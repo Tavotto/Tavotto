@@ -43,6 +43,15 @@ jobs:
         with:
           ref: ${{ inputs.tag }}
 
+      - name: 确认该 tag 含打包配置
+        shell: bash
+        run: |
+          test -f packaging/magplot.spec || {
+            echo "::error::${{ inputs.tag }} 这个 tag 里没有 packaging/——"\
+                 "打包配置是后来才加的，请选一个更新的 tag"
+            exit 1
+          }
+
       - uses: actions/setup-python@v5
         with: { python-version: "3.13" }
       - uses: pnpm/action-setup@v4
