@@ -26,6 +26,7 @@ from pathlib import Path
 
 import queue
 import shutil
+import sys
 
 from flask import Flask, Response, abort, jsonify, request, send_file, send_from_directory
 from werkzeug.exceptions import HTTPException
@@ -1517,6 +1518,13 @@ def api_styles_delete(sid):
 
 
 def main():
+    # 启动信息里有中文。Windows 上 stdout 一旦不是真控制台（被重定向到文件、
+    # 由启动器接管管道）就退回系统区域编码，print 会 UnicodeEncodeError 直接
+    # 打死进程——用户看到的是「启动即崩」，却查不出原因。
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--figures", default=None,
                     help="面板图所在目录（缺省恢复最近打开的项目）")
