@@ -105,9 +105,16 @@ jobs:
           set -euo pipefail
           # --deep 已废弃且对 PyInstaller 的嵌套二进制不可靠：自底向上逐个签，
           # 最后签 .app 本身。hardened runtime 是公证的硬性要求。
-          find dist/Magplot.app -type f \( -name "*.dylib" -o -name "*.so" \) -print0 |
-            xargs -0 -I{} codesign --force --timestamp --options runtime \
-              --sign "$MACOS_SIGN_IDENTITY" {}
+          #
+          # 必须按 `file` 的判断签**所有** Mach-O 文件，不能只挑 *.dylib / *.so：
+          # PyInstaller 的包里还有 Python.framework 的可执行体和一堆无后缀的
+          # 二进制，漏签任何一个，公证就会回 Invalid（只签 dylib/so 时实测如此）。
+          find dist/Magplot.app -type f | while read -r f; do
+            case "$(file -b "$f")" in
+              *Mach-O*) codesign --force --timestamp --options runtime \
+                          --sign "$MACOS_SIGN_IDENTITY" "$f" ;;
+            esac
+          done
           codesign --force --timestamp --options runtime \
             --entitlements packaging/entitlements.plist \
             --sign "$MACOS_SIGN_IDENTITY" dist/Magplot.app
@@ -131,9 +138,28 @@ jobs:
           set -euo pipefail
           VER="${{ inputs.tag }}"; VER="${VER#v}"
           DMG="out/Magplot-$VER-macOS.dmg"
-          xcrun notarytool submit "$DMG" --wait \
-            --apple-id "$APPLE_ID" --password "$APPLE_APP_PASSWORD" \
-            --team-id "$APPLE_TEAM_ID"
+          # dmg 本身也签一道：公证服务要求提交物已签名
+          codesign --force --timestamp --sign "$MACOS_SIGN_IDENTITY" "$DMG"
+
+          CREDS="--apple-id $APPLE_ID --password $APPLE_APP_PASSWORD --team-id $APPLE_TEAM_ID"
+          # shellcheck disable=SC2086
+          ID=$(xcrun notarytool submit "$DMG" $CREDS --output-format json |
+               python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+          echo "提交 ID: $ID"
+          # shellcheck disable=SC2086
+          xcrun notarytool wait "$ID" $CREDS || true
+          # shellcheck disable=SC2086
+          STATUS=$(xcrun notarytool info "$ID" $CREDS --output-format json |
+                   python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])')
+          echo "公证结果: $STATUS"
+          if [ "$STATUS" != "Accepted" ]; then
+            # 没有这份日志，Invalid 就是个哑谜——它会逐个列出哪个二进制没签好
+            echo "::group::公证详细日志"
+            # shellcheck disable=SC2086
+            xcrun notarytool log "$ID" $CREDS || true
+            echo "::endgroup::"
+            exit 1
+          fi
           # 装订：装订过的 dmg 在离线机器上也能通过 Gatekeeper
           xcrun stapler staple "$DMG"
           spctl -a -t open --context context:primary-signature -vv "$DMG"
