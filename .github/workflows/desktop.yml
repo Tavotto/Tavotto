@@ -124,16 +124,19 @@ jobs:
       # ---------------- Windows ----------------
       - name: 做安装程序
         if: runner.os == 'Windows'
-        shell: bash
+        # 必须用 pwsh 而不是 bash：Git Bash 的 MSYS 会把 `/DVersion=x` 当成路径
+        # 改写成 `C:/Program Files/Git/DVersion=x`，ISCC 于是报
+        # 「You may not specify more than one script filename」。
+        shell: pwsh
         run: |
-          set -euo pipefail
-          mkdir -p out
-          choco install innosetup --no-progress -y >/dev/null
-          VER="${{ inputs.tag }}"; VER="${VER#v}"
-          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "/DVersion=$VER" packaging/magplot.iss
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+          choco install innosetup --no-progress -y | Out-Null
+          $ver = "${{ inputs.tag }}" -replace '^v', ''
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DVersion=$ver" packaging\magplot.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC 失败" }
           # 另附一份免安装 zip：有些机构禁止运行未签名安装程序，解压即用能绕开
-          cd dist && 7z a -tzip "../out/Magplot-${{ inputs.tag }}-Windows-portable.zip" Magplot >/dev/null
-          cd .. && ls -lh out
+          & 7z a -tzip "out\Magplot-${{ inputs.tag }}-Windows-portable.zip" "dist\Magplot" | Out-Null
+          Get-ChildItem out | Format-Table Name, Length
 
       - uses: actions/upload-artifact@v4
         with:
