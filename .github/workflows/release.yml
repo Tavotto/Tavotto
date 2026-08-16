@@ -89,13 +89,34 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
       - uses: actions/download-artifact@v4
         with: { name: dist, path: dist }
+
+      - name: 找手写的 release notes
+        id: notes
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          # 自动生成的 notes 只是一串提交标题，用户看不出该不该升级。
+          # docs/release-notes/<tag>.md 存在就用它，缺失则退回自动生成。
+          F="docs/release-notes/${TAG}.md"
+          if [ -f "$F" ]; then
+            echo "path=$F" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::没有 $F，本次用自动生成的 notes（一串提交标题）"
+            echo "path=" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
           draft: false
-          generate_release_notes: true
+          body_path: ${{ steps.notes.outputs.path }}
+          generate_release_notes: ${{ steps.notes.outputs.path == '' }}
           files: |
             dist/*.whl
             dist/*.tar.gz

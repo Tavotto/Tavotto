@@ -74,7 +74,8 @@ pip install --index-url https://test.pypi.org/simple/ \
 1. 改 `src/magplot/__init__.py` 里的 `__version__`（版本号唯一出处）。
 2. 改两份 README 里安装命令中的 wheel 文件名——**URL 带版本号**，忘了改用户
    就会一直装到旧版。
-3. 提交、打 tag、推送：
+3. 写 `docs/release-notes/vX.Y.Z.md`（见下）。
+4. 提交、打 tag、推送：
 
    ```sh
    git commit -am "0.2.0"
@@ -85,6 +86,22 @@ pip install --index-url https://test.pypi.org/simple/ \
 tag 与 `__version__` 对不上时 `build` job 直接失败，不会发出错版本。
 
 **发之前确认 CI 是绿的**——`release.yml` 不重跑测试，它只负责构建与分发。
+
+## Release notes
+
+`docs/release-notes/<tag>.md` 存在就作为 Release 正文，缺失则退回自动生成
+（一串提交标题，用户看不出该不该升级，会在 Actions 里留一条 warning）。
+用英文写，与 README 一致。
+
+**按症状和触发条件写，不要按提交写**。用户是带着「我这边坏了」来找的，
+要能对上号：
+
+> **Scripts calling `plt.close(fig)` produced an empty figure on matplotlib ≥ 3.11.**
+> Symptom: double-clicking a panel does nothing, or the element tree comes up empty.
+> Trigger: your script closes the figure after saving — the normal pattern when one
+> script produces several panels.
+
+`docs/release-notes/v0.1.1.md` 是范例。
 
 ## 首次成功发到 PyPI 之后
 
