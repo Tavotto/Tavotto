@@ -1,0 +1,162 @@
+@import 'tailwindcss';
+
+/* ---------------------------------------------------------------------------
+   Magic Matplot v2 — design tokens
+   暖灰白底、白色 surface、层级靠留白与轻微背景差；
+   边框只给真实输入框、区域边界、选择状态与浮层；
+   持久表面不用 shadow，浮层允许唯一一层轻投影（--shadow-pop）。
+   --------------------------------------------------------------------------- */
+@theme {
+  --color-bg: #f2f2ef;
+  --color-canvas: #eaeae6;
+  --color-surface: #ffffff;
+  --color-surface-2: #f7f7f4;
+
+  --color-border: #e3e3dd;
+  --color-border-strong: #cfcfc7;
+
+  --color-ink: #1b1b18;
+  /* 次级正文：≥5.9:1（#f2f2ef 上），可放心用于说明文字 */
+  --color-ink-2: #5c5c55;
+  /* 三级正文：≥4.7:1，仍满足普通文字 4.5:1 —— 可读的最浅一档 */
+  --color-ink-3: #6b6b64;
+  /* faint：仅装饰、禁用态、非必要信息；不用于需要阅读的文字 */
+  --color-ink-faint: #a3a39a;
+
+  --color-accent: #4a63d8;
+  --color-accent-subtle: #eef0fb;
+  --color-danger: #c4442a;
+  --color-danger-subtle: #fbeeeb;
+  --color-sel: #2f6fed;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+
+  /* 唯一允许的投影：菜单 / popover / dialog / tooltip 等浮层专用 */
+  --shadow-pop: 0 6px 20px rgba(27, 27, 24, 0.09);
+
+  --text-xs: 11px;
+  --text-xs--line-height: 15px;
+  --text-sm: 12px;
+  --text-sm--line-height: 16px;
+  --text-base: 13px;
+  --text-base--line-height: 18px;
+  --text-lg: 14px;
+  --text-lg--line-height: 20px;
+
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue',
+    'Microsoft YaHei', system-ui, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+  /* 画布内文字对象专用：与 UI 字体严格分离，模拟论文排版 */
+  --font-doc: 'Times New Roman', 'Songti SC', 'Source Han Serif SC', serif;
+
+  --animate-pop-in: pop-in 0.12s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97) translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@layer base {
+  /* Tailwind v4 的默认边框色是 currentColor，这里回到 token 边框 */
+  *,
+  ::after,
+  ::before {
+    border-color: var(--color-border);
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background: var(--color-bg);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: var(--text-sm);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    overscroll-behavior: none;
+  }
+
+  /* 工具类软件不该有到处可选中的文字 */
+  body {
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  input,
+  textarea,
+  [contenteditable='true'] {
+    user-select: text;
+    -webkit-user-select: text;
+  }
+
+  button {
+    cursor: default;
+    font: inherit;
+    color: inherit;
+  }
+
+  input[type='number']::-webkit-outer-spin-button,
+  input[type='number']::-webkit-inner-spin-button {
+    appearance: none;
+    margin: 0;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--color-ink-faint) 55%, transparent);
+    border-radius: 99px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--color-ink-2) 55%, transparent);
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
+  /* 动效可关：动画只是点缀，关掉不损失任何信息 */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    ::before,
+    ::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@utility focus-ring {
+  outline: 2px solid color-mix(in srgb, var(--color-accent) 45%, transparent);
+  outline-offset: 1px;
+}
+
+/* 数值输入：等宽、右对齐、去边框直到 hover/focus —— 紧凑工具软件的典型手感 */
+@utility num-input {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-xs);
+}

@@ -1,0 +1,73 @@
+name: Release
+
+# 打 tag 即发布：v0.1.0 → 构建 wheel + sdist → 建 Release 并挂上去。
+# 「检查更新」功能就是从这个 Release 的 assets 里找 .whl 的下载地址，
+# 所以 wheel 必须真的挂上去，否则装好的 Magplot 升不了级。
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "要发布的 tag（如 v0.1.0）"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
+      - uses: pnpm/action-setup@v4
+        with: { version: 11 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: 构建前端进包
+        run: python scripts/build_frontend.py
+
+      - name: 打 wheel 与 sdist
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+
+      - name: 核对 tag 与包版本一致
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          VER="${TAG#v}"
+          test -f "dist/magplot-${VER}-py3-none-any.whl" || {
+            echo "::error::tag $TAG 与 __init__.py 里的版本对不上；dist/ 实际内容："
+            ls dist/
+            exit 1
+          }
+
+      - name: 装进干净环境冒烟
+        run: |
+          python -m venv /tmp/smoke
+          /tmp/smoke/bin/pip install --quiet dist/*.whl
+          /tmp/smoke/bin/python -c "
+          from pathlib import Path
+          import magplot
+          assert (Path(magplot.__file__).parent / 'web' / 'index.html').is_file()
+          print('ok', magplot.__version__)
+          "
+
+      - name: 发布 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          draft: false
+          generate_release_notes: true
+          files: |
+            dist/*.whl
+            dist/*.tar.gz

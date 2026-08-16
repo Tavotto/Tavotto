@@ -1,0 +1,31 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# 打包产物
+/dist/
+/build/
+*.egg-info/
+
+# 前端构建产物（scripts/build_frontend.py 生成，随 wheel 分发但不进仓库）
+/src/magplot/web/
+web/node_modules/
+web/dist/
+
+# 运行时数据：装成包后一律落在用户数据目录
+# （macOS ~/Library/Application Support/Magplot、Linux ~/.local/share/magplot、
+#  Windows %LOCALAPPDATA%\Magplot）。下面几个是旧版本在仓库里留下的残余。
+/cache/
+/exports/
+/layouts/
+/baked_overrides.json
+*.log
+.pytest_cache/
+
+# 工具与系统
+.gstack/
+.DS_Store
+
+# 开发期界面验证截图：含真实研究图，不进公开仓
+/docs/verify/

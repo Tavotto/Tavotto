@@ -1,0 +1,71 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "magplot"
+dynamic = ["version"]
+description = "论文 Figure 排版 + 参数化图表编辑工具：matplotlib 面板拖拽排版，双击进图内改元素，导出真矢量 PDF"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "AGPL-3.0-only"
+license-files = ["LICENSE"]
+authors = [{ name = "erwanjun" }]
+keywords = ["matplotlib", "figure", "layout", "publication", "pdf", "科研绘图"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Web Environment",
+    "Framework :: Flask",
+    "Intended Audience :: Science/Research",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Visualization",
+    "Topic :: Multimedia :: Graphics :: Editors :: Vector-Based",
+]
+
+# Flask 父进程只要这两个：科学栈刻意不在这里——engine/registry.py、pool.py、
+# ai_bridge.py 必须保持纯标准库可 import，matplotlib 由 worker 解释器提供。
+dependencies = [
+    "flask>=3.1,<4",
+    "pymupdf>=1.24,<2",
+]
+
+[project.optional-dependencies]
+# 单环境安装：渲染 worker 直接用当前解释器，无需另找科学栈 python。
+worker = ["matplotlib>=3.8", "numpy>=1.24"]
+dev = ["pytest>=8", "build>=1.2"]
+
+[project.scripts]
+magplot = "magplot.app:main"
+
+[project.urls]
+Homepage = "https://github.com/erwanjun/magplot"
+Issues = "https://github.com/erwanjun/magplot/issues"
+Changelog = "https://github.com/erwanjun/magplot/releases"
+
+[tool.hatch.version]
+path = "src/magplot/__init__.py"
+
+# 前端产物 src/magplot/web/ 由 scripts/build_frontend.py 生成，进 .gitignore（可再生）。
+# hatchling 默认跳过 VCS 忽略的文件，targets 的 include 也救不回来——必须在这里
+# 用 artifacts 显式收回，否则打出来的包没有界面（首页 404）。
+[tool.hatch.build]
+artifacts = ["src/magplot/web/**"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/magplot"]
+
+[tool.hatch.build.targets.sdist]
+# 源码包里带上前端构建产物（src/magplot/web），从 sdist 装也不需要 node。
+include = [
+    "src/magplot",
+    "tests",
+    "web/src",
+    "web/package.json",
+    "web/pnpm-lock.yaml",
+    "README.md",
+    "LICENSE",
+    "pytest.ini",
+]

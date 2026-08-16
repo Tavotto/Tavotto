@@ -1,0 +1,947 @@
+import type { PointerEvent as ReactPointerEvent } from 'react'
+import {
+  rectsIntersect,
+  resizeRect,
+  snapCandidates,
+  snapEdge,
+  snapMove,
+  type Rect,
+  type ResizeDir,
+} from '@/lib/geometry'
+import type { Manifest, ManifestElement } from '@/lib/api'
+import { flipY, resizeGroup, round4, unionBox, type Rect4 } from '@/lib/axesLayout'
+import {
+  groupBoxes,
+  groupPatches,
+  positionOf,
+  type AlignEntry,
+  type Group,
+} from '@/lib/elementGeom'
+import { newId } from '@/lib/id'
+import { clamp } from '@/lib/units'
+import { useDocumentStore } from '@/store/documentStore'
+import { useInteractionStore } from '@/store/interactionStore'
+import { useSelectionStore } from '@/store/selectionStore'
+import { useUiStore, type Tool } from '@/store/uiStore'
+import {
+  clientToMm,
+  getTransform,
+  pxToMm,
+  snapTolMm,
+  useViewportStore,
+} from '@/store/viewportStore'
+import { setOverride, setOverrides } from '@/store/actions'
+import {
+  panelAspectLocked,
+  panelRotation,
+  rotateVec,
+  rotationSwaps,
+  unrotateVec,
+  type ArrowObject,
+  type CanvasObject,
+  type PanelObject,
+  type PanelRotation,
+  type ShapeObject,
+  type TextObject,
+} from '@/types/document'
+import { expandGroups } from '@/store/actions'
+
+/* -------------------------------------------------------------------------- */
+/*  指针追踪骨架                                                               */
+/* -------------------------------------------------------------------------- */
+
+interface TrackOptions {
+  onMove: (ev: PointerEvent, dxPx: number, dyPx: number) => void
+  onEnd: (moved: boolean, ev: PointerEvent) => void
+  /** 超过该像素位移才算「真的动了」 */
+  threshold?: number
+}
+
+function trackPointer(e: ReactPointerEvent, { onMove, onEnd, threshold = 2 }: TrackOptions) {
+  const startX = e.clientX
+  const startY = e.clientY
+  let moved = false
+
+  const move = (ev: PointerEvent) => {
+    const dx = ev.clientX - startX
+    const dy = ev.clientY - startY
+    if (!moved && Math.abs(dx) + Math.abs(dy) < threshold) return
+    moved = true
+    onMove(ev, dx, dy)
+  }
+  const finish = (ev: PointerEvent) => {
+    window.removeEventListener('pointermove', move)
+    window.removeEventListener('pointerup', finish)
+    window.removeEventListener('pointercancel', finish)
+    onEnd(moved, ev)
+  }
+  window.addEventListener('pointermove', move)
+  window.addEventListener('pointerup', finish)
+  window.addEventListener('pointercancel', finish)
+}
+
+const doc = () => useDocumentStore.getState().doc
+const interaction = () => useInteractionStore.getState()
+
+/** 当前吸附偏好；总开关关闭时返回 null，调用方据此完全跳过吸附 */
+function snapPrefs() {
+  const ui = useUiStore.getState()
+  if (!ui.snapEnabled) return null
+  return {
+    objects: ui.snapToObjects,
+    guides: ui.snapToGuides,
+    grid: ui.snapToGrid,
+    gridSize: ui.gridSize,
+  }
+}
+
+const candidatesFor = (exclude: Set<string>) => {
+  const prefs = snapPrefs()
+  return prefs
+    ? snapCandidates(doc().objects, exclude, doc().page, doc().guides, prefs)
+    : null
+}
+
+/** 拖动 / 缩放时排除锁定对象；成组对象整组跟着走 */
+function draggableSelection(): CanvasObject[] {
+  const ids = expandGroups(useSelectionStore.getState().ids)
+  return doc().objects.filter((o) => ids.includes(o.id) && !o.locked && !o.hidden)
+}
+
+/* -------------------------------------------------------------------------- */
+/*  移动                                                                       */
+/* -------------------------------------------------------------------------- */
+
+export function startMoveDrag(e: ReactPointerEvent, objectId: string) {
+  const store = useDocumentStore.getState()
+  const targets = draggableSelection()
+  if (!targets.length) return
+  const primary = targets.find((o) => o.id === objectId) ?? targets[0]
+  const origin = new Map(targets.map((o) => [o.id, { x: o.x, y: o.y }]))
+  const primaryOrigin = origin.get(primary.id)!
+  const excluded = new Set(targets.map((o) => o.id))
+  const cands = candidatesFor(excluded)
+
+  interaction().begin('move')
+  store.beginTxn(targets.length > 1 ? `移动 ${targets.length} 个对象` : '移动对象')
+
+  trackPointer(e, {
+    onMove: (ev, dxPx, dyPx) => {
+      const t = getTransform()
+      let dx = pxToMm(dxPx, t)
+      let dy = pxToMm(dyPx, t)
+      if (ev.shiftKey) {
+        // 按住 shift 锁定为单轴移动
+        if (Math.abs(dxPx) > Math.abs(dyPx)) dy = 0
+        else dx = 0
+      }
+
+      let snapX: number[] = []
+      let snapY: number[] = []
+      if (cands && !ev.metaKey && !ev.ctrlKey) {
+        const moving: Rect = {
+          x: primaryOrigin.x + dx,
+          y: primaryOrigin.y + dy,
+          w: primary.w,
+          h: primary.h,
+        }
+        const snap = snapMove(moving, cands, snapTolMm(t))
+        dx += snap.dx
+        dy += snap.dy
+        snapX = snap.guideXs
+        snapY = snap.guideYs
+      }
+      interaction().setSnap(snapX, snapY)
+
+      store.txnUpdate((d) => {
+        for (const o of d.objects) {
+          const start = origin.get(o.id)
+          if (!start) continue
+          o.x = start.x + dx
+          o.y = start.y + dy
+        }
+      })
+    },
+    onEnd: (moved) => {
+      interaction().end()
+      store.endTxn({ discard: !moved })
+    },
+  })
+}
+
+/* -------------------------------------------------------------------------- */
+/*  缩放                                                                       */
+/* -------------------------------------------------------------------------- */
+
+export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: ResizeDir) {
+  e.stopPropagation()
+  const store = useDocumentStore.getState()
+  const target = doc().objects.find((o) => o.id === objectId)
+  if (!target || target.locked) return
+  const orig: Rect = { x: target.x, y: target.y, w: target.w, h: target.h }
+  const excluded = new Set([objectId])
+  const cands = candidatesFor(excluded)
+  const isText = target.type === 'text'
+  // 面板的等比与否由它自己的宽高比锁定开关决定，形状仍是默认等比
+  const keepRatio = target.type === 'panel' ? panelAspectLocked(target) : !isText
+
+  interaction().begin('resize')
+  store.beginTxn('缩放对象')
+
+  trackPointer(e, {
+    onMove: (ev, dxPx, dyPx) => {
+      const t = getTransform()
+      const dx = pxToMm(dxPx, t)
+      const dy = pxToMm(dyPx, t)
+      // 角点按锁定状态等比，Alt 反转；文字只改宽度
+      const corner = (dir.includes('e') || dir.includes('w')) && (dir.includes('n') || dir.includes('s'))
+      const proportional = corner && keepRatio !== ev.altKey
+      let next = resizeRect(orig, dir, dx, dy, proportional)
+
+      if (isText) {
+        next = { ...next, y: orig.y, h: orig.h }
+      }
+
+      // 缩放时只吸附正在移动的边
+      const tol = snapTolMm(t)
+      const snapX: number[] = []
+      const snapY: number[] = []
+      if (cands && !ev.metaKey && !ev.ctrlKey && !proportional) {
+        if (dir.includes('e')) {
+          const hit = snapEdge(next.x + next.w, cands.xs, tol)
+          if (hit != null) {
+            next.w = Math.max(3, hit - next.x)
+            snapX.push(hit)
+          }
+        } else if (dir.includes('w')) {
+          const hit = snapEdge(next.x, cands.xs, tol)
+          if (hit != null) {
+            next.w = Math.max(3, next.x + next.w - hit)
+            next.x = hit
+            snapX.push(hit)
+          }
+        }
+        if (dir.includes('s')) {
+          const hit = snapEdge(next.y + next.h, cands.ys, tol)
+          if (hit != null) {
+            next.h = Math.max(2, hit - next.y)
+            snapY.push(hit)
+          }
+        } else if (dir.includes('n')) {
+          const hit = snapEdge(next.y, cands.ys, tol)
+          if (hit != null) {
+            next.h = Math.max(2, next.y + next.h - hit)
+            next.y = hit
+            snapY.push(hit)
+          }
+        }
+      }
+      interaction().setSnap(snapX, snapY)
+
+      store.txnUpdate((d) => {
+        const o = d.objects.find((x) => x.id === objectId)
+        if (!o) return
+        o.x = next.x
+        o.y = next.y
+        o.w = next.w
+        if (!isText) o.h = next.h
+      })
+    },
+    onEnd: (moved) => {
+      interaction().end()
+      store.endTxn({ discard: !moved })
+    },
+  })
+}
+
+/* -------------------------------------------------------------------------- */
+/*  箭头端点                                                                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * 拖动箭头端点：端点存的是包围盒内的比例坐标，拖动时先算出两端的绝对 mm
+ * 位置，再由两点重新推出包围盒，保证包围盒始终贴合箭头。
+ */
+export function startEndpointDrag(e: ReactPointerEvent, objectId: string, which: 'start' | 'end') {
+  e.stopPropagation()
+  const store = useDocumentStore.getState()
+  const arrow = doc().objects.find((o) => o.id === objectId) as ArrowObject | undefined
+  if (!arrow || arrow.locked) return
+
+  const abs = (p: { rx: number; ry: number }) => ({
+    x: arrow.x + p.rx * arrow.w,
+    y: arrow.y + p.ry * arrow.h,
+  })
+  const fixed = abs(which === 'start' ? arrow.end : arrow.start)
+  const movingStart = abs(which === 'start' ? arrow.start : arrow.end)
+  const cands = candidatesFor(new Set([objectId]))
+
+  interaction().begin('endpoint')
+  store.beginTxn('调整箭头端点')
+
+  trackPointer(e, {
+    onMove: (ev, dxPx, dyPx) => {
+      const t = getTransform()
+      let px = movingStart.x + pxToMm(dxPx, t)
+      let py = movingStart.y + pxToMm(dyPx, t)
+
+      if (ev.shiftKey) {
+        // 15° 吸附，画示意箭头时很有用
+        const dx = px - fixed.x
+        const dy = py - fixed.y
+        const len = Math.hypot(dx, dy)
+        const ang = Math.round(Math.atan2(dy, dx) / (Math.PI / 12)) * (Math.PI / 12)
+        px = fixed.x + Math.cos(ang) * len
+        py = fixed.y + Math.sin(ang) * len
+      }
+
+      const snapX: number[] = []
+      const snapY: number[] = []
+      if (cands && !ev.metaKey && !ev.ctrlKey && !ev.shiftKey) {
+        const tol = snapTolMm(t)
+        const hx = snapEdge(px, cands.xs, tol)
+        if (hx != null) {
+          px = hx
+          snapX.push(hx)
+        }
+        const hy = snapEdge(py, cands.ys, tol)
+        if (hy != null) {
+          py = hy
+          snapY.push(hy)
+        }
+      }
+      interaction().setSnap(snapX, snapY)
+
+      const a = which === 'start' ? { x: px, y: py } : fixed
+      const b = which === 'start' ? fixed : { x: px, y: py }
+      const x = Math.min(a.x, b.x)
+      const y = Math.min(a.y, b.y)
+      const w = Math.max(Math.abs(b.x - a.x), 0.01)
+      const h = Math.max(Math.abs(b.y - a.y), 0.01)
+
+      store.txnUpdate((d) => {
+        const o = d.objects.find((x) => x.id === objectId) as ArrowObject | undefined
+        if (!o) return
+        o.x = x
+        o.y = y
+        o.w = w
+        o.h = h
+        o.start = { rx: (a.x - x) / w, ry: (a.y - y) / h }
+        o.end = { rx: (b.x - x) / w, ry: (b.y - y) / h }
+      })
+    },
+    onEnd: (moved) => {
+      interaction().end()
+      store.endTxn({ discard: !moved })
+    },
+  })
+}
+
+/* -------------------------------------------------------------------------- */
+/*  框选                                                                       */
+/* -------------------------------------------------------------------------- */
+
+export function startMarquee(e: ReactPointerEvent) {
+  const additive = e.shiftKey
+  const base = additive ? [...useSelectionStore.getState().ids] : []
+  const start = clientToMm(e.clientX, e.clientY)
+  if (!additive) useSelectionStore.getState().clear()
+  interaction().begin('marquee')
+
+  trackPointer(e, {
+    onMove: (ev) => {
+      const cur = clientToMm(ev.clientX, ev.clientY)
+      const rect: Rect = {
+        x: Math.min(start.x, cur.x),
+        y: Math.min(start.y, cur.y),
+        w: Math.abs(cur.x - start.x),
+        h: Math.abs(cur.y - start.y),
+      }
+      interaction().setMarquee(rect)
+      const hit = doc()
+        .objects.filter((o) => !o.hidden && rectsIntersect(o, rect))
+        .map((o) => o.id)
+      useSelectionStore.getState().set(expandGroups([...new Set([...base, ...hit])]))
+    },
+    onEnd: () => interaction().end(),
+  })
+}
+
+/* -------------------------------------------------------------------------- */
+/*  平移                                                                       */
+/* -------------------------------------------------------------------------- */
+
+export function startPan(e: ReactPointerEvent) {
+  const { panX, panY } = useViewportStore.getState()
+  interaction().begin('pan')
+  trackPointer(e, {
+    threshold: 0,
+    onMove: (_ev, dx, dy) => useViewportStore.getState().setPan(panX + dx, panY + dy),
+    onEnd: () => interaction().end(),
+  })
+}
+
+/* -------------------------------------------------------------------------- */
+/*  绘制新对象                                                                 */
+/* -------------------------------------------------------------------------- */
+
+const DEFAULT_DRAW: Record<string, { w: number; h: number }> = {
+  text: { w: 40, h: 5 },
+  arrow: { w: 30, h: 14 },
+  rect: { w: 30, h: 20 },
+  ellipse: { w: 30, h: 20 },
+  line: { w: 30, h: 0.01 },
+}
+
+/**
+ * 用当前工具拖出一个新对象；只是点一下则落一个默认尺寸的对象。
+ * 完成后工具自动回到选择态（与 Figma / Illustrator 一致）。
+ */
+export function startDraw(e: ReactPointerEvent, tool: Exclude<Tool, 'select'>) {
+  const store = useDocumentStore.getState()
+  const start = clientToMm(e.clientX, e.clientY)
+  const cands = candidatesFor(new Set())
+  interaction().begin('draw')
+
+  trackPointer(e, {
+    onMove: (ev) => {
+      const t = getTransform()
+      let cur = clientToMm(ev.clientX, ev.clientY, t)
+      if (cands && !ev.metaKey && !ev.ctrlKey) {
+        const tol = snapTolMm(t)
+        const hx = snapEdge(cur.x, cands.xs, tol)
+        const hy = snapEdge(cur.y, cands.ys, tol)
+        cur = { x: hx ?? cur.x, y: hy ?? cur.y }
+        interaction().setSnap(hx != null ? [hx] : [], hy != null ? [hy] : [])
+      }
+      interaction().setDraft({
+        tool,
+        x: Math.min(start.x, cur.x),
+        y: Math.min(start.y, cur.y),
+        w: Math.abs(cur.x - start.x),
+        h: Math.abs(cur.y - start.y),
+      })
+    },
+    onEnd: (moved, ev) => {
+      const draft = interaction().draft
+      const end = clientToMm(ev.clientX, ev.clientY)
+      interaction().end()
+
+      const fallback = DEFAULT_DRAW[tool]
+      const rect: Rect =
+        moved && draft && draft.w > 0.5
+          ? draft
+          : { x: start.x, y: start.y, w: fallback.w, h: fallback.h }
+
+      const id = newId(tool[0])
+      let created: CanvasObject
+      if (tool === 'text') {
+        const text: TextObject = {
+          id,
+          type: 'text',
+          x: rect.x,
+          y: rect.y,
+          w: Math.max(rect.w, 12),
+          h: 5,
+          text: '文字',
+          sizePt: 10,
+          bold: false,
+          color: '#000000',
+          align: 'left',
+        }
+        created = text
+      } else if (tool === 'arrow') {
+        // 箭头沿实际拖动方向，而不是永远左上到右下
+        const sx = moved ? start.x : rect.x
+        const sy = moved ? start.y : rect.y + rect.h
+        const ex = moved ? end.x : rect.x + rect.w
+        const ey = moved ? end.y : rect.y
+        const x = Math.min(sx, ex)
+        const y = Math.min(sy, ey)
+        const w = Math.max(Math.abs(ex - sx), 0.01)
+        const h = Math.max(Math.abs(ey - sy), 0.01)
+        const arrow: ArrowObject = {
+          id,
+          type: 'arrow',
+          x,
+          y,
+          w,
+          h,
+          start: { rx: (sx - x) / w, ry: (sy - y) / h },
+          end: { rx: (ex - x) / w, ry: (ey - y) / h },
+          strokePt: 1,
+          color: '#1B1B18',
+          head: 'end',
+        }
+        created = arrow
+      } else {
+        const shape: ShapeObject = {
+          id,
+          type: 'shape',
+          shape: tool,
+          x: rect.x,
+          y: rect.y,
+          w: Math.max(rect.w, 1),
+          h: tool === 'line' ? 0.01 : Math.max(rect.h, 1),
+          strokePt: 1,
+          color: '#1B1B18',
+          fill: null,
+        }
+        created = shape
+      }
+
+      store.commit(`添加${{ text: '文字', arrow: '箭头', rect: '矩形', ellipse: '椭圆', line: '直线' }[tool]}`, (d) => {
+        d.objects.push(created)
+      })
+      const ui = useUiStore.getState()
+      // 在图内编辑态画标注：新对象属于画布层，必须先退出图内编辑，
+      // 属性页才会跟到新对象上（否则它的属性根本改不了）
+      if (ui.elementPanelId) ui.setElementPanel(null)
+      useSelectionStore.getState().set([id])
+      ui.setTool('select')
+      if (tool === 'text') ui.setEditingText(id)
+    },
+  })
+}
+
+/* -------------------------------------------------------------------------- */
+/*  参考线                                                                     */
+/* -------------------------------------------------------------------------- */
+
+/** 从标尺拖出新参考线；index 非空表示拖动已有参考线（拖回标尺则删除） */
+export function startGuideDrag(e: ReactPointerEvent, axis: 'x' | 'y', index: number | null) {
+  e.stopPropagation()
+  const store = useDocumentStore.getState()
+  const page = doc().page
+  interaction().begin('guide')
+
+  const posOf = (ev: PointerEvent | ReactPointerEvent) => {
+    const p = clientToMm(ev.clientX, ev.clientY)
+    return Math.round((axis === 'x' ? p.x : p.y) * 10) / 10
+  }
+  const inRange = (pos: number) => pos >= -2 && pos <= (axis === 'x' ? page.w : page.h) + 2
+
+  if (index != null) store.beginTxn('移动参考线')
+
+  trackPointer(e, {
+    threshold: 0,
+    onMove: (ev) => {
+      const pos = posOf(ev)
+      if (index == null) {
+        interaction().setPendingGuide({ axis, pos })
+      } else {
+        store.txnUpdate((d) => {
+          if (d.guides[index]) d.guides[index].pos = pos
+        })
+      }
+    },
+    onEnd: (moved, ev) => {
+      const pos = posOf(ev)
+      interaction().end()
+      if (index == null) {
+        if (moved && inRange(pos)) {
+          store.commit('添加参考线', (d) => {
+            d.guides.push({ axis, pos })
+          })
+        }
+        return
+      }
+      store.endTxn({ discard: !moved })
+      if (!inRange(pos)) {
+        store.commit('删除参考线', (d) => {
+          d.guides.splice(index, 1)
+        })
+      }
+    },
+  })
+}
+
+/* -------------------------------------------------------------------------- */
+/*  裁剪                                                                       */
+/* -------------------------------------------------------------------------- */
+
+export type CropHandle = ResizeDir
+
+const HANDLE_CYCLE = ['n', 'e', 's', 'w'] as const
+
+/** 屏幕方位的手柄 → 内容坐标系方位（旋转的逆）：转 90° 时屏幕右缘是内容顶缘 */
+function unrotateHandle(h: CropHandle, r: PanelRotation): CropHandle {
+  if (!r) return h
+  const steps = (4 - r / 90) % 4
+  const mapped = [...h].map(
+    (ch) => HANDLE_CYCLE[(HANDLE_CYCLE.indexOf(ch as (typeof HANDLE_CYCLE)[number]) + steps) % 4],
+  )
+  // 拼回 'nw'/'se' 这类合法方向名：纵向字母在前
+  const ns = mapped.find((c) => c === 'n' || c === 's') ?? ''
+  const ew = mapped.find((c) => c === 'e' || c === 'w') ?? ''
+  return (ns + ew) as CropHandle
+}
+
+/**
+ * 裁剪框以归一化比例存储（内容坐标系，与旋转无关）；拖动时限制在 0–1 内并
+ * 保证最小 5% 边长。旋转的面板：屏幕位移/手柄先逆旋转回内容坐标系再套同一套
+ * 边缘逻辑；包围盒以「未裁剪整图的画布中心」为锚重算——内容在画布上纹丝不动，
+ * 动的只是取景窗（rot=0 时与旧公式逐项等价）。
+ */
+export function startCropDrag(
+  e: ReactPointerEvent,
+  objectId: string,
+  handle: CropHandle | 'move',
+) {
+  e.stopPropagation()
+  const store = useDocumentStore.getState()
+  const panel = doc().objects.find((o) => o.id === objectId)
+  if (!panel || panel.type !== 'panel') return
+  const crop = panel.crop ?? { x: 0, y: 0, w: 1, h: 1 }
+  const rot = panelRotation(panel)
+  const swap = rotationSwaps(rot)
+  // 未裁剪整图的显示尺寸（内容坐标系：90/270 时与包围盒长宽互换）
+  const fullW = (swap ? panel.h : panel.w) / crop.w
+  const fullH = (swap ? panel.w : panel.h) / crop.h
+  const cHandle = handle === 'move' ? handle : unrotateHandle(handle, rot)
+  // 取景窗中心相对整图中心的偏移（内容系）旋转到画布系，得到整图的画布锚点
+  const [anchorDx, anchorDy] = rotateVec(
+    fullW * ((1 - crop.w) / 2 - crop.x),
+    fullH * ((1 - crop.h) / 2 - crop.y),
+    rot,
+  )
+  const anchorX = panel.x + panel.w / 2 + anchorDx
+  const anchorY = panel.y + panel.h / 2 + anchorDy
+
+  interaction().begin('crop')
+  store.beginTxn('调整裁剪')
+
+  trackPointer(e, {
+    onMove: (_ev, dxPx, dyPx) => {
+      const t = getTransform()
+      const [dxc, dyc] = unrotateVec(pxToMm(dxPx, t), pxToMm(dyPx, t), rot)
+      const du = dxc / fullW
+      const dv = dyc / fullH
+      let { x, y, w, h } = crop
+
+      if (cHandle === 'move') {
+        x = clamp(crop.x + du, 0, 1 - crop.w)
+        y = clamp(crop.y + dv, 0, 1 - crop.h)
+      } else {
+        const MIN = 0.05
+        if (cHandle.includes('w')) {
+          const nx = clamp(crop.x + du, 0, crop.x + crop.w - MIN)
+          w = crop.x + crop.w - nx
+          x = nx
+        } else if (cHandle.includes('e')) {
+          w = clamp(crop.w + du, MIN, 1 - crop.x)
+        }
+        if (cHandle.includes('n')) {
+          const ny = clamp(crop.y + dv, 0, crop.y + crop.h - MIN)
+          h = crop.y + crop.h - ny
+          y = ny
+        } else if (cHandle.includes('s')) {
+          h = clamp(crop.h + dv, MIN, 1 - crop.y)
+        }
+      }
+
+      store.txnUpdate((d) => {
+        const o = d.objects.find((x2) => x2.id === objectId)
+        if (!o || o.type !== 'panel') return
+        o.crop = { x, y, w, h }
+        // 整图锚死在画布上，包围盒围着新取景窗重算
+        const cw = fullW * w
+        const ch = fullH * h
+        const [offX, offY] = rotateVec(
+          fullW * ((1 - w) / 2 - x),
+          fullH * ((1 - h) / 2 - y),
+          rot,
+        )
+        o.w = swap ? ch : cw
+        o.h = swap ? cw : ch
+        o.x = anchorX - offX - o.w / 2
+        o.y = anchorY - offY - o.h / 2
+      })
+    },
+    onEnd: (moved) => {
+      interaction().end()
+      store.endTxn({ discard: !moved })
+    },
+  })
+}
+
+/* -------------------------------------------------------------------------- */
+/*  图内元素编辑                                                               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * 用 manifest bbox 做命中测试：面积小者优先，「图表外壳」类降权，
+ * 边缘留 0.4% 容差。不依赖 SVG 内部结构，因此换 matplotlib 版本也不会失效。
+ */
+/** manifest 里 visible=false 即已被「删除」（非破坏性隐藏） */
+export function isElementHidden(el: ManifestElement): boolean {
+  return el.editable.some((f) => f.prop === 'visible' && f.value === false)
+}
+
+/**
+ * 命中评分的角色权重：重叠时谁该让路。
+ *
+ * 子图是容器，刻度与刻度标签是子图的外壳 —— 它们都不是「盖在别人上面」的
+ * 内容，用户点到重叠区时想要的几乎总是那个内容元素。刻度标签尤其危险：
+ * 它的 bbox 常常只有千分之几，纯比面积必赢，而 matplotlib 即使没把它画出来
+ * （比如那条只放「CMP only」的窄条轴）也照样报一个 bbox，于是变成一块看不见
+ * 的挡板，把真实文字标签的点击偷走。
+ *
+ * 降权而不是排除：单独摆在空白处的刻度标签仍然选得中，只是不再抢别人的。
+ */
+const HIT_PENALTY: Record<string, number> = {
+  axes: 10,
+  axes3d: 10,
+  ticks: 20,
+  ticklabel: 20,
+}
+
+export function pickElement(
+  manifest: Manifest | null | undefined,
+  fx: number,
+  fy: number,
+  lockedGids?: readonly string[],
+): ManifestElement | null {
+  if (!manifest) return null
+  const PAD = 0.004
+  let best: ManifestElement | null = null
+  let bestScore = Infinity
+  for (const el of manifest.elements) {
+    if (el.gid === 'figure') continue
+    if (isElementHidden(el)) continue // 隐藏的元素不该再挡住点击
+    if (lockedGids?.includes(el.gid)) continue // 锁定元素只能从元素树选中
+    const [x, y, w, h] = el.bbox
+    if (fx < x - PAD || fx > x + w + PAD || fy < y - PAD || fy > y + h + PAD) continue
+    const area = w * h
+    const score = area * (HIT_PENALTY[el.role] ?? 1)
+    if (score < bestScore) {
+      bestScore = score
+      best = el
+    }
+  }
+  return best ?? manifest.elements.find((e) => e.gid === 'figure') ?? null
+}
+
+/**
+ * 拖动图内可拖元素：先直接平移 SVG 里对应的 <g> 做乐观预览，
+ * 松手才把新锚点写成 override 触发真渲染。
+ */
+export function startElementDrag(
+  e: ReactPointerEvent,
+  panel: PanelObject,
+  element: ManifestElement,
+  layout: { width: number; height: number },
+) {
+  if (!element.anchor || !element.drag_prop) return
+  e.stopPropagation()
+  const anchor = element.anchor
+  const dragProp = element.drag_prop
+
+  const wrap = document.querySelector<HTMLElement>(`[data-element-svg="${panel.id}"]`)
+  const svg = wrap?.querySelector('svg')
+  const group = svg?.querySelector<SVGGElement>(`[id="${CSS.escape(element.gid)}"]`)
+  const viewBox = (svg?.getAttribute('viewBox') ?? '0 0 100 100').split(/\s+/).map(Number)
+
+  interaction().begin('element')
+  // 面板可能被旋转过：屏幕位移要先转回内容坐标系，图内的分数坐标才对得上
+  const toContent = contentDelta(panel, layout)
+
+  trackPointer(e, {
+    onMove: (_ev, dxPx, dyPx) => {
+      const [dfx, dfy] = toContent(dxPx, dyPx)
+      group?.setAttribute('transform', `translate(${dfx * viewBox[2]},${dfy * viewBox[3]})`)
+      interaction().setGidDrag({ gid: element.gid, dfx, dfy })
+    },
+    onEnd: (moved, ev) => {
+      interaction().end()
+      if (!moved) return
+      const [dfx, dfy] = toContent(ev.clientX - e.clientX, ev.clientY - e.clientY)
+      setOverride(panel.id, element.gid, dragProp, [anchor[0] + dfx, anchor[1] + dfy], true)
+    },
+  })
+}
+
+/**
+ * 屏幕像素位移 → 面板内容的分数位移。
+ * layout 是世界像素（未旋转的内容尺寸），换算到屏幕要乘 zoom；
+ * 面板带 90° 步进旋转时先把位移反向旋转回内容坐标系。
+ */
+function contentDelta(panel: PanelObject, layout: { width: number; height: number }) {
+  const rot = panelRotation(panel)
+  return (dxPx: number, dyPx: number): [number, number] => {
+    const { zoom } = useViewportStore.getState()
+    const [dx, dy] = unrotateVec(dxPx, dyPx, rot)
+    return [dx / (layout.width * zoom), dy / (layout.height * zoom)]
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/*  axes 拖动 / 缩放子图占比                                                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * 拖动整个子图或它的八个手柄，改的是 matplotlib 的 axes position（figure 占比）。
+ * 移动时顺带平移 SVG 里的 <g> 做预览；缩放不做 SVG 预览——matplotlib 重排后
+ * 刻度和字号并不会跟着线性缩放，假预览会骗人，只给一个覆盖层线框。
+ *
+ * element 必须已经过 geomTarget 解析：点位图时传进来的是它的宿主子图。
+ */
+export function startAxesDrag(
+  e: ReactPointerEvent,
+  panel: PanelObject,
+  element: ManifestElement,
+  layout: { width: number; height: number },
+  mode: 'move' | ResizeDir,
+) {
+  const start = positionOf(panel, element)
+  if (!start) return
+  e.stopPropagation()
+
+  const wrap = document.querySelector<HTMLElement>(`[data-element-svg="${panel.id}"]`)
+  const svg = wrap?.querySelector('svg')
+  const group = svg?.querySelector<SVGGElement>(`[id="${CSS.escape(element.gid)}"]`)
+  const viewBox = (svg?.getAttribute('viewBox') ?? '0 0 100 100').split(/\s+/).map(Number)
+
+  const MIN = 0.05
+  interaction().begin('element')
+  const toContent = contentDelta(panel, layout)
+
+  const compute = (dxPx: number, dyPx: number) => {
+    const [dfx, dfy] = toContent(dxPx, dyPx)
+    let [x, y, w, h] = start
+
+    if (mode === 'move') {
+      x = clamp(x + dfx, 0, 1 - w)
+      y = clamp(y - dfy, 0, 1 - h) // 屏幕向下 = bottom-origin 的 y 变小
+      return { rect: [x, y, w, h] as Rect4, dfx, dfy }
+    }
+    if (mode.includes('e')) w = clamp(w + dfx, MIN, 1 - x)
+    else if (mode.includes('w')) {
+      const nx = clamp(x + dfx, 0, x + w - MIN)
+      w = x + w - nx
+      x = nx
+    }
+    if (mode.includes('s')) {
+      const ny = clamp(y - dfy, 0, y + h - MIN)
+      h = y + h - ny
+      y = ny
+    } else if (mode.includes('n')) {
+      h = clamp(h - dfy, MIN, 1 - y)
+    }
+    return { rect: [x, y, w, h] as Rect4, dfx, dfy }
+  }
+
+  trackPointer(e, {
+    onMove: (_ev, dxPx, dyPx) => {
+      const { rect, dfx, dfy } = compute(dxPx, dyPx)
+      interaction().setElementPreview({ boxes: { [element.gid]: flipY(rect) } })
+      if (mode === 'move' && group) {
+        group.setAttribute('transform', `translate(${dfx * viewBox[2]},${dfy * viewBox[3]})`)
+      }
+    },
+    onEnd: (moved, ev) => {
+      const dx = ev.clientX - e.clientX
+      const dy = ev.clientY - e.clientY
+      interaction().end()
+      if (!moved) return
+      const { rect } = compute(dx, dy)
+      setOverride(panel.id, element.gid, 'position', rect.map(round4), true)
+    },
+  })
+}
+
+/**
+ * 图内多选整组平移：拖动多选里的任一成员，全体按同一位移走。
+ *
+ * 每个成员写自己的那条 override —— 子图与位图（经 geom 代理）写 position、
+ * 文字写 pos_frac、图例写 loc_frac —— 具体写法由 alignEntries 的 write 决定，
+ * 这里只负责把「同一个分数位移」发给每个成员。松手一次 setOverrides =
+ * 一条撤销 = 一次渲染。
+ *
+ * 不把成员钳进画布：一旦有成员贴边，钳位会让整组卡住、相对布局也被拆散，
+ * 与成组缩放（resizeGroup）的取舍一致，超出部分由 matplotlib 自己裁掉。
+ */
+export function startElementGroupMove(
+  e: ReactPointerEvent,
+  panel: PanelObject,
+  entries: AlignEntry[],
+  layout: { width: number; height: number },
+) {
+  e.stopPropagation()
+  const wrap = document.querySelector<HTMLElement>(`[data-element-svg="${panel.id}"]`)
+  const svg = wrap?.querySelector('svg')
+  const viewBox = (svg?.getAttribute('viewBox') ?? '0 0 100 100').split(/\s+/).map(Number)
+  // 纯平移的乐观预览是准的（不像缩放会触发 matplotlib 重排），SVG 一起跟手
+  const nodes = entries.map(
+    (en) => svg?.querySelector<SVGGElement>(`[id="${CSS.escape(en.key)}"]`) ?? null,
+  )
+
+  interaction().begin('element')
+  const toContent = contentDelta(panel, layout)
+
+  const shifted = (dfx: number, dfy: number): Rect4[] =>
+    entries.map((en) => [en.box[0] + dfx, en.box[1] + dfy, en.box[2], en.box[3]])
+
+  trackPointer(e, {
+    onMove: (_ev, dxPx, dyPx) => {
+      const [dfx, dfy] = toContent(dxPx, dyPx)
+      const boxes = shifted(dfx, dfy)
+      interaction().setElementPreview({
+        boxes: Object.fromEntries(entries.map((en, i) => [en.key, boxes[i]])),
+        group: unionBox(boxes) ?? undefined,
+      })
+      for (const node of nodes) {
+        node?.setAttribute('transform', `translate(${dfx * viewBox[2]},${dfy * viewBox[3]})`)
+      }
+    },
+    onEnd: (moved, ev) => {
+      interaction().end()
+      if (!moved) return
+      const [dfx, dfy] = toContent(ev.clientX - e.clientX, ev.clientY - e.clientY)
+      const boxes = shifted(dfx, dfy)
+      setOverrides(
+        panel.id,
+        `移动 ${entries.length} 个图内元素`,
+        entries.map((en, i) => en.write(boxes[i])),
+      )
+    },
+  })
+}
+
+/**
+ * 拖组包围框的手柄，成组缩放多个子图：组框按手柄方向缩放，每个成员再线性
+ * 重映射进新组框，组内相对布局因此保持不变。松手一次性提交全部 position——
+ * 一条撤销、一次引擎渲染。
+ */
+export function startGroupResize(
+  e: ReactPointerEvent,
+  panel: PanelObject,
+  group: Group,
+  layout: { width: number; height: number },
+  dir: ResizeDir,
+) {
+  e.stopPropagation()
+  interaction().begin('element')
+
+  const toContent = contentDelta(panel, layout)
+  const nextGroup = (dxPx: number, dyPx: number) => {
+    const [dfx, dfy] = toContent(dxPx, dyPx)
+    return resizeGroup(group.box, dir, dfx, dfy)
+  }
+
+  trackPointer(e, {
+    onMove: (_ev, dxPx, dyPx) => {
+      const box = nextGroup(dxPx, dyPx)
+      interaction().setElementPreview({
+        boxes: Object.fromEntries(groupBoxes(group, box)),
+        group: box,
+      })
+    },
+    onEnd: (moved, ev) => {
+      interaction().end()
+      if (!moved) return
+      const box = nextGroup(ev.clientX - e.clientX, ev.clientY - e.clientY)
+      setOverrides(panel.id, `缩放 ${group.entries.length} 个子图`, groupPatches(group, box))
+    },
+  })
+}

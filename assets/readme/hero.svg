@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="1200" height="360" viewBox="0 0 1200 360"
+     role="img" aria-labelledby="hero-title hero-desc">
+  <title id="hero-title">Magplot</title>
+  <desc id="hero-desc">论文 Figure 排版工具：matplotlib 面板在画布上拖拽排版，带选择手柄、对齐参考线与毫米标注，导出真矢量 PDF。</desc>
+
+  <style>
+    .ui   { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  </style>
+
+  <rect width="1200" height="360" rx="24" fill="#f2f2ef"/>
+
+  <!-- 标题区 -->
+  <g id="title-block" class="ui" transform="translate(64 0)">
+    <text x="0" y="86" class="mono" font-size="18" letter-spacing="2.4" fill="#6b6b64">
+      PUBLICATION FIGURE LAYOUT
+    </text>
+    <text x="-3" y="164" font-size="66" font-weight="600" fill="#1b1b18">Magplot</text>
+    <text x="0" y="214" font-size="25" fill="#5c5c55">matplotlib 面板拖拽排版，双击进图内改元素，</text>
+    <text x="0" y="248" font-size="25" fill="#5c5c55">导出可选中文字的真矢量 PDF。</text>
+
+    <g transform="translate(0 292)">
+      <rect x="0" y="-19" width="126" height="28" rx="6" fill="#eef0fb"/>
+      <text x="14" y="0" class="mono" font-size="17" fill="#4a63d8">AGPL-3.0</text>
+      <text x="146" y="0" class="mono" font-size="17" fill="#6b6b64">macOS · Windows · Linux</text>
+    </g>
+  </g>
+
+  <!-- 证据区：画布上的一页，正在排版 -->
+  <g id="project-proof" transform="translate(676 40)">
+    <rect width="468" height="280" rx="14" fill="#eaeae6" stroke="#e3e3dd"/>
+    <rect x="30" y="22" width="408" height="236" fill="#ffffff" stroke="#cfcfc7" stroke-width="1"/>
+
+    <!-- (a) 折线面板 -->
+    <g transform="translate(54 46)">
+      <path d="M0 104 L0 0 M0 104 L176 104" fill="none" stroke="#a3a39a" stroke-width="1.2"/>
+      <polyline points="6,92 34,70 62,74 90,44 118,36 146,14 172,10"
+                fill="none" stroke="#1b1b18" stroke-width="2"/>
+      <polyline points="6,98 34,88 62,80 90,72 118,58 146,52 172,40"
+                fill="none" stroke="#4a63d8" stroke-width="2" stroke-dasharray="5 3"/>
+      <text x="8" y="-8" class="ui" font-size="18" font-weight="600" fill="#1b1b18">(a)</text>
+    </g>
+
+    <!-- (b) 柱形面板：选中态（角点手柄 + 尺寸标注） -->
+    <g transform="translate(266 46)">
+      <path d="M0 104 L0 0 M0 104 L148 104" fill="none" stroke="#a3a39a" stroke-width="1.2"/>
+      <rect x="14"  y="56" width="20" height="48" fill="#1b1b18"/>
+      <rect x="46"  y="38" width="20" height="66" fill="#5c5c55"/>
+      <rect x="78"  y="66" width="20" height="38" fill="#a3a39a"/>
+      <rect x="110" y="26" width="20" height="78" fill="#4a63d8"/>
+      <text x="8" y="-8" class="ui" font-size="18" font-weight="600" fill="#1b1b18">(b)</text>
+
+      <rect x="-10" y="-22" width="168" height="136" fill="none"
+            stroke="#2f6fed" stroke-width="1.5"/>
+      <g fill="#ffffff" stroke="#2f6fed" stroke-width="1.5">
+        <rect x="-14" y="-26" width="8" height="8"/>
+        <rect x="150" y="-26" width="8" height="8"/>
+        <rect x="-14" y="110" width="8" height="8"/>
+        <rect x="150" y="110" width="8" height="8"/>
+      </g>
+      <g stroke="#2f6fed" stroke-width="1.2">
+        <path d="M-10 130 L158 130"/>
+        <path d="M-10 125 L-10 135 M158 125 L158 135"/>
+      </g>
+      <text x="74" y="152" class="mono" font-size="17" text-anchor="middle" fill="#2f6fed">85 mm</text>
+    </g>
+
+    <!-- 对齐参考线：吸附到 (b) 的左边 -->
+    <path d="M256 30 L256 250" stroke="#2f6fed" stroke-width="1"
+          stroke-dasharray="4 4" opacity="0.55"/>
+
+    <!-- (c) 通栏光谱面板 -->
+    <g transform="translate(54 196)">
+      <path d="M0 46 L0 0 M0 46 L360 46" fill="none" stroke="#a3a39a" stroke-width="1.2"/>
+      <polyline points="4,42 40,40 66,20 92,38 130,36 158,6 186,34 228,32 262,16 300,34 340,38 356,40"
+                fill="none" stroke="#1b1b18" stroke-width="1.8"/>
+      <text x="8" y="-8" class="ui" font-size="18" font-weight="600" fill="#1b1b18">(c)</text>
+    </g>
+  </g>
+</svg>
