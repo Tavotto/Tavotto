@@ -3,6 +3,6 @@
 包内只放轻量常量：`magplot.app` 会拉起 Flask 与 PyMuPDF，
 import 代价不该由 `import magplot` 承担（CLI 探测版本号等场景）。
 """
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 
 __all__ = ["__version__"]
