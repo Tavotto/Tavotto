@@ -58,6 +58,15 @@ def save(fig, stem, outdir="figures"):
 """
 
 
+def _drain(proc, timeout=10) -> str:
+    """把 worker 已经写出的 stderr 收上来（进程已死时会立刻读到 EOF）。"""
+    box: list = []
+    t = threading.Thread(target=lambda: box.append(proc.stderr.read()), daemon=True)
+    t.start()
+    t.join(timeout)
+    return (box[0] if box else "") or "（无 stderr 输出）"
+
+
 def _rpc(proc, obj, timeout=120):
     """发一条命令读一行回应。
 
@@ -75,7 +84,9 @@ def _rpc(proc, obj, timeout=120):
     reader.join(timeout)
     assert not reader.is_alive(), f"worker 超时（{timeout}s）: {obj.get('cmd')}"
     line = box[0] if box else ""
-    assert line, f"worker 无响应: {obj.get('cmd')}"
+    # 空行 = stdout 到了 EOF = worker 死了。光断言 `assert ''` 什么也看不出来，
+    # 把子进程的 stderr 一并带上——worker 的 traceback 全在那儿。
+    assert line, f"worker 无响应: {obj.get('cmd')}\n--- worker stderr ---\n{_drain(proc)}"
     resp = json.loads(line)
     assert resp.get("ok"), f"{resp.get('error', resp)}\n{resp.get('traceback', '')}"
     return resp
