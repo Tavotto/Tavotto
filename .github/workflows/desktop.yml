@@ -82,12 +82,22 @@ jobs:
           echo "$MACOS_CERTIFICATE" | base64 --decode > /tmp/cert.p12
           security create-keychain -p ci /tmp/build.keychain
           security default-keychain -s /tmp/build.keychain
+          # 关键：必须把钥匙串加进**搜索列表**。codesign 只在搜索列表里找身份，
+          # default-keychain 单独设不够，--keychain 参数在新版 macOS 上也不可靠——
+          # 症状是 "no identity found"，而 PyInstaller 留下的 adhoc 签名会让随后的
+          # codesign --verify 照样通过，非常容易误判成签名成功（本机实测过）。
+          EXISTING=$(security list-keychains -d user | sed 's/^ *"//;s/"$//')
+          # 下面一行有意不加引号：要按空白拆成多个钥匙串路径
+          # shellcheck disable=SC2086
+          security list-keychains -d user -s /tmp/build.keychain $EXISTING
           security unlock-keychain -p ci /tmp/build.keychain
+          security set-keychain-settings -lut 21600 /tmp/build.keychain
           security import /tmp/cert.p12 -k /tmp/build.keychain \
-            -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+            -P "$MACOS_CERTIFICATE_PASSWORD" -A -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: \
             -s -k ci /tmp/build.keychain >/dev/null
           rm -f /tmp/cert.p12
+          security find-identity -v -p codesigning /tmp/build.keychain
 
       - name: 签名 .app
         if: runner.os == 'macOS' && env.MACOS_SIGN_IDENTITY != ''
@@ -102,6 +112,10 @@ jobs:
             --entitlements packaging/entitlements.plist \
             --sign "$MACOS_SIGN_IDENTITY" dist/Magplot.app
           codesign --verify --deep --strict --verbose=2 dist/Magplot.app
+          # --verify 对 adhoc 签名同样返回成功，必须显式断言签的是 Developer ID，
+          # 否则「签名失败但流水线绿」会一路带到用户手里
+          codesign -dvvv dist/Magplot.app 2>&1 | grep -q "Authority=Developer ID Application" || {
+            echo "::error::签名没生效（仍是 adhoc）"; codesign -dvvv dist/Magplot.app; exit 1; }
 
       - name: 打 .dmg
         if: runner.os == 'macOS'

@@ -167,8 +167,13 @@ python -m twine check --strict dist/*     # 元数据 + PyPI 的 README 渲染
 `security find-identity -v` 的证书名括号里读到）也要设上，共六个。
 私钥和 .p12 只留在 `~/magplot-signing/`，绝不进版本库。
 
-验证签名是否真的生效：下载 dmg 后 `codesign -dv Magplot.app`，
-`Signature=adhoc` 表示没签上，正式签名会显示 `TeamIdentifier`。
+验证签名是否真的生效：下载 dmg 后 `codesign -dvvv Magplot.app`，要看到
+`Authority=Developer ID Application: …`。**只看 `codesign --verify` 会被骗**——
+PyInstaller 留下的 adhoc 签名同样能通过 verify；流水线里已加了显式断言。
+
+踩过的坑：`codesign` 只在**钥匙串搜索列表**里找身份，光 `default-keychain -s`
+或传 `--keychain` 都不够（新版 macOS 上后者不可靠），症状是
+`no identity found`。CI 里用 `security list-keychains -d user -s` 显式加入。
 
 ### Windows 签名
 
