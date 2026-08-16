@@ -263,3 +263,30 @@ def test_hidden_dirs_and_files_are_not_assets(client, tmp_path):
     client.post("/api/projects/open", json={"path": str(figs)})
     ids = {p["id"] for p in client.get("/api/panels").get_json()["panels"]}
     assert ids == {"p1.pdf", str(Path("sub/real.pdf"))}
+
+
+# ---------------- 端口占用（双击启动的应用不能无声退出） ----------------------
+
+def test_resolve_port_uses_preferred_when_free(monkeypatch):
+    monkeypatch.setattr(m, "port_is_free", lambda p: True)
+    assert m.resolve_port(5089) == 5089
+
+
+def test_resolve_port_returns_none_when_magplot_already_running(monkeypatch):
+    """端口上是另一个 Magplot：不再起第二个，调用方把浏览器指过去即可。"""
+    monkeypatch.setattr(m, "port_is_free", lambda p: False)
+    monkeypatch.setattr(m, "magplot_is_serving", lambda p: True)
+    assert m.resolve_port(5089) is None
+
+
+def test_resolve_port_steps_aside_for_other_programs(monkeypatch):
+    """端口被别的程序占了就顺延——窗口化应用报不出 traceback，不能直接崩。"""
+    monkeypatch.setattr(m, "magplot_is_serving", lambda p: False)
+    monkeypatch.setattr(m, "port_is_free", lambda p: p >= 5092)
+    assert m.resolve_port(5089) == 5092
+
+
+def test_resolve_port_gives_up_gracefully(monkeypatch):
+    monkeypatch.setattr(m, "magplot_is_serving", lambda p: False)
+    monkeypatch.setattr(m, "port_is_free", lambda p: False)
+    assert m.resolve_port(5089, tries=3) == 5089   # 交给 app.run 报错，有日志可查

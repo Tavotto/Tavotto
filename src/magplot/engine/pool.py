@@ -32,17 +32,42 @@ class WorkerError(RuntimeError):
         self.traceback_text = traceback_text
 
 
+def is_frozen() -> bool:
+    """是否跑在 PyInstaller 打出的独立应用里（.app / .exe）。"""
+    import sys
+    return bool(getattr(sys, "frozen", False))
+
+
 def _candidate_pythons() -> list[str | None]:
     """按优先级列出可能装了 matplotlib 的解释器（跨平台）。
 
     sys.executable 排在环境变量之后、系统路径之前：`pip install magplot[worker]`
     这种单环境安装里，跑 Flask 的解释器自己就带科学栈，无需再探测。
+
+    **打包成独立应用时必须跳过 sys.executable**——那时它是 Magplot 自己那个
+    可执行文件，不是 Python 解释器；拿它去跑 `-c "import matplotlib"` 会以
+    莫名其妙的参数把应用再启动一次。独立应用里渲染只能用用户自己的环境：
+    用户的论文脚本本来就要 import 他自己那套依赖（scipy / pandas / …），
+    我们塞进包里的任何 Python 都满足不了。
     """
     import os
     import sys
-    cands: list[str | None] = [os.environ.get("MM_WORKER_PYTHON"), sys.executable]
+    cands: list[str | None] = [os.environ.get("MM_WORKER_PYTHON")]
+    if not is_frozen():
+        cands.append(sys.executable)
+
+    # 一律用字符串拼路径：pathlib.Path 会按 os.name 分派 Posix/Windows 实现，
+    # 在非目标平台上构造另一半会直接抛 UnsupportedOperation。
+    home = os.path.expanduser("~")
     if os.name == "nt":
         cands += [shutil.which("python"), shutil.which("python3")]
+        # python.org 与 conda 的常见落点。独立应用没有「自己的解释器」可用，
+        # 全靠这里把用户已有的环境翻出来，值得多找几个地方。
+        local = os.environ.get("LOCALAPPDATA")
+        roots = ([local + r"\Programs\Python"] if local else []) + ["C:\\"]
+        for root in roots:
+            cands += _glob(root + r"\Python*\python.exe")
+        cands += [f"{home}\\{n}\\python.exe" for n in ("anaconda3", "miniconda3")]
     else:
         cands += [
             "/opt/homebrew/opt/python@3.13/libexec/bin/python3",  # macOS Homebrew
@@ -50,7 +75,20 @@ def _candidate_pythons() -> list[str | None]:
             shutil.which("python3"),
             "/usr/bin/python3",
         ]
+        # python.org 的 framework 安装（新版优先）与 conda
+        cands += _glob("/Library/Frameworks/Python.framework/Versions/*/bin/python3")
+        cands += [f"{home}/{n}/bin/python3"
+                  for n in ("anaconda3", "miniconda3", "mambaforge")]
     return cands
+
+
+def _glob(pattern: str) -> list[str]:
+    """新版优先的安全 glob：目录不存在/没权限时回空表，不把启动流程带崩。"""
+    import glob as _g
+    try:
+        return sorted(_g.glob(pattern), reverse=True)
+    except OSError:
+        return []
 
 
 def find_worker_python() -> str:

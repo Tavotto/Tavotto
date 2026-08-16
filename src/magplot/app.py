@@ -20,12 +20,15 @@ import os
 import re
 import threading
 import time
+import urllib.error
+import urllib.request
 import webbrowser
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 import queue
 import shutil
+import socket
 import sys
 
 from flask import Flask, Response, abort, jsonify, request, send_file, send_from_directory
@@ -1519,6 +1522,41 @@ def api_styles_delete(sid):
     return jsonify({"ok": True})
 
 
+def port_is_free(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind(("127.0.0.1", port))
+            return True
+        except OSError:
+            return False
+
+
+def magplot_is_serving(port: int) -> bool:
+    """占着这个端口的是不是另一个 Magplot（而不是别的程序）。"""
+    try:
+        with urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/api/version", timeout=1.5) as resp:
+            return "build" in json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, OSError, ValueError, TimeoutError):
+        return False
+
+
+def resolve_port(preferred: int, tries: int = 20) -> int | None:
+    """要用的端口；None = 该端口上已经有一个 Magplot 在跑，不必再起。
+
+    被别的程序占用时顺延找下一个空闲端口——双击启动的应用不能因为端口冲突就
+    一声不响地退出（窗口化打包下用户连 traceback 都看不到）。
+    """
+    if port_is_free(preferred):
+        return preferred
+    if magplot_is_serving(preferred):
+        return None
+    for p in range(preferred + 1, preferred + 1 + tries):
+        if port_is_free(p):
+            return p
+    return preferred          # 全占满了：交给 app.run 报错，至少日志里有据可查
+
+
 def main():
     # 启动信息里有中文。Windows 上 stdout 一旦不是真控制台（被重定向到文件、
     # 由启动器接管管道）就退回系统区域编码，print 会 UnicodeEncodeError 直接
@@ -1563,11 +1601,23 @@ def main():
     else:
         print("* 尚未选择项目：请在浏览器中新建或打开一个项目")
 
-    url = f"http://127.0.0.1:{args.port}"
+    port = resolve_port(args.port)
+    if port is None:
+        # 端口上已经有一个 Magplot 在跑：把浏览器指过去就够了，别再起一个。
+        # 双击应用图标的用户没有终端可看，这里必须自己把事办圆。
+        url = f"http://127.0.0.1:{args.port}"
+        print(f"* Magplot 已在 {url} 运行，打开现有窗口")
+        if not args.no_browser:
+            webbrowser.open(url)
+        return
+
+    url = f"http://127.0.0.1:{port}"
+    if port != args.port:
+        print(f"* 端口 {args.port} 被占用，改用 {port}")
     print(f"* 打开 {url}")
     if not args.no_browser:
         threading.Timer(0.8, lambda: webbrowser.open(url)).start()
-    app.run(host="127.0.0.1", port=args.port, threaded=True)
+    app.run(host="127.0.0.1", port=port, threaded=True)
 
 
 if __name__ == "__main__":

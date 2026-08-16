@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  公证要求开启 hardened runtime，但 Python 应用有两处必须放开：
+
+  - allow-unsigned-executable-memory / allow-jit：CPython 与 PyMuPDF 的原生扩展
+    会做运行时代码生成，hardened runtime 默认禁止，不放开会直接崩。
+  - disable-library-validation：渲染 worker 是**用户自己的 Python**，那个二进制
+    不是我们签的；库校验开着会拒绝加载。
+
+  这些是 Python 打包的标准放行项，不是在关安全特性——应用仍然被签名、被公证、
+  且只监听 127.0.0.1。
+-->
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+</dict>
+</plist>

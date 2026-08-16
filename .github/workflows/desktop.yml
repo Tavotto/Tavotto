@@ -1,0 +1,140 @@
+name: Desktop apps
+
+# 打独立应用：macOS .dmg（签名 + 公证）与 Windows .exe（未签名）。
+#
+# 这些包里**不含 matplotlib**——渲染 worker 用的是用户自己的 Python 环境
+# （用户的论文脚本要 import 他自己那套依赖，我们塞什么进去都满足不了）。
+# 见 packaging/magplot.spec 的文件头。
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "基于哪个 tag 构建（如 v0.1.1）"
+        required: true
+      attach:
+        description: "构建完挂到该 tag 的 Release 上"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-latest,   artifact: dmg }
+          - { os: windows-latest, artifact: exe }
+    runs-on: ${{ matrix.os }}
+    # secrets 提到 job 级：步骤自身 env 块里的变量能否用于该步骤的 if 有歧义，
+    # 而 job 级 env 在 step if 里是明确可用的。没配 secret 时这些就是空串，
+    # 签名/公证步骤整段跳过，产出未签名的包而不是让整个流水线红。
+    env:
+      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
+      - uses: pnpm/action-setup@v4
+        with: { version: 11 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: 构建前端进包
+        run: python scripts/build_frontend.py
+
+      - name: 装打包依赖
+        # 只装 Flask 父进程那点依赖：科学栈刻意不装，免得 PyInstaller 顺手打进去
+        run: |
+          python -m pip install --upgrade pip pyinstaller
+          python -m pip install "flask>=3.1,<4" "pymupdf>=1.24,<2"
+
+      - name: PyInstaller
+        run: pyinstaller packaging/magplot.spec --noconfirm
+
+      # ---------------- macOS：签名 + 公证 ----------------
+      - name: 导入签名证书
+        if: runner.os == 'macOS' && env.MACOS_CERTIFICATE != ''
+        run: |
+          set -euo pipefail
+          echo "$MACOS_CERTIFICATE" | base64 --decode > /tmp/cert.p12
+          security create-keychain -p ci /tmp/build.keychain
+          security default-keychain -s /tmp/build.keychain
+          security unlock-keychain -p ci /tmp/build.keychain
+          security import /tmp/cert.p12 -k /tmp/build.keychain \
+            -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k ci /tmp/build.keychain >/dev/null
+          rm -f /tmp/cert.p12
+
+      - name: 签名 .app
+        if: runner.os == 'macOS' && env.MACOS_SIGN_IDENTITY != ''
+        run: |
+          set -euo pipefail
+          # --deep 已废弃且对 PyInstaller 的嵌套二进制不可靠：自底向上逐个签，
+          # 最后签 .app 本身。hardened runtime 是公证的硬性要求。
+          find dist/Magplot.app -type f \( -name "*.dylib" -o -name "*.so" \) -print0 |
+            xargs -0 -I{} codesign --force --timestamp --options runtime \
+              --sign "$MACOS_SIGN_IDENTITY" {}
+          codesign --force --timestamp --options runtime \
+            --entitlements packaging/entitlements.plist \
+            --sign "$MACOS_SIGN_IDENTITY" dist/Magplot.app
+          codesign --verify --deep --strict --verbose=2 dist/Magplot.app
+
+      - name: 打 .dmg
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p out
+          scripts/make_dmg.sh dist "out/Magplot-${{ inputs.tag }}-macOS.dmg"
+
+      - name: 公证 .dmg
+        if: runner.os == 'macOS' && env.APPLE_ID != ''
+        run: |
+          set -euo pipefail
+          DMG="out/Magplot-${{ inputs.tag }}-macOS.dmg"
+          xcrun notarytool submit "$DMG" --wait \
+            --apple-id "$APPLE_ID" --password "$APPLE_APP_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID"
+          # 装订：装订过的 dmg 在离线机器上也能通过 Gatekeeper
+          xcrun stapler staple "$DMG"
+          spctl -a -t open --context context:primary-signature -vv "$DMG"
+
+      # ---------------- Windows ----------------
+      - name: 做安装程序
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          choco install innosetup --no-progress -y >/dev/null
+          VER="${{ inputs.tag }}"; VER="${VER#v}"
+          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "/DVersion=$VER" packaging/magplot.iss
+          # 另附一份免安装 zip：有些机构禁止运行未签名安装程序，解压即用能绕开
+          cd dist && 7z a -tzip "../out/Magplot-${{ inputs.tag }}-Windows-portable.zip" Magplot >/dev/null
+          cd .. && ls -lh out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.artifact }}
+          path: out/*
+          if-no-files-found: error
+
+      - name: 挂到 Release
+        if: inputs.attach
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          files: out/*
