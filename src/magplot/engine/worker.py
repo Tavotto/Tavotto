@@ -225,6 +225,15 @@ def main() -> None:
     ap.add_argument("--sandbox", required=True)
     ap.add_argument("--entry", default="main")
     ap.add_argument("--preview-dpi", type=int, default=200)
+
+    # 协议管道钉死 UTF-8。Windows 的默认 stdio 编码跟着系统区域走（常是
+    # cp1252/cp936），而回应里 ensure_ascii=False——中文标签、µ、⁻¹ 这类字符
+    # 一出现就 UnicodeEncodeError 把 worker 整个打死，表现为「worker 无响应」。
+    # errors="replace" 是最后一道保险：宁可某个字符显示成 ? 也不能让会话崩掉。
+    sys.stdin.reconfigure(encoding="utf-8", errors="replace")
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
     worker = Worker(ap.parse_args())
 
     for line in sys.stdin:

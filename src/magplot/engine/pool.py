@@ -97,6 +97,9 @@ class EngineWorker:
              "--entry", entry],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self._log,
             text=True, bufsize=1,
+            # 显式 UTF-8：text=True 默认跟随系统区域编码，Windows 上是 cp1252/
+            # cp936，读 worker 回来的中文/µ/⁻¹ 会解码失败。worker 侧同样钉死。
+            encoding="utf-8", errors="replace",
         )
 
     def alive(self) -> bool:

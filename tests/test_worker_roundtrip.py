@@ -116,7 +116,8 @@ def worker(tmp_path):
          "--sandbox", str(tmp_path / "sandbox"),
          "--entry", "main"],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE, text=True, bufsize=1)
+        stderr=subprocess.PIPE, text=True, bufsize=1,
+        encoding="utf-8", errors="replace")   # 同 pool.py：管道钉死 UTF-8
     yield proc, out, tmp_path
     if proc.poll() is None:
         proc.kill()
@@ -308,3 +309,31 @@ def _assert_unknown_stem(proc):
     assert proc.poll() is None
 
     _rpc(proc, {"cmd": "ping"})
+
+
+def test_non_ascii_survives_the_pipe(worker):
+    """图内文字含非 ASCII（中文 / µ / ⁻¹）时协议不能崩。
+
+    回归看护：worker 用 ensure_ascii=False 写 JSON，Windows 的默认 stdio 编码
+    跟系统区域走（cp1252/cp936），不钉死 UTF-8 就会 UnicodeEncodeError 把
+    worker 打死——症状是「worker 无响应」，而不是一条能看懂的错误。
+    """
+    proc, out, tmp = worker
+    _rpc(proc, {"cmd": "build"})
+    man = json.loads((out / "TestFig_a.json").read_text(encoding="utf-8"))
+    title_gid = next(
+        el["gid"] for el in man["elements"]
+        for f in el.get("editable", [])
+        if f["prop"] == "text" and f["value"] == "Original Title")
+
+    tricky = "反应速率 µm·h⁻¹ ±0.5 ℃"
+    resp = _rpc(proc, {"cmd": "override", "stem": "TestFig_a",
+                       "patches": [{"gid": title_gid, "prop": "text", "value": tricky}]})
+    assert _text_value(resp["manifest"], title_gid) == tricky
+
+    pdf = tmp / "cjk.pdf"
+    _rpc(proc, {"cmd": "export", "stem": "TestFig_a",
+                "patches": [{"gid": title_gid, "prop": "text", "value": tricky}],
+                "path": str(pdf), "format": "pdf", "dpi": 300})
+    assert pdf.is_file() and pdf.stat().st_size > 0
+    assert proc.poll() is None, "worker 不该因为非 ASCII 文字退出"
