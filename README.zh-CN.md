@@ -35,8 +35,14 @@ Python 在后台实时重渲染（热态约 40 ms）。
 
 ## 安装
 
-三个平台命令相同。推荐 [pipx](https://pipx.pypa.io/)——它把 Magplot 装进独立环境，
-不会污染你做研究用的那套：
+**下载安装包**：到 [最新发行版](https://github.com/erwanjun/magplot/releases/latest)
+取 macOS 的 `.dmg` 或 Windows 的 `.exe`，装完双击即用，Magplot 会在浏览器里打开。
+
+安装包里刻意不含 matplotlib：Magplot 渲染的是**你自己的脚本**，它们要 import
+你自己那套依赖，所以它用的是你已有的那个 Python——就是你画这些图时用的那个。
+见[使用须知](#使用须知)。
+
+**或者从 PyPI 装**，三个平台命令相同：
 
 ```sh
 pipx install "magplot[worker]"
@@ -133,8 +139,11 @@ PDF 会把每张原始矢量面板整块嵌进去，**文字仍然可选中、�
 
 - **第一次打开某张图时会跑一遍你的脚本**。轻量图秒级，重的该多久就多久；
   之后每次修改都是亚秒级。
-- **渲染需要一个装了 matplotlib 的 Python**。`[worker]` 会带一个，
-  也可以用 `MM_WORKER_PYTHON` 指向你自己的环境。
+- **渲染需要一个装了 matplotlib 的 Python**——Magplot 跑的是你的脚本，
+  解释器得能 import 它们 import 的东西。从 PyPI 装时 `[worker]` 会带一个；
+  `.dmg`/`.exe` 安装包则去找你已有的那个。两种情况都可以用 `MM_WORKER_PYTHON`
+  指定，「设置 → 隐私、诊断与 About」能看到当前用的是哪一个。
+  一个都没有时，排版、标注、导出照常，只有 ⚡ 图内编辑用不了。
 
 ## 开发
 

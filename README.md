@@ -38,8 +38,15 @@ PDF whose text is still real, selectable vector text.
 
 ## Install
 
-Same command on all three platforms. [pipx](https://pipx.pypa.io/) is recommended —
-it keeps Magplot in its own environment, away from the one you do research in:
+**Download an installer** from the [latest release](https://github.com/erwanjun/magplot/releases/latest)
+— `.dmg` for macOS, `.exe` for Windows — install it, and double-click. Magplot opens
+in your browser.
+
+The installers deliberately do not bundle matplotlib: Magplot renders *your* scripts,
+which import *your* dependencies, so it uses the Python you already have — the one you
+made your figures with. See [Good to know](#good-to-know).
+
+**Or install from PyPI**, which works the same on all three platforms:
 
 ```sh
 pipx install "magplot[worker]"
@@ -144,8 +151,12 @@ your figures or data is uploaded.
 
 - **The first open of a figure runs your script.** Light figures take a second; heavy
   ones take as long as they normally do. Every edit after that is sub-second.
-- **A Python with matplotlib is required** for rendering. The `[worker]` extra brings
-  one along, or point `MM_WORKER_PYTHON` at your own.
+- **A Python with matplotlib is required** for rendering — Magplot runs your scripts,
+  so it needs an interpreter that can import what they import. Installing from PyPI with
+  the `[worker]` extra brings one along; the `.dmg`/`.exe` installers find the Python you
+  already have. Either way you can point `MM_WORKER_PYTHON` at a specific interpreter,
+  and **Settings → Privacy, diagnostics and About** shows which one is in use.
+  Without one, layout, annotation and export still work — only ⚡ editing needs it.
 
 ## Development
 

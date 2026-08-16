@@ -106,14 +106,17 @@ jobs:
       - name: 打 .dmg
         if: runner.os == 'macOS'
         run: |
+          set -euo pipefail
           mkdir -p out
-          scripts/make_dmg.sh dist "out/Magplot-${{ inputs.tag }}-macOS.dmg"
+          VER="${{ inputs.tag }}"; VER="${VER#v}"   # 与 wheel / 安装程序命名一致
+          scripts/make_dmg.sh dist "out/Magplot-$VER-macOS.dmg"
 
       - name: 公证 .dmg
         if: runner.os == 'macOS' && env.APPLE_ID != ''
         run: |
           set -euo pipefail
-          DMG="out/Magplot-${{ inputs.tag }}-macOS.dmg"
+          VER="${{ inputs.tag }}"; VER="${VER#v}"
+          DMG="out/Magplot-$VER-macOS.dmg"
           xcrun notarytool submit "$DMG" --wait \
             --apple-id "$APPLE_ID" --password "$APPLE_APP_PASSWORD" \
             --team-id "$APPLE_TEAM_ID"
@@ -135,7 +138,7 @@ jobs:
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DVersion=$ver" packaging\magplot.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC 失败" }
           # 另附一份免安装 zip：有些机构禁止运行未签名安装程序，解压即用能绕开
-          & 7z a -tzip "out\Magplot-${{ inputs.tag }}-Windows-portable.zip" "dist\Magplot" | Out-Null
+          & 7z a -tzip "out\Magplot-$ver-Windows-portable.zip" "dist\Magplot" | Out-Null
           Get-ChildItem out | Format-Table Name, Length
 
       - uses: actions/upload-artifact@v4
