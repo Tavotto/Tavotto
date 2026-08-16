@@ -39,7 +39,7 @@ Python 在后台实时重渲染（热态约 40 ms）。
 不会污染你做研究用的那套：
 
 ```sh
-pipx install "magplot[worker] @ https://github.com/erwanjun/magplot/releases/latest/download/magplot-0.1.1-py3-none-any.whl"
+pipx install "magplot[worker]"
 magplot
 ```
 
@@ -51,7 +51,7 @@ magplot
 **pip**（装进当前环境）：
 
 ```sh
-pip install "magplot[worker] @ https://github.com/erwanjun/magplot/releases/latest/download/magplot-0.1.1-py3-none-any.whl"
+pip install "magplot[worker]"
 magplot
 ```
 
@@ -59,7 +59,7 @@ magplot
 这样渲染用的就是脚本当初依赖的那一套，图长什么样完全一致：
 
 ```sh
-pipx install "magplot @ https://github.com/erwanjun/magplot/releases/latest/download/magplot-0.1.1-py3-none-any.whl"
+pipx install magplot
 export MM_WORKER_PYTHON=/path/to/your/env/bin/python     # Windows: setx MM_WORKER_PYTHON "..."
 magplot
 ```
@@ -135,7 +135,6 @@ PDF 会把每张原始矢量面板整块嵌进去，**文字仍然可选中、�
   之后每次修改都是亚秒级。
 - **渲染需要一个装了 matplotlib 的 Python**。`[worker]` 会带一个，
   也可以用 `MM_WORKER_PYTHON` 指向你自己的环境。
-- **尚未发布到 PyPI**，请用上面的 Release wheel 地址安装。
 
 ## 开发
 

@@ -72,10 +72,8 @@ pip install --index-url https://test.pypi.org/simple/ \
 ## 发一个新版本
 
 1. 改 `src/magplot/__init__.py` 里的 `__version__`（版本号唯一出处）。
-2. 改两份 README 里安装命令中的 wheel 文件名——**URL 带版本号**，忘了改用户
-   就会一直装到旧版。
-3. 写 `docs/release-notes/vX.Y.Z.md`（见下）。
-4. 提交、打 tag、推送：
+2. 写 `docs/release-notes/vX.Y.Z.md`（见下）。
+3. 提交、打 tag、推送：
 
    ```sh
    git commit -am "0.2.0"
@@ -102,14 +100,6 @@ tag 与 `__version__` 对不上时 `build` job 直接失败，不会发出错版
 > script produces several panels.
 
 `docs/release-notes/v0.1.1.md` 是范例。
-
-## 首次成功发到 PyPI 之后
-
-README 里的安装方式可以简化成正常写法，并删掉「尚未发布到 PyPI」那条：
-
-```sh
-pipx install "magplot[worker]"
-```
 
 ## 本地自检
 

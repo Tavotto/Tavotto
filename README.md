@@ -42,7 +42,7 @@ Same command on all three platforms. [pipx](https://pipx.pypa.io/) is recommende
 it keeps Magplot in its own environment, away from the one you do research in:
 
 ```sh
-pipx install "magplot[worker] @ https://github.com/erwanjun/magplot/releases/latest/download/magplot-0.1.1-py3-none-any.whl"
+pipx install "magplot[worker]"
 magplot
 ```
 
@@ -54,7 +54,7 @@ Your browser opens at `http://127.0.0.1:5089`.
 **pip** (installs into the current environment):
 
 ```sh
-pip install "magplot[worker] @ https://github.com/erwanjun/magplot/releases/latest/download/magplot-0.1.1-py3-none-any.whl"
+pip install "magplot[worker]"
 magplot
 ```
 
@@ -63,7 +63,7 @@ point Magplot at your own interpreter, so figures render against exactly the
 dependencies they were written for:
 
 ```sh
-pipx install "magplot @ https://github.com/erwanjun/magplot/releases/latest/download/magplot-0.1.1-py3-none-any.whl"
+pipx install magplot
 export MM_WORKER_PYTHON=/path/to/your/env/bin/python     # Windows: setx MM_WORKER_PYTHON "..."
 magplot
 ```
@@ -146,7 +146,6 @@ your figures or data is uploaded.
   ones take as long as they normally do. Every edit after that is sub-second.
 - **A Python with matplotlib is required** for rendering. The `[worker]` extra brings
   one along, or point `MM_WORKER_PYTHON` at your own.
-- **Not on PyPI yet** — install from the release wheel URL above.
 
 ## Development
 
