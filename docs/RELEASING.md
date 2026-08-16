@@ -134,18 +134,38 @@ python -m twine check --strict dist/*     # 元数据 + PyPI 的 README 渲染
 右键 → 打开。配齐后自动变成签名 + 公证 + 装订，双击即开。
 
 1. 加入 [Apple Developer Program](https://developer.apple.com/programs/)（$99/年）。
-2. 在钥匙串里创建 **Developer ID Application** 证书，导出为 .p12（设个密码）。
-3. 在 <https://appleid.apple.com> 生成一个 **App-Specific Password**（公证用）。
-4. 仓库 Settings → Secrets and variables → Actions → Secrets 添加：
+2. 生成私钥与 CSR：
 
-   | Secret | 值 |
-   |---|---|
-   | `MACOS_CERTIFICATE` | `base64 -i cert.p12` 的输出 |
-   | `MACOS_CERTIFICATE_PASSWORD` | 导出 .p12 时设的密码 |
-   | `MACOS_SIGN_IDENTITY` | 如 `Developer ID Application: Your Name (TEAMID)` |
-   | `APPLE_ID` | 你的 Apple ID 邮箱 |
-   | `APPLE_APP_PASSWORD` | 上一步的 App-Specific Password |
-   | `APPLE_TEAM_ID` | 10 位 Team ID |
+   ```sh
+   mkdir -p ~/magplot-signing && chmod 700 ~/magplot-signing && cd ~/magplot-signing
+   openssl genrsa -out developerID.key 2048 && chmod 600 developerID.key
+   openssl req -new -key developerID.key -out developerID.csr \
+     -subj "/emailAddress=<你的邮箱>/CN=<你的名字>/C=CN"
+   ```
+
+3. 到 <https://developer.apple.com/account/resources/certificates/add> 选
+   **Developer ID Application**（**不是** Apple Development——后者只能在自己
+   设备上跑，不能对外分发也过不了公证），上传 `developerID.csr`，
+   把下载到的 `.cer` 放回 `~/magplot-signing/`。
+4. 一条命令完成打包与写入 secret：
+
+   ```sh
+   scripts/setup_macos_signing.sh
+   ```
+
+   它会核对证书类型、附上 Apple 中间 CA（链不完整时别的机器验不过）、
+   随机生成 .p12 密码，并写入 `MACOS_CERTIFICATE`、
+   `MACOS_CERTIFICATE_PASSWORD`、`MACOS_SIGN_IDENTITY`。
+
+5. 公证还需要一个 App 专用密码（<https://appleid.apple.com> → 登录与安全）：
+
+   ```sh
+   printf '<App 专用密码>' | gh secret set APPLE_APP_PASSWORD --repo erwanjun/magplot
+   ```
+
+`APPLE_ID`（邮箱）与 `APPLE_TEAM_ID`（10 位，可从
+`security find-identity -v` 的证书名括号里读到）也要设上，共六个。
+私钥和 .p12 只留在 `~/magplot-signing/`，绝不进版本库。
 
 验证签名是否真的生效：下载 dmg 后 `codesign -dv Magplot.app`，
 `Signature=adhoc` 表示没签上，正式签名会显示 `TeamIdentifier`。
