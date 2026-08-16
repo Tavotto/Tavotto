@@ -29,3 +29,6 @@ web/dist/
 
 # 开发期界面验证截图：含真实研究图，不进公开仓
 /docs/verify/
+
+# 内部执行清单 / 路线图，不进公开仓
+/docs/MAGPLOT_RENAME_AND_MATURITY_PLAN.md

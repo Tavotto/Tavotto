@@ -2,7 +2,7 @@
      width="1200" height="360" viewBox="0 0 1200 360"
      role="img" aria-labelledby="hero-title hero-desc">
   <title id="hero-title">Magplot</title>
-  <desc id="hero-desc">论文 Figure 排版工具：matplotlib 面板在画布上拖拽排版，带选择手柄、对齐参考线与毫米标注，导出真矢量 PDF。</desc>
+  <desc id="hero-desc">Lay out matplotlib panels on a page, edit the elements inside each figure, export a true-vector PDF. Shows a page with three arranged panels, selection handles, an alignment guide and a millimetre dimension label.</desc>
 
   <style>
     .ui   { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif; }
@@ -11,14 +11,14 @@
 
   <rect width="1200" height="360" rx="24" fill="#f2f2ef"/>
 
-  <!-- 标题区 -->
+  <!-- Title block -->
   <g id="title-block" class="ui" transform="translate(64 0)">
     <text x="0" y="86" class="mono" font-size="18" letter-spacing="2.4" fill="#6b6b64">
       PUBLICATION FIGURE LAYOUT
     </text>
     <text x="-3" y="164" font-size="66" font-weight="600" fill="#1b1b18">Magplot</text>
-    <text x="0" y="214" font-size="25" fill="#5c5c55">matplotlib 面板拖拽排版，双击进图内改元素，</text>
-    <text x="0" y="248" font-size="25" fill="#5c5c55">导出可选中文字的真矢量 PDF。</text>
+    <text x="0" y="214" font-size="25" fill="#5c5c55">Arrange matplotlib panels, edit what is inside</text>
+    <text x="0" y="248" font-size="25" fill="#5c5c55">them, export a true-vector PDF.</text>
 
     <g transform="translate(0 292)">
       <rect x="0" y="-19" width="126" height="28" rx="6" fill="#eef0fb"/>
@@ -27,12 +27,12 @@
     </g>
   </g>
 
-  <!-- 证据区：画布上的一页，正在排版 -->
+  <!-- Proof: a page being laid out on the canvas -->
   <g id="project-proof" transform="translate(676 40)">
     <rect width="468" height="280" rx="14" fill="#eaeae6" stroke="#e3e3dd"/>
     <rect x="30" y="22" width="408" height="236" fill="#ffffff" stroke="#cfcfc7" stroke-width="1"/>
 
-    <!-- (a) 折线面板 -->
+    <!-- (a) line panel -->
     <g transform="translate(54 46)">
       <path d="M0 104 L0 0 M0 104 L176 104" fill="none" stroke="#a3a39a" stroke-width="1.2"/>
       <polyline points="6,92 34,70 62,74 90,44 118,36 146,14 172,10"
@@ -42,7 +42,7 @@
       <text x="8" y="-8" class="ui" font-size="18" font-weight="600" fill="#1b1b18">(a)</text>
     </g>
 
-    <!-- (b) 柱形面板：选中态（角点手柄 + 尺寸标注） -->
+    <!-- (b) bar panel, selected: corner handles + dimension label -->
     <g transform="translate(266 46)">
       <path d="M0 104 L0 0 M0 104 L148 104" fill="none" stroke="#a3a39a" stroke-width="1.2"/>
       <rect x="14"  y="56" width="20" height="48" fill="#1b1b18"/>
@@ -66,11 +66,11 @@
       <text x="74" y="152" class="mono" font-size="17" text-anchor="middle" fill="#2f6fed">85 mm</text>
     </g>
 
-    <!-- 对齐参考线：吸附到 (b) 的左边 -->
+    <!-- Alignment guide, snapped to the left edge of (b) -->
     <path d="M256 30 L256 250" stroke="#2f6fed" stroke-width="1"
           stroke-dasharray="4 4" opacity="0.55"/>
 
-    <!-- (c) 通栏光谱面板 -->
+    <!-- (c) full-width spectrum panel -->
     <g transform="translate(54 196)">
       <path d="M0 46 L0 0 M0 46 L360 46" fill="none" stroke="#a3a39a" stroke-width="1.2"/>
       <polyline points="4,42 40,40 66,20 92,38 130,36 158,6 186,34 228,32 262,16 300,34 340,38 356,40"

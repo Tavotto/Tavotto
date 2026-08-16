@@ -3,8 +3,7 @@
 产品名 **Magplot**（拼写大小写固定；旧名 Magic Matplot 只在兼容读取与
 历史格式说明中出现）。品牌与格式常量唯一出处：`web/src/lib/brand.ts`、
 `engine/brand.py`——界面/导出格式不得手写产品名。对象层级
-Project / Canvas / Tab / Object 见 `docs/adr/0001-project-canvas-tab-object.md`；
-执行清单 `docs/MAGPLOT_RENAME_AND_MATURITY_PLAN.md`。
+Project / Canvas / Tab / Object 见 `docs/adr/0001-project-canvas-tab-object.md`。
 
 论文 Figure 排版 + 参数化图表编辑工具。Flask 后端（`src/magplot/app.py`）+
 PyMuPDF（**只经 `src/magplot/pdfbackend/`**），前端 `web/`
@@ -42,9 +41,9 @@ PyMuPDF（**只经 `src/magplot/pdfbackend/`**），前端 `web/`
 - `src/magplot/pdfbackend/pymupdf_backend.py` 是**全仓库唯一** import pymupdf 的
   模块；`__init__.py` 是与实现无关的契约层（probe_asset / render_preview_png /
   text_width / compose + mm2pt / hex2rgb）。`app.py` 只认这些名字。
-- 为什么在意：PyMuPDF 是 AGPL-3.0，整个发行版因此是 AGPL-3.0-only。换掉它才可能
-  转 MPL-2.0 open core（见 `docs/LICENSING.md`）。**别在 app.py 或别处新写
-  `import pymupdf`**——那会把这条边界废掉。
+- 为什么在意：PDF 库是可替换的实现细节，收敛成单一模块后换后端只需重写这一个
+  文件，上层零改动。**别在 app.py 或别处新写 `import pymupdf`**——那会把这条
+  边界废掉。许可证说明见 `docs/LICENSING.md`。
 - 面板的项目路径解析与引擎重渲染留在 app 层的 `_resolve_panel_source` 回调里，
   后端只管画。几何公式仍与前端严格同源，pytest 用 get_drawings() 做几何级看护。
 
