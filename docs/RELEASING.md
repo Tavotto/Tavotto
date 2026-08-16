@@ -1,18 +1,25 @@
 # 发版
 
-两条流水线，各管一段：
+一条流水线 `release.yml`，推 `v*` tag 触发，三个 job：
 
-| 触发 | 工作流 | 做什么 |
-|---|---|---|
-| 推 `v*` tag | `release.yml` | 构建前端 → 打 wheel + sdist → 建 GitHub Release 并挂上产物 |
-| Release 发布后自动 | `publish-pypi.yml` | 下载**同一份**产物 → 发到 PyPI |
+| job | 做什么 |
+|---|---|
+| `build` | 构建前端 → 打 wheel + sdist → 核对版本 → `twine check` → 干净环境装一遍冒烟 |
+| `github_release` | 建 GitHub Release，挂上产物 |
+| `pypi` | 发到 PyPI（需开闸，见下） |
 
-PyPI 拿到的是 Release 上那份字节一致的 wheel，不重新构建——否则「检查更新」
-装到的和 `pip install` 装到的会是两个不同的东西。
+后两个 job 用的是 `build` 上传的**同一份** artifact——GitHub Release 上的 wheel
+与 PyPI 上的必须字节一致，否则「检查更新」装到的和 `pip install` 装到的会是两个
+不同的东西。
+
+> **为什么 PyPI 发布不是单独一个工作流**：Release 是本工作流用 `GITHUB_TOKEN`
+> 建的，而 GitHub 明确规定 `GITHUB_TOKEN` 触发的事件**不会**再触发新的工作流运行
+> （防递归）。`on: release: published` 那条链根本不会响——实测过，v0.1.1 发布时
+> 独立的 publish 工作流一次都没被触发。
 
 ## 一次性设置：PyPI Trusted Publishing
 
-Trusted Publishing 用 OIDC 换取短时凭据，仓库里不存任何 API token。PyPI 校验
+Trusted Publishing 用 OIDC 换短时凭据，仓库里不存任何 API token。PyPI 校验
 「哪个仓库 + 哪个工作流文件 + 哪个 environment」，三者任一改名都要同步改这里的
 配置，否则鉴权直接失败。
 
@@ -26,7 +33,7 @@ Trusted Publishing 用 OIDC 换取短时凭据，仓库里不存任何 API token
 | PyPI Project Name | `magplot` |
 | Owner | `erwanjun` |
 | Repository name | `magplot` |
-| Workflow name | `publish-pypi.yml` |
+| Workflow name | `release.yml` |
 | Environment name | `pypi` |
 
 ### 2. TestPyPI（演练用，强烈建议先做）
@@ -36,15 +43,15 @@ Trusted Publishing 用 OIDC 换取短时凭据，仓库里不存任何 API token
 
 ### 3. 开闸
 
-配好上面两步之前，`publish-pypi.yml` 的自动发布是关着的（否则每发一个 Release
-都会红一次）。准备好了就在 Settings → Secrets and variables → Actions →
-**Variables** 加一条 `PYPI_PUBLISH_ENABLED = true`。
+配好之前自动发布是关着的（否则每发一个 Release 都会红一次）。准备好了就在
+Settings → Secrets and variables → Actions → **Variables** 加一条
+`PYPI_PUBLISH_ENABLED = true`。
 
-手动 Run workflow 不受此限——没开闸也能先在 TestPyPI 上演练。
+手动 Run workflow 不受此限——没开闸也能先演练。
 
 ### 4. 给正式发布加一道人工确认（可选但推荐）
 
-仓库 Settings → Environments → `pypi` → 勾 **Required reviewers** 填自己。
+Settings → Environments → `pypi` → 勾 **Required reviewers** 填自己。
 之后每次发 PyPI 都会停下来等你点一下。
 
 > PyPI 上的项目名一旦被占用就再也拿不回来，**同名文件永远不能重传**——
@@ -52,10 +59,8 @@ Trusted Publishing 用 OIDC 换取短时凭据，仓库里不存任何 API token
 
 ## 演练
 
-先在 TestPyPI 上走一遍完整链路：
-
-Actions → **Publish to PyPI** → Run workflow，填 tag（如 `v0.1.0`）、
-target 选 `testpypi`。成功后验证能装：
+Actions → **Release** → Run workflow，填 tag（如 `v0.1.1`）、pypi 选 `testpypi`。
+成功后验证能装：
 
 ```sh
 pip install --index-url https://test.pypi.org/simple/ \
@@ -66,7 +71,7 @@ pip install --index-url https://test.pypi.org/simple/ \
 
 ## 发一个新版本
 
-1. 改 `src/magplot/__init__.py` 里的 `__version__`。
+1. 改 `src/magplot/__init__.py` 里的 `__version__`（版本号唯一出处）。
 2. 改两份 README 里安装命令中的 wheel 文件名——**URL 带版本号**，忘了改用户
    就会一直装到旧版。
 3. 提交、打 tag、推送：
@@ -77,10 +82,9 @@ pip install --index-url https://test.pypi.org/simple/ \
    git push origin main v0.2.0
    ```
 
-4. `release.yml` 自动出包建 Release；`publish-pypi.yml` 随即发到 PyPI
-   （若配了 required reviewers，会等你批准）。
+tag 与 `__version__` 对不上时 `build` job 直接失败，不会发出错版本。
 
-tag 与 `__version__` 对不上时 `release.yml` 会直接失败，不会发出错版本。
+**发之前确认 CI 是绿的**——`release.yml` 不重跑测试，它只负责构建与分发。
 
 ## 首次成功发到 PyPI 之后
 
@@ -92,10 +96,10 @@ pipx install "magplot[worker]"
 
 ## 本地自检
 
-上传是不可撤销的，本地先过一遍：
+上传不可撤销，本地先过一遍：
 
 ```sh
 python scripts/build_frontend.py
 python -m build
-python -m twine check --strict dist/*     # 校验元数据 + PyPI 的 README 渲染
+python -m twine check --strict dist/*     # 元数据 + PyPI 的 README 渲染
 ```

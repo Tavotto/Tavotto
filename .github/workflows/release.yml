@@ -1,8 +1,13 @@
 name: Release
 
-# 打 tag 即发布：v0.1.0 → 构建 wheel + sdist → 建 Release 并挂上去。
-# 「检查更新」功能就是从这个 Release 的 assets 里找 .whl 的下载地址，
-# 所以 wheel 必须真的挂上去，否则装好的 Magplot 升不了级。
+# 打 tag 即发布：v0.1.0 → 构建一次 → 建 GitHub Release → 发 PyPI。
+#
+# 三个 job 共用 build 产出的**同一份**产物：GitHub Release 上的 wheel 与 PyPI 上的
+# 必须字节一致，否则「检查更新」装到的和 pip 装到的会是两个东西。
+#
+# 为什么 PyPI 发布在这个文件里而不是单独一个工作流：Release 是本工作流用
+# GITHUB_TOKEN 建的，而 GitHub 明确规定 GITHUB_TOKEN 触发的事件不会再触发新的
+# 工作流运行（防递归）——`on: release: published` 那条链根本不会响。
 on:
   push:
     tags: ["v*"]
@@ -11,17 +16,20 @@ on:
       tag:
         description: "要发布的 tag（如 v0.1.0）"
         required: true
-
-permissions:
-  contents: write
+      pypi:
+        description: "发到哪里（演练选 testpypi）"
+        required: true
+        default: none
+        type: choice
+        options: [none, testpypi, pypi]
 
 jobs:
-  release:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ inputs.tag || github.ref }}
 
       - uses: actions/setup-python@v5
         with: { python-version: "3.13" }
@@ -38,18 +46,25 @@ jobs:
 
       - name: 打 wheel 与 sdist
         run: |
-          python -m pip install --upgrade pip build
+          python -m pip install --upgrade pip build twine
           python -m build
 
       - name: 核对 tag 与包版本一致
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          set -euo pipefail
           VER="${TAG#v}"
           test -f "dist/magplot-${VER}-py3-none-any.whl" || {
             echo "::error::tag $TAG 与 __init__.py 里的版本对不上；dist/ 实际内容："
             ls dist/
             exit 1
           }
+
+      - name: 元数据与 README 渲染自检
+        # PyPI 项目页会渲染 README，渲染失败整段会变成纯文本；上传不可撤销，
+        # 必须在传之前就发现。
+        run: python -m twine check --strict dist/*
 
       - name: 装进干净环境冒烟
         run: |
@@ -62,12 +77,59 @@ jobs:
           print('ok', magplot.__version__)
           "
 
-      - name: 发布 Release
-        uses: softprops/action-gh-release@v2
+      - uses: actions/upload-artifact@v4
         with:
-          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  github_release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: dist, path: dist }
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
           draft: false
           generate_release_notes: true
           files: |
             dist/*.whl
             dist/*.tar.gz
+
+  pypi:
+    needs: build
+    # PyPI 侧的 trusted publisher 配好之前，自动发布只会红一次给人添堵——
+    # 用仓库变量 PYPI_PUBLISH_ENABLED=true 开闸（Settings → Variables）。
+    # 手动 dispatch 时按 inputs.pypi 走，none 则整个跳过。
+    if: >-
+      (github.event_name == 'push' && vars.PYPI_PUBLISH_ENABLED == 'true') ||
+      (github.event_name == 'workflow_dispatch' && inputs.pypi != 'none')
+    runs-on: ubuntu-latest
+    # PyPI 上的项目名一旦被占用就再也拿不回来，同名文件也永远不能重传。
+    # environment 让正式发布可以卡一道人工确认（给它加 required reviewers 即可）。
+    environment:
+      name: ${{ inputs.pypi == 'testpypi' && 'testpypi' || 'pypi' }}
+      url: ${{ inputs.pypi == 'testpypi' && 'https://test.pypi.org/p/magplot' || 'https://pypi.org/p/magplot' }}
+    permissions:
+      id-token: write     # OIDC 签发，Trusted Publishing 的必需权限
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: dist, path: dist }
+
+      - name: 发布到 TestPyPI
+        if: inputs.pypi == 'testpypi'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          print-hash: true
+          skip-existing: true      # 演练可以重跑，同名文件跳过而不是整个失败
+
+      - name: 发布到 PyPI
+        if: inputs.pypi != 'testpypi'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          print-hash: true
