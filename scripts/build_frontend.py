@@ -42,10 +42,23 @@ def main() -> int:
     if not (DIST / "index.html").is_file():
         print(f"构建没产出 {DIST}/index.html", file=sys.stderr)
         return 1
-    # 整目录替换：留着旧构建的残余文件会让 /api/version 的 build id 对不上
+
+    # 先拷到旁边再原子换名，而不是 rmtree 目标目录后往里拷。
+    # 从源码树跑的实例正是从 TARGET 提供前端的；先删后拷会留下几百毫秒的空窗，
+    # 那期间 index.html 与 assets 全都 404——正在用的人看到的就是白屏。
+    # 整目录替换本身要保留：留着旧构建的残余文件会让 /api/version 的 build id 对不上。
+    staging = TARGET.with_name(TARGET.name + ".new")
+    old = TARGET.with_name(TARGET.name + ".old")
+    for leftover in (staging, old):
+        if leftover.exists():
+            shutil.rmtree(leftover)
+    shutil.copytree(DIST, staging)
     if TARGET.exists():
-        shutil.rmtree(TARGET)
-    shutil.copytree(DIST, TARGET)
+        TARGET.rename(old)          # 同一文件系统内的 rename 是原子的
+    staging.rename(TARGET)
+    if old.exists():
+        shutil.rmtree(old, ignore_errors=True)
+
     n = sum(1 for _ in TARGET.rglob("*") if _.is_file())
     print(f"✓ 前端已就位: {TARGET.relative_to(ROOT)}（{n} 个文件）")
     return 0
