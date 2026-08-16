@@ -444,9 +444,12 @@ export interface EngineRenderResponse {
 
 export class EngineError extends Error {
   traceback: string
-  constructor(message: string, traceback = '') {
+  /** 机器可读的原因；'no_worker_python' = 缺渲染环境，界面给引导而不是甩错误文字 */
+  code: string
+  constructor(message: string, traceback = '', code = '') {
     super(message)
     this.traceback = traceback
+    this.code = code
   }
 }
 
@@ -466,6 +469,7 @@ export async function engineRender(
     throw new EngineError(
       (body.error as string) || `渲染失败（HTTP ${res.status}）`,
       (body.traceback as string) || '',
+      (body.code as string) || '',
     )
   }
   return body as EngineRenderResponse
@@ -602,6 +606,7 @@ export type ServerEvent =
   | { kind: 'render.done'; id: string; rev?: number }
   | { kind: 'render.failed'; id: string; error?: string }
   | { kind: 'panel.file_changed'; scripts?: string[]; stems?: string[] }
+  | { kind: 'engine.bootstrap'; state: string; log: string; error: string | null }
   | { kind: 'ai.delta'; session: string; text: string; kindOf?: AiDeltaKind }
   | {
       kind: 'ai.done'
@@ -618,6 +623,7 @@ const EVENT_KINDS = [
   'render.done',
   'render.failed',
   'panel.file_changed',
+  'engine.bootstrap',
   'ai.delta',
   'ai.done',
 ] as const
@@ -778,3 +784,39 @@ export const patchUpdateSettings = (patch: { auto_check: boolean }) =>
 
 export const applyUpdate = () =>
   jsonFetch<UpdateApplyResult>('/api/update/apply', { method: 'POST' })
+
+// ---------------------------------------------------------------------------
+// 渲染环境（缺 matplotlib 时的自助安装）
+// ---------------------------------------------------------------------------
+export interface EngineEnvironment {
+  ok: boolean
+  python: string | null
+  matplotlib: string | null
+  /** true = 用的是 Magplot 自建的环境，而非用户自己的 */
+  managed: boolean
+  state: 'idle' | 'running' | 'done' | 'failed'
+  /** ok=false 时才有：能不能替用户装一个 */
+  can_install?: boolean
+  base_python?: string | null
+  error?: string | null
+}
+
+export interface BootstrapProgress {
+  state: 'idle' | 'running' | 'done' | 'failed'
+  log: string
+  error: string | null
+}
+
+export const fetchEngineEnvironment = () =>
+  jsonFetch<EngineEnvironment>('/api/engine/environment')
+
+export const installEngineEnvironment = () =>
+  jsonFetch<{ started?: boolean } & BootstrapProgress>(
+    '/api/engine/environment/install', { method: 'POST' })
+
+export const setEngineEnvironment = (python: string | null) =>
+  jsonFetch<EngineEnvironment>('/api/engine/environment', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ python }),
+  })

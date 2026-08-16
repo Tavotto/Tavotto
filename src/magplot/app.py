@@ -37,6 +37,7 @@ from werkzeug.exceptions import HTTPException
 from . import pdfbackend
 from .pdfbackend import hex2rgb, mm2pt
 from .engine import ai_bridge as engine_ai
+from .engine import bootstrap as engine_bootstrap
 from .engine import ai_history as engine_ai_history
 from .engine import brand as engine_brand
 from .engine import config as engine_config
@@ -260,6 +261,19 @@ def scan_panels() -> list[dict]:
 @app.errorhandler(NoProjectError)
 def _no_project(_exc):
     return jsonify({"error": "尚未打开项目", "code": "no_project"}), 409
+
+
+@app.errorhandler(engine_pool.WorkerError)
+def _worker_error(exc):
+    """worker 类错误统一带上 code。
+
+    多数端点自己 catch 了，但 `_engine_worker()` 这类调用常落在 try 之外——
+    没有这个处理器时它们会掉进通用 Exception 处理器，`code` 全丢，前端就分不出
+    「缺渲染环境」（该给引导）和「脚本报错」（该给 traceback）。
+    """
+    LOG.error("worker 错误: %s %s: %s", request.method, request.path, exc)
+    return jsonify({"error": str(exc), "traceback": exc.traceback_text,
+                    "code": exc.code}), 500
 
 
 @app.errorhandler(Exception)
@@ -839,7 +853,8 @@ def api_engine_render():
     except engine_pool.WorkerError as exc:
         LOG.error("引擎渲染失败: %s: %s", stem, exc)
         sse_publish("render.failed", {"id": rel_id, "error": str(exc)})
-        return jsonify({"error": str(exc), "traceback": exc.traceback_text}), 500
+        return jsonify({"error": str(exc), "traceback": exc.traceback_text,
+                        "code": exc.code}), 500
     LOG.info("引擎渲染: %s %.0fms%s", stem, (time.time() - t0) * 1000,
              "（冷启动）" if cold else "")
     sse_publish("render.done", {"id": rel_id, "rev": worker.rev})
@@ -859,7 +874,8 @@ def api_engine_png():
     try:
         path = worker.render_png(stem, w)
     except engine_pool.WorkerError as exc:
-        return jsonify({"error": str(exc), "traceback": exc.traceback_text}), 500
+        return jsonify({"error": str(exc), "traceback": exc.traceback_text,
+                        "code": exc.code}), 500
     resp = send_file(path, mimetype="image/png")
     resp.headers["Cache-Control"] = "no-store"  # rev 参数负责客户端缓存节流
     return resp
@@ -886,7 +902,8 @@ def api_engine_update_source():
     try:
         updated, backup_dir = _write_source_files(src, patches, worker)
     except engine_pool.WorkerError as exc:
-        return jsonify({"error": str(exc), "traceback": exc.traceback_text}), 500
+        return jsonify({"error": str(exc), "traceback": exc.traceback_text,
+                        "code": exc.code}), 500
     # 把这组修改追加为该图的版本历史，末位即当前基线：
     # 新拖入的同名面板自动继承，双击进编辑态能接着改
     append_baked(src.stem, patches)
@@ -996,7 +1013,8 @@ def api_engine_sync_overrides():
         man_s = _manifest_of(worker, src_path.stem)
         man_d = _manifest_of(worker, dst_path.stem)
     except engine_pool.WorkerError as exc:
-        return jsonify({"error": str(exc), "traceback": exc.traceback_text}), 500
+        return jsonify({"error": str(exc), "traceback": exc.traceback_text,
+                        "code": exc.code}), 500
 
     ax_s, ax_d = _axes_info(man_s), _axes_info(man_d)
     if len(ax_s) >= len(ax_d):  # 组 → 子：源 axes 区间 [o, o+K) → 目标 0..K
@@ -1063,7 +1081,8 @@ def api_engine_history_preview():
     try:
         path = worker.preview_png(stem, patches, w, tag=f"hist{n}")
     except engine_pool.WorkerError as exc:
-        return jsonify({"error": str(exc), "traceback": exc.traceback_text}), 500
+        return jsonify({"error": str(exc), "traceback": exc.traceback_text,
+                        "code": exc.code}), 500
     resp = send_file(path, mimetype="image/png")
     resp.headers["Cache-Control"] = "no-store"
     return resp
@@ -1084,7 +1103,8 @@ def api_engine_history_restore():
     try:
         updated, backup_dir = _write_source_files(src, patches, worker)
     except engine_pool.WorkerError as exc:
-        return jsonify({"error": str(exc), "traceback": exc.traceback_text}), 500
+        return jsonify({"error": str(exc), "traceback": exc.traceback_text,
+                        "code": exc.code}), 500
     append_baked(stem, patches)
     return jsonify({"updated": updated, "backup_dir": str(backup_dir),
                     "patches": patches})
@@ -1098,7 +1118,8 @@ def api_engine_svg():
         if not worker.built:
             worker.ensure_built()
     except engine_pool.WorkerError as exc:
-        return jsonify({"error": str(exc), "traceback": exc.traceback_text}), 500
+        return jsonify({"error": str(exc), "traceback": exc.traceback_text,
+                        "code": exc.code}), 500
     svg = worker.svg_path(stem)
     if not svg.exists():
         abort(404)
@@ -1115,6 +1136,49 @@ def api_ai_capabilities():
     resp = jsonify(engine_ai.capabilities(refresh=refresh))
     resp.headers["Cache-Control"] = "no-store"
     return resp
+
+
+# ------------------------- 渲染环境（缺 matplotlib 时的自助安装）--------------
+@app.get("/api/engine/environment")
+def api_engine_environment():
+    """渲染环境现状；ok=False 且 can_install=True 时前端给「自动安装」按钮。"""
+    return jsonify(engine_bootstrap.status())
+
+
+@app.post("/api/engine/environment/install")
+def api_engine_environment_install():
+    """在 Magplot 自己的数据目录里建一个 venv 并装 matplotlib。
+
+    绝不动用户已有的环境——那是他做研究用的。进度经 SSE `engine.bootstrap` 推送。
+    """
+    st = engine_bootstrap.status()
+    if st["ok"]:
+        return jsonify({"ok": True, **st})
+    if not st.get("can_install"):
+        return jsonify({"error": "这台机器上没找到可用的 Python，"
+                                 "请先安装 Python 3.10 以上再重试。"}), 400
+    engine_bootstrap.install_async(
+        lambda p: sse_publish("engine.bootstrap", p))
+    return jsonify({"started": True, **engine_bootstrap.progress()})
+
+
+@app.patch("/api/engine/environment")
+def api_engine_environment_set():
+    """手动指定渲染解释器；path 为空 = 清除，回到自动探测。"""
+    body = request.get_json(force=True)
+    raw = str(body.get("python") or "").strip()
+    if raw:
+        p = Path(raw).expanduser()
+        if not p.is_file():
+            return jsonify({"error": f"找不到该文件: {p}"}), 400
+        ver = engine_bootstrap.matplotlib_version(str(p))
+        if not ver:
+            return jsonify({"error": f"{p} 里 import 不到 matplotlib"}), 400
+        engine_config.set_worker_python(str(p))
+    else:
+        engine_config.set_worker_python(None)
+    engine_pool.reset_worker_python()
+    return jsonify(engine_bootstrap.status())
 
 
 # ------------------------- 检查更新 -----------------------------------------

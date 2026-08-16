@@ -27,9 +27,11 @@ _lock = threading.Lock()
 
 
 class WorkerError(RuntimeError):
-    def __init__(self, message: str, traceback_text: str = ""):
+    def __init__(self, message: str, traceback_text: str = "", code: str = ""):
         super().__init__(message)
         self.traceback_text = traceback_text
+        # 机器可读的原因；前端据此换成对应的引导界面而不是干甩一段错误文字
+        self.code = code
 
 
 def is_frozen() -> bool:
@@ -52,7 +54,9 @@ def _candidate_pythons() -> list[str | None]:
     """
     import os
     import sys
-    cands: list[str | None] = [os.environ.get("MM_WORKER_PYTHON")]
+    # 优先级：环境变量 > 用户在设置里指定/Magplot 自建的环境 > 自身 > 系统常见位置
+    cands: list[str | None] = [os.environ.get("MM_WORKER_PYTHON"),
+                               config.worker_python()]
     if not is_frozen():
         cands.append(sys.executable)
 
@@ -106,9 +110,19 @@ def find_worker_python() -> str:
         if probe.returncode == 0:
             _worker_python = cand
             return cand
+    # 前端认这个 code，据此弹「自动安装渲染环境」而不是把这段话直接甩给用户
     raise WorkerError(
-        "找不到装有 matplotlib 的 python：请 `pip install magplot[worker]`，"
-        "或用环境变量 MM_WORKER_PYTHON 指定一个带科学栈的解释器")
+        "找不到装有 matplotlib 的 Python。可在设置里让 Magplot 自动装一个，"
+        "或指定你已有的解释器（环境变量 MM_WORKER_PYTHON 同样有效）。",
+        code="no_worker_python")
+
+
+def reset_worker_python() -> None:
+    """丢弃已缓存的解释器选择——改了设置或刚装完环境后必须调用，
+    否则本次进程会一直用着旧的（或继续认为「找不到」）。"""
+    global _worker_python
+    with _lock:
+        _worker_python = None
 
 
 class EngineWorker:

@@ -27,6 +27,7 @@ import { ProjectPicker } from '@/components/ProjectPicker'
 import { useAiStore } from '@/store/aiStore'
 import { useAssetStore } from '@/store/assetStore'
 import { useProjectStore } from '@/store/projectStore'
+import { useEnvStore } from '@/store/envStore'
 import { useUpdateStore } from '@/store/updateStore'
 import { restoreSession, startAutosave, useDocumentStore } from '@/store/documentStore'
 import { useViewportStore } from '@/store/viewportStore'
@@ -42,6 +43,8 @@ export function App() {
     void useProjectStore.getState().init()
     // 静默取一次版本状态（后端 24h 节流 + 可关；有新版本才在顶栏点圆点）
     void useUpdateStore.getState().check(false)
+    // 渲染环境状态：缺 matplotlib 时属性栏与设置里都要能给出引导
+    void useEnvStore.getState().refresh()
   }, [])
 
   // 启动探测中不闪 Picker；探测完没有项目 → Picker 接管整个界面

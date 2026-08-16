@@ -53,6 +53,7 @@ import {
 import { useDocumentStore } from '@/store/documentStore'
 import { useRenderStore } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
+import { EngineEnvironmentCard } from '@/components/EngineEnvironmentCard'
 import type { PanelObject } from '@/types/document'
 import { groupHasContent, groupRank, optionLabel, propLabel, roleName, UNSUPPORTED } from './roles/registry'
 import { Button } from '../ui/Button'
@@ -94,12 +95,19 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
 
   return (
     <>
-      {render?.error && (
-        <ErrorBlock
-          error={render.error}
-          traceback={render.traceback}
-          onRetry={() => requestRender(panel.fileId, panel.overrides, true)}
-        />
+      {/* 缺渲染环境不是「出错」而是缺件，给能点的出口；脚本真报错才显示 traceback */}
+      {render?.code === 'no_worker_python' ? (
+        <Section>
+          <EngineEnvironmentCard />
+        </Section>
+      ) : (
+        render?.error && (
+          <ErrorBlock
+            error={render.error}
+            traceback={render.traceback}
+            onRetry={() => requestRender(panel.fileId, panel.overrides, true)}
+          />
+        )
       )}
       {!!render?.warnings.length && (
         <Section>

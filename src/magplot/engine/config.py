@@ -63,7 +63,8 @@ def data_path(*parts: str) -> Path:
 
 
 def _defaults() -> dict:
-    return {"recent_projects": [], "projects": {}, "ai": {}, "updates": {}}
+    return {"recent_projects": [], "projects": {}, "ai": {}, "updates": {},
+            "worker": {}}
 
 
 def load() -> dict:
@@ -86,6 +87,8 @@ def load() -> dict:
         out["ai"] = data["ai"]
     if isinstance(data.get("updates"), dict):
         out["updates"] = data["updates"]
+    if isinstance(data.get("worker"), dict):
+        out["worker"] = data["worker"]
     return out
 
 
@@ -148,6 +151,23 @@ def set_project_settings(path: str, patch: dict) -> dict:
         cfg["projects"][key] = merged
         save(cfg)
         return merged
+
+
+def worker_python() -> str | None:
+    """用户指定或 Magplot 自建的渲染解释器（绝对路径）。"""
+    return (load().get("worker") or {}).get("python") or None
+
+
+def set_worker_python(path: str | None) -> None:
+    with _LOCK:
+        cfg = load()
+        worker = dict(cfg.get("worker") or {})
+        if path:
+            worker["python"] = str(path)
+        else:
+            worker.pop("python", None)
+        cfg["worker"] = worker
+        save(cfg)
 
 
 def ai_settings() -> dict:

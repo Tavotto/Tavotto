@@ -138,6 +138,9 @@ def test_worker_python_candidates_on_windows(monkeypatch):
     monkeypatch.delenv("MM_WORKER_PYTHON", raising=False)
     monkeypatch.setattr(os, "name", "nt")
     monkeypatch.setattr(pool.shutil, "which", lambda n: f"C:\\Python\\{n}.exe")
+    # 本例只验证候选清单的平台分支：把读配置这步短路掉，否则 pathlib 会按被
+    # 篡改的 os.name 去构造 WindowsPath，在 macOS 上直接抛 UnsupportedOperation
+    monkeypatch.setattr(pool.config, "worker_python", lambda: None)
     cands = [c for c in pool._candidate_pythons() if c]
     assert not any("homebrew" in c or c.startswith("/usr/bin") for c in cands)
     assert "C:\\Python\\python.exe" in cands

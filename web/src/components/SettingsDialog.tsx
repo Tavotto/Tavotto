@@ -10,6 +10,7 @@ import { useUiStore } from '@/store/uiStore'
 import { useUpdateStore } from '@/store/updateStore'
 import { Button } from './ui/Button'
 import { Dialog } from './ui/Dialog'
+import { EngineEnvironmentCard } from './EngineEnvironmentCard'
 import { TextInput } from './ui/Input'
 import { Toggle } from './ui/Toggle'
 
@@ -521,6 +522,8 @@ function AboutSection() {
         </a>
         。
       </p>
+      <EngineEnvironmentCard />
+
       <div>
         <h3 className="mb-1 text-xs font-medium text-ink-2">环境诊断</h3>
         {checks === null ? (

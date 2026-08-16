@@ -3,6 +3,7 @@ import { subscribeEvents, type ServerEvent } from '@/lib/api'
 import { useAiStore } from '@/store/aiStore'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
+import { useEnvStore } from '@/store/envStore'
 import { useRenderStore } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
 
@@ -21,6 +22,11 @@ function handleEvent(ev: ServerEvent) {
   const render = useRenderStore.getState()
 
   switch (ev.kind) {
+    case 'engine.bootstrap':
+      // 渲染环境安装进度（建 venv + 装 matplotlib）
+      useEnvStore.getState().onProgress(ev)
+      break
+
     case 'render.started': {
       render.patch(ev.id, { status: 'rendering', cold: !!ev.cold, cost: ev.cost ?? '' })
       if (ev.cold) {

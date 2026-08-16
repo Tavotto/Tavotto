@@ -14,6 +14,8 @@ export interface PanelRender {
   cold: boolean
   cost: string
   error: string | null
+  /** 机器可读的失败原因；'no_worker_python' 时界面给环境引导而不是 traceback */
+  code: string
   traceback: string
   warnings: string[]
   /** 脚本文件变了，当前 SVG 已过期 */
@@ -37,6 +39,7 @@ const EMPTY: PanelRender = {
   cold: false,
   cost: '',
   error: null,
+  code: '',
   traceback: '',
   warnings: [],
   stale: false,
@@ -112,7 +115,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
     try {
       let current = patches
       for (;;) {
-        patch(fileId, { status: 'rendering', error: null, traceback: '' })
+        patch(fileId, { status: 'rendering', error: null, traceback: '', code: '' })
         const ctrl = new AbortController()
         const timeoutMs = watchdogMs(fileId)
         let timedOut = false
@@ -147,6 +150,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           patch(fileId, {
             status: 'error',
             cold: false,
+            code: err instanceof EngineError ? err.code : '',
             error: timedOut
               ? `渲染超过 ${Math.round(timeoutMs / 60_000)} 分钟无响应，已断开请求；服务可能仍在后台运行，可稍后重试`
               : err instanceof Error
