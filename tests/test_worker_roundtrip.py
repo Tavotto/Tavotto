@@ -365,6 +365,33 @@ def main():
 """
 
 
+def test_closed_figure_still_builds(tmp_path):
+    """脚本 `savefig` 完就 `plt.close(fig)` 时仍要能起来。
+
+    matplotlib 3.11 起 plt.close 会把 canvas 退回 FigureCanvasBase——它没有
+    get_renderer，量包围盒时直接 AttributeError，整张图一个元素都出不来。
+    「存完就 close」是极常见写法（examples/figures/paper_style.py 就这么写），
+    manifest 必须自己补 Agg canvas，不能指望脚本把 figure 留成什么样。
+    这条用例在旧版 matplotlib 上恒过，只有装了新版才有意义——CI 特意装最新版。
+    """
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    (figs / "fig_closed.py").write_text(PLAIN_SCRIPT, encoding="utf-8")
+
+    proc = _spawn(figs / "fig_closed.py", figs, tmp_path)
+    try:
+        resp = _rpc(proc, {"cmd": "build"})
+        stem = sorted(resp["stems"])[0]
+        # manifest 真的建出来了（元素非空），而不是只回了个 stem 列表
+        resp = _rpc(proc, {"cmd": "override", "stem": stem, "patches": []})
+        roles = {e["role"] for e in resp["manifest"]["elements"]}
+        assert "title" in roles, roles
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=10)
+
+
 def test_build_without_paper_style(tmp_path):
     """图库里没有 paper_style.py 也必须能起来。
 

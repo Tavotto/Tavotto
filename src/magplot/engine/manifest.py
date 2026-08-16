@@ -704,10 +704,25 @@ def _padded_bbox(bb, W: float, H: float) -> list[float]:
     return [x0 / W, 1.0 - y1 / H, w / W, h / H]
 
 
+def _ensure_agg_canvas(fig):
+    """保证 fig 挂着 Agg canvas，然后返回 renderer。
+
+    脚本里 `fig.savefig(...); plt.close(fig)` 是极常见的写法（我们自己的
+    examples 就这么写）。worker 的 CAPTURE 仍持有 Figure 对象，但 matplotlib
+    3.11 起 `plt.close` 会把 canvas 退回 FigureCanvasBase——它没有
+    get_renderer，量文字包围盒时直接 AttributeError，整张图起不来。
+    这里当场补一个 Agg canvas，不依赖脚本把 figure 留在什么状态。
+    """
+    if not hasattr(fig.canvas, "get_renderer"):
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+        FigureCanvasAgg(fig)          # 构造即绑定到 fig.canvas
+    fig.canvas.draw()
+    return fig.canvas.get_renderer()
+
+
 def build_manifest(state: FigState, stem: str) -> dict:
     fig = state.fig
-    fig.canvas.draw()
-    renderer = fig.canvas.get_renderer()
+    renderer = _ensure_agg_canvas(fig)
     W, H = float(fig.bbox.width), float(fig.bbox.height)
 
     elements = []
