@@ -171,9 +171,20 @@ python -m twine check --strict dist/*     # 元数据 + PyPI 的 README 渲染
 `Authority=Developer ID Application: …`。**只看 `codesign --verify` 会被骗**——
 PyInstaller 留下的 adhoc 签名同样能通过 verify；流水线里已加了显式断言。
 
-踩过的坑：`codesign` 只在**钥匙串搜索列表**里找身份，光 `default-keychain -s`
-或传 `--keychain` 都不够（新版 macOS 上后者不可靠），症状是
-`no identity found`。CI 里用 `security list-keychains -d user -s` 显式加入。
+踩过的两个坑（都已在流水线里堵上，改动签名步骤前先读这段）：
+
+1. **`codesign` 只在钥匙串搜索列表里找身份。** 光 `default-keychain -s` 或传
+   `--keychain` 都不够（新版 macOS 上后者不可靠），症状是 `no identity found`。
+   更坑的是它会**静默假成功**：PyInstaller 留下的 adhoc 签名让随后的
+   `codesign --verify` 照样通过。所以流水线里除了用
+   `security list-keychains -d user -s` 显式加入，还显式断言
+   `Authority=Developer ID Application`。
+
+2. **要签的不只是 `*.dylib` / `*.so`。** 包里还有两个无后缀的 Mach-O——
+   `Contents/MacOS/Magplot` 和 `Contents/Frameworks/Python.framework/Versions/*/Python`，
+   漏签就公证 Invalid。改成按 `file` 的判断签所有 Mach-O。
+   公证失败时流水线会自动打印 `notarytool log`——没有它，`status: Invalid`
+   就是个哑谜。
 
 ### Windows 签名
 
