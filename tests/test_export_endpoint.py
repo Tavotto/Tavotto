@@ -27,7 +27,9 @@ def _export(client, tmp_path, spec):
     assert resp.status_code == 200, resp.get_json()
     files = resp.get_json()["files"]
     assert len(files) == 1
-    return pymupdf.open(tmp_path / files[0]["name"])
+    # 同 test_compose_annotations：不留文件句柄，否则 Windows 上覆盖导出会失败
+    return pymupdf.open(stream=(tmp_path / files[0]["name"]).read_bytes(),
+                        filetype="pdf")
 
 
 def _asym_panel_dir(tmp_path):

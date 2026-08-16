@@ -7,8 +7,8 @@
   * export 应用 patches 后的 PDF 矢量文字保真
 """
 import json
-import select
 import subprocess
+import threading
 import sys
 from pathlib import Path
 
@@ -59,11 +59,22 @@ def save(fig, stem, outdir="figures"):
 
 
 def _rpc(proc, obj, timeout=120):
+    """发一条命令读一行回应。
+
+    读取放在线程里加超时，而不是 `select.select`——Windows 的 select 只接受
+    socket，对管道会直接 WinError 10038。产品侧的 pool.py 本来就是阻塞
+    readline，这里只是给测试补一个卡死时的保险丝。
+    """
     proc.stdin.write(json.dumps(obj) + "\n")
     proc.stdin.flush()
-    ready, _, _ = select.select([proc.stdout], [], [], timeout)
-    assert ready, f"worker 超时（{timeout}s）: {obj.get('cmd')}"
-    line = proc.stdout.readline()
+
+    box: list = []
+    reader = threading.Thread(target=lambda: box.append(proc.stdout.readline()),
+                              daemon=True)
+    reader.start()
+    reader.join(timeout)
+    assert not reader.is_alive(), f"worker 超时（{timeout}s）: {obj.get('cmd')}"
+    line = box[0] if box else ""
     assert line, f"worker 无响应: {obj.get('cmd')}"
     resp = json.loads(line)
     assert resp.get("ok"), f"{resp.get('error', resp)}\n{resp.get('traceback', '')}"
@@ -269,11 +280,19 @@ def test_legend_entry_order_roundtrip(worker):
 
 
 def _assert_unknown_stem(proc):
+    """未知 stem 要回结构化错误而不是让 worker 退出。
+
+    这里手写协议（而非走 _rpc）是因为 _rpc 断言 ok=True，正好是本例要否定的。
+    """
     proc.stdin.write(json.dumps({"cmd": "override", "stem": "nope", "patches": []}) + "\n")
     proc.stdin.flush()
-    ready, _, _ = select.select([proc.stdout], [], [], 30)
-    assert ready
-    resp = json.loads(proc.stdout.readline())
+    box: list = []
+    reader = threading.Thread(target=lambda: box.append(proc.stdout.readline()),
+                              daemon=True)
+    reader.start()
+    reader.join(30)
+    assert not reader.is_alive() and box and box[0], "worker 对未知 stem 无回应"
+    resp = json.loads(box[0])
     assert resp["ok"] is False and "nope" in resp["error"]
     assert proc.poll() is None
 

@@ -25,7 +25,9 @@ def _export(client, tmp_path, objects):
         "stem": "ann", "objects": objects})
     assert resp.status_code == 200, resp.get_json()
     name = resp.get_json()["files"][0]["name"]
-    return pymupdf.open(tmp_path / name)
+    # 从内存开：Windows 上进程持着 PDF 的文件句柄时，下一次导出想覆盖同名
+    # 文件会直接 Permission denied（POSIX 无此限制，此前只在 Windows CI 暴露）。
+    return pymupdf.open(stream=(tmp_path / name).read_bytes(), filetype="pdf")
 
 
 def _drawings(page):
