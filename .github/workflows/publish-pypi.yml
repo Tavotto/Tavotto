@@ -23,6 +23,10 @@ on:
 
 jobs:
   publish:
+    # PyPI 侧的 trusted publisher 配好之前，自动发布只会红一次给人添堵——
+    # 用仓库变量 PYPI_PUBLISH_ENABLED=true 开闸（Settings → Variables）。
+    # 手动 dispatch 不受此限，方便先在 TestPyPI 上演练。
+    if: github.event_name == 'workflow_dispatch' || vars.PYPI_PUBLISH_ENABLED == 'true'
     runs-on: ubuntu-latest
     # PyPI 上的项目名一旦被占用就再也拿不回来，同名文件也永远不能重传。
     # environment 让首次发布可以卡一道人工确认（在仓库 Settings → Environments

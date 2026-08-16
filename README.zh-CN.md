@@ -39,7 +39,7 @@ Python 在后台实时重渲染（热态约 40 ms）。
 不会污染你做研究用的那套：
 
 ```sh
-pipx install "magplot[worker] @ https://github.com/erwanjun/magplot/releases/latest/download/magplot-0.1.0-py3-none-any.whl"
+pipx install "magplot[worker] @ https://github.com/erwanjun/magplot/releases/latest/download/magplot-0.1.1-py3-none-any.whl"
 magplot
 ```
 
@@ -51,7 +51,7 @@ magplot
 **pip**（装进当前环境）：
 
 ```sh
-pip install "magplot[worker] @ https://github.com/erwanjun/magplot/releases/latest/download/magplot-0.1.0-py3-none-any.whl"
+pip install "magplot[worker] @ https://github.com/erwanjun/magplot/releases/latest/download/magplot-0.1.1-py3-none-any.whl"
 magplot
 ```
 
@@ -59,7 +59,7 @@ magplot
 这样渲染用的就是脚本当初依赖的那一套，图长什么样完全一致：
 
 ```sh
-pipx install "magplot @ https://github.com/erwanjun/magplot/releases/latest/download/magplot-0.1.0-py3-none-any.whl"
+pipx install "magplot @ https://github.com/erwanjun/magplot/releases/latest/download/magplot-0.1.1-py3-none-any.whl"
 export MM_WORKER_PYTHON=/path/to/your/env/bin/python     # Windows: setx MM_WORKER_PYTHON "..."
 magplot
 ```

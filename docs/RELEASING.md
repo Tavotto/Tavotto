@@ -34,7 +34,15 @@ Trusted Publishing 用 OIDC 换取短时凭据，仓库里不存任何 API token
 在 <https://test.pypi.org/manage/account/publishing/> 重复一遍，
 **Environment name 填 `testpypi`**。两边是完全独立的账号与配置。
 
-### 3. 给正式发布加一道人工确认（可选但推荐）
+### 3. 开闸
+
+配好上面两步之前，`publish-pypi.yml` 的自动发布是关着的（否则每发一个 Release
+都会红一次）。准备好了就在 Settings → Secrets and variables → Actions →
+**Variables** 加一条 `PYPI_PUBLISH_ENABLED = true`。
+
+手动 Run workflow 不受此限——没开闸也能先在 TestPyPI 上演练。
+
+### 4. 给正式发布加一道人工确认（可选但推荐）
 
 仓库 Settings → Environments → `pypi` → 勾 **Required reviewers** 填自己。
 之后每次发 PyPI 都会停下来等你点一下。
