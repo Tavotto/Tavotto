@@ -65,8 +65,15 @@ def _str_pattern(node: ast.expr) -> str | None:
     return s
 
 
-def _stem_patterns(tree: ast.Module) -> set[str]:
+def _stem_patterns(tree: ast.Module) -> tuple[set[str], int]:
+    """返回 (stem 模式集合, save/savefig 调用次数)。
+
+    调用次数单独报出来，是为了区分「这个模块根本不产图」和「它明明在存图、
+    但文件名是变量所以静态看不出来」——后者必须让用户看见，否则只会拿到一份
+    空注册表而不知道为什么。
+    """
     pats: set[str] = set()
+    calls = 0
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
@@ -74,11 +81,12 @@ def _stem_patterns(tree: ast.Module) -> set[str]:
         name = fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", "")
         if name not in SAVE_FUNCS:
             continue
+        calls += 1
         for arg in node.args:
             pat = _str_pattern(arg)
             if pat:
                 pats.add(pat)
-    return pats
+    return pats, calls
 
 
 def _resolve(patterns: set[str], figures_dir: Path) -> tuple[set[str], list[str]]:
@@ -110,12 +118,17 @@ def discover(figures_dir: str | Path) -> dict:
         except (SyntaxError, OSError, UnicodeDecodeError):
             continue
         entry = _entry_of(tree)
-        pats = _stem_patterns(tree)
-        if entry is None or not pats:
-            continue  # 不产图（如纯数据模块）或完全无法静态识别
+        pats, save_calls = _stem_patterns(tree)
+        if entry is None or not save_calls:
+            continue  # 没有入口，或压根不产图（纯数据模块）
         stems, unresolved = _resolve(pats, figures_dir)
         scripts[p.name] = {"entry": entry, "stems": sorted(stems),
-                           "unresolved": unresolved}
+                           "unresolved": unresolved,
+                           # 在存图却一个 stem 都定位不到：文件名全在变量里
+                           # （save_panel(fig, stem) → fig.savefig(pdf)）。
+                           # 这种脚本进不了草稿，只能手工登记，必须报出来。
+                           "dynamic_names": not stems,
+                           "save_calls": save_calls}
     claims: dict[str, list[str]] = {}
     for script, info in scripts.items():
         for s in info["stems"]:
@@ -178,6 +191,10 @@ def _print_report(rep: dict) -> None:
         print(f"  {script}  [{info['entry']}]  {len(info['stems'])} stems")
         for pat in info["unresolved"]:
             print(f"    ? 无法与磁盘产物对上: {pat}*")
+        if info.get("dynamic_names"):
+            print(f"    ! {info['save_calls']} 处 save/savefig 的文件名是变量，"
+                  "静态定位不到 stem —— 请把产出的 stem 手工写进 mm_registry.json"
+                  "（引擎运行时按真实文件名捕获，登记后即可参数化）")
     if rep["conflicts"]:
         print("  ⚠ 归属冲突（未分配，请在 mm_registry.json 手工裁决）:")
         for stem, cs in sorted(rep["conflicts"].items()):

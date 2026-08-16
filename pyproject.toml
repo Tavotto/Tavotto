@@ -35,7 +35,7 @@ dependencies = [
 [project.optional-dependencies]
 # 单环境安装：渲染 worker 直接用当前解释器，无需另找科学栈 python。
 worker = ["matplotlib>=3.8", "numpy>=1.24"]
-dev = ["pytest>=8", "build>=1.2"]
+dev = ["pytest>=8", "build>=1.2", "twine>=5"]
 
 [project.scripts]
 magplot = "magplot.app:main"

@@ -90,12 +90,22 @@ PyMuPDF（**只经 `src/magplot/pdfbackend/`**），前端 `web/`
   （show_pdf_page 无镜像；flipH = 行倒序 + 旋转 180°），与 opacity<1 同一取舍。
 - 安全：worker `cwd=沙盒`（挡相对路径写出/删除）+ `Path.unlink` 守卫
   （挡 fig6 的绝对路径删除）；脚本 stdout 重定向到 stderr 保护 JSON 协议。
+- **paper_style 是图库方言，不是引擎依赖**：worker 的 `import paper_style` 必须留在
+  try/except 里，捕获靠通用的 `_patched_savefig` 兜底。曾经这行是硬 import，
+  任何不带 paper_style.py 的图库（论文的 supporting_information、外部用户的图库）
+  都以 ModuleNotFoundError 开局，一张图都渲染不了（test_build_without_paper_style 看护）。
+- 素材扫描用 `os.walk` 当场剪枝隐藏目录（.venv/.git/.rendered/.qa_*）与隐藏文件，
+  不是 rglob 后过滤——既是噪音也是性能（图库旁边常年躺着工具产物）。
 - 新脚本 / stem 变化：改**图库目录下的 `mm_registry.json`**（注册表随图库走；
   `engine/registry.py` 只负责加载校验，重复 stem 仍直接报错；
   一脚本多产物 / 归属有歧义的 stem，裁决结果记在各图库自己的注册表文件里，勿改）。
   无注册表的图库启动时由 `engine/discover.py` 静态扫描自动起草；
-  手动生成/合并：`python -m engine.discover <figures_dir> --write`
+  手动生成/合并：`python -m magplot.engine.discover <figures_dir> --write`
   （现有条目永远优先，冲突 stem 只报告不裁决）。
+  **文件名是变量的脚本**（`def save_panel(fig, stem): fig.savefig(OUT / f"{stem}.pdf")`）
+  静态定位不到 stem，报告里标 `dynamic_names` 并提示手工登记——绝不猜，
+  但也绝不静默跳过（静默跳过 = 用户拿到空注册表却不知道为什么）。
+  worker 运行时按真实文件名捕获，所以登记后照样能参数化。
 
 ## 布局层新增（R18）
 

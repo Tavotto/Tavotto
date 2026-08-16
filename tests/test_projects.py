@@ -1,5 +1,6 @@
 """项目系统：用户配置、无项目守卫、打开/切换/最近列表/目录浏览/项目设置。"""
 import json
+from pathlib import Path
 
 import pymupdf
 import pytest
@@ -240,3 +241,25 @@ def test_diagnostics_without_project(client, monkeypatch):
     monkeypatch.setattr(m, "FIGURES_DIR", None)
     checks = {c["id"]: c for c in client.get("/api/diagnostics").get_json()["checks"]}
     assert checks["project_open"]["ok"] is False
+
+
+def test_hidden_dirs_and_files_are_not_assets(client, tmp_path):
+    """隐藏目录/文件不进素材库。
+
+    真实图库旁边常年躺着工具产物：.venv、.git、渲染快照 .rendered/、
+    .qa_no_survey/page-1.png……全都列出来的话素材库会被淹没（论文的
+    supporting_information 曾经因此列出 51 个「面板」，真正有用的只有 17 个）。
+    """
+    figs = _make_figs(tmp_path)
+    doc = pymupdf.open()
+    doc.new_page(width=100, height=50)
+    for rel in (".rendered/page-1.pdf", ".qa/contact.pdf", "sub/real.pdf"):
+        target = figs / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        doc.save(target)
+    doc.close()
+    (figs / ".DS_Store").write_bytes(b"junk")
+
+    client.post("/api/projects/open", json={"path": str(figs)})
+    ids = {p["id"] for p in client.get("/api/panels").get_json()["panels"]}
+    assert ids == {"p1.pdf", str(Path("sub/real.pdf"))}

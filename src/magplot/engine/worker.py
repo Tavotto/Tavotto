@@ -124,8 +124,16 @@ class Worker:
 
         # 拦截必须发生在 import 脚本之前（多数脚本 from paper_style import save）
         mfigure.Figure.savefig = _patched_savefig
-        import paper_style  # noqa: PLC0415
-        paper_style.save = lambda fig, stem, outdir="figures": CAPTURE.setdefault(stem, fig)
+        # paper_style 是某些图库的私有方言，不是引擎的依赖：没有就跳过，
+        # 靠 _patched_savefig 这条通用兜底捕获。曾经这里是无保护的 import，
+        # 任何不带 paper_style.py 的图库都会以 ModuleNotFoundError 开局。
+        try:
+            import paper_style  # noqa: PLC0415
+        except ImportError:
+            pass
+        else:
+            paper_style.save = (
+                lambda fig, stem, outdir="figures": CAPTURE.setdefault(stem, fig))
 
         with contextlib.redirect_stdout(sys.stderr):
             if self.entry == "__main__":

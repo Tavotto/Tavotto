@@ -101,24 +101,27 @@ def _text_value(manifest, gid):
     raise AssertionError(f"manifest 中找不到 {gid} 的 text 字段")
 
 
+def _spawn(script: Path, figs: Path, tmp_path: Path, entry: str = "main"):
+    return subprocess.Popen(
+        [WORKER_PY, str(pool.WORKER_PY),
+         "--script", str(script),
+         "--figures-dir", str(figs),
+         "--out-dir", str(tmp_path / "out"),
+         "--sandbox", str(tmp_path / "sandbox"),
+         "--entry", entry],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, text=True, bufsize=1,
+        encoding="utf-8", errors="replace")   # 同 pool.py：管道钉死 UTF-8
+
+
 @pytest.fixture
 def worker(tmp_path):
     figs = tmp_path / "figures"
     figs.mkdir()
     (figs / "paper_style.py").write_text(PAPER_STYLE_STUB, encoding="utf-8")
     (figs / "fig_test.py").write_text(FIG_SCRIPT, encoding="utf-8")
-    out = tmp_path / "out"
-    proc = subprocess.Popen(
-        [WORKER_PY, str(pool.WORKER_PY),
-         "--script", str(figs / "fig_test.py"),
-         "--figures-dir", str(figs),
-         "--out-dir", str(out),
-         "--sandbox", str(tmp_path / "sandbox"),
-         "--entry", "main"],
-        stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE, text=True, bufsize=1,
-        encoding="utf-8", errors="replace")   # 同 pool.py：管道钉死 UTF-8
-    yield proc, out, tmp_path
+    proc = _spawn(figs / "fig_test.py", figs, tmp_path)
+    yield proc, tmp_path / "out", tmp_path
     if proc.poll() is None:
         proc.kill()
     proc.wait(timeout=10)
@@ -337,3 +340,51 @@ def test_non_ascii_survives_the_pipe(worker):
                 "path": str(pdf), "format": "pdf", "dpi": 300})
     assert pdf.is_file() and pdf.stat().st_size > 0
     assert proc.poll() is None, "worker 不该因为非 ASCII 文字退出"
+
+
+PLAIN_SCRIPT = """\
+import matplotlib.pyplot as plt
+from pathlib import Path
+
+OUT = Path(__file__).resolve().parent / "panels"
+OUT.mkdir(parents=True, exist_ok=True)
+
+
+def save_panel(fig, stem):
+    # 文件名藏在变量里、stem 还是函数形参：静态扫描无从得知，只有运行时才知道
+    fig.savefig(OUT / f"{stem}.pdf")
+    plt.close(fig)          # 脚本自己关图；worker 的 CAPTURE 已持有引用
+
+
+def main():
+    for name in ("PlainFig_a", "PlainFig_b"):
+        fig, ax = plt.subplots(figsize=(3, 2))
+        ax.plot([0, 1], [1, 0])
+        ax.set_title(name)
+        save_panel(fig, name)
+"""
+
+
+def test_build_without_paper_style(tmp_path):
+    """图库里没有 paper_style.py 也必须能起来。
+
+    paper_style 是某些图库的私有方言，不是引擎的依赖。曾经 worker 无保护地
+    `import paper_style`，于是任何不带这个模块的图库（比如论文的
+    supporting_information 目录）都以 ModuleNotFoundError 开局，一张图也渲染
+    不了。顺带覆盖裸 savefig + 动态文件名 + 脚本自己 plt.close 的写法。
+    """
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    (figs / "fig_plain.py").write_text(PLAIN_SCRIPT, encoding="utf-8")
+    assert not (figs / "paper_style.py").exists()
+
+    proc = _spawn(figs / "fig_plain.py", figs, tmp_path)
+    try:
+        resp = _rpc(proc, {"cmd": "build"})
+        assert sorted(resp["stems"]) == ["PlainFig_a", "PlainFig_b"]
+        # 拦截仍然生效：真实文件一个都没写出去
+        assert not list((figs / "panels").glob("*.pdf"))
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=10)

@@ -120,3 +120,40 @@ def test_merge_appends_new_stems_to_existing_script(figs):
     assert merged["scripts"]["fig_a.py"]["stems"] == ["FigA_1", "FigA_2"]
     assert merged["scripts"]["fig_a.py"]["cost"] == "light"  # 现有元数据不动
     assert changes["added_stems"] == {"fig_a.py": ["FigA_2"]}
+
+
+DYNAMIC_NAME_SCRIPT = '''\
+from pathlib import Path
+
+OUT = Path(__file__).parent / "panels"
+
+def save_panel(fig, stem):
+    fig.savefig(OUT / f"{stem}.pdf")
+
+def main():
+    for name in ("A", "B"):
+        save_panel(build(), f"Dyn_{name}")
+'''
+
+
+def test_dynamic_filenames_reported_not_silently_skipped(figs):
+    """脚本明明在存图、但文件名是变量：不能静默跳过。
+
+    静默跳过的后果是用户拿到一份空的 mm_registry.json，面板上没有 ⚡，
+    却完全不知道原因（论文的 supporting_information 目录正是这样）。
+    """
+    _script(figs, "build_panels.py", DYNAMIC_NAME_SCRIPT)
+    info = discover.discover(figs)["scripts"]["build_panels.py"]
+    assert info["stems"] == []
+    assert info["dynamic_names"] is True
+    assert info["save_calls"] == 1          # save_panel 里那一处 fig.savefig
+
+    # 报不出 stem 就绝不猜：草稿里不能出现这个脚本
+    cfg, _ = discover.build_draft(figs)
+    assert "build_panels.py" not in cfg["scripts"]
+
+
+def test_non_plotting_module_stays_quiet(figs):
+    """没有任何 save 调用的模块不该被当成「命名有问题的绘图脚本」报出来。"""
+    _script(figs, "helpers_mod.py", 'def main():\n    return compute()\n')
+    assert discover.discover(figs)["scripts"] == {}

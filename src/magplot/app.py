@@ -188,13 +188,15 @@ def scan_panels() -> list[dict]:
     _BAKED_CACHE = load_baked()
     panels = []
     root = require_project().resolve()
+    # os.walk 而不是 rglob：隐藏目录当场剪枝，不下探。图库里常有 .venv、
+    # .git、工具留下的 .rendered/.qa_* 快照——它们既是噪音（素材库里塞满
+    # page-1.png），爬进去还很慢。以 . 开头的文件同理（.DS_Store）。
     files: list[Path] = []
-    for p in sorted(root.rglob("*")):
-        if not p.is_file():
-            continue
-        if any(part in EXCLUDE_DIRS for part in p.relative_to(root).parts):
-            continue
-        files.append(p)
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames
+                       if d not in EXCLUDE_DIRS and not d.startswith(".")]
+        files += [Path(dirpath) / fn for fn in filenames if not fn.startswith(".")]
+    files.sort()
 
     pdf_stems = {(p.parent, p.stem) for p in files if p.suffix.lower() in PDF_EXT}
 

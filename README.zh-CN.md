@@ -1,16 +1,16 @@
 <p align="center">
-  <img src="./assets/readme/hero.svg" width="100%"
+  <img src="https://raw.githubusercontent.com/erwanjun/magplot/main/assets/readme/hero.svg" width="100%"
        alt="Magplot — 把 matplotlib 面板拖到画布上排版，双击进图内改元素，导出真矢量 PDF">
 </p>
 
 <p align="center">
-  <a href="./README.md">English</a> · <b>简体中文</b>
+  <a href="https://github.com/erwanjun/magplot/blob/main/README.md">English</a> · <b>简体中文</b>
 </p>
 
 <p align="center">
   <a href="https://github.com/erwanjun/magplot/releases"><img alt="Release" src="https://img.shields.io/github/v/release/erwanjun/magplot?style=flat-square&color=4a63d8&labelColor=1b1b18"></a>
   <a href="https://github.com/erwanjun/magplot/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/erwanjun/magplot/ci.yml?branch=main&style=flat-square&labelColor=1b1b18"></a>
-  <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0--only-4a63d8?style=flat-square&labelColor=1b1b18"></a>
+  <a href="https://github.com/erwanjun/magplot/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0--only-4a63d8?style=flat-square&labelColor=1b1b18"></a>
   <img alt="Python" src="https://img.shields.io/badge/python-3.10%20–%203.13-1b1b18?style=flat-square&labelColor=1b1b18">
   <img alt="Platform" src="https://img.shields.io/badge/macOS%20·%20Windows%20·%20Linux-1b1b18?style=flat-square&labelColor=1b1b18">
 </p>
@@ -27,7 +27,7 @@ Python 在后台实时重渲染（热态约 40 ms）。
 导出时引擎按全质量重新出图，合成一份文字仍可选中的真矢量 PDF。
 
 <p align="center">
-  <img src="./assets/readme/workbench.png" width="100%"
+  <img src="https://raw.githubusercontent.com/erwanjun/magplot/main/assets/readme/workbench.png" width="100%"
        alt="Magplot 工作台：左栏图内元素树列出标题与坐标轴，画布上三张面板排成 (a)(b)(c)，右栏正在编辑选中标题的属性">
 </p>
 
@@ -149,7 +149,7 @@ cd web && pnpm tsc --noEmit && pnpm build
 
 ## 许可证
 
-[AGPL-3.0-only](./LICENSE)。
+[AGPL-3.0-only](https://github.com/erwanjun/magplot/blob/main/LICENSE)。
 
 自己使用、修改、在实验室内部部署都不受限制，**用它排出来的图和导出的 PDF 完全属于你**
 ——许可证不影响你的作品。受约束的是分发：如果你把改过的 Magplot 分发给别人，

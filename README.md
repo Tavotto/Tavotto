@@ -1,16 +1,16 @@
 <p align="center">
-  <img src="./assets/readme/hero.svg" width="100%"
+  <img src="https://raw.githubusercontent.com/erwanjun/magplot/main/assets/readme/hero.svg" width="100%"
        alt="Magplot — arrange matplotlib panels on a page, edit the elements inside them, export a true-vector PDF">
 </p>
 
 <p align="center">
-  <b>English</b> · <a href="./README.zh-CN.md">简体中文</a>
+  <b>English</b> · <a href="https://github.com/erwanjun/magplot/blob/main/README.zh-CN.md">简体中文</a>
 </p>
 
 <p align="center">
   <a href="https://github.com/erwanjun/magplot/releases"><img alt="Release" src="https://img.shields.io/github/v/release/erwanjun/magplot?style=flat-square&color=4a63d8&labelColor=1b1b18"></a>
   <a href="https://github.com/erwanjun/magplot/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/erwanjun/magplot/ci.yml?branch=main&style=flat-square&labelColor=1b1b18"></a>
-  <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0--only-4a63d8?style=flat-square&labelColor=1b1b18"></a>
+  <a href="https://github.com/erwanjun/magplot/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0--only-4a63d8?style=flat-square&labelColor=1b1b18"></a>
   <img alt="Python" src="https://img.shields.io/badge/python-3.10%20–%203.13-1b1b18?style=flat-square&labelColor=1b1b18">
   <img alt="Platform" src="https://img.shields.io/badge/macOS%20·%20Windows%20·%20Linux-1b1b18?style=flat-square&labelColor=1b1b18">
 </p>
@@ -30,7 +30,7 @@ be undone. On export the engine re-renders each panel at full quality and compos
 PDF whose text is still real, selectable vector text.
 
 <p align="center">
-  <img src="./assets/readme/workbench.png" width="100%"
+  <img src="https://raw.githubusercontent.com/erwanjun/magplot/main/assets/readme/workbench.png" width="100%"
        alt="The Magplot workbench: an element tree on the left listing the title and axis labels, three panels arranged as (a)(b)(c) on the page, and the properties of the selected title on the right">
 </p>
 
@@ -160,7 +160,7 @@ Issues and pull requests are welcome.
 
 ## License
 
-[AGPL-3.0-only](./LICENSE).
+[AGPL-3.0-only](https://github.com/erwanjun/magplot/blob/main/LICENSE).
 
 Using Magplot, modifying it, and running it inside your lab are all unrestricted, and
 **the figures and PDFs you produce with it are entirely yours** — the licence does not
