@@ -20,10 +20,19 @@
    `engine/runtime.py` 按 `sys._MEIPASS` 解析，安装程序与免安装 zip 自动都含它。
    macOS / 没构建 runtime 时这一段整个跳过，行为与从前一致。
 
+4. **Rust supervisor `magplot-workerd` 必须进包**（两个平台都要）。它作为
+   binaries 落在 `_internal/`，也就是冻结后的 `sys._MEIPASS`——
+   `engine/workerd_client.find_workerd()` 的第一条查找路径。这里**缺了就直接
+   失败**，不像 runtime 那样可选：回退到 Python 渲染池是**静默**的，做出来的
+   包功能一样不缺、只是慢，装到用户机器上也不会有任何报错，等于永远没人发现。
+
 用法（在仓库根目录）：
     python scripts/build_frontend.py
+    cargo build --release --manifest-path workerd/Cargo.toml
     python scripts/build_worker_runtime.py      # 仅 Windows 桌面版需要
     pyinstaller packaging/magplot.spec --noconfirm
+
+（`python scripts/build_desktop.py` 会按顺序把上面这些都做掉。）
 """
 import os
 import sys
@@ -67,10 +76,26 @@ else:
     print(f"[magplot.spec] 未附带内置 runtime（{RUNTIME} 不存在）——"
           "渲染将回退到用户自己的 Python")
 
+# Rust supervisor（见文件头说明 4）。约定位置就是 cargo 自己的产出目录——
+# `workerd_client._dev_tree_candidates()` 认的也是它，别再造第二个落点。
+# 走 binaries 而不是 datas：PyInstaller 只对 binaries 保留可执行位。
+WORKERD_NAME = "magplot-workerd.exe" if sys.platform == "win32" else "magplot-workerd"
+WORKERD = Path(os.environ.get("MAGPLOT_WORKERD_BIN")
+               or (ROOT / "workerd" / "target" / "release" / WORKERD_NAME))
+if not WORKERD.is_file():
+    raise SystemExit(
+        f"缺少 Rust supervisor 二进制: {WORKERD}\n"
+        "  先跑 cargo build --release --manifest-path workerd/Cargo.toml\n"
+        "  （或者直接用 python scripts/build_desktop.py，它会一并构建）\n"
+        "  桌面产物必须自带 workerd：缺了它渲染会静默回退到 Python 池，"
+        "功能全在、只是慢，没有任何报错。")
+binaries = [(str(WORKERD), ".")]
+print(f"[magplot.spec] Rust supervisor: {WORKERD}")
+
 a = Analysis(
     [str(ROOT / "packaging" / "entry.py")],
     pathex=[str(ROOT / "src")],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
     hiddenimports=[
         # Flask 的这几个依赖是运行时按名字取的，静态分析看不见

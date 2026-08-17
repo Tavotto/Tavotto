@@ -18,11 +18,16 @@
 **随安装包附带的内置 runtime**，不是运行器上碰巧装着的 Python。没有这条
 断言，一台装了 matplotlib 的 CI 机器会让「内置环境根本没打进去」全程绿灯。
 
+`--expect-control-plane workerd` 是同一条思路的另一面：断言渲染真的跑在
+Rust supervisor 上。回退到 Python 渲染池是**静默**的降级，包里没打进
+magplot-workerd 时功能一样不缺、只是慢，不断言就永远发现不了。
+
 用法：
     python scripts/smoke_app.py --exe dist/Magplot/Magplot.exe
     python scripts/smoke_app.py --python .venv/bin/python      # 源码树/wheel
     python scripts/smoke_app.py --exe dist/Magplot/Magplot.exe \
         --figures examples/runtime_check --expect-source bundled \
+        --expect-control-plane workerd \
         --expect-packages numpy,pandas,scipy,seaborn,PIL,matplotlib
 """
 from __future__ import annotations
@@ -164,9 +169,33 @@ def _check_environment(base: str, expect_source: str | None,
               "  ".join(f"{n}={imports[n]}" for n in expect_packages))
 
 
+def _check_control_plane(base: str, expect: str | None) -> None:
+    """渲染控制面自检：**在渲染之后**问，那时池里才有真会话。
+
+    `selected` 回答「产物里有没有 magplot-workerd」，`sessions` 回答「刚才那次
+    渲染到底走了谁」。只看第一个不够：workerd 建会话失败会静默回退到 Python
+    渲染池（那是刻意设计的降级），做出来的包功能一样不缺、只是慢，界面上
+    一点异常都没有。
+    """
+    cp = (_get(f"{base}/api/engine/environment").get("control_plane") or {})
+    selected, sessions = cp.get("selected"), cp.get("sessions") or []
+    print(f"✓ 渲染控制面: selected={selected} sessions={sessions}")
+    if not expect:
+        return
+    if selected != expect:
+        raise SmokeError(
+            f"渲染控制面应为 {expect}，实际是 {selected}"
+            "（产物里没打进 magplot-workerd？）")
+    if expect == "workerd" and "workerd" not in sessions:
+        raise SmokeError(
+            f"二进制在，但刚才那次渲染走的是 {sessions}——workerd 起不来，"
+            "已静默回退到 Python 渲染池（看数据目录 cache/workerd.log）")
+
+
 def run_smoke(launch: list[str], figures: Path, workdir: Path,
               port: int | None = None, expect_source: str | None = None,
-              expect_packages: list[str] | None = None) -> None:
+              expect_packages: list[str] | None = None,
+              expect_control_plane: str | None = None) -> None:
     port = port or _free_port()
     base = f"http://127.0.0.1:{port}"
     data_dir = workdir / "data"
@@ -234,8 +263,13 @@ def run_smoke(launch: list[str], figures: Path, workdir: Path,
                 raise SmokeError(f"渲染没回 manifest: {res}")
             print(f"✓ 引擎渲染 {target['id']}: "
                   f"{len(res['manifest'].get('elements', []))} 个元素")
+            _check_control_plane(base, expect_control_plane)
         else:
             print("! 没有可参数化面板，跳过引擎渲染（注册表为空？）")
+            if expect_control_plane:
+                raise SmokeError(
+                    "要求断言控制面，但这个示例项目里没有可参数化面板——"
+                    "没渲染就无从判断走的是哪条控制面")
 
         spec = {
             "page_w_mm": 80, "page_h_mm": 40, "formats": ["pdf"], "stem": "smoke",
@@ -329,6 +363,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--expect-packages", default="",
                     help="逗号分隔的 import 名，断言在渲染环境里都能 import "
                          "（如 numpy,pandas,scipy,seaborn,PIL,matplotlib）")
+    ap.add_argument("--expect-control-plane", default=None,
+                    choices=["workerd", "python"],
+                    help="断言渲染控制面（workerd = Rust supervisor）。"
+                         "桌面产物用 workerd：回退是静默的，不断言就发现不了")
     args = ap.parse_args(argv)
 
     launch = [args.exe] if args.exe else [args.python, "-m", "magplot"]
@@ -345,7 +383,7 @@ def main(argv: list[str] | None = None) -> int:
     workdir = Path(tempfile.mkdtemp(prefix="magplot-smoke-"))
     try:
         run_smoke(launch, figures, workdir, args.port,
-                  args.expect_source, packages)
+                  args.expect_source, packages, args.expect_control_plane)
     except Exception as exc:  # noqa: BLE001 — 冒烟脚本要给人看结论
         print(f"::error::冒烟失败: {exc}", file=sys.stderr)
         return 1

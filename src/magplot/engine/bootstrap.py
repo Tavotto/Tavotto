@@ -116,6 +116,10 @@ def status() -> dict:
                 "managed": Path(python) == venv_python(),
                 "bundled": source == pool.SOURCE_BUNDLED,
                 "runtime": rt,
+                # 谁在管 worker 的生命周期（Rust supervisor / Python 池）。
+                # 冒烟脚本靠它断言「产物里真带了 workerd 且渲染真走了它」——
+                # 回退是静默的，不报出来就只能靠「怎么有点慢」去猜。
+                "control_plane": pool.control_plane(),
                 "state": _progress["state"]}
     except pool.WorkerError as exc:
         code = exc.code
@@ -128,6 +132,7 @@ def status() -> dict:
         "managed": False,
         "bundled": False,
         "runtime": rt,
+        "control_plane": pool.control_plane(),
         # 该带 runtime 却带坏了：这不是「缺 Python」，是安装文件不完整。
         # 自动安装在这种情况下毫无意义（且 embeddable 里没有 pip），必须关掉。
         "code": code,

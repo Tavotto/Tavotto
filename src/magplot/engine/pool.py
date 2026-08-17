@@ -1052,6 +1052,22 @@ def workerd_path() -> str | None:
     return workerd_client.find_workerd()
 
 
+def control_plane() -> dict:
+    """当前渲染控制面：**下一条会话会走谁** + 池里活着的会话**实际走的谁**。
+
+    两个字段缺一不可。`_new_worker()` 在 workerd 建会话失败时会**静默回退**到
+    Python 池（那是刻意的：加速件起不来不该让渲染整个不可用），所以只报
+    `selected` 会把「打进去了但一直没用上」说成一切正常——而那正是「功能全在、
+    只是慢」这一类最难被发现的失灵。冒烟脚本与诊断包都据此判定。
+    """
+    path = workerd_path()
+    with _lock:
+        sessions = ["workerd" if isinstance(w, WorkerdWorker) else "python"
+                    for w in _workers.values()]
+    return {"selected": "workerd" if path else "python",
+            "path": path, "sessions": sessions}
+
+
 def _new_worker(script_name: str, figures_dir: str, entry: str):
     """按可用性挑控制面。**任何失败都回退 Python 池**——渲染不能因为一个
     可选的加速件起不来就整个不可用。"""

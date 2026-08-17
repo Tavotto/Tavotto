@@ -46,6 +46,15 @@ jobs:
       - name: 构建前端进包
         run: python scripts/build_frontend.py
 
+      # magplot.spec 从 workerd/target/release/ 取 Rust supervisor，取不到直接
+      # 失败（桌面产物必须自带它）
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: workerd
+      - name: 构建 Rust supervisor（magplot-workerd）
+        run: cargo build --release --manifest-path workerd/Cargo.toml
+
       - name: 缓存 CPython embeddable 下载
         uses: actions/cache@v4
         with:

@@ -48,6 +48,29 @@ def test_the_conftest_default_keeps_the_suite_on_the_python_path():
     assert pool.workerd_path() is None
 
 
+def test_control_plane_reports_both_the_choice_and_what_is_actually_running(
+        monkeypatch, tmp_path):
+    """`selected` 与 `sessions` 缺一不可。
+
+    workerd 建会话失败会**静默**回退（`_new_worker()` 的 except 分支），只报
+    「二进制在」就会把「打进去了但一直没用上」说成一切正常——功能全在、只是慢，
+    是最难被发现的一类失灵。冒烟脚本与诊断包都按这两个字段判定。
+    """
+    monkeypatch.setattr(workerd_client, "find_workerd", lambda: None)
+    assert pool.control_plane() == {"selected": "python", "path": None,
+                                    "sessions": []}
+
+    monkeypatch.setattr(workerd_client, "find_workerd", lambda: "/opt/wd")
+    wd, _ = _worker(monkeypatch, tmp_path, [{"ok": True, "session_id": "s"}])
+    monkeypatch.setattr(pool, "_workers", {
+        ("d", "a.py"): wd,
+        ("d", "b.py"): object(),   # 不是 WorkerdWorker = 这条已经回退到 Python 池
+    })
+    assert pool.control_plane() == {
+        "selected": "workerd", "path": "/opt/wd",
+        "sessions": ["workerd", "python"]}
+
+
 # ------------------------------ spawn 规格 ------------------------------
 def _capture_engine_worker_argv(monkeypatch, tmp_path, source):
     """真去构造一个 EngineWorker，但把 Popen 换成录音机。"""

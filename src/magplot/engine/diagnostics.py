@@ -158,6 +158,9 @@ def build_report(project: dict | None = None, port: int | None = None) -> dict:
             "worker_error": worker_error,
             "matplotlib": mpl,
             "env_override": os.environ.get("MM_WORKER_PYTHON"),
+            # 控制面（Rust supervisor / Python 池）+ 池里每条会话实际走的哪条。
+            # workerd 建会话失败是静默回退的，「装了但没用上」只有这里看得出来。
+            "control_plane": pool.control_plane(),
             # 「装了但用不了」全靠这一段：内置 runtime 在不在、装的是哪些版本、
             # 实测能不能 import。只贴 manifest 不够——杀毒软件隔离掉一个 .pyd
             # 时 manifest 照样完好。

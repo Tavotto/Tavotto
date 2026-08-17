@@ -141,6 +141,16 @@ jobs:
       - name: 构建前端进包
         run: python scripts/build_frontend.py
 
+      # Rust supervisor：magplot.spec 从 workerd/target/release/ 取，取不到直接
+      # 失败。**不设 MAGPLOT_WORKERD**——下面的冒烟要验的正是「产物自带的那份
+      # 被自动找到并真的用上了」。
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: workerd
+      - name: 构建 Rust supervisor（magplot-workerd）
+        run: cargo build --release --manifest-path workerd/Cargo.toml
+
       - name: 缓存 CPython embeddable 下载
         # 只缓存那个 11 MiB 的官方 zip（按锁文件内容做 key）。wheel 不缓存：
         # 每次真从 PyPI 装一遍，才能发现「锁文件里的版本被 yank 了」这类问题。
@@ -166,6 +176,14 @@ jobs:
           MAGPLOT_REQUIRE_RUNTIME: "1"
         run: pyinstaller packaging/magplot.spec --noconfirm
 
+      - name: 断言产物里真有 workerd
+        run: |
+          $bin = "dist\Magplot\_internal\magplot-workerd.exe"
+          if (-not (Test-Path $bin)) {
+            throw "产物里没有 $bin——渲染会静默回退到 Python 池（功能全在、只是慢）"
+          }
+          "{0:N0} KiB" -f ((Get-Item $bin).Length / 1KB)
+
       - name: 断言产物里真有内置 runtime
         run: |
           $rt = "dist\Magplot\_internal\runtime"
@@ -182,11 +200,15 @@ jobs:
         # 没打进去」全程绿灯。smoke_app.py 还会主动把 MM_WORKER_PYTHON 摘掉。
         # 此刻运行器上**尚未** pip install matplotlib（在下一步才装），
         # 所以这一步同时也证明了「机器上没有科学栈也能渲染」。
+        # --expect-control-plane workerd 是同一条思路的另一面：产物自带的
+        # Rust supervisor 被自动找到、并且这次渲染真的跑在它上面
+        # （回退到 Python 池是静默降级，不断言就永远发现不了）。
         run: |
           $env:MM_WORKER_PYTHON = $null
           python scripts/smoke_app.py --exe dist/Magplot/Magplot.exe `
             --figures examples/runtime_check `
             --expect-source bundled `
+            --expect-control-plane workerd `
             --expect-packages numpy,pandas,scipy,seaborn,PIL,matplotlib
 
       - name: 冒烟②：中文 + 空格路径下仍走内置 runtime

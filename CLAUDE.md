@@ -518,6 +518,11 @@ Python，首次渲染也不联网：
 
 - 测试：`.venv/bin/python -m pytest`（tests/ 跑在 .venv；worker round-trip
   用例自行 spawn 科学栈解释器，无 matplotlib 则跳过）。
+- **四路等价性矩阵**（`tests/test_equivalence_matrix.py`，引擎的最终验收物）：
+  `hot_apply(patches) == 清空后全量重放 == 全新 worker 重放 == 写回文件后全新
+  worker 重放`，六个场景 × 十组 patch，判据直接复用 `app._compare_manifests`
+  （与写回放行/阻断同一把尺）。四条腿各起独立 worker，核心场景在 workerd 控制面
+  再走一遍。缺 matplotlib / 缺 CJK 字体各自 skip 并注明理由。
 - **端到端冒烟**：`python scripts/smoke_app.py --python .venv/bin/python`
   （或 `--exe dist/Magplot/Magplot.exe`）。隔离用户目录 → **渲染环境自检** →
   打开项目 → 渲染 → 导出 → 覆盖导出 → **干净退出**（走 `/api/shutdown`，需
@@ -526,6 +531,10 @@ Python，首次渲染也不联网：
   的核心验收：少了它，一台碰巧装着 matplotlib 的 CI 机器会让「内置 runtime 根本
   没打进去」全程绿灯。CI 的 windows-exe-smoke 与 nightly 共用它。
   验收项目在 `examples/runtime_check/`（一个把整套内置科学栈都用一遍的脚本）。
+  `--expect-control-plane workerd` 同理盯另一件静默失灵：桌面产物必须自带
+  Rust supervisor（`build_desktop.py` 先 cargo build，`magplot.spec` 收进
+  `_internal/`），少了它渲染回退到 Python 池——功能全在、只是慢、零报错。
+  两条冒烟腿都**不设 `MAGPLOT_WORKERD`**：要验的正是自动发现。
 - **黄金路径 E2E**：`cd web && pnpm e2e`（Playwright，`MAGPLOT_EXE` 指打包产物、
   缺省用 `python -m magplot`）。跑之前先 `python scripts/build_frontend.py`——
   包内 `src/magplot/web/` 优先于 `web/dist`，只跑 `pnpm build` 测的还是旧界面。

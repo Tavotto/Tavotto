@@ -9,9 +9,13 @@
 1. 版本同步：src/magplot/__init__.py 是唯一出处，写进 src-tauri/tauri.conf.json
    与 src-tauri/Cargo.toml（Tauri 的 About/安装包版本号不允许漂移）。
 2. 前端：scripts/build_frontend.py → src/magplot/web/（sidecar 从这里出界面）。
-3. sidecar：PyInstaller onedir（packaging/magplot.spec，刻意不含 matplotlib，
+3. Rust supervisor：cargo build --release → workerd/target/release/，由
+   packaging/magplot.spec 收进 sidecar 的 _internal/。**没有 cargo 就直接中止**
+   ——回退到 Python 渲染池是静默的，做出来的包功能一样不缺、只是慢，
+   发出去也不会有人发现。
+4. sidecar：PyInstaller onedir（packaging/magplot.spec，刻意不含 matplotlib，
    不用 onefile——科学场景的启动解压等不起）→ dist/Magplot/。
-4. Tauri：pnpm dlx @tauri-apps/cli build，把 dist/Magplot 作为资源打进壳
+5. Tauri：pnpm dlx @tauri-apps/cli build，把 dist/Magplot 作为资源打进壳
    （src-tauri/tauri.conf.json 的 bundle.resources）。
 
 签名/公证不在本脚本内：本地无证书时产物是未签名测试包（macOS 上 Tauri 会
@@ -21,7 +25,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -65,6 +71,40 @@ def sync_version(version: str) -> None:
         print(f"* Cargo.toml 版本 → {version}")
 
 
+WORKERD_NAME = "magplot-workerd.exe" if sys.platform == "win32" else "magplot-workerd"
+
+
+def build_workerd() -> Path:
+    """构建 Rust supervisor，返回二进制路径（magplot.spec 从同一位置取）。
+
+    `MAGPLOT_WORKERD_BIN` 可指到已经构建好的产物（交叉编译 / CI 分步构建时用），
+    此时不跑 cargo。两条路都会**确认文件真的在**：桌面产物缺了 workerd 不会
+    报错、只会悄悄慢下来，所以这里宁可当场中止也不留下一个「看起来正常」的包。
+    """
+    prebuilt = os.environ.get("MAGPLOT_WORKERD_BIN")
+    if prebuilt:
+        exe = Path(prebuilt)
+        if not exe.is_file():
+            raise SystemExit(f"MAGPLOT_WORKERD_BIN 指向的文件不存在: {exe}")
+        print(f"* workerd（沿用现成产物）: {exe}")
+        return exe
+
+    if shutil.which("cargo") is None:
+        raise SystemExit(
+            "找不到 cargo，无法构建 magplot-workerd（Rust supervisor）。\n"
+            "  · 装一次 Rust 工具链：https://rustup.rs\n"
+            "  · 或者在别处构建好，用 MAGPLOT_WORKERD_BIN=<路径> 指过来\n"
+            "桌面产物必须自带 workerd——缺了它渲染静默回退到 Python 池，"
+            "队列合并/超时强杀/取消全部失效，而界面上一点异常都看不出来。")
+    run(["cargo", "build", "--release",
+         "--manifest-path", str(ROOT / "workerd" / "Cargo.toml")])
+    exe = ROOT / "workerd" / "target" / "release" / WORKERD_NAME
+    if not exe.is_file():
+        raise SystemExit(f"cargo 跑完了，但产物不在预期位置: {exe}")
+    print(f"* workerd: {exe}（{exe.stat().st_size // 1024} KiB）")
+    return exe
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--skip-tauri", action="store_true",
@@ -78,6 +118,7 @@ def main() -> None:
     sync_version(version)
 
     run([sys.executable, str(ROOT / "scripts" / "build_frontend.py")])
+    build_workerd()
     run([sys.executable, "-m", "PyInstaller",
          str(ROOT / "packaging" / "magplot.spec"), "--noconfirm"])
 
@@ -85,6 +126,14 @@ def main() -> None:
         ("Magplot.exe" if sys.platform == "win32" else "Magplot")
     if not sidecar.is_file():
         raise SystemExit(f"sidecar 产物缺失: {sidecar}")
+    # spec 里那条 binaries 真的落到 _internal/ 了没有——这一步只花一次 stat，
+    # 却挡住了「打包器换了版本、落点变了」这种发出去才发现的回归
+    packed = sidecar.parent / "_internal" / WORKERD_NAME
+    if not packed.is_file():
+        raise SystemExit(
+            f"sidecar 里没有 workerd: {packed}\n"
+            "  packaging/magplot.spec 的 binaries 落点与 "
+            "engine/workerd_client.find_workerd() 对不上了。")
 
     if args.skip_tauri:
         print("* --skip-tauri：到此为止")

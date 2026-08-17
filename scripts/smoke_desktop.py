@@ -11,8 +11,9 @@
 2. 未认证请求 401；错误 nonce 403；正确 nonce → cookie；nonce 重放 403
 3. Host/Origin 校验
 4. 打开 examples/figures 项目 → 素材扫描
-5. 参数化渲染 + PDF/PNG 导出（渲染环境缺 matplotlib 时如实跳过并报告）
-6. 关 stdin（模拟壳退出）→ sidecar 限时内自行退出，且不留 worker 孤儿
+5. 渲染控制面：产物里带着 magplot-workerd，且渲染**真的走了它**
+6. 参数化渲染 + PDF/PNG 导出（渲染环境缺 matplotlib 时如实跳过并报告）
+7. 关 stdin（模拟壳退出）→ sidecar 限时内自行退出，且不留 worker 孤儿
 
 数据/配置目录全程隔离在临时目录，绝不碰真实用户数据。
 """
@@ -48,6 +49,49 @@ def fail(msg: str) -> None:
 
 def ok(msg: str) -> None:
     print(f"✓ {msg}")
+
+
+def is_packaged(exe: Path) -> bool:
+    """这是不是 PyInstaller 打出来的真产物（旁边有 _internal/）。
+
+    与 smoke_app.py 找内置 runtime 清单用的是同一条线索，别再发明第二种判法。
+    源码模式（`--sidecar .venv/bin/magplot`）下 workerd 只是「开发机上建过就
+    有」，那时缺失只警告；真产物缺失一律判失败。
+    """
+    return (exe.parent / "_internal").is_dir()
+
+
+def check_control_plane(port: int, cookie: str, packaged: bool,
+                        rendered: bool) -> None:
+    """渲染控制面必须是 workerd（Rust supervisor），而且渲染真的走了它。
+
+    回退到 Python 池是**静默**的（`pool._new_worker()` 的 except 分支），所以
+    「二进制没打进去」「打进去了但起不来」这两件事在界面上完全看不出来——
+    功能一样不缺，只是慢。这一步就是把它们变成一次可见的失败。
+    """
+    st, env = request(port, "GET", "/api/engine/environment", cookie=cookie)
+    assert st == 200, f"读渲染环境失败: {st} {env}"
+    cp = env.get("control_plane") or {}
+    selected, sessions = cp.get("selected"), cp.get("sessions") or []
+
+    if selected != "workerd":
+        msg = (f"渲染控制面是 {selected!r} 而不是 workerd——"
+               "产物里没有 magplot-workerd，渲染会静默回退到 Python 渲染池")
+        if packaged:
+            fail(msg)
+        print(f"⚠ {msg}；源码模式下先跑 "
+              "cargo build --release --manifest-path workerd/Cargo.toml")
+        return
+    ok(f"渲染控制面: workerd（{cp.get('path')}）")
+
+    if not rendered:
+        print("⚠ 本次没跑渲染（环境缺 matplotlib）：只验到「带着 workerd」，"
+              "没验到「渲染真走了它」")
+        return
+    if "workerd" not in sessions:
+        fail(f"渲染跑完了，但会话走的是 Python 渲染池: {sessions}"
+             "（workerd 起不来？看数据目录 cache/workerd.log）")
+    ok(f"渲染会话确实跑在 workerd 上: {sessions}")
 
 
 def request(port: int, method: str, path: str, body: dict | None = None,
@@ -159,12 +203,14 @@ def main() -> None:
         # ---- 渲染环境 → 参数化渲染 + 导出 ----
         st, envst = request(port, "GET", "/api/engine/environment", cookie=cookie)
         script_panel = next((p for p in panels if p.get("script")), None)
+        rendered = False
         if not envst.get("ok"):
             print(f"⚠ 渲染环境不可用（{envst.get('reason') or 'matplotlib 缺失'}）："
                   "跳过参数化渲染/导出验证——这是环境限制，不是通过")
         elif script_panel is None:
             print("⚠ 示例项目里没有可参数化面板：跳过渲染验证")
         else:
+            rendered = True
             st, body = request(port, "POST", "/api/engine/render",
                                {"id": script_panel["id"], "patches": []},
                                cookie=cookie)
@@ -186,6 +232,9 @@ def main() -> None:
                 p = Path(body["export_dir"]) / f["name"]
                 assert p.is_file() and p.stat().st_size > 0, f"导出文件缺失: {p}"
             ok(f"导出 PDF+PNG: {[f['name'] for f in body['files']]}")
+
+        # ---- 渲染控制面（放在渲染之后问：那时池里才有真会话）----
+        check_control_plane(port, cookie, is_packaged(exe), rendered)
 
         # ---- 退出：关 stdin = 壳没了 ----
         proc.stdin.close()

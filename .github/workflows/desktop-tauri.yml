@@ -34,6 +34,32 @@ permissions:
   contents: write
 
 jobs:
+  # Rust supervisor 的静态门禁。**只在 Linux 上跑一份**：它是纯标准库 + serde
+  # 的 stdio 进程，没有任何平台分支，三平台各跑一遍只是把发布慢三倍。
+  # 刻意不做 build 的 `needs`：clippy 挑剔一条命名不该把发行链堵死，
+  # 但它必须与桌面构建同时可见（golden vectors 是 patch 身份的硬验收，
+  # 那条真跑在 cargo test 里）。
+  workerd:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: workerd
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: workerd
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      # supervisor_behaviour.rs 起的是真二进制 + tests/fake_worker.py，
+      # 靠 runner 自带的 python3（`PYTHON` 可覆盖）
+      - run: cargo test
+
   build:
     strategy:
       fail-fast: false
@@ -76,7 +102,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri
+          # 两个 crate 都要缓存：src-tauri 是壳，workerd 是随 sidecar 一起发出去的
+          # Rust supervisor（由 build_desktop.py 在 PyInstaller 之前 cargo build，
+          # 跟随本平台的 host target，不交叉编译）
+          workspaces: |
+            src-tauri
+            workerd
 
       - name: 缓存 CPython embeddable 下载
         if: runner.os == 'Windows'
@@ -96,7 +127,10 @@ jobs:
           python -m pip install --upgrade pip pyinstaller
           python -m pip install "flask>=3.1,<4" "pymupdf>=1.24,<2"
 
-      - name: 构建前端 + sidecar（PyInstaller onedir）
+      - name: 构建前端 + workerd + sidecar（PyInstaller onedir）
+        # build_desktop.py 会先 cargo build --release 出 magplot-workerd，
+        # magplot.spec 再把它收进 _internal/。cargo 缺席时脚本当场中止——
+        # 静默少一个 workerd 的包在界面上完全看不出来（功能全在、只是慢）
         env:
           # Windows 发行包必须自带 runtime（落在 sidecar 的 _internal\runtime，
           # NSIS 经 bundle.resources 一起收走）；macOS 不带，spec 自动跳过
@@ -123,13 +157,17 @@ jobs:
 
       - name: 发布前冒烟：内置 runtime 真能渲染（仅 Windows）
         # --expect-source bundled 断言渲染真的走了内置环境；--expect-packages
-        # 逐个 import 内置科学栈。少了它们，「runtime 根本没打进去」会全程绿灯。
+        # 逐个 import 内置科学栈；--expect-control-plane workerd 断言这次渲染
+        # 真的跑在 Rust supervisor 上。少了它们，「runtime / workerd 根本没打
+        # 进去」都会全程绿灯——两种缺失在界面上都毫无症状。
+        # **刻意不设 MAGPLOT_WORKERD**：要验的是产物自带的那份被自动找到。
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $env:MM_WORKER_PYTHON = $null
           python scripts/smoke_app.py --exe dist/Magplot/Magplot.exe `
             --figures examples/runtime_check --expect-source bundled `
+            --expect-control-plane workerd `
             --expect-packages numpy,pandas,scipy,seaborn,PIL,matplotlib
 
       - name: Tauri build
