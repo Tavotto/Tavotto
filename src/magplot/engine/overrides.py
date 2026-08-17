@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import numpy as np
 
+import matplotlib as mpl
 import matplotlib.colors as mcolors
 import matplotlib.patheffects as mpatheffects
 from matplotlib.axes import Axes
@@ -170,6 +171,33 @@ def _restore_text_pos(t: Text, orig) -> None:
     if kind == "title":
         ax._autotitlepos = True  # noqa: SLF001
     t.set_position(tuple(orig))
+
+
+def _set_text_fontfamily(t: Text, v) -> None:
+    """改字体连同 mathtext 一起改。set_fontfamily 只影响正文，$…$ 里的上下标
+    仍按 mathtext 字体集渲染——同一个文字框里两种字体。把该 artist 的
+    math_fontfamily 切到 custom 字体集，再让 rcParams 的 mathtext.* 指向同一
+    字体，正文与上下标才一致。rcParams 是进程级：多个文字分别改成**不同**
+    字体时 custom 集只能指向最后一次的选择（明示的边界）；未改字体的文字
+    不在 custom 集上，不受影响。"""
+    fam = str(v[0]) if isinstance(v, (list, tuple)) else str(v)
+    t.set_fontfamily(fam)
+    mpl.rcParams["mathtext.rm"] = fam
+    mpl.rcParams["mathtext.it"] = f"{fam}:italic"
+    mpl.rcParams["mathtext.bf"] = f"{fam}:bold"
+    mpl.rcParams["mathtext.sf"] = fam
+    t.set_math_fontfamily("custom")
+
+
+def _get_text_fontfamily(t: Text):
+    # 原生状态 = (family, math_fontfamily)，恢复时两者都要还原
+    return (t.get_fontfamily(), t.get_math_fontfamily())
+
+
+def _restore_text_fontfamily(t: Text, orig) -> None:
+    fam, math = orig
+    t.set_fontfamily(fam)
+    t.set_math_fontfamily(math)
 
 
 def _set_legend_loc_frac(leg: Legend, value) -> None:
@@ -717,6 +745,8 @@ def _cls_key(artist) -> str | None:
         return "figure"
     if isinstance(artist, Text):
         return "text"
+    if isinstance(artist, FancyArrowPatch):
+        return "arrowpatch"
     if isinstance(artist, Line2D):
         return "line"
     if isinstance(artist, Legend):
@@ -734,6 +764,88 @@ def _cls_key(artist) -> str | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# 单色渐变位图（imshow 渐变 + set_clip_path 裁剪，是「形状渐变填充」的标准画法）
+# ---------------------------------------------------------------------------
+def _gradient_decompose(a: np.ndarray):
+    """RGB(A) 数组 → (基色 rgb, 每像素与白的混合系数 s)；解不出返回 None。
+
+    这种图的每个像素都是 `base·(1−s) + 白·s` 的凸组合（s∈[0,1]）：
+    基色取离白最远的像素，逐通道反解 s 并要求通道间一致。满足者可整体换
+    基色而完全保留渐变形状与 alpha；不满足（真实照片、多色图）绝不硬套。"""
+    if a.ndim != 3 or a.shape[2] not in (3, 4):
+        return None
+    rgb = a[..., :3].astype(float)
+    if rgb.size == 0:
+        return None
+    if a.dtype.kind in "ui" or float(np.nanmax(rgb)) > 1.0001:
+        rgb = rgb / 255.0
+    flat = rgb.reshape(-1, 3)
+    dist = ((1.0 - flat) ** 2).sum(axis=1)
+    if float(dist.max()) < 1e-3:   # 全白：没有可辨识的基色
+        return None
+    base = flat[int(np.argmax(dist))]
+    ok = np.abs(1.0 - base) > 1e-3  # 基色为 1 的通道恒等于 1，解不出 s
+    if not ok.any():
+        return None
+    s = (flat[:, ok] - base[ok]) / (1.0 - base[ok])
+    if s.shape[1] > 1:
+        spread = s.max(axis=1) - s.min(axis=1)
+        if float(np.mean(spread > 0.04)) > 0.02:
+            return None            # 通道间不一致 → 不是单色渐变
+    sm = s.mean(axis=1)
+    if float(sm.min()) < -0.04 or float(sm.max()) > 1.04:
+        return None
+    return base, np.clip(sm, 0.0, 1.0)
+
+
+def gradient_base_hex(im) -> str | None:
+    """渐变位图的基色 '#rrggbb'；不是单色渐变返回 None（字段就不出现）。
+
+    先抽样（≤64×64）做门槛判定——真照片级 imshow 不必逐像素扫，也过不了
+    一致性检查；判定通过再在**全量**数组上取精确基色：抽样步长会漏掉渐变
+    最深的那一行，基色差一档，界面里显示的就不是脚本写的那个色号。"""
+    a = np.asarray(im.get_array())
+    if a.ndim != 3:
+        return None
+    sub = a[::max(1, a.shape[0] // 64), ::max(1, a.shape[1] // 64)]
+    if _gradient_decompose(np.asarray(sub)) is None:
+        return None
+    dec = _gradient_decompose(a)
+    if dec is None:
+        return None
+    return mcolors.to_hex(dec[0])
+
+
+def _set_image_gradient(im, v) -> None:
+    """整体换渐变基色：从**原始**数组解 s 再套新基色（首改前缓存原数组——
+    对着改过的数组反解，用户一旦选了近白色 s 就会退化、渐变形状回不去了）。"""
+    orig = getattr(im, "_mm_gradient_orig", None)
+    if orig is None:
+        orig = np.array(im.get_array(), copy=True)
+        im._mm_gradient_orig = orig
+    a = np.asarray(orig)
+    dec = _gradient_decompose(a)
+    if dec is None:
+        return
+    _base, s = dec
+    new = np.asarray(mcolors.to_rgb(v), dtype=float)
+    out = (new[None, :] * (1.0 - s[:, None]) + s[:, None]).reshape(a.shape[:2] + (3,))
+    if a.dtype.kind in "ui":
+        result = a.copy()
+        result[..., :3] = np.clip(np.rint(out * 255.0), 0, 255).astype(a.dtype)
+    else:
+        result = a.astype(float, copy=True)
+        result[..., :3] = out
+    im.set_data(result)
+
+
+def _restore_image_gradient(im, orig) -> None:
+    im.set_data(orig)
+    if hasattr(im, "_mm_gradient_orig"):
+        del im._mm_gradient_orig
+
+
 HANDLERS: dict[tuple[str, str], tuple] = {
     ("text", "text"):     (lambda a: a.get_text(),          lambda a, v: a.set_text(str(v))),
     ("text", "fontsize"): (lambda a: a.get_fontsize(),      lambda a, v: a.set_fontsize(float(v))),
@@ -745,7 +857,7 @@ HANDLERS: dict[tuple[str, str], tuple] = {
     ("text", "pos_frac"): (_get_text_pos,                   _set_text_pos_frac),
     ("text", "alpha"):    (lambda a: a.get_alpha(),
                            lambda a, v: a.set_alpha(None if v is None else float(v))),
-    ("text", "fontfamily"): (lambda a: a.get_fontfamily(),  lambda a, v: a.set_fontfamily(v)),
+    ("text", "fontfamily"): (_get_text_fontfamily,          _set_text_fontfamily),
     ("text", "ha"):       (lambda a: a.get_ha(),            lambda a, v: a.set_ha(v)),
     ("text", "va"):       (lambda a: a.get_va(),            lambda a, v: a.set_va(v)),
     ("text", "linespacing"): (lambda a: text_linespacing(a),
@@ -780,6 +892,21 @@ HANDLERS: dict[tuple[str, str], tuple] = {
     ("text", "stroke_width"):   (lambda a: float(_stroke_state(a)["width"]),
                                  lambda a, v: _stroke_set(a, "width", float(v))),
 
+    # 图内独立箭头（FancyArrowPatch：脚本 add_patch 的与 annotate 的 arrow_patch
+    # 同一个类）。set_color 同时写 edge+face——"-|>" 这类实心帽两者必须一致，
+    # 分开暴露只会做出「帽黑杆红」的半成品
+    ("arrowpatch", "color"): (lambda a: a.get_edgecolor(), lambda a, v: a.set_color(v)),
+    ("arrowpatch", "linewidth"): (lambda a: a.get_linewidth(),
+                                  lambda a, v: a.set_linewidth(float(v))),
+    ("arrowpatch", "mutation_scale"): (lambda a: a.get_mutation_scale(),
+                                       lambda a, v: a.set_mutation_scale(float(v))),
+    ("arrowpatch", "alpha"): (lambda a: a.get_alpha(),
+                              lambda a, v: a.set_alpha(None if v is None else float(v))),
+    ("arrowpatch", "visible"): (lambda a: a.get_visible(),
+                                lambda a, v: a.set_visible(bool(v))),
+    ("arrowpatch", "zorder"): (lambda a: float(a.get_zorder()),
+                               lambda a, v: a.set_zorder(float(v))),
+
     ("line", "color"):     (lambda a: a.get_color(),      lambda a, v: a.set_color(v)),
     ("line", "linewidth"): (lambda a: a.get_linewidth(),  lambda a, v: a.set_linewidth(float(v))),
     ("line", "linestyle"): (lambda a: a.get_linestyle(),  lambda a, v: a.set_linestyle(v)),
@@ -804,6 +931,9 @@ HANDLERS: dict[tuple[str, str], tuple] = {
     ("axes", "visible"):  (lambda a: a.get_visible(), lambda a, v: a.set_visible(bool(v))),
 
     ("image", "visible"): (lambda a: a.get_visible(), lambda a, v: a.set_visible(bool(v))),
+    # 原生值 = 整个像素数组（恢复走 set_data，见 _restore_image_gradient）
+    ("image", "gradient_color"): (lambda a: np.array(a.get_array(), copy=True),
+                                  _set_image_gradient),
 
     ("ticklabel", "text"): (
         lambda a: a.get_text(),
@@ -1052,6 +1182,8 @@ for _prop, _g3, _s3 in [
 _RESTORE: dict[tuple[str, str], object] = {
     ("scatter", "marker"):  _restore_scatter_marker,
     ("text", "pos_frac"):   _restore_text_pos,
+    ("text", "fontfamily"): _restore_text_fontfamily,
+    ("image", "gradient_color"): _restore_image_gradient,
     ("legend", "loc_frac"): _restore_legend_loc,
     ("legend", "loc"):      _restore_legend_loc,  # loc 预设的原生值同为 (loc, 锚框)
     ("ticks", "format"):    _restore_tick_format,

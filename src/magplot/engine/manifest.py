@@ -12,6 +12,7 @@ from __future__ import annotations
 from matplotlib.axes import Axes
 from matplotlib.collections import PathCollection, PolyCollection
 from matplotlib.container import BarContainer, ErrorbarContainer
+from matplotlib.patches import FancyArrowPatch
 from matplotlib.text import Text
 from matplotlib.ticker import FormatStrFormatter, ScalarFormatter
 
@@ -20,7 +21,8 @@ from overrides import (ColorbarProxy, FigState, HANDLERS, SeriesGroup, TickLabel
                        _boxstyle_info, _cb_axis, _cb_tick_color,
                        _cb_tick_fontsize, _cls_key, _grid_prop, _grid_visible,
                        _legend_entry_order, _legend_loc_name, _spines_get,
-                       _stroke_state, _tick0, text_linespacing, to_hex)
+                       _stroke_state, _tick0, gradient_base_hex,
+                       text_linespacing, to_hex)
 
 CMAPS = ["viridis", "plasma", "inferno", "magma", "cividis", "Greys", "gray",
          "hot", "afmhot", "coolwarm", "RdBu_r", "seismic", "jet", "turbo"]
@@ -103,6 +105,11 @@ def instrument(state: FigState) -> None:
             if t.get_text():
                 _register(state, f"axes_{i}.texts_{j}", t, "text",
                           f"文字 “{_snippet(t.get_text())}”", draggable=True)
+            # annotate(...) 的箭头单独成元素；`annotate("", …)` 纯箭头也要能选中
+            ap = getattr(t, "arrow_patch", None)
+            if ap is not None:
+                _register(state, f"axes_{i}.texts_{j}.arrow", ap,
+                          "arrow_patch", "标注箭头")
         if not is3d:
             # 数据系列容器先注册（其成员不再作为独立曲线/集合重复注册）
             skip_ids: set[int] = set()
@@ -144,6 +151,14 @@ def instrument(state: FigState) -> None:
                     _register(state, f"axes_{i}.scatter_{j}", coll, "scatter", nice)
                 elif isinstance(coll, PolyCollection):
                     _register(state, f"axes_{i}.fill_{j}", coll, "fill", f"填充区域 {j + 1}")
+            # 脚本直接 add_patch 的独立箭头（XPS 峰位标注这类画法）。
+            # gid 用 patches 里的树序 j 保证重建稳定，label 按箭头自己计数
+            arrow_n = 0
+            for j, pt in enumerate(ax.patches):
+                if isinstance(pt, FancyArrowPatch):
+                    arrow_n += 1
+                    _register(state, f"axes_{i}.arrows_{j}", pt,
+                              "arrow_patch", f"箭头 {arrow_n}")
         leg = ax.get_legend()
         if leg is not None:
             _register(state, f"axes_{i}.legend", leg, "legend", "图例", draggable=True)
@@ -384,10 +399,38 @@ def _cmap_options(current: str) -> list[str]:
     return ([current] if current not in CMAPS else []) + CMAPS
 
 
+def _arrowpatch_fields(a) -> list[dict]:
+    """图内独立箭头（FancyArrowPatch）：颜色 / 线宽 / 帽大小 / 透明度 / 显隐。
+    位置仍归脚本管——箭头端点是数据坐标里的语义落点（指着某个峰），
+    在排版工具里拖它只会把标注拖离事实。"""
+    alpha = a.get_alpha()
+    return [
+        {"prop": "color", "type": "color", "value": to_hex(a.get_edgecolor())},
+        {"prop": "linewidth", "type": "number",
+         "value": round(float(a.get_linewidth()), 2),
+         "min": 0.1, "max": 6, "step": 0.05, "unit": "pt"},
+        {"prop": "mutation_scale", "type": "number",
+         "value": round(float(a.get_mutation_scale()), 1),
+         "min": 1, "max": 40, "step": 0.5, "unit": "pt"},
+        {"prop": "alpha", "type": "number",
+         "value": 1.0 if alpha is None else round(float(alpha), 2),
+         "min": 0, "max": 1, "step": 0.05},
+        {"prop": "zorder", "type": "number", "value": round(float(a.get_zorder()), 1),
+         "min": -5, "max": 50, "step": 1, "group": "排列"},
+        {"prop": "visible", "type": "bool", "value": bool(a.get_visible())},
+    ]
+
+
 def _image_fields(im) -> list[dict]:
     arr = im.get_array()
     mappable = arr is not None and getattr(arr, "ndim", 0) == 2
     fields = []
+    # 单色渐变位图（imshow 渐变 + 裁剪路径的「形状渐变填充」画法）：
+    # 基色可整体替换，渐变形状与透明度原样保留。不是这种图就不出字段。
+    grad = None if mappable else gradient_base_hex(im)
+    if grad is not None:
+        fields.append({"prop": "gradient_color", "type": "color", "value": grad,
+                       "group": "渐变填充"})
     if mappable:
         vmin, vmax = im.get_clim()
         span = abs(float(vmax) - float(vmin)) if vmin is not None and vmax is not None else 1.0
@@ -677,6 +720,8 @@ def _fields_for(el) -> list[dict]:
         return _axes3d_fields(artist) if role == "axes3d" else _axes_fields(artist)
     if key == "image":
         return _image_fields(artist)
+    if key == "arrowpatch":
+        return _arrowpatch_fields(artist)
     if key == "scatter":
         return _collection_fields(artist, with_size=True)
     if key == "fill":

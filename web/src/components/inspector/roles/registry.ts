@@ -93,6 +93,12 @@ const R17_LABEL: Record<string, string> = {
   arrow_width: '箭头线宽',
   arrow_head: '箭头大小',
 
+  // arrow_patch（图内独立箭头 / 标注箭头）
+  mutation_scale: '箭头帽大小',
+
+  // image · 单色渐变填充（imshow 渐变 + 裁剪路径的画法）
+  gradient_color: '渐变基色',
+
   // 通用
   label: '名称',
   zorder: '堆叠层级',
@@ -132,6 +138,7 @@ const ROLE_NAME: Record<string, string> = {
   axis_label: '轴标题',
   title: '标题',
   text: '文字',
+  arrow_patch: '箭头',
 }
 
 export const roleName = (role: string) => ROLE_NAME[role] ?? '同类元素'
@@ -214,6 +221,7 @@ const GROUP_ORDER = [
   '刻度线',
   '网格与边框',
   '线条与标记',
+  '渐变填充',
   '颜色映射',
   '文字',
   '排版',

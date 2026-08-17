@@ -36,6 +36,7 @@ def main():
     ax.plot([0, 1, 2], [1, 0, 2], label="series-a")
     ax.set_title("Original Title")
     ax.set_xlabel("x label")
+    ax.set_ylabel("Signal (cm$^{-1}$)")
     ax.legend()
     save(fig, "TestFig_a")
 
@@ -316,6 +317,48 @@ def _assert_unknown_stem(proc):
     _rpc(proc, {"cmd": "ping"})
 
 
+def test_fontfamily_override_syncs_mathtext(worker):
+    """改字体必须连 $…$ 上下标一起改。set_fontfamily 只影响正文，mathtext
+    仍按自己的字体集渲染——修好前正文换成衬线、上标还是 DejaVu Sans，
+    同一个文字框里两种字体。几何级看护：导出 PDF 后 ylabel 区域内的
+    所有字形（含上标的 −1）字体族必须一致。"""
+    proc, out, tmp = worker
+    _rpc(proc, {"cmd": "build"})
+    man = json.loads((out / "TestFig_a.json").read_text(encoding="utf-8"))
+    el = next(e for e in man["elements"]
+              for f in e.get("editable", [])
+              if f["prop"] == "text" and "cm$^{-1}$" in str(f["value"]))
+    patch = [{"gid": el["gid"], "prop": "fontfamily", "value": "serif"}]
+    _rpc(proc, {"cmd": "override", "stem": "TestFig_a", "patches": patch})
+
+    pdf = tmp / "font_export.pdf"
+    _rpc(proc, {"cmd": "export", "stem": "TestFig_a", "patches": patch,
+                "path": str(pdf), "format": "pdf", "dpi": 600})
+    with pymupdf.open(pdf) as doc:
+        page = doc[0]
+        w, h = page.rect.width, page.rect.height
+        bx, by, bw, bh = el["bbox"]
+        clip = pymupdf.Rect(bx * w - 2, by * h - 2, (bx + bw) * w + 2, (by + bh) * h + 2)
+        fonts = {s["font"]
+                 for blk in page.get_text("rawdict", clip=clip)["blocks"]
+                 for ln in blk.get("lines", [])
+                 for s in ln.get("spans", [])}
+    assert fonts, "ylabel 区域抽不到文字"
+    assert all("Serif" in f for f in fonts), f"上下标没跟着换字体: {fonts}"
+
+    # 撤销（全量列表语义）后 math 字体集也要回到原生状态：再导出，上标回到 Sans
+    _rpc(proc, {"cmd": "override", "stem": "TestFig_a", "patches": []})
+    pdf2 = tmp / "font_export_undo.pdf"
+    _rpc(proc, {"cmd": "export", "stem": "TestFig_a", "patches": [],
+                "path": str(pdf2), "format": "pdf", "dpi": 600})
+    with pymupdf.open(pdf2) as doc:
+        fonts2 = {s["font"]
+                  for blk in doc[0].get_text("rawdict", clip=clip)["blocks"]
+                  for ln in blk.get("lines", [])
+                  for s in ln.get("spans", [])}
+    assert fonts2 and all("Serif" not in f for f in fonts2), f"撤销未还原 math 字体: {fonts2}"
+
+
 def test_non_ascii_survives_the_pipe(worker):
     """图内文字含非 ASCII（中文 / µ / ⁻¹）时协议不能崩。
 
@@ -365,6 +408,103 @@ def main():
         ax.set_title(name)
         save_panel(fig, name)
 """
+
+
+ARROW_GRADIENT_SCRIPT = """\
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.colors import to_rgb
+from matplotlib.patches import FancyArrowPatch, PathPatch
+from matplotlib.path import Path as MplPath
+
+
+def main():
+    fig, ax = plt.subplots(figsize=(3, 2))
+    x = np.linspace(0.0, 10.0, 60)
+    curve = np.exp(-((x - 5.0) ** 2) / 2.0)
+    ax.plot(x, curve, color="#111111")
+
+    # 「形状渐变填充」的标准画法：imshow 竖直渐变 + PathPatch 裁剪
+    verts = np.concatenate([np.column_stack((x, np.zeros_like(x))),
+                            np.column_stack((x[::-1], curve[::-1]))])
+    codes = np.full(len(verts), MplPath.LINETO, dtype=np.uint8)
+    codes[0] = MplPath.MOVETO
+    codes[-1] = MplPath.CLOSEPOLY
+    clip = PathPatch(MplPath(verts, codes), transform=ax.transData,
+                     facecolor="none", edgecolor="none")
+    ax.add_patch(clip)
+    rgb = np.asarray(to_rgb("#4C78A8"), dtype=float)
+    light = rgb + (1.0 - rgb) * 0.82
+    ramp = np.linspace(light, rgb, 256).reshape(256, 1, 3)
+    rgba = np.concatenate([ramp, np.full((256, 1, 1), 0.82)], axis=2)
+    image = ax.imshow(rgba, extent=(0.0, 10.0, 0.0, 1.0), origin="lower",
+                      aspect="auto", interpolation="bicubic", zorder=1)
+    image.set_clip_path(clip)
+
+    # 独立箭头（add_patch）+ annotate 纯箭头，两条注册路径都要盖到
+    arrow = FancyArrowPatch(posA=(5.0, 1.4), posB=(5.0, 1.05),
+                            transform=ax.transData, arrowstyle="-|>",
+                            linewidth=0.75, mutation_scale=7,
+                            color="#76008A", zorder=11)
+    ax.add_patch(arrow)
+    ax.annotate("", xy=(3.0, 0.6), xytext=(2.0, 1.3),
+                arrowprops=dict(arrowstyle="->", color="#2A6F3C"))
+
+    ax.set_ylim(0, 1.6)
+    fig.savefig("ArrowGrad.pdf")
+"""
+
+
+def _field_value(manifest, gid, prop):
+    el = next(e for e in manifest["elements"] if e["gid"] == gid)
+    return next(f["value"] for f in el["editable"] if f["prop"] == prop)
+
+
+def test_arrowpatch_and_gradient_fill_editable(tmp_path):
+    """独立箭头（FancyArrowPatch / annotate）与单色渐变填充要能改。
+
+    用户的 XPS 谱图脚本正是这两种画法：add_patch 的峰位箭头 + 「imshow 渐变
+    + PathPatch 裁剪」的组分填充。此前两者都不在 manifest 里，界面上根本
+    选不中。看护：manifest 暴露 → override 换色生效 → 空列表还原原值。
+    """
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    (figs / "fig_ag.py").write_text(ARROW_GRADIENT_SCRIPT, encoding="utf-8")
+    proc = _spawn(figs / "fig_ag.py", figs, tmp_path)
+    try:
+        _rpc(proc, {"cmd": "build"})
+        resp = _rpc(proc, {"cmd": "override", "stem": "ArrowGrad", "patches": []})
+        man = resp["manifest"]
+        arrows = [e for e in man["elements"] if e["role"] == "arrow_patch"]
+        # add_patch 的独立箭头 + annotate 的标注箭头都在
+        assert {e["gid"] for e in arrows} >= {"axes_0.arrows_1", "axes_0.texts_0.arrow"}, \
+            [e["gid"] for e in arrows]
+        for e in arrows:
+            assert e.get("bbox"), f"{e['gid']} 没有 bbox，画布上选不中"
+        assert _field_value(man, "axes_0.arrows_1", "color").lower() == "#76008a"
+        # 渐变位图暴露基色；真数据 imshow 不会有这个字段（检测为单色渐变才给）
+        assert _field_value(man, "axes_0.images_0", "gradient_color").lower() == "#4c78a8"
+
+        # 换色：箭头改红、渐变基色改绿
+        patches = [
+            {"gid": "axes_0.arrows_1", "prop": "color", "value": "#D00000"},
+            {"gid": "axes_0.images_0", "prop": "gradient_color", "value": "#2A9D8F"},
+        ]
+        resp = _rpc(proc, {"cmd": "override", "stem": "ArrowGrad", "patches": patches})
+        assert resp.get("warnings") in (None, []), resp.get("warnings")
+        man = resp["manifest"]
+        assert _field_value(man, "axes_0.arrows_1", "color").lower() == "#d00000"
+        assert _field_value(man, "axes_0.images_0", "gradient_color").lower() == "#2a9d8f"
+
+        # 全量列表语义：空列表 = 全部还原
+        resp = _rpc(proc, {"cmd": "override", "stem": "ArrowGrad", "patches": []})
+        man = resp["manifest"]
+        assert _field_value(man, "axes_0.arrows_1", "color").lower() == "#76008a"
+        assert _field_value(man, "axes_0.images_0", "gradient_color").lower() == "#4c78a8"
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=10)
 
 
 def test_closed_figure_still_builds(tmp_path):
