@@ -36,36 +36,90 @@ interface ClipPayload {
   layoutGroups: LayoutGroup[]
 }
 
-export async function copySelectedObjects(): Promise<boolean> {
+/** 当前选区的剪贴板负载；没有可复制的对象返回 null */
+function buildClipPayload(): ClipPayload | null {
   const ids = useSelectionStore.getState().ids
-  if (!ids.length) return false
+  if (!ids.length) return null
   const { doc, documentId, activeCanvasId } = useDocumentStore.getState()
   const objects = doc.objects.filter((o) => ids.includes(o.id))
-  if (!objects.length) return false
+  if (!objects.length) return null
   const carriedGroups = (doc.layoutGroups ?? []).filter((g) => {
     const members = doc.objects.filter((o) => o.groupId === g.id)
     return members.length >= 2 && members.every((o) => ids.includes(o.id))
   })
-  const payload: ClipPayload = {
+  return {
     magic: MAGIC,
     sourceDocId: documentId,
     sourceCanvasId: activeCanvasId,
     objects: structuredClone(objects),
     layoutGroups: structuredClone(carriedGroups),
   }
+}
+
+function announceCopied(payload: ClipPayload): void {
+  useUiStore
+    .getState()
+    .setStatus(
+      payload.objects.length === 1
+        ? `已复制 ${objectLabel(payload.objects[0])}`
+        : `已复制 ${payload.objects.length} 个对象（可粘贴到其他布局文档）`,
+    )
+}
+
+/** 右键菜单 / 属性页按钮的复制入口（点击是用户手势，writeText 各浏览器都放行） */
+export async function copySelectedObjects(): Promise<boolean> {
+  const payload = buildClipPayload()
+  if (!payload) return false
   try {
     await navigator.clipboard.writeText(JSON.stringify(payload))
   } catch {
     useUiStore.getState().setStatus('无法访问剪贴板（浏览器权限被拒）', 'error')
     return false
   }
-  useUiStore
-    .getState()
-    .setStatus(
-      objects.length === 1
-        ? `已复制 ${objectLabel(objects[0])}`
-        : `已复制 ${objects.length} 个对象（可粘贴到其他布局文档）`,
-    )
+  announceCopied(payload)
+  return true
+}
+
+/** copy/paste 事件不该被劫持的目标：输入框、可编辑区、对话框 */
+function editableTarget(t: EventTarget | null): boolean {
+  if (!(t instanceof HTMLElement)) return false
+  return (
+    t.isContentEditable ||
+    /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) ||
+    t.closest('[role="dialog"]') != null
+  )
+}
+
+/**
+ * ⌘C 的主路径：原生 copy 事件。`e.clipboardData.setData` 同步写、无权限门槛，
+ * Safari / 桌面壳的 WKWebView / Firefox 都认——异步的 `writeText` 在 WebKit 里
+ * 会被拒，正是「复制的素材无法跨标签页粘贴」的根源。返回 true = 消费了本次复制。
+ */
+export function handleCopyEvent(e: ClipboardEvent): boolean {
+  if (editableTarget(e.target)) return false
+  // 页面上有真实文字选区（比如在报错 toast 里选了段文字）时让位给原生文本复制
+  const sel = document.getSelection?.()
+  if (sel && !sel.isCollapsed) return false
+  if (!e.clipboardData) return false
+  const payload = buildClipPayload()
+  if (!payload) return false
+  e.preventDefault()
+  e.clipboardData.setData('text/plain', JSON.stringify(payload))
+  announceCopied(payload)
+  return true
+}
+
+/**
+ * ⌘V 的主路径：原生 paste 事件，`e.clipboardData.getData` 同步读。
+ * 不是本工具的负载就不拦（返回 false），普通文本粘贴照旧。
+ */
+export function handlePasteEvent(e: ClipboardEvent): boolean {
+  if (editableTarget(e.target)) return false
+  const text = e.clipboardData?.getData('text/plain') ?? ''
+  const payload = parsePayload(text)
+  if (!payload) return false
+  e.preventDefault()
+  consumePayload(payload)
   return true
 }
 
@@ -193,7 +247,12 @@ export async function pasteObjects(): Promise<boolean> {
   }
   const payload = parsePayload(text)
   if (!payload) return false
+  consumePayload(payload)
+  return true
+}
 
+/** 负载落地：缺素材先走重新链接对话框，否则直接粘贴 */
+function consumePayload(payload: ClipPayload): void {
   const assets = useAssetStore.getState().byId
   const missingMap = new Map<string, MissingAsset>()
   for (const o of payload.objects) {
@@ -217,10 +276,9 @@ export async function pasteObjects(): Promise<boolean> {
       payload,
       missing: [...missingMap.values()],
     })
-    return true
+    return
   }
   materializePaste(payload, [])
-  return true
 }
 
 /** 真正落盘：一条历史记录。resolved 为缺失素材的处置结果。 */

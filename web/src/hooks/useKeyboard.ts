@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { usePalette } from '@/components/CommandPalette'
-import { copySelectedObjects, pasteObjects } from '@/lib/clipboard'
+import { handleCopyEvent, handlePasteEvent } from '@/lib/clipboard'
 import {
   changeZOrder,
   enterElementEdit,
@@ -111,19 +111,10 @@ export function useKeyboard() {
         duplicateSelected()
         return
       }
-      if (mod && e.key.toLowerCase() === 'c') {
-        // 只有画布上有选中对象才接管 ⌘C；否则让浏览器做普通文本复制
-        if (useSelectionStore.getState().ids.length) {
-          e.preventDefault()
-          void copySelectedObjects()
-        }
-        return
-      }
-      if (mod && e.key.toLowerCase() === 'v') {
-        // 异步读剪贴板：是本工具的对象负载才粘贴，普通文本不受影响
-        void pasteObjects()
-        return
-      }
+      // ⌘C / ⌘V 不在 keydown 层拦：让浏览器派发原生 copy/paste 事件，
+      // 由下面注册的 ClipboardEvent 监听同步读写 e.clipboardData——
+      // WebKit（Safari / 桌面壳）不给非编辑区的异步 readText/writeText，
+      // 走事件是跨标签页复制粘贴在所有浏览器都通的唯一路径。
       if (mod && e.key.toLowerCase() === 'a') {
         e.preventDefault()
         selectAll()
@@ -246,14 +237,20 @@ export function useKeyboard() {
       if (e.code === 'Space') useViewportStore.getState().setSpaceDown(false)
     }
     const onBlur = () => useViewportStore.getState().setSpaceDown(false)
+    const onCopy = (e: ClipboardEvent) => void handleCopyEvent(e)
+    const onPaste = (e: ClipboardEvent) => void handlePasteEvent(e)
 
     window.addEventListener('keydown', onKeyDown)
     window.addEventListener('keyup', onKeyUp)
     window.addEventListener('blur', onBlur)
+    document.addEventListener('copy', onCopy)
+    document.addEventListener('paste', onPaste)
     return () => {
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('keyup', onKeyUp)
       window.removeEventListener('blur', onBlur)
+      document.removeEventListener('copy', onCopy)
+      document.removeEventListener('paste', onPaste)
     }
   }, [])
 }
