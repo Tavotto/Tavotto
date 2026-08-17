@@ -116,6 +116,7 @@ Magplot does not ask you to write them in any special way.
 |---|---|
 | **Text** | Title, axis labels, tick labels, legend, annotations — content, size, colour, weight, style, rotation, opacity, visibility. Draggable. |
 | **Data series** | Line width, dash pattern, colour, markers (scatter markers can be swapped wholesale), legend entry order |
+| **Arrows** | Arrows your script draws (`FancyArrowPatch`): drag the whole arrow or either endpoint, and change arrow style, line style, width, head size and colour. Arrows attached to `annotate()` keep their data anchors — style only. |
 | **Axes** | Tick groups, axis lines, grid, 3D viewing angle (elev/azim/roll), 3D axis arrows and panes |
 | **Figure** | Overall figure size (the layout reflows), background |
 | **Not editable** | Data-space properties such as axis limits, scales and spines, and colourbar orientation. Change those in your script. |
@@ -151,7 +152,8 @@ your figures or data is uploaded.
 
 | | |
 |---|---|
-| Documents and layouts | `~/Library/Application Support/Magplot/` (Linux `~/.local/share/magplot/`, Windows `%LOCALAPPDATA%\Magplot\`) |
+| Documents and autosaves | `~/Library/Application Support/Magplot/` (Linux `~/.local/share/magplot/`, Windows `%LOCALAPPDATA%\Magplot\`) |
+| Exports and saved canvas files | Next to your work, where you can find them: exports in a sibling `<project>-exports/` folder, canvas files in `canvases/` inside the project |
 | Your scripts and figures | Read-only, unless you explicitly choose "write back to original file" — which can be locked off per project |
 | The only outbound request | A once-a-day check for a new release, which you can turn off in Settings → Check for updates |
 
@@ -186,7 +188,7 @@ your figures or data is uploaded.
 ```sh
 .venv/bin/python -m pytest        # backend
 cd web && pnpm test               # frontend
-cd web && pnpm tsc --noEmit && pnpm build
+cd web && pnpm build              # type-check (tsc -b) + bundle
 
 # Windows desktop only: build the bundled rendering runtime before packaging.
 # Versions are pinned in packaging/runtime-lock.json; the script verifies the

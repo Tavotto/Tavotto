@@ -62,6 +62,16 @@ PyMuPDF（**只经 `src/magplot/pdfbackend/`**），前端 `web/`
   runtime，桌面产物一律真窗口、不再有「启动后开浏览器」的形态。
 - wheel/sdist 不含 `src-tauri/`（hatchling 白名单）；`src-tauri/target/`、
   `src-tauri/gen/` 进 .gitignore。
+- **安装界面（2026-08-17）**：macOS dmg 带品牌版式——背景图
+  `assets/brand/dmg-background.png` 由 `scripts/build_dmg_background.py` 生成
+  （PyMuPDF 直绘，图标落点与 `make_dmg.sh` 的 Finder 版式严格同源），
+  make_dmg.sh 里 Finder 脚本失败只降级为朴素版式、绝不断发布链。
+  Windows NSIS 用 vendored 模板 `src-tauri/windows/installer.nsi`
+  （上游 tauri-cli v2.11.4 + `MAGPLOT PATCH` 标注的最小补丁：去欢迎页 /
+  极简进度 / 品牌配色；头图侧栏图走 tauri.conf.json 的 nsis.* 配置）。
+  **@tauri-apps/cli 钉死在 2.11.4**——模板与打包器必须同源，升级 CLI 时
+  取新模板重打补丁并同步 build_desktop.py / desktop-tauri.yml
+  （tests/test_nsis_template.py 看护三处版本一致与 BMP 形态）。
 
 ## PDF 后端边界（许可证相关，勿破坏）
 
@@ -147,6 +157,13 @@ Python，首次渲染也不联网：
   axis.line、箭头指向坐标增大端，视角旋转/换边自动跟随；matplotlib 升版
   破坏点由 test_axes3d_axis_arrows_roundtrip 看护）。
   盒内数据属性（spines/lim/scale）仍禁用。
+- **图内箭头（FancyArrowPatch）**：脚本 `add_patch` 的独立箭头 manifest 带
+  `arrow_endpoints`（figure 分数、y 向下），可整体拖动 / 拖单个端点
+  （override `endpoints_frac`=[ax,ay,bx,by]，setter 经箭头自身 transform 逆变换
+  后 `set_positions`）；arrowstyle / linestyle 两类箭头都可改
+  （识别不出的自定义样式报 "custom"，选它=不动）。**annotate 的 arrow_patch
+  端点由注释机制每次 draw 重定位，绝不出端点**——出了用户拖完下一帧就弹回
+  （test_arrowpatch_endpoints_and_style_roundtrip 看护）。
 - 散点 marker 可整体替换（set_paths，首改前缓存原始路径，"original" 还原）；
   图例条目顺序 entry_order（重建型，manifest type="order"）。**图例重建后必须
   `_legend_box.set_offset(leg._findoffset)` 重挂定位回调**，否则导出时图例整块
@@ -196,6 +213,11 @@ Python，首次渲染也不联网：
 - **项目包**：`POST /api/package` 打 zip（layout+素材+脚本+sha1 清单）；
   `POST /api/package/open` 检视（缺失/sha1 漂移），素材永不自动写入图库。
 - **导出**：请求可带 `proof` 对象 → 随成图写 `_proof.json`。
+- **用户可见的产物不进数据目录（2026-08-17）**：导出默认落在**项目同级**的
+  `<项目名>-exports/`（settings.export_dir 可覆盖；同级建不出来退回数据目录，
+  测试读响应里的 export_dir 而不是猜路径）；命名画布文件存**项目目录下**的
+  `canvases/`（旧数据目录 layouts/ 只读兼容合并列出，重名以项目文件为准）。
+  autosave / versions / styles 等内部机制仍留在数据目录。
 - 前端文档模型新增可选字段（schema 仍为 2，旧文档兼容）：
   `PanelObject.lockedGids / flipH / flipV`、`ObjectBase.layoutPinned`、
   `FigureDocument.layoutGroups`（行/列/网格约束，id 即 groupId，
@@ -227,6 +249,21 @@ Python，首次渲染也不联网：
   持久化/读档统一走 `migrateToProject()`（接受 2/3）。画布切换换入换出
   undo 栈（canvasSessions）与 UI 会话（`store/canvasSession.ts`）。
   标签页 openTabs 按 documentId 存本机。后端 versions/package 接受 schema 2/3。
+- **剪贴板（2026-08-17）**：⌘C/⌘V 的主路径是**原生 copy/paste ClipboardEvent**
+  （`e.clipboardData` 同步读写，`lib/clipboard.ts` 的 handleCopyEvent /
+  handlePasteEvent）——WebKit（Safari / 桌面壳）不给非编辑区的异步
+  readText/writeText，跨标签页粘贴只有这条路全浏览器通。keydown 层不再拦
+  ⌘C/⌘V；按钮触发的复制仍走 writeText（点击是用户手势）。e2e
+  cross-tab-paste.spec.ts 看护。
+- **撤销防线（2026-08-17，数据损坏级）**：`txnUpdate` 在无事务时**丢弃更新**
+  ——绝不静默直写 doc（拖动中事务被外部 endTxn/undo 结束后，pointermove 落进
+  静默分支 = 位移绕过历史、撤销永远找不回，真实用户撞见过）。一切撤销入口
+  （键盘 / 顶栏按钮 / 桌面菜单加速键）必须走 `runUndoRedo`（带
+  undoRedoBlocked 守卫）；undo/redo 的 applyPatches 有 try/catch，坏补丁丢弃
+  该条而不是让栈与文档错位。
+- **画布标签常驻图层**：每个打开的标签一个图层，非激活的用 canvases 快照渲染
+  并 display:none——docToCanvas/canvasToDoc 共享同一 objects 数组引用 +
+  ObjectView memo，切换标签 = 纯 CSS 显隐，不重建 DOM / 不重新解码图片。
 - **自动保存**：磁盘为主（`PUT /api/autosave/<docId>` 原子写
   `layouts/_autosave/`），localStorage 只留索引 + 崩溃兜底副本
   （写盘成功即清、读取按 updatedAt 取新）。失败发
@@ -251,6 +288,10 @@ Python，首次渲染也不联网：
 - `GET /api/ai/capabilities` 实测本机 CLI（安装/版本/模型/推理强度，两家不同构：
   claude 无强度选项就不给）；CLI 路径可经 `PATCH /api/ai/settings` 指定，
   **不允许硬编码私人路径**（pytest 看护）。run 可带 model/effort。
+- **CLI 子进程一律用 `_spawn_env()` 的增强 PATH**（探测与运行同一份）：
+  桌面壳从 Finder / 开始菜单启动时继承 GUI 的最小 PATH，npm shim 的
+  `#!/usr/bin/env node` 解析不到 node（`env: node: No such file or directory`）
+  ——把 CLI 所在目录 + 常见安装目录补到 PATH 末尾即可，不改用户已有排序。
 - **CLI 探测（Windows 尤其）**：`_search_dirs()` 在 PATH 之外把 npm 全局、
   `%LOCALAPPDATA%\Microsoft\WindowsApps`（**商店版 codex 的执行别名——真身在
   受 ACL 保护的 WindowsApps 包体里，只能走这个入口**）、WinGet/scoop/choco/

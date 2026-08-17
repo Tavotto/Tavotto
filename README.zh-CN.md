@@ -108,6 +108,7 @@ Magplot 不要求你按任何特殊方式写它们。
 |---|---|
 | **文字** | 标题、坐标轴标签、刻度标签、图例、图内注释——内容 / 字号 / 颜色 / 字重 / 字形 / 旋转 / 透明度 / 显隐，可直接拖动 |
 | **数据系列** | 线宽、线型、颜色、marker（散点可整体换形状）、图例条目顺序 |
+| **箭头** | 脚本画的箭头（`FancyArrowPatch`）：整体拖动、拖单个端点，改箭头样式 / 线型 / 线宽 / 帽大小 / 颜色。`annotate()` 的箭头保持数据锚点——只开放样式 |
 | **坐标轴** | 刻度组、轴线、网格、3D 视角（elev/azim/roll）、3D 轴箭头与背景面板 |
 | **图幅** | 整张图的尺寸（会重排版）、背景 |
 | **不开放** | 坐标轴范围、刻度尺度、spines 等数据空间属性，以及色条方向——这些请在脚本里改 |
@@ -137,7 +138,8 @@ PDF 会把每张原始矢量面板整块嵌进去，**文字仍然可选中、�
 
 | | |
 |---|---|
-| 文档与布局 | `~/Library/Application Support/Magplot/`（Linux `~/.local/share/magplot/`，Windows `%LOCALAPPDATA%\Magplot\`） |
+| 文档与自动保存 | `~/Library/Application Support/Magplot/`（Linux `~/.local/share/magplot/`，Windows `%LOCALAPPDATA%\Magplot\`） |
+| 导出成图与画布文件 | 就在你的项目旁边：导出在同级的 `<项目名>-exports/`，画布文件在项目内的 `canvases/`——找得到、好备份 |
 | 你的脚本与图 | 只读——除非你明确选择「写回原始文件」，且该权限可按项目锁死 |
 | 唯一的对外请求 | 每天一次检查有没有新版本，可在「设置 → 检查更新」关掉 |
 
@@ -170,7 +172,7 @@ PDF 会把每张原始矢量面板整块嵌进去，**文字仍然可选中、�
 ```sh
 .venv/bin/python -m pytest        # 后端
 cd web && pnpm test               # 前端
-cd web && pnpm tsc --noEmit && pnpm build
+cd web && pnpm build              # 类型检查（tsc -b）+ 打包
 
 # 只有打 Windows 桌面版才需要：构建内置渲染环境。
 # 版本锁在 packaging/runtime-lock.json；脚本会校验 CPython 下载的 SHA-256，
