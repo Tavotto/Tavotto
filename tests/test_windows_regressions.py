@@ -218,6 +218,21 @@ def test_startup_prints_reconfigure_stdout_to_utf8():
     assert 'reconfigure(encoding="utf-8"' in src
 
 
+def test_runtime_build_log_survives_cp1252_stdout():
+    """runtime 构建脚本的日志带「↓」（U+2193）；Windows 上管道 stdout 默认
+    cp1252/cp936，第一条下载日志就 UnicodeEncodeError 打死整个构建
+    （GitHub CI windows-exe-smoke 实测）。log() 必须自己兜底。"""
+    scripts = Path(__file__).resolve().parent.parent / "scripts"
+    r = subprocess.run(
+        [sys.executable, "-c",
+         "import sys; sys.path.insert(0, sys.argv[1]); "
+         "import build_worker_runtime as brt; brt.log('↓ https://example.invalid')",
+         str(scripts)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
+        env={**os.environ, "PYTHONIOENCODING": "cp1252"})
+    assert r.returncode == 0, r.stderr
+
+
 # ---------------- AI CLI 的 Windows 落点 --------------------------------------
 
 def test_cli_search_dirs_cover_windows_install_locations(monkeypatch):

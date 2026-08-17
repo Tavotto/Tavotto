@@ -66,7 +66,13 @@ class BuildError(RuntimeError):
 
 
 def log(msg: str) -> None:
-    print(msg, flush=True)
+    try:
+        print(msg, flush=True)
+    except UnicodeEncodeError:
+        # Windows 的控制台/管道默认 cp1252/cp936，编不出「↓」这类符号——
+        # 一条日志绝不能打死整个构建
+        enc = getattr(sys.stdout, "encoding", None) or "ascii"
+        print(msg.encode(enc, "backslashreplace").decode(enc, "replace"), flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -617,6 +623,12 @@ def build(lock: dict, out: Path, cache: Path, lock_sha: str,
 
 
 def main(argv: list[str] | None = None) -> int:
+    # 与 app.py 同一手：stdout 不是真控制台时会退回系统区域编码（cp1252/cp936）
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--lock", default=str(DEFAULT_LOCK))
     ap.add_argument("--out", default=str(DEFAULT_OUT))
