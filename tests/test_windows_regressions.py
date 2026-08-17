@@ -72,7 +72,7 @@ def _fake_workers(monkeypatch, figs, tmp_path, payload: bytes) -> None:
         script_sha1 = ""     # 空 = 会话没记指纹，前置的脚本检查自然跳过
         last_patch_hash = ""
 
-        def override(self, stem, patches):
+        def override(self, stem, patches, preview_dpi=None):
             return {"ok": True, "manifest": man, "warnings": []}
 
         def export(self, stem, patches, path, fmt="pdf", dpi=600):

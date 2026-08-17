@@ -12,7 +12,9 @@
 
   命令：ping / build / render / render_png / preview_png / export /
   cancel / shutdown。generation、revision、hash **worker 只回显不理解**
-  （校验归 supervisor）。完整契约见 `docs/adr/0003-worker-protocol-v1.md`。
+  （校验归 supervisor）。build / render / export 的成功响应带 `timings`
+  （毫秒，见 `_TIMED_COMMANDS`）。完整契约见
+  `docs/adr/0003-worker-protocol-v1.md`。
 
 * **legacy**（无 `protocol_version`）：老的扁平信封，行为一字不改——
   手工 `echo '{"cmd":"build"}' | python worker.py …` 调试时用的就是它。
@@ -37,6 +39,7 @@ import importlib
 import json
 import os
 import sys
+import time
 import traceback
 from pathlib import Path
 
@@ -76,6 +79,19 @@ _PATCH_COMMANDS = frozenset({"render", "preview_png", "export"})
 
 #: 需要 stem 的命令
 _STEM_COMMANDS = frozenset({"render", "render_png", "preview_png", "export"})
+
+#: 会在响应里带 `timings` 的命令（v1 **only**——legacy 信封的形状一字不改）。
+#: 加字段不升协议版本（ADR 0003 §1：两侧都必须容忍未知字段）。
+_TIMED_COMMANDS = frozenset({"build", "render", "export"})
+
+
+def _ms(t0: float) -> float:
+    """自 `t0`（perf_counter）以来的毫秒数，保留三位小数。
+
+    用 `perf_counter` 而不是 `time.time()`：后者会被系统改时间/NTP 校正带偏，
+    而这些数字是要拿去做「哪一段最慢」的判断的。
+    """
+    return round((time.perf_counter() - t0) * 1000.0, 3)
 
 
 class ProtocolError(Exception):
@@ -149,7 +165,15 @@ class Worker:
         self._seen: collections.deque = collections.deque(maxlen=64)
 
     # ---------------- build ----------------
-    def build(self) -> dict:
+    def build(self, timings: dict | None = None) -> dict:
+        """跑一次用户脚本，把产出的 Figure 全部收进内存。
+
+        `timings` 非空时填两个数：`script_build_ms` 是整个 build（脚本 +
+        instrument + 每个 stem 的首次预览），`script_exec_ms` 只是用户脚本
+        自己那一段。两者分开是因为它们的改法完全不同——前者大头在用户的
+        计算里（我们无能为力），差额才是引擎自己的开销。
+        """
+        t_build = time.perf_counter()
         if self.built:
             return self._stems_summary()
         self.out_dir.mkdir(parents=True, exist_ok=True)
@@ -212,6 +236,7 @@ class Worker:
         # 当场撞见过）。真跑 `python fig.py` 时 argv 就只有脚本自己。
         sys.argv = [str(self.script)]
 
+        t_script = time.perf_counter()
         with contextlib.redirect_stdout(sys.stderr):
             if self.entry == "__main__":
                 import runpy  # noqa: PLC0415 — 内联脚本（fig4c / fig_models）
@@ -219,6 +244,7 @@ class Worker:
             else:
                 module = importlib.import_module(self.script.stem)
                 getattr(module, self.entry)()
+        script_ms = _ms(t_script)
 
         for stem, fig in CAPTURE.items():
             state = overrides_mod.FigState(fig)
@@ -226,19 +252,42 @@ class Worker:
             STATES[stem] = state
             self._render(stem)
         self.built = True
+        if timings is not None:
+            timings["script_exec_ms"] = script_ms
+            timings["script_build_ms"] = _ms(t_build)
         return self._stems_summary()
 
     def _stems_summary(self) -> dict:
         return {"stems": {s: {"size_mm": self._manifest_cache[s]["size_mm"]}
                           for s in STATES}}
 
-    def _render(self, stem: str) -> dict:
-        """导出预览 SVG + 重建 manifest，写入 out_dir。"""
+    def _render(self, stem: str, timings: dict | None = None,
+                preview_dpi: int | None = None) -> dict:
+        """导出预览 SVG + 重建 manifest，写入 out_dir。
+
+        `preview_dpi` 只影响 SVG 里**嵌入位图**的分辨率（imshow / 光栅化的
+        面板）：纯矢量图上它一分钱都不值（实测 dpi 72→300 耗时与体积一模一样），
+        含 imshow 的图上 200→100 能让 savefig 从 ~29ms 降到 ~17ms、SVG 从
+        827KB 降到 196KB。给不给由调用方决定，缺省仍是 `--preview-dpi`。
+
+        计时口径（`timings` 非空时填）：
+
+        * `manifest_ms` —— `build_manifest`，其中包含一次 `fig.canvas.draw()`
+          （量每个元素的包围盒必须有 renderer）；
+        * `canvas_draw_ms` —— `savefig(svg)`。**SVG 序列化与 draw 在 matplotlib
+          里分不开**（`print_svg` 是「边画边写」的一趟），所以不单出 `svg_ms`，
+          两者合在这一个数里，见 ADR 0003 §9。
+        """
         state = STATES[stem]
+        t0 = time.perf_counter()
         man = manifest_mod.build_manifest(state, stem)
+        t1 = time.perf_counter()
         with _real_output():
             state.fig.savefig(self.out_dir / f"{stem}.svg", format="svg",
-                              dpi=self.preview_dpi)
+                              dpi=preview_dpi or self.preview_dpi)
+        if timings is not None:
+            timings["manifest_ms"] = round((t1 - t0) * 1000.0, 3)
+            timings["canvas_draw_ms"] = _ms(t1)
         (self.out_dir / f"{stem}.json").write_text(
             json.dumps(man, ensure_ascii=False, default=_json_default), encoding="utf-8")
         self._manifest_cache[stem] = man
@@ -250,10 +299,16 @@ class Worker:
         return [{"gid": g, "prop": p, "value": v}
                 for (g, p), v in state.applied.items()]
 
-    def _do_render(self, stem: str, patches: list) -> dict:
+    def _do_render(self, stem: str, patches: list,
+                   timings: dict | None = None,
+                   preview_dpi: int | None = None) -> dict:
         """应用全量 override 列表 + 重出预览 SVG/manifest（v1 的 render）。"""
+        t0 = time.perf_counter()
         warnings = overrides_mod.apply(STATES[stem], patches)
-        return {"manifest": self._render(stem), "warnings": warnings}
+        if timings is not None:
+            timings["patch_apply_ms"] = _ms(t0)
+        return {"manifest": self._render(stem, timings, preview_dpi),
+                "warnings": warnings}
 
     def _do_render_png(self, stem: str, width: int) -> dict:
         """从 live figure 按目标像素宽出高清位图（imshow 类面板显示用）。"""
@@ -279,7 +334,8 @@ class Worker:
         return {"path": str(path)}
 
     def _do_export(self, stem: str, patches: list, path: str,
-                   fmt: str = "pdf", dpi: int = 600) -> dict:
+                   fmt: str = "pdf", dpi: int = 600,
+                   timings: dict | None = None) -> dict:
         """全质量导出（供 PyMuPDF 合成）。
 
         与 preview_png 同一纪律：export 是**状态中立**的一次性动作。
@@ -290,12 +346,19 @@ class Worker:
         """
         state = STATES[stem]
         prev = self._snapshot(state)
+        t0 = time.perf_counter()
         warnings = overrides_mod.apply(state, patches)
+        t1 = time.perf_counter()
         out = Path(path)
         out.parent.mkdir(parents=True, exist_ok=True)
         try:
             with _real_output():
                 state.fig.savefig(out, format=fmt, dpi=int(dpi))
+            if timings is not None:
+                timings["patch_apply_ms"] = round((t1 - t0) * 1000.0, 3)
+                # 还原那一次的耗时**不算进 export_ms**：它是状态中立这条纪律的
+                # 代价，不是用户等的那张图的成本（但它确实要花时间，见 total_ms）
+                timings["export_ms"] = _ms(t1)
         finally:
             # 还原那次的 warnings 丢弃：报给调用方的必须是「这组 patches
             # 有没有写不进去的」，混进还原噪音会让写回自检误判。
@@ -337,8 +400,12 @@ class Worker:
         return {"ok": False, "error": f"未知指令: {cmd}"}
 
     # ---------------- 协议 v1 ----------------
-    def _ensure_built(self) -> None:
+    def _ensure_built(self, timings: dict | None = None) -> None:
         """按需 build；用户脚本炸了报 script_error（重试没有意义）。
+
+        `timings` 一路传下去：冷启动的 render 里 `script_build_ms` 才是那几十秒
+        的去向，不带上的话响应里只剩几毫秒的 apply/draw，读数与用户的体感完全
+        对不上。
 
         build 里除了跑脚本还有 mkdir / 预览 SVG 落盘，理论上也会因磁盘问题
         失败——这里**一律归到 script_error**：绝大多数是脚本自己的问题，
@@ -349,7 +416,7 @@ class Worker:
         if self.built:
             return
         try:
-            self.build()
+            self.build(timings)
         except Exception as exc:  # noqa: BLE001 — 转成结构化错误，进程不退出
             raise ProtocolError("script_error", f"脚本执行失败: {exc}",
                                 retryable=False,
@@ -394,9 +461,11 @@ class Worker:
         if cmd in _PATCH_COMMANDS and not isinstance(patches, list):
             raise ProtocolError("bad_request", "payload.patches 必须是数组")
 
-        self._ensure_built()
+        # 阶段计时（毫秒）。**只在 v1 出现**，legacy 信封的形状一字不改。
+        timings: dict[str, float] = {}
+        self._ensure_built(timings)
         if cmd == "build":
-            return self._stems_summary()
+            return {**self._stems_summary(), "timings": timings}
 
         result: dict = {}
         stem = req.get("stem")
@@ -416,10 +485,19 @@ class Worker:
                 raise ProtocolError("bad_request", "payload.path 必须是非空字符串")
         width = _int_arg(payload, "width", 800 if cmd == "render_png" else 400)
         dpi = _int_arg(payload, "dpi", 600)
+        # 可选：这一次预览 SVG 用的 dpi（缺省 = 启动参数 --preview-dpi）。
+        # 非正数一律 bad_request——0 会让 matplotlib 抛在渲染里，报出来的
+        # 是 internal + 一段 traceback，指向完全错误的方向。
+        preview_dpi = None
+        if "preview_dpi" in payload and payload["preview_dpi"] is not None:
+            preview_dpi = _int_arg(payload, "preview_dpi", self.preview_dpi)
+            if preview_dpi <= 0:
+                raise ProtocolError("bad_request",
+                                    f"payload.preview_dpi 必须为正: {preview_dpi}")
 
         try:
             if cmd == "render":
-                result = self._do_render(stem, patches)
+                result = self._do_render(stem, patches, timings, preview_dpi)
             elif cmd == "render_png":
                 result = self._do_render_png(stem, width)
             elif cmd == "preview_png":
@@ -427,7 +505,8 @@ class Worker:
                     stem, patches, width, str(payload.get("tag", "p")))
             elif cmd == "export":
                 result = self._do_export(stem, patches, payload["path"],
-                                         str(payload.get("format", "pdf")), dpi)
+                                         str(payload.get("format", "pdf")), dpi,
+                                         timings)
         except ProtocolError:
             raise
         except Exception as exc:  # noqa: BLE001
@@ -435,6 +514,8 @@ class Worker:
             raise ProtocolError("internal", str(exc) or exc.__class__.__name__,
                                 retryable=True,
                                 traceback_text=traceback.format_exc()) from exc
+        if cmd in _TIMED_COMMANDS:
+            result["timings"] = timings
         return result
 
     def _cancel(self, payload: dict) -> dict:

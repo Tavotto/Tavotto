@@ -112,6 +112,14 @@ PyMuPDF（**只经 `src/magplot/pdfbackend/`**），前端 `web/`
   边界废掉。许可证说明见 `docs/LICENSING.md`。
 - 面板的项目路径解析与引擎重渲染留在 app 层的 `_resolve_panel_source` 回调里，
   后端只管画。几何公式仍与前端严格同源，pytest 用 get_drawings() 做几何级看护。
+- **`/api/render` 的磁盘缓存键 = `sha1(id|内容 sha1|宽度|后端-版本)`**（2026-08-18）。
+  **不许用 mtime 当身份**：它回答的是「什么时候被碰过」，内容没变而 mtime 变了
+  （touch / 从备份还原 / 同步工具）会白丢一张 3200px 预览；换了 PyMuPDF 版本
+  像素可能已经不同却照旧命中，所以 `BACKEND_NAME/BACKEND_VERSION` 进契约层。
+  内容哈希走进程内 `(mtime,size)→sha1` memo（memo 失效信号 ≠ 身份）。写入一律
+  临时文件 + `os.replace`（同键并发会读到半个 PNG），零字节缓存当场删掉重建
+  ——临时文件后缀**必须还是 .png**，后端按扩展名定格式。
+  看护 `tests/test_render_cache.py`。
 
 ## Windows 内置渲染 runtime（2026-08-17）
 
@@ -177,6 +185,17 @@ Python，首次渲染也不联网：
   golden vectors 在 `tests/golden/patch_vectors.json`——Rust supervisor 要
   逐字节复现，改任一侧必须同步另一侧。cancel 只是尽力而为的 no-op，硬取消 =
   kill + 重启。完整契约见 `docs/adr/0003-worker-protocol-v1.md`，改协议前先读。
+- **计时管道与性能基线（2026-08-18）**：worker 的 build/render/export 响应带
+  `timings`（`script_build_ms` / `patch_apply_ms` / `canvas_draw_ms` /
+  `manifest_ms`；**没有 `svg_ms`**——SVG 序列化与 draw 在 matplotlib 里分不开），
+  `pool` 补 `queue_wait_ms` / `total_ms` 并把冷启动那次的 build 计时折叠进来，
+  `app.py` 再补 `worker_get_ms`（取/spawn 会话，既不属于 worker 也不属于 build，
+  **漏了它冷启动的十几秒在数据里就凭空消失**）。全部是加字段，协议不升版；
+  legacy 信封一个字节不加。基线报告与「值得做的优化」清单在
+  `docs/perf-baseline.md`，重测走 `python scripts/bench_render.py`。
+  **先测量后优化**：那份文档里被数据否掉的两条（挪 SVG 顺序省 draw = 图例 bbox
+  错 0.18–0.32 分数，写回自检必报 divergence；`draw_without_rendering` 只省 8%）
+  别再重试。
 - **live-figure 会话**：worker 跑一次脚本（拦截 `Figure.savefig` + `paper_style.save`，
   不写真实文件），Figure 常驻内存；override 直接 mutate artist 再导出带 gid 的
   SVG（dpi≈120 预览）——冷启动秒到分钟级，热态 ~40ms。
@@ -492,6 +511,11 @@ Python，首次渲染也不联网：
   文件占用、盘符/反斜杠/中文路径、端口占用、CLI 只有 .cmd、解释器探测）。
 - 后端冒烟（示例项目）：`magplot --figures examples/figures --no-browser` 后
   `curl -X POST /api/engine/render -d '{"id":"Fig1_kinetics.pdf","patches":[]}'`
+- **性能基线**：`python scripts/bench_render.py --python .venv/bin/python`
+  （真 HTTP 链路、冷启动/热 override 中位/导出、两条控制面对照）。结论与前后对照
+  都写进 `docs/perf-baseline.md`——**改性能前先在那儿指出一个数字**。
+  注意它**默认不隔离 HOME**：重置 HOME 会让每次冷启动多出 9 秒的 matplotlib
+  字体缓存重建，盖掉所有别的数字（要量首次体验用 `--fresh-home`）。
 - 导出保真：导出 PDF 用 pymupdf `get_text()` 验证矢量文字。
 - 前端（web/）：`pnpm test && pnpm build`；界面用 agent-browser 实测。
   **别用 `tsc --noEmit` 当类型检查**：根 tsconfig 是 `files:[]`+references 的方案文件，

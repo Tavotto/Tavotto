@@ -371,7 +371,7 @@ class _FakeWorker:
         self.rev = 7
         self._exc = exc
 
-    def override(self, stem, patches):
+    def override(self, stem, patches, preview_dpi=None):
         if self._exc is not None:
             raise self._exc
         return {"manifest": {"elements": []}, "warnings": []}
@@ -415,6 +415,38 @@ def test_render_events_carry_pj(client, tmp_path, monkeypatch, sse_spy):
     assert sent["render.done"]["pj"] == idb
     # 认领的是请求指名的项目，不是默认项目
     assert idb != ida
+
+
+def test_render_response_carries_timings(client, tmp_path, monkeypatch, sse_spy):
+    """`/api/engine/render` 的响应必须带 `timings`，且里面有 `worker_get_ms`。
+
+    取会话（必要时 spawn 解释器 + import matplotlib）既不在 worker 的计时里
+    也不在 build 里——只有 app 层量得到。少了它，冷启动的十几秒在数据里
+    凭空消失，性能判断就全建立在一个漏项上。
+    """
+    figs = _make_figs(tmp_path, "timing")
+    client.post("/api/projects/open", json={"path": str(figs)})
+    _stub_engine(monkeypatch, _FakeWorker())
+
+    body = client.post("/api/engine/render",
+                       json={"id": "p1.pdf", "patches": []}).get_json()
+    assert isinstance(body["timings"], dict)
+    assert isinstance(body["timings"]["worker_get_ms"], (int, float))
+
+
+def test_render_rejects_a_bogus_preview_dpi(client, tmp_path, monkeypatch, sse_spy):
+    """preview_dpi 写错是调用方的错（400），不能变成一次 500 渲染失败。"""
+    figs = _make_figs(tmp_path, "dpi")
+    client.post("/api/projects/open", json={"path": str(figs)})
+    _stub_engine(monkeypatch, _FakeWorker())
+
+    for bad in ("很高", 0, -5):
+        resp = client.post("/api/engine/render",
+                           json={"id": "p1.pdf", "patches": [], "preview_dpi": bad})
+        assert resp.status_code == 400, (bad, resp.get_json())
+    assert client.post("/api/engine/render",
+                       json={"id": "p1.pdf", "patches": [],
+                             "preview_dpi": 96}).status_code == 200
 
 
 def test_render_failed_event_carries_pj(client, tmp_path, monkeypatch, sse_spy):

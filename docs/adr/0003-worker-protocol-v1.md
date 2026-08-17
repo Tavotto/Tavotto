@@ -194,6 +194,42 @@ last-wins / 乱序等价 / 非法剔除 / 中文·µ·⁻¹ / 浮点 / 嵌套 / 
   普通 `serde_json` 就够，不必开 arbitrary precision。
 - 非有限浮点（NaN / Infinity）不是 JSON 值，一律剔除，不写成裸 `NaN`。
 
+### 9. 阶段计时 `timings`（加字段，不升版本）
+
+`build` / `render` / `export` 的**成功响应**带一个 `timings` 对象（毫秒，float）。
+**legacy 信封一个字节都不加**（`{"ok":true,"manifest":…,"warnings":…}` 的形状是
+契约）。加字段不升版本——两侧本来就必须容忍未知字段（§1）。
+
+| 命令 | 键 | 含义 |
+|---|---|---|
+| `build` | `script_exec_ms` | 跑用户脚本那一段（import + entry） |
+| `build` | `script_build_ms` | 整个 build（脚本 + instrument + 每个 stem 的首次预览） |
+| `render` | `patch_apply_ms` | `overrides.apply` |
+| `render` | `canvas_draw_ms` | `savefig(svg)` |
+| `render` | `manifest_ms` | `build_manifest`（内含一次 `fig.canvas.draw()`） |
+| `export` | `patch_apply_ms` / `export_ms` | 应用 patches / 全质量 `savefig` |
+
+**为什么没有 `svg_ms`**：SVG 序列化与 draw 在 matplotlib 里是同一趟
+（`print_svg` 边画边写），分不开。硬拆只能靠再画一遍，那就把测量本身变成了
+被测对象。合并在 `canvas_draw_ms` 里，如实注明。
+
+worker 只说**自己那一段**。父进程（`pool`）另外补两个键：`queue_wait_ms`
+（请求发出去之前排了多久）与 `total_ms`（父进程看到的整次往返），worker 已给的
+键一律不覆盖。冷启动那次 render 会把顺带触发的 build 计时折叠进来
+（`script_*` + `build_total_ms`）——用户等的是一件事，而 build 是另一条命令，
+不折叠的话响应里只剩十几毫秒的 apply/draw，而他刚等了半分钟。基线与口径见
+`docs/perf-baseline.md`。
+
+### 10. `render` 的可选 `preview_dpi`
+
+`payload.preview_dpi`（正整数，可缺省）覆盖本次预览 SVG 的 dpi；不给就用 worker
+启动参数 `--preview-dpi`。**只影响 SVG 里嵌入位图的分辨率**：含 imshow 的面板上
+200→100 让 `canvas_draw_ms` 降三分之一、SVG 体积降四分之三；纯矢量图上完全无效
+（实测字节数相同）。非正数是 `bad_request`——0 交给 matplotlib 会炸在渲染里，
+报出来的是 `internal` + 一段指向错误方向的 traceback。
+
+不给这个字段时**信封形状一字不变**，既有调用方与 golden 断言不受影响。
+
 ## 影响面与非目标
 
 - **Flask HTTP API 与前端零改动**：`pool.EngineWorker` 的 Python 方法签名
@@ -211,4 +247,7 @@ last-wins / 乱序等价 / 非法剔除 / 中文·µ·⁻¹ / 浮点 / 嵌套 / 
 - `tests/test_worker_protocol.py`：pool 侧信封构造、回显校验、错误映射、
   generation 递增（假子进程，不需要科学栈）。
 - `tests/test_worker_roundtrip.py` 末节：真 worker 的 v1 全链路、错误信封形状、
-  hash_mismatch、cancel、**legacy 响应形状不变**。
+  hash_mismatch、cancel、**legacy 响应形状不变**、`timings` 的键集合与
+  `preview_dpi` 的校验。
+- `tests/test_worker_protocol.py` 末节：控制面补的 `queue_wait_ms`/`total_ms`、
+  冷启动折叠 build 计时、不给 `preview_dpi` 时 payload 一字不变。

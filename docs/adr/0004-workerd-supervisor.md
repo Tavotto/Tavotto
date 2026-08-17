@@ -144,6 +144,14 @@ worker 原样回显。**读线程给它读到的每一行都打上自己那一�
   杀掉一次正在跑的渲染去插队并不划算。
 - **队列满立即拒绝**（`queue_full`，retryable），绝不把调用方挂在一条排不上的队上。
 
+**`queue_wait_ms` 的口径在两条控制面上不一样，如实标注**：Python 池里「排队」
+就是抢 `w.lock`，量得到；workerd 里真正的排队发生在 Rust 的合并队列中，Flask
+侧只能量到「发出请求前自己等了多久」（≈0）。workerd 若在响应里带自己的排队时长
+（顶层 `queue_wait_ms`）就**透传优先**，没带就用 Python 侧那个数——所以 workerd
+路径上的 0.0ms 只说明「Flask 没等」，**不说明没排队**。本阶段不为此改 Rust
+（`session.rs` 对 worker 的结果字段是整体透传的，worker 的 `timings` 自动到位）。
+基线与实测见 `docs/perf-baseline.md`。
+
 ### 7. 超时 / 取消 / 重启
 
 - **超时**：档位由请求携带。超时即 kill worker 并报 `worker_timeout`；下一条请求

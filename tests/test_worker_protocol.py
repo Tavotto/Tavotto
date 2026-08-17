@@ -225,3 +225,58 @@ def test_dead_worker_and_empty_response_keep_their_old_errors(tmp_path):
     w2.proc.returncode = 0
     with pytest.raises(pool.WorkerError, match="已退出"):
         w2.request({"cmd": "ping"})
+
+
+# ------------------------------ 计时管道 ------------------------------
+def test_control_plane_adds_queue_wait_and_total(tmp_path):
+    """父进程补的两个数一定在：worker 只说自己那一段，排队与往返归控制面。"""
+    w = _worker(lambda env: _echo(env, manifest={}, warnings=[],
+                                  timings={"patch_apply_ms": 1.5,
+                                           "canvas_draw_ms": 9.0,
+                                           "manifest_ms": 4.0}),
+                tmp_path)
+    resp = w.override("Fig1", [])
+    t = resp["timings"]
+    # worker 自报的一个都不许被改
+    assert t["patch_apply_ms"] == 1.5 and t["canvas_draw_ms"] == 9.0
+    assert t["manifest_ms"] == 4.0
+    assert isinstance(t["queue_wait_ms"], float) and t["queue_wait_ms"] >= 0
+    assert isinstance(t["total_ms"], float) and t["total_ms"] >= t["queue_wait_ms"]
+
+
+def test_timings_survive_a_worker_that_reports_none(tmp_path):
+    """worker 一个 timings 都不给（老 worker / legacy 分支）也不能炸。"""
+    w = _worker(lambda env: _echo(env, manifest={}, warnings=[]), tmp_path)
+    resp = w.override("Fig1", [])
+    assert set(resp["timings"]) == {"queue_wait_ms", "total_ms"}
+
+
+def test_cold_render_folds_in_the_build_timings(tmp_path):
+    """冷启动那一次 render 必须带上 build 的耗时——用户等的是同一件事。
+
+    不并过来的话响应里只剩几毫秒的 apply/draw，而用户刚等了半分钟。
+    """
+    def responder(env):
+        if env["cmd"] == "build":
+            return _echo(env, stems={}, timings={"script_build_ms": 4200.0,
+                                                 "script_exec_ms": 4100.0})
+        return _echo(env, manifest={}, warnings=[],
+                     timings={"patch_apply_ms": 0.4, "canvas_draw_ms": 8.0})
+
+    w = _worker(responder, tmp_path)
+    w.built = False
+    t = w.override("Fig1", [])["timings"]
+    assert t["script_build_ms"] == 4200.0 and t["script_exec_ms"] == 4100.0
+    assert t["build_total_ms"] >= 0          # build 那次往返，与 render 的分开
+    assert t["canvas_draw_ms"] == 8.0        # render 自己那份没被盖掉
+    # 已经 built 的会话不再折叠（第二次渲染不该凭空冒出 script_build_ms）
+    assert "script_build_ms" not in w.override("Fig1", [])["timings"]
+
+
+def test_preview_dpi_is_only_sent_when_asked(tmp_path):
+    """不给 preview_dpi 时信封形状一字不变（老调用方与 golden 断言都靠这条）。"""
+    w = _worker(lambda env: _echo(env, manifest={}, warnings=[]), tmp_path)
+    w.override("Fig1", [])
+    assert w.proc.stdin.sent[-1]["payload"] == {"patches": []}
+    w.override("Fig1", [], preview_dpi=96)
+    assert w.proc.stdin.sent[-1]["payload"] == {"patches": [], "preview_dpi": 96}

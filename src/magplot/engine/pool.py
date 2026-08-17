@@ -106,6 +106,52 @@ _lock = threading.Lock()
 _EMPTY_PATCH_HASH = patchspec.patch_hash([])
 
 
+def _merge_timings(resp: dict, queue_wait_ms: float, total_ms: float) -> dict:
+    """把控制面自己的两段计时并进 worker 回来的 `timings`。
+
+    分工：worker 的那几个数说的是「进了 worker 之后各阶段花了多少」
+    （`script_build_ms` / `patch_apply_ms` / `canvas_draw_ms` / `manifest_ms`），
+    这里补的两个是**父进程视角**——
+
+    * `queue_wait_ms`：请求发出去之前排了多久。Python 池里就是抢 `w.lock` 的
+      时间（同一会话上一次渲染没跑完，后来的全堵在这儿），workerd 那边由它
+      自己的合并队列体现（口径差异见 ADR 0004）。
+    * `total_ms`：父进程看到的整次往返。
+
+    `total_ms − queue_wait_ms −（worker 各阶段之和）` 就是协议与管道的开销——
+    没有这两个数，一次「慢」到底慢在排队、渲染还是序列化上永远说不清。
+    worker 已经给出的键**一律不覆盖**：那是它那一侧的事实。
+    """
+    got = resp.get("timings")
+    timings = dict(got) if isinstance(got, dict) else {}
+    timings.setdefault("queue_wait_ms", round(queue_wait_ms, 3))
+    timings["total_ms"] = round(total_ms, 3)
+    resp["timings"] = timings
+    return resp
+
+
+def _fold_build_timings(resp: dict, build: dict | None) -> dict:
+    """把「顺带触发的那次 build」的计时并进本次响应。
+
+    协议里 build 与 render 是两条命令（`ensure_built()` 单独发一条），但用户
+    等的是**一次**渲染：冷启动那一下的几十秒全在 build 里。不并过来的话，
+    响应里只剩十几毫秒的 apply/draw——读数与体感对不上的性能数据比没有更糟。
+
+    build 的往返总时长单列 `build_total_ms`，**不去改 render 自己的
+    `total_ms`**：后者的定义是「这条 render 请求的往返」，混进别的命令就没法
+    再和热态那些数放在一列里比。
+    """
+    if not build:
+        return resp
+    timings = resp.setdefault("timings", {})
+    for key in ("script_exec_ms", "script_build_ms"):
+        if key in build:
+            timings[key] = build[key]
+    if "total_ms" in build:
+        timings["build_total_ms"] = build["total_ms"]
+    return resp
+
+
 def _norm_dir(figures_dir: str | Path) -> str:
     """池键里的项目标识：解析成绝对路径，大小写不敏感的平台统一小写。"""
     try:
@@ -607,7 +653,11 @@ class EngineWorker:
         self._touch()
         env = self._envelope(obj)
         rid = env["request_id"]
+        t_req = time.perf_counter()
         with self.lock:
+            # 拿到锁的那一刻 = 这条请求真正开始被处理。Python 池没有队列，
+            # 「排队」全表现为在这把锁上等——所以它就是 queue_wait 的量法。
+            t_lock = time.perf_counter()
             if not self.alive():
                 raise WorkerError("worker 进程已退出", self._log_tail())
             self.proc.stdin.write(json.dumps(env, ensure_ascii=False) + "\n")
@@ -624,7 +674,8 @@ class EngineWorker:
                         resp.get("worker_patch_hash"), self.script_name)
         if not resp.get("ok"):
             raise self._error_of(resp)
-        return resp
+        return _merge_timings(resp, (t_lock - t_req) * 1000.0,
+                              (time.perf_counter() - t_req) * 1000.0)
 
     def ensure_built(self) -> dict:
         # build 要跑用户整个脚本（heavy 的分钟级），给最宽的一档
@@ -633,22 +684,25 @@ class EngineWorker:
         self.last_patch_hash = _EMPTY_PATCH_HASH
         return resp
 
-    def override(self, stem: str, patches: list) -> dict:
-        if not self.built:
-            self.ensure_built()
-        resp = self.request({"cmd": "override", "stem": stem, "patches": patches},
-                            REQUEST_TIMEOUT)
+    def override(self, stem: str, patches: list,
+                 preview_dpi: int | None = None) -> dict:
+        build = self.ensure_built().get("timings") if not self.built else None
+        payload = {"cmd": "override", "stem": stem, "patches": patches}
+        # 不给就**一个字段都不加**：信封形状对既有调用方一字不变
+        if preview_dpi:
+            payload["preview_dpi"] = int(preview_dpi)
+        resp = self.request(payload, REQUEST_TIMEOUT)
         self.rev += 1
         self.last_patch_hash = patchspec.patch_hash(patches)
-        return resp
+        return _fold_build_timings(resp, build)
 
     def export(self, stem: str, patches: list, path: str,
                fmt: str = "pdf", dpi: int = 600) -> dict:
-        if not self.built:
-            self.ensure_built()
-        return self.request({"cmd": "export", "stem": stem, "patches": patches,
+        build = self.ensure_built().get("timings") if not self.built else None
+        resp = self.request({"cmd": "export", "stem": stem, "patches": patches,
                              "path": path, "format": fmt, "dpi": dpi},
                             EXPORT_TIMEOUT)
+        return _fold_build_timings(resp, build)
 
     def svg_path(self, stem: str) -> Path:
         return self.out_dir / f"{stem}.svg"
@@ -860,7 +914,9 @@ class WorkerdWorker:
 
         self.last_used = time.time()
         self._touch()
+        t_req = time.perf_counter()
         for attempt in (0, 1):
+            t_call = time.perf_counter()
             try:
                 resp = self._client.call(op, session_id=self._session_id,
                                          stem=stem, payload=payload or {},
@@ -878,7 +934,16 @@ class WorkerdWorker:
                 LOG.warning("worker 报告 patch 哈希不一致: %s → %s（%s）",
                             resp.get("canonical_patch_hash"),
                             resp.get("worker_patch_hash"), self.script_name)
-            return resp
+            # queue_wait 的口径与 Python 池**不一样，这里如实标注**：真正的排队
+            # 发生在 workerd 的合并队列里（Rust 侧），workerd 自报就透传它；
+            # 没自报时只能给 Python 侧那段（≈0，本进程不排队），别把它当成
+            # 「没排队」。差异见 ADR 0004 §6。
+            reported = resp.get("queue_wait_ms")
+            wait_ms = (float(reported) if isinstance(reported, (int, float))
+                       and not isinstance(reported, bool)
+                       else (t_call - t_req) * 1000.0)
+            return _merge_timings(resp, wait_ms,
+                                  (time.perf_counter() - t_req) * 1000.0)
         raise WorkerError("workerd 会话重开后仍不可用", self._log_tail(),
                           code="session_dead")
 
@@ -903,22 +968,24 @@ class WorkerdWorker:
         self.last_patch_hash = _EMPTY_PATCH_HASH
         return resp
 
-    def override(self, stem: str, patches: list) -> dict:
-        if not self.built:
-            self.ensure_built()
-        resp = self._call("render", REQUEST_TIMEOUT, stem=stem,
-                          payload={"patches": patches})
+    def override(self, stem: str, patches: list,
+                 preview_dpi: int | None = None) -> dict:
+        build = self.ensure_built().get("timings") if not self.built else None
+        payload: dict = {"patches": patches}
+        if preview_dpi:
+            payload["preview_dpi"] = int(preview_dpi)
+        resp = self._call("render", REQUEST_TIMEOUT, stem=stem, payload=payload)
         self.rev += 1
         self.last_patch_hash = patchspec.patch_hash(patches)
-        return resp
+        return _fold_build_timings(resp, build)
 
     def export(self, stem: str, patches: list, path: str,
                fmt: str = "pdf", dpi: int = 600) -> dict:
-        if not self.built:
-            self.ensure_built()
-        return self._call("export", EXPORT_TIMEOUT, stem=stem,
+        build = self.ensure_built().get("timings") if not self.built else None
+        resp = self._call("export", EXPORT_TIMEOUT, stem=stem,
                           payload={"patches": patches, "path": path,
                                    "format": fmt, "dpi": dpi})
+        return _fold_build_timings(resp, build)
 
     def svg_path(self, stem: str) -> Path:
         return self.out_dir / f"{stem}.svg"

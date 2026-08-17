@@ -548,6 +548,12 @@ export interface EngineRenderResponse {
   rev: number
   manifest: Manifest
   warnings?: string[]
+  /**
+   * 阶段计时（毫秒）：worker 的 script_build_ms / patch_apply_ms /
+   * canvas_draw_ms / manifest_ms + 控制面的 queue_wait_ms / total_ms。
+   * 键集合随后端演进，前端只存不解释（暂无 UI）。
+   */
+  timings?: Record<string, number>
 }
 
 export class EngineError extends Error {

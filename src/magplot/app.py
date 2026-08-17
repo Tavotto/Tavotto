@@ -143,6 +143,59 @@ def prune_render_cache(max_bytes: int = RENDER_CACHE_MAX_BYTES) -> int:
     return removed
 
 
+# ---- 渲染缓存的身份：内容哈希，不是 mtime ----------------------------------
+#: `{路径: (mtime, size, sha1)}` 的进程内 memo。**身份永远是内容 sha1**，
+#: mtime/size 只当「要不要重算」的信号：
+#:   * 内容没变而 mtime 变了（touch、从备份还原、同步工具、重跑脚本出同一张图）
+#:     → 重算一次哈希，值不变，**缓存照常命中**；
+#:   * 内容变了 → mtime/size 必然也变，memo 失效重算，键跟着变，缓存必然失效。
+#: 反过来拿 mtime 当身份就只有第二条成立，第一条会白丢一张 3200px 的预览。
+_SOURCE_SHA1: dict[str, tuple[float, int, str]] = {}
+_SOURCE_SHA1_LOCK = threading.Lock()
+#: memo 条目上限（素材数量由用户的图库决定，不设上限就是慢性泄漏）。
+#: 满了整表清掉：LRU 只为省几次哈希，不值得多维护一个数据结构。
+_SOURCE_SHA1_MAX = 4096
+
+
+def source_sha1(path: Path) -> str:
+    """素材文件内容的 sha1（按 (mtime, size) memo，命中就不读文件）。"""
+    st = path.stat()
+    key = str(path)
+    sig = (st.st_mtime, st.st_size)
+    with _SOURCE_SHA1_LOCK:
+        hit = _SOURCE_SHA1.get(key)
+    if hit is not None and hit[0] == sig[0] and hit[1] == sig[1]:
+        return hit[2]
+    digest = _sha1_of(path)
+    with _SOURCE_SHA1_LOCK:
+        if len(_SOURCE_SHA1) >= _SOURCE_SHA1_MAX:
+            _SOURCE_SHA1.clear()
+        _SOURCE_SHA1[key] = (sig[0], sig[1], digest)
+    return digest
+
+
+def _write_render_cache(src: Path, width_px: int, cached: Path) -> None:
+    """渲染进临时文件再 `os.replace` 落盘（同键并发不会读到半个 PNG）。
+
+    直写最终路径的话，同一张图被两个面板/两个标签页同时请求时，后到的那个
+    `send_file` 出去的可能是只写了一半的文件——浏览器画半张图，而且**下次
+    还命中那个坏文件**。replace 是原子的：读者要么看到旧的（完整），要么看到
+    新的（完整）。
+    """
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    # **后缀必须仍是 .png**：后端按扩展名决定图片格式（`pix.save()` 见了 .tmp
+    # 直接抛 ValueError）。留在同一个目录里也是有意的——进程被杀留下的半成品
+    # 会被 `prune_render_cache()`（按 *.png 扫）当成最久未用的缓存正常回收，
+    # 不需要另写一套清理；它删的是最旧的，正在写的那个永远是最新的。
+    tmp = cached.with_name(
+        f"{cached.stem}.{os.getpid()}-{threading.get_ident():x}.part.png")
+    try:
+        pdfbackend.render_preview_png(src, width_px, tmp)
+        os.replace(tmp, cached)
+    finally:
+        tmp.unlink(missing_ok=True)      # replace 成功后已经不在了，这里是 no-op
+
+
 def prune_backups(root: Path, keep: int = BACKUP_KEEP) -> int:
     """original_backups 只保留最近 keep 个时间戳目录。"""
     if not root.is_dir():
@@ -477,12 +530,26 @@ def api_render():
     w = next((b for b in RENDER_BUCKETS if b >= want_w), RENDER_BUCKETS[-1])
 
     path = safe_resolve(rel_id)
-    key = hashlib.sha1(f"{rel_id}|{path.stat().st_mtime}|{w}".encode()).hexdigest()
+    # 缓存身份 =（面板 id, **内容哈希**, 宽度, 渲染后端与版本）。曾经这里是
+    # `path.stat().st_mtime`：mtime 是「什么时候被碰过」，不是「里面是什么」，
+    # 拿它当身份两头都错——内容没变而 mtime 变了白丢缓存，换了渲染后端版本
+    # （出来的像素可能不一样）却照旧命中。
+    key = hashlib.sha1(
+        f"{rel_id}|{source_sha1(path)}|{w}|"
+        f"{pdfbackend.BACKEND_NAME}-{pdfbackend.BACKEND_VERSION}".encode()
+    ).hexdigest()
     cached = CACHE_DIR / f"{key}.png"
-    if not cached.exists():
-        pdfbackend.render_preview_png(path, w, cached)
+    try:
+        usable = cached.stat().st_size > 0
+    except OSError:
+        usable = False
+    if not usable:
+        # 零字节 = 上一次写到一半就断电/被杀（旧的直写路径留下的产物）。
+        # 把空文件当缓存交出去，用户看到的是一个永远画不出来的面板。
+        cached.unlink(missing_ok=True)
+        _write_render_cache(path, w, cached)
         prune_render_cache()
-    # no-cache = 每次向服务器验证（304 极快）；文件一变（mtime 进 key）立即失效。
+    # no-cache = 每次向服务器验证（304 极快）；内容一变（sha1 进 key）立即失效。
     # 不用长 max-age——「更新原图」后旧 URL 也不能再吃浏览器缓存。
     resp = send_file(cached, mimetype="image/png", conditional=True)
     resp.headers["Cache-Control"] = "no-cache"
@@ -1328,10 +1395,32 @@ def api_engine_render():
     """应用全量 override 列表并重渲染，返回新 manifest 与版本号。
 
     首次调用会触发脚本 build（fig9 数秒；heavy 脚本 Phase 1 处理异步化）。
+
+    可选 `preview_dpi`：本次预览 SVG 里**嵌入位图**的分辨率（缺省是 worker 的
+    `--preview-dpi`）。纯矢量图上它毫无影响（实测 72→300 耗时与体积完全相同），
+    含 imshow 的面板上 200→100 能把这条 render 的 canvas_draw 砍掉近一半、
+    SVG 体积降到四分之一。**前端目前不发这个字段**——「编辑期降质换快显」
+    是交互取舍，归 Phase F 判断；后端先把旋钮留出来，见 docs/perf-baseline.md。
     """
     body = request.get_json(force=True)
     rel_id = body.get("id", "")
+    # 参数校验先做完再进渲染：混在下面那个 try 里的话，worker 响应的
+    # JSONDecodeError（也是 ValueError）会被当成「preview_dpi 写错了」
+    raw_dpi = body.get("preview_dpi")
+    try:
+        # `is not None` 而不是真值判断：显式发了 0 是写错了，不是「没给」
+        preview_dpi = int(raw_dpi) if raw_dpi is not None else None
+    except (TypeError, ValueError):
+        return jsonify({"error": f"preview_dpi 必须是整数: {raw_dpi!r}"}), 400
+    if preview_dpi is not None and preview_dpi <= 0:
+        return jsonify({"error": f"preview_dpi 必须为正: {preview_dpi}"}), 400
+    t0 = time.time()
+    t_get = time.perf_counter()
     worker, stem = _engine_worker(rel_id)
+    # 取会话可能当场 spawn 一个解释器并 import matplotlib——冷启动的大头常常
+    # 在这里，而它**既不在 worker 的 timings 里也不在 build 里**。不单独量出来，
+    # 用户等的那十几秒在数据里就凭空消失了（第一版计时管道就是这么骗了自己）。
+    get_ms = round((time.perf_counter() - t_get) * 1000, 3)
     info = current_registry().for_stem(Path(stem).stem) or {}
     cold = not worker.built
     # 三个事件都得带 pj：前端 renderStore 按 fileId 索引且不分项目，不带的话
@@ -1339,20 +1428,25 @@ def api_engine_render():
     pj = current_ctx().id
     sse_publish("render.started",
                 {"pj": pj, "id": rel_id, "cost": info.get("cost", ""), "cold": cold})
-    t0 = time.time()
     try:
-        resp = worker.override(stem, body.get("patches", []))
+        resp = worker.override(stem, body.get("patches", []), preview_dpi)
     except engine_pool.WorkerError as exc:
         LOG.error("引擎渲染失败: %s: %s", stem, exc)
         sse_publish("render.failed", {"pj": pj, "id": rel_id, "error": str(exc)})
         return jsonify(_worker_error_payload(exc)), 500
-    LOG.info("引擎渲染: %s %.0fms%s", stem, (time.time() - t0) * 1000,
-             "（冷启动）" if cold else "")
+    # 阶段计时：worker 的 script_build/patch_apply/manifest/canvas_draw +
+    # 控制面的 queue_wait/total。日志里一行结构化（可 grep 可喂脚本），响应里
+    # 原样交给前端——「慢」这件事必须能指到具体某一段上，不能靠猜。
+    timings = {**(resp.get("timings") or {}), "worker_get_ms": get_ms}
+    LOG.info("引擎渲染: %s %.0fms%s timings=%s", stem, (time.time() - t0) * 1000,
+             "（冷启动）" if cold else "",
+             json.dumps(timings, sort_keys=True))
     sse_publish("render.done", {"pj": pj, "id": rel_id, "rev": worker.rev})
     return jsonify({
         "rev": worker.rev,
         "manifest": resp["manifest"],
         "warnings": resp.get("warnings", []),
+        "timings": timings,
     })
 
 

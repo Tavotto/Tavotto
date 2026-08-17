@@ -1208,6 +1208,69 @@ def test_v1_bad_payload_args_are_bad_request_not_internal(worker):
     assert proc.poll() is None
 
 
+def test_v1_timings_have_the_documented_shape(worker):
+    """真 worker 的阶段计时：键齐、都是数、量级说得通。
+
+    这些数字要拿去做「慢在哪一段」的判断（docs/perf-baseline.md），所以
+    形状必须钉住：build 给 script_exec/script_build，render 给
+    patch_apply/canvas_draw/manifest，export 给 patch_apply/export。
+    **不给 `svg_ms`**——SVG 序列化与 draw 在 matplotlib 里分不开，合并在
+    canvas_draw_ms 里（ADR 0003 §9）。
+    """
+    proc, out, tmp = worker
+
+    resp = _ok(proc, _v1("build", rid="r-t1"))
+    t = resp["timings"]
+    assert set(t) == {"script_exec_ms", "script_build_ms"}
+    assert all(isinstance(v, float) for v in t.values())
+    # build = 跑脚本 + instrument + 每个 stem 的首次预览，必然 ≥ 脚本本身
+    assert 0 < t["script_exec_ms"] <= t["script_build_ms"]
+
+    resp = _ok(proc, _v1("render", stem="TestFig_a", payload={"patches": []},
+                         rid="r-t2"))
+    t = resp["timings"]
+    assert set(t) == {"patch_apply_ms", "canvas_draw_ms", "manifest_ms"}
+    assert "svg_ms" not in t
+    assert all(isinstance(v, float) and v >= 0 for v in t.values())
+    assert t["canvas_draw_ms"] > 0 and t["manifest_ms"] > 0
+
+    pdf = tmp / "timed_export.pdf"
+    resp = _ok(proc, _v1("export", stem="TestFig_a",
+                         payload={"patches": [], "path": str(pdf),
+                                  "format": "pdf", "dpi": 150}, rid="r-t3"))
+    t = resp["timings"]
+    assert set(t) == {"patch_apply_ms", "export_ms"} and t["export_ms"] > 0
+
+    # 第二次 build 是 no-op：计时表为空而不是凭空冒出一个 script_build_ms
+    assert _ok(proc, _v1("build", rid="r-t4"))["timings"] == {}
+    # 不带计时的命令不许多出这个键
+    assert "timings" not in _ok(proc, _v1("render_png", stem="TestFig_a",
+                                          payload={"width": 200}, rid="r-t5"))
+
+
+def test_v1_preview_dpi_is_optional_and_validated(worker):
+    """按请求给预览 dpi：给了就用，写错是 bad_request（不是 internal）。
+
+    这是 Phase E 唯一一条有数据支撑的旋钮（含 imshow 的面板上 200→100 让
+    savefig 从 ~29ms 降到 ~17ms、SVG 从 827KB 降到 196KB；纯矢量图上毫无
+    影响）。**前端目前不发**，交互降质归 Phase F 判断。
+    """
+    proc, out, tmp = worker
+    _ok(proc, _v1("build", rid="r-d0"))
+
+    # 给了就照常渲染（矢量图上产物一致，只有嵌入位图会变）
+    resp = _ok(proc, _v1("render", stem="TestFig_a",
+                         payload={"patches": [], "preview_dpi": 72}, rid="r-d1"))
+    assert (out / "TestFig_a.svg").exists() and resp["manifest"]["elements"]
+
+    for bad in (0, -10, "很高"):
+        resp = _raw(proc, _v1("render", stem="TestFig_a",
+                              payload={"patches": [], "preview_dpi": bad},
+                              rid=f"r-d-{bad}"))
+        assert resp["error"]["code"] == "bad_request", (bad, resp)
+    assert proc.poll() is None
+
+
 # ================== workerd 控制面（ADR 0004，Phase C） ==================
 # 上面那些用例跑的是 Python 池（conftest 把 MAGPLOT_WORKERD 钉成 0，Python 实现
 # 始终是参考实现）。这一节把**同样几件事**在 Rust supervisor 上再走一遍：

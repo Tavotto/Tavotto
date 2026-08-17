@@ -23,6 +23,8 @@ export interface PanelRender {
   module: string
   traceback: string
   warnings: string[]
+  /** 最近一次成功渲染的阶段计时（毫秒，键见 api.ts）；暂不做 UI */
+  timings: Record<string, number>
   /** 脚本文件变了，当前 SVG 已过期 */
   stale: boolean
   /**
@@ -48,6 +50,7 @@ const EMPTY: PanelRender = {
   module: '',
   traceback: '',
   warnings: [],
+  timings: {},
   stale: false,
   tracked: false,
   lastPatches: null,
@@ -141,6 +144,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
             error: null,
             traceback: '',
             warnings: res.warnings ?? [],
+            timings: res.timings ?? {},
             stale: false,
             lastPatches: JSON.stringify(current),
           })
