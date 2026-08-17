@@ -113,6 +113,31 @@ python -m twine check --strict dist/*     # 元数据 + PyPI 的 README 渲染
 
 ## 独立应用（.dmg / .exe）
 
+桌面应用现在有**两条并行链路**（Tauri 链路完成等价验证前，旧链路不删）：
+
+### 新链路：Tauri 桌面壳（desktop-tauri.yml）
+
+真正的桌面窗口（不再开系统浏览器）：Tauri 2 壳 + `magplot --desktop-sidecar`
+后端（127.0.0.1 动态端口 + 一次性 nonce 认证），架构与安全模型见
+`docs/adr/0002-tauri-desktop-shell.md`。
+
+手动触发（Actions → **Desktop apps (Tauri)** → 填 tag，需 tag 含 `src-tauri/`）。
+本地构建：`python scripts/build_desktop.py`（版本同步 → 前端 → PyInstaller
+sidecar → Tauri bundler）。CI 门禁打的是最终产物：sidecar 真二进制过
+`scripts/smoke_desktop.py` 全链路（认证/项目/渲染/导出/退出无孤儿），Windows
+上另对 Tauri 真 .exe 做启动-探活-退出探针。
+
+| 平台 | 产物 | 说明 |
+|---|---|---|
+| macOS | `Magplot-X.Y.Z-macOS.dmg` | Tauri .app（内嵌 sidecar）；签名 + 公证复用下述同一套 secret 与流程 |
+| Windows | `Magplot_X.Y.Z_x64-setup.exe` | NSIS，装到用户目录；当前未签名（无 Windows 代码签名证书） |
+
+macOS 签名注意：sidecar 是 `.app` 里 `Resources/sidecar/` 下的 PyInstaller
+onedir，签名必须继续「按 `file` 判断签**所有** Mach-O、自底向上」——只签壳
+本体公证会 Invalid（教训同旧链路）。
+
+### 旧链路：PyInstaller 直发（desktop.yml，待替换）
+
 `desktop.yml`，手动触发（Actions → **Desktop apps** → 填 tag）。产物：
 
 | 平台 | 产物 | 说明 |

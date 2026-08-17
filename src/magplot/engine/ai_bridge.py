@@ -20,7 +20,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import ai_history, config
+from . import ai_history, config, pool
 
 LOG = logging.getLogger("mm.ai")
 
@@ -75,7 +75,9 @@ def _find_cli(name: str) -> str:
 def _probe_version(path: str) -> str | None:
     try:
         out = subprocess.run([path, "--version"], capture_output=True,
-                             text=True, timeout=10)
+                             text=True, timeout=10,
+                             stdin=subprocess.DEVNULL,
+                             creationflags=pool.NO_WINDOW)
         line = (out.stdout or out.stderr).strip().splitlines()
         return line[0][:80] if line else None
     except (OSError, subprocess.TimeoutExpired):
@@ -314,8 +316,10 @@ def run(agent: str, script: str, user_prompt: str, figures_dir: str,
     LOG.info("AI 任务命令: %s", " ".join(cmd[:-1] if agent == "codex" else cmd[:4]))
     proc = subprocess.Popen(
         cmd, cwd=figures_dir,
+        stdin=subprocess.DEVNULL,  # 桌面 sidecar 的 stdin 是父进程死亡信号管道，不外传
         stdout=subprocess.PIPE, stderr=stderr_log,  # CLI 的 hook/统计噪音不进对话
         text=True, bufsize=1,
+        creationflags=pool.NO_WINDOW,
     )
     sess = {
         "id": sid, "agent": agent, "script": script, "prompt": user_prompt,

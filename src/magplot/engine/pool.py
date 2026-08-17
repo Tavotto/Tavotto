@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 import subprocess
 import threading
@@ -16,6 +17,12 @@ from pathlib import Path
 from . import config
 
 LOG = logging.getLogger("mm.engine")
+
+# Windows 上引擎的一切子进程都要带 CREATE_NO_WINDOW：桌面壳/独立应用的父进程
+# 是窗口化程序（没有控制台），console 子进程会触发新建控制台——交互桌面上是
+# 闪黑窗，SSH/服务这类无交互桌面的会话里 conhost 分配会直接挂死（python 探测
+# 30s 超时，Server 2025 实测）。bootstrap / ai_bridge / app 诊断统一引用这里。
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 ENGINE_CACHE = config.data_dir() / "cache" / "engine"
 WORKER_PY = Path(__file__).resolve().parent / "worker.py"
@@ -105,8 +112,13 @@ def find_worker_python() -> str:
         if not cand or cand in seen or not Path(cand).exists():
             continue
         seen.add(cand)   # 同一个解释器不重复探测（每次探测最多 30s）
+        # stdin 必须显式断开：桌面 sidecar 的 stdin 是「父进程死亡信号」管道，
+        # 绝不能被探测子进程继承（既是卫生问题，Windows 上还实测会让子解释器
+        # 启动挂死，见 test_engine_subprocess_calls_never_pop_console_windows）
         probe = subprocess.run([cand, "-c", "import matplotlib"],
-                               capture_output=True, timeout=30)
+                               capture_output=True, timeout=30,
+                               stdin=subprocess.DEVNULL,
+                               creationflags=NO_WINDOW)
         if probe.returncode == 0:
             _worker_python = cand
             return cand
@@ -152,6 +164,7 @@ class EngineWorker:
             # 显式 UTF-8：text=True 默认跟随系统区域编码，Windows 上是 cp1252/
             # cp936，读 worker 回来的中文/µ/⁻¹ 会解码失败。worker 侧同样钉死。
             encoding="utf-8", errors="replace",
+            creationflags=NO_WINDOW,
         )
 
     def alive(self) -> bool:
@@ -257,13 +270,24 @@ def invalidate(script_name: str) -> None:
         threading.Thread(target=w.shutdown, daemon=True).start()
 
 
-def shutdown_all() -> None:
-    """关闭全部 worker（项目切换 / 进程退出前）。异步优雅关停 + 兜底 kill。"""
+def shutdown_all(wait: bool = False, timeout: float = 5.0) -> None:
+    """关闭全部 worker（项目切换 / 进程退出前）。异步优雅关停 + 兜底 kill。
+
+    wait=True 时阻塞等到全部关完（或超时）——桌面 sidecar 退出前必须确认
+    worker 子进程真的没了，否则关窗后留下孤儿进程。
+    """
     with _lock:
         victims = list(_workers.values())
         _workers.clear()
+    threads = []
     for w in victims:
-        threading.Thread(target=w.shutdown, daemon=True).start()
+        t = threading.Thread(target=w.shutdown, daemon=True)
+        t.start()
+        threads.append(t)
+    if wait:
+        deadline = time.monotonic() + timeout
+        for t in threads:
+            t.join(max(0.0, deadline - time.monotonic()))
 
 
 _watcher_stop: threading.Event | None = None

@@ -36,7 +36,7 @@ Python 在后台实时重渲染（热态约 40 ms）。
 ## 安装
 
 **下载安装包**：到 [最新发行版](https://github.com/erwanjun/magplot/releases/latest)
-取 macOS 的 `.dmg` 或 Windows 的 `.exe`，装完双击即用，Magplot 会在浏览器里打开。
+取 macOS 的 `.dmg` 或 Windows 的 `.exe`，装完双击即用，Magplot 在自己的桌面窗口中打开。
 
 安装包里刻意不含 matplotlib：Magplot 渲染的是**你自己的脚本**，它们要 import
 你自己那套依赖，所以它用的是你已有的那个 Python——就是你画这些图时用的那个。

@@ -40,7 +40,7 @@ PDF whose text is still real, selectable vector text.
 
 **Download an installer** from the [latest release](https://github.com/erwanjun/magplot/releases/latest)
 — `.dmg` for macOS, `.exe` for Windows — install it, and double-click. Magplot opens
-in your browser.
+in its own desktop window.
 
 The installers deliberately do not bundle matplotlib: Magplot renders *your* scripts,
 which import *your* dependencies, so it uses the Python you already have — the one you

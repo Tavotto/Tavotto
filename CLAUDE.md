@@ -36,6 +36,31 @@ PyMuPDF（**只经 `src/magplot/pdfbackend/`**），前端 `web/`
   ai_history.sqlite3 / ai_snapshots 全在那儿。**不要再往包目录或仓库根写东西**
   ——site-packages 不可写，装成 wheel 后会直接崩。
 
+## Tauri 桌面壳（2026-08-17，与浏览器模式并行）
+
+架构与安全模型的完整版在 `docs/adr/0002-tauri-desktop-shell.md`，改动前先读。
+
+- **进程关系**：Tauri 壳（`src-tauri/`）→ spawn `magplot --desktop-sidecar`
+  （PyInstaller onedir，无 matplotlib）→ 现有 worker 协议。前端仍由 sidecar 的
+  Flask 提供，**不走 Tauri frontendDist**——桌面与浏览器跑同一份界面。
+- **桌面模式差异全部收在 `src/magplot/desktop.py`**：`127.0.0.1:0` 动态端口
+  （werkzeug `make_server`，可优雅 shutdown）、一次性 nonce → HttpOnly cookie
+  认证（nonce 走 **stdin 首行**，环境变量对同用户进程可见；`/`、`/assets/*`、
+  bootstrap 之外全部 401 兜底）、Host/Origin 校验、握手文件（无密钥、原子写、
+  退出清理）、stdin EOF + 父 PID 双路「壳没了就自杀」。浏览器/CLI 模式下这些
+  钩子**必须完全旁路**（`test_desktop_sidecar.py` 看护）——别让桌面逻辑漏进
+  `magplot` 普通启动路径。
+- **前端唯一桌面感知点是 `web/src/lib/desktop.ts`**：组件不得直接 import
+  `@tauri-apps/*`；每个能力都有浏览器回退（vitest 看护）。菜单事件 id 与
+  `src-tauri/src/main.rs` 严格同源（`magplot:menu`）。
+- **桌面模式下 Python updater 停用**（升级归 Tauri 层），`/api/update/*` 回
+  禁用响应；浏览器模式照旧。
+- 构建：`python scripts/build_desktop.py`；验收：`python scripts/smoke_desktop.py
+  --sidecar dist/Magplot/Magplot`（真产物全链路：认证/项目/渲染/导出/退出无孤儿）。
+  CI 在 `desktop-tauri.yml`（与旧 `desktop.yml` 并行，等价验证前不删旧链）。
+- wheel/sdist 不含 `src-tauri/`（hatchling 白名单）；`src-tauri/target/`、
+  `src-tauri/gen/` 进 .gitignore。
+
 ## PDF 后端边界（许可证相关，勿破坏）
 
 - `src/magplot/pdfbackend/pymupdf_backend.py` 是**全仓库唯一** import pymupdf 的

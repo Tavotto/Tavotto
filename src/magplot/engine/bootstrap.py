@@ -23,6 +23,7 @@ import threading
 from pathlib import Path
 
 from . import config
+from . import pool
 
 VENV_DIR_NAME = "worker-env"
 INSTALL_TIMEOUT_S = 900          # 首次装 matplotlib 要下几十 MB，网络慢时给足
@@ -45,7 +46,9 @@ def _probe(python: str, expr: str) -> str | None:
     """在指定解释器里求值，失败回 None。"""
     try:
         out = subprocess.run([python, "-c", expr], capture_output=True,
-                             text=True, timeout=PROBE_TIMEOUT_S)
+                             text=True, timeout=PROBE_TIMEOUT_S,
+                             stdin=subprocess.DEVNULL,
+                             creationflags=pool.NO_WINDOW)
     except (OSError, subprocess.SubprocessError):
         return None
     return out.stdout.strip() if out.returncode == 0 else None
@@ -168,7 +171,9 @@ def _run(cmd: list[str]) -> tuple[int, str]:
     try:
         p = subprocess.run(cmd, capture_output=True, text=True,
                            encoding="utf-8", errors="replace",
-                           timeout=INSTALL_TIMEOUT_S)
+                           timeout=INSTALL_TIMEOUT_S,
+                           stdin=subprocess.DEVNULL,
+                           creationflags=pool.NO_WINDOW)
     except subprocess.TimeoutExpired:
         return 1, f"\n超时（{INSTALL_TIMEOUT_S}s）：{' '.join(cmd)}\n"
     except OSError as exc:

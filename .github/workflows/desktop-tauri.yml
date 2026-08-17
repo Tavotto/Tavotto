@@ -1,0 +1,226 @@
+name: Desktop apps (Tauri)
+
+# Tauri 桌面壳的构建 + 验收：macOS .app/.dmg（签名 + 公证）与 Windows NSIS。
+#
+# 与旧链路（desktop.yml：PyInstaller 直发 + Inno Setup）**并行存在**——完成
+# 等价验证之前旧链路不删（回退路径）。架构见 docs/adr/0002-tauri-desktop-shell.md。
+#
+# 验收原则：门禁打的是**最终用户启动的产物**——
+# 1. sidecar 冒烟（scripts/smoke_desktop.py）对 PyInstaller 真二进制走完整链路：
+#    动态端口 / nonce 认证 / 重放拒绝 / 打开项目 / 渲染 / 导出 / EOF 退出无孤儿；
+# 2. Windows 上再对 Tauri 真 .exe 做启动-探活-退出探针（壳 → sidecar → 收尾）。
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "基于哪个 tag 构建（如 v0.2.0）"
+        required: true
+      attach:
+        description: "构建完挂到该 tag 的 Release 上"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-latest,   bundles: app,  artifact: dmg }
+          - { os: windows-latest, bundles: nsis, artifact: nsis }
+    runs-on: ${{ matrix.os }}
+    env:
+      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: 确认该 tag 含 Tauri 配置
+        shell: bash
+        run: |
+          test -f src-tauri/tauri.conf.json || {
+            echo "::error::${{ inputs.tag }} 这个 tag 里没有 src-tauri/——请选更新的 tag"
+            exit 1
+          }
+
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
+      - uses: pnpm/action-setup@v4
+        with: { version: 11 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: 装打包依赖（Flask 父进程那点；科学栈刻意不装，免得进 sidecar）
+        run: |
+          python -m pip install --upgrade pip pyinstaller
+          python -m pip install "flask>=3.1,<4" "pymupdf>=1.24,<2"
+
+      - name: 构建前端 + sidecar（PyInstaller onedir）
+        run: python scripts/build_desktop.py --skip-tauri
+
+      - name: 渲染 worker 环境（冒烟里的渲染/导出腿需要 matplotlib）
+        shell: bash
+        run: |
+          python -m venv worker-env
+          if [ "$RUNNER_OS" = "Windows" ]; then WPY=worker-env/Scripts/python.exe
+          else WPY=worker-env/bin/python; fi
+          "$WPY" -m pip install -q matplotlib numpy
+          echo "MM_WORKER_PYTHON=$PWD/$WPY" >> "$GITHUB_ENV"
+
+      - name: sidecar 冒烟（真产物：认证/项目/渲染/导出/退出）
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then EXE=dist/Magplot/Magplot.exe
+          else EXE=dist/Magplot/Magplot; fi
+          python scripts/smoke_desktop.py --sidecar "$EXE"
+
+      - name: Tauri build
+        run: pnpm dlx @tauri-apps/cli@latest build --bundles ${{ matrix.bundles }}
+
+      # ---------------- macOS：签名 + 公证（复用已趟通的流程，不经 Tauri 签名） ----------------
+      - name: 导入签名证书
+        if: runner.os == 'macOS' && env.MACOS_CERTIFICATE != ''
+        run: |
+          set -euo pipefail
+          echo "$MACOS_CERTIFICATE" | base64 --decode > /tmp/cert.p12
+          security create-keychain -p ci /tmp/build.keychain
+          security default-keychain -s /tmp/build.keychain
+          # 必须把钥匙串加进搜索列表（详见 desktop.yml 同名步骤的注释与教训）
+          EXISTING=$(security list-keychains -d user | sed 's/^ *"//;s/"$//')
+          # shellcheck disable=SC2086
+          security list-keychains -d user -s /tmp/build.keychain $EXISTING
+          security unlock-keychain -p ci /tmp/build.keychain
+          security set-keychain-settings -lut 21600 /tmp/build.keychain
+          security import /tmp/cert.p12 -k /tmp/build.keychain \
+            -P "$MACOS_CERTIFICATE_PASSWORD" -A -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k ci /tmp/build.keychain >/dev/null
+          rm -f /tmp/cert.p12
+          security find-identity -v -p codesigning /tmp/build.keychain
+
+      - name: 签名 .app（含嵌套的 PyInstaller sidecar）
+        if: runner.os == 'macOS' && env.MACOS_SIGN_IDENTITY != ''
+        run: |
+          set -euo pipefail
+          APP=src-tauri/target/release/bundle/macos/Magplot.app
+          # 自底向上签**所有** Mach-O（含 Resources/sidecar 里 PyInstaller 的
+          # 无后缀二进制）——漏一个公证就 Invalid，这是 0.1.3 时代用真公证换来的教训
+          find "$APP" -type f | while read -r f; do
+            case "$(file -b "$f")" in
+              *Mach-O*) codesign --force --timestamp --options runtime \
+                          --sign "$MACOS_SIGN_IDENTITY" "$f" ;;
+            esac
+          done
+          codesign --force --timestamp --options runtime \
+            --entitlements packaging/entitlements.plist \
+            --sign "$MACOS_SIGN_IDENTITY" "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -dvvv "$APP" 2>&1 | grep -q "Authority=Developer ID Application" || {
+            echo "::error::签名没生效（仍是 adhoc）"; codesign -dvvv "$APP"; exit 1; }
+
+      - name: 打 .dmg
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          VER="${{ inputs.tag }}"; VER="${VER#v}"
+          scripts/make_dmg.sh src-tauri/target/release/bundle/macos "out/Magplot-$VER-macOS.dmg"
+
+      - name: 公证 .dmg
+        if: runner.os == 'macOS' && env.APPLE_ID != ''
+        run: |
+          set -euo pipefail
+          VER="${{ inputs.tag }}"; VER="${VER#v}"
+          DMG="out/Magplot-$VER-macOS.dmg"
+          codesign --force --timestamp --sign "$MACOS_SIGN_IDENTITY" "$DMG"
+          CREDS="--apple-id $APPLE_ID --password $APPLE_APP_PASSWORD --team-id $APPLE_TEAM_ID"
+          # shellcheck disable=SC2086
+          ID=$(xcrun notarytool submit "$DMG" $CREDS --output-format json |
+               python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+          echo "提交 ID: $ID"
+          # shellcheck disable=SC2086
+          xcrun notarytool wait "$ID" $CREDS || true
+          # shellcheck disable=SC2086
+          STATUS=$(xcrun notarytool info "$ID" $CREDS --output-format json |
+                   python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])')
+          echo "公证结果: $STATUS"
+          if [ "$STATUS" != "Accepted" ]; then
+            echo "::group::公证详细日志"
+            # shellcheck disable=SC2086
+            xcrun notarytool log "$ID" $CREDS || true
+            echo "::endgroup::"
+            exit 1
+          fi
+          xcrun stapler staple "$DMG"
+          spctl -a -t open --context context:primary-signature -vv "$DMG"
+
+      - name: 未签名提示（缺证书时如实标注，不冒充可发行）
+        if: runner.os == 'macOS' && env.MACOS_SIGN_IDENTITY == ''
+        run: echo "::warning::没有配置签名证书——本次 dmg 未签名，仅供测试，不可发行"
+
+      # ---------------- Windows：Tauri 真 .exe 启动-探活-退出探针 ----------------
+      - name: Windows 桌面壳探针（壳 → sidecar → 退出收尾）
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:MAGPLOT_DATA_DIR   = "$env:RUNNER_TEMP\mp-data"
+          $env:MAGPLOT_CONFIG_DIR = "$env:RUNNER_TEMP\mp-config"
+          $exe = "src-tauri\target\release\Magplot.exe"
+          if (!(Test-Path $exe)) { throw "壳二进制缺失: $exe" }
+          $p = Start-Process -FilePath $exe -PassThru
+          $side = $null
+          foreach ($i in 1..60) {
+            Start-Sleep -Milliseconds 500
+            $side = Get-CimInstance Win32_Process -Filter "ParentProcessId=$($p.Id)" |
+                    Where-Object { $_.CommandLine -match "desktop-sidecar" }
+            if ($side) { break }
+          }
+          if (-not $side) { Stop-Process -Id $p.Id -Force; throw "壳没有拉起 sidecar" }
+          Write-Host "sidecar pid: $($side.ProcessId)"
+          Stop-Process -Id $p.Id -Force   # 模拟异常退出：sidecar 必须经父监视自行退出
+          foreach ($i in 1..30) {
+            Start-Sleep -Milliseconds 500
+            if (-not (Get-Process -Id $side.ProcessId -ErrorAction SilentlyContinue)) { break }
+          }
+          if (Get-Process -Id $side.ProcessId -ErrorAction SilentlyContinue) {
+            throw "壳被杀后 sidecar 未退出（孤儿进程）"
+          }
+          Write-Host "壳退出 → sidecar 跟随退出 ✔"
+
+      - name: 收集 Windows 产物
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+          Copy-Item src-tauri\target\release\bundle\nsis\*.exe out\
+          Write-Warning "Windows 安装包未签名（无代码签名证书），仅供测试分发"
+          Get-ChildItem out | Format-Table Name, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-tauri-${{ matrix.artifact }}
+          path: out/*
+          if-no-files-found: error
+
+      - name: 挂到 Release
+        if: inputs.attach
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          files: out/*

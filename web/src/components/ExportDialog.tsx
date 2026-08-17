@@ -5,8 +5,10 @@ import { readExportDefaults } from '@/lib/exportDefaults'
 import { toExportObjects } from '@/lib/exportPayload'
 import { buildProofPayload, runPreflight } from '@/lib/preflight'
 import { cn } from '@/lib/utils'
+import { isDesktop, revealExportedFile } from '@/lib/desktop'
 import { revealObjects } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
+import { useProjectStore } from '@/store/projectStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useRenderStore } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
@@ -267,18 +269,34 @@ export function ExportDialog() {
         {(result || packResult) && (
           <div className="flex flex-col gap-1 rounded-sm border border-border bg-surface-2 p-2">
             <p className="text-xs text-ink-3">已保存到 exports/</p>
-            {[...(result?.files ?? []), ...(packResult ? [packResult] : [])].map((f) => (
-              <a
-                key={f.name}
-                href={f.url}
-                target="_blank"
-                rel="noreferrer"
-                className="flex items-center gap-1.5 font-mono text-xs text-accent hover:underline"
-              >
-                <ExternalLink size={12} />
-                {f.name}
-              </a>
-            ))}
+            {[...(result?.files ?? []), ...(packResult ? [packResult] : [])].map((f) =>
+              isDesktop() ? (
+                // 桌面里不开浏览器式文件标签页：在系统文件管理器中显示
+                <button
+                  key={f.name}
+                  type="button"
+                  onClick={() => {
+                    const dir = result?.export_dir ?? useProjectStore.getState().project?.export_dir
+                    if (dir) void revealExportedFile(dir, f.name)
+                  }}
+                  className="flex items-center gap-1.5 font-mono text-xs text-accent hover:underline"
+                >
+                  <ExternalLink size={12} />
+                  {f.name}
+                </button>
+              ) : (
+                <a
+                  key={f.name}
+                  href={f.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center gap-1.5 font-mono text-xs text-accent hover:underline"
+                >
+                  <ExternalLink size={12} />
+                  {f.name}
+                </a>
+              ),
+            )}
           </div>
         )}
       </div>

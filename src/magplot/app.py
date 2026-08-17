@@ -58,6 +58,11 @@ RENDER_BUCKETS = [200, 400, 800, 1600, 3200]
 
 app = Flask(__name__, static_folder=None)
 
+# 桌面 sidecar 的认证钩子必须在首个请求前注册；浏览器模式下全部旁路（零行为差异）
+from . import desktop as desktop_mode  # noqa: E402 — 需要 app 实例存在后立即挂钩
+
+desktop_mode.install(app)
+
 # 当前项目的图库目录；None = 尚未打开项目（前端显示 Project Picker）。
 # 不再内置任何默认路径——项目由 --figures、最近项目或 Picker 决定。
 FIGURES_DIR: Path | None = None
@@ -682,7 +687,9 @@ def api_diagnostics():
         py = engine_pool.find_worker_python()
         try:
             out = sp.run([py, "-c", "import matplotlib; print(matplotlib.__version__)"],
-                         capture_output=True, text=True, timeout=30)
+                         capture_output=True, text=True, timeout=30,
+                         stdin=sp.DEVNULL,
+                         creationflags=engine_pool.NO_WINDOW)
             mpl = out.stdout.strip() or None
         except (OSError, sp.TimeoutExpired):
             mpl = None
@@ -1182,15 +1189,29 @@ def api_engine_environment_set():
 
 
 # ------------------------- 检查更新 -----------------------------------------
+def _updater_disabled_in_desktop():
+    """桌面模式下 Python updater 整个停用（升级归 Tauri 层，避免两套升级机制）。
+    回禁用响应或 None（浏览器 / CLI 模式照旧）。"""
+    if app.config.get("MAGPLOT_DESKTOP_MODE"):
+        return jsonify({"desktop": True, "auto_check": False,
+                        "update_available": False,
+                        "current": engine_updater.current_version()})
+    return None
+
+
 @app.get("/api/update/check")
 def api_update_check():
     """?force=1 = 用户手动点「立即检查」，无视 24h 节流与自动检查开关。"""
+    if resp := _updater_disabled_in_desktop():
+        return resp
     force = request.args.get("force") in ("1", "true", "yes")
     return jsonify(engine_updater.check(force=force))
 
 
 @app.patch("/api/update/settings")
 def api_update_settings():
+    if resp := _updater_disabled_in_desktop():
+        return resp
     body = request.get_json(force=True)
     patch = {}
     if "auto_check" in body:
@@ -1201,6 +1222,9 @@ def api_update_settings():
 @app.post("/api/update/apply")
 def api_update_apply():
     """执行升级。成功后进程仍跑着旧代码，restart_required 由界面提示重启。"""
+    if app.config.get("MAGPLOT_DESKTOP_MODE"):
+        return jsonify({"error": "桌面版内不支持 pip 自升级，请更新桌面应用",
+                        "code": "desktop_updater_disabled"}), 409
     result = engine_updater.apply_upgrade()
     LOG.info("升级 %s: %s", "成功" if result["ok"] else "失败", result["command"])
     return jsonify(result), (200 if result["ok"] else 500)
@@ -1634,6 +1658,9 @@ def main():
                     help="面板图所在目录（缺省恢复最近打开的项目）")
     ap.add_argument("--port", type=int, default=5089)
     ap.add_argument("--no-browser", action="store_true")
+    ap.add_argument("--desktop-sidecar", action="store_true",
+                    help="作为 Magplot 桌面应用的后端运行：127.0.0.1 动态端口 + "
+                         "桌面认证 + 父进程跟随退出（由桌面壳启动，不建议手动使用）")
     args = ap.parse_args()
 
     setup_logging()
@@ -1644,10 +1671,13 @@ def main():
     if n:
         LOG.info("上次运行遗留的 %d 个 AI 会话已标记为中断", n)
     engine_ai_history.purge(keep_days=180)
-    engine_updater.check_in_background()  # 默认每天一次；设置里可关，关了不联网
+    if not args.desktop_sidecar:
+        # 桌面模式的升级由 Tauri 层负责，Python updater 连后台检查都不跑
+        engine_updater.check_in_background()  # 默认每天一次；设置里可关，关了不联网
 
-    # --figures 最高优先；否则恢复最近项目；都没有（或无效）→ 浏览器里的
+    # --figures 最高优先；否则恢复最近项目；都没有（或无效）→ 界面里的
     # Project Picker 接手，进程不再直接退出。
+    where = "窗口" if args.desktop_sidecar else "浏览器"
     candidate = args.figures or engine_config.last_project()
     if candidate:
         try:
@@ -1661,9 +1691,12 @@ def main():
                       f"请在注册表中手工裁决: {', '.join(st['conflicts'])}")
         except (RuntimeError, OSError) as exc:
             print(f"* 无法打开项目 {candidate}: {exc}")
-            print("* 请在浏览器中选择或新建项目")
+            print(f"* 请在{where}中选择或新建项目")
     else:
-        print("* 尚未选择项目：请在浏览器中新建或打开一个项目")
+        print(f"* 尚未选择项目：请在{where}中新建或打开一个项目")
+
+    if args.desktop_sidecar:
+        sys.exit(desktop_mode.run(app))
 
     port = resolve_port(args.port)
     if port is None:

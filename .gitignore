@@ -23,6 +23,10 @@ web/dist/
 *.log
 .pytest_cache/
 
+# Tauri 桌面壳（src-tauri/ 源码进仓库；构建产物与 CLI 生成的 schema 不进）
+src-tauri/target/
+src-tauri/gen/
+
 # 工具与系统
 .gstack/
 .DS_Store
@@ -32,3 +36,4 @@ web/dist/
 
 # 内部执行清单 / 路线图，不进公开仓
 /docs/MAGPLOT_RENAME_AND_MATURITY_PLAN.md
+.impeccable/

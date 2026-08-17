@@ -8,6 +8,7 @@ import {
   X,
 } from 'lucide-react'
 import { browseDirs, type BrowseResult, type RecentProject } from '@/lib/api'
+import { isDesktop, pickDirectory } from '@/lib/desktop'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { cn } from '@/lib/utils'
 import { useProjectStore } from '@/store/projectStore'
@@ -54,7 +55,19 @@ export function ProjectPicker() {
             <FolderPlus size={14} />
             新建项目
           </Button>
-          <Button variant="outline" size="md" onClick={() => setBrowse('open')}>
+          <Button
+            variant="outline"
+            size="md"
+            onClick={() => {
+              // 桌面壳里用原生目录选择器；取消不是错误，什么都不发生。
+              // 浏览器模式回退到服务器端目录浏览器（本地单用户应用，浏览的就是本机磁盘）。
+              if (isDesktop()) {
+                void pickDirectory('选择论文图所在目录').then((dir) => {
+                  if (dir) void openPath(dir)
+                })
+              } else setBrowse('open')
+            }}
+          >
             <FolderOpen size={14} />
             打开目录…
           </Button>

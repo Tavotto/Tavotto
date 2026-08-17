@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>Magplot</title>
+<style>
+  /* 与 web/ 的视觉纪律同源：暖灰白底、近黑主色、层级靠留白 */
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: flex; align-items: center; justify-content: center;
+    background: #F2F2EF; color: #1A1A18;
+    font: 13px/1.6 -apple-system, "SF Pro Text", "Segoe UI", "Microsoft YaHei", sans-serif;
+    -webkit-user-select: none; user-select: none; cursor: default;
+  }
+  main { text-align: center; }
+  h1 { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; margin: 0 0 6px; }
+  p  { margin: 0; font-size: 12px; color: #6E6E68; }
+  .dot { display: inline-block; width: 5px; height: 5px; border-radius: 50%;
+         background: #8A8A83; margin: 0 2px; animation: b 1.2s infinite ease-in-out; }
+  .dot:nth-child(2) { animation-delay: .15s } .dot:nth-child(3) { animation-delay: .3s }
+  @keyframes b { 0%,80%,100% { opacity: .25 } 40% { opacity: 1 } }
+  @media (prefers-reduced-motion: reduce) { .dot { animation: none; opacity: .6 } }
+</style>
+</head>
+<body>
+  <main>
+    <h1>Magplot</h1>
+    <p>正在启动渲染服务<span class="dot"></span><span class="dot"></span><span class="dot"></span></p>
+  </main>
+</body>
+</html>

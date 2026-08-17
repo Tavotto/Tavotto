@@ -35,6 +35,7 @@ import { startLayoutAutoReflow } from '@/store/actions'
 import { startVersionCheckpoints } from '@/hooks/useVersionCheckpoints'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
+import { onDesktopMenu } from '@/lib/desktop'
 
 export function App() {
   const phase = useProjectStore((s) => s.phase)
@@ -46,6 +47,7 @@ export function App() {
     // 渲染环境状态：缺 matplotlib 时属性栏与设置里都要能给出引导
     void useEnvStore.getState().refresh()
   }, [])
+  useDesktopMenu()
 
   // 启动探测中不闪 Picker；探测完没有项目 → Picker 接管整个界面
   if (phase === 'loading') return <div className="h-full bg-bg" />
@@ -131,6 +133,54 @@ function Workspace() {
       </div>
     </TooltipProvider>
   )
+}
+
+/**
+ * 系统菜单（Tauri 壳）→ 现有 store action 的转发。浏览器模式下是空订阅。
+ * 撤销/重做按焦点分派：文本框里交还原生文本撤销，画布上走文档 undo 栈——
+ * 菜单加速键（⌘Z 等）在桌面里会先于 keydown 被吃掉，这里是唯一入口。
+ */
+function useDesktopMenu() {
+  useEffect(() => {
+    let unlisten: (() => void) | undefined
+    let disposed = false
+    void onDesktopMenu((action) => {
+      const ui = useUiStore.getState()
+      const el = document.activeElement
+      const inEditable =
+        el instanceof HTMLElement &&
+        (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))
+      switch (action) {
+        case 'menu-open-project':
+          useProjectStore.setState({ phase: 'none' })
+          break
+        case 'menu-export':
+          if (useProjectStore.getState().phase === 'open') ui.setExportOpen(true)
+          break
+        case 'menu-undo':
+          if (inEditable) document.execCommand('undo')
+          else {
+            const label = useDocumentStore.getState().undo()
+            ui.setStatus(label ? `撤销：${label}` : '没有可撤销的操作')
+          }
+          break
+        case 'menu-redo':
+          if (inEditable) document.execCommand('redo')
+          else {
+            const label = useDocumentStore.getState().redo()
+            ui.setStatus(label ? `重做：${label}` : '没有可重做的操作')
+          }
+          break
+      }
+    }).then((u) => {
+      if (disposed) u()
+      else unlisten = u
+    })
+    return () => {
+      disposed = true
+      unlisten?.()
+    }
+  }, [])
 }
 
 /**
