@@ -113,15 +113,13 @@ python -m twine check --strict dist/*     # 元数据 + PyPI 的 README 渲染
 
 ## 独立应用（.dmg / .exe）
 
-桌面应用现在有**两条并行链路**（Tauri 链路完成等价验证前，旧链路不删）。
-**v0.2.0 起 Release 资产的分工**：macOS 的 dmg 挂 **Tauri 链**（真桌面窗口；
-macOS 本来就不带内置 runtime，没有短板），Windows 仍挂**旧链**（Tauri 链的
-NSIS 还没带内置渲染 runtime，发出去用户没装 Python 就渲染不了）。两条链的
-dmg 产物同名，谁后 attach 谁生效——所以 dispatch 时 Windows 端只信旧链，
-Tauri 链 attach=false 再单独 `gh release upload --clobber` 它的 dmg，
-或等 Tauri 链补齐 Windows runtime 后整体翻转。
+桌面发行**只有一条链路**（v0.3.0 起）：`desktop-tauri.yml`。旧 PyInstaller
+直发链（`desktop.yml` + Inno Setup + 免安装 zip）已退役删除，git 历史可找回。
+两个平台的桌面产物都是 Tauri 真窗口——不再存在「启动后开浏览器」的桌面包，
+也不再有两条链同名 dmg 互相覆盖的问题（v0.2.0 发布时踩过：两条链前后两秒
+dispatch，后 attach 的旧链 dmg 顶掉了 Tauri dmg）。
 
-### 新链路：Tauri 桌面壳（desktop-tauri.yml）
+### Tauri 桌面壳（desktop-tauri.yml）
 
 真正的桌面窗口（不再开系统浏览器）：Tauri 2 壳 + `magplot --desktop-sidecar`
 后端（127.0.0.1 动态端口 + 一次性 nonce 认证），架构与安全模型见
@@ -136,30 +134,22 @@ sidecar → Tauri bundler）。CI 门禁打的是最终产物：sidecar 真二�
 | 平台 | 产物 | 说明 |
 |---|---|---|
 | macOS | `Magplot-X.Y.Z-macOS.dmg` | Tauri .app（内嵌 sidecar）；签名 + 公证复用下述同一套 secret 与流程 |
-| Windows | `Magplot_X.Y.Z_x64-setup.exe` | NSIS，装到用户目录；当前未签名（无 Windows 代码签名证书） |
+| Windows | `Magplot-X.Y.Z-Windows-Setup.exe` | NSIS（收集时改成与 wheel/dmg 一致的命名），装到用户目录；**含内置渲染 runtime**；当前未签名（无 Windows 代码签名证书） |
 
 macOS 签名注意：sidecar 是 `.app` 里 `Resources/sidecar/` 下的 PyInstaller
 onedir，签名必须继续「按 `file` 判断签**所有** Mach-O、自底向上」——只签壳
 本体公证会 Invalid（教训同旧链路）。
 
-### 旧链路：PyInstaller 直发（desktop.yml，待替换）
-
-`desktop.yml`，手动触发（Actions → **Desktop apps** → 填 tag）。产物：
-
-| 平台 | 产物 | 说明 |
-|---|---|---|
-| macOS | `Magplot-X.Y.Z-macOS.dmg` | 拖进 Applications；配了 secret 则已签名 + 公证 |
-| Windows | `Magplot-X.Y.Z-Windows-Setup.exe` | Inno Setup，装到用户目录、不弹 UAC；**含内置渲染 runtime** |
-| Windows | `Magplot-X.Y.Z-Windows-portable.zip` | 免安装，给禁止运行未签名安装程序的环境；**同样含内置 runtime** |
-
 **Flask 主进程里始终不含 matplotlib**：科学栈只存在于 worker 那一侧。
 这条边界一破，包大小与依赖关系立刻失控（`packaging/magplot.spec` 文件头有完整说明）。
 
-打包配置从 tag 检出，所以**只能构建含 `packaging/` 的 tag**（v0.1.2 起）。
+打包配置从 tag 检出，所以只能构建含 `src-tauri/` 的 tag（v0.2.0 起）。
+免安装 zip 随旧链一起退役：它本质是浏览器模式的 PyInstaller 目录，与「桌面
+产物一律真窗口」冲突；确有需要时从历史 tag 走旧链构建。
 
 ### Windows 内置渲染 runtime
 
-Windows 安装包与免安装 zip 都**自带一套 Magplot 私有的 Python 渲染环境**，
+Windows 安装包**自带一套 Magplot 私有的 Python 渲染环境**，
 用户不需要先装 Python，首次渲染也不联网：
 
 ```
@@ -175,15 +165,17 @@ Magplot.exe → _internal\runtime\python.exe → engine\worker.py → 用户的�
 
 发行流水线里这条链路是这样护住的：
 
-1. `desktop.yml` 先跑 `scripts/build_worker_runtime.py`。脚本自己会校验 CPython
-   压缩包的 SHA-256、按 `.dist-info` 核对装出来的版本、**逐个 import 并画一张真图**
-   ——任何一步不过就失败在构建机上，而不是留到用户电脑上。
-2. `pyinstaller` 带 `MAGPLOT_REQUIRE_RUNTIME=1`：忘了构建 runtime 会当场失败，
+1. `desktop-tauri.yml` 先跑 `scripts/build_worker_runtime.py`。脚本自己会校验
+   CPython 压缩包的 SHA-256、按 `.dist-info` 核对装出来的版本、**逐个 import 并
+   画一张真图**——任何一步不过就失败在构建机上，而不是留到用户电脑上。
+2. sidecar 构建带 `MAGPLOT_REQUIRE_RUNTIME=1`：忘了构建 runtime 会当场失败，
    而不是安静地产出一个装完不能渲染的包。
-3. ISCC 脚本自己检查 `dist\Magplot\_internal\runtime\runtime-manifest.json`
-   在不在；免安装 zip 打完也断言一次。
+3. NSIS 经 `tauri.conf.json` 的 `bundle.resources` 把整个 sidecar 目录
+   （含 `_internal\runtime`）收走——第 2 条保证了它此刻一定在。
 4. 打包后跑一次 `scripts/smoke_app.py --expect-source bundled`：真启动 .exe、
-   真渲染、真导出，并断言用的是**内置**解释器而不是构建机上碰巧装着的 Python。
+   真渲染、真导出，并断言用的是**内置**解释器而不是构建机上碰巧装着的 Python；
+   sidecar 全链路冒烟（smoke_desktop.py）在 Windows 上也刻意不给
+   `MM_WORKER_PYTHON`，渲染腿必须走内置 runtime。
 
 同一套门禁在 `ci.yml` 的 `windows-exe-smoke` 里对每个 PR 都跑一遍
 （还额外验中文 + 空格路径、以及 `MM_WORKER_PYTHON` 仍然优先）。

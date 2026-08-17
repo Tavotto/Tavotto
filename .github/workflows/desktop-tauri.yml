@@ -1,14 +1,20 @@
 name: Desktop apps (Tauri)
 
-# Tauri 桌面壳的构建 + 验收：macOS .app/.dmg（签名 + 公证）与 Windows NSIS。
+# 桌面发行的唯一链路：macOS .app/.dmg（签名 + 公证）与 Windows NSIS，
+# 两个平台都是 Tauri 真窗口——桌面产物不再有「启动后开浏览器」的形态。
+# 旧链路（desktop.yml：PyInstaller 直发 + Inno Setup + 免安装 zip）已于
+# v0.3.0 退役删除，git 历史可找回。架构见 docs/adr/0002-tauri-desktop-shell.md。
 #
-# 与旧链路（desktop.yml：PyInstaller 直发 + Inno Setup）**并行存在**——完成
-# 等价验证之前旧链路不删（回退路径）。架构见 docs/adr/0002-tauri-desktop-shell.md。
+# Windows 的 NSIS 里带**内置渲染 runtime**（进 sidecar 的 _internal\runtime，
+# 由 scripts/build_worker_runtime.py 生成、经 packaging/magplot.spec 收进）：
+# 用户不用装 Python，首次渲染不联网。
 #
 # 验收原则：门禁打的是**最终用户启动的产物**——
 # 1. sidecar 冒烟（scripts/smoke_desktop.py）对 PyInstaller 真二进制走完整链路：
-#    动态端口 / nonce 认证 / 重放拒绝 / 打开项目 / 渲染 / 导出 / EOF 退出无孤儿；
-# 2. Windows 上再对 Tauri 真 .exe 做启动-探活-退出探针（壳 → sidecar → 收尾）。
+#    动态端口 / nonce 认证 / 重放拒绝 / 打开项目 / 渲染 / 导出 / EOF 退出无孤儿
+#    （Windows 上这条腿刻意不给 MM_WORKER_PYTHON，渲染必须走内置 runtime）；
+# 2. Windows 再跑 smoke_app.py --expect-source bundled（内置 runtime 真能渲染），
+#    并对 Tauri 真 .exe 做启动-探活-退出探针（壳 → sidecar → 收尾）。
 on:
   workflow_dispatch:
     inputs:
@@ -66,20 +72,39 @@ jobs:
         with:
           workspaces: src-tauri
 
+      - name: 缓存 CPython embeddable 下载
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: build/runtime-cache
+          key: cpython-embed-${{ hashFiles('packaging/runtime-lock.json') }}
+
+      - name: 构建内置渲染 runtime（仅 Windows）
+        # 脚本自己做 SHA-256 校验、按 .dist-info 核对版本，并逐个 import +
+        # 画一张真图。任何一步不过就失败在这里——发出去之后再发现就晚了。
+        if: runner.os == 'Windows'
+        run: python scripts/build_worker_runtime.py --clean
+
       - name: 装打包依赖（Flask 父进程那点；科学栈刻意不装，免得进 sidecar）
         run: |
           python -m pip install --upgrade pip pyinstaller
           python -m pip install "flask>=3.1,<4" "pymupdf>=1.24,<2"
 
       - name: 构建前端 + sidecar（PyInstaller onedir）
+        env:
+          # Windows 发行包必须自带 runtime（落在 sidecar 的 _internal\runtime，
+          # NSIS 经 bundle.resources 一起收走）；macOS 不带，spec 自动跳过
+          MAGPLOT_REQUIRE_RUNTIME: ${{ runner.os == 'Windows' && '1' || '0' }}
         run: python scripts/build_desktop.py --skip-tauri
 
-      - name: 渲染 worker 环境（冒烟里的渲染/导出腿需要 matplotlib）
+      - name: 渲染 worker 环境（仅 macOS：冒烟的渲染/导出腿需要 matplotlib）
+        # Windows 刻意不建也不设 MM_WORKER_PYTHON——sidecar 冒烟的渲染腿
+        # 必须走内置 runtime，一台碰巧装着 matplotlib 的机器不该让它绿灯
+        if: runner.os == 'macOS'
         shell: bash
         run: |
           python -m venv worker-env
-          if [ "$RUNNER_OS" = "Windows" ]; then WPY=worker-env/Scripts/python.exe
-          else WPY=worker-env/bin/python; fi
+          WPY=worker-env/bin/python
           "$WPY" -m pip install -q matplotlib numpy
           echo "MM_WORKER_PYTHON=$PWD/$WPY" >> "$GITHUB_ENV"
 
@@ -89,6 +114,17 @@ jobs:
           if [ "$RUNNER_OS" = "Windows" ]; then EXE=dist/Magplot/Magplot.exe
           else EXE=dist/Magplot/Magplot; fi
           python scripts/smoke_desktop.py --sidecar "$EXE"
+
+      - name: 发布前冒烟：内置 runtime 真能渲染（仅 Windows）
+        # --expect-source bundled 断言渲染真的走了内置环境；--expect-packages
+        # 逐个 import 内置科学栈。少了它们，「runtime 根本没打进去」会全程绿灯。
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:MM_WORKER_PYTHON = $null
+          python scripts/smoke_app.py --exe dist/Magplot/Magplot.exe `
+            --figures examples/runtime_check --expect-source bundled `
+            --expect-packages numpy,pandas,scipy,seaborn,PIL,matplotlib
 
       - name: Tauri build
         run: pnpm dlx @tauri-apps/cli@latest build --bundles ${{ matrix.bundles }}
@@ -208,7 +244,12 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path out | Out-Null
-          Copy-Item src-tauri\target\release\bundle\nsis\*.exe out\
+          # 命名与 wheel / dmg 一致（Magplot-<ver>-Windows-Setup.exe），
+          # 不用 NSIS 默认的 Magplot_<ver>_x64-setup.exe——升级用户认的是老名字
+          $ver = "${{ inputs.tag }}" -replace '^v', ''
+          $nsis = @(Get-ChildItem src-tauri\target\release\bundle\nsis\*.exe)
+          if ($nsis.Count -ne 1) { throw "NSIS 产物数量异常（$($nsis.Count) 个）" }
+          Copy-Item $nsis[0].FullName "out\Magplot-$ver-Windows-Setup.exe"
           Write-Warning "Windows 安装包未签名（无代码签名证书），仅供测试分发"
           Get-ChildItem out | Format-Table Name, Length
 

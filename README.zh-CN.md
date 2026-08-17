@@ -150,7 +150,7 @@ PDF 会把每张原始矢量面板整块嵌进去，**文字仍然可选中、�
 
   | 安装方式 | 渲染用的解释器 |
   |---|---|
-  | Windows `.exe` / 免安装 `.zip` | 安装包**自带的内置环境**：CPython 3.13 + numpy / matplotlib / pandas / scipy / seaborn / Pillow（版本固定）。不用装、不用下载。 |
+  | Windows `.exe` | 安装包**自带的内置环境**：CPython 3.13 + numpy / matplotlib / pandas / scipy / seaborn / Pillow（版本固定）。不用装、不用下载。 |
   | macOS `.dmg` | 你自己的 Python；也可以让 Magplot 在它自己的数据目录里建一个隔离环境。 |
   | PyPI + `[worker]` | 你装它的那个环境。 |
 

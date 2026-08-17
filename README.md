@@ -164,7 +164,7 @@ your figures or data is uploaded.
 
   | Install | Interpreter used for rendering |
   |---|---|
-  | Windows `.exe` / portable `.zip` | The **bundled runtime** that ships inside the installer — CPython 3.13 with numpy, matplotlib, pandas, scipy, seaborn and Pillow at pinned versions. Nothing to install, nothing to download. |
+  | Windows `.exe` | The **bundled runtime** that ships inside the installer — CPython 3.13 with numpy, matplotlib, pandas, scipy, seaborn and Pillow at pinned versions. Nothing to install, nothing to download. |
   | macOS `.dmg` | Your own Python; Magplot can also build an isolated one for you inside its own data folder. |
   | PyPI with the `[worker]` extra | The environment you installed it into. |
 

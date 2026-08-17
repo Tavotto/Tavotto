@@ -144,6 +144,9 @@ Tauri bundler）。
 - 旧 PyInstaller 直发链路（`desktop.yml`：Inno Setup / make_dmg.sh）**原样保留**，
   Tauri 链路（`desktop-tauri.yml`）完成等价验证（含 Windows 真 exe 门禁）之前
   不删；任何时刻可回退到旧安装包。
+  ——**2026-08-17 更新**：等价验证完成，Windows NSIS 已带内置渲染 runtime 并过
+  `--expect-source bundled` 门禁；旧链于 v0.3.0 退役删除（含 Inno Setup 与
+  免安装 zip），回退路径改为检出历史 tag 走旧链构建。
 - 桌面壳的 Tauri updater 本轮只留了位置（Python updater 已在桌面模式停用），
   端到端的壳自更新未接——发行前需接 tauri-plugin-updater 或提示手动下载。
 - 画布级 ⌘C/⌘V 在桌面菜单预定义角色下的行为需人工回归一轮（文本框内已保证）；

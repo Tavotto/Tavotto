@@ -219,7 +219,16 @@ def test_spec_ships_runtime_only_when_it_exists():
     assert '"runtime"' in spec, "runtime 要作为 datas 进包"
 
 
-def test_installer_refuses_to_build_without_the_runtime():
-    """漏了 runtime 照样能编出安装包，而那个包只有到了用户手里才暴露问题。"""
-    iss = (REPO / "packaging" / "magplot.iss").read_text(encoding="utf-8")
-    assert "runtime-manifest.json" in iss and "#error" in iss
+def test_release_chain_refuses_to_ship_without_the_runtime():
+    """漏了 runtime 照样能编出安装包，而那个包只有到了用户手里才暴露问题。
+
+    旧链的看护在 Inno Setup 脚本的 #error 里；旧链退役后这条线由发行工作流
+    扛：Windows 构建 sidecar 时必须开 MAGPLOT_REQUIRE_RUNTIME（spec 当场失败），
+    NSIS 经 tauri.conf.json 的 bundle.resources 把整个 sidecar 目录（含
+    _internal/runtime）收走，打完还要过 --expect-source bundled 的真渲染冒烟。
+    """
+    wf = (REPO / ".github" / "workflows" / "desktop-tauri.yml").read_text(encoding="utf-8")
+    assert "MAGPLOT_REQUIRE_RUNTIME" in wf, "Windows 构建必须能把「必须带 runtime」打开"
+    assert "--expect-source bundled" in wf, "打包后必须断言渲染真的走了内置 runtime"
+    conf = (REPO / "src-tauri" / "tauri.conf.json").read_text(encoding="utf-8")
+    assert "../dist/Magplot" in conf, "NSIS/.app 必须把整个 sidecar 目录作为资源收走"

@@ -57,7 +57,9 @@ PyMuPDF（**只经 `src/magplot/pdfbackend/`**），前端 `web/`
   禁用响应；浏览器模式照旧。
 - 构建：`python scripts/build_desktop.py`；验收：`python scripts/smoke_desktop.py
   --sidecar dist/Magplot/Magplot`（真产物全链路：认证/项目/渲染/导出/退出无孤儿）。
-  CI 在 `desktop-tauri.yml`（与旧 `desktop.yml` 并行，等价验证前不删旧链）。
+  CI 在 `desktop-tauri.yml`——v0.3.0 起是唯一桌面发行链（旧 `desktop.yml`/
+  Inno Setup/免安装 zip 已退役删除，git 可找回）；Windows NSIS 自带内置渲染
+  runtime，桌面产物一律真窗口、不再有「启动后开浏览器」的形态。
 - wheel/sdist 不含 `src-tauri/`（hatchling 白名单）；`src-tauri/target/`、
   `src-tauri/gen/` 进 .gitignore。
 
