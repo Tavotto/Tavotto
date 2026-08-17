@@ -527,6 +527,12 @@ export interface ManifestElement {
   colorbar_gid?: string
   anchor?: [number, number]
   drag_prop?: string
+  /**
+   * 图内独立箭头（脚本 add_patch 的 FancyArrowPatch）的两个端点
+   * （figure 分数、y 向下）。有它 = 可整体拖动、可拖单个端点，
+   * 写 endpoints_frac override（[ax, ay, bx, by]）。
+   */
+  arrow_endpoints?: [number, number][]
 }
 
 export interface Manifest {

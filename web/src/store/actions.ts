@@ -500,6 +500,8 @@ export const PROP_LABEL: Record<string, string> = {
   size_mm: '图幅',
   pos_frac: '位置',
   loc_frac: '位置',
+  endpoints_frac: '位置',
+  arrowstyle: '箭头样式',
   alpha: '透明度',
   fontfamily: '字体',
   ha: '水平对齐',

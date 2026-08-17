@@ -17,7 +17,8 @@ from matplotlib.text import Text
 from matplotlib.ticker import FormatStrFormatter, ScalarFormatter
 
 from overrides import (ColorbarProxy, FigState, HANDLERS, SeriesGroup, TickLabel,
-                       TickSet, _LEGEND_LOCS, _arrow_style, _axis_arrows_on,
+                       TickSet, _ARROWSTYLES, _LEGEND_LOCS, _arrow_style,
+                       _arrowstyle_name, _axis_arrows_on, _linestyle_name,
                        _boxstyle_info, _cb_axis, _cb_tick_color,
                        _cb_tick_fontsize, _cls_key, _grid_prop, _grid_visible,
                        _legend_entry_order, _legend_loc_name, _spines_get,
@@ -157,6 +158,9 @@ def instrument(state: FigState) -> None:
             for j, pt in enumerate(ax.patches):
                 if isinstance(pt, FancyArrowPatch):
                     arrow_n += 1
+                    # 独立箭头的端点归自己管（set_positions 持久生效），可拖；
+                    # annotate 的 arrow_patch 每次 draw 被注释机制重定位，不标
+                    pt._mm_arrow_standalone = True  # noqa: SLF001
                     _register(state, f"axes_{i}.arrows_{j}", pt,
                               "arrow_patch", f"箭头 {arrow_n}")
         leg = ax.get_legend()
@@ -400,11 +404,15 @@ def _cmap_options(current: str) -> list[str]:
 
 
 def _arrowpatch_fields(a) -> list[dict]:
-    """图内独立箭头（FancyArrowPatch）：颜色 / 线宽 / 帽大小 / 透明度 / 显隐。
-    位置仍归脚本管——箭头端点是数据坐标里的语义落点（指着某个峰），
-    在排版工具里拖它只会把标注拖离事实。"""
+    """图内箭头（FancyArrowPatch）：样式 / 颜色 / 线宽 / 帽大小 / 线型 /
+    透明度 / 显隐。独立箭头（脚本 add_patch 的）另有端点可在画布上直接拖动
+    （manifest 的 arrow_endpoints + endpoints_frac override）；annotate 的箭头
+    端点由注释机制每次 draw 重定位，只放样式。"""
     alpha = a.get_alpha()
+    style = _arrowstyle_name(a)
+    style_opts = ([style] if style not in _ARROWSTYLES else []) + _ARROWSTYLES
     return [
+        {"prop": "arrowstyle", "type": "enum", "value": style, "options": style_opts},
         {"prop": "color", "type": "color", "value": to_hex(a.get_edgecolor())},
         {"prop": "linewidth", "type": "number",
          "value": round(float(a.get_linewidth()), 2),
@@ -412,6 +420,8 @@ def _arrowpatch_fields(a) -> list[dict]:
         {"prop": "mutation_scale", "type": "number",
          "value": round(float(a.get_mutation_scale()), 1),
          "min": 1, "max": 40, "step": 0.5, "unit": "pt"},
+        {"prop": "linestyle", "type": "enum", "value": _linestyle_name(a),
+         "options": ["-", "--", "-.", ":"]},
         {"prop": "alpha", "type": "number",
          "value": 1.0 if alpha is None else round(float(alpha), 2),
          "min": 0, "max": 1, "step": 0.05},
@@ -854,6 +864,20 @@ def build_manifest(state: FigState, stem: str) -> dict:
                 entry["bbox"] = _padded_bbox(bb, W, H)
             except Exception:
                 continue
+        # 独立箭头：端点（figure 分数、top-origin）随 manifest 下发，
+        # 前端据此画端点手柄、整体拖动 / 单端拖动都写 endpoints_frac override
+        if el["role"] == "arrow_patch" and getattr(artist, "_mm_arrow_standalone", False):
+            pts = getattr(artist, "_posA_posB", None)
+            if pts is not None:
+                try:
+                    conv = getattr(artist, "_convert_xy_units", lambda p: p)
+                    disp = artist.get_transform().transform(
+                        [conv(pts[0]), conv(pts[1])])
+                    entry["arrow_endpoints"] = [
+                        [round(float(x) / W, 4), round(1.0 - float(y) / H, 4)]
+                        for x, y in disp]
+                except Exception:
+                    pass
         # 可拖元素附带锚点（figure 分数、top-origin），拖动换算用
         if el["draggable"]:
             try:

@@ -14,6 +14,7 @@ import {
 import type { Manifest, ManifestElement } from '@/lib/api'
 import { flipY, resizeGroup, round4, unionBox, type Rect4 } from '@/lib/axesLayout'
 import {
+  arrowEndpointsOf,
   groupBoxes,
   groupPatches,
   positionOf,
@@ -844,6 +845,61 @@ export function startElementDrag(
       if (!moved) return
       const [dfx, dfy] = toContent(ev.clientX - e.clientX, ev.clientY - e.clientY)
       setOverride(panel.id, element.gid, dragProp, [anchor[0] + dfx, anchor[1] + dfy], true)
+    },
+  })
+}
+
+/**
+ * 拖动图内独立箭头（FancyArrowPatch）：整体平移或拖单个端点。
+ * 整体平移时顺带平移 SVG <g> 做乐观预览；单端拖动改变形状，SVG 预览会骗人，
+ * 改在覆盖层画一条虚线（OverlaySvg 读 arrowPreview），松手写 endpoints_frac。
+ */
+export function startArrowDrag(
+  e: ReactPointerEvent,
+  panel: PanelObject,
+  element: ManifestElement,
+  layout: { width: number; height: number },
+  which: 'both' | 'start' | 'end',
+) {
+  const pts = arrowEndpointsOf(panel, element)
+  if (!pts) return
+  e.stopPropagation()
+
+  const wrap = document.querySelector<HTMLElement>(`[data-element-svg="${panel.id}"]`)
+  const svg = wrap?.querySelector('svg')
+  const group = svg?.querySelector<SVGGElement>(`[id="${CSS.escape(element.gid)}"]`)
+  const viewBox = (svg?.getAttribute('viewBox') ?? '0 0 100 100').split(/\s+/).map(Number)
+
+  interaction().begin('element')
+  const toContent = contentDelta(panel, layout)
+  const next = (dfx: number, dfy: number): [number, number][] => [
+    which !== 'end' ? [pts[0][0] + dfx, pts[0][1] + dfy] : pts[0],
+    which !== 'start' ? [pts[1][0] + dfx, pts[1][1] + dfy] : pts[1],
+  ]
+
+  trackPointer(e, {
+    onMove: (_ev, dxPx, dyPx) => {
+      const [dfx, dfy] = toContent(dxPx, dyPx)
+      if (which === 'both') {
+        group?.setAttribute('transform', `translate(${dfx * viewBox[2]},${dfy * viewBox[3]})`)
+        interaction().setGidDrag({ gid: element.gid, dfx, dfy })
+      } else {
+        const [a, b] = next(dfx, dfy)
+        interaction().setArrowPreview({ gid: element.gid, a, b })
+      }
+    },
+    onEnd: (moved, ev) => {
+      interaction().end()
+      if (!moved) return
+      const [dfx, dfy] = toContent(ev.clientX - e.clientX, ev.clientY - e.clientY)
+      const [a, b] = next(dfx, dfy)
+      setOverride(
+        panel.id,
+        element.gid,
+        'endpoints_frac',
+        [a[0], a[1], b[0], b[1]].map(round4),
+        true,
+      )
     },
   })
 }

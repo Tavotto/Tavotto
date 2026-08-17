@@ -14,6 +14,7 @@ import { panelFullSize, panelRotation, rotationSwaps, unrotateVec } from '@/type
 import {
   isElementHidden,
   pickElement,
+  startArrowDrag,
   startAxesDrag,
   startElementDrag,
   startElementGroupMove,
@@ -218,7 +219,8 @@ function ElementHitLayer({
         const hit = pickElement(manifest, fx, fy, obj.lockedGids)
         setHoverGid(hit?.gid ?? null)
         if (ref.current) {
-          ref.current.style.cursor = hit?.draggable || hit?.resizable ? 'move' : 'crosshair'
+          ref.current.style.cursor =
+            hit?.draggable || hit?.resizable || hit?.arrow_endpoints ? 'move' : 'crosshair'
         }
       }}
       onPointerLeave={() => setHoverGid(null)}
@@ -257,6 +259,7 @@ function ElementHitLayer({
         // 保持选区归保持选区，该拖的照样拖：位图没有自己的几何属性，
         // 拖它等于拖宿主子图
         if (hit?.resizable) startAxesDrag(e, obj, geomTarget(manifest, hit), layout, 'move')
+        else if (hit?.arrow_endpoints) startArrowDrag(e, obj, hit, layout, 'both')
         else if (hit?.draggable && hit.anchor) startElementDrag(e, obj, hit, layout)
       }}
       onContextMenu={(e) => {

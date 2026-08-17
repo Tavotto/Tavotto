@@ -95,6 +95,7 @@ const R17_LABEL: Record<string, string> = {
 
   // arrow_patch（图内独立箭头 / 标注箭头）
   mutation_scale: '箭头帽大小',
+  arrowstyle: '箭头样式',
 
   // image · 单色渐变填充（imshow 渐变 + 裁剪路径的画法）
   gradient_color: '渐变基色',
@@ -188,6 +189,22 @@ const R17_ENUM: Record<string, Record<string, string>> = {
   style: { normal: '正体', italic: '斜体', oblique: '倾斜' },
   grid_linestyle: { '-': '实线', '--': '虚线', '-.': '点划线', ':': '点线' },
   linestyle: { '-': '实线', '--': '虚线', '-.': '点划线', ':': '点线', none: '无' },
+  // matplotlib 的 arrowstyle 代号（"-|>" 等）直接显示没人看得懂
+  arrowstyle: {
+    '-': '无箭头',
+    '->': '细箭头',
+    '-|>': '实心箭头',
+    '<-': '反向细箭头',
+    '<|-': '反向实心箭头',
+    '<->': '双向细箭头',
+    '<|-|>': '双向实心箭头',
+    '|-|': '两端竖线',
+    ']-[': '两端方括号',
+    simple: '简约',
+    fancy: '花式',
+    wedge: '楔形',
+    custom: '自定义（脚本设定）',
+  },
   loc: {
     best: '自动',
     'upper right': '右上',

@@ -507,6 +507,68 @@ def test_arrowpatch_and_gradient_fill_editable(tmp_path):
         proc.wait(timeout=10)
 
 
+def test_arrowpatch_endpoints_and_style_roundtrip(tmp_path):
+    """独立箭头可自由挪动与改样式；annotate 箭头端点归注释机制、不放出来。
+
+    - 独立箭头（add_patch）manifest 带 arrow_endpoints（figure 分数、y 向下），
+      endpoints_frac override 拖到哪端点就落到哪；
+    - arrowstyle / linestyle 可换、可还原（全量列表语义）；
+    - annotate 的 arrow_patch 每次 draw 被注释机制重定位，绝不能出端点，
+      否则用户拖完下一帧就弹回去。
+    """
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    (figs / "fig_ae.py").write_text(ARROW_GRADIENT_SCRIPT, encoding="utf-8")
+    proc = _spawn(figs / "fig_ae.py", figs, tmp_path)
+    try:
+        _rpc(proc, {"cmd": "build"})
+        resp = _rpc(proc, {"cmd": "override", "stem": "ArrowGrad", "patches": []})
+        man = resp["manifest"]
+
+        standalone = next(e for e in man["elements"] if e["gid"] == "axes_0.arrows_1")
+        annotate = next(e for e in man["elements"] if e["gid"] == "axes_0.texts_0.arrow")
+        pts = standalone.get("arrow_endpoints")
+        assert pts and len(pts) == 2, standalone
+        # 脚本里 posA=(5,1.4) 在 posB=(5,1.05) 上方：top-origin 下 A 的 fy 更小
+        assert pts[0][1] < pts[1][1]
+        assert all(0.0 <= v <= 1.0 for p in pts for v in p)
+        assert "arrow_endpoints" not in annotate
+        assert _field_value(man, "axes_0.arrows_1", "arrowstyle") == "-|>"
+        assert _field_value(man, "axes_0.texts_0.arrow", "arrowstyle") == "->"
+        assert _field_value(man, "axes_0.arrows_1", "linestyle") == "-"
+
+        # 整体右移 0.1（figure 分数）+ 换样式
+        moved = [round(pts[0][0] + 0.1, 4), pts[0][1], round(pts[1][0] + 0.1, 4), pts[1][1]]
+        patches = [
+            {"gid": "axes_0.arrows_1", "prop": "endpoints_frac", "value": moved},
+            {"gid": "axes_0.arrows_1", "prop": "arrowstyle", "value": "->"},
+            {"gid": "axes_0.arrows_1", "prop": "linestyle", "value": "--"},
+        ]
+        resp = _rpc(proc, {"cmd": "override", "stem": "ArrowGrad", "patches": patches})
+        assert resp.get("warnings") in (None, []), resp.get("warnings")
+        man = resp["manifest"]
+        el = next(e for e in man["elements"] if e["gid"] == "axes_0.arrows_1")
+        got = el["arrow_endpoints"]
+        for want, have in zip([moved[:2], moved[2:]], got):
+            assert abs(want[0] - have[0]) < 0.01 and abs(want[1] - have[1]) < 0.01, \
+                (moved, got)
+        assert _field_value(man, "axes_0.arrows_1", "arrowstyle") == "->"
+        assert _field_value(man, "axes_0.arrows_1", "linestyle") == "--"
+
+        # 全量列表语义：空列表 = 端点与样式全部还原
+        resp = _rpc(proc, {"cmd": "override", "stem": "ArrowGrad", "patches": []})
+        man = resp["manifest"]
+        el = next(e for e in man["elements"] if e["gid"] == "axes_0.arrows_1")
+        for want, have in zip(pts, el["arrow_endpoints"]):
+            assert abs(want[0] - have[0]) < 0.01 and abs(want[1] - have[1]) < 0.01
+        assert _field_value(man, "axes_0.arrows_1", "arrowstyle") == "-|>"
+        assert _field_value(man, "axes_0.arrows_1", "linestyle") == "-"
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=10)
+
+
 def test_closed_figure_still_builds(tmp_path):
     """脚本 `savefig` 完就 `plt.close(fig)` 时仍要能起来。
 

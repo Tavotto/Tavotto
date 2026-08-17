@@ -224,6 +224,60 @@ def _restore_legend_loc(leg: Legend, orig) -> None:
 
 
 # ---------------------------------------------------------------------------
+# 图内独立箭头（FancyArrowPatch）：端点拖动 + 箭头样式
+# ---------------------------------------------------------------------------
+_ARROWSTYLES = ["-", "->", "-|>", "<-", "<|-", "<->", "<|-|>", "|-|", "]-[",
+                "simple", "fancy", "wedge"]
+
+
+def _arrowstyle_name(a) -> str:
+    """当前 ArrowStyle 的注册名；识别不出（带参数的自定义写法）报 'custom'，
+    前端把它放进选项里，选它 = 保持脚本原样。"""
+    from matplotlib.patches import ArrowStyle
+    st = a.get_arrowstyle()
+    for name, cls in ArrowStyle._style_list.items():  # noqa: SLF001
+        if type(st) is cls:
+            return name
+    return "custom"
+
+
+def _set_arrowstyle(a, v) -> None:
+    if str(v) == "custom":
+        return  # 占位项：脚本用了带参数的自定义样式，选它就是不动
+    a.set_arrowstyle(str(v))
+
+
+def _linestyle_name(a) -> str:
+    ls = a.get_linestyle()
+    named = {"solid": "-", "dashed": "--", "dashdot": "-.", "dotted": ":"}
+    if isinstance(ls, str):
+        return named.get(ls, ls)
+    return "-"  # (offset, seq) 自定义虚线：显示成实线占位，用户改了才覆盖
+
+
+def _set_arrow_endpoints(a, value) -> None:
+    """拖动图内独立箭头。值为 figure 分数（top-origin）的 [ax, ay, bx, by]，
+    换算回箭头自己的 transform 坐标后 set_positions——数据坐标里落点跟着
+    数据范围走，figure 分数才是「屏幕上挪到哪就是哪」。annotate 的箭头每次
+    draw 会被注释机制重定位，manifest 不给它出端点，这里只会收到独立箭头。"""
+    fig = a.get_figure()
+    da = _frac_to_display(fig, float(value[0]), float(value[1]))
+    db = _frac_to_display(fig, float(value[2]), float(value[3]))
+    inv = a.get_transform().inverted()
+    a.set_positions(tuple(inv.transform(da)), tuple(inv.transform(db)))
+
+
+def _get_arrow_endpoints(a):
+    pts = getattr(a, "_posA_posB", None)
+    return None if pts is None else (tuple(pts[0]), tuple(pts[1]))
+
+
+def _restore_arrow_endpoints(a, orig) -> None:
+    if orig is not None:
+        a.set_positions(orig[0], orig[1])
+
+
+# ---------------------------------------------------------------------------
 # 文字背景框（Text.set_bbox 的 FancyBboxPatch）与描边（path_effects.withStroke）
 # ---------------------------------------------------------------------------
 _BBOX_CREATE = dict(boxstyle="square,pad=0.3", facecolor="#FFFFFF",
@@ -906,6 +960,13 @@ HANDLERS: dict[tuple[str, str], tuple] = {
                                 lambda a, v: a.set_visible(bool(v))),
     ("arrowpatch", "zorder"): (lambda a: float(a.get_zorder()),
                                lambda a, v: a.set_zorder(float(v))),
+    # 端点与样式：位置只对独立箭头开放（manifest 侧把关），样式两类都能改。
+    # 原生值分别是 transform 坐标的端点对 / ArrowStyle 对象 / linestyle 原值，
+    # 恢复走 _RESTORE 里的专用函数
+    ("arrowpatch", "endpoints_frac"): (_get_arrow_endpoints, _set_arrow_endpoints),
+    ("arrowpatch", "arrowstyle"): (lambda a: a.get_arrowstyle(), _set_arrowstyle),
+    ("arrowpatch", "linestyle"): (lambda a: a.get_linestyle(),
+                                  lambda a, v: a.set_linestyle(str(v))),
 
     ("line", "color"):     (lambda a: a.get_color(),      lambda a, v: a.set_color(v)),
     ("line", "linewidth"): (lambda a: a.get_linewidth(),  lambda a, v: a.set_linewidth(float(v))),
@@ -1181,6 +1242,9 @@ for _prop, _g3, _s3 in [
 # 恢复原值时 pos_frac / loc_frac 的原生值需要走原生 setter
 _RESTORE: dict[tuple[str, str], object] = {
     ("scatter", "marker"):  _restore_scatter_marker,
+    ("arrowpatch", "endpoints_frac"): _restore_arrow_endpoints,
+    ("arrowpatch", "arrowstyle"): lambda a, orig: a.set_arrowstyle(orig),
+    ("arrowpatch", "linestyle"): lambda a, orig: a.set_linestyle(orig),
     ("text", "pos_frac"):   _restore_text_pos,
     ("text", "fontfamily"): _restore_text_fontfamily,
     ("image", "gradient_color"): _restore_image_gradient,

@@ -39,6 +39,23 @@ export function positionOf(panel: PanelObject, el: ManifestElement): Rect4 | nul
   return Array.isArray(f?.value) ? ((f.value as number[]).slice(0, 4) as Rect4) : null
 }
 
+/** 图内独立箭头的当前端点（figure 分数、top-origin；优先尚未渲染回来的 override） */
+export function arrowEndpointsOf(
+  panel: PanelObject,
+  el: ManifestElement,
+): [number, number][] | null {
+  if (!el.arrow_endpoints || el.arrow_endpoints.length < 2) return null
+  const ov = panel.overrides.find((o) => o.gid === el.gid && o.prop === 'endpoints_frac')
+  if (ov && Array.isArray(ov.value) && ov.value.length === 4) {
+    const v = ov.value as number[]
+    return [
+      [v[0], v[1]],
+      [v[2], v[3]],
+    ]
+  }
+  return el.arrow_endpoints
+}
+
 /** 可拖动文字 / 图例的当前锚点（top-origin，优先 override） */
 export function anchorOf(panel: PanelObject, el: ManifestElement): [number, number] | null {
   if (!el.anchor || !el.drag_prop) return null

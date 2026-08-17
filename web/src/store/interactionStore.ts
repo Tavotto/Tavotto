@@ -30,6 +30,8 @@ interface InteractionState {
   hoverGid: string | null
   /** 图内元素拖动中的分数位移，供选中框跟随 */
   gidDrag: { gid: string; dfx: number; dfy: number } | null
+  /** 图内独立箭头端点拖动中的预览端点（figure 分数、top-origin） */
+  arrowPreview: { gid: string; a: [number, number]; b: [number, number] } | null
   /**
    * 子图拖动 / 缩放的预览框（figure 分数、top-origin），按 gid 索引。
    * 成组缩放时同时给出组框，单个子图拖动时只有 boxes 里的一项。
@@ -48,6 +50,7 @@ interface InteractionState {
   setHover: (id: string | null) => void
   setHoverGid: (gid: string | null) => void
   setGidDrag: (d: { gid: string; dfx: number; dfy: number } | null) => void
+  setArrowPreview: (p: { gid: string; a: [number, number]; b: [number, number] } | null) => void
   setElementPreview: (p: { boxes: Record<string, Rect4>; group?: Rect4 } | null) => void
   setCursor: (c: { x: number; y: number } | null) => void
   setPendingGuide: (g: { axis: 'x' | 'y'; pos: number } | null) => void
@@ -62,6 +65,7 @@ export const useInteractionStore = create<InteractionState>((set) => ({
   hoverId: null,
   hoverGid: null,
   gidDrag: null,
+  arrowPreview: null,
   elementPreview: null,
   cursor: null,
   pendingGuide: null,
@@ -76,6 +80,7 @@ export const useInteractionStore = create<InteractionState>((set) => ({
       snapYs: [],
       pendingGuide: null,
       gidDrag: null,
+      arrowPreview: null,
       elementPreview: null,
     }),
   setMarquee: (marquee) => set({ marquee }),
@@ -92,6 +97,7 @@ export const useInteractionStore = create<InteractionState>((set) => ({
   setHover: (hoverId) => set((s) => (s.hoverId === hoverId ? s : { hoverId })),
   setHoverGid: (hoverGid) => set((s) => (s.hoverGid === hoverGid ? s : { hoverGid })),
   setGidDrag: (gidDrag) => set({ gidDrag }),
+  setArrowPreview: (arrowPreview) => set({ arrowPreview }),
   setElementPreview: (elementPreview) => set({ elementPreview }),
   setCursor: (cursor) => set({ cursor }),
   setPendingGuide: (pendingGuide) => set({ pendingGuide }),

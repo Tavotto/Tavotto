@@ -1,7 +1,7 @@
 import { Fragment } from 'react'
 import type { Rect4 } from '@/lib/axesLayout'
 import { MM_PER_PT } from '@/lib/units'
-import { geomTarget, resolveGroup } from '@/lib/elementGeom'
+import { arrowEndpointsOf, geomTarget, resolveGroup } from '@/lib/elementGeom'
 import { ALL_DIRS, boundsOf, dirsFor, type ResizeDir } from '@/lib/geometry'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
@@ -25,6 +25,7 @@ import {
   panelRotation,
 } from '@/types/document'
 import {
+  startArrowDrag,
   startAxesDrag,
   startCropDrag,
   startEndpointDrag,
@@ -517,6 +518,7 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
   const hoverGid = useInteractionStore((s) => s.hoverGid)
   const gidDrag = useInteractionStore((s) => s.gidDrag)
   const preview = useInteractionStore((s) => s.elementPreview)
+  const arrowPreview = useInteractionStore((s) => s.arrowPreview)
   const selectedGids = useUiStore((s) => s.selectedGids)
   const selectedGid = selectedGids.at(-1) ?? null
   if (!manifest) return null
@@ -559,6 +561,13 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
   const groupBox = group ? toBox(preview?.group ?? group.box) : null
   // 单选子图仍是它自己的八个手柄
   const axesBox = !groupBox && primary?.target.resizable ? primary.box : null
+  // 单选图内独立箭头 → 两个端点手柄（画布原生箭头的同款交互）
+  const arrowEl = !groupBox && primary?.target.arrow_endpoints ? primary.target : null
+  const arrowPts = arrowEl ? arrowEndpointsOf(panel, arrowEl) : null
+  const toPoint = (p: [number, number]) => {
+    const b = toBox([p[0], p[1], 0, 0])
+    return { x: b.x, y: b.y }
+  }
 
   return (
     <>
@@ -625,6 +634,52 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
               onPointerDown={(e) => startAxesDrag(e, panel, primary.target, layout, dir)}
             />
           ))}
+
+        {arrowEl && arrowPts && (
+          <>
+            {arrowPreview?.gid === arrowEl.gid && (
+              <line
+                x1={toPoint(arrowPreview.a).x}
+                y1={toPoint(arrowPreview.a).y}
+                x2={toPoint(arrowPreview.b).x}
+                y2={toPoint(arrowPreview.b).y}
+                stroke="var(--color-accent)"
+                strokeWidth={1}
+                strokeDasharray="4 3"
+              />
+            )}
+            {(
+              [
+                ['start', arrowPreview?.gid === arrowEl.gid ? arrowPreview.a : arrowPts[0]],
+                ['end', arrowPreview?.gid === arrowEl.gid ? arrowPreview.b : arrowPts[1]],
+              ] as const
+            ).map(([key, p]) => {
+              const shifted: [number, number] =
+                gidDrag?.gid === arrowEl.gid
+                  ? [p[0] + gidDrag.dfx, p[1] + gidDrag.dfy]
+                  : [p[0], p[1]]
+              const pt = toPoint(shifted)
+              return (
+                <circle
+                  key={key}
+                  data-arrow-endpoint={key}
+                  cx={pt.x}
+                  cy={pt.y}
+                  r={4.5}
+                  fill="#fff"
+                  stroke="var(--color-accent)"
+                  strokeWidth={1}
+                  style={{
+                    pointerEvents: 'all',
+                    cursor: 'crosshair',
+                    shapeRendering: 'geometricPrecision',
+                  }}
+                  onPointerDown={(e) => startArrowDrag(e, panel, arrowEl, layout, key)}
+                />
+              )
+            })}
+          </>
+        )}
       </g>
     </>
   )
