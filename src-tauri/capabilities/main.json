@@ -8,6 +8,7 @@
   },
   "permissions": [
     "core:event:default",
-    "dialog:allow-open"
+    "dialog:allow-open",
+    "allow-reveal-export"
   ]
 }

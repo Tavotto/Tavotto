@@ -258,7 +258,7 @@ export function ExportDialog() {
         <Row label="留档" labelWidth={52}>
           <label
             className="flex items-center gap-1.5 text-xs text-ink-2"
-            title="JSON 留档：预检结果 + 素材清单 + 导出设置，随成图写入 exports/"
+            title="JSON 留档：预检结果 + 素材清单 + 导出设置，随成图写入导出目录"
           >
             <Toggle checked={withProof} onChange={setWithProof} />
             随成图生成 proof report
@@ -269,16 +269,23 @@ export function ExportDialog() {
 
         {(result || packResult) && (
           <div className="flex flex-col gap-1 rounded-sm border border-border bg-surface-2 p-2">
-            <p className="text-xs text-ink-3">已保存到 exports/</p>
+            <p className="break-all text-xs text-ink-3">
+              已保存到 {result?.export_dir ?? useProjectStore.getState().project?.export_dir ?? 'exports/'}
+            </p>
             {[...(result?.files ?? []), ...(packResult ? [packResult] : [])].map((f) =>
               isDesktop() ? (
-                // 桌面里不开浏览器式文件标签页：在系统文件管理器中显示
+                // 桌面里不开浏览器式文件标签页：在系统文件管理器中显示。
+                // reveal 失败绝不静默——把完整路径告诉用户（「点了没反应、
+                // 也不知道输出到哪」比失败本身更伤）
                 <button
                   key={f.name}
                   type="button"
                   onClick={() => {
                     const dir = result?.export_dir ?? useProjectStore.getState().project?.export_dir
-                    if (dir) void revealExportedFile(dir, f.name)
+                    if (!dir) return
+                    void revealExportedFile(dir, f.name).then((ok) => {
+                      if (!ok) setError(`无法在文件管理器中定位，文件在：${dir}/${f.name}`)
+                    })
                   }}
                   className="flex items-center gap-1.5 font-mono text-xs text-accent hover:underline"
                 >
