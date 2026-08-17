@@ -17,6 +17,8 @@ __pycache__/
 /src/magplot/web/
 web/node_modules/
 web/dist/
+web/test-results/
+web/playwright-report/
 
 # 运行时数据：装成包后一律落在用户数据目录
 # （macOS ~/Library/Application Support/Magplot、Linux ~/.local/share/magplot、

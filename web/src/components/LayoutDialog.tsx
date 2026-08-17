@@ -58,7 +58,7 @@ export function LayoutDialog() {
       store.renameProject(stem)
       await saveLayout(stem, useDocumentStore.getState().buildProject())
       setNames(await fetchLayoutNames())
-      useUiStore.getState().setStatus(`已保存为布局文件：${stem}`)
+      useUiStore.getState().setStatus(`已保存为画布文件：${stem}`)
       setOpen(false)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -85,8 +85,8 @@ export function LayoutDialog() {
     <Dialog
       open={open}
       onOpenChange={setOpen}
-      title="布局文件"
-      description="布局文件是命名保存的版本，可随时载入；日常编辑本身已自动保存在本机"
+      title="画布文件"
+      description="画布文件是命名保存的版本，可随时载入；日常编辑本身已自动保存在本机"
       size="md"
       busy={busy}
       footer={
@@ -103,7 +103,7 @@ export function LayoutDialog() {
             onClick={doSave}
           >
             <Save size={14} />
-            保存为布局文件
+            保存为画布文件
           </Button>
         </>
       }
@@ -111,7 +111,7 @@ export function LayoutDialog() {
       <div className="flex flex-col gap-3">
         <div>
           <h3 className="mb-1.5 text-xs font-medium uppercase tracking-[.06em] text-ink-3">
-            保存为布局文件
+            保存为画布文件
           </h3>
           <TextInput
             ref={nameRef}
@@ -127,10 +127,10 @@ export function LayoutDialog() {
 
         <div>
           <h3 className="mb-1.5 text-xs font-medium uppercase tracking-[.06em] text-ink-3">
-            载入布局文件
+            载入画布文件
           </h3>
           {names.length === 0 ? (
-            <p className="py-2 text-xs text-ink-3">还没有保存过布局文件</p>
+            <p className="py-2 text-xs text-ink-3">还没有保存过画布文件</p>
           ) : (
             <ul ref={listRef} className="max-h-56 overflow-y-auto rounded-sm border border-border">
               {names.map((n, i) => (

@@ -9,7 +9,7 @@ const GROUPS: { title: string; rows: [string, string][] }[] = [
     rows: [
       [`${MOD}K`, '命令面板'],
       [`${MOD}Z / ⇧${MOD}Z`, '撤销 / 重做'],
-      [`${MOD}S`, '保存为布局文件'],
+      [`${MOD}S`, '保存为画布文件'],
       [`${MOD}E`, '导出'],
       ['?', '本帮助'],
     ],

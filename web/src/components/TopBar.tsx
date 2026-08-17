@@ -130,7 +130,7 @@ function AutosaveState() {
     <span
       aria-live="polite"
       className="hidden shrink-0 text-xs text-ink-3 min-[900px]:inline"
-      title="改动会自动保存到本机磁盘；要留一个命名版本请用「保存为布局文件」"
+      title="改动会自动保存到本机磁盘；要留一个命名版本请用「保存为画布文件」"
     >
       {dirty || !lastPersisted ? '保存中…' : `已自动保存 ${formatClock(lastPersisted)}`}
     </span>
@@ -188,15 +188,15 @@ function DocumentMenu() {
       <MenuItem onSelect={newBlankDocument}>新建空白文档</MenuItem>
 
       <MenuSeparator />
-      <MenuLabel>布局文件</MenuLabel>
+      <MenuLabel>画布文件</MenuLabel>
       <MenuItem
         onSelect={() => useUiStore.getState().setLayoutOpen(true, 'save')}
         shortcut={`${MOD}S`}
       >
-        保存为布局文件…
+        保存为画布文件…
       </MenuItem>
       <MenuItem onSelect={() => useUiStore.getState().setLayoutOpen(true, 'load')}>
-        载入布局文件…
+        载入画布文件…
       </MenuItem>
       <MenuItem onSelect={() => useUiStore.getState().setVersionsOpen(true)}>
         布局版本时间线…

@@ -673,7 +673,8 @@ function FieldRow({
         write(transformCase(text, mode, true), true) // 保护 $…$ 里的公式
       return (
         <Row label={labelNode} labelWidth={LABEL_W}>
-          <div className="flex w-full min-w-0 items-start gap-1">
+          {/* 输入框占满整行，四个动作横排在下方——竖排会把这一行拉得比输入框还高 */}
+          <div className="flex w-full min-w-0 flex-col gap-1">
             <TextArea
               // 选中带文字的元素就直接可以打字，不用再点一次输入框
               ref={(el) => {
@@ -698,7 +699,7 @@ function FieldRow({
               }}
             />
             {/* 按下时一律不抢焦点：textarea 的编辑事务不因点按钮而提交 */}
-            <div className="flex shrink-0 flex-col gap-0.5">
+            <div className="flex shrink-0 justify-end gap-0.5">
               <Button
                 size="icon-sm"
                 onPointerDown={(e) => e.preventDefault()}

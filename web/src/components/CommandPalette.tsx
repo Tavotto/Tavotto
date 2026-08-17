@@ -47,8 +47,8 @@ const ui = () => useUiStore.getState()
 
 const COMMANDS: Command[] = [
   { id: 'export', label: '导出 PDF / PNG…', keywords: 'export pdf png dc', shortcut: `${MOD}E`, run: () => ui().setExportOpen(true) },
-  { id: 'save-layout', label: '保存为布局文件…', keywords: 'save layout bc', shortcut: `${MOD}S`, run: () => ui().setLayoutOpen(true, 'save') },
-  { id: 'load-layout', label: '载入布局文件…', keywords: 'open load layout zr', run: () => ui().setLayoutOpen(true, 'load') },
+  { id: 'save-layout', label: '保存为画布文件…', keywords: 'save layout bc', shortcut: `${MOD}S`, run: () => ui().setLayoutOpen(true, 'save') },
+  { id: 'load-layout', label: '载入画布文件…', keywords: 'open load layout zr', run: () => ui().setLayoutOpen(true, 'load') },
   { id: 'versions', label: '布局版本时间线…', keywords: 'version history timeline bb sjx', run: () => ui().setVersionsOpen(true) },
   { id: 'styles', label: '论文样式…', keywords: 'style token preset ys lwys', run: () => ui().setStylesOpen(true) },
   { id: 'new-doc', label: '新建空白文档', keywords: 'new blank xj', run: () => void newBlankDocument() },

@@ -252,6 +252,10 @@ fn main() {
             .inner_size(1280.0, 860.0)
             // 三栏工作台的断点下限：再窄左右栏会互相挤压（见 CLAUDE.md 视觉纪律）
             .min_inner_size(1024.0, 680.0)
+            // Tauri 默认接管窗口的拖放事件（tauri://drag-drop），代价是 webview 里
+            // 的 HTML5 drag&drop 整个失效——「素材拖入画布」在桌面壳里就是这么坏的。
+            // 我们不消费 OS 文件拖放（素材来自图库目录扫描），关掉它把 DnD 还给页面。
+            .disable_drag_drop_handler()
             .on_navigation(move |url| match navigation_allowed(url, &port_cell) {
                 NavDecision::Allow => true,
                 NavDecision::Deny => false,

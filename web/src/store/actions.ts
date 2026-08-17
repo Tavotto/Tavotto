@@ -367,7 +367,7 @@ export async function newBlankDocument(): Promise<void> {
   status('已新建空白文档，原文档可从「最近文档」取回')
 }
 
-/** 载入布局文件：每次载入都是一个新的编辑会话，因此给一个新的文档身份 */
+/** 载入画布文件：每次载入都是一个新的编辑会话，因此给一个新的文档身份 */
 export async function openLayoutDocument(doc: FigureDocument | ProjectDocument): Promise<void> {
   if (!(await useDocumentStore.getState().switchDocument(doc, newId('d'), confirmLoss))) return
   afterSwitch()
