@@ -1,4 +1,11 @@
 import { useEffect, useLayoutEffect, useRef } from 'react'
+import {
+  parseRuns,
+  plainText,
+  SCRIPT_SIZE,
+  SUB_DROP,
+  SUP_RISE,
+} from '@/lib/richText'
 import { MM_PER_PT } from '@/lib/units'
 import { useDocumentStore } from '@/store/documentStore'
 import { useUiStore } from '@/store/uiStore'
@@ -15,6 +22,7 @@ export function TextView({ obj }: { obj: TextObject }) {
   const ref = useRef<HTMLDivElement>(null)
   const heightRef = useRef(obj.h)
   heightRef.current = obj.h
+  const sizePx = mmToWorld(obj.sizePt * MM_PER_PT)
 
   useLayoutEffect(() => {
     const el = ref.current
@@ -96,7 +104,7 @@ export function TextView({ obj }: { obj: TextObject }) {
       className="absolute left-0 top-0 w-full outline-none"
       style={{
         fontFamily: 'var(--font-doc)',
-        fontSize: mmToWorld(obj.sizePt * MM_PER_PT),
+        fontSize: sizePx,
         lineHeight: obj.lineHeight ?? 1.25,
         fontWeight: obj.bold ? 700 : 400,
         fontStyle: obj.italic ? 'italic' : 'normal',
@@ -115,7 +123,40 @@ export function TextView({ obj }: { obj: TextObject }) {
           : undefined,
       }}
     >
-      {editing ? null : obj.text}
+      {editing ? null : <RenderedText text={obj.text} sizePx={sizePx} />}
     </div>
+  )
+}
+
+/**
+ * 行内标记的渲染（上标 `^{…}` / 下标 `_{…}`）。
+ *
+ * 字号与基线偏移用**绝对像素**算，不用 em/百分比：`vertical-align` 的长度值
+ * 是相对元素自身字号解析的，套在缩小后的 span 上会再乘一次比例，画布与
+ * 导出就对不上了。常量取自 lib/richText.ts，与后端 richtext.py 同源。
+ */
+function RenderedText({ text, sizePx }: { text: string; sizePx: number }) {
+  const runs = parseRuns(text)
+  if (runs.every((r) => r.script === '')) return <>{plainText(text)}</>
+  return (
+    <>
+      {runs.map((r, i) =>
+        r.script === '' ? (
+          <span key={i}>{r.text}</span>
+        ) : (
+          <span
+            key={i}
+            style={{
+              fontSize: sizePx * SCRIPT_SIZE,
+              // 正 = 抬高；vertical-align 的正值就是往上，故下标取负
+              verticalAlign: sizePx * (r.script === 'sup' ? SUP_RISE : -SUB_DROP),
+              lineHeight: 0, // 上下标不参与行盒高度，行距不被它撑开
+            }}
+          >
+            {r.text}
+          </span>
+        ),
+      )}
+    </>
   )
 }

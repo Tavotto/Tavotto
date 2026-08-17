@@ -38,9 +38,13 @@ Python 在后台实时重渲染（热态约 40 ms）。
 **下载安装包**：到 [最新发行版](https://github.com/erwanjun/magplot/releases/latest)
 取 macOS 的 `.dmg` 或 Windows 的 `.exe`，装完双击即用，Magplot 会在浏览器里打开。
 
-安装包里刻意不含 matplotlib：Magplot 渲染的是**你自己的脚本**，它们要 import
-你自己那套依赖，所以它用的是你已有的那个 Python——就是你画这些图时用的那个。
-见[使用须知](#使用须知)。
+**Windows 用户不需要自己装 Python。** 安装包里自带一套 Magplot 专用的 Python
+运行环境，常用科学栈已经装好——numpy、matplotlib、pandas、scipy、seaborn、Pillow，
+版本都是固定的。装完立刻就能渲染，不用下载、不用联网。它**不会碰你已有的任何
+Python 或 Conda**；如果某张图要用到清单之外的包，在「设置 →「渲染环境」」里
+换成你自己那套环境即可。见[使用须知](#使用须知)。
+
+macOS 版仍然用你已有的 Python（或让 Magplot 在自己的目录里建一个隔离环境）。
 
 **或者从 PyPI 装**，三个平台命令相同：
 
@@ -139,11 +143,25 @@ PDF 会把每张原始矢量面板整块嵌进去，**文字仍然可选中、�
 
 - **第一次打开某张图时会跑一遍你的脚本**。轻量图秒级，重的该多久就多久；
   之后每次修改都是亚秒级。
-- **渲染需要一个装了 matplotlib 的 Python**——Magplot 跑的是你的脚本，
-  解释器得能 import 它们 import 的东西。从 PyPI 装时 `[worker]` 会带一个；
-  `.dmg`/`.exe` 安装包则去找你已有的那个。两种情况都可以用 `MM_WORKER_PYTHON`
-  指定，「设置 → 隐私、诊断与 About」能看到当前用的是哪一个。
-  一个都没有时，排版、标注、导出照常，只有 ⚡ 图内编辑用不了。
+- **渲染需要一个能 import 你脚本所需依赖的 Python**。这个 Python 从哪来，
+  取决于你怎么装的 Magplot：
+
+  | 安装方式 | 渲染用的解释器 |
+  |---|---|
+  | Windows `.exe` / 免安装 `.zip` | 安装包**自带的内置环境**：CPython 3.13 + numpy / matplotlib / pandas / scipy / seaborn / Pillow（版本固定）。不用装、不用下载。 |
+  | macOS `.dmg` | 你自己的 Python；也可以让 Magplot 在它自己的数据目录里建一个隔离环境。 |
+  | PyPI + `[worker]` | 你装它的那个环境。 |
+
+  选择顺序：`MM_WORKER_PYTHON` → 你在设置里指定的 → 内置环境 → Magplot 自身的
+  解释器 → 机器上探测到的 Python / Conda。**你显式指定的永远优先**；
+  Magplot 只是**启动**你指定的环境来渲染，
+  绝不往里面装任何东西，也绝不修改你已有的 Python / Conda。
+
+  脚本要用内置环境里没有的包（rdkit、astropy、自家实验室的库）时，Magplot 会
+  直接告诉你缺的是哪个包，并给出「换成你自己的环境」的入口
+  （设置 →「渲染环境」）。一个可用解释器都没有时，排版、标注、导出照常，
+  只有 ⚡ 图内编辑用不了。「设置 → 隐私、诊断与 About」始终显示当前用的是
+  哪个解释器、来自哪里。
 
 ## 开发
 
@@ -151,6 +169,11 @@ PDF 会把每张原始矢量面板整块嵌进去，**文字仍然可选中、�
 .venv/bin/python -m pytest        # 后端
 cd web && pnpm test               # 前端
 cd web && pnpm tsc --noEmit && pnpm build
+
+# 只有打 Windows 桌面版才需要：构建内置渲染环境。
+# 版本锁在 packaging/runtime-lock.json；脚本会校验 CPython 下载的 SHA-256，
+# 并逐个 import 测试装进去的每个包。
+python scripts/build_worker_runtime.py
 ```
 
 欢迎提 issue 与 PR。

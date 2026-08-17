@@ -42,9 +42,15 @@ PDF whose text is still real, selectable vector text.
 — `.dmg` for macOS, `.exe` for Windows — install it, and double-click. Magplot opens
 in your browser.
 
-The installers deliberately do not bundle matplotlib: Magplot renders *your* scripts,
-which import *your* dependencies, so it uses the Python you already have — the one you
-made your figures with. See [Good to know](#good-to-know).
+**On Windows you do not need to install Python.** The installer ships a private Python
+runtime with the usual scientific stack already in it — numpy, matplotlib, pandas, scipy,
+seaborn and Pillow, at pinned versions. Rendering works the moment the installer finishes,
+with no download and no network. Magplot never touches a Python or Conda you already have;
+if a figure of yours needs a package that is not in that list, point Magplot at your own
+environment under **Settings → Rendering environment**. See [Good to know](#good-to-know).
+
+On macOS, rendering uses the Python you already have (or one Magplot sets up for you in
+its own folder, on request).
 
 **Or install from PyPI**, which works the same on all three platforms:
 
@@ -151,12 +157,27 @@ your figures or data is uploaded.
 
 - **The first open of a figure runs your script.** Light figures take a second; heavy
   ones take as long as they normally do. Every edit after that is sub-second.
-- **A Python with matplotlib is required** for rendering — Magplot runs your scripts,
-  so it needs an interpreter that can import what they import. Installing from PyPI with
-  the `[worker]` extra brings one along; the `.dmg`/`.exe` installers find the Python you
-  already have. Either way you can point `MM_WORKER_PYTHON` at a specific interpreter,
-  and **Settings → Privacy, diagnostics and About** shows which one is in use.
-  Without one, layout, annotation and export still work — only ⚡ editing needs it.
+- **Rendering needs a Python that can import what your scripts import.** Where that
+  Python comes from depends on how you installed Magplot:
+
+  | Install | Interpreter used for rendering |
+  |---|---|
+  | Windows `.exe` / portable `.zip` | The **bundled runtime** that ships inside the installer — CPython 3.13 with numpy, matplotlib, pandas, scipy, seaborn and Pillow at pinned versions. Nothing to install, nothing to download. |
+  | macOS `.dmg` | Your own Python; Magplot can also build an isolated one for you inside its own data folder. |
+  | PyPI with the `[worker]` extra | The environment you installed it into. |
+
+  Magplot picks in this order: `MM_WORKER_PYTHON` → the interpreter you chose in
+  Settings → the bundled runtime → its own interpreter → a Python/Conda it finds on the
+  machine. **Whatever you choose explicitly always wins**, and Magplot only *launches*
+  the environment you point it at — it never installs anything into it, and never
+  modifies an existing Python or Conda.
+
+  If a script needs a package the bundled runtime does not have (rdkit, astropy, your
+  lab's own library), Magplot says which package is missing and offers to switch to your
+  own environment under **Settings → Rendering environment**. Without any working
+  interpreter, layout, annotation and export still work — only ⚡ editing needs one.
+  **Settings → Privacy, diagnostics and About** always shows which interpreter is in use
+  and where it came from.
 
 ## Development
 
@@ -164,6 +185,11 @@ your figures or data is uploaded.
 .venv/bin/python -m pytest        # backend
 cd web && pnpm test               # frontend
 cd web && pnpm tsc --noEmit && pnpm build
+
+# Windows desktop only: build the bundled rendering runtime before packaging.
+# Versions are pinned in packaging/runtime-lock.json; the script verifies the
+# CPython download's SHA-256 and import-tests every package it installs.
+python scripts/build_worker_runtime.py
 ```
 
 Issues and pull requests are welcome.

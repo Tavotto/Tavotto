@@ -204,9 +204,10 @@ def test_render_failure_carries_machine_readable_code(client, monkeypatch, tmp_p
     figs = tmp_path / "figs"
     figs.mkdir()
     (figs / "p1.pdf").write_bytes(b"%PDF-1.4\n")
-    monkeypatch.setattr(m, "FIGURES_DIR", figs)
-    monkeypatch.setattr(m.engine_registry, "for_stem",
-                        lambda s: {"script": "x.py", "entry": "main", "cost": "light"})
+    m.open_project(str(figs))
+    monkeypatch.setattr(
+        m.engine_registry.Registry, "for_stem",
+        lambda self, s: {"script": "x.py", "entry": "main", "cost": "light"})
 
     def boom(*a, **kw):
         raise pool.WorkerError("找不到装有 matplotlib 的 Python",

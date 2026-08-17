@@ -9,6 +9,7 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { clientToMm, mmToWorld, useViewportStore } from '@/store/viewportStore'
 import { shouldFitOnDoubleClick } from '@/lib/fitGuard'
+import { normalizeWheel } from '@/lib/wheel'
 import { ObjectView } from './ObjectView'
 import { OverlaySvg } from './OverlaySvg'
 import { PageSheet } from './PageSheet'
@@ -81,11 +82,14 @@ export function CanvasStage() {
       const vp = useViewportStore.getState()
       const ax = e.clientX - vp.originX
       const ay = e.clientY - vp.originY
+      // 先按 deltaMode 折算成像素：Firefox 默认发「行」，不归一化就慢几十倍
+      // （像素模式恒等返回，Chrome/触控板捏合的手感逐位不变）
+      const { deltaX, deltaY } = normalizeWheel(e, { w: vp.viewW, h: vp.viewH })
       if (e.ctrlKey || e.metaKey) {
         // 0.0022 让鼠标滚轮一格约 1.3×，触控板捏合（deltaY 很小）也保持连续
-        vp.zoomAt(Math.exp(-e.deltaY * 0.0022), ax, ay)
+        vp.zoomAt(Math.exp(-deltaY * 0.0022), ax, ay)
       } else {
-        vp.setPan(vp.panX - e.deltaX, vp.panY - e.deltaY)
+        vp.setPan(vp.panX - deltaX, vp.panY - deltaY)
       }
     }
     el.addEventListener('wheel', onWheel, { passive: false })
@@ -154,6 +158,9 @@ export function CanvasStage() {
       )}
       <div
         ref={viewRef}
+        // 端到端测试的落点：画布是纯图形区域，没有可靠的语义角色可以选中，
+        // 与其套一个会误导读屏器的 role，不如留一个明确的测试钩子
+        data-canvas-stage=""
         className="absolute overflow-hidden bg-canvas"
         style={{ left: pad, top: pad, right: 0, bottom: 0, cursor }}
         onPointerDown={onPointerDown}

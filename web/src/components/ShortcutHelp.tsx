@@ -1,4 +1,4 @@
-import { MOD } from '@/lib/utils'
+import { ALT, MOD } from '@/lib/utils'
 import { useUiStore } from '@/store/uiStore'
 import { Dialog } from './ui/Dialog'
 
@@ -23,6 +23,7 @@ const GROUPS: { title: string; rows: [string, string][] }[] = [
       ['Delete', '删除对象；图内编辑时 = 隐藏元素（可恢复）'],
       ['Enter', '编辑所选：文字进入编辑，可参数化面板进图内编辑'],
       ['Esc', '逐层退出：文字编辑 → 图内元素 → 编辑态 → 清空选择'],
+      [`${MOD}↑ / ${MOD}↓`, '上标 / 下标（属性面板的文字输入框内）'],
       ['方向键 / ⇧+方向键', '微调 0.5mm / 5mm'],
     ],
   },
@@ -46,8 +47,8 @@ const GROUPS: { title: string; rows: [string, string][] }[] = [
     title: '工具',
     rows: [
       ['V / T / A / R / O / L', '选择 / 文字 / 箭头 / 矩形 / 椭圆 / 直线'],
-      ['⌥+拖角点', '非等比自由拉伸'],
-      ['⌥⏎ 或 ⌘⏎（文字编辑中）', '插入换行；单按 ⏎ 提交'],
+      [`${ALT}+拖角点`, '非等比自由拉伸'],
+      [`${ALT}⏎ 或 ${MOD}⏎（文字编辑中）`, '插入换行；单按 ⏎ 提交'],
     ],
   },
 ]

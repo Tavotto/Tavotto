@@ -6,6 +6,7 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import type { CanvasObject, LayoutGroup, PanelObject } from '@/types/document'
 import { objectLabel } from '@/types/document'
+import { modKey } from '@/lib/utils'
 
 /**
  * 对象剪贴板：⌘C/⌘V，走系统剪贴板（JSON + 魔数）。
@@ -156,16 +157,39 @@ export function materializeRelink(resolved: MissingAsset[]): void {
       o.overrides = info.baked_overrides ? structuredClone(info.baked_overrides) : []
     }
   })
-  useUiStore.getState().setStatus(`已重新链接 ${relink.length} 个素材（⌘Z 可撤销）`)
+  useUiStore.getState().setStatus(`已重新链接 ${relink.length} 个素材（${modKey('Z')} 可撤销）`)
 }
+
+/**
+ * 「浏览器根本不给读剪贴板」每会话只提示一次：粘贴键是高频操作，
+ * 每按一次弹一条等于噪音，而这个结论一次就够用户知道了。
+ * 会话级语义 → 模块级变量，不进文档态。
+ */
+let readUnsupportedNotified = false
 
 /** ⌘V 入口。返回 true = 消费了这次粘贴（是本工具的对象负载）。 */
 export async function pasteObjects(): Promise<boolean> {
+  // Firefox 默认不暴露 readText：对象粘贴在这类浏览器上永远走不通，
+  // 静默失败会让用户以为是复制没成功，反复重试。
+  if (typeof navigator.clipboard?.readText !== 'function') {
+    if (!readUnsupportedNotified) {
+      readUnsupportedNotified = true
+      useUiStore.getState().setStatus('浏览器不支持读取剪贴板，对象粘贴不可用', 'error')
+    }
+    return false
+  }
   let text = ''
   try {
     text = await navigator.clipboard.readText()
-  } catch {
-    return false // 权限被拒：不打扰（可能根本不是我们的粘贴）
+  } catch (err) {
+    // 窗口失焦时浏览器抛的也是 NotAllowedError（「Document is not focused」），
+    // 那种多半根本不是冲我们来的粘贴；只有当前确实有焦点才算真的被拒。
+    const denied =
+      (err as { name?: string } | null)?.name === 'NotAllowedError' && document.hasFocus?.()
+    if (denied) {
+      useUiStore.getState().setStatus('无法读取剪贴板（浏览器权限被拒）', 'error')
+    }
+    return false // 其余情况（失焦、瞬态异常）保持安静，不打扰
   }
   const payload = parsePayload(text)
   if (!payload) return false
@@ -286,6 +310,6 @@ export function materializePaste(payload: ClipPayload, resolved: MissingAsset[])
     .setStatus(
       `已粘贴 ${clones.length} 个对象` +
         (skipped ? `（跳过 ${skipped} 个缺失素材的面板）` : '') +
-        '（⌘Z 可撤销）',
+        `（${modKey('Z')} 可撤销）`,
     )
 }

@@ -118,15 +118,66 @@ python -m twine check --strict dist/*     # 元数据 + PyPI 的 README 渲染
 | 平台 | 产物 | 说明 |
 |---|---|---|
 | macOS | `Magplot-X.Y.Z-macOS.dmg` | 拖进 Applications；配了 secret 则已签名 + 公证 |
-| Windows | `Magplot-X.Y.Z-Windows-Setup.exe` | Inno Setup，装到用户目录、不弹 UAC |
-| Windows | `Magplot-X.Y.Z-Windows-portable.zip` | 免安装，给禁止运行未签名安装程序的环境 |
+| Windows | `Magplot-X.Y.Z-Windows-Setup.exe` | Inno Setup，装到用户目录、不弹 UAC；**含内置渲染 runtime** |
+| Windows | `Magplot-X.Y.Z-Windows-portable.zip` | 免安装，给禁止运行未签名安装程序的环境；**同样含内置 runtime** |
 
-**包里不含 matplotlib**，这是设计决定而不是遗漏：渲染的是用户自己的脚本，
-它们要 import 用户自己那套依赖，我们塞任何科学栈进去都满足不了，还要多背
-一两百 MB。独立应用靠 `pool.find_worker_python()` 找用户已有的环境
-（`packaging/magplot.spec` 文件头有完整说明）。
+**Flask 主进程里始终不含 matplotlib**：科学栈只存在于 worker 那一侧。
+这条边界一破，包大小与依赖关系立刻失控（`packaging/magplot.spec` 文件头有完整说明）。
 
 打包配置从 tag 检出，所以**只能构建含 `packaging/` 的 tag**（v0.1.2 起）。
+
+### Windows 内置渲染 runtime
+
+Windows 安装包与免安装 zip 都**自带一套 Magplot 私有的 Python 渲染环境**，
+用户不需要先装 Python，首次渲染也不联网：
+
+```
+Magplot.exe → _internal\runtime\python.exe → engine\worker.py → 用户的图表脚本
+```
+
+| 东西 | 在哪 |
+|---|---|
+| 版本锁（CPython 下载地址 + SHA-256、科学栈的完整传递闭包） | `packaging/runtime-lock.json` |
+| 构建脚本 | `scripts/build_worker_runtime.py` |
+| 定位与校验（唯一出处） | `src/magplot/engine/runtime.py` |
+| 产物 | 仓库根的 `runtime/`（**不进 Git**，200 MiB 上下） |
+
+发行流水线里这条链路是这样护住的：
+
+1. `desktop.yml` 先跑 `scripts/build_worker_runtime.py`。脚本自己会校验 CPython
+   压缩包的 SHA-256、按 `.dist-info` 核对装出来的版本、**逐个 import 并画一张真图**
+   ——任何一步不过就失败在构建机上，而不是留到用户电脑上。
+2. `pyinstaller` 带 `MAGPLOT_REQUIRE_RUNTIME=1`：忘了构建 runtime 会当场失败，
+   而不是安静地产出一个装完不能渲染的包。
+3. ISCC 脚本自己检查 `dist\Magplot\_internal\runtime\runtime-manifest.json`
+   在不在；免安装 zip 打完也断言一次。
+4. 打包后跑一次 `scripts/smoke_app.py --expect-source bundled`：真启动 .exe、
+   真渲染、真导出，并断言用的是**内置**解释器而不是构建机上碰巧装着的 Python。
+
+同一套门禁在 `ci.yml` 的 `windows-exe-smoke` 里对每个 PR 都跑一遍
+（还额外验中文 + 空格路径、以及 `MM_WORKER_PYTHON` 仍然优先）。
+
+**换版本怎么办**（升 CPython 补丁版或某个科学包）：
+
+```sh
+# 只换包版本：先改 runtime-lock.json 的 top_level/packages，再重解析闭包
+python scripts/build_worker_runtime.py --resolve
+
+# 连 CPython 一起换：脚本会下载、重算 sha256、核对 _pth 名字
+python scripts/build_worker_runtime.py --resolve --python-version 3.13.16
+```
+
+`--resolve` 只改锁文件，不构建。改完提交锁文件，让 Windows CI 去验实际能不能用。
+**别手写闭包**——手写迟早漏一个传递依赖，而漏掉的那个会在用户机器上以
+ModuleNotFoundError 的形式出现。
+
+**macOS 不带内置 runtime**，这是有意的：那边装 Python 的门槛低得多，而 `.dmg`
+还要过公证——多几万个二进制文件会让签名与公证时间失控。runtime 不存在时
+spec 自动跳过，macOS 构建与从前完全一样。
+
+**第三方许可证**：构建脚本会把 CPython 与每个包的许可证收进
+`runtime/licenses/`，并生成 `THIRD-PARTY-NOTICES.md` 索引，随安装包一起分发。
+新增依赖时不需要额外做什么，但**要确认新包的许可证允许再分发**。
 
 ### macOS 签名与公证的一次性设置
 

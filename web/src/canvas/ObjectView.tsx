@@ -3,9 +3,9 @@ import { useInteractionStore } from '@/store/interactionStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { enterElementEdit, groupMates } from '@/store/actions'
 import { useUiStore } from '@/store/uiStore'
-import { mmToWorld } from '@/store/viewportStore'
+import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import type { CanvasObject } from '@/types/document'
-import { objectRotation, panelRotation } from '@/types/document'
+import { isLinear, objectRotation, panelRotation } from '@/types/document'
 import { startMoveDrag } from './interactions'
 import { openQuickEdit } from './quickEditStore'
 import { ArrowView } from './ArrowView'
@@ -17,8 +17,20 @@ import { TextView } from './TextView'
 export const ObjectView = memo(function ObjectView({ obj }: { obj: CanvasObject }) {
   const editing = useUiStore((s) => s.editingTextId === obj.id)
   const cropping = useUiStore((s) => s.cropTargetId === obj.id)
+  // 绘制工具 / 空格平移时世界层整体 pointer-events:none，靠继承让对象一起失去命中
+  // （CanvasStage 的世界变换 div 是这条开关的出处）。细长对象的命中线必须写**显式**
+  // 值才能在祖先 none 之下重新生效，而显式值不吃继承——所以这一档得在这儿一起判掉，
+  // 否则画新对象时点到已有箭头会变成拖它。
+  const drawing = useUiStore((s) => s.tool !== 'select')
+  const spaceDown = useViewportStore((s) => s.spaceDown)
 
   if (obj.hidden) return null
+
+  // 箭头 / 直线形状的包围盒既太薄又太大：水平时 h 被钳到 0.01mm 根本点不中，
+  // 斜放时整个矩形吃点击、误伤下层面板。命中改为交给沿线段的透明 stroke
+  // （ArrowView / ShapeView 里的 data-hit-line），外层 div 整个让位。
+  const isThinLinear = isLinear(obj)
+  const hit = obj.locked || drawing || spaceDown ? 'none' : 'stroke'
 
   const onPointerDown = (e: React.PointerEvent) => {
     if (e.button !== 0 || editing || cropping) return
@@ -92,15 +104,16 @@ export const ObjectView = memo(function ObjectView({ obj }: { obj: CanvasObject 
         height: mmToWorld(obj.h),
         // 任意角度旋转（text/arrow/shape）：绕中心，包围盒字段保持未旋转值
         transform: objectRotation(obj) ? `rotate(${objectRotation(obj)}deg)` : undefined,
-        // 不写 'auto'：绘制工具激活时世界层整体设为 none，靠继承让对象一起失去命中
-        pointerEvents: obj.locked ? 'none' : undefined,
+        // 不写 'auto'：绘制工具激活时世界层整体设为 none，靠继承让对象一起失去命中。
+        // 细长线状对象让位给自己的命中线（事件仍会从命中线冒泡到这里的 handler）
+        pointerEvents: obj.locked || isThinLinear ? 'none' : undefined,
         cursor: editing ? 'text' : 'default',
       }}
     >
       {obj.type === 'panel' && <PanelView obj={obj} />}
       {obj.type === 'text' && <TextView obj={obj} />}
-      {obj.type === 'arrow' && <ArrowView obj={obj} />}
-      {obj.type === 'shape' && <ShapeView obj={obj} />}
+      {obj.type === 'arrow' && <ArrowView obj={obj} hit={hit} />}
+      {obj.type === 'shape' && <ShapeView obj={obj} hit={hit} />}
     </div>
   )
 })

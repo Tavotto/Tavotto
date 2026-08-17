@@ -72,6 +72,9 @@ function toExportObject(o: CanvasObject): ExportObject {
         ...box,
         type: 'shape',
         shape: o.shape,
+        // 直线端点只在 line 上有意义；缺省不发，后端按 (0,0.5)→(1,0.5) 兜底
+        start: o.shape === 'line' ? o.start : undefined,
+        end: o.shape === 'line' ? o.end : undefined,
         stroke_pt: o.strokePt,
         color: o.color,
         fill: o.fill,

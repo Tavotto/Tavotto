@@ -1,13 +1,18 @@
 import { MM_PER_PT } from '@/lib/units'
-import { dashArray, polygonPoints } from '@/lib/shapeGeometry'
-import { mmToWorld } from '@/store/viewportStore'
+import { cornerRadius, dashArray, hitStrokeWidth, polygonPoints } from '@/lib/shapeGeometry'
+import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import type { ShapeObject } from '@/types/document'
+import { lineEndpoints } from '@/types/document'
 
 /**
  * 形状：几何公式与后端 _draw_shape 一一对应（engine 侧同名注释），
  * 显示与 PDF 导出必须逐点一致。
+ *
+ * `hit` 由 ObjectView 决定，只有 line 用得上：它和箭头一样是细长线状对象，
+ * 沿拖动方向铺开时包围盒另一边被钳到 0.01mm，命中得交给沿线段的透明线。
  */
-export function ShapeView({ obj }: { obj: ShapeObject }) {
+export function ShapeView({ obj, hit = 'none' }: { obj: ShapeObject; hit?: 'stroke' | 'none' }) {
+  const zoom = useViewportStore((s) => s.zoom)
   const w = Math.max(mmToWorld(obj.w), 0.001)
   const h = Math.max(mmToWorld(obj.h), 0.001)
   const sw = Math.max(mmToWorld(obj.strokePt * MM_PER_PT), 0.05)
@@ -15,6 +20,12 @@ export function ShapeView({ obj }: { obj: ShapeObject }) {
   const fill = obj.fill ?? 'none'
   const fillOpacity = obj.fill ? (obj.fillOpacity ?? 1) : undefined
   const dash = dashArray(obj.dash, sw)
+  // 描边内缩后的矩形（与后端 rect 同一个 Rect），圆角钳制也以它为准
+  const rectW = Math.max(w - sw, 0.001)
+  const rectH = Math.max(h - sw, 0.001)
+  const rectR = obj.cornerRadius
+    ? cornerRadius(mmToWorld(obj.cornerRadius), rectW, rectH)
+    : undefined
 
   const stroke = {
     stroke: obj.color,
@@ -42,9 +53,12 @@ export function ShapeView({ obj }: { obj: ShapeObject }) {
         <rect
           x={inset}
           y={inset}
-          width={Math.max(w - sw, 0.001)}
-          height={Math.max(h - sw, 0.001)}
-          rx={obj.cornerRadius ? mmToWorld(obj.cornerRadius) : undefined}
+          width={rectW}
+          height={rectH}
+          // rx/ry 同值：SVG 只写 rx 时两个方向会各自按半宽/半高钳制，宽高悬殊
+          // 时退化成椭圆角，而后端画的是正圆角。钳制公式见 lib/cornerRadius。
+          rx={rectR}
+          ry={rectR}
           fill={fill}
           fillOpacity={fillOpacity}
           {...stroke}
@@ -61,16 +75,31 @@ export function ShapeView({ obj }: { obj: ShapeObject }) {
           {...stroke}
         />
       )}
-      {obj.shape === 'line' && (
-        <line
-          x1={0}
-          y1={h / 2}
-          x2={w}
-          y2={h / 2}
-          strokeLinecap="round"
-          {...stroke}
-        />
-      )}
+      {obj.shape === 'line' &&
+        (() => {
+          // 端点与箭头同构（比例坐标）；旧文档没有 start/end 时兜底成水平中线
+          const { start: s, end: e } = lineEndpoints(obj)
+          const a = { x: s.rx * w, y: s.ry * h }
+          const b = { x: e.rx * w, y: e.ry * h }
+          return (
+            <>
+              {/* 与 ArrowView 同一手法：线状对象的包围盒又薄又大，命中只能交给这条
+                  沿真实端点走的透明线（端点一动它就跟着动） */}
+              <line
+                data-hit-line=""
+                x1={a.x}
+                y1={a.y}
+                x2={b.x}
+                y2={b.y}
+                stroke="transparent"
+                strokeWidth={hitStrokeWidth(sw, zoom)}
+                strokeLinecap="round"
+                style={{ pointerEvents: hit }}
+              />
+              <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} strokeLinecap="round" {...stroke} />
+            </>
+          )
+        })()}
       {obj.shape === 'triangle' &&
         poly([
           [w / 2, inset],

@@ -16,7 +16,7 @@ def figs(tmp_path, monkeypatch):
     sub.mkdir()
     (sub / "img.png").write_bytes(b"\x89PNG fake")
     (tmp_path.parent / "outside.pdf").write_bytes(b"%PDF-1.4 fake")
-    monkeypatch.setattr(m, "FIGURES_DIR", tmp_path)
+    m.open_project(str(tmp_path))
     return tmp_path
 
 

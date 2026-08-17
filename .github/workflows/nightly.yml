@@ -1,0 +1,174 @@
+name: Nightly install matrix
+
+# 每晚一次的重装测试。不排列组合所有情况——只取几台有代表性的组合：
+#   * 无 Python（**装完必须照样能渲染**——安装包自带内置 runtime）/ conda / 官方 Python
+#   * 中文系统区域 + 中文用户名
+#   * 普通用户、无管理员权限、低权限目录
+#   * 断网启动
+#
+# 每次提交都跑这些太贵（PR 上跑的是 ci.yml 里的 windows-exe-smoke），
+# 但每天至少要验证一遍——安装器、升级覆盖、卸载这条链路只有真装一遍才知道。
+on:
+  schedule:
+    - cron: "0 18 * * *"     # UTC 18:00 = 北京时间次日 02:00
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-install:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 三种代表性的 Python 环境。自带内置 runtime 之后，「无 Python」
+          # 不再是降级场景而是**主场景**：绝大多数用户就是这台机器。
+          # 另外两档验的是「用户指定自己的环境时仍然优先」这条兼容承诺。
+          - { name: "无 Python", python: none }
+          - { name: "官方 Python", python: cpython }
+          - { name: "Conda", python: conda }
+    name: Windows · ${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # 打包用的解释器与「用户的 Python」是两回事：前者永远要有，
+      # 后者才是矩阵在变的东西
+      - uses: actions/setup-python@v5
+        id: buildpy
+        with: { python-version: "3.13" }
+      - uses: pnpm/action-setup@v4
+        with: { version: 11 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+
+      - name: 构建前端进包
+        run: python scripts/build_frontend.py
+
+      - name: 缓存 CPython embeddable 下载
+        uses: actions/cache@v4
+        with:
+          path: build/runtime-cache
+          key: cpython-embed-${{ hashFiles('packaging/runtime-lock.json') }}
+
+      - name: 构建内置渲染 runtime
+        run: python scripts/build_worker_runtime.py --clean
+
+      - name: 打包（内置 runtime 必须进包）
+        env:
+          MAGPLOT_REQUIRE_RUNTIME: "1"
+        run: |
+          python -m pip install --upgrade pip pyinstaller
+          python -m pip install "flask>=3.1,<4" "pymupdf>=1.24,<2"
+          pyinstaller packaging/magplot.spec --noconfirm
+
+      - name: 准备「用户的 Python」— conda
+        if: matrix.python == 'conda'
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          auto-update-conda: false
+          python-version: "3.12"
+
+      - name: 准备「用户的 Python」— 官方
+        if: matrix.python == 'cpython'
+        run: python -m pip install matplotlib
+
+      - name: 装 matplotlib 到 conda 环境
+        if: matrix.python == 'conda'
+        shell: bash -el {0}
+        run: conda install -y matplotlib
+
+      - name: 冒烟（中文用户名 + 中文区域）
+        shell: pwsh
+        env:
+          # 中文区域是国内机器的默认值，也是历来最容易出问题的一档：
+          # 系统默认编码是 cp936，控制台、管道、文件名全都受影响
+          PYTHONUTF8: "0"
+        run: |
+          $dst = "$env:RUNNER_TEMP\张三 的论文\figures"
+          New-Item -ItemType Directory -Force -Path $dst | Out-Null
+          Copy-Item examples\runtime_check\* $dst -Recurse -Force
+          # none：什么都不指定 → 必须落到内置 runtime 并**完整跑通**渲染与导出。
+          # 其余两档：显式指定用户自己的解释器 → 必须压过内置的。
+          if ("${{ matrix.python }}" -ne "none") {
+            $env:MM_WORKER_PYTHON = (Get-Command python).Source
+            $expect = "env_override"
+          } else {
+            $env:MM_WORKER_PYTHON = $null
+            $expect = "bundled"
+          }
+          python scripts/smoke_app.py --exe dist\Magplot\Magplot.exe `
+            --figures "$dst" --expect-source $expect
+
+      - name: 无 Python：确认整套内置科学栈都能用
+        # 装完即用是产品承诺的全部内容。这里不只看「起得来」，而是逐个 import
+        # 并要求报出版本——文件都在但某个 .pyd 被杀毒软件隔离时，只看启动会漏。
+        if: matrix.python == 'none'
+        shell: pwsh
+        run: |
+          $env:MM_WORKER_PYTHON = $null
+          python scripts/smoke_app.py --exe dist\Magplot\Magplot.exe `
+            --figures examples\runtime_check --expect-source bundled `
+            --expect-packages numpy,pandas,scipy,seaborn,PIL,matplotlib
+
+      - name: 断网启动
+        # 检查更新是唯一的对外请求；断网时必须照常可用
+        shell: pwsh
+        run: |
+          $env:MAGPLOT_NO_UPDATE_CHECK = "1"
+          $p = Start-Process -PassThru dist\Magplot\Magplot.exe `
+               -ArgumentList "--port","5398","--no-browser"
+          try {
+            foreach ($i in 1..60) {
+              try { Invoke-RestMethod http://127.0.0.1:5398/api/version | Out-Null; break }
+              catch { Start-Sleep 1 }
+            }
+            Invoke-RestMethod http://127.0.0.1:5398/api/version | Out-Null
+            Write-Host "✓ 断网可用"
+          } finally { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+
+      - name: 安装器 → 启动 → 升级覆盖 → 卸载
+        if: matrix.python == 'cpython'
+        shell: pwsh
+        run: |
+          if (-not (Test-Path packaging\magplot.iss)) {
+            Write-Host "::notice::没有 Inno Setup 脚本，跳过安装器链路"; exit 0
+          }
+          # ISCC 要用 pwsh 调（cmd 下参数转义规则不同）
+          & "$env:ProgramFiles(x86)\Inno Setup 6\ISCC.exe" packaging\magplot.iss
+          $setup = Get-ChildItem dist\*Setup*.exe | Select-Object -First 1
+          if (-not $setup) { throw "没产出安装器" }
+          # /VERYSILENT + 当前用户安装：不要求管理员权限
+          Start-Process -Wait $setup.FullName -ArgumentList "/VERYSILENT","/CURRENTUSER"
+          $installed = "$env:LOCALAPPDATA\Programs\Magplot\Magplot.exe"
+          if (-not (Test-Path $installed)) { throw "装完找不到可执行文件" }
+          # 装出来的目录里必须有内置 runtime——安装器漏收它是「本地能跑、
+          # 用户装完不能渲染」最典型的成因
+          $rt = "$env:LOCALAPPDATA\Programs\Magplot\_internal\runtime"
+          if (-not (Test-Path "$rt\python.exe")) { throw "安装后没有内置 runtime" }
+          python scripts\smoke_app.py --exe $installed --expect-source bundled `
+            --figures examples\runtime_check
+          # 覆盖安装（升级）后再冒烟一次
+          Start-Process -Wait $setup.FullName -ArgumentList "/VERYSILENT","/CURRENTUSER"
+          python scripts\smoke_app.py --exe $installed --expect-source bundled `
+            --figures examples\runtime_check
+          # 卸载
+          $uninst = "$env:LOCALAPPDATA\Programs\Magplot\unins000.exe"
+          if (Test-Path $uninst) {
+            Start-Process -Wait $uninst -ArgumentList "/VERYSILENT"
+            if (Test-Path $installed) { throw "卸载后可执行文件仍在" }
+          }
+
+      - name: 失败时收集日志
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-${{ matrix.python }}-logs
+          path: |
+            ${{ runner.temp }}/**/app.log
+            ${{ runner.temp }}/**/worker.log
+            dist/Magplot/_internal/runtime/runtime-manifest.json
+            build/**/warn-*.txt
+          if-no-files-found: warn
+          retention-days: 14

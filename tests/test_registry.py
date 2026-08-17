@@ -48,9 +48,20 @@ def test_duplicate_stem_raises_with_both_scripts():
         registry.load_data(bad)
 
 
+def test_custom_entry_name_accepted():
+    """入口名不限于 main/render——worker 是 getattr(module, entry)() 直接调的，
+    图库按自己习惯把入口叫 plot()/build() 完全合法。"""
+    registry.load_data({"scripts": {"a.py": {"entry": "plot", "stems": ["A"]}}})
+    assert registry.for_stem("A")["entry"] == "plot"
+    registry.load_data({"scripts": {}}, source="<test-reset>")
+
+
 def test_invalid_entry_and_cost_rejected():
     with pytest.raises(RuntimeError, match="entry 非法"):
-        registry.load_data({"scripts": {"a.py": {"entry": "run", "stems": []}}})
+        registry.load_data({"scripts": {"a.py": {"entry": "not an entry",
+                                                 "stems": []}}})
+    with pytest.raises(RuntimeError, match="entry 非法"):
+        registry.load_data({"scripts": {"a.py": {"entry": 3, "stems": []}}})
     with pytest.raises(RuntimeError, match="cost 非法"):
         registry.load_data({"scripts": {"a.py": {"entry": "main",
                                                  "cost": "huge", "stems": []}}})

@@ -53,6 +53,11 @@ path = "src/magplot/__init__.py"
 # 用 artifacts 显式收回，否则打出来的包没有界面（首页 404）。
 [tool.hatch.build]
 artifacts = ["src/magplot/web/**"]
+# Windows 桌面版的内置渲染 runtime（仓库根的 runtime/，200 MiB 上下）只跟着
+# 安装包走，**绝不能混进 wheel / sdist**：pip 用户拿到的是轻量包，
+# 而且那是一堆 Windows 二进制。它已经在 .gitignore 里（hatchling 默认就会跳过），
+# 这条 exclude 是第二道闸——artifacts 那类显式收回的规则容易越写越宽。
+exclude = ["runtime", "runtime/**", "build/runtime-cache/**"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/magplot"]

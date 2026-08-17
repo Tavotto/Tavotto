@@ -8,6 +8,11 @@ __pycache__/
 /build/
 *.egg-info/
 
+# Windows 桌面版的内置渲染 runtime（scripts/build_worker_runtime.py 生成）：
+# 200 MiB 上下的二进制，随安装包分发但**绝不进 Git**。
+# 版本锁在 packaging/runtime-lock.json 里，那个才是要提交的东西。
+/runtime/
+
 # 前端构建产物（scripts/build_frontend.py 生成，随 wheel 分发但不进仓库）
 /src/magplot/web/
 web/node_modules/

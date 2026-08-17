@@ -63,7 +63,7 @@ def _ink_halves(doc):
 
 def test_export_panel_flip_h(client, tmp_path, monkeypatch):
     """水平翻转：墨量从左半移到右半；不翻转的对照在左半。"""
-    monkeypatch.setattr(m, "FIGURES_DIR", _asym_panel_dir(tmp_path))
+    m.open_project(str(_asym_panel_dir(tmp_path)))
     panel = {"type": "panel", "id": "asym.pdf",
              "x_mm": 0, "y_mm": 0, "w_mm": 100, "h_mm": 50}
     plain = _export(client, tmp_path, {"stem": "plain", "objects": [panel]})
@@ -77,7 +77,7 @@ def test_export_panel_flip_h(client, tmp_path, monkeypatch):
 
 def test_export_panel_flip_v_keeps_horizontal(client, tmp_path, monkeypatch):
     """垂直翻转不影响左右分布（内容仍在左半）。"""
-    monkeypatch.setattr(m, "FIGURES_DIR", _asym_panel_dir(tmp_path))
+    m.open_project(str(_asym_panel_dir(tmp_path)))
     panel = {"type": "panel", "id": "asym.pdf",
              "x_mm": 0, "y_mm": 0, "w_mm": 100, "h_mm": 50, "flip_v": True}
     doc = _export(client, tmp_path, {"stem": "flipv", "objects": [panel]})

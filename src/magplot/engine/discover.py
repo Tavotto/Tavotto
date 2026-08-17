@@ -1,20 +1,24 @@
 """静态扫描图库目录，起草 stem↔script 注册表（mm_registry.json 的数据来源）。
 
 三件事：
-  1. AST 识别入口方言：有 def main → "main"；否则 def render → "render"；
-     否则只有 `if __name__ == "__main__"` 的内联脚本 → "__main__"
-  2. 从 save()/savefig() 调用里抽 stem——字符串字面量直接取；
-     f-string 把 {…} 变成 * 得到 glob 模式，再与磁盘上的 PDF/PNG 产物
-     比对还原为具体 stem（动态命名无法纯静态求解，必须对着产物核）
+  1. AST 识别入口：优先 main / render，其次任何「无必填参数且能走到存图调用」的
+     顶层函数，最后是只有 `if __name__ == "__main__"` 的内联脚本
+  2. 抽象求值 save()/savefig() 的路径参数——不再只认字符串字面量：
+     模块级常量、f-string、`Path(...) / "x"`、`.with_suffix()` / `.with_name()` /
+     `.joinpath()`、`os.path.join()`、`str.format()`、`%`、`+` 拼接、
+     `Path(__file__)` 自命名，以及**跨函数传播**（`save_panel(fig, "Fig1")` →
+     包装函数里的 `OUT / f"{stem}.pdf"`）与常量 for 循环展开都能还原。
+     实在解不出的段落变成 `*`，再与磁盘上的产物比对还原成具体 stem。
   3. 同一 stem 被多个脚本认领 → 冲突显式报告，**绝不自动裁决**
      （裁决手写进 mm_registry.json；--write 合并时现有条目永远优先）
 
-无法静态识别的（stem 全是变量、Path 拼接等）列入 unresolved 报告，
-需要手工补登。cost 无法静态判断，草稿一律 "medium"，请按需修正。
+静态求不出来的（stem 来自命令行参数、数据文件、目录遍历……）列入
+`dynamic_names` 报告，交给「试运行探测」（engine/probe.py）按真实产出登记——
+绝不猜，也绝不静默跳过。cost 无法静态判断，草稿一律 "medium"。
 
 用法：
-    python -m engine.discover <figures_dir>            # 只打印报告
-    python -m engine.discover <figures_dir> --write    # 生成/合并 mm_registry.json
+    python -m magplot.engine.discover <figures_dir>            # 只打印报告
+    python -m magplot.engine.discover <figures_dir> --write    # 生成/合并 mm_registry.json
 
 纯标准库，Flask 父进程可安全 import。
 """
@@ -23,81 +27,582 @@ from __future__ import annotations
 import argparse
 import ast
 import json
-from pathlib import Path
+import re
+from pathlib import Path, PurePosixPath
 
 from . import registry
 
-OUT_EXTS = (".pdf", ".png", ".svg", ".jpg", ".jpeg")
-SKIP_PREFIXES = ("paper_style", "_")  # 样式模块及其副本（"paper_style 2.py"）、私有助手
-SAVE_FUNCS = {"save", "savefig"}
+OUT_EXTS = (".pdf", ".png", ".svg", ".jpg", ".jpeg", ".eps", ".tif", ".tiff")
+# 样式模块及其副本（"paper_style 2.py"）、私有助手、测试与打包脚本
+SKIP_PREFIXES = ("paper_style", "_", "test_", "conftest", "setup")
+SKIP_SUFFIXES = ("_test.py",)
+# 存图调用名。paper_style.save(fig, stem) 这类图库方言与 matplotlib 原生
+# savefig 一起认；参数位置不假设，所有实参都试着求值。
+SAVE_FUNCS = {"save", "savefig", "imsave", "write_image", "save_fig",
+              "savefigure", "save_figure", "savefig_pdf", "export_fig"}
+# 存图调用里可能承载文件名的关键字实参
+SAVE_KWARGS = ("fname", "filename", "file", "path", "out", "outfile",
+               "output", "stem", "name", "basename", "target")
+
+# 扫描时整棵剪掉的目录（噪音 + 性能：图库旁边常年躺着工具产物与虚拟环境）
+PRUNE_DIRS = {"__pycache__", "node_modules", ".venv", "venv", "env", ".git",
+              "build", "dist", "site-packages", ".ipynb_checkpoints",
+              ".rendered", ".mypy_cache", ".pytest_cache", ".tox", ".eggs"}
+MAX_DEPTH = 4        # 图库目录层级：panels/、subfigs/ 这种一两层，给到四层
+MAX_CALL_DEPTH = 6   # 跨函数传播的递归上限（防互递归与深调用链爆栈）
+
+UNKNOWN = "*"
 
 
-def _entry_of(tree: ast.Module) -> str | None:
-    names = {n.name for n in tree.body if isinstance(n, ast.FunctionDef)}
-    if "main" in names:
-        return "main"
-    if "render" in names:
-        return "render"
+# --------------------------------------------------------------------------
+# 路径字符串的小工具：抽象求值的结果统一是「以 / 分隔、可能含 * 的路径串」，
+# 真正关心的只有最后一段（basename）——目录求不出来完全无所谓。
+# --------------------------------------------------------------------------
+def _norm(s: str) -> str:
+    return s.replace("\\", "/")
+
+
+def _join(left: str, right: str) -> str:
+    """路径拼接。右侧绝对则整体替换（与 pathlib 的 `/` 语义一致）。"""
+    right = _norm(right)
+    if right.startswith("/") or (len(right) > 1 and right[1] == ":"):
+        return right
+    left = _norm(left).rstrip("/")
+    return f"{left}/{right}" if left else right
+
+
+def _basename(s: str) -> str:
+    return _norm(s).rsplit("/", 1)[-1]
+
+
+def _parent(s: str) -> str:
+    s = _norm(s).rstrip("/")
+    return s.rsplit("/", 1)[0] if "/" in s else ""
+
+
+def _strip_ext(s: str) -> str:
+    """只剥图片/PDF 扩展名——stem 之外的点（Fig1.v2）必须原样留着。"""
+    low = s.lower()
+    for ext in OUT_EXTS:
+        if low.endswith(ext):
+            return s[: -len(ext)]
+    return s
+
+
+def _split_suffix(s: str) -> tuple[str, str]:
+    """pathlib 语义的 (无后缀部分, 后缀)——with_suffix/.stem 用，剥任意后缀。"""
+    leaf = _basename(s)
+    dot = leaf.rfind(".")
+    if dot <= 0:
+        return s, ""
+    return s[: len(s) - (len(leaf) - dot)], leaf[dot:]
+
+
+def _squeeze(s: str) -> str:
+    """连续通配符压成一个，避免 `Fig_**_a` 这种匹配不上磁盘产物的模式。"""
+    while "**" in s:
+        s = s.replace("**", "*")
+    return s
+
+
+def _const_str(node: ast.expr) -> str | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
+
+
+def _const_seq(node: ast.expr) -> list[str] | None:
+    """字面量字符串序列（for 循环常量展开用）。"""
+    if not isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+        return None
+    out = []
+    for el in node.elts:
+        s = _const_str(el)
+        if s is None:
+            return None
+        out.append(s)
+    return out
+
+
+def _func_name(node: ast.expr) -> str:
+    """调用目标的「最后一段」名字：a.b.save → save；save → save。"""
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return getattr(node, "id", "") or ""
+
+
+# --------------------------------------------------------------------------
+# 抽象求值器
+# --------------------------------------------------------------------------
+class _Analyzer:
+    """单个脚本的抽象求值：从入口出发走语句，遇到存图调用就抽文件名模式。
+
+    环境 env 是 {名字: 路径串}；解不出的名字直接不在环境里（区别于「解得出
+    但内容未知」——后者是 `*`）。这个区分很重要：`save(fig, some_object)` 里
+    的 `some_object` 不是路径，不该产出一个 `*` 模式去污染报告。
+    """
+
+    def __init__(self, tree: ast.Module, script_name: str):
+        self.tree = tree
+        self.script_name = script_name
+        self.funcs: dict[str, ast.FunctionDef] = {
+            n.name: n for n in tree.body
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        self.patterns: set[str] = set()
+        self.sites: set[tuple[int, int]] = set()   # 走到过的存图调用位置
+        self.module_env: dict[str, str] = {}
+        self.seqs: dict[str, list[str]] = {}
+
+    # ---------------- 表达式 ----------------
+    def value(self, node: ast.expr, env: dict[str, str]) -> str | None:
+        if isinstance(node, ast.Constant):
+            return node.value if isinstance(node.value, str) else None
+        if isinstance(node, ast.Name):
+            return env.get(node.id)
+        if isinstance(node, ast.JoinedStr):
+            parts = []
+            for v in node.values:
+                if isinstance(v, ast.Constant):
+                    parts.append(str(v.value))
+                elif isinstance(v, ast.FormattedValue):
+                    inner = self.value(v.value, env)
+                    # 带格式说明（:0.2f / :03d）的插值即使拿到值也未必等于
+                    # 最终文本，一律降级成通配符
+                    parts.append(inner if inner is not None and not v.format_spec
+                                 else UNKNOWN)
+                else:
+                    parts.append(UNKNOWN)
+            return _squeeze("".join(parts))
+        if isinstance(node, ast.BinOp):
+            return self._binop(node, env)
+        if isinstance(node, ast.Attribute):
+            return self._attribute(node, env)
+        if isinstance(node, ast.Call):
+            return self._call_value(node, env)
+        if isinstance(node, ast.IfExp):
+            # 两个分支都可能发生：能求出的那个先用，两个都能求就都记下
+            a = self.value(node.body, env)
+            b = self.value(node.orelse, env)
+            if a is not None and b is not None and a != b:
+                self._record_pattern(b)      # 另一分支也是真实产物
+            return a if a is not None else b
+        return None
+
+    def _binop(self, node: ast.BinOp, env: dict[str, str]) -> str | None:
+        if isinstance(node.op, ast.Div):
+            # Path 除法：右侧必须解得出，左侧（目录）解不出无所谓
+            right = self.value(node.right, env)
+            if right is None:
+                return None
+            left = self.value(node.left, env)
+            return _join(left or "", right)
+        if isinstance(node.op, ast.Add):
+            left, right = self.value(node.left, env), self.value(node.right, env)
+            if left is None or right is None:
+                return None
+            return _squeeze(left + right)
+        if isinstance(node.op, ast.Mod):
+            # "Fig_%s.pdf" % name —— 求得出的操作数按序代入，其余变通配符
+            left = self.value(node.left, env)
+            if left is None:
+                return None
+            operands = (node.right.elts if isinstance(node.right, ast.Tuple)
+                        else [node.right])
+            vals = [self.value(o, env) for o in operands]
+            it = iter(vals)
+
+            def _sub(m: re.Match[str]) -> str:
+                if m.group(0) == "%%":
+                    return "%"
+                val = next(it, None)
+                # %s 之外的转换（%d/%.2f）即使拿到值也未必等于最终文本
+                return val if val is not None and m.group(0).endswith("s") else UNKNOWN
+
+            return _squeeze(re.sub(r"%%|%[-+ #0]*[\d.*]*[hlL]?[a-zA-Z]", _sub, left))
+        return None
+
+    def _attribute(self, node: ast.Attribute, env: dict[str, str]) -> str | None:
+        if node.attr in ("parent", "stem", "name", "resolve", "absolute"):
+            base = self.value(node.value, env)
+            if base is None:
+                return None
+            if node.attr == "parent":
+                return _parent(base)
+            if node.attr == "stem":
+                return _split_suffix(_basename(base))[0]
+            if node.attr == "name":
+                return _basename(base)
+            return base
+        return None
+
+    def _call_value(self, node: ast.Call, env: dict[str, str]) -> str | None:
+        name = _func_name(node.func)
+        args = node.args
+
+        if name in ("Path", "PurePath", "PosixPath", "WindowsPath"):
+            vals = [self.value(a, env) for a in args]
+            if not vals or vals[0] is None:
+                return None
+            out = vals[0]
+            for v in vals[1:]:
+                if v is None:
+                    return None
+                out = _join(out, v)
+            return out
+        if name in ("str", "fspath", "abspath", "realpath", "normpath",
+                    "expanduser", "resolve", "absolute"):
+            return self.value(args[0], env) if args else None
+        if name == "join":                      # os.path.join(a, b, ...)
+            vals = [self.value(a, env) for a in args]
+            if not vals or any(v is None for v in vals):
+                return None
+            out = vals[0]
+            for v in vals[1:]:
+                out = _join(out, v)             # type: ignore[arg-type]
+            return out
+        if name == "joinpath":
+            base = self.value(node.func.value, env) if isinstance(
+                node.func, ast.Attribute) else None
+            vals = [self.value(a, env) for a in args]
+            if any(v is None for v in vals):
+                return None
+            out = base or ""
+            for v in vals:
+                out = _join(out, v)             # type: ignore[arg-type]
+            return out
+        if name in ("with_suffix", "with_name", "with_stem"):
+            if not isinstance(node.func, ast.Attribute) or not args:
+                return None
+            base = self.value(node.func.value, env)
+            arg = self.value(args[0], env)
+            if base is None or arg is None:
+                return None
+            if name == "with_suffix":
+                return _split_suffix(base)[0] + arg
+            if name == "with_name":
+                return _join(_parent(base), arg)
+            return _join(_parent(base), arg + _split_suffix(base)[1])
+        if name == "format":
+            if not isinstance(node.func, ast.Attribute):
+                return None
+            base = self.value(node.func.value, env)
+            if base is None:
+                return None
+            return self._apply_format(base, node, env)
+        if name == "replace":
+            if not isinstance(node.func, ast.Attribute) or len(args) < 2:
+                return None
+            base = self.value(node.func.value, env)
+            old, new = self.value(args[0], env), self.value(args[1], env)
+            if base is None or old is None or new is None:
+                return None
+            return _squeeze(base.replace(old, new))
+        return None
+
+    def _apply_format(self, tpl: str, node: ast.Call,
+                      env: dict[str, str]) -> str:
+        """"Fig_{}.pdf".format(x) —— 求得出的实参代入，求不出的变通配符。"""
+        pos = [self.value(a, env) for a in node.args]
+        kw = {k.arg: self.value(k.value, env) for k in node.keywords if k.arg}
+        out, i, buf = [], 0, ""
+        depth = 0
+        for ch in tpl:
+            if ch == "{":
+                depth += 1
+                if depth == 1:
+                    buf = ""
+                    continue
+            if ch == "}" and depth:
+                depth -= 1
+                if depth == 0:
+                    key = buf.split("!")[0].split(":")[0].strip()
+                    if key.isdigit():
+                        val = pos[int(key)] if int(key) < len(pos) else None
+                    elif key:
+                        val = kw.get(key)
+                    else:
+                        val = pos[i] if i < len(pos) else None
+                        i += 1
+                    out.append(val if val is not None and ":" not in buf
+                               else UNKNOWN)
+                    continue
+            if depth:
+                buf += ch
+            else:
+                out.append(ch)
+        return _squeeze("".join(out))
+
+    # ---------------- 语句 ----------------
+    def _record_pattern(self, raw: str | None) -> None:
+        if raw is None:
+            return
+        s = _strip_ext(_basename(raw)).strip()
+        if not s or s.startswith(UNKNOWN):   # 开头即变量：无从定位
+            return
+        self.patterns.add(_squeeze(s))
+
+    def _save_call(self, node: ast.Call, env: dict[str, str]) -> None:
+        self.sites.add((node.lineno, node.col_offset))
+        for arg in node.args:
+            self._record_pattern(self.value(arg, env))
+        for kw in node.keywords:
+            if kw.arg in SAVE_KWARGS:
+                self._record_pattern(self.value(kw.value, env))
+
+    def _visit_call(self, node: ast.Call, env: dict[str, str],
+                    depth: int, stack: tuple[str, ...]) -> None:
+        name = _func_name(node.func)
+        if name in SAVE_FUNCS:
+            self._save_call(node, env)
+            return
+        # 用户自己的包装函数：把实参绑到形参上走进去（save_panel(fig, "Fig1")）
+        fn = self.funcs.get(name) if isinstance(node.func, ast.Name) else None
+        if fn is None or depth >= MAX_CALL_DEPTH or name in stack:
+            return
+        self.walk(fn.body, self._bind(fn, node, env), depth + 1, stack + (name,))
+
+    def _bind(self, fn: ast.FunctionDef, call: ast.Call,
+              env: dict[str, str]) -> dict[str, str]:
+        """实参 → 形参环境（模块常量打底；解不出的形参就是「不在环境里」）。"""
+        inner = dict(self.module_env)
+        params = [a.arg for a in fn.args.args]
+        for i, arg in enumerate(call.args):
+            if i < len(params):
+                val = self.value(arg, env)
+                if val is not None:
+                    inner[params[i]] = val
+        for kw in call.keywords:
+            if kw.arg:
+                val = self.value(kw.value, env)
+                if val is not None:
+                    inner[kw.arg] = val
+        # 有默认值的形参：调用方没传就用默认值
+        defaults = fn.args.defaults
+        for param, default in zip(params[len(params) - len(defaults):], defaults):
+            if param not in inner:
+                val = self.value(default, env)
+                if val is not None:
+                    inner[param] = val
+        return inner
+
+    def walk(self, stmts: list[ast.stmt], env: dict[str, str],
+             depth: int = 0, stack: tuple[str, ...] = ()) -> None:
+        """按语句结构走：复合语句显式下钻，简单语句整棵扫 Call。"""
+        for st in stmts:
+            if isinstance(st, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue                     # 定义不等于执行，被调用时才走
+            if isinstance(st, ast.Assign):
+                self._assign(st, env)
+                self._scan_exprs([st.value], env, depth, stack)
+                continue
+            if isinstance(st, ast.AnnAssign) and st.value is not None:
+                if isinstance(st.target, ast.Name):
+                    val = self.value(st.value, env)
+                    if val is not None:
+                        env[st.target.id] = val
+                self._scan_exprs([st.value], env, depth, stack)
+                continue
+            if isinstance(st, ast.For):
+                self._for(st, env, depth, stack)
+                continue
+            if isinstance(st, (ast.If, ast.While)):
+                self._scan_exprs([st.test], env, depth, stack)
+                self.walk(st.body, dict(env), depth, stack)
+                self.walk(st.orelse, dict(env), depth, stack)
+                continue
+            if isinstance(st, (ast.With, ast.AsyncWith)):
+                self._scan_exprs([i.context_expr for i in st.items], env, depth, stack)
+                self.walk(st.body, env, depth, stack)
+                continue
+            if isinstance(st, ast.Try):
+                for block in (st.body, st.orelse, st.finalbody):
+                    self.walk(block, dict(env), depth, stack)
+                for handler in st.handlers:
+                    self.walk(handler.body, dict(env), depth, stack)
+                continue
+            self._scan_exprs([st], env, depth, stack)
+
+    def _assign(self, st: ast.Assign, env: dict[str, str]) -> None:
+        val = self.value(st.value, env)
+        seq = _const_seq(st.value)
+        for target in st.targets:
+            if not isinstance(target, ast.Name):
+                continue
+            if seq is not None:
+                self.seqs[target.id] = seq
+            if val is not None:
+                env[target.id] = val
+            else:
+                env.pop(target.id, None)   # 重新赋成未知值，旧绑定必须失效
+
+    def _for(self, st: ast.For, env: dict[str, str], depth: int,
+             stack: tuple[str, ...]) -> None:
+        """常量序列的 for 循环展开：`for k in ("a","b")` 每个取值各走一遍。"""
+        self._scan_exprs([st.iter], env, depth, stack)
+        seq = _const_seq(st.iter)
+        if seq is None and isinstance(st.iter, ast.Name):
+            seq = self.seqs.get(st.iter.id)
+        if seq is not None and isinstance(st.target, ast.Name) and len(seq) <= 32:
+            for item in seq:
+                inner = dict(env)
+                inner[st.target.id] = item
+                self.walk(st.body, inner, depth, stack)
+        else:
+            inner = dict(env)
+            for name in _target_names(st.target):
+                inner.pop(name, None)      # 循环变量取值未知
+            self.walk(st.body, inner, depth, stack)
+        self.walk(st.orelse, dict(env), depth, stack)
+
+    def _scan_exprs(self, nodes: list[ast.AST], env: dict[str, str],
+                    depth: int, stack: tuple[str, ...]) -> None:
+        for node in nodes:
+            for sub in ast.walk(node):
+                if isinstance(sub, ast.Call):
+                    self._visit_call(sub, env, depth, stack)
+
+    # ---------------- 入口 ----------------
+    def run(self, entry: str) -> None:
+        self.module_env = {"__file__": self.script_name}
+        # 模块级常量（OUT = Path(__file__).parent / "panels" 这类）
+        self.walk([s for s in self.tree.body
+                   if isinstance(s, (ast.Assign, ast.AnnAssign))], self.module_env)
+        if entry == "__main__":
+            self.walk(self.tree.body, dict(self.module_env))
+        else:
+            fn = self.funcs.get(entry)
+            if fn is not None:
+                self.walk(fn.body, dict(self.module_env), 1, (entry,))
+        if not self.sites:
+            # 入口走不到存图（脚本在 import 期出图、或入口判断失手）：
+            # 全模块兜底扫一遍，宁可宽松也不要交白卷
+            self.walk(self.tree.body, dict(self.module_env))
+            for fn in self.funcs.values():
+                self.walk(fn.body, dict(self.module_env), 1, (fn.name,))
+
+
+def _target_names(node: ast.expr) -> list[str]:
+    if isinstance(node, ast.Name):
+        return [node.id]
+    if isinstance(node, (ast.Tuple, ast.List)):
+        return [n for el in node.elts for n in _target_names(el)]
+    return []
+
+
+# --------------------------------------------------------------------------
+# 入口方言识别
+# --------------------------------------------------------------------------
+def _reaches_save(fn: ast.FunctionDef, funcs: dict[str, ast.FunctionDef],
+                  seen: frozenset[str] = frozenset()) -> bool:
+    """函数体（含它调用的本模块函数）里是否存在存图调用。"""
+    if fn.name in seen or len(seen) > MAX_CALL_DEPTH:
+        return False
+    seen = seen | {fn.name}
+    for node in ast.walk(fn):
+        if not isinstance(node, ast.Call):
+            continue
+        name = _func_name(node.func)
+        if name in SAVE_FUNCS:
+            return True
+        sub = funcs.get(name)
+        if sub is not None and _reaches_save(sub, funcs, seen):
+            return True
+    return False
+
+
+def _has_inline_main(tree: ast.Module) -> bool:
     for node in tree.body:
         if (isinstance(node, ast.If) and isinstance(node.test, ast.Compare)
                 and isinstance(node.test.left, ast.Name)
                 and node.test.left.id == "__name__"):
-            return "__main__"
-    return None
+            return True
+    return False
 
 
-def _str_pattern(node: ast.expr) -> str | None:
-    """字符串参数 → stem 模式；f-string 的插值段变 *。整体是变量则放弃。"""
-    if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        s = node.value
-    elif isinstance(node, ast.JoinedStr):
-        s = "".join(str(v.value) if isinstance(v, ast.Constant) else "*"
-                    for v in node.values)
-    else:
-        return None
-    s = s.strip().replace("\\", "/").rsplit("/", 1)[-1]  # 去目录前缀
-    for ext in OUT_EXTS:
-        if s.lower().endswith(ext):
-            s = s[: -len(ext)]
-            break
-    if not s or s.startswith("*"):  # 空或开头即变量：无法定位
-        return None
-    return s
+def _callable_without_args(fn: ast.FunctionDef) -> bool:
+    """能否零参调用（worker 就是 `getattr(module, entry)()` 直接调的）。"""
+    a = fn.args
+    positional = len(a.posonlyargs) + len(a.args) - len(a.defaults)
+    kwonly_required = sum(1 for d in a.kw_defaults if d is None)
+    return positional <= 0 and kwonly_required == 0
 
 
-def _stem_patterns(tree: ast.Module) -> tuple[set[str], int]:
-    """返回 (stem 模式集合, save/savefig 调用次数)。
+def _entry_of(tree: ast.Module) -> str | None:
+    """入口优先级：main > render > 其它无参且能走到存图的顶层函数 > __main__。
 
-    调用次数单独报出来，是为了区分「这个模块根本不产图」和「它明明在存图、
-    但文件名是变量所以静态看不出来」——后者必须让用户看见，否则只会拿到一份
-    空注册表而不知道为什么。
+    第三档是为「按自己习惯命名入口」的图库准备的（plot() / build() /
+    make_figures()）——worker 用 getattr(module, entry)() 调用，函数名本来就
+    不必是 main。找不到任何函数时才退回内联脚本。
     """
-    pats: set[str] = set()
-    calls = 0
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        fn = node.func
-        name = fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", "")
-        if name not in SAVE_FUNCS:
-            continue
-        calls += 1
-        for arg in node.args:
-            pat = _str_pattern(arg)
-            if pat:
-                pats.add(pat)
-    return pats, calls
+    funcs = {n.name: n for n in tree.body
+             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    for preferred in ("main", "render"):
+        if preferred in funcs:
+            return preferred
+    inline = _has_inline_main(tree)
+    candidates = [n for name, n in funcs.items()
+                  if _callable_without_args(n) and _reaches_save(n, funcs)]
+    if candidates:
+        # 常见入口名先来，其余按定义顺序（越靠后越可能是「总装」函数）
+        rank = {"plot": 0, "build": 1, "make": 2, "draw": 3, "run": 4,
+                "figure": 5, "generate": 6, "all": 7}
+        candidates.sort(key=lambda n: (rank.get(n.name, 99), n.lineno))
+        return candidates[0].name
+    return "__main__" if inline else None
+
+
+# --------------------------------------------------------------------------
+# 扫描
+# --------------------------------------------------------------------------
+def iter_scripts(figures_dir: Path) -> list[Path]:
+    """图库里的候选脚本：递归但剪枝（隐藏目录、虚拟环境、缓存一律不下探）。
+
+    只扫顶层曾经是个隐性假设——把面板脚本放 panels/ 子目录的图库（论文的
+    supporting_information 就是）会被整目录漏掉。
+    """
+    out: list[Path] = []
+    root = Path(figures_dir)
+
+    def walk(d: Path, depth: int) -> None:
+        try:
+            children = sorted(d.iterdir())
+        except OSError:
+            return
+        for child in children:
+            if child.name.startswith("."):
+                continue
+            if child.is_dir():
+                if depth < MAX_DEPTH and child.name not in PRUNE_DIRS:
+                    walk(child, depth + 1)
+                continue
+            if child.suffix != ".py":
+                continue
+            if child.name.startswith(SKIP_PREFIXES) or child.name.endswith(SKIP_SUFFIXES):
+                continue
+            out.append(child)
+
+    walk(root, 0)
+    return out
+
+
+def _rel_key(path: Path, root: Path) -> str:
+    """注册表里的脚本键：图库相对路径，统一 POSIX 分隔符（跨平台一致）。"""
+    try:
+        return PurePosixPath(path.relative_to(root).as_posix()).as_posix()
+    except ValueError:
+        return path.name
 
 
 def _resolve(patterns: set[str], figures_dir: Path) -> tuple[set[str], list[str]]:
-    """模式 → 具体 stem。带 * 的与磁盘产物（pdf/png）比对；无匹配进 unresolved。"""
+    """模式 → 具体 stem。带 * 的与磁盘产物比对；无匹配进 unresolved。"""
     stems: set[str] = set()
     unresolved: list[str] = []
     for pat in sorted(patterns):
         if "*" not in pat:
             stems.add(pat)
             continue
-        found = {p.stem for ext in (".pdf", ".png")
+        found = {p.stem for ext in OUT_EXTS
                  for p in figures_dir.rglob(pat + ext)}
         if found:
             stems |= found
@@ -106,29 +611,39 @@ def _resolve(patterns: set[str], figures_dir: Path) -> tuple[set[str], list[str]
     return stems, unresolved
 
 
+def analyze_script(path: Path, figures_dir: Path) -> dict | None:
+    """单个脚本 → 报告条目；不是绘图脚本（无入口 / 不存图）返回 None。"""
+    try:
+        source = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return None
+    entry = _entry_of(tree)
+    if entry is None:
+        return None
+    an = _Analyzer(tree, path.name)
+    an.run(entry)
+    if not an.sites:
+        return None                       # 压根不产图（纯数据/工具模块）
+    stems, unresolved = _resolve(an.patterns, figures_dir)
+    return {"entry": entry, "stems": sorted(stems), "unresolved": unresolved,
+            # 在存图却一个 stem 都定位不到：文件名完全来自运行期数据。
+            # 这种脚本进不了草稿，必须报出来（可用「试运行探测」登记）。
+            "dynamic_names": not stems,
+            "save_calls": len(an.sites)}
+
+
 def discover(figures_dir: str | Path) -> dict:
-    """扫描顶层 *.py（脚本约定放图库根目录），返回原始报告。"""
+    """扫描图库（含子目录）里的候选脚本，返回原始报告。"""
     figures_dir = Path(figures_dir)
     scripts: dict[str, dict] = {}
-    for p in sorted(figures_dir.glob("*.py")):
-        if p.name.startswith(SKIP_PREFIXES):
-            continue
-        try:
-            tree = ast.parse(p.read_text(encoding="utf-8"))
-        except (SyntaxError, OSError, UnicodeDecodeError):
-            continue
-        entry = _entry_of(tree)
-        pats, save_calls = _stem_patterns(tree)
-        if entry is None or not save_calls:
-            continue  # 没有入口，或压根不产图（纯数据模块）
-        stems, unresolved = _resolve(pats, figures_dir)
-        scripts[p.name] = {"entry": entry, "stems": sorted(stems),
-                           "unresolved": unresolved,
-                           # 在存图却一个 stem 都定位不到：文件名全在变量里
-                           # （save_panel(fig, stem) → fig.savefig(pdf)）。
-                           # 这种脚本进不了草稿，只能手工登记，必须报出来。
-                           "dynamic_names": not stems,
-                           "save_calls": save_calls}
+    for p in iter_scripts(figures_dir):
+        info = analyze_script(p, figures_dir)
+        if info is not None:
+            scripts[_rel_key(p, figures_dir)] = info
     claims: dict[str, list[str]] = {}
     for script, info in scripts.items():
         for s in info["stems"]:
@@ -186,15 +701,47 @@ def merge(figures_dir: str | Path) -> tuple[dict, dict, dict]:
     return merged, rep, {"added_scripts": added_scripts, "added_stems": added_stems}
 
 
+def register(figures_dir: str | Path, script: str, stems: list[str],
+             entry: str = "main", cost: str = "medium",
+             notes: str = "") -> dict:
+    """把一个脚本的 stem 归属写进注册表（试运行探测确认后调用）。
+
+    同名脚本整条替换（探测结果是权威的），其它脚本里被本次认领走的 stem
+    一并摘掉——否则 registry.load 会因重复 stem 直接报错。
+    """
+    path = registry.registry_path(figures_dir)
+    try:
+        cfg = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        cfg = {"version": 1, "scripts": {}}
+    scripts = cfg.setdefault("scripts", {})
+    claimed = set(stems)
+    for name, entry_cfg in list(scripts.items()):
+        if name == script or not isinstance(entry_cfg, dict):
+            continue
+        kept = [s for s in entry_cfg.get("stems", []) if s not in claimed]
+        if len(kept) != len(entry_cfg.get("stems", [])):
+            entry_cfg["stems"] = kept
+    if stems:
+        prev = scripts.get(script) if isinstance(scripts.get(script), dict) else {}
+        scripts[script] = {"entry": entry, "cost": cost or prev.get("cost", "medium"),
+                           "notes": notes or prev.get("notes", ""),
+                           "stems": sorted(claimed)}
+    else:
+        scripts.pop(script, None)
+    write_config(figures_dir, cfg)
+    return cfg
+
+
 def _print_report(rep: dict) -> None:
     for script, info in sorted(rep["scripts"].items()):
         print(f"  {script}  [{info['entry']}]  {len(info['stems'])} stems")
         for pat in info["unresolved"]:
             print(f"    ? 无法与磁盘产物对上: {pat}*")
         if info.get("dynamic_names"):
-            print(f"    ! {info['save_calls']} 处 save/savefig 的文件名是变量，"
-                  "静态定位不到 stem —— 请把产出的 stem 手工写进 mm_registry.json"
-                  "（引擎运行时按真实文件名捕获，登记后即可参数化）")
+            print(f"    ! {info['save_calls']} 处 save/savefig 的文件名来自运行期数据，"
+                  "静态定位不到 stem —— 用「试运行探测」按真实产出登记"
+                  "（magplot 设置 → 脚本注册表，或手工写 mm_registry.json）")
     if rep["conflicts"]:
         print("  ⚠ 归属冲突（未分配，请在 mm_registry.json 手工裁决）:")
         for stem, cs in sorted(rep["conflicts"].items()):

@@ -20,7 +20,8 @@ import time
 import uuid
 from pathlib import Path
 
-from . import ai_history, config
+from . import ai_history, ai_providers, config
+from .runtime import CREATE_NO_WINDOW  # noqa: F401 — 重导出，历史调用方仍认这个名字
 
 LOG = logging.getLogger("mm.ai")
 
@@ -47,6 +48,91 @@ def _prune_snapshots(keep: int = SNAP_KEEP) -> int:
     return removed
 
 
+def _search_dirs(name: str) -> list[str]:
+    """按平台列出该 CLI 的常见落点（PATH 之外的兜底）。
+
+    Windows 上以前一个候选都没有——`shutil.which` 找不到就直接判定「未安装」。
+    可 PATH 恰恰是 Windows 最不可靠的地方：npm 全局目录要重开终端才进 PATH，
+    从桌面快捷方式启动的进程拿的又是启动那一刻的旧环境块。所以这里把
+    npm / winget / scoop / bun / volta / 官方安装器的落点全部直接翻一遍。
+    """
+    # 一律用字符串拼路径（与 pool._candidate_pythons 同一条约定）：
+    # pathlib.Path 会按 os.name 分派 Posix/Windows 实现，在非目标平台上构造
+    # 另一半会直接抛 UnsupportedOperation——连跨平台测这段分支都做不到。
+    home = os.path.expanduser("~")
+    if os.name == "nt":
+        appdata = os.environ.get("APPDATA") or home + r"\AppData\Roaming"
+        local = os.environ.get("LOCALAPPDATA") or home + r"\AppData\Local"
+        programs = os.environ.get("ProgramFiles") or r"C:\Program Files"
+        return [
+            appdata + r"\npm",                       # npm 全局（最常见）
+            local + r"\npm",
+            # 微软商店 / MSIX 安装（OpenAI.Codex 就是这么发的）。真身在
+            # C:\Program Files\WindowsApps\OpenAI.Codex_…\app，那个目录受 ACL
+            # 保护、普通进程连列都列不了——**能用的入口是这里的执行别名**
+            # （0 字节 reparse point，只能执行不能读）。少了这一条，商店版
+            # codex 在系统里就是「找不到」。
+            local + r"\Microsoft\WindowsApps",
+            home + r"\.local\bin",                   # 官方安装脚本
+            home + r"\.bun\bin",
+            local + r"\Volta\bin",
+            home + r"\scoop\shims",
+            local + r"\Microsoft\WinGet\Links",
+            r"C:\ProgramData\chocolatey\bin",
+            local + rf"\Programs\{name}",
+            local + rf"\Programs\{name}\bin",
+            programs + r"\nodejs",
+            home + r"\.codex\bin",
+            home + r"\.claude\bin",
+            home + rf"\.{name}\bin",
+        ]
+    return [
+        "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin",
+        f"{home}/.local/bin",
+        f"{home}/.bun/bin",
+        f"{home}/.volta/bin",
+        f"{home}/.npm-global/bin",
+        f"{home}/.{name}/bin",
+        "/opt/homebrew/opt/node/bin",
+    ]
+
+
+def _resolve_shim(path: str) -> list[str] | None:
+    """npm 的 `.cmd`/`.ps1` 外壳 → 真正的可执行文件（Windows）。
+
+    npm 全局安装留下的是 `codex.cmd` 这类批处理外壳，经 cmd.exe 中转会带来
+    参数再解析问题：提示词里的 `%`、`&`、`^`、`<`、`>`、`|` 会被 cmd 吃掉或
+    截断——中文提示里写个「透明度调到 50%」就足以让任务跑错。外壳内部指向的
+    平台原生 `.exe`（或 `xxx.js` + node）拿出来直接跑，就完全绕开了 cmd.exe。
+    """
+    p = Path(path)
+    if p.suffix.lower() not in (".cmd", ".bat", ".ps1"):
+        return None
+    try:
+        text = p.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    base = p.parent
+    for m in re.finditer(r'["\']?%~?dp0%?[\\/]?([^"\'\s]+\.(?:exe|js))', text, re.I):
+        target = (base / m.group(1).replace("\\", "/")).resolve()
+        if not target.is_file():
+            continue
+        if target.suffix.lower() == ".exe":
+            return [str(target)]
+        node = shutil.which("node")
+        if node:
+            return [node, str(target)]
+    return None
+
+
+def _cli_argv(name: str) -> list[str] | None:
+    """CLI 的启动 argv（可能是 [exe] 或 [node, script.js]）；找不到回 None。"""
+    path = _cli_path(name)
+    if path is None:
+        return None
+    return _resolve_shim(path) or [path]
+
+
 def _cli_path(name: str) -> str | None:
     """CLI 可执行路径：用户设置最优先，其次 PATH，最后常见安装位置。
     不含任何私人硬编码路径。"""
@@ -58,24 +144,43 @@ def _cli_path(name: str) -> str | None:
     cand = shutil.which(name)
     if cand:
         return cand
-    for generic in (f"/opt/homebrew/bin/{name}", f"/usr/local/bin/{name}",
-                    str(Path.home() / ".local" / "bin" / name)):
-        if Path(generic).is_file():
-            return generic
+    # PATH 里没有：把常见安装目录当成 PATH 再 which 一次（Windows 上
+    # PATHEXT 的 .cmd/.exe 匹配也交给 which 处理，不手写扩展名组合）
+    dirs = [d for d in _search_dirs(name) if Path(d).is_dir()]
+    if dirs:
+        cand = shutil.which(name, path=os.pathsep.join(dirs))
+        if cand:
+            return cand
+    # npm 包内部的平台原生二进制（外层 .cmd 外壳缺失时的最后一手）
+    for d in dirs:
+        for sub in Path(d).glob(f"node_modules/**/bin/{name}*"):
+            if sub.is_file() and sub.suffix.lower() in ("", ".exe"):
+                return str(sub)
+    if os.name == "nt":
+        # MSIX 包体本身。正常情况下走执行别名就够了（见 _search_dirs），
+        # 这里只是别名被用户关掉时的兜底；目录读不了就当没有，绝不报错。
+        for root in (os.environ.get("ProgramFiles") or r"C:\Program Files",):
+            try:
+                for sub in Path(root, "WindowsApps").glob(f"*{name}*/app/{name}.exe"):
+                    if sub.is_file():
+                        return str(sub)
+            except OSError:
+                pass
     return None
 
 
-def _find_cli(name: str) -> str:
-    cand = _cli_path(name)
-    if cand is None:
+def _find_cli(name: str) -> list[str]:
+    argv = _cli_argv(name)
+    if argv is None:
         raise RuntimeError(f"找不到 {name} CLI（可在设置中指定其路径）")
-    return cand
+    return argv
 
 
-def _probe_version(path: str) -> str | None:
+def _probe_version(argv: list[str]) -> str | None:
     try:
-        out = subprocess.run([path, "--version"], capture_output=True,
-                             text=True, timeout=10)
+        out = subprocess.run([*argv, "--version"], capture_output=True,
+                             text=True, timeout=10, encoding="utf-8",
+                             errors="replace", creationflags=CREATE_NO_WINDOW)
         line = (out.stdout or out.stderr).strip().splitlines()
         return line[0][:80] if line else None
     except (OSError, subprocess.TimeoutExpired):
@@ -138,19 +243,23 @@ def capabilities(refresh: bool = False) -> dict:
     """实际探测本机 codex / claude：安装与版本；模型与推理强度按 provider
     各自给出（两家能力不同构——claude CLI 不暴露推理强度选项）。
 
-    codex 的模型清单来自它自己的 config.toml，随用户升级 CLI 自动跟上。
+    codex 的模型清单来自它自己的 config.toml，随用户升级 CLI 自动跟上；
+    接了第三方接口时改用该接口自己填的模型清单（网关认的模型名与官方无关）。
     """
     global _CAPS_CACHE
     if _CAPS_CACHE and not refresh:
         return _CAPS_CACHE
     providers: dict[str, dict] = {}
     for name in ("codex", "claude"):
-        path = _cli_path(name)
-        info: dict = {"installed": path is not None, "path": path,
-                      "version": _probe_version(path) if path else None,
+        argv = _cli_argv(name)
+        path = argv[-1] if argv else None
+        info: dict = {"installed": argv is not None, "path": path,
+                      "argv": argv,
+                      "version": _probe_version(argv) if argv else None,
                       "models": [], "default_model": None,
-                      "efforts": [], "default_effort": None}
-        if path:
+                      "efforts": [], "default_effort": None,
+                      "endpoint": None}
+        if argv:
             if name == "codex":
                 cfg = _codex_config()
                 efforts = list(CODEX_EFFORTS)
@@ -163,29 +272,57 @@ def capabilities(refresh: bool = False) -> dict:
             else:
                 # claude CLI 支持模型别名；推理强度无 CLI 开关，不假装有
                 info.update(models=list(CLAUDE_MODELS), default_model="sonnet")
+            endpoint = ai_providers.resolve(name)
+            if endpoint:
+                info["endpoint"] = ai_providers.public(endpoint)
+                if endpoint.get("models"):
+                    info["models"] = list(endpoint["models"])
+                    info["default_model"] = (endpoint.get("default_model")
+                                             or endpoint["models"][0])
+        else:
+            # 没装：把找过哪些目录告诉用户，比干甩一句「未安装」有用得多
+            info["searched"] = _search_dirs(name)
         providers[name] = info
-    _CAPS_CACHE = {"providers": providers}
+    _CAPS_CACHE = {"providers": providers,
+                   "endpoints": [ai_providers.public(p)
+                                 for p in ai_providers.list_providers()],
+                   "presets": ai_providers.PRESETS,
+                   "active": {a: ai_providers.active_id(a)
+                              for a in ai_providers.AGENTS}}
     return _CAPS_CACHE
 
 
+def invalidate_capabilities() -> None:
+    """改过 CLI 路径 / 第三方接口后必须清缓存，否则界面一直是旧探测结果。"""
+    global _CAPS_CACHE
+    _CAPS_CACHE = {}
+
+
 def _cmd(agent: str, prompt: str, cwd: str,
-         model: str | None = None, effort: str | None = None) -> list[str]:
+         model: str | None = None, effort: str | None = None,
+         endpoint: dict | None = None) -> tuple[list[str], dict[str, str]]:
+    """→ (命令行, 需要追加到环境的变量)。第三方接口全部走这两样注入，
+    绝不改写用户自己的 ~/.claude 或 ~/.codex 配置。"""
+    extra_args, extra_env = ai_providers.spawn_overrides(agent, endpoint, model)
     if agent == "codex":
-        cmd = [_find_cli("codex"), "exec", "-C", cwd, "--json",
+        cmd = [*_find_cli("codex"), "exec", "-C", cwd, "--json",
                "--sandbox", "workspace-write", "--skip-git-repo-check"]
+        cmd += extra_args
         if model:
             cmd += ["-m", model]
         if effort:
             cmd += ["-c", f"model_reasoning_effort={effort}"]
-        return cmd + [prompt]
+        return cmd + [prompt], extra_env
     if agent == "claude":
         # stream-json + partial messages → 逐 token 流式（kind="delta"）
-        cmd = [_find_cli("claude"), "-p", prompt, "--permission-mode", "acceptEdits",
+        cmd = [*_find_cli("claude"), "-p", prompt,
+               "--permission-mode", "acceptEdits",
                "--output-format", "stream-json", "--include-partial-messages",
                "--verbose"]
+        cmd += extra_args
         if model:
             cmd += ["--model", model]
-        return cmd
+        return cmd, extra_env
     raise RuntimeError(f"未知 agent: {agent}")
 
 
@@ -290,7 +427,8 @@ def _build_prompt(script: str, user_prompt: str, context: dict | None) -> str:
 
 def run(agent: str, script: str, user_prompt: str, figures_dir: str,
         context: dict | None = None, on_event=None,
-        model: str | None = None, effort: str | None = None) -> str:
+        model: str | None = None, effort: str | None = None,
+        endpoint_id: str | None = None) -> str:
     """启动一次 AI 修改任务，返回 session id。事件经 on_event(name, data) 回调。"""
     script_path = Path(figures_dir) / script
     if not script_path.is_file():
@@ -310,12 +448,21 @@ def run(agent: str, script: str, user_prompt: str, figures_dir: str,
 
     prompt = _build_prompt(script, user_prompt, context)
     stderr_log = open(SNAP_DIR / f"{sid}.stderr.log", "wb", buffering=0)
-    cmd = _cmd(agent, prompt, figures_dir, model=model, effort=effort)
-    LOG.info("AI 任务命令: %s", " ".join(cmd[:-1] if agent == "codex" else cmd[:4]))
+    endpoint = ai_providers.resolve(agent, endpoint_id)
+    cmd, extra_env = _cmd(agent, prompt, figures_dir, model=model,
+                          effort=effort, endpoint=endpoint)
+    LOG.info("AI 任务命令: %s（接口: %s）",
+             " ".join(cmd[:-1] if agent == "codex" else cmd[:5]),
+             endpoint["label"] if endpoint else "CLI 默认")
+    env = {**os.environ, **extra_env} if extra_env else None
     proc = subprocess.Popen(
-        cmd, cwd=figures_dir,
+        cmd, cwd=figures_dir, env=env,
         stdout=subprocess.PIPE, stderr=stderr_log,  # CLI 的 hook/统计噪音不进对话
         text=True, bufsize=1,
+        # 显式 UTF-8：Windows 上 text=True 跟随系统区域编码（cp936），
+        # CLI 回来的中文/JSON 一解码就炸，表现为「任务刚起就结束」
+        encoding="utf-8", errors="replace",
+        creationflags=CREATE_NO_WINDOW,
     )
     sess = {
         "id": sid, "agent": agent, "script": script, "prompt": user_prompt,

@@ -125,11 +125,17 @@ export interface TextObject extends ObjectBase {
   borderPt?: number
 }
 
+/** 端点相对包围盒的比例坐标（0–1）；箭头与直线形状同构 */
+export interface EndPoint {
+  rx: number
+  ry: number
+}
+
 export interface ArrowObject extends ObjectBase {
   type: 'arrow'
   /** 端点相对包围盒的比例坐标（0–1） */
-  start: { rx: number; ry: number }
-  end: { rx: number; ry: number }
+  start: EndPoint
+  end: EndPoint
   strokePt: number
   color: string
   /** 旧字段：none/end/both（实心三角）。新文档写 headStart/headEnd。 */
@@ -154,6 +160,14 @@ export interface ShapeObject extends ObjectBase {
   strokePt: number
   color: string
   fill: string | null
+  /**
+   * 直线端点（与箭头同构的包围盒比例坐标）。**只有 shape==='line' 用得上**，
+   * 其它 shape 忽略。旧文档没有这两个字段 —— 缺省 (0,0.5)→(1,0.5) 即包围盒
+   * 水平中线，与新增端点之前的画法逐点一致（schema 不升版）。
+   * 读取一律走 lineEndpoints()，别在各处手写缺省值。
+   */
+  start?: EndPoint
+  end?: EndPoint
   /** 圆角半径 mm（rect 专用） */
   cornerRadius?: number
   /** 正多边形边数（polygon 专用，3–12） */
@@ -172,6 +186,31 @@ export function arrowHeads(o: ArrowObject): { start: ArrowHeadType; end: ArrowHe
     start: o.head === 'both' ? 'triangle' : 'none',
     end: o.head === 'end' || o.head === 'both' ? 'triangle' : 'none',
   }
+}
+
+/** 直线形状（端点语义只对这一种 shape 生效） */
+export type LineShape = ShapeObject & { shape: 'line' }
+
+/**
+ * 端点语义的线状对象：箭头 + 直线形状。两者的 start/end 结构一致，
+ * 因而共用端点手柄（OverlaySvg.LinearEndpoints）与端点拖拽
+ * （interactions.startEndpointDrag），也都不给包围盒缩放柄。
+ */
+export type LinearObject = ArrowObject | LineShape
+
+export const isLinear = (o: CanvasObject): o is LinearObject =>
+  o.type === 'arrow' || (o.type === 'shape' && o.shape === 'line')
+
+/**
+ * 线状对象的端点统一读取：直线的 start/end 是可选字段（旧文档没有），
+ * 缺省兜底为包围盒水平中线 (0,0.5)→(1,0.5)；箭头两个字段必填，原样返回。
+ * 渲染 / 拖拽 / 导出的每个读取点都走这里，缺省值只此一份。
+ */
+export function lineEndpoints(o: { start?: EndPoint; end?: EndPoint }): {
+  start: EndPoint
+  end: EndPoint
+} {
+  return { start: o.start ?? { rx: 0, ry: 0.5 }, end: o.end ?? { rx: 1, ry: 0.5 } }
 }
 
 /** 对象的任意角度旋转（面板恒 0——它走 90° 步进的 rotation） */

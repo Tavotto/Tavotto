@@ -17,7 +17,7 @@ def env(tmp_path, monkeypatch):
     doc.new_page(width=100, height=50)
     doc.save(figs / "p1.pdf")
     doc.close()
-    monkeypatch.setattr(m, "FIGURES_DIR", figs)
+    m.open_project(str(figs))
     monkeypatch.setattr(m, "EXPORT_DIR", tmp_path / "exports")
     m.app.config["TESTING"] = True
     return m.app.test_client(), figs, tmp_path
