@@ -166,7 +166,10 @@ export function writeRuntimeNamedProject(dir: string): void {
 export const test = base.extend<{ app: (o?: AppOptions) => Promise<RunningApp> }>({
   // 第二个参数是 Playwright 的「交出去再收回来」回调。名字不叫 use 是因为
   // lint 会把 `use(...)` 当成 React Hook 调用（它是位置参数，随便起名）。
-  app: async (_fixtures, provide) => {
+  // 第一参必须写成对象解构（哪怕不取任何内置 fixture）——Playwright 靠这个
+  // 语法形态解析依赖，写普通标识符它在加载期直接拒收。
+  // oxlint-disable-next-line no-empty-pattern
+  app: async ({}, provide) => {
     const started: RunningApp[] = []
     await provide(async (o?: AppOptions) => {
       const a = await startApp(o)
