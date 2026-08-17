@@ -204,9 +204,7 @@ export function CanvasStage() {
             margin={page.margin}
             showSafeArea={showSafeArea}
           />
-          {objects.map((o) => (
-            <ObjectView key={o.id} obj={o} />
-          ))}
+          <CanvasLayers />
         </div>
 
         <OverlaySvg />
@@ -219,6 +217,43 @@ export function CanvasStage() {
       {/* 右键快捷编辑：自己 portal 到 body，不受世界变换影响 */}
       <QuickEdit />
     </div>
+  )
+}
+
+/**
+ * 每个打开的画布标签一个常驻图层：激活画布渲染活跃 doc，其余渲染快照并
+ * display:none。切换标签只是 CSS 显隐——docToCanvas/canvasToDoc 共享同一个
+ * objects 数组引用，配合 ObjectView 的 memo，标签来回切换时 DOM 与已解码的
+ * 图片全部原地保留，不再整树重建、闪白、卡顿。
+ * 隐藏图层 display:none：无命中、无绘制成本；快照对象的 id 不在活跃 doc 里，
+ * 任何按 id 回写（文字自适应高度这类）都会安静落空，不会误写。
+ */
+function CanvasLayers() {
+  const objects = useDocumentStore((s) => s.doc.objects)
+  const openTabs = useDocumentStore((s) => s.openTabs)
+  const activeId = useDocumentStore((s) => s.activeCanvasId)
+  const canvases = useDocumentStore((s) => s.canvases)
+
+  return (
+    <>
+      {openTabs.map((id) => {
+        const active = id === activeId
+        const objs = active ? objects : canvases.find((c) => c.id === id)?.objects
+        if (!objs) return null
+        return (
+          <div
+            key={id}
+            aria-hidden={active ? undefined : true}
+            className="absolute left-0 top-0"
+            style={active ? undefined : { display: 'none' }}
+          >
+            {objs.map((o) => (
+              <ObjectView key={o.id} obj={o} />
+            ))}
+          </div>
+        )
+      })}
+    </>
   )
 }
 

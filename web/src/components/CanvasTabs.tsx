@@ -19,6 +19,8 @@ export function CanvasTabs() {
   const dirty = useDocumentStore((s) => s.dirty)
   const [renaming, setRenaming] = useState<string | null>(null)
   const dragFrom = useRef<number | null>(null)
+  /** 拖动经过的目标标签，给一个可见的落点提示 */
+  const [dragOver, setDragOver] = useState<number | null>(null)
 
   const nameOf = (id: string) =>
     id === activeId ? activeName : (canvases.find((c) => c.id === id)?.name ?? '')
@@ -49,6 +51,8 @@ export function CanvasTabs() {
             }}
             onClose={() => useDocumentStore.getState().closeCanvasTab(id)}
             dragFrom={dragFrom}
+            dragOver={dragOver === i && dragFrom.current !== i}
+            setDragOver={setDragOver}
           />
         ))}
       </div>
@@ -82,6 +86,8 @@ function TabItem({
   onRenamed,
   onClose,
   dragFrom,
+  dragOver,
+  setDragOver,
 }: {
   index: number
   name: string
@@ -94,6 +100,8 @@ function TabItem({
   onRenamed: (name: string | null) => void
   onClose: () => void
   dragFrom: React.RefObject<number | null>
+  dragOver: boolean
+  setDragOver: (i: number | null) => void
 }) {
   const [draft, setDraft] = useState(name)
   useEffect(() => {
@@ -124,15 +132,29 @@ function TabItem({
       aria-selected={active}
       tabIndex={0}
       draggable
-      onDragStart={() => {
+      onDragStart={(e) => {
+        // Firefox / WebKit 不写 dataTransfer 数据就不会真正开始拖拽
+        e.dataTransfer.setData('text/plain', name)
+        e.dataTransfer.effectAllowed = 'move'
         dragFrom.current = index
       }}
-      onDragOver={(e) => e.preventDefault()}
-      onDrop={() => {
+      onDragOver={(e) => {
+        e.preventDefault()
+        e.dataTransfer.dropEffect = 'move'
+        if (dragFrom.current != null) setDragOver(index)
+      }}
+      onDragLeave={() => setDragOver(null)}
+      onDragEnd={() => {
+        dragFrom.current = null
+        setDragOver(null)
+      }}
+      onDrop={(e) => {
+        e.preventDefault()
         if (dragFrom.current != null && dragFrom.current !== index) {
           useDocumentStore.getState().reorderTabs(dragFrom.current, index)
         }
         dragFrom.current = null
+        setDragOver(null)
       }}
       onClick={onActivate}
       onDoubleClick={onRename}
@@ -148,6 +170,8 @@ function TabItem({
         active
           ? 'text-ink after:absolute after:inset-x-1.5 after:bottom-0 after:h-0.5 after:rounded-full after:bg-ink'
           : 'text-ink-3 hover:text-ink-2',
+        // 拖动排序的落点提示：不只靠颜色，加背景块让目标一眼可辨
+        dragOver && 'rounded-sm bg-accent-subtle text-accent',
       )}
       title={name}
     >
