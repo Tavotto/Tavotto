@@ -269,6 +269,7 @@ def scan_panels() -> list[dict]:
                        if d not in EXCLUDE_DIRS and not d.startswith(".")]
         files += [Path(dirpath) / fn for fn in filenames if not fn.startswith(".")]
     files.sort()
+    LOG.info("素材扫描: %s → %d 个文件", root, len(files))
 
     pdf_stems = {(p.parent, p.stem) for p in files if p.suffix.lower() in PDF_EXT}
 
@@ -318,6 +319,9 @@ def scan_panels() -> list[dict]:
             else:
                 continue
         except Exception:
+            # 单个素材坏了不拖垮整个列表，但绝不静默——用户丢面板时
+            # app.log 里要能看到是哪个文件、为什么
+            LOG.warning("素材扫描跳过 %s（probe 失败）", p, exc_info=True)
             continue
         panels.append(entry)
     return panels

@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, readdirSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readdirSync, realpathSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { expect, test, writeRuntimeNamedProject } from './fixtures'
@@ -30,6 +30,10 @@ test('直接粘贴路径打开项目（含中文与空格）', async ({ app, pag
   const dir = path.join(os.tmpdir(), `magplot-e2e-${Date.now()}`, '我的 论文 图', 'figures')
   mkdirSync(dir, { recursive: true })
   cpSync(path.join(REPO, 'examples', 'figures'), dir, { recursive: true })
+  // 自证拷贝真的落盘——后续「素材空」时才能把责任划给后端而不是这里
+  const copied = readdirSync(dir)
+  expect(copied, `拷贝后 ${dir} 只有: ${copied.join(', ')}`).toContain('Fig1_kinetics.pdf')
+  console.log(`[e2e] 项目目录 ${dir}（真实路径 ${realpathSync.native(dir)}）: ${copied.join(', ')}`)
 
   const a = await app({ noProject: true })
   await page.goto(a.baseURL)

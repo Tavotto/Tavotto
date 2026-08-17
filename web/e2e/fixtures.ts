@@ -53,6 +53,8 @@ export interface RunningApp {
   figures: string
   dataDir: string
   proc: ChildProcess
+  /** 应用进程的 stdout/stderr（含 app.log 同款启动日志），失败诊断用 */
+  logs: string[]
   stop(): Promise<void>
 }
 
@@ -122,6 +124,7 @@ export async function startApp(opts: AppOptions = {}): Promise<RunningApp> {
     figures: figures ?? '',
     dataDir,
     proc,
+    logs,
     async stop() {
       try {
         await fetch(`${baseURL}/api/shutdown`, { method: 'POST' })
@@ -169,14 +172,25 @@ export const test = base.extend<{ app: (o?: AppOptions) => Promise<RunningApp> }
   // 第一参必须写成对象解构（哪怕不取任何内置 fixture）——Playwright 靠这个
   // 语法形态解析依赖，写普通标识符它在加载期直接拒收。
   // oxlint-disable-next-line no-empty-pattern
-  app: async ({}, provide) => {
+  app: async ({}, provide, testInfo) => {
     const started: RunningApp[] = []
     await provide(async (o?: AppOptions) => {
       const a = await startApp(o)
       started.push(a)
       return a
     })
-    for (const a of started) await a.stop()
+    // 失败时先把后端现场保下来再清理：app.log 在 dataDir 里，rmSync 之后
+    // 就什么都不剩了——CI 只收集 test-results/**，拷进去才带得走。
+    const failed = testInfo.status !== testInfo.expectedStatus
+    for (const [i, a] of started.entries()) {
+      if (failed) {
+        try {
+          cpSync(a.dataDir, testInfo.outputPath(`app-${i}-data`), { recursive: true })
+        } catch { /* 数据目录可能没建出来 */ }
+        console.log(`[e2e] app-${i} 进程输出（尾部）:\n${a.logs.slice(-40).join('')}`)
+      }
+      await a.stop()
+    }
   },
 })
 
