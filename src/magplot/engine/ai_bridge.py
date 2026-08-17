@@ -125,37 +125,36 @@ def _resolve_shim(path: str) -> list[str] | None:
     return None
 
 
-def _cli_argv(name: str) -> list[str] | None:
-    """CLI 的启动 argv（可能是 [exe] 或 [node, script.js]）；找不到回 None。"""
-    path = _cli_path(name)
-    if path is None:
-        return None
-    return _resolve_shim(path) or [path]
+def _cli_candidates(name: str) -> list[str]:
+    """该 CLI 的候选路径（按优先级、去重）：用户设置 → PATH → 常见安装位置。
 
+    刻意返回**全部**候选而不是第一个：Windows 上 `%LOCALAPPDATA%\\Microsoft\\
+    WindowsApps` 里的执行别名可能存在却根本启动不了（商店应用没装全 / 别名被
+    禁用 / 残留的 0 字节 reparse point）——第一候选坏了必须能落到下一个
+    （比如 npm 全局目录里那个真的能跑的）。不含任何私人硬编码路径。"""
+    out: list[str] = []
 
-def _cli_path(name: str) -> str | None:
-    """CLI 可执行路径：用户设置最优先，其次 PATH，最后常见安装位置。
-    不含任何私人硬编码路径。"""
+    def add(p: str | None) -> None:
+        if p and p not in out:
+            out.append(p)
+
     custom = str(config.ai_settings().get(f"{name}_path") or "")
     if custom:
         p = Path(custom).expanduser()
         if p.is_file():
-            return str(p)
-    cand = shutil.which(name)
-    if cand:
-        return cand
-    # PATH 里没有：把常见安装目录当成 PATH 再 which 一次（Windows 上
-    # PATHEXT 的 .cmd/.exe 匹配也交给 which 处理，不手写扩展名组合）
+            add(str(p))
+    add(shutil.which(name))
+    # PATH 里没有：把常见安装目录当成 PATH 再 which（Windows 上 PATHEXT 的
+    # .cmd/.exe 匹配也交给 which 处理，不手写扩展名组合）。逐目录 which，
+    # 保住「一个目录里的候选坏了还有下一个目录」的语义。
     dirs = [d for d in _search_dirs(name) if Path(d).is_dir()]
-    if dirs:
-        cand = shutil.which(name, path=os.pathsep.join(dirs))
-        if cand:
-            return cand
+    for d in dirs:
+        add(shutil.which(name, path=d))
     # npm 包内部的平台原生二进制（外层 .cmd 外壳缺失时的最后一手）
     for d in dirs:
         for sub in Path(d).glob(f"node_modules/**/bin/{name}*"):
             if sub.is_file() and sub.suffix.lower() in ("", ".exe"):
-                return str(sub)
+                add(str(sub))
     if os.name == "nt":
         # MSIX 包体本身。正常情况下走执行别名就够了（见 _search_dirs），
         # 这里只是别名被用户关掉时的兜底；目录读不了就当没有，绝不报错。
@@ -163,10 +162,51 @@ def _cli_path(name: str) -> str | None:
             try:
                 for sub in Path(root, "WindowsApps").glob(f"*{name}*/app/{name}.exe"):
                     if sub.is_file():
-                        return str(sub)
+                        add(str(sub))
             except OSError:
                 pass
-    return None
+    return out
+
+
+# name -> {"argv": list|None, "version": str|None, "broken_path": str|None}
+_RESOLVE_CACHE: dict[str, dict] = {}
+
+
+def _resolve_cli(name: str) -> dict:
+    """逐个候选做启动验证（`--version`），第一个真能跑起来的才算数。
+
+    以前拿到第一个候选就宣布「已安装」，用户在别人电脑上撞到的正是这一步：
+    WindowsApps 的执行别名存在但无法被子进程启动，探测说装了、运行必失败。
+    现在候选启动不了就换下一个；全都不行时把第一个坏候选记在 broken_path，
+    界面据此提示「检测到不可用的安装」而不是干说「未安装」。"""
+    cached = _RESOLVE_CACHE.get(name)
+    if cached is not None:
+        return cached
+    broken: str | None = None
+    result = {"argv": None, "version": None, "broken_path": None}
+    for path in _cli_candidates(name):
+        argv = _resolve_shim(path) or [path]
+        version = _probe_version(argv)
+        if version is not None:
+            result = {"argv": argv, "version": version, "broken_path": None}
+            break
+        if broken is None:
+            broken = path
+    else:
+        result["broken_path"] = broken
+    _RESOLVE_CACHE[name] = result
+    return result
+
+
+def _cli_argv(name: str) -> list[str] | None:
+    """CLI 的启动 argv（可能是 [exe] 或 [node, script.js]）；找不到回 None。"""
+    return _resolve_cli(name)["argv"]
+
+
+def _cli_path(name: str) -> str | None:
+    """CLI 可执行路径（已通过启动验证的那一个）；探测/诊断用。"""
+    argv = _cli_argv(name)
+    return argv[-1] if argv else None
 
 
 def _find_cli(name: str) -> list[str]:
@@ -252,11 +292,12 @@ def capabilities(refresh: bool = False) -> dict:
         return _CAPS_CACHE
     providers: dict[str, dict] = {}
     for name in ("codex", "claude"):
-        argv = _cli_argv(name)
+        resolved = _resolve_cli(name)
+        argv = resolved["argv"]
         path = argv[-1] if argv else None
         info: dict = {"installed": argv is not None, "path": path,
                       "argv": argv,
-                      "version": _probe_version(argv) if argv else None,
+                      "version": resolved["version"],
                       "models": [], "default_model": None,
                       "efforts": [], "default_effort": None,
                       "endpoint": None}
@@ -281,8 +322,16 @@ def capabilities(refresh: bool = False) -> dict:
                     info["default_model"] = (endpoint.get("default_model")
                                              or endpoint["models"][0])
         else:
-            # 没装：把找过哪些目录告诉用户，比干甩一句「未安装」有用得多
+            # 没装：把找过哪些目录告诉用户，比干甩一句「未安装」有用得多；
+            # 找到了却启动不了的候选（商店版执行别名的典型故障）单独指出来
             info["searched"] = _search_dirs(name)
+            if resolved["broken_path"]:
+                info["broken_path"] = resolved["broken_path"]
+            # 一键安装的可行性：npm 在不在 + 装哪个包 + 当前安装状态
+            info["install"] = {"method": "npm",
+                               "package": NPM_PACKAGES.get(name),
+                               "available": _npm_argv() is not None,
+                               **install_status(name)}
         providers[name] = info
     _CAPS_CACHE = {"providers": providers,
                    "endpoints": [ai_providers.public(p)
@@ -297,6 +346,86 @@ def invalidate_capabilities() -> None:
     """改过 CLI 路径 / 第三方接口后必须清缓存，否则界面一直是旧探测结果。"""
     global _CAPS_CACHE
     _CAPS_CACHE = {}
+    _RESOLVE_CACHE.clear()
+
+
+# ---------------------------------------------------------------------------
+# 一键安装（npm 用户级全局包；给「根本没装过 CLI」的用户一条不出软件的路）
+# ---------------------------------------------------------------------------
+NPM_PACKAGES = {"codex": "@openai/codex", "claude": "@anthropic-ai/claude-code"}
+INSTALL_TIMEOUT_S = 600
+_INSTALLS: dict[str, dict] = {}   # agent -> {"status", "code", "log", "started"}
+_INSTALL_LOCK = threading.Lock()
+
+
+def _npm_argv() -> list[str] | None:
+    """npm 可执行路径。npm.cmd 直接跑没有元字符问题——install 的参数全是
+    我们写死的常量，不含用户输入，无须经 _resolve_shim 绕开 cmd.exe。"""
+    p = shutil.which("npm")
+    if not p:
+        dirs = [d for d in _search_dirs("npm") if Path(d).is_dir()]
+        if dirs:
+            p = shutil.which("npm", path=os.pathsep.join(dirs))
+    return [p] if p else None
+
+
+def install_status(agent: str) -> dict:
+    st = _INSTALLS.get(agent)
+    if not st:
+        return {"status": "idle"}
+    return {k: st[k] for k in ("status", "code", "log") if k in st}
+
+
+def start_install(agent: str) -> dict:
+    """后台 `npm install -g <包>`；结束后重探测 capabilities 定成败。
+
+    只装 NPM_PACKAGES 里认识的两个包名，绝不把请求体里的字符串拼进命令行。
+    """
+    if agent not in NPM_PACKAGES:
+        raise ValueError(f"未知 agent: {agent}")
+    with _INSTALL_LOCK:
+        st = _INSTALLS.get(agent)
+        if st and st.get("status") == "running":
+            return install_status(agent)
+        npm = _npm_argv()
+        if npm is None:
+            # 现场没有 npm：结构化告知，让界面引导用户先装 Node.js LTS——
+            # 绝不静默下载 Node 安装器（那是另一个量级的越权）
+            _INSTALLS[agent] = {"status": "error", "code": "npm_missing",
+                                "log": "找不到 npm。请先安装 Node.js LTS"
+                                       "（https://nodejs.org），再回来点一次安装。"}
+            return install_status(agent)
+        state: dict = {"status": "running", "started": time.time()}
+        _INSTALLS[agent] = state
+
+    def work() -> None:
+        try:
+            out = subprocess.run(
+                [*npm, "install", "-g", NPM_PACKAGES[agent]],
+                capture_output=True, text=True, timeout=INSTALL_TIMEOUT_S,
+                encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL,
+                creationflags=CREATE_NO_WINDOW)
+            state["log"] = ((out.stdout or "") + "\n" + (out.stderr or "")).strip()[-4000:]
+            if out.returncode != 0:
+                state.update(status="error", code="npm_failed")
+                return
+            # npm 说成了不算数：重新探测，CLI 真能 --version 才算装上
+            invalidate_capabilities()
+            caps = capabilities(refresh=True)
+            if caps["providers"][agent]["installed"]:
+                state.update(status="done")
+            else:
+                state.update(status="error", code="installed_but_not_found")
+        except subprocess.TimeoutExpired:
+            state.update(status="error", code="timeout",
+                         log=f"npm install 超过 {INSTALL_TIMEOUT_S}s 未完成")
+        except OSError as exc:
+            state.update(status="error", code="spawn_failed", log=str(exc))
+        finally:
+            LOG.info("npm install %s -> %s", agent, state.get("status"))
+
+    threading.Thread(target=work, daemon=True, name=f"ai-install-{agent}").start()
+    return install_status(agent)
 
 
 def _cmd(agent: str, prompt: str, cwd: str,
@@ -401,27 +530,46 @@ def _classify(agent: str, line: str, st: dict) -> list[tuple[str, str]]:
     return []  # system / rate_limit 等噪音
 
 
-def _build_prompt(script: str, user_prompt: str, context: dict | None) -> str:
+def _build_prompt(script: str, user_prompt: str, context: dict | None,
+                  figures_dir: str | None = None) -> str:
+    """给编程助手的规范化提示词。
+
+    硬性约束单独成段、编号列出：Magplot 的参数化编辑靠拦截 matplotlib 的
+    savefig 才成立，助手一旦改用 PIL / plotly / 手写 SVG 等其他方式出图，
+    整条 live-figure 链路（manifest / override / 导出）全部失效——这必须是
+    对助手的硬性要求，而不是含在叙述里的默认假设。
+    图库细节（如 paper_style.py）按实际存在与否动态给出，不硬编码任何
+    具体图库的私有规范。"""
     lines = [
-        "你在修改一篇论文的 matplotlib 图表脚本（Python）。",
+        "你在修改一篇论文的图表脚本（Python）。",
         f"目标脚本：{script}（在当前工作目录中）。",
-        "全文共享样式在 paper_style.py（9pt Times、AMFE 107 配色、8/15cm 版面宽度规范），"
-        "修改时保持整体规范，不要改 paper_style.py 本身。",
+        "",
+        "硬性要求（外部系统靠这些约定解析产物，违反任何一条都会让图表无法再编辑）：",
+        "1. 图必须用 matplotlib 生成，并经 Figure.savefig(...)（或图库自带的保存封装）"
+        "落盘。禁止改用 PIL/Pillow、plotly、bokeh、seaborn 之外叠加的其他渲染后端、"
+        "手写 SVG/PDF、subprocess 调外部绘图工具等方式出图——外部系统靠拦截 "
+        "matplotlib 的 savefig 实现参数化编辑，其他方式生成的图完全无法再编辑。",
+        "2. 保持既有输出文件名（stem）与出图数量不变。",
+        "3. 只修改目标脚本；不要运行脚本（渲染由外部系统负责）；"
+        "不要修改其他脚本或数据文件。",
     ]
+    if figures_dir and (Path(figures_dir) / "paper_style.py").is_file():
+        lines.append("4. 图库有共享样式 paper_style.py：沿用它既有的字体/字号/配色/"
+                     "版面规范，不要修改 paper_style.py 本身。")
     ctx = context or {}
+    ctx_lines = []
     if ctx.get("stem"):
-        lines.append(f"用户当前编辑的是该脚本的输出面板：{ctx['stem']}。")
+        ctx_lines.append(f"用户当前编辑的是该脚本的输出面板：{ctx['stem']}。")
     if ctx.get("gid"):
-        lines.append(f"用户在界面上选中的元素：{ctx['gid']}（{ctx.get('label', '')}）。")
+        ctx_lines.append(f"用户在界面上选中的元素：{ctx['gid']}（{ctx.get('label', '')}）。")
     if ctx.get("overrides"):
-        lines.append("用户已在界面上做了这些非破坏性修改（渲染时叠加的 override，"
-                     f"代表期望状态，供参考）：{ctx['overrides']}")
+        ctx_lines.append("用户已在界面上做了这些非破坏性修改（渲染时叠加的 override，"
+                         f"代表期望状态，供参考）：{ctx['overrides']}")
+    if ctx_lines:
+        lines += ["", *ctx_lines]
     lines += [
         "",
         f"用户需求：{user_prompt}",
-        "",
-        "约束：只修改目标脚本；保持既有输出文件名（stem）与出图数量不变；"
-        "不要运行脚本（渲染由外部系统负责）；不要修改其他脚本或数据文件。",
     ]
     return "\n".join(lines)
 
@@ -447,7 +595,7 @@ def run(agent: str, script: str, user_prompt: str, figures_dir: str,
         "model": model, "effort": effort,
     }, ensure_ascii=False), encoding="utf-8")
 
-    prompt = _build_prompt(script, user_prompt, context)
+    prompt = _build_prompt(script, user_prompt, context, figures_dir)
     stderr_log = open(SNAP_DIR / f"{sid}.stderr.log", "wb", buffering=0)
     endpoint = ai_providers.resolve(agent, endpoint_id)
     cmd, extra_env = _cmd(agent, prompt, figures_dir, model=model,

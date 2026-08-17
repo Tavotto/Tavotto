@@ -67,17 +67,29 @@ def test_pin_delete_purge(db):
 
 # ---------------- capabilities 与命令构造 -------------------------------------
 
+@pytest.fixture(autouse=True)
+def _clean_caps_cache():
+    """capabilities 缓存是模块级全局：本文件的用例在 monkeypatch 生效期间
+    重建过它，跑完必须清掉，否则假探测结果会串进后面的诊断包用例。"""
+    yield
+    ai_bridge.invalidate_capabilities()
+
+
 def test_capabilities_reports_uninstalled(monkeypatch):
-    monkeypatch.setattr(ai_bridge, "_cli_path", lambda name: None)
+    monkeypatch.setattr(ai_bridge, "_cli_candidates", lambda name: [])
+    monkeypatch.setattr(ai_bridge, "_RESOLVE_CACHE", {})
     caps = ai_bridge.capabilities(refresh=True)
     for name in ("codex", "claude"):
         p = caps["providers"][name]
         assert p["installed"] is False and p["models"] == []
+        # 未安装时给出一键安装的可行性信息（npm 在不在由测试机决定，不断言）
+        assert p["install"]["method"] == "npm" and p["install"]["package"]
 
 
 def test_capabilities_provider_specific(monkeypatch):
-    monkeypatch.setattr(ai_bridge, "_cli_path", lambda name: f"/fake/{name}")
+    monkeypatch.setattr(ai_bridge, "_cli_candidates", lambda name: [f"/fake/{name}"])
     monkeypatch.setattr(ai_bridge, "_probe_version", lambda p: "v1.0")
+    monkeypatch.setattr(ai_bridge, "_RESOLVE_CACHE", {})
     caps = ai_bridge.capabilities(refresh=True)
     codex, claude = caps["providers"]["codex"], caps["providers"]["claude"]
     assert codex["efforts"]  # codex 有推理强度
@@ -87,6 +99,42 @@ def test_capabilities_provider_specific(monkeypatch):
     monkeypatch.setattr(ai_bridge, "_probe_version", lambda p: "v2.0")
     assert ai_bridge.capabilities()["providers"]["codex"]["version"] == "v1.0"
     ai_bridge.capabilities(refresh=True)
+
+
+def test_broken_candidate_falls_through(monkeypatch):
+    """第一个候选启动不了（WindowsApps 执行别名的典型故障）要落到下一个；
+    全都启动不了时必须报未安装 + broken_path，绝不能拿着坏路径宣布已安装。"""
+    monkeypatch.setattr(ai_bridge, "_RESOLVE_CACHE", {})
+    monkeypatch.setattr(
+        ai_bridge, "_cli_candidates",
+        lambda name: [rf"C:\Users\x\AppData\Local\Microsoft\WindowsApps\{name}.exe",
+                      rf"C:\Users\x\AppData\Roaming\npm\{name}.cmd"])
+    monkeypatch.setattr(ai_bridge, "_resolve_shim", lambda p: None)
+    monkeypatch.setattr(
+        ai_bridge, "_probe_version",
+        lambda argv: "v9.9" if "npm" in argv[0] else None)
+    caps = ai_bridge.capabilities(refresh=True)
+    codex = caps["providers"]["codex"]
+    assert codex["installed"] is True
+    assert "npm" in codex["path"] and codex["version"] == "v9.9"
+
+    # 全部候选都启动不了：未安装 + 指出坏在哪
+    ai_bridge.invalidate_capabilities()
+    monkeypatch.setattr(ai_bridge, "_probe_version", lambda argv: None)
+    caps = ai_bridge.capabilities(refresh=True)
+    codex = caps["providers"]["codex"]
+    assert codex["installed"] is False
+    assert "WindowsApps" in codex["broken_path"]
+
+
+def test_start_install_reports_missing_npm(monkeypatch):
+    """现场没有 npm：结构化 npm_missing，引导装 Node，而不是闷头失败。"""
+    monkeypatch.setattr(ai_bridge, "_npm_argv", lambda: None)
+    monkeypatch.setattr(ai_bridge, "_INSTALLS", {})
+    st = ai_bridge.start_install("codex")
+    assert st["status"] == "error" and st["code"] == "npm_missing"
+    with pytest.raises(ValueError):
+        ai_bridge.start_install("not-a-cli")
 
 
 def test_cmd_passes_model_and_effort(monkeypatch):
@@ -141,3 +189,27 @@ def test_no_private_paths_in_cli_lookup():
     src = inspect.getsource(ai_bridge)
     hits = re.findall(r'["\'](/(?:Users|home)/[^"\'/\s]+[^"\']*)["\']', src)
     assert not hits, f"发现写死的用户主目录: {hits}"
+
+
+def test_build_prompt_normalized(tmp_path):
+    """给编程助手的提示词规范化看护：
+
+    1. 「必须用 matplotlib + savefig 出图」是硬性要求——助手改用 PIL/plotly/
+       手写 SVG 出的图，live-figure 链路完全无法参数化编辑；
+    2. paper_style.py 是图库方言：图库里有才提，没有绝不提——更不允许把某个
+       具体图库的私有规范（字体/配色号）硬编码进产品提示词。
+    """
+    p = ai_bridge._build_prompt("fig1.py", "把线加粗", None, str(tmp_path))
+    assert "matplotlib" in p and "savefig" in p
+    assert "stem" in p and "出图数量" in p
+    assert "paper_style" not in p  # 图库里没有这个文件，不该无中生有
+
+    (tmp_path / "paper_style.py").write_text("save = None\n", encoding="utf-8")
+    p2 = ai_bridge._build_prompt("fig1.py", "把线加粗", None, str(tmp_path))
+    assert "paper_style.py" in p2
+    assert "AMFE" not in p2  # 私有图库的规范细节不得硬编码
+
+    # 上下文照常拼进去
+    p3 = ai_bridge._build_prompt(
+        "fig1.py", "换配色", {"stem": "Fig1", "gid": "axes_0"}, str(tmp_path))
+    assert "Fig1" in p3 and "axes_0" in p3 and "换配色" in p3

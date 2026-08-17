@@ -1560,6 +1560,25 @@ def api_ai_capabilities():
     return resp
 
 
+@app.post("/api/ai/install")
+def api_ai_install():
+    """一键 `npm install -g` 装 CLI（后台线程）；agent 只认 codex/claude。"""
+    agent = str((request.get_json(silent=True) or {}).get("agent") or "")
+    if agent not in engine_ai.NPM_PACKAGES:
+        return jsonify({"error": f"未知 agent: {agent}"}), 400
+    return jsonify(engine_ai.start_install(agent))
+
+
+@app.get("/api/ai/install/status")
+def api_ai_install_status():
+    agent = str(request.args.get("agent") or "")
+    if agent not in engine_ai.NPM_PACKAGES:
+        return jsonify({"error": f"未知 agent: {agent}"}), 400
+    resp = jsonify(engine_ai.install_status(agent))
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 # ------------------------- 渲染环境（缺 matplotlib 时的自助安装）--------------
 @app.get("/api/engine/environment")
 def api_engine_environment():

@@ -11,12 +11,17 @@ from magplot.engine import ai_bridge
 
 @pytest.fixture(autouse=True)
 def _fake_cli(monkeypatch):
-    """假装两个 CLI 都装了，并清掉能力缓存（模块级全局，会串味）。"""
-    monkeypatch.setattr(ai_bridge, "_cli_path", lambda name: f"/usr/bin/{name}")
-    monkeypatch.setattr(ai_bridge, "_probe_version", lambda path: "test 0.0.0")
+    """假装两个 CLI 都装了，并清掉能力缓存（模块级全局，会串味）。
+
+    候选枚举 + 启动验证是探测的新缝隙：candidates 给一个假路径、
+    _probe_version 恒成功 = 「装了且能启动」。"""
+    monkeypatch.setattr(ai_bridge, "_cli_candidates", lambda name: [f"/usr/bin/{name}"])
+    monkeypatch.setattr(ai_bridge, "_probe_version", lambda argv: "test 0.0.0")
     monkeypatch.setattr(ai_bridge, "_CAPS_CACHE", {})
+    monkeypatch.setattr(ai_bridge, "_RESOLVE_CACHE", {})
     yield
     ai_bridge._CAPS_CACHE = {}
+    ai_bridge._RESOLVE_CACHE.clear()
 
 
 def _codex_caps(tmp_path, monkeypatch, config_text=None):

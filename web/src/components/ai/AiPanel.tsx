@@ -454,9 +454,20 @@ function ScopeAgentContent({
         {caps == null ? (
           <p className="text-xs text-ink-3">正在探测本机 CLI…</p>
         ) : installed.length === 0 ? (
-          <p className="text-xs leading-relaxed text-ink-3">
-            未检测到 Codex 或 Claude CLI。安装其一，或在设置里指定其路径。
-          </p>
+          <div className="flex flex-col gap-1">
+            <p className="text-xs leading-relaxed text-ink-3">
+              未检测到 Codex 或 Claude CLI。可在设置里一键用 npm 安装，或指定其路径。
+            </p>
+            <div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => useUiStore.getState().setSettingsOpen(true, 'ai')}
+              >
+                打开 AI 工具设置
+              </Button>
+            </div>
+          </div>
         ) : (
           <>
             <Segmented

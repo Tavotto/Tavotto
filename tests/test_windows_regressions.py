@@ -291,7 +291,7 @@ def test_plain_executable_is_not_treated_as_shim(tmp_path):
 def test_capabilities_tells_where_it_looked_when_missing(monkeypatch):
     """没找到 CLI 时要说清「找过哪些地方」。干甩一句「未安装」的结果是
     用户明明装了却无从下手（朋友的商店版 codex 就是这样）。"""
-    monkeypatch.setattr(ai_bridge, "_cli_argv", lambda name: None)
+    monkeypatch.setattr(ai_bridge, "_cli_candidates", lambda name: [])
     ai_bridge.invalidate_capabilities()
     caps = ai_bridge.capabilities(refresh=True)
     for name in ("codex", "claude"):

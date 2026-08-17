@@ -3,12 +3,15 @@ import { CheckCircle2, XCircle } from 'lucide-react'
 import { apiUrl, withProject } from '@/lib/session'
 import {
   deleteAiEndpoint,
+  fetchAiInstallStatus,
   patchAiSettings,
   patchProjectSettings,
   saveAiEndpoint,
   setAiEndpointActive,
+  startAiInstall,
   type AiEndpoint,
   type AiEndpointPreset,
+  type AiInstallState,
 } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { readExportDefaults, writeExportDefaults } from '@/lib/exportDefaults'
@@ -110,7 +113,7 @@ function GeneralSection() {
     <div className="flex flex-col gap-2.5">
       <p className="text-xs leading-relaxed text-ink-3">
         改动自动保存：编辑停顿 1 秒后写入本机磁盘（layouts/_autosave/），
-        无须手动保存；命名版本走「保存为布局文件」。
+        无须手动保存；命名版本走「保存为画布文件」。
       </p>
       <div>
         <Button
@@ -331,24 +334,36 @@ function AiSection() {
             {p.path}
           </p>
         )}
-        {!p?.installed && (p?.searched?.length ?? 0) > 0 && (
-          <details className="mt-1">
-            <summary className="cursor-default text-xs text-ink-3 outline-none focus-visible:focus-ring">
-              找过这些位置
-            </summary>
-            <ul className="mt-0.5 flex flex-col gap-0.5">
-              {p!.searched!.map((d) => (
-                <li key={d} className="truncate font-mono text-xs text-ink-faint" title={d}>
-                  {d}
-                </li>
-              ))}
-            </ul>
-            <p className="mt-1 text-xs text-ink-3">
-              装在别处就把可执行文件路径填在下面。微软商店版 Codex 请用
-              <span className="font-mono"> %LOCALAPPDATA%\Microsoft\WindowsApps\codex.exe </span>
-              这个执行别名，而不是 WindowsApps 里那个受保护的包体目录。
-            </p>
-          </details>
+        {!p?.installed && (
+          <div className="mt-1.5 flex flex-col gap-1.5">
+            {p?.broken_path && (
+              <p className="text-xs leading-relaxed text-ink-3">
+                检测到一个<span className="text-ink">无法启动</span>的安装（多见于微软商店版的
+                执行别名残留），已跳过：
+                <span className="block truncate font-mono text-xs text-ink-faint" title={p.broken_path}>
+                  {p.broken_path}
+                </span>
+              </p>
+            )}
+            <InstallCliButton agent={name} label={label} />
+            {(p?.searched?.length ?? 0) > 0 && (
+              <details>
+                <summary className="cursor-default text-xs text-ink-3 outline-none focus-visible:focus-ring">
+                  找过这些位置
+                </summary>
+                <ul className="mt-0.5 flex flex-col gap-0.5">
+                  {p!.searched!.map((d) => (
+                    <li key={d} className="truncate font-mono text-xs text-ink-faint" title={d}>
+                      {d}
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-1 text-xs text-ink-3">
+                  装在别处就把可执行文件路径填在下面。
+                </p>
+              </details>
+            )}
+          </div>
         )}
 
         {/* 接口选择：官方登录态 or 某个第三方网关 */}
@@ -450,6 +465,88 @@ function AiSection() {
             void run(() => saveAiEndpoint(rec))
           }}
         />
+      )}
+    </div>
+  )
+}
+
+/**
+ * 一键安装 CLI：后台 `npm install -g <包名>`，前端轮询进度；装完自动重探测。
+ * 没有 npm 时不静默装 Node——明确引导用户先装 Node.js LTS（那是另一个量级的
+ * 系统改动，必须由用户自己做）。
+ */
+function InstallCliButton({ agent, label }: { agent: 'codex' | 'claude'; label: string }) {
+  const info = useAiStore((s) => s.caps?.providers[agent]?.install)
+  const [state, setState] = useState<AiInstallState | null>(null)
+  const st = state ?? (info && info.status !== 'idle' ? info : null)
+  const running = st?.status === 'running'
+
+  useEffect(() => {
+    if (!running) return
+    const t = window.setInterval(() => {
+      void (async () => {
+        try {
+          const s = await fetchAiInstallStatus(agent)
+          setState(s)
+          if (s.status === 'done') {
+            // 装好后重探测；provider 变为已安装，这一块整体消失，
+            // 绿勾 + 版本号就是完成反馈
+            await useAiStore.getState().loadCaps(true)
+          }
+        } catch {
+          /* 网络抖动：下一轮再问 */
+        }
+      })()
+    }, 2000)
+    return () => window.clearInterval(t)
+  }, [running, agent])
+
+  if (!info) return null
+
+  const begin = async () => {
+    setState({ status: 'running' })
+    try {
+      setState(await startAiInstall(agent))
+    } catch (e) {
+      setState({ status: 'error', code: 'spawn_failed', log: String(e) })
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-2">
+        <Button size="sm" loading={running} disabled={!info.available} onClick={() => void begin()}>
+          {running ? '正在安装…' : `用 npm 安装 ${label}`}
+        </Button>
+        <span className="min-w-0 truncate font-mono text-xs text-ink-faint">
+          npm install -g {info.package ?? agent}
+        </span>
+      </div>
+      {!info.available && (
+        <p className="text-xs leading-relaxed text-ink-3">
+          本机没有 npm。请先安装 Node.js LTS（nodejs.org），装好后回到这里再点安装。
+        </p>
+      )}
+      {st?.status === 'error' && (
+        <p className="text-xs text-danger">
+          {st.code === 'npm_missing'
+            ? '找不到 npm：请先安装 Node.js LTS（nodejs.org）。'
+            : st.code === 'installed_but_not_found'
+              ? 'npm 安装完成，但仍未检测到可用的 CLI。重启应用再试，或在下方手动指定路径。'
+              : st.code === 'timeout'
+                ? '安装超时（网络太慢或 npm 源不可达），可重试。'
+                : '安装失败，可查看日志或重试。'}
+        </p>
+      )}
+      {st?.status === 'error' && st.log && (
+        <details>
+          <summary className="cursor-default text-xs text-ink-3 outline-none focus-visible:focus-ring">
+            安装日志
+          </summary>
+          <pre className="mt-0.5 max-h-40 overflow-auto whitespace-pre-wrap rounded-sm border border-border bg-surface p-1.5 font-mono text-xs text-ink-3">
+            {st.log}
+          </pre>
+        </details>
       )}
     </div>
   )

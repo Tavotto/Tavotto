@@ -630,6 +630,17 @@ export interface AiProviderCaps {
   endpoint: AiEndpoint | null
   /** 未安装时：后端找过哪些目录（比干甩一句「未安装」有用得多） */
   searched?: string[]
+  /** 找到了却启动不了的候选（典型：WindowsApps 里坏掉的商店版执行别名） */
+  broken_path?: string
+  /** 未安装时的一键安装可行性与当前进度 */
+  install?: AiInstallState & { method: 'npm'; package: string | null; available: boolean }
+}
+
+/** `npm install -g` 的进度（后台线程，前端轮询） */
+export interface AiInstallState {
+  status: 'idle' | 'running' | 'done' | 'error'
+  code?: 'npm_missing' | 'npm_failed' | 'installed_but_not_found' | 'timeout' | 'spawn_failed'
+  log?: string
 }
 
 /** 第三方 API 接入。密钥永远不回传，只给「有没有」和尾四位。 */
@@ -692,6 +703,17 @@ export const setAiEndpointActive = (agent: 'codex' | 'claude', id: string) =>
 
 export const fetchAiCapabilities = (refresh = false) =>
   jsonFetch<AiCapabilities>(`/api/ai/capabilities${refresh ? '?refresh=1' : ''}`)
+
+/** 一键安装 CLI（后台 `npm install -g`）；进度用 fetchAiInstallStatus 轮询 */
+export const startAiInstall = (agent: 'codex' | 'claude') =>
+  jsonFetch<AiInstallState>('/api/ai/install', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ agent }),
+  })
+
+export const fetchAiInstallStatus = (agent: 'codex' | 'claude') =>
+  jsonFetch<AiInstallState>(`/api/ai/install/status?agent=${agent}`)
 
 export const patchAiSettings = (patch: { codex_path?: string; claude_path?: string }) =>
   jsonFetch<AiCapabilities & { settings: Record<string, string> }>('/api/ai/settings', {
