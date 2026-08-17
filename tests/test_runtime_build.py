@@ -7,8 +7,12 @@
 import json
 import re
 import sys
-import tomllib
 from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # tomllib 是 3.11 才进标准库的；3.10 上只跳过用到它的那一条
+    tomllib = None
 
 import pytest
 
@@ -194,6 +198,7 @@ def test_runtime_is_gitignored():
     assert LOCK_PATH.is_file(), "锁文件必须在仓库里"
 
 
+@pytest.mark.skipif(tomllib is None, reason="需要 tomllib（Python ≥ 3.11）")
 def test_wheel_and_sdist_never_pick_up_the_runtime():
     """pip 用户拿到的是轻量包，不该被塞进一堆 Windows 二进制。"""
     cfg = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))

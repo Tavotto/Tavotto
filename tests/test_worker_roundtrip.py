@@ -540,8 +540,13 @@ def test_shutdown_all_kills_hung_worker(tmp_path, monkeypatch):
         pool.shutdown_all(figures_dir=str(figs), wait=True)
 
         assert w.proc.wait(timeout=10) is not None   # 已被 kill 并回收
-        with pytest.raises(ProcessLookupError):
-            os.kill(pid, 0)
+        if os.name == "posix":
+            # 再从 OS 层确认 PID 已消失（没留僵尸）。Windows 上做不了这条探测：
+            # Popen 还握着进程句柄时 PID 不会被回收，os.kill(pid, 0) 对
+            # 已终止的进程照样成功（死 PID 则抛 EINVAL 而非 ProcessLookupError），
+            # 那边 wait() 返回本身就等价于「已终止且句柄可回收」。
+            with pytest.raises(ProcessLookupError):
+                os.kill(pid, 0)
     finally:
         if w.proc.poll() is None:                    # 兜底：绝不在测试机上留僵尸
             w.proc.kill()
