@@ -1206,3 +1206,150 @@ def test_v1_bad_payload_args_are_bad_request_not_internal(worker):
                           payload={"patches": "不是数组"}, rid="r-bad3"))
     assert resp["error"]["code"] == "bad_request"
     assert proc.poll() is None
+
+
+# ================== workerd 控制面（ADR 0004，Phase C） ==================
+# 上面那些用例跑的是 Python 池（conftest 把 MAGPLOT_WORKERD 钉成 0，Python 实现
+# 始终是参考实现）。这一节把**同样几件事**在 Rust supervisor 上再走一遍：
+# 渲染 / 全量列表还原 / 导出状态中立 / 超时重建。两条控制面在这些语义上必须
+# 逐条一致——有一条不一致，用户就会在「装没装 workerd」之间看到不同的图。
+
+def _workerd_binary() -> str | None:
+    """忽略 conftest 的默认禁用开关，只看 cargo 产物在不在。"""
+    saved = os.environ.pop("MAGPLOT_WORKERD", None)
+    try:
+        from magplot.engine import workerd_client
+        return workerd_client.find_workerd()
+    finally:
+        if saved is not None:
+            os.environ["MAGPLOT_WORKERD"] = saved
+
+
+WORKERD_EXE = _workerd_binary()
+needs_workerd = pytest.mark.skipif(
+    WORKERD_EXE is None,
+    reason="没有 magplot-workerd 产物（先在 workerd/ 里 cargo build）")
+
+
+@pytest.fixture
+def workerd_figs(tmp_path, monkeypatch):
+    """一个用 workerd 控制面的图库目录。"""
+    from magplot.engine import workerd_client
+
+    monkeypatch.setenv("MAGPLOT_WORKERD", WORKERD_EXE or "0")
+    workerd_client.reset_client()
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    (figs / "paper_style.py").write_text(PAPER_STYLE_STUB, encoding="utf-8")
+    (figs / "fig_test.py").write_text(FIG_SCRIPT, encoding="utf-8")
+    try:
+        yield figs
+    finally:
+        pool.shutdown_all(figures_dir=str(figs), wait=True)
+        workerd_client.reset_client()
+
+
+def _title_gid(worker, stem="TestFig_a"):
+    man = json.loads((worker.out_dir / f"{stem}.json").read_text(encoding="utf-8"))
+    return next(el["gid"] for el in man["elements"]
+                for f in el.get("editable", [])
+                if f["prop"] == "text" and f["value"] == "Original Title")
+
+
+@needs_workerd
+def test_workerd_render_and_full_list_restore(workerd_figs):
+    """workerd 路径的 build → render → 全量列表还原，与 Python 池同语义。"""
+    w = pool.get("fig_test.py", str(workerd_figs), "main")
+    assert isinstance(w, pool.WorkerdWorker), "应当走 workerd 控制面"
+    assert w.generation >= 1
+
+    w.ensure_built()
+    gid = _title_gid(w)
+    resp = w.override("TestFig_a", [{"gid": gid, "prop": "text", "value": "Workerd Title"}])
+    assert _text_value(resp["manifest"], gid) == "Workerd Title"
+    assert w.svg_path("TestFig_a").exists()
+    assert w.rev == 1
+
+    # 空列表 = 撤销全部，自动恢复原值（undo 的基础）
+    resp = w.override("TestFig_a", [])
+    assert _text_value(resp["manifest"], gid) == "Original Title"
+
+
+@needs_workerd
+def test_workerd_export_is_state_neutral(workerd_figs, tmp_path):
+    """导出是一次性动作，不得把它那组 patches 留在常驻 figure 上。
+
+    与 Python 池的 `test_export_is_state_neutral` 同一条断言（导出前后的
+    render_png 逐字节相同）——控制面换了，这条数据损坏级的保证不许松。
+    """
+    w = pool.get("fig_test.py", str(workerd_figs), "main")
+    gid = _title_gid(w) if w.built else (w.ensure_built(), _title_gid(w))[1]
+
+    w.override("TestFig_a", [{"gid": gid, "prop": "text", "value": "Hot Session Title"}])
+    png_before = w.render_png("TestFig_a", 400).read_bytes()
+
+    pdf = tmp_path / "workerd_neutral.pdf"
+    w.export("TestFig_a", [], str(pdf), "pdf", 200)
+    with pymupdf.open(pdf) as doc:
+        assert "Original Title" in doc[0].get_text()   # 导出用的是自己那组
+
+    assert w.render_png("TestFig_a", 400).read_bytes() == png_before, \
+        "export 污染了热会话状态"
+
+
+@needs_workerd
+def test_workerd_export_keeps_vector_text(workerd_figs, tmp_path):
+    w = pool.get("fig_test.py", str(workerd_figs), "main")
+    w.ensure_built()
+    gid = _title_gid(w)
+    patch = [{"gid": gid, "prop": "text", "value": "Vector Title"}]
+    pdf = tmp_path / "workerd_export.pdf"
+    w.export("TestFig_a", patch, str(pdf), "pdf", 300)
+    with pymupdf.open(pdf) as doc:
+        text = doc[0].get_text()
+    assert "Vector Title" in text and "series-a" in text
+
+
+@needs_workerd
+def test_workerd_unknown_stem_is_structured_and_the_session_survives(workerd_figs):
+    """业务错误不该把会话打死（只有状态未知的失败才 kill）。"""
+    w = pool.get("fig_test.py", str(workerd_figs), "main")
+    w.ensure_built()
+    with pytest.raises(pool.WorkerError) as e:
+        w.override("nope", [])
+    assert e.value.code == "unknown_stem"
+    assert w.alive(), "普通业务错误不该把会话标死"
+    assert "manifest" in w.override("TestFig_a", [])
+
+
+@needs_workerd
+def test_workerd_timeout_kills_and_rebuilds(tmp_path, monkeypatch):
+    """死循环脚本必须以超时收场，且下一次 get() 能拿到一条新会话。
+
+    对照 Python 池的 `test_request_timeout_kills_and_rebuilds_worker`：
+    报 code=worker_timeout、`alive()` 转 False、`get()` 原地重建。
+    """
+    from magplot.engine import workerd_client
+
+    if WORKERD_EXE is None:
+        pytest.skip("没有 magplot-workerd 产物")
+    monkeypatch.setenv("MAGPLOT_WORKERD", WORKERD_EXE)
+    workerd_client.reset_client()
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    (figs / "fig_hang.py").write_text(HANG_SCRIPT, encoding="utf-8")
+    monkeypatch.setattr(pool, "BUILD_TIMEOUT", 3.0)   # 否则要干等 15 分钟
+    try:
+        w = pool.get("fig_hang.py", str(figs), "main")
+        assert isinstance(w, pool.WorkerdWorker)
+        with pytest.raises(pool.WorkerError) as e:
+            w.ensure_built()
+        assert e.value.code == "worker_timeout"
+        assert "重试" in str(e.value)
+        assert not w.alive()
+
+        w2 = pool.get("fig_hang.py", str(figs), "main")
+        assert w2 is not w and w2.alive()
+    finally:
+        pool.shutdown_all(figures_dir=str(figs), wait=True)
+        workerd_client.reset_client()

@@ -642,6 +642,306 @@ class EngineWorker:
                 self.proc.kill()
             self._log.close()
 
+    def force_kill(self) -> None:
+        """兜底硬杀（`shutdown_all(wait=True)` 在优雅关停超时后调）。"""
+        try:
+            self.proc.kill()
+        except OSError:
+            pass
+
+
+# ============================================================================
+# Rust supervisor 路由（magplot-workerd，契约见 docs/adr/0004-workerd-supervisor.md）
+#
+# 找得到二进制就把**生命周期**交给它（队列合并、超时强杀、取消、代序隔离），
+# 找不到 / 显式禁用就原路走上面那套 Python 实现——那条路径**一行都没动**，
+# 它同时还是 workerd 行为的参考实现（reference oracle）。
+#
+# 分工不许含糊：**Rust 是机制层，Python 是策略层**。解释器优先级
+# （`_prioritized_candidates()`）、内置 runtime 的 env/args、超时档位、会话上限，
+# 全部在这里算完再装进 spawn 规格交过去。把它们搬进 Rust 就是制造第二个权威。
+# ============================================================================
+
+#: 握手（v1 ping）期限：解释器冷启动 + import matplotlib 在慢盘上真能到十几秒。
+HANDSHAKE_TIMEOUT = 60.0
+
+#: 单会话队列上限（workerd 的有界队列）。排队无上限时一次卡顿会攒出几百条早就
+#: 没人要的渲染，之后逐条跑完——用户看到的是「越用越慢」。
+MAX_QUEUE = 32
+
+#: 这些 code 意味着**这条会话的状态已经不可知**，与 Python 池里「超时/错乱就
+#: kill，下一次 get() 原地重建」是同一条纪律：标记死亡 → `alive()` 回 False →
+#: `get()` 建新的。
+_FATAL_CODES = frozenset({
+    "session_dead", "spawn_failed", "handshake_timeout", "protocol_mismatch",
+    "worker_timeout", "workerd_dead", "workerd_unavailable",
+})
+
+
+def _spawn_spec(script_name: str, figures_dir: str, entry: str, out_dir: Path,
+                sandbox: Path, log_path: Path, python: str, source: str) -> dict:
+    """交给 workerd 的**完整** spawn 规格。
+
+    与 `EngineWorker.__init__` 里那串 Popen 参数严格同源。刻意不去重构成共享
+    helper：Python 池那条路径这次一行都不动是前提，多这几行远比让两条路径共享
+    一个会被同时改到的函数安全。
+    """
+    bundled = source == SOURCE_BUNDLED
+    args = runtime.child_args() if bundled else []
+    # 只给**增量**：workerd 继承的本来就是 Flask 自己的环境，整份传过去没有意义
+    env = runtime.child_env(base={}) if bundled else {}
+    return {
+        "argv": [python, *args, str(WORKER_PY),
+                 "--script", str(Path(figures_dir) / script_name),
+                 "--figures-dir", figures_dir,
+                 "--out-dir", str(out_dir),
+                 "--sandbox", str(sandbox),
+                 "--entry", entry],
+        "env": env,
+        "log_path": str(log_path),
+        "handshake_timeout_ms": int(HANDSHAKE_TIMEOUT * 1000),
+        "label": f"{script_name}::{entry}",
+    }
+
+
+def _worker_error(message: str, code: str, traceback_text: str,
+                  extra: dict | None = None) -> WorkerError:
+    """错误三元组 → `WorkerError`，**`missing_dependency` 优先于协议 code**。
+
+    判据与 `EngineWorker._error_of` 一致：脚本 `import rdkit` 而渲染环境没有，
+    在 worker 那里只是一个普通 `script_error`，但对用户是完全不同的一件事
+    （有可执行出口：换成自己的环境）。前端认的是这个 code，不能因为换了控制面
+    就变成一段没人能用的通用错误。
+    """
+    mod = missing_module(f"{message}\n{traceback_text}")
+    if mod:
+        return WorkerError(
+            f"脚本用到的 {mod} 在当前渲染环境里没有。"
+            f"可以在设置 →「渲染环境」里改用你自己那套装了 {mod} 的 "
+            f"Python / Conda 环境。",
+            traceback_text, code="missing_dependency", module=mod)
+    err = WorkerError(message, traceback_text, code=code)
+    if extra:
+        # worker 多带的字段（unknown_stem 的 `known` 之类）留给上层
+        err.extra = extra
+    return err
+
+
+class WorkerdWorker:
+    """`EngineWorker` 的等价物，但生命周期由 magplot-workerd 管。
+
+    **对 `app.py` 完全同形**：`ensure_built` / `override` / `export` /
+    `render_png` / `preview_png` / `svg_path` / `out_dir` / `rev` 的签名与返回
+    结构一字不差，切控制面对上层透明。
+    """
+
+    def __init__(self, script_name: str, figures_dir: str, entry: str,
+                 client=None):
+        from . import workerd_client
+
+        self.script_name = script_name
+        self.figures_dir = figures_dir
+        self.entry = entry
+        # 目录布局与 EngineWorker 完全一致：prune_engine_cache 按 base 走，
+        # 换个控制面就换个落点的话，清理会把正在用的会话目录当成垃圾删掉。
+        base = ENGINE_CACHE / _cache_slug(_norm_dir(figures_dir), script_name)
+        self.base = base
+        self.out_dir = base / "out"
+        self.sandbox = base / "sandbox"
+        self.export_dir = base / "export"
+        self.log_path = base / "worker.log"
+        base.mkdir(parents=True, exist_ok=True)
+        self._touched = 0.0
+        self._touch()
+        self.rev = 0
+        self.generation = _next_generation((_norm_dir(figures_dir), script_name))
+        # workerd 自己排队，这把锁只是为了与 EngineWorker 同形（调用方不该关心
+        # 是哪条路径）。**绝不拿它包住一次请求**——那会把 workerd 好不容易解开的
+        # 「一个慢请求占死整条会话」重新绑回来。
+        self.lock = threading.Lock()
+        self.built = False
+        self.last_used = time.time()
+        self._dead = False
+        self._client = client or workerd_client.client()
+        if self._client is None:
+            raise WorkerdUnavailable("workerd 不可用")
+        python, self.python_source = select_worker_python()
+        self.python = python
+        self._session_id = ""
+        self._open()
+
+    # ---------------------------------------------------------------- 会话
+    def _spec(self) -> dict:
+        return _spawn_spec(self.script_name, self.figures_dir, self.entry,
+                           self.out_dir, self.sandbox, self.log_path,
+                           self.python, self.python_source)
+
+    def _open(self) -> None:
+        from . import workerd_client
+
+        LOG.info("workerd 会话打开: %s（entry=%s，解释器来源=%s）",
+                 self.script_name, self.entry, self.python_source)
+        try:
+            resp = self._client.call("open_session", payload=self._spec(),
+                                     timeout=HANDSHAKE_TIMEOUT)
+        except workerd_client.WorkerdError as exc:
+            self._dead = True
+            raise self._to_worker_error(exc) from exc
+        self._session_id = resp.get("session_id", "")
+        self.built = False
+
+    def _log_tail(self, n: int = 30) -> str:
+        try:
+            lines = self.log_path.read_text(errors="replace").splitlines()
+            return "\n".join(lines[-n:])
+        except OSError:
+            return ""
+
+    def _to_worker_error(self, exc) -> WorkerError:
+        code = exc.code or ""
+        if code in _FATAL_CODES:
+            # 状态未知的会话绝不复用（与 Python 池的超时/错乱路径同纪律）
+            self._dead = True
+        tb = exc.traceback_text or ""
+        if not tb and code in _FATAL_CODES:
+            tb = self._log_tail()      # 进程级失败时 worker 的 traceback 全在日志里
+        return _worker_error(str(exc), code, tb, exc.extra)
+
+    def _call(self, op: str, timeout: float, *, stem: str | None = None,
+              payload: dict | None = None) -> dict:
+        from . import workerd_client
+
+        self.last_used = time.time()
+        self._touch()
+        for attempt in (0, 1):
+            try:
+                resp = self._client.call(op, session_id=self._session_id,
+                                         stem=stem, payload=payload or {},
+                                         timeout=timeout)
+            except workerd_client.WorkerdError as exc:
+                # workerd 重启过 → session_id 作废。这条**透明重开一次**：
+                # 对上层来说这只是一次稍慢的渲染，没有任何语义变化。
+                if exc.code == "unknown_session" and attempt == 0:
+                    LOG.warning("workerd 会话已失效，重开: %s", self.script_name)
+                    self._open()
+                    continue
+                raise self._to_worker_error(exc) from exc
+            if resp.get("hash_mismatch"):
+                # 本次结果照常可用（worker 执行了），但两侧的规范化实现已经分叉
+                LOG.warning("worker 报告 patch 哈希不一致: %s → %s（%s）",
+                            resp.get("canonical_patch_hash"),
+                            resp.get("worker_patch_hash"), self.script_name)
+            return resp
+        raise WorkerError("workerd 会话重开后仍不可用", self._log_tail(),
+                          code="session_dead")
+
+    # ---------------------------------------------------------------- 同 EngineWorker
+    def alive(self) -> bool:
+        return not self._dead
+
+    def _touch(self) -> None:
+        import os
+        now = time.time()
+        if now - self._touched < _TOUCH_INTERVAL:
+            return
+        self._touched = now
+        try:
+            os.utime(self.base, None)
+        except OSError:
+            pass
+
+    def ensure_built(self) -> dict:
+        resp = self._call("build", BUILD_TIMEOUT)
+        self.built = True
+        return resp
+
+    def override(self, stem: str, patches: list) -> dict:
+        if not self.built:
+            self.ensure_built()
+        resp = self._call("render", REQUEST_TIMEOUT, stem=stem,
+                          payload={"patches": patches})
+        self.rev += 1
+        return resp
+
+    def export(self, stem: str, patches: list, path: str,
+               fmt: str = "pdf", dpi: int = 600) -> dict:
+        if not self.built:
+            self.ensure_built()
+        return self._call("export", EXPORT_TIMEOUT, stem=stem,
+                          payload={"patches": patches, "path": path,
+                                   "format": fmt, "dpi": dpi})
+
+    def svg_path(self, stem: str) -> Path:
+        return self.out_dir / f"{stem}.svg"
+
+    def render_png(self, stem: str, width_px: int) -> Path:
+        if not self.built:
+            self.ensure_built()
+        resp = self._call("render_png", REQUEST_TIMEOUT, stem=stem,
+                          payload={"width": width_px})
+        return Path(resp["path"])
+
+    def preview_png(self, stem: str, patches: list, width_px: int, tag: str) -> Path:
+        if not self.built:
+            self.ensure_built()
+        resp = self._call("preview_png", REQUEST_TIMEOUT, stem=stem,
+                          payload={"patches": patches, "width": width_px,
+                                   "tag": tag})
+        return Path(resp["path"])
+
+    def shutdown(self) -> None:
+        """优雅关会话；workerd 收不到就当它已经没了（不许把退出流程挂住）。"""
+        from . import workerd_client
+
+        if not self._session_id:
+            return
+        try:
+            # 退出路径不许被一个卡住的 supervisor 拖住：余量收到 5 秒
+            self._client.call("close_session", session_id=self._session_id,
+                              timeout=SHUTDOWN_TIMEOUT, slack=5.0)
+        except workerd_client.WorkerdError:
+            pass
+        finally:
+            self._dead = True
+
+    def force_kill(self) -> None:
+        """硬关：workerd 当场杀掉 worker，不等在飞的活跑完。"""
+        from . import workerd_client
+
+        if not self._session_id:
+            return
+        try:
+            self._client.call("close_session", session_id=self._session_id,
+                              payload={"force": True}, timeout=SHUTDOWN_TIMEOUT,
+                              slack=2.0)
+        except workerd_client.WorkerdError:
+            pass
+        finally:
+            self._dead = True
+
+
+class WorkerdUnavailable(RuntimeError):
+    """workerd 这条路走不通（没装 / 禁用 / 起不来）——调用方回退 Python 池。"""
+
+
+def workerd_path() -> str | None:
+    """本次进程实际会用的 workerd 可执行文件（禁用或找不到回 None）。"""
+    from . import workerd_client
+    return workerd_client.find_workerd()
+
+
+def _new_worker(script_name: str, figures_dir: str, entry: str):
+    """按可用性挑控制面。**任何失败都回退 Python 池**——渲染不能因为一个
+    可选的加速件起不来就整个不可用。"""
+    from . import workerd_client
+
+    if workerd_client.find_workerd():
+        try:
+            return WorkerdWorker(script_name, figures_dir, entry)
+        except (WorkerdUnavailable, WorkerError, OSError) as exc:
+            LOG.warning("workerd 会话建立失败，回退到 Python 渲染池: %s", exc)
+    return EngineWorker(script_name, figures_dir, entry)
+
 
 def _dir_size(path: Path) -> int:
     """目录占用字节数；读不动的条目跳过（宁可少算也不能把清理带崩）。"""
@@ -734,7 +1034,7 @@ def get(script_name: str, figures_dir: str, entry: str) -> EngineWorker:
             w.shutdown()
             w = None
         if w is None:
-            w = EngineWorker(script_name, figures_dir, entry)
+            w = _new_worker(script_name, figures_dir, entry)
             _workers[key] = w
             created = True
         w.last_used = time.time()
@@ -799,10 +1099,18 @@ def shutdown_all(figures_dir: str | None = None, wait: bool = False) -> None:
             if t.is_alive():
                 LOG.warning("worker 关停超时（可能卡在死循环脚本里），强制 kill: %s",
                             w.script_name)
-                try:
-                    w.proc.kill()
-                except OSError:
-                    pass
+                # `force_kill()` 两条控制面都有：Python 池是 `proc.kill()`，
+                # workerd 是「当场关掉会话、不等在飞的活」。
+                w.force_kill()
+    if wait and figures_dir is None:
+        # 「本进程即将退出」这条路径顺手把 supervisor 也收掉。不收也不会留孤儿
+        # （父进程一走它的 stdin 就 EOF，workerd 自己会退），但那要等到父进程真的
+        # 消失；显式关掉能让退出是**可观测**的，冒烟脚本才断言得出来。
+        try:
+            from . import workerd_client
+            workerd_client.reset_client()
+        except Exception:  # noqa: BLE001 — 退出路径不许因为收尾动作抛出而中断
+            pass
 
 
 # 每个项目一个 watcher：多标签页各开各的项目时，两个图库都要被盯着。

@@ -57,7 +57,12 @@ artifacts = ["src/magplot/web/**"]
 # 安装包走，**绝不能混进 wheel / sdist**：pip 用户拿到的是轻量包，
 # 而且那是一堆 Windows 二进制。它已经在 .gitignore 里（hatchling 默认就会跳过），
 # 这条 exclude 是第二道闸——artifacts 那类显式收回的规则容易越写越宽。
-exclude = ["runtime", "runtime/**", "build/runtime-cache/**"]
+# Rust supervisor 的 crate（workerd/）同理：它是随桌面产物分发的二进制源码，
+# 不属于 pip 包。**必须显式 exclude**——sdist 的 include 里那条 `tests` 是
+# gitignore 风格的模式，会把任何一层的 `tests/` 都收进来，`workerd/tests/` 正好
+# 撞上（实测过：不加这条，sdist 里会多出三个 .rs 文件和一个 fake worker）。
+exclude = ["runtime", "runtime/**", "build/runtime-cache/**",
+           "workerd", "workerd/**"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/magplot"]

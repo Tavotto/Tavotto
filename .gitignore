@@ -34,6 +34,9 @@ web/playwright-report/
 src-tauri/target/
 src-tauri/gen/
 
+# Rust supervisor magplot-workerd（workerd/ 源码进仓库；构建产物不进）
+workerd/target/
+
 # 工具与系统
 .gstack/
 .DS_Store

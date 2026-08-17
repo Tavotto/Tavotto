@@ -14,6 +14,13 @@ import pytest
 _DATA_DIR = tempfile.mkdtemp(prefix="magplot-data-")
 os.environ.setdefault("MAGPLOT_DATA_DIR", _DATA_DIR)
 
+# 渲染控制面**默认走 Python 池**。开发机上 `cargo build` 之后
+# `workerd/target/debug/magplot-workerd` 就在那儿，pool 会自动认出来——
+# 那样整套既有用例会在不知不觉间换一条控制面跑，「Python 实现是参考实现」
+# 这件事就没人看着了。走 workerd 的用例自己把这个变量改掉（见
+# tests/test_workerd_pool.py 的 workerd_enabled fixture）。
+os.environ.setdefault("MAGPLOT_WORKERD", "0")
+
 
 @pytest.fixture(autouse=True)
 def _isolated_user_config(tmp_path_factory, monkeypatch):

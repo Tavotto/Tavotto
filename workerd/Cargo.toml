@@ -1,0 +1,28 @@
+[package]
+name = "magplot-workerd"
+version = "0.5.0"
+edition = "2021"
+rust-version = "1.75"
+license = "AGPL-3.0-only"
+description = "Magplot 渲染 worker 的 supervisor：进程生命周期、队列合并、超时与取消"
+publish = false
+
+[lib]
+name = "magplot_workerd"
+path = "src/lib.rs"
+
+[[bin]]
+name = "magplot-workerd"
+path = "src/main.rs"
+
+[dependencies]
+# arbitrary_precision：数字保留原始字面量。没有它，超出 u64 的整数字面量会被
+# 解析成 f64，而 Python 侧 `json` 解析成 int 后按 int_out_of_range 剔除——
+# 两边算出的 patch 身份会静默分叉，正是 ADR 0003 反复警告的那一类。
+serde_json = { version = "1", features = ["arbitrary_precision"] }
+sha2 = "0.10"
+
+[profile.release]
+opt-level = 2
+lto = "thin"
+strip = true

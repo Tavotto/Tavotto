@@ -78,6 +78,30 @@ PyMuPDF（**只经 `src/magplot/pdfbackend/`**），前端 `web/`
   取新模板重打补丁并同步 build_desktop.py / desktop-tauri.yml
   （tests/test_nsis_template.py 看护三处版本一致与 BMP 形态）。
 
+## Rust supervisor `magplot-workerd`（2026-08-18，与 Python 池并行）
+
+架构、协议与错误码的完整版在 `docs/adr/0004-workerd-supervisor.md`，改动前先读。
+
+- crate 在仓库根的 **`workerd/`**（不进 `src-tauri/`，壳保持薄）；`workerd/target/`
+  进 .gitignore；pyproject 的 `exclude` 显式挡住它进 wheel/sdist
+  （sdist 的 `include=["tests"]` 是 gitignore 风格模式，会把 `workerd/tests/` 收进去）。
+- **Rust 是机制层，Python 是策略层**：解释器优先级（`pool._prioritized_candidates()`）、
+  内置 runtime 的 `-B`/env、超时档位、会话与队列上限**全部留在 Python**，
+  Flask 把完整 spawn 规格（argv/env/log_path/握手期限）交给 workerd。
+  **别在 Rust 里重写探测或渲染**——那是制造第二个权威。
+- `pool.py` 的 Python 实现**一行没删**：找不到二进制或 `MAGPLOT_WORKERD=0` 就原路走它，
+  它同时是 workerd 的参考实现。**pytest 的 conftest 默认把开关钉成 `0`**，
+  否则 `cargo build` 之后整套既有用例会悄悄换一条控制面跑。
+- `workerd/src/patchspec.rs` + `pyfloat.rs` 必须**逐字节复现** `engine/patchspec.py`，
+  硬验收是同一份 `tests/golden/patch_vectors.json`。已知坑：Python 的浮点 repr
+  （`1e+22`/`1e-07`、`-0.0` 保号、`1.0` 补 `.0`）、int 与 float 是两个值
+  （serde_json 必须开 `arbitrary_precision`）、转义表照抄 `ESCAPE_DCT`。
+- 语义要点：generation 每 (re)spawn +1 且**上一代的迟到响应一律丢弃**；
+  per (会话, stem) 的 render 队列里至多一条、新的顶掉旧的（回 `queue_superseded`）；
+  export 一条都不合并；队列有界，满了立即拒绝；取消在飞 = **杀进程**
+  （协议层没有协作中断）；淘汰 = kill，不等锁。
+- 验证：`cd workerd && cargo test && cargo clippy --all-targets -- -D warnings && cargo fmt --check`。
+
 ## PDF 后端边界（许可证相关，勿破坏）
 
 - `src/magplot/pdfbackend/pymupdf_backend.py` 是**全仓库唯一** import pymupdf 的
