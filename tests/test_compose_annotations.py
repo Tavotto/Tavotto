@@ -15,6 +15,10 @@ MM = 72 / 25.4
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setattr(m, "EXPORT_DIR", tmp_path)
+    # 纯标注导出不依赖项目；清掉别的测试模块残留的已打开项目，
+    # 否则导出会落到那个项目的同级导出目录（project_export_dir 的新默认）
+    monkeypatch.setattr(m, "PROJECTS", {})
+    monkeypatch.setattr(m, "DEFAULT_PROJECT", None)
     m.app.config["TESTING"] = True
     return m.app.test_client()
 

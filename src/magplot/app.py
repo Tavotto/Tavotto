@@ -808,13 +808,24 @@ def reload_registry(ctx: "ProjectCtx") -> None:
 
 
 def project_export_dir(ctx: "ProjectCtx | None" = None) -> Path:
-    """项目的导出目录（项目设置可覆盖；缺省数据目录 exports/）。
-    未打开项目时（纯文字/形状导出不依赖项目）直接用默认目录。"""
+    """项目的导出目录（项目设置可覆盖）。
+
+    缺省放在**项目文件夹旁边**的 `<项目名>-exports/`——导出的成图要交给
+    投稿/合作者，藏在应用数据目录里用户根本找不到。旁边建不出来
+    （父目录只读、网络盘等）再退回数据目录 exports/。
+    未打开项目时（纯文字/形状导出不依赖项目）直接用数据目录。"""
     ctx = ctx if ctx is not None else _request_ctx()
     if ctx is None:
         return EXPORT_DIR
     d = engine_config.project_settings(str(ctx.path)).get("export_dir")
-    return Path(d).expanduser() if d else EXPORT_DIR
+    if d:
+        return Path(d).expanduser()
+    sibling = ctx.path.parent / f"{ctx.path.name}-exports"
+    try:
+        sibling.mkdir(parents=True, exist_ok=True)
+        return sibling
+    except OSError:
+        return EXPORT_DIR
 
 
 def project_backup_dir(ctx: "ProjectCtx | None" = None) -> Path:
@@ -1812,36 +1823,53 @@ def api_ai_cancel(sid):
 
 
 # ------------------------- 布局的保存 / 读取 -------------------------------
-def layout_path(name: str) -> Path:
+def project_layout_dir(ctx: "ProjectCtx | None" = None) -> Path:
+    """命名画布文件的目录：项目目录下可见的 `canvases/`。
+
+    成品画布要跟图库一起被找到 / 备份 / 同步，藏在应用数据目录里对用户
+    等于不存在。未打开项目时退回数据目录 layouts/（纯文字/形状排版不依赖
+    项目）；旧数据目录里升级前存的画布仍然只读可见（api_layouts 合并列出）。"""
+    ctx = ctx if ctx is not None else _request_ctx()
+    if ctx is None:
+        return LAYOUT_DIR
+    return ctx.path / "canvases"
+
+
+def layout_path(name: str, base: Path | None = None) -> Path:
     name = re.sub(r"[^\w\-一-鿿]+", "_", name)
     if not name:
         abort(400)
-    return LAYOUT_DIR / f"{name}.json"
+    return (base if base is not None else LAYOUT_DIR) / f"{name}.json"
 
 
 @app.get("/api/layouts")
 def api_layouts():
-    LAYOUT_DIR.mkdir(parents=True, exist_ok=True)
-    names = sorted(
-        (p.stem for p in LAYOUT_DIR.glob("*.json")),
-        key=lambda n: layout_path(n).stat().st_mtime,
-        reverse=True,
-    )
-    return jsonify({"layouts": list(names)})
+    # 主位置 = 项目 canvases/；数据目录 layouts/ 只读兼容，重名以项目文件为准
+    seen: dict[str, float] = {}
+    for d in (project_layout_dir(), LAYOUT_DIR):
+        if not d.is_dir():
+            continue
+        for p in d.glob("*.json"):
+            if p.stem not in seen:
+                seen[p.stem] = p.stat().st_mtime
+    names = sorted(seen, key=lambda n: seen[n], reverse=True)
+    return jsonify({"layouts": names})
 
 
 @app.get("/api/layouts/<name>")
 def api_layout_get(name):
-    p = layout_path(name)
-    if not p.exists():
-        abort(404)
-    return send_file(p, mimetype="application/json")
+    for d in (project_layout_dir(), LAYOUT_DIR):
+        p = layout_path(name, d)
+        if p.exists():
+            return send_file(p, mimetype="application/json")
+    abort(404)
 
 
 @app.post("/api/layouts/<name>")
 def api_layout_save(name):
-    LAYOUT_DIR.mkdir(parents=True, exist_ok=True)
-    layout_path(name).write_text(
+    d = project_layout_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    layout_path(name, d).write_text(
         json.dumps(request.get_json(force=True), ensure_ascii=False, indent=1),
         encoding="utf-8",
     )
