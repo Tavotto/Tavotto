@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { AlertTriangle, Check, Play, RefreshCw, Zap } from 'lucide-react'
+import { AlertTriangle, Braces, Check, Play, RefreshCw } from 'lucide-react'
 import {
   fetchRegistry,
   probeScript,
@@ -99,7 +99,7 @@ function RegistryBody() {
     <div className="flex flex-col gap-3">
       <div className="flex items-start justify-between gap-3">
         <p className="text-xs leading-relaxed text-ink-3">
-          登记过的脚本，它产出的面板才带 <Zap size={11} className="inline -mt-0.5" />
+          登记过的脚本，它产出的面板才带 <Braces size={11} className="inline -mt-0.5" />
           （可参数化编辑）。注册表存在图库目录的 mm_registry.json，随图库走。
         </p>
         <Button variant="outline" size="sm" disabled={busy !== null} onClick={() => void scan()}>
@@ -162,7 +162,7 @@ function RegistryBody() {
         <h3 className="mb-1 text-xs font-medium text-ink-2">已登记（{registered.length}）</h3>
         {registered.length === 0 ? (
           <EmptyState
-            icon={Zap}
+            icon={Braces}
             title="注册表是空的"
             hint="先「重新扫描」；文件名只有运行时才知道的脚本用「试运行」登记。"
           />

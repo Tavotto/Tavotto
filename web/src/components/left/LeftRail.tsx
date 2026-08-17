@@ -1,4 +1,4 @@
-import { Images, Layers, LayoutGrid, Settings, Zap } from 'lucide-react'
+import { Braces, Images, Layers, LayoutGrid, Settings } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { RAIL_W, useUiStore, type LeftTab } from '@/store/uiStore'
 import { Tip } from '../ui/Tooltip'
@@ -7,7 +7,7 @@ const ITEMS: { id: LeftTab; icon: typeof Images; label: string }[] = [
   { id: 'canvases', icon: LayoutGrid, label: '画布' },
   { id: 'assets', icon: Images, label: '素材' },
   { id: 'layers', icon: Layers, label: '结构' },
-  { id: 'elements', icon: Zap, label: '图内元素' },
+  { id: 'elements', icon: Braces, label: '图内元素' },
 ]
 
 /**

@@ -16,7 +16,6 @@ import {
   Square,
   Triangle,
   Type,
-  Zap,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { renameObject, reorderObject, toggleHidden, toggleLocked } from '@/store/actions'
@@ -366,7 +365,9 @@ function LayerRow({
       ) : (
         <span className="min-w-0 flex-1 truncate">{objectLabel(obj)}</span>
       )}
-      {isScript && !editing && <Zap size={12} className="shrink-0 text-accent" />}
+      {/* 可参数化徽标与素材卡的 { } 同源；行首的 Braces 是大括号形状的种类图标，
+          位置（行尾）与颜色（accent）把两个角色分开 */}
+      {isScript && !editing && <Braces size={12} className="shrink-0 text-accent" />}
       {primary && !editing && (
         <span className="shrink-0 font-mono text-xs text-accent/70">基准</span>
       )}

@@ -229,7 +229,7 @@ export function AssistantPanel() {
             <EmptyState
               icon={FileCode2}
               title="选中一个可参数化面板"
-              hint="带 ⚡ 标记的面板由脚本生成，助手可以直接修改脚本。"
+              hint="带 { } 标记的面板由脚本生成，助手可以直接修改脚本。"
             />
           ) : mine.length === 0 ? (
             <EmptyState

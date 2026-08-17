@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  Braces,
   ChevronRight,
   Crosshair,
   Eye,
@@ -10,7 +11,6 @@ import {
   Search,
   TriangleAlert,
   X,
-  Zap,
   SearchX,
 } from 'lucide-react'
 import type { Manifest, ManifestElement } from '@/lib/api'
@@ -210,9 +210,9 @@ export function ElementTree() {
   if (!panel) {
     return (
       <EmptyState
-        icon={Zap}
+        icon={Braces}
         title="选中一个可参数化面板"
-        hint="带 ⚡ 标记的面板由脚本生成，这里会列出它的全部图内元素。"
+        hint="带 { } 标记的面板由脚本生成，这里会列出它的全部图内元素。"
       />
     )
   }
@@ -230,7 +230,7 @@ export function ElementTree() {
           </p>
         ) : (
           <Button variant="outline" size="sm" onClick={() => enterElementEdit(panel.id)}>
-            <Zap size={13} />
+            <Braces size={13} />
             加载元素清单
           </Button>
         )}
