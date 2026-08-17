@@ -34,7 +34,11 @@
         "languages": [
           "SimpChinese",
           "English"
-        ]
+        ],
+        "template": "windows/installer.nsi",
+        "installerIcon": "../assets/icon/icon.ico",
+        "headerImage": "../assets/brand/installer-header.bmp",
+        "sidebarImage": "../assets/brand/installer-sidebar.bmp"
       }
     }
   }

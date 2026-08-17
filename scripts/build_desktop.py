@@ -90,7 +90,9 @@ def main() -> None:
         print("* --skip-tauri：到此为止")
         return
 
-    run(["pnpm", "dlx", "@tauri-apps/cli@latest", "build",
+    # CLI 版本钉死：src-tauri/windows/installer.nsi 是按这个版本的上游模板
+    # 打的品牌补丁，模板与打包器必须同源（升级时两处一起动，见模板头注释）
+    run(["pnpm", "dlx", "@tauri-apps/cli@2.11.4", "build",
          "--bundles", args.bundles])
     out = ROOT / "src-tauri" / "target" / "release" / "bundle"
     print(f"* 产物目录: {out}")

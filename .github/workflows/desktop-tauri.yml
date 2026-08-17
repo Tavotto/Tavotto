@@ -127,7 +127,9 @@ jobs:
             --expect-packages numpy,pandas,scipy,seaborn,PIL,matplotlib
 
       - name: Tauri build
-        run: pnpm dlx @tauri-apps/cli@latest build --bundles ${{ matrix.bundles }}
+        # CLI 版本钉死：src-tauri/windows/installer.nsi 按这个版本的上游模板
+        # 打品牌补丁，模板与打包器必须同源（升级时同步 scripts/build_desktop.py）
+        run: pnpm dlx @tauri-apps/cli@2.11.4 build --bundles ${{ matrix.bundles }}
 
       # ---------------- macOS：签名 + 公证（复用已趟通的流程，不经 Tauri 签名） ----------------
       - name: 导入签名证书
