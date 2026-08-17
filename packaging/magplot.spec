@@ -6,8 +6,10 @@
 1. **worker 侧的三个模块必须是磁盘上的真 .py 文件**。渲染 worker 是**另一个
    真解释器**起的子进程（用户的论文脚本要动态 import 各种东西，冻结成第二个
    黑盒立刻就 import 不进去），所以 `engine/worker.py` 以及它 `import` 的
-   `manifest.py` / `overrides.py` 得能被外部解释器按路径读到——只编进
-   PyInstaller 归档是不够的。
+   `manifest.py` / `overrides.py` / `patchspec.py` 得能被外部解释器按路径读到
+   ——只编进 PyInstaller 归档是不够的。漏一个的表现是「装完的桌面版一渲染就
+   ModuleNotFoundError」，而源码模式一切正常
+   （tests/test_runtime_build.py::test_spec_ships_every_module_the_worker_imports 看护）。
 
 2. **Flask 主进程里不打包 matplotlib**。科学栈跑在 worker 子进程里，主进程
    有它没用，白白多出一两百 MB，还会把「主程序 / 渲染环境分离」这条边界废掉。
@@ -45,7 +47,7 @@ datas = [
     (str(PKG / "web"), "magplot/web"),
 ]
 # worker 子进程要用的源码（见文件头说明 1）
-for name in ("worker.py", "manifest.py", "overrides.py"):
+for name in ("worker.py", "manifest.py", "overrides.py", "patchspec.py"):
     datas.append((str(PKG / "engine" / name), "magplot/engine"))
 
 # 内置渲染 runtime（见文件头说明 3）。

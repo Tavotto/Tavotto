@@ -5,6 +5,7 @@
   * 拦截 savefig 捕获 Figure（合成脚本走 paper_style.save 方言）
   * override 全量列表语义：缺失 key 自动恢复原值（undo 的基础）
   * export 应用 patches 后的 PDF 矢量文字保真
+  * 协议 v1 信封（文件末尾一节）：回显、错误 code、hash 自检、legacy 兼容
 """
 import json
 import os
@@ -17,7 +18,7 @@ from pathlib import Path
 import pymupdf
 import pytest
 
-from magplot.engine import pool
+from magplot.engine import patchspec, pool
 
 try:
     WORKER_PY = pool.find_worker_python()
@@ -935,3 +936,273 @@ def test_frac_anchor_exact_on_aspect_equal_axes(tmp_path):
         if proc.poll() is None:
             proc.kill()
         proc.wait(timeout=10)
+
+
+# =========================== 协议 v1（ADR 0003） ============================
+# worker 双栈兼容：带 protocol_version 走 v1，不带的照旧。这一组用例是
+# Rust supervisor（Phase C）接手前把契约钉在 Python 两侧的地方——信封字段、
+# 回显语义、错误 code、legacy 兼容，改一条就得先改 ADR。
+
+def _v1(cmd, *, stem=None, payload=None, rid="r-test-1",
+        generation=7, revision=3, patch_hash=None):
+    env = {"protocol_version": 1, "request_id": rid,
+           "worker_generation": generation, "render_revision": revision,
+           "cmd": cmd, "payload": payload or {}}
+    if stem is not None:
+        env["stem"] = stem
+    if patch_hash is not None:
+        env["canonical_patch_hash"] = patch_hash
+    return env
+
+
+def _raw(proc, env, timeout=120):
+    """发一条请求读一行回应，**不断言 ok**（错误信封用例要的就是 ok=false）。"""
+    proc.stdin.write(json.dumps(env, ensure_ascii=False) + "\n")
+    proc.stdin.flush()
+    box: list = []
+    reader = threading.Thread(target=lambda: box.append(proc.stdout.readline()),
+                              daemon=True)
+    reader.start()
+    reader.join(timeout)
+    assert not reader.is_alive(), f"worker 超时（{timeout}s）: {env.get('cmd')}"
+    line = box[0] if box else ""
+    assert line, f"worker 无响应: {env.get('cmd')}\n--- stderr ---\n{_drain(proc)}"
+    return json.loads(line)
+
+
+def _ok(proc, env, timeout=120):
+    resp = _raw(proc, env, timeout)
+    assert resp.get("ok"), resp
+    return resp
+
+
+def test_v1_envelope_echoes_generation_revision_and_hash(worker):
+    """v1 全链路 build → render → export，信封字段一律**原样回显**。
+
+    generation/revision/hash 是 supervisor 的账本，worker 插手就多一个可能
+    对不上的地方；回显让上层把响应对回请求（超时重建后的迟到响应靠它识别）。
+    """
+    proc, out, tmp = worker
+
+    resp = _ok(proc, _v1("build", rid="r-b1", generation=2, revision=0))
+    assert resp["protocol_version"] == 1
+    assert resp["request_id"] == "r-b1"
+    assert resp["worker_generation"] == 2 and resp["render_revision"] == 0
+    assert "TestFig_a" in resp["stems"]
+
+    man = json.loads((out / "TestFig_a.json").read_text(encoding="utf-8"))
+    title_gid = next(
+        el["gid"] for el in man["elements"]
+        for f in el.get("editable", [])
+        if f["prop"] == "text" and f["value"] == "Original Title")
+    patch = [{"gid": title_gid, "prop": "text", "value": "V1 Title"}]
+    h = patchspec.patch_hash(patch)
+
+    resp = _ok(proc, _v1("render", stem="TestFig_a", payload={"patches": patch},
+                         rid="r-r1", generation=2, revision=5, patch_hash=h))
+    assert resp["request_id"] == "r-r1" and resp["render_revision"] == 5
+    assert resp["canonical_patch_hash"] == h
+    assert "hash_mismatch" not in resp          # 两侧规范化实现一致
+    assert _text_value(resp["manifest"], title_gid) == "V1 Title"
+    assert resp["warnings"] == []
+
+    pdf = tmp / "v1_export.pdf"
+    resp = _ok(proc, _v1("export", stem="TestFig_a",
+                         payload={"patches": patch, "path": str(pdf),
+                                  "format": "pdf", "dpi": 200},
+                         rid="r-e1", patch_hash=h))
+    assert resp["request_id"] == "r-e1" and resp["path"] == str(pdf)
+    with pymupdf.open(pdf) as doc:
+        assert "V1 Title" in doc[0].get_text()
+
+    # render_png / preview_png / ping 也在 v1 命令集里
+    resp = _ok(proc, _v1("render_png", stem="TestFig_a", payload={"width": 300},
+                         rid="r-p1"))
+    assert Path(resp["path"]).exists()
+    resp = _ok(proc, _v1("preview_png", stem="TestFig_a",
+                         payload={"patches": [], "width": 300, "tag": "hist1"},
+                         rid="r-p2"))
+    assert Path(resp["path"]).exists()
+    assert _ok(proc, _v1("ping", rid="r-ping"))["request_id"] == "r-ping"
+
+
+def test_v1_error_envelope_shapes(worker):
+    """错误信封：code / retryable / message / traceback + 回显；进程不退出。"""
+    proc, out, tmp = worker
+    _ok(proc, _v1("build", rid="r-b2"))
+
+    resp = _raw(proc, _v1("render", stem="nope", payload={"patches": []},
+                          rid="r-err1"))
+    assert resp["ok"] is False
+    assert resp["protocol_version"] == 1 and resp["request_id"] == "r-err1"
+    err = resp["error"]
+    assert err["code"] == "unknown_stem" and err["retryable"] is False
+    assert "nope" in err["message"]
+    assert "TestFig_a" in err["known"]          # 告诉调用方有哪些 stem
+
+    resp = _raw(proc, _v1("frobnicate", rid="r-err2"))
+    assert resp["error"]["code"] == "unknown_cmd"
+    assert "render" in resp["error"]["known"]
+
+    # 信封字段缺失/类型错 → bad_request
+    for bad in ({"protocol_version": 1, "cmd": "ping"},                    # 无 rid
+                {"protocol_version": 1, "request_id": "r-x", "cmd": 1},    # cmd 非串
+                {"protocol_version": 1, "request_id": "r-x", "cmd": "ping",
+                 "payload": []},                                          # payload 非对象
+                {"protocol_version": 99, "request_id": "r-x", "cmd": "ping"}):
+        resp = _raw(proc, bad)
+        assert resp["ok"] is False, bad
+        assert resp["error"]["code"] == "bad_request", bad
+
+    # export 缺 path 也是 bad_request（不是 internal——调用方写错了）
+    resp = _raw(proc, _v1("export", stem="TestFig_a", payload={"patches": []},
+                          rid="r-err3"))
+    assert resp["error"]["code"] == "bad_request"
+
+    assert proc.poll() is None                  # 全程没把 worker 打死
+    _ok(proc, _v1("ping", rid="r-alive"))
+
+
+def test_v1_hash_mismatch_is_flagged_but_still_executed(worker):
+    """哈希对不上 = 两侧序列化分歧，**标记但照常执行**。
+
+    当场拒绝会把一个可观测的对齐问题变成一次用户可见的渲染失败；标记 +
+    stderr 警告则让上层（未来的 Rust supervisor）自己发现并去修。
+    """
+    proc, out, tmp = worker
+    _ok(proc, _v1("build", rid="r-b3"))
+    man = json.loads((out / "TestFig_a.json").read_text(encoding="utf-8"))
+    title_gid = next(
+        el["gid"] for el in man["elements"]
+        for f in el.get("editable", [])
+        if f["prop"] == "text" and f["value"] == "Original Title")
+    patch = [{"gid": title_gid, "prop": "text", "value": "Mismatch Title"}]
+
+    resp = _ok(proc, _v1("render", stem="TestFig_a", payload={"patches": patch},
+                         rid="r-hm", patch_hash="sha256:" + "0" * 64))
+    assert resp["hash_mismatch"] is True
+    assert resp["worker_patch_hash"] == patchspec.patch_hash(patch)
+    assert resp["canonical_patch_hash"] == "sha256:" + "0" * 64   # 仍原样回显
+    assert _text_value(resp["manifest"], title_gid) == "Mismatch Title"
+
+    # 等价写法（乱序 + 重复条目）算出的哈希一致，不该报 mismatch
+    equivalent = [{"gid": title_gid, "prop": "text", "value": "早写的"},
+                  {"gid": title_gid, "prop": "text", "value": "Mismatch Title"}]
+    resp = _ok(proc, _v1("render", stem="TestFig_a",
+                         payload={"patches": equivalent}, rid="r-hm2",
+                         patch_hash=patchspec.patch_hash(patch)))
+    assert "hash_mismatch" not in resp
+
+
+def test_v1_cancel_is_an_honest_idempotent_noop(worker):
+    """cancel 不假装能中断 matplotlib：串行 worker 读到它时目标早已结束。"""
+    proc, out, tmp = worker
+    _ok(proc, _v1("build", rid="r-b4"))
+
+    resp = _ok(proc, _v1("cancel", payload={"request_id": "r-b4"}, rid="r-c1"))
+    assert resp["cancelled"] is False and resp["seen"] is True
+    assert "已执行完毕" in resp["note"]
+
+    resp = _ok(proc, _v1("cancel", payload={"request_id": "r-未见过"}, rid="r-c2"))
+    assert resp["cancelled"] is False and resp["seen"] is False
+
+    # 幂等：再取消一次还是同一个答案
+    assert _ok(proc, _v1("cancel", payload={"request_id": "r-b4"},
+                         rid="r-c3"))["seen"] is True
+    resp = _raw(proc, _v1("cancel", rid="r-c4"))          # 没给目标 id
+    assert resp["error"]["code"] == "bad_request"
+
+
+def test_legacy_envelope_keeps_the_old_response_shape(worker):
+    """无 protocol_version 的老信封必须**一字不变**地按旧形状回应。
+
+    手工 `echo '{"cmd":"build"}' | python worker.py …` 调试、以及任何还没
+    切过来的调用方都靠它；双栈兼容不是「顺便也能跑」，是明确的契约。
+    """
+    proc, out, tmp = worker
+    resp = _rpc(proc, {"cmd": "build"})
+    assert "protocol_version" not in resp and "request_id" not in resp
+    assert set(resp) == {"ok", "stems"}
+
+    resp = _rpc(proc, {"cmd": "override", "stem": "TestFig_a", "patches": []})
+    assert set(resp) == {"ok", "manifest", "warnings"}
+
+    # 老的错误形状也不变：扁平 error 字符串 + known
+    proc.stdin.write(json.dumps({"cmd": "override", "stem": "nope",
+                                 "patches": []}) + "\n")
+    proc.stdin.flush()
+    box: list = []
+    reader = threading.Thread(target=lambda: box.append(proc.stdout.readline()),
+                              daemon=True)
+    reader.start()
+    reader.join(30)
+    resp = json.loads(box[0])
+    assert resp["ok"] is False
+    assert isinstance(resp["error"], str) and "nope" in resp["error"]
+    assert resp["known"] == sorted(["TestFig_a", "TestFig_3d", "TestFig_sc"])
+
+    resp = _rpc(proc, {"cmd": "ping"})
+    assert set(resp) == {"ok"}
+
+
+def test_v1_script_error_is_not_retryable(tmp_path):
+    """用户脚本自己炸了 → script_error / retryable=false（重试还是同一个结果）。"""
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    (figs / "fig_boom.py").write_text(
+        "def main():\n    raise ValueError('脚本自己炸了')\n", encoding="utf-8")
+    proc = _spawn(figs / "fig_boom.py", figs, tmp_path)
+    try:
+        resp = _raw(proc, _v1("build", rid="r-boom"))
+        assert resp["ok"] is False and resp["request_id"] == "r-boom"
+        err = resp["error"]
+        assert err["code"] == "script_error" and err["retryable"] is False
+        assert "脚本自己炸了" in err["message"]
+        assert "ValueError" in err["traceback"]      # 真正的原因原样带着
+        assert proc.poll() is None                   # 进程不退出，可继续排障
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=10)
+
+
+def test_pool_speaks_v1_end_to_end(tmp_path):
+    """pool 侧真实链路：EngineWorker 发 v1、带 generation、结果照旧可用。"""
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    (figs / "paper_style.py").write_text(PAPER_STYLE_STUB, encoding="utf-8")
+    (figs / "fig_test.py").write_text(FIG_SCRIPT, encoding="utf-8")
+    try:
+        w = pool.get("fig_test.py", str(figs), "main")
+        assert w.generation >= 1
+        resp = w.override("TestFig_a", [])
+        assert "manifest" in resp and w.rev == 1
+
+        # 同一池键重建一次：generation 必须 +1（supervisor 靠它认代）
+        w.proc.kill()
+        w.proc.wait(timeout=10)
+        w2 = pool.get("fig_test.py", str(figs), "main")
+        assert w2 is not w and w2.generation == w.generation + 1
+    finally:
+        pool.shutdown_all(figures_dir=str(figs), wait=True)
+
+
+def test_v1_bad_payload_args_are_bad_request_not_internal(worker):
+    """width/dpi 写错类型 = 调用方的错（bad_request），不是 internal。
+
+    这条分界不能靠「在渲染里 catch ValueError」实现——matplotlib 画图时
+    自己就会抛 ValueError，那样排障会被指到完全错误的方向。
+    """
+    proc, out, tmp = worker
+    _ok(proc, _v1("build", rid="r-b5"))
+    resp = _raw(proc, _v1("render_png", stem="TestFig_a",
+                          payload={"width": "很宽"}, rid="r-bad1"))
+    assert resp["error"]["code"] == "bad_request"
+    resp = _raw(proc, _v1("export", stem="TestFig_a",
+                          payload={"patches": [], "path": str(tmp / "x.pdf"),
+                                   "dpi": {"nope": 1}}, rid="r-bad2"))
+    assert resp["error"]["code"] == "bad_request"
+    resp = _raw(proc, _v1("render", stem="TestFig_a",
+                          payload={"patches": "不是数组"}, rid="r-bad3"))
+    assert resp["error"]["code"] == "bad_request"
+    assert proc.poll() is None

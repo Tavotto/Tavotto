@@ -219,6 +219,30 @@ def test_spec_ships_runtime_only_when_it_exists():
     assert '"runtime"' in spec, "runtime 要作为 datas 进包"
 
 
+def test_spec_ships_every_module_the_worker_imports():
+    """worker 平铺 import 的每个同目录模块都必须作为真 .py 进包。
+
+    worker 是**外部解释器**按路径起的子进程，只编进 PyInstaller 归档它读不到。
+    漏一个的表现是「装完的桌面版一渲染就 ModuleNotFoundError」，而源码模式下
+    一切正常——所以这条不能靠人记得改 spec，得从 worker.py 自己的 import 反推。
+    """
+    import ast
+
+    engine = REPO / "src" / "magplot" / "engine"
+    tree = ast.parse((engine / "worker.py").read_text(encoding="utf-8"))
+    flat = {a.name for node in ast.walk(tree) if isinstance(node, ast.Import)
+            for a in node.names}
+    flat |= {node.module for node in ast.walk(tree)
+             if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module}
+    siblings = {f"{name}.py" for name in flat if (engine / f"{name}.py").is_file()}
+    assert "patchspec.py" in siblings, "用例前提：worker 确实平铺 import 了 patchspec"
+
+    spec = (REPO / "packaging" / "magplot.spec").read_text(encoding="utf-8")
+    shipped = set(re.findall(r'"(\w+\.py)"', spec))
+    missing = (siblings | {"worker.py"}) - shipped
+    assert not missing, f"packaging/magplot.spec 漏了 worker 要用的模块: {missing}"
+
+
 def test_release_chain_refuses_to_ship_without_the_runtime():
     """漏了 runtime 照样能编出安装包，而那个包只有到了用户手里才暴露问题。
 

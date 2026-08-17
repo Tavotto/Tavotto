@@ -143,6 +143,16 @@ Python，首次渲染也不联网：
 
 ## 渲染引擎核心机制
 
+- **worker 协议 v1（2026-08-18）**：请求带 `protocol_version/request_id/
+  worker_generation/render_revision/canonical_patch_hash` 信封，命令
+  ping/build/render/render_png/preview_png/export/cancel/shutdown，
+  错误带 code + retryable；generation/revision/hash 由 worker **原样回显**
+  （校验归调用方，`request_id` 对不上当场 kill 会话）。无 `protocol_version`
+  的老信封仍按旧形状回应（双栈，手工调试用）。patch 规范化与哈希的**唯一
+  权威实现**是 `engine/patchspec.py`（纯标准库，父子进程共用同一份），
+  golden vectors 在 `tests/golden/patch_vectors.json`——Rust supervisor 要
+  逐字节复现，改任一侧必须同步另一侧。cancel 只是尽力而为的 no-op，硬取消 =
+  kill + 重启。完整契约见 `docs/adr/0003-worker-protocol-v1.md`，改协议前先读。
 - **live-figure 会话**：worker 跑一次脚本（拦截 `Figure.savefig` + `paper_style.save`，
   不写真实文件），Figure 常驻内存；override 直接 mutate artist 再导出带 gid 的
   SVG（dpi≈120 预览）——冷启动秒到分钟级，热态 ~40ms。

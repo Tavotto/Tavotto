@@ -3,6 +3,7 @@
 全程不起真 worker（.venv 里没有 matplotlib）：目录用 mkdir + os.utime 造，
 worker 用 `__new__` 造壳子只装 `request()` 用得到的几个属性。
 """
+import json
 import os
 import threading
 
@@ -23,7 +24,11 @@ def _aged_dir(root, name: str, order: int, size: int = 0):
 
 
 class _FakeProc:
-    """够 `request()` 走一个来回的最小 stdin/stdout 替身。"""
+    """够 `request()` 走一个来回的最小 stdin/stdout 替身。
+
+    按协议 v1 回显 `request_id`/`protocol_version`——回显对不上的话
+    `request()` 会当场判定会话错乱并 kill（见 test_worker_protocol.py）。
+    """
 
     def __init__(self, replies: list[str]):
         self._replies = list(replies)
@@ -36,12 +41,17 @@ class _FakeProc:
 
     def write(self, s: str) -> None:
         self.written.append(s)
+        env = json.loads(s)
+        reply = json.loads(self._replies.pop(0)) if self._replies else {"ok": True}
+        reply.setdefault("protocol_version", env["protocol_version"])
+        reply.setdefault("request_id", env["request_id"])
+        self._pending = json.dumps(reply) + "\n"
 
     def flush(self) -> None:
         pass
 
     def readline(self) -> str:
-        return self._replies.pop(0)
+        return self._pending
 
 
 def _stub_worker(base, replies=()):
@@ -51,6 +61,8 @@ def _stub_worker(base, replies=()):
     w.lock = threading.Lock()
     w.proc = _FakeProc(list(replies))
     w.script_name = base.name
+    w.generation = 1       # v1 信封字段：真 __init__ 里由 _next_generation() 给
+    w.rev = 0
     return w
 
 
@@ -147,5 +159,5 @@ def test_touch_survives_unwritable_dir(cache, monkeypatch):
     base = _aged_dir(cache, "s0", 0)
     monkeypatch.setattr(os, "utime",
                         lambda *a, **kw: (_ for _ in ()).throw(OSError(13, "只读")))
-    w = _stub_worker(base, ['{"ok": true}\n'])
-    assert w.request({"cmd": "build"}) == {"ok": True}
+    w = _stub_worker(base, ['{"ok": true}'])
+    assert w.request({"cmd": "build"})["ok"] is True

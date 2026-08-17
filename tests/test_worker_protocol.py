@@ -1,0 +1,227 @@
+"""pool 侧的 worker 协议 v1（信封构造 + 响应校验），不需要科学栈。
+
+真 worker 的往返在 `test_worker_roundtrip.py`（要 matplotlib，没有就整档跳过）。
+这里用**假子进程**盯住父进程自己的那一半：发出去的信封长什么样、响应对不上
+号时会不会继续用这个会话。后者是数据损坏级的——管道串行，回显对不上意味着
+之后每一条响应都错位，A 图的 manifest 会落到 B 图上。
+"""
+import json
+import threading
+
+import pytest
+
+from magplot.engine import patchspec, pool
+
+
+class _FakePipe:
+    """worker 的 stdin：把父进程写进来的信封解析出来，顺手排好回应。"""
+
+    def __init__(self, proc):
+        self.proc = proc
+        self.sent: list[dict] = []
+
+    def write(self, text: str) -> None:
+        env = json.loads(text)
+        self.sent.append(env)
+        self.proc.queue(self.proc.responder(env))
+
+    def flush(self) -> None:
+        pass
+
+
+class _FakeStdout:
+    def __init__(self, proc):
+        self.proc = proc
+
+    def readline(self) -> str:
+        return self.proc.pending.pop(0) if self.proc.pending else ""
+
+
+class _FakeProc:
+    """只实现 `EngineWorker.request()` 真正用到的那几个口子。"""
+
+    def __init__(self, responder):
+        self.responder = responder
+        self.stdin = _FakePipe(self)
+        self.stdout = _FakeStdout(self)
+        self.pending: list[str] = []
+        self.returncode = None
+        self.killed = False
+
+    def queue(self, resp) -> None:
+        if resp == "":          # 模拟「进程死了」：readline 直接读到 EOF
+            return
+        line = resp if isinstance(resp, str) else json.dumps(resp, ensure_ascii=False)
+        self.pending.append(line + "\n")
+
+    def poll(self):
+        return self.returncode
+
+    def kill(self) -> None:
+        self.killed = True
+        self.returncode = -9
+
+    def wait(self, timeout=None):
+        return self.returncode if self.returncode is not None else 0
+
+
+def _worker(responder, tmp_path) -> pool.EngineWorker:
+    """不 spawn 任何进程地捏一个 EngineWorker（`__init__` 会真的起子进程）。"""
+    w = object.__new__(pool.EngineWorker)
+    w.script_name = "fig_fake.py"
+    w.figures_dir = str(tmp_path)
+    w.entry = "main"
+    w.base = tmp_path
+    w.out_dir = tmp_path / "out"
+    w.log_path = tmp_path / "worker.log"     # 不存在 → _log_tail 回空串
+    w.lock = threading.Lock()
+    w.rev = 0
+    w.generation = 4
+    w.built = True
+    w.last_used = 0.0
+    w._touched = float("inf")                # 关掉 _touch 的落盘（无 base 目录也不炸）
+    w.proc = _FakeProc(responder)
+    return w
+
+
+def _echo(env, **overrides) -> dict:
+    """一个「规矩的」v1 成功响应。"""
+    resp = {"ok": True, "protocol_version": 1,
+            "request_id": env["request_id"],
+            "worker_generation": env.get("worker_generation"),
+            "render_revision": env.get("render_revision")}
+    if "canonical_patch_hash" in env:
+        resp["canonical_patch_hash"] = env["canonical_patch_hash"]
+    resp.update(overrides)
+    return resp
+
+
+# ------------------------------ 信封构造 ------------------------------
+def test_envelope_carries_version_generation_revision_and_hash(tmp_path):
+    w = _worker(lambda env: _echo(env, manifest={}, warnings=[]), tmp_path)
+    w.rev = 12
+    patches = [{"gid": "b", "prop": "text", "value": "后写的"},
+               {"gid": "a", "prop": "text", "value": "先写的"}]
+    w.override("Fig1", patches)
+
+    env = w.proc.stdin.sent[-1]
+    assert env["protocol_version"] == pool.PROTOCOL_VERSION == 1
+    assert env["request_id"].startswith("r-") and len(env["request_id"]) > 8
+    assert env["worker_generation"] == 4
+    assert env["render_revision"] == 12
+    # 池方法叫 override（app.py 一路这么叫），线上命令叫 render
+    assert env["cmd"] == "render"
+    assert env["stem"] == "Fig1"             # stem 走顶层，不在 payload 里
+    assert env["payload"] == {"patches": patches}
+    assert env["canonical_patch_hash"] == patchspec.patch_hash(patches)
+
+
+def test_request_ids_are_unique_per_request(tmp_path):
+    w = _worker(lambda env: _echo(env), tmp_path)
+    for _ in range(5):
+        w.request({"cmd": "ping"})
+    ids = [e["request_id"] for e in w.proc.stdin.sent]
+    assert len(set(ids)) == 5
+
+
+def test_commands_map_to_the_v1_names_and_payloads(tmp_path):
+    w = _worker(lambda env: _echo(env, path="/tmp/x.png", stems={},
+                                  manifest={}, warnings=[]), tmp_path)
+    w.ensure_built()
+    w.render_png("Fig1", 800)
+    w.preview_png("Fig1", [], 400, "hist3")
+    w.export("Fig1", [], "/tmp/x.pdf", "pdf", 300)
+    sent = {e["cmd"]: e for e in w.proc.stdin.sent}
+    assert set(sent) == {"build", "render_png", "preview_png", "export"}
+    assert sent["build"]["payload"] == {}
+    assert "canonical_patch_hash" not in sent["build"]     # 不带 patches 就不算
+    assert sent["render_png"]["payload"] == {"width": 800}
+    assert sent["preview_png"]["payload"] == {"patches": [], "width": 400,
+                                              "tag": "hist3"}
+    assert sent["export"]["payload"] == {"patches": [], "path": "/tmp/x.pdf",
+                                         "format": "pdf", "dpi": 300}
+
+
+def test_generation_increments_per_pool_key():
+    """同一 (项目, 脚本) 每重建一次 +1；不同池键各算各的。"""
+    a = pool._next_generation(("/proj/gen-a", "fig1.py"))
+    assert a == 1                                   # 从 1 开始
+    assert pool._next_generation(("/proj/gen-a", "fig1.py")) == 2
+    # 另一个池键独立计数（同名脚本在两个项目里是两个会话）
+    assert pool._next_generation(("/proj/gen-b", "fig1.py")) == 1
+    assert pool._next_generation(("/proj/gen-a", "fig1.py")) == 3
+
+
+# ------------------------------ 响应校验 ------------------------------
+def test_request_id_mismatch_kills_the_session(tmp_path):
+    """回显对不上 = 会话已错位，必须杀掉不复用（与超时同纪律）。
+
+    不杀的话后面每一条响应都对错请求：用户看到 A 面板的修改出现在 B 面板上，
+    而且没有任何报错——比直接失败糟得多。
+    """
+    w = _worker(lambda env: _echo(env, request_id="r-别人的"), tmp_path)
+    with pytest.raises(pool.WorkerError) as e:
+        w.request({"cmd": "ping"})
+    assert e.value.code == "protocol_mismatch"
+    assert "重试" in str(e.value)
+    assert w.proc.killed, "协议错乱的 worker 必须被 kill，不许留在池里复用"
+
+
+def test_protocol_version_mismatch_kills_the_session(tmp_path):
+    w = _worker(lambda env: _echo(env, protocol_version=2), tmp_path)
+    with pytest.raises(pool.WorkerError) as e:
+        w.request({"cmd": "ping"})
+    assert e.value.code == "protocol_mismatch"
+    assert w.proc.killed
+
+
+def test_v1_error_envelope_becomes_a_workererror(tmp_path):
+    w = _worker(lambda env: {
+        "ok": False, "protocol_version": 1, "request_id": env["request_id"],
+        "error": {"code": "unknown_stem", "retryable": False,
+                  "message": "stem 不存在: nope", "traceback": ""},
+    }, tmp_path)
+    with pytest.raises(pool.WorkerError) as e:
+        w.request({"cmd": "ping"})
+    assert e.value.code == "unknown_stem"
+    assert "nope" in str(e.value)
+    assert not w.proc.killed, "普通业务错误不该把会话杀掉"
+
+
+def test_missing_dependency_still_wins_over_the_protocol_code(tmp_path):
+    """缺包对用户是完全不同的一件事（有可执行出口），优先于协议 code。"""
+    tb = 'Traceback…\nModuleNotFoundError: No module named \'rdkit.Chem\'\n'
+    w = _worker(lambda env: {
+        "ok": False, "protocol_version": 1, "request_id": env["request_id"],
+        "error": {"code": "script_error", "retryable": False,
+                  "message": "脚本执行失败", "traceback": tb},
+    }, tmp_path)
+    with pytest.raises(pool.WorkerError) as e:
+        w.request({"cmd": "ping"})
+    assert e.value.code == "missing_dependency"
+    assert e.value.module == "rdkit"
+
+
+def test_hash_mismatch_is_logged_but_the_result_is_used(tmp_path, caplog):
+    """哈希分歧只是警告：worker 照常执行了，结果照常用。"""
+    w = _worker(lambda env: _echo(env, manifest={"elements": []}, warnings=[],
+                                  hash_mismatch=True,
+                                  worker_patch_hash="sha256:" + "1" * 64),
+                tmp_path)
+    with caplog.at_level("WARNING", logger="mm.engine"):
+        resp = w.override("Fig1", [{"gid": "g", "prop": "text", "value": "x"}])
+    assert resp["manifest"] == {"elements": []}
+    assert any("哈希不一致" in r.getMessage() for r in caplog.records)
+
+
+def test_dead_worker_and_empty_response_keep_their_old_errors(tmp_path):
+    """老的两条兜底不变：进程已退出 / 无响应。"""
+    w = _worker(lambda env: "", tmp_path)          # 空行 = EOF = 崩了
+    w.proc.pending.clear()
+    with pytest.raises(pool.WorkerError, match="崩溃"):
+        w.request({"cmd": "ping"})
+
+    w2 = _worker(lambda env: _echo(env), tmp_path)
+    w2.proc.returncode = 0
+    with pytest.raises(pool.WorkerError, match="已退出"):
+        w2.request({"cmd": "ping"})

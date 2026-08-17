@@ -16,9 +16,10 @@ import shutil
 import subprocess
 import threading
 import time
+import uuid
 from pathlib import Path
 
-from . import config, runtime
+from . import config, patchspec, runtime
 
 LOG = logging.getLogger("mm.engine")
 
@@ -56,6 +57,23 @@ EXPORT_TIMEOUT = 600.0
 #: 优雅关停：worker 收到就 SystemExit，等不到 5 秒说明它根本没在读 stdin。
 SHUTDOWN_TIMEOUT = 5.0
 
+# ---- worker 协议 v1（契约见 docs/adr/0003-worker-protocol-v1.md） -----------
+#: 请求信封的协议版本。worker 双栈兼容（无此字段 = legacy），父进程只发 v1。
+PROTOCOL_VERSION = 1
+
+#: 池方法名 → v1 线上命令名。`override` 这个叫法留在 Python API 上（app.py
+#: 一路这么叫），线上统一叫 `render`——v1 的命令表是给 Rust supervisor 看的，
+#: 那里没有历史包袱，不该背我们的旧名字。
+_V1_CMD = {"override": "render"}
+
+#: (项目, 脚本) → 已经起过第几代 worker。supervisor 靠 generation 分辨
+#: 「这条响应属于哪一代」：会话被超时 kill 后重建，晚到的旧响应必须能被认出来
+#: 丢弃，否则新会话会被上一代的 manifest 污染。
+_generations: dict[tuple[str, str], int] = {}
+#: 单独一把锁：`EngineWorker.__init__` 是在 `get()` 持着 `_lock` 时调用的，
+#: 在里面再抢 `_lock` 会直接自锁死（threading.Lock 不可重入）。
+_gen_lock = threading.Lock()
+
 #: 解释器来源（环境状态 API 与诊断包都用这套字符串，别在别处另起名字）
 SOURCE_ENV = "env_override"       # MM_WORKER_PYTHON
 SOURCE_CONFIGURED = "configured"  # 用户在设置里指定的
@@ -88,6 +106,14 @@ def _norm_dir(figures_dir: str | Path) -> str:
         p = str(figures_dir)
     import os
     return p.lower() if os.name == "nt" else p
+
+
+def _next_generation(key: tuple[str, str]) -> int:
+    """该池键的下一代序号（从 1 开始，每重建一次 +1，进程内单调）。"""
+    with _gen_lock:
+        gen = _generations.get(key, 0) + 1
+        _generations[key] = gen
+        return gen
 
 
 def _cache_slug(figures_dir: str, script_name: str) -> str:
@@ -363,6 +389,9 @@ class EngineWorker:
         self._touched = 0.0
         self._touch()                      # mkdir 对已存在的目录不动 mtime，见 _touch
         self.rev = 0                       # 每次 override 递增，用于前端缓存穿透
+        # 这一代的序号：同一 (项目, 脚本) 每重建一次 +1，随每个请求发给 worker
+        # 并原样回显（worker 不理解它，校验归调用方/未来的 supervisor）。
+        self.generation = _next_generation((_norm_dir(figures_dir), script_name))
         self.lock = threading.Lock()
         self.built = False
         self.last_used = time.time()
@@ -459,6 +488,81 @@ class EngineWorker:
                 self._log_tail(), code="worker_timeout")
         return box[0] if box else ""
 
+    def _envelope(self, obj: dict) -> dict:
+        """把 `{"cmd": …, 其余参数}` 装进 v1 信封。
+
+        `stem` 走顶层（它是「这条请求作用在哪张图上」，与命令参数不是一回事），
+        其余参数进 `payload`。带 patches 的命令顺手算上 canonical hash——
+        worker 会自己再算一遍对一下，两边序列化分歧当场暴露（这条自检为的是
+        将来 Rust supervisor 接手时不会静默地发出「看起来一样其实不一样」的
+        patch 列表）。
+        """
+        payload = dict(obj)
+        cmd = payload.pop("cmd")
+        stem = payload.pop("stem", None)
+        env = {
+            "protocol_version": PROTOCOL_VERSION,
+            "request_id": f"r-{uuid.uuid4().hex}",
+            "worker_generation": self.generation,
+            "render_revision": self.rev,
+            "cmd": _V1_CMD.get(cmd, cmd),
+            "payload": payload,
+        }
+        if stem is not None:
+            env["stem"] = stem
+        if "patches" in payload:
+            env["canonical_patch_hash"] = patchspec.patch_hash(payload["patches"])
+        return env
+
+    def _kill_now(self) -> None:
+        """状态未知的会话立即杀掉（与超时同纪律，绝不复用）。"""
+        try:
+            self.proc.kill()
+            self.proc.wait(timeout=_SHUTDOWN_JOIN_TIMEOUT)
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+    def _check_envelope(self, resp: dict, rid: str) -> None:
+        """响应必须是对这条请求的回答，否则这个会话已经错位了。
+
+        管道是串行的，回显对不上只有两种可能：worker 少回/多回了一条，
+        或者对面根本不是我们以为的那个实现。两种都意味着**后续所有响应都
+        对不上号**——继续用下去，用户会看到 A 图的 manifest 落到 B 图上。
+        杀掉重建是唯一安全的处置（下一次 `get()` 自动起新的）。
+        """
+        got = resp.get("request_id")
+        ver = resp.get("protocol_version")
+        if got == rid and ver == PROTOCOL_VERSION:
+            return
+        self._kill_now()
+        detail = (f"protocol_version={ver!r}" if got == rid
+                  else f"request_id={got!r}，期待 {rid!r}")
+        raise WorkerError(
+            f"渲染会话协议错乱（{detail}）。会话已重启，可以重试。",
+            self._log_tail(), code="protocol_mismatch")
+
+    def _error_of(self, resp: dict) -> WorkerError:
+        """v1 错误信封 → WorkerError（legacy 的扁平形状一并兼容）。"""
+        err = resp.get("error")
+        if isinstance(err, dict):
+            msg = err.get("message") or "worker 错误"
+            tb = err.get("traceback", "")
+            code = err.get("code", "")
+        else:
+            msg = err or "worker 错误"
+            tb = resp.get("traceback", "")
+            code = ""
+        # missing_dependency 优先于协议 code：worker 那边它只是一个普通的
+        # script_error，但对用户来说「缺包」是完全不同的一件事（有可执行出口）。
+        mod = missing_module(f"{msg}\n{tb}")
+        if mod:
+            return WorkerError(
+                f"脚本用到的 {mod} 在当前渲染环境里没有。"
+                f"可以在设置 →「渲染环境」里改用你自己那套装了 {mod} 的 "
+                f"Python / Conda 环境。",
+                tb, code="missing_dependency", module=mod)
+        return WorkerError(msg, tb, code=code)
+
     def request(self, obj: dict, timeout: float | None = None) -> dict:
         # None → 取模块常量的**当前**值（默认参数会在 def 时定死，测试改不动）
         timeout = REQUEST_TIMEOUT if timeout is None else timeout
@@ -466,26 +570,25 @@ class EngineWorker:
         # 所有命令（build/override/export/render_png/preview_png）都经这里，
         # 是「这个会话真的被用了」覆盖面最全的一个点。
         self._touch()
+        env = self._envelope(obj)
+        rid = env["request_id"]
         with self.lock:
             if not self.alive():
                 raise WorkerError("worker 进程已退出", self._log_tail())
-            self.proc.stdin.write(json.dumps(obj, ensure_ascii=False) + "\n")
+            self.proc.stdin.write(json.dumps(env, ensure_ascii=False) + "\n")
             self.proc.stdin.flush()
             line = self._readline(timeout)
         if not line:
             raise WorkerError("worker 进程崩溃（无响应）", self._log_tail())
         resp = json.loads(line)
+        self._check_envelope(resp, rid)
+        if resp.get("hash_mismatch"):
+            # 不影响本次结果（worker 照常执行了），但两侧的规范化实现已经分叉
+            LOG.warning("worker 报告 patch 哈希不一致: %s → %s（%s）",
+                        env.get("canonical_patch_hash"),
+                        resp.get("worker_patch_hash"), self.script_name)
         if not resp.get("ok"):
-            tb = resp.get("traceback", "")
-            msg = resp.get("error", "worker 错误")
-            mod = missing_module(f"{msg}\n{tb}")
-            if mod:
-                raise WorkerError(
-                    f"脚本用到的 {mod} 在当前渲染环境里没有。"
-                    f"可以在设置 →「渲染环境」里改用你自己那套装了 {mod} 的 "
-                    f"Python / Conda 环境。",
-                    tb, code="missing_dependency", module=mod)
-            raise WorkerError(msg, tb)
+            raise self._error_of(resp)
         return resp
 
     def ensure_built(self) -> dict:

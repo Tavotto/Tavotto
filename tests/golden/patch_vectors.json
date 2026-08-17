@@ -1,0 +1,550 @@
+{
+  "_README": [
+    "Magplot worker 协议 v1 —— patch 规范化 golden vectors。",
+    "唯一权威实现: src/magplot/engine/patchspec.py；契约: docs/adr/0003-worker-protocol-v1.md。",
+    "Rust 实现（magplot-workerd）必须逐字节复现 canonical_json 与 hash——",
+    "改动任何一侧都必须同步另一侧并更新本文件，否则两边算出的 patch 身份会静默分叉。",
+    "字段: input=原始 patch 列表, canonical=规范化结果, dropped=被剔除条目的原因,",
+    "canonical_json=确定性序列化(UTF-8), hash=sha256: 前缀的十六进制摘要。"
+  ],
+  "vectors": [
+    {
+      "name": "empty",
+      "description": "空表：什么都没改也要有稳定身份（sha256 of \"[]\"）",
+      "input": [],
+      "canonical": [],
+      "dropped": [],
+      "canonical_json": "[]",
+      "hash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "name": "single",
+      "description": "单条 patch 的最小形态",
+      "input": [
+        {
+          "gid": "fig.ax0.title",
+          "prop": "text",
+          "value": "Fig 1"
+        }
+      ],
+      "canonical": [
+        {
+          "gid": "fig.ax0.title",
+          "prop": "text",
+          "value": "Fig 1"
+        }
+      ],
+      "dropped": [],
+      "canonical_json": "[{\"gid\":\"fig.ax0.title\",\"prop\":\"text\",\"value\":\"Fig 1\"}]",
+      "hash": "sha256:51159e25994e239d30e615dbc70314001764ee5cd2dd2c4975efccd74536f0be"
+    },
+    {
+      "name": "last_wins",
+      "description": "同一个 (gid, prop) 写了三遍：只留最后一条",
+      "input": [
+        {
+          "gid": "fig.ax0.title",
+          "prop": "text",
+          "value": "第一版"
+        },
+        {
+          "gid": "fig.ax0.title",
+          "prop": "text",
+          "value": "第二版"
+        },
+        {
+          "gid": "fig.ax0.title",
+          "prop": "text",
+          "value": "最终版"
+        }
+      ],
+      "canonical": [
+        {
+          "gid": "fig.ax0.title",
+          "prop": "text",
+          "value": "最终版"
+        }
+      ],
+      "dropped": [],
+      "canonical_json": "[{\"gid\":\"fig.ax0.title\",\"prop\":\"text\",\"value\":\"最终版\"}]",
+      "hash": "sha256:53682d151db9601e761e053a6ddc814cc415cb3059d421e56abcad3997dc21a5"
+    },
+    {
+      "name": "order_independent",
+      "description": "乱序 + 重复：规范化后与 sorted_equivalent 逐字节相同（同 hash）",
+      "input": [
+        {
+          "gid": "fig.ax1.ylabel",
+          "prop": "fontsize",
+          "value": 9
+        },
+        {
+          "gid": "fig.ax0.title",
+          "prop": "text",
+          "value": "T"
+        },
+        {
+          "gid": "fig.ax0.title",
+          "prop": "fontsize",
+          "value": 11
+        },
+        {
+          "gid": "fig.ax1.ylabel",
+          "prop": "fontsize",
+          "value": 10
+        }
+      ],
+      "canonical": [
+        {
+          "gid": "fig.ax0.title",
+          "prop": "fontsize",
+          "value": 11
+        },
+        {
+          "gid": "fig.ax0.title",
+          "prop": "text",
+          "value": "T"
+        },
+        {
+          "gid": "fig.ax1.ylabel",
+          "prop": "fontsize",
+          "value": 10
+        }
+      ],
+      "dropped": [],
+      "canonical_json": "[{\"gid\":\"fig.ax0.title\",\"prop\":\"fontsize\",\"value\":11},{\"gid\":\"fig.ax0.title\",\"prop\":\"text\",\"value\":\"T\"},{\"gid\":\"fig.ax1.ylabel\",\"prop\":\"fontsize\",\"value\":10}]",
+      "hash": "sha256:fd01355c8b262aa90f2a2cd1e3344fe941ebdb574256118ac6039e81d32116b5"
+    },
+    {
+      "name": "sorted_equivalent",
+      "description": "与 order_independent 等价的另一种写法：hash 必须一致",
+      "input": [
+        {
+          "gid": "fig.ax0.title",
+          "prop": "fontsize",
+          "value": 11
+        },
+        {
+          "gid": "fig.ax0.title",
+          "prop": "text",
+          "value": "T"
+        },
+        {
+          "gid": "fig.ax1.ylabel",
+          "prop": "fontsize",
+          "value": 10
+        }
+      ],
+      "canonical": [
+        {
+          "gid": "fig.ax0.title",
+          "prop": "fontsize",
+          "value": 11
+        },
+        {
+          "gid": "fig.ax0.title",
+          "prop": "text",
+          "value": "T"
+        },
+        {
+          "gid": "fig.ax1.ylabel",
+          "prop": "fontsize",
+          "value": 10
+        }
+      ],
+      "dropped": [],
+      "canonical_json": "[{\"gid\":\"fig.ax0.title\",\"prop\":\"fontsize\",\"value\":11},{\"gid\":\"fig.ax0.title\",\"prop\":\"text\",\"value\":\"T\"},{\"gid\":\"fig.ax1.ylabel\",\"prop\":\"fontsize\",\"value\":10}]",
+      "hash": "sha256:fd01355c8b262aa90f2a2cd1e3344fe941ebdb574256118ac6039e81d32116b5"
+    },
+    {
+      "name": "invalid_dropped",
+      "description": "非法条目剔除（不是对象 / gid 非字符串 / gid 空 / prop 为 null / 缺 value / 整数越界），合法的那条照留",
+      "input": [
+        "not-an-object",
+        42,
+        null,
+        {
+          "gid": 7,
+          "prop": "text",
+          "value": "x"
+        },
+        {
+          "gid": "",
+          "prop": "text",
+          "value": "x"
+        },
+        {
+          "gid": "fig.ax0.title",
+          "prop": null,
+          "value": "x"
+        },
+        {
+          "gid": "fig.ax0.title",
+          "prop": "text"
+        },
+        {
+          "gid": "fig.ax0.title",
+          "prop": "zorder",
+          "value": 9223372036854775808
+        },
+        {
+          "gid": "fig.ax0.title",
+          "prop": "text",
+          "value": "survivor"
+        }
+      ],
+      "canonical": [
+        {
+          "gid": "fig.ax0.title",
+          "prop": "text",
+          "value": "survivor"
+        }
+      ],
+      "dropped": [
+        {
+          "index": 0,
+          "reason": "not_an_object"
+        },
+        {
+          "index": 1,
+          "reason": "not_an_object"
+        },
+        {
+          "index": 2,
+          "reason": "not_an_object"
+        },
+        {
+          "index": 3,
+          "reason": "bad_gid"
+        },
+        {
+          "index": 4,
+          "reason": "bad_gid"
+        },
+        {
+          "index": 5,
+          "reason": "bad_prop"
+        },
+        {
+          "index": 6,
+          "reason": "missing_value"
+        },
+        {
+          "index": 7,
+          "reason": "int_out_of_range"
+        }
+      ],
+      "canonical_json": "[{\"gid\":\"fig.ax0.title\",\"prop\":\"text\",\"value\":\"survivor\"}]",
+      "hash": "sha256:6387aceb4a2b52aea016554eaeabda783560fa773ec58ac4c5032ddc0cc490fb"
+    },
+    {
+      "name": "unicode_values",
+      "description": "中文 / µ / ⁻¹ / mathtext：ensure_ascii=False，UTF-8 原样出字",
+      "input": [
+        {
+          "gid": "fig.ax0.xlabel",
+          "prop": "text",
+          "value": "波数 (cm$^{-1}$)"
+        },
+        {
+          "gid": "fig.ax0.ylabel",
+          "prop": "text",
+          "value": "强度 µA·cm⁻²"
+        },
+        {
+          "gid": "fig.ax0.title",
+          "prop": "text",
+          "value": "图 1：对照组"
+        }
+      ],
+      "canonical": [
+        {
+          "gid": "fig.ax0.title",
+          "prop": "text",
+          "value": "图 1：对照组"
+        },
+        {
+          "gid": "fig.ax0.xlabel",
+          "prop": "text",
+          "value": "波数 (cm$^{-1}$)"
+        },
+        {
+          "gid": "fig.ax0.ylabel",
+          "prop": "text",
+          "value": "强度 µA·cm⁻²"
+        }
+      ],
+      "dropped": [],
+      "canonical_json": "[{\"gid\":\"fig.ax0.title\",\"prop\":\"text\",\"value\":\"图 1：对照组\"},{\"gid\":\"fig.ax0.xlabel\",\"prop\":\"text\",\"value\":\"波数 (cm$^{-1}$)\"},{\"gid\":\"fig.ax0.ylabel\",\"prop\":\"text\",\"value\":\"强度 µA·cm⁻²\"}]",
+      "hash": "sha256:2934dbbab6459f3b0a44f8f8e0a11a40652a7c746952605c1681c2b1699067fe"
+    },
+    {
+      "name": "floats",
+      "description": "浮点写法逐字节钉死：0.1+0.2 的尾数、-0.0、1e-07 的指数形式、整数 1 与浮点 1.0 是两个不同的值",
+      "input": [
+        {
+          "gid": "g",
+          "prop": "sum",
+          "value": 0.30000000000000004
+        },
+        {
+          "gid": "g",
+          "prop": "neg_zero",
+          "value": -0.0
+        },
+        {
+          "gid": "g",
+          "prop": "tiny",
+          "value": 1e-07
+        },
+        {
+          "gid": "g",
+          "prop": "int_one",
+          "value": 1
+        },
+        {
+          "gid": "g",
+          "prop": "float_one",
+          "value": 1.0
+        },
+        {
+          "gid": "g",
+          "prop": "big",
+          "value": 1e+22
+        },
+        {
+          "gid": "g",
+          "prop": "third",
+          "value": 0.3333333333333333
+        }
+      ],
+      "canonical": [
+        {
+          "gid": "g",
+          "prop": "big",
+          "value": 1e+22
+        },
+        {
+          "gid": "g",
+          "prop": "float_one",
+          "value": 1.0
+        },
+        {
+          "gid": "g",
+          "prop": "int_one",
+          "value": 1
+        },
+        {
+          "gid": "g",
+          "prop": "neg_zero",
+          "value": -0.0
+        },
+        {
+          "gid": "g",
+          "prop": "sum",
+          "value": 0.30000000000000004
+        },
+        {
+          "gid": "g",
+          "prop": "third",
+          "value": 0.3333333333333333
+        },
+        {
+          "gid": "g",
+          "prop": "tiny",
+          "value": 1e-07
+        }
+      ],
+      "dropped": [],
+      "canonical_json": "[{\"gid\":\"g\",\"prop\":\"big\",\"value\":1e+22},{\"gid\":\"g\",\"prop\":\"float_one\",\"value\":1.0},{\"gid\":\"g\",\"prop\":\"int_one\",\"value\":1},{\"gid\":\"g\",\"prop\":\"neg_zero\",\"value\":-0.0},{\"gid\":\"g\",\"prop\":\"sum\",\"value\":0.30000000000000004},{\"gid\":\"g\",\"prop\":\"third\",\"value\":0.3333333333333333},{\"gid\":\"g\",\"prop\":\"tiny\",\"value\":1e-07}]",
+      "hash": "sha256:f2d8bc259afcb2ef1469ac8bd28365f1a5e012f961c1a3a58f92784c51b0f7a8"
+    },
+    {
+      "name": "nested_values",
+      "description": "嵌套 list value（pos_frac / endpoints_frac）与对象 value",
+      "input": [
+        {
+          "gid": "fig.ax0.text3",
+          "prop": "pos_frac",
+          "value": [
+            0.125,
+            0.5
+          ]
+        },
+        {
+          "gid": "fig.arrow0",
+          "prop": "endpoints_frac",
+          "value": [
+            0.1,
+            0.2,
+            0.35,
+            0.9
+          ]
+        },
+        {
+          "gid": "fig.ax0",
+          "prop": "proof",
+          "value": {
+            "b": [
+              1,
+              2.5
+            ],
+            "a": "x",
+            "c": {
+              "z": null
+            }
+          }
+        }
+      ],
+      "canonical": [
+        {
+          "gid": "fig.arrow0",
+          "prop": "endpoints_frac",
+          "value": [
+            0.1,
+            0.2,
+            0.35,
+            0.9
+          ]
+        },
+        {
+          "gid": "fig.ax0",
+          "prop": "proof",
+          "value": {
+            "b": [
+              1,
+              2.5
+            ],
+            "a": "x",
+            "c": {
+              "z": null
+            }
+          }
+        },
+        {
+          "gid": "fig.ax0.text3",
+          "prop": "pos_frac",
+          "value": [
+            0.125,
+            0.5
+          ]
+        }
+      ],
+      "dropped": [],
+      "canonical_json": "[{\"gid\":\"fig.arrow0\",\"prop\":\"endpoints_frac\",\"value\":[0.1,0.2,0.35,0.9]},{\"gid\":\"fig.ax0\",\"prop\":\"proof\",\"value\":{\"a\":\"x\",\"b\":[1,2.5],\"c\":{\"z\":null}}},{\"gid\":\"fig.ax0.text3\",\"prop\":\"pos_frac\",\"value\":[0.125,0.5]}]",
+      "hash": "sha256:9bc64d41cb0859aa9aad5ddce1a8244d50973cffd7a5ac41470b4fd0ddf74a4f"
+    },
+    {
+      "name": "scalars",
+      "description": "null / true / false / 空字符串：都是合法 value，不许被当成缺失",
+      "input": [
+        {
+          "gid": "fig.ax0.legend",
+          "prop": "visible",
+          "value": true
+        },
+        {
+          "gid": "fig.ax0.grid",
+          "prop": "visible",
+          "value": false
+        },
+        {
+          "gid": "fig.ax0.title",
+          "prop": "color",
+          "value": null
+        },
+        {
+          "gid": "fig.ax0.xlabel",
+          "prop": "text",
+          "value": ""
+        }
+      ],
+      "canonical": [
+        {
+          "gid": "fig.ax0.grid",
+          "prop": "visible",
+          "value": false
+        },
+        {
+          "gid": "fig.ax0.legend",
+          "prop": "visible",
+          "value": true
+        },
+        {
+          "gid": "fig.ax0.title",
+          "prop": "color",
+          "value": null
+        },
+        {
+          "gid": "fig.ax0.xlabel",
+          "prop": "text",
+          "value": ""
+        }
+      ],
+      "dropped": [],
+      "canonical_json": "[{\"gid\":\"fig.ax0.grid\",\"prop\":\"visible\",\"value\":false},{\"gid\":\"fig.ax0.legend\",\"prop\":\"visible\",\"value\":true},{\"gid\":\"fig.ax0.title\",\"prop\":\"color\",\"value\":null},{\"gid\":\"fig.ax0.xlabel\",\"prop\":\"text\",\"value\":\"\"}]",
+      "hash": "sha256:df139f5fae6915848cbd22e872b6486f815a8c6bda46aa5e5b964eb154664883"
+    },
+    {
+      "name": "sort_order",
+      "description": "排序按 (gid, prop) 的 Unicode 码点序：ASCII 全部排在非 ASCII 之前，Rust 侧的 UTF-8 字节序与之等价",
+      "input": [
+        {
+          "gid": "轴",
+          "prop": "text",
+          "value": 1
+        },
+        {
+          "gid": "Z",
+          "prop": "text",
+          "value": 2
+        },
+        {
+          "gid": "a",
+          "prop": "text",
+          "value": 3
+        },
+        {
+          "gid": "a",
+          "prop": "Text",
+          "value": 4
+        },
+        {
+          "gid": "A",
+          "prop": "text",
+          "value": 5
+        }
+      ],
+      "canonical": [
+        {
+          "gid": "A",
+          "prop": "text",
+          "value": 5
+        },
+        {
+          "gid": "Z",
+          "prop": "text",
+          "value": 2
+        },
+        {
+          "gid": "a",
+          "prop": "Text",
+          "value": 4
+        },
+        {
+          "gid": "a",
+          "prop": "text",
+          "value": 3
+        },
+        {
+          "gid": "轴",
+          "prop": "text",
+          "value": 1
+        }
+      ],
+      "dropped": [],
+      "canonical_json": "[{\"gid\":\"A\",\"prop\":\"text\",\"value\":5},{\"gid\":\"Z\",\"prop\":\"text\",\"value\":2},{\"gid\":\"a\",\"prop\":\"Text\",\"value\":4},{\"gid\":\"a\",\"prop\":\"text\",\"value\":3},{\"gid\":\"轴\",\"prop\":\"text\",\"value\":1}]",
+      "hash": "sha256:f7e4bb2a70c6b8e17bbcdfb254ff230ebc8e6bb646c3dd8a9646cbf414bb53d2"
+    }
+  ]
+}
