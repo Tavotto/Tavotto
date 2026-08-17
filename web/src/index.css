@@ -23,8 +23,10 @@
   /* faint：仅装饰、禁用态、非必要信息；不用于需要阅读的文字 */
   --color-ink-faint: #a3a39a;
 
-  --color-accent: #4a63d8;
-  --color-accent-subtle: #eef0fb;
+  /* 品牌蓝（Magplot Brand System Rev 2.0）：链接、主动作强调、徽章、focus ring。
+     与选中蓝 --color-sel 分工明确：sel 只做选中 / 对齐 / 尺寸线，不进标志。 */
+  --color-accent: #2868b7;
+  --color-accent-subtle: #e9f0f9;
   --color-danger: #c4442a;
   --color-danger-subtle: #fbeeeb;
   --color-sel: #2f6fed;

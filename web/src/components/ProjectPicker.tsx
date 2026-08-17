@@ -20,6 +20,7 @@ import { isDesktop, pickDirectory } from '@/lib/desktop'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { cn } from '@/lib/utils'
 import { useProjectStore } from '@/store/projectStore'
+import { BrandMark } from './ui/BrandMark'
 import { Button } from './ui/Button'
 import { Dialog } from './ui/Dialog'
 import { TextInput } from './ui/Input'
@@ -54,7 +55,11 @@ export function ProjectPicker() {
   return (
     <div className="flex h-full items-center justify-center overflow-y-auto bg-bg">
       <main aria-label="选择项目" className="w-[460px] max-w-[calc(100vw-3rem)] py-10">
-        <h1 className="text-lg font-semibold tracking-tight text-ink">{PRODUCT_NAME}</h1>
+        {/* 页面底是纸色 --color-bg：灰块用 paper 档才能与背景分开 */}
+        <h1 className="flex items-center gap-2.5 text-lg font-semibold tracking-tight text-ink">
+          <BrandMark size={24} variant="compact" tone="paper" />
+          {PRODUCT_NAME}
+        </h1>
         <p className="mt-1 text-xs leading-relaxed text-ink-3">
           项目就是论文图所在的目录；选择一个目录开始排版。
         </p>

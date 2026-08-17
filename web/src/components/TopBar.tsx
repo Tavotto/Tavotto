@@ -34,6 +34,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import { useUiStore, type Tool } from '@/store/uiStore'
 import { useUpdateStore } from '@/store/updateStore'
 import { useViewportStore } from '@/store/viewportStore'
+import { BrandMark } from './ui/BrandMark'
 import { Button } from './ui/Button'
 import { Menu, MenuItem, MenuLabel, MenuSeparator } from './ui/Menu'
 import { Popover } from './ui/Popover'
@@ -106,10 +107,13 @@ function importPackage() {
   input.click()
 }
 
-/** 纯文字品牌：没有真实品牌资产前不画 logo */
+/** 图形标 + 实时文字：20px compact 是规范的显式例外（阈值本该给 mini） */
 function Brand() {
   return (
-    <span className="shrink-0 text-sm font-semibold tracking-tight text-ink">{PRODUCT_NAME}</span>
+    <span className="flex shrink-0 items-center gap-[7px] text-sm font-semibold tracking-tight text-ink">
+      <BrandMark size={20} variant="compact" />
+      {PRODUCT_NAME}
+    </span>
   )
 }
 

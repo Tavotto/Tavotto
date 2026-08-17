@@ -30,6 +30,13 @@ ICO = ROOT / "assets" / "icon" / "icon.ico"
 ICNS_SIZES = [16, 32, 64, 128, 256, 512, 1024]
 ICO_SIZES = [16, 24, 32, 48, 64, 128, 256]
 
+# Tauri 壳直接引用的 PNG（tauri.conf.json 的 bundle.icon）——
+# 和 .icns/.ico 出自同一份 SVG，忘了重出会让 dmg 窗口图标停在旧画面
+TAURI_PNGS = [
+    (ROOT / "src-tauri" / "icons" / "128x128.png", 128),
+    (ROOT / "src-tauri" / "icons" / "icon.png", 512),
+]
+
 
 def need(tool: str) -> str:
     p = shutil.which(tool)
@@ -75,6 +82,12 @@ def main() -> int:
             pngs.append(str(p))
         subprocess.run([need("magick"), *pngs, str(ICO)], check=True)
         print(f"✓ {ICO.relative_to(ROOT)}  {ICO.stat().st_size:,} bytes")
+
+        # ---- Tauri PNGs ----
+        for out, size in TAURI_PNGS:
+            if out.parent.is_dir():
+                render(rsvg, size, out)
+                print(f"✓ {out.relative_to(ROOT)}  {out.stat().st_size:,} bytes")
 
     return 0
 

@@ -17,6 +17,7 @@ import { useAiStore } from '@/store/aiStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
 import { useUpdateStore } from '@/store/updateStore'
+import { BrandMark } from './ui/BrandMark'
 import { Button } from './ui/Button'
 import { Dialog } from './ui/Dialog'
 import { EngineEnvironmentCard } from './EngineEnvironmentCard'
@@ -180,7 +181,7 @@ function ProjectSection() {
       <Row label="可参数化脚本">
         <span className="flex-1 text-xs text-ink-2">
           {project?.scripts ?? 0} 个脚本已登记
-          {(project?.scripts ?? 0) === 0 && '（面板不会带 ⚡）'}
+          {(project?.scripts ?? 0) === 0 && '（面板不会进入图内编辑）'}
         </span>
         <Button
           variant="outline"
@@ -777,11 +778,15 @@ function AboutSection() {
   }, [])
   return (
     <div className="flex flex-col gap-2.5">
-      <p className="text-xs text-ink">
-        {PRODUCT_NAME}
-        {version && <span className="ml-1.5 font-mono text-ink-2">v{version}</span>}
-        <span className="ml-2 text-ink-3">论文图排版与参数化图表编辑</span>
-      </p>
+      {/* About 是标志唯一允许的 full 档界面位置（54px，弹窗白底用默认灰） */}
+      <div className="flex items-center gap-3">
+        <BrandMark size={54} variant="full" />
+        <p className="text-xs text-ink">
+          {PRODUCT_NAME}
+          {version && <span className="ml-1.5 font-mono text-ink-2">v{version}</span>}
+          <span className="ml-2 text-ink-3">论文图排版与参数化图表编辑</span>
+        </p>
+      </div>
       <p className="text-xs leading-relaxed text-ink-3">
         所有数据与渲染都在本机完成，不上传任何内容；改图助手调用的是你本机的
         Codex / Claude 命令行工具。唯一的对外请求是检查更新（可在「检查更新」里关闭）。

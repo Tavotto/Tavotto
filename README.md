@@ -8,12 +8,14 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/erwanjun/magplot/releases"><img alt="Release" src="https://img.shields.io/github/v/release/erwanjun/magplot?style=flat-square&color=4a63d8&labelColor=1b1b18"></a>
+  <a href="https://github.com/erwanjun/magplot/releases"><img alt="Release" src="https://img.shields.io/github/v/release/erwanjun/magplot?style=flat-square&color=2868b7&labelColor=1b1b18"></a>
   <a href="https://github.com/erwanjun/magplot/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/erwanjun/magplot/ci.yml?branch=main&style=flat-square&labelColor=1b1b18"></a>
-  <a href="https://github.com/erwanjun/magplot/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0--only-4a63d8?style=flat-square&labelColor=1b1b18"></a>
+  <a href="https://github.com/erwanjun/magplot/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0--only-2868b7?style=flat-square&labelColor=1b1b18"></a>
   <img alt="Python" src="https://img.shields.io/badge/python-3.10%20–%203.13-1b1b18?style=flat-square&labelColor=1b1b18">
   <img alt="Platform" src="https://img.shields.io/badge/macOS%20·%20Windows%20·%20Linux-1b1b18?style=flat-square&labelColor=1b1b18">
 </p>
+
+<p align="center"><i>Edit the figure. Keep the source.</i></p>
 
 The last mile before submission usually goes like this: the plots are done, but now
 they have to become Figure 1 — resize the fonts, move the legend, align everything.
@@ -175,7 +177,7 @@ your figures or data is uploaded.
   If a script needs a package the bundled runtime does not have (rdkit, astropy, your
   lab's own library), Magplot says which package is missing and offers to switch to your
   own environment under **Settings → Rendering environment**. Without any working
-  interpreter, layout, annotation and export still work — only ⚡ editing needs one.
+  interpreter, layout, annotation and export still work — only in-figure editing needs one.
   **Settings → Privacy, diagnostics and About** always shows which interpreter is in use
   and where it came from.
 

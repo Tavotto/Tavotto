@@ -8,12 +8,14 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/erwanjun/magplot/releases"><img alt="Release" src="https://img.shields.io/github/v/release/erwanjun/magplot?style=flat-square&color=4a63d8&labelColor=1b1b18"></a>
+  <a href="https://github.com/erwanjun/magplot/releases"><img alt="Release" src="https://img.shields.io/github/v/release/erwanjun/magplot?style=flat-square&color=2868b7&labelColor=1b1b18"></a>
   <a href="https://github.com/erwanjun/magplot/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/erwanjun/magplot/ci.yml?branch=main&style=flat-square&labelColor=1b1b18"></a>
-  <a href="https://github.com/erwanjun/magplot/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0--only-4a63d8?style=flat-square&labelColor=1b1b18"></a>
+  <a href="https://github.com/erwanjun/magplot/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0--only-2868b7?style=flat-square&labelColor=1b1b18"></a>
   <img alt="Python" src="https://img.shields.io/badge/python-3.10%20–%203.13-1b1b18?style=flat-square&labelColor=1b1b18">
   <img alt="Platform" src="https://img.shields.io/badge/macOS%20·%20Windows%20·%20Linux-1b1b18?style=flat-square&labelColor=1b1b18">
 </p>
+
+<p align="center"><i>Edit the figure. Keep the source. —— 直接在图上改，脚本不动。</i></p>
 
 投稿前的最后一公里通常是这样的：图早就画好了，但要拼成 Figure 1、调字号、
 挪图例、对齐版面——于是回到 Python 里改一行、重跑脚本、再看一眼，来回二十遍。
@@ -160,7 +162,7 @@ PDF 会把每张原始矢量面板整块嵌进去，**文字仍然可选中、�
   脚本要用内置环境里没有的包（rdkit、astropy、自家实验室的库）时，Magplot 会
   直接告诉你缺的是哪个包，并给出「换成你自己的环境」的入口
   （设置 →「渲染环境」）。一个可用解释器都没有时，排版、标注、导出照常，
-  只有 ⚡ 图内编辑用不了。「设置 → 隐私、诊断与 About」始终显示当前用的是
+  只有图内编辑用不了。「设置 → 隐私、诊断与 About」始终显示当前用的是
   哪个解释器、来自哪里。
 
 ## 开发
