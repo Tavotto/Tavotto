@@ -2,7 +2,7 @@
 # 架构与安全模型见 docs/adr/0002-tauri-desktop-shell.md。
 [package]
 name = "magplot-desktop"
-version = "0.5.0"
+version = "0.6.0"
 description = "Magplot 桌面应用外壳"
 edition = "2021"
 license = "AGPL-3.0-only"
