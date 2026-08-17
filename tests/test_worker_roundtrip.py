@@ -753,3 +753,123 @@ def test_shutdown_all_kills_hung_worker(tmp_path, monkeypatch):
         if w.proc.poll() is None:                    # 兜底：绝不在测试机上留僵尸
             w.proc.kill()
             w.proc.wait(timeout=10)
+
+
+REPLAY_SCRIPT = """\
+import matplotlib.pyplot as plt
+
+def main():
+    fig, ax = plt.subplots(figsize=(4, 3))
+    ax.plot([0, 1, 2], [1, 0, 2], label="s")
+    ax.text(0.2, 0.3, "note", transform=ax.transAxes)
+    ax.legend()
+    fig.savefig("ReplayFig.pdf")
+
+    # aspect="equal"（imshow 默认）：draw 时才 apply_aspect，几何变更后
+    # 不刷新布局的话 figure 锚定换算会拿旧 transform 落错位置
+    fig2, ax2 = plt.subplots(figsize=(4, 3))
+    ax2.imshow([[0, 1], [1, 0]])
+    ax2.text(0.2, 0.3, "eqnote", transform=ax2.transAxes)
+    fig2.savefig("ReplayEq.pdf")
+"""
+
+
+def _anchor_of(manifest, gid):
+    el = next(e for e in manifest["elements"] if e["gid"] == gid)
+    return el.get("anchor")
+
+
+def _bbox_of(manifest, gid):
+    el = next(e for e in manifest["elements"] if e["gid"] == gid)
+    return el["bbox"]
+
+
+def test_frac_anchored_props_survive_geometry_moves(tmp_path):
+    """figure 锚定的位置（pos_frac 等）不得随后续几何变动漂移（FigS3 错位回归）。
+
+    真实事故：用户先拖好一批 axes 文字（pos_frac），随后又挪子图 / 改图幅。
+    旧实现里 pos_frac 只在「值变了」的那一次换算进 artist 本地坐标，几何再动
+    文字就跟着子图漂走——写回 PDF 定格的是漂移后的样子，重开后全量重放又
+    落回声明位置，「文字全部错位」。看护三件事：
+      1. 热会话里子图移动后，文字仍钉在声明的 figure 锚点上；
+      2. 图幅（size_mm）变化后同样成立；
+      3. 清空重放（≈冷启动重放）与热会话逐步应用收敛到同一状态。
+    """
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    (figs / "fig_replay.py").write_text(REPLAY_SCRIPT, encoding="utf-8")
+    proc = _spawn(figs / "fig_replay.py", figs, tmp_path)
+    try:
+        _rpc(proc, {"cmd": "build"})
+        resp = _rpc(proc, {"cmd": "override", "stem": "ReplayFig", "patches": []})
+        man = resp["manifest"]
+        txt = next(e["gid"] for e in man["elements"]
+                   if e["role"] == "text" and "texts_" in e["gid"])
+        axg = next(e["gid"] for e in man["elements"] if e["role"] == "axes")
+
+        # 1) 先放文字（pos_frac 在列表里排在几何之前——与真实事故同序）
+        p1 = [{"gid": txt, "prop": "pos_frac", "value": [0.3, 0.2]}]
+        resp = _rpc(proc, {"cmd": "override", "stem": "ReplayFig", "patches": p1})
+        a1 = _anchor_of(resp["manifest"], txt)
+        assert a1 == pytest.approx([0.3, 0.2], abs=0.02), a1
+
+        # 2) 再挪子图：文字必须钉在声明的 figure 锚点上，不随子图漂移
+        p2 = p1 + [{"gid": axg, "prop": "position", "value": [0.5, 0.5, 0.42, 0.4]}]
+        resp = _rpc(proc, {"cmd": "override", "stem": "ReplayFig", "patches": p2})
+        a2 = _anchor_of(resp["manifest"], txt)
+        assert a2 == pytest.approx([0.3, 0.2], abs=0.02), a2
+
+        # 3) 改图幅后同样成立（分数锚点与物理尺寸无关）
+        p3 = p2 + [{"gid": "figure", "prop": "size_mm", "value": [120, 80]}]
+        resp = _rpc(proc, {"cmd": "override", "stem": "ReplayFig", "patches": p3})
+        a3 = _anchor_of(resp["manifest"], txt)
+        assert a3 == pytest.approx([0.3, 0.2], abs=0.02), a3
+        bbox_live = _bbox_of(resp["manifest"], txt)
+
+        # 4) 清空再一次性全量应用（= 冷启动重放）：与热会话状态逐位收敛
+        _rpc(proc, {"cmd": "override", "stem": "ReplayFig", "patches": []})
+        resp = _rpc(proc, {"cmd": "override", "stem": "ReplayFig", "patches": p3})
+        bbox_replay = _bbox_of(resp["manifest"], txt)
+        assert bbox_replay == pytest.approx(bbox_live, abs=0.005), \
+            (bbox_live, bbox_replay)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=10)
+
+
+def test_frac_anchor_exact_on_aspect_equal_axes(tmp_path):
+    """aspect="equal"（imshow 方图）的子图：几何变更后 figure 锚点仍逐位可信。
+
+    apply_aspect 只在 draw 时发生——同一次 apply 里「先挪子图、紧接着换算
+    pos_frac」若不强制刷新布局，换算用的是未贴合长宽比的旧 transform，
+    文字会系统性落偏（FigS3 的 AFM 方图正是这一型）。看护：挪过子图后
+    文字 anchor 仍与声明值一致。
+    """
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    (figs / "fig_replay.py").write_text(REPLAY_SCRIPT, encoding="utf-8")
+    proc = _spawn(figs / "fig_replay.py", figs, tmp_path)
+    try:
+        _rpc(proc, {"cmd": "build"})
+        resp = _rpc(proc, {"cmd": "override", "stem": "ReplayEq", "patches": []})
+        man = resp["manifest"]
+        txt = next(e["gid"] for e in man["elements"]
+                   if e["role"] == "text" and "texts_" in e["gid"])
+        axg = next(e["gid"] for e in man["elements"] if e["role"] == "axes")
+
+        p = [{"gid": txt, "prop": "pos_frac", "value": [0.35, 0.25]},
+             {"gid": axg, "prop": "position", "value": [0.45, 0.4, 0.42, 0.45]}]
+        resp = _rpc(proc, {"cmd": "override", "stem": "ReplayEq", "patches": p})
+        a = _anchor_of(resp["manifest"], txt)
+        assert a == pytest.approx([0.35, 0.25], abs=0.02), a
+
+        # 图幅变化叠加后仍然成立
+        p2 = p + [{"gid": "figure", "prop": "size_mm", "value": [130, 90]}]
+        resp = _rpc(proc, {"cmd": "override", "stem": "ReplayEq", "patches": p2})
+        a2 = _anchor_of(resp["manifest"], txt)
+        assert a2 == pytest.approx([0.35, 0.25], abs=0.02), a2
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=10)

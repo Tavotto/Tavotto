@@ -1263,15 +1263,37 @@ def to_hex(color) -> str:
         return "#000000"
 
 
+# figure 锚定的 prop：setter 在应用那一刻把 figure 分数换算进 artist 的本地
+# 坐标（transData / transAxes / legend loc）。几何（图幅、子图 position）随后
+# 再变，artist 会跟着几何一起漂走，声明的 figure 位置就不再成立——所以几何
+# 一变必须重放它们，否则「写回时看到的」与「重开后重放出来的」不是同一张图
+# （FigS3 文字全体错位就是这么来的）。
+_FRAC_ANCHORED = {"pos_frac", "loc_frac", "endpoints_frac"}
+
+
+def _is_geometry_key(prop: str, artist) -> bool:
+    """会改变 figure 分数 ↔ 本地坐标换算关系的 prop。"""
+    if prop == "size_mm":
+        return isinstance(artist, Figure)
+    return prop == "position" and isinstance(artist, Axes)
+
+
 def apply(state: FigState, patches: list[dict]) -> list[str]:
-    """把全量 patch 列表同步到 Figure。返回 warning 列表（孤儿 gid 等）。"""
+    """把全量 patch 列表同步到 Figure。返回 warning 列表（孤儿 gid 等）。
+
+    应用顺序是**规范化**的：图幅（size_mm）→ 子图 position → 其余按列表序。
+    figure 锚定的 prop 依赖应用那一刻的几何，只有先把几何放到位、且几何
+    变过就重放它们，热会话的增量应用才与冷启动的全量重放收敛到同一状态
+    ——「所见 == 文档重放 == 写回 == 重开」这条链靠它成立。"""
     warnings: list[str] = []
     new: dict[tuple, object] = {}
     for p in patches:
         key = (str(p["gid"]), str(p["prop"]))
         new[key] = p["value"]
 
-    # 上次应用、这次不在 → 恢复原值
+    geometry_moved = False
+
+    # 上次应用、这次不在 → 恢复原值（originals 存的是本地坐标，与几何无关）
     for key in list(state.applied):
         if key in new:
             continue
@@ -1289,13 +1311,25 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
                         setter(artist, orig, state)
                     else:
                         setter(artist, orig)
+                if _is_geometry_key(key[1], artist):
+                    geometry_moved = True
             except Exception as exc:  # noqa: BLE001 — 单条失败不拖垮整次渲染
                 warnings.append(f"还原失败 {key[0]}.{key[1]}: {exc}")
         state.applied.pop(key)
         state.originals.pop(key, None)
 
-    # 应用新值
-    for key, value in new.items():
+    # 应用新值：size_mm → axes position → 其余（组内保持列表序，sorted 稳定）
+    def _rank(item):
+        (gid, prop), _value = item
+        artist = state.index.get(gid)
+        if prop == "size_mm" and isinstance(artist, Figure):
+            return 0
+        if prop == "position" and isinstance(artist, Axes):
+            return 1
+        return 2
+
+    drawn_after_geometry = False
+    for key, value in sorted(new.items(), key=_rank):
         gid, prop = key
         artist = state.index.get(gid)
         if artist is None:
@@ -1305,8 +1339,22 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
         if handler is None:
             warnings.append(f"属性不支持: {gid}.{prop}")
             continue
+        # 几何组应用完、进入其余 prop 之前强制一次布局：aspect="equal" 的
+        # 子图只有 draw 才 apply_aspect，不刷新的话 figure 锚定的换算会拿着
+        # 旧 transform 落错位置（AFM 方图上尤其明显）
+        if (geometry_moved and not drawn_after_geometry
+                and not _is_geometry_key(prop, artist)):
+            drawn_after_geometry = True
+            try:
+                state.fig.draw_without_rendering()
+            except Exception:  # noqa: BLE001 — 布局刷新失败不拦渲染
+                pass
         if state.applied.get(key) == value:
-            continue
+            # 值没变也要重放 figure 锚定的位置：几何动过，它们的本地坐标已失效
+            if not (geometry_moved and prop in _FRAC_ANCHORED):
+                continue
+        elif _is_geometry_key(prop, artist):
+            geometry_moved = True
         getter, setter = handler
         try:
             if key not in state.originals:
