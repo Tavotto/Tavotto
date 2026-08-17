@@ -24,6 +24,8 @@ url = "2"
 percent-encoding = "2"
 
 [profile.release]
-codegen-units = 1
-lto = true
+# thin LTO + 默认 codegen-units：壳的业务全在 Python sidecar，fat LTO +
+# 单 codegen unit 换不来可感知的体积/性能，却让每次发布的末端链接
+# （rust-cache 帮不上的那段）多等数分钟——Windows 腿实测 6m44s 的大头。
+lto = "thin"
 strip = true

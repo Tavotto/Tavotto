@@ -16,6 +16,10 @@ name: Desktop apps (Tauri)
 # 2. Windows 再跑 smoke_app.py --expect-source bundled（内置 runtime 真能渲染），
 #    并对 Tauri 真 .exe 做启动-探活-退出探针（壳 → sidecar → 收尾）。
 on:
+  # 打 tag 即自动构建并挂到 Release（与 release.yml 并行，省一半墙钟时间；
+  # 「挂到 Release」步骤会先等 release.yml 把 Release 建出来）
+  push:
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
       tag:
@@ -39,6 +43,8 @@ jobs:
           - { os: windows-latest, bundles: nsis, artifact: nsis }
     runs-on: ${{ matrix.os }}
     env:
+      # tag 触发时 inputs 为空，一律经这个变量取目标 tag
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
       MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
       MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
       MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
@@ -48,13 +54,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ inputs.tag || github.ref_name }}
 
       - name: 确认该 tag 含 Tauri 配置
         shell: bash
         run: |
           test -f src-tauri/tauri.conf.json || {
-            echo "::error::${{ inputs.tag }} 这个 tag 里没有 src-tauri/——请选更新的 tag"
+            echo "::error::$RELEASE_TAG 这个 tag 里没有 src-tauri/——请选更新的 tag"
             exit 1
           }
 
@@ -177,14 +183,14 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out
-          VER="${{ inputs.tag }}"; VER="${VER#v}"
+          VER="$RELEASE_TAG"; VER="${VER#v}"
           scripts/make_dmg.sh src-tauri/target/release/bundle/macos "out/Magplot-$VER-macOS.dmg"
 
       - name: 公证 .dmg
         if: runner.os == 'macOS' && env.APPLE_ID != ''
         run: |
           set -euo pipefail
-          VER="${{ inputs.tag }}"; VER="${VER#v}"
+          VER="$RELEASE_TAG"; VER="${VER#v}"
           DMG="out/Magplot-$VER-macOS.dmg"
           codesign --force --timestamp --sign "$MACOS_SIGN_IDENTITY" "$DMG"
           CREDS="--apple-id $APPLE_ID --password $APPLE_APP_PASSWORD --team-id $APPLE_TEAM_ID"
@@ -248,7 +254,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path out | Out-Null
           # 命名与 wheel / dmg 一致（Magplot-<ver>-Windows-Setup.exe），
           # 不用 NSIS 默认的 Magplot_<ver>_x64-setup.exe——升级用户认的是老名字
-          $ver = "${{ inputs.tag }}" -replace '^v', ''
+          $ver = "$env:RELEASE_TAG" -replace '^v', ''
           $nsis = @(Get-ChildItem src-tauri\target\release\bundle\nsis\*.exe)
           if ($nsis.Count -ne 1) { throw "NSIS 产物数量异常（$($nsis.Count) 个）" }
           Copy-Item $nsis[0].FullName "out\Magplot-$ver-Windows-Setup.exe"
@@ -261,9 +267,27 @@ jobs:
           path: out/*
           if-no-files-found: error
 
+      - name: 等 Release 存在（tag 触发时与 release.yml 并行，先到要等）
+        # 不等就挂 = softprops 会替我们「创建」一个没有 notes 的 Release，
+        # 与 release.yml 手写 notes 的那份撞车。等不到按失败处理，绝不静默。
+        if: ${{ github.event_name == 'push' || inputs.attach }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for i in $(seq 1 30); do
+            if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              exit 0
+            fi
+            echo "· Release $RELEASE_TAG 还没建好（release.yml 可能仍在跑），20s 后重试（$i/30）"
+            sleep 20
+          done
+          echo "::error::等了 10 分钟仍没有 $RELEASE_TAG 的 Release——检查 release.yml 是否失败"
+          exit 1
+
       - name: 挂到 Release
-        if: inputs.attach
+        if: ${{ github.event_name == 'push' || inputs.attach }}
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.tag }}
+          tag_name: ${{ inputs.tag || github.ref_name }}
           files: out/*
