@@ -386,8 +386,12 @@ def test_bundled_runtime_lives_under_the_onedir_internal_folder(tmp_path, monkey
 
     internal = tmp_path / "_internal" / "runtime"
     internal.mkdir(parents=True)
-    (internal / "bin").mkdir()
-    (internal / "bin" / "python3").write_text("#!/bin/sh\n")
+    # 解释器落点必须问 runtime_python()：Windows 是 runtime\python.exe，
+    # POSIX 是 runtime/bin/python3。以前硬编码 bin/python3，这个「Windows
+    # 回归」用例反而只在 macOS/Linux 上绿——真 Windows 上一跑就穿帮。
+    py = Path(rt.runtime_python(str(internal)))
+    py.parent.mkdir(parents=True, exist_ok=True)
+    py.write_text("#!/bin/sh\n")
     (internal / "runtime-manifest.json").write_text(_json.dumps({
         "schema": 1, "python": {"version": "3.13.15"},
         "packages": {"numpy": "2.5.2"}}), encoding="utf-8")
