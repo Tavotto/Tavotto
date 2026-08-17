@@ -89,7 +89,12 @@ class Worker:
         self.out_dir.mkdir(parents=True, exist_ok=True)
         self.sandbox.mkdir(parents=True, exist_ok=True)
         os.chdir(self.sandbox)
+        # 图库根先进 sys.path（脚本 import 同目录的 paper_style / 数据模块），
+        # 脚本自己所在目录再插到最前——面板脚本放 panels/ 子目录时，
+        # 只加图库根会让 import_module(stem) 直接 ModuleNotFoundError。
         sys.path.insert(0, str(self.figures_dir))
+        if self.script.parent != self.figures_dir:
+            sys.path.insert(0, str(self.script.parent))
 
         # 删除守卫：fig6 用绝对路径删“过期输出”（ROOT/figures/...），沙盒 cwd
         # 挡不住，这里直接拒绝任何指向真实图库目录的删除（渲染用不到删除）
@@ -134,6 +139,12 @@ class Worker:
         else:
             paper_style.save = (
                 lambda fig, stem, outdir="figures": CAPTURE.setdefault(stem, fig))
+
+        # 脚本看到的 argv 必须是它自己的，不是 worker 的。不换的话
+        # `sys.argv[1:]` 拿到的是 --script/--out-dir/--entry 这串内部参数，
+        # 按参数命名输出的脚本会存出一堆叫 "--entry" 的图（试运行探测时
+        # 当场撞见过）。真跑 `python fig.py` 时 argv 就只有脚本自己。
+        sys.argv = [str(self.script)]
 
         with contextlib.redirect_stdout(sys.stderr):
             if self.entry == "__main__":

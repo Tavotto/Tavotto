@@ -7,8 +7,10 @@
   * export 应用 patches 后的 PDF 矢量文字保真
 """
 import json
+import os
 import subprocess
 import threading
+import time
 import sys
 from pathlib import Path
 
@@ -415,3 +417,132 @@ def test_build_without_paper_style(tmp_path):
         if proc.poll() is None:
             proc.kill()
         proc.wait(timeout=10)
+
+
+ARGV_SCRIPT = """\
+import sys
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+
+
+def main():
+    # 按命令行参数命名输出的脚本；不给参数就用默认名
+    names = sys.argv[1:] or ["ArgvFig_default"]
+    for name in names:
+        fig, ax = plt.subplots(figsize=(2, 1.5))
+        ax.plot([0, 1], [0, 1])
+        fig.savefig(Path(f"{name}.pdf"))
+        plt.close(fig)
+"""
+
+
+def test_script_sees_its_own_argv_not_the_workers(tmp_path):
+    """脚本读到的 sys.argv 必须是它自己的，不能是 worker 的内部参数。
+
+    worker 是 `python worker.py --script … --out-dir … --entry main` 起来的，
+    不重置 argv 的话 `sys.argv[1:]` 会拿到那一串开关；按参数命名输出的脚本
+    于是存出一堆叫 "--entry"/"--out-dir" 的图（试运行探测时当场撞见过，
+    注册表会被这些垃圾 stem 灌满）。真跑 `python fig.py` 时 argv 只有脚本自己。
+    """
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    (figs / "fig_argv.py").write_text(ARGV_SCRIPT, encoding="utf-8")
+
+    proc = _spawn(figs / "fig_argv.py", figs, tmp_path)
+    try:
+        resp = _rpc(proc, {"cmd": "build"})
+        assert sorted(resp["stems"]) == ["ArgvFig_default"]
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=10)
+
+
+SUBDIR_SCRIPT = """\
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+
+import shared_data
+
+
+def main():
+    fig, ax = plt.subplots(figsize=(2, 1.5))
+    ax.plot(shared_data.YS)
+    fig.savefig((Path("out") / "SubFig_1").with_suffix(".pdf"))
+    plt.close(fig)
+"""
+
+
+def test_script_in_subdirectory_can_import_neighbours(tmp_path):
+    """面板脚本放子目录（panels/）时，同目录的模块要 import 得到。
+
+    只把图库根加进 sys.path 的话，子目录脚本 import 隔壁模块直接
+    ModuleNotFoundError——而「脚本放子目录」正是静态扫描新支持的写法。
+    """
+    figs = tmp_path / "figures"
+    (figs / "panels").mkdir(parents=True)
+    (figs / "panels" / "shared_data.py").write_text("YS = [1, 2, 3]\n", encoding="utf-8")
+    (figs / "panels" / "fig_sub.py").write_text(SUBDIR_SCRIPT, encoding="utf-8")
+
+    proc = _spawn(figs / "panels" / "fig_sub.py", figs, tmp_path)
+    try:
+        resp = _rpc(proc, {"cmd": "build"})
+        assert sorted(resp["stems"]) == ["SubFig_1"]
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=10)
+
+
+HANG_SCRIPT = """\
+import time
+
+
+def main():
+    # build 阶段永远不返回——死循环 / 极慢计算的脚本对 worker 来说就是这个样子
+    time.sleep(600)
+"""
+
+
+def test_shutdown_all_kills_hung_worker(tmp_path, monkeypatch):
+    """脚本卡死时 `shutdown_all(wait=True)` 必须真把子进程杀掉，不留僵尸。
+
+    `request()` 在持 `w.lock` 的状态下无超时阻塞 readline，`shutdown()` 抢同一把
+    锁也跟着卡死，永远走不到它 finally 里的 `proc.kill()`；旧实现里 join 超时只是
+    不再等，卡死的渲染子进程于是成为孤儿，在用户机器上继续跑死循环占 CPU。
+
+    这里走 pool 的真实退出路径（`/api/shutdown` 与 reset_projects 用的就是它），
+    而不是 `_spawn` 出来的裸子进程。
+    """
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    (figs / "fig_hang.py").write_text(HANG_SCRIPT, encoding="utf-8")
+
+    monkeypatch.setattr(pool, "_SHUTDOWN_JOIN_TIMEOUT", 0.5)  # 否则用例要干等 10 秒
+    w = pool.get("fig_hang.py", str(figs), "main")
+    pid = w.proc.pid
+
+    def hold_the_lock():
+        try:
+            w.ensure_built()      # 前端的渲染请求；卡在 readline 上不返回
+        except Exception:  # noqa: BLE001 — 子进程被 kill 后这里必然抛，与断言无关
+            pass
+
+    try:
+        threading.Thread(target=hold_the_lock, daemon=True).start()
+        deadline = time.time() + 30
+        while not w.lock.locked() and time.time() < deadline:
+            time.sleep(0.05)
+        assert w.lock.locked(), "请求线程没占住 worker 锁，用例前提不成立"
+
+        pool.shutdown_all(figures_dir=str(figs), wait=True)
+
+        assert w.proc.wait(timeout=10) is not None   # 已被 kill 并回收
+        with pytest.raises(ProcessLookupError):
+            os.kill(pid, 0)
+    finally:
+        if w.proc.poll() is None:                    # 兜底：绝不在测试机上留僵尸
+            w.proc.kill()
+            w.proc.wait(timeout=10)

@@ -104,6 +104,8 @@ interface UiState extends Persisted {
   versionsOpen: boolean
   /** 论文样式弹窗 */
   stylesOpen: boolean
+  /** 脚本注册表面板（stem↔脚本 映射：扫描 / 试运行 / 手工裁决） */
+  registryOpen: boolean
   /** 快捷键帮助 */
   shortcutHelpOpen: boolean
   /** 设置面板 */
@@ -145,6 +147,7 @@ interface UiState extends Persisted {
   setLayoutOpen: (v: boolean, intent?: 'save' | 'load') => void
   setVersionsOpen: (v: boolean) => void
   setStylesOpen: (v: boolean) => void
+  setRegistryOpen: (v: boolean) => void
   setShortcutHelpOpen: (v: boolean) => void
   setSettingsOpen: (v: boolean, section?: string) => void
   setConfirm: (req: ConfirmRequest | null) => void
@@ -186,6 +189,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   layoutOpen: false,
   versionsOpen: false,
   stylesOpen: false,
+  registryOpen: false,
   shortcutHelpOpen: false,
   settingsOpen: false,
   settingsSection: null,
@@ -312,6 +316,7 @@ export const useUiStore = create<UiState>((set, get) => ({
     set(intent ? { layoutOpen, layoutIntent: intent } : { layoutOpen }),
   setVersionsOpen: (versionsOpen) => set({ versionsOpen }),
   setStylesOpen: (stylesOpen) => set({ stylesOpen }),
+  setRegistryOpen: (registryOpen) => set({ registryOpen }),
   setShortcutHelpOpen: (shortcutHelpOpen) => set({ shortcutHelpOpen }),
   setSettingsOpen: (settingsOpen, settingsSection = undefined) =>
     set({ settingsOpen, ...(settingsSection ? { settingsSection } : {}) }),

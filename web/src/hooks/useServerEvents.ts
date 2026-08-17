@@ -4,6 +4,7 @@ import { useAiStore } from '@/store/aiStore'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useEnvStore } from '@/store/envStore'
+import { useProjectStore } from '@/store/projectStore'
 import { useRenderStore } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
 
@@ -20,6 +21,12 @@ const COST_HINT: Record<string, string> = {
 function handleEvent(ev: ServerEvent) {
   const setStatus = useUiStore.getState().setStatus
   const render = useRenderStore.getState()
+
+  // SSE 是全进程共享的一条流，后端同时端着多个项目。带了 pj 的事件只属于
+  // 那个项目——本标签页开的是另一个图库时必须无视它，否则会拿别人的脚本
+  // 变更把自己的面板判成过期、白跑一轮 heavy 重建。
+  const mine = useProjectStore.getState().project?.id
+  if ('pj' in ev && ev.pj && mine && ev.pj !== mine) return
 
   switch (ev.kind) {
     case 'engine.bootstrap':

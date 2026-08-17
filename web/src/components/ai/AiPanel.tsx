@@ -19,7 +19,7 @@ import {
   type AiHistoryEntry,
   type ManifestElement,
 } from '@/lib/api'
-import { cn } from '@/lib/utils'
+import { cn, MOD, modKey } from '@/lib/utils'
 import {
   isSessionOf,
   scriptName,
@@ -306,8 +306,8 @@ export function AssistantPanel() {
               scope={scope}
               scopes={scopes}
             />
-            <span className="ml-auto font-mono text-xs text-ink-faint">⌘↵</span>
-            <Tip label={runningHere ? '该脚本的任务正在运行' : '发送（⌘↵）'}>
+            <span className="ml-auto font-mono text-xs text-ink-faint">{MOD}↵</span>
+            <Tip label={runningHere ? '该脚本的任务正在运行' : `发送（${modKey('↵')}）`}>
               <Button
                 variant="primary"
                 size="icon-sm"

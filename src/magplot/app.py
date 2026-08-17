@@ -31,7 +31,8 @@ import shutil
 import socket
 import sys
 
-from flask import Flask, Response, abort, jsonify, request, send_file, send_from_directory
+from flask import (Flask, Response, abort, has_request_context, jsonify,
+                   request, send_file, send_from_directory)
 from werkzeug.exceptions import HTTPException
 
 from . import pdfbackend
@@ -41,9 +42,13 @@ from .engine import bootstrap as engine_bootstrap
 from .engine import ai_history as engine_ai_history
 from .engine import brand as engine_brand
 from .engine import config as engine_config
+from .engine import diagnostics as engine_diagnostics
 from .engine import discover as engine_discover
 from .engine import pool as engine_pool
+from .engine import probe as engine_probe
+from .engine import ai_providers as engine_ai_providers
 from .engine import registry as engine_registry
+from .engine import runtime as engine_runtime
 from .engine import updater as engine_updater
 
 PKG_ROOT = Path(__file__).resolve().parent   # 只读：包自带资源（前端构建产物）
@@ -63,9 +68,13 @@ from . import desktop as desktop_mode  # noqa: E402 — 需要 app 实例存在�
 
 desktop_mode.install(app)
 
-# 当前项目的图库目录；None = 尚未打开项目（前端显示 Project Picker）。
+# 打开着的项目：id → ProjectCtx。**一个进程可以同时端着多个项目**——
+# 不同浏览器标签页各开各的图库（标签页把自己的 pj 带在请求上，见
+# `_request_ctx`）。没有任何项目时前端显示 Project Picker。
 # 不再内置任何默认路径——项目由 --figures、最近项目或 Picker 决定。
-FIGURES_DIR: Path | None = None
+PROJECTS: dict[str, "ProjectCtx"] = {}
+DEFAULT_PROJECT: str | None = None       # 不带 pj 的请求落到这里
+_PROJECT_LOCK = threading.Lock()
 CACHE_DIR = DATA_ROOT / "cache"
 EXPORT_DIR = DATA_ROOT / "exports"
 LAYOUT_DIR = DATA_ROOT / "layouts"
@@ -172,10 +181,64 @@ class NoProjectError(Exception):
     """当前没有打开的项目；API 层转成 409，前端据此显示 Project Picker。"""
 
 
-def require_project() -> Path:
-    if FIGURES_DIR is None:
+class ProjectCtx:
+    """一个打开着的项目：图库路径 + 它自己的脚本注册表。
+
+    每个标签页可以指向不同的 ctx，所以注册表**不能**再是模块全局的——
+    两个图库里同名的 Fig1.pdf 必须各自映射到各自的脚本。
+    """
+
+    def __init__(self, path: Path, pid: str, registry: engine_registry.Registry):
+        self.path = path
+        self.id = pid
+        self.registry = registry
+
+    def __repr__(self) -> str:  # 日志用
+        return f"<Project {self.id} {self.path}>"
+
+
+def _project_id(path: Path) -> str:
+    """项目短 id：路径的稳定哈希。
+
+    URL 参数（`?pj=`）与 `<img src>` 都要带上它，用完整路径既难看又会把
+    用户的目录结构塞进浏览器历史；短 id 还天然对大小写/分隔符差异免疫。
+    """
+    key = str(path).lower() if os.name == "nt" else str(path)
+    return hashlib.sha1(key.encode("utf-8")).hexdigest()[:12]
+
+
+def _request_ctx() -> "ProjectCtx | None":
+    """本次请求作用于哪个项目：显式 pj > 默认项目。
+
+    pj 走查询参数或请求头两条路：`fetch` 统一加请求头，但 `<img src>` 和
+    EventSource 加不了头，只能用查询参数——两条都认才不会有一半 API 串项目。
+    """
+    # 后台线程（watcher 回调、启动流程）没有请求上下文，落到默认项目
+    pid = ((request.args.get("pj") or request.headers.get("X-Magplot-Project")
+            or "").strip() if has_request_context() else "")
+    if pid:
+        ctx = PROJECTS.get(pid)
+        if ctx is not None:
+            return ctx
+        # 指名了一个不存在的项目（后端重启 / 项目已关闭）：不能悄悄落到别的
+        # 项目上——那会让标签页对着另一个图库继续编辑。
         raise NoProjectError()
-    return FIGURES_DIR
+    return PROJECTS.get(DEFAULT_PROJECT or "")
+
+
+def current_ctx() -> ProjectCtx:
+    ctx = _request_ctx()
+    if ctx is None:
+        raise NoProjectError()
+    return ctx
+
+
+def require_project() -> Path:
+    return current_ctx().path
+
+
+def current_registry() -> engine_registry.Registry:
+    return current_ctx().registry
 
 
 def safe_resolve(rel_id: str) -> Path:
@@ -227,7 +290,7 @@ def scan_panels() -> list[dict]:
                     native_w_mm=round(probe["w_pt"] * MM_PER_PT, 3),
                     native_h_mm=round(probe["h_pt"] * MM_PER_PT, 3),
                 )
-                info = engine_registry.for_stem(p.stem)
+                info = current_registry().for_stem(p.stem)
                 if info is not None:  # 可参数化面板：有产出它的 matplotlib 脚本
                     entry.update(script=info["script"], cost=info["cost"])
                     baseline = _baseline_patches(p.stem)
@@ -246,7 +309,7 @@ def scan_panels() -> list[dict]:
                     native_w_mm=round(probe["px_w"] / ppi * 25.4, 3),
                     native_h_mm=round(probe["px_h"] / ppi * 25.4, 3),
                 )
-                info = engine_registry.for_stem(p.stem)
+                info = current_registry().for_stem(p.stem)
                 if info is not None:  # fig1 等纯 PNG 素材脚本
                     entry.update(script=info["script"], cost=info["cost"])
                     baseline = _baseline_patches(p.stem)
@@ -268,6 +331,19 @@ def _no_project(_exc):
     return jsonify({"error": "尚未打开项目", "code": "no_project"}), 409
 
 
+def _worker_error_payload(exc) -> dict:
+    """worker 错误的统一响应体。
+
+    `module` 只在 code == "missing_dependency" 时有值：用户脚本 import 了当前
+    渲染环境里没有的包（内置 runtime 只带常用科学栈）。前端据此给「换成你自己
+    的环境」这个可执行出口，而不是甩一段 ModuleNotFoundError。
+    """
+    body = {"error": str(exc), "traceback": exc.traceback_text, "code": exc.code}
+    if getattr(exc, "module", ""):
+        body["module"] = exc.module
+    return body
+
+
 @app.errorhandler(engine_pool.WorkerError)
 def _worker_error(exc):
     """worker 类错误统一带上 code。
@@ -277,8 +353,7 @@ def _worker_error(exc):
     「缺渲染环境」（该给引导）和「脚本报错」（该给 traceback）。
     """
     LOG.error("worker 错误: %s %s: %s", request.method, request.path, exc)
-    return jsonify({"error": str(exc), "traceback": exc.traceback_text,
-                    "code": exc.code}), 500
+    return jsonify(_worker_error_payload(exc)), 500
 
 
 @app.errorhandler(Exception)
@@ -370,11 +445,10 @@ def _resolve_panel_source(o: dict, dpi: int) -> Path:
     path = safe_resolve(o["id"])
     overrides = o.get("overrides") or []
     if overrides:
-        info = engine_registry.for_stem(path.stem)
+        info = current_registry().for_stem(path.stem)
         if info is not None:
-            worker = engine_pool.get(info["script"], str(FIGURES_DIR), info["entry"])
-            tmp = (engine_pool.ENGINE_CACHE / Path(info["script"]).stem
-                   / "export" / f"{path.stem}.pdf")
+            worker = engine_pool.get(info["script"], str(require_project()), info["entry"])
+            tmp = worker.export_dir / f"{path.stem}.pdf"
             worker.export(path.stem, overrides, str(tmp), "pdf", dpi)
             path = tmp
     return path
@@ -489,7 +563,7 @@ def api_package():
         if p.is_relative_to(root.resolve()) and p.is_file():
             entry.update(sha1=_sha1_of(p), mtime=int(p.stat().st_mtime),
                          bytes=p.stat().st_size)
-            info = engine_registry.for_stem(p.stem)
+            info = current_registry().for_stem(p.stem)
             if info is not None:
                 entry["script"] = info["script"]
                 scripts[info["script"]] = root / info["script"]
@@ -603,76 +677,149 @@ def api_events():
 # ------------------------- 项目（Project）管理 -------------------------------
 # 对象层级见 docs/adr/0001-project-canvas-tab-object.md：Project = 图库路径 +
 # 素材根 + 导出/备份位置 + 设置。用户级配置（最近项目等）存 engine_config。
-def _on_script_change(changed: list[str]) -> None:
-    stems = [s for sc in changed for s in engine_registry.stems_of(sc)]
-    sse_publish("panel.file_changed", {"scripts": changed, "stems": stems})
+def _script_change_handler(ctx: "ProjectCtx"):
+    """watcher 回调必须绑定到具体项目——事件里带上 pj，别的标签页才不会
+    因为另一个图库的脚本变动去重渲染自己的面板。"""
+    def _on_change(changed: list[str]) -> None:
+        stems = [s for sc in changed for s in ctx.registry.stems_of(sc)]
+        sse_publish("panel.file_changed",
+                    {"scripts": changed, "stems": stems, "pj": ctx.id})
+    return _on_change
 
 
-def project_status() -> dict:
-    if FIGURES_DIR is None:
+def project_status(ctx: "ProjectCtx | None") -> dict:
+    if ctx is None:
         return {"open": False}
-    p = FIGURES_DIR
+    p = ctx.path
     return {
         "open": True,
+        "id": ctx.id,
         "figures_dir": str(p),
         "name": p.name,
         "exists": p.is_dir(),
         "writable": os.access(p, os.W_OK),
-        "scripts": len(engine_registry.all_scripts()),
+        "scripts": len(ctx.registry.all_scripts()),
         "settings": engine_config.project_settings(str(p)),
-        "export_dir": str(project_export_dir()),
-        "backup_dir": str(project_backup_dir()),
+        "export_dir": str(project_export_dir(ctx)),
+        "backup_dir": str(project_backup_dir(ctx)),
     }
 
 
-def open_project(path_str: str) -> dict:
-    """校验并切换当前项目：停旧 watcher、关旧 worker、中断 AI 任务、换 registry。
+def open_project(path_str: str, make_default: bool = True) -> dict:
+    """打开一个项目（已打开就直接复用），可选把它设为默认项目。
 
-    失败（目录不存在 / 注册表损坏）抛 RuntimeError，当前项目保持不变。
+    多项目并存后这里**不再拆别的项目的台**：以前每次切换都
+    stop_watcher + shutdown_all + interrupt_all，那会把另一个标签页正在用的
+    渲染会话和 AI 任务一起打掉。worker 池自带 LRU 上限，内存不会失控。
+
+    失败（目录不存在 / 注册表损坏）抛 RuntimeError，已打开的项目不受影响。
     """
-    global FIGURES_DIR
+    global DEFAULT_PROJECT
     path = Path(path_str).expanduser().resolve()
     if not path.is_dir():
         raise RuntimeError(f"目录不存在: {path}")
+    pid = _project_id(path)
+
+    with _PROJECT_LOCK:
+        existing = PROJECTS.get(pid)
+    if existing is not None:
+        if make_default:
+            DEFAULT_PROJECT = pid
+        engine_config.touch_recent(str(path))
+        return {**project_status(existing), "drafted": False, "conflicts": [],
+                "reused": True}
+
     drafted, conflicts = False, []
     try:
-        engine_registry.load(path)
+        reg = engine_registry.open_registry(path)
     except FileNotFoundError:
         cfg, rep = engine_discover.build_draft(path)
         engine_discover.write_config(path, cfg)
-        engine_registry.load(path)
+        reg = engine_registry.open_registry(path)
         drafted, conflicts = True, sorted(rep["conflicts"])
-    # 旧项目运行态全部收掉：先停 watcher（不再轮询旧目录），再关 worker，
-    # 再中断 AI 任务（快照保留，revert 仍可用）
-    engine_pool.stop_watcher()
-    engine_pool.shutdown_all()
-    interrupted = engine_ai.interrupt_all()
-    FIGURES_DIR = path
-    engine_pool.start_watcher(str(path), engine_registry.all_scripts(),
-                              _on_script_change)
+    ctx = ProjectCtx(path, pid, reg)
+    with _PROJECT_LOCK:
+        PROJECTS[pid] = ctx
+        if make_default or DEFAULT_PROJECT is None:
+            DEFAULT_PROJECT = pid
+    engine_pool.start_watcher(str(path), reg.all_scripts(),
+                              _script_change_handler(ctx))
     engine_config.touch_recent(str(path))
-    LOG.info("项目已打开: %s（%d 个脚本%s）", path,
-             len(engine_registry.all_scripts()),
+    LOG.info("项目已打开: %s（%d 个脚本%s）", path, len(reg.all_scripts()),
              "，注册表为静态扫描草稿" if drafted else "")
-    return {**project_status(), "drafted": drafted, "conflicts": conflicts,
-            "ai_interrupted": interrupted}
+    return {**project_status(ctx), "drafted": drafted, "conflicts": conflicts,
+            "reused": False}
 
 
-def project_export_dir() -> Path:
-    """当前项目的导出目录（项目设置可覆盖；缺省数据目录 exports/）。
+def close_project(pid: str, wait: bool = False) -> bool:
+    """关闭一个项目：停它的 watcher、收它的 worker。别的项目一概不动。
+
+    `wait=True` 用于进程即将退出的场合——关停跑在 daemon 线程里，父进程先走
+    的话 worker 子进程会留在用户机器上。**必须在这里等**：等到 close_project
+    返回时 worker 已经从池里摘走了，外层再调 shutdown_all(wait=True) 等的是
+    一个空池子，等于没等（冒烟脚本的「残留 worker」断言当场抓到过）。
+    """
+    global DEFAULT_PROJECT
+    with _PROJECT_LOCK:
+        ctx = PROJECTS.pop(pid, None)
+        if ctx is not None and DEFAULT_PROJECT == pid:
+            DEFAULT_PROJECT = next(iter(PROJECTS), None)
+    if ctx is None:
+        return False
+    engine_pool.stop_watcher(str(ctx.path))
+    engine_pool.shutdown_all(str(ctx.path), wait=wait)
+    LOG.info("项目已关闭: %s", ctx.path)
+    return True
+
+
+def default_project_path() -> Path | None:
+    ctx = PROJECTS.get(DEFAULT_PROJECT or "")
+    return ctx.path if ctx else None
+
+
+def reset_projects(wait: bool = False) -> None:
+    """关掉所有项目（进程收尾 / 测试隔离）：watcher 与 worker 一起收。
+
+    `wait=True` 用于进程即将退出的场合——关停线程是 daemon，父进程先走的话
+    worker 子进程会留在用户机器上。
+    """
+    global DEFAULT_PROJECT
+    with _PROJECT_LOCK:
+        ids = list(PROJECTS)
+        DEFAULT_PROJECT = None
+    for pid in ids:
+        close_project(pid, wait=wait)
+    if wait:
+        engine_pool.shutdown_all(wait=True)   # 兜底：不属于任何项目的残留
+
+
+def reload_registry(ctx: "ProjectCtx") -> None:
+    """注册表改过之后重装并重挂 watcher（新脚本要被盯上才会自动作废会话）。"""
+    try:
+        ctx.registry.load(ctx.path)
+    except (FileNotFoundError, RuntimeError):
+        return
+    engine_pool.start_watcher(str(ctx.path), ctx.registry.all_scripts(),
+                              _script_change_handler(ctx))
+
+
+def project_export_dir(ctx: "ProjectCtx | None" = None) -> Path:
+    """项目的导出目录（项目设置可覆盖；缺省数据目录 exports/）。
     未打开项目时（纯文字/形状导出不依赖项目）直接用默认目录。"""
-    if FIGURES_DIR is None:
+    ctx = ctx if ctx is not None else _request_ctx()
+    if ctx is None:
         return EXPORT_DIR
-    d = engine_config.project_settings(str(FIGURES_DIR)).get("export_dir")
+    d = engine_config.project_settings(str(ctx.path)).get("export_dir")
     return Path(d).expanduser() if d else EXPORT_DIR
 
 
-def project_backup_dir() -> Path:
+def project_backup_dir(ctx: "ProjectCtx | None" = None) -> Path:
     """「写回原始文件」的备份根目录（项目设置可覆盖）。"""
     default = CACHE_DIR / "original_backups"
-    if FIGURES_DIR is None:
+    ctx = ctx if ctx is not None else _request_ctx()
+    if ctx is None:
         return default
-    d = engine_config.project_settings(str(FIGURES_DIR)).get("backup_dir")
+    d = engine_config.project_settings(str(ctx.path)).get("backup_dir")
     return Path(d).expanduser() if d else default
 
 
@@ -687,20 +834,40 @@ def api_diagnostics():
         py = engine_pool.find_worker_python()
         try:
             out = sp.run([py, "-c", "import matplotlib; print(matplotlib.__version__)"],
-                         capture_output=True, text=True, timeout=30,
+                         capture_output=True, text=True,
+                         # 显式 UTF-8：text=True 默认跟随系统区域编码（cp936），
+                         # 解释器路径带中文时一解码就炸。creationflags 见
+                         # engine/runtime.py——GUI 子系统进程不该弹控制台黑框。
+                         encoding="utf-8", errors="replace", timeout=30,
                          stdin=sp.DEVNULL,
-                         creationflags=engine_pool.NO_WINDOW)
+                         creationflags=engine_runtime.CREATE_NO_WINDOW)
             mpl = out.stdout.strip() or None
         except (OSError, sp.TimeoutExpired):
             mpl = None
+        src = engine_pool.source_of(py)
         checks.append({"id": "worker_python", "ok": True,
-                       "label": "渲染引擎 Python", "detail": py})
+                       "label": "渲染引擎 Python",
+                       "detail": f"{py}（{engine_pool.SOURCE_LABELS.get(src, src)}）"})
         checks.append({"id": "matplotlib", "ok": mpl is not None,
                        "label": "matplotlib",
                        "detail": mpl or "无法导入（渲染将不可用）"})
     except engine_pool.WorkerError as exc:
         checks.append({"id": "worker_python", "ok": False,
                        "label": "渲染引擎 Python", "detail": str(exc)})
+
+    rt = engine_runtime.status()
+    # 只在「本该有」或「确实有一套好的」时才报这一项。开发机上放着一份交叉
+    # 构建出来的 Windows runtime（在 macOS 上当然跑不起来）不该被算成故障。
+    if rt["valid"] or engine_runtime.ships_bundled_runtime():
+        info = rt.get("manifest") or {}
+        pkgs = info.get("packages") or {}
+        checks.append({
+            "id": "bundled_runtime", "ok": rt["valid"],
+            "label": "内置渲染环境",
+            "detail": (f"Python {(info.get('python') or {}).get('version')}"
+                       f" + {len(pkgs)} 个包" if rt["valid"]
+                       else rt.get("error") or "缺失"),
+        })
 
     caps = engine_ai.capabilities()
     for name in ("codex", "claude"):
@@ -709,15 +876,17 @@ def api_diagnostics():
                        "label": f"{name.capitalize()} CLI",
                        "detail": p["version"] or "未安装（改图助手对应选项不可用）"})
 
-    if FIGURES_DIR is not None:
-        checks.append({"id": "project_readable", "ok": FIGURES_DIR.is_dir(),
-                       "label": "项目目录可读", "detail": str(FIGURES_DIR)})
+    ctx = _request_ctx()
+    if ctx is not None:
+        root = ctx.path
+        checks.append({"id": "project_readable", "ok": root.is_dir(),
+                       "label": "项目目录可读", "detail": str(root)})
         checks.append({"id": "project_writable",
-                       "ok": os.access(FIGURES_DIR, os.W_OK),
+                       "ok": os.access(root, os.W_OK),
                        "label": "项目目录可写（写回原始文件需要）",
-                       "detail": str(FIGURES_DIR)})
+                       "detail": str(root)})
         try:
-            _cfg, rep = engine_discover.build_draft(FIGURES_DIR)
+            _cfg, rep = engine_discover.build_draft(root)
             n = len(rep.get("conflicts") or [])
             checks.append({"id": "registry_conflicts", "ok": n == 0,
                            "label": "注册表 stem 归属",
@@ -735,21 +904,74 @@ def api_diagnostics():
     return resp
 
 
+@app.get("/api/diagnostics/bundle")
+def api_diagnostics_bundle():
+    """一键诊断包（zip）。密钥与个人路径已脱敏，见 engine/diagnostics.py。
+
+    剩下那些没法提前覆盖的 bug，来回问十次才能定位一次；有了这个包，
+    用户点一下发过来就够了。
+    """
+    ctx = _request_ctx()
+    data = engine_diagnostics.build_bundle(
+        project=project_status(ctx), port=request.host.rsplit(":", 1)[-1])
+    name = f"magplot-diagnostics-{time.strftime('%Y%m%d-%H%M%S')}.zip"
+    return Response(data, mimetype="application/zip", headers={
+        "Content-Disposition": f'attachment; filename="{name}"',
+        "Cache-Control": "no-store",
+    })
+
+
 @app.get("/api/project")
 def api_project():
-    resp = jsonify(project_status())
+    """本标签页当前指向的项目（?pj= 决定；不带就是默认项目）。"""
+    resp = jsonify(project_status(_request_ctx()))
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/shutdown")
+def api_shutdown():
+    """受控退出（仅当环境变量 MAGPLOT_ALLOW_SHUTDOWN 打开时可用）。
+
+    存在的理由只有一个：端到端冒烟要验证**干净退出**——关掉窗口之后
+    worker 子进程必须一起收掉，不能在用户机器上留一堆僵尸 python.exe。
+    默认关闭，免得本地应用平白多一个「任何网页都能把它关掉」的入口。
+    """
+    if not os.environ.get("MAGPLOT_ALLOW_SHUTDOWN"):
+        abort(404)
+    LOG.info("收到关闭请求，正在收尾")
+    reset_projects(wait=True)  # 停 watcher + 关 worker（等它们真的收完）
+    engine_ai.interrupt_all()  # AI 任务终止，快照保留
+
+    def _bye():
+        time.sleep(0.3)        # 先把响应送出去
+        os._exit(0)
+
+    threading.Thread(target=_bye, daemon=True, name="mm-shutdown").start()
+    return jsonify({"ok": True})
+
+
+@app.get("/api/projects")
+def api_projects_open_list():
+    """进程里打开着的全部项目——快速切换菜单据此标出「已打开」。"""
+    with _PROJECT_LOCK:
+        items = [project_status(c) for c in PROJECTS.values()]
+    resp = jsonify({"projects": items, "default": DEFAULT_PROJECT})
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
 
 @app.get("/api/projects/recent")
 def api_projects_recent():
+    open_paths = {str(c.path): c.id for c in PROJECTS.values()}
+    current = _request_ctx()
     entries = []
     for e in engine_config.recent_projects():
         p = Path(e["path"])
         entries.append({**e, "exists": p.is_dir(),
-                        "current": FIGURES_DIR is not None
-                        and p == FIGURES_DIR})
+                        "id": open_paths.get(str(p)),
+                        "opened": str(p) in open_paths,
+                        "current": current is not None and p == current.path})
     resp = jsonify({"recent": entries})
     resp.headers["Cache-Control"] = "no-store"
     return resp
@@ -757,7 +979,11 @@ def api_projects_recent():
 
 @app.post("/api/projects/open")
 def api_projects_open():
-    """打开（或 create=true 时先创建）一个项目目录并切换过去。"""
+    """打开（或 create=true 时先创建）一个项目目录。
+
+    已经打开的项目直接复用，不会打断其它标签页；`default=false` 表示
+    「只给本标签页用」，不改动新标签页的默认落点。
+    """
     body = request.get_json(force=True)
     raw = str(body.get("path") or "").strip()
     if not raw:
@@ -769,9 +995,16 @@ def api_projects_open():
         except OSError as exc:
             return jsonify({"error": f"无法创建目录: {exc}"}), 400
     try:
-        return jsonify(open_project(str(p)))
+        return jsonify(open_project(str(p), make_default=body.get("default", True)))
     except (RuntimeError, OSError) as exc:
         return jsonify({"error": str(exc)}), 400
+
+
+@app.post("/api/projects/close")
+def api_projects_close():
+    """关闭一个打开着的项目（收 watcher 与 worker）；不动磁盘内容。"""
+    body = request.get_json(force=True)
+    return jsonify({"ok": close_project(str(body.get("id") or ""))})
 
 
 @app.post("/api/projects/remove")
@@ -781,27 +1014,175 @@ def api_projects_remove():
     return jsonify({"ok": engine_config.remove_recent(str(body.get("path") or ""))})
 
 
+def _drive_roots() -> list[dict]:
+    """Windows 的盘符根。
+
+    以前浏览器从 home 起步、只能往下钻，`C:\\` 的 parent 又是它自己——
+    等于**永远走不到 D 盘**。把盘符做成一层虚拟根目录就通了。
+    """
+    if os.name != "nt":
+        return [{"name": "/", "path": "/"}]
+    roots = []
+    for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+        d = f"{letter}:\\"
+        try:
+            if os.path.isdir(d):
+                roots.append({"name": f"{letter}:", "path": d})
+        except OSError:
+            continue
+    return roots
+
+
+def _browse_shortcuts() -> list[dict]:
+    """常用起点。桌面/文档只在真实存在时给出（非英文系统上未必叫这个名字）。"""
+    home = Path.home()
+    out = [{"name": "主目录", "path": str(home)}]
+    for label, name in (("桌面", "Desktop"), ("文档", "Documents"),
+                        ("下载", "Downloads")):
+        p = home / name
+        if p.is_dir():
+            out.append({"name": label, "path": str(p)})
+    return out
+
+
 @app.get("/api/projects/browse")
 def api_projects_browse():
-    """服务器端目录列举（本地单用户应用的目录选择器；只列目录）。"""
-    raw = request.args.get("path") or str(Path.home())
+    """服务器端目录列举（本地单用户应用的目录选择器；只列目录）。
+
+    `path=@roots` 列驱动器/根，让 Windows 能横跨盘符；路径可由用户直接输入，
+    所以不存在时要给出**最近的存在祖先**，别让人对着一句报错干瞪眼。
+    """
+    raw = (request.args.get("path") or "").strip()
+    roots = _drive_roots()
+    if raw in ("@roots", "@drives"):
+        return jsonify({"path": "@roots", "parent": None, "is_roots": True,
+                        "dirs": roots, "roots": roots,
+                        "shortcuts": _browse_shortcuts()})
+    if not raw:
+        raw = str(Path.home())
     try:
-        p = Path(raw).expanduser().resolve()
-    except OSError:
+        p = Path(raw).expanduser()
+        p = p.resolve() if p.exists() else Path(os.path.abspath(str(p)))
+    except (OSError, ValueError):
         return jsonify({"error": "路径无效"}), 400
     if not p.is_dir():
-        return jsonify({"error": f"目录不存在: {p}"}), 400
+        # 找一个还存在的祖先，前端可以一键跳过去继续找
+        near = p
+        while near != near.parent and not near.is_dir():
+            near = near.parent
+        return jsonify({"error": f"目录不存在: {p}",
+                        "nearest": str(near) if near.is_dir() else None}), 400
     dirs = []
     try:
-        for child in sorted(p.iterdir()):
-            if child.name.startswith(".") or not child.is_dir():
+        for child in sorted(p.iterdir(), key=lambda c: c.name.lower()):
+            if child.name.startswith("."):
+                continue
+            try:
+                if not child.is_dir():
+                    continue
+            except OSError:        # 断开的网络驱动器 / 权限受限的符号链接
                 continue
             dirs.append({"name": child.name, "path": str(child)})
     except PermissionError:
         return jsonify({"error": f"无权限读取: {p}"}), 403
-    return jsonify({"path": str(p),
-                    "parent": str(p.parent) if p != p.parent else None,
-                    "dirs": dirs})
+    except OSError as exc:
+        return jsonify({"error": f"无法读取: {exc}"}), 400
+    # 盘符根的上一级是「此电脑」那一层虚拟根，不是它自己
+    parent = str(p.parent) if p != p.parent else ("@roots" if os.name == "nt" else None)
+    return jsonify({"path": str(p), "parent": parent, "is_roots": False,
+                    "dirs": dirs, "roots": roots,
+                    "shortcuts": _browse_shortcuts(),
+                    "writable": os.access(p, os.W_OK)})
+
+
+# ------------------------- 脚本注册表 ---------------------------------------
+# 「面板上没有 ⚡」几乎总是注册表的问题，而以前它只能靠手改 JSON 解决。
+# 这三个端点把整条链路搬到界面上：看现状 → 重扫 → 跑一遍认领。
+@app.get("/api/registry")
+def api_registry():
+    """当前注册表 + 静态扫描报告（谁已登记、谁在存图却没登记、有无冲突）。"""
+    ctx = current_ctx()
+    reg = ctx.registry.entries()
+    try:
+        rep = engine_discover.discover(ctx.path)
+    except OSError as exc:
+        return jsonify({"error": f"扫描失败: {exc}"}), 400
+    registered_stems = {s for c in reg.values() for s in c["stems"]}
+    candidates = []
+    for script, info in sorted(rep["scripts"].items()):
+        fresh = [s for s in info["stems"] if s not in registered_stems]
+        # 已登记且没有新产物就不再列为「未登记」——包括那些静态解不出文件名的
+        # 脚本（它们已经靠试运行登记过了，再列一遍只会自相矛盾）。需要重新
+        # 探测时从「已登记」那一栏走。
+        if script in reg and not fresh:
+            continue
+        candidates.append({"script": script, **info, "new_stems": fresh,
+                           "registered": script in reg})
+    return jsonify({"source": ctx.registry.source(), "scripts": reg,
+                    "candidates": candidates,
+                    "conflicts": rep["conflicts"]})
+
+
+@app.post("/api/registry/scan")
+def api_registry_scan():
+    """重跑静态扫描并合并进 mm_registry.json（现有条目永远优先）。"""
+    ctx = current_ctx()
+    try:
+        cfg, rep, changes = engine_discover.merge(ctx.path)
+        engine_discover.write_config(ctx.path, cfg)
+    except (OSError, ValueError, RuntimeError) as exc:
+        return jsonify({"error": f"扫描失败: {exc}"}), 400
+    reload_registry(ctx)
+    return jsonify({"changes": changes, "conflicts": rep["conflicts"],
+                    "scripts": ctx.registry.entries()})
+
+
+@app.post("/api/registry/probe")
+def api_registry_probe():
+    """试运行一个脚本，按**真实产出**的文件名登记 stem。
+
+    静态解不出文件名的脚本（stem 来自数据目录 / 命令行）只有这条路。
+    脚本跑得起来 = 能参数化，不用再让用户手改 JSON 猜自己该写什么。
+    同步阻塞：冷启动秒级到分钟级，前端逐个脚本调用即可看到进度。
+    """
+    ctx = current_ctx()
+    body = request.get_json(force=True)
+    script = str(body.get("script") or "").strip()
+    target = (ctx.path / script).resolve() if script else ctx.path
+    # 只允许跑图库目录内的 .py：这个端点会真的执行代码，越权必须挡死
+    if (not script or target.suffix != ".py" or not target.is_file()
+            or not target.is_relative_to(ctx.path.resolve())):
+        return jsonify({"error": "脚本不存在或不在项目目录内"}), 404
+    result = engine_probe.probe_and_register(
+        ctx.path, script, cost=str(body.get("cost") or "medium"))
+    if result.get("registered"):
+        reload_registry(ctx)
+        sse_publish("registry.changed", {"pj": ctx.id, "script": script,
+                                         "stems": result["stems"]})
+    return jsonify(result)
+
+
+@app.put("/api/registry")
+def api_registry_write():
+    """手工裁决：直接写一条脚本的 stem 归属（冲突仲裁、改 entry/cost）。"""
+    ctx = current_ctx()
+    body = request.get_json(force=True)
+    script = str(body.get("script") or "").strip()
+    if not script:
+        return jsonify({"error": "缺少脚本名"}), 400
+    entry = str(body.get("entry") or "main")
+    if not engine_registry.valid_entry(entry):
+        return jsonify({"error": f"entry 非法: {entry}"}), 400
+    stems = [str(s).strip() for s in (body.get("stems") or []) if str(s).strip()]
+    try:
+        engine_discover.register(ctx.path, script, stems, entry=entry,
+                                 cost=str(body.get("cost") or "medium"),
+                                 notes=str(body.get("notes") or ""))
+        reload_registry(ctx)
+    except (OSError, RuntimeError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    sse_publish("registry.changed", {"pj": ctx.id, "script": script, "stems": stems})
+    return jsonify({"scripts": ctx.registry.entries()})
 
 
 @app.patch("/api/project/settings")
@@ -835,10 +1216,10 @@ def api_project_settings():
 def _engine_worker(rel_id: str):
     """面板 id → (worker, stem)；非脚本面板 404。"""
     path = safe_resolve(rel_id)
-    info = engine_registry.for_stem(path.stem)
+    info = current_registry().for_stem(path.stem)
     if info is None:
         abort(404)
-    return engine_pool.get(info["script"], str(FIGURES_DIR), info["entry"]), path.stem
+    return engine_pool.get(info["script"], str(require_project()), info["entry"]), path.stem
 
 
 @app.post("/api/engine/render")
@@ -850,21 +1231,23 @@ def api_engine_render():
     body = request.get_json(force=True)
     rel_id = body.get("id", "")
     worker, stem = _engine_worker(rel_id)
-    info = engine_registry.for_stem(Path(stem).stem) or {}
+    info = current_registry().for_stem(Path(stem).stem) or {}
     cold = not worker.built
+    # 三个事件都得带 pj：前端 renderStore 按 fileId 索引且不分项目，不带的话
+    # 另一个标签页里同名的面板（到处都是的 Fig1.pdf）会跟着显示「正在构建…」
+    pj = current_ctx().id
     sse_publish("render.started",
-                {"id": rel_id, "cost": info.get("cost", ""), "cold": cold})
+                {"pj": pj, "id": rel_id, "cost": info.get("cost", ""), "cold": cold})
     t0 = time.time()
     try:
         resp = worker.override(stem, body.get("patches", []))
     except engine_pool.WorkerError as exc:
         LOG.error("引擎渲染失败: %s: %s", stem, exc)
-        sse_publish("render.failed", {"id": rel_id, "error": str(exc)})
-        return jsonify({"error": str(exc), "traceback": exc.traceback_text,
-                        "code": exc.code}), 500
+        sse_publish("render.failed", {"pj": pj, "id": rel_id, "error": str(exc)})
+        return jsonify(_worker_error_payload(exc)), 500
     LOG.info("引擎渲染: %s %.0fms%s", stem, (time.time() - t0) * 1000,
              "（冷启动）" if cold else "")
-    sse_publish("render.done", {"id": rel_id, "rev": worker.rev})
+    sse_publish("render.done", {"pj": pj, "id": rel_id, "rev": worker.rev})
     return jsonify({
         "rev": worker.rev,
         "manifest": resp["manifest"],
@@ -881,8 +1264,7 @@ def api_engine_png():
     try:
         path = worker.render_png(stem, w)
     except engine_pool.WorkerError as exc:
-        return jsonify({"error": str(exc), "traceback": exc.traceback_text,
-                        "code": exc.code}), 500
+        return jsonify(_worker_error_payload(exc)), 500
     resp = send_file(path, mimetype="image/png")
     resp.headers["Cache-Control"] = "no-store"  # rev 参数负责客户端缓存节流
     return resp
@@ -902,15 +1284,21 @@ def api_engine_update_source():
     rel_id = body.get("id", "")
     patches = body.get("patches", [])
     src = safe_resolve(rel_id)
-    info = engine_registry.for_stem(src.stem)
+    info = current_registry().for_stem(src.stem)
     if info is None:
         return jsonify({"error": "该面板不可参数化（没有对应脚本）"}), 404
-    worker = engine_pool.get(info["script"], str(FIGURES_DIR), info["entry"])
+    worker = engine_pool.get(info["script"], str(require_project()), info["entry"])
     try:
         updated, backup_dir = _write_source_files(src, patches, worker)
     except engine_pool.WorkerError as exc:
-        return jsonify({"error": str(exc), "traceback": exc.traceback_text,
-                        "code": exc.code}), 500
+        return jsonify(_worker_error_payload(exc)), 500
+    except FileLockedError as exc:
+        # 可操作的错误：告诉用户是哪个文件、该去关掉谁；已经换掉的一并报出来，
+        # 免得用户以为「什么都没发生」
+        return jsonify({"error": f"{exc}。请关闭正在打开它的程序"
+                                 "（PDF 阅读器 / 看图工具）后重试。",
+                        "code": "file_locked", "file": exc.name,
+                        "updated": exc.updated}), 409
     # 把这组修改追加为该图的版本历史，末位即当前基线：
     # 新拖入的同名面板自动继承，双击进编辑态能接着改
     append_baked(src.stem, patches)
@@ -928,18 +1316,38 @@ def _write_back_forbidden():
     return None
 
 
+class FileLockedError(RuntimeError):
+    """目标文件被别的程序占用，替换不了（Windows 上的独占锁）。"""
+
+    def __init__(self, name: str, detail: str, updated: list[str]):
+        super().__init__(f"{name} 正被其它程序占用，无法覆盖：{detail}")
+        self.name = name
+        self.updated = updated
+
+
 def _write_source_files(src: Path, patches: list, worker) -> tuple[list, Path]:
-    """按 patches 全质量重出 stem 的 PDF/PNG 并原子替换原文件（先备份）。"""
+    """按 patches 全质量重出 stem 的 PDF/PNG 并原子替换原文件（先备份）。
+
+    替换失败要当成一等公民处理：Windows 上文件被 Acrobat / 看图工具打开时
+    是**独占锁**，`replace` 直接抛 PermissionError。不接住的话用户会拿到一个
+    500 加一串 traceback，图库里还留下一个 `.Fig1.pdf.updating` 垃圾文件，
+    下次再看见它完全不知道是什么。
+    """
     targets = [p for p in (src.with_suffix(".pdf"), src.with_suffix(".png")) if p.exists()]
     backup_dir = project_backup_dir() / time.strftime("%m%d_%H%M%S")
     backup_dir.mkdir(parents=True, exist_ok=True)
-    updated = []
+    updated: list[str] = []
     for target in targets:
         shutil.copy2(target, backup_dir / target.name)
         tmp = target.with_name(f".{target.name}.updating")
         worker.export(src.stem, patches, str(tmp),
                       fmt=target.suffix.lstrip("."), dpi=600)
-        tmp.replace(target)
+        try:
+            tmp.replace(target)
+        except OSError as exc:
+            tmp.unlink(missing_ok=True)   # 不给图库留下半成品
+            LOG.warning("写回原图失败（文件被占用？）: %s: %s", target.name, exc)
+            raise FileLockedError(target.name, str(exc), updated) from exc
         updated.append(target.name)
     prune_backups(backup_dir.parent)
     LOG.info("更新原图: %s → %s（备份 %s）", src.stem, updated, backup_dir.name)
@@ -1011,17 +1419,16 @@ def api_engine_sync_overrides():
     src_path = safe_resolve(body.get("from_id", ""))
     dst_path = safe_resolve(body.get("to_id", ""))
     patches = body.get("patches", [])
-    info_s = engine_registry.for_stem(src_path.stem)
-    info_d = engine_registry.for_stem(dst_path.stem)
+    info_s = current_registry().for_stem(src_path.stem)
+    info_d = current_registry().for_stem(dst_path.stem)
     if info_s is None or info_d is None or info_s["script"] != info_d["script"]:
         return jsonify({"error": "两张图不属于同一个脚本，无法同步"}), 400
-    worker = engine_pool.get(info_s["script"], str(FIGURES_DIR), info_s["entry"])
+    worker = engine_pool.get(info_s["script"], str(require_project()), info_s["entry"])
     try:
         man_s = _manifest_of(worker, src_path.stem)
         man_d = _manifest_of(worker, dst_path.stem)
     except engine_pool.WorkerError as exc:
-        return jsonify({"error": str(exc), "traceback": exc.traceback_text,
-                        "code": exc.code}), 500
+        return jsonify(_worker_error_payload(exc)), 500
 
     ax_s, ax_d = _axes_info(man_s), _axes_info(man_d)
     if len(ax_s) >= len(ax_d):  # 组 → 子：源 axes 区间 [o, o+K) → 目标 0..K
@@ -1088,8 +1495,7 @@ def api_engine_history_preview():
     try:
         path = worker.preview_png(stem, patches, w, tag=f"hist{n}")
     except engine_pool.WorkerError as exc:
-        return jsonify({"error": str(exc), "traceback": exc.traceback_text,
-                        "code": exc.code}), 500
+        return jsonify(_worker_error_payload(exc)), 500
     resp = send_file(path, mimetype="image/png")
     resp.headers["Cache-Control"] = "no-store"
     return resp
@@ -1110,8 +1516,14 @@ def api_engine_history_restore():
     try:
         updated, backup_dir = _write_source_files(src, patches, worker)
     except engine_pool.WorkerError as exc:
-        return jsonify({"error": str(exc), "traceback": exc.traceback_text,
-                        "code": exc.code}), 500
+        return jsonify(_worker_error_payload(exc)), 500
+    except FileLockedError as exc:
+        # 可操作的错误：告诉用户是哪个文件、该去关掉谁；已经换掉的一并报出来，
+        # 免得用户以为「什么都没发生」
+        return jsonify({"error": f"{exc}。请关闭正在打开它的程序"
+                                 "（PDF 阅读器 / 看图工具）后重试。",
+                        "code": "file_locked", "file": exc.name,
+                        "updated": exc.updated}), 409
     append_baked(stem, patches)
     return jsonify({"updated": updated, "backup_dir": str(backup_dir),
                     "patches": patches})
@@ -1125,8 +1537,7 @@ def api_engine_svg():
         if not worker.built:
             worker.ensure_built()
     except engine_pool.WorkerError as exc:
-        return jsonify({"error": str(exc), "traceback": exc.traceback_text,
-                        "code": exc.code}), 500
+        return jsonify(_worker_error_payload(exc)), 500
     svg = worker.svg_path(stem)
     if not svg.exists():
         abort(404)
@@ -1138,8 +1549,8 @@ def api_engine_svg():
 # ------------------------- AI 桥 -------------------------------------------
 @app.get("/api/ai/capabilities")
 def api_ai_capabilities():
-    """实际探测本机 codex / claude 的安装、版本与可用参数。"""
-    refresh = request.args.get("refresh") == "1"
+    """实测本机 codex / claude 的安装、版本、可用参数，以及已配置的第三方接口。"""
+    refresh = request.args.get("refresh") in ("1", "true", "yes")
     resp = jsonify(engine_ai.capabilities(refresh=refresh))
     resp.headers["Cache-Control"] = "no-store"
     return resp
@@ -1148,8 +1559,23 @@ def api_ai_capabilities():
 # ------------------------- 渲染环境（缺 matplotlib 时的自助安装）--------------
 @app.get("/api/engine/environment")
 def api_engine_environment():
-    """渲染环境现状；ok=False 且 can_install=True 时前端给「自动安装」按钮。"""
-    return jsonify(engine_bootstrap.status())
+    """渲染环境现状；ok=False 且 can_install=True 时前端给「自动安装」按钮。
+
+    `?probe=1` 会**真去 import** 一遍内置科学栈并报各自版本（最长几十秒）。
+    平时不做：普通刷新不该为了贴个版本号卡住界面；排障与冒烟才用得上。
+    """
+    st = engine_bootstrap.status()
+    probe = request.args.get("probe")
+    if probe:
+        # `?probe=1` 用 manifest 里声明的那批；`?probe=numpy,scipy` 指定要问哪些
+        # （用户自己的环境没有 manifest，只能由调用方点名）
+        names = ([n.strip() for n in probe.split(",") if n.strip()]
+                 if probe not in ("1", "true", "yes") else None)
+        py = st.get("python")
+        st["imports"] = engine_runtime.probe_packages(py, names) if py else {}
+    resp = jsonify(st)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 @app.post("/api/engine/environment/install")
@@ -1161,6 +1587,11 @@ def api_engine_environment_install():
     st = engine_bootstrap.status()
     if st["ok"]:
         return jsonify({"ok": True, **st})
+    if st.get("runtime", {}).get("expected"):
+        # 桌面版自带渲染环境，缺了就是安装文件不完整——现场联网建 venv 只会
+        # 把一个包装问题伪装成用户的环境问题
+        return jsonify({"error": engine_runtime.repair_hint(),
+                        "code": st.get("code")}), 400
     if not st.get("can_install"):
         return jsonify({"error": "这台机器上没找到可用的 Python，"
                                  "请先安装 Python 3.10 以上再重试。"}), 400
@@ -1240,8 +1671,40 @@ def api_ai_settings():
             val = str(body[key] or "").strip()
             patch[key] = val or None
     merged = engine_config.set_ai_settings(patch)
-    return jsonify({"settings": merged,
+    return jsonify({"settings": {k: v for k, v in merged.items()
+                                 if k not in ("providers",)},
                     **engine_ai.capabilities(refresh=True)})
+
+
+@app.put("/api/ai/endpoints")
+def api_ai_endpoint_save():
+    """新增/更新一个第三方接口。api_key 留空 = 保留原值（界面不回显密钥）。"""
+    body = request.get_json(force=True)
+    if not str(body.get("label") or body.get("id") or "").strip():
+        return jsonify({"error": "缺少名称"}), 400
+    try:
+        engine_ai_providers.save(body)
+    except (ValueError, OSError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(engine_ai.capabilities(refresh=True))
+
+
+@app.delete("/api/ai/endpoints/<pid>")
+def api_ai_endpoint_delete(pid):
+    engine_ai_providers.delete(pid)
+    return jsonify(engine_ai.capabilities(refresh=True))
+
+
+@app.post("/api/ai/endpoints/active")
+def api_ai_endpoint_active():
+    """选中某个 agent 当前使用的接口；id 为空字符串 = 回到 CLI 自带登录态。"""
+    body = request.get_json(force=True)
+    try:
+        engine_ai_providers.set_active(str(body.get("agent") or ""),
+                                       body.get("id") or None)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(engine_ai.capabilities(refresh=True))
 
 
 @app.post("/api/ai/run")
@@ -1253,7 +1716,7 @@ def api_ai_run():
     if not prompt:
         abort(400)
     path = safe_resolve(body.get("id", ""))
-    info = engine_registry.for_stem(path.stem)
+    info = current_registry().for_stem(path.stem)
     if info is None:
         return jsonify({"error": "该面板不可参数化（没有对应脚本）"}), 404
     context = {"stem": path.stem, "gid": body.get("gid"),
@@ -1261,10 +1724,11 @@ def api_ai_run():
                "scope": body.get("scope"), "target": body.get("target"),
                "canvas": body.get("canvas")}
     try:
-        sid = engine_ai.run(agent, info["script"], prompt, str(FIGURES_DIR),
+        sid = engine_ai.run(agent, info["script"], prompt, str(require_project()),
                             context=context, on_event=sse_publish,
                             model=body.get("model") or None,
-                            effort=body.get("effort") or None)
+                            effort=body.get("effort") or None,
+                            endpoint_id=body.get("endpoint"))
     except RuntimeError as exc:
         LOG.error("AI 任务启动失败: %s %s: %s", agent, info["script"], exc)
         return jsonify({"error": str(exc)}), 500
@@ -1380,13 +1844,44 @@ def api_autosave_get(doc_id):
     return resp
 
 
+def _autosave_newer_than(p: Path, base) -> int | None:
+    """磁盘上这一份是否比调用方的基线更新？是则返回它的 updatedAt。
+
+    乐观并发：`base` 是前端标签页最后一次成功落盘时的 updatedAt。磁盘上比它
+    更新 = 另一个标签页在这中间存过一份，此时整份覆盖就是静默丢数据。
+    没带基线（首次写、旧前端）一律放行；磁盘无文件、读不出来或没有 updatedAt
+    也放行——自动保存是用户数据的最后一道，不能因为一个坏掉的旧槽位卡死。
+    比较的是文档里的 updatedAt 而不是文件 mtime：同机多标签页共享同一个时钟。
+    """
+    if base is None:
+        return None
+    try:
+        mine = int(base)
+    except (TypeError, ValueError):
+        return None
+    try:
+        theirs = json.loads(p.read_text(encoding="utf-8")).get("updatedAt")
+    except (OSError, ValueError, AttributeError):
+        return None
+    if isinstance(theirs, (int, float)) and not isinstance(theirs, bool) and theirs > mine:
+        return int(theirs)
+    return None
+
+
 @app.put("/api/autosave/<doc_id>")
 def api_autosave_put(doc_id):
     body = request.get_json(force=True)
     if not isinstance(body, dict) or body.get("schema") not in (2, 3):
         return jsonify({"error": "无效的文档（需要 schema 2 或 3）"}), 400
-    AUTOSAVE_DIR.mkdir(parents=True, exist_ok=True)
     p = _autosave_path(doc_id)
+    theirs = _autosave_newer_than(p, request.args.get("base"))
+    if theirs is not None:
+        return jsonify({
+            "code": "stale_write",
+            "theirs": theirs,
+            "error": "该文档已在其他窗口保存了更新的版本",
+        }), 409
+    AUTOSAVE_DIR.mkdir(parents=True, exist_ok=True)
     tmp = p.with_name(p.name + ".tmp")
     tmp.write_text(json.dumps(body, ensure_ascii=False), encoding="utf-8")
     tmp.replace(p)
@@ -1666,6 +2161,9 @@ def main():
     setup_logging()
     threading.Thread(target=prune_render_cache, daemon=True,
                      name="mm-cache-prune").start()  # 启动清一次历史存量
+    # 引擎会话缓存同理：get() 里的触发点只在新建会话时走，长开不新建的实例靠这次
+    threading.Thread(target=engine_pool.prune_engine_cache, daemon=True,
+                     name="mm-engine-cache-prune").start()
     # 上个进程留下的 running AI 会话一律标为已中断（绝不显示为空/unknown）
     n = engine_ai_history.mark_interrupted_running()
     if n:

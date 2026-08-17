@@ -14,7 +14,7 @@ import {
   type StylePreset,
   type StyleScope,
 } from '@/lib/stylePresets'
-import { cn } from '@/lib/utils'
+import { cn, modKey } from '@/lib/utils'
 import { applyStylePlan } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { useRenderStore } from '@/store/renderStore'
@@ -121,7 +121,7 @@ export function StyleDialog() {
       overwrites > 0 &&
       !(await askConfirm({
         title: `应用样式「${draft.name || '未命名'}」？`,
-        body: `将覆盖 ${overwrites} 项已有的图内修改（⌘Z 可整体撤销）。`,
+        body: `将覆盖 ${overwrites} 项已有的图内修改（${modKey('Z')} 可整体撤销）。`,
         confirmLabel: '应用',
       }))
     ) {

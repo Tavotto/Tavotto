@@ -28,6 +28,7 @@ import { openPackage } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { insertShape } from '@/lib/presets'
 import { PresetsDialog } from './PresetsDialog'
+import { ProjectSwitcher } from './ProjectSwitcher'
 import { usePalette } from '@/components/CommandPalette'
 import { useDocumentStore } from '@/store/documentStore'
 import { useUiStore, type Tool } from '@/store/uiStore'
@@ -52,8 +53,11 @@ const ZOOM_PRESETS = [0.5, 0.75, 1, 1.5, 2, 4]
 export function TopBar() {
   return (
     <header className="flex h-11 shrink-0 items-center justify-between gap-3 border-b border-border bg-surface px-3">
-      <div className="flex min-w-0 flex-1 items-center gap-2">
+      <div className="flex min-w-0 flex-1 items-center gap-1.5">
         <Brand />
+        {/* 项目（图库目录）→ 文档（画布）：从大到小，与对象层级一致 */}
+        <ProjectSwitcher />
+        <span aria-hidden className="h-3.5 w-px shrink-0 bg-border" />
         <DocumentMenu />
         <AutosaveState />
       </div>

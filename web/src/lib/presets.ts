@@ -1,4 +1,5 @@
 import { newId } from '@/lib/id'
+import { modKey } from '@/lib/utils'
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
@@ -32,7 +33,7 @@ function place(objs: CanvasObject[], label: string): void {
     d.objects.push(...objs)
   })
   useSelectionStore.getState().set(objs.map((o) => o.id))
-  useUiStore.getState().setStatus(`已插入${label.replace(/^插入/, '')}（⌘Z 可撤销）`)
+  useUiStore.getState().setStatus(`已插入${label.replace(/^插入/, '')}（${modKey('Z')} 可撤销）`)
 }
 
 const baseArrow = (x: number, y: number, w: number, h: number): ArrowObject => ({

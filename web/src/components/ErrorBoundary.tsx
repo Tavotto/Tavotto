@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
+import { requestBlankStart } from '@/store/documentStore'
 
 interface State {
   error: Error | null
@@ -28,16 +29,29 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
           <div className="mb-1 text-[13px] font-medium text-ink">界面出错了</div>
           <div className="mb-3 text-xs leading-relaxed text-ink-2">
             文档已自动保存在本机，刷新后可从最后一次快照继续。
+            如果一刷新就再次出错，改用「打开空白文档」——文档不会被删除，
+            仍可从顶栏「最近文档」取回。
           </div>
           <pre className="mb-4 max-h-40 overflow-auto rounded-sm border border-border bg-surface-2 px-2 py-1.5 font-mono text-[11px] leading-relaxed text-ink-2">
             {this.state.error.message}
           </pre>
-          <button
-            onClick={() => location.reload()}
-            className="h-7 rounded-md border border-border bg-surface px-3 text-xs text-ink transition-colors hover:border-border-strong"
-          >
-            重新加载
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={() => location.reload()}
+              className="h-7 rounded-md border border-border bg-surface px-3 text-xs text-ink transition-colors hover:border-border-strong"
+            >
+              重新加载
+            </button>
+            <button
+              onClick={() => {
+                requestBlankStart()
+                location.reload()
+              }}
+              className="h-7 rounded-md border border-border bg-surface px-3 text-xs text-ink-2 transition-colors hover:border-border-strong hover:text-ink"
+            >
+              打开空白文档
+            </button>
+          </div>
         </div>
       </div>
     )

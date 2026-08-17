@@ -109,3 +109,128 @@ jobs:
           curl -sf http://127.0.0.1:5199/ -o /dev/null
           curl -sf http://127.0.0.1:5199/api/version
           echo
+
+  windows-exe-smoke:
+    # 「只在别人电脑上发生」的问题基本都在这一段：打包后的 .exe、隔离的
+    # 用户目录、真实的渲染与导出。GitHub 提供 windows-latest 托管运行器，
+    # 所以日常拦截不需要自己常备一台 Windows。
+    #
+    # **本作业是内置渲染 runtime 的唯一真验证点**：Windows 桌面版承诺
+    # 「没装过 Python 的电脑装完就能渲染、首次不联网」，而这条承诺只有把
+    # runtime 真构建出来、真打进 .exe、再在**不给 MM_WORKER_PYTHON** 的
+    # 情况下真跑一次渲染与导出，才算验过。所以它进 PR/main 门禁，
+    # 不是只挂在手动的 Release 工作流上。
+    #
+    # 走的是 scripts/smoke_app.py（与 nightly 共用同一条路径），失败时把
+    # app.log / worker.log / runtime 清单一起传上来。
+    needs: [backend, frontend]
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
+      - uses: pnpm/action-setup@v4
+        with: { version: 11 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: 构建前端进包
+        run: python scripts/build_frontend.py
+
+      - name: 缓存 CPython embeddable 下载
+        # 只缓存那个 11 MiB 的官方 zip（按锁文件内容做 key）。wheel 不缓存：
+        # 每次真从 PyPI 装一遍，才能发现「锁文件里的版本被 yank 了」这类问题。
+        uses: actions/cache@v4
+        with:
+          path: build/runtime-cache
+          key: cpython-embed-${{ hashFiles('packaging/runtime-lock.json') }}
+
+      - name: 构建内置渲染 runtime
+        # 脚本自己会做 SHA-256 校验、版本核对，并**逐个 import + 画一张真图**；
+        # 任何一步不过就直接失败在这里，而不是留到用户机器上。
+        run: python scripts/build_worker_runtime.py --clean
+
+      - name: 装打包依赖
+        # 主进程**不装科学栈**，免得 PyInstaller 顺手打进去——科学栈只存在于
+        # 内置 runtime 里，这条边界一破，包大小和依赖关系立刻失控。
+        run: |
+          python -m pip install --upgrade pip pyinstaller
+          python -m pip install "flask>=3.1,<4" "pymupdf>=1.24,<2"
+
+      - name: PyInstaller（内置 runtime 必须进包）
+        env:
+          MAGPLOT_REQUIRE_RUNTIME: "1"
+        run: pyinstaller packaging/magplot.spec --noconfirm
+
+      - name: 断言产物里真有内置 runtime
+        run: |
+          $rt = "dist\Magplot\_internal\runtime"
+          if (-not (Test-Path "$rt\python.exe")) { throw "产物里没有 $rt\python.exe" }
+          if (-not (Test-Path "$rt\runtime-manifest.json")) { throw "产物里没有 runtime 清单" }
+          $m = Get-Content "$rt\runtime-manifest.json" -Raw | ConvertFrom-Json
+          if ($m.build.smoke -ne "passed") { throw "runtime 未通过 import 冒烟: $($m.build.smoke)" }
+          Write-Host "内置 runtime: Python $($m.python.version)，$($m.packages.PSObject.Properties.Count) 个锁定包"
+          "{0:N0} MiB" -f ((Get-ChildItem $rt -Recurse -File | Measure-Object Length -Sum).Sum / 1MB)
+
+      - name: 冒烟①：干净 Windows（无 Python / 无 MM_WORKER_PYTHON）
+        # **本次改动的核心验收**。--expect-source bundled 断言渲染真的走了内置
+        # runtime：少了它，一台碰巧装着 matplotlib 的 CI 机器会让「runtime 根本
+        # 没打进去」全程绿灯。smoke_app.py 还会主动把 MM_WORKER_PYTHON 摘掉。
+        # 此刻运行器上**尚未** pip install matplotlib（在下一步才装），
+        # 所以这一步同时也证明了「机器上没有科学栈也能渲染」。
+        run: |
+          $env:MM_WORKER_PYTHON = $null
+          python scripts/smoke_app.py --exe dist/Magplot/Magplot.exe `
+            --figures examples/runtime_check `
+            --expect-source bundled `
+            --expect-packages numpy,pandas,scipy,seaborn,PIL,matplotlib
+
+      - name: 冒烟②：中文 + 空格路径下仍走内置 runtime
+        # 用户名带中文、项目路径带空格是国内最常见的组合，也是历来最容易
+        # 出问题的一档（编码、引号、路径分隔符）
+        run: |
+          $env:MM_WORKER_PYTHON = $null
+          $dst = "$env:RUNNER_TEMP\我的 论文 图\figures"
+          New-Item -ItemType Directory -Force -Path $dst | Out-Null
+          Copy-Item examples\runtime_check\* $dst -Recurse -Force
+          python scripts/smoke_app.py --exe dist/Magplot/Magplot.exe `
+            --figures "$dst" --expect-source bundled
+
+      - name: 准备渲染环境（模拟用户自己的 Python）
+        run: python -m pip install matplotlib
+
+      - name: 冒烟③：用户指定的解释器仍然优先于内置
+        # 高级用户的出口不能被内置 runtime 挤掉——脚本要 rdkit / 自家实验室的库时
+        # 只有他自己那套环境才行。expect-source=env_override 就是这条的看护。
+        run: |
+          $env:MM_WORKER_PYTHON = (Get-Command python).Source
+          python scripts/smoke_app.py --exe dist/Magplot/Magplot.exe `
+            --expect-source env_override
+
+      - name: Playwright 黄金路径（真实界面 + 打包产物 + 内置 runtime）
+        working-directory: web
+        run: |
+          $env:MM_WORKER_PYTHON = $null
+          $env:MAGPLOT_EXE = "$env:GITHUB_WORKSPACE\dist\Magplot\Magplot.exe"
+          pnpm install --frozen-lockfile
+          pnpm exec playwright install --with-deps chromium
+          pnpm e2e
+
+      - name: 失败时收集日志与操作轨迹
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-smoke-logs
+          path: |
+            ${{ runner.temp }}/**/app.log
+            ${{ runner.temp }}/**/worker.log
+            dist/Magplot/_internal/runtime/runtime-manifest.json
+            build/**/warn-*.txt
+            web/playwright-report/**
+            web/test-results/**
+          if-no-files-found: warn
+          retention-days: 7

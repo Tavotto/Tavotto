@@ -1,3 +1,4 @@
+import { apiUrl, withProject } from '@/lib/session'
 import type { FigureDocument, ProjectDocument } from '@/types/document'
 
 export interface PanelInfo {
@@ -26,17 +27,77 @@ export interface PanelsResponse {
   panels: PanelInfo[]
 }
 
+/** 带上服务器错误体的 Error：某些端点会附带可操作的线索（如就近可用路径） */
+export class ApiError extends Error {
+  status: number
+  body: Record<string, unknown>
+  constructor(message: string, status: number, body: Record<string, unknown>) {
+    super(message)
+    this.status = status
+    this.body = body
+  }
+}
+
+/* --------------------- 项目失效（409 no_project）的统一出口 ------------------- */
+/**
+ * 后端不认本标签页的项目了：进程重启后 PROJECTS 清空、或项目被别处关掉，而
+ * sessionStorage 里还留着旧 pj。此后**每个**请求都是 409 `no_project`
+ * （app.py 的 _request_ctx 绝不悄悄落到默认项目），界面却停在原地——点重试
+ * 也只是再 409 一次。
+ *
+ * 所以在请求出口集中认这个码，触发一次「回到项目选择」，然后照常把错误抛给
+ * 调用方（语义一点不变，组件层不需要各自认识这个码）。用回调注册而不是直接
+ * import projectStore：那边 import 了本模块，反向再引一次就成了循环依赖。
+ */
+let noProjectHandler: (() => void) | null = null
+/** 节流：一屏十几个请求会同时 409，恢复动作只能跑一次 */
+let noProjectFired = false
+
+export function setNoProjectHandler(fn: (() => void) | null): void {
+  noProjectHandler = fn
+}
+
+/** 重新认领到项目后调用：下一次项目失效时还要能把用户送回选择器 */
+export function armNoProjectRecovery(): void {
+  noProjectFired = false
+}
+
+/**
+ * 409 + `code=no_project` → 触发一次恢复。**只认这一个码**：同样是 409 的
+ * `stale_write`（自动保存的乐观并发）与 `file_locked`（写回撞上独占锁）各有
+ * 各的处理，误伤它们等于把用户的改动扔了。
+ */
+function noteProjectGone(status: number, body: Record<string, unknown>): void {
+  if (status !== 409 || body?.code !== 'no_project') return
+  if (noProjectFired || !noProjectHandler) return
+  noProjectFired = true
+  try {
+    noProjectHandler()
+  } catch {
+    /* 恢复动作自己出错，不能连累本次请求的错误往上抛 */
+  }
+}
+
+/** 失败响应的 JSON 错误体（非 JSON 时给空对象）；只在 !res.ok 时调用 */
+const errorBody = (res: Response): Promise<Record<string, unknown>> =>
+  res
+    .json()
+    .then((b) => (b ?? {}) as Record<string, unknown>)
+    .catch(() => ({}) as Record<string, unknown>)
+
 async function jsonFetch<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init)
+  const res = await fetch(apiUrl(url), withProject(init))
   if (!res.ok) {
     let detail = `HTTP ${res.status}`
+    let body: Record<string, unknown> = {}
     try {
-      const body = await res.json()
-      if (body?.error) detail = body.error
+      body = (await res.json()) as Record<string, unknown>
+      if (typeof body?.error === 'string') detail = body.error
     } catch {
       /* 非 JSON 错误体，保留状态码 */
     }
-    throw new Error(detail)
+    noteProjectGone(res.status, body)
+    throw new ApiError(detail, res.status, body)
   }
   return res.json() as Promise<T>
 }
@@ -48,6 +109,8 @@ export const fetchPanels = () => jsonFetch<PanelsResponse>('/api/panels')
 
 export interface ProjectStatus {
   open: boolean
+  /** 后端给这个项目的短 id；本标签页据此认领项目（见 lib/session.ts） */
+  id?: string
   figures_dir?: string
   name?: string
   exists?: boolean
@@ -66,13 +129,19 @@ export interface RecentProject {
   name: string
   last_opened: number
   exists: boolean
+  /** 已在后端打开（其它标签页可能正用着）；有值即为它的项目 id */
+  id?: string | null
+  opened?: boolean
   current: boolean
 }
 
 export const fetchProject = () => jsonFetch<ProjectStatus>('/api/project')
 
-export const fetchRecentProjects = () =>
-  jsonFetch<{ recent: RecentProject[] }>('/api/projects/recent').then((r) => r.recent)
+/** 后端进程里打开着的全部项目（多标签页各开各的时用来做快速切换） */
+export const fetchOpenProjects = () =>
+  jsonFetch<{ projects: ProjectStatus[]; default: string | null }>('/api/projects').then(
+    (r) => r.projects,
+  )
 
 export const openProjectApi = (path: string, create = false) =>
   jsonFetch<ProjectStatus>('/api/projects/open', {
@@ -81,6 +150,9 @@ export const openProjectApi = (path: string, create = false) =>
     body: JSON.stringify({ path, create }),
   })
 
+export const fetchRecentProjects = () =>
+  jsonFetch<{ recent: RecentProject[] }>('/api/projects/recent').then((r) => r.recent)
+
 export const removeRecentProject = (path: string) =>
   jsonFetch<{ ok: boolean }>('/api/projects/remove', {
     method: 'POST',
@@ -88,12 +160,25 @@ export const removeRecentProject = (path: string) =>
     body: JSON.stringify({ path }),
   })
 
+export interface DirEntry {
+  name: string
+  path: string
+}
+
 export interface BrowseResult {
   path: string
   parent: string | null
-  dirs: { name: string; path: string }[]
+  dirs: DirEntry[]
+  /** Windows 的盘符（此电脑那一层）；POSIX 上只有 `/` */
+  roots: DirEntry[]
+  /** 主目录 / 桌面 / 文档 等常用起点 */
+  shortcuts: DirEntry[]
+  /** 当前列的是「驱动器」那一层虚拟根 */
+  is_roots: boolean
+  writable?: boolean
 }
 
+/** 目录列举。`'@roots'` = 列驱动器（Windows 靠它跨到 D 盘）。 */
 export const browseDirs = (path?: string) =>
   jsonFetch<BrowseResult>(
     `/api/projects/browse${path ? `?path=${encodeURIComponent(path)}` : ''}`,
@@ -121,10 +206,10 @@ export const patchProjectSettings = (patch: {
 const stamp = (mtime?: number) => (mtime ? `&m=${mtime}` : '')
 
 export const renderUrl = (id: string, bucket: number, mtime?: number) =>
-  `/api/render?id=${encodeURIComponent(id)}&w=${bucket}${stamp(mtime)}`
+  apiUrl(`/api/render?id=${encodeURIComponent(id)}&w=${bucket}${stamp(mtime)}`)
 
 export const fileUrl = (id: string, mtime?: number) =>
-  `/api/file?id=${encodeURIComponent(id)}${stamp(mtime)}`
+  apiUrl(`/api/file?id=${encodeURIComponent(id)}${stamp(mtime)}`)
 
 /** 位图走原文件、矢量走分档渲染 —— 与后端缓存策略一致 */
 export const panelSrc = (
@@ -153,18 +238,29 @@ export const saveLayout = (name: string, doc: FigureDocument | ProjectDocument) 
 /* --------------------------- 文档自动保存（磁盘） ---------------------------- */
 /** 文档主体的可靠落盘（后端原子写）；localStorage 只留索引与崩溃兜底副本 */
 
-export const putAutosave = (docId: string, doc: ProjectDocument) =>
-  jsonFetch<{ ok: boolean }>(`/api/autosave/${encodeURIComponent(docId)}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(doc),
-  })
+/**
+ * `base` = 本标签页最后一次成功落盘时的 updatedAt（乐观并发基线）。
+ * 带上它，后端发现磁盘上已经比它更新（另一个标签页存过）就回 409
+ * `stale_write` 而不是整份覆盖。不带 = 后端不校验（首次写、旧路径都照常）。
+ */
+export const putAutosave = (docId: string, doc: ProjectDocument, base?: number) =>
+  jsonFetch<{ ok: boolean }>(
+    `/api/autosave/${encodeURIComponent(docId)}${base === undefined ? '' : `?base=${base}`}`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(doc),
+    },
+  )
 
 /** 404（没存过）返回 null；其余错误抛出 */
 export async function fetchAutosave(docId: string): Promise<unknown | null> {
-  const res = await fetch(`/api/autosave/${encodeURIComponent(docId)}`)
+  const res = await fetch(apiUrl(`/api/autosave/${encodeURIComponent(docId)}`), withProject())
   if (res.status === 404) return null
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  if (!res.ok) {
+    noteProjectGone(res.status, await errorBody(res))
+    throw new Error(`HTTP ${res.status}`)
+  }
   return res.json()
 }
 
@@ -314,6 +410,9 @@ export type ExportObject =
   | (ExportBox & {
       type: 'shape'
       shape: string
+      /** line 专用端点（比例坐标）；缺省时后端按包围盒水平中线画 */
+      start?: { rx: number; ry: number }
+      end?: { rx: number; ry: number }
       stroke_pt: number
       color: string
       fill: string | null
@@ -444,32 +543,51 @@ export interface EngineRenderResponse {
 
 export class EngineError extends Error {
   traceback: string
-  /** 机器可读的原因；'no_worker_python' = 缺渲染环境，界面给引导而不是甩错误文字 */
+  /**
+   * 机器可读的原因，界面据此换成对应的出口而不是甩错误文字：
+   *   no_worker_python         没有可用的渲染环境（源码/pip 安装模式）
+   *   bundled_runtime_missing  桌面版该带的内置环境没带 → 让用户重装
+   *   bundled_runtime_invalid  内置环境残缺/损坏 → 同上
+   *   missing_dependency       脚本要的包当前环境里没有 → 让用户换自己的环境
+   */
   code: string
-  constructor(message: string, traceback = '', code = '') {
+  /** code === 'missing_dependency' 时缺的那个包名 */
+  module: string
+  constructor(message: string, traceback = '', code = '', module = '') {
     super(message)
     this.traceback = traceback
     this.code = code
+    this.module = module
   }
 }
+
+/** 渲染环境缺件类错误：这些不是「脚本报错」，不该给 traceback 而该给出口 */
+export const ENVIRONMENT_CODES = [
+  'no_worker_python',
+  'bundled_runtime_missing',
+  'bundled_runtime_invalid',
+  'missing_dependency',
+] as const
 
 export async function engineRender(
   id: string,
   patches: unknown[],
   signal?: AbortSignal,
 ): Promise<EngineRenderResponse> {
-  const res = await fetch('/api/engine/render', {
+  const res = await fetch(apiUrl('/api/engine/render'), withProject({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id, patches }),
     signal,
-  })
+  }))
   const body = await res.json().catch(() => ({}) as Record<string, unknown>)
   if (!res.ok) {
+    noteProjectGone(res.status, body)
     throw new EngineError(
       (body.error as string) || `渲染失败（HTTP ${res.status}）`,
       (body.traceback as string) || '',
       (body.code as string) || '',
+      (body.module as string) || '',
     )
   }
   return body as EngineRenderResponse
@@ -477,11 +595,14 @@ export async function engineRender(
 
 /** 高清位图预览：含 imshow 的面板用 SVG 显示会糊，退出编辑态后走这个 */
 export const enginePngUrl = (id: string, bucket: number, rev: number) =>
-  `/api/engine/png?id=${encodeURIComponent(id)}&w=${bucket}&rev=${rev}`
+  apiUrl(`/api/engine/png?id=${encodeURIComponent(id)}&w=${bucket}&rev=${rev}`)
 
 export async function engineSvg(id: string, rev: number, signal?: AbortSignal): Promise<string> {
-  const res = await fetch(`/api/engine/svg?id=${encodeURIComponent(id)}&rev=${rev}`, { signal })
-  if (!res.ok) throw new EngineError(`取 SVG 失败（HTTP ${res.status}）`)
+  const res = await fetch(apiUrl(`/api/engine/svg?id=${encodeURIComponent(id)}&rev=${rev}`), withProject({ signal }))
+  if (!res.ok) {
+    noteProjectGone(res.status, await errorBody(res))
+    throw new EngineError(`取 SVG 失败（HTTP ${res.status}）`)
+  }
   return res.text()
 }
 
@@ -498,16 +619,76 @@ export const updateSourceFiles = (id: string, patches: unknown[]) =>
 export interface AiProviderCaps {
   installed: boolean
   path: string | null
+  /** 实际启动命令（npm 的 .cmd 外壳会被解析成真正的 exe / node 脚本） */
+  argv: string[] | null
   version: string | null
   models: string[]
   default_model: string | null
   efforts: string[]
   default_effort: string | null
+  /** 当前接管这家 CLI 的第三方接口；null = 用 CLI 自己的登录态 */
+  endpoint: AiEndpoint | null
+  /** 未安装时：后端找过哪些目录（比干甩一句「未安装」有用得多） */
+  searched?: string[]
+}
+
+/** 第三方 API 接入。密钥永远不回传，只给「有没有」和尾四位。 */
+export interface AiEndpoint {
+  id: string
+  label: string
+  agent: 'codex' | 'claude'
+  base_url: string
+  models: string[]
+  default_model: string | null
+  wire_api: 'responses' | 'chat'
+  has_key: boolean
+  key_hint: string
+}
+
+export interface AiEndpointPreset {
+  id: string
+  label: string
+  agent: 'codex' | 'claude'
+  base_url: string
+  models: string[]
+  wire_api?: 'responses' | 'chat'
+  note?: string
 }
 
 export interface AiCapabilities {
   providers: Record<'codex' | 'claude', AiProviderCaps>
+  endpoints: AiEndpoint[]
+  presets: AiEndpointPreset[]
+  active: Record<'codex' | 'claude', string | null>
 }
+
+/** 新增/更新一个第三方接口；api_key 留空 = 保留原值 */
+export const saveAiEndpoint = (rec: {
+  id?: string
+  label: string
+  agent: 'codex' | 'claude'
+  base_url: string
+  api_key?: string
+  models?: string[]
+  default_model?: string | null
+  wire_api?: 'responses' | 'chat'
+}) =>
+  jsonFetch<AiCapabilities>('/api/ai/endpoints', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(rec),
+  })
+
+export const deleteAiEndpoint = (id: string) =>
+  jsonFetch<AiCapabilities>(`/api/ai/endpoints/${encodeURIComponent(id)}`, { method: 'DELETE' })
+
+/** 选中某家 CLI 当前使用的接口；id 传 '' = 回到 CLI 自带登录态 */
+export const setAiEndpointActive = (agent: 'codex' | 'claude', id: string) =>
+  jsonFetch<AiCapabilities>('/api/ai/endpoints/active', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ agent, id }),
+  })
 
 export const fetchAiCapabilities = (refresh = false) =>
   jsonFetch<AiCapabilities>(`/api/ai/capabilities${refresh ? '?refresh=1' : ''}`)
@@ -601,14 +782,20 @@ export const aiCancel = (sid: string) =>
 /** ai.delta 的内容分类：流式增量 / 正文终稿 / 思考 / 动作 */
 export type AiDeltaKind = 'delta' | 'message' | 'thinking' | 'action'
 
+/** 事件所属项目（后端一个进程同时端着多个图库）；缺省 = 与项目无关的全局事件 */
+interface ProjectScoped {
+  pj?: string
+}
+
 export type ServerEvent =
-  | { kind: 'render.started'; id: string; cost?: string; cold?: boolean }
-  | { kind: 'render.done'; id: string; rev?: number }
-  | { kind: 'render.failed'; id: string; error?: string }
-  | { kind: 'panel.file_changed'; scripts?: string[]; stems?: string[] }
+  | ({ kind: 'render.started'; id: string; cost?: string; cold?: boolean } & ProjectScoped)
+  | ({ kind: 'render.done'; id: string; rev?: number } & ProjectScoped)
+  | ({ kind: 'render.failed'; id: string; error?: string } & ProjectScoped)
+  | ({ kind: 'panel.file_changed'; scripts?: string[]; stems?: string[] } & ProjectScoped)
+  | ({ kind: 'registry.changed'; script: string; stems: string[] } & ProjectScoped)
   | { kind: 'engine.bootstrap'; state: string; log: string; error: string | null }
   | { kind: 'ai.delta'; session: string; text: string; kindOf?: AiDeltaKind }
-  | {
+  | ({
       kind: 'ai.done'
       session: string
       status: string
@@ -616,13 +803,14 @@ export type ServerEvent =
       diff: string
       script: string
       error?: string
-    }
+    } & ProjectScoped)
 
 const EVENT_KINDS = [
   'render.started',
   'render.done',
   'render.failed',
   'panel.file_changed',
+  'registry.changed',
   'engine.bootstrap',
   'ai.delta',
   'ai.done',
@@ -637,7 +825,7 @@ export function subscribeEvents(
   let closed = false
 
   try {
-    source = new EventSource('/api/events')
+    source = new EventSource(apiUrl('/api/events'))
   } catch {
     return () => {}
   }
@@ -686,7 +874,7 @@ export const fetchHistory = (id: string) =>
 
 /** n = -1 表示脚本原始状态，永远可用作时间线起点 */
 export const historyPreviewUrl = (id: string, n: number, w = 400) =>
-  `/api/engine/history/preview?id=${encodeURIComponent(id)}&n=${n}&w=${w}`
+  apiUrl(`/api/engine/history/preview?id=${encodeURIComponent(id)}&n=${n}&w=${w}`)
 
 export const restoreHistory = (id: string, n: number) =>
   jsonFetch<{
@@ -788,17 +976,49 @@ export const applyUpdate = () =>
 // ---------------------------------------------------------------------------
 // 渲染环境（缺 matplotlib 时的自助安装）
 // ---------------------------------------------------------------------------
+/** 渲染解释器是从哪来的——同一条路径，来源不同排障含义完全不同 */
+export type EngineSource =
+  | 'env_override'    // 环境变量 MM_WORKER_PYTHON
+  | 'configured'      // 用户在设置里指定的
+  | 'managed_venv'    // Magplot 在源码模式下自建的 venv
+  | 'bundled'         // Windows 桌面版随包附带的内置环境
+  | 'current_process' // Magplot 自身的解释器（pip install magplot[worker]）
+  | 'system'          // 探测到的系统 Python / Conda
+  | ''
+
+/** 内置渲染环境（Windows 桌面版随包附带）的现状 */
+export interface BundledRuntime {
+  present: boolean
+  valid: boolean
+  /** 这个安装形态**本该**带内置环境吗——false 时缺失是正常的，不该报错 */
+  expected: boolean
+  python: string | null
+  packages: Record<string, string>
+  build: Record<string, unknown>
+  code: string
+  error: string | null
+}
+
 export interface EngineEnvironment {
   ok: boolean
   python: string | null
+  source: EngineSource
   matplotlib: string | null
-  /** true = 用的是 Magplot 自建的环境，而非用户自己的 */
+  /** true = 用的是 Magplot 自建的 venv，而非用户自己的 */
   managed: boolean
+  /** true = 用的是随安装包附带的内置环境（装完即用，不联网） */
+  bundled: boolean
+  runtime: BundledRuntime
   state: 'idle' | 'running' | 'done' | 'failed'
   /** ok=false 时才有：能不能替用户装一个 */
   can_install?: boolean
   base_python?: string | null
+  /** ok=false 时的机器可读原因（bundled_runtime_missing / …） */
+  code?: string
+  base_error?: string | null
   error?: string | null
+  /** ?probe= 时才有：各包实测 import 到的版本，null = import 不到 */
+  imports?: Record<string, string | null>
 }
 
 export interface BootstrapProgress {
@@ -807,8 +1027,9 @@ export interface BootstrapProgress {
   error: string | null
 }
 
-export const fetchEngineEnvironment = () =>
-  jsonFetch<EngineEnvironment>('/api/engine/environment')
+export const fetchEngineEnvironment = (probe?: boolean) =>
+  jsonFetch<EngineEnvironment>(
+    `/api/engine/environment${probe ? '?probe=1' : ''}`)
 
 export const installEngineEnvironment = () =>
   jsonFetch<{ started?: boolean } & BootstrapProgress>(
@@ -819,4 +1040,75 @@ export const setEngineEnvironment = (python: string | null) =>
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ python }),
+  })
+
+/* --------------------------- 脚本注册表（stem ↔ 脚本） ----------------------- */
+/**
+ * 「面板上没有 ⚡」几乎总是注册表的问题，以前只能手改 mm_registry.json。
+ * 这组接口把整条链路搬到界面上：看现状 → 重扫 → 跑一遍认领 → 手工裁决。
+ */
+
+export interface RegistryEntry {
+  entry: string
+  cost: string
+  notes: string
+  stems: string[]
+}
+
+export interface RegistryCandidate {
+  script: string
+  entry: string
+  stems: string[]
+  new_stems: string[]
+  unresolved: string[]
+  /** 静态解不出文件名（stem 来自运行期数据）——只能靠试运行探测 */
+  dynamic_names: boolean
+  save_calls: number
+  registered: boolean
+}
+
+export interface RegistryView {
+  source: string
+  scripts: Record<string, RegistryEntry>
+  candidates: RegistryCandidate[]
+  conflicts: Record<string, string[]>
+}
+
+export const fetchRegistry = () => jsonFetch<RegistryView>('/api/registry')
+
+export const scanRegistry = () =>
+  jsonFetch<{
+    changes: { added_scripts: string[]; added_stems: Record<string, string[]> }
+    conflicts: Record<string, string[]>
+    scripts: Record<string, RegistryEntry>
+  }>('/api/registry/scan', { method: 'POST' })
+
+export interface ProbeResult {
+  script: string
+  entry: string | null
+  stems: string[]
+  error: string | null
+  tried: string[]
+  registered?: boolean
+}
+
+/** 试运行：真的跑一遍脚本，按它**实际产出**的文件名登记（冷启动可能要几分钟） */
+export const probeScript = (script: string, cost?: string) =>
+  jsonFetch<ProbeResult>('/api/registry/probe', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ script, cost }),
+  })
+
+export const writeRegistryEntry = (payload: {
+  script: string
+  entry: string
+  stems: string[]
+  cost?: string
+  notes?: string
+}) =>
+  jsonFetch<{ scripts: Record<string, RegistryEntry> }>('/api/registry', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
   })

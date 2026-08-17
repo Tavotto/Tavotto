@@ -90,16 +90,42 @@ def test_capabilities_provider_specific(monkeypatch):
 
 
 def test_cmd_passes_model_and_effort(monkeypatch):
-    monkeypatch.setattr(ai_bridge, "_find_cli", lambda name: f"/fake/{name}")
-    cmd = ai_bridge._cmd("codex", "p", "/cwd", model="gpt-5", effort="high")
+    monkeypatch.setattr(ai_bridge, "_find_cli", lambda name: [f"/fake/{name}"])
+    cmd, env = ai_bridge._cmd("codex", "p", "/cwd", model="gpt-5", effort="high")
     assert "-m" in cmd and "gpt-5" in cmd
     assert "-c" in cmd and "model_reasoning_effort=high" in cmd
     assert cmd[-1] == "p"  # prompt 恒在末位
-    cmd = ai_bridge._cmd("claude", "p", "/cwd", model="opus")
+    assert env == {}       # 没选第三方接口就不注入任何环境变量
+    cmd, _ = ai_bridge._cmd("claude", "p", "/cwd", model="opus")
     assert "--model" in cmd and "opus" in cmd
     # 不传参数 = 不携带对应 flag
-    cmd = ai_bridge._cmd("codex", "p", "/cwd")
+    cmd, _ = ai_bridge._cmd("codex", "p", "/cwd")
     assert "-m" not in cmd
+
+
+def test_cmd_injects_third_party_endpoint(monkeypatch):
+    """第三方接口只经环境变量 / `-c` 临时覆盖注入——绝不改写用户
+    自己的 ~/.claude/settings.json 或 ~/.codex/config.toml。"""
+    monkeypatch.setattr(ai_bridge, "_find_cli", lambda name: [f"/fake/{name}"])
+    claude_ep = {"agent": "claude", "label": "Kimi", "api_key": "sk-k",
+                 "base_url": "https://api.moonshot.cn/anthropic"}
+    cmd, env = ai_bridge._cmd("claude", "p", "/cwd", model="kimi-k2",
+                              endpoint=claude_ep)
+    assert env["ANTHROPIC_BASE_URL"] == "https://api.moonshot.cn/anthropic"
+    assert env["ANTHROPIC_AUTH_TOKEN"] == "sk-k"
+    assert env["ANTHROPIC_MODEL"] == "kimi-k2"
+    assert not any(a.startswith("ANTHROPIC") for a in cmd)  # 密钥不进命令行
+
+    codex_ep = {"agent": "codex", "label": "DeepSeek", "api_key": "sk-d",
+                "base_url": "https://api.deepseek.com/v1", "wire_api": "chat"}
+    cmd, env = ai_bridge._cmd("codex", "p", "/cwd", endpoint=codex_ep)
+    joined = " ".join(cmd)
+    assert 'model_provider="magplot"' in joined
+    assert 'model_providers.magplot.base_url="https://api.deepseek.com/v1"' in joined
+    assert 'model_providers.magplot.wire_api="chat"' in joined
+    # 密钥走环境变量，命令行里只出现变量名
+    assert env == {"MAGPLOT_CODEX_API_KEY": "sk-d"}
+    assert "sk-d" not in joined
 
 
 def test_no_private_paths_in_cli_lookup():

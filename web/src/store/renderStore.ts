@@ -14,8 +14,13 @@ export interface PanelRender {
   cold: boolean
   cost: string
   error: string | null
-  /** 机器可读的失败原因；'no_worker_python' 时界面给环境引导而不是 traceback */
+  /**
+   * 机器可读的失败原因。属于 ENVIRONMENT_CODES 的那几个是「缺件」而不是
+   * 「脚本报错」，界面给出口而不是 traceback。
+   */
   code: string
+  /** code === 'missing_dependency' 时缺的那个包名 */
+  module: string
   traceback: string
   warnings: string[]
   /** 脚本文件变了，当前 SVG 已过期 */
@@ -40,6 +45,7 @@ const EMPTY: PanelRender = {
   cost: '',
   error: null,
   code: '',
+  module: '',
   traceback: '',
   warnings: [],
   stale: false,
@@ -115,7 +121,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
     try {
       let current = patches
       for (;;) {
-        patch(fileId, { status: 'rendering', error: null, traceback: '', code: '' })
+        patch(fileId, { status: 'rendering', error: null, traceback: '', code: '', module: '' })
         const ctrl = new AbortController()
         const timeoutMs = watchdogMs(fileId)
         let timedOut = false
@@ -151,6 +157,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
             status: 'error',
             cold: false,
             code: err instanceof EngineError ? err.code : '',
+            module: err instanceof EngineError ? err.module : '',
             error: timedOut
               ? `渲染超过 ${Math.round(timeoutMs / 60_000)} 分钟无响应，已断开请求；服务可能仍在后台运行，可稍后重试`
               : err instanceof Error

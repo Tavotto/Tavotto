@@ -11,6 +11,7 @@ import {
   selectAll,
 } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
+import { useInteractionStore } from '@/store/interactionStore'
 import { useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore, type Tool } from '@/store/uiStore'
@@ -55,6 +56,29 @@ function inEditableTarget(e: KeyboardEvent) {
   )
 }
 
+/**
+ * 拖动 / 缩放 / 框选 / 画线 / 调端点进行中要忽略撤销重做：`documentStore.undo()`
+ * 开头的 `if (state.txn) state.endTxn()` 会把进行中的这次拖动当场结算成一条历史，
+ * 紧接着同一次调用里 `past.at(-1)` 取到的正是它，立刻又把它撤销；而
+ * `canvas/interactions.ts` 挂在 window 上的 pointermove 毫不知情，此后每次移动都落进
+ * `txnUpdate` 里「没有 txn 就直接 set」的静默分支——那段位移既不进历史也撤不回来。
+ * 与 `inEditableTarget()` 不冲突：那条按 e.target 挡的是输入框 / 对话框里的原生文本
+ * 撤销，这条只看画布拖动是否进行中，两者各管一段、互不覆盖。
+ */
+export function undoRedoBlocked() {
+  return useInteractionStore.getState().kind !== 'none'
+}
+
+/** ⌘Z / ⌘⇧Z 的实际动作；拖动中直接放弃（见 undoRedoBlocked） */
+export function runUndoRedo(redo: boolean) {
+  if (undoRedoBlocked()) return
+  const doc = useDocumentStore.getState()
+  const label = redo ? doc.redo() : doc.undo()
+  const ui = useUiStore.getState()
+  if (label) ui.setStatus(`${redo ? '重做' : '撤销'}：${label}`)
+  else ui.setStatus(redo ? '没有可重做的操作' : '没有可撤销的操作')
+}
+
 export function useKeyboard() {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -72,13 +96,12 @@ export function useKeyboard() {
 
       if (mod && e.key.toLowerCase() === 'z') {
         e.preventDefault()
-        const label = e.shiftKey ? doc.redo() : doc.undo()
-        if (label) ui.setStatus(`${e.shiftKey ? '重做' : '撤销'}：${label}`)
-        else ui.setStatus(e.shiftKey ? '没有可重做的操作' : '没有可撤销的操作')
+        runUndoRedo(e.shiftKey)
         return
       }
       if (mod && e.key.toLowerCase() === 'y') {
         e.preventDefault()
+        if (undoRedoBlocked()) return
         const label = doc.redo()
         if (label) ui.setStatus(`重做：${label}`)
         return

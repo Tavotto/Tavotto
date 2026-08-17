@@ -2,6 +2,7 @@ import { requestRender } from '@/hooks/useEngineSync'
 import { newId } from '@/lib/id'
 import { applyAlign, boundsOf, readingOrder, type AlignMode } from '@/lib/geometry'
 import { clamp } from '@/lib/units'
+import { modKey } from '@/lib/utils'
 import type { PanelInfo } from '@/lib/api'
 import type { StylePlan, StylePreset } from '@/lib/stylePresets'
 import { reflowPatches, sizeSignature } from '@/lib/layoutGroups'
@@ -215,25 +216,31 @@ export function deleteSelected() {
 export function duplicateSelected() {
   const ids = useSelectionStore.getState().ids
   if (!ids.length) return
-  const clones: string[] = []
-  commit('复制对象', (d) => {
-    // 组要跟着复制成新的一份，否则副本会和原件粘成同一组
-    const regroup = new Map<string, string>()
-    for (const o of d.objects.filter((x) => ids.includes(x.id))) {
+  // 克隆**必须**在 commit 的 recipe 外面做：recipe 里的 d 是 Immer 草稿，
+  // d.objects.filter(...) 逐个取到的是元素的草稿 Proxy，而 structuredClone
+  // 对任何 Proxy 都直接抛 DataCloneError（引擎级行为）——复制会 100% 静默失败。
+  // 对已 finalize 的 plain object 克隆好再整体 push，与 clipboard.materializePaste 同一模式。
+  const regroup = new Map<string, string>()
+  const clones: CanvasObject[] = doc()
+    .objects.filter((o) => ids.includes(o.id))
+    .map((o) => {
       const copy = structuredClone(o)
       copy.id = newId(o.type[0])
       copy.x += 4
       copy.y += 4
+      // 组要跟着复制成新的一份，否则副本会和原件粘成同一组
       if (copy.groupId) {
         const next = regroup.get(copy.groupId) ?? newId('g')
         regroup.set(copy.groupId, next)
         copy.groupId = next
       }
-      clones.push(copy.id)
-      d.objects.push(copy)
-    }
+      return copy
+    })
+  if (!clones.length) return
+  commit('复制对象', (d) => {
+    d.objects.push(...clones)
   })
-  select(clones)
+  select(clones.map((c) => c.id))
 }
 
 export type ZMove = 'top' | 'bottom' | 'up' | 'down'
@@ -304,9 +311,14 @@ export function alignSelected(mode: AlignMode) {
 export function nudgeSelected(dx: number, dy: number) {
   const ids = useSelectionStore.getState().ids
   if (!ids.length) return
+  // 与鼠标拖动同一套规则：组内有锁定成员就整组不动（movableTargets）
+  const { objects, blockedGroups } = movableTargets(ids)
+  warnBlockedGroups(blockedGroups, objects.length > 0)
+  if (!objects.length) return
+  const moving = new Set(objects.map((o) => o.id))
   commit('移动对象', (d) => {
     for (const o of d.objects) {
-      if (!ids.includes(o.id) || o.locked) continue
+      if (!moving.has(o.id)) continue
       o.x += dx
       o.y += dy
     }
@@ -751,7 +763,7 @@ export function applyStylePlan(plan: StylePlan, preset: StylePreset) {
     plan.subLabelIds.length && `${plan.subLabelIds.length} 个序号标签`,
     plan.page && '页面尺寸',
   ].filter(Boolean)
-  status(`已应用样式「${preset.name}」到 ${parts.join('、')}（⌘Z 可整体撤销）`)
+  status(`已应用样式「${preset.name}」到 ${parts.join('、')}（${modKey('Z')} 可整体撤销）`)
 }
 
 /* ------------------------------ 结构化布局组 -------------------------------- */
@@ -899,7 +911,7 @@ export function startLayoutAutoReflow(): () => void {
         }
       })
       snapshot(useDocumentStore.getState().doc)
-      if (moved) status('布局组已自动重排（⌘Z 可撤销）')
+      if (moved) status(`布局组已自动重排（${modKey('Z')} 可撤销）`)
     }, 120)
   })
   return () => {
@@ -918,6 +930,43 @@ export function groupMates(id: string): string[] {
   const self = objs.find((o) => o.id === id)
   if (!self?.groupId) return self ? [id] : []
   return objs.filter((o) => o.groupId === self.groupId).map((o) => o.id)
+}
+
+/**
+ * 选区里这次真正能移动的对象。组的意义是「保持相对排布」，所以**组内任一成员
+ * 锁定就整组不动**——只动没锁的那一半等于把组悄悄拆散（成员的锁定状态不限于
+ * 选区内，按 groupId 全量扫文档）。不成组的锁定对象照旧逐个过滤。
+ */
+export function movableTargets(ids: string[]): {
+  objects: CanvasObject[]
+  /** 因含锁定成员被整组跳过的组数，调用方据此提示 */
+  blockedGroups: number
+} {
+  const objs = doc().objects
+  const expanded = expandGroups(ids)
+  const lockedGids = new Set(
+    objs.filter((o) => o.locked && o.groupId).map((o) => o.groupId as string),
+  )
+  const blocked = new Set<string>()
+  const objects = objs.filter((o) => {
+    if (!expanded.includes(o.id)) return false
+    if (o.groupId && lockedGids.has(o.groupId)) {
+      blocked.add(o.groupId)
+      return false
+    }
+    return !o.locked
+  })
+  return { objects, blockedGroups: blocked.size }
+}
+
+/** 组因含锁定成员被跳过时的统一提示（移动 / 方向键微调共用） */
+export function warnBlockedGroups(blockedGroups: number, movedAny: boolean) {
+  if (!blockedGroups) return
+  status(
+    movedAny
+      ? `组内有锁定对象，已跳过 ${blockedGroups} 个组`
+      : '组内有锁定对象，先解锁才能移动整组',
+  )
 }
 
 /** 选区补齐成整组：点中组里任意一个 = 选中整组 */

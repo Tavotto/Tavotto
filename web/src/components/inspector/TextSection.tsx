@@ -3,12 +3,16 @@ import {
   Bold,
   CornerDownLeft,
   Italic,
+  Subscript,
+  Superscript,
   TextAlignCenter,
   TextAlignEnd,
   TextAlignStart,
   Underline,
 } from 'lucide-react'
+import { toggleScript, transformCase, type CaseMode } from '@/lib/richText'
 import { BASE_FONT_PT, effectivePt, round1 } from '@/lib/units'
+import { ALT, combo, modKey } from '@/lib/utils'
 import { updateObjects } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { useUiStore } from '@/store/uiStore'
@@ -23,6 +27,30 @@ const ALIGN_ITEMS = [
   { value: 'left' as const, icon: <TextAlignStart size={13} />, tip: '左对齐' },
   { value: 'center' as const, icon: <TextAlignCenter size={13} />, tip: '居中' },
   { value: 'right' as const, icon: <TextAlignEnd size={13} />, tip: '右对齐' },
+]
+
+/**
+ * 上下标快捷键：Mod+↑ = 上标、Mod+↓ = 下标（Mod = ⌘ / Ctrl，两边都认）。
+ *
+ * 带 ⌥ / ⇧ 的组合**不认领**——那些是系统自带的「按段移动 / 选到开头」，
+ * 抢过来用户就没法在文本框里选词了；只有干净的 Mod+方向键才是我们的键位。
+ * 单独抽出来是为了能直接对它写用例，不必为每种组合去挂一次组件。
+ */
+export function scriptHotkey(
+  e: Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey'>,
+): 'sup' | 'sub' | null {
+  if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return null
+  if (e.key === 'ArrowUp') return 'sup'
+  if (e.key === 'ArrowDown') return 'sub'
+  return null
+}
+
+/** 大小写是一次性动作而不是状态：转换完就没有「当前处于大写」这回事 */
+const CASE_ITEMS = [
+  { value: 'upper' as const, label: 'AA', tip: '全部大写' },
+  { value: 'lower' as const, label: 'aa', tip: '全部小写' },
+  { value: 'title' as const, label: 'Aa', tip: '每个词首字母大写' },
+  { value: 'sentence' as const, label: 'A.', tip: '每句首字母大写' },
 ]
 
 export function TextSection({ objs }: { objs: TextObject[] }) {
@@ -42,6 +70,42 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
     updateObjects(ids, label, (o) => {
       if (o.type === 'text') fn(o)
     })
+
+  /**
+   * 输入框是逐字符 onChange 的：不开事务的话一个字一条历史，⌘Z 一次只退一个字，
+   * 长文本还会把 200 条历史上限挤爆。聚焦开事务、失焦合并成一条
+   * （与 ElementInspector 的图内文字输入框同一模式）。
+   */
+  const beginTxn = () => useDocumentStore.getState().beginTxn('编辑文字')
+  const endTxn = () => useDocumentStore.getState().endTxn()
+
+  /** 改完文本后把光标放回去——不复位的话每点一次按钮光标就跳到末尾。 */
+  const restoreCaret = (start: number, end: number) => {
+    requestAnimationFrame(() => {
+      const el = taRef.current
+      if (!el) return
+      el.focus()
+      el.setSelectionRange(start, end)
+    })
+  }
+
+  /**
+   * 给选中的一段套上/去掉上下标标记（`^{…}` / `_{…}`）。
+   * 没有选区就插入一对空标记并把光标放进去，可以直接开始打字。
+   */
+  const wrapScript = (kind: 'sup' | 'sub') => {
+    if (!one) return
+    const ta = taRef.current
+    const start = ta?.selectionStart ?? one.text.length
+    const end = ta?.selectionEnd ?? one.text.length
+    const next = toggleScript(one.text, start, end, kind)
+    patch(kind === 'sup' ? '设为上标' : '设为下标', (o) => (o.text = next.text))
+    restoreCaret(next.start, next.end)
+  }
+
+  /** 大小写：直接改文本内容（可撤销），不新增字段，导出零改动。 */
+  const applyCase = (mode: CaseMode) =>
+    patch('转换大小写', (o) => (o.text = transformCase(o.text, mode)))
 
   /** 在光标处插入换行；textarea 没聚焦过就接在末尾。补丁重渲染后恢复光标。 */
   const insertNewline = () => {
@@ -67,8 +131,17 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
           ref={taRef}
           value={one.text}
           rows={2}
+          onFocus={beginTxn}
+          onBlur={endTxn}
           onChange={(e) => patch('编辑文字', (o) => (o.text = e.target.value))}
-          onKeyDown={(e) => e.stopPropagation()}
+          onKeyDown={(e) => {
+            e.stopPropagation()
+            const kind = scriptHotkey(e)
+            if (!kind) return
+            // 不拦默认行为的话光标会先跳到上一行/末行，标记插进去人就找不着它了
+            e.preventDefault()
+            wrapScript(kind)
+          }}
           onDoubleClick={() => useUiStore.getState().setEditingText(one.id)}
           placeholder="输入文字…"
           className="mb-1 w-full resize-none rounded-sm border border-border bg-surface px-1.5 py-1 text-xs leading-relaxed text-ink outline-none transition-colors placeholder:text-ink-3 hover:border-border-strong focus:border-accent"
@@ -80,7 +153,7 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
           <Button
             size="sm"
             onClick={insertNewline}
-            title="在光标处插入换行（画布内编辑可用 ⌥⏎ / ⌘⏎）"
+            title={`在光标处插入换行（画布内编辑可用 ${combo(ALT, '⏎')} / ${modKey('⏎')}）`}
           >
             <CornerDownLeft size={12} />
             插入换行
@@ -128,6 +201,32 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
           >
             <Underline size={13} />
           </Button>
+          <Button
+            size="icon"
+            disabled={!one}
+            onClick={() => wrapScript('sup')}
+            aria-label="上标（cm⁻¹ 这类）"
+            title={`上标：选中文本框里的一段再点（${modKey('↑')}）`}
+          >
+            <Superscript size={13} />
+          </Button>
+          <Button
+            size="icon"
+            disabled={!one}
+            onClick={() => wrapScript('sub')}
+            aria-label="下标（H₂O 这类）"
+            title={`下标：选中文本框里的一段再点（${modKey('↓')}）`}
+          >
+            <Subscript size={13} />
+          </Button>
+        </Row>
+        <Row label="大小写">
+          <Segmented
+            value={null}
+            onChange={(v) => applyCase(v)}
+            items={CASE_ITEMS}
+            className="w-full"
+          />
         </Row>
         {one && (
           <MatchFigureSize

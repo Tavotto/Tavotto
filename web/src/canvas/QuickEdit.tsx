@@ -493,9 +493,14 @@ function ObjectQuick({ id, close }: { id: string; close: () => void }) {
   }, [obj, close])
   if (!obj) return null
 
+  // 动作抛异常时菜单也必须关掉：卡在屏幕上的菜单比错误本身更让人摸不着头脑。
+  // 异常继续往外抛（该进 Console / ErrorBoundary 的还得进）。
   const run = (fn: () => void) => () => {
-    fn()
-    close()
+    try {
+      fn()
+    } finally {
+      close()
+    }
   }
 
   return (

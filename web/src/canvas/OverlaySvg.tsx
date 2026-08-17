@@ -1,7 +1,7 @@
 import { Fragment } from 'react'
 import type { Rect4 } from '@/lib/axesLayout'
 import { geomTarget, resolveGroup } from '@/lib/elementGeom'
-import { boundsOf, type ResizeDir } from '@/lib/geometry'
+import { ALL_DIRS, boundsOf, dirsFor, type ResizeDir } from '@/lib/geometry'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -15,8 +15,14 @@ import {
   type ViewTransform,
 } from '@/store/viewportStore'
 import { useRenderStore } from '@/store/renderStore'
-import type { ArrowObject, CanvasObject, PanelObject } from '@/types/document'
-import { panelContentSize, panelRotation } from '@/types/document'
+import type { CanvasObject, LinearObject, PanelObject } from '@/types/document'
+import {
+  isLinear,
+  lineEndpoints,
+  objectRotation,
+  panelContentSize,
+  panelRotation,
+} from '@/types/document'
 import {
   startAxesDrag,
   startCropDrag,
@@ -40,15 +46,6 @@ const CURSORS: Record<ResizeDir, string> = {
   w: 'ew-resize',
 }
 
-const ALL_DIRS: ResizeDir[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
-
-function dirsFor(obj: CanvasObject): ResizeDir[] {
-  if (obj.type === 'text') return ['w', 'e']
-  if (obj.type === 'shape' && obj.shape === 'line') return ['w', 'e']
-  if (obj.type === 'arrow') return []
-  return ALL_DIRS
-}
-
 interface Box {
   x: number
   y: number
@@ -69,6 +66,26 @@ function handlePos(box: Box, dir: ResizeDir) {
   const x = dir.includes('w') ? box.x : dir.includes('e') ? box.x + box.w : cx
   const y = dir.includes('n') ? box.y : dir.includes('s') ? box.y + box.h : cy
   return { x, y }
+}
+
+/**
+ * 对象的任意角度旋转（text/arrow/shape）：x/y/w/h 恒为未旋转包围盒，图形只靠
+ * ObjectView 的 CSS rotate 呈现，所以覆盖层的框与手柄必须绕同一个中心转过去，
+ * 否则转 90° 后手柄离真实图形约半个对角线。写法与下面 ElementBoxes 的 spin 一致。
+ */
+function spinOf(o: CanvasObject, box: Box): string | undefined {
+  const rot = objectRotation(o)
+  return rot ? `rotate(${rot} ${box.x + box.w / 2} ${box.y + box.h / 2})` : undefined
+}
+
+/** 顺时针八方位环，用于把手柄光标按对象旋转换档（45° 一档，四舍五入到最近的一档） */
+const CURSOR_RING: ResizeDir[] = ['n', 'ne', 'e', 'se', 's', 'sw', 'w', 'nw']
+
+function cursorFor(dir: ResizeDir, deg: number): string {
+  if (!deg) return CURSORS[dir]
+  const i = CURSOR_RING.indexOf(dir)
+  const steps = Math.round(deg / 45)
+  return CURSORS[CURSOR_RING[(((i + steps) % 8) + 8) % 8]]
 }
 
 /**
@@ -160,6 +177,7 @@ export function OverlaySvg() {
       {hovered && (
         <rect
           {...rectAttrs(toScreen(hovered, t))}
+          transform={spinOf(hovered, toScreen(hovered, t))}
           fill="none"
           stroke={SEL}
           strokeOpacity={0.4}
@@ -173,6 +191,7 @@ export function OverlaySvg() {
           <rect
             key={o.id}
             {...rectAttrs(toScreen(o, t))}
+            transform={spinOf(o, toScreen(o, t))}
             fill="none"
             stroke={SEL}
             strokeWidth={1}
@@ -191,29 +210,30 @@ export function OverlaySvg() {
         />
       )}
 
-      {/* 缩放手柄 */}
-      {single &&
-        !single.locked &&
-        dirsFor(single).map((dir) => {
-          const p = handlePos(toScreen(single, t), dir)
-          return (
-            <rect
-              key={dir}
-              x={p.x - HANDLE / 2}
-              y={p.y - HANDLE / 2}
-              width={HANDLE}
-              height={HANDLE}
-              fill="#fff"
-              stroke={SEL}
-              strokeWidth={1}
-              style={{ pointerEvents: 'all', cursor: CURSORS[dir] }}
-              onPointerDown={(e) => startResizeDrag(e, single.id, dir)}
-            />
-          )
-        })}
-
-      {/* 箭头端点 */}
-      {single?.type === 'arrow' && !single.locked && <ArrowEndpoints obj={single} t={t} />}
+      {/* 缩放手柄 + 线状对象端点（箭头 / 直线）：整组绕包围盒中心转到对象朝向 */}
+      {single && !single.locked && (
+        <g transform={spinOf(single, toScreen(single, t))}>
+          {dirsFor(single).map((dir) => {
+            const p = handlePos(toScreen(single, t), dir)
+            return (
+              <rect
+                key={dir}
+                data-handle={dir}
+                x={p.x - HANDLE / 2}
+                y={p.y - HANDLE / 2}
+                width={HANDLE}
+                height={HANDLE}
+                fill="#fff"
+                stroke={SEL}
+                strokeWidth={1}
+                style={{ pointerEvents: 'all', cursor: cursorFor(dir, objectRotation(single)) }}
+                onPointerDown={(e) => startResizeDrag(e, single.id, dir)}
+              />
+            )
+          })}
+          {isLinear(single) && <LinearEndpoints obj={single} t={t} />}
+        </g>
+      )}
 
       {/* 吸附参考线 */}
       {snapXs.map((x, i) => (
@@ -279,17 +299,22 @@ function rectAttrs(box: Box) {
   }
 }
 
-function ArrowEndpoints({ obj, t }: { obj: ArrowObject; t: ViewTransform }) {
+/**
+ * 箭头 / 直线的两个端点圆圈：抓着它掰方向（这两类对象没有缩放手柄）。
+ * 端点是未旋转包围盒里的比例坐标，转到对象朝向由外层那个 spin 组负责。
+ */
+function LinearEndpoints({ obj, t }: { obj: LinearObject; t: ViewTransform }) {
+  const ends = lineEndpoints(obj)
   const pts: { key: 'start' | 'end'; x: number; y: number }[] = [
     {
       key: 'start',
-      x: mmToViewX(obj.x + obj.start.rx * obj.w, t),
-      y: mmToViewY(obj.y + obj.start.ry * obj.h, t),
+      x: mmToViewX(obj.x + ends.start.rx * obj.w, t),
+      y: mmToViewY(obj.y + ends.start.ry * obj.h, t),
     },
     {
       key: 'end',
-      x: mmToViewX(obj.x + obj.end.rx * obj.w, t),
-      y: mmToViewY(obj.y + obj.end.ry * obj.h, t),
+      x: mmToViewX(obj.x + ends.end.rx * obj.w, t),
+      y: mmToViewY(obj.y + ends.end.ry * obj.h, t),
     },
   ]
   return (
@@ -297,6 +322,7 @@ function ArrowEndpoints({ obj, t }: { obj: ArrowObject; t: ViewTransform }) {
       {pts.map((p) => (
         <circle
           key={p.key}
+          data-endpoint={p.key}
           cx={p.x}
           cy={p.y}
           r={4.5}

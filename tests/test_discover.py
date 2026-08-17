@@ -136,21 +136,97 @@ def main():
 '''
 
 
-def test_dynamic_filenames_reported_not_silently_skipped(figs):
-    """脚本明明在存图、但文件名是变量：不能静默跳过。
+def test_wrapper_function_and_constant_loop_are_resolved(figs):
+    """包装函数 + 常量循环不是「动态命名」，是可以算出来的。
 
-    静默跳过的后果是用户拿到一份空的 mm_registry.json，面板上没有 ⚡，
-    却完全不知道原因（论文的 supporting_information 目录正是这样）。
+    `save_panel(fig, f"Dyn_{name}")` 把 stem 传进包装函数，包装函数再拼
+    `OUT / f"{stem}.pdf"`——跨函数传播实参 + 展开常量 for 循环即可还原。
+    论文的 supporting_information/panels/ 正是这个写法。
     """
     _script(figs, "build_panels.py", DYNAMIC_NAME_SCRIPT)
     info = discover.discover(figs)["scripts"]["build_panels.py"]
+    assert info["stems"] == ["Dyn_A", "Dyn_B"]
+    assert info["dynamic_names"] is False
+    assert info["save_calls"] == 1          # 调用点算一次，不按循环次数重复计
+
+    cfg, _ = discover.build_draft(figs)
+    assert cfg["scripts"]["build_panels.py"]["stems"] == ["Dyn_A", "Dyn_B"]
+
+
+RUNTIME_NAME_SCRIPT = '''\
+import sys
+from pathlib import Path
+
+OUT = Path("panels")
+
+def main():
+    for path in sorted(Path("data").glob("*.csv")):
+        fig = build(path)
+        fig.savefig(OUT / f"{path.stem}.pdf")
+'''
+
+
+def test_runtime_only_names_reported_not_guessed(figs):
+    """stem 真的只有运行期才知道（来自目录遍历）：报出来，但绝不猜。
+
+    静默跳过的后果是用户拿到一份空的 mm_registry.json，面板上没有 ⚡，
+    却完全不知道原因——所以必须留 dynamic_names 让上层引导「试运行探测」。
+    """
+    _script(figs, "scan_panels.py", RUNTIME_NAME_SCRIPT)
+    info = discover.discover(figs)["scripts"]["scan_panels.py"]
     assert info["stems"] == []
     assert info["dynamic_names"] is True
-    assert info["save_calls"] == 1          # save_panel 里那一处 fig.savefig
+    assert info["save_calls"] == 1
 
-    # 报不出 stem 就绝不猜：草稿里不能出现这个脚本
     cfg, _ = discover.build_draft(figs)
-    assert "build_panels.py" not in cfg["scripts"]
+    assert "scan_panels.py" not in cfg["scripts"]
+
+
+def test_path_algebra_with_suffix_and_join(figs):
+    """朋友那份图库的写法：Path / f-string 再 .with_suffix()。
+
+    v0.1.3 只认 save()/savefig() 里的字符串字面量，这类脚本一个 stem 都抽不
+    出来，注册表必然是空的（= 全图库不可参数化）。
+    """
+    _script(figs, "fig_paths.py", '''\
+import os
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+OUT = HERE / "output"
+
+LABEL = "map"
+
+def main():
+    fig.savefig((OUT / "Fig_kinetics").with_suffix(".pdf"))
+    fig.savefig(os.path.join("out", "Fig_%s.png" % LABEL))
+    fig.savefig(OUT.joinpath("Fig_{}.png".format("zeta")))
+    fig.savefig(Path(__file__).with_suffix(".svg"))
+''')
+    info = discover.discover(figs)["scripts"]["fig_paths.py"]
+    # with_suffix 剥的是任意后缀（.py → .svg），不是只剥图片扩展名
+    assert info["stems"] == ["Fig_kinetics", "Fig_map", "Fig_zeta", "fig_paths"]
+
+
+def test_subdirectories_are_scanned(figs):
+    """面板脚本放子目录的图库不能整目录漏掉；脚本键是 POSIX 相对路径。"""
+    (figs / "panels").mkdir()
+    (figs / ".venv" / "lib").mkdir(parents=True)
+    _script(figs, "panels/fig_sub.py", 'def main():\n    save(fig, "Sub_1")\n')
+    _script(figs, ".venv/lib/noise.py", 'def main():\n    save(fig, "Noise")\n')
+    scripts = discover.discover(figs)["scripts"]
+    assert "panels/fig_sub.py" in scripts       # 子目录进来了
+    assert all(".venv" not in k for k in scripts)  # 虚拟环境整棵剪掉
+
+
+def test_custom_entry_name_accepted(figs):
+    """入口不必叫 main/render——worker 本来就是 getattr(module, entry)()。"""
+    _script(figs, "fig_custom.py",
+            'def _draw():\n    return 1\n\n'
+            'def plot():\n    fig = _draw()\n    fig.savefig("Custom_1.pdf")\n')
+    info = discover.discover(figs)["scripts"]["fig_custom.py"]
+    assert info["entry"] == "plot"
+    assert info["stems"] == ["Custom_1"]
 
 
 def test_non_plotting_module_stays_quiet(figs):

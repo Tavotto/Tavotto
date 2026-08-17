@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { emptyProject } from '@/types/document'
 import type { TextObject } from '@/types/document'
 import {
@@ -190,5 +190,433 @@ describe('多画布数据层', () => {
     localStorage.setItem('magplot.autosave.d_x', JSON.stringify(newer))
     const pd = (await readAutosaveDoc('d_x'))!
     expect(pd.updatedAt).toBe(200)
+  })
+})
+
+describe('文字编辑事务', () => {
+  beforeEach(reset)
+
+  const s = () => useDocumentStore.getState()
+
+  /** 复刻 TextSection 的 textarea：逐字符 onChange → updateObjects → commit */
+  const type = (chars: string) => {
+    for (let i = 1; i <= chars.length; i++) {
+      s().commit('编辑文字', (d) => {
+        const o = d.objects.find((x) => x.id === 't1')
+        if (o?.type === 'text') o.text = chars.slice(0, i)
+      })
+    }
+  }
+
+  const currentText = () => (s().doc.objects[0] as TextObject).text
+
+  it('事务期间连打 5 个字只留一条历史，撤销一次整段回到编辑前', () => {
+    s().commit('加字', (d) => {
+      d.objects.push(text('t1', '原'))
+    })
+    const before = s().past.length
+
+    s().beginTxn('编辑文字')
+    type('ABCDE')
+    expect(s().past).toHaveLength(before) // 事务未提交前一条都不进历史
+    expect(currentText()).toBe('ABCDE') // 但文档已即时更新
+    s().endTxn()
+
+    expect(s().past).toHaveLength(before + 1)
+    expect(s().past.at(-1)!.label).toBe('编辑文字')
+    expect(s().undo()).toBe('编辑文字')
+    expect(currentText()).toBe('原') // 退到编辑前，不是倒数第二个字
+  })
+
+  it('对照：不开事务逐字符 commit 就是 5 条历史，撤销一次只退一个字', () => {
+    s().commit('加字', (d) => {
+      d.objects.push(text('t1', '原'))
+    })
+    const before = s().past.length
+
+    type('ABCDE')
+
+    expect(s().past).toHaveLength(before + 5)
+    expect(s().undo()).toBe('编辑文字')
+    expect(currentText()).toBe('ABCD')
+  })
+})
+
+/**
+ * 事务的反向补丁是**前插**累积的（数组末尾才是最早那条），compress() 一度按数组
+ * 顺序取第一条 = 最新那条，于是所有事务撤销都只退到倒数第二次更新：拖动松手后
+ * ⌘Z 只回退最后一帧（离落点常常就一两个像素，看着像「撤销没反应」）。
+ */
+describe('事务压缩：撤销回到事务开始前', () => {
+  beforeEach(reset)
+
+  const s = () => useDocumentStore.getState()
+  const at = () => s().doc.objects[0]
+
+  const seed = () =>
+    s().commit('加字', (d) => {
+      d.objects.push(text('t1', 'x'))
+    })
+
+  it('拖动：连续 5 次 txnUpdate 后撤销回到起点，不是最后一帧', () => {
+    seed()
+    s().beginTxn('移动对象')
+    for (const x of [10, 20, 30, 40, 50]) {
+      s().txnUpdate((d) => {
+        d.objects[0].x = x
+      })
+    }
+    s().endTxn()
+    expect(at().x).toBe(50)
+
+    expect(s().undo()).toBe('移动对象')
+    expect(at().x).toBe(0)
+    // 压缩不该弄丢重做：正向仍是最后一次的值
+    s().redo()
+    expect(at().x).toBe(50)
+  })
+
+  it('同时改 x/y：两个 key 各自回到起点', () => {
+    seed()
+    s().beginTxn('移动对象')
+    for (const v of [10, 20, 30]) {
+      s().txnUpdate((d) => {
+        d.objects[0].x = v
+        d.objects[0].y = v * 2
+      })
+    }
+    s().endTxn()
+    expect([at().x, at().y]).toEqual([30, 60])
+
+    s().undo()
+    expect([at().x, at().y]).toEqual([0, 0])
+  })
+
+  it('含增删的事务不压缩，全量反向补丁照样退回事务开始前', () => {
+    seed()
+    const before = s().past.length
+    s().beginTxn('移动并加字')
+    s().txnUpdate((d) => {
+      d.objects[0].x = 10
+    })
+    s().txnUpdate((d) => {
+      d.objects.push(text('t2', 'y')) // 有 add，compress 直接放弃压缩
+    })
+    s().txnUpdate((d) => {
+      d.objects[0].x = 20
+    })
+    s().endTxn()
+    expect(s().past).toHaveLength(before + 1)
+
+    s().undo()
+    expect(at().x).toBe(0)
+    expect(s().doc.objects).toHaveLength(1)
+  })
+
+  it('discard 路径：不进历史，文档立刻回到事务开始前', () => {
+    seed()
+    const before = s().past.length
+    s().beginTxn('移动对象')
+    for (const x of [10, 20, 30]) {
+      s().txnUpdate((d) => {
+        d.objects[0].x = x
+      })
+    }
+    s().endTxn({ discard: true })
+
+    expect(at().x).toBe(0) // 全量按序应用，最早那条最后落地
+    expect(s().past).toHaveLength(before)
+    expect(s().txn).toBeNull()
+  })
+})
+
+/** 上面那套即答即回的 fetch mock；下面按需换成可控延迟的版本再换回来 */
+const baseFetch = globalThis.fetch
+
+describe('自动保存磁盘写入队列', () => {
+  /** 每个 PUT 一发出就挂起，等 releaseNext() 逐个放行——用来制造「在途」窗口 */
+  const putLog: { id: string; body: string }[] = []
+  /** 挂起中的 PUT resolver，只能逐个放行——直接丢弃会让 diskBusy 永远卡住 */
+  const gate: (() => void)[] = []
+
+  const gatedFetch = (async (url: unknown, init?: RequestInit) => {
+    const m = String(url).match(/\/api\/autosave\/([^/?]+)/)
+    if (m && init?.method === 'PUT') {
+      const id = decodeURIComponent(m[1])
+      const body = String(init.body)
+      putLog.push({ id, body }) // 发出即记，与是否放行无关
+      await new Promise<void>((r) => gate.push(r))
+      diskSlots.set(id, body)
+      return new Response('{"ok":true}', { status: 200 })
+    }
+    return baseFetch(url as RequestInfo, init)
+  }) as typeof fetch
+
+  /** 放行最早挂起的那个 PUT，并等队列推进到下一个 */
+  const releaseNext = async () => {
+    gate.shift()?.()
+    await tick()
+  }
+
+  const slot = (id: string) => localStorage.getItem(`magplot.autosave.${id}`)
+
+  beforeEach(async () => {
+    globalThis.fetch = gatedFetch
+    await reset()
+    await useDocumentStore.getState().switchDocument(emptyProject(), 'd_a')
+    // switchDocument 会替上一个用例的文档再落一次盘，先排干净再开始记账
+    while (gate.length) await releaseNext()
+    putLog.length = 0
+    diskSlots.clear()
+    localStorage.clear()
+  })
+
+  afterEach(async () => {
+    // 排空，别把在途请求漏给下一个用例（diskBusy 是模块级的）
+    while (gate.length) await releaseNext()
+    globalThis.fetch = baseFetch
+  })
+
+  it('不同文档背靠背排队时都能落盘，兜底副本只清写成功的那个', async () => {
+    const s = () => useDocumentStore.getState()
+
+    s().commit('A1', (d) => {
+      d.objects.push(text('t1', 'A1'))
+    })
+    expect(flushAutosave()).toBe('saved') // d_a 第一次 PUT：在途
+    await tick()
+    expect(putLog).toHaveLength(1)
+
+    s().commit('A2', (d) => {
+      d.objects.push(text('t2', 'A2'))
+    })
+    expect(flushAutosave()).toBe('saved') // d_a 最新一份：排队
+    await tick()
+    expect(putLog).toHaveLength(1)
+
+    // 切文档：旧实现在这里把 d_a 排队的那份整个顶掉
+    await s().switchDocument(emptyProject(), 'd_b')
+    s().commit('B1', (d) => {
+      d.objects.push(text('t3', 'B1'))
+    })
+    expect(flushAutosave()).toBe('saved') // d_b：排在 d_a 后面
+    await tick()
+    expect(putLog).toHaveLength(1)
+    expect(slot('d_a')).not.toBeNull()
+    expect(slot('d_b')).not.toBeNull()
+
+    await releaseNext() // d_a 第一次写成功 → 推进到 d_a 的最新一份
+    expect(putLog.map((e) => e.id)).toEqual(['d_a', 'd_a'])
+    expect(slot('d_a')).toBeNull() // 只清 d_a 自己的兜底副本
+    expect(slot('d_b')).not.toBeNull()
+
+    await releaseNext() // d_a 最新一份写成功 → 推进到 d_b
+    expect(putLog.map((e) => e.id)).toEqual(['d_a', 'd_a', 'd_b'])
+    expect(slot('d_b')).not.toBeNull() // d_b 还没写成功，兜底副本必须留着
+
+    await releaseNext() // d_b 写成功
+    expect(slot('d_b')).toBeNull()
+
+    // 两个文档的最终版本都真的落了盘（旧实现里 d_a 的 t2 从此消失）
+    const diskA = JSON.parse(diskSlots.get('d_a')!)
+    expect(diskA.canvases[0].objects.map((o: { id: string }) => o.id)).toEqual(['t1', 't2'])
+    const diskB = JSON.parse(diskSlots.get('d_b')!)
+    expect(diskB.canvases[0].objects.map((o: { id: string }) => o.id)).toEqual(['t3'])
+  })
+
+  it('同一文档连续排队只合并成最新一份，不会重复入队', async () => {
+    const s = () => useDocumentStore.getState()
+
+    s().commit('A1', (d) => {
+      d.objects.push(text('t1', 'A1'))
+    })
+    flushAutosave() // 在途
+    for (const label of ['A2', 'A3', 'A4']) {
+      s().commit(label, (d) => {
+        d.objects.push(text(`t_${label}`, label))
+      })
+      flushAutosave() // 三次都排进同一个 id 的槽位
+    }
+    await tick()
+    expect(putLog).toHaveLength(1)
+
+    await releaseNext()
+    expect(putLog.map((e) => e.id)).toEqual(['d_a', 'd_a'])
+
+    await releaseNext() // 队列已空，不该再冒出第三次
+    expect(putLog).toHaveLength(2)
+    expect(gate).toHaveLength(0)
+    const disk = JSON.parse(diskSlots.get('d_a')!)
+    expect(disk.canvases[0].objects).toHaveLength(4)
+  })
+})
+
+/**
+ * 同一 documentId 被两个标签页同时开着：后保存的整份覆盖先保存的。
+ * 前端带「上次成功落盘时的 updatedAt」当基线，后端发现磁盘更新就回 409
+ * stale_write——本窗口这次改动只留在本机兜底副本里，绝不清、绝不静默重试。
+ */
+describe('自动保存的跨标签页写覆盖', () => {
+  const puts: { id: string; base: string | null }[] = []
+  const errors: { id: string; reason: string }[] = []
+  const gate: (() => void)[] = []
+  /** 下一批 PUT 是否被后端当作过期写挡下 */
+  let stale = false
+
+  const conflictFetch = (async (url: unknown, init?: RequestInit) => {
+    const m = String(url).match(/\/api\/autosave\/([^/?]+)/)
+    if (m && init?.method === 'PUT') {
+      const id = decodeURIComponent(m[1])
+      puts.push({ id, base: new URL(String(url), 'http://t').searchParams.get('base') })
+      await new Promise<void>((r) => gate.push(r))
+      if (stale) {
+        return new Response(JSON.stringify({ code: 'stale_write', theirs: 999 }), {
+          status: 409,
+        })
+      }
+      diskSlots.set(id, String(init.body))
+      return new Response('{"ok":true}', { status: 200 })
+    }
+    return baseFetch(url as RequestInfo, init)
+  }) as typeof fetch
+
+  const releaseNext = async () => {
+    gate.shift()?.()
+    await tick()
+  }
+  const drain = async () => {
+    while (gate.length) await releaseNext()
+  }
+  const slot = (id: string) => localStorage.getItem(`magplot.autosave.${id}`)
+  const onError = (ev: Event) => {
+    errors.push((ev as CustomEvent<{ id: string; reason: string }>).detail)
+  }
+
+  beforeEach(async () => {
+    globalThis.fetch = conflictFetch
+    stale = false
+    localStorage.clear()
+    diskSlots.clear()
+    await useDocumentStore.getState().switchDocument(emptyProject(), 'd_cc_setup')
+    await drain()
+    puts.length = 0
+    errors.length = 0
+    diskSlots.clear()
+    localStorage.clear()
+    window.addEventListener('magplot:autosave-error', onError)
+  })
+
+  afterEach(async () => {
+    stale = false
+    await drain() // 别把在途请求漏给下一个用例（diskBusy 是模块级的）
+    window.removeEventListener('magplot:autosave-error', onError)
+    globalThis.fetch = baseFetch
+  })
+
+  /** 空文档不触发落盘（flushAutosave 判 'empty'），要落盘就得有内容 */
+  const seeded = (updatedAt: number) => {
+    const pd = emptyProject()
+    pd.canvases[0].objects = [text('t0', 'seed')]
+    pd.updatedAt = updatedAt
+    return pd
+  }
+
+  it('读档时以磁盘那份的 updatedAt 为基线，写成功后推进', async () => {
+    const s = () => useDocumentStore.getState()
+    // 磁盘上已有一份（另一个标签页存的），updatedAt = 4242
+    diskSlots.set('d_base', JSON.stringify(seeded(4242)))
+
+    const pd = (await readAutosaveDoc('d_base'))!
+    expect(pd.updatedAt).toBe(4242)
+    await s().switchDocument(pd, 'd_base') // 切进去会立刻落一次盘
+    await drain()
+    expect(puts[0]).toEqual({ id: 'd_base', base: '4242' }) // 基线 = 读到的那一版
+
+    const firstWritten = JSON.parse(diskSlots.get('d_base')!).updatedAt as number
+    s().commit('改一笔', (d) => {
+      d.objects.push(text('t1', 'A'))
+    })
+    flushAutosave()
+    await drain()
+    // 写成功后基线推进到刚落盘的那一版，下一次带的就是它
+    expect(puts[1]).toEqual({ id: 'd_base', base: String(firstWritten) })
+  })
+
+  it('首次写不带基线：后端无从校验，兼容旧路径', async () => {
+    const s = () => useDocumentStore.getState()
+    await s().switchDocument(emptyProject(), 'd_fresh')
+    s().commit('改一笔', (d) => {
+      d.objects.push(text('t1', 'A'))
+    })
+    flushAutosave()
+    await drain()
+    expect(puts[0]).toEqual({ id: 'd_fresh', base: null })
+  })
+
+  it('409 stale_write：兜底副本留着、报 stale、队列不死锁', async () => {
+    const s = () => useDocumentStore.getState()
+    await s().switchDocument(emptyProject(), 'd_stale')
+    await drain()
+    puts.length = 0
+    errors.length = 0
+
+    stale = true
+    s().commit('本窗口改一笔', (d) => {
+      d.objects.push(text('t1', 'A'))
+    })
+    expect(flushAutosave()).toBe('saved') // 在途
+    s().commit('再改一笔', (d) => {
+      d.objects.push(text('t2', 'B'))
+    })
+    flushAutosave() // 排队
+    await tick()
+    expect(puts).toHaveLength(1)
+
+    await releaseNext() // 第一次被 409 挡下
+    expect(errors).toEqual([{ id: 'd_stale', reason: 'stale' }])
+    // 本机兜底副本绝不能清：磁盘上没有这份改动，清了就真丢了
+    expect(slot('d_stale')).not.toBeNull()
+    // 队列照常推进（diskBusy 已复位），不是卡死
+    expect(puts).toHaveLength(2)
+
+    await releaseNext() // 排队那份仍带旧基线，仍然 409——有意为之，不静默重试
+    expect(errors).toHaveLength(2)
+    expect(errors[1].reason).toBe('stale')
+    expect(slot('d_stale')).not.toBeNull()
+    expect(diskSlots.has('d_stale')).toBe(false) // 磁盘上对方那份没被覆盖
+
+    // 写盘链路没被这次冲突堵死：换个文档照样落盘
+    stale = false
+    await s().switchDocument(emptyProject(), 'd_after')
+    s().commit('新文档改一笔', (d) => {
+      d.objects.push(text('t3', 'C'))
+    })
+    flushAutosave()
+    await drain()
+    expect(diskSlots.has('d_after')).toBe(true)
+  })
+
+  it('普通写盘失败仍报 io，与 stale 分开', async () => {
+    const s = () => useDocumentStore.getState()
+    await s().switchDocument(emptyProject(), 'd_io')
+    await drain()
+    errors.length = 0
+
+    const prev = globalThis.fetch
+    globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+      if (String(url).includes('/api/autosave/') && init?.method === 'PUT') {
+        return new Response('{"error":"磁盘满了"}', { status: 500 })
+      }
+      return baseFetch(url as RequestInfo, init)
+    }) as typeof fetch
+    s().commit('改一笔', (d) => {
+      d.objects.push(text('t1', 'A'))
+    })
+    flushAutosave()
+    await tick()
+    globalThis.fetch = prev
+
+    expect(errors).toEqual([{ id: 'd_io', reason: 'io' }])
+    expect(slot('d_io')).not.toBeNull()
   })
 })

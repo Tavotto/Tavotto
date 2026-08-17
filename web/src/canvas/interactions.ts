@@ -1,10 +1,13 @@
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import {
+  anchoredRect,
+  endpointDelta,
   rectsIntersect,
   resizeRect,
   snapCandidates,
   snapEdge,
   snapMove,
+  unrotateVecDeg,
   type Rect,
   type ResizeDir,
 } from '@/lib/geometry'
@@ -32,6 +35,9 @@ import {
 } from '@/store/viewportStore'
 import { setOverride, setOverrides } from '@/store/actions'
 import {
+  isLinear,
+  lineEndpoints,
+  objectRotation,
   panelAspectLocked,
   panelRotation,
   rotateVec,
@@ -39,12 +45,13 @@ import {
   unrotateVec,
   type ArrowObject,
   type CanvasObject,
+  type EndPoint,
   type PanelObject,
   type PanelRotation,
   type ShapeObject,
   type TextObject,
 } from '@/types/document'
-import { expandGroups } from '@/store/actions'
+import { expandGroups, movableTargets, warnBlockedGroups } from '@/store/actions'
 
 /* -------------------------------------------------------------------------- */
 /*  指针追踪骨架                                                               */
@@ -102,10 +109,13 @@ const candidatesFor = (exclude: Set<string>) => {
     : null
 }
 
-/** 拖动 / 缩放时排除锁定对象；成组对象整组跟着走 */
-function draggableSelection(): CanvasObject[] {
-  const ids = expandGroups(useSelectionStore.getState().ids)
-  return doc().objects.filter((o) => ids.includes(o.id) && !o.locked && !o.hidden)
+/**
+ * 拖动时排除锁定对象；成组对象整组跟着走，**组内有锁定成员则整组都不动**
+ * （规则唯一出处是 actions 的 movableTargets，方向键微调走的是同一个）。
+ */
+function draggableSelection(): { targets: CanvasObject[]; blockedGroups: number } {
+  const { objects, blockedGroups } = movableTargets(useSelectionStore.getState().ids)
+  return { targets: objects.filter((o) => !o.hidden), blockedGroups }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -114,7 +124,8 @@ function draggableSelection(): CanvasObject[] {
 
 export function startMoveDrag(e: ReactPointerEvent, objectId: string) {
   const store = useDocumentStore.getState()
-  const targets = draggableSelection()
+  const { targets, blockedGroups } = draggableSelection()
+  warnBlockedGroups(blockedGroups, targets.length > 0)
   if (!targets.length) return
   const primary = targets.find((o) => o.id === objectId) ?? targets[0]
   const origin = new Map(targets.map((o) => [o.id, { x: o.x, y: o.y }]))
@@ -173,6 +184,15 @@ export function startMoveDrag(e: ReactPointerEvent, objectId: string) {
 /*  缩放                                                                       */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * 拖八个缩放手柄。对象可能带任意角度 rotationDeg（x/y/w/h 恒为未旋转包围盒，
+ * 旋转只由 ObjectView 的 CSS rotate 呈现），所以：
+ * 1. 屏幕位移先反旋转回对象局部系，手柄方向才与 resizeRect 的 e/w/n/s 对得上；
+ * 2. 局部系里算出的新包围盒再经 anchoredRect 落位，保证被拖手柄对面那个锚点
+ *    在页面上不动（否则中心一变，图形会先整体跳一段）；
+ * 3. 旋转后不再做吸附——候选线是页面 x/y 轴的，而旋转对象的可见边根本不平行于
+ *    它们，硬吸只会把用户往一个看不出所以然的位置上拽。
+ */
 export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: ResizeDir) {
   e.stopPropagation()
   const store = useDocumentStore.getState()
@@ -182,6 +202,7 @@ export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: Res
   const excluded = new Set([objectId])
   const cands = candidatesFor(excluded)
   const isText = target.type === 'text'
+  const rot = objectRotation(target)
   // 面板的等比与否由它自己的宽高比锁定开关决定，形状仍是默认等比
   const keepRatio = target.type === 'panel' ? panelAspectLocked(target) : !isText
 
@@ -191,8 +212,7 @@ export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: Res
   trackPointer(e, {
     onMove: (ev, dxPx, dyPx) => {
       const t = getTransform()
-      const dx = pxToMm(dxPx, t)
-      const dy = pxToMm(dyPx, t)
+      const [dx, dy] = unrotateVecDeg(pxToMm(dxPx, t), pxToMm(dyPx, t), rot)
       // 角点按锁定状态等比，Alt 反转；文字只改宽度
       const corner = (dir.includes('e') || dir.includes('w')) && (dir.includes('n') || dir.includes('s'))
       const proportional = corner && keepRatio !== ev.altKey
@@ -206,7 +226,7 @@ export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: Res
       const tol = snapTolMm(t)
       const snapX: number[] = []
       const snapY: number[] = []
-      if (cands && !ev.metaKey && !ev.ctrlKey && !proportional) {
+      if (cands && !rot && !ev.metaKey && !ev.ctrlKey && !proportional) {
         if (dir.includes('e')) {
           const hit = snapEdge(next.x + next.w, cands.xs, tol)
           if (hit != null) {
@@ -238,13 +258,14 @@ export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: Res
       }
       interaction().setSnap(snapX, snapY)
 
+      const placed = anchoredRect(orig, next, dir, rot)
       store.txnUpdate((d) => {
         const o = d.objects.find((x) => x.id === objectId)
         if (!o) return
-        o.x = next.x
-        o.y = next.y
-        o.w = next.w
-        if (!isText) o.h = next.h
+        o.x = placed.x
+        o.y = placed.y
+        o.w = placed.w
+        if (!isText) o.h = placed.h
       })
     },
     onEnd: (moved) => {
@@ -255,35 +276,45 @@ export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: Res
 }
 
 /* -------------------------------------------------------------------------- */
-/*  箭头端点                                                                   */
+/*  线状对象端点（箭头 / 直线形状）                                             */
 /* -------------------------------------------------------------------------- */
 
 /**
- * 拖动箭头端点：端点存的是包围盒内的比例坐标，拖动时先算出两端的绝对 mm
- * 位置，再由两点重新推出包围盒，保证包围盒始终贴合箭头。
+ * 拖动端点：端点存的是包围盒内的比例坐标，拖动时先算出两端的绝对 mm
+ * 位置，再由两点重新推出包围盒，保证包围盒始终贴合线段。
+ * 箭头与直线形状共用这条路径（端点字段同构，见 types/document.isLinear）。
+ *
+ * 带 rotationDeg 时，屏幕位移经 endpointDelta 解成局部位移（不是简单反旋转：
+ * 包围盒随端点变，旋转支点也跟着动，详见 geometry.endpointDelta），之后整条
+ * 链路仍在局部系里跑。15° 吸附因此吸的是局部角度——旋转角按 15° 步进（属性面板
+ * 的默认档）时，屏幕上看到的仍是 15° 的整数倍。页面参考线吸附与缩放同理，
+ * 旋转后不再参与：候选线是页面 x/y 轴的，与旋转后的可见方向对不上。
  */
 export function startEndpointDrag(e: ReactPointerEvent, objectId: string, which: 'start' | 'end') {
   e.stopPropagation()
   const store = useDocumentStore.getState()
-  const arrow = doc().objects.find((o) => o.id === objectId) as ArrowObject | undefined
-  if (!arrow || arrow.locked) return
+  const target = doc().objects.find((o) => o.id === objectId)
+  if (!target || !isLinear(target) || target.locked) return
 
-  const abs = (p: { rx: number; ry: number }) => ({
-    x: arrow.x + p.rx * arrow.w,
-    y: arrow.y + p.ry * arrow.h,
+  const ends = lineEndpoints(target)
+  const abs = (p: EndPoint) => ({
+    x: target.x + p.rx * target.w,
+    y: target.y + p.ry * target.h,
   })
-  const fixed = abs(which === 'start' ? arrow.end : arrow.start)
-  const movingStart = abs(which === 'start' ? arrow.start : arrow.end)
+  const fixed = abs(which === 'start' ? ends.end : ends.start)
+  const movingStart = abs(which === 'start' ? ends.start : ends.end)
+  const rot = objectRotation(target)
   const cands = candidatesFor(new Set([objectId]))
 
   interaction().begin('endpoint')
-  store.beginTxn('调整箭头端点')
+  store.beginTxn(target.type === 'arrow' ? '调整箭头端点' : '调整直线端点')
 
   trackPointer(e, {
     onMove: (ev, dxPx, dyPx) => {
       const t = getTransform()
-      let px = movingStart.x + pxToMm(dxPx, t)
-      let py = movingStart.y + pxToMm(dyPx, t)
+      const [ldx, ldy] = endpointDelta(pxToMm(dxPx, t), pxToMm(dyPx, t), rot)
+      let px = movingStart.x + ldx
+      let py = movingStart.y + ldy
 
       if (ev.shiftKey) {
         // 15° 吸附，画示意箭头时很有用
@@ -297,7 +328,7 @@ export function startEndpointDrag(e: ReactPointerEvent, objectId: string, which:
 
       const snapX: number[] = []
       const snapY: number[] = []
-      if (cands && !ev.metaKey && !ev.ctrlKey && !ev.shiftKey) {
+      if (cands && !rot && !ev.metaKey && !ev.ctrlKey && !ev.shiftKey) {
         const tol = snapTolMm(t)
         const hx = snapEdge(px, cands.xs, tol)
         if (hx != null) {
@@ -320,8 +351,8 @@ export function startEndpointDrag(e: ReactPointerEvent, objectId: string, which:
       const h = Math.max(Math.abs(b.y - a.y), 0.01)
 
       store.txnUpdate((d) => {
-        const o = d.objects.find((x) => x.id === objectId) as ArrowObject | undefined
-        if (!o) return
+        const o = d.objects.find((x) => x.id === objectId)
+        if (!o || !isLinear(o)) return
         o.x = x
         o.y = y
         o.w = w
@@ -450,30 +481,49 @@ export function startDraw(e: ReactPointerEvent, tool: Exclude<Tool, 'select'>) {
           align: 'left',
         }
         created = text
-      } else if (tool === 'arrow') {
-        // 箭头沿实际拖动方向，而不是永远左上到右下
+      } else if (tool === 'arrow' || tool === 'line') {
+        // 箭头 / 直线沿实际拖动方向，而不是永远左上到右下（直线也不再永远水平）。
+        // 点一下不拖时按 DEFAULT_DRAW 落一条：箭头默认斜向、直线默认水平。
         const sx = moved ? start.x : rect.x
-        const sy = moved ? start.y : rect.y + rect.h
+        const sy = moved ? start.y : rect.y + (tool === 'arrow' ? rect.h : 0)
         const ex = moved ? end.x : rect.x + rect.w
         const ey = moved ? end.y : rect.y
         const x = Math.min(sx, ex)
         const y = Math.min(sy, ey)
+        // 正好水平 / 竖直时另一边钳到 0.01：包围盒不能是零厚度（比例坐标要除它）
         const w = Math.max(Math.abs(ex - sx), 0.01)
         const h = Math.max(Math.abs(ey - sy), 0.01)
-        const arrow: ArrowObject = {
-          id,
-          type: 'arrow',
-          x,
-          y,
-          w,
-          h,
+        const ends = {
           start: { rx: (sx - x) / w, ry: (sy - y) / h },
           end: { rx: (ex - x) / w, ry: (ey - y) / h },
-          strokePt: 1,
-          color: '#1B1B18',
-          head: 'end',
         }
-        created = arrow
+        created =
+          tool === 'arrow'
+            ? ({
+                id,
+                type: 'arrow',
+                x,
+                y,
+                w,
+                h,
+                ...ends,
+                strokePt: 1,
+                color: '#1B1B18',
+                head: 'end',
+              } satisfies ArrowObject)
+            : ({
+                id,
+                type: 'shape',
+                shape: 'line',
+                x,
+                y,
+                w,
+                h,
+                ...ends,
+                strokePt: 1,
+                color: '#1B1B18',
+                fill: null,
+              } satisfies ShapeObject)
       } else {
         const shape: ShapeObject = {
           id,
@@ -482,7 +532,7 @@ export function startDraw(e: ReactPointerEvent, tool: Exclude<Tool, 'select'>) {
           x: rect.x,
           y: rect.y,
           w: Math.max(rect.w, 1),
-          h: tool === 'line' ? 0.01 : Math.max(rect.h, 1),
+          h: Math.max(rect.h, 1),
           strokePt: 1,
           color: '#1B1B18',
           fill: null,

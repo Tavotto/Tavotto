@@ -1,6 +1,15 @@
 import { useEffect, useState } from 'react'
 import { CheckCircle2, XCircle } from 'lucide-react'
-import { patchAiSettings, patchProjectSettings } from '@/lib/api'
+import { apiUrl, withProject } from '@/lib/session'
+import {
+  deleteAiEndpoint,
+  patchAiSettings,
+  patchProjectSettings,
+  saveAiEndpoint,
+  setAiEndpointActive,
+  type AiEndpoint,
+  type AiEndpointPreset,
+} from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { readExportDefaults, writeExportDefaults } from '@/lib/exportDefaults'
 import { cn } from '@/lib/utils'
@@ -168,6 +177,22 @@ function ProjectSection() {
           切换项目…
         </Button>
       </Row>
+      <Row label="可参数化脚本">
+        <span className="flex-1 text-xs text-ink-2">
+          {project?.scripts ?? 0} 个脚本已登记
+          {(project?.scripts ?? 0) === 0 && '（面板不会带 ⚡）'}
+        </span>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            useUiStore.getState().setSettingsOpen(false)
+            useUiStore.getState().setRegistryOpen(true)
+          }}
+        >
+          脚本注册表…
+        </Button>
+      </Row>
       <Row label="导出目录">
         <TextInput
           value={exportDir}
@@ -258,6 +283,8 @@ function AiSection() {
   const [codexPath, setCodexPath] = useState('')
   const [claudePath, setClaudePath] = useState('')
   const [busy, setBusy] = useState(false)
+  const [editing, setEditing] = useState<null | { id?: string; agent: 'codex' | 'claude' }>(null)
+  const [error, setError] = useState<string | null>(null)
 
   const apply = async (patch: { codex_path?: string; claude_path?: string }) => {
     setBusy(true)
@@ -269,8 +296,22 @@ function AiSection() {
     }
   }
 
-  const provider = (name: 'codex' | 'claude', label: string) => {
+  const run = async (fn: () => Promise<unknown>) => {
+    setError(null)
+    setBusy(true)
+    try {
+      await fn()
+      await useAiStore.getState().loadCaps(true)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const cli = (name: 'codex' | 'claude', label: string) => {
     const p = caps?.providers[name]
+    const mine = (caps?.endpoints ?? []).filter((e) => e.agent === name)
     return (
       <div className="rounded-sm border border-border p-2">
         <div className="flex items-center gap-1.5">
@@ -289,21 +330,95 @@ function AiSection() {
             {p.path}
           </p>
         )}
+        {!p?.installed && (p?.searched?.length ?? 0) > 0 && (
+          <details className="mt-1">
+            <summary className="cursor-default text-xs text-ink-3 outline-none focus-visible:focus-ring">
+              找过这些位置
+            </summary>
+            <ul className="mt-0.5 flex flex-col gap-0.5">
+              {p!.searched!.map((d) => (
+                <li key={d} className="truncate font-mono text-xs text-ink-faint" title={d}>
+                  {d}
+                </li>
+              ))}
+            </ul>
+            <p className="mt-1 text-xs text-ink-3">
+              装在别处就把可执行文件路径填在下面。微软商店版 Codex 请用
+              <span className="font-mono"> %LOCALAPPDATA%\Microsoft\WindowsApps\codex.exe </span>
+              这个执行别名，而不是 WindowsApps 里那个受保护的包体目录。
+            </p>
+          </details>
+        )}
+
+        {/* 接口选择：官方登录态 or 某个第三方网关 */}
+        <label className="mt-1.5 flex items-center gap-2">
+          <span className="w-14 shrink-0 text-xs text-ink-2">接口</span>
+          <select
+            value={caps?.active[name] ?? ''}
+            onChange={(e) => void run(() => setAiEndpointActive(name, e.target.value))}
+            aria-label={`${label} 使用的接口`}
+            className="h-7 min-w-0 flex-1 rounded-sm border border-border bg-surface px-1.5 text-xs text-ink outline-none focus-visible:focus-ring"
+          >
+            <option value="">CLI 自带登录态（官方）</option>
+            {mine.map((e) => (
+              <option key={e.id} value={e.id}>
+                {e.label}
+                {e.has_key ? '' : '（未填密钥）'}
+              </option>
+            ))}
+          </select>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setEditing({ agent: name })}
+          >
+            添加接口…
+          </Button>
+        </label>
+        {mine.length > 0 && (
+          <ul className="mt-1 flex flex-col gap-0.5">
+            {mine.map((e) => (
+              <li key={e.id} className="flex items-center gap-2">
+                <span className="min-w-0 flex-1 truncate font-mono text-xs text-ink-3" title={e.base_url}>
+                  {e.base_url || '（官方默认地址）'}
+                </span>
+                <button
+                  onClick={() => setEditing({ id: e.id, agent: name })}
+                  className="shrink-0 text-xs text-ink-3 outline-none hover:text-ink focus-visible:focus-ring"
+                >
+                  编辑
+                </button>
+                <button
+                  onClick={() => void run(() => deleteAiEndpoint(e.id))}
+                  className="shrink-0 text-xs text-ink-3 outline-none hover:text-danger focus-visible:focus-ring"
+                >
+                  删除
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
     )
   }
 
   return (
     <div className="flex flex-col gap-2.5">
-      {provider('codex', 'Codex')}
-      {provider('claude', 'Claude')}
+      <p className="text-xs leading-relaxed text-ink-3">
+        改图助手借用你已装好的 codex / claude 命令行工具。接第三方接口时只在
+        启动它们时临时注入环境变量，<strong className="font-medium text-ink-2">
+        不会改写你自己的 ~/.claude 或 ~/.codex 配置</strong>。
+      </p>
+      {cli('codex', 'Codex')}
+      {cli('claude', 'Claude')}
       <Row label="Codex 路径">
         <TextInput
           value={codexPath}
           onChange={(e) => setCodexPath(e.target.value)}
           onBlur={() => void apply({ codex_path: codexPath })}
-          placeholder="留空 = 自动查找（PATH）"
-          className="flex-1"
+          placeholder="留空 = 自动查找（PATH 与常见安装位置）"
+          className="flex-1 font-mono"
+          spellCheck={false}
         />
       </Row>
       <Row label="Claude 路径">
@@ -311,16 +426,169 @@ function AiSection() {
           value={claudePath}
           onChange={(e) => setClaudePath(e.target.value)}
           onBlur={() => void apply({ claude_path: claudePath })}
-          placeholder="留空 = 自动查找（PATH）"
-          className="flex-1"
+          placeholder="留空 = 自动查找（PATH 与常见安装位置）"
+          className="flex-1 font-mono"
+          spellCheck={false}
         />
       </Row>
+      {error && <p className="text-xs text-danger">{error}</p>}
       <div>
         <Button variant="outline" size="sm" loading={busy} onClick={() => void apply({})}>
           重新探测
         </Button>
       </div>
+
+      {editing && (
+        <EndpointDialog
+          agent={editing.agent}
+          existing={caps?.endpoints.find((e) => e.id === editing.id) ?? null}
+          presets={(caps?.presets ?? []).filter((p) => p.agent === editing.agent)}
+          onClose={() => setEditing(null)}
+          onSave={(rec) => {
+            setEditing(null)
+            void run(() => saveAiEndpoint(rec))
+          }}
+        />
+      )}
     </div>
+  )
+}
+
+/**
+ * 第三方接口编辑。密钥只写不读——后端从不回传，留空即保留原值，
+ * 所以编辑一个已有接口时不必重新粘贴密钥。
+ */
+function EndpointDialog({
+  agent,
+  existing,
+  presets,
+  onClose,
+  onSave,
+}: {
+  agent: 'codex' | 'claude'
+  existing: AiEndpoint | null
+  presets: AiEndpointPreset[]
+  onClose: () => void
+  onSave: (rec: Parameters<typeof saveAiEndpoint>[0]) => void
+}) {
+  const [label, setLabel] = useState(existing?.label ?? '')
+  const [baseUrl, setBaseUrl] = useState(existing?.base_url ?? '')
+  const [apiKey, setApiKey] = useState('')
+  const [models, setModels] = useState((existing?.models ?? []).join(', '))
+  const [wire, setWire] = useState<'responses' | 'chat'>(existing?.wire_api ?? 'chat')
+
+  const applyPreset = (id: string) => {
+    const p = presets.find((x) => x.id === id)
+    if (!p) return
+    setLabel(p.label)
+    setBaseUrl(p.base_url)
+    setModels(p.models.join(', '))
+    if (p.wire_api) setWire(p.wire_api)
+  }
+
+  return (
+    <Dialog
+      open
+      onOpenChange={(v) => !v && onClose()}
+      title={existing ? `编辑接口 — ${existing.label}` : `为 ${agent} 添加接口`}
+      size="md"
+      footer={
+        <>
+          <Button variant="outline" size="md" onClick={onClose}>
+            取消
+          </Button>
+          <Button
+            variant="primary"
+            size="md"
+            disabled={!label.trim()}
+            onClick={() =>
+              onSave({
+                id: existing?.id,
+                label: label.trim(),
+                agent,
+                base_url: baseUrl.trim(),
+                api_key: apiKey.trim() || undefined,
+                models: models
+                  .split(/[,，\s]+/)
+                  .map((s) => s.trim())
+                  .filter(Boolean),
+                wire_api: wire,
+              })
+            }
+          >
+            保存
+          </Button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-2">
+        {!existing && presets.length > 0 && (
+          <Row label="预设">
+            <select
+              defaultValue=""
+              onChange={(e) => applyPreset(e.target.value)}
+              aria-label="接口预设"
+              className="h-7 flex-1 rounded-sm border border-border bg-surface px-1.5 text-xs text-ink outline-none focus-visible:focus-ring"
+            >
+              <option value="">选一个预设填好地址…</option>
+              {presets.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+          </Row>
+        )}
+        <Row label="名称">
+          <TextInput value={label} onChange={(e) => setLabel(e.target.value)} className="flex-1" />
+        </Row>
+        <Row label="接口地址">
+          <TextInput
+            value={baseUrl}
+            onChange={(e) => setBaseUrl(e.target.value)}
+            placeholder={agent === 'claude' ? 'https://…/anthropic' : 'https://…/v1'}
+            className="flex-1 font-mono"
+            spellCheck={false}
+          />
+        </Row>
+        <Row label="密钥">
+          <TextInput
+            type="password"
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            placeholder={existing?.has_key ? `已保存 ${existing.key_hint}，留空则不改` : 'sk-…'}
+            className="flex-1 font-mono"
+            spellCheck={false}
+          />
+        </Row>
+        <Row label="模型">
+          <TextInput
+            value={models}
+            onChange={(e) => setModels(e.target.value)}
+            placeholder="逗号分隔；第一个是默认值"
+            className="flex-1 font-mono"
+            spellCheck={false}
+          />
+        </Row>
+        {agent === 'codex' && (
+          <Row label="协议">
+            <select
+              value={wire}
+              onChange={(e) => setWire(e.target.value as 'responses' | 'chat')}
+              aria-label="wire api"
+              className="h-7 flex-1 rounded-sm border border-border bg-surface px-1.5 text-xs text-ink outline-none focus-visible:focus-ring"
+            >
+              <option value="chat">chat（OpenAI Chat Completions 兼容，多数网关）</option>
+              <option value="responses">responses（OpenAI Responses 原生）</option>
+            </select>
+          </Row>
+        )}
+        <p className="text-xs leading-relaxed text-ink-3">
+          密钥保存在本机配置文件里（目录权限已收到仅本人可读），只在启动 CLI
+          时作为环境变量传入，不写进任何命令行、日志或项目文件。
+        </p>
+      </div>
+    </Dialog>
   )
 }
 
@@ -488,13 +756,21 @@ function UpdateSection() {
   )
 }
 
+/** 诊断包：交给浏览器直接下载，不经前端内存（zip 可能不小） */
+function downloadDiagnostics() {
+  const a = document.createElement('a')
+  a.href = apiUrl('/api/diagnostics/bundle')
+  a.download = ''
+  a.click()
+}
+
 function AboutSection() {
   const version = useUpdateStore((s) => s.status?.current)
   const [checks, setChecks] = useState<
     { id: string; ok: boolean; label: string; detail: string }[] | null
   >(null)
   useEffect(() => {
-    void fetch('/api/diagnostics')
+    void fetch(apiUrl('/api/diagnostics'), withProject())
       .then((r) => r.json())
       .then((d) => setChecks(d.checks ?? []))
       .catch(() => setChecks([]))
@@ -525,7 +801,17 @@ function AboutSection() {
       <EngineEnvironmentCard />
 
       <div>
-        <h3 className="mb-1 text-xs font-medium text-ink-2">环境诊断</h3>
+        <div className="mb-1 flex items-center justify-between gap-2">
+          <h3 className="text-xs font-medium text-ink-2">环境诊断</h3>
+          <Button variant="outline" size="sm" onClick={downloadDiagnostics}>
+            导出诊断包
+          </Button>
+        </div>
+        <p className="mb-1.5 text-xs leading-relaxed text-ink-3">
+          遇到问题时导出一个 zip 发给我们：里面是版本、系统、渲染解释器、
+          AI CLI 探测结果与最近日志。<strong className="font-medium text-ink-2">
+          密钥与你的主目录已自动抹掉</strong>。
+        </p>
         {checks === null ? (
           <p className="text-xs text-ink-3">正在检测…</p>
         ) : (

@@ -7,7 +7,8 @@
 
 几何公式与前端严格同源：`_dash_pattern` ↔ `shapeGeometry.dashArray`、
 `_polygon_points` ↔ `shapeGeometry` 的正多边形、`_draw_shape` 的 brace ↔
-`bracePath`、`_draw_arrow` ↔ `ArrowView`、`_draw_text` 换行 ↔ `TextView`。
+`bracePath`、`_draw_arrow` ↔ `ArrowView`、`_draw_shape` 的 line 端点 ↔
+`ShapeView` + `types/document.lineEndpoints`、`_draw_text` 换行 ↔ `TextView`。
 改一边必须同步另一边，pytest 用 get_drawings() 做几何级看护。
 """
 from __future__ import annotations
@@ -17,6 +18,8 @@ from pathlib import Path
 from typing import Callable
 
 import pymupdf
+
+from .. import richtext
 
 BACKEND_NAME = "pymupdf"
 
@@ -231,8 +234,9 @@ def _place_panel(page: pymupdf.Page, o: dict, dpi: int, path: Path) -> None:
 def _draw_text(page: pymupdf.Page, t: dict) -> None:
     """中英混排分段书写：拉丁走 Times、CJK 走宋体。整框套 CJK 字体会把
     拉丁字母排成全角步进（"E x p o r t"），必须按 script 切段各用各的字体。
-    行高 line_height（缺省 1.25）、按框宽贪心换行（CJK 逐字、拉丁按词），
-    与前端 TextView 一致；背景/描边/内边距/下划线/旋转同前端语义。"""
+    行高 line_height（缺省 1.25）、按框宽贪心换行（CJK 逐字、拉丁按词，
+    单词自己就超宽时逐字兜底），与前端 TextView 一致；
+    背景/描边/内边距/下划线/旋转同前端语义。"""
     text = t.get("text", "")
     if not text.strip():
         return
@@ -259,32 +263,76 @@ def _draw_text(page: pymupdf.Page, t: dict) -> None:
                      morph=morph)
         shape.commit()
 
-    lines: list[str] = []
+    # 行内标记（上标 ^{…} / 下标 _{…}）先解析成片段，换行与书写都按片段走：
+    # 上下标字号只有正文的 62%，把它当正文宽度算会提前折行。
+    def _unit_w(u: list[tuple[str, str]]) -> float:
+        return sum(_mixed_width(seg, latin, cjk, richtext.run_metrics(sc, size)[0])
+                   for seg, sc in u)
+
+    def _rstrip(u: list[tuple[str, str]]) -> list[tuple[str, str]]:
+        out = list(u)
+        while out and not out[-1][0].rstrip():
+            out.pop()
+        if out:
+            out[-1] = (out[-1][0].rstrip(), out[-1][1])
+        return out
+
+    def _chars_of(u: list[tuple[str, str]]) -> list[list[tuple[str, str]]]:
+        """把一个换行单元拆成逐字符的单元；script 标记跟着每个字符走
+        （上下标段拆开后仍要按各自字号量宽、按各自基线书写）。"""
+        return [[(ch, sc)] for seg, sc in u for ch in seg]
+
+    lines: list[list[tuple[str, str]]] = []
     for raw in text.split("\n"):
-        units: list[str] = []
-        cur = ""
-        for ch in raw:  # 换行单元：CJK 逐字，拉丁按词（空格附着前词）
-            if ord(ch) > 0x2E80:
-                if cur:
-                    units.append(cur)
-                    cur = ""
-                units.append(ch)
+        units: list[list[tuple[str, str]]] = []   # 每个换行单元 = 片段序列
+        cur: list[tuple[str, str]] = []
+
+        def _push_char(ch: str, sc: str) -> None:
+            if cur and cur[-1][1] == sc:
+                cur[-1] = (cur[-1][0] + ch, sc)
             else:
-                cur += ch
-                if ch == " ":
-                    units.append(cur)
-                    cur = ""
+                cur.append((ch, sc))
+
+        for run in richtext.parse_runs(raw):
+            for ch in run.text:
+                if ord(ch) > 0x2E80:      # 换行单元：CJK 逐字
+                    if cur:
+                        units.append(cur)
+                        cur = []
+                    units.append([(ch, run.script)])
+                else:                      # 拉丁按词（空格附着前词）
+                    _push_char(ch, run.script)
+                    if ch == " ":
+                        units.append(cur)
+                        cur = []
         if cur:
             units.append(cur)
-        line = ""
+
+        line: list[tuple[str, str]] = []
         for u in units:
+            # 单个 unit 自己就超宽（无空格的长化学式 / DOI / URL / 驼峰变量名）：
+            # 先收掉当前行让它独占新行，仍放不下就逐字符断——不兜这一刀的话整个词
+            # 会横向冲出文本框（实测越界 151pt）。与前端 TextView 的
+            # word-break:break-word 同义：只有一个词独占一行都放不下才词内断开。
+            if len(_chars_of(u)) > 1 and _unit_w(_rstrip(u)) > box_w:
+                if line:
+                    lines.append(_rstrip(line))
+                    line = []
+                for cu in _chars_of(u):
+                    cand = line + cu
+                    if line and _unit_w(_rstrip(cand)) > box_w:
+                        lines.append(_rstrip(line))
+                        line = list(cu)
+                    else:
+                        line = cand
+                continue
             cand = line + u
-            if line and _mixed_width(cand.rstrip(), latin, cjk, size) > box_w:
-                lines.append(line.rstrip())
-                line = u
+            if line and _unit_w(_rstrip(cand)) > box_w:
+                lines.append(_rstrip(line))
+                line = list(u)
             else:
                 line = cand
-        lines.append(line.rstrip())
+        lines.append(_rstrip(line))
 
     # CSS 行盒基线：半行距 + ascent（与 TextView 的 line-height 对齐）
     asc, desc = latin.ascender, latin.descender
@@ -294,16 +342,19 @@ def _draw_text(page: pymupdf.Page, t: dict) -> None:
     for i, line in enumerate(lines):
         if not line:
             continue
-        w = _mixed_width(line, latin, cjk, size)
+        w = _unit_w(line)
         x = (x0 + (box_w - w) / 2 if align == "center"
              else x0 + box_w - w if align == "right" else x0)
         y = baseline0 + i * size * line_h
         if t.get("underline"):
+            # 下划线始终画在正文基线上：上下标不该把线拉出锯齿
             underlines.append((x, y + size * 0.11, w))
-        for is_cjk, seg in _script_runs(line):
-            f = cjk if is_cjk else latin
-            tw.append((x, y), seg, font=f, fontsize=size)
-            x += f.text_length(seg, size)
+        for seg_text, seg_script in line:
+            seg_size, rise = richtext.run_metrics(seg_script, size)
+            for is_cjk, sub in _script_runs(seg_text):
+                f = cjk if is_cjk else latin
+                tw.append((x, y - rise), sub, font=f, fontsize=seg_size)
+                x += f.text_length(sub, seg_size)
     tw.write_text(page, morph=morph)
     if underlines:
         shape = page.new_shape()
@@ -360,7 +411,8 @@ def _draw_arrow(page: pymupdf.Page, o: dict) -> None:
 
 
 def _draw_shape(page: pymupdf.Page, o: dict) -> None:
-    """rect/ellipse 描边居中内缩半线宽（外沿贴合包围盒），line 为包围盒水平中线；
+    """rect/ellipse 描边居中内缩半线宽（外沿贴合包围盒），line 画 start→end 端点连线
+    （缺省即包围盒水平中线）；
     triangle/diamond/polygon/brace/圆角/虚线/填充透明度/旋转与前端 ShapeView 逐点一致。"""
     x, y = mm2pt(o["x_mm"]), mm2pt(o["y_mm"])
     w, h = mm2pt(o["w_mm"]), mm2pt(o["h_mm"])
@@ -418,7 +470,15 @@ def _draw_shape(page: pymupdf.Page, o: dict) -> None:
         shape.draw_curve(pt(cx, h * 0.75), pt(cx, h - inset), pt(w - inset, h - inset))
         shape.finish(color=color, width=sw, lineCap=1, dashes=dashes, morph=morph)
     else:  # line
-        shape.draw_line(pymupdf.Point(x, y + h / 2), pymupdf.Point(x + w, y + h / 2))
+        # 端点与 _draw_arrow 同一套算法：包围盒比例坐标 → 绝对 pt。
+        # 缺省 (0,0.5)→(1,0.5) 即包围盒水平中线，兜住没有 start/end 的旧布局文件
+        # （前端同源缺省在 types/document.lineEndpoints）。
+        s = o.get("start") or {"rx": 0.0, "ry": 0.5}
+        e = o.get("end") or {"rx": 1.0, "ry": 0.5}
+        shape.draw_line(
+            pymupdf.Point(x + float(s["rx"]) * w, y + float(s["ry"]) * h),
+            pymupdf.Point(x + float(e["rx"]) * w, y + float(e["ry"]) * h),
+        )
         shape.finish(color=color, width=sw, lineCap=1, dashes=dashes, morph=morph)
     shape.commit()
 

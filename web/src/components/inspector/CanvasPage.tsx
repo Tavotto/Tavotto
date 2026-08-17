@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { ArrowLeftRight, Trash2 } from 'lucide-react'
 import { formatCm, formatMm } from '@/lib/units'
-import { cn } from '@/lib/utils'
+import { cn, MOD } from '@/lib/utils'
 import { clearGuides, removeGuide, setPageSetup, setPageSize } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { useUiStore } from '@/store/uiStore'
@@ -178,7 +178,7 @@ export function CanvasPage() {
                 />
               </Row>
               <Row label="对齐对象">
-                <Tip label={`页面边与中线始终参与吸附；拖动时按住 ⌘ 可临时关掉`} side="left">
+                <Tip label={`页面边与中线始终参与吸附；拖动时按住 ${MOD} 可临时关掉`} side="left">
                   <span className="flex">
                     <Toggle
                       checked={ui.snapToObjects}

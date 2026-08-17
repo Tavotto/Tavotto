@@ -6,6 +6,7 @@ import { ExportDialog } from '@/components/ExportDialog'
 import { Inspector } from '@/components/inspector/Inspector'
 import { LayoutDialog } from '@/components/LayoutDialog'
 import { CommandPalette } from '@/components/CommandPalette'
+import { RegistryDialog } from '@/components/RegistryDialog'
 import { RelinkDialog } from '@/components/RelinkDialog'
 import { SettingsDialog } from '@/components/SettingsDialog'
 import { ShortcutHelp } from '@/components/ShortcutHelp'
@@ -79,17 +80,31 @@ function Workspace() {
     const stopPrune = subscribePruneSelection()
     const stopCheckpoints = startVersionCheckpoints()
     const stopReflow = startLayoutAutoReflow()
-    const onAutosaveError = () =>
+    const onAutosaveError = (ev: Event) => {
+      // stale = 另一个窗口已经存过更新的版本，后端挡下了这次覆盖（见 documentStore）
+      const stale = (ev as CustomEvent<{ reason?: string }>).detail?.reason === 'stale'
       useUiStore
         .getState()
-        .setStatus('自动保存写入磁盘失败：改动暂存在浏览器里，请检查磁盘空间后重试', 'error')
+        .setStatus(
+          stale
+            ? '该文档已在其他窗口保存了更新的版本，本窗口的改动已暂存本机，未写入磁盘'
+            : '自动保存写入磁盘失败：改动暂存在浏览器里，请检查磁盘空间后重试',
+          'error',
+        )
+    }
+    const onDocConflict = () =>
+      useUiStore
+        .getState()
+        .setStatus('该文档已在另一个窗口打开，同时编辑会互相覆盖', 'error')
     window.addEventListener('magplot:autosave-error', onAutosaveError)
+    window.addEventListener('magplot:doc-conflict', onDocConflict)
     return () => {
       stopAutosave()
       stopPrune()
       stopCheckpoints()
       stopReflow()
       window.removeEventListener('magplot:autosave-error', onAutosaveError)
+      window.removeEventListener('magplot:doc-conflict', onDocConflict)
     }
   }, [])
 
@@ -126,7 +141,8 @@ function Workspace() {
         <SettingsDialog />
         <LayoutDialog />
         <StyleDialog />
-        <RelinkDialog />
+        <RegistryDialog />
+      <RelinkDialog />
         <CommandPalette />
         <ShortcutHelp />
         <ConfirmDialog />

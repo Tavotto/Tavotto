@@ -1,0 +1,180 @@
+import { test as base, expect } from '@playwright/test'
+import { spawn, type ChildProcess } from 'node:child_process'
+import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import net from 'node:net'
+import os from 'node:os'
+import path from 'node:path'
+
+const REPO = path.resolve(import.meta.dirname, '..', '..')
+
+/**
+ * 启动被测应用。
+ *
+ * 默认打的是**打包产物**（`MAGPLOT_EXE`），CI 上就是 PyInstaller 出来的
+ * .exe——「本地能跑、装完就崩」的问题只有这样才拦得住。本地没有产物时
+ * 退回 `python -m magplot`，方便边写边跑。
+ *
+ * 本地跑之前记得 `python scripts/build_frontend.py`：包内 `src/magplot/web/`
+ * 优先于 `web/dist`，只跑 `pnpm build` 的话测的还是上一次的界面。
+ */
+function launchCommand(): { cmd: string; args: string[] } {
+  const exe = process.env.MAGPLOT_EXE
+  if (exe) return { cmd: exe, args: [] }
+  const py = process.env.MAGPLOT_PYTHON ?? path.join(REPO, '.venv', 'bin', 'python')
+  return { cmd: py, args: ['-m', 'magplot'] }
+}
+
+async function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer()
+    srv.once('error', reject)
+    srv.listen(0, '127.0.0.1', () => {
+      const port = (srv.address() as net.AddressInfo).port
+      srv.close(() => resolve(port))
+    })
+  })
+}
+
+export interface AppOptions {
+  /** 图库目录；不给就用 examples/figures 的一份拷贝 */
+  figures?: string
+  /** 不带 --figures 启动：模拟「首次启动，用户目录为空」 */
+  noProject?: boolean
+  /** 额外环境变量（用来伪造「没装 Python」「只有 .cmd 的 CLI」等场景） */
+  env?: Record<string, string>
+  /** 指定端口（测端口冲突时用） */
+  port?: number
+}
+
+export interface RunningApp {
+  baseURL: string
+  port: number
+  home: string
+  figures: string
+  dataDir: string
+  proc: ChildProcess
+  stop(): Promise<void>
+}
+
+/** 起一个**全新用户目录**的实例：每个场景都真的从零开始。 */
+export async function startApp(opts: AppOptions = {}): Promise<RunningApp> {
+  const workdir = mkdtempSync(path.join(os.tmpdir(), 'magplot-e2e-'))
+  const home = path.join(workdir, 'home')
+  const dataDir = path.join(workdir, 'data')
+  for (const d of [home, dataDir, path.join(workdir, 'AppData', 'Roaming'),
+                   path.join(workdir, 'AppData', 'Local')]) {
+    mkdirSync(d, { recursive: true })
+  }
+
+  let figures = opts.figures
+  if (!figures && !opts.noProject) {
+    figures = path.join(workdir, 'figures')
+    cpSync(path.join(REPO, 'examples', 'figures'), figures, { recursive: true })
+  }
+
+  const port = opts.port ?? (await freePort())
+  const { cmd, args } = launchCommand()
+  const proc = spawn(
+    cmd,
+    [...args, '--port', String(port), '--no-browser',
+     ...(figures ? ['--figures', figures] : [])],
+    {
+      env: {
+        ...process.env,
+        MAGPLOT_DATA_DIR: dataDir,
+        MAGPLOT_CONFIG_DIR: path.join(workdir, 'config'),
+        MAGPLOT_ALLOW_SHUTDOWN: '1',
+        HOME: home,
+        USERPROFILE: home,
+        APPDATA: path.join(workdir, 'AppData', 'Roaming'),
+        LOCALAPPDATA: path.join(workdir, 'AppData', 'Local'),
+        ...opts.env,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  )
+  const logs: string[] = []
+  proc.stdout?.on('data', (b) => logs.push(String(b)))
+  proc.stderr?.on('data', (b) => logs.push(String(b)))
+
+  const baseURL = `http://127.0.0.1:${port}`
+  const deadline = Date.now() + 120_000
+  for (;;) {
+    if (proc.exitCode !== null) {
+      throw new Error(`应用在就绪前退出（code=${proc.exitCode}）\n${logs.join('')}`)
+    }
+    try {
+      const r = await fetch(`${baseURL}/api/version`)
+      if (r.ok) break
+    } catch {
+      /* 还没起来 */
+    }
+    if (Date.now() > deadline) {
+      throw new Error(`120s 内没起来\n${logs.join('')}`)
+    }
+    await new Promise((r) => setTimeout(r, 500))
+  }
+
+  return {
+    baseURL,
+    port,
+    home,
+    figures: figures ?? '',
+    dataDir,
+    proc,
+    async stop() {
+      try {
+        await fetch(`${baseURL}/api/shutdown`, { method: 'POST' })
+      } catch {
+        proc.kill()
+      }
+      await new Promise((r) => setTimeout(r, 800))
+      if (proc.exitCode === null) proc.kill('SIGKILL')
+      rmSync(workdir, { recursive: true, force: true })
+    },
+  }
+}
+
+/** 造一个「文件名只有运行时才知道」的图库，用来测脚本注册表那条路径。 */
+export function writeRuntimeNamedProject(dir: string): void {
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(
+    path.join(dir, 'render_map.py'),
+    [
+      'import matplotlib',
+      'matplotlib.use("Agg")',
+      'import matplotlib.pyplot as plt',
+      'from pathlib import Path',
+      '',
+      'NAMES = None  # 运行期才决定，静态扫描解不出',
+      '',
+      'def main():',
+      '    for name in (NAMES or ["Runtime_map"]):',
+      '        fig, ax = plt.subplots(figsize=(2, 2))',
+      '        ax.plot([0, 1], [1, 0])',
+      '        fig.savefig(Path(f"{name}.pdf"))',
+      '        plt.close(fig)',
+      '',
+    ].join('\n'),
+    'utf-8',
+  )
+  writeFileSync(path.join(dir, 'mm_registry.json'),
+                JSON.stringify({ version: 1, scripts: {} }), 'utf-8')
+}
+
+/** 每个用例自带一个干净实例；用例里按需 `await app()` 拿到它。 */
+export const test = base.extend<{ app: (o?: AppOptions) => Promise<RunningApp> }>({
+  // 第二个参数是 Playwright 的「交出去再收回来」回调。名字不叫 use 是因为
+  // lint 会把 `use(...)` 当成 React Hook 调用（它是位置参数，随便起名）。
+  app: async (_fixtures, provide) => {
+    const started: RunningApp[] = []
+    await provide(async (o?: AppOptions) => {
+      const a = await startApp(o)
+      started.push(a)
+      return a
+    })
+    for (const a of started) await a.stop()
+  },
+})
+
+export { expect }

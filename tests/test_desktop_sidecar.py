@@ -159,11 +159,13 @@ def test_bootstrap_flow_and_replay(sidecar):
                                   {"nonce": NONCE})
     assert status == 403
 
-    # 有 cookie → 放行到业务层（没开项目 → 409 no_project，说明穿过了认证）
+    # 有 cookie → 放行到业务层：没开项目时 409 no_project；全量测试里其他用例
+    # 可能已把默认项目打开（进程级状态），那时是 200——两者都证明穿过了认证
     status, _, body = http_get(sidecar.url("/api/panels"),
                                headers={"Cookie": cookie})
-    assert status == 409
-    assert json.loads(body)["code"] == "no_project"
+    assert status in (200, 409)
+    if status == 409:
+        assert json.loads(body)["code"] == "no_project"
 
     # 伪造 cookie → 401
     status, _, _ = http_get(sidecar.url("/api/panels"),
@@ -358,11 +360,11 @@ def test_engine_subprocess_calls_never_pop_console_windows():
 def test_no_window_flag_value():
     import subprocess as sp
 
-    from magplot.engine import pool
+    from magplot.engine import runtime
     if os.name == "nt":
-        assert pool.NO_WINDOW == sp.CREATE_NO_WINDOW
+        assert runtime.CREATE_NO_WINDOW == sp.CREATE_NO_WINDOW
     else:
-        assert pool.NO_WINDOW == 0  # 非 Windows 上必须是无操作
+        assert runtime.CREATE_NO_WINDOW == 0  # 非 Windows 上必须是无操作
 
 
 # ---------------------------------------------------------------------------

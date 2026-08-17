@@ -8,6 +8,7 @@ import {
   AlignStartHorizontal,
   AlignStartVertical,
   AlignVerticalDistributeCenter,
+  CaseSensitive,
   ChevronRight,
   CircleQuestionMark,
   CornerDownLeft,
@@ -17,13 +18,16 @@ import {
   MoveUp,
   MoveVertical,
   RotateCcw,
+  Subscript,
+  Superscript,
   TriangleAlert,
 } from 'lucide-react'
 import type { AlignMode } from '@/lib/geometry'
+import { ENVIRONMENT_CODES } from '@/lib/api'
 import type { EditableField, Manifest, ManifestElement } from '@/lib/api'
 import { requestRender } from '@/hooks/useEngineSync'
 import { useQuickEdit } from '@/canvas/quickEditStore'
-import { cn } from '@/lib/utils'
+import { ALT, cn, combo, modKey } from '@/lib/utils'
 import {
   centerInFigure,
   fracToMm,
@@ -53,12 +57,21 @@ import {
 import { useDocumentStore } from '@/store/documentStore'
 import { useRenderStore } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
-import { EngineEnvironmentCard } from '@/components/EngineEnvironmentCard'
+import {
+  EngineEnvironmentCard,
+  MissingDependencyCard,
+} from '@/components/EngineEnvironmentCard'
 import type { PanelObject } from '@/types/document'
 import { groupHasContent, groupRank, optionLabel, propLabel, roleName, UNSUPPORTED } from './roles/registry'
 import { Button } from '../ui/Button'
 import { Grid2, Row, Section } from '../ui/Field'
 import { ColorField, NumberField, TextArea } from '../ui/Input'
+import { Menu, MenuItem } from '../ui/Menu'
+import {
+  toggleMathScript,
+  transformCase,
+  type CaseMode,
+} from '@/lib/richText'
 import { Popover } from '../ui/Popover'
 import { Select } from '../ui/Select'
 import { Toggle } from '../ui/Toggle'
@@ -96,9 +109,13 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
   return (
     <>
       {/* 缺渲染环境不是「出错」而是缺件，给能点的出口；脚本真报错才显示 traceback */}
-      {render?.code === 'no_worker_python' ? (
+      {render?.code === 'missing_dependency' ? (
         <Section>
-          <EngineEnvironmentCard />
+          <MissingDependencyCard module={render.module} />
+        </Section>
+      ) : ENVIRONMENT_CODES.includes(render?.code as (typeof ENVIRONMENT_CODES)[number]) ? (
+        <Section>
+          <EngineEnvironmentCard compact />
         </Section>
       ) : (
         render?.error && (
@@ -637,6 +654,23 @@ function FieldRow({
           ta.setSelectionRange(s + 1, s + 1)
         })
       }
+      /**
+       * 上下标走 matplotlib mathtext（`cm$^{-1}$`）——图内文字是交给
+       * matplotlib 排的，跟画布标注那套 `^{…}` 标记不是一回事。
+       */
+      const wrapMath = (kind: 'sup' | 'sub') => {
+        const ta = taRef.current
+        const s = ta?.selectionStart ?? text.length
+        const t = ta?.selectionEnd ?? text.length
+        const next = toggleMathScript(text, s, t, kind)
+        write(next.text, true)
+        requestAnimationFrame(() => {
+          ta?.focus()
+          ta?.setSelectionRange(next.start, next.end)
+        })
+      }
+      const changeCase = (mode: CaseMode) =>
+        write(transformCase(text, mode, true), true) // 保护 $…$ 里的公式
       return (
         <Row label={labelNode} labelWidth={LABEL_W}>
           <div className="flex w-full min-w-0 items-start gap-1">
@@ -663,16 +697,55 @@ function FieldRow({
                 }
               }}
             />
-            <Button
-              size="icon-sm"
-              // 按下时不抢焦点：textarea 的编辑事务不因点按钮而提交
-              onPointerDown={(e) => e.preventDefault()}
-              onClick={insertNewline}
-              title="在光标处插入换行（⌥⏎ / ⌘⏎）"
-              aria-label="插入换行"
-            >
-              <CornerDownLeft size={12} />
-            </Button>
+            {/* 按下时一律不抢焦点：textarea 的编辑事务不因点按钮而提交 */}
+            <div className="flex shrink-0 flex-col gap-0.5">
+              <Button
+                size="icon-sm"
+                onPointerDown={(e) => e.preventDefault()}
+                onClick={insertNewline}
+                title={`在光标处插入换行（${combo(ALT, '⏎')} / ${modKey('⏎')}）`}
+                aria-label="插入换行"
+              >
+                <CornerDownLeft size={12} />
+              </Button>
+              <Button
+                size="icon-sm"
+                onPointerDown={(e) => e.preventDefault()}
+                onClick={() => wrapMath('sup')}
+                title="上标：选中一段再点，写成 matplotlib 公式（cm$^{-1}$）"
+                aria-label="上标"
+              >
+                <Superscript size={12} />
+              </Button>
+              <Button
+                size="icon-sm"
+                onPointerDown={(e) => e.preventDefault()}
+                onClick={() => wrapMath('sub')}
+                title="下标：选中一段再点，写成 matplotlib 公式（H$_{2}$O）"
+                aria-label="下标"
+              >
+                <Subscript size={12} />
+              </Button>
+              <Menu
+                align="end"
+                width={140}
+                trigger={
+                  <Button
+                    size="icon-sm"
+                    onPointerDown={(e) => e.preventDefault()}
+                    title="大小写转换"
+                    aria-label="大小写转换"
+                  >
+                    <CaseSensitive size={12} />
+                  </Button>
+                }
+              >
+                <MenuItem onSelect={() => changeCase('upper')}>全部大写</MenuItem>
+                <MenuItem onSelect={() => changeCase('lower')}>全部小写</MenuItem>
+                <MenuItem onSelect={() => changeCase('title')}>每词首字母大写</MenuItem>
+                <MenuItem onSelect={() => changeCase('sentence')}>每句首字母大写</MenuItem>
+              </Menu>
+            </div>
           </div>
         </Row>
       )

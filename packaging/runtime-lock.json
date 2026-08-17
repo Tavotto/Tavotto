@@ -1,0 +1,54 @@
+{
+  "schema": 1,
+  "_comment": [
+    "Magplot Windows 桌面版内置渲染 runtime 的锁文件——scripts/build_worker_runtime.py 的唯一输入。",
+    "改这里 = 改所有用户拿到的渲染环境，所以每一项都必须是精确版本，不允许 latest / 范围。",
+    "python.sha256 是 python.org 那个 zip 的实测校验和；换版本时用",
+    "  python scripts/build_worker_runtime.py --resolve --python-version <x.y.z>",
+    "重新生成，它会下载、算 sha256、并用 pip 真实解析出下面这份传递闭包。",
+    "packages 是**完整闭包**（含传递依赖），构建时按 --no-deps 逐个装：",
+    "只锁顶层的话，某个传递依赖发新版就会让两次构建装出不同的东西。"
+  ],
+  "python": {
+    "version": "3.13.15",
+    "implementation": "cpython",
+    "url": "https://www.python.org/ftp/python/3.13.15/python-3.13.15-embed-amd64.zip",
+    "sha256": "d1f04d990aee1253d8569e8e5104e30fa9f5fa830899f14843448872d936a2cf",
+    "size": 11009825,
+    "stdlib_zip": "python313.zip",
+    "pth": "python313._pth",
+    "doc": "https://docs.python.org/3/using/windows.html#the-embeddable-package"
+  },
+  "platform": {
+    "os": "windows",
+    "arch": "amd64",
+    "pip_platform": "win_amd64",
+    "pip_python_version": "3.13",
+    "pip_implementation": "cp",
+    "pip_abi": "cp313"
+  },
+  "top_level": [
+    "numpy",
+    "matplotlib",
+    "pandas",
+    "scipy",
+    "seaborn",
+    "pillow"
+  ],
+  "packages": {
+    "contourpy": "1.3.3",
+    "cycler": "0.12.1",
+    "fonttools": "4.63.0",
+    "kiwisolver": "1.5.0",
+    "matplotlib": "3.11.1",
+    "numpy": "2.5.2",
+    "packaging": "26.3",
+    "pandas": "3.0.5",
+    "pillow": "12.3.0",
+    "pyparsing": "3.3.2",
+    "python-dateutil": "2.9.0.post0",
+    "scipy": "1.18.0",
+    "seaborn": "0.13.2",
+    "six": "1.17.0"
+  }
+}

@@ -4,6 +4,7 @@ import { createPackage, exportFigure, type ExportResponse } from '@/lib/api'
 import { readExportDefaults } from '@/lib/exportDefaults'
 import { toExportObjects } from '@/lib/exportPayload'
 import { buildProofPayload, runPreflight } from '@/lib/preflight'
+import { apiUrl } from '@/lib/session'
 import { cn } from '@/lib/utils'
 import { isDesktop, revealExportedFile } from '@/lib/desktop'
 import { revealObjects } from '@/store/actions'
@@ -285,9 +286,12 @@ export function ExportDialog() {
                   {f.name}
                 </button>
               ) : (
+                // 后端回的是裸路径 /exports/<name>，必须过 apiUrl() 补 pj：`<a>` 加不了
+                // 请求头，不带 pj 时后端落到**默认项目**的导出目录——非默认项目的标签页
+                // 点下载不是 404 就是下到别的图库的同名文件
                 <a
                   key={f.name}
-                  href={f.url}
+                  href={apiUrl(f.url)}
                   target="_blank"
                   rel="noreferrer"
                   className="flex items-center gap-1.5 font-mono text-xs text-accent hover:underline"

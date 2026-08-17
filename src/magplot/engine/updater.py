@@ -25,7 +25,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from . import brand, config
+from . import brand, config, runtime
 
 CHECK_INTERVAL_S = 24 * 3600
 NETWORK_TIMEOUT_S = 6
@@ -176,7 +176,14 @@ def check(force: bool = False) -> dict:
 
 
 def check_in_background() -> None:
-    """启动时的静默检查——失败一律吞掉，绝不影响进程启动。"""
+    """启动时的静默检查——失败一律吞掉，绝不影响进程启动。
+
+    `MAGPLOT_NO_UPDATE_CHECK=1` 完全关掉它：检查更新是本应用唯一的对外请求，
+    CI 冒烟与断网启动测试都不该被它拖住（也不该因为 GitHub 不可达而变慢）。
+    """
+    if os.environ.get("MAGPLOT_NO_UPDATE_CHECK"):
+        return
+
     def run():
         try:
             check(force=False)
@@ -201,7 +208,12 @@ def apply_upgrade() -> dict:
                 "log": "这是源码检出的运行方式，请在仓库目录执行 git pull 后重启。"}
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True,
-                              timeout=UPGRADE_TIMEOUT_S)
+                              # 显式 UTF-8：text=True 默认跟随系统区域编码，
+                              # cp936 下 pip 的进度条/中文路径一解码就抛
+                              # UnicodeDecodeError，直接逃出 apply_upgrade 变 500
+                              encoding="utf-8", errors="replace",
+                              timeout=UPGRADE_TIMEOUT_S,
+                              creationflags=runtime.CREATE_NO_WINDOW)
     except (OSError, subprocess.TimeoutExpired) as exc:
         return {"ok": False, "command": " ".join(cmd), "restart_required": False,
                 "log": f"升级命令执行失败: {exc}"}

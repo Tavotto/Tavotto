@@ -92,6 +92,48 @@ def test_rotated_rect_geometry(client, tmp_path):
     assert abs((r.x0 + r.x1) / 2 - cx) < 1 and abs((r.y0 + r.y1) / 2 - cy) < 1
 
 
+def _line_points(page):
+    """直线导出后那条线段的两端（pt，按绘制方向）。
+
+    get_drawings 把一条描边线段来回各记一次（去程 + 回程），取第一条即绘制方向。
+    """
+    items = [it for d in _drawings(page) for it in d["items"] if it[0] == "l"]
+    assert items, "没画出线段"
+    return items[0][1], items[0][2]
+
+
+def test_line_draws_between_endpoints(client, tmp_path):
+    """直线端点：比例坐标 → 页面 pt 的换算与前端 ShapeView 逐点同源。
+
+    包围盒 (10,10)+40×30mm，start(0,0)→end(1,1) 即左上到右下的对角线。
+    """
+    doc = _export(client, tmp_path, [
+        _shape("line", start={"rx": 0, "ry": 0}, end={"rx": 1, "ry": 1}),
+    ])
+    a, b = _line_points(doc[0])
+    assert abs(a - pymupdf.Point(10 * MM, 10 * MM)) < 0.01
+    assert abs(b - pymupdf.Point(50 * MM, 40 * MM)) < 0.01
+
+
+def test_line_endpoints_follow_drag_direction(client, tmp_path):
+    """从右下往左上拖出来的线：端点顺序不同，线段本身是同一条对角线。"""
+    doc = _export(client, tmp_path, [
+        _shape("line", start={"rx": 1, "ry": 1}, end={"rx": 0, "ry": 0}),
+    ])
+    a, b = _line_points(doc[0])
+    assert abs(a - pymupdf.Point(50 * MM, 40 * MM)) < 0.01
+    assert abs(b - pymupdf.Point(10 * MM, 10 * MM)) < 0.01
+
+
+def test_line_without_endpoints_is_bbox_midline(client, tmp_path):
+    """旧布局文件没有 start/end：兜底成包围盒水平中线，与改动前逐点一致
+    （前端同一缺省在 types/document.lineEndpoints）。"""
+    doc = _export(client, tmp_path, [_shape("line")])
+    a, b = _line_points(doc[0])
+    assert abs(a - pymupdf.Point(10 * MM, 25 * MM)) < 0.01
+    assert abs(b - pymupdf.Point(50 * MM, 25 * MM)) < 0.01
+
+
 def _arrow(**kw):
     return {"type": "arrow", "x_mm": 10, "y_mm": 10, "w_mm": 50, "h_mm": 10,
             "start": {"rx": 0, "ry": 0.5}, "end": {"rx": 1, "ry": 0.5},

@@ -12,6 +12,10 @@
 
 机器上一个 Python 都没有时我们无能为力：venv 得由某个真解释器创建。那种情况
 如实告诉用户去装 Python，不假装能修。
+
+**Windows 桌面版走不到这里**：安装包自带 `runtime/`（见 `engine/runtime.py`），
+`find_worker_python()` 直接就选中它——不弹「请先安装 Python」、不联网装包。
+这条自建 venv 的路留给源码 / pip 安装模式，那是它本来的用途。
 """
 from __future__ import annotations
 
@@ -22,8 +26,7 @@ import sys
 import threading
 from pathlib import Path
 
-from . import config
-from . import pool
+from . import config, runtime
 
 VENV_DIR_NAME = "worker-env"
 INSTALL_TIMEOUT_S = 900          # 首次装 matplotlib 要下几十 MB，网络慢时给足
@@ -46,9 +49,10 @@ def _probe(python: str, expr: str) -> str | None:
     """在指定解释器里求值，失败回 None。"""
     try:
         out = subprocess.run([python, "-c", expr], capture_output=True,
-                             text=True, timeout=PROBE_TIMEOUT_S,
+                             text=True, encoding="utf-8", errors="replace",
+                             timeout=PROBE_TIMEOUT_S,
                              stdin=subprocess.DEVNULL,
-                             creationflags=pool.NO_WINDOW)
+                             creationflags=runtime.CREATE_NO_WINDOW)
     except (OSError, subprocess.SubprocessError):
         return None
     return out.stdout.strip() if out.returncode == 0 else None
@@ -63,11 +67,16 @@ def find_base_python() -> str | None:
 
     复用 pool 的候选清单（已含 conda / python.org / PATH 的常见落点），
     只是把判据从「有没有 matplotlib」换成「是不是个能建 venv 的 Python」。
+
+    内置 runtime 明确排除：官方 embeddable 发行版不带 `ensurepip`，
+    `python -m venv` 建到一半就失败，白白给用户一段看不懂的报错。
     """
     from . import pool
     seen: set[str] = set()
-    for cand in pool._candidate_pythons():
-        if not cand or cand in seen or not Path(cand).exists():
+    for cand, source in pool._prioritized_candidates():
+        if source == pool.SOURCE_BUNDLED:
+            continue
+        if cand in seen or not Path(cand).exists():
             continue
         seen.add(cand)
         if _probe(cand, "import venv,sys;print(sys.version_info[:2])"):
@@ -75,28 +84,57 @@ def find_base_python() -> str | None:
     return None
 
 
+def _runtime_block() -> dict:
+    """内置 runtime 的对外视图：装了什么版本、完不完整。"""
+    st = runtime.status()
+    info = st.get("manifest") or {}
+    return {
+        "present": st["present"],
+        "valid": st["valid"],
+        "expected": runtime.ships_bundled_runtime(),
+        "python": (info.get("python") or {}).get("version"),
+        "packages": info.get("packages") or {},
+        "build": info.get("build") or {},
+        "code": st["code"],
+        "error": st["error"],
+    }
+
+
 def status() -> dict:
-    """渲染环境现状——前端据此决定要不要弹「自动安装」。"""
+    """渲染环境现状——前端据此决定显示什么，以及要不要给「自动安装」。
+
+    `source` 是关键字段：`bundled` 表示用的是随包附带的 Magplot 内置环境，
+    界面显示「Magplot 内置环境」并且**不出现任何安装引导**——那时什么都不缺。
+    """
     from . import pool
+    rt = _runtime_block()
     try:
         python = pool.find_worker_python()
-        return {"ok": True, "python": python,
+        source = pool.source_of(python)
+        return {"ok": True, "python": python, "source": source,
                 "matplotlib": matplotlib_version(python),
                 "managed": Path(python) == venv_python(),
+                "bundled": source == pool.SOURCE_BUNDLED,
+                "runtime": rt,
                 "state": _progress["state"]}
-    except pool.WorkerError:
-        pass
+    except pool.WorkerError as exc:
+        code = exc.code
     base = find_base_python()
     return {
         "ok": False,
         "python": None,
+        "source": "",
         "matplotlib": None,
         "managed": False,
-        # 有可用的基础解释器才谈得上「自动安装」
-        "can_install": base is not None,
+        "bundled": False,
+        "runtime": rt,
+        # 该带 runtime 却带坏了：这不是「缺 Python」，是安装文件不完整。
+        # 自动安装在这种情况下毫无意义（且 embeddable 里没有 pip），必须关掉。
+        "code": code,
+        "can_install": base is not None and not rt["expected"],
         "base_python": base,
         "state": _progress["state"],
-        "error": _progress["error"],
+        "error": (runtime.repair_hint() if rt["expected"] else _progress["error"]),
     }
 
 
@@ -121,6 +159,12 @@ def install(on_event=None) -> dict:
     try:
         _progress.update(state="running", log="", error=None)
         _emit(on_event)
+
+        # 桌面版该有内置 runtime。走到这里说明它缺了或坏了——那时该做的是重装，
+        # 不是现场联网建一个 venv：用户装的是「开箱即用」的安装包，我们不能
+        # 因为自己的产物残缺就把下载几十 MB 的活推给他。
+        if runtime.ships_bundled_runtime():
+            return _fail(runtime.repair_hint(), on_event)
 
         base = find_base_python()
         if base is None:
@@ -173,7 +217,7 @@ def _run(cmd: list[str]) -> tuple[int, str]:
                            encoding="utf-8", errors="replace",
                            timeout=INSTALL_TIMEOUT_S,
                            stdin=subprocess.DEVNULL,
-                           creationflags=pool.NO_WINDOW)
+                           creationflags=runtime.CREATE_NO_WINDOW)
     except subprocess.TimeoutExpired:
         return 1, f"\n超时（{INSTALL_TIMEOUT_S}s）：{' '.join(cmd)}\n"
     except OSError as exc:

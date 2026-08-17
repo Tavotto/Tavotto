@@ -1,0 +1,10 @@
+{
+  "_comment": "内置渲染环境的验收项目（CI 用）。只有一个脚本，冒烟脚本因此一定渲染到它——把整套内置科学栈真跑一遍。",
+  "scripts": {
+    "fig_stack.py": {
+      "entry": "main",
+      "cost": "light",
+      "stems": ["Fig_runtime_stack"]
+    }
+  }
+}
