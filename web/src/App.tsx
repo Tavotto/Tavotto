@@ -20,7 +20,7 @@ import { UpdateBanner } from '@/components/UpdateBanner'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useEngineSync } from '@/hooks/useEngineSync'
 import { useBuildVersion } from '@/hooks/useBuildVersion'
-import { useKeyboard } from '@/hooks/useKeyboard'
+import { runUndoRedo, useKeyboard } from '@/hooks/useKeyboard'
 import { useWorkspaceLayout } from '@/hooks/useWorkspaceLayout'
 import { useServerEvents } from '@/hooks/useServerEvents'
 import { subscribePruneSelection } from '@/hooks/usePruneSelection'
@@ -174,18 +174,14 @@ function useDesktopMenu() {
           if (useProjectStore.getState().phase === 'open') ui.setExportOpen(true)
           break
         case 'menu-undo':
+          // 菜单加速键在拖动进行中也会触发——必须走带 undoRedoBlocked 守卫的
+          // 入口，否则会把进行中的事务当场结算掉，后续位移绕过历史（数据损坏）
           if (inEditable) document.execCommand('undo')
-          else {
-            const label = useDocumentStore.getState().undo()
-            ui.setStatus(label ? `撤销：${label}` : '没有可撤销的操作')
-          }
+          else runUndoRedo(false)
           break
         case 'menu-redo':
           if (inEditable) document.execCommand('redo')
-          else {
-            const label = useDocumentStore.getState().redo()
-            ui.setStatus(label ? `重做：${label}` : '没有可重做的操作')
-          }
+          else runUndoRedo(true)
           break
       }
     }).then((u) => {

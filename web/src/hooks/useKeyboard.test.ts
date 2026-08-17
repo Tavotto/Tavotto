@@ -107,10 +107,11 @@ describe('拖动中途按 ⌘Z', () => {
     expect(s().doc.objects[0].x).toBe(0)
   })
 
-  it('（根因存档）绕过拦截直接 undo()：结算+撤销一次发生，之后的位移静默写入', () => {
-    // 这条用例不测修复，测的是「为什么必须在按键层拦」：只要 undo() 能在
-    // txn 非空时被调到，下面这条时间线就必然重演。documentStore.undo() 的语义
-    // 若哪天改了（拒绝执行 / discard 当前事务），这里会红，届时按新语义重写。
+  it('绕过拦截直接 undo()：事务被结算+撤销，此后无事务的 txnUpdate 一律落空', () => {
+    // 按键层的拦截（undoRedoBlocked）仍是第一道防线，但它拦不住桌面菜单
+    // 加速键这类入口。第二道防线在 documentStore.txnUpdate：没有进行中的
+    // 事务就丢弃更新——丢一帧拖动无害，绕过历史写文档是数据损坏
+    // （真实撞见过：成组文字回到原位、图片停在新位、撤销无能为力）。
     s().commit('改文字', (d) => {
       const o = d.objects[0]
       if (o.type === 'text') o.text = 'B'
@@ -125,19 +126,19 @@ describe('拖动中途按 ⌘Z', () => {
     expect(s().txn).toBeNull()
     expect(s().doc.objects[0].x).toBe(0)
 
-    // trackPointer 的 pointermove 还挂在 window 上：没有 txn 的 txnUpdate 直接
-    // set({doc})，绕过 pushHistory
+    // trackPointer 的 pointermove 还挂在 window 上：无事务的 txnUpdate 必须落空，
+    // 绝不能把位移静默写进文档
     s().txnUpdate((d) => {
       d.objects[0].x = 3
     })
-    expect(s().doc.objects[0].x).toBe(3)
+    expect(s().doc.objects[0].x).toBe(0)
     expect(s().past).toHaveLength(1)
     s().endTxn() // 松手时 txn 早已是 null，空转
     expect(s().past).toHaveLength(1)
 
-    // 再按一次 ⌘Z，撤掉的是更早、与这次拖动毫不相干的一步；3mm 残留位移撤不回来
+    // 再按 ⌘Z 撤的是「改文字」，没有任何残留位移
     expect(s().undo()).toBe('改文字')
     expect(firstText()).toBe('A')
-    expect(s().doc.objects[0].x).toBe(3)
+    expect(s().doc.objects[0].x).toBe(0)
   })
 })
