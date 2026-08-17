@@ -113,7 +113,13 @@ python -m twine check --strict dist/*     # 元数据 + PyPI 的 README 渲染
 
 ## 独立应用（.dmg / .exe）
 
-桌面应用现在有**两条并行链路**（Tauri 链路完成等价验证前，旧链路不删）：
+桌面应用现在有**两条并行链路**（Tauri 链路完成等价验证前，旧链路不删）。
+**v0.2.0 起 Release 资产的分工**：macOS 的 dmg 挂 **Tauri 链**（真桌面窗口；
+macOS 本来就不带内置 runtime，没有短板），Windows 仍挂**旧链**（Tauri 链的
+NSIS 还没带内置渲染 runtime，发出去用户没装 Python 就渲染不了）。两条链的
+dmg 产物同名，谁后 attach 谁生效——所以 dispatch 时 Windows 端只信旧链，
+Tauri 链 attach=false 再单独 `gh release upload --clobber` 它的 dmg，
+或等 Tauri 链补齐 Windows runtime 后整体翻转。
 
 ### 新链路：Tauri 桌面壳（desktop-tauri.yml）
 
