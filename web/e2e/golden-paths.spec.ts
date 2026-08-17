@@ -1,9 +1,22 @@
-import { cpSync, existsSync, mkdirSync, readdirSync, realpathSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readdirSync, realpathSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { expect, test, writeRuntimeNamedProject } from './fixtures'
 
 const REPO = path.resolve(import.meta.dirname, '..', '..')
+
+/** 逐文件显式拷贝。Windows CI 实测：`fs.cpSync` 往含中文+空格的目标路径
+ *  拷贝时会**静默拷出一个空目录**（mkdir/readdir 同路径均正常）；
+ *  显式循环要么成功要么当场抛错，不给「拷了个寂寞」留余地。 */
+function copyTree(src: string, dest: string): void {
+  mkdirSync(dest, { recursive: true })
+  for (const e of readdirSync(src, { withFileTypes: true })) {
+    const s = path.join(src, e.name)
+    const d = path.join(dest, e.name)
+    if (e.isDirectory()) copyTree(s, d)
+    else copyFileSync(s, d)
+  }
+}
 
 /**
  * Windows 黄金路径。用真实浏览器操作真实界面，打的是打包后的应用。
@@ -28,8 +41,7 @@ test('首次启动：用户目录为空时进项目选择器，而不是白屏',
 
 test('直接粘贴路径打开项目（含中文与空格）', async ({ app, page }) => {
   const dir = path.join(os.tmpdir(), `magplot-e2e-${Date.now()}`, '我的 论文 图', 'figures')
-  mkdirSync(dir, { recursive: true })
-  cpSync(path.join(REPO, 'examples', 'figures'), dir, { recursive: true })
+  copyTree(path.join(REPO, 'examples', 'figures'), dir)
   // 自证拷贝真的落盘——后续「素材空」时才能把责任划给后端而不是这里
   const copied = readdirSync(dir)
   expect(copied, `拷贝后 ${dir} 只有: ${copied.join(', ')}`).toContain('Fig1_kinetics.pdf')
