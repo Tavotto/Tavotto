@@ -24,11 +24,13 @@ import {
   setDocumentName,
 } from '@/store/actions'
 import { requestRelinkMissing } from '@/lib/clipboard'
+import { runUndoRedo } from '@/hooks/useKeyboard'
 import { openPackage } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { insertShape } from '@/lib/presets'
 import { PresetsDialog } from './PresetsDialog'
 import { ProjectSwitcher } from './ProjectSwitcher'
+import { WriteBackTopBarButton } from './inspector/UpdateSourceButton'
 import { usePalette } from '@/components/CommandPalette'
 import { useDocumentStore } from '@/store/documentStore'
 import { useUiStore, type Tool } from '@/store/uiStore'
@@ -67,6 +69,8 @@ export function TopBar() {
 
       <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
         <ZoomControls />
+        {/* 写回原始文件是高频动作，常驻导出左侧；导出仍是顶栏唯一填色主动作 */}
+        <WriteBackTopBarButton />
         <ExportButton />
         <MoreMenu />
       </div>
@@ -235,14 +239,10 @@ function ToolCluster() {
   const markActive = !!activeMark
   const ActiveMark = activeMark?.icon
 
-  const runUndo = () => {
-    const label = useDocumentStore.getState().undo()
-    if (label) useUiStore.getState().setStatus(`撤销：${label}`)
-  }
-  const runRedo = () => {
-    const label = useDocumentStore.getState().redo()
-    if (label) useUiStore.getState().setStatus(`重做：${label}`)
-  }
+  // 必须走带 undoRedoBlocked 守卫的入口：拖动进行中点撤销会把事务当场结算，
+  // 后续位移绕过历史（真实撞见过的数据损坏路径）
+  const runUndo = () => runUndoRedo(false)
+  const runRedo = () => runUndoRedo(true)
 
   return (
     <div className="flex shrink-0 items-center gap-0.5">
