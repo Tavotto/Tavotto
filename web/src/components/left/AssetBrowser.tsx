@@ -92,7 +92,14 @@ export function AssetBrowser() {
       return true
     })
     list = [...list]
-    if (sort === 'name') list.sort((a, b) => fileName(a.id).localeCompare(fileName(b.id)))
+    // 默认（按名称）排序把可参数化面板排在前面：它们才能进图内编辑，是这个
+    // 面板里的一等公民。显式选了最近/次数排序时尊重用户的选择，不再分组。
+    if (sort === 'name')
+      list.sort(
+        (a, b) =>
+          Number(!!b.script) - Number(!!a.script) ||
+          fileName(a.id).localeCompare(fileName(b.id)),
+      )
     else if (sort === 'recent')
       list.sort((a, b) => (recentlyUsed[b.id] ?? 0) - (recentlyUsed[a.id] ?? 0))
     else list.sort((a, b) => (usage.get(b.id) ?? 0) - (usage.get(a.id) ?? 0))
@@ -162,6 +169,21 @@ export function AssetBrowser() {
               )}
             />
           </div>
+          {/* 一键只看可参数化：等价于筛选弹层里的类型=可参数化，走同一份状态，
+              生效时下方出现同一个可移除的筛选标签 */}
+          <Tip label="只看可参数化面板">
+            <Button
+              size="icon-sm"
+              active={type === 'script'}
+              onClick={() =>
+                setFilters((f) => ({ ...f, type: f.type === 'script' ? 'all' : 'script' }))
+              }
+              aria-label="只看可参数化面板"
+              aria-pressed={type === 'script'}
+            >
+              <Braces size={12} />
+            </Button>
+          </Tip>
           <FilterButton
             filters={filters}
             folders={folders}
