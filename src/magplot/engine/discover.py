@@ -47,7 +47,8 @@ SAVE_KWARGS = ("fname", "filename", "file", "path", "out", "outfile",
 # 扫描时整棵剪掉的目录（噪音 + 性能：图库旁边常年躺着工具产物与虚拟环境）
 PRUNE_DIRS = {"__pycache__", "node_modules", ".venv", "venv", "env", ".git",
               "build", "dist", "site-packages", ".ipynb_checkpoints",
-              ".rendered", ".mypy_cache", ".pytest_cache", ".tox", ".eggs"}
+              ".rendered", ".mypy_cache", ".pytest_cache", ".tox", ".eggs",
+              "magplotfile"}  # 项目内的 Magplot 数据收纳目录，里面没有图表脚本
 MAX_DEPTH = 4        # 图库目录层级：panels/、subfigs/ 这种一两层，给到四层
 MAX_CALL_DEPTH = 6   # 跨函数传播的递归上限（防互递归与深调用链爆栈）
 

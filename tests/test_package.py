@@ -43,7 +43,7 @@ def test_package_roundtrip(env):
     # 新包：.magplot 扩展 + magplot-package 标识
     assert body["name"].endswith(".magplot")
 
-    zpath = tmp / "figs-exports" / body["name"]
+    zpath = figs / "magplotfile" / "export" / body["name"]
     with zipfile.ZipFile(zpath) as z:
         names = set(z.namelist())
         assert "layout.json" in names
@@ -66,7 +66,7 @@ def test_package_roundtrip(env):
 def test_package_open_reports_missing_and_drift(env, tmp_path):
     client, figs, tmp = env
     zdata = client.post("/api/package", json={"doc": _layout()}).get_json()
-    zpath = tmp / "figs-exports" / zdata["name"]
+    zpath = figs / "magplotfile" / "export" / zdata["name"]
 
     # 素材内容漂移
     doc = pymupdf.open()
@@ -110,7 +110,7 @@ def test_package_schema3_collects_assets_across_canvases(env, tmp_path):
     }
     body = client.post("/api/package", json={"doc": pd}).get_json()
     assert body["assets"] == 2  # 两张画布的素材都进包
-    zpath = tmp / "figs-exports" / body["name"]
+    zpath = figs / "magplotfile" / "export" / body["name"]
     with zipfile.ZipFile(zpath) as z:
         assert json.loads(z.read("layout.json"))["schema"] == 3
     with open(zpath, "rb") as f:
@@ -156,6 +156,6 @@ def test_export_writes_proof_report(env):
     })
     files = resp.get_json()["files"]
     proof = next(f for f in files if f["name"].endswith("_proof.json"))
-    data = json.loads((tmp / "figs-exports" / proof["name"]).read_text(encoding="utf-8"))
+    data = json.loads((figs / "magplotfile" / "export" / proof["name"]).read_text(encoding="utf-8"))
     assert data["kind"] == "magplot-proof"
     assert data["files"]  # 成图文件名回填进 report

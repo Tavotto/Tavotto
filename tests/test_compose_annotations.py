@@ -16,7 +16,7 @@ MM = 72 / 25.4
 def client(tmp_path, monkeypatch):
     monkeypatch.setattr(m, "EXPORT_DIR", tmp_path)
     # 纯标注导出不依赖项目；清掉别的测试模块残留的已打开项目，
-    # 否则导出会落到那个项目的同级导出目录（project_export_dir 的新默认）
+    # 否则导出会落到那个项目的 magplotfile/export/（project_export_dir 的默认）
     monkeypatch.setattr(m, "PROJECTS", {})
     monkeypatch.setattr(m, "DEFAULT_PROJECT", None)
     m.app.config["TESTING"] = True

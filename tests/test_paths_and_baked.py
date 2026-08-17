@@ -115,3 +115,58 @@ def test_hex2rgb():
     assert pb.hex2rgb("#0f0") == (0.0, 1.0, 0.0)
     assert pb.hex2rgb("garbage") == (0.0, 0.0, 0.0)
     assert pb.hex2rgb(None) == (0.0, 0.0, 0.0)
+
+
+def test_magplotfile_store(figs, monkeypatch):
+    """项目内 magplotfile/ 统一收纳（2026-08-17 产品决定）：
+
+    - 命名画布保存进 `magplotfile/`，旧位置（项目 canvases/、数据目录
+      layouts/）只读兼容、合并列出；
+    - 布局版本历史写进 `magplotfile/versions/`，数据目录旧历史仍可见；
+    - 素材扫描剪掉整个 magplotfile/——导出的成图绝不能混进素材面板。
+    """
+    monkeypatch.setattr(m, "LAYOUT_DIR", figs / "_data_layouts")
+    monkeypatch.setattr(m, "VERSIONS_DIR", figs / "_data_layouts" / "_versions")
+    m.app.config["TESTING"] = True
+    client = m.app.test_client()
+
+    # 保存画布 → 项目 magplotfile/
+    r = client.post("/api/layouts/主图", json={"schema": 2})
+    assert r.status_code == 200
+    assert (figs / "magplotfile" / "主图.json").is_file()
+
+    # 旧位置只读兼容：canvases/ 与数据目录 layouts/ 都列得出、读得到
+    (figs / "canvases").mkdir()
+    (figs / "canvases" / "旧画布.json").write_text('{"schema": 2}', encoding="utf-8")
+    (figs / "_data_layouts").mkdir(parents=True, exist_ok=True)
+    (figs / "_data_layouts" / "更早.json").write_text('{"schema": 2}', encoding="utf-8")
+    names = client.get("/api/layouts").get_json()["layouts"]
+    assert {"主图", "旧画布", "更早"} <= set(names)
+    assert client.get("/api/layouts/旧画布").status_code == 200
+
+    # 版本历史 → magplotfile/versions/
+    ok = client.post("/api/versions/doc9", json={
+        "doc": {"schema": 2, "page": {"w": 10, "h": 10}, "objects": [], "guides": []}})
+    assert ok.status_code == 200, ok.get_json()
+    assert (figs / "magplotfile" / "versions" / "doc9.json").is_file()
+
+    # 数据目录里升级前的历史只读兜底
+    m.VERSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    (m.VERSIONS_DIR / "docold.json").write_text(
+        json.dumps({"versions": [{"id": "v1", "name": "n", "ts": 0, "doc": {}}]}),
+        encoding="utf-8")
+    got = client.get("/api/versions/docold").get_json()["versions"]
+    assert [v["id"] for v in got] == ["v1"]
+
+    # 素材扫描剪掉 magplotfile/：同一份真 PDF，根目录的收录、export/ 里的不收
+    import pymupdf
+    exp = figs / "magplotfile" / "export"
+    exp.mkdir(parents=True, exist_ok=True)
+    doc = pymupdf.open()
+    doc.new_page(width=100, height=50)
+    doc.save(figs / "real.pdf")
+    doc.save(exp / "out.pdf")
+    doc.close()
+    ids = {p["id"] for p in client.get("/api/panels").get_json()["panels"]}
+    assert not any("magplotfile" in i for i in ids), ids
+    assert "real.pdf" in ids

@@ -54,7 +54,10 @@ from .engine import updater as engine_updater
 PKG_ROOT = Path(__file__).resolve().parent   # 只读：包自带资源（前端构建产物）
 DATA_ROOT = engine_config.data_dir()         # 可写：运行时产物（装成包后 site-packages 不可写）
 
-EXCLUDE_DIRS = {"__pycache__", "_cache", "_palette_ref", "scripts", ".git"}
+# magplotfile/ 是项目内的 Magplot 数据收纳目录（画布/导出/版本历史）：
+# 导出的 PDF/PNG 落在里面，素材扫描必须剪掉，否则导出一次素材面板就多一堆成图
+EXCLUDE_DIRS = {"__pycache__", "_cache", "_palette_ref", "scripts", ".git",
+                "magplotfile"}
 PDF_EXT = {".pdf"}
 IMG_EXT = {".png", ".jpg", ".jpeg"}
 
@@ -807,23 +810,33 @@ def reload_registry(ctx: "ProjectCtx") -> None:
                               _script_change_handler(ctx))
 
 
+def project_store_dir(ctx: "ProjectCtx | None" = None) -> Path | None:
+    """项目文件夹内的 `magplotfile/`：与该项目相关的 Magplot 文件统一收纳处
+    ——命名画布布局直接放里面，导出在 `export/`，布局版本历史在 `versions/`。
+    用户在自己的项目目录里就能看到、随项目一起备份/同步/迁移。
+    未打开项目时返回 None（调用方各自退回数据目录）。"""
+    ctx = ctx if ctx is not None else _request_ctx()
+    return None if ctx is None else ctx.path / "magplotfile"
+
+
 def project_export_dir(ctx: "ProjectCtx | None" = None) -> Path:
     """项目的导出目录（项目设置可覆盖）。
 
-    缺省放在**项目文件夹旁边**的 `<项目名>-exports/`——导出的成图要交给
-    投稿/合作者，藏在应用数据目录里用户根本找不到。旁边建不出来
-    （父目录只读、网络盘等）再退回数据目录 exports/。
-    未打开项目时（纯文字/形状导出不依赖项目）直接用数据目录。"""
+    缺省 `<项目>/magplotfile/export/`——导出的成图要交给投稿/合作者，
+    跟着项目走才找得到（旧版的 `<项目名>-exports/` 同级目录不再新建，
+    已有的留在原地不动）。项目目录建不出来（只读、网络盘等）退回数据目录
+    exports/。未打开项目时（纯文字/形状导出不依赖项目）直接用数据目录。"""
     ctx = ctx if ctx is not None else _request_ctx()
     if ctx is None:
         return EXPORT_DIR
     d = engine_config.project_settings(str(ctx.path)).get("export_dir")
     if d:
         return Path(d).expanduser()
-    sibling = ctx.path.parent / f"{ctx.path.name}-exports"
+    store = project_store_dir(ctx)
+    assert store is not None
     try:
-        sibling.mkdir(parents=True, exist_ok=True)
-        return sibling
+        (store / "export").mkdir(parents=True, exist_ok=True)
+        return store / "export"
     except OSError:
         return EXPORT_DIR
 
@@ -1824,15 +1837,25 @@ def api_ai_cancel(sid):
 
 # ------------------------- 布局的保存 / 读取 -------------------------------
 def project_layout_dir(ctx: "ProjectCtx | None" = None) -> Path:
-    """命名画布文件的目录：项目目录下可见的 `canvases/`。
+    """命名画布文件的目录：项目内 `magplotfile/`（项目文件的统一收纳处）。
 
     成品画布要跟图库一起被找到 / 备份 / 同步，藏在应用数据目录里对用户
     等于不存在。未打开项目时退回数据目录 layouts/（纯文字/形状排版不依赖
-    项目）；旧数据目录里升级前存的画布仍然只读可见（api_layouts 合并列出）。"""
+    项目）；旧位置（项目 `canvases/`、数据目录 layouts/）只读兼容
+    （api_layouts 合并列出，保存后以 magplotfile/ 里的为准）。"""
     ctx = ctx if ctx is not None else _request_ctx()
-    if ctx is None:
-        return LAYOUT_DIR
-    return ctx.path / "canvases"
+    store = project_store_dir(ctx)
+    return LAYOUT_DIR if store is None else store
+
+
+def _layout_read_dirs() -> list[Path]:
+    """读画布的查找顺序：magplotfile/ → 旧项目 canvases/ → 数据目录 layouts/。"""
+    ctx = _request_ctx()
+    dirs = [project_layout_dir(ctx)]
+    if ctx is not None:
+        dirs.append(ctx.path / "canvases")
+    dirs.append(LAYOUT_DIR)
+    return dirs
 
 
 def layout_path(name: str, base: Path | None = None) -> Path:
@@ -1844,9 +1867,9 @@ def layout_path(name: str, base: Path | None = None) -> Path:
 
 @app.get("/api/layouts")
 def api_layouts():
-    # 主位置 = 项目 canvases/；数据目录 layouts/ 只读兼容，重名以项目文件为准
+    # 主位置 = 项目 magplotfile/；旧位置只读兼容，重名以主位置为准
     seen: dict[str, float] = {}
-    for d in (project_layout_dir(), LAYOUT_DIR):
+    for d in _layout_read_dirs():
         if not d.is_dir():
             continue
         for p in d.glob("*.json"):
@@ -1858,7 +1881,7 @@ def api_layouts():
 
 @app.get("/api/layouts/<name>")
 def api_layout_get(name):
-    for d in (project_layout_dir(), LAYOUT_DIR):
+    for d in _layout_read_dirs():
         p = layout_path(name, d)
         if p.exists():
             return send_file(p, mimetype="application/json")
@@ -1958,7 +1981,7 @@ def api_autosave_delete(doc_id):
 # 与「写回原始文件」的版本历史（baked_overrides.json，作用于单张图的源文件）
 # 是两件事：这里保存的是**整份布局文档**的快照，按前端 documentId 分文件存放，
 # 恢复只改前端文档内容，绝不触碰 figures 里的任何文件。
-VERSIONS_DIR = LAYOUT_DIR / "_versions"
+VERSIONS_DIR = LAYOUT_DIR / "_versions"   # 旧位置：只读兼容（新写入进项目 magplotfile/versions/）
 _VERSIONS_LOCK = threading.Lock()
 VERSION_KEEP_AUTO = 40    # 自动检查点保留数
 VERSION_KEEP_TOTAL = 120  # 单文档版本总数上限（先裁自动、再裁最旧）
@@ -1978,20 +2001,27 @@ def _versions_path(doc_id: str) -> Path:
     doc_id = re.sub(r"[^\w\-]+", "_", doc_id)
     if not doc_id:
         abort(400)
-    return VERSIONS_DIR / f"{doc_id}.json"
+    store = project_store_dir()
+    base = (store / "versions") if store is not None else VERSIONS_DIR
+    return base / f"{doc_id}.json"
 
 
 def _load_versions(doc_id: str) -> list[dict]:
+    p = _versions_path(doc_id)
+    if not p.is_file():
+        # 升级前的历史在数据目录 layouts/_versions/：项目里还没有这份文档的
+        # 版本文件时继续可见；一旦保存过新版本，就以项目里的为准
+        p = VERSIONS_DIR / p.name
     try:
-        data = json.loads(_versions_path(doc_id).read_text(encoding="utf-8"))
+        data = json.loads(p.read_text(encoding="utf-8"))
         return data.get("versions", []) if isinstance(data, dict) else []
     except (OSError, ValueError):
         return []
 
 
 def _save_versions(doc_id: str, versions: list[dict]) -> None:
-    VERSIONS_DIR.mkdir(parents=True, exist_ok=True)
     p = _versions_path(doc_id)
+    p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_name(p.name + ".tmp")
     tmp.write_text(json.dumps({"versions": versions}, ensure_ascii=False),
                    encoding="utf-8")

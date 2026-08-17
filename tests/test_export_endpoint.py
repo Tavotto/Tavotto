@@ -15,7 +15,7 @@ from magplot.pdfbackend import pymupdf_backend as pb
 def client(tmp_path, monkeypatch):
     monkeypatch.setattr(m, "EXPORT_DIR", tmp_path)
     # 纯标注导出不依赖项目；清掉别的测试模块残留的已打开项目，
-    # 否则导出会落到那个项目的同级导出目录（project_export_dir 的新默认）
+    # 否则导出会落到那个项目的 magplotfile/export/（project_export_dir 的默认）
     monkeypatch.setattr(m, "PROJECTS", {})
     monkeypatch.setattr(m, "DEFAULT_PROJECT", None)
     m.app.config["TESTING"] = True
@@ -34,8 +34,8 @@ def _export(client, tmp_path, spec):
     body = resp.get_json()
     files = body["files"]
     assert len(files) == 1
-    # 落盘位置以响应里的 export_dir 为准：开着项目时默认是项目同级的
-    # <项目名>-exports/，没开项目才回落到 EXPORT_DIR（fixture 里的 tmp_path）
+    # 落盘位置以响应里的 export_dir 为准：开着项目时默认是项目内的
+    # magplotfile/export/，没开项目才回落到 EXPORT_DIR（fixture 里的 tmp_path）
     out_dir = Path(body["export_dir"])
     # 同 test_compose_annotations：不留文件句柄，否则 Windows 上覆盖导出会失败
     return pymupdf.open(stream=(out_dir / files[0]["name"]).read_bytes(),

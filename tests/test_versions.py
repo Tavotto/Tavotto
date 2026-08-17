@@ -7,6 +7,10 @@ from magplot import app as m
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setattr(m, "VERSIONS_DIR", tmp_path / "_versions")
+    # 清掉别的测试模块残留的已打开项目：版本历史现在优先写进项目的
+    # magplotfile/versions/，不隔离的话状态会串到那个项目里
+    monkeypatch.setattr(m, "PROJECTS", {})
+    monkeypatch.setattr(m, "DEFAULT_PROJECT", None)
     m.app.config["TESTING"] = True
     return m.app.test_client()
 
