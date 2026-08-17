@@ -53,6 +53,53 @@ def _figs(tmp_path, name="figs"):
 
 # ---------------- 文件被占用（Windows 独占锁） -------------------------------
 
+def _fake_workers(monkeypatch, figs, tmp_path, payload: bytes) -> None:
+    """接上假 worker（热会话 + 写回用的一次性重放）。
+
+    写回的 staging 一律出自一次性 worker（干净重放，见 app._write_source_files），
+    所以这里两个角色都要给：热会话只用来读 manifest，导出全在重放那边。
+    """
+    out = tmp_path / "_replay_out"
+    out.mkdir(exist_ok=True)
+    man = {"stem": "Fig1", "size_mm": [35.28, 17.64], "elements": []}
+    (out / "Fig1.json").write_text(json.dumps(man), encoding="utf-8")
+
+    class FakeWorker:
+        script_name, entry = "fig1.py", "main"
+        figures_dir = str(figs)
+        base = out_dir = out
+        built = True
+        script_sha1 = ""     # 空 = 会话没记指纹，前置的脚本检查自然跳过
+        last_patch_hash = ""
+
+        def override(self, stem, patches):
+            return {"ok": True, "manifest": man, "warnings": []}
+
+        def export(self, stem, patches, path, fmt="pdf", dpi=600):
+            Path(path).write_bytes(payload)
+            return {"ok": True, "path": path, "warnings": []}
+
+        def shutdown(self):
+            pass
+
+    worker = FakeWorker()
+    monkeypatch.setattr(m.engine_pool, "get", lambda *a, **k: worker)
+    monkeypatch.setattr(m.engine_pool, "one_shot", lambda *a, **k: worker)
+    monkeypatch.setattr(m.engine_pool, "discard", lambda w: None)
+
+
+def _lock(monkeypatch, name: str) -> None:
+    """让某个目标文件的原子替换抛 PermissionError（独占锁的形状）。"""
+    real_replace = Path.replace
+
+    def locked(self, target):
+        if Path(target).name == name:
+            raise PermissionError(13, "另一个程序正在使用此文件")
+        return real_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", locked)
+
+
 def test_write_back_reports_locked_file_instead_of_500(client, tmp_path, monkeypatch):
     """目标 PDF 被别的程序打开时，写回必须给一个能照做的错误。
 
@@ -62,21 +109,8 @@ def test_write_back_reports_locked_file_instead_of_500(client, tmp_path, monkeyp
     """
     figs = _figs(tmp_path)
     m.open_project(str(figs))
-
-    class FakeWorker:
-        def export(self, stem, patches, path, fmt="pdf", dpi=600):
-            Path(path).write_bytes(b"%PDF-1.4\n")  # 假装导出成功
-            return {"ok": True, "path": path, "warnings": []}
-
-    monkeypatch.setattr(m.engine_pool, "get", lambda *a, **k: FakeWorker())
-    real_replace = Path.replace
-
-    def locked(self, target):
-        if Path(target).name == "Fig1.pdf":
-            raise PermissionError(13, "另一个程序正在使用此文件")
-        return real_replace(self, target)
-
-    monkeypatch.setattr(Path, "replace", locked)
+    _fake_workers(monkeypatch, figs, tmp_path, b"%PDF-1.4\n")   # 假装导出成功
+    _lock(monkeypatch, "Fig1.pdf")
 
     resp = client.post("/api/engine/update_source",
                        json={"id": "Fig1.pdf", "patches": []})
@@ -90,30 +124,27 @@ def test_write_back_reports_locked_file_instead_of_500(client, tmp_path, monkeyp
     assert (figs / "Fig1.pdf").is_file()   # 原文件完好
 
 
-def test_write_back_reports_which_files_already_changed(client, tmp_path, monkeypatch):
-    """PDF 换成功、PNG 被占用：必须说清哪些已经变了，不能让用户以为什么都没发生。"""
+def test_write_back_rolls_back_when_the_second_target_is_locked(client, tmp_path,
+                                                                monkeypatch):
+    """PDF 换成功、PNG 被占用：把 PDF 从备份恢复回去，并说清事情的结局。
+
+    一张图的 PDF 是新的、PNG 还是旧的，比整件事失败糟糕得多——用户在画布上看
+    位图、投出去的是矢量，两者从此不一致且没有任何提示。
+    """
     figs = _figs(tmp_path)
     (figs / "Fig1.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    before_pdf = (figs / "Fig1.pdf").read_bytes()
     m.open_project(str(figs))
+    _fake_workers(monkeypatch, figs, tmp_path, b"x" * 16)
+    _lock(monkeypatch, "Fig1.png")
 
-    class FakeWorker:
-        def export(self, stem, patches, path, fmt="pdf", dpi=600):
-            Path(path).write_bytes(b"x" * 16)
-            return {"ok": True, "path": path, "warnings": []}
-
-    monkeypatch.setattr(m.engine_pool, "get", lambda *a, **k: FakeWorker())
-    real_replace = Path.replace
-
-    def locked(self, target):
-        if str(target).endswith(".png"):
-            raise PermissionError(13, "locked")
-        return real_replace(self, target)
-
-    monkeypatch.setattr(Path, "replace", locked)
     body = client.post("/api/engine/update_source",
                        json={"id": "Fig1.pdf", "patches": []}).get_json()
     assert body["file"] == "Fig1.png"
-    assert body["updated"] == ["Fig1.pdf"]
+    assert body["rolled_back"] == ["Fig1.pdf"] and body["rollback_failed"] == []
+    assert body["updated"] == []          # 回滚成功 = 没有文件停在「已被换掉」
+    assert (figs / "Fig1.pdf").read_bytes() == before_pdf
+    assert not list(figs.glob(".*updating"))
 
 
 # ---------------- 路径：盘符、反斜杠、中文与空格 ------------------------------

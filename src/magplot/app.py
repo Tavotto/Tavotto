@@ -44,6 +44,7 @@ from .engine import brand as engine_brand
 from .engine import config as engine_config
 from .engine import diagnostics as engine_diagnostics
 from .engine import discover as engine_discover
+from .engine import patchspec as engine_patchspec
 from .engine import pool as engine_pool
 from .engine import probe as engine_probe
 from .engine import ai_providers as engine_ai_providers
@@ -207,13 +208,19 @@ def load_baked(ctx: "ProjectCtx | None" = None) -> dict:
 
 
 def append_baked(stem: str, patches: list, ctx: "ProjectCtx | None" = None) -> None:
-    """读-改-写全程持锁（同一项目内），落盘走 `_write_baked` 的原子替换。"""
+    """读-改-写全程持锁（同一项目内），落盘走 `_write_baked` 的原子替换。
+
+    每条版本都带 `patch_hash`（`patchspec` 的权威实现）：写回响应里回的是同一个
+    值，用户/排障时能把「磁盘上这张图」与「哪一版 patches」对上。旧条目没有这个
+    键，读取端一律按缺失兼容。
+    """
     ctx = ctx if ctx is not None else current_ctx()
     with _BAKED_LOCK:
         data = load_baked(ctx)
         entry = data.setdefault(stem, {"versions": []})
         entry["versions"].append({"ts": time.strftime("%Y-%m-%d %H:%M:%S"),
-                                  "patches": patches})
+                                  "patches": patches,
+                                  "patch_hash": engine_patchspec.patch_hash(patches)})
         entry["versions"] = entry["versions"][-50:]
         _write_baked(_baked_path(ctx), data)
 
@@ -1391,28 +1398,18 @@ def api_engine_update_source():
         return jsonify({"error": "该面板不可参数化（没有对应脚本）"}), 404
     worker = engine_pool.get(info["script"], str(require_project()), info["entry"])
     try:
-        updated, backup_dir = _write_source_files(src, patches, worker,
-                                                  annotations=annotations)
+        result = _write_source_files(src, patches, worker,
+                                     annotations=annotations,
+                                     expected_mtime=body.get("expected_mtime"))
     except engine_pool.WorkerError as exc:
         return jsonify(_worker_error_payload(exc)), 500
-    except WriteBackVerifyError as exc:
-        return jsonify({"error": _write_back_warning_error(exc),
-                        "code": "write_back_warnings",
-                        "warnings": exc.warnings}), 409
-    except FileLockedError as exc:
-        # 可操作的错误：告诉用户是哪个文件、该去关掉谁；已经换掉的一并报出来，
-        # 免得用户以为「什么都没发生」
-        return jsonify({"error": f"{exc}。请关闭正在打开它的程序"
-                                 "（PDF 阅读器 / 看图工具）后重试。",
-                        "code": "file_locked", "file": exc.name,
-                        "updated": exc.updated}), 409
+    except (SourceChangedError, ScriptChangedError, ReplayDivergenceError,
+            WriteBackVerifyError, FileLockedError) as exc:
+        return _write_back_error_response(exc)
     # 把这组修改追加为该图的版本历史，末位即当前基线：
     # 新拖入的同名面板自动继承，双击进编辑态能接着改
     append_baked(src.stem, patches)
-    # warnings 恒为空（有一条就走上面的 409），但字段必须在：前端据此确认
-    # 「这次写回确实是全量应用的」，而不是靠「没报错」推断
-    return jsonify({"updated": updated, "backup_dir": str(backup_dir),
-                    "baked": bool(patches), "warnings": []})
+    return jsonify(_write_back_response(result, baked=bool(patches)))
 
 
 def _write_back_forbidden():
@@ -1426,12 +1423,71 @@ def _write_back_forbidden():
 
 
 class FileLockedError(RuntimeError):
-    """目标文件被别的程序占用，替换不了（Windows 上的独占锁）。"""
+    """目标文件被别的程序占用，替换不了（Windows 上的独占锁）。
 
-    def __init__(self, name: str, detail: str, updated: list[str]):
-        super().__init__(f"{name} 正被其它程序占用，无法覆盖：{detail}")
+    第 2 个目标撞锁时**先把已经换掉的从备份恢复回去**：一张图的 PDF 与 PNG
+    分岔（矢量是新的、位图还是旧的）比整件事失败糟糕得多——用户在画布上看到
+    的是位图，投出去的是矢量。恢复成功 = 原文件一个字节都没变；恢复也失败
+    （备份也被锁）才退回「部分完成」的如实报告。
+    """
+
+    def __init__(self, name: str, detail: str, updated: list[str],
+                 rolled_back: list[str] | None = None,
+                 rollback_failed: list[str] | None = None):
+        self.rolled_back = list(rolled_back or [])
+        self.rollback_failed = list(rollback_failed or [])
+        tail = ""
+        if self.rolled_back and not self.rollback_failed:
+            tail = f"（已回滚 {'、'.join(self.rolled_back)}，原文件未变）"
+        elif self.rollback_failed:
+            tail = f"（{'、'.join(self.rollback_failed)} 回滚失败，仍是新内容）"
+        super().__init__(f"{name} 正被其它程序占用，无法覆盖：{detail}{tail}")
         self.name = name
+        #: 仍处于「已被换掉」状态的文件（回滚成功后为空）
         self.updated = updated
+
+
+class SourceChangedError(RuntimeError):
+    """写回目标在用户按下确认之后被外部改过（mtime 与前端手里的对不上）。
+
+    典型场景：AI 桥改了脚本重出、另一个标签页刚写回过同一张图、用户自己在
+    别的工具里存了一次。这时候按旧状态覆盖 = 悄悄吃掉别人的改动。
+    """
+
+    def __init__(self, name: str, expected: int, actual: int):
+        super().__init__(f"{name} 已被外部修改")
+        self.name = name
+        self.expected = expected
+        self.actual = actual
+
+
+class ScriptChangedError(RuntimeError):
+    """生成这张图的脚本，在当前会话 spawn 之后被改过。
+
+    热会话里跑的还是旧代码，mtime watcher 有 2 秒轮询窗口——那个窗口里写回，
+    落盘的是旧脚本的产物，而下一次渲染就会变成新脚本的样子，两者再也对不上。
+    """
+
+    def __init__(self, script: str, expected: str, actual: str):
+        super().__init__(f"脚本 {script} 已改动")
+        self.script = script
+        self.expected = expected
+        self.actual = actual
+
+
+class ReplayDivergenceError(RuntimeError):
+    """热会话的 manifest 与「全新 worker 全量重放」的对不上。
+
+    这是 FigS3 那一类问题（热态所见 ≠ 重开后重放）的最后一道防线：写回把热态
+    的样子刻进用户原件，而重开项目后引擎会按 patches 全量重放——两者不一致，
+    用户下次打开就会看到一张与文件里不同的图，且无从判断哪一份才是对的。
+    """
+
+    def __init__(self, diffs: list[dict]):
+        head = "；".join(f"{d['gid'] or 'figure'}.{d['field']}" for d in diffs[:3])
+        more = f"（另有 {len(diffs) - 3} 处）" if len(diffs) > 3 else ""
+        super().__init__(f"{head}{more}")
+        self.diffs = diffs
 
 
 class WriteBackVerifyError(RuntimeError):
@@ -1456,9 +1512,167 @@ def _write_back_warning_error(exc: "WriteBackVerifyError") -> str:
             "已删除）。请重新渲染确认当前效果，或撤销对应的修改后再写回。")
 
 
+# ---- 写回事务：prepare → verify → commit ------------------------------------
+#: 干净重放与热态 manifest 的几何容差（figure 分数坐标，bbox/anchor 逐项）。
+#: 0.5% 是「同一张图两次独立渲染的浮点噪声」与「真的挪位了」之间的分界：
+#: 文字错位那类事故的偏移量是百分之几到几十，噪声在 1e-6 量级。
+REPLAY_GEOM_TOL = 0.005
+#: 画布尺寸容差（mm）。size_mm 由 figsize 直接算出，两次重放该逐位相同。
+REPLAY_SIZE_TOL = 0.01
+#: 落盘后页面尺寸自检的容差（mm）——这一档只看「有没有整体错档」。
+POST_CHECK_SIZE_TOL = 0.5
+#: 分歧清单最多回多少条（够定位问题，又不至于把响应撑成一页 JSON）。
+REPLAY_DIFF_LIMIT = 20
+
+
+def _f(value) -> float | None:
+    """manifest 里的数值统一成 float。
+
+    manifest 是经 JSON 落盘的，worker 的 `default=` 兜底可能把 numpy 标量写成
+    字符串（`float()` 失败时它回 `str(o)`）——不统一化的话「0.5」与 0.5 会被
+    判成分歧，把一条真防线变成天天误报的噪音。
+    """
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _vec(value, n: int) -> list[float] | None:
+    if not isinstance(value, (list, tuple)) or len(value) != n:
+        return None
+    out = [_f(v) for v in value]
+    return None if any(v is None for v in out) else out  # type: ignore[return-value]
+
+
+def _manifest_hash(man: dict) -> str:
+    """manifest 的内容指纹（canonical JSON 的 sha256，带算法前缀）。
+
+    与 `patchspec.canonical_json` 同一口径（sort_keys + 紧凑分隔符 +
+    ensure_ascii=False），这样「哪一版 patches」与「重放出的哪一份 manifest」
+    是两个能对上的、可复现的值。
+    """
+    text = json.dumps(man, sort_keys=True, separators=(",", ":"),
+                      ensure_ascii=False, default=str)
+    return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _compare_manifests(hot: dict, fresh: dict) -> tuple[list[dict], int]:
+    """热态 manifest vs 干净重放 manifest → (分歧清单, 逐项比过的元素数)。
+
+    比 gid 集合、每个元素的 bbox/anchor、以及 figure 的 size_mm。只比几何：
+    文本内容之类的属性差异会被 worker 自己的 warning 抓到，而**位置**恰恰是
+    热会话增量应用与全量重放最容易分岔的地方（FigS3 事故就是这条）。
+    """
+    diffs: list[dict] = []
+    hot_size, fresh_size = _vec(hot.get("size_mm"), 2), _vec(fresh.get("size_mm"), 2)
+    if hot_size is None or fresh_size is None:
+        if hot.get("size_mm") != fresh.get("size_mm"):
+            diffs.append({"gid": "", "field": "size_mm",
+                          "hot": hot.get("size_mm"), "fresh": fresh.get("size_mm")})
+    elif any(abs(a - b) > REPLAY_SIZE_TOL for a, b in zip(hot_size, fresh_size)):
+        diffs.append({"gid": "", "field": "size_mm",
+                      "hot": hot_size, "fresh": fresh_size})
+
+    hot_els = {el.get("gid"): el for el in hot.get("elements", []) if el.get("gid")}
+    fresh_els = {el.get("gid"): el for el in fresh.get("elements", []) if el.get("gid")}
+    for gid in sorted(set(hot_els) - set(fresh_els)):
+        diffs.append({"gid": gid, "field": "missing_in_replay",
+                      "hot": "存在", "fresh": None})
+    for gid in sorted(set(fresh_els) - set(hot_els)):
+        diffs.append({"gid": gid, "field": "missing_in_hot",
+                      "hot": None, "fresh": "存在"})
+
+    common = sorted(set(hot_els) & set(fresh_els))
+    for gid in common:
+        for field, n in (("bbox", 4), ("anchor", 2)):
+            a, b = hot_els[gid].get(field), fresh_els[gid].get(field)
+            if a is None and b is None:
+                continue
+            va, vb = _vec(a, n), _vec(b, n)
+            if va is None or vb is None:
+                if a != b:
+                    diffs.append({"gid": gid, "field": field, "hot": a, "fresh": b})
+            elif any(abs(x - y) > REPLAY_GEOM_TOL for x, y in zip(va, vb)):
+                diffs.append({"gid": gid, "field": field, "hot": va, "fresh": vb})
+    return diffs, len(common)
+
+
+def _write_back_prepare(src: Path, worker, expected_mtime) -> None:
+    """写回前置校验：目标文件没被外部改过、脚本没在会话背后换过。
+
+    `expected_mtime` 比对的是**请求点名的那个素材**（`src`）：它是前端 assetStore
+    里唯一有 mtime 的那一份；同 stem 的另一载体（PDF↔PNG）客户端并不持有它的
+    mtime，服务端也就无从判定「用户看到的是哪一版」，硬拿同一个数去比只会必然
+    误报。缺省（旧前端）跳过整条检查。
+    """
+    if expected_mtime is not None:
+        try:
+            actual = int(src.stat().st_mtime)
+        except OSError:
+            actual = 0
+        if actual != int(expected_mtime):
+            raise SourceChangedError(src.name, int(expected_mtime), actual)
+
+    figures_dir = getattr(worker, "figures_dir", "")
+    script_name = getattr(worker, "script_name", "")
+    spawned = getattr(worker, "script_sha1", "")
+    if not (figures_dir and script_name and spawned):
+        return          # 会话没记指纹（读不到脚本）：没有可比的基准，不臆断
+    now = engine_pool.script_sha1(figures_dir, script_name)
+    if now and now != spawned:
+        raise ScriptChangedError(script_name, spawned, now)
+
+
+def _hot_manifest(worker, stem: str, patches: list) -> dict | None:
+    """热会话当前的 manifest；拿不到（或热态压根不是这组 patches）回 None。
+
+    只有热会话最后应用的正是**这一组** patches 时，两份 manifest 才可比。
+    历史版本恢复、跨面板同步这类入口写回的是会话里没应用过的 patches，那时候
+    比出来的差异全是假的——报一次假的 `replay_divergence`，用户学到的是
+    「这个提示可以无视」，真出事那天它就不再是防线了。
+    """
+    want = engine_patchspec.patch_hash(patches)
+    if getattr(worker, "last_patch_hash", "") != want:
+        return None
+    path = Path(worker.out_dir) / f"{stem}.json"
+    if not path.exists():
+        try:
+            worker.override(stem, patches)   # 同一组 patches，幂等
+        except engine_pool.WorkerError:
+            return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def _rollback(done: list[Path], backup_dir: Path) -> tuple[list[str], list[str]]:
+    """把已经替换掉的目标从本次备份恢复回去，返回 (成功, 失败) 两份文件名。"""
+    rolled, failed = [], []
+    for target in done:
+        try:
+            shutil.copy2(backup_dir / target.name, target)
+            rolled.append(target.name)
+        except OSError:
+            LOG.error("写回回滚失败: %s（备份在 %s）", target.name, backup_dir,
+                      exc_info=True)
+            failed.append(target.name)
+    return rolled, failed
+
+
 def _write_source_files(src: Path, patches: list, worker,
-                        annotations: list | None = None) -> tuple[list, Path]:
-    """按 patches 全质量重出 stem 的 PDF/PNG 并原子替换原文件（先备份）。
+                        annotations: list | None = None,
+                        expected_mtime=None) -> dict:
+    """写回事务：prepare → verify → commit，任一环不过就保持原文件零改动。
+
+    **staging 的 PDF/PNG 由一个全新的一次性 worker 产出，不用热会话。**
+    热会话是增量的：build 之后经历过任意多次 override 与还原，它「现在的样子」
+    未必等于「按这组 patches 从零重放一次的样子」（FigS3 事故就是这个差）。
+    写回是把某一版刻进用户原件，那就必须刻**可复现的那一版**——重开项目后引擎
+    重放出来的，正是干净重放这一版。代价是每次写回都要重跑一遍脚本（heavy 的
+    分钟级），这是正确性优先的自觉取舍，不许为省时间跳过。同一次写回只 build
+    一次：override + PDF + PNG 全共用这一个 worker。
 
     annotations 非空时（写回携带画布标注，坐标为该图自身的 mm），先在导出的
     PDF 上矢量绘制标注，PNG 再由注好的 PDF 重新栅格化——两种载体逐像素同源。
@@ -1472,18 +1686,34 @@ def _write_source_files(src: Path, patches: list, worker,
     以前只有「文件被占用」那一条路径清理，PDF 导出成功而 PNG 导出抛
     WorkerError 时，`.Fig1.pdf.updating` 就永久留在图库里了。
     """
-    targets = [p for p in (src.with_suffix(".pdf"), src.with_suffix(".png")) if p.exists()]
+    stem = src.stem
+    _write_back_prepare(src, worker, expected_mtime)
 
-    # 全部先导出到临时文件，标注一次性画好，自检通过后才动真文件
+    targets = [p for p in (src.with_suffix(".pdf"), src.with_suffix(".png")) if p.exists()]
+    man_hot = _hot_manifest(worker, stem, patches)
+
+    # ---- verify：全新 worker 全量重放，staging 也从它出 ----------------------
+    fresh = engine_pool.one_shot(worker.script_name, worker.figures_dir, worker.entry)
     tmps: list[tuple[Path, Path]] = []
     warnings: list[str] = []
     try:
+        resp = fresh.override(stem, patches)
+        for w in (resp.get("warnings") or []):
+            if w not in warnings:
+                warnings.append(str(w))
+        man_fresh = json.loads(
+            (Path(fresh.out_dir) / f"{stem}.json").read_text(encoding="utf-8"))
+        if man_hot is None:
+            diffs, compared = [], 0
+        else:
+            diffs, compared = _compare_manifests(man_hot, man_fresh)
+
         for target in targets:
             tmp = target.with_name(f".{target.name}.updating")
             tmps.append((target, tmp))   # 先登记再导出：中途抛了也要清得掉
-            resp = worker.export(src.stem, patches, str(tmp),
+            eresp = fresh.export(stem, patches, str(tmp),
                                  fmt=target.suffix.lstrip("."), dpi=600)
-            for w in (resp.get("warnings") or []):
+            for w in (eresp.get("warnings") or []):
                 if w not in warnings:    # PDF/PNG 两次导出报的是同一批
                     warnings.append(str(w))
         if annotations:
@@ -1493,14 +1723,20 @@ def _write_source_files(src: Path, patches: list, worker,
             pdfbackend.annotate_asset(pdf_tmp, png_tmp, annotations, dpi=600)
         if warnings:
             raise WriteBackVerifyError(warnings)
+        if diffs:
+            raise ReplayDivergenceError(diffs[:REPLAY_DIFF_LIMIT])
     except BaseException:
         for _t, leftover in tmps:
             leftover.unlink(missing_ok=True)
         raise
+    finally:
+        engine_pool.discard(fresh)
 
+    # ---- commit：备份 → 逐个原子替换（中途撞锁则回滚） ----------------------
     backup_dir = project_backup_dir() / time.strftime("%m%d_%H%M%S")
     backup_dir.mkdir(parents=True, exist_ok=True)
     updated: list[str] = []
+    done: list[Path] = []
     for target, tmp in tmps:
         shutil.copy2(target, backup_dir / target.name)
         try:
@@ -1509,12 +1745,107 @@ def _write_source_files(src: Path, patches: list, worker,
             for _t, leftover in tmps:
                 leftover.unlink(missing_ok=True)   # 不给图库留下半成品
             LOG.warning("写回原图失败（文件被占用？）: %s: %s", target.name, exc)
-            raise FileLockedError(target.name, str(exc), updated) from exc
+            rolled, failed = _rollback(done, backup_dir)
+            raise FileLockedError(target.name, str(exc), failed, rolled, failed) from exc
+        done.append(target)
         updated.append(target.name)
     prune_backups(backup_dir.parent)
     LOG.info("更新原图: %s → %s（备份 %s，标注 %d 条）",
-             src.stem, updated, backup_dir.name, len(annotations or []))
-    return updated, backup_dir
+             stem, updated, backup_dir.name, len(annotations or []))
+
+    verification = {
+        "replay": "ok" if man_hot is not None else "fresh_only",
+        "elements": compared,
+    }
+    if man_hot is None:
+        # 没比 ≠ 没验：staging 本来就出自干净重放，只是没有可对照的热态基准
+        verification["reason"] = "hot_state_differs"
+    return {
+        "updated": updated,
+        "backup_dir": backup_dir,
+        "patch_hash": engine_patchspec.patch_hash(patches),
+        "source_sha1": {t.name: _sha1_of(t) for t in done},
+        "manifest_hash": _manifest_hash(man_fresh),
+        "verification": verification,
+        "post_check": _post_check_size(done, man_fresh),
+    }
+
+
+def _post_check_size(done: list[Path], man_fresh: dict) -> str:
+    """落盘后自检：写回的 PDF 页面尺寸对不对得上重放 manifest 的 size_mm。
+
+    对不上**不回滚**——文件已经换掉了，再动一次只会让状态更难解释；备份还在，
+    如实报告（响应 + ERROR 日志）就是这里能给的最有用的东西。
+    """
+    pdf = next((t for t in done if t.suffix.lower() == ".pdf"), None)
+    want = _vec(man_fresh.get("size_mm"), 2)
+    if pdf is None or want is None:
+        return ""
+    try:
+        info = pdfbackend.probe_asset(pdf, "pdf")
+        got = [info["w_pt"] * 25.4 / 72.0, info["h_pt"] * 25.4 / 72.0]
+    except Exception:                        # noqa: BLE001 — 自检读不动不算失败
+        LOG.warning("写回后尺寸自检读不出 PDF: %s", pdf, exc_info=True)
+        return ""
+    if any(abs(a - b) > POST_CHECK_SIZE_TOL for a, b in zip(got, want)):
+        LOG.error("写回后尺寸自检不符: %s 实际 %.2f×%.2fmm，manifest %.2f×%.2fmm",
+                  pdf.name, got[0], got[1], want[0], want[1])
+        return "size_mismatch"
+    return ""
+
+
+def _write_back_response(result: dict, **extra) -> dict:
+    """写回成功响应（update_source 与 history/restore 同构）。"""
+    body = {
+        "updated": result["updated"],
+        "backup_dir": str(result["backup_dir"]),
+        # warnings 恒为空（有一条就走 409），但字段必须在：前端据此确认
+        # 「这次写回确实是全量应用的」，而不是靠「没报错」推断
+        "warnings": [],
+        "patch_hash": result["patch_hash"],
+        "source_sha1": result["source_sha1"],
+        "manifest_hash": result["manifest_hash"],
+        "verification": result["verification"],
+        **extra,
+    }
+    if result.get("post_check"):
+        body["post_check"] = result["post_check"]
+    return body
+
+
+def _write_back_error_response(exc):
+    """三种 prepare/verify 失败 → 409 + 专属 code；不认识的回 None。"""
+    if isinstance(exc, SourceChangedError):
+        return jsonify({
+            "error": f"{exc.name} 已被外部修改（本工具之外），写回已取消，"
+                     "原文件未做任何改动。请刷新素材面板后重新确认再写回。",
+            "code": "source_changed", "file": exc.name,
+            "expected": exc.expected, "actual": exc.actual}), 409
+    if isinstance(exc, ScriptChangedError):
+        return jsonify({
+            "error": f"生成这张图的脚本 {exc.script} 在本次会话开始后被改动过，"
+                     "当前渲染的仍是旧代码，写回已取消（原文件未做任何改动）。"
+                     "请重新渲染该面板确认效果后再写回。",
+            "code": "script_changed", "script": exc.script}), 409
+    if isinstance(exc, ReplayDivergenceError):
+        return jsonify({
+            "error": "热编辑状态与全新重放不一致，写回已阻断，原文件未做任何改动。"
+                     f"分歧：{exc}。这属于引擎级问题，请把此信息报告给开发者。",
+            "code": "replay_divergence", "diffs": exc.diffs}), 409
+    if isinstance(exc, WriteBackVerifyError):
+        return jsonify({"error": _write_back_warning_error(exc),
+                        "code": "write_back_warnings",
+                        "warnings": exc.warnings}), 409
+    if isinstance(exc, FileLockedError):
+        # 可操作的错误：告诉用户是哪个文件、该去关掉谁；回滚结果一并报出来，
+        # 免得用户以为「什么都没发生」或者反过来以为「已经写进去了」
+        return jsonify({"error": f"{exc}。请关闭正在打开它的程序"
+                                 "（PDF 阅读器 / 看图工具）后重试。",
+                        "code": "file_locked", "file": exc.name,
+                        "updated": exc.updated,
+                        "rolled_back": exc.rolled_back,
+                        "rollback_failed": exc.rollback_failed}), 409
+    return None
 
 
 # ---- 组图 ↔ 子图 override 同步 ----------------------------------------------
@@ -1677,23 +2008,15 @@ def api_engine_history_restore():
     patches = [] if n < 0 or n >= len(versions) else versions[n]["patches"]
     src = safe_resolve(body.get("id", ""))
     try:
-        updated, backup_dir = _write_source_files(src, patches, worker)
+        result = _write_source_files(src, patches, worker,
+                                     expected_mtime=body.get("expected_mtime"))
     except engine_pool.WorkerError as exc:
         return jsonify(_worker_error_payload(exc)), 500
-    except WriteBackVerifyError as exc:
-        return jsonify({"error": _write_back_warning_error(exc),
-                        "code": "write_back_warnings",
-                        "warnings": exc.warnings}), 409
-    except FileLockedError as exc:
-        # 可操作的错误：告诉用户是哪个文件、该去关掉谁；已经换掉的一并报出来，
-        # 免得用户以为「什么都没发生」
-        return jsonify({"error": f"{exc}。请关闭正在打开它的程序"
-                                 "（PDF 阅读器 / 看图工具）后重试。",
-                        "code": "file_locked", "file": exc.name,
-                        "updated": exc.updated}), 409
+    except (SourceChangedError, ScriptChangedError, ReplayDivergenceError,
+            WriteBackVerifyError, FileLockedError) as exc:
+        return _write_back_error_response(exc)
     append_baked(stem, patches)
-    return jsonify({"updated": updated, "backup_dir": str(backup_dir),
-                    "patches": patches, "warnings": []})
+    return jsonify(_write_back_response(result, patches=patches))
 
 
 @app.get("/api/engine/svg")

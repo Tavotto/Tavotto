@@ -615,27 +615,63 @@ export async function engineSvg(id: string, rev: number, signal?: AbortSignal): 
   return res.text()
 }
 
+/**
+ * 写回事务的成功响应（update_source 与 history/restore 同构）。
+ *
+ * 写回是覆盖用户原始文件的一步，后端把它做成了 prepare → verify → commit 的
+ * 事务：前置校验（素材 mtime / 脚本 sha1）、干净重放校验（全新 worker 全量重放
+ * 一遍，与热态 manifest 逐元素比几何）、提交（备份 + 原子替换 + 尺寸自检）。
+ * 任一环不过一律 409 且原文件零改动，所以成功路径上 `warnings` 恒为空。
+ */
+export interface WriteBackResponse {
+  updated: string[]
+  backup_dir: string
+  warnings: string[]
+  /** patchspec 权威哈希，与 baked 版本条目里的同源 */
+  patch_hash: string
+  /** 写回后各文件的新 sha1 */
+  source_sha1: Record<string, string>
+  /** 干净重放出的 manifest 的内容指纹 */
+  manifest_hash: string
+  verification: {
+    /** ok = 与热态逐元素比过且一致；fresh_only = 热态不是这组 patches，无从对照 */
+    replay: 'ok' | 'fresh_only'
+    /** 逐项比对过的元素数 */
+    elements: number
+    reason?: string
+  }
+  /** 落盘后页面尺寸与 manifest 对不上（文件已替换，备份仍在） */
+  post_check?: 'size_mismatch'
+}
+
+/** 写回被阻断时后端给的 code（全部 409，原文件一个字节都没动） */
+export interface WriteBackDiff {
+  gid: string
+  field: string
+  hot: unknown
+  fresh: unknown
+}
+
 /** 用当前 overrides 全质量重出该 stem 的 PDF+PNG，原子替换 figures 里的原文件。
- *  annotations 非空 = 顺带把画布标注烙进原图（坐标已换算成该图自身的 mm）。 */
+ *  annotations 非空 = 顺带把画布标注烙进原图（坐标已换算成该图自身的 mm）。
+ *  expectedMtime = 前端手里这份素材的 mtime，与磁盘对不上后端回 409
+ *  source_changed（素材被工具之外改过，按旧状态覆盖会吃掉别人的改动）。 */
 export const updateSourceFiles = (
   id: string,
   patches: unknown[],
   annotations?: ExportObject[],
+  expectedMtime?: number,
 ) =>
-  // 写回是覆盖用户原始文件的一步：warnings 非空时后端直接回 409
-  // （code=write_back_warnings，原文件一个字节都不动），所以成功路径上它恒为空。
-  jsonFetch<{ updated: string[]; backup_dir: string; warnings: string[] }>(
-    '/api/engine/update_source',
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        id,
-        patches,
-        ...(annotations?.length ? { annotations } : {}),
-      }),
-    },
-  )
+  jsonFetch<WriteBackResponse & { baked: boolean }>('/api/engine/update_source', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      id,
+      patches,
+      ...(annotations?.length ? { annotations } : {}),
+      ...(expectedMtime ? { expected_mtime: expectedMtime } : {}),
+    }),
+  })
 
 /* -------------------------------- AI 桥 ----------------------------------- */
 
@@ -921,17 +957,17 @@ export const fetchHistory = (id: string) =>
 export const historyPreviewUrl = (id: string, n: number, w = 400) =>
   apiUrl(`/api/engine/history/preview?id=${encodeURIComponent(id)}&n=${n}&w=${w}`)
 
-export const restoreHistory = (id: string, n: number) =>
-  jsonFetch<{
-    updated: string[]
-    backup_dir: string
-    patches: { gid: string; prop: string; value: unknown }[]
-    /** 与写回同一纪律：非空即 409，成功路径上恒为空 */
-    warnings: string[]
-  }>('/api/engine/history/restore', {
+export const restoreHistory = (id: string, n: number, expectedMtime?: number) =>
+  jsonFetch<
+    WriteBackResponse & { patches: { gid: string; prop: string; value: unknown }[] }
+  >('/api/engine/history/restore', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id, n }),
+    body: JSON.stringify({
+      id,
+      n,
+      ...(expectedMtime ? { expected_mtime: expectedMtime } : {}),
+    }),
   })
 
 /* ------------------------------ 构建版本 ---------------------------------- */

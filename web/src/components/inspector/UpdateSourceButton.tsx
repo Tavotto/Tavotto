@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
-import { FileUp, TriangleAlert } from 'lucide-react'
-import { updateSourceFiles } from '@/lib/api'
+import { FileUp, ShieldAlert, TriangleAlert } from 'lucide-react'
+import { ApiError, updateSourceFiles, type WriteBackDiff } from '@/lib/api'
 import {
   annotationsBlocked,
   collectPanelAnnotations,
@@ -33,34 +33,113 @@ const stemOf = (fileId: string) => fileId.split('/').pop()?.replace(/\.[^.]+$/, 
 interface WriteBackResult {
   updated: string[]
   backup_dir: string
+  /** 与热态逐元素比对过的元素总数；null = 本次没有可对照的热态基准 */
+  verified: number | null
+  /** 落盘后页面尺寸与重放 manifest 对不上的文件（文件已替换，备份仍在） */
+  sizeMismatch: boolean
+}
+
+/** 写回失败：把后端的结构化错误体一路带到界面，好按 code 给专属文案 */
+class WriteBackFailure extends Error {
+  api: ApiError | null
+  constructor(message: string, api: ApiError | null) {
+    super(message)
+    this.api = api
+  }
 }
 
 /** 多面板顺序写回；单条失败即停，把已完成的部分与失败原因都讲清楚 */
 async function runWriteBack(
   panels: PanelObject[],
+  mtimeOf: (fileId: string) => number | undefined,
   annotations?: Map<string, PanelAnnotations>,
 ): Promise<WriteBackResult> {
   const updated: string[] = []
   let backupDir = ''
+  let verified: number | null = 0
+  let sizeMismatch = false
   for (const p of panels) {
     try {
       const res = await updateSourceFiles(
         p.fileId,
         p.overrides,
         annotations?.get(p.id)?.objects,
+        mtimeOf(p.fileId),
       )
       updated.push(...res.updated)
       backupDir = res.backup_dir
+      // 一个面板没比上，整批就不能宣称「已通过干净重放校验」
+      verified =
+        verified === null || res.verification.replay !== 'ok'
+          ? null
+          : verified + res.verification.elements
+      if (res.post_check === 'size_mismatch') sizeMismatch = true
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      throw new Error(
+      throw new WriteBackFailure(
         updated.length
           ? `${stemOf(p.fileId)} 写回失败：${msg}（已完成：${updated.join('、')}）`
           : `${stemOf(p.fileId)} 写回失败：${msg}`,
+        e instanceof ApiError ? e : null,
       )
     }
   }
-  return { updated, backup_dir: backupDir }
+  return { updated, backup_dir: backupDir, verified, sizeMismatch }
+}
+
+/**
+ * 被阻断的写回：按 code 给可执行的下一步。这三条都不是「重试一次就好」的错误，
+ * 文案必须说清楚「为什么被拦」和「该做什么」，否则用户只会反复点确认。
+ */
+function BlockedNotice({ error }: { error: WriteBackFailure }) {
+  const body = (error.api?.body ?? {}) as {
+    code?: string
+    file?: string
+    script?: string
+    diffs?: WriteBackDiff[]
+  }
+  const detail =
+    body.code === 'source_changed'
+      ? `素材 ${body.file ?? ''} 已被本工具之外改动。请刷新素材面板（重新载入图库）确认当前内容后再写回。`
+      : body.code === 'script_changed'
+        ? `生成脚本 ${body.script ?? ''} 在本次编辑期间被改过，当前渲染的仍是旧代码。请重新渲染该面板，确认效果后再写回。`
+        : null
+
+  if (body.code === 'replay_divergence') {
+    const diffs = body.diffs ?? []
+    return (
+      <div className="flex flex-col gap-1.5 rounded-sm border border-danger/40 bg-surface-2 p-2">
+        <p className="flex items-start gap-1.5 text-xs leading-relaxed text-ink">
+          <ShieldAlert size={12} className="mt-0.5 shrink-0 text-danger" />
+          <span>
+            <b className="font-medium">写回已阻断</b>
+            ：当前编辑状态与「重开项目后重放一遍」的结果不一致，原文件未做任何改动。
+            这属于引擎级问题，请把下面的信息报告给开发者。
+          </span>
+        </p>
+        {diffs.length > 0 && (
+          <ul className="flex flex-col gap-0.5">
+            {diffs.slice(0, 5).map((d, i) => (
+              <li key={`${d.gid}-${d.field}-${i}`} className="font-mono text-[11px] text-ink-2">
+                {d.gid || 'figure'}.{d.field}
+              </li>
+            ))}
+            {diffs.length > 5 && (
+              <li className="text-[11px] text-ink-3">另有 {diffs.length - 5} 处…</li>
+            )}
+          </ul>
+        )}
+      </div>
+    )
+  }
+  if (detail) {
+    return (
+      <p className="rounded-sm border border-border bg-surface-2 p-2 text-xs leading-relaxed text-ink-2">
+        {detail}
+      </p>
+    )
+  }
+  return <p className="text-xs text-danger">更新失败：{error.message}</p>
 }
 
 export function WriteBackDialog({
@@ -74,10 +153,11 @@ export function WriteBackDialog({
 }) {
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<WriteBackResult | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<WriteBackFailure | null>(null)
   const [withAnnotations, setWithAnnotations] = useState(false)
   const backupDir = useProjectStore((s) => s.project?.backup_dir) ?? 'cache/original_backups'
   const objects = useDocumentStore((s) => s.doc.objects)
+  const assets = useAssetStore((s) => s.byId)
   const stems = panels.map((p) => stemOf(p.fileId))
 
   // 与写回目标重叠的画布标注（按重叠面积归属，一条只进一张图）
@@ -106,7 +186,11 @@ export function WriteBackDialog({
     setError(null)
     try {
       const useAnn = withAnnotations && annCount > 0
-      const res = await runWriteBack(panels, useAnn ? annMap : undefined)
+      const res = await runWriteBack(
+        panels,
+        (fileId) => assets[fileId]?.mtime,
+        useAnn ? annMap : undefined,
+      )
       setResult(res)
       if (useAnn) {
         // 标注已经烙进原图：画布上的原件移除（可撤销），否则成图里会出现两份
@@ -126,7 +210,11 @@ export function WriteBackDialog({
             `备份在 ${res.backup_dir}）`,
         )
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(
+        e instanceof WriteBackFailure
+          ? e
+          : new WriteBackFailure(e instanceof Error ? e.message : String(e), null),
+      )
     } finally {
       setBusy(false)
     }
@@ -139,6 +227,7 @@ export function WriteBackDialog({
         onOpenChange(v)
         if (!v) {
           setResult(null)
+          setError(null)
           setWithAnnotations(false)
         }
       }}
@@ -189,6 +278,17 @@ export function WriteBackDialog({
             <span className="mx-1 font-mono text-ink-2">{result.backup_dir}</span>
             需要时可从那里取回。
           </p>
+          {result.verified !== null && (
+            <p className="text-xs text-ink-3">
+              已通过干净重放校验（{result.verified} 个元素一致）
+            </p>
+          )}
+          {result.sizeMismatch && (
+            <p className="text-xs leading-relaxed text-danger">
+              写回后的页面尺寸与重放结果对不上。文件已替换，原件仍在备份目录里，
+              建议核对后从备份取回并报告给开发者。
+            </p>
+          )}
         </div>
       ) : (
         <div className="flex flex-col gap-2">
@@ -226,7 +326,7 @@ export function WriteBackDialog({
               <p className="text-xs text-ink-3">画布标注无法随写回：{blockedReason}。</p>
             )
           )}
-          {error && <p className="text-xs text-danger">更新失败：{error}</p>}
+          {error && <BlockedNotice error={error} />}
         </div>
       )}
     </Dialog>

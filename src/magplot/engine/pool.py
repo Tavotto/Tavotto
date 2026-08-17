@@ -95,7 +95,15 @@ SOURCE_LABELS = {
 _worker_python: str | None = None
 _worker_source: str = ""
 _workers: dict[tuple[str, str], "EngineWorker"] = {}
+#: 一次性 worker（`one_shot()`）正在用的缓存目录。它们**不在池里**，
+#: `prune_engine_cache()` 却按 ENGINE_CACHE 的顶层目录清理——不登记的话，
+#: 一次写回的干净重放正跑到一半，目录可能被后台清理线程整个删掉。
+_oneshot_bases: set[str] = set()
 _lock = threading.Lock()
+
+#: 空 patch 列表的规范哈希（`last_patch_hash` 的初值：刚 build 完的 figure
+#: 就是「一条 override 都没应用」的状态）。
+_EMPTY_PATCH_HASH = patchspec.patch_hash([])
 
 
 def _norm_dir(figures_dir: str | Path) -> str:
@@ -125,6 +133,24 @@ def _cache_slug(figures_dir: str, script_name: str) -> str:
     digest = hashlib.sha1(figures_dir.encode("utf-8")).hexdigest()[:8]
     safe = re.sub(r"[^\w.-]+", "_", script_name.replace("\\", "/").rstrip("/"))
     return f"{digest}-{safe[:60]}"
+
+
+def script_sha1(figures_dir: str, script_name: str) -> str:
+    """脚本文件当前内容的 sha1（读不到回空串）。
+
+    worker 是在 spawn 那一刻把脚本 import 进内存的，之后脚本再被改（AI 桥改图、
+    用户自己编辑）这条会话仍跑着旧代码——mtime watcher 有 2 秒轮询窗口。写回是
+    **覆盖用户原件**的动作，那个窗口必须关死：写回前重算一次，与 spawn 时记下的
+    对不上就阻断。
+    """
+    h = hashlib.sha1()
+    try:
+        with open(str(Path(figures_dir) / script_name), "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 16), b""):
+                h.update(chunk)
+    except OSError:
+        return ""
+    return h.hexdigest()
 
 
 class WorkerError(RuntimeError):
@@ -375,11 +401,15 @@ def reset_worker_python() -> None:
 
 
 class EngineWorker:
-    def __init__(self, script_name: str, figures_dir: str, entry: str):
+    def __init__(self, script_name: str, figures_dir: str, entry: str,
+                 base_dir: Path | None = None):
         self.script_name = script_name
         self.figures_dir = figures_dir
         self.entry = entry
-        base = ENGINE_CACHE / _cache_slug(_norm_dir(figures_dir), script_name)
+        # `base_dir` 只给一次性 worker（`one_shot()`）用：与热会话共用 out/
+        # 会让重放的 manifest/SVG 盖掉用户正在看的那份。池里的会话永远走
+        # `_cache_slug`，落点一个字节都没变。
+        base = base_dir or ENGINE_CACHE / _cache_slug(_norm_dir(figures_dir), script_name)
         self.base = base
         self.out_dir = base / "out"
         self.sandbox = base / "sandbox"
@@ -392,6 +422,11 @@ class EngineWorker:
         # 这一代的序号：同一 (项目, 脚本) 每重建一次 +1，随每个请求发给 worker
         # 并原样回显（worker 不理解它，校验归调用方/未来的 supervisor）。
         self.generation = _next_generation((_norm_dir(figures_dir), script_name))
+        # spawn 那一刻脚本文件的内容指纹（写回前的「脚本变更防线」比对基准）
+        self.script_sha1 = script_sha1(figures_dir, script_name)
+        #: 这条会话上最后一次 `override()` 的规范 patch 哈希（build 之后是空列表）。
+        #: 写回时据此判断「热态手里的这份 manifest 是不是同一组 patches 出的」。
+        self.last_patch_hash = ""
         self.lock = threading.Lock()
         self.built = False
         self.last_used = time.time()
@@ -595,6 +630,7 @@ class EngineWorker:
         # build 要跑用户整个脚本（heavy 的分钟级），给最宽的一档
         resp = self.request({"cmd": "build"}, BUILD_TIMEOUT)
         self.built = True
+        self.last_patch_hash = _EMPTY_PATCH_HASH
         return resp
 
     def override(self, stem: str, patches: list) -> dict:
@@ -603,6 +639,7 @@ class EngineWorker:
         resp = self.request({"cmd": "override", "stem": stem, "patches": patches},
                             REQUEST_TIMEOUT)
         self.rev += 1
+        self.last_patch_hash = patchspec.patch_hash(patches)
         return resp
 
     def export(self, stem: str, patches: list, path: str,
@@ -679,7 +716,8 @@ _FATAL_CODES = frozenset({
 
 
 def _spawn_spec(script_name: str, figures_dir: str, entry: str, out_dir: Path,
-                sandbox: Path, log_path: Path, python: str, source: str) -> dict:
+                sandbox: Path, log_path: Path, python: str, source: str,
+                extra_env: dict | None = None) -> dict:
     """交给 workerd 的**完整** spawn 规格。
 
     与 `EngineWorker.__init__` 里那串 Popen 参数严格同源。刻意不去重构成共享
@@ -690,6 +728,10 @@ def _spawn_spec(script_name: str, figures_dir: str, entry: str, out_dir: Path,
     args = runtime.child_args() if bundled else []
     # 只给**增量**：workerd 继承的本来就是 Flask 自己的环境，整份传过去没有意义
     env = runtime.child_env(base={}) if bundled else {}
+    if extra_env:
+        # env 参与 workerd 的 spec 哈希（`SpawnSpec::hash`），所以一个一次性
+        # 的 salt 就足以拿到一条**必然独立**的会话，绕开「同规格复用 + 引用计数」。
+        env = {**env, **extra_env}
     return {
         "argv": [python, *args, str(WORKER_PY),
                  "--script", str(Path(figures_dir) / script_name),
@@ -736,7 +778,8 @@ class WorkerdWorker:
     """
 
     def __init__(self, script_name: str, figures_dir: str, entry: str,
-                 client=None):
+                 client=None, base_dir: Path | None = None,
+                 extra_env: dict | None = None):
         from . import workerd_client
 
         self.script_name = script_name
@@ -744,8 +787,9 @@ class WorkerdWorker:
         self.entry = entry
         # 目录布局与 EngineWorker 完全一致：prune_engine_cache 按 base 走，
         # 换个控制面就换个落点的话，清理会把正在用的会话目录当成垃圾删掉。
-        base = ENGINE_CACHE / _cache_slug(_norm_dir(figures_dir), script_name)
+        base = base_dir or ENGINE_CACHE / _cache_slug(_norm_dir(figures_dir), script_name)
         self.base = base
+        self._extra_env = dict(extra_env or {})
         self.out_dir = base / "out"
         self.sandbox = base / "sandbox"
         self.export_dir = base / "export"
@@ -755,6 +799,9 @@ class WorkerdWorker:
         self._touch()
         self.rev = 0
         self.generation = _next_generation((_norm_dir(figures_dir), script_name))
+        # 与 EngineWorker 同源：spawn 时的脚本指纹 + 最后应用的 patch 哈希
+        self.script_sha1 = script_sha1(figures_dir, script_name)
+        self.last_patch_hash = ""
         # workerd 自己排队，这把锁只是为了与 EngineWorker 同形（调用方不该关心
         # 是哪条路径）。**绝不拿它包住一次请求**——那会把 workerd 好不容易解开的
         # 「一个慢请求占死整条会话」重新绑回来。
@@ -774,7 +821,7 @@ class WorkerdWorker:
     def _spec(self) -> dict:
         return _spawn_spec(self.script_name, self.figures_dir, self.entry,
                            self.out_dir, self.sandbox, self.log_path,
-                           self.python, self.python_source)
+                           self.python, self.python_source, self._extra_env)
 
     def _open(self) -> None:
         from . import workerd_client
@@ -853,6 +900,7 @@ class WorkerdWorker:
     def ensure_built(self) -> dict:
         resp = self._call("build", BUILD_TIMEOUT)
         self.built = True
+        self.last_patch_hash = _EMPTY_PATCH_HASH
         return resp
 
     def override(self, stem: str, patches: list) -> dict:
@@ -861,6 +909,7 @@ class WorkerdWorker:
         resp = self._call("render", REQUEST_TIMEOUT, stem=stem,
                           payload={"patches": patches})
         self.rev += 1
+        self.last_patch_hash = patchspec.patch_hash(patches)
         return resp
 
     def export(self, stem: str, patches: list, path: str,
@@ -943,6 +992,60 @@ def _new_worker(script_name: str, figures_dir: str, entry: str):
     return EngineWorker(script_name, figures_dir, entry)
 
 
+def one_shot(script_name: str, figures_dir: str, entry: str):
+    """一次性 worker：**不进池、目录独立、用完即毁**。写回前的干净重放用。
+
+    热会话是长期活着的：build 之后经历过任意多次 override / 还原，applied 与
+    originals 两表就是一份增量历史。写回要保证的是「重开这个项目、按这组
+    patches 全量重放一次，得到的图与热态所见一模一样」——那就必须真的**从零
+    起一个 worker 跑一遍脚本**，拿它的产物去覆盖用户原件（FigS3 那次文字全体
+    错位，症状正是热会话状态 ≠ 全量重放）。
+
+    两条控制面各有一处必须绕开的复用：
+
+    * Python 池按 `(项目, 脚本)` 索引 —— 这里干脆不登记，调用方拿着引用用完
+      `discard()`；
+    * workerd 按 spawn 规格哈希复用会话（引用计数，见 ADR 0004）—— 目录不同
+      argv 就不同，再加一个一次性 salt env 双保险，拿到的必然是独立会话。
+
+    目录放在 ENGINE_CACHE 顶层（`_replay-…`）而不是数据目录别处：进程在写回
+    途中被杀时，留下的空壳会被 `prune_engine_cache()` 当成最久未用的会话目录
+    正常回收，不需要另写一套清理。
+    """
+    from . import workerd_client
+
+    nonce = uuid.uuid4().hex
+    slug = _cache_slug(_norm_dir(figures_dir), script_name)
+    base = ENGINE_CACHE / f"_replay-{nonce[:8]}-{slug}"
+    with _lock:
+        _oneshot_bases.add(str(base))
+    try:
+        if workerd_client.find_workerd():
+            try:
+                return WorkerdWorker(script_name, figures_dir, entry,
+                                     base_dir=base,
+                                     extra_env={"MAGPLOT_REPLAY_NONCE": nonce})
+            except (WorkerdUnavailable, WorkerError, OSError) as exc:
+                LOG.warning("workerd 一次性会话建立失败，回退到 Python 渲染池: %s", exc)
+        return EngineWorker(script_name, figures_dir, entry, base_dir=base)
+    except BaseException:
+        with _lock:
+            _oneshot_bases.discard(str(base))
+        shutil.rmtree(base, ignore_errors=True)
+        raise
+
+
+def discard(worker) -> None:
+    """关掉一次性 worker 并删掉它的目录。**绝不抛**——写回的成败与它无关。"""
+    try:
+        worker.shutdown()
+    except Exception:            # noqa: BLE001 — 收尾动作不许连累主流程
+        LOG.warning("一次性 worker 关停失败: %s", worker.script_name, exc_info=True)
+    with _lock:
+        _oneshot_bases.discard(str(worker.base))
+    shutil.rmtree(worker.base, ignore_errors=True)
+
+
 def _dir_size(path: Path) -> int:
     """目录占用字节数；读不动的条目跳过（宁可少算也不能把清理带崩）。"""
     import os
@@ -972,7 +1075,8 @@ def prune_engine_cache(max_bytes: int = ENGINE_CACHE_MAX_BYTES,
     with _lock:
         # 池里挂着的一律豁免，不筛 alive()：崩掉的那个键还留在池里，下一次
         # 请求会**原地重建**（`get()`），期间把目录删了正好撞上重建的 mkdir。
-        busy = {str(w.base) for w in _workers.values()}
+        # 一次性 worker（写回的干净重放）不在池里，但它的目录正在被写
+        busy = {str(w.base) for w in _workers.values()} | set(_oneshot_bases)
     try:
         entries = [p for p in ENGINE_CACHE.iterdir() if p.is_dir()]
     except OSError:      # 缓存目录还没建起来

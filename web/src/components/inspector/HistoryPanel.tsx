@@ -164,7 +164,9 @@ function RestoreDialog({
     setBusy(true)
     setError(null)
     try {
-      const res = await restoreHistory(panel.fileId, version.n)
+      // 与写回同一条前置校验：素材被工具之外改过就别按旧状态覆盖（409 source_changed）
+      const mtime = useAssetStore.getState().byId[panel.fileId]?.mtime
+      const res = await restoreHistory(panel.fileId, version.n, mtime)
       // 文件、基线、当前面板的 overrides 三者对齐，否则下次进编辑态又会打架
       updateObject<PanelObject>(panel.id, '恢复历史版本', (o) => {
         o.overrides = structuredClone(res.patches)

@@ -176,7 +176,8 @@ function ResultDialog({
         if (i >= 0) merged[i] = p
         else merged.push(p)
       }
-      const res = await updateSourceFiles(target.id, merged)
+      // target 就是素材面板里的那条记录，mtime 直接可用（409 source_changed 的依据）
+      const res = await updateSourceFiles(target.id, merged, undefined, target.mtime)
       await useAssetStore.getState().load()
       useRenderStore.getState().markStale([target.id])
       setDone(`已更新 ${res.updated.join('、')}（备份在 ${res.backup_dir}）`)

@@ -1353,3 +1353,171 @@ def test_workerd_timeout_kills_and_rebuilds(tmp_path, monkeypatch):
     finally:
         pool.shutdown_all(figures_dir=str(figs), wait=True)
         workerd_client.reset_client()
+
+
+# ================== 写回事务全链路（真 matplotlib + Flask） ==================
+# 上面测的是 worker 协议本身。这一节走**产品路径**：Flask 的
+# `/api/engine/update_source` → 一次性 worker 干净重放 → 与热态 manifest 比几何
+# → 原子替换磁盘上的原件。看护的是 ADR 里那条不变式：
+#   热态所见 == 写进文件的 == 重开后重放出来的。
+# 假 worker 测不到这条——那里 manifest 是我们自己造的，重放与热态天然一致。
+
+REGISTRY = json.dumps({"version": 1, "scripts": {
+    "fig_test.py": {"entry": "main", "cost": "light", "notes": "",
+                    "stems": ["TestFig_a", "TestFig_3d", "TestFig_sc"]},
+}})
+
+
+def _write_back_project(tmp_path, monkeypatch):
+    """真图库 + 真渲染的 Flask test client。返回 (app 模块, client, figs)。"""
+    from magplot import app as m
+
+    m.app.config["TESTING"] = True
+    m.reset_projects()
+    monkeypatch.setattr(m, "BAKED_DIR", tmp_path / "_baked")
+    monkeypatch.setattr(m, "BAKED_PATH", tmp_path / "_legacy_baked.json")
+    monkeypatch.setattr(m, "CACHE_DIR", tmp_path / "_cache")
+
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    (figs / "paper_style.py").write_text(PAPER_STYLE_STUB, encoding="utf-8")
+    (figs / "fig_test.py").write_text(FIG_SCRIPT, encoding="utf-8")
+    (figs / "mm_registry.json").write_text(REGISTRY, encoding="utf-8")
+    # 写回覆盖的是磁盘上**已有**的原件（真实图库里它由脚本跑出来），先放一张
+    doc = pymupdf.open()
+    doc.new_page(width=200, height=100)
+    doc.save(figs / "TestFig_a.pdf")
+    doc.close()
+    m.open_project(str(figs))
+    return m, m.app.test_client(), figs
+
+
+@pytest.fixture
+def write_back(tmp_path, monkeypatch):
+    from magplot import app as m
+
+    ctx = _write_back_project(tmp_path, monkeypatch)
+    try:
+        yield ctx
+    finally:
+        m.reset_projects()
+        pool.shutdown_all(figures_dir=str(ctx[2]), wait=True)
+        pool.stop_watcher()
+
+
+def _figs3_patches(client) -> tuple[list, str]:
+    """FigS3 型的一组 patch：几何（子图 position）+ figure 锚定的文字位置。
+
+    这正是当年出事的组合——几何一变，pos_frac 这类锚在 figure 分数上的属性
+    必须被重放，否则热会话的状态与全量重放对不上。
+    """
+    resp = client.post("/api/engine/render",
+                       json={"id": "TestFig_a.pdf", "patches": []})
+    assert resp.status_code == 200, resp.get_json()
+    man = resp.get_json()["manifest"]
+    title_gid = next(el["gid"] for el in man["elements"]
+                     for f in el.get("editable", [])
+                     if f["prop"] == "text" and f["value"] == "Original Title")
+    return [
+        {"gid": "axes_0", "prop": "position", "value": [0.22, 0.20, 0.60, 0.62]},
+        {"gid": title_gid, "prop": "text", "value": "Vector Title"},
+        {"gid": title_gid, "prop": "pos_frac", "value": [0.46, 0.10]},
+    ], title_gid
+
+
+def _run_write_back(client, figs):
+    """热会话应用 patches → 写回；返回 (响应体, patches)。"""
+    from magplot.engine import patchspec as ps
+
+    patches, _gid = _figs3_patches(client)
+    r = client.post("/api/engine/render",
+                    json={"id": "TestFig_a.pdf", "patches": patches})
+    assert r.status_code == 200, r.get_json()
+
+    resp = client.post("/api/engine/update_source",
+                       json={"id": "TestFig_a.pdf", "patches": patches,
+                             "expected_mtime": int((figs / "TestFig_a.pdf")
+                                                   .stat().st_mtime)})
+    assert resp.status_code == 200, resp.get_json()
+    body = resp.get_json()
+    assert body["patch_hash"] == ps.patch_hash(patches)
+    return body, patches
+
+
+def test_write_back_verifies_a_clean_replay_and_keeps_vector_text(write_back):
+    """真链路：热态拖过文字、挪过子图 → 写回通过干净重放校验，产物仍是矢量。"""
+    m, client, figs = write_back
+    body, patches = _run_write_back(client, figs)
+
+    assert body["verification"]["replay"] == "ok", body["verification"]
+    assert body["verification"]["elements"] > 0
+    assert body["updated"] == ["TestFig_a.pdf"]       # 图库里只有 PDF 这一份
+    assert body["warnings"] == []
+    assert "post_check" not in body, "落盘后的页面尺寸该与重放 manifest 一致"
+    assert body["source_sha1"]["TestFig_a.pdf"] == m._sha1_of(figs / "TestFig_a.pdf")
+
+    # 导出保真：写回的 PDF 里文字仍是矢量（不是栅格化的一张图）
+    with pymupdf.open(figs / "TestFig_a.pdf") as doc:
+        text = doc[0].get_text()
+    assert "Vector Title" in text and "series-a" in text
+    assert "x label" in text
+
+    # 事务收尾：图库无半成品，缓存里没留下一次性会话目录
+    assert not list(figs.glob(".*updating"))
+    assert not list(pool.ENGINE_CACHE.glob("_replay-*")), "一次性 worker 的目录泄漏了"
+
+    # 版本历史带上权威 patch_hash，热会话照常可用（重放没有动它）
+    ctx = m.PROJECTS[m._project_id(figs.resolve())]
+    assert m.load_baked(ctx)["TestFig_a"]["versions"][-1]["patch_hash"] == body["patch_hash"]
+    again = client.post("/api/engine/render",
+                        json={"id": "TestFig_a.pdf", "patches": patches})
+    assert again.status_code == 200, again.get_json()
+
+
+def test_write_back_blocks_when_the_script_changed_mid_session(write_back):
+    """脚本在会话背后被改（watcher 的 2 秒轮询窗口）→ 阻断，原件零改动。"""
+    _m, client, figs = write_back
+    patches, _gid = _figs3_patches(client)
+    client.post("/api/engine/render", json={"id": "TestFig_a.pdf", "patches": patches})
+    before = (figs / "TestFig_a.pdf").read_bytes()
+
+    (figs / "fig_test.py").write_text(FIG_SCRIPT + "\n# touched\n", encoding="utf-8")
+    resp = client.post("/api/engine/update_source",
+                       json={"id": "TestFig_a.pdf", "patches": patches})
+    assert resp.status_code == 409
+    assert resp.get_json()["code"] == "script_changed"
+    assert (figs / "TestFig_a.pdf").read_bytes() == before
+    assert not list(figs.glob(".*updating"))
+
+
+@needs_workerd
+def test_workerd_write_back_replays_without_leaking_a_session(tmp_path, monkeypatch):
+    """workerd 路径同语义，且**一次性会话不泄漏**。
+
+    workerd 按 spawn 规格哈希复用会话（引用计数，ADR 0004）：重放会话靠独立的
+    out_dir + 一次性 salt env 拿到自己的那条。写完之后 supervisor 手里只该剩下
+    热会话——泄漏的话每写回一次就多端一份整套 Figure 的内存。
+    """
+    from magplot import app as m
+    from magplot.engine import workerd_client
+
+    monkeypatch.setenv("MAGPLOT_WORKERD", WORKERD_EXE or "0")
+    workerd_client.reset_client()
+    _m, client, figs = _write_back_project(tmp_path, monkeypatch)
+    try:
+        worker = pool.get("fig_test.py", str(figs), "main")
+        assert isinstance(worker, pool.WorkerdWorker), "应当走 workerd 控制面"
+
+        body, _patches = _run_write_back(client, figs)
+        assert body["verification"]["replay"] == "ok", body["verification"]
+        with pymupdf.open(figs / "TestFig_a.pdf") as doc:
+            assert "Vector Title" in doc[0].get_text()
+
+        sessions = workerd_client.client().call("sessions", timeout=10.0)["sessions"]
+        assert len(sessions) == 1, f"重放会话没被回收: {sessions}"
+        assert not list(pool.ENGINE_CACHE.glob("_replay-*"))
+    finally:
+        m.reset_projects()
+        pool.shutdown_all(figures_dir=str(figs), wait=True)
+        pool.stop_watcher()
+        workerd_client.reset_client()

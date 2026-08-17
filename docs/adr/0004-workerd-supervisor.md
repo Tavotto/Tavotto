@@ -108,6 +108,14 @@ import matplotlib），占住主循环的话别的会话连一条 ping 都发不
 `pool.get()` 建好新的 `EngineWorker` 时，旧的往往还在另一条线程上异步关停。
 不做引用计数的话，旧的那次 close 会把刚建好的会话关掉。
 
+反过来，「写回前的干净重放」（`pool.one_shot()`）要的恰恰是**必然不复用**：
+它必须是一条从零跑过脚本的新会话，复用热会话就等于什么都没验。这件事**不需要
+supervisor 增加任何概念**——一次性 worker 本来就有自己的 out_dir/sandbox
+（argv 因此不同），再加一个一次性的 `MAGPLOT_REPLAY_NONCE` salt env 作双保险，
+spec 哈希必然不同。用完走普通 `close_session`，引用归零即真关
+（`test_workerd_write_back_replays_without_leaking_a_session` 用 `sessions` op
+断言写回之后 supervisor 手里只剩热会话那一条）。
+
 ### 5. generation：上一代的迟到响应一律丢弃
 
 每次 (re)spawn 把会话的 generation +1，随每条 worker 请求下发（`worker_generation`），
