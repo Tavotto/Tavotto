@@ -16,7 +16,7 @@ import {
   useViewportStore,
   type ViewTransform,
 } from '@/store/viewportStore'
-import { useRenderStore } from '@/store/renderStore'
+import { usePanelManifest } from '@/store/renderStore'
 import type { CanvasObject, LinearObject, PanelObject } from '@/types/document'
 import { isLinear, lineEndpoints, objectRotation, panelRotation } from '@/types/document'
 import {
@@ -491,7 +491,7 @@ function CropFrame({ obj, t }: { obj: CanvasObject; t: ViewTransform }) {
 
 /** 图内元素的 hover / 选中框；拖动时跟随乐观位移 */
 function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
-  const manifest = useRenderStore((s) => s.byFile[panel.fileId]?.manifest)
+  const manifest = usePanelManifest(panel)
   const hoverGid = useInteractionStore((s) => s.hoverGid)
   const gidDrag = useInteractionStore((s) => s.gidDrag)
   const preview = useInteractionStore((s) => s.elementPreview)

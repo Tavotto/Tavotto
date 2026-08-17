@@ -371,7 +371,7 @@ class _FakeWorker:
         self.rev = 7
         self._exc = exc
 
-    def override(self, stem, patches, preview_dpi=None):
+    def override(self, stem, patches, preview_dpi=None, inline_svg=False):
         if self._exc is not None:
             raise self._exc
         return {"manifest": {"elements": []}, "warnings": []}

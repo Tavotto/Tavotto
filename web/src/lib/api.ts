@@ -554,6 +554,12 @@ export interface EngineRenderResponse {
    * 键集合随后端演进，前端只存不解释（暂无 UI）。
    */
   timings?: Record<string, number>
+  /**
+   * 本次渲染的预览 SVG（请求带 inline_svg 时才有）。**与 manifest 同一响应
+   * 才能保证配对**：单独 GET /api/engine/svg 读的是磁盘上那一份，另一个变体
+   * 或另一个标签页的渲染插进来就会拿到别人的图，而元素框还是这次的。
+   */
+  svg?: string
 }
 
 export class EngineError extends Error {
@@ -584,16 +590,32 @@ export const ENVIRONMENT_CODES = [
   'missing_dependency',
 ] as const
 
+export interface EngineRenderOptions {
+  signal?: AbortSignal
+  /**
+   * 这一次预览 SVG 里**嵌入位图**的 dpi（不给 = worker 的默认）。
+   * 只对含图像的面板有意义：连续调整期间降到 100 能省三分之一往返、
+   * 四分之三传输；纯矢量图上一分钱都不值（docs/perf-baseline.md）。
+   */
+  previewDpi?: number
+}
+
 export async function engineRender(
   id: string,
   patches: unknown[],
-  signal?: AbortSignal,
+  opts: EngineRenderOptions = {},
 ): Promise<EngineRenderResponse> {
   const res = await fetch(apiUrl('/api/engine/render'), withProject({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id, patches }),
-    signal,
+    // inline_svg 恒发：SVG 必须与 manifest 原子配对（见 EngineRenderResponse.svg）
+    body: JSON.stringify({
+      id,
+      patches,
+      inline_svg: true,
+      ...(opts.previewDpi ? { preview_dpi: opts.previewDpi } : {}),
+    }),
+    signal: opts.signal,
   }))
   const body = await res.json().catch(() => ({}) as Record<string, unknown>)
   if (!res.ok) {
@@ -608,17 +630,37 @@ export async function engineRender(
   return body as EngineRenderResponse
 }
 
-/** 高清位图预览：含 imshow 的面板用 SVG 显示会糊，退出编辑态后走这个 */
-export const enginePngUrl = (id: string, bucket: number, rev: number) =>
-  apiUrl(`/api/engine/png?id=${encodeURIComponent(id)}&w=${bucket}&rev=${rev}`)
-
-export async function engineSvg(id: string, rev: number, signal?: AbortSignal): Promise<string> {
-  const res = await fetch(apiUrl(`/api/engine/svg?id=${encodeURIComponent(id)}&rev=${rev}`), withProject({ signal }))
+/**
+ * 高清位图预览：含 imshow 的面板用 SVG 显示会糊，退出编辑态后走这个。
+ *
+ * **按 patches 出图**，与热会话当前是哪个变体无关——旧的 `/api/engine/png`
+ * 从 live figure 直接 savefig，同文件多变体时后渲染的那个会把像素喂给别人
+ * （「一个面板显示了另一个面板的图」）。返回 Blob 而不是 URL：`<img src>`
+ * 只能发 GET，而这里要把整份 patches 带上去。
+ */
+export async function enginePreviewPng(
+  id: string,
+  patches: unknown[],
+  bucket: number,
+  signal?: AbortSignal,
+): Promise<Blob> {
+  const res = await fetch(apiUrl('/api/engine/preview_png'), withProject({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, patches, w: bucket }),
+    signal,
+  }))
   if (!res.ok) {
-    noteProjectGone(res.status, await errorBody(res))
-    throw new EngineError(`取 SVG 失败（HTTP ${res.status}）`)
+    const body = await errorBody(res)
+    noteProjectGone(res.status, body)
+    throw new EngineError(
+      (body.error as string) || `取预览位图失败（HTTP ${res.status}）`,
+      (body.traceback as string) || '',
+      (body.code as string) || '',
+      (body.module as string) || '',
+    )
   }
-  return res.text()
+  return res.blob()
 }
 
 /**

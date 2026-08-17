@@ -1,5 +1,5 @@
 import type { PanelInfo } from './api'
-import type { PanelRender } from '@/store/renderStore'
+import { panelRender, type PanelRender } from '@/store/renderStore'
 import { PROOF_KIND } from './brand'
 import { effectiveDpi, effectivePt } from './units'
 import type { CanvasObject, FigureDocument, PanelObject } from '@/types/document'
@@ -25,7 +25,8 @@ const EPS = 0.05
 export function runPreflight(
   doc: FigureDocument,
   assets: Record<string, PanelInfo>,
-  renderByFile: Record<string, PanelRender>,
+  /** 渲染态按「文件 + 变体」分键：取某个面板的那一份必须带上面板本身 */
+  render: { byKey: Record<string, PanelRender>; latest: Record<string, string> },
 ): PreflightIssue[] {
   const issues: PreflightIssue[] = []
   const visible = doc.objects.filter((o) => !o.hidden)
@@ -47,7 +48,7 @@ export function runPreflight(
     'stale-render',
     'warn',
     '面板的脚本已更新但尚未重建，导出的会是旧图',
-    panels.filter((o) => renderByFile[o.fileId]?.stale),
+    panels.filter((o) => panelRender(render, o)?.stale),
   )
 
   // 渲染失败：带图内修改但最近一次渲染报错
@@ -55,7 +56,9 @@ export function runPreflight(
     'render-error',
     'error',
     '面板最近一次渲染失败，导出时会再次尝试，建议先修复',
-    panels.filter((o) => o.overrides.length > 0 && renderByFile[o.fileId]?.status === 'error'),
+    panels.filter(
+      (o) => o.overrides.length > 0 && panelRender(render, o)?.status === 'error',
+    ),
   )
 
   // 越界：部分在页面外，超出部分会被裁掉

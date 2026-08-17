@@ -192,7 +192,10 @@ worker（`build`/`render`/`export` 的 v1 响应）→ pool（`queue_wait_ms` /
    按什么策略」——预热的内存代价是每条会话一整个 matplotlib。
 3. **编辑期降质快显**：数据只支持一种情况——**含 imshow 的面板**。那里
    `preview_dpi` 200→100 省 16% 的往返和 75% 的传输；纯矢量面板上做这件事是
-   零收益（见补测第二张表）。**归属：Phase F**，旋钮已经就位（E3-2）。
+   零收益（见补测第二张表）。**归属：Phase F，已做**：前端只对
+   manifest 里有 `role=="image"` 元素的面板、且只在防抖那一路带
+   `preview_dpi: 100`，松手/结束事务由 `flushRender` 按默认 dpi 定稿
+   （`web/src/hooks/useEngineSync.ts`，vitest 看护）。纯矢量面板一律不带。
 4. **并发下的排队行为完全没有数据**（观察 2）。「用户连拖十几下」是 workerd
    合并队列的立项理由，却从来没被量过。**归属：需要一个并发压测脚本**，
    本阶段没做，也不该靠猜。

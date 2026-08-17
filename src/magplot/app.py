@@ -1399,11 +1399,17 @@ def api_engine_render():
     可选 `preview_dpi`：本次预览 SVG 里**嵌入位图**的分辨率（缺省是 worker 的
     `--preview-dpi`）。纯矢量图上它毫无影响（实测 72→300 耗时与体积完全相同），
     含 imshow 的面板上 200→100 能把这条 render 的 canvas_draw 砍掉近一半、
-    SVG 体积降到四分之一。**前端目前不发这个字段**——「编辑期降质换快显」
-    是交互取舍，归 Phase F 判断；后端先把旋钮留出来，见 docs/perf-baseline.md。
+    SVG 体积降到四分之一。前端只在**含图像元素的面板**的连续调整期间发它
+    （松手即回默认 dpi），见 docs/perf-baseline.md 与 web 侧 useEngineSync。
+
+    可选 `inline_svg`：响应里一并带上本次的预览 SVG 文本。前端一律发它——
+    `/api/engine/svg` 是第二跳 GET，读的是磁盘上那一份，另一个变体/标签页的
+    渲染插进来就会与本次 manifest 错配（元素框对不上图）。端点保留兼容，
+    但新代码不要再用两跳。
     """
     body = request.get_json(force=True)
     rel_id = body.get("id", "")
+    inline_svg = bool(body.get("inline_svg"))
     # 参数校验先做完再进渲染：混在下面那个 try 里的话，worker 响应的
     # JSONDecodeError（也是 ValueError）会被当成「preview_dpi 写错了」
     raw_dpi = body.get("preview_dpi")
@@ -1429,7 +1435,8 @@ def api_engine_render():
     sse_publish("render.started",
                 {"pj": pj, "id": rel_id, "cost": info.get("cost", ""), "cold": cold})
     try:
-        resp = worker.override(stem, body.get("patches", []), preview_dpi)
+        resp = worker.override(stem, body.get("patches", []), preview_dpi,
+                               inline_svg=inline_svg)
     except engine_pool.WorkerError as exc:
         LOG.error("引擎渲染失败: %s: %s", stem, exc)
         sse_publish("render.failed", {"pj": pj, "id": rel_id, "error": str(exc)})
@@ -1442,17 +1449,60 @@ def api_engine_render():
              "（冷启动）" if cold else "",
              json.dumps(timings, sort_keys=True))
     sse_publish("render.done", {"pj": pj, "id": rel_id, "rev": worker.rev})
-    return jsonify({
+    out = {
         "rev": worker.rev,
         "manifest": resp["manifest"],
         "warnings": resp.get("warnings", []),
         "timings": timings,
-    })
+    }
+    # 没要就不加这个字段（响应形状对老调用方一字不变）
+    if inline_svg and "svg" in resp:
+        out["svg"] = resp["svg"]
+    return jsonify(out)
+
+
+@app.post("/api/engine/preview_png")
+def api_engine_preview_png():
+    """**按给定 patches** 出高清位图（bucket 宽度），不依赖热会话当前是哪个变体。
+
+    与 `/api/engine/png` 的区别就是这一条：那个端点从 live figure 直接 savefig，
+    而 live 状态永远只是「最后渲染的那个变体」。画布上放两个同文件不同 override
+    的面板时，后渲染的那个会把像素喂给前一个——用户看到的是「一个面板显示了
+    另一个面板的图」。这里走 worker 的 `preview_png`（应用 patches → 出图 →
+    还原，状态中立），每个变体各拿各的。
+
+    落盘文件名带 patches 哈希前 12 位：同一 stem 的多个变体、多个标签页并发
+    取图时不会互相覆盖对方的临时文件。哈希前缀（`sha256:`）**必须去掉**——
+    冒号在 Windows 上不是合法文件名字符。
+    """
+    body = request.get_json(force=True)
+    worker, stem = _engine_worker(body.get("id", ""))
+    patches = body.get("patches", [])
+    if not isinstance(patches, list):
+        return jsonify({"error": "patches 必须是数组"}), 400
+    try:
+        want_w = int(body.get("w", 800))
+    except (TypeError, ValueError):
+        return jsonify({"error": f"w 必须是整数: {body.get('w')!r}"}), 400
+    w = next((b for b in RENDER_BUCKETS if b >= want_w), RENDER_BUCKETS[-1])
+    tag = "v" + engine_patchspec.patch_hash(patches).split(":")[-1][:12]
+    try:
+        path = worker.preview_png(stem, patches, w, tag=tag)
+    except engine_pool.WorkerError as exc:
+        return jsonify(_worker_error_payload(exc)), 500
+    resp = send_file(path, mimetype="image/png")
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 @app.get("/api/engine/png")
 def api_engine_png():
-    """当前 override 状态下的高清位图（bucket 宽度）——含 imshow 的面板显示不糊。"""
+    """当前 override 状态下的高清位图（bucket 宽度）——含 imshow 的面板显示不糊。
+
+    **状态相关**：从 live figure 直接出图，拿到的永远是最后渲染的那个变体。
+    同文件多变体的场景请改用 `/api/engine/preview_png`（前端已全部改过去），
+    这个端点只为兼容保留。
+    """
     worker, stem = _engine_worker(request.args.get("id", ""))
     want_w = int(request.args.get("w", 800))
     w = next((b for b in RENDER_BUCKETS if b >= want_w), RENDER_BUCKETS[-1])

@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { isJustBakedBaseline } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
-import { useRenderStore } from '@/store/renderStore'
+import { panelRender, renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
 import {
   panelRotation,
@@ -13,56 +13,98 @@ import {
 /** 文字/数值输入合并成一次渲染的窗口；颜色、开关、拖动结束走 immediate */
 const DEBOUNCE_MS = 300
 
+/**
+ * 连续调整期间的预览 dpi。**只给含图像（imshow 等）的面板**：实测那里
+ * 200→100 让一次渲染的往返降 16%、SVG 体积降 75%；纯矢量面板上耗时与字节数
+ * 完全相同（docs/perf-baseline.md 补测两张表），给了只会白白让图变糊。
+ * 定稿（immediate / flushRender）永远用默认 dpi。
+ */
+const INTERACTIVE_PREVIEW_DPI = 100
+
+/**
+ * 防抖计时器按**面板**索引，不按变体：连着改同一个值会走出一串变体键，
+ * 按变体存的话每个中间值都会在 300ms 后各渲染一次（打十个字 = 十次渲染）。
+ * 也不能按文件——同文件的两个副本各调各的，互相取消就会有一个永远渲染不出来。
+ */
 const timers = new Map<string, number>()
 
+/** 该面板的图里有没有位图元素（imshow / 图片）——降质预览只对它们有收益 */
+function hasImageElement(panel: PanelObject): boolean {
+  // 走 panelRender：变体刚换、自己那份还没画出来时退回文件最近那份。
+  // 元素构成不随 override 的取值变化，用哪个变体的 manifest 判断都一样
+  const manifest = panelRender(useRenderStore.getState(), panel)?.manifest
+  return !!manifest?.elements.some((el) => el.role === 'image')
+}
+
 /**
- * 请求渲染。同一文件的连续请求会被合并：debounce 期内只保留最后一次，
+ * 请求渲染。同一面板的连续请求会被合并：debounce 期内只保留最后一次，
  * 真正发出后由 renderStore 的 busy/queued 再兜一层。
  */
-export function requestRender(fileId: string, patches: unknown[], immediate = false) {
+export function requestRender(panel: PanelObject, immediate = false) {
   const store = useRenderStore.getState()
-  const want = JSON.stringify(patches)
-  // 值没变就别写 store：patch() 会换掉 byFile 的引用，把依赖它的 effect
+  const key = renderKeyOf(panel)
+  const want = JSON.stringify(panel.overrides)
+  // 值没变就别写 store：patch() 会换掉 byKey 的引用，把依赖它的 effect
   // 全部重跑一遍——白白多一轮渲染，也是同步循环的燃料
-  if (store.get(fileId).wantPatches !== want) store.patch(fileId, { wantPatches: want })
-
-  const fire = () => {
-    timers.delete(fileId)
-    void store.render(fileId, patches)
+  if (store.get(key).wantPatches !== want) {
+    store.patch(key, { fileId: panel.fileId, wantPatches: want })
   }
-  window.clearTimeout(timers.get(fileId))
-  if (immediate) fire()
-  else timers.set(fileId, window.setTimeout(fire, DEBOUNCE_MS))
-}
 
-/** 立刻冲刷某文件挂起的渲染（松开拖动、切换枚举等） */
-export function flushRender(fileId: string) {
-  const t = timers.get(fileId)
-  if (t == null) return
-  window.clearTimeout(t)
-  timers.delete(fileId)
-  const want = useRenderStore.getState().get(fileId).wantPatches
-  if (want) void useRenderStore.getState().render(fileId, JSON.parse(want))
+  // 防抖那一路是「还在调」，可以先给一张低清；immediate 是定稿，永远默认 dpi
+  const dpi = immediate || !hasImageElement(panel) ? undefined : INTERACTIVE_PREVIEW_DPI
+  const patches = panel.overrides
+  const fileId = panel.fileId
+  const fire = () => {
+    timers.delete(panel.id)
+    void store.render(fileId, patches, dpi)
+  }
+  window.clearTimeout(timers.get(panel.id))
+  if (immediate) fire()
+  else timers.set(panel.id, window.setTimeout(fire, DEBOUNCE_MS))
 }
 
 /**
- * 每个 fileId 只能有一个「说了算」的面板。
+ * 立刻冲刷该面板挂起的渲染，并保证最终那张是定稿质量（松开滑块、退出输入框）。
  *
- * 渲染状态（byFile）、引擎会话、live figure 全都按文件索引——worker 里一个
- * stem 同时只端着一份 Figure 状态，本来就渲染不出同一张图的两个版本。可
- * 复制面板（structuredClone）保留原 fileId，所以画布上完全可能出现两个
- * 指向同一文件、overrides 不同的面板。此时若两个都去 requestRender，就会
- * 同步地互相顶掉对方的 wantPatches，effect ↔ store 无限互相触发 —— 用户
- * 看到的是 React #185「Maximum update depth exceeded」，整个界面白掉。
- *
- * 裁决顺序：正在图内编辑的那个（用户眼睛盯着的） > 改动更多的 > 更上层的。
+ * 两件事都必须做：挂起的那次直接发出去；已经画完但用的是降质 dpi 的，
+ * 补一张默认 dpi 的——否则用户手一松，图就永远停在临时低清上。
  */
-export function pickRenderTargets(
+export function flushRender(panelId: string) {
+  // 按 id 从文档里现取，不信调用方手里那份：事件处理器闭包里的 panel 可能是
+  // 上一帧的，拿它的 overrides 去渲染就等于把刚改的那一版丢了（而挂起的
+  // 计时器已经被清掉，同步器又因为 wantPatches 相等而跳过 → 永远画不出来）
+  const panel = useDocumentStore.getState().doc.objects.find((o) => o.id === panelId)
+  if (panel?.type !== 'panel') return
+  const store = useRenderStore.getState()
+  const pending = timers.get(panelId)
+  if (pending != null) {
+    window.clearTimeout(pending)
+    timers.delete(panelId)
+    void store.render(panel.fileId, panel.overrides)
+    return
+  }
+  // 没有挂起的：只有「现在这张是拖动期的低清」才需要补一张定稿
+  if (store.get(renderKeyOf(panel)).previewDpi != null) {
+    void store.render(panel.fileId, panel.overrides)
+  }
+}
+
+/**
+ * 需要引擎渲染的面板，**按 (fileId, overrides) 去重**。
+ *
+ * 这里曾经是「每个 fileId 只能有一个说了算的面板」的裁决：渲染态按文件索引，
+ * 两个同文件不同 override 的副本会同步互顶 wantPatches，effect ↔ store
+ * 无限互相触发（React #185）。代价是输家永远显示赢家的图。现在渲染态按变体
+ * 分键（renderKeyOf），两个副本各有各的条目，互不覆盖——真正的多变体支持，
+ * 去重只剩「完全相同的两个副本共用一次渲染」这一条。
+ */
+export function renderTargets(
   objects: readonly CanvasObject[],
   editingId: string | null,
-  byFile: Record<string, { tracked?: boolean } | undefined>,
+  tracked: Record<string, boolean | undefined>,
 ): PanelObject[] {
-  const winners = new Map<string, PanelObject>()
+  const seen = new Set<string>()
+  const targets: PanelObject[] = []
   for (const o of objects) {
     if (o.type !== 'panel' || !o.script) continue
     // 编辑中 / 有图内修改 / 脚本已领先磁盘文件（AI 改过）。
@@ -70,17 +112,45 @@ export function pickRenderTargets(
     // 白跑一次引擎（heavy 脚本要几分钟）没有意义。
     const wants =
       o.id === editingId ||
-      !!byFile[o.fileId]?.tracked ||
+      !!tracked[o.fileId] ||
       (o.overrides.length > 0 && !isJustBakedBaseline(o))
     if (!wants) continue
-    const prev = winners.get(o.fileId)
-    if (!prev || o.id === editingId) {
-      winners.set(o.fileId, o)
-    } else if (prev.id !== editingId && o.overrides.length >= prev.overrides.length) {
-      winners.set(o.fileId, o)   // 同分取后者 = 取画布上更上层的那个
-    }
+    const key = renderKeyOf(o)
+    if (seen.has(key)) continue
+    seen.add(key)
+    targets.push(o)
   }
-  return [...winners.values()]
+  return targets
+}
+
+/** 文档里现存（含其它画布）的全部面板变体键——prune 的保留名单 */
+function liveRenderKeys(objects: readonly CanvasObject[]): Set<string> {
+  const keys = new Set<string>()
+  const add = (objs: readonly CanvasObject[]) => {
+    for (const o of objs) if (o.type === 'panel') keys.add(renderKeyOf(o))
+  }
+  add(objects)
+  // 非激活画布的面板也在渲染（常驻图层），它们的条目同样不能被清掉
+  for (const c of useDocumentStore.getState().canvases) add(c.objects)
+  return keys
+}
+
+/**
+ * 同步一轮：把还没排期的变体发出去，再清掉没人引用的旧变体。
+ * effect 与测试共用同一份判断——「同步会不会自己把自己转起来」这件事必须
+ * 能在测试里直接跑（旧实现的死循环就是在这一层）。
+ */
+export function syncEngine(objects: readonly CanvasObject[], editingId: string | null): void {
+  const store = useRenderStore.getState()
+  for (const panel of renderTargets(objects, editingId, store.tracked)) {
+    const want = JSON.stringify(panel.overrides)
+    const state = store.byKey[renderKeyOf(panel)]
+    if (state && (state.lastPatches === want || state.wantPatches === want)) continue
+    // 进入编辑态的首次渲染立即发出，其余（打字等）走防抖
+    requestRender(panel, !state)
+  }
+  // 编辑期每改一个值就多一条变体（各带一份 SVG）：没人再引用的当场清掉
+  useRenderStore.getState().prune(liveRenderKeys(objects))
 }
 
 /**
@@ -90,44 +160,40 @@ export function pickRenderTargets(
 export function useEngineSync() {
   const objects = useDocumentStore((s) => s.doc.objects)
   const editingId = useUiStore((s) => s.elementPanelId)
-  const byFile = useRenderStore((s) => s.byFile)
+  const byKey = useRenderStore((s) => s.byKey)
+  const tracked = useRenderStore((s) => s.tracked)
 
   useEffect(() => {
-    const targets = pickRenderTargets(objects, editingId, byFile)
+    syncEngine(objects, editingId)
+    // byKey / tracked 进依赖表是为了「渲染回来了 → 再看一眼还有没有要发的」，
+    // 判断本身在 syncEngine 里读的是最新 state
+  }, [objects, editingId, byKey, tracked])
 
-    for (const panel of targets) {
-      const want = JSON.stringify(panel.overrides)
-      const state = byFile[panel.fileId]
-      if (state && (state.lastPatches === want || state.wantPatches === want)) continue
-      // 进入编辑态的首次渲染立即发出，其余（打字等）走防抖
-      requestRender(panel.fileId, panel.overrides, !state)
-    }
-  }, [objects, editingId, byFile])
-
-  // 渲染回来的图幅尺寸变了（改了 size_mm）→ 同步面板原生尺寸并按新纵横比调高度
+  // 渲染回来的图幅尺寸变了（改了 size_mm）→ 同步面板原生尺寸并按新纵横比调高度。
+  // 按**面板自己那份变体**取尺寸：size_mm 本身就是可以被 override 的，
+  // 同文件的另一个副本改了图幅，不该把这个副本一起拽走。
   useEffect(() => {
-    for (const [fileId, state] of Object.entries(byFile)) {
-      const size = state.manifest?.size_mm
+    const fixes: { id: string; wMm: number; hMm: number }[] = []
+    for (const o of objects) {
+      if (o.type !== 'panel') continue
+      const size = byKey[renderKeyOf(o)]?.manifest?.size_mm
       if (!size) continue
       const [wMm, hMm] = size
-      const stale = objects.some(
-        (o) =>
-          o.type === 'panel' &&
-          o.fileId === fileId &&
-          (Math.abs(o.nativeW - wMm) > 0.05 || Math.abs(o.nativeH - hMm) > 0.05),
-      )
-      if (!stale) continue
-      useDocumentStore.getState().silent((d) => {
-        for (const o of d.objects) {
-          if (o.type !== 'panel' || o.fileId !== fileId) continue
-          o.nativeW = wMm
-          o.nativeH = hMm
-          // x/y/w/h 是旋转后的页面包围盒：90/270 时内容的长宽是互换的，
-          // 直接按 hMm/wMm 调 o.h 会把旋转过的面板越调越偏
-          if (rotationSwaps(panelRotation(o))) o.w = o.h * (hMm / wMm)
-          else o.h = o.w * (hMm / wMm)
-        }
-      })
+      if (Math.abs(o.nativeW - wMm) <= 0.05 && Math.abs(o.nativeH - hMm) <= 0.05) continue
+      fixes.push({ id: o.id, wMm, hMm })
     }
-  }, [byFile, objects])
+    if (!fixes.length) return
+    useDocumentStore.getState().silent((d) => {
+      for (const fix of fixes) {
+        const o = d.objects.find((x) => x.id === fix.id)
+        if (o?.type !== 'panel') continue
+        o.nativeW = fix.wMm
+        o.nativeH = fix.hMm
+        // x/y/w/h 是旋转后的页面包围盒：90/270 时内容的长宽是互换的，
+        // 直接按 hMm/wMm 调 o.h 会把旋转过的面板越调越偏
+        if (rotationSwaps(panelRotation(o))) o.w = o.h * (fix.hMm / fix.wMm)
+        else o.h = o.w * (fix.hMm / fix.wMm)
+      }
+    })
+  }, [byKey, objects])
 }

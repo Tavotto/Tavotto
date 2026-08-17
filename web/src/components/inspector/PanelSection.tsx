@@ -13,7 +13,7 @@ import {
   Scaling,
   Unlink2,
 } from 'lucide-react'
-import { useRenderStore } from '@/store/renderStore'
+import { usePanelRender, useRenderStore } from '@/store/renderStore'
 import { BASE_FONT_PT, effectiveDpi, effectivePt, formatCm, formatMm, round1 } from '@/lib/units'
 import { cn } from '@/lib/utils'
 import type { PanelInfo } from '@/lib/api'
@@ -602,10 +602,12 @@ function ReplaceAssetDialog({
 
 /** ⚡ 可参数化面板：进入图内编辑的入口 + 引擎状态 */
 function ScriptSection({ panel }: { panel: PanelObject }) {
-  const render = useRenderStore((s) => s.byFile[panel.fileId])
+  const render = usePanelRender(panel)
   const editing = useUiStore((s) => s.elementPanelId === panel.id)
-  const building = render?.status === 'rendering'
-  const cold = !!render?.cold
+  // 冷启动是文件级事实（SSE 写在 building 表里），渲染中是本变体的状态
+  const buildingFile = useRenderStore((s) => s.building[panel.fileId])
+  const building = render?.status === 'rendering' || !!buildingFile
+  const cold = !!buildingFile?.cold
   const overrides = panel.overrides.length
 
   return (

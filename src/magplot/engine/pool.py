@@ -685,12 +685,15 @@ class EngineWorker:
         return resp
 
     def override(self, stem: str, patches: list,
-                 preview_dpi: int | None = None) -> dict:
+                 preview_dpi: int | None = None,
+                 inline_svg: bool = False) -> dict:
         build = self.ensure_built().get("timings") if not self.built else None
         payload = {"cmd": "override", "stem": stem, "patches": patches}
         # 不给就**一个字段都不加**：信封形状对既有调用方一字不变
         if preview_dpi:
             payload["preview_dpi"] = int(preview_dpi)
+        if inline_svg:
+            payload["inline_svg"] = True
         resp = self.request(payload, REQUEST_TIMEOUT)
         self.rev += 1
         self.last_patch_hash = patchspec.patch_hash(patches)
@@ -969,11 +972,14 @@ class WorkerdWorker:
         return resp
 
     def override(self, stem: str, patches: list,
-                 preview_dpi: int | None = None) -> dict:
+                 preview_dpi: int | None = None,
+                 inline_svg: bool = False) -> dict:
         build = self.ensure_built().get("timings") if not self.built else None
         payload: dict = {"patches": patches}
         if preview_dpi:
             payload["preview_dpi"] = int(preview_dpi)
+        if inline_svg:
+            payload["inline_svg"] = True
         resp = self._call("render", REQUEST_TIMEOUT, stem=stem, payload=payload)
         self.rev += 1
         self.last_patch_hash = patchspec.patch_hash(patches)

@@ -301,14 +301,27 @@ class Worker:
 
     def _do_render(self, stem: str, patches: list,
                    timings: dict | None = None,
-                   preview_dpi: int | None = None) -> dict:
-        """应用全量 override 列表 + 重出预览 SVG/manifest（v1 的 render）。"""
+                   preview_dpi: int | None = None,
+                   inline_svg: bool = False) -> dict:
+        """应用全量 override 列表 + 重出预览 SVG/manifest（v1 的 render）。
+
+        `inline_svg=True` 时响应里**多带一份 SVG 文本**。为什么要它：SVG 与
+        manifest 必须成对——另一个标签页（或同一文件的另一个变体）的渲染插进来
+        之后，第二跳 GET 拿到的磁盘 SVG 已经是别人的了，而 manifest 是这次的，
+        画布上就出现「框选命中的元素和看到的图对不上」。worker 串行执行，在这里
+        把刚写完的那份读回来天然原子。
+        """
         t0 = time.perf_counter()
         warnings = overrides_mod.apply(STATES[stem], patches)
         if timings is not None:
             timings["patch_apply_ms"] = _ms(t0)
-        return {"manifest": self._render(stem, timings, preview_dpi),
-                "warnings": warnings}
+        result = {"manifest": self._render(stem, timings, preview_dpi),
+                  "warnings": warnings}
+        if inline_svg:
+            # 读回磁盘那一份而不是另存一个内存缓冲：调用方拿到的与
+            # out_dir/<stem>.svg 逐字节相同，排障时不必怀疑「是不是两份」
+            result["svg"] = (self.out_dir / f"{stem}.svg").read_text(encoding="utf-8")
+        return result
 
     def _do_render_png(self, stem: str, width: int) -> dict:
         """从 live figure 按目标像素宽出高清位图（imshow 类面板显示用）。"""
@@ -494,10 +507,18 @@ class Worker:
             if preview_dpi <= 0:
                 raise ProtocolError("bad_request",
                                     f"payload.preview_dpi 必须为正: {preview_dpi}")
+        # 可选：把这次的预览 SVG 一并放进响应（与 manifest 原子配对，见 _do_render）。
+        # 只认真正的布尔值——"false"/0 这类写法在真值判断下会静默地做反，
+        # 而这个字段决定的是「调用方能不能拿到配对的 SVG」，静默出错代价太大。
+        inline_svg = payload.get("inline_svg", False)
+        if not isinstance(inline_svg, bool):
+            raise ProtocolError("bad_request",
+                                f"payload.inline_svg 必须是布尔值: {inline_svg!r}")
 
         try:
             if cmd == "render":
-                result = self._do_render(stem, patches, timings, preview_dpi)
+                result = self._do_render(stem, patches, timings, preview_dpi,
+                                         inline_svg)
             elif cmd == "render_png":
                 result = self._do_render_png(stem, width)
             elif cmd == "preview_png":

@@ -27,7 +27,7 @@ import { newId } from '@/lib/id'
 import { clamp } from '@/lib/units'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
-import { useRenderStore } from '@/store/renderStore'
+import { panelRender, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore, type Tool } from '@/store/uiStore'
 import {
@@ -113,10 +113,10 @@ const candidatesFor = (exclude: Set<string>) => {
   if (prefs.objects) {
     // 图内元素的中心线也参与：拖画布标注（箭头指向图里那行字）时能吸到
     // 图内文字 / 图例 / 子图的水平、垂直中心线上，参考线照常显示
-    const byFile = useRenderStore.getState().byFile
+    const rs = useRenderStore.getState()
     for (const o of doc().objects) {
       if (o.type !== 'panel' || o.hidden || exclude.has(o.id)) continue
-      const manifest = byFile[o.fileId]?.manifest
+      const manifest = panelRender(rs, o)?.manifest
       if (!manifest) continue
       const extra = elementSnapCandidates(o, manifest)
       cands.xs.push(...extra.xs)

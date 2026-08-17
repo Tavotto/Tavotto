@@ -41,7 +41,8 @@ export function ExportDialog() {
   const open = useUiStore((s) => s.exportOpen)
   const setOpen = useUiStore((s) => s.setExportOpen)
   const doc = useDocumentStore((s) => s.doc)
-  const renderByFile = useRenderStore((s) => s.byFile)
+  const byKey = useRenderStore((s) => s.byKey)
+  const latest = useRenderStore((s) => s.latest)
   const assets = useAssetStore((s) => s.byId)
 
   // 初始值来自「设置 → 导出默认值」；对话框内的改动只影响本次
@@ -72,8 +73,8 @@ export function ExportDialog() {
   const pxH = Math.round((doc.page.h / 25.4) * Number(dpi))
 
   const issues = useMemo(
-    () => (open ? runPreflight(doc, assets, renderByFile) : []),
-    [open, doc, assets, renderByFile],
+    () => (open ? runPreflight(doc, assets, { byKey, latest }) : []),
+    [open, doc, assets, byKey, latest],
   )
   const errors = issues.filter((i) => i.severity === 'error')
 

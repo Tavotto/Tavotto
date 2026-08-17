@@ -109,7 +109,7 @@ class _FakeWorker:
         (self.out_dir / f"{self.manifest['stem']}.json").write_text(
             json.dumps(self.manifest, ensure_ascii=False), encoding="utf-8")
 
-    def override(self, stem, patches, preview_dpi=None):
+    def override(self, stem, patches, preview_dpi=None, inline_svg=False):
         self.calls.append("override")
         self.last_patch_hash = patchspec.patch_hash(patches)
         self._write_manifest()

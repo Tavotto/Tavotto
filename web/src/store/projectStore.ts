@@ -51,7 +51,7 @@ async function resetForNewProject() {
   ui.setElementPanel(null)
   ui.setEditingText(null)
   ui.setCropTarget(null)
-  useRenderStore.setState({ byFile: {} })
+  useRenderStore.getState().clear()
   // 3. 换成空白文档（旧文档属于旧项目；素材引用跨项目不可靠）
   await useDocumentStore.getState().switchDocument(
     { schema: 2, name: 'fig_layout', page: { w: 150, h: 100 }, objects: [], guides: [] },

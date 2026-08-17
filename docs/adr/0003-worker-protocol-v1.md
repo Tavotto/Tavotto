@@ -54,7 +54,7 @@
 |---|---|---|
 | `ping` | — | — |
 | `build` | — | `stems: {stem: {size_mm}}` |
-| `render` | `patches` | `manifest`, `warnings` |
+| `render` | `patches`（+可选 `preview_dpi` §10、`inline_svg` §11） | `manifest`, `warnings`（+`svg`，仅当要了） |
 | `render_png` | `width` | `path` |
 | `preview_png` | `patches`, `width`, `tag` | `path` |
 | `export` | `patches`, `path`, `format`, `dpi` | `path`, `warnings` |
@@ -230,6 +230,26 @@ worker 只说**自己那一段**。父进程（`pool`）另外补两个键：`qu
 
 不给这个字段时**信封形状一字不变**，既有调用方与 golden 断言不受影响。
 
+### 11. `render` 的可选 `inline_svg`（加字段，不升版本）
+
+`payload.inline_svg`（布尔，可缺省）为真时，成功响应多一个 `svg` 字段：本次
+预览 SVG 的**文本**，与同一响应里的 `manifest` 出自同一次渲染。worker 读回它
+刚写进 `out_dir/<stem>.svg` 的那一份（逐字节相同），串行执行天然原子。
+
+**为什么要它**：调用方以前是「render 拿 manifest → 再 GET 一次 SVG 文件」。
+同一个 stem 的另一个变体（画布上的复制面板）或另一个标签页的渲染插在两跳之间，
+第二跳读到的就是别人的图，而 manifest 是自己这次的——用户看到的是元素框与图
+对不上。两跳之间没有任何锁能修好这件事：live figure 一个 stem 只有一份，
+唯一的解法是让结果原子地成对回来。
+
+只认真正的布尔值，`"false"` / `0` 这类写法一律 `bad_request`：真值判断下它们会
+静默地做反，而这个字段决定的是「调用方能不能拿到配对的 SVG」。不给这个字段时
+**响应里连 `svg` 这个键都没有**，老调用方与 golden 断言不受影响。
+
+`svg` 是纯文本、可能几百 KB（含 imshow 的面板），与 `preview_dpi` 配合使用：
+连续调整期间降 dpi，传输量同时降下来（见 `docs/perf-baseline.md`）。
+supervisor 对结果字段整体透传（`session.rs` 只剔除信封字段），Rust 侧零改动。
+
 ## 影响面与非目标
 
 - **Flask HTTP API 与前端零改动**：`pool.EngineWorker` 的 Python 方法签名
@@ -247,7 +267,10 @@ worker 只说**自己那一段**。父进程（`pool`）另外补两个键：`qu
 - `tests/test_worker_protocol.py`：pool 侧信封构造、回显校验、错误映射、
   generation 递增（假子进程，不需要科学栈）。
 - `tests/test_worker_roundtrip.py` 末节：真 worker 的 v1 全链路、错误信封形状、
-  hash_mismatch、cancel、**legacy 响应形状不变**、`timings` 的键集合与
-  `preview_dpi` 的校验。
+  hash_mismatch、cancel、**legacy 响应形状不变**、`timings` 的键集合、
+  `preview_dpi` 与 `inline_svg` 的校验（后者还断言 `svg` 与磁盘上那一份逐字节
+  相同，并且不要时响应里没有这个键）。
 - `tests/test_worker_protocol.py` 末节：控制面补的 `queue_wait_ms`/`total_ms`、
-  冷启动折叠 build 计时、不给 `preview_dpi` 时 payload 一字不变。
+  冷启动折叠 build 计时、不给 `preview_dpi` / `inline_svg` 时 payload 一字不变。
+- `tests/test_engine_variants.py`：HTTP 层的 `inline_svg` 透传与
+  `/api/engine/preview_png`（按 patches 出图、tag 取 patch 哈希前 12 位且不含冒号）。

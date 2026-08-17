@@ -552,7 +552,7 @@ export function setOverride(
     o.overrides.push({ gid, prop, value })
   })
   const panel = findObject(panelId)
-  if (panel?.type === 'panel') requestRender(panel.fileId, panel.overrides, immediate)
+  if (panel?.type === 'panel') requestRender(panel, immediate)
 }
 
 /**
@@ -607,7 +607,7 @@ export function unhideElement(panelId: string, gid: string) {
     o.overrides = o.overrides.filter((p) => !(p.gid === gid && p.prop === 'visible'))
   })
   const next = findObject(panelId)
-  if (next?.type === 'panel') requestRender(next.fileId, next.overrides, true)
+  if (next?.type === 'panel') requestRender(next, true)
 }
 
 /**
@@ -622,7 +622,7 @@ export function clearOverride(panelId: string, gid: string, prop: string) {
     o.overrides = o.overrides.filter((p) => !(p.gid === gid && p.prop === prop))
   })
   const next = findObject(panelId)
-  if (next?.type === 'panel') requestRender(next.fileId, next.overrides, true)
+  if (next?.type === 'panel') requestRender(next, true)
 }
 
 /**
@@ -646,7 +646,7 @@ export function clearOverrides(
     )
   })
   const next = findObject(panelId)
-  if (next?.type === 'panel') requestRender(next.fileId, next.overrides, true)
+  if (next?.type === 'panel') requestRender(next, true)
 }
 
 export function resetOverrides(panelId: string) {
@@ -655,7 +655,9 @@ export function resetOverrides(panelId: string) {
   updateObject<PanelObject>(panelId, '重置图内修改', (o) => {
     o.overrides = []
   })
-  requestRender(panel.fileId, [], true)
+  // 清空之后的那个面板才是要渲染的变体（overrides 已经是空表）
+  const cleared = findObject(panelId)
+  if (cleared?.type === 'panel') requestRender(cleared, true)
   status('已清空该面板的图内修改')
 }
 
@@ -673,7 +675,7 @@ export function setOverrides(
     }
   })
   const panel = findObject(panelId)
-  if (panel?.type === 'panel') requestRender(panel.fileId, panel.overrides, true)
+  if (panel?.type === 'panel') requestRender(panel, true)
 }
 
 /**
@@ -707,7 +709,7 @@ export function applyMixedAlign(
   })
   if (patches.length) {
     const panel = findObject(panelId)
-    if (panel?.type === 'panel') requestRender(panel.fileId, panel.overrides, true)
+    if (panel?.type === 'panel') requestRender(panel, true)
   }
 }
 
@@ -792,7 +794,7 @@ export function applyStylePlan(plan: StylePlan, preset: StylePreset) {
   })
   for (const { panel } of touched) {
     const next = findObject(panel.id)
-    if (next?.type === 'panel') requestRender(next.fileId, next.overrides, true)
+    if (next?.type === 'panel') requestRender(next, true)
   }
   const parts = [
     touched.length && `${touched.length} 个面板`,

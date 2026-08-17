@@ -151,7 +151,7 @@ export function targetPanels(
 export function planStyle(
   preset: StylePreset,
   panels: PanelObject[],
-  manifestOf: (fileId: string) => Manifest | null | undefined,
+  manifestOf: (panel: PanelObject) => Manifest | null | undefined,
   doc: FigureDocument,
   includeAnnotations: boolean,
 ): StylePlan {
@@ -159,7 +159,7 @@ export function planStyle(
   const unrendered: PanelObject[] = []
 
   for (const panel of panels) {
-    const manifest = manifestOf(panel.fileId)
+    const manifest = manifestOf(panel)
     if (!manifest) {
       unrendered.push(panel)
       continue

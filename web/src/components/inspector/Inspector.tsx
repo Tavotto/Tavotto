@@ -17,7 +17,7 @@ import {
 import { cn, MOD } from '@/lib/utils'
 import { deleteSelected, duplicateSelected, hideElement, updateObjects } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
-import { useRenderStore } from '@/store/renderStore'
+import { usePanelManifest } from '@/store/renderStore'
 import { RIGHT_MAX, RIGHT_MIN, useUiStore, type RightTab } from '@/store/uiStore'
 import {
   objectLabel,
@@ -253,7 +253,7 @@ function PropertiesPage() {
  */
 function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: PanelObject }) {
   const selectedGids = useUiStore((s) => s.selectedGids)
-  const manifest = useRenderStore((s) => (panel ? s.byFile[panel.fileId]?.manifest : undefined))
+  const manifest = usePanelManifest(panel)
 
   if (panel) {
     const gid = selectedGids.at(-1)

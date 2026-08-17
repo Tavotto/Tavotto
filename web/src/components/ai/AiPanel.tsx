@@ -29,7 +29,7 @@ import {
   type AiSession,
 } from '@/store/aiStore'
 import { useDocumentStore } from '@/store/documentStore'
-import { useRenderStore } from '@/store/renderStore'
+import { usePanelManifest, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
@@ -120,9 +120,7 @@ function useTargetPanel(): PanelObject | null {
 function useAssistantTarget() {
   const panel = useTargetPanel()
   const selectedGid = useUiStore((s) => s.selectedGids.at(-1) ?? null)
-  const elements = useRenderStore((s) =>
-    panel ? (s.byFile[panel.fileId]?.manifest?.elements ?? null) : null,
-  )
+  const elements = usePanelManifest(panel)?.elements ?? null
 
   return useMemo(() => {
     const find = (gid: string | null) =>

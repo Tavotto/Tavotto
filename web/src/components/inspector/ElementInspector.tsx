@@ -25,7 +25,7 @@ import {
 import type { AlignMode } from '@/lib/geometry'
 import { ENVIRONMENT_CODES } from '@/lib/api'
 import type { EditableField, Manifest, ManifestElement } from '@/lib/api'
-import { requestRender } from '@/hooks/useEngineSync'
+import { flushRender, requestRender } from '@/hooks/useEngineSync'
 import { useQuickEdit } from '@/canvas/quickEditStore'
 import { ALT, cn, combo, modKey } from '@/lib/utils'
 import {
@@ -61,7 +61,7 @@ import {
 } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
-import { useRenderStore } from '@/store/renderStore'
+import { usePanelRender } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
 import {
   EngineEnvironmentCard,
@@ -87,7 +87,7 @@ import { SyncOverridesButton } from './SyncOverridesButton'
 
 /** 图内元素编辑器：表单结构完全由 manifest.editable 决定 */
 export function ElementInspector({ panel }: { panel: PanelObject }) {
-  const render = useRenderStore((s) => s.byFile[panel.fileId])
+  const render = usePanelRender(panel)
   const selectedGids = useUiStore((s) => s.selectedGids)
   // 折叠状态挂在面板级组件上：同一面板内换元素不重置，换面板才归零
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({})
@@ -137,7 +137,7 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
           <ErrorBlock
             error={render.error}
             traceback={render.traceback}
-            onRetry={() => requestRender(panel.fileId, panel.overrides, true)}
+            onRetry={() => requestRender(panel, true)}
           />
         )
       )}
@@ -652,7 +652,12 @@ function FieldRow({
     setOverride(panel.id, element.gid, field.prop, v, immediate)
 
   const beginTxn = () => useDocumentStore.getState().beginTxn(`修改${label}`)
-  const endTxn = () => useDocumentStore.getState().endTxn()
+  // 结束事务 = 这一轮连续调整定稿：把防抖里挂着的那次立刻发出去，
+  // 并保证最终那张不是拖动期的降质预览（见 flushRender）
+  const endTxn = () => {
+    useDocumentStore.getState().endTxn()
+    flushRender(panel.id)
+  }
 
 
   switch (field.type) {

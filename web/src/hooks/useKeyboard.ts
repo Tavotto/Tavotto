@@ -12,7 +12,7 @@ import {
 } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
-import { useRenderStore } from '@/store/renderStore'
+import { panelRender, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore, type Tool } from '@/store/uiStore'
 import { useViewportStore } from '@/store/viewportStore'
@@ -33,7 +33,7 @@ const TOOL_KEYS: Record<string, Tool> = {
 function hideSelectedElements(panelId: string, gids: string[]) {
   const panel = useDocumentStore.getState().doc.objects.find((o) => o.id === panelId)
   if (panel?.type !== 'panel') return
-  const elements = useRenderStore.getState().byFile[panel.fileId]?.manifest?.elements ?? []
+  const elements = panelRender(useRenderStore.getState(), panel)?.manifest?.elements ?? []
   const targets = gids
     .map((gid) => elements.find((e) => e.gid === gid))
     .filter(

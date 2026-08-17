@@ -1248,6 +1248,47 @@ def test_v1_timings_have_the_documented_shape(worker):
                                           payload={"width": 200}, rid="r-t5"))
 
 
+def test_v1_inline_svg_returns_the_very_svg_it_just_wrote(worker):
+    """`inline_svg` 让 SVG 与 manifest 在**同一个响应**里回来。
+
+    为什么必须原子：以前前端 render 之后再 GET 一次 `/api/engine/svg`，读的是
+    磁盘上 `out_dir/<stem>.svg`。同一个 stem 的另一个变体（画布上的复制面板）
+    或另一个标签页的渲染插在两跳中间，第二跳拿到的就是别人的图，而 manifest
+    是自己这次的——元素框与看到的图对不上。worker 串行执行，在响应里带上
+    刚写完的那份天然配对。
+    """
+    proc, out, tmp = worker
+    _ok(proc, _v1("build", rid="r-i0"))
+
+    # 不要就一个字段都不多（信封形状对老调用方一字不变）
+    plain = _ok(proc, _v1("render", stem="TestFig_a", payload={"patches": []},
+                          rid="r-i1"))
+    assert "svg" not in plain
+
+    gid = next(el["gid"] for el in plain["manifest"]["elements"]
+               for f in el.get("editable", [])
+               if f["prop"] == "text" and f["value"] == "Original Title")
+    resp = _ok(proc, _v1("render", stem="TestFig_a", rid="r-i2",
+                         payload={"patches": [{"gid": gid, "prop": "text",
+                                               "value": "Inline Title"}],
+                                  "inline_svg": True}))
+    svg = resp["svg"]
+    assert svg.lstrip().startswith("<?xml") or svg.lstrip().startswith("<svg")
+    # 与磁盘上那一份逐字节相同（同一次渲染的产物，不是另存的第二份）
+    assert svg == (out / "TestFig_a.svg").read_text(encoding="utf-8")
+    # 而且确实是这一次的：manifest 与 SVG 里都是新标题
+    assert "Inline" in svg
+    assert any(f["value"] == "Inline Title"
+               for el in resp["manifest"]["elements"]
+               for f in el.get("editable", []) if f["prop"] == "text")
+
+    # 写错类型是 bad_request（真值判断会让 "false" 静默地做反）
+    bad = _raw(proc, _v1("render", stem="TestFig_a", rid="r-i3",
+                         payload={"patches": [], "inline_svg": "yes"}))
+    assert bad["error"]["code"] == "bad_request"
+    assert proc.poll() is None
+
+
 def test_v1_preview_dpi_is_optional_and_validated(worker):
     """按请求给预览 dpi：给了就用，写错是 bad_request（不是 internal）。
 
@@ -1466,6 +1507,85 @@ def write_back(tmp_path, monkeypatch):
         m.reset_projects()
         pool.shutdown_all(figures_dir=str(ctx[2]), wait=True)
         pool.stop_watcher()
+
+
+# ---------------- 同一 stem 的多个变体（Phase F，真渲染） ----------------
+
+def _http_title_gid(client) -> str:
+    resp = client.post("/api/engine/render",
+                       json={"id": "TestFig_a.pdf", "patches": []})
+    assert resp.status_code == 200, resp.get_json()
+    return next(el["gid"] for el in resp.get_json()["manifest"]["elements"]
+                for f in el.get("editable", [])
+                if f["prop"] == "text" and f["value"] == "Original Title")
+
+
+def test_variants_take_turns_on_one_live_figure(write_back):
+    """画布上两个同文件不同 override 的面板：各自的 SVG 与 manifest 必须配对。
+
+    live figure 一个 stem 只有一份，两个变体轮流全量重放。**响应里内联的 SVG
+    才是这一次的**——分两跳去 GET 磁盘上的 stem.svg，中间插进来的那次渲染
+    会把它换掉（用户看到的是另一个面板的图，元素框却是自己的）。
+    """
+    _m, client, _figs = write_back
+    gid = _http_title_gid(client)
+
+    def render(title):
+        resp = client.post("/api/engine/render",
+                           json={"id": "TestFig_a.pdf", "inline_svg": True,
+                                 "patches": [{"gid": gid, "prop": "text",
+                                              "value": title}]})
+        assert resp.status_code == 200, resp.get_json()
+        return resp.get_json()
+
+    a1 = render("Variant AAA")
+    b1 = render("Variant BBB")
+    a2 = render("Variant AAA")
+
+    for body, want in ((a1, "AAA"), (b1, "BBB"), (a2, "AAA")):
+        assert want in body["svg"], body["svg"][:400]
+        assert any(f["value"] == f"Variant {want}"
+                   for el in body["manifest"]["elements"]
+                   for f in el.get("editable", []) if f["prop"] == "text")
+    # 谁也没沾上谁：每份 SVG 里只有自己那个标题
+    # （逐字节比 SVG 没有意义——matplotlib 每次给 defs 的 id 都不一样）
+    assert "BBB" not in a1["svg"] and "BBB" not in a2["svg"]
+    assert "AAA" not in b1["svg"]
+
+
+def test_preview_png_is_state_neutral_across_variants(write_back):
+    """`/api/engine/preview_png` 按 patches 出图，与热会话当前是哪个变体无关。
+
+    这是 `/api/engine/png` 做不到的：它从 live figure 直接 savefig，谁最后渲染
+    谁说了算——复制面板于是显示了另一个面板的像素。
+    """
+    _m, client, _figs = write_back
+    gid = _http_title_gid(client)
+    a = [{"gid": gid, "prop": "text", "value": "PNG Variant AAA"}]
+    b = [{"gid": gid, "prop": "text", "value": "PNG Variant BBB"}]
+
+    def png(patches):
+        resp = client.post("/api/engine/preview_png",
+                           json={"id": "TestFig_a.pdf", "patches": patches, "w": 400})
+        assert resp.status_code == 200, resp.get_json()
+        assert resp.headers["Cache-Control"] == "no-store"
+        return resp.data
+
+    client.post("/api/engine/render", json={"id": "TestFig_a.pdf", "patches": a})
+    b_while_hot_is_a = png(b)
+    client.post("/api/engine/render", json={"id": "TestFig_a.pdf", "patches": b})
+    b_while_hot_is_b = png(b)
+    a_while_hot_is_b = png(a)
+
+    assert b_while_hot_is_a == b_while_hot_is_b, "同一组 patches 必须得到同一张图"
+    assert a_while_hot_is_b != b_while_hot_is_b, "不同变体不能出同一张图"
+
+    # 出图不许污染热会话：随后一次 render 的 manifest 仍是最后设定的那个变体
+    man = client.post("/api/engine/render",
+                      json={"id": "TestFig_a.pdf", "patches": b}).get_json()["manifest"]
+    assert any(f["value"] == "PNG Variant BBB"
+               for el in man["elements"]
+               for f in el.get("editable", []) if f["prop"] == "text")
 
 
 def _figs3_patches(client) -> tuple[list, str]:

@@ -35,7 +35,10 @@ function handleEvent(ev: ServerEvent) {
       break
 
     case 'render.started': {
-      render.patch(ev.id, { status: 'rendering', cold: !!ev.cold, cost: ev.cost ?? '' })
+      // 事件只带 fileId，而渲染态按变体分键：冷启动提示记在**文件级**的
+      // building 表里，不写进任何一个变体条目——同文件另一个副本被盖成
+      // 「渲染中」之后没人会来收掉它（它自己根本没在渲染）。
+      render.noteBuilding(ev.id, { cold: !!ev.cold, cost: ev.cost ?? '' })
       if (ev.cold) {
         const hint = COST_HINT[ev.cost ?? ''] ?? ''
         setStatus(`正在构建 ${short(ev.id)}${hint ? `（${hint}）` : '…'}`)
@@ -43,9 +46,11 @@ function handleEvent(ev: ServerEvent) {
       break
     }
     case 'render.done':
+      render.noteBuilding(ev.id, null)
       setStatus(`渲染完成：${short(ev.id)}`)
       break
     case 'render.failed':
+      render.noteBuilding(ev.id, null)
       setStatus(`渲染失败：${short(ev.id)}${ev.error ? ` — ${ev.error}` : ''}`, 'error')
       break
 

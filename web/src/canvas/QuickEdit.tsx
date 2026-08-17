@@ -17,7 +17,7 @@ import {
   unhideElement,
 } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
-import { useRenderStore } from '@/store/renderStore'
+import { usePanelManifest } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import type { CanvasObject, PanelObject } from '@/types/document'
@@ -197,7 +197,7 @@ function ElementQuick({
   const panel = useDocumentStore((s) =>
     s.doc.objects.find((o) => o.id === target.panelId && o.type === 'panel'),
   ) as PanelObject | undefined
-  const manifest = useRenderStore((s) => (panel ? s.byFile[panel.fileId]?.manifest : null))
+  const manifest = usePanelManifest(panel)
   const el = manifest?.elements.find((e) => e.gid === target.gid)
 
   useEffect(() => {

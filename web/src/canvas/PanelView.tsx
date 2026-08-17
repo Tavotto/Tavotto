@@ -1,12 +1,12 @@
-import { useMemo, useRef, useState } from 'react'
-import { enginePngUrl, panelSrc } from '@/lib/api'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { enginePreviewPng, panelSrc } from '@/lib/api'
 import { alignEntries, geomGid, geomTarget, segIntersectsRect } from '@/lib/elementGeom'
 import { pickBucket } from '@/lib/units'
 import { cn } from '@/lib/utils'
 import { isJustBakedBaseline } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
 import { useInteractionStore } from '@/store/interactionStore'
-import { useRenderStore } from '@/store/renderStore'
+import { usePanelManifest, usePanelRender, useRenderStore } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import type { PanelObject, PanelRotation } from '@/types/document'
@@ -36,7 +36,8 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   // 「写回原始文件」后 mtime 变化 → URL 变化 → 画布上已放置的同源面板自动重取
   const mtime = useAssetStore((s) => s.byId[obj.fileId]?.mtime)
   const editing = useUiStore((s) => s.elementPanelId === obj.id)
-  const render = useRenderStore((s) => s.byFile[obj.fileId])
+  // 自己那份变体的渲染态（同文件的另一个副本有它自己的一份，互不相干）
+  const render = usePanelRender(obj)
   const bucketRef = useRef(0)
 
   const crop = obj.crop
@@ -66,11 +67,12 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   const showSvg = !!render?.svg && editing
   // 有图内修改、或脚本已领先磁盘文件时，显示都必须走引擎产物。
   // 只带基线的面板除外——磁盘文件已经是那个样子，继续用 /api/render 更省。
-  const needsEngine =
-    (obj.overrides.length > 0 && !isJustBakedBaseline(obj)) || !!render?.tracked
+  const tracked = useRenderStore((s) => !!s.tracked[obj.fileId])
+  const needsEngine = (obj.overrides.length > 0 && !isJustBakedBaseline(obj)) || tracked
   const useEnginePng = !editing && needsEngine && (render?.rev ?? 0) > 0
-  const src = useEnginePng
-    ? enginePngUrl(obj.fileId, bucket, render!.rev)
+  const enginePng = useEnginePngBlob(obj, bucket, useEnginePng, render?.rev ?? 0)
+  const src = useEnginePng && enginePng
+    ? enginePng
     : panelSrc(obj.fileId, obj.fileKind, bucket, mtime)
 
   return (
@@ -120,6 +122,58 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   )
 }
 
+/**
+ * 引擎位图：**按本面板自己的 overrides** 现出（POST /api/engine/preview_png）。
+ *
+ * 旧路径是 `<img src=/api/engine/png>`，那个端点从 live figure 直接出图，而
+ * live 状态永远只是「最后渲染的那个变体」——画布上放两个同文件不同修改的
+ * 副本时，后渲染的那个会把像素喂给前一个。要带上整份 patches 就发不了 GET，
+ * 于是改成 fetch blob + objectURL。
+ *
+ * 新图到位之前一直挂着上一张（失败也保留）：中途置空会让画布闪一下磁盘原图。
+ */
+function useEnginePngBlob(
+  obj: PanelObject,
+  bucket: number,
+  enabled: boolean,
+  rev: number,
+): string | null {
+  const [url, setUrl] = useState<string | null>(null)
+  const urlRef = useRef<string | null>(null)
+  // 依赖用变体串而不是 overrides 数组：数组每次 commit 都是新引用
+  const variant = JSON.stringify(obj.overrides)
+  const { fileId, overrides } = obj
+
+  useEffect(() => {
+    if (!enabled) return
+    const ctrl = new AbortController()
+    let landed = false
+    void enginePreviewPng(fileId, overrides, bucket, ctrl.signal)
+      .then((blob) => {
+        landed = true
+        const next = URL.createObjectURL(blob)
+        if (urlRef.current) URL.revokeObjectURL(urlRef.current)
+        urlRef.current = next
+        setUrl(next)
+      })
+      .catch(() => {
+        /* 失败保留上一张：渲染失败由角标表达，不该让画布空掉 */
+      })
+    return () => {
+      if (!landed) ctrl.abort()
+    }
+    // overrides 的内容变化由 variant 表达（数组引用每次 commit 都变）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, fileId, variant, bucket, rev])
+
+  // 卸载时把最后一张还回去，否则每个被删/被切走的面板都留一块 blob
+  useEffect(() => () => {
+    if (urlRef.current) URL.revokeObjectURL(urlRef.current)
+  }, [])
+
+  return url
+}
+
 type Layout = { width: number; height: number; left: number; top: number }
 
 /**
@@ -135,7 +189,7 @@ function ElementHitLayer({
   layout: Layout
   rot: PanelRotation
 }) {
-  const manifest = useRenderStore((s) => s.byFile[obj.fileId]?.manifest)
+  const manifest = usePanelManifest(obj)
   const setHoverGid = useInteractionStore((s) => s.setHoverGid)
   const zoom = useViewportStore((s) => s.zoom)
   const ref = useRef<HTMLDivElement>(null)
@@ -307,7 +361,10 @@ function ElementHitLayer({
 
 /** 渲染中 / 冷启动 / 失败 / 过期 的角标 */
 function RenderStatusBadge({ obj }: { obj: PanelObject }) {
-  const render = useRenderStore((s) => s.byFile[obj.fileId])
+  const render = usePanelRender(obj)
+  // 冷启动/构建中是**文件级**的事实（一个 stem 一份 live figure），由 SSE 写；
+  // 「这一份变体正在渲染」才是变体级的
+  const building = useRenderStore((s) => s.building[obj.fileId])
   const editing = useUiStore((s) => s.elementPanelId === obj.id)
   const zoom = useViewportStore((s) => s.zoom)
 
@@ -315,21 +372,21 @@ function RenderStatusBadge({ obj }: { obj: PanelObject }) {
   const scale = 1 / zoom
   const relevant = editing || obj.overrides.length > 0 || render?.stale
   const info = useMemo(() => {
-    if (!render || !relevant) return null
-    if (render.status === 'rendering') {
+    if (!relevant) return null
+    if (render?.status === 'rendering' || building) {
       return {
         tone: 'busy' as const,
-        text: render.cold
-          ? render.cost === 'heavy'
+        text: building?.cold
+          ? building.cost === 'heavy'
             ? '冷启动中，可能需要几分钟…'
             : '首次构建中…'
           : '渲染中…',
       }
     }
-    if (render.status === 'error') return { tone: 'error' as const, text: '渲染失败' }
-    if (render.stale) return { tone: 'stale' as const, text: '脚本已更新' }
+    if (render?.status === 'error') return { tone: 'error' as const, text: '渲染失败' }
+    if (render?.stale) return { tone: 'stale' as const, text: '脚本已更新' }
     return null
-  }, [render, relevant])
+  }, [render, relevant, building])
 
   if (!info) return null
 

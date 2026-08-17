@@ -22,7 +22,7 @@ import type { Manifest, ManifestElement } from '@/lib/api'
 import { elementSnapCandidates, segIntersectsRect } from '@/lib/elementGeom'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
-import { useRenderStore } from '@/store/renderStore'
+import { renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
@@ -151,7 +151,12 @@ beforeEach(async () => {
   useDocumentStore.getState().commit('加面板', (d) => {
     d.objects.push(panel())
   })
-  useRenderStore.getState().patch('f1', { manifest, status: 'ready' })
+  // 渲染态按「文件 + 变体」分键：种进这个面板自己的那份
+  useRenderStore.getState().patch(renderKeyOf(panel()), {
+    fileId: 'f1',
+    manifest,
+    status: 'ready',
+  })
 })
 
 afterEach(() => {

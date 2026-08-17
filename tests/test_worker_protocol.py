@@ -280,3 +280,14 @@ def test_preview_dpi_is_only_sent_when_asked(tmp_path):
     assert w.proc.stdin.sent[-1]["payload"] == {"patches": []}
     w.override("Fig1", [], preview_dpi=96)
     assert w.proc.stdin.sent[-1]["payload"] == {"patches": [], "preview_dpi": 96}
+
+
+def test_inline_svg_is_only_sent_when_asked(tmp_path):
+    """同上：`inline_svg` 也是「不给就一个字段都不加」的可选项。"""
+    w = _worker(lambda env: _echo(env, manifest={}, warnings=[], svg="<svg/>"), tmp_path)
+    w.override("Fig1", [])
+    assert w.proc.stdin.sent[-1]["payload"] == {"patches": []}
+    resp = w.override("Fig1", [], inline_svg=True)
+    assert w.proc.stdin.sent[-1]["payload"] == {"patches": [], "inline_svg": True}
+    # 结果字段整体透传（控制面不解释 svg，只是把它带上来）
+    assert resp["svg"] == "<svg/>"

@@ -17,7 +17,7 @@ import {
 import { cn, modKey } from '@/lib/utils'
 import { applyStylePlan } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
-import { useRenderStore } from '@/store/renderStore'
+import { panelRender, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { askConfirm, useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
@@ -58,7 +58,9 @@ export function StyleDialog() {
   const doc = useDocumentStore((s) => s.doc)
   const selectedIds = useSelectionStore((s) => s.ids)
   const elementPanelId = useUiStore((s) => s.elementPanelId)
-  const byFile = useRenderStore((s) => s.byFile)
+  // 变体分键之后取 manifest 必须带上面板本身（同文件的两个副本各有各的）
+  const byKey = useRenderStore((s) => s.byKey)
+  const latest = useRenderStore((s) => s.latest)
 
   // 「当前面板」：图内编辑中的面板优先，否则选区里最后选中的脚本面板
   const primaryPanel = useMemo(() => {
@@ -73,18 +75,20 @@ export function StyleDialog() {
     )
   }, [doc.objects, elementPanelId, selectedIds])
 
-  const primaryManifest = primaryPanel ? byFile[primaryPanel.fileId]?.manifest : null
+  const primaryManifest = primaryPanel
+    ? (panelRender({ byKey, latest }, primaryPanel)?.manifest ?? null)
+    : null
 
   const plan = useMemo(() => {
     const panels = targetPanels(doc, scope, primaryPanel?.id ?? null, selectedIds)
     return planStyle(
       draft,
       panels,
-      (fileId) => byFile[fileId]?.manifest,
+      (p) => panelRender({ byKey, latest }, p)?.manifest,
       doc,
       withAnnotations,
     )
-  }, [doc, scope, primaryPanel, selectedIds, draft, byFile, withAnnotations])
+  }, [doc, scope, primaryPanel, selectedIds, draft, byKey, latest, withAnnotations])
 
   const extract = () => {
     if (!primaryManifest) return
