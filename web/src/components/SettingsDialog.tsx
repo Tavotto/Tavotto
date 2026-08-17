@@ -763,8 +763,17 @@ function ShortcutsSection({ close }: { close: () => void }) {
 }
 
 function UpdateSection() {
-  const { status, checking, applying, restartRequired, applyLog, check, apply, setAutoCheck } =
-    useUpdateStore()
+  const {
+    status,
+    checking,
+    applying,
+    restartRequired,
+    applyLog,
+    checkError,
+    check,
+    apply,
+    setAutoCheck,
+  } = useUpdateStore()
   useEffect(() => {
     if (!status) void check(false)
   }, [status, check])
@@ -772,6 +781,32 @@ function UpdateSection() {
   const checkedAt = status?.checked_at_ms
     ? new Date(status.checked_at_ms).toLocaleString()
     : '尚未检查'
+
+  // 桌面模式：Python updater 整个停用（升级归安装包），不摆一个永远
+  // 没有结果的「立即检查」死按钮，直接把 Releases 递到手边
+  if (status?.desktop) {
+    return (
+      <div className="flex flex-col gap-2.5">
+        <Row label="当前版本">
+          <span className="font-mono text-xs text-ink">{status.current}</span>
+        </Row>
+        <p className="text-xs leading-relaxed text-ink-3">
+          桌面版的升级由安装包负责：下载新版本安装覆盖即可，项目、画布与设置都在
+          用户数据目录，不受影响。
+        </p>
+        <div>
+          <a
+            href={status.releases_url}
+            target="_blank"
+            rel="noreferrer"
+            className="text-xs text-accent hover:underline"
+          >
+            前往 Releases 下载新版
+          </a>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-col gap-2.5">
@@ -804,6 +839,7 @@ function UpdateSection() {
       </div>
 
       {status?.error && <p className="text-xs text-danger">{status.error}</p>}
+      {checkError && <p className="text-xs text-danger">{checkError}</p>}
 
       {status?.update_available ? (
         <div className="flex flex-col gap-2 rounded-md border border-border p-2.5">

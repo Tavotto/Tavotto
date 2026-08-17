@@ -17,6 +17,8 @@ interface UpdateState {
   applyLog: string | null
   /** 用户手动关掉本次顶栏提示（不改设置，仅本次会话） */
   dismissed: boolean
+  /** 手动「立即检查」在 fetch 层就失败时的提示（连不上后端等）；自动检查不写 */
+  checkError: string | null
   check: (force?: boolean) => Promise<void>
   apply: () => Promise<void>
   setAutoCheck: (v: boolean) => Promise<void>
@@ -30,15 +32,24 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
   restartRequired: false,
   applyLog: null,
   dismissed: false,
+  checkError: null,
 
   check: async (force = false) => {
     if (get().checking) return
-    set({ checking: true })
+    set({ checking: true, ...(force ? { checkError: null } : {}) })
     try {
       const status = await checkUpdate(force)
-      set({ status, dismissed: force ? false : get().dismissed })
-    } catch {
-      // 检查更新失败不该打扰用户：离线是常态，顶栏什么都不显示即可
+      set({ status, checkError: null, dismissed: force ? false : get().dismissed })
+    } catch (e) {
+      // 自动检查失败保持安静（离线是常态，顶栏什么都不显示即可）；
+      // 手动点「立即检查」必须有下文——无声无息的按钮和坏掉没有区别。
+      // 走到这里说明 fetch 层就失败了（后端联网失败会以 status.error 正常返回）
+      if (force) {
+        set({
+          checkError:
+            e instanceof Error ? `检查失败：${e.message}` : '检查失败：无法连接本地服务',
+        })
+      }
     } finally {
       set({ checking: false })
     }

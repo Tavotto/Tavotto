@@ -148,7 +148,12 @@ def check(force: bool = False) -> dict:
             "releases_url": brand.RELEASES_URL}
     fresh = (time.time() * 1000 - st["last_check_ms"]) < CHECK_INTERVAL_S * 1000
     if not force and (not st["auto_check"] or fresh):
-        cached = st["last_result"] or {}
+        cached = dict(st["last_result"] or {})
+        # update_available 必须按**当前运行版本**现算：缓存里存的是按检查
+        # 当时的版本比出来的结果，升级并重启后原样回放会出现「有新版本
+        # 0.4.0（当前 0.4.0）」，纠缠用户直到 24h 节流过期
+        latest = str(cached.get("latest") or "")
+        cached["update_available"] = bool(latest) and is_newer(latest, current_version())
         return {**base, **cached, "cached": True,
                 "checked_at_ms": st["last_check_ms"]}
 

@@ -955,14 +955,16 @@ export const syncOverrides = (fromId: string, toId: string, patches: unknown[]) 
 export interface UpdateStatus {
   /** 正在跑的版本 */
   current: string
+  /** 桌面模式：Python updater 停用，升级归安装包；界面只给 Releases 链接 */
+  desktop?: boolean
   /** GitHub Releases 上的最新 tag（离线或从未检查过时缺席） */
   latest?: string
   update_available?: boolean
   notes?: string
   published_at?: string | null
   html_url?: string
-  /** 安装方式决定能不能代劳升级：source 检出只提示 git pull */
-  method: 'pip' | 'pipx' | 'source'
+  /** 安装方式决定能不能代劳升级：source 检出只提示 git pull；桌面模式缺席 */
+  method?: 'pip' | 'pipx' | 'source'
   can_self_update?: boolean
   upgrade_command?: string
   auto_check: boolean

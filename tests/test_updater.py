@@ -112,6 +112,26 @@ def test_check_is_throttled(monkeypatch):
     assert calls == [] and out["cached"] is True and out["latest"] == "9.9.9"
 
 
+def test_cached_result_recomputes_against_running_version(monkeypatch):
+    """缓存回放必须按当前运行版本现算 update_available。
+
+    升级并重启后，缓存里还是按旧版本比出来的 True——原样回放会出现
+    「有新版本 X（当前 X）」，纠缠用户直到 24h 节流过期。"""
+    updater.set_settings({"auto_check": True,
+                          "last_check_ms": int(time.time() * 1000),
+                          "last_result": {"latest": updater.current_version(),
+                                          "update_available": True}})
+    out = updater.check(force=False)
+    assert out["cached"] is True
+    assert out["update_available"] is False  # latest == 正在跑的版本
+
+    # 缓存里的 latest 确实更新时照常提示
+    updater.set_settings({"last_result": {"latest": "9.9.9",
+                                          "update_available": False}})
+    out = updater.check(force=False)
+    assert out["update_available"] is True
+
+
 # ---------------- worker 解释器探测（跨平台） --------------------------------
 def test_worker_python_candidates_prefer_env_then_self(monkeypatch):
     """单环境安装（pip install magplot[worker]）时，跑 Flask 的解释器自己就带

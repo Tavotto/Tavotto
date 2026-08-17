@@ -1647,9 +1647,13 @@ def _updater_disabled_in_desktop():
     """桌面模式下 Python updater 整个停用（升级归 Tauri 层，避免两套升级机制）。
     回禁用响应或 None（浏览器 / CLI 模式照旧）。"""
     if app.config.get("MAGPLOT_DESKTOP_MODE"):
+        # 带上 Releases 地址：界面据此显示「去下载新安装包」，
+        # 而不是留一个永远没有结果的「立即检查」死按钮
         return jsonify({"desktop": True, "auto_check": False,
                         "update_available": False,
-                        "current": engine_updater.current_version()})
+                        "current": engine_updater.current_version(),
+                        "repo_url": engine_brand.REPO_URL,
+                        "releases_url": engine_brand.RELEASES_URL})
     return None
 
 
