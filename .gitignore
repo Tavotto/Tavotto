@@ -42,3 +42,6 @@ src-tauri/gen/
 # 内部执行清单 / 路线图，不进公开仓
 /docs/MAGPLOT_RENAME_AND_MATURITY_PLAN.md
 .impeccable/
+
+# CodeGraph 本地索引（可再生）
+.codegraph/
