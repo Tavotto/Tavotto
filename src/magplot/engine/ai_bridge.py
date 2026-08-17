@@ -216,11 +216,42 @@ def _find_cli(name: str) -> list[str]:
     return argv
 
 
+def _spawn_env(cli_path: str | None, extra: dict | None = None) -> dict:
+    """CLI 子进程的环境：把常见安装目录并进 PATH（不改排序、只补缺）。
+
+    桌面壳从 Finder / 开始菜单启动时继承的是 GUI 的最小 PATH，里面没有
+    /opt/homebrew/bin 这类目录：npm shim 的 `#!/usr/bin/env node` 在子进程里
+    解析不到 node，报 `env: node: No such file or directory`——CLI 明明装着、
+    路径也找到了，一启动就死。把 CLI 自己所在目录 + 各常见安装目录接到
+    PATH 末尾，`env node` 就能像在用户终端里一样解析。"""
+    env = dict(os.environ)
+    parts = [p for p in env.get("PATH", "").split(os.pathsep) if p]
+    home = os.path.expanduser("~")
+    candidates = []
+    if cli_path:
+        candidates.append(os.path.dirname(cli_path))
+    candidates += _search_dirs("node")
+    if os.name != "nt":
+        # nvm 没有稳定的 current 目录：把装过的版本目录挑最新的补上
+        import glob as _glob
+        vers = sorted(_glob.glob(home + "/.nvm/versions/node/*/bin"))
+        if vers:
+            candidates.append(vers[-1])
+    for d in candidates:
+        if d and d not in parts and os.path.isdir(d):
+            parts.append(d)
+    env["PATH"] = os.pathsep.join(parts)
+    if extra:
+        env.update(extra)
+    return env
+
+
 def _probe_version(argv: list[str]) -> str | None:
     try:
         out = subprocess.run([*argv, "--version"], capture_output=True,
                              text=True, timeout=10, encoding="utf-8",
                              errors="replace", stdin=subprocess.DEVNULL,
+                             env=_spawn_env(argv[-1]),
                              creationflags=CREATE_NO_WINDOW)
         line = (out.stdout or out.stderr).strip().splitlines()
         return line[0][:80] if line else None
@@ -603,7 +634,8 @@ def run(agent: str, script: str, user_prompt: str, figures_dir: str,
     LOG.info("AI 任务命令: %s（接口: %s）",
              " ".join(cmd[:-1] if agent == "codex" else cmd[:5]),
              endpoint["label"] if endpoint else "CLI 默认")
-    env = {**os.environ, **extra_env} if extra_env else None
+    # cmd[0] 是 CLI 可执行（或 node），末尾是提示词——PATH 增强按 cmd[0] 算
+    env = _spawn_env(cmd[0], extra_env)
     proc = subprocess.Popen(
         cmd, cwd=figures_dir, env=env,
         stdin=subprocess.DEVNULL,  # 桌面 sidecar 的 stdin 是父进程死亡信号管道，不外传

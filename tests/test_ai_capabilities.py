@@ -4,6 +4,8 @@
 400 `The 'gpt-5' model is not supported when using Codex with a ChatGPT
 account.`，用户在面板里只能看到一个不能用的下拉项。
 """
+import os
+
 import pytest
 
 from magplot.engine import ai_bridge
@@ -74,3 +76,25 @@ def test_claude_side_reports_no_effort_switch(tmp_path, monkeypatch):
     caps = ai_bridge.capabilities(refresh=True)["providers"]["claude"]
     assert caps["models"] == ["sonnet", "opus", "haiku"]
     assert caps["efforts"] == []              # claude CLI 没有强度开关，不假装有
+
+
+def test_spawn_env_appends_cli_dir_and_common_bins(tmp_path, monkeypatch):
+    """GUI 进程的最小 PATH 里没有 /opt/homebrew/bin 之类目录：npm shim 的
+    `#!/usr/bin/env node` 找不到 node（env: node: No such file or directory）。
+    _spawn_env 必须把 CLI 自己所在目录补进 PATH，且不动已有排序。"""
+    cli_dir = tmp_path / "some-bin"
+    cli_dir.mkdir()
+    monkeypatch.setenv("PATH", "/usr/bin")
+    env = ai_bridge._spawn_env(str(cli_dir / "codex"), {"X_EXTRA": "1"})
+    parts = env["PATH"].split(os.pathsep)
+    assert parts[0] == "/usr/bin"          # 原有排序保持
+    assert str(cli_dir) in parts           # CLI 所在目录补上了（env node 可解析）
+    assert env["X_EXTRA"] == "1"           # 第三方接口的注入变量原样保留
+
+
+def test_spawn_env_does_not_duplicate_existing_dirs(tmp_path, monkeypatch):
+    cli_dir = tmp_path / "bin"
+    cli_dir.mkdir()
+    monkeypatch.setenv("PATH", str(cli_dir))
+    env = ai_bridge._spawn_env(str(cli_dir / "codex"))
+    assert env["PATH"].split(os.pathsep).count(str(cli_dir)) == 1
