@@ -31,6 +31,12 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+# Windows 上 stdout 被重定向成管道时会退回系统区域编码（cp1252/cp936），
+# 打印带中文或 ✓ 的进度就会 UnicodeEncodeError——冒烟明明通过却以非零退出。
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 ROOT = Path(__file__).resolve().parent.parent
 NONCE = "smoke-" + os.urandom(16).hex()
 

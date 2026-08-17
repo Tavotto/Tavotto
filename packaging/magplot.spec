@@ -27,6 +27,12 @@ import os
 import sys
 from pathlib import Path
 
+# Windows 上 stdout 被重定向成管道时会退回系统区域编码（cp1252/cp936），
+# 下面带中文的 print 会 UnicodeEncodeError 打死整个 PyInstaller 构建。
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 ROOT = Path(SPECPATH).resolve().parent
 PKG = ROOT / "src" / "magplot"
 

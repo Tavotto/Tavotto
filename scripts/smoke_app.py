@@ -40,6 +40,12 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+# Windows 上 stdout 被重定向成管道时会退回系统区域编码（cp1252/cp936），
+# 打印带中文或 ✓ 的进度就会 UnicodeEncodeError——冒烟明明通过却以非零退出。
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 REPO = Path(__file__).resolve().parent.parent
 DEFAULT_FIGURES = REPO / "examples" / "figures"
 BOOT_TIMEOUT_S = 120      # 冷启动 + 首次 import 在 Windows runner 上可能很慢

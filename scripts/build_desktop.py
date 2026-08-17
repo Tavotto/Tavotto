@@ -26,6 +26,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Windows 上 stdout 被重定向成管道时会退回系统区域编码（cp1252/cp936），
+# 打印带中文的进度就会 UnicodeEncodeError——构建明明成功了却以非零退出。
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 ROOT = Path(__file__).resolve().parent.parent
 
 

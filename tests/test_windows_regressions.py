@@ -218,6 +218,24 @@ def test_startup_prints_reconfigure_stdout_to_utf8():
     assert 'reconfigure(encoding="utf-8"' in src
 
 
+def test_packaging_entry_points_reconfigure_stdout_to_utf8():
+    """打包/冒烟脚本的日志带中文与 ✓✗↓；Windows 管道 stdout 默认 cp1252/cp936，
+    不 reconfigure 的话第一条日志就 UnicodeEncodeError 打死整个构建
+    （windows-exe-smoke 首跑连撞两处：build_worker_runtime 的「↓」、
+    magplot.spec 的中文 print）。新加的入口脚本都要沿用 build_frontend.py
+    的同一段写法。"""
+    repo = Path(__file__).resolve().parent.parent
+    for rel in ("packaging/magplot.spec",
+                "scripts/build_frontend.py",
+                "scripts/build_desktop.py",
+                "scripts/build_worker_runtime.py",
+                "scripts/smoke_app.py",
+                "scripts/smoke_desktop.py"):
+        src = (repo / rel).read_text(encoding="utf-8")
+        assert 'reconfigure(encoding="utf-8"' in src, \
+            f"{rel} 没做 stdout reconfigure，Windows 管道下中文日志会打死进程"
+
+
 def test_runtime_build_log_survives_cp1252_stdout():
     """runtime 构建脚本的日志带「↓」（U+2193）；Windows 上管道 stdout 默认
     cp1252/cp936，第一条下载日志就 UnicodeEncodeError 打死整个构建
