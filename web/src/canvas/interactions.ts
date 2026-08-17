@@ -64,7 +64,7 @@ interface TrackOptions {
   threshold?: number
 }
 
-function trackPointer(e: ReactPointerEvent, { onMove, onEnd, threshold = 2 }: TrackOptions) {
+export function trackPointer(e: ReactPointerEvent, { onMove, onEnd, threshold = 2 }: TrackOptions) {
   const startX = e.clientX
   const startY = e.clientY
   let moved = false
@@ -142,9 +142,15 @@ export function startMoveDrag(e: ReactPointerEvent, objectId: string) {
       let dx = pxToMm(dxPx, t)
       let dy = pxToMm(dyPx, t)
       if (ev.shiftKey) {
-        // 按住 shift 锁定为单轴移动
-        if (Math.abs(dxPx) > Math.abs(dyPx)) dy = 0
-        else dx = 0
+        // 按住 shift 锁定移动方向（Illustrator 语义）：水平 / 垂直 / 45° 斜向，
+        // 位移取指针在锁定方向上的投影，斜拖时也能顺着对角线走
+        const ang = Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) * (Math.PI / 4)
+        // cos(π/2) 是 6e-17 不是 0：轴向锁定必须逐位归零，否则「锁垂直」仍带极小水平漂移
+        const ux = Math.abs(Math.cos(ang)) < 1e-9 ? 0 : Math.cos(ang)
+        const uy = Math.abs(Math.sin(ang)) < 1e-9 ? 0 : Math.sin(ang)
+        const proj = dx * ux + dy * uy
+        dx = ux * proj
+        dy = uy * proj
       }
 
       let snapX: number[] = []
@@ -213,9 +219,11 @@ export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: Res
     onMove: (ev, dxPx, dyPx) => {
       const t = getTransform()
       const [dx, dy] = unrotateVecDeg(pxToMm(dxPx, t), pxToMm(dyPx, t), rot)
-      // 角点按锁定状态等比，Alt 反转；文字只改宽度
+      // 角点按锁定状态等比，Alt 反转；shift 强制等比（Illustrator 语义，
+      // 边柄按住 shift 也等比缩放）；文字只改宽度、不参与等比
       const corner = (dir.includes('e') || dir.includes('w')) && (dir.includes('n') || dir.includes('s'))
-      const proportional = corner && keepRatio !== ev.altKey
+      const proportional =
+        !isText && (corner ? ev.shiftKey || keepRatio !== ev.altKey : ev.shiftKey)
       let next = resizeRect(orig, dir, dx, dy, proportional)
 
       if (isText) {
@@ -427,23 +435,49 @@ const DEFAULT_DRAW: Record<string, { w: number; h: number }> = {
 /**
  * 用当前工具拖出一个新对象；只是点一下则落一个默认尺寸的对象。
  * 完成后工具自动回到选择态（与 Figma / Illustrator 一致）。
+ *
+ * 箭头 / 直线拖动中把真实端点写进 draft：OverlaySvg 按最终样式实时预览
+ * 那条线（不是包围盒虚线框），松手也用同一对端点落对象——吸附与 shift
+ * 角度锁在预览里是什么样，落下来就是什么样。
+ * shift（Illustrator 语义）：矩形 / 椭圆锁成正方形 / 正圆（锚在起点），
+ * 箭头 / 直线锁 15° 角（与端点拖拽同一档）。
  */
 export function startDraw(e: ReactPointerEvent, tool: Exclude<Tool, 'select'>) {
   const store = useDocumentStore.getState()
   const start = clientToMm(e.clientX, e.clientY)
   const cands = candidatesFor(new Set())
+  const linear = tool === 'arrow' || tool === 'line'
   interaction().begin('draw')
 
   trackPointer(e, {
     onMove: (ev) => {
       const t = getTransform()
       let cur = clientToMm(ev.clientX, ev.clientY, t)
-      if (cands && !ev.metaKey && !ev.ctrlKey) {
-        const tol = snapTolMm(t)
-        const hx = snapEdge(cur.x, cands.xs, tol)
-        const hy = snapEdge(cur.y, cands.ys, tol)
-        cur = { x: hx ?? cur.x, y: hy ?? cur.y }
-        interaction().setSnap(hx != null ? [hx] : [], hy != null ? [hy] : [])
+      // shift 角度锁优先于吸附（与端点拖拽一致：锁角时不再吸附，两者会互相拆台）
+      if (ev.shiftKey && linear) {
+        const dx = cur.x - start.x
+        const dy = cur.y - start.y
+        const len = Math.hypot(dx, dy)
+        const ang = Math.round(Math.atan2(dy, dx) / (Math.PI / 12)) * (Math.PI / 12)
+        cur = { x: start.x + Math.cos(ang) * len, y: start.y + Math.sin(ang) * len }
+        interaction().setSnap([], [])
+      } else {
+        if (cands && !ev.metaKey && !ev.ctrlKey) {
+          const tol = snapTolMm(t)
+          const hx = snapEdge(cur.x, cands.xs, tol)
+          const hy = snapEdge(cur.y, cands.ys, tol)
+          cur = { x: hx ?? cur.x, y: hy ?? cur.y }
+          interaction().setSnap(hx != null ? [hx] : [], hy != null ? [hy] : [])
+        }
+        if (ev.shiftKey && (tool === 'rect' || tool === 'ellipse')) {
+          const dx = cur.x - start.x
+          const dy = cur.y - start.y
+          const side = Math.max(Math.abs(dx), Math.abs(dy))
+          cur = {
+            x: start.x + (dx < 0 ? -side : side),
+            y: start.y + (dy < 0 ? -side : side),
+          }
+        }
       }
       interaction().setDraft({
         tool,
@@ -451,11 +485,14 @@ export function startDraw(e: ReactPointerEvent, tool: Exclude<Tool, 'select'>) {
         y: Math.min(start.y, cur.y),
         w: Math.abs(cur.x - start.x),
         h: Math.abs(cur.y - start.y),
+        ...(linear ? { start: { x: start.x, y: start.y }, end: cur } : {}),
       })
     },
     onEnd: (moved, ev) => {
       const draft = interaction().draft
-      const end = clientToMm(ev.clientX, ev.clientY)
+      // 优先用 draft 里的端点：吸附 / shift 锁角只作用于 onMove，
+      // 直接读松手坐标会让最终对象与预览差一口气
+      const end = draft?.end ?? clientToMm(ev.clientX, ev.clientY)
       interaction().end()
 
       const fallback = DEFAULT_DRAW[tool]

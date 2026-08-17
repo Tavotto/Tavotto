@@ -32,6 +32,9 @@ export function ShapeView({ obj, hit = 'none' }: { obj: ShapeObject; hit?: 'stro
     strokeWidth: sw,
     strokeDasharray: dash,
     strokeLinejoin: 'round' as const,
+    // dotted 的线段长只有 0.01×线宽，「点」全靠圆线帽画出来；缺省 butt 线帽下
+    // 点是零面积，整圈描边直接不可见。与后端 _draw_shape 的 lineCap=1 同源。
+    strokeLinecap: 'round' as const,
   }
 
   const poly = (pts: [number, number][]) => (
@@ -46,8 +49,10 @@ export function ShapeView({ obj, hit = 'none' }: { obj: ShapeObject; hit?: 'stro
   return (
     <svg
       className="pointer-events-none absolute left-0 top-0 overflow-visible"
-      width={w}
-      height={h}
+      // 与 ArrowView 同一钳制：竖直 / 水平直线的包围盒薄到亚像素时，
+      // Chrome 会整个跳过 <svg> 的绘制；视口钳到 ≥1px，内部坐标不变。
+      width={Math.max(w, 1)}
+      height={Math.max(h, 1)}
     >
       {obj.shape === 'rect' && (
         <rect
@@ -96,7 +101,7 @@ export function ShapeView({ obj, hit = 'none' }: { obj: ShapeObject; hit?: 'stro
                 strokeLinecap="round"
                 style={{ pointerEvents: hit }}
               />
-              <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} strokeLinecap="round" {...stroke} />
+              <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} {...stroke} />
             </>
           )
         })()}
@@ -116,7 +121,7 @@ export function ShapeView({ obj, hit = 'none' }: { obj: ShapeObject; hit?: 'stro
       {obj.shape === 'polygon' &&
         poly(polygonPoints(obj.sides ?? 6, w, h, inset))}
       {obj.shape === 'brace' && (
-        <path d={bracePath(w, h, inset)} fill="none" strokeLinecap="round" {...stroke} />
+        <path d={bracePath(w, h, inset)} fill="none" {...stroke} />
       )}
     </svg>
   )

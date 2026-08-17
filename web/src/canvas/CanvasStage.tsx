@@ -261,9 +261,20 @@ function ElementEditBar() {
 function EmptyHint() {
   const setLeftTab = useUiStore((s) => s.setLeftTab)
   const selectionEmpty = useSelectionStore((s) => s.ids.length === 0)
+  const zoom = useViewportStore((s) => s.zoom)
+  const panX = useViewportStore((s) => s.panX)
+  const panY = useViewportStore((s) => s.panY)
+  const page = useDocumentStore((s) => s.doc.page)
   if (!selectionEmpty) return null
+  // 锚在纸面中心而不是视口中心：侧栏一开、画布被挤到一边时，
+  // 提示跟着纸面走，而不是飘在灰色工作区中央
+  const cx = panX + mmToWorld(page.w / 2) * zoom
+  const cy = panY + mmToWorld(page.h / 2) * zoom
   return (
-    <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+    <div
+      className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2"
+      style={{ left: cx, top: cy }}
+    >
       <div className="pointer-events-auto">
         <EmptyState
           icon={Images}

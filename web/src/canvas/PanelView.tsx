@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { enginePngUrl, panelSrc } from '@/lib/api'
 import { alignEntries, geomGid, geomTarget } from '@/lib/elementGeom'
 import { pickBucket } from '@/lib/units'
@@ -12,10 +12,12 @@ import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import type { PanelObject, PanelRotation } from '@/types/document'
 import { panelFullSize, panelRotation, rotationSwaps, unrotateVec } from '@/types/document'
 import {
+  isElementHidden,
   pickElement,
   startAxesDrag,
   startElementDrag,
   startElementGroupMove,
+  trackPointer,
 } from './interactions'
 import { openQuickEdit } from './quickEditStore'
 
@@ -134,7 +136,10 @@ function ElementHitLayer({
 }) {
   const manifest = useRenderStore((s) => s.byFile[obj.fileId]?.manifest)
   const setHoverGid = useInteractionStore((s) => s.setHoverGid)
+  const zoom = useViewportStore((s) => s.zoom)
   const ref = useRef<HTMLDivElement>(null)
+  /** 框选带（本层局部 px；世界层随 zoom 缩放，画框时线宽反除保持 1 屏幕 px） */
+  const [band, setBand] = useState<{ l: number; t: number; w: number; h: number } | null>(null)
 
   /**
    * 屏幕点 → 内容分数坐标。旋转后 getBoundingClientRect 给的是轴对齐外框，
@@ -150,6 +155,56 @@ function ElementHitLayer({
       rot,
     )
     return { fx: u / w + 0.5, fy: v / h + 0.5 }
+  }
+
+  /**
+   * 图内元素框选：从空白处（命中 figure）按住拖出选择带，框到的元素整组选中。
+   * 容器（axes/axes3d）的 bbox 盖着整块绘图区，相交即选会让任何框选都混进
+   * 宿主子图，所以容器要求**整个落进框里**才入选；其余元素相交即选。
+   * shift 起手 = 加选（并入既有选区）；没拖动就是普通点空白，回落到 figure。
+   */
+  const startBandSelect = (e: React.PointerEvent) => {
+    const additive = e.shiftKey
+    const ui = useUiStore.getState()
+    const base = additive ? [...ui.selectedGids] : []
+    const origin = frac(e)
+    useInteractionStore.getState().begin('marquee')
+
+    trackPointer(e, {
+      onMove: (ev) => {
+        const cur = frac(ev)
+        const r = {
+          x: Math.min(origin.fx, cur.fx),
+          y: Math.min(origin.fy, cur.fy),
+          w: Math.abs(cur.fx - origin.fx),
+          h: Math.abs(cur.fy - origin.fy),
+        }
+        setBand({
+          l: r.x * layout.width,
+          t: r.y * layout.height,
+          w: r.w * layout.width,
+          h: r.h * layout.height,
+        })
+        if (!manifest) return
+        const hits = manifest.elements
+          .filter((el) => {
+            if (el.gid === 'figure' || isElementHidden(el)) return false
+            if (obj.lockedGids?.includes(el.gid)) return false
+            const [bx, by, bw, bh] = el.bbox
+            if (el.role === 'axes' || el.role === 'axes3d') {
+              return bx >= r.x && by >= r.y && bx + bw <= r.x + r.w && by + bh <= r.y + r.h
+            }
+            return bx < r.x + r.w && bx + bw > r.x && by < r.y + r.h && by + bh > r.y
+          })
+          .map((el) => el.gid)
+        ui.setSelectedGids([...new Set([...base, ...hits])])
+      },
+      onEnd: (moved) => {
+        useInteractionStore.getState().end()
+        setBand(null)
+        if (!moved && !additive) ui.setSelectedGid('figure')
+      },
+    })
   }
 
   return (
@@ -179,6 +234,11 @@ function ElementHitLayer({
         // 非几何元素进了选区也不会搅乱它们。
         if (e.shiftKey && hit && hit.gid !== 'figure') {
           ui.toggleSelectedGid(hit.gid)
+          return
+        }
+        // 空白处（兜底命中 figure）按下 → 拖出框选带；点一下不拖仍是选中 figure
+        if (!hit || hit.gid === 'figure') {
+          startBandSelect(e)
           return
         }
         // 拖多选里的任一成员 = 整组平移，且不改动选择（与画布层多选拖动一致）
@@ -219,7 +279,22 @@ function ElementHitLayer({
         useUiStore.getState().setSelectedGid(hit.gid)
         openQuickEdit({ kind: 'element', panelId: obj.id, gid: hit.gid, focusText: true }, e)
       }}
-    />
+    >
+      {band && (
+        <div
+          className="pointer-events-none absolute"
+          style={{
+            left: band.l,
+            top: band.t,
+            width: band.w,
+            height: band.h,
+            // 本层随世界 zoom 缩放，线宽反除才是屏幕上恒定的 1px
+            border: `${1 / zoom}px dashed var(--color-accent)`,
+            background: 'color-mix(in srgb, var(--color-accent) 6%, transparent)',
+          }}
+        />
+      )}
+    </div>
   )
 }
 

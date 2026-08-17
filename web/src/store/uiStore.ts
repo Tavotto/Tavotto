@@ -112,7 +112,7 @@ interface UiState extends Persisted {
   settingsOpen: boolean
   /** 打开设置时直接跳到哪一节（如顶栏「有新版本」→ 检查更新）；null = 沿用上次 */
   settingsSection: string | null
-  /** 打开「布局文件」弹窗时用户想做的是哪件事，决定焦点落在保存还是载入 */
+  /** 打开「画布文件」弹窗时用户想做的是哪件事，决定焦点落在保存还是载入 */
   layoutIntent: 'save' | 'load'
   /** 全局确认框；由 askConfirm() 写入，ConfirmDialog 渲染 */
   confirm: ConfirmRequest | null
@@ -141,6 +141,8 @@ interface UiState extends Persisted {
   setCropTarget: (id: string | null) => void
   setElementPanel: (id: string | null) => void
   setSelectedGid: (gid: string | null) => void
+  /** 整组替换（图内元素框选用）；顺序即选择顺序，末位是主选 */
+  setSelectedGids: (gids: string[]) => void
   toggleSelectedGid: (gid: string) => void
   setTool: (tool: Tool) => void
   setExportOpen: (v: boolean) => void
@@ -304,6 +306,12 @@ export const useUiStore = create<UiState>((set, get) => ({
   setElementPanel: (elementPanelId) =>
     set({ elementPanelId, selectedGids: [], cropTargetId: null }),
   setSelectedGid: (gid) => set({ selectedGids: gid ? [gid] : [] }),
+  setSelectedGids: (gids) =>
+    set((s) =>
+      s.selectedGids.length === gids.length && s.selectedGids.every((g, i) => g === gids[i])
+        ? s
+        : { selectedGids: gids },
+    ),
   toggleSelectedGid: (gid) =>
     set((s) => ({
       selectedGids: s.selectedGids.includes(gid)

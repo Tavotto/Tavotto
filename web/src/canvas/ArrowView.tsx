@@ -73,8 +73,11 @@ export function ArrowView({ obj, hit = 'none' }: { obj: ArrowObject; hit?: 'stro
   return (
     <svg
       className="pointer-events-none absolute left-0 top-0 overflow-visible"
-      width={w}
-      height={h}
+      // 竖直 / 水平箭头的包围盒被钳到 0.01mm（≈0.04 世界 px）：Chrome 对亚像素
+      // 尺寸的 <svg> 视口整个跳过绘制，overflow:visible 也救不了——箭头凭空消失。
+      // 视口钳到 ≥1px 只影响绘制区域，内部坐标仍按真实 w/h 计算，几何不变。
+      width={Math.max(w, 1)}
+      height={Math.max(h, 1)}
     >
       {/*
         沿线段的透明命中线：可见描边只有零点几毫米宽，水平箭头的包围盒 h 还被钳到

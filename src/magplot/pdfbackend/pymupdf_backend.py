@@ -425,8 +425,10 @@ def _draw_shape(page: pymupdf.Page, o: dict) -> None:
     inset = sw / 2
     kind = o.get("shape")
     shape = page.new_shape()
+    # lineCap=1（圆帽）：dotted 的线段长只有 0.01×线宽，「点」全靠圆线帽画出来，
+    # butt 帽下整圈描边不可见。与前端 ShapeView 的 strokeLinecap='round' 同源。
     filled = dict(color=color, fill=fill, width=sw, dashes=dashes,
-                  fill_opacity=fill_opacity, lineJoin=1, morph=morph)
+                  fill_opacity=fill_opacity, lineJoin=1, lineCap=1, morph=morph)
     if kind == "rect":
         radius_mm = float(o.get("corner_radius_mm") or 0)
         rect = pymupdf.Rect(x + inset, y + inset,

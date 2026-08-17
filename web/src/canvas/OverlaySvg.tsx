@@ -1,5 +1,6 @@
 import { Fragment } from 'react'
 import type { Rect4 } from '@/lib/axesLayout'
+import { MM_PER_PT } from '@/lib/units'
 import { geomTarget, resolveGroup } from '@/lib/elementGeom'
 import { ALL_DIRS, boundsOf, dirsFor, type ResizeDir } from '@/lib/geometry'
 import { useDocumentStore } from '@/store/documentStore'
@@ -173,31 +174,38 @@ export function OverlaySvg() {
         />
       )}
 
-      {/* hover 预示 */}
-      {hovered && (
-        <rect
-          {...rectAttrs(toScreen(hovered, t))}
-          transform={spinOf(hovered, toScreen(hovered, t))}
-          fill="none"
-          stroke={SEL}
-          strokeOpacity={0.4}
-          strokeWidth={1}
-        />
-      )}
-
-      {/* 选择框 */}
-      {!cropTarget &&
-        selected.map((o) => (
+      {/* hover 预示；箭头 / 直线沿线段本身描示，不画与线对不上的包围盒框 */}
+      {hovered &&
+        (isLinear(hovered) ? (
+          <LinearOutline obj={hovered} t={t} opacity={0.4} />
+        ) : (
           <rect
-            key={o.id}
-            {...rectAttrs(toScreen(o, t))}
-            transform={spinOf(o, toScreen(o, t))}
+            {...rectAttrs(toScreen(hovered, t))}
+            transform={spinOf(hovered, toScreen(hovered, t))}
             fill="none"
             stroke={SEL}
+            strokeOpacity={0.4}
             strokeWidth={1}
-            strokeDasharray={o.id === editingTextId ? '3 2' : undefined}
           />
         ))}
+
+      {/* 选择框；箭头 / 直线同上——只有沿线的描示 + 端点手柄，没有矩形外框 */}
+      {!cropTarget &&
+        selected.map((o) =>
+          isLinear(o) ? (
+            <LinearOutline key={o.id} obj={o} t={t} />
+          ) : (
+            <rect
+              key={o.id}
+              {...rectAttrs(toScreen(o, t))}
+              transform={spinOf(o, toScreen(o, t))}
+              fill="none"
+              stroke={SEL}
+              strokeWidth={1}
+              strokeDasharray={o.id === editingTextId ? '3 2' : undefined}
+            />
+          ),
+        )}
 
       {groupBounds && !cropTarget && (
         <rect
@@ -271,21 +279,71 @@ export function OverlaySvg() {
         />
       )}
 
-      {/* 绘制预览 */}
-      {draft && (
-        <rect
-          {...rectAttrs(toScreen(draft, t))}
-          fill="none"
-          stroke={SEL}
-          strokeWidth={1}
-          strokeDasharray="3 2"
-        />
-      )}
+      {/* 绘制预览：箭头 / 直线画最终那条线（含箭头帽），其余仍是虚线框 */}
+      {draft &&
+        (draft.start && draft.end ? (
+          <DraftLinePreview draft={draft} t={t} />
+        ) : (
+          <rect
+            {...rectAttrs(toScreen(draft, t))}
+            fill="none"
+            stroke={SEL}
+            strokeWidth={1}
+            strokeDasharray="3 2"
+          />
+        ))}
 
       {cropTarget && cropTarget.type === 'panel' && <CropFrame obj={cropTarget} t={t} />}
 
       {elementPanel?.type === 'panel' && <ElementBoxes panel={elementPanel} t={t} />}
     </svg>
+  )
+}
+
+/**
+ * 箭头 / 直线的拖画预览：直接按新对象的最终样式画（默认色 + 1pt 线宽 +
+ * 箭头帽），几何与 ArrowView 同一套（帽长 4×线宽、帽半宽 1.7×线宽、
+ * 实心三角端线段回缩 0.75×帽长）——预览即成品。
+ */
+function DraftLinePreview({
+  draft,
+  t,
+}: {
+  draft: { tool: string; start?: { x: number; y: number }; end?: { x: number; y: number } }
+  t: ViewTransform
+}) {
+  const a = { x: mmToViewX(draft.start!.x, t), y: mmToViewY(draft.start!.y, t) }
+  const b = { x: mmToViewX(draft.end!.x, t), y: mmToViewY(draft.end!.y, t) }
+  const sw = Math.max(mmToPx(MM_PER_PT, t), 0.5) // 新对象默认 strokePt=1
+  const color = '#1B1B18' // 与 startDraw 落对象的默认色同一常量语义
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  const len = Math.hypot(dx, dy) || 1
+  const ux = dx / len
+  const uy = dy / len
+  const isArrow = draft.tool === 'arrow'
+  const headLen = sw * 4
+  const headHalf = sw * 1.7
+  const trim = isArrow ? headLen * 0.75 : 0
+  const p2 = { x: b.x - ux * trim, y: b.y - uy * trim }
+  return (
+    <g style={{ shapeRendering: 'geometricPrecision' }}>
+      <line
+        x1={a.x}
+        y1={a.y}
+        x2={p2.x}
+        y2={p2.y}
+        stroke={color}
+        strokeWidth={sw}
+        strokeLinecap="round"
+      />
+      {isArrow && len > headLen && (
+        <polygon
+          points={`${b.x},${b.y} ${b.x - ux * headLen + -uy * headHalf},${b.y - uy * headLen + ux * headHalf} ${b.x - ux * headLen - -uy * headHalf},${b.y - uy * headLen - ux * headHalf}`}
+          fill={color}
+        />
+      )}
+    </g>
   )
 }
 
@@ -297,6 +355,38 @@ function rectAttrs(box: Box) {
     width: Math.max(Math.round(box.w) - 1, 1),
     height: Math.max(Math.round(box.h) - 1, 1),
   }
+}
+
+/**
+ * 箭头 / 直线的 hover / 选中描示：一条沿真实端点的细线（代替包围盒矩形——
+ * 斜线的包围盒是一大块与线对不上的矩形，Illustrator 语义是描线本身）。
+ * 端点为未旋转包围盒比例坐标，旋转由与选择框同一套 spinOf 处理。
+ */
+function LinearOutline({
+  obj,
+  t,
+  opacity,
+}: {
+  obj: LinearObject
+  t: ViewTransform
+  opacity?: number
+}) {
+  const ends = lineEndpoints(obj)
+  const box = toScreen(obj, t)
+  return (
+    <line
+      x1={box.x + ends.start.rx * box.w}
+      y1={box.y + ends.start.ry * box.h}
+      x2={box.x + ends.end.rx * box.w}
+      y2={box.y + ends.end.ry * box.h}
+      transform={spinOf(obj, box)}
+      stroke={SEL}
+      strokeOpacity={opacity}
+      strokeWidth={1.5}
+      strokeLinecap="round"
+      style={{ shapeRendering: 'geometricPrecision' }}
+    />
+  )
 }
 
 /**

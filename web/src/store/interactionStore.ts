@@ -6,12 +6,22 @@ export type DragKind =
   | 'none' | 'move' | 'resize' | 'marquee' | 'pan'
   | 'guide' | 'draw' | 'crop' | 'endpoint' | 'element'
 
+export type DraftPreview = Rect & {
+  tool: string
+  start?: { x: number; y: number }
+  end?: { x: number; y: number }
+}
+
 interface InteractionState {
   kind: DragKind
   /** 框选矩形（mm） */
   marquee: Rect | null
-  /** 正在绘制的新对象预览（mm） */
-  draft: (Rect & { tool: string }) | null
+  /**
+   * 正在绘制的新对象预览（mm）。箭头 / 直线额外带真实端点：预览画的是
+   * 最终那条线（含箭头帽），不是包围盒虚线框；松手落对象也用同一对端点，
+   * 保证「预览什么就得到什么」（吸附 / shift 角度锁都已折算在内）。
+   */
+  draft: DraftPreview | null
   /** 命中的吸附参考线（mm） */
   snapXs: number[]
   snapYs: number[]
@@ -33,7 +43,7 @@ interface InteractionState {
   begin: (kind: DragKind) => void
   end: () => void
   setMarquee: (r: Rect | null) => void
-  setDraft: (d: (Rect & { tool: string }) | null) => void
+  setDraft: (d: DraftPreview | null) => void
   setSnap: (xs: number[], ys: number[]) => void
   setHover: (id: string | null) => void
   setHoverGid: (gid: string | null) => void
