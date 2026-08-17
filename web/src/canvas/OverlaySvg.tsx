@@ -1,7 +1,8 @@
 import { Fragment } from 'react'
+import type { ManifestElement } from '@/lib/api'
 import type { Rect4 } from '@/lib/axesLayout'
 import { MM_PER_PT } from '@/lib/units'
-import { arrowEndpointsOf, geomTarget, resolveGroup } from '@/lib/elementGeom'
+import { arrowEndpointsOf, geomTarget, panelFullRect, resolveGroup } from '@/lib/elementGeom'
 import { ALL_DIRS, boundsOf, dirsFor, type ResizeDir } from '@/lib/geometry'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
@@ -17,13 +18,7 @@ import {
 } from '@/store/viewportStore'
 import { useRenderStore } from '@/store/renderStore'
 import type { CanvasObject, LinearObject, PanelObject } from '@/types/document'
-import {
-  isLinear,
-  lineEndpoints,
-  objectRotation,
-  panelContentSize,
-  panelRotation,
-} from '@/types/document'
+import { isLinear, lineEndpoints, objectRotation, panelRotation } from '@/types/document'
 import {
   startArrowDrag,
   startAxesDrag,
@@ -494,24 +489,6 @@ function CropFrame({ obj, t }: { obj: CanvasObject; t: ViewTransform }) {
   )
 }
 
-/**
- * 面板未被裁剪时占据的完整显示矩形（mm，**内容坐标系**）——manifest 的分数
- * 坐标就摊在它上面。面板旋转时内容与包围盒长宽互换，且内容以包围盒中心为
- * 中心，所以这里统一按中心推算；画框时整组再绕同一个中心转回去。
- */
-function fullRect(panel: PanelObject) {
-  const c = panel.crop
-  const content = panelContentSize(panel)
-  const cx = panel.x + panel.w / 2
-  const cy = panel.y + panel.h / 2
-  return {
-    x: cx - content.w / 2 - (c ? (c.x / c.w) * content.w : 0),
-    y: cy - content.h / 2 - (c ? (c.y / c.h) * content.h : 0),
-    w: content.w / (c?.w ?? 1),
-    h: content.h / (c?.h ?? 1),
-  }
-}
-
 /** 图内元素的 hover / 选中框；拖动时跟随乐观位移 */
 function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
   const manifest = useRenderStore((s) => s.byFile[panel.fileId]?.manifest)
@@ -523,7 +500,7 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
   const selectedGid = selectedGids.at(-1) ?? null
   if (!manifest) return null
 
-  const full = fullRect(panel)
+  const full = panelFullRect(panel)
   const toBox = (r: Rect4) =>
     toScreen({ x: full.x + r[0] * full.w, y: full.y + r[1] * full.h, w: r[2] * full.w, h: r[3] * full.h }, t)
   /**
@@ -541,13 +518,13 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
   }
 
   // 所有选中元素画同一种框；位图与宿主子图落在同一个几何目标上，只画一次
-  const picked = new Map<string, Box>()
+  const picked = new Map<string, { target: ManifestElement; box: Box }>()
   for (const gid of selectedGids) {
     const r = resolve(gid)
-    if (r) picked.set(r.key, r.box)
+    if (r) picked.set(r.key, { target: r.target, box: r.box })
   }
   const hovered = hoverGid ? resolve(hoverGid) : null
-  const hover = hovered && !picked.has(hovered.key) ? hovered.box : null
+  const hover = hovered && !picked.has(hovered.key) ? hovered : null
   const panelBox = toScreen(panel, t)
   const primary = selectedGid ? resolve(selectedGid) : null
   const layout = { width: mmToWorld(full.w), height: mmToWorld(full.h) }
@@ -569,6 +546,33 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
     return { x: b.x, y: b.y }
   }
 
+  /**
+   * 图内独立箭头的 hover / 选中描示：沿真实端点画线（画布箭头 LinearOutline 的
+   * 同款语义）——斜线的 bbox 是一大块与线对不上的矩形，不画它。
+   * 整体拖动跟随乐观位移；拖单端点时下方的虚线预览（arrowPreview）接管，这里不画。
+   */
+  const arrowOutline = (target: ManifestElement, opacity?: number) => {
+    const pts = arrowEndpointsOf(panel, target)
+    if (!pts || arrowPreview?.gid === target.gid) return null
+    const dx = gidDrag?.gid === target.gid ? gidDrag.dfx : 0
+    const dy = gidDrag?.gid === target.gid ? gidDrag.dfy : 0
+    const a = toPoint([pts[0][0] + dx, pts[0][1] + dy])
+    const b = toPoint([pts[1][0] + dx, pts[1][1] + dy])
+    return (
+      <line
+        x1={a.x}
+        y1={a.y}
+        x2={b.x}
+        y2={b.y}
+        stroke="var(--color-accent)"
+        strokeOpacity={opacity}
+        strokeWidth={1.5}
+        strokeLinecap="round"
+        style={{ shapeRendering: 'geometricPrecision' }}
+      />
+    )
+  }
+
   return (
     <>
       {/* 编辑态的面板轮廓，提示「现在在图内」 */}
@@ -581,26 +585,33 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
         strokeOpacity={0.7}
       />
       <g transform={spin}>
-        {hover && (
-          <rect
-            {...rectAttrs(hover)}
-            fill="var(--color-accent)"
-            fillOpacity={0.06}
-            stroke="var(--color-accent)"
-            strokeWidth={1}
-            strokeOpacity={0.55}
-          />
+        {hover &&
+          (hover.target.arrow_endpoints ? (
+            arrowOutline(hover.target, 0.5)
+          ) : (
+            <rect
+              {...rectAttrs(hover.box)}
+              fill="var(--color-accent)"
+              fillOpacity={0.06}
+              stroke="var(--color-accent)"
+              strokeWidth={1}
+              strokeOpacity={0.55}
+            />
+          ))}
+        {[...picked].map(([key, r]) =>
+          r.target.arrow_endpoints ? (
+            <Fragment key={key}>{arrowOutline(r.target)}</Fragment>
+          ) : (
+            <rect
+              key={key}
+              {...rectAttrs(r.box)}
+              fill="var(--color-accent)"
+              fillOpacity={0.06}
+              stroke="var(--color-accent)"
+              strokeWidth={1}
+            />
+          ),
         )}
-        {[...picked].map(([key, box]) => (
-          <rect
-            key={key}
-            {...rectAttrs(box)}
-            fill="var(--color-accent)"
-            fillOpacity={0.06}
-            stroke="var(--color-accent)"
-            strokeWidth={1}
-          />
-        ))}
 
         {/* 组包围框：只有细虚线 + 手柄，不加底色，与单元素选中框区分 */}
         {groupBox && (

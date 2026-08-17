@@ -37,9 +37,14 @@ export const ObjectView = memo(function ObjectView({ obj }: { obj: CanvasObject 
     e.stopPropagation()
 
     // 图内编辑时点了别的对象 = 回到画布层工作：退出编辑态，
-    // 属性页才能跟随点中的对象（正在编辑的面板自己被命中层拦截，到不了这里）
+    // 属性页才能跟随点中的对象（正在编辑的面板自己被命中层拦截，到不了这里）。
+    // 例外：shift 点标注（文字/箭头/形状）= 加入混排选区——标注与图内元素
+    // 一起进元素检查器的对齐工具条，编辑态不退。
     const ui = useUiStore.getState()
-    if (ui.elementPanelId && ui.elementPanelId !== obj.id) ui.setElementPanel(null)
+    if (ui.elementPanelId && ui.elementPanelId !== obj.id) {
+      const joinsMixed = e.shiftKey && obj.type !== 'panel'
+      if (!joinsMixed) ui.setElementPanel(null)
+    }
 
     const sel = useSelectionStore.getState()
     // 成组的对象点谁都是整组：选择、移动、属性都对整组生效

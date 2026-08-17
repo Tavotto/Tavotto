@@ -537,3 +537,32 @@ class Canvas:
 
 def compose(page_w_mm: float, page_h_mm: float) -> Canvas:
     return Canvas(page_w_mm, page_h_mm)
+
+
+def annotate_asset(pdf_path: Path, png_path: Path | None,
+                   objects: list[dict], dpi: int = 600) -> None:
+    """把画布标注（text/arrow/shape，坐标为**该图自身的 mm**）画进导出的
+    单图文件——「写回原始文件」勾选携带标注时用。
+
+    PDF 上矢量绘制（与导出合成同一套 _draw_*，几何严格同源）；PNG 由注好
+    的 PDF 重新栅格化，保证两种载体逐像素同源。只有 PNG、没有矢量底的
+    素材不支持（调用方先拦）。"""
+    doc = pymupdf.open(str(pdf_path))
+    try:
+        page = doc[0]
+        for o in objects:
+            kind = o.get("type")
+            if kind == "text":
+                _draw_text(page, o)
+            elif kind == "arrow":
+                _draw_arrow(page, o)
+            elif kind == "shape":
+                _draw_shape(page, o)
+        doc.save(str(pdf_path), incremental=True,
+                 encryption=pymupdf.PDF_ENCRYPT_KEEP)
+        if png_path is not None:
+            zoom = dpi / 72.0
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False)
+            pix.save(str(png_path))
+    finally:
+        doc.close()

@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react'
 import { enginePngUrl, panelSrc } from '@/lib/api'
-import { alignEntries, geomGid, geomTarget } from '@/lib/elementGeom'
+import { alignEntries, geomGid, geomTarget, segIntersectsRect } from '@/lib/elementGeom'
 import { pickBucket } from '@/lib/units'
 import { cn } from '@/lib/utils'
 import { isJustBakedBaseline } from '@/store/actions'
@@ -191,6 +191,10 @@ function ElementHitLayer({
           .filter((el) => {
             if (el.gid === 'figure' || isElementHidden(el)) return false
             if (obj.lockedGids?.includes(el.gid)) return false
+            // 图内独立箭头按线本身与框选带相交，不用一大块空白 bbox
+            if (el.arrow_endpoints && el.arrow_endpoints.length >= 2) {
+              return segIntersectsRect(el.arrow_endpoints[0], el.arrow_endpoints[1], r)
+            }
             const [bx, by, bw, bh] = el.bbox
             if (el.role === 'axes' || el.role === 'axes3d') {
               return bx >= r.x && by >= r.y && bx + bw <= r.x + r.w && by + bh <= r.y + r.h

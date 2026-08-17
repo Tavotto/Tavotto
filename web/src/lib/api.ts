@@ -612,12 +612,21 @@ export async function engineSvg(id: string, rev: number, signal?: AbortSignal): 
   return res.text()
 }
 
-/** 用当前 overrides 全质量重出该 stem 的 PDF+PNG，原子替换 figures 里的原文件 */
-export const updateSourceFiles = (id: string, patches: unknown[]) =>
+/** 用当前 overrides 全质量重出该 stem 的 PDF+PNG，原子替换 figures 里的原文件。
+ *  annotations 非空 = 顺带把画布标注烙进原图（坐标已换算成该图自身的 mm）。 */
+export const updateSourceFiles = (
+  id: string,
+  patches: unknown[],
+  annotations?: ExportObject[],
+) =>
   jsonFetch<{ updated: string[]; backup_dir: string }>('/api/engine/update_source', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id, patches }),
+    body: JSON.stringify({
+      id,
+      patches,
+      ...(annotations?.length ? { annotations } : {}),
+    }),
   })
 
 /* -------------------------------- AI 桥 ----------------------------------- */

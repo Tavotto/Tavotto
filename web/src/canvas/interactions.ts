@@ -15,8 +15,10 @@ import type { Manifest, ManifestElement } from '@/lib/api'
 import { flipY, resizeGroup, round4, unionBox, type Rect4 } from '@/lib/axesLayout'
 import {
   arrowEndpointsOf,
+  elementSnapCandidates,
   groupBoxes,
   groupPatches,
+  isElementHidden,
   positionOf,
   type AlignEntry,
   type Group,
@@ -25,6 +27,7 @@ import { newId } from '@/lib/id'
 import { clamp } from '@/lib/units'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
+import { useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore, type Tool } from '@/store/uiStore'
 import {
@@ -105,9 +108,48 @@ function snapPrefs() {
 
 const candidatesFor = (exclude: Set<string>) => {
   const prefs = snapPrefs()
-  return prefs
-    ? snapCandidates(doc().objects, exclude, doc().page, doc().guides, prefs)
-    : null
+  if (!prefs) return null
+  const cands = snapCandidates(doc().objects, exclude, doc().page, doc().guides, prefs)
+  if (prefs.objects) {
+    // 图内元素的中心线也参与：拖画布标注（箭头指向图里那行字）时能吸到
+    // 图内文字 / 图例 / 子图的水平、垂直中心线上，参考线照常显示
+    const byFile = useRenderStore.getState().byFile
+    for (const o of doc().objects) {
+      if (o.type !== 'panel' || o.hidden || exclude.has(o.id)) continue
+      const manifest = byFile[o.fileId]?.manifest
+      if (!manifest) continue
+      const extra = elementSnapCandidates(o, manifest)
+      cands.xs.push(...extra.xs)
+      cands.ys.push(...extra.ys)
+    }
+  }
+  return cands
+}
+
+/**
+ * shift 方向锁（Illustrator 语义）：位移投影到最近的水平 / 垂直 / 45° 方向，
+ * 斜拖时也能顺着对角线走。cos(π/2) 是 6e-17 不是 0：轴向分量必须逐位归零，
+ * 否则「锁垂直」仍带极小水平漂移。
+ */
+function axisLock(dx: number, dy: number): [number, number] {
+  const ang = Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) * (Math.PI / 4)
+  const ux = Math.abs(Math.cos(ang)) < 1e-9 ? 0 : Math.cos(ang)
+  const uy = Math.abs(Math.sin(ang)) < 1e-9 ? 0 : Math.sin(ang)
+  const proj = dx * ux + dy * uy
+  return [ux * proj, uy * proj]
+}
+
+/**
+ * 分数坐标位移的 shift 方向锁：fx / fy 分别除以内容宽高，45° 只有换算到
+ * 内容像素系投影、再换算回去才是视觉上的 45°（水平 / 垂直不受比例影响）。
+ */
+function contentAxisLock(
+  layout: { width: number; height: number },
+  dfx: number,
+  dfy: number,
+): [number, number] {
+  const [dx, dy] = axisLock(dfx * layout.width, dfy * layout.height)
+  return [dx / layout.width, dy / layout.height]
 }
 
 /**
@@ -143,15 +185,7 @@ export function startMoveDrag(e: ReactPointerEvent, objectId: string) {
       let dx = pxToMm(dxPx, t)
       let dy = pxToMm(dyPx, t)
       if (ev.shiftKey) {
-        // 按住 shift 锁定移动方向（Illustrator 语义）：水平 / 垂直 / 45° 斜向，
-        // 位移取指针在锁定方向上的投影，斜拖时也能顺着对角线走
-        const ang = Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) * (Math.PI / 4)
-        // cos(π/2) 是 6e-17 不是 0：轴向锁定必须逐位归零，否则「锁垂直」仍带极小水平漂移
-        const ux = Math.abs(Math.cos(ang)) < 1e-9 ? 0 : Math.cos(ang)
-        const uy = Math.abs(Math.sin(ang)) < 1e-9 ? 0 : Math.sin(ang)
-        const proj = dx * ux + dy * uy
-        dx = ux * proj
-        dy = uy * proj
+        ;[dx, dy] = axisLock(dx, dy)
       }
 
       let snapX: number[] = []
@@ -761,10 +795,8 @@ export function startCropDrag(
  * 用 manifest bbox 做命中测试：面积小者优先，「图表外壳」类降权，
  * 边缘留 0.4% 容差。不依赖 SVG 内部结构，因此换 matplotlib 版本也不会失效。
  */
-/** manifest 里 visible=false 即已被「删除」（非破坏性隐藏） */
-export function isElementHidden(el: ManifestElement): boolean {
-  return el.editable.some((f) => f.prop === 'visible' && f.value === false)
-}
+// isElementHidden 已随 manifest 几何一起收进 lib/elementGeom；原调用点从这里继续拿
+export { isElementHidden }
 
 /**
  * 命中评分的角色权重：重叠时谁该让路。
@@ -784,6 +816,30 @@ const HIT_PENALTY: Record<string, number> = {
   ticklabel: 20,
 }
 
+/** 图内独立箭头的命中容差（mm，线两侧各留这么宽） */
+const ARROW_HIT_MM = 1.5
+
+/** 点到线段的距离，mm 系：分数坐标 x/y 分别乘以图宽图高，距离才是视觉距离 */
+function arrowDistMm(
+  size: [number, number],
+  fx: number,
+  fy: number,
+  a: [number, number],
+  b: [number, number],
+): number {
+  const px = fx * size[0]
+  const py = fy * size[1]
+  const ax = a[0] * size[0]
+  const ay = a[1] * size[1]
+  const bx = b[0] * size[0]
+  const by = b[1] * size[1]
+  const dx = bx - ax
+  const dy = by - ay
+  const len2 = dx * dx + dy * dy
+  const t = len2 ? clamp(((px - ax) * dx + (py - ay) * dy) / len2, 0, 1) : 0
+  return Math.hypot(px - (ax + dx * t), py - (ay + dy * t))
+}
+
 export function pickElement(
   manifest: Manifest | null | undefined,
   fx: number,
@@ -798,6 +854,22 @@ export function pickElement(
     if (el.gid === 'figure') continue
     if (isElementHidden(el)) continue // 隐藏的元素不该再挡住点击
     if (lockedGids?.includes(el.gid)) continue // 锁定元素只能从元素树选中
+    // 图内独立箭头按线本身命中（与画布箭头同语义，见 hitTest.test 的沿线命中）：
+    // 斜箭头的 bbox 是一大块空白矩形，按矩形命中会让远离线的点击也选中箭头、
+    // 还把底下元素的点击偷走。评分用线的「墨迹面积」（长 × 2×容差，换算回
+    // 分数系），与其余元素的 bbox 面积同一量纲。
+    if (el.arrow_endpoints && el.arrow_endpoints.length >= 2) {
+      const [a, b] = el.arrow_endpoints
+      const [sw, sh] = manifest.size_mm
+      if (arrowDistMm(manifest.size_mm, fx, fy, a, b) > ARROW_HIT_MM) continue
+      const lenMm = Math.hypot((b[0] - a[0]) * sw, (b[1] - a[1]) * sh)
+      const score = (lenMm * 2 * ARROW_HIT_MM) / (sw * sh)
+      if (score < bestScore) {
+        bestScore = score
+        best = el
+      }
+      continue
+    }
     const [x, y, w, h] = el.bbox
     if (fx < x - PAD || fx > x + w + PAD || fy < y - PAD || fy > y + h + PAD) continue
     const area = w * h
@@ -833,17 +905,22 @@ export function startElementDrag(
   interaction().begin('element')
   // 面板可能被旋转过：屏幕位移要先转回内容坐标系，图内的分数坐标才对得上
   const toContent = contentDelta(panel, layout)
+  // 松手写 onMove 最后一次的位移：shift 锁向只作用于 onMove，若重读松手坐标，
+  // shift 先于抬指松开时落点会与预览差一口气
+  let last: [number, number] = [0, 0]
 
   trackPointer(e, {
-    onMove: (_ev, dxPx, dyPx) => {
-      const [dfx, dfy] = toContent(dxPx, dyPx)
+    onMove: (ev, dxPx, dyPx) => {
+      let [dfx, dfy] = toContent(dxPx, dyPx)
+      if (ev.shiftKey) [dfx, dfy] = contentAxisLock(layout, dfx, dfy)
+      last = [dfx, dfy]
       group?.setAttribute('transform', `translate(${dfx * viewBox[2]},${dfy * viewBox[3]})`)
       interaction().setGidDrag({ gid: element.gid, dfx, dfy })
     },
-    onEnd: (moved, ev) => {
+    onEnd: (moved) => {
       interaction().end()
       if (!moved) return
-      const [dfx, dfy] = toContent(ev.clientX - e.clientX, ev.clientY - e.clientY)
+      const [dfx, dfy] = last
       setOverride(panel.id, element.gid, dragProp, [anchor[0] + dfx, anchor[1] + dfy], true)
     },
   })
@@ -853,6 +930,10 @@ export function startElementDrag(
  * 拖动图内独立箭头（FancyArrowPatch）：整体平移或拖单个端点。
  * 整体平移时顺带平移 SVG <g> 做乐观预览；单端拖动改变形状，SVG 预览会骗人，
  * 改在覆盖层画一条虚线（OverlaySvg 读 arrowPreview），松手写 endpoints_frac。
+ *
+ * shift（Illustrator 语义，与画布箭头同一套档位）：整体拖动锁水平 / 垂直 / 45°，
+ * 拖单端点相对固定端锁 15° 角。端点是 figure 分数坐标（x/y 分别除以图宽图高），
+ * 角度必须换算到内容像素系再算，锁出来的才是视觉角度。
  */
 export function startArrowDrag(
   e: ReactPointerEvent,
@@ -872,32 +953,62 @@ export function startArrowDrag(
 
   interaction().begin('element')
   const toContent = contentDelta(panel, layout)
-  const next = (dfx: number, dfy: number): [number, number][] => [
-    which !== 'end' ? [pts[0][0] + dfx, pts[0][1] + dfy] : pts[0],
-    which !== 'start' ? [pts[1][0] + dfx, pts[1][1] + dfy] : pts[1],
-  ]
+  const W = layout.width
+  const H = layout.height
+
+  const compute = (dfx: number, dfy: number, shift: boolean) => {
+    if (which === 'both') {
+      if (shift) [dfx, dfy] = contentAxisLock(layout, dfx, dfy)
+      return {
+        dfx,
+        dfy,
+        a: [pts[0][0] + dfx, pts[0][1] + dfy] as [number, number],
+        b: [pts[1][0] + dfx, pts[1][1] + dfy] as [number, number],
+      }
+    }
+    const fixed = pts[which === 'start' ? 1 : 0] as [number, number]
+    const moving = pts[which === 'start' ? 0 : 1]
+    let mx = moving[0] + dfx
+    let my = moving[1] + dfy
+    if (shift) {
+      // 15° 锁角（与画布箭头端点拖拽同一档），在内容像素系里取角
+      const dx = (mx - fixed[0]) * W
+      const dy = (my - fixed[1]) * H
+      const len = Math.hypot(dx, dy)
+      const ang = Math.round(Math.atan2(dy, dx) / (Math.PI / 12)) * (Math.PI / 12)
+      mx = fixed[0] + (Math.cos(ang) * len) / W
+      my = fixed[1] + (Math.sin(ang) * len) / H
+    }
+    const moved: [number, number] = [mx, my]
+    return which === 'start'
+      ? { dfx, dfy, a: moved, b: fixed }
+      : { dfx, dfy, a: fixed, b: moved }
+  }
+
+  // 松手写 onMove 最后一次的结果：shift 锁角只作用于 onMove，重读松手坐标会
+  // 让落点与预览差一口气（与 startDraw 读 draft 同一取舍）
+  let last: ReturnType<typeof compute> | null = null
 
   trackPointer(e, {
-    onMove: (_ev, dxPx, dyPx) => {
+    onMove: (ev, dxPx, dyPx) => {
       const [dfx, dfy] = toContent(dxPx, dyPx)
+      const r = compute(dfx, dfy, ev.shiftKey)
+      last = r
       if (which === 'both') {
-        group?.setAttribute('transform', `translate(${dfx * viewBox[2]},${dfy * viewBox[3]})`)
-        interaction().setGidDrag({ gid: element.gid, dfx, dfy })
+        group?.setAttribute('transform', `translate(${r.dfx * viewBox[2]},${r.dfy * viewBox[3]})`)
+        interaction().setGidDrag({ gid: element.gid, dfx: r.dfx, dfy: r.dfy })
       } else {
-        const [a, b] = next(dfx, dfy)
-        interaction().setArrowPreview({ gid: element.gid, a, b })
+        interaction().setArrowPreview({ gid: element.gid, a: r.a, b: r.b })
       }
     },
-    onEnd: (moved, ev) => {
+    onEnd: (moved) => {
       interaction().end()
-      if (!moved) return
-      const [dfx, dfy] = toContent(ev.clientX - e.clientX, ev.clientY - e.clientY)
-      const [a, b] = next(dfx, dfy)
+      if (!moved || !last) return
       setOverride(
         panel.id,
         element.gid,
         'endpoints_frac',
-        [a[0], a[1], b[0], b[1]].map(round4),
+        [last.a[0], last.a[1], last.b[0], last.b[1]].map(round4),
         true,
       )
     },
@@ -949,11 +1060,13 @@ export function startAxesDrag(
   interaction().begin('element')
   const toContent = contentDelta(panel, layout)
 
-  const compute = (dxPx: number, dyPx: number) => {
-    const [dfx, dfy] = toContent(dxPx, dyPx)
+  const compute = (dxPx: number, dyPx: number, shift = false) => {
+    let [dfx, dfy] = toContent(dxPx, dyPx)
     let [x, y, w, h] = start
 
     if (mode === 'move') {
+      // 整体拖动支持 shift 锁向（与画布对象移动一致）；缩放手柄不参与
+      if (shift) [dfx, dfy] = contentAxisLock(layout, dfx, dfy)
       x = clamp(x + dfx, 0, 1 - w)
       y = clamp(y - dfy, 0, 1 - h) // 屏幕向下 = bottom-origin 的 y 变小
       return { rect: [x, y, w, h] as Rect4, dfx, dfy }
@@ -974,21 +1087,22 @@ export function startAxesDrag(
     return { rect: [x, y, w, h] as Rect4, dfx, dfy }
   }
 
+  // 松手写 onMove 最后一次的结果：shift 锁向只作用于 onMove（见 startArrowDrag）
+  let last: Rect4 | null = null
+
   trackPointer(e, {
-    onMove: (_ev, dxPx, dyPx) => {
-      const { rect, dfx, dfy } = compute(dxPx, dyPx)
+    onMove: (ev, dxPx, dyPx) => {
+      const { rect, dfx, dfy } = compute(dxPx, dyPx, ev.shiftKey)
+      last = rect
       interaction().setElementPreview({ boxes: { [element.gid]: flipY(rect) } })
       if (mode === 'move' && group) {
         group.setAttribute('transform', `translate(${dfx * viewBox[2]},${dfy * viewBox[3]})`)
       }
     },
-    onEnd: (moved, ev) => {
-      const dx = ev.clientX - e.clientX
-      const dy = ev.clientY - e.clientY
+    onEnd: (moved) => {
       interaction().end()
-      if (!moved) return
-      const { rect } = compute(dx, dy)
-      setOverride(panel.id, element.gid, 'position', rect.map(round4), true)
+      if (!moved || !last) return
+      setOverride(panel.id, element.gid, 'position', last.map(round4), true)
     },
   })
 }
@@ -1025,9 +1139,14 @@ export function startElementGroupMove(
   const shifted = (dfx: number, dfy: number): Rect4[] =>
     entries.map((en) => [en.box[0] + dfx, en.box[1] + dfy, en.box[2], en.box[3]])
 
+  // 松手写 onMove 最后一次的位移：shift 锁向只作用于 onMove（见 startArrowDrag）
+  let last: [number, number] = [0, 0]
+
   trackPointer(e, {
-    onMove: (_ev, dxPx, dyPx) => {
-      const [dfx, dfy] = toContent(dxPx, dyPx)
+    onMove: (ev, dxPx, dyPx) => {
+      let [dfx, dfy] = toContent(dxPx, dyPx)
+      if (ev.shiftKey) [dfx, dfy] = contentAxisLock(layout, dfx, dfy)
+      last = [dfx, dfy]
       const boxes = shifted(dfx, dfy)
       interaction().setElementPreview({
         boxes: Object.fromEntries(entries.map((en, i) => [en.key, boxes[i]])),
@@ -1037,11 +1156,10 @@ export function startElementGroupMove(
         node?.setAttribute('transform', `translate(${dfx * viewBox[2]},${dfy * viewBox[3]})`)
       }
     },
-    onEnd: (moved, ev) => {
+    onEnd: (moved) => {
       interaction().end()
       if (!moved) return
-      const [dfx, dfy] = toContent(ev.clientX - e.clientX, ev.clientY - e.clientY)
-      const boxes = shifted(dfx, dfy)
+      const boxes = shifted(last[0], last[1])
       setOverrides(
         panel.id,
         `移动 ${entries.length} 个图内元素`,

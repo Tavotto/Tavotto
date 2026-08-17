@@ -53,6 +53,11 @@ PyMuPDF（**只经 `src/magplot/pdfbackend/`**），前端 `web/`
 - **前端唯一桌面感知点是 `web/src/lib/desktop.ts`**：组件不得直接 import
   `@tauri-apps/*`；每个能力都有浏览器回退（vitest 看护）。菜单事件 id 与
   `src-tauri/src/main.rs` 严格同源（`magplot:menu`）。
+- **Tauri 2 的 ACL 对应用自定义命令同样生效**：新增 `#[tauri::command]` 必须
+  三处同步——`build.rs` 的 `AppManifest::commands`、`capabilities/main.json`
+  加 `allow-<命令名连字符化>`、`main.rs` 的 `generate_handler`。漏掉前两处
+  invoke 会被**静默拒绝**（reveal_export「点了没反应」就是这么坏的）；
+  失败路径不许吞——回退时把完整文件路径告诉用户。
 - **桌面模式下 Python updater 停用**（升级归 Tauri 层），`/api/update/*` 回
   禁用响应；浏览器模式照旧。
 - 构建：`python scripts/build_desktop.py`；验收：`python scripts/smoke_desktop.py
@@ -143,6 +148,16 @@ Python，首次渲染也不联网：
   SVG（dpi≈120 预览）——冷启动秒到分钟级，热态 ~40ms。
 - override 是**全量列表**语义：worker 维护 applied/originals 两表，缺失的 key 自动
   恢复原值（undo 的基础）。前端永远发完整 `o.overrides`。
+- **应用顺序规范化 + figure 锚定 prop 的重放（2026-08-17，数据损坏级）**：
+  `overrides.apply` 按 size_mm → 子图 position → 其余（列表序）应用；
+  pos_frac / loc_frac / endpoints_frac 的 setter 在应用那一刻把 figure 分数换算进
+  artist 本地坐标，**几何一变（含还原）必须重放它们**，否则热会话状态 ≠ 全量
+  重放——用户「写回时的样子」重开后全体文字错位（FigS3 事故，
+  test_frac_anchored_props_survive_geometry_moves 看护）。新增 figure 锚定
+  prop 时记得加进 `_FRAC_ANCHORED`。aspect="equal" 的子图只有 draw 才
+  apply_aspect，几何组应用完必须 `draw_without_rendering()` 刷新布局再应用
+  其余 prop。事故期间保存的旧文档用 `scripts/recover_frac_positions.py`
+  修复（从写回 PDF 的文字层反推真实位置，输出另存 + POST 成布局版本）。
 - 坐标约定：manifest bbox/anchor 均为 figure 分数坐标、**y 向下**（top-origin）；
   worker 内部转 matplotlib 的 bottom-origin。
 - 特殊 artist：轴标签拖动走 `set_label_coords`（恢复时 transform 也要还原）；
@@ -163,7 +178,12 @@ Python，首次渲染也不联网：
   后 `set_positions`）；arrowstyle / linestyle 两类箭头都可改
   （识别不出的自定义样式报 "custom"，选它=不动）。**annotate 的 arrow_patch
   端点由注释机制每次 draw 重定位，绝不出端点**——出了用户拖完下一帧就弹回
-  （test_arrowpatch_endpoints_and_style_roundtrip 看护）。
+  （test_arrowpatch_endpoints_and_style_roundtrip 看护）。前端交互与画布箭头
+  同语义（2026-08-17，elementArrowEditing.test 看护）：命中/框选按**线本身**
+  不按 bbox 空白矩形、选中/hover 沿线描示无矩形外框、拖端点 shift 锁 15°、
+  整体拖 shift 锁水平/垂直/45°（分数坐标锁角必须换算到内容像素系）；
+  图内文字/子图拖动同样有 shift 锁向，画布对象拖动可吸附图内元素中心线
+  （elementSnapCandidates）。
 - 散点 marker 可整体替换（set_paths，首改前缓存原始路径，"original" 还原）；
   图例条目顺序 entry_order（重建型，manifest type="order"）。**图例重建后必须
   `_legend_box.set_offset(leg._findoffset)` 重挂定位回调**，否则导出时图例整块
@@ -213,11 +233,14 @@ Python，首次渲染也不联网：
 - **项目包**：`POST /api/package` 打 zip（layout+素材+脚本+sha1 清单）；
   `POST /api/package/open` 检视（缺失/sha1 漂移），素材永不自动写入图库。
 - **导出**：请求可带 `proof` 对象 → 随成图写 `_proof.json`。
-- **用户可见的产物不进数据目录（2026-08-17）**：导出默认落在**项目同级**的
-  `<项目名>-exports/`（settings.export_dir 可覆盖；同级建不出来退回数据目录，
-  测试读响应里的 export_dir 而不是猜路径）；命名画布文件存**项目目录下**的
-  `canvases/`（旧数据目录 layouts/ 只读兼容合并列出，重名以项目文件为准）。
-  autosave / versions / styles 等内部机制仍留在数据目录。
+- **项目文件统一收纳在项目内的 `magplotfile/`（2026-08-17 定版）**：命名画布
+  布局直接放 `magplotfile/`，导出默认 `magplotfile/export/`（settings.export_dir
+  可覆盖；建不出来退回数据目录，测试读响应里的 export_dir 而不是猜路径），
+  布局版本历史 `magplotfile/versions/`。旧位置（项目 `canvases/`、项目同级
+  `<项目名>-exports/`、数据目录 layouts/ 与 layouts/_versions/）只读兼容、
+  合并列出，重名以 magplotfile 为准；**素材扫描的 EXCLUDE_DIRS 必须含
+  magplotfile**，否则导出成图会混进素材面板。autosave / styles 等
+  跨项目或内部机制仍留在数据目录。
 - 前端文档模型新增可选字段（schema 仍为 2，旧文档兼容）：
   `PanelObject.lockedGids / flipH / flipV`、`ObjectBase.layoutPinned`、
   `FigureDocument.layoutGroups`（行/列/网格约束，id 即 groupId，
@@ -276,6 +299,18 @@ Python，首次渲染也不联网：
   同名注释），
   改一边必须同步另一边，pytest 用 get_drawings() 做几何级看护。
   科研预设在 `lib/presets.ts`（纯既有对象组合）。
+- **混排对齐（2026-08-17）**：图内编辑态里 **shift 点画布标注**（文字/箭头/
+  形状）= 加入混排选区、不退编辑态（ObjectView 的唯一例外分支）；元素检查器
+  的 AlignSection 接受 `MixedEntry`（元素写 override、标注改画布 x/y），经
+  `applyMixedAlign` **同一次 commit**——一条撤销回滚两边。标注框由
+  `annotationAlignEntries` 换算进面板内容分数空间；面板带旋转/翻转不给条目。
+- **写回原图可携带画布标注（2026-08-17）**：写回对话框勾选后，与目标面板
+  重叠的标注（重叠面积最大者得、一条只进一张图）由
+  `lib/writeBackAnnotations.ts` 换算成**图自身 mm**（长度类字段按显示比例
+  同缩），后端 `pdfbackend.annotate_asset` 用导出合成同一组 `_draw_*` 矢量
+  画进 PDF、PNG 由注好的 PDF 重栅格化（两载体同源）；只有 PNG 的素材回
+  `annotations_need_pdf`。写回成功后画布原件移除（可撤销）。面板带旋转/
+  翻转不支持（UI 给原因）。
 - **空状态**：一律用 `components/ui/EmptyState`（图标+短标题+≤1 句+≤1 动作）。
 - 前端测试：`cd web && pnpm test`（vitest+jsdom；NODE_OPTIONS 里禁用了
   node 内建 webstorage，否则 jsdom localStorage 被遮蔽）。

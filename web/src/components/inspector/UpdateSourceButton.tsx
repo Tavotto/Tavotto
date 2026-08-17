@@ -1,6 +1,11 @@
 import { useMemo, useState } from 'react'
 import { FileUp, TriangleAlert } from 'lucide-react'
 import { updateSourceFiles } from '@/lib/api'
+import {
+  annotationsBlocked,
+  collectPanelAnnotations,
+  type PanelAnnotations,
+} from '@/lib/writeBackAnnotations'
 import { isJustBakedBaseline } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
@@ -10,6 +15,7 @@ import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
 import { Button } from '../ui/Button'
 import { Dialog } from '../ui/Dialog'
+import { Toggle } from '../ui/Toggle'
 import { Tip } from '../ui/Tooltip'
 
 const stemOf = (fileId: string) => fileId.split('/').pop()?.replace(/\.[^.]+$/, '') ?? fileId
@@ -30,12 +36,19 @@ interface WriteBackResult {
 }
 
 /** 多面板顺序写回；单条失败即停，把已完成的部分与失败原因都讲清楚 */
-async function runWriteBack(panels: PanelObject[]): Promise<WriteBackResult> {
+async function runWriteBack(
+  panels: PanelObject[],
+  annotations?: Map<string, PanelAnnotations>,
+): Promise<WriteBackResult> {
   const updated: string[] = []
   let backupDir = ''
   for (const p of panels) {
     try {
-      const res = await updateSourceFiles(p.fileId, p.overrides)
+      const res = await updateSourceFiles(
+        p.fileId,
+        p.overrides,
+        annotations?.get(p.id)?.objects,
+      )
       updated.push(...res.updated)
       backupDir = res.backup_dir
     } catch (e) {
@@ -62,20 +75,56 @@ export function WriteBackDialog({
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<WriteBackResult | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [withAnnotations, setWithAnnotations] = useState(false)
   const backupDir = useProjectStore((s) => s.project?.backup_dir) ?? 'cache/original_backups'
+  const objects = useDocumentStore((s) => s.doc.objects)
   const stems = panels.map((p) => stemOf(p.fileId))
+
+  // 与写回目标重叠的画布标注（按重叠面积归属，一条只进一张图）
+  const annMap = useMemo(
+    () => (open ? collectPanelAnnotations(panels, objects) : new Map<string, PanelAnnotations>()),
+    [open, panels, objects],
+  )
+  const annCount = [...annMap.values()].reduce((n, a) => n + a.objectIds.length, 0)
+  // 「有标注压着面板却带不走」才值得说一句；面板上本来就没标注不用提
+  const blockedReason = useMemo(() => {
+    if (panels.length !== 1) return null
+    const reason = annotationsBlocked(panels[0])
+    if (!reason) return null
+    const p = panels[0]
+    const touching = objects.some(
+      (o) =>
+        (o.type === 'text' || o.type === 'arrow' || o.type === 'shape') &&
+        !o.hidden &&
+        o.x < p.x + p.w && o.x + o.w > p.x && o.y < p.y + p.h && o.y + o.h > p.y,
+    )
+    return touching ? reason : null
+  }, [panels, objects])
 
   const run = async () => {
     setBusy(true)
     setError(null)
     try {
-      const res = await runWriteBack(panels)
+      const useAnn = withAnnotations && annCount > 0
+      const res = await runWriteBack(panels, useAnn ? annMap : undefined)
       setResult(res)
+      if (useAnn) {
+        // 标注已经烙进原图：画布上的原件移除（可撤销），否则成图里会出现两份
+        const ids = [...annMap.values()].flatMap((a) => a.objectIds)
+        useDocumentStore.getState().commit(`标注写回原图（${ids.length} 条）`, (d) => {
+          d.objects = d.objects.filter((o) => !ids.includes(o.id))
+        })
+        useSelectionStore.getState().clear()
+      }
       // 重拉面板列表拿到新 mtime；所有图片 URL 带 m 参数，缩略图与画布面板都会自动重取
       await useAssetStore.getState().load()
       useUiStore
         .getState()
-        .setStatus(`已写回原始文件：${res.updated.join('、')}（备份在 ${res.backup_dir}）`)
+        .setStatus(
+          `已写回原始文件：${res.updated.join('、')}` +
+            (useAnn ? `（含 ${annCount} 条标注，` : '（') +
+            `备份在 ${res.backup_dir}）`,
+        )
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -88,7 +137,10 @@ export function WriteBackDialog({
       open={open}
       onOpenChange={(v) => {
         onOpenChange(v)
-        if (!v) setResult(null)
+        if (!v) {
+          setResult(null)
+          setWithAnnotations(false)
+        }
       }}
       title="写回原始文件"
       description={
@@ -161,6 +213,19 @@ export function WriteBackDialog({
               </p>
             </div>
           </div>
+          {annCount > 0 ? (
+            <label
+              className="flex items-center gap-1.5 text-xs text-ink-2"
+              title="压在面板上的画布箭头/文字/形状按当前位置矢量画进原 PDF（PNG 同步重出），写回后从画布移除（可撤销）"
+            >
+              <Toggle checked={withAnnotations} onChange={setWithAnnotations} />
+              连同画布标注一并写回（{annCount} 条）
+            </label>
+          ) : (
+            blockedReason && (
+              <p className="text-xs text-ink-3">画布标注无法随写回：{blockedReason}。</p>
+            )
+          )}
           {error && <p className="text-xs text-danger">更新失败：{error}</p>}
         </div>
       )}

@@ -676,6 +676,41 @@ export function setOverrides(
   if (panel?.type === 'panel') requestRender(panel.fileId, panel.overrides, true)
 }
 
+/**
+ * 混排对齐（图内元素 + 画布标注）：元素落 override、标注改画布位置，
+ * 全部进**同一次 commit**——一条撤销、一次渲染。
+ */
+export function applyMixedAlign(
+  panelId: string,
+  label: string,
+  patches: { gid: string; prop: string; value: unknown }[],
+  moves: { id: string; x: number; y: number }[],
+) {
+  if (!patches.length && !moves.length) return
+  useDocumentStore.getState().commit(label, (d) => {
+    const p = d.objects.find((o) => o.id === panelId)
+    if (p?.type === 'panel') {
+      for (const patch of patches) {
+        p.overrides = p.overrides.filter(
+          (x) => !(x.gid === patch.gid && x.prop === patch.prop),
+        )
+        p.overrides.push(patch)
+      }
+    }
+    for (const mv of moves) {
+      const o = d.objects.find((x) => x.id === mv.id)
+      if (o && !o.locked) {
+        o.x = mv.x
+        o.y = mv.y
+      }
+    }
+  })
+  if (patches.length) {
+    const panel = findObject(panelId)
+    if (panel?.type === 'panel') requestRender(panel.fileId, panel.overrides, true)
+  }
+}
+
 /* ------------------------ 「写回原始文件」基线的继承 --------------------------- */
 
 /** 该面板的 overrides 是否恰好等于资产基线（即文件上已经烙好、没再动过） */

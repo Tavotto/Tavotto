@@ -9,7 +9,14 @@ import {
   type AlignItem,
   type Rect4,
 } from './axesLayout'
-import type { PanelObject, PanelOverride } from '@/types/document'
+import {
+  panelContentSize,
+  panelRotation,
+  rotateVec,
+  type CanvasObject,
+  type PanelObject,
+  type PanelOverride,
+} from '@/types/document'
 
 /**
  * 图内元素的几何代理层。
@@ -21,6 +28,70 @@ import type { PanelObject, PanelOverride } from '@/types/document'
 
 /** 几何操作真正落到哪个 gid 上 */
 export const geomGid = (el: ManifestElement) => el.geom_gid ?? el.gid
+
+/** manifest 里 visible=false 即已被「删除」（非破坏性隐藏） */
+export function isElementHidden(el: ManifestElement): boolean {
+  return el.editable.some((f) => f.prop === 'visible' && f.value === false)
+}
+
+/**
+ * 面板未被裁剪时占据的完整显示矩形（mm，**内容坐标系**）——manifest 的分数
+ * 坐标就摊在它上面。面板旋转时内容与包围盒长宽互换，且内容以包围盒中心为
+ * 中心，所以这里统一按中心推算；调用方画框时整组再绕同一个中心转回去。
+ */
+export function panelFullRect(panel: PanelObject): { x: number; y: number; w: number; h: number } {
+  const c = panel.crop
+  const content = panelContentSize(panel)
+  const cx = panel.x + panel.w / 2
+  const cy = panel.y + panel.h / 2
+  return {
+    x: cx - content.w / 2 - (c ? (c.x / c.w) * content.w : 0),
+    y: cy - content.h / 2 - (c ? (c.y / c.h) * content.h : 0),
+    w: content.w / (c?.w ?? 1),
+    h: content.h / (c?.h ?? 1),
+  }
+}
+
+/**
+ * 图内元素的中心线吸附候选（页面 mm）：拖画布标注经过面板时，可吸到图内
+ * 文字 / 图例 / 子图的水平与垂直中心线上——「箭头对准图里那行字的中心」
+ * 是排注记的主要参照。只取有布局意义的元素（可拖动文字类 + 子图），
+ * 刻度这类外壳不出线；独立箭头是线不是块，中心线没意义，跳过。
+ * 元素被 override 挪过而渲染尚未回来时，中心跟着未落盘的锚点走。
+ */
+export function elementSnapCandidates(
+  panel: PanelObject,
+  manifest: Manifest,
+): { xs: number[]; ys: number[] } {
+  const full = panelFullRect(panel)
+  const rot = panelRotation(panel)
+  const cx = panel.x + panel.w / 2
+  const cy = panel.y + panel.h / 2
+  const xs: number[] = []
+  const ys: number[] = []
+  for (const el of manifest.elements) {
+    if (el.gid === 'figure' || isElementHidden(el) || el.arrow_endpoints) continue
+    const draggableText = el.draggable && !!el.anchor && !!el.drag_prop
+    if (!el.resizable && !draggableText) continue
+    let [bx, by] = el.bbox
+    const [, , bw, bh] = el.bbox
+    if (draggableText) {
+      const a = anchorOf(panel, el)!
+      bx += a[0] - el.anchor![0]
+      by += a[1] - el.anchor![1]
+    }
+    const mx = full.x + (bx + bw / 2) * full.w
+    const my = full.y + (by + bh / 2) * full.h
+    const [dx, dy] = rotateVec(mx - cx, my - cy, rot)
+    const px = cx + dx
+    const py = cy + dy
+    // 裁剪窗外的元素在画布上看不见，不在空白处凭空出参考线
+    if (px < panel.x || px > panel.x + panel.w || py < panel.y || py > panel.y + panel.h) continue
+    xs.push(px)
+    ys.push(py)
+  }
+  return { xs, ys }
+}
 
 /** 承载 position override 的 manifest entry（位图 → 宿主 axes） */
 export function geomTarget(
@@ -54,6 +125,35 @@ export function arrowEndpointsOf(
     ]
   }
   return el.arrow_endpoints
+}
+
+/**
+ * 线段与矩形是否相交（同一坐标系即可，图内用 figure 分数）：图内独立箭头参与
+ * 框选时按线本身算——斜箭头的 bbox 是一大块空白矩形，按 bbox 相交会让离线很远
+ * 的框选也圈中它（与画布箭头的沿线命中同语义）。
+ */
+export function segIntersectsRect(
+  a: [number, number],
+  b: [number, number],
+  r: { x: number; y: number; w: number; h: number },
+): boolean {
+  const inside = (p: [number, number]) =>
+    p[0] >= r.x && p[0] <= r.x + r.w && p[1] >= r.y && p[1] <= r.y + r.h
+  if (inside(a) || inside(b)) return true
+  const cross = (o: [number, number], p: [number, number], q: [number, number]) =>
+    (p[0] - o[0]) * (q[1] - o[1]) - (p[1] - o[1]) * (q[0] - o[0])
+  const corners: [number, number][] = [
+    [r.x, r.y],
+    [r.x + r.w, r.y],
+    [r.x + r.w, r.y + r.h],
+    [r.x, r.y + r.h],
+  ]
+  for (let i = 0; i < 4; i++) {
+    const c = corners[i]
+    const d = corners[(i + 1) % 4]
+    if (cross(a, b, c) * cross(a, b, d) <= 0 && cross(c, d, a) * cross(c, d, b) <= 0) return true
+  }
+  return false
 }
 
 /** 可拖动文字 / 图例的当前锚点（top-origin，优先 override） */
@@ -138,6 +238,53 @@ export function alignEntries(
         }),
       })
     }
+  }
+  return out
+}
+
+export interface AnnotationEntry extends AlignItem {
+  label: string
+  /** 画布标注对象 id；有它 = 这一条改的是画布对象的 x/y，不是 override */
+  objectId: string
+}
+
+/** 混排对齐条目：图内元素（写 override）或画布标注（改对象位置） */
+export type MixedEntry = AlignEntry | AnnotationEntry
+
+export const isAnnotationEntry = (e: MixedEntry): e is AnnotationEntry => 'objectId' in e
+
+/**
+ * 画布标注（文字/箭头/形状）→ 图内对齐条目：框换算成面板内容坐标系的
+ * top-origin 分数，与 alignEntries 的元素框同一空间——混排对齐靠它们能
+ * 同框排版。面板带旋转/翻转时换算对不上，返回空（调用方按无标注处理）。
+ */
+export function annotationAlignEntries(
+  panel: PanelObject,
+  objects: readonly CanvasObject[],
+): AnnotationEntry[] {
+  if (panelRotation(panel) || panel.flipH || panel.flipV) return []
+  const full = panelFullRect(panel)
+  const out: AnnotationEntry[] = []
+  for (const o of objects) {
+    if (o.type === 'panel' || o.hidden) continue
+    const name =
+      o.type === 'text'
+        ? `文字「${o.text.slice(0, 12)}」`
+        : o.type === 'arrow'
+          ? '箭头'
+          : '形状'
+    out.push({
+      key: `obj:${o.id}`,
+      objectId: o.id,
+      label: `标注 · ${name}`,
+      resizable: false,
+      box: [
+        (o.x - full.x) / full.w,
+        (o.y - full.y) / full.h,
+        o.w / full.w,
+        o.h / full.h,
+      ],
+    })
   }
   return out
 }

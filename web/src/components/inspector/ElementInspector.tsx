@@ -31,6 +31,7 @@ import { ALT, cn, combo, modKey } from '@/lib/utils'
 import {
   centerInFigure,
   fracToMm,
+  layoutBoxes,
   mmToFrac,
   round4,
   scaleGroupAbout,
@@ -38,15 +39,19 @@ import {
 } from '@/lib/axesLayout'
 import {
   alignEntries,
-  alignPatches,
+  annotationAlignEntries,
   geomTarget,
   groupOf,
   groupPatches,
   type Group,
+  isAnnotationEntry,
+  type MixedEntry,
+  panelFullRect,
   positionOf,
   type AlignEntry,
 } from '@/lib/elementGeom'
 import {
+  applyMixedAlign,
   clearOverride,
   clearOverrides,
   resetOverrides,
@@ -55,6 +60,7 @@ import {
   unhideElement,
 } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
+import { useSelectionStore } from '@/store/selectionStore'
 import { useRenderStore } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
 import {
@@ -97,11 +103,20 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
     picked?.is_colorbar && picked.colorbar_gid
       ? (manifest?.elements.find((e) => e.gid === picked.colorbar_gid) ?? picked)
       : picked
+  // shift 加选进来的画布标注（文字/箭头/形状）：与图内元素混排对齐
+  const selIds = useSelectionStore((s) => s.ids)
+  const docObjects = useDocumentStore((s) => s.doc.objects)
+  const annotations = docObjects.filter(
+    (o) => selIds.includes(o.id) && (o.type === 'text' || o.type === 'arrow' || o.type === 'shape'),
+  )
+  const annEntries = annotationAlignEntries(panel, annotations)
   // 多选 → 出对齐工具条，替代单元素表单。位图会归并到宿主子图，
   // 归并后只剩一个几何目标时就没什么可对齐的，仍走单元素表单。
+  // 画布标注加进来后与元素同框排版（元素写 override，标注改画布位置）。
   const entries =
-    manifest && selected.length > 1 ? alignEntries(panel, manifest, selectedGids) : []
-  const alignGroup = entries.length > 1 ? entries : null
+    manifest && selected.length ? alignEntries(panel, manifest, selectedGids) : []
+  const mixed: MixedEntry[] = [...entries, ...annEntries]
+  const alignGroup = mixed.length > 1 ? mixed : null
   // 多选同一种角色 → 批量改公共属性（文字全部调字号、曲线全部换色…）
   const batch =
     selected.length > 1 && selected.every((e) => e.role === selected[0].role) ? selected : null
@@ -978,19 +993,40 @@ function ScaleField({ panel, group }: { panel: PanelObject; group: Group }) {
 }
 
 /**
- * 多选元素时的对齐工具条：几何全部在 manifest 的 top-origin 分数框里算，
- * 子图落成 position、文字/图例落成新锚点，一次发一批 override。
+ * 多选时的对齐工具条：几何全部在面板内容的 top-origin 分数框里算，
+ * 子图落成 position、文字/图例落成新锚点，画布标注（shift 加选进来的）
+ * 改画布位置——override 与位移进同一次 commit，一条撤销、一次渲染。
  */
-function AlignSection({ panel, items }: { panel: PanelObject; items: AlignEntry[] }) {
-  // 只有子图（含位图代理）能改尺寸，文字/图例进选区就得禁掉等宽等高与成组缩放
+function AlignSection({ panel, items }: { panel: PanelObject; items: MixedEntry[] }) {
+  // 只有子图（含位图代理）能改尺寸，文字/图例/标注进选区就得禁掉等宽等高与成组缩放
   const allResizable = items.every((i) => i.resizable)
-  const group = groupOf(items)
+  const elementItems = items.filter((i): i is AlignEntry => !isAnnotationEntry(i))
+  const hasAnnotations = elementItems.length !== items.length
+  const group = hasAnnotations ? null : groupOf(elementItems)
 
-  const apply = (mode: AlignMode, label: string) =>
-    setOverrides(panel.id, label, alignPatches(items, mode))
+  const apply = (mode: AlignMode, label: string) => {
+    const boxes = layoutBoxes(items, mode)
+    const full = panelFullRect(panel)
+    const patches: { gid: string; prop: string; value: unknown }[] = []
+    const moves: { id: string; x: number; y: number }[] = []
+    for (const it of items) {
+      const next = boxes.get(it.key)
+      if (!next) continue
+      if (isAnnotationEntry(it)) {
+        moves.push({
+          id: it.objectId,
+          x: full.x + next[0] * full.w,
+          y: full.y + next[1] * full.h,
+        })
+      } else {
+        patches.push(it.write(next))
+      }
+    }
+    applyMixedAlign(panel.id, label, patches, moves)
+  }
 
   return (
-    <Section plainTitle title={`已选 ${items.length} 个元素`}>
+    <Section plainTitle title={`已选 ${items.length} 个${hasAnnotations ? '对象' : '元素'}`}>
       <div className="grid grid-cols-6 gap-0.5">
         {ALIGN_BUTTONS.map(({ mode, icon: Icon, tip, min }) => {
           const sizeOnly = mode === 'samew' || mode === 'sameh'
@@ -1014,6 +1050,7 @@ function AlignSection({ panel, items }: { panel: PanelObject; items: AlignEntry[
       <p className="mt-2 text-xs leading-relaxed text-ink-3">
         子图改的是它在整张图里的占比（matplotlib position），文字与图例改的是锚点位置，
         都不影响画布上的面板尺寸。
+        {hasAnnotations && '画布标注跟着同一条基线排，位置改在画布对象上。'}
         {group && '拖画布上的组包围框手柄也能成组缩放。'}
       </p>
       <ul className="mt-2 flex flex-col gap-0.5">

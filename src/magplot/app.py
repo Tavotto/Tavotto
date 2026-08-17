@@ -1311,13 +1311,22 @@ def api_engine_update_source():
     body = request.get_json(force=True)
     rel_id = body.get("id", "")
     patches = body.get("patches", [])
+    # 可选：随写回把画布标注烙进原图（坐标已由前端换算成该图自身的 mm）
+    annotations = [a for a in (body.get("annotations") or [])
+                   if isinstance(a, dict)
+                   and a.get("type") in ("text", "arrow", "shape")]
     src = safe_resolve(rel_id)
+    if annotations and not src.with_suffix(".pdf").exists():
+        return jsonify({"error": "该素材只有位图、没有矢量 PDF，"
+                                 "暂不支持把标注写回原图",
+                        "code": "annotations_need_pdf"}), 400
     info = current_registry().for_stem(src.stem)
     if info is None:
         return jsonify({"error": "该面板不可参数化（没有对应脚本）"}), 404
     worker = engine_pool.get(info["script"], str(require_project()), info["entry"])
     try:
-        updated, backup_dir = _write_source_files(src, patches, worker)
+        updated, backup_dir = _write_source_files(src, patches, worker,
+                                                  annotations=annotations)
     except engine_pool.WorkerError as exc:
         return jsonify(_worker_error_payload(exc)), 500
     except FileLockedError as exc:
@@ -1353,8 +1362,12 @@ class FileLockedError(RuntimeError):
         self.updated = updated
 
 
-def _write_source_files(src: Path, patches: list, worker) -> tuple[list, Path]:
+def _write_source_files(src: Path, patches: list, worker,
+                        annotations: list | None = None) -> tuple[list, Path]:
     """按 patches 全质量重出 stem 的 PDF/PNG 并原子替换原文件（先备份）。
+
+    annotations 非空时（写回携带画布标注，坐标为该图自身的 mm），先在导出的
+    PDF 上矢量绘制标注，PNG 再由注好的 PDF 重新栅格化——两种载体逐像素同源。
 
     替换失败要当成一等公民处理：Windows 上文件被 Acrobat / 看图工具打开时
     是**独占锁**，`replace` 直接抛 PermissionError。不接住的话用户会拿到一个
@@ -1364,21 +1377,34 @@ def _write_source_files(src: Path, patches: list, worker) -> tuple[list, Path]:
     targets = [p for p in (src.with_suffix(".pdf"), src.with_suffix(".png")) if p.exists()]
     backup_dir = project_backup_dir() / time.strftime("%m%d_%H%M%S")
     backup_dir.mkdir(parents=True, exist_ok=True)
-    updated: list[str] = []
+
+    # 全部先导出到临时文件，标注一次性画好，再统一替换
+    tmps: list[tuple[Path, Path]] = []
     for target in targets:
-        shutil.copy2(target, backup_dir / target.name)
         tmp = target.with_name(f".{target.name}.updating")
         worker.export(src.stem, patches, str(tmp),
                       fmt=target.suffix.lstrip("."), dpi=600)
+        tmps.append((target, tmp))
+    if annotations:
+        pdf_tmp = next((t for tg, t in tmps if tg.suffix == ".pdf"), None)
+        png_tmp = next((t for tg, t in tmps if tg.suffix == ".png"), None)
+        assert pdf_tmp is not None  # 端点已拦过「只有 PNG」的素材
+        pdfbackend.annotate_asset(pdf_tmp, png_tmp, annotations, dpi=600)
+
+    updated: list[str] = []
+    for target, tmp in tmps:
+        shutil.copy2(target, backup_dir / target.name)
         try:
             tmp.replace(target)
         except OSError as exc:
-            tmp.unlink(missing_ok=True)   # 不给图库留下半成品
+            for _t, leftover in tmps:
+                leftover.unlink(missing_ok=True)   # 不给图库留下半成品
             LOG.warning("写回原图失败（文件被占用？）: %s: %s", target.name, exc)
             raise FileLockedError(target.name, str(exc), updated) from exc
         updated.append(target.name)
     prune_backups(backup_dir.parent)
-    LOG.info("更新原图: %s → %s（备份 %s）", src.stem, updated, backup_dir.name)
+    LOG.info("更新原图: %s → %s（备份 %s，标注 %d 条）",
+             src.stem, updated, backup_dir.name, len(annotations or []))
     return updated, backup_dir
 
 
