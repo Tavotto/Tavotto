@@ -32,7 +32,7 @@ PyMuPDF（**只经 `src/magplot/pdfbackend/`**），前端 `web/`
 - CI 的 package job 看护这条链路：build_frontend → wheel → 断言含
   `magplot/web/index.html` + entry point → 干净 venv 装 wheel 跑 `magplot --help`。
 - 运行时可写数据一律走 `engine/config.data_dir()`（`MAGPLOT_DATA_DIR` 可覆盖，
-  conftest 已全局隔离）：cache / layouts / exports / baked_overrides.json /
+  conftest 已全局隔离）：cache / layouts / exports / baked_overrides/&lt;项目id&gt;.json /
   ai_history.sqlite3 / ai_snapshots 全在那儿。**不要再往包目录或仓库根写东西**
   ——site-packages 不可写，装成 wheel 后会直接崩。
 
@@ -148,6 +148,17 @@ Python，首次渲染也不联网：
   SVG（dpi≈120 预览）——冷启动秒到分钟级，热态 ~40ms。
 - override 是**全量列表**语义：worker 维护 applied/originals 两表，缺失的 key 自动
   恢复原值（undo 的基础）。前端永远发完整 `o.overrides`。
+- **export / preview_png 都是状态中立的一次性动作**：应用自己那组 patches 出图后
+  必须把 `state.applied` 还原回去（还原那次的 warnings 丢弃）。不还原的话历史版本
+  恢复与画布导出（每个面板各带一套 overrides）会把别人的状态留在常驻 figure 上，
+  前端的 lastPatches 与 worker 真实状态错位，「全量列表」的还原就还错了东西
+  （test_export_is_state_neutral 看护）。
+- **worker 请求一律有超时**（`pool.BUILD_TIMEOUT/REQUEST_TIMEOUT/EXPORT_TIMEOUT`，
+  测试可 monkeypatch）：超时即 kill 并报 `code=worker_timeout`，会话由下一次
+  `get()` 原地重建——**状态未知的 worker 绝不复用**。超时实现是「读线程 +
+  join」而不是 select（Windows 的 select 不接管道）。无超时的 readline 会让一个
+  死循环脚本持着 `w.lock` 把整个会话占死，连 shutdown 都抢不到锁
+  （test_request_timeout_kills_and_rebuilds_worker 看护）。
 - **应用顺序规范化 + figure 锚定 prop 的重放（2026-08-17，数据损坏级）**：
   `overrides.apply` 按 size_mm → 子图 position → 其余（列表序）应用；
   pos_frac / loc_frac / endpoints_frac 的 setter 在应用那一刻把 figure 分数换算进
@@ -266,6 +277,12 @@ Python，首次渲染也不联网：
   registry 因此不能再是模块全局：`engine/registry.Registry` 可实例化，
   模块级函数代理到默认实例（老调用方式与测试不动）。worker 池键与
   watcher 也都带项目路径（`pool._norm_dir`）。
+  **写回基线（baked overrides）同样按项目分键**：`baked_overrides/<项目id>.json`，
+  `load_baked(ctx)` / `append_baked(stem, patches, ctx)` 默认取 `current_ctx()`；
+  旧的全局 `baked_overrides.json` 只作一次性迁移源（按 `ctx.registry.for_stem`
+  过滤搬入，**不删旧文件**——别的项目还要迁；迁过一次分键文件即唯一权威，
+  哪怕是空 dict）。`scan_panels` 里的 baked 表是**局部变量**，绝不再做模块级
+  缓存——那就是「A 项目扫一遍素材，B 项目的基线全被换掉」。
   SSE 事件带 `pj`，前端只处理属于本标签页项目的那些。
 - **schema 3**：`ProjectDocument{project, canvases[], activeCanvasId}`；
   运行时激活画布仍是 schema 2 形状的 `documentStore.doc`（画布编辑代码零改动），
@@ -375,6 +392,14 @@ Python，首次渲染也不联网：
 - 「写回原始文件」撞上 Windows 独占锁（PDF 被阅读器打开）回 409
   `code=file_locked`，带上是哪个文件、已经换掉了哪些，并清掉 `.updating`
   半成品——不接住的话用户拿到 500 + traceback，图库里还多个垃圾文件。
+- **写回是个事务（`_write_source_files`，数据损坏级）**：staging（导出 →
+  标注 → 自检）全部通过才动真文件，其中**任何异常都要 unlink 掉所有
+  `.updating` 临时文件**（以前只有 file_locked 那条路径清理，PDF 成功 PNG
+  失败就留垃圾）。worker 的 warnings（元素不存在 / 属性不支持 / 应用失败 /
+  还原失败）**一条即阻断**写回，回 409 `code=write_back_warnings` + warnings
+  列表；成功响应带 `warnings: []`。理由：写回覆盖用户原件，画布上有、写进
+  PDF 里没有的「半对的图」事后根本对不出来。`/api/export`（画布合成）同样
+  收集 warnings，但**只透出不阻断**——成图已经出来了，前端在结果区列出。
 
 ## 验证
 

@@ -225,12 +225,24 @@ class Worker:
             return {"ok": True, "path": str(path)}
 
         if cmd == "export":
+            # 与 preview_png 同一纪律：export 是**状态中立**的一次性动作。
+            # 不还原的话导出用的 patches 会留在常驻 figure 上——历史版本恢复、
+            # 画布导出（各面板自带一套 overrides）之后，热会话的真实状态就与
+            # 前端手里的 lastPatches 错位，下一次 override 的「全量列表」语义
+            # 会拿着错的 applied 表去做还原。
+            prev = [{"gid": g, "prop": p, "value": v}
+                    for (g, p), v in state.applied.items()]
             warnings = overrides_mod.apply(state, req.get("patches", []))
             out = Path(req["path"])
             out.parent.mkdir(parents=True, exist_ok=True)
-            with _real_output():
-                state.fig.savefig(out, format=req.get("format", "pdf"),
-                                  dpi=int(req.get("dpi", 600)))
+            try:
+                with _real_output():
+                    state.fig.savefig(out, format=req.get("format", "pdf"),
+                                      dpi=int(req.get("dpi", 600)))
+            finally:
+                # 还原那次的 warnings 丢弃：报给调用方的必须是「这组 patches
+                # 有没有写不进去的」，混进还原噪音会让写回自检误判。
+                overrides_mod.apply(state, prev)
             return {"ok": True, "path": str(out), "warnings": warnings}
 
         return {"ok": False, "error": f"未知指令: {cmd}"}

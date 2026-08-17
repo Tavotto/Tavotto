@@ -167,6 +167,39 @@ def test_full_roundtrip(worker):
     _assert_unknown_stem(proc)
 
 
+def test_export_is_state_neutral(worker):
+    """export 是**一次性动作**，不得把它那组 patches 留在常驻 figure 上。
+
+    真实后果：历史版本恢复（重放旧 patches）和画布导出（每个面板各带一套
+    overrides）之后，热会话的真实状态与前端手里的 lastPatches 错位——override
+    的「全量列表」语义会拿着错的 applied 表去还原，用户看到的图开始漂。
+    看护方式与 preview_png 同构：导出前后的 render_png 必须逐字节相同。
+    """
+    proc, out, tmp = worker
+    _rpc(proc, {"cmd": "build"})
+    man = json.loads((out / "TestFig_a.json").read_text(encoding="utf-8"))
+    title_gid = next(
+        el["gid"] for el in man["elements"]
+        for f in el.get("editable", [])
+        if f["prop"] == "text" and f["value"] == "Original Title")
+
+    patch = [{"gid": title_gid, "prop": "text", "value": "Hot Session Title"}]
+    _rpc(proc, {"cmd": "override", "stem": "TestFig_a", "patches": patch})
+    resp = _rpc(proc, {"cmd": "render_png", "stem": "TestFig_a", "width": 400})
+    png_before = Path(resp["path"]).read_bytes()
+
+    # 用另一组 patches 导出（空列表 = 脚本原始状态，与热会话状态截然不同）
+    pdf = tmp / "neutral.pdf"
+    _rpc(proc, {"cmd": "export", "stem": "TestFig_a", "patches": [],
+                "path": str(pdf), "format": "pdf", "dpi": 200})
+    with pymupdf.open(pdf) as doc:
+        assert "Original Title" in doc[0].get_text()   # 导出确实用的是自己那组
+
+    resp = _rpc(proc, {"cmd": "render_png", "stem": "TestFig_a", "width": 400})
+    png_after = Path(resp["path"]).read_bytes()
+    assert png_after == png_before, "export 污染了热会话状态"
+
+
 def _pos_of(manifest, gid):
     el = next(e for e in manifest["elements"] if e["gid"] == gid)
     return next(f["value"] for f in el.get("editable", []) if f["prop"] == "position")
@@ -753,6 +786,35 @@ def test_shutdown_all_kills_hung_worker(tmp_path, monkeypatch):
         if w.proc.poll() is None:                    # 兜底：绝不在测试机上留僵尸
             w.proc.kill()
             w.proc.wait(timeout=10)
+
+
+def test_request_timeout_kills_and_rebuilds_worker(tmp_path, monkeypatch):
+    """死循环脚本必须以「超时」收场，而不是把会话永久占死。
+
+    旧实现里 `request()` 持着 `w.lock` 无超时阻塞 readline：一个死循环脚本就
+    让这个 (项目, 脚本) 的会话从此谁也用不了，连 `shutdown()` 都抢不到锁。
+    看护三件事：报 code=worker_timeout、进程真被杀掉、下一次 get() 能重建。
+    """
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    (figs / "fig_hang.py").write_text(HANG_SCRIPT, encoding="utf-8")
+
+    monkeypatch.setattr(pool, "BUILD_TIMEOUT", 2.0)   # 否则用例要干等 15 分钟
+    w = pool.get("fig_hang.py", str(figs), "main")
+    try:
+        with pytest.raises(pool.WorkerError) as e:
+            w.ensure_built()
+        assert e.value.code == "worker_timeout"
+        assert "重试" in str(e.value)                 # 告诉用户能怎么办
+
+        assert w.proc.wait(timeout=10) is not None    # 已被 kill 并回收
+        assert not w.alive()
+
+        # 状态未知的会话绝不复用：下一次请求原地重建一个新进程
+        w2 = pool.get("fig_hang.py", str(figs), "main")
+        assert w2 is not w and w2.alive()
+    finally:
+        pool.shutdown_all(figures_dir=str(figs), wait=True)
 
 
 REPLAY_SCRIPT = """\

@@ -86,9 +86,13 @@ LAYOUT_DIR = DATA_ROOT / "layouts"
 WEB_DIST = PKG_ROOT / "web"
 if not WEB_DIST.is_dir():
     WEB_DIST = PKG_ROOT.parent.parent / "web" / "dist"
-BAKED_PATH = DATA_ROOT / "baked_overrides.json"  # stem → 「更新原图」时烙进文件的 override 基线
-_BAKED_CACHE: dict = {}
-_BAKED_LOCK = threading.Lock()  # append 是读-改-写；Flask threaded 下必须互斥
+# 「更新原图」时烙进文件的 override 基线：**每个项目一份**（文件名 = 项目 id）。
+# 曾经是一个全局文件、按 stem 索引——两个图库里都有的 Fig1 会互相覆盖基线，
+# 新拖入的面板于是继承了另一个项目的 override（写回时直接把别人的改动烙进图）。
+BAKED_DIR = DATA_ROOT / "baked_overrides"
+BAKED_PATH = DATA_ROOT / "baked_overrides.json"  # 旧全局文件：只读迁移源，不再写
+# 读-改-写与「旧文件迁移」都持它。可重入：append_baked 持锁后还会调 load_baked。
+_BAKED_LOCK = threading.RLock()
 
 LOG = logging.getLogger("mm")
 
@@ -149,12 +153,52 @@ def prune_backups(root: Path, keep: int = BACKUP_KEEP) -> int:
     return max(0, len(dirs) - keep)
 
 
-def load_baked() -> dict:
-    """{stem: {"versions": [{"ts", "patches"}...]}}；末位 = 当前基线。"""
+def _baked_path(ctx: "ProjectCtx") -> Path:
+    return BAKED_DIR / f"{ctx.id}.json"
+
+
+def _write_baked(path: Path, data: dict) -> None:
+    """临时文件 + replace 原子落盘，读者不会撞见半个文件。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+    tmp.replace(path)
+
+
+def _migrate_global_baked(ctx: "ProjectCtx", path: Path) -> None:
+    """旧的全局 baked_overrides.json → 本项目的分键文件（只读迁移，一次性）。
+
+    按注册表过滤：只有本项目认得的 stem 才搬过来，别的项目的同名 Fig1 留在
+    旧文件里等它自己迁移（所以**不删旧文件**）。迁完就写盘——哪怕一条都没搬
+    也要写出空 dict，否则每次读都要再翻一遍旧文件，而且「本项目确实没有基线」
+    与「还没迁移」这两种状态分不开。
+    """
     try:
-        data = json.loads(BAKED_PATH.read_text(encoding="utf-8"))
+        legacy = json.loads(BAKED_PATH.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return {}
+        legacy = {}
+    mine = {stem: v for stem, v in legacy.items()
+            if isinstance(v, dict) and ctx.registry.for_stem(stem) is not None}
+    try:
+        _write_baked(path, mine)
+    except OSError:      # 写不进去（只读介质）：这次照旧读旧文件，不拦渲染
+        LOG.warning("baked 基线迁移写盘失败: %s", path, exc_info=True)
+        return
+    if mine:
+        LOG.info("baked 基线迁移: %d 个 stem → %s", len(mine), path.name)
+
+
+def load_baked(ctx: "ProjectCtx | None" = None) -> dict:
+    """本项目的 {stem: {"versions": [{"ts", "patches"}...]}}；末位 = 当前基线。"""
+    ctx = ctx if ctx is not None else current_ctx()
+    with _BAKED_LOCK:
+        path = _baked_path(ctx)
+        if not path.exists():
+            _migrate_global_baked(ctx, path)
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
     for stem, v in list(data.items()):  # 迁移单版本旧格式
         if "patches" in v:
             data[stem] = {"versions": [{"ts": v.get("updated_at", ""),
@@ -162,21 +206,22 @@ def load_baked() -> dict:
     return data
 
 
-def append_baked(stem: str, patches: list) -> None:
-    """读-改-写全程持锁；临时文件 + replace 原子落盘，读者不会撞见半个文件。"""
+def append_baked(stem: str, patches: list, ctx: "ProjectCtx | None" = None) -> None:
+    """读-改-写全程持锁（同一项目内），落盘走 `_write_baked` 的原子替换。"""
+    ctx = ctx if ctx is not None else current_ctx()
     with _BAKED_LOCK:
-        data = load_baked()
+        data = load_baked(ctx)
         entry = data.setdefault(stem, {"versions": []})
         entry["versions"].append({"ts": time.strftime("%Y-%m-%d %H:%M:%S"),
                                   "patches": patches})
         entry["versions"] = entry["versions"][-50:]
-        tmp = BAKED_PATH.with_name(BAKED_PATH.name + ".tmp")
-        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
-        tmp.replace(BAKED_PATH)
+        _write_baked(_baked_path(ctx), data)
 
 
-def _baseline_patches(stem: str) -> list:
-    versions = (_BAKED_CACHE.get(stem) or {}).get("versions") or []
+def _baseline_patches(stem: str, baked: dict) -> list:
+    """baked 表由调用方传进来——它曾经是个模块级缓存，多项目下那就是
+    「A 项目扫一遍素材，B 项目的基线全被换掉」。"""
+    versions = (baked.get(stem) or {}).get("versions") or []
     return versions[-1]["patches"] if versions else []
 
 
@@ -259,10 +304,10 @@ def safe_resolve(rel_id: str) -> Path:
 
 def scan_panels() -> list[dict]:
     """扫描 figures 目录：PDF 是首选（矢量）；无同名 PDF 的图片按位图收录。"""
-    global _BAKED_CACHE
-    _BAKED_CACHE = load_baked()
+    ctx = current_ctx()
+    baked = load_baked(ctx)      # 本项目的写回基线，局部变量（绝不跨项目共享）
     panels = []
-    root = require_project().resolve()
+    root = ctx.path.resolve()
     # os.walk 而不是 rglob：隐藏目录当场剪枝，不下探。图库里常有 .venv、
     # .git、工具留下的 .rendered/.qa_* 快照——它们既是噪音（素材库里塞满
     # page-1.png），爬进去还很慢。以 . 开头的文件同理（.DS_Store）。
@@ -297,7 +342,7 @@ def scan_panels() -> list[dict]:
                 info = current_registry().for_stem(p.stem)
                 if info is not None:  # 可参数化面板：有产出它的 matplotlib 脚本
                     entry.update(script=info["script"], cost=info["cost"])
-                    baseline = _baseline_patches(p.stem)
+                    baseline = _baseline_patches(p.stem, baked)
                     if baseline:
                         entry["baked_overrides"] = baseline
             elif ext in IMG_EXT:
@@ -316,7 +361,7 @@ def scan_panels() -> list[dict]:
                 info = current_registry().for_stem(p.stem)
                 if info is not None:  # fig1 等纯 PNG 素材脚本
                     entry.update(script=info["script"], cost=info["cost"])
-                    baseline = _baseline_patches(p.stem)
+                    baseline = _baseline_patches(p.stem, baked)
                     if baseline:
                         entry["baked_overrides"] = baseline
             else:
@@ -446,9 +491,14 @@ def api_file():
     return resp
 
 
-def _resolve_panel_source(o: dict, dpi: int) -> Path:
+def _resolve_panel_source(o: dict, dpi: int, sink: list | None = None) -> Path:
     """面板对象 → 待嵌入的源文件路径。带 override 的 ⚡ 面板先由引擎按全质量
-    重渲染成临时 PDF，导出的永远是矢量而不是画布上的预览位图。"""
+    重渲染成临时 PDF，导出的永远是矢量而不是画布上的预览位图。
+
+    `sink` 收集 worker 的 warnings（哪些 override 没写进去）。导出**不因此
+    中断**——用户要的成图已经出来了，但不能像以前那样把它们直接扔掉：
+    「导出的图和画布上不一样」必须有个说法。
+    """
     path = safe_resolve(o["id"])
     overrides = o.get("overrides") or []
     if overrides:
@@ -456,7 +506,12 @@ def _resolve_panel_source(o: dict, dpi: int) -> Path:
         if info is not None:
             worker = engine_pool.get(info["script"], str(require_project()), info["entry"])
             tmp = worker.export_dir / f"{path.stem}.pdf"
-            worker.export(path.stem, overrides, str(tmp), "pdf", dpi)
+            resp = worker.export(path.stem, overrides, str(tmp), "pdf", dpi)
+            if sink is not None:
+                for w in (resp.get("warnings") or []):
+                    msg = f"{o.get('id', path.name)}: {w}"
+                    if msg not in sink:
+                        sink.append(msg)
             path = tmp
     return path
 
@@ -483,11 +538,18 @@ def api_export():
     t0 = time.time()
     canvas = pdfbackend.compose(page_w, page_h)
 
+    # 面板重渲染时 worker 报的 warning（元素不存在 / 属性不支持 / 应用失败）：
+    # 随响应透出，不阻断导出
+    warnings: list[str] = []
+
+    def resolve(obj: dict, out_dpi: int) -> Path:
+        return _resolve_panel_source(obj, out_dpi, warnings)
+
     for o in objects:
         if o.get("hidden"):
             continue
         try:
-            canvas.place(o, dpi, _resolve_panel_source)
+            canvas.place(o, dpi, resolve)
         except engine_pool.WorkerError as exc:
             canvas.close()
             kind = o.get("type")
@@ -517,10 +579,14 @@ def api_export():
         (out_dir / name).write_text(
             json.dumps(proof, ensure_ascii=False, indent=1), encoding="utf-8")
         out_files.append({"name": name, "url": f"/exports/{name}"})
-    LOG.info("导出: %s（%d 对象, %s, %.0fms）",
+    LOG.info("导出: %s（%d 对象, %s, %.0fms）%s",
              [f["name"] for f in out_files], len(objects), formats,
-             (time.time() - t0) * 1000)
-    return jsonify({"files": out_files, "export_dir": str(out_dir)})
+             (time.time() - t0) * 1000,
+             f"，{len(warnings)} 条警告" if warnings else "")
+    if warnings:
+        LOG.warning("导出警告: %s", warnings)
+    return jsonify({"files": out_files, "export_dir": str(out_dir),
+                    "warnings": warnings})
 
 
 @app.get("/exports/<path:name>")
@@ -1329,6 +1395,10 @@ def api_engine_update_source():
                                                   annotations=annotations)
     except engine_pool.WorkerError as exc:
         return jsonify(_worker_error_payload(exc)), 500
+    except WriteBackVerifyError as exc:
+        return jsonify({"error": _write_back_warning_error(exc),
+                        "code": "write_back_warnings",
+                        "warnings": exc.warnings}), 409
     except FileLockedError as exc:
         # 可操作的错误：告诉用户是哪个文件、该去关掉谁；已经换掉的一并报出来，
         # 免得用户以为「什么都没发生」
@@ -1339,8 +1409,10 @@ def api_engine_update_source():
     # 把这组修改追加为该图的版本历史，末位即当前基线：
     # 新拖入的同名面板自动继承，双击进编辑态能接着改
     append_baked(src.stem, patches)
+    # warnings 恒为空（有一条就走上面的 409），但字段必须在：前端据此确认
+    # 「这次写回确实是全量应用的」，而不是靠「没报错」推断
     return jsonify({"updated": updated, "backup_dir": str(backup_dir),
-                    "baked": bool(patches)})
+                    "baked": bool(patches), "warnings": []})
 
 
 def _write_back_forbidden():
@@ -1362,6 +1434,28 @@ class FileLockedError(RuntimeError):
         self.updated = updated
 
 
+class WriteBackVerifyError(RuntimeError):
+    """写回前自检不通过：worker 报了 warning，这组 patches 没有全部落到图上。
+
+    warning 的来源是 `overrides.apply`——「元素不存在（脚本可能已改动）」、
+    「属性不支持」、「应用失败 / 还原失败」。写回是**覆盖用户原始文件**的一步，
+    这时候半对的图比报错糟糕得多：用户看到的画布是带这条修改的，写进 PDF 的
+    却不是，而原文件已经被换掉了，事后根本对不出来。所以一条 warning 就阻断。
+    """
+
+    def __init__(self, warnings: list[str]):
+        head = "；".join(warnings[:3])
+        more = f"（另有 {len(warnings) - 3} 条）" if len(warnings) > 3 else ""
+        super().__init__(f"{head}{more}")
+        self.warnings = warnings
+
+
+def _write_back_warning_error(exc: "WriteBackVerifyError") -> str:
+    return (f"写回前自检未通过，原文件未做任何修改：{exc}。"
+            "这些元素/属性没能应用到图上——通常是脚本改过了（元素的 gid 变了或"
+            "已删除）。请重新渲染确认当前效果，或撤销对应的修改后再写回。")
+
+
 def _write_source_files(src: Path, patches: list, worker,
                         annotations: list | None = None) -> tuple[list, Path]:
     """按 patches 全质量重出 stem 的 PDF/PNG 并原子替换原文件（先备份）。
@@ -1373,24 +1467,39 @@ def _write_source_files(src: Path, patches: list, worker,
     是**独占锁**，`replace` 直接抛 PermissionError。不接住的话用户会拿到一个
     500 加一串 traceback，图库里还留下一个 `.Fig1.pdf.updating` 垃圾文件，
     下次再看见它完全不知道是什么。
+
+    **staging 阶段（导出 + 标注 + 自检）任何异常都要清干净临时文件**：
+    以前只有「文件被占用」那一条路径清理，PDF 导出成功而 PNG 导出抛
+    WorkerError 时，`.Fig1.pdf.updating` 就永久留在图库里了。
     """
     targets = [p for p in (src.with_suffix(".pdf"), src.with_suffix(".png")) if p.exists()]
+
+    # 全部先导出到临时文件，标注一次性画好，自检通过后才动真文件
+    tmps: list[tuple[Path, Path]] = []
+    warnings: list[str] = []
+    try:
+        for target in targets:
+            tmp = target.with_name(f".{target.name}.updating")
+            tmps.append((target, tmp))   # 先登记再导出：中途抛了也要清得掉
+            resp = worker.export(src.stem, patches, str(tmp),
+                                 fmt=target.suffix.lstrip("."), dpi=600)
+            for w in (resp.get("warnings") or []):
+                if w not in warnings:    # PDF/PNG 两次导出报的是同一批
+                    warnings.append(str(w))
+        if annotations:
+            pdf_tmp = next((t for tg, t in tmps if tg.suffix == ".pdf"), None)
+            png_tmp = next((t for tg, t in tmps if tg.suffix == ".png"), None)
+            assert pdf_tmp is not None  # 端点已拦过「只有 PNG」的素材
+            pdfbackend.annotate_asset(pdf_tmp, png_tmp, annotations, dpi=600)
+        if warnings:
+            raise WriteBackVerifyError(warnings)
+    except BaseException:
+        for _t, leftover in tmps:
+            leftover.unlink(missing_ok=True)
+        raise
+
     backup_dir = project_backup_dir() / time.strftime("%m%d_%H%M%S")
     backup_dir.mkdir(parents=True, exist_ok=True)
-
-    # 全部先导出到临时文件，标注一次性画好，再统一替换
-    tmps: list[tuple[Path, Path]] = []
-    for target in targets:
-        tmp = target.with_name(f".{target.name}.updating")
-        worker.export(src.stem, patches, str(tmp),
-                      fmt=target.suffix.lstrip("."), dpi=600)
-        tmps.append((target, tmp))
-    if annotations:
-        pdf_tmp = next((t for tg, t in tmps if tg.suffix == ".pdf"), None)
-        png_tmp = next((t for tg, t in tmps if tg.suffix == ".png"), None)
-        assert pdf_tmp is not None  # 端点已拦过「只有 PNG」的素材
-        pdfbackend.annotate_asset(pdf_tmp, png_tmp, annotations, dpi=600)
-
     updated: list[str] = []
     for target, tmp in tmps:
         shutil.copy2(target, backup_dir / target.name)
@@ -1571,6 +1680,10 @@ def api_engine_history_restore():
         updated, backup_dir = _write_source_files(src, patches, worker)
     except engine_pool.WorkerError as exc:
         return jsonify(_worker_error_payload(exc)), 500
+    except WriteBackVerifyError as exc:
+        return jsonify({"error": _write_back_warning_error(exc),
+                        "code": "write_back_warnings",
+                        "warnings": exc.warnings}), 409
     except FileLockedError as exc:
         # 可操作的错误：告诉用户是哪个文件、该去关掉谁；已经换掉的一并报出来，
         # 免得用户以为「什么都没发生」
@@ -1580,7 +1693,7 @@ def api_engine_history_restore():
                         "updated": exc.updated}), 409
     append_baked(stem, patches)
     return jsonify({"updated": updated, "backup_dir": str(backup_dir),
-                    "patches": patches})
+                    "patches": patches, "warnings": []})
 
 
 @app.get("/api/engine/svg")
@@ -2004,7 +2117,7 @@ def api_autosave_delete(doc_id):
 
 
 # ------------------------- 布局版本时间线 -----------------------------------
-# 与「写回原始文件」的版本历史（baked_overrides.json，作用于单张图的源文件）
+# 与「写回原始文件」的版本历史（baked_overrides/<项目>.json，作用于单张图的源文件）
 # 是两件事：这里保存的是**整份布局文档**的快照，按前端 documentId 分文件存放，
 # 恢复只改前端文档内容，绝不触碰 figures 里的任何文件。
 VERSIONS_DIR = LAYOUT_DIR / "_versions"   # 旧位置：只读兼容（新写入进项目 magplotfile/versions/）

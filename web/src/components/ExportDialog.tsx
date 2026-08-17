@@ -308,6 +308,20 @@ export function ExportDialog() {
                 </a>
               ),
             )}
+            {/* 引擎重渲染的警告：图已经出来了，但可能与画布不完全一致
+                （元素不存在 = 脚本改过了）。不吞——用户投出去之前得知道 */}
+            {!!result?.warnings?.length && (
+              <div className="mt-1 flex flex-col gap-0.5 border-t border-border pt-1">
+                <p className="text-xs text-ink-2">
+                  以下修改未能应用到重渲染的面板上，成图可能与画布不一致：
+                </p>
+                {result.warnings.map((w) => (
+                  <p key={w} className="break-all text-xs text-ink-3">
+                    {w}
+                  </p>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>

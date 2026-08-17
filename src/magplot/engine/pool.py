@@ -43,6 +43,19 @@ _last_prune = 0.0
 #: 提成常量是为了让测试能改短——真等 10 秒的用例没人愿意跑。
 _SHUTDOWN_JOIN_TIMEOUT = 10.0
 
+# ---- 单次请求的超时上限（秒） ----------------------------------------------
+#: 无超时的 `readline()` 是会话级死锁的源头：脚本写了死循环（或某个 C 扩展
+#: 卡住），发出请求的线程就持着 `w.lock` 永远等下去，这个会话从此谁也用不了，
+#: 连 `shutdown()` 都抢不到锁。宁可杀掉重来——超时或状态未知的 worker 一律
+#: 不复用（kill 之后下一次 `get()` 自动重建）。
+#: 各档按「正常情况下最坏要多久」给：build 要跑用户整个脚本（heavy 分钟级），
+#: 导出是 600dpi 全质量出图，override / 预览是热态操作。
+BUILD_TIMEOUT = 900.0
+REQUEST_TIMEOUT = 300.0     # override / render_png / preview_png
+EXPORT_TIMEOUT = 600.0
+#: 优雅关停：worker 收到就 SystemExit，等不到 5 秒说明它根本没在读 stdin。
+SHUTDOWN_TIMEOUT = 5.0
+
 #: 解释器来源（环境状态 API 与诊断包都用这套字符串，别在别处另起名字）
 SOURCE_ENV = "env_override"       # MM_WORKER_PYTHON
 SOURCE_CONFIGURED = "configured"  # 用户在设置里指定的
@@ -411,7 +424,44 @@ class EngineWorker:
         except OSError:
             return ""
 
-    def request(self, obj: dict) -> dict:
+    def _readline(self, timeout: float) -> str:
+        """带超时读一行回应；超时即杀掉 worker 并抛 `worker_timeout`。
+
+        超时用「读线程 + join」而不是 `select`：Windows 的 select 只接受 socket，
+        对管道直接 WinError 10038，而这条路径必须跨平台一致。
+
+        kill 之后读线程会立刻读到 EOF 退出，不会泄漏；被杀的 worker 留在池里
+        也无妨——下一次 `get()` 看到它已死就地重建（状态未知的会话绝不复用）。
+        """
+        box: list[str] = []
+
+        def read() -> None:
+            try:
+                box.append(self.proc.stdout.readline())
+            except (OSError, ValueError):      # 进程被杀后管道关闭
+                box.append("")
+
+        t = threading.Thread(target=read, daemon=True, name="mm-worker-read")
+        t.start()
+        t.join(timeout)
+        if t.is_alive():
+            LOG.warning("worker 请求超时（%.0fs），强制 kill: %s",
+                        timeout, self.script_name)
+            try:
+                self.proc.kill()
+                self.proc.wait(timeout=_SHUTDOWN_JOIN_TIMEOUT)
+            except (OSError, subprocess.SubprocessError):
+                pass
+            raise WorkerError(
+                f"渲染超时（等了 {int(timeout)} 秒）。脚本可能陷入死循环，"
+                f"或这一步本身极慢；渲染会话已重启，可以重试。"
+                f"若每次都卡在同一步，请检查 {self.script_name} 里的耗时代码。",
+                self._log_tail(), code="worker_timeout")
+        return box[0] if box else ""
+
+    def request(self, obj: dict, timeout: float | None = None) -> dict:
+        # None → 取模块常量的**当前**值（默认参数会在 def 时定死，测试改不动）
+        timeout = REQUEST_TIMEOUT if timeout is None else timeout
         self.last_used = time.time()
         # 所有命令（build/override/export/render_png/preview_png）都经这里，
         # 是「这个会话真的被用了」覆盖面最全的一个点。
@@ -421,7 +471,7 @@ class EngineWorker:
                 raise WorkerError("worker 进程已退出", self._log_tail())
             self.proc.stdin.write(json.dumps(obj, ensure_ascii=False) + "\n")
             self.proc.stdin.flush()
-            line = self.proc.stdout.readline()
+            line = self._readline(timeout)
         if not line:
             raise WorkerError("worker 进程崩溃（无响应）", self._log_tail())
         resp = json.loads(line)
@@ -439,14 +489,16 @@ class EngineWorker:
         return resp
 
     def ensure_built(self) -> dict:
-        resp = self.request({"cmd": "build"})
+        # build 要跑用户整个脚本（heavy 的分钟级），给最宽的一档
+        resp = self.request({"cmd": "build"}, BUILD_TIMEOUT)
         self.built = True
         return resp
 
     def override(self, stem: str, patches: list) -> dict:
         if not self.built:
             self.ensure_built()
-        resp = self.request({"cmd": "override", "stem": stem, "patches": patches})
+        resp = self.request({"cmd": "override", "stem": stem, "patches": patches},
+                            REQUEST_TIMEOUT)
         self.rev += 1
         return resp
 
@@ -455,7 +507,8 @@ class EngineWorker:
         if not self.built:
             self.ensure_built()
         return self.request({"cmd": "export", "stem": stem, "patches": patches,
-                             "path": path, "format": fmt, "dpi": dpi})
+                             "path": path, "format": fmt, "dpi": dpi},
+                            EXPORT_TIMEOUT)
 
     def svg_path(self, stem: str) -> Path:
         return self.out_dir / f"{stem}.svg"
@@ -463,20 +516,22 @@ class EngineWorker:
     def render_png(self, stem: str, width_px: int) -> Path:
         if not self.built:
             self.ensure_built()
-        resp = self.request({"cmd": "render_png", "stem": stem, "width": width_px})
+        resp = self.request({"cmd": "render_png", "stem": stem, "width": width_px},
+                            REQUEST_TIMEOUT)
         return Path(resp["path"])
 
     def preview_png(self, stem: str, patches: list, width_px: int, tag: str) -> Path:
         if not self.built:
             self.ensure_built()
         resp = self.request({"cmd": "preview_png", "stem": stem, "patches": patches,
-                             "width": width_px, "tag": tag})
+                             "width": width_px, "tag": tag},
+                            REQUEST_TIMEOUT)
         return Path(resp["path"])
 
     def shutdown(self) -> None:
         try:
             if self.alive():
-                self.request({"cmd": "shutdown"})
+                self.request({"cmd": "shutdown"}, SHUTDOWN_TIMEOUT)
         except (WorkerError, OSError):
             pass
         finally:
@@ -617,10 +672,11 @@ def shutdown_all(figures_dir: str | None = None, wait: bool = False) -> None:
     `wait=True` 用于**本进程即将退出**的场合：关停跑在 daemon 线程里，
     父进程一走它们就没了，worker 子进程会变成用户机器上的僵尸 python.exe。
 
-    脚本写了死循环时优雅关停根本走不通：`request()` 在持 `w.lock` 的状态下
-    无超时阻塞 readline，`shutdown()` 抢同一把锁也跟着卡死，永远走不到它
-    finally 里的 `proc.kill()`。join 超时只是不再等，子进程照样活着——所以
-    `wait=True` 这条「进程即将退出」的路径必须硬杀一次兜底。
+    脚本写了死循环时优雅关停根本走不通：`request()` 持着 `w.lock` 等回应
+    （现在有超时了，但 build 那一档就是 15 分钟），`shutdown()` 抢同一把锁
+    要一直等到它超时，永远走不到 finally 里的 `proc.kill()`。join 超时只是
+    不再等，子进程照样活着——所以 `wait=True` 这条「进程即将退出」的路径
+    必须硬杀一次兜底。
     （LRU 淘汰路径不动：那里 worker 还可能是正常在跑的慢脚本。）
     """
     with _lock:

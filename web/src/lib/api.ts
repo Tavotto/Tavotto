@@ -438,6 +438,9 @@ export interface ExportRequest {
 export interface ExportResponse {
   files: { name: string; url: string }[]
   export_dir?: string
+  /** 面板重渲染时 worker 报的警告（元素不存在 / 属性不支持）。
+   *  导出照常完成，但成图可能与画布不完全一致——必须让用户看见。 */
+  warnings?: string[]
 }
 
 export const exportFigure = (req: ExportRequest) =>
@@ -619,15 +622,20 @@ export const updateSourceFiles = (
   patches: unknown[],
   annotations?: ExportObject[],
 ) =>
-  jsonFetch<{ updated: string[]; backup_dir: string }>('/api/engine/update_source', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      id,
-      patches,
-      ...(annotations?.length ? { annotations } : {}),
-    }),
-  })
+  // 写回是覆盖用户原始文件的一步：warnings 非空时后端直接回 409
+  // （code=write_back_warnings，原文件一个字节都不动），所以成功路径上它恒为空。
+  jsonFetch<{ updated: string[]; backup_dir: string; warnings: string[] }>(
+    '/api/engine/update_source',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id,
+        patches,
+        ...(annotations?.length ? { annotations } : {}),
+      }),
+    },
+  )
 
 /* -------------------------------- AI 桥 ----------------------------------- */
 
@@ -918,6 +926,8 @@ export const restoreHistory = (id: string, n: number) =>
     updated: string[]
     backup_dir: string
     patches: { gid: string; prop: string; value: unknown }[]
+    /** 与写回同一纪律：非空即 409，成功路径上恒为空 */
+    warnings: string[]
   }>('/api/engine/history/restore', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

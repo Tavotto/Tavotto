@@ -66,6 +66,7 @@ def test_write_back_reports_locked_file_instead_of_500(client, tmp_path, monkeyp
     class FakeWorker:
         def export(self, stem, patches, path, fmt="pdf", dpi=600):
             Path(path).write_bytes(b"%PDF-1.4\n")  # 假装导出成功
+            return {"ok": True, "path": path, "warnings": []}
 
     monkeypatch.setattr(m.engine_pool, "get", lambda *a, **k: FakeWorker())
     real_replace = Path.replace
@@ -98,6 +99,7 @@ def test_write_back_reports_which_files_already_changed(client, tmp_path, monkey
     class FakeWorker:
         def export(self, stem, patches, path, fmt="pdf", dpi=600):
             Path(path).write_bytes(b"x" * 16)
+            return {"ok": True, "path": path, "warnings": []}
 
     monkeypatch.setattr(m.engine_pool, "get", lambda *a, **k: FakeWorker())
     real_replace = Path.replace
