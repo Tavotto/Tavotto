@@ -431,16 +431,32 @@ def _existing_desktop(root: str, system: str, isfile) -> str | None:
 
 
 # ----------------------------- 应用自己刷新清单 ---------------------------
+#: 刷新清单时「问不到就别动它」的那几个键
+_KEEP_IF_UNKNOWN = ("cli", "desktop", "install_dir")
+
+
 def refresh_manifest(*, source: str = "app", **kw) -> str | None:
     """启动时把清单刷成「我现在在这儿」。**失败一律不打扰用户**。
 
     为什么应用自己也写：安装器只在装的那一刻写得了一次，而用户会把 .app 拖到
     别处、会用免安装形态、macOS 根本没有装完跑脚本的钩子。每次启动刷一遍，
     清单就永远指着最后一次真的跑起来过的那套。
+
+    **刷新只补充、不抹掉。** 同一台机器上可以既有桌面版（装在非惯例位置）
+    又有 pip 装的 magplot：pip 那次是非冻结进程，`describe_self()` 只会去惯例
+    位置找壳，找不到就是 None——无条件写下去等于把桌面版那次记下的、仍然有效
+    的 `desktop` 抹成空，此后 `magplot open` 再也定位不到那个窗口，静默退回
+    浏览器模式。所以这几个键**问不到就沿用上一份**（`read_manifest` 已经核实过
+    里面的路径还在，沿用的不会是一条死路径）。
     """
     try:
         info = describe_self(**kw)
         info["source"] = source
+        previous = read_manifest()
+        if previous:
+            for key in _KEEP_IF_UNKNOWN:
+                if not info.get(key) and previous.get(key):
+                    info[key] = previous[key]
         return write_manifest(info)
     except (OSError, ValueError, ImportError):
         return None

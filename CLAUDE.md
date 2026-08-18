@@ -482,7 +482,9 @@ Python，首次渲染也不联网：
   **别把 GUI exe 当 CLI 调**，哪怕它接受同样的参数。
   安装清单落在**用户配置目录**（安装目录可能只读、卸载会被删）：安装器装完跑
   `magplot-cli doctor --json --write-manifest`（让 CLI 自己写，NSIS 不拼 JSON），
-  应用每次启动 `locate.refresh_manifest()` 刷一遍，卸载器在**删文件之前**移除。
+  应用每次启动 `locate.refresh_manifest()` 刷一遍（**只补充不抹掉**：pip 装的
+  那份是非冻结进程、只去惯例位置找壳，无条件写下去会把桌面版记的非惯例路径
+  抹成空，一次 `magplot --figures …` 就够），卸载器在**删文件之前**移除。
   读的一方要核实里面的路径还在——清单是缓存不是真相。**任何单一机制都不是
   唯一依据**（清单可能没写成、注册表可能被策略锁住），也**不动用户 PATH**。
   `sidecar/Magplot` 这一段的出处只有 `tauri.conf.json` 的 `bundle.resources`，

@@ -557,3 +557,63 @@ def test_nightly_uninstall_assertion_is_not_vacuous():
     assert "Test-Path $manifest" in between, \
         "删掉清单之后、卸载之前没有再确认它存在——那条卸载断言是空的"
     assert removed < uninstalled < gone
+
+
+# ------------------- 刷新清单只补充，不抹掉（Codex #6） -------------------
+def test_refresh_keeps_a_desktop_path_it_cannot_rediscover(tmp_path, monkeypatch):
+    """pip 装的 magplot 跑一次，不许把桌面版记下的 desktop 抹成空。
+
+    同一台机器上可以既有装在非惯例位置的桌面版、又有 pip 装的 magplot。
+    pip 那次是非冻结进程，`describe_self()` 只去惯例位置找壳、找不到就是 None；
+    无条件写下去 = 桌面版那条仍然有效的路径没了，此后 `magplot open` 再也
+    定位不到那个窗口，**静默**退回浏览器模式。
+    """
+    monkeypatch.setenv("MAGPLOT_CONFIG_DIR", str(tmp_path))
+    moved = tmp_path / "Tools" / "Magplot.app" / "Contents" / "MacOS" / "Magplot"
+    moved.parent.mkdir(parents=True)
+    moved.write_text("gui", encoding="utf-8")
+    # 桌面版（冻结）先写下它在哪
+    locate.write_manifest({"version": "1", "cli": None, "desktop": str(moved),
+                           "install_dir": str(tmp_path / "Tools" / "Magplot.app"),
+                           "source": "app"})
+
+    # pip 装的那份跑一次。用 system="linux" 表示「惯例位置里没有壳」——那儿
+    # 本来就没有桌面发行形态，install_roots 恒为空，与开发机上 /Applications
+    # 里是否真装着一份无关（那是绝对路径，env 隔离不掉）。
+    locate.refresh_manifest(frozen=False, system="linux", prefix=str(tmp_path),
+                            environ={"HOME": str(tmp_path)}, version="1")
+
+    got = locate.read_manifest()
+    assert got["desktop"] == str(moved), "刷新把桌面版的路径抹掉了"
+
+
+def test_refresh_drops_a_desktop_path_that_no_longer_exists(tmp_path, monkeypatch):
+    """沿用的前提是它**还在**——read_manifest 已经核实过，别把死路径留下来。"""
+    monkeypatch.setenv("MAGPLOT_CONFIG_DIR", str(tmp_path))
+    locate.write_manifest({"version": "1", "cli": None,
+                           "desktop": str(tmp_path / "gone" / "Magplot"),
+                           "install_dir": None, "source": "app"})
+    locate.refresh_manifest(frozen=False, system="linux", prefix=str(tmp_path),
+                            environ={"HOME": str(tmp_path)}, version="1")
+    assert locate.read_manifest()["desktop"] is None
+
+
+def test_refresh_still_updates_what_it_does_know(tmp_path, monkeypatch):
+    """「只补充不抹掉」不等于「不再更新」：问得到的照旧覆盖。"""
+    monkeypatch.setenv("MAGPLOT_CONFIG_DIR", str(tmp_path))
+    old_cli = tmp_path / "old" / "magplot"
+    old_cli.parent.mkdir()
+    old_cli.write_text("x", encoding="utf-8")
+    locate.write_manifest({"version": "0.0.1", "cli": str(old_cli), "desktop": None,
+                           "install_dir": None, "source": "installer"})
+
+    scripts = tmp_path / ("Scripts" if os.name == "nt" else "bin")
+    scripts.mkdir()
+    new_cli = scripts / ("magplot.exe" if os.name == "nt" else "magplot")
+    new_cli.write_text("x", encoding="utf-8")
+    locate.refresh_manifest(frozen=False, prefix=str(tmp_path),
+                            environ={"HOME": str(tmp_path)}, version="9.9.9")
+
+    got = locate.read_manifest()
+    assert os.path.normpath(got["cli"]) == os.path.normpath(str(new_cli))
+    assert got["version"] == "9.9.9"
