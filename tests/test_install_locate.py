@@ -264,13 +264,20 @@ def test_describe_self_from_the_cli_shim_itself():
 
 
 def test_describe_self_from_a_pip_install(tmp_path):
-    scripts = tmp_path / "bin"
+    r"""pip / pipx 装的：CLI 是解释器同级的 console script。
+
+    这条**按本平台**跑（要真的建文件），所以目录名与后缀都得跟着平台走：
+    Windows 是 `Scripts\magplot.exe`，POSIX 是 `bin/magplot`。
+    """
+    win = os.name == "nt"
+    scripts = tmp_path / ("Scripts" if win else "bin")
     scripts.mkdir()
-    (scripts / "magplot").write_text("#!/bin/sh\n", encoding="utf-8")
-    me = locate.describe_self(executable=str(scripts / "python3"), frozen=False,
-                              prefix=str(tmp_path), system="darwin",
-                              environ={"HOME": str(tmp_path)}, version="1")
-    assert me["cli"] == str(scripts / "magplot")
+    exe = scripts / ("magplot.exe" if win else "magplot")
+    exe.write_text("#!/bin/sh\n", encoding="utf-8")
+    me = locate.describe_self(executable=str(scripts / "python"), frozen=False,
+                              prefix=str(tmp_path), environ={"HOME": str(tmp_path)},
+                              version="1")
+    assert os.path.normpath(me["cli"]) == os.path.normpath(str(exe))
     assert me["source"] == "module"
 
 

@@ -414,8 +414,14 @@ def test_broken_registry_has_a_stable_code(figures, monkeypatch):
     assert rc == 2 and out["code"] in {"registry_invalid", "project_unreadable"}
 
 
-@pytest.mark.skipif(os.name == "nt", reason="Windows 上 chmod 挡不住写入")
-@pytest.mark.skipif(os.geteuid() == 0, reason="root 无视权限位")
+#: `os.geteuid` 在 Windows 上根本不存在，而 skipif 的参数是 **import 期**求值的
+#: ——写成 `os.geteuid() == 0` 会让整个文件在 Windows 上收集失败（连带把别的
+#: 用例一起藏起来，CI 实测）。判据本身要在能求值的前提下才谈得上跳过。
+_is_root = getattr(os, "geteuid", lambda: -1)() == 0
+
+
+@pytest.mark.skipif(os.name == "nt" or _is_root,
+                    reason="Windows 上 chmod 挡不住写入；root 无视权限位")
 def test_unwritable_project_reports_registry_write_failed(figures, monkeypatch):
     """图库目录只读时报 `registry_write_failed`，**不是** traceback。
 

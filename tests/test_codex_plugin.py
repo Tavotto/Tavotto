@@ -8,6 +8,7 @@ import ast
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -250,6 +251,14 @@ needs_no_real_cli = pytest.mark.skipif(
     os.path.isfile(REAL_APP_CLI),
     reason="这台机器上真装着带 CLI 的 Magplot 桌面版，「装了但没 CLI」模拟不出来")
 
+#: 假 bridge 是带 shebang 的脚本。Windows 的 CreateProcess 起不了它（也起不了
+#: .bat/.cmd，subprocess 不走 shell），所以这一类只在 POSIX 上跑——与文件上半部
+#: 分那个 posix_shim_only 同一个理由。**Windows 上的等价覆盖有两条**：
+#: tests/test_install_locate.py 用注入的假文件系统测同一套判据（平台无关），
+#: 下面 test_real_cli_handoff_end_to_end 用 pip 装出来的真 magplot 走完整链路。
+posix_bridge_only = pytest.mark.skipif(
+    os.name == "nt", reason="假 bridge 用 shebang 脚本，Windows 上起不来")
+
 
 @pytest.fixture(scope="module")
 def clean_python(tmp_path_factory):
@@ -281,11 +290,23 @@ def _write_bridge(path: Path) -> Path:
 
 
 def _plugin_env(tmp_path, **extra):
-    """一个干净到底的环境：PATH 里没有 magplot，也没有 MAGPLOT_CLI。"""
+    """一个干净到底的环境：PATH 里没有 magplot，也没有 MAGPLOT_CLI。
+
+    **已知安装位置也要一起指到临时目录**：Windows 的 `install_roots()` 读的是
+    `%LOCALAPPDATA%` / `%PROGRAMFILES%`，不改它们的话 runner（或开发机）上真装
+    着的 Magplot 会被发现——「什么都没装」就模拟不出来了。macOS 的
+    `/Applications` 是绝对路径改不掉，那条由 needs_no_real_desktop 兜。
+    """
     empty = tmp_path / "empty-bin"
     empty.mkdir(exist_ok=True)
+    roots = tmp_path / "roots"
+    (roots / "local").mkdir(parents=True, exist_ok=True)
+    (roots / "pf").mkdir(parents=True, exist_ok=True)
     env = {**os.environ, "PATH": str(empty), "HOME": str(tmp_path),
+           "LOCALAPPDATA": str(roots / "local"),
+           "PROGRAMFILES": str(roots / "pf"),
            "MAGPLOT_CONFIG_DIR": str(tmp_path / "config")}
+    env.pop("PROGRAMFILES(X86)", None)
     env.pop("MAGPLOT_CLI", None)
     env.update(extra)
     return env
@@ -356,6 +377,7 @@ def test_desktop_installed_but_without_cli_is_its_own_error(clean_python, tmp_pa
     assert "最新版" in out["hint"]
 
 
+@posix_bridge_only
 def test_manifest_discovery_survives_spaces_and_chinese(clean_python, tmp_path):
     """安装清单指到带空格和中文的路径：一路到 bridge 都不许被拆开。
 
@@ -382,6 +404,7 @@ def test_manifest_discovery_survives_spaces_and_chinese(clean_python, tmp_path):
     assert calls[0][1] == str(target)
 
 
+@posix_bridge_only
 def test_explicit_env_override_still_wins(clean_python, tmp_path):
     """既有行为不许被新链路顶掉：MAGPLOT_CLI 指到哪儿就用哪儿。"""
     chosen = _write_bridge(tmp_path / "chosen" / "magplot")
@@ -399,6 +422,7 @@ def test_explicit_env_override_still_wins(clean_python, tmp_path):
     assert out["magplot"] == {"source": "env", "cmd": str(chosen)}
 
 
+@posix_bridge_only
 def test_path_cli_still_wins_over_the_install(clean_python, tmp_path):
     """PATH 里的 magplot（pip/pipx 装的）优先级仍在 CLI shim 之前。"""
     bin_dir = tmp_path / "bin"
@@ -430,6 +454,7 @@ def test_nothing_installed_reports_magplot_missing(clean_python, tmp_path):
     assert "releases" in out["hint"]
 
 
+@posix_bridge_only
 def test_no_launch_reaches_the_bridge(clean_python, tmp_path):
     """`--no-launch` 一路传到 CLI，且第二次调用不再发生。"""
     bridge = _write_bridge(tmp_path / "cli" / "magplot-cli")
@@ -443,6 +468,7 @@ def test_no_launch_reaches_the_bridge(clean_python, tmp_path):
     assert out["launch"] is None                 # 一个界面都没起
 
 
+@posix_bridge_only
 def test_open_error_code_is_passed_through(clean_python, tmp_path):
     """`magplot open` 自己的 code（比如注册表写不进去）要原样带出来。
 
@@ -486,3 +512,45 @@ def test_every_failure_payload_carries_an_error_code():
         if isinstance(payload, ast.Dict):
             keys = {k.value for k in payload.keys if isinstance(k, ast.Constant)}
             assert "error_code" in keys, f"第 {node.lineno} 行的失败出口没有 error_code"
+
+
+@pytest.mark.skipif(shutil.which("magplot") is None,
+                    reason="PATH 里没有 pip 装出来的 magplot")
+def test_real_cli_handoff_end_to_end(tmp_path):
+    """拿**真的** magplot CLI 走完整条链路——Windows 上也跑。
+
+    上面那批用假 bridge 的用例在 Windows 上起不来（shebang 脚本），可
+    「路径带空格和中文时会不会被拆开」恰恰是 Windows 最容易出事的地方。
+    这一条用 `pip install -e .` 装出来的 `magplot`（Windows 上是真的 .exe）
+    补上那段覆盖：真 argv、真注册表、真 JSON，只是不唤起界面。
+    """
+    project = tmp_path / "我的 图库"
+    project.mkdir()
+    (project / "fig_demo.py").write_text(
+        "from pathlib import Path\n\n"
+        "import matplotlib.pyplot as plt\n\n"
+        "OUT = Path(__file__).resolve().parent\n\n\n"
+        "def main():\n"
+        "    fig, ax = plt.subplots()\n"
+        '    fig.savefig(OUT / "Fig1_演示.pdf")\n',
+        encoding="utf-8")
+    (project / "Fig1_演示.pdf").write_bytes(b"%PDF-1.4\n%%EOF\n")
+
+    env = {**os.environ,
+           "MAGPLOT_CLI": shutil.which("magplot"),
+           "MAGPLOT_CONFIG_DIR": str(tmp_path / "cfg"),
+           "MAGPLOT_DATA_DIR": str(tmp_path / "data")}
+    proc = subprocess.run(
+        [sys.executable, str(HANDOFF), str(project / "fig_demo.py"),
+         "--run", "never", "--no-launch"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", env=env)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    out = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert out["ok"] is True
+    assert out["parameterizable"] is True
+    assert out["project"] == str(project)          # 空格与中文原样，没被拆开
+    assert out["stem"] == "Fig1_演示"
+    assert out["launch"] is None                   # --no-launch：一个界面都没起
+    assert out["magplot"]["source"] == "env"
+    registry = json.loads((project / "mm_registry.json").read_text(encoding="utf-8"))
+    assert "fig_demo.py" in registry["scripts"]
