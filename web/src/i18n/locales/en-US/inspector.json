@@ -185,6 +185,12 @@
     "mixedValues": "Mixed",
     "moveDown": "Move down",
     "moveUp": "Move up",
+    "numberList": {
+      "count_one": "{{count}} tick",
+      "count_other": "{{count}} ticks",
+      "empty": "Leave empty to keep the current ticks",
+      "placeholder": "e.g. 0, 0.5, 1"
+    },
     "orderEntry": "Entry {{index}}",
     "orphanCount": "{{overrides}} edits · {{elements}} elements",
     "proxiedGeometry": "Position and size apply to the host axes “{{label}}”.",
@@ -204,6 +210,8 @@
     "resetToScriptCount": "Reset to the script ({{count}})",
     "restore": "Restore",
     "retryRender": "Retry render",
+    "scaleAxes": "Scale axes",
+    "scaleAxesMulti": "Scale {{count}} axes",
     "scaleHint": "Relative to the current size; returns to 100% once applied",
     "scaleLabel": "Scale",
     "scaleTitle": "Scales about the centre; relative layout inside the group is preserved",
@@ -211,9 +219,7 @@
     "setAxesWidth": "Change axes width",
     "traceback": "traceback",
     "useAssistant": "Do it with the assistant",
-    "waiting": "Waiting for the engine to render…",
-    "scaleAxes": "Scale axes",
-    "scaleAxesMulti": "Scale {{count}} axes"
+    "waiting": "Waiting for the engine to render…"
   },
   "elementFallback": "Figure element",
   "elementsSelected_one": "{{count}} element selected",
@@ -241,6 +247,7 @@
     "lineNamed": "Line “{{value}}”",
     "scatterNamed": "Scatter “{{value}}”",
     "scatterSeries": "Scatter series {{value}}",
+    "shape": "Shape {{value}}",
     "textNamed": "Text “{{value}}”",
     "tickLabels": "{{axis}} tick labels",
     "tickNamed": "Tick “{{value}}”",
@@ -271,13 +278,19 @@
       "inout": "Both",
       "out": "Outward"
     },
+    "extend": {
+      "both": "Both ends",
+      "max": "High end",
+      "min": "Low end",
+      "neither": "None"
+    },
     "fontfamily": {
       "monospace": "Monospace",
       "sans-serif": "Sans-serif",
       "serif": "Serif"
     },
     "format": {
-      "auto": "Auto",
+      "auto": "Auto (as in script)",
       "sci": "Scientific"
     },
     "grid_linestyle": {
@@ -320,6 +333,11 @@
       "upper left": "Upper left",
       "upper right": "Upper right"
     },
+    "major_mode": {
+      "auto": "Auto (as in script)",
+      "fixed": "Fixed positions",
+      "step": "Fixed step"
+    },
     "marker": {
       "": "None",
       "*": "Star",
@@ -339,6 +357,19 @@
       "s": "Square",
       "v": "Triangle down",
       "x": "Cross"
+    },
+    "minor_format": {
+      "auto": "Auto (as in script)",
+      "none": "No numbers",
+      "sci": "Scientific"
+    },
+    "minor_mode": {
+      "auto": "Auto",
+      "step": "Fixed step"
+    },
+    "orientation": {
+      "horizontal": "Horizontal",
+      "vertical": "Vertical"
     },
     "origin": {
       "lower": "Bottom left",
@@ -370,13 +401,13 @@
     "xscale": {
       "linear": "Linear",
       "log": "Log",
-      "logit": "Logit",
+      "logit": "Logit (log-odds)",
       "symlog": "Symlog"
     },
     "yscale": {
       "linear": "Linear",
       "log": "Log",
-      "logit": "Logit",
+      "logit": "Logit (log-odds)",
       "symlog": "Symlog"
     }
   },
@@ -392,12 +423,14 @@
     "geometry": "Position and size",
     "gradientFill": "Gradient fill",
     "gridFrame": "Grid and frame",
+    "gridFramePerSide": "Border (per side)",
     "layout": "Layout",
     "legend": "Legend",
     "lineMarker": "Line and markers",
     "stroke": "Stroke",
     "style": "Style",
     "text": "Text",
+    "tickLocator": "Tick placement",
     "tickMarks": "Tick marks",
     "ticks": "Ticks",
     "typography": "Typography",
@@ -560,7 +593,9 @@
     "elev": "Elevation",
     "endpoints_frac": "Position",
     "entry_order": "Entry order",
+    "extend": "Extend ends",
     "facecolor": "Background colour",
+    "fill": "Filled",
     "fontfamily": "Font family",
     "fontsize": "Font size",
     "format": "Number format",
@@ -588,12 +623,20 @@
     "linewidth": "Line width",
     "loc": "Location",
     "loc_frac": "Position",
+    "major_mode": "Major tick mode",
+    "major_step": "Major tick step",
+    "major_values": "Fixed ticks",
     "marker": "Marker",
     "markeredgecolor": "Marker edge",
     "markerfacecolor": "Marker fill",
     "markersize": "Marker size",
+    "minor_format": "Minor tick format",
+    "minor_mode": "Minor tick mode",
+    "minor_step": "Minor tick step",
+    "minor_visible": "Minor ticks",
     "mutation_scale": "Arrow head scale",
     "ncol": "Columns",
+    "orientation": "Orientation",
     "origin": "Origin",
     "outline_visible": "Outline",
     "outline_width": "Outline width",
@@ -607,11 +650,19 @@
     "size": "Point size",
     "size_mm": "Figure size",
     "spine_bottom": "Bottom spine",
+    "spine_bottom_color": "Bottom border colour",
+    "spine_bottom_linewidth": "Bottom border width",
     "spine_color": "Spine colour",
     "spine_left": "Left spine",
+    "spine_left_color": "Left border colour",
+    "spine_left_linewidth": "Left border width",
     "spine_linewidth": "Spine width",
     "spine_right": "Right spine",
+    "spine_right_color": "Right border colour",
+    "spine_right_linewidth": "Right border width",
     "spine_top": "Top spine",
+    "spine_top_color": "Top border colour",
+    "spine_top_linewidth": "Top border width",
     "stroke_color": "Stroke colour",
     "stroke_enabled": "Stroke",
     "stroke_width": "Stroke width",
@@ -643,6 +694,9 @@
     "fill": {
       "facecolor": "Fill colour"
     },
+    "patch": {
+      "facecolor": "Fill colour"
+    },
     "scatter": {
       "facecolor": "Fill colour"
     }
@@ -663,6 +717,7 @@
     "legend": "Legend",
     "legend_text": "Legend entry",
     "line": "Line",
+    "patch": "Shape",
     "scatter": "Scatter series",
     "text": "Text",
     "ticklabel": "Tick label",
@@ -826,12 +881,6 @@
     "title": "Transform"
   },
   "unlock": "Unlock",
-  "unsupported": {
-    "colorbar": {
-      "reason": "Flipping the orientation requires destroying and rebuilding the colorbar axes, which would renumber every element (gid) in the figure and invalidate existing edits and undo history. Change `orientation` in the script instead — the assistant can do it for you.",
-      "title": "Colorbar orientation"
-    }
-  },
   "versionHistory": {
     "confirmRestore": "Restore",
     "currentSuffix": " · current",

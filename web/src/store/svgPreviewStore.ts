@@ -25,8 +25,9 @@
  *    （那会双倍位移，而且第一个元素的预览会在权威渲染回来之前弹回去）。
  */
 import {
-  applyStyleEdit,
   adapterFor,
+  applyStyleEdit,
+  canStyleEditApply,
   restoreStyleEdits,
   unitsPerPt,
   type StyleEdit,
@@ -366,17 +367,27 @@ export function previewTransform(gid: string, dfx: number, dfy: number): void {
 /**
  * 样式预览。**返回 false = 这一次预览不会发生，调用方必须原路走后端。**
  *
- * 三种 false：不在能力表里（白名单，见 lib/svgStyle.ts）／没有进行中的会话／
- * gid 在这一版 SVG 里根本不存在。第三种是真实存在的一大类——误差棒、柱形系列、
- * 刻度组都是 manifest 的伪元素，matplotlib 给它们的成员发的是自动 id。
- * 这里**必须同步查一次节点**：光看能力表就回 true 的话，调用方会据此把渲染
- * 策略降成 `'none'`，于是用户拖着改颜色**整轮什么都不会发生**——比改动前
+ * 四种 false：不在能力表里（白名单，见 lib/svgStyle.ts）／没有进行中的会话／
+ * gid 在这一版 SVG 里根本不存在／**这个 artist 上没有可改的叶子**。
+ *
+ * 第三种是真实存在的一大类——误差棒、柱形系列、刻度组都是 manifest 的伪元素，
+ * matplotlib 给它们的成员发的是自动 id。第四种同样常见：能力表按 role+prop 发，
+ * 而同一个 role 的两个 artist 在 SVG 上可以长得完全不同——`fill=False` 的
+ * PathPatch 写的是 `fill: none`，改 facecolor 一个叶子都碰不到。
+ *
+ * 这里**必须同步算一遍**：光看能力表就回 true 的话，调用方会据此把渲染策略
+ * 降成 `'none'`，于是用户拖着改颜色**整轮什么都不会发生**——比改动前
  * （每次都发后端）还糟。
  */
 export function previewStyle(gid: string, role: string, prop: string, value: unknown): boolean {
-  if (!adapterFor(role, prop)) return false
+  const kind = adapterFor(role, prop)
+  if (!kind) return false
   if (!session || session.settled) return false
-  if (!findGidNode(findPanelSvg(session.panelId), gid)) return false
+  const svg = findPanelSvg(session.panelId)
+  const node = findGidNode(svg, gid)
+  if (!node) return false
+  const sizeMm = panels.get(session.panelId)?.sizeMm
+  if (!canStyleEditApply(node, kind, value, { unitsPerPt: unitsPerPt(svg, sizeMm) })) return false
   schedule(`s:${gid}|${prop}`, { kind: 'style', panelId: session.panelId, gid, role, prop, value })
   return true
 }

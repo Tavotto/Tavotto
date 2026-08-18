@@ -100,6 +100,39 @@ const errorbarEl: ManifestElement = {
   editable: [f('color', 'color', '#9467bd'), f('linewidth', 'number', 1.2)],
 }
 
+/** 脚本 `ax.fill()` 出的独立形状：SVG 上 fill 与 stroke 各一条 */
+const patchEl: ManifestElement = {
+  gid: 'axes_0.patches_4',
+  role: 'patch',
+  label: '形状 1',
+  bbox: [0.1, 0.6, 0.2, 0.2],
+  draggable: false,
+  editable: [
+    f('facecolor', 'color', '#17becf'),
+    f('fill', 'bool', true),
+    f('edgecolor', 'color', '#5a3286'),
+    f('linewidth', 'number', 1.2, { min: 0, max: 8, step: 0.1 }),
+    f('visible', 'bool', true),
+  ],
+}
+
+/**
+ * `fill=False` 的 PathPatch：SVG 上写的是 `fill: none`。
+ * 通用规则只改「本来就画着的叶子」，所以 facecolor 在它身上必须**预览不生效**
+ * 并据实回退后端——而不是把一个空心形状凭空填实。
+ */
+const hollowPatchEl: ManifestElement = {
+  gid: 'axes_0.patches_5',
+  role: 'patch',
+  label: '形状 2',
+  bbox: [0.4, 0.6, 0.2, 0.2],
+  draggable: false,
+  editable: [
+    f('facecolor', 'color', '#000000'),
+    f('edgecolor', 'color', '#7f7f0f'),
+  ],
+}
+
 const manifest: Manifest = {
   stem: 'Fig1',
   size_mm: [101.6, 76.2],
@@ -109,6 +142,8 @@ const manifest: Manifest = {
     barEl,
     titleEl,
     errorbarEl,
+    patchEl,
+    hollowPatchEl,
   ],
 }
 
@@ -313,6 +348,66 @@ describe('柱形填充色', () => {
     expect(styleOf('axes_0.barseries_0.bar_0', 'path', 'fill')).toBe(css('#123456'))
     // 边框色不该被顺手改掉
     expect(styleOf('axes_0.barseries_0.bar_0', 'path', 'stroke')).toBe(css('#333333'))
+    expect(engineRender).not.toHaveBeenCalled()
+  })
+})
+
+describe('独立形状（patch）', () => {
+  it('facecolor 只改 fill，描边不动，整轮不发后端', async () => {
+    await mount('axes_0.patches_4')
+    const input = colorInput('填充色')
+    await act(async () => {
+      typeInto(input, '#123456')
+    })
+    flushPreviewFrame()
+    expect(styleOf('axes_0.patches_4', 'path', 'fill')).toBe(css('#123456'))
+    expect(styleOf('axes_0.patches_4', 'path', 'stroke')).toBe(css('#5a3286'))
+    expect(engineRender).not.toHaveBeenCalled()
+  })
+
+  it('edgecolor 只改 stroke，填充不动', async () => {
+    await mount('axes_0.patches_4')
+    await act(async () => {
+      typeInto(colorInput('描边色'), '#aa0000')
+    })
+    flushPreviewFrame()
+    expect(styleOf('axes_0.patches_4', 'path', 'stroke')).toBe(css('#aa0000'))
+    expect(styleOf('axes_0.patches_4', 'path', 'fill')).toBe(css('#17becf'))
+    expect(engineRender).not.toHaveBeenCalled()
+  })
+
+  it('「填充」开关不在能力表里：不碰 SVG，直接走后端', async () => {
+    await mount('axes_0.patches_4')
+    const before = document.querySelector(`[data-element-svg="p1"] svg`)!.outerHTML
+    await act(async () => {
+      toggle('填充').click()
+    })
+    flushPreviewFrame()
+    expect(document.querySelector(`[data-element-svg="p1"] svg`)!.outerHTML).toBe(before)
+    expect(overrideOf('axes_0.patches_4', 'fill')).toBe(false)
+    expect(engineRender).toHaveBeenCalled()
+  })
+
+  it('空心 patch 改 facecolor：SVG 一个字节不动，据实回退后端', async () => {
+    await mount('axes_0.patches_5')
+    const before = document.querySelector(`[data-element-svg="p1"] svg`)!.outerHTML
+    await act(async () => {
+      typeInto(colorInput('填充色'), '#00ff00')
+    })
+    flushPreviewFrame()
+    // `fill: none` 不许被填实——预览没生效，就该说没生效
+    expect(document.querySelector(`[data-element-svg="p1"] svg`)!.outerHTML).toBe(before)
+    expect(overrideOf('axes_0.patches_5', 'facecolor')).toBe('#00ff00')
+    expect(engineRender).toHaveBeenCalled()
+  })
+
+  it('空心 patch 的描边照样能抢先显示', async () => {
+    await mount('axes_0.patches_5')
+    await act(async () => {
+      typeInto(colorInput('描边色'), '#0000aa')
+    })
+    flushPreviewFrame()
+    expect(styleOf('axes_0.patches_5', 'path', 'stroke')).toBe(css('#0000aa'))
     expect(engineRender).not.toHaveBeenCalled()
   })
 })

@@ -523,8 +523,20 @@ export function openPackage(file: File): Promise<PackageOpenResult> {
 /** manifest 里一个可编辑字段；ElementInspector 完全由它驱动，前端不硬编码属性名 */
 export interface EditableField {
   prop: string
-  /** order：可重排列表（图例条目顺序），value 为原始序号排列，options 为显示文字 */
-  type: 'text' | 'number' | 'color' | 'bool' | 'enum' | 'pair' | 'rect' | 'order'
+  /**
+   * order：可重排列表（图例条目顺序），value 为原始序号排列，options 为显示文字。
+   * number_list：一串数（固定刻度位置），value 为 number[]。
+   */
+  type:
+    | 'text'
+    | 'number'
+    | 'color'
+    | 'bool'
+    | 'enum'
+    | 'pair'
+    | 'rect'
+    | 'order'
+    | 'number_list'
   value: unknown
   min?: number
   max?: number
@@ -535,12 +547,48 @@ export interface EditableField {
   group?: string
 }
 
+/** 路径几何的一条子路径（figure 分数、y 向下） */
+export interface GeometryPath {
+  points: [number, number][]
+  closed: boolean
+}
+
+/**
+ * 元素**真正画出来的那条路径**（曲线 / 填充 / 独立形状）。
+ *
+ * 为什么需要它：bbox 回答的是「占了多大一块」，当不了选中轮廓也当不了命中
+ * 判据——斜曲线、fill_between、多边形的包围盒里绝大部分是空白，用它画选择框
+ * 会画出一个与图形对不上的矩形，用它做命中会让用户在空白处误选。
+ *
+ * 约定（与 engine/pathgeom.py 同源）：
+ * * 坐标与 bbox 同一套：figure 分数、y 向下；
+ * * 它是**渲染派生数据**：每次渲染由引擎现算，不进用户文档、不是 override、
+ *   不参与写回。xlim / scale / axes position / figsize / aspect / 色条方向一变，
+ *   下一版 manifest 里它自然就是新的——前端**绝不**自己推算它；
+ * * bbox 一个字节没少：布局、缩放、对齐、resize 手柄仍然只认 bbox，
+ *   没有 geometry 的元素（文字、图例、子图、散点）也仍然只用 bbox。
+ * * 散点与「只有 marker 没有连线」的曲线**有意不给** geometry：一个 marker
+ *   一条小路径撑爆 manifest，而那条穿过点位的折线图上根本不存在。
+ */
+export interface ElementGeometry {
+  kind: 'polyline' | 'path' | 'multi_path'
+  paths: GeometryPath[]
+  /** 这条路径是填充的（选中时给一层很淡的底色，命中含内部） */
+  fill: boolean
+  /** 这条路径有描边 */
+  stroke: boolean
+  /** 裁剪框（figure 分数、y 向下）；只有矩形裁剪才给，非矩形裁剪不给 */
+  clip?: [number, number, number, number]
+}
+
 export interface ManifestElement {
   gid: string
   role: string
   label: string
   /** figure 分数坐标，y 向下：[x, y, w, h] */
   bbox: [number, number, number, number]
+  /** 真实路径（见 ElementGeometry）；没有就退回 bbox */
+  geometry?: ElementGeometry
   editable: EditableField[]
   draggable: boolean
   /** axes：可在画布上直接拖动/缩放子图占比（写 position override） */
@@ -553,6 +601,13 @@ export interface ManifestElement {
   /** 该 axes 其实是色条轴；属性页应改用它的色条元素 */
   is_colorbar?: boolean
   colorbar_gid?: string
+  /**
+   * 色条元素的**稳定语义身份**（`cbar:<宿主 axes gid>:<序号>`）与宿主 gid。
+   * `axes_i.colorbar` 是按 fig.axes 的排序编出来的名字，语义身份才是「这是谁的
+   * 色条」；引擎在 index 里两个都认，所以旧文档的 gid 照旧生效。
+   */
+  colorbar_key?: string
+  host_gid?: string
   /**
    * 拖动这个 axes 时该一起走的**其他 axes**（色条轴、twinx/twiny 的孪生轴）。
    * 由引擎裁决（只有那边有 matplotlib 的共享关系与落点），前端只负责把同一个

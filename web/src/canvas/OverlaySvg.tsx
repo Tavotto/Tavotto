@@ -1,6 +1,8 @@
 import { Fragment } from 'react'
-import type { ManifestElement } from '@/lib/api'
+import type { ElementGeometry, ManifestElement } from '@/lib/api'
 import type { Rect4 } from '@/lib/axesLayout'
+import { geomPathD, translateGeom } from '@/lib/pathGeom'
+import { PATH_HIT_SHAPES, shapeOutline } from '@/lib/shapeGeometry'
 import { MM_PER_PT } from '@/lib/units'
 import { arrowEndpointsOf, geomTarget, panelFullRect, resolveGroup } from '@/lib/elementGeom'
 import { ALL_DIRS, boundsOf, dirsFor, type ResizeDir } from '@/lib/geometry'
@@ -170,38 +172,14 @@ export function OverlaySvg() {
         />
       )}
 
-      {/* hover 预示；箭头 / 直线沿线段本身描示，不画与线对不上的包围盒框 */}
-      {hovered &&
-        (isLinear(hovered) ? (
-          <LinearOutline obj={hovered} t={t} opacity={0.4} />
-        ) : (
-          <rect
-            {...rectAttrs(toScreen(hovered, t))}
-            transform={spinOf(hovered, toScreen(hovered, t))}
-            fill="none"
-            stroke={SEL}
-            strokeOpacity={0.4}
-            strokeWidth={1}
-          />
-        ))}
+      {/* hover 预示；线状与真实轮廓类对象沿自己的形状描示，不画对不上的包围盒 */}
+      {hovered && <ObjectOutline obj={hovered} t={t} opacity={0.4} />}
 
-      {/* 选择框；箭头 / 直线同上——只有沿线的描示 + 端点手柄，没有矩形外框 */}
+      {/* 选择框；同上——形状对象只有沿真实轮廓的描示，没有矩形外框 */}
       {!cropTarget &&
-        selected.map((o) =>
-          isLinear(o) ? (
-            <LinearOutline key={o.id} obj={o} t={t} />
-          ) : (
-            <rect
-              key={o.id}
-              {...rectAttrs(toScreen(o, t))}
-              transform={spinOf(o, toScreen(o, t))}
-              fill="none"
-              stroke={SEL}
-              strokeWidth={1}
-              strokeDasharray={o.id === editingTextId ? '3 2' : undefined}
-            />
-          ),
-        )}
+        selected.map((o) => (
+          <ObjectOutline key={o.id} obj={o} t={t} dashed={o.id === editingTextId} />
+        ))}
 
       {groupBounds && !cropTarget && (
         <rect
@@ -354,6 +332,76 @@ function rectAttrs(box: Box) {
 }
 
 /**
+ * 画布对象的 hover / 选中描示：**能沿真实形状描的一律沿真实形状描**。
+ *
+ * * 箭头 / 直线 → 沿端点的一条线（`LinearOutline`）；
+ * * 椭圆 / 三角 / 菱形 / 多边形 / 大括号 → 沿真实轮廓（与 ShapeView、
+ *   命中层共用 `shapeOutline`，三处同一份几何）；
+ * * 其余（矩形、文字、面板）→ 包围盒矩形，那本来就是它们的形状。
+ *
+ * 为什么较真：一个三角形选中时显示成矩形，用户既认不出选中的是哪一个，
+ * 也会以为那三个空白角属于它——而命中层已经不认那些角了，两边说法不一。
+ */
+function ObjectOutline({
+  obj,
+  t,
+  opacity,
+  dashed,
+}: {
+  obj: CanvasObject
+  t: ViewTransform
+  opacity?: number
+  dashed?: boolean
+}) {
+  if (isLinear(obj)) return <LinearOutline obj={obj} t={t} opacity={opacity} />
+  const box = toScreen(obj, t)
+  const outline =
+    obj.type === 'shape' && PATH_HIT_SHAPES.has(obj.shape)
+      ? shapeOutline(
+          obj.shape,
+          box.w,
+          box.h,
+          Math.max(mmToPx(obj.strokePt * MM_PER_PT, t), 0.05) / 2,
+          obj.sides,
+        )
+      : null
+  if (!outline) {
+    return (
+      <rect
+        {...rectAttrs(box)}
+        transform={spinOf(obj, box)}
+        fill="none"
+        stroke={SEL}
+        strokeOpacity={opacity}
+        strokeWidth={1}
+        strokeDasharray={dashed ? '3 2' : undefined}
+      />
+    )
+  }
+  const common = {
+    fill: 'none' as const,
+    stroke: SEL,
+    strokeOpacity: opacity,
+    strokeWidth: 1,
+    strokeLinejoin: 'round' as const,
+    style: { shapeRendering: 'geometricPrecision' as const },
+  }
+  // 轮廓算在对象自己的局部坐标里，先平移到包围盒左上角，再由 spin 转到朝向
+  // （SVG 的 transform 列表从左往右应用，所以 rotate 写在 translate 前面）
+  return (
+    <g transform={`${spinOf(obj, box) ?? ''} translate(${box.x},${box.y})`.trim()}>
+      {outline.kind === 'ellipse' ? (
+        <ellipse cx={outline.cx} cy={outline.cy} rx={outline.rx} ry={outline.ry} {...common} />
+      ) : outline.kind === 'poly' ? (
+        <polygon points={outline.points.map(([x, y]) => `${x},${y}`).join(' ')} {...common} />
+      ) : (
+        <path d={outline.d} {...common} />
+      )}
+    </g>
+  )
+}
+
+/**
  * 箭头 / 直线的 hover / 选中描示：一条沿真实端点的细线（代替包围盒矩形——
  * 斜线的包围盒是一大块与线对不上的矩形，Illustrator 语义是描线本身）。
  * 端点为未旋转包围盒比例坐标，旋转由与选择框同一套 spinOf 处理。
@@ -489,6 +537,70 @@ function CropFrame({ obj, t }: { obj: CanvasObject; t: ViewTransform }) {
   )
 }
 
+interface Resolved {
+  key: string
+  target: ManifestElement
+  /** 真实路径（已跟随乐观位移）；没有就退回 box */
+  geom: ElementGeometry | null
+  box: Box
+}
+
+/**
+ * 沿**真实路径**的选中 / hover 描示（曲线、fill_between、多边形、PathPatch）。
+ *
+ * 为什么不是矩形：这些图形的包围盒里绝大部分是空白，画成矩形用户根本认不出
+ * 选中的是哪一个（两条交叉曲线的框一模一样）。填充类再补一层很淡的底色，
+ * 让「这一整块」看得出来；空心的只描线。
+ *
+ * `clip` 是引擎给的矩形裁剪框：曲线的数据可能伸到子图之外，matplotlib 画的
+ * 时候裁掉了，轮廓不裁就会在图上多出一截根本不存在的墨迹。
+ */
+function GeometryOutline({
+  id,
+  geom,
+  toPoint,
+  opacity,
+}: {
+  id: string
+  geom: ElementGeometry
+  toPoint: (p: [number, number]) => { x: number; y: number }
+  opacity?: number
+}) {
+  const d = geomPathD(geom, toPoint)
+  if (!d) return null
+  const clipId = `mmclip-${id.replace(/[^A-Za-z0-9_-]/g, '_')}`
+  const c = geom.clip
+  const a = c ? toPoint([c[0], c[1]]) : null
+  const b = c ? toPoint([c[0] + c[2], c[1] + c[3]]) : null
+  return (
+    <>
+      {c && a && b && (
+        <clipPath id={clipId}>
+          <rect
+            x={Math.min(a.x, b.x)}
+            y={Math.min(a.y, b.y)}
+            width={Math.abs(b.x - a.x)}
+            height={Math.abs(b.y - a.y)}
+          />
+        </clipPath>
+      )}
+      <path
+        d={d}
+        clipPath={c ? `url(#${clipId})` : undefined}
+        fill={geom.fill ? 'var(--color-accent)' : 'none'}
+        fillOpacity={geom.fill ? 0.12 : undefined}
+        fillRule="evenodd"
+        stroke="var(--color-accent)"
+        strokeOpacity={opacity}
+        strokeWidth={1.5}
+        strokeLinejoin="round"
+        strokeLinecap="round"
+        style={{ shapeRendering: 'geometricPrecision' }}
+      />
+    </>
+  )
+}
+
 /** 图内元素的 hover / 选中框；拖动时跟随乐观位移 */
 function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
   const manifest = usePanelManifest(panel)
@@ -514,14 +626,17 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
     const [bx, by, bw, bh] = preview?.boxes[target.gid] ?? target.bbox
     const dx = gidDrag?.gid === target.gid ? gidDrag.dfx : 0
     const dy = gidDrag?.gid === target.gid ? gidDrag.dfy : 0
-    return { key: target.gid, target, box: toBox([bx + dx, by + dy, bw, bh]) }
+    // 真实路径跟着同一个乐观位移走——只挪框不挪路径的话，拖动中框与轮廓
+    // 会分家（松手权威渲染回来才对上，中间那一段全是错的）
+    const geom = target.geometry ? translateGeom(target.geometry, dx, dy) : null
+    return { key: target.gid, target, geom, box: toBox([bx + dx, by + dy, bw, bh]) }
   }
 
   // 所有选中元素画同一种框；位图与宿主子图落在同一个几何目标上，只画一次
-  const picked = new Map<string, { target: ManifestElement; box: Box }>()
+  const picked = new Map<string, Resolved>()
   for (const gid of selectedGids) {
     const r = resolve(gid)
-    if (r) picked.set(r.key, { target: r.target, box: r.box })
+    if (r) picked.set(r.key, r)
   }
   const hovered = hoverGid ? resolve(hoverGid) : null
   const hover = hovered && !picked.has(hovered.key) ? hovered : null
@@ -588,6 +703,9 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
         {hover &&
           (hover.target.arrow_endpoints ? (
             arrowOutline(hover.target, 0.5)
+          ) : hover.geom ? (
+            <GeometryOutline id={`hov-${panel.id}`} geom={hover.geom} toPoint={toPoint}
+              opacity={0.55} />
           ) : (
             <rect
               {...rectAttrs(hover.box)}
@@ -601,6 +719,9 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
         {[...picked].map(([key, r]) =>
           r.target.arrow_endpoints ? (
             <Fragment key={key}>{arrowOutline(r.target)}</Fragment>
+          ) : r.geom ? (
+            <GeometryOutline key={key} id={`sel-${panel.id}-${key}`} geom={r.geom}
+              toPoint={toPoint} />
           ) : (
             <rect
               key={key}

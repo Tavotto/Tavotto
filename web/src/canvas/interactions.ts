@@ -26,6 +26,12 @@ import {
   type Group,
 } from '@/lib/elementGeom'
 import { newId } from '@/lib/id'
+import {
+  geomAreaFrac,
+  geomContains,
+  geomDistMm,
+  geomInkAreaFrac,
+} from '@/lib/pathGeom'
 import { clamp } from '@/lib/units'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
@@ -872,8 +878,11 @@ const HIT_PENALTY: Record<string, number> = {
   ticklabel: 20,
 }
 
-/** 图内独立箭头的命中容差（mm，线两侧各留这么宽） */
-const ARROW_HIT_MM = 1.5
+/**
+ * 沿**路径**命中的容差（mm，路径两侧各留这么宽）。图内独立箭头、曲线、
+ * 填充/多边形的边线共用同一档——它们在用户眼里都是「点线本身」。
+ */
+export const PATH_HIT_MM = 1.5
 
 /** 点到线段的距离，mm 系：分数坐标 x/y 分别乘以图宽图高，距离才是视觉距离 */
 function arrowDistMm(
@@ -917,9 +926,29 @@ export function pickElement(
     if (el.arrow_endpoints && el.arrow_endpoints.length >= 2) {
       const [a, b] = el.arrow_endpoints
       const [sw, sh] = manifest.size_mm
-      if (arrowDistMm(manifest.size_mm, fx, fy, a, b) > ARROW_HIT_MM) continue
+      if (arrowDistMm(manifest.size_mm, fx, fy, a, b) > PATH_HIT_MM) continue
       const lenMm = Math.hypot((b[0] - a[0]) * sw, (b[1] - a[1]) * sh)
-      const score = (lenMm * 2 * ARROW_HIT_MM) / (sw * sh)
+      const score = (lenMm * 2 * PATH_HIT_MM) / (sw * sh)
+      if (score < bestScore) {
+        bestScore = score
+        best = el
+      }
+      continue
+    }
+    // 有真实路径的元素（曲线 / 填充 / 独立形状）按**路径**命中，不用 bbox：
+    // 一条斜曲线的 bbox 是一大块空白矩形，按矩形命中会让离线很远的点击也选中
+    // 它，还把底下元素的点击偷走。填充区域内部照旧算命中（点进去就是选它），
+    // 空心的只在描边附近命中。裁剪框之外一律不命中（那儿本来就看不见）。
+    if (el.geometry) {
+      const geom = el.geometry
+      const inside = geomContains(geom, fx, fy)
+      const dist = inside ? 0 : geomDistMm(geom, manifest.size_mm, fx, fy)
+      if (!inside && dist > PATH_HIT_MM) continue
+      // 评分与 bbox 面积同一量纲：填充按真实面积（小的赢），空心按墨迹面积
+      // （一条线的墨迹极小，因此总能从子图容器手里把点击拿回来）
+      const score = inside
+        ? geomAreaFrac(geom) * (HIT_PENALTY[el.role] ?? 1)
+        : geomInkAreaFrac(geom, manifest.size_mm, PATH_HIT_MM)
       if (score < bestScore) {
         bestScore = score
         best = el

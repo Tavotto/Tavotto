@@ -4,6 +4,7 @@ import { enginePreviewPng, panelSrc } from '@/lib/api'
 import { engineTransport } from '@/lib/engineTransport'
 import { alignEntries, geomGid, geomTarget, segIntersectsRect } from '@/lib/elementGeom'
 import { DURATION, prefersReducedMotion, usePresence } from '@/lib/motion'
+import { geomHitsRect } from '@/lib/pathGeom'
 import { pickBucket } from '@/lib/units'
 import { cn } from '@/lib/utils'
 import { isJustBakedBaseline } from '@/store/actions'
@@ -377,6 +378,9 @@ function ElementHitLayer({
             if (el.arrow_endpoints && el.arrow_endpoints.length >= 2) {
               return segIntersectsRect(el.arrow_endpoints[0], el.arrow_endpoints[1], r)
             }
+            // 有真实路径的（曲线 / 填充 / 独立形状）按**路径**与框相交，同理：
+            // 一条 U 形曲线的 bbox 中间那块全是空白，框在那儿不该圈中它
+            if (el.geometry) return geomHitsRect(el.geometry, r)
             const [bx, by, bw, bh] = el.bbox
             if (el.role === 'axes' || el.role === 'axes3d') {
               return bx >= r.x && by >= r.y && bx + bw <= r.x + r.w && by + bh <= r.y + r.h

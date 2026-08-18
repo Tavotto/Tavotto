@@ -1072,6 +1072,11 @@ export default interface Resources {
       "mixedValues": "多个值",
       "moveDown": "下移",
       "moveUp": "上移",
+      "numberList": {
+        "count_other": "{{count}} 个刻度",
+        "empty": "留空 = 用当前刻度",
+        "placeholder": "例：0, 0.5, 1"
+      },
       "orderEntry": "条目 {{index}}",
       "orphanCount": "{{overrides}} 条 · {{elements}} 个元素",
       "proxiedGeometry": "位置与大小作用于宿主子图「{{label}}」。",
@@ -1127,6 +1132,7 @@ export default interface Resources {
       "lineNamed": "曲线 “{{value}}”",
       "scatterNamed": "散点 “{{value}}”",
       "scatterSeries": "散点系列 {{value}}",
+      "shape": "形状 {{value}}",
       "textNamed": "文字 “{{value}}”",
       "tickLabels": "{{axis}} 刻度文字",
       "tickNamed": "刻度 “{{value}}”",
@@ -1157,13 +1163,19 @@ export default interface Resources {
         "inout": "跨轴",
         "out": "朝外"
       },
+      "extend": {
+        "both": "两端",
+        "max": "上端",
+        "min": "下端",
+        "neither": "无"
+      },
       "fontfamily": {
         "monospace": "等宽",
         "sans-serif": "无衬线",
         "serif": "衬线"
       },
       "format": {
-        "auto": "自动",
+        "auto": "自动（脚本原样）",
         "sci": "科学计数"
       },
       "grid_linestyle": {
@@ -1206,6 +1218,11 @@ export default interface Resources {
         "upper left": "左上",
         "upper right": "右上"
       },
+      "major_mode": {
+        "auto": "自动（脚本原样）",
+        "fixed": "固定位置",
+        "step": "固定间隔"
+      },
       "marker": {
         "": "无",
         "*": "星形",
@@ -1225,6 +1242,19 @@ export default interface Resources {
         "s": "方块",
         "v": "下三角",
         "x": "叉号"
+      },
+      "minor_format": {
+        "auto": "自动（脚本原样）",
+        "none": "不标数字",
+        "sci": "科学计数"
+      },
+      "minor_mode": {
+        "auto": "自动",
+        "step": "固定间隔"
+      },
+      "orientation": {
+        "horizontal": "水平",
+        "vertical": "竖直"
       },
       "origin": {
         "lower": "左下",
@@ -1256,13 +1286,13 @@ export default interface Resources {
       "xscale": {
         "linear": "线性",
         "log": "对数",
-        "logit": "logit",
+        "logit": "对数几率（logit）",
         "symlog": "对称对数"
       },
       "yscale": {
         "linear": "线性",
         "log": "对数",
-        "logit": "logit",
+        "logit": "对数几率（logit）",
         "symlog": "对称对数"
       }
     },
@@ -1278,12 +1308,14 @@ export default interface Resources {
       "geometry": "位置与尺寸",
       "gradientFill": "渐变填充",
       "gridFrame": "网格与边框",
+      "gridFramePerSide": "边框（逐条）",
       "layout": "布局",
       "legend": "图例",
       "lineMarker": "线条与标记",
       "stroke": "描边",
       "style": "样式",
       "text": "文字",
+      "tickLocator": "刻度定位",
       "tickMarks": "刻度线",
       "ticks": "刻度",
       "typography": "排版",
@@ -1443,7 +1475,9 @@ export default interface Resources {
       "elev": "俯仰角",
       "endpoints_frac": "位置",
       "entry_order": "条目顺序",
+      "extend": "两端延伸",
       "facecolor": "背景色",
+      "fill": "填充",
       "fontfamily": "字体",
       "fontsize": "字号",
       "format": "数值格式",
@@ -1471,12 +1505,20 @@ export default interface Resources {
       "linewidth": "线宽",
       "loc": "位置",
       "loc_frac": "位置",
+      "major_mode": "主刻度方式",
+      "major_step": "主刻度间隔",
+      "major_values": "固定刻度",
       "marker": "标记",
       "markeredgecolor": "标记描边",
       "markerfacecolor": "标记填充",
       "markersize": "标记大小",
+      "minor_format": "次刻度格式",
+      "minor_mode": "次刻度方式",
+      "minor_step": "次刻度间隔",
+      "minor_visible": "次刻度",
       "mutation_scale": "箭头帽大小",
       "ncol": "列数",
+      "orientation": "方向",
       "origin": "原点位置",
       "outline_visible": "外框",
       "outline_width": "外框线宽",
@@ -1490,11 +1532,19 @@ export default interface Resources {
       "size": "点大小",
       "size_mm": "图幅",
       "spine_bottom": "下边框",
+      "spine_bottom_color": "下边框颜色",
+      "spine_bottom_linewidth": "下边框线宽",
       "spine_color": "边框颜色",
       "spine_left": "左边框",
+      "spine_left_color": "左边框颜色",
+      "spine_left_linewidth": "左边框线宽",
       "spine_linewidth": "边框线宽",
       "spine_right": "右边框",
+      "spine_right_color": "右边框颜色",
+      "spine_right_linewidth": "右边框线宽",
       "spine_top": "上边框",
+      "spine_top_color": "上边框颜色",
+      "spine_top_linewidth": "上边框线宽",
       "stroke_color": "描边色",
       "stroke_enabled": "描边",
       "stroke_width": "描边宽度",
@@ -1526,6 +1576,9 @@ export default interface Resources {
       "fill": {
         "facecolor": "填充色"
       },
+      "patch": {
+        "facecolor": "填充色"
+      },
       "scatter": {
         "facecolor": "填充色"
       }
@@ -1546,6 +1599,7 @@ export default interface Resources {
       "legend": "图例",
       "legend_text": "图例项",
       "line": "曲线",
+      "patch": "形状",
       "scatter": "散点系列",
       "text": "文字",
       "ticklabel": "刻度文字",
@@ -1706,12 +1760,6 @@ export default interface Resources {
       "title": "变换"
     },
     "unlock": "解锁",
-    "unsupported": {
-      "colorbar": {
-        "reason": "翻转方向必须销毁并重建色条轴，这会打乱全图元素的稳定编号（gid），已有修改与撤销都会失效——请在脚本里改 orientation（可用改图助手）。",
-        "title": "色条方向"
-      }
-    },
     "versionHistory": {
       "confirmRestore": "确认恢复",
       "currentSuffix": " · 当前",
