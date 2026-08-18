@@ -1,8 +1,122 @@
 {
+  "chips": {
+    "axes": [
+      "统一坐标轴字体",
+      "调整留白",
+      "修复图例遮挡",
+      "统一刻度格式"
+    ],
+    "figure": [
+      "统一字体",
+      "统一线宽",
+      "检查最小字号",
+      "优化子图间距"
+    ],
+    "image": [
+      "调整色图",
+      "增强对比度",
+      "统一色条范围"
+    ],
+    "legend": [
+      "调整图例位置",
+      "缩小图例字号",
+      "图例改为两列"
+    ],
+    "series": [
+      "加粗线条",
+      "换成更易区分的配色",
+      "调整标记大小"
+    ],
+    "text": [
+      "调整字号",
+      "统一为 Times 字体",
+      "避免与相邻元素重叠"
+    ]
+  },
+  "history": {
+    "allStatuses": "全部状态",
+    "changedSuffix": " · 有改动",
+    "close": "关闭任务历史",
+    "count_one": "{{count}} 条",
+    "count_other": "{{count}} 条",
+    "delete": "删除此记录",
+    "effort": "推理强度：{{effort}}",
+    "empty": "还没有改图任务",
+    "emptyHint": "在下方输入需求，助手会修改脚本并留下记录。",
+    "filterAria": "按状态筛选",
+    "next": "下一页",
+    "noMatch": "没有匹配的任务",
+    "pin": "固定此记录",
+    "pinTip": "固定：不随保留期清理",
+    "prev": "上一页",
+    "revert": "回滚此次修改",
+    "revertTip": "回滚此次修改（恢复脚本快照）",
+    "reverted": "已回滚该次修改，脚本恢复到修改前",
+    "searchAria": "搜索任务历史",
+    "searchPlaceholder": "搜索任务…",
+    "snapshotAvailable": "快照可用 · id {{id}}",
+    "snapshotCleared": "快照已清理 · id {{id}}",
+    "title": "任务历史",
+    "unpin": "取消固定",
+    "unpinTip": "取消固定（会随保留期清理）"
+  },
+  "panel": {
+    "abort": "中止",
+    "agentNote": "直接改脚本文件；每次运行前自动快照，可回滚。",
+    "agentTitle": "执行改动的命令行工具",
+    "cli": "CLI：{{version}}",
+    "effort": "推理强度",
+    "emptyHint": "助手会修改这张图的脚本；改完可查看差异、一键回滚。",
+    "emptyTitle": "描述想要的改动",
+    "generating": "正在生成回答",
+    "model": "模型",
+    "noCli": "未检测到 Codex 或 Claude CLI。可在设置里一键用 npm 安装，或指定其路径。",
+    "noPanelHint": "带 { } 标记的面板由脚本生成，助手可以直接修改脚本。",
+    "noPanelTitle": "选中一个可参数化面板",
+    "none": "—",
+    "openAiSettings": "打开 AI 工具设置",
+    "placeholder": "例如：把图例移到左上角",
+    "placeholderNoPanel": "先选中一个可参数化面板",
+    "probing": "正在探测本机 CLI…",
+    "processSteps_one": "过程 {{count}} 步",
+    "processSteps_other": "过程 {{count}} 步",
+    "processTail": " · {{text}}",
+    "revert": "回滚此次修改",
+    "runningHere": "该脚本的任务正在运行",
+    "scopeAndAgent": "作用范围与执行器",
+    "scopeTitle": "作用范围",
+    "script": "脚本：{{name}}",
+    "send": "发送（{{key}}）",
+    "sendAria": "发送",
+    "streaming": "正在输出",
+    "targetAria": "作用目标：{{target}}",
+    "taskHistory": "任务历史",
+    "techDetails": "技术详情"
+  },
+  "scope": {
+    "axes": "当前子图",
+    "element": "当前元素",
+    "figure": "整张图"
+  },
+  "session": {
+    "doneChanged": "修改已写入脚本，可查看 diff 或回滚",
+    "doneNoChange": "已完成，脚本没有变化",
+    "reverted": "已回滚，脚本恢复到本次修改前",
+    "revertedStatus": "已回滚改图助手的修改，正在重建图表…",
+    "running": "正在改写脚本…"
+  },
   "status": {
     "aiChanged": "AI 已修改脚本，正在重建图表…",
     "aiFailed": "AI 任务失败",
     "aiNoChange": "AI 运行完成，但脚本没有变化",
-    "aiTimeout": "AI 任务超时"
-  }
+    "aiTimeout": "AI 任务超时",
+    "cancelled": "已取消",
+    "done": "完成",
+    "failed": "失败",
+    "interrupted": "已中断",
+    "reverted": "已回滚",
+    "running": "运行中",
+    "timeout": "超时"
+  },
+  "tabLabel": "改图助手"
 }

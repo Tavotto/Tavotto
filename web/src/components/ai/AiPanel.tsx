@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   ArrowUp,
   ChevronRight,
@@ -20,6 +21,9 @@ import {
   type ManifestElement,
 } from '@/lib/api'
 import { cn, MOD, modKey } from '@/lib/utils'
+import { msg, t as translate } from '@/i18n'
+import { formatTime } from '@/i18n/format'
+import { engineLabel } from '@/components/inspector/roles/registry'
 import {
   isSessionOf,
   scriptName,
@@ -43,61 +47,54 @@ import { DiffView } from './DiffView'
 import { Markdown } from './Markdown'
 
 /** 右栏标签名与图标：tab bar 引用这里，改名只改这一处 */
-export const ASSISTANT_TAB_LABEL = '改图助手'
+export const assistantTabLabel = () => translate('tabLabel', { ns: 'ai' })
 export const ASSISTANT_TAB_ICON = FileCode2
+
+/** 本面板的文案都在 ai 命名空间下 */
+const ai = (key: string, values?: Record<string, unknown>) =>
+  translate(key, { ns: 'ai', ...(values ?? {}) })
+
+/** 会话状态名；未知状态原样透出（后端加了新状态也不会变成空白） */
+const statusLabel = (status: string) =>
+  translate(`status.${status}`, { ns: 'ai', defaultValue: status })
 
 /** loader 一律走灰阶，别在聊天区制造高对比 */
 const LOADER_COLOR = 'var(--color-ink-3)'
 
-const STATUS_LABEL: Record<string, string> = {
-  running: '运行中',
-  done: '完成',
-  failed: '失败',
-  timeout: '超时',
-  cancelled: '已取消',
-  reverted: '已回滚',
-  interrupted: '已中断',
-}
+const SCOPE_VALUES: AiScope[] = ['element', 'axes', 'figure']
 
-const SCOPE_ITEMS: { value: AiScope; label: string }[] = [
-  { value: 'element', label: '当前元素' },
-  { value: 'axes', label: '当前子图' },
-  { value: 'figure', label: '整张图' },
-]
+const scopeItems = () =>
+  SCOPE_VALUES.map((value) => ({ value, label: ai(`scope.${value}`) }))
 
-/** 按目标类型给的起手式：点一下填进输入框，改完再发 */
-const CHIPS: Record<string, string[]> = {
-  figure: ['统一字体', '统一线宽', '检查最小字号', '优化子图间距'],
-  axes: ['统一坐标轴字体', '调整留白', '修复图例遮挡', '统一刻度格式'],
-  image: ['调整色图', '增强对比度', '统一色条范围'],
-  text: ['调整字号', '统一为 Times 字体', '避免与相邻元素重叠'],
-  legend: ['调整图例位置', '缩小图例字号', '图例改为两列'],
-  series: ['加粗线条', '换成更易区分的配色', '调整标记大小'],
-}
+const scopeLabel = (scope: AiScope) => ai(`scope.${scope}`)
+
+/** 按目标类型给的起手式：点一下填进输入框，改完再发。文案按语言各一套。 */
+const chips = (kind: string): string[] =>
+  translate(`chips.${kind}`, { ns: 'ai', returnObjects: true }) as unknown as string[]
 
 function chipsFor(scope: AiScope, element: ManifestElement | null, hasAxes: boolean): string[] {
-  if (scope === 'figure') return CHIPS.figure
-  if (scope === 'axes') return CHIPS.axes
+  if (scope === 'figure') return chips('figure')
+  if (scope === 'axes') return chips('axes')
   switch (element?.role) {
     case 'image':
     case 'colorbar':
-      return CHIPS.image
+      return chips('image')
     case 'text':
     case 'title':
     case 'axis_label':
     case 'ticklabel':
-      return CHIPS.text
+      return chips('text')
     case 'legend':
-      return CHIPS.legend
+      return chips('legend')
     case 'line':
     case 'scatter':
     case 'bar':
     case 'bar_series':
     case 'errorbar':
     case 'fill':
-      return CHIPS.series
+      return chips('series')
     default:
-      return hasAxes ? CHIPS.axes : CHIPS.figure
+      return hasAxes ? chips('axes') : chips('figure')
   }
 }
 
@@ -135,6 +132,7 @@ function useAssistantTarget() {
 }
 
 export function AssistantPanel() {
+  useTranslation('ai')
   const sessions = useAiStore((s) => s.sessions)
   const storedScope = useAiStore((s) => s.scope)
   const { panel, element, axes } = useAssistantTarget()
@@ -179,7 +177,7 @@ export function AssistantPanel() {
         ? { gid: element.gid, label: element.label, target: element.label }
         : scope === 'axes' && axes
           ? { gid: axes.gid, label: axes.label, target: axes.label }
-          : { gid: null, label: null, target: '整张图' }
+          : { gid: null, label: null, target: ai('scope.figure') }
     try {
       await useAiStore.getState().start({
         prompt: text,
@@ -208,12 +206,12 @@ export function AssistantPanel() {
         ) : (
           <span className="min-w-0 flex-1" />
         )}
-        <Tip label="任务历史">
+        <Tip label={ai('panel.taskHistory')}>
           <Button
             size="icon-sm"
             className="shrink-0"
             onClick={() => setHistoryOpen((v) => !v)}
-            aria-label="任务历史"
+            aria-label={ai('panel.taskHistory')}
             aria-expanded={historyOpen}
           >
             <History size={12} className="text-ink-2" />
@@ -226,14 +224,14 @@ export function AssistantPanel() {
           {!panel ? (
             <EmptyState
               icon={FileCode2}
-              title="选中一个可参数化面板"
-              hint="带 { } 标记的面板由脚本生成，助手可以直接修改脚本。"
+              title={ai('panel.noPanelTitle')}
+              hint={ai('panel.noPanelHint')}
             />
           ) : mine.length === 0 ? (
             <EmptyState
               icon={FileCode2}
-              title="描述想要的改动"
-              hint="助手会修改这张图的脚本；改完可查看差异、一键回滚。"
+              title={ai('panel.emptyTitle')}
+              hint={ai('panel.emptyHint')}
             />
           ) : (
             <div className="flex flex-col gap-3">
@@ -276,7 +274,7 @@ export function AssistantPanel() {
             value={prompt}
             rows={2}
             disabled={!panel}
-            placeholder={panel ? '例如：把图例移到左上角' : '先选中一个可参数化面板'}
+            placeholder={ai(panel ? 'panel.placeholder' : 'panel.placeholderNoPanel')}
             onChange={(e) => {
               setPrompt(e.target.value)
               // 两行起步，随内容自动增长（封顶约 8 行）
@@ -305,14 +303,18 @@ export function AssistantPanel() {
               scopes={scopes}
             />
             <span className="ml-auto font-mono text-xs text-ink-faint">{MOD}↵</span>
-            <Tip label={runningHere ? '该脚本的任务正在运行' : `发送（${modKey('↵')}）`}>
+            <Tip
+              label={
+                runningHere ? ai('panel.runningHere') : ai('panel.send', { key: modKey('↵') })
+              }
+            >
               <Button
                 variant="primary"
                 size="icon-sm"
                 disabled={!panel || !prompt.trim() || runningHere}
                 loading={sending || runningHere}
                 onClick={send}
-                aria-label="发送"
+                aria-label={ai('panel.sendAria')}
               >
                 {!(sending || runningHere) && <ArrowUp size={13} />}
               </Button>
@@ -338,11 +340,13 @@ function TargetChip({
   scope: AiScope
   scopes: AiScope[]
 }) {
+  useTranslation('ai')
+  // 元素名是引擎发来的散文，过 engineLabel 换成当前语言；面板名是用户内容
   const targetText =
     scope === 'element' && element
-      ? element.label
+      ? engineLabel(element.label)
       : scope === 'axes' && axes
-        ? axes.label
+        ? engineLabel(axes.label)
         : (panel.name ?? panel.fileId)
   return (
     <Popover
@@ -350,7 +354,7 @@ function TargetChip({
       align="start"
       trigger={
         <button
-          aria-label={`作用目标：${targetText}`}
+          aria-label={ai('panel.targetAria', { target: targetText })}
           className={cn(
             'flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-sm bg-surface-2 px-2 text-left',
             'outline-none transition-colors hover:bg-ink/[.06] focus-visible:focus-ring',
@@ -358,9 +362,7 @@ function TargetChip({
         >
           <FileCode2 size={12} className="shrink-0 text-ink-3" />
           <span className="min-w-0 truncate text-xs text-ink">{targetText}</span>
-          <span className="ml-auto shrink-0 text-xs text-ink-3">
-            {SCOPE_ITEMS.find((i) => i.value === scope)?.label}
-          </span>
+          <span className="ml-auto shrink-0 text-xs text-ink-3">{scopeLabel(scope)}</span>
         </button>
       }
     >
@@ -383,16 +385,22 @@ function ScopeAgentButton({
   scope: AiScope
   scopes: AiScope[]
 }) {
+  useTranslation('ai')
   const agent = useAiStore((s) => s.agent)
   return (
     <Popover
       width={232}
       align="start"
       trigger={
-        <Button size="sm" className="text-ink-2" disabled={!panel} aria-label="作用范围与执行器">
+        <Button
+          size="sm"
+          className="text-ink-2"
+          disabled={!panel}
+          aria-label={ai('panel.scopeAndAgent')}
+        >
           <Settings2 size={12} />
           <span className="text-xs">
-            {SCOPE_ITEMS.find((i) => i.value === scope)?.label} · {agent === 'codex' ? 'Codex' : 'Claude'}
+            {scopeLabel(scope)} · {agent === 'codex' ? 'Codex' : 'Claude'}
           </span>
         </Button>
       }
@@ -417,6 +425,7 @@ function ScopeAgentContent({
   scope: AiScope
   scopes: AiScope[]
 }) {
+  useTranslation('ai')
   const agent = useAiStore((s) => s.agent)
   const caps = useAiStore((s) => s.caps)
   const models = useAiStore((s) => s.models)
@@ -434,13 +443,13 @@ function ScopeAgentContent({
   return (
     <div className="flex flex-col gap-2">
       <div>
-        <p className="mb-1 text-xs text-ink-2">作用范围</p>
+        <p className="mb-1 text-xs text-ink-2">{ai('panel.scopeTitle')}</p>
         <Segmented
           tone="quiet"
           className="w-full"
           value={scope}
           onChange={(v) => useAiStore.getState().setScope(v)}
-          items={SCOPE_ITEMS.filter((i) => scopes.includes(i.value))}
+          items={scopeItems().filter((i) => scopes.includes(i.value))}
         />
         <div className="mt-1">
           <Breadcrumb panel={panel} element={element} axes={axes} scope={scope} />
@@ -448,21 +457,19 @@ function ScopeAgentContent({
       </div>
       <div className="h-px bg-border" />
       <div>
-        <p className="mb-1 text-xs text-ink-2">执行改动的命令行工具</p>
+        <p className="mb-1 text-xs text-ink-2">{ai('panel.agentTitle')}</p>
         {caps == null ? (
-          <p className="text-xs text-ink-3">正在探测本机 CLI…</p>
+          <p className="text-xs text-ink-3">{ai('panel.probing')}</p>
         ) : installed.length === 0 ? (
           <div className="flex flex-col gap-1">
-            <p className="text-xs leading-relaxed text-ink-3">
-              未检测到 Codex 或 Claude CLI。可在设置里一键用 npm 安装，或指定其路径。
-            </p>
+            <p className="text-xs leading-relaxed text-ink-3">{ai('panel.noCli')}</p>
             <div>
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => useUiStore.getState().setSettingsOpen(true, 'ai')}
               >
-                打开 AI 工具设置
+                {ai('panel.openAiSettings')}
               </Button>
             </div>
           </div>
@@ -480,11 +487,11 @@ function ScopeAgentContent({
             />
             {cur && cur.models.length > 0 && (
               <label className="mt-1.5 flex items-center gap-2 text-xs text-ink-2">
-                模型
+                {ai('panel.model')}
                 <select
                   value={model}
                   onChange={(e) => useAiStore.getState().setModel(agent, e.target.value)}
-                  aria-label="模型"
+                  aria-label={ai('panel.model')}
                   className="h-6 flex-1 rounded-sm border border-border bg-surface px-1 text-xs text-ink outline-none focus-visible:focus-ring"
                 >
                   {cur.models.map((m) => (
@@ -497,7 +504,7 @@ function ScopeAgentContent({
             )}
             {cur && cur.efforts.length > 0 && (
               <div className="mt-1.5">
-                <p className="mb-1 text-xs text-ink-2">推理强度</p>
+                <p className="mb-1 text-xs text-ink-2">{ai('panel.effort')}</p>
                 <Segmented
                   tone="quiet"
                   className="w-full"
@@ -509,9 +516,7 @@ function ScopeAgentContent({
             )}
           </>
         )}
-        <p className="mt-1 text-xs leading-relaxed text-ink-3">
-          直接改脚本文件；每次运行前自动快照，可回滚。
-        </p>
+        <p className="mt-1 text-xs leading-relaxed text-ink-3">{ai('panel.agentNote')}</p>
       </div>
       {/* 文件名 / 路径等技术信息默认不展示 */}
       <button
@@ -523,16 +528,18 @@ function ScopeAgentContent({
           size={11}
           className={cn('shrink-0 transition-transform', detailsOpen && 'rotate-90')}
         />
-        技术详情
+        {ai('panel.techDetails')}
       </button>
       {detailsOpen && (
         <div className="flex flex-col gap-0.5 border-l border-border pl-2">
           <p className="truncate font-mono text-xs text-ink-3" title={panel.script ?? ''}>
-            脚本：{panel.script ? scriptName(panel.script) : '—'}
+            {ai('panel.script', {
+              name: panel.script ? scriptName(panel.script) : ai('panel.none'),
+            })}
           </p>
           {cur?.version && (
             <p className="truncate font-mono text-xs text-ink-3" title={cur.path ?? ''}>
-              CLI：{cur.version}
+              {ai('panel.cli', { version: cur.version })}
             </p>
           )}
         </div>
@@ -558,8 +565,8 @@ function Breadcrumb({
 }) {
   const crumbs: { level: AiScope; text: string }[] = [
     { level: 'figure', text: panel.name ?? panel.fileId },
-    ...(axes ? [{ level: 'axes' as const, text: axes.label }] : []),
-    ...(element ? [{ level: 'element' as const, text: element.label }] : []),
+    ...(axes ? [{ level: 'axes' as const, text: engineLabel(axes.label) }] : []),
+    ...(element ? [{ level: 'element' as const, text: engineLabel(element.label) }] : []),
   ]
   return (
     <p className="truncate text-xs">
@@ -573,10 +580,16 @@ function Breadcrumb({
   )
 }
 
-const HISTORY_STATUS_LABEL: Record<string, string> = {
-  ...STATUS_LABEL,
-  interrupted: '已中断',
-}
+/** 历史筛选下拉里的状态集合（会话状态 + 只在历史里出现的 interrupted） */
+const HISTORY_STATUSES = [
+  'running',
+  'done',
+  'failed',
+  'timeout',
+  'cancelled',
+  'reverted',
+  'interrupted',
+]
 
 const PAGE = 20
 
@@ -585,6 +598,7 @@ const PAGE = 20
  * 默认只显示人类可读目标；脚本名等技术信息在条目的「技术详情」里。
  */
 function TaskHistory({ onClose }: { onClose: () => void }) {
+  useTranslation('ai')
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState('')
   const [entries, setEntries] = useState<AiHistoryEntry[]>([])
@@ -611,9 +625,14 @@ function TaskHistory({ onClose }: { onClose: () => void }) {
   return (
     <div className="absolute inset-0 z-20 flex flex-col bg-surface">
       <div className="flex h-8 shrink-0 items-center gap-2 border-b border-border px-2.5">
-        <h3 className="text-xs text-ink">任务历史</h3>
-        <span className="text-xs text-ink-3">{total} 条</span>
-        <Button size="icon-sm" className="-mr-1 ml-auto" onClick={onClose} aria-label="关闭任务历史">
+        <h3 className="text-xs text-ink">{ai('history.title')}</h3>
+        <span className="text-xs text-ink-3">{ai('history.count', { count: total })}</span>
+        <Button
+          size="icon-sm"
+          className="-mr-1 ml-auto"
+          onClick={onClose}
+          aria-label={ai('history.close')}
+        >
           <X size={12} />
         </Button>
       </div>
@@ -624,8 +643,8 @@ function TaskHistory({ onClose }: { onClose: () => void }) {
             setQuery(e.target.value)
             setOffset(0)
           }}
-          placeholder="搜索任务…"
-          aria-label="搜索任务历史"
+          placeholder={ai('history.searchPlaceholder')}
+          aria-label={ai('history.searchAria')}
           className="h-6 min-w-0 flex-1 rounded-sm border border-border bg-surface px-1.5 text-xs text-ink outline-none placeholder:text-ink-faint focus:border-accent"
         />
         <select
@@ -634,13 +653,13 @@ function TaskHistory({ onClose }: { onClose: () => void }) {
             setStatus(e.target.value)
             setOffset(0)
           }}
-          aria-label="按状态筛选"
+          aria-label={ai('history.filterAria')}
           className="h-6 rounded-sm border border-border bg-surface px-1 text-xs text-ink outline-none focus-visible:focus-ring"
         >
-          <option value="">全部状态</option>
-          {Object.entries(HISTORY_STATUS_LABEL).map(([v, label]) => (
+          <option value="">{ai('history.allStatuses')}</option>
+          {HISTORY_STATUSES.map((v) => (
             <option key={v} value={v}>
-              {label}
+              {statusLabel(v)}
             </option>
           ))}
         </select>
@@ -651,8 +670,8 @@ function TaskHistory({ onClose }: { onClose: () => void }) {
         ) : entries.length === 0 ? (
           <EmptyState
             icon={History}
-            title={query || status ? '没有匹配的任务' : '还没有改图任务'}
-            hint={query || status ? undefined : '在下方输入需求，助手会修改脚本并留下记录。'}
+            title={ai(query || status ? 'history.noMatch' : 'history.empty')}
+            hint={query || status ? undefined : ai('history.emptyHint')}
           />
         ) : (
           <div className="flex flex-col gap-2 pt-1">
@@ -669,7 +688,7 @@ function TaskHistory({ onClose }: { onClose: () => void }) {
       {total > PAGE && (
         <div className="flex shrink-0 items-center justify-between border-t border-border px-2.5 py-1.5">
           <Button size="sm" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE))}>
-            上一页
+            {ai('history.prev')}
           </Button>
           <span className="text-xs text-ink-3">
             {Math.floor(offset / PAGE) + 1} / {Math.ceil(total / PAGE)}
@@ -679,7 +698,7 @@ function TaskHistory({ onClose }: { onClose: () => void }) {
             disabled={offset + PAGE >= total}
             onClick={() => setOffset(offset + PAGE)}
           >
-            下一页
+            {ai('history.next')}
           </Button>
         </div>
       )}
@@ -688,6 +707,7 @@ function TaskHistory({ onClose }: { onClose: () => void }) {
 }
 
 function HistoryRow({ entry, onChanged }: { entry: AiHistoryEntry; onChanged: () => void }) {
+  useTranslation('ai')
   const [detailsOpen, setDetailsOpen] = useState(false)
   const failed = entry.status === 'failed' || entry.status === 'timeout' || entry.status === 'interrupted'
 
@@ -695,35 +715,35 @@ function HistoryRow({ entry, onChanged }: { entry: AiHistoryEntry; onChanged: ()
     <div className="border-b border-border pb-2 last:border-b-0">
       <p className="line-clamp-2 text-xs leading-relaxed text-ink-2">{entry.prompt}</p>
       <p className="mt-0.5 truncate text-xs text-ink-3">
-        {entry.target || '整张图'} · {entry.provider === 'codex' ? 'Codex' : 'Claude'}
+        {entry.target || ai('scope.figure')} · {entry.provider === 'codex' ? 'Codex' : 'Claude'}
         {entry.model ? ` · ${entry.model}` : ''} · {timeOf(entry.started_ms)}
       </p>
       <div className="mt-1 flex items-center gap-1.5">
         <span className={cn('text-xs', failed ? 'text-danger' : 'text-ink-3')}>
-          {HISTORY_STATUS_LABEL[entry.status] ?? entry.status}
-          {entry.changed ? ' · 有改动' : ''}
+          {statusLabel(entry.status)}
+          {entry.changed ? ai('history.changedSuffix') : ''}
         </span>
         <span className="flex-1" />
-        <Tip label={entry.pinned ? '取消固定（会随保留期清理）' : '固定：不随保留期清理'}>
+        <Tip label={ai(entry.pinned ? 'history.unpinTip' : 'history.pinTip')}>
           <Button
             size="icon-sm"
             active={entry.pinned}
             aria-pressed={entry.pinned}
-            aria-label={entry.pinned ? '取消固定' : '固定此记录'}
+            aria-label={ai(entry.pinned ? 'history.unpin' : 'history.pin')}
             onClick={() => void pinAiHistory(entry.id, !entry.pinned).then(onChanged)}
           >
             <Pin size={11} className={entry.pinned ? undefined : 'text-ink-3'} />
           </Button>
         </Tip>
         {entry.changed && entry.revert_available && (
-          <Tip label="回滚此次修改（恢复脚本快照）">
+          <Tip label={ai('history.revertTip')}>
             <Button
               size="icon-sm"
               className="text-danger"
-              aria-label="回滚此次修改"
+              aria-label={ai('history.revert')}
               onClick={() =>
                 void aiRevert(entry.id).then(() => {
-                  useUiStore.getState().setStatus('已回滚该次修改，脚本恢复到修改前')
+                  useUiStore.getState().setStatus(msg('history.reverted', undefined, 'ai'))
                   onChanged()
                 })
               }
@@ -732,10 +752,10 @@ function HistoryRow({ entry, onChanged }: { entry: AiHistoryEntry; onChanged: ()
             </Button>
           </Tip>
         )}
-        <Tip label="删除此记录">
+        <Tip label={ai('history.delete')}>
           <Button
             size="icon-sm"
-            aria-label="删除此记录"
+            aria-label={ai('history.delete')}
             onClick={() => void deleteAiHistory(entry.id).then(onChanged)}
           >
             <Trash2 size={11} className="text-ink-3" />
@@ -752,16 +772,24 @@ function HistoryRow({ entry, onChanged }: { entry: AiHistoryEntry; onChanged: ()
           size={11}
           className={cn('shrink-0 transition-transform', detailsOpen && 'rotate-90')}
         />
-        技术详情
+        {ai('panel.techDetails')}
       </button>
       {detailsOpen && (
         <div className="mt-0.5 flex flex-col gap-0.5 border-l border-border pl-2">
           <p className="truncate font-mono text-xs text-ink-3">
-            脚本：{entry.script ? scriptName(entry.script) : '—'}
+            {ai('panel.script', {
+              name: entry.script ? scriptName(entry.script) : ai('panel.none'),
+            })}
           </p>
-          {entry.effort && <p className="font-mono text-xs text-ink-3">推理强度：{entry.effort}</p>}
+          {entry.effort && (
+            <p className="font-mono text-xs text-ink-3">
+              {ai('history.effort', { effort: entry.effort })}
+            </p>
+          )}
           <p className="font-mono text-xs text-ink-3">
-            快照{entry.revert_available ? '可用' : '已清理'} · id {entry.id}
+            {ai(entry.revert_available ? 'history.snapshotAvailable' : 'history.snapshotCleared', {
+              id: entry.id,
+            })}
           </p>
         </div>
       )}
@@ -769,15 +797,15 @@ function HistoryRow({ entry, onChanged }: { entry: AiHistoryEntry; onChanged: ()
   )
 }
 
-const timeOf = (ts: number) =>
-  new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+/** 时间按**当前界面语言**格式化（以前钉死 zh-CN，英文界面里会露馅） */
+const timeOf = (ts: number) => formatTime(ts)
 
 /** 改动是直接落盘的，措辞不能像「待应用的预览」 */
 function statusText(s: AiSession): string {
-  if (s.status === 'running') return '正在改写脚本…'
-  if (s.status === 'done') return s.changed ? '修改已写入脚本，可查看 diff 或回滚' : '已完成，脚本没有变化'
-  if (s.status === 'reverted') return '已回滚，脚本恢复到本次修改前'
-  return STATUS_LABEL[s.status] ?? s.status
+  if (s.status === 'running') return ai('session.running')
+  if (s.status === 'done') return ai(s.changed ? 'session.doneChanged' : 'session.doneNoChange')
+  if (s.status === 'reverted') return ai('session.reverted')
+  return statusLabel(s.status)
 }
 
 const toneOf = (s: AiSession) =>
@@ -803,6 +831,7 @@ function groupEntries(entries: AiEntry[]): Group[] {
 }
 
 function SessionBlock({ session }: { session: AiSession }) {
+  useTranslation('ai')
   const running = session.status === 'running'
   const groups = groupEntries(session.entries)
   // 有文字正在流入就撤掉 loader——同时出现会互相抢注意力
@@ -831,9 +860,9 @@ function SessionBlock({ session }: { session: AiSession }) {
         <div className="text-sm leading-[1.6]">
           <TextLoader
             variant="skeleton"
-            text="正在生成回答"
+            text={ai('panel.generating')}
             color={LOADER_COLOR}
-            aria-label="正在生成回答"
+            aria-label={ai('panel.generating')}
           />
         </div>
       )}
@@ -848,7 +877,7 @@ function SessionBlock({ session }: { session: AiSession }) {
             size="icon-sm"
             className="ml-auto text-danger"
             onClick={() => void useAiStore.getState().cancel(session.id)}
-            aria-label="中止"
+            aria-label={ai('panel.abort')}
           >
             <Square size={10} />
           </Button>
@@ -867,7 +896,7 @@ function SessionBlock({ session }: { session: AiSession }) {
             onClick={() => void revertSession(session)}
           >
             <RotateCcw size={12} />
-            回滚此次修改
+            {ai('panel.revert')}
           </Button>
         </>
       )}
@@ -877,6 +906,7 @@ function SessionBlock({ session }: { session: AiSession }) {
 
 /** 思考/动作默认只占一行，点开才看时间线——不刷屏 */
 function ProcessGroup({ items }: { items: { kind: string; text: string }[] }) {
+  useTranslation('ai')
   const [open, setOpen] = useState(false)
   return (
     <div>
@@ -886,8 +916,12 @@ function ProcessGroup({ items }: { items: { kind: string; text: string }[] }) {
       >
         <ChevronRight size={11} className={cn('shrink-0 transition-transform', open && 'rotate-90')} />
         <span className="truncate">
-          过程 {items.length} 步
-          {!open && items.at(-1) ? ` · ${items.at(-1)!.text.replace(/\s+/g, ' ').slice(0, 16)}` : ''}
+          {ai('panel.processSteps', { count: items.length })}
+          {!open && items.at(-1)
+            ? ai('panel.processTail', {
+                text: items.at(-1)!.text.replace(/\s+/g, ' ').slice(0, 16),
+              })
+            : ''}
         </span>
       </button>
       {open && (
@@ -913,7 +947,7 @@ async function revertSession(session: AiSession) {
   await useAiStore.getState().revert(session.id)
   // 回滚后 worker 会话同样失效，重建让画布自动回到改动前的样子
   if (session.fileId) useRenderStore.getState().markStale([session.fileId])
-  useUiStore.getState().setStatus('已回滚改图助手的修改，正在重建图表…')
+  useUiStore.getState().setStatus(msg('session.revertedStatus', undefined, 'ai'))
 }
 
 /** 正文：按空行分段，行高放松；流式中在末段尾部挂闪烁光标 */
@@ -923,7 +957,7 @@ function MessageBody({ text, streaming }: { text: string; streaming?: boolean })
   if (streaming) {
     return (
       <div className="whitespace-pre-wrap break-words text-sm leading-[1.6] text-ink-2">
-        <TextLoader variant="redact" text={text} color={LOADER_COLOR} aria-label="正在输出" />
+        <TextLoader variant="redact" text={text} color={LOADER_COLOR} aria-label={ai('panel.streaming')} />
       </div>
     )
   }
