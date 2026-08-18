@@ -50,3 +50,8 @@ workerd/target/
 
 # CodeGraph 本地索引（可再生）
 .codegraph/
+
+# 品牌源文件（设计稿，随手放在工作副本里；产物由 scripts/build_brand_assets.py 生成）
+/logo.ai
+/logo.pdf
+/Magplot Brand System.html
