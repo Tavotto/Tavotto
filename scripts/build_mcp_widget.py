@@ -32,7 +32,7 @@ import re
 import shutil
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PurePath
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "web"
@@ -66,6 +66,21 @@ def _pnpm() -> list[str]:
     raise SystemExit("没找到 pnpm 或 npx —— 构建前端需要 Node 工具链")
 
 
+def _entry(rel: PurePath, data: bytes) -> tuple[bytes, bytes]:
+    """一条参与指纹的记录：(相对路径, 文件内容)。
+
+    **路径统一成 POSIX 分隔符、行尾统一成 LF**，两者缺一不可：
+
+    * `str(Path("web/src/a.ts"))` 在 Windows 上是 `web\src\a.ts`；
+    * GitHub 的 Windows runner 默认 `core.autocrlf=true`，检出的文本文件是 CRLF。
+
+    不规范化的话，同一份源码在两个平台上算出两个指纹，这个门禁在 Windows 腿上
+    **永远是红的**——而且红的原因与它要看护的「画布产物过期了」毫无关系。
+    看的人学会的是忽略它（CI 首跑实测，`test_windows_regressions.py` 看着）。
+    """
+    return rel.as_posix().encode("utf-8"), data.replace(b"\r\n", b"\n")
+
+
 def source_fingerprint() -> str:
     """画布源码的指纹：`web/src/**` + 规范文件 + 构建配置。
 
@@ -82,8 +97,8 @@ def source_fingerprint() -> str:
     for p in files:
         if not p.is_file():
             continue
-        h.update(str(p.relative_to(ROOT)).encode("utf-8"))
-        h.update(p.read_bytes())
+        for chunk in _entry(p.relative_to(ROOT), p.read_bytes()):
+            h.update(chunk)
     return h.hexdigest()[:16]
 
 

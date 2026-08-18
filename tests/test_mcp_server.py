@@ -13,6 +13,7 @@
 """
 import io
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -192,12 +193,26 @@ def test_protocol_owns_the_real_stdout(monkeypatch):
 
 # ------------------------------ 路径范围 ------------------------------------
 def test_paths_outside_the_allowed_roots_are_refused(tmp_path, monkeypatch):
-    monkeypatch.setenv(bridge.ROOTS_ENV, str(tmp_path))
+    """越界一律拒，并如实回报**规范化后的那个路径**。
+
+    这里不拿 `/etc` 当反例：Windows 上 `os.path.realpath("/etc")` 是 `D:\\etc`，
+    断言里写死 POSIX 路径只会让用例在那条腿上假红（CI 实测撞到）。
+    改用一个明确落在允许根之外的兄弟目录，两个平台语义一致。
+    """
+    inside = tmp_path / "inside"
+    outside = tmp_path / "outside"
+    inside.mkdir()
+    outside.mkdir()
+    monkeypatch.setenv(bridge.ROOTS_ENV, str(inside))
+
+    assert bridge.check_scope(str(inside)) == os.path.realpath(str(inside))
     with pytest.raises(bridge.BridgeError) as exc:
-        bridge.check_scope("/etc")
+        bridge.check_scope(str(outside))
+    payload = exc.value.payload()
     assert exc.value.code == "path_out_of_scope"
-    # 越界绝不「就近找一个能用的」
-    assert "/etc" in exc.value.payload()["path"]
+    # 越界绝不「就近找一个能用的」：回的是用户给的那个路径，不是某个替代品
+    assert payload["path"] == os.path.realpath(str(outside))
+    assert payload["roots"] == [os.path.realpath(str(inside))]
 
 
 def test_allowed_roots_default_to_cwd(monkeypatch, tmp_path):
