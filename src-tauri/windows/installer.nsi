@@ -734,7 +734,7 @@ Section Install
   ; 展开文件时 NSIS 默认把每个文件名刷上去（Extract: python313.dll…），
   ; 内置渲染 runtime 有几千个文件，那一行会疯狂闪。listonly 让这些只进
   ; 日志（诊断照旧留着，只是 nevershow 不给用户看），状态行停在
-  ; 「正在安装 Magplot」；复制完再还原 both，后面的 DetailPrint 两边都进。
+  ; 「正在安装 Magplot」直到本段结束。
   DetailPrint "$(installingMagplot)"
   SetDetailsPrint listonly
 
@@ -762,8 +762,12 @@ Section Install
     File /a "/oname={{this}}" "{{no-escape @key}}"
   {{/each}}
 
-  ; MAGPLOT PATCH: 文件展开完毕，状态行交还给后面的 DetailPrint
-  SetDetailsPrint both
+  ; MAGPLOT PATCH: 这里**故意不还原成 both**。本段后面全是 NSIS 自己的输出
+  ; ——CreateShortcut 会把「Create shortcut: C:\Users\…\Magplot.lnk」、
+  ; WriteUninstaller 会把卸载器路径顶到状态行（nightly 的 GUI 探针在真安装器
+  ; 上抓到过前者）。一整条用户路径闪在进度条上方，既不好看也不是他要读的东西。
+  ; listonly 保持到本段结束：这些照旧全进日志（诊断不受影响），状态行一直是
+  ; 「正在安装 Magplot」。WebView2 段在本段之前跑，它的 DetailPrint 不受影响。
 
   ; Create file associations
   {{#each file_associations as |association| ~}}
