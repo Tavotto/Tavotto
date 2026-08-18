@@ -1,4 +1,63 @@
 {
+  "export": {
+    "blockingTitle": "There are blocking issues (missing assets / failed renders). You can still export, but fixing them first is safer.",
+    "composing": "Composing…",
+    "dpiHint": {
+      "300": "submission",
+      "600": "print",
+      "900": "large format",
+      "1200": "maximum"
+    },
+    "dpiLabel": "Resolution",
+    "dpiSelectLabel": "Export resolution",
+    "exported": "Exported: {{files}}",
+    "formatLabel": "Format",
+    "issueCount_one": " ({{count}} object)",
+    "issueCount_other": " ({{count}} objects)",
+    "locate": "Locate",
+    "moreOptions": "More export options",
+    "operationFailed": "Operation failed: {{error}}",
+    "package": "Package project (.magplot)",
+    "packaged_one": "Project package {{name}} created with {{count}} asset — open it elsewhere via Document menu → Import project package",
+    "packaged_other": "Project package {{name}} created with {{count}} assets — open it elsewhere via Document menu → Import project package",
+    "pageMismatch": "The page is {{current}}mm wide, but \"{{preset}}\" expects {{want}}mm. Presets never change the page — adjust it on the Canvas tab if you want to.",
+    "pdfDpiIrrelevant": "dpi does not affect PDF",
+    "pdfHint": "True vector, best for submission",
+    "pngHint": "Raster, rendered at the chosen dpi",
+    "preflightOk": "Pre-export checks passed",
+    "preflightSummary": "Preflight found {{count}} kinds of issue",
+    "preflightSummaryBlocking": "Preflight found {{count}} kinds of issue ({{errors}} blocking)",
+    "presetLabel": "Preset",
+    "presets": {
+      "double": {
+        "hint": "PDF · 150mm double column",
+        "label": "Double column"
+      },
+      "full": {
+        "hint": "PDF+PNG · 180mm text block",
+        "label": "Full page"
+      },
+      "screen": {
+        "hint": "PNG 300dpi",
+        "label": "Screen preview"
+      },
+      "single": {
+        "hint": "PDF · 85mm single column",
+        "label": "Single column"
+      }
+    },
+    "proofLabel": "Record",
+    "proofTitle": "JSON record: preflight results, asset list and export settings, written next to the output",
+    "proofToggle": "Write a proof report alongside the output",
+    "revealFailed": "Could not reveal it in the file manager. The file is at: {{path}}",
+    "savedTo": "Saved to {{dir}}",
+    "start": "Export",
+    "stemLabel": "File name",
+    "summary": "{{w}}×{{h}} mm · {{panels}} panels · {{texts}} texts · {{marks}} annotations",
+    "timestampSuffix": "_timestamp",
+    "title": "Export",
+    "warningsIntro": "These edits could not be applied to the re-rendered panels, so the output may differ from the canvas:"
+  },
   "palette": {
     "commands": {
       "add-text": {

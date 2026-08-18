@@ -1,5 +1,6 @@
 import type { PanelInfo } from './api'
 import { panelRender, type PanelRender } from '@/store/renderStore'
+import { formatMessage, msg, type UiMessage } from '@/i18n'
 import { PROOF_KIND } from './brand'
 import { effectiveDpi, effectivePt } from './units'
 import type { CanvasObject, FigureDocument, PanelObject } from '@/types/document'
@@ -14,9 +15,20 @@ import { panelFullSize } from '@/types/document'
 export interface PreflightIssue {
   id: string
   severity: 'error' | 'warn'
-  text: string
+  /**
+   * 问题描述的**描述符**，不是翻译好的字符串：预检结果会在对话框里一直挂
+   * 着，中途切语言得跟着换。`id` 才是机器可读的稳定身份（proof report 里
+   * 两者都写）。
+   */
+  message: UiMessage
   objectIds: string[]
 }
+
+/** 显示用文本（组件里请配合 useTranslation 订阅语言变化）。 */
+export const issueText = (issue: PreflightIssue): string => formatMessage(issue.message)
+
+const pf = (key: string, values?: Record<string, unknown>): UiMessage =>
+  msg(`preflight.${key}`, values, 'errors')
 
 const MIN_PT = 6
 const MIN_DPI = 300
@@ -31,15 +43,20 @@ export function runPreflight(
   const issues: PreflightIssue[] = []
   const visible = doc.objects.filter((o) => !o.hidden)
   const panels = visible.filter((o): o is PanelObject => o.type === 'panel')
-  const push = (id: string, severity: PreflightIssue['severity'], text: string, objs: CanvasObject[]) => {
-    if (objs.length) issues.push({ id, severity, text, objectIds: objs.map((o) => o.id) })
+  const push = (
+    id: string,
+    severity: PreflightIssue['severity'],
+    message: UiMessage,
+    objs: CanvasObject[],
+  ) => {
+    if (objs.length) issues.push({ id, severity, message, objectIds: objs.map((o) => o.id) })
   }
 
   // 缺失素材：文件已不在图库（跨机器 / 被删）
   push(
     'missing-asset',
     'error',
-    '面板引用的素材文件不在当前图库中，导出会失败或出空白',
+    pf('missingAsset'),
     panels.filter((o) => !assets[o.fileId]),
   )
 
@@ -47,7 +64,7 @@ export function runPreflight(
   push(
     'stale-render',
     'warn',
-    '面板的脚本已更新但尚未重建，导出的会是旧图',
+    pf('staleRender'),
     panels.filter((o) => panelRender(render, o)?.stale),
   )
 
@@ -55,7 +72,7 @@ export function runPreflight(
   push(
     'render-error',
     'error',
-    '面板最近一次渲染失败，导出时会再次尝试，建议先修复',
+    pf('renderError'),
     panels.filter(
       (o) => o.overrides.length > 0 && panelRender(render, o)?.status === 'error',
     ),
@@ -65,7 +82,7 @@ export function runPreflight(
   push(
     'out-of-page',
     'warn',
-    '对象超出页面范围，超出部分不会出现在成图里',
+    pf('outOfPage'),
     visible.filter(
       (o) =>
         o.x < -EPS || o.y < -EPS || o.x + o.w > doc.page.w + EPS || o.y + o.h > doc.page.h + EPS,
@@ -78,7 +95,7 @@ export function runPreflight(
     push(
       'outside-margin',
       'warn',
-      `对象越过了 ${m}mm 安全区页边距`,
+      pf('outsideMargin', { margin: m }),
       visible.filter(
         (o) =>
           !(o.x < -EPS || o.y < -EPS || o.x + o.w > doc.page.w + EPS || o.y + o.h > doc.page.h + EPS) &&
@@ -102,13 +119,13 @@ export function runPreflight(
       }
     }
   }
-  push('overlap', 'warn', '面板互相重叠，确认是有意的压盖再导出', [...overlapped])
+  push('overlap', 'warn', pf('overlap'), [...overlapped])
 
   // 低字号：矢量面板等效字号 < 6pt；画布标注 < 6pt
   push(
     'low-font-panel',
     'warn',
-    `矢量面板缩得太小，图内正文等效字号低于 ${MIN_PT}pt`,
+    pf('lowFontPanel', { min: MIN_PT }),
     panels.filter(
       (o) => o.fileKind === 'pdf' && effectivePt(panelFullSize(o).w, o.nativeW) < MIN_PT,
     ),
@@ -116,7 +133,7 @@ export function runPreflight(
   push(
     'low-font-text',
     'warn',
-    `标注文字小于 ${MIN_PT}pt，多数期刊不接受`,
+    pf('lowFontText', { min: MIN_PT }),
     visible.filter((o) => o.type === 'text' && o.sizePt < MIN_PT),
   )
 
@@ -124,7 +141,7 @@ export function runPreflight(
   push(
     'low-dpi',
     'warn',
-    `位图面板的等效分辨率低于 ${MIN_DPI}dpi`,
+    pf('lowDpi', { min: MIN_DPI }),
     panels.filter(
       (o) => o.fileKind === 'raster' && !!o.pxW && effectiveDpi(o.pxW, panelFullSize(o).w) < MIN_DPI,
     ),
@@ -134,7 +151,7 @@ export function runPreflight(
   push(
     'bitmap-embed',
     'warn',
-    '翻转或半透明的面板在 PDF 里按导出 DPI 位图嵌入，矢量文字不保留',
+    pf('bitmapEmbed'),
     panels.filter((o) => o.flipH || o.flipV || (o.opacity != null && o.opacity < 1)),
   )
 
@@ -142,7 +159,7 @@ export function runPreflight(
   push(
     'hidden',
     'warn',
-    '隐藏的对象不会出现在导出中',
+    pf('hidden'),
     doc.objects.filter((o) => o.hidden),
   )
 
@@ -163,7 +180,14 @@ export function buildProofPayload(
     page_mm: { w: doc.page.w, h: doc.page.h, margin: doc.page.margin ?? 0 },
     dpi: settings.dpi,
     formats: settings.formats,
-    checks: issues.map((i) => ({ id: i.id, severity: i.severity, text: i.text, count: i.objectIds.length })),
+    // proof report 是**投稿留档**：id 是稳定的机器键，text 是生成那一刻的
+    // 界面语言下的人类可读文本（留档记录当时看到的是什么）
+    checks: issues.map((i) => ({
+      id: i.id,
+      severity: i.severity,
+      text: issueText(i),
+      count: i.objectIds.length,
+    })),
     objects: doc.objects
       .filter((o) => !o.hidden)
       .map((o) =>

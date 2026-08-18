@@ -1,1 +1,15 @@
-{}
+{
+  "preflight": {
+    "bitmapEmbed": "Flipped or semi-transparent panels are embedded in the PDF as bitmaps at export DPI; vector text is not preserved",
+    "hidden": "Hidden objects will not appear in the export",
+    "lowDpi": "A raster panel's effective resolution is below {{min}}dpi",
+    "lowFontPanel": "A vector panel is scaled down so far that its body text falls below {{min}}pt",
+    "lowFontText": "Annotation text is smaller than {{min}}pt, which most journals reject",
+    "missingAsset": "A panel references an asset that is not in the current figure library; export will fail or come out blank",
+    "outOfPage": "An object extends past the page; the part outside will not appear in the output",
+    "outsideMargin": "An object crosses the {{margin}}mm safe-area margin",
+    "overlap": "Panels overlap each other — make sure the overlap is intentional before exporting",
+    "renderError": "This panel's last render failed. Export will retry, but fixing it first is safer",
+    "staleRender": "The panel's script changed but has not been rebuilt — the export would use the old figure"
+  }
+}

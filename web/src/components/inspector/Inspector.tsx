@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import {
   Copy,
   Eye,
@@ -15,6 +16,8 @@ import {
   X,
 } from 'lucide-react'
 import { drawerMotion, type PresenceState } from '@/lib/motion'
+import { msg, t as translate } from '@/i18n'
+import { listJoin } from '@/i18n/format'
 import { cn, MOD } from '@/lib/utils'
 import { deleteSelected, duplicateSelected, hideElement, updateObjects } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
@@ -29,7 +32,7 @@ import {
   type TextObject,
 } from '@/types/document'
 import { useAiStore } from '@/store/aiStore'
-import { ASSISTANT_TAB_LABEL, AssistantPanel } from '../ai/AiPanel'
+import { assistantTabLabel, AssistantPanel } from '../ai/AiPanel'
 import { Button } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
 import { Menu, MenuItem, MenuSeparator } from '../ui/Menu'
@@ -43,11 +46,11 @@ import { TextSection } from './TextSection'
 import { TransformSection } from './TransformSection'
 import { useSelectedObjects } from './common'
 
-const TABS: { id: RightTab; label: string }[] = [
-  { id: 'properties', label: '属性' },
-  { id: 'assistant', label: ASSISTANT_TAB_LABEL },
-  { id: 'canvas', label: '画布' },
-]
+/** 三个模式的标签文案：助手那条来自 ai 命名空间，另外两条在 inspector 里 */
+const TABS: RightTab[] = ['properties', 'assistant', 'canvas']
+
+const tabLabel = (id: RightTab): string =>
+  id === 'assistant' ? assistantTabLabel() : translate(`tab.${id}`, { ns: 'inspector' })
 
 const TYPE_ICON = {
   panel: ImageIcon,
@@ -64,6 +67,7 @@ export function Inspector({
   /** 开合动效由 App 的 usePresence 驱动：收起时先播完退场再卸载 */
   state?: PresenceState
 }) {
+  const { t } = useTranslation('inspector')
   const tab = useUiStore((s) => s.rightTab)
   const setTab = useUiStore((s) => s.setRightTab)
   const width = useUiStore((s) => s.rightWidth)
@@ -76,7 +80,7 @@ export function Inspector({
   return (
     <aside
       {...motion}
-      aria-label="右侧面板"
+      aria-label={t('panelLabel')}
       className={cn(
         // overflow-hidden 是动效的一部分，见 drawerMotion 的注释
         'relative shrink-0 overflow-hidden border-l border-border bg-surface',
@@ -86,25 +90,25 @@ export function Inspector({
     >
       <div className="flex h-full flex-col" style={{ width }}>
       <div className="flex h-9 shrink-0 items-center gap-3 px-3">
-        <div role="tablist" aria-label="右侧面板模式" className="flex h-full items-center gap-3">
-          {TABS.map((t) => (
+        <div role="tablist" aria-label={t('tabsLabel')} className="flex h-full items-center gap-3">
+          {TABS.map((id) => (
             <button
-              key={t.id}
+              key={id}
               role="tab"
-              aria-selected={tab === t.id}
-              onClick={() => setTab(t.id)}
+              aria-selected={tab === id}
+              onClick={() => setTab(id)}
               className={cn(
                 'relative h-full text-xs outline-none transition-colors focus-visible:focus-ring',
-                tab === t.id
+                tab === id
                   ? 'font-medium text-ink after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:rounded-full after:bg-ink'
                   : 'text-ink-3 hover:text-ink-2',
               )}
             >
-              {t.label}
-              {t.id === 'assistant' && runningAi && (
+              {tabLabel(id)}
+              {id === 'assistant' && runningAi && (
                 <span
                   className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-accent"
-                  aria-label="有任务在运行"
+                  aria-label={t('aiRunning')}
                 />
               )}
             </button>
@@ -113,34 +117,30 @@ export function Inspector({
         <span className="flex-1" />
         {layout !== 'narrow' ? (
           <Tip
-            label={
-              pinned
-                ? '常驻中：清空选择也保持展开。点击改为自动收起'
-                : '自动收起中：清空选择后右栏让位给画布。点击改为常驻'
-            }
+            label={t(pinned ? 'pinnedTip' : 'autoHideTip')}
             side="bottom"
           >
             <Button
               size="sm"
               active={pinned}
               aria-pressed={pinned}
-              aria-label={pinned ? '右栏常驻中，点击改为自动收起' : '右栏自动收起中，点击改为常驻'}
+              aria-label={t(pinned ? 'pinnedAria' : 'autoHideAria')}
               onClick={() => useUiStore.getState().setRightPinned(!pinned)}
             >
               <Pin size={11} className={pinned ? undefined : 'text-ink-3'} />
-              <span className="text-xs">{pinned ? '常驻' : '自动收起'}</span>
+              <span className="text-xs">{t(pinned ? 'pinned' : 'autoHide')}</span>
             </Button>
           </Tip>
         ) : (
-          <Tip label="窗口过窄：右栏以覆盖层临时显示，加宽窗口后可常驻" side="bottom">
-            <span className="text-xs text-ink-3">覆盖层</span>
+          <Tip label={t('overlayTip')} side="bottom">
+            <span className="text-xs text-ink-3">{t('overlay')}</span>
           </Tip>
         )}
-        <Tip label="关闭" side="bottom">
+        <Tip label={translate('actions.close')} side="bottom">
           <Button
             size="icon-sm"
             className="-mr-1.5"
-            aria-label="关闭右侧面板"
+            aria-label={t('closePanel')}
             onClick={() => useUiStore.getState().toggleRight()}
           >
             <X size={13} className="text-ink-3" />
@@ -164,6 +164,7 @@ export function Inspector({
 }
 
 function WidthHandle() {
+  const { t } = useTranslation('inspector')
   const start = (e: React.PointerEvent) => {
     e.preventDefault()
     const from = useUiStore.getState().rightWidth
@@ -181,7 +182,7 @@ function WidthHandle() {
     <div
       role="separator"
       aria-orientation="vertical"
-      aria-label={`调整属性栏宽度（${RIGHT_MIN}–${RIGHT_MAX}px）`}
+      aria-label={t('resize', { min: RIGHT_MIN, max: RIGHT_MAX })}
       tabIndex={0}
       onPointerDown={start}
       onKeyDown={(e) => {
@@ -201,6 +202,7 @@ function WidthHandle() {
 /* -------------------------------------------------------------------------- */
 
 function PropertiesPage() {
+  const { t } = useTranslation('inspector')
   const objs = useSelectedObjects()
   const elementPanelId = useUiStore((s) => s.elementPanelId)
   const elementPanel = useDocumentStore((s) =>
@@ -231,11 +233,7 @@ function PropertiesPage() {
     // 钉住时面板留着；未钉住时选择清空后面板本来就收起了
     return (
       <div className="flex min-h-0 flex-1 overflow-y-auto">
-        <EmptyState
-          icon={MousePointerClick}
-          title="没有选中对象"
-          hint="点画布上的面板、文字或标注开始编辑。"
-        />
+        <EmptyState icon={MousePointerClick} title={t('emptyTitle')} hint={t('emptyHint')} />
       </div>
     )
   }
@@ -267,6 +265,7 @@ function PropertiesPage() {
  * 复制 / 显隐 / 锁定 / 删除收进右侧更多菜单，锁定与隐藏状态本身常驻显示。
  */
 function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: PanelObject }) {
+  const { t } = useTranslation('inspector')
   const selectedGids = useUiStore((s) => s.selectedGids)
   const manifest = usePanelManifest(panel)
 
@@ -279,7 +278,11 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
     const crumbs = [
       panel.name ?? panel.fileId,
       axes && axes.gid !== gid ? axes.label : null,
-      el ? el.label : selectedGids.length > 1 ? `已选 ${selectedGids.length} 个元素` : null,
+      el
+        ? el.label
+        : selectedGids.length > 1
+          ? t('elementsSelected', { count: selectedGids.length })
+          : null,
     ].filter(Boolean) as string[]
     const hideable =
       el && el.gid !== 'figure' && el.editable.some((f) => f.prop === 'visible')
@@ -289,29 +292,29 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
         <div className="flex items-center gap-1.5">
           <ImageIcon size={13} className="shrink-0 text-ink-3" />
           <h2 className="min-w-0 truncate text-xs font-medium text-ink">
-            {crumbs.at(-1) ?? '图内元素'}
+            {crumbs.at(-1) ?? t('elementFallback')}
           </h2>
           <span className="ml-auto flex shrink-0 items-center">
             {hideable && el && (
-              <Tip label="隐藏该元素（可随时恢复）" side="bottom">
+              <Tip label={t('hideElementTip')} side="bottom">
                 <Button
                   size="icon-sm"
                   onClick={() => {
                     hideElement(panel.id, el.gid, el.label)
                     useUiStore.getState().setSelectedGid(null)
                   }}
-                  aria-label="隐藏该元素"
+                  aria-label={t('hideElement')}
                 >
                   <EyeOff size={12} className="text-ink-3" />
                 </Button>
               </Tip>
             )}
-            <Tip label="退出图内编辑" side="bottom">
+            <Tip label={t('exitElementEdit')} side="bottom">
               <Button
                 size="icon-sm"
                 className="-mr-1"
                 onClick={() => useUiStore.getState().setElementPanel(null)}
-                aria-label="退出图内编辑"
+                aria-label={t('exitElementEdit')}
               >
                 <X size={12} className="text-ink-3" />
               </Button>
@@ -339,16 +342,16 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
       <div className="flex items-center gap-1.5">
         <Icon size={13} className="shrink-0 text-ink-3" />
         <h2 className="min-w-0 truncate text-xs font-medium text-ink">
-          {one ? objectLabel(one) : `已选 ${objs.length} 个对象`}
+          {one ? objectLabel(one) : translate('count.selectedObjects', { count: objs.length })}
         </h2>
-        {locked && <Lock size={11} className="shrink-0 text-ink-3" aria-label="已锁定" />}
-        {hidden && <EyeOff size={11} className="shrink-0 text-ink-3" aria-label="已隐藏" />}
+        {locked && <Lock size={11} className="shrink-0 text-ink-3" aria-label={t('locked')} />}
+        {hidden && <EyeOff size={11} className="shrink-0 text-ink-3" aria-label={t('hiddenState')} />}
         {!one && <span className="shrink-0 text-xs text-ink-3">{summarize(objs)}</span>}
         <Menu
           width={172}
           align="end"
           trigger={
-            <Button size="icon-sm" className="-mr-1 ml-auto" aria-label="对象操作">
+            <Button size="icon-sm" className="-mr-1 ml-auto" aria-label={t('objectActions')}>
               <MoreHorizontal size={13} className="text-ink-3" />
             </Button>
           }
@@ -356,38 +359,38 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
           <MenuItem shortcut={`${MOD}D`} onSelect={duplicateSelected}>
             <span className="flex items-center gap-2">
               <Copy size={13} className="text-ink-3" />
-              复制
+              {translate('actions.copy')}
             </span>
           </MenuItem>
           <MenuItem
             onSelect={() =>
-              updateObjects(ids, hidden ? '显示对象' : '隐藏对象', (o) => {
+              updateObjects(ids, msg(hidden ? 'history.showObject' : 'history.hideObject', undefined, 'workspace'), (o) => {
                 o.hidden = !hidden
               })
             }
           >
             <span className="flex items-center gap-2">
               {hidden ? <Eye size={13} className="text-ink-3" /> : <EyeOff size={13} className="text-ink-3" />}
-              {hidden ? '显示' : '隐藏'}
+              {t(hidden ? 'show' : 'hide')}
             </span>
           </MenuItem>
           <MenuItem
             onSelect={() =>
-              updateObjects(ids, locked ? '解锁对象' : '锁定对象', (o) => {
+              updateObjects(ids, msg(locked ? 'history.unlockObject' : 'history.lockObject', undefined, 'workspace'), (o) => {
                 o.locked = !locked
               })
             }
           >
             <span className="flex items-center gap-2">
               {locked ? <LockOpen size={13} className="text-ink-3" /> : <Lock size={13} className="text-ink-3" />}
-              {locked ? '解锁' : '锁定'}
+              {t(locked ? 'unlock' : 'lock')}
             </span>
           </MenuItem>
           <MenuSeparator />
           <MenuItem danger shortcut="⌫" onSelect={deleteSelected}>
             <span className="flex items-center gap-2">
               <Trash2 size={13} />
-              删除
+              {translate('actions.delete')}
             </span>
           </MenuItem>
         </Menu>
@@ -397,11 +400,11 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
 }
 
 function summarize(objs: CanvasObject[]): string {
-  const n = (t: CanvasObject['type']) => objs.filter((o) => o.type === t).length
+  const n = (type: CanvasObject['type']) => objs.filter((o) => o.type === type).length
   const parts: string[] = []
-  if (n('panel')) parts.push(`${n('panel')} 面板`)
-  if (n('text')) parts.push(`${n('text')} 文字`)
+  if (n('panel')) parts.push(translate('summaryPanels', { ns: 'inspector', count: n('panel') }))
+  if (n('text')) parts.push(translate('summaryTexts', { ns: 'inspector', count: n('text') }))
   const marks = n('arrow') + n('shape')
-  if (marks) parts.push(`${marks} 标注`)
-  return parts.join(' · ')
+  if (marks) parts.push(translate('summaryMarks', { ns: 'inspector', count: marks }))
+  return listJoin(parts)
 }

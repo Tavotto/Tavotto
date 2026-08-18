@@ -1,1 +1,15 @@
-{}
+{
+  "preflight": {
+    "bitmapEmbed": "翻转或半透明的面板在 PDF 里按导出 DPI 位图嵌入，矢量文字不保留",
+    "hidden": "隐藏的对象不会出现在导出中",
+    "lowDpi": "位图面板的等效分辨率低于 {{min}}dpi",
+    "lowFontPanel": "矢量面板缩得太小，图内正文等效字号低于 {{min}}pt",
+    "lowFontText": "标注文字小于 {{min}}pt，多数期刊不接受",
+    "missingAsset": "面板引用的素材文件不在当前图库中，导出会失败或出空白",
+    "outOfPage": "对象超出页面范围，超出部分不会出现在成图里",
+    "outsideMargin": "对象越过了 {{margin}}mm 安全区页边距",
+    "overlap": "面板互相重叠，确认是有意的压盖再导出",
+    "renderError": "面板最近一次渲染失败，导出时会再次尝试，建议先修复",
+    "staleRender": "面板的脚本已更新但尚未重建，导出的会是旧图"
+  }
+}
