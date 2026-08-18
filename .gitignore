@@ -19,6 +19,10 @@ web/node_modules/
 web/dist/
 web/test-results/
 web/playwright-report/
+# 从仓库根跑 `npx playwright test` 时产物落在根上，同样挡住
+# （曾被 `git add -A` 顺手收进一次提交）
+test-results/
+playwright-report/
 
 # 运行时数据：装成包后一律落在用户数据目录
 # （macOS ~/Library/Application Support/Magplot、Linux ~/.local/share/magplot、
