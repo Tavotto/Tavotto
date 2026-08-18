@@ -28,6 +28,22 @@ from magplot.engine import preflight, profiles  # noqa: E402
 OUT = ROOT / "tests" / "golden" / "preflight_vectors.json"
 
 
+def _force_utf8() -> None:
+    """把自己的 stdout/stderr 钉成 UTF-8。
+
+    输出里全是中文，而被 subprocess 捕获（pytest 就是这么调的）或重定向时，
+    Windows 上 stdout 会退回系统区域编码 cp1252/cp936——第一次 print 就
+    UnicodeEncodeError 打死进程，调用方看到的是「脚本挂了」而不是那行结论。
+    同 `codex-plugin/skills/magplot-figure/scripts/handoff.py` 的 `_force_utf8()`。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except (ValueError, OSError):
+                pass
+
+
 def _el(gid: str, role: str, **props) -> dict:
     return {"gid": gid, "role": role, "label": gid, "draggable": False,
             "bbox": [0.1, 0.1, 0.2, 0.2],
@@ -254,6 +270,7 @@ def build() -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
+    _force_utf8()
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--write", action="store_true", help="按 Python 侧重新生成")
     args = ap.parse_args(argv)
