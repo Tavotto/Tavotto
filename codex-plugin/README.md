@@ -20,14 +20,18 @@ Codex + 本插件: 写 figures/fig_removal_rate.py → 跑 → Fig1_removal_rate
 本仓库同时是一个 Codex 插件市场（仓库根的 `.agents/plugins/marketplace.json`）：
 
 ```bash
-# 从 GitHub 装
-codex plugin marketplace add erwanjun/magplot
-codex plugin add magplot@magplot
+# 从 GitHub 装（一行）
+codex plugin marketplace add erwanjun/magplot && codex plugin add magplot@magplot
 
-# 或者本地开发时指向工作副本
-codex plugin marketplace add /path/to/magplot
-codex plugin add magplot@magplot
+# 更新
+codex plugin marketplace upgrade magplot
+
+# 本地开发时指向工作副本
+codex plugin marketplace add /path/to/magplot && codex plugin add magplot@magplot
 ```
+
+发进官方插件目录（让用户在 ChatGPT / Codex 里直接搜到）的路线与缺口清单在
+[`../docs/codex-plugin-distribution.md`](../docs/codex-plugin-distribution.md)。
 
 装完**新开一个会话**。CLI 里用 `$magplot-figure` 显式调用，或者直接说「画张图」
 让它隐式命中；Codex 桌面应用共用同一份插件目录，装一次两边都有。

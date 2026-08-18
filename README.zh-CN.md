@@ -157,12 +157,16 @@ magplot open figures/                    # 或者整个图库
 目录、矢量 PDF、产物名可静态解析），画完自动交接过来：
 
 ```bash
-codex plugin marketplace add erwanjun/magplot
-codex plugin add magplot@magplot
+codex plugin marketplace add erwanjun/magplot && codex plugin add magplot@magplot
 ```
 
+装完新开一个会话即可。CLI 与 Codex 桌面应用共用同一份插件目录，**装一次两边都有**；
+`codex plugin marketplace upgrade magplot` 拉新版。
+
 之后图例位置、字号、线宽、刻度这些直接在 Magplot 里拖/改，不用再回去跟 AI 描述一遍。
-详见 [`codex-plugin/README.md`](codex-plugin/README.md)。
+详见 [`codex-plugin/README.md`](codex-plugin/README.md)，
+分发路线（含官方插件目录的提交清单）见
+[`docs/codex-plugin-distribution.md`](docs/codex-plugin-distribution.md)。
 
 ## 你的数据在哪
 

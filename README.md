@@ -175,12 +175,16 @@ Install it and the matplotlib figures Codex writes come out in a shape Magplot c
 over automatically when they're done:
 
 ```bash
-codex plugin marketplace add erwanjun/magplot
-codex plugin add magplot@magplot
+codex plugin marketplace add erwanjun/magplot && codex plugin add magplot@magplot
 ```
 
+Start a new session afterwards. The CLI and the Codex desktop app share one plugin directory,
+so **installing once covers both**; `codex plugin marketplace upgrade magplot` pulls updates.
+
 Legend position, font sizes, line widths and ticks are then a drag or a click away in Magplot —
-no need to describe them to an AI again. See [`codex-plugin/README.md`](codex-plugin/README.md).
+no need to describe them to an AI again. See [`codex-plugin/README.md`](codex-plugin/README.md);
+the distribution roadmap (including the official directory submission checklist) is in
+[`docs/codex-plugin-distribution.md`](docs/codex-plugin-distribution.md).
 
 ## Where your data lives
 
