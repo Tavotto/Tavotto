@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { Bold, ExternalLink, Eye, EyeOff, Minus, Plus } from 'lucide-react'
+import { ExternalLink, Eye, EyeOff, Minus, Plus } from 'lucide-react'
 import { round4, scaleGroupAbout } from '@/lib/axesLayout'
 import { geomTarget, positionOf } from '@/lib/elementGeom'
 import type { EditableField, Manifest, ManifestElement } from '@/lib/api'
@@ -24,10 +24,11 @@ import type { CanvasObject, PanelObject } from '@/types/document'
 import { objectLabel } from '@/types/document'
 import { optionLabel, propLabel } from '@/components/inspector/roles/registry'
 import { useQuickEdit } from './quickEditStore'
+import { TextActionRow } from '@/components/inspector/TextActions'
+import { hasTextStyleBar, TextStyleBar } from '@/components/inspector/TextStyleBar'
 import { Button } from '@/components/ui/Button'
-import { ColorField, NumberField, TextArea } from '@/components/ui/Input'
+import { NumberField, TextArea } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
-import { Toggle } from '@/components/ui/Toggle'
 
 /**
  * 右键快捷编辑：光标处的小弹层。
@@ -111,7 +112,9 @@ export function QuickEdit() {
       onContextMenu={(e) => e.preventDefault()}
       style={{ left: pos.x, top: pos.y }}
       className={cn(
-        'fixed z-50 w-[196px] rounded-md border border-border bg-surface p-1',
+        'fixed z-50 rounded-md border border-border bg-surface p-1',
+        // 对象那份是纯菜单，窄着就行；元素那份要放下样式工具条
+        target.kind === 'element' ? 'w-[268px]' : 'w-[196px]',
         'text-xs text-ink shadow-pop animate-pop-in',
       )}
     >
@@ -234,7 +237,11 @@ function ElementQuick({
       <Head>{el.label}</Head>
 
       {field('text') && <TextContentRow read={read} write={write} close={close} />}
-      {isTextLike(el) && <TextControls read={read} field={field} write={write} />}
+      {hasTextStyleBar(el) && (
+        <div className="px-1.5 py-1">
+          <TextStyleBar panel={panel} element={el} />
+        </div>
+      )}
       {isGeometric(el) && <GeomControls panel={panel} el={el} manifest={manifest} />}
       {el.role === 'legend' && <LegendControls read={read} field={field} write={write} />}
 
@@ -290,7 +297,7 @@ function TextContentRow({
   }
 
   return (
-    <div className="px-1.5 py-0.5">
+    <div className="flex flex-col gap-1 px-1.5 py-0.5">
       <TextArea
         ref={taRef}
         rows={Math.min(3, text.split('\n').length)}
@@ -305,76 +312,13 @@ function TextContentRow({
           }
         }}
       />
+      {/* 换行 / 上下标 / 大小写：与属性页同一份组件，行为一字不差 */}
+      <TextActionRow
+        text={text}
+        taRef={taRef}
+        onChange={(next, immediate) => write('text', next, immediate)}
+      />
     </div>
-  )
-}
-
-/** 文字类：字号 / 加粗 / 颜色 / 背景开关 + 底色 —— 每项都要 manifest 里真有才出现 */
-function TextControls({
-  read,
-  field,
-  write,
-}: {
-  read: (prop: string) => unknown
-  field: (prop: string) => EditableField | undefined
-  write: (prop: string, value: unknown, immediate?: boolean) => void
-}) {
-  const size = field('fontsize')
-  const weight = field('weight')
-  const color = field('color')
-  const bbox = field('bbox_visible')
-  const bboxColor = field('bbox_facecolor')
-  const bold = read('weight') === 'bold'
-  const bgOn = read('bbox_visible') === true
-
-  return (
-    <>
-      {size && (
-        <Line label={propLabel('fontsize')}>
-          <NumberField
-            className="min-w-0 flex-1"
-            value={Number(read('fontsize') ?? 9)}
-            step={size.step ?? 0.5}
-            min={size.min ?? 1}
-            max={size.max ?? 96}
-            precision={1}
-            onChange={(v) => write('fontsize', v, false)}
-          />
-          {weight && (
-            <Button
-              size="icon-sm"
-              active={bold}
-              aria-pressed={bold}
-              aria-label={propLabel('weight')}
-              onClick={() => write('weight', bold ? 'normal' : 'bold')}
-            >
-              <Bold size={12} />
-            </Button>
-          )}
-        </Line>
-      )}
-      {color && (
-        <Line label={propLabel('color')}>
-          <ColorField
-            className="min-w-0 flex-1"
-            value={String(read('color') ?? '#000000')}
-            onChange={(v) => write('color', v)}
-          />
-        </Line>
-      )}
-      {bbox && (
-        <Line label={propLabel('bbox_visible')}>
-          <Toggle checked={bgOn} onChange={(v) => write('bbox_visible', v)} />
-          {bgOn && bboxColor && (
-            <ColorField
-              className="min-w-0 flex-1"
-              value={String(read('bbox_facecolor') ?? '#ffffff')}
-              onChange={(v) => write('bbox_facecolor', v)}
-            />
-          )}
-        </Line>
-      )}
-    </>
   )
 }
 
@@ -471,11 +415,6 @@ function LegendControls({
 }
 
 /** 有字号又有颜色的元素就按文字对待——比枚举角色名更耐引擎变动 */
-const isTextLike = (el: ManifestElement) =>
-  el.role !== 'legend' &&
-  el.editable.some((f) => f.prop === 'fontsize') &&
-  el.editable.some((f) => f.prop === 'color')
-
 const isGeometric = (el: ManifestElement) => !!el.resizable || !!el.geom_gid
 
 /* -------------------------------------------------------------------------- */

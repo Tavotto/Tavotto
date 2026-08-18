@@ -15,6 +15,7 @@ import type { Manifest, ManifestElement } from '@/lib/api'
 import { flipY, resizeGroup, round4, unionBox, type Rect4 } from '@/lib/axesLayout'
 import {
   arrowEndpointsOf,
+  axesCompanions,
   elementSnapCandidates,
   groupBoxes,
   groupPatches,
@@ -1076,6 +1077,10 @@ function contentDelta(panel: PanelObject, layout: { width: number; height: numbe
  * 移动时顺带平移 SVG 里的 <g> 做预览；缩放不做 SVG 预览——matplotlib 重排后
  * 刻度和字号并不会跟着线性缩放，假预览会骗人，只给一个覆盖层线框。
  *
+ * 整体平移会带上随行元素（被手动摆过的标签、色条轴、孪生轴，见
+ * `axesCompanions`）——设置里可关。缩放不带：随行元素该缩到哪里没有可信答案，
+ * matplotlib 自己重排出来的才算数。
+ *
  * element 必须已经过 geomTarget 解析：点位图时传进来的是它的宿主子图。
  */
 export function startAxesDrag(
@@ -1090,6 +1095,11 @@ export function startAxesDrag(
   e.stopPropagation()
 
   const MIN = 0.05
+  const manifest = panelRender(useRenderStore.getState(), panel)?.manifest
+  const companions =
+    mode === 'move' && manifest && useUiStore.getState().dragAxesWithCompanions
+      ? axesCompanions(panel, manifest, element.gid)
+      : []
   interaction().begin('element')
   beginElementPreview(panel)
   const toContent = contentDelta(panel, layout)
@@ -1121,18 +1131,32 @@ export function startAxesDrag(
     return { rect: [x, y, w, h] as Rect4, dfx, dfy }
   }
 
+  /**
+   * 落在子图上的**净位移**（内容分数、y 向下）。
+   * 取钳位后的结果反推，而不是用光标的原始位移：贴到画布边上时子图停了，
+   * 随行元素要是照着原始位移继续走，一组东西就被拆散了。
+   */
+  const netDelta = (rect: Rect4): [number, number] => [rect[0] - start[0], start[1] - rect[1]]
+
   // 松手写 onMove 最后一次的结果：shift 锁向只作用于 onMove（见 startArrowDrag）
   let last: Rect4 | null = null
 
   trackPointer(e, {
     onMove: (ev, dxPx, dyPx) => {
-      const { rect, dfx, dfy } = compute(dxPx, dyPx, ev.shiftKey)
+      const { rect } = compute(dxPx, dyPx, ev.shiftKey)
       last = rect
       interaction().setElementPreview({ boxes: { [element.gid]: flipY(rect) } })
       // 只有纯平移的 SVG 预览是准的。缩放要 matplotlib 重排（刻度、字号、
       // 图例都不会跟着线性缩放），假装缩放只会画出一张必然被纠正的图——
       // 覆盖层线框如实表达「框会变成这么大」，成图由权威渲染说了算
-      if (mode === 'move') previewTransform(element.gid, dfx, dfy)
+      if (mode === 'move') {
+        const [ndx, ndy] = netDelta(rect)
+        previewTransform(element.gid, ndx, ndy)
+        // 后代不单独平移：它们嵌在宿主的 <g> 里，已经跟着动了
+        for (const c of companions) {
+          if (c.previewsSeparately) previewTransform(c.gid, ndx, ndy)
+        }
+      }
     },
     onEnd: (moved, _ev, end) => {
       interaction().end()
@@ -1140,7 +1164,14 @@ export function startAxesDrag(
         cancelElementPreview()
         return
       }
-      setOverride(panel.id, element.gid, 'position', last.map(round4), true)
+      const rect = last
+      const patches = [
+        { gid: element.gid, prop: 'position', value: rect.map(round4) },
+        ...companions.map((c) => c.shift(...netDelta(rect))),
+      ]
+      // 一次 setOverrides = 一条撤销 = 一次权威渲染
+      if (patches.length > 1) setOverrides(panel.id, `移动${element.label}`, patches, true)
+      else setOverride(panel.id, element.gid, 'position', rect.map(round4), true)
       commitElementPreview(panel.id)
     },
   })

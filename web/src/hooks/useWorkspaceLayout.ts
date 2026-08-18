@@ -1,18 +1,10 @@
 import { useEffect } from 'react'
-import { useUiStore, type WorkspaceLayout } from '@/store/uiStore'
+import { layoutFor, useUiStore, type WorkspaceLayout } from '@/store/uiStore'
 
 /**
- * 工作区断点。画布是主角，窄下来时先让侧栏让路，而不是压缩画布：
- * - ≥1440 左右可同时钉住；
- * - 1024–1439 左右互斥，同时只留一侧（1280×720 下画布仍 ≥760px）；
- * - <1024 侧栏改成盖在画布上的抽屉，画布宽度完全不受影响。
+ * 断点与 layoutFor 的唯一出处在 uiStore —— 开机读 persisted 偏好时就要按
+ * 当前窗口宽度裁一次（窄屏不让右栏盖住画布），放这边会和 store 成环。
  */
-const WIDE = 1440
-const MEDIUM = 1024
-
-export const layoutFor = (w: number): WorkspaceLayout =>
-  w >= WIDE ? 'wide' : w >= MEDIUM ? 'medium' : 'narrow'
-
 export function useWorkspaceLayout(): WorkspaceLayout {
   const layout = useUiStore((s) => s.layout)
 

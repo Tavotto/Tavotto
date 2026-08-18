@@ -528,6 +528,13 @@ export interface ManifestElement {
   /** 该 axes 其实是色条轴；属性页应改用它的色条元素 */
   is_colorbar?: boolean
   colorbar_gid?: string
+  /**
+   * 拖动这个 axes 时该一起走的**其他 axes**（色条轴、twinx/twiny 的孪生轴）。
+   * 由引擎裁决（只有那边有 matplotlib 的共享关系与落点），前端只负责把同一个
+   * 位移发给它们。子图自己的标题/轴标签不在这里——它们是 Axes 的孩子，
+   * set_position 一挪天然跟着走。
+   */
+  follow_gids?: string[]
   anchor?: [number, number]
   drag_prop?: string
   /**

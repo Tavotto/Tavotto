@@ -147,8 +147,44 @@ Tauri bundler）。
   ——**2026-08-17 更新**：等价验证完成，Windows NSIS 已带内置渲染 runtime 并过
   `--expect-source bundled` 门禁；旧链于 v0.3.0 退役删除（含 Inno Setup 与
   免安装 zip），回退路径改为检出历史 tag 走旧链构建。
-- 桌面壳的 Tauri updater 本轮只留了位置（Python updater 已在桌面模式停用），
-  端到端的壳自更新未接——发行前需接 tauri-plugin-updater 或提示手动下载。
+- ~~桌面壳的 Tauri updater 本轮只留了位置~~ ——**2026-08-18 已接**：
+  `tauri-plugin-updater` + `tauri-plugin-process`，界面在「设置 → 检查更新」
+  （桌面模式整段换成壳的更新器，Python updater 仍然停用）。清单
+  `latest.json` 由 `scripts/make_updater_manifest.py` 在两条 matrix 腿都跑完
+  之后合成。要点见下节。
 - 画布级 ⌘C/⌘V 在桌面菜单预定义角色下的行为需人工回归一轮（文本框内已保证）；
   发现异常的回退方案是把剪贴板项换成自定义转发（同撤销/重做路径）。
 - 双击 .magplot 项目包 / 文件关联未做。
+
+## 应用内更新（2026-08-18）
+
+桌面版的升级**全程留在软件里**：检查 → 下载（带进度）→ 安装 → 重启。
+用户不再需要去 Releases 页面手动下载覆盖安装。
+
+- **两条升级通道互斥**。浏览器 / pip / pipx 走 Python updater
+  （`/api/update/*`，pip 装 wheel）；桌面壳走 Tauri updater（下载签名过的
+  安装包就地替换）。后端在桌面模式把 `/api/update/*` 整个关掉，
+  `checkUpdateOnStartup()` 按 `isDesktop()` 只查一条——两条同时插手会出现
+  「一边说有新版、一边说不支持」。
+- **前端唯一桌面感知点仍是 `web/src/lib/desktop.ts`**：
+  `checkDesktopUpdate` / `installDesktopUpdate` / `relaunchDesktop`，
+  每个都有浏览器回退（vitest 看护）。组件不 import `@tauri-apps/*`。
+- **check 拿到的句柄要留住**。`installDesktopUpdate` 用的是上一次 check 的
+  那个 `Update` 对象，没有句柄直接抛——不在安装那一刻偷偷补一次 check，
+  否则用户看到的版本号与真正装上去的可能不是同一个。
+- **签名**。更新包用 minisign 签名（与代码签名/公证是两回事）：私钥只在 CI
+  的 `TAURI_SIGNING_PRIVATE_KEY` secret 里，公钥写死在 tauri.conf.json 的
+  `plugins.updater.pubkey`。校验不过 `downloadAndInstall` 当场抛错。
+  **没有配私钥时构建就地关掉 `createUpdaterArtifacts`**（否则打包器直接失败），
+  并打一条 warning——安装包照发，只是这一版进不了自动更新。
+- **macOS 的更新包必须在签名/公证之后重做**。`tauri build` 顺手打的那个
+  `.app.tar.gz` 里装的是**还没签名**的 .app，更新器换上去之后 Gatekeeper 当场
+  拦下，用户拿到一个打不开的应用。发行链里那一份是签完 + `stapler staple`
+  之后重新 tar、重新 `tauri signer sign` 的。
+- **macOS 只发 arm64**（sidecar 由 arm64 runner 上的 PyInstaller 打出来）。
+  清单里因此**没有** `darwin-x86_64`——给 Intel 挂上同一个包，等于把一个装不上
+  的更新推给他们，比「查不到更新」糟糕得多。
+- **清单是单独一个 job**：两条 matrix 腿各只知道自己那一半，`latest.json`
+  必须等两条都跑完才拼得出来。拼接逻辑在 `scripts/make_updater_manifest.py`
+  （有包没签名、一个包都没有，都是硬错误——宁可不发清单，也不发一份装到
+  一半才发现对不上的），看护 `tests/test_updater_manifest.py`。

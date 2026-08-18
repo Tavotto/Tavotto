@@ -78,6 +78,11 @@ jobs:
       APPLE_ID: ${{ secrets.APPLE_ID }}
       APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      # 更新器包的 minisign 私钥（与 tauri.conf.json 里的 pubkey 配对）。
+      # 没配 secret 时 createUpdaterArtifacts 会失败，所以构建那步按有没有
+      # 密钥分岔——**发行链不能因为「暂时没配更新器」整个断掉**。
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -183,7 +188,20 @@ jobs:
       - name: Tauri build
         # CLI 版本钉死：src-tauri/windows/installer.nsi 按这个版本的上游模板
         # 打品牌补丁，模板与打包器必须同源（升级时同步 scripts/build_desktop.py）
-        run: pnpm dlx @tauri-apps/cli@2.11.4 build --bundles ${{ matrix.bundles }}
+        #
+        # createUpdaterArtifacts 打开时打包器要签名，没有私钥会直接失败。
+        # 没配 secret 就地关掉它并打一条 warning——安装包照发，只是这一版
+        # 不进「软件内直接更新」。**不许静默**：空转的更新链比没有更坏。
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+            pnpm dlx @tauri-apps/cli@2.11.4 build --bundles ${{ matrix.bundles }}
+          else
+            echo "::warning::没有 TAURI_SIGNING_PRIVATE_KEY——本次不产出更新包，桌面版只能手动下载新版"
+            pnpm dlx @tauri-apps/cli@2.11.4 build --bundles ${{ matrix.bundles }} \
+              --config '{"bundle":{"createUpdaterArtifacts":false}}'
+          fi
 
       # 发行链上的安装界面门禁。判的是 Tauri 把 {{...}} 展开后**真正喂给
       # makensis 的那份**中间脚本，不是仓库模板：installMode / license /
@@ -284,6 +302,25 @@ jobs:
           xcrun stapler staple "$DMG"
           spctl -a -t open --context context:primary-signature -vv "$DMG"
 
+      - name: macOS 更新包（必须在签名/公证之后重做）
+        # tauri build 里顺手打的那个 tar.gz 装的是**还没签名**的 .app：更新器
+        # 换上去之后 Gatekeeper 当场拦下来，用户拿到一个打不开的应用。
+        # 所以那份丢掉，签完 + 钉上公证票据再重新打包、重新用 minisign 签名。
+        if: runner.os == 'macOS' && env.TAURI_SIGNING_PRIVATE_KEY != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP=src-tauri/target/release/bundle/macos/Magplot.app
+          test -d "$APP" || { echo "::error::找不到 $APP"; exit 1; }
+          # 公证过就把票据钉进 .app：更新器换上去的那份也要能离线过 Gatekeeper。
+          # 没公证（本地/无证书构建）时 stapler 会失败，那不该拦住整条链。
+          xcrun stapler staple "$APP" || echo "::warning::.app 未公证，更新包不带票据"
+          mkdir -p out
+          tar -czf out/Magplot.app.tar.gz -C "$(dirname "$APP")" "$(basename "$APP")"
+          pnpm dlx @tauri-apps/cli@2.11.4 signer sign out/Magplot.app.tar.gz
+          test -f out/Magplot.app.tar.gz.sig || { echo "::error::签名文件没生成"; exit 1; }
+          ls -l out/Magplot.app.tar.gz*
+
       - name: 未签名提示（缺证书时如实标注，不冒充可发行）
         if: runner.os == 'macOS' && env.MACOS_SIGN_IDENTITY == ''
         run: echo "::warning::没有配置签名证书——本次 dmg 未签名，仅供测试，不可发行"
@@ -328,6 +365,9 @@ jobs:
           $nsis = @(Get-ChildItem src-tauri\target\release\bundle\nsis\*.exe)
           if ($nsis.Count -ne 1) { throw "NSIS 产物数量异常（$($nsis.Count) 个）" }
           Copy-Item $nsis[0].FullName "out\Magplot-$ver-Windows-Setup.exe"
+          # 更新包不在这里收：它要装**签过名的**那个 exe，而签名要等 SignPath
+          # 回来（见后面「Windows 更新包」那步）。此刻 out/ 整个目录会被当成
+          # 签名请求的输入，多塞一个 zip 进去只会让 SignPath 那边对不上。
           [System.IO.File]::AppendAllText($env:GITHUB_ENV, "APP_VERSION=$ver`n")
           Get-ChildItem out | Format-Table Name, Length
 
@@ -375,6 +415,26 @@ jobs:
         if: runner.os == 'Windows' && vars.SIGNPATH_ENABLED != 'true'
         run: Write-Warning "SIGNPATH_ENABLED 未开启：Windows 安装包未签名，仅供测试分发"
 
+      - name: Windows 更新包（必须在 SignPath 签名之后重做）
+        # 与 macOS 同一条道理：打包器顺手打的那个 nsis.zip 装的是**还没签名**的
+        # 安装器，自动更新推给用户的就成了一个 SmartScreen 会拦的 exe——新装的人
+        # 拿到签名版、升级的人拿到未签名版，比不签更难查。所以这里用 out/ 里那份
+        # 最终安装包（SignPath 换过的那个）现做一个 zip，再用 minisign 签它。
+        #
+        # zip 里放什么名字不影响更新器：它解开后找第一个 .exe 执行。但 **zip 自己
+        # 的文件名要能被 make_updater_manifest.py 认出来**（*-setup.nsis.zip）。
+        if: runner.os == 'Windows' && env.TAURI_SIGNING_PRIVATE_KEY != ''
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $exe = "out\Magplot-$env:APP_VERSION-Windows-Setup.exe"
+          if (!(Test-Path $exe)) { throw "找不到最终安装包: $exe" }
+          $zip = "out\Magplot_${env:APP_VERSION}_x64-setup.nsis.zip"
+          Compress-Archive -Path $exe -DestinationPath $zip -Force
+          pnpm dlx @tauri-apps/cli@2.11.4 signer sign $zip
+          if (!(Test-Path "$zip.sig")) { throw "更新包签名没生成" }
+          Get-ChildItem out | Format-Table Name, Length
+
       - name: 上传最终 Windows 产物
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
@@ -407,3 +467,60 @@ jobs:
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
           files: out/*
+
+  # ---------------------------------------------------------------------------
+  # 更新清单：两条腿都跑完才拼得出来（每条腿只知道自己那一半）
+  # ---------------------------------------------------------------------------
+  # 桌面版「软件内直接更新」的最后一环。壳按 tauri.conf.json 里的 endpoint
+  # 拉 latest.json → 比版本 → 下载对应平台的包 → 用内置公钥校验签名 → 安装。
+  # **没有这一份，壳永远查不到新版本**，前一版的用户就停在原地了。
+  updater-manifest:
+    needs: build
+    if: ${{ github.event_name == 'push' || inputs.attach }}
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: desktop-tauri-*
+
+      - name: 有没有更新包（没配私钥就如实跳过，不产出半份清单）
+        id: probe
+        shell: bash
+        run: |
+          if compgen -G "artifacts/**/*.sig" > /dev/null; then
+            echo "have=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "have=0" >> "$GITHUB_OUTPUT"
+            echo "::warning::本次没有任何更新包（未配置 TAURI_SIGNING_PRIVATE_KEY）——桌面版这一版无法自动更新"
+          fi
+
+      - name: 合成 latest.json
+        if: steps.probe.outputs.have == '1'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # 更新说明取 Release 正文（release.yml 手写的那份），拿不到就留空
+          NOTES=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+                    --json body -q .body 2>/dev/null || true)
+          python scripts/make_updater_manifest.py \
+            --artifacts artifacts --tag "$RELEASE_TAG" \
+            --notes "$NOTES" --out out/latest.json
+          cat out/latest.json
+
+      - name: 挂到 Release
+        if: steps.probe.outputs.have == '1'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          files: out/latest.json

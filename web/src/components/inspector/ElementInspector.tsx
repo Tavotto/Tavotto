@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import {
   AlignCenterHorizontal,
   AlignCenterVertical,
@@ -8,26 +8,22 @@ import {
   AlignStartHorizontal,
   AlignStartVertical,
   AlignVerticalDistributeCenter,
-  CaseSensitive,
   ChevronRight,
   CircleQuestionMark,
-  CornerDownLeft,
   CornerUpLeft,
   MoveDown,
   MoveHorizontal,
   MoveUp,
   MoveVertical,
   RotateCcw,
-  Subscript,
-  Superscript,
   TriangleAlert,
 } from 'lucide-react'
 import type { AlignMode } from '@/lib/geometry'
 import { ENVIRONMENT_CODES } from '@/lib/api'
 import type { EditableField, Manifest, ManifestElement } from '@/lib/api'
-import { flushRender, requestRender } from '@/hooks/useEngineSync'
+import { requestRender } from '@/hooks/useEngineSync'
 import { useQuickEdit } from '@/canvas/quickEditStore'
-import { ALT, cn, combo, modKey } from '@/lib/utils'
+import { cn } from '@/lib/utils'
 import {
   centerInFigure,
   fracToMm,
@@ -60,8 +56,7 @@ import {
   unhideElement,
 } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
-import { beginElementPreview, commitElementPreview } from '@/canvas/elementPreview'
-import { getHistoryMode, previewStyle } from '@/store/svgPreviewStore'
+import { previewStyle } from '@/store/svgPreviewStore'
 import { canPreviewStyle } from '@/lib/svgStyle'
 import { useSelectionStore } from '@/store/selectionStore'
 import { usePanelRender } from '@/store/renderStore'
@@ -75,16 +70,13 @@ import { groupHasContent, groupRank, optionLabel, propLabel, roleName, UNSUPPORT
 import { Button } from '../ui/Button'
 import { Grid2, Row, Section } from '../ui/Field'
 import { ColorField, NumberField, TextArea } from '../ui/Input'
-import { Menu, MenuItem } from '../ui/Menu'
-import {
-  toggleMathScript,
-  transformCase,
-  type CaseMode,
-} from '@/lib/richText'
 import { Popover } from '../ui/Popover'
 import { Select } from '../ui/Select'
 import { Toggle } from '../ui/Toggle'
 import { Tip } from '../ui/Tooltip'
+import { useFieldGesture } from './elementWrite'
+import { TextActionRow } from './TextActions'
+import { hasTextStyleBar, TextStyleBar, TEXT_BAR_PROPS } from './TextStyleBar'
 import { SourceSection } from './PanelSection'
 import { SyncOverridesButton } from './SyncOverridesButton'
 
@@ -364,9 +356,13 @@ function FieldList({
   openGroups: Record<string, boolean>
   onToggleGroup: (name: string) => void
 }) {
-  const flat = element.editable.filter((f) => !f.group)
+  // 文字元素的字号/加粗/字形/颜色/背景/描边/排版全部收进工具条，
+  // 平铺列表与分组要把它们让出来——同一个属性出两套控件是最坏的那种冗余
+  const bar = hasTextStyleBar(element)
+  const shown = element.editable.filter((f) => !bar || !TEXT_BAR_PROPS.has(f.prop))
+  const flat = shown.filter((f) => !f.group)
   const groups = new Map<string, EditableField[]>()
-  for (const f of element.editable) {
+  for (const f of shown) {
     if (!f.group) continue
     groups.set(f.group, [...(groups.get(f.group) ?? []), f])
   }
@@ -402,6 +398,11 @@ function FieldList({
 
   return (
     <>
+      {bar && (
+        <div className="mb-2 border-b border-border pb-2">
+          <TextStyleBar panel={panel} element={element} />
+        </div>
+      )}
       {rows(flat)}
       {ordered.map(([name, fields]) => {
         // 组里已经有非默认值（如 Ra 标签自带的黑底）就默认展开——
@@ -640,65 +641,6 @@ function BatchFieldRow({
   )
 }
 
-/**
- * 原生取色对话框（`<input type="color">`）不保证发 blur：连续拖着选色时，
- * 只能靠「安静了这么久」判定这一轮结束。取值刻意大于渲染防抖（300ms），
- * 免得刚停手就被当成两轮。
- */
-const GESTURE_QUIET_MS = 450
-
-/**
- * 属性页的一次「连续调整」。**历史与渲染在这里彻底分开**：
- *
- *   历史：gesture 模式下整轮压成一条事务（一次 scrub / 一轮取色 = 一条撤销）；
- *         granular 模式下不开事务，每个语义变化各自 commit 成一条。
- *         **两种模式都经过 documentStore.commit**，一条都不会丢。
- *   渲染：不管哪种模式，能局部预览的字段整轮都不麻烦 matplotlib
- *         （setOverride 走 render:'none'），收尾时 flushRender 定稿一次。
- *
- * 收尾必须可靠：组件卸载（切走选中元素、关掉属性页）也要收——否则事务悬着、
- * 占位的 wantPatches 还挡着同步器，用户会等来一张永远不出现的定稿图。
- */
-function useFieldGesture(panel: PanelObject, label: string) {
-  const open = useRef(false)
-  const timer = useRef<number | undefined>(undefined)
-  const panelId = panel.id
-  const labelRef = useRef(label)
-  labelRef.current = label
-
-  const end = useCallback(() => {
-    window.clearTimeout(timer.current)
-    timer.current = undefined
-    if (!open.current) return
-    open.current = false
-    if (getHistoryMode() === 'gesture') useDocumentStore.getState().endTxn()
-    commitElementPreview(panelId)
-    flushRender(panelId)
-  }, [panelId])
-
-  const start = useCallback(() => {
-    window.clearTimeout(timer.current)
-    if (open.current) return
-    open.current = true
-    const p = useDocumentStore.getState().doc.objects.find((o) => o.id === panelId)
-    if (p?.type !== 'panel') return
-    // granular：不开事务，每个变化各成一条历史；渲染照样推迟到 end()
-    if (getHistoryMode() === 'gesture') useDocumentStore.getState().beginTxn(labelRef.current)
-    beginElementPreview(p)
-  }, [panelId])
-
-  /** 心跳：每次值变化都续一次「安静计时」，超时就当这一轮结束 */
-  const touch = useCallback(() => {
-    if (!open.current) return
-    window.clearTimeout(timer.current)
-    timer.current = window.setTimeout(end, GESTURE_QUIET_MS)
-  }, [end])
-
-  useEffect(() => () => end(), [end])
-
-  return { start, end, touch, isOpen: () => open.current }
-}
-
 /** 当前值：优先取尚未渲染回来的 override，保证输入即时反馈 */
 function currentValue(panel: PanelObject, gid: string, field: EditableField): unknown {
   const ov = panel.overrides.find((p) => p.gid === gid && p.prop === field.prop)
@@ -772,34 +714,6 @@ function FieldRow({
   switch (field.type) {
     case 'text': {
       const text = String(value ?? '')
-      const insertNewline = () => {
-        const ta = taRef.current
-        if (!ta) return
-        const s = ta.selectionStart ?? text.length
-        const t = ta.selectionEnd ?? text.length
-        write(text.slice(0, s) + '\n' + text.slice(t))
-        requestAnimationFrame(() => {
-          ta.focus()
-          ta.setSelectionRange(s + 1, s + 1)
-        })
-      }
-      /**
-       * 上下标走 matplotlib mathtext（`cm$^{-1}$`）——图内文字是交给
-       * matplotlib 排的，跟画布标注那套 `^{…}` 标记不是一回事。
-       */
-      const wrapMath = (kind: 'sup' | 'sub') => {
-        const ta = taRef.current
-        const s = ta?.selectionStart ?? text.length
-        const t = ta?.selectionEnd ?? text.length
-        const next = toggleMathScript(text, s, t, kind)
-        write(next.text, true)
-        requestAnimationFrame(() => {
-          ta?.focus()
-          ta?.setSelectionRange(next.start, next.end)
-        })
-      }
-      const changeCase = (mode: CaseMode) =>
-        write(transformCase(text, mode, true), true) // 保护 $…$ 里的公式
       return (
         <Row label={labelNode} labelWidth={LABEL_W}>
           {/* 输入框占满整行，四个动作横排在下方——竖排会把这一行拉得比输入框还高 */}
@@ -822,60 +736,24 @@ function FieldRow({
                 } else if (e.key === 'Enter') {
                   // 契约与画布文字一致：Enter 提交，⌥/⌘/Ctrl+Enter 换行
                   e.preventDefault()
-                  if (e.altKey || e.metaKey || e.ctrlKey) insertNewline()
-                  else e.currentTarget.blur()
+                  if (e.altKey || e.metaKey || e.ctrlKey) {
+                    const ta = e.currentTarget
+                    const a = ta.selectionStart ?? text.length
+                    const b = ta.selectionEnd ?? text.length
+                    write(text.slice(0, a) + '\n' + text.slice(b))
+                    requestAnimationFrame(() => {
+                      ta.focus()
+                      ta.setSelectionRange(a + 1, a + 1)
+                    })
+                  } else e.currentTarget.blur()
                 }
               }}
             />
-            {/* 按下时一律不抢焦点：textarea 的编辑事务不因点按钮而提交 */}
-            <div className="flex shrink-0 justify-end gap-0.5">
-              <Button
-                size="icon-sm"
-                onPointerDown={(e) => e.preventDefault()}
-                onClick={insertNewline}
-                title={`在光标处插入换行（${combo(ALT, '⏎')} / ${modKey('⏎')}）`}
-                aria-label="插入换行"
-              >
-                <CornerDownLeft size={12} />
-              </Button>
-              <Button
-                size="icon-sm"
-                onPointerDown={(e) => e.preventDefault()}
-                onClick={() => wrapMath('sup')}
-                title="上标：选中一段再点，写成 matplotlib 公式（cm$^{-1}$）"
-                aria-label="上标"
-              >
-                <Superscript size={12} />
-              </Button>
-              <Button
-                size="icon-sm"
-                onPointerDown={(e) => e.preventDefault()}
-                onClick={() => wrapMath('sub')}
-                title="下标：选中一段再点，写成 matplotlib 公式（H$_{2}$O）"
-                aria-label="下标"
-              >
-                <Subscript size={12} />
-              </Button>
-              <Menu
-                align="end"
-                width={140}
-                trigger={
-                  <Button
-                    size="icon-sm"
-                    onPointerDown={(e) => e.preventDefault()}
-                    title="大小写转换"
-                    aria-label="大小写转换"
-                  >
-                    <CaseSensitive size={12} />
-                  </Button>
-                }
-              >
-                <MenuItem onSelect={() => changeCase('upper')}>全部大写</MenuItem>
-                <MenuItem onSelect={() => changeCase('lower')}>全部小写</MenuItem>
-                <MenuItem onSelect={() => changeCase('title')}>每词首字母大写</MenuItem>
-                <MenuItem onSelect={() => changeCase('sentence')}>每句首字母大写</MenuItem>
-              </Menu>
-            </div>
+            <TextActionRow
+              text={text}
+              taRef={taRef}
+              onChange={(next, immediate) => write(next, immediate)}
+            />
           </div>
         </Row>
       )

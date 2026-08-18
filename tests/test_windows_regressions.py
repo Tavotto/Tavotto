@@ -11,6 +11,7 @@
   * 关进程慢：poll() 还说活着，握手其实早就失败了
   * AI CLI 只有 .cmd 外壳 / 装在微软商店的执行别名下
   * 渲染解释器探测：python.org / conda / 商店版
+  * 测试自己的 id 太长撑爆环境变量（32767 上限）
 
 跨平台可跑：拿不到真实 Windows 语义的地方就直接测**那段逻辑本身**
 （monkeypatch 出同样的失败），而不是假装在 Windows 上跑。
@@ -784,3 +785,38 @@ def test_workerd_that_dies_while_poll_still_says_alive_gets_disabled(monkeypatch
         "重启次数不该超过上限"
     # 半启动的都被收掉了：不收就是每重启一次泄漏一个子进程
     assert all(z.killed for z in _ZombiePopen.instances[:-1])
+
+
+def test_no_test_id_can_blow_the_windows_env_var_limit():
+    """没有哪条用例的 id 长到能撑爆 Windows 的环境变量上限。
+
+    pytest 把当前用例的 id 写进 `PYTEST_CURRENT_TEST`。Windows 的环境变量
+    上限是 32767 字符，超了就 `ValueError: the environment variable is longer
+    than 32767 characters` —— **在 Linux/macOS 上全绿，只在 Windows 上炸**，
+    而且报错和被测的东西毫无关系，得翻半天才看出来是 id 的问题。
+
+    真实来源：`@pytest.mark.parametrize` 直接拿**整个文件的内容**当参数。
+    工作流文件慢慢变长，某天加几行就越线（本仓库在 desktop-tauri.yml 上撞过
+    一次）。参数化要按名字/路径，内容在用例里自己读。
+
+    这里量的是 pytest 真正生成的 id，不是猜哪些用例可疑——阈值取上限的
+    四分之一，给「文件还会长」留足余量，同时任何按内容参数化的写法都会
+    立刻越线（那些 id 动辄上万字符）。
+    """
+    # **不能加 -q**：安静模式把每个文件折叠成一行计数，id 根本不出现，
+    # 这条守卫就永远是绿的（第一版正是这么写的，改回原 bug 也没红）
+    out = subprocess.run(
+        [sys.executable, "-m", "pytest", "--collect-only", "--no-header",
+         "-p", "no:cacheprovider", str(Path(__file__).parent)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        cwd=Path(__file__).resolve().parents[1],
+    )
+    assert out.returncode == 0, f"收集用例就失败了:\n{out.stdout[-3000:]}\n{out.stderr[-2000:]}"
+
+    LIMIT = 32767 // 4
+    worst = max((ln for ln in out.stdout.splitlines() if "::" in ln),
+                key=len, default="")
+    assert len(worst) <= LIMIT, (
+        f"有用例 id 长达 {len(worst)} 字符（上限 {LIMIT}）——多半是 parametrize "
+        f"直接吃了整个文件的内容。开头：{worst[:200]}"
+    )

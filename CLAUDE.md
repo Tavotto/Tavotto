@@ -178,6 +178,16 @@ Python，首次渲染也不联网：
   `engine/brand.py`，别处不得手写。
 - 默认每天一次、可在设置里关（关了**一个包都不发**）；升级永不静默进行，
   且升级后 `restart_required`（进程内存里还是旧代码）。
+- **桌面版走另一条（2026-08-18）**：`tauri-plugin-updater` 下载签名过的安装包
+  就地替换，装完 `relaunch`。两条通道互斥——后端在桌面模式把 `/api/update/*`
+  整个关掉，前端 `checkUpdateOnStartup()` 按 `isDesktop()` 只查一条。
+  前端唯一入口仍是 `web/src/lib/desktop.ts`（每个能力有浏览器回退）。
+  更新包的 minisign 私钥只在 CI，公钥写死在 tauri.conf.json；**没配私钥时
+  构建就地关掉 createUpdaterArtifacts 并打 warning**，安装包照发。
+  **macOS 的更新包必须在签名/公证之后重做**——tauri build 顺手打的那份装的是
+  没签名的 .app，换上去 Gatekeeper 当场拦。清单 `latest.json` 由
+  `scripts/make_updater_manifest.py` 在两条 matrix 腿都跑完后合成
+  （少了它壳永远显示「已是最新」而 CI 全绿）。细节见 ADR 0002 末节。
 - 安装方式探测：包上两级有 `pyproject.toml` = source（只提示 `git pull`，
   绝不在源码树里跑 pip 覆盖用户工作副本）；`sys.prefix` 含 pipx = pipx；否则 pip。
 - 升级目标优先取 Release 里的 `.whl` 资产 URL（没发 PyPI 也能升），
