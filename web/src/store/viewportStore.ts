@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { DURATION, tween } from '@/lib/motion'
 import { BASE_PX_PER_MM, clamp } from '@/lib/units'
 
 export const MIN_ZOOM = 0.25
@@ -28,13 +29,14 @@ interface ViewportState {
   zoomAt: (factor: number, anchorX: number, anchorY: number) => void
   setZoomCentered: (zoom: number) => void
   fit: (pageW: number, pageH: number, padding?: number) => void
-  /** 带 150ms 缓动的 fit（prefers-reduced-motion 时瞬时完成）；双击空白回中用 */
+  /** 带缓动的 fit（prefers-reduced-motion 时瞬时完成）；双击空白回中用 */
   fitAnimated: (pageW: number, pageH: number, padding?: number) => void
   /** 把一块区域挪到视口中央（放不下才缩小），用于「定位到这个对象」 */
   revealRect: (rect: { x: number; y: number; w: number; h: number }, padding?: number) => void
 }
 
-let fitRaf = 0
+/** 上一次 fitAnimated 的取消句柄：连点两次不能让两条补间打架 */
+let cancelFit: (() => void) | null = null
 
 export const useViewportStore = create<ViewportState>((set, get) => ({
   zoom: 1,
@@ -107,28 +109,22 @@ export const useViewportStore = create<ViewportState>((set, get) => ({
       panX: (s.viewW - wPx * zoom) / 2,
       panY: (s.viewH - hPx * zoom) / 2,
     }
-    const reduced =
-      typeof matchMedia !== 'undefined' &&
-      matchMedia('(prefers-reduced-motion: reduce)').matches
-    if (reduced) {
-      set(target)
-      return
-    }
     const from = { zoom: s.zoom, panX: s.panX, panY: s.panY }
-    const t0 = performance.now()
-    const DUR = 150 // 120–180ms 区间取中
-    cancelAnimationFrame(fitRaf)
-    const step = (now: number) => {
-      const t = Math.min(1, (now - t0) / DUR)
-      const e = 1 - (1 - t) ** 3 // easeOutCubic
-      set({
-        zoom: from.zoom + (target.zoom - from.zoom) * e,
-        panX: from.panX + (target.panX - from.panX) * e,
-        panY: from.panY + (target.panY - from.panY) * e,
-      })
-      if (t < 1) fitRaf = requestAnimationFrame(step)
-    }
-    fitRaf = requestAnimationFrame(step)
+    // reduced-motion 由 tween 内部判掉（同步落终态），这里不再各写一份分支
+    cancelFit?.()
+    cancelFit = tween({
+      duration: DURATION.base,
+      onUpdate: (e) => {
+        set({
+          zoom: from.zoom + (target.zoom - from.zoom) * e,
+          panX: from.panX + (target.panX - from.panX) * e,
+          panY: from.panY + (target.panY - from.panY) * e,
+        })
+      },
+      onDone: () => {
+        cancelFit = null
+      },
+    })
   },
 
   revealRect: ({ x, y, w, h }, padding = 96) => {

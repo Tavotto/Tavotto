@@ -54,9 +54,47 @@
   /* 画布内文字对象专用：与 UI 字体严格分离，模拟论文排版 */
   --font-doc: 'Times New Roman', 'Songti SC', 'Source Han Serif SC', serif;
 
-  --animate-pop-in: pop-in 0.12s cubic-bezier(0.16, 1, 0.3, 1);
+  /* --------------------------------------------------------------------------
+     动效 token —— 时长与缓动的唯一出处，组件里不写字面量。
+     JS 侧的同一份值在 lib/motion.ts（两边必须同步，那里有断言看护）。
+
+     进场比退场慢：退场是「让路」，拖沓会挡住用户的下一步动作。
+     形态一律 opacity + ≤4px 位移 + scale(0.97~1)——没有弹跳、没有回弹，
+     动画只是点缀，关掉（prefers-reduced-motion）不损失任何信息。
+     -------------------------------------------------------------------------- */
+  --duration-fast: 120ms;
+  --duration-base: 180ms;
+  --duration-slow: 240ms;
+  /* 退场档：比同名进场短一档 */
+  --duration-exit: 90ms;
+
+  /* 进场用强 ease-out（起步快、收尾稳），退场用 ease-in（直接让开） */
+  --ease-pop: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+
+  /* 浮层：菜单 / popover / select / tooltip / dialog 主体 */
+  --animate-pop-in: pop-in var(--duration-fast) var(--ease-pop);
+  --animate-pop-out: pop-out var(--duration-exit) var(--ease-exit);
+  /* 遮罩、角标这类只需要「在与不在」的 */
+  --animate-fade-in: fade-in var(--duration-fast) var(--ease-pop);
+  --animate-fade-out: fade-out var(--duration-exit) var(--ease-exit);
+  /* 从下方升起：toast */
+  --animate-rise-in: rise-in var(--duration-base) var(--ease-pop);
+  --animate-rise-out: rise-out var(--duration-exit) var(--ease-exit);
+  /* 面板换图：旧图压在新图之上淡出。linear 而不是缓动——交叉淡入两侧的
+     不透明度和恒为 1 才不会在中途出现一道暗带；forwards 是必须的，
+     不然动画结束到卸载之间会有一帧回到 opacity:1，闪一下。 */
+  --animate-crossfade-out: fade-out var(--duration-slow) linear forwards;
+
+  /* 冷启动那几分钟的「还活着」信号：不确定进度条来回扫 */
+  --animate-sweep: sweep 1.4s ease-in-out infinite;
 }
 
+/* Tailwind v4 的 `-translate-x-1/2` 编译成**独立的 `translate` 属性**，不是
+   `transform` 的一部分——所以居中的浮层（Dialog）套 pop-in 不会被动画的
+   transform 顶掉，两者各走各的。别再「顺手」给关键帧补 translate(-50%,-50%)：
+   那会跟 translate 属性叠加，播放期间弹窗往左上多偏半个身位（实测偏 250px，
+   由 e2e 的真浏览器探针抓到）。 */
 @keyframes pop-in {
   from {
     opacity: 0;
@@ -65,6 +103,66 @@
   to {
     opacity: 1;
     transform: none;
+  }
+}
+
+@keyframes pop-out {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes rise-out {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+}
+
+@keyframes sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(300%);
   }
 }
 

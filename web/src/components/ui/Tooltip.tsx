@@ -26,7 +26,11 @@ export function Tip({ label, shortcut, side = 'bottom', children }: TipProps) {
           className={cn(
             'z-50 flex items-center gap-2 rounded-sm border border-border bg-surface',
             'px-2 py-1 text-xs text-ink shadow-pop',
+            'origin-[var(--radix-tooltip-content-transform-origin)]',
             'data-[state=delayed-open]:animate-pop-in',
+            // instant-open = 连续划过同组按钮时的即时切换：再播一次进场会闪，只淡入
+            'data-[state=instant-open]:animate-fade-in',
+            'data-[state=closed]:animate-fade-out',
           )}
         >
           <span>{label}</span>

@@ -22,7 +22,12 @@ export function Menu({
           align={align}
           sideOffset={6}
           style={{ minWidth: width }}
-          className="z-50 rounded-md border border-border bg-surface p-1 shadow-pop animate-pop-in"
+          className={cn(
+            'z-50 rounded-md border border-border bg-surface p-1 shadow-pop',
+            // 从触发器那个角展开，而不是从自己中心——菜单与按钮的因果关系才看得出来
+            'origin-[var(--radix-dropdown-menu-content-transform-origin)]',
+            'data-[state=open]:animate-pop-in data-[state=closed]:animate-pop-out',
+          )}
         >
           {children}
         </DM.Content>

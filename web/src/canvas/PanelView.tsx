@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { enginePreviewPng, panelSrc } from '@/lib/api'
 import { alignEntries, geomGid, geomTarget, segIntersectsRect } from '@/lib/elementGeom'
+import { DURATION, prefersReducedMotion, usePresence } from '@/lib/motion'
 import { pickBucket } from '@/lib/units'
 import { cn } from '@/lib/utils'
 import { isJustBakedBaseline } from '@/store/actions'
@@ -137,10 +138,9 @@ export function PanelView({ obj }: { obj: PanelObject }) {
             dangerouslySetInnerHTML={{ __html: svgHtml }}
           />
         ) : (
-          <img
+          <CrossfadeImage
             src={src}
             alt={obj.name ?? obj.fileId}
-            draggable={false}
             className="absolute select-none"
             style={{ ...layout, maxWidth: 'none' }}
           />
@@ -204,6 +204,88 @@ function useEnginePngBlob(
   }, [])
 
   return url
+}
+
+/**
+ * 面板换图的交叉淡入。
+ *
+ * 引擎每出一版新图就换一次 src，硬换会让画布「啪」地闪一下——连续调参时
+ * 每次松手都闪一回。这里让**旧的那一帧**压在新图之上淡出，把硬切遮掉。
+ *
+ * 两个不能改的实现约束：
+ *
+ * 1. **两个图层常驻、轮流当主角，绝不为淡出层现建 `<img>`。**
+ *    引擎位图是 blob: URL，`useEnginePngBlob` 在新 URL 到手的同一刻就
+ *    `revokeObjectURL` 掉了旧的——这时候现建一个 `<img>` 指过去只会加载失败、
+ *    露出一块空白，比不做淡入淡出更糟。而**已经解码过**的那个 `<img>` 节点
+ *    即使 URL 已失效照样画得出来，所以旧图层必须还是原来那个节点。
+ * 2. **当前图层的 src 永远直接跟着最新值走，不等加载。**
+ *    浏览器换 src 时会一直画着旧的一帧直到新图解码完成，底下这张不会空白；
+ *    也因此这里不需要任何「等 onLoad 再切」的状态机——那种写法在图加载失败、
+ *    或 jsdom 这类根本不加载图片的环境里会永久卡在旧图上。
+ *
+ * 淡出层 `alt=""` + `aria-hidden`：任何时刻都只有一张图带真实 alt。
+ * reduced-motion 下不进入淡出态，行为与从前逐字节一致。
+ */
+function CrossfadeImage({
+  src,
+  alt,
+  className,
+  style,
+}: {
+  src: string
+  alt: string
+  className?: string
+  style?: React.CSSProperties
+}) {
+  const [layers, setLayers] = useState<{ a?: string; b?: string; cur: 'a' | 'b' }>({
+    a: src,
+    cur: 'a',
+  })
+  const [fading, setFading] = useState(false)
+  const seen = useRef(src)
+
+  // 依赖只有 src。带上 layers / cur 的话它们自己的 setState 会让 effect 重跑，
+  // 重跑的 cleanup 会把定时器清掉，淡出态就再也退不出来
+  useEffect(() => {
+    if (src === seen.current) return
+    seen.current = src
+    setLayers((l) => (l.cur === 'a' ? { ...l, b: src, cur: 'b' } : { ...l, a: src, cur: 'a' }))
+    if (prefersReducedMotion()) return
+    setFading(true)
+    const t = setTimeout(() => setFading(false), DURATION.slow)
+    return () => clearTimeout(t)
+  }, [src])
+
+  // 非当前层排在后面 = 画在上面（同层同栈时 DOM 顺序决定叠放）。
+  // key 固定为 'a'/'b'，重排只是移动节点，不重挂、不丢已解码的那一帧
+  const order: ('a' | 'b')[] = layers.cur === 'a' ? ['a', 'b'] : ['b', 'a']
+
+  return (
+    <>
+      {order.map((k) => {
+        const layerSrc = layers[k]
+        // 还没用过的那一层不渲染：<img> 不给 src 会去请求当前页面地址
+        if (!layerSrc) return null
+        const isCur = k === layers.cur
+        return (
+          <img
+            key={k}
+            src={layerSrc}
+            alt={isCur ? alt : ''}
+            aria-hidden={isCur ? undefined : true}
+            draggable={false}
+            className={cn(
+              className,
+              !isCur && 'pointer-events-none',
+              !isCur && fading && 'animate-crossfade-out',
+            )}
+            style={isCur || fading ? style : { ...style, opacity: 0 }}
+          />
+        )
+      })}
+    </>
+  )
 }
 
 type Layout = { width: number; height: number; left: number; top: number }
@@ -408,6 +490,7 @@ function RenderStatusBadge({ obj }: { obj: PanelObject }) {
     if (render?.status === 'rendering' || building) {
       return {
         tone: 'busy' as const,
+        cold: !!building?.cold,
         text: building?.cold
           ? building.cost === 'heavy'
             ? '冷启动中，可能需要几分钟…'
@@ -415,32 +498,52 @@ function RenderStatusBadge({ obj }: { obj: PanelObject }) {
           : '渲染中…',
       }
     }
-    if (render?.status === 'error') return { tone: 'error' as const, text: '渲染失败' }
-    if (render?.stale) return { tone: 'stale' as const, text: '脚本已更新' }
+    if (render?.status === 'error') return { tone: 'error' as const, cold: false, text: '渲染失败' }
+    if (render?.stale) return { tone: 'stale' as const, cold: false, text: '脚本已更新' }
     return null
   }, [render, relevant, building])
 
-  if (!info) return null
+  // 退场那 90ms 里 info 已经是 null 了，留住最后一版才播得完
+  const last = useRef(info)
+  useEffect(() => {
+    if (info) last.current = info
+  }, [info])
+  const { mounted, state } = usePresence(!!info, DURATION.exit)
+  const shown = info ?? last.current
+
+  if (!mounted || !shown) return null
 
   return (
     <div
-      className="pointer-events-none absolute left-0 top-0 origin-top-left p-1"
+      data-state={state}
+      className={cn(
+        'pointer-events-none absolute left-0 top-0 origin-top-left p-1',
+        'data-[state=open]:animate-fade-in data-[state=closed]:animate-fade-out',
+      )}
       style={{ transform: `scale(${scale})` }}
     >
       <span
         className={cn(
-          'flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-xs',
-          info.tone === 'error'
+          'relative flex items-center gap-1 overflow-hidden rounded-sm px-1.5 py-0.5 text-xs',
+          shown.tone === 'error'
             ? 'bg-danger text-white'
-            : info.tone === 'stale'
+            : shown.tone === 'stale'
               ? 'bg-ink text-white'
               : 'bg-accent text-white',
         )}
       >
-        {info.tone === 'busy' && (
+        {shown.tone === 'busy' && (
           <span className="h-2 w-2 animate-pulse rounded-full bg-white/80" />
         )}
-        {info.text}
+        {shown.text}
+        {/* 冷启动可能要几分钟：一个呼吸的圆点表达不出「还在动」，补一条来回扫的
+            不确定进度条。**不做百分比**——worker 那边根本没有进度可报，
+            假进度条比没有更坏。 */}
+        {shown.cold && (
+          <span aria-hidden className="absolute inset-x-0 bottom-0 h-0.5">
+            <span className="block h-full w-1/4 rounded-full bg-white/75 animate-sweep" />
+          </span>
+        )}
       </span>
     </div>
   )

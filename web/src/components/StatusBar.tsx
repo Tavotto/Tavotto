@@ -1,4 +1,6 @@
+import { useEffect, useRef } from 'react'
 import { X } from 'lucide-react'
+import { DURATION, usePresence } from '@/lib/motion'
 import { formatMm } from '@/lib/units'
 import { cn } from '@/lib/utils'
 import { useDocumentStore } from '@/store/documentStore'
@@ -63,6 +65,14 @@ export function CanvasHud() {
 export function StatusToasts() {
   const status = useUiStore((s) => s.status)
   const tone = useUiStore((s) => s.statusTone)
+  // 退场那 90ms 里 status 已经是空串了，得把最后一条文案留着播完，
+  // 否则会看到一个空壳滑下去
+  const last = useRef<{ status: string; tone: typeof tone }>({ status: '', tone: 'info' })
+  useEffect(() => {
+    if (status) last.current = { status, tone }
+  }, [status, tone])
+  const shown = status ? { status, tone } : last.current
+  const { mounted, state } = usePresence(!!status, DURATION.exit)
 
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex justify-center px-4">
@@ -73,17 +83,19 @@ export function StatusToasts() {
       <div aria-live="assertive" role="alert" className="sr-only">
         {tone === 'error' ? status : ''}
       </div>
-      {status && (
+      {mounted && (
         <div
+          data-state={state}
           className={cn(
             'pointer-events-auto flex max-w-[520px] items-center gap-2 rounded-md border px-3 py-1.5 text-xs shadow-pop',
-            tone === 'error'
+            shown.tone === 'error'
               ? 'border-danger/30 bg-danger-subtle text-danger'
               : 'border-border bg-surface text-ink-2',
+            'data-[state=open]:animate-rise-in data-[state=closed]:animate-rise-out',
           )}
         >
-          <span className="min-w-0 flex-1">{status}</span>
-          {tone === 'error' && (
+          <span className="min-w-0 flex-1">{shown.status}</span>
+          {shown.tone === 'error' && (
             <button
               onClick={() => useUiStore.getState().setStatus('')}
               aria-label="关闭错误提示"
