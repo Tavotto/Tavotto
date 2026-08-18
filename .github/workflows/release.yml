@@ -99,13 +99,30 @@ jobs:
         id: notes
         env:
           TAG: ${{ inputs.tag || github.ref_name }}
+          SIGNPATH_ENABLED: ${{ vars.SIGNPATH_ENABLED }}
         run: |
           set -euo pipefail
           # 自动生成的 notes 只是一串提交标题，用户看不出该不该升级。
           # docs/release-notes/<tag>.md 存在就用它，缺失则退回自动生成。
           F="docs/release-notes/${TAG}.md"
           if [ -f "$F" ]; then
-            echo "path=$F" >> "$GITHUB_OUTPUT"
+            # SignPath Foundation 的条件要求「Code signing policy」这个词组同时
+            # 出现在项目主页**与下载/发布页**上。README 那半已经有了，这里补发布页。
+            # 措辞按 SIGNPATH_ENABLED 分岔：没开时如实说这一版没签名——把未签名的
+            # 包描述成已签名，正是 policy 里明令禁止的那件事。
+            B="$RUNNER_TEMP/release-body.md"
+            cp "$F" "$B"
+            {
+              printf '\n\n---\n\n### Code signing policy\n\n'
+              if [ "$SIGNPATH_ENABLED" = "true" ]; then
+                printf 'The Windows installer in this release is code signed. Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org).\n\n'
+              else
+                printf '**The Windows installer in this release is not code signed**, so Windows will show a SmartScreen warning on first run. Verify it against this workflow run if you want to check what you downloaded.\n\n'
+              fi
+              printf 'See the full [code signing policy](https://github.com/%s/blob/%s/docs/code-signing-policy.md) and [privacy policy](https://github.com/%s/blob/%s/docs/privacy.md).\n' \
+                     "$GITHUB_REPOSITORY" "$TAG" "$GITHUB_REPOSITORY" "$TAG"
+            } >> "$B"
+            echo "path=$B" >> "$GITHUB_OUTPUT"
           else
             echo "::warning::没有 $F，本次用自动生成的 notes（一串提交标题）"
             echo "path=" >> "$GITHUB_OUTPUT"
