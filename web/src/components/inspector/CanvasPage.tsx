@@ -21,6 +21,14 @@ const PRESETS = [
 ]
 
 /**
+ * 预设缩略图：**四档共用同一个 mm→px 比例**，所以「单栏比双栏窄一半」
+ * 这件事在图形上是真的。各自撑满格子的话四个方块一样大，形状还在、
+ * 比例没了，用户照样得读文字——那就白画了。
+ */
+const PREVIEW_BOX = 40
+const PREVIEW_SCALE = PREVIEW_BOX / Math.max(...PRESETS.map((p) => Math.max(p.w, p.h)))
+
+/**
  * 画布页：页面尺寸是排版的第一约束，默认展开；
  * 背景、查看辅助、吸附、参考线、安全区域按需展开，折叠行给现状摘要。
  */
@@ -43,24 +51,46 @@ export function CanvasPage() {
   return (
     <>
       <Section title="页面尺寸">
-        <div className="mb-2 grid grid-cols-4 gap-0.5" role="radiogroup" aria-label="页面预设">
-          {PRESETS.map((p) => (
-            <Tip key={p.label} label={p.hint}>
-              <button
-                onClick={() => setPageSize(p.w, p.h)}
-                role="radio"
-                aria-checked={active?.label === p.label}
-                className={cn(
-                  'flex h-7 items-center justify-center rounded-sm border text-xs outline-none transition-colors focus-visible:focus-ring',
-                  active?.label === p.label
-                    ? 'border-accent bg-accent-subtle font-medium text-accent'
-                    : 'border-border bg-surface text-ink-2 hover:border-border-strong hover:text-ink',
-                )}
-              >
-                {p.label}
-              </button>
-            </Tip>
-          ))}
+        <div className="mb-2 grid grid-cols-4 gap-1" role="radiogroup" aria-label="页面预设">
+          {PRESETS.map((p) => {
+            const on = active?.label === p.label
+            return (
+              <Tip key={p.label} label={p.hint}>
+                <button
+                  onClick={() => setPageSize(p.w, p.h)}
+                  role="radio"
+                  aria-checked={on}
+                  aria-label={`${p.label}，${p.w}×${p.h} 毫米`}
+                  className={cn(
+                    'flex flex-col items-center gap-1 rounded-sm border py-1.5 outline-none transition-colors focus-visible:focus-ring',
+                    on
+                      ? 'border-accent bg-accent-subtle text-accent'
+                      : 'border-border bg-surface text-ink-2 hover:border-border-strong hover:text-ink',
+                  )}
+                >
+                  {/* 缩略图按真实比例摆，底边对齐——横竖两类放一排才看得出高矮 */}
+                  <span
+                    className="flex items-end justify-center"
+                    style={{ height: PREVIEW_BOX }}
+                    aria-hidden
+                  >
+                    <span
+                      className={cn(
+                        'block border',
+                        // 选中不只换颜色：空心变实心，色觉障碍下也分得出
+                        on ? 'border-accent bg-accent/25' : 'border-ink-faint bg-surface',
+                      )}
+                      style={{
+                        width: p.w * PREVIEW_SCALE,
+                        height: p.h * PREVIEW_SCALE,
+                      }}
+                    />
+                  </span>
+                  <span className={cn('text-xs', on && 'font-medium')}>{p.label}</span>
+                </button>
+              </Tip>
+            )
+          })}
         </div>
         <Grid2>
           <MmField
