@@ -2,8 +2,12 @@
 ; MAGPLOT VENDORED TEMPLATE
 ; 上游：tauri-apps/tauri @ tauri-cli-v2.11.4
 ;       crates/tauri-bundler/src/bundle/windows/nsis/installer.nsi
-; 改动：全部以 `MAGPLOT PATCH` 注释标出（品牌配色 / 去欢迎页 /
-;       极简进度 / 完成页自动进入）。头图与侧栏图不在此文件——走
+; 改动：全部以 `MAGPLOT PATCH` 注释标出。首次 GUI 安装只剩两页——
+;       真实安装进度（MUI_PAGE_INSTFILES）→ 完成页（MUI_PAGE_FINISH）：
+;       欢迎页删除、目录页与开始菜单页恒被 Skip 掉、日志列表 nevershow、
+;       完成页去掉伪 README 复选框并本地化「打开 Magplot」。
+;       异常流程（同版本 / 降级 / WiX 迁移 / 应用在跑 / WebView2 失败 /
+;       卸载）的页面与判断一个都没动。头图与侧栏图不在此文件——走
 ;       tauri.conf.json 的 nsis.headerImage / sidebarImage。
 ; 升级 @tauri-apps/cli 时：模板与打包器必须同源——取新版模板重打
 ;       这些补丁，并同步 scripts/build_desktop.py 与
@@ -181,13 +185,22 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 ; 安装过程只留一根进度条，不出日志列表与 Nullsoft 角标。
 !define MUI_BGCOLOR "F2F2EF"
 !define MUI_TEXTCOLOR "1B1B18"
+; 日志列表恒不可见（连「显示详细信息」按钮一起消失）。DetailPrint 一条
+; 都没删——它仍然是排障时唯一的现场记录，只是用户不该被它糊一脸。
 ShowInstDetails nevershow
 ShowUninstDetails nevershow
+; 日志列表的配色（藏起来了，留着是为了万一有人把 nevershow 改回来时
+; 不会突然冒出一块白底黑字）。进度条钉住 MUI 的默认 smooth——一整条，
+; 不分格；颜色仍由系统主题画，**不做假的百分比也不做假的染色**。
+!define MUI_INSTFILESPAGE_COLORS "1B1B18 F2F2EF"
+!define MUI_INSTFILESPAGE_PROGRESSBAR "smooth"
 ; MAGPLOT PATCH END ----------------------------------------------------
 
 ; Installer pages, must be ordered as they appear
 ; 1. Welcome Page
-; MAGPLOT PATCH: 去掉欢迎页——打开即达安装位置确认，减少一次点击
+; MAGPLOT PATCH: 欢迎页删除（宏一并去掉，不是藏起来）。
+; 首次 GUI 安装从这里直接落到进度页：没有欢迎页、没有目录页、
+; 没有开始菜单页、没有许可证页——启动安装器即开始装。
 
 ; 2. License Page (if defined)
 !if "${LICENSE}" != ""
@@ -405,33 +418,60 @@ Function PageLeaveReinstall
 FunctionEnd
 
 ; 5. Choose install directory page
-!define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
+; MAGPLOT PATCH: 目录页恒不可见（PRE 从 SkipIfPassive 换成 Skip = 无条件
+; Abort）。安装位置由 .onInit 决定：新装固定 $LOCALAPPDATA\Magplot，
+; 已有安装则 RestorePreviousInstallLocation 从注册表读回老路径。
+; **宏本身保留**——它是 Tauri 模板的既有依赖，命令行 /D= 也照旧生效；
+; 这里删的只是那一屏「你要装到哪儿」，不是安装位置的能力。
+!define MUI_PAGE_CUSTOMFUNCTION_PRE Skip
 !insertmacro MUI_PAGE_DIRECTORY
 
 ; 6. Start menu shortcut page
+; MAGPLOT PATCH: 开始菜单文件夹选择页恒不可见（两个分支都 Skip）。
+; 上游只在没配 startMenuFolder 时才 Skip；Magplot 确实没配（快捷方式直接
+; 落在 $SMPROGRAMS\Magplot.lnk），但「页面可见与否」不该由一个可选配置
+; 顺带决定——那样以后有人加一行配置，选择页就会无声地回来。
+; **宏本身保留**：$AppStartMenuFolder 与 MUI_STARTMENU_WRITE_BEGIN /
+; MUI_STARTMENU_GETFOLDER 是安装与卸载两侧的既有依赖，删掉会连带把
+; 「卸载时清掉开始菜单快捷方式」一起弄坏。开始菜单快捷方式照常创建。
 Var AppStartMenuFolder
 !if "${STARTMENUFOLDER}" != ""
-  !define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
   !define MUI_STARTMENUPAGE_DEFAULTFOLDER "${STARTMENUFOLDER}"
-!else
-  !define MUI_PAGE_CUSTOMFUNCTION_PRE Skip
 !endif
+!define MUI_PAGE_CUSTOMFUNCTION_PRE Skip
 !insertmacro MUI_PAGE_STARTMENU Application $AppStartMenuFolder
 
 ; 7. Installation page
+; MAGPLOT PATCH: 页眉说人话。上游用的是 NSIS 语言包里的
+; 「正在安装 / 请稍候，安装程序正在安装 Magplot……」——后半句是典型的
+; 传统安装器说明，删掉；标题换成本地化的「正在安装 Magplot」。
+; MUI_PAGE_HEADER_TEXT/SUBTEXT 是 MUI2 的每页官方开关，用完自动 unset。
+!define MUI_PAGE_HEADER_TEXT "$(installingMagplot)"
+!define MUI_PAGE_HEADER_SUBTEXT ""
 !insertmacro MUI_PAGE_INSTFILES
 
 ; 8. Finish page
 ;
 ; Don't auto jump to finish page after installation page,
 ; because the installation page has useful info that can be used debug any issues with the installer.
-; MAGPLOT PATCH: 进度页不再展示日志，装完直接进完成页
-; Use show readme button in the finish page as a button create a desktop shortcut
-!define MUI_FINISHPAGE_SHOWREADME
-!define MUI_FINISHPAGE_SHOWREADME_TEXT "$(createDesktop)"
-!define MUI_FINISHPAGE_SHOWREADME_FUNCTION CreateOrUpdateDesktopShortcut
+; MAGPLOT PATCH: 进度页不再展示日志，装完直接进完成页。
+; **不要重新 !define MUI_FINISHPAGE_NOAUTOCLOSE**——上游那一行正是
+; 「装完还停在日志页、要再点一次」的来源（test_nsis_template 看护它不存在）。
+;
+; MAGPLOT PATCH: 完成页只剩品牌文案 + 一个「打开 Magplot」。
+; 上游把 showreadme 复选框借去当「创建桌面快捷方式」（伪 README 选项），
+; 这里删掉。**桌面快捷方式本身没删**——它默认就是勾上的，等于既有默认
+; 行为，现在改由 Section Install 无条件创建，与静默/被动安装同一条路径。
+!define MUI_FINISHPAGE_TITLE "$(finishTitle)"
+!define MUI_FINISHPAGE_TEXT "$(finishText)"
 ; Show run app after installation.
+; MUI 的 RUN 控件是**复选框**不是按钮（勾上后按「完成」才启动）。要做成
+; 真按钮只能整页换成自定义 nsDialogs，那就得自己接管自动跳页 / 取消 /
+; 多语言 / DPI 缩放——为一个控件形态引入第二套完成页不划算。这里保留
+; MUI 官方控件，只把文案本地化。启动仍走 RunAsUser（见 RunMainBinary）：
+; 普通 Exec 会把安装器的令牌继承给应用，那是权限继承事故的来源。
 !define MUI_FINISHPAGE_RUN
+!define MUI_FINISHPAGE_RUN_TEXT "$(openMagplot)"
 !define MUI_FINISHPAGE_RUN_FUNCTION RunMainBinary
 !define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
 !insertmacro MUI_PAGE_FINISH
@@ -494,6 +534,29 @@ FunctionEnd
   !include "{{this}}"
 {{/each}}
 
+; MAGPLOT PATCH: 品牌文案。安装器只剩两页，这几句就是用户会读到的全部。
+; 为什么不走 tauri.conf.json 的 customLanguageFiles：那个开关是**整份替换**
+; 内置语言文件，为一句「打开 Magplot」要把上游三十来条字符串抄一份，
+; 升级 CLI 时必然漂。就地 LangString 更小也更难错。
+; NSIS 允许先引用后定义（上游自己的 $(alreadyInstalled) 就在前面用着）。
+; **新增 nsis.languages 时必须在这里补齐对应语言**，否则 NSIS 只给一条
+; 警告然后把空字符串顶上去——安装器照样打得出来，只是完成页没字。
+; tests/test_nsis_template.py 拿 tauri.conf.json 的语言表逐个对。
+!ifdef LANG_ENGLISH
+  LangString preparingMagplot  ${LANG_ENGLISH} "Preparing Magplot"
+  LangString installingMagplot ${LANG_ENGLISH} "Installing Magplot"
+  LangString finishTitle       ${LANG_ENGLISH} "Magplot is ready"
+  LangString finishText        ${LANG_ENGLISH} "Magplot has been installed on this computer."
+  LangString openMagplot       ${LANG_ENGLISH} "Open Magplot"
+!endif
+!ifdef LANG_SIMPCHINESE
+  LangString preparingMagplot  ${LANG_SIMPCHINESE} "正在准备 Magplot"
+  LangString installingMagplot ${LANG_SIMPCHINESE} "正在安装 Magplot"
+  LangString finishTitle       ${LANG_SIMPCHINESE} "Magplot 已安装完成"
+  LangString finishText        ${LANG_SIMPCHINESE} "Magplot 已经装到这台电脑上。"
+  LangString openMagplot       ${LANG_SIMPCHINESE} "打开 Magplot"
+!endif
+
 Function .onInit
   ${GetOptions} $CMDLINE "/P" $PassiveMode
   ${IfNot} ${Errors}
@@ -545,6 +608,9 @@ FunctionEnd
 
 
 Section EarlyChecks
+  ; MAGPLOT PATCH: 状态行说实话——这一档在做降级判断，还没开始装
+  DetailPrint "$(preparingMagplot)"
+
   ; Abort silent installer if downgrades is disabled
   !if "${ALLOWDOWNGRADES}" == "false"
   ${If} ${Silent}
@@ -656,6 +722,14 @@ Section WebView2
 SectionEnd
 
 Section Install
+  ; MAGPLOT PATCH: 进度条上方那行只说人话。
+  ; 展开文件时 NSIS 默认把每个文件名刷上去（Extract: python313.dll…），
+  ; 内置渲染 runtime 有几千个文件，那一行会疯狂闪。listonly 让这些只进
+  ; 日志（诊断照旧留着，只是 nevershow 不给用户看），状态行停在
+  ; 「正在安装 Magplot」；复制完再还原 both，后面的 DetailPrint 两边都进。
+  DetailPrint "$(installingMagplot)"
+  SetDetailsPrint listonly
+
   SetOutPath $INSTDIR
 
   !ifmacrodef NSIS_HOOK_PREINSTALL
@@ -679,6 +753,9 @@ Section Install
   {{#each binaries}}
     File /a "/oname={{this}}" "{{no-escape @key}}"
   {{/each}}
+
+  ; MAGPLOT PATCH: 文件展开完毕，状态行交还给后面的 DetailPrint
+  SetDetailsPrint both
 
   ; Create file associations
   {{#each file_associations as |association| ~}}
@@ -743,12 +820,13 @@ Section Install
     Call CreateOrUpdateStartMenuShortcut
   !insertmacro MUI_STARTMENU_WRITE_END
 
-  ; Create desktop shortcut for silent and passive installers
-  ; because finish page will be skipped
-  ${If} $PassiveMode = 1
-  ${OrIf} ${Silent}
-    Call CreateOrUpdateDesktopShortcut
-  ${EndIf}
+  ; MAGPLOT PATCH: 桌面快捷方式改为无条件创建。
+  ; 上游只在静默/被动安装时建，GUI 安装靠完成页那个伪 README 复选框——
+  ; 而它**默认就是勾上的**，所以「装完桌面上有 Magplot」一直是既有默认
+  ; 行为。完成页不再提供这个选择，就把同一件事收进这里，三种安装方式
+  ; 一致。/NS（不建快捷方式）与 /UPDATE（升级不动用户已有快捷方式）的
+  ; 豁免在 CreateOrUpdateDesktopShortcut 内部，语义一个字没改。
+  Call CreateOrUpdateDesktopShortcut
 
   !ifmacrodef NSIS_HOOK_POSTINSTALL
     !insertmacro NSIS_HOOK_POSTINSTALL

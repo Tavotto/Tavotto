@@ -175,6 +175,28 @@ jobs:
         # 打品牌补丁，模板与打包器必须同源（升级时同步 scripts/build_desktop.py）
         run: pnpm dlx @tauri-apps/cli@2.11.4 build --bundles ${{ matrix.bundles }}
 
+      # 发行链上的安装界面门禁。判的是 Tauri 把 {{...}} 展开后**真正喂给
+      # makensis 的那份**中间脚本，不是仓库模板：installMode / license /
+      # startMenuFolder / 语言表都是打包器那一刻才落定的。首次安装只应剩
+      # 进度页与完成页；页面序列、UAC、中文路径这些要真装一遍才算数，
+      # 那条链路挂在 nightly.yml 的「装一遍再冒烟」上。
+      - name: 安装界面门禁（生成的中间 NSIS 脚本）
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $gen = @(Get-ChildItem src-tauri\target\release\nsis -Recurse `
+                     -Filter installer.nsi -ErrorAction SilentlyContinue)
+          if ($gen.Count -lt 1) {
+            throw "找不到 tauri 渲染出来的中间脚本（打包器换了输出布局？）"
+          }
+          # 这一档的 venv 只装了打包用的东西，pytest 得现装
+          python -m pip install --quiet --disable-pip-version-check pytest
+          $env:MAGPLOT_NSIS_GENERATED = $gen[0].FullName
+          python -m pytest -q tests/test_nsis_template.py
+          if ($LASTEXITCODE -ne 0) { throw "安装界面门禁不过（退出码 $LASTEXITCODE）" }
+
+
       # ---------------- macOS：签名 + 公证（复用已趟通的流程，不经 Tauri 签名） ----------------
       - name: 导入签名证书
         if: runner.os == 'macOS' && env.MACOS_CERTIFICATE != ''

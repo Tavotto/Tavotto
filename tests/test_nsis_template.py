@@ -1,15 +1,244 @@
-"""Windows NSIS 品牌安装界面的打包卫生。
+"""Windows NSIS 安装界面的打包卫生。
 
-src-tauri/windows/installer.nsi 是按钉住的 @tauri-apps/cli 版本 vendored 的
-上游模板 + 品牌补丁：模板与打包器必须同源。这里看护三件事——
-补丁标记还在、四处版本号一致、配置引用的资产真实存在。
+`src-tauri/windows/installer.nsi` 是按钉住的 @tauri-apps/cli 版本 vendored 的
+上游模板 + 品牌补丁：模板与打包器必须同源。这里看护三类事——
+
+1. **首次 GUI 安装只剩两页**：真实安装进度（MUI_PAGE_INSTFILES）→ 完成页
+   （MUI_PAGE_FINISH）。欢迎页/目录页/开始菜单页/许可证页一律不可见。
+2. **精简没有顺手删掉安装能力**：currentUser 安装、固定安装路径与升级时
+   恢复历史路径、WebView2、快捷方式、卸载注册表、命令行开关、降级保护、
+   WiX 迁移——每一条都还在。
+3. 四处 CLI 版本同源、配置引用的品牌资产真实存在且是 NSIS 吃得下的形态。
+
+**这些是源码级看护，不是「装出来是这样」的证据**：安装器真实页面序列、
+UAC、中文路径这些只有 Windows 上跑真产物才算数，走
+`.github/workflows/nightly.yml` 的「装一遍再冒烟」那条链路。
 """
 import json
+import os
 import re
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 TEMPLATE = ROOT / "src-tauri" / "windows" / "installer.nsi"
+CONF = ROOT / "src-tauri" / "tauri.conf.json"
+
+TEXT = TEMPLATE.read_text(encoding="utf-8")
+LINES = TEXT.splitlines()
+CONFIG = json.loads(CONF.read_text(encoding="utf-8"))
+NSIS_CONF = CONFIG["bundle"]["windows"]["nsis"]
+FLAT = re.sub(r"[ \t]+", " ", TEXT)
+# 整行注释剥掉后的代码。断言「某个 define 不存在」必须打在这上面——
+# 补丁注释里正写着那些符号名，打在原文上会被自己的说明骗过去。
+CODE = "\n".join(ln for ln in LINES if not ln.lstrip().startswith(";"))
+
+# 补丁新增的 LangString。安装器只剩两页，这几条就是用户会读到的全部文案。
+BRAND_STRINGS = (
+    "preparingMagplot",
+    "installingMagplot",
+    "finishTitle",
+    "finishText",
+    "openMagplot",
+)
+
+
+def _pre_function_for(macro: str, lines: list[str] | None = None) -> str | None:
+    """返回某个页面宏生效的 MUI_PAGE_CUSTOMFUNCTION_PRE。
+
+    MUI2 在每次插入页面后会 unset 这个 define，所以「生效的那一个」就是
+    紧邻其上、上一次页面插入之后最后一条 PRE 定义。
+    """
+    target = re.compile(rf"^\s*!insertmacro\s+{re.escape(macro)}\b")
+    pre = re.compile(r"^\s*!define\s+MUI_PAGE_CUSTOMFUNCTION_PRE\s+(\S+)")
+    any_page = re.compile(r"^\s*!insertmacro\s+(MUI_PAGE_\w+|MULTIUSER_PAGE_\w+)\b")
+    current = None
+    for line in lines if lines is not None else LINES:
+        if target.match(line):
+            return current
+        m = pre.match(line)
+        if m:
+            current = m.group(1)
+            continue
+        if any_page.match(line):
+            current = None
+    raise AssertionError(f"脚本里找不到 !insertmacro {macro}")
+
+
+# ---------------------------------------------------------------- 页面结构
+
+
+def test_no_welcome_page():
+    """欢迎页连宏一起没了——不是藏起来，是不存在。"""
+    assert "!insertmacro MUI_PAGE_WELCOME" not in CODE
+    assert "MUI_WELCOMEPAGE_TITLE" not in CODE
+
+
+def test_directory_page_is_never_visible():
+    """目录页恒被 Abort：安装位置由 .onInit 决定，不问用户。
+
+    注意判据是 `Skip` 而不是 `SkipIfPassive`——后者只在 /P 静默时跳过，
+    普通双击安装照样会弹出「你要装到哪儿」。
+    """
+    assert _pre_function_for("MUI_PAGE_DIRECTORY") == "Skip"
+
+
+def test_start_menu_page_is_never_visible():
+    """开始菜单文件夹选择页同理，且不再由 startMenuFolder 配置顺带决定。"""
+    assert _pre_function_for("MUI_PAGE_STARTMENU") == "Skip"
+    # 上游的 `!else` 分支（只在没配 startMenuFolder 时才 Skip）必须已经拆掉，
+    # 否则加一行配置就能把选择页无声地放回来
+    block = TEXT.split("; 6. Start menu shortcut page")[1].split("; 7.")[0]
+    assert "SkipIfPassive" not in block
+
+
+def test_skip_really_aborts():
+    """`Skip` 必须是无条件 Abort——上面两条测试全靠它。"""
+    body = TEXT.split("Function Skip\n")[1].split("FunctionEnd")[0]
+    assert body.strip() == "Abort"
+
+
+def test_license_page_not_introduced():
+    """当前不配许可证；许可证页只在 ${LICENSE} 非空时才插入，且配置里没有。"""
+    assert '!if "${LICENSE}" != ""' in TEXT
+    assert not NSIS_CONF.get("license")
+    assert not CONFIG["bundle"].get("licenseFile")
+
+
+def test_progress_and_finish_pages_survive():
+    """真实进度页与完成页是仅剩的两页，一个都不能少。"""
+    assert "!insertmacro MUI_PAGE_INSTFILES" in TEXT
+    assert "!insertmacro MUI_PAGE_FINISH" in TEXT
+    # 进度条必须仍由 NSIS 的真实安装过程驱动：没有自定义页顶替它
+    assert "Page custom" not in CODE.replace("Page custom PageReinstall", "")
+
+
+def test_no_log_list_and_no_manual_step_before_finish():
+    """日志列表恒不可见；装完自动进完成页。"""
+    assert "ShowInstDetails nevershow" in TEXT
+    assert "ShowUninstDetails nevershow" in TEXT
+    # MUI 只要看到这个 define 就不会 SetAutoClose，装完会停在日志页等用户再点一次
+    assert "MUI_FINISHPAGE_NOAUTOCLOSE" not in CODE
+    # DetailPrint 是排障现场，一条都不许删（nevershow 已经让用户看不到了）
+    assert TEXT.count("DetailPrint") >= 10
+
+
+def test_finish_page_has_no_fake_readme_option():
+    """完成页不再借 showreadme 复选框当「创建桌面快捷方式」。"""
+    assert "MUI_FINISHPAGE_SHOWREADME" not in CODE
+
+
+def test_finish_page_runs_via_run_as_user():
+    """「打开 Magplot」走 MUI 官方 RUN 控件 + RunAsUser。"""
+    assert "!define MUI_FINISHPAGE_RUN\n" in TEXT
+    assert "!define MUI_FINISHPAGE_RUN_FUNCTION RunMainBinary" in TEXT
+    body = TEXT.split("Function RunMainBinary\n")[1].split("FunctionEnd")[0]
+    # 普通 Exec 会把安装器的令牌继承给应用
+    assert "nsis_tauri_utils::RunAsUser" in body
+    assert not re.search(r"^\s*Exec(Wait|Shell)?\s", body, re.M)
+
+
+def test_user_facing_text_is_localized_for_every_language():
+    """每个配置里的语言都必须给全所有品牌文案。
+
+    NSIS 对缺失的 LangString 只给一条警告然后填空字符串——安装器照样打得
+    出来，只是完成页没字。加语言时这条测试先红。
+    """
+    langs = NSIS_CONF["languages"]
+    assert langs, "nsis.languages 不能为空"
+    for key in BRAND_STRINGS:
+        assert f"$({key})" in TEXT, f"{key} 定义了却没人用"
+        for lang in langs:
+            # 模板里为了对齐用了多个空格，比对前先把空白压平
+            needle = "LangString %s ${LANG_%s} \"" % (key, lang.upper())
+            assert needle in FLAT, f"{lang} 缺少 LangString {key}"
+
+
+def test_status_text_is_honest():
+    """进度页的状态行说的是真在做的事，不是假百分比。"""
+    assert 'DetailPrint "$(preparingMagplot)"' in TEXT
+    assert 'DetailPrint "$(installingMagplot)"' in TEXT
+    assert 'DetailPrint "$(installingWebview2)"' in TEXT  # 上游字符串，已本地化
+    # 展开文件时的 `Extract: xxx.dll` 只进日志，不刷状态行；复制完还原
+    assert "SetDetailsPrint listonly" in TEXT
+    assert "SetDetailsPrint both" in TEXT
+    for fake in ("78%", "Progress:", "IntFmt $0 \"%d%%\""):
+        assert fake not in TEXT
+
+
+# ------------------------------------------------------------ 安装能力保留
+
+
+def test_current_user_install_without_admin():
+    assert NSIS_CONF["installMode"] == "currentUser"
+    block = TEXT.split('!if "${INSTALLMODE}" == "currentUser"')[1].split("!endif")[0]
+    assert "RequestExecutionLevel user" in block
+
+
+def test_install_dir_is_localappdata_and_upgrades_keep_old_path():
+    """新装固定 %LOCALAPPDATA%\\Magplot；已有安装沿用注册表里的老路径。"""
+    assert 'InstallDir "${PLACEHOLDER_INSTALL_DIR}"' in TEXT
+    assert '${If} $INSTDIR == "${PLACEHOLDER_INSTALL_DIR}"' in TEXT
+    assert 'StrCpy $INSTDIR "$LOCALAPPDATA\\${PRODUCTNAME}"' in TEXT
+    assert "Call RestorePreviousInstallLocation" in TEXT
+    body = TEXT.split("Function RestorePreviousInstallLocation\n")[1].split("FunctionEnd")[0]
+    assert 'ReadRegStr $4 SHCTX "${MANUPRODUCTKEY}" ""' in body
+
+
+def test_shortcut_helpers_and_policy():
+    """快捷方式：不给选择页，但入口策略一个没变。"""
+    assert "Function CreateOrUpdateStartMenuShortcut" in TEXT
+    assert "Function CreateOrUpdateDesktopShortcut" in TEXT
+    assert "Call CreateOrUpdateStartMenuShortcut" in TEXT
+    # 行为变化：GUI 安装的桌面快捷方式从「完成页复选框（默认勾上）」
+    # 改成 Section Install 里无条件创建，与静默/被动安装同一条路径
+    section = TEXT.split("Section Install\n")[1].split("SectionEnd")[0]
+    assert re.search(r"^\s*Call CreateOrUpdateDesktopShortcut\s*$", section, re.M)
+    assert not re.search(r"\$\{If\} \$PassiveMode = 1\s*\n\s*\$\{OrIf\} \$\{Silent\}\s*\n"
+                         r"\s*Call CreateOrUpdateDesktopShortcut", section)
+    # /NS 与 /UPDATE 的豁免仍在函数内部
+    for fn in ("CreateOrUpdateStartMenuShortcut", "CreateOrUpdateDesktopShortcut"):
+        body = TEXT.split(f"Function {fn}\n")[1].split("FunctionEnd")[0]
+        assert "$UpdateMode = 1" in body and "$NoShortcutMode = 1" in body
+    # 卸载时清掉开始菜单与桌面快捷方式（含旧版落点）
+    uninst = TEXT.split("Section Uninstall\n")[1].split("SectionEnd")[0]
+    assert "$SMPROGRAMS\\$AppStartMenuFolder\\${PRODUCTNAME}.lnk" in uninst
+    assert "$SMPROGRAMS\\${PRODUCTNAME}.lnk" in uninst
+    assert "$DESKTOP\\${PRODUCTNAME}.lnk" in uninst
+
+
+def test_command_line_switches_survive():
+    for flag in ("/P", "/NS", "/UPDATE", "/R", "/ARGS"):
+        assert f'$CMDLINE "{flag}"' in TEXT, f"命令行开关 {flag} 没了"
+
+
+def test_exception_flows_still_have_their_pages():
+    """异常流程该弹的还得弹——精简的是首次安装，不是安全判断。"""
+    assert "Page custom PageReinstall PageLeaveReinstall" in TEXT
+    assert "$(alreadyInstalledLong)" in TEXT          # 同版本
+    assert "$(newerVersionInstalled)" in TEXT         # 降级
+    assert '!if "${ALLOWDOWNGRADES}" == "false"' in TEXT
+    assert "StrCpy $WixMode 1" in TEXT                # 旧 WiX 安装迁移
+    assert "!insertmacro CheckIfAppIsRunning" in TEXT  # 应用仍在运行
+    assert 'Abort "$(webview2AbortError)"' in TEXT     # WebView2 装不上
+    assert "!insertmacro MUI_UNPAGE_CONFIRM" in TEXT   # 卸载确认
+    assert "!insertmacro MUI_UNPAGE_INSTFILES" in TEXT
+
+
+def test_payload_and_registration_survive():
+    section = TEXT.split("Section Install\n")[1].split("SectionEnd")[0]
+    assert "{{#each binaries}}" in section          # sidecar / workerd / 内置 runtime
+    assert "{{#each resources}}" in section
+    assert "{{#each file_associations" in section
+    assert "{{#each deep_link_protocols" in section
+    assert 'WriteUninstaller "$INSTDIR\\uninstall.exe"' in section
+    for value in ("DisplayName", "DisplayVersion", "InstallLocation", "UninstallString"):
+        assert f'"${{UNINSTKEY}}" "{value}"' in section
+    assert "Section WebView2" in TEXT
+
+
+# ---------------------------------------------------------- 版本与品牌资产
 
 
 def _pinned_versions() -> dict[str, str]:
@@ -31,12 +260,11 @@ def _pinned_versions() -> dict[str, str]:
 
 
 def test_template_exists_with_patch_markers():
-    text = TEMPLATE.read_text(encoding="utf-8")
-    assert "MAGPLOT PATCH" in text
-    # 关键补丁点：欢迎页移除后原宏绝不能残留；极简进度必须生效
-    assert "!insertmacro MUI_PAGE_WELCOME" not in text
-    assert "ShowInstDetails nevershow" in text
-    assert 'MUI_BGCOLOR "F2F2EF"' in text
+    assert "MAGPLOT PATCH" in TEXT
+    assert 'MUI_BGCOLOR "F2F2EF"' in TEXT
+    assert 'MUI_TEXTCOLOR "1B1B18"' in TEXT
+    # 前端的 selection blue #2F6FED 不是安装器主色，别混用
+    assert "2F6FED" not in TEXT
 
 
 def test_cli_version_pinned_and_in_sync():
@@ -45,15 +273,82 @@ def test_cli_version_pinned_and_in_sync():
 
 
 def test_nsis_config_paths_resolve():
-    conf = json.loads((ROOT / "src-tauri" / "tauri.conf.json").read_text("utf-8"))
-    nsis = conf["bundle"]["windows"]["nsis"]
     base = ROOT / "src-tauri"
     for key in ("template", "installerIcon", "headerImage", "sidebarImage"):
-        p = (base / nsis[key]).resolve()
+        p = (base / NSIS_CONF[key]).resolve()
         assert p.is_file(), f"nsis.{key} 指向不存在的文件: {p}"
     # BMP 必须是 bottom-up 的 24 位 BMP3（top-down DIB 在 NSIS 里有兼容风险）
     for key in ("headerImage", "sidebarImage"):
-        data = (base / nsis[key]).resolve().read_bytes()
+        data = (base / NSIS_CONF[key]).resolve().read_bytes()
         assert data[:2] == b"BM"
         height = int.from_bytes(data[22:26], "little", signed=True)
         assert height > 0, f"nsis.{key} 是 top-down DIB，应为 bottom-up"
+        bits = int.from_bytes(data[28:30], "little")
+        assert bits == 24, f"nsis.{key} 是 {bits} 位 BMP，NSIS 要 24 位"
+
+
+# ------------------------------------------------ Tauri 渲染出来的中间脚本
+#
+# 上面全部打在**仓库模板**上，而真正喂给 makensis 的是 Tauri 把 {{...}}
+# 占位符展开后的那份。两者之间隔着一个打包器：`installMode` /
+# `startMenuFolder` / `license` / 语言表都是那时候才落定的——模板里写着
+# 「没配许可证就不插许可证页」，配置真值只有在中间脚本里才看得见。
+#
+# 只有 Windows 构建之后才有这个文件。CI 用 MAGPLOT_NSIS_GENERATED 指名，
+# 指了就**必须**存在：让它悄悄 skip 等于把门禁变成一条 notice。
+
+GENERATED_ENV = "MAGPLOT_NSIS_GENERATED"
+
+
+def _generated_script() -> Path | None:
+    explicit = os.environ.get(GENERATED_ENV)
+    if explicit:
+        p = Path(explicit)
+        assert p.is_file(), f"{GENERATED_ENV} 指向的中间脚本不存在: {p}"
+        return p
+    base = ROOT / "src-tauri" / "target" / "release" / "nsis"
+    hits = sorted(base.rglob("installer.nsi")) if base.is_dir() else []
+    return hits[0] if hits else None
+
+
+def test_generated_script_has_the_same_two_pages():
+    gen = _generated_script()
+    if gen is None:
+        pytest.skip("没有 tauri 渲染出来的中间脚本（Windows 打包之后才有）")
+    text = gen.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    code = "\n".join(ln for ln in lines if not ln.lstrip().startswith(";"))
+
+    # 占位符真的展开了（否则下面几条断言只是在重测模板）
+    assert "{{" not in code, "中间脚本里还留着未展开的 handlebars 占位符"
+
+    # 首次安装只剩这两页
+    assert "!insertmacro MUI_PAGE_INSTFILES" in code
+    assert "!insertmacro MUI_PAGE_FINISH" in code
+    assert "!insertmacro MUI_PAGE_WELCOME" not in code
+    assert _pre_function_for("MUI_PAGE_DIRECTORY", lines) == "Skip"
+    assert _pre_function_for("MUI_PAGE_STARTMENU", lines) == "Skip"
+
+    # 这三条决定了另外三页存不存在，且只有打包器说了算
+    assert '!define INSTALLMODE "currentUser"' in code      # 没有安装模式页，不要管理员
+    assert '!define LICENSE ""' in code                     # 没有许可证页
+    assert '!define STARTMENUFOLDER ""' in code             # 快捷方式直接落 $SMPROGRAMS
+
+    # 完成页的形态
+    assert "MUI_FINISHPAGE_SHOWREADME" not in code
+    assert "MUI_FINISHPAGE_NOAUTOCLOSE" not in code
+    assert "!define MUI_FINISHPAGE_RUN_FUNCTION RunMainBinary" in code
+
+    # 语言表与品牌文案对得上（打包器决定插哪几种语言）
+    langs = re.findall(r'!insertmacro MUI_LANGUAGE "(\w+)"', code)
+    assert sorted(langs) == sorted(NSIS_CONF["languages"]), \
+        f"中间脚本的语言表 {langs} 与 tauri.conf.json 不一致"
+    flat = re.sub(r"[ \t]+", " ", code)
+    for key in BRAND_STRINGS:
+        for lang in langs:
+            assert 'LangString %s ${LANG_%s} "' % (key, lang.upper()) in flat, \
+                f"中间脚本缺 {lang} 的 {key}"
+
+    # 精简没有把要装的东西弄丢：sidecar / workerd / 内置 runtime 都在
+    assert '!define MAINBINARYNAME "Magplot"' in code
+    assert re.search(r'^\s*File /a "/oname=', code, re.M), "中间脚本里没有任何 binaries/resources"
