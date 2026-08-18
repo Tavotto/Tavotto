@@ -92,9 +92,14 @@ const COMMANDS: Command[] = [
   { id: 'shortcut-help', shortcut: '?', run: () => ui().setShortcutHelpOpen(true) },
 ]
 
-const commandLabel = (id: string) => translate(`palette.commands.${id}.label`, { ns: 'dialogs' })
-const commandKeywords = (id: string) =>
-  translate(`palette.commands.${id}.keywords`, { ns: 'dialogs' })
+/**
+ * 命令名与搜索用的关键词。**收 t 而不是直接用模块级 translate**：这份列表
+ * 在 useMemo 里算，只有把组件的 t 传进去，切语言时 memo 才会失效重算——
+ * 否则搜索框里输入的中文关键词在英文界面下继续命中，反过来也一样。
+ */
+type Tr = (key: string) => string
+const commandLabel = (t: Tr, id: string) => t(`palette.commands.${id}.label`)
+const commandKeywords = (t: Tr, id: string) => t(`palette.commands.${id}.keywords`)
 
 export function CommandPalette() {
   const { t } = useTranslation('dialogs')
@@ -131,14 +136,13 @@ export function CommandPalette() {
     const q = query.trim().toLowerCase()
     const pool = COMMANDS.filter((c) => !c.needsSelection || hasSelection).map((c) => ({
       ...c,
-      label: commandLabel(c.id),
-      keywords: commandKeywords(c.id),
+      label: commandLabel(t, c.id),
+      keywords: commandKeywords(t, c.id),
     }))
     if (!q) return pool
     return pool.filter(
       (c) => c.label.toLowerCase().includes(q) || c.keywords.toLowerCase().includes(q),
     )
-    // t 只是订阅语言变化的引用，用来在切语言后重算这份列表
   }, [query, hasSelection, t])
 
   useEffect(() => {

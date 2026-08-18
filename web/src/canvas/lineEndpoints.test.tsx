@@ -9,7 +9,7 @@
  * jsdom 说明：这里断言的是**数值与结构**——端点比例、包围盒、SVG 属性、
  * 手柄方向表。真实指针命中由 hitTest.test.tsx 与审计的 Playwright 背书。
  */
-import { literal } from '@/i18n'
+import { formatMessage, literal } from '@/i18n'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -220,7 +220,7 @@ describe('端点拖拽把直线掰斜', () => {
     fire('pointermove', 0, px(20))
     fire('pointerup', 0, px(20))
 
-    expect(useDocumentStore.getState().undo()).toBe('调整直线端点')
+    expect(formatMessage(useDocumentStore.getState().undo())).toBe('调整直线端点')
     const line = objects()[0] as ShapeObject
     expect(line.h).toBeCloseTo(0.01, 6)
     expect(line.start).toBeUndefined()

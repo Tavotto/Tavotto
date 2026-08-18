@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { formatMessage } from '@/i18n'
 import { CLIPBOARD_FORMAT } from './brand'
 
 /**
@@ -62,7 +63,7 @@ async function load() {
 
 type Loaded = Awaited<ReturnType<typeof load>>
 
-const status = (l: Loaded) => l.useUiStore.getState().status
+const status = (l: Loaded) => formatMessage(l.useUiStore.getState().status)
 
 beforeEach(() => {
   vi.spyOn(document, 'hasFocus').mockReturnValue(true)

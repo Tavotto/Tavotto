@@ -1,4 +1,4 @@
-import { literal } from '@/i18n'
+import { formatMessage, literal } from '@/i18n'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { emptyProject } from '@/types/document'
 import type { ArrowObject, ShapeObject, TextObject } from '@/types/document'
@@ -89,10 +89,10 @@ describe('duplicateSelected', () => {
 
     duplicateSelected()
     expect(s().past).toHaveLength(before + 1)
-    expect(s().past.at(-1)!.label).toBe('复制对象')
+    expect(formatMessage(s().past.at(-1)!.label)).toBe('复制对象')
     expect(s().doc.objects).toHaveLength(4)
 
-    expect(s().undo()).toBe('复制对象')
+    expect(formatMessage(s().undo())).toBe('复制对象')
     expect(s().doc.objects.map((o) => o.id)).toEqual(['t1', 'a1'])
   })
 

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { formatMessage } from '@/i18n'
 import { CLIPBOARD_FORMAT } from './brand'
 import { handleCopyEvent, handlePasteEvent } from './clipboard'
 import { useDocumentStore } from '@/store/documentStore'
@@ -71,7 +72,7 @@ describe('handleCopyEvent', () => {
     const [mime, data] = setData.mock.calls[0]
     expect(mime).toBe('text/plain')
     expect(JSON.parse(data).magic).toBe(CLIPBOARD_FORMAT)
-    expect(useUiStore.getState().status).toContain('已复制')
+    expect(formatMessage(useUiStore.getState().status)).toContain('已复制')
   })
 
   it('无选中对象：不接管（普通文本复制照旧）', () => {
@@ -96,7 +97,7 @@ describe('handlePasteEvent', () => {
     expect(preventDefault).toHaveBeenCalled()
     const objects = useDocumentStore.getState().doc.objects
     expect(objects).toHaveLength(2)
-    expect(useUiStore.getState().status).toContain('已粘贴')
+    expect(formatMessage(useUiStore.getState().status)).toContain('已粘贴')
   })
 
   it('普通文本：不消费、不提示', () => {

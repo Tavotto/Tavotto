@@ -1,4 +1,4 @@
-import { literal } from '@/i18n'
+import { formatMessage, literal } from '@/i18n'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { runUndoRedo, undoRedoBlocked } from './useKeyboard'
 import { useDocumentStore } from '@/store/documentStore'
@@ -85,7 +85,7 @@ describe('拖动中途按 ⌘Z', () => {
     spies.restore()
 
     // 事务原封不动，拖动照常继续
-    expect(s().txn?.label).toBe('移动对象')
+    expect(formatMessage(s().txn?.label)).toBe('移动对象')
     expect(s().past).toHaveLength(1)
     expect(s().doc.objects[0].x).toBe(2)
 
@@ -96,12 +96,12 @@ describe('拖动中途按 ⌘Z', () => {
     useInteractionStore.getState().end()
     s().endTxn()
     expect(s().past).toHaveLength(2)
-    expect(s().past.at(-1)?.label).toBe('移动对象')
+    expect(formatMessage(s().past.at(-1)?.label)).toBe('移动对象')
 
     // 松手后再按 ⌘Z，撤的就是这次拖动本身，不是更早那条
     runUndoRedo(false)
     expect(s().past).toHaveLength(1)
-    expect(s().past.at(-1)?.label).toBe('改文字')
+    expect(formatMessage(s().past.at(-1)?.label)).toBe('改文字')
     // 整段拖动一次退回，中途那次 ⌘Z 没留下残留位移。
     // 「回到 0 而不是倒数第二步」由 documentStore.compress() 的反向补丁方向保证——
     // 这里红了先看那儿，不是本文件的拦截逻辑坏了
@@ -122,7 +122,7 @@ describe('拖动中途按 ⌘Z', () => {
       d.objects[0].x = 2
     })
 
-    expect(s().undo()).toBe('移动对象') // 结算成历史 + 立刻撤销，一次调用里连着发生
+    expect(formatMessage(s().undo())).toBe('移动对象') // 结算成历史 + 立刻撤销，一次调用里连着发生
     expect(s().past).toHaveLength(1) // past 净变化为 0
     expect(s().txn).toBeNull()
     expect(s().doc.objects[0].x).toBe(0)
@@ -138,7 +138,7 @@ describe('拖动中途按 ⌘Z', () => {
     expect(s().past).toHaveLength(1)
 
     // 再按 ⌘Z 撤的是「改文字」，没有任何残留位移
-    expect(s().undo()).toBe('改文字')
+    expect(formatMessage(s().undo())).toBe('改文字')
     expect(firstText()).toBe('A')
     expect(s().doc.objects[0].x).toBe(0)
   })

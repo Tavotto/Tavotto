@@ -7,7 +7,7 @@
  * - collectPanelAnnotations：重叠面积最大者得，隐藏对象不进，坐标/字号按
  *   面板显示比例换算成图自身 mm
  */
-import { literal } from '@/i18n'
+import { formatMessage, literal } from '@/i18n'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { annotationAlignEntries } from '@/lib/elementGeom'
@@ -95,7 +95,7 @@ describe('applyMixedAlign', () => {
     expect(p.overrides).toHaveLength(1)
     expect(t.x).toBe(42)
 
-    expect(useDocumentStore.getState().undo()).toBe('顶对齐')
+    expect(formatMessage(useDocumentStore.getState().undo())).toBe('顶对齐')
     const p2 = doc().objects.find((o) => o.id === 'p1') as PanelObject
     const t2 = doc().objects.find((o) => o.id === 't1') as TextObject
     expect(p2.overrides).toHaveLength(0)

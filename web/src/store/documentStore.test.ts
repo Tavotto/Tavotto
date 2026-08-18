@@ -1,4 +1,4 @@
-import { literal } from '@/i18n'
+import { formatMessage, literal } from '@/i18n'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { emptyProject } from '@/types/document'
 import type { TextObject } from '@/types/document'
@@ -62,13 +62,13 @@ describe('多画布数据层', () => {
     })
     s().switchCanvas(firstId)
     expect(s().doc.objects.map((o) => o.id)).toEqual(['t1'])
-    expect(s().past.map((e) => e.label)).toEqual(['加字A'])
-    expect(s().undo()).toBe('加字A')
+    expect(s().past.map((e) => formatMessage(e.label))).toEqual(['加字A'])
+    expect(formatMessage(s().undo())).toBe('加字A')
     expect(s().doc.objects).toHaveLength(0)
 
     s().switchCanvas(secondId)
     expect(s().doc.objects.map((o) => o.id)).toEqual(['t2'])
-    expect(s().past.map((e) => e.label)).toEqual(['加字B'])
+    expect(s().past.map((e) => formatMessage(e.label))).toEqual(['加字B'])
   })
 
   it('buildProject 汇总激活画布的最新内容', () => {
@@ -224,8 +224,8 @@ describe('文字编辑事务', () => {
     s().endTxn()
 
     expect(s().past).toHaveLength(before + 1)
-    expect(s().past.at(-1)!.label).toBe('编辑文字')
-    expect(s().undo()).toBe('编辑文字')
+    expect(formatMessage(s().past.at(-1)!.label)).toBe('编辑文字')
+    expect(formatMessage(s().undo())).toBe('编辑文字')
     expect(currentText()).toBe('原') // 退到编辑前，不是倒数第二个字
   })
 
@@ -238,7 +238,7 @@ describe('文字编辑事务', () => {
     type('ABCDE')
 
     expect(s().past).toHaveLength(before + 5)
-    expect(s().undo()).toBe('编辑文字')
+    expect(formatMessage(s().undo())).toBe('编辑文字')
     expect(currentText()).toBe('ABCD')
   })
 })
@@ -270,7 +270,7 @@ describe('事务压缩：撤销回到事务开始前', () => {
     s().endTxn()
     expect(at().x).toBe(50)
 
-    expect(s().undo()).toBe('移动对象')
+    expect(formatMessage(s().undo())).toBe('移动对象')
     expect(at().x).toBe(0)
     // 压缩不该弄丢重做：正向仍是最后一次的值
     s().redo()

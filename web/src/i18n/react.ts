@@ -12,7 +12,7 @@ import type { UiMessage } from './message'
  */
 export function useFormatMessage(): (m: UiMessage | null | undefined) => string {
   useTranslation()
-  return (m) => (m ? formatMessage(m) : '')
+  return (m) => formatMessage(m)
 }
 
 /** 当前语言（组件内使用，切换时会触发重渲染）。 */

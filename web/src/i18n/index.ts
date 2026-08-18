@@ -124,9 +124,12 @@ export const t = i18n.t.bind(i18n)
 
 /**
  * 描述符 → 当前语言的文本。撤销栈、toast、确认框都在**显示那一刻**才调它。
+ *
+ * 收 null/undefined 回空串：状态提示、撤销栈栈顶这些位置本来就有「现在没有」
+ * 这个合法取值，调用点各自补一次三目只会到处漏。
  */
-export function formatMessage(m: UiMessage): string {
-  return i18n.t(m.key, { ns: m.ns ?? DEFAULT_NS, ...(m.values ?? {}) })
+export function formatMessage(m: UiMessage | null | undefined): string {
+  return m ? i18n.t(m.key, { ns: m.ns ?? DEFAULT_NS, ...(m.values ?? {}) }) : ''
 }
 
 export { i18n }

@@ -9,7 +9,7 @@
  * 鼠标拖动（startMoveDrag）与方向键微调（useKeyboard → nudgeSelected）走的是
  * 同一个 movableTargets，两条路径在这里都断言一遍。
  */
-import { literal } from '@/i18n'
+import { formatMessage, literal } from '@/i18n'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { beforeEach, describe, expect, it } from 'vitest'
 
@@ -50,7 +50,7 @@ const fire = (type: 'pointermove' | 'pointerup', clientX: number, clientY: numbe
 const px = (mm: number) => mmToWorld(mm)
 
 const byId = (id: string) => useDocumentStore.getState().doc.objects.find((o) => o.id === id)!
-const status = () => useUiStore.getState().status
+const status = () => formatMessage(useUiStore.getState().status)
 
 /** 拖 dxMm 毫米：pointerdown → 两帧 pointermove → pointerup */
 function drag(id: string, dxMm: number) {
