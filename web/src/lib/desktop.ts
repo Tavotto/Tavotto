@@ -51,6 +51,26 @@ export async function onDesktopMenu(
   return listen<string>('magplot:menu', (e) => handler(e.payload as MenuAction))
 }
 
+/** 桌面交接事件的载荷（与 src-tauri/src/main.rs 的 OpenRequest 严格同源） */
+export interface DesktopOpenPayload {
+  project: string
+  stem?: string | null
+}
+
+/**
+ * 订阅「把这张图交给我打开」。壳在**已经开着窗口**时收到第二次启动的
+ * `--open/--stem` 就发这个事件（单实例转发 argv）；首启不发——那一次项目走
+ * sidecar 的 `--figures`、stem 走落地 URL 的 `?open=`，两条路最终都汇进
+ * lib/openRequest.ts 的同一个 applyOpenRequest。
+ */
+export async function onDesktopOpen(
+  handler: (payload: DesktopOpenPayload) => void,
+): Promise<() => void> {
+  if (!isDesktop()) return () => {}
+  const { listen } = await import('@tauri-apps/api/event')
+  return listen<DesktopOpenPayload>('magplot:open', (e) => handler(e.payload))
+}
+
 /**
  * 原生目录选择器（「打开项目」用）。用户取消返回 null——取消不是错误。
  * 浏览器模式返回 null，调用方回退到服务器端目录浏览器。

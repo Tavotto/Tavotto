@@ -1,0 +1,44 @@
+{
+  "name": "magplot",
+  "version": "0.6.0",
+  "description": "画论文级 matplotlib 图，并把成图直接交给 Magplot 用鼠标微调：拖图例、改字号线宽、调刻度，改完导出真矢量 PDF。",
+  "author": {
+    "name": "erwanjun",
+    "url": "https://github.com/erwanjun/magplot"
+  },
+  "homepage": "https://github.com/erwanjun/magplot",
+  "repository": "https://github.com/erwanjun/magplot",
+  "license": "AGPL-3.0-only",
+  "keywords": [
+    "matplotlib",
+    "figure",
+    "论文配图",
+    "科研绘图",
+    "publication",
+    "pdf",
+    "chart",
+    "plot"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Magplot",
+    "shortDescription": "画好的图直接进 Magplot 用鼠标微调",
+    "longDescription": "生成 Magplot 兼容的 matplotlib 脚本（脚本与产物同目录、矢量 PDF、可静态登记的产物名），跑完把成图交给 Magplot 打开。之后拖图例、改字号线宽、调刻度朝向都在 Magplot 里点鼠标完成，不必回来改代码重跑。",
+    "developerName": "erwanjun",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/erwanjun/magplot",
+    "defaultPrompt": [
+      "用这个 CSV 画温度与去除率的折线图，要 error bar，适合论文投稿",
+      "把这批实验数据画成双栏宽的柱状图，画完在 Magplot 里打开",
+      "给这份数据做一张相关性散点图 + 线性拟合，出矢量 PDF"
+    ],
+    "brandColor": "#2868b7",
+    "composerIcon": "./assets/magplot.svg",
+    "logo": "./assets/magplot.svg",
+    "screenshots": []
+  }
+}

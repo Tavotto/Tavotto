@@ -44,6 +44,7 @@ from .engine import brand as engine_brand
 from .engine import config as engine_config
 from .engine import diagnostics as engine_diagnostics
 from .engine import discover as engine_discover
+from .engine import handoff as engine_handoff
 from .engine import patchspec as engine_patchspec
 from .engine import pool as engine_pool
 from .engine import probe as engine_probe
@@ -2909,11 +2910,25 @@ def main():
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
 
-    ap = argparse.ArgumentParser(description=__doc__)
+    # `magplot open <路径>`：外部程序（Codex 插件、编辑器、别的 Agent、用户自己）
+    # 把一张刚画好的图交接进来的入口。**必须在 argparse 之前拦**——主入口是纯
+    # flag 形态（`magplot --figures …`），改成 subparsers 会把既有命令行整个换掉。
+    if len(sys.argv) > 1 and sys.argv[1] == "open":
+        sys.exit(engine_handoff.cli(sys.argv[2:]))
+
+    ap = argparse.ArgumentParser(
+        description=__doc__,
+        # 子命令在上面就分派掉了，argparse 看不见它——不在这儿写一句，
+        # `magplot --help` 里就查无此命令
+        epilog="另有子命令: magplot open <图|脚本|目录>  "
+               "把一张刚画好的图交给 Magplot 打开（详见 magplot open --help）",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--figures", default=None,
                     help="面板图所在目录（缺省恢复最近打开的项目）")
     ap.add_argument("--port", type=int, default=5089)
     ap.add_argument("--no-browser", action="store_true")
+    ap.add_argument("--open-stem", default=None,
+                    help="启动后在界面里定位这个面板（stem）；由 `magplot open` 传入")
     ap.add_argument("--desktop-sidecar", action="store_true",
                     help="作为 Magplot 桌面应用的后端运行：127.0.0.1 动态端口 + "
                          "桌面认证 + 父进程跟随退出（由桌面壳启动，不建议手动使用）")
@@ -2957,17 +2972,22 @@ def main():
     if args.desktop_sidecar:
         sys.exit(desktop_mode.run(app))
 
+    # 落地地址的形状（含 `?open=<stem>`）只有 handoff.browser_url 一个出处：
+    # 前端 lib/openRequest.ts 认的就是它，两边别各写一份。
+    def landing(p: int) -> str:
+        return engine_handoff.browser_url(p, engine_handoff.Target("", args.open_stem))
+
     port = resolve_port(args.port)
     if port is None:
         # 端口上已经有一个 Magplot 在跑：把浏览器指过去就够了，别再起一个。
         # 双击应用图标的用户没有终端可看，这里必须自己把事办圆。
-        url = f"http://127.0.0.1:{args.port}"
+        url = landing(args.port)
         print(f"* Magplot 已在 {url} 运行，打开现有窗口")
         if not args.no_browser:
             webbrowser.open(url)
         return
 
-    url = f"http://127.0.0.1:{port}"
+    url = landing(port)
     if port != args.port:
         print(f"* 端口 {args.port} 被占用，改用 {port}")
     print(f"* 打开 {url}")

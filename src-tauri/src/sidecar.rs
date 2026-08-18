@@ -94,10 +94,15 @@ fn log_tail(path: &Path, max: u64) -> String {
 
 impl Sidecar {
     /// 启动 sidecar 并等到握手完成，返回 (Sidecar, 端口)。
+    /// `project` 是首启交接（`Magplot --open <目录>`）带来的项目目录：原样转成
+    /// sidecar 的 `--figures`。**不做任何存在性判断**——目录有没有、注册表长
+    /// 什么样，是 Python 那边（app.open_project）唯一说了算的事，壳里再判一次
+    /// 只会制造第二个权威，还会在两边给出不一样的错误。
     pub fn start(
         resource_dir: Option<PathBuf>,
         log_dir: &Path,
         nonce: &str,
+        project: Option<&str>,
     ) -> Result<(Sidecar, u16), String> {
         let (exe, extra_args) = resolve_command(resource_dir.as_deref())?;
 
@@ -121,8 +126,11 @@ impl Sidecar {
         let _ = std::fs::remove_file(&handshake);
 
         let mut cmd = Command::new(&exe);
-        cmd.args(&extra_args)
-            .arg("--desktop-sidecar")
+        cmd.args(&extra_args);
+        if let Some(dir) = project {
+            cmd.arg("--figures").arg(dir);
+        }
+        cmd.arg("--desktop-sidecar")
             .env("MAGPLOT_DESKTOP_HANDSHAKE", &handshake)
             .stdin(Stdio::piped())
             .stdout(Stdio::from(log_out))

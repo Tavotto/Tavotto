@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { CanvasStage } from '@/canvas/CanvasStage'
 import { CanvasTabs } from '@/components/CanvasTabs'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
@@ -36,8 +36,9 @@ import { startLayoutAutoReflow } from '@/store/actions'
 import { startVersionCheckpoints } from '@/hooks/useVersionCheckpoints'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
-import { onDesktopMenu } from '@/lib/desktop'
+import { onDesktopMenu, onDesktopOpen } from '@/lib/desktop'
 import { DURATION, usePresence } from '@/lib/motion'
+import { applyOpenRequest, readOpenRequestFromUrl, type OpenRequest } from '@/lib/openRequest'
 
 export function App() {
   const phase = useProjectStore((s) => s.phase)
@@ -50,6 +51,7 @@ export function App() {
     void useEnvStore.getState().refresh()
   }, [])
   useDesktopMenu()
+  useHandoff()
 
   // 启动探测中不闪 Picker；探测完没有项目 → Picker 接管整个界面
   if (phase === 'loading') return <div className="h-full bg-bg" />
@@ -155,6 +157,44 @@ function Workspace() {
       </div>
     </TooltipProvider>
   )
+}
+
+/**
+ * 外部交接（`magplot open` / Codex 插件）→ 打开项目 + 定位面板。
+ *
+ * 两条入口、一个执行体（lib/openRequest.ts）：
+ *   * 地址栏 `?open=<stem>` —— 浏览器模式与桌面**首启**都走它。只认一次，
+ *     且必须等 `phase === 'open'`：素材是从项目里扫出来的，项目还没就位时
+ *     去找面板必然「找不到」，用户得到的就是一条假错误。
+ *   * Tauri 事件 `magplot:open` —— 桌面**再次**交接（单实例转发 argv）。
+ *     它自带项目路径，所以在 Project Picker 上也能直接落地。
+ */
+function useHandoff() {
+  const phase = useProjectStore((s) => s.phase)
+  const fromUrl = useRef<OpenRequest | null | undefined>(undefined)
+  if (fromUrl.current === undefined) fromUrl.current = readOpenRequestFromUrl()
+
+  useEffect(() => {
+    if (phase !== 'open' || !fromUrl.current) return
+    const req = fromUrl.current
+    fromUrl.current = null // 只认一次：换项目后不该再被重放
+    void applyOpenRequest(req)
+  }, [phase])
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined
+    let disposed = false
+    void onDesktopOpen((p) => {
+      void applyOpenRequest({ project: p.project, stem: p.stem })
+    }).then((u) => {
+      if (disposed) u()
+      else unlisten = u
+    })
+    return () => {
+      disposed = true
+      unlisten?.()
+    }
+  }, [])
 }
 
 /**
