@@ -14,6 +14,7 @@
  * - startElementDrag：图内文字类拖动同样 shift 锁向
  * - 画布对象拖动可吸附图内元素（文字 / 子图）的中心线（elementSnapCandidates）
  */
+import { literal } from '@/i18n'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -148,7 +149,7 @@ beforeEach(async () => {
   // setOverride 松手会触发引擎渲染；测试里掐断网络那一步
   useRenderStore.setState({ render: async () => {} })
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_el_arrow')
-  useDocumentStore.getState().commit('加面板', (d) => {
+  useDocumentStore.getState().commit(literal('加面板'), (d) => {
     d.objects.push(panel())
   })
   // 渲染态按「文件 + 变体」分键：种进这个面板自己的那份
@@ -348,7 +349,7 @@ describe('elementSnapCandidates：图内元素中心线', () => {
       color: '#111111',
       fill: null,
     }
-    useDocumentStore.getState().commit('加', (d) => {
+    useDocumentStore.getState().commit(literal('加'), (d) => {
       d.objects.push(r)
     })
     useSelectionStore.getState().set(['r1'])

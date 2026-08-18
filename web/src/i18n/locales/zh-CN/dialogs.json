@@ -1,0 +1,103 @@
+{
+  "palette": {
+    "commands": {
+      "add-text": {
+        "keywords": "text add tjwz wenzi",
+        "label": "添加文字"
+      },
+      "canvas-settings": {
+        "keywords": "canvas page settings hbsz huabu",
+        "label": "画布设置"
+      },
+      "edit-elements": {
+        "keywords": "edit element tnys tuneiyuansu",
+        "label": "编辑选中面板的图内元素"
+      },
+      "export": {
+        "keywords": "export pdf png dc daochu",
+        "label": "导出 PDF / PNG…"
+      },
+      "fit": {
+        "keywords": "fit zoom syhb shiying",
+        "label": "缩放到适应画布"
+      },
+      "grid": {
+        "keywords": "grid wg wangge",
+        "label": "显示 / 隐藏网格"
+      },
+      "group": {
+        "keywords": "group cz chengzu",
+        "label": "成组所选对象"
+      },
+      "layout-col": {
+        "keywords": "col layout lbj liebuju",
+        "label": "创建列布局"
+      },
+      "layout-grid": {
+        "keywords": "grid layout wgbj wangge",
+        "label": "创建网格布局"
+      },
+      "layout-row": {
+        "keywords": "row layout hbj hangbuju",
+        "label": "创建行布局"
+      },
+      "left-assets": {
+        "keywords": "asset panel sc sucai",
+        "label": "打开素材"
+      },
+      "left-elements": {
+        "keywords": "element tree yss yuansushu",
+        "label": "打开图内元素树"
+      },
+      "left-layers": {
+        "keywords": "layer structure tc jg tuceng",
+        "label": "打开结构（图层）"
+      },
+      "load-layout": {
+        "keywords": "open load layout zr zairu",
+        "label": "载入画布文件…"
+      },
+      "new-doc": {
+        "keywords": "new blank xj xinjian",
+        "label": "新建空白文档"
+      },
+      "rulers": {
+        "keywords": "ruler bc biaochi",
+        "label": "显示 / 隐藏标尺"
+      },
+      "save-layout": {
+        "keywords": "save layout bc baocun",
+        "label": "保存为画布文件…"
+      },
+      "select-all": {
+        "keywords": "select all qx quanxuan",
+        "label": "全选"
+      },
+      "shortcut-help": {
+        "keywords": "shortcut help kjj kuaijiejian",
+        "label": "快捷键帮助"
+      },
+      "styles": {
+        "keywords": "style token preset ys lwys yangshi",
+        "label": "论文样式…"
+      },
+      "sub-labels": {
+        "keywords": "label abc xhbq xuhao",
+        "label": "添加 (a)(b)(c) 序号标签"
+      },
+      "ungroup": {
+        "keywords": "ungroup qxcz",
+        "label": "取消成组"
+      },
+      "versions": {
+        "keywords": "version history timeline bb sjx banben",
+        "label": "布局版本时间线…"
+      }
+    },
+    "listLabel": "命令",
+    "needPanel": "先选中一个可参数化面板",
+    "noMatch": "没有匹配的命令",
+    "placeholder": "输入命令…",
+    "searchLabel": "搜索命令"
+  }
+}

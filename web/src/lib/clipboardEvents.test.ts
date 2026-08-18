@@ -54,11 +54,11 @@ beforeEach(() => {
     txn: null,
   })
   useSelectionStore.getState().set([])
-  useUiStore.getState().setStatus('')
+  useUiStore.getState().setStatus(null)
 })
 
 afterEach(() => {
-  useUiStore.getState().setStatus('')
+  useUiStore.getState().setStatus(null)
   vi.restoreAllMocks()
 })
 

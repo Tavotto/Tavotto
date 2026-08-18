@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   AlertTriangle,
   ArrowUp,
@@ -17,6 +18,7 @@ import {
   type RecentProject,
 } from '@/lib/api'
 import { isDesktop, pickDirectory } from '@/lib/desktop'
+import { t as translate } from '@/i18n'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { cn } from '@/lib/utils'
 import { useProjectStore } from '@/store/projectStore'
@@ -30,6 +32,7 @@ import { TextInput } from './ui/Input'
  * 项目 = 论文图所在的目录（figures 目录）；打开即切换本标签页的项目。
  */
 export function ProjectPicker() {
+  const { t } = useTranslation('project')
   const recent = useProjectStore((s) => s.recent)
   const open = useProjectStore((s) => s.open)
   const remove = useProjectStore((s) => s.remove)
@@ -54,20 +57,18 @@ export function ProjectPicker() {
 
   return (
     <div className="flex h-full items-center justify-center overflow-y-auto bg-bg">
-      <main aria-label="选择项目" className="w-[460px] max-w-[calc(100vw-3rem)] py-10">
+      <main aria-label={t('picker.regionLabel')} className="w-[460px] max-w-[calc(100vw-3rem)] py-10">
         {/* 页面底是纸色 --color-bg：灰块用 paper 档才能与背景分开 */}
         <h1 className="flex items-center gap-2.5 text-lg font-semibold tracking-tight text-ink">
           <BrandMark size={24} variant="compact" tone="paper" />
           {PRODUCT_NAME}
         </h1>
-        <p className="mt-1 text-xs leading-relaxed text-ink-3">
-          项目就是论文图所在的目录；选择一个目录开始排版。
-        </p>
+        <p className="mt-1 text-xs leading-relaxed text-ink-3">{t('picker.tagline')}</p>
 
         <div className="mt-5 flex gap-2">
           <Button variant="primary" size="md" onClick={() => setBrowse('create')}>
             <FolderPlus size={14} />
-            新建项目
+            {t('picker.create')}
           </Button>
           <Button
             variant="outline"
@@ -76,14 +77,14 @@ export function ProjectPicker() {
               // 桌面壳里用原生目录选择器；取消不是错误，什么都不发生。
               // 浏览器模式回退到服务器端目录浏览器（本地单用户应用，浏览的就是本机磁盘）。
               if (isDesktop()) {
-                void pickDirectory('选择论文图所在目录').then((dir) => {
+                void pickDirectory(t('picker.nativePickerTitle')).then((dir) => {
                   if (dir) void openPath(dir)
                 })
               } else setBrowse('open')
             }}
           >
             <FolderOpen size={14} />
-            浏览目录…
+            {t('picker.browse')}
           </Button>
           {currentOpen && (
             <Button
@@ -91,7 +92,7 @@ export function ProjectPicker() {
               className="ml-auto text-ink-2"
               onClick={() => useProjectStore.setState({ phase: 'open' })}
             >
-              返回当前项目
+              {t('picker.backToCurrent')}
             </Button>
           )}
         </div>
@@ -108,14 +109,14 @@ export function ProjectPicker() {
           <TextInput
             value={typed}
             onChange={(e) => setTyped(e.target.value)}
-            placeholder="或直接粘贴路径，如 D:\\research\\figures"
-            aria-label="项目路径"
+            placeholder={t('picker.pathPlaceholder')}
+            aria-label={t('picker.pathLabel')}
             className="flex-1 font-mono"
             spellCheck={false}
           />
           <Button type="submit" variant="outline" size="md" disabled={!typed.trim()}>
             <CornerDownLeft size={13} />
-            打开
+            {t('picker.openButton')}
           </Button>
         </form>
 
@@ -126,8 +127,8 @@ export function ProjectPicker() {
         )}
 
         {recent.length > 0 && (
-          <section aria-label="最近项目" className="mt-7">
-            <h2 className="mb-1.5 text-xs font-medium text-ink-2">最近项目</h2>
+          <section aria-label={t('picker.recentLabel')} className="mt-7">
+            <h2 className="mb-1.5 text-xs font-medium text-ink-2">{t('picker.recentHeading')}</h2>
             <ul className="flex flex-col">
               {recent.map((r) => (
                 <RecentRow
@@ -168,6 +169,7 @@ function RecentRow({
   onOpen: () => void
   onRemove: () => void
 }) {
+  const { t } = useTranslation('project')
   return (
     <li className="group flex items-center gap-2 border-b border-border py-2 last:border-b-0">
       <Folder size={14} className="shrink-0 text-ink-3" />
@@ -178,24 +180,24 @@ function RecentRow({
           'min-w-0 flex-1 text-left outline-none focus-visible:focus-ring',
           entry.exists ? 'cursor-pointer' : 'cursor-default',
         )}
-        aria-label={`打开项目 ${entry.name}`}
+        aria-label={t('picker.openProject', { name: entry.name })}
       >
         <span className="flex items-center gap-1.5">
           <span className="truncate text-xs font-medium text-ink">{entry.name}</span>
           {!entry.exists && (
             <span className="flex shrink-0 items-center gap-1 text-xs text-danger">
               <AlertTriangle size={11} />
-              目录不存在
+              {t('picker.missingDir')}
             </span>
           )}
-          {busy && <span className="shrink-0 text-xs text-ink-3">打开中…</span>}
+          {busy && <span className="shrink-0 text-xs text-ink-3">{t('picker.opening')}</span>}
         </span>
         <span className="block truncate font-mono text-xs text-ink-3">{entry.path}</span>
       </button>
       <button
         onClick={onRemove}
-        aria-label={`从列表移除 ${entry.name}（不删除磁盘内容）`}
-        title="从列表移除（不删除磁盘内容）"
+        aria-label={t('picker.removeFromList', { name: entry.name })}
+        title={t('picker.removeFromListTitle')}
         className={cn(
           'flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-ink-3',
           'opacity-0 outline-none transition-opacity hover:bg-ink/[.055] hover:text-ink',
@@ -227,6 +229,7 @@ export function DirBrowser({
   onClose: () => void
   onPick: (path: string, create: boolean) => void
 }) {
+  const { t } = useTranslation('project')
   const [state, setState] = useState<BrowseResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [nearest, setNearest] = useState<string | null>(null)
@@ -263,12 +266,12 @@ export function DirBrowser({
     <Dialog
       open
       onOpenChange={(v) => !v && onClose()}
-      title={mode === 'create' ? '新建项目' : '打开项目目录'}
+      title={t(mode === 'create' ? 'browser.titleCreate' : 'browser.titleOpen')}
       size="md"
       footer={
         <>
           <Button variant="outline" size="md" onClick={onClose}>
-            取消
+            {translate('actions.cancel')}
           </Button>
           <Button
             variant="primary"
@@ -279,7 +282,7 @@ export function DirBrowser({
               onPick(mode === 'create' ? `${target}/${name.trim()}` : target, mode === 'create')
             }}
           >
-            {mode === 'create' ? '在此新建' : '打开此目录'}
+            {t(mode === 'create' ? 'browser.confirmCreate' : 'browser.confirmOpen')}
           </Button>
         </>
       }
@@ -304,7 +307,7 @@ export function DirBrowser({
                 void nav(state.parent)
               }
             }}
-            aria-label="上一级目录"
+            aria-label={t('browser.parentDir')}
           >
             <ArrowUp size={13} />
           </Button>
@@ -317,12 +320,12 @@ export function DirBrowser({
             onBlur={() => {
               editingPath.current = false
             }}
-            placeholder="输入或粘贴路径后回车"
-            aria-label="当前路径"
+            placeholder={t('browser.pathPlaceholder')}
+            aria-label={t('browser.pathLabel')}
             className="min-w-0 flex-1 font-mono"
             spellCheck={false}
           />
-          <Button type="submit" size="icon-sm" aria-label="跳转到该路径">
+          <Button type="submit" size="icon-sm" aria-label={t('browser.goToPath')}>
             <CornerDownLeft size={13} />
           </Button>
         </form>
@@ -337,7 +340,7 @@ export function DirBrowser({
           ))}
         </div>
 
-        <ul aria-label="子目录" className="h-56 overflow-y-auto rounded-sm border border-border">
+        <ul aria-label={t('browser.subdirsLabel')} className="h-56 overflow-y-auto rounded-sm border border-border">
           {state?.dirs.map((d) => (
             <li key={d.path}>
               <button
@@ -361,14 +364,14 @@ export function DirBrowser({
           ))}
           {state && state.dirs.length === 0 && (
             <li className="flex h-full items-center justify-center text-xs text-ink-3">
-              没有子目录
+              {t('browser.noSubdirs')}
             </li>
           )}
         </ul>
 
         {mode === 'create' && (
           <label className="flex items-center gap-2 text-xs text-ink-2">
-            项目名
+            {t('browser.projectName')}
             <TextInput
               autoFocus
               value={name}
@@ -387,7 +390,7 @@ export function DirBrowser({
                 className="ml-2 underline outline-none focus-visible:focus-ring"
                 onClick={() => void nav(nearest)}
               >
-                去 {nearest}
+                {t('browser.goTo', { path: nearest })}
               </button>
             )}
           </p>

@@ -4,8 +4,14 @@ import { createRoot } from 'react-dom/client'
 import { App } from './App'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { bootstrapDesktopSession } from './lib/desktop'
+import { currentLocale, initI18n, t } from './i18n'
 import 'generative-loaders/styles.css'
 import './index.css'
+
+// i18n 必须在挂载 React **之前**就位：下面那个「桌面会话建立失败」的页面
+// 根本走不到 React，它也得有翻译。
+initI18n()
+document.documentElement.lang = currentLocale()
 
 const rootEl = document.getElementById('root')!
 
@@ -20,7 +26,7 @@ void bootstrapDesktopSession().then((r) => {
       'display:flex;height:100%;align-items:center;justify-content:center;' +
         'font:13px/1.6 -apple-system,sans-serif;color:#3D3D39;background:#F2F2EF',
     )
-    div.textContent = 'Magplot 桌面会话建立失败：请关闭窗口后重新打开应用。'
+    div.textContent = t('boot.desktopSessionFailed', { ns: 'workspace' })
     rootEl.replaceChildren(div)
     return
   }

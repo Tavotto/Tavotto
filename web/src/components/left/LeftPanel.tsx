@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import { Pin } from 'lucide-react'
 import { drawerMotion, type PresenceState } from '@/lib/motion'
 import { cn } from '@/lib/utils'
@@ -12,13 +13,6 @@ import { CanvasList } from './CanvasList'
 import { ElementTree } from './ElementTree'
 import { LayerTree } from './LayerTree'
 
-const TITLES = {
-  canvases: '画布',
-  assets: '素材',
-  layers: '结构',
-  elements: '图内元素',
-} as const
-
 /**
  * 左侧上下文抽屉：内容由图标轨道决定，一次只有一个上下文。
  * 标题行给出上下文名 + 计数；宽屏可钉住（选中对象时不自动让位）。
@@ -31,6 +25,7 @@ export function LeftPanel({
   /** 开合动效由 App 的 usePresence 驱动：收起时先播完退场再卸载 */
   state?: PresenceState
 }) {
+  const { t } = useTranslation('workspace')
   const tab = useUiStore((s) => s.leftTab)
   const width = useUiStore((s) => s.leftWidth)
   const pinned = useUiStore((s) => s.leftPinned)
@@ -44,7 +39,7 @@ export function LeftPanel({
       {...motion}
       style={{ ...motion.style, left: overlay ? RAIL_W : undefined }}
       data-left-drawer
-      aria-label={TITLES[tab]}
+      aria-label={t(`rail.${tab}`)}
       className={cn(
         // overflow-hidden 是动效的一部分：停靠态动的是外层 width，内容包在下面
         // 那层定宽 div 里，所以展开收起时抽屉自己的子树一次都不重排
@@ -55,19 +50,19 @@ export function LeftPanel({
     >
       <div className="flex h-full flex-col" style={{ width }}>
       <div className="flex h-9 shrink-0 items-center gap-1.5 px-3">
-        <h2 className="text-xs font-medium text-ink">{TITLES[tab]}</h2>
+        <h2 className="text-xs font-medium text-ink">{t(`rail.${tab}`)}</h2>
         {tab === 'layers' && objectCount > 0 && (
           <span className="font-mono text-xs text-ink-3">{objectCount}</span>
         )}
         {tab === 'elements' && <ElementCount />}
         <span className="flex-1" />
         {wide && (
-          <Tip label={pinned ? '取消钉住' : '钉住：选中对象时不自动收起'} side="bottom">
+          <Tip label={pinned ? t('drawer.unpinHint') : t('drawer.pinHint')} side="bottom">
             <Button
               size="icon-sm"
               active={pinned}
               aria-pressed={pinned}
-              aria-label={pinned ? '取消钉住侧栏' : '钉住侧栏'}
+              aria-label={pinned ? t('drawer.unpin') : t('drawer.pin')}
               onClick={() => useUiStore.getState().setLeftPinned(!pinned)}
             >
               <Pin size={12} className={pinned ? undefined : 'text-ink-3'} />
@@ -107,6 +102,7 @@ function ElementCount() {
 
 /** 右边缘的拖拽把手：卡片网格的列宽由它决定，所以宽度值得可调且记住 */
 function WidthHandle() {
+  const { t } = useTranslation('workspace')
   const start = (e: React.PointerEvent) => {
     e.preventDefault()
     const from = useUiStore.getState().leftWidth
@@ -124,7 +120,7 @@ function WidthHandle() {
     <div
       role="separator"
       aria-orientation="vertical"
-      aria-label={`调整侧栏宽度（${LEFT_MIN}–${LEFT_MAX}px）`}
+      aria-label={t('drawer.resize', { min: LEFT_MIN, max: LEFT_MAX })}
       tabIndex={0}
       onPointerDown={start}
       onKeyDown={(e) => {

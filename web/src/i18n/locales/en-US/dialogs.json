@@ -1,0 +1,103 @@
+{
+  "palette": {
+    "commands": {
+      "add-text": {
+        "keywords": "text add label annotation",
+        "label": "Add text"
+      },
+      "canvas-settings": {
+        "keywords": "canvas page settings size",
+        "label": "Canvas settings"
+      },
+      "edit-elements": {
+        "keywords": "edit element figure inner",
+        "label": "Edit figure elements of the selected panel"
+      },
+      "export": {
+        "keywords": "export pdf png save out",
+        "label": "Export PDF / PNG…"
+      },
+      "fit": {
+        "keywords": "fit zoom canvas page",
+        "label": "Zoom to fit canvas"
+      },
+      "grid": {
+        "keywords": "grid background squares",
+        "label": "Show / hide grid"
+      },
+      "group": {
+        "keywords": "group selection combine",
+        "label": "Group selected objects"
+      },
+      "layout-col": {
+        "keywords": "column layout vertical arrange",
+        "label": "Create column layout"
+      },
+      "layout-grid": {
+        "keywords": "grid layout matrix arrange",
+        "label": "Create grid layout"
+      },
+      "layout-row": {
+        "keywords": "row layout horizontal arrange",
+        "label": "Create row layout"
+      },
+      "left-assets": {
+        "keywords": "asset panel figures browser",
+        "label": "Open assets"
+      },
+      "left-elements": {
+        "keywords": "element tree figure inner",
+        "label": "Open figure element tree"
+      },
+      "left-layers": {
+        "keywords": "layer structure stacking order",
+        "label": "Open structure (layers)"
+      },
+      "load-layout": {
+        "keywords": "open load layout canvas file",
+        "label": "Load canvas file…"
+      },
+      "new-doc": {
+        "keywords": "new blank document empty",
+        "label": "New blank document"
+      },
+      "rulers": {
+        "keywords": "ruler guides measure",
+        "label": "Show / hide rulers"
+      },
+      "save-layout": {
+        "keywords": "save layout canvas file",
+        "label": "Save as canvas file…"
+      },
+      "select-all": {
+        "keywords": "select all everything",
+        "label": "Select all"
+      },
+      "shortcut-help": {
+        "keywords": "shortcut help keys keyboard",
+        "label": "Keyboard shortcuts"
+      },
+      "styles": {
+        "keywords": "style token preset journal paper",
+        "label": "Paper styles…"
+      },
+      "sub-labels": {
+        "keywords": "label abc subfigure panel letters",
+        "label": "Add (a)(b)(c) panel labels"
+      },
+      "ungroup": {
+        "keywords": "ungroup split separate",
+        "label": "Ungroup"
+      },
+      "versions": {
+        "keywords": "version history timeline snapshot",
+        "label": "Layout version timeline…"
+      }
+    },
+    "listLabel": "Commands",
+    "needPanel": "Select a parameterizable panel first",
+    "noMatch": "No matching command",
+    "placeholder": "Type a command…",
+    "searchLabel": "Search commands"
+  }
+}

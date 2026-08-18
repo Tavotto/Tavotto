@@ -1,0 +1,58 @@
+{
+  "browser": {
+    "confirmCreate": "在此新建",
+    "confirmOpen": "打开此目录",
+    "goTo": "去 {{path}}",
+    "goToPath": "跳转到该路径",
+    "noSubdirs": "没有子目录",
+    "parentDir": "上一级目录",
+    "pathLabel": "当前路径",
+    "pathPlaceholder": "输入或粘贴路径后回车",
+    "projectName": "项目名",
+    "subdirsLabel": "子目录",
+    "titleCreate": "新建项目",
+    "titleOpen": "打开项目目录"
+  },
+  "handoff": {
+    "added": "已加入 {{name}}",
+    "located": "已定位到 {{name}}",
+    "noProject": "还没有打开的项目，无法定位面板",
+    "openFailed": "打不开项目：{{error}}",
+    "panelMissing": "没找到面板 {{stem}}——脚本可能还没跑出产物，或它在别的图库里",
+    "projectOpened": "已打开项目 {{name}}"
+  },
+  "picker": {
+    "backToCurrent": "返回当前项目",
+    "browse": "浏览目录…",
+    "create": "新建项目",
+    "missingDir": "目录不存在",
+    "nativePickerTitle": "选择论文图所在目录",
+    "openButton": "打开",
+    "openProject": "打开项目 {{name}}",
+    "opening": "打开中…",
+    "pathLabel": "项目路径",
+    "pathPlaceholder": "或直接粘贴路径，如 D:\\research\\figures",
+    "recentHeading": "最近项目",
+    "recentLabel": "最近项目",
+    "regionLabel": "选择项目",
+    "removeFromList": "从列表移除 {{name}}（不删除磁盘内容）",
+    "removeFromListTitle": "从列表移除（不删除磁盘内容）",
+    "tagline": "项目就是论文图所在的目录；选择一个目录开始排版。"
+  },
+  "switcher": {
+    "allProjects": "全部项目…",
+    "browse": "浏览目录…",
+    "create": "新建项目…",
+    "current": "当前项目",
+    "newTabLabel": "在新标签页打开",
+    "newTabTip": "在新标签页打开（可在那边切到另一个项目）",
+    "openInNewTab": "在新标签页打开本项目",
+    "opened": "已打开",
+    "readOnlySuffix": " · 只读",
+    "recent": "最近",
+    "registry": "脚本注册表…",
+    "scriptCount_one": "{{count}} 个可参数化脚本",
+    "scriptCount_other": "{{count}} 个可参数化脚本",
+    "trigger": "当前项目 {{name}}，点击切换"
+  }
+}

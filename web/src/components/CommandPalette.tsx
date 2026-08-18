@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { create } from 'zustand'
+import { msg, t as translate } from '@/i18n'
 import { Search } from 'lucide-react'
 import { cn, MOD } from '@/lib/utils'
 import {
@@ -32,11 +34,14 @@ export const usePalette = create<PaletteState>((set) => ({
   setOpen: (open) => set({ open }),
 }))
 
+/**
+ * 命令的**文案不在这里**：label 与 keywords 都按 id 查
+ * `dialogs:palette.commands.<id>.{label,keywords}`。keywords 是每种语言各自
+ * 的搜索词（中文那份带拼音首字母，英文那份带同义词），所以它必须跟着语言
+ * 走，不能只翻 label。
+ */
 interface Command {
   id: string
-  label: string
-  /** 额外搜索词（拼音首字母 / 英文） */
-  keywords: string
   shortcut?: string
   /** 需要选中对象才可用 */
   needsSelection?: boolean
@@ -46,52 +51,53 @@ interface Command {
 const ui = () => useUiStore.getState()
 
 const COMMANDS: Command[] = [
-  { id: 'export', label: '导出 PDF / PNG…', keywords: 'export pdf png dc', shortcut: `${MOD}E`, run: () => ui().setExportOpen(true) },
-  { id: 'save-layout', label: '保存为画布文件…', keywords: 'save layout bc', shortcut: `${MOD}S`, run: () => ui().setLayoutOpen(true, 'save') },
-  { id: 'load-layout', label: '载入画布文件…', keywords: 'open load layout zr', run: () => ui().setLayoutOpen(true, 'load') },
-  { id: 'versions', label: '布局版本时间线…', keywords: 'version history timeline bb sjx', run: () => ui().setVersionsOpen(true) },
-  { id: 'styles', label: '论文样式…', keywords: 'style token preset ys lwys', run: () => ui().setStylesOpen(true) },
-  { id: 'new-doc', label: '新建空白文档', keywords: 'new blank xj', run: () => void newBlankDocument() },
-  { id: 'add-text', label: '添加文字', keywords: 'text add tjwz', shortcut: 'T', run: () => void addText() },
-  { id: 'sub-labels', label: '添加 (a)(b)(c) 序号标签', keywords: 'label abc xhbq', run: addSubLabels },
-  { id: 'select-all', label: '全选', keywords: 'select all qx', shortcut: `${MOD}A`, run: selectAll },
-  { id: 'group', label: '成组所选对象', keywords: 'group cz', needsSelection: true, run: groupSelected },
-  { id: 'ungroup', label: '取消成组', keywords: 'ungroup qxcz', needsSelection: true, run: ungroupSelected },
-  { id: 'layout-row', label: '创建行布局', keywords: 'row layout hbj', needsSelection: true, run: () => createLayoutGroup('row') },
-  { id: 'layout-col', label: '创建列布局', keywords: 'col layout lbj', needsSelection: true, run: () => createLayoutGroup('col') },
-  { id: 'layout-grid', label: '创建网格布局', keywords: 'grid layout wgbj', needsSelection: true, run: () => createLayoutGroup('grid') },
+  { id: 'export', shortcut: `${MOD}E`, run: () => ui().setExportOpen(true) },
+  { id: 'save-layout', shortcut: `${MOD}S`, run: () => ui().setLayoutOpen(true, 'save') },
+  { id: 'load-layout', run: () => ui().setLayoutOpen(true, 'load') },
+  { id: 'versions', run: () => ui().setVersionsOpen(true) },
+  { id: 'styles', run: () => ui().setStylesOpen(true) },
+  { id: 'new-doc', run: () => void newBlankDocument() },
+  { id: 'add-text', shortcut: 'T', run: () => void addText() },
+  { id: 'sub-labels', run: addSubLabels },
+  { id: 'select-all', shortcut: `${MOD}A`, run: selectAll },
+  { id: 'group', needsSelection: true, run: groupSelected },
+  { id: 'ungroup', needsSelection: true, run: ungroupSelected },
+  { id: 'layout-row', needsSelection: true, run: () => createLayoutGroup('row') },
+  { id: 'layout-col', needsSelection: true, run: () => createLayoutGroup('col') },
+  { id: 'layout-grid', needsSelection: true, run: () => createLayoutGroup('grid') },
   {
     id: 'edit-elements',
-    label: '编辑选中面板的图内元素',
-    keywords: 'edit element tnys',
     needsSelection: true,
     run: () => {
       const id = useSelectionStore.getState().primary()
       const o = id ? useDocumentStore.getState().doc.objects.find((x) => x.id === id) : null
       if (o?.type === 'panel' && o.script) enterElementEdit(o.id)
-      else ui().setStatus('先选中一个 可参数化面板', 'error')
+      else ui().setStatus(msg('palette.needPanel', undefined, 'dialogs'), 'error')
     },
   },
   {
     id: 'fit',
-    label: '缩放到适应画布',
-    keywords: 'fit zoom syhb',
     shortcut: `${MOD}1`,
     run: () => {
       const page = useDocumentStore.getState().doc.page
       useViewportStore.getState().fitAnimated(page.w, page.h)
     },
   },
-  { id: 'rulers', label: '显示 / 隐藏标尺', keywords: 'ruler bc', run: () => ui().setShowRulers(!ui().showRulers) },
-  { id: 'grid', label: '显示 / 隐藏网格', keywords: 'grid wg', run: () => ui().setShowGrid(!ui().showGrid) },
-  { id: 'canvas-settings', label: '画布设置', keywords: 'canvas page settings hbsz', run: () => ui().setRightTab('canvas') },
-  { id: 'left-assets', label: '打开素材', keywords: 'asset panel sc', run: () => ui().setLeftTab('assets') },
-  { id: 'left-elements', label: '打开图内元素树', keywords: 'element tree yss', run: () => ui().setLeftTab('elements') },
-  { id: 'left-layers', label: '打开结构（图层）', keywords: 'layer structure tc jg', run: () => ui().setLeftTab('layers') },
-  { id: 'shortcut-help', label: '快捷键帮助', keywords: 'shortcut help kjj', shortcut: '?', run: () => ui().setShortcutHelpOpen(true) },
+  { id: 'rulers', run: () => ui().setShowRulers(!ui().showRulers) },
+  { id: 'grid', run: () => ui().setShowGrid(!ui().showGrid) },
+  { id: 'canvas-settings', run: () => ui().setRightTab('canvas') },
+  { id: 'left-assets', run: () => ui().setLeftTab('assets') },
+  { id: 'left-elements', run: () => ui().setLeftTab('elements') },
+  { id: 'left-layers', run: () => ui().setLeftTab('layers') },
+  { id: 'shortcut-help', shortcut: '?', run: () => ui().setShortcutHelpOpen(true) },
 ]
 
+const commandLabel = (id: string) => translate(`palette.commands.${id}.label`, { ns: 'dialogs' })
+const commandKeywords = (id: string) =>
+  translate(`palette.commands.${id}.keywords`, { ns: 'dialogs' })
+
 export function CommandPalette() {
+  const { t } = useTranslation('dialogs')
   const open = usePalette((s) => s.open)
   const setOpen = usePalette((s) => s.setOpen)
   const hasSelection = useSelectionStore((s) => s.ids.length > 0)
@@ -119,14 +125,21 @@ export function CommandPalette() {
     }
   }, [open, setOpen])
 
+  // 搜索按**当前语言**的文案与关键词来：英文界面下输 "export" 能中，
+  // 中文界面下输拼音首字母也能中
   const matches = useMemo(() => {
     const q = query.trim().toLowerCase()
-    const pool = COMMANDS.filter((c) => !c.needsSelection || hasSelection)
+    const pool = COMMANDS.filter((c) => !c.needsSelection || hasSelection).map((c) => ({
+      ...c,
+      label: commandLabel(c.id),
+      keywords: commandKeywords(c.id),
+    }))
     if (!q) return pool
     return pool.filter(
       (c) => c.label.toLowerCase().includes(q) || c.keywords.toLowerCase().includes(q),
     )
-  }, [query, hasSelection])
+    // t 只是订阅语言变化的引用，用来在切语言后重算这份列表
+  }, [query, hasSelection, t])
 
   useEffect(() => {
     setActive((a) => Math.min(a, Math.max(0, matches.length - 1)))
@@ -140,7 +153,7 @@ export function CommandPalette() {
 
   if (!open) return null
 
-  const runCommand = (c: Command) => {
+  const runCommand = (c: { run: () => void }) => {
     setOpen(false)
     c.run()
   }
@@ -173,15 +186,20 @@ export function CommandPalette() {
                 runCommand(matches[active])
               }
             }}
-            placeholder="输入命令…"
-            aria-label="搜索命令"
+            placeholder={t('palette.placeholder')}
+            aria-label={t('palette.searchLabel')}
             className="h-6 min-w-0 flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-ink-3"
           />
           <span className="shrink-0 font-mono text-xs text-ink-3">Esc</span>
         </div>
-        <ul ref={listRef} className="max-h-72 overflow-y-auto py-1" role="listbox" aria-label="命令">
+        <ul
+          ref={listRef}
+          className="max-h-72 overflow-y-auto py-1"
+          role="listbox"
+          aria-label={t('palette.listLabel')}
+        >
           {matches.length === 0 && (
-            <li className="px-3 py-2 text-xs text-ink-3">没有匹配的命令</li>
+            <li className="px-3 py-2 text-xs text-ink-3">{t('palette.noMatch')}</li>
           )}
           {matches.map((c, i) => (
             <li key={c.id} role="option" aria-selected={i === active} data-cmd-index={i}>

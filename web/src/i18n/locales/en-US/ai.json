@@ -1,0 +1,8 @@
+{
+  "status": {
+    "aiChanged": "The assistant edited the script; rebuilding the figure…",
+    "aiFailed": "The assistant failed",
+    "aiNoChange": "The assistant finished, but the script is unchanged",
+    "aiTimeout": "The assistant timed out"
+  }
+}

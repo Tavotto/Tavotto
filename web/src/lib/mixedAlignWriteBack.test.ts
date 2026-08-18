@@ -7,6 +7,7 @@
  * - collectPanelAnnotations：重叠面积最大者得，隐藏对象不进，坐标/字号按
  *   面板显示比例换算成图自身 mm
  */
+import { literal } from '@/i18n'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { annotationAlignEntries } from '@/lib/elementGeom'
@@ -78,12 +79,12 @@ describe('annotationAlignEntries', () => {
 describe('applyMixedAlign', () => {
   it('override 与对象位移同一次 commit，一条撤销同时回滚', () => {
     const store = useDocumentStore.getState()
-    store.commit('加', (d) => {
+    store.commit(literal('加'), (d) => {
       d.objects.push(panel(), note())
     })
     applyMixedAlign(
       'p1',
-      '顶对齐',
+      literal('顶对齐'),
       [{ gid: 'axes_0', prop: 'position', value: [0.1, 0.1, 0.5, 0.5] }],
       [{ id: 't1', x: 42, y: 21 }],
     )

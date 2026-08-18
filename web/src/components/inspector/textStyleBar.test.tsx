@@ -9,6 +9,7 @@
  *   5. 右键弹层拿到的是同一批控件（含只在弹层里露面的背景 / 描边 / 排版）；
  *   6. 只有 fontsize + color + weight 都在才算文字元素（图例、刻度标签不套）。
  */
+import { literal } from '@/i18n'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -205,7 +206,7 @@ beforeEach(async () => {
   useSelectionStore.getState().clear()
   useRenderStore.getState().clear()
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_text_bar')
-  useDocumentStore.getState().commit('加面板', (d) => {
+  useDocumentStore.getState().commit(literal('加面板'), (d) => {
     d.objects.push(panelOf())
   })
   useRenderStore.getState().patch(renderKeyOf(livePanel()), {

@@ -1,0 +1,75 @@
+{
+  "alignMode": {
+    "bottom": "Align bottom",
+    "hcenter": "Center horizontally",
+    "hdist": "Distribute horizontally",
+    "left": "Align left",
+    "right": "Align right",
+    "sameh": "Same height",
+    "samew": "Same width",
+    "top": "Align top",
+    "vcenter": "Center vertically",
+    "vdist": "Distribute vertically"
+  },
+  "alignRef": {
+    "page": "Canvas",
+    "primary": "Last selected",
+    "selection": "Selection"
+  },
+  "enum": {
+    "fontfamily": {
+      "monospace": "Monospace",
+      "sans-serif": "Sans-serif",
+      "serif": "Serif"
+    },
+    "ha": {
+      "center": "Center",
+      "left": "Left",
+      "right": "Right"
+    },
+    "va": {
+      "baseline": "Baseline",
+      "bottom": "Bottom",
+      "center": "Center",
+      "top": "Top"
+    }
+  },
+  "prop": {
+    "alpha": "Opacity",
+    "arrowstyle": "Arrow style",
+    "bbox_alpha": "Background opacity",
+    "bbox_edgecolor": "Border colour",
+    "bbox_facecolor": "Background colour",
+    "bbox_linewidth": "Border width",
+    "bbox_pad": "Padding",
+    "bbox_rounded": "Rounded corners",
+    "bbox_visible": "Background",
+    "color": "Colour",
+    "endpoints_frac": "Position",
+    "fontfamily": "Font family",
+    "fontsize": "Font size",
+    "frameon": "Frame",
+    "ha": "Horizontal align",
+    "labelpad": "Label distance",
+    "linespacing": "Line spacing",
+    "linestyle": "Line style",
+    "linewidth": "Line width",
+    "loc_frac": "Position",
+    "markersize": "Marker size",
+    "pos_frac": "Position",
+    "position": "Axes box",
+    "rotation": "Rotation",
+    "size_mm": "Figure size",
+    "stroke_color": "Stroke colour",
+    "stroke_enabled": "Stroke",
+    "stroke_width": "Stroke width",
+    "style": "Style",
+    "text": "Content",
+    "va": "Vertical align",
+    "visible": "Visible",
+    "weight": "Weight",
+    "xlim": "X range",
+    "ylim": "Y range",
+    "zorder": "Stacking order"
+  }
+}

@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import type { UiMessage } from '@/i18n'
 
 export type LeftTab = 'canvases' | 'assets' | 'layers' | 'elements'
 /** 右栏三模式：属性 / 改图助手 / 画布设置 */
@@ -119,18 +120,24 @@ function readPersisted(): Persisted {
   return state
 }
 
-/** 一次等待用户点头的请求；resolve 由 ConfirmDialog 调用 */
+/**
+ * 一次等待用户点头的请求；resolve 由 ConfirmDialog 调用。
+ *
+ * 文案全部是**描述符**而不是翻译好的字符串：确认框可能挂着等用户很久，
+ * 中途切了语言得跟着换。用户自己的内容（文件名、画布名）走 values 插值。
+ */
 export interface ConfirmRequest {
-  title: string
-  body: string
-  confirmLabel?: string
-  cancelLabel?: string
+  title: UiMessage
+  body: UiMessage
+  confirmLabel?: UiMessage
+  cancelLabel?: UiMessage
   danger?: boolean
   resolve: (ok: boolean) => void
 }
 
 interface UiState extends Persisted {
-  status: string
+  /** 当前 toast 的描述符；null = 没有 toast。切语言时 toast 跟着换 */
+  status: UiMessage | null
   statusTone: 'info' | 'error'
   /** 正在双击编辑的文字对象 */
   editingTextId: string | null
@@ -180,7 +187,7 @@ interface UiState extends Persisted {
   setCanvasPref: (patch: Partial<Persisted>) => void
   setShowRulers: (v: boolean) => void
   setShowGrid: (v: boolean) => void
-  setStatus: (msg: string, tone?: 'info' | 'error') => void
+  setStatus: (msg: UiMessage | null, tone?: 'info' | 'error') => void
   setEditingText: (id: string | null) => void
   setCropTarget: (id: string | null) => void
   setElementPanel: (id: string | null) => void
@@ -225,7 +232,7 @@ const exclusive = (s: UiState) => s.layout !== 'wide'
 
 export const useUiStore = create<UiState>((set, get) => ({
   ...readPersisted(),
-  status: '',
+  status: null,
   statusTone: 'info',
   editingTextId: null,
   cropTargetId: null,
@@ -342,7 +349,7 @@ export const useUiStore = create<UiState>((set, get) => ({
     window.clearTimeout(statusTimer)
     // 普通状态短暂即逝；错误保留到用户处理（toast 上有关闭键）
     if (status && statusTone !== 'error') {
-      statusTimer = window.setTimeout(() => set({ status: '', statusTone: 'info' }), 4500)
+      statusTimer = window.setTimeout(() => set({ status: null, statusTone: 'info' }), 4500)
     }
   },
 

@@ -1,0 +1,54 @@
+{
+  "actions": {
+    "add": "Add",
+    "apply": "Apply",
+    "back": "Back",
+    "cancel": "Cancel",
+    "close": "Close",
+    "confirm": "OK",
+    "continue": "Continue",
+    "copy": "Copy",
+    "delete": "Delete",
+    "done": "Done",
+    "edit": "Edit",
+    "open": "Open",
+    "refresh": "Refresh",
+    "reload": "Reload",
+    "remove": "Remove",
+    "rename": "Rename",
+    "retry": "Retry",
+    "save": "Save",
+    "search": "Search"
+  },
+  "count": {
+    "assets_one": "{{count}} asset",
+    "assets_other": "{{count}} assets",
+    "items_one": "{{count}} item",
+    "items_other": "{{count}} items",
+    "objects_one": "{{count}} object",
+    "objects_other": "{{count}} objects",
+    "panels_one": "{{count}} panel",
+    "panels_other": "{{count}} panels",
+    "scripts_one": "{{count}} script",
+    "scripts_other": "{{count}} scripts",
+    "selectedObjects_one": "{{count}} object selected",
+    "selectedObjects_other": "{{count}} objects selected"
+  },
+  "literal": "{{text}}",
+  "objectType": {
+    "arrow": "Arrow",
+    "emptyText": "Empty text",
+    "panel": "Panel",
+    "shape": "Shape",
+    "text": "Text"
+  },
+  "shape": {
+    "brace": "Brace",
+    "diamond": "Diamond",
+    "ellipse": "Ellipse",
+    "line": "Line",
+    "polygon": "Polygon",
+    "rect": "Rectangle",
+    "triangle": "Triangle"
+  }
+}

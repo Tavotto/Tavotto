@@ -15,6 +15,7 @@
  *   5. 全部进同一次 commit：一条撤销、一次权威渲染；
  *   6. 设置关掉后只动子图本身。
  */
+import { literal } from '@/i18n'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { MATPLOTLIB_SVG } from '@/lib/__fixtures__/matplotlibSvg'
@@ -169,7 +170,7 @@ async function setup(overrides: PanelObject['overrides'] = []) {
   useSelectionStore.getState().clear()
   useRenderStore.getState().clear()
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_axes_companion')
-  useDocumentStore.getState().commit('加面板', (d) => {
+  useDocumentStore.getState().commit(literal('加面板'), (d) => {
     d.objects.push(panelOf(overrides))
   })
   useRenderStore.getState().patch(renderKeyOf(livePanel()), {

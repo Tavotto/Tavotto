@@ -1,4 +1,6 @@
 import { requestRender, type RenderPolicy } from '@/hooks/useEngineSync'
+import { msg, t, type UiMessage } from '@/i18n'
+import { listJoin } from '@/i18n/format'
 import { newId } from '@/lib/id'
 import { flipCapture } from '@/lib/motion'
 import { applyAlign, boundsOf, readingOrder, type AlignMode } from '@/lib/geometry'
@@ -33,12 +35,18 @@ import {
   rotationSwaps,
 } from '@/types/document'
 
+/** 本文件的历史标签与状态提示都在 workspace 命名空间下 */
+const hist = (key: string, values?: Record<string, unknown>): UiMessage =>
+  msg(`history.${key}`, values, 'workspace')
+const note = (key: string, values?: Record<string, unknown>): UiMessage =>
+  msg(`status.${key}`, values, 'workspace')
+
 const doc = () => useDocumentStore.getState().doc
-const commit = (label: string, recipe: (d: FigureDocument) => void) =>
+const commit = (label: UiMessage, recipe: (d: FigureDocument) => void) =>
   useDocumentStore.getState().commit(label, recipe)
 const select = (ids: string[]) => useSelectionStore.getState().set(ids)
-const status = (msg: string, tone?: 'info' | 'error') =>
-  useUiStore.getState().setStatus(msg, tone)
+const status = (message: UiMessage, tone?: 'info' | 'error') =>
+  useUiStore.getState().setStatus(message, tone)
 
 export const findObject = (id: string): CanvasObject | undefined =>
   doc().objects.find((o) => o.id === id)
@@ -74,7 +82,7 @@ export function addPanel(info: PanelInfo, atX?: number, atY?: number) {
     w,
     h,
   }
-  commit(`加入面板 ${info.name}`, (d) => {
+  commit(hist('addPanel', { name: info.name }), (d) => {
     d.objects.push(obj)
   })
   select([obj.id])
@@ -87,7 +95,7 @@ export function addText(partial: Partial<TextObject> = {}) {
   const obj: TextObject = {
     id: newId('t'),
     type: 'text',
-    text: '文字',
+    text: t('objectType.text'),
     x: page.w / 2 - 20,
     y: page.h / 2 - 4,
     w: 40,
@@ -98,7 +106,7 @@ export function addText(partial: Partial<TextObject> = {}) {
     align: 'left',
     ...partial,
   }
-  commit('添加文字', (d) => {
+  commit(hist('addText'), (d) => {
     d.objects.push(obj)
   })
   select([obj.id])
@@ -121,7 +129,7 @@ export function addArrow(partial: Partial<ArrowObject> = {}) {
     head: 'end',
     ...partial,
   }
-  commit('添加箭头', (d) => {
+  commit(hist('addArrow'), (d) => {
     d.objects.push(obj)
   })
   select([obj.id])
@@ -143,10 +151,7 @@ export function addShape(shape: ShapeObject['shape'], partial: Partial<ShapeObje
     fill: null,
     ...partial,
   }
-  commit(`添加${{
-    rect: '矩形', ellipse: '椭圆', line: '直线', triangle: '三角形',
-    diamond: '菱形', polygon: '多边形', brace: '大括号',
-  }[shape]}`, (d) => {
+  commit(hist('addShape', { shape: t(`shape.${shape}`) }), (d) => {
     d.objects.push(obj)
   })
   select([obj.id])
@@ -157,11 +162,11 @@ export function addShape(shape: ShapeObject['shape'], partial: Partial<ShapeObje
 export function addSubLabels() {
   const panels = readingOrder(doc().objects.filter((o) => o.type === 'panel'))
   if (!panels.length) {
-    status('画布上还没有面板')
+    status(note('noPanels'))
     return
   }
   const created: string[] = []
-  commit('添加序号标签', (d) => {
+  commit(hist('addSubLabels'), (d) => {
     panels.forEach((p, i) => {
       const label: TextObject = {
         id: newId('t'),
@@ -181,19 +186,19 @@ export function addSubLabels() {
     })
   })
   select(created)
-  status(`已添加 ${panels.length} 个序号标签（按从上到下、从左到右排序）`)
+  status(note('subLabelsAdded', { count: panels.length }))
 }
 
 /* ------------------------------- 编辑操作 --------------------------------- */
 
-export function updateObject<T extends CanvasObject>(id: string, label: string, patch: (o: T) => void) {
+export function updateObject<T extends CanvasObject>(id: string, label: UiMessage, patch: (o: T) => void) {
   commit(label, (d) => {
     const o = d.objects.find((x) => x.id === id) as T | undefined
     if (o) patch(o)
   })
 }
 
-export function updateObjects(ids: string[], label: string, patch: (o: CanvasObject) => void) {
+export function updateObjects(ids: string[], label: UiMessage, patch: (o: CanvasObject) => void) {
   commit(label, (d) => {
     for (const o of d.objects) if (ids.includes(o.id)) patch(o)
   })
@@ -202,8 +207,11 @@ export function updateObjects(ids: string[], label: string, patch: (o: CanvasObj
 export function deleteSelected() {
   const ids = useSelectionStore.getState().ids
   if (!ids.length) return
-  const names = ids.length === 1 ? objectLabel(findObject(ids[0])!) : `${ids.length} 个对象`
-  commit(`删除 ${names}`, (d) => {
+  // 单选时把对象名（用户自己的内容，不翻译）插进去；多选走复数分支。
+  // 名字现算：对象已经不在文档里时退回类型名，别让历史标签把这条 commit 拖崩。
+  const first = findObject(ids[0])
+  const name = first ? objectLabel(first) : t('objectType.shape')
+  commit(hist('deleteObjects', { count: ids.length, name }), (d) => {
     d.objects = d.objects.filter((o) => !ids.includes(o.id))
     // 成员不足 2 个的布局组失去意义，一并清掉（约束消失，剩余对象原地不动）
     if (d.layoutGroups?.length) {
@@ -239,7 +247,7 @@ export function duplicateSelected() {
       return copy
     })
   if (!clones.length) return
-  commit('复制对象', (d) => {
+  commit(hist('duplicateObjects'), (d) => {
     d.objects.push(...clones)
   })
   select(clones.map((c) => c.id))
@@ -251,12 +259,12 @@ export function changeZOrder(move: ZMove) {
   const ids = useSelectionStore.getState().ids
   if (!ids.length) return
   const labels: Record<ZMove, string> = {
-    top: '置于顶层',
-    bottom: '置于底层',
-    up: '上移一层',
-    down: '下移一层',
+    top: 'zTop',
+    bottom: 'zBottom',
+    up: 'zUp',
+    down: 'zDown',
   }
-  commit(labels[move], (d) => {
+  commit(hist(labels[move]), (d) => {
     // 从后往前处理，避免同批移动时互相挤压
     const picked = d.objects.filter((o) => ids.includes(o.id))
     const rest = d.objects.filter((o) => !ids.includes(o.id))
@@ -287,23 +295,11 @@ export function alignSelected(mode: AlignMode) {
   const ids = useSelectionStore.getState().ids
   if (!ids.length) return
   if ((mode === 'hdist' || mode === 'vdist') && ids.length < 3) {
-    status('等距分布需要至少选中 3 个对象')
+    status(note('needThreeForDistribute'))
     return
   }
   const primaryId = ids.at(-1)!
-  const labels: Record<AlignMode, string> = {
-    left: '左对齐',
-    hcenter: '水平居中',
-    right: '右对齐',
-    top: '顶对齐',
-    vcenter: '垂直居中',
-    bottom: '底对齐',
-    hdist: '水平等距',
-    vdist: '垂直等距',
-    samew: '等宽',
-    sameh: '等高',
-  }
-  commit(labels[mode], (d) => {
+  commit(msg(`alignMode.${mode}`, undefined, 'inspector'), (d) => {
     const objs = d.objects.filter((o) => ids.includes(o.id))
     const primary = objs.find((o) => o.id === primaryId)
     applyAlign(objs, mode, d.page, primary)
@@ -318,7 +314,7 @@ export function nudgeSelected(dx: number, dy: number) {
   warnBlockedGroups(blockedGroups, objects.length > 0)
   if (!objects.length) return
   const moving = new Set(objects.map((o) => o.id))
-  commit('移动对象', (d) => {
+  commit(hist('moveObjects', { count: objects.length }), (d) => {
     for (const o of d.objects) {
       if (!moving.has(o.id)) continue
       o.x += dx
@@ -348,9 +344,9 @@ export function selectAll() {
  */
 const confirmLoss = () =>
   askConfirm({
-    title: '当前文档无法保存到本机',
-    body: '浏览器存储不可用或已写满，切换后将无法从「最近文档」取回当前文档。仍要继续吗？',
-    confirmLabel: '仍要切换',
+    title: msg('confirm.docLossTitle', undefined, 'workspace'),
+    body: msg('confirm.docLossBody', undefined, 'workspace'),
+    confirmLabel: msg('confirm.docLossConfirm', undefined, 'workspace'),
     danger: true,
   })
 
@@ -366,7 +362,7 @@ export async function newBlankDocument(): Promise<void> {
   const next = emptyProject()
   if (!(await useDocumentStore.getState().switchDocument(next, newId('d'), confirmLoss))) return
   afterSwitch()
-  status('已新建空白文档，原文档可从「最近文档」取回')
+  status(note('blankCreated'))
 }
 
 /** 载入画布文件：每次载入都是一个新的编辑会话，因此给一个新的文档身份 */
@@ -374,32 +370,32 @@ export async function openLayoutDocument(doc: FigureDocument | ProjectDocument):
   if (!(await useDocumentStore.getState().switchDocument(doc, newId('d'), confirmLoss))) return
   afterSwitch()
   const s = useDocumentStore.getState()
-  status(`已载入：${s.projectMeta.name}（${s.canvases.length} 张画布）`)
+  status(note('documentLoaded', { name: s.projectMeta.name, count: s.canvases.length }))
 }
 
 /** 切回本机自动保存过的文档；沿用它原来的身份，槽位因此不会分叉 */
 export async function openRecentDocument(id: string): Promise<void> {
   const pd = await readAutosaveDoc(id)
   if (!pd) {
-    status('该文档的本机副本已不存在', 'error')
+    status(note('recentMissing'), 'error')
     return
   }
   if (!(await useDocumentStore.getState().switchDocument(pd, id, confirmLoss))) return
   afterSwitch()
-  status(`已切回：${pd.project.name}（${pd.canvases.length} 张画布）`)
+  status(note('documentReopened', { name: pd.project.name, count: pd.canvases.length }))
 }
 
 /* --------------------------------- 页面 ----------------------------------- */
 
 export function setPageSize(w: number, h: number) {
-  commit('修改画布尺寸', (d) => {
+  commit(hist('setPageSize'), (d) => {
     d.page.w = clamp(w, 10, 1000)
     d.page.h = clamp(h, 10, 1000)
   })
 }
 
 /** 页面的非尺寸设置（背景、页边距）；尺寸走 setPageSize */
-export function setPageSetup(patch: Partial<FigureDocument['page']>, label: string) {
+export function setPageSetup(patch: Partial<FigureDocument['page']>, label: UiMessage) {
   commit(label, (d) => {
     Object.assign(d.page, patch)
   })
@@ -413,25 +409,25 @@ export function setDocumentName(name: string) {
 /* -------------------------------- 参考线 ---------------------------------- */
 
 export function addGuide(axis: 'x' | 'y', pos: number) {
-  commit('添加参考线', (d) => {
+  commit(hist('addGuide'), (d) => {
     d.guides.push({ axis, pos })
   })
 }
 
 export function moveGuide(index: number, pos: number) {
-  commit('移动参考线', (d) => {
+  commit(hist('moveGuide'), (d) => {
     if (d.guides[index]) d.guides[index].pos = pos
   })
 }
 
 export function removeGuide(index: number) {
-  commit('删除参考线', (d) => {
+  commit(hist('deleteGuide'), (d) => {
     d.guides.splice(index, 1)
   })
 }
 
 export function clearGuides() {
-  commit('清除参考线', (d) => {
+  commit(hist('clearGuides'), (d) => {
     d.guides = []
   })
 }
@@ -444,7 +440,7 @@ export function clearGuides() {
  */
 export function reorderObject(fromId: string, targetId: string, position: 'above' | 'below') {
   if (fromId === targetId) return
-  commit('调整图层顺序', (d) => {
+  commit(hist('reorderLayers'), (d) => {
     const from = d.objects.find((o) => o.id === fromId)
     if (!from) return
     const rest = d.objects.filter((o) => o.id !== fromId)
@@ -458,7 +454,7 @@ export function reorderObject(fromId: string, targetId: string, position: 'above
 export function toggleHidden(id: string) {
   const o = findObject(id)
   if (!o) return
-  updateObject(id, o.hidden ? '显示对象' : '隐藏对象', (obj) => {
+  updateObject(id, hist(o.hidden ? 'showObject' : 'hideObject'), (obj) => {
     obj.hidden = !obj.hidden
   })
 }
@@ -466,13 +462,13 @@ export function toggleHidden(id: string) {
 export function toggleLocked(id: string) {
   const o = findObject(id)
   if (!o) return
-  updateObject(id, o.locked ? '解锁对象' : '锁定对象', (obj) => {
+  updateObject(id, hist(o.locked ? 'unlockObject' : 'lockObject'), (obj) => {
     obj.locked = !obj.locked
   })
 }
 
 export function renameObject(id: string, name: string) {
-  updateObject(id, '重命名对象', (o) => {
+  updateObject(id, hist('renameObject'), (o) => {
     o.name = name.trim() || undefined
   })
 }
@@ -482,60 +478,25 @@ export const selectionBounds = () => boundsOf(selectedObjects())
 
 /* ---------------------------- 图内元素 override ---------------------------- */
 
-/** manifest 里 prop 的中文名；未知属性原样显示，前端不硬编码 matplotlib 属性表 */
-export const PROP_LABEL: Record<string, string> = {
-  text: '内容',
-  fontsize: '字号',
-  color: '颜色',
-  weight: '字重',
-  style: '字形',
-  visible: '显示',
-  linewidth: '线宽',
-  linestyle: '线型',
-  markersize: '点径',
-  xlim: 'X 范围',
-  ylim: 'Y 范围',
-  position: '子图占比',
-  labelpad: '与轴距离',
-  rotation: '旋转',
-  frameon: '边框',
-  size_mm: '图幅',
-  pos_frac: '位置',
-  loc_frac: '位置',
-  endpoints_frac: '位置',
-  arrowstyle: '箭头样式',
-  alpha: '透明度',
-  fontfamily: '字体',
-  ha: '水平对齐',
-  va: '垂直对齐',
-  linespacing: '行距',
-  zorder: '堆叠层级',
-  bbox_visible: '背景',
-  bbox_facecolor: '背景色',
-  bbox_alpha: '背景透明度',
-  bbox_edgecolor: '边框色',
-  bbox_linewidth: '边框粗细',
-  bbox_pad: '内边距',
-  bbox_rounded: '圆角',
-  stroke_enabled: '描边',
-  stroke_color: '描边色',
-  stroke_width: '描边宽度',
-}
-
-export const propLabel = (prop: string) => PROP_LABEL[prop] ?? prop
+/**
+ * manifest 里 prop 的显示名。
+ *
+ * **matplotlib 的属性是开放集合**：脚本能暴露前端从没见过的 prop，所以查不到
+ * 翻译时**原样回退到属性名本身**（`linewidth`），而不是显示一个空白标签或
+ * 一串 `inspector.prop.foo`。前端不硬编码 matplotlib 属性表，这条回退就是
+ * 「不认识也不能坏」的那道保险。
+ */
+export const propLabel = (prop: string): string =>
+  t(`prop.${prop}`, { ns: 'inspector', defaultValue: prop })
 
 /**
- * enum 选项的中文名，按属性分档——"center" 在水平/垂直对齐里含义不同，
+ * enum 选项的显示名，按属性分档——"center" 在水平/垂直对齐里含义不同，
  * "normal" 在字重/字形里也不同，所以不能只按值查表。
- * 查不到的原样显示：具体字体名（Times New Roman 等）不该被翻译。
+ * 查不到的原样显示：具体字体名（Times New Roman 等）不该被翻译，
+ * 脚本自定义的枚举值也不该被吞掉。
  */
-const ENUM_LABEL: Record<string, Record<string, string>> = {
-  ha: { left: '左', center: '中', right: '右' },
-  va: { top: '上', center: '中', bottom: '下', baseline: '基线' },
-  fontfamily: { serif: '衬线', 'sans-serif': '无衬线', monospace: '等宽' },
-}
-
-export const optionLabel = (prop: string, value: string) => ENUM_LABEL[prop]?.[value] ?? value
+export const optionLabel = (prop: string, value: string): string =>
+  t(`enum.${prop}.${value}`, { ns: 'inspector', defaultValue: value })
 
 /**
  * 写入一条图内元素 override 并触发重渲染。
@@ -555,7 +516,7 @@ export function setOverride(
   value: unknown,
   immediate: boolean | RenderPolicy = false,
 ) {
-  updateObject<PanelObject>(panelId, `修改${propLabel(prop)}`, (o) => {
+  updateObject<PanelObject>(panelId, hist('setProp', { prop: propLabel(prop) }), (o) => {
     o.overrides = o.overrides.filter((p) => !(p.gid === gid && p.prop === prop))
     o.overrides.push({ gid, prop, value })
   })
@@ -569,7 +530,7 @@ export function setOverride(
  */
 export function hideElement(panelId: string, gid: string, label: string) {
   setOverride(panelId, gid, 'visible', false, true)
-  status(`已隐藏「${label}」，可在「已隐藏元素」里恢复`)
+  status(note('elementHidden', { label }))
 }
 
 /** 多选一起隐藏：一次撤销、一次渲染（键盘 Delete 走这条） */
@@ -581,10 +542,10 @@ export function hideElements(panelId: string, targets: { gid: string; label: str
   }
   setOverrides(
     panelId,
-    `隐藏 ${targets.length} 个图内元素`,
-    targets.map((t) => ({ gid: t.gid, prop: 'visible', value: false })),
+    hist('hideElements', { count: targets.length }),
+    targets.map((x) => ({ gid: x.gid, prop: 'visible', value: false })),
   )
-  status(`已隐藏 ${targets.length} 个元素，可在「已隐藏元素」里恢复`)
+  status(note('elementsHidden', { count: targets.length }))
 }
 
 /** 锁定/解锁图内元素：命中测试跳过锁定元素，元素树是唯一的解锁入口 */
@@ -592,7 +553,7 @@ export function toggleElementLocked(panelId: string, gid: string, label?: string
   const panel = findObject(panelId)
   if (panel?.type !== 'panel') return
   const locked = panel.lockedGids?.includes(gid) ?? false
-  updateObject<PanelObject>(panelId, locked ? '解锁图内元素' : '锁定图内元素', (o) => {
+  updateObject<PanelObject>(panelId, hist(locked ? 'unlockElement' : 'lockElement'), (o) => {
     const cur = o.lockedGids ?? []
     const next = locked ? cur.filter((g) => g !== gid) : [...cur, gid]
     o.lockedGids = next.length ? next : undefined
@@ -603,7 +564,7 @@ export function toggleElementLocked(panelId: string, gid: string, label?: string
     if (ui.selectedGids.includes(gid)) {
       ui.setSelectedGid(null)
     }
-    status(`已锁定「${label ?? gid}」，画布点击将跳过它`)
+    status(note('elementLocked', { label: label ?? gid }))
   }
 }
 
@@ -611,7 +572,7 @@ export function toggleElementLocked(panelId: string, gid: string, label?: string
 export function unhideElement(panelId: string, gid: string) {
   const panel = findObject(panelId)
   if (panel?.type !== 'panel') return
-  updateObject<PanelObject>(panelId, '恢复隐藏元素', (o) => {
+  updateObject<PanelObject>(panelId, hist('unhideElement'), (o) => {
     o.overrides = o.overrides.filter((p) => !(p.gid === gid && p.prop === 'visible'))
   })
   const next = findObject(panelId)
@@ -626,7 +587,7 @@ export function clearOverride(panelId: string, gid: string, prop: string) {
   const panel = findObject(panelId)
   if (panel?.type !== 'panel') return
   if (!panel.overrides.some((p) => p.gid === gid && p.prop === prop)) return
-  updateObject<PanelObject>(panelId, `恢复${propLabel(prop)}`, (o) => {
+  updateObject<PanelObject>(panelId, hist('clearProp', { prop: propLabel(prop) }), (o) => {
     o.overrides = o.overrides.filter((p) => !(p.gid === gid && p.prop === prop))
   })
   const next = findObject(panelId)
@@ -639,7 +600,7 @@ export function clearOverride(panelId: string, gid: string, prop: string) {
  */
 export function clearOverrides(
   panelId: string,
-  label: string,
+  label: UiMessage,
   targets: { gid: string; prop: string }[],
 ) {
   const panel = findObject(panelId)
@@ -660,13 +621,13 @@ export function clearOverrides(
 export function resetOverrides(panelId: string) {
   const panel = findObject(panelId)
   if (panel?.type !== 'panel' || !panel.overrides.length) return
-  updateObject<PanelObject>(panelId, '重置图内修改', (o) => {
+  updateObject<PanelObject>(panelId, hist('resetOverrides'), (o) => {
     o.overrides = []
   })
   // 清空之后的那个面板才是要渲染的变体（overrides 已经是空表）
   const cleared = findObject(panelId)
   if (cleared?.type === 'panel') requestRender(cleared, true)
-  status('已清空该面板的图内修改')
+  status(note('overridesCleared'))
 }
 
 /**
@@ -675,7 +636,7 @@ export function resetOverrides(panelId: string) {
  */
 export function setOverrides(
   panelId: string,
-  label: string,
+  label: UiMessage,
   patches: { gid: string; prop: string; value: unknown }[],
   render: boolean | RenderPolicy = true,
 ) {
@@ -696,7 +657,7 @@ export function setOverrides(
  */
 export function applyMixedAlign(
   panelId: string,
-  label: string,
+  label: UiMessage,
   patches: { gid: string; prop: string; value: unknown }[],
   moves: { id: string; x: number; y: number }[],
 ) {
@@ -743,7 +704,7 @@ export function seedBakedOverrides(panelId: string): number {
   if (panel?.type !== 'panel' || panel.overrides.length) return 0
   const baked = useAssetStore.getState().byId[panel.fileId]?.baked_overrides
   if (!baked?.length) return 0
-  updateObject<PanelObject>(panelId, '载入写回文件的基线', (o) => {
+  updateObject<PanelObject>(panelId, hist('seedBaked'), (o) => {
     o.overrides = structuredClone(baked)
   })
   return baked.length
@@ -758,7 +719,7 @@ export function enterElementEdit(panelId: string) {
   if (ui.layout === 'wide' && ui.leftOpen && ui.leftTab !== 'elements') {
     ui.setLeftTab('elements')
   }
-  if (seeded) status(`已载入写回文件时的基线（${seeded} 项）`)
+  if (seeded) status(note('bakedSeeded', { count: seeded }))
 }
 
 /* ------------------------------ 论文样式应用 -------------------------------- */
@@ -770,10 +731,10 @@ export function enterElementEdit(panelId: string) {
 export function applyStylePlan(plan: StylePlan, preset: StylePreset) {
   const touched = plan.panels.filter((p) => p.patches.length)
   if (!touched.length && !plan.annotationIds.length && !plan.subLabelIds.length && !plan.page) {
-    status('该样式没有可应用的内容', 'error')
+    status(note('styleEmpty'), 'error')
     return
   }
-  commit(`应用样式「${preset.name}」`, (d) => {
+  commit(hist('applyStyle', { name: preset.name }), (d) => {
     for (const { panel, patches } of touched) {
       const o = d.objects.find((x) => x.id === panel.id)
       if (o?.type !== 'panel') continue
@@ -783,21 +744,21 @@ export function applyStylePlan(plan: StylePlan, preset: StylePreset) {
       }
     }
     const applyText = (
-      t: TextObject,
+      obj: TextObject,
       s: { sizePt?: number; bold?: boolean; italic?: boolean; color?: string },
     ) => {
-      if (s.sizePt != null) t.sizePt = s.sizePt
-      if (s.bold != null) t.bold = s.bold
-      if (s.italic != null) t.italic = s.italic || undefined
-      if (s.color != null) t.color = s.color
+      if (s.sizePt != null) obj.sizePt = s.sizePt
+      if (s.bold != null) obj.bold = s.bold
+      if (s.italic != null) obj.italic = s.italic || undefined
+      if (s.color != null) obj.color = s.color
     }
     for (const id of plan.annotationIds) {
-      const t = d.objects.find((x) => x.id === id)
-      if (t?.type === 'text' && preset.annotation) applyText(t, preset.annotation)
+      const obj = d.objects.find((x) => x.id === id)
+      if (obj?.type === 'text' && preset.annotation) applyText(obj, preset.annotation)
     }
     for (const id of plan.subLabelIds) {
-      const t = d.objects.find((x) => x.id === id)
-      if (t?.type === 'text' && preset.subLabel) applyText(t, preset.subLabel)
+      const obj = d.objects.find((x) => x.id === id)
+      if (obj?.type === 'text' && preset.subLabel) applyText(obj, preset.subLabel)
     }
     if (plan.page) {
       d.page.w = clamp(plan.page.w, 10, 1000)
@@ -809,21 +770,26 @@ export function applyStylePlan(plan: StylePlan, preset: StylePreset) {
     if (next?.type === 'panel') requestRender(next, true)
   }
   const parts = [
-    touched.length && `${touched.length} 个面板`,
-    plan.annotationIds.length && `${plan.annotationIds.length} 条标注`,
-    plan.subLabelIds.length && `${plan.subLabelIds.length} 个序号标签`,
-    plan.page && '页面尺寸',
-  ].filter(Boolean)
-  status(`已应用样式「${preset.name}」到 ${parts.join('、')}（${modKey('Z')} 可整体撤销）`)
+    touched.length && t('status.stylePartPanels', { ns: 'workspace', count: touched.length }),
+    plan.annotationIds.length &&
+      t('status.stylePartAnnotations', { ns: 'workspace', count: plan.annotationIds.length }),
+    plan.subLabelIds.length &&
+      t('status.stylePartSubLabels', { ns: 'workspace', count: plan.subLabelIds.length }),
+    plan.page && t('status.stylePartPage', { ns: 'workspace' }),
+  ].filter(Boolean) as string[]
+  status(
+    note('styleApplied', {
+      name: preset.name,
+      parts: listJoin(parts),
+      undo: modKey('Z'),
+    }),
+  )
 }
 
 /* ------------------------------ 结构化布局组 -------------------------------- */
 
-const LAYOUT_KIND_LABEL: Record<LayoutGroup['kind'], string> = {
-  row: '行布局',
-  col: '列布局',
-  grid: '网格布局',
-}
+export const layoutKindLabel = (kind: LayoutGroup['kind']): string =>
+  t(`layoutKind.${kind}`, { ns: 'workspace' })
 
 export function findLayoutGroup(id: string | undefined): LayoutGroup | undefined {
   if (!id) return undefined
@@ -845,7 +811,7 @@ export function createLayoutGroup(kind: LayoutGroup['kind']) {
   const ids = useSelectionStore.getState().ids
   const objs = selectedObjects().filter((o) => !o.hidden)
   if (objs.length < 2) {
-    status('至少选中 2 个对象才能创建布局组')
+    status(note('needTwoForLayoutGroup'))
     return
   }
   const gid = newId('g')
@@ -859,12 +825,12 @@ export function createLayoutGroup(kind: LayoutGroup['kind']) {
     align: 'start',
     uniform: null,
   }
-  commit(`创建${LAYOUT_KIND_LABEL[kind]}`, (d) => {
+  commit(hist('createLayoutGroup', { kind: layoutKindLabel(kind) }), (d) => {
     for (const o of d.objects) if (ids.includes(o.id)) o.groupId = gid
     d.layoutGroups = [...(d.layoutGroups ?? []), group]
     applyReflowDraft(d, group)
   })
-  status(`已创建${LAYOUT_KIND_LABEL[kind]}（${objs.length} 个成员）；改间距/列数会自动重排`)
+  status(note('layoutGroupCreated', { kind: layoutKindLabel(kind), count: objs.length }))
 }
 
 /** 在 immer draft 里就地重排（创建 / 参数修改 / 自动触发共用） */
@@ -885,7 +851,7 @@ export function updateLayoutGroup(
   id: string,
   patch: Partial<Pick<LayoutGroup, 'kind' | 'gap' | 'cols' | 'align' | 'uniform'>>,
 ) {
-  commit('调整布局组', (d) => {
+  commit(hist('updateLayoutGroup'), (d) => {
     const g = d.layoutGroups?.find((x) => x.id === id)
     if (!g) return
     Object.assign(g, patch)
@@ -897,7 +863,7 @@ export function updateLayoutGroup(
 export function reflowLayoutGroup(id: string) {
   const g = findLayoutGroup(id)
   if (!g) return
-  commit('重新排列布局组', (d) => {
+  commit(hist('reflowLayoutGroup'), (d) => {
     const gg = d.layoutGroups?.find((x) => x.id === id)
     if (gg) applyReflowDraft(d, gg)
   })
@@ -905,17 +871,17 @@ export function reflowLayoutGroup(id: string) {
 
 /** 解散布局组：成员位置保持现状，只移除约束与成组 */
 export function dissolveLayoutGroup(id: string) {
-  commit('解散布局组', (d) => {
+  commit(hist('dissolveLayoutGroup'), (d) => {
     d.layoutGroups = (d.layoutGroups ?? []).filter((g) => g.id !== id)
     for (const o of d.objects) if (o.groupId === id) o.groupId = undefined
   })
-  status('已解散布局组，对象位置保持不变')
+  status(note('layoutGroupDissolved'))
 }
 
 export function toggleLayoutPinned(ids: string[]) {
   if (!ids.length) return
   const anyUnpinned = selectedObjects().some((o) => ids.includes(o.id) && !o.layoutPinned)
-  updateObjects(ids, anyUnpinned ? '固定位置（不随重排）' : '跟随布局约束', (o) => {
+  updateObjects(ids, hist(anyUnpinned ? 'pinLayout' : 'unpinLayout'), (o) => {
     o.layoutPinned = anyUnpinned ? true : undefined
   })
 }
@@ -967,7 +933,7 @@ export function startLayoutAutoReflow(): () => void {
       const play = flipCapture(els)
 
       let moved = 0
-      commit('自动重排布局组', (d) => {
+      commit(hist('autoReflow'), (d) => {
         for (const g of dirty) {
           const gg = d.layoutGroups?.find((x) => x.id === g.id)
           if (gg) moved += applyReflowDraft(d, gg)
@@ -976,7 +942,7 @@ export function startLayoutAutoReflow(): () => void {
       snapshot(useDocumentStore.getState().doc)
       if (moved) {
         play()
-        status(`布局组已自动重排（${modKey('Z')} 可撤销）`)
+        status(note('layoutAutoReflowed', { undo: modKey('Z') }))
       }
     }, 120)
   })
@@ -1030,8 +996,8 @@ export function warnBlockedGroups(blockedGroups: number, movedAny: boolean) {
   if (!blockedGroups) return
   status(
     movedAny
-      ? `组内有锁定对象，已跳过 ${blockedGroups} 个组`
-      : '组内有锁定对象，先解锁才能移动整组',
+      ? note('blockedGroupsSkipped', { count: blockedGroups })
+      : note('blockedGroupsAll'),
   )
 }
 
@@ -1052,14 +1018,14 @@ export function expandGroups(ids: string[]): string[] {
 export function groupSelected() {
   const ids = useSelectionStore.getState().ids
   if (ids.length < 2) {
-    status('至少选中 2 个对象才能成组')
+    status(note('needTwoForGroup'))
     return
   }
   const gid = newId('g')
-  updateObjects(ids, `成组 ${ids.length} 个对象`, (o) => {
+  updateObjects(ids, hist('group', { count: ids.length }), (o) => {
     o.groupId = gid
   })
-  status(`已成组 ${ids.length} 个对象，之后点其中之一会整组选中`)
+  status(note('grouped', { count: ids.length }))
 }
 
 export function ungroupSelected() {
@@ -1068,10 +1034,10 @@ export function ungroupSelected() {
     selectedObjects().map((o) => o.groupId).filter(Boolean) as string[],
   )
   if (!gids.size) {
-    status('选中的对象不在任何组里')
+    status(note('notInAnyGroup'))
     return
   }
-  commit('取消成组', (d) => {
+  commit(hist('ungroup'), (d) => {
     for (const o of d.objects) if (ids.includes(o.id)) o.groupId = undefined
     // 该组若带布局约束，成员散了约束也一并移除
     if (d.layoutGroups?.length) {
@@ -1092,24 +1058,11 @@ export const selectionHasGroup = () => selectedObjects().some((o) => o.groupId)
 /** 对齐的参照框：选区包围盒 / 整个画布 / 最后选中的那个对象 */
 export type AlignRef = 'selection' | 'page' | 'primary'
 
-export const ALIGN_REF_LABEL: Record<AlignRef, string> = {
-  selection: '选区',
-  page: '画布',
-  primary: '最后选中',
-}
+export const alignRefLabel = (ref: AlignRef): string =>
+  t(`alignRef.${ref}`, { ns: 'inspector' })
 
-const ALIGN_LABEL: Record<AlignMode, string> = {
-  left: '左对齐',
-  hcenter: '水平居中',
-  right: '右对齐',
-  top: '顶对齐',
-  vcenter: '垂直居中',
-  bottom: '底对齐',
-  hdist: '水平等距',
-  vdist: '垂直等距',
-  samew: '等宽',
-  sameh: '等高',
-}
+export const alignModeLabel = (mode: AlignMode): string =>
+  t(`alignMode.${mode}`, { ns: 'inspector' })
 
 /** 在给定参照框里就地对齐；直接改传入对象（immer draft） */
 function alignIn(objs: CanvasObject[], mode: AlignMode, box: Rect): void {
@@ -1161,11 +1114,11 @@ export function alignSelectedTo(mode: AlignMode, ref: AlignRef) {
   const ids = useSelectionStore.getState().ids
   if (!ids.length) return
   if ((mode === 'hdist' || mode === 'vdist') && ids.length < 3) {
-    status('等距分布需要至少选中 3 个对象')
+    status(note('needThreeForDistribute'))
     return
   }
   const primaryId = ids.at(-1)!
-  commit(`${ALIGN_LABEL[mode]}（${ALIGN_REF_LABEL[ref]}）`, (d) => {
+  commit(hist('alignWithRef', { mode: alignModeLabel(mode), ref: alignRefLabel(ref) }), (d) => {
     const objs = d.objects.filter((o) => ids.includes(o.id))
     if (!objs.length) return
     const primary = objs.find((o) => o.id === primaryId) ?? objs[objs.length - 1]
@@ -1184,7 +1137,7 @@ export function alignSelectedTo(mode: AlignMode, ref: AlignRef) {
 export function setSelectionSpacing(axis: 'x' | 'y', gap: number) {
   const ids = useSelectionStore.getState().ids
   if (ids.length < 2) return
-  commit(axis === 'x' ? '设置水平间距' : '设置垂直间距', (d) => {
+  commit(hist(axis === 'x' ? 'spacingX' : 'spacingY'), (d) => {
     const objs = d.objects.filter((o) => ids.includes(o.id))
     const s = axis === 'x' ? 'w' : 'h'
     const sorted = objs.slice().sort((a, b) => a[axis] - b[axis])
@@ -1242,18 +1195,18 @@ export function copySelectionStyle() {
       rotation: src.rotation,
       opacity: src.opacity,
     }
-    status('已复制面板样式（裁剪 / 旋转 / 不透明度）')
+    status(note('styleCopiedPanel'))
   } else if (src?.type === 'text') {
     styleClip = { kind: 'text', ...pickKeys(src, TEXT_STYLE_KEYS) }
-    status('已复制文字样式（字号 / 粗斜下划线 / 颜色 / 行距 / 背景描边）')
+    status(note('styleCopiedText'))
   } else if (src?.type === 'arrow') {
     styleClip = { kind: 'arrow', ...pickKeys(src, ARROW_STYLE_KEYS) }
-    status('已复制箭头样式（线宽 / 颜色 / 端型 / 线型）')
+    status(note('styleCopiedArrow'))
   } else if (src?.type === 'shape') {
     styleClip = { kind: 'shape', ...pickKeys(src, SHAPE_STYLE_KEYS) }
-    status('已复制形状样式（描边 / 填充 / 圆角 / 线型）')
+    status(note('styleCopiedShape'))
   } else {
-    status('先选中要复制样式的对象', 'error')
+    status(note('styleCopyNeedSelection'), 'error')
   }
 }
 
@@ -1264,11 +1217,10 @@ export function pasteSelectionStyle() {
     .filter((o) => o.type === clip.kind)
     .map((o) => o.id)
   if (!ids.length) {
-    const kindLabel = { panel: '面板', text: '文字', arrow: '箭头', shape: '形状' }[clip.kind]
-    status(`选区里没有可粘贴的${kindLabel}`, 'error')
+    status(note('stylePasteNoTarget', { kind: t(`objectType.${clip.kind}`) }), 'error')
     return
   }
-  updateObjects(ids, '粘贴样式', (o) => {
+  updateObjects(ids, hist('pasteStyle'), (o) => {
     if (clip.kind === 'panel' && o.type === 'panel') {
       rotatePanelDraft(o, clip.rotation ?? 0)
       applyCropDraft(o, clip.crop)
@@ -1281,14 +1233,14 @@ export function pasteSelectionStyle() {
       assignKeys(o, clip, SHAPE_STYLE_KEYS)
     }
   })
-  status(`已粘贴样式到 ${ids.length} 个对象`)
+  status(note('stylePasted', { count: ids.length }))
 }
 
 /* ========================================================================== */
 /*  面板几何：旋转 / 裁剪 / Fit / Fill                                          */
 /* ========================================================================== */
 
-const updatePanels = (ids: string[], label: string, patch: (o: PanelObject) => void) =>
+const updatePanels = (ids: string[], label: UiMessage, patch: (o: PanelObject) => void) =>
   updateObjects(ids, label, (o) => {
     if (o.type === 'panel') patch(o)
   })
@@ -1343,31 +1295,33 @@ export function applyCropDraft(o: PanelObject, next?: CropRect): void {
 }
 
 export function rotatePanels(ids: string[], next: PanelRotation) {
-  updatePanels(ids, next === 0 ? '取消旋转' : `旋转 ${next}°`, (o) => rotatePanelDraft(o, next))
+  updatePanels(ids, next === 0 ? hist('rotateReset') : hist('rotate', { deg: next }), (o) =>
+    rotatePanelDraft(o, next),
+  )
 }
 
 export function setPanelOpacity(ids: string[], v: number) {
   const opacity = clamp(v, 0, 1)
-  updatePanels(ids, '修改不透明度', (o) => {
+  updatePanels(ids, hist('setOpacity'), (o) => {
     o.opacity = opacity >= 1 ? undefined : opacity
   })
 }
 
 export function setPanelAspectLocked(ids: string[], locked: boolean) {
-  updatePanels(ids, locked ? '锁定宽高比' : '解锁宽高比', (o) => {
+  updatePanels(ids, hist(locked ? 'lockAspect' : 'unlockAspect'), (o) => {
     o.aspectLocked = locked ? undefined : false
   })
 }
 
 export function resetPanelCrop(ids: string[]) {
-  updatePanels(ids, '重置裁剪', (o) => {
+  updatePanels(ids, hist('resetCrop'), (o) => {
     if (o.crop) applyCropDraft(o, undefined)
   })
 }
 
 /** Fit：清掉裁剪，整图等比缩到当前框内，框跟着收成图的比例（居中） */
 export function fitPanels(ids: string[]) {
-  updatePanels(ids, '完整放入框内', (o) => {
+  updatePanels(ids, hist('fitPanel'), (o) => {
     const box = panelContentSize(o)
     const ar = o.nativeW / o.nativeH
     let w = box.w
@@ -1387,7 +1341,7 @@ export function fitPanels(ids: string[]) {
 
 /** Fill：框一点不动，用居中裁剪把溢出的部分切掉 */
 export function fillPanels(ids: string[]) {
-  updatePanels(ids, '填满当前框', (o) => {
+  updatePanels(ids, hist('fillPanel'), (o) => {
     const box = panelContentSize(o)
     const r = box.w / box.h
     const a = o.nativeW / o.nativeH
@@ -1398,7 +1352,7 @@ export function fillPanels(ids: string[]) {
 
 /** 恢复原始比例：保持内容宽度，按（裁剪后的）原始长宽比修高度 */
 export function restorePanelAspect(ids: string[]) {
-  updatePanels(ids, '恢复原始比例', (o) => {
+  updatePanels(ids, hist('restoreAspect'), (o) => {
     const w = panelContentSize(o).w
     const ar = (o.nativeW * (o.crop?.w ?? 1)) / (o.nativeH * (o.crop?.h ?? 1))
     setContentSize(o, w, w / ar)
@@ -1407,7 +1361,7 @@ export function restorePanelAspect(ids: string[]) {
 
 /** 恢复原始尺寸：回到素材自身的 mm 尺寸（裁剪比例仍生效） */
 export function restorePanelNativeSize(ids: string[]) {
-  updatePanels(ids, '恢复原始尺寸', (o) => {
+  updatePanels(ids, hist('restoreNativeSize'), (o) => {
     setContentSize(o, o.nativeW * (o.crop?.w ?? 1), o.nativeH * (o.crop?.h ?? 1))
   })
 }
@@ -1423,9 +1377,9 @@ export async function replacePanelAsset(panelId: string, info: PanelInfo): Promi
   if (
     panel.overrides.length &&
     !(await askConfirm({
-      title: `替换为「${info.name}」？`,
-      body: `当前面板有 ${panel.overrides.length} 项图内修改。这些修改绑定在原脚本的元素上，换素材后无法保留，将被清空（可撤销）。位置、尺寸、裁剪与层级都会保留。`,
-      confirmLabel: '替换并清空修改',
+      title: msg('confirm.replaceAssetTitle', { name: info.name }, 'workspace'),
+      body: msg('confirm.replaceAssetBody', { count: panel.overrides.length }, 'workspace'),
+      confirmLabel: msg('confirm.replaceAssetConfirm', undefined, 'workspace'),
       danger: true,
     }))
   ) {
@@ -1434,7 +1388,7 @@ export async function replacePanelAsset(panelId: string, info: PanelInfo): Promi
   if (useUiStore.getState().elementPanelId === panelId) {
     useUiStore.getState().setElementPanel(null)
   }
-  updateObject<PanelObject>(panelId, `替换素材为 ${info.name}`, (o) => {
+  updateObject<PanelObject>(panelId, hist('replaceAsset', { name: info.name }), (o) => {
     o.fileId = info.id
     o.fileKind = info.kind
     o.nativeW = info.native_w_mm
@@ -1446,6 +1400,6 @@ export async function replacePanelAsset(panelId: string, info: PanelInfo): Promi
     o.overrides = info.baked_overrides ? structuredClone(info.baked_overrides) : []
   })
   useAssetStore.getState().markUsed(info.id)
-  status(`已替换为「${info.name}」，位置与尺寸保持不变`)
+  status(note('assetReplaced', { name: info.name }))
   return true
 }

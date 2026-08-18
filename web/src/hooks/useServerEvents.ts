@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { msg, t } from '@/i18n'
 import { subscribeEvents, type ServerEvent } from '@/lib/api'
 import { useAiStore } from '@/store/aiStore'
 import { useAssetStore } from '@/store/assetStore'
@@ -11,11 +12,11 @@ import { useUiStore } from '@/store/uiStore'
 const short = (id: string) => id.split('/').pop()?.replace(/\.[^.]+$/, '') ?? id
 const stemOf = (fileId: string) => short(fileId)
 
-const COST_HINT: Record<string, string> = {
-  heavy: '冷启动可能需要几分钟',
-  medium: '冷启动约十几秒',
-  light: '',
-}
+/** 冷启动耗时提示；light 没有提示（本来就快） */
+const costHint = (cost: string): string =>
+  cost === 'heavy' || cost === 'medium'
+    ? t(`status.coldHint.${cost}`, { ns: 'workspace' })
+    : ''
 
 /** 单条事件的处理；抽成具名函数，免得 subscribeEvents 的两个参数挤成一坨 */
 function handleEvent(ev: ServerEvent) {
@@ -40,18 +41,31 @@ function handleEvent(ev: ServerEvent) {
       // 「渲染中」之后没人会来收掉它（它自己根本没在渲染）。
       render.noteBuilding(ev.id, { cold: !!ev.cold, cost: ev.cost ?? '' })
       if (ev.cold) {
-        const hint = COST_HINT[ev.cost ?? ''] ?? ''
-        setStatus(`正在构建 ${short(ev.id)}${hint ? `（${hint}）` : '…'}`)
+        const hint = costHint(ev.cost ?? '')
+        setStatus(
+          msg(
+            hint ? 'status.buildingWithHint' : 'status.building',
+            { name: short(ev.id), hint },
+            'workspace',
+          ),
+        )
       }
       break
     }
     case 'render.done':
       render.noteBuilding(ev.id, null)
-      setStatus(`渲染完成：${short(ev.id)}`)
+      setStatus(msg('status.renderDone', { name: short(ev.id) }, 'workspace'))
       break
     case 'render.failed':
       render.noteBuilding(ev.id, null)
-      setStatus(`渲染失败：${short(ev.id)}${ev.error ? ` — ${ev.error}` : ''}`, 'error')
+      setStatus(
+        msg(
+          ev.error ? 'status.renderFailedWithError' : 'status.renderFailed',
+          { name: short(ev.id), error: ev.error ?? '' },
+          'workspace',
+        ),
+        'error',
+      )
       break
 
     case 'panel.file_changed': {
@@ -66,7 +80,7 @@ function handleEvent(ev: ServerEvent) {
       render.markStale([...new Set(affected)])
       useAssetStore.getState().load()
       if (affected.length) {
-        setStatus(`脚本已更新，面板已按新脚本重渲染（${affected.length} 个）`)
+        setStatus(msg('status.scriptChanged', { count: affected.length }, 'workspace'))
       }
       break
     }
@@ -85,11 +99,17 @@ function handleEvent(ev: ServerEvent) {
         render.markStale([sess.fileId])
       }
       setStatus(
-        ev.status === 'done'
-          ? ev.changed
-            ? 'AI 已修改脚本，正在重建图表…'
-            : 'AI 运行完成，但脚本没有变化'
-          : `AI 任务${ev.status === 'timeout' ? '超时' : '失败'}`,
+        msg(
+          ev.status === 'done'
+            ? ev.changed
+              ? 'status.aiChanged'
+              : 'status.aiNoChange'
+            : ev.status === 'timeout'
+              ? 'status.aiTimeout'
+              : 'status.aiFailed',
+          undefined,
+          'ai',
+        ),
         ev.status === 'done' ? 'info' : 'error',
       )
       break

@@ -9,6 +9,7 @@
  * jsdom 说明：这里断言的是**数值与结构**——端点比例、包围盒、SVG 属性、
  * 手柄方向表。真实指针命中由 hitTest.test.tsx 与审计的 Playwright 背书。
  */
+import { literal } from '@/i18n'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -195,7 +196,7 @@ describe('拖拽创建直线', () => {
 
 describe('端点拖拽把直线掰斜', () => {
   it('旧文档的水平线也能掰（读取走兜底），包围盒重新贴合线段', () => {
-    useDocumentStore.getState().commit('加线', (d) => {
+    useDocumentStore.getState().commit(literal('加线'), (d) => {
       d.objects.push(legacyLine())
     })
     // 端点绝对位置：start(10, 20.005) → end(50, 20.005)；把 end 往下拖 20mm
@@ -212,7 +213,7 @@ describe('端点拖拽把直线掰斜', () => {
   })
 
   it('是一条可撤销的历史（标签认直线，不是箭头）', () => {
-    useDocumentStore.getState().commit('加线', (d) => {
+    useDocumentStore.getState().commit(literal('加线'), (d) => {
       d.objects.push(legacyLine())
     })
     startEndpointDrag(down(0, 0), 's1', 'end')
@@ -226,7 +227,7 @@ describe('端点拖拽把直线掰斜', () => {
   })
 
   it('锁定的直线不响应端点拖拽', () => {
-    useDocumentStore.getState().commit('加线', (d) => {
+    useDocumentStore.getState().commit(literal('加线'), (d) => {
       d.objects.push(legacyLine({ locked: true }))
     })
     startEndpointDrag(down(0, 0), 's1', 'end')

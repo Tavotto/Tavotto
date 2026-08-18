@@ -9,6 +9,7 @@
  *      但**两种模式下后端渲染都推迟到手势结束**；
  *   4. 两个独立控件的操作绝不被合并成一条历史。
  */
+import { literal } from '@/i18n'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -210,7 +211,7 @@ beforeEach(async () => {
   useSelectionStore.getState().clear()
   useRenderStore.getState().clear()
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_style_preview')
-  useDocumentStore.getState().commit('加面板', (d) => {
+  useDocumentStore.getState().commit(literal('加面板'), (d) => {
     d.objects.push(panelOf())
   })
   useRenderStore.getState().patch(renderKeyOf(panelOf()), {

@@ -1,0 +1,75 @@
+{
+  "alignMode": {
+    "bottom": "底对齐",
+    "hcenter": "水平居中",
+    "hdist": "水平等距",
+    "left": "左对齐",
+    "right": "右对齐",
+    "sameh": "等高",
+    "samew": "等宽",
+    "top": "顶对齐",
+    "vcenter": "垂直居中",
+    "vdist": "垂直等距"
+  },
+  "alignRef": {
+    "page": "画布",
+    "primary": "最后选中",
+    "selection": "选区"
+  },
+  "enum": {
+    "fontfamily": {
+      "monospace": "等宽",
+      "sans-serif": "无衬线",
+      "serif": "衬线"
+    },
+    "ha": {
+      "center": "中",
+      "left": "左",
+      "right": "右"
+    },
+    "va": {
+      "baseline": "基线",
+      "bottom": "下",
+      "center": "中",
+      "top": "上"
+    }
+  },
+  "prop": {
+    "alpha": "透明度",
+    "arrowstyle": "箭头样式",
+    "bbox_alpha": "背景透明度",
+    "bbox_edgecolor": "边框色",
+    "bbox_facecolor": "背景色",
+    "bbox_linewidth": "边框粗细",
+    "bbox_pad": "内边距",
+    "bbox_rounded": "圆角",
+    "bbox_visible": "背景",
+    "color": "颜色",
+    "endpoints_frac": "位置",
+    "fontfamily": "字体",
+    "fontsize": "字号",
+    "frameon": "边框",
+    "ha": "水平对齐",
+    "labelpad": "与轴距离",
+    "linespacing": "行距",
+    "linestyle": "线型",
+    "linewidth": "线宽",
+    "loc_frac": "位置",
+    "markersize": "点径",
+    "pos_frac": "位置",
+    "position": "子图占比",
+    "rotation": "旋转",
+    "size_mm": "图幅",
+    "stroke_color": "描边色",
+    "stroke_enabled": "描边",
+    "stroke_width": "描边宽度",
+    "style": "字形",
+    "text": "内容",
+    "va": "垂直对齐",
+    "visible": "显示",
+    "weight": "字重",
+    "xlim": "X 范围",
+    "ylim": "Y 范围",
+    "zorder": "堆叠层级"
+  }
+}

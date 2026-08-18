@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { msg, type UiMessage } from '@/i18n'
 import { newId } from '@/lib/id'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
@@ -56,13 +57,20 @@ function buildClipPayload(): ClipPayload | null {
   }
 }
 
+/** 剪贴板的历史标签与提示都在 workspace 命名空间 */
+const hist = (key: string, values?: Record<string, unknown>): UiMessage =>
+  msg(`history.${key}`, values, 'workspace')
+const note = (key: string, values?: Record<string, unknown>): UiMessage =>
+  msg(`status.${key}`, values, 'workspace')
+
 function announceCopied(payload: ClipPayload): void {
   useUiStore
     .getState()
     .setStatus(
-      payload.objects.length === 1
-        ? `已复制 ${objectLabel(payload.objects[0])}`
-        : `已复制 ${payload.objects.length} 个对象（可粘贴到其他布局文档）`,
+      note('objectsCopied', {
+        count: payload.objects.length,
+        name: objectLabel(payload.objects[0]),
+      }),
     )
 }
 
@@ -73,7 +81,7 @@ export async function copySelectedObjects(): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(JSON.stringify(payload))
   } catch {
-    useUiStore.getState().setStatus('无法访问剪贴板（浏览器权限被拒）', 'error')
+    useUiStore.getState().setStatus(note('clipboardWriteDenied'), 'error')
     return false
   }
   announceCopied(payload)
@@ -191,11 +199,11 @@ export function materializeRelink(resolved: MissingAsset[]): void {
   const assets = useAssetStore.getState().byId
   const relink = resolved.filter((m) => m.relinkTo && assets[m.relinkTo])
   if (!relink.length) {
-    useUiStore.getState().setStatus('未重链接任何面板；缺失素材的面板保持原样')
+    useUiStore.getState().setStatus(note('relinkNone'))
     return
   }
   const byFileId = new Map(relink.map((m) => [m.fileId, assets[m.relinkTo!]]))
-  useDocumentStore.getState().commit(`重新链接 ${relink.length} 个素材`, (d) => {
+  useDocumentStore.getState().commit(hist('relinkAssets', { count: relink.length }), (d) => {
     for (const o of d.objects) {
       if (o.type !== 'panel') continue
       const info = byFileId.get(o.fileId)
@@ -211,7 +219,7 @@ export function materializeRelink(resolved: MissingAsset[]): void {
       o.overrides = info.baked_overrides ? structuredClone(info.baked_overrides) : []
     }
   })
-  useUiStore.getState().setStatus(`已重新链接 ${relink.length} 个素材（${modKey('Z')} 可撤销）`)
+  useUiStore.getState().setStatus(note('relinked', { count: relink.length, undo: modKey('Z') }))
 }
 
 /**
@@ -228,7 +236,7 @@ export async function pasteObjects(): Promise<boolean> {
   if (typeof navigator.clipboard?.readText !== 'function') {
     if (!readUnsupportedNotified) {
       readUnsupportedNotified = true
-      useUiStore.getState().setStatus('浏览器不支持读取剪贴板，对象粘贴不可用', 'error')
+      useUiStore.getState().setStatus(note('clipboardReadUnsupported'), 'error')
     }
     return false
   }
@@ -241,7 +249,7 @@ export async function pasteObjects(): Promise<boolean> {
     const denied =
       (err as { name?: string } | null)?.name === 'NotAllowedError' && document.hasFocus?.()
     if (denied) {
-      useUiStore.getState().setStatus('无法读取剪贴板（浏览器权限被拒）', 'error')
+      useUiStore.getState().setStatus(note('clipboardReadDenied'), 'error')
     }
     return false // 其余情况（失焦、瞬态异常）保持安静，不打扰
   }
@@ -344,7 +352,7 @@ export function materializePaste(payload: ClipPayload, resolved: MissingAsset[])
   }
 
   if (!clones.length) {
-    useUiStore.getState().setStatus('没有可粘贴的对象（缺失素材均被跳过）', 'error')
+    useUiStore.getState().setStatus(note('pasteNothing'), 'error')
     return
   }
 
@@ -356,7 +364,7 @@ export function materializePaste(payload: ClipPayload, resolved: MissingAsset[])
       order: g.order.map((oid) => idMap.get(oid)).filter((x): x is string => !!x),
     }))
 
-  commit(`粘贴 ${clones.length} 个对象`, (d) => {
+  commit(hist('pasteObjects', { count: clones.length }), (d) => {
     d.objects.push(...clones)
     if (carriedGroups.length) {
       d.layoutGroups = [...(d.layoutGroups ?? []), ...carriedGroups]
@@ -366,8 +374,8 @@ export function materializePaste(payload: ClipPayload, resolved: MissingAsset[])
   useUiStore
     .getState()
     .setStatus(
-      `已粘贴 ${clones.length} 个对象` +
-        (skipped ? `（跳过 ${skipped} 个缺失素材的面板）` : '') +
-        `（${modKey('Z')} 可撤销）`,
+      skipped
+        ? note('pastedWithSkips', { count: clones.length, skipped, undo: modKey('Z') })
+        : note('pasted', { count: clones.length, undo: modKey('Z') }),
     )
 }

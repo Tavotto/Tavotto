@@ -7,6 +7,7 @@
  * - 画箭头 / 直线：shift 锁 15° 角（与端点拖拽同一档）
  * - draft 带真实端点：预览里是什么，松手落下来就是什么
  */
+import { literal } from '@/i18n'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { useDocumentStore } from '@/store/documentStore'
@@ -57,7 +58,7 @@ afterEach(() => {
 
 describe('shift 移动锁方向', () => {
   it('近似水平的拖动锁成纯水平（垂直分量归零，无浮点残差）', () => {
-    useDocumentStore.getState().commit('加', (d) => {
+    useDocumentStore.getState().commit(literal('加'), (d) => {
       d.objects.push(rect40x20())
     })
     useSelectionStore.getState().set(['r1'])
@@ -71,7 +72,7 @@ describe('shift 移动锁方向', () => {
   })
 
   it('接近对角线时锁 45°（dx 与 dy 相等），不再吸到单轴', () => {
-    useDocumentStore.getState().commit('加', (d) => {
+    useDocumentStore.getState().commit(literal('加'), (d) => {
       d.objects.push(rect40x20())
     })
     useSelectionStore.getState().set(['r1'])
@@ -87,7 +88,7 @@ describe('shift 移动锁方向', () => {
 
 describe('shift 缩放等比', () => {
   it('角柄 + shift：即使 alt 反转也强制等比', () => {
-    useDocumentStore.getState().commit('加', (d) => {
+    useDocumentStore.getState().commit(literal('加'), (d) => {
       d.objects.push(rect40x20())
     })
     startResizeDrag(down(0, 0), 'r1', 'se')
@@ -100,7 +101,7 @@ describe('shift 缩放等比', () => {
   })
 
   it('边柄 + shift：单轴拖动也等比缩放另一边', () => {
-    useDocumentStore.getState().commit('加', (d) => {
+    useDocumentStore.getState().commit(literal('加'), (d) => {
       d.objects.push(rect40x20())
     })
     startResizeDrag(down(0, 0), 'r1', 'e')
@@ -113,7 +114,7 @@ describe('shift 缩放等比', () => {
   })
 
   it('边柄不按 shift：保持现状，只改一边', () => {
-    useDocumentStore.getState().commit('加', (d) => {
+    useDocumentStore.getState().commit(literal('加'), (d) => {
       d.objects.push(rect40x20())
     })
     startResizeDrag(down(0, 0), 'r1', 'e')

@@ -1,3 +1,4 @@
+import { literal } from '@/i18n'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { runUndoRedo, undoRedoBlocked } from './useKeyboard'
 import { useDocumentStore } from '@/store/documentStore'
@@ -61,17 +62,17 @@ describe('undoRedoBlocked', () => {
 
 describe('拖动中途按 ⌘Z', () => {
   beforeEach(reset)
-  afterEach(() => useUiStore.getState().setStatus('')) // 顺手清掉 4.5s 的状态计时器
+  afterEach(() => useUiStore.getState().setStatus(null)) // 顺手清掉 4.5s 的状态计时器
 
   it('拖动进行中根本不会调到 documentStore.undo/redo', () => {
-    s().commit('改文字', (d) => {
+    s().commit(literal('改文字'), (d) => {
       const o = d.objects[0]
       if (o.type === 'text') o.text = 'B'
     })
 
     // pointerdown：interactions.ts 先 begin('move') 再 beginTxn
     useInteractionStore.getState().begin('move')
-    s().beginTxn('移动对象')
+    s().beginTxn(literal('移动对象'))
     s().txnUpdate((d) => {
       d.objects[0].x = 2
     })
@@ -112,11 +113,11 @@ describe('拖动中途按 ⌘Z', () => {
     // 加速键这类入口。第二道防线在 documentStore.txnUpdate：没有进行中的
     // 事务就丢弃更新——丢一帧拖动无害，绕过历史写文档是数据损坏
     // （真实撞见过：成组文字回到原位、图片停在新位、撤销无能为力）。
-    s().commit('改文字', (d) => {
+    s().commit(literal('改文字'), (d) => {
       const o = d.objects[0]
       if (o.type === 'text') o.text = 'B'
     })
-    s().beginTxn('移动对象')
+    s().beginTxn(literal('移动对象'))
     s().txnUpdate((d) => {
       d.objects[0].x = 2
     })

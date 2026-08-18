@@ -9,6 +9,7 @@
  * 鼠标拖动（startMoveDrag）与方向键微调（useKeyboard → nudgeSelected）走的是
  * 同一个 movableTargets，两条路径在这里都断言一遍。
  */
+import { literal } from '@/i18n'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { beforeEach, describe, expect, it } from 'vitest'
 
@@ -65,14 +66,14 @@ beforeEach(async () => {
   localStorage.clear()
   useViewportStore.setState({ zoom: 1, panX: 0, panY: 0, originX: 0, originY: 0, viewW: 900, viewH: 700 })
   // 关掉吸附：这里要的是位移原样落到 x/y，不掺吸附修正
-  useUiStore.setState({ tool: 'select', snapEnabled: false, status: '', statusTone: 'info' })
+  useUiStore.setState({ tool: 'select', snapEnabled: false, status: null, statusTone: 'info' })
   useSelectionStore.getState().clear()
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_grouplock')
 }, 20000)
 
 /** 造一个组：members 里带 locked 的就是锁定成员 */
 function makeGroup(gid: string, members: { id: string; x: number; locked?: boolean }[]) {
-  useDocumentStore.getState().commit('加组', (d) => {
+  useDocumentStore.getState().commit(literal('加组'), (d) => {
     for (const m of members) d.objects.push(rect(m.id, m.x, { groupId: gid, locked: m.locked }))
   })
 }
@@ -120,7 +121,7 @@ describe('组内含锁定成员 → 整组不可移动', () => {
   })
 
   it('拖动：不成组的锁定对象维持原样——自己不动、别人照走', () => {
-    useDocumentStore.getState().commit('加对象', (d) => {
+    useDocumentStore.getState().commit(literal('加对象'), (d) => {
       d.objects.push(rect('free', 0), rect('lock', 20, { locked: true }))
     })
     useSelectionStore.getState().set(['free', 'lock'])
@@ -142,7 +143,7 @@ describe('组内含锁定成员 → 整组不可移动', () => {
     expect(byId('b').x).toBe(20)
     expect(status()).toContain('先解锁')
 
-    useUiStore.setState({ status: '' })
+    useUiStore.setState({ status: null })
     makeGroup('g2', [{ id: 'c', x: 40 }, { id: 'd', x: 60 }])
     useSelectionStore.getState().set(['c', 'd'])
 

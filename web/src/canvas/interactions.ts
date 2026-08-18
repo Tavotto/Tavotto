@@ -1,4 +1,5 @@
 import type { PointerEvent as ReactPointerEvent } from 'react'
+import { msg, t, type UiMessage } from '@/i18n'
 import {
   anchoredRect,
   endpointDelta,
@@ -63,6 +64,14 @@ import {
   type TextObject,
 } from '@/types/document'
 import { expandGroups, movableTargets, warnBlockedGroups } from '@/store/actions'
+
+/** 历史标签描述符（与 store/actions.ts 同一命名空间） */
+const hist = (key: string, values?: Record<string, unknown>): UiMessage =>
+  msg(`history.${key}`, values, 'workspace')
+
+/** 画出来的那类对象叫什么——文字/箭头走对象类型名，其余走形状名 */
+const drawnToolLabel = (tool: Tool): string =>
+  tool === 'text' || tool === 'arrow' ? t(`objectType.${tool}`) : t(`shape.${tool}`)
 
 /* -------------------------------------------------------------------------- */
 /*  指针追踪骨架                                                               */
@@ -204,7 +213,7 @@ export function startMoveDrag(e: ReactPointerEvent, objectId: string) {
   const cands = candidatesFor(excluded)
 
   interaction().begin('move')
-  store.beginTxn(targets.length > 1 ? `移动 ${targets.length} 个对象` : '移动对象')
+  store.beginTxn(hist('moveObjects', { count: targets.length }))
 
   trackPointer(e, {
     onMove: (ev, dxPx, dyPx) => {
@@ -276,7 +285,7 @@ export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: Res
   const keepRatio = target.type === 'panel' ? panelAspectLocked(target) : !isText
 
   interaction().begin('resize')
-  store.beginTxn('缩放对象')
+  store.beginTxn(hist('resizeObjects'))
 
   trackPointer(e, {
     onMove: (ev, dxPx, dyPx) => {
@@ -379,7 +388,7 @@ export function startEndpointDrag(e: ReactPointerEvent, objectId: string, which:
   const cands = candidatesFor(new Set([objectId]))
 
   interaction().begin('endpoint')
-  store.beginTxn(target.type === 'arrow' ? '调整箭头端点' : '调整直线端点')
+  store.beginTxn(hist(target.type === 'arrow' ? 'arrowEndpoint' : 'lineEndpoint'))
 
   trackPointer(e, {
     onMove: (ev, dxPx, dyPx) => {
@@ -578,7 +587,7 @@ export function startDraw(e: ReactPointerEvent, tool: Exclude<Tool, 'select'>) {
           y: rect.y,
           w: Math.max(rect.w, 12),
           h: 5,
-          text: '文字',
+          text: t('objectType.text'),
           sizePt: 10,
           bold: false,
           color: '#000000',
@@ -644,7 +653,7 @@ export function startDraw(e: ReactPointerEvent, tool: Exclude<Tool, 'select'>) {
         created = shape
       }
 
-      store.commit(`添加${{ text: '文字', arrow: '箭头', rect: '矩形', ellipse: '椭圆', line: '直线' }[tool]}`, (d) => {
+      store.commit(hist('addShape', { shape: drawnToolLabel(tool) }), (d) => {
         d.objects.push(created)
       })
       const ui = useUiStore.getState()
@@ -675,7 +684,7 @@ export function startGuideDrag(e: ReactPointerEvent, axis: 'x' | 'y', index: num
   }
   const inRange = (pos: number) => pos >= -2 && pos <= (axis === 'x' ? page.w : page.h) + 2
 
-  if (index != null) store.beginTxn('移动参考线')
+  if (index != null) store.beginTxn(hist('moveGuide'))
 
   trackPointer(e, {
     threshold: 0,
@@ -699,7 +708,7 @@ export function startGuideDrag(e: ReactPointerEvent, axis: 'x' | 'y', index: num
       }
       if (index == null) {
         if (moved && inRange(pos)) {
-          store.commit('添加参考线', (d) => {
+          store.commit(hist('addGuide'), (d) => {
             d.guides.push({ axis, pos })
           })
         }
@@ -707,7 +716,7 @@ export function startGuideDrag(e: ReactPointerEvent, axis: 'x' | 'y', index: num
       }
       store.endTxn({ discard: !moved })
       if (!inRange(pos)) {
-        store.commit('删除参考线', (d) => {
+        store.commit(hist('deleteGuide'), (d) => {
           d.guides.splice(index, 1)
         })
       }
@@ -768,7 +777,7 @@ export function startCropDrag(
   const anchorY = panel.y + panel.h / 2 + anchorDy
 
   interaction().begin('crop')
-  store.beginTxn('调整裁剪')
+  store.beginTxn(hist('adjustCrop'))
 
   trackPointer(e, {
     onMove: (_ev, dxPx, dyPx) => {
@@ -1170,7 +1179,8 @@ export function startAxesDrag(
         ...companions.map((c) => c.shift(...netDelta(rect))),
       ]
       // 一次 setOverrides = 一条撤销 = 一次权威渲染
-      if (patches.length > 1) setOverrides(panel.id, `移动${element.label}`, patches, true)
+      if (patches.length > 1)
+        setOverrides(panel.id, hist('moveElement', { label: element.label }), patches, true)
       else setOverride(panel.id, element.gid, 'position', rect.map(round4), true)
       commitElementPreview(panel.id)
     },
@@ -1227,7 +1237,7 @@ export function startElementGroupMove(
       const boxes = shifted(last[0], last[1])
       setOverrides(
         panel.id,
-        `移动 ${entries.length} 个图内元素`,
+        hist('moveElements', { count: entries.length }),
         entries.map((en, i) => en.write(boxes[i])),
       )
       commitElementPreview(panel.id)
@@ -1278,7 +1288,7 @@ export function startGroupResize(
         return
       }
       const box = last ?? nextGroup(ev.clientX - e.clientX, ev.clientY - e.clientY)
-      setOverrides(panel.id, `缩放 ${group.entries.length} 个子图`, groupPatches(group, box))
+      setOverrides(panel.id, hist('resizeAxes', { count: group.entries.length }), groupPatches(group, box))
       commitElementPreview(panel.id)
     },
   })

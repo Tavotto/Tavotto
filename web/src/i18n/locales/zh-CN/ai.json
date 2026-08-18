@@ -1,0 +1,8 @@
+{
+  "status": {
+    "aiChanged": "AI 已修改脚本，正在重建图表…",
+    "aiFailed": "AI 任务失败",
+    "aiNoChange": "AI 运行完成，但脚本没有变化",
+    "aiTimeout": "AI 任务超时"
+  }
+}
