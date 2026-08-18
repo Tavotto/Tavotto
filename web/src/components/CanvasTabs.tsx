@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { ChevronDown, Plus, X } from 'lucide-react'
+import { useFlip } from '@/lib/motion'
 import { cn } from '@/lib/utils'
 import { activateCanvas, createCanvasAndActivate } from '@/store/canvasSession'
 import { useDocumentStore } from '@/store/documentStore'
@@ -19,6 +20,10 @@ export function CanvasTabs() {
   const dirty = useDocumentStore((s) => s.dirty)
   const [renaming, setRenaming] = useState<string | null>(null)
   const dragFrom = useRef<number | null>(null)
+  // 重排是在 drop 那一刻整排换位的（拖动中只有一条落点提示线），
+  // 不给动效的话标签「啪」地跳到新位置，看不出是哪一个被挪走了
+  const strip = useRef<HTMLDivElement>(null)
+  useFlip(strip)
   /** 拖动经过的目标标签，给一个可见的落点提示 */
   const [dragOver, setDragOver] = useState<number | null>(null)
 
@@ -33,10 +38,11 @@ export function CanvasTabs() {
       aria-label="画布标签"
       className="flex h-8 shrink-0 items-center gap-0.5 border-b border-border bg-surface px-2"
     >
-      <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
+      <div ref={strip} className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
         {openTabs.map((id, i) => (
           <TabItem
             key={id}
+            id={id}
             index={i}
             name={nameOf(id)}
             active={id === activeId}
@@ -75,6 +81,7 @@ export function CanvasTabs() {
 }
 
 function TabItem({
+  id,
   index,
   name,
   active,
@@ -99,6 +106,7 @@ function TabItem({
   onRename: () => void
   onRenamed: (name: string | null) => void
   onClose: () => void
+  id: string
   dragFrom: React.RefObject<number | null>
   dragOver: boolean
   setDragOver: (i: number | null) => void
@@ -129,6 +137,7 @@ function TabItem({
   return (
     <div
       role="tab"
+      data-flip-id={id}
       aria-selected={active}
       tabIndex={0}
       draggable

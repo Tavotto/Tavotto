@@ -18,6 +18,7 @@ import {
   Type,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useFlip } from '@/lib/motion'
 import { renameObject, reorderObject, toggleHidden, toggleLocked } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -62,6 +63,9 @@ export function LayerTree() {
   const [dropHint, setDropHint] = useState<{ id: string; pos: 'above' | 'below' } | null>(null)
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   const listRef = useRef<HTMLUListElement>(null)
+  // 重排是 drop 那一刻整列换位的（拖动中只有一条落点提示线）；折叠/展开组
+  // 也会让下面所有行整体位移。不给动效的话行「啪」地跳，看不出是哪一行动了
+  useFlip(listRef, 'data-layer')
 
   // 顶层在最上面，与画布的视觉层级一致
   const zOrder = [...objects].reverse()

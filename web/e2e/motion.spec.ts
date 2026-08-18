@@ -235,3 +235,49 @@ test('抽屉开合：先播完再卸载、内容不挤、把手仍可拖', async
   console.log(`[动效] 把手拖动：${w0} → ${w1}`)
   expect(w1, '把手被 overflow-hidden 剪掉的话这里拖不动').toBeGreaterThan(w0 + 30)
 })
+
+/**
+ * 列表重排的 FLIP。重排是在 drop 那一刻整排换位的（拖动中只有一条落点提示线），
+ * 不给动效就是「啪」地跳一下，看不出是哪一个被挪走了。
+ *
+ * jsdom 里既没有布局也没有 Web Animations API，位移算得对不对由
+ * src/lib/useFlip.test 用桩看护；**动画到底有没有真的播**只有这里验得了。
+ */
+test('画布标签重排：每个标签从原位滑到新位', async ({ app, page }) => {
+  const a = await app()
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await page.goto(a.baseURL)
+  await page.waitForTimeout(1500)
+
+  await page.getByRole('button', { name: '新建画布' }).click()
+  await page.waitForTimeout(400)
+  const tabs = page.getByRole('tab')
+  expect(await tabs.count()).toBeGreaterThanOrEqual(2)
+
+  // 记下每次 animate 的起始位移
+  await page.evaluate(() => {
+    const w = window as unknown as { __flip__: { dx: number; dy: number }[] }
+    w.__flip__ = []
+    const orig = Element.prototype.animate
+    Element.prototype.animate = function (this: Element, frames: unknown, opts: unknown) {
+      const f = (frames as { translate?: string; transform?: string }[])?.[0]
+      const m = String(f?.translate ?? f?.transform ?? '').match(/(-?[\d.]+)px[ ,]+\s*(-?[\d.]+)px/)
+      if (m) w.__flip__.push({ dx: Number(m[1]), dy: Number(m[2]) })
+      return orig.call(this, frames as Keyframe[], opts as KeyframeAnimationOptions)
+    } as typeof Element.prototype.animate
+  })
+
+  const namesBefore = await tabs.allInnerTexts()
+  await tabs.nth(1).dragTo(tabs.nth(0))
+  await page.waitForTimeout(400)
+  const namesAfter = await tabs.allInnerTexts()
+  console.log(`[动效] 标签顺序 ${JSON.stringify(namesBefore)} → ${JSON.stringify(namesAfter)}`)
+
+  const flips = await page.evaluate(
+    () => (window as unknown as { __flip__: { dx: number; dy: number }[] }).__flip__,
+  )
+  console.log(`[动效] 标签重排触发 ${flips.length} 段 FLIP：${JSON.stringify(flips)}`)
+  expect(flips.length, '两个标签都该从原位滑过来').toBeGreaterThanOrEqual(2)
+  // 标签是横排：位移必须发生在 x 上
+  expect(flips.every((f) => Math.abs(f.dx) > 1)).toBe(true)
+})

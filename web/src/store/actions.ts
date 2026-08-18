@@ -1,5 +1,6 @@
 import { requestRender, type RenderPolicy } from '@/hooks/useEngineSync'
 import { newId } from '@/lib/id'
+import { flipCapture } from '@/lib/motion'
 import { applyAlign, boundsOf, readingOrder, type AlignMode } from '@/lib/geometry'
 import { clamp } from '@/lib/units'
 import { modKey } from '@/lib/utils'
@@ -18,6 +19,7 @@ import type {
 import { emptyProject, objectLabel, type ProjectDocument } from '@/types/document'
 import { useAssetStore } from './assetStore'
 import { readAutosaveDoc, useDocumentStore } from './documentStore'
+import { useInteractionStore } from './interactionStore'
 import { useSelectionStore } from './selectionStore'
 import { askConfirm, useUiStore } from './uiStore'
 import { useViewportStore } from './viewportStore'
@@ -952,6 +954,18 @@ export function startLayoutAutoReflow(): () => void {
     if (!dirty.length) return
     window.clearTimeout(timer)
     timer = window.setTimeout(() => {
+      // 自动重排是「文档自己动了」，不是用户在拖——不给动效的话相邻面板会
+      // 凭空跳一下，看不出跟刚才那次改动的因果。**只播没被选中/悬停的那些**：
+      // 选择框与手柄由 OverlaySvg 按文档坐标画，它不参与这段补间，
+      // 给选中对象播的话框和图会分家 180ms。
+      const sel = new Set(useSelectionStore.getState().ids)
+      const hover = useInteractionStore.getState().hoverId
+      const els = dirty
+        .flatMap((g) => g.order)
+        .filter((id) => !sel.has(id) && id !== hover)
+        .map((id) => document.querySelector<HTMLElement>(`[data-object-id="${CSS.escape(id)}"]`))
+      const play = flipCapture(els)
+
       let moved = 0
       commit('自动重排布局组', (d) => {
         for (const g of dirty) {
@@ -960,7 +974,10 @@ export function startLayoutAutoReflow(): () => void {
         }
       })
       snapshot(useDocumentStore.getState().doc)
-      if (moved) status(`布局组已自动重排（${modKey('Z')} 可撤销）`)
+      if (moved) {
+        play()
+        status(`布局组已自动重排（${modKey('Z')} 可撤销）`)
+      }
     }, 120)
   })
   return () => {
