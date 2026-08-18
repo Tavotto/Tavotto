@@ -163,7 +163,7 @@ export function McpApp({
           {open.profile.profile_id} v{open.profile.profile_version}
         </span>
         <span className="shrink-0 font-mono text-[11px] text-ink-3">
-          {translate('measure.mmSize', { w: panel.w.toFixed(1), h: panel.h.toFixed(1) })}
+          {translate('measure.mmSizeSpaced', { w: panel.w.toFixed(1), h: panel.h.toFixed(1) })}
         </span>
 
         <span className="mx-1 h-4 w-px bg-border" />

@@ -142,6 +142,7 @@ export default interface Resources {
       "mm": "{{value}} mm",
       "mmPair": "{{a}}, {{b}} mm",
       "mmSize": "{{w}}×{{h}} mm",
+      "mmSizeSpaced": "{{w}} × {{h}} mm",
       "pxSize": "{{w}} × {{h}} px"
     },
     "mixed": "多个值",
