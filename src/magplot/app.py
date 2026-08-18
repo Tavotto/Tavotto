@@ -191,9 +191,44 @@ def _write_render_cache(src: Path, width_px: int, cached: Path) -> None:
         f"{cached.stem}.{os.getpid()}-{threading.get_ident():x}.part.png")
     try:
         pdfbackend.render_preview_png(src, width_px, tmp)
-        os.replace(tmp, cached)
+        _publish_render_cache(tmp, cached)
     finally:
         tmp.unlink(missing_ok=True)      # replace 成功后已经不在了，这里是 no-op
+
+
+#: 换名撞上 Windows 独占读句柄时的重试次数与间隔（总计 ~0.2s 的退让窗口）。
+_REPLACE_TRIES = 5
+_REPLACE_BACKOFF_S = 0.05
+
+
+def _publish_render_cache(tmp: Path, cached: Path) -> None:
+    """把临时文件换成最终缓存；目标正被人读着就**退让**，不是出错。
+
+    POSIX 的 rename 可以盖掉一个正被读的文件，**Windows 不行**：werkzeug 的
+    `send_file` 用 `open(path, "rb")` 拿着句柄（没带 `FILE_SHARE_DELETE`），
+    这一刻 `os.replace` 直接 `PermissionError`（WinError 5 / 32）。上面那句
+    「读者要么看到旧的、要么看到新的」在 Windows 上因此不成立——16 个并发
+    请求撞一次，用户拿到的是 500，而图其实好好地在磁盘上
+    （tests/test_windows_regressions.py 看护）。
+
+    退让是安全的：缓存键 = `sha1(id|内容 sha1|宽度|后端-版本)`，同键的字节
+    逐字节相同——目标已经在那儿且非空，就说明别人刚写完的正是同一张图。
+    只有目标不存在（或是零字节的半成品）时才重试，重试完仍不行就如实抛出：
+    那是真出了事，不该伪装成成功。
+    """
+    for attempt in range(_REPLACE_TRIES):
+        try:
+            os.replace(tmp, cached)
+            return
+        except PermissionError:
+            try:
+                if cached.stat().st_size > 0:
+                    return                   # 别人写好的同一张图，让给它
+            except OSError:
+                pass
+            if attempt == _REPLACE_TRIES - 1:
+                raise
+            time.sleep(_REPLACE_BACKOFF_S)
 
 
 def prune_backups(root: Path, keep: int = BACKUP_KEEP) -> int:

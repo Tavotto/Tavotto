@@ -130,6 +130,9 @@ class WorkerdClient:
         self._restarts = 0
         self._started_at = 0.0
         self.disabled = False                  # 连续崩溃后本进程放弃 workerd
+        # **握过手才算「起来了」**：只看「进程对象还在」会把一个正在退出的
+        # 进程当成就绪的 workerd（见 ensure_started 里的注释）
+        self._ready = False
         self.hello: dict = {}
         self._log = None
 
@@ -148,13 +151,28 @@ class WorkerdClient:
         with self._start_lock:
             with self._lock:
                 proc = self._proc
-            if proc is not None and proc.poll() is None:
+            # 就绪 = **hello 握过手**，不是「进程对象还在」。差别在 Windows 上
+            # 是致命的：那儿关一个进程比 POSIX 慢得多，hello 已经失败（写管道
+            # 报 EINVAL）而 `poll()` 还是 None，于是下一次 ensure_started 直接
+            # 当成「已就绪」返回——重启计数一次都不加，`_MAX_RESTARTS` 永远到
+            # 不了，一个起来就崩的二进制就成了无限重启：每次渲染白等一轮
+            # spawn + 握手，还永远退不到 Python 池（CI 的 windows-latest 上
+            # 6 次尝试后 disabled 仍是 False，tests/test_windows_regressions.py
+            # 已把这一幕钉死）。
+            if proc is not None and proc.poll() is None and self._ready:
                 return
             if self.disabled:
                 raise WorkerdError("workerd 已在本次进程内禁用",
                                    code="workerd_unavailable")
             if proc is not None:
-                # 上一条已经死了：起得来但活不过 _MIN_UPTIME 就是「起来就崩」
+                # 半启动的（还活着但没握上手）先收掉：不收就是每重启一次泄漏
+                # 一个子进程，而它还占着日志文件与管道
+                if proc.poll() is None:
+                    try:
+                        proc.kill()
+                    except OSError:
+                        pass
+                # 上一条已经不能用了：起得来但活不过 _MIN_UPTIME 就是「起来就崩」
                 if time.time() - self._started_at < _MIN_UPTIME:
                     self._restarts += 1
                 else:
@@ -167,6 +185,7 @@ class WorkerdClient:
                                        code="workerd_unavailable")
                 LOG.warning("workerd 已退出（第 %d 次），重启", self._restarts)
 
+            self._ready = False
             try:
                 self._log = open(self._log_path(), "ab", buffering=0)
             except OSError:
@@ -197,10 +216,12 @@ class WorkerdClient:
                     f"workerd 说的是 supervisor 协议 v{got}，本版 Magplot 说 "
                     f"v{SUPERVISOR_PROTOCOL_VERSION}",
                     code="protocol_mismatch")
+            self._ready = True
 
     def close(self) -> None:
         with self._lock:
             proc, self._proc = self._proc, None
+        self._ready = False
         if proc is None:
             return
         try:

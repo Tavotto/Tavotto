@@ -7,6 +7,8 @@
   * 文件被别的程序占用（PDF 阅读器开着）——「写回原始文件」的覆盖行为
   * 路径：盘符、反斜杠、中文与空格
   * 端口被占用
+  * 换名盖不掉正被读的文件（os.replace → WinError 5）
+  * 关进程慢：poll() 还说活着，握手其实早就失败了
   * AI CLI 只有 .cmd 外壳 / 装在微软商店的执行别名下
   * 渲染解释器探测：python.org / conda / 商店版
 
@@ -14,6 +16,7 @@
 （monkeypatch 出同样的失败），而不是假装在 Windows 上跑。
 """
 import ast
+import io
 import json
 import os
 import socket
@@ -25,7 +28,7 @@ import pymupdf
 import pytest
 
 from magplot import app as m
-from magplot.engine import ai_bridge, pool
+from magplot.engine import ai_bridge, pool, workerd_client
 
 
 @pytest.fixture
@@ -626,3 +629,113 @@ def test_upgrade_pins_utf8_so_pip_output_cannot_explode(monkeypatch):
     assert out["ok"] is True and out["restart_required"] is True
     assert seen.get("encoding") == "utf-8"
     assert seen.get("errors") == "replace"
+
+
+# ---------------- 换名盖不掉正被读的文件（os.replace → WinError 5） ----------
+
+def test_render_cache_yields_when_the_target_is_locked_by_a_reader(tmp_path,
+                                                                   monkeypatch):
+    """Windows：目标正被 `send_file` 读着时 `os.replace` 报 WinError 5。
+
+    POSIX 的 rename 盖得掉一个开着的文件，Windows 盖不掉（werkzeug 的
+    `open(path, "rb")` 没带 FILE_SHARE_DELETE）。真机现象：16 个并发
+    `/api/render` 撞一次就有人拿到 500，而图其实好好地躺在磁盘上。
+    """
+    figs = _figs(tmp_path)
+    src = figs / "Fig1.pdf"
+    m.CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cached = m.CACHE_DIR / "locked-target.png"
+
+    m._write_render_cache(src, 200, cached)          # 先有一份完整的
+    good = cached.read_bytes()
+    assert good.startswith(b"\x89PNG\r\n\x1a\n")
+
+    def denied(_a, _b):
+        raise PermissionError(5, "Access is denied")
+
+    monkeypatch.setattr(m.os, "replace", denied)
+    m._write_render_cache(src, 200, cached)          # 退让，不许抛
+    assert cached.read_bytes() == good, "已经在那儿的同一张图不该被动过"
+    assert not list(m.CACHE_DIR.glob("*.part.png")), "临时文件必须清掉"
+
+
+def test_a_replace_that_never_succeeds_still_fails_loudly(tmp_path, monkeypatch):
+    """退让只对「目标已经是同一张完整的图」成立。
+
+    目标不存在还一直换不过去 = 真出事了（盘满、权限、杀毒软件锁着临时文件），
+    这时**必须如实抛出**——伪装成成功，用户得到的是一个永远画不出来的面板。
+    """
+    figs = _figs(tmp_path)
+    m.CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cached = m.CACHE_DIR / "never-lands.png"
+
+    monkeypatch.setattr(m, "_REPLACE_BACKOFF_S", 0.0)   # 别让重试拖慢测试
+    monkeypatch.setattr(m.os, "replace",
+                        lambda _a, _b: (_ for _ in ()).throw(
+                            PermissionError(5, "Access is denied")))
+    with pytest.raises(PermissionError):
+        m._write_render_cache(figs / "Fig1.pdf", 200, cached)
+    assert not list(m.CACHE_DIR.glob("*.part.png")), "失败路径也不许留临时文件"
+
+
+# ---------------- 关进程慢：poll() 还说活着，握手其实早就失败了 --------------
+
+class _ZombiePopen:
+    """起得来、握不上手、还迟迟不肯退——Windows 关进程的那个窗口。
+
+    `stdin` 一写就 EINVAL（真机上 hello 就是这么失败的），`stdout` 立刻 EOF，
+    而 `poll()` 永远回 None：进程对象看着还活着。
+    """
+
+    instances: list = []
+
+    def __init__(self, *_a, **_kw):
+        self.pid = 4321 + len(self.instances)
+        self.stdout = io.StringIO("")
+        self.stdin = self
+        self.killed = False
+        _ZombiePopen.instances.append(self)
+
+    # stdin
+    def write(self, _line):
+        raise OSError(22, "Invalid argument")
+
+    def flush(self):
+        pass
+
+    # 进程
+    def poll(self):
+        return None                       # ← 关键：永远说「我还活着」
+
+    def kill(self):
+        self.killed = True
+
+    def wait(self, timeout=None):
+        return 0
+
+
+def test_workerd_that_dies_while_poll_still_says_alive_gets_disabled(monkeypatch):
+    """起来就崩的 workerd 必须停用（回退 Python 池），不能无限重启。
+
+    「进程对象还在」不等于「起来了」——Windows 上进程拆除比 POSIX 慢，
+    hello 已经失败而 `poll()` 还是 None。少了握手这一层，重启计数一次都不加，
+    `_MAX_RESTARTS` 永远到不了：每次渲染白等一轮 spawn + 握手，用户只觉得
+    「越来越慢」，日志里一个字都没有。CI 的 windows-latest 上实测过。
+    """
+    _ZombiePopen.instances = []
+    monkeypatch.setattr(workerd_client.subprocess, "Popen", _ZombiePopen)
+
+    c = workerd_client.WorkerdClient("magplot-workerd")
+    for _ in range(6):
+        try:
+            c.ensure_started()
+        except workerd_client.WorkerdError:
+            pass
+        if c.disabled:
+            break
+
+    assert c.disabled, "反复起来就崩必须停用 workerd"
+    assert len(_ZombiePopen.instances) <= workerd_client._MAX_RESTARTS + 1, \
+        "重启次数不该超过上限"
+    # 半启动的都被收掉了：不收就是每重启一次泄漏一个子进程
+    assert all(z.killed for z in _ZombiePopen.instances[:-1])

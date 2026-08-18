@@ -96,6 +96,11 @@ PyMuPDF（**只经 `src/magplot/pdfbackend/`**），前端 `web/`
   硬验收是同一份 `tests/golden/patch_vectors.json`。已知坑：Python 的浮点 repr
   （`1e+22`/`1e-07`、`-0.0` 保号、`1.0` 补 `.0`）、int 与 float 是两个值
   （serde_json 必须开 `arbitrary_precision`）、转义表照抄 `ESCAPE_DCT`。
+- **「起来了」= hello 握过手**，不是「进程对象还在」：Windows 关进程比 POSIX
+  慢得多，握手早已失败（写管道 EINVAL）而 `poll()` 还回 None，只看后者会把
+  正在退出的进程当成就绪的 workerd——重启计数一次都不加，起来就崩的二进制
+  于是无限重启，每次渲染白等一轮 spawn + 握手，还永远退不到 Python 池。
+  半启动的那条要先 kill 再重启（否则每次泄漏一个子进程）。
 - 语义要点：generation 每 (re)spawn +1 且**上一代的迟到响应一律丢弃**；
   per (会话, stem) 的 render 队列里至多一条、新的顶掉旧的（回 `queue_superseded`）；
   export 一条都不合并；队列有界，满了立即拒绝；取消在飞 = **杀进程**
@@ -119,7 +124,12 @@ PyMuPDF（**只经 `src/magplot/pdfbackend/`**），前端 `web/`
   内容哈希走进程内 `(mtime,size)→sha1` memo（memo 失效信号 ≠ 身份）。写入一律
   临时文件 + `os.replace`（同键并发会读到半个 PNG），零字节缓存当场删掉重建
   ——临时文件后缀**必须还是 .png**，后端按扩展名定格式。
-  看护 `tests/test_render_cache.py`。
+  **Windows 上 `os.replace` 盖不掉正被读的目标**（werkzeug 的 `send_file` 拿着
+  没有 FILE_SHARE_DELETE 的句柄 → WinError 5，并发请求当场 500）：撞上就
+  **退让**给已经在磁盘上的那份——键含内容哈希，同键必然逐字节相同；只有目标
+  不存在或是零字节时才重试，重试完仍不行照旧抛出（假装成功 = 一个永远画不
+  出来的面板）。看护 `tests/test_render_cache.py` 与
+  `tests/test_windows_regressions.py`。
 
 ## Windows 内置渲染 runtime（2026-08-17）
 
