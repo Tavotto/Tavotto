@@ -17,7 +17,27 @@ export const RIGHT_MAX = 320
 /** 常驻图标轨道宽度 */
 export const RAIL_W = 44
 
+/**
+ * 工作区断点。画布是主角，窄下来时先让侧栏让路，而不是压缩画布：
+ * - ≥1440 左右可同时钉住；
+ * - 1024–1439 左右互斥，同时只留一侧（1280×720 下画布仍 ≥760px）；
+ * - <1024 侧栏改成盖在画布上的抽屉，画布宽度完全不受影响。
+ *
+ * 放在 store 里而不是 useWorkspaceLayout：初始 persisted 状态就要按当前窗口
+ * 宽度裁一次（见 readPersisted），hook 反过来 import store，搁那边会成环。
+ */
+export const WIDE = 1440
+export const MEDIUM = 1024
+
+export const layoutFor = (w: number): WorkspaceLayout =>
+  w >= WIDE ? 'wide' : w >= MEDIUM ? 'medium' : 'narrow'
+
 interface Persisted {
+  /**
+   * 偏好版本号。默认值改动过一次（右栏由「等选中再弹」改成常驻），老用户
+   * 本机存的是旧默认，直接改 DEFAULTS 对他们等于没改——按版本号补一次。
+   */
+  prefsVersion: number
   leftOpen: boolean
   /** 左抽屉宽度（px），素材卡片列数靠它决定 */
   leftWidth: number
@@ -44,13 +64,16 @@ interface Persisted {
   showGrid: boolean
 }
 
+export const PREFS_VERSION = 1
+
 const DEFAULTS: Persisted = {
-  // 初始只开素材抽屉；右栏等选中对象或用户主动打开
+  prefsVersion: PREFS_VERSION,
+  // 素材抽屉 + 右栏都开着：属性栏是编辑过程持续要看的，让它常驻
   leftOpen: true,
   leftWidth: 300,
   rightWidth: 304,
   leftPinned: false,
-  rightPinned: false,
+  rightPinned: true,
   gridSize: 10,
   snapEnabled: true,
   snapToGrid: false,
@@ -58,7 +81,7 @@ const DEFAULTS: Persisted = {
   snapToObjects: true,
   guidesLocked: false,
   showSafeArea: false,
-  rightOpen: false,
+  rightOpen: true,
   leftTab: 'assets',
   rightTab: 'properties',
   showRulers: true,
@@ -66,13 +89,28 @@ const DEFAULTS: Persisted = {
 }
 
 function readPersisted(): Persisted {
+  let saved: Partial<Persisted> | null = null
   try {
     const raw = localStorage.getItem(LS_KEY)
-    if (raw) return { ...DEFAULTS, ...(JSON.parse(raw) as Partial<Persisted>) }
+    if (raw) saved = JSON.parse(raw) as Partial<Persisted>
   } catch {
     /* 用默认值 */
   }
-  return DEFAULTS
+  let state: Persisted = saved ? { ...DEFAULTS, ...saved } : DEFAULTS
+  // v0 → v1：右栏改成默认常驻。老用户本机躺着 rightPinned:false，不补一次
+  // 的话「默认常驻」对他们永远不生效；补完盖上版本号，之后用户自己关了就
+  // 一直是关的。
+  // 判据取 saved 而不是合并后的 state：DEFAULTS 里的 prefsVersion 会把
+  // 「老 blob 没有这个键」这件事补没了，那样迁移永远不触发。
+  if (saved && (saved.prefsVersion ?? 0) < PREFS_VERSION) {
+    state = { ...state, prefsVersion: PREFS_VERSION, rightOpen: true, rightPinned: true }
+  }
+  // 窄屏下右栏是盖在画布上的覆盖层，开机就铺满等于把画布藏了；常驻标记留着，
+  // 拉宽窗口自然生效。
+  if (typeof window !== 'undefined' && layoutFor(window.innerWidth) === 'narrow') {
+    state = { ...state, rightOpen: false }
+  }
+  return state
 }
 
 /** 一次等待用户点头的请求；resolve 由 ConfirmDialog 调用 */
@@ -158,6 +196,7 @@ interface UiState extends Persisted {
 
 function persist(state: UiState) {
   const keys: (keyof Persisted)[] = [
+    'prefsVersion',
     'leftOpen', 'rightOpen', 'leftTab', 'rightTab', 'showRulers', 'showGrid',
     'leftWidth', 'rightWidth', 'leftPinned', 'rightPinned', 'gridSize',
     'snapEnabled', 'snapToGrid', 'snapToGuides', 'snapToObjects',
@@ -197,7 +236,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   settingsSection: null,
   layoutIntent: 'save',
   confirm: null,
-  layout: 'wide',
+  layout: typeof window === 'undefined' ? 'wide' : layoutFor(window.innerWidth),
 
   toggleLeft: () => {
     set((s) => {
