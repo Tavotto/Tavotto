@@ -25,6 +25,12 @@ Magplot 里双击进不去——多半是脚本没跟产物放在同一个目录
 第二套判断**，它只负责「要不要先把脚本跑一遍」和把结果整理成一行 JSON。
 
 纯标准库，Python 3.8+。
+
+**Windows 上两处必须钉死 UTF-8**（CI 的 windows-latest 腿实测撞到）：输出的 JSON
+带中文（`hint`、`magplot open` 回来的错误），而 Windows 上 stdout 一旦是管道
+（Codex 调它就是管道）就退回系统区域编码 cp1252/cp936——写出去 UnicodeEncodeError
+打死进程，读回来 UnicodeDecodeError。两侧都得自己兜底，见 `_force_utf8()` 与每个
+`subprocess.run` 的 `encoding=`。
 """
 from __future__ import annotations
 
@@ -42,6 +48,18 @@ INSTALL_HINT = (
     "命令行版 `pipx install magplot`（或 `pip install magplot`）。"
     "装好后重新执行同一条 handoff 命令即可——图已经画出来了。"
 )
+
+
+def _force_utf8() -> None:
+    """把自己的 stdout/stderr 钉成 UTF-8。
+
+    Codex 调这个脚本时 stdout 是管道，Windows 上于是退回 cp1252/cp936；
+    输出里有中文（hint、magplot open 回来的错误），第一次 print 就
+    UnicodeEncodeError 打死进程——调用方看到的是「脚本挂了」，不是那行 JSON。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
 
 
 def magplot_cmd() -> list[str] | None:
@@ -62,7 +80,10 @@ def run_magplot_open(cmd: list[str], path: str, *, launch: bool) -> dict:
     if not launch:
         argv.append("--no-launch")
     try:
-        proc = subprocess.run(argv, capture_output=True, text=True)
+        # encoding 必须显式：text=True 跟随系统区域编码，cp936/cp1252 下
+        # `magplot open` 回来的中文 JSON 一解码就炸（Windows CI 实测）
+        proc = subprocess.run(argv, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace")
     except OSError as exc:
         # MAGPLOT_CLI 指到了不存在的东西：说清楚是哪一条，别抛 traceback
         return {"ok": False, "error": f"执行不了 {argv[0]}: {exc}"}
@@ -98,6 +119,7 @@ def needs_run(script: str, project: str, stem: str | None, mode: str) -> bool:
 def run_script(python: str, script: str) -> tuple[bool, str]:
     """在脚本自己的目录里跑它——脚本里的相对路径按这个目录解析。"""
     proc = subprocess.run([python, script], capture_output=True, text=True,
+                          encoding="utf-8", errors="replace",
                           cwd=os.path.dirname(os.path.abspath(script)) or ".")
     if proc.returncode == 0:
         return True, ""
@@ -111,6 +133,7 @@ def emit(payload: dict, code: int) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    _force_utf8()
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("path", help="脚本（.py）或它的产物（.pdf/.png…）")
     ap.add_argument("--run", choices=("auto", "always", "never"), default="auto",

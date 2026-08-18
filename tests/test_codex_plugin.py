@@ -126,6 +126,13 @@ print(json.dumps(resp, ensure_ascii=False))
 
 HANDOFF = SKILL_DIR / "scripts" / "handoff.py"
 
+#: 假 CLI 是个带 shebang 的脚本文件。Windows 上 `shutil.which` 只认 PATHEXT 里的
+#: 后缀，而 .bat/.cmd 又不能被 CreateProcess 直接拉起（subprocess 不走 shell）。
+#: 这三条验的是与平台无关的判据（退出码、调用次序），Windows 那侧真正的风险是
+#: 编码，由 tests/test_windows_regressions.py 的两条专门看着。
+posix_shim_only = pytest.mark.skipif(
+    os.name == "nt", reason="假 CLI 用 shebang 脚本，Windows 上起不来")
+
 
 def _run_handoff(tmp_path, response: dict, *args):
     bin_dir = tmp_path / "bin"
@@ -145,12 +152,16 @@ def _run_handoff(tmp_path, response: dict, *args):
     env = {**os.environ, "PATH": str(bin_dir), "FAKE_RESPONSE": str(resp_file),
            "FAKE_LOG": str(log)}
     env.pop("MAGPLOT_CLI", None)
+    # 子进程按 UTF-8 写（它自己 reconfigure 过），这边解码也得钉死——
+    # 不钉就跟随系统区域编码，Windows 上读中文 JSON 当场变乱码
     proc = subprocess.run([sys.executable, str(HANDOFF), str(target), *args],
-                          capture_output=True, text=True, env=env)
+                          capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", env=env)
     calls = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
     return proc, calls
 
 
+@posix_shim_only
 def test_handoff_succeeds_when_the_figure_is_parameterizable(tmp_path):
     proc, calls = _run_handoff(tmp_path, {
         "ok": True, "project": "/p", "stem": "Fig1",
@@ -162,6 +173,7 @@ def test_handoff_succeeds_when_the_figure_is_parameterizable(tmp_path):
     assert len(calls) == 2 and "--no-launch" in calls[0] and "--no-launch" not in calls[1]
 
 
+@posix_shim_only
 def test_handoff_fails_loudly_when_the_figure_has_no_script(tmp_path):
     """用户强调的那条硬约定：脚本没跟图放在一起 = 没做完，退出码必须非零。"""
     proc, _ = _run_handoff(tmp_path, {
@@ -172,6 +184,7 @@ def test_handoff_fails_loudly_when_the_figure_has_no_script(tmp_path):
     assert "同一个目录" in out["hint"]
 
 
+@posix_shim_only
 def test_handoff_reports_magplot_open_failure(tmp_path):
     proc, _ = _run_handoff(tmp_path, {"ok": False, "error": "注册表不是合法 JSON"})
     assert proc.returncode == 2
@@ -180,7 +193,8 @@ def test_handoff_reports_magplot_open_failure(tmp_path):
 
 def test_handoff_rejects_missing_path(tmp_path):
     proc = subprocess.run([sys.executable, str(HANDOFF), str(tmp_path / "nope.pdf")],
-                          capture_output=True, text=True, env={**os.environ})
+                          capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", env={**os.environ})
     assert proc.returncode == 2
     assert json.loads(proc.stdout)["ok"] is False
 
