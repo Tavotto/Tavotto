@@ -13,7 +13,14 @@
  * 3. **动画只是点缀，关掉不损失任何信息。** 位移 ≤4px、scale 0.97~1、
  *    没有弹跳回弹；退场比进场短一档（退场是让路，拖沓会挡住下一步动作）。
  */
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type RefObject,
+} from 'react'
 
 /** 与 index.css `@theme` 的 --duration-* 逐值同源（motion.test.ts 看护） */
 export const DURATION = {
@@ -34,6 +41,12 @@ export function prefersReducedMotion(): boolean {
 
 /** 与 index.css 的 --ease-pop 同形（起步快、收尾稳） */
 export const easeOutCubic = (t: number): number => 1 - (1 - t) ** 3
+
+/**
+ * 进场缓动的 CSS 写法，给 Web Animations API 用（它只认字符串）。
+ * 与 index.css 的 `--ease-pop` 逐字节相同，motion.test 直接读那份文件比对。
+ */
+export const EASE_POP = 'cubic-bezier(0.16, 1, 0.3, 1)'
 
 interface TweenOptions {
   duration?: number
@@ -153,5 +166,103 @@ export function drawerMotion({ state, overlay, width, side }: DrawerMotionOption
       '--drawer-w': `${width}px`,
       '--drawer-from': side === 'left' ? '-100%' : '100%',
     } as CSSProperties,
+  }
+}
+
+/**
+ * FLIP：列表顺序变了之后，让每一项从**原来的位置**滑到新位置。
+ *
+ * 用法：容器给 ref，每个可重排的子项带一个**稳定 id 属性**（默认
+ * `data-flip-id`；已经有 `data-layer` 这类身份属性的列表直接把属性名传进来，
+ * 不必在 DOM 上写第二份 id）。顺序没变就什么都不做，对普通重渲染无感。
+ *
+ * 两件事值得先知道再用：
+ *
+ * 1. **每次提交都要量一遍位置**（没有依赖数组）。FLIP 需要「上一帧的位置」，
+ *    而 React 不给函数组件「DOM 改之前」的钩子，只能每次提交后量下来留着
+ *    下次用。代价是每次重渲染一轮 getBoundingClientRect（一次强制布局）——
+ *    列表长到几百行时值得换成别的方案，几十行的量级实测在噪声里。
+ *    不能只在顺序变化时量：滚动、窗口缩放也会让位置变，拿着过期的基准去
+ *    算位移，会凭空播出一段错误的滑动。
+ * 2. **动画用 WAAPI 而不是 CSS transition**：不需要「先设起点、下一帧再设终点」
+ *    那套两帧把戏，也不会和元素自己的 transform 类抢同一个属性声明。
+ *    reduced-motion 下整个跳过——WAAPI 同样不受 index.css 的全局 override 管。
+ */
+export function useFlip(container: RefObject<HTMLElement | null>, attr = 'data-flip-id'): void {
+  const prev = useRef(new Map<string, { left: number; top: number }>())
+
+  useLayoutEffect(() => {
+    const root = container.current
+    if (!root) return
+    const items = [...root.querySelectorAll<HTMLElement>(`[${attr}]`)]
+    const next = new Map<string, { left: number; top: number }>()
+    const reduced = prefersReducedMotion()
+    // 位置一律换算到**容器的内容坐标系**（减容器左上角、加回滚动量），不能直接
+    // 用视口坐标：列表能滚，而滚动不触发重渲染——下一次因为别的原因重渲染时，
+    // 拿视口坐标算出来的位移正好等于这期间滚过的距离，整列表会凭空滑一下。
+    const base = root.getBoundingClientRect()
+    const ox = base.left - root.scrollLeft
+    const oy = base.top - root.scrollTop
+
+    for (const el of items) {
+      const id = el.getAttribute(attr)
+      if (!id) continue
+      const r = el.getBoundingClientRect()
+      next.set(id, { left: r.left - ox, top: r.top - oy })
+      if (reduced) continue
+      const old = prev.current.get(id)
+      if (!old) continue // 新来的项没有「原来的位置」，直接就位
+      const dx = old.left - (r.left - ox)
+      const dy = old.top - (r.top - oy)
+      if (Math.abs(dx) < 1 && Math.abs(dy) < 1) continue
+      // jsdom 没有 Web Animations API（真实浏览器全都有）。不判这一下，
+      // 任何渲染到这类列表的单测都会在这里 TypeError
+      if (typeof el.animate !== 'function') continue
+      el.animate(
+        [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }],
+        { duration: DURATION.base, easing: EASE_POP },
+      )
+    }
+    prev.current = next
+  })
+}
+
+/**
+ * 一次性的 FLIP：先记下这些元素现在在哪，DOM 改完之后让它们从原处滑到新处。
+ *
+ * 与 `useFlip` 的分工：`useFlip` 盯的是「这个列表每次重渲染都可能重排」；
+ * 这个是「我**知道**接下来这一步会挪动它们」。画布对象必须走这条——对象位置
+ * 每一帧都在因为拖动而变，挂个自动 FLIP 上去等于给每个拖动帧都播一次动画。
+ *
+ * 动的是 CSS 的 **`translate` 属性**而不是 `transform`：画布对象的 `transform`
+ * 上挂着自己的 rotate/scale（旋转、翻转），拿 transform 播动画会把它们在这
+ * 180ms 里整个盖掉——旋转过的面板会先转正、再转回去。
+ *
+ * 用法：
+ *   const play = flipCapture(els)
+ *   commit(...)        // 改文档
+ *   play()             // 内部等 React 把 DOM 落下去再量第二次
+ */
+export function flipCapture(els: (HTMLElement | null | undefined)[]): () => void {
+  if (prefersReducedMotion()) return () => {}
+  const before = new Map<HTMLElement, DOMRect>()
+  for (const el of els) if (el) before.set(el, el.getBoundingClientRect())
+  if (!before.size) return () => {}
+
+  return () => {
+    // rAF 而不是微任务：要等 React 把这次提交渲染进 DOM
+    requestAnimationFrame(() => {
+      for (const [el, old] of before) {
+        if (!el.isConnected || typeof el.animate !== 'function') continue
+        const now = el.getBoundingClientRect()
+        const dx = old.left - now.left
+        const dy = old.top - now.top
+        if (Math.abs(dx) < 1 && Math.abs(dy) < 1) continue
+        el.animate([{ translate: `${dx}px ${dy}px` }, { translate: 'none' }], {
+          duration: DURATION.base,
+          easing: EASE_POP,
+        })
+      }
+    })
   }
 }

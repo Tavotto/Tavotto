@@ -15,7 +15,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { DURATION, easeOutCubic, prefersReducedMotion, tween, usePresence } from './motion'
+import {
+  DURATION,
+  EASE_POP,
+  easeOutCubic,
+  prefersReducedMotion,
+  tween,
+  usePresence,
+} from './motion'
 
 /**
  * 直接读源文件，不走 import —— vitest 默认 `css: false`，任何形式的 CSS
@@ -69,6 +76,11 @@ describe('关键帧的形态约束', () => {
     // `transform` 各走各的、会叠加。给关键帧补一份居中位移 = 播放期间多偏半个
     // 身位（实测 250px）。居中的浮层直接套 pop-in 就是对的。
     expect(CSS).not.toMatch(/@keyframes[\s\S]*?translate\(-50%/)
+  })
+
+  it('EASE_POP 与 index.css 的 --ease-pop 逐字节相同', () => {
+    // WAAPI 只认字符串缓动，JS 侧只能自己带一份；带了就必须钉住
+    expect(cssToken('ease-pop')).toBe(EASE_POP)
   })
 
   it('交叉淡出是 linear + forwards', () => {
