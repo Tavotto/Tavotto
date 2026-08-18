@@ -1,4 +1,14 @@
-"""独立应用（.app / .exe）的入口。
+"""独立应用（.app / .exe）的入口。**两个可执行文件共用这一份。**
+
+`packaging/magplot.spec` 从同一个 Analysis 出两个 exe，只差 console 子系统：
+
+  * `Magplot(.exe)`  —— `console=False`。双击不弹黑窗；桌面壳启动它当 sidecar。
+  * `magplot-cli(.exe)` —— `console=True`。**外部程序（Codex 插件、安装器、
+    编辑器）唯一能当命令行调的那个**：GUI 子系统的 exe 在没有真终端时
+    `sys.stdout is None`，下面 `_redirect_streams` 会把输出改道到 app.log，
+    调用方 `capture_output` 拿到的是空的 stdout 而不是那行 JSON。
+
+两个 exe 共用同一份 `_internal/`，代价只是多一个 ~1.5 MB 的 bootloader。
 
 窗口化打包（console=False）下没有终端：Windows 上 `sys.stdout` 直接是 None，
 一句 `print()` 就是 AttributeError，应用会在用户眼前一声不响地消失。所以这里
@@ -33,6 +43,13 @@ def main() -> None:
     base = getattr(sys, "_MEIPASS", None)
     if base and base not in sys.path:
         sys.path.insert(0, base)
+    # 子命令（open / doctor）只用纯标准库那点逻辑，**在这里就分派掉**：
+    # 走 app.main() 会 import Flask + pymupdf + 整个 app.py，而一次交接
+    # 一个 HTTP 端点都用不上——那份冷启动全是白付的。
+    from magplot.engine import cli as engine_cli
+    rc = engine_cli.dispatch(sys.argv[1:])
+    if rc is not None:
+        sys.exit(rc)
     from magplot.app import main as app_main
     app_main()
 

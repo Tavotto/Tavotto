@@ -1,7 +1,7 @@
 {
   "name": "magplot",
   "version": "0.7.0",
-  "description": "画论文级 matplotlib 图，并把成图直接交给 Magplot 用鼠标微调：拖图例、改字号线宽、调刻度，改完导出真矢量 PDF。",
+  "description": "画论文级 matplotlib 图，并在 Codex 里直接用鼠标微调：拖图例、改字号线宽、调刻度，跑出版规范预检，导出真矢量 PDF。",
   "author": {
     "name": "erwanjun",
     "url": "https://github.com/erwanjun/magplot"
@@ -20,10 +20,11 @@
     "plot"
   ],
   "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Magplot",
-    "shortDescription": "画好的图直接进 Magplot 用鼠标微调",
-    "longDescription": "生成 Magplot 兼容的 matplotlib 脚本（脚本与产物同目录、矢量 PDF、可静态登记的产物名），跑完把成图交给 Magplot 打开。之后拖图例、改字号线宽、调刻度朝向都在 Magplot 里点鼠标完成，不必回来改代码重跑。",
+    "shortDescription": "在 Codex 里直接拖着改图，按出版规范预检后导出",
+    "longDescription": "两层能力：技能教 Codex 写出 Magplot 接得住的 matplotlib 脚本；MCP server 把 Magplot 的渲染引擎接进 Codex——打开交互画布拖图例与图内文字、改字号线宽刻度、按课题组出版规范预检（尺寸/最终有效字号/字体/刻度/色系），再导出真矢量 PDF。没有 UI 的 host 里同一套 MCP 工具也能走完整条流程。所有改动都是 override，不会动你的 Python 源码。",
     "developerName": "erwanjun",
     "category": "Productivity",
     "capabilities": [
@@ -32,9 +33,9 @@
     ],
     "websiteURL": "https://github.com/erwanjun/magplot",
     "defaultPrompt": [
-      "用这个 CSV 画温度与去除率的折线图，要 error bar，适合论文投稿",
-      "把这批实验数据画成双栏宽的柱状图，画完在 Magplot 里打开",
-      "给这份数据做一张相关性散点图 + 线性拟合，出矢量 PDF"
+      "用这个 CSV 画温度与去除率的折线图，要 error bar，画完在 Codex 里打开画布让我调",
+      "把这张图按课题组出版规范体检一遍，然后导出双栏宽的矢量 PDF",
+      "图例挪到右下、刻度朝内、线宽统一到 0.75pt，改完给我导出 PDF 和 300dpi PNG"
     ],
     "brandColor": "#2868b7",
     "composerIcon": "./assets/magplot.svg",

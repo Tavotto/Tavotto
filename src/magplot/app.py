@@ -41,10 +41,12 @@ from .engine import ai_bridge as engine_ai
 from .engine import bootstrap as engine_bootstrap
 from .engine import ai_history as engine_ai_history
 from .engine import brand as engine_brand
+from .engine import cli as engine_cli
 from .engine import config as engine_config
 from .engine import diagnostics as engine_diagnostics
 from .engine import discover as engine_discover
 from .engine import handoff as engine_handoff
+from .engine import locate as engine_locate
 from .engine import patchspec as engine_patchspec
 from .engine import pool as engine_pool
 from .engine import probe as engine_probe
@@ -1027,29 +1029,18 @@ def project_store_dir(ctx: "ProjectCtx | None" = None) -> Path | None:
     用户在自己的项目目录里就能看到、随项目一起备份/同步/迁移。
     未打开项目时返回 None（调用方各自退回数据目录）。"""
     ctx = ctx if ctx is not None else _request_ctx()
-    return None if ctx is None else ctx.path / "magplotfile"
+    return None if ctx is None else engine_config.project_store_dir(ctx.path)
 
 
 def project_export_dir(ctx: "ProjectCtx | None" = None) -> Path:
     """项目的导出目录（项目设置可覆盖）。
 
-    缺省 `<项目>/magplotfile/export/`——导出的成图要交给投稿/合作者，
-    跟着项目走才找得到（旧版的 `<项目名>-exports/` 同级目录不再新建，
-    已有的留在原地不动）。项目目录建不出来（只读、网络盘等）退回数据目录
-    exports/。未打开项目时（纯文字/形状导出不依赖项目）直接用数据目录。"""
+    规则本身在 `engine/config.project_export_dir()`——**Codex 插件的 MCP server
+    也导出成图**，两条入口各写一份的话，用户会在两个地方找同一张图。
+    这里只负责把请求上下文翻译成项目路径。"""
     ctx = ctx if ctx is not None else _request_ctx()
-    if ctx is None:
-        return EXPORT_DIR
-    d = engine_config.project_settings(str(ctx.path)).get("export_dir")
-    if d:
-        return Path(d).expanduser()
-    store = project_store_dir(ctx)
-    assert store is not None
-    try:
-        (store / "export").mkdir(parents=True, exist_ok=True)
-        return store / "export"
-    except OSError:
-        return EXPORT_DIR
+    return engine_config.project_export_dir(
+        None if ctx is None else ctx.path, fallback=EXPORT_DIR)
 
 
 def project_backup_dir(ctx: "ProjectCtx | None" = None) -> Path:
@@ -2910,18 +2901,22 @@ def main():
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
 
-    # `magplot open <路径>`：外部程序（Codex 插件、编辑器、别的 Agent、用户自己）
-    # 把一张刚画好的图交接进来的入口。**必须在 argparse 之前拦**——主入口是纯
-    # flag 形态（`magplot --figures …`），改成 subparsers 会把既有命令行整个换掉。
-    if len(sys.argv) > 1 and sys.argv[1] == "open":
-        sys.exit(engine_handoff.cli(sys.argv[2:]))
+    # 子命令（`magplot open` / `magplot doctor`）：外部程序（Codex 插件、安装器、
+    # 编辑器、别的 Agent、用户自己）的入口。**必须在 argparse 之前拦**——主入口
+    # 是纯 flag 形态（`magplot --figures …`），改成 subparsers 会把既有命令行
+    # 整个换掉。分派本身在 engine/cli.py（纯标准库），打包出来的 magplot-cli
+    # 走的是同一份，不必为一次交接付整个 Flask 的冷启动。
+    rc = engine_cli.dispatch(sys.argv[1:])
+    if rc is not None:
+        sys.exit(rc)
 
     ap = argparse.ArgumentParser(
         description=__doc__,
         # 子命令在上面就分派掉了，argparse 看不见它——不在这儿写一句，
         # `magplot --help` 里就查无此命令
-        epilog="另有子命令: magplot open <图|脚本|目录>  "
-               "把一张刚画好的图交给 Magplot 打开（详见 magplot open --help）",
+        epilog="另有子命令（详见各自的 --help）:\n"
+               "  magplot open <图|脚本|目录>  把一张刚画好的图交给 Magplot 打开\n"
+               "  magplot doctor               检查本机安装并维护交接用的安装清单",
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--figures", default=None,
                     help="面板图所在目录（缺省恢复最近打开的项目）")
@@ -2935,6 +2930,12 @@ def main():
     args = ap.parse_args()
 
     setup_logging()
+    # 安装清单刷成「这套 Magplot 现在在这儿」。安装器只写得了装的那一刻，
+    # 而用户会把 .app 拖到别处、会用免安装形态、macOS 压根没有安装后钩子——
+    # 每次启动刷一遍，外部程序（Codex 插件）查到的就永远是最后真跑起来过的
+    # 那一套。**失败一律不打扰用户**：清单只是快路径，已知安装位置那条腿还在。
+    if engine_locate.refresh_manifest() is None:
+        LOG.debug("安装清单未能刷新（不影响使用）")
     threading.Thread(target=prune_render_cache, daemon=True,
                      name="mm-cache-prune").start()  # 启动清一次历史存量
     # 引擎会话缓存同理：get() 里的触发点只在新建会话时走，长开不新建的实例靠这次
