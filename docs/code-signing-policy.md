@@ -33,6 +33,24 @@ The workflow is fail-closed when SignPath signing is enabled. Until the project
 subscription and repository variables are configured, an unsigned build may be
 produced for testing only and must not be described as a signed release.
 
+## macOS artifacts (out of scope for this subscription)
+
+The macOS `.dmg` is **not** signed with the SignPath certificate. It is signed
+with an Apple Developer ID Application certificate held by the maintainer and
+notarized by Apple, in the same workflow but on a separate runner. It is listed
+here only so the two chains are not confused with each other.
+
+Like the Windows installer, the macOS application embeds a private Python
+rendering runtime (CPython plus a pinned scientific stack) so that users do not
+need to install Python. Every nested Mach-O file in the application — the shell,
+the PyInstaller sidecar, the embedded interpreter and every compiled extension
+module in that runtime — is signed individually, from the inside out, with the
+hardened runtime enabled, by `scripts/codesign_macos.py`. That script then
+re-verifies each one and checks that they all target the same architecture;
+`codesign --deep` alone is not sufficient, because Mach-O files under
+`Contents/Resources` are sealed as resources rather than recognised as nested
+code, so `--deep` neither signs nor verifies them.
+
 ## Roles
 
 - Committers and reviewers: [erwanjun](https://github.com/erwanjun)

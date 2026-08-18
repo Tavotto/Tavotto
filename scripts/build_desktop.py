@@ -13,11 +13,15 @@
    packaging/magplot.spec 收进 sidecar 的 _internal/。**没有 cargo 就直接中止**
    ——回退到 Python 渲染池是静默的，做出来的包功能一样不缺、只是慢，
    发出去也不会有人发现。
-4. sidecar：PyInstaller onedir（packaging/magplot.spec，刻意不含 matplotlib，
+4. 内置渲染 runtime：scripts/build_worker_runtime.py → runtime/，由
+   packaging/magplot.spec 收进 sidecar 的 _internal/runtime。**Windows 与 macOS
+   都要**——没有它，用户得先自己装 Python，而这正是这条链要消灭的东西。
+   已有一份且平台/锁文件都对得上时直接复用（重建一次要下 25 MiB + 装 300 MiB）。
+5. sidecar：PyInstaller onedir（packaging/magplot.spec，刻意不含 matplotlib，
    不用 onefile——科学场景的启动解压等不起）→ dist/Magplot/。同一份 Analysis
    里还出一个 console 版 `magplot-cli`，那是外部程序（Codex 插件）唯一能当
    命令行调的入口——GUI 子系统的 exe 没有 stdout，交接的 JSON 会落进 app.log。
-5. Tauri：pnpm dlx @tauri-apps/cli build，把 dist/Magplot 作为资源打进壳
+6. Tauri：pnpm dlx @tauri-apps/cli build，把 dist/Magplot 作为资源打进壳
    （src-tauri/tauri.conf.json 的 bundle.resources）。
 
 签名/公证不在本脚本内：本地无证书时产物是未签名测试包（macOS 上 Tauri 会
@@ -26,6 +30,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -107,10 +112,68 @@ def build_workerd() -> Path:
     return exe
 
 
+RUNTIME_DIR = ROOT / "runtime"
+RUNTIME_MANIFEST = RUNTIME_DIR / "runtime-manifest.json"
+RUNTIME_LOCK = ROOT / "packaging" / "runtime-lock.json"
+
+sys.path.insert(0, str(ROOT / "scripts"))
+from build_worker_runtime import BuildError, check_runtime_dir  # noqa: E402
+
+
+def _runtime_is_current() -> str:
+    """现成的 runtime/ 能不能直接用；能用回空串，不能用回原因。
+
+    判据三条，缺一不可：平台/架构对得上、冒烟真的过了、锁文件没变过。
+    前两条与 packaging/magplot.spec 共用 `check_runtime_dir()`（同一把尺）；
+    第三条是本地复用特有的——改了锁文件却复用旧产物，等于「以为换了 numpy
+    版本，其实一个字节都没动」，而这种错要到用户报「版本不对」时才发现。
+    """
+    if not RUNTIME_MANIFEST.is_file():
+        return "还没构建过"
+    try:
+        info = check_runtime_dir(RUNTIME_MANIFEST, require_smoke=True)
+    except BuildError as exc:
+        return str(exc).splitlines()[0]
+    try:
+        lock_sha = hashlib.sha256(RUNTIME_LOCK.read_bytes()).hexdigest()
+    except OSError as exc:
+        return f"读不到锁文件（{exc}）"
+    if (info.get("build") or {}).get("lock_sha256") != lock_sha:
+        return "锁文件变过了"
+    return ""
+
+
+def build_runtime(skip: bool, force: bool) -> None:
+    """构建（或复用）内置渲染 runtime。
+
+    `--skip-runtime` 是**开发态**的省时开关：产物照样能跑，只是渲染会回退到
+    机器上已有的 Python。发行构建绝不能用它——CI 那边还会加
+    `MAGPLOT_REQUIRE_RUNTIME=1`，spec 会当场把没有 runtime 的包拦下来。
+    """
+    if skip:
+        print("* --skip-runtime：不构建内置 runtime"
+              "（产物将依赖机器上已有的 Python，**不可发行**）")
+        return
+    if not force:
+        why = _runtime_is_current()
+        if not why:
+            info = json.loads(RUNTIME_MANIFEST.read_text(encoding="utf-8"))
+            print(f"* 内置 runtime（复用现成的）: {info['platform']['os']}/"
+                  f"{info['platform']['arch']}  Python {info['python']['version']}")
+            return
+        print(f"* 内置 runtime 需要重建：{why}")
+    run([sys.executable, str(ROOT / "scripts" / "build_worker_runtime.py"),
+         "--clean"])
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--skip-tauri", action="store_true",
                     help="只构建前端与 sidecar，不打 Tauri 壳")
+    ap.add_argument("--skip-runtime", action="store_true",
+                    help="不构建内置渲染 runtime（开发态省时；产物不可发行）")
+    ap.add_argument("--rebuild-runtime", action="store_true",
+                    help="强制重建内置 runtime，即使现成的看起来是对的")
     ap.add_argument("--bundles", default="app,dmg" if sys.platform == "darwin"
                     else "nsis", help="Tauri bundler 目标（默认按平台）")
     args = ap.parse_args()
@@ -121,6 +184,7 @@ def main() -> None:
 
     run([sys.executable, str(ROOT / "scripts" / "build_frontend.py")])
     build_workerd()
+    build_runtime(args.skip_runtime, args.rebuild_runtime)
     run([sys.executable, "-m", "PyInstaller",
          str(ROOT / "packaging" / "magplot.spec"), "--noconfirm"])
 

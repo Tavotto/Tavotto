@@ -46,15 +46,17 @@ PDF whose text is still real, selectable vector text.
 in its own desktop window, and updates itself from then on — it checks, downloads,
 installs and restarts without sending you back to this page.
 
-**On Windows you do not need to install Python.** The installer ships a private Python
-runtime with the usual scientific stack already in it — numpy, matplotlib, pandas, scipy,
-seaborn and Pillow, at pinned versions. Rendering works the moment the installer finishes,
-with no download and no network. Magplot never touches a Python or Conda you already have;
-if a figure of yours needs a package that is not in that list, point Magplot at your own
-environment under **Settings → Rendering environment**. See [Good to know](#good-to-know).
+**You do not need to install Python.** Both the macOS and the Windows installer ship a
+private Python runtime with the usual scientific stack already in it — numpy, matplotlib,
+pandas, scipy, seaborn and Pillow, at pinned versions, identical on both platforms so the
+same script draws the same figure. Rendering works the moment the installer finishes, with
+no download and no network, and without Homebrew, Conda or Xcode. Magplot never touches a
+Python or Conda you already have; if a figure of yours needs a package that is not in that
+list, point Magplot at your own environment under **Settings → Rendering environment**.
+See [Good to know](#good-to-know).
 
-On macOS, rendering uses the Python you already have (or one Magplot sets up for you in
-its own folder, on request).
+The macOS build is **Apple Silicon (arm64) only**. Intel Macs are not currently built or
+tested — use the PyPI install below.
 
 **Or install from PyPI**, which works the same on all three platforms:
 
@@ -210,21 +212,37 @@ your figures or data is uploaded.
   | Install | Interpreter used for rendering |
   |---|---|
   | Windows `.exe` | The **bundled runtime** that ships inside the installer — CPython 3.13 with numpy, matplotlib, pandas, scipy, seaborn and Pillow at pinned versions. Nothing to install, nothing to download. |
-  | macOS `.dmg` | Your own Python; Magplot can also build an isolated one for you inside its own data folder. |
+  | macOS `.dmg` (arm64) | The same **bundled runtime**, same pinned versions. No Homebrew, Conda or Xcode needed. |
   | PyPI with the `[worker]` extra | The environment you installed it into. |
 
   Magplot picks in this order: `MM_WORKER_PYTHON` → the interpreter you chose in
   Settings → the bundled runtime → its own interpreter → a Python/Conda it finds on the
   machine. **Whatever you choose explicitly always wins**, and Magplot only *launches*
   the environment you point it at — it never installs anything into it, and never
-  modifies an existing Python or Conda.
+  modifies an existing Python or Conda. The bundled runtime is likewise never written
+  to: bytecode and the Matplotlib font cache go to Magplot's own data folder, so the
+  installed app stays byte-identical (on macOS, writing into it would break the code
+  signature).
 
-  If a script needs a package the bundled runtime does not have (rdkit, astropy, your
-  lab's own library), Magplot says which package is missing and offers to switch to your
-  own environment under **Settings → Rendering environment**. Without any working
-  interpreter, layout, annotation and export still work — only in-figure editing needs one.
-  **Settings → Privacy, diagnostics and About** always shows which interpreter is in use
-  and where it came from.
+  The bundled runtime covers the common scientific stack — **it is not a promise to
+  cover whatever your scripts import**. If a script needs a package it does not have
+  (rdkit, astropy, your lab's own library), Magplot says which package is missing and
+  offers to switch to your own environment under **Settings → Rendering environment**;
+  it will not install that package for you, into its own runtime or into yours.
+  Without any working interpreter, layout, annotation and export still work — only
+  in-figure editing needs one.
+
+  **Settings → Privacy, diagnostics and About** shows which interpreter is in use, where
+  it came from (`bundled`, `configured`, `system`, …), and — for the bundled runtime —
+  its Python version and the exact pinned version of every package, read from the
+  `runtime-manifest.json` that ships beside it. The same information is in the
+  diagnostics bundle.
+
+- **Desktop installers are large: ~180 MB to download, ~490 MB installed** (measured
+  on macOS arm64; v0.7.0, without the bundled runtime, was 62 MB / 131 MB). The
+  difference is the runtime: CPython plus numpy/scipy/pandas/matplotlib and their
+  compiled extensions. It is the price of "install and render", paid once, offline.
+  The PyPI install stays a few MB because it reuses the Python you already have.
 
 ## Development
 
@@ -233,10 +251,14 @@ your figures or data is uploaded.
 cd web && pnpm test               # frontend
 cd web && pnpm build              # type-check (tsc -b) + bundle
 
-# Windows desktop only: build the bundled rendering runtime before packaging.
-# Versions are pinned in packaging/runtime-lock.json; the script verifies the
-# CPython download's SHA-256 and import-tests every package it installs.
-python scripts/build_worker_runtime.py
+# Desktop builds (macOS and Windows): build the bundled rendering runtime first.
+# Versions are pinned per platform/arch in packaging/runtime-lock.json; the script
+# verifies the CPython download's SHA-256, checks every installed version against
+# the lock, then imports each package with the freshly built interpreter and draws
+# a real PDF. Any step failing fails the build.
+python scripts/build_worker_runtime.py              # picks the target for this host
+python scripts/build_worker_runtime.py --list-targets
+python scripts/build_desktop.py                     # full desktop chain (includes it)
 ```
 
 Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for

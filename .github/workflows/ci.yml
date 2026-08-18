@@ -151,13 +151,15 @@ jobs:
       - name: 构建 Rust supervisor（magplot-workerd）
         run: cargo build --release --manifest-path workerd/Cargo.toml
 
-      - name: 缓存 CPython embeddable 下载
-        # 只缓存那个 11 MiB 的官方 zip（按锁文件内容做 key）。wheel 不缓存：
+      - name: 缓存 CPython 归档下载
+        # 只缓存那个官方 zip（按锁文件内容做 key）。wheel 不缓存：
         # 每次真从 PyPI 装一遍，才能发现「锁文件里的版本被 yank 了」这类问题。
+        # key 带上 runner 的平台/架构：不同目标下的是不同的归档，共用一个 key
+        # 会让 macOS 那条腿命中 Windows 的缓存（然后 sha256 对不上、白下一次）。
         uses: actions/cache@v4
         with:
           path: build/runtime-cache
-          key: cpython-embed-${{ hashFiles('packaging/runtime-lock.json') }}
+          key: cpython-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packaging/runtime-lock.json') }}
 
       - name: 构建内置渲染 runtime
         # 脚本自己会做 SHA-256 校验、版本核对，并**逐个 import + 画一张真图**；
@@ -241,7 +243,7 @@ jobs:
           $env:MM_WORKER_PYTHON = $null
           python scripts/smoke_app.py --exe dist/Magplot/Magplot.exe `
             --figures examples/runtime_check `
-            --expect-source bundled `
+            --expect-source bundled --expect-runtime `
             --expect-control-plane workerd `
             --expect-packages numpy,pandas,scipy,seaborn,PIL,matplotlib
 
@@ -288,5 +290,150 @@ jobs:
             build/**/warn-*.txt
             web/playwright-report/**
             web/test-results/**
+          if-no-files-found: warn
+          retention-days: 7
+
+  macos-app-smoke:
+    # windows-exe-smoke 的 macOS 对应物（2026-08-18 起）。
+    #
+    # macOS 桌面版从这一版开始也自带内置渲染 runtime，于是同一条承诺
+    # 「没装过 Python / Homebrew / Conda 的 Mac 装完就能渲染、首次不联网」
+    # 也需要一个真验证点。**它必须真构建 runtime、真打进产物、再在不给
+    # MM_WORKER_PYTHON 的情况下真跑一次渲染与导出**——否则一台碰巧装着
+    # matplotlib 的运行器会让「runtime 根本没打进去」全程绿灯，而那正是
+    # 用户装完打不开图的原因。
+    #
+    # 这一档在托管运行器上要跑十来分钟（下 25 MiB CPython + 装 300 MiB 科学栈
+    # + PyInstaller）。值得：在这之前 macOS 这条腿的渲染是靠 CI 现建的
+    # worker-env 撑着的，等于什么都没验。
+    #
+    # e2e 不在这里跑（Windows 那条已经覆盖真实界面），避免把 PR 门禁再拉长一倍。
+    needs: [backend, frontend]
+    runs-on: macos-latest        # 目前只有 Apple Silicon 一档；Intel 未构建未验证
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
+      - uses: pnpm/action-setup@v4
+        with: { version: 11 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: 构建前端进包
+        run: python scripts/build_frontend.py
+
+      # **不设 MAGPLOT_WORKERD**——冒烟要验的正是「产物自带的那份被自动找到」
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: workerd
+      - name: 构建 Rust supervisor（magplot-workerd）
+        run: cargo build --release --manifest-path workerd/Cargo.toml
+
+      - name: 缓存 CPython 归档下载
+        uses: actions/cache@v4
+        with:
+          path: build/runtime-cache
+          key: cpython-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packaging/runtime-lock.json') }}
+
+      - name: 构建内置渲染 runtime（python-build-standalone）
+        # 目标按本机平台/架构自动挑。脚本自己做 SHA-256 校验（期望值取自 pbs
+        # 上游发布的 SHA256SUMS）、按 .dist-info 核对版本，并用刚装好的解释器
+        # **逐个 import + 画一张真图**；任何一步不过就直接失败在这里。
+        run: python scripts/build_worker_runtime.py --clean
+
+      - name: 装打包依赖
+        # 主进程**不装科学栈**，免得 PyInstaller 顺手打进去
+        run: |
+          python -m pip install --upgrade pip pyinstaller
+          python -m pip install "flask>=3.1,<4" "pymupdf>=1.24,<2"
+
+      - name: PyInstaller（内置 runtime 必须进包）
+        env:
+          MAGPLOT_REQUIRE_RUNTIME: "1"
+        run: pyinstaller packaging/magplot.spec --noconfirm
+
+      - name: 断言产物里真有 workerd 与内置 runtime
+        run: |
+          set -euo pipefail
+          BIN=dist/Magplot/_internal/magplot-workerd
+          test -x "$BIN" || { echo "::error::产物里没有 $BIN——渲染会静默回退到 Python 池"; exit 1; }
+
+          RT=dist/Magplot/_internal/runtime
+          test -f "$RT/runtime-manifest.json" || { echo "::error::产物里没有 runtime 清单"; exit 1; }
+          # 解释器的落点**从清单里读**，不写死 bin/python3——构建时会把
+          # python / python3 两个别名剪掉（Tauri 拍平符号链接 = 白搭 34 MiB），
+          # 实体是版本化的 bin/python3.13，而那个名字会随 CPython 升版而变。
+          python - "$RT" <<'PY'
+          import json, os, sys
+          rt = sys.argv[1]
+          m = json.load(open(os.path.join(rt, "runtime-manifest.json"), encoding="utf-8"))
+          if m["build"]["smoke"] != "passed":
+              raise SystemExit(f"::error::runtime 未通过 import 冒烟: {m['build']['smoke']}")
+          py = os.path.join(rt, m["build"]["interpreter"])
+          if not os.access(py, os.X_OK):
+              raise SystemExit(f"::error::产物里没有可执行的解释器: {py}")
+          print(f"内置 runtime: {m['platform']['os']}/{m['platform']['arch']} "
+                f"Python {m['python']['version']}，{len(m['packages'])} 个锁定包，"
+                f"解释器 {m['build']['interpreter']}")
+          PY
+          du -sh "$RT"
+
+      - name: 架构核对（产物里不许混进另一个架构的 Mach-O）
+        # 一个 x86_64 的 .so 混进 arm64 的包里，签名/公证都可能过，
+        # 症状要等到用户 import 那个包时才出现
+        run: |
+          python scripts/codesign_macos.py scan --app dist/Magplot --quiet \
+            --expect-arch "$(python -c 'import platform;print(platform.machine())')"
+
+      - name: 冒烟①：干净 Mac（无 Homebrew/Conda 干扰、无 MM_WORKER_PYTHON）
+        # **本次改动的核心验收**。--expect-source bundled 断言渲染真的走了内置
+        # runtime；--expect-runtime 再断言「本该带 runtime 且带的这份完整」。
+        # 此刻运行器上**尚未** pip install matplotlib（在下一步才装），
+        # 所以这一步同时证明了「机器上没有科学栈也能渲染」。
+        # smoke_app.py 会主动把 MM_WORKER_PYTHON / Conda / PYTHONHOME 摘掉。
+        run: |
+          python scripts/smoke_app.py --exe dist/Magplot/Magplot \
+            --figures examples/runtime_check \
+            --expect-source bundled --expect-runtime \
+            --expect-control-plane workerd \
+            --expect-packages numpy,pandas,scipy,seaborn,PIL,matplotlib
+
+      - name: 冒烟②：中文 + 空格路径下仍走内置 runtime
+        # 项目路径与**用户数据目录**都放到中文+空格路径下——两者的失败方式不同
+        run: |
+          set -euo pipefail
+          DST="$RUNNER_TEMP/我的 论文 图/figures"
+          mkdir -p "$DST"
+          cp -R examples/runtime_check/. "$DST/"
+          python scripts/smoke_app.py --exe dist/Magplot/Magplot \
+            --figures "$DST" --workdir "$RUNNER_TEMP/我的 数据 目录" \
+            --expect-source bundled --expect-runtime
+
+      - name: 准备渲染环境（模拟用户自己的 Python）
+        run: python -m pip install matplotlib
+
+      - name: 冒烟③：用户指定的解释器仍然优先于内置
+        # 高级用户的出口不能被内置 runtime 挤掉——脚本要 rdkit / 自家实验室的库时
+        # 只有他自己那套环境才行
+        run: |
+          MM_WORKER_PYTHON="$(command -v python)" \
+            python scripts/smoke_app.py --exe dist/Magplot/Magplot \
+              --expect-source env_override
+
+      - name: 失败时收集日志
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-smoke-logs
+          path: |
+            ${{ runner.temp }}/**/app.log
+            ${{ runner.temp }}/**/worker.log
+            dist/Magplot/_internal/runtime/runtime-manifest.json
+            build/**/warn-*.txt
           if-no-files-found: warn
           retention-days: 7

@@ -1,32 +1,26 @@
 {
-  "schema": 1,
+  "schema": 2,
   "_comment": [
-    "Magplot Windows 桌面版内置渲染 runtime 的锁文件——scripts/build_worker_runtime.py 的唯一输入。",
+    "Magplot 桌面版内置渲染 runtime 的锁文件——scripts/build_worker_runtime.py 的唯一输入。",
     "改这里 = 改所有用户拿到的渲染环境，所以每一项都必须是精确版本，不允许 latest / 范围。",
-    "python.sha256 是 python.org 那个 zip 的实测校验和；换版本时用",
-    "  python scripts/build_worker_runtime.py --resolve --python-version <x.y.z>",
-    "重新生成，它会下载、算 sha256、并用 pip 真实解析出下面这份传递闭包。",
+    "",
+    "schema 2 起按**目标**分层（schema 1 只有 Windows 一档，平铺在顶层）。每个平台/架构",
+    "各自一块：CPython 的来源与 SHA-256、pip 的交叉安装标签、以及**完整传递闭包**。",
+    "分层不是洁癖——一个平台的 wheel 绝不能被另一个平台复用：macosx_11_0_arm64 的",
+    "numpy 落进 Windows 包里，症状是用户机器上 ImportError，而构建全程绿灯。",
+    "",
     "packages 是**完整闭包**（含传递依赖），构建时按 --no-deps 逐个装：",
-    "只锁顶层的话，某个传递依赖发新版就会让两次构建装出不同的东西。"
+    "只锁顶层的话，某个传递依赖发新版就会让两次构建装出不同的东西。",
+    "三个目标的闭包目前逐字相同——这是**刻意维持**的：同版本的 matplotlib/numpy 才能",
+    "保证同一个脚本在 Windows 和 macOS 上画出同一张图。解析结果不同时不要硬凑，",
+    "如实记下来并在发布说明里讲清楚。",
+    "",
+    "换版本时用 python scripts/build_worker_runtime.py --resolve --target <目标>",
+    "重新生成：它会下载、算 sha256、并用 pip 真实解析出闭包。",
+    "",
+    "shipped=false 的目标是**锁住了但没在发**：CI 里没有对应的 runner，因此既没构建过",
+    "也没冒烟过。别把它当成「支持」——见 README 的架构支持范围一节。"
   ],
-  "python": {
-    "version": "3.13.15",
-    "implementation": "cpython",
-    "url": "https://www.python.org/ftp/python/3.13.15/python-3.13.15-embed-amd64.zip",
-    "sha256": "d1f04d990aee1253d8569e8e5104e30fa9f5fa830899f14843448872d936a2cf",
-    "size": 11009825,
-    "stdlib_zip": "python313.zip",
-    "pth": "python313._pth",
-    "doc": "https://docs.python.org/3/using/windows.html#the-embeddable-package"
-  },
-  "platform": {
-    "os": "windows",
-    "arch": "amd64",
-    "pip_platform": "win_amd64",
-    "pip_python_version": "3.13",
-    "pip_implementation": "cp",
-    "pip_abi": "cp313"
-  },
   "top_level": [
     "numpy",
     "matplotlib",
@@ -35,20 +29,155 @@
     "seaborn",
     "pillow"
   ],
-  "packages": {
-    "contourpy": "1.3.3",
-    "cycler": "0.12.1",
-    "fonttools": "4.63.0",
-    "kiwisolver": "1.5.0",
-    "matplotlib": "3.11.1",
-    "numpy": "2.5.2",
-    "packaging": "26.3",
-    "pandas": "3.0.5",
-    "pillow": "12.3.0",
-    "pyparsing": "3.3.2",
-    "python-dateutil": "2.9.0.post0",
-    "scipy": "1.18.0",
-    "seaborn": "0.13.2",
-    "six": "1.17.0"
+  "targets": {
+    "windows-amd64": {
+      "kind": "windows-embeddable",
+      "os": "windows",
+      "arch": "x86_64",
+      "shipped": true,
+      "note": "官方 embeddable 发行版。Python 官方就把它定位成「应用私有的运行时」。",
+      "python": {
+        "version": "3.13.15",
+        "implementation": "cpython",
+        "url": "https://www.python.org/ftp/python/3.13.15/python-3.13.15-embed-amd64.zip",
+        "sha256": "d1f04d990aee1253d8569e8e5104e30fa9f5fa830899f14843448872d936a2cf",
+        "size": 11009825,
+        "stdlib_zip": "python313.zip",
+        "pth": "python313._pth",
+        "doc": "https://docs.python.org/3/using/windows.html#the-embeddable-package"
+      },
+      "pip": {
+        "platforms": [
+          "win_amd64"
+        ],
+        "python_version": "3.13",
+        "implementation": "cp",
+        "abi": "cp313"
+      },
+      "packages": {
+        "contourpy": "1.3.3",
+        "cycler": "0.12.1",
+        "fonttools": "4.63.0",
+        "kiwisolver": "1.5.0",
+        "matplotlib": "3.11.1",
+        "numpy": "2.5.2",
+        "packaging": "26.3",
+        "pandas": "3.0.5",
+        "pillow": "12.3.0",
+        "pyparsing": "3.3.2",
+        "python-dateutil": "2.9.0.post0",
+        "scipy": "1.18.0",
+        "seaborn": "0.13.2",
+        "six": "1.17.0"
+      }
+    },
+    "macos-arm64": {
+      "kind": "macos-standalone",
+      "os": "macos",
+      "arch": "arm64",
+      "shipped": true,
+      "note": [
+        "python-build-standalone（astral-sh）的 install_only 发行版：可重定位的 CPython，",
+        "prefix 由解释器自身路径推导，因此挪进 .app 的 Resources 里照样工作。",
+        "官方 macOS 安装器装的是 /Library/Frameworks 下的固定路径，嵌不进 .app；",
+        "Homebrew/Conda 属于用户的环境，我们不碰。这一档是目前唯一既可重定位、",
+        "又能逐个 codesign + 公证、还能离线首渲的方案。",
+        "install_only（未 strip）而不是 install_only_stripped：两者只差 150 KiB，",
+        "留着符号表换崩溃报告可读。"
+      ],
+      "python": {
+        "version": "3.13.15",
+        "implementation": "cpython",
+        "release": "20260814",
+        "triple": "aarch64-apple-darwin",
+        "flavor": "install_only",
+        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260814/cpython-3.13.15%2B20260814-aarch64-apple-darwin-install_only.tar.gz",
+        "sha256": "7d50bb42813a5644db7c40d3ad79361d0b724bb29d25a91fab1048c2c5c6a8c5",
+        "size": 25304407,
+        "archive_root": "python",
+        "checksums": "https://github.com/astral-sh/python-build-standalone/releases/download/20260814/SHA256SUMS",
+        "doc": "https://github.com/astral-sh/python-build-standalone"
+      },
+      "pip": {
+        "platforms": [
+          "macosx_11_0_arm64",
+          "macosx_12_0_arm64",
+          "macosx_13_0_arm64",
+          "macosx_14_0_arm64"
+        ],
+        "python_version": "3.13",
+        "implementation": "cp",
+        "abi": "cp313"
+      },
+      "packages": {
+        "contourpy": "1.3.3",
+        "cycler": "0.12.1",
+        "fonttools": "4.63.0",
+        "kiwisolver": "1.5.0",
+        "matplotlib": "3.11.1",
+        "numpy": "2.5.2",
+        "packaging": "26.3",
+        "pandas": "3.0.5",
+        "pillow": "12.3.0",
+        "pyparsing": "3.3.2",
+        "python-dateutil": "2.9.0.post0",
+        "scipy": "1.18.0",
+        "seaborn": "0.13.2",
+        "six": "1.17.0"
+      }
+    },
+    "macos-x86_64": {
+      "kind": "macos-standalone",
+      "os": "macos",
+      "arch": "x86_64",
+      "shipped": false,
+      "note": [
+        "**锁住了，但没在发。** CI 的 macOS runner 只有 Apple Silicon 一档，因此这个目标",
+        "既没有构建产物也没有冒烟记录——它只是把「要发 Intel 版时该装哪些东西」写死，",
+        "省掉临时决定版本的那一步。真要发 Intel 版，需要一台 Intel runner（或带 Rosetta",
+        "的机器）跑完整的 import + 真实绘图冒烟，并把 shipped 改成 true。",
+        "在那之前 README 里不许出现「支持 Intel」。"
+      ],
+      "python": {
+        "version": "3.13.15",
+        "implementation": "cpython",
+        "release": "20260814",
+        "triple": "x86_64-apple-darwin",
+        "flavor": "install_only",
+        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260814/cpython-3.13.15%2B20260814-x86_64-apple-darwin-install_only.tar.gz",
+        "sha256": "44bb8a1d97c070deb30880b2b7fe681c1e9cf727cb950709e022dc195cdfdf4f",
+        "size": 25053138,
+        "archive_root": "python",
+        "checksums": "https://github.com/astral-sh/python-build-standalone/releases/download/20260814/SHA256SUMS",
+        "doc": "https://github.com/astral-sh/python-build-standalone"
+      },
+      "pip": {
+        "platforms": [
+          "macosx_11_0_x86_64",
+          "macosx_12_0_x86_64",
+          "macosx_13_0_x86_64",
+          "macosx_14_0_x86_64"
+        ],
+        "python_version": "3.13",
+        "implementation": "cp",
+        "abi": "cp313"
+      },
+      "packages": {
+        "contourpy": "1.3.3",
+        "cycler": "0.12.1",
+        "fonttools": "4.63.0",
+        "kiwisolver": "1.5.0",
+        "matplotlib": "3.11.1",
+        "numpy": "2.5.2",
+        "packaging": "26.3",
+        "pandas": "3.0.5",
+        "pillow": "12.3.0",
+        "pyparsing": "3.3.2",
+        "python-dateutil": "2.9.0.post0",
+        "scipy": "1.18.0",
+        "seaborn": "0.13.2",
+        "six": "1.17.0"
+      }
+    }
   }
 }

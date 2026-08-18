@@ -133,14 +133,21 @@ def test_cached_result_recomputes_against_running_version(monkeypatch):
 
 
 # ---------------- worker 解释器探测（跨平台） --------------------------------
-def test_worker_python_candidates_prefer_env_then_self(monkeypatch):
+def test_worker_python_candidates_prefer_env_then_self(monkeypatch, tmp_path):
     """单环境安装（pip install magplot[worker]）时，跑 Flask 的解释器自己就带
-    科学栈——sys.executable 必须排在系统路径之前，否则会去用别的 python。"""
+    科学栈——sys.executable 必须排在系统路径之前，否则会去用别的 python。
+
+    前提是「这台机器上没有内置 runtime」，所以这里把 MAGPLOT_RUNTIME_DIR 指到
+    一个空处显式声明它（覆盖是排他的）。不声明的话，开发机上只要跑过一次
+    scripts/build_worker_runtime.py，仓库根就真的躺着一份 runtime——它**本来
+    就该**排在 sys.executable 前面，于是这条用例在本机红、在 CI 绿。
+    """
     import sys
 
     from magplot.engine import pool
 
     monkeypatch.delenv("MM_WORKER_PYTHON", raising=False)
+    monkeypatch.setenv("MAGPLOT_RUNTIME_DIR", str(tmp_path / "_no_runtime_here"))
     cands = [c for c in pool._candidate_pythons() if c]
     assert cands[0] == sys.executable
 
