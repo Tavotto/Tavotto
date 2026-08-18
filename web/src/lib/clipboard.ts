@@ -67,10 +67,9 @@ function announceCopied(payload: ClipPayload): void {
   useUiStore
     .getState()
     .setStatus(
-      note('objectsCopied', {
-        count: payload.objects.length,
-        name: objectLabel(payload.objects[0]),
-      }),
+      payload.objects.length === 1
+        ? note('objectCopied', { name: objectLabel(payload.objects[0]) })
+        : note('objectsCopied', { count: payload.objects.length }),
     )
 }
 

@@ -63,7 +63,7 @@ import {
   type ShapeObject,
   type TextObject,
 } from '@/types/document'
-import { expandGroups, movableTargets, warnBlockedGroups } from '@/store/actions'
+import { expandGroups, movableTargets, moveLabel, warnBlockedGroups } from '@/store/actions'
 
 /** 历史标签描述符（与 store/actions.ts 同一命名空间） */
 const hist = (key: string, values?: Record<string, unknown>): UiMessage =>
@@ -222,7 +222,7 @@ export function startMoveDrag(e: ReactPointerEvent, objectId: string) {
   const cands = candidatesFor(excluded)
 
   interaction().begin('move')
-  store.beginTxn(hist('moveObjects', { count: targets.length }))
+  store.beginTxn(moveLabel(targets.length))
 
   trackPointer(e, {
     onMove: (ev, dxPx, dyPx) => {

@@ -10,7 +10,6 @@
     "save": "保存"
   },
   "count": {
-    "selectedObjects_one": "已选 {{count}} 个对象",
     "selectedObjects_other": "已选 {{count}} 个对象"
   },
   "keycap": {

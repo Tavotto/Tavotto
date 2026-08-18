@@ -51,7 +51,6 @@
     "readOnlySuffix": " · 只读",
     "recent": "最近",
     "registry": "脚本注册表…",
-    "scriptCount_one": "{{count}} 个可参数化脚本",
     "scriptCount_other": "{{count}} 个可参数化脚本",
     "trigger": "当前项目 {{name}}，点击切换"
   }

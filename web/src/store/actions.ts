@@ -41,6 +41,15 @@ const hist = (key: string, values?: Record<string, unknown>): UiMessage =>
 const note = (key: string, values?: Record<string, unknown>): UiMessage =>
   msg(`status.${key}`, values, 'workspace')
 
+/**
+ * 「移动对象」的历史标签。单数那句不带数量（「移动对象」），**不能交给复数
+ * 规则**：中文只有 other 一档，写进 _one 的那句永远选不中，会退化成
+ * 「移动 1 个对象」。鼠标拖动（canvas/interactions）与方向键微调共用这一个
+ * 出处——两条路径落在历史里的标签必须一模一样。
+ */
+export const moveLabel = (count: number): UiMessage =>
+  count === 1 ? hist('moveObject') : hist('moveObjects', { count })
+
 const doc = () => useDocumentStore.getState().doc
 const commit = (label: UiMessage, recipe: (d: FigureDocument) => void) =>
   useDocumentStore.getState().commit(label, recipe)
@@ -207,11 +216,16 @@ export function updateObjects(ids: string[], label: UiMessage, patch: (o: Canvas
 export function deleteSelected() {
   const ids = useSelectionStore.getState().ids
   if (!ids.length) return
-  // 单选时把对象名（用户自己的内容，不翻译）插进去；多选走复数分支。
+  // 单选时把对象名（用户自己的内容，不翻译）插进去，多选才说数量——这是
+  // **两句不同的话**，不是同一句的单复数：中文没有单数档（Intl.PluralRules
+  // 只给 other），塞进 _one 的那句永远选不中，「删除 折线图.pdf」会变成
+  // 「删除 1 个对象」。所以在这里按数量选 key，而不是交给复数规则。
   // 名字现算：对象已经不在文档里时退回类型名，别让历史标签把这条 commit 拖崩。
   const first = findObject(ids[0])
   const name = first ? objectLabel(first) : t('objectType.shape')
-  commit(hist('deleteObjects', { count: ids.length, name }), (d) => {
+  const label =
+    ids.length === 1 ? hist('deleteObject', { name }) : hist('deleteObjects', { count: ids.length })
+  commit(label, (d) => {
     d.objects = d.objects.filter((o) => !ids.includes(o.id))
     // 成员不足 2 个的布局组失去意义，一并清掉（约束消失，剩余对象原地不动）
     if (d.layoutGroups?.length) {
@@ -314,7 +328,7 @@ export function nudgeSelected(dx: number, dy: number) {
   warnBlockedGroups(blockedGroups, objects.length > 0)
   if (!objects.length) return
   const moving = new Set(objects.map((o) => o.id))
-  commit(hist('moveObjects', { count: objects.length }), (d) => {
+  commit(moveLabel(objects.length), (d) => {
     for (const o of d.objects) {
       if (!moving.has(o.id)) continue
       o.x += dx

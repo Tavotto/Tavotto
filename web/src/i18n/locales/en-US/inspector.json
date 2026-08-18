@@ -205,8 +205,6 @@
     "resetToScriptCount": "Reset to the script ({{count}})",
     "restore": "Restore",
     "retryRender": "Retry render",
-    "scaleAxes_one": "Scale axes",
-    "scaleAxes_other": "Scale {{count}} axes",
     "scaleHint": "Relative to the current size; returns to 100% once applied",
     "scaleLabel": "Scale",
     "scaleTitle": "Scales about the centre; relative layout inside the group is preserved",
@@ -214,7 +212,9 @@
     "setAxesWidth": "Change axes width",
     "traceback": "traceback",
     "useAssistant": "Do it with the assistant",
-    "waiting": "Waiting for the engine to render…"
+    "waiting": "Waiting for the engine to render…",
+    "scaleAxes": "Scale axes",
+    "scaleAxesMulti": "Scale {{count}} axes"
   },
   "elementFallback": "Figure element",
   "elementsSelected_one": "{{count}} element selected",

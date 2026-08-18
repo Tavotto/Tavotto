@@ -71,6 +71,13 @@ const stripPlural = (key) => {
 }
 const pluralSuffixOf = (key) => PLURAL_SUFFIXES.find((s) => key.endsWith(s)) ?? null
 
+/**
+ * 这门语言真正用得上的复数形态，问 Intl 而不是写死表——写死的话每加一门
+ * 语言都要改这里，而漏改的表现是「翻译齐全，就是永远选不中」。
+ */
+const requiredPluralForms = (locale) =>
+  new Set(new Intl.PluralRules(locale).resolvedOptions().pluralCategories.map((c) => `_${c}`))
+
 /* --------------------------------- 资源 ------------------------------------ */
 
 function flatten(obj, prefix = '', out = new Map()) {
@@ -338,16 +345,21 @@ function main() {
   }
   const coveredByPrefix = (nsKey) => [...prefixes].some((p) => nsKey.startsWith(p))
 
-  /* --- 1. 两种语言的 key 集合一致 --- */
+  /* --- 1. 两种语言的 key 集合一致 ---
+   *
+   * 比的是**去掉复数后缀之后**的基名：语言不同，i18next 需要的形态就不同
+   * （英文要 _one + _other，中文只有 _other），逐字节比 key 会把「中文本来
+   * 就不该有 _one」报成漏翻。形态齐不齐由第 4 组按 Intl.PluralRules 单独查。 */
+  const basesOf = (table) => new Set([...table.keys()].map(stripPlural))
   for (const ns of NAMESPACES) {
-    const a = res[PRIMARY][ns]
+    const a = basesOf(res[PRIMARY][ns])
     for (const locale of LOCALES) {
       if (locale === PRIMARY) continue
-      const b = res[locale][ns]
-      for (const key of a.keys()) {
+      const b = basesOf(res[locale][ns])
+      for (const key of a) {
         if (!b.has(key)) add('missing-translation', `${locale} 缺 ${ns}:${key}`)
       }
-      for (const key of b.keys()) {
+      for (const key of b) {
         if (!a.has(key)) add('extra-translation', `${locale} 多出 ${ns}:${key}（${PRIMARY} 里没有）`)
       }
     }
@@ -399,14 +411,17 @@ function main() {
     }
     for (const [base, byLocale] of forms) {
       for (const locale of LOCALES) {
-        const have = byLocale.get(locale)
-        if (!have) {
-          add('plural', `${ns}:${base} 在 ${locale} 里没有任何复数形态`)
-          continue
+        const have = byLocale.get(locale) ?? new Set()
+        const want = requiredPluralForms(locale)
+        const missing = [...want].filter((f) => !have.has(f))
+        // 多出来的形态不是无害的冗余：这门语言的 Intl.PluralRules 永远选不中它，
+        // 于是那句译文是死的，而评审时看着还挺齐整（中文的 _one 就是这么来的）。
+        const dead = [...have].filter((f) => !want.has(f))
+        if (missing.length) {
+          add('plural', `${ns}:${base} 在 ${locale} 里缺 [${missing}]（该语言必须给全这些形态）`)
         }
-        if (!have.has('_other')) add('plural', `${ns}:${base} 在 ${locale} 里缺 _other`)
-        if (locale === 'en-US' && !have.has('_one')) {
-          add('plural', `${ns}:${base} 在 en-US 里缺 _one（英文必须区分单复数）`)
+        if (dead.length) {
+          add('plural', `${ns}:${base} 在 ${locale} 里多出 [${dead}]，该语言选不中，等于死文案`)
         }
         if (res[locale][ns].has(base)) {
           add('plural', `${ns}:${base} 在 ${locale} 里同时存在基键与复数形态`)

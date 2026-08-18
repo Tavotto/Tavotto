@@ -159,8 +159,6 @@
     "clearProp": "Reset {{prop}}",
     "createLayoutGroup": "Create {{kind}}",
     "deleteGuide": "Delete guide",
-    "deleteObjects_one": "Delete {{name}}",
-    "deleteObjects_other": "Delete {{count}} objects",
     "dissolveLayoutGroup": "Dissolve layout group",
     "duplicateCanvasSuffix": "{{name}} copy",
     "duplicateObjects": "Duplicate objects",
@@ -180,8 +178,6 @@
     "moveElement": "Move {{label}}",
     "moveElements": "Move {{count}} figure elements",
     "moveGuide": "Move guide",
-    "moveObjects_one": "Move object",
-    "moveObjects_other": "Move {{count}} objects",
     "pasteObjects_one": "Paste {{count}} object",
     "pasteObjects_other": "Paste {{count}} objects",
     "pasteStyle": "Paste style",
@@ -218,7 +214,11 @@
     "zBottom": "Send to back",
     "zDown": "Send backward",
     "zTop": "Bring to front",
-    "zUp": "Bring forward"
+    "zUp": "Bring forward",
+    "deleteObject": "Delete {{name}}",
+    "deleteObjects": "Delete {{count}} objects",
+    "moveObject": "Move object",
+    "moveObjects": "Move {{count}} objects"
   },
   "layerTree": {
     "collapseGroup": "Collapse group",
@@ -335,8 +335,6 @@
     "notInAnyGroup": "The selected objects are not in a group",
     "nothingToRedo": "Nothing to redo",
     "nothingToUndo": "Nothing to undo",
-    "objectsCopied_one": "Copied {{name}}",
-    "objectsCopied_other": "Copied {{count}} objects — they can be pasted into another layout document",
     "overridesCleared": "Cleared this panel's figure edits",
     "packageDrift_one": "Project package opened; {{count}} asset differs from the packaged copy and may have been edited — please check",
     "packageDrift_other": "Project package opened; {{count}} assets differ from the packaged copies and may have been edited — please check",
@@ -376,7 +374,9 @@
     "stylePasted_other": "Pasted style onto {{count}} objects",
     "subLabelsAdded_one": "Added {{count}} panel label, ordered top to bottom, left to right",
     "subLabelsAdded_other": "Added {{count}} panel labels, ordered top to bottom, left to right",
-    "undone": "Undone: {{label}}"
+    "undone": "Undone: {{label}}",
+    "objectCopied": "Copied {{name}}",
+    "objectsCopied": "Copied {{count}} objects — they can be pasted into another layout document"
   },
   "tabs": {
     "allCanvases": "All canvases",

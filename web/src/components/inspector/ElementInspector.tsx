@@ -1000,7 +1000,9 @@ function ScaleField({ panel, group }: { panel: PanelObject; group: Group }) {
     if (v === 100) return
     setOverrides(
       panel.id,
-      elMsg('scaleAxes', { count: group.entries.length }),
+      group.entries.length === 1
+        ? elMsg('scaleAxes')
+        : elMsg('scaleAxesMulti', { count: group.entries.length }),
       groupPatches(group, scaleGroupAbout(group.box, v / 100)),
     )
     setPct(100)
