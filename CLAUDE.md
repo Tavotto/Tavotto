@@ -490,14 +490,79 @@ Python，首次渲染也不联网：
   ② 必须重扫素材（交接的图刚写到磁盘，实例手里那份 panels 是旧的）；
   ③ 找不到就说找不到，绝不退而求其次选别的面板。重复交接同一张只选中，不叠第二份。
 - **Codex 插件在 `codex-plugin/`**，市场清单在仓库根 `.agents/plugins/marketplace.json`
-  （仓库即市场根）。**skills-only**：不做 MCP server（Codex 本就能跑 Python，
-  缺的是约定与最后一跳），不做 `.app.json`（需要 OpenAI 侧注册的托管 App id）。
-  pyproject 的 `exclude` 显式挡住它进 wheel/sdist。插件版本 == `magplot.__version__`
-  （`tests/test_codex_plugin.py` 看护）。
+  （仓库即市场根）。**已不再是 skills-only**：2026-08-18 起同时带一个本地 stdio
+  MCP server 与内嵌画布（见下面「Codex MCP server 与内嵌画布」一节与 ADR 0006）；
+  交接这条路一字未改。**仍不做 `.app.json`**（需要 OpenAI 侧注册的托管 App id）。
+  pyproject 的 `exclude` 显式挡住 `codex-plugin/` 进 wheel/sdist。插件版本 ==
+  `magplot.__version__`（`tests/test_codex_plugin.py` 看护）。
 - **技能的第一条硬约定：脚本与产物同目录、且必须先落成文件**（禁 `python -c` 出图）
   ——「stem ↔ 产出它的脚本」是图能不能双击进去改的全部依据。自检不靠祈祷：
   `scripts/handoff.py` 读 `magplot open --json` 的 `registry.parameterizable`，
   为 false 时**退出码 4**。图出来了但只是死图，那不是成功。
+
+## 出版规范 profile 与预检（2026-08-18）
+
+- **规则的唯一权威文件是 `src/magplot/profiles/publication.json`**（随 wheel 分发）。
+  Python 走 `engine/profiles.py`（`importlib.resources` 定位，装成 wheel 后源码树的
+  相对路径不存在），TypeScript 经 **`@profiles` 路径别名**整份 import 进 bundle
+  （`web/vite.config.ts` / `vitest.config.ts` / `vite.mcp.config.ts` **各配一次**）。
+  **绝不在任一侧硬编码同一条规则**——旧代码里 `preflight.ts` 的 6pt/300dpi 与
+  ExportDialog 的 85/150/180mm 就是各写一份，规范一改两处同时开始撒谎。
+- **预检有两个求值器**（`engine/preflight.py` 给 MCP，`web/src/lib/preflight.ts` 给
+  画布与导出对话框）——浏览器跑不了 Python，这是必需的第二份，不是重复。
+  两份靠 `tests/golden/preflight_vectors.json` 对齐：**pytest 与 vitest 各跑一遍同一份
+  向量**（与 patchspec ↔ Rust 同一套纪律），只比 `id/severity/object_ids/gids/detail`，
+  不比中文措辞。改任一侧跑 `python scripts/gen_preflight_vectors.py --write` 并人工读 diff。
+- 输入是**规范化的 figure spec**（页面 + 面板 + 文字 + 对象几何），不是画布文档也不是
+  manifest 本身：同一套规则同时服务「一张图」（MCP，scale=1）与「多面板拼版」
+  （画布，每面板带自己的 scale）。
+- **字号按最终物理尺寸判**：manifest 的 `fontsize` 是脚本坐标系里的 pt，面板缩到 60%
+  时读者量到的是 `fontsize × scale`。只看原始值 = 「缩一缩就放行」。阈值 8.5pt（严格）
+  与 8.0pt（绝对下限，**正好 8.0 不算过**）。
+- 四档：`error`（默认阻止导出，显式确认才放行且写进 proof）/ `warn`（放行必展示）/
+  `not_verifiable`（**查不了**，如位图内部文字，需人工确认并写进 proof）/ `suggestion`
+  （数据语义类全在这档，**绝不替用户裁决**）。**没登记的检查项兜底为 warn**，
+  刻意不是 suggestion——忘了登记会让用户以为它通过了。
+- 文档里**只存 `{id, journal}`，不存规则**（`FigureDocument.profile`，可选，schema 仍是 2）。
+  期刊自定义走覆盖（浅合并 + 几个子对象深合并），结果带 `derived_from`/`journal` 并进
+  proof report。整套换掉用 `MAGPLOT_PROFILES_FILE`。
+- 导出目录规则收在 `engine/config.project_export_dir(project, fallback)` —— Flask 与
+  MCP server 都调它（`fallback` 是参数不是常量：app 的 `EXPORT_DIR` 会被测试 monkeypatch）。
+
+## Codex MCP server 与内嵌画布（2026-08-18）
+
+完整版在 `docs/adr/0006-codex-mcp-app-and-publication-profile.md`，改动前先读。
+ADR 0005 的「skills-only / 不做 MCP server」这一条**已被它推翻**（交接那条路不变）。
+
+- 插件清单加 `"mcpServers": "./.mcp.json"`；`.mcp.json` 是**本地 stdio**
+  （`command: python3` + `args: ["./mcp/server.py"]` + `cwd/env_vars/tool_timeout_sec`）。
+  字段形状取自 Codex 官方插件装出来的清单，**不要猜**。
+- **`codex-plugin/mcp/magplot_mcp/` 只翻译不实现**：会话、manifest、override、patch 规范化、
+  导出全部落回 `magplot.engine.{pool,registry,handoff,patchspec,profiles,preflight}`。
+  发给 worker 的 patches 与 Flask `/api/engine/render` 走同一条路径，所以 ADR 0003 的
+  等价性不变式原样成立（`tests/test_mcp_roundtrip.py` 用真 matplotlib + 真 stdio 逐条验：
+  热态 == 全新 worker 重放、figure 尺寸变、axes 几何变、关掉重开）。
+- **stdout 归协议独占**：`rpc.hijack_stdout()` 把 `sys.stdout` 改道到 stderr，**必须先
+  存下真正的 stdout 句柄**（`_REAL_STDOUT`）。顺序反了协议帧全写到 stderr 上，症状是
+  「initialize 永远等不到响应」且零报错（开发期真撞到过）。
+- **路径范围**：`MAGPLOT_MCP_ROOTS`（缺省进程 cwd），越界一律拒，**绝不「就近找一个
+  能用的」**。**没装 Magplot 时降级而不是退出**（降级 server 握手正常、每个工具说人话）
+  ——静默退出在 Codex 里表现为「插件没有工具」。
+- **导出先预检**：有 error 且没有 `explicit_confirm` 时一张图都不出；强制导出记进 proof。
+- **内嵌画布 = Magplot 前端那一份代码**（`CanvasStage`/`OverlaySvg`/`interactions.ts`/
+  `ElementInspector`/既有 stores），拖拽、命中、吸附、undo、patch 状态**没有第二份实现**。
+  唯一改动是 `web/src/lib/engineTransport.ts`：一个**可选覆盖**（HTTP ↔ `tools/call`）。
+  它**不 import `lib/api`**——搬默认实现进去会与 api 绕成环（TDZ），而且既有单测大量
+  `vi.mock('@/lib/api')` 打桩 `engineRender`，实测会炸 7 个文件。
+- UI 只挂在 `magplot_open_figure` / `magplot_apply_overrides` 上（其余工具的产出是文字与
+  文件，挂 UI 只会让画布不停重建）；CSP 的 `connectDomains` **是空的**（sidecar 端口动态，
+  写不进白名单，这也是必须走 `tools/call` 的原因）；**绝不用「开浏览器」冒充内嵌画布**；
+  iframe 的 `localStorage`/`widgetState` **不存业务数据**。
+- 画布产物 `codex-plugin/mcp/widget/canvas.html` 是**受管构建物**（进 git）：
+  `python scripts/build_mcp_widget.py`，`--check` 在 CI 的 frontend job 与 pytest 里各看一道。
+  **改了 `web/src` 就得重跑**，否则用户装到的是上一版画布（功能全在、只是旧、零报错）。
+- **Codex Desktop 里的 iframe 渲染尚未实测**——协议层与画布逻辑都有自动化看护，
+  但「真桌面应用把这块 HTML 跑起来」这一步没验过，README 里如实写着。
 
 ## AI 桥
 
@@ -645,6 +710,12 @@ Python，首次渲染也不联网：
   文件占用、盘符/反斜杠/中文路径、端口占用、CLI 只有 .cmd、解释器探测）。
 - 后端冒烟（示例项目）：`magplot --figures examples/figures --no-browser` 后
   `curl -X POST /api/engine/render -d '{"id":"Fig1_kinetics.pdf","patches":[]}'`
+- **Codex 插件**：`.venv/bin/python -m pytest tests/test_mcp_server.py
+  tests/test_mcp_roundtrip.py tests/test_codex_plugin.py tests/test_preflight.py`；
+  画布产物 `python scripts/build_mcp_widget.py --check`（改了 web/src 就得重跑构建）；
+  预检向量 `python scripts/gen_preflight_vectors.py`（`--write` 重新生成后人工读 diff，
+  并让 `cd web && pnpm test` 也绿——两个求值器跑的是同一份向量）；
+  MCP 手动冒烟 `python codex-plugin/mcp/server.py --self-check`。
 - **性能基线**：`python scripts/bench_render.py --python .venv/bin/python`
   （真 HTTP 链路、冷启动/热 override 中位/导出、两条控制面对照）。结论与前后对照
   都写进 `docs/perf-baseline.md`——**改性能前先在那儿指出一个数字**。

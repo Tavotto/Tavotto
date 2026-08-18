@@ -54,6 +54,12 @@ jobs:
       - run: pnpm tsc --noEmit
       - run: pnpm test
       - run: pnpm build
+      # Codex 内嵌画布是 web/src 打出来的单文件产物，随插件一起提交进仓库。
+      # 改了前端却没重跑它，用户在 Codex 里装到的画布就是上一版——功能全在、
+      # 只是旧，零报错。指纹算法纯 Python，这一步不需要 Node。
+      - name: MCP 画布产物与前端源码同步
+        working-directory: .
+        run: python3 scripts/build_mcp_widget.py --check
 
   package:
     # 装出来的 wheel 必须自带界面并且能真的起起来——这条流水线专门盯

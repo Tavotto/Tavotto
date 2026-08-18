@@ -206,3 +206,75 @@ def test_plugin_is_excluded_from_the_python_package():
     exclude = cfg["tool"]["hatch"]["build"]["exclude"]
     assert "codex-plugin" in exclude and "codex-plugin/**" in exclude
     assert ".agents" in exclude and ".agents/**" in exclude
+
+
+# --------------------------- MCP server 的清单接线 ---------------------------
+# 这几条盯的是「Codex 装上了、但一个工具都看不见」——清单字段错一个字，
+# 症状就是插件安安静静地只剩技能。字段形状取自官方插件（`codex plugin` 装出来的
+# `~/.codex/plugins/cache/**/.codex-plugin/plugin.json` 与它们的 `.mcp.json`）。
+MCP_JSON = PLUGIN / ".mcp.json"
+
+
+def test_manifest_declares_the_mcp_server(manifest):
+    """`mcpServers` 指向一个**存在的** .mcp.json，且技能仍在。"""
+    assert manifest["mcpServers"] == "./.mcp.json"
+    assert MCP_JSON.is_file()
+    assert manifest["skills"] == "./skills/", "加 MCP 不能把技能挤掉"
+
+
+def test_mcp_json_shape_matches_what_codex_reads():
+    data = json.loads(MCP_JSON.read_text(encoding="utf-8"))
+    servers = data["mcpServers"]
+    assert list(servers) == ["magplot"]
+    entry = servers["magplot"]
+    # 本地 stdio：command + args + cwd。远程 HTTP 那套字段这里一个都不该有
+    assert entry["command"] == "python3"
+    assert entry["args"] == ["./mcp/server.py"]
+    assert entry["cwd"] == "."
+    assert "url" not in entry
+    # 起 worker 要跑用户的脚本，heavy 的图是分钟级——超时不能用默认的那点
+    assert entry["tool_timeout_sec"] >= 600
+    for name in ("MAGPLOT_CLI", "MAGPLOT_MCP_ROOTS", "PATH"):
+        assert name in entry["env_vars"], f"{name} 没进 env_vars，server 那边读不到"
+    assert (PLUGIN / "mcp" / "server.py").is_file()
+
+
+def test_launcher_is_stdlib_only_and_parses():
+    """启动器跑在**用户机器上的任意 python3**（可能没装 magplot）。"""
+    src = (PLUGIN / "mcp" / "server.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    imported = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported |= {a.name.split(".")[0] for a in node.names}
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            imported.add(node.module.split(".")[0])
+    allowed = {"json", "os", "shutil", "subprocess", "sys", "__future__",
+               "magplot", "magplot_mcp"}
+    assert not (imported - allowed), f"启动器引入了非标准库: {sorted(imported - allowed)}"
+
+
+def test_launcher_degrades_instead_of_dying_without_magplot():
+    """没装 Magplot 时**不能静默退出**——那在 Codex 里就是「插件没有工具」。"""
+    src = (PLUGIN / "mcp" / "server.py").read_text(encoding="utf-8")
+    assert "_degraded_server" in src
+    assert "pipx install magplot" in src
+
+
+def test_the_plugin_is_not_shipped_in_the_wheel():
+    """插件随 Codex 市场分发，不属于 pip 包（pyproject 的 exclude 看着）。"""
+    if tomllib is None:
+        pytest.skip("需要 tomllib（Python 3.11+）")
+    cfg = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    exclude = cfg["tool"]["hatch"]["build"]["exclude"]
+    assert "codex-plugin" in exclude and "codex-plugin/**" in exclude
+
+
+def test_widget_artifact_is_committed_next_to_the_server():
+    """产物不在仓库里 = 用户装完插件只有一个空目录（server 会如实降级）。"""
+    canvas = PLUGIN / "mcp" / "widget" / "canvas.html"
+    if not canvas.is_file():
+        pytest.skip("画布产物未构建（跑一次 scripts/build_mcp_widget.py）")
+    text = canvas.read_text(encoding="utf-8")
+    assert text.startswith("<!-- magplot-mcp-widget ")
+    assert "<div id=\"root\">" in text
