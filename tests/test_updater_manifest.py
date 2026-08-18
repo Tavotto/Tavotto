@@ -85,3 +85,33 @@ def test_cli_writes_the_file(tmp_path):
     data = json.loads(out.read_text(encoding="utf-8"))
     assert data["version"] == "1.2.3"
     assert data["platforms"]["darwin-aarch64"]["url"].endswith("/v1.2.3/Magplot.app.tar.gz")
+
+
+def test_half_a_manifest_is_rejected_when_both_platforms_are_required(tmp_path):
+    """v0.7.0 真实发生过：只有 Windows 那半进了清单，链路全绿。
+
+    根因在工作流（macOS 的 out/ 没被传成 desktop-tauri-* artifact，只挂了
+    Release），但脚本这一侧当时也拦不住——「一个都没有」是硬错误，「只有
+    一半」却照常产出。缺的那个平台的用户于是永远显示「已是最新」。
+    """
+    _artifact(tmp_path / "desktop-tauri-nsis", "Magplot_0.7.0_x64-setup.nsis.zip")
+
+    with pytest.raises(SystemExit, match="清单缺平台：darwin-aarch64"):
+        mod.build_manifest(tmp_path, "0.7.0", "v0.7.0", "erwanjun", "magplot", "",
+                           ["darwin-aarch64", "windows-x86_64"])
+
+
+def test_require_passes_when_both_are_present(tmp_path):
+    _artifact(tmp_path / "desktop-tauri-dmg", "Magplot.app.tar.gz")
+    _artifact(tmp_path / "desktop-tauri-nsis", "Magplot_0.7.0_x64-setup.nsis.zip")
+
+    man = mod.build_manifest(tmp_path, "0.7.0", "v0.7.0", "erwanjun", "magplot", "",
+                             ["darwin-aarch64", "windows-x86_64"])
+    assert set(man["platforms"]) == {"darwin-aarch64", "windows-x86_64"}
+
+
+def test_require_is_opt_in(tmp_path):
+    """不传 --require 时行为不变（手工 dispatch 单腿构建仍能用）。"""
+    _artifact(tmp_path / "desktop-tauri-nsis", "Magplot_0.7.0_x64-setup.nsis.zip")
+    man = mod.build_manifest(tmp_path, "0.7.0", "v0.7.0", "erwanjun", "magplot", "")
+    assert set(man["platforms"]) == {"windows-x86_64"}

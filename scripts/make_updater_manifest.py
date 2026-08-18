@@ -61,10 +61,21 @@ def collect(root: Path) -> dict[str, tuple[Path, Path]]:
 
 
 def build_manifest(root: Path, version: str, tag: str, owner: str, repo: str,
-                   notes: str) -> dict:
+                   notes: str, require: list[str] | None = None) -> dict:
     found = collect(root)
     if not found:
         raise SystemExit("一个更新包都没找到——检查 createUpdaterArtifacts 与私钥配置")
+    # 「一个都没有」会被上面拦下，「只有一半」以前不会——那才是真正发生过的那次：
+    # macOS 的产物没被传成 artifact，清单只剩 windows-x86_64，全链路绿灯，
+    # 而 dmg 那批用户从此查不到新版本。缺哪个平台就报哪个。
+    if require:
+        missing = [key for key in require if key not in found]
+        if missing:
+            raise SystemExit(
+                f"清单缺平台：{', '.join(missing)}（只找到 {', '.join(sorted(found))}）"
+                "——那个平台的用户会永远收不到更新。检查该腿有没有把 out/ 传成"
+                " desktop-tauri-* artifact"
+            )
     return {
         "version": version,
         "notes": notes,
@@ -87,12 +98,15 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--owner", default="erwanjun")
     ap.add_argument("--repo", default="magplot")
     ap.add_argument("--notes", default="", help="更新说明（原样写进清单）")
+    ap.add_argument("--require", default="",
+                    help="必须齐全的平台（逗号分隔），缺一个即失败")
     ap.add_argument("--out", required=True, type=Path)
     args = ap.parse_args(argv)
 
     version = args.tag[1:] if args.tag.startswith("v") else args.tag
+    require = [k.strip() for k in args.require.split(",") if k.strip()]
     manifest = build_manifest(args.artifacts, version, args.tag,
-                              args.owner, args.repo, args.notes)
+                              args.owner, args.repo, args.notes, require)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
                         encoding="utf-8")

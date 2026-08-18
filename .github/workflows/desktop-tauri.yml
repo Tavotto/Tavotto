@@ -435,8 +435,12 @@ jobs:
           if (!(Test-Path "$zip.sig")) { throw "更新包签名没生成" }
           Get-ChildItem out | Format-Table Name, Length
 
-      - name: 上传最终 Windows 产物
-        if: runner.os == 'Windows'
+      # **两条腿都要传**：updater-manifest 只看 desktop-tauri-* 这些 artifact，
+      # 「挂到 Release」那步喂不到它。这里曾经写着 runner.os == 'Windows'，
+      # 于是 macOS 的 Magplot.app.tar.gz(.sig) 只上了 Release、从没进过清单，
+      # latest.json 里一直只有 windows-x86_64——dmg 装的那批用户永远查不到
+      # 新版本，而整条链全绿（v0.7.0 就是这么发出去的）。
+      - name: 上传最终桌面产物（更新清单的输入）
         uses: actions/upload-artifact@v4
         with:
           name: desktop-tauri-${{ matrix.artifact }}
@@ -513,8 +517,10 @@ jobs:
           # 更新说明取 Release 正文（release.yml 手写的那份），拿不到就留空
           NOTES=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
                     --json body -q .body 2>/dev/null || true)
+          # 少一个平台 = 那个平台的用户永远收不到更新，而且全绿。硬要求两个都在。
           python scripts/make_updater_manifest.py \
             --artifacts artifacts --tag "$RELEASE_TAG" \
+            --require darwin-aarch64,windows-x86_64 \
             --notes "$NOTES" --out out/latest.json
           cat out/latest.json
 
