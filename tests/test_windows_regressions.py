@@ -328,14 +328,14 @@ def test_maintenance_scripts_report_under_cp1252_stdout(tmp_path):
 def test_widget_fingerprint_is_the_same_on_windows_and_posix():
     """画布同步门禁的指纹**必须跨平台一致**，否则它在 Windows 腿上永远是红的。
 
-    CI 的 windows-latest 腿实测撞到（本 PR 首跑）：同一份源码算出
-    `0c6de4960eba854f`，产物里戳的是 POSIX 上算的 `62654002934b20dc`。
-    两个差异各占一半：
+    CI 的 windows-latest 腿实测（本 PR 连撞两轮），三处差异各占一份：
 
       * **路径分隔符**——`str(Path("web/src/a.ts"))` 在 Windows 上是
         `web\\src\\a.ts`；
       * **行尾**——GitHub 的 Windows runner 默认 `core.autocrlf=true`，
-        检出的文本文件是 CRLF。
+        检出的文本文件是 CRLF；
+      * **遍历顺序**——`sorted(Path)` 在 Windows 上比的是**小写化**后的字符串
+        （大小写不敏感），`Zebra.ts` 与 `apple.ts` 的先后在两个平台正好相反。
 
     「永远红的门禁」与「空转的门禁」一样坏：它报的不是它要看护的那件事，
     看的人学会的是忽略它。
@@ -346,9 +346,29 @@ def test_widget_fingerprint_is_the_same_on_windows_and_posix():
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
     import build_mcp_widget
 
-    win = build_mcp_widget._entry(PureWindowsPath(r"web\src\lib\a.ts"), b"x\r\ny\r\n")
-    posix = build_mcp_widget._entry(PurePosixPath("web/src/lib/a.ts"), b"x\ny\n")
-    assert win == posix, "同一份源码在两个平台上算出了不同的指纹"
+    # 一份「Windows 视角」：反斜杠 + CRLF + 大小写不敏感的那个顺序
+    windows = build_mcp_widget.digest([
+        (PureWindowsPath(r"web\src\lib\apple.ts"), b"a\r\nb\r\n"),
+        (PureWindowsPath(r"web\src\lib\Zebra.ts"), b"z\r\n"),
+    ])
+    # 一份「POSIX 视角」：正斜杠 + LF + 大小写敏感的那个顺序
+    posix = build_mcp_widget.digest([
+        (PurePosixPath("web/src/lib/Zebra.ts"), b"z\n"),
+        (PurePosixPath("web/src/lib/apple.ts"), b"a\nb\n"),
+    ])
+    assert windows == posix, "同一份源码在两个平台上算出了不同的指纹"
+
+
+def test_widget_fingerprint_still_notices_a_real_change():
+    """上一条是「别乱报」，这条是「别不报」——规范化不能规范到什么都一样。"""
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+    import build_mcp_widget
+
+    base = [(PurePosixPath("web/src/a.ts"), b"x\n")]
+    assert build_mcp_widget.digest(base) != build_mcp_widget.digest(
+        [(PurePosixPath("web/src/a.ts"), b"y\n")]), "内容变了却算出同一个指纹"
+    assert build_mcp_widget.digest(base) != build_mcp_widget.digest(
+        [(PurePosixPath("web/src/b.ts"), b"x\n")]), "文件名变了却算出同一个指纹"
 
 
 def test_codex_handoff_pins_utf8_on_every_decoding_spawn():

@@ -67,39 +67,48 @@ def _pnpm() -> list[str]:
 
 
 def _entry(rel: PurePath, data: bytes) -> tuple[bytes, bytes]:
-    """一条参与指纹的记录：(相对路径, 文件内容)。
+    r"""一条参与指纹的记录：(相对路径, 文件内容)。
 
     **路径统一成 POSIX 分隔符、行尾统一成 LF**，两者缺一不可：
 
     * `str(Path("web/src/a.ts"))` 在 Windows 上是 `web\src\a.ts`；
     * GitHub 的 Windows runner 默认 `core.autocrlf=true`，检出的文本文件是 CRLF。
 
-    不规范化的话，同一份源码在两个平台上算出两个指纹，这个门禁在 Windows 腿上
-    **永远是红的**——而且红的原因与它要看护的「画布产物过期了」毫无关系。
-    看的人学会的是忽略它（CI 首跑实测，`test_windows_regressions.py` 看着）。
+    （docstring 用 raw string：这里有反斜杠，普通字符串在 3.12+ 会发
+    SyntaxWarning，而这个脚本是被捕获着调用的，warning 会混进它的输出里。）
     """
     return rel.as_posix().encode("utf-8"), data.replace(b"\r\n", b"\n")
+
+
+def digest(items) -> str:
+    """一组 (相对路径, 内容) → 指纹。**与遍历顺序无关，与平台无关。**
+
+    排序放在这里而不是交给调用方：`sorted(Path)` 在 Windows 上比的是
+    **小写化**后的字符串（大小写不敏感），POSIX 上是原字符串——同一棵目录树
+    在两个平台上会给出不同的遍历顺序，于是指纹不同，这个门禁在 Windows 腿上
+    永远是红的。规范化之后按 bytes 排，两边必然一致。
+    """
+    h = hashlib.sha256()
+    for rel, data in sorted(_entry(rel, data) for rel, data in items):
+        h.update(rel)
+        h.update(data)
+    return h.hexdigest()[:16]
 
 
 def source_fingerprint() -> str:
     """画布源码的指纹：`web/src/**` + 规范文件 + 构建配置。
 
     只盯这几处：改了它们而没重新构建，用户装到的画布就是旧的。
+    收集顺序无所谓——排序与规范化都在 `digest()` 里。
     """
-    h = hashlib.sha256()
     files: list[Path] = []
     for base in (WEB / "src",):
-        for p in sorted(base.rglob("*")):
+        for p in base.rglob("*"):
             if p.is_file() and p.suffix in (".ts", ".tsx", ".css") and ".test." not in p.name:
                 files.append(p)
     files += [WEB / "mcp.html", WEB / "vite.mcp.config.ts", WEB / "package.json",
               ROOT / "src" / "magplot" / "profiles" / "publication.json"]
-    for p in files:
-        if not p.is_file():
-            continue
-        for chunk in _entry(p.relative_to(ROOT), p.read_bytes()):
-            h.update(chunk)
-    return h.hexdigest()[:16]
+    return digest((p.relative_to(ROOT), p.read_bytes()) for p in files if p.is_file())
 
 
 def build() -> str:
