@@ -1027,29 +1027,18 @@ def project_store_dir(ctx: "ProjectCtx | None" = None) -> Path | None:
     用户在自己的项目目录里就能看到、随项目一起备份/同步/迁移。
     未打开项目时返回 None（调用方各自退回数据目录）。"""
     ctx = ctx if ctx is not None else _request_ctx()
-    return None if ctx is None else ctx.path / "magplotfile"
+    return None if ctx is None else engine_config.project_store_dir(ctx.path)
 
 
 def project_export_dir(ctx: "ProjectCtx | None" = None) -> Path:
     """项目的导出目录（项目设置可覆盖）。
 
-    缺省 `<项目>/magplotfile/export/`——导出的成图要交给投稿/合作者，
-    跟着项目走才找得到（旧版的 `<项目名>-exports/` 同级目录不再新建，
-    已有的留在原地不动）。项目目录建不出来（只读、网络盘等）退回数据目录
-    exports/。未打开项目时（纯文字/形状导出不依赖项目）直接用数据目录。"""
+    规则本身在 `engine/config.project_export_dir()`——**Codex 插件的 MCP server
+    也导出成图**，两条入口各写一份的话，用户会在两个地方找同一张图。
+    这里只负责把请求上下文翻译成项目路径。"""
     ctx = ctx if ctx is not None else _request_ctx()
-    if ctx is None:
-        return EXPORT_DIR
-    d = engine_config.project_settings(str(ctx.path)).get("export_dir")
-    if d:
-        return Path(d).expanduser()
-    store = project_store_dir(ctx)
-    assert store is not None
-    try:
-        (store / "export").mkdir(parents=True, exist_ok=True)
-        return store / "export"
-    except OSError:
-        return EXPORT_DIR
+    return engine_config.project_export_dir(
+        None if ctx is None else ctx.path, fallback=EXPORT_DIR)
 
 
 def project_backup_dir(ctx: "ProjectCtx | None" = None) -> Path:

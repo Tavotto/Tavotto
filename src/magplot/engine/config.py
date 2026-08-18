@@ -153,6 +153,42 @@ def set_project_settings(path: str, patch: dict) -> dict:
         return merged
 
 
+#: 项目内的 Magplot 收纳目录名（画布 / 导出 / 版本历史都在里面）
+PROJECT_STORE_DIRNAME = "magplotfile"
+
+
+def project_store_dir(project: str | Path) -> Path:
+    """`<项目>/magplotfile/` —— 与该项目相关的 Magplot 文件统一收纳处。"""
+    return Path(project) / PROJECT_STORE_DIRNAME
+
+
+def project_export_dir(project: str | Path | None,
+                       fallback: Path | None = None) -> Path:
+    """项目的导出目录（项目设置可覆盖）。**规则的唯一出处**。
+
+    缺省 `<项目>/magplotfile/export/`——成图要交给投稿/合作者，跟着项目走才
+    找得到。项目目录建不出来（只读、网络盘）退回 `fallback`；没有项目
+    （纯文字/形状导出）也用它。`fallback` 不给时是数据目录的 exports/。
+
+    Flask 的 `app.project_export_dir()` 与 Codex 插件的 MCP server 都调这里：
+    两条入口各写一份的话，用户会在两个地方找同一张图。**`fallback` 是参数而
+    不是就地取常量**：app 侧的 `EXPORT_DIR` 是模块级常量，测试会 monkeypatch
+    它，读死在这里会让那些用例静默写到真实数据目录。
+    """
+    fallback = fallback if fallback is not None else data_path("exports")
+    if project is None:
+        return fallback
+    configured = project_settings(str(project)).get("export_dir")
+    if configured:
+        return Path(configured).expanduser()
+    store = project_store_dir(project) / "export"
+    try:
+        store.mkdir(parents=True, exist_ok=True)
+        return store
+    except OSError:
+        return fallback
+
+
 def worker_python() -> str | None:
     """用户指定或 Magplot 自建的渲染解释器（绝对路径）。"""
     return (load().get("worker") or {}).get("python") or None

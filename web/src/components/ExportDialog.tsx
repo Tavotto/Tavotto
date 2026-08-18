@@ -1,9 +1,32 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Archive, Check, ChevronRight, Download, ExternalLink, MoreHorizontal, TriangleAlert } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import {
+  Archive,
+  Check,
+  ChevronRight,
+  Download,
+  ExternalLink,
+  Lightbulb,
+  MoreHorizontal,
+  ShieldQuestion,
+  TriangleAlert,
+} from 'lucide-react'
 import { createPackage, exportFigure, type ExportResponse } from '@/lib/api'
-import { readExportDefaults } from '@/lib/exportDefaults'
+import { readExportDefaults, writeExportDefaults } from '@/lib/exportDefaults'
 import { toExportObjects } from '@/lib/exportPayload'
-import { buildProofPayload, runPreflight } from '@/lib/preflight'
+import {
+  buildProofPayload,
+  runPreflight,
+  summarize,
+  type PreflightIssue,
+} from '@/lib/preflight'
+import {
+  columnOf,
+  listProfiles,
+  loadProfile,
+  type JournalOverride,
+  type PublicationProfile,
+  type Severity,
+} from '@/lib/profile'
 import { apiUrl } from '@/lib/session'
 import { cn } from '@/lib/utils'
 import { isDesktop, revealExportedFile } from '@/lib/desktop'
@@ -18,7 +41,7 @@ import { Button } from './ui/Button'
 import { Dialog } from './ui/Dialog'
 import { Menu, MenuItem } from './ui/Menu'
 import { Row } from './ui/Field'
-import { TextInput } from './ui/Input'
+import { NumberField, TextInput } from './ui/Input'
 import { Select } from './ui/Select'
 import { Toggle } from './ui/Toggle'
 
@@ -29,18 +52,68 @@ const DPI_OPTIONS = [
   { value: '1200', label: '1200 dpi', hint: '极限' },
 ]
 
-/** 导出预设：dpi + 格式的组合，并按期刊常见版式校对页宽（只提示，不擅自改页面） */
-const PRESETS: { id: string; label: string; dpi: string; formats: string[]; pageW?: number; hint: string }[] = [
-  { id: 'single', label: '单栏投稿', dpi: '600', formats: ['pdf'], pageW: 85, hint: 'PDF · 85mm 单栏' },
-  { id: 'double', label: '通栏投稿', dpi: '600', formats: ['pdf'], pageW: 150, hint: 'PDF · 150mm 通栏' },
-  { id: 'full', label: '整页', dpi: '600', formats: ['pdf', 'png'], pageW: 180, hint: 'PDF+PNG · 180mm 版心' },
-  { id: 'screen', label: '屏幕预览', dpi: '300', formats: ['png'], hint: 'PNG 300dpi' },
-]
+/**
+ * 导出预设：**页宽全部来自 profile**（以前是写死的 85/150/180mm——规范一改，
+ * 那三个数字就开始撒谎）。预设只设 dpi + 格式并校对页宽，绝不擅自改页面。
+ */
+function buildPresets(profile: PublicationProfile) {
+  const dpi = String(profile.preferred_formats.export_dpi_default)
+  const vector = profile.preferred_formats.vector.includes('pdf') ? 'pdf' : 'pdf'
+  return [
+    {
+      id: 'single',
+      label: '单栏投稿',
+      dpi,
+      formats: [vector],
+      pageW: profile.widths_mm.single,
+      hint: `PDF · ${profile.widths_mm.single}mm 单栏`,
+    },
+    {
+      id: 'double',
+      label: '通栏投稿',
+      dpi,
+      formats: [vector],
+      pageW: profile.widths_mm.double,
+      hint: `PDF · ${profile.widths_mm.double}mm 通栏`,
+    },
+    {
+      id: 'both',
+      label: 'PDF + PNG',
+      dpi,
+      formats: ['pdf', 'png'],
+      pageW: null as number | null,
+      hint: `PDF+PNG · ${dpi}dpi`,
+    },
+    {
+      id: 'screen',
+      label: '屏幕预览',
+      dpi: String(profile.min_raster_dpi),
+      formats: ['png'],
+      pageW: null as number | null,
+      hint: `PNG ${profile.min_raster_dpi}dpi`,
+    },
+  ]
+}
+
+const SEVERITY_LABEL: Record<Severity, string> = {
+  error: '阻断',
+  warn: '警告',
+  not_verifiable: '无法核验',
+  suggestion: '建议',
+}
+
+const SEVERITY_ICON: Record<Severity, typeof TriangleAlert> = {
+  error: TriangleAlert,
+  warn: TriangleAlert,
+  not_verifiable: ShieldQuestion,
+  suggestion: Lightbulb,
+}
 
 export function ExportDialog() {
   const open = useUiStore((s) => s.exportOpen)
   const setOpen = useUiStore((s) => s.setExportOpen)
   const doc = useDocumentStore((s) => s.doc)
+  const commit = useDocumentStore((s) => s.commit)
   const byKey = useRenderStore((s) => s.byKey)
   const latest = useRenderStore((s) => s.latest)
   const assets = useAssetStore((s) => s.byId)
@@ -49,12 +122,33 @@ export function ExportDialog() {
   const [formats, setFormats] = useState<string[]>(() => readExportDefaults().formats)
   const [dpi, setDpi] = useState(() => readExportDefaults().dpi)
   const [stem, setStem] = useState(doc.name)
-  const [preset, setPreset] = useState<string | null>(null)
   const [withProof, setWithProof] = useState(() => readExportDefaults().withProof)
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<ExportResponse | null>(null)
-  const [packResult, setPackResult] = useState<{ name: string; url: string; assets: number } | null>(null)
+  const [packResult, setPackResult] = useState<{ name: string; url: string; assets: number } | null>(
+    null,
+  )
   const [error, setError] = useState<string | null>(null)
+  /**
+   * 用户对本次导出的显式确认：阻断项与「无法核验」项都要点过才放行。
+   * **不做成记住的偏好**——每次导出都得重新面对一次当前这批问题。
+   */
+  const [confirmed, setConfirmed] = useState(false)
+
+  /* ------------------------------ 出版规范 ------------------------------- */
+  const profiles = useMemo(() => listProfiles(), [])
+  // 规范绑定优先看文档自己的；旧文档没有该字段时用「上次用过的」，再退默认
+  const docProfileId = doc.profile?.id
+  const [profileId, setProfileId] = useState(
+    () => docProfileId ?? readExportDefaults().profileId,
+  )
+  const journal = doc.profile?.journal as JournalOverride | undefined
+  const profile = useMemo(() => loadProfile(profileId, journal), [profileId, journal])
+  const column = columnOf(profile, doc.page.w)
+  // 期刊自定义宽度：文档里存的是覆盖值，缺省显示 profile 的双栏宽
+  const [journalWidth, setJournalWidth] = useState<number | null>(
+    () => (doc.profile?.journal as JournalOverride | undefined)?.widths_mm?.double ?? null,
+  )
 
   useEffect(() => {
     if (!open) return
@@ -62,7 +156,10 @@ export function ExportDialog() {
     setResult(null)
     setPackResult(null)
     setError(null)
-  }, [open, doc.name])
+    setConfirmed(false)
+    setProfileId(doc.profile?.id ?? readExportDefaults().profileId)
+    setJournalWidth((doc.profile?.journal as JournalOverride | undefined)?.widths_mm?.double ?? null)
+  }, [open, doc.name, doc.profile])
 
   const visible = doc.objects.filter((o) => !o.hidden)
   const panels = visible.filter((o): o is PanelObject => o.type === 'panel')
@@ -73,16 +170,47 @@ export function ExportDialog() {
   const pxH = Math.round((doc.page.h / 25.4) * Number(dpi))
 
   const issues = useMemo(
-    () => (open ? runPreflight(doc, assets, { byKey, latest }) : []),
-    [open, doc, assets, byKey, latest],
+    () => (open ? runPreflight(doc, assets, { byKey, latest }, profile) : []),
+    [open, doc, assets, byKey, latest, profile],
   )
-  const errors = issues.filter((i) => i.severity === 'error')
+  const sum = useMemo(() => summarize(issues), [issues])
+  /** 最小的最终有效字号（体检里最有信息量的那个数字，直接摆在面板上） */
+  const minEffectivePt = useMemo(() => {
+    let min: number | null = null
+    for (const i of issues) {
+      const v = i.detail?.effective_pt
+      if (typeof v === 'number' && (min == null || v < min)) min = v
+    }
+    return min
+  }, [issues])
 
-  const activePreset = PRESETS.find((p) => p.id === preset)
+  /** 需要用户点头才放行的东西：阻断项 + 无法核验项 */
+  const needsConfirm = sum.errors.length > 0 || sum.notVerifiable.length > 0
+  const blocked = needsConfirm && !confirmed
+
+  const applyProfile = (id: string, width: number | null) => {
+    setProfileId(id)
+    writeExportDefaults({ profileId: id })
+    const nextJournal: JournalOverride | undefined =
+      width != null && Number.isFinite(width) && width > 0
+        ? { widths_mm: { double: width } }
+        : undefined
+    // 规范绑定写进文档（可撤销）：proof 与下次打开都按同一套规矩
+    commit('设置出版规范', (d) => {
+      d.profile = {
+        id,
+        ...(nextJournal ? { journal: nextJournal as Record<string, unknown> } : {}),
+      }
+    })
+  }
+
+  const presets = useMemo(() => buildPresets(profile), [profile])
+  const [preset, setPreset] = useState<string | null>(null)
+  const activePreset = presets.find((p) => p.id === preset)
   const pageMismatch =
-    activePreset?.pageW != null && Math.abs(doc.page.w - activePreset.pageW) > 0.5
+    activePreset?.pageW != null && Math.abs(doc.page.w - activePreset.pageW) > profile.widths_mm.tolerance_mm
 
-  const applyPreset = (p: (typeof PRESETS)[number]) => {
+  const applyPreset = (p: (typeof presets)[number]) => {
     setPreset(p.id)
     setDpi(p.dpi)
     setFormats([...p.formats])
@@ -99,7 +227,7 @@ export function ExportDialog() {
   }
 
   const run = async () => {
-    if (!formats.length) return
+    if (!formats.length || blocked) return
     setBusy(true)
     setError(null)
     setResult(null)
@@ -112,7 +240,15 @@ export function ExportDialog() {
         formats,
         stem: settings.stem,
         objects: toExportObjects(doc.objects),
-        proof: withProof ? buildProofPayload(doc, assets, issues, settings) : undefined,
+        // proof 里必须带 profile 身份与全部检查结果，含 not_verifiable
+        proof: withProof
+          ? buildProofPayload(doc, assets, issues, settings, profile, {
+              forced: sum.errors.length > 0 && confirmed,
+              acknowledged: needsConfirm
+                ? [...sum.errors, ...sum.notVerifiable].map((i) => i.id)
+                : [],
+            })
+          : undefined,
       })
       setResult(res)
       useUiStore.getState().setStatus(`导出完成：${res.files.map((f) => f.name).join('、')}`)
@@ -151,7 +287,7 @@ export function ExportDialog() {
       onOpenChange={setOpen}
       title="导出"
       description={`${doc.page.w}×${doc.page.h} mm · ${panels.length} 面板 · ${texts.length} 文字 · ${marks.length} 标注`}
-      width={500}
+      width={520}
       busy={busy}
       footer={
         <>
@@ -178,10 +314,14 @@ export function ExportDialog() {
           <Button
             variant="primary"
             size="md"
-            disabled={!formats.length}
+            disabled={!formats.length || blocked}
             loading={busy}
             loadingLabel="正在合成…"
-            title={errors.length ? '存在阻断性问题（缺素材 / 渲染失败），仍可导出但建议先处理' : undefined}
+            title={
+              blocked
+                ? '存在阻断性问题或无法自动核验的项，先在上方勾选确认再导出'
+                : undefined
+            }
             onClick={run}
           >
             <Download size={14} />
@@ -193,7 +333,7 @@ export function ExportDialog() {
       <div className="flex flex-col gap-2.5">
         <Row label="预设" labelWidth={52}>
           <div className="flex min-w-0 flex-1 flex-wrap gap-1">
-            {PRESETS.map((p) => (
+            {presets.map((p) => (
               <button
                 key={p.id}
                 onClick={() => applyPreset(p)}
@@ -217,7 +357,88 @@ export function ExportDialog() {
           </p>
         )}
 
-        <PreflightBlock issues={issues} errors={errors.length} onLocate={locate} />
+        <Row label="规范" labelWidth={52}>
+          <Select
+            value={profileId}
+            onChange={(v) => applyProfile(v, journalWidth)}
+            options={profiles.map((p) => ({
+              value: p.profile_id,
+              label: p.label,
+              hint: `v${p.version}`,
+            }))}
+            ariaLabel="出版规范"
+            className="w-44"
+          />
+          <span className="shrink-0 font-mono text-xs text-ink-3">
+            {profile.profile_id} · v{profile.version}
+          </span>
+        </Row>
+
+        <ProfileFacts
+          pageW={doc.page.w}
+          pageH={doc.page.h}
+          column={column}
+          singleMm={profile.widths_mm.single}
+          doubleMm={profile.widths_mm.double}
+          minPt={profile.min_effective_font_size_pt}
+          minEffectivePt={minEffectivePt}
+          minDpi={profile.min_raster_dpi}
+          dpi={Number(dpi)}
+          vector={profile.preferred_formats.vector}
+          raster={profile.preferred_formats.raster}
+        />
+
+        {profile.widths_mm.allow_custom && (
+          <Row label="期刊宽" labelWidth={52}>
+            <NumberField
+              value={journalWidth ?? profile.widths_mm.double}
+              min={20}
+              max={500}
+              step={0.5}
+              precision={2}
+              suffix="mm"
+              className="w-24"
+              onChange={(v) => {
+                setJournalWidth(v)
+                applyProfile(profileId, v)
+              }}
+            />
+            <span className="min-w-0 flex-1 text-xs text-ink-3">
+              覆盖本规范的双栏宽度（只改这一条，其余规则继承；写进文档并随 proof 留档）
+              {journalWidth != null && (
+                <button
+                  className="ml-2 text-accent hover:underline"
+                  onClick={() => {
+                    setJournalWidth(null)
+                    applyProfile(profileId, null)
+                  }}
+                >
+                  还原
+                </button>
+              )}
+            </span>
+          </Row>
+        )}
+
+        <PreflightBlock issues={issues} onLocate={locate} />
+
+        {needsConfirm && (
+          <label className="flex items-start gap-1.5 rounded-sm border border-danger/40 bg-surface-2 px-2 py-1.5 text-xs text-ink-2">
+            <input
+              type="checkbox"
+              checked={confirmed}
+              onChange={(e) => setConfirmed(e.target.checked)}
+              className="mt-0.5 shrink-0"
+            />
+            <span className="min-w-0 flex-1">
+              我已知悉上述
+              {sum.errors.length > 0 && ` ${sum.errors.length} 类阻断性问题`}
+              {sum.errors.length > 0 && sum.notVerifiable.length > 0 && '与'}
+              {sum.notVerifiable.length > 0 && ` ${sum.notVerifiable.length} 类无法自动核验的项`}
+              ，仍然导出。确认记录会写进 proof report。
+            </span>
+          </label>
+        )}
 
         <Row label="格式" labelWidth={52}>
           <FormatToggle
@@ -233,6 +454,12 @@ export function ExportDialog() {
             hint="位图，按 dpi 渲染"
           />
         </Row>
+        {profile.preferred_formats.vector.includes('svg') && (
+          <p className="pl-[60px] text-xs leading-relaxed text-ink-3">
+            规范也接受 SVG，但画布合成只出 PDF/PNG（合成走 PyMuPDF）。要 SVG
+            请对单张图导出——图内编辑态的写回 / Codex 插件的 magplot_export 都给真矢量 SVG。
+          </p>
+        )}
 
         <Row label="分辨率" labelWidth={52}>
           <Select
@@ -259,7 +486,7 @@ export function ExportDialog() {
         <Row label="留档" labelWidth={52}>
           <label
             className="flex items-center gap-1.5 text-xs text-ink-2"
-            title="JSON 留档：预检结果 + 素材清单 + 导出设置，随成图写入导出目录"
+            title="JSON 留档：profile 身份 + 全部预检结果（含无法核验项）+ 素材清单 + 导出设置，随成图写入导出目录"
           >
             <Toggle checked={withProof} onChange={setWithProof} />
             随成图生成 proof report
@@ -330,17 +557,80 @@ export function ExportDialog() {
   )
 }
 
-/** 预检：先一句摘要，问题明细按需展开；有问题时默认展开错误 */
+/** 规范体检的四个关键数字：尺寸 / 栏位 / 最小有效字号 / DPI */
+function ProfileFacts({
+  pageW,
+  pageH,
+  column,
+  singleMm,
+  doubleMm,
+  minPt,
+  minEffectivePt,
+  minDpi,
+  dpi,
+  vector,
+  raster,
+}: {
+  pageW: number
+  pageH: number
+  column: 'single' | 'double' | null
+  singleMm: number
+  doubleMm: number
+  minPt: number
+  minEffectivePt: number | null
+  minDpi: number
+  dpi: number
+  vector: string[]
+  raster: string[]
+}) {
+  const fontOk = minEffectivePt == null || minEffectivePt >= minPt
+  return (
+    <div className="grid grid-cols-2 gap-x-3 gap-y-1 rounded-sm bg-surface-2 px-2 py-1.5 text-xs">
+      <Fact label="页面" value={`${pageW} × ${pageH} mm`} />
+      <Fact
+        label="栏位"
+        value={
+          column === 'single'
+            ? `单栏 ${singleMm}mm`
+            : column === 'double'
+              ? `双栏 ${doubleMm}mm`
+              : `不符（规范 ${singleMm}/${doubleMm}mm）`
+        }
+        bad={column === null}
+      />
+      <Fact
+        label="最小有效字号"
+        value={minEffectivePt == null ? `未发现低于 ${minPt}pt 的文字` : `${minEffectivePt}pt`}
+        bad={!fontOk}
+      />
+      <Fact label="导出 DPI" value={`${dpi} dpi（规范下限 ${minDpi}）`} bad={dpi < minDpi} />
+      <Fact label="矢量格式" value={vector.join(' / ').toUpperCase()} />
+      <Fact label="位图格式" value={raster.join(' / ').toUpperCase()} />
+    </div>
+  )
+}
+
+function Fact({ label, value, bad = false }: { label: string; value: string; bad?: boolean }) {
+  return (
+    <span className="flex min-w-0 items-baseline gap-1.5">
+      <span className="shrink-0 text-ink-3">{label}</span>
+      <span className={cn('min-w-0 truncate font-mono', bad ? 'text-danger' : 'text-ink-2')}>
+        {value}
+      </span>
+    </span>
+  )
+}
+
+/** 预检：先一句摘要，问题明细按需展开；有阻断项时默认展开 */
 function PreflightBlock({
   issues,
-  errors,
   onLocate,
 }: {
-  issues: { id: string; text: string; severity: string; objectIds: string[] }[]
-  errors: number
+  issues: PreflightIssue[]
   onLocate: (ids: string[]) => void
 }) {
-  const [expanded, setExpanded] = useState(false)
+  const sum = summarize(issues)
+  const [expanded, setExpanded] = useState(sum.errors.length > 0)
   if (issues.length === 0) {
     return (
       <p className="flex items-center gap-1.5 rounded-sm bg-surface-2 px-2 py-1.5 text-xs text-ink-2">
@@ -349,6 +639,9 @@ function PreflightBlock({
       </p>
     )
   }
+  const parts = (['error', 'warn', 'not_verifiable', 'suggestion'] as Severity[])
+    .filter((s) => sum.counts[s] > 0)
+    .map((s) => `${sum.counts[s]} ${SEVERITY_LABEL[s]}`)
   return (
     <div className="rounded-sm bg-surface-2 px-2 py-1.5">
       <button
@@ -356,9 +649,12 @@ function PreflightBlock({
         aria-expanded={expanded}
         className="flex w-full items-center gap-1.5 rounded-sm text-left text-xs outline-none focus-visible:focus-ring"
       >
-        <TriangleAlert size={12} className={errors ? 'shrink-0 text-danger' : 'shrink-0 text-ink-3'} />
-        <span className={cn('min-w-0 flex-1', errors ? 'text-danger' : 'text-ink-2')}>
-          预检发现 {issues.length} 类问题{errors ? `（${errors} 类阻断性）` : ''}
+        <TriangleAlert
+          size={12}
+          className={sum.blocking ? 'shrink-0 text-danger' : 'shrink-0 text-ink-3'}
+        />
+        <span className={cn('min-w-0 flex-1', sum.blocking ? 'text-danger' : 'text-ink-2')}>
+          预检：{parts.join(' · ')}
         </span>
         <ChevronRight
           size={11}
@@ -368,13 +664,54 @@ function PreflightBlock({
       {expanded && (
         <ul className="mt-1.5 flex flex-col gap-1.5 border-t border-border pt-1.5">
           {issues.map((it) => (
-            <Warning key={it.id} ids={it.objectIds} error={it.severity === 'error'} onLocate={onLocate}>
-              {it.text}（{it.objectIds.length} 个）
-            </Warning>
+            <IssueRow key={it.id} issue={it} onLocate={onLocate} />
           ))}
         </ul>
       )}
     </div>
+  )
+}
+
+function IssueRow({
+  issue,
+  onLocate,
+}: {
+  issue: PreflightIssue
+  onLocate: (ids: string[]) => void
+}) {
+  const Icon = SEVERITY_ICON[issue.severity]
+  const tone =
+    issue.severity === 'error'
+      ? 'text-danger'
+      : issue.severity === 'suggestion'
+        ? 'text-ink-faint'
+        : 'text-ink-3'
+  return (
+    <li>
+      <button
+        onClick={() => onLocate(issue.objectIds)}
+        disabled={!issue.objectIds.length}
+        className="group flex w-full items-start gap-1.5 text-left text-xs leading-relaxed text-ink-2 hover:text-ink disabled:cursor-default"
+      >
+        <Icon size={12} className={cn('mt-px shrink-0', tone)} />
+        <span className="min-w-0 flex-1">
+          <span className="mr-1 rounded-[3px] bg-surface px-1 font-mono text-[10px] text-ink-3">
+            {SEVERITY_LABEL[issue.severity]}
+          </span>
+          {issue.text}
+          {issue.objectIds.length > 1 && `（${issue.objectIds.length} 处）`}
+          {!!issue.gids.length && (
+            <span className="ml-1 font-mono text-[10px] text-ink-faint">
+              {issue.gids.slice(0, 3).join(' ')}
+              {issue.gids.length > 3 && ' …'}
+            </span>
+          )}
+        </span>
+        {!!issue.objectIds.length && (
+          <span className="shrink-0 text-ink-3 group-hover:text-accent">定位</span>
+        )}
+      </button>
+    </li>
   )
 }
 
@@ -413,34 +750,5 @@ function FormatToggle({
         <span className="block text-xs text-ink-3">{hint}</span>
       </span>
     </button>
-  )
-}
-
-/** 预检警告点得动：点一下就关掉弹窗、选中并把问题对象挪进视野 */
-function Warning({
-  ids,
-  error = false,
-  onLocate,
-  children,
-}: {
-  ids: string[]
-  error?: boolean
-  onLocate: (ids: string[]) => void
-  children: ReactNode
-}) {
-  return (
-    <li>
-      <button
-        onClick={() => onLocate(ids)}
-        className="group flex w-full items-start gap-1.5 text-left text-xs leading-relaxed text-ink-2 hover:text-ink"
-      >
-        <TriangleAlert
-          size={12}
-          className={cn('mt-px shrink-0', error ? 'text-danger' : 'text-ink-3')}
-        />
-        <span className="min-w-0 flex-1">{children}</span>
-        <span className="shrink-0 text-ink-3 group-hover:text-accent">定位</span>
-      </button>
-    </li>
   )
 }
