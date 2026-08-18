@@ -79,7 +79,7 @@ const COMMANDS: Command[] = [
     shortcut: `${MOD}1`,
     run: () => {
       const page = useDocumentStore.getState().doc.page
-      useViewportStore.getState().fit(page.w, page.h)
+      useViewportStore.getState().fitAnimated(page.w, page.h)
     },
   },
   { id: 'rulers', label: '显示 / 隐藏标尺', keywords: 'ruler bc', run: () => ui().setShowRulers(!ui().showRulers) },

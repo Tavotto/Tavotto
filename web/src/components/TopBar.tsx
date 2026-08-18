@@ -328,7 +328,7 @@ function ZoomControls() {
         <Button
           size="icon-sm"
           className="rounded-r-none"
-          onClick={() => useViewportStore.getState().setZoomCentered(zoom / 1.25)}
+          onClick={() => useViewportStore.getState().zoomBy(1 / 1.25)}
           aria-label="缩小"
         >
           <Minus size={13} />
@@ -365,7 +365,7 @@ function ZoomControls() {
           <div className="my-1 h-px bg-border" />
           <button
             onClick={() => {
-              useViewportStore.getState().fit(page.w, page.h)
+              useViewportStore.getState().fitAnimated(page.w, page.h)
               setOpen(false)
             }}
             className="flex h-7 items-center justify-between rounded-sm px-2 text-xs text-ink outline-none hover:bg-ink/[.055] focus-visible:focus-ring"
@@ -379,7 +379,7 @@ function ZoomControls() {
         <Button
           size="icon-sm"
           className="rounded-none"
-          onClick={() => useViewportStore.getState().setZoomCentered(zoom * 1.25)}
+          onClick={() => useViewportStore.getState().zoomBy(1.25)}
           aria-label="放大"
         >
           <Plus size={13} />
@@ -389,7 +389,7 @@ function ZoomControls() {
         <Button
           size="icon-sm"
           className="rounded-l-none border-l border-border"
-          onClick={() => useViewportStore.getState().fit(page.w, page.h)}
+          onClick={() => useViewportStore.getState().fitAnimated(page.w, page.h)}
           aria-label="适应画布"
         >
           <Maximize2 size={13} />

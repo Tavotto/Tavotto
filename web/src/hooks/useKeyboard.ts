@@ -143,7 +143,7 @@ export function useKeyboard() {
       if (mod && (e.key === '=' || e.key === '+' || e.key === '-')) {
         e.preventDefault()
         const vp = useViewportStore.getState()
-        vp.setZoomCentered(vp.zoom * (e.key === '-' ? 1 / 1.25 : 1.25))
+        vp.zoomBy(e.key === '-' ? 1 / 1.25 : 1.25)
         return
       }
       if (mod && e.key === '0') {
@@ -154,7 +154,7 @@ export function useKeyboard() {
       if (mod && e.key === '1') {
         e.preventDefault()
         const page = doc.doc.page
-        useViewportStore.getState().fit(page.w, page.h)
+        useViewportStore.getState().fitAnimated(page.w, page.h)
         return
       }
 
