@@ -55,14 +55,28 @@ MANIFEST = {
 LAYOUTS = {"windows": ("python.exe",), "posix": ("bin", "python3")}
 
 
-def foreign_manifest(os_name=None, arch=None):
-    """一份「给别的平台/架构」的 manifest——用来验架构核对真的会拦。"""
+def manifest_claiming(os_name=None, arch=None):
+    """一份「声称自己是给某平台/某架构」的 manifest（不给的字段沿用本机）。"""
     plat = dict(MANIFEST["platform"])
     if os_name:
         plat["os"] = os_name
     if arch:
         plat["arch"] = arch
     return {**MANIFEST, "platform": plat}
+
+
+#: 与本机不符的那一份——用来验平台/架构核对真的会拦。
+foreign_manifest = manifest_claiming
+
+#: 配合「把 sys.platform 打桩成 darwin 来模拟 macOS」的用例。
+#:
+#: **打桩了平台，清单就得跟着打桩**：MANIFEST 默认按**真实**宿主生成，而
+#: schema 2 会校验平台——在 Linux/Windows 上模拟 macOS 时，一份写着 linux 的
+#: 清单会被判成「平台不符」，于是 `bundled_python()` 回 None，用例悄悄退到
+#: 系统 Python 上去。CI 上「macOS 绿、Linux/Windows 红」正是这么来的：
+#: 本机恰好是 macOS，两边对得上，于是本地怎么跑都发现不了。
+def macos_manifest():
+    return manifest_claiming(os_name="macos")
 
 
 def make_runtime(root, manifest=MANIFEST, with_python=True, layout=None):
@@ -725,12 +739,28 @@ def test_explicit_runtime_dir_override_is_exclusive(tmp_path, monkeypatch):
 
 
 # ---------------- macOS 上的解释器优先级与不写安装目录 ------------------------
+#: 在 Windows 上模拟 POSIX 是**做不到**的，只要那条路径会碰到 pathlib：
+#: `pool.select_worker_python()` 里有 `Path(cand)`，而把 `os.name` 打桩成
+#: "posix" 之后它会分派到 PosixPath，在 Windows 上直接抛
+#: `UnsupportedOperation: cannot instantiate 'PosixPath'`（反方向同理，
+#: 在 macOS 上伪装 nt 会抛 WindowsPath）。这正是 `engine/runtime.py` 全程
+#: os.path 拼字符串、一个 pathlib 都不用的原因——**它**因此三平台可测。
+#:
+#: 所以下面两条「跑完整优先级链」的用例只在 POSIX 宿主上跑。macOS 特有的那几条
+#: 保证并没有因此失去看护，它们由**不碰 pathlib**、因而 Windows 上照跑的用例
+#: 分别覆盖：`ships_bundled_runtime()` 的形态矩阵、两种布局的识别、平台/架构核对。
+posix_host_only = pytest.mark.skipif(
+    os.name == "nt",
+    reason="Windows 上无法模拟 POSIX 宿主：pool 里的 Path() 会分派到 PosixPath")
+
+
+@posix_host_only
 def test_macos_desktop_uses_bundled_runtime_by_default(tmp_path, monkeypatch):
     """**macOS 的产品承诺本身**：没有 Python / Homebrew / Conda 的 Mac 上，
     装完 dmg 就能渲染。"""
     monkeypatch.setattr(os, "name", "posix")
     monkeypatch.setattr(sys, "platform", "darwin")
-    py = make_runtime(tmp_path / "rt", layout="posix")
+    py = make_runtime(tmp_path / "rt", manifest=macos_manifest(), layout="posix")
     monkeypatch.setenv("MAGPLOT_RUNTIME_DIR", str(tmp_path / "rt"))
     monkeypatch.setattr(runtime, "is_frozen", lambda: True)
     monkeypatch.setattr(pool, "is_frozen", lambda: True)
@@ -738,12 +768,13 @@ def test_macos_desktop_uses_bundled_runtime_by_default(tmp_path, monkeypatch):
     assert pool.select_worker_python() == (py, pool.SOURCE_BUNDLED)
 
 
+@posix_host_only
 def test_macos_user_choice_still_beats_the_bundled_runtime(tmp_path, monkeypatch):
     """高级用户的脚本要 rdkit / astropy，内置环境里没有——他挑的 conda
     必须继续赢。内置 runtime 是**默认**，不是**强制**。"""
     monkeypatch.setattr(os, "name", "posix")
     monkeypatch.setattr(sys, "platform", "darwin")
-    make_runtime(tmp_path / "rt", layout="posix")
+    make_runtime(tmp_path / "rt", manifest=macos_manifest(), layout="posix")
     monkeypatch.setenv("MAGPLOT_RUNTIME_DIR", str(tmp_path / "rt"))
     monkeypatch.setattr(runtime, "is_frozen", lambda: True)
     monkeypatch.setattr(pool, "is_frozen", lambda: True)
