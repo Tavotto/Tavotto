@@ -20,10 +20,12 @@ Codex 插件（`codex-plugin/`）跑完脚本后调的就是这条命令，但�
 
 纯标准库，Flask 父进程可安全 import（不碰 matplotlib，也不 import app）。
 
-**平台分支的路径拼接全程用 os.path 字符串**：避免 `Path()` 在不同平台下生成
-不同的分隔符，从而可在 mac/CI 上单测 Windows 的安装路径（同 `engine/runtime.py`；
-看护用例 `tests/test_handoff.py`）。本模块仅在静态扫描脚本时用 `pathlib.Path`
-（`analyze_script` 需要）。
+**桌面 App 装在哪儿由 `engine/locate.py` 说了算**（同一份清单还要给 CLI shim
+的发现用，见 `docs/handoff-protocol.md`），本模块只负责拿它去唤起。那边的路径
+拼接全程 os.path 字符串：避免 `Path()` 在不同平台下生成不同的分隔符，从而可在
+mac/CI 上单测 Windows 的安装路径（同 `engine/runtime.py`；看护用例
+`tests/test_handoff.py` 与 `tests/test_install_locate.py`）。本模块仅在静态扫描
+脚本时用 `pathlib.Path`（`analyze_script` 需要）。
 """
 from __future__ import annotations
 
@@ -40,6 +42,7 @@ from typing import NamedTuple
 from urllib.parse import quote
 
 from . import discover as engine_discover
+from . import locate as engine_locate
 from . import registry as engine_registry
 
 #: 认得的产物后缀，与静态扫描同源
@@ -53,7 +56,17 @@ DEFAULT_PORT = 5089
 
 
 class HandoffError(RuntimeError):
-    """交接无法继续（路径不存在、不是图、注册表损坏）。CLI 转成非零退出码。"""
+    """交接无法继续（路径不存在、不是图、注册表损坏）。CLI 转成非零退出码。
+
+    **`code` 是给机器读的，必须稳定**：调用方（Codex 插件、编辑器）要按它
+    分诊——「注册表写不进去」该提示改目录权限，「桌面版没装」该提示去下载，
+    两件事都塞进一句中文 `error` 里，对面只能做字符串匹配。文案可以随时改，
+    code 不行。全部 code 见 `docs/handoff-protocol.md`。
+    """
+
+    def __init__(self, message: str, code: str = "handoff_failed") -> None:
+        super().__init__(message)
+        self.code = code
 
 
 class Target(NamedTuple):
@@ -98,13 +111,13 @@ def _first_on_disk(stems: list[str], project: str, *, isfile=os.path.isfile) -> 
 def resolve_target(raw: str, *, isdir=os.path.isdir, isfile=os.path.isfile) -> Target:
     """`<路径>` → (项目目录, stem)。路径可以是产物、脚本或目录。"""
     if not raw or not raw.strip():
-        raise HandoffError("要打开的路径不能为空")
+        raise HandoffError("要打开的路径不能为空", "empty_path")
     path = os.path.abspath(os.path.expanduser(raw.strip()))
 
     if isdir(path):
         return Target(_project_root(path, isfile=isfile), None)
     if not isfile(path):
-        raise HandoffError(f"路径不存在: {path}")
+        raise HandoffError(f"路径不存在: {path}", "path_not_found")
 
     folder, name = os.path.split(path)
     stem, ext = os.path.splitext(name)
@@ -119,7 +132,7 @@ def resolve_target(raw: str, *, isdir=os.path.isdir, isfile=os.path.isfile) -> T
     raise HandoffError(
         f"不认识的文件类型: {name}"
         f"（要一张图 {'/'.join(e.lstrip('.') for e in OUT_EXTS[:3])}…、"
-        f"一个 .py 脚本，或一个目录）")
+        f"一个 .py 脚本，或一个目录）", "unsupported_file")
 
 
 # --------------------------- 2. 登记 stem --------------------------------
@@ -129,7 +142,8 @@ def _registered(project: str, stem: str) -> bool:
     except FileNotFoundError:
         return False
     except RuntimeError as exc:                      # 注册表损坏 / 重复 stem
-        raise HandoffError(f"注册表无法加载，请先修好它: {exc}") from exc
+        raise HandoffError(f"注册表无法加载，请先修好它: {exc}",
+                           "registry_invalid") from exc
     return reg.for_stem(stem) is not None
 
 
@@ -138,8 +152,16 @@ def ensure_registered(project: str, stem: str | None) -> dict:
 
     返回给 CLI/插件的自检信息：是否可参数化、新增了什么、哪些脚本静态解不出
     stem（`dynamic_names`，得走试运行探测）、有没有归属冲突。
+
+    `status` 是给机器分诊用的一个词，四种取值互斥：
+
+      already   注册表里本来就有这条，一个字节都没动
+      created   项目里原本没有注册表，这次新建了一份
+      merged    注册表已存在，这次合并进了新的脚本 / stem
+      unchanged 注册表已存在，扫完发现没什么可加的
     """
     info: dict = {"registry": str(engine_registry.registry_path(project)),
+                  "status": "already",
                   "created": False, "added_scripts": [], "added_stems": {},
                   "conflicts": [], "dynamic_names": [], "parameterizable": None}
     if stem is not None and _registered(project, stem):
@@ -150,14 +172,30 @@ def ensure_registered(project: str, stem: str | None) -> dict:
     try:
         cfg, rep, changes = engine_discover.merge(project)
     except ValueError as exc:                        # 用户手写的 JSON 坏了
-        raise HandoffError(f"注册表不是合法 JSON，未做任何改动: {exc}") from exc
+        raise HandoffError(f"注册表不是合法 JSON，未做任何改动: {exc}",
+                           "registry_invalid") from exc
     except OSError as exc:
-        raise HandoffError(f"无法读取图库目录 {project}: {exc}") from exc
+        raise HandoffError(f"无法读取图库目录 {project}: {exc}",
+                           "project_unreadable") from exc
 
     should_write = (not existed) or changes["added_scripts"] or changes["added_stems"]
     if should_write:
-        engine_discover.write_config(project, cfg)
+        try:
+            engine_discover.write_config(project, cfg)
+        except OSError as exc:
+            # 只读目录 / 没有写权限 / 磁盘满。以前这条裸 OSError 会一路冒到
+            # `magplot open` 外面变成 traceback，插件那侧只看得到「脚本挂了」。
+            raise HandoffError(
+                f"注册表写不进去 {info['registry']}: {exc}"
+                "（图库目录需要可写；换一个目录，或修好它的权限后重试）",
+                "registry_write_failed") from exc
     info["created"] = not existed
+    if not existed:
+        info["status"] = "created"
+    elif changes["added_scripts"] or changes["added_stems"]:
+        info["status"] = "merged"
+    else:
+        info["status"] = "unchanged"
     info["added_scripts"] = list(changes["added_scripts"])
     info["added_stems"] = {k: list(v) for k, v in changes["added_stems"].items()}
     info["conflicts"] = sorted(rep["conflicts"])
@@ -171,26 +209,20 @@ def ensure_registered(project: str, stem: str | None) -> dict:
 # --------------------------- 3. 唤起界面 ---------------------------------
 def desktop_app_candidates(*, system: str | None = None,
                            environ: dict | None = None) -> list[str]:
-    """桌面 App 可执行文件的候选路径（按优先级）。全程字符串拼接，见模块注释。"""
+    """桌面 App 可执行文件的候选路径（按优先级）。
+
+    安装位置的**唯一出处是 `engine/locate.install_roots()`**——同一份清单还要
+    给 CLI shim 的发现用（Codex 插件那条链），在这儿再抄一遍就是第二个权威。
+    """
     system = sys.platform if system is None else system
     env = os.environ if environ is None else environ
     out: list[str] = []
     override = (env.get(APP_ENV) or "").strip()
     if override:
         out.append(override)                          # 用户显式指定的永远第一
-    if system == "darwin":
-        out.append("/Applications/Magplot.app/Contents/MacOS/Magplot")
-        home = (env.get("HOME") or "").rstrip("/")
-        if home:
-            out.append(home + "/Applications/Magplot.app/Contents/MacOS/Magplot")
-    elif system.startswith("win"):
-        # NSIS 是 currentUser 安装：新装固定 $LOCALAPPDATA\Magplot
-        # （src-tauri/windows/installer.nsi 的 .onInit），后两条是管理员装的老位置
-        for key in ("LOCALAPPDATA", "PROGRAMFILES", "PROGRAMFILES(X86)"):
-            base = (env.get(key) or "").rstrip("\\")
-            if base:
-                out.append(base + "\\Magplot\\Magplot.exe")
-    # Linux 没有桌面发行形态（desktop-tauri.yml 只发 macOS/Windows）：退回浏览器
+    # Linux 没有桌面发行形态（desktop-tauri.yml 只发 macOS/Windows）：回空表 → 浏览器
+    out += [engine_locate.desktop_exe_for(root, system=system)
+            for root in engine_locate.install_roots(system=system, environ=env)]
     return out
 
 
@@ -252,19 +284,25 @@ def launch(target: Target, *, prefer: str = "auto", port: int = DEFAULT_PORT,
            http=_http_json, browse=webbrowser.open) -> dict:
     """唤起界面。返回 {"mode": ..., ...}；mode 是给插件看的机器可读值。"""
     if prefer not in ("auto", "desktop", "browser"):
-        raise HandoffError(f"未知的唤起方式: {prefer}")
+        raise HandoffError(f"未知的唤起方式: {prefer}", "bad_launch_mode")
 
     if prefer != "browser":
         app = find_desktop_app(system=system, environ=environ, isfile=isfile)
         if app:
             argv = desktop_argv(app, target)
-            _spawn_detached(argv, spawn=spawn)
+            try:
+                _spawn_detached(argv, spawn=spawn)
+            except OSError as exc:
+                # 文件在、但起不来（权限、被杀软拦、可执行位丢了）。裸 OSError
+                # 冒出去只会变成 traceback，调用方分不清「没装」和「起不来」。
+                raise HandoffError(f"Magplot 桌面应用启动失败 {app}: {exc}",
+                                   "launch_failed") from exc
             return {"mode": "desktop", "app": app, "argv": argv}
         if prefer == "desktop":
             raise HandoffError(
                 "没找到 Magplot 桌面应用。装一个（GitHub Releases），"
                 f"或用 {APP_ENV} 指到它的可执行文件，"
-                "或去掉 --desktop 走浏览器模式。")
+                "或去掉 --desktop 走浏览器模式。", "desktop_missing")
 
     # 浏览器模式：先问问本机有没有已经在跑的实例——有就让它开这个项目，
     # 绝不再起第二个进程去抢同一个端口（抢不到的那个只会把用户送回旧项目）。
@@ -272,7 +310,8 @@ def launch(target: Target, *, prefer: str = "auto", port: int = DEFAULT_PORT,
         st = http(f"http://127.0.0.1:{port}/api/projects/open",
                   {"path": target.project}, timeout=10.0) or {}
         if st.get("error"):
-            raise HandoffError(f"已在运行的 Magplot 打不开这个项目: {st['error']}")
+            raise HandoffError(f"已在运行的 Magplot 打不开这个项目: {st['error']}",
+                               "remote_open_failed")
         url = browser_url(port, target, st.get("id"))
         browse(url)
         return {"mode": "browser-existing", "url": url}
@@ -281,7 +320,10 @@ def launch(target: Target, *, prefer: str = "auto", port: int = DEFAULT_PORT,
             "--port", str(port)]
     if target.stem:
         argv += ["--open-stem", target.stem]
-    _spawn_detached(argv, spawn=spawn)
+    try:
+        _spawn_detached(argv, spawn=spawn)
+    except OSError as exc:
+        raise HandoffError(f"Magplot 启动失败: {exc}", "launch_failed") from exc
     return {"mode": "browser-new", "argv": argv, "url": browser_url(port, target)}
 
 
@@ -291,7 +333,8 @@ def open_target(raw: str, *, prefer: str = "auto", port: int = DEFAULT_PORT,
     """解析 → 登记 → 唤起。返回一份可直接 json.dumps 的结果。"""
     target = resolve_target(raw)
     registry_info = ensure_registered(target.project, target.stem)
-    result = {"ok": True, "project": target.project, "stem": target.stem,
+    result = {"ok": True, "protocol": engine_locate.PROTOCOL_VERSION,
+              "project": target.project, "stem": target.stem,
               "registry": registry_info, "launch": None}
     if launch_ui:
         result["launch"] = launch(target, prefer=prefer, port=port, **kw)
@@ -345,9 +388,20 @@ def cli(argv: list[str]) -> int:
     ap.add_argument("--port", type=int, default=DEFAULT_PORT, help="浏览器模式端口")
     ap.add_argument("--json", action="store_true", help="输出机器可读结果")
     args = ap.parse_args(argv)
+    # stdout 是管道时 Windows 退回 cp936/cp1252，输出里的中文（项目路径、
+    # 错误文案）第一次 print 就 UnicodeEncodeError——调用方看到的是「命令挂了」。
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
 
     if args.desktop and args.browser:
-        print("--desktop 与 --browser 不能同时给", file=sys.stderr)
+        msg = "--desktop 与 --browser 不能同时给"
+        if args.json:
+            print(json.dumps({"ok": False, "protocol": engine_locate.PROTOCOL_VERSION,
+                              "code": "bad_launch_mode", "error": msg},
+                             ensure_ascii=False))
+        else:
+            print(msg, file=sys.stderr)
         return 2
     prefer = "desktop" if args.desktop else "browser" if args.browser else "auto"
 
@@ -355,8 +409,13 @@ def cli(argv: list[str]) -> int:
         result = open_target(args.path, prefer=prefer, port=args.port,
                              launch_ui=not args.no_launch)
     except HandoffError as exc:
+        # 失败也必须是**机器可解析的一行 JSON**：调用方按 `code` 分诊，
+        # 拿不到 JSON 就只能去猜 stderr 里那句中文是什么意思。
         if args.json:
-            print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+            print(json.dumps({"ok": False,
+                              "protocol": engine_locate.PROTOCOL_VERSION,
+                              "code": exc.code, "error": str(exc)},
+                             ensure_ascii=False))
         else:
             print(f"打不开: {exc}", file=sys.stderr)
         return 2

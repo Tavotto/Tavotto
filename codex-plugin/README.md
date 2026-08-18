@@ -41,6 +41,23 @@ codex plugin marketplace add /path/to/magplot && codex plugin add magplot@magplo
 * 桌面版（推荐）：<https://github.com/erwanjun/magplot/releases>
 * 命令行版：`pipx install magplot`
 
+**只装桌面版就够了**——不需要另外装 Python/Conda，也不需要配任何环境变量。
+插件会按下面的顺序找到 Magplot 的命令行入口，前面的赢：
+
+1. `MAGPLOT_CLI` 环境变量（高级覆盖）
+2. PATH 里的 `magplot`（pip / pipx 装的）
+3. **安装清单** `install.json`（桌面版装完就有，记着 CLI 的绝对路径）
+4. **已知安装位置**里的 `magplot-cli`（清单丢了照样能找到）
+5. Windows 上 HKCU 记着的安装位置（只当补充）
+6. 当前解释器里的 `magplot` 模块
+
+桌面安装包里带的 `magplot-cli` 是一个 **console 版**命令行，与界面共用同一份
+运行时。装出来的 `Magplot.exe` 是 GUI 程序，**不能当命令行调**（没有真终端时
+它的 stdout 会落进日志文件，调用方拿不到那行 JSON）——所以才有这一个。
+
+自检：`magplot doctor --json`（不起界面、不联网）。完整协议、错误码与排障见
+[`../docs/handoff-protocol.md`](../docs/handoff-protocol.md)。
+
 ## 结构
 
 ```
@@ -57,3 +74,9 @@ codex-plugin/
 交接的真正实现在 Magplot 主体里（`magplot open`，见
 `src/magplot/engine/handoff.py`）：路径解析、注册表合并、唤起桌面还是浏览器
 全在那边裁决，插件不做第二套判断。
+
+插件里唯一的一处「判断」是**怎么找到那条命令行**（上面那六步）。它是
+`src/magplot/engine/locate.py` 的镜像——插件跑在用户机器上，import 不到
+magplot，这份重复无法避免；能避免的是两边悄悄漂开，所以
+`tests/test_install_locate.py::test_plugin_mirrors_the_locator` 在一整张环境
+矩阵上逐条比对两侧的输出。改一边必须同步另一边。

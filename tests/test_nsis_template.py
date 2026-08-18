@@ -9,6 +9,8 @@
    恢复历史路径、WebView2、快捷方式、卸载注册表、命令行开关、降级保护、
    WiX 迁移——每一条都还在。
 3. 四处 CLI 版本同源、配置引用的品牌资产真实存在且是 NSIS 吃得下的形态。
+4. **装完真的登记了 CLI 入口**。只写卸载注册表不等于外部程序（Codex 插件）
+   能发现 Magplot——它不读卸载信息，也不该只靠注册表（企业策略能锁掉它）。
 
 **这些是源码级看护，不是「装出来是这样」的证据**：安装器真实页面序列、
 UAC、中文路径这些只有 Windows 上跑真产物才算数，走
@@ -41,6 +43,7 @@ BRAND_STRINGS = (
     "finishTitle",
     "finishText",
     "openMagplot",
+    "registeringMagplot",
 )
 
 
@@ -367,3 +370,93 @@ def test_generated_script_has_the_same_two_pages():
     # 精简没有把要装的东西弄丢：sidecar / workerd / 内置 runtime 都在
     assert '!define MAINBINARYNAME "Magplot"' in code
     assert re.search(r'^\s*File /a "/oname=', code, re.M), "中间脚本里没有任何 binaries/resources"
+
+
+# ------------------------------------------- 外部程序发现得了这台机器上的 CLI
+#
+# 起因：只装了桌面版的 Windows 用户那里，Codex 插件一直报「没找到 Magplot」。
+# 装出来的 Magplot.exe 是 GUI 子系统的可执行文件，当命令行调它拿不到 stdout。
+# 修法是安装包里另带一个 console 版 magplot-cli，并在装完时由它写一份
+# 安装清单。下面几条盯的是「安装器有没有真的把这一步做掉」。
+
+from magplot.engine import locate                                    # noqa: E402
+
+SECTION_INSTALL = TEXT.split("Section Install\n")[1].split("SectionEnd")[0]
+SECTION_UNINSTALL = TEXT.split("Section Uninstall\n")[1].split("SectionEnd")[0]
+
+
+def _bundled_cli_path() -> str:
+    """安装后 CLI 的落点，**由 tauri.conf.json 的 resources 映射推出来**。
+
+    在测试里重新推一遍而不是写死，是为了让「改了那份映射却忘了改安装器」
+    当场变红——那种漏改的表现是装完一切正常，只有外部程序发现不了 Magplot。
+    """
+    target = CONFIG["bundle"]["resources"]["../dist/Magplot"]
+    return "$INSTDIR\\" + target.replace("/", "\\") + "\\" + locate.CLI_NAME
+
+
+def test_sidecar_layout_has_a_single_source_of_truth():
+    """tauri.conf.json 的 resources 映射 == engine/locate.SIDECAR_REL。
+
+    Rust 壳（src-tauri/src/sidecar.rs）、Python 定位器、NSIS 安装段三处都按
+    这个布局找 sidecar 目录；映射一改，三处必须同时改。
+    """
+    assert CONFIG["bundle"]["resources"]["../dist/Magplot"] == \
+        "/".join(locate.SIDECAR_REL)
+    rust = (ROOT / "src-tauri" / "src" / "sidecar.rs").read_text(encoding="utf-8")
+    for part in locate.SIDECAR_REL:
+        assert f'join("{part}")' in rust, f"sidecar.rs 里找不到 {part}"
+
+
+def test_install_registers_the_cli_through_the_bundled_binary():
+    """装完跑一次装进来的 magplot-cli，由它写安装清单。
+
+    为什么让 CLI 自己写、而不是让 NSIS 拼 JSON：安装目录可能带空格和中文，
+    NSIS 里手工转义 JSON 反斜杠是纯粹的自找麻烦；而且这一跑同时就是**无 GUI
+    的装后健康检查**——CLI 起不来的包，发出去只会表现为「Codex 找不到 Magplot」。
+    """
+    assert _bundled_cli_path() in SECTION_INSTALL
+    assert "doctor --json --write-manifest" in SECTION_INSTALL
+    assert "nsExec::" in SECTION_INSTALL          # 不弹窗、不闪黑框
+    assert "/TIMEOUT=" in SECTION_INSTALL         # 冷启动异常时不许挂住安装器
+
+
+def test_registration_failure_never_aborts_the_install():
+    """清单只是快路径：写不出来也不能让整个安装失败。
+
+    已知安装位置那条腿还在，用户照样能用；为一个可选的加速文件把安装打断，
+    换来的是一个装不上的产品。
+    """
+    block = SECTION_INSTALL.split("$(registeringMagplot)")[1]
+    block = block.split("MAGPLOT PATCH END")[0]
+    assert "Abort" not in block
+    assert "DetailPrint" in block                 # 但要留下痕迹，别静默
+
+
+def test_uninstall_removes_the_manifest_before_deleting_files():
+    """顺序不能换：清单是那个 CLI 自己删的，文件删完就没人删得掉了。
+
+    留下一份指向已卸载路径的清单，外部程序会拿着不存在的路径去 spawn——
+    报出来的是「执行不了」，而用户需要看到的是「没装」。
+    """
+    assert "doctor --json --remove-manifest" in SECTION_UNINSTALL
+    assert SECTION_UNINSTALL.index("--remove-manifest") < \
+        SECTION_UNINSTALL.index('Delete "$INSTDIR\\${MAINBINARYNAME}.exe"')
+
+
+def test_registration_does_not_need_admin():
+    """全程仍是 currentUser：清单落在用户配置目录，注册表一个字没多写。"""
+    assert NSIS_CONF["installMode"] == "currentUser"
+    for needle in ("RequestExecutionLevel admin", "SetShellVarContext all"):
+        assert needle not in SECTION_INSTALL
+
+
+def test_installer_leaves_the_user_path_alone():
+    """**不动用户的 PATH**——这是有意的取舍，不是漏做。
+
+    发现链靠清单 + 已知安装位置就够了；改 PATH 要写注册表、广播
+    WM_SETTINGCHANGE、处理 1024 字符截断，还要在卸载时准确摘掉自己那一段，
+    每一步都可能把用户的 PATH 弄坏。风险与收益不成比例。
+    """
+    for needle in ("EnVar::", '"Environment"', "WM_SETTINGCHANGE"):
+        assert needle not in CODE, f"安装器动了 PATH（{needle}）"

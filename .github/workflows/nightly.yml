@@ -195,7 +195,7 @@ jobs:
           python -m pytest -q tests/test_nsis_template.py
           if ($LASTEXITCODE -ne 0) { throw "中间脚本的页面结构不对（退出码 $LASTEXITCODE）" }
 
-      - name: 安装器 → 启动 → 升级覆盖 → 卸载
+      - name: 安装器 → 启动 → 升级覆盖 → 外部程序发现 → 卸载
         if: matrix.python == 'none'
         shell: pwsh
         env:
@@ -307,6 +307,82 @@ jobs:
             --expect-control-plane workerd
           if ($LASTEXITCODE -ne 0) { throw "覆盖安装后冒烟失败（退出码 $LASTEXITCODE）" }
 
+          # ---- 外部程序（Codex 插件）在这台机器上发现得了 Magplot 吗 ----
+          # 这是本条链路唯一能回答的问题：只装了桌面程序、没有用户 Python、
+          # PATH 里没有 magplot、没设 MAGPLOT_CLI。源码级测试证明不了它——
+          # 要装出来的那份 magplot-cli 真的在、真的能跑、清单真的写了。
+          $env:MAGPLOT_CLI = $null
+          if (Get-Command magplot -ErrorAction SilentlyContinue) {
+            throw "PATH 里有 magplot，这一步就验不到「只装了桌面版」了"
+          }
+
+          # 安装器装完就该有清单（NSIS 段里那次 doctor --write-manifest）
+          $manifest = "$env:MAGPLOT_CONFIG_DIR\install.json"
+          if (-not (Test-Path $manifest)) { throw "安装器没写安装清单: $manifest" }
+          $mf = Get-Content $manifest -Raw | ConvertFrom-Json
+          if (-not (Test-Path $mf.cli)) { throw "清单里的 CLI 不存在: $($mf.cli)" }
+          Write-Host "✓ 安装清单: $manifest → $($mf.cli)"
+
+          # 装出来的 CLI 自己也得能体检（无 GUI、不起服务）
+          & $mf.cli doctor --json | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "装出来的 magplot-cli doctor 失败" }
+
+          # 中文 + 空格的项目路径：交接全程不许被拆开
+          $proj = "$env:RUNNER_TEMP\我的 图库"
+          if (Test-Path $proj) { Remove-Item $proj -Recurse -Force }
+          Copy-Item examples\runtime_check $proj -Recurse
+          $script = @(Get-ChildItem $proj -Filter *.py)[0].FullName
+
+          # --no-launch：只登记，不起界面
+          $plugin = "codex-plugin\skills\magplot-figure\scripts\handoff.py"
+          $out = python $plugin "$script" --run never --no-launch
+          if ($LASTEXITCODE -ne 0) { throw "插件交接失败（退出码 $LASTEXITCODE）: $out" }
+          $j = $out | Select-Object -Last 1 | ConvertFrom-Json
+          if (-not $j.ok) { throw "插件回了 ok=false: $out" }
+          if ($j.parameterizable -ne $true) { throw "图不可参数化: $out" }
+          if ($j.launch) { throw "--no-launch 却起了界面: $($j.launch)" }
+          if ($j.magplot.source -notin @("manifest", "install")) {
+            throw "CLI 不是从桌面安装里发现的（source=$($j.magplot.source)）"
+          }
+          if (-not (Test-Path "$proj\mm_registry.json")) {
+            throw "没有生成 mm_registry.json: $proj"
+          }
+          Write-Host "✓ 插件发现 Magplot（source=$($j.magplot.source)）并生成了注册表"
+
+          # 清单被删掉（企业策略、用户清理）也要能走通——不许把任何单一
+          # 机制当成唯一依据。这次只能靠已知安装位置。
+          Remove-Item $manifest -Force
+          $out = python $plugin "$script" --run never --no-launch
+          if ($LASTEXITCODE -ne 0) { throw "没有清单时交接失败: $out" }
+          $j = $out | Select-Object -Last 1 | ConvertFrom-Json
+          if ($j.magplot.source -ne "install") {
+            throw "清单没了却不是从已知安装位置找到的（source=$($j.magplot.source)）"
+          }
+          Write-Host "✓ 清单缺失时仍能按已知安装位置发现"
+
+          # 不带 --no-launch：必须拉起**原生窗口**（不是浏览器）
+          $before = @(Get-Process Magplot -ErrorAction SilentlyContinue).Id
+          $out = python $plugin "$script" --run never
+          if ($LASTEXITCODE -ne 0) { throw "带唤起的交接失败: $out" }
+          $j = $out | Select-Object -Last 1 | ConvertFrom-Json
+          if ($j.launch -ne "desktop") { throw "没走桌面模式: $($j.launch)" }
+          $spawned = $null
+          foreach ($i in 1..60) {
+            Start-Sleep -Milliseconds 500
+            $spawned = @(Get-Process Magplot -ErrorAction SilentlyContinue) |
+                       Where-Object { $_.Id -notin $before }
+            if ($spawned) { break }
+          }
+          if (-not $spawned) { throw "交接没有拉起 Magplot 窗口进程" }
+          Write-Host "✓ 交接拉起了原生 Magplot（pid $($spawned.Id -join ','))"
+          $spawned | ForEach-Object { Stop-Process -Id $_.Id -Force }
+          foreach ($i in 1..30) {
+            Start-Sleep -Milliseconds 500
+            if (-not (Get-Process -Name Magplot -ErrorAction SilentlyContinue)) { break }
+          }
+          Get-Process -Name Magplot -ErrorAction SilentlyContinue |
+            ForEach-Object { Stop-Process -Id $_.Id -Force }
+
           # 卸载
           $uninst = "$inst\uninstall.exe"
           if (-not (Test-Path $uninst)) { throw "没有卸载器: $uninst" }
@@ -320,6 +396,9 @@ jobs:
           if (Test-Path $shell) { throw "卸载后可执行文件仍在: $shell" }
           # 注册表项留着 = 控制面板里还挂着一个卸不掉的条目
           if (Test-Path $key) { throw "卸载后注册表项仍在: $key" }
+          # 安装清单同理：留下一份指向已删文件的清单，外部程序会拿着不存在
+          # 的路径去 spawn，报出来的是「执行不了」而不是「没装」
+          if (Test-Path $manifest) { throw "卸载后安装清单仍在: $manifest" }
           if (Test-Path $inst) {
             $left = Get-ChildItem $inst -Recurse -File | Select-Object -First 20
             if ($left) {

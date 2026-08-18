@@ -4,6 +4,7 @@
 engine/handoff.py 全程 os.path 拼字符串。这里的 win32 用例跑在 macOS/Linux
 的 CI 上，就是那条纪律的看护。
 """
+import ast
 import json
 import os
 import subprocess
@@ -111,6 +112,7 @@ def test_unknown_extension_rejected(tmp_path):
 def test_registry_drafted_when_missing(figures):
     info = handoff.ensure_registered(str(figures), "Fig1_demo")
     assert info["created"] is True
+    assert info["status"] == "created"
     assert info["parameterizable"] is True
     assert engine_registry.open_registry(figures).for_stem("Fig1_demo")
 
@@ -120,9 +122,9 @@ def test_registered_stem_leaves_registry_untouched(figures):
     path = engine_registry.registry_path(figures)
     before = path.read_bytes()
     info = handoff.ensure_registered(str(figures), "Fig1_demo")
-    assert info == {"registry": str(path), "created": False, "added_scripts": [],
-                    "added_stems": {}, "conflicts": [], "dynamic_names": [],
-                    "parameterizable": True}
+    assert info == {"registry": str(path), "status": "already", "created": False,
+                    "added_scripts": [], "added_stems": {}, "conflicts": [],
+                    "dynamic_names": [], "parameterizable": True}
     assert path.read_bytes() == before      # 已经登记过就一个字节都别动
 
 
@@ -322,3 +324,144 @@ def test_handoff_stays_stdlib_only():
         capture_output=True, text=True, check=True,
         env={**os.environ, "PYTHONPATH": src})
     assert out.stdout.strip() == "[]"
+
+
+# ========================= `magplot open` 的机器接口 ======================
+# 外部程序（Codex 插件、编辑器、安装器）读的就是这一层：一行 JSON + 稳定的
+# error code + 「--no-launch 真的不起界面」。这几条把它钉住。
+
+def _run_cli(argv, monkeypatch):
+    """跑一次 `magplot open …`，返回 (退出码, 解析出来的 JSON, 起过的界面)。"""
+    launched = []
+    monkeypatch.setattr(handoff, "_spawn_detached",
+                        lambda argv, **kw: launched.append(argv))
+    monkeypatch.setattr(handoff, "find_desktop_app",
+                        lambda **kw: "/Applications/Magplot.app/Contents/MacOS/Magplot")
+    import io
+    import contextlib
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = handoff.cli(argv)
+    lines = buf.getvalue().strip().splitlines()
+    payload = json.loads(lines[-1]) if lines else None
+    return rc, payload, launched
+
+
+def test_no_launch_registers_without_starting_anything(figures, monkeypatch):
+    """`--json --no-launch`：登记做完，界面一个都不起（浏览器也不许开）。"""
+    opened = []
+    monkeypatch.setattr(handoff.webbrowser, "open", lambda url: opened.append(url))
+    rc, out, launched = _run_cli(
+        [str(figures / "Fig1_demo.pdf"), "--json", "--no-launch"], monkeypatch)
+    assert rc == 0
+    assert out["ok"] is True and out["protocol"] == 1
+    assert out["stem"] == "Fig1_demo"
+    assert out["registry"]["parameterizable"] is True
+    assert out["registry"]["status"] == "created"
+    assert out["launch"] is None
+    assert launched == [] and opened == []
+    assert engine_registry.registry_path(figures).is_file()
+
+
+def test_second_call_launches_the_native_app(figures, monkeypatch):
+    """不带 --no-launch 就唤起桌面应用——**不是浏览器**。"""
+    opened = []
+    monkeypatch.setattr(handoff.webbrowser, "open", lambda url: opened.append(url))
+    rc, out, launched = _run_cli([str(figures / "Fig1_demo.pdf"), "--json"], monkeypatch)
+    assert rc == 0
+    assert out["launch"]["mode"] == "desktop"
+    assert launched == [["/Applications/Magplot.app/Contents/MacOS/Magplot",
+                         "--open", str(figures), "--stem", "Fig1_demo"]]
+    assert opened == []                     # 装了桌面版就绝不弹浏览器
+
+
+def test_registry_is_left_alone_on_the_second_call(figures, monkeypatch):
+    rc, first, _ = _run_cli([str(figures / "Fig1_demo.pdf"), "--json",
+                             "--no-launch"], monkeypatch)
+    rc, second, _ = _run_cli([str(figures / "Fig1_demo.pdf"), "--json",
+                              "--no-launch"], monkeypatch)
+    assert first["registry"]["status"] == "created"
+    assert second["registry"]["status"] == "already"
+
+
+def test_paths_with_spaces_and_chinese_are_not_split(tmp_path, monkeypatch):
+    """带空格与中文的路径原样走完全程——参数是数组，不是拼出来的命令行。"""
+    project = tmp_path / "我的 图库"
+    project.mkdir()
+    (project / "图 1.pdf").write_bytes(b"%PDF-1.4\n%%EOF\n")
+    rc, out, launched = _run_cli([str(project / "图 1.pdf"), "--json"], monkeypatch)
+    assert rc == 0
+    assert out["project"] == str(project) and out["stem"] == "图 1"
+    assert launched[0][2] == str(project) and launched[0][4] == "图 1"
+
+
+def test_missing_path_has_a_stable_code(tmp_path, monkeypatch):
+    rc, out, _ = _run_cli([str(tmp_path / "没有这张图.pdf"), "--json"], monkeypatch)
+    assert rc == 2
+    assert out["ok"] is False and out["code"] == "path_not_found"
+
+
+def test_unsupported_file_type_has_a_stable_code(tmp_path, monkeypatch):
+    target = tmp_path / "notes.txt"
+    target.write_text("x", encoding="utf-8")
+    rc, out, _ = _run_cli([str(target), "--json"], monkeypatch)
+    assert rc == 2 and out["code"] == "unsupported_file"
+
+
+def test_broken_registry_has_a_stable_code(figures, monkeypatch):
+    engine_registry.registry_path(figures).write_text("{ 不是 JSON", encoding="utf-8")
+    rc, out, _ = _run_cli([str(figures / "Fig1_demo.pdf"), "--json"], monkeypatch)
+    assert rc == 2 and out["code"] in {"registry_invalid", "project_unreadable"}
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows 上 chmod 挡不住写入")
+@pytest.mark.skipif(os.geteuid() == 0, reason="root 无视权限位")
+def test_unwritable_project_reports_registry_write_failed(figures, monkeypatch):
+    """图库目录只读时报 `registry_write_failed`，**不是** traceback。
+
+    以前 write_config 的 OSError 会一路冒到 `magplot open` 外面：插件那侧看到的
+    是「脚本挂了」，用户完全不知道要去改目录权限。
+    """
+    figures.chmod(0o500)
+    try:
+        rc, out, _ = _run_cli([str(figures / "Fig1_demo.pdf"), "--json"], monkeypatch)
+    finally:
+        figures.chmod(0o700)
+    assert rc == 2
+    assert out["code"] == "registry_write_failed"
+    assert "写不进去" in out["error"]
+
+
+def test_launch_failure_has_a_stable_code(figures, monkeypatch):
+    """桌面应用在、但起不来（权限/被杀软拦）——与「没装」是两回事。"""
+    monkeypatch.setattr(handoff, "find_desktop_app", lambda **kw: "/A/Magplot")
+
+    def boom(argv, **kw):
+        raise OSError(13, "Permission denied")
+
+    monkeypatch.setattr(handoff, "_spawn_detached", boom)
+    import io
+    import contextlib
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = handoff.cli([str(figures / "Fig1_demo.pdf"), "--json"])
+    out = json.loads(buf.getvalue().strip().splitlines()[-1])
+    assert rc == 2 and out["code"] == "launch_failed"
+
+
+def test_conflicting_launch_flags_still_emit_json(figures, monkeypatch):
+    rc, out, _ = _run_cli([str(figures / "Fig1_demo.pdf"), "--json",
+                           "--desktop", "--browser"], monkeypatch)
+    assert rc == 2 and out["code"] == "bad_launch_mode"
+
+
+def test_every_handoff_error_carries_a_code():
+    """`HandoffError` 不许再裸抛：没有 code 的那一条，调用方只能去匹配中文。"""
+    import inspect
+    src = inspect.getsource(handoff)
+    tree = ast.parse(src)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call) \
+                and getattr(node.exc.func, "id", "") == "HandoffError":
+            assert len(node.exc.args) == 2, \
+                f"handoff.py 第 {node.lineno} 行的 HandoffError 没给 code"
