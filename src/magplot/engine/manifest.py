@@ -9,21 +9,29 @@ build_manifest(state)：每次渲染后调用——读取元素当前属性值�
 """
 from __future__ import annotations
 
+import sys
+
 from matplotlib.axes import Axes
 from matplotlib.collections import PathCollection, PolyCollection
 from matplotlib.container import BarContainer, ErrorbarContainer
-from matplotlib.patches import FancyArrowPatch
+from matplotlib.patches import FancyArrowPatch, PathPatch, Polygon
 from matplotlib.text import Text
-from matplotlib.ticker import FormatStrFormatter, ScalarFormatter
 
+import pathgeom
 from overrides import (ColorbarProxy, FigState, HANDLERS, SeriesGroup, TickLabel,
-                       TickSet, _ARROWSTYLES, _LEGEND_LOCS, _arrow_style,
-                       _arrowstyle_name, _axis_arrows_on, _linestyle_name,
-                       _boxstyle_info, _cb_axis, _cb_tick_color,
+                       TickSet, _ARROWSTYLES, _CB_EXTENDS, _LEGEND_LOCS,
+                       _TICK_FORMATS, _TICK_MINOR_FORMATS,
+                       _arrow_style, _arrowstyle_name, _axis_arrows_on,
+                       _linestyle_name, _boxstyle_info, _cb_axis, _cb_tick_color,
                        _cb_tick_fontsize, _cls_key, _grid_prop, _grid_visible,
-                       _legend_entry_order, _legend_loc_name, _spines_get,
-                       _stroke_state, _tick0, gradient_base_hex,
-                       text_linespacing, to_hex)
+                       _legend_entry_order, _legend_loc_name,
+                       _stroke_state, _tick0, colorbar_maps, follow_map,
+                       gradient_base_hex, scale_options, text_linespacing,
+                       spine_all_color, spine_all_width, spine_cfg,
+                       spine_side_color, spine_side_width, tick_cfg,
+                       tick_format_name, tick_major_mode, tick_major_step,
+                       tick_major_values, tick_minor_format, tick_minor_mode,
+                       tick_minor_step, tick_minor_visible, to_hex)
 
 CMAPS = ["viridis", "plasma", "inferno", "magma", "cividis", "Greys", "gray",
          "hot", "afmhot", "coolwarm", "RdBu_r", "seismic", "jet", "turbo"]
@@ -36,6 +44,12 @@ def _snippet(text: str, n: int = 18) -> str:
     return text if len(text) <= n else text[: n - 1] + "…"
 
 
+def _relabel(registered: str, text: str) -> str:
+    """把登记名里引号中的那段换成当前文字（前缀是角色名，原样保留）。"""
+    head = registered.split("“", 1)[0]
+    return f"{head}“{_snippet(text)}”"
+
+
 def _register(state: FigState, gid: str, artist, role: str, label: str,
               draggable: bool = False) -> None:
     artist.set_gid(gid)
@@ -44,54 +58,53 @@ def _register(state: FigState, gid: str, artist, role: str, label: str,
                            "label": label, "draggable": draggable})
 
 
-def _follow_map(fig, cbar_of_ax: dict, host_of_cbax: dict) -> dict[str, list[str]]:
-    """宿主 axes gid → 拖动它时该一起走的其他 axes gid。
+def _tick_label_entries(ax, which: str, ax_gid: str) -> list[tuple]:
+    """该轴上每个**有文字**的主刻度 → (gid, TickLabel 伪元素, 显示名)。
 
-    子图自己的标题 / 轴标签 / 刻度是 Axes 的孩子，set_position 一挪它们天然
-    跟着走（被用户 override 过位置的那些例外，见前端 axesCompanions）。这里
-    收的是**另外的 axes**——它们和宿主在视觉上是一体，在 artist 树上却是平级：
-
-      * 色条轴：`fig.colorbar` 造出来的独立 axes，宿主挪走它自己留在原地；
-      * 孪生轴：`twinx()` / `twiny()` 叠在同一块地方的第二套刻度。
-
-    共享 ≠ 孪生。`subplots(sharex=True)` 同样共享 x 轴，但那是并排的另一个
-    子图——只看共享关系会把整行子图一起拖走，所以判据必须再加「position
-    基本重合」。判据用公开的 get_shared_[xy]_axes()，不碰 `_twinned_axes`。
+    序号 j 是 `get_[xyz]ticklabels()` 里的下标——`TickLabel.live()` 也按它取，
+    两边必须是同一个口径，否则「第 j 个刻度」在登记与应用时指的不是同一条。
     """
-    gid_of_ax = {ax: f"axes_{i}" for i, ax in enumerate(fig.axes)}
-    follow: dict[str, list[str]] = {}
+    raw = getattr(ax, f"get_{which}ticklabels")()
+    return [(f"{ax_gid}.{which}ticklabels_{j}", TickLabel(ax, which, j),
+             f"刻度 “{_snippet(t.get_text())}”")
+            for j, t in enumerate(raw) if t.get_text()]
 
-    def link(host, other) -> None:
-        h, o = gid_of_ax.get(host), gid_of_ax.get(other)
-        if h is None or o is None or h == o:
-            return
-        bucket = follow.setdefault(h, [])
-        if o not in bucket:
-            bucket.append(o)
 
-    for cbax, host in host_of_cbax.items():
-        link(host, cbax)
+def _sync_tick_labels(state: FigState, ax, which: str, ax_gid: str) -> None:
+    for gid, tl, label in _tick_label_entries(ax, which, ax_gid):
+        _register(state, gid, tl, "ticklabel", label)
 
-    for ax in fig.axes:
-        if ax in cbar_of_ax:
-            continue
-        try:
-            pos = ax.get_position().bounds
-            siblings = set()
-            for grouper in (ax.get_shared_x_axes(), ax.get_shared_y_axes()):
-                siblings.update(grouper.get_siblings(ax))
-        except Exception:  # noqa: BLE001 — 关联判定失败只是少一条联动，不拦渲染
-            continue
-        # 按 fig.axes 顺序遍历而不是遍历 siblings 集合：集合序不稳定，
-        # manifest 要逐字节可复现（写回校验拿它比对）
-        for other in fig.axes:
-            if other is ax or other in cbar_of_ax or other not in siblings:
-                continue
-            if all(abs(a - b) < 1e-6
-                   for a, b in zip(pos, other.get_position().bounds)):
-                link(ax, other)
 
-    return follow
+def sync_tick_elements(state: FigState) -> None:
+    """把 ticklabel 伪元素与**当前**刻度状态对齐（每次 build_manifest 里跑一次）。
+
+    刻度不是常驻 artist：改 xlim、换 locator、翻转色条方向，都会让 matplotlib
+    把整组刻度重来。`instrument` 只在 build 那一刻登记过一次，之后**新出现**
+    的刻度既选不中也改不了，**消失**的那些则会把已有 override 静默吞掉。
+
+    这里按当前状态重建每条轴的 ticklabel 块，并且是**就地替换**（插在它原来
+    所属的刻度组后面），所以 manifest 的元素顺序不会因为同步而变——热会话与
+    全量重放的元素顺序仍然逐位一致。已经不存在的 gid 从 `state.index` 里摘掉，
+    它的 override 于是变成界面上可见、可清理的孤儿，而不是一条永远不生效
+    却毫无提示的记录。
+    """
+    out: list[dict] = []
+    for el in state.elements:
+        if isinstance(el["artist"], TickLabel):
+            continue                      # 旧的一律丢掉，按当前状态重发
+        out.append(el)
+        ts = el["artist"]
+        if isinstance(ts, TickSet):
+            ax_gid = el["gid"].rsplit(".", 1)[0]
+            for gid, tl, label in _tick_label_entries(ts.ax, ts.which, ax_gid):
+                state.index[gid] = tl
+                out.append({"gid": gid, "artist": tl, "role": "ticklabel",
+                            "label": label, "draggable": False})
+    live = {el["gid"] for el in out}
+    for gid in [g for g, a in state.index.items() if isinstance(a, TickLabel)]:
+        if gid not in live:
+            state.index.pop(gid, None)
+    state.elements = out
 
 
 def instrument(state: FigState) -> None:
@@ -111,25 +124,28 @@ def instrument(state: FigState) -> None:
     for i, leg in enumerate(getattr(fig, "legends", []) or []):
         _register(state, f"fig.legend_{i}", leg, "legend", "图例", draggable=True)
 
-    # 色条反查：mappable.colorbar → 宿主轴
-    cbar_of_ax = {}
-    host_of_cbax = {}
-    for ax in fig.axes:
-        for sm in [*ax.images, *ax.collections]:
-            cb = getattr(sm, "colorbar", None)
-            if cb is not None:
-                cbar_of_ax[cb.ax] = cb
-                host_of_cbax[cb.ax] = ax
+    # 色条反查：mappable.colorbar → 宿主轴（与色条方向事务共用同一份实现）
+    cbar_of_ax, host_of_cbax = colorbar_maps(fig)
     state.colorbar_axes = set(cbar_of_ax)
-    state.axes_follow = _follow_map(fig, cbar_of_ax, host_of_cbax)
+    state.axes_follow = follow_map(fig, cbar_of_ax, host_of_cbax)
+    gid_of_ax = {ax: f"axes_{i}" for i, ax in enumerate(fig.axes)}
+    cbar_ordinal: dict[int, int] = {}
 
     for i, ax in enumerate(fig.axes):
         is3d = getattr(ax, "name", "") == "3d"
         _register(state, f"axes_{i}", ax, "axes3d" if is3d else "axes",
                   "色条轴" if ax in cbar_of_ax else f"子图 {i + 1}")
         if ax in cbar_of_ax:
-            _register(state, f"axes_{i}.colorbar", ColorbarProxy(cbar_of_ax[ax]),
-                      "colorbar", "色条")
+            host = host_of_cbax.get(ax)
+            n = cbar_ordinal.get(id(host), 0)
+            cbar_ordinal[id(host)] = n + 1
+            proxy = ColorbarProxy(cbar_of_ax[ax], host, f"axes_{i}",
+                                  gid_of_ax.get(host, ""), n)
+            _register(state, f"axes_{i}.colorbar", proxy, "colorbar", "色条")
+            # 语义身份也进 index：`axes_i.colorbar` 是按邻居排序编出来的名字，
+            # 语义身份（宿主 + 序号）才是「这是谁的色条」。两个 gid 指同一个
+            # 代理对象，旧文档与将来可能的重建都认得出同一条色条。
+            state.index[proxy.identity] = proxy
         for suffix, t in (("title", ax.title),
                           ("title_left", getattr(ax, "_left_title", None)),
                           ("title_right", getattr(ax, "_right_title", None))):
@@ -142,7 +158,12 @@ def instrument(state: FigState) -> None:
             label_axes.append(("z", ax.zaxis))
         for name, axis in label_axes:
             t = axis.label
-            if not t.get_text():
+            # **无条件登记**（此刻空着的也登记）：色条方向一翻，长轴标签就从
+            # ylabel 搬到 xlabel 上，而 xlabel 在 build 那一刻是空的——只登记
+            # 「现在有字的」会让翻转之后那行字整个从元素表里消失，选不中也改不了。
+            # 当下真的没有文字的，build_manifest 量到零尺寸包围盒会自动丢掉，
+            # 界面上不会凭空多出条目。
+            if is3d and not t.get_text():
                 continue
             if is3d:
                 # mplot3d 每次 draw 按投影轴线重算标签位置，set_label_coords
@@ -176,6 +197,7 @@ def instrument(state: FigState) -> None:
                     _register(state, f"axes_{i}.barseries_{j}", grp, "bar_series", nice)
                     for k, rect in enumerate(cont.patches):
                         rect._mm_bar = True  # noqa: SLF001 — _cls_key 识别标记
+                        skip_ids.add(id(rect))   # 柱也在 ax.patches 里，别再当独立形状登记
                         _register(state, f"axes_{i}.barseries_{j}.bar_{k}", rect,
                                   "bar", f"柱 {k + 1}")
                 elif isinstance(cont, ErrorbarContainer):
@@ -205,9 +227,16 @@ def instrument(state: FigState) -> None:
                     _register(state, f"axes_{i}.scatter_{j}", coll, "scatter", nice)
                 elif isinstance(coll, PolyCollection):
                     _register(state, f"axes_{i}.fill_{j}", coll, "fill", f"填充区域 {j + 1}")
-            # 脚本直接 add_patch 的独立箭头（XPS 峰位标注这类画法）。
-            # gid 用 patches 里的树序 j 保证重建稳定，label 按箭头自己计数
+            # 脚本直接 add_patch 的独立箭头（XPS 峰位标注这类画法）与独立形状
+            # （`ax.fill()` 出的 Polygon、手搓的 PathPatch）。gid 用 patches 里的
+            # 树序 j 保证重建稳定，label 各自计数。柱形系列的 Rectangle 也在
+            # ax.patches 里，已经登记过，这里必须跳过（skip_ids 收了它们）
             arrow_n = 0
+            shape_n = 0
+            # 色条轴上的 patch 不是用户的形状：`extend` 的两个延伸三角就是
+            # PathPatch，而且每次 `_draw_all()` 都会被删掉重建——登记它们等于
+            # 在元素表里放两个随时换身份的幽灵条目
+            is_cbax = ax in cbar_of_ax
             for j, pt in enumerate(ax.patches):
                 if isinstance(pt, FancyArrowPatch):
                     arrow_n += 1
@@ -216,6 +245,11 @@ def instrument(state: FigState) -> None:
                     pt._mm_arrow_standalone = True  # noqa: SLF001
                     _register(state, f"axes_{i}.arrows_{j}", pt,
                               "arrow_patch", f"箭头 {arrow_n}")
+                elif (isinstance(pt, (Polygon, PathPatch))
+                      and id(pt) not in skip_ids and not is_cbax):
+                    shape_n += 1
+                    _register(state, f"axes_{i}.patches_{j}", pt, "patch",
+                              f"形状 {shape_n}")
         leg = ax.get_legend()
         if leg is not None:
             _register(state, f"axes_{i}.legend", leg, "legend", "图例", draggable=True)
@@ -227,20 +261,23 @@ def instrument(state: FigState) -> None:
                 if t.get_text():
                     _register(state, f"axes_{i}.legend.texts_{j}", t, "legend_text",
                               f"图例项 “{_snippet(t.get_text())}”")
+        if not is3d:
+            # 边框模型的「脚本原样」也在这里采（与刻度模型同一时机：build 之后、
+            # 任何 override 之前）
+            spine_cfg(ax)
         tick_axes = (("x", "X"), ("y", "Y"), ("z", "Z")) if is3d else (("x", "X"), ("y", "Y"))
         for which, cn in tick_axes:
             if getattr(ax, f"{which}axis", None) is None:
                 continue
-            ts = TickSet(ax, which)
-            if ts.labels:
-                _register(state, f"axes_{i}.{which}ticks", ts, "ticks",
-                          f"{cn} 刻度文字")
-            raw = getattr(ax, f"get_{which}ticklabels")()
-            for j, t in enumerate(raw):
-                if t.get_text():
-                    _register(state, f"axes_{i}.{which}ticklabels_{j}",
-                              TickLabel(ax, which, j), "ticklabel",
-                              f"刻度 “{_snippet(t.get_text())}”")
+            # 刻度模型的「脚本原样」在这里采：build 之后、任何 override 之前，
+            # 采到的才是脚本自己那套 locator/formatter（见 overrides.tick_cfg）
+            tick_cfg(ax, which)
+            # **无条件登记**刻度组：此刻没有刻度不代表以后没有——色条方向一翻，
+            # 长短轴互换，原来空着的那条轴就成了带刻度的那条。build_manifest 会
+            # 把当下真的没有刻度的组丢掉，所以多登记一个不会在界面上多出东西
+            _register(state, f"axes_{i}.{which}ticks", TickSet(ax, which), "ticks",
+                      f"{cn} 刻度文字")
+            _sync_tick_labels(state, ax, which, f"axes_{i}")
 
 
 # ---------------------------------------------------------------------------
@@ -484,6 +521,30 @@ def _arrowpatch_fields(a) -> list[dict]:
     ]
 
 
+def _patch_fields(pt) -> list[dict]:
+    """独立形状 patch（`ax.fill()` 的 Polygon / 手搓的 PathPatch）。
+
+    几何不给编辑字段——它由脚本的数据决定，改它等于改数据。选中 / 命中 /
+    框选靠 manifest 的 `geometry`（沿真实闭合路径），样式在这里。
+    """
+    alpha = pt.get_alpha()
+    return [
+        {"prop": "facecolor", "type": "color", "value": to_hex(pt.get_facecolor())},
+        {"prop": "fill", "type": "bool", "value": bool(pt.get_fill())},
+        {"prop": "edgecolor", "type": "color", "value": to_hex(pt.get_edgecolor())},
+        {"prop": "linewidth", "type": "number", "value": round(float(pt.get_linewidth()), 2),
+         "min": 0, "max": 8, "step": 0.1, "unit": "pt"},
+        {"prop": "linestyle", "type": "enum", "value": _linestyle_name(pt),
+         "options": ["-", "--", "-.", ":"]},
+        {"prop": "alpha", "type": "number",
+         "value": 1.0 if alpha is None else round(float(alpha), 2),
+         "min": 0, "max": 1, "step": 0.05},
+        {"prop": "visible", "type": "bool", "value": bool(pt.get_visible())},
+        {"prop": "zorder", "type": "number", "value": round(float(pt.get_zorder()), 1),
+         "min": -5, "max": 50, "step": 1, "group": "排列"},
+    ]
+
+
 def _image_fields(im) -> list[dict]:
     arr = im.get_array()
     mappable = arr is not None and getattr(arr, "ndim", 0) == 2
@@ -535,6 +596,16 @@ def _colorbar_fields(p) -> list[dict]:
     cname = cb.mappable.get_cmap().name
     return [
         {"prop": "label", "type": "text", "value": _cb_axis(p).label.get_text()},
+        # 方向：就地结构改造（长短轴互换 + 重画色带 + 刻度换轴），实现见
+        # overrides._cb_reorient。`fig.axes` 顺序不动，所以 gid / 撤销 / 写回照旧
+        {"prop": "orientation", "type": "enum",
+         "value": str(getattr(cb, "orientation", "vertical")),
+         "options": ["vertical", "horizontal"]},
+        # 两端的延伸三角（「超出色阶的值画成箭头」）。同样是结构改造：
+        # 见 overrides._set_cb_extend
+        {"prop": "extend", "type": "enum",
+         "value": str(getattr(cb, "extend", "neither")),
+         "options": list(_CB_EXTENDS)},
         {"prop": "cmap", "type": "enum", "value": cname, "options": _cmap_options(cname),
          "group": "颜色映射"},
         {"prop": "vmin", "type": "number",
@@ -596,16 +667,6 @@ def _legend_fields(leg) -> list[dict]:
     ]
 
 
-def _tick_format_name(ts: TickSet) -> str:
-    fmt = getattr(ts.ax, f"{ts.which}axis").get_major_formatter()
-    if isinstance(fmt, FormatStrFormatter):
-        s = getattr(fmt, "fmt", "")
-        return s if s in ("%.0f", "%.1f", "%.2f") else "auto"
-    if isinstance(fmt, ScalarFormatter) and getattr(fmt, "_powerlimits", None) == (0, 0):
-        return "sci"
-    return "auto"
-
-
 def _tick_fields(ts: TickSet) -> list[dict]:
     t0 = _tick0(ts)
     is3d = getattr(ts.ax, "name", "") == "3d"
@@ -631,8 +692,32 @@ def _tick_fields(ts: TickSet) -> list[dict]:
         {"prop": "width", "type": "number",
          "value": round(float(t0.tick1line.get_markeredgewidth()), 2) if t0 is not None else 0.8,
          "min": 0.1, "max": 3, "step": 0.1, "unit": "pt", "group": "刻度线"},
-        {"prop": "format", "type": "enum", "value": _tick_format_name(ts),
-         "options": ["auto", "%.0f", "%.1f", "%.2f", "sci"], "group": "刻度线"},
+        # 数值格式（主刻度 Formatter）。"auto" = 回到脚本原样，不是「换成
+        # ScalarFormatter」——对数轴上后者会把 10³ 写成 1000
+        {"prop": "format", "type": "enum", "value": tick_format_name(ts.ax, ts.which),
+         "options": list(_TICK_FORMATS), "group": "刻度线"},
+
+        # ---- 刻度定位（Locator）：几个刻度、落在哪 ----
+        {"prop": "major_mode", "type": "enum",
+         "value": tick_major_mode(ts.ax, ts.which),
+         "options": ["auto", "step", "fixed"], "group": "刻度定位"},
+        {"prop": "major_step", "type": "number",
+         "value": tick_major_step(ts.ax, ts.which),
+         "min": 0, "step": 0.1, "group": "刻度定位"},
+        {"prop": "major_values", "type": "number_list",
+         "value": tick_major_values(ts.ax, ts.which), "group": "刻度定位"},
+        {"prop": "minor_visible", "type": "bool",
+         "value": tick_minor_visible(ts.ax, ts.which), "group": "刻度定位"},
+        {"prop": "minor_mode", "type": "enum",
+         "value": tick_minor_mode(ts.ax, ts.which),
+         "options": ["auto", "step"], "group": "刻度定位"},
+        {"prop": "minor_step", "type": "number",
+         "value": tick_minor_step(ts.ax, ts.which),
+         "min": 0, "step": 0.1, "group": "刻度定位"},
+        # 次刻度默认不标数字（"none"）；"auto" 与主刻度一样是「脚本原样」
+        {"prop": "minor_format", "type": "enum",
+         "value": tick_minor_format(ts.ax, ts.which),
+         "options": list(_TICK_MINOR_FORMATS), "group": "刻度定位"},
     ]
     if is3d:
         # mplot3d 的刻度朝向由投影决定；label 显隐的 tick_params 键也不含 z
@@ -653,10 +738,12 @@ def _axes_fields(ax) -> list[dict]:
          "group": "数据范围"},
         {"prop": "ylim", "type": "pair", "value": [float(y0), float(y1)],
          "group": "数据范围"},
+        # 选项由**当前这套 matplotlib 真正注册了的 scale** 决定，不写死清单：
+        # 列一个 set_[xy]scale 吃不下的名字，用户点了只会得到一次渲染失败
         {"prop": "xscale", "type": "enum", "value": str(ax.get_xscale()),
-         "options": ["linear", "log"], "group": "数据范围"},
+         "options": scale_options(ax.get_xscale()), "group": "数据范围"},
         {"prop": "yscale", "type": "enum", "value": str(ax.get_yscale()),
-         "options": ["linear", "log"], "group": "数据范围"},
+         "options": scale_options(ax.get_yscale()), "group": "数据范围"},
         {"prop": "invert_x", "type": "bool", "value": bool(ax.xaxis_inverted()),
          "group": "数据范围"},
         {"prop": "invert_y", "type": "bool", "value": bool(ax.yaxis_inverted()),
@@ -693,12 +780,22 @@ def _axes_fields(ax) -> list[dict]:
         {"prop": "spine_left", "type": "bool",
          "value": bool(ax.spines["left"].get_visible()) if "left" in ax.spines else True,
          "group": "网格与边框"},
+        # 「全部」这一档：四条边（含色条轴的 outline）统一改
         {"prop": "spine_color", "type": "color",
-         "value": to_hex(_spines_get(ax, lambda s: s.get_edgecolor(), (0, 0, 0, 1))),
-         "group": "网格与边框"},
+         "value": to_hex(spine_all_color(ax)), "group": "网格与边框"},
         {"prop": "spine_linewidth", "type": "number",
-         "value": round(float(_spines_get(ax, lambda s: float(s.get_linewidth()), 0.8)), 2),
+         "value": round(spine_all_width(ax), 2),
          "min": 0.1, "max": 3, "step": 0.1, "unit": "pt", "group": "网格与边框"},
+        # 逐条覆盖（只画左下两条粗边框是论文图的常见做法）。没表态的落回
+        # 「全部」，「全部」也没表态就用脚本原样——优先级见 apply_spine_model
+        *[f for side in ("top", "right", "bottom", "left") for f in (
+            {"prop": f"spine_{side}_color", "type": "color",
+             "value": to_hex(spine_side_color(ax, side)), "group": "边框（逐条）"},
+            {"prop": f"spine_{side}_linewidth", "type": "number",
+             "value": round(spine_side_width(ax, side), 2),
+             "min": 0.1, "max": 3, "step": 0.1, "unit": "pt",
+             "group": "边框（逐条）"},
+        )],
         {"prop": "facecolor", "type": "color", "value": to_hex(ax.get_facecolor()),
          "group": "网格与边框"},
     ]
@@ -785,6 +882,8 @@ def _fields_for(el) -> list[dict]:
         return _image_fields(artist)
     if key == "arrowpatch":
         return _arrowpatch_fields(artist)
+    if key == "patch":
+        return _patch_fields(artist)
     if key == "scatter":
         return _collection_fields(artist, with_size=True)
     if key == "fill":
@@ -832,12 +931,23 @@ def build_manifest(state: FigState, stem: str) -> dict:
     fig = state.fig
     renderer = _ensure_agg_canvas(fig)
     W, H = float(fig.bbox.width), float(fig.bbox.height)
+    # 刻度伪元素按**当前**刻度状态对齐（必须在 draw 之后：标签的文字是 draw
+    # 那一刻由 Formatter 填进去的）
+    sync_tick_elements(state)
+    budget = pathgeom.Budget()
 
     elements = []
     for el in state.elements:
         artist = el["artist"]
         entry = {"gid": el["gid"], "role": el["role"], "label": el["label"],
                  "draggable": el["draggable"], "editable": _fields_for(el)}
+        # 文字类元素的显示名跟着**当前**文字走：登记名是 build 那一刻的快照，
+        # 改过字（或色条翻转把标签搬了家）之后它就成了旧内容，元素树里对不上
+        if el["role"] in ("title", "axis_label", "text", "legend_text"):
+            live_text = artist.get_text()
+            if not live_text:
+                continue
+            entry["label"] = _relabel(el["label"], live_text)
         if el["role"] in ("axes", "axes3d"):
             entry["resizable"] = True  # 前端可拖动/缩放子图占比（override axes position）
             if artist in state.colorbar_axes:
@@ -900,6 +1010,10 @@ def build_manifest(state: FigState, stem: str) -> dict:
                 entry["bbox"] = [bb.x0 / W, 1.0 - bb.y1 / H, bb.width / W, bb.height / H]
             except Exception:
                 continue
+            # 稳定语义身份（宿主 + 序号）：`axes_i.colorbar` 是按邻居排序编的
+            # 名字，这个才是「这是谁的色条」。两者都在 state.index 里认得出
+            entry["colorbar_key"] = artist.identity
+            entry["host_gid"] = artist.host_gid
         elif isinstance(artist, PathCollection):
             # Artist 默认的 get_window_extent 对散点集合是空框，此前散点
             # 根本进不了 manifest——改用数据范围换算 display 框
@@ -920,6 +1034,14 @@ def build_manifest(state: FigState, stem: str) -> dict:
                 entry["bbox"] = _padded_bbox(bb, W, H)
             except Exception:
                 continue
+        # 路径几何（figure 分数、top-origin）：曲线 / 填充 / 独立形状的选中轮廓
+        # 与命中判据。**渲染派生数据**，不进用户文档、不是 override——xlim /
+        # scale / position / figsize / aspect / 色条方向一变，下一版就是新的。
+        # 没有 geometry 的元素（文字、图例、容器、散点）前端照旧用 bbox。
+        if el["role"] in ("line", "fill", "patch"):
+            geom = pathgeom.element_geometry(artist, W, H, budget)
+            if geom is not None:
+                entry["geometry"] = geom
         # 独立箭头：端点（figure 分数、top-origin）随 manifest 下发，
         # 前端据此画端点手柄、整体拖动 / 单端拖动都写 endpoints_frac override
         if el["role"] == "arrow_patch" and getattr(artist, "_mm_arrow_standalone", False):
@@ -947,6 +1069,12 @@ def build_manifest(state: FigState, stem: str) -> dict:
             except Exception:
                 entry["draggable"] = False
         elements.append(entry)
+
+    if budget.skipped:
+        # 降级要说出来：同一张图上有的曲线沿路径选、有的退回 bbox，
+        # 不打这一行的话没人知道为什么
+        print(f"[geometry] 点数预算用尽，{budget.skipped} 个元素退回 bbox "
+              f"（TOTAL_BUDGET={pathgeom.TOTAL_BUDGET}）", file=sys.stderr)
 
     w_in, h_in = fig.get_size_inches()
     return {"stem": stem, "size_mm": [round(float(w_in) * 25.4, 2), round(float(h_in) * 25.4, 2)],

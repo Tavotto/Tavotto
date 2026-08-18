@@ -92,8 +92,13 @@ export function initI18n(locale?: Locale): typeof i18n {
     // 用户的文件名里的引号显示成 &#39;
     interpolation: { escapeValue: false },
     returnNull: false,
-    // 缺 key 时回退到 key 本身而不是空串：漏翻至少还看得见是哪一条
-    parseMissingKeyHandler: (key) => key,
+    // 缺 key 时回退到 key 本身而不是空串：漏翻至少还看得见是哪一条。
+    //
+    // **调用方给了 defaultValue 就必须让它赢**（i18next 把它作为第二个参数
+    // 传进来）。无脑 `(key) => key` 会把 defaultValue 整个吃掉，而这一层的
+    // 回退恰恰全是「查不到就原样显示」的开放集合：matplotlib 的属性名、
+    // 色图名 viridis、刻度格式串 %.1f……用户看到的会是 `enum.cmap.viridis`。
+    parseMissingKeyHandler: (key, fallback) => fallback ?? key,
   })
   return i18n
 }

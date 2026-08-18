@@ -28,6 +28,8 @@ const ROLE_SCOPED_PROPS: Record<string, string[]> = {
   bar_series: ['facecolor'],
   scatter: ['facecolor'],
   fill: ['facecolor'],
+  // 脚本 add_patch 出的独立形状：facecolor 是它自己的填充
+  patch: ['facecolor'],
 }
 
 /**
@@ -70,7 +72,9 @@ const ENGINE_GROUP: Record<string, string> = {
   轴箭头: 'axisArrows',
   刻度: 'ticks',
   刻度线: 'tickMarks',
+  刻度定位: 'tickLocator',
   网格与边框: 'gridFrame',
+  '边框（逐条）': 'gridFramePerSide',
   线条与标记: 'lineMarker',
   渐变填充: 'gradientFill',
   颜色映射: 'colormap',
@@ -104,7 +108,9 @@ const GROUP_ORDER = [
   '轴箭头',
   '刻度',
   '刻度线',
+  '刻度定位',
   '网格与边框',
+  '边框（逐条）',
   '线条与标记',
   '渐变填充',
   '颜色映射',
@@ -158,6 +164,7 @@ const ENGINE_LABEL_PATTERNS: { re: RegExp; key: string }[] = [
   { re: /^误差棒 (\d+)$/, key: 'errorbar' },
   { re: /^图像 (\d+)$/, key: 'image' },
   { re: /^填充区域 (\d+)$/, key: 'fillArea' },
+  { re: /^形状 (\d+)$/, key: 'shape' },
   { re: /^箭头 (\d+)$/, key: 'arrow' },
   { re: /^([XYZ]) 轴 “(.*)”$/s, key: 'axisLabelNamed' },
   { re: /^([XYZ]) 刻度文字$/, key: 'tickLabels' },
@@ -186,8 +193,14 @@ export function engineLabel(label: string): string {
 /**
  * 引擎明确不支持的能力：不画空白页、不摆假的 disabled 控件，
  * 而是说清为什么，并把用户导向改图助手（那条路真能做到）。
+ *
+ * 目前是空表。**色条曾经在这里**——那条说明写的是「翻转方向必须销毁重建
+ * 色条轴、会打乱 gid」，而引擎已改成**就地**改造（同一个 Axes 对象，
+ * `fig.axes` 顺序一个字节不动，见 engine/overrides.py 的 `_cb_reorient`），
+ * 方向与两端延伸都成了普通的 enum 字段。留着这条机制是因为「说清为什么
+ * 做不到」比「摆一个点了没反应的控件」好，下一个真做不到的能力还得用它。
  */
-export const UNSUPPORTED_ROLES = ['colorbar'] as const
+export const UNSUPPORTED_ROLES = [] as const
 
 export const unsupportedOf = (role: string): { title: string; reason: string } | undefined =>
   (UNSUPPORTED_ROLES as readonly string[]).includes(role)
@@ -214,6 +227,10 @@ const NEUTRAL: Record<string, unknown> = {
   invert_x: false,
   invert_y: false,
   outline_visible: false,
+  major_mode: 'auto',
+  minor_mode: 'auto',
+  minor_format: 'none',
+  extend: 'neither',
 }
 
 /**

@@ -9,6 +9,8 @@ worker 在此转换为各 artist 自己的坐标系。
 """
 from __future__ import annotations
 
+import re
+
 import numpy as np
 
 import matplotlib as mpl
@@ -21,11 +23,16 @@ from matplotlib.figure import Figure
 from matplotlib.legend import Legend
 from matplotlib.lines import Line2D
 from matplotlib.markers import MarkerStyle
-from matplotlib.patches import BoxStyle, FancyArrowPatch, Rectangle
+from matplotlib.patches import (BoxStyle, FancyArrowPatch, PathPatch, Polygon,
+                                Rectangle)
 from mpl_toolkits.mplot3d import proj3d
 from matplotlib.text import Text
+import matplotlib.ticker as mticker
 from matplotlib.ticker import FormatStrFormatter, ScalarFormatter
 from matplotlib.image import AxesImage
+
+#: 刻度标签的 gid 形状（`FigState.resolve` 按需现解时用）
+_TICKLABEL_GID = re.compile(r"^axes_(\d+)\.([xyz])ticklabels_(\d+)$")
 
 
 class FigState:
@@ -40,6 +47,45 @@ class FigState:
         self.colorbar_axes: set = set()     # 承载色条的轴（manifest 标记用）
         # 宿主 axes gid -> 拖动它时应当一起走的其他 axes gid（色条轴 / 孪生轴）
         self.axes_follow: dict[str, list[str]] = {}
+        # 本次 apply 的**全量** patch 表 {(gid, prop): value}，只在 apply() 期间有值。
+        # 结构性 setter（色条方向）要按「这一次改完之后」的落位算几何，而不是
+        # 按此刻的实况——热会话里 position 可能已经先改过，全量重放里它还没轮到，
+        # 只看实况两条路就会算出不同的位置。
+        self.pending: dict[tuple, object] = {}
+
+    def resolve(self, gid: str):
+        """gid → artist / 伪元素。查不到就试着**按需现解**刻度标签。
+
+        刻度标签不是常驻 artist：改 xlim、换 locator、翻转色条方向都会让整组
+        重来，`index` 里那一份只是上一次渲染留下的快照。全量重放时
+        「先把主刻度改成 0.05 间隔，再改第 22 条刻度的文字」这种组合里，第 22
+        条在登记表建立的那一刻还不存在——只查表就会报「元素不存在」，而热
+        会话里它明明改得动，两条路当场分岔（而分岔的表现是写回被 409 拦住，
+        用户完全看不出为什么）。
+
+        现解不出来（轴没了 / 序号越界 / 那条刻度没有文字）才是真的不存在，
+        照旧回 None → warning → 界面上的孤儿 override。
+        """
+        artist = self.index.get(gid)
+        if artist is not None:
+            return artist
+        m = _TICKLABEL_GID.match(gid)
+        if m is None:
+            return None
+        i, which, j = int(m.group(1)), m.group(2), int(m.group(3))
+        axes = self.fig.axes
+        if not 0 <= i < len(axes):
+            return None
+        ax = axes[i]
+        if getattr(ax, f"{which}axis", None) is None:
+            return None
+        try:
+            labels = getattr(ax, f"get_{which}ticklabels")()
+        except Exception:  # noqa: BLE001 — 取不到就当它不存在
+            return None
+        if j >= len(labels) or not labels[j].get_text():
+            return None
+        return TickLabel(ax, which, j)
 
 
 class SeriesGroup:
@@ -65,10 +111,33 @@ class SeriesGroup:
 
 
 class ColorbarProxy:
-    """色条伪元素：字段落在 Colorbar 对象与其 mappable 上，命中/位置走宿主轴。"""
+    """色条伪元素：字段落在 Colorbar 对象与其 mappable 上，命中/位置走宿主轴。
 
-    def __init__(self, cb):
+    **语义身份**（`identity`）：色条在 artist 树上没有自己的名字，现有 gid
+    `axes_<色条轴序号>.colorbar` 是按 `fig.axes` 里的序号编的。方向翻转是
+    **就地**改造（同一个 Axes 对象、`fig.axes` 顺序一个字节不动），所以那个
+    gid 今天不会漂；但「色条是谁的色条」本来就该由宿主轴 + mappable 决定，
+    而不是由邻居的排序决定。`identity` 记的就是这条语义身份，随 manifest
+    下发（`colorbar_key`），并在 `state.index` 里登记成别名——将来真要重建
+    色条轴时，旧文档的 `axes_i.colorbar` 与新身份都还认得出同一个对象。
+    """
+
+    def __init__(self, cb, host=None, cbax_gid: str = "", host_gid: str = "",
+                 ordinal: int = 0):
         self.cb = cb
+        self.host = host                 # 宿主 Axes（方向翻转的落位参照）
+        self.cbax_gid = cbax_gid         # 色条**轴**的 gid（axes_i）
+        self.host_gid = host_gid
+        self.ordinal = ordinal           # 同一宿主上的第几条色条
+        # box_aspect 基线必须在这一刻采：`instrument` 跑在 build 之后、任何
+        # override 之前，而 extend 的 locator 会在渲染时把 box_aspect 改成
+        # `aspect*shrink`——晚一步采就把它的中间态当成了脚本原样
+        _cb_box_aspect0(cb)
+
+    @property
+    def identity(self) -> str:
+        """稳定语义身份：宿主轴 + 色条序号（与 fig.axes 的排序无关）。"""
+        return f"cbar:{self.host_gid or '?'}:{self.ordinal}"
 
     def set_gid(self, gid) -> None:
         """宿主轴已有 axes_i gid；伪元素靠 manifest bbox 命中。"""
@@ -87,8 +156,20 @@ class TickSet:
 
     @property
     def labels(self):
+        """当前这条轴上**画着字**的刻度标签：主刻度 + 开了数字的次刻度。
+
+        次刻度也算进来，是因为它们在用户眼里就是「X 刻度文字」的一部分——
+        开了 `minor_format` 之后不算的话，刻度组的包围盒会漏掉下面那一排，
+        点它选不中、对齐也对不准。单条编辑仍然只对主刻度开放（冻结整条轴
+        是主刻度的机制，见 TickLabel）。
+        """
         get = getattr(self.ax, f"get_{self.which}ticklabels")
-        return [t for t in get() if t.get_text()]
+        out = [t for t in get() if t.get_text()]
+        try:
+            out += [t for t in get(minor=True) if t.get_text()]
+        except (TypeError, AttributeError):  # 该轴不支持 minor 参数
+            pass
+        return out
 
     def _first(self, getter, default):
         labs = self.labels
@@ -99,8 +180,22 @@ class TickSet:
 
 
 class TickLabel:
-    """单个刻度标签的伪元素（按主刻度序号定位；标签会随 draw 重建，
-    改文字要通过 set_xticks(ticks, labels) 冻结整组后替换）。3D 轴含 "z"。"""
+    """单个刻度标签的伪元素（按主刻度序号定位）。3D 轴含 "z"。
+
+    **生命周期**（改动前先读）：刻度标签不是常驻 artist，每次 draw 由 Locator +
+    Formatter 重新生成。想让「把 0.5 改成 ½」留得住，只有把整条轴冻成
+    `set_ticks(locs, labels)`（FixedLocator + FixedFormatter）这一条路。因此：
+
+    * 身份是**序号**（第 j 个主刻度），不是数值。改 xlim / 换 locator 之后
+      第 j 个刻度可能已经是另一个数——这是索引身份的固有代价，`manifest`
+      每次渲染都按当前刻度重新登记这批伪元素，消失的那个会变成孤儿 override
+      （界面里可见、可清理），**不会**静默吞掉。
+    * 冻结前先 `apply_tick_model` 回到「模型态」（脚本原样或用户配置的
+      locator），再把该轴上**全部**仍在生效的单条文字一起盖上去——否则
+      两条编辑会互相顶掉，热会话与全量重放也会分岔。
+    * 索引超出当前刻度数时**抛异常**（→ warning → 写回阻断），绝不静默返回：
+      静默返回的表现是「改了字，下一帧自己变回去，没有任何提示」。
+    """
 
     def __init__(self, ax: Axes, which: str, index: int):
         self.ax = ax
@@ -119,13 +214,8 @@ class TickLabel:
         return t.get_text() if t is not None else ""
 
     def set_text(self, value) -> None:
-        labels = getattr(self.ax, f"get_{self.which}ticklabels")()
-        texts = [t.get_text() for t in labels]
-        if self.index >= len(texts):
-            return
-        texts[self.index] = str(value)
-        ticks = getattr(self.ax, f"get_{self.which}ticks")()
-        getattr(self.ax, f"set_{self.which}ticks")(ticks, texts)
+        """只改自己这一条（无 state 时的退化路径，供 restore/手工调用）。"""
+        _freeze_tick_texts(self.ax, self.which, {self.index: str(value)})
 
 
 # ---------------------------------------------------------------------------
@@ -391,9 +481,100 @@ def _spines_get(ax: Axes, fn, default):
     return fn(sp) if sp is not None else default
 
 
-def _spines_set(ax: Axes, fn) -> None:
-    for sp in ax.spines.values():
-        fn(sp)
+# ---------------------------------------------------------------------------
+# 边框（spine）模型：一档「全部」+ 四条可各自覆盖
+#
+# 与刻度模型同一套路数（写进 cfg 再**整体重建**），原因也一样：「全部边框改成
+# 灰色」与「只把上边框改成红色」是两条会互相盖写的 setter，谁先谁后就会得到
+# 两张不同的图。改成一次重建之后，两者的应用顺序不影响结果——热会话与全量
+# 重放才收敛。
+#
+# 优先级：某一条自己的设定 > 「全部」的设定 > 脚本原样。
+# 「全部」这一档故意作用于 `ax.spines` 的**每一条**（含色条轴的 'outline'）——
+# 那是它原本的口径，收窄成四条会让色条的外框突然改不动了。
+# ---------------------------------------------------------------------------
+_SPINE_SIDES = ("top", "right", "bottom", "left")
+_SPINE_CFG_KEYS = ("all_color", "all_width",
+                   *(f"{s}_{k}" for s in _SPINE_SIDES for k in ("color", "width")))
+
+
+def spine_cfg(ax: Axes) -> dict:
+    """取（必要时新建）一条 axes 的边框模型缓存。`instrument` 在 build 之后
+    对每个 2D axes 调一次，保证 `orig` 采的是**脚本原样**。"""
+    cfg = getattr(ax, "_mm_spine_cfg", None)
+    if cfg is None:
+        cfg = {k: None for k in _SPINE_CFG_KEYS}
+        cfg["orig"] = {name: (sp.get_edgecolor(), float(sp.get_linewidth()))
+                       for name, sp in ax.spines.items()}
+        ax._mm_spine_cfg = cfg  # noqa: SLF001
+    return cfg
+
+
+def apply_spine_model(ax: Axes) -> None:
+    """按 cfg **整体重建**每一条边框的颜色与线宽。"""
+    cfg = spine_cfg(ax)
+    for name, sp in ax.spines.items():
+        orig = cfg["orig"].get(name)
+        if orig is None:
+            continue
+        color = cfg.get(f"{name}_color")
+        if color is None:
+            color = cfg["all_color"]
+        width = cfg.get(f"{name}_width")
+        if width is None:
+            width = cfg["all_width"]
+        sp.set_edgecolor(orig[0] if color is None else color)
+        sp.set_linewidth(orig[1] if width is None else float(width))
+    ax.stale = True
+
+
+def spine_all_color(ax: Axes):
+    cfg = spine_cfg(ax)
+    if cfg["all_color"] is not None:
+        return cfg["all_color"]
+    return _spines_get(ax, lambda s: s.get_edgecolor(), (0, 0, 0, 1))
+
+
+def spine_all_width(ax: Axes) -> float:
+    cfg = spine_cfg(ax)
+    if cfg["all_width"] is not None:
+        return float(cfg["all_width"])
+    return float(_spines_get(ax, lambda s: float(s.get_linewidth()), 0.8))
+
+
+def spine_side_color(ax: Axes, side: str):
+    cfg = spine_cfg(ax)
+    if cfg[f"{side}_color"] is not None:
+        return cfg[f"{side}_color"]
+    sp = ax.spines.get(side)
+    return sp.get_edgecolor() if sp is not None else spine_all_color(ax)
+
+
+def spine_side_width(ax: Axes, side: str) -> float:
+    cfg = spine_cfg(ax)
+    if cfg[f"{side}_width"] is not None:
+        return float(cfg[f"{side}_width"])
+    sp = ax.spines.get(side)
+    return float(sp.get_linewidth()) if sp is not None else spine_all_width(ax)
+
+
+def _mk_spine_handler(key: str, read):
+    def g(ax: Axes):
+        return read(ax)
+
+    def s(ax: Axes, v) -> None:
+        spine_cfg(ax)[key] = v
+        apply_spine_model(ax)
+    return (g, s)
+
+
+def _mk_spine_restore(key: str):
+    """撤销一条边框设定 = **退回未表态**（落回「全部」那一档，或脚本原样），
+    不是把当前推断出来的值钉死成一条显式配置。"""
+    def r(ax: Axes, _orig) -> None:
+        spine_cfg(ax)[key] = None
+        apply_spine_model(ax)
+    return r
 
 
 def _tick_axis(ts: "TickSet"):
@@ -403,18 +584,6 @@ def _tick_axis(ts: "TickSet"):
 def _tick0(ts: "TickSet"):
     ticks = _tick_axis(ts).get_major_ticks()
     return ticks[0] if ticks else None
-
-
-def _set_tick_format(ts: "TickSet", v) -> None:
-    axis = _tick_axis(ts)
-    if v == "auto":
-        axis.set_major_formatter(ScalarFormatter())
-    elif v == "sci":
-        fmt = ScalarFormatter(useMathText=True)
-        fmt.set_powerlimits((0, 0))
-        axis.set_major_formatter(fmt)
-    else:  # "%.0f" / "%.1f" / "%.2f"
-        axis.set_major_formatter(FormatStrFormatter(str(v)))
 
 
 def _set_tick_width(ts: "TickSet", v) -> None:
@@ -430,12 +599,304 @@ def _set_tick_width(ts: "TickSet", v) -> None:
             info["tick"]["linewidth"] = float(v)
 
 
-def _get_tick_formatter(ts: "TickSet"):
-    return _tick_axis(ts).get_major_formatter()
+# ---------------------------------------------------------------------------
+# 刻度模型：Locator / Formatter（不是「改已经生成出来的 Text」）
+#
+# 为什么必须走 Locator/Formatter：刻度标签每次 draw 由 locator 现算、Text 对象
+# 现建，改 Text 的属性只能靠 tick_params 持久（字号/颜色/朝向那一档），而
+# 「几个刻度、落在哪、写成什么」只有 locator 与 formatter 说了算。
+#
+# 模型存在**轴对象**上（`axis._mm_tick_cfg`），四个字段是「用户表态过什么」，
+# 三个 `orig_*` 是「脚本原样」。规则：
+#   * 没表态（None）= 用脚本原样，而不是我们另挑一个 AutoLocator——对数轴的
+#     LogLocator、脚本自己 set_xticks 冻出来的 FixedLocator，换成 AutoLocator
+#     就是把用户的图改了。
+#   * setter 一律写进 cfg 再**整体重建**（`apply_tick_model`），不做增量：
+#     两条 prop 的应用顺序因此不影响结果，热会话与全量重放才收敛。
+#   * `set_[xy]scale` 会把 locator/formatter 整套换成该 scale 的默认值，所以
+#     换 scale 之后必须**重新采集** orig（`invalidate_tick_cfg`），否则
+#     「自动」会把线性轴的 AutoLocator 按到对数轴上。
+# ---------------------------------------------------------------------------
+_TICK_MODEL_PROPS = ("major_mode", "major_step", "major_values",
+                     "minor_visible", "minor_mode", "minor_step",
+                     "format", "minor_format")
+
+_TICK_FORMATS = ["auto", "%.0f", "%.1f", "%.2f", "%.3f", "%g", "sci"]
+#: 次刻度的格式多一档 "none"（不标数字）——**那才是默认**，所以它得排在最前。
+#: 「auto」在这里同样是「脚本原样」：对数轴的 LogFormatterSciNotation 会挑几条
+#: 次刻度标上 10^n，换成 ScalarFormatter 就把它标成一串整数了。
+_TICK_MINOR_FORMATS = ["none", *_TICK_FORMATS]
 
 
-def _restore_tick_format(ts: "TickSet", orig) -> None:
-    _tick_axis(ts).set_major_formatter(orig)
+def _axis_of(ax: Axes, which: str):
+    return getattr(ax, f"{which}axis")
+
+
+def tick_cfg(ax: Axes, which: str) -> dict:
+    """取（必要时新建）一条轴的刻度模型缓存。`instrument` 会在 build 之后
+    对每条轴调用一次，保证 `orig_*` 采的是**脚本原样**而不是改到一半的状态。"""
+    axis = _axis_of(ax, which)
+    cfg = getattr(axis, "_mm_tick_cfg", None)
+    if cfg is None:
+        cfg = {k: None for k in _TICK_MODEL_PROPS}
+        axis._mm_tick_cfg = cfg  # noqa: SLF001
+        invalidate_tick_cfg(ax, which)
+    return cfg
+
+
+def invalidate_tick_cfg(ax: Axes, which: str) -> None:
+    """重新采集「脚本原样」的 locator/formatter（换 scale / 重建色条后调用）。"""
+    axis = _axis_of(ax, which)
+    cfg = getattr(axis, "_mm_tick_cfg", None)
+    if cfg is None:
+        cfg = {k: None for k in _TICK_MODEL_PROPS}
+        axis._mm_tick_cfg = cfg  # noqa: SLF001
+    cfg["orig_major_locator"] = axis.get_major_locator()
+    cfg["orig_major_formatter"] = axis.get_major_formatter()
+    cfg["orig_minor_locator"] = axis.get_minor_locator()
+    cfg["orig_minor_formatter"] = axis.get_minor_formatter()
+
+
+def _minor_auto_locator(axis):
+    """「自动次刻度」按当前 scale 选 locator。
+
+    `AutoMinorLocator` 在对数类刻度上直接罢工（matplotlib 会 warn 并给空
+    列表），所以 log / symlog / logit 各用它们自己的那一款——列一个点不出
+    刻度的选项，等于给了个坏掉的开关。
+    """
+    name = axis.get_scale()
+    if name == "log":
+        base = getattr(getattr(axis, "_scale", None), "base", 10)
+        return mticker.LogLocator(base=base, subs="auto")
+    if name == "symlog":
+        return mticker.SymmetricalLogLocator(axis.get_transform(),
+                                             subs=list(range(1, 10)))
+    if name == "logit":
+        return mticker.LogitLocator(minor=True)
+    return mticker.AutoMinorLocator()
+
+
+def _major_locs(axis) -> list[float]:
+    try:
+        return [float(v) for v in axis.get_majorticklocs()]
+    except Exception:  # noqa: BLE001 — 取不到就当没有
+        return []
+
+
+def _guess_step(axis) -> float:
+    """当前刻度的间距（切到「固定间隔」时的缺省值，避免视觉上突然跳一下）。"""
+    locs = _major_locs(axis)
+    if len(locs) >= 2:
+        step = abs(locs[1] - locs[0])
+        if step > 0:
+            return float(step)
+    lo, hi = axis.get_view_interval()
+    span = abs(float(hi) - float(lo))
+    return float(span / 5.0) if span > 0 else 1.0
+
+
+def _formatter_for(name, orig):
+    """格式名 → Formatter。`None`/"auto" = 脚本原样，"none" = 不标数字。"""
+    name = name or "auto"
+    if name == "auto":
+        return orig
+    if name == "none":
+        return mticker.NullFormatter()
+    if name == "sci":
+        f = ScalarFormatter(useMathText=True)
+        f.set_powerlimits((0, 0))
+        return f
+    return FormatStrFormatter(str(name))
+
+
+def _formatter_name(fmt, *, allow_none: bool) -> str:
+    """Formatter → 格式名（用户没表态时按实际对象反推）。"""
+    if allow_none and isinstance(fmt, mticker.NullFormatter):
+        return "none"
+    if isinstance(fmt, FormatStrFormatter):
+        s = getattr(fmt, "fmt", "")
+        return s if s in _TICK_FORMATS else "auto"
+    if isinstance(fmt, ScalarFormatter) and getattr(fmt, "_powerlimits", None) == (0, 0):
+        return "sci"
+    return "auto"
+
+
+def apply_tick_model(ax: Axes, which: str) -> None:
+    """按 cfg **整体重建** major/minor locator 与 major formatter。"""
+    axis = _axis_of(ax, which)
+    cfg = tick_cfg(ax, which)
+
+    mode = cfg["major_mode"] or "auto"
+    if mode == "fixed":
+        vals = cfg["major_values"]
+        vals = [float(v) for v in vals] if vals else _major_locs(axis)
+        axis.set_major_locator(mticker.FixedLocator(vals))
+    elif mode == "step":
+        step = float(cfg["major_step"] or 0.0)
+        if step <= 0:
+            step = _guess_step(axis)
+        axis.set_major_locator(mticker.MultipleLocator(step))
+    else:
+        axis.set_major_locator(cfg["orig_major_locator"])
+
+    axis.set_major_formatter(_formatter_for(cfg["format"],
+                                           cfg["orig_major_formatter"]))
+
+    axis.set_minor_formatter(_formatter_for(cfg["minor_format"],
+                                           cfg["orig_minor_formatter"]))
+
+    vis, mmode, mstep = cfg["minor_visible"], cfg["minor_mode"], cfg["minor_step"]
+    if vis is False:
+        axis.set_minor_locator(mticker.NullLocator())
+    elif vis is None and mmode is None and mstep is None:
+        axis.set_minor_locator(cfg["orig_minor_locator"])   # 没人表态 → 脚本原样
+    elif (mmode or "auto") == "step" and mstep and float(mstep) > 0:
+        axis.set_minor_locator(mticker.MultipleLocator(float(mstep)))
+    else:
+        axis.set_minor_locator(_minor_auto_locator(axis))
+    ax.stale = True
+
+
+# ---- manifest 侧的「当前值」读数（用户没表态时按实况推断）----
+def tick_major_mode(ax: Axes, which: str) -> str:
+    cfg = tick_cfg(ax, which)
+    if cfg["major_mode"]:
+        return str(cfg["major_mode"])
+    loc = _axis_of(ax, which).get_major_locator()
+    if isinstance(loc, mticker.FixedLocator):
+        return "fixed"
+    if isinstance(loc, mticker.MultipleLocator):
+        return "step"
+    return "auto"
+
+
+def tick_major_step(ax: Axes, which: str) -> float:
+    cfg = tick_cfg(ax, which)
+    if cfg["major_step"]:
+        return round(float(cfg["major_step"]), 6)
+    return round(_guess_step(_axis_of(ax, which)), 6)
+
+
+def tick_major_values(ax: Axes, which: str) -> list[float]:
+    cfg = tick_cfg(ax, which)
+    vals = cfg["major_values"] if cfg["major_values"] else _major_locs(_axis_of(ax, which))
+    return [round(float(v), 6) for v in vals]
+
+
+def tick_minor_visible(ax: Axes, which: str) -> bool:
+    cfg = tick_cfg(ax, which)
+    if cfg["minor_visible"] is not None:
+        return bool(cfg["minor_visible"])
+    return not isinstance(_axis_of(ax, which).get_minor_locator(), mticker.NullLocator)
+
+
+def tick_minor_mode(ax: Axes, which: str) -> str:
+    return str(tick_cfg(ax, which)["minor_mode"] or "auto")
+
+
+def tick_minor_step(ax: Axes, which: str) -> float:
+    return round(float(tick_cfg(ax, which)["minor_step"] or 0.0), 6)
+
+
+def tick_format_name(ax: Axes, which: str) -> str:
+    """当前主刻度数值格式。用户表态过就报表态值，否则按实际 formatter 推断。"""
+    cfg = tick_cfg(ax, which)
+    if cfg["format"]:
+        return str(cfg["format"])
+    return _formatter_name(_axis_of(ax, which).get_major_formatter(), allow_none=False)
+
+
+def tick_minor_format(ax: Axes, which: str) -> str:
+    """当前**次**刻度数值格式。默认是 "none"（次刻度不标数字）。"""
+    cfg = tick_cfg(ax, which)
+    if cfg["minor_format"]:
+        return str(cfg["minor_format"])
+    return _formatter_name(_axis_of(ax, which).get_minor_formatter(), allow_none=True)
+
+
+def _mk_tick_model_handler(key: str, cast=None):
+    """刻度模型 prop 的 (getter, setter)：写进 cfg 再整体重建。"""
+    readers = {"major_mode": tick_major_mode, "major_step": tick_major_step,
+               "major_values": tick_major_values, "minor_visible": tick_minor_visible,
+               "minor_mode": tick_minor_mode, "minor_step": tick_minor_step,
+               "format": tick_format_name, "minor_format": tick_minor_format}
+
+    def g(ts: "TickSet"):
+        return readers[key](ts.ax, ts.which)
+
+    def s(ts: "TickSet", v) -> None:
+        tick_cfg(ts.ax, ts.which)[key] = None if v is None else cast(v)
+        apply_tick_model(ts.ax, ts.which)
+    return (g, s)
+
+
+def _mk_tick_model_restore(key: str):
+    """撤销一条刻度模型 prop = **把它退回未表态**（脚本原样），而不是把
+    「当前推断出来的值」钉死成一条显式配置——后者会让 undo 之后的图与
+    从没改过的图不是同一张。"""
+    def r(ts: "TickSet", _orig) -> None:
+        tick_cfg(ts.ax, ts.which)[key] = None
+        apply_tick_model(ts.ax, ts.which)
+    return r
+
+
+def _num_list(v) -> list[float]:
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        return [float(v)]
+    return [float(x) for x in (v or []) if isinstance(x, (int, float))
+            and not isinstance(x, bool)]
+
+
+def _freeze_tick_texts(ax: Axes, which: str, edits: dict) -> None:
+    """把一条轴冻成 FixedLocator + FixedFormatter，并盖上 `edits` 里的文字。
+
+    `edits` 是 {主刻度序号: 文字}。基础文字取当前 formatter 对当前刻度位置的
+    输出（`format_ticks`）——它与 matplotlib 自己 draw 时用的是同一条路，
+    所以「只改一条、其余原样」是逐字节原样。
+    """
+    axis = _axis_of(ax, which)
+    locs = _major_locs(axis)
+    if not locs:
+        raise ValueError(f"{which} 轴当前没有主刻度，无法改刻度文字")
+    texts = [str(t) for t in axis.get_major_formatter().format_ticks(locs)]
+    for idx, val in edits.items():
+        if not (0 <= int(idx) < len(texts)):
+            raise ValueError(
+                f"刻度 #{int(idx)} 已不存在（当前只有 {len(texts)} 个主刻度）")
+        texts[int(idx)] = str(val)
+    getattr(ax, f"set_{which}ticks")(locs, texts)
+
+
+def _set_ticklabel_text(tl: "TickLabel", value, state: "FigState") -> None:
+    """改单条刻度文字：先回到模型态，再把该轴上**全部**仍在生效的编辑一起冻上。
+
+    只冻自己那一条的话，同轴上的第二条编辑会把第一条顶掉（冻结是整条轴的
+    动作）；而不先回模型态的话，反复冻结会把旧刻度位置带进新一轮——改完
+    xlim 之后热会话与全量重放就分岔了。
+    """
+    apply_tick_model(tl.ax, tl.which)
+    edits: dict[int, str] = {}
+    for (gid, prop), v in (state.applied or {}).items():
+        if prop != "text":
+            continue
+        other = state.resolve(gid)
+        if (isinstance(other, TickLabel) and other.ax is tl.ax
+                and other.which == tl.which and other.index != tl.index):
+            edits[other.index] = str(v)
+    edits[tl.index] = str(value)
+    _freeze_tick_texts(tl.ax, tl.which, edits)
+
+
+_set_ticklabel_text._needs_state = True  # noqa: SLF001
+
+
+def _restore_ticklabel_text(tl: "TickLabel", _orig, state: "FigState") -> None:
+    """撤销一条刻度文字 = 让该轴回到模型态。仍在生效的其它编辑由 apply()
+    的最后一档（`_ALWAYS_REPLAY`）重新冻上，所以这里不必也不该逐条补。"""
+    apply_tick_model(tl.ax, tl.which)
+
+
+_restore_ticklabel_text._needs_state = True  # noqa: SLF001
 
 
 # ---------------------------------------------------------------------------
@@ -679,6 +1140,305 @@ def _cb_tick_color(p: "ColorbarProxy"):
 
 
 # ---------------------------------------------------------------------------
+# 色条方向：一次**就地**的结构改造，不是普通 setter
+#
+# `cb.orientation` 只是个属性，直接写它不会动布局、不会换刻度所属的轴、
+# 也不会重画色带——图上什么都不变，界面却显示成横的，是最坏的那种「假支持」。
+# 反过来，销毁重建色条（`cb.remove()` + `fig.colorbar(...)`）会往 `fig.axes`
+# 里换一个新对象，全图 `axes_i` 的编号跟着漂，已有 override 与撤销全废。
+#
+# 这里走第三条：**同一个 Axes 对象原地改造**——
+#   ① 换 orientation / ticklocation（决定长短轴与刻度落在哪条轴）；
+#   ② 长短轴互换后重算落位（见 `_cb_place`，vertical↔horizontal 逐位可逆）；
+#   ③ `_reset_locator_formatter_scale()` + `_draw_all()` 让 matplotlib 自己
+#      重建色带网格、outline、刻度与 xlim/ylim；
+#   ④ 把长轴标签搬到新的长轴上（旧轴那份要清掉，否则两条轴各有一份）。
+# `fig.axes` 顺序一个字节不动 → gid 稳定 → 撤销 / 写回 / 重开全链路照旧。
+# ---------------------------------------------------------------------------
+_CB_TICKLOC = {"vertical": "right", "horizontal": "bottom"}
+
+#: `Colorbar._inside` 是按 extend 切出来的那段 boundaries。它**只在 `__init__`
+#: 里设过一次**——改 `cb.extend` 不动它，于是 `_draw_all()` 会拿 259 条边界去配
+#: 256 块颜色，当场 TypeError。两者必须一起改。
+_CB_INSIDE = {"neither": slice(0, None), "both": slice(1, -1),
+              "min": slice(1, None), "max": slice(0, -1)}
+_CB_EXTENDS = ["neither", "both", "min", "max"]
+
+
+def _cb_box_aspect0(cb):
+    """色条轴的「没有 extend 时」的 box_aspect 基线。
+
+    落位其实由 matplotlib 自己的 `_ColorbarAxesLocator` 每帧重算：它按 extend
+    把位置收一收给三角让地方，并顺手把 `box_aspect` 改成 `aspect*shrink`。
+    但它在 extend=='neither' 时**提前 return**，那个 box_aspect 再也收不回去
+    ——于是「开了 extend 又关掉」的色条比从没开过的宽 10%。这里记下基线，
+    每次改 extend 前先放回去，让 locator 每次都从同一个起点算。
+    """
+    if not hasattr(cb, "_mm_box_aspect0"):
+        cb._mm_box_aspect0 = cb.ax.get_box_aspect()  # noqa: SLF001
+    return cb._mm_box_aspect0  # noqa: SLF001
+
+
+def _set_cb_extend(p: "ColorbarProxy", v) -> None:
+    """开/关色条两端的延伸三角（neither / both / min / max）。
+
+    与方向一样是结构改造：`extend` 决定 boundaries 的切法、outline 的形状、
+    以及给三角让出来的地方。做完之后落位与原生
+    `fig.colorbar(..., extend=…)` **逐位相同**（用例断言）。
+    """
+    cb = p.cb
+    to = str(v) if str(v) in _CB_INSIDE else "neither"
+    cb.ax.set_box_aspect(_cb_box_aspect0(cb))
+    cb.extend = to
+    cb._inside = _CB_INSIDE[to]  # noqa: SLF001 — 见 _CB_INSIDE 的注释
+    cb._draw_all()               # noqa: SLF001
+
+
+def _restore_cb_extend(p: "ColorbarProxy", orig) -> None:
+    _set_cb_extend(p, orig)
+
+
+def _cb_label_text(cb) -> str:
+    return (cb.ax.get_ylabel() if getattr(cb, "orientation", "vertical") == "vertical"
+            else cb.ax.get_xlabel())
+
+
+def _cb_place(host_rect, cur_rect, to: str) -> list[float]:
+    """翻转后色条轴该落在哪儿（figure 分数，matplotlib 的 bottom-origin）。
+
+    规则：厚度取色条自己的短边、间距沿用它与宿主之间原本那道缝，长边跟宿主
+    对齐——竖条在右侧，横条就到下方，长度铺满宿主。竖↔横来回翻**逐位可逆**
+    （thick 与 pad 都能从对侧原样反解出来），所以撤销回来的图与没改过的
+    完全一样。
+    """
+    hx, hy, hw, hh = (float(v) for v in host_rect)
+    cx, cy, cw, ch = (float(v) for v in cur_rect)
+    thick = min(cw, ch)
+    if to == "horizontal":
+        pad = cx - (hx + hw)
+        if not 0.0 <= pad <= 0.4:
+            pad = 0.04
+        return [hx, hy - pad - thick, hw, thick]
+    pad = hy - (cy + ch)
+    if not 0.0 <= pad <= 0.4:
+        pad = 0.04
+    return [hx + hw + pad, hy, thick, hh]
+
+
+def _cb_target_rect(p: "ColorbarProxy", to: str, state: "FigState"):
+    """翻转后的落位；用户自己摆过色条轴时返回 None（位置归 position override）。
+
+    宿主的落位取**这一次 apply 之后**的值（pending 里点名了就用点名的），
+    不是此刻的实况：热会话里 position 可能已经先改过，全量重放里它还没轮到，
+    只看实况两条路会算出不同的位置——「所见 == 重放」当场就断了。
+    """
+    pending = state.pending or {}
+    if (p.cbax_gid, "position") in pending:
+        return None
+    host_rect = pending.get((p.host_gid, "position"))
+    if not (isinstance(host_rect, (list, tuple)) and len(host_rect) == 4):
+        if p.host is None:
+            return None
+        host_rect = p.host.get_position().bounds
+    # 这里要的是**画出来**的那个矩形（厚度、与宿主之间的缝），不是分配到的整格
+    # ——`original` 还没经过 box_aspect 收缩，拿它反解厚度会粗好几倍。
+    # extend 的收缩只发生在长轴上，而 `_cb_place` 读的恰好是短边与短轴方向的
+    # 间距，两者不打架。
+    return _cb_place(host_rect, p.cb.ax.get_position().bounds, to)
+
+
+def _cb_reorient(p: "ColorbarProxy", to: str, state: "FigState") -> None:
+    cb = p.cb
+    label = _cb_label_text(cb)
+    rect = _cb_target_rect(p, to, state)
+    cb.orientation = to
+    cb.ticklocation = _CB_TICKLOC[to]
+    # 两条轴的标签都先清掉：旧长轴那份不清就会变成「横过来了但左边还挂着
+    # 一行竖排文字」
+    cb.ax.set_xlabel("")
+    cb.ax.set_ylabel("")
+    # make_axes_gridspec 给竖色条按了 box_aspect=20（强制细高）；不解开的话
+    # set_position 会被它按回去
+    cb.ax.set_box_aspect(None)
+    cb.ax.set_aspect("auto")
+    if rect is not None:
+        cb.ax.set_position(rect)
+    # 落位从此归我们（`_cb_place`）。`_ColorbarAxesLocator` 在 extend≠neither 时
+    # 会按 `_colorbar_info['aspect']` 反推厚度，两套规则一起上只会打架——关掉
+    # 它的 aspect 那一支，位置收缩（给延伸三角让地方）照旧由它做。
+    info = getattr(cb.ax, "_colorbar_info", None)
+    if isinstance(info, dict):
+        info["aspect"] = False
+    cb._mm_box_aspect0 = None            # noqa: SLF001 — 新的 box_aspect 基线
+    cb._reset_locator_formatter_scale()  # noqa: SLF001 — 官方也是这么重建的
+    cb._draw_all()                       # noqa: SLF001
+    if label:
+        cb.set_label(label)
+    # locator/formatter 被上面整套换掉了：刻度模型的「脚本原样」必须重采
+    for which in ("x", "y"):
+        invalidate_tick_cfg(cb.ax, which)
+    _refresh_axes_follow(state)
+
+
+def _cb_orientation_snapshot(p: "ColorbarProxy") -> dict:
+    """撤销用的原始快照：方向 + 刻度侧 + 完整落位 + 长轴标签。"""
+    ax = p.cb.ax
+    info = getattr(ax, "_colorbar_info", None)
+    return {"orientation": str(getattr(p.cb, "orientation", "vertical")),
+            "ticklocation": str(getattr(p.cb, "ticklocation", "right")),
+            # 落位记 original：locator 每帧从它推出 extend 收缩后的实际位置，
+            # 记实际位置的话还原一次就再收缩一次
+            "position": list(ax.get_position(original=True).bounds),
+            # box_aspect 记**基线**而不是此刻观察到的值：extend 开着时
+            # locator 已经把它改成了 aspect*shrink，那是中间态不是原样
+            "box_aspect0": _cb_box_aspect0(p.cb),
+            "info_aspect": info.get("aspect") if isinstance(info, dict) else None,
+            "aspect": ax.get_aspect(),
+            "anchor": ax.get_anchor(),
+            "label": _cb_label_text(p.cb)}
+
+
+def _set_cb_orientation(p: "ColorbarProxy", v, state: "FigState") -> None:
+    to = "horizontal" if str(v) == "horizontal" else "vertical"
+    _cb_reorient(p, to, state)
+
+
+_set_cb_orientation._needs_state = True  # noqa: SLF001
+
+
+def _restore_cb_orientation(p: "ColorbarProxy", orig, state: "FigState") -> None:
+    """按快照原样放回（落位/长宽比/锚点一并还原），再让 matplotlib 重画。"""
+    if not isinstance(orig, dict):
+        return
+    cb = p.cb
+    ax = cb.ax
+    cb.orientation = orig["orientation"]
+    cb.ticklocation = orig["ticklocation"]
+    ax.set_xlabel("")
+    ax.set_ylabel("")
+    ax.set_box_aspect(orig["box_aspect0"])
+    ax.set_aspect(orig["aspect"])
+    ax.set_anchor(orig["anchor"])
+    ax.set_position(orig["position"])
+    cb._mm_box_aspect0 = orig["box_aspect0"]  # noqa: SLF001
+    info = getattr(ax, "_colorbar_info", None)
+    if isinstance(info, dict) and orig.get("info_aspect") is not None:
+        info["aspect"] = orig["info_aspect"]
+    cb._reset_locator_formatter_scale()  # noqa: SLF001
+    cb._draw_all()                       # noqa: SLF001
+    if orig["label"]:
+        cb.set_label(orig["label"])
+    for which in ("x", "y"):
+        invalidate_tick_cfg(ax, which)
+    _refresh_axes_follow(state)
+
+
+_restore_cb_orientation._needs_state = True  # noqa: SLF001
+
+
+# ---------------------------------------------------------------------------
+# 色条反查与「拖它时谁跟着走」（manifest.instrument 与色条方向事务共用）
+# ---------------------------------------------------------------------------
+def colorbar_maps(fig) -> tuple[dict, dict]:
+    """(色条轴 → Colorbar, 色条轴 → 宿主 axes)。反查经 mappable.colorbar。"""
+    cbar_of_ax: dict = {}
+    host_of_cbax: dict = {}
+    for ax in fig.axes:
+        for sm in [*ax.images, *ax.collections]:
+            cb = getattr(sm, "colorbar", None)
+            if cb is not None and cb.ax is not ax:
+                cbar_of_ax[cb.ax] = cb
+                host_of_cbax[cb.ax] = ax
+    return cbar_of_ax, host_of_cbax
+
+
+def follow_map(fig, cbar_of_ax: dict, host_of_cbax: dict) -> dict[str, list[str]]:
+    """宿主 axes gid → 拖动它时该一起走的其他 axes gid。
+
+    子图自己的标题 / 轴标签 / 刻度是 Axes 的孩子，set_position 一挪它们天然
+    跟着走（被用户 override 过位置的那些例外，见前端 axesCompanions）。这里
+    收的是**另外的 axes**——它们和宿主在视觉上是一体，在 artist 树上却是平级：
+
+      * 色条轴：`fig.colorbar` 造出来的独立 axes，宿主挪走它自己留在原地；
+      * 孪生轴：`twinx()` / `twiny()` 叠在同一块地方的第二套刻度。
+
+    共享 ≠ 孪生。`subplots(sharex=True)` 同样共享 x 轴，但那是并排的另一个
+    子图——只看共享关系会把整行子图一起拖走，所以判据必须再加「position
+    基本重合」。判据用公开的 get_shared_[xy]_axes()，不碰 `_twinned_axes`。
+    """
+    gid_of_ax = {ax: f"axes_{i}" for i, ax in enumerate(fig.axes)}
+    follow: dict[str, list[str]] = {}
+
+    def link(host, other) -> None:
+        h, o = gid_of_ax.get(host), gid_of_ax.get(other)
+        if h is None or o is None or h == o:
+            return
+        bucket = follow.setdefault(h, [])
+        if o not in bucket:
+            bucket.append(o)
+
+    for cbax, host in host_of_cbax.items():
+        link(host, cbax)
+
+    for ax in fig.axes:
+        if ax in cbar_of_ax:
+            continue
+        try:
+            pos = ax.get_position().bounds
+            siblings = set()
+            for grouper in (ax.get_shared_x_axes(), ax.get_shared_y_axes()):
+                siblings.update(grouper.get_siblings(ax))
+        except Exception:  # noqa: BLE001 — 关联判定失败只是少一条联动，不拦渲染
+            continue
+        # 按 fig.axes 顺序遍历而不是遍历 siblings 集合：集合序不稳定，
+        # manifest 要逐字节可复现（写回校验拿它比对）
+        for other in fig.axes:
+            if other is ax or other in cbar_of_ax or other not in siblings:
+                continue
+            if all(abs(a - b) < 1e-6
+                   for a, b in zip(pos, other.get_position().bounds)):
+                link(ax, other)
+
+    return follow
+
+
+def _refresh_axes_follow(state: "FigState") -> None:
+    """结构改造之后重算随行关系（色条方向翻转会改变谁和谁挨着）。"""
+    try:
+        cbar_of_ax, host_of_cbax = colorbar_maps(state.fig)
+        state.colorbar_axes = set(cbar_of_ax)
+        state.axes_follow = follow_map(state.fig, cbar_of_ax, host_of_cbax)
+    except Exception:  # noqa: BLE001 — 少一条联动不该拦渲染
+        pass
+
+
+# ---------------------------------------------------------------------------
+# 坐标轴 scale：选项必须与真实 handler 完全一致
+# ---------------------------------------------------------------------------
+#: 我们支持的刻度类型（按界面里的排列顺序）。真正出不出某一项，看当前
+#: matplotlib 有没有注册它——列一个 `set_[xy]scale` 吃不下的假选项，
+#: 用户点了只会得到一次渲染失败。
+_SCALE_CHOICES = ("linear", "log", "symlog", "logit")
+
+
+def scale_options(current: str) -> list[str]:
+    import matplotlib.scale as mscale  # noqa: PLC0415 — worker 侧才有科学栈
+    have = set(mscale.get_scale_names())
+    opts = [s for s in _SCALE_CHOICES if s in have]
+    return ([str(current)] if str(current) not in opts else []) + opts
+
+
+def _mk_set_scale(which: str):
+    """换 scale。matplotlib 会把该轴的 locator/formatter 整套换成新 scale 的
+    默认值，所以刻度模型的「脚本原样」必须当场重采——不重采的话「自动刻度」
+    会把线性轴的 AutoLocator 按到对数轴上（一个刻度都出不来）。"""
+    def s(a: Axes, v) -> None:
+        getattr(a, f"set_{which}scale")(str(v))
+        invalidate_tick_cfg(a, which)
+    return s
+
+
+# ---------------------------------------------------------------------------
 # 图例：loc 预设与「重建型」布局属性（ncol/labelspacing/…）
 # ---------------------------------------------------------------------------
 _LEGEND_LOCS = ["best", "upper right", "upper left", "lower left", "lower right",
@@ -813,6 +1573,10 @@ def _cls_key(artist) -> str | None:
         return "image"
     if isinstance(artist, Rectangle) and getattr(artist, "_mm_bar", False):
         return "bar"
+    # 脚本 add_patch 的独立形状（`ax.fill()` 出的 Polygon、手搓的 PathPatch）。
+    # 必须排在 FancyArrowPatch / bar 之后：它们也是 Patch，各有各的契约
+    if isinstance(artist, (Polygon, PathPatch)):
+        return "patch"
     if isinstance(artist, PathCollection):
         return "scatter"
     if isinstance(artist, PolyCollection):
@@ -998,9 +1762,11 @@ HANDLERS: dict[tuple[str, str], tuple] = {
     ("image", "gradient_color"): (lambda a: np.array(a.get_array(), copy=True),
                                   _set_image_gradient),
 
+    # 单条刻度文字：冻结整条轴（FixedLocator + FixedFormatter）才留得住，
+    # 生命周期与索引身份见 TickLabel 的类注释
     ("ticklabel", "text"): (
         lambda a: a.get_text(),
-        lambda a, v: a.set_text(v),
+        _set_ticklabel_text,
     ),
 
     ("ticks", "fontsize"): (
@@ -1031,11 +1797,27 @@ HANDLERS: dict[tuple[str, str], tuple] = {
                                 lambda f, v: f.patch.set_visible(not bool(v))),
 
     # ---- axes: 比例 / 反转 / 缩放 / 网格 / spine / 底色 ----
-    ("axes", "xscale"): (lambda a: a.get_xscale(), lambda a, v: a.set_xscale(str(v))),
-    ("axes", "yscale"): (lambda a: a.get_yscale(), lambda a, v: a.set_yscale(str(v))),
+    ("axes", "xscale"): (lambda a: a.get_xscale(), _mk_set_scale("x")),
+    ("axes", "yscale"): (lambda a: a.get_yscale(), _mk_set_scale("y")),
     ("axes", "invert_x"): (lambda a: bool(a.xaxis_inverted()), _mk_set_invert("x")),
     ("axes", "invert_y"): (lambda a: bool(a.yaxis_inverted()), _mk_set_invert("y")),
     ("axes", "aspect"): (lambda a: a.get_aspect(), _set_aspect),
+    ("axes", "spine_top_color"): _mk_spine_handler(
+        "top_color", lambda a, _s="top": spine_side_color(a, _s)),
+    ("axes", "spine_top_linewidth"): _mk_spine_handler(
+        "top_width", lambda a, _s="top": spine_side_width(a, _s)),
+    ("axes", "spine_right_color"): _mk_spine_handler(
+        "right_color", lambda a, _s="right": spine_side_color(a, _s)),
+    ("axes", "spine_right_linewidth"): _mk_spine_handler(
+        "right_width", lambda a, _s="right": spine_side_width(a, _s)),
+    ("axes", "spine_bottom_color"): _mk_spine_handler(
+        "bottom_color", lambda a, _s="bottom": spine_side_color(a, _s)),
+    ("axes", "spine_bottom_linewidth"): _mk_spine_handler(
+        "bottom_width", lambda a, _s="bottom": spine_side_width(a, _s)),
+    ("axes", "spine_left_color"): _mk_spine_handler(
+        "left_color", lambda a, _s="left": spine_side_color(a, _s)),
+    ("axes", "spine_left_linewidth"): _mk_spine_handler(
+        "left_width", lambda a, _s="left": spine_side_width(a, _s)),
     ("axes", "facecolor"): (lambda a: a.get_facecolor(), lambda a, v: a.set_facecolor(v)),
     ("axes", "grid_x"): (lambda a: _grid_visible(a, "x"),
                          lambda a, v: a.grid(visible=bool(v), axis="x")),
@@ -1058,12 +1840,10 @@ HANDLERS: dict[tuple[str, str], tuple] = {
     ("axes", "spine_right"): (_mk_spine_get("right"), _mk_spine_set("right")),
     ("axes", "spine_bottom"): (_mk_spine_get("bottom"), _mk_spine_set("bottom")),
     ("axes", "spine_left"): (_mk_spine_get("left"), _mk_spine_set("left")),
-    ("axes", "spine_color"): (
-        lambda a: _spines_get(a, lambda s: s.get_edgecolor(), (0, 0, 0, 1)),
-        lambda a, v: _spines_set(a, lambda s: s.set_edgecolor(v))),
-    ("axes", "spine_linewidth"): (
-        lambda a: _spines_get(a, lambda s: float(s.get_linewidth()), 0.8),
-        lambda a, v: _spines_set(a, lambda s: s.set_linewidth(float(v)))),
+    # 边框颜色 / 线宽走「模型」：一档「全部」+ 四条各自可覆盖，
+    # 应用顺序不影响结果（见上方 apply_spine_model 的注释）
+    ("axes", "spine_color"): _mk_spine_handler("all_color", spine_all_color),
+    ("axes", "spine_linewidth"): _mk_spine_handler("all_width", spine_all_width),
 
     # ---- axes3d: 视角 / 网格（manifest 只对 3D 轴放出这些字段）----
     ("axes", "elev"): (_view3d_get("elev"), _view3d_set("elev")),
@@ -1127,6 +1907,19 @@ HANDLERS: dict[tuple[str, str], tuple] = {
     ("fill", "zorder"): (lambda a: float(a.get_zorder()), lambda a, v: a.set_zorder(float(v))),
     ("fill", "visible"): (lambda a: a.get_visible(), lambda a, v: a.set_visible(bool(v))),
 
+    # ---- 独立形状 patch（ax.fill() 的 Polygon / 手搓的 PathPatch）----
+    ("patch", "facecolor"): (lambda a: a.get_facecolor(), lambda a, v: a.set_facecolor(v)),
+    ("patch", "edgecolor"): (lambda a: a.get_edgecolor(), lambda a, v: a.set_edgecolor(v)),
+    ("patch", "linewidth"): (lambda a: float(a.get_linewidth()),
+                             lambda a, v: a.set_linewidth(float(v))),
+    ("patch", "linestyle"): (lambda a: a.get_linestyle(),
+                             lambda a, v: a.set_linestyle(str(v))),
+    ("patch", "fill"): (lambda a: bool(a.get_fill()), lambda a, v: a.set_fill(bool(v))),
+    ("patch", "alpha"): (lambda a: a.get_alpha(),
+                         lambda a, v: a.set_alpha(None if v is None else float(v))),
+    ("patch", "zorder"): (lambda a: float(a.get_zorder()), lambda a, v: a.set_zorder(float(v))),
+    ("patch", "visible"): (lambda a: a.get_visible(), lambda a, v: a.set_visible(bool(v))),
+
     # ---- 单根柱（BarContainer 成员，_mm_bar 标记）----
     ("bar", "facecolor"): (lambda a: a.get_facecolor(), lambda a, v: a.set_facecolor(v)),
     ("bar", "edgecolor"): (lambda a: a.get_edgecolor(), lambda a, v: a.set_edgecolor(v)),
@@ -1168,7 +1961,16 @@ HANDLERS: dict[tuple[str, str], tuple] = {
     ("ticks", "width"): (
         lambda a: float(_tick0(a).tick1line.get_markeredgewidth()) if _tick0(a) else 0.8,
         _set_tick_width),
-    ("ticks", "format"): (_get_tick_formatter, _set_tick_format),
+
+    # ---- ticks: 刻度定位模型（Locator / Formatter）----
+    ("ticks", "major_mode"): _mk_tick_model_handler("major_mode", str),
+    ("ticks", "major_step"): _mk_tick_model_handler("major_step", float),
+    ("ticks", "major_values"): _mk_tick_model_handler("major_values", _num_list),
+    ("ticks", "minor_visible"): _mk_tick_model_handler("minor_visible", bool),
+    ("ticks", "minor_mode"): _mk_tick_model_handler("minor_mode", str),
+    ("ticks", "minor_step"): _mk_tick_model_handler("minor_step", float),
+    ("ticks", "format"): _mk_tick_model_handler("format", str),
+    ("ticks", "minor_format"): _mk_tick_model_handler("minor_format", str),
 
     # ---- colorbar（ColorbarProxy 伪元素）----
     ("colorbar", "label"): (lambda p: _cb_axis(p).label.get_text(),
@@ -1191,6 +1993,13 @@ HANDLERS: dict[tuple[str, str], tuple] = {
                                     lambda p, v: p.cb.outline.set_linewidth(float(v))),
     ("colorbar", "visible"): (lambda p: p.cb.ax.get_visible(),
                               lambda p, v: p.cb.ax.set_visible(bool(v))),
+    # 方向：就地结构改造（见上方 `_cb_reorient`），不是普通 setter。
+    # 原生值是一整份快照，撤销走 _RESTORE 里的专用函数
+    ("colorbar", "orientation"): (_cb_orientation_snapshot, _set_cb_orientation),
+    # 两端的延伸三角。同样是结构改造：改 extend 必须连 `_inside` 一起改，
+    # 否则 `_draw_all()` 会拿错长度的边界去配颜色（见 _CB_INSIDE）
+    ("colorbar", "extend"): (lambda p: str(getattr(p.cb, "extend", "neither")),
+                             _set_cb_extend),
 }
 
 # 系列伪元素：统一应用、按成员还原（restore 函数暂存，随后并入 _RESTORE）
@@ -1241,7 +2050,8 @@ for _prop, _g3, _s3 in [
     HANDLERS[("axes", _prop)] = _h3
     _PENDING_RESTORES[("axes", _prop)] = _r3
 
-# 恢复原值时 pos_frac / loc_frac 的原生值需要走原生 setter
+# 恢复原值时 pos_frac / loc_frac 的原生值需要走原生 setter。
+# 标了 `_needs_state` 的 restore 函数额外收一个 state（与 setter 同一约定）。
 _RESTORE: dict[tuple[str, str], object] = {
     ("scatter", "marker"):  _restore_scatter_marker,
     ("arrowpatch", "endpoints_frac"): _restore_arrow_endpoints,
@@ -1252,9 +2062,18 @@ _RESTORE: dict[tuple[str, str], object] = {
     ("image", "gradient_color"): _restore_image_gradient,
     ("legend", "loc_frac"): _restore_legend_loc,
     ("legend", "loc"):      _restore_legend_loc,  # loc 预设的原生值同为 (loc, 锚框)
-    ("ticks", "format"):    _restore_tick_format,
+    ("ticklabel", "text"):  _restore_ticklabel_text,
+    ("colorbar", "orientation"): _restore_cb_orientation,
+    ("colorbar", "extend"): _restore_cb_extend,
     ("figure", "size_mm"):  lambda f, v: f.set_size_inches(v[0] / 25.4, v[1] / 25.4, forward=False),
 }
+for _p in _TICK_MODEL_PROPS:
+    _RESTORE[("ticks", _p)] = _mk_tick_model_restore(_p)
+for _prop, _key in [("spine_color", "all_color"), ("spine_linewidth", "all_width"),
+                    *[(f"spine_{_s}_{_n}", f"{_s}_{_k}")
+                      for _s in _SPINE_SIDES
+                      for _n, _k in (("color", "color"), ("linewidth", "width"))]]:
+    _RESTORE[("axes", _prop)] = _mk_spine_restore(_key)
 _RESTORE.update(_PENDING_RESTORES)
 
 
@@ -1277,16 +2096,74 @@ def _is_geometry_key(prop: str, artist) -> bool:
     """会改变 figure 分数 ↔ 本地坐标换算关系的 prop。"""
     if prop == "size_mm":
         return isinstance(artist, Figure)
+    if isinstance(artist, ColorbarProxy) and prop in ("orientation", "extend"):
+        # 长短边互换 / 给延伸三角让地方，两者都让色条轴换了一块地方
+        return True
     return prop == "position" and isinstance(artist, Axes)
+
+
+def _must_replay(prop: str, artist) -> bool:
+    """每次 apply 都必须重放的 prop（「值没变就跳过」那条捷径对它们是错的）。
+
+    刻度定位与单条刻度文字都是「按当前状态重算」的：改 xlim、换 scale、
+    翻转色条方向都会让 matplotlib 把 locator/formatter 或整组刻度换掉，而
+    `applied` 表里的值一个字节没变。跳过它们，热会话就停在旧刻度上，与
+    全量重放当场分岔（分岔的表现是写回自检 409，或者更糟——没被发现）。
+    重放的代价是每次渲染多几次 locator 赋值，与 draw 相比可以忽略。
+    """
+    if isinstance(artist, TickSet):
+        return prop in _TICK_MODEL_PROPS
+    return isinstance(artist, TickLabel) and prop == "text"
+
+
+#: 应用顺序的**规范档位**。同档内保持列表序（sorted 稳定），跨档必须按这里
+#: 的先后，否则同一组 patch 在热会话与全量重放里会落成两张不同的图。
+#:
+#:   0 图幅       size_mm 一变，所有分数坐标的物理落点全变
+#:   1 色条方向   长短轴互换、整块地方换位置，还要重设 box_aspect 基线
+#:   2 色条 extend 延伸三角要占地方；必须**在方向之后**，因为方向要拿色条
+#:                当前的矩形反解厚度与间距
+#:   3 子图落位   axes position
+#:   4 刻度类型   set_[xy]scale 会把 locator/formatter 整套换掉，必须先于 6
+#:   5 其余       列表序
+#:   6 刻度定位   locator / formatter 模型（依赖 4 与 5 的 xlim）
+#:   7 刻度文字   冻结整条轴，必须最后（先冻的会被后来的 locator 换掉）
+_RANK_FIGURE_SIZE, _RANK_CB_ORIENT, _RANK_CB_EXTEND = 0, 1, 2
+_RANK_POSITION, _RANK_SCALE = 3, 4
+_RANK_REST, _RANK_TICK_MODEL, _RANK_TICK_TEXT = 5, 6, 7
+
+
+def _apply_rank(prop: str, artist, gid: str = "") -> int:
+    # 刻度文字按 **gid 形状** 归档，不按解出来的对象：排序发生在整轮 apply
+    # 之前，而「先改刻度定位、再改新出现的那条刻度」里那条刻度**此刻还不存在**
+    # ——按对象归档会把它错排到刻度定位前面，于是永远解不出来
+    if prop == "text" and _TICKLABEL_GID.match(gid or ""):
+        return _RANK_TICK_TEXT
+    if prop == "size_mm" and isinstance(artist, Figure):
+        return _RANK_FIGURE_SIZE
+    if prop == "orientation" and isinstance(artist, ColorbarProxy):
+        return _RANK_CB_ORIENT
+    if prop == "extend" and isinstance(artist, ColorbarProxy):
+        return _RANK_CB_EXTEND
+    if prop == "position" and isinstance(artist, Axes):
+        return _RANK_POSITION
+    if prop in ("xscale", "yscale") and isinstance(artist, Axes):
+        return _RANK_SCALE
+    if isinstance(artist, TickSet) and prop in _TICK_MODEL_PROPS:
+        return _RANK_TICK_MODEL
+    if isinstance(artist, TickLabel) and prop == "text":
+        return _RANK_TICK_TEXT
+    return _RANK_REST
 
 
 def apply(state: FigState, patches: list[dict]) -> list[str]:
     """把全量 patch 列表同步到 Figure。返回 warning 列表（孤儿 gid 等）。
 
-    应用顺序是**规范化**的：图幅（size_mm）→ 子图 position → 其余按列表序。
-    figure 锚定的 prop 依赖应用那一刻的几何，只有先把几何放到位、且几何
-    变过就重放它们，热会话的增量应用才与冷启动的全量重放收敛到同一状态
-    ——「所见 == 文档重放 == 写回 == 重开」这条链靠它成立。"""
+    应用顺序是**规范化**的，七个档位见 `_apply_rank` 的表：图幅 → 结构改造
+    （色条方向）→ 子图 position → 刻度类型 → 其余（列表序）→ 刻度定位 →
+    刻度文字。figure 锚定的 prop 依赖应用那一刻的几何，只有先把几何放到位、
+    且几何变过就重放它们，热会话的增量应用才与冷启动的全量重放收敛到同一
+    状态——「所见 == 文档重放 == 写回 == 重开」这条链靠它成立。"""
     warnings: list[str] = []
     new: dict[tuple, object] = {}
     for p in patches:
@@ -1294,19 +2171,26 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
         new[key] = p["value"]
 
     geometry_moved = False
+    # 结构性 setter 要按「这一次改完之后」的落位算几何，见 FigState.pending。
+    # 出口处一定要清掉（下面 try/finally），不然下一次 apply 会拿着上一批的
+    # patch 表去算落位
+    state.pending = new
 
     # 上次应用、这次不在 → 恢复原值（originals 存的是本地坐标，与几何无关）
     for key in list(state.applied):
         if key in new:
             continue
-        artist = state.index.get(key[0])
+        artist = state.resolve(key[0])
         orig = state.originals.get(key)
         if artist is not None and key in state.originals:
             ck = _cls_key(artist)
             try:
                 restore = _RESTORE.get((ck, key[1]))
                 if restore is not None:
-                    restore(artist, orig)
+                    if getattr(restore, "_needs_state", False):
+                        restore(artist, orig, state)
+                    else:
+                        restore(artist, orig)
                 else:
                     setter = HANDLERS[(ck, key[1])][1]
                     if getattr(setter, "_needs_state", False):
@@ -1320,53 +2204,54 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
         state.applied.pop(key)
         state.originals.pop(key, None)
 
-    # 应用新值：size_mm → axes position → 其余（组内保持列表序，sorted 稳定）
+    # 应用新值：七档规范顺序（组内保持列表序，sorted 稳定）
     def _rank(item):
         (gid, prop), _value = item
-        artist = state.index.get(gid)
-        if prop == "size_mm" and isinstance(artist, Figure):
-            return 0
-        if prop == "position" and isinstance(artist, Axes):
-            return 1
-        return 2
+        return _apply_rank(prop, state.resolve(gid), gid)
 
     drawn_after_geometry = False
-    for key, value in sorted(new.items(), key=_rank):
-        gid, prop = key
-        artist = state.index.get(gid)
-        if artist is None:
-            warnings.append(f"元素不存在（脚本可能已改动）: {gid}")
-            continue
-        handler = HANDLERS.get((_cls_key(artist), prop))
-        if handler is None:
-            warnings.append(f"属性不支持: {gid}.{prop}")
-            continue
-        # 几何组应用完、进入其余 prop 之前强制一次布局：aspect="equal" 的
-        # 子图只有 draw 才 apply_aspect，不刷新的话 figure 锚定的换算会拿着
-        # 旧 transform 落错位置（AFM 方图上尤其明显）
-        if (geometry_moved and not drawn_after_geometry
-                and not _is_geometry_key(prop, artist)):
-            drawn_after_geometry = True
-            try:
-                state.fig.draw_without_rendering()
-            except Exception:  # noqa: BLE001 — 布局刷新失败不拦渲染
-                pass
-        if state.applied.get(key) == value:
-            # 值没变也要重放 figure 锚定的位置：几何动过，它们的本地坐标已失效
-            if not (geometry_moved and prop in _FRAC_ANCHORED):
+    try:
+        for key, value in sorted(new.items(), key=_rank):
+            gid, prop = key
+            artist = state.resolve(gid)
+            if artist is None:
+                warnings.append(f"元素不存在（脚本可能已改动）: {gid}")
                 continue
-        elif _is_geometry_key(prop, artist):
-            geometry_moved = True
-        getter, setter = handler
-        try:
-            if key not in state.originals:
-                state.originals[key] = getter(artist)
-            if getattr(setter, "_needs_state", False):
-                setter(artist, value, state)
-            else:
-                setter(artist, value)
-            state.applied[key] = value
-        except Exception as exc:  # noqa: BLE001
-            warnings.append(f"应用失败 {gid}.{prop}: {exc}")
+            handler = HANDLERS.get((_cls_key(artist), prop))
+            if handler is None:
+                warnings.append(f"属性不支持: {gid}.{prop}")
+                continue
+            # 几何组应用完、进入其余 prop 之前强制一次布局：aspect="equal" 的
+            # 子图只有 draw 才 apply_aspect，不刷新的话 figure 锚定的换算会拿着
+            # 旧 transform 落错位置（AFM 方图上尤其明显）
+            if (geometry_moved and not drawn_after_geometry
+                    and not _is_geometry_key(prop, artist)):
+                drawn_after_geometry = True
+                try:
+                    state.fig.draw_without_rendering()
+                except Exception:  # noqa: BLE001 — 布局刷新失败不拦渲染
+                    pass
+            if state.applied.get(key) == value:
+                # 值没变也要重放：① figure 锚定的位置（几何动过，本地坐标已失效）；
+                # ② 刻度定位与刻度文字（它们按当前状态重算，见 `_must_replay`）
+                if not (geometry_moved and prop in _FRAC_ANCHORED) \
+                        and not _must_replay(prop, artist):
+                    continue
+            elif _is_geometry_key(prop, artist):
+                geometry_moved = True
+            getter, setter = handler
+            try:
+                if key not in state.originals:
+                    state.originals[key] = getter(artist)
+                if getattr(setter, "_needs_state", False):
+                    setter(artist, value, state)
+                else:
+                    setter(artist, value)
+                state.applied[key] = value
+            except Exception as exc:  # noqa: BLE001
+                warnings.append(f"应用失败 {gid}.{prop}: {exc}")
+    finally:
+        # 下一次 apply 绝不能拿着上一批的 patch 表去算落位
+        state.pending = {}
 
     return warnings

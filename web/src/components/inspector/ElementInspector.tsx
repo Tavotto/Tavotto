@@ -25,6 +25,7 @@ import { ENVIRONMENT_CODES } from '@/lib/api'
 import type { EditableField, Manifest, ManifestElement } from '@/lib/api'
 import { requestRender } from '@/hooks/useEngineSync'
 import { useQuickEdit } from '@/canvas/quickEditStore'
+import { formatNumberList, parseNumberList } from '@/lib/numberList'
 import { cn } from '@/lib/utils'
 import {
   centerInFigure,
@@ -80,7 +81,7 @@ import {
 } from './roles/registry'
 import { Button } from '../ui/Button'
 import { Grid2, Row, Section } from '../ui/Field'
-import { ColorField, NumberField, TextArea } from '../ui/Input'
+import { ColorField, NumberField, TextArea, TextInput } from '../ui/Input'
 import { Popover } from '../ui/Popover'
 import { Select } from '../ui/Select'
 import { Toggle } from '../ui/Toggle'
@@ -887,6 +888,47 @@ function FieldRow({
               </li>
             ))}
           </ul>
+        </Row>
+      )
+    }
+
+    case 'number_list': {
+      // 一串数（固定刻度位置）。用一个文本框而不是 N 个数字框：刻度个数本来
+      // 就是用户要改的东西，固定成 N 个格子等于不让他增删。分隔符逗号、空格、
+      // 中文逗号都收——用户多半是从别处粘一串数进来的。
+      const arr = Array.isArray(value) ? (value as number[]) : []
+      return (
+        <Row label={labelNode} labelWidth={LABEL_W}>
+          <div className="flex w-full min-w-0 flex-col gap-1">
+            <TextInput
+              defaultValue={formatNumberList(arr)}
+              // 受控会在每敲一个字符时把 "1, " 重写成 "1"，逗号根本打不出来。
+              // 因此按「失焦 / 回车提交」处理，key 跟着权威值走以便外部更新时重置
+              key={arr.join(',')}
+              placeholder={el('numberList.placeholder')}
+              aria-label={label}
+              onKeyDown={(e) => {
+                e.stopPropagation()
+                if (e.key === 'Enter') e.currentTarget.blur()
+                else if (e.key === 'Escape') {
+                  e.currentTarget.value = formatNumberList(arr)
+                  e.currentTarget.blur()
+                }
+              }}
+              onBlur={(e) => {
+                const next = parseNumberList(e.target.value)
+                if (next.length !== arr.length || next.some((v, i) => v !== arr[i])) {
+                  write(next, true)
+                  gesture.end()
+                }
+              }}
+            />
+            <span className="text-xs text-ink-3">
+              {arr.length
+                ? el('numberList.count', { count: arr.length })
+                : el('numberList.empty')}
+            </span>
+          </div>
         </Row>
       )
     }

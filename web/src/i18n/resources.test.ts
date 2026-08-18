@@ -204,3 +204,28 @@ describe('资源里没有把内容当 key 的写法', () => {
     expect(bad).toEqual([])
   })
 })
+
+describe('缺 key 时的回退', () => {
+  /**
+   * 这一层有一批**开放集合**：matplotlib 的属性名、色图名（viridis）、刻度
+   * 格式串（%.1f）、脚本自定义的枚举值——它们永远不会全都进翻译表，查不到
+   * 时必须原样显示。调用方为此传 `defaultValue`。
+   *
+   * `parseMissingKeyHandler` 会**盖掉** defaultValue（i18next 把它作为第二个
+   * 参数传进去，处理函数的返回值就是最终结果），写成 `(key) => key` 的话
+   * 用户在色图下拉里看到的是一串 `enum.cmap.viridis`：控件全在、功能全对、
+   * 只是没人看得懂，而且不报错——所以钉一条。
+   */
+  it('给了 defaultValue 就用它，没给才回退到 key 本身', () => {
+    expect(i18n.t('enum.cmap.viridis', { ns: 'inspector', defaultValue: 'viridis' })).toBe(
+      'viridis',
+    )
+    expect(i18n.t('enum.format.%.1f', { ns: 'inspector', defaultValue: '%.1f' })).toBe('%.1f')
+    // 空串同样是「调用方说了算」：propLabel 靠 `t(...) || 兜底` 判断有没有译文
+    expect(i18n.t('prop.zzz_not_a_real_prop', { ns: 'inspector', defaultValue: '' })).toBe('')
+    // 没给 defaultValue：漏翻至少看得见是哪一条
+    expect(i18n.t('prop.zzz_not_a_real_prop', { ns: 'inspector' })).toBe(
+      'prop.zzz_not_a_real_prop',
+    )
+  })
+})

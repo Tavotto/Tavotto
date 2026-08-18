@@ -347,7 +347,14 @@ Python，首次渲染也不联网：
   死循环脚本持着 `w.lock` 把整个会话占死，连 shutdown 都抢不到锁
   （test_request_timeout_kills_and_rebuilds_worker 看护）。
 - **应用顺序规范化 + figure 锚定 prop 的重放（2026-08-17，数据损坏级）**：
-  `overrides.apply` 按 size_mm → 子图 position → 其余（列表序）应用；
+  `overrides.apply` 按**七档规范顺序**应用（`_apply_rank` 是唯一出处）：
+  图幅 size_mm → 色条方向 → 色条 extend → 子图 position → 刻度类型
+  （set_[xy]scale 会把 locator/formatter 整套换掉）→ 其余（列表序）→
+  刻度定位模型 → 单条刻度文字（冻结整条轴，必须最后）。色条方向必须先于
+  extend：方向要拿色条**当前**的矩形反解厚度与间距。跨档的先后不是
+  口味问题：顺序一乱，同一组 patch 在热会话与全量重放里会落成两张图。
+  刻度类的 prop 还必须**每次都重放**（`_must_replay`）——它们按当前状态重算，
+  而 applied 表里的值一个字节没变，走「值没变就跳过」的捷径就会停在旧刻度上；
   pos_frac / loc_frac / endpoints_frac 的 setter 在应用那一刻把 figure 分数换算进
   artist 本地坐标，**几何一变（含还原）必须重放它们**，否则热会话状态 ≠ 全量
   重放——用户「写回时的样子」重开后全体文字错位（FigS3 事故，
@@ -387,7 +394,77 @@ Python，首次渲染也不联网：
   `_legend_box.set_offset(leg._findoffset)` 重挂定位回调**，否则导出时图例整块
   消失（ncol 等旧重建路径同修）。散点/扁平线的 bbox 走 `_padded_bbox`
   （PathCollection 用 datalim 换算，零厚度边垫 4px，否则进不了 manifest）。
-- 色条方向仍明确不支持：翻转需销毁重建色条轴，会打乱 axes gid 稳定编号。
+- **色条方向（2026-08-18）**：**就地**结构改造，不是普通 setter，也不是销毁
+  重建。`overrides._cb_reorient` 在同一个 Axes 对象上换 orientation/ticklocation
+  → 按 `_cb_place` 重算落位（竖↔横逐位可逆）→ `_reset_locator_formatter_scale()`
+  + `_draw_all()` 让 matplotlib 自己重建色带/outline/刻度/xlim,ylim → 把长轴标签
+  搬到新长轴（**旧轴那份要清掉**）。`fig.axes` 顺序一个字节不动 → gid 稳定 →
+  撤销 / 写回 / 重开全链路照旧。落位参照取 `state.pending` 里**这一次改完之后**
+  的宿主 position（只看实况的话，热会话与全量重放会算出两个位置）；用户自己
+  摆过色条轴时不动它的落位，交给 position override。翻完要 `invalidate_tick_cfg`
+  （locator 被整套换过）并重算 `axes_follow`。色条另有**稳定语义身份**
+  `cbar:<宿主 gid>:<序号>`（manifest 的 `colorbar_key`），与 `axes_i.colorbar`
+  一起登记在 index 里。
+  **两端延伸三角 `extend`**（neither/both/min/max）同样是就地结构改造，两个坑：
+  ① `cb._inside` 是按 extend 切出来的那段 boundaries，**只在 `__init__` 里设过
+  一次**——只改 `cb.extend` 就 `_draw_all()` 会拿 259 条边界配 256 块颜色，当场
+  TypeError，两者必须一起改；② 落位其实由 matplotlib 自己的
+  `_ColorbarAxesLocator` 每帧从 `get_position(original=True)` 重算，它顺手把
+  `box_aspect` 改成 `aspect*shrink`，却在 extend=='neither' 时**提前 return
+  不收回去**——不管这一点的话「开了又关」的色条比从没开过的宽 10%，而且回不去。
+  修法是每次改 extend 前把 box_aspect 放回基线（基线在 `ColorbarProxy.__init__`
+  即 instrument 时采，那一刻才是脚本原样），做完的落位与原生
+  `fig.colorbar(..., extend=…)` **逐位相同**（用例是这么断言的）。翻转之后
+  `_colorbar_info['aspect']=False`：落位归我们，locator 不能再按 aspect 反推厚度。
+  **色条轴上的 patch 一律不登记成可编辑形状**——延伸三角就是 PathPatch，而且每次
+  `_draw_all()` 都被删掉重建。看护 `tests/test_colorbar_orientation.py`。
+- **刻度定位走 Locator / Formatter，不是改已经生成出来的 Text**（2026-08-18）：
+  刻度标签每次 draw 由 locator 现算、Text 对象现建，改 Text 属性只能靠
+  tick_params 持久（字号/颜色/朝向那一档），而「几个刻度、落在哪、写成什么」
+  只有 locator 与 formatter 说了算。模型存在**轴对象**上
+  （`axis._mm_tick_cfg`，`tick_cfg` / `apply_tick_model` 是唯一出处）：
+  major_mode(auto|step|fixed) / major_step / major_values / minor_visible /
+  minor_mode / minor_step / format / minor_format。次刻度的格式多一档 "none"
+  （不标数字）——**那才是默认**；开了之后 `TickSet.labels` 把次刻度标签也算进
+  刻度组，否则那一排点不中、对齐也对不准。**没表态 = 用脚本原样**，不是我们另挑一个
+  AutoLocator（对数轴的 LogLocator 换成 AutoLocator 就是把用户的图改了）；
+  setter 一律写进 cfg 再**整体重建**，所以 prop 之间的应用顺序不影响结果；
+  `set_[xy]scale` 之后必须 `invalidate_tick_cfg` 重采「脚本原样」。
+  单条刻度文字（`ticklabel.text`）冻结整条轴（FixedLocator + FixedFormatter），
+  身份是**序号**：冻结前先回模型态、再把该轴上全部仍在生效的编辑一起盖上，
+  序号越界就**抛异常**（→ warning → 写回阻断），绝不静默返回。刻度伪元素
+  每次 `build_manifest` 按当前状态重登记（`manifest.sync_tick_elements`），
+  `FigState.resolve` 还能按 gid 形状**现解**尚未登记的那些——「先改刻度定位、
+  再改新出现的那条刻度」在全量重放里才不会报「元素不存在」。
+- **边框模型（2026-08-18）**：与刻度模型同一套路数（写进 cfg 再**整体重建**，
+  `spine_cfg` / `apply_spine_model` 是唯一出处）。一档「全部」（`spine_color` /
+  `spine_linewidth`，作用于 `ax.spines` 的**每一条**，含色条轴的 'outline'）+
+  四条各自可覆盖（`spine_<side>_color` / `spine_<side>_linewidth`）。优先级：
+  自己的设定 > 「全部」 > 脚本原样；撤销一条 = 退回未表态（落回上一档），
+  不是把当前推断出来的值钉死。**为什么要模型化**：「全部灰色」与「上边红色」
+  是两条会互相盖写的 setter，直接改的话谁先谁后就是两张图——而 patch 列表序
+  在热会话与全量重放之间并不保证同序。
+- **路径几何 `geometry`（2026-08-18）**：manifest 给曲线 / fill_between /
+  `ax.fill()` 的 Polygon / PathPatch 带上**真正画出来的那条路径**（figure 分数、
+  y 向下，与 bbox 同一套），前端据此沿路径描边与命中——bbox 里绝大部分是空白，
+  拿它画选择框会画出与图形对不上的矩形，拿它做命中会让用户在空白处误选。
+  唯一实现 `engine/pathgeom.py`：`Path.cleaned()` 一次拿 numpy 数组（逐段迭代
+  在两万点谱线上要 +550ms）、非仿射先 `transform_path_non_affine`、贝塞尔在
+  display 空间细分、NaN 拆子路径、超长路径先按段取极值再 RDP（见
+  docs/perf-baseline.md 的「路径几何」一节）。它是**渲染派生数据**：不进用户
+  文档、不是 override、不参与写回，几何一变下一版自然就是新的。
+  **散点与只有 marker 的曲线有意不给**（bbox 降级，记录在案）；
+  **箭头也不给**（它有 `arrow_endpoints` 那套契约，两套并存只会打架）。
+  `ax.fill()` 的 Polygon 与 PathPatch 现在登记成 `axes_i.patches_j`（role=patch）。
+  前端：命中 / 框选 / 描边全在 `web/src/lib/pathGeom.ts`（距离一律换到 mm 再比，
+  与图内箭头同一口径；填充按 even-odd 算内部，空心只在描边附近命中；框选是
+  「圈墨迹」不是「戳进去」）；`OverlaySvg` 画 `<path>` 并套上引擎给的 clip 框。
+  **文字 / 图例 / 子图 / 组选择继续用矩形**——它们本来就是矩形语义，别为了统一
+  硬转路径。画布**原生**形状同理：`lib/shapeGeometry.ts` 的 `shapeOutline` 是
+  ShapeView 显示、透明命中层、覆盖层选中描示**三处唯一的一份轮廓**
+  （椭圆/三角/菱形/多边形/大括号；矩形不在此列，直线走端点那套）。
+  看护 `tests/test_manifest_geometry.py` + `web` 的 `pathGeom.test.ts` /
+  `elementPathSelection.test.tsx` / `shapeOutline.test.tsx`。
 - 面板翻转（flip_h/flip_v，先翻转后旋转）：导出按 dpi 位图嵌入
   （show_pdf_page 无镜像；flipH = 行倒序 + 旋转 180°），与 opacity<1 同一取舍。
 - 安全：worker `cwd=沙盒`（挡相对路径写出/删除）+ `Path.unlink` 守卫
