@@ -129,6 +129,7 @@ class WorkerdClient:
         self._seq = 0
         self._restarts = 0
         self._started_at = 0.0
+        self._ready = False                  # hello/version 协商完成后才算可用
         self.disabled = False                  # 连续崩溃后本进程放弃 workerd
         self.hello: dict = {}
         self._log = None
@@ -148,24 +149,20 @@ class WorkerdClient:
         with self._start_lock:
             with self._lock:
                 proc = self._proc
-            if proc is not None and proc.poll() is None:
+                ready = self._ready
+            if proc is not None and proc.poll() is None and ready:
                 return
             if self.disabled:
                 raise WorkerdError("workerd 已在本次进程内禁用",
                                    code="workerd_unavailable")
             if proc is not None:
-                # 上一条已经死了：起得来但活不过 _MIN_UPTIME 就是「起来就崩」
-                if time.time() - self._started_at < _MIN_UPTIME:
-                    self._restarts += 1
-                else:
-                    self._restarts = 1
-                if self._restarts > _MAX_RESTARTS:
-                    self.disabled = True
-                    LOG.error("workerd 连续 %d 次起来就崩，本次进程改用 Python "
-                              "渲染池（日志见 %s）", self._restarts, self._log_path())
-                    raise WorkerdError("workerd 反复崩溃，已停用",
-                                       code="workerd_unavailable")
-                LOG.warning("workerd 已退出（第 %d 次），重启", self._restarts)
+                if proc.poll() is None:
+                    # 进程还在但 hello 没协商成功：按「起来就崩」处理并强制重启。
+                    try:
+                        proc.kill()
+                    except OSError:
+                        pass
+                self._mark_restart()
 
             try:
                 self._log = open(self._log_path(), "ab", buffering=0)
@@ -184,23 +181,58 @@ class WorkerdClient:
             self._started_at = time.time()
             with self._lock:
                 self._proc = proc
+                self._ready = False
             threading.Thread(target=self._read_loop, args=(proc,),
                              daemon=True, name="mm-workerd-read").start()
             LOG.info("workerd 启动: %s（pid=%s）", self.exe, proc.pid)
 
-            self.hello = self._call_on(
-                proc, "hello", None, None,
-                {"max_sessions": max_sessions, "max_queue": max_queue}, 15.0)
-            got = self.hello.get("supervisor_protocol_version")
-            if got != SUPERVISOR_PROTOCOL_VERSION:
-                raise WorkerdError(
-                    f"workerd 说的是 supervisor 协议 v{got}，本版 Magplot 说 "
-                    f"v{SUPERVISOR_PROTOCOL_VERSION}",
-                    code="protocol_mismatch")
+            try:
+                self.hello = self._call_on(
+                    proc, "hello", None, None,
+                    {"max_sessions": max_sessions, "max_queue": max_queue}, 15.0)
+                got = self.hello.get("supervisor_protocol_version")
+                if got != SUPERVISOR_PROTOCOL_VERSION:
+                    raise WorkerdError(
+                        f"workerd 说的是 supervisor 协议 v{got}，本版 Magplot 说 "
+                        f"v{SUPERVISOR_PROTOCOL_VERSION}",
+                        code="protocol_mismatch")
+            except Exception:
+                with self._lock:
+                    if self._proc is proc:
+                        self._proc = None
+                        self._ready = False
+                try:
+                    if proc.poll() is None:
+                        proc.kill()
+                except OSError:
+                    pass
+                try:
+                    self._mark_restart()
+                except WorkerdError as disable_exc:
+                    raise disable_exc
+                raise
+            with self._lock:
+                if self._proc is proc:
+                    self._ready = True
+
+    def _mark_restart(self) -> None:
+        """记录一次「起来就崩」并在超限时禁用 workerd。"""
+        if time.time() - self._started_at < _MIN_UPTIME:
+            self._restarts += 1
+        else:
+            self._restarts = 1
+        if self._restarts > _MAX_RESTARTS:
+            self.disabled = True
+            LOG.error("workerd 连续 %d 次起来就崩，本次进程改用 Python "
+                      "渲染池（日志见 %s）", self._restarts, self._log_path())
+            raise WorkerdError("workerd 反复崩溃，已停用",
+                               code="workerd_unavailable")
+        LOG.warning("workerd 已退出（第 %d 次），重启", self._restarts)
 
     def close(self) -> None:
         with self._lock:
             proc, self._proc = self._proc, None
+            self._ready = False
         if proc is None:
             return
         try:
@@ -252,6 +284,7 @@ class WorkerdClient:
         """workerd 没了：**所有等着的调用线程立刻失败**，一个都不许挂死。"""
         with self._lock:
             pending, self._pending = self._pending, {}
+            self._ready = False
         for slot in pending.values():
             slot["resp"] = {
                 "ok": False,

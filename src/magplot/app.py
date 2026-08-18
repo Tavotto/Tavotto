@@ -155,6 +155,19 @@ _SOURCE_SHA1_LOCK = threading.Lock()
 #: memo 条目上限（素材数量由用户的图库决定，不设上限就是慢性泄漏）。
 #: 满了整表清掉：LRU 只为省几次哈希，不值得多维护一个数据结构。
 _SOURCE_SHA1_MAX = 4096
+_RENDER_CACHE_LOCKS: dict[str, threading.Lock] = {}
+_RENDER_CACHE_LOCKS_GUARD = threading.Lock()
+
+
+def _cache_write_lock(path: Path) -> threading.Lock:
+    """按缓存键复用一把锁（同键并发只允许一个写者）。"""
+    key = str(path)
+    with _RENDER_CACHE_LOCKS_GUARD:
+        lock = _RENDER_CACHE_LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _RENDER_CACHE_LOCKS[key] = lock
+        return lock
 
 
 def source_sha1(path: Path) -> str:
@@ -544,11 +557,20 @@ def api_render():
     except OSError:
         usable = False
     if not usable:
-        # 零字节 = 上一次写到一半就断电/被杀（旧的直写路径留下的产物）。
-        # 把空文件当缓存交出去，用户看到的是一个永远画不出来的面板。
-        cached.unlink(missing_ok=True)
-        _write_render_cache(path, w, cached)
-        prune_render_cache()
+        # Windows 上 open 中的目标文件不能被 os.replace 覆盖；同键并发若让多个
+        # 线程同时写，后到者会在 replace 撞 WinError 5。按键串行写并在锁内复查，
+        # 让第一个写者之外的线程直接复用已写好的成品。
+        with _cache_write_lock(cached):
+            try:
+                usable = cached.stat().st_size > 0
+            except OSError:
+                usable = False
+            if not usable:
+                # 零字节 = 上一次写到一半就断电/被杀（旧的直写路径留下的产物）。
+                # 把空文件当缓存交出去，用户看到的是一个永远画不出来的面板。
+                cached.unlink(missing_ok=True)
+                _write_render_cache(path, w, cached)
+                prune_render_cache()
     # no-cache = 每次向服务器验证（304 极快）；内容一变（sha1 进 key）立即失效。
     # 不用长 max-age——「更新原图」后旧 URL 也不能再吃浏览器缓存。
     resp = send_file(cached, mimetype="image/png", conditional=True)
