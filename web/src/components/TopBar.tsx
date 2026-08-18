@@ -34,7 +34,7 @@ import { ProjectSwitcher } from './ProjectSwitcher'
 import { WriteBackTopBarButton } from './inspector/UpdateSourceButton'
 import { usePalette } from '@/components/CommandPalette'
 import { useDocumentStore } from '@/store/documentStore'
-import { useUiStore, type Tool } from '@/store/uiStore'
+import { useUiStore } from '@/store/uiStore'
 import { useUpdateStore } from '@/store/updateStore'
 import { useViewportStore } from '@/store/viewportStore'
 import { BrandMark } from './ui/BrandMark'
@@ -50,17 +50,29 @@ import { useFormatMessage } from '@/i18n/react'
 /**
  * 标注形状收进一个菜单：顶栏留给「文字」和真正高频的动作。
  * 名字走 common:objectType / common:shape，这里只留图标与快捷键。
+ * 「文字」有自己的按钮，不在这张表里。
  */
-const MARK_TOOLS: { tool: Exclude<Tool, 'select'>; icon: typeof Type; key: string }[] = [
+type MarkTool = 'arrow' | 'rect' | 'ellipse' | 'line'
+
+const MARK_TOOLS: { tool: MarkTool; icon: typeof Type; key: string }[] = [
   { tool: 'arrow', icon: ArrowUpRight, key: 'A' },
   { tool: 'rect', icon: Square, key: 'R' },
   { tool: 'ellipse', icon: Circle, key: 'O' },
   { tool: 'line', icon: Slash, key: 'L' },
 ]
 
-/** 画布工具的显示名：箭头是对象类型，其余是形状 */
-const markToolKey = (tool: Exclude<Tool, 'select'>) =>
-  tool === 'arrow' || tool === 'text' ? `common:objectType.${tool}` : `common:shape.${tool}`
+/**
+ * 画布工具的显示名：箭头是对象类型，其余是形状。
+ *
+ * 两个分支各自收窄成自己的字面量联合——模板 key 的静态展开按参数类型走，
+ * 混在一个 `Exclude<Tool,'select'>` 里会让提取器要求 `shape.arrow`、
+ * `objectType.rect` 这类不存在的条目。
+ */
+const markToolKey = (tool: MarkTool): string =>
+  tool === 'arrow' ? objectTypeKey(tool) : shapeKey(tool)
+
+const objectTypeKey = (tool: 'arrow') => `common:objectType.${tool}`
+const shapeKey = (tool: 'rect' | 'ellipse' | 'line') => `common:shape.${tool}`
 
 /** 顶栏里插入的形状（非工具，点一下直接落一个） */
 const INSERT_SHAPES = ['triangle', 'diamond', 'polygon', 'brace'] as const

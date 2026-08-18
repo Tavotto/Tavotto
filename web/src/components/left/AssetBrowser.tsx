@@ -564,7 +564,10 @@ function AssetCard({
           {name}
         </p>
         <p className="truncate font-mono text-xs leading-4 text-ink-3">
-          {formatCm(panel.native_w_mm)}×{formatCm(panel.native_h_mm)}cm
+          {translate('measure.cmSize', {
+            w: formatCm(panel.native_w_mm),
+            h: formatCm(panel.native_h_mm),
+          })}
           {used ? ab('usedSuffix', { count: used }) : ''}
         </p>
       </div>

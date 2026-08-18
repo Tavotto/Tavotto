@@ -336,7 +336,7 @@ function ErrorBlock({
               className="mt-1 flex items-center gap-0.5 text-xs text-danger/80 hover:text-danger"
             >
               <ChevronRight size={11} className={cn('transition-transform', open && 'rotate-90')} />
-              traceback
+              {el('traceback')}
             </button>
             {open && (
               <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-sm bg-surface p-1.5 font-mono text-xs leading-relaxed text-ink-2">

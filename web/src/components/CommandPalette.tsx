@@ -190,7 +190,9 @@ export function CommandPalette() {
             aria-label={t('palette.searchLabel')}
             className="h-6 min-w-0 flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-ink-3"
           />
-          <span className="shrink-0 font-mono text-xs text-ink-3">Esc</span>
+          <span className="shrink-0 font-mono text-xs text-ink-3">
+            {translate('keycap.esc')}
+          </span>
         </div>
         <ul
           ref={listRef}

@@ -68,9 +68,24 @@ const scopeItems = () =>
 
 const scopeLabel = (scope: AiScope) => ai(`scope.${scope}`)
 
-/** 按目标类型给的起手式：点一下填进输入框，改完再发。文案按语言各一套。 */
+/**
+ * 按目标类型给的起手式：点一下填进输入框，改完再发。
+ *
+ * **分组留在代码里（那是逻辑），文案在 `ai:chip.<id>`（那是文案）**。
+ * 以前整组存成 JSON 数组，提取器每次都要把数组原样重写一遍，`--ci` 永远红；
+ * 拆成一条一个 key 之后，漏翻某一条也能被 key 集合对比抓到。
+ */
+const CHIP_IDS: Record<string, string[]> = {
+  figure: ['unifyFont', 'unifyLineWidth', 'checkMinFontSize', 'improveSpacing'],
+  axes: ['unifyAxisFont', 'adjustPadding', 'fixLegendOverlap', 'unifyTickFormat'],
+  image: ['changeColormap', 'increaseContrast', 'unifyColorScale'],
+  text: ['adjustFontSize', 'switchToTimes', 'avoidOverlap'],
+  legend: ['moveLegend', 'shrinkLegendFont', 'legendTwoColumns'],
+  series: ['thickenLines', 'distinguishablePalette', 'adjustMarkerSize'],
+}
+
 const chips = (kind: string): string[] =>
-  translate(`chips.${kind}`, { ns: 'ai', returnObjects: true }) as unknown as string[]
+  (CHIP_IDS[kind] ?? []).map((id) => translate(`chip.${id}`, { ns: 'ai' }))
 
 function chipsFor(scope: AiScope, element: ManifestElement | null, hasAxes: boolean): string[] {
   if (scope === 'figure') return chips('figure')

@@ -133,7 +133,7 @@ export function CanvasPage() {
             {cv('swap')}
           </Button>
           <span className="shrink-0 font-mono text-xs text-ink-3">
-            {formatCm(page.w)}×{formatCm(page.h)} cm
+            {translate('measure.cmSizeSpaced', { w: formatCm(page.w), h: formatCm(page.h) })}
           </span>
         </div>
       </Section>
@@ -265,7 +265,9 @@ export function CanvasPage() {
                 <span className="w-8 shrink-0 text-xs text-ink-2">
                   {cv(g.axis === 'x' ? 'guideVertical' : 'guideHorizontal')}
                 </span>
-                <span className="flex-1 font-mono text-xs text-ink">{formatMm(g.pos)} mm</span>
+                <span className="flex-1 font-mono text-xs text-ink">
+                  {translate('measure.mm', { value: formatMm(g.pos) })}
+                </span>
                 <Button
                   size="icon-sm"
                   className="text-ink-3 hover:text-danger"

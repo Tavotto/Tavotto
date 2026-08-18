@@ -326,6 +326,7 @@
       "noKeySuffix": " (no key set)",
       "noNpm": "npm is not available on this machine. Install Node.js LTS (nodejs.org) first, then come back and click install.",
       "notDetected": "not detected",
+      "npmCommand": "npm install -g {{package}}",
       "officialBaseUrl": "(official default address)",
       "officialLogin": "The CLI's own login (official)",
       "pathPlaceholder": "Leave empty to search automatically (PATH and common install locations)",

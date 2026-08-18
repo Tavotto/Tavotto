@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { X } from 'lucide-react'
-import type { UiMessage } from '@/i18n'
+import { t as translate, type UiMessage } from '@/i18n'
 import { useFormatMessage } from '@/i18n/react'
 import { DURATION, usePresence } from '@/lib/motion'
 import { formatMm } from '@/lib/units'
@@ -47,12 +47,12 @@ export function CanvasHud() {
         <div className="flex items-center gap-2 rounded-sm border border-border bg-surface px-2 py-1 font-mono text-xs tabular-nums text-ink-2">
           {cursor && (
             <span>
-              {formatMm(cursor.x)}, {formatMm(cursor.y)} mm
+              {translate('measure.mmPair', { a: formatMm(cursor.x), b: formatMm(cursor.y) })}
             </span>
           )}
           {bounds && (
             <span className="text-ink-3">
-              {formatMm(bounds.w)}×{formatMm(bounds.h)} mm
+              {translate('measure.mmSize', { w: formatMm(bounds.w), h: formatMm(bounds.h) })}
             </span>
           )}
         </div>

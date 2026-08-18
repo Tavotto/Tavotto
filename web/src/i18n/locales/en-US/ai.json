@@ -1,37 +1,25 @@
 {
-  "chips": {
-    "axes": [
-      "Unify axis fonts",
-      "Adjust padding",
-      "Fix legend overlap",
-      "Unify tick formatting"
-    ],
-    "figure": [
-      "Unify fonts",
-      "Unify line widths",
-      "Check the minimum font size",
-      "Improve subplot spacing"
-    ],
-    "image": [
-      "Change the colormap",
-      "Increase contrast",
-      "Unify the colour-scale range"
-    ],
-    "legend": [
-      "Move the legend",
-      "Shrink the legend font",
-      "Make the legend two columns"
-    ],
-    "series": [
-      "Thicken the lines",
-      "Use a more distinguishable palette",
-      "Adjust marker size"
-    ],
-    "text": [
-      "Adjust the font size",
-      "Switch to Times",
-      "Avoid overlapping neighbours"
-    ]
+  "chip": {
+    "adjustFontSize": "Adjust the font size",
+    "adjustMarkerSize": "Adjust marker size",
+    "adjustPadding": "Adjust padding",
+    "avoidOverlap": "Avoid overlapping neighbours",
+    "changeColormap": "Change the colormap",
+    "checkMinFontSize": "Check the minimum font size",
+    "distinguishablePalette": "Use a more distinguishable palette",
+    "fixLegendOverlap": "Fix legend overlap",
+    "improveSpacing": "Improve subplot spacing",
+    "increaseContrast": "Increase contrast",
+    "legendTwoColumns": "Make the legend two columns",
+    "moveLegend": "Move the legend",
+    "shrinkLegendFont": "Shrink the legend font",
+    "switchToTimes": "Switch to Times",
+    "thickenLines": "Thicken the lines",
+    "unifyAxisFont": "Unify axis fonts",
+    "unifyColorScale": "Unify the colour-scale range",
+    "unifyFont": "Unify fonts",
+    "unifyLineWidth": "Unify line widths",
+    "unifyTickFormat": "Unify tick formatting"
   },
   "diff": {
     "title": "Script changes",

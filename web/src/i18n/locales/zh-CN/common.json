@@ -1,40 +1,30 @@
 {
   "actions": {
-    "add": "添加",
-    "apply": "应用",
-    "back": "返回",
     "cancel": "取消",
     "close": "关闭",
-    "confirm": "确定",
     "continue": "继续",
     "copy": "复制",
     "delete": "删除",
-    "done": "完成",
-    "edit": "编辑",
-    "open": "打开",
     "refresh": "刷新",
     "reload": "重新加载",
-    "remove": "移除",
-    "rename": "重命名",
-    "retry": "重试",
-    "save": "保存",
-    "search": "搜索"
+    "save": "保存"
   },
   "count": {
-    "assets_one": "{{count}} 个素材",
-    "assets_other": "{{count}} 个素材",
-    "items_one": "{{count}} 项",
-    "items_other": "{{count}} 项",
-    "objects_one": "{{count}} 个对象",
-    "objects_other": "{{count}} 个对象",
-    "panels_one": "{{count}} 个面板",
-    "panels_other": "{{count}} 个面板",
-    "scripts_one": "{{count}} 个脚本",
-    "scripts_other": "{{count}} 个脚本",
     "selectedObjects_one": "已选 {{count}} 个对象",
     "selectedObjects_other": "已选 {{count}} 个对象"
   },
+  "keycap": {
+    "esc": "Esc"
+  },
   "literal": "{{text}}",
+  "measure": {
+    "cmSize": "{{w}}×{{h}}cm",
+    "cmSizeSpaced": "{{w}}×{{h}} cm",
+    "dpi": "{{value}} dpi",
+    "mm": "{{value}} mm",
+    "mmPair": "{{a}}, {{b}} mm",
+    "mmSize": "{{w}}×{{h}} mm"
+  },
   "mixed": "多个值",
   "objectType": {
     "arrow": "箭头",

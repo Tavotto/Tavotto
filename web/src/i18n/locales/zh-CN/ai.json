@@ -1,37 +1,25 @@
 {
-  "chips": {
-    "axes": [
-      "统一坐标轴字体",
-      "调整留白",
-      "修复图例遮挡",
-      "统一刻度格式"
-    ],
-    "figure": [
-      "统一字体",
-      "统一线宽",
-      "检查最小字号",
-      "优化子图间距"
-    ],
-    "image": [
-      "调整色图",
-      "增强对比度",
-      "统一色条范围"
-    ],
-    "legend": [
-      "调整图例位置",
-      "缩小图例字号",
-      "图例改为两列"
-    ],
-    "series": [
-      "加粗线条",
-      "换成更易区分的配色",
-      "调整标记大小"
-    ],
-    "text": [
-      "调整字号",
-      "统一为 Times 字体",
-      "避免与相邻元素重叠"
-    ]
+  "chip": {
+    "adjustFontSize": "调整字号",
+    "adjustMarkerSize": "调整标记大小",
+    "adjustPadding": "调整留白",
+    "avoidOverlap": "避免与相邻元素重叠",
+    "changeColormap": "调整色图",
+    "checkMinFontSize": "检查最小字号",
+    "distinguishablePalette": "换成更易区分的配色",
+    "fixLegendOverlap": "修复图例遮挡",
+    "improveSpacing": "优化子图间距",
+    "increaseContrast": "增强对比度",
+    "legendTwoColumns": "图例改为两列",
+    "moveLegend": "调整图例位置",
+    "shrinkLegendFont": "缩小图例字号",
+    "switchToTimes": "统一为 Times 字体",
+    "thickenLines": "加粗线条",
+    "unifyAxisFont": "统一坐标轴字体",
+    "unifyColorScale": "统一色条范围",
+    "unifyFont": "统一字体",
+    "unifyLineWidth": "统一线宽",
+    "unifyTickFormat": "统一刻度格式"
   },
   "diff": {
     "title": "脚本改动",

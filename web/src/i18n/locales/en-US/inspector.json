@@ -212,6 +212,7 @@
     "scaleTitle": "Scales about the centre; relative layout inside the group is preserved",
     "setAxesHeight": "Change axes height",
     "setAxesWidth": "Change axes width",
+    "traceback": "traceback",
     "useAssistant": "Do it with the assistant",
     "waiting": "Waiting for the engine to render…"
   },

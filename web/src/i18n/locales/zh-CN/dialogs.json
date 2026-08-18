@@ -326,6 +326,7 @@
       "noKeySuffix": "（未填密钥）",
       "noNpm": "本机没有 npm。请先安装 Node.js LTS（nodejs.org），装好后回到这里再点安装。",
       "notDetected": "未检测到",
+      "npmCommand": "npm install -g {{package}}",
       "officialBaseUrl": "（官方默认地址）",
       "officialLogin": "CLI 自带登录态（官方）",
       "pathPlaceholder": "留空 = 自动查找（PATH 与常见安装位置）",

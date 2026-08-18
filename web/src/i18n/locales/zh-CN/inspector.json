@@ -212,6 +212,7 @@
     "scaleTitle": "绕中心缩放，组内相对布局不变",
     "setAxesHeight": "修改子图高度",
     "setAxesWidth": "修改子图宽度",
+    "traceback": "traceback",
     "useAssistant": "用改图助手完成",
     "waiting": "等待引擎渲染…"
   },

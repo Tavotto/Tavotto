@@ -1,2 +1,7 @@
+# pnpm 要求对带安装脚本的依赖显式表态，否则每次跑 script 都会当成「依赖没装好」。
+#
+# @swc/core 是 i18next-cli 的解析器，装下来的就是预编译好的原生二进制；它的
+# postinstall 只在需要从源码构建时才有意义，我们用不到——i18n:extract /
+# i18n:lint / i18n:types 在不跑它的情况下都正常工作。
 allowBuilds:
-  '@swc/core': set this to true or false
+  '@swc/core': false

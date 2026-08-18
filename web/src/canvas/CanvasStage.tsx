@@ -289,7 +289,7 @@ function ElementEditBar() {
           className="flex h-5 items-center gap-1 rounded-sm border border-border bg-surface px-1.5 text-xs text-ink transition-colors hover:bg-ink/[.055]"
         >
           {sg('backToCanvas')}
-          <span className="font-mono text-xs text-ink-3">Esc</span>
+          <span className="font-mono text-xs text-ink-3">{translate('keycap.esc')}</span>
         </button>
       </div>
     </div>

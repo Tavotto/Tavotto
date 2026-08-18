@@ -94,7 +94,9 @@ export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
           <p className="mt-1 text-xs leading-relaxed text-ink-2">
             {label}
             {env.matplotlib && (
-              <span className="ml-1.5 font-mono text-ink-3">matplotlib {env.matplotlib}</span>
+              <span className="ml-1.5 font-mono text-ink-3">
+                {en('matplotlibVersion', { version: env.matplotlib })}
+              </span>
             )}
           </p>
           {env.bundled ? (

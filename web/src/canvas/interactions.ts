@@ -69,9 +69,18 @@ import { expandGroups, movableTargets, warnBlockedGroups } from '@/store/actions
 const hist = (key: string, values?: Record<string, unknown>): UiMessage =>
   msg(`history.${key}`, values, 'workspace')
 
-/** 画出来的那类对象叫什么——文字/箭头走对象类型名，其余走形状名 */
-const drawnToolLabel = (tool: Tool): string =>
-  tool === 'text' || tool === 'arrow' ? t(`objectType.${tool}`) : t(`shape.${tool}`)
+/**
+ * 画出来的那类对象叫什么——文字/箭头走对象类型名，其余走形状名。
+ *
+ * 两个分支各自收窄成自己的字面量联合：模板 key 的静态展开按**参数类型**走，
+ * 传整个 `Tool` 进去会让提取器同时要求 `shape.text`、`objectType.rect` 这类
+ * 根本不存在的条目。
+ */
+const objectToolLabel = (tool: 'text' | 'arrow'): string => t(`objectType.${tool}`)
+const shapeToolLabel = (tool: 'rect' | 'ellipse' | 'line'): string => t(`shape.${tool}`)
+
+const drawnToolLabel = (tool: Exclude<Tool, 'select'>): string =>
+  tool === 'text' || tool === 'arrow' ? objectToolLabel(tool) : shapeToolLabel(tool)
 
 /* -------------------------------------------------------------------------- */
 /*  指针追踪骨架                                                               */

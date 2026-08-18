@@ -597,7 +597,10 @@ function ReplaceAssetDialog({
                 </span>
                 <span className="shrink-0 text-xs text-ink-3">{folderLabel(info.folder)}</span>
                 <span className="shrink-0 font-mono text-xs tabular-nums text-ink-3">
-                  {formatCm(info.native_w_mm)}×{formatCm(info.native_h_mm)}cm
+                  {translate('measure.cmSize', {
+                    w: formatCm(info.native_w_mm),
+                    h: formatCm(info.native_h_mm),
+                  })}
                 </span>
                 {info.id === panel.fileId && (
                   <span className="shrink-0 text-xs text-ink-3">{pn('currentAsset')}</span>

@@ -557,7 +557,7 @@ function InstallCliButton({ agent, label }: { agent: 'codex' | 'claude'; label: 
           {running ? st('ai.installing') : st('ai.installWithNpm', { label })}
         </Button>
         <span className="min-w-0 truncate font-mono text-xs text-ink-faint">
-          npm install -g {info.package ?? agent}
+          {st('ai.npmCommand', { package: info.package ?? agent })}
         </span>
       </div>
       {!info.available && (
@@ -754,7 +754,7 @@ function ExportSection() {
         >
           {['300', '600', '900', '1200'].map((d) => (
             <option key={d} value={d}>
-              {d} dpi
+              {translate('measure.dpi', { value: d })}
             </option>
           ))}
         </select>

@@ -8,6 +8,11 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "test": "NODE_OPTIONS=--no-experimental-webstorage vitest run",
+    "i18n:extract": "i18next-cli extract",
+    "i18n:lint": "i18next-cli lint",
+    "i18n:status": "i18next-cli status",
+    "i18n:types": "i18next-cli types",
+    "i18n:check": "i18next-cli types --ci && node scripts/i18n-check.mjs && i18next-cli lint",
     "preview": "vite preview",
     "e2e": "playwright test",
     "e2e:ui": "playwright test --ui"

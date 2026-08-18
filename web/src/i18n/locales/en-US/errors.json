@@ -15,6 +15,7 @@
     "incompleteTitle": "The installation is incomplete",
     "installFailed": "Installation failed",
     "installing": "Installing…",
+    "matplotlibVersion": "matplotlib {{version}}",
     "missingBody": "Figure-element editing needs a Python with matplotlib. Magplot runs your own scripts, so the interpreter has to be able to import the libraries they use. Layout, annotation and export are unaffected.",
     "missingModuleBody": "Magplot bundles the common scientific stack (numpy / matplotlib / pandas / scipy / seaborn / Pillow). This script needs something else — point the rendering environment at the Python / Conda environment you normally run it in.",
     "missingModuleNoteAfter": ".",

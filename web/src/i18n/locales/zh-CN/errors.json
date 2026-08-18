@@ -15,6 +15,7 @@
     "incompleteTitle": "安装文件不完整",
     "installFailed": "安装失败",
     "installing": "正在安装…",
+    "matplotlibVersion": "matplotlib {{version}}",
     "missingBody": "图内元素编辑需要一个装了 matplotlib 的 Python——Magplot 运行的是你自己的脚本，解释器得能 import 它们用到的库。排版、标注和导出不受影响。",
     "missingModuleBody": "Magplot 内置的是常用科学栈（numpy / matplotlib / pandas / scipy / seaborn / Pillow）。这个脚本还需要别的包——把渲染环境换成你平时跑它的那套 Python / Conda 环境即可。",
     "missingModuleNoteAfter": "。",
