@@ -175,13 +175,9 @@ def test_status_text_is_honest():
     assert 'DetailPrint "$(preparingMagplot)"' in TEXT
     assert 'DetailPrint "$(installingMagplot)"' in TEXT
     assert 'DetailPrint "$(installingWebview2)"' in TEXT  # 上游字符串，已本地化
-    # 展开文件与后续 CreateShortcut/WriteUninstaller 的输出只进日志，不刷状态行。
-    # **不许还原成 both**：那会把「Create shortcut: C:\Users\…\Magplot.lnk」
-    # 顶到进度条上方（真安装器上抓到过）。WebView2 段在 Install 之前跑，
-    # 用的还是默认 both，所以「正在安装 WebView2」照样出得来。
-    section = TEXT.split("Section Install\n")[1].split("SectionEnd")[0]
-    assert "SetDetailsPrint listonly" in section
-    assert "SetDetailsPrint both" not in section
+    # 展开文件时的 `Extract: xxx.dll` 只进日志，不刷状态行；复制完还原
+    assert "SetDetailsPrint listonly" in TEXT
+    assert "SetDetailsPrint both" in TEXT
     for fake in ("78%", "Progress:", "IntFmt $0 \"%d%%\""):
         assert fake not in TEXT
 

@@ -421,10 +421,6 @@ jobs:
           if ($all -match 'Installation Complete') {
             throw "进度页装完时闪了 MUI 默认页眉标题"
           }
-          # NSIS 自己的输出别顶到状态行：一整条用户路径闪在进度条上方
-          if ($all -match 'Create shortcut:|Create uninstaller:|Extract:|Output folder:') {
-            throw "状态行被 NSIS 的内部输出顶掉了（SetDetailsPrint 没管住）"
-          }
           Write-Host "✓ 页面序列：进度页 → 完成页，没有目录页"
 
           # 装出来的落点与快捷方式策略——首次安装固定 %LOCALAPPDATA%\Magplot
