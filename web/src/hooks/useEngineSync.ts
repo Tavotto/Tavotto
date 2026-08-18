@@ -37,10 +37,29 @@ function hasImageElement(panel: PanelObject): boolean {
 }
 
 /**
+ * 渲染策略。**与历史无关**——无论选哪个，文档改动都已经经过
+ * documentStore.commit 进了历史；这里决定的只是「什么时候麻烦 matplotlib」。
+ *
+ *   immediate  立刻发（定稿：松手、颜色定稿、枚举、撤销/重做）
+ *   defer      防抖 300ms 后发（打字、连续数值输入）
+ *   none       **本轮完全不发**，只登记 wantPatches 占位；由 flushRender
+ *              在手势结束时定稿。假实时的 scrub / 取色走这条：拖动期间
+ *              画面由 SVG 局部预览负责，matplotlib 一次都不用跑。
+ *
+ * `none` 必须照样写 wantPatches：syncEngine 的跳过判据就是它，不占位的话
+ * 同步 effect 会立刻替这次改动发一次 immediate 渲染——比不加策略还糟。
+ */
+export type RenderPolicy = 'immediate' | 'defer' | 'none'
+
+const policyOf = (p: boolean | RenderPolicy | undefined): RenderPolicy =>
+  p === true ? 'immediate' : p === false || p == null ? 'defer' : p
+
+/**
  * 请求渲染。同一面板的连续请求会被合并：debounce 期内只保留最后一次，
  * 真正发出后由 renderStore 的 busy/queued 再兜一层。
  */
-export function requestRender(panel: PanelObject, immediate = false) {
+export function requestRender(panel: PanelObject, immediate: boolean | RenderPolicy = false) {
+  const policy = policyOf(immediate)
   const store = useRenderStore.getState()
   const key = renderKeyOf(panel)
   const want = JSON.stringify(panel.overrides)
@@ -51,7 +70,7 @@ export function requestRender(panel: PanelObject, immediate = false) {
   }
 
   // 防抖那一路是「还在调」，可以先给一张低清；immediate 是定稿，永远默认 dpi
-  const dpi = immediate || !hasImageElement(panel) ? undefined : INTERACTIVE_PREVIEW_DPI
+  const dpi = policy !== 'defer' || !hasImageElement(panel) ? undefined : INTERACTIVE_PREVIEW_DPI
   const patches = panel.overrides
   const fileId = panel.fileId
   const fire = () => {
@@ -59,7 +78,9 @@ export function requestRender(panel: PanelObject, immediate = false) {
     void store.render(fileId, patches, dpi)
   }
   window.clearTimeout(timers.get(panel.id))
-  if (immediate) fire()
+  timers.delete(panel.id)
+  if (policy === 'none') return
+  if (policy === 'immediate') fire()
   else timers.set(panel.id, window.setTimeout(fire, DEBOUNCE_MS))
 }
 
@@ -77,16 +98,20 @@ export function flushRender(panelId: string) {
   if (panel?.type !== 'panel') return
   const store = useRenderStore.getState()
   const pending = timers.get(panelId)
-  if (pending != null) {
-    window.clearTimeout(pending)
-    timers.delete(panelId)
+  window.clearTimeout(pending)
+  timers.delete(panelId)
+  const want = JSON.stringify(panel.overrides)
+  const state = store.get(renderKeyOf(panel))
+  // 判据是「这一版还没画出来」，不是「有没有挂起的计时器」。
+  // 旧实现只看计时器：render:'none' 的手势（scrub / 取色）压根不设计时器，
+  // 松手时就会一声不响地什么都不做——占位的 wantPatches 还挡着同步器，
+  // 结果是用户改完之后**永远等不到那张定稿图**。
+  if (state.lastPatches !== want) {
     void store.render(panel.fileId, panel.overrides)
     return
   }
-  // 没有挂起的：只有「现在这张是拖动期的低清」才需要补一张定稿
-  if (store.get(renderKeyOf(panel)).previewDpi != null) {
-    void store.render(panel.fileId, panel.overrides)
-  }
+  // 已经是这一版了：只有「现在这张是拖动期的低清」才需要补一张定稿
+  if (state.previewDpi != null) void store.render(panel.fileId, panel.overrides)
 }
 
 /**

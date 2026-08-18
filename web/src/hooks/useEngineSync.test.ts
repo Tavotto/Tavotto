@@ -236,3 +236,83 @@ describe('flushRender：交互结束后必须回到定稿质量', () => {
     expect(calls).toHaveLength(0)
   })
 })
+
+/* ========================================================================== */
+/*  渲染策略：假实时手势期间「一次都不发」                                     */
+/* ========================================================================== */
+
+describe("render:'none'：手势期间不麻烦 matplotlib，收尾时定稿一次", () => {
+  beforeEach(async () => {
+    await useDocumentStore.getState().switchDocument(emptyProject(), 'd_policy')
+  })
+
+  const putPanel = (p: PanelObject) => {
+    useDocumentStore.getState().commit('加面板', (d) => {
+      d.objects.push(p)
+    })
+  }
+
+  it('none 不发请求，也不排防抖计时器', () => {
+    vi.useFakeTimers()
+    const p = panel('a', 'Fig1.pdf', 1)
+    requestRender(p, 'none')
+    vi.runAllTimers()
+    expect(calls).toHaveLength(0)
+    vi.useRealTimers()
+  })
+
+  it('none 仍然要占住 wantPatches——不占位的话同步器会立刻替它发一次', () => {
+    const p = panel('a', 'Fig1.pdf', 1)
+    putPanel(p)
+    requestRender(p, 'none')
+    expect(useRenderStore.getState().get(renderKeyOf(p)).wantPatches).toBe(
+      JSON.stringify(p.overrides),
+    )
+    // 这才是真正的看护点：同步 effect 每次文档变化都会跑一遍
+    syncEngine(useDocumentStore.getState().doc.objects, 'a')
+    expect(calls).toHaveLength(0)
+  })
+
+  it('手势结束 flushRender：把这一版发出去（此前没有任何计时器挂着）', () => {
+    const p = panel('a', 'Fig1.pdf', 1)
+    putPanel(p)
+    requestRender(p, 'none')
+    expect(calls).toHaveLength(0)
+
+    flushRender('a')
+    expect(calls).toHaveLength(1)
+    expect(calls[0].patches).toEqual(p.overrides)
+    expect(calls[0].dpi).toBeUndefined() // 定稿永远默认 dpi
+  })
+
+  it('连着改十次只留最后一版，收尾发一次', () => {
+    let p = panel('a', 'Fig1.pdf', 1)
+    putPanel(p)
+    for (let i = 1; i <= 10; i++) {
+      p = panel('a', 'Fig1.pdf', i)
+      useDocumentStore.getState().commit('改一个值', (d) => {
+        const o = d.objects.find((x) => x.id === 'a')
+        if (o?.type === 'panel') o.overrides = p.overrides
+      })
+      requestRender(p, 'none')
+      syncEngine(useDocumentStore.getState().doc.objects, 'a')
+    }
+    expect(calls).toHaveLength(0)
+    flushRender('a')
+    expect(calls).toHaveLength(1)
+    expect(calls[0].patches).toHaveLength(10)
+  })
+
+  it('布尔参数照旧：true=立刻、false=防抖（老调用方一个字不用改）', () => {
+    vi.useFakeTimers()
+    const p = panel('a', 'Fig1.pdf', 1)
+    requestRender(p, true)
+    expect(calls).toHaveLength(1)
+    calls.length = 0
+    requestRender(panel('b', 'Fig2.pdf', 1), false)
+    expect(calls).toHaveLength(0)
+    vi.runAllTimers()
+    expect(calls).toHaveLength(1)
+    vi.useRealTimers()
+  })
+})
