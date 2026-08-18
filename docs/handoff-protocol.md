@@ -104,6 +104,10 @@ CLI、唤起却静默退回浏览器模式——用户明明装了桌面版却�
 | --- | --- | --- |
 | `manifest_write_failed` | 配置目录写不进去 | 能——已知安装位置那条腿还在 |
 | `bundled_cli_missing` | 这个安装包里没有 `magplot-cli` | 不能，要重装 |
+| `bad_manifest_action` | `--write-manifest` 与 `--remove-manifest` 同时给了 | 调用方自己拼错了参数 |
+
+**给了 `--json` 就一律回 JSON**，参数拼错也不例外（与 `magplot open` 同一条纪律）
+——那条恰恰是调用方自己出的错，最该被程序读懂。
 
 `--write-manifest` / `--remove-manifest` 分别给安装器与卸载器用。
 

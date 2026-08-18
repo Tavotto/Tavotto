@@ -61,12 +61,23 @@ def doctor(argv: list[str]) -> int:
                     help="删除安装清单（卸载时用）")
     args = ap.parse_args(argv)
 
-    if args.write_manifest and args.remove_manifest:
-        print("--write-manifest 与 --remove-manifest 不能同时给", file=sys.stderr)
-        return 2
-
     from . import locate
     from .. import __version__
+
+    if args.write_manifest and args.remove_manifest:
+        # `--json` 一旦给了，**失败也必须是一行 JSON**（与 `magplot open` 同一条
+        # 纪律）。只往 stderr 写一句中文，机器调用方就拿不到 code，只能去匹配
+        # 字符串——而这条恰恰是它自己把参数拼错了，最该被程序读懂。
+        msg = "--write-manifest 与 --remove-manifest 不能同时给"
+        if args.json:
+            print(json.dumps({"ok": False, "protocol": locate.PROTOCOL_VERSION,
+                              "code": "bad_manifest_action", "error": msg,
+                              "problems": [{"code": "bad_manifest_action",
+                                            "message": msg}]},
+                             ensure_ascii=False))
+        else:
+            print(msg, file=sys.stderr)
+        return 2
 
     problems: list[dict] = []
     me = locate.describe_self()

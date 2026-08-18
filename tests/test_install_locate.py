@@ -479,8 +479,46 @@ def test_doctor_speaks_human_without_json(tmp_path):
 
 
 def test_doctor_rejects_contradictory_flags(tmp_path):
+    """参数拼错了也要回 JSON——`--json` 给了就一律给 JSON。
+
+    这条最该被程序读懂：它恰恰是调用方自己把参数拼错了。只往 stderr 写一句
+    中文，对面只能去匹配字符串（与 `magplot open` 的 bad_launch_mode 同一条纪律）。
+    """
     proc = _doctor(tmp_path, "--json", "--write-manifest", "--remove-manifest")
     assert proc.returncode == 2
+    out = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert out["ok"] is False
+    assert out["code"] == "bad_manifest_action"
+    assert out["problems"][0]["code"] == "bad_manifest_action"
+    assert not (tmp_path / "install.json").exists()    # 什么都没动
+
+
+def test_doctor_rejects_contradictory_flags_in_human_mode(tmp_path):
+    """不给 --json 时照旧说人话，别把 JSON 糊到终端上。"""
+    proc = _doctor(tmp_path, "--write-manifest", "--remove-manifest")
+    assert proc.returncode == 2
+    assert proc.stdout.strip() == ""
+    assert "不能同时给" in proc.stderr
+
+
+def test_every_doctor_json_failure_has_a_code():
+    """doctor 的每一条 `--json` 失败出口都要带 code。
+
+    新增一条早退分支时最容易漏掉的就是这件事——`open` 那边已经栽过一次。
+    """
+    src = (ROOT / "src" / "magplot" / "engine" / "cli.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    dumps = [n for n in ast.walk(tree)
+             if isinstance(n, ast.Call)
+             and getattr(n.func, "attr", "") == "dumps"]
+    assert dumps, "cli.py 里没有 json.dumps"
+    for node in dumps:
+        payload = node.args[0]
+        if not isinstance(payload, ast.Dict):
+            continue
+        keys = {k.value for k in payload.keys if isinstance(k, ast.Constant)}
+        if keys and keys != {"code", "message"}:
+            assert "code" in keys, f"第 {node.lineno} 行的 JSON 出口没有 code"
 
 
 def test_open_and_doctor_are_dispatched_before_argparse():
