@@ -49,7 +49,9 @@ export function Select<T extends string>({
           sideOffset={4}
           className={cn(
             'z-50 min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-md',
-            'border border-border bg-surface p-1 shadow-pop animate-pop-in',
+            'border border-border bg-surface p-1 shadow-pop',
+            'origin-[var(--radix-select-content-transform-origin)]',
+            'data-[state=open]:animate-pop-in data-[state=closed]:animate-pop-out',
           )}
         >
           <RS.Viewport className="max-h-72">

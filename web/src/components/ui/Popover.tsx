@@ -32,7 +32,9 @@ export function Popover({
           style={{ width }}
           onKeyDown={(e) => e.stopPropagation()}
           className={cn(
-            'z-50 rounded-md border border-border bg-surface p-2 shadow-pop animate-pop-in',
+            'z-50 rounded-md border border-border bg-surface p-2 shadow-pop',
+            'origin-[var(--radix-popover-content-transform-origin)]',
+            'data-[state=open]:animate-pop-in data-[state=closed]:animate-pop-out',
           )}
         >
           {children}

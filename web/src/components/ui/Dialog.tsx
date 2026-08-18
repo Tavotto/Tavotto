@@ -43,7 +43,12 @@ export function Dialog({
   return (
     <RD.Root open={open} onOpenChange={(v) => (locked && !v ? undefined : onOpenChange(v))}>
       <RD.Portal>
-        <RD.Overlay className="fixed inset-0 z-40 bg-ink/20 backdrop-blur-[1px]" />
+        <RD.Overlay
+          className={cn(
+            'fixed inset-0 z-40 bg-ink/20 backdrop-blur-[1px]',
+            'data-[state=open]:animate-fade-in data-[state=closed]:animate-fade-out',
+          )}
+        />
         <RD.Content
           style={{ width: width ?? WIDTH[size] }}
           aria-busy={busy || undefined}
@@ -54,7 +59,9 @@ export function Dialog({
             'fixed left-1/2 top-1/2 z-50 max-h-[86vh] max-w-[calc(100vw-2rem)]',
             '-translate-x-1/2 -translate-y-1/2',
             'flex flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-pop',
-            'animate-pop-in',
+            // 退场靠 Radix 的 Presence 保活（它会等 animationend）——**不要**改成条件
+            // 渲染，那样只有进场、没有退场，浮层会「淡入之后瞬间消失」
+            'data-[state=open]:animate-pop-in data-[state=closed]:animate-pop-out',
           )}
         >
           <div className="flex items-start justify-between gap-3 px-4 pb-1 pt-3.5">
