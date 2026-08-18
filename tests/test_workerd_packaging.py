@@ -91,13 +91,19 @@ def test_the_release_workflow_gates_the_rust_crate():
         "两个 crate 都要进 rust-cache，否则每次发布都从零编"
 
 
-@pytest.mark.parametrize("wf,name", [(DESKTOP_WF, "desktop-tauri.yml"),
-                                     (CI_WF, "ci.yml")])
-def test_the_smoke_legs_assert_the_control_plane_without_forcing_it(wf, name):
+@pytest.mark.parametrize("name", ["desktop-tauri.yml", "ci.yml"])
+def test_the_smoke_legs_assert_the_control_plane_without_forcing_it(name):
     """两条冒烟腿都**不设 MAGPLOT_WORKERD**，只断言结果。
 
     设了就等于自己把答案填上：要验的恰恰是「产物自带的那份被自动找到」。
+
+    **按文件名参数化，不要按文件内容**：pytest 会用参数值拼测试 id，再把 id
+    塞进 `PYTEST_CURRENT_TEST` 环境变量。Windows 的环境变量上限是 32767 字符
+    ——工作流文件长到那个数就 `ValueError: the environment variable is longer
+    than 32767 characters`，整条用例在别的平台上全绿、只在 Windows 上炸，而且
+    报错跟被测的东西毫无关系。
     """
+    wf = {"desktop-tauri.yml": DESKTOP_WF, "ci.yml": CI_WF}[name]
     assert "--expect-control-plane workerd" in wf, f"{name} 少了控制面断言"
     # 注释里提它是好事（写清楚为什么不设），要挡的是真把它设进环境
     steps = "\n".join(ln for ln in wf.splitlines()
