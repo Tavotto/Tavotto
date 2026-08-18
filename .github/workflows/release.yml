@@ -94,6 +94,9 @@ jobs:
           ref: ${{ inputs.tag || github.ref }}
       - uses: actions/download-artifact@v4
         with: { name: dist, path: dist }
+      # 插件清单那步要跑 Python（这个 job 原本只用 bash，没装过）
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
 
       - name: 找手写的 release notes
         id: notes
@@ -128,15 +131,34 @@ jobs:
             echo "path=" >> "$GITHUB_OUTPUT"
           fi
 
+      # Codex 插件的更新通道：装了插件的用户下次调用时就是靠这份清单看到新版本。
+      # **刻意放在这里而不是 desktop-tauri.yml 的 updater-manifest**——那个 job
+      # 依赖桌面构建产物与 minisign 私钥，没配私钥时整个跳过；挂在那儿等于
+      # 「哪天没配签名密钥，插件的更新通道就悄悄停了」，而且全绿。
+      - name: 生成 Codex 插件清单与安装包
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          python scripts/make_plugin_manifest.py --tag "$TAG" \
+            --out out/codex-plugin.json \
+            --zip "out/codex-plugin-${TAG#v}.zip" \
+            --published-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          cat out/codex-plugin.json
+
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
           draft: false
           body_path: ${{ steps.notes.outputs.path }}
           generate_release_notes: ${{ steps.notes.outputs.path == '' }}
+          # codex-plugin.json 的**文件名不能改**：插件拉的是
+          # releases/latest/download/codex-plugin.json（见 update_check.DEFAULT_URL）
           files: |
             dist/*.whl
             dist/*.tar.gz
+            out/codex-plugin.json
+            out/codex-plugin-*.zip
 
   pypi:
     needs: build

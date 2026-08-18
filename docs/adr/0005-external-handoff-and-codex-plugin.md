@@ -83,10 +83,56 @@ macOS 上刻意**直接 exec 包内二进制**而不是 `open -a Magplot --args`
 `registry.parameterizable`，为 false 时**退出码 4**并给出怎么修。图出来了但只是死图，
 那不是成功。
 
+### 5. 桌面安装另带一个 console 版 `magplot-cli`，并写一份安装清单（2026-08-18 补）
+
+**问题**：只装了桌面程序的 Windows 用户那里，Codex 插件一直报「没找到 Magplot」。
+插件当时只查三处——`MAGPLOT_CLI` / PATH / 当前解释器里的 magplot 模块——
+只装桌面版的用户三条全落空。
+
+**为什么不能直接调 `Magplot.exe`**：它是 GUI 子系统的可执行文件，sidecar 也是
+（`packaging/magplot.spec` 的 `console=False`）。没有真终端时 `sys.stdout` 是
+`None`，`packaging/entry.py` 会把输出改道到 `app.log`——调用方 `capture_output`
+拿到的是空 stdout，不是那行 JSON。**GUI 可执行文件不是 CLI**，哪怕它接受同样的参数。
+
+**决策**：
+
+1. `packaging/magplot.spec` 从**同一个 Analysis** 出第二个 exe `magplot-cli`
+   （`console=True`），与 sidecar 共用同一份 `_internal/`——代价只是多一个
+   ~1.5 MB 的 bootloader。两个 exe 跑的是同一份 `packaging/entry.py`。
+2. 子命令分派提到 `engine/cli.py`（纯标准库），`entry.py` 在 import Flask
+   **之前**就把 `open` / `doctor` 处理掉：一次交接用不上任何 HTTP 端点，
+   不该付整个 Flask 的冷启动。
+3. 新增 `magplot doctor [--json] [--write-manifest|--remove-manifest]`：
+   无 GUI、不起服务、不联网的健康检查，同时负责维护**安装清单**。
+4. 安装清单 `install.json` 落在**用户配置目录**（不是安装目录——那儿可能只读，
+   卸载还会被删）。安装器装完跑一次 `doctor --write-manifest`（让 CLI 自己写，
+   NSIS 不拼 JSON），应用每次启动刷新一遍（覆盖「用户把 .app 拖走了」
+   与「macOS 没有装后钩子」），卸载器在删文件**之前**移除它。
+5. 发现链的唯一权威是 `engine/locate.py`：`MAGPLOT_CLI` → PATH → 清单 →
+   已知安装位置 → HKCU（只当补充）→ 当前解释器。**任何单一机制都不是唯一
+   依据**：清单可能没写成、注册表可能被策略锁住、PATH 可能是空的。
+
+**明确不做的**：不改用户 PATH（写注册表 + 广播 `WM_SETTINGCHANGE` +
+1024 字符截断 + 卸载时准确摘除，每一步都可能把用户的 PATH 弄坏，而收益是零——
+发现链已经不需要它了）；不要求管理员权限；不把注册表当唯一机制。
+
+**镜像的代价**：插件跑在用户机器上、import 不到 magplot，所以
+`codex-plugin/…/handoff.py` 里有一份路径规则的副本。这份重复无法避免，
+能避免的是两边悄悄漂开——`tests/test_install_locate.py::test_plugin_mirrors_the_locator`
+在一整张环境矩阵（Windows/macOS/Linux × 有无环境变量 × 空格与中文）上逐条比对
+两侧输出。协议全文见 [`../handoff-protocol.md`](../handoff-protocol.md)。
+
 ## 代价与已知边界
 
 * 每次交接都会在图库目录里写 `mm_registry.json`（缺条目时）。这是 Magplot 打开项目
   本来就会做的事，交接只是提前做掉。
 * Linux 没有桌面发行形态，那里交接一律走浏览器模式。
 * `magplot open` 是**纯 flag 形态主入口之外的子命令**，在 argparse 之前拦截分派——
-  改成 subparsers 会把 `magplot --figures …` 整个既有命令行换掉。
+  改成 subparsers 会把 `magplot --figures …` 整个既有命令行换掉。`magplot doctor`
+  同理，两条都在 `engine/cli.COMMANDS` 里。
+* 安装包多了一个 ~1.5 MB 的 bootloader（`magplot-cli`）。这是让「只装桌面版」
+  可用的最小代价——另一条路是把 sidecar 改成 console 子系统，那会让双击启动
+  弹出黑窗。
+* v0.7.0 及更早的安装包里没有 `magplot-cli`。那些用户会拿到
+  `desktop_found_cli_missing`（提示升级），而**不是** `magplot_missing`
+  ——他们明明装了，让他们再装一遍已经装着的东西只会浪费一轮。

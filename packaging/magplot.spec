@@ -27,7 +27,16 @@
    运行**，而且发行链随后会用 Developer ID 全部重签一遍——最终说了算的是那一次。
    符号链接与可执行位都被保留（实测），所以 `bin/python3` 不会被拍平成第二个 18 MB 副本。
 
-4. **Rust supervisor `magplot-workerd` 必须进包**（两个平台都要）。它作为
+4. **除了 GUI 的 Magplot，还出一个 console 版 `magplot-cli`**。两个 exe 出自
+   同一个 Analysis、共用同一份 `_internal/`（只多一个 ~1.5 MB 的 bootloader），
+   代码也是同一份 `packaging/entry.py`——差别只有 Windows 的子系统。
+   为什么非要多这一个：`console=False` 的 exe 在没有真终端时 `sys.stdout`
+   是 None，entry.py 会把输出改道到 app.log，外部程序 `capture_output` 拿到
+   的是**空 stdout**，不是那行 JSON。于是「只装了桌面版」的用户那里，Codex
+   插件永远发现不了 Magplot。落点与发现规则见 `engine/locate.py`
+   （tests/test_install_locate.py + test_runtime_build.py 看护）。
+
+5. **Rust supervisor `magplot-workerd` 必须进包**（两个平台都要）。它作为
    binaries 落在 `_internal/`，也就是冻结后的 `sys._MEIPASS`——
    `engine/workerd_client.find_workerd()` 的第一条查找路径。这里**缺了就直接
    失败**，不像 runtime 那样可选：回退到 Python 渲染池是**静默**的，做出来的
@@ -97,7 +106,7 @@ else:
     print(f"[magplot.spec] 未附带内置 runtime（{RUNTIME} 不存在）——"
           "渲染将回退到用户自己的 Python")
 
-# Rust supervisor（见文件头说明 4）。约定位置就是 cargo 自己的产出目录——
+# Rust supervisor（见文件头说明 5）。约定位置就是 cargo 自己的产出目录——
 # `workerd_client._dev_tree_candidates()` 认的也是它，别再造第二个落点。
 # 走 binaries 而不是 datas：PyInstaller 只对 binaries 保留可执行位。
 WORKERD_NAME = "magplot-workerd.exe" if sys.platform == "win32" else "magplot-workerd"
@@ -132,6 +141,9 @@ a = Analysis(
 )
 pyz = PYZ(a.pure)
 
+ICON = str(ROOT / "assets" / "icon" /
+           ("icon.icns" if sys.platform == "darwin" else "icon.ico"))
+
 exe = EXE(
     pyz,
     a.scripts,
@@ -143,12 +155,28 @@ exe = EXE(
     strip=False,
     upx=False,                      # UPX 压缩会让 Windows Defender 误报
     console=False,                  # 双击不弹黑窗；日志走数据目录里的 app.log
-    icon=str(ROOT / "assets" / "icon" /
-             ("icon.icns" if sys.platform == "darwin" else "icon.ico")),
+    icon=ICON,
+)
+
+# console 版命令行（见文件头说明 4）。名字**必须**与
+# engine/locate.CLI_NAME 一致：安装清单和已知安装位置两条发现链找的都是它。
+cli = EXE(
+    pyz,
+    a.scripts,
+    [],
+    exclude_binaries=True,
+    name="magplot-cli",
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=False,
+    console=True,                   # 这一行就是它存在的全部理由
+    icon=ICON,
 )
 
 coll = COLLECT(
     exe,
+    cli,
     a.binaries,
     a.datas,
     strip=False,

@@ -101,6 +101,41 @@ tag 与 `__version__` 对不上时 `build` job 直接失败，不会发出错版
 
 `docs/release-notes/v0.1.1.md` 是范例。
 
+## Codex 插件的更新提醒
+
+插件（`codex-plugin/`）随 Magplot 一起发。装了它的用户**不会自动收到更新**——
+Codex 不管这件事，所以插件自己每 24 小时查一次清单，有新版就在交接结果里
+附一句提醒（只提醒，不下载、不安装）。
+
+发版时这一步是自动的（`release.yml` 的「生成 Codex 插件清单与安装包」），
+产出两份挂到 Release：
+
+* `codex-plugin.json` —— 版本清单。**文件名不能改**：插件拉的是
+  `releases/latest/download/codex-plugin.json`（`update_check.DEFAULT_URL`）。
+* `codex-plugin-<版本>.zip` —— 插件安装包，清单的 `download_url` 指向它。
+
+要手动做一次（或者本地看看长什么样）：
+
+```bash
+python scripts/make_plugin_manifest.py --tag v0.7.1 \
+  --out out/codex-plugin.json --zip out/codex-plugin-0.7.1.zip
+```
+
+**发插件新版的完整流程**：
+
+1. 改 `codex-plugin/.codex-plugin/plugin.json` 的 `version`
+   （版本号只有这一处；`tests/test_codex_plugin.py` 盯着它与 `magplot.__version__` 一致）；
+2. 正常打 tag 发版——上面那步会自动生成清单与 zip；
+3. 用户下次调用插件时看到提醒，执行
+   `codex plugin marketplace upgrade magplot` 并重载 Codex。
+
+改 `min_magplot_version`（`scripts/make_plugin_manifest.py` 里的常量）之前想清楚：
+那个值会让本机 Magplot 更老的用户看到「去升级 Magplot」的提示。当前是 `0.7.0`
+——第一个带 `magplot open` 的版本，没有它交接根本无从谈起。
+
+排障与用户侧开关（`MAGPLOT_UPDATE_URL` / `MAGPLOT_DISABLE_UPDATE_CHECK`）见
+`docs/handoff-protocol.md`。
+
 ## 本地自检
 
 上传不可撤销，本地先过一遍：
