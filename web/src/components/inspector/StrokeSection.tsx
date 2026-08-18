@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next'
+import { msg, t as translate, type UiMessage } from '@/i18n'
 import { updateObjects } from '@/store/actions'
 import type { ArrowHeadType, ArrowObject, DashStyle, ShapeObject } from '@/types/document'
 import { arrowHeads } from '@/types/document'
@@ -7,18 +9,15 @@ import { ColorField, NumberField } from '../ui/Input'
 import { Segmented } from '../ui/Segmented'
 import { shared } from './common'
 
-const HEAD_TYPES: { value: ArrowHeadType; label: string }[] = [
-  { value: 'none', label: '无' },
-  { value: 'triangle', label: '三角' },
-  { value: 'open', label: '开口' },
-  { value: 'bar', label: '短线' },
-]
+/** 本组文案 inspector:stroke.*，历史标签 inspector:history.* */
+const sk = (key: string) => translate(`stroke.${key}`, { ns: 'inspector' })
+const hist = (key: string): UiMessage => msg(`history.${key}`, undefined, 'inspector')
 
-const DASHES: { value: DashStyle; label: string }[] = [
-  { value: 'solid', label: '实线' },
-  { value: 'dashed', label: '虚线' },
-  { value: 'dotted', label: '点线' },
-]
+const HEAD_VALUES: ArrowHeadType[] = ['none', 'triangle', 'open', 'bar']
+const DASH_VALUES: DashStyle[] = ['solid', 'dashed', 'dotted']
+
+const headItems = () => HEAD_VALUES.map((value) => ({ value, label: sk(`head.${value}`) }))
+const dashItems = () => DASH_VALUES.map((value) => ({ value, label: sk(`dashStyle.${value}`) }))
 
 /** 写新端型时同步维护旧 head 字段（旧版本读档 / 旧后端导出仍有合理行为） */
 function syncLegacyHead(o: ArrowObject): void {
@@ -27,16 +26,17 @@ function syncLegacyHead(o: ArrowObject): void {
 }
 
 export function ArrowSection({ objs }: { objs: ArrowObject[] }) {
+  useTranslation('inspector')
   const ids = objs.map((o) => o.id)
-  const patch = (label: string, fn: (o: ArrowObject) => void) =>
+  const patch = (label: UiMessage, fn: (o: ArrowObject) => void) =>
     updateObjects(ids, label, (o) => {
       if (o.type === 'arrow') fn(o)
     })
 
   return (
-    <Section title="箭头">
+    <Section title={sk('arrowTitle')}>
       <div className="flex flex-col gap-1.5">
-        <Row label="线宽">
+        <Row label={sk('lineWidth')}>
           <NumberField
             value={shared(objs, (o) => (o as ArrowObject).strokePt) ?? 1}
             mixed={shared(objs, (o) => (o as ArrowObject).strokePt) === undefined}
@@ -45,50 +45,50 @@ export function ArrowSection({ objs }: { objs: ArrowObject[] }) {
             max={20}
             precision={2}
             suffix="pt"
-            onChange={(v) => patch('修改线宽', (o) => (o.strokePt = v))}
+            onChange={(v) => patch(hist('setStrokeWidth'), (o) => (o.strokePt = v))}
           />
         </Row>
-        <Row label="颜色">
+        <Row label={sk('color')}>
           <ColorField
             value={shared(objs, (o) => (o as ArrowObject).color) ?? '#1B1B18'}
-            onChange={(v) => patch('修改箭头颜色', (o) => (o.color = v))}
+            onChange={(v) => patch(hist('setArrowColor'), (o) => (o.color = v))}
           />
         </Row>
-        <Row label="终点">
+        <Row label={sk('end')}>
           <Segmented
             value={shared(objs, (o) => arrowHeads(o as ArrowObject).end) ?? null}
             onChange={(v) =>
-              patch('修改终点端型', (o) => {
+              patch(hist('setHeadEnd'), (o) => {
                 const prev = arrowHeads(o) // 先取旧值：设了新字段后旧 head 不再参与推导
                 o.headEnd = v
                 o.headStart = prev.start
                 syncLegacyHead(o)
               })
             }
-            items={HEAD_TYPES}
+            items={headItems()}
             className="w-full"
           />
         </Row>
-        <Row label="起点">
+        <Row label={sk('start')}>
           <Segmented
             value={shared(objs, (o) => arrowHeads(o as ArrowObject).start) ?? null}
             onChange={(v) =>
-              patch('修改起点端型', (o) => {
+              patch(hist('setHeadStart'), (o) => {
                 const prev = arrowHeads(o)
                 o.headStart = v
                 o.headEnd = prev.end
                 syncLegacyHead(o)
               })
             }
-            items={HEAD_TYPES}
+            items={headItems()}
             className="w-full"
           />
         </Row>
-        <Row label="线型">
+        <Row label={sk('dash')}>
           <Segmented
             value={shared(objs, (o) => (o as ArrowObject).dash ?? 'solid') ?? null}
-            onChange={(v) => patch('修改线型', (o) => (o.dash = v === 'solid' ? undefined : v))}
-            items={DASHES}
+            onChange={(v) => patch(hist('setDash'), (o) => (o.dash = v === 'solid' ? undefined : v))}
+            items={dashItems()}
             className="w-full"
           />
         </Row>
@@ -98,14 +98,14 @@ export function ArrowSection({ objs }: { objs: ArrowObject[] }) {
             size="sm"
             className="w-full"
             onClick={() =>
-              patch('反转箭头方向', (o) => {
+              patch(hist('reverseArrow'), (o) => {
                 const s = o.start
                 o.start = o.end
                 o.end = s
               })
             }
           >
-            反转方向
+            {sk('reverse')}
           </Button>
         </Row>
       </div>
@@ -114,21 +114,22 @@ export function ArrowSection({ objs }: { objs: ArrowObject[] }) {
 }
 
 export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
+  useTranslation('inspector')
   const ids = objs.map((o) => o.id)
   // line 只有描边；brace 只描边不填充
   const hasFillable = objs.some((o) => o.shape !== 'line' && o.shape !== 'brace')
   const allRect = objs.every((o) => o.shape === 'rect')
   const allPolygon = objs.every((o) => o.shape === 'polygon')
   const fill = shared(objs, (o) => (o as ShapeObject).fill)
-  const patch = (label: string, fn: (o: ShapeObject) => void) =>
+  const patch = (label: UiMessage, fn: (o: ShapeObject) => void) =>
     updateObjects(ids, label, (o) => {
       if (o.type === 'shape') fn(o)
     })
 
   return (
-    <Section title="形状">
+    <Section title={sk('shapeTitle')}>
       <div className="flex flex-col gap-1.5">
-        <Row label="线宽">
+        <Row label={sk('lineWidth')}>
           <NumberField
             value={shared(objs, (o) => (o as ShapeObject).strokePt) ?? 1}
             mixed={shared(objs, (o) => (o as ShapeObject).strokePt) === undefined}
@@ -137,25 +138,25 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
             max={20}
             precision={2}
             suffix="pt"
-            onChange={(v) => patch('修改线宽', (o) => (o.strokePt = v))}
+            onChange={(v) => patch(hist('setStrokeWidth'), (o) => (o.strokePt = v))}
           />
         </Row>
-        <Row label="描边">
+        <Row label={sk('strokeColor')}>
           <ColorField
             value={shared(objs, (o) => (o as ShapeObject).color) ?? '#1B1B18'}
-            onChange={(v) => patch('修改描边颜色', (o) => (o.color = v))}
+            onChange={(v) => patch(hist('setStrokeColor'), (o) => (o.color = v))}
           />
         </Row>
-        <Row label="线型">
+        <Row label={sk('dash')}>
           <Segmented
             value={shared(objs, (o) => (o as ShapeObject).dash ?? 'solid') ?? null}
-            onChange={(v) => patch('修改线型', (o) => (o.dash = v === 'solid' ? undefined : v))}
-            items={DASHES}
+            onChange={(v) => patch(hist('setDash'), (o) => (o.dash = v === 'solid' ? undefined : v))}
+            items={dashItems()}
             className="w-full"
           />
         </Row>
         {allRect && (
-          <Row label="圆角">
+          <Row label={sk('cornerRadius')}>
             <NumberField
               value={shared(objs, (o) => (o as ShapeObject).cornerRadius ?? 0) ?? 0}
               step={0.5}
@@ -164,7 +165,7 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
               precision={1}
               suffix="mm"
               onChange={(v) =>
-                patch('修改圆角', (o) => {
+                patch(hist('setCornerRadius'), (o) => {
                   if (v > 0) o.cornerRadius = v
                   else delete o.cornerRadius
                 })
@@ -173,27 +174,30 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
           </Row>
         )}
         {allPolygon && (
-          <Row label="边数">
+          <Row label={sk('sides')}>
             <NumberField
               value={shared(objs, (o) => (o as ShapeObject).sides ?? 6) ?? 6}
               step={1}
               min={3}
               max={12}
-              onChange={(v) => patch('修改边数', (o) => (o.sides = Math.round(v)))}
+              onChange={(v) => patch(hist('setSides'), (o) => (o.sides = Math.round(v)))}
             />
           </Row>
         )}
         {hasFillable && (
-          <Row label="填充">
+          <Row label={sk('fill')}>
             {fill ? (
               <>
-                <ColorField value={fill} onChange={(v) => patch('修改填充', (o) => (o.fill = v))} />
+                <ColorField
+                  value={fill}
+                  onChange={(v) => patch(hist('setFill'), (o) => (o.fill = v))}
+                />
                 <Button
                   size="icon"
-                  onClick={() => patch('清除填充', (o) => (o.fill = null))}
-                  aria-label="清除填充"
+                  onClick={() => patch(hist('clearFill'), (o) => (o.fill = null))}
+                  aria-label={sk('clearFill')}
                 >
-                  <span className="text-xs text-ink-3">无</span>
+                  <span className="text-xs text-ink-3">{sk('none')}</span>
                 </Button>
               </>
             ) : (
@@ -201,15 +205,15 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
                 variant="outline"
                 size="sm"
                 className="w-full"
-                onClick={() => patch('添加填充', (o) => (o.fill = '#FFFFFF'))}
+                onClick={() => patch(hist('addFill'), (o) => (o.fill = '#FFFFFF'))}
               >
-                添加填充
+                {sk('addFill')}
               </Button>
             )}
           </Row>
         )}
         {hasFillable && fill && (
-          <Row label="不透明度">
+          <Row label={sk('fillOpacity')}>
             <NumberField
               value={Math.round(((shared(objs, (o) => (o as ShapeObject).fillOpacity ?? 1) ?? 1) as number) * 100)}
               step={5}
@@ -217,7 +221,7 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
               max={100}
               suffix="%"
               onChange={(v) =>
-                patch('修改填充不透明度', (o) => {
+                patch(hist('setFillOpacity'), (o) => {
                   const f = Math.max(0, Math.min(1, v / 100))
                   if (f < 1) o.fillOpacity = f
                   else delete o.fillOpacity

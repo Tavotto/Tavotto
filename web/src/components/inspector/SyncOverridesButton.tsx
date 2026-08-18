@@ -1,5 +1,8 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { ArrowLeftRight, TriangleAlert } from 'lucide-react'
+import { msg, t as translate } from '@/i18n'
+import { listJoin } from '@/i18n/format'
 import {
   syncOverrides,
   updateSourceFiles,
@@ -16,6 +19,10 @@ import type { PanelObject } from '@/types/document'
 import { Button } from '../ui/Button'
 import { Dialog } from '../ui/Dialog'
 import { Popover } from '../ui/Popover'
+
+/** 本组文案在 inspector:sync.* 下 */
+const sy = (key: string, values?: Record<string, unknown>) =>
+  translate(`sync.${key}`, { ns: 'inspector', ...(values ?? {}) })
 
 /** 只留引擎认识的三个字段：clamped 是给用户看的提示，不该写进文档 */
 const clean = (p: SyncPatch) => ({ gid: p.gid, prop: p.prop, value: p.value })
@@ -39,6 +46,7 @@ function siblingGroups(panel: PanelObject, all: PanelInfo[]) {
 }
 
 export function SyncOverridesButton({ panel }: { panel: PanelObject }) {
+  useTranslation('inspector')
   const [open, setOpen] = useState(false)
   const [target, setTarget] = useState<PanelInfo | null>(null)
   const [result, setResult] = useState<SyncResult | null>(null)
@@ -80,21 +88,21 @@ export function SyncOverridesButton({ panel }: { panel: PanelObject }) {
             disabled={disabled}
             title={
               !panel.overrides.length
-                ? '当前面板还没有图内修改'
+                ? sy('noOverrides')
                 : !siblingCount
-                  ? '这个脚本只产出这一张图'
-                  : '把当前图内修改映射到同一脚本的其它图（组图↔子图双向都可以，从哪张发起就是哪个方向）'
+                  ? sy('onlyOne')
+                  : sy('tip')
             }
           >
             <ArrowLeftRight size={13} />
-            同步修改到…
+            {sy('trigger')}
           </Button>
         }
       >
         <div className="flex max-h-[50vh] flex-col gap-0.5 overflow-y-auto">
           {kin.length > 0 && (
             <>
-              <p className="px-1 pb-0.5 text-xs text-ink-3">同一组图</p>
+              <p className="px-1 pb-0.5 text-xs text-ink-3">{sy('kinGroup')}</p>
               {kin.map((s) => (
                 <SiblingItem key={s.id} info={s} onPick={pick} />
               ))}
@@ -103,7 +111,7 @@ export function SyncOverridesButton({ panel }: { panel: PanelObject }) {
           {others.length > 0 && (
             <>
               <p className="px-1 pb-0.5 pt-1 text-xs text-ink-3">
-                同脚本的其它图（{others.length}）
+                {sy('othersGroup', { count: others.length })}
               </p>
               {others.map((s) => (
                 <SiblingItem key={s.id} info={s} onPick={pick} />
@@ -144,6 +152,7 @@ function ResultDialog({
   error: string | null
   onClose: () => void
 }) {
+  useTranslation('inspector')
   const [applying, setApplying] = useState(false)
   const [applyError, setApplyError] = useState<string | null>(null)
   const [done, setDone] = useState<string | null>(null)
@@ -158,8 +167,16 @@ function ResultDialog({
 
   const applyToCanvas = () => {
     if (!onCanvas) return
-    setOverrides(onCanvas.id, `同步自 ${source.name ?? '源图'}`, mapped.map(clean))
-    useUiStore.getState().setStatus(`已把 ${mapped.length} 项修改同步到画布上的 ${onCanvas.name}`)
+    setOverrides(
+      onCanvas.id,
+      msg('sync.historyLabel', { name: source.name ?? sy('sourceFallback') }, 'inspector'),
+      mapped.map(clean),
+    )
+    useUiStore
+      .getState()
+      .setStatus(
+        msg('sync.syncedToCanvas', { count: mapped.length, name: onCanvas.name }, 'inspector'),
+      )
     onClose()
   }
 
@@ -180,8 +197,10 @@ function ResultDialog({
       const res = await updateSourceFiles(target.id, merged, undefined, target.mtime)
       await useAssetStore.getState().load()
       useRenderStore.getState().markStale([target.id])
-      setDone(`已更新 ${res.updated.join('、')}（备份在 ${res.backup_dir}）`)
-      useUiStore.getState().setStatus(`已同步并写回原始文件：${target.name}`)
+      setDone(sy('updatedFiles', { files: listJoin(res.updated), dir: res.backup_dir }))
+      useUiStore
+        .getState()
+        .setStatus(msg('sync.writtenBack', { name: target.name }, 'inspector'))
     } catch (e) {
       setApplyError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -193,23 +212,23 @@ function ResultDialog({
     <Dialog
       open={!!target}
       onOpenChange={(v) => !v && onClose()}
-      title="同步修改"
+      title={sy('title')}
       description={target ? `${source.name ?? source.fileId} → ${target.name}` : ''}
       size="md"
       busy={applying}
       footer={
         done ? (
           <Button variant="outline" size="md" onClick={onClose}>
-            完成
+            {sy('done')}
           </Button>
         ) : (
           <>
             <Button variant="outline" size="md" disabled={applying} onClick={onClose}>
-              取消
+              {translate('actions.cancel')}
             </Button>
             {onCanvas ? (
               <Button variant="primary" size="md" disabled={!mapped.length} onClick={applyToCanvas}>
-                合并到画布上的面板
+                {sy('mergeToCanvas')}
               </Button>
             ) : (
               <Button
@@ -217,56 +236,58 @@ function ResultDialog({
                 size="md"
                 disabled={!mapped.length}
                 loading={applying}
-                loadingLabel="正在重出…"
+                loadingLabel={sy('rewriting')}
                 onClick={applyToFile}
               >
-                同步并写回原始文件
+                {sy('syncAndWriteBack')}
               </Button>
             )}
           </>
         )
       }
     >
-      {busy && <p className="text-xs text-ink-3">正在计算映射…</p>}
-      {error && <p className="text-xs text-danger">同步失败：{error}</p>}
+      {busy && <p className="text-xs text-ink-3">{sy('computing')}</p>}
+      {error && <p className="text-xs text-danger">{sy('failed', { error })}</p>}
 
       {result && !busy && (
         <div className="flex flex-col gap-2">
           <ul className="flex flex-col gap-1 rounded-sm border border-border bg-surface-2 p-2 text-xs">
             <li className="text-ink">
-              可映射 <span className="font-mono">{mapped.length}</span> 项
+              {sy('mappedCount')} <span className="font-mono">{mapped.length}</span>{' '}
+              {sy('itemsSuffix')}
               {clamped > 0 && (
-                <span className="text-ink-2">（其中 {clamped} 项位置已按目标版面折算，可能需微调）</span>
+                <span className="text-ink-2">{sy('clampedNote', { count: clamped })}</span>
               )}
             </li>
             {result.skipped.length > 0 && (
               <li className="text-ink-2">
-                跳过 <span className="font-mono">{result.skipped.length}</span> 项：版面几何（子图占比 / 图幅）不可跨图搬运
+                {sy('skippedPrefix')} <span className="font-mono">{result.skipped.length}</span>{' '}
+                {sy('skippedSuffix')}
               </li>
             )}
             {result.unmatched.length > 0 && (
               <li className="text-ink-2">
-                无对应 <span className="font-mono">{result.unmatched.length}</span> 项：目标图里找不到这些元素
+                {sy('unmatchedPrefix')} <span className="font-mono">{result.unmatched.length}</span>{' '}
+                {sy('unmatchedSuffix')}
               </li>
             )}
           </ul>
 
           {!mapped.length && (
-            <p className="text-xs text-ink-3">没有可同步的项，取消即可。</p>
+            <p className="text-xs text-ink-3">{sy('nothingToSync')}</p>
           )}
 
           {!!mapped.length && !onCanvas && !done && (
             <div className="flex items-start gap-1.5 rounded-sm border border-border bg-surface-2 p-2">
               <TriangleAlert size={12} className="mt-0.5 shrink-0 text-danger" />
-              <p className="text-xs leading-relaxed text-ink-2">
-                目标图不在画布上，只能直接写回它的原图文件（会与它已有的基线合并，自动备份）。
-                想先看效果的话，把它拖进画布再同步。
-              </p>
+              <p className="text-xs leading-relaxed text-ink-2">{sy('notOnCanvas')}</p>
             </div>
           )}
 
           {done && <p className="text-xs text-ink-2">{done}</p>}
-          {applyError && <p className="text-xs text-danger">更新失败：{applyError}</p>}
+          {applyError && (
+            <p className="text-xs text-danger">{sy('updateFailed', { error: applyError })}</p>
+          )}
         </div>
       )}
     </Dialog>

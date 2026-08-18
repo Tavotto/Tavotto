@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   AlignCenterHorizontal,
   AlignCenterVertical,
@@ -20,9 +21,11 @@ import {
   Ungroup,
 } from 'lucide-react'
 import type { AlignMode } from '@/lib/geometry'
+import { t as translate } from '@/i18n'
 import { MOD } from '@/lib/utils'
 import {
-  ALIGN_REF_LABEL,
+  alignModeLabel,
+  alignRefLabel,
   alignSelectedTo,
   changeZOrder,
   copySelectionStyle,
@@ -51,47 +54,56 @@ import { Toggle } from '../ui/Toggle'
 import { Tip } from '../ui/Tooltip'
 import { useSelectedObjects } from './common'
 
-const ALIGN: { mode: AlignMode; icon: typeof AlignStartVertical; tip: string }[] = [
-  { mode: 'left', icon: AlignStartVertical, tip: '左对齐' },
-  { mode: 'hcenter', icon: AlignCenterVertical, tip: '水平居中' },
-  { mode: 'right', icon: AlignEndVertical, tip: '右对齐' },
-  { mode: 'top', icon: AlignStartHorizontal, tip: '顶对齐' },
-  { mode: 'vcenter', icon: AlignCenterHorizontal, tip: '垂直居中' },
-  { mode: 'bottom', icon: AlignEndHorizontal, tip: '底对齐' },
+/** 本组的文案在 inspector:arrange.* 下；对齐动作名复用 inspector:alignMode.* */
+const ar = (key: string, values?: Record<string, unknown>) =>
+  translate(`arrange.${key}`, { ns: 'inspector', ...(values ?? {}) })
+
+const ALIGN: { mode: AlignMode; icon: typeof AlignStartVertical }[] = [
+  { mode: 'left', icon: AlignStartVertical },
+  { mode: 'hcenter', icon: AlignCenterVertical },
+  { mode: 'right', icon: AlignEndVertical },
+  { mode: 'top', icon: AlignStartHorizontal },
+  { mode: 'vcenter', icon: AlignCenterHorizontal },
+  { mode: 'bottom', icon: AlignEndHorizontal },
 ]
 
-const DISTRIBUTE: { mode: AlignMode; icon: typeof MoveUp; tip: string; min: number }[] = [
-  { mode: 'hdist', icon: AlignHorizontalDistributeCenter, tip: '水平等距分布（≥3 个对象）', min: 3 },
-  { mode: 'vdist', icon: AlignVerticalDistributeCenter, tip: '垂直等距分布（≥3 个对象）', min: 3 },
-  { mode: 'samew', icon: MoveHorizontal, tip: '等宽', min: 2 },
-  { mode: 'sameh', icon: MoveVertical, tip: '等高', min: 2 },
+/** 分布/统一尺寸：hdist/vdist 有带条件的长提示，等宽等高用通用短名 */
+const DISTRIBUTE: { mode: AlignMode; icon: typeof MoveUp; tipKey?: string; min: number }[] = [
+  { mode: 'hdist', icon: AlignHorizontalDistributeCenter, tipKey: 'hdist', min: 3 },
+  { mode: 'vdist', icon: AlignVerticalDistributeCenter, tipKey: 'vdist', min: 3 },
+  { mode: 'samew', icon: MoveHorizontal, min: 2 },
+  { mode: 'sameh', icon: MoveVertical, min: 2 },
 ]
 
-const ZORDER: { move: ZMove; icon: typeof MoveUp; tip: string; shortcut?: string }[] = [
-  { move: 'top', icon: ArrowUpToLine, tip: '置于顶层', shortcut: `⇧${MOD}]` },
-  { move: 'up', icon: MoveUp, tip: '上移一层', shortcut: `${MOD}]` },
-  { move: 'down', icon: MoveDown, tip: '下移一层', shortcut: `${MOD}[` },
-  { move: 'bottom', icon: ArrowDownToLine, tip: '置于底层', shortcut: `⇧${MOD}[` },
+const ZORDER: { move: ZMove; icon: typeof MoveUp; key: string; shortcut?: string }[] = [
+  { move: 'top', icon: ArrowUpToLine, key: 'zTop', shortcut: `⇧${MOD}]` },
+  { move: 'up', icon: MoveUp, key: 'zUp', shortcut: `${MOD}]` },
+  { move: 'down', icon: MoveDown, key: 'zDown', shortcut: `${MOD}[` },
+  { move: 'bottom', icon: ArrowDownToLine, key: 'zBottom', shortcut: `⇧${MOD}[` },
 ]
 
 const REFS: AlignRef[] = ['selection', 'page', 'primary']
 
 /** 六向对齐，参照整个画布 —— 单选时唯一说得通的对齐 */
 export function AlignToCanvasRow() {
+  useTranslation('inspector')
   return (
     <div className="grid grid-cols-6 gap-0.5">
-      {ALIGN.map(({ mode, icon: Icon, tip }) => (
-        <Tip key={mode} label={`${tip}（相对画布）`} side="left">
+      {ALIGN.map(({ mode, icon: Icon }) => {
+        const label = ar('alignRelativeCanvas', { mode: alignModeLabel(mode) })
+        return (
+        <Tip key={mode} label={label} side="left">
           <Button
             size="icon"
             className="w-full"
             onClick={() => alignSelectedTo(mode, 'page')}
-            aria-label={`${tip}（相对画布）`}
+            aria-label={label}
           >
             <Icon size={14} />
           </Button>
         </Tip>
-      ))}
+        )
+      })}
     </div>
   )
 }
@@ -110,37 +122,42 @@ export function ArrangeSection({
   multi?: boolean
   zOnly?: boolean
 }) {
+  useTranslation('inspector')
   const [moreOpen, setMoreOpen] = useState(false)
   const zRow = (
-    <div role="toolbar" aria-label="层级" className="grid grid-cols-6 gap-0.5">
-      {ZORDER.map(({ move, icon: Icon, tip, shortcut }) => (
-        <Tip key={move} label={tip} shortcut={shortcut} side="left">
-          <Button size="icon" className="w-full" onClick={() => changeZOrder(move)} aria-label={tip}>
-            <Icon size={14} />
-          </Button>
-        </Tip>
-      ))}
+    <div role="toolbar" aria-label={ar('zorderLabel')} className="grid grid-cols-6 gap-0.5">
+      {ZORDER.map(({ move, icon: Icon, key, shortcut }) => {
+        const tip = ar(key)
+        return (
+          <Tip key={move} label={tip} shortcut={shortcut} side="left">
+            <Button
+              size="icon"
+              className="w-full"
+              onClick={() => changeZOrder(move)}
+              aria-label={tip}
+            >
+              <Icon size={14} />
+            </Button>
+          </Tip>
+        )
+      })}
     </div>
   )
 
   if (zOnly) {
-    return (
-      <Section title="层级">
-        {zRow}
-      </Section>
-    )
+    return <Section title={ar('zorderLabel')}>{zRow}</Section>
   }
 
   return (
     <>
-      <Section title={multi ? `排列 · 已选 ${count} 个` : '排列'}>
+      <Section title={multi ? ar('titleMulti', { count }) : ar('title')}>
         <div className="flex flex-col gap-1.5">
           {multi ? <MultiAlignRows count={count} /> : <AlignToCanvasRow />}
           {zRow}
         </div>
       </Section>
       {multi && (
-        <Disclosure title="更多排列" open={moreOpen} onToggle={() => setMoreOpen((v) => !v)}>
+        <Disclosure title={ar('more')} open={moreOpen} onToggle={() => setMoreOpen((v) => !v)}>
           <MultiArrangeExtras />
         </Disclosure>
       )}
@@ -152,16 +169,11 @@ export function ArrangeSection({
 let alignRefState: AlignRef = 'selection'
 
 function MultiAlignRows({ count }: { count: number }) {
+  useTranslation('inspector')
   const [ref, setRefLocal] = useState<AlignRef>(alignRefState)
   const setRef = (r: AlignRef) => {
     alignRefState = r
     setRefLocal(r)
-  }
-
-  const refTip: Record<AlignRef, string> = {
-    selection: '以选区的包围盒为基准',
-    page: '以整个画布为基准',
-    primary: '以最后选中的那个对象为基准，它自己不动',
   }
 
   return (
@@ -171,48 +183,71 @@ function MultiAlignRows({ count }: { count: number }) {
         tone="quiet"
         value={ref}
         onChange={setRef}
-        items={REFS.map((r) => ({ value: r, label: ALIGN_REF_LABEL[r], tip: refTip[r] }))}
+        items={REFS.map((r) => ({
+          value: r,
+          label: alignRefLabel(r),
+          tip: ar(`refTip.${r}`),
+        }))}
       />
 
-      <div role="toolbar" aria-label="对齐" className="grid grid-cols-6 gap-0.5">
-        {ALIGN.map(({ mode, icon: Icon, tip }) => (
-          <Tip key={mode} label={`${tip}（${ALIGN_REF_LABEL[ref]}）`} side="left">
-            <Button
-              size="icon"
-              className="w-full"
-              onClick={() => alignSelectedTo(mode, ref)}
-              aria-label={tip}
+      <div role="toolbar" aria-label={ar('alignToolbar')} className="grid grid-cols-6 gap-0.5">
+        {ALIGN.map(({ mode, icon: Icon }) => {
+          const tip = alignModeLabel(mode)
+          return (
+            <Tip
+              key={mode}
+              label={ar('alignRelativeRef', { mode: tip, ref: alignRefLabel(ref) })}
+              side="left"
             >
-              <Icon size={14} />
-            </Button>
-          </Tip>
-        ))}
+              <Button
+                size="icon"
+                className="w-full"
+                onClick={() => alignSelectedTo(mode, ref)}
+                aria-label={tip}
+              >
+                <Icon size={14} />
+              </Button>
+            </Tip>
+          )
+        })}
       </div>
 
-      <div role="toolbar" aria-label="分布与统一尺寸" className="grid grid-cols-6 gap-0.5">
-        {DISTRIBUTE.map(({ mode, icon: Icon, tip, min }) => (
-          <Tip
-            key={mode}
-            label={mode === 'samew' || mode === 'sameh' ? `${tip}（${ALIGN_REF_LABEL[ref]}）` : tip}
-            side="left"
-          >
-            <Button
-              size="icon"
-              className="w-full"
-              disabled={count < min}
-              onClick={() => alignSelectedTo(mode, ref)}
-              aria-label={tip}
+      <div
+        role="toolbar"
+        aria-label={ar('distributeToolbar')}
+        className="grid grid-cols-6 gap-0.5"
+      >
+        {DISTRIBUTE.map(({ mode, icon: Icon, tipKey, min }) => {
+          const tip = tipKey ? ar(tipKey) : alignModeLabel(mode)
+          return (
+            <Tip
+              key={mode}
+              label={
+                mode === 'samew' || mode === 'sameh'
+                  ? ar('alignRelativeRef', { mode: tip, ref: alignRefLabel(ref) })
+                  : tip
+              }
+              side="left"
             >
-              <Icon size={14} />
-            </Button>
-          </Tip>
-        ))}
+              <Button
+                size="icon"
+                className="w-full"
+                disabled={count < min}
+                onClick={() => alignSelectedTo(mode, ref)}
+                aria-label={tip}
+              >
+                <Icon size={14} />
+              </Button>
+            </Tip>
+          )
+        })}
       </div>
     </>
   )
 }
 
 function MultiArrangeExtras() {
+  useTranslation('inspector')
   const objs = useSelectedObjects()
   // 样式剪贴板不在 store 里（不属于文档），复制后自己触发一次重渲染
   const [, bump] = useState(0)
@@ -221,7 +256,7 @@ function MultiArrangeExtras() {
 
   return (
     <div className="flex flex-col gap-1.5">
-      <Row label="间距">
+      <Row label={ar('spacing')}>
         <NumberField
           className="min-w-0 flex-1"
           prefix="H"
@@ -230,7 +265,7 @@ function MultiArrangeExtras() {
           precision={1}
           value={spacingOf(objs, 'x') ?? 0}
           mixed={spacingOf(objs, 'x') === undefined}
-          title="水平间距：按 X 排序后依次贴齐，第一个对象不动"
+          title={ar('spacingHTitle')}
           onChange={(v) => setSelectionSpacing('x', v)}
         />
         <NumberField
@@ -241,19 +276,19 @@ function MultiArrangeExtras() {
           precision={1}
           value={spacingOf(objs, 'y') ?? 0}
           mixed={spacingOf(objs, 'y') === undefined}
-          title="垂直间距：按 Y 排序后依次贴齐，第一个对象不动"
+          title={ar('spacingVTitle')}
           onChange={(v) => setSelectionSpacing('y', v)}
         />
       </Row>
 
       <div className="flex gap-1.5">
-        <Tip label="成组后点其中任意一个都会整组选中、整组移动">
+        <Tip label={ar('groupTip')}>
           <Button variant="outline" size="sm" className="flex-1" onClick={groupSelected}>
             <Group size={13} />
-            成组
+            {ar('group')}
           </Button>
         </Tip>
-        <Tip label="解散选区里的组">
+        <Tip label={ar('ungroupTip')}>
           <Button
             variant="outline"
             size="sm"
@@ -262,7 +297,7 @@ function MultiArrangeExtras() {
             onClick={ungroupSelected}
           >
             <Ungroup size={13} />
-            取消成组
+            {ar('ungroup')}
           </Button>
         </Tip>
       </div>
@@ -270,7 +305,7 @@ function MultiArrangeExtras() {
       <LayoutGroupControls />
 
       <div className="flex gap-1.5">
-        <Tip label="从最后选中的对象取样式：面板取裁剪 / 旋转 / 不透明度，文字取字号 / 字重 / 颜色 / 对齐">
+        <Tip label={ar('copyStyleTip')}>
           <Button
             variant="outline"
             size="sm"
@@ -281,14 +316,14 @@ function MultiArrangeExtras() {
             }}
           >
             <Clipboard size={13} />
-            复制样式
+            {ar('copyStyle')}
           </Button>
         </Tip>
         <Tip
           label={
             clip
-              ? `粘贴到选区里的${clip === 'panel' ? '面板' : '文字'}`
-              : '还没有复制过样式'
+              ? ar('pasteStyleTip', { kind: translate(`objectType.${clip}`) })
+              : ar('pasteStyleEmpty')
           }
         >
           <Button
@@ -299,7 +334,7 @@ function MultiArrangeExtras() {
             onClick={pasteSelectionStyle}
           >
             <ClipboardPaste size={13} />
-            粘贴样式
+            {ar('pasteStyle')}
           </Button>
         </Tip>
       </div>
@@ -313,6 +348,7 @@ function MultiArrangeExtras() {
  * 成员可单独「固定位置」不随重排。
  */
 function LayoutGroupControls() {
+  useTranslation('inspector')
   const selIds = useSelectionStore((s) => s.ids)
   const group = useDocumentStore((s): LayoutGroup | null => {
     const gs = s.doc.layoutGroups
@@ -329,19 +365,14 @@ function LayoutGroupControls() {
   if (!group) {
     return (
       <div className="mt-0.5">
-        <Row label="布局组">
+        <Row label={ar('layoutGroup')}>
           <div className="flex min-w-0 flex-1 gap-1">
-            {(
-              [
-                ['row', '行'],
-                ['col', '列'],
-                ['grid', '网格'],
-              ] as const
-            ).map(([kind, label]) => (
-              <Tip
-                key={kind}
-                label={`把选区变成${label}布局：固定间距自动排列，替换素材后自动重排（可撤销）`}
-              >
+            {(['row', 'col', 'grid'] as const).map((kind) => {
+              const label = ar(
+                kind === 'row' ? 'layoutRow' : kind === 'col' ? 'layoutCol' : 'layoutGrid',
+              )
+              return (
+              <Tip key={kind} label={ar('createLayoutTip', { kind: label })}>
                 <Button
                   variant="outline"
                   size="sm"
@@ -351,7 +382,8 @@ function LayoutGroupControls() {
                   {label}
                 </Button>
               </Tip>
-            ))}
+              )
+            })}
           </div>
         </Row>
       </div>
@@ -360,19 +392,19 @@ function LayoutGroupControls() {
 
   return (
     <div className="mt-0.5 flex flex-col gap-1.5 rounded-sm border border-border p-1.5">
-      <Row label="布局">
+      <Row label={ar('layout')}>
         <Segmented
           className="w-full"
           value={group.kind}
           onChange={(kind) => updateLayoutGroup(group.id, { kind })}
           items={[
-            { value: 'row', label: '行' },
-            { value: 'col', label: '列' },
-            { value: 'grid', label: '网格' },
+            { value: 'row', label: ar('layoutRow') },
+            { value: 'col', label: ar('layoutCol') },
+            { value: 'grid', label: ar('layoutGrid') },
           ]}
         />
       </Row>
-      <Row label="间距">
+      <Row label={ar('spacing')}>
         <NumberField
           value={group.gap}
           min={0}
@@ -383,7 +415,7 @@ function LayoutGroupControls() {
         />
         {group.kind === 'grid' && (
           <NumberField
-            prefix="列"
+            prefix={ar('columns')}
             value={group.cols ?? 2}
             min={1}
             max={8}
@@ -392,20 +424,20 @@ function LayoutGroupControls() {
           />
         )}
       </Row>
-      <Row label="对齐">
+      <Row label={ar('align')}>
         <Segmented
           className="w-full"
           tone="quiet"
           value={group.align}
           onChange={(align) => updateLayoutGroup(group.id, { align })}
           items={[
-            { value: 'start', label: group.kind === 'col' ? '左' : '上' },
-            { value: 'center', label: '中' },
-            { value: 'end', label: group.kind === 'col' ? '右' : '下' },
+            { value: 'start', label: ar(group.kind === 'col' ? 'alignStartCol' : 'alignStartRow') },
+            { value: 'center', label: ar('alignCenter') },
+            { value: 'end', label: ar(group.kind === 'col' ? 'alignEndCol' : 'alignEndRow') },
           ]}
         />
       </Row>
-      <Row label="统一">
+      <Row label={ar('uniform')}>
         <Segmented
           className="w-full"
           tone="quiet"
@@ -414,34 +446,34 @@ function LayoutGroupControls() {
             updateLayoutGroup(group.id, { uniform: v === 'none' ? null : (v as 'width' | 'height') })
           }
           items={[
-            { value: 'none', label: '不动' },
-            { value: 'width', label: '等宽' },
-            { value: 'height', label: '等高' },
+            { value: 'none', label: ar('uniformNone') },
+            { value: 'width', label: ar('uniformWidth') },
+            { value: 'height', label: ar('uniformHeight') },
           ]}
         />
       </Row>
       <label className="flex items-center gap-1.5 text-xs text-ink-2">
         <Toggle checked={anyPinned} onChange={() => toggleLayoutPinned(selIds)} />
-        固定选中成员（不随重排）
+        {ar('pinMembers')}
       </label>
       <div className="flex gap-1.5">
         <Button
           variant="outline"
           size="sm"
           className="flex-1"
-          title="按当前约束把全部成员归位"
+          title={ar('reflowTitle')}
           onClick={() => reflowLayoutGroup(group.id)}
         >
-          重新排列
+          {ar('reflow')}
         </Button>
         <Button
           variant="outline"
           size="sm"
           className="flex-1"
-          title="移除布局约束与成组，对象位置保持现状"
+          title={ar('dissolveTitle')}
           onClick={() => dissolveLayoutGroup(group.id)}
         >
-          解散布局
+          {ar('dissolve')}
         </Button>
       </div>
     </div>

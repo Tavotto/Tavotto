@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
+import { Trans, useTranslation } from 'react-i18next'
 import { History, RotateCcw, TriangleAlert } from 'lucide-react'
+import { msg, t as translate } from '@/i18n'
 import {
   fetchHistory,
   historyPreviewUrl,
@@ -22,7 +24,12 @@ const ORIGIN: HistoryVersion = { n: -1, ts: '', count: 0, patches: [] }
 
 const shortTs = (ts: string) => ts.replace(/^\d{4}-/, '').replace(/:\d{2}$/, '')
 
+/** 本组文案在 inspector:versionHistory.* 下 */
+const vh = (key: string, values?: Record<string, unknown>) =>
+  translate(`versionHistory.${key}`, { ns: 'inspector', ...(values ?? {}) })
+
 export function HistoryPanel({ panel }: { panel: PanelObject }) {
+  useTranslation('inspector')
   const [open, setOpen] = useState(false)
 
   return (
@@ -34,7 +41,7 @@ export function HistoryPanel({ panel }: { panel: PanelObject }) {
       trigger={
         <Button variant="outline" size="sm" className="flex-1">
           <History size={13} />
-          历史
+          {vh('trigger')}
         </Button>
       }
     >
@@ -44,6 +51,7 @@ export function HistoryPanel({ panel }: { panel: PanelObject }) {
 }
 
 function HistoryBody({ panel, onDone }: { panel: PanelObject; onDone: () => void }) {
+  useTranslation('inspector')
   const [versions, setVersions] = useState<HistoryVersion[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [confirming, setConfirming] = useState<HistoryVersion | null>(null)
@@ -58,15 +66,13 @@ function HistoryBody({ panel, onDone }: { panel: PanelObject; onDone: () => void
     }
   }, [panel.fileId])
 
-  if (error) return <p className="text-xs text-danger">读取历史失败：{error}</p>
-  if (!versions) return <p className="text-xs text-ink-3">正在读取历史…</p>
+  if (error) return <p className="text-xs text-danger">{vh('loadFailed', { error })}</p>
+  if (!versions) return <p className="text-xs text-ink-3">{vh('loading')}</p>
   if (!versions.length) {
     return (
       <div className="flex flex-col gap-1">
-        <p className="text-xs text-ink-2">还没有写回原始文件的记录</p>
-        <p className="text-xs leading-relaxed text-ink-3">
-          用「写回原始文件」把图内修改写回文件后，这里会留下可回溯的足迹。
-        </p>
+        <p className="text-xs text-ink-2">{vh('emptyTitle')}</p>
+        <p className="text-xs leading-relaxed text-ink-3">{vh('emptyHint')}</p>
       </div>
     )
   }
@@ -110,6 +116,7 @@ function VersionRow({
   isCurrent: boolean
   onRestore: () => void
 }) {
+  useTranslation('inspector')
   const isOrigin = version.n < 0
   // 横向排：缩略图窄一点，四五个版本也能一屏看完
   return (
@@ -127,16 +134,16 @@ function VersionRow({
       />
       <div className="flex min-w-0 flex-1 flex-col justify-center gap-0.5">
         <p className={cn('truncate text-xs', isCurrent ? 'text-accent' : 'text-ink-2')}>
-          {isOrigin ? '脚本原始' : `${version.count} 项修改`}
-          {isCurrent && ' · 当前'}
+          {isOrigin ? vh('origin') : vh('editCount', { count: version.count })}
+          {isCurrent && vh('currentSuffix')}
         </p>
         {!isOrigin && version.ts && (
           <p className="truncate font-mono text-xs text-ink-3">{shortTs(version.ts)}</p>
         )}
         {!isCurrent && (
-          <Tip label="用这个版本重写原图文件" side="left">
+          <Tip label={vh('restoreTip')} side="left">
             <Button size="sm" className="-ml-1 self-start text-ink-2" onClick={onRestore}>
-              恢复
+              {vh('restore')}
             </Button>
           </Tip>
         )}
@@ -156,6 +163,7 @@ function RestoreDialog({
   onClose: () => void
   onDone: () => void
 }) {
+  const { t } = useTranslation('inspector')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -168,14 +176,14 @@ function RestoreDialog({
       const mtime = useAssetStore.getState().byId[panel.fileId]?.mtime
       const res = await restoreHistory(panel.fileId, version.n, mtime)
       // 文件、基线、当前面板的 overrides 三者对齐，否则下次进编辑态又会打架
-      updateObject<PanelObject>(panel.id, '恢复历史版本', (o) => {
+      updateObject<PanelObject>(panel.id, msg('history.restoreVersion', undefined, 'inspector'), (o) => {
         o.overrides = structuredClone(res.patches)
       })
       await useAssetStore.getState().load()
       useRenderStore.getState().markStale([panel.fileId])
       useUiStore
         .getState()
-        .setStatus(`已恢复到该版本并重写原图（备份在 ${res.backup_dir}）`)
+        .setStatus(msg('versionHistory.restored', { dir: res.backup_dir }, 'inspector'))
       onClose()
       onDone()
     } catch (e) {
@@ -189,24 +197,28 @@ function RestoreDialog({
     <Dialog
       open={!!version}
       onOpenChange={(v) => !v && onClose()}
-      title="恢复到该版本"
-      description={version?.n === -1 ? '脚本原始状态' : `${version?.count ?? 0} 项修改 · ${version?.ts ?? ''}`}
+      title={vh('restoreTitle')}
+      description={
+        version?.n === -1
+          ? vh('originDescription')
+          : vh('versionDescription', { count: version?.count ?? 0, ts: version?.ts ?? '' })
+      }
       size="md"
       busy={busy}
       footer={
         <>
           <Button variant="outline" size="md" disabled={busy} onClick={onClose}>
-            取消
+            {translate('actions.cancel')}
           </Button>
           <Button
             variant="primary"
             size="md"
             loading={busy}
-            loadingLabel="正在重写…"
+            loadingLabel={vh('rewriting')}
             onClick={run}
           >
             <RotateCcw size={14} />
-            确认恢复
+            {vh('confirmRestore')}
           </Button>
         </>
       }
@@ -215,10 +227,8 @@ function RestoreDialog({
         <div className="flex items-start gap-1.5 rounded-sm border border-border bg-surface-2 p-2">
           <TriangleAlert size={12} className="mt-0.5 shrink-0 text-danger" />
           <p className="text-xs leading-relaxed text-ink-2">
-            会用这个版本的修改重新写出原图文件（自动备份到 cache/original_backups）。
-            <span className="mt-1 block text-ink-3">
-              历史只前进不回卷：这次恢复会追加为一条新记录，随时可以再反悔。
-            </span>
+            {vh('warnBody')}
+            <span className="mt-1 block text-ink-3">{vh('warnForward')}</span>
           </p>
         </div>
 
@@ -226,13 +236,16 @@ function RestoreDialog({
           <div className="flex items-start gap-1.5 rounded-sm bg-danger-subtle p-2">
             <TriangleAlert size={12} className="mt-0.5 shrink-0 text-danger" />
             <p className="text-xs leading-relaxed text-danger">
-              「脚本原始」是用脚本<b className="font-medium">当前</b>输出重新渲染，不是还原原始文件的字节。
-              如果原图曾被手工处理过、或脚本后来改动过，恢复后就与原文件不再一致，
-              只能从备份目录取回。
+              {/* 句中有 <b> 强调，走 Trans 保留标签而不是把句子切三段 */}
+              <Trans
+                t={t}
+                i18nKey="versionHistory.originWarn"
+                components={{ b: <b className="font-medium" /> }}
+              />
             </p>
           </div>
         )}
-        {error && <p className="text-xs text-danger">恢复失败：{error}</p>}
+        {error && <p className="text-xs text-danger">{vh('restoreFailed', { error })}</p>}
       </div>
     </Dialog>
   )

@@ -1,6 +1,8 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { ArrowLeftRight, Trash2 } from 'lucide-react'
 import { formatCm, formatMm } from '@/lib/units'
+import { msg, t as translate, type UiMessage } from '@/i18n'
 import { cn, MOD } from '@/lib/utils'
 import { clearGuides, removeGuide, setPageSetup, setPageSize } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
@@ -12,13 +14,21 @@ import { Toggle } from '../ui/Toggle'
 import { Tip } from '../ui/Tooltip'
 import { MmField } from './MmField'
 
-/** 期刊常用版心；宽度是硬约束，高度给个常见起点 */
+/**
+ * 期刊常用版心；宽度是硬约束，高度给个常见起点。
+ * 文案按 id 查 `inspector:canvas.presets.<id>`，这里只留尺寸。
+ */
 const PRESETS = [
-  { label: '单栏', w: 85, h: 60, hint: '85 mm，多数期刊单栏宽' },
-  { label: '双栏', w: 150, h: 100, hint: '150 mm，通栏' },
-  { label: '整页', w: 180, h: 240, hint: '180×240 mm，整页版心' },
-  { label: '方形', w: 100, h: 100, hint: '100×100 mm' },
+  { id: 'single', w: 85, h: 60 },
+  { id: 'double', w: 150, h: 100 },
+  { id: 'full', w: 180, h: 240 },
+  { id: 'square', w: 100, h: 100 },
 ]
+
+/** 本页文案 inspector:canvas.*，历史标签 inspector:history.* */
+const cv = (key: string, values?: Record<string, unknown>) =>
+  translate(`canvas.${key}`, { ns: 'inspector', ...(values ?? {}) })
+const hist = (key: string): UiMessage => msg(`history.${key}`, undefined, 'inspector')
 
 /**
  * 预设缩略图：**四档共用同一个 mm→px 比例**，所以「单栏比双栏窄一半」
@@ -33,6 +43,7 @@ const PREVIEW_SCALE = PREVIEW_BOX / Math.max(...PRESETS.map((p) => Math.max(p.w,
  * 背景、查看辅助、吸附、参考线、安全区域按需展开，折叠行给现状摘要。
  */
 export function CanvasPage() {
+  useTranslation('inspector')
   const page = useDocumentStore((s) => s.doc.page)
   const guides = useDocumentStore((s) => s.doc.guides)
   const ui = useUiStore()
@@ -41,26 +52,29 @@ export function CanvasPage() {
   const toggle = (k: string) => setOpen((s) => ({ ...s, [k]: !s[k] }))
 
   const aidsSummary =
-    [ui.showRulers && '标尺', ui.showGrid && '网格'].filter(Boolean).join(' · ') || '全部关闭'
+    [ui.showRulers && cv('rulers'), ui.showGrid && cv('grid')]
+      .filter(Boolean)
+      .join(' · ') || cv('allOff')
   const snapSummary = ui.snapEnabled
-    ? [ui.snapToGrid && '网格', ui.snapToGuides && '参考线', ui.snapToObjects && '对象']
+    ? [ui.snapToGrid && cv('grid'), ui.snapToGuides && cv('guides'), ui.snapToObjects && cv('objects')]
         .filter(Boolean)
-        .join(' · ') || '仅页面边线'
-    : '已关闭'
+        .join(' · ') || cv('snapPageOnly')
+    : cv('snapOff')
 
   return (
     <>
-      <Section title="页面尺寸">
-        <div className="mb-2 grid grid-cols-4 gap-1" role="radiogroup" aria-label="页面预设">
+      <Section title={cv('pageSize')}>
+        <div className="mb-2 grid grid-cols-4 gap-1" role="radiogroup" aria-label={cv('presetGroup')}>
           {PRESETS.map((p) => {
-            const on = active?.label === p.label
+            const on = active?.id === p.id
+            const label = cv(`presets.${p.id}.label`)
             return (
-              <Tip key={p.label} label={p.hint}>
+              <Tip key={p.id} label={cv(`presets.${p.id}.hint`)}>
                 <button
                   onClick={() => setPageSize(p.w, p.h)}
                   role="radio"
                   aria-checked={on}
-                  aria-label={`${p.label}，${p.w}×${p.h} 毫米`}
+                  aria-label={cv('presetAria', { label, w: p.w, h: p.h })}
                   className={cn(
                     'flex flex-col items-center gap-1 rounded-sm border py-1.5 outline-none transition-colors focus-visible:focus-ring',
                     on
@@ -86,7 +100,7 @@ export function CanvasPage() {
                       }}
                     />
                   </span>
-                  <span className={cn('text-xs', on && 'font-medium')}>{p.label}</span>
+                  <span className={cn('text-xs', on && 'font-medium')}>{label}</span>
                 </button>
               </Tip>
             )
@@ -95,14 +109,14 @@ export function CanvasPage() {
         <Grid2>
           <MmField
             label="W"
-            historyLabel="修改画布宽度"
+            historyLabel={hist('setPageW')}
             min={10}
             value={page.w}
             onChange={(v) => setPageSize(v, page.h)}
           />
           <MmField
             label="H"
-            historyLabel="修改画布高度"
+            historyLabel={hist('setPageH')}
             min={10}
             value={page.h}
             onChange={(v) => setPageSize(page.w, v)}
@@ -116,7 +130,7 @@ export function CanvasPage() {
             onClick={() => setPageSize(page.h, page.w)}
           >
             <ArrowLeftRight size={13} />
-            横竖交换
+            {cv('swap')}
           </Button>
           <span className="shrink-0 font-mono text-xs text-ink-3">
             {formatCm(page.w)}×{formatCm(page.h)} cm
@@ -125,48 +139,46 @@ export function CanvasPage() {
       </Section>
 
       <Disclosure
-        title="背景"
+        title={cv('background')}
         open={!!open.bg}
         onToggle={() => toggle('bg')}
-        summary={page.transparent ? '透明' : (page.bg ?? '#FFFFFF').toUpperCase()}
+        summary={page.transparent ? cv('transparent') : (page.bg ?? '#FFFFFF').toUpperCase()}
       >
         <div className="flex flex-col gap-1.5">
-          <Row label="透明背景">
+          <Row label={cv('transparentBg')}>
             <Toggle
               checked={!!page.transparent}
-              onChange={(v) => setPageSetup({ transparent: v }, '修改页面背景')}
+              onChange={(v) => setPageSetup({ transparent: v }, hist('setPageBackground'))}
             />
           </Row>
-          <Row label="背景色">
+          <Row label={cv('bgColor')}>
             <ColorField
               value={page.bg ?? '#FFFFFF'}
-              onChange={(v) => setPageSetup({ bg: v }, '修改页面背景色')}
+              onChange={(v) => setPageSetup({ bg: v }, hist('setPageBgColor'))}
               className={page.transparent ? 'pointer-events-none opacity-40' : undefined}
             />
           </Row>
           {page.transparent && (
-            <p className="text-xs leading-relaxed text-ink-3">
-              导出 PNG 不铺底色，PDF 本身即无背景；画布上的棋盘格只是示意。
-            </p>
+            <p className="text-xs leading-relaxed text-ink-3">{cv('transparentHint')}</p>
           )}
         </div>
       </Disclosure>
 
       <Disclosure
-        title="查看辅助"
+        title={cv('viewAids')}
         open={!!open.aids}
         onToggle={() => toggle('aids')}
         summary={aidsSummary}
       >
         <div className="flex flex-col gap-1.5">
-          <Row label="标尺">
+          <Row label={cv('rulers')}>
             <Toggle checked={ui.showRulers} onChange={ui.setShowRulers} />
           </Row>
-          <Row label="网格">
+          <Row label={cv('grid')}>
             <Toggle checked={ui.showGrid} onChange={ui.setShowGrid} />
           </Row>
           {ui.showGrid && (
-            <Row label="网格间距">
+            <Row label={cv('gridSize')}>
               <NumberField
                 value={ui.gridSize}
                 min={1}
@@ -181,13 +193,13 @@ export function CanvasPage() {
       </Disclosure>
 
       <Disclosure
-        title="吸附"
+        title={cv('snap')}
         open={!!open.snap}
         onToggle={() => toggle('snap')}
         summary={snapSummary}
       >
         <div className="flex flex-col gap-1.5">
-          <Row label="启用吸附">
+          <Row label={cv('snapEnable')}>
             <Toggle
               checked={ui.snapEnabled}
               onChange={(v) => ui.setCanvasPref({ snapEnabled: v })}
@@ -195,20 +207,20 @@ export function CanvasPage() {
           </Row>
           {ui.snapEnabled && (
             <>
-              <Row label="对齐网格">
+              <Row label={cv('snapGrid')}>
                 <Toggle
                   checked={ui.snapToGrid}
                   onChange={(v) => ui.setCanvasPref({ snapToGrid: v })}
                 />
               </Row>
-              <Row label="对齐参考线">
+              <Row label={cv('snapGuides')}>
                 <Toggle
                   checked={ui.snapToGuides}
                   onChange={(v) => ui.setCanvasPref({ snapToGuides: v })}
                 />
               </Row>
-              <Row label="对齐对象">
-                <Tip label={`页面边与中线始终参与吸附；拖动时按住 ${MOD} 可临时关掉`} side="left">
+              <Row label={cv('snapObjects')}>
+                <Tip label={cv('snapObjectsTip', { mod: MOD })} side="left">
                   <span className="flex">
                     <Toggle
                       checked={ui.snapToObjects}
@@ -223,32 +235,35 @@ export function CanvasPage() {
       </Disclosure>
 
       <Disclosure
-        title={`参考线`}
+        title={cv('guides')}
         open={!!open.guides}
         onToggle={() => toggle('guides')}
-        summary={guides.length ? `${guides.length} 条${ui.guidesLocked ? ' · 已锁定' : ''}` : '无'}
+        summary={
+          guides.length
+            ? cv('guideCount', { count: guides.length }) +
+              (ui.guidesLocked ? cv('guidesLockedSuffix') : '')
+            : cv('guidesNone')
+        }
       >
         <div className="flex items-center gap-2">
-          <Row label="锁定" className="min-w-0 flex-1">
+          <Row label={cv('lock')} className="min-w-0 flex-1">
             <Toggle
               checked={ui.guidesLocked}
               onChange={(v) => ui.setCanvasPref({ guidesLocked: v })}
             />
           </Row>
           <Button size="sm" disabled={!guides.length} onClick={clearGuides}>
-            全部清除
+            {cv('clearAll')}
           </Button>
         </div>
         {guides.length === 0 ? (
-          <p className="mt-1.5 text-xs leading-relaxed text-ink-3">
-            从标尺往画布里拖即可拉出参考线。
-          </p>
+          <p className="mt-1.5 text-xs leading-relaxed text-ink-3">{cv('guidesHint')}</p>
         ) : (
           <ul className="mt-1.5 flex flex-col gap-0.5">
             {guides.map((g, i) => (
               <li key={`${g.axis}-${i}`} className="flex items-center gap-1.5">
                 <span className="w-8 shrink-0 text-xs text-ink-2">
-                  {g.axis === 'x' ? '垂直' : '水平'}
+                  {cv(g.axis === 'x' ? 'guideVertical' : 'guideHorizontal')}
                 </span>
                 <span className="flex-1 font-mono text-xs text-ink">{formatMm(g.pos)} mm</span>
                 <Button
@@ -256,7 +271,10 @@ export function CanvasPage() {
                   className="text-ink-3 hover:text-danger"
                   disabled={ui.guidesLocked}
                   onClick={() => removeGuide(i)}
-                  aria-label={`删除${g.axis === 'x' ? '垂直' : '水平'}参考线 ${formatMm(g.pos)}mm`}
+                  aria-label={cv('deleteGuide', {
+                    axis: cv(g.axis === 'x' ? 'guideVertical' : 'guideHorizontal'),
+                    pos: formatMm(g.pos),
+                  })}
                 >
                   <Trash2 size={12} />
                 </Button>
@@ -267,14 +285,16 @@ export function CanvasPage() {
       </Disclosure>
 
       <Disclosure
-        title="安全区域"
+        title={cv('safeArea')}
         open={!!open.safe}
         onToggle={() => toggle('safe')}
-        summary={ui.showSafeArea ? `页边距 ${page.margin ?? 0} mm` : '关闭'}
+        summary={
+          ui.showSafeArea ? cv('marginSummary', { margin: page.margin ?? 0 }) : cv('safeAreaOff')
+        }
       >
         <div className="flex flex-col gap-1.5">
-          <Row label="显示">
-            <Tip label="只是画布上的参考框，不裁剪也不影响导出" side="left">
+          <Row label={cv('show')}>
+            <Tip label={cv('safeAreaTip')} side="left">
               <span className="flex">
                 <Toggle
                   checked={ui.showSafeArea}
@@ -283,14 +303,14 @@ export function CanvasPage() {
               </span>
             </Tip>
           </Row>
-          <Row label="页边距">
+          <Row label={cv('margin')}>
             <NumberField
               value={page.margin ?? 0}
               min={0}
               max={40}
               step={1}
               suffix="mm"
-              onChange={(v) => setPageSetup({ margin: v }, '修改页边距')}
+              onChange={(v) => setPageSetup({ margin: v }, hist('setPageMargin'))}
             />
           </Row>
         </div>
