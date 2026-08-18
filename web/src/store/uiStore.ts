@@ -57,6 +57,11 @@ interface Persisted {
   guidesLocked: boolean
   /** 显示页面安全区域（页边距）参考框 */
   showSafeArea: boolean
+  /**
+   * 拖动子图时带上随行元素：被手动摆过位置的标题 / 轴标签 / 图例，
+   * 以及色条轴、twinx 的孪生轴。关掉就只动子图本身。
+   */
+  dragAxesWithCompanions: boolean
   rightOpen: boolean
   leftTab: LeftTab
   rightTab: RightTab
@@ -81,6 +86,7 @@ const DEFAULTS: Persisted = {
   snapToObjects: true,
   guidesLocked: false,
   showSafeArea: false,
+  dragAxesWithCompanions: true,
   rightOpen: true,
   leftTab: 'assets',
   rightTab: 'properties',
@@ -200,7 +206,7 @@ function persist(state: UiState) {
     'leftOpen', 'rightOpen', 'leftTab', 'rightTab', 'showRulers', 'showGrid',
     'leftWidth', 'rightWidth', 'leftPinned', 'rightPinned', 'gridSize',
     'snapEnabled', 'snapToGrid', 'snapToGuides', 'snapToObjects',
-    'guidesLocked', 'showSafeArea',
+    'guidesLocked', 'showSafeArea', 'dragAxesWithCompanions',
   ]
   try {
     localStorage.setItem(

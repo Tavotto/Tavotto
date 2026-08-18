@@ -38,6 +38,8 @@ class FigState:
         self.applied: dict[tuple, object] = {}    # (gid,prop) -> 请求值
         self.originals: dict[tuple, object] = {}  # (gid,prop) -> 原生值
         self.colorbar_axes: set = set()     # 承载色条的轴（manifest 标记用）
+        # 宿主 axes gid -> 拖动它时应当一起走的其他 axes gid（色条轴 / 孪生轴）
+        self.axes_follow: dict[str, list[str]] = {}
 
 
 class SeriesGroup:

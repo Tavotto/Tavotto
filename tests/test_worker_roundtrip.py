@@ -1704,3 +1704,79 @@ def test_workerd_write_back_replays_without_leaking_a_session(tmp_path, monkeypa
         pool.shutdown_all(figures_dir=str(figs), wait=True)
         pool.stop_watcher()
         workerd_client.reset_client()
+
+
+FOLLOW_SCRIPT = """\
+import matplotlib.pyplot as plt
+import numpy as np
+
+
+def main():
+    # 1) 带色条的子图：色条是 fig.colorbar 造出来的**独立 axes**
+    fig, ax = plt.subplots(figsize=(3, 2))
+    im = ax.imshow(np.arange(9).reshape(3, 3))
+    fig.colorbar(im, ax=ax)
+    fig.savefig("FollowCbar.pdf")
+
+    # 2) twinx：叠在同一块地方的第二套刻度
+    fig2, ax2 = plt.subplots(figsize=(3, 2))
+    ax2.plot([0, 1], [0, 1])
+    ax2.twinx().plot([0, 1], [1, 0])
+    fig2.savefig("FollowTwin.pdf")
+
+    # 3) sharex 的上下两个子图：**共享轴但不是孪生轴**，落点完全不同
+    fig3, axes3 = plt.subplots(2, 1, figsize=(3, 3), sharex=True)
+    axes3[0].plot([0, 1], [0, 1])
+    axes3[1].plot([0, 1], [1, 0])
+    fig3.savefig("FollowShare.pdf")
+"""
+
+
+def _follow_of(manifest, gid):
+    el = next(e for e in manifest["elements"] if e["gid"] == gid)
+    return el.get("follow_gids")
+
+
+def test_axes_follow_gids_cover_colorbar_and_twin_but_not_shared(tmp_path):
+    """manifest 要说清「拖这个子图时谁跟着走」——色条轴与孪生轴跟，共享轴不跟。
+
+    子图的标题 / 轴标签是 Axes 的孩子，set_position 一挪天然跟着走；跟不动的
+    是视觉上一体、artist 树上却平级的那些 axes。判据不能只看「共享 x 轴」：
+    `subplots(sharex=True)` 的上下两个子图同样共享 x，把它们连起来的话拖一个
+    子图会把整列一起拖走，所以还要求 position 基本重合。
+    """
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    (figs / "fig_follow.py").write_text(FOLLOW_SCRIPT, encoding="utf-8")
+    proc = _spawn(figs / "fig_follow.py", figs, tmp_path)
+    try:
+        _rpc(proc, {"cmd": "build"})
+
+        # 色条：宿主点名色条轴，色条轴自己不反过来点名宿主
+        man = _rpc(proc, {"cmd": "override", "stem": "FollowCbar",
+                          "patches": []})["manifest"]
+        cbar_gid = next(e["gid"] for e in man["elements"]
+                        if e["role"] == "axes" and e.get("is_colorbar"))
+        host_gid = next(e["gid"] for e in man["elements"]
+                        if e["role"] == "axes" and not e.get("is_colorbar"))
+        assert _follow_of(man, host_gid) == [cbar_gid]
+        assert _follow_of(man, cbar_gid) is None
+
+        # twinx：两边互相点名（拖哪个都该带上另一个）
+        man = _rpc(proc, {"cmd": "override", "stem": "FollowTwin",
+                          "patches": []})["manifest"]
+        twins = [e["gid"] for e in man["elements"] if e["role"] == "axes"]
+        assert len(twins) == 2, twins
+        assert _follow_of(man, twins[0]) == [twins[1]]
+        assert _follow_of(man, twins[1]) == [twins[0]]
+
+        # sharex 的并排子图：共享轴 ≠ 孪生轴，一条联动都不能有
+        man = _rpc(proc, {"cmd": "override", "stem": "FollowShare",
+                          "patches": []})["manifest"]
+        for e in man["elements"]:
+            if e["role"] == "axes":
+                assert e.get("follow_gids") is None, e
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=10)

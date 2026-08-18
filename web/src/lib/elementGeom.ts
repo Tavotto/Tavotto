@@ -242,6 +242,93 @@ export function alignEntries(
   return out
 }
 
+/**
+ * figure 锚定的位置类 override —— 值是 figure 分数、**y 向下**。
+ * 与后端 overrides.py 的 `_FRAC_ANCHORED` 同一批；改一边要同步另一边。
+ */
+const FRAC_ANCHORED_PROPS = new Set(['pos_frac', 'loc_frac', 'endpoints_frac'])
+
+/** 拖动子图时跟着走的一条随行改动 */
+export interface AxesCompanion {
+  gid: string
+  /**
+   * 预览阶段要不要单独平移它的 SVG 组。子图自己的标题 / 轴标签 / 图例都嵌在
+   * `<g id="axes_N">` 里面，宿主组一平移它们已经跟着动了，再来一次就是双倍。
+   */
+  previewsSeparately: boolean
+  /** dfx/dfy 是内容分数位移，**y 向下**（与 contentDelta 的输出同一套） */
+  shift: (dfx: number, dfy: number) => PanelOverride
+}
+
+/**
+ * 拖动 `axesGid` 这个子图时，应当跟着走的随行元素。
+ *
+ * 为什么需要它：子图的标题 / 轴标签 / 刻度是 Axes 的孩子，`set_position`
+ * 一挪天然跟着走，**除非用户先手动摆过它们**——那一刻它们身上多了一条
+ * figure 锚定的 override（pos_frac / loc_frac / endpoints_frac），而引擎按
+ * 设计会在几何变动后重放这类 override（FigS3 事故的修法，见 overrides.py），
+ * 于是它们被钉死在原来的 figure 位置上，子图走了它们不走。
+ *
+ * 修法不是去掉那个重放（那会把 FigS3 放回来：写回文件的样子 ≠ 重开后重放的
+ * 样子），而是**把存着的锚点值本身加上同一个位移**。这样热态与全量重放依旧
+ * 逐位一致，撤销也只是一条。
+ *
+ * 另外那些视觉上是一体、artist 树上却平级的 axes（色条轴、twinx 的孪生轴）
+ * 由引擎在 manifest 的 `follow_gids` 里点名——只有那边能看到 matplotlib 的
+ * 共享关系。
+ */
+export function axesCompanions(
+  panel: PanelObject,
+  manifest: Manifest,
+  axesGid: string,
+): AxesCompanion[] {
+  const host = manifest.elements.find((e) => e.gid === axesGid)
+  const followGids = host?.follow_gids ?? []
+  const out: AxesCompanion[] = []
+
+  for (const gid of followGids) {
+    const other = manifest.elements.find((e) => e.gid === gid)
+    if (!other) continue
+    const pos = positionOf(panel, other)
+    if (!pos) continue
+    out.push({
+      gid,
+      previewsSeparately: true,
+      // position 是 bottom-origin：屏幕向下 = y 变小
+      shift: (dfx, dfy) => ({
+        gid,
+        prop: 'position',
+        value: [pos[0] + dfx, pos[1] - dfy, pos[2], pos[3]].map(round4),
+      }),
+    })
+  }
+
+  // 宿主与随行 axes 底下、被用户挪过位置的后代
+  const roots = [axesGid, ...followGids]
+  for (const o of panel.overrides) {
+    if (!FRAC_ANCHORED_PROPS.has(o.prop)) continue
+    if (!roots.some((root) => o.gid.startsWith(`${root}.`))) continue
+    const v = o.value
+    if (!Array.isArray(v) || (v.length !== 2 && v.length !== 4)) continue
+    const nums = v as number[]
+    if (nums.some((n) => typeof n !== 'number' || !Number.isFinite(n))) continue
+    const { gid, prop } = o
+    out.push({
+      gid,
+      // 后代嵌在所属 axes 的 <g> 里，那个组一平移它们已经跟着动了
+      previewsSeparately: false,
+      shift: (dfx, dfy) => ({
+        gid,
+        prop,
+        // pos_frac/loc_frac 是 [x, y]，endpoints_frac 是 [ax, ay, bx, by]，
+        // 都是 top-origin：位移直接加
+        value: nums.map((n, i) => round4(n + (i % 2 === 0 ? dfx : dfy))),
+      }),
+    })
+  }
+  return out
+}
+
 export interface AnnotationEntry extends AlignItem {
   label: string
   /** 画布标注对象 id；有它 = 这一条改的是画布对象的 x/y，不是 override */

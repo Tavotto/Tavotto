@@ -41,7 +41,7 @@ type SectionId =
 const SECTIONS: { id: SectionId; label: string }[] = [
   { id: 'general', label: '常规' },
   { id: 'project', label: '项目与路径' },
-  { id: 'canvas', label: '画布与吸附' },
+  { id: 'canvas', label: '画布与编辑' },
   { id: 'sidebars', label: '侧栏行为' },
   { id: 'ai', label: 'AI 工具' },
   { id: 'export', label: '导出默认值' },
@@ -232,8 +232,22 @@ function ProjectSection() {
 }
 
 function CanvasSection({ close }: { close: () => void }) {
+  const withCompanions = useUiStore((s) => s.dragAxesWithCompanions)
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-2.5">
+      <Row label="拖动子图联动">
+        <Toggle
+          checked={withCompanions}
+          onChange={(v) => useUiStore.getState().setCanvasPref({ dragAxesWithCompanions: v })}
+          aria-label="拖动子图时带上关联元素"
+        />
+        <span className="text-xs text-ink-3">关联元素跟着子图一起走</span>
+      </Row>
+      <p className="text-xs leading-relaxed text-ink-3">
+        关联元素 = 被你手动摆过位置的标题 / 轴标签 / 图例，以及色条轴与
+        twinx 的孪生轴。它们要么钉在 figure 坐标上、要么本就是平级的另一个
+        子图，不带的话挪走子图它们会留在原地。关掉就只动子图本身。
+      </p>
       <p className="text-xs leading-relaxed text-ink-3">
         网格、吸附、标尺与安全区域的开关在右栏「画布」页，与画布放在一起改。
       </p>

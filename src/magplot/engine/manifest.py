@@ -44,6 +44,56 @@ def _register(state: FigState, gid: str, artist, role: str, label: str,
                            "label": label, "draggable": draggable})
 
 
+def _follow_map(fig, cbar_of_ax: dict, host_of_cbax: dict) -> dict[str, list[str]]:
+    """宿主 axes gid → 拖动它时该一起走的其他 axes gid。
+
+    子图自己的标题 / 轴标签 / 刻度是 Axes 的孩子，set_position 一挪它们天然
+    跟着走（被用户 override 过位置的那些例外，见前端 axesCompanions）。这里
+    收的是**另外的 axes**——它们和宿主在视觉上是一体，在 artist 树上却是平级：
+
+      * 色条轴：`fig.colorbar` 造出来的独立 axes，宿主挪走它自己留在原地；
+      * 孪生轴：`twinx()` / `twiny()` 叠在同一块地方的第二套刻度。
+
+    共享 ≠ 孪生。`subplots(sharex=True)` 同样共享 x 轴，但那是并排的另一个
+    子图——只看共享关系会把整行子图一起拖走，所以判据必须再加「position
+    基本重合」。判据用公开的 get_shared_[xy]_axes()，不碰 `_twinned_axes`。
+    """
+    gid_of_ax = {ax: f"axes_{i}" for i, ax in enumerate(fig.axes)}
+    follow: dict[str, list[str]] = {}
+
+    def link(host, other) -> None:
+        h, o = gid_of_ax.get(host), gid_of_ax.get(other)
+        if h is None or o is None or h == o:
+            return
+        bucket = follow.setdefault(h, [])
+        if o not in bucket:
+            bucket.append(o)
+
+    for cbax, host in host_of_cbax.items():
+        link(host, cbax)
+
+    for ax in fig.axes:
+        if ax in cbar_of_ax:
+            continue
+        try:
+            pos = ax.get_position().bounds
+            siblings = set()
+            for grouper in (ax.get_shared_x_axes(), ax.get_shared_y_axes()):
+                siblings.update(grouper.get_siblings(ax))
+        except Exception:  # noqa: BLE001 — 关联判定失败只是少一条联动，不拦渲染
+            continue
+        # 按 fig.axes 顺序遍历而不是遍历 siblings 集合：集合序不稳定，
+        # manifest 要逐字节可复现（写回校验拿它比对）
+        for other in fig.axes:
+            if other is ax or other in cbar_of_ax or other not in siblings:
+                continue
+            if all(abs(a - b) < 1e-6
+                   for a, b in zip(pos, other.get_position().bounds)):
+                link(ax, other)
+
+    return follow
+
+
 def instrument(state: FigState) -> None:
     fig = state.fig
     state.elements.clear()
@@ -63,12 +113,15 @@ def instrument(state: FigState) -> None:
 
     # 色条反查：mappable.colorbar → 宿主轴
     cbar_of_ax = {}
+    host_of_cbax = {}
     for ax in fig.axes:
         for sm in [*ax.images, *ax.collections]:
             cb = getattr(sm, "colorbar", None)
             if cb is not None:
                 cbar_of_ax[cb.ax] = cb
+                host_of_cbax[cb.ax] = ax
     state.colorbar_axes = set(cbar_of_ax)
+    state.axes_follow = _follow_map(fig, cbar_of_ax, host_of_cbax)
 
     for i, ax in enumerate(fig.axes):
         is3d = getattr(ax, "name", "") == "3d"
@@ -790,6 +843,9 @@ def build_manifest(state: FigState, stem: str) -> dict:
             if artist in state.colorbar_axes:
                 entry["is_colorbar"] = True
                 entry["colorbar_gid"] = f"{el['gid']}.colorbar"
+            follow = state.axes_follow.get(el["gid"])
+            if follow:
+                entry["follow_gids"] = follow
         elif el["role"] == "image":
             # imshow 位图铺满宿主 axes，会在命中测试里盖住它——把几何编辑
             # 代理回宿主 axes（前端对 geom_gid 发 position override）
