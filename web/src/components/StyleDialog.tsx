@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { msg, t as translate } from '@/i18n'
 import { Check, Pipette, Plus, Save, Trash2, TriangleAlert, X,
   Paintbrush,
 } from 'lucide-react'
@@ -8,8 +10,8 @@ import {
   extractPalette,
   planStyle,
   presetEntries,
-  STYLE_ROLE_LABEL,
-  STYLE_SCOPE_LABEL,
+  styleRoleLabel,
+  styleScopeLabel,
   targetPanels,
   type StylePreset,
   type StyleScope,
@@ -36,7 +38,12 @@ import { Toggle } from './ui/Toggle'
  * 应用只写 override 与标注属性（一条历史，⌘Z 整体撤销），不写回源文件；
  * 想把结果烙进 figures 里的原图，仍走各面板自己的「写回原始文件」。
  */
+/** 本对话框的文案在 dialogs:style.* 下 */
+const sd = (key: string, values?: Record<string, unknown>) =>
+  translate(`style.${key}`, { ns: 'dialogs', ...(values ?? {}) })
+
 export function StyleDialog() {
+  const { t } = useTranslation(['dialogs', 'common'])
   const open = useUiStore((s) => s.stylesOpen)
   const setOpen = useUiStore((s) => s.setStylesOpen)
 
@@ -101,7 +108,7 @@ export function StyleDialog() {
 
   const save = async () => {
     if (!draft.name.trim()) {
-      setError('先给样式起个名字')
+      setError(sd('nameRequired'))
       return
     }
     setBusy(true)
@@ -110,7 +117,7 @@ export function StyleDialog() {
       setDraft(stored)
       setSaved(await fetchStyles())
       setError(null)
-      useUiStore.getState().setStatus(`已保存样式「${stored.name}」`)
+      useUiStore.getState().setStatus(msg('style.saved', { name: stored.name }, 'dialogs'))
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -124,14 +131,14 @@ export function StyleDialog() {
     if (
       overwrites > 0 &&
       !(await askConfirm({
-        title: `应用样式「${draft.name || '未命名'}」？`,
-        body: `将覆盖 ${overwrites} 项已有的图内修改（${modKey('Z')} 可整体撤销）。`,
-        confirmLabel: '应用',
+        title: msg('style.confirmTitle', { name: draft.name || sd('untitled') }, 'dialogs'),
+        body: msg('style.confirmBody', { count: overwrites, undo: modKey('Z') }, 'dialogs'),
+        confirmLabel: msg('style.confirmApply', undefined, 'dialogs'),
       }))
     ) {
       return
     }
-    applyStylePlan(plan, { ...draft, name: draft.name || '未命名样式' })
+    applyStylePlan(plan, { ...draft, name: draft.name || sd('untitledStyle') })
     setOpen(false)
     void touched
   }
@@ -153,31 +160,29 @@ export function StyleDialog() {
       <Dialog
         open={open}
         onOpenChange={setOpen}
-        title="论文样式"
-        description="把字号、线宽、刻度、配色等排版规格存成命名样式，批量应用；只写图内修改，不改源文件"
+        title={sd('title')}
+        description={sd('descriptionEmpty')}
         width={520}
         busy={busy}
         footer={
           <>
             <Button variant="outline" size="md" onClick={() => setOpen(false)}>
-              关闭
+              {t('common:actions.close')}
             </Button>
             <Button
               variant="primary"
               size="md"
               disabled={!primaryManifest}
-              title={primaryManifest ? undefined : '先在画布上选中一个已渲染的 可参数化面板'}
+              title={primaryManifest ? undefined : sd('needPanel')}
               onClick={extract}
             >
               <Pipette size={14} />
-              从当前面板提取
+              {sd('extract')}
             </Button>
           </>
         }
       >
-        <p className="text-xs leading-relaxed text-ink-2">
-          还没有保存的样式。选中一个已渲染的 可参数化面板，提取它的字号 / 线宽 / 刻度 / 配色作为起点。
-        </p>
+        <p className="text-xs leading-relaxed text-ink-2">{sd('emptyBody')}</p>
         {error && <p className="mt-2 text-xs text-danger">{error}</p>}
       </Dialog>
     )
@@ -187,18 +192,18 @@ export function StyleDialog() {
     <Dialog
       open={open}
       onOpenChange={setOpen}
-      title="论文样式"
-      description="把字号、线宽、刻度、配色等排版规格存成命名样式，批量应用到面板；只写图内修改，不改源文件"
+      title={sd('title')}
+      description={sd('description')}
       width={760}
       busy={busy}
       footer={
         <>
           <Button variant="outline" size="md" onClick={() => setOpen(false)}>
-            关闭
+            {t('common:actions.close')}
           </Button>
           <Button variant="primary" size="md" disabled={!applicable} onClick={apply}>
             <Check size={14} />
-            应用到{STYLE_SCOPE_LABEL[scope]}
+            {sd('applyTo', { scope: styleScopeLabel(scope) })}
           </Button>
         </>
       }
@@ -207,12 +212,12 @@ export function StyleDialog() {
         {/* 左：已存样式 */}
         <div className="flex w-44 shrink-0 flex-col gap-1.5">
           <h3 className="text-xs font-medium uppercase tracking-[.06em] text-ink-3">
-            已存样式
+            {sd('savedStyles')}
           </h3>
           <ul className="min-h-0 flex-1 overflow-y-auto rounded-sm border border-border">
             {saved.length === 0 && (
               <li>
-                <EmptyState icon={Paintbrush} title="还没有保存的样式" />
+                <EmptyState icon={Paintbrush} title={sd('noSavedStyles')} />
               </li>
             )}
             {saved.map((s, i) => (
@@ -232,13 +237,13 @@ export function StyleDialog() {
                 <Button
                   size="icon-sm"
                   className="mr-0.5 h-5 w-5 opacity-0 group-hover:opacity-100"
-                  aria-label={`删除样式 ${s.name}`}
+                  aria-label={sd('deleteStyleAria', { name: s.name })}
                   onClick={async () => {
                     if (
                       !(await askConfirm({
-                        title: `删除样式「${s.name}」？`,
-                        body: '删除后无法找回（已应用到文档的修改不受影响）。',
-                        confirmLabel: '删除',
+                        title: msg('style.deleteTitle', { name: s.name }, 'dialogs'),
+                        body: msg('style.deleteBody', undefined, 'dialogs'),
+                        confirmLabel: msg('actions.delete', undefined, 'common'),
                         danger: true,
                       }))
                     ) {
@@ -256,7 +261,7 @@ export function StyleDialog() {
           </ul>
           <Button variant="outline" size="sm" onClick={() => setDraft(EMPTY)}>
             <Plus size={12} />
-            新建样式
+            {sd('newStyle')}
           </Button>
         </div>
 
@@ -266,7 +271,7 @@ export function StyleDialog() {
             <TextInput
               value={draft.name}
               onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
-              placeholder="样式名称（如「AMFE 正文图」）"
+              placeholder={sd('namePlaceholder')}
               className="h-6 min-w-0 flex-1"
             />
             <Button
@@ -275,32 +280,29 @@ export function StyleDialog() {
               disabled={!primaryManifest}
               title={
                 primaryManifest
-                  ? `从「${primaryPanel?.name ?? primaryPanel?.fileId}」读取当前值`
-                  : '选中一个已渲染的 可参数化面板后可提取'
+                  ? sd('extractFrom', { name: primaryPanel?.name ?? primaryPanel?.fileId })
+                  : sd('extractNeedPanel')
               }
               onClick={extract}
             >
               <Pipette size={12} />
-              从当前面板提取
+              {sd('extract')}
             </Button>
             <Button variant="outline" size="sm" loading={busy} onClick={save}>
               <Save size={12} />
-              保存
+              {t('common:actions.save')}
             </Button>
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto rounded-sm border border-border p-2">
             {entries.length === 0 && !draft.palette?.length ? (
-              <p className="py-2 text-xs leading-relaxed text-ink-3">
-                空样式。点「从当前面板提取」读取选中面板的字号 / 线宽 / 刻度 / 配色，
-                删掉不想统一的项后保存。
-              </p>
+              <p className="py-2 text-xs leading-relaxed text-ink-3">{sd('emptyDraft')}</p>
             ) : (
               <div className="flex flex-col gap-1">
                 {entries.map((en) => (
                   <div key={`${en.role}.${en.prop}`} className="flex h-6 items-center gap-1.5">
                     <span className="w-16 shrink-0 truncate text-xs text-ink-3">
-                      {STYLE_ROLE_LABEL[en.role] ?? en.role}
+                      {styleRoleLabel(en.role)}
                     </span>
                     <span className="w-16 shrink-0 truncate text-xs text-ink-2">
                       {propLabel(en.prop, en.role)}
@@ -323,7 +325,7 @@ export function StyleDialog() {
                     <Button
                       size="icon-sm"
                       className="h-5 w-5 shrink-0"
-                      aria-label="移除此项"
+                      aria-label={sd('removeEntry')}
                       onClick={() =>
                         setDraft((d) => {
                           const role = { ...d.element[en.role] }
@@ -341,9 +343,7 @@ export function StyleDialog() {
 
                 {!!draft.palette?.length && (
                   <div className="mt-1 border-t border-border pt-1.5">
-                    <p className="mb-1 text-xs text-ink-3">
-                      系列配色（按曲线 / 散点 / 柱形出现顺序循环）
-                    </p>
+                    <p className="mb-1 text-xs text-ink-3">{sd('paletteTitle')}</p>
                     <div className="flex flex-wrap items-center gap-1">
                       {draft.palette.map((c, i) => (
                         <span key={i} className="flex items-center gap-0.5">
@@ -357,7 +357,7 @@ export function StyleDialog() {
                             }
                           />
                           <button
-                            aria-label="移除颜色"
+                            aria-label={sd('removeColor')}
                             onClick={() =>
                               setDraft((d) => ({
                                 ...d,
@@ -377,12 +377,14 @@ export function StyleDialog() {
             )}
 
             <TextStylePart
-              label="标注文字"
+              label={sd('annotationText')}
+              boldByDefault={false}
               value={draft.annotation}
               onChange={(v) => setDraft((d) => ({ ...d, annotation: v }))}
             />
             <TextStylePart
-              label="序号标签 (a)(b)(c)"
+              label={sd('subLabel')}
+              boldByDefault
               value={draft.subLabel}
               onChange={(v) => setDraft((d) => ({ ...d, subLabel: v }))}
             />
@@ -398,8 +400,8 @@ export function StyleDialog() {
                 }
               />
               <span className="text-xs text-ink-2">
-                包含页面尺寸
-                {draft.page ? `（${draft.page.w}×${draft.page.h} mm）` : ''}
+                {sd('includePageSize')}
+                {draft.page ? sd('pageSizeSuffix', { w: draft.page.w, h: draft.page.h }) : ''}
               </span>
             </div>
           </div>
@@ -408,42 +410,48 @@ export function StyleDialog() {
         {/* 右：应用范围与预览 */}
         <div className="flex w-52 shrink-0 flex-col gap-2">
           <h3 className="text-xs font-medium uppercase tracking-[.06em] text-ink-3">
-            应用范围
+            {sd('applyScope')}
           </h3>
           <Segmented
             value={scope}
             onChange={setScope}
             className="w-full"
             items={[
-              { value: 'panel', label: '面板', tip: STYLE_SCOPE_LABEL.panel },
-              { value: 'selection', label: '选区', tip: STYLE_SCOPE_LABEL.selection },
-              { value: 'sameScript', label: '同脚本', tip: STYLE_SCOPE_LABEL.sameScript },
-              { value: 'document', label: '全文档', tip: STYLE_SCOPE_LABEL.document },
+              { value: 'panel', label: sd('scopePanel'), tip: styleScopeLabel('panel') },
+              { value: 'selection', label: sd('scopeSelection'), tip: styleScopeLabel('selection') },
+              {
+                value: 'sameScript',
+                label: sd('scopeSameScript'),
+                tip: styleScopeLabel('sameScript'),
+              },
+              { value: 'document', label: sd('scopeDocument'), tip: styleScopeLabel('document') },
             ]}
           />
           <label className="flex items-center gap-1.5 text-xs text-ink-2">
             <Toggle checked={withAnnotations} onChange={setWithAnnotations} />
-            含画布标注与序号标签
+            {sd('withAnnotations')}
           </label>
 
           <div className="min-h-0 flex-1 overflow-y-auto rounded-sm border border-border p-2">
-            <p className="mb-1 text-xs font-medium text-ink">将影响</p>
+            <p className="mb-1 text-xs font-medium text-ink">{sd('willAffect')}</p>
             {plan.panels.length === 0 && (
               <p className="text-xs leading-relaxed text-ink-3">
-                {scope === 'panel' ? '先在画布上选中一个 可参数化面板' : '范围内没有 可参数化面板'}
+                {sd(scope === 'panel' ? 'noPanelsPanel' : 'noPanelsScope')}
               </p>
             )}
             <ul className="flex flex-col gap-1">
               {plan.panels.map((p) => (
                 <li key={p.panel.id} className="text-xs leading-relaxed text-ink-2">
                   <span className="text-ink">{p.panel.name ?? p.panel.fileId}</span>
-                  ：{p.patches.length} 项
+                  {sd('panelPatches', { count: p.patches.length })}
                   {p.overwrites > 0 && (
-                    <span className="text-danger">（覆盖 {p.overwrites} 项已有修改）</span>
+                    <span className="text-danger">
+                      {sd('panelOverwrites', { count: p.overwrites })}
+                    </span>
                   )}
                   {p.unmappable.length > 0 && (
                     <span className="text-ink-3">
-                      ；{p.unmappable.length} 项无法映射
+                      {sd('panelUnmappable', { count: p.unmappable.length })}
                     </span>
                   )}
                 </li>
@@ -451,25 +459,29 @@ export function StyleDialog() {
               {plan.unrendered.map((p: PanelObject) => (
                 <li key={p.id} className="flex items-start gap-1 text-xs leading-relaxed text-ink-3">
                   <TriangleAlert size={11} className="mt-0.5 shrink-0" />
-                  <span>{p.name ?? p.fileId}：尚未渲染，无法映射（先进入图内编辑渲染一次）</span>
+                  <span>{sd('unrendered', { name: p.name ?? p.fileId })}</span>
                 </li>
               ))}
               {withAnnotations && plan.annotationIds.length > 0 && draft.annotation && (
-                <li className="text-xs text-ink-2">标注文字：{plan.annotationIds.length} 条</li>
+                <li className="text-xs text-ink-2">
+                  {sd('annotationCount', { count: plan.annotationIds.length })}
+                </li>
               )}
               {withAnnotations && plan.subLabelIds.length > 0 && draft.subLabel && (
-                <li className="text-xs text-ink-2">序号标签：{plan.subLabelIds.length} 个</li>
+                <li className="text-xs text-ink-2">
+                  {sd('subLabelCount', { count: plan.subLabelIds.length })}
+                </li>
               )}
               {plan.page && (
                 <li className="text-xs text-ink-2">
-                  页面尺寸 → {plan.page.w}×{plan.page.h} mm
+                  {sd('pageSizeTo', { w: plan.page.w, h: plan.page.h })}
                 </li>
               )}
             </ul>
             {plan.panels.some((p) => p.unmappable.length > 0) && (
               <details className="mt-1.5">
                 <summary className="cursor-pointer text-xs text-ink-3 hover:text-ink">
-                  无法映射的明细
+                  {sd('unmappableDetails')}
                 </summary>
                 <ul className="mt-1 flex flex-col gap-0.5">
                   {plan.panels.flatMap((p) =>
@@ -539,19 +551,28 @@ function EntryEditor({
 /** 标注 / 序号标签的字号加粗颜色小节 */
 function TextStylePart({
   label,
+  boldByDefault,
   value,
   onChange,
 }: {
   label: string
+  /**
+   * 打开时是否默认加粗。以前是拿 `label.includes('序号')` 判的——那是把
+   * **界面文案**当逻辑用，换成英文界面之后序号标签就不再默认加粗了。
+   */
+  boldByDefault: boolean
   value: { sizePt?: number; bold?: boolean; italic?: boolean; color?: string } | undefined
   onChange: (v: { sizePt?: number; bold?: boolean; italic?: boolean; color?: string } | undefined) => void
 }) {
+  useTranslation('dialogs')
   return (
     <div className="mt-1.5 border-t border-border pt-1.5">
       <div className="flex h-6 items-center gap-1.5">
         <Toggle
           checked={!!value}
-          onChange={(v) => onChange(v ? { sizePt: 9, bold: label.includes('序号'), color: '#000000' } : undefined)}
+          onChange={(v) =>
+            onChange(v ? { sizePt: 9, bold: boldByDefault, color: '#000000' } : undefined)
+          }
         />
         <span className="text-xs text-ink-2">{label}</span>
       </div>
@@ -567,7 +588,7 @@ function TextStylePart({
           />
           <label className="flex items-center gap-1 text-xs text-ink-2">
             <Toggle checked={!!value.bold} onChange={(v) => onChange({ ...value, bold: v })} />
-            粗体
+            {sd('bold')}
           </label>
           <ColorField
             value={value.color ?? '#000000'}
