@@ -86,6 +86,17 @@
      不然动画结束到卸载之间会有一帧回到 opacity:1，闪一下。 */
   --animate-crossfade-out: fade-out var(--duration-slow) linear forwards;
 
+  /* 侧边抽屉。停靠态动 width（画布跟着让位），覆盖态动 transform（零布局代价）。
+     动 width 意味着画布列每帧重排 + CanvasStage 的 ResizeObserver 每帧触发——
+     实测 1.60ms/帧（脚本 0.38 · 样式+布局 0.30），60Hz 预算的一成，零掉帧；
+     覆盖态那条 0.51ms/帧。方法与数字见 docs/perf-baseline.md。
+     抽屉内容包在**定宽的内层**里、外层 overflow:hidden，所以每帧重排的只有
+     画布，抽屉自己的子树一次都不重排（否则文字会跟着挤来挤去）。 */
+  --animate-drawer-in: drawer-in var(--duration-base) var(--ease-pop);
+  --animate-drawer-out: drawer-out var(--duration-fast) var(--ease-exit);
+  --animate-drawer-slide-in: drawer-slide-in var(--duration-base) var(--ease-pop);
+  --animate-drawer-slide-out: drawer-slide-out var(--duration-fast) var(--ease-exit);
+
   /* 冷启动那几分钟的「还活着」信号：不确定进度条来回扫 */
   --animate-sweep: sweep 1.4s ease-in-out infinite;
 }
@@ -154,6 +165,47 @@
   to {
     opacity: 0;
     transform: translateY(2px);
+  }
+}
+
+/* --drawer-w / --drawer-from 由组件按自己的宽度与方向内联给出 */
+@keyframes drawer-in {
+  from {
+    width: 0;
+  }
+  to {
+    width: var(--drawer-w);
+  }
+}
+
+@keyframes drawer-out {
+  from {
+    width: var(--drawer-w);
+  }
+  to {
+    width: 0;
+  }
+}
+
+@keyframes drawer-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(var(--drawer-from));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes drawer-slide-out {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateX(var(--drawer-from));
   }
 }
 

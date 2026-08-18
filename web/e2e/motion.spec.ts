@@ -136,3 +136,102 @@ test('prefers-reduced-motion：动画一帧都不播，浮层立刻消失', asyn
   // 真播的话是 pop-out 的 90ms ≈ 6 帧起（上一条用例实测 7 帧）
   expect(r.frames, '关掉动效后不该还有可感知的保活期').toBeLessThanOrEqual(3)
 })
+
+/**
+ * 侧边抽屉的开合。三件事只有真浏览器验得了：
+ *   ① 收起时先播完退场再卸载（条件渲染一破坏就只剩「瞬间消失」）；
+ *   ② **内容层宽度全程不变**——动的是外层 width，内容包在定宽内层里靠
+ *      overflow 裁掉，不然那 180ms 里文字会跟着挤来挤去；
+ *   ③ 宽度把手仍然拖得动——它现在整条在抽屉内侧，正是因为外层要 overflow:hidden。
+ */
+test('抽屉开合：先播完再卸载、内容不挤、把手仍可拖', async ({ app, page }) => {
+  const a = await app()
+  // 同文件里有一条会开 reduced-motion，显式复位，免得受用例顺序影响
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await page.goto(a.baseURL)
+  await page.waitForTimeout(1500)
+
+  const rail = page.getByRole('button', { name: '素材', exact: true })
+  if ((await rail.getAttribute('aria-expanded')) !== 'true') await rail.click()
+  await expect(page.locator('[data-left-drawer]')).toBeVisible()
+  await page.waitForTimeout(400)
+
+  const cdp = await page.context().newCDPSession(page)
+  await cdp.send('Performance.enable')
+  const grab = async () => {
+    const { metrics } = await cdp.send('Performance.getMetrics')
+    return Object.fromEntries(metrics.map((x) => [x.name, x.value])) as Record<string, number>
+  }
+
+  // 收起：应当先播 drawer-out 再卸载；内容层宽度全程不变（不挤）
+  const before = await grab()
+  const closing = await page.evaluate(async () => {
+    const btn = [...document.querySelectorAll('button')].find(
+      (b) => b.getAttribute('aria-label') === '素材',
+    ) as HTMLElement
+    const rows: { outer: number; inner: number; anim: string; state?: string }[] = []
+    // **先进 rAF 循环再点**：退场只有 120ms，先点后进循环的话，一次慢帧
+    // （GC、前一个 CDP 调用）就足以让第一帧采样落在动画结束之后，
+    // 量到的全是收尾宽度——这种用例平时绿、偶尔红，最难查
+    for (let i = 0; i < 20; i++) {
+      if (i === 0) btn.click()
+      await new Promise((r) => requestAnimationFrame(r))
+      const el = document.querySelector('[data-left-drawer]') as HTMLElement | null
+      if (!el) break
+      const inner = el.firstElementChild as HTMLElement
+      rows.push({
+        outer: +el.getBoundingClientRect().width.toFixed(1),
+        inner: +inner.getBoundingClientRect().width.toFixed(1),
+        anim: getComputedStyle(el).animationName,
+        state: el.dataset.state,
+      })
+    }
+    return { rows, gone: !document.querySelector('[data-left-drawer]') }
+  })
+  const after = await grab()
+
+  const outers = closing.rows.map((r) => r.outer)
+  const inners = new Set(closing.rows.map((r) => r.inner))
+  console.log(
+    `[动效] 收起：${closing.rows.length} 帧 · 动画=${closing.rows[0]?.anim} · state=${closing.rows[0]?.state} · ` +
+      `外层宽 ${outers[0]}→${outers.at(-1)} · 内层宽 ${[...inners].join('/')} · 最终卸载=${closing.gone} · ` +
+      `主线程 ${(((after.TaskDuration - before.TaskDuration) * 1000) / closing.rows.length).toFixed(2)}ms/帧`,
+  )
+  expect(closing.rows.length, '应当先播退场再卸载').toBeGreaterThan(2)
+  expect(closing.rows[0].state).toBe('closed')
+  expect(closing.rows[0].anim).toBe('drawer-out')
+  expect(outers.at(-1)!).toBeLessThan(outers[0])
+  expect(inners.size, '内容层宽度全程不变（不跟着挤）').toBe(1)
+  expect(closing.gone).toBe(true)
+
+  // 展开：drawer-in
+  const opening = await page.evaluate(async () => {
+    const btn = [...document.querySelectorAll('button')].find(
+      (b) => b.getAttribute('aria-label') === '素材',
+    ) as HTMLElement
+    const rows: { outer: number; anim: string }[] = []
+    for (let i = 0; i < 8; i++) {
+      if (i === 0) btn.click()
+      await new Promise((r) => requestAnimationFrame(r))
+      const el = document.querySelector('[data-left-drawer]') as HTMLElement | null
+      if (el) rows.push({ outer: +el.getBoundingClientRect().width.toFixed(1), anim: getComputedStyle(el).animationName })
+    }
+    return rows
+  })
+  console.log(`[动效] 展开：动画=${opening[0]?.anim} · 宽 ${opening.map((r) => r.outer).join('→')}`)
+  expect(opening[0].anim).toBe('drawer-in')
+
+  // 宽度把手仍然可拖（它现在整条在抽屉内侧，被 overflow-hidden 剪掉就没用了）
+  await page.waitForTimeout(400)
+  const handle = page.getByRole('separator', { name: /调整侧栏宽度/ })
+  const box = (await handle.boundingBox())!
+  const w0 = (await page.locator('[data-left-drawer]').boundingBox())!.width
+  await page.mouse.move(box.x + box.width / 2, box.y + 200)
+  await page.mouse.down()
+  await page.mouse.move(box.x + box.width / 2 + 60, box.y + 200, { steps: 8 })
+  await page.mouse.up()
+  await page.waitForTimeout(200)
+  const w1 = (await page.locator('[data-left-drawer]').boundingBox())!.width
+  console.log(`[动效] 把手拖动：${w0} → ${w1}`)
+  expect(w1, '把手被 overflow-hidden 剪掉的话这里拖不动').toBeGreaterThan(w0 + 30)
+})

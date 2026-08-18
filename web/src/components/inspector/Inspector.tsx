@@ -14,6 +14,7 @@ import {
   Type as TypeIcon,
   X,
 } from 'lucide-react'
+import { drawerMotion, type PresenceState } from '@/lib/motion'
 import { cn, MOD } from '@/lib/utils'
 import { deleteSelected, duplicateSelected, hideElement, updateObjects } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
@@ -55,7 +56,14 @@ const TYPE_ICON = {
   shape: Square,
 } as const
 
-export function Inspector({ overlay = false }: { overlay?: boolean }) {
+export function Inspector({
+  overlay = false,
+  state = 'open',
+}: {
+  overlay?: boolean
+  /** 开合动效由 App 的 usePresence 驱动：收起时先播完退场再卸载 */
+  state?: PresenceState
+}) {
   const tab = useUiStore((s) => s.rightTab)
   const setTab = useUiStore((s) => s.setRightTab)
   const width = useUiStore((s) => s.rightWidth)
@@ -63,15 +71,20 @@ export function Inspector({ overlay = false }: { overlay?: boolean }) {
   const layout = useUiStore((s) => s.layout)
   const runningAi = useAiStore((s) => s.sessions.some((x) => x.status === 'running'))
 
+  const motion = drawerMotion({ state, overlay, width, side: 'right' })
+
   return (
     <aside
-      style={{ width }}
+      {...motion}
       aria-label="右侧面板"
       className={cn(
-        'relative flex shrink-0 flex-col border-l border-border bg-surface',
+        // overflow-hidden 是动效的一部分，见 drawerMotion 的注释
+        'relative shrink-0 overflow-hidden border-l border-border bg-surface',
         overlay && 'absolute inset-y-0 right-0 z-30 shadow-pop',
+        motion.className,
       )}
     >
+      <div className="flex h-full flex-col" style={{ width }}>
       <div className="flex h-9 shrink-0 items-center gap-3 px-3">
         <div role="tablist" aria-label="右侧面板模式" className="flex h-full items-center gap-3">
           {TABS.map((t) => (
@@ -144,6 +157,7 @@ export function Inspector({ overlay = false }: { overlay?: boolean }) {
       ) : (
         <PropertiesPage />
       )}
+      </div>
       <WidthHandle />
     </aside>
   )
@@ -176,7 +190,8 @@ function WidthHandle() {
         const ui = useUiStore.getState()
         ui.setRightWidth(ui.rightWidth + (e.key === 'ArrowLeft' ? 16 : -16))
       }}
-      className="absolute inset-y-0 -left-1 z-20 w-2 cursor-col-resize outline-none hover:bg-accent/20 focus-visible:bg-accent/30"
+      // 整条都在抽屉内侧：外层 overflow-hidden（开合动效要用）会把伸到外面的部分剪掉
+      className="absolute inset-y-0 left-0 z-20 w-2 cursor-col-resize outline-none hover:bg-accent/20 focus-visible:bg-accent/30"
     />
   )
 }

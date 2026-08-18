@@ -13,7 +13,7 @@
  * 3. **动画只是点缀，关掉不损失任何信息。** 位移 ≤4px、scale 0.97~1、
  *    没有弹跳回弹；退场比进场短一档（退场是让路，拖沓会挡住下一步动作）。
  */
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 
 /** 与 index.css `@theme` 的 --duration-* 逐值同源（motion.test.ts 看护） */
 export const DURATION = {
@@ -113,4 +113,45 @@ export function usePresence(
 
   // 卸载后 state 取什么都无所谓（不会被渲染），保持 'closed' 语义清楚
   return { mounted, state: open ? 'open' : 'closed' }
+}
+
+export type PresenceState = 'open' | 'closed'
+
+interface DrawerMotionOptions {
+  state: PresenceState
+  /** 覆盖态（窄屏）：抽屉绝对定位盖在画布上，不占布局 */
+  overlay: boolean
+  width: number
+  side: 'left' | 'right'
+}
+
+/**
+ * 侧边抽屉的动效属性——**左右两个抽屉的唯一出处**，展开成 props 直接铺在
+ * `<aside>` 上。
+ *
+ * 两种形态分得很清楚：
+ *   停靠态动 `width`（画布必须跟着让位，这是布局变化，躲不掉）；
+ *   覆盖态动 `transform`（不占布局，零重排）。
+ *
+ * 用的时候有一条硬要求：**抽屉内容必须包在一层定宽的内层里，外层
+ * `overflow: hidden`**。否则动 width 的那 180ms 里子树每帧重排，文字会跟着
+ * 挤来挤去；包起来之后每帧重排的只剩画布列，抽屉自己的子树一次都不动。
+ */
+export function drawerMotion({ state, overlay, width, side }: DrawerMotionOptions): {
+  'data-state': PresenceState
+  className: string
+  style: CSSProperties
+} {
+  return {
+    'data-state': state,
+    className: overlay
+      ? 'data-[state=open]:animate-drawer-slide-in data-[state=closed]:animate-drawer-slide-out'
+      : 'data-[state=open]:animate-drawer-in data-[state=closed]:animate-drawer-out',
+    style: {
+      width,
+      // 关键帧要的两个量：停靠态的目标宽度、覆盖态滑进滑出的方向
+      '--drawer-w': `${width}px`,
+      '--drawer-from': side === 'left' ? '-100%' : '100%',
+    } as CSSProperties,
+  }
 }

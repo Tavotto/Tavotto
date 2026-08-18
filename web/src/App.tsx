@@ -37,6 +37,7 @@ import { startVersionCheckpoints } from '@/hooks/useVersionCheckpoints'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { onDesktopMenu } from '@/lib/desktop'
+import { DURATION, usePresence } from '@/lib/motion'
 
 export function App() {
   const phase = useProjectStore((s) => s.phase)
@@ -66,6 +67,10 @@ function Workspace() {
   const leftOpen = useUiStore((s) => s.leftOpen)
   const rightOpen = useUiStore((s) => s.rightOpen)
   const overlay = useWorkspaceLayout() === 'narrow'
+  // 收起时先把退场播完再卸载；退场时长与 --animate-drawer-out 同源
+  const left = usePresence(leftOpen, DURATION.fast)
+  const right = usePresence(rightOpen, DURATION.fast)
+  const scrim = usePresence(overlay && (leftOpen || rightOpen), DURATION.fast)
 
   useEffect(() => {
     useAssetStore.getState().load()
@@ -117,22 +122,23 @@ function Workspace() {
         <div className="relative flex min-h-0 flex-1">
           <LeftRail />
           {/* 窄屏时抽屉盖在画布上（绝对定位在轨道右侧），画布宽度不被侵占 */}
-          {leftOpen && <LeftPanel overlay={overlay} />}
+          {left.mounted && <LeftPanel overlay={overlay} state={left.state} />}
           <div className="relative flex min-w-0 flex-1 flex-col">
             <CanvasStage />
             <CanvasHud />
             <StatusToasts />
           </div>
-          {rightOpen && <Inspector overlay={overlay} />}
-          {overlay && (leftOpen || rightOpen) && (
+          {right.mounted && <Inspector overlay={overlay} state={right.state} />}
+          {scrim.mounted && (
             <button
               aria-label="收起侧栏"
+              data-state={scrim.state}
               onClick={() => {
                 const ui = useUiStore.getState()
                 if (ui.leftOpen) ui.toggleLeft()
                 if (ui.rightOpen) ui.toggleRight()
               }}
-              className="absolute inset-0 z-20 cursor-default bg-ink/10"
+              className="absolute inset-0 z-20 cursor-default bg-ink/10 data-[state=open]:animate-fade-in data-[state=closed]:animate-fade-out"
             />
           )}
           <VersionDrawer />
