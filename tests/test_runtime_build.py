@@ -572,26 +572,46 @@ def test_spec_ships_runtime_when_it_exists():
 
 
 def test_spec_ships_every_module_the_worker_imports():
-    """worker 平铺 import 的每个同目录模块都必须作为真 .py 进包。
+    """worker 平铺 import 的**整条传递闭包**都必须作为真 .py 进包。
 
     worker 是**外部解释器**按路径起的子进程，只编进 PyInstaller 归档它读不到。
     漏一个的表现是「装完的桌面版一渲染就 ModuleNotFoundError」，而源码模式下
     一切正常——所以这条不能靠人记得改 spec，得从 worker.py 自己的 import 反推。
+
+    **必须是传递闭包，不能只看 worker.py 一层。** 只看一层的时候，
+    `manifest.py` 新引进来的 `pathgeom` 一路绿灯到了 macOS / Windows 的
+    冒烟腿上（`workerd 会话建立失败…pathgeom 在当前渲染环境里没有` →
+    回退的 Python 池也崩）。一个只查半条链的门禁比没有门禁更坏：它在报平安。
     """
     import ast
 
     engine = REPO / "src" / "magplot" / "engine"
-    tree = ast.parse((engine / "worker.py").read_text(encoding="utf-8"))
-    flat = {a.name for node in ast.walk(tree) if isinstance(node, ast.Import)
-            for a in node.names}
-    flat |= {node.module for node in ast.walk(tree)
-             if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module}
-    siblings = {f"{name}.py" for name in flat if (engine / f"{name}.py").is_file()}
+
+    def flat_imports(path):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        names = {a.name for node in ast.walk(tree) if isinstance(node, ast.Import)
+                 for a in node.names}
+        names |= {node.module for node in ast.walk(tree)
+                  if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module}
+        # 只要**同目录**的平铺模块：worker 把 engine/ 插进 sys.path 之后
+        # `import manifest` 找的就是它们；`matplotlib` 这类第三方不在此列
+        return {n for n in names if (engine / f"{n}.py").is_file()}
+
+    closure, todo = set(), ["worker"]
+    while todo:
+        name = todo.pop()
+        if name in closure:
+            continue
+        closure.add(name)
+        todo += list(flat_imports(engine / f"{name}.py"))
+    siblings = {f"{n}.py" for n in closure}
     assert "patchspec.py" in siblings, "用例前提：worker 确实平铺 import 了 patchspec"
+    assert "pathgeom.py" in siblings, \
+        "用例前提：manifest 确实平铺 import 了 pathgeom（传递闭包这一层的样本）"
 
     spec = (REPO / "packaging" / "magplot.spec").read_text(encoding="utf-8")
     shipped = set(re.findall(r'"(\w+\.py)"', spec))
-    missing = (siblings | {"worker.py"}) - shipped
+    missing = siblings - shipped
     assert not missing, f"packaging/magplot.spec 漏了 worker 要用的模块: {missing}"
 
 
