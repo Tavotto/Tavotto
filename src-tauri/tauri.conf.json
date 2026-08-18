@@ -18,7 +18,7 @@
       "endpoints": [
         "https://github.com/erwanjun/magplot/releases/latest/download/latest.json"
       ],
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQxQzM0QzI5QUVFNTBGNUUKUldSZUQrV3VLVXpEUWZ2RDFOVEZ1VHQybzZKSi9zdis2UEZmQUJpTStFQ0xJL1ppd2g4bWF2cWQK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk0NzUwNTc4QzY3QjYyMTEKUldRUlludkdlQVYxbEtlaGEwY1kvNVl2N0ViOFV1bndiNTI5dHdNdzRrRDE5L3NmY0VEWXlQUWMK",
       "windows": {
         "installMode": "passive"
       }
