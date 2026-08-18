@@ -22,7 +22,8 @@
     "dpi": "{{value}} dpi",
     "mm": "{{value}} mm",
     "mmPair": "{{a}}, {{b}} mm",
-    "mmSize": "{{w}}×{{h}} mm"
+    "mmSize": "{{w}}×{{h}} mm",
+    "pxSize": "{{w}} × {{h}} px"
   },
   "mixed": "多个值",
   "objectType": {

@@ -159,6 +159,8 @@
     "clearProp": "Reset {{prop}}",
     "createLayoutGroup": "Create {{kind}}",
     "deleteGuide": "Delete guide",
+    "deleteObject": "Delete {{name}}",
+    "deleteObjects": "Delete {{count}} objects",
     "dissolveLayoutGroup": "Dissolve layout group",
     "duplicateCanvasSuffix": "{{name}} copy",
     "duplicateObjects": "Duplicate objects",
@@ -175,9 +177,12 @@
     "lockAspect": "Lock aspect ratio",
     "lockElement": "Lock figure element",
     "lockObject": "Lock object",
+    "mcpOpenFigure": "Open figure",
     "moveElement": "Move {{label}}",
     "moveElements": "Move {{count}} figure elements",
     "moveGuide": "Move guide",
+    "moveObject": "Move object",
+    "moveObjects": "Move {{count}} objects",
     "pasteObjects_one": "Paste {{count}} object",
     "pasteObjects_other": "Paste {{count}} objects",
     "pasteStyle": "Paste style",
@@ -201,6 +206,7 @@
     "setOpacity": "Change opacity",
     "setPageSize": "Change canvas size",
     "setProp": "Change {{prop}}",
+    "setPublicationProfile": "Set publication profile",
     "showObject": "Show object",
     "spacingX": "Set horizontal spacing",
     "spacingY": "Set vertical spacing",
@@ -214,11 +220,7 @@
     "zBottom": "Send to back",
     "zDown": "Send backward",
     "zTop": "Bring to front",
-    "zUp": "Bring forward",
-    "deleteObject": "Delete {{name}}",
-    "deleteObjects": "Delete {{count}} objects",
-    "moveObject": "Move object",
-    "moveObjects": "Move {{count}} objects"
+    "zUp": "Bring forward"
   },
   "layerTree": {
     "collapseGroup": "Collapse group",
@@ -335,6 +337,8 @@
     "notInAnyGroup": "The selected objects are not in a group",
     "nothingToRedo": "Nothing to redo",
     "nothingToUndo": "Nothing to undo",
+    "objectCopied": "Copied {{name}}",
+    "objectsCopied": "Copied {{count}} objects — they can be pasted into another layout document",
     "overridesCleared": "Cleared this panel's figure edits",
     "packageDrift_one": "Project package opened; {{count}} asset differs from the packaged copy and may have been edited — please check",
     "packageDrift_other": "Project package opened; {{count}} assets differ from the packaged copies and may have been edited — please check",
@@ -374,9 +378,7 @@
     "stylePasted_other": "Pasted style onto {{count}} objects",
     "subLabelsAdded_one": "Added {{count}} panel label, ordered top to bottom, left to right",
     "subLabelsAdded_other": "Added {{count}} panel labels, ordered top to bottom, left to right",
-    "undone": "Undone: {{label}}",
-    "objectCopied": "Copied {{name}}",
-    "objectsCopied": "Copied {{count}} objects — they can be pasted into another layout document"
+    "undone": "Undone: {{label}}"
   },
   "tabs": {
     "allCanvases": "All canvases",

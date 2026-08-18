@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "magplot": {
+      "title": "Magplot",
+      "description": "打开 Magplot 交互画布：拖图例与图内文字、改字号线宽刻度、跑出版规范预检、导出真矢量 PDF。",
+      "command": "python3",
+      "args": ["./mcp/server.py"],
+      "cwd": ".",
+      "env_vars": ["MAGPLOT_CLI", "MAGPLOT_MCP_ROOTS", "MAGPLOT_MCP_WIDGET", "MM_WORKER_PYTHON", "MAGPLOT_DATA_DIR", "PATH", "HOME", "USERPROFILE", "LOCALAPPDATA"],
+      "startup_timeout_sec": 30,
+      "tool_timeout_sec": 1800
+    }
+  }
+}

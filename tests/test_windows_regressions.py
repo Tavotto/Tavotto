@@ -11,6 +11,7 @@
   * 关进程慢：poll() 还说活着，握手其实早就失败了
   * AI CLI 只有 .cmd 外壳 / 装在微软商店的执行别名下
   * 渲染解释器探测：python.org / conda / 商店版
+  * 只装了桌面版时外部程序找不到 CLI（GUI 子系统的 exe 没有 stdout）
   * 测试自己的 id 太长撑爆环境变量（32767 上限）
 
 跨平台可跑：拿不到真实 Windows 语义的地方就直接测**那段逻辑本身**
@@ -23,7 +24,7 @@ import os
 import socket
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import pymupdf
 import pytest
@@ -270,7 +271,10 @@ def test_packaging_entry_points_reconfigure_stdout_to_utf8():
                 "scripts/smoke_desktop.py",
                 # Codex 插件的交接脚本：Codex 调它时 stdout 就是管道，
                 # 输出的 JSON 带中文（hint / magplot open 回来的错误）
-                "codex-plugin/skills/magplot-figure/scripts/handoff.py"):
+                "codex-plugin/skills/magplot-figure/scripts/handoff.py",
+                # 这两个的结论全是中文，而 pytest 与 CI 都是捕获着调它们的
+                "scripts/gen_preflight_vectors.py",
+                "scripts/build_mcp_widget.py"):
         src = (repo / rel).read_text(encoding="utf-8")
         assert 'reconfigure(encoding="utf-8"' in src, \
             f"{rel} 没做 stdout reconfigure，Windows 管道下中文日志会打死进程"
@@ -292,6 +296,80 @@ def test_codex_handoff_json_survives_cp1252_stdout():
         env={**os.environ, "PYTHONIOENCODING": "cp1252"})
     assert r.returncode == 2, r.stderr        # 2 = 路径不对，不是 1（崩了）
     assert "路径不存在" in json.loads(r.stdout.strip().splitlines()[-1])["error"]
+
+
+def test_maintenance_scripts_report_under_cp1252_stdout(tmp_path):
+    """两个新维护脚本在非 UTF-8 stdout 下必须照样把结论说出来。
+
+    它们都是**被捕获着调用**的（`tests/test_preflight.py` spawn 校验器、
+    CI 的 frontend job 跑画布同步门禁），输出又全是中文。不钉 UTF-8 的话
+    Windows 上第一次 print 就 UnicodeEncodeError——退出码变成 1，
+    于是「向量对不上」和「画布产物过期」这两个门禁在 Windows 腿上**永远是红的，
+    而且红的原因与它们要看护的事毫无关系**。空转的门禁比没有门禁更坏。
+    """
+    repo = Path(__file__).resolve().parent.parent
+    env = {**os.environ, "PYTHONIOENCODING": "cp1252"}
+
+    # 校验器：向量与实现一致时退 0，并把那句中文结论说出来
+    r = subprocess.run([sys.executable, str(repo / "scripts/gen_preflight_vectors.py")],
+                       capture_output=True, text=True, encoding="utf-8",
+                       errors="replace", timeout=120, env=env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "Python 实现一致" in r.stdout
+
+    # 画布同步门禁：--check 不需要 Node，纯指纹比对
+    r = subprocess.run([sys.executable, str(repo / "scripts/build_mcp_widget.py"),
+                        "--check"],
+                       capture_output=True, text=True, encoding="utf-8",
+                       errors="replace", timeout=120, env=env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "画布产物与源码一致" in r.stdout
+
+
+def test_widget_fingerprint_is_the_same_on_windows_and_posix():
+    """画布同步门禁的指纹**必须跨平台一致**，否则它在 Windows 腿上永远是红的。
+
+    CI 的 windows-latest 腿实测（本 PR 连撞两轮），三处差异各占一份：
+
+      * **路径分隔符**——`str(Path("web/src/a.ts"))` 在 Windows 上是
+        `web\\src\\a.ts`；
+      * **行尾**——GitHub 的 Windows runner 默认 `core.autocrlf=true`，
+        检出的文本文件是 CRLF；
+      * **遍历顺序**——`sorted(Path)` 在 Windows 上比的是**小写化**后的字符串
+        （大小写不敏感），`Zebra.ts` 与 `apple.ts` 的先后在两个平台正好相反。
+
+    「永远红的门禁」与「空转的门禁」一样坏：它报的不是它要看护的那件事，
+    看的人学会的是忽略它。
+
+    这条在 macOS/Linux 上照样跑得出来——`PureWindowsPath` 是纯路径，
+    不像 `WindowsPath` 那样在别的平台上构造就抛 UnsupportedOperation。
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+    import build_mcp_widget
+
+    # 一份「Windows 视角」：反斜杠 + CRLF + 大小写不敏感的那个顺序
+    windows = build_mcp_widget.digest([
+        (PureWindowsPath(r"web\src\lib\apple.ts"), b"a\r\nb\r\n"),
+        (PureWindowsPath(r"web\src\lib\Zebra.ts"), b"z\r\n"),
+    ])
+    # 一份「POSIX 视角」：正斜杠 + LF + 大小写敏感的那个顺序
+    posix = build_mcp_widget.digest([
+        (PurePosixPath("web/src/lib/Zebra.ts"), b"z\n"),
+        (PurePosixPath("web/src/lib/apple.ts"), b"a\nb\n"),
+    ])
+    assert windows == posix, "同一份源码在两个平台上算出了不同的指纹"
+
+
+def test_widget_fingerprint_still_notices_a_real_change():
+    """上一条是「别乱报」，这条是「别不报」——规范化不能规范到什么都一样。"""
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+    import build_mcp_widget
+
+    base = [(PurePosixPath("web/src/a.ts"), b"x\n")]
+    assert build_mcp_widget.digest(base) != build_mcp_widget.digest(
+        [(PurePosixPath("web/src/a.ts"), b"y\n")]), "内容变了却算出同一个指纹"
+    assert build_mcp_widget.digest(base) != build_mcp_widget.digest(
+        [(PurePosixPath("web/src/b.ts"), b"x\n")]), "文件名变了却算出同一个指纹"
 
 
 def test_codex_handoff_pins_utf8_on_every_decoding_spawn():
@@ -820,3 +898,75 @@ def test_no_test_id_can_blow_the_windows_env_var_limit():
         f"有用例 id 长达 {len(worst)} 字符（上限 {LIMIT}）——多半是 parametrize "
         f"直接吃了整个文件的内容。开头：{worst[:200]}"
     )
+
+
+# ---------------- 只装桌面版：外部程序发现不了 CLI ----------------------------
+#
+# 朋友的现象：Windows 上装好 Magplot 桌面程序，Codex 的 Magplot 插件一直说
+# 「没找到 Magplot」。他没装 Python、没装 Conda、PATH 里没有 magplot、也没设
+# MAGPLOT_CLI——插件当时查的正好就是这三处。
+#
+# 根因不是「少查了一个目录」，而是**装出来的东西里根本没有能当命令行用的
+# 可执行文件**：Magplot.exe（Tauri 壳）与 sidecar 都是 console=False 打的，
+# 没有真终端时 sys.stdout 是 None，packaging/entry.py 会把输出改道进 app.log，
+# 调用方 capture_output 拿到的是空 stdout 而不是那行 JSON。
+#
+# 下面两条是这个 bug 的 Windows 语义定版。**跨平台可跑**（注入假文件系统 +
+# 显式 system="win32"），完整的环境矩阵与插件那侧的同源比对在
+# tests/test_install_locate.py，真安装产物的验收在 nightly 的「装一遍再冒烟」。
+
+WIN_INSTALL = "C:\\Users\\张三\\AppData\\Local\\Magplot"
+WIN_DESKTOP_EXE = WIN_INSTALL + "\\Magplot.exe"
+WIN_CLI_EXE = WIN_INSTALL + "\\sidecar\\Magplot\\magplot-cli.exe"
+WIN_ENVIRON = {"LOCALAPPDATA": "C:\\Users\\张三\\AppData\\Local",
+               "APPDATA": "C:\\Users\\张三\\AppData\\Roaming"}
+
+
+def test_desktop_only_windows_install_exposes_a_usable_cli():
+    """只装了桌面版的 Windows 机器上，必须找得到一条能当命令行调的入口。
+
+    没有 MAGPLOT_CLI、PATH 里没有 magplot、没有安装清单（模拟被清掉的情况）
+    ——只剩「按已知安装位置找」这一条腿，它必须撑得住。
+    """
+    from magplot.engine import locate
+
+    installed = {WIN_DESKTOP_EXE, WIN_CLI_EXE}
+    got = locate.find_cli(system="win32", environ=WIN_ENVIRON,
+                          isfile=lambda p: p in installed,
+                          which=lambda name: None, reg_dirs=())
+    assert got["cmd"] == [WIN_CLI_EXE], "只装桌面版就找不到 CLI = 那个 bug 回来了"
+    assert got["source"] == "install"
+
+
+def test_the_gui_binary_is_never_offered_as_a_command_line():
+    """**绝不能把 Magplot.exe 当命令行交出去。**
+
+    它是 GUI 子系统的可执行文件：调用方拿不到 stdout，只会看到「命令没有输出」。
+    这一版没带 magplot-cli（v0.7.0 及更早的安装包就是这样）时，正确的回答是
+    「装了但缺 CLI，去升级」，而不是拿 Magplot.exe 顶上，也不是说「没装」。
+    """
+    from magplot.engine import locate
+
+    only_gui = {WIN_DESKTOP_EXE}
+    got = locate.find_cli(system="win32", environ=WIN_ENVIRON,
+                          isfile=lambda p: p in only_gui,
+                          which=lambda name: None, reg_dirs=())
+    assert got["cmd"] is None, "把 GUI exe 当 CLI 交出去了"
+    assert got["desktop"] == WIN_DESKTOP_EXE, "得说清楚「装了，只是缺 CLI」"
+
+
+def test_the_windows_installer_ships_and_registers_that_cli():
+    """光有发现逻辑不够：安装器得真的把 magplot-cli 装进来并登记。
+
+    这三处任何一处漏掉，上面两条仍然全绿，而用户那里照旧「找不到 Magplot」。
+    """
+    root = Path(__file__).resolve().parent.parent
+    spec = (root / "packaging" / "magplot.spec").read_text(encoding="utf-8")
+    assert 'name="magplot-cli"' in spec, "安装产物里没有 console 版 CLI"
+    assert "console=True" in spec
+
+    nsi = (root / "src-tauri" / "windows" /
+           "installer.nsi").read_text(encoding="utf-8")
+    from magplot.engine import locate
+    assert locate.CLI_NAME in nsi, "安装器没提到 magplot-cli.exe"
+    assert "doctor --json --write-manifest" in nsi, "装完没有登记安装清单"

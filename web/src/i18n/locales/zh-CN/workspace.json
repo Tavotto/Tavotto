@@ -152,6 +152,8 @@
     "clearProp": "恢复{{prop}}",
     "createLayoutGroup": "创建{{kind}}",
     "deleteGuide": "删除参考线",
+    "deleteObject": "删除 {{name}}",
+    "deleteObjects": "删除 {{count}} 个对象",
     "dissolveLayoutGroup": "解散布局组",
     "duplicateCanvasSuffix": "{{name}} 副本",
     "duplicateObjects": "复制对象",
@@ -168,9 +170,12 @@
     "lockAspect": "锁定宽高比",
     "lockElement": "锁定图内元素",
     "lockObject": "锁定对象",
+    "mcpOpenFigure": "打开图",
     "moveElement": "移动{{label}}",
     "moveElements": "移动 {{count}} 个图内元素",
     "moveGuide": "移动参考线",
+    "moveObject": "移动对象",
+    "moveObjects": "移动 {{count}} 个对象",
     "pasteObjects_other": "粘贴 {{count}} 个对象",
     "pasteStyle": "粘贴样式",
     "pinLayout": "固定位置（不随重排）",
@@ -192,6 +197,7 @@
     "setOpacity": "修改不透明度",
     "setPageSize": "修改画布尺寸",
     "setProp": "修改{{prop}}",
+    "setPublicationProfile": "设置出版规范",
     "showObject": "显示对象",
     "spacingX": "设置水平间距",
     "spacingY": "设置垂直间距",
@@ -205,11 +211,7 @@
     "zBottom": "置于底层",
     "zDown": "下移一层",
     "zTop": "置于顶层",
-    "zUp": "上移一层",
-    "deleteObject": "删除 {{name}}",
-    "deleteObjects": "删除 {{count}} 个对象",
-    "moveObject": "移动对象",
-    "moveObjects": "移动 {{count}} 个对象"
+    "zUp": "上移一层"
   },
   "layerTree": {
     "collapseGroup": "折叠组",
@@ -316,6 +318,8 @@
     "notInAnyGroup": "选中的对象不在任何组里",
     "nothingToRedo": "没有可重做的操作",
     "nothingToUndo": "没有可撤销的操作",
+    "objectCopied": "已复制 {{name}}",
+    "objectsCopied": "已复制 {{count}} 个对象（可粘贴到其他布局文档）",
     "overridesCleared": "已清空该面板的图内修改",
     "packageDrift_other": "已打开项目包；{{count}} 个素材与打包时内容不一致（可能已被改动），请核对",
     "packageOpenFailed": "项目包打开失败：{{error}}",
@@ -345,9 +349,7 @@
     "stylePasteNoTarget": "选区里没有可粘贴的{{kind}}",
     "stylePasted_other": "已粘贴样式到 {{count}} 个对象",
     "subLabelsAdded_other": "已添加 {{count}} 个序号标签（按从上到下、从左到右排序）",
-    "undone": "撤销：{{label}}",
-    "objectCopied": "已复制 {{name}}",
-    "objectsCopied": "已复制 {{count}} 个对象（可粘贴到其他布局文档）"
+    "undone": "撤销：{{label}}"
   },
   "tabs": {
     "allCanvases": "全部画布",

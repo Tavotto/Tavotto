@@ -141,7 +141,8 @@ export default interface Resources {
       "dpi": "{{value}} dpi",
       "mm": "{{value}} mm",
       "mmPair": "{{a}}, {{b}} mm",
-      "mmSize": "{{w}}×{{h}} mm"
+      "mmSize": "{{w}}×{{h}} mm",
+      "pxSize": "{{w}} × {{h}} px"
     },
     "mixed": "多个值",
     "objectType": {
@@ -167,8 +168,11 @@ export default interface Resources {
   },
   "dialogs": {
     "export": {
-      "blockingTitle": "存在阻断性问题（缺素材 / 渲染失败），仍可导出但建议先处理",
+      "blockedTitle": "存在阻断性问题或无法自动核验的项，先在上方勾选确认再导出",
       "composing": "正在合成…",
+      "confirmBoth": "我已知悉上述 {{errors}} 类阻断性问题与 {{notVerifiable}} 类无法自动核验的项，仍然导出。确认记录会写进 proof report。",
+      "confirmErrors": "我已知悉上述 {{errors}} 类阻断性问题，仍然导出。确认记录会写进 proof report。",
+      "confirmNotVerifiable": "我已知悉上述 {{notVerifiable}} 类无法自动核验的项，仍然导出。确认记录会写进 proof report。",
       "dpiHint": {
         "1200": "极限",
         "300": "投稿",
@@ -178,8 +182,26 @@ export default interface Resources {
       "dpiLabel": "分辨率",
       "dpiSelectLabel": "导出分辨率",
       "exported": "导出完成：{{files}}",
+      "facts": {
+        "column": "栏位",
+        "columnDouble": "双栏 {{mm}}mm",
+        "columnNone": "不符（规范 {{single}}/{{double}}mm）",
+        "columnSingle": "单栏 {{mm}}mm",
+        "dpi": "导出 DPI",
+        "dpiValue": "{{dpi}} dpi（规范下限 {{min}}）",
+        "minFont": "最小有效字号",
+        "minFontNone": "未发现低于 {{min}}pt 的文字",
+        "minFontValue": "{{pt}}pt",
+        "page": "页面",
+        "pageValue": "{{w}} × {{h}} mm",
+        "raster": "位图格式",
+        "vector": "矢量格式"
+      },
       "formatLabel": "格式",
-      "issueCount_other": "（{{count}} 个）",
+      "issueOccurrences": "（{{count}} 处）",
+      "journalWidthHint": "覆盖本规范的双栏宽度（只改这一条，其余规则继承；写进文档并随 proof 留档）",
+      "journalWidthLabel": "期刊宽",
+      "journalWidthReset": "还原",
       "locate": "定位",
       "moreOptions": "更多导出选项",
       "operationFailed": "操作失败：{{error}}",
@@ -190,35 +212,45 @@ export default interface Resources {
       "pdfHint": "真矢量，投稿首选",
       "pngHint": "位图，按 dpi 渲染",
       "preflightOk": "导出前检查通过",
-      "preflightSummary": "预检发现 {{count}} 类问题",
-      "preflightSummaryBlocking": "预检发现 {{count}} 类问题（{{errors}} 类阻断性）",
+      "preflightParts": "预检：{{parts}}",
       "presetLabel": "预设",
       "presets": {
+        "both": {
+          "hint": "PDF+PNG · {{dpi}}dpi",
+          "label": "PDF + PNG"
+        },
         "double": {
-          "hint": "PDF · 150mm 通栏",
+          "hint": "PDF · {{mm}}mm 通栏",
           "label": "通栏投稿"
         },
-        "full": {
-          "hint": "PDF+PNG · 180mm 版心",
-          "label": "整页"
-        },
         "screen": {
-          "hint": "PNG 300dpi",
+          "hint": "PNG {{dpi}}dpi",
           "label": "屏幕预览"
         },
         "single": {
-          "hint": "PDF · 85mm 单栏",
+          "hint": "PDF · {{mm}}mm 单栏",
           "label": "单栏投稿"
         }
       },
+      "profileAria": "出版规范",
+      "profileLabel": "规范",
+      "profileStamp": "{{id}} · v{{version}}",
       "proofLabel": "留档",
-      "proofTitle": "JSON 留档：预检结果 + 素材清单 + 导出设置，随成图写入导出目录",
+      "proofTitle": "JSON 留档：profile 身份 + 全部预检结果（含无法核验项）+ 素材清单 + 导出设置，随成图写入导出目录",
       "proofToggle": "随成图生成 proof report",
       "revealFailed": "无法在文件管理器中定位，文件在：{{path}}",
       "savedTo": "已保存到 {{dir}}",
+      "severity": {
+        "error": "阻断",
+        "notVerifiable": "无法核验",
+        "suggestion": "建议",
+        "warn": "警告"
+      },
+      "severityCount": "{{count}} {{label}}",
       "start": "开始导出",
       "stemLabel": "文件名",
       "summary": "{{w}}×{{h}} mm · {{panels}} 面板 · {{texts}} 文字 · {{marks}} 标注",
+      "svgNote": "规范也接受 SVG，但画布合成只出 PDF/PNG（合成走 PyMuPDF）。要 SVG 请对单张图导出——图内编辑态的写回 / Codex 插件的 magplot_export 都给真矢量 SVG。",
       "timestampSuffix": "_时间戳",
       "title": "导出",
       "warningsIntro": "以下修改未能应用到重渲染的面板上，成图可能与画布不一致："
@@ -234,6 +266,26 @@ export default interface Resources {
       "saved": "已保存为画布文件：{{name}}",
       "saving": "正在保存…",
       "title": "画布文件"
+    },
+    "mcp": {
+      "confirmBoth": "仍要导出：已知悉 {{errors}} 类阻断性问题与 {{notVerifiable}} 类无法自动核验的项。确认会写进 proof report。",
+      "confirmErrors": "仍要导出：已知悉 {{errors}} 类阻断性问题。确认会写进 proof report。",
+      "exportBlockedTitle": "有阻断项或无法核验项：先在下方勾选确认",
+      "exportBoth": "导出 PDF+PNG",
+      "exportPendingTitle": "还有改动没画上，等这一版渲染完再导出",
+      "exported": "已导出 {{files}}",
+      "issuesTitle": "出版规范预检",
+      "issuesTitleStale": "出版规范预检（图已改动，结论属于上一版）",
+      "panelGone": "面板不见了——请让 Codex 重新打开这张图。",
+      "pending": "有改动待应用",
+      "pillClean": "预检通过",
+      "pillCounts": "{{errors}} 阻断 · {{warnings}} 警告 · {{notVerifiable}} 待核验",
+      "pillStale": "预检已过期",
+      "pillStaleTitle": "图改过了，这份结论属于上一版——点一下重跑",
+      "pillTitle": "重新跑一遍出版规范预检",
+      "renderFailed": "渲染失败",
+      "rendering": "正在重渲染",
+      "synced": "已同步"
     },
     "palette": {
       "commands": {
@@ -782,17 +834,43 @@ export default interface Resources {
       "useOtherLink": "使用其他 Python 环境…"
     },
     "preflight": {
+      "axisLabelFormat": "坐标轴标题「{{label}}」不是规范的「{{want}}」形式",
+      "barWithoutErrorbar": "柱状图没有误差棒——如果这些柱子是多次测量的均值，规范期望标出误差",
       "bitmapEmbed": "翻转或半透明的面板在 PDF 里按导出 DPI 位图嵌入，矢量文字不保留",
+      "cjkFallbackMissing": "含中日韩字符的文字用的是 {{family}}，没有声明中文 fallback，导出 PDF 里会是方框",
+      "discouragedColormap": "色谱 {{cmap}} 不是感知均匀的，规范推荐 {{recommended}}",
+      "fitWithoutCi": "有拟合曲线但没有置信区间填充带——投稿时通常要求给出拟合的不确定度",
+      "fontBelowFloor": "图内文字的最终有效字号 {{effective}}pt 不大于绝对下限 {{floor}}pt",
+      "fontFamilySubstituted": "图内文字用的是 {{family}}，规范要求 {{want}}",
+      "fontFamilySubstitutedKnown": "图内文字用的是 {{family}}，规范要求 {{want}}（该字体是常见的替代品，说明目标字体没装上）",
+      "fontTooLarge": "图内文字的最终有效字号 {{effective}}pt 超过 {{max}}pt，通常大于正文字号",
+      "fontTooSmall": "图内文字的最终有效字号 {{effective}}pt 低于规范下限 {{min}}pt",
+      "frameWidthOffPreset": "外框线宽最终有效值 {{effective}}pt 不在规范档位 {{presets}}pt 上",
       "hidden": "隐藏的对象不会出现在导出中",
-      "lowDpi": "位图面板的等效分辨率低于 {{min}}dpi",
-      "lowFontPanel": "矢量面板缩得太小，图内正文等效字号低于 {{min}}pt",
-      "lowFontText": "标注文字小于 {{min}}pt，多数期刊不接受",
+      "legendFontSize": "图例字号最终有效值 {{effective}}pt 不在规范的 {{min}}–{{max}}pt 之间",
+      "legendFrame": "图例带边框，规范要求图例无框",
+      "lineWidthOffPreset": "线宽最终有效值 {{effective}}pt 不在规范档位 {{presets}}pt 上",
       "missingAsset": "面板引用的素材文件不在当前图库中，导出会失败或出空白",
       "outOfPage": "对象超出页面范围，超出部分不会出现在成图里",
       "outsideMargin": "对象越过了 {{margin}}mm 安全区页边距",
       "overlap": "面板互相重叠，确认是有意的压盖再导出",
-      "renderError": "面板最近一次渲染失败，导出时会再次尝试，建议先修复",
-      "staleRender": "面板的脚本已更新但尚未重建，导出的会是旧图"
+      "pageAspect": "页面比例 {{ratio}}（{{w}}×{{h}}mm）不在规范允许的 {{allowed}} 之内",
+      "pageWidth": "页面宽 {{actual}}mm 不是规范里的单栏/双栏宽度（{{want}}mm）",
+      "paletteLineMarkers": "{{count}} 条曲线全部没有 marker，黑白打印或色觉障碍读者难以区分，可考虑点线图或不同线型",
+      "paletteSemantic": "色谱 {{cmap}} 不在推荐的科学色系里（按 sequential / diverging / categorical 语义选：{{url}}）",
+      "panelTextNotVerifiable": "矢量面板还没有引擎 manifest（未渲染 / 非脚本产物），图内文字字号与字体无法自动核验",
+      "rasterDpi": "位图面板的等效分辨率 {{dpi}}dpi 低于规范的 {{min}}dpi",
+      "rasterTextNotVerifiable": "位图面板内部的文字字号无法自动核验（没有矢量文字层），请人工确认其最终字号大于规范下限",
+      "renderError": "面板最近一次渲染失败，导出前请先修复",
+      "spinesNotEnclosed": "坐标轴未封闭（缺 {{sides}} 边），规范要求封闭坐标轴",
+      "staleRender": "面板的脚本已更新但尚未重建，导出的会是旧图",
+      "textBelowFloor": "画布文字 {{size}}pt 不大于绝对下限 {{floor}}pt",
+      "textCjkFallbackMissing": "画布中文文字没有可用的中文字体 fallback",
+      "textTooSmall": "画布文字 {{size}}pt 低于规范下限 {{min}}pt",
+      "textWeightPolicy": "规范建议 {{role}} 的字重为 {{want}}（当前 {{got}}）",
+      "tickDirection": "刻度朝向为 {{got}}，规范要求 {{want}}",
+      "tickLabelCount": "{{axis}} 有 {{count}} 个刻度标签，规范建议控制在 {{max}} 个以内",
+      "unappliedOverride": "面板有 {{count}} 条图内修改尚未应用到渲染上，成图会与画布不一致"
     },
     "render": {
       "failed": "渲染失败（HTTP {{status}}）",
@@ -1970,6 +2048,7 @@ export default interface Resources {
       "lockAspect": "锁定宽高比",
       "lockElement": "锁定图内元素",
       "lockObject": "锁定对象",
+      "mcpOpenFigure": "打开图",
       "moveElement": "移动{{label}}",
       "moveElements": "移动 {{count}} 个图内元素",
       "moveGuide": "移动参考线",
@@ -1996,6 +2075,7 @@ export default interface Resources {
       "setOpacity": "修改不透明度",
       "setPageSize": "修改画布尺寸",
       "setProp": "修改{{prop}}",
+      "setPublicationProfile": "设置出版规范",
       "showObject": "显示对象",
       "spacingX": "设置水平间距",
       "spacingY": "设置垂直间距",

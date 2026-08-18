@@ -1,19 +1,39 @@
 {
   "export": {
-    "blockingTitle": "There are blocking issues (missing assets / failed renders). You can still export, but fixing them first is safer.",
+    "blockedTitle": "There are blocking problems or items that cannot be verified automatically — tick the confirmation above before exporting",
     "composing": "Composing…",
+    "confirmBoth": "I understand the {{errors}} blocking problems and {{notVerifiable}} items that cannot be verified automatically, and want to export anyway. The confirmation is recorded in the proof report.",
+    "confirmErrors": "I understand the {{errors}} blocking problems and want to export anyway. The confirmation is recorded in the proof report.",
+    "confirmNotVerifiable": "I understand the {{notVerifiable}} items that cannot be verified automatically and want to export anyway. The confirmation is recorded in the proof report.",
     "dpiHint": {
+      "1200": "maximum",
       "300": "submission",
       "600": "print",
-      "900": "large format",
-      "1200": "maximum"
+      "900": "large format"
     },
     "dpiLabel": "Resolution",
     "dpiSelectLabel": "Export resolution",
     "exported": "Exported: {{files}}",
+    "facts": {
+      "column": "Column",
+      "columnDouble": "Double {{mm}}mm",
+      "columnNone": "No match (profile: {{single}}/{{double}}mm)",
+      "columnSingle": "Single {{mm}}mm",
+      "dpi": "Export DPI",
+      "dpiValue": "{{dpi}} dpi (profile floor {{min}})",
+      "minFont": "Smallest effective size",
+      "minFontNone": "No text found below {{min}}pt",
+      "minFontValue": "{{pt}}pt",
+      "page": "Page",
+      "pageValue": "{{w}} × {{h}} mm",
+      "raster": "Raster formats",
+      "vector": "Vector formats"
+    },
     "formatLabel": "Format",
-    "issueCount_one": " ({{count}} object)",
-    "issueCount_other": " ({{count}} objects)",
+    "issueOccurrences": " ({{count}} places)",
+    "journalWidthHint": "Overrides this profile's double-column width (only that one rule; the rest is inherited). Stored in the document and recorded in the proof.",
+    "journalWidthLabel": "Journal width",
+    "journalWidthReset": "Reset",
     "locate": "Locate",
     "moreOptions": "More export options",
     "operationFailed": "Operation failed: {{error}}",
@@ -25,35 +45,45 @@
     "pdfHint": "True vector, best for submission",
     "pngHint": "Raster, rendered at the chosen dpi",
     "preflightOk": "Pre-export checks passed",
-    "preflightSummary": "Preflight found {{count}} kinds of issue",
-    "preflightSummaryBlocking": "Preflight found {{count}} kinds of issue ({{errors}} blocking)",
+    "preflightParts": "Preflight: {{parts}}",
     "presetLabel": "Preset",
     "presets": {
+      "both": {
+        "hint": "PDF+PNG · {{dpi}}dpi",
+        "label": "PDF + PNG"
+      },
       "double": {
-        "hint": "PDF · 150mm double column",
+        "hint": "PDF · {{mm}}mm double column",
         "label": "Double column"
       },
-      "full": {
-        "hint": "PDF+PNG · 180mm text block",
-        "label": "Full page"
-      },
       "screen": {
-        "hint": "PNG 300dpi",
+        "hint": "PNG {{dpi}}dpi",
         "label": "Screen preview"
       },
       "single": {
-        "hint": "PDF · 85mm single column",
+        "hint": "PDF · {{mm}}mm single column",
         "label": "Single column"
       }
     },
+    "profileAria": "Publication profile",
+    "profileLabel": "Profile",
+    "profileStamp": "{{id}} · v{{version}}",
     "proofLabel": "Record",
-    "proofTitle": "JSON record: preflight results, asset list and export settings, written next to the output",
+    "proofTitle": "JSON record: profile identity + every preflight result (including not-verifiable items) + asset list + export settings, written into the export folder alongside the output",
     "proofToggle": "Write a proof report alongside the output",
     "revealFailed": "Could not reveal it in the file manager. The file is at: {{path}}",
     "savedTo": "Saved to {{dir}}",
+    "severity": {
+      "error": "Blocking",
+      "notVerifiable": "Not verifiable",
+      "suggestion": "Suggestion",
+      "warn": "Warning"
+    },
+    "severityCount": "{{count}} {{label}}",
     "start": "Export",
     "stemLabel": "File name",
     "summary": "{{w}}×{{h}} mm · {{panels}} panels · {{texts}} texts · {{marks}} annotations",
+    "svgNote": "The profile also accepts SVG, but canvas composition only produces PDF/PNG (composition goes through PyMuPDF). For SVG, export a single figure — write-back from figure editing and the Codex plugin's magplot_export both produce true vector SVG.",
     "timestampSuffix": "_timestamp",
     "title": "Export",
     "warningsIntro": "These edits could not be applied to the re-rendered panels, so the output may differ from the canvas:"
@@ -69,6 +99,26 @@
     "saved": "Saved as canvas file: {{name}}",
     "saving": "Saving…",
     "title": "Canvas files"
+  },
+  "mcp": {
+    "confirmBoth": "Export anyway: I understand the {{errors}} blocking problems and {{notVerifiable}} items that cannot be verified automatically. The confirmation is recorded in the proof report.",
+    "confirmErrors": "Export anyway: I understand the {{errors}} blocking problems. The confirmation is recorded in the proof report.",
+    "exportBlockedTitle": "There are blocking or not-verifiable items: tick the confirmation below first",
+    "exportBoth": "Export PDF+PNG",
+    "exportPendingTitle": "Some edits have not been drawn yet — wait for this render to finish before exporting",
+    "exported": "Exported {{files}}",
+    "issuesTitle": "Publication preflight",
+    "issuesTitleStale": "Publication preflight (the figure changed; this verdict is from the previous version)",
+    "panelGone": "The panel is gone — ask Codex to open this figure again.",
+    "pending": "Edits pending",
+    "pillClean": "Preflight passed",
+    "pillCounts": "{{errors}} blocking · {{warnings}} warnings · {{notVerifiable}} to verify",
+    "pillStale": "Preflight out of date",
+    "pillStaleTitle": "The figure changed — this verdict is from the previous version. Click to re-run.",
+    "pillTitle": "Run the publication preflight again",
+    "renderFailed": "Render failed",
+    "rendering": "Re-rendering",
+    "synced": "In sync"
   },
   "palette": {
     "commands": {

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { t as translate } from '@/i18n'
 import { enginePreviewPng, panelSrc } from '@/lib/api'
+import { engineTransport } from '@/lib/engineTransport'
 import { alignEntries, geomGid, geomTarget, segIntersectsRect } from '@/lib/elementGeom'
 import { DURATION, prefersReducedMotion, usePresence } from '@/lib/motion'
 import { pickBucket } from '@/lib/units'
@@ -108,9 +109,13 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   const needsEngine = (obj.overrides.length > 0 && !isJustBakedBaseline(obj)) || tracked
   const useEnginePng = !editing && needsEngine && (render?.rev ?? 0) > 0
   const enginePng = useEnginePngBlob(obj, bucket, useEnginePng, render?.rev ?? 0)
-  const src = useEnginePng && enginePng
-    ? enginePng
+  // 替代传输给不出可寻址地址时（Codex 内嵌画布里没有 HTTP 服务）退回空串，
+  // 此时显示走 SVG——绝不留一个连不上的 URL 让画布挂一个碎图标
+  const transport = engineTransport()
+  const fileSrc = transport
+    ? transport.panelSrc(obj.fileId, obj.fileKind, bucket, mtime)
     : panelSrc(obj.fileId, obj.fileKind, bucket, mtime)
+  const src = (useEnginePng && enginePng) || fileSrc || ''
 
   return (
     <div className="absolute inset-0 overflow-hidden">
@@ -184,10 +189,15 @@ function useEnginePngBlob(
     if (!enabled) return
     const ctrl = new AbortController()
     let landed = false
-    void enginePreviewPng(fileId, overrides, bucket, ctrl.signal)
-      .then((blob) => {
+    const transport = engineTransport()
+    const pending = transport
+      ? transport.previewPngUrl(fileId, overrides, bucket, ctrl.signal)
+      : enginePreviewPng(fileId, overrides, bucket, ctrl.signal).then((blob) =>
+          URL.createObjectURL(blob),
+        )
+    void pending
+      .then((next) => {
         landed = true
-        const next = URL.createObjectURL(blob)
         if (urlRef.current) URL.revokeObjectURL(urlRef.current)
         urlRef.current = next
         setUrl(next)
