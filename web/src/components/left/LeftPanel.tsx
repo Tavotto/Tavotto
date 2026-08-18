@@ -1,4 +1,5 @@
 import { Pin } from 'lucide-react'
+import { drawerMotion, type PresenceState } from '@/lib/motion'
 import { cn } from '@/lib/utils'
 import { useDocumentStore } from '@/store/documentStore'
 import { usePanelManifest } from '@/store/renderStore'
@@ -22,23 +23,37 @@ const TITLES = {
  * 左侧上下文抽屉：内容由图标轨道决定，一次只有一个上下文。
  * 标题行给出上下文名 + 计数；宽屏可钉住（选中对象时不自动让位）。
  */
-export function LeftPanel({ overlay = false }: { overlay?: boolean }) {
+export function LeftPanel({
+  overlay = false,
+  state = 'open',
+}: {
+  overlay?: boolean
+  /** 开合动效由 App 的 usePresence 驱动：收起时先播完退场再卸载 */
+  state?: PresenceState
+}) {
   const tab = useUiStore((s) => s.leftTab)
   const width = useUiStore((s) => s.leftWidth)
   const pinned = useUiStore((s) => s.leftPinned)
   const wide = useUiStore((s) => s.layout === 'wide')
   const objectCount = useDocumentStore((s) => s.doc.objects.length)
 
+  const motion = drawerMotion({ state, overlay, width, side: 'left' })
+
   return (
     <aside
-      style={{ width, left: overlay ? RAIL_W : undefined }}
+      {...motion}
+      style={{ ...motion.style, left: overlay ? RAIL_W : undefined }}
       data-left-drawer
       aria-label={TITLES[tab]}
       className={cn(
-        'relative flex shrink-0 flex-col border-r border-border bg-surface',
+        // overflow-hidden 是动效的一部分：停靠态动的是外层 width，内容包在下面
+        // 那层定宽 div 里，所以展开收起时抽屉自己的子树一次都不重排
+        'relative shrink-0 overflow-hidden border-r border-border bg-surface',
         overlay && 'absolute inset-y-0 z-30 shadow-pop',
+        motion.className,
       )}
     >
+      <div className="flex h-full flex-col" style={{ width }}>
       <div className="flex h-9 shrink-0 items-center gap-1.5 px-3">
         <h2 className="text-xs font-medium text-ink">{TITLES[tab]}</h2>
         {tab === 'layers' && objectCount > 0 && (
@@ -69,6 +84,7 @@ export function LeftPanel({ overlay = false }: { overlay?: boolean }) {
       ) : (
         <ElementTree />
       )}
+      </div>
       <WidthHandle />
     </aside>
   )
@@ -117,7 +133,8 @@ function WidthHandle() {
         const ui = useUiStore.getState()
         ui.setLeftWidth(ui.leftWidth + (e.key === 'ArrowRight' ? 16 : -16))
       }}
-      className="absolute inset-y-0 -right-1 z-20 w-2 cursor-col-resize outline-none hover:bg-accent/20 focus-visible:bg-accent/30"
+      // 整条都在抽屉内侧：外层 overflow-hidden（开合动效要用）会把伸到外面的部分剪掉
+      className="absolute inset-y-0 right-0 z-20 w-2 cursor-col-resize outline-none hover:bg-accent/20 focus-visible:bg-accent/30"
     />
   )
 }
