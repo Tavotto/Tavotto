@@ -184,6 +184,40 @@ jobs:
           }
           "{0:N0} KiB" -f ((Get-Item $bin).Length / 1KB)
 
+      # 只装桌面版的用户全靠这一个可执行文件被外部程序（Codex 插件）发现。
+      # **在真 Windows 产物上验**：GUI 与 console 是两个子系统，源码级测试
+      # 只能证明 spec 里写了，证明不了打出来的东西真能当命令行用。
+      - name: 断言产物里有 console 版 CLI，并且它真能当命令行用
+        run: |
+          $cli = "dist\Magplot\magplot-cli.exe"
+          if (-not (Test-Path $cli)) {
+            throw "产物里没有 $cli——只装桌面版的用户那里 Codex 插件会报「没找到 Magplot」"
+          }
+          # GUI 版 Magplot.exe 拿不到 stdout（输出会被改道进 app.log），
+          # console 版必须**真的**把那行 JSON 交到管道里来。
+          $env:MAGPLOT_CONFIG_DIR = "$env:RUNNER_TEMP\cli-cfg"
+          $env:MAGPLOT_DATA_DIR   = "$env:RUNNER_TEMP\cli-data"
+          $out = & $cli doctor --json
+          if ($LASTEXITCODE -ne 0) { throw "magplot-cli doctor 失败（$LASTEXITCODE）: $out" }
+          $j = $out | Select-Object -Last 1 | ConvertFrom-Json
+          if (-not $j.ok) { throw "doctor 报了问题: $out" }
+          if (-not $j.frozen) { throw "doctor 没认出自己是冻结产物: $out" }
+          if (-not $j.cli) { throw "doctor 定位不到自己的 CLI: $out" }
+          Write-Host "magplot-cli: $($j.cli)（协议 v$($j.protocol)）"
+
+          # 交接协议在真产物上跑一遍：登记 + 不唤起界面，路径带中文和空格
+          $proj = "$env:RUNNER_TEMP\我的 图库"
+          New-Item -ItemType Directory -Force -Path $proj | Out-Null
+          Copy-Item examples\runtime_check\*.py $proj -Force
+          $script = @(Get-ChildItem $proj -Filter *.py)[0].FullName
+          $out = & $cli open "$script" --json --no-launch
+          if ($LASTEXITCODE -ne 0) { throw "magplot-cli open 失败（$LASTEXITCODE）: $out" }
+          $j = $out | Select-Object -Last 1 | ConvertFrom-Json
+          if (-not $j.ok) { throw "open 回了 ok=false: $out" }
+          if ($j.launch) { throw "--no-launch 却起了界面: $out" }
+          if (-not (Test-Path "$proj\mm_registry.json")) { throw "没生成 mm_registry.json" }
+          Write-Host "✓ 真产物上的 doctor / open --json --no-launch 都通了"
+
       - name: 断言产物里真有内置 runtime
         run: |
           $rt = "dist\Magplot\_internal\runtime"

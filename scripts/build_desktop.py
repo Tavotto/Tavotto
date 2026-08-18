@@ -14,7 +14,9 @@
    ——回退到 Python 渲染池是静默的，做出来的包功能一样不缺、只是慢，
    发出去也不会有人发现。
 4. sidecar：PyInstaller onedir（packaging/magplot.spec，刻意不含 matplotlib，
-   不用 onefile——科学场景的启动解压等不起）→ dist/Magplot/。
+   不用 onefile——科学场景的启动解压等不起）→ dist/Magplot/。同一份 Analysis
+   里还出一个 console 版 `magplot-cli`，那是外部程序（Codex 插件）唯一能当
+   命令行调的入口——GUI 子系统的 exe 没有 stdout，交接的 JSON 会落进 app.log。
 5. Tauri：pnpm dlx @tauri-apps/cli build，把 dist/Magplot 作为资源打进壳
    （src-tauri/tauri.conf.json 的 bundle.resources）。
 
@@ -134,6 +136,31 @@ def main() -> None:
             f"sidecar 里没有 workerd: {packed}\n"
             "  packaging/magplot.spec 的 binaries 落点与 "
             "engine/workerd_client.find_workerd() 对不上了。")
+
+    # console 版 CLI 同理**缺了就中止**：少了它，装完的桌面版功能一样不缺，
+    # 只有「Codex 插件找不到 Magplot」这一种表现，而那要等用户装完才发现。
+    cli = sidecar.parent / ("magplot-cli.exe" if sys.platform == "win32"
+                            else "magplot-cli")
+    if not cli.is_file():
+        raise SystemExit(
+            f"sidecar 目录里没有 console 版 CLI: {cli}\n"
+            "  packaging/magplot.spec 的第二个 EXE 落点与 "
+            "engine/locate.CLI_NAME 对不上了。")
+    # 装完的机器上安装器跑的就是这一条；在这儿先跑一次，把「打出来的 CLI 起不来」
+    # 挡在发布之前（真产物、真 argv、真 JSON，不是对源码的断言）。
+    probe = subprocess.run([str(cli), "doctor", "--json"], capture_output=True,
+                           text=True, encoding="utf-8", errors="replace")
+    tail = (probe.stdout or probe.stderr or "").strip().splitlines()
+    try:
+        report = json.loads(tail[-1]) if tail else {}
+    except ValueError:
+        report = {}
+    if not report.get("cli"):
+        raise SystemExit(
+            f"magplot-cli 自检没过（退出码 {probe.returncode}）:\n"
+            f"  stdout: {(probe.stdout or '').strip()[:400]}\n"
+            f"  stderr: {(probe.stderr or '').strip()[:400]}")
+    print(f"* magplot-cli: {cli}（doctor 自检通过，协议 v{report.get('protocol')}）")
 
     if args.skip_tauri:
         print("* --skip-tauri：到此为止")
