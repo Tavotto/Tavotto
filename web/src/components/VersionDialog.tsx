@@ -4,6 +4,7 @@ import { Bookmark, Copy, Layers2, Pencil, RotateCcw, Trash2, X,
   History,
 } from 'lucide-react'
 import {
+  backendErrorText,
   createVersion,
   deleteVersion,
   duplicateVersion,
@@ -62,7 +63,7 @@ export function VersionDrawer() {
       setVersions(list.slice().reverse()) // 最新在上
       setError(null)
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(backendErrorText(e))
     }
   }, [docId])
 
@@ -92,7 +93,7 @@ export function VersionDrawer() {
     let alive = true
     fetchVersionDoc(docId, selected)
       .then((v) => alive && setSelectedDoc(v.doc))
-      .catch((e) => alive && setError(e instanceof Error ? e.message : String(e)))
+      .catch((e) => alive && setError(backendErrorText(e)))
     return () => {
       alive = false
     }
@@ -109,7 +110,7 @@ export function VersionDrawer() {
       await reload()
       useUiStore.getState().setStatus(msg('versions.saved', undefined, 'dialogs'))
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(backendErrorText(e))
     } finally {
       setBusy(false)
     }

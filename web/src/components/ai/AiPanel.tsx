@@ -13,6 +13,7 @@ import {
   X,
 } from 'lucide-react'
 import {
+  backendErrorText,
   aiRevert,
   deleteAiHistory,
   fetchAiHistory,
@@ -207,7 +208,7 @@ export function AssistantPanel() {
       })
       setPrompt('')
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(backendErrorText(e))
     } finally {
       setSending(false)
     }
@@ -628,7 +629,7 @@ function TaskHistory({ onClose }: { onClose: () => void }) {
       setTotal(res.total)
       setError(null)
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(backendErrorText(e))
     }
   }
 

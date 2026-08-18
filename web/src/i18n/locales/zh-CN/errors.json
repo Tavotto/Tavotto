@@ -1,4 +1,14 @@
 {
+  "backend": {
+    "dir_missing": "目录不存在：{{path}}",
+    "invalid_path": "路径无效",
+    "missing_path": "缺少项目路径",
+    "mkdir_failed": "无法创建目录：{{reason}}",
+    "no_project": "尚未打开项目",
+    "open_project_failed": "打不开这个项目：{{reason}}",
+    "permission_denied": "无权限读取：{{path}}",
+    "read_failed": "无法读取：{{reason}}"
+  },
   "engine": {
     "apply": "应用",
     "autoInstall": "自动安装",

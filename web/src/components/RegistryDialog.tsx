@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AlertTriangle, Braces, Check, Play, RefreshCw } from 'lucide-react'
 import {
+  backendErrorText,
   fetchRegistry,
   probeScript,
   scanRegistry,
@@ -59,7 +60,7 @@ function RegistryBody() {
       setView(await fetchRegistry())
       setError(null)
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(backendErrorText(e))
     }
   }
 
@@ -76,7 +77,7 @@ function RegistryBody() {
       // 注册表变了，面板的 ⚡ 状态跟着变——素材库必须重取
       await useAssetStore.getState().load()
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(backendErrorText(e))
     } finally {
       setBusy(null)
     }

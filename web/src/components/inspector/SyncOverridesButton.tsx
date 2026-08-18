@@ -4,6 +4,7 @@ import { ArrowLeftRight, TriangleAlert } from 'lucide-react'
 import { msg, t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
 import {
+  backendErrorText,
   syncOverrides,
   updateSourceFiles,
   type PanelInfo,
@@ -67,7 +68,7 @@ export function SyncOverridesButton({ panel }: { panel: PanelObject }) {
     try {
       setResult(await syncOverrides(panel.fileId, info.id, panel.overrides))
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(backendErrorText(e))
     } finally {
       setBusy(false)
     }
@@ -202,7 +203,7 @@ function ResultDialog({
         .getState()
         .setStatus(msg('sync.writtenBack', { name: target.name }, 'inspector'))
     } catch (e) {
-      setApplyError(e instanceof Error ? e.message : String(e))
+      setApplyError(backendErrorText(e))
     } finally {
       setApplying(false)
     }

@@ -23,6 +23,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
+import { backendErrorText } from '@/lib/api'
 import type { PanelInfo } from '@/lib/api'
 
 export interface OpenRequest {
@@ -95,11 +96,7 @@ export async function applyOpenRequest(req: OpenRequest): Promise<OpenOutcome> {
     }
   } catch (err) {
     ui.setStatus(
-      msg(
-        'handoff.openFailed',
-        { error: err instanceof Error ? err.message : String(err) },
-        'project',
-      ),
+      msg('handoff.openFailed', { error: backendErrorText(err) }, 'project'),
       'error',
     )
     return 'failed'

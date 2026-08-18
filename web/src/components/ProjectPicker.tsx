@@ -11,6 +11,7 @@ import {
   X,
 } from 'lucide-react'
 import {
+  backendErrorText,
   ApiError,
   browseDirs,
   type BrowseResult,
@@ -49,7 +50,7 @@ export function ProjectPicker() {
     try {
       await open(path, create)
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(backendErrorText(e))
     } finally {
       setBusyPath(null)
     }
@@ -245,7 +246,7 @@ export function DirBrowser({
       setNearest(null)
       if (!editingPath.current) setPathText(next.is_roots ? '' : next.path)
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(backendErrorText(e))
       // 后端在「路径不存在」时附带最近的存在祖先，给一个一键跳转——
       // 手输路径打错一个字符不该只换来一句死报错
       const hint = e instanceof ApiError ? e.body.nearest : null

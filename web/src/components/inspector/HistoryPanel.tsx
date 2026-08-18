@@ -3,6 +3,7 @@ import { Trans, useTranslation } from 'react-i18next'
 import { History, RotateCcw, TriangleAlert } from 'lucide-react'
 import { msg, t as translate } from '@/i18n'
 import {
+  backendErrorText,
   fetchHistory,
   historyPreviewUrl,
   restoreHistory,
@@ -60,7 +61,7 @@ function HistoryBody({ panel, onDone }: { panel: PanelObject; onDone: () => void
     let alive = true
     fetchHistory(panel.fileId)
       .then((r) => alive && setVersions(r.versions))
-      .catch((e) => alive && setError(e instanceof Error ? e.message : String(e)))
+      .catch((e) => alive && setError(backendErrorText(e)))
     return () => {
       alive = false
     }
@@ -187,7 +188,7 @@ function RestoreDialog({
       onClose()
       onDone()
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(backendErrorText(e))
     } finally {
       setBusy(false)
     }

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronDown, Folder, SquareArrowOutUpRight } from 'lucide-react'
 import { literal } from '@/i18n'
+import { backendErrorText } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
@@ -32,8 +33,8 @@ export function ProjectSwitcher() {
 
   const go = (path: string, create = false) => {
     void open(path, create).catch((e: unknown) =>
-      // 后端的原始报错原样透出（诊断信息），不当作界面文案翻译
-      useUiStore.getState().setStatus(literal(e instanceof Error ? e.message : String(e)), 'error'),
+      // 后端给了稳定 code 就按当前语言说；没给就原样透出它那句话
+      useUiStore.getState().setStatus(literal(backendErrorText(e)), 'error'),
     )
   }
 

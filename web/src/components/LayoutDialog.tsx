@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { msg } from '@/i18n'
 import { FolderOpen, Save } from 'lucide-react'
-import { fetchLayout, fetchLayoutNames, saveLayout } from '@/lib/api'
+import { backendErrorText, fetchLayout, fetchLayoutNames, saveLayout } from '@/lib/api'
 import { normalizeLayout } from '@/lib/migrate'
 import { cn } from '@/lib/utils'
 import { openLayoutDocument } from '@/store/actions'
@@ -32,7 +32,7 @@ export function LayoutDialog() {
     setError(null)
     fetchLayoutNames()
       .then(setNames)
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+      .catch((e) => setError(backendErrorText(e)))
   }, [open, docName])
 
   // 从菜单进来时焦点直接落在用户选的那件事上。
@@ -64,7 +64,7 @@ export function LayoutDialog() {
       useUiStore.getState().setStatus(msg('layout.saved', { name: stem }, 'dialogs'))
       setOpen(false)
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(backendErrorText(e))
     } finally {
       setBusy(false)
     }
@@ -78,7 +78,7 @@ export function LayoutDialog() {
       openLayoutDocument(normalizeLayout(payload, target))
       setOpen(false)
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(backendErrorText(e))
     } finally {
       setBusy(false)
     }

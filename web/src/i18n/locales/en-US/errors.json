@@ -1,4 +1,14 @@
 {
+  "backend": {
+    "dir_missing": "Folder does not exist: {{path}}",
+    "invalid_path": "Invalid path",
+    "missing_path": "The project path is missing",
+    "mkdir_failed": "Cannot create the folder: {{reason}}",
+    "no_project": "No project is open yet",
+    "open_project_failed": "Cannot open this project: {{reason}}",
+    "permission_denied": "No permission to read: {{path}}",
+    "read_failed": "Cannot read: {{reason}}"
+  },
   "engine": {
     "apply": "Apply",
     "autoInstall": "Install automatically",

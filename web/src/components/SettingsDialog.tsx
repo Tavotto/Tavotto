@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { CheckCircle2, XCircle } from 'lucide-react'
 import { apiUrl, withProject } from '@/lib/session'
 import {
+  backendErrorText,
   deleteAiEndpoint,
   fetchAiInstallStatus,
   patchAiSettings,
@@ -189,7 +190,7 @@ function ProjectSection() {
           : s,
       )
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(backendErrorText(e))
     }
   }
 
@@ -344,7 +345,7 @@ function AiSection() {
       await fn()
       await useAiStore.getState().loadCaps(true)
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(backendErrorText(e))
     } finally {
       setBusy(false)
     }

@@ -4,7 +4,7 @@ import { msg, t as translate } from '@/i18n'
 import { Check, Pipette, Plus, Save, Trash2, TriangleAlert, X,
   Paintbrush,
 } from 'lucide-react'
-import { deleteStyle, fetchStyles, saveStyle } from '@/lib/api'
+import { backendErrorText, deleteStyle, fetchStyles, saveStyle } from '@/lib/api'
 import {
   extractFromManifest,
   extractPalette,
@@ -59,7 +59,7 @@ export function StyleDialog() {
     setError(null)
     fetchStyles()
       .then(setSaved)
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+      .catch((e) => setError(backendErrorText(e)))
   }, [open])
 
   const doc = useDocumentStore((s) => s.doc)
@@ -119,7 +119,7 @@ export function StyleDialog() {
       setError(null)
       useUiStore.getState().setStatus(msg('style.saved', { name: stored.name }, 'dialogs'))
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(backendErrorText(e))
     } finally {
       setBusy(false)
     }
