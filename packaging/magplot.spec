@@ -14,11 +14,18 @@
 2. **Flask 主进程里不打包 matplotlib**。科学栈跑在 worker 子进程里，主进程
    有它没用，白白多出一两百 MB，还会把「主程序 / 渲染环境分离」这条边界废掉。
 
-3. **Windows 桌面版把内置渲染 runtime 一起带上**（`runtime/`，由
+3. **两个桌面平台都把内置渲染 runtime 一起带上**（`runtime/`，由
    `scripts/build_worker_runtime.py` 生成）。这样没装过 Python 的用户装完就能
    渲染，首次渲染也不联网。runtime 作为 datas 进包 → 落在 `_internal/runtime`，
-   `engine/runtime.py` 按 `sys._MEIPASS` 解析，安装程序与免安装 zip 自动都含它。
-   macOS / 没构建 runtime 时这一段整个跳过，行为与从前一致。
+   `engine/runtime.py` 按 `sys._MEIPASS` 解析；macOS 上这一整坨再被 Tauri 收进
+   `Magplot.app/Contents/Resources/sidecar/Magplot/`，`_MEIPASS` 照样指得准。
+
+   走 **datas 而不是 binaries** 是有意的：binaries 会被做依赖分析并改写 rpath，
+   而这份 runtime 的内部引用（`bin/python3.13` → `lib/libpython3.13.dylib`、
+   各 .so 之间）本来就是自洽的，改写只会把它弄坏。实测 PyInstaller 6.x 仍会
+   把 datas 里的 Mach-O 重新 adhoc 签一遍（原来的 linker 签名被换掉），**这不影响
+   运行**，而且发行链随后会用 Developer ID 全部重签一遍——最终说了算的是那一次。
+   符号链接与可执行位都被保留（实测），所以 `bin/python3` 不会被拍平成第二个 18 MB 副本。
 
 4. **除了 GUI 的 Magplot，还出一个 console 版 `magplot-cli`**。两个 exe 出自
    同一个 Analysis、共用同一份 `_internal/`（只多一个 ~1.5 MB 的 bootloader），
@@ -38,7 +45,7 @@
 用法（在仓库根目录）：
     python scripts/build_frontend.py
     cargo build --release --manifest-path workerd/Cargo.toml
-    python scripts/build_worker_runtime.py      # 仅 Windows 桌面版需要
+    python scripts/build_worker_runtime.py      # Windows / macOS 桌面版都需要
     pyinstaller packaging/magplot.spec --noconfirm
 
 （`python scripts/build_desktop.py` 会按顺序把上面这些都做掉。）
@@ -74,9 +81,23 @@ for name in ("worker.py", "manifest.py", "overrides.py", "patchspec.py"):
 # 安装包，而这种包只有到了用户手里才会暴露。
 RUNTIME = Path(os.environ.get("MAGPLOT_RUNTIME_SRC") or (ROOT / "runtime"))
 _require = os.environ.get("MAGPLOT_REQUIRE_RUNTIME") in ("1", "true", "yes")
-if (RUNTIME / "runtime-manifest.json").is_file():
+_MANIFEST = RUNTIME / "runtime-manifest.json"
+
+# 「这份 runtime 配不配得上这次构建」的判据只有一份，在构建脚本里
+# （build_desktop.py 复用同一个函数）。分头各写一遍的话，迟早一边放行
+# 另一边拦住，而放行的那一边才是发出去的。
+sys.path.insert(0, str(ROOT / "scripts"))
+from build_worker_runtime import BuildError, check_runtime_dir  # noqa: E402
+
+if _MANIFEST.is_file():
+    try:
+        _info = check_runtime_dir(_MANIFEST, require_smoke=_require)
+    except BuildError as exc:
+        raise SystemExit(f"[magplot.spec] {exc}")
     datas.append((str(RUNTIME), "runtime"))
-    print(f"[magplot.spec] 内置 runtime: {RUNTIME}")
+    print(f"[magplot.spec] 内置 runtime: {RUNTIME} "
+          f"（{_info['platform']['os']}/{_info['platform']['arch']}，"
+          f"Python {_info['python']['version']}，冒烟 {_info['build']['smoke']}）")
 elif _require:
     raise SystemExit(
         f"MAGPLOT_REQUIRE_RUNTIME=1 但 {RUNTIME} 里没有可用的内置 runtime——"
@@ -85,7 +106,7 @@ else:
     print(f"[magplot.spec] 未附带内置 runtime（{RUNTIME} 不存在）——"
           "渲染将回退到用户自己的 Python")
 
-# Rust supervisor（见文件头说明 4）。约定位置就是 cargo 自己的产出目录——
+# Rust supervisor（见文件头说明 5）。约定位置就是 cargo 自己的产出目录——
 # `workerd_client._dev_tree_candidates()` 认的也是它，别再造第二个落点。
 # 走 binaries 而不是 datas：PyInstaller 只对 binaries 保留可执行位。
 WORKERD_NAME = "magplot-workerd.exe" if sys.platform == "win32" else "magplot-workerd"

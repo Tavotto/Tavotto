@@ -5,16 +5,26 @@ name: Desktop apps (Tauri)
 # 旧链路（desktop.yml：PyInstaller 直发 + Inno Setup + 免安装 zip）已于
 # v0.3.0 退役删除，git 历史可找回。架构见 docs/adr/0002-tauri-desktop-shell.md。
 #
-# Windows 的 NSIS 里带**内置渲染 runtime**（进 sidecar 的 _internal\runtime，
+# **两个平台的安装包都带内置渲染 runtime**（进 sidecar 的 _internal/runtime，
 # 由 scripts/build_worker_runtime.py 生成、经 packaging/magplot.spec 收进）：
 # 用户不用装 Python，首次渲染不联网。
+#   Windows: 官方 embeddable          → runtime\python.exe
+#   macOS:   python-build-standalone  → runtime/bin/python3.13（可重定位，逐个可签名；
+#            python/python3 两个别名在构建时剪掉，Tauri 会把符号链接拍平成真副本）
+# macOS 目前**只发 arm64**（runner 只有 Apple Silicon 一档）；Intel 的目标在
+# packaging/runtime-lock.json 里标着 shipped=false，没构建过也没冒烟过。
 #
 # 验收原则：门禁打的是**最终用户启动的产物**——
 # 1. sidecar 冒烟（scripts/smoke_desktop.py）对 PyInstaller 真二进制走完整链路：
-#    动态端口 / nonce 认证 / 重放拒绝 / 打开项目 / 渲染 / 导出 / EOF 退出无孤儿
-#    （Windows 上这条腿刻意不给 MM_WORKER_PYTHON，渲染必须走内置 runtime）；
-# 2. Windows 再跑 smoke_app.py --expect-source bundled（内置 runtime 真能渲染），
-#    并对 Tauri 真 .exe 做启动-探活-退出探针（壳 → sidecar → 收尾）。
+#    动态端口 / nonce 认证 / 重放拒绝 / 打开项目 / 渲染 / 导出 / EOF 退出无孤儿；
+# 2. 两个平台都跑 smoke_app.py --expect-source bundled --expect-runtime
+#    （内置 runtime 真能渲染，且是「本该带、带的这份完整」）。
+#    **刻意不建 worker-env、不设 MM_WORKER_PYTHON**：一条借来的解释器会让
+#    「runtime 根本没打进去」全程绿灯，而那正是这条门禁唯一要挡的东西；
+# 3. macOS 还要对**签完名的 .app 本体**再跑一次 smoke_app（从中文+空格路径），
+#    并逐个校验 .app 里每个 Mach-O 都签到了、架构都对——签名/公证之后产物
+#    还会不会跑，只有真跑一次才知道；
+# 4. Windows 对 Tauri 真 .exe 做启动-探活-退出探针（壳 → sidecar → 收尾）。
 on:
   # 打 tag 即自动构建并挂到 Release（与 release.yml 并行，省一半墙钟时间；
   # 「挂到 Release」步骤会先等 release.yml 把 Release 建出来）
@@ -115,17 +125,18 @@ jobs:
             src-tauri
             workerd
 
-      - name: 缓存 CPython embeddable 下载
-        if: runner.os == 'Windows'
+      - name: 缓存 CPython 归档下载
         uses: actions/cache@v4
         with:
           path: build/runtime-cache
-          key: cpython-embed-${{ hashFiles('packaging/runtime-lock.json') }}
+          key: cpython-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packaging/runtime-lock.json') }}
 
-      - name: 构建内置渲染 runtime（仅 Windows）
-        # 脚本自己做 SHA-256 校验、按 .dist-info 核对版本，并逐个 import +
-        # 画一张真图。任何一步不过就失败在这里——发出去之后再发现就晚了。
-        if: runner.os == 'Windows'
+      - name: 构建内置渲染 runtime
+        # 两个平台都要。脚本自己做 SHA-256 校验（macOS 那份的期望值取自
+        # python-build-standalone 上游发布的 SHA256SUMS）、按 .dist-info 核对
+        # 版本，并用 runtime 自己的解释器逐个 import + 画一张真图。
+        # 任何一步不过就失败在这里——发出去之后再发现就晚了。
+        # 目标按本机平台/架构自动挑（--target 可覆盖，交叉构建时才需要）。
         run: python scripts/build_worker_runtime.py --clean
 
       - name: 装打包依赖（Flask 父进程那点；科学栈刻意不装，免得进 sidecar）
@@ -138,9 +149,12 @@ jobs:
         # magplot.spec 再把它收进 _internal/。cargo 缺席时脚本当场中止——
         # 静默少一个 workerd 的包在界面上完全看不出来（功能全在、只是慢）
         env:
-          # Windows 发行包必须自带 runtime（落在 sidecar 的 _internal\runtime，
-          # NSIS 经 bundle.resources 一起收走）；macOS 不带，spec 自动跳过
-          MAGPLOT_REQUIRE_RUNTIME: ${{ runner.os == 'Windows' && '1' || '0' }}
+          # **两个平台的发行包都必须自带 runtime**（落在 sidecar 的
+          # _internal/runtime；NSIS 与 .app 各自经 bundle.resources 一起收走）。
+          # 打开它之后 magplot.spec 会额外确认：清单 schema 对、平台/架构与本次
+          # 构建一致、冒烟状态是 passed——少任何一条都当场失败，而不是安静地
+          # 产出一个「装完不能渲染」的安装包。
+          MAGPLOT_REQUIRE_RUNTIME: "1"
         run: python scripts/build_desktop.py --skip-tauri
 
       - name: 壳的单测（交接契约 --open/--stem）
@@ -152,16 +166,11 @@ jobs:
         working-directory: src-tauri
         run: cargo test
 
-      - name: 渲染 worker 环境（仅 macOS：冒烟的渲染/导出腿需要 matplotlib）
-        # Windows 刻意不建也不设 MM_WORKER_PYTHON——sidecar 冒烟的渲染腿
-        # 必须走内置 runtime，一台碰巧装着 matplotlib 的机器不该让它绿灯
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          python -m venv worker-env
-          WPY=worker-env/bin/python
-          "$WPY" -m pip install -q matplotlib numpy
-          echo "MM_WORKER_PYTHON=$PWD/$WPY" >> "$GITHUB_ENV"
+      # 这里**刻意没有**「建一个 worker-env 再设 MM_WORKER_PYTHON」那一步。
+      # 它曾经存在于 macOS 这条腿上，代价是整条门禁失去意义：借来的解释器让
+      # 冒烟一路绿灯，而「内置 runtime 根本没打进安装包」这件事没有任何一处
+      # 会发现——那正是用户装完打不开图的原因。渲染腿现在只能走内置 runtime，
+      # 走不通就该红。
 
       - name: sidecar 冒烟（真产物：认证/项目/渲染/导出/退出）
         shell: bash
@@ -170,19 +179,24 @@ jobs:
           else EXE=dist/Magplot/Magplot; fi
           python scripts/smoke_desktop.py --sidecar "$EXE"
 
-      - name: 发布前冒烟：内置 runtime 真能渲染（仅 Windows）
-        # --expect-source bundled 断言渲染真的走了内置环境；--expect-packages
-        # 逐个 import 内置科学栈；--expect-control-plane workerd 断言这次渲染
-        # 真的跑在 Rust supervisor 上。少了它们，「runtime / workerd 根本没打
-        # 进去」都会全程绿灯——两种缺失在界面上都毫无症状。
+      - name: 发布前冒烟：内置 runtime 真能渲染
+        # --expect-source bundled     渲染真的走了内置环境（没被别的 Python 抢先）
+        # --expect-runtime            该带 runtime 的形态，且带的这份完整可用
+        # --expect-packages           逐个 import 内置科学栈（文件在 ≠ 能用）
+        # --expect-control-plane      这次渲染真的跑在 Rust supervisor 上
+        # 少了它们，「runtime / workerd 根本没打进去」都会全程绿灯——
+        # 两种缺失在界面上都毫无症状。
         # **刻意不设 MAGPLOT_WORKERD**：要验的是产物自带的那份被自动找到。
-        if: runner.os == 'Windows'
-        shell: pwsh
+        # 脚本自己会把 MM_WORKER_PYTHON / Conda / PYTHONHOME 等一律摘干净。
+        shell: bash
         run: |
-          $env:MM_WORKER_PYTHON = $null
-          python scripts/smoke_app.py --exe dist/Magplot/Magplot.exe `
-            --figures examples/runtime_check --expect-source bundled `
-            --expect-control-plane workerd `
+          set -euo pipefail
+          if [ "$RUNNER_OS" = "Windows" ]; then EXE=dist/Magplot/Magplot.exe
+          else EXE=dist/Magplot/Magplot; fi
+          python scripts/smoke_app.py --exe "$EXE" \
+            --figures examples/runtime_check \
+            --expect-source bundled --expect-runtime \
+            --expect-control-plane workerd \
             --expect-packages numpy,pandas,scipy,seaborn,PIL,matplotlib
 
       - name: Tauri build
@@ -246,25 +260,73 @@ jobs:
           rm -f /tmp/cert.p12
           security find-identity -v -p codesigning /tmp/build.keychain
 
-      - name: 签名 .app（含嵌套的 PyInstaller sidecar）
+      - name: 架构核对（.app 里不许混进另一个架构的 Mach-O）
+        # 签名**之前**先看架构：一个 x86_64 的 .so 混进 arm64 的包里，签名照样
+        # 能过、公证也可能过，症状要等到用户 import 那个包时才出现
+        # （"incompatible architecture"）。放在签名前是因为这一步不需要签名，
+        # 而且没证书的构建（fork / 本地）也该被它挡住。
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          APP=src-tauri/target/release/bundle/macos/Magplot.app
+          python scripts/codesign_macos.py scan --app "$APP" --quiet \
+            --expect-arch "$(python -c 'import platform;print(platform.machine())')"
+
+      - name: 签名 .app（含嵌套 sidecar 与内置渲染 runtime）
         if: runner.os == 'macOS' && env.MACOS_SIGN_IDENTITY != ''
         run: |
           set -euo pipefail
           APP=src-tauri/target/release/bundle/macos/Magplot.app
-          # 自底向上签**所有** Mach-O（含 Resources/sidecar 里 PyInstaller 的
-          # 无后缀二进制）——漏一个公证就 Invalid，这是 0.1.3 时代用真公证换来的教训
-          find "$APP" -type f | while read -r f; do
-            case "$(file -b "$f")" in
-              *Mach-O*) codesign --force --timestamp --options runtime \
-                          --sign "$MACOS_SIGN_IDENTITY" "$f" ;;
-            esac
-          done
-          codesign --force --timestamp --options runtime \
-            --entitlements packaging/entitlements.plist \
-            --sign "$MACOS_SIGN_IDENTITY" "$APP"
-          codesign --verify --deep --strict --verbose=2 "$APP"
-          codesign -dvvv "$APP" 2>&1 | grep -q "Authority=Developer ID Application" || {
-            echo "::error::签名没生效（仍是 adhoc）"; codesign -dvvv "$APP"; exit 1; }
+          # 自内向外签**所有** Mach-O——漏一个公证就 Invalid，这是 0.1.3 时代
+          # 用真公证换来的教训。内置 runtime 进来之后这件事从「几十个」变成
+          # 「五百多个」（解释器 + numpy/scipy/pandas 的全部扩展模块），
+          # 靠 `--deep` 是签不到的：它们躺在 Resources 里，不被识别为嵌套代码。
+          # 脚本读魔数而不是 fork `file`，并且只给可执行文件挂 entitlements。
+          python scripts/codesign_macos.py sign --app "$APP" \
+            --identity "$MACOS_SIGN_IDENTITY" \
+            --entitlements packaging/entitlements.plist
+
+      - name: 签名验收（逐个 Mach-O + 架构 + 签名主体）
+        if: runner.os == 'macOS' && env.MACOS_SIGN_IDENTITY != ''
+        run: |
+          set -euo pipefail
+          APP=src-tauri/target/release/bundle/macos/Magplot.app
+          ARCH=$(python -c "import platform;print(platform.machine())")
+          # `--verify --deep` 验不出「Resources 里躺着一个没签名的 .so」——
+          # 那种文件是被当作*资源*封进签名的，封条本身合法。所以必须逐个验。
+          python scripts/codesign_macos.py verify --app "$APP" \
+            --expect-arch "$ARCH" \
+            --expect-identity "Authority=Developer ID Application"
+
+      - name: 最终 .app 冒烟（签完名的产物，中文 + 空格路径）
+        # **这一步才是「用户拿到的东西能不能用」**。前面那次冒烟打的是
+        # dist/Magplot（PyInstaller 的裸产物），此刻这份已经被 Tauri 收进
+        # .app、又被逐个重签过——hardened runtime 会不会拦下内置解释器加载
+        # numpy 的 .dylib、签名有没有把某个扩展模块弄坏，只有真跑一次才知道。
+        #
+        # 从**中文 + 空格**的路径跑：国内用户最常见的一档，而 macOS 上
+        # `.app` 被拖到「我的 文档」里是家常便饭。用 ditto 而不是 cp -R——
+        # 它是 Apple 用来保留签名与扩展属性的那个工具。
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC=src-tauri/target/release/bundle/macos/Magplot.app
+          DEST="$RUNNER_TEMP/我的 应用 目录"
+          mkdir -p "$DEST"
+          ditto "$SRC" "$DEST/Magplot.app"
+          SIDECAR="$DEST/Magplot.app/Contents/Resources/sidecar/Magplot/Magplot"
+          test -x "$SIDECAR" || { echo "::error::.app 里没有可执行的 sidecar: $SIDECAR"; exit 1; }
+          # 拷完再验一次签名：ditto 保不住签名的话，用户从 dmg 拖进
+          # /Applications 的那一份也一样坏
+          codesign --verify --deep --strict "$DEST/Magplot.app"
+          python scripts/smoke_app.py --exe "$SIDECAR" \
+            --figures examples/runtime_check \
+            --workdir "$RUNNER_TEMP/冒烟 数据" \
+            --expect-source bundled --expect-runtime \
+            --expect-control-plane workerd \
+            --expect-packages numpy,pandas,scipy,seaborn,PIL,matplotlib
+          rm -rf "$DEST"
 
       - name: 打 .dmg
         if: runner.os == 'macOS'

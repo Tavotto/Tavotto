@@ -55,3 +55,6 @@ workerd/target/
 /logo.ai
 /logo.pdf
 /Magplot Brand System.html
+
+# MCP App 画布的中间产物（最终单文件在 codex-plugin/mcp/widget/canvas.html，那个进 git）
+web/dist-mcp/
