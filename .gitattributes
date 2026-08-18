@@ -1,0 +1,17 @@
+# 会被**逐字节 / 逐指纹比对**的生成物一律钉成 LF。
+#
+# 为什么需要这条：Git for Windows 默认 `core.autocrlf=true`，检出时把文本文件
+# 换成 CRLF。这些文件是生成器写出来的（写的是 LF），而 CI 会拿磁盘上那份与
+# 新生成的一份逐字节比——内容一个字都没错，只是换行符被 git 改了，于是
+# **只有 Windows 那条腿红**，ubuntu / macOS 一路绿，本机怎么也复现不了。
+#
+# 撞过一次：`i18next-cli types --ci` 在 package(windows) 与 windows-exe-smoke
+# 上同时报「TypeScript definitions are out of date」。
+# 看护在 tests/test_windows_regressions.py 的 test_byte_compared_artifacts_are_pinned_to_lf
+# ——新增这类生成物时，那张表和这里都要加一行。
+
+# `pnpm i18n:check` 的第一步就是 `i18next-cli types --ci`
+web/src/i18n/resources.d.ts text eol=lf
+
+# `python scripts/build_mcp_widget.py --check` 比的是 web/src 的源码指纹
+codex-plugin/mcp/widget/canvas.html text eol=lf
