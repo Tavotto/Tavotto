@@ -54,6 +54,19 @@ def test_marketplace_points_at_the_plugin():
     assert (ROOT / entry["source"]["path"]).is_dir()
 
 
+def test_marketplace_policy_uses_values_codex_accepts():
+    """policy 是**枚举**，不是自由文本。
+
+    实测：`authentication: "NONE"`（本插件确实不需要认证，写着最自然）会让
+    `codex plugin marketplace add` 当场拒绝整个市场文件——
+    `unknown variant NONE, expected ON_INSTALL or ON_USE`。整个市场都装不上，
+    错误只在那一条命令里出现一次，之后就是「插件列表里没有它」。
+    """
+    entry = json.loads(MARKETPLACE.read_text(encoding="utf-8"))["plugins"][0]
+    assert entry["policy"]["installation"] in {"AVAILABLE", "REQUIRED", "BLOCKED"}
+    assert entry["policy"]["authentication"] in {"ON_INSTALL", "ON_USE"}
+
+
 def test_skill_frontmatter_is_wellformed():
     """name/description 是 Codex 做隐式匹配的全部依据，缺了技能等于不存在。"""
     text = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
