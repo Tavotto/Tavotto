@@ -27,17 +27,52 @@
 </head>
 <body>
   <main>
-    <h1>Magplot 启动失败</h1>
-    <p>本机渲染服务没有启动成功。重新打开应用通常可以恢复；若反复出现，请重新安装。</p>
+    <h1 id="title">Magplot 启动失败</h1>
+    <p id="body">本机渲染服务没有启动成功。重新打开应用通常可以恢复；若反复出现，请重新安装。</p>
     <div class="msg" id="msg">未知错误</div>
-    <p class="log">日志文件（反馈问题时请附上）：<br /><code id="log"></code></p>
-    <p class="hint">Magplot 完全在本机运行，此页面不涉及任何网络请求。</p>
+    <p class="log"><span id="logLabel">日志文件（反馈问题时请附上）：</span><br /><code id="log"></code></p>
+    <p class="hint" id="hint">Magplot 完全在本机运行，此页面不涉及任何网络请求。</p>
   </main>
   <script>
+    // 内联两份文案的理由见 splash.html：tauri:// 源下没有 i18next，也读不到
+    // sidecar 那个源的 localStorage。**这张页面尤其不能只有中文**——用户看到
+    // 它的时候正需要看懂上面写了什么。
+    const STRINGS = {
+      'zh-CN': {
+        title: 'Magplot 启动失败',
+        body: '本机渲染服务没有启动成功。重新打开应用通常可以恢复；若反复出现，请重新安装。',
+        unknown: '未知错误',
+        logLabel: '日志文件（反馈问题时请附上）：',
+        hint: 'Magplot 完全在本机运行，此页面不涉及任何网络请求。',
+      },
+      'en-US': {
+        title: 'Magplot failed to start',
+        body: 'The local render service did not start. Reopening the app usually fixes it; if it keeps happening, reinstall.',
+        unknown: 'Unknown error',
+        logLabel: 'Log file (please attach it when reporting the problem):',
+        hint: 'Magplot runs entirely on this machine; this page makes no network requests.',
+      },
+    }
+    // 与 web/src/i18n/locale.ts 的 normalizeLocale 同一条规则：只看主子标签
+    const pick = (tag) => {
+      const primary = String(tag || '').trim().toLowerCase().replace(/_/g, '-').split('-')[0]
+      if (primary === 'zh') return 'zh-CN'
+      if (primary === 'en') return 'en-US'
+      return null
+    }
     const q = new URLSearchParams(location.search)
+    const locale = pick(q.get('lang')) || pick(navigator.language) || 'zh-CN'
+    const s = STRINGS[locale]
+    document.documentElement.lang = locale
+    for (const id of ['title', 'body', 'logLabel', 'hint']) {
+      document.getElementById(id).textContent = s[id]
+    }
+
+    // msg 是壳给的真实报错（sidecar 的 stderr / 平台错误码），**原样显示、
+    // 不翻译**：它要贴进 issue 里，翻过一道就对不上日志了。
     const msg = q.get('msg')
     const log = q.get('log')
-    if (msg) document.getElementById('msg').textContent = msg
+    document.getElementById('msg').textContent = msg || s.unknown
     if (log) document.getElementById('log').textContent = log
   </script>
 </body>

@@ -4,9 +4,8 @@ fn main() {
     // 会被静默拒绝（导出对话框「在文件管理器中显示」点了没反应就是这么来的）。
     // 新增 #[tauri::command] 时必须同步三处：这里、capabilities/main-window.json、
     // main.rs 的 generate_handler。
-    tauri_build::try_build(
-        tauri_build::Attributes::new()
-            .app_manifest(tauri_build::AppManifest::new().commands(&["reveal_export"])),
-    )
+    tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
+        tauri_build::AppManifest::new().commands(&["reveal_export", "set_menu_locale"]),
+    ))
     .expect("failed to run tauri-build");
 }

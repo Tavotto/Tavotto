@@ -3,6 +3,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod i18n;
 mod sidecar;
 
 use std::fmt::Write as _;
@@ -16,6 +17,9 @@ use tauri_plugin_opener::OpenerExt;
 
 struct AppState {
     sidecar: Mutex<Option<sidecar::Sidecar>>,
+    /// 原生菜单当前用的语言。前端 i18n 就绪 / 用户切语言时经
+    /// `set_menu_locale` 报上来，Rust 据此重建菜单并记住给下次启动。
+    menu_locale: Mutex<i18n::Locale>,
     port: Arc<OnceLock<u16>>,
     nonce: String,
     /// 本次启动带进来的交接请求（`Magplot --open <目录> [--stem <s>]`）。
@@ -115,8 +119,8 @@ fn reveal_export(app: tauri::AppHandle, dir: String, name: String) -> Result<(),
     if name.contains('/') || name.contains('\\') || name.contains("..") || name.is_empty() {
         return Err("非法文件名".into());
     }
-    let base = std::fs::canonicalize(PathBuf::from(&dir))
-        .map_err(|_| "导出目录不存在".to_string())?;
+    let base =
+        std::fs::canonicalize(PathBuf::from(&dir)).map_err(|_| "导出目录不存在".to_string())?;
     let path = base.join(&name);
     if !path.is_file() {
         return Err("文件不存在".into());
@@ -126,12 +130,19 @@ fn reveal_export(app: tauri::AppHandle, dir: String, name: String) -> Result<(),
         .map_err(|e| e.to_string())
 }
 
-fn build_menu<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) -> tauri::Result<Menu<R>> {
+/// 建菜单。**菜单项 id 与加速键在两种语言下完全相同**——只有显示文案换，
+/// 事件转发（`magplot:menu`）与 `CmdOrCtrl+*` 一个字节不动：切语言绝不能
+/// 让 ⌘Z 失灵，那种坏法用户根本不会往语言上联想。
+fn build_menu_in<R: tauri::Runtime>(
+    handle: &tauri::AppHandle<R>,
+    locale: i18n::Locale,
+) -> tauri::Result<Menu<R>> {
+    let m = i18n::text(locale);
     let about = AboutMetadataBuilder::new()
         .name(Some("Magplot"))
         .version(Some(env!("CARGO_PKG_VERSION")))
         .website(Some("https://github.com/erwanjun/magplot"))
-        .comments(Some("论文 Figure 排版 + 参数化图表编辑"))
+        .comments(Some(m.about_comments))
         .build();
 
     let menu = Menu::new(handle)?;
@@ -139,62 +150,91 @@ fn build_menu<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) -> tauri::Result<
     #[cfg(target_os = "macos")]
     {
         let app_menu = SubmenuBuilder::new(handle, "Magplot")
-            .about_with_text("关于 Magplot", Some(about.clone()))
+            .about_with_text(m.app_about, Some(about.clone()))
             .separator()
-            .hide_with_text("隐藏 Magplot")
-            .hide_others_with_text("隐藏其他")
+            .hide_with_text(m.app_hide)
+            .hide_others_with_text(m.app_hide_others)
             .separator()
-            .quit_with_text("退出 Magplot")
+            .quit_with_text(m.app_quit)
             .build()?;
         menu.append(&app_menu)?;
     }
 
     #[cfg_attr(target_os = "macos", allow(unused_mut))]
-    let mut file = SubmenuBuilder::new(handle, "文件")
+    let mut file = SubmenuBuilder::new(handle, m.file)
         .item(
-            &MenuItemBuilder::with_id("menu-open-project", "打开项目…")
+            &MenuItemBuilder::with_id("menu-open-project", m.file_open_project)
                 .accelerator("CmdOrCtrl+O")
                 .build(handle)?,
         )
         .item(
-            &MenuItemBuilder::with_id("menu-export", "导出…")
+            &MenuItemBuilder::with_id("menu-export", m.file_export)
                 .accelerator("CmdOrCtrl+E")
                 .build(handle)?,
         );
     #[cfg(not(target_os = "macos"))]
     {
-        file = file.separator().quit_with_text("退出");
+        file = file.separator().quit_with_text(m.quit);
     }
     menu.append(&file.build()?)?;
 
     // 撤销/重做是自定义项：走事件转发给前端（画布 undo 栈），文本框内的
     // 原生撤销由前端按焦点分派。剪贴板项必须用预定义角色——macOS 的
     // WKWebView 里没有这些菜单角色时 ⌘C/⌘V 在输入框里完全失效。
-    let edit = SubmenuBuilder::new(handle, "编辑")
+    let edit = SubmenuBuilder::new(handle, m.edit)
         .item(
-            &MenuItemBuilder::with_id("menu-undo", "撤销")
+            &MenuItemBuilder::with_id("menu-undo", m.edit_undo)
                 .accelerator("CmdOrCtrl+Z")
                 .build(handle)?,
         )
         .item(
-            &MenuItemBuilder::with_id("menu-redo", "重做")
+            &MenuItemBuilder::with_id("menu-redo", m.edit_redo)
                 .accelerator("CmdOrCtrl+Shift+Z")
                 .build(handle)?,
         )
         .separator()
-        .cut_with_text("剪切")
-        .copy_with_text("复制")
-        .paste_with_text("粘贴")
-        .select_all_with_text("全选")
+        .cut_with_text(m.edit_cut)
+        .copy_with_text(m.edit_copy)
+        .paste_with_text(m.edit_paste)
+        .select_all_with_text(m.edit_select_all)
         .build()?;
     menu.append(&edit)?;
 
-    let help = SubmenuBuilder::new(handle, "帮助")
-        .about_with_text("关于 Magplot", Some(about))
+    let help = SubmenuBuilder::new(handle, m.help)
+        .about_with_text(m.app_about, Some(about))
         .build()?;
     menu.append(&help)?;
 
     Ok(menu)
+}
+
+/// 启动时用的那次：语言取上次记下的偏好（没有就是 zh-CN）。
+fn build_menu<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) -> tauri::Result<Menu<R>> {
+    let locale = i18n::read_locale(i18n::locale_file(handle.path().app_config_dir().ok()));
+    build_menu_in(handle, locale)
+}
+
+/// 前端切了界面语言 → 重建原生菜单，并把选择记下来给下次启动用。
+///
+/// 前端在 i18n 就绪时（还没挂 React）就会调一次，用户在设置里换语言时再调。
+/// 语言认不出来一律忽略：菜单保持现状比换成一堆空词条好。
+#[tauri::command]
+fn set_menu_locale(app: tauri::AppHandle, locale: String) -> Result<(), String> {
+    let Some(next) = i18n::normalize(&locale) else {
+        return Err(format!("不支持的语言：{locale}"));
+    };
+    let state = app.state::<AppState>();
+    {
+        let mut cur = state.menu_locale.lock().unwrap();
+        if *cur == next {
+            return Ok(());
+        }
+        *cur = next;
+    }
+    i18n::write_locale(i18n::locale_file(app.path().app_config_dir().ok()), next);
+    let menu = build_menu_in(&app, next).map_err(|e| e.to_string())?;
+    app.set_menu(menu).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 fn spawn_sidecar_and_navigate(app: tauri::AppHandle) {
@@ -202,6 +242,8 @@ fn spawn_sidecar_and_navigate(app: tauri::AppHandle) {
     let nonce = state.nonce.clone();
     let port_cell = state.port.clone();
     let open = state.open.clone();
+    // 起 sidecar 这段跑在前端加载之前，语言只能取记下来的那个偏好
+    let menu_locale = *state.menu_locale.lock().unwrap();
 
     std::thread::spawn(move || {
         let resource_dir = app.path().resource_dir().ok();
@@ -211,7 +253,7 @@ fn spawn_sidecar_and_navigate(app: tauri::AppHandle) {
             .unwrap_or_else(|_| std::env::temp_dir().join("magplot-logs"));
 
         let project = open.as_ref().map(|o| o.project.as_str());
-        let result = sidecar::Sidecar::start(resource_dir, &log_dir, &nonce, project);
+        let result = sidecar::Sidecar::start(resource_dir, &log_dir, &nonce, project, menu_locale);
         let Some(win) = app.get_webview_window("main") else {
             if let Ok((sc, _)) = result {
                 sc.shutdown();
@@ -227,10 +269,7 @@ fn spawn_sidecar_and_navigate(app: tauri::AppHandle) {
                 // `?open=<stem>` 是首启交接的落点（前端 lib/openRequest.ts 消费），
                 // 与浏览器模式共用同一份语义——桌面首启不必再多发一次事件。
                 let query = match open.as_ref().and_then(|o| o.stem.as_deref()) {
-                    Some(stem) => format!(
-                        "?open={}",
-                        utf8_percent_encode(stem, NON_ALPHANUMERIC)
-                    ),
+                    Some(stem) => format!("?open={}", utf8_percent_encode(stem, NON_ALPHANUMERIC)),
                     None => String::new(),
                 };
                 let url = format!("http://127.0.0.1:{port}/{query}#dnonce={nonce}");
@@ -238,12 +277,17 @@ fn spawn_sidecar_and_navigate(app: tauri::AppHandle) {
                     .eval(format!("window.location.replace({})", js_string(&url)))
                     .is_err()
                 {
-                    show_error(&win, "窗口初始化失败", &log_path.display().to_string());
+                    show_error(
+                        &win,
+                        i18n::text(menu_locale).window_init_failed,
+                        &log_path.display().to_string(),
+                        menu_locale,
+                    );
                 }
             }
             Err(msg) => {
                 let log = log_dir.join("sidecar.log");
-                show_error(&win, &msg, &log.display().to_string());
+                show_error(&win, &msg, &log.display().to_string(), menu_locale);
             }
         }
     });
@@ -253,11 +297,15 @@ fn js_string(s: &str) -> String {
     serde_json::to_string(s).unwrap_or_else(|_| "''".into())
 }
 
-fn show_error(win: &tauri::WebviewWindow, msg: &str, log_path: &str) {
+/// 启动失败页。**语言由壳带过去**：这张页面在 `tauri://` 源下，读不到
+/// sidecar 那个源的 localStorage，也没有 i18next——不带 lang 的话，选了英文
+/// 的用户在最需要看懂的时候看到的是中文。
+fn show_error(win: &tauri::WebviewWindow, msg: &str, log_path: &str, locale: i18n::Locale) {
     let q = format!(
-        "error.html?msg={}&log={}",
+        "error.html?msg={}&log={}&lang={}",
         utf8_percent_encode(msg, NON_ALPHANUMERIC),
-        utf8_percent_encode(log_path, NON_ALPHANUMERIC)
+        utf8_percent_encode(log_path, NON_ALPHANUMERIC),
+        locale.tag()
     );
     let _ = win.eval(format!("window.location.replace({})", js_string(&q)));
 }
@@ -268,6 +316,9 @@ fn main() {
         port: Arc::new(OnceLock::new()),
         nonce: random_nonce(),
         open: parse_open_args(&std::env::args().skip(1).collect::<Vec<_>>()),
+        // 真正的初值在 build_menu 里按配置目录读；这里先摆默认档，
+        // 免得 set_menu_locale 把「和现在一样」误判成需要重建。
+        menu_locale: Mutex::new(i18n::DEFAULT_LOCALE),
     };
 
     let app = tauri::Builder::default()
@@ -293,7 +344,7 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .manage(state)
-        .invoke_handler(tauri::generate_handler![reveal_export])
+        .invoke_handler(tauri::generate_handler![reveal_export, set_menu_locale])
         .menu(build_menu)
         .on_menu_event(|app, event| {
             let id = event.id().as_ref();
@@ -305,10 +356,16 @@ fn main() {
             let handle = app.handle().clone();
             let port_cell = app.state::<AppState>().port.clone();
             let nav_handle = handle.clone();
+            // 上次记下的语言。菜单与启动画面都用它——「装完第一次打开」之外
+            // 每一次启动，用户看到的第一屏就已经是他选的语言。
+            let boot_locale =
+                i18n::read_locale(i18n::locale_file(handle.path().app_config_dir().ok()));
+            *app.state::<AppState>().menu_locale.lock().unwrap() = boot_locale;
             let win = tauri::WebviewWindowBuilder::new(
                 app,
                 "main",
-                tauri::WebviewUrl::App("splash.html".into()),
+                // 启动画面同样带上语言：它比前端先出现，读不到 i18next
+                tauri::WebviewUrl::App(format!("splash.html?lang={}", boot_locale.tag()).into()),
             )
             .title("Magplot")
             .inner_size(1280.0, 860.0)

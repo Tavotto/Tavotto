@@ -3,8 +3,8 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { App } from './App'
 import { ErrorBoundary } from './components/ErrorBoundary'
-import { bootstrapDesktopSession } from './lib/desktop'
-import { currentLocale, initI18n, t } from './i18n'
+import { bootstrapDesktopSession, setDesktopMenuLocale } from './lib/desktop'
+import { currentLocale, i18n, initI18n, t } from './i18n'
 import 'generative-loaders/styles.css'
 import './index.css'
 
@@ -12,6 +12,12 @@ import './index.css'
 // 根本走不到 React，它也得有翻译。
 initI18n()
 document.documentElement.lang = currentLocale()
+
+// 原生菜单的文案在壳里另有一份（Rust 在 webview 起来之前就要建菜单）。
+// 这条通知**放在这儿而不是放进 `@/i18n`**：i18n 模块被 store / lib / 单测到处
+// import，让它反过来依赖 `lib/desktop` 会绕成环。浏览器模式下这两句都是 no-op。
+void setDesktopMenuLocale(currentLocale())
+i18n.on('languageChanged', (lng) => void setDesktopMenuLocale(lng))
 
 const rootEl = document.getElementById('root')!
 
