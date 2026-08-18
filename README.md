@@ -25,7 +25,8 @@ Or you drag the PDFs into Illustrator and lose the connection to your code for g
 **Magplot lets you edit the figure directly.** Drop your matplotlib panels onto a page
 and arrange them freely. Double-click any panel and you can select the things inside
 it — title, axis labels, curves, legend — then change the font size, the colour, or
-just drag them. Python re-renders in the background as you go (~40 ms once warm).
+just drag them. **Dragging and dialling are instant** — the figure follows your
+cursor frame by frame, and matplotlib runs once, when you let go, to make it official.
 
 Every change is **non-destructive**: your script is never modified, and anything can
 be undone. On export the engine re-renders each panel at full quality and composes a
@@ -42,7 +43,8 @@ PDF whose text is still real, selectable vector text.
 
 **Download an installer** from the [latest release](https://github.com/erwanjun/magplot/releases/latest)
 — `.dmg` for macOS, `.exe` for Windows — install it, and double-click. Magplot opens
-in its own desktop window.
+in its own desktop window, and updates itself from then on — it checks, downloads,
+installs and restarts without sending you back to this page.
 
 **On Windows you do not need to install Python.** The installer ships a private Python
 runtime with the usual scientific stack already in it — numpy, matplotlib, pandas, scipy,
@@ -117,7 +119,7 @@ Magplot does not ask you to write them in any special way.
 | **Text** | Title, axis labels, tick labels, legend, annotations — content, size, colour, weight, style, rotation, opacity, visibility. Draggable. |
 | **Data series** | Line width, dash pattern, colour, markers (scatter markers can be swapped wholesale), legend entry order |
 | **Arrows** | Arrows your script draws (`FancyArrowPatch`): drag the whole arrow or either endpoint, and change arrow style, line style, width, head size and colour. Arrows attached to `annotate()` keep their data anchors — style only. |
-| **Axes** | Tick groups, axis lines, grid, 3D viewing angle (elev/azim/roll), 3D axis arrows and panes |
+| **Axes** | Tick groups, axis lines, grid, 3D viewing angle (elev/azim/roll), 3D axis arrows and panes. Drag a subplot and what belongs to it travels along — a label you had moved, its colourbar, a twin axis. |
 | **Figure** | Overall figure size (the layout reflows), background |
 | **Not editable** | Data-space properties such as axis limits, scales and spines, and colourbar orientation. Change those in your script. |
 
@@ -194,9 +196,9 @@ your figures or data is uploaded.
 | | |
 |---|---|
 | Documents and autosaves | `~/Library/Application Support/Magplot/` (Linux `~/.local/share/magplot/`, Windows `%LOCALAPPDATA%\Magplot\`) |
-| Exports and saved canvas files | Next to your work, where you can find them: exports in a sibling `<project>-exports/` folder, canvas files in `canvases/` inside the project |
+| Exports, canvas files and version history | Inside your project, in one `magplotfile/` folder: exports in `magplotfile/export/`, named canvases alongside them, version history in `magplotfile/versions/`. Visible, backupable, and synced with your figures. Files written by older versions stay readable where they were. |
 | Your scripts and figures | Read-only, unless you explicitly choose "write back to original file" — which can be locked off per project |
-| The only outbound request | A once-a-day check for a new release, which you can turn off in Settings → Check for updates |
+| The only outbound request | A once-a-day check for a new release — plus the download itself, if you accept an update in the desktop app. Both stop when you turn the check off in Settings → Check for updates. |
 
 ## Good to know
 
@@ -248,3 +250,13 @@ Using Magplot, modifying it, and running it inside your lab are all unrestricted
 reach your work. The obligations apply to distribution: if you give a modified Magplot
 to others or run it as a network service for them, the corresponding source has to be
 available to those users.
+
+## Star history
+
+<a href="https://www.star-history.com/#erwanjun/magplot&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=erwanjun/magplot&type=Date&theme=dark&legend=bottom-right">
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=erwanjun/magplot&type=Date&legend=bottom-right">
+    <img alt="Star history of erwanjun/magplot" src="https://api.star-history.com/svg?repos=erwanjun/magplot&type=Date&legend=bottom-right" width="100%">
+  </picture>
+</a>

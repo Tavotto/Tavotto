@@ -23,7 +23,7 @@
 
 **Magplot 让你直接在图上改。** matplotlib 输出的面板拖进画布自由排版，
 双击任意一张图就能点中里面的标题、坐标轴、曲线、图例——改字号、换颜色、拖位置，
-Python 在后台实时重渲染（热态约 40 ms）。
+**拖和调都是即时的**：图跟着光标一帧一帧地动，matplotlib 只在你松手时跑一次定稿。
 
 所有修改都是**非破坏性**的：你的脚本一个字节都不会被改动，随时可撤销。
 导出时引擎按全质量重新出图，合成一份文字仍可选中的真矢量 PDF。
@@ -39,6 +39,7 @@ Python 在后台实时重渲染（热态约 40 ms）。
 
 **下载安装包**：到 [最新发行版](https://github.com/erwanjun/magplot/releases/latest)
 取 macOS 的 `.dmg` 或 Windows 的 `.exe`，装完双击即用，Magplot 在自己的桌面窗口中打开。
+之后的升级都在软件里完成——自己检查、下载、安装、重启，不用再回发行页。
 
 **Windows 用户不需要自己装 Python。** 安装包里自带一套 Magplot 专用的 Python
 运行环境，常用科学栈已经装好——numpy、matplotlib、pandas、scipy、seaborn、Pillow，
@@ -109,7 +110,7 @@ Magplot 不要求你按任何特殊方式写它们。
 | **文字** | 标题、坐标轴标签、刻度标签、图例、图内注释——内容 / 字号 / 颜色 / 字重 / 字形 / 旋转 / 透明度 / 显隐，可直接拖动 |
 | **数据系列** | 线宽、线型、颜色、marker（散点可整体换形状）、图例条目顺序 |
 | **箭头** | 脚本画的箭头（`FancyArrowPatch`）：整体拖动、拖单个端点，改箭头样式 / 线型 / 线宽 / 帽大小 / 颜色。`annotate()` 的箭头保持数据锚点——只开放样式 |
-| **坐标轴** | 刻度组、轴线、网格、3D 视角（elev/azim/roll）、3D 轴箭头与背景面板 |
+| **坐标轴** | 刻度组、轴线、网格、3D 视角（elev/azim/roll）、3D 轴箭头与背景面板。拖动子图时，属于它的东西一起走——你摆过的标签、它的色条、孪生轴 |
 | **图幅** | 整张图的尺寸（会重排版）、背景 |
 | **不开放** | 坐标轴范围、刻度尺度、spines 等数据空间属性，以及色条方向——这些请在脚本里改 |
 
@@ -175,9 +176,9 @@ codex plugin marketplace add erwanjun/magplot && codex plugin add magplot@magplo
 | | |
 |---|---|
 | 文档与自动保存 | `~/Library/Application Support/Magplot/`（Linux `~/.local/share/magplot/`，Windows `%LOCALAPPDATA%\Magplot\`） |
-| 导出成图与画布文件 | 就在你的项目旁边：导出在同级的 `<项目名>-exports/`，画布文件在项目内的 `canvases/`——找得到、好备份 |
+| 导出成图、画布文件与版本历史 | 都收在项目内的一个 `magplotfile/` 里：导出在 `magplotfile/export/`，命名画布就在旁边，版本历史在 `magplotfile/versions/`——找得到、好备份、跟着图一起同步。旧版本写在老位置的文件仍可读 |
 | 你的脚本与图 | 只读——除非你明确选择「写回原始文件」，且该权限可按项目锁死 |
-| 唯一的对外请求 | 每天一次检查有没有新版本，可在「设置 → 检查更新」关掉 |
+| 唯一的对外请求 | 每天一次检查有没有新版本；桌面版里你接受更新时，还会下载那个安装包。关掉「设置 → 检查更新」后两者都不再发生 |
 
 ## 使用须知
 
@@ -225,3 +226,13 @@ python scripts/build_worker_runtime.py
 自己使用、修改、在实验室内部部署都不受限制，**用它排出来的图和导出的 PDF 完全属于你**
 ——许可证不影响你的作品。受约束的是分发：如果你把改过的 Magplot 分发给别人，
 或架成别人能通过网络访问的服务，需要向这些用户提供对应的源码。
+
+## Star history
+
+<a href="https://www.star-history.com/#erwanjun/magplot&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=erwanjun/magplot&type=Date&theme=dark&legend=bottom-right">
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=erwanjun/magplot&type=Date&legend=bottom-right">
+    <img alt="erwanjun/magplot 的 star 增长" src="https://api.star-history.com/svg?repos=erwanjun/magplot&type=Date&legend=bottom-right" width="100%">
+  </picture>
+</a>

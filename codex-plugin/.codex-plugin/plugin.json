@@ -1,6 +1,6 @@
 {
   "name": "magplot",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "画论文级 matplotlib 图，并把成图直接交给 Magplot 用鼠标微调：拖图例、改字号线宽、调刻度，改完导出真矢量 PDF。",
   "author": {
     "name": "erwanjun",
