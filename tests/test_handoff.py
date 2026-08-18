@@ -146,6 +146,26 @@ def test_new_script_merges_without_touching_existing_entries(figures):
     assert cfg["scripts"]["fig1_demo.py"]["notes"] == "手工裁决"
 
 
+def test_merge_with_nothing_new_leaves_the_file_byte_identical(figures):
+    """合并只追加：没有新东西就**一个字节都不写**。
+
+    重写一遍在内容上是等价的，但会抹掉用户手写的缩进与注释、并动 mtime——
+    注册表是用户的资产，不是我们的缓存。
+    """
+    path = engine_registry.registry_path(figures)
+    path.write_text(
+        '{\n  "version": 1,\n  "_comment": "手写的，别动我的排版",\n'
+        '  "scripts": {\n    "fig1_demo.py": {"entry": "main", "cost": "light",\n'
+        '                     "stems": ["Fig1_demo"]}\n  }\n}\n',
+        encoding="utf-8")
+    before = path.read_bytes()
+
+    info = handoff.ensure_registered(str(figures), None)   # 目录级交接，无 stem
+
+    assert info["added_scripts"] == [] and info["added_stems"] == {}
+    assert path.read_bytes() == before
+
+
 def test_product_without_script_is_reported_not_parameterizable(tmp_path):
     d = tmp_path / "figures"
     d.mkdir()
