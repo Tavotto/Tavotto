@@ -11,6 +11,7 @@
   * 关进程慢：poll() 还说活着，握手其实早就失败了
   * AI CLI 只有 .cmd 外壳 / 装在微软商店的执行别名下
   * 渲染解释器探测：python.org / conda / 商店版
+  * 只装了桌面版时外部程序找不到 CLI（GUI 子系统的 exe 没有 stdout）
   * 测试自己的 id 太长撑爆环境变量（32767 上限）
 
 跨平台可跑：拿不到真实 Windows 语义的地方就直接测**那段逻辑本身**
@@ -897,3 +898,75 @@ def test_no_test_id_can_blow_the_windows_env_var_limit():
         f"有用例 id 长达 {len(worst)} 字符（上限 {LIMIT}）——多半是 parametrize "
         f"直接吃了整个文件的内容。开头：{worst[:200]}"
     )
+
+
+# ---------------- 只装桌面版：外部程序发现不了 CLI ----------------------------
+#
+# 朋友的现象：Windows 上装好 Magplot 桌面程序，Codex 的 Magplot 插件一直说
+# 「没找到 Magplot」。他没装 Python、没装 Conda、PATH 里没有 magplot、也没设
+# MAGPLOT_CLI——插件当时查的正好就是这三处。
+#
+# 根因不是「少查了一个目录」，而是**装出来的东西里根本没有能当命令行用的
+# 可执行文件**：Magplot.exe（Tauri 壳）与 sidecar 都是 console=False 打的，
+# 没有真终端时 sys.stdout 是 None，packaging/entry.py 会把输出改道进 app.log，
+# 调用方 capture_output 拿到的是空 stdout 而不是那行 JSON。
+#
+# 下面两条是这个 bug 的 Windows 语义定版。**跨平台可跑**（注入假文件系统 +
+# 显式 system="win32"），完整的环境矩阵与插件那侧的同源比对在
+# tests/test_install_locate.py，真安装产物的验收在 nightly 的「装一遍再冒烟」。
+
+WIN_INSTALL = "C:\\Users\\张三\\AppData\\Local\\Magplot"
+WIN_DESKTOP_EXE = WIN_INSTALL + "\\Magplot.exe"
+WIN_CLI_EXE = WIN_INSTALL + "\\sidecar\\Magplot\\magplot-cli.exe"
+WIN_ENVIRON = {"LOCALAPPDATA": "C:\\Users\\张三\\AppData\\Local",
+               "APPDATA": "C:\\Users\\张三\\AppData\\Roaming"}
+
+
+def test_desktop_only_windows_install_exposes_a_usable_cli():
+    """只装了桌面版的 Windows 机器上，必须找得到一条能当命令行调的入口。
+
+    没有 MAGPLOT_CLI、PATH 里没有 magplot、没有安装清单（模拟被清掉的情况）
+    ——只剩「按已知安装位置找」这一条腿，它必须撑得住。
+    """
+    from magplot.engine import locate
+
+    installed = {WIN_DESKTOP_EXE, WIN_CLI_EXE}
+    got = locate.find_cli(system="win32", environ=WIN_ENVIRON,
+                          isfile=lambda p: p in installed,
+                          which=lambda name: None, reg_dirs=())
+    assert got["cmd"] == [WIN_CLI_EXE], "只装桌面版就找不到 CLI = 那个 bug 回来了"
+    assert got["source"] == "install"
+
+
+def test_the_gui_binary_is_never_offered_as_a_command_line():
+    """**绝不能把 Magplot.exe 当命令行交出去。**
+
+    它是 GUI 子系统的可执行文件：调用方拿不到 stdout，只会看到「命令没有输出」。
+    这一版没带 magplot-cli（v0.7.0 及更早的安装包就是这样）时，正确的回答是
+    「装了但缺 CLI，去升级」，而不是拿 Magplot.exe 顶上，也不是说「没装」。
+    """
+    from magplot.engine import locate
+
+    only_gui = {WIN_DESKTOP_EXE}
+    got = locate.find_cli(system="win32", environ=WIN_ENVIRON,
+                          isfile=lambda p: p in only_gui,
+                          which=lambda name: None, reg_dirs=())
+    assert got["cmd"] is None, "把 GUI exe 当 CLI 交出去了"
+    assert got["desktop"] == WIN_DESKTOP_EXE, "得说清楚「装了，只是缺 CLI」"
+
+
+def test_the_windows_installer_ships_and_registers_that_cli():
+    """光有发现逻辑不够：安装器得真的把 magplot-cli 装进来并登记。
+
+    这三处任何一处漏掉，上面两条仍然全绿，而用户那里照旧「找不到 Magplot」。
+    """
+    root = Path(__file__).resolve().parent.parent
+    spec = (root / "packaging" / "magplot.spec").read_text(encoding="utf-8")
+    assert 'name="magplot-cli"' in spec, "安装产物里没有 console 版 CLI"
+    assert "console=True" in spec
+
+    nsi = (root / "src-tauri" / "windows" /
+           "installer.nsi").read_text(encoding="utf-8")
+    from magplot.engine import locate
+    assert locate.CLI_NAME in nsi, "安装器没提到 magplot-cli.exe"
+    assert "doctor --json --write-manifest" in nsi, "装完没有登记安装清单"

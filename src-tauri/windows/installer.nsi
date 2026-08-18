@@ -9,6 +9,9 @@
 ;       异常流程（同版本 / 降级 / WiX 迁移 / 应用在跑 / WebView2 失败 /
 ;       卸载）的页面与判断一个都没动。头图与侧栏图不在此文件——走
 ;       tauri.conf.json 的 nsis.headerImage / sidebarImage。
+;       另有一处与界面无关的补丁：装完/卸载时调 magplot-cli 维护**安装清单**
+;       （见 Section Install / Section Uninstall 里的 MAGPLOT PATCH），
+;       外部程序（Codex 插件）靠它发现这台机器上的 Magplot CLI。
 ; 升级 @tauri-apps/cli 时：模板与打包器必须同源——取新版模板重打
 ;       这些补丁，并同步 scripts/build_desktop.py 与
 ;       .github/workflows/desktop-tauri.yml 里钉住的版本号。
@@ -556,6 +559,7 @@ FunctionEnd
   LangString finishTitle       ${LANG_ENGLISH} "Magplot is ready"
   LangString finishText        ${LANG_ENGLISH} "Magplot has been installed on this computer."
   LangString openMagplot       ${LANG_ENGLISH} "Open Magplot"
+  LangString registeringMagplot ${LANG_ENGLISH} "Registering the Magplot command line"
 !endif
 !ifdef LANG_SIMPCHINESE
   LangString preparingMagplot  ${LANG_SIMPCHINESE} "正在准备 Magplot"
@@ -563,6 +567,7 @@ FunctionEnd
   LangString finishTitle       ${LANG_SIMPCHINESE} "Magplot 已安装完成"
   LangString finishText        ${LANG_SIMPCHINESE} "Magplot 已经装到这台电脑上。"
   LangString openMagplot       ${LANG_SIMPCHINESE} "打开 Magplot"
+  LangString registeringMagplot ${LANG_SIMPCHINESE} "正在登记 Magplot 命令行入口"
 !endif
 
 Function .onInit
@@ -836,6 +841,33 @@ Section Install
   ; 豁免在 CreateOrUpdateDesktopShortcut 内部，语义一个字没改。
   Call CreateOrUpdateDesktopShortcut
 
+  ; MAGPLOT PATCH: 登记安装清单，让外部程序发现得了这台机器上的 CLI ------
+  ; 只写卸载注册表**不等于** Codex 能找到 Magplot：插件不读卸载信息，也不该
+  ; 只靠注册表（企业策略能锁掉它）。这里跑一次装进来的 console 版 CLI，由它
+  ; 把自己的绝对路径写进用户配置目录的 install.json——顺带就是一次**无 GUI
+  ; 的装后健康检查**：这条命令跑不通，等于这个包发出去也只会表现为
+  ; 「Codex 找不到 Magplot」。
+  ;
+  ; · 路径与 tauri.conf.json 的 bundle.resources（"../dist/Magplot":
+  ;   "sidecar/Magplot"）同源，改那份映射要同步这里（tests/test_nsis_template.py
+  ;   的 test_install_manifest_is_registered_from_the_bundled_cli 看护）。
+  ; · nsExec 不弹窗口、不闪黑框；/TIMEOUT 保证冷启动异常时不会把安装器挂住。
+  ; · **失败绝不中断安装**：清单只是快路径，已知安装位置那条腿还在。
+  SetDetailsPrint both
+  DetailPrint "$(registeringMagplot)"
+  StrCpy $R8 "$INSTDIR\sidecar\Magplot\magplot-cli.exe"
+  ${If} ${FileExists} "$R8"
+    nsExec::ExecToStack /TIMEOUT=60000 '"$R8" doctor --json --write-manifest'
+    Pop $R9
+    Pop $R7
+    ${If} $R9 != 0
+      DetailPrint "magplot-cli doctor 未通过（$R9）: $R7"
+    ${EndIf}
+  ${Else}
+    DetailPrint "未找到 $R8：外部程序将改用已知安装位置发现 Magplot"
+  ${EndIf}
+  ; MAGPLOT PATCH END ----------------------------------------------------
+
   !ifmacrodef NSIS_HOOK_POSTINSTALL
     !insertmacro NSIS_HOOK_POSTINSTALL
   !endif
@@ -886,6 +918,19 @@ Section Uninstall
   !endif
 
   !insertmacro CheckIfAppIsRunning "${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
+
+  ; MAGPLOT PATCH: 先清安装清单，再删文件 --------------------------------
+  ; 顺序不能换：清单是那个 CLI 自己删的，文件删完就没人删得掉了。留下一份
+  ; 指向已卸载路径的清单，外部程序会拿着一条不存在的路径去 spawn——报出来
+  ; 的错是「执行不了」而不是「没装」。（读的一方也会核实路径还在，这里是
+  ; 第一道。）升级时卸载器先跑、安装段随后重写，两边都对。
+  StrCpy $R8 "$INSTDIR\sidecar\Magplot\magplot-cli.exe"
+  ${If} ${FileExists} "$R8"
+    nsExec::ExecToStack /TIMEOUT=60000 '"$R8" doctor --json --remove-manifest'
+    Pop $R9
+    Pop $R7
+  ${EndIf}
+  ; MAGPLOT PATCH END ----------------------------------------------------
 
   ; Delete the app directory and its content from disk
   ; Copy main executable

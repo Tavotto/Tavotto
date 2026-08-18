@@ -472,6 +472,30 @@ Python，首次渲染也不联网：
 
 完整版在 `docs/adr/0005-external-handoff-and-codex-plugin.md`，改动前先读。
 
+- **发现链的唯一权威是 `engine/locate.py`**（纯标准库）：`MAGPLOT_CLI` → PATH →
+  安装清单 `install.json` → 已知安装位置 → HKCU（只当补充）→ 当前解释器。
+  **只装了桌面版也必须能被发现**——这是 2026-08-18 修的那个 bug：装出来的
+  `Magplot.exe` 与 sidecar 都是 GUI 子系统可执行文件，没有真终端时
+  `sys.stdout is None`、输出被 `entry.py` 改道进 app.log，**调用方拿到的是空
+  stdout**。所以 `packaging/magplot.spec` 从同一个 Analysis 多出一个
+  `console=True` 的 `magplot-cli`（共用 `_internal/`，只多 ~1.5 MB）。
+  **别把 GUI exe 当 CLI 调**，哪怕它接受同样的参数。
+  安装清单落在**用户配置目录**（安装目录可能只读、卸载会被删）：安装器装完跑
+  `magplot-cli doctor --json --write-manifest`（让 CLI 自己写，NSIS 不拼 JSON），
+  应用每次启动 `locate.refresh_manifest()` 刷一遍（**只补充不抹掉**：pip 装的
+  那份是非冻结进程、只去惯例位置找壳，无条件写下去会把桌面版记的非惯例路径
+  抹成空，一次 `magplot --figures …` 就够），卸载器在**删文件之前**移除。
+  读的一方要核实里面的路径还在——清单是缓存不是真相。**任何单一机制都不是
+  唯一依据**（清单可能没写成、注册表可能被策略锁住），也**不动用户 PATH**。
+  `sidecar/Magplot` 这一段的出处只有 `tauri.conf.json` 的 `bundle.resources`，
+  Rust 壳 / locate / NSIS 三处同源。协议与错误码全文在 `docs/handoff-protocol.md`。
+- **子命令在 `engine/cli.py`（`open` / `doctor`）**，`app.main()` 与
+  `packaging/entry.py` 都先问它一句。分派**必须在 import Flask 之前**：一次交接
+  用不上任何 HTTP 端点，冻结产物却要为它付整个 Flask 的冷启动。
+- **`HandoffError` 一律带稳定 `code`**（`registry_write_failed` /
+  `path_not_found` / `launch_failed` …），`--json` 失败也输出一行 JSON。
+  文案随时可改，code 不行——调用方按它分诊。裸抛的那条由
+  `test_every_handoff_error_carries_a_code` 挡住。
 - **入口是 `magplot open <产物|脚本|目录>`**（`engine/handoff.py`，纯标准库）：
   解析目标 → 登记 stem → 唤起界面。子命令在 argparse **之前**分派——主入口是纯
   flag 形态（`magplot --figures …`），改成 subparsers 会把既有命令行整个换掉。
@@ -495,6 +519,21 @@ Python，首次渲染也不联网：
   交接这条路一字未改。**仍不做 `.app.json`**（需要 OpenAI 侧注册的托管 App id）。
   pyproject 的 `exclude` 显式挡住 `codex-plugin/` 进 wheel/sdist。插件版本 ==
   `magplot.__version__`（`tests/test_codex_plugin.py` 看护）。
+- **插件里那份路径规则是 `engine/locate.py` 的镜像**（插件 import 不到 magplot，
+  这份重复无法避免）。能避免的是两边悄悄漂开：
+  `tests/test_install_locate.py::test_plugin_mirrors_the_locator` 在
+  Windows/macOS/Linux × 有无环境变量 × 空格与中文的矩阵上逐条比对两侧输出，
+  改一边必须同步另一边。两侧都**一个 pathlib 都不用**（`Path()` 按 `os.name`
+  分派，在 macOS 上连构造一条 Windows 路径都做不到）。
+- **插件自己的更新检查在 `codex-plugin/.../scripts/update_check.py`**：
+  每 24 小时一次（失败 1 小时后可重试）、1.5 秒超时、缓存落
+  `config_dir()/codex-plugin-update.json`（**绝不往插件目录写**——那儿归 Codex
+  管、可能只读、升级时整个被换掉）。四条底线：不阻塞出图、**不污染 stdout**
+  （调用方读的是最后一行 JSON）、不自动下载执行、**插件版本 ≠ Magplot 版本**
+  （当前版本只从 plugin.json 读，`min_magplot_version` 比的是 `magplot open`
+  回报的那个版本）。清单由 `scripts/make_plugin_manifest.py` 在 **release.yml**
+  生成——**不能挪进 desktop-tauri.yml 的 updater-manifest**，那个 job 没配
+  minisign 私钥就整个跳过，插件的更新通道会跟着悄悄停而且全绿。
 - **技能的第一条硬约定：脚本与产物同目录、且必须先落成文件**（禁 `python -c` 出图）
   ——「stem ↔ 产出它的脚本」是图能不能双击进去改的全部依据。自检不靠祈祷：
   `scripts/handoff.py` 读 `magplot open --json` 的 `registry.parameterizable`，
