@@ -146,6 +146,13 @@ python3 scripts/handoff.py <脚本路径>
 * 顺便留意 `conflicts`（两个脚本抢同一个 stem）和 `dynamic_names`（某些脚本的产出名
   静态解不出）——只报告不自动裁决，需要时告诉用户。
 
+* `"update"` —— 插件自己有新版本时才出现（每 24 小时最多查一次）。
+  `status` 为 `available` 时**顺口告诉用户一句**就行：让他执行
+  `codex plugin marketplace upgrade magplot` 再重载 Codex。**别为这件事停下手里
+  的活**，也别反复提——图已经交接好了，这只是个提醒。里面还可能有
+  `magplot` 字段，那是说本机的 Magplot 版本低于新版插件的要求，让他去
+  Releases 更新 Magplot（**跟插件是两码事，别混着说**）。
+
 完整的错误码清单与排障步骤在 `../../../docs/handoff-protocol.md`。
 
 ## 交接之后就收手

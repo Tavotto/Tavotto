@@ -5,6 +5,7 @@
 的那类问题——清单字段错一个 Codex 就装不上，版本漂了用户装到的是另一代约定。
 """
 import ast
+import importlib.util
 import json
 import os
 import re
@@ -90,19 +91,37 @@ def test_skill_states_the_script_must_sit_next_to_the_figure():
     assert "python -c" in text          # 明确禁掉临时出图的写法
 
 
-def test_handoff_script_is_stdlib_only_and_parses():
-    """技能自带脚本跑在用户机器上：不许有第三方依赖，也不许有语法错。"""
-    src = (SKILL_DIR / "scripts" / "handoff.py").read_text(encoding="utf-8")
-    tree = ast.parse(src)
-    imported = set()
+#: 技能自带脚本允许 import 的标准库。加新名字前先想清楚：这些脚本跑在**用户
+#: 机器上**、跑在 Codex 的沙盒里，第三方依赖装不上就是整个技能不可用。
+_ALLOWED_STDLIB = {
+    "argparse", "json", "os", "shutil", "subprocess", "sys", "time",
+    "urllib", "winreg", "__future__",
+}
+
+
+def _imports_of(path):
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    names = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
-            imported |= {a.name.split(".")[0] for a in node.names}
+            names |= {a.name.split(".")[0] for a in node.names}
         elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-            imported.add(node.module.split(".")[0])
-    third_party = imported - {
-        "argparse", "json", "os", "shutil", "subprocess", "sys", "__future__"}
-    assert not third_party, f"handoff.py 引入了非标准库: {sorted(third_party)}"
+            names.add(node.module.split(".")[0])
+    return names
+
+
+def test_skill_scripts_are_stdlib_only_and_parse():
+    """技能自带脚本跑在用户机器上：不许有第三方依赖，也不许有语法错。
+
+    互相 import 是允许的（handoff.py ↔ update_check.py 是同一个技能的两半），
+    别的一概不行。
+    """
+    scripts = sorted((SKILL_DIR / "scripts").glob("*.py"))
+    assert scripts, "技能里一个脚本都没有？"
+    siblings = {p.stem for p in scripts}
+    for path in scripts:
+        extra = _imports_of(path) - _ALLOWED_STDLIB - siblings
+        assert not extra, f"{path.name} 引入了非标准库: {sorted(extra)}"
 
 
 def test_handoff_script_reads_the_parameterizable_verdict():
@@ -483,7 +502,10 @@ def test_open_error_code_is_passed_through(clean_python, tmp_path):
         response={"ok": False, "code": "registry_write_failed",
                   "error": "注册表写不进去 /p/mm_registry.json"})
     assert proc.returncode == 2
-    assert out["error_code"] == "open_failed"
+    # **原样带出来**，不是压成 open_failed：SKILL.md 教 Codex 的就是按
+    # error_code 分支（registry_write_failed → 换个可写目录）。藏进第二层
+    # 等于那条指引永远走不到。
+    assert out["error_code"] == "registry_write_failed"
     assert out["code"] == "registry_write_failed"
 
 
@@ -495,6 +517,54 @@ def test_unrunnable_cli_is_not_reported_as_missing(clean_python, tmp_path):
     proc, out, _ = _run_plugin(clean_python, tmp_path, env, str(target))
     assert proc.returncode == 2
     assert out["error_code"] == "cli_exec_failed"
+
+
+@posix_bridge_only
+def test_open_failure_without_a_code_still_has_one(clean_python, tmp_path):
+    """老版本 magplot 不带 code：那时才回落到 open_failed。"""
+    bridge = _write_bridge(tmp_path / "cli" / "magplot-cli")
+    target = tmp_path / "Fig1.pdf"
+    target.write_bytes(b"%PDF-1.4\n%%EOF\n")
+    env = _plugin_env(tmp_path, MAGPLOT_CLI=str(bridge))
+    proc, out, _ = _run_plugin(clean_python, tmp_path, env, str(target),
+                               response={"ok": False, "error": "说不清哪儿错了"})
+    assert proc.returncode == 2
+    assert out["error_code"] == "open_failed"
+
+
+def test_skill_documents_every_error_code_it_can_emit():
+    """SKILL.md 里教 Codex 分支的那几个 code，插件真的发得出来。
+
+    这条挡的正是 Codex review 抓到的那种错位：文档说「看到
+    registry_write_failed 就换个可写目录」，而实现把它压成了 open_failed，
+    于是那段指引永远走不到，两边各看各的都很合理。
+    """
+    skill = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+    documented = set(re.findall(r'"error_code": "(\w+)"', skill))
+    assert documented, "SKILL.md 里一个 error_code 都没写"
+    src = HANDOFF.read_text(encoding="utf-8")
+    for code in documented:
+        if code in {"magplot_missing", "desktop_found_cli_missing"}:
+            assert code in src                       # 插件自己的 code
+        else:
+            # 来自 magplot open 的 code：靠 _open_failure 原样透传
+            assert "code or \"open_failed\"" in src, \
+                f"SKILL.md 承诺了 {code}，但插件没有透传 CLI 的 code"
+
+
+def test_plugin_consults_the_registry_like_the_engine_locator():
+    """HKCU 那条腿两侧都要有。
+
+    engine.locate.find_cli 有、插件没有的话，「装在非默认目录 + 清单又没写成」
+    的 Windows 机器上，插件会报 magplot_missing 而 Magplot 自己找得到——
+    同一台机器两个答案。
+    """
+    src = HANDOFF.read_text(encoding="utf-8")
+    assert "hkcu_install_dirs" in src
+    assert "winreg" in src
+    from magplot.engine import locate
+    assert locate.UNINSTALL_KEY.replace("\\", "\\\\") in src or \
+        locate.UNINSTALL_KEY in src.replace("\\\\", "\\")
 
 
 def test_every_failure_payload_carries_an_error_code():
@@ -554,3 +624,92 @@ def test_real_cli_handoff_end_to_end(tmp_path):
     assert out["magplot"]["source"] == "env"
     registry = json.loads((project / "mm_registry.json").read_text(encoding="utf-8"))
     assert "fig_demo.py" in registry["scripts"]
+
+
+# ===================== 插件的更新通道（发布侧） ==========================
+# 用户装了插件之后不会自动收到更新——Codex 不管这件事。所以插件自己查一份
+# 清单，而那份清单是发版时生成的。这几条盯的是「发版时它真的被生成、内容对」。
+
+def _manifest_module():
+    spec = importlib.util.spec_from_file_location(
+        "make_plugin_manifest", ROOT / "scripts" / "make_plugin_manifest.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _make_manifest(tmp_path, tag):
+    mod = _manifest_module()
+    out = tmp_path / "codex-plugin.json"
+    mod.main(["--tag", tag, "--out", str(out)])
+    return mod, json.loads(out.read_text(encoding="utf-8"))
+
+
+def test_plugin_manifest_matches_what_the_plugin_reads(tmp_path):
+    """生成的清单，插件那侧要认得出来（schema 与字段名同源）。"""
+    mod, data = _make_manifest(tmp_path, "v" + magplot.__version__)
+    spec = importlib.util.spec_from_file_location(
+        "_uc", SKILL_DIR / "scripts" / "update_check.py")
+    uc = importlib.util.module_from_spec(spec)
+    sys.path.insert(0, str(SKILL_DIR / "scripts"))
+    try:
+        spec.loader.exec_module(uc)
+    finally:
+        sys.path.remove(str(SKILL_DIR / "scripts"))
+    assert data["schema"] == uc.SCHEMA
+    assert data["latest_version"] == uc.current_version()
+    # 清单地址是发布资产，文件名不能漂——插件拉的就是这个名字
+    assert uc.DEFAULT_URL.endswith("/codex-plugin.json")
+
+
+def test_plugin_manifest_refuses_a_tag_that_disagrees(tmp_path):
+    """tag 与 plugin.json 对不上就失败。
+
+    发一份说自己是 0.7.1、里面装着 0.7.0 的清单，用户会永远看到「有新版本」，
+    更新完还是看到——而且没有任何报错。
+    """
+    with pytest.raises(SystemExit) as err:
+        _make_manifest(tmp_path, "v99.0.0")
+    assert "对不上" in str(err.value)
+
+
+def test_plugin_manifest_min_magplot_version_is_real(tmp_path):
+    """`min_magplot_version` 必须是真发过的版本，且不高于当前版本。
+
+    随手往上调会让一批老用户看到「去升级 Magplot」，而他们的 Magplot 可能
+    完全够用。当前值是第一个带 `magplot open` 的版本。
+    """
+    mod, data = _make_manifest(tmp_path, "v" + magplot.__version__)
+    required = data["min_magplot_version"]
+    assert re.fullmatch(r"\d+\.\d+\.\d+", required), required
+    assert tuple(map(int, required.split("."))) <= \
+        tuple(map(int, magplot.__version__.split(".")))
+    assert mod.MIN_MAGPLOT_VERSION == required
+
+
+def test_plugin_zip_contains_the_skill(tmp_path):
+    """安装包里要有技能本体，不能只有清单。"""
+    import zipfile
+    target = _manifest_module().build_zip(tmp_path / "p.zip")
+    names = zipfile.ZipFile(target).namelist()
+    for needed in ("codex-plugin/.codex-plugin/plugin.json",
+                   "codex-plugin/skills/magplot-figure/SKILL.md",
+                   "codex-plugin/skills/magplot-figure/scripts/handoff.py",
+                   "codex-plugin/skills/magplot-figure/scripts/update_check.py"):
+        assert needed in names, f"插件包里缺 {needed}"
+    assert not [n for n in names if "__pycache__" in n]
+
+
+def test_release_workflow_publishes_the_plugin_channel():
+    """发版流水线真的会生成并挂上去。
+
+    **刻意不在 desktop-tauri.yml 的 updater-manifest 里**：那个 job 依赖桌面
+    产物与 minisign 私钥，没配私钥时整个跳过——插件的更新通道会跟着悄悄停，
+    而且全绿。
+    """
+    release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    assert "make_plugin_manifest.py" in release
+    assert "out/codex-plugin.json" in release
+    desktop = (ROOT / ".github" / "workflows" /
+               "desktop-tauri.yml").read_text(encoding="utf-8")
+    assert "make_plugin_manifest" not in desktop

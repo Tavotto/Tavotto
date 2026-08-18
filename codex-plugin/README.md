@@ -58,6 +58,27 @@ codex plugin marketplace add /path/to/magplot && codex plugin add magplot@magplo
 自检：`magplot doctor --json`（不起界面、不联网）。完整协议、错误码与排障见
 [`../docs/handoff-protocol.md`](../docs/handoff-protocol.md)。
 
+## 插件自己的更新
+
+Codex 不会替插件检查更新，所以插件自己查：每 24 小时最多一次，1.5 秒超时，
+网络不通就用上次的答案、不报错也不拖慢出图。有新版时交接结果里多一个
+`update` 字段，同时往 stderr 写一句人话——**stdout 永远只有那一行 JSON**。
+
+**只提醒，不下载、不安装。** 看到提醒后自己执行：
+
+```bash
+codex plugin marketplace upgrade magplot   # 然后重载 Codex
+```
+
+显式查一次（忽略缓存）：
+
+```bash
+python3 skills/magplot-figure/scripts/update_check.py --json --force
+```
+
+两个开关：`MAGPLOT_UPDATE_URL`（换清单地址，自建分发/内网镜像用）、
+`MAGPLOT_DISABLE_UPDATE_CHECK=1`（完全关掉，一个包都不发）。
+
 ## 结构
 
 ```

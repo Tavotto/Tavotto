@@ -45,6 +45,11 @@ def doctor(argv: list[str]) -> int:
     退出码：0 = 这套装置能用（找得到自己、CLI 可执行）；1 = 有硬伤（下面
     `problems` 里逐条说）。**安装器拿它当验收**：装完连自己都定位不到，
     那这个包发出去也只会在用户机器上表现为「Codex 找不到 Magplot」。
+
+    `problems` 的每一条都是 `{"code", "message"}`：**code 稳定，message 随时
+    可改**（与 `magplot open` 的失败同一条纪律）。只给一句中文的话，调用方
+    要区分「清单写不出来」和「这个包漏打了 CLI」就只能去匹配字符串——而这两
+    件事的处置完全不同：前者还能用，后者得重装。
     """
     ap = argparse.ArgumentParser(
         prog="magplot doctor",
@@ -63,7 +68,7 @@ def doctor(argv: list[str]) -> int:
     from . import locate
     from .. import __version__
 
-    problems: list[str] = []
+    problems: list[dict] = []
     me = locate.describe_self()
     report = {
         "ok": True,
@@ -92,8 +97,10 @@ def doctor(argv: list[str]) -> int:
         except OSError as exc:
             # 清单写不出来不代表这台机器不能用：已知安装位置那条腿还在。
             # 但要如实说，别让安装器以为一切正常。
-            problems.append(f"安装清单写不出来（{exc}）；"
-                            "外部程序仍可按已知安装位置发现 Magplot")
+            problems.append({
+                "code": "manifest_write_failed",
+                "message": f"安装清单写不出来（{exc}）；"
+                           "外部程序仍可按已知安装位置发现 Magplot"})
     else:
         found = locate.read_manifest()
         report["manifest"]["found"] = bool(found)
@@ -105,10 +112,14 @@ def doctor(argv: list[str]) -> int:
     if me["frozen"] and not me["cli"]:
         # 冻结产物里没有 console 版 CLI = 这个安装包漏打了 magplot-cli，
         # 外部程序（Codex 插件）只能看到一个不能当 CLI 用的 GUI 可执行文件。
-        problems.append(
-            "这套安装里没有 magplot-cli（console 版命令行）——"
-            "外部程序将无法通过安装位置发现 Magplot，请重新安装最新版本")
+        problems.append({
+            "code": "bundled_cli_missing",
+            "message": "这套安装里没有 magplot-cli（console 版命令行）——"
+                       "外部程序将无法通过安装位置发现 Magplot，请重新安装最新版本"})
     report["ok"] = not problems
+    # 顶层也给一个 code：调用方最常问的就是「这次到底哪儿不对」，
+    # 不该逼它先去翻数组。多个问题时取第一个（严重程度按追加顺序）。
+    report["code"] = problems[0]["code"] if problems else None
 
     if args.json:
         print(json.dumps(report, ensure_ascii=False))
@@ -119,6 +130,6 @@ def doctor(argv: list[str]) -> int:
         print(f"* 桌面应用:   {report['desktop'] or '（未安装或未找到）'}")
         print(f"* 安装清单:   {report['manifest']['path']}"
               f"（{report['manifest']['action']}）")
-        for line in problems:
-            print(f"! {line}")
+        for problem in problems:
+            print(f"! [{problem['code']}] {problem['message']}")
     return 0 if report["ok"] else 1

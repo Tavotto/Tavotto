@@ -522,6 +522,15 @@ Python，首次渲染也不联网：
   Windows/macOS/Linux × 有无环境变量 × 空格与中文的矩阵上逐条比对两侧输出，
   改一边必须同步另一边。两侧都**一个 pathlib 都不用**（`Path()` 按 `os.name`
   分派，在 macOS 上连构造一条 Windows 路径都做不到）。
+- **插件自己的更新检查在 `codex-plugin/.../scripts/update_check.py`**：
+  每 24 小时一次（失败 1 小时后可重试）、1.5 秒超时、缓存落
+  `config_dir()/codex-plugin-update.json`（**绝不往插件目录写**——那儿归 Codex
+  管、可能只读、升级时整个被换掉）。四条底线：不阻塞出图、**不污染 stdout**
+  （调用方读的是最后一行 JSON）、不自动下载执行、**插件版本 ≠ Magplot 版本**
+  （当前版本只从 plugin.json 读，`min_magplot_version` 比的是 `magplot open`
+  回报的那个版本）。清单由 `scripts/make_plugin_manifest.py` 在 **release.yml**
+  生成——**不能挪进 desktop-tauri.yml 的 updater-manifest**，那个 job 没配
+  minisign 私钥就整个跳过，插件的更新通道会跟着悄悄停而且全绿。
 - **技能的第一条硬约定：脚本与产物同目录、且必须先落成文件**（禁 `python -c` 出图）
   ——「stem ↔ 产出它的脚本」是图能不能双击进去改的全部依据。自检不靠祈祷：
   `scripts/handoff.py` 读 `magplot open --json` 的 `registry.parameterizable`，

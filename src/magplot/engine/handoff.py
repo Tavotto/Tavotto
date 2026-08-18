@@ -208,11 +208,21 @@ def ensure_registered(project: str, stem: str | None) -> dict:
 
 # --------------------------- 3. 唤起界面 ---------------------------------
 def desktop_app_candidates(*, system: str | None = None,
-                           environ: dict | None = None) -> list[str]:
+                           environ: dict | None = None,
+                           isfile=os.path.isfile) -> list[str]:
     """桌面 App 可执行文件的候选路径（按优先级）。
 
     安装位置的**唯一出处是 `engine/locate.install_roots()`**——同一份清单还要
     给 CLI shim 的发现用（Codex 插件那条链），在这儿再抄一遍就是第二个权威。
+
+    惯例位置**不是全部**：用户会把 `Magplot.app` 从 `/Applications` 拖到别处、
+    会装在非默认盘。那时发现链照样找得到 CLI（清单里记着绝对路径），唤起却
+    只按惯例位置找 → 交接静默退回浏览器模式，用户明明有桌面版却看不到窗口。
+    所以这里在惯例位置**之前**先认两条更可靠的：
+
+      1. 我自己旁边那个壳——冻结产物里 sidecar/CLI 与壳的相对位置是固定的，
+         装到哪个盘都不用猜；
+      2. 安装清单里核实过的 `desktop`。
     """
     system = sys.platform if system is None else system
     env = os.environ if environ is None else environ
@@ -220,15 +230,26 @@ def desktop_app_candidates(*, system: str | None = None,
     override = (env.get(APP_ENV) or "").strip()
     if override:
         out.append(override)                          # 用户显式指定的永远第一
+    if getattr(sys, "frozen", False):
+        # **只在冻结产物里问这一条。** 那时壳与 sidecar/CLI 的相对位置是打包
+        # 时固定下来的，比任何惯例位置都准。非冻结时 describe_self 的 desktop
+        # 本来就是从惯例位置推出来的，摆在这儿只会把清单挤到后面去——而清单
+        # 恰恰是「装在非惯例位置」时唯一知道真相的那个。
+        me = engine_locate.describe_self(system=system, environ=env, isfile=isfile)
+        if me.get("desktop"):
+            out.append(me["desktop"])
+    manifest = engine_locate.read_manifest(system=system, environ=env, isfile=isfile)
+    if manifest and manifest.get("desktop"):
+        out.append(manifest["desktop"])
     # Linux 没有桌面发行形态（desktop-tauri.yml 只发 macOS/Windows）：回空表 → 浏览器
     out += [engine_locate.desktop_exe_for(root, system=system)
             for root in engine_locate.install_roots(system=system, environ=env)]
-    return out
+    return list(dict.fromkeys(out))                   # 去重，保序
 
 
 def find_desktop_app(*, system: str | None = None, environ: dict | None = None,
                      isfile=os.path.isfile) -> str | None:
-    for cand in desktop_app_candidates(system=system, environ=environ):
+    for cand in desktop_app_candidates(system=system, environ=environ, isfile=isfile):
         if cand and isfile(cand):
             return cand
     return None
@@ -316,8 +337,13 @@ def launch(target: Target, *, prefer: str = "auto", port: int = DEFAULT_PORT,
         browse(url)
         return {"mode": "browser-existing", "url": url}
 
-    argv = [sys.executable, "-m", "magplot", "--figures", target.project,
-            "--port", str(port)]
+    # **冻结产物里没有 `-m magplot` 这回事**：那时 sys.executable 就是
+    # Magplot 自己（magplot-cli.exe / Magplot.exe），拼成
+    # `magplot-cli -m magplot --figures …` 会在 argparse 里报 unrecognized
+    # arguments 当场退出——用户看到的是「点了没反应」。直接给主入口的 flag。
+    launcher = ([sys.executable] if getattr(sys, "frozen", False)
+                else [sys.executable, "-m", "magplot"])
+    argv = [*launcher, "--figures", target.project, "--port", str(port)]
     if target.stem:
         argv += ["--open-stem", target.stem]
     try:
@@ -331,9 +357,14 @@ def launch(target: Target, *, prefer: str = "auto", port: int = DEFAULT_PORT,
 def open_target(raw: str, *, prefer: str = "auto", port: int = DEFAULT_PORT,
                 launch_ui: bool = True, **kw) -> dict:
     """解析 → 登记 → 唤起。返回一份可直接 json.dumps 的结果。"""
+    from .. import __version__                    # 版本号唯一出处，别在这儿写死
     target = resolve_target(raw)
     registry_info = ensure_registered(target.project, target.stem)
+    # `version` 是**这次真正干活的那个 Magplot** 的版本。调用方（Codex 插件）
+    # 要拿它比 min_magplot_version——插件自己的版本与它各有各的升级节奏，
+    # 混为一谈会提示用户去升级一个根本没问题的东西。
     result = {"ok": True, "protocol": engine_locate.PROTOCOL_VERSION,
+              "version": __version__,
               "project": target.project, "stem": target.stem,
               "registry": registry_info, "launch": None}
     if launch_ui:

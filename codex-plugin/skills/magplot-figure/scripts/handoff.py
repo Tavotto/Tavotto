@@ -21,11 +21,11 @@ Magplot 里双击进不去——多半是脚本没跟产物放在同一个目录
     1  脚本运行失败            4  交接了，但这张图不可参数化
     2  路径不对 / magplot open 失败
 
-失败时一律带 `error_code`（稳定，可分诊）：`magplot_missing` /
+失败时一律带 `error_code`（稳定，可分诊）。插件自己的：`magplot_missing` /
 `desktop_found_cli_missing` / `path_not_found` / `script_failed` /
-`open_failed` / `cli_exec_failed` / `not_parameterizable`。
-`open_failed` 还会把 `magplot open` 自己的 code 原样带出来（比如
-`registry_write_failed`）。完整清单见 docs/handoff-protocol.md。
+`not_parameterizable`。来自 `magplot open` 的**原样透传**（`registry_write_failed`
+/ `cli_exec_failed` / `unsupported_file` …），CLI 没给 code 才回落到
+`open_failed`。完整清单见 docs/handoff-protocol.md。
 
 真正干活的是 Magplot 自己的 `magplot open`（`src/magplot/engine/handoff.py`）：
 路径解析、注册表合并、唤起桌面 App 还是浏览器，全部在那边裁决。**本脚本不做
@@ -40,7 +40,8 @@ Magplot 里双击进不去——多半是脚本没跟产物放在同一个目录
     2. PATH 里的 magplot        pip / pipx 装的
     3. 安装清单 install.json    桌面版装完就有（记着 CLI 的绝对路径）
     4. 已知安装位置里的 CLI     清单丢了/被策略删了照样能找到
-    5. 当前解释器里的 magplot 模块
+    5. HKCU 记着的安装位置      装在非默认目录、又没有清单时只有它知道
+    6. 当前解释器里的 magplot 模块
 
 第 3、4 条是**只装了桌面版**的用户唯一能走通的路：桌面版的 `Magplot.exe`
 是 GUI 子系统的可执行文件，**不能当命令行用**（没有真终端时它的 stdout 是
@@ -88,6 +89,8 @@ SIDECAR_REL = ("sidecar", "Magplot")
 MANIFEST_NAME = "install.json"
 #: 显式覆盖
 CLI_ENV = "MAGPLOT_CLI"
+#: HKCU 的卸载信息键（NSIS 模板写的就是它）。**只读、只当前用户、只当补充**
+UNINSTALL_KEY = "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Magplot"
 # ---------------------------------------------------------------------------
 
 INSTALL_HINT = (
@@ -133,8 +136,37 @@ def _join(system: str, *parts: str) -> str:
     return sep.join([head, *parts[1:]])
 
 
-def install_roots(system: str | None = None, environ: dict | None = None) -> list[str]:
-    """桌面版安装根目录的候选（按优先级）。"""
+def hkcu_install_dirs() -> list[str]:
+    """HKCU 里记着的安装位置（Windows only）。
+
+    **只读、只当前用户、只作为补充**：读不到（非 Windows、键不存在、被组策略
+    挡住）一律回空表。它补的是「装在非默认目录 + 清单又没写成」这一格——
+    安装器明确保留了历史/自定义位置，少了这条那些机器上就只剩
+    magplot_missing。与 engine/locate.hkcu_install_dirs() 同源。
+    """
+    if os.name != "nt":
+        return []
+    try:
+        import winreg
+    except ImportError:
+        return []
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, UNINSTALL_KEY) as key:
+            value, _ = winreg.QueryValueEx(key, "InstallLocation")
+    except OSError:
+        return []
+    if isinstance(value, str) and value.strip():
+        return [value.strip().strip('"')]
+    return []
+
+
+def install_roots(system: str | None = None, environ: dict | None = None,
+                  extra: tuple = ()) -> list[str]:
+    """桌面版安装根目录的候选（按优先级）。
+
+    `extra` 给「从别处问出来的位置」（HKCU 的 InstallLocation），排在惯例位置
+    之后——注册表可能记着一个已经被手工删掉的老安装。
+    """
     system = sys.platform if system is None else system
     env = os.environ if environ is None else environ
     out: list[str] = []
@@ -151,6 +183,10 @@ def install_roots(system: str | None = None, environ: dict | None = None) -> lis
             if base:
                 out.append(base + "\\Magplot")
     # Linux 没有桌面发行形态
+    for path in extra:
+        cleaned = (path or "").strip().strip('"').rstrip("/\\")
+        if cleaned and cleaned not in out:
+            out.append(cleaned)
     return out
 
 
@@ -169,23 +205,30 @@ def cli_exe_for(root: str, system: str | None = None) -> str:
     return _join(system, root, *SIDECAR_REL, name)
 
 
-def manifest_path(system: str | None = None, environ: dict | None = None) -> str:
-    """安装清单的落点 = 用户配置目录（与 engine/config.config_dir() 同规则）。"""
+def config_dir(system: str | None = None, environ: dict | None = None) -> str:
+    """Magplot 的用户配置目录（与 engine/config.config_dir() 同规则）。
+
+    安装清单和插件的更新检查缓存都落在这儿——两处共用同一份规则，别再抄第三遍。
+    """
     system = sys.platform if system is None else system
     env = os.environ if environ is None else environ
     override = env.get("MAGPLOT_CONFIG_DIR")
     if override:
-        return _join(system, override, MANIFEST_NAME)
+        return override
     home = (env.get("HOME") or "").rstrip("/")
     if system == "darwin":
-        base = _join(system, home or "~", "Library", "Application Support", "Magplot")
-    elif _is_win(system):
+        return _join(system, home or "~", "Library", "Application Support", "Magplot")
+    if _is_win(system):
         root = (env.get("APPDATA") or env.get("USERPROFILE") or "%APPDATA%").rstrip("\\")
-        base = _join(system, root, "Magplot")
-    else:
-        xdg = (env.get("XDG_CONFIG_HOME") or "").rstrip("/")
-        base = _join(system, xdg or _join(system, home or "~", ".config"), "magplot")
-    return _join(system, base, MANIFEST_NAME)
+        return _join(system, root, "Magplot")
+    xdg = (env.get("XDG_CONFIG_HOME") or "").rstrip("/")
+    return _join(system, xdg or _join(system, home or "~", ".config"), "magplot")
+
+
+def manifest_path(system: str | None = None, environ: dict | None = None) -> str:
+    """安装清单的落点。"""
+    system = sys.platform if system is None else system
+    return _join(system, config_dir(system, environ), MANIFEST_NAME)
 
 
 def read_manifest(system: str | None = None, environ: dict | None = None,
@@ -214,7 +257,7 @@ def read_manifest(system: str | None = None, environ: dict | None = None,
 
 
 def find_magplot(system: str | None = None, environ: dict | None = None,
-                 isfile=os.path.isfile, which=None) -> dict:
+                 isfile=os.path.isfile, which=None, reg_dirs=None) -> dict:
     """定位 magplot 命令行。返回
 
         {"cmd": [...] | None, "source": ..., "desktop": ..., "searched": [...]}
@@ -246,17 +289,20 @@ def find_magplot(system: str | None = None, environ: dict | None = None,
             return {"cmd": [manifest["cli"]], "source": "manifest",
                     "desktop": desktop, "searched": searched}
 
-    for root in install_roots(system, env):           # 4. 已知安装位置
+    extra = tuple(reg_dirs if reg_dirs is not None else hkcu_install_dirs())
+    known = install_roots(system, env)
+    for root in install_roots(system, env, extra):    # 4. 已知位置 / 5. HKCU
         cli = cli_exe_for(root, system)
         searched.append(cli)
         if isfile(cli):
-            return {"cmd": [cli], "source": "install",
+            return {"cmd": [cli],
+                    "source": "install" if root in known else "registry",
                     "desktop": desktop or _desktop_at(root, system, isfile),
                     "searched": searched}
         if desktop is None:
             desktop = _desktop_at(root, system, isfile)
 
-    return {"cmd": None, "source": None, "desktop": desktop,   # 5. 本解释器
+    return {"cmd": None, "source": None, "desktop": desktop,   # 6. 本解释器
             "searched": searched}
 
 
@@ -338,19 +384,49 @@ def run_script(python: str, script: str) -> tuple[bool, str]:
 def _open_failure(result: dict, magplot: dict, **extra) -> dict:
     """`magplot open` 没成时的统一回报。
 
-    「CLI 本身起不来」与「CLI 起来了但拒绝了这次交接」是两回事：前者要去看
-    安装，后者要去看图库（注册表写不进去、路径不认识）。合成一个 code
-    等于让调用方自己去猜。
+    **CLI 给了具体 code 就原样当 error_code 用。** 调用方（SKILL.md 教 Codex 的
+    就是这件事）只看一个字段分诊：`registry_write_failed` 要去改目录权限、
+    `path_not_found` 要去看路径。把它们统统压成 `open_failed`、真 code 藏进
+    第二层，等于让对面多猜一次——而 SKILL.md 里写的恰恰是按 `error_code`
+    分支，两边当场对不上。CLI 没给 code（老版本 / 没有输出）才回 open_failed。
     """
     code = result.get("code")
     return {"ok": False, "magplot": magplot,
-            "error_code": "cli_exec_failed" if code == "cli_exec_failed"
-                          else "open_failed",
+            "error_code": code or "open_failed",
             "code": code,
             "error": result.get("error", "magplot open 失败"), **extra}
 
 
-def emit(payload: dict, code: int) -> int:
+def update_notice(magplot_version: str | None = None) -> dict | None:
+    """插件自己有没有新版本。**任何问题都当没有**——这是个提醒，不是功能。
+
+    实现在 update_check.py（同目录）。import 失败也要活下去：用户可能只拷了
+    handoff.py 一个文件过去。
+    """
+    try:
+        import update_check
+        found = update_check.check(magplot_version=magplot_version)
+    except Exception:                                 # noqa: BLE001 —— 提醒不许拖累出图
+        return None
+    return None if found.get("status") == "disabled" else found
+
+
+def emit(payload: dict, code: int, magplot_version: str | None = None) -> int:
+    """**唯一的输出出口。** stdout 只有那一行 JSON，别的一律 stderr。
+
+    调用方读的是 stdout 的最后一行；往里写一句「有新版本」就等于把整条链路
+    弄坏（json.loads 当场炸）。所以人话走 stderr，机器读的进 JSON 字段。
+    """
+    update = update_notice(magplot_version)
+    if update:
+        payload["update"] = update
+        try:
+            import update_check
+            for line in (update_check.hint(update), update_check.magplot_hint(update)):
+                if line:
+                    print(line, file=sys.stderr)
+        except Exception:                             # noqa: BLE001
+            pass
     print(json.dumps(payload, ensure_ascii=False))
     return code
 
@@ -419,6 +495,7 @@ def main(argv: list[str] | None = None) -> int:
     if not final.get("ok"):
         return emit(_open_failure(final, magplot, ran=ran), 2)
 
+    version = final.get("version") or probe.get("version")
     reg = final.get("registry", {})
     # 注册表状态取**两次调用里更有信息量的那个**。交接固定调两次
     # （先探测再交接），第一次就把注册表建好了，第二次自然回 already——
@@ -446,8 +523,8 @@ def main(argv: list[str] | None = None) -> int:
             "这张图没有对应脚本，在 Magplot 里只能当素材排版。"
             "把产出它的 .py 放到产物同一个目录，并让产物名是脚本里的字面量"
             "（不要来自 sys.argv / 时间戳），然后重新交接。")
-        return emit(payload, 4)
-    return emit(payload, 0)
+        return emit(payload, 4, version)
+    return emit(payload, 0, version)
 
 
 if __name__ == "__main__":

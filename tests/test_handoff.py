@@ -7,6 +7,7 @@ engine/handoff.py 全程 os.path 拼字符串。这里的 win32 用例跑在 mac
 import ast
 import json
 import os
+import pathlib
 import subprocess
 import sys
 
@@ -471,3 +472,94 @@ def test_every_handoff_error_carries_a_code():
                 and getattr(node.exc.func, "id", "") == "HandoffError":
             assert len(node.exc.args) == 2, \
                 f"handoff.py 第 {node.lineno} 行的 HandoffError 没给 code"
+
+
+# ============ 唤起：惯例位置之外的安装（Codex review 的两条） =============
+# 发现链找得到 CLI、唤起却按惯例位置找 = 用户明明装了桌面版，交接却静默退回
+# 浏览器模式。这几条把「唤起也认清单 / 也认自己旁边那个壳」钉住。
+
+def test_launch_uses_the_desktop_recorded_in_the_manifest(tmp_path, monkeypatch):
+    """用户把 Magplot.app 拖出了 /Applications：清单里记着它在哪。"""
+    moved = tmp_path / "Tools" / "Magplot.app" / "Contents" / "MacOS" / "Magplot"
+    moved.parent.mkdir(parents=True)
+    moved.write_text("gui", encoding="utf-8")
+    from magplot.engine import locate
+    locate.write_manifest({"version": "1", "cli": None, "desktop": str(moved),
+                           "install_dir": None, "source": "app"})
+
+    got = handoff.desktop_app_candidates(environ=dict(os.environ))
+    assert str(moved) in got, "清单里的桌面 App 没进候选"
+    assert handoff.find_desktop_app(environ=dict(os.environ)) == str(moved)
+
+
+def test_manifest_desktop_that_no_longer_exists_is_ignored(tmp_path):
+    """清单是缓存不是真相：路径没了就当没有，别拿它去 spawn。
+
+    （不断言「找不到任何桌面 App」——开发机上 /Applications 里可能真装着一个，
+    那属于惯例位置那条腿，与这里要验的事无关。）
+    """
+    from magplot.engine import locate
+    gone = str(tmp_path / "gone" / "Magplot")
+    locate.write_manifest({"version": "1", "cli": None, "desktop": gone,
+                           "install_dir": None, "source": "app"})
+    assert gone not in handoff.desktop_app_candidates(environ=dict(os.environ))
+
+
+def test_frozen_prefers_the_shell_sitting_next_to_itself(tmp_path, monkeypatch):
+    """冻结产物：壳与 CLI 的相对位置是打包时定死的，比惯例位置和清单都准。
+
+    落点用 locate 自己算（各平台形状不同，写死就只在写它的那个平台上成立）；
+    这条验的是**优先级**，形状本身由 test_install_locate 的 describe_self 用例看着。
+    """
+    from magplot.engine import locate
+    root = tmp_path / ("Magplot.app" if sys.platform == "darwin" else "Magplot")
+    cli = pathlib.Path(locate.cli_exe_for(str(root)))
+    shell = pathlib.Path(locate.desktop_exe_for(str(root)))
+    for path, body in ((cli, "cli"), (shell, "gui")):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(cli))
+    got = handoff.desktop_app_candidates(environ=dict(os.environ))
+    assert got[0] == str(shell), f"冻结产物没把身边那个壳排在最前: {got[:3]}"
+
+
+def test_candidates_have_no_duplicates(tmp_path):
+    """惯例位置与清单可能指同一个文件——候选里不该出现两遍。"""
+    got = handoff.desktop_app_candidates(system="darwin",
+                                         environ={"HOME": "/Users/x"})
+    assert len(got) == len(set(got))
+
+
+def test_frozen_browser_fallback_never_builds_dash_m_magplot(figures, monkeypatch):
+    """冻结产物里没有 `-m magplot` 这回事。
+
+    那时 `sys.executable` 就是 Magplot 自己（magplot-cli.exe / Magplot.exe），
+    拼成 `magplot-cli -m magplot --figures …` 会在 argparse 里报
+    unrecognized arguments 当场退出——用户看到的是「点了没反应」。
+    """
+    spawned = []
+    monkeypatch.setattr(handoff, "find_desktop_app", lambda **kw: None)
+    monkeypatch.setattr(handoff, "_spawn_detached",
+                        lambda argv, **kw: spawned.append(argv))
+    monkeypatch.setattr(handoff, "_http_json", lambda *a, **kw: None)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", "C:\\P\\Magplot\\magplot-cli.exe")
+    out = handoff.launch(handoff.Target(str(figures), "Fig1_demo"),
+                         prefer="browser", http=lambda *a, **kw: None)
+    assert out["mode"] == "browser-new"
+    assert "-m" not in spawned[0], f"冻结产物拼出了 -m: {spawned[0]}"
+    assert spawned[0][:2] == ["C:\\P\\Magplot\\magplot-cli.exe", "--figures"]
+
+
+def test_source_mode_browser_fallback_still_uses_dash_m(figures, monkeypatch):
+    """源码 / pip 模式照旧走 `python -m magplot`——那条路一个字没改。"""
+    spawned = []
+    monkeypatch.setattr(handoff, "find_desktop_app", lambda **kw: None)
+    monkeypatch.setattr(handoff, "_spawn_detached",
+                        lambda argv, **kw: spawned.append(argv))
+    monkeypatch.delattr(sys, "frozen", raising=False)
+    handoff.launch(handoff.Target(str(figures), None), prefer="browser",
+                   http=lambda *a, **kw: None)
+    assert spawned[0][:3] == [sys.executable, "-m", "magplot"]

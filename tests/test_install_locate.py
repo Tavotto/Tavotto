@@ -325,9 +325,16 @@ def test_plugin_mirrors_the_locator():
     assert plugin.MANIFEST_NAME == locate.MANIFEST_NAME
     assert plugin.CLI_ENV == locate.CLI_ENV
 
+    assert plugin.UNINSTALL_KEY == locate.UNINSTALL_KEY
+
     for system, env in MIRROR_ENVS:
         roots = locate.install_roots(system=system, environ=env)
         assert plugin.install_roots(system, env) == roots, (system, env)
+        # HKCU 问出来的位置（第 5 条腿）两侧的排法也必须一样：只有一侧有的话，
+        # 「装在非默认目录 + 没有清单」的机器上会出现两个不同的答案
+        extra = ("E:\\Tools\\Magplot", "  ", roots[0] if roots else "X")
+        assert plugin.install_roots(system, env, extra) == \
+            locate.install_roots(system=system, environ=env, extra=extra), (system, env)
         assert plugin.manifest_path(system, env) == \
             locate.manifest_path(system=system, environ=env), (system, env)
         for root in roots:
@@ -337,18 +344,30 @@ def test_plugin_mirrors_the_locator():
                 locate.desktop_exe_for(root, system=system), (system, root)
 
 
-@pytest.mark.parametrize("present,expect_source", [
-    ((WIN_CLI, WIN_DESKTOP), "install"),
-    ((WIN_DESKTOP,), None),
-    ((), None),
+REG_ROOT = "E:\\Tools\\Magplot"
+REG_CLI = REG_ROOT + "\\sidecar\\Magplot\\magplot-cli.exe"
+
+
+@pytest.mark.parametrize("present,reg,expect_source", [
+    ((WIN_CLI, WIN_DESKTOP), (), "install"),
+    ((WIN_DESKTOP,), (), None),
+    ((), (), None),
+    # 装在非默认目录、清单又没写成：只有注册表知道。**两侧都得知道。**
+    ((REG_CLI,), (REG_ROOT,), "registry"),
+    # 注册表读不到（组策略锁了）时，惯例位置那条腿照样管用
+    ((WIN_CLI,), (), "install"),
 ])
-def test_plugin_and_locator_agree_on_the_same_filesystem(present, expect_source):
-    """同一个（假的）文件系统上，两侧给出同一个答案。"""
+def test_plugin_and_locator_agree_on_the_same_filesystem(present, reg, expect_source):
+    """同一个（假的）文件系统上，两侧给出同一个答案。
+
+    这条比「源码里都有 winreg」强得多：它比的是**结果**，包括优先级顺序。
+    """
     plugin = _plugin_module()
     isfile = only(*present)
     mine = locate.find_cli(system="win32", environ=WIN_ENV, isfile=isfile,
-                           which=nothing_on_path, reg_dirs=())
-    theirs = plugin.find_magplot("win32", WIN_ENV, isfile, nothing_on_path)
+                           which=nothing_on_path, reg_dirs=reg)
+    theirs = plugin.find_magplot("win32", WIN_ENV, isfile, nothing_on_path,
+                                 reg_dirs=reg)
     for key in ("cmd", "source", "desktop"):
         assert mine[key] == theirs[key], key
     assert mine["source"] == expect_source
@@ -477,3 +496,45 @@ def test_open_and_doctor_are_dispatched_before_argparse():
     app_src = (ROOT / "src" / "magplot" / "app.py").read_text(encoding="utf-8")
     body = app_src.split("def main():")[1]
     assert body.index("engine_cli.dispatch") < body.index("argparse.ArgumentParser")
+
+
+# --------------------- doctor 的失败也要有稳定 code ----------------------
+# 与 `magplot open` 同一条纪律：文案随时可改，code 不行。只给一句中文的话，
+# 调用方要区分「清单写不出来」和「这个包漏打了 CLI」就只能去匹配字符串——
+# 而这两件事的处置完全不同：前者还能用，后者得重装。
+
+def test_doctor_problems_carry_stable_codes(tmp_path):
+    """配置目录写不进去 → `manifest_write_failed`，不是一句散文。"""
+    blocked = tmp_path / "ro"
+    blocked.mkdir()
+    if os.name == "nt" or getattr(os, "geteuid", lambda: -1)() == 0:
+        pytest.skip("Windows 上 chmod 挡不住写入；root 无视权限位")
+    blocked.chmod(0o500)
+    try:
+        proc = _doctor(blocked, "--json", "--write-manifest")
+    finally:
+        blocked.chmod(0o700)
+    out = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert proc.returncode == 1
+    assert out["ok"] is False
+    assert out["code"] == "manifest_write_failed"
+    assert [p["code"] for p in out["problems"]] == ["manifest_write_failed"]
+    assert out["problems"][0]["message"]              # 人话也还在
+
+
+def test_doctor_reports_no_code_when_healthy(tmp_path):
+    out = json.loads(_doctor(tmp_path, "--json").stdout.strip().splitlines()[-1])
+    assert out["ok"] is True and out["code"] is None and out["problems"] == []
+
+
+def test_every_doctor_problem_is_a_coded_dict():
+    """新增 problem 时不许再往里塞裸字符串。"""
+    src = (ROOT / "src" / "magplot" / "engine" / "cli.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and getattr(node.func, "attr", "") == "append" \
+                and getattr(node.func.value, "id", "") == "problems":
+            arg = node.args[0]
+            assert isinstance(arg, ast.Dict), f"第 {node.lineno} 行 append 了非 dict"
+            keys = {k.value for k in arg.keys if isinstance(k, ast.Constant)}
+            assert keys == {"code", "message"}, f"第 {node.lineno} 行缺 code/message"

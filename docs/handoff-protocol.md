@@ -55,6 +55,12 @@ Magplot 里只能当素材排版、双击进不去图内编辑，多半是脚本
 
 `launch.mode`：`desktop` / `browser-existing` / `browser-new`。
 
+**唤起时找桌面 App 的顺序**与找 CLI 是两件事，但同样不能只认惯例位置
+（用户会把 `Magplot.app` 拖出 `/Applications`、会装在非默认盘）：
+`MAGPLOT_DESKTOP_APP` → 冻结产物里**自己身边那个壳**（打包时定死的相对位置，
+最准）→ 安装清单里核实过的 `desktop` → 惯例位置。少了中间两条，发现链找得到
+CLI、唤起却静默退回浏览器模式——用户明明装了桌面版却看不到窗口。
+
 ### `magplot open --json` 失败时
 
 ```json
@@ -90,7 +96,15 @@ Magplot 里只能当素材排版、双击进不去图内编辑，多半是脚本
  "problems": []}
 ```
 
-退出码 0 = 这套装置能用；1 = `problems` 里逐条说了哪儿不对。
+退出码 0 = 这套装置能用；1 = 有硬伤。`problems` 的每一条都是
+`{"code", "message"}`，顶层 `code` 是其中第一条（最常问的就是「到底哪儿不对」，
+不该逼调用方先翻数组）：
+
+| code | 什么情况 | 还能用吗 |
+| --- | --- | --- |
+| `manifest_write_failed` | 配置目录写不进去 | 能——已知安装位置那条腿还在 |
+| `bundled_cli_missing` | 这个安装包里没有 `magplot-cli` | 不能，要重装 |
+
 `--write-manifest` / `--remove-manifest` 分别给安装器与卸载器用。
 
 ---
@@ -107,6 +121,10 @@ Magplot 里只能当素材排版、双击进不去图内编辑，多半是脚本
 | 4 | 已知安装位置里的 `magplot-cli` | `install` | 清单丢了照样能找到 |
 | 5 | HKCU 记着的安装位置（Windows） | `registry` | 只当补充，不是唯一依据 |
 | 6 | 当前解释器里的 `magplot` 模块 | `module` | 开发态 / 装在同一个环境里 |
+
+第 5 条补的是「装在非默认目录 **且** 清单没写成」这一格——安装器明确保留了
+历史/自定义安装位置，少了它那些机器上就只剩 `magplot_missing`。**两侧都要有**：
+只有一侧实现的话，同一台机器上 Magplot 自己找得到、插件却说没装。
 
 唯一权威实现是 `src/magplot/engine/locate.py`。Codex 插件跑在用户机器上、
 import 不到 magplot，所以
@@ -187,11 +205,16 @@ Windows 上安装目录可能在 Program Files（只读），卸载后也会被�
 | --- | --- |
 | 0 | 交接成功且**可参数化** |
 | 1 | 脚本运行失败（`error_code: script_failed`，`stderr` 里是尾部输出） |
-| 2 | 路径不对 / `magplot open` 失败（`open_failed`、`cli_exec_failed`、`path_not_found`） |
+| 2 | 路径不对 / `magplot open` 失败（见下） |
 | 3 | 这台机器上用不了 Magplot（`magplot_missing`、`desktop_found_cli_missing`） |
 | 4 | 交接了，但这张图不可参数化（`not_parameterizable`） |
 
-`open_failed` 会把 `magplot open` 自己的 `code` 原样带在 `code` 字段里。
+`magplot open` 给了具体 `code` 时，插件**把它原样当成 `error_code`**
+（`registry_write_failed`、`path_not_found`、`cli_exec_failed`…），同时保留在
+`code` 字段里；CLI 没给 code（老版本 / 没有输出）才回落到 `open_failed`。
+调用方因此只看一个字段就能分诊——把具体 code 压成 `open_failed`、真相藏进第二层，
+等于让对面多猜一次，而 SKILL.md 里教 Codex 的恰恰是按 `error_code` 分支。
+
 成功时 `magplot: {"source": ..., "cmd": ...}` 说明是从哪条腿找到的 CLI。
 
 ---
