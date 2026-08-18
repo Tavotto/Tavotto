@@ -20,10 +20,10 @@ Codex 插件（`codex-plugin/`）跑完脚本后调的就是这条命令，但�
 
 纯标准库，Flask 父进程可安全 import（不碰 matplotlib，也不 import app）。
 
-**平台分支全程 os.path 拼字符串，一个 pathlib 都不用**：`Path()` 按 `os.name`
-分派，在 macOS 上构造 Windows 分支直接抛 UnsupportedOperation——那样连「在
-mac/CI 上单测 Windows 的安装路径」都做不到（`engine/runtime.py` 同款纪律，
-看护用例 `tests/test_handoff.py`）。
+**平台分支的路径拼接全程用 os.path 字符串**：避免 `Path()` 在不同平台下生成
+不同的分隔符，从而可在 mac/CI 上单测 Windows 的安装路径（同 `engine/runtime.py`；
+看护用例 `tests/test_handoff.py`）。本模块仅在静态扫描脚本时用 `pathlib.Path`
+（`analyze_script` 需要）。
 """
 from __future__ import annotations
 
