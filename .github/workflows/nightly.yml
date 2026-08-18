@@ -412,6 +412,15 @@ jobs:
           if (-not $sawFinish) { throw "150 秒内没走到完成页（没出现「打开 Magplot」）" }
           if ($all -match $reBrowse) { throw "出现了安装目录选择页（看到了浏览按钮）" }
           if ($all -notmatch $reInstalling) { throw "没出现进度页的品牌页眉（页眉补丁没生效？）" }
+          # MUI 默认会在装完那一瞬把页眉换成这两句传统安装器说明。断言只对
+          # 英文写死：runner 是 en-US，安装器就挑英文；换成中文机器时这条会
+          # 空过，那时该补的是中文串，不是把它删掉。
+          if ($all -match 'Setup was completed successfully') {
+            throw "进度页装完时闪了 MUI 默认页眉（FINISHHEADER 补丁没生效？）"
+          }
+          if ($all -match 'Installation Complete') {
+            throw "进度页装完时闪了 MUI 默认页眉标题"
+          }
           Write-Host "✓ 页面序列：进度页 → 完成页，没有目录页"
 
           # 装出来的落点与快捷方式策略——首次安装固定 %LOCALAPPDATA%\Magplot

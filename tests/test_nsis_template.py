@@ -155,6 +155,21 @@ def test_user_facing_text_is_localized_for_every_language():
             assert needle in FLAT, f"{lang} 缺少 LangString {key}"
 
 
+def test_progress_page_header_is_ours_start_to_finish():
+    """进度页的页眉从开始到装完都是品牌文案，中间不闪 MUI 默认那两句。
+
+    「Installation Complete / Setup was completed successfully.」是 MUI 在
+    instfiles 的 LEAVE 里塞的，就闪在自动跳完成页之前——nightly 的 GUI 探针
+    在真安装器上抓到过它。
+    """
+    assert '!define MUI_PAGE_HEADER_TEXT "$(installingMagplot)"' in TEXT
+    assert '!define MUI_PAGE_HEADER_SUBTEXT ""' in TEXT
+    assert '!define MUI_INSTFILESPAGE_FINISHHEADER_TEXT "$(finishTitle)"' in TEXT
+    assert '!define MUI_INSTFILESPAGE_FINISHHEADER_SUBTEXT ""' in TEXT
+    # 中止时的页眉不动：那是异常流程，「安装未完成」正是该说的话
+    assert "MUI_INSTFILESPAGE_ABORTHEADER" not in CODE
+
+
 def test_status_text_is_honest():
     """进度页的状态行说的是真在做的事，不是假百分比。"""
     assert 'DetailPrint "$(preparingMagplot)"' in TEXT

@@ -448,6 +448,14 @@ Var AppStartMenuFolder
 ; MUI_PAGE_HEADER_TEXT/SUBTEXT 是 MUI2 的每页官方开关，用完自动 unset。
 !define MUI_PAGE_HEADER_TEXT "$(installingMagplot)"
 !define MUI_PAGE_HEADER_SUBTEXT ""
+; MAGPLOT PATCH: 装完那一瞬的页眉也归自己管。MUI 在 instfiles 的 LEAVE 里
+; 把页眉换成 $(MUI_TEXT_FINISH_TITLE)/$(SUBTITLE)——「Installation Complete /
+; Setup was completed successfully.」，又是一句传统安装器说明，而且它就闪在
+; 自动跳完成页之前（nightly 的 GUI 探针在真安装器上抓到过这两行）。换成与
+; 完成页同一句品牌文案，闪过去也不出戏。中止时的 ABORTHEADER 不动：那是
+; 异常流程，「安装未完成」正是该说的话。
+!define MUI_INSTFILESPAGE_FINISHHEADER_TEXT "$(finishTitle)"
+!define MUI_INSTFILESPAGE_FINISHHEADER_SUBTEXT ""
 !insertmacro MUI_PAGE_INSTFILES
 
 ; 8. Finish page
