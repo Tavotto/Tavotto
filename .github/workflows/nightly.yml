@@ -26,9 +26,18 @@ jobs:
           # 三种代表性的 Python 环境。自带内置 runtime 之后，「无 Python」
           # 不再是降级场景而是**主场景**：绝大多数用户就是这台机器。
           # 另外两档验的是「用户指定自己的环境时仍然优先」这条兼容承诺。
-          - { name: "无 Python", python: none }
-          - { name: "官方 Python", python: cpython }
-          - { name: "Conda", python: conda }
+          #
+          # 冒烟用的项目**按档给**：runtime_check 要的是整套科学栈
+          # （numpy/pandas/scipy/seaborn/PIL），只有内置 runtime 满足它；
+          # 另外两档把渲染解释器指向用户自己的 Python，那儿只装了 matplotlib，
+          # 拿全栈脚本去冒烟等于要求 worker 变出 pandas——那时报
+          # missing_dependency 正是**对的行为**，红的是用例不是产品。
+          # 它们要验的是解释器优先级与中文路径，examples/figures
+          # （numpy + matplotlib）就够；全栈验收由「无 Python」那档
+          # 连同后面的 --expect-packages 承担。ci.yml 的冒烟③同此约定。
+          - { name: "无 Python", python: none, figures: 'examples\runtime_check' }
+          - { name: "官方 Python", python: cpython, figures: 'examples\figures' }
+          - { name: "Conda", python: conda, figures: 'examples\figures' }
     name: Windows · ${{ matrix.name }}
     steps:
       - uses: actions/checkout@v4
@@ -51,7 +60,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: workerd
+          # workerd 是随 sidecar 发出去的 Rust supervisor；src-tauri 是壳，
+          # 「无 Python」那档要现打一个 NSIS 安装器出来（见文末的安装链路）
+          workspaces: |
+            workerd
+            src-tauri
       - name: 构建 Rust supervisor（magplot-workerd）
         run: cargo build --release --manifest-path workerd/Cargo.toml
 
@@ -97,7 +110,7 @@ jobs:
         run: |
           $dst = "$env:RUNNER_TEMP\张三 的论文\figures"
           New-Item -ItemType Directory -Force -Path $dst | Out-Null
-          Copy-Item examples\runtime_check\* $dst -Recurse -Force
+          Copy-Item "${{ matrix.figures }}\*" $dst -Recurse -Force
           # none：什么都不指定 → 必须落到内置 runtime 并**完整跑通**渲染与导出。
           # 其余两档：显式指定用户自己的解释器 → 必须压过内置的。
           if ("${{ matrix.python }}" -ne "none") {
@@ -107,8 +120,13 @@ jobs:
             $env:MM_WORKER_PYTHON = $null
             $expect = "bundled"
           }
+          # 控制面与解释器是两回事：不管渲染跑在谁的 Python 上，产物自带的
+          # Rust supervisor 都必须被自动找到并真的用上——回退到 Python 池
+          # 功能全在、只是慢、零报错，不断言就永远发现不了。
+          # 这里**不设 MAGPLOT_WORKERD**：要验的正是自动发现。
           python scripts/smoke_app.py --exe dist\Magplot\Magplot.exe `
-            --figures "$dst" --expect-source $expect
+            --figures "$dst" --expect-source $expect `
+            --expect-control-plane workerd
 
       - name: 无 Python：确认整套内置科学栈都能用
         # 装完即用是产品承诺的全部内容。这里不只看「起得来」，而是逐个 import
@@ -119,6 +137,7 @@ jobs:
           $env:MM_WORKER_PYTHON = $null
           python scripts/smoke_app.py --exe dist\Magplot\Magplot.exe `
             --figures examples\runtime_check --expect-source bundled `
+            --expect-control-plane workerd `
             --expect-packages numpy,pandas,scipy,seaborn,PIL,matplotlib
 
       - name: 断网启动
@@ -137,37 +156,155 @@ jobs:
             Write-Host "✓ 断网可用"
           } finally { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
 
+      # ---------------- 装一遍再冒烟：NSIS → 启动 → 升级覆盖 → 卸载 ----------------
+      # 这条链路只有真装一遍才知道，而它一度是**空转**的：判的是
+      # packaging\magplot.iss，而 Inno Setup 那条链在 v0.3.0 随旧 desktop.yml
+      # 一起退役删除了，于是每晚只打一条 notice 就过。现在改挂唯一在发的
+      # Windows 发行形态——Tauri 的 NSIS 安装器。
+      #
+      # 只挂「无 Python」这一档：它就是绝大多数用户那台机器（装完即用是产品
+      # 承诺的全部内容），而 Tauri 壳要现编译一遍 Rust，三档各来一次只是把
+      # nightly 慢三倍。
+      - name: Tauri 打包（NSIS 安装器）
+        if: matrix.python == 'none'
+        # CLI 版本钉死 2.11.4：src-tauri/windows/installer.nsi 是按这个版本的
+        # 上游模板打的品牌补丁，模板与打包器必须同源（tests/test_nsis_template.py
+        # 看护四处版本一致）。前端 / workerd / sidecar 前面几步已经出好，
+        # 这里不再走 build_desktop.py 的完整链路，只补最后一步。
+        run: pnpm dlx @tauri-apps/cli@2.11.4 build --bundles nsis
+
       - name: 安装器 → 启动 → 升级覆盖 → 卸载
-        if: matrix.python == 'cpython'
+        if: matrix.python == 'none'
         shell: pwsh
+        env:
+          # 壳探针那段会真起一次应用：数据目录必须隔离，别把 runner 的
+          # 用户目录当垃圾场，也别让上一步的状态泄进来
+          MAGPLOT_DATA_DIR: ${{ runner.temp }}\inst-data
+          MAGPLOT_CONFIG_DIR: ${{ runner.temp }}\inst-config
         run: |
-          if (-not (Test-Path packaging\magplot.iss)) {
-            Write-Host "::notice::没有 Inno Setup 脚本，跳过安装器链路"; exit 0
+          $ErrorActionPreference = "Stop"
+          $nsis = @(Get-ChildItem src-tauri\target\release\bundle\nsis\*.exe)
+          if ($nsis.Count -ne 1) { throw "NSIS 产物数量异常（$($nsis.Count) 个）" }
+          $setup = $nsis[0].FullName
+
+          # /S = 静默；模板的 installMode 是 currentUser，全程不需要管理员。
+          # **不给 /R**——那才是装完自动启动，启动时机这里要自己控制。
+          Start-Process -Wait $setup -ArgumentList "/S"
+
+          # 安装位置以**注册表为准**（模板把 InstallLocation 写进 UNINSTKEY，
+          # 值带引号），读不到才退回 currentUser 模式的默认落点。顺带验了一件
+          # 用户真会碰的事：控制面板的「应用」列表里认不认得它。
+          $key  = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Magplot"
+          $inst = $null
+          if (Test-Path $key) {
+            $inst = (Get-ItemProperty $key).InstallLocation -replace '^"|"$', ''
           }
-          # ISCC 要用 pwsh 调（cmd 下参数转义规则不同）
-          & "$env:ProgramFiles(x86)\Inno Setup 6\ISCC.exe" packaging\magplot.iss
-          $setup = Get-ChildItem dist\*Setup*.exe | Select-Object -First 1
-          if (-not $setup) { throw "没产出安装器" }
-          # /VERYSILENT + 当前用户安装：不要求管理员权限
-          Start-Process -Wait $setup.FullName -ArgumentList "/VERYSILENT","/CURRENTUSER"
-          $installed = "$env:LOCALAPPDATA\Programs\Magplot\Magplot.exe"
-          if (-not (Test-Path $installed)) { throw "装完找不到可执行文件" }
-          # 装出来的目录里必须有内置 runtime——安装器漏收它是「本地能跑、
-          # 用户装完不能渲染」最典型的成因
-          $rt = "$env:LOCALAPPDATA\Programs\Magplot\_internal\runtime"
-          if (-not (Test-Path "$rt\python.exe")) { throw "安装后没有内置 runtime" }
-          python scripts\smoke_app.py --exe $installed --expect-source bundled `
-            --figures examples\runtime_check
-          # 覆盖安装（升级）后再冒烟一次
-          Start-Process -Wait $setup.FullName -ArgumentList "/VERYSILENT","/CURRENTUSER"
-          python scripts\smoke_app.py --exe $installed --expect-source bundled `
-            --figures examples\runtime_check
+          if (-not $inst) {
+            Write-Warning "注册表里没有 InstallLocation（控制面板里将看不到它），退回默认位置"
+            $inst = "$env:LOCALAPPDATA\Magplot"
+          }
+          $shell = Join-Path $inst "Magplot.exe"
+          if (-not (Test-Path $shell)) { throw "装完找不到壳: $shell" }
+          Write-Host "安装位置: $inst"
+
+          # sidecar 的落点由 tauri.conf.json 的 bundle.resources 决定，这里
+          # **不写死**：写死等于把同一份约定抄成第二处权威，改了映射只会在
+          # 这儿报一个假故障。要看的是「安装器有没有把 sidecar 和它的内置
+          # runtime 带过来」——漏收它们是「本地能跑、用户装完不能渲染」最
+          # 典型的成因，而界面上一点症状都没有。
+          function Find-Sidecar($root, $shellExe) {
+            $hit = Get-ChildItem $root -Recurse -Filter Magplot.exe -ErrorAction SilentlyContinue |
+                   Where-Object { $_.FullName -ne $shellExe } | Select-Object -First 1
+            if (-not $hit) { throw "装出来的目录里没有 sidecar（bundle.resources 漏了？）" }
+            return $hit
+          }
+          $side = Find-Sidecar $inst $shell
+          Write-Host "sidecar: $($side.FullName)"
+          $internal = Join-Path $side.Directory.FullName "_internal"
+          foreach ($rel in @("runtime\python.exe",
+                             "runtime\runtime-manifest.json",
+                             "magplot-workerd.exe")) {
+            if (-not (Test-Path (Join-Path $internal $rel))) {
+              throw "安装后缺 $rel（安装器没把它带进来）"
+            }
+          }
+          Write-Host "✓ 安装目录里有 sidecar + 内置 runtime + workerd"
+
+          # 壳探针：用户从开始菜单点的就是它。这一步同时是安装布局的**唯一
+          # 权威验证**——壳靠 resource_dir() 找 sidecar，找得到才说明落点真的对。
+          $p = Start-Process -FilePath $shell -PassThru
+          $child = $null
+          foreach ($i in 1..60) {
+            Start-Sleep -Milliseconds 500
+            $child = Get-CimInstance Win32_Process -Filter "ParentProcessId=$($p.Id)" |
+                     Where-Object { $_.CommandLine -match "desktop-sidecar" }
+            if ($child) { break }
+          }
+          if (-not $child) {
+            Stop-Process -Id $p.Id -Force
+            # 失败路径不许吞：壳把 sidecar 的日志写在 app_log_dir（起不来时
+            # 界面上显示的也是这个路径），起不来的原因全在里面
+            @("$env:LOCALAPPDATA\com.erwanjun.magplot\logs\sidecar.log",
+              "$env:TEMP\magplot-logs\sidecar.log") |
+              Where-Object { Test-Path $_ } | ForEach-Object {
+                Write-Host "---- $_ ----"; Get-Content $_ -Tail 60
+              }
+            throw "装好的壳没有拉起 sidecar"
+          }
+          Stop-Process -Id $p.Id -Force   # 模拟异常退出：sidecar 必须自行跟随退出
+          foreach ($i in 1..30) {
+            Start-Sleep -Milliseconds 500
+            if (-not (Get-Process -Id $child.ProcessId -ErrorAction SilentlyContinue)) { break }
+          }
+          if (Get-Process -Id $child.ProcessId -ErrorAction SilentlyContinue) {
+            throw "壳被杀后 sidecar 未退出（孤儿进程）"
+          }
+          Write-Host "✓ 壳 → sidecar → 跟随退出"
+
+          # 装出来的东西真能渲染。**不设 MM_WORKER_PYTHON**：这台机器上要么
+          # 没有科学栈、要么与内置的无关，渲染必须落到装进来的那份 runtime；
+          # 控制面同理，回退到 Python 池是静默降级，不断言就发现不了。
+          $env:MM_WORKER_PYTHON = $null
+          # 每次调用后显式看 $LASTEXITCODE：pwsh 里原生命令的失败**不会**
+          # 中断脚本（是否随 $ErrorActionPreference 走要看 PowerShell 版本），
+          # 而 runner 只把最后一条命令的退出码当成步骤结果——中间这条冒烟
+          # 挂了却全程绿灯，正是这一步最该防的静默失灵。
+          python scripts\smoke_app.py --exe "$($side.FullName)" `
+            --figures examples\runtime_check --expect-source bundled `
+            --expect-control-plane workerd `
+            --expect-packages numpy,pandas,scipy,seaborn,PIL,matplotlib
+          if ($LASTEXITCODE -ne 0) { throw "装出来的 sidecar 冒烟失败（退出码 $LASTEXITCODE）" }
+
+          # 覆盖安装（升级路径）。同版本盖同版本验的是安装器的 reinstall 分支，
+          # 不是版本比较——用户点升级时走的就是这条。
+          Start-Process -Wait $setup -ArgumentList "/S"
+          if (-not (Test-Path $shell)) { throw "覆盖安装后壳不见了" }
+          $side = Find-Sidecar $inst $shell
+          python scripts\smoke_app.py --exe "$($side.FullName)" `
+            --figures examples\runtime_check --expect-source bundled `
+            --expect-control-plane workerd
+          if ($LASTEXITCODE -ne 0) { throw "覆盖安装后冒烟失败（退出码 $LASTEXITCODE）" }
+
           # 卸载
-          $uninst = "$env:LOCALAPPDATA\Programs\Magplot\unins000.exe"
-          if (Test-Path $uninst) {
-            Start-Process -Wait $uninst -ArgumentList "/VERYSILENT"
-            if (Test-Path $installed) { throw "卸载后可执行文件仍在" }
+          $uninst = "$inst\uninstall.exe"
+          if (-not (Test-Path $uninst)) { throw "没有卸载器: $uninst" }
+          Start-Process -Wait $uninst -ArgumentList "/S"
+          # NSIS 卸载器会把自己复制到 temp 再回头删安装目录，-Wait 等到的是
+          # 外面那层壳——所以这里轮询，别当场断言
+          foreach ($i in 1..30) {
+            Start-Sleep -Milliseconds 500
+            if (-not (Test-Path $shell) -and -not (Test-Path $key)) { break }
           }
+          if (Test-Path $shell) { throw "卸载后可执行文件仍在: $shell" }
+          # 注册表项留着 = 控制面板里还挂着一个卸不掉的条目
+          if (Test-Path $key) { throw "卸载后注册表项仍在: $key" }
+          if (Test-Path $inst) {
+            $left = Get-ChildItem $inst -Recurse -File | Select-Object -First 20
+            if ($left) {
+              Write-Warning "卸载后安装目录仍有残留: $($left.FullName -join '; ')"
+            }
+          }
+          Write-Host "✓ 安装 → 启动 → 渲染 → 升级覆盖 → 卸载 全链路通过"
 
       - name: 失败时收集日志
         if: failure()

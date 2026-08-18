@@ -2,7 +2,7 @@
 
 src-tauri/windows/installer.nsi 是按钉住的 @tauri-apps/cli 版本 vendored 的
 上游模板 + 品牌补丁：模板与打包器必须同源。这里看护三件事——
-补丁标记还在、三处版本号一致、配置引用的资产真实存在。
+补丁标记还在、四处版本号一致、配置引用的资产真实存在。
 """
 import json
 import re
@@ -19,6 +19,9 @@ def _pinned_versions() -> dict[str, str]:
         ("template", TEMPLATE),
         ("build_desktop", ROOT / "scripts" / "build_desktop.py"),
         ("workflow", ROOT / ".github" / "workflows" / "desktop-tauri.yml"),
+        # nightly 的「装一遍再冒烟」也自己打一个 NSIS 安装器，
+        # 版本漂了就等于拿另一个打包器去配这份 vendored 模板
+        ("nightly", ROOT / ".github" / "workflows" / "nightly.yml"),
     ]:
         text = path.read_text(encoding="utf-8")
         m = pat.search(text) or re.search(r"tauri-cli-v([\d.]+)", text)

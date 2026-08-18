@@ -75,8 +75,8 @@ PyMuPDF（**只经 `src/magplot/pdfbackend/`**），前端 `web/`
   （上游 tauri-cli v2.11.4 + `MAGPLOT PATCH` 标注的最小补丁：去欢迎页 /
   极简进度 / 品牌配色；头图侧栏图走 tauri.conf.json 的 nsis.* 配置）。
   **@tauri-apps/cli 钉死在 2.11.4**——模板与打包器必须同源，升级 CLI 时
-  取新模板重打补丁并同步 build_desktop.py / desktop-tauri.yml
-  （tests/test_nsis_template.py 看护三处版本一致与 BMP 形态）。
+  取新模板重打补丁并同步 build_desktop.py / desktop-tauri.yml / nightly.yml
+  （tests/test_nsis_template.py 看护四处版本一致与 BMP 形态）。
 
 ## Rust supervisor `magplot-workerd`（2026-08-18，与 Python 池并行）
 
@@ -535,6 +535,17 @@ Python，首次渲染也不联网：
   Rust supervisor（`build_desktop.py` 先 cargo build，`magplot.spec` 收进
   `_internal/`），少了它渲染回退到 Python 池——功能全在、只是慢、零报错。
   两条冒烟腿都**不设 `MAGPLOT_WORKERD`**：要验的正是自动发现。
+- **nightly 的安装链路（`nightly.yml`，每晚一次）**：三档代表性环境
+  （无 Python / 官方 Python / Conda）× 中文用户名 + 中文区域 + cp936。
+  冒烟项目**按档给**——`examples/runtime_check` 要整套科学栈，只有内置 runtime
+  满足；指向用户自己解释器的两档用 `examples/figures`（numpy + matplotlib），
+  它们验的是解释器优先级与中文路径。「无 Python」那档还会现打一个 NSIS
+  安装器，走**装一遍再冒烟**：静默安装 → 断言安装目录里有 sidecar + 内置
+  runtime + workerd → 起真壳确认它能拉起 sidecar 且退出不留孤儿 → 对装出来的
+  sidecar 冒烟 → 覆盖安装（升级）再冒一次 → 静默卸载。这条链路只有真装一遍
+  才知道，而且必须挂在**在发的那个发行形态**上：它一度判的是早已退役删除的
+  `packaging/magplot.iss`，于是每晚只打一条 notice 就过——**空转的门禁比没有
+  门禁更坏**，它还在报平安。
 - **黄金路径 E2E**：`cd web && pnpm e2e`（Playwright，`MAGPLOT_EXE` 指打包产物、
   缺省用 `python -m magplot`）。跑之前先 `python scripts/build_frontend.py`——
   包内 `src/magplot/web/` 优先于 `web/dist`，只跑 `pnpm build` 测的还是旧界面。
