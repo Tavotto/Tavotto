@@ -1,0 +1,189 @@
+{
+  "schema": 1,
+  "comment": "出版规范 profile —— Python 与 TypeScript 的唯一权威来源。改这里，两侧同时生效；绝不在任一侧硬编码同一条规则。加期刊 = 在 profiles 里加一条，或在调用时给 journal overrides。",
+  "default_profile": "lab-publication-v1",
+  "profiles": {
+    "lab-publication-v1": {
+      "profile_id": "lab-publication-v1",
+      "version": "1.0.0",
+      "label": "课题组出版规范 v1",
+      "source": "课题组《数据处理分析》§1.3 格式规范；8.5 pt 严格下限为本项目补充（原文示例里有 8 pt 图例/刻度，这里从严）",
+      "widths_mm": {
+        "single": 80.0,
+        "double": 150.0,
+        "tolerance_mm": 0.5,
+        "allow_custom": true
+      },
+      "allowed_aspect_ratios": [
+        { "id": "16:9", "w": 16, "h": 9 },
+        { "id": "4:3", "w": 4, "h": 3 },
+        { "id": "1:1", "w": 1, "h": 1 }
+      ],
+      "aspect_tolerance": 0.04,
+      "font_family": {
+        "latin": "Times New Roman",
+        "latin_accepted": [
+          "Times New Roman", "TimesNewRoman", "TimesNewRomanPSMT", "Times",
+          "Nimbus Roman", "Liberation Serif", "Tinos", "STIXGeneral", "serif"
+        ],
+        "latin_substitutes_flagged": ["DejaVu Serif", "DejaVu Sans", "Arial", "Helvetica", "sans-serif"]
+      },
+      "cjk_fallback": {
+        "required": true,
+        "preferred": ["方正小标宋简体", "FZXiaoBiaoSong-B05S"],
+        "accepted": [
+          "方正小标宋简体", "FZXiaoBiaoSong-B05S",
+          "Noto Sans CJK SC", "Noto Serif CJK SC", "Source Han Sans SC",
+          "Source Han Serif SC", "Microsoft YaHei", "SimSun", "PingFang SC",
+          "Songti SC", "STSong"
+        ]
+      },
+      "default_font_size_pt": 9.0,
+      "min_effective_font_size_pt": 8.5,
+      "absolute_min_font_size_pt": 8.0,
+      "max_font_size_pt": 12.0,
+      "min_raster_dpi": 300,
+      "preferred_formats": {
+        "vector": ["pdf", "svg"],
+        "raster": ["png", "tif", "tiff", "jpg"],
+        "export_default": ["pdf", "png"],
+        "export_dpi_default": 600
+      },
+      "line_widths_pt": [0.5, 0.75, 1.0, 1.5],
+      "line_width_tolerance_pt": 0.08,
+      "axis_policy": {
+        "tick_direction": "in",
+        "enclosed_spines": true,
+        "minor_ticks": "opt_in",
+        "label_format": "Title (unit)",
+        "label_format_regex": "^\\S(?:.*\\S)?\\s\\([^()]+\\)$",
+        "frame_linewidth_pt": [0.75, 1.0],
+        "max_tick_labels": 10
+      },
+      "legend_policy": {
+        "frame": false,
+        "min_font_size_pt": 8.5,
+        "max_font_size_pt": 9.0
+      },
+      "palette_policy": {
+        "recommended": "Scientific colour maps (Crameri)",
+        "url": "https://www.fabiocrameri.ch/colourmaps/",
+        "by_semantic": {
+          "sequential": ["batlow", "batlowW", "batlowK", "glasgow", "lipari", "navia", "hawaii", "buda", "imola", "oslo", "grayC", "nuuk", "devon", "lajolla", "bamako", "davos", "bilbao", "lapaz", "acton", "turku", "tokyo"],
+          "diverging": ["broc", "cork", "vik", "lisbon", "tofino", "berlin", "bam", "roma", "vanimo", "managua"],
+          "categorical": ["batlowS", "romaS", "bamakoS", "vikS"],
+          "cyclic": ["romaO", "bamO", "brocO", "corkO", "vikO"],
+          "multi_sequential": ["oleron", "bukavu", "fes"]
+        },
+        "discouraged_colormaps": ["jet", "rainbow", "hsv", "gist_rainbow", "nipy_spectral"],
+        "auto_recolor": false
+      },
+      "text_weight_policy": {
+        "comment": "原文示例里数值标签与图例内字体加粗；按角色处理，绝不整图一刀切加粗。全部只作建议。",
+        "figure": "normal",
+        "title": "normal",
+        "axis_label": "normal",
+        "tick_label": "bold",
+        "legend_text": "bold",
+        "annotation": "normal"
+      },
+      "severity": {
+        "missing-asset": "error",
+        "render-error": "error",
+        "unapplied-override": "error",
+        "stale-render": "warn",
+        "page-width": "error",
+        "page-aspect": "warn",
+        "font-too-small": "error",
+        "font-below-absolute-floor": "error",
+        "font-too-large": "warn",
+        "font-family-substituted": "warn",
+        "cjk-fallback-missing": "warn",
+        "text-weight-policy": "suggestion",
+        "raster-dpi": "error",
+        "raster-text-not-verifiable": "not_verifiable",
+        "panel-text-not-verifiable": "not_verifiable",
+        "out-of-page": "error",
+        "outside-margin": "warn",
+        "overlap": "warn",
+        "hidden": "warn",
+        "legend-frame": "warn",
+        "legend-font-size": "warn",
+        "tick-direction": "warn",
+        "spines-not-enclosed": "warn",
+        "line-width-off-preset": "warn",
+        "tick-label-count": "suggestion",
+        "axis-label-format": "suggestion",
+        "bitmap-embed": "warn",
+        "discouraged-colormap": "suggestion",
+        "bar-without-errorbar": "suggestion",
+        "fit-without-ci": "suggestion",
+        "palette-semantic": "suggestion",
+        "palette-line-markers": "suggestion"
+      }
+    },
+    "free-form-v1": {
+      "profile_id": "free-form-v1",
+      "version": "1.0.0",
+      "label": "自由排版（只做技术性检查）",
+      "source": "不约束版式的兜底 profile：仍检查缺素材/渲染失败/越界/DPI，尺寸与字体规范一律降级为提示",
+      "widths_mm": { "single": 80.0, "double": 150.0, "tolerance_mm": 0.5, "allow_custom": true },
+      "allowed_aspect_ratios": [],
+      "aspect_tolerance": 0.04,
+      "font_family": {
+        "latin": "Times New Roman",
+        "latin_accepted": ["Times New Roman", "Nimbus Roman", "Liberation Serif", "serif"],
+        "latin_substitutes_flagged": []
+      },
+      "cjk_fallback": { "required": false, "preferred": [], "accepted": [] },
+      "default_font_size_pt": 9.0,
+      "min_effective_font_size_pt": 6.0,
+      "absolute_min_font_size_pt": 5.0,
+      "max_font_size_pt": 72.0,
+      "min_raster_dpi": 300,
+      "preferred_formats": {
+        "vector": ["pdf", "svg"],
+        "raster": ["png", "tif", "tiff", "jpg"],
+        "export_default": ["pdf", "png"],
+        "export_dpi_default": 600
+      },
+      "line_widths_pt": [],
+      "line_width_tolerance_pt": 0.08,
+      "axis_policy": {
+        "tick_direction": null,
+        "enclosed_spines": false,
+        "minor_ticks": "any",
+        "label_format": null,
+        "label_format_regex": null,
+        "frame_linewidth_pt": [],
+        "max_tick_labels": 0
+      },
+      "legend_policy": { "frame": null, "min_font_size_pt": 6.0, "max_font_size_pt": 72.0 },
+      "palette_policy": {
+        "recommended": "Scientific colour maps (Crameri)",
+        "url": "https://www.fabiocrameri.ch/colourmaps/",
+        "by_semantic": {},
+        "discouraged_colormaps": [],
+        "auto_recolor": false
+      },
+      "text_weight_policy": {},
+      "severity": {
+        "page-width": "suggestion",
+        "page-aspect": "suggestion",
+        "font-too-small": "warn",
+        "font-below-absolute-floor": "warn",
+        "legend-frame": "suggestion",
+        "tick-direction": "suggestion",
+        "spines-not-enclosed": "suggestion",
+        "line-width-off-preset": "suggestion",
+        "font-family-substituted": "suggestion",
+        "cjk-fallback-missing": "suggestion",
+        "palette-line-markers": "suggestion",
+        "axis-label-format": "suggestion",
+        "tick-label-count": "suggestion",
+        "text-weight-policy": "suggestion",
+        "palette-semantic": "suggestion"
+      }
+    }
+  }
+}
