@@ -233,10 +233,10 @@ python scripts/build_worker_runtime.py
 
 ## Star history
 
-<a href="https://www.star-history.com/#erwanjun/magplot&Date">
+<a href="https://www.star-history.com/?repos=erwanjun%2Fmagplot&type=date&legend=bottom-right">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=erwanjun/magplot&type=Date&theme=dark&legend=bottom-right">
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=erwanjun/magplot&type=Date&legend=bottom-right">
-    <img alt="erwanjun/magplot 的 star 增长" src="https://api.star-history.com/svg?repos=erwanjun/magplot&type=Date&legend=bottom-right" width="100%">
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=erwanjun/magplot&type=date&theme=dark&legend=bottom-right&sealed_token=N_HkVy3WXmZ-L-LdXjq8yjVIGq3O6NWzfAI0NxRWdgJomReAYwu9qlvk78IdfeG8loxZTvRLP_VjiVIrO3ZIrfe8yEzeeklvUfkoRjpWy1Zm5SazecpETgwnZyseVroitCM5lhCLnTU7dorXRnk3FnU34Auy9YsfWrfmlPEb0IP0Sjwaz_7q47jCFt4C" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=erwanjun/magplot&type=date&legend=bottom-right&sealed_token=N_HkVy3WXmZ-L-LdXjq8yjVIGq3O6NWzfAI0NxRWdgJomReAYwu9qlvk78IdfeG8loxZTvRLP_VjiVIrO3ZIrfe8yEzeeklvUfkoRjpWy1Zm5SazecpETgwnZyseVroitCM5lhCLnTU7dorXRnk3FnU34Auy9YsfWrfmlPEb0IP0Sjwaz_7q47jCFt4C" />
+    <img alt="erwanjun/magplot 的 star 增长" src="https://api.star-history.com/chart?repos=erwanjun/magplot&type=date&legend=bottom-right&sealed_token=N_HkVy3WXmZ-L-LdXjq8yjVIGq3O6NWzfAI0NxRWdgJomReAYwu9qlvk78IdfeG8loxZTvRLP_VjiVIrO3ZIrfe8yEzeeklvUfkoRjpWy1Zm5SazecpETgwnZyseVroitCM5lhCLnTU7dorXRnk3FnU34Auy9YsfWrfmlPEb0IP0Sjwaz_7q47jCFt4C" />
   </picture>
 </a>
