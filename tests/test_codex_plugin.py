@@ -12,6 +12,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 try:
@@ -713,3 +714,140 @@ def test_release_workflow_publishes_the_plugin_channel():
     desktop = (ROOT / ".github" / "workflows" /
                "desktop-tauri.yml").read_text(encoding="utf-8")
     assert "make_plugin_manifest" not in desktop
+
+
+# --------------------------- MCP server 的清单接线 ---------------------------
+# 这几条盯的是「Codex 装上了、但一个工具都看不见」——清单字段错一个字，
+# 症状就是插件安安静静地只剩技能。字段形状取自官方插件（`codex plugin` 装出来的
+# `~/.codex/plugins/cache/**/.codex-plugin/plugin.json` 与它们的 `.mcp.json`）。
+MCP_JSON = PLUGIN / ".mcp.json"
+
+
+def test_manifest_declares_the_mcp_server(manifest):
+    """`mcpServers` 指向一个**存在的** .mcp.json，且技能仍在。"""
+    assert manifest["mcpServers"] == "./.mcp.json"
+    assert MCP_JSON.is_file()
+    assert manifest["skills"] == "./skills/", "加 MCP 不能把技能挤掉"
+
+
+def test_mcp_json_shape_matches_what_codex_reads():
+    data = json.loads(MCP_JSON.read_text(encoding="utf-8"))
+    servers = data["mcpServers"]
+    assert list(servers) == ["magplot"]
+    entry = servers["magplot"]
+    # 本地 stdio：command + args + cwd。远程 HTTP 那套字段这里一个都不该有
+    assert entry["command"] == "python3"
+    assert entry["args"] == ["./mcp/server.py"]
+    assert entry["cwd"] == "."
+    assert "url" not in entry
+    # 起 worker 要跑用户的脚本，heavy 的图是分钟级——超时不能用默认的那点
+    assert entry["tool_timeout_sec"] >= 600
+    for name in ("MAGPLOT_CLI", "MAGPLOT_MCP_ROOTS", "PATH"):
+        assert name in entry["env_vars"], f"{name} 没进 env_vars，server 那边读不到"
+    assert (PLUGIN / "mcp" / "server.py").is_file()
+
+
+def test_launcher_is_stdlib_only_and_parses():
+    """启动器跑在**用户机器上的任意 python3**（可能没装 magplot）。
+
+    `handoff` 是插件自带的那份定位器（同一个包里，按相对路径 import），
+    不是第三方依赖。
+    """
+    src = (PLUGIN / "mcp" / "server.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    imported = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported |= {a.name.split(".")[0] for a in node.names}
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            imported.add(node.module.split(".")[0])
+    allowed = {"json", "os", "shutil", "subprocess", "sys", "__future__",
+               "magplot", "magplot_mcp", "handoff"}
+    assert not (imported - allowed), f"启动器引入了非标准库: {sorted(imported - allowed)}"
+
+
+def test_launcher_degrades_instead_of_dying_without_magplot():
+    """跑不起来时**不能静默退出**——那在 Codex 里就是「插件没有工具」。"""
+    src = (PLUGIN / "mcp" / "server.py").read_text(encoding="utf-8")
+    assert "_degraded_server" in src
+    assert "pipx install magplot" in src
+
+
+def test_launcher_reuses_the_plugin_locator_instead_of_a_third_copy():
+    """路径规则已经有两份（`engine/locate.py` + 插件的 handoff），不许有第三份。
+
+    启动器与 handoff.py 同属一个插件包，直接 import 那份就好；自己再抄一遍
+    的话，「只装了桌面版」这类格子会在两处各修一次——而 #7 刚为此付过一次账。
+    """
+    src = (PLUGIN / "mcp" / "server.py").read_text(encoding="utf-8")
+    assert "find_magplot" in src, "启动器没有复用插件自带的定位器"
+    for owned_by_the_locator in ("LOCALAPPDATA", "install.json", "SIDECAR_REL",
+                                 "UNINSTALL_KEY", "/Applications/Magplot.app"):
+        assert owned_by_the_locator not in src, (
+            f"启动器里出现了 {owned_by_the_locator}——路径规则该由定位器说了算")
+
+
+def test_launcher_tells_desktop_only_users_the_truth():
+    """**只装桌面版**要单独报，不能笼统说「没装 Magplot」——他明明装了。
+
+    交接只要能*执行* `magplot open`，桌面版带的 `magplot-cli` 就够；但 MCP
+    server 要 `import magplot` 在进程内驱动引擎，而那个 CLI 是 frozen 的，
+    给不出解释器。三态互斥，各有各的下一步动作。
+    """
+    sys.path.insert(0, str(PLUGIN / "mcp"))
+    import importlib
+    launcher = importlib.import_module("server")
+
+    code, hint = launcher.diagnose({"cmd": ["/Applications/Magplot.app/…/magplot-cli"],
+                                    "desktop": "/Applications/Magplot.app/…/Magplot"})
+    assert code == "desktop_only"
+    assert "pipx install magplot" in hint
+    assert "没装" not in hint, "对着装了桌面版的用户说「没装」"
+
+    code, hint = launcher.diagnose({"cmd": None, "desktop": "/Applications/Magplot.app"})
+    assert code == "desktop_found_cli_missing"
+
+    code, hint = launcher.diagnose({"cmd": None, "desktop": None})
+    assert code == "magplot_missing"
+
+
+def test_launcher_only_takes_interpreters_it_can_actually_use():
+    """frozen 的 `magplot-cli` 给不出解释器：它没有 shebang，旁边也没有 python。
+
+    反过来，pip / pipx 装的 `magplot` 是带 shebang 的小脚本——这条区分就是
+    「桌面版」与「Python 环境」两格的分界线。
+    """
+    sys.path.insert(0, str(PLUGIN / "mcp"))
+    import importlib
+    launcher = importlib.import_module("server")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        frozen = os.path.join(tmp, "magplot-cli")
+        with open(frozen, "wb") as f:                 # ELF/PE 头，不是 shebang
+            f.write(b"\x7fELF\x02\x01\x01\x00")
+        assert launcher._shebang_interpreter(frozen) is None
+        assert launcher._interpreter_beside(frozen) == []
+
+        shim = os.path.join(tmp, "magplot")
+        with open(shim, "w", encoding="utf-8") as f:
+            f.write(f"#!{sys.executable}\nprint(1)\n")
+        assert launcher._shebang_interpreter(shim) == sys.executable
+
+
+def test_the_plugin_is_not_shipped_in_the_wheel():
+    """插件随 Codex 市场分发，不属于 pip 包（pyproject 的 exclude 看着）。"""
+    if tomllib is None:
+        pytest.skip("需要 tomllib（Python 3.11+）")
+    cfg = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    exclude = cfg["tool"]["hatch"]["build"]["exclude"]
+    assert "codex-plugin" in exclude and "codex-plugin/**" in exclude
+
+
+def test_widget_artifact_is_committed_next_to_the_server():
+    """产物不在仓库里 = 用户装完插件只有一个空目录（server 会如实降级）。"""
+    canvas = PLUGIN / "mcp" / "widget" / "canvas.html"
+    if not canvas.is_file():
+        pytest.skip("画布产物未构建（跑一次 scripts/build_mcp_widget.py）")
+    text = canvas.read_text(encoding="utf-8")
+    assert text.startswith("<!-- magplot-mcp-widget ")
+    assert "<div id=\"root\">" in text

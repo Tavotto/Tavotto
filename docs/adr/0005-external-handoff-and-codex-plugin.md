@@ -1,7 +1,10 @@
 # ADR 0005：外部交接（`magplot open`）与 Codex 插件
 
-状态：已实施（2026-08-18）
-相关：[0001 对象层级](0001-project-canvas-tab-object.md)、[0002 Tauri 桌面壳](0002-tauri-desktop-shell.md)
+状态：已实施（2026-08-18）；第 4 节的「skills-only」已被
+[ADR 0006](0006-codex-mcp-app-and-publication-profile.md) 部分推翻——插件现在**同时**带一个
+本地 stdio MCP server 与内嵌画布，交接那条路（本 ADR 的 1–3 节）原样保留。
+相关：[0001 对象层级](0001-project-canvas-tab-object.md)、[0002 Tauri 桌面壳](0002-tauri-desktop-shell.md)、
+[0006 Codex MCP App 与出版规范](0006-codex-mcp-app-and-publication-profile.md)
 
 ## 背景
 
@@ -65,15 +68,20 @@ macOS 上刻意**直接 exec 包内二进制**而不是 `open -a Magplot --args`
 
 同一张图重复交接（用户在 Codex 里改一版就交一次）只选中已有面板，不叠第二份。
 
-### 4. Codex 插件是 skills-only，随 Magplot 仓库一起发
+### 4. Codex 插件随 Magplot 仓库一起发（当时定为 skills-only，见下方修订）
 
 `codex-plugin/` + 仓库根的 `.agents/plugins/marketplace.json`（仓库即插件市场根，
 `codex plugin marketplace add erwanjun/magplot` 直接可用）。CLI 与 Codex 桌面应用
 共用同一份插件目录，装一次两边都在。
 
-**不做 MCP server**：Codex 本来就能跑 Python、读写文件，缺的是约定与最后一跳，
-多一个常驻进程只是把简单事情复杂化。**不做 `.app.json`**：那需要在 OpenAI 侧注册
-一个托管的 App/Connector id，与本地工具链无关。
+当时的决定是**不做 MCP server**（「Codex 本来就能跑 Python、读写文件，缺的是约定与
+最后一跳」）。**这一条已被 ADR 0006 推翻**：那个判断只对「生成脚本」成立；结构化图表
+编辑要的是 manifest、override 语义、canonical patch 哈希、规范预检与真矢量导出，
+没有一样是「跑个 Python 脚本」能替代的。现在插件同时带 skills 与一个本地 stdio MCP
+server（`codex-plugin/.mcp.json`），技能这一条路一字未改。
+
+**仍然不做 `.app.json`**：那需要在 OpenAI 侧注册一个托管的 App/Connector id，
+与本地工具链无关。
 
 技能 `magplot-figure` 的硬性约定里，第一条也是最要紧的一条是**脚本与产物同目录、
 且必须先落成文件**（禁止 `python -c` 出图）——Magplot 靠「stem ↔ 产出它的脚本」把图

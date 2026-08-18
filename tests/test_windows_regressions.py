@@ -24,7 +24,7 @@ import os
 import socket
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import pymupdf
 import pytest
@@ -271,7 +271,10 @@ def test_packaging_entry_points_reconfigure_stdout_to_utf8():
                 "scripts/smoke_desktop.py",
                 # Codex 插件的交接脚本：Codex 调它时 stdout 就是管道，
                 # 输出的 JSON 带中文（hint / magplot open 回来的错误）
-                "codex-plugin/skills/magplot-figure/scripts/handoff.py"):
+                "codex-plugin/skills/magplot-figure/scripts/handoff.py",
+                # 这两个的结论全是中文，而 pytest 与 CI 都是捕获着调它们的
+                "scripts/gen_preflight_vectors.py",
+                "scripts/build_mcp_widget.py"):
         src = (repo / rel).read_text(encoding="utf-8")
         assert 'reconfigure(encoding="utf-8"' in src, \
             f"{rel} 没做 stdout reconfigure，Windows 管道下中文日志会打死进程"
@@ -293,6 +296,80 @@ def test_codex_handoff_json_survives_cp1252_stdout():
         env={**os.environ, "PYTHONIOENCODING": "cp1252"})
     assert r.returncode == 2, r.stderr        # 2 = 路径不对，不是 1（崩了）
     assert "路径不存在" in json.loads(r.stdout.strip().splitlines()[-1])["error"]
+
+
+def test_maintenance_scripts_report_under_cp1252_stdout(tmp_path):
+    """两个新维护脚本在非 UTF-8 stdout 下必须照样把结论说出来。
+
+    它们都是**被捕获着调用**的（`tests/test_preflight.py` spawn 校验器、
+    CI 的 frontend job 跑画布同步门禁），输出又全是中文。不钉 UTF-8 的话
+    Windows 上第一次 print 就 UnicodeEncodeError——退出码变成 1，
+    于是「向量对不上」和「画布产物过期」这两个门禁在 Windows 腿上**永远是红的，
+    而且红的原因与它们要看护的事毫无关系**。空转的门禁比没有门禁更坏。
+    """
+    repo = Path(__file__).resolve().parent.parent
+    env = {**os.environ, "PYTHONIOENCODING": "cp1252"}
+
+    # 校验器：向量与实现一致时退 0，并把那句中文结论说出来
+    r = subprocess.run([sys.executable, str(repo / "scripts/gen_preflight_vectors.py")],
+                       capture_output=True, text=True, encoding="utf-8",
+                       errors="replace", timeout=120, env=env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "Python 实现一致" in r.stdout
+
+    # 画布同步门禁：--check 不需要 Node，纯指纹比对
+    r = subprocess.run([sys.executable, str(repo / "scripts/build_mcp_widget.py"),
+                        "--check"],
+                       capture_output=True, text=True, encoding="utf-8",
+                       errors="replace", timeout=120, env=env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "画布产物与源码一致" in r.stdout
+
+
+def test_widget_fingerprint_is_the_same_on_windows_and_posix():
+    """画布同步门禁的指纹**必须跨平台一致**，否则它在 Windows 腿上永远是红的。
+
+    CI 的 windows-latest 腿实测（本 PR 连撞两轮），三处差异各占一份：
+
+      * **路径分隔符**——`str(Path("web/src/a.ts"))` 在 Windows 上是
+        `web\\src\\a.ts`；
+      * **行尾**——GitHub 的 Windows runner 默认 `core.autocrlf=true`，
+        检出的文本文件是 CRLF；
+      * **遍历顺序**——`sorted(Path)` 在 Windows 上比的是**小写化**后的字符串
+        （大小写不敏感），`Zebra.ts` 与 `apple.ts` 的先后在两个平台正好相反。
+
+    「永远红的门禁」与「空转的门禁」一样坏：它报的不是它要看护的那件事，
+    看的人学会的是忽略它。
+
+    这条在 macOS/Linux 上照样跑得出来——`PureWindowsPath` 是纯路径，
+    不像 `WindowsPath` 那样在别的平台上构造就抛 UnsupportedOperation。
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+    import build_mcp_widget
+
+    # 一份「Windows 视角」：反斜杠 + CRLF + 大小写不敏感的那个顺序
+    windows = build_mcp_widget.digest([
+        (PureWindowsPath(r"web\src\lib\apple.ts"), b"a\r\nb\r\n"),
+        (PureWindowsPath(r"web\src\lib\Zebra.ts"), b"z\r\n"),
+    ])
+    # 一份「POSIX 视角」：正斜杠 + LF + 大小写敏感的那个顺序
+    posix = build_mcp_widget.digest([
+        (PurePosixPath("web/src/lib/Zebra.ts"), b"z\n"),
+        (PurePosixPath("web/src/lib/apple.ts"), b"a\nb\n"),
+    ])
+    assert windows == posix, "同一份源码在两个平台上算出了不同的指纹"
+
+
+def test_widget_fingerprint_still_notices_a_real_change():
+    """上一条是「别乱报」，这条是「别不报」——规范化不能规范到什么都一样。"""
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+    import build_mcp_widget
+
+    base = [(PurePosixPath("web/src/a.ts"), b"x\n")]
+    assert build_mcp_widget.digest(base) != build_mcp_widget.digest(
+        [(PurePosixPath("web/src/a.ts"), b"y\n")]), "内容变了却算出同一个指纹"
+    assert build_mcp_widget.digest(base) != build_mcp_widget.digest(
+        [(PurePosixPath("web/src/b.ts"), b"x\n")]), "文件名变了却算出同一个指纹"
 
 
 def test_codex_handoff_pins_utf8_on_every_decoding_spawn():

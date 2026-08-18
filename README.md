@@ -175,8 +175,8 @@ window — no second copy). Without the desktop app it falls back to browser mod
 ### Codex plugin
 
 Install it and the matplotlib figures Codex writes come out in a shape Magplot can take over
-(script next to its output, vector PDF, statically resolvable output name), and are handed
-over automatically when they're done:
+(script next to its output, vector PDF, statically resolvable output name) — **and you can
+finish them without leaving Codex**:
 
 ```bash
 codex plugin marketplace add erwanjun/magplot && codex plugin add magplot@magplot
@@ -185,10 +185,46 @@ codex plugin marketplace add erwanjun/magplot && codex plugin add magplot@magplo
 Start a new session afterwards. The CLI and the Codex desktop app share one plugin directory,
 so **installing once covers both**; `codex plugin marketplace upgrade magplot` pulls updates.
 
-Legend position, font sizes, line widths and ticks are then a drag or a click away in Magplot —
-no need to describe them to an AI again. See [`codex-plugin/README.md`](codex-plugin/README.md);
-the distribution roadmap (including the official directory submission checklist) is in
+The plugin ships three layers with clear boundaries:
+
+* a **skill** that teaches Codex the conventions a Magplot-editable figure has to satisfy;
+* a local **MCP server** exposing the engine — open a figure, apply canonical overrides,
+  run a publication preflight, export true-vector PDF/SVG or PNG at an explicit DPI.
+  All six tools work in hosts with no UI at all;
+* an **MCP App canvas** rendered inside Codex, built from the *same* frontend code the
+  desktop app uses — dragging, hit-testing, snapping and undo have no second implementation.
+
+Every edit is an override; **your Python source is never rewritten**. Multi-panel layout,
+canvas annotations and write-back still live in the Magplot window, one `magplot open` away.
+
+See [`codex-plugin/README.md`](codex-plugin/README.md) — including which parts are *not yet
+verified inside a real Codex Desktop*. Design notes are in
+[ADR 0006](docs/adr/0006-codex-mcp-app-and-publication-profile.md); the distribution roadmap
+(including the official directory submission checklist) is in
 [`docs/codex-plugin-distribution.md`](docs/codex-plugin-distribution.md).
+
+## Publication profile and preflight
+
+Export runs a **profile-driven preflight** first. The rules live in one versioned JSON file
+(`src/magplot/profiles/publication.json`) that both the Python engine and the TypeScript
+frontend read — so there is no second copy to drift.
+
+The default `lab-publication-v1` encodes: 80 mm single / 150 mm double column, 16:9 · 4:3 · 1:1
+aspect ratios, 9 pt body text with a hard floor of **more than 8 pt of final effective size**
+(8.5 pt strict), ≥ 300 dpi rasters, Times New Roman plus an explicit CJK fallback, 0.5 / 0.75 /
+1.0 / 1.5 pt line widths, ticks in, enclosed spines, frameless legends, `Title (unit)` axis
+labels, and Scientific colour maps by semantic type.
+
+Font sizes are checked at their **final physical size** — a panel scaled to 60 % is judged on
+`fontsize × 0.6`, not on what the script asked for. Findings come in four levels: `error`
+blocks export until you explicitly confirm, `warn` is always shown, `not_verifiable` is what
+we honestly cannot check (text inside an external bitmap) and needs a human, and `suggestion`
+never decides anything for you. Everything, including the confirmation, is written into the
+proof report next to the exported files.
+
+Journals with their own widths need an override, not a fork:
+`{"widths_mm": {"double": 178}}` — the rest is inherited, and the override is recorded in the
+proof report.
 
 ## Where your data lives
 
