@@ -15,6 +15,7 @@ import { currentProjectId, setCurrentProjectId } from '@/lib/session'
 import { flushAutosave, useDocumentStore } from '@/store/documentStore'
 import { useAssetStore } from '@/store/assetStore'
 import { useRenderStore } from '@/store/renderStore'
+import { resetPreview } from '@/store/svgPreviewStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 
@@ -52,6 +53,9 @@ async function resetForNewProject() {
   ui.setEditingText(null)
   ui.setCropTarget(null)
   useRenderStore.getState().clear()
+  // 预览平面挂在「面板 + 那一版 SVG」上，旧项目的面板整批消失后那些账本
+  // 指向的都是野节点，跟着一起清（DOM 由 React 自己收）
+  resetPreview()
   // 3. 换成空白文档（旧文档属于旧项目；素材引用跨项目不可靠）
   await useDocumentStore.getState().switchDocument(
     { schema: 2, name: 'fig_layout', page: { w: 150, h: 100 }, objects: [], guides: [] },

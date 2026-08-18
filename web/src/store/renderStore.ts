@@ -373,6 +373,23 @@ function mergeRender(
 }
 
 /**
+ * 画布上**此刻挂着的**那一版 SVG 的键。
+ *
+ * 与 panelRender 的取舍严格同源：自己那份变体有 SVG 就是自己那份，否则退回
+ * 该文件最近画好的那份（`latest`）。预览平面靠它认领「我贴的这份预览是挂在
+ * 哪一版 SVG 上的」——键一变，DOM 节点就已经整个被换掉了，账本必须作废，
+ * 否则还原会写到一批野引用上。
+ */
+export function activeRenderKey(
+  state: Pick<RenderState, 'byKey' | 'latest'>,
+  panel: PanelObject,
+): string {
+  const own = renderKeyOf(panel)
+  if (state.byKey[own]?.svg) return own
+  return state.latest[panel.fileId] ?? own
+}
+
+/**
  * panelRender 的 hook 版；引用稳定（自己那份画好之后就是 store 里那个对象）。
  * 接受 null 是为了调用方不必为「还没选中面板」再套一层条件 hook。
  */

@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   AlignCenterHorizontal,
   AlignCenterVertical,
@@ -60,6 +60,9 @@ import {
   unhideElement,
 } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
+import { beginElementPreview, commitElementPreview } from '@/canvas/elementPreview'
+import { getHistoryMode, previewStyle } from '@/store/svgPreviewStore'
+import { canPreviewStyle } from '@/lib/svgStyle'
 import { useSelectionStore } from '@/store/selectionStore'
 import { usePanelRender } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
@@ -529,12 +532,32 @@ function BatchFieldRow({
       {label}
     </span>
   )
-  const write = (v: unknown) =>
+  const gesture = useFieldGesture(panel, `批量修改${label}`)
+  // 多选里每个成员各自判断能不能预览：同时选中曲线和刻度组时，曲线照样
+  // 抢先显示，刻度组安静地等后端——**不能因为有一个不支持就整批放弃**
+  const previewables = elements.filter((el) => canPreviewStyle(el.role, field.prop))
+
+  const write = (v: unknown, immediate = false) => {
+    if (previewables.length && !gesture.isOpen()) gesture.start()
+    let previewed = previewables.length === elements.length
+    for (const el of previewables) {
+      if (!previewStyle(el.gid, el.role, field.prop, v)) previewed = false
+    }
+    // 只要有一个成员没预览成功就照旧走后端：宁可多渲染一次，
+    // 也不能让画布上一部分元素显示新值、另一部分停在旧值
     setOverrides(
       panel.id,
       `批量修改${label}`,
       elements.map((el) => ({ gid: el.gid, prop: field.prop, value: v })),
+      previewed ? 'none' : immediate,
     )
+    gesture.touch()
+  }
+
+  const writeOnce = (v: unknown) => {
+    write(v, true)
+    gesture.end()
+  }
   const overridden = elements.filter((el) =>
     panel.overrides.some((o) => o.gid === el.gid && o.prop === field.prop),
   )
@@ -551,20 +574,26 @@ function BatchFieldRow({
             step={field.step ?? 1}
             precision={2}
             suffix={field.unit}
-            onChange={write}
+            onChange={(v) => write(v)}
+            onScrubStart={gesture.start}
+            onScrubEnd={gesture.end}
           />
         )
       case 'color':
         return (
           <>
-            <ColorField value={mixed ? '#000000' : String(first ?? '#000000')} onChange={write} />
+            <ColorField
+              value={mixed ? '#000000' : String(first ?? '#000000')}
+              onChange={(v) => write(v, true)}
+              onGestureEnd={gesture.end}
+            />
             {mixed && <span className="shrink-0 text-xs text-ink-3">多个值</span>}
           </>
         )
       case 'bool':
         return (
           <>
-            <Toggle checked={!mixed && !!first} onChange={write} />
+            <Toggle checked={!mixed && !!first} onChange={writeOnce} />
             {mixed && <span className="shrink-0 text-xs text-ink-3">多个值</span>}
           </>
         )
@@ -573,7 +602,7 @@ function BatchFieldRow({
           <Select
             value={mixed ? '' : String(first ?? '')}
             placeholder="多个值"
-            onChange={write}
+            onChange={(v) => writeOnce(v)}
             options={(field.options ?? []).map((o) => ({
               value: o,
               label: optionLabel(field.prop, o),
@@ -609,6 +638,65 @@ function BatchFieldRow({
       )}
     </div>
   )
+}
+
+/**
+ * 原生取色对话框（`<input type="color">`）不保证发 blur：连续拖着选色时，
+ * 只能靠「安静了这么久」判定这一轮结束。取值刻意大于渲染防抖（300ms），
+ * 免得刚停手就被当成两轮。
+ */
+const GESTURE_QUIET_MS = 450
+
+/**
+ * 属性页的一次「连续调整」。**历史与渲染在这里彻底分开**：
+ *
+ *   历史：gesture 模式下整轮压成一条事务（一次 scrub / 一轮取色 = 一条撤销）；
+ *         granular 模式下不开事务，每个语义变化各自 commit 成一条。
+ *         **两种模式都经过 documentStore.commit**，一条都不会丢。
+ *   渲染：不管哪种模式，能局部预览的字段整轮都不麻烦 matplotlib
+ *         （setOverride 走 render:'none'），收尾时 flushRender 定稿一次。
+ *
+ * 收尾必须可靠：组件卸载（切走选中元素、关掉属性页）也要收——否则事务悬着、
+ * 占位的 wantPatches 还挡着同步器，用户会等来一张永远不出现的定稿图。
+ */
+function useFieldGesture(panel: PanelObject, label: string) {
+  const open = useRef(false)
+  const timer = useRef<number | undefined>(undefined)
+  const panelId = panel.id
+  const labelRef = useRef(label)
+  labelRef.current = label
+
+  const end = useCallback(() => {
+    window.clearTimeout(timer.current)
+    timer.current = undefined
+    if (!open.current) return
+    open.current = false
+    if (getHistoryMode() === 'gesture') useDocumentStore.getState().endTxn()
+    commitElementPreview(panelId)
+    flushRender(panelId)
+  }, [panelId])
+
+  const start = useCallback(() => {
+    window.clearTimeout(timer.current)
+    if (open.current) return
+    open.current = true
+    const p = useDocumentStore.getState().doc.objects.find((o) => o.id === panelId)
+    if (p?.type !== 'panel') return
+    // granular：不开事务，每个变化各成一条历史；渲染照样推迟到 end()
+    if (getHistoryMode() === 'gesture') useDocumentStore.getState().beginTxn(labelRef.current)
+    beginElementPreview(p)
+  }, [panelId])
+
+  /** 心跳：每次值变化都续一次「安静计时」，超时就当这一轮结束 */
+  const touch = useCallback(() => {
+    if (!open.current) return
+    window.clearTimeout(timer.current)
+    timer.current = window.setTimeout(end, GESTURE_QUIET_MS)
+  }, [end])
+
+  useEffect(() => () => end(), [end])
+
+  return { start, end, touch, isOpen: () => open.current }
 }
 
 /** 当前值：优先取尚未渲染回来的 override，保证输入即时反馈 */
@@ -648,16 +736,37 @@ function FieldRow({
       {label}
     </span>
   )
-  const write = (v: unknown, immediate = false) =>
-    setOverride(panel.id, element.gid, field.prop, v, immediate)
+  const gesture = useFieldGesture(panel, `修改${label}`)
+  const previewable = canPreviewStyle(element.role, field.prop)
 
-  const beginTxn = () => useDocumentStore.getState().beginTxn(`修改${label}`)
-  // 结束事务 = 这一轮连续调整定稿：把防抖里挂着的那次立刻发出去，
-  // 并保证最终那张不是拖动期的降质预览（见 flushRender）
-  const endTxn = () => {
-    useDocumentStore.getState().endTxn()
-    flushRender(panel.id)
+  /**
+   * 写一个值。
+   *
+   * 能局部预览的字段：先把新样子贴到 SVG 上（rAF 合并），**这一轮完全不发
+   * 后端**（render:'none'）——文档改动照旧经过 documentStore.commit，历史
+   * 一条不少，只是 matplotlib 等到这一轮结束才跑一次。scrub 没起手（直接
+   * 敲数字回车）时就地开一轮，由安静计时收尾。
+   *
+   * 预览没生效（不在能力表里 / gid 在 SVG 里查不到 / 值类型不对）就原路走
+   * 后端——immediate 参数照旧生效，行为与改动前一字不差。
+   */
+  const write = (v: unknown, immediate = false) => {
+    if (previewable && !gesture.isOpen()) gesture.start()
+    const previewed = previewable && previewStyle(element.gid, element.role, field.prop, v)
+    setOverride(panel.id, element.gid, field.prop, v, previewed ? 'none' : immediate)
+    gesture.touch()
   }
+
+  /** 一次性的离散动作（开关）：写一次当场收尾，一条历史 + 一次权威渲染 */
+  const writeOnce = (v: unknown) => {
+    write(v, true)
+    gesture.end()
+  }
+
+  const beginTxn = gesture.start
+  // 结束事务 = 这一轮连续调整定稿：把挂起的那次立刻发出去，
+  // 并保证最终那张不是拖动期的降质预览（见 flushRender）
+  const endTxn = gesture.end
 
 
   switch (field.type) {
@@ -792,14 +901,21 @@ function FieldRow({
     case 'color':
       return (
         <Row label={labelNode} labelWidth={LABEL_W}>
-          <ColorField value={String(value ?? '#000000')} onChange={(v) => write(v, true)} />
+          {/* 取色是**连续**动作：系统取色盘拖着走会发一串 change。开一轮事务，
+              每次变化只贴 SVG，blur 或安静一会儿才定稿——否则拖一次颜色就是
+              十几条撤销 + 十几次 matplotlib 渲染 */}
+          <ColorField
+            value={String(value ?? '#000000')}
+            onChange={(v) => write(v, true)}
+            onGestureEnd={gesture.end}
+          />
         </Row>
       )
 
     case 'bool':
       return (
         <Row label={labelNode} labelWidth={LABEL_W}>
-          <Toggle checked={!!value} onChange={(v) => write(v, true)} />
+          <Toggle checked={!!value} onChange={writeOnce} />
         </Row>
       )
 

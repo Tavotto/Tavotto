@@ -180,6 +180,52 @@ worker（`build`/`render`/`export` 的 v1 响应）→ pool（`queue_wait_ms` /
 `queue_wait` 恒为 0.0ms（观察 2），没有任何数据支撑去动它。workerd 已经有合并
 队列，Python 池是参考实现，不加复杂度。
 
+## 假实时预览（Phase G）：客户端那一半的账
+
+日期：2026-08-18 ｜ 复现：`cd web && npx playwright test e2e/fake-realtime.spec.ts`
+
+后端的 `timings` 回答的是「matplotlib 那边花了多久」。它看不见另一半——**用户从
+按下鼠标到画面动起来等了多久**。Phase G 把这半边也量出来了，出处是
+`web/src/lib/previewTrace.ts` 维护的计时环（`window.__MM_PREVIEW_TIMINGS__`）。
+
+### 真浏览器（Chromium，Playwright，`examples/figures` 的 Fig1_kinetics）
+
+| 项 | 实测 | 说明 |
+|---|---|---|
+| `preview_first_frame` | **12–30ms** | pointerdown → 第一帧预览落进 DOM。含 2px 起拖阈值与一次 rAF 等待，所以下限就是一两帧 |
+| `preview_frame_count / move_count` | 40 / 40 | **这条脚本里合并率为 0**：Playwright 的 `mouse.move` 是一次一等，每一步都赶得上自己那一帧 |
+| `commit_to_authority_ms` | **36–37ms** | pointerup → 权威 SVG 换上画布，整条 HTTP 链路 |
+| 拖动期间 `/api/engine/render` | **0 次**（40 次 pointermove） | 用例直接数 network request，不是数 mock |
+
+对照同一台机器同一个面板的后端热态中位 **28–32ms**（上面的基线表）：
+commit→权威 的 36ms 里，matplotlib 那段占了八成以上，**剩下的都在网络与 JSON**。
+这也说明「继续压前端」没有意义——要更快只能压 worker 那一段。
+
+### DOM 写入本身的代价（jsdom，非浏览器）
+
+浏览器里量不到「单纯写一帧要多久」（一帧里还有布局与绘制）。这张表是 jsdom 里
+纯 DOM 写入的成本，**只用来回答「预览本身会不会成为瓶颈」**，不是帧预算：
+
+| 操作 | 中位 | p95 |
+|---|---|---|
+| transform 首帧（含采 base） | 0.37ms | 0.51ms |
+| transform 后续帧 | 0.24ms | 0.27ms |
+| 样式首帧 `line.color` | 0.27ms | 0.36ms |
+| 样式帧 `scatter.facecolor`（`<defs>` + 5 个 `<use>`） | 0.04–0.07ms | 0.16ms |
+| **100 次 pointermove → 1 帧（总）** | **0.25ms** | 0.26ms |
+
+最后一行是 rAF 合并的证据：一百次 `previewTransform` 加起来与**一次**落地写入
+同一量级——被合并掉的 99 次几乎不要钱。（SVG fixture 18.8KB；真实
+Fig1_kinetics 的 SVG 是 38.4KB，同一量级。）
+
+### 这几个数字**不**是什么
+
+* 不是「拖动一定 30ms 内跟手」的保证。首帧含一次 rAF 等待，掉帧的页面上会更久。
+* 不是重图的数字。`examples/figures` 全是 `cost=light` 的纯矢量小图；
+  heavy 脚本的 commit→权威 仍然是**秒到分钟**级——预览的价值恰恰在那里最大，
+  但没有样本就不写数。
+* jsdom 那张表不能当浏览器帧预算用：jsdom 没有布局也没有绘制。
+
 ## 值得做的优化（按数据支撑排序，标注归属阶段）
 
 1. **首次启动的 9.4 秒字体缓存**（观察 4）——目前只在 `--fresh-home` 下暴露，
@@ -196,10 +242,15 @@ worker（`build`/`render`/`export` 的 v1 响应）→ pool（`queue_wait_ms` /
    manifest 里有 `role=="image"` 元素的面板、且只在防抖那一路带
    `preview_dpi: 100`，松手/结束事务由 `flushRender` 按默认 dpi 定稿
    （`web/src/hooks/useEngineSync.ts`，vitest 看护）。纯矢量面板一律不带。
-4. **并发下的排队行为完全没有数据**（观察 2）。「用户连拖十几下」是 workerd
+4. **拖动期间的 matplotlib 往返（Phase G，已做）**：以前拖一个图内元素只有
+   松手才渲染（这条本来就对），但**属性页的 scrub 与取色每改一个值就发一次**。
+   现在这两类走 `render:'none'` + SVG 局部预览，整轮只在收尾发一次
+   （`web/src/store/svgPreviewStore.ts` 的能力表 + `useEngineSync` 的渲染策略）。
+   收益按上面的表算：一次三十步的取色从「最多 30 次 × 28ms 的往返」降到 1 次。
+5. **并发下的排队行为完全没有数据**（观察 2）。「用户连拖十几下」是 workerd
    合并队列的立项理由，却从来没被量过。**归属：需要一个并发压测脚本**，
    本阶段没做，也不该靠猜。
-5. **manifest 的逐元素 `get_window_extent`（8.5ms / 26 元素）**：目前占热态约
+6. **manifest 的逐元素 `get_window_extent`（8.5ms / 26 元素）**：目前占热态约
    30%，但它是「量每个元素在哪」这件事本身的成本，没有明显的重复计算可砍。
    真要动得先有更大的图库样本（本基线只有 25–68 个元素的小图）。**归属：待定，
    证据不足。**

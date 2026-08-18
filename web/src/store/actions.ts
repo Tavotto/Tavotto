@@ -1,4 +1,4 @@
-import { requestRender } from '@/hooks/useEngineSync'
+import { requestRender, type RenderPolicy } from '@/hooks/useEngineSync'
 import { newId } from '@/lib/id'
 import { applyAlign, boundsOf, readingOrder, type AlignMode } from '@/lib/geometry'
 import { clamp } from '@/lib/units'
@@ -539,13 +539,19 @@ export const optionLabel = (prop: string, value: string) => ENUM_LABEL[prop]?.[v
  * 写入一条图内元素 override 并触发重渲染。
  * override 存在 PanelObject 上，因此天然进 undo history；
  * immediate=true 用于颜色/开关/枚举/拖动结束这类不需要防抖的改动。
+ *
+ * 第五个参数也接受**渲染策略**（'immediate' / 'defer' / 'none'）。
+ * 策略只管「什么时候麻烦 matplotlib」——文档改动**无论如何都经过
+ * documentStore.commit**（updateObject → commit），历史一条不少。
+ * 'none' 是给假实时手势用的：拖动 / scrub / 取色期间画面由 SVG 局部预览
+ * 负责，手势结束由 flushRender 定稿。
  */
 export function setOverride(
   panelId: string,
   gid: string,
   prop: string,
   value: unknown,
-  immediate = false,
+  immediate: boolean | RenderPolicy = false,
 ) {
   updateObject<PanelObject>(panelId, `修改${propLabel(prop)}`, (o) => {
     o.overrides = o.overrides.filter((p) => !(p.gid === gid && p.prop === prop))
@@ -661,11 +667,15 @@ export function resetOverrides(panelId: string) {
   status('已清空该面板的图内修改')
 }
 
-/** 一次写入多条 override（子图对齐等批量操作）：一条历史、一次渲染 */
+/**
+ * 一次写入多条 override（子图对齐等批量操作）：一条历史、一次渲染。
+ * render 同 setOverride 的第五参：'none' 交给手势结束时的 flushRender 定稿。
+ */
 export function setOverrides(
   panelId: string,
   label: string,
   patches: { gid: string; prop: string; value: unknown }[],
+  render: boolean | RenderPolicy = true,
 ) {
   if (!patches.length) return
   updateObject<PanelObject>(panelId, label, (o) => {
@@ -675,7 +685,7 @@ export function setOverrides(
     }
   })
   const panel = findObject(panelId)
-  if (panel?.type === 'panel') requestRender(panel, true)
+  if (panel?.type === 'panel') requestRender(panel, render)
 }
 
 /**

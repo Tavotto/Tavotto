@@ -38,6 +38,12 @@ import {
   useViewportStore,
 } from '@/store/viewportStore'
 import { setOverride, setOverrides } from '@/store/actions'
+import { previewTransform } from '@/store/svgPreviewStore'
+import {
+  beginElementPreview,
+  cancelElementPreview,
+  commitElementPreview,
+} from './elementPreview'
 import {
   isLinear,
   lineEndpoints,
@@ -61,9 +67,21 @@ import { expandGroups, movableTargets, warnBlockedGroups } from '@/store/actions
 /*  指针追踪骨架                                                               */
 /* -------------------------------------------------------------------------- */
 
+/** 一次拖动是怎么结束的——**提交与取消必须分开**，见 TrackOptions.onEnd */
+export interface TrackEnd {
+  /**
+   * true = pointercancel / lostpointercapture：系统把这次交互作废了
+   * （手势被识别成滚动、笔离开数位板、别的元素抢走了指针捕获）。
+   * 这**不是**用户完成了操作：一律取消——不写 override、不进历史、不渲染、
+   * 不留临时 transform。旧实现把 cancel 与 up 走同一条路，于是一次被系统
+   * 打断的拖动会静默落成一条真实改动。
+   */
+  cancelled: boolean
+}
+
 interface TrackOptions {
   onMove: (ev: PointerEvent, dxPx: number, dyPx: number) => void
-  onEnd: (moved: boolean, ev: PointerEvent) => void
+  onEnd: (moved: boolean, ev: PointerEvent, end: TrackEnd) => void
   /** 超过该像素位移才算「真的动了」 */
   threshold?: number
 }
@@ -72,6 +90,7 @@ export function trackPointer(e: ReactPointerEvent, { onMove, onEnd, threshold = 
   const startX = e.clientX
   const startY = e.clientY
   let moved = false
+  let done = false
 
   const move = (ev: PointerEvent) => {
     const dx = ev.clientX - startX
@@ -80,15 +99,22 @@ export function trackPointer(e: ReactPointerEvent, { onMove, onEnd, threshold = 
     moved = true
     onMove(ev, dx, dy)
   }
-  const finish = (ev: PointerEvent) => {
+  const finish = (cancelled: boolean) => (ev: Event) => {
+    if (done) return
+    done = true
     window.removeEventListener('pointermove', move)
-    window.removeEventListener('pointerup', finish)
-    window.removeEventListener('pointercancel', finish)
-    onEnd(moved, ev)
+    window.removeEventListener('pointerup', up)
+    window.removeEventListener('pointercancel', cancel)
+    window.removeEventListener('lostpointercapture', cancel)
+    onEnd(moved, ev as PointerEvent, { cancelled })
   }
+  const up = finish(false)
+  const cancel = finish(true)
   window.addEventListener('pointermove', move)
-  window.addEventListener('pointerup', finish)
-  window.addEventListener('pointercancel', finish)
+  window.addEventListener('pointerup', up)
+  window.addEventListener('pointercancel', cancel)
+  // 指针捕获被别处抢走 = 后续 pointerup 再也不会到我们手里，按取消处理
+  window.addEventListener('lostpointercapture', cancel)
 }
 
 const doc = () => useDocumentStore.getState().doc
@@ -214,9 +240,10 @@ export function startMoveDrag(e: ReactPointerEvent, objectId: string) {
         }
       })
     },
-    onEnd: (moved) => {
+    onEnd: (moved, _ev, end) => {
       interaction().end()
-      store.endTxn({ discard: !moved })
+      // pointercancel = 这次交互被系统作废，一律丢弃：不留位移、不进历史
+      store.endTxn({ discard: !moved || end.cancelled })
     },
   })
 }
@@ -311,9 +338,10 @@ export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: Res
         if (!isText) o.h = placed.h
       })
     },
-    onEnd: (moved) => {
+    onEnd: (moved, _ev, end) => {
       interaction().end()
-      store.endTxn({ discard: !moved })
+      // pointercancel = 这次交互被系统作废，一律丢弃：不留位移、不进历史
+      store.endTxn({ discard: !moved || end.cancelled })
     },
   })
 }
@@ -404,9 +432,10 @@ export function startEndpointDrag(e: ReactPointerEvent, objectId: string, which:
         o.end = { rx: (b.x - x) / w, ry: (b.y - y) / h }
       })
     },
-    onEnd: (moved) => {
+    onEnd: (moved, _ev, end) => {
       interaction().end()
-      store.endTxn({ discard: !moved })
+      // pointercancel = 这次交互被系统作废，一律丢弃：不留位移、不进历史
+      store.endTxn({ discard: !moved || end.cancelled })
     },
   })
 }
@@ -523,12 +552,14 @@ export function startDraw(e: ReactPointerEvent, tool: Exclude<Tool, 'select'>) {
         ...(linear ? { start: { x: start.x, y: start.y }, end: cur } : {}),
       })
     },
-    onEnd: (moved, ev) => {
+    onEnd: (moved, ev, fin) => {
       const draft = interaction().draft
       // 优先用 draft 里的端点：吸附 / shift 锁角只作用于 onMove，
       // 直接读松手坐标会让最终对象与预览差一口气
       const end = draft?.end ?? clientToMm(ev.clientX, ev.clientY)
       interaction().end()
+      // pointercancel：草稿丢掉，不落对象（工具也不该切回选择）
+      if (fin.cancelled) return
 
       const fallback = DEFAULT_DRAW[tool]
       const rect: Rect =
@@ -657,9 +688,14 @@ export function startGuideDrag(e: ReactPointerEvent, axis: 'x' | 'y', index: num
         })
       }
     },
-    onEnd: (moved, ev) => {
+    onEnd: (moved, ev, end) => {
       const pos = posOf(ev)
       interaction().end()
+      // pointercancel：参考线既不新增也不删除，正在拖的那条回到原位
+      if (end.cancelled) {
+        if (index != null) store.endTxn({ discard: true })
+        return
+      }
       if (index == null) {
         if (moved && inRange(pos)) {
           store.commit('添加参考线', (d) => {
@@ -780,9 +816,10 @@ export function startCropDrag(
         o.y = anchorY - offY - o.h / 2
       })
     },
-    onEnd: (moved) => {
+    onEnd: (moved, _ev, end) => {
       interaction().end()
-      store.endTxn({ discard: !moved })
+      // pointercancel = 这次交互被系统作废，一律丢弃：不留位移、不进历史
+      store.endTxn({ discard: !moved || end.cancelled })
     },
   })
 }
@@ -897,12 +934,8 @@ export function startElementDrag(
   const anchor = element.anchor
   const dragProp = element.drag_prop
 
-  const wrap = document.querySelector<HTMLElement>(`[data-element-svg="${panel.id}"]`)
-  const svg = wrap?.querySelector('svg')
-  const group = svg?.querySelector<SVGGElement>(`[id="${CSS.escape(element.gid)}"]`)
-  const viewBox = (svg?.getAttribute('viewBox') ?? '0 0 100 100').split(/\s+/).map(Number)
-
   interaction().begin('element')
+  beginElementPreview(panel)
   // 面板可能被旋转过：屏幕位移要先转回内容坐标系，图内的分数坐标才对得上
   const toContent = contentDelta(panel, layout)
   // 松手写 onMove 最后一次的位移：shift 锁向只作用于 onMove，若重读松手坐标，
@@ -914,14 +947,18 @@ export function startElementDrag(
       let [dfx, dfy] = toContent(dxPx, dyPx)
       if (ev.shiftKey) [dfx, dfy] = contentAxisLock(layout, dfx, dfy)
       last = [dfx, dfy]
-      group?.setAttribute('transform', `translate(${dfx * viewBox[2]},${dfy * viewBox[3]})`)
+      previewTransform(element.gid, dfx, dfy)
       interaction().setGidDrag({ gid: element.gid, dfx, dfy })
     },
-    onEnd: (moved) => {
+    onEnd: (moved, _ev, end) => {
       interaction().end()
-      if (!moved) return
+      if (!moved || end.cancelled) {
+        cancelElementPreview()
+        return
+      }
       const [dfx, dfy] = last
       setOverride(panel.id, element.gid, dragProp, [anchor[0] + dfx, anchor[1] + dfy], true)
+      commitElementPreview(panel.id)
     },
   })
 }
@@ -946,12 +983,8 @@ export function startArrowDrag(
   if (!pts) return
   e.stopPropagation()
 
-  const wrap = document.querySelector<HTMLElement>(`[data-element-svg="${panel.id}"]`)
-  const svg = wrap?.querySelector('svg')
-  const group = svg?.querySelector<SVGGElement>(`[id="${CSS.escape(element.gid)}"]`)
-  const viewBox = (svg?.getAttribute('viewBox') ?? '0 0 100 100').split(/\s+/).map(Number)
-
   interaction().begin('element')
+  beginElementPreview(panel)
   const toContent = contentDelta(panel, layout)
   const W = layout.width
   const H = layout.height
@@ -995,15 +1028,19 @@ export function startArrowDrag(
       const r = compute(dfx, dfy, ev.shiftKey)
       last = r
       if (which === 'both') {
-        group?.setAttribute('transform', `translate(${r.dfx * viewBox[2]},${r.dfy * viewBox[3]})`)
+        previewTransform(element.gid, r.dfx, r.dfy)
         interaction().setGidDrag({ gid: element.gid, dfx: r.dfx, dfy: r.dfy })
       } else {
+        // 单端拖动改的是形状，平移 SVG 会骗人：预览交给覆盖层的虚线
         interaction().setArrowPreview({ gid: element.gid, a: r.a, b: r.b })
       }
     },
-    onEnd: (moved) => {
+    onEnd: (moved, _ev, end) => {
       interaction().end()
-      if (!moved || !last) return
+      if (!moved || !last || end.cancelled) {
+        cancelElementPreview()
+        return
+      }
       setOverride(
         panel.id,
         element.gid,
@@ -1011,6 +1048,7 @@ export function startArrowDrag(
         [last.a[0], last.a[1], last.b[0], last.b[1]].map(round4),
         true,
       )
+      commitElementPreview(panel.id)
     },
   })
 }
@@ -1051,13 +1089,9 @@ export function startAxesDrag(
   if (!start) return
   e.stopPropagation()
 
-  const wrap = document.querySelector<HTMLElement>(`[data-element-svg="${panel.id}"]`)
-  const svg = wrap?.querySelector('svg')
-  const group = svg?.querySelector<SVGGElement>(`[id="${CSS.escape(element.gid)}"]`)
-  const viewBox = (svg?.getAttribute('viewBox') ?? '0 0 100 100').split(/\s+/).map(Number)
-
   const MIN = 0.05
   interaction().begin('element')
+  beginElementPreview(panel)
   const toContent = contentDelta(panel, layout)
 
   const compute = (dxPx: number, dyPx: number, shift = false) => {
@@ -1095,14 +1129,19 @@ export function startAxesDrag(
       const { rect, dfx, dfy } = compute(dxPx, dyPx, ev.shiftKey)
       last = rect
       interaction().setElementPreview({ boxes: { [element.gid]: flipY(rect) } })
-      if (mode === 'move' && group) {
-        group.setAttribute('transform', `translate(${dfx * viewBox[2]},${dfy * viewBox[3]})`)
-      }
+      // 只有纯平移的 SVG 预览是准的。缩放要 matplotlib 重排（刻度、字号、
+      // 图例都不会跟着线性缩放），假装缩放只会画出一张必然被纠正的图——
+      // 覆盖层线框如实表达「框会变成这么大」，成图由权威渲染说了算
+      if (mode === 'move') previewTransform(element.gid, dfx, dfy)
     },
-    onEnd: (moved) => {
+    onEnd: (moved, _ev, end) => {
       interaction().end()
-      if (!moved || !last) return
+      if (!moved || !last || end.cancelled) {
+        cancelElementPreview()
+        return
+      }
       setOverride(panel.id, element.gid, 'position', last.map(round4), true)
+      commitElementPreview(panel.id)
     },
   })
 }
@@ -1125,15 +1164,9 @@ export function startElementGroupMove(
   layout: { width: number; height: number },
 ) {
   e.stopPropagation()
-  const wrap = document.querySelector<HTMLElement>(`[data-element-svg="${panel.id}"]`)
-  const svg = wrap?.querySelector('svg')
-  const viewBox = (svg?.getAttribute('viewBox') ?? '0 0 100 100').split(/\s+/).map(Number)
-  // 纯平移的乐观预览是准的（不像缩放会触发 matplotlib 重排），SVG 一起跟手
-  const nodes = entries.map(
-    (en) => svg?.querySelector<SVGGElement>(`[id="${CSS.escape(en.key)}"]`) ?? null,
-  )
-
   interaction().begin('element')
+  // 纯平移的乐观预览是准的（不像缩放会触发 matplotlib 重排），SVG 一起跟手
+  beginElementPreview(panel)
   const toContent = contentDelta(panel, layout)
 
   const shifted = (dfx: number, dfy: number): Rect4[] =>
@@ -1152,19 +1185,21 @@ export function startElementGroupMove(
         boxes: Object.fromEntries(entries.map((en, i) => [en.key, boxes[i]])),
         group: unionBox(boxes) ?? undefined,
       })
-      for (const node of nodes) {
-        node?.setAttribute('transform', `translate(${dfx * viewBox[2]},${dfy * viewBox[3]})`)
-      }
+      for (const en of entries) previewTransform(en.key, dfx, dfy)
     },
-    onEnd: (moved) => {
+    onEnd: (moved, _ev, end) => {
       interaction().end()
-      if (!moved) return
+      if (!moved || end.cancelled) {
+        cancelElementPreview()
+        return
+      }
       const boxes = shifted(last[0], last[1])
       setOverrides(
         panel.id,
         `移动 ${entries.length} 个图内元素`,
         entries.map((en, i) => en.write(boxes[i])),
       )
+      commitElementPreview(panel.id)
     },
   })
 }
@@ -1183,26 +1218,37 @@ export function startGroupResize(
 ) {
   e.stopPropagation()
   interaction().begin('element')
+  beginElementPreview(panel)
 
   const toContent = contentDelta(panel, layout)
   const nextGroup = (dxPx: number, dyPx: number) => {
     const [dfx, dfy] = toContent(dxPx, dyPx)
     return resizeGroup(group.box, dir, dfx, dfy)
   }
+  // shift 锁向不作用于成组缩放，松手重读坐标与预览一致；但仍记下最后一帧，
+  // 免得 onEnd 与 onMove 各算一遍
+  let last: Rect4 | null = null
 
   trackPointer(e, {
     onMove: (_ev, dxPx, dyPx) => {
       const box = nextGroup(dxPx, dyPx)
+      last = box
+      // 缩放不做 SVG 预览（见 startAxesDrag 的同一条取舍）：
+      // 手柄、线框与最终 patch 是准的，像素由 matplotlib 重排后说了算
       interaction().setElementPreview({
         boxes: Object.fromEntries(groupBoxes(group, box)),
         group: box,
       })
     },
-    onEnd: (moved, ev) => {
+    onEnd: (moved, ev, end) => {
       interaction().end()
-      if (!moved) return
-      const box = nextGroup(ev.clientX - e.clientX, ev.clientY - e.clientY)
+      if (!moved || end.cancelled) {
+        cancelElementPreview()
+        return
+      }
+      const box = last ?? nextGroup(ev.clientX - e.clientX, ev.clientY - e.clientY)
       setOverrides(panel.id, `缩放 ${group.entries.length} 个子图`, groupPatches(group, box))
+      commitElementPreview(panel.id)
     },
   })
 }

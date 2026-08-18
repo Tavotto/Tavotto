@@ -212,10 +212,18 @@ export function NumberField({
 export function ColorField({
   value,
   onChange,
+  onGestureEnd,
   className,
 }: {
   value: string
   onChange: (v: string) => void
+  /**
+   * 这一轮取色结束（两个输入框任一失焦）。取色是连续动作：系统取色盘拖着走
+   * 会发一串 change，调用方靠它把整轮压成一条历史 + 一次定稿渲染。
+   * 原生对话框不保证发 blur，所以调用方另有安静计时兜底——这里只管报告
+   * 确实发生了的失焦。
+   */
+  onGestureEnd?: () => void
   className?: string
 }) {
   return (
@@ -232,6 +240,7 @@ export function ColorField({
           type="color"
           value={value}
           onChange={(e) => onChange(e.target.value)}
+          onBlur={onGestureEnd}
           className="absolute inset-0 cursor-pointer opacity-0"
         />
       </div>
@@ -241,6 +250,7 @@ export function ColorField({
           const v = e.target.value
           if (/^#[0-9a-fA-F]{0,6}$/.test(v)) onChange(v)
         }}
+        onBlur={onGestureEnd}
         onKeyDown={(e) => e.stopPropagation()}
         className="num-input w-full min-w-0 bg-transparent uppercase text-ink outline-none"
       />

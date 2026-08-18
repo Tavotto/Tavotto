@@ -6,7 +6,13 @@ import { cn } from '@/lib/utils'
 import { isJustBakedBaseline } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
 import { useInteractionStore } from '@/store/interactionStore'
-import { usePanelManifest, usePanelRender, useRenderStore } from '@/store/renderStore'
+import {
+  renderKeyOf,
+  usePanelManifest,
+  usePanelRender,
+  useRenderStore,
+} from '@/store/renderStore'
+import { reattachPreview, settleFailedAuthority } from '@/store/svgPreviewStore'
 import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import type { PanelObject, PanelRotation } from '@/types/document'
@@ -64,7 +70,33 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   bucketRef.current = bucket
 
   // 编辑态用 SVG（要 gid 命中）；退出后有 override 的用引擎 PNG（imshow 面板不发糊）
-  const showSvg = !!render?.svg && editing
+  const svgHtml = editing ? (render?.svg ?? null) : null
+  const showSvg = svgHtml != null
+
+  // 预览平面与权威 SVG 的接合点：内联 SVG 每换一次就来认领一次。
+  // 换上来的正是等的那一版 → 预览功成身退（DOM 已经整个换掉）；还是原来那一版
+  // （React 把同一份 SVG 重新插了一遍：面板重挂、标签页切回来）→ 把挂起的预览
+  // 重放上去，否则用户刚拖完的元素会凭空弹回原位。判断收在 svgPreviewStore。
+  //
+  // 依赖只认 svgHtml 与 obj.id，**不能带整个 obj**：obj 每次 commit 都是新引用，
+  // 带上它等于每写一条 override 就重放一次预览——而重放会重新采 base，
+  // 那时 DOM 上还挂着预览位移，采到的 base 就是「已经挪过的位置」，位移翻倍。
+  const panelId = obj.id
+  useEffect(() => {
+    if (svgHtml == null) return
+    const st = useRenderStore.getState()
+    const cur = st.byKey[renderKeyOf(obj)]?.svg ? renderKeyOf(obj) : (st.latest[obj.fileId] ?? '')
+    reattachPreview(panelId, cur)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [svgHtml, panelId])
+
+  // 权威渲染失败：等不到那一版 SVG 了，会话就地收尾。
+  // **预览留在画布上**——文档里已经是用户要的值，把预览撤掉会让画布与属性页
+  // 各说各话；渲染失败本身由角标表达，用户可以继续编辑或重试。
+  const renderStatus = render?.status
+  useEffect(() => {
+    if (renderStatus === 'error') settleFailedAuthority(panelId)
+  }, [renderStatus, panelId])
   // 有图内修改、或脚本已领先磁盘文件时，显示都必须走引擎产物。
   // 只带基线的面板除外——磁盘文件已经是那个样子，继续用 /api/render 更省。
   const tracked = useRenderStore((s) => !!s.tracked[obj.fileId])
@@ -102,7 +134,7 @@ export function PanelView({ obj }: { obj: PanelObject }) {
             data-element-svg={obj.id}
             className="absolute"
             style={{ ...layout, maxWidth: 'none' }}
-            dangerouslySetInnerHTML={{ __html: render!.svg! }}
+            dangerouslySetInnerHTML={{ __html: svgHtml }}
           />
         ) : (
           <img
