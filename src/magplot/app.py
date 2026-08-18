@@ -174,6 +174,30 @@ def source_sha1(path: Path) -> str:
     return digest
 
 
+#: 同键写者串行用的锁表。键随内容/宽度/后端版本变，**必须封顶**——与
+#: `_SOURCE_SHA1` 同一条纪律，不封顶就是慢性泄漏。
+_RENDER_CACHE_LOCKS: dict[str, threading.Lock] = {}
+_RENDER_CACHE_LOCKS_GUARD = threading.Lock()
+_RENDER_CACHE_LOCKS_MAX = 512
+
+
+def _cache_write_lock(cached: Path) -> threading.Lock:
+    """同一个缓存键共用一把写锁。"""
+    key = str(cached)
+    with _RENDER_CACHE_LOCKS_GUARD:
+        lock = _RENDER_CACHE_LOCKS.get(key)
+        if lock is None:
+            if len(_RENDER_CACHE_LOCKS) >= _RENDER_CACHE_LOCKS_MAX:
+                # 只丢没人拿着的那些：正被持有的锁一旦从表里消失，下一个线程
+                # 会为同一个键另建一把，互斥当场失效
+                for stale, held in list(_RENDER_CACHE_LOCKS.items()):
+                    if not held.locked():
+                        del _RENDER_CACHE_LOCKS[stale]
+            lock = threading.Lock()
+            _RENDER_CACHE_LOCKS[key] = lock
+        return lock
+
+
 def _write_render_cache(src: Path, width_px: int, cached: Path) -> None:
     """渲染进临时文件再 `os.replace` 落盘（同键并发不会读到半个 PNG）。
 
@@ -579,11 +603,22 @@ def api_render():
     except OSError:
         usable = False
     if not usable:
-        # 零字节 = 上一次写到一半就断电/被杀（旧的直写路径留下的产物）。
-        # 把空文件当缓存交出去，用户看到的是一个永远画不出来的面板。
-        cached.unlink(missing_ok=True)
-        _write_render_cache(path, w, cached)
-        prune_render_cache()
+        # 同键并发只让一个线程真渲染：同一素材在画布里放几份、缩略图与主图同时
+        # 上，是常态。其余线程渲出来的字节完全一样（键含内容哈希），多渲一次
+        # 就是白烧一次 CPU。锁内复查一次，看到成品直接用。
+        # 这把锁**只保本进程**——杀毒软件、别的进程不听它的，所以失败点上的
+        # 退让（`_publish_render_cache`）仍然是必须的，两者不互相替代。
+        with _cache_write_lock(cached):
+            try:
+                usable = cached.stat().st_size > 0
+            except OSError:
+                usable = False
+            if not usable:
+                # 零字节 = 上一次写到一半就断电/被杀（旧的直写路径留下的产物）。
+                # 把空文件当缓存交出去，用户看到的是一个永远画不出来的面板。
+                cached.unlink(missing_ok=True)
+                _write_render_cache(path, w, cached)
+                prune_render_cache()
     # no-cache = 每次向服务器验证（304 极快）；内容一变（sha1 进 key）立即失效。
     # 不用长 max-age——「更新原图」后旧 URL 也不能再吃浏览器缓存。
     resp = send_file(cached, mimetype="image/png", conditional=True)

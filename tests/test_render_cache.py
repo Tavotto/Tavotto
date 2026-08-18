@@ -183,3 +183,51 @@ def test_zero_byte_cache_heals_itself(client, tmp_path):
     assert len(resp.get_data()) > 0
     assert cached.stat().st_size > 0
     assert _cached_files(tmp_path) == [cached.name], "自愈应写回同一个键"
+
+
+def test_same_key_renders_once_under_concurrency(client, tmp_path, monkeypatch):
+    """同键并发只渲染一次，其余线程复用成品。
+
+    16 个线程同时要同一张图时，每个各渲一遍出来的字节完全相同（键含内容
+    哈希），多出来的 15 次纯属白烧 CPU；在 Windows 上多个写者还会互相撞
+    `os.replace`。写者按键串行 + 锁内复查即可，读路径一点不受影响。
+    """
+    import time
+
+    figs = _figs(tmp_path)
+    m.open_project(str(figs))
+
+    real = m.pdfbackend.render_preview_png
+    calls: list = []
+    counter_lock = threading.Lock()
+
+    def counted(path, w, out):
+        with counter_lock:
+            calls.append(w)
+        time.sleep(0.05)          # 给别的线程足够时间挤进来
+        real(path, w, out)
+
+    monkeypatch.setattr(m.pdfbackend, "render_preview_png", counted)
+
+    results: list = []
+    errors: list = []
+
+    def hit():
+        try:
+            r = client.get("/api/render?id=p1.pdf&w=400")
+            results.append((r.status_code, r.get_data()))
+        except Exception as exc:            # noqa: BLE001 — 线程里的异常要带回来
+            errors.append(exc)
+
+    threads = [threading.Thread(target=hit) for _ in range(16)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(30)
+
+    assert not errors, errors
+    assert len(calls) == 1, f"同键渲染了 {len(calls)} 次，应当只渲一次"
+    assert len(results) == 16
+    for status, data in results:
+        assert status == 200
+        assert data.startswith(b"\x89PNG\r\n\x1a\n")
