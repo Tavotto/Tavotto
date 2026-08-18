@@ -375,6 +375,23 @@ jobs:
           }
           if (-not $spawned) { throw "交接没有拉起 Magplot 窗口进程" }
           Write-Host "✓ 交接拉起了原生 Magplot（pid $($spawned.Id -join ','))"
+
+          # 起来的这一下应该把清单**刷回来**（应用每次启动刷一遍）。这是
+          # 「用户把 .app 拖到别处 / 免安装形态 / macOS 没有装后钩子」那条自愈
+          # 路径在真产物上的唯一验证点——所以要**等**，不能刚看见进程就杀。
+          # 顺带它也让下面「卸载后清单不该还在」那条断言重新变得有意义：
+          # 上面我们自己把清单删掉了，不刷回来的话那条断言恒真，卸载钩子
+          # 完全失灵也照样绿。空转的门禁比没有门禁更坏，它还在报平安。
+          foreach ($i in 1..60) {
+            if (Test-Path $manifest) { break }
+            Start-Sleep -Milliseconds 500
+          }
+          if (-not (Test-Path $manifest)) {
+            $spawned | ForEach-Object { Stop-Process -Id $_.Id -Force }
+            throw "应用启动后没有刷新安装清单: $manifest"
+          }
+          Write-Host "✓ 应用启动时把安装清单刷了回来"
+
           $spawned | ForEach-Object { Stop-Process -Id $_.Id -Force }
           foreach ($i in 1..30) {
             Start-Sleep -Milliseconds 500
@@ -386,6 +403,9 @@ jobs:
           # 卸载
           $uninst = "$inst\uninstall.exe"
           if (-not (Test-Path $uninst)) { throw "没有卸载器: $uninst" }
+          # 卸载前**再确认一次清单确实在**：下面那条「卸载后不该还在」只有在
+          # 这时候真的有文件，才算验到了卸载钩子。
+          if (-not (Test-Path $manifest)) { throw "卸载前清单就不在了，下面的断言将毫无意义" }
           Start-Process -Wait $uninst -ArgumentList "/S"
           # NSIS 卸载器会把自己复制到 temp 再回头删安装目录，-Wait 等到的是
           # 外面那层壳——所以这里轮询，别当场断言

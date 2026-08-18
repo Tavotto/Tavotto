@@ -538,3 +538,22 @@ def test_every_doctor_problem_is_a_coded_dict():
             assert isinstance(arg, ast.Dict), f"第 {node.lineno} 行 append 了非 dict"
             keys = {k.value for k in arg.keys if isinstance(k, ast.Constant)}
             assert keys == {"code", "message"}, f"第 {node.lineno} 行缺 code/message"
+
+
+def test_nightly_uninstall_assertion_is_not_vacuous():
+    """nightly 里「卸载后清单不该还在」必须真的验到东西。
+
+    那条链路中间为了测「清单缺失时的回退」会**自己把清单删掉**。删了不补，
+    后面那条断言就恒真——卸载钩子完全失灵也照样绿。这正是本仓库最忌讳的
+    那种门禁：它还在报平安。（Codex review 抓到过一次。）
+
+    判据是顺序：删 → …… → 重新确认它在 → 卸载 → 断言它没了。
+    """
+    text = (ROOT / ".github" / "workflows" / "nightly.yml").read_text(encoding="utf-8")
+    removed = text.index("Remove-Item $manifest")
+    uninstalled = text.index("Start-Process -Wait $uninst")
+    gone = text.index('throw "卸载后安装清单仍在')
+    between = text[removed:uninstalled]
+    assert "Test-Path $manifest" in between, \
+        "删掉清单之后、卸载之前没有再确认它存在——那条卸载断言是空的"
+    assert removed < uninstalled < gone
