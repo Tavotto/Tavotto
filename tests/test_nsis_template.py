@@ -460,3 +460,27 @@ def test_installer_leaves_the_user_path_alone():
     """
     for needle in ("EnVar::", '"Environment"', "WM_SETTINGCHANGE"):
         assert needle not in CODE, f"安装器动了 PATH（{needle}）"
+
+
+def test_nightly_packaging_does_not_need_a_signing_key():
+    """nightly 打安装器时必须就地关掉 createUpdaterArtifacts。
+
+    tauri.conf.json 里它常开（发行链要它），而打包器一开它就要 minisign 私钥；
+    私钥只在 release 的 secret 里，nightly 没有也不该有。不关的话安装包明明
+    已经打出来了，tauri 仍以「A public key has been found, but no private key」
+    退出 1——整条「装一遍再冒烟」的验收根本跑不到。
+
+    这不是假设：`createUpdaterArtifacts` 随应用内更新那个 PR 合进 main 之后，
+    nightly 的安装腿就一直红着，而 scripts/build_desktop.py 早有同样的处理
+    （那条链路走它，所以没暴露）。
+    """
+    assert CONFIG["bundle"]["createUpdaterArtifacts"] is True, \
+        "配置变了的话这条看护要重新想一遍"
+    nightly = (ROOT / ".github" / "workflows" / "nightly.yml").read_text(encoding="utf-8")
+    build = nightly.split("Tauri 打包")[1].split("- name:")[0]
+    assert "createUpdaterArtifacts" in build and "false" in build, \
+        "nightly 的 tauri build 没关掉更新包产出——没有私钥时它会直接失败"
+    # build_desktop.py 那条链路同样得有（它是本地/发行走的那条）
+    desktop = (ROOT / "scripts" / "build_desktop.py").read_text(encoding="utf-8")
+    assert "TAURI_SIGNING_PRIVATE_KEY" in desktop
+    assert "createUpdaterArtifacts" in desktop

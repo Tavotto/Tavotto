@@ -171,7 +171,23 @@ jobs:
         # 上游模板打的品牌补丁，模板与打包器必须同源（tests/test_nsis_template.py
         # 看护四处版本一致）。前端 / workerd / sidecar 前面几步已经出好，
         # 这里不再走 build_desktop.py 的完整链路，只补最后一步。
-        run: pnpm dlx @tauri-apps/cli@2.11.4 build --bundles nsis
+        #
+        # **必须就地关掉 createUpdaterArtifacts**：tauri.conf.json 里它常开
+        # （发行链要它），而打包器一开它就要 minisign 私钥签名——私钥只在
+        # release 的 secret 里，nightly 没有也不该有。不关的话安装包明明已经
+        # 打出来了，tauri 仍以「A public key has been found, but no private
+        # key」退出 1，整条安装/升级/卸载验收根本跑不到。
+        # 同一处理 scripts/build_desktop.py 早就有了（那条链路走它，所以没暴露）；
+        # 这一步是自己拼的 tauri 调用，得自己补上。nightly 验的是装/卸载，
+        # 更新包本来就用不着。
+        # 覆盖配置走**文件**而不是内联 JSON：内联那串里全是引号和花括号，
+        # 经 pwsh 再到 pnpm 再到 tauri，任何一层的引号处理不同都会把它拆坏，
+        # 而拆坏的表现是「参数没生效」——又是一个不报错的失败。
+        run: |
+          [System.IO.File]::WriteAllText(
+            "$PWD\no-updater.json", '{"bundle":{"createUpdaterArtifacts":false}}')
+          pnpm dlx @tauri-apps/cli@2.11.4 build --bundles nsis --config "$PWD\no-updater.json"
+          if ($LASTEXITCODE -ne 0) { throw "tauri build 失败（$LASTEXITCODE）" }
 
       # 仓库模板只是原料：真正喂给 makensis 的是 Tauri 把 {{...}} 展开后的
       # 那份中间脚本。installMode / license / startMenuFolder / 语言表都是
