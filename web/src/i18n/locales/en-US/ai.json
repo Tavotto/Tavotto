@@ -33,6 +33,11 @@
       "Avoid overlapping neighbours"
     ]
   },
+  "diff": {
+    "title": "Script changes",
+    "zoomAria": "Open the full diff",
+    "zoomTip": "Open the full diff"
+  },
   "history": {
     "allStatuses": "All statuses",
     "changedSuffix": " · changed",
@@ -59,6 +64,10 @@
     "title": "Task history",
     "unpin": "Unpin",
     "unpinTip": "Unpin (will be cleaned up with the retention policy)"
+  },
+  "markdown": {
+    "image": "[image: {{alt}}]",
+    "untitled": "untitled"
   },
   "panel": {
     "abort": "Stop",

@@ -35,12 +35,17 @@
     "selectedObjects_other": "已选 {{count}} 个对象"
   },
   "literal": "{{text}}",
+  "mixed": "多个值",
   "objectType": {
     "arrow": "箭头",
     "emptyText": "空文字",
     "panel": "面板",
     "shape": "形状",
     "text": "文字"
+  },
+  "presetText": {
+    "annotation": "标注",
+    "group": "分组"
   },
   "shape": {
     "brace": "大括号",

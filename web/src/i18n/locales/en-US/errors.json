@@ -57,5 +57,24 @@
     "overlap": "Panels overlap each other — make sure the overlap is intentional before exporting",
     "renderError": "This panel's last render failed. Export will retry, but fixing it first is safer",
     "staleRender": "The panel's script changed but has not been rebuilt — the export would use the old figure"
+  },
+  "render": {
+    "failed": "Render failed (HTTP {{status}})",
+    "previewPngFailed": "Could not fetch the preview bitmap (HTTP {{status}})",
+    "timeout": "No response for over {{minutes}} minutes, so the request was dropped. The service may still be working in the background — try again later."
+  },
+  "update": {
+    "applyFailed": "Upgrade failed",
+    "checkFailed": "Check failed: {{error}}",
+    "checkFailedOffline": "Check failed: could not reach the local service",
+    "desktopCheckFailed": "Update check failed",
+    "desktopInstallFailed": "Download or installation failed",
+    "noPendingUpdate": "No update is waiting to be installed; check for updates first",
+    "relaunchFailed": "Restart failed — please quit and reopen the app manually"
+  },
+  "writeBackAnnotations": {
+    "flipped": "the panel is flipped, so annotation coordinates cannot be mapped",
+    "rasterOnly": "this asset is a bitmap only — there is no vector PDF",
+    "rotated": "the panel is rotated, so annotation coordinates cannot be mapped"
   }
 }

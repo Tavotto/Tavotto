@@ -1,4 +1,5 @@
 import * as RD from '@radix-ui/react-dialog'
+import { t } from '@/i18n'
 import { X } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/utils'
@@ -74,7 +75,7 @@ export function Dialog({
             {!locked && (
               <RD.Close
                 className="-mr-1.5 -mt-1 flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-sm text-ink-3 hover:bg-ink/[.055] hover:text-ink"
-                aria-label="关闭"
+                aria-label={t('actions.close')}
               >
                 <X size={14} />
               </RD.Close>

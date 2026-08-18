@@ -1,1 +1,42 @@
-{}
+{
+  "combo": {
+    "altDrag": "{{alt}}+drag a corner",
+    "arrowKeys": "Arrow keys / ⇧+arrow keys",
+    "newline": "{{alt}}⏎ or {{mod}}⏎ (while editing text)",
+    "spaceDrag": "Space+drag",
+    "tools": "V / T / A / R / O / L",
+    "wheelZoom": "{{mod}}+wheel"
+  },
+  "group": {
+    "arrange": "Arrange and stacking",
+    "editing": "Selection and editing",
+    "general": "General",
+    "tools": "Tools",
+    "view": "View"
+  },
+  "key": {
+    "copyPaste": "Copy / paste objects (works across layout documents)",
+    "delete": "Delete objects; in figure editing this hides the element instead (restorable)",
+    "duplicate": "Duplicate the selection in place",
+    "enter": "Edit the selection: text enters editing, parameterizable panels enter figure editing",
+    "escape": "Step out one level: text editing → figure element → editing mode → clear selection",
+    "export": "Export",
+    "freeResize": "Free (non-proportional) resize",
+    "help": "This help",
+    "newline": "Insert a line break; plain ⏎ commits",
+    "nudge": "Nudge 0.5mm / 5mm",
+    "palette": "Command palette",
+    "pan": "Pan the canvas",
+    "saveLayout": "Save as canvas file",
+    "script": "Superscript / subscript (inside the properties panel's text box)",
+    "selectAll": "Select all",
+    "tools": "Select / text / arrow / rectangle / ellipse / line",
+    "undoRedo": "Undo / redo",
+    "wheelZoom": "Zoom the canvas",
+    "zEnds": "Bring to front / send to back",
+    "zMove": "Bring forward / send backward",
+    "zoom": "Zoom in / out",
+    "zoomPresets": "100% / fit canvas"
+  },
+  "title": "Keyboard shortcuts"
+}

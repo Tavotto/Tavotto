@@ -1,1 +1,42 @@
-{}
+{
+  "combo": {
+    "altDrag": "{{alt}}+拖角点",
+    "arrowKeys": "方向键 / ⇧+方向键",
+    "newline": "{{alt}}⏎ 或 {{mod}}⏎（文字编辑中）",
+    "spaceDrag": "Space+拖动",
+    "tools": "V / T / A / R / O / L",
+    "wheelZoom": "{{mod}}+滚轮"
+  },
+  "group": {
+    "arrange": "排列与层级",
+    "editing": "选择与编辑",
+    "general": "通用",
+    "tools": "工具",
+    "view": "视图"
+  },
+  "key": {
+    "copyPaste": "复制 / 粘贴对象（可跨布局文档）",
+    "delete": "删除对象；图内编辑时 = 隐藏元素（可恢复）",
+    "duplicate": "原位复制所选",
+    "enter": "编辑所选：文字进入编辑，可参数化面板进图内编辑",
+    "escape": "逐层退出：文字编辑 → 图内元素 → 编辑态 → 清空选择",
+    "export": "导出",
+    "freeResize": "非等比自由拉伸",
+    "help": "本帮助",
+    "newline": "插入换行；单按 ⏎ 提交",
+    "nudge": "微调 0.5mm / 5mm",
+    "palette": "命令面板",
+    "pan": "平移画布",
+    "saveLayout": "保存为画布文件",
+    "script": "上标 / 下标（属性面板的文字输入框内）",
+    "selectAll": "全选",
+    "tools": "选择 / 文字 / 箭头 / 矩形 / 椭圆 / 直线",
+    "undoRedo": "撤销 / 重做",
+    "wheelZoom": "缩放画布",
+    "zEnds": "置顶 / 置底",
+    "zMove": "上移 / 下移一层",
+    "zoom": "放大 / 缩小",
+    "zoomPresets": "100% / 适应画布"
+  },
+  "title": "快捷键"
+}

@@ -35,12 +35,17 @@
     "selectedObjects_other": "{{count}} objects selected"
   },
   "literal": "{{text}}",
+  "mixed": "Mixed",
   "objectType": {
     "arrow": "Arrow",
     "emptyText": "Empty text",
     "panel": "Panel",
     "shape": "Shape",
     "text": "Text"
+  },
+  "presetText": {
+    "annotation": "Label",
+    "group": "Group"
   },
   "shape": {
     "brace": "Brace",

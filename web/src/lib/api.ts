@@ -1,4 +1,5 @@
 import { apiUrl, withProject } from '@/lib/session'
+import { t } from '@/i18n'
 import type { FigureDocument, ProjectDocument } from '@/types/document'
 
 export interface PanelInfo {
@@ -628,7 +629,7 @@ export async function engineRender(
   if (!res.ok) {
     noteProjectGone(res.status, body)
     throw new EngineError(
-      (body.error as string) || `渲染失败（HTTP ${res.status}）`,
+      (body.error as string) || t('render.failed', { ns: 'errors', status: res.status }),
       (body.traceback as string) || '',
       (body.code as string) || '',
       (body.module as string) || '',
@@ -661,7 +662,7 @@ export async function enginePreviewPng(
     const body = await errorBody(res)
     noteProjectGone(res.status, body)
     throw new EngineError(
-      (body.error as string) || `取预览位图失败（HTTP ${res.status}）`,
+      (body.error as string) || t('render.previewPngFailed', { ns: 'errors', status: res.status }),
       (body.traceback as string) || '',
       (body.code as string) || '',
       (body.module as string) || '',

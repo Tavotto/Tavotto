@@ -791,6 +791,36 @@
     "titleCase": "Capitalise Each Word",
     "upper": "UPPERCASE"
   },
+  "textBar": {
+    "alignCenter": "Center",
+    "alignLeft": "Align left",
+    "alignRight": "Align right",
+    "backToScript": "Back to the script value",
+    "background": "Background",
+    "bold": "Bold",
+    "boldWeight": "Weight · {{value}}",
+    "color": "Text colour",
+    "italic": "Italic",
+    "italicStyle": "Style · {{value}}",
+    "layout": "Typography and stacking",
+    "prop": {
+      "alpha": "Opacity",
+      "bbox_alpha": "Opacity",
+      "bbox_edgecolor": "Border colour",
+      "bbox_facecolor": "Fill",
+      "bbox_linewidth": "Border width",
+      "bbox_visible": "Show",
+      "color": "Colour",
+      "stroke_color": "Colour",
+      "stroke_enabled": "Enable",
+      "stroke_width": "Width"
+    },
+    "stroke": "Stroke",
+    "styleItalic": "italic",
+    "styleNormal": "upright",
+    "weightBold": "bold",
+    "weightNormal": "regular"
+  },
   "transform": {
     "rotation": "Rotation",
     "textHeightAuto": "Text height is determined by the content",

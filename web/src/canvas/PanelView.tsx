@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { t as translate } from '@/i18n'
 import { enginePreviewPng, panelSrc } from '@/lib/api'
 import { alignEntries, geomGid, geomTarget, segIntersectsRect } from '@/lib/elementGeom'
 import { DURATION, prefersReducedMotion, usePresence } from '@/lib/motion'
@@ -38,6 +39,9 @@ import { openQuickEdit } from './quickEditStore'
  * 旋转：对象的 x/y/w/h 是旋转后的页面落位，内容层按未旋转尺寸铺好、
  * 居中后整体 CSS rotate；90/270 时两者长宽互换，正好填满包围盒。
  */
+/** 面板角标的文案（workspace:panelBadge.*） */
+const badge = (key: string) => translate(`panelBadge.${key}`, { ns: 'workspace' })
+
 export function PanelView({ obj }: { obj: PanelObject }) {
   const zoom = useViewportStore((s) => s.zoom)
   // 「写回原始文件」后 mtime 变化 → URL 变化 → 画布上已放置的同源面板自动重取
@@ -491,15 +495,19 @@ function RenderStatusBadge({ obj }: { obj: PanelObject }) {
       return {
         tone: 'busy' as const,
         cold: !!building?.cold,
-        text: building?.cold
-          ? building.cost === 'heavy'
-            ? '冷启动中，可能需要几分钟…'
-            : '首次构建中…'
-          : '渲染中…',
+        text: badge(
+          building?.cold
+            ? building.cost === 'heavy'
+              ? 'cold'
+              : 'firstBuild'
+            : 'rendering',
+        ),
       }
     }
-    if (render?.status === 'error') return { tone: 'error' as const, cold: false, text: '渲染失败' }
-    if (render?.stale) return { tone: 'stale' as const, cold: false, text: '脚本已更新' }
+    if (render?.status === 'error') {
+      return { tone: 'error' as const, cold: false, text: badge('error') }
+    }
+    if (render?.stale) return { tone: 'stale' as const, cold: false, text: badge('stale') }
     return null
   }, [render, relevant, building])
 

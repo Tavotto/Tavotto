@@ -9,6 +9,8 @@
  */
 
 /** Tauri 2 注入的 IPC 标记；存在即运行在 Magplot 桌面壳里 */
+import { t } from '@/i18n'
+
 export function isDesktop(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 }
@@ -153,7 +155,7 @@ export async function installDesktopUpdate(
   onProgress?: (fraction: number | null) => void,
 ): Promise<void> {
   const update = pendingUpdate
-  if (!update) throw new Error('没有待安装的更新，请先检查更新')
+  if (!update) throw new Error(t('update.noPendingUpdate', { ns: 'errors' }))
   let total = 0
   let got = 0
   await update.downloadAndInstall((event) => {

@@ -1,4 +1,10 @@
 {
+  "annotationEntry": {
+    "arrow": "Arrow",
+    "label": "Annotation · {{name}}",
+    "shape": "Shape",
+    "text": "Text “{{text}}”"
+  },
   "assets": {
     "activeFilters": "Active filters",
     "addAria": "Add {{name}} to the canvas",
@@ -157,6 +163,7 @@
     "deleteObjects_one": "Delete {{name}}",
     "deleteObjects_other": "Delete {{count}} objects",
     "dissolveLayoutGroup": "Dissolve layout group",
+    "duplicateCanvasSuffix": "{{name}} copy",
     "duplicateObjects": "Duplicate objects",
     "editText": "Edit text",
     "fillPanel": "Fill frame",
@@ -240,6 +247,34 @@
     "grid": "grid layout",
     "row": "row layout"
   },
+  "panelBadge": {
+    "cold": "Cold start — this can take a few minutes…",
+    "error": "Render failed",
+    "firstBuild": "First build…",
+    "rendering": "Rendering…",
+    "stale": "Script changed"
+  },
+  "quickEdit": {
+    "aria": "Quick edit",
+    "editElements": "Edit figure elements",
+    "hide": "Hide this element",
+    "hideObject": "Hide",
+    "lock": "Lock",
+    "openInspector": "Open in the properties panel",
+    "scale": "Scale",
+    "scaleDown": "Shrink 5%",
+    "scaleProxiedTip": "Position and size belong to the host axes “{{label}}”; scaling changes those",
+    "scaleTip": "Scales about the axes centre, 5% per step",
+    "scaleUp": "Grow 5%",
+    "show": "Show",
+    "unhide": "Show again",
+    "unlock": "Unlock",
+    "widthShare": "{{percent}}% of the width",
+    "zBottom": "Send to back",
+    "zDown": "Send backward",
+    "zTop": "Bring to front",
+    "zUp": "Bring forward"
+  },
   "rail": {
     "assets": "Assets",
     "canvases": "Canvases",
@@ -251,6 +286,15 @@
   },
   "scrim": {
     "collapse": "Collapse side panels"
+  },
+  "stage": {
+    "backToCanvas": "Back to canvas",
+    "elementEditing": "Figure editing",
+    "elementEditingName": ": {{name}}",
+    "emptyHint": "Drag a panel in from the asset library, or double-click an entry to add it.",
+    "emptyTitle": "The canvas is empty",
+    "exitTitle": "Leave figure editing and go back to the canvas layer (Esc)",
+    "openAssets": "Open the asset library"
   },
   "status": {
     "assetReplaced": "Replaced with \"{{name}}\"; position and size unchanged",

@@ -791,6 +791,36 @@
     "titleCase": "每词首字母大写",
     "upper": "全部大写"
   },
+  "textBar": {
+    "alignCenter": "居中",
+    "alignLeft": "左对齐",
+    "alignRight": "右对齐",
+    "backToScript": "回到脚本值",
+    "background": "背景",
+    "bold": "加粗",
+    "boldWeight": "字重 · {{value}}",
+    "color": "文字颜色",
+    "italic": "斜体",
+    "italicStyle": "字形 · {{value}}",
+    "layout": "排版与层级",
+    "prop": {
+      "alpha": "不透明度",
+      "bbox_alpha": "不透明度",
+      "bbox_edgecolor": "边框色",
+      "bbox_facecolor": "填充",
+      "bbox_linewidth": "边框粗细",
+      "bbox_visible": "显示",
+      "color": "颜色",
+      "stroke_color": "颜色",
+      "stroke_enabled": "启用",
+      "stroke_width": "粗细"
+    },
+    "stroke": "描边",
+    "styleItalic": "斜体",
+    "styleNormal": "正体",
+    "weightBold": "加粗",
+    "weightNormal": "常规"
+  },
   "transform": {
     "rotation": "旋转",
     "textHeightAuto": "文字高度由内容自动决定",

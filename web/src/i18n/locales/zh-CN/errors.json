@@ -57,5 +57,24 @@
     "overlap": "面板互相重叠，确认是有意的压盖再导出",
     "renderError": "面板最近一次渲染失败，导出时会再次尝试，建议先修复",
     "staleRender": "面板的脚本已更新但尚未重建，导出的会是旧图"
+  },
+  "render": {
+    "failed": "渲染失败（HTTP {{status}}）",
+    "previewPngFailed": "取预览位图失败（HTTP {{status}}）",
+    "timeout": "渲染超过 {{minutes}} 分钟无响应，已断开请求；服务可能仍在后台运行，可稍后重试"
+  },
+  "update": {
+    "applyFailed": "升级失败",
+    "checkFailed": "检查失败：{{error}}",
+    "checkFailedOffline": "检查失败：无法连接本地服务",
+    "desktopCheckFailed": "检查更新失败",
+    "desktopInstallFailed": "下载或安装失败",
+    "noPendingUpdate": "没有待安装的更新，请先检查更新",
+    "relaunchFailed": "重启失败，请手动退出后重新打开"
+  },
+  "writeBackAnnotations": {
+    "flipped": "面板带翻转，标注坐标换算不过去",
+    "rasterOnly": "该素材只有位图、没有矢量 PDF",
+    "rotated": "面板带旋转，标注坐标换算不过去"
   }
 }

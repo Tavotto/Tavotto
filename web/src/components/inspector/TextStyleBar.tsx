@@ -1,4 +1,6 @@
 import type { ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
+import { t as translate } from '@/i18n'
 import {
   Baseline,
   Bold,
@@ -50,28 +52,36 @@ export const TEXT_BAR_PROPS = new Set([
 export const hasTextStyleBar = (el: ManifestElement) =>
   ['fontsize', 'color', 'weight'].every((p) => el.editable.some((f) => f.prop === p))
 
-const HA_ITEMS = [
-  { value: 'left', icon: <TextAlignStart size={12} />, tip: '左对齐' },
-  { value: 'center', icon: <TextAlignCenter size={12} />, tip: '居中' },
-  { value: 'right', icon: <TextAlignEnd size={12} />, tip: '右对齐' },
+/** 本组文案在 inspector:textBar.* 下 */
+const tb = (key: string, values?: Record<string, unknown>) =>
+  translate(`textBar.${key}`, { ns: 'inspector', ...(values ?? {}) })
+
+const haItems = () => [
+  { value: 'left', icon: <TextAlignStart size={12} />, tip: tb('alignLeft') },
+  { value: 'center', icon: <TextAlignCenter size={12} />, tip: tb('alignCenter') },
+  { value: 'right', icon: <TextAlignEnd size={12} />, tip: tb('alignRight') },
 ]
 
 /**
  * 弹层里的行标签改写。注册表给的是全局通名（bbox_visible = 「背景」），
  * 落在标题已经写着「背景」的弹层里就成了重复；这里只改称呼，不改属性。
  */
-const ROW_LABEL: Record<string, string> = {
-  bbox_visible: '显示',
-  bbox_facecolor: '填充',
-  bbox_alpha: '不透明度',
-  bbox_edgecolor: '边框色',
-  bbox_linewidth: '边框粗细',
-  stroke_enabled: '启用',
-  stroke_color: '颜色',
-  stroke_width: '粗细',
-  alpha: '不透明度',
-  color: '颜色',
-}
+const ROW_LABEL_PROPS = new Set([
+  'bbox_visible',
+  'bbox_facecolor',
+  'bbox_alpha',
+  'bbox_edgecolor',
+  'bbox_linewidth',
+  'stroke_enabled',
+  'stroke_color',
+  'stroke_width',
+  'alpha',
+  'color',
+])
+
+/** 弹层里的行标签；没有改写的属性回落到注册表的通名 */
+const rowLabel = (prop: string): string | undefined =>
+  ROW_LABEL_PROPS.has(prop) ? tb(`prop.${prop}`) : undefined
 
 export function TextStyleBar({
   panel,
@@ -82,6 +92,7 @@ export function TextStyleBar({
   element: ManifestElement
   className?: string
 }) {
+  useTranslation('inspector')
   const w = useElementWriter(panel, element)
   const family = w.fieldOf('fontfamily')
   const size = w.fieldOf('fontsize')
@@ -126,8 +137,8 @@ export function TextStyleBar({
         {w.has('weight') && (
           <IconToggle
             on={bold}
-            label="加粗"
-            hint={`字重 · ${bold ? '加粗' : '常规'}`}
+            label={tb('bold')}
+            hint={tb('boldWeight', { value: tb(bold ? 'weightBold' : 'weightNormal') })}
             onClick={() => w.writeOnce('weight', bold ? 'normal' : 'bold')}
           >
             <Bold size={12} />
@@ -136,8 +147,8 @@ export function TextStyleBar({
         {w.has('style') && (
           <IconToggle
             on={italic}
-            label="斜体"
-            hint={`字形 · ${italic ? '斜体' : '正体'}`}
+            label={tb('italic')}
+            hint={tb('italicStyle', { value: tb(italic ? 'styleItalic' : 'styleNormal') })}
             onClick={() => w.writeOnce('style', italic ? 'normal' : 'italic')}
           >
             <Italic size={12} />
@@ -148,7 +159,7 @@ export function TextStyleBar({
           panel={panel}
           element={element}
           w={w}
-          label="文字颜色"
+          label={tb('color')}
           icon={<Baseline size={12} />}
           swatch={String(w.read('color') ?? '#000000')}
           props={['color', 'alpha']}
@@ -157,7 +168,7 @@ export function TextStyleBar({
           panel={panel}
           element={element}
           w={w}
-          label="背景"
+          label={tb('background')}
           icon={<PaintBucket size={12} />}
           swatch={w.read('bbox_visible') === true ? String(w.read('bbox_facecolor') ?? '#ffffff') : null}
           props={[
@@ -169,7 +180,7 @@ export function TextStyleBar({
           panel={panel}
           element={element}
           w={w}
-          label="描边"
+          label={tb('stroke')}
           icon={<PenLine size={12} />}
           swatch={w.read('stroke_enabled') === true ? String(w.read('stroke_color') ?? '#ffffff') : null}
           props={['stroke_enabled', 'stroke_color', 'stroke_width']}
@@ -181,7 +192,7 @@ export function TextStyleBar({
           panel={panel}
           element={element}
           w={w}
-          label="排版与层级"
+          label={tb('layout')}
           icon={<Settings2 size={12} />}
           props={['ha', 'va', 'rotation', 'linespacing', 'zorder']}
         />
@@ -298,7 +309,7 @@ function CompactRow({
   w: ElementWriter
   field: EditableField
 }) {
-  const label = ROW_LABEL[field.prop] ?? propLabel(field.prop, element.role)
+  const label = rowLabel(field.prop) ?? propLabel(field.prop, element.role)
   const value = w.read(field.prop)
   const overridden = panel.overrides.some(
     (o) => o.gid === element.gid && o.prop === field.prop,
@@ -342,7 +353,7 @@ function CompactRow({
             tone="quiet"
             value={String(value ?? 'center')}
             onChange={(v) => w.writeOnce('ha', v)}
-            items={HA_ITEMS}
+            items={haItems()}
           />
         )
         break
@@ -377,7 +388,7 @@ function CompactRow({
           onClick={() => clearOverride(panel.id, element.gid, field.prop)}
           className="pl-[68px] text-xs text-ink-3 hover:text-accent"
         >
-          回到脚本值
+          {tb('backToScript')}
         </button>
       )}
     </div>

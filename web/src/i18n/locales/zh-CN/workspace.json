@@ -1,4 +1,10 @@
 {
+  "annotationEntry": {
+    "arrow": "箭头",
+    "label": "标注 · {{name}}",
+    "shape": "形状",
+    "text": "文字「{{text}}」"
+  },
   "assets": {
     "activeFilters": "生效中的筛选",
     "addAria": "把 {{name}} 加入画布",
@@ -157,6 +163,7 @@
     "deleteObjects_one": "删除 {{name}}",
     "deleteObjects_other": "删除 {{count}} 个对象",
     "dissolveLayoutGroup": "解散布局组",
+    "duplicateCanvasSuffix": "{{name}} 副本",
     "duplicateObjects": "复制对象",
     "editText": "编辑文字",
     "fillPanel": "填满当前框",
@@ -240,6 +247,34 @@
     "grid": "网格布局",
     "row": "行布局"
   },
+  "panelBadge": {
+    "cold": "冷启动中，可能需要几分钟…",
+    "error": "渲染失败",
+    "firstBuild": "首次构建中…",
+    "rendering": "渲染中…",
+    "stale": "脚本已更新"
+  },
+  "quickEdit": {
+    "aria": "快捷编辑",
+    "editElements": "编辑图内元素",
+    "hide": "隐藏此元素",
+    "hideObject": "隐藏",
+    "lock": "锁定",
+    "openInspector": "在属性页打开",
+    "scale": "缩放",
+    "scaleDown": "缩小 5%",
+    "scaleProxiedTip": "位置和大小属于宿主子图「{{label}}」，缩放改的是它",
+    "scaleTip": "绕子图中心缩放，每次 5%",
+    "scaleUp": "放大 5%",
+    "show": "显示",
+    "unhide": "恢复显示",
+    "unlock": "解锁",
+    "widthShare": "占宽 {{percent}}%",
+    "zBottom": "置于底层",
+    "zDown": "下移一层",
+    "zTop": "置于顶层",
+    "zUp": "上移一层"
+  },
   "rail": {
     "assets": "素材",
     "canvases": "画布",
@@ -251,6 +286,15 @@
   },
   "scrim": {
     "collapse": "收起侧栏"
+  },
+  "stage": {
+    "backToCanvas": "返回画布",
+    "elementEditing": "图内编辑",
+    "elementEditingName": "：{{name}}",
+    "emptyHint": "从素材库拖入面板，或双击列表项加入画布。",
+    "emptyTitle": "画布是空的",
+    "exitTitle": "退出图内编辑，回到画布层（Esc）",
+    "openAssets": "打开素材库"
   },
   "status": {
     "assetReplaced": "已替换为「{{name}}」，位置与尺寸保持不变",

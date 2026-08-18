@@ -1,4 +1,6 @@
 import { useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { t as translate } from '@/i18n'
 import { Maximize2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '../ui/Button'
@@ -43,6 +45,7 @@ function DiffBody({ lines, maxH }: { lines: string[]; maxH: string }) {
 
 /** unified diff：侧栏里给个紧凑预览，放大后在对话框里完整看 */
 export function DiffView({ diff, script }: { diff: string; script?: string }) {
+  useTranslation('ai')
   const [open, setOpen] = useState(false)
   const lines = useMemo(() => diff.replace(/\n$/, '').split('\n'), [diff])
   const added = lines.filter((l) => classify(l) === 'add').length
@@ -52,15 +55,15 @@ export function DiffView({ diff, script }: { diff: string; script?: string }) {
     <>
       <div className="overflow-hidden rounded-sm border border-border">
         <div className="flex items-center gap-2 border-b border-border bg-surface-2 px-2 py-1">
-          <span className="text-xs text-ink-2">脚本改动</span>
+          <span className="text-xs text-ink-2">{translate('diff.title', { ns: 'ai' })}</span>
           <span className="ml-auto font-mono text-xs" style={{ color: ADD }}>
             +{added}
           </span>
           <span className="font-mono text-xs" style={{ color: DEL }}>
             −{removed}
           </span>
-          <Tip label="放大查看完整 diff">
-            <Button size="icon-sm" className="-mr-1 h-5 w-5" onClick={() => setOpen(true)} aria-label="放大查看">
+          <Tip label={translate('diff.zoomTip', { ns: 'ai' })}>
+            <Button size="icon-sm" className="-mr-1 h-5 w-5" onClick={() => setOpen(true)} aria-label={translate('diff.zoomAria', { ns: 'ai' })}>
               <Maximize2 size={11} />
             </Button>
           </Tip>
@@ -71,12 +74,12 @@ export function DiffView({ diff, script }: { diff: string; script?: string }) {
       <Dialog
         open={open}
         onOpenChange={setOpen}
-        title="脚本改动"
+        title={translate('diff.title', { ns: 'ai' })}
         description={`${script ?? ''} · +${added} −${removed}`}
         width={760}
         footer={
           <Button variant="outline" size="md" onClick={() => setOpen(false)}>
-            关闭
+            {translate('actions.close')}
           </Button>
         }
       >

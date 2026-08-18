@@ -211,16 +211,16 @@ export function insertPreset(id: PresetId): void {
       l.head = 'none'
       l.start = { rx: 0, ry: 1 }
       l.end = { rx: 1, ry: 0 }
-      const t = baseText(c.x + 2, c.y - 8.5, 20, '标注')
-      t.align = 'left'
-      objs.push(grouped(l), grouped(t))
+      const caption = baseText(c.x + 2, c.y - 8.5, 20, t('presetText.annotation'))
+      caption.align = 'left'
+      objs.push(grouped(l), grouped(caption))
       break
     }
     case 'braceGroup': {
       const b = baseShape('brace', c.x - 12, c.y - 12, 5, 24)
-      const t = baseText(c.x - 12 - 18, c.y - 3, 16, '分组')
-      t.align = 'right'
-      objs.push(grouped(b), grouped(t))
+      const caption = baseText(c.x - 12 - 18, c.y - 3, 16, t('presetText.group'))
+      caption.align = 'right'
+      objs.push(grouped(b), grouped(caption))
       break
     }
   }
