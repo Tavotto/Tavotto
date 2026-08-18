@@ -32,7 +32,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.patches import FancyArrowPatch
+from matplotlib.patches import FancyArrowPatch, PathPatch
+from matplotlib.path import Path
 import manifest as M, overrides as O
 
 fig, ax = plt.subplots(figsize=(4, 3))
@@ -52,6 +53,17 @@ ax.fill_between(x, np.sin(x) - 0.2, np.sin(x) - 0.5, facecolor="#8c564b",
 # "-|>" 的帽是填充的、杆是 fill:none —— 箭头颜色要同时作用于 stroke 与 fill
 ax.add_patch(FancyArrowPatch((1, 0.5), (3, 0.8), arrowstyle="-|>",
                              mutation_scale=12, color="#e377c2", lw=1.4))
+# 独立形状（role=patch）两种形态，都**落在已有数据范围之内**——伸出去会改
+# autoscale，整份 fixture 的坐标全变，真正要看护的样式差异就淹没在噪音里。
+# 填充的：fill 与 stroke 各一条，两者互不串味
+ax.fill([0.5, 1.5, 1.0], [-1.0, -1.0, -0.6],
+        facecolor="#17becf", edgecolor="#5a3286", lw=1.2)
+# 空心的（fill=False）：matplotlib 写的是 `fill: none`，facecolor 预览必须
+# 认这条规则、绝不把它填实
+ax.add_patch(PathPatch(
+    Path([[2.5, -1.2], [2.8, -0.8], [3.2, -1.2], [3.5, -0.9]],
+         [Path.MOVETO, Path.CURVE4, Path.CURVE4, Path.CURVE4]),
+    fill=False, edgecolor="#7f7f0f", lw=1.6))
 ax.set_title("Title here")      # 默认黑：字形组上**没有** style
 ax.set_xlabel("X label"); ax.set_ylabel("Y label")
 ax.text(1, 0.9, "inline text", color="#123456")      # 有颜色 → style="fill: …"
@@ -87,6 +99,8 @@ HEADER = '''/* eslint-disable */
  *   fill      `<use style="fill: …; fill-opacity: 0.5; stroke: …; stroke-opacity: 0.5">`
  *             ——alpha 是分开的两条，不是一个 opacity
  *   arrow     杆 `fill: none` + 帽 `fill: <色>`，颜色要同时作用于两者
+ *   patch     `ax.fill()` 的 Polygon → `fill: <色>; stroke: <色>`；
+ *             `fill=False` 的 PathPatch → `fill: none`（facecolor 不许填实它）
  *   text      `<g style="fill: #123456" transform="…">`；**默认黑色时没有这条 style**
  *   image     gid 落在 `<image>` 自身，且自带 transform（alpha 烤进 PNG，改不了）
  *
@@ -105,6 +119,11 @@ def shrink(svg: str) -> str:
     svg = re.sub(r'xlink:href="data:image/png;base64,[^"]*"',
                  'xlink:href="data:image/png;base64,iVBORw0KGgo="', svg)
     svg = re.sub(r"\n\s*\n", "\n", svg)
+    # 行尾空格：matplotlib 的路径数据里每个折点后面都跟一个空格再换行。它对
+    # SVG 毫无意义，却让这份文件每一次重生成都往 `git diff --check` 里塞一堆
+    # 「trailing whitespace」——真正要看的输出变化就淹没在里面了。
+    # **只削行尾，不碰任何 `style=`**（适配器判断的正是那些属性的形状）。
+    svg = re.sub(r"[ \t]+\n", "\n", svg)
     # matplotlib 给 clipPath 与 marker 模板发的是随机 id（每次跑都不同）。
     # 不归一化的话 fixture 每生成一次就「变了」，--check 永远红，
     # 真正的输出变化（我们要看护的那种）就淹没在噪音里。

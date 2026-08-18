@@ -312,6 +312,15 @@ Python，首次渲染也不联网：
     通用规则是「只改本来就声明了该属性、且值不是 `none` 的叶子」，因此
     `fill: none` 的线不会被 facecolor 填实、箭头杆与箭头帽各得其所。文字是唯一
     例外（颜色在字形组上，默认黑色时那条 style 根本不存在，必须允许新增）。
+    **能力表说「支持」不等于这个 artist 上改得到**：同一个 role 的两个 artist
+    在 SVG 上可以长得完全不同（`fill=False` 的 PathPatch 写的是 `fill: none`，
+    改 facecolor 一个叶子都碰不到）。所以 `previewStyle` 除了查 gid 节点在不在，
+    还要同步跑一遍 `canStyleEditApply`——它与 `applyStyleEdit` **共用
+    `styleTargets` 这一份实现**，分成两份迟早分叉，而分叉的表现正是
+    「界面说预览生效了，画面纹丝不动」（预览一旦回 true，调用方就把渲染策略
+    降成 `'none'`，那一轮**根本不会发后端**）。`patch` 角色在表里，
+    但它的 `fill` 开关**不在**：把 `none` 换成颜色是新增语义，只能让
+    matplotlib 自己重画。
     还原记的是**整条 style 属性原文**而不是逐条属性：CSSOM 会把颜色规范化成
     `rgb(...)`，逐条还原写回去的已经不是 matplotlib 给的那份文本了。
     **实测不可预览、必须回退后端的**：`image.alpha`（透明度烤进 PNG 栅格）、
