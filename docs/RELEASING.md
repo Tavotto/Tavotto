@@ -134,7 +134,7 @@ sidecar → Tauri bundler）。CI 门禁打的是最终产物：sidecar 真二�
 | 平台 | 产物 | 说明 |
 |---|---|---|
 | macOS | `Magplot-X.Y.Z-macOS.dmg` | Tauri .app（内嵌 sidecar）；签名 + 公证复用下述同一套 secret 与流程 |
-| Windows | `Magplot-X.Y.Z-Windows-Setup.exe` | NSIS（收集时改成与 wheel/dmg 一致的命名），装到用户目录；**含内置渲染 runtime**；当前未签名（无 Windows 代码签名证书） |
+| Windows | `Magplot-X.Y.Z-Windows-Setup.exe` | NSIS（收集时改成与 wheel/dmg 一致的命名），装到用户目录；**含内置渲染 runtime**；SignPath 启用后由 SignPath Foundation 证书签名 |
 
 macOS 签名注意：sidecar 是 `.app` 里 `Resources/sidecar/` 下的 PyInstaller
 onedir，签名必须继续「按 `file` 判断签**所有** Mach-O、自底向上」——只签壳
@@ -262,9 +262,29 @@ PyInstaller 留下的 adhoc 签名同样能通过 verify；流水线里已加了
 
 ### Windows 签名
 
-暂未做。用户首次运行会看到 SmartScreen「Windows 已保护你的电脑」，
-需点「更多信息 → 仍要运行」。要消除需买代码签名证书（OV 约 $200-400/年，
-或 Azure Trusted Signing）。
+Windows 签名通过 SignPath Foundation 的开源项目订阅完成。仓库中的
+`signpath/windows-installer.artifact-configuration.xml` 描述上传的 GitHub
+Actions ZIP 中应签名的 NSIS 安装包及其产品/版本元数据。
+
+获批并在 SignPath 中创建项目后：
+
+1. 安装 SignPath GitHub App，并允许它访问本仓库。
+2. 在仓库中创建以下变量：
+   `SIGNPATH_ENABLED=true`、`SIGNPATH_ORGANIZATION_ID`、
+   `SIGNPATH_PROJECT_SLUG`、`SIGNPATH_SIGNING_POLICY_SLUG`、
+   `SIGNPATH_ARTIFACT_CONFIGURATION_SLUG`。
+3. 创建仓库 secret `SIGNPATH_API_TOKEN`。Token 只保存在 GitHub Secrets，
+   不写入仓库或日志。
+4. 在 SignPath 的 artifact configuration 中导入
+   `signpath/windows-installer.artifact-configuration.xml`，并把 slug 填入
+   `SIGNPATH_ARTIFACT_CONFIGURATION_SLUG`。
+5. 对 tag 运行 `Desktop apps (Tauri)`。工作流会先把未签名安装包作为 GitHub
+   Actions artifact 提交签名，再下载签名结果并把它挂到同一个 GitHub Release。
+
+`SIGNPATH_ENABLED` 未开启时，工作流仍可生成测试用的未签名安装包，但会明确标记
+为未签名；不要把该产物当作正式发行版。当前配置签名的是下载给用户的 NSIS 外层
+安装包；若以后需要对安装包内部的每个 PE 文件做深度签名，应改用 SignPath 支持
+深度签名的 MSI 发行链。
 
 ### 改图标
 

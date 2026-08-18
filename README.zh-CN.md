@@ -126,6 +126,12 @@ PDF 会把每张原始矢量面板整块嵌进去，**文字仍然可选中、�
 两处明示的例外：面板设了 `opacity < 1` 或做了翻转时，该面板按导出 DPI 转成位图嵌入
 ——PDF 的矢量内容不支持这两种效果。
 
+## Code signing policy
+
+Free code signing provided by SignPath.io, certificate by SignPath Foundation。
+Windows 安装包由本仓库的 GitHub Actions 构建，并在被称为已签名发行版之前经过人工签名审批。
+完整内容见 [签名政策](docs/code-signing-policy.md) 和 [隐私政策](docs/privacy.md)。
+
 ## 改图助手（可选）
 
 助手面板可以把需求交给你本机的 **Codex / Claude CLI** 去直接改脚本，

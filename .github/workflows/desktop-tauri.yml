@@ -32,6 +32,7 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
   # Rust supervisor 的静态门禁。**只在 Linux 上跑一份**：它是纯标准库 + serde
@@ -296,10 +297,56 @@ jobs:
           $nsis = @(Get-ChildItem src-tauri\target\release\bundle\nsis\*.exe)
           if ($nsis.Count -ne 1) { throw "NSIS 产物数量异常（$($nsis.Count) 个）" }
           Copy-Item $nsis[0].FullName "out\Magplot-$ver-Windows-Setup.exe"
-          Write-Warning "Windows 安装包未签名（无代码签名证书），仅供测试分发"
+          [System.IO.File]::AppendAllText($env:GITHUB_ENV, "APP_VERSION=$ver`n")
           Get-ChildItem out | Format-Table Name, Length
 
-      - uses: actions/upload-artifact@v4
+      - name: 上传待签名 Windows 安装包
+        if: runner.os == 'Windows'
+        id: upload-unsigned-windows-artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer-signing-input-${{ github.run_id }}
+          path: out/*
+          if-no-files-found: error
+
+      - name: 提交 Windows 安装包到 SignPath
+        if: runner.os == 'Windows' && vars.SIGNPATH_ENABLED == 'true'
+        id: signpath-windows
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
+          github-artifact-id: ${{ steps.upload-unsigned-windows-artifact.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed-out
+          parameters: |
+            version: "${{ env.APP_VERSION }}"
+
+      - name: 替换为 SignPath 签名结果
+        if: runner.os == 'Windows' && vars.SIGNPATH_ENABLED == 'true'
+        shell: pwsh
+        run: |
+          $signed = @(Get-ChildItem signed-out -Recurse -File -Filter "Magplot-$env:APP_VERSION-Windows-Setup.exe")
+          if ($signed.Count -ne 1) {
+            throw "SignPath 返回的签名安装包数量异常（$($signed.Count) 个）"
+          }
+          Copy-Item $signed[0].FullName "out\Magplot-$env:APP_VERSION-Windows-Setup.exe" -Force
+          $signature = Get-AuthenticodeSignature "out\Magplot-$env:APP_VERSION-Windows-Setup.exe"
+          if ($signature.Status -ne 'Valid') {
+            throw "SignPath 返回的安装包签名无效：$($signature.Status)"
+          }
+          Write-Host "SignPath 签名有效：$($signature.SignerCertificate.Subject)"
+
+      - name: 标记未签名测试产物
+        if: runner.os == 'Windows' && vars.SIGNPATH_ENABLED != 'true'
+        run: Write-Warning "SIGNPATH_ENABLED 未开启：Windows 安装包未签名，仅供测试分发"
+
+      - name: 上传最终 Windows 产物
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
         with:
           name: desktop-tauri-${{ matrix.artifact }}
           path: out/*

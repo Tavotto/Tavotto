@@ -138,6 +138,14 @@ for your submission records.
 Two deliberate exceptions: a panel with `opacity < 1` or a flip applied is embedded as a
 bitmap at your export DPI, because PDF vector content supports neither.
 
+## Code signing policy
+
+Free code signing provided by SignPath.io, certificate by SignPath Foundation.
+Windows release installers are built from this repository by GitHub Actions and
+are submitted for manual signing before they are described as signed releases.
+See the complete [Code signing policy](docs/code-signing-policy.md) and
+[Privacy policy](docs/privacy.md).
+
 ## AI assistant (optional)
 
 The assistant panel can hand a request to the **Codex or Claude CLI** on your machine to
