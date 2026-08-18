@@ -73,7 +73,6 @@
     "zUp": "Bring forward",
     "zorderLabel": "Stacking order"
   },
-  "autoHide": "Auto-hide",
   "autoHideAria": "Right panel auto-hides; click to pin it",
   "autoHideTip": "Auto-hiding: collapses when the selection is cleared. Click to pin it open.",
   "canvas": {
@@ -530,7 +529,6 @@
     "unknown": "Unknown"
   },
   "panelLabel": "Right panel",
-  "pinned": "Pinned",
   "pinnedAria": "Right panel is pinned; click to auto-hide it",
   "pinnedTip": "Pinned: stays open even with nothing selected. Click to auto-hide instead.",
   "prop": {

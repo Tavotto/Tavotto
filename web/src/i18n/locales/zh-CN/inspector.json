@@ -72,7 +72,6 @@
     "zUp": "上移一层",
     "zorderLabel": "层级"
   },
-  "autoHide": "自动收起",
   "autoHideAria": "右栏自动收起中，点击改为常驻",
   "autoHideTip": "自动收起中：清空选择后右栏让位给画布。点击改为常驻",
   "canvas": {
@@ -518,7 +517,6 @@
     "unknown": "未知"
   },
   "panelLabel": "右侧面板",
-  "pinned": "常驻",
   "pinnedAria": "右栏常驻中，点击改为自动收起",
   "pinnedTip": "常驻中：清空选择也保持展开。点击改为自动收起",
   "prop": {

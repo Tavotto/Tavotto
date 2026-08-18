@@ -116,19 +116,20 @@ export function Inspector({
         </div>
         <span className="flex-1" />
         {layout !== 'narrow' ? (
-          <Tip
-            label={t(pinned ? 'pinnedTip' : 'autoHideTip')}
-            side="bottom"
-          >
+          /* 只留图钉，不写「常驻 / 自动收起」：这一行宽度是 296–320px 定死的，
+             三个标签页 + 一个带词的开关 + 关闭按钮在英文下要 321px，超出 17px
+             把关闭按钮顶到面板外面（e2e/i18n.spec.ts 量的就是它）。状态本身
+             由填色（active）+ aria-pressed 表达，说明留在 tooltip 与无障碍名里，
+             那两处不占版面。 */
+          <Tip label={t(pinned ? 'pinnedTip' : 'autoHideTip')} side="bottom">
             <Button
-              size="sm"
+              size="icon-sm"
               active={pinned}
               aria-pressed={pinned}
               aria-label={t(pinned ? 'pinnedAria' : 'autoHideAria')}
               onClick={() => useUiStore.getState().setRightPinned(!pinned)}
             >
               <Pin size={11} className={pinned ? undefined : 'text-ink-3'} />
-              <span className="text-xs">{t(pinned ? 'pinned' : 'autoHide')}</span>
             </Button>
           </Tip>
         ) : (
