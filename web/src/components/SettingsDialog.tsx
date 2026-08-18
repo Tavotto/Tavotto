@@ -12,6 +12,7 @@ import {
   type AiEndpoint,
   type AiEndpointPreset,
   type AiInstallState,
+  type UpdateStatus,
 } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { readExportDefaults, writeExportDefaults } from '@/lib/exportDefaults'
@@ -796,31 +797,9 @@ function UpdateSection() {
     ? new Date(status.checked_at_ms).toLocaleString()
     : '尚未检查'
 
-  // 桌面模式：Python updater 整个停用（升级归安装包），不摆一个永远
-  // 没有结果的「立即检查」死按钮，直接把 Releases 递到手边
-  if (status?.desktop) {
-    return (
-      <div className="flex flex-col gap-2.5">
-        <Row label="当前版本">
-          <span className="font-mono text-xs text-ink">{status.current}</span>
-        </Row>
-        <p className="text-xs leading-relaxed text-ink-3">
-          桌面版的升级由安装包负责：下载新版本安装覆盖即可，项目、画布与设置都在
-          用户数据目录，不受影响。
-        </p>
-        <div>
-          <a
-            href={status.releases_url}
-            target="_blank"
-            rel="noreferrer"
-            className="text-xs text-accent hover:underline"
-          >
-            前往 Releases 下载新版
-          </a>
-        </div>
-      </div>
-    )
-  }
+  // 桌面模式：Python updater 整个停用（升级归 Tauri 层），整段换成
+  // 壳里的更新器——检查 / 下载 / 安装 / 重启都在软件内完成
+  if (status?.desktop) return <DesktopUpdateSection status={status} />
 
   return (
     <div className="flex flex-col gap-2.5">
@@ -910,6 +889,131 @@ function downloadDiagnostics() {
   a.href = apiUrl('/api/diagnostics/bundle')
   a.download = ''
   a.click()
+}
+
+/**
+ * 桌面版的更新器（Tauri）。**整个过程留在软件里**：检查 → 下载（带进度）→
+ * 安装 → 重启，用户不用去 Releases 页面手动下载覆盖安装。
+ *
+ * 三条纪律与 pip 那条一致：
+ *   * 不静默——每一步都要用户按一下；
+ *   * 装完不等于生效，重启才算换版本；
+ *   * 失败要说人话并留退路（更新器连不上时仍给 Releases 链接）。
+ *
+ * 安装包的签名由壳里的公钥校验，校验不过当场失败——这里不做「忽略签名」的口子。
+ */
+function DesktopUpdateSection({ status }: { status: UpdateStatus }) {
+  const {
+    desktopPhase,
+    desktopUpdate,
+    desktopProgress,
+    desktopError,
+    desktopChecked,
+    checkDesktop,
+    installDesktop,
+    relaunch,
+  } = useUpdateStore()
+  useEffect(() => {
+    if (!desktopChecked) void checkDesktop()
+  }, [desktopChecked, checkDesktop])
+
+  const busy = desktopPhase !== 'idle'
+  const pct = desktopProgress === null ? null : Math.round(desktopProgress * 100)
+
+  return (
+    <div className="flex flex-col gap-2.5">
+      <Row label="当前版本">
+        <span className="font-mono text-xs text-ink">{status.current}</span>
+      </Row>
+
+      <div className="flex items-center gap-2">
+        <Button onClick={() => void checkDesktop()} disabled={busy}>
+          {desktopPhase === 'checking' ? '检查中…' : '立即检查'}
+        </Button>
+        {desktopChecked && !desktopUpdate && !desktopError && (
+          <span className="text-xs text-ink-3">已是最新版本。</span>
+        )}
+      </div>
+
+      {desktopError && (
+        <div className="flex flex-col gap-1">
+          <p className="text-xs text-danger">{desktopError}</p>
+          <a
+            href={status.releases_url}
+            target="_blank"
+            rel="noreferrer"
+            className="text-xs text-accent hover:underline"
+          >
+            连不上更新服务时，也可以去 Releases 手动下载
+          </a>
+        </div>
+      )}
+
+      {desktopUpdate && (
+        <div className="flex flex-col gap-2 rounded-md border border-border p-2.5">
+          <p className="text-xs text-ink">
+            有新版本 <span className="font-mono">{desktopUpdate.version}</span>
+            <span className="ml-2 text-ink-3">当前 {status.current}</span>
+          </p>
+          {desktopUpdate.notes && (
+            <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-ink-2">
+              {desktopUpdate.notes}
+            </pre>
+          )}
+
+          {desktopPhase === 'installed' ? (
+            <div className="flex items-center gap-2">
+              <Button variant="primary" onClick={() => void relaunch()}>
+                重启并使用新版本
+              </Button>
+              <span className="text-xs text-ink-2">
+                已安装完成——当前窗口仍是旧版本，重启后生效。
+              </span>
+            </div>
+          ) : desktopPhase === 'downloading' ? (
+            <div className="flex flex-col gap-1">
+              {/* 拿不到 Content-Length 就走不确定态，不假装卡在某个百分比 */}
+              <div
+                role="progressbar"
+                aria-label="下载更新"
+                aria-valuenow={pct ?? undefined}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                className="h-1 overflow-hidden rounded-full bg-surface-2"
+              >
+                <div
+                  className={cn('h-full bg-accent', pct === null && 'w-1/3 animate-pulse')}
+                  style={pct === null ? undefined : { width: `${pct}%` }}
+                />
+              </div>
+              <span className="text-xs text-ink-3">
+                {pct === null ? '下载中…' : `下载中 ${pct}%`}
+              </span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <Button variant="primary" onClick={() => void installDesktop()}>
+                下载并安装
+              </Button>
+              <a
+                href={status.releases_url}
+                target="_blank"
+                rel="noreferrer"
+                className="text-xs text-accent hover:underline"
+              >
+                查看发行说明
+              </a>
+            </div>
+          )}
+        </div>
+      )}
+
+      <p className="text-xs leading-relaxed text-ink-3">
+        更新包由官方签名，装之前壳会校验签名，校验不过不会安装。项目、画布与
+        设置都在用户数据目录，升级不影响。
+      </p>
+    </div>
+  )
 }
 
 function AboutSection() {

@@ -420,7 +420,9 @@ function MoreMenu() {
   // 新版本不弹窗、不占顶栏位置：只在「更多」上点一个圆点，菜单里给一条入口。
   // 升级是可延后的事，不该打断正在排版的人。
   const update = useUpdateStore((s) => s.status)
-  const hasUpdate = !!update?.update_available
+  const desktopUpdate = useUpdateStore((s) => s.desktopUpdate)
+  const hasUpdate = !!update?.update_available || !!desktopUpdate
+  const latest = desktopUpdate?.version ?? update?.latest
   return (
     <Menu
       width={196}
@@ -443,7 +445,7 @@ function MoreMenu() {
           <MenuItem onSelect={() => ui().setSettingsOpen(true, 'update')}>
             <span className="flex items-center gap-2">
               <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" aria-hidden />
-              有新版本 {update?.latest}
+              有新版本 {latest}
             </span>
           </MenuItem>
           <MenuSeparator />

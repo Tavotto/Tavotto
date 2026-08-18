@@ -230,6 +230,11 @@ fn main() {
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        // 应用内更新：前端经 @tauri-apps/plugin-updater 检查/下载/安装，
+        // 装完用 process 的 restart 重启。升级永不静默进行——什么时候换版本
+        // 是用户按下按钮的结果（与 Python updater 同一条纪律）。
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(state)
         .invoke_handler(tauri::generate_handler![reveal_export])
         .menu(build_menu)

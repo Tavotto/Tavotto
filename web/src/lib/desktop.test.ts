@@ -4,10 +4,14 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  __resetDesktopUpdate,
   bootstrapDesktopSession,
+  checkDesktopUpdate,
+  installDesktopUpdate,
   isDesktop,
   onDesktopMenu,
   pickDirectory,
+  relaunchDesktop,
   revealExportedFile,
 } from './desktop'
 
@@ -74,5 +78,23 @@ describe('浏览器回退', () => {
 
   it('revealExportedFile 返回 false（调用方保留 <a> 行为）', async () => {
     expect(await revealExportedFile('/tmp', 'a.pdf')).toBe(false)
+  })
+})
+
+describe('应用内更新的浏览器回退', () => {
+  it('checkDesktopUpdate 返回 null —— 浏览器那条走 Python updater，两条不能同时插手', async () => {
+    expect(await checkDesktopUpdate()).toBeNull()
+  })
+
+  it('没查过就装：抛错而不是偷偷补一次 check', async () => {
+    __resetDesktopUpdate()
+    await expect(installDesktopUpdate()).rejects.toThrow('请先检查更新')
+  })
+
+  it('relaunchDesktop 退化成刷新页面', async () => {
+    const reload = vi.fn()
+    vi.stubGlobal('location', { ...window.location, reload })
+    await relaunchDesktop()
+    expect(reload).toHaveBeenCalled()
   })
 })

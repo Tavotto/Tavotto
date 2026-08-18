@@ -29,7 +29,7 @@ import { useAiStore } from '@/store/aiStore'
 import { useAssetStore } from '@/store/assetStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useEnvStore } from '@/store/envStore'
-import { useUpdateStore } from '@/store/updateStore'
+import { checkUpdateOnStartup } from '@/store/updateStore'
 import { restoreSession, startAutosave, useDocumentStore } from '@/store/documentStore'
 import { useViewportStore } from '@/store/viewportStore'
 import { startLayoutAutoReflow } from '@/store/actions'
@@ -44,8 +44,9 @@ export function App() {
 
   useEffect(() => {
     void useProjectStore.getState().init()
-    // 静默取一次版本状态（后端 24h 节流 + 可关；有新版本才在顶栏点圆点）
-    void useUpdateStore.getState().check(false)
+    // 静默取一次版本状态（有新版本才在顶栏点圆点）。桌面与浏览器是两条
+    // 互斥的升级通道，由 checkUpdateOnStartup 决定查哪一条
+    checkUpdateOnStartup()
     // 渲染环境状态：缺 matplotlib 时属性栏与设置里都要能给出引导
     void useEnvStore.getState().refresh()
   }, [])

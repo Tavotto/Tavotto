@@ -76,3 +76,93 @@ export async function revealExportedFile(dir: string, name: string): Promise<boo
     return false
   }
 }
+
+/* -------------------------------------------------------------------------- */
+/*  应用内更新（桌面壳）                                                        */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * 桌面版的升级归 Tauri 层（Python updater 在桌面模式整个停用，见 desktop.py）。
+ * 这里是它在前端的唯一入口：检查 → 下载安装 → 重启，三步各自可见、可失败，
+ * **绝不静默进行**——什么时候换版本必须是用户按下按钮的结果。
+ *
+ * 更新包的签名由壳里的公钥校验（tauri.conf.json 的 plugins.updater.pubkey），
+ * 私钥只在 CI 里；校验不过 downloadAndInstall 当场抛错，装不上去。
+ */
+export interface DesktopUpdateInfo {
+  version: string
+  notes?: string
+  /** Release 里写的发布时间，原样透出，不在前端解析格式 */
+  date?: string
+}
+
+interface UpdateHandle {
+  version: string
+  downloadAndInstall: (cb?: (e: unknown) => void) => Promise<void>
+}
+
+/** check() 拿到的句柄——下载安装要用同一个，不能到时候重新查一次 */
+let pendingUpdate: UpdateHandle | null = null
+
+/**
+ * 查有没有新版。没有新版返回 null；**浏览器模式也返回 null**——那条路由
+ * Python updater 负责（/api/update/*），两条不能同时插手。
+ */
+export async function checkDesktopUpdate(): Promise<DesktopUpdateInfo | null> {
+  if (!isDesktop()) return null
+  const { check } = await import('@tauri-apps/plugin-updater')
+  const update = await check()
+  pendingUpdate = update ? (update as unknown as UpdateHandle) : null
+  if (!update) return null
+  return {
+    version: update.version,
+    notes: update.body ?? undefined,
+    date: update.date ?? undefined,
+  }
+}
+
+/**
+ * 下载并安装上一次查到的那一版。onProgress 收到 0–1 的进度；服务端没给
+ * Content-Length 时收到 null——进度条该显示成不确定态，而不是假装卡在
+ * 某个百分比上。
+ *
+ * 没有句柄就抛，不在这里偷偷补一次 check：用户看到的版本号与真正装上去的
+ * 那一版必须是同一个。
+ */
+export async function installDesktopUpdate(
+  onProgress?: (fraction: number | null) => void,
+): Promise<void> {
+  const update = pendingUpdate
+  if (!update) throw new Error('没有待安装的更新，请先检查更新')
+  let total = 0
+  let got = 0
+  await update.downloadAndInstall((event) => {
+    const e = event as { event: string; data?: { contentLength?: number; chunkLength?: number } }
+    if (e.event === 'Started') {
+      total = e.data?.contentLength ?? 0
+      got = 0
+      onProgress?.(total ? 0 : null)
+    } else if (e.event === 'Progress') {
+      got += e.data?.chunkLength ?? 0
+      onProgress?.(total ? Math.min(1, got / total) : null)
+    } else if (e.event === 'Finished') {
+      onProgress?.(1)
+    }
+  })
+  pendingUpdate = null
+}
+
+/** 装完重启到新版本。浏览器模式退化成刷新页面。 */
+export async function relaunchDesktop(): Promise<void> {
+  if (!isDesktop()) {
+    location.reload()
+    return
+  }
+  const { relaunch } = await import('@tauri-apps/plugin-process')
+  await relaunch()
+}
+
+/** 仅供测试：清掉 check 留下的句柄 */
+export function __resetDesktopUpdate(): void {
+  pendingUpdate = null
+}

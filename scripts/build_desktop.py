@@ -141,8 +141,15 @@ def main() -> None:
 
     # CLI 版本钉死：src-tauri/windows/installer.nsi 是按这个版本的上游模板
     # 打的品牌补丁，模板与打包器必须同源（升级时两处一起动，见模板头注释）
-    run(["pnpm", "dlx", "@tauri-apps/cli@2.11.4", "build",
-         "--bundles", args.bundles])
+    cmd = ["pnpm", "dlx", "@tauri-apps/cli@2.11.4", "build",
+           "--bundles", args.bundles]
+    # tauri.conf.json 里 createUpdaterArtifacts 常开（发行链要它），但打包器
+    # 一开它就要用 minisign 私钥签名——本机开发通常没有那把钥匙。没有就地关掉，
+    # 而不是让每个开发者为了跑一次构建去配发行密钥。
+    if not os.environ.get("TAURI_SIGNING_PRIVATE_KEY"):
+        print("* 没有 TAURI_SIGNING_PRIVATE_KEY：本次不产出更新包（安装包照打）")
+        cmd += ["--config", json.dumps({"bundle": {"createUpdaterArtifacts": False}})]
+    run(cmd)
     out = ROOT / "src-tauri" / "target" / "release" / "bundle"
     print(f"* 产物目录: {out}")
 

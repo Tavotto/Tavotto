@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-window",
-  "description": "主窗口（内容来自本机 sidecar 的 127.0.0.1 动态端口）能用的最小权限：监听菜单事件 + 原生目录选择。不开放 shell、fs、任意 opener。",
+  "description": "主窗口（内容来自本机 sidecar 的 127.0.0.1 动态端口）能用的最小权限：监听菜单事件 + 原生目录选择 + 应用内更新（检查/下载/安装/重启）。不开放 shell、fs、任意 opener。",
   "windows": ["main"],
   "remote": {
     "urls": ["http://127.0.0.1:*"]
@@ -9,6 +9,8 @@
   "permissions": [
     "core:event:default",
     "dialog:allow-open",
-    "allow-reveal-export"
+    "allow-reveal-export",
+    "updater:default",
+    "process:allow-restart"
   ]
 }

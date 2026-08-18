@@ -202,6 +202,36 @@ spec 自动跳过，macOS 构建与从前完全一样。
 `runtime/licenses/`，并生成 `THIRD-PARTY-NOTICES.md` 索引，随安装包一起分发。
 新增依赖时不需要额外做什么，但**要确认新包的许可证允许再分发**。
 
+### 应用内更新的一次性设置（更新器签名密钥）
+
+桌面版的「软件内直接更新」靠一对 **minisign 密钥**（与 macOS 代码签名、
+Windows 代码签名都是两回事）：公钥写死在 `src-tauri/tauri.conf.json` 的
+`plugins.updater.pubkey`，私钥只放 GitHub Secrets。
+
+**没配这对密钥时发行链照常出安装包**，只是这一版进不了自动更新——构建会打
+一条 warning，`updater-manifest` job 也会如实跳过。
+
+1. 生成一对（**私钥丢了就没法给已发出去的用户推更新**，请妥善保存）：
+
+   ```sh
+   pnpm dlx @tauri-apps/cli@2.11.4 signer generate -w ~/magplot-updater.key
+   ```
+
+2. 仓库 Settings → Secrets and variables → Actions 加两条：
+
+   | Secret | 值 |
+   |---|---|
+   | `TAURI_SIGNING_PRIVATE_KEY` | `~/magplot-updater.key` 的**全部内容** |
+   | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | 生成时设的口令（没设就留空/不建） |
+
+3. 公钥（`~/magplot-updater.key.pub` 的内容）要与 `tauri.conf.json` 里的
+   `plugins.updater.pubkey` 一致。**换密钥 = 老版本的用户再也收不到更新**
+   （他们壳里烧的是旧公钥），只能引导手动下载一次，非必要不要换。
+
+发出去之后自查：Release 资产里应当有 `latest.json`、`Magplot.app.tar.gz(.sig)`、
+`Magplot_<ver>_x64-setup.nsis.zip(.sig)`。少了 `latest.json`，壳那边的表现是
+**一直显示「已是最新版本」**——用户停在旧版本上而 CI 全绿，这条要盯。
+
 ### macOS 签名与公证的一次性设置
 
 不配下面这些 secret 时，流水线照常出包，只是未签名（adhoc），用户首次打开要
