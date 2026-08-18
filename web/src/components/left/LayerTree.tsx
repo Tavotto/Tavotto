@@ -1,4 +1,6 @@
 import { useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { t as translate } from '@/i18n'
 import {
   ArrowUpRight,
   Braces,
@@ -24,6 +26,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { objectLabel, type CanvasObject, type LayoutGroup } from '@/types/document'
+import { layoutKindLabel } from '@/store/actions'
 import { Button } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
 
@@ -45,11 +48,9 @@ function iconFor(o: CanvasObject) {
   return ICONS[o.type]
 }
 
-const LAYOUT_BADGE: Record<LayoutGroup['kind'], string> = {
-  row: '行布局',
-  col: '列布局',
-  grid: '网格布局',
-}
+/** 本组文案在 workspace:layerTree.* 下；布局徽标与 actions 的布局名同源 */
+const lt = (key: string, values?: Record<string, unknown>) =>
+  translate(`layerTree.${key}`, { ns: 'workspace', ...(values ?? {}) })
 
 /** 显示行：普通对象 / 组标题（组成员挂在标题下，可折叠） */
 type TreeRow =
@@ -57,6 +58,7 @@ type TreeRow =
   | { kind: 'group'; gid: string; members: CanvasObject[] }
 
 export function LayerTree() {
+  useTranslation('workspace')
   const objects = useDocumentStore((s) => s.doc.objects)
   const layoutGroups = useDocumentStore((s) => s.doc.layoutGroups)
   const selectedIds = useSelectionStore((s) => s.ids)
@@ -74,8 +76,11 @@ export function LayerTree() {
     return (
       <EmptyState
         icon={Layers}
-        title="画布上还没有对象"
-        action={{ label: '打开素材', onClick: () => useUiStore.getState().railClick('assets') }}
+        title={lt('emptyTitle')}
+        action={{
+          label: lt('openAssets'),
+          onClick: () => useUiStore.getState().railClick('assets'),
+        }}
       />
     )
   }
@@ -129,7 +134,7 @@ export function LayerTree() {
     <ul
       ref={listRef}
       role="listbox"
-      aria-label="图层"
+      aria-label={lt('listLabel')}
       aria-multiselectable
       className="min-h-0 flex-1 overflow-y-auto py-1"
       onDragLeave={() => setDropHint(null)}
@@ -193,13 +198,21 @@ function GroupRow({
   onToggle: () => void
   onMoveFocus: (delta: number) => void
 }) {
+  useTranslation('workspace')
   const selectAllMembers = () => useSelectionStore.getState().set(members.map((m) => m.id))
   return (
     <li
       role="option"
       aria-selected={allSelected}
       aria-expanded={!collapsed}
-      aria-label={`组（${members.length} 个对象）${layout ? `，${LAYOUT_BADGE[layout.kind]}` : ''}`}
+      aria-label={
+        layout
+          ? lt('groupAriaWithLayout', {
+              count: members.length,
+              layout: layoutKindLabel(layout.kind),
+            })
+          : lt('groupAria', { count: members.length })
+      }
       tabIndex={tabbable ? 0 : -1}
       data-layer={`g:${gid}`}
       onPointerDown={(e) => {
@@ -235,18 +248,18 @@ function GroupRow({
       <button
         onPointerDown={(e) => e.stopPropagation()}
         onClick={onToggle}
-        aria-label={collapsed ? '展开组' : '折叠组'}
+        aria-label={lt(collapsed ? 'expandGroup' : 'collapseGroup')}
         tabIndex={-1}
         className="flex h-4 w-4 shrink-0 items-center justify-center text-ink-3 hover:text-ink"
       >
         <ChevronRight size={11} className={cn('transition-transform', !collapsed && 'rotate-90')} />
       </button>
       <span className="min-w-0 flex-1 truncate">
-        组 · {members.length} 个对象
+        {lt('groupLabel', { count: members.length })}
       </span>
       {layout && (
         <span className="shrink-0 rounded-[3px] border border-border px-1 text-xs text-ink-3">
-          {LAYOUT_BADGE[layout.kind]}
+          {layoutKindLabel(layout.kind)}
         </span>
       )}
     </li>
@@ -276,16 +289,21 @@ function LayerRow({
   onMoveFocus,
   onReorder,
 }: RowProps) {
+  useTranslation('workspace')
   const [editing, setEditing] = useState(false)
   const Icon = iconFor(obj)
   const isScript = obj.type === 'panel' && !!obj.script
-  const stateLabel = [obj.hidden && '已隐藏', obj.locked && '已锁定'].filter(Boolean).join('，')
+  const stateLabel = [obj.hidden && lt('hiddenState'), obj.locked && lt('lockedState')]
+    .filter(Boolean)
+    .join('，')
 
   return (
     <li
       role="option"
       aria-selected={selected}
-      aria-label={objectLabel(obj) + (stateLabel ? `，${stateLabel}` : '')}
+      aria-label={
+        stateLabel ? lt('rowAria', { label: objectLabel(obj), state: stateLabel }) : objectLabel(obj)
+      }
       tabIndex={tabbable ? 0 : -1}
       data-layer={obj.id}
       onFocus={(e) => {
@@ -373,7 +391,7 @@ function LayerRow({
           位置（行尾）与颜色（accent）把两个角色分开 */}
       {isScript && !editing && <Braces size={12} className="shrink-0 text-accent" />}
       {primary && !editing && (
-        <span className="shrink-0 font-mono text-xs text-accent/70">基准</span>
+        <span className="shrink-0 font-mono text-xs text-accent/70">{lt('primary')}</span>
       )}
 
       <div
@@ -388,7 +406,7 @@ function LayerRow({
           className="h-7 w-6"
           onPointerDown={(e) => e.stopPropagation()}
           onClick={() => toggleLocked(obj.id)}
-          aria-label={obj.locked ? '解锁' : '锁定'}
+          aria-label={lt(obj.locked ? 'unlock' : 'lock')}
         >
           {obj.locked ? <Lock size={12} /> : <LockOpen size={12} className="text-ink-3" />}
         </Button>
@@ -397,7 +415,7 @@ function LayerRow({
           className="h-7 w-6"
           onPointerDown={(e) => e.stopPropagation()}
           onClick={() => toggleHidden(obj.id)}
-          aria-label={obj.hidden ? '显示' : '隐藏'}
+          aria-label={lt(obj.hidden ? 'show' : 'hide')}
         >
           {obj.hidden ? <EyeOff size={12} /> : <Eye size={12} className="text-ink-3" />}
         </Button>

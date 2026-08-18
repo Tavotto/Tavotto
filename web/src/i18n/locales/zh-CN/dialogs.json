@@ -58,6 +58,18 @@
     "title": "导出",
     "warningsIntro": "以下修改未能应用到重渲染的面板上，成图可能与画布不一致："
   },
+  "layout": {
+    "description": "画布文件是命名保存的版本，可随时载入；日常编辑本身已自动保存在本机",
+    "empty": "还没有保存过画布文件",
+    "load": "载入",
+    "loadHeading": "载入画布文件",
+    "namePlaceholder": "布局名称",
+    "saveAs": "保存为画布文件",
+    "saveHeading": "保存为画布文件",
+    "saved": "已保存为画布文件：{{name}}",
+    "saving": "正在保存…",
+    "title": "画布文件"
+  },
   "palette": {
     "commands": {
       "add-text": {
@@ -158,5 +170,65 @@
     "noMatch": "没有匹配的命令",
     "placeholder": "输入命令…",
     "searchLabel": "搜索命令"
+  },
+  "presets": {
+    "insertSymbolAria": "插入符号 {{symbol}}",
+    "items": {
+      "axes": {
+        "hint": "x / y 方向角标",
+        "label": "坐标方向"
+      },
+      "braceGroup": {
+        "hint": "大括号 + 说明文字",
+        "label": "括号分组"
+      },
+      "callout": {
+        "hint": "引线 + 文字",
+        "label": "引线标注"
+      },
+      "crystal": {
+        "hint": "箭头 + [001] 标注",
+        "label": "晶向箭头"
+      },
+      "dimension": {
+        "hint": "双向箭头 + 两端界线",
+        "label": "尺寸线"
+      },
+      "errorbar": {
+        "hint": "工字线 + ± 值",
+        "label": "误差标注"
+      },
+      "magnifier": {
+        "hint": "虚线框 + 引出线 + 放大框",
+        "label": "局部放大框"
+      },
+      "reversible": {
+        "hint": "两条反向箭头（⇌）",
+        "label": "可逆反应箭头"
+      },
+      "scalebar": {
+        "hint": "粗线 + 长度标注",
+        "label": "比例尺"
+      }
+    },
+    "symbolsHeading": "常用符号",
+    "title": "科研预设"
+  },
+  "relink": {
+    "assetOption": "{{name}}（{{folder}}）",
+    "cancelDoc": "暂不处理",
+    "cancelPaste": "取消粘贴",
+    "confirmDoc": "重新链接所选素材",
+    "confirmPaste": "按上述处置粘贴",
+    "descDoc": "布局引用了当前图库中不存在的文件（常见于换机器打开项目包）。逐个选择替代素材；不处理的面板会保持缺失状态并在导出前检查里提示。",
+    "descPaste": "剪贴板里的面板引用了当前图库中不存在的文件。逐个选择替代素材，或跳过该面板。",
+    "footnote": "重新链接会按新素材的尺寸与脚本重置图内修改（overrides 绑定在原脚本的元素上，跨素材搬运不可靠）；位置、大小、层级与成组关系保留。",
+    "keepMissing": "保持缺失",
+    "refCount_one": "（{{count}} 个面板引用）",
+    "refCount_other": "（{{count}} 个面板引用）",
+    "selectAria": "为 {{name}} 选择替代素材",
+    "skipPanel": "跳过该面板",
+    "titleDoc": "文档里的面板缺少素材",
+    "titlePaste": "粘贴的面板缺少素材"
   }
 }

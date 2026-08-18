@@ -1,4 +1,5 @@
 import { newId } from '@/lib/id'
+import { msg, t, type UiMessage } from '@/i18n'
 import { modKey } from '@/lib/utils'
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -27,13 +28,19 @@ function dropPoint(): { x: number; y: number } {
   return { x: page.w / 2, y: page.h / 2 }
 }
 
-function place(objs: CanvasObject[], label: string): void {
+/**
+ * 落一组对象。**历史标签与 toast 各自成条**——以前 toast 是拿历史标签正则
+ * 掐掉「插入」二字拼出来的，换了语言那条正则立刻失效。
+ */
+function place(objs: CanvasObject[], label: UiMessage, name: string): void {
   if (!objs.length) return
   useDocumentStore.getState().commit(label, (d) => {
     d.objects.push(...objs)
   })
   useSelectionStore.getState().set(objs.map((o) => o.id))
-  useUiStore.getState().setStatus(`已插入${label.replace(/^插入/, '')}（${modKey('Z')} 可撤销）`)
+  useUiStore
+    .getState()
+    .setStatus(msg('status.inserted', { name, undo: modKey('Z') }, 'workspace'))
 }
 
 const baseArrow = (x: number, y: number, w: number, h: number): ArrowObject => ({
@@ -78,7 +85,8 @@ export function insertShape(kind: ShapeKind): void {
   const h = isBrace ? 24 : 16
   const shape = baseShape(kind, c.x - w / 2, c.y - h / 2, w, h)
   if (kind === 'polygon') shape.sides = 6
-  place([shape], `插入${{ triangle: '三角形', diamond: '菱形', polygon: '多边形', brace: '大括号' }[kind as 'triangle' | 'diamond' | 'polygon' | 'brace']}`)
+  const name = t(`shape.${kind}`)
+  place([shape], msg('history.insertShape', { name }, 'workspace'), name)
 }
 
 export type PresetId =
@@ -92,17 +100,21 @@ export type PresetId =
   | 'callout'
   | 'braceGroup'
 
-export const PRESETS: { id: PresetId; label: string; hint: string }[] = [
-  { id: 'reversible', label: '可逆反应箭头', hint: '两条反向箭头（⇌）' },
-  { id: 'dimension', label: '尺寸线', hint: '双向箭头 + 两端界线' },
-  { id: 'scalebar', label: '比例尺', hint: '粗线 + 长度标注' },
-  { id: 'axes', label: '坐标方向', hint: 'x / y 方向角标' },
-  { id: 'crystal', label: '晶向箭头', hint: '箭头 + [001] 标注' },
-  { id: 'errorbar', label: '误差标注', hint: '工字线 + ± 值' },
-  { id: 'magnifier', label: '局部放大框', hint: '虚线框 + 引出线 + 放大框' },
-  { id: 'callout', label: '引线标注', hint: '引线 + 文字' },
-  { id: 'braceGroup', label: '括号分组', hint: '大括号 + 说明文字' },
+/** 预设清单只留 id；名称与说明按 id 查 `dialogs:presets.items.<id>` */
+export const PRESET_IDS: PresetId[] = [
+  'reversible',
+  'dimension',
+  'scalebar',
+  'axes',
+  'crystal',
+  'errorbar',
+  'magnifier',
+  'callout',
+  'braceGroup',
 ]
+
+export const presetLabel = (id: PresetId) => t(`presets.items.${id}.label`, { ns: 'dialogs' })
+export const presetHint = (id: PresetId) => t(`presets.items.${id}.hint`, { ns: 'dialogs' })
 
 /** 常用希腊字母 / 数学 / 单位符号：点击即插入一个文字对象 */
 export const SYMBOLS = [
@@ -113,14 +125,14 @@ export const SYMBOLS = [
 
 export function insertSymbol(sym: string): void {
   const c = dropPoint()
-  const t = baseText(c.x - 5, c.y - 3, 10, sym)
-  place([t], `插入符号 ${sym}`)
+  const obj = baseText(c.x - 5, c.y - 3, 10, sym)
+  place([obj], msg('history.insertSymbol', { symbol: sym }, 'workspace'), sym)
 }
 
 export function insertPreset(id: PresetId): void {
   const c = dropPoint()
   const g = newId('g')
-  const label = PRESETS.find((p) => p.id === id)?.label ?? id
+  const name = presetLabel(id)
   const objs: CanvasObject[] = []
   const grouped = <T extends CanvasObject>(o: T): T => ({ ...o, groupId: g })
 
@@ -212,5 +224,5 @@ export function insertPreset(id: PresetId): void {
       break
     }
   }
-  place(objs, `插入${label}`)
+  place(objs, msg('history.insertPreset', { name }, 'workspace'), name)
 }

@@ -1,4 +1,6 @@
 import { useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { msg, t as translate } from '@/i18n'
 import { Copy, MoreHorizontal, Pencil, Plus, Search, Trash2,
   SearchX,
 } from 'lucide-react'
@@ -21,7 +23,12 @@ import { TextInput } from '../ui/Input'
  * 点击 = 打开成标签并切换；缩略图是对象布局示意（页面比例 + 对象框），
  * 不做真实渲染——识别用，不冒充成图。
  */
+/** 本组文案在 workspace:canvasList.* 下 */
+const cl = (key: string, values?: Record<string, unknown>) =>
+  translate(`canvasList.${key}`, { ns: 'workspace', ...(values ?? {}) })
+
 export function CanvasList() {
+  useTranslation('workspace')
   const canvases = useDocumentStore((s) => s.canvases)
   const activeId = useDocumentStore((s) => s.activeCanvasId)
   const activeDoc = useDocumentStore((s) => s.doc)
@@ -50,21 +57,21 @@ export function CanvasList() {
           <TextInput
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="搜索画布…"
-            aria-label="搜索画布"
+            placeholder={cl('search')}
+            aria-label={cl('searchAria')}
             className="w-full pl-6"
           />
         </div>
         <Button
           size="icon"
-          aria-label="新建画布"
+          aria-label={cl('newCanvas')}
           onClick={() => void createCanvasAndActivate()}
         >
           <Plus size={14} />
         </Button>
       </div>
 
-      <ul aria-label="画布列表" className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+      <ul aria-label={cl('listLabel')} className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
         {rows.map((c, i) => (
           <CanvasRow
             key={c.id}
@@ -84,7 +91,7 @@ export function CanvasList() {
         ))}
         {rows.length === 0 && (
           <li>
-            <EmptyState icon={SearchX} title={`没有匹配「${query}」的画布`} />
+            <EmptyState icon={SearchX} title={cl('noMatch', { query })} />
           </li>
         )}
       </ul>
@@ -114,23 +121,26 @@ function CanvasRow({
   onRenamed: (name: string | null) => void
   dragFrom: React.RefObject<number | null>
 }) {
+  useTranslation('workspace')
   const [draft, setDraft] = useState(canvas.name)
 
   const remove = async () => {
     const s = useDocumentStore.getState()
     if (s.canvases.length <= 1) {
-      useUiStore.getState().setStatus('项目至少保留一张画布', 'error')
+      useUiStore.getState().setStatus(msg('canvasList.keepOne', undefined, 'workspace'), 'error')
       return
     }
     const ok = await askConfirm({
-      title: `删除画布「${canvas.name}」`,
-      body: `画布上的 ${canvas.objects.length} 个对象将一并删除，且不可撤销。`,
-      confirmLabel: '删除画布',
+      title: msg('canvasList.deleteTitle', { name: canvas.name }, 'workspace'),
+      body: msg('canvasList.deleteBody', { count: canvas.objects.length }, 'workspace'),
+      confirmLabel: msg('canvasList.deleteConfirm', undefined, 'workspace'),
       danger: true,
     })
     if (!ok) return
     deleteCanvasWithSession(canvas.id)
-    useUiStore.getState().setStatus(`已删除画布「${canvas.name}」`)
+    useUiStore
+      .getState()
+      .setStatus(msg('canvasList.deleted', { name: canvas.name }, 'workspace'))
   }
 
   return (
@@ -159,14 +169,14 @@ function CanvasRow({
         onClick={onOpen}
         onDoubleClick={onRenameStart}
         className="min-w-0 flex-1 text-left outline-none focus-visible:focus-ring"
-        aria-label={`打开画布 ${canvas.name}`}
+        aria-label={cl('openCanvas', { name: canvas.name })}
         aria-current={active || undefined}
       >
         {renaming ? (
           <input
             autoFocus
             value={draft}
-            aria-label="画布名"
+            aria-label={cl('canvasName')}
             onChange={(e) => setDraft(e.target.value)}
             onClick={(e) => e.stopPropagation()}
             onBlur={() => onRenamed(draft.trim() || null)}
@@ -183,7 +193,11 @@ function CanvasRow({
               {canvas.name}
             </span>
             <span className="block text-xs text-ink-3">
-              {canvas.page.w}×{canvas.page.h} mm · {canvas.objects.length} 对象
+              {cl('meta', {
+                w: canvas.page.w,
+                h: canvas.page.h,
+                count: canvas.objects.length,
+              })}
             </span>
           </>
         )}
@@ -194,7 +208,7 @@ function CanvasRow({
         trigger={
           <Button
             size="icon-sm"
-            aria-label={`画布 ${canvas.name} 的操作`}
+            aria-label={cl('rowActions', { name: canvas.name })}
             className="opacity-0 focus-visible:opacity-100 group-hover:opacity-100"
           >
             <MoreHorizontal size={13} className="text-ink-3" />
@@ -204,7 +218,7 @@ function CanvasRow({
         <MenuItem onSelect={onRenameStart}>
           <span className="flex items-center gap-2">
             <Pencil size={13} className="text-ink-3" />
-            重命名
+            {cl('rename')}
           </span>
         </MenuItem>
         <MenuItem
@@ -215,14 +229,14 @@ function CanvasRow({
         >
           <span className="flex items-center gap-2">
             <Copy size={13} className="text-ink-3" />
-            复制画布
+            {cl('duplicate')}
           </span>
         </MenuItem>
         <MenuSeparator />
         <MenuItem danger onSelect={() => void remove()}>
           <span className="flex items-center gap-2">
             <Trash2 size={13} />
-            删除画布…
+            {cl('delete')}
           </span>
         </MenuItem>
       </Menu>

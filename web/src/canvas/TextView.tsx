@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef } from 'react'
+import { msg } from '@/i18n'
 import {
   parseRuns,
   plainText,
@@ -64,7 +65,7 @@ export function TextView({ obj }: { obj: TextObject }) {
     const text = el.innerText.replace(/\n$/, '')
     setEditingText(null)
     if (text !== obj.text) {
-      useDocumentStore.getState().commit('编辑文字', (d) => {
+      useDocumentStore.getState().commit(msg('history.editText', undefined, 'inspector'), (d) => {
         const o = d.objects.find((x) => x.id === obj.id)
         if (o && o.type === 'text') o.text = text
       })

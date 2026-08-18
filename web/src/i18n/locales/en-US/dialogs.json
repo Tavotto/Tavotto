@@ -58,6 +58,18 @@
     "title": "Export",
     "warningsIntro": "These edits could not be applied to the re-rendered panels, so the output may differ from the canvas:"
   },
+  "layout": {
+    "description": "A canvas file is a named saved version you can load at any time; everyday edits are already autosaved on this machine",
+    "empty": "No canvas file has been saved yet",
+    "load": "Load",
+    "loadHeading": "Load a canvas file",
+    "namePlaceholder": "Layout name",
+    "saveAs": "Save as canvas file",
+    "saveHeading": "Save as canvas file",
+    "saved": "Saved as canvas file: {{name}}",
+    "saving": "Saving…",
+    "title": "Canvas files"
+  },
   "palette": {
     "commands": {
       "add-text": {
@@ -158,5 +170,65 @@
     "noMatch": "No matching command",
     "placeholder": "Type a command…",
     "searchLabel": "Search commands"
+  },
+  "presets": {
+    "insertSymbolAria": "Insert symbol {{symbol}}",
+    "items": {
+      "axes": {
+        "hint": "x / y direction indicator",
+        "label": "Axis directions"
+      },
+      "braceGroup": {
+        "hint": "Brace with a caption",
+        "label": "Brace grouping"
+      },
+      "callout": {
+        "hint": "Leader line with text",
+        "label": "Leader callout"
+      },
+      "crystal": {
+        "hint": "Arrow with a [001] label",
+        "label": "Crystal direction arrow"
+      },
+      "dimension": {
+        "hint": "Double-headed arrow with end caps",
+        "label": "Dimension line"
+      },
+      "errorbar": {
+        "hint": "I-beam with a ± value",
+        "label": "Error annotation"
+      },
+      "magnifier": {
+        "hint": "Dashed box, leader line and enlarged box",
+        "label": "Zoom inset"
+      },
+      "reversible": {
+        "hint": "Two opposing arrows (⇌)",
+        "label": "Reversible reaction arrows"
+      },
+      "scalebar": {
+        "hint": "Thick line with a length label",
+        "label": "Scale bar"
+      }
+    },
+    "symbolsHeading": "Common symbols",
+    "title": "Research presets"
+  },
+  "relink": {
+    "assetOption": "{{name}} ({{folder}})",
+    "cancelDoc": "Not now",
+    "cancelPaste": "Cancel paste",
+    "confirmDoc": "Relink the selected assets",
+    "confirmPaste": "Paste with these choices",
+    "descDoc": "This layout references files that do not exist in the current figure library (common when opening a project package on another machine). Pick a replacement for each; panels you leave alone stay missing and will be flagged by the pre-export check.",
+    "descPaste": "Panels on the clipboard reference files that do not exist in the current figure library. Pick a replacement for each, or skip that panel.",
+    "footnote": "Relinking resets the figure edits to the new asset's size and script (overrides are bound to elements of the original script, so they do not transfer reliably). Position, size, stacking order and grouping are kept.",
+    "keepMissing": "Leave missing",
+    "refCount_one": " (referenced by {{count}} panel)",
+    "refCount_other": " (referenced by {{count}} panels)",
+    "selectAria": "Choose a replacement asset for {{name}}",
+    "skipPanel": "Skip this panel",
+    "titleDoc": "Panels in this document are missing assets",
+    "titlePaste": "The pasted panels are missing assets"
   }
 }
