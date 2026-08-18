@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { t as translate } from '@/i18n'
 import {
   Braces,
   ChevronRight,
@@ -27,7 +29,7 @@ import { usePanelManifest, usePanelRender } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
-import { roleName, UNSUPPORTED } from '../inspector/roles/registry'
+import { engineLabel, roleName, unsupportedOf } from '../inspector/roles/registry'
 import { Button } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
 import { Menu, MenuItem } from '../ui/Menu'
@@ -45,7 +47,8 @@ import { Tip } from '../ui/Tooltip'
 /** 树节点：真实元素或语义聚类标题（聚类不可选中，只组织层级） */
 interface TreeNode {
   el?: ManifestElement
-  cluster?: { key: string; label: string }
+  /** 聚类节点：labelKey 而不是成品文案——切语言时同一棵树要跟着换说法 */
+  cluster?: { key: string; labelKey: string }
   children: TreeNode[]
 }
 
@@ -67,16 +70,24 @@ function parentGid(gid: string, byGid: ReadonlySet<string>): string | null {
   return 'figure'
 }
 
+/** 本组文案在 workspace:elementTree.* 下 */
+const et = (key: string, values?: Record<string, unknown>) =>
+  translate(`elementTree.${key}`, { ns: 'workspace', ...(values ?? {}) })
+
 /** 语义聚类：子图直属元素按角色归组，找不准的元素靠类别缩小范围 */
-const CLUSTERS: { key: string; label: string; roles: Set<string> }[] = [
-  { key: 'text', label: '文字', roles: new Set(['text', 'title', 'axis_label']) },
+const CLUSTERS: { key: string; labelKey: string; roles: Set<string> }[] = [
+  { key: 'text', labelKey: 'groupText', roles: new Set(['text', 'title', 'axis_label']) },
   {
     key: 'series',
-    label: '数据系列',
+    labelKey: 'groupSeries',
     roles: new Set(['line', 'scatter', 'bar_series', 'bar', 'errorbar', 'fill', 'image']),
   },
-  { key: 'axis', label: '坐标轴', roles: new Set(['ticks', 'spine', 'grid']) },
-  { key: 'legend', label: '图例与色条', roles: new Set(['legend', 'legend_text', 'colorbar']) },
+  { key: 'axis', labelKey: 'groupAxis', roles: new Set(['ticks', 'spine', 'grid']) },
+  {
+    key: 'legend',
+    labelKey: 'groupLegend',
+    roles: new Set(['legend', 'legend_text', 'colorbar']),
+  },
 ]
 
 const clusterOf = (role: string): (typeof CLUSTERS)[number] | undefined =>
@@ -109,7 +120,7 @@ function buildTree(manifest: Manifest): TreeNode[] {
       }
       let bucket = buckets.get(c.key)
       if (!bucket) {
-        bucket = { cluster: { key: c.key, label: c.label }, children: [] }
+        bucket = { cluster: { key: c.key, labelKey: c.labelKey }, children: [] }
         buckets.set(c.key, bucket)
         next.push(bucket)
       }
@@ -146,7 +157,7 @@ function flatten(
 
 /** 命中搜索：标签 / 角色名 / gid（聚类节点按聚类名） */
 function matches(n: TreeNode, q: string): boolean {
-  if (n.cluster) return n.cluster.label.toLowerCase().includes(q)
+  if (n.cluster) return et(n.cluster.labelKey).toLowerCase().includes(q)
   const el = n.el!
   return (
     el.label.toLowerCase().includes(q) ||
@@ -207,8 +218,8 @@ export function ElementTree() {
     return (
       <EmptyState
         icon={Braces}
-        title="选中一个可参数化面板"
-        hint="带 { } 标记的面板由脚本生成，这里会列出它的全部图内元素。"
+        title={et('noPanelTitle')}
+        hint={et('noPanelHint')}
       />
     )
   }
@@ -217,17 +228,17 @@ export function ElementTree() {
     return (
       <div className="flex flex-col items-start gap-2 px-3 py-2">
         <p className="text-xs leading-relaxed text-ink-3">
-          「{panel.name ?? panel.fileId}」的元素清单需要引擎渲染一次。
+          {et('needRender', { name: panel.name ?? panel.fileId })}
         </p>
         {rendering ? (
           <p className="flex items-center gap-1.5 text-xs text-ink-2">
             <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-ink-faint" />
-            正在构建图表…
+            {et('building')}
           </p>
         ) : (
           <Button variant="outline" size="sm" onClick={() => enterElementEdit(panel.id)}>
             <Braces size={13} />
-            加载元素清单
+            {et('load')}
           </Button>
         )}
       </div>
@@ -238,6 +249,7 @@ export function ElementTree() {
 }
 
 function TreeView({ panel, manifest }: { panel: PanelObject; manifest: Manifest }) {
+  useTranslation('workspace')
   const selectedGids = useUiStore((s) => s.selectedGids)
   const editing = useUiStore((s) => s.elementPanelId === panel.id)
   const [query, setQuery] = useState('')
@@ -315,8 +327,8 @@ function TreeView({ panel, manifest }: { panel: PanelObject; manifest: Manifest 
                 focusRow(rows[0].key)
               }
             }}
-            placeholder="搜索名称 / 角色 / gid"
-            aria-label="搜索图内元素"
+            placeholder={et('search')}
+            aria-label={et('searchAria')}
             className={cn(
               'h-7 w-full rounded-sm border border-transparent bg-surface-2 pl-6.5 pr-6 text-xs',
               'text-ink placeholder:text-ink-faint outline-none transition-colors',
@@ -326,7 +338,7 @@ function TreeView({ panel, manifest }: { panel: PanelObject; manifest: Manifest 
           {query && (
             <button
               onClick={() => setQuery('')}
-              aria-label="清除搜索"
+              aria-label={et('clearSearch')}
               className="absolute right-1 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-sm text-ink-3 hover:text-ink"
             >
               <X size={12} />
@@ -339,13 +351,18 @@ function TreeView({ panel, manifest }: { panel: PanelObject; manifest: Manifest 
         <div className="flex shrink-0 items-center gap-1.5 bg-accent-subtle px-3 py-1">
           <Crosshair size={11} className="shrink-0 text-accent" />
           <span className="min-w-0 flex-1 truncate text-xs text-accent">
-            只看：{manifest.elements.find((e) => e.gid === isolated)?.label ?? isolated}
+            {et('isolated', {
+              label: (() => {
+                const hit = manifest.elements.find((e) => e.gid === isolated)
+                return hit ? engineLabel(hit.label) : isolated
+              })(),
+            })}
           </span>
           <button
             onClick={() => setIsolated(null)}
             className="shrink-0 text-xs text-accent underline-offset-2 hover:underline"
           >
-            退出
+            {et('exitIsolate')}
           </button>
         </div>
       )}
@@ -353,12 +370,12 @@ function TreeView({ panel, manifest }: { panel: PanelObject; manifest: Manifest 
       <ul
         ref={listRef}
         role="tree"
-        aria-label="图内元素"
+        aria-label={et('listLabel')}
         className="min-h-0 flex-1 overflow-y-auto py-1"
       >
         {rows.length === 0 && (
           <li>
-            <EmptyState icon={SearchX} title="没有匹配的元素" />
+            <EmptyState icon={SearchX} title={et('noMatch')} />
           </li>
         )}
         {rows.map(({ node, depth, key }) =>
@@ -366,7 +383,7 @@ function TreeView({ panel, manifest }: { panel: PanelObject; manifest: Manifest 
             <ClusterRow
               key={key}
               rowKey={key}
-              label={node.cluster.label}
+              label={et(node.cluster.labelKey)}
               count={node.children.length}
               depth={depth}
               expanded={isOpen(node, key)}
@@ -420,7 +437,7 @@ function ClusterRow({
     <li
       role="treeitem"
       aria-expanded={expanded}
-      aria-label={`${label}（${count} 个元素）`}
+      aria-label={et('groupAria', { label, count })}
       tabIndex={tabbable ? 0 : -1}
       data-el={rowKey}
       style={{ paddingLeft: 8 + depth * 12 }}
@@ -482,7 +499,7 @@ function ElementRow({
       (o) => o.gid === el.gid && o.prop === 'visible' && o.value === false,
     ) || isElementHidden(el)
   const locked = panel.lockedGids?.includes(el.gid) ?? false
-  const unsupported = UNSUPPORTED[el.role]
+  const unsupported = unsupportedOf(el.role)
   const readonly = el.editable.length === 0
 
   return (
@@ -490,7 +507,11 @@ function ElementRow({
       role="treeitem"
       aria-selected={selected}
       aria-expanded={expanded}
-      aria-label={`${el.label}（${roleName(el.role)}）${hidden ? '，已隐藏' : ''}${locked ? '，已锁定' : ''}`}
+      aria-label={
+        et('rowAria', { label: engineLabel(el.label), role: roleName(el.role) }) +
+        (hidden ? et('rowAriaHidden') : '') +
+        (locked ? et('rowAriaLocked') : '')
+      }
       tabIndex={tabbable ? 0 : -1}
       data-el={rowKey}
       style={{ paddingLeft: 8 + depth * 12 }}
@@ -544,7 +565,7 @@ function ElementRow({
         <button
           onPointerDown={(e) => e.stopPropagation()}
           onClick={onToggle}
-          aria-label={expanded ? '折叠' : '展开'}
+          aria-label={et(expanded ? 'collapse' : 'expand')}
           tabIndex={-1}
           className="flex h-4 w-4 shrink-0 items-center justify-center text-ink-3 hover:text-ink"
         >
@@ -557,20 +578,29 @@ function ElementRow({
         <span className="w-4 shrink-0" />
       )}
 
-      <span className="min-w-0 flex-1 truncate" title={`${el.label} · ${roleName(el.role)} · ${el.gid}`}>
-        {el.label}
+      <span
+        className="min-w-0 flex-1 truncate"
+        title={`${engineLabel(el.label)} · ${roleName(el.role)} · ${el.gid}`}
+      >
+        {engineLabel(el.label)}
       </span>
 
       {unsupported && (
-        <Tip label={`${unsupported.title}暂不支持：${unsupported.reason}`} side="right">
+        <Tip
+          label={et('unsupportedTip', {
+            title: unsupported.title,
+            reason: unsupported.reason,
+          })}
+          side="right"
+        >
           <TriangleAlert size={11} className="shrink-0 text-ink-3" />
         </Tip>
       )}
-      {readonly && <span className="shrink-0 text-xs text-ink-3">只读</span>}
+      {readonly && <span className="shrink-0 text-xs text-ink-3">{et('readonly')}</span>}
 
       {/* 锁定 / 隐藏状态常驻；动作本身收进 ⋯ 菜单 */}
-      {locked && <Lock size={11} className="shrink-0 text-ink-3" aria-label="已锁定" />}
-      {hidden && <EyeOff size={11} className="shrink-0 text-ink-3" aria-label="已隐藏" />}
+      {locked && <Lock size={11} className="shrink-0 text-ink-3" aria-label={et('lockedState')} />}
+      {hidden && <EyeOff size={11} className="shrink-0 text-ink-3" aria-label={et('hiddenState')} />}
 
       <span
         className={cn(
@@ -587,7 +617,7 @@ function ElementRow({
               className="h-7 w-6"
               tabIndex={-1}
               onPointerDown={(e) => e.stopPropagation()}
-              aria-label={`${el.label} 的操作`}
+              aria-label={et('rowActions', { label: engineLabel(el.label) })}
             >
               <MoreHorizontal size={12} className="text-ink-3" />
             </Button>
@@ -596,7 +626,7 @@ function ElementRow({
           <MenuItem onSelect={onIsolate}>
             <span className="flex items-center gap-2">
               <Crosshair size={12} className="text-ink-3" />
-              只看此分支
+              {et('isolateBranch')}
             </span>
           </MenuItem>
           {el.gid !== 'figure' && (
@@ -607,7 +637,7 @@ function ElementRow({
                 ) : (
                   <Lock size={12} className="text-ink-3" />
                 )}
-                {locked ? '解锁' : '锁定（画布点击跳过）'}
+                {et(locked ? 'unlock' : 'lock')}
               </span>
             </MenuItem>
           )}
@@ -623,7 +653,7 @@ function ElementRow({
                 ) : (
                   <EyeOff size={12} className="text-ink-3" />
                 )}
-                {hidden ? '恢复显示' : '隐藏（可恢复）'}
+                {et(hidden ? 'unhide' : 'hide')}
               </span>
             </MenuItem>
           )}

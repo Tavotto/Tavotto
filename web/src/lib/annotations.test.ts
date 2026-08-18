@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { arrowHeads, emptyProject, type ArrowObject } from '@/types/document'
 import { useDocumentStore } from '@/store/documentStore'
-import { insertPreset, insertShape, insertSymbol, PRESETS } from './presets'
+import { insertPreset, insertShape, insertSymbol, PRESET_IDS } from './presets'
 
 const arrow = (over: Partial<ArrowObject>): ArrowObject => ({
   id: 'a1', type: 'arrow', x: 0, y: 0, w: 10, h: 10,
@@ -31,14 +31,14 @@ describe('科研预设与形状插入', () => {
   })
 
   it('每个预设都能插入且成组', () => {
-    for (const p of PRESETS) {
+    for (const id of PRESET_IDS) {
       const before = useDocumentStore.getState().doc.objects.length
-      insertPreset(p.id)
+      insertPreset(id)
       const objs = useDocumentStore.getState().doc.objects.slice(before)
-      expect(objs.length, p.id).toBeGreaterThan(0)
+      expect(objs.length, id).toBeGreaterThan(0)
       if (objs.length > 1) {
         const gids = new Set(objs.map((o) => o.groupId))
-        expect(gids.size, `${p.id} 应成一组`).toBe(1)
+        expect(gids.size, `${id} 应成一组`).toBe(1)
         expect([...gids][0]).toBeTruthy()
       }
     }

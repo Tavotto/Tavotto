@@ -9,6 +9,7 @@
  * 3. warn 与 not_verifiable 必须看得见（不是折在一句「有几个问题」后面）。
  */
 import { act } from 'react'
+import { literal } from '@/i18n'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -84,7 +85,7 @@ function stubFetch() {
 
 async function setup(tickPt: number, page = { w: 80, h: 60 }, panelH = 60) {
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_export')
-  useDocumentStore.getState().commit('准备', (d) => {
+  useDocumentStore.getState().commit(literal('准备'), (d) => {
     d.page = page
     // immer 会把 doc 冻起来，模板对象得整份拷贝而不是就地改
     d.objects = [{ ...panel, h: panelH }]

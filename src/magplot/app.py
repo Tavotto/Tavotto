@@ -499,6 +499,18 @@ def scan_panels() -> list[dict]:
 
 # ---------------------------------------------------------------------------
 # API
+#
+# **错误响应的语言归前端管**（界面支持中英文，见 docs/i18n.md）。后端不知道、
+# 也不该知道用户选了哪门语言——它没有 Accept-Language 之外的线索，而语言偏好
+# 存在浏览器/桌面壳这一侧。
+#
+# 于是约定：用户会看到的失败一律带 **稳定的 `code` + `params`**，前端按 code
+# 查自己的文案、把 params 插进去；`error` 字段保留人可读的中文原文，作为
+# ① 老前端与 curl 调试的回退，② 前端没有对应文案时的兜底。**code 一旦发布就
+# 不能改名**——改了等于让所有装着旧前端的用户看到一句英文 key。
+#
+# 只在请求本身畸形时才出现的校验错误（"patches 必须是数组"这类）不给 code：
+# 用户点不出来，给了也没人翻。traceback / 日志同理，那是诊断材料，不翻译。
 # ---------------------------------------------------------------------------
 @app.errorhandler(NoProjectError)
 def _no_project(_exc):
@@ -1217,17 +1229,21 @@ def api_projects_open():
     body = request.get_json(force=True)
     raw = str(body.get("path") or "").strip()
     if not raw:
-        return jsonify({"error": "缺少项目路径"}), 400
+        return jsonify({"error": "缺少项目路径", "code": "missing_path"}), 400
     p = Path(raw).expanduser()
     if body.get("create"):
         try:
             p.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
-            return jsonify({"error": f"无法创建目录: {exc}"}), 400
+            return jsonify({"error": f"无法创建目录: {exc}",
+                            "code": "mkdir_failed",
+                            "params": {"reason": str(exc)}}), 400
     try:
         return jsonify(open_project(str(p), make_default=body.get("default", True)))
     except (RuntimeError, OSError) as exc:
-        return jsonify({"error": str(exc)}), 400
+        return jsonify({"error": str(exc),
+                        "code": "open_project_failed",
+                        "params": {"reason": str(exc)}}), 400
 
 
 @app.post("/api/projects/close")
@@ -1294,13 +1310,15 @@ def api_projects_browse():
         p = Path(raw).expanduser()
         p = p.resolve() if p.exists() else Path(os.path.abspath(str(p)))
     except (OSError, ValueError):
-        return jsonify({"error": "路径无效"}), 400
+        return jsonify({"error": "路径无效", "code": "invalid_path"}), 400
     if not p.is_dir():
         # 找一个还存在的祖先，前端可以一键跳过去继续找
         near = p
         while near != near.parent and not near.is_dir():
             near = near.parent
         return jsonify({"error": f"目录不存在: {p}",
+                        "code": "dir_missing",
+                        "params": {"path": str(p)},
                         "nearest": str(near) if near.is_dir() else None}), 400
     dirs = []
     try:
@@ -1314,9 +1332,13 @@ def api_projects_browse():
                 continue
             dirs.append({"name": child.name, "path": str(child)})
     except PermissionError:
-        return jsonify({"error": f"无权限读取: {p}"}), 403
+        return jsonify({"error": f"无权限读取: {p}",
+                        "code": "permission_denied",
+                        "params": {"path": str(p)}}), 403
     except OSError as exc:
-        return jsonify({"error": f"无法读取: {exc}"}), 400
+        return jsonify({"error": f"无法读取: {exc}",
+                        "code": "read_failed",
+                        "params": {"reason": str(exc)}}), 400
     # 盘符根的上一级是「此电脑」那一层虚拟根，不是它自己
     parent = str(p.parent) if p != p.parent else ("@roots" if os.name == "nt" else None)
     return jsonify({"path": str(p), "parent": parent, "is_roots": False,

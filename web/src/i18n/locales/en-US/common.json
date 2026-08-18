@@ -1,0 +1,51 @@
+{
+  "actions": {
+    "cancel": "Cancel",
+    "close": "Close",
+    "continue": "Continue",
+    "copy": "Copy",
+    "delete": "Delete",
+    "refresh": "Refresh",
+    "reload": "Reload",
+    "save": "Save"
+  },
+  "count": {
+    "selectedObjects_one": "{{count}} object selected",
+    "selectedObjects_other": "{{count}} objects selected"
+  },
+  "keycap": {
+    "esc": "Esc"
+  },
+  "literal": "{{text}}",
+  "measure": {
+    "cmSize": "{{w}}×{{h}}cm",
+    "cmSizeSpaced": "{{w}}×{{h}} cm",
+    "dpi": "{{value}} dpi",
+    "mm": "{{value}} mm",
+    "mmPair": "{{a}}, {{b}} mm",
+    "mmSize": "{{w}}×{{h}} mm",
+    "mmSizeSpaced": "{{w}} × {{h}} mm",
+    "pxSize": "{{w}} × {{h}} px"
+  },
+  "mixed": "Mixed",
+  "objectType": {
+    "arrow": "Arrow",
+    "emptyText": "Empty text",
+    "panel": "Panel",
+    "shape": "Shape",
+    "text": "Text"
+  },
+  "presetText": {
+    "annotation": "Label",
+    "group": "Group"
+  },
+  "shape": {
+    "brace": "Brace",
+    "diamond": "Diamond",
+    "ellipse": "Ellipse",
+    "line": "Line",
+    "polygon": "Polygon",
+    "rect": "Rectangle",
+    "triangle": "Triangle"
+  }
+}

@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next'
+import { useFormatMessage } from '@/i18n/react'
 import { useUiStore } from '@/store/uiStore'
 import { Button } from './ui/Button'
 import { Dialog } from './ui/Dialog'
@@ -8,6 +10,8 @@ import { Dialog } from './ui/Dialog'
  * 必须做出选择，所以 blockDismiss：点外面和 Esc 都不算回答。
  */
 export function ConfirmDialog() {
+  const { t } = useTranslation()
+  const fmt = useFormatMessage()
   const req = useUiStore((s) => s.confirm)
   const answer = (ok: boolean) => {
     useUiStore.getState().setConfirm(null)
@@ -18,25 +22,25 @@ export function ConfirmDialog() {
     <Dialog
       open={!!req}
       onOpenChange={() => answer(false)}
-      title={req?.title ?? ''}
+      title={fmt(req?.title)}
       size="sm"
       blockDismiss
       footer={
         <>
           <Button variant="outline" size="md" onClick={() => answer(false)}>
-            {req?.cancelLabel ?? '取消'}
+            {req?.cancelLabel ? fmt(req.cancelLabel) : t('actions.cancel')}
           </Button>
           <Button
             variant={req?.danger ? 'danger' : 'primary'}
             size="md"
             onClick={() => answer(true)}
           >
-            {req?.confirmLabel ?? '继续'}
+            {req?.confirmLabel ? fmt(req.confirmLabel) : t('actions.continue')}
           </Button>
         </>
       }
     >
-      <p className="text-xs leading-relaxed text-ink-2">{req?.body}</p>
+      <p className="text-xs leading-relaxed text-ink-2">{fmt(req?.body)}</p>
     </Dialog>
   )
 }

@@ -1,4 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
+import { t as translate } from '@/i18n'
+import { engineLabel } from '@/components/inspector/roles/registry'
 import { createPortal } from 'react-dom'
 import { ExternalLink, Eye, EyeOff, Minus, Plus } from 'lucide-react'
 import { round4, scaleGroupAbout } from '@/lib/axesLayout'
@@ -40,7 +43,12 @@ import { Select } from '@/components/ui/Select'
 
 const MARGIN = 8
 
+/** 快捷编辑的文案（workspace:quickEdit.*） */
+const qe = (key: string, values?: Record<string, unknown>) =>
+  translate(`quickEdit.${key}`, { ns: 'workspace', ...(values ?? {}) })
+
 export function QuickEdit() {
+  useTranslation('workspace')
   const target = useQuickEdit((s) => s.target)
   const at = useQuickEdit((s) => s.at)
   const close = useQuickEdit((s) => s.close)
@@ -108,7 +116,7 @@ export function QuickEdit() {
       tabIndex={-1}
       // 对象那份是纯菜单，图内元素那份含输入控件，按对话框宣告更诚实
       role={target.kind === 'object' ? 'menu' : 'dialog'}
-      aria-label="快捷编辑"
+      aria-label={qe('aria')}
       onContextMenu={(e) => e.preventDefault()}
       style={{ left: pos.x, top: pos.y }}
       className={cn(
@@ -197,6 +205,7 @@ function ElementQuick({
   target: { panelId: string; gid: string; focusText?: boolean }
   close: () => void
 }) {
+  useTranslation('workspace')
   const panel = useDocumentStore((s) =>
     s.doc.objects.find((o) => o.id === target.panelId && o.type === 'panel'),
   ) as PanelObject | undefined
@@ -251,7 +260,7 @@ function ElementQuick({
           <Item onClick={toggleVisible}>
             <span className="flex items-center gap-1.5">
               {hidden ? <Eye size={12} /> : <EyeOff size={12} />}
-              {hidden ? '恢复显示' : '隐藏此元素'}
+              {qe(hidden ? 'unhide' : 'hide')}
             </span>
           </Item>
         </>
@@ -259,7 +268,7 @@ function ElementQuick({
       <Item onClick={openInPanel}>
         <span className="flex items-center gap-1.5">
           <ExternalLink size={12} />
-          在属性页打开
+          {qe('openInspector')}
         </span>
       </Item>
     </>
@@ -335,6 +344,7 @@ function GeomControls({
   el: ManifestElement
   manifest: Manifest
 }) {
+  useTranslation('workspace')
   const host = geomTarget(manifest, el)
   const pos = positionOf(panel, host)
   if (!pos) return null
@@ -350,21 +360,21 @@ function GeomControls({
 
   return (
     <Line
-      label="缩放"
+      label={qe('scale')}
       hint={
         host.gid === el.gid
-          ? '绕子图中心缩放，每次 5%'
-          : `位置和大小属于宿主子图「${host.label}」，缩放改的是它`
+          ? qe('scaleTip')
+          : qe('scaleProxiedTip', { label: engineLabel(host.label) })
       }
     >
-      <Button size="icon-sm" aria-label="缩小 5%" onClick={() => scale(0.95)}>
+      <Button size="icon-sm" aria-label={qe('scaleDown')} onClick={() => scale(0.95)}>
         <Minus size={12} />
       </Button>
-      <Button size="icon-sm" aria-label="放大 5%" onClick={() => scale(1.05)}>
+      <Button size="icon-sm" aria-label={qe('scaleUp')} onClick={() => scale(1.05)}>
         <Plus size={12} />
       </Button>
       <span className="ml-auto shrink-0 font-mono text-xs tabular-nums text-ink-3">
-        占宽 {Math.round(pos[2] * 100)}%
+        {qe('widthShare', { percent: Math.round(pos[2] * 100) })}
       </span>
     </Line>
   )
@@ -422,6 +432,7 @@ const isGeometric = (el: ManifestElement) => !!el.resizable || !!el.geom_gid
 /* -------------------------------------------------------------------------- */
 
 function ObjectQuick({ id, close }: { id: string; close: () => void }) {
+  useTranslation('workspace')
   const obj = useDocumentStore((s) => s.doc.objects.find((o) => o.id === id)) as
     | CanvasObject
     | undefined
@@ -445,31 +456,37 @@ function ObjectQuick({ id, close }: { id: string; close: () => void }) {
   return (
     <>
       {/* 复制 / 层级 / 删除作用于整个选区，多选时要说清楚，别让人以为只动这一个 */}
-      <Head>{selected > 1 ? `已选 ${selected} 个对象` : objectLabel(obj)}</Head>
+      <Head>
+        {selected > 1
+          ? translate('count.selectedObjects', { count: selected })
+          : objectLabel(obj)}
+      </Head>
       {obj.type === 'panel' && obj.script && (
-        <Item onClick={run(() => enterElementEdit(obj.id))}>编辑图内元素</Item>
+        <Item onClick={run(() => enterElementEdit(obj.id))}>{qe('editElements')}</Item>
       )}
       <Item onClick={run(duplicateSelected)} shortcut={`${MOD}D`}>
-        复制
+        {translate('actions.copy')}
       </Item>
-      <Item onClick={run(() => toggleLocked(obj.id))}>{obj.locked ? '解锁' : '锁定'}</Item>
-      <Item onClick={run(() => toggleHidden(obj.id))}>{obj.hidden ? '显示' : '隐藏'}</Item>
+      <Item onClick={run(() => toggleLocked(obj.id))}>{qe(obj.locked ? 'unlock' : 'lock')}</Item>
+      <Item onClick={run(() => toggleHidden(obj.id))}>
+        {qe(obj.hidden ? 'show' : 'hideObject')}
+      </Item>
       <Divider />
       <Item onClick={run(() => changeZOrder('top'))} shortcut={`⇧${MOD}]`}>
-        置于顶层
+        {qe('zTop')}
       </Item>
       <Item onClick={run(() => changeZOrder('up'))} shortcut={`${MOD}]`}>
-        上移一层
+        {qe('zUp')}
       </Item>
       <Item onClick={run(() => changeZOrder('down'))} shortcut={`${MOD}[`}>
-        下移一层
+        {qe('zDown')}
       </Item>
       <Item onClick={run(() => changeZOrder('bottom'))} shortcut={`⇧${MOD}[`}>
-        置于底层
+        {qe('zBottom')}
       </Item>
       <Divider />
       <Item danger onClick={run(deleteSelected)} shortcut="Delete">
-        删除
+        {translate('actions.delete')}
       </Item>
     </>
   )

@@ -16,12 +16,14 @@
  *     panels 是旧的，不重扫就是「打开了，但说找不到这张图」。
  *  3. **找不到就说找不到**：绝不退而求其次选中别的面板——用户要的是那一张。
  */
+import { msg } from '@/i18n'
 import { addPanel } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
+import { backendErrorText } from '@/lib/api'
 import type { PanelInfo } from '@/lib/api'
 
 export interface OpenRequest {
@@ -87,25 +89,30 @@ export async function applyOpenRequest(req: OpenRequest): Promise<OpenOutcome> {
       // 换项目：projectStore.open 里已经先冲刷了当前文档的自动保存
       await proj.open(req.project)
     } else if (proj.phase !== 'open') {
-      ui.setStatus('还没有打开的项目，无法定位面板', 'error')
+      ui.setStatus(msg('handoff.noProject', undefined, 'project'), 'error')
       return 'no-project'
     } else {
       await useAssetStore.getState().load()
     }
   } catch (err) {
-    ui.setStatus(`打不开项目: ${err instanceof Error ? err.message : String(err)}`, 'error')
+    ui.setStatus(
+      msg('handoff.openFailed', { error: backendErrorText(err) }, 'project'),
+      'error',
+    )
     return 'failed'
   }
 
   // `magplot open <目录>`：只把图库换过来，不指定面板
   if (!stem) {
-    ui.setStatus(`已打开项目 ${useProjectStore.getState().project?.name ?? ''}`)
+    ui.setStatus(
+      msg('handoff.projectOpened', { name: useProjectStore.getState().project?.name ?? '' }, 'project'),
+    )
     return 'project-only'
   }
 
   const info = findByStem(useAssetStore.getState().panels, stem)
   if (!info) {
-    ui.setStatus(`没找到面板 ${stem}——脚本可能还没跑出产物，或它在别的图库里`, 'error')
+    ui.setStatus(msg('handoff.panelMissing', { stem }, 'project'), 'error')
     return 'missing'
   }
 
@@ -116,11 +123,11 @@ export async function applyOpenRequest(req: OpenRequest): Promise<OpenOutcome> {
     .doc.objects.find((o) => o.type === 'panel' && o.fileId === info.id)
   if (existing) {
     useSelectionStore.getState().set([existing.id])
-    ui.setStatus(`已定位到 ${info.name}`)
+    ui.setStatus(msg('handoff.located', { name: info.name }, 'project'))
     return 'selected'
   }
 
   addPanel(info)
-  ui.setStatus(`已加入 ${info.name}`)
+  ui.setStatus(msg('handoff.added', { name: info.name }, 'project'))
   return 'placed'
 }

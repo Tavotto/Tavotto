@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { useTranslation } from 'react-i18next'
 import { CanvasStage } from '@/canvas/CanvasStage'
 import { CanvasTabs } from '@/components/CanvasTabs'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
@@ -39,6 +40,7 @@ import { useUiStore } from '@/store/uiStore'
 import { onDesktopMenu, onDesktopOpen } from '@/lib/desktop'
 import { DURATION, usePresence } from '@/lib/motion'
 import { applyOpenRequest, readOpenRequestFromUrl, type OpenRequest } from '@/lib/openRequest'
+import { msg } from '@/i18n'
 
 export function App() {
   const phase = useProjectStore((s) => s.phase)
@@ -61,6 +63,7 @@ export function App() {
 }
 
 function Workspace() {
+  const { t } = useTranslation('workspace')
   useKeyboard()
   useServerEvents()
   useEngineSync()
@@ -94,16 +97,18 @@ function Workspace() {
       useUiStore
         .getState()
         .setStatus(
-          stale
-            ? '该文档已在其他窗口保存了更新的版本，本窗口的改动已暂存本机，未写入磁盘'
-            : '自动保存写入磁盘失败：改动暂存在浏览器里，请检查磁盘空间后重试',
+          msg(
+            stale ? 'autosave.staleOtherWindow' : 'autosave.diskFailed',
+            undefined,
+            'workspace',
+          ),
           'error',
         )
     }
     const onDocConflict = () =>
       useUiStore
         .getState()
-        .setStatus('该文档已在另一个窗口打开，同时编辑会互相覆盖', 'error')
+        .setStatus(msg('autosave.docConflict', undefined, 'workspace'), 'error')
     window.addEventListener('magplot:autosave-error', onAutosaveError)
     window.addEventListener('magplot:doc-conflict', onDocConflict)
     return () => {
@@ -134,7 +139,7 @@ function Workspace() {
           {right.mounted && <Inspector overlay={overlay} state={right.state} />}
           {scrim.mounted && (
             <button
-              aria-label="收起侧栏"
+              aria-label={t('scrim.collapse')}
               data-state={scrim.state}
               onClick={() => {
                 const ui = useUiStore.getState()

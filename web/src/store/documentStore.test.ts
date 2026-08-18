@@ -1,3 +1,4 @@
+import { formatMessage, literal } from '@/i18n'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { emptyProject } from '@/types/document'
 import type { TextObject } from '@/types/document'
@@ -45,7 +46,7 @@ describe('多画布数据层', () => {
 
   it('addCanvas 新建并切换；undo 栈按画布隔离', () => {
     const s = () => useDocumentStore.getState()
-    s().commit('加字A', (d) => {
+    s().commit(literal('加字A'), (d) => {
       d.objects.push(text('t1', 'A'))
     })
     const firstId = s().activeCanvasId
@@ -56,23 +57,23 @@ describe('多画布数据层', () => {
     expect(s().doc.objects).toHaveLength(0)
     expect(s().past).toHaveLength(0) // 新画布是干净的撤销栈
 
-    s().commit('加字B', (d) => {
+    s().commit(literal('加字B'), (d) => {
       d.objects.push(text('t2', 'B'))
     })
     s().switchCanvas(firstId)
     expect(s().doc.objects.map((o) => o.id)).toEqual(['t1'])
-    expect(s().past.map((e) => e.label)).toEqual(['加字A'])
-    expect(s().undo()).toBe('加字A')
+    expect(s().past.map((e) => formatMessage(e.label))).toEqual(['加字A'])
+    expect(formatMessage(s().undo())).toBe('加字A')
     expect(s().doc.objects).toHaveLength(0)
 
     s().switchCanvas(secondId)
     expect(s().doc.objects.map((o) => o.id)).toEqual(['t2'])
-    expect(s().past.map((e) => e.label)).toEqual(['加字B'])
+    expect(s().past.map((e) => formatMessage(e.label))).toEqual(['加字B'])
   })
 
   it('buildProject 汇总激活画布的最新内容', () => {
     const s = () => useDocumentStore.getState()
-    s().commit('加字', (d) => {
+    s().commit(literal('加字'), (d) => {
       d.objects.push(text('t1', 'x'))
     })
     const pd = s().buildProject()
@@ -83,7 +84,7 @@ describe('多画布数据层', () => {
 
   it('duplicateCanvas 换新全部对象/成组 id', () => {
     const s = () => useDocumentStore.getState()
-    s().commit('加组', (d) => {
+    s().commit(literal('加组'), (d) => {
       d.objects.push({ ...text('t1', 'x'), groupId: 'g1' })
       d.objects.push({ ...text('t2', 'y'), groupId: 'g1' })
       d.layoutGroups = [{ id: 'g1', kind: 'row', order: ['t1', 't2'], gap: 4, align: 'center' }]
@@ -157,7 +158,7 @@ describe('多画布数据层', () => {
 
   it('自动保存：磁盘落 schema 3，成功后本机副本清空', async () => {
     const s = () => useDocumentStore.getState()
-    s().commit('加字', (d) => {
+    s().commit(literal('加字'), (d) => {
       d.objects.push(text('t1', 'x'))
     })
     expect(flushAutosave()).toBe('saved')
@@ -201,7 +202,7 @@ describe('文字编辑事务', () => {
   /** 复刻 TextSection 的 textarea：逐字符 onChange → updateObjects → commit */
   const type = (chars: string) => {
     for (let i = 1; i <= chars.length; i++) {
-      s().commit('编辑文字', (d) => {
+      s().commit(literal('编辑文字'), (d) => {
         const o = d.objects.find((x) => x.id === 't1')
         if (o?.type === 'text') o.text = chars.slice(0, i)
       })
@@ -211,25 +212,25 @@ describe('文字编辑事务', () => {
   const currentText = () => (s().doc.objects[0] as TextObject).text
 
   it('事务期间连打 5 个字只留一条历史，撤销一次整段回到编辑前', () => {
-    s().commit('加字', (d) => {
+    s().commit(literal('加字'), (d) => {
       d.objects.push(text('t1', '原'))
     })
     const before = s().past.length
 
-    s().beginTxn('编辑文字')
+    s().beginTxn(literal('编辑文字'))
     type('ABCDE')
     expect(s().past).toHaveLength(before) // 事务未提交前一条都不进历史
     expect(currentText()).toBe('ABCDE') // 但文档已即时更新
     s().endTxn()
 
     expect(s().past).toHaveLength(before + 1)
-    expect(s().past.at(-1)!.label).toBe('编辑文字')
-    expect(s().undo()).toBe('编辑文字')
+    expect(formatMessage(s().past.at(-1)!.label)).toBe('编辑文字')
+    expect(formatMessage(s().undo())).toBe('编辑文字')
     expect(currentText()).toBe('原') // 退到编辑前，不是倒数第二个字
   })
 
   it('对照：不开事务逐字符 commit 就是 5 条历史，撤销一次只退一个字', () => {
-    s().commit('加字', (d) => {
+    s().commit(literal('加字'), (d) => {
       d.objects.push(text('t1', '原'))
     })
     const before = s().past.length
@@ -237,7 +238,7 @@ describe('文字编辑事务', () => {
     type('ABCDE')
 
     expect(s().past).toHaveLength(before + 5)
-    expect(s().undo()).toBe('编辑文字')
+    expect(formatMessage(s().undo())).toBe('编辑文字')
     expect(currentText()).toBe('ABCD')
   })
 })
@@ -254,13 +255,13 @@ describe('事务压缩：撤销回到事务开始前', () => {
   const at = () => s().doc.objects[0]
 
   const seed = () =>
-    s().commit('加字', (d) => {
+    s().commit(literal('加字'), (d) => {
       d.objects.push(text('t1', 'x'))
     })
 
   it('拖动：连续 5 次 txnUpdate 后撤销回到起点，不是最后一帧', () => {
     seed()
-    s().beginTxn('移动对象')
+    s().beginTxn(literal('移动对象'))
     for (const x of [10, 20, 30, 40, 50]) {
       s().txnUpdate((d) => {
         d.objects[0].x = x
@@ -269,7 +270,7 @@ describe('事务压缩：撤销回到事务开始前', () => {
     s().endTxn()
     expect(at().x).toBe(50)
 
-    expect(s().undo()).toBe('移动对象')
+    expect(formatMessage(s().undo())).toBe('移动对象')
     expect(at().x).toBe(0)
     // 压缩不该弄丢重做：正向仍是最后一次的值
     s().redo()
@@ -278,7 +279,7 @@ describe('事务压缩：撤销回到事务开始前', () => {
 
   it('同时改 x/y：两个 key 各自回到起点', () => {
     seed()
-    s().beginTxn('移动对象')
+    s().beginTxn(literal('移动对象'))
     for (const v of [10, 20, 30]) {
       s().txnUpdate((d) => {
         d.objects[0].x = v
@@ -295,7 +296,7 @@ describe('事务压缩：撤销回到事务开始前', () => {
   it('含增删的事务不压缩，全量反向补丁照样退回事务开始前', () => {
     seed()
     const before = s().past.length
-    s().beginTxn('移动并加字')
+    s().beginTxn(literal('移动并加字'))
     s().txnUpdate((d) => {
       d.objects[0].x = 10
     })
@@ -316,7 +317,7 @@ describe('事务压缩：撤销回到事务开始前', () => {
   it('discard 路径：不进历史，文档立刻回到事务开始前', () => {
     seed()
     const before = s().past.length
-    s().beginTxn('移动对象')
+    s().beginTxn(literal('移动对象'))
     for (const x of [10, 20, 30]) {
       s().txnUpdate((d) => {
         d.objects[0].x = x
@@ -380,14 +381,14 @@ describe('自动保存磁盘写入队列', () => {
   it('不同文档背靠背排队时都能落盘，兜底副本只清写成功的那个', async () => {
     const s = () => useDocumentStore.getState()
 
-    s().commit('A1', (d) => {
+    s().commit(literal('A1'), (d) => {
       d.objects.push(text('t1', 'A1'))
     })
     expect(flushAutosave()).toBe('saved') // d_a 第一次 PUT：在途
     await tick()
     expect(putLog).toHaveLength(1)
 
-    s().commit('A2', (d) => {
+    s().commit(literal('A2'), (d) => {
       d.objects.push(text('t2', 'A2'))
     })
     expect(flushAutosave()).toBe('saved') // d_a 最新一份：排队
@@ -396,7 +397,7 @@ describe('自动保存磁盘写入队列', () => {
 
     // 切文档：旧实现在这里把 d_a 排队的那份整个顶掉
     await s().switchDocument(emptyProject(), 'd_b')
-    s().commit('B1', (d) => {
+    s().commit(literal('B1'), (d) => {
       d.objects.push(text('t3', 'B1'))
     })
     expect(flushAutosave()).toBe('saved') // d_b：排在 d_a 后面
@@ -427,12 +428,12 @@ describe('自动保存磁盘写入队列', () => {
   it('同一文档连续排队只合并成最新一份，不会重复入队', async () => {
     const s = () => useDocumentStore.getState()
 
-    s().commit('A1', (d) => {
+    s().commit(literal('A1'), (d) => {
       d.objects.push(text('t1', 'A1'))
     })
     flushAutosave() // 在途
     for (const label of ['A2', 'A3', 'A4']) {
-      s().commit(label, (d) => {
+      s().commit(literal(label), (d) => {
         d.objects.push(text(`t_${label}`, label))
       })
       flushAutosave() // 三次都排进同一个 id 的槽位
@@ -533,7 +534,7 @@ describe('自动保存的跨标签页写覆盖', () => {
     expect(puts[0]).toEqual({ id: 'd_base', base: '4242' }) // 基线 = 读到的那一版
 
     const firstWritten = JSON.parse(diskSlots.get('d_base')!).updatedAt as number
-    s().commit('改一笔', (d) => {
+    s().commit(literal('改一笔'), (d) => {
       d.objects.push(text('t1', 'A'))
     })
     flushAutosave()
@@ -545,7 +546,7 @@ describe('自动保存的跨标签页写覆盖', () => {
   it('首次写不带基线：后端无从校验，兼容旧路径', async () => {
     const s = () => useDocumentStore.getState()
     await s().switchDocument(emptyProject(), 'd_fresh')
-    s().commit('改一笔', (d) => {
+    s().commit(literal('改一笔'), (d) => {
       d.objects.push(text('t1', 'A'))
     })
     flushAutosave()
@@ -561,11 +562,11 @@ describe('自动保存的跨标签页写覆盖', () => {
     errors.length = 0
 
     stale = true
-    s().commit('本窗口改一笔', (d) => {
+    s().commit(literal('本窗口改一笔'), (d) => {
       d.objects.push(text('t1', 'A'))
     })
     expect(flushAutosave()).toBe('saved') // 在途
-    s().commit('再改一笔', (d) => {
+    s().commit(literal('再改一笔'), (d) => {
       d.objects.push(text('t2', 'B'))
     })
     flushAutosave() // 排队
@@ -588,7 +589,7 @@ describe('自动保存的跨标签页写覆盖', () => {
     // 写盘链路没被这次冲突堵死：换个文档照样落盘
     stale = false
     await s().switchDocument(emptyProject(), 'd_after')
-    s().commit('新文档改一笔', (d) => {
+    s().commit(literal('新文档改一笔'), (d) => {
       d.objects.push(text('t3', 'C'))
     })
     flushAutosave()
@@ -609,7 +610,7 @@ describe('自动保存的跨标签页写覆盖', () => {
       }
       return baseFetch(url as RequestInfo, init)
     }) as typeof fetch
-    s().commit('改一笔', (d) => {
+    s().commit(literal('改一笔'), (d) => {
       d.objects.push(text('t1', 'A'))
     })
     flushAutosave()

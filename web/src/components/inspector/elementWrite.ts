@@ -3,6 +3,7 @@ import { beginElementPreview, commitElementPreview } from '@/canvas/elementPrevi
 import { flushRender } from '@/hooks/useEngineSync'
 import type { EditableField, ManifestElement } from '@/lib/api'
 import { canPreviewStyle } from '@/lib/svgStyle'
+import { msg, t, type UiMessage } from '@/i18n'
 import { setOverride } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { getHistoryMode, previewStyle } from '@/store/svgPreviewStore'
@@ -32,7 +33,7 @@ const GESTURE_QUIET_MS = 450
  * `start(label)` 允许每次带自己的历史标题：工具条一个手势里可能先点加粗
  * 再改颜色，标题跟着第一个动作走比钉死一个泛称诚实。
  */
-export function useFieldGesture(panel: PanelObject, defaultLabel: string) {
+export function useFieldGesture(panel: PanelObject, defaultLabel: UiMessage | string) {
   const open = useRef(false)
   const timer = useRef<number | undefined>(undefined)
   const panelId = panel.id
@@ -57,8 +58,10 @@ export function useFieldGesture(panel: PanelObject, defaultLabel: string) {
       const p = useDocumentStore.getState().doc.objects.find((o) => o.id === panelId)
       if (p?.type !== 'panel') return
       // 参数按 string 校验而不是直接用：这个函数同时被当成 onFocus /
-      // onScrubStart 的处理器传下去，那时第一个实参是事件对象
-      const title = typeof label === 'string' ? label : labelRef.current
+      // onScrubStart 的处理器传下去，那时第一个实参是事件对象。
+      // 传进来的字符串已经是当前语言的成品文案，包成 literal 描述符即可。
+      const raw = typeof label === 'string' ? label : labelRef.current
+      const title: UiMessage = typeof raw === 'string' ? { key: 'literal', ns: 'common', values: { text: raw } } : raw
       // granular：不开事务，每个变化各成一条历史；渲染照样推迟到 end()
       if (getHistoryMode() === 'gesture') useDocumentStore.getState().beginTxn(title)
       beginElementPreview(p)
@@ -93,6 +96,9 @@ export interface ElementWriter {
   beginGesture: (label?: string) => void
 }
 
+/** 图内属性写入的默认历史标题 */
+const defaultGestureLabel = (): UiMessage => msg('element.editElement', undefined, 'inspector')
+
 /**
  * 图内元素的属性写入器：把「预览 + 事务 + 渲染时机」这一套收在一处，
  * 属性页的工具条与右键弹层共用同一份，两边行为不会飘。
@@ -101,7 +107,7 @@ export interface ElementWriter {
  * 后端**；预览没生效（不在能力表里 / gid 在 SVG 里查不到）就原路走后端。
  */
 export function useElementWriter(panel: PanelObject, element: ManifestElement): ElementWriter {
-  const gesture = useFieldGesture(panel, '修改图内元素')
+  const gesture = useFieldGesture(panel, defaultGestureLabel())
   const gid = element.gid
   const role = element.role
 
@@ -114,7 +120,9 @@ export function useElementWriter(panel: PanelObject, element: ManifestElement): 
 
   const write = (prop: string, value: unknown, immediate = false) => {
     const previewable = canPreviewStyle(role, prop)
-    if (previewable && !gesture.isOpen()) gesture.start(`修改${propLabel(prop, role)}`)
+    if (previewable && !gesture.isOpen()) {
+      gesture.start(t('element.editProp', { ns: 'inspector', label: propLabel(prop, role) }))
+    }
     const previewed = previewable && previewStyle(gid, role, prop, value)
     setOverride(panel.id, gid, prop, value, previewed ? 'none' : immediate)
     gesture.touch()

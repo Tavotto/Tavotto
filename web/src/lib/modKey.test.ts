@@ -56,16 +56,18 @@ describe('状态提示里的撤销键', () => {
   /** 真跑一个会发 toast 的动作，断言文案是平台化拼出来的而不是写死的 */
   const insertOnPlatform = async (platform: string) => {
     asPlatform(platform)
-    const [{ insertSymbol }, { useUiStore }, { useDocumentStore }, { emptyProject }] =
+    const [{ insertSymbol }, { useUiStore }, { useDocumentStore }, { emptyProject }, i18n] =
       await Promise.all([
         import('@/lib/presets'),
         import('@/store/uiStore'),
         import('@/store/documentStore'),
         import('@/types/document'),
+        import('@/i18n'),
       ])
     await useDocumentStore.getState().switchDocument(emptyProject(), 'd_modkey')
     insertSymbol('α')
-    return useUiStore.getState().status
+    // status 存的是描述符（切语言要跟着变），断言前先按当前语言翻出来
+    return i18n.formatMessage(useUiStore.getState().status)
   }
 
   it('Windows 上不出现 ⌘', async () => {

@@ -1,4 +1,5 @@
 import { apiUrl, withProject } from '@/lib/session'
+import { i18n, t } from '@/i18n'
 import type { FigureDocument, ProjectDocument } from '@/types/document'
 
 export interface PanelInfo {
@@ -36,6 +37,30 @@ export class ApiError extends Error {
     this.status = status
     this.body = body
   }
+}
+
+/**
+ * 后端错误 → 当前语言的一句话。
+ *
+ * 约定见 `src/magplot/app.py` 顶部：用户会看到的失败带稳定 `code` + `params`，
+ * `error` 里的中文原文只是回退。**先查 code**，查不到才用原文——后端不知道
+ * 用户选了哪门语言，让它去猜等于把语言偏好搬到服务端。
+ *
+ * 没 code、或本前端还不认识这个 code 时原样透出后端那句话：一句中文总比
+ * 一串 `errors:backend.xxx` 有用，也比「发生了未知错误」有用。
+ */
+export function backendErrorText(e: unknown): string {
+  if (e instanceof ApiError) {
+    const code = typeof e.body?.code === 'string' ? e.body.code : ''
+    // 用 exists 而不是 defaultValue 判「有没有这条」：i18n 那边的
+    // parseMissingKeyHandler 会把缺失的 key 原样吐回来（界面上看得见是哪条），
+    // 那样 defaultValue 永远轮不到，缺文案时用户看到的就是 `backend.xxx`。
+    if (code && i18n.exists(`backend.${code}`, { ns: 'errors' })) {
+      const params = (e.body?.params ?? {}) as Record<string, unknown>
+      return t(`backend.${code}`, { ns: 'errors', ...params })
+    }
+  }
+  return e instanceof Error ? e.message : String(e)
 }
 
 /* --------------------- 项目失效（409 no_project）的统一出口 ------------------- */
@@ -628,7 +653,7 @@ export async function engineRender(
   if (!res.ok) {
     noteProjectGone(res.status, body)
     throw new EngineError(
-      (body.error as string) || `渲染失败（HTTP ${res.status}）`,
+      (body.error as string) || t('render.failed', { ns: 'errors', status: res.status }),
       (body.traceback as string) || '',
       (body.code as string) || '',
       (body.module as string) || '',
@@ -661,7 +686,7 @@ export async function enginePreviewPng(
     const body = await errorBody(res)
     noteProjectGone(res.status, body)
     throw new EngineError(
-      (body.error as string) || `取预览位图失败（HTTP ${res.status}）`,
+      (body.error as string) || t('render.previewPngFailed', { ns: 'errors', status: res.status }),
       (body.traceback as string) || '',
       (body.code as string) || '',
       (body.module as string) || '',

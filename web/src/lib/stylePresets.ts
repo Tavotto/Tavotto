@@ -1,4 +1,5 @@
 import type { Manifest } from './api'
+import { t } from '@/i18n'
 import type { FigureDocument, PanelObject, PanelOverride, TextObject } from '@/types/document'
 
 /**
@@ -38,18 +39,9 @@ export const STYLE_ROLE_PROPS: Record<string, string[]> = {
   colorbar: ['tick_fontsize', 'outline_width'],
 }
 
-export const STYLE_ROLE_LABEL: Record<string, string> = {
-  text: '图内文字',
-  title: '标题',
-  axis_label: '轴标题',
-  ticks: '刻度',
-  legend: '图例',
-  line: '曲线',
-  errorbar: '误差棒',
-  bar_series: '柱形系列',
-  axes: '子图边框',
-  colorbar: '色条',
-}
+/** 样式表里角色的显示名；未登记的角色原样显示 */
+export const styleRoleLabel = (role: string): string =>
+  t(`style.roleLabel.${role}`, { ns: 'dialogs', defaultValue: role })
 
 /** 参与配色循环的系列角色 → 承接颜色的 prop */
 const PALETTE_PROP: Record<string, string> = {
@@ -99,12 +91,8 @@ export function extractPalette(manifest: Manifest): string[] {
 
 export type StyleScope = 'panel' | 'selection' | 'sameScript' | 'document'
 
-export const STYLE_SCOPE_LABEL: Record<StyleScope, string> = {
-  panel: '当前面板',
-  selection: '选中的面板',
-  sameScript: '同脚本的全部面板',
-  document: '整份文档',
-}
+export const styleScopeLabel = (scope: StyleScope): string =>
+  t(`style.scopeLabel.${scope}`, { ns: 'dialogs' })
 
 export interface PanelPlan {
   panel: PanelObject
@@ -172,7 +160,9 @@ export function planStyle(
         for (const [prop, value] of Object.entries(props)) {
           const field = el.editable.find((f) => f.prop === prop)
           if (!field) {
-            unmappable.push(`${el.label}：无「${prop}」`)
+            unmappable.push(
+              t('style.unmappableEntry', { ns: 'dialogs', label: el.label, prop }),
+            )
             continue
           }
           patches.push({ gid: el.gid, prop, value })

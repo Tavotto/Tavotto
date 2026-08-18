@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   Crop,
   FlipHorizontal2,
@@ -14,6 +15,7 @@ import {
   Unlink2,
 } from 'lucide-react'
 import { usePanelRender, useRenderStore } from '@/store/renderStore'
+import { msg, t as translate, type UiMessage } from '@/i18n'
 import { BASE_FONT_PT, effectiveDpi, effectivePt, formatCm, formatMm, round1 } from '@/lib/units'
 import { cn } from '@/lib/utils'
 import type { PanelInfo } from '@/lib/api'
@@ -52,6 +54,11 @@ import { MmField } from './MmField'
 import { UpdateSourceButton } from './UpdateSourceButton'
 import { shared } from './common'
 
+/** 本文件的文案：inspector:panel.*，历史标签 inspector:history.* */
+const pn = (key: string, values?: Record<string, unknown>) =>
+  translate(`panel.${key}`, { ns: 'inspector', ...(values ?? {}) })
+const hist = (key: string): UiMessage => msg(`history.${key}`, undefined, 'inspector')
+
 /** 多选时取值不一致返回 undefined —— 面板版，省去每处的类型断言 */
 function sharedPanel<T>(objs: PanelObject[], pick: (o: PanelObject) => T): T | undefined {
   return shared(objs, (o) => pick(o as PanelObject))
@@ -79,6 +86,7 @@ export function PanelSection({ objs }: { objs: PanelObject[] }) {
 /* -------------------------------------------------------------------------- */
 
 function GeometrySection({ objs }: { objs: PanelObject[] }) {
+  useTranslation('inspector')
   const ids = objs.map((o) => o.id)
   const one = objs.length === 1 ? objs[0] : null
   const locked = objs.every(panelAspectLocked)
@@ -86,14 +94,14 @@ function GeometrySection({ objs }: { objs: PanelObject[] }) {
   const native = sharedPanel(objs, (o) => `${formatMm(o.nativeW)} × ${formatMm(o.nativeH)}`)
   const scale = sharedPanel(objs, (o) => Math.round((panelFullSize(o).w / o.nativeW) * 100))
 
-  const setEach = (label: string, fn: (o: PanelObject) => void) =>
+  const setEach = (label: UiMessage, fn: (o: PanelObject) => void) =>
     updateObjects(ids, label, (o) => {
       if (o.type === 'panel') fn(o)
     })
 
   /** 多个不同值时按整体偏移，保持相对位置 */
   const setAxis = (axis: 'x' | 'y', v: number) => {
-    const label = axis === 'x' ? '修改 X' : '修改 Y'
+    const label = hist(axis === 'x' ? 'setX' : 'setY')
     if (sharedPanel(objs, (o) => o[axis]) === undefined && objs.length > 1) {
       const min = Math.min(...objs.map((o) => o[axis]))
       setEach(label, (o) => {
@@ -107,17 +115,17 @@ function GeometrySection({ objs }: { objs: PanelObject[] }) {
   }
 
   return (
-    <Section title="位置与尺寸">
+    <Section title={pn('geometry')}>
       <Grid2>
         <MmField
           label="X"
-          historyLabel="修改 X"
+          historyLabel={hist('setX')}
           value={sharedPanel(objs, (o) => o.x)}
           onChange={(v) => setAxis('x', v)}
         />
         <MmField
           label="Y"
-          historyLabel="修改 Y"
+          historyLabel={hist('setY')}
           value={sharedPanel(objs, (o) => o.y)}
           onChange={(v) => setAxis('y', v)}
         />
@@ -127,11 +135,11 @@ function GeometrySection({ objs }: { objs: PanelObject[] }) {
         <div className="min-w-0 flex-1">
           <MmField
             label="W"
-            historyLabel="修改宽度"
+            historyLabel={hist('setWidth')}
             min={1}
             value={sharedPanel(objs, (o) => o.w)}
             onChange={(v) =>
-              setEach('修改宽度', (o) => {
+              setEach(hist('setWidth'), (o) => {
                 const k = v / o.w
                 o.w = v
                 if (panelAspectLocked(o)) o.h *= k
@@ -139,12 +147,12 @@ function GeometrySection({ objs }: { objs: PanelObject[] }) {
             }
           />
         </div>
-        <Tip label={locked ? '宽高比已锁定，改一边另一边跟着变' : '宽高比已解锁，W / H 各改各的'}>
+        <Tip label={pn(locked ? 'aspectLocked' : 'aspectUnlocked')}>
           <Button
             size="icon-sm"
             active={locked}
             aria-pressed={locked}
-            aria-label="锁定宽高比"
+            aria-label={pn('lockAspect')}
             onClick={() => setPanelAspectLocked(ids, !locked)}
           >
             {locked ? <Link2 size={12} /> : <Unlink2 size={12} />}
@@ -153,11 +161,11 @@ function GeometrySection({ objs }: { objs: PanelObject[] }) {
         <div className="min-w-0 flex-1">
           <MmField
             label="H"
-            historyLabel="修改高度"
+            historyLabel={hist('setHeight')}
             min={1}
             value={sharedPanel(objs, (o) => o.h)}
             onChange={(v) =>
-              setEach('修改高度', (o) => {
+              setEach(hist('setHeight'), (o) => {
                 const k = v / o.h
                 o.h = v
                 if (panelAspectLocked(o)) o.w *= k
@@ -167,7 +175,7 @@ function GeometrySection({ objs }: { objs: PanelObject[] }) {
         </div>
       </div>
 
-      <Row className="mt-1.5" label="缩放">
+      <Row className="mt-1.5" label={pn('scale')}>
         <NumberField
           value={scale ?? 100}
           mixed={scale === undefined}
@@ -176,9 +184,9 @@ function GeometrySection({ objs }: { objs: PanelObject[] }) {
           max={500}
           precision={0}
           suffix="%"
-          title="相对原始大小的绝对百分比：100% = 原始大小。裁剪不改变缩放基准"
+          title={pn('scaleTitle')}
           onChange={(v) =>
-            updateObjects(ids, '修改面板缩放', (o) => {
+            updateObjects(ids, hist('setPanelScale'), (o) => {
               if (o.type !== 'panel') return
               // 裁剪后仍以未裁剪的整图为缩放基准；包围盒等比缩放
               const k = (o.nativeW * (v / 100)) / panelFullSize(o).w
@@ -190,13 +198,13 @@ function GeometrySection({ objs }: { objs: PanelObject[] }) {
         <Tip
           label={
             one
-              ? `素材自身尺寸 ${formatCm(one.nativeW)}×${formatCm(one.nativeH)} cm；缩放 % 一律相对它计算`
-              : '素材自身的尺寸；缩放 % 一律相对它计算'
+              ? pn('nativeTip', { w: formatCm(one.nativeW), h: formatCm(one.nativeH) })
+              : pn('nativeTipMulti')
           }
           side="left"
         >
           <span className="min-w-0 shrink truncate font-mono text-xs text-ink-3">
-            {native ? `原始 ${native}` : '多个原始尺寸'}
+            {native ? pn('native', { size: native }) : pn('nativeMixed')}
           </span>
         </Tip>
       </Row>
@@ -215,6 +223,7 @@ function GeometrySection({ objs }: { objs: PanelObject[] }) {
 /* -------------------------------------------------------------------------- */
 
 function AppearanceSection({ objs }: { objs: PanelObject[] }) {
+  useTranslation('inspector')
   const [open, setOpen] = useState(false)
   const ids = objs.map((o) => o.id)
   const rot = sharedPanel(objs, panelRotation)
@@ -222,26 +231,26 @@ function AppearanceSection({ objs }: { objs: PanelObject[] }) {
   const translucent = objs.some((o) => (o.opacity ?? 1) < 1)
   const flipped = objs.some((o) => o.flipH || o.flipV)
 
-  const setEach = (label: string, fn: (o: PanelObject) => void) =>
+  const setEach = (label: UiMessage, fn: (o: PanelObject) => void) =>
     updateObjects(ids, label, (o) => {
       if (o.type === 'panel') fn(o)
     })
 
   const summaryBits = [
     rot ? `${rot}°` : null,
-    flipped ? '已翻转' : null,
+    flipped ? pn('flipped') : null,
     opacity !== undefined && opacity < 100 ? `${opacity}%` : null,
   ].filter(Boolean)
 
   return (
     <Disclosure
-      title="外观"
+      title={pn('appearance')}
       open={open}
       onToggle={() => setOpen((v) => !v)}
       summary={summaryBits.length ? summaryBits.join(' · ') : undefined}
     >
       <div className="flex flex-col gap-1.5">
-        <Row label="旋转">
+        <Row label={translate('transform.rotation', { ns: 'inspector' })}>
           <Segmented
             className="w-full"
             value={rot === undefined ? null : String(rot)}
@@ -249,12 +258,12 @@ function AppearanceSection({ objs }: { objs: PanelObject[] }) {
             items={ROTATIONS.map((r) => ({
               value: String(r),
               label: `${r}°`,
-              tip: '只提供 90° 步进：合成引擎在非 90° 倍数下无法填满目标框',
+              tip: pn('rotationTip'),
             }))}
           />
         </Row>
 
-        <Row label="翻转">
+        <Row label={pn('flip')}>
           <div className="flex min-w-0 flex-1 gap-1">
             <Button
               variant="outline"
@@ -262,13 +271,13 @@ function AppearanceSection({ objs }: { objs: PanelObject[] }) {
               className="flex-1"
               active={sharedPanel(objs, (o) => o.flipH === true) === true}
               onClick={() =>
-                setEach('水平翻转', (o) => {
+                setEach(hist('flipH'), (o) => {
                   o.flipH = o.flipH ? undefined : true
                 })
               }
             >
               <FlipHorizontal2 size={13} />
-              水平
+              {pn('flipHorizontal')}
             </Button>
             <Button
               variant="outline"
@@ -276,28 +285,30 @@ function AppearanceSection({ objs }: { objs: PanelObject[] }) {
               className="flex-1"
               active={sharedPanel(objs, (o) => o.flipV === true) === true}
               onClick={() =>
-                setEach('垂直翻转', (o) => {
+                setEach(hist('flipV'), (o) => {
                   o.flipV = o.flipV ? undefined : true
                 })
               }
             >
               <FlipVertical2 size={13} />
-              垂直
+              {pn('flipVertical')}
             </Button>
           </div>
         </Row>
 
-        <Row label="不透明度">
+        <Row label={pn('opacity')}>
           <input
             type="range"
             min={0}
             max={100}
             step={1}
             value={opacity ?? 100}
-            aria-label="不透明度"
+            aria-label={pn('opacity')}
             style={{ accentColor: 'var(--color-accent)' }}
             className="h-4 min-w-0 flex-1 cursor-pointer"
-            onPointerDown={() => useDocumentStore.getState().beginTxn('修改不透明度')}
+            onPointerDown={() =>
+              useDocumentStore.getState().beginTxn(msg('history.setOpacity', undefined, 'workspace'))
+            }
             onPointerUp={() => useDocumentStore.getState().endTxn()}
             onChange={(e) => setPanelOpacity(ids, Number(e.target.value) / 100)}
           />
@@ -317,11 +328,7 @@ function AppearanceSection({ objs }: { objs: PanelObject[] }) {
         {/* 说明只讲导出后果：翻转 / 半透明面板在 PDF 里按位图嵌入，矢量文字不再可选中 */}
         {(flipped || translucent) && (
           <p className="text-xs leading-relaxed text-ink-3">
-            {flipped && translucent
-              ? '翻转与不透明度都会让该面板在导出 PDF 里按位图嵌入（矢量文字不再可选中）。'
-              : flipped
-                ? '翻转的面板在导出 PDF 里按导出 DPI 位图嵌入，矢量文字不再可选中。'
-                : '不透明度小于 100% 时，导出 PDF 中该面板以高分辨率位图嵌入，矢量文字不再可选中。'}
+            {pn(flipped && translucent ? 'bitmapBoth' : flipped ? 'bitmapFlip' : 'bitmapOpacity')}
           </p>
         )}
       </div>
@@ -334,6 +341,7 @@ function AppearanceSection({ objs }: { objs: PanelObject[] }) {
 /* -------------------------------------------------------------------------- */
 
 function ImageSection({ objs }: { objs: PanelObject[] }) {
+  useTranslation('inspector')
   const [open, setOpen] = useState(false)
   const ids = objs.map((o) => o.id)
   const cropTargetId = useUiStore((s) => s.cropTargetId)
@@ -347,13 +355,13 @@ function ImageSection({ objs }: { objs: PanelObject[] }) {
 
   return (
     <Disclosure
-      title="图片"
+      title={pn('image')}
       open={effectiveOpen}
       onToggle={() => setOpen((v) => !v)}
-      summary={cropped ? '已裁剪' : undefined}
+      summary={cropped ? pn('cropped') : undefined}
     >
       <div className="flex gap-1.5">
-        <Tip label="在画布上拖裁剪框取景">
+        <Tip label={pn('cropTip')}>
           <Button
             variant="outline"
             size="sm"
@@ -365,16 +373,16 @@ function ImageSection({ objs }: { objs: PanelObject[] }) {
             }}
           >
             <Crop size={13} />
-            {cropping ? '完成裁剪' : '裁剪'}
+            {pn(cropping ? 'cropDone' : 'crop')}
           </Button>
         </Tip>
         {cropped && (
-          <Tip label="恢复完整画面">
+          <Tip label={pn('resetCropTip')}>
             <Button
               variant="outline"
               size="sm"
               onClick={() => resetPanelCrop(ids)}
-              aria-label="重置裁剪"
+              aria-label={pn('resetCrop')}
             >
               <RotateCcw size={13} />
             </Button>
@@ -383,19 +391,19 @@ function ImageSection({ objs }: { objs: PanelObject[] }) {
       </div>
 
       <Grid2 className="mt-1.5">
-        <Tip label="整图等比缩进当前框内，框跟着收成图的比例">
+        <Tip label={pn('fitTip')}>
           <Button variant="outline" size="sm" className="w-full" onClick={() => fitPanels(ids)}>
             <Minimize2 size={13} />
-            完整放入
+            {pn('fit')}
           </Button>
         </Tip>
-        <Tip label="框一点不动，用居中裁剪切掉溢出的部分">
+        <Tip label={pn('fillTip')}>
           <Button variant="outline" size="sm" className="w-full" onClick={() => fillPanels(ids)}>
             <Maximize2 size={13} />
-            填满框
+            {pn('fill')}
           </Button>
         </Tip>
-        <Tip label="保持宽度，按原始长宽比修正高度（消除拉伸）">
+        <Tip label={pn('aspectTip')}>
           <Button
             variant="outline"
             size="sm"
@@ -403,10 +411,10 @@ function ImageSection({ objs }: { objs: PanelObject[] }) {
             onClick={() => restorePanelAspect(ids)}
           >
             <Ratio size={13} />
-            原始比例
+            {pn('aspect')}
           </Button>
         </Tip>
-        <Tip label="回到素材自身的 mm 尺寸（100% 缩放）">
+        <Tip label={pn('nativeSizeTip')}>
           <Button
             variant="outline"
             size="sm"
@@ -414,12 +422,12 @@ function ImageSection({ objs }: { objs: PanelObject[] }) {
             onClick={() => restorePanelNativeSize(ids)}
           >
             <Scaling size={13} />
-            原始尺寸
+            {pn('nativeSize')}
           </Button>
         </Tip>
       </Grid2>
 
-      <Tip label="保留位置、尺寸、裁剪与层级，只换图源">
+      <Tip label={pn('replaceTip')}>
         <Button
           variant="outline"
           size="sm"
@@ -428,7 +436,7 @@ function ImageSection({ objs }: { objs: PanelObject[] }) {
           onClick={() => setReplacing(true)}
         >
           <Replace size={13} />
-          替换素材
+          {pn('replace')}
         </Button>
       </Tip>
 
@@ -459,9 +467,12 @@ function qualityOf(o: PanelObject): Quality {
     return {
       id: o.id,
       bad,
-      label: '等效字号',
+      label: pn('effectivePt'),
       value: `${round1(pt)} pt`,
-      hint: `原图 ${BASE_FONT_PT}pt × 缩放 ${Math.round((fullW / o.nativeW) * 100)}%${bad ? '，低于 6pt 出版会看不清' : ''}`,
+      hint: pn(bad ? 'ptHintBad' : 'ptHint', {
+        base: BASE_FONT_PT,
+        scale: Math.round((fullW / o.nativeW) * 100),
+      }),
     }
   }
   const dpi = effectiveDpi(o.pxW ?? 0, fullW)
@@ -469,13 +480,14 @@ function qualityOf(o: PanelObject): Quality {
   return {
     id: o.id,
     bad,
-    label: '等效 DPI',
-    value: dpi ? `${dpi} dpi` : '未知',
-    hint: bad ? '低于 300dpi，印刷会发虚' : '位图在当前尺寸下的实际分辨率',
+    label: pn('effectiveDpi'),
+    value: dpi ? `${dpi} dpi` : pn('unknown'),
+    hint: pn(bad ? 'dpiHintBad' : 'dpiHint'),
   }
 }
 
 function DiagnosticsSection({ objs }: { objs: PanelObject[] }) {
+  useTranslation('inspector')
   const [open, setOpen] = useState(false)
   const items = objs.slice(0, 4).map(qualityOf)
   const worst = items.find((q) => q.bad) ?? items[0]
@@ -483,7 +495,7 @@ function DiagnosticsSection({ objs }: { objs: PanelObject[] }) {
 
   return (
     <Disclosure
-      title="诊断"
+      title={pn('diagnostics')}
       open={open}
       onToggle={() => setOpen((v) => !v)}
       summary={
@@ -507,7 +519,7 @@ function DiagnosticsSection({ objs }: { objs: PanelObject[] }) {
           </Tip>
         ))}
         {objs.length > 4 && (
-          <p className="text-xs text-ink-3">另有 {objs.length - 4} 个面板未显示</p>
+          <p className="text-xs text-ink-3">{pn('morePanels', { count: objs.length - 4 })}</p>
         )}
       </div>
     </Disclosure>
@@ -527,6 +539,7 @@ function ReplaceAssetDialog({
   open: boolean
   onOpenChange: (v: boolean) => void
 }) {
+  useTranslation('inspector')
   const panels = useAssetStore((s) => s.panels)
   const loaded = useAssetStore((s) => s.loaded)
   const loading = useAssetStore((s) => s.loading)
@@ -549,21 +562,23 @@ function ReplaceAssetDialog({
     <Dialog
       open={open}
       onOpenChange={onOpenChange}
-      title="替换素材"
-      description="位置、尺寸、裁剪、旋转与层级都会保留；图内修改无法跨脚本搬运，会先征求同意再清空。"
+      title={pn('replaceTitle')}
+      description={pn('replaceDescription')}
       size="md"
     >
       <TextInput
         autoFocus
         value={q}
-        placeholder="搜索文件名…"
+        placeholder={pn('searchAssets')}
         onChange={(e) => setQ(e.target.value)}
         onKeyDown={(e) => e.stopPropagation()}
       />
       <div className="mt-2 max-h-[46vh] overflow-y-auto">
-        {loading && !panels.length && <p className="py-4 text-center text-xs text-ink-3">加载中…</p>}
+        {loading && !panels.length && (
+          <p className="py-4 text-center text-xs text-ink-3">{pn('loading')}</p>
+        )}
         {!loading && !list.length && (
-          <p className="py-4 text-center text-xs text-ink-3">没有匹配的素材</p>
+          <p className="py-4 text-center text-xs text-ink-3">{pn('noAssetMatch')}</p>
         )}
         <ul>
           {list.map((info) => (
@@ -582,10 +597,13 @@ function ReplaceAssetDialog({
                 </span>
                 <span className="shrink-0 text-xs text-ink-3">{folderLabel(info.folder)}</span>
                 <span className="shrink-0 font-mono text-xs tabular-nums text-ink-3">
-                  {formatCm(info.native_w_mm)}×{formatCm(info.native_h_mm)}cm
+                  {translate('measure.cmSize', {
+                    w: formatCm(info.native_w_mm),
+                    h: formatCm(info.native_h_mm),
+                  })}
                 </span>
                 {info.id === panel.fileId && (
-                  <span className="shrink-0 text-xs text-ink-3">当前</span>
+                  <span className="shrink-0 text-xs text-ink-3">{pn('currentAsset')}</span>
                 )}
               </button>
             </li>
@@ -602,6 +620,7 @@ function ReplaceAssetDialog({
 
 /** ⚡ 可参数化面板：进入图内编辑的入口 + 引擎状态 */
 function ScriptSection({ panel }: { panel: PanelObject }) {
+  useTranslation('inspector')
   const render = usePanelRender(panel)
   const editing = useUiStore((s) => s.elementPanelId === panel.id)
   // 冷启动是文件级事实（SSE 写在 building 表里），渲染中是本变体的状态
@@ -611,7 +630,7 @@ function ScriptSection({ panel }: { panel: PanelObject }) {
   const overrides = panel.overrides.length
 
   return (
-    <Section title="图内元素">
+    <Section title={pn('elements')}>
       <div className="flex items-center gap-1.5">
         {/*
           进图内编辑是导航动作，**不能**绑渲染状态：进去本来就不依赖上一次渲染
@@ -629,10 +648,10 @@ function ScriptSection({ panel }: { panel: PanelObject }) {
           }
         >
           <Pencil size={13} />
-          {editing ? '退出图内编辑' : '编辑图内元素'}
+          {pn(editing ? 'exitElementEdit' : 'editElements')}
         </Button>
         {overrides > 0 && (
-          <Tip label={`该面板有 ${overrides} 项图内修改`}>
+          <Tip label={pn('overrideCount', { count: overrides })}>
             <span className="flex h-7 shrink-0 items-center rounded-sm bg-surface-2 px-1.5 font-mono text-xs tabular-nums text-ink-2">
               {overrides}
             </span>
@@ -643,12 +662,12 @@ function ScriptSection({ panel }: { panel: PanelObject }) {
       {!editing && building && (
         <p className="mt-1.5 flex items-center gap-1.5 text-xs text-ink-2">
           <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-ink-faint" />
-          {cold ? '正在冷启动，可能需要几分钟…' : '正在构建…'}
+          {pn(cold ? 'coldBuilding' : 'building')}
         </p>
       )}
 
       {render?.stale && (
-        <p className="mt-1.5 text-xs text-danger">脚本已更新，进入编辑会自动重建</p>
+        <p className="mt-1.5 text-xs text-danger">{pn('staleScript')}</p>
       )}
     </Section>
   )
@@ -659,10 +678,11 @@ function ScriptSection({ panel }: { panel: PanelObject }) {
  * 写回不要求正处于图内编辑：退出编辑后选中面板，同样能把修改同步回原图。
  */
 export function SourceSection({ panel }: { panel: PanelObject }) {
+  useTranslation('inspector')
   const [open, setOpen] = useState(false)
   return (
     <Disclosure
-      title="源文件"
+      title={pn('source')}
       open={open}
       onToggle={() => setOpen((v) => !v)}
       summary={panel.script?.split('/').pop()}
@@ -671,9 +691,7 @@ export function SourceSection({ panel }: { panel: PanelObject }) {
         <UpdateSourceButton panel={panel} />
         <HistoryPanel panel={panel} />
       </div>
-      <p className="mt-1.5 text-xs leading-relaxed text-ink-3">
-        写回会用当前图内修改覆盖 figures 里的原始 PDF/PNG（自动备份，可从历史恢复）。
-      </p>
+      <p className="mt-1.5 text-xs leading-relaxed text-ink-3">{pn('sourceHint')}</p>
     </Disclosure>
   )
 }

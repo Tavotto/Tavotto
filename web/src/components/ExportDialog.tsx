@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   Archive,
   Check,
@@ -10,11 +11,14 @@ import {
   ShieldQuestion,
   TriangleAlert,
 } from 'lucide-react'
-import { createPackage, exportFigure, type ExportResponse } from '@/lib/api'
+import { backendErrorText, createPackage, exportFigure, type ExportResponse } from '@/lib/api'
+import { msg, t as translate } from '@/i18n'
+import { listJoin } from '@/i18n/format'
 import { readExportDefaults, writeExportDefaults } from '@/lib/exportDefaults'
 import { toExportObjects } from '@/lib/exportPayload'
 import {
   buildProofPayload,
+  issueText,
   runPreflight,
   summarize,
   type PreflightIssue,
@@ -45,12 +49,11 @@ import { NumberField, TextInput } from './ui/Input'
 import { Select } from './ui/Select'
 import { Toggle } from './ui/Toggle'
 
-const DPI_OPTIONS = [
-  { value: '300', label: '300 dpi', hint: '投稿' },
-  { value: '600', label: '600 dpi', hint: '出版' },
-  { value: '900', label: '900 dpi', hint: '大幅' },
-  { value: '1200', label: '1200 dpi', hint: '极限' },
-]
+/** 本对话框的文案都在 `dialogs:export.*` 下 */
+const ex = (key: string, values?: Record<string, unknown>) =>
+  translate(`export.${key}`, { ns: 'dialogs', ...(values ?? {}) })
+
+const DPI_VALUES = ['300', '600', '900', '1200'] as const
 
 /**
  * 导出预设：**页宽全部来自 profile**（以前是写死的 85/150/180mm——规范一改，
@@ -62,45 +65,42 @@ function buildPresets(profile: PublicationProfile) {
   return [
     {
       id: 'single',
-      label: '单栏投稿',
+      label: ex('presets.single.label'),
       dpi,
       formats: [vector],
       pageW: profile.widths_mm.single,
-      hint: `PDF · ${profile.widths_mm.single}mm 单栏`,
+      hint: ex('presets.single.hint', { mm: profile.widths_mm.single }),
     },
     {
       id: 'double',
-      label: '通栏投稿',
+      label: ex('presets.double.label'),
       dpi,
       formats: [vector],
       pageW: profile.widths_mm.double,
-      hint: `PDF · ${profile.widths_mm.double}mm 通栏`,
+      hint: ex('presets.double.hint', { mm: profile.widths_mm.double }),
     },
     {
       id: 'both',
-      label: 'PDF + PNG',
+      label: ex('presets.both.label'),
       dpi,
       formats: ['pdf', 'png'],
       pageW: null as number | null,
-      hint: `PDF+PNG · ${dpi}dpi`,
+      hint: ex('presets.both.hint', { dpi }),
     },
     {
       id: 'screen',
-      label: '屏幕预览',
+      label: ex('presets.screen.label'),
       dpi: String(profile.min_raster_dpi),
       formats: ['png'],
       pageW: null as number | null,
-      hint: `PNG ${profile.min_raster_dpi}dpi`,
+      hint: ex('presets.screen.hint', { dpi: profile.min_raster_dpi }),
     },
   ]
 }
 
-const SEVERITY_LABEL: Record<Severity, string> = {
-  error: '阻断',
-  warn: '警告',
-  not_verifiable: '无法核验',
-  suggestion: '建议',
-}
+/** 等级标签按 severity 查 `dialogs:export.severity.<等级>` */
+const severityLabel = (s: Severity): string =>
+  ex(`severity.${s === 'not_verifiable' ? 'notVerifiable' : s}`)
 
 const SEVERITY_ICON: Record<Severity, typeof TriangleAlert> = {
   error: TriangleAlert,
@@ -110,6 +110,9 @@ const SEVERITY_ICON: Record<Severity, typeof TriangleAlert> = {
 }
 
 export function ExportDialog() {
+  // 订阅语言变化：预设、体检数字这些都是模块级 ex() 拼出来的，
+  // 没有这一句切语言后这个对话框会停在旧语言上
+  useTranslation(['dialogs', 'common'])
   const open = useUiStore((s) => s.exportOpen)
   const setOpen = useUiStore((s) => s.setExportOpen)
   const doc = useDocumentStore((s) => s.doc)
@@ -196,7 +199,7 @@ export function ExportDialog() {
         ? { widths_mm: { double: width } }
         : undefined
     // 规范绑定写进文档（可撤销）：proof 与下次打开都按同一套规矩
-    commit('设置出版规范', (d) => {
+    commit(msg('history.setPublicationProfile', undefined, 'workspace'), (d) => {
       d.profile = {
         id,
         ...(nextJournal ? { journal: nextJournal as Record<string, unknown> } : {}),
@@ -251,9 +254,13 @@ export function ExportDialog() {
           : undefined,
       })
       setResult(res)
-      useUiStore.getState().setStatus(`导出完成：${res.files.map((f) => f.name).join('、')}`)
+      useUiStore
+        .getState()
+        .setStatus(
+          msg('export.exported', { files: listJoin(res.files.map((f) => f.name)) }, 'dialogs'),
+        )
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(backendErrorText(err))
     } finally {
       setBusy(false)
     }
@@ -273,9 +280,9 @@ export function ExportDialog() {
       setPackResult(res)
       useUiStore
         .getState()
-        .setStatus(`已生成项目包 ${res.name}（${res.assets} 个素材），换机器可从「文档菜单 → 导入项目包」打开`)
+        .setStatus(msg('export.packaged', { name: res.name, count: res.assets }, 'dialogs'))
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(backendErrorText(err))
     } finally {
       setBusy(false)
     }
@@ -285,8 +292,14 @@ export function ExportDialog() {
     <Dialog
       open={open}
       onOpenChange={setOpen}
-      title="导出"
-      description={`${doc.page.w}×${doc.page.h} mm · ${panels.length} 面板 · ${texts.length} 文字 · ${marks.length} 标注`}
+      title={ex('title')}
+      description={ex('summary', {
+        w: doc.page.w,
+        h: doc.page.h,
+        panels: panels.length,
+        texts: texts.length,
+        marks: marks.length,
+      })}
       width={520}
       busy={busy}
       footer={
@@ -295,7 +308,7 @@ export function ExportDialog() {
             width={200}
             align="start"
             trigger={
-              <Button size="icon" disabled={busy} aria-label="更多导出选项">
+              <Button size="icon" disabled={busy} aria-label={ex('moreOptions')}>
                 <MoreHorizontal size={14} className="text-ink-2" />
               </Button>
             }
@@ -303,35 +316,31 @@ export function ExportDialog() {
             <MenuItem disabled={!doc.objects.length} onSelect={() => void pack()}>
               <span className="flex items-center gap-2">
                 <Archive size={13} className="text-ink-3" />
-                打包项目（.magplot）
+                {ex('package')}
               </span>
             </MenuItem>
           </Menu>
           <span className="flex-1" />
           <Button variant="outline" size="md" disabled={busy} onClick={() => setOpen(false)}>
-            关闭
+            {translate('actions.close')}
           </Button>
           <Button
             variant="primary"
             size="md"
             disabled={!formats.length || blocked}
             loading={busy}
-            loadingLabel="正在合成…"
-            title={
-              blocked
-                ? '存在阻断性问题或无法自动核验的项，先在上方勾选确认再导出'
-                : undefined
-            }
+            loadingLabel={ex('composing')}
+            title={blocked ? ex('blockedTitle') : undefined}
             onClick={run}
           >
             <Download size={14} />
-            开始导出
+            {ex('start')}
           </Button>
         </>
       }
     >
       <div className="flex flex-col gap-2.5">
-        <Row label="预设" labelWidth={52}>
+        <Row label={ex('presetLabel')} labelWidth={52}>
           <div className="flex min-w-0 flex-1 flex-wrap gap-1">
             {presets.map((p) => (
               <button
@@ -352,12 +361,15 @@ export function ExportDialog() {
         </Row>
         {pageMismatch && activePreset?.pageW != null && (
           <p className="pl-[60px] text-xs leading-relaxed text-ink-3">
-            当前页面宽 {doc.page.w}mm，与「{activePreset.label}」的 {activePreset.pageW}mm
-            不一致——预设不改页面，需要的话去「画布」标签页调整。
+            {ex('pageMismatch', {
+              current: doc.page.w,
+              preset: activePreset.label,
+              want: activePreset.pageW,
+            })}
           </p>
         )}
 
-        <Row label="规范" labelWidth={52}>
+        <Row label={ex('profileLabel')} labelWidth={52}>
           <Select
             value={profileId}
             onChange={(v) => applyProfile(v, journalWidth)}
@@ -366,11 +378,11 @@ export function ExportDialog() {
               label: p.label,
               hint: `v${p.version}`,
             }))}
-            ariaLabel="出版规范"
+            ariaLabel={ex('profileAria')}
             className="w-44"
           />
           <span className="shrink-0 font-mono text-xs text-ink-3">
-            {profile.profile_id} · v{profile.version}
+            {ex('profileStamp', { id: profile.profile_id, version: profile.version })}
           </span>
         </Row>
 
@@ -389,7 +401,7 @@ export function ExportDialog() {
         />
 
         {profile.widths_mm.allow_custom && (
-          <Row label="期刊宽" labelWidth={52}>
+          <Row label={ex('journalWidthLabel')} labelWidth={52}>
             <NumberField
               value={journalWidth ?? profile.widths_mm.double}
               min={20}
@@ -404,7 +416,7 @@ export function ExportDialog() {
               }}
             />
             <span className="min-w-0 flex-1 text-xs text-ink-3">
-              覆盖本规范的双栏宽度（只改这一条，其余规则继承；写进文档并随 proof 留档）
+              {ex('journalWidthHint')}
               {journalWidth != null && (
                 <button
                   className="ml-2 text-accent hover:underline"
@@ -413,7 +425,7 @@ export function ExportDialog() {
                     applyProfile(profileId, null)
                   }}
                 >
-                  还原
+                  {ex('journalWidthReset')}
                 </button>
               )}
             </span>
@@ -430,75 +442,85 @@ export function ExportDialog() {
               onChange={(e) => setConfirmed(e.target.checked)}
               className="mt-0.5 shrink-0"
             />
+            {/* 三种情况各是一句完整的话，不拼字符串：中文能靠「与」串起来，
+                英文的从句位置不一样，拼出来的句子读着就是机翻 */}
             <span className="min-w-0 flex-1">
-              我已知悉上述
-              {sum.errors.length > 0 && ` ${sum.errors.length} 类阻断性问题`}
-              {sum.errors.length > 0 && sum.notVerifiable.length > 0 && '与'}
-              {sum.notVerifiable.length > 0 && ` ${sum.notVerifiable.length} 类无法自动核验的项`}
-              ，仍然导出。确认记录会写进 proof report。
+              {sum.errors.length > 0 && sum.notVerifiable.length > 0
+                ? ex('confirmBoth', {
+                    errors: sum.errors.length,
+                    notVerifiable: sum.notVerifiable.length,
+                  })
+                : sum.errors.length > 0
+                  ? ex('confirmErrors', { errors: sum.errors.length })
+                  : ex('confirmNotVerifiable', { notVerifiable: sum.notVerifiable.length })}
             </span>
           </label>
         )}
 
-        <Row label="格式" labelWidth={52}>
+        <Row label={ex('formatLabel')} labelWidth={52}>
           <FormatToggle
             checked={formats.includes('pdf')}
             onClick={() => toggleFormat('pdf')}
             title="PDF"
-            hint="真矢量，投稿首选"
+            hint={ex('pdfHint')}
           />
           <FormatToggle
             checked={formats.includes('png')}
             onClick={() => toggleFormat('png')}
             title="PNG"
-            hint="位图，按 dpi 渲染"
+            hint={ex('pngHint')}
           />
         </Row>
         {profile.preferred_formats.vector.includes('svg') && (
-          <p className="pl-[60px] text-xs leading-relaxed text-ink-3">
-            规范也接受 SVG，但画布合成只出 PDF/PNG（合成走 PyMuPDF）。要 SVG
-            请对单张图导出——图内编辑态的写回 / Codex 插件的 magplot_export 都给真矢量 SVG。
-          </p>
+          <p className="pl-[60px] text-xs leading-relaxed text-ink-3">{ex('svgNote')}</p>
         )}
 
-        <Row label="分辨率" labelWidth={52}>
+        <Row label={ex('dpiLabel')} labelWidth={52}>
           <Select
             value={dpi}
             onChange={(v) => {
               setPreset(null)
               setDpi(v)
             }}
-            options={DPI_OPTIONS}
+            options={DPI_VALUES.map((v) => ({
+              value: v,
+              label: translate('measure.dpi', { value: v }),
+              hint: ex(`dpiHint.${v}`),
+            }))}
             disabled={!formats.includes('png')}
-            ariaLabel="导出分辨率"
+            ariaLabel={ex('dpiSelectLabel')}
             className="w-28"
           />
           <span className="shrink-0 font-mono text-xs text-ink-3">
-            {formats.includes('png') ? `${pxW} × ${pxH} px` : 'PDF 与 dpi 无关'}
+            {formats.includes('png')
+              ? translate('measure.pxSize', { w: pxW, h: pxH })
+              : ex('pdfDpiIrrelevant')}
           </span>
         </Row>
 
-        <Row label="文件名" labelWidth={52}>
+        <Row label={ex('stemLabel')} labelWidth={52}>
           <TextInput value={stem} onChange={(e) => setStem(e.target.value)} placeholder="composed" />
-          <span className="shrink-0 font-mono text-xs text-ink-3">_时间戳</span>
+          <span className="shrink-0 font-mono text-xs text-ink-3">{ex('timestampSuffix')}</span>
         </Row>
 
-        <Row label="留档" labelWidth={52}>
-          <label
-            className="flex items-center gap-1.5 text-xs text-ink-2"
-            title="JSON 留档：profile 身份 + 全部预检结果（含无法核验项）+ 素材清单 + 导出设置，随成图写入导出目录"
-          >
+        <Row label={ex('proofLabel')} labelWidth={52}>
+          <label className="flex items-center gap-1.5 text-xs text-ink-2" title={ex('proofTitle')}>
             <Toggle checked={withProof} onChange={setWithProof} />
-            随成图生成 proof report
+            {ex('proofToggle')}
           </label>
         </Row>
 
-        {error && <p className="text-xs text-danger">操作失败：{error}</p>}
+        {error && <p className="text-xs text-danger">{ex('operationFailed', { error })}</p>}
 
         {(result || packResult) && (
           <div className="flex flex-col gap-1 rounded-sm border border-border bg-surface-2 p-2">
             <p className="break-all text-xs text-ink-3">
-              已保存到 {result?.export_dir ?? useProjectStore.getState().project?.export_dir ?? 'exports/'}
+              {ex('savedTo', {
+                dir:
+                  result?.export_dir ??
+                  useProjectStore.getState().project?.export_dir ??
+                  'exports/',
+              })}
             </p>
             {[...(result?.files ?? []), ...(packResult ? [packResult] : [])].map((f) =>
               isDesktop() ? (
@@ -512,7 +534,7 @@ export function ExportDialog() {
                     const dir = result?.export_dir ?? useProjectStore.getState().project?.export_dir
                     if (!dir) return
                     void revealExportedFile(dir, f.name).then((ok) => {
-                      if (!ok) setError(`无法在文件管理器中定位，文件在：${dir}/${f.name}`)
+                      if (!ok) setError(ex('revealFailed', { path: `${dir}/${f.name}` }))
                     })
                   }}
                   className="flex items-center gap-1.5 font-mono text-xs text-accent hover:underline"
@@ -540,9 +562,7 @@ export function ExportDialog() {
                 （元素不存在 = 脚本改过了）。不吞——用户投出去之前得知道 */}
             {!!result?.warnings?.length && (
               <div className="mt-1 flex flex-col gap-0.5 border-t border-border pt-1">
-                <p className="text-xs text-ink-2">
-                  以下修改未能应用到重渲染的面板上，成图可能与画布不一致：
-                </p>
+                <p className="text-xs text-ink-2">{ex('warningsIntro')}</p>
                 {result.warnings.map((w) => (
                   <p key={w} className="break-all text-xs text-ink-3">
                     {w}
@@ -583,29 +603,38 @@ function ProfileFacts({
   vector: string[]
   raster: string[]
 }) {
+  useTranslation('dialogs')
   const fontOk = minEffectivePt == null || minEffectivePt >= minPt
   return (
     <div className="grid grid-cols-2 gap-x-3 gap-y-1 rounded-sm bg-surface-2 px-2 py-1.5 text-xs">
-      <Fact label="页面" value={`${pageW} × ${pageH} mm`} />
+      <Fact label={ex('facts.page')} value={ex('facts.pageValue', { w: pageW, h: pageH })} />
       <Fact
-        label="栏位"
+        label={ex('facts.column')}
         value={
           column === 'single'
-            ? `单栏 ${singleMm}mm`
+            ? ex('facts.columnSingle', { mm: singleMm })
             : column === 'double'
-              ? `双栏 ${doubleMm}mm`
-              : `不符（规范 ${singleMm}/${doubleMm}mm）`
+              ? ex('facts.columnDouble', { mm: doubleMm })
+              : ex('facts.columnNone', { single: singleMm, double: doubleMm })
         }
         bad={column === null}
       />
       <Fact
-        label="最小有效字号"
-        value={minEffectivePt == null ? `未发现低于 ${minPt}pt 的文字` : `${minEffectivePt}pt`}
+        label={ex('facts.minFont')}
+        value={
+          minEffectivePt == null
+            ? ex('facts.minFontNone', { min: minPt })
+            : ex('facts.minFontValue', { pt: minEffectivePt })
+        }
         bad={!fontOk}
       />
-      <Fact label="导出 DPI" value={`${dpi} dpi（规范下限 ${minDpi}）`} bad={dpi < minDpi} />
-      <Fact label="矢量格式" value={vector.join(' / ').toUpperCase()} />
-      <Fact label="位图格式" value={raster.join(' / ').toUpperCase()} />
+      <Fact
+        label={ex('facts.dpi')}
+        value={ex('facts.dpiValue', { dpi, min: minDpi })}
+        bad={dpi < minDpi}
+      />
+      <Fact label={ex('facts.vector')} value={vector.join(' / ').toUpperCase()} />
+      <Fact label={ex('facts.raster')} value={raster.join(' / ').toUpperCase()} />
     </div>
   )
 }
@@ -629,19 +658,20 @@ function PreflightBlock({
   issues: PreflightIssue[]
   onLocate: (ids: string[]) => void
 }) {
+  useTranslation('dialogs')
   const sum = summarize(issues)
   const [expanded, setExpanded] = useState(sum.errors.length > 0)
   if (issues.length === 0) {
     return (
       <p className="flex items-center gap-1.5 rounded-sm bg-surface-2 px-2 py-1.5 text-xs text-ink-2">
         <Check size={12} className="shrink-0 text-accent" />
-        导出前检查通过
+        {ex('preflightOk')}
       </p>
     )
   }
   const parts = (['error', 'warn', 'not_verifiable', 'suggestion'] as Severity[])
     .filter((s) => sum.counts[s] > 0)
-    .map((s) => `${sum.counts[s]} ${SEVERITY_LABEL[s]}`)
+    .map((s) => ex('severityCount', { count: sum.counts[s], label: severityLabel(s) }))
   return (
     <div className="rounded-sm bg-surface-2 px-2 py-1.5">
       <button
@@ -654,7 +684,7 @@ function PreflightBlock({
           className={sum.blocking ? 'shrink-0 text-danger' : 'shrink-0 text-ink-3'}
         />
         <span className={cn('min-w-0 flex-1', sum.blocking ? 'text-danger' : 'text-ink-2')}>
-          预检：{parts.join(' · ')}
+          {ex('preflightParts', { parts: parts.join(' · ') })}
         </span>
         <ChevronRight
           size={11}
@@ -679,6 +709,7 @@ function IssueRow({
   issue: PreflightIssue
   onLocate: (ids: string[]) => void
 }) {
+  useTranslation('dialogs')
   const Icon = SEVERITY_ICON[issue.severity]
   const tone =
     issue.severity === 'error'
@@ -696,10 +727,10 @@ function IssueRow({
         <Icon size={12} className={cn('mt-px shrink-0', tone)} />
         <span className="min-w-0 flex-1">
           <span className="mr-1 rounded-[3px] bg-surface px-1 font-mono text-[10px] text-ink-3">
-            {SEVERITY_LABEL[issue.severity]}
+            {severityLabel(issue.severity)}
           </span>
-          {issue.text}
-          {issue.objectIds.length > 1 && `（${issue.objectIds.length} 处）`}
+          {issueText(issue)}
+          {issue.objectIds.length > 1 && ex('issueOccurrences', { count: issue.objectIds.length })}
           {!!issue.gids.length && (
             <span className="ml-1 font-mono text-[10px] text-ink-faint">
               {issue.gids.slice(0, 3).join(' ')}
@@ -708,7 +739,7 @@ function IssueRow({
           )}
         </span>
         {!!issue.objectIds.length && (
-          <span className="shrink-0 text-ink-3 group-hover:text-accent">定位</span>
+          <span className="shrink-0 text-ink-3 group-hover:text-accent">{ex('locate')}</span>
         )}
       </button>
     </li>

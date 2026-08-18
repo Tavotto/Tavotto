@@ -1,4 +1,5 @@
 import { useMemo } from 'react'
+import { t } from '@/i18n'
 import { create } from 'zustand'
 import { EngineError, engineRender, type Manifest } from '@/lib/api'
 import { engineTransport } from '@/lib/engineTransport'
@@ -263,7 +264,10 @@ export const useRenderStore = create<RenderState>((set, get) => ({
             code: err instanceof EngineError ? err.code : '',
             module: err instanceof EngineError ? err.module : '',
             error: timedOut
-              ? `渲染超过 ${Math.round(timeoutMs / 60_000)} 分钟无响应，已断开请求；服务可能仍在后台运行，可稍后重试`
+              ? t('render.timeout', {
+                  ns: 'errors',
+                  minutes: Math.round(timeoutMs / 60_000),
+                })
               : err instanceof Error
                 ? err.message
                 : String(err),

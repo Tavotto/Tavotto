@@ -705,6 +705,56 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被它推翻**（
   大小写转换要 `protectMath`（`$…$` 里是 `\alpha` 这类命令，改大小写就废）。
 - 大小写是**一次性动作**，直接改文本内容（可撤销），不新增字段、导出零改动。
 
+## 多语言（zh-CN / en-US，2026-08-18）
+
+完整版在 `docs/i18n.md`，改动前先读。
+
+- 技术栈 i18next + react-i18next + 官方 `i18next-cli`；**资源静态 import 进
+  bundle**（离线桌面版是硬要求，不连 CDN）。八个命名空间在
+  `web/src/i18n/locales/<语言>/`。默认仍是 **zh-CN**；优先级
+  手动 > 系统 > zh-CN，偏好存独立的 `magplot.locale`，**不进 .magplot 文档**。
+- 组件用 `useTranslation()`；store / lib 用 `import { t } from '@/i18n'`。
+  **活得比一次渲染长的文本存描述符** `UiMessage {key, ns?, values?}`
+  （撤销标签、toast、确认框），显示那一刻才翻——存成字符串的话切语言后历史
+  面板永远停在旧语言，而且再也换不回来（参数已经拼进去了）。用户自己的内容
+  包 `literal(text)` 原样透出。这是运行时状态，**文档 schema 一个字节没动**。
+- **复数形态按语言定**（`Intl.PluralRules`）：英文 `_one`+`_other`，中文只有
+  `_other`。中文写 `_one` 不报错但永远选不中，那句译文是死的。**「单数是
+  另一句话」的必须自己分 key**（`deleteObject` / `deleteObjects` 等四对），
+  交给复数规则会让「删除 折线图.pdf」在中文界面变成「删除 1 个对象」。
+- **不翻**：用户内容（项目/画布/文档名、路径、脚本、图内文字、matplotlib
+  输出）、诊断材料（traceback / 日志 / 后端报错原文 / console）。matplotlib
+  的属性名与枚举是**开集**，`propLabel/optionLabel` 查不到就回退原文。
+- **引擎协议里的中文不动**：manifest 的 `group`/`label` 仍由
+  `engine/manifest.py` 发中文，前端 `roles/registry.ts` 用 `ENGINE_GROUP` 表 +
+  `ENGINE_LABEL_PATTERNS` 正则翻结构部分、用户内容原样带过去；`GROUP_ORDER`
+  仍按引擎名排序（分区顺序不该跟着界面语言变）。
+- **Python 不决定界面语言**：用户可见的失败带稳定 `code` + `params`
+  （约定写在 `app.py` 的 API 段首），前端 `backendErrorText()` 按 code 翻，
+  `error` 原文留作回退。**code 一旦发布不能改名**。
+- **出版规范预检的文案在前端**：`web/src/lib/preflight.ts` 的 `PreflightIssue`
+  存的是描述符（`message: UiMessage`），`id` 才是稳定身份——golden vectors
+  （`tests/golden/preflight_vectors.json`）与 proof report 认的都是 id，
+  `preflight.golden.test.ts` 明确**只比判据不比措辞**，所以两侧求值器的中英文
+  措辞可以各自演进。proof report 里写的是**当前语言的成文**（人要读）+ id。
+- **MCP 画布里的预检条目是例外**：那份 payload 来自 Python 求值器
+  （`magplot_preflight` 工具），`it.text` 原样显示——Codex 那一侧不知道这个
+  webview 用的是哪门语言。widget 自己的按钮/状态/标题照常翻。
+- **桌面壳自带一份文案**（`src-tauri/src/i18n.rs`）：原生菜单在 webview
+  起来之前就要建。改菜单文案要**改两处**；切语言只换显示文案，菜单项 id 与
+  加速键一个字节不动。splash/error 页在 `tauri://` 源下，两份文案内联、
+  语言由壳经 `?lang=` 带过去。首启（还没有 `menu-locale` 文件）菜单是默认档，
+  前端起来后重建——已知限制，见 docs/i18n.md。
+- **维护**：`cd web && pnpm i18n:check`（= `types --ci` + 自建检查脚本 +
+  `lint`），查 key 对齐 / 漏翻多余 / 空翻译 / 插值一致 / 复数形态 / 无用 key /
+  硬编码文案 / 类型过期。**CI 里是硬门禁，缺翻译直接红**：接在 ci.yml 的
+  frontend job 与 `scripts/build_frontend.py`（每条打包链路都过它）。
+  官方提取器覆盖不了本仓库的短助手（`hist('setPageW')` 这种），所以自己写了
+  `web/scripts/i18n-check.mjs`——**别为了让官方 CLI 过而降低检查范围**。
+- 英文更长：`web/src/i18n/overflow.test.tsx` 守字数预算与截断兜底，
+  `e2e/i18n.spec.ts` 在真浏览器 1024px 下量 `scrollWidth > clientWidth`
+  （jsdom 没有布局引擎，量不出溢出）。
+
 ## 诊断与排障
 
 - `engine/diagnostics.py` 出**一键诊断包**（`GET /api/diagnostics/bundle`）：

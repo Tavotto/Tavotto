@@ -13,6 +13,7 @@ import {
 import { CanvasStage } from '@/canvas/CanvasStage'
 import { ElementInspector } from '@/components/inspector/ElementInspector'
 import { useEngineSync } from '@/hooks/useEngineSync'
+import { t as translate } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { useDocumentStore } from '@/store/documentStore'
 import { usePanelRender } from '@/store/renderStore'
@@ -116,7 +117,9 @@ export function McpApp({
         const files = (body.files as { path: string }[]) ?? []
         setPreflight((body.preflight as PreflightPayload) ?? preflight)
         setPreflightStale(false)
-        setNotice({ tone: 'ok', text: `已导出 ${files.map((f) => f.path).join('、')}` })
+        setNotice({ tone: 'ok', text: mc('exported', { files: files.map((f) => f.path).join('、') }) })
+        // 这句是**发给 Codex 的对话内容**，不是界面文案：它进的是聊天记录，
+        // 语言该跟着那边的对话走，不该被这个 webview 的界面语言改写
         bridge.sendMessage(`我在画布里改完并导出了 ${open.stem}：${files.map((f) => f.path).join('、')}`)
       } catch (err) {
         setNotice({ tone: 'bad', text: err instanceof Error ? err.message : String(err) })
@@ -149,7 +152,7 @@ export function McpApp({
     !!preflight && (preflight.errors.length > 0 || preflight.not_verifiable.length > 0)
 
   if (!panel) {
-    return <div className="p-4 text-sm text-ink-2">面板不见了——请让 Codex 重新打开这张图。</div>
+    return <div className="p-4 text-sm text-ink-2">{mc('panelGone')}</div>
   }
 
   return (
@@ -160,14 +163,14 @@ export function McpApp({
           {open.profile.profile_id} v{open.profile.profile_version}
         </span>
         <span className="shrink-0 font-mono text-[11px] text-ink-3">
-          {panel.w.toFixed(1)} × {panel.h.toFixed(1)} mm
+          {translate('measure.mmSizeSpaced', { w: panel.w.toFixed(1), h: panel.h.toFixed(1) })}
         </span>
 
         <span className="mx-1 h-4 w-px bg-border" />
-        <IconButton label="撤销" disabled={!canUndo} onClick={() => undo()}>
+        <IconButton label={translate('topbar.undo', { ns: 'workspace' })} disabled={!canUndo} onClick={() => undo()}>
           <RotateCcw size={13} />
         </IconButton>
-        <IconButton label="重做" disabled={!canRedo} onClick={() => redo()}>
+        <IconButton label={translate('topbar.redo', { ns: 'workspace' })} disabled={!canRedo} onClick={() => redo()}>
           <RotateCw size={13} />
         </IconButton>
 
@@ -185,15 +188,15 @@ export function McpApp({
           disabled={busy != null || pending || (needsConfirm && !confirmForced)}
           title={
             pending
-              ? '还有改动没画上，等这一版渲染完再导出'
+              ? mc('exportPendingTitle')
               : needsConfirm && !confirmForced
-                ? '有阻断项或无法核验项：先在下方勾选确认'
+                ? mc('exportBlockedTitle')
                 : undefined
           }
           onClick={() => void runExport(['pdf', 'png'])}
         >
           {busy === 'export' ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
-          导出 PDF+PNG
+          {mc('exportBoth')}
         </button>
       </header>
 
@@ -205,11 +208,14 @@ export function McpApp({
             onChange={(e) => setConfirmForced(e.target.checked)}
             className="mt-0.5 shrink-0"
           />
+          {/* 两种情况各是一句完整的话，不拼字符串（英文从句位置与中文不同） */}
           <span>
-            仍要导出：已知悉 {preflight!.errors.length} 类阻断性问题
-            {preflight!.not_verifiable.length > 0 &&
-              ` 与 ${preflight!.not_verifiable.length} 类无法自动核验的项`}
-            。确认会写进 proof report。
+            {preflight!.not_verifiable.length > 0
+              ? mc('confirmBoth', {
+                  errors: preflight!.errors.length,
+                  notVerifiable: preflight!.not_verifiable.length,
+                })
+              : mc('confirmErrors', { errors: preflight!.errors.length })}
           </span>
         </label>
       )}
@@ -280,7 +286,7 @@ function RenderState({
     return (
       <span className="flex shrink-0 items-center gap-1 text-xs text-danger" title={error}>
         <TriangleAlert size={12} />
-        渲染失败
+        {mc('renderFailed')}
       </span>
     )
   }
@@ -288,7 +294,7 @@ function RenderState({
     return (
       <span className="flex shrink-0 items-center gap-1 text-xs text-ink-3">
         <Loader2 size={12} className="animate-spin" />
-        正在重渲染
+        {mc('rendering')}
       </span>
     )
   }
@@ -296,14 +302,14 @@ function RenderState({
     return (
       <span className="flex shrink-0 items-center gap-1 text-xs text-ink-3">
         <Loader2 size={12} />
-        有改动待应用
+        {mc('pending')}
       </span>
     )
   }
   return (
     <span className="flex shrink-0 items-center gap-1 text-xs text-ink-3">
       <Check size={12} />
-      已同步
+      {mc('synced')}
     </span>
   )
 }
@@ -334,7 +340,7 @@ function PreflightPill({
             ? 'border-danger/40 text-danger'
             : 'border-border text-ink-2',
       )}
-      title={stale ? '图改过了，这份结论属于上一版——点一下重跑' : '重新跑一遍出版规范预检'}
+      title={stale ? mc('pillStaleTitle') : mc('pillTitle')}
     >
       {loading ? (
         <Loader2 size={12} className="animate-spin" />
@@ -345,10 +351,18 @@ function PreflightPill({
       ) : (
         <ShieldCheck size={12} />
       )}
-      {stale ? '预检已过期' : clean ? '预检通过' : `${err} 阻断 · ${warn} 警告 · ${nv} 待核验`}
+      {stale
+        ? mc('pillStale')
+        : clean
+          ? mc('pillClean')
+          : mc('pillCounts', { errors: err, warnings: warn, notVerifiable: nv })}
     </button>
   )
 }
+
+/** MCP 画布这一屏的文案都在 `dialogs:mcp.*` 下 */
+const mc = (key: string, values?: Record<string, unknown>) =>
+  translate(`mcp.${key}`, { ns: 'dialogs', ...(values ?? {}) })
 
 const SEVERITY_ICON = {
   error: TriangleAlert,
@@ -372,7 +386,7 @@ function IssueList({
   return (
     <section className="border-t border-border p-2">
       <h3 className="mb-1.5 text-[11px] text-ink-3">
-        出版规范预检{stale && '（图已改动，结论属于上一版）'}
+        {stale ? mc('issuesTitleStale') : mc('issuesTitle')}
       </h3>
       <ul className="flex flex-col gap-1.5">
         {issues.map((it) => {
@@ -394,6 +408,9 @@ function IssueList({
                     it.severity === 'error' ? 'text-danger' : 'text-ink-3',
                   )}
                 />
+                {/* 文案来自 **Python 侧的求值器**（MCP server 的 magplot_preflight），
+                    原样显示：那一侧不知道这个 webview 用的是哪门语言，而 id / gids /
+                    detail 才是机器可读的部分。见 docs/i18n.md 的「MCP 画布」一节。 */}
                 <span className="min-w-0 flex-1">{it.text}</span>
               </button>
             </li>

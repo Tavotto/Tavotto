@@ -1,3 +1,4 @@
+import { literal } from '@/i18n'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   ApiError,
@@ -135,7 +136,7 @@ describe('项目失效（409 no_project）的前端出口', () => {
     const s = () => useDocumentStore.getState()
     await s().switchDocument(emptyProject(), 'd_gone')
     await tick() // 切文档那次落盘走完，diskBusy 复位
-    s().commit('加一段字', (d) => {
+    s().commit(literal('加一段字'), (d) => {
       d.objects.push(text('t1', '还没存的改动'))
     })
     calls.length = 0

@@ -1,0 +1,58 @@
+{
+  "browser": {
+    "confirmCreate": "Create here",
+    "confirmOpen": "Open this folder",
+    "goTo": "Go to {{path}}",
+    "goToPath": "Go to this path",
+    "noSubdirs": "No subfolders",
+    "parentDir": "Parent folder",
+    "pathLabel": "Current path",
+    "pathPlaceholder": "Type or paste a path, then press Enter",
+    "projectName": "Project name",
+    "subdirsLabel": "Subfolders",
+    "titleCreate": "New project",
+    "titleOpen": "Open project folder"
+  },
+  "handoff": {
+    "added": "Added {{name}}",
+    "located": "Jumped to {{name}}",
+    "noProject": "No project is open, so the panel cannot be located",
+    "openFailed": "Could not open the project: {{error}}",
+    "panelMissing": "Panel {{stem}} not found — the script may not have produced it yet, or it belongs to another figure library",
+    "projectOpened": "Opened project {{name}}"
+  },
+  "picker": {
+    "backToCurrent": "Back to current project",
+    "browse": "Browse folder…",
+    "create": "New project",
+    "missingDir": "Folder not found",
+    "nativePickerTitle": "Choose the folder containing your figures",
+    "openButton": "Open",
+    "openProject": "Open project {{name}}",
+    "opening": "Opening…",
+    "pathLabel": "Project path",
+    "pathPlaceholder": "…or paste a path, e.g. D:\\research\\figures",
+    "recentHeading": "Recent projects",
+    "recentLabel": "Recent projects",
+    "regionLabel": "Choose a project",
+    "removeFromList": "Remove {{name}} from the list (nothing on disk is deleted)",
+    "removeFromListTitle": "Remove from the list (nothing on disk is deleted)",
+    "tagline": "A project is the folder your figures live in. Pick one to start laying out."
+  },
+  "switcher": {
+    "allProjects": "All projects…",
+    "browse": "Browse folder…",
+    "create": "New project…",
+    "current": "Current project",
+    "newTabLabel": "Open in a new tab",
+    "newTabTip": "Open in a new tab (you can switch that tab to another project)",
+    "openInNewTab": "Open this project in a new tab",
+    "opened": "Open",
+    "readOnlySuffix": " · read-only",
+    "recent": "Recent",
+    "registry": "Script registry…",
+    "scriptCount_one": "{{count}} parameterizable script",
+    "scriptCount_other": "{{count}} parameterizable scripts",
+    "trigger": "Current project {{name}} — click to switch"
+  }
+}

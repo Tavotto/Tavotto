@@ -1,4 +1,5 @@
 /** 文档模型 —— 单位一律 mm，数组顺序即 z 序（末尾在最上）。 */
+import { t } from '@/i18n'
 import { newId } from '@/lib/id'
 
 export interface ObjectBase {
@@ -358,12 +359,12 @@ export function emptyProject(): ProjectDocument {
   }
 }
 
-export const OBJECT_TYPE_LABEL: Record<ObjectType, string> = {
-  panel: '面板',
-  text: '文字',
-  arrow: '箭头',
-  shape: '形状',
-}
+/**
+ * 对象类型名。**是函数不是常量表**：常量在模块求值那一刻就把当时的语言
+ * 定死了，之后切语言再也换不掉。
+ */
+export const objectTypeLabel = (type: ObjectType): string =>
+  t(`objectType.${type}`, { ns: 'common' })
 
 export function emptyDocument(): FigureDocument {
   return {
@@ -422,24 +423,22 @@ export function unrotateVec(x: number, y: number, r: PanelRotation): [number, nu
   return rotateVec(x, y, ((360 - r) % 360) as PanelRotation)
 }
 
+/**
+ * 图层树/历史/检查器里显示的对象名。
+ *
+ * **用户自己起的名字、文字内容、素材文件名一律原样透出，绝不翻译**——
+ * 只有「箭头」「矩形」这类兜底的类型名才是界面文案。
+ */
 export function objectLabel(o: CanvasObject): string {
   if (o.name) return o.name
   switch (o.type) {
     case 'panel':
-      return o.fileId.split('/').pop()?.replace(/\.[^.]+$/, '') ?? '面板'
+      return o.fileId.split('/').pop()?.replace(/\.[^.]+$/, '') ?? t('objectType.panel')
     case 'text':
-      return o.text.trim().slice(0, 18) || '空文字'
+      return o.text.trim().slice(0, 18) || t('objectType.emptyText')
     case 'arrow':
-      return '箭头'
+      return t('objectType.arrow')
     case 'shape':
-      return {
-        rect: '矩形',
-        ellipse: '椭圆',
-        line: '直线',
-        triangle: '三角形',
-        diamond: '菱形',
-        polygon: '多边形',
-        brace: '大括号',
-      }[o.shape]
+      return t(`shape.${o.shape}`)
   }
 }

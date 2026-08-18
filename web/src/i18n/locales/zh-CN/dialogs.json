@@ -1,0 +1,609 @@
+{
+  "export": {
+    "blockedTitle": "存在阻断性问题或无法自动核验的项，先在上方勾选确认再导出",
+    "composing": "正在合成…",
+    "confirmBoth": "我已知悉上述 {{errors}} 类阻断性问题与 {{notVerifiable}} 类无法自动核验的项，仍然导出。确认记录会写进 proof report。",
+    "confirmErrors": "我已知悉上述 {{errors}} 类阻断性问题，仍然导出。确认记录会写进 proof report。",
+    "confirmNotVerifiable": "我已知悉上述 {{notVerifiable}} 类无法自动核验的项，仍然导出。确认记录会写进 proof report。",
+    "dpiHint": {
+      "1200": "极限",
+      "300": "投稿",
+      "600": "出版",
+      "900": "大幅"
+    },
+    "dpiLabel": "分辨率",
+    "dpiSelectLabel": "导出分辨率",
+    "exported": "导出完成：{{files}}",
+    "facts": {
+      "column": "栏位",
+      "columnDouble": "双栏 {{mm}}mm",
+      "columnNone": "不符（规范 {{single}}/{{double}}mm）",
+      "columnSingle": "单栏 {{mm}}mm",
+      "dpi": "导出 DPI",
+      "dpiValue": "{{dpi}} dpi（规范下限 {{min}}）",
+      "minFont": "最小有效字号",
+      "minFontNone": "未发现低于 {{min}}pt 的文字",
+      "minFontValue": "{{pt}}pt",
+      "page": "页面",
+      "pageValue": "{{w}} × {{h}} mm",
+      "raster": "位图格式",
+      "vector": "矢量格式"
+    },
+    "formatLabel": "格式",
+    "issueOccurrences": "（{{count}} 处）",
+    "journalWidthHint": "覆盖本规范的双栏宽度（只改这一条，其余规则继承；写进文档并随 proof 留档）",
+    "journalWidthLabel": "期刊宽",
+    "journalWidthReset": "还原",
+    "locate": "定位",
+    "moreOptions": "更多导出选项",
+    "operationFailed": "操作失败：{{error}}",
+    "package": "打包项目（.magplot）",
+    "packaged_other": "已生成项目包 {{name}}（{{count}} 个素材），换机器可从「文档菜单 → 导入项目包」打开",
+    "pageMismatch": "当前页面宽 {{current}}mm，与「{{preset}}」的 {{want}}mm 不一致——预设不改页面，需要的话去「画布」标签页调整。",
+    "pdfDpiIrrelevant": "PDF 与 dpi 无关",
+    "pdfHint": "真矢量，投稿首选",
+    "pngHint": "位图，按 dpi 渲染",
+    "preflightOk": "导出前检查通过",
+    "preflightParts": "预检：{{parts}}",
+    "presetLabel": "预设",
+    "presets": {
+      "both": {
+        "hint": "PDF+PNG · {{dpi}}dpi",
+        "label": "PDF + PNG"
+      },
+      "double": {
+        "hint": "PDF · {{mm}}mm 通栏",
+        "label": "通栏投稿"
+      },
+      "screen": {
+        "hint": "PNG {{dpi}}dpi",
+        "label": "屏幕预览"
+      },
+      "single": {
+        "hint": "PDF · {{mm}}mm 单栏",
+        "label": "单栏投稿"
+      }
+    },
+    "profileAria": "出版规范",
+    "profileLabel": "规范",
+    "profileStamp": "{{id}} · v{{version}}",
+    "proofLabel": "留档",
+    "proofTitle": "JSON 留档：profile 身份 + 全部预检结果（含无法核验项）+ 素材清单 + 导出设置，随成图写入导出目录",
+    "proofToggle": "随成图生成 proof report",
+    "revealFailed": "无法在文件管理器中定位，文件在：{{path}}",
+    "savedTo": "已保存到 {{dir}}",
+    "severity": {
+      "error": "阻断",
+      "notVerifiable": "无法核验",
+      "suggestion": "建议",
+      "warn": "警告"
+    },
+    "severityCount": "{{count}} {{label}}",
+    "start": "开始导出",
+    "stemLabel": "文件名",
+    "summary": "{{w}}×{{h}} mm · {{panels}} 面板 · {{texts}} 文字 · {{marks}} 标注",
+    "svgNote": "规范也接受 SVG，但画布合成只出 PDF/PNG（合成走 PyMuPDF）。要 SVG 请对单张图导出——图内编辑态的写回 / Codex 插件的 magplot_export 都给真矢量 SVG。",
+    "timestampSuffix": "_时间戳",
+    "title": "导出",
+    "warningsIntro": "以下修改未能应用到重渲染的面板上，成图可能与画布不一致："
+  },
+  "layout": {
+    "description": "画布文件是命名保存的版本，可随时载入；日常编辑本身已自动保存在本机",
+    "empty": "还没有保存过画布文件",
+    "load": "载入",
+    "loadHeading": "载入画布文件",
+    "namePlaceholder": "布局名称",
+    "saveAs": "保存为画布文件",
+    "saveHeading": "保存为画布文件",
+    "saved": "已保存为画布文件：{{name}}",
+    "saving": "正在保存…",
+    "title": "画布文件"
+  },
+  "mcp": {
+    "confirmBoth": "仍要导出：已知悉 {{errors}} 类阻断性问题与 {{notVerifiable}} 类无法自动核验的项。确认会写进 proof report。",
+    "confirmErrors": "仍要导出：已知悉 {{errors}} 类阻断性问题。确认会写进 proof report。",
+    "exportBlockedTitle": "有阻断项或无法核验项：先在下方勾选确认",
+    "exportBoth": "导出 PDF+PNG",
+    "exportPendingTitle": "还有改动没画上，等这一版渲染完再导出",
+    "exported": "已导出 {{files}}",
+    "issuesTitle": "出版规范预检",
+    "issuesTitleStale": "出版规范预检（图已改动，结论属于上一版）",
+    "panelGone": "面板不见了——请让 Codex 重新打开这张图。",
+    "pending": "有改动待应用",
+    "pillClean": "预检通过",
+    "pillCounts": "{{errors}} 阻断 · {{warnings}} 警告 · {{notVerifiable}} 待核验",
+    "pillStale": "预检已过期",
+    "pillStaleTitle": "图改过了，这份结论属于上一版——点一下重跑",
+    "pillTitle": "重新跑一遍出版规范预检",
+    "renderFailed": "渲染失败",
+    "rendering": "正在重渲染",
+    "synced": "已同步"
+  },
+  "palette": {
+    "commands": {
+      "add-text": {
+        "keywords": "text add tjwz wenzi",
+        "label": "添加文字"
+      },
+      "canvas-settings": {
+        "keywords": "canvas page settings hbsz huabu",
+        "label": "画布设置"
+      },
+      "edit-elements": {
+        "keywords": "edit element tnys tuneiyuansu",
+        "label": "编辑选中面板的图内元素"
+      },
+      "export": {
+        "keywords": "export pdf png dc daochu",
+        "label": "导出 PDF / PNG…"
+      },
+      "fit": {
+        "keywords": "fit zoom syhb shiying",
+        "label": "缩放到适应画布"
+      },
+      "grid": {
+        "keywords": "grid wg wangge",
+        "label": "显示 / 隐藏网格"
+      },
+      "group": {
+        "keywords": "group cz chengzu",
+        "label": "成组所选对象"
+      },
+      "layout-col": {
+        "keywords": "col layout lbj liebuju",
+        "label": "创建列布局"
+      },
+      "layout-grid": {
+        "keywords": "grid layout wgbj wangge",
+        "label": "创建网格布局"
+      },
+      "layout-row": {
+        "keywords": "row layout hbj hangbuju",
+        "label": "创建行布局"
+      },
+      "left-assets": {
+        "keywords": "asset panel sc sucai",
+        "label": "打开素材"
+      },
+      "left-elements": {
+        "keywords": "element tree yss yuansushu",
+        "label": "打开图内元素树"
+      },
+      "left-layers": {
+        "keywords": "layer structure tc jg tuceng",
+        "label": "打开结构（图层）"
+      },
+      "load-layout": {
+        "keywords": "open load layout zr zairu",
+        "label": "载入画布文件…"
+      },
+      "new-doc": {
+        "keywords": "new blank xj xinjian",
+        "label": "新建空白文档"
+      },
+      "rulers": {
+        "keywords": "ruler bc biaochi",
+        "label": "显示 / 隐藏标尺"
+      },
+      "save-layout": {
+        "keywords": "save layout bc baocun",
+        "label": "保存为画布文件…"
+      },
+      "select-all": {
+        "keywords": "select all qx quanxuan",
+        "label": "全选"
+      },
+      "shortcut-help": {
+        "keywords": "shortcut help kjj kuaijiejian",
+        "label": "快捷键帮助"
+      },
+      "styles": {
+        "keywords": "style token preset ys lwys yangshi",
+        "label": "论文样式…"
+      },
+      "sub-labels": {
+        "keywords": "label abc xhbq xuhao",
+        "label": "添加 (a)(b)(c) 序号标签"
+      },
+      "ungroup": {
+        "keywords": "ungroup qxcz",
+        "label": "取消成组"
+      },
+      "versions": {
+        "keywords": "version history timeline bb sjx banben",
+        "label": "布局版本时间线…"
+      }
+    },
+    "listLabel": "命令",
+    "needPanel": "先选中一个可参数化面板",
+    "noMatch": "没有匹配的命令",
+    "placeholder": "输入命令…",
+    "searchLabel": "搜索命令"
+  },
+  "presets": {
+    "insertSymbolAria": "插入符号 {{symbol}}",
+    "items": {
+      "axes": {
+        "hint": "x / y 方向角标",
+        "label": "坐标方向"
+      },
+      "braceGroup": {
+        "hint": "大括号 + 说明文字",
+        "label": "括号分组"
+      },
+      "callout": {
+        "hint": "引线 + 文字",
+        "label": "引线标注"
+      },
+      "crystal": {
+        "hint": "箭头 + [001] 标注",
+        "label": "晶向箭头"
+      },
+      "dimension": {
+        "hint": "双向箭头 + 两端界线",
+        "label": "尺寸线"
+      },
+      "errorbar": {
+        "hint": "工字线 + ± 值",
+        "label": "误差标注"
+      },
+      "magnifier": {
+        "hint": "虚线框 + 引出线 + 放大框",
+        "label": "局部放大框"
+      },
+      "reversible": {
+        "hint": "两条反向箭头（⇌）",
+        "label": "可逆反应箭头"
+      },
+      "scalebar": {
+        "hint": "粗线 + 长度标注",
+        "label": "比例尺"
+      }
+    },
+    "symbolsHeading": "常用符号",
+    "title": "科研预设"
+  },
+  "registry": {
+    "canRegister": "可登记：",
+    "candidatesTitle": "未登记的绘图脚本",
+    "conflictHint": "在下面把该 stem 填给其中一个脚本即可；另一个脚本对它的认领会自动摘掉。",
+    "conflictScripts": "：{{scripts}}",
+    "conflictsTitle": "归属冲突（未分配，需要你裁决）",
+    "emptyHint": "先「重新扫描」；文件名只有运行时才知道的脚本用「试运行」登记。",
+    "emptyTitle": "注册表是空的",
+    "entry": "入口 {{entry}}",
+    "introAfter": "（可参数化编辑）。注册表存在图库目录的 mm_registry.json，随图库走。",
+    "introBefore": "登记过的脚本，它产出的面板才带",
+    "manualAria": "{{script}} 的 stem",
+    "manualPlaceholder": "或手工填 stem，逗号分隔",
+    "noCandidates": "没有发现未登记的脚本。",
+    "none": "—",
+    "nothingNew": "扫描完成，没有发现新的可登记脚本",
+    "probeAndRegister": "试运行并登记",
+    "probeFailed": "{{script}} 试运行失败：{{error}}",
+    "probeRegistered": "已登记 {{stems}}",
+    "register": "登记",
+    "registeredTitle_other": "已登记（{{count}}）",
+    "registered_other": "已登记 {{count}} 个脚本",
+    "reprobe": "重新试运行",
+    "rescan": "重新扫描",
+    "running": "运行中…",
+    "runtimeOnlyTail": "。跑一遍就能按真实产出登记。",
+    "runtimeOnly_other": "有 {{count}} 处存图调用，但文件名只有运行时才知道",
+    "sourcePrefix": "注册表来源：",
+    "title": "脚本注册表",
+    "unresolved": "（对不上磁盘产物：{{names}}）",
+    "write": "写入"
+  },
+  "relink": {
+    "assetOption": "{{name}}（{{folder}}）",
+    "cancelDoc": "暂不处理",
+    "cancelPaste": "取消粘贴",
+    "confirmDoc": "重新链接所选素材",
+    "confirmPaste": "按上述处置粘贴",
+    "descDoc": "布局引用了当前图库中不存在的文件（常见于换机器打开项目包）。逐个选择替代素材；不处理的面板会保持缺失状态并在导出前检查里提示。",
+    "descPaste": "剪贴板里的面板引用了当前图库中不存在的文件。逐个选择替代素材，或跳过该面板。",
+    "footnote": "重新链接会按新素材的尺寸与脚本重置图内修改（overrides 绑定在原脚本的元素上，跨素材搬运不可靠）；位置、大小、层级与成组关系保留。",
+    "keepMissing": "保持缺失",
+    "refCount_other": "（{{count}} 个面板引用）",
+    "selectAria": "为 {{name}} 选择替代素材",
+    "skipPanel": "跳过该面板",
+    "titleDoc": "文档里的面板缺少素材",
+    "titlePaste": "粘贴的面板缺少素材"
+  },
+  "settings": {
+    "about": {
+      "check": {
+        "bundled_runtime": "内置渲染环境",
+        "cli_claude": "Claude CLI",
+        "cli_codex": "Codex CLI",
+        "matplotlib": "matplotlib",
+        "project_open": "项目",
+        "project_readable": "项目目录可读",
+        "project_writable": "项目目录可写（写回原始文件需要）",
+        "registry_conflicts": "注册表 stem 归属",
+        "worker_python": "渲染引擎 Python"
+      },
+      "detecting": "正在检测…",
+      "diagnosticsHintAfter": "。",
+      "diagnosticsHintBefore": "遇到问题时导出一个 zip 发给我们：里面是版本、系统、渲染解释器、AI CLI 探测结果与最近日志。",
+      "diagnosticsHintStrong": "密钥与你的主目录已自动抹掉",
+      "diagnosticsTitle": "环境诊断",
+      "exportBundle": "导出诊断包",
+      "licenseAfter": "。",
+      "licenseBefore": "自由软件，以 AGPL-3.0-only 发布 ——",
+      "privacy": "所有数据与渲染都在本机完成，不上传任何内容；改图助手调用的是你本机的 Codex / Claude 命令行工具。唯一的对外请求是检查更新（可在「检查更新」里关闭）。",
+      "source": "获取源代码",
+      "tagline": "论文图排版与参数化图表编辑"
+    },
+    "ai": {
+      "addEndpoint": "添加接口…",
+      "addEndpointTitle": "为 {{agent}} 添加接口",
+      "apiKey": "密钥",
+      "apiKeySaved": "已保存 {{hint}}，留空则不改",
+      "baseUrl": "接口地址",
+      "brokenAfter": "的安装（多见于微软商店版的执行别名残留），已跳过：",
+      "brokenBefore": "检测到一个",
+      "brokenStrong": "无法启动",
+      "claudePath": "Claude 路径",
+      "codexPath": "Codex 路径",
+      "delete": "删除",
+      "edit": "编辑",
+      "editEndpointTitle": "编辑接口 — {{label}}",
+      "endpoint": "接口",
+      "endpointAria": "{{label}} 使用的接口",
+      "installError": {
+        "installed_but_not_found": "npm 安装完成，但仍未检测到可用的 CLI。重启应用再试，或在下方手动指定路径。",
+        "npm_missing": "找不到 npm：请先安装 Node.js LTS（nodejs.org）。",
+        "other": "安装失败，可查看日志或重试。",
+        "timeout": "安装超时（网络太慢或 npm 源不可达），可重试。"
+      },
+      "installLog": "安装日志",
+      "installWithNpm": "用 npm 安装 {{label}}",
+      "installing": "正在安装…",
+      "introAfter": "。",
+      "introBefore": "改图助手借用你已装好的 codex / claude 命令行工具。接第三方接口时只在启动它们时临时注入环境变量，",
+      "introStrong": "不会改写你自己的 ~/.claude 或 ~/.codex 配置",
+      "keyNote": "密钥保存在本机配置文件里（目录权限已收到仅本人可读），只在启动 CLI 时作为环境变量传入，不写进任何命令行、日志或项目文件。",
+      "models": "模型",
+      "modelsPlaceholder": "逗号分隔；第一个是默认值",
+      "name": "名称",
+      "noKeySuffix": "（未填密钥）",
+      "noNpm": "本机没有 npm。请先安装 Node.js LTS（nodejs.org），装好后回到这里再点安装。",
+      "notDetected": "未检测到",
+      "npmCommand": "npm install -g {{package}}",
+      "officialBaseUrl": "（官方默认地址）",
+      "officialLogin": "CLI 自带登录态（官方）",
+      "pathPlaceholder": "留空 = 自动查找（PATH 与常见安装位置）",
+      "preset": "预设",
+      "presetAria": "接口预设",
+      "presetPlaceholder": "选一个预设填好地址…",
+      "redetect": "重新探测",
+      "searchedHint": "装在别处就把可执行文件路径填在下面。",
+      "searchedSummary": "找过这些位置",
+      "wire": "协议",
+      "wireChat": "chat（OpenAI Chat Completions 兼容，多数网关）",
+      "wireResponses": "responses（OpenAI Responses 原生）"
+    },
+    "canvas": {
+      "companionsExplain": "关联元素 = 被你手动摆过位置的标题 / 轴标签 / 图例，以及色条轴与 twinx 的孪生轴。它们要么钉在 figure 坐标上、要么本就是平级的另一个子图，不带的话挪走子图它们会留在原地。关掉就只动子图本身。",
+      "dragCompanions": "拖动子图联动",
+      "dragCompanionsAria": "拖动子图时带上关联元素",
+      "dragCompanionsHint": "关联元素跟着子图一起走",
+      "elsewhere": "网格、吸附、标尺与安全区域的开关在右栏「画布」页，与画布放在一起改。",
+      "openCanvasSettings": "打开画布设置"
+    },
+    "export": {
+      "defaultDpi": "默认 DPI",
+      "defaultFormats": "默认格式",
+      "hint": "这里是导出对话框的初始值；单次导出仍可临时改。",
+      "proof": "Proof 留档",
+      "proofAria": "默认随导出生成 proof report",
+      "proofHint": "随成图生成 proof report（JSON 留档）"
+    },
+    "general": {
+      "autosaveHint": "改动自动保存：编辑停顿 1 秒后写入本机磁盘（layouts/_autosave/），无须手动保存；命名版本走「保存为画布文件」。",
+      "language": "界面语言",
+      "languageHint": "只影响界面文字；项目名、画布名、脚本与图内文字都不会被翻译。",
+      "layoutReset": "界面布局已重置，刷新页面后生效",
+      "resetLayout": "恢复界面默认布局",
+      "resetLayoutHint": "侧栏宽度、吸附开关等界面偏好回到出厂值。"
+    },
+    "navLabel": "设置分区",
+    "project": {
+      "backupDir": "备份目录",
+      "current": "当前项目",
+      "defaultPlaceholder": "默认 {{path}}",
+      "dirHint": "目录留空 = 使用默认位置。设置按项目分别保存。",
+      "exportDir": "导出目录",
+      "noScriptsSuffix": "（面板不会进入图内编辑）",
+      "readOnly": "项目只读",
+      "readOnlyAria": "项目只读（禁止写回原始文件）",
+      "readOnlyHint": "开启后禁止「写回原始文件」，源图不会被覆盖",
+      "registry": "脚本注册表…",
+      "scriptCount_other": "{{count}} 个脚本已登记",
+      "scripts": "可参数化脚本",
+      "switch": "切换项目…"
+    },
+    "section": {
+      "about": "隐私、诊断与 About",
+      "ai": "AI 工具",
+      "canvas": "画布与编辑",
+      "export": "导出默认值",
+      "general": "常规",
+      "project": "项目与路径",
+      "shortcuts": "快捷键",
+      "sidebars": "侧栏行为",
+      "update": "检查更新"
+    },
+    "shortcuts": {
+      "hint": "全部快捷键见速查表（按 ? 随时打开）。",
+      "open": "打开快捷键速查表"
+    },
+    "sidebars": {
+      "breakpoints": "窗口 ≥1440px 时两侧可同时常驻；1024–1439px 左右互斥；更窄时侧栏以覆盖层临时显示，常驻不生效。",
+      "leftPinned": "左抽屉常驻",
+      "leftPinnedHint": "选中对象时素材抽屉不自动让位",
+      "rightPinned": "右栏常驻",
+      "rightPinnedHint": "清空选择后属性栏保持展开"
+    },
+    "title": "设置",
+    "update": {
+      "autoCheck": "自动检查",
+      "autoCheckAria": "每天自动检查更新",
+      "autoCheckHint": "每天一次，关掉后不会有任何联网请求",
+      "available": "有新版本",
+      "checkNow": "立即检查",
+      "checking": "检查中…",
+      "currentIs": "当前 {{version}}",
+      "currentVersion": "当前版本",
+      "downloadAndInstall": "下载并安装",
+      "downloadAndUpgrade": "下载并升级",
+      "downloadProgressAria": "下载更新",
+      "downloading": "下载中…",
+      "downloadingPct": "下载中 {{pct}}%",
+      "installMethod": "安装方式",
+      "installedHint": "已安装完成——当前窗口仍是旧版本，重启后生效。",
+      "lastChecked": "上次检查：{{time}}",
+      "manualDownload": "连不上更新服务时，也可以去 Releases 手动下载",
+      "methodSource": "源码检出（升级请用 git pull）",
+      "neverChecked": "尚未检查",
+      "relaunch": "重启并使用新版本",
+      "releaseNotes": "查看发行说明",
+      "restartAfter": "后生效——当前进程仍在运行旧版本代码。",
+      "restartBefore": "升级完成。",
+      "restartStrong": "请重启 Magplot",
+      "signatureNote": "更新包由官方签名，装之前壳会校验签名，校验不过不会安装。项目、画布与设置都在用户数据目录，升级不影响。",
+      "sourceUpgrade": "源码检出请自行执行",
+      "upToDate": "已是最新版本。",
+      "upgrading": "升级中…"
+    }
+  },
+  "style": {
+    "annotationCount_other": "标注文字：{{count}} 条",
+    "annotationText": "标注文字",
+    "applyScope": "应用范围",
+    "applyTo": "应用到{{scope}}",
+    "bold": "粗体",
+    "confirmApply": "应用",
+    "confirmBody_other": "将覆盖 {{count}} 项已有的图内修改（{{undo}} 可整体撤销）。",
+    "confirmTitle": "应用样式「{{name}}」？",
+    "deleteBody": "删除后无法找回（已应用到文档的修改不受影响）。",
+    "deleteStyleAria": "删除样式 {{name}}",
+    "deleteTitle": "删除样式「{{name}}」？",
+    "description": "把字号、线宽、刻度、配色等排版规格存成命名样式，批量应用到面板；只写图内修改，不改源文件",
+    "descriptionEmpty": "把字号、线宽、刻度、配色等排版规格存成命名样式，批量应用；只写图内修改，不改源文件",
+    "emptyBody": "还没有保存的样式。选中一个已渲染的可参数化面板，提取它的字号 / 线宽 / 刻度 / 配色作为起点。",
+    "emptyDraft": "空样式。点「从当前面板提取」读取选中面板的字号 / 线宽 / 刻度 / 配色，删掉不想统一的项后保存。",
+    "extract": "从当前面板提取",
+    "extractFrom": "从「{{name}}」读取当前值",
+    "extractNeedPanel": "选中一个已渲染的可参数化面板后可提取",
+    "includePageSize": "包含页面尺寸",
+    "namePlaceholder": "样式名称（如「AMFE 正文图」）",
+    "nameRequired": "先给样式起个名字",
+    "needPanel": "先在画布上选中一个已渲染的可参数化面板",
+    "newStyle": "新建样式",
+    "noPanelsPanel": "先在画布上选中一个可参数化面板",
+    "noPanelsScope": "范围内没有可参数化面板",
+    "noSavedStyles": "还没有保存的样式",
+    "pageSizeSuffix": "（{{w}}×{{h}} mm）",
+    "pageSizeTo": "页面尺寸 → {{w}}×{{h}} mm",
+    "paletteTitle": "系列配色（按曲线 / 散点 / 柱形出现顺序循环）",
+    "panelOverwrites_other": "（覆盖 {{count}} 项已有修改）",
+    "panelPatches_other": "：{{count}} 项",
+    "panelUnmappable_other": "；{{count}} 项无法映射",
+    "removeColor": "移除颜色",
+    "removeEntry": "移除此项",
+    "roleLabel": {
+      "axes": "子图边框",
+      "axis_label": "轴标题",
+      "bar_series": "柱形系列",
+      "colorbar": "色条",
+      "errorbar": "误差棒",
+      "legend": "图例",
+      "line": "曲线",
+      "text": "图内文字",
+      "ticks": "刻度",
+      "title": "标题"
+    },
+    "saved": "已保存样式「{{name}}」",
+    "savedStyles": "已存样式",
+    "scopeDocument": "全文档",
+    "scopeLabel": {
+      "document": "整份文档",
+      "panel": "当前面板",
+      "sameScript": "同脚本的全部面板",
+      "selection": "选中的面板"
+    },
+    "scopePanel": "面板",
+    "scopeSameScript": "同脚本",
+    "scopeSelection": "选区",
+    "subLabel": "序号标签 (a)(b)(c)",
+    "subLabelCount_other": "序号标签：{{count}} 个",
+    "title": "论文样式",
+    "unmappableDetails": "无法映射的明细",
+    "unmappableEntry": "{{label}}：无「{{prop}}」",
+    "unrendered": "{{name}}：尚未渲染，无法映射（先进入图内编辑渲染一次）",
+    "untitled": "未命名",
+    "untitledStyle": "未命名样式",
+    "willAffect": "将影响",
+    "withAnnotations": "含画布标注与序号标签"
+  },
+  "versions": {
+    "autoBadge": "自动",
+    "beforeRestore": "恢复前（{{time}}）",
+    "close": "关闭布局版本",
+    "compareAria": "叠加对比",
+    "compareDescription": "底图 = 该版本；半透明描边 = 当前布局",
+    "compareTip": "大尺寸叠加对比（底图 = 该版本，描边 = 当前）",
+    "compareTitle": "叠加对比",
+    "delete": "删除版本",
+    "deleteBody": "版本删除后无法找回（当前文档不受影响）。",
+    "deleteTitle": "删除版本「{{name}}」？",
+    "diff": {
+      "added": "当前新增：{{name}}",
+      "assetReplaced": "{{name}}：素材已替换",
+      "cropChanged": "{{name}}：裁剪已变",
+      "guides": "参考线：{{from}} → {{to}} 条",
+      "hidden": "{{name}}：已隐藏",
+      "locked": "{{name}}：已锁定",
+      "moved": "{{name}}：移动 {{dx}}, {{dy}} mm",
+      "movedAndResized": "{{name}}：位置与尺寸已变",
+      "overrides": "{{name}}：图内修改 {{from}} → {{to}} 项",
+      "pageBackground": "页面背景设置不同",
+      "pageMargin": "安全区页边距：{{a}} → {{b}} mm",
+      "pageSize": "页面尺寸：{{aw}}×{{ah}} → {{bw}}×{{bh}} mm",
+      "removed": "当前已删除：{{name}}",
+      "resized": "{{name}}：尺寸已变",
+      "rotationChanged": "{{name}}：旋转 {{from}}° → {{to}}°",
+      "shown": "{{name}}：已显示",
+      "textChanged": "{{name}}：文字内容已变",
+      "textStyleChanged": "{{name}}：文字样式已变",
+      "unlocked": "{{name}}：已解锁",
+      "zorder": "对象层级顺序不同"
+    },
+    "drawerLabel": "布局版本时间线",
+    "duplicate": "复制版本",
+    "emptyHint": "手动「存版本」，或编辑几分钟后自动出现检查点。",
+    "emptyTitle": "还没有版本",
+    "intro": "整份布局的服务器快照；恢复产生新版本、可撤销，不改动任何源文件。",
+    "keep": "保留",
+    "keepTitle": "自动检查点会滚动清理；转正后按手动版本保留",
+    "listLabel": "版本列表",
+    "loadingSnapshot": "正在载入快照…",
+    "metaObjects_other": "{{time}} · {{count}} 个对象",
+    "metaPage": " · {{w}}×{{h}}mm",
+    "namePlaceholder": "版本名称（可留空）",
+    "noDiff": "与当前布局没有差异",
+    "rename": "重命名版本",
+    "restore": "恢复为新版本",
+    "restoreHistory": "恢复布局版本「{{name}}」",
+    "restored": "已恢复布局版本「{{name}}」（可撤销；未改动任何源文件）",
+    "save": "存版本",
+    "saved": "已保存当前布局为新版本",
+    "title": "布局版本",
+    "versionName": "版本名称",
+    "viewCurrent": "当前",
+    "viewVersion": "该版本"
+  }
+}

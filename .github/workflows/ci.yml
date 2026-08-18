@@ -51,8 +51,14 @@ jobs:
           cache-dependency-path: web/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
-      - run: pnpm tsc --noEmit
+      # 翻译检查（key 对齐 / 空翻译 / 插值与复数形态 / 硬编码文案 / 生成的类型
+      # 是否过期）。缺翻译在这里必须**失败**，不是打条 warning 就放行——
+      # 界面上一串 `project.actions.create` 是发出去才被用户发现的那类问题。
+      - run: pnpm i18n:check
       - run: pnpm test
+      # 真类型检查在 `pnpm build` 的 `tsc -b` 里。这里曾经是 `pnpm tsc --noEmit`：
+      # 根 tsconfig 是 `files: []` + references 的方案文件，--noEmit 不走项目引用、
+      # 什么都不编，恒绿——一个报平安的空门禁比没有门禁更坏。
       - run: pnpm build
       # Codex 内嵌画布是 web/src 打出来的单文件产物，随插件一起提交进仓库。
       # 改了前端却没重跑它，用户在 Codex 里装到的画布就是上一版——功能全在、

@@ -1,5 +1,6 @@
 import type { PanelInfo } from './api'
 import { panelRender, type PanelRender } from '@/store/renderStore'
+import { formatMessage, msg, type UiMessage } from '@/i18n'
 import { PROOF_KIND } from './brand'
 import { profileStamp, severityOf, type PublicationProfile, type Severity } from './profile'
 import type { CanvasObject, FigureDocument, PanelObject } from '@/types/document'
@@ -24,13 +25,25 @@ import type { Manifest, ManifestElement } from './api'
 export interface PreflightIssue {
   id: string
   severity: Severity
-  text: string
+  /**
+   * 问题描述的**描述符**，不是翻好的字符串：预检结果会在导出对话框里一直挂着，
+   * 中途切语言得跟着换。`id` 才是机器可读的稳定身份——golden vectors 与 proof
+   * report 认的都是它，措辞怎么写不影响判据（见 preflight.golden.test.ts）。
+   */
+  message: UiMessage
   objectIds: string[]
   /** 命中的图内元素 gid（面板级问题为空）——配合元素树一键定位 */
   gids: string[]
   /** 量化细节（等效字号、dpi、比例…）；写进 proof report */
   detail: Record<string, unknown>
 }
+
+/** 显示用文本（组件里请配合 useTranslation 订阅语言变化）。 */
+export const issueText = (issue: PreflightIssue): string => formatMessage(issue.message)
+
+/** 本文件的文案都在 `errors:preflight.*` 下 */
+const pf = (key: string, values?: Record<string, unknown>): UiMessage =>
+  msg(`preflight.${key}`, values, 'errors')
 
 /** 页面/几何比较的容差（mm）。与 Python 的 EPS_MM 同值。 */
 const EPS_MM = 0.05
@@ -125,12 +138,12 @@ class Sink {
 
   add(
     id: string,
-    text: string,
+    message: UiMessage,
     opts: { objectIds?: string[]; gids?: string[]; detail?: Record<string, unknown> } = {},
   ): void {
     let item = this.items.get(id)
     if (!item) {
-      item = { id, severity: severityOf(this.profile, id), text, objectIds: [], gids: [], detail: {} }
+      item = { id, severity: severityOf(this.profile, id), message, objectIds: [], gids: [], detail: {} }
       this.items.set(id, item)
       this.order.push(id)
     }
@@ -162,7 +175,7 @@ function checkPage(spec: PreflightSpec, profile: PublicationProfile, sink: Sink)
   }
   if (matched == null && (single != null || double != null)) {
     const want = [single, double].filter((v) => v != null).map(g).join('/')
-    sink.add('page-width', `页面宽 ${g(w)}mm 不是规范里的单栏/双栏宽度（${want}mm）`, {
+    sink.add('page-width', pf('pageWidth', { actual: g(w), want }), {
       detail: { page_w_mm: r2(w), single_mm: single, double_mm: double, column: null },
     })
   }
@@ -185,7 +198,7 @@ function checkPage(spec: PreflightSpec, profile: PublicationProfile, sink: Sink)
       const allowed = ratios.map((r) => r.id).join('、')
       sink.add(
         'page-aspect',
-        `页面比例 ${actual.toFixed(3)}（${g(w)}×${g(h)}mm）不在规范允许的 ${allowed} 之内`,
+        pf('pageAspect', { ratio: actual.toFixed(3), w: g(w), h: g(h), allowed }),
         { detail: { aspect: r2(actual), closest: best[0] } },
       )
     }
@@ -195,28 +208,28 @@ function checkPage(spec: PreflightSpec, profile: PublicationProfile, sink: Sink)
 function checkPanelState(panel: PreflightPanelSpec, sink: Sink): void {
   const pid = panel.id
   if (panel.missing) {
-    sink.add('missing-asset', '面板引用的素材文件不在当前图库中，导出会失败或出空白', {
+    sink.add('missing-asset', pf('missingAsset'), {
       objectIds: [pid],
     })
   }
   if (panel.render_error) {
-    sink.add('render-error', '面板最近一次渲染失败，导出前请先修复', {
+    sink.add('render-error', pf('renderError'), {
       objectIds: [pid],
       detail: { error: String(panel.render_error).slice(0, 200) },
     })
   }
   if (panel.stale) {
-    sink.add('stale-render', '面板的脚本已更新但尚未重建，导出的会是旧图', { objectIds: [pid] })
+    sink.add('stale-render', pf('staleRender'), { objectIds: [pid] })
   }
   const n = panel.unapplied_overrides | 0
   if (n > 0) {
-    sink.add('unapplied-override', `面板有 ${n} 条图内修改尚未应用到渲染上，成图会与画布不一致`, {
+    sink.add('unapplied-override', pf('unappliedOverride', { count: n }), {
       objectIds: [pid],
       detail: { count: n },
     })
   }
   if (panel.bitmap_embed) {
-    sink.add('bitmap-embed', '翻转或半透明的面板在 PDF 里按导出 DPI 位图嵌入，矢量文字不保留', {
+    sink.add('bitmap-embed', pf('bitmapEmbed'), {
       objectIds: [pid],
     })
   }
@@ -235,7 +248,7 @@ function checkPanelRaster(
     if (dpi < minDpi) {
       sink.add(
         'raster-dpi',
-        `位图面板的等效分辨率 ${dpi.toFixed(0)}dpi 低于规范的 ${g(minDpi)}dpi`,
+        pf('rasterDpi', { dpi: dpi.toFixed(0), min: g(minDpi) }),
         { objectIds: [pid], detail: { dpi: r2(dpi), min_dpi: minDpi } },
       )
     }
@@ -243,7 +256,7 @@ function checkPanelRaster(
   // 外部位图内部的文字字号无法可靠判定：如实报 not_verifiable，绝不假装通过
   sink.add(
     'raster-text-not-verifiable',
-    '位图面板内部的文字字号无法自动核验（没有矢量文字层），请人工确认其最终字号大于规范下限',
+    pf('rasterTextNotVerifiable'),
     { objectIds: [pid] },
   )
 }
@@ -285,20 +298,20 @@ function checkPanelFonts(
     if (eff <= floor) {
       sink.add(
         'font-below-absolute-floor',
-        `图内文字的最终有效字号 ${eff.toFixed(2)}pt 不大于绝对下限 ${g(floor)}pt`,
+        pf('fontBelowFloor', { effective: eff.toFixed(2), floor: g(floor) }),
         { objectIds: [pid], gids: [gid], detail: { effective_pt: r2(eff), floor_pt: floor } },
       )
     } else if (eff < strict) {
       sink.add(
         'font-too-small',
-        `图内文字的最终有效字号 ${eff.toFixed(2)}pt 低于规范下限 ${g(strict)}pt`,
+        pf('fontTooSmall', { effective: eff.toFixed(2), min: g(strict) }),
         { objectIds: [pid], gids: [gid], detail: { effective_pt: r2(eff), min_pt: strict } },
       )
     }
     if (eff > biggest) {
       sink.add(
         'font-too-large',
-        `图内文字的最终有效字号 ${eff.toFixed(2)}pt 超过 ${g(biggest)}pt，通常大于正文字号`,
+        pf('fontTooLarge', { effective: eff.toFixed(2), max: g(biggest) }),
         { objectIds: [pid], gids: [gid], detail: { effective_pt: r2(eff), max_pt: biggest } },
       )
     }
@@ -313,15 +326,17 @@ function checkPanelFonts(
       if (accepted.size && !accepted.has(low)) {
         sink.add(
           'font-family-substituted',
-          `图内文字用的是 ${family}，规范要求 ${fam.latin}` +
-            (flagged.has(low) ? '（该字体是常见的替代品，说明目标字体没装上）' : ''),
+          // 分两条完整句子而不是拼字符串：英文里那半句补语的位置和中文不一样
+          flagged.has(low)
+            ? pf('fontFamilySubstitutedKnown', { family, want: fam.latin })
+            : pf('fontFamilySubstituted', { family, want: fam.latin }),
           { objectIds: [pid], gids: [gid], detail: { family } },
         )
       }
       if (hasCjk(text) && cjk.required && !cjkOk.has(low)) {
         sink.add(
           'cjk-fallback-missing',
-          `含中日韩字符的文字用的是 ${family}，没有声明中文 fallback，导出 PDF 里会是方框`,
+          pf('cjkFallbackMissing', { family }),
           { objectIds: [pid], gids: [gid], detail: { family } },
         )
       }
@@ -331,7 +346,7 @@ function checkPanelFonts(
     if ((want === 'bold' || want === 'normal') && TEXT_ROLES.has(role)) {
       const got = field(el, 'weight')
       if (typeof got === 'string' && got && got !== want) {
-        sink.add('text-weight-policy', `规范建议 ${role} 的字重为 ${want}（当前 ${got}）`, {
+        sink.add('text-weight-policy', pf('textWeightPolicy', { role, want, got }), {
           objectIds: [pid],
           gids: [gid],
           detail: { role, want, got },
@@ -375,7 +390,7 @@ function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, 
 
     if (role === 'legend') {
       if (legend.frame === false && field(el, 'frameon') === true) {
-        sink.add('legend-frame', '图例带边框，规范要求图例无框', { objectIds: [pid], gids: [gid] })
+        sink.add('legend-frame', pf('legendFrame'), { objectIds: [pid], gids: [gid] })
       }
       const size = num(field(el, 'fontsize'))
       const lo = num(legend.min_font_size_pt)
@@ -385,7 +400,7 @@ function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, 
         if (eff < lo - 1e-9 || eff > hi + 1e-9) {
           sink.add(
             'legend-font-size',
-            `图例字号最终有效值 ${eff.toFixed(2)}pt 不在规范的 ${g(lo)}–${g(hi)}pt 之间`,
+            pf('legendFontSize', { effective: eff.toFixed(2), min: g(lo), max: g(hi) }),
             { objectIds: [pid], gids: [gid], detail: { effective_pt: r2(eff) } },
           )
         }
@@ -395,7 +410,7 @@ function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, 
     if (role === 'ticks') {
       const got = field(el, 'direction')
       if (wantDir && typeof got === 'string' && got !== wantDir) {
-        sink.add('tick-direction', `刻度朝向为 ${got}，规范要求 ${wantDir}`, {
+        sink.add('tick-direction', pf('tickDirection', { got, want: wantDir }), {
           objectIds: [pid],
           gids: [gid],
           detail: { direction: got, want: wantDir },
@@ -416,7 +431,7 @@ function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, 
         if (off.length) {
           sink.add(
             'spines-not-enclosed',
-            `坐标轴未封闭（缺 ${off.join(', ')} 边），规范要求封闭坐标轴`,
+            pf('spinesNotEnclosed', { sides: off.join(', ') }),
             { objectIds: [pid], gids: [gid], detail: { missing: off } },
           )
         }
@@ -428,7 +443,7 @@ function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, 
         if (frameLw.every((v) => Math.abs(eff - v) > tol)) {
           sink.add(
             'line-width-off-preset',
-            `外框线宽最终有效值 ${eff.toFixed(2)}pt 不在规范档位 ${frameLw.map(g).join('/')}pt 上`,
+            pf('frameWidthOffPreset', { effective: eff.toFixed(2), presets: frameLw.map(g).join('/') }),
             { objectIds: [pid], gids: [gid], detail: { effective_pt: r2(eff) } },
           )
         }
@@ -440,7 +455,7 @@ function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, 
       if (typeof text === 'string' && text.trim() && !labelRe.test(text.trim())) {
         sink.add(
           'axis-label-format',
-          `坐标轴标题「${text.trim().slice(0, 30)}」不是规范的「${axis.label_format}」形式`,
+          pf('axisLabelFormat', { label: text.trim().slice(0, 30), want: axis.label_format }),
           { objectIds: [pid], gids: [gid], detail: { text: text.trim().slice(0, 60) } },
         )
       }
@@ -455,7 +470,7 @@ function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, 
         if (presets.every((v) => Math.abs(eff - v) > tol)) {
           sink.add(
             'line-width-off-preset',
-            `线宽最终有效值 ${eff.toFixed(2)}pt 不在规范档位 ${presets.map(g).join('/')}pt 上`,
+            pf('lineWidthOffPreset', { effective: eff.toFixed(2), presets: presets.map(g).join('/') }),
             { objectIds: [pid], gids: [gid], detail: { effective_pt: r2(eff) } },
           )
         }
@@ -473,13 +488,13 @@ function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, 
         if (badCmaps.has(low)) {
           sink.add(
             'discouraged-colormap',
-            `色谱 ${cmap} 不是感知均匀的，规范推荐 ${palette.recommended}`,
+            pf('discouragedColormap', { cmap, recommended: palette.recommended }),
             { objectIds: [pid], gids: [gid], detail: { cmap } },
           )
         } else if (goodCmaps.size && !goodCmaps.has(low)) {
           sink.add(
             'palette-semantic',
-            `色谱 ${cmap} 不在推荐的科学色系里（按 sequential / diverging / categorical 语义选：${palette.url}）`,
+            pf('paletteSemantic', { cmap, url: palette.url }),
             { objectIds: [pid], gids: [gid], detail: { cmap } },
           )
         }
@@ -492,7 +507,7 @@ function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, 
     if (maxLabels && count > maxLabels) {
       sink.add(
         'tick-label-count',
-        `${prefix} 有 ${count} 个刻度标签，规范建议控制在 ${maxLabels} 个以内`,
+        pf('tickLabelCount', { axis: prefix, count, max: maxLabels }),
         { objectIds: [pid], gids: [prefix], detail: { count } },
       )
     }
@@ -504,7 +519,7 @@ function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, 
     if (roles.has('bar_series') && !roles.has('errorbar')) {
       sink.add(
         'bar-without-errorbar',
-        '柱状图没有误差棒——如果这些柱子是多次测量的均值，规范期望标出误差',
+        pf('barWithoutErrorbar'),
         { objectIds: [pid], gids: [ax] },
       )
     }
@@ -512,7 +527,7 @@ function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, 
     if (lines.some((l) => FIT_WORDS.test(String(field(l, 'label') ?? ''))) && !roles.has('fill')) {
       sink.add(
         'fit-without-ci',
-        '有拟合曲线但没有置信区间填充带——投稿时通常要求给出拟合的不确定度',
+        pf('fitWithoutCi'),
         { objectIds: [pid], gids: [ax] },
       )
     }
@@ -522,7 +537,7 @@ function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, 
     ) {
       sink.add(
         'palette-line-markers',
-        `${lines.length} 条曲线全部没有 marker，黑白打印或色觉障碍读者难以区分，可考虑点线图或不同线型`,
+        pf('paletteLineMarkers', { count: lines.length }),
         { objectIds: [pid], gids: [ax], detail: { lines: lines.length } },
       )
     }
@@ -545,7 +560,7 @@ function checkGeometry(spec: PreflightSpec, sink: Sink): void {
     )
     .map((o) => o.id)
   if (out.length) {
-    sink.add('out-of-page', '对象超出页面范围，超出部分不会出现在成图里', { objectIds: out })
+    sink.add('out-of-page', pf('outOfPage'), { objectIds: out })
   }
   if (margin > 0) {
     const outSet = new Set(out)
@@ -560,7 +575,7 @@ function checkGeometry(spec: PreflightSpec, sink: Sink): void {
       )
       .map((o) => o.id)
     if (near.length) {
-      sink.add('outside-margin', `对象越过了 ${g(margin)}mm 安全区页边距`, { objectIds: near })
+      sink.add('outside-margin', pf('outsideMargin', { margin: g(margin) }), { objectIds: near })
     }
   }
 
@@ -577,10 +592,10 @@ function checkGeometry(spec: PreflightSpec, sink: Sink): void {
       }
     }
   }
-  if (hit.length) sink.add('overlap', '面板互相重叠，确认是有意的压盖再导出', { objectIds: hit })
+  if (hit.length) sink.add('overlap', pf('overlap'), { objectIds: hit })
 
   const hidden = spec.objects.filter((o) => o.hidden).map((o) => o.id)
-  if (hidden.length) sink.add('hidden', '隐藏的对象不会出现在导出中', { objectIds: hidden })
+  if (hidden.length) sink.add('hidden', pf('hidden'), { objectIds: hidden })
 }
 
 function checkTexts(spec: PreflightSpec, profile: PublicationProfile, sink: Sink): void {
@@ -592,18 +607,18 @@ function checkTexts(spec: PreflightSpec, profile: PublicationProfile, sink: Sink
     const size = num(t.size_pt) ?? 0
     // 画布标注的 size_pt 已经是页面上的绝对 pt：不再乘 scale
     if (size <= floor) {
-      sink.add('font-below-absolute-floor', `画布文字 ${g(size)}pt 不大于绝对下限 ${g(floor)}pt`, {
+      sink.add('font-below-absolute-floor', pf('textBelowFloor', { size: g(size), floor: g(floor) }), {
         objectIds: [t.id],
         detail: { effective_pt: r2(size), floor_pt: floor },
       })
     } else if (size < strict) {
-      sink.add('font-too-small', `画布文字 ${g(size)}pt 低于规范下限 ${g(strict)}pt`, {
+      sink.add('font-too-small', pf('textTooSmall', { size: g(size), min: g(strict) }), {
         objectIds: [t.id],
         detail: { effective_pt: r2(size), min_pt: strict },
       })
     }
     if (hasCjk(t.text) && cjk.required && !(cjk.accepted ?? []).length) {
-      sink.add('cjk-fallback-missing', '画布中文文字没有可用的中文字体 fallback', {
+      sink.add('cjk-fallback-missing', pf('textCjkFallbackMissing'), {
         objectIds: [t.id],
       })
     }
@@ -613,7 +628,7 @@ function checkTexts(spec: PreflightSpec, profile: PublicationProfile, sink: Sink
 function checkMissingManifest(panel: PreflightPanelSpec, sink: Sink): void {
   sink.add(
     'panel-text-not-verifiable',
-    '矢量面板还没有引擎 manifest（未渲染 / 非脚本产物），图内文字字号与字体无法自动核验',
+    pf('panelTextNotVerifiable'),
     { objectIds: [panel.id] },
   )
 }
@@ -770,7 +785,8 @@ export function buildProofPayload(
     checks: issues.map((i) => ({
       id: i.id,
       severity: i.severity,
-      text: i.text,
+      // 留档写的是**当前语言的成文**（人要读），机器可读的身份是 id。
+      text: issueText(i),
       count: i.objectIds.length,
       object_ids: i.objectIds,
       gids: i.gids,
@@ -780,7 +796,7 @@ export function buildProofPayload(
     // not_verifiable 单独留档：那是「我们查不了，人得自己看」，不能和 warn 混在一起
     not_verifiable: sum.notVerifiable.map((i) => ({
       id: i.id,
-      text: i.text,
+      text: issueText(i),
       object_ids: i.objectIds,
     })),
     forced: forced?.forced ?? false,

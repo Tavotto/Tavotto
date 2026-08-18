@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { formatMessage, msg } from '@/i18n'
 import { usePalette } from '@/components/CommandPalette'
 import { handleCopyEvent, handlePasteEvent } from '@/lib/clipboard'
 import {
@@ -75,8 +76,15 @@ export function runUndoRedo(redo: boolean) {
   const doc = useDocumentStore.getState()
   const label = redo ? doc.redo() : doc.undo()
   const ui = useUiStore.getState()
-  if (label) ui.setStatus(`${redo ? '重做' : '撤销'}：${label}`)
-  else ui.setStatus(redo ? '没有可重做的操作' : '没有可撤销的操作')
+  // 历史条目存的是描述符，这里在**显示那一刻**才翻——切语言后同一条历史
+  // 会用新语言说话
+  if (label) {
+    ui.setStatus(
+      msg(redo ? 'status.redone' : 'status.undone', { label: formatMessage(label) }, 'workspace'),
+    )
+  } else {
+    ui.setStatus(msg(redo ? 'status.nothingToRedo' : 'status.nothingToUndo', undefined, 'workspace'))
+  }
 }
 
 export function useKeyboard() {
@@ -103,7 +111,9 @@ export function useKeyboard() {
         e.preventDefault()
         if (undoRedoBlocked()) return
         const label = doc.redo()
-        if (label) ui.setStatus(`重做：${label}`)
+        if (label) {
+          ui.setStatus(msg('status.redone', { label: formatMessage(label) }, 'workspace'))
+        }
         return
       }
       if (mod && e.key.toLowerCase() === 'd') {

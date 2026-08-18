@@ -1,4 +1,5 @@
 import type { Manifest, ManifestElement } from './api'
+import { t } from '@/i18n'
 import type { AlignMode } from './geometry'
 import {
   flipY,
@@ -354,16 +355,16 @@ export function annotationAlignEntries(
   const out: AnnotationEntry[] = []
   for (const o of objects) {
     if (o.type === 'panel' || o.hidden) continue
+    // 画布标注的名字：文字取内容前 12 字（用户内容，原样插值），
+    // 箭头/形状用类型名
     const name =
       o.type === 'text'
-        ? `文字「${o.text.slice(0, 12)}」`
-        : o.type === 'arrow'
-          ? '箭头'
-          : '形状'
+        ? t('annotationEntry.text', { ns: 'workspace', text: o.text.slice(0, 12) })
+        : t(`annotationEntry.${o.type === 'arrow' ? 'arrow' : 'shape'}`, { ns: 'workspace' })
     out.push({
       key: `obj:${o.id}`,
       objectId: o.id,
-      label: `标注 · ${name}`,
+      label: t('annotationEntry.label', { ns: 'workspace', name }),
       resizable: false,
       box: [
         (o.x - full.x) / full.w,

@@ -1,4 +1,5 @@
 import type { ExportObject } from './api'
+import { t } from '@/i18n'
 import { panelFullRect } from './elementGeom'
 import { toExportObjects } from './exportPayload'
 import { rectsIntersect } from './geometry'
@@ -35,9 +36,10 @@ function overlapArea(a: CanvasObject, p: PanelObject): number {
 
 /** 该面板能否携带标注写回；不能时给出人话原因 */
 export function annotationsBlocked(panel: PanelObject): string | null {
-  if (panelRotation(panel)) return '面板带旋转，标注坐标换算不过去'
-  if (panel.flipH || panel.flipV) return '面板带翻转，标注坐标换算不过去'
-  if (panel.fileKind !== 'pdf') return '该素材只有位图、没有矢量 PDF'
+  const why = (key: string) => t(`writeBackAnnotations.${key}`, { ns: 'errors' })
+  if (panelRotation(panel)) return why('rotated')
+  if (panel.flipH || panel.flipV) return why('flipped')
+  if (panel.fileKind !== 'pdf') return why('rasterOnly')
   return null
 }
 

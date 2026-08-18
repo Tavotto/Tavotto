@@ -9,6 +9,8 @@
  */
 
 /** Tauri 2 注入的 IPC 标记；存在即运行在 Magplot 桌面壳里 */
+import { t } from '@/i18n'
+
 export function isDesktop(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 }
@@ -97,6 +99,29 @@ export async function revealExportedFile(dir: string, name: string): Promise<boo
   }
 }
 
+/**
+ * 把界面语言告诉壳，让原生菜单跟着换。
+ *
+ * 原生菜单是 Rust 在 webview 起来之前建的，那套文案在 `src-tauri/src/i18n.rs`
+ * 里另有一份（见那里的说明），i18next 够不着。所以由前端**主动报**：i18n 就绪
+ * 时一次、用户切语言时一次。Rust 顺手把选择记在应用配置目录里，下次启动的
+ * 菜单一开始就是对的。
+ *
+ * 浏览器模式下没有原生菜单，直接返回 false——**不抛**：语言切换是纯界面动作，
+ * 不该因为壳不在就失败。
+ */
+export async function setDesktopMenuLocale(locale: string): Promise<boolean> {
+  if (!isDesktop()) return false
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    await invoke('set_menu_locale', { locale })
+    return true
+  } catch {
+    // 老版本的壳没有这个命令（ACL 会直接拒），菜单保持旧语言即可
+    return false
+  }
+}
+
 /* -------------------------------------------------------------------------- */
 /*  应用内更新（桌面壳）                                                        */
 /* -------------------------------------------------------------------------- */
@@ -153,7 +178,7 @@ export async function installDesktopUpdate(
   onProgress?: (fraction: number | null) => void,
 ): Promise<void> {
   const update = pendingUpdate
-  if (!update) throw new Error('没有待安装的更新，请先检查更新')
+  if (!update) throw new Error(t('update.noPendingUpdate', { ns: 'errors' }))
   let total = 0
   let got = 0
   await update.downloadAndInstall((event) => {

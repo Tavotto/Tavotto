@@ -10,6 +10,7 @@
  * 这里的正变换（局部点 → 页面上的可见位置）全部用 cos/sin 现算，不复用被测
  * 代码的 rotateVecDeg，免得公式写错时测试跟着一起错。
  */
+import { literal } from '@/i18n'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -125,7 +126,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
 /** 放一个对象进文档并选中它，然后画覆盖层 */
 function show(obj: CanvasObject) {
-  useDocumentStore.getState().commit('加对象', (d) => {
+  useDocumentStore.getState().commit(literal('加对象'), (d) => {
     d.objects.push(obj)
   })
   useSelectionStore.getState().set([obj.id])

@@ -1,3 +1,4 @@
+import { formatMessage, literal } from '@/i18n'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { emptyProject } from '@/types/document'
 import type { ArrowObject, ShapeObject, TextObject } from '@/types/document'
@@ -40,7 +41,7 @@ const reset = async () => {
 
 /** 放入对象并选中它们（放入本身占一条历史，与复制那条分开计） */
 const seed = (...objects: (TextObject | ArrowObject | ShapeObject)[]) => {
-  s().commit('放入对象', (d) => {
+  s().commit(literal('放入对象'), (d) => {
     d.objects.push(...objects)
   })
   useSelectionStore.getState().set(objects.map((o) => o.id))
@@ -88,10 +89,10 @@ describe('duplicateSelected', () => {
 
     duplicateSelected()
     expect(s().past).toHaveLength(before + 1)
-    expect(s().past.at(-1)!.label).toBe('复制对象')
+    expect(formatMessage(s().past.at(-1)!.label)).toBe('复制对象')
     expect(s().doc.objects).toHaveLength(4)
 
-    expect(s().undo()).toBe('复制对象')
+    expect(formatMessage(s().undo())).toBe('复制对象')
     expect(s().doc.objects.map((o) => o.id)).toEqual(['t1', 'a1'])
   })
 

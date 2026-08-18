@@ -1,6 +1,7 @@
 import type { Manifest, PanelInfo } from '@/lib/api'
 import { setEngineTransport, type EngineTransport } from '@/lib/engineTransport'
 import { EngineError } from '@/lib/api'
+import { msg } from '@/i18n'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { renderKey, useRenderStore } from '@/store/renderStore'
@@ -167,7 +168,7 @@ export function seedSession(open: OpenFigureResult): { panelId: string; fileId: 
   }
 
   const store = useDocumentStore.getState()
-  store.commit('打开图', (d) => {
+  store.commit(msg('history.mcpOpenFigure', undefined, 'workspace'), (d) => {
     d.name = open.stem
     // 页面就是这张图自己的尺寸：MCP 画布编辑的是**一张图**，不是拼版
     d.page = { w: wMm, h: hMm }

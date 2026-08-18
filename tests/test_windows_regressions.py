@@ -970,3 +970,55 @@ def test_the_windows_installer_ships_and_registers_that_cli():
     from magplot.engine import locate
     assert locate.CLI_NAME in nsi, "安装器没提到 magplot-cli.exe"
     assert "doctor --json --write-manifest" in nsi, "装完没有登记安装清单"
+
+
+# ---------------- 生成物在 Windows 上被改成 CRLF，逐字节比对当场失败 ----------
+#
+# 现象：`package (windows-latest)` 与 `windows-exe-smoke` 一起红，报
+# 「TypeScript definitions are out of date. Run 'i18next-cli types'」，而
+# ubuntu / macOS 全绿，本机怎么跑都复现不了。
+#
+# 成因：`web/src/i18n/resources.d.ts` 是 `i18next-cli types` 生成的，写出来是
+# LF；Git for Windows 默认 `core.autocrlf=true`，检出时把它换成 CRLF。
+# `types --ci` 拿磁盘上那份与新生成的**逐字节**比，于是必然不一致——
+# 文件内容一个字都没错，只是换行符被 git 改了。
+#
+# 修法是 .gitattributes 把这类「会被逐字节比对的生成物」钉成 LF。
+
+def _byte_compared_generated_files() -> list[str]:
+    """会被逐字节 / 逐指纹比对的生成物。新增一个就往这里加一行。"""
+    return [
+        # `pnpm i18n:check` 的第一步就是 `i18next-cli types --ci`
+        "web/src/i18n/resources.d.ts",
+        # `python scripts/build_mcp_widget.py --check` 比的是源码指纹
+        "codex-plugin/mcp/widget/canvas.html",
+    ]
+
+
+@pytest.mark.parametrize("rel", _byte_compared_generated_files())
+def test_byte_compared_artifacts_are_pinned_to_lf(rel):
+    """会被逐字节比对的生成物必须钉成 LF，否则只在 Windows 上红。
+
+    两件事都要有：
+      1. 仓库里存的就是 LF（生成器写的就是 LF，混进 CRLF 说明有人在 Windows
+         上重新生成并提交了）；
+      2. `.gitattributes` 里有规则挡住 Windows 检出时的 autocrlf 转换——
+         只做第 1 条的话，仓库里干净，Windows 的**工作区**照旧是 CRLF。
+    """
+    root = Path(__file__).resolve().parent.parent
+    path = root / rel
+    assert path.is_file(), f"{rel} 不在了——改了路径就同步改这张表"
+    assert b"\r\n" not in path.read_bytes(), (
+        f"{rel} 里有 CRLF：它是生成物，生成器写的是 LF，"
+        f"混进 CRLF 说明有人在 Windows 上重新生成并提交了"
+    )
+
+    ga = root / ".gitattributes"
+    assert ga.is_file(), (
+        "没有 .gitattributes：Git for Windows 默认 core.autocrlf=true，"
+        "检出时会把这些生成物换成 CRLF，逐字节比对当场失败"
+    )
+    rules = [ln.strip() for ln in ga.read_text(encoding="utf-8").splitlines()
+             if ln.strip() and not ln.strip().startswith("#")]
+    hit = [r for r in rules if r.split()[0] in (rel, "*") and "eol=lf" in r]
+    assert hit, f".gitattributes 没有把 {rel} 钉成 eol=lf；现有规则：{rules}"

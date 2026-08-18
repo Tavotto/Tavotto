@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   AlignCenterHorizontal,
   AlignCenterVertical,
@@ -19,6 +20,7 @@ import {
   TriangleAlert,
 } from 'lucide-react'
 import type { AlignMode } from '@/lib/geometry'
+import { msg, t as translate } from '@/i18n'
 import { ENVIRONMENT_CODES } from '@/lib/api'
 import type { EditableField, Manifest, ManifestElement } from '@/lib/api'
 import { requestRender } from '@/hooks/useEngineSync'
@@ -66,7 +68,16 @@ import {
   MissingDependencyCard,
 } from '@/components/EngineEnvironmentCard'
 import type { PanelObject } from '@/types/document'
-import { groupHasContent, groupRank, optionLabel, propLabel, roleName, UNSUPPORTED } from './roles/registry'
+import {
+  engineLabel,
+  groupHasContent,
+  groupLabel,
+  groupRank,
+  optionLabel,
+  propLabel,
+  roleName,
+  unsupportedOf,
+} from './roles/registry'
 import { Button } from '../ui/Button'
 import { Grid2, Row, Section } from '../ui/Field'
 import { ColorField, NumberField, TextArea } from '../ui/Input'
@@ -80,8 +91,15 @@ import { hasTextStyleBar, TextStyleBar, TEXT_BAR_PROPS } from './TextStyleBar'
 import { SourceSection } from './PanelSection'
 import { SyncOverridesButton } from './SyncOverridesButton'
 
+/** 本文件的文案都在 inspector:element.* 下 */
+const el = (key: string, values?: Record<string, unknown>) =>
+  translate(`element.${key}`, { ns: 'inspector', ...(values ?? {}) })
+const elMsg = (key: string, values?: Record<string, unknown>) =>
+  msg(`element.${key}`, values, 'inspector')
+
 /** 图内元素编辑器：表单结构完全由 manifest.editable 决定 */
 export function ElementInspector({ panel }: { panel: PanelObject }) {
+  useTranslation('inspector')
   const render = usePanelRender(panel)
   const selectedGids = useUiStore((s) => s.selectedGids)
   // 折叠状态挂在面板级组件上：同一面板内换元素不重置，换面板才归零
@@ -158,10 +176,10 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
         {manifest && element && <RelatedRow manifest={manifest} element={element} />}
         {!manifest ? (
           <p className="text-xs text-ink-3">
-            {render?.status === 'rendering' ? '正在构建图表…' : '等待引擎渲染…'}
+            {el(render?.status === 'rendering' ? 'building' : 'waiting')}
           </p>
         ) : !element?.editable.length ? (
-          <p className="text-xs text-ink-3">点击图内元素开始编辑</p>
+          <p className="text-xs text-ink-3">{el('clickToEdit')}</p>
         ) : (
           <FieldList
             panel={panel}
@@ -175,9 +193,7 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
         )}
         {element && <UnsupportedNote role={element.role} />}
         {element?.role === 'image' && (
-          <p className="mt-2 text-xs leading-relaxed text-ink-3">
-            位置和大小属于宿主子图；颜色与显示属于当前图像。
-          </p>
+          <p className="mt-2 text-xs leading-relaxed text-ink-3">{el('imageHint')}</p>
         )}
         {element?.resizable && manifest && (
           <AxesSizeMm
@@ -206,6 +222,7 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
  * 「属性不支持」类警告是另一回事，不在这里处理。
  */
 function OrphanOverrides({ panel, manifest }: { panel: PanelObject; manifest?: Manifest | null }) {
+  useTranslation('inspector')
   if (!manifest) return null
   const orphans = panel.overrides.filter((o) => !manifest.elements.some((e) => e.gid === o.gid))
   if (!orphans.length) return null
@@ -218,15 +235,15 @@ function OrphanOverrides({ panel, manifest }: { panel: PanelObject; manifest?: M
         onClick={() =>
           clearOverrides(
             panel.id,
-            '清除失效修改',
+            elMsg('clearOrphans'),
             orphans.map((o) => ({ gid: o.gid, prop: o.prop })),
           )
         }
       >
-        清除失效修改
+        {el('clearOrphans')}
       </Button>
       <span className="text-xs text-ink-3">
-        {orphans.length} 条 · {gids.size} 个元素
+        {el('orphanCount', { overrides: orphans.length, elements: gids.size })}
       </span>
     </div>
   )
@@ -238,31 +255,33 @@ function OrphanOverrides({ panel, manifest }: { panel: PanelObject; manifest?: M
  */
 function relatedGids(
   manifest: Manifest,
-  el: ManifestElement,
+  target: ManifestElement,
 ): { gid: string; label: string; hint?: string }[] {
   const find = (gid: string) =>
     manifest.elements.find((e) => e.gid === gid && e.editable.length > 0)
   const up = (re: RegExp) => {
-    const m = el.gid.match(re)
+    const m = target.gid.match(re)
     return m ? find(m[1]) : undefined
   }
   const out: { gid: string; label: string; hint?: string }[] = []
   const push = (e: ManifestElement | undefined, hint?: string) => {
-    if (e) out.push({ gid: e.gid, label: e.label, hint })
+    // label 是引擎发来的散文（`曲线 “电流”`），过 engineLabel 换成当前语言
+    if (e) out.push({ gid: e.gid, label: engineLabel(e.label), hint })
   }
 
-  if (el.role === 'bar') push(up(/^(.*)\.bar_\d+$/), '所属系列')
-  if (el.role === 'legend_text') push(up(/^(.*)\.texts_\d+$/), '所属图例')
-  if (el.role === 'ticks') push(up(/^(.*)\.[xyz]ticks$/), '所属子图')
-  if (el.role === 'axes' || el.role === 'axes3d') {
-    push(find(`${el.gid}.xticks`))
-    push(find(`${el.gid}.yticks`))
-    push(find(`${el.gid}.zticks`))
+  if (target.role === 'bar') push(up(/^(.*)\.bar_\d+$/), el('relatedSeries'))
+  if (target.role === 'legend_text') push(up(/^(.*)\.texts_\d+$/), el('relatedLegend'))
+  if (target.role === 'ticks') push(up(/^(.*)\.[xyz]ticks$/), el('relatedAxes'))
+  if (target.role === 'axes' || target.role === 'axes3d') {
+    push(find(`${target.gid}.xticks`))
+    push(find(`${target.gid}.yticks`))
+    push(find(`${target.gid}.zticks`))
   }
   return out
 }
 
 function RelatedRow({ manifest, element }: { manifest: Manifest; element: ManifestElement }) {
+  useTranslation('inspector')
   const items = relatedGids(manifest, element)
   if (!items.length) return null
   return (
@@ -275,7 +294,9 @@ function RelatedRow({ manifest, element }: { manifest: Manifest; element: Manife
           onClick={() => useUiStore.getState().setSelectedGid(it.gid)}
         >
           <CornerUpLeft size={11} className="shrink-0" />
-          <span className="truncate">{it.hint ? `${it.hint}：${it.label}` : it.label}</span>
+          <span className="truncate">
+            {it.hint ? el('relatedWithHint', { hint: it.hint, label: it.label }) : it.label}
+          </span>
         </Button>
       ))}
     </div>
@@ -297,14 +318,14 @@ function ErrorBlock({
       <div className="rounded-sm bg-danger-subtle px-2 py-1.5">
         <p className="text-xs text-danger">{error}</p>
         <div className="mt-0.5 flex items-center gap-2">
-          <p className="text-xs text-danger/70">已保留上一版图像</p>
+          <p className="text-xs text-danger/70">{el('keptPrevious')}</p>
           {onRetry && (
             <button
               onClick={onRetry}
               className="flex items-center gap-1 text-xs text-danger underline-offset-2 hover:underline"
             >
               <RotateCcw size={11} />
-              重试渲染
+              {el('retryRender')}
             </button>
           )}
         </div>
@@ -315,7 +336,7 @@ function ErrorBlock({
               className="mt-1 flex items-center gap-0.5 text-xs text-danger/80 hover:text-danger"
             >
               <ChevronRight size={11} className={cn('transition-transform', open && 'rotate-90')} />
-              traceback
+              {el('traceback')}
             </button>
             {open && (
               <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-sm bg-surface p-1.5 font-mono text-xs leading-relaxed text-ink-2">
@@ -336,12 +357,13 @@ function ErrorBlock({
 /** 标签列宽：容得下「网格透明度」这类 5 字标签，再长的自身截断 */
 const LABEL_W = 72
 
-/** 「移除 override」在不同字段上的自然说法 */
-const RESET_HINT: Record<string, string> = {
-  vmin: '自动范围',
-  vmax: '自动范围',
-  size_mm: '恢复脚本原始尺寸',
-}
+/**
+ * 「移除 override」在不同字段上的自然说法；没有专属说法的用通用那条。
+ * 注意查的是**固定的几个 prop**，不是开放集合，所以这里可以放心用 key。
+ */
+const RESET_HINT_PROPS = new Set(['vmin', 'vmax', 'size_mm'])
+const resetHint = (prop: string) =>
+  el(`resetHint.${RESET_HINT_PROPS.has(prop) ? prop : 'default'}`)
 
 function FieldList({
   panel,
@@ -384,7 +406,7 @@ function FieldList({
                 onClick={() => clearOverride(panel.id, element.gid, field.prop)}
                 className="mt-0.5 pl-20 text-xs text-ink-3 hover:text-accent"
               >
-                {RESET_HINT[field.prop] ?? '回到脚本值'}
+                {resetHint(field.prop)}
               </button>
             )}
             {warning && (
@@ -422,7 +444,7 @@ function FieldList({
                 size={11}
                 className={cn('shrink-0 transition-transform', open && 'rotate-90')}
               />
-              {name}
+              {groupLabel(name)}
             </button>
             {open && <div className="mt-1.5">{rows(fields)}</div>}
           </div>
@@ -480,12 +502,17 @@ function BatchSection({ panel, elements }: { panel: PanelObject; elements: Manif
   )
 
   return (
-    <Section plainTitle title={`已选 ${elements.length} 个${roleName(elements[0].role)}`}>
+    <Section
+      plainTitle
+      title={el('batchTitle', { count: elements.length, role: roleName(elements[0].role) })}
+    >
       {!fields.length ? (
-        <p className="text-xs text-ink-3">这些元素没有可一起改的属性</p>
+        <p className="text-xs text-ink-3">{el('batchNoCommon')}</p>
       ) : (
         <>
-          <p className="mb-1.5 text-xs text-ink-3">改动会同时写到选中的 {elements.length} 个元素</p>
+          <p className="mb-1.5 text-xs text-ink-3">
+            {el('batchHint', { count: elements.length })}
+          </p>
           {rows(flat)}
           {ordered.map(([name, list]) => {
             const open = openGroups[name] ?? false
@@ -500,7 +527,7 @@ function BatchSection({ panel, elements }: { panel: PanelObject; elements: Manif
                     size={11}
                     className={cn('shrink-0 transition-transform', open && 'rotate-90')}
                   />
-                  {name}
+                  {groupLabel(name)}
                 </button>
                 {open && <div className="mt-1.5">{rows(list)}</div>}
               </div>
@@ -533,7 +560,7 @@ function BatchFieldRow({
       {label}
     </span>
   )
-  const gesture = useFieldGesture(panel, `批量修改${label}`)
+  const gesture = useFieldGesture(panel, el('batchEdit', { label }))
   // 多选里每个成员各自判断能不能预览：同时选中曲线和刻度组时，曲线照样
   // 抢先显示，刻度组安静地等后端——**不能因为有一个不支持就整批放弃**
   const previewables = elements.filter((el) => canPreviewStyle(el.role, field.prop))
@@ -548,8 +575,8 @@ function BatchFieldRow({
     // 也不能让画布上一部分元素显示新值、另一部分停在旧值
     setOverrides(
       panel.id,
-      `批量修改${label}`,
-      elements.map((el) => ({ gid: el.gid, prop: field.prop, value: v })),
+      elMsg('batchEdit', { label }),
+      elements.map((item) => ({ gid: item.gid, prop: field.prop, value: v })),
       previewed ? 'none' : immediate,
     )
     gesture.touch()
@@ -588,21 +615,21 @@ function BatchFieldRow({
               onChange={(v) => write(v, true)}
               onGestureEnd={gesture.end}
             />
-            {mixed && <span className="shrink-0 text-xs text-ink-3">多个值</span>}
+            {mixed && <span className="shrink-0 text-xs text-ink-3">{el('mixedValues')}</span>}
           </>
         )
       case 'bool':
         return (
           <>
             <Toggle checked={!mixed && !!first} onChange={writeOnce} />
-            {mixed && <span className="shrink-0 text-xs text-ink-3">多个值</span>}
+            {mixed && <span className="shrink-0 text-xs text-ink-3">{el('mixedValues')}</span>}
           </>
         )
       case 'enum':
         return (
           <Select
             value={mixed ? '' : String(first ?? '')}
-            placeholder="多个值"
+            placeholder={el('mixedValues')}
             onChange={(v) => writeOnce(v)}
             options={(field.options ?? []).map((o) => ({
               value: o,
@@ -626,15 +653,15 @@ function BatchFieldRow({
           onClick={() =>
             clearOverrides(
               panel.id,
-              `恢复${label}`,
-              overridden.map((el) => ({ gid: el.gid, prop: field.prop })),
+              elMsg('resetProp', { label }),
+              overridden.map((item) => ({ gid: item.gid, prop: field.prop })),
             )
           }
           className="mt-0.5 pl-20 text-xs text-ink-3 hover:text-accent"
         >
           {overridden.length === elements.length
-            ? '回到脚本值'
-            : `回到脚本值（${overridden.length} 个改过）`}
+            ? el('backToScript')
+            : el('backToScriptPartial', { count: overridden.length })}
         </button>
       )}
     </div>
@@ -678,7 +705,7 @@ function FieldRow({
       {label}
     </span>
   )
-  const gesture = useFieldGesture(panel, `修改${label}`)
+  const gesture = useFieldGesture(panel, el('editProp', { label }))
   const previewable = canPreviewStyle(element.role, field.prop)
 
   /**
@@ -837,14 +864,14 @@ function FieldRow({
                 )}
               >
                 <span className="min-w-0 flex-1 truncate text-xs text-ink">
-                  {labels[i] ?? `条目 ${origIdx + 1}`}
+                  {labels[i] ?? el('orderEntry', { index: origIdx + 1 })}
                 </span>
                 <Button
                   size="icon-sm"
                   className="h-5 w-5"
                   disabled={i === 0}
                   onClick={() => move(i, -1)}
-                  aria-label="上移"
+                  aria-label={el('moveUp')}
                 >
                   <MoveUp size={11} />
                 </Button>
@@ -853,7 +880,7 @@ function FieldRow({
                   className="h-5 w-5"
                   disabled={i === perm.length - 1}
                   onClick={() => move(i, 1)}
-                  aria-label="下移"
+                  aria-label={el('moveDown')}
                 >
                   <MoveDown size={11} />
                 </Button>
@@ -899,41 +926,37 @@ function FieldRow({
 
 /** 「修改逻辑」说明：讲清 override 与改脚本这两层的区别 */
 function HowItWorks() {
+  useTranslation('inspector')
   return (
     <Popover
       width={268}
       align="end"
       trigger={
-        <Button variant="outline" size="sm" className="w-full text-ink-2" aria-label="修改逻辑说明">
+        <Button
+          variant="outline"
+          size="sm"
+          className="w-full text-ink-2"
+          aria-label={el('howItWorksAria')}
+        >
           <CircleQuestionMark size={13} />
-          修改保存在哪里？
+          {el('howItWorksTrigger')}
         </Button>
       }
     >
       <div className="flex flex-col gap-2 text-xs leading-relaxed text-ink-2">
         <div>
-          <p className="font-medium text-ink">图内修改（override）</p>
-          <p className="mt-0.5">
-            不动脚本文件。每次渲染时把你的改动叠加到脚本输出之上，存在布局文档里，
-            进撤销栈，「重置图内修改」可一次清空。导出时会随面板一起发给引擎，
-            按全质量重出矢量。
-          </p>
+          <p className="font-medium text-ink">{el('howOverrideTitle')}</p>
+          <p className="mt-0.5">{el('howOverrideBody')}</p>
         </div>
         <div className="h-px bg-border" />
         <div>
-          <p className="font-medium text-ink">AI 改脚本</p>
-          <p className="mt-0.5">
-            AI 标签页里的修改会直接改写 .py 源文件，属于破坏性改动，
-            但每次都有快照，可以「回滚此次修改」。
-          </p>
+          <p className="font-medium text-ink">{el('howAiTitle')}</p>
+          <p className="mt-0.5">{el('howAiBody')}</p>
         </div>
         <div className="h-px bg-border" />
         <div>
-          <p className="font-medium text-ink">两者相遇时</p>
-          <p className="mt-0.5">
-            脚本变了之后，指向已消失元素的 override 会成为孤儿，
-            渲染时以警告列出并自动忽略，其余修改照常生效。
-          </p>
+          <p className="font-medium text-ink">{el('howBothTitle')}</p>
+          <p className="mt-0.5">{el('howBothBody')}</p>
         </div>
       </div>
     </Popover>
@@ -944,17 +967,27 @@ function HowItWorks() {
 /*  子图布局                                                                   */
 /* -------------------------------------------------------------------------- */
 
-const ALIGN_BUTTONS: { mode: AlignMode; icon: typeof AlignStartVertical; tip: string; min: number }[] = [
-  { mode: 'left', icon: AlignStartVertical, tip: '左对齐', min: 2 },
-  { mode: 'hcenter', icon: AlignCenterVertical, tip: '水平居中', min: 2 },
-  { mode: 'right', icon: AlignEndVertical, tip: '右对齐', min: 2 },
-  { mode: 'top', icon: AlignStartHorizontal, tip: '顶对齐', min: 2 },
-  { mode: 'vcenter', icon: AlignCenterHorizontal, tip: '垂直居中', min: 2 },
-  { mode: 'bottom', icon: AlignEndHorizontal, tip: '底对齐', min: 2 },
-  { mode: 'hdist', icon: AlignHorizontalDistributeCenter, tip: '水平等距（≥3）', min: 3 },
-  { mode: 'vdist', icon: AlignVerticalDistributeCenter, tip: '垂直等距（≥3）', min: 3 },
-  { mode: 'samew', icon: MoveHorizontal, tip: '等宽（以最后选中的为基准）', min: 2 },
-  { mode: 'sameh', icon: MoveVertical, tip: '等高（以最后选中的为基准）', min: 2 },
+/**
+ * 对齐按钮。`tip` 是带条件说明的长提示，`history` 是落进撤销栈的短标签——
+ * 以前是拿 tip 正则掐掉括号来当历史标签的，换了语言那条正则立刻失效。
+ */
+const ALIGN_BUTTONS: {
+  mode: AlignMode
+  icon: typeof AlignStartVertical
+  /** 长提示的 key（在 inspector:element 下）；没有就用 alignMode 的短名 */
+  tipKey?: string
+  min: number
+}[] = [
+  { mode: 'left', icon: AlignStartVertical, min: 2 },
+  { mode: 'hcenter', icon: AlignCenterVertical, min: 2 },
+  { mode: 'right', icon: AlignEndVertical, min: 2 },
+  { mode: 'top', icon: AlignStartHorizontal, min: 2 },
+  { mode: 'vcenter', icon: AlignCenterHorizontal, min: 2 },
+  { mode: 'bottom', icon: AlignEndHorizontal, min: 2 },
+  { mode: 'hdist', icon: AlignHorizontalDistributeCenter, tipKey: 'alignHdist', min: 3 },
+  { mode: 'vdist', icon: AlignVerticalDistributeCenter, tipKey: 'alignVdist', min: 3 },
+  { mode: 'samew', icon: MoveHorizontal, tipKey: 'alignSameW', min: 2 },
+  { mode: 'sameh', icon: MoveVertical, tipKey: 'alignSameH', min: 2 },
 ]
 
 /**
@@ -963,30 +996,32 @@ const ALIGN_BUTTONS: { mode: AlignMode; icon: typeof AlignStartVertical; tip: st
  */
 function ScaleField({ panel, group }: { panel: PanelObject; group: Group }) {
   const [pct, setPct] = useState(100)
-  const label = group.entries.length > 1 ? `缩放 ${group.entries.length} 个子图` : '缩放子图'
-
   const apply = (v: number) => {
     if (v === 100) return
-    setOverrides(panel.id, label, groupPatches(group, scaleGroupAbout(group.box, v / 100)))
+    setOverrides(
+      panel.id,
+      group.entries.length === 1
+        ? elMsg('scaleAxes')
+        : elMsg('scaleAxesMulti', { count: group.entries.length }),
+      groupPatches(group, scaleGroupAbout(group.box, v / 100)),
+    )
     setPct(100)
   }
 
   return (
     <div className="mt-1.5">
-      <Row label="缩放">
+      <Row label={el('scaleLabel')}>
         <NumberField
           value={pct}
           min={10}
           max={400}
           step={5}
           suffix="%"
-          title="绕中心缩放，组内相对布局不变"
+          title={el('scaleTitle')}
           onChange={apply}
         />
       </Row>
-      <p className="mt-1 text-xs leading-relaxed text-ink-3">
-        相对当前大小；应用后回到 100%
-      </p>
+      <p className="mt-1 text-xs leading-relaxed text-ink-3">{el('scaleHint')}</p>
     </div>
   )
 }
@@ -1003,7 +1038,7 @@ function AlignSection({ panel, items }: { panel: PanelObject; items: MixedEntry[
   const hasAnnotations = elementItems.length !== items.length
   const group = hasAnnotations ? null : groupOf(elementItems)
 
-  const apply = (mode: AlignMode, label: string) => {
+  const apply = (mode: AlignMode) => {
     const boxes = layoutBoxes(items, mode)
     const full = panelFullRect(panel)
     const patches: { gid: string; prop: string; value: unknown }[] = []
@@ -1021,22 +1056,34 @@ function AlignSection({ panel, items }: { panel: PanelObject; items: MixedEntry[
         patches.push(it.write(next))
       }
     }
-    applyMixedAlign(panel.id, label, patches, moves)
+    applyMixedAlign(panel.id, msg(`alignMode.${mode}`, undefined, 'inspector'), patches, moves)
   }
 
   return (
-    <Section plainTitle title={`已选 ${items.length} 个${hasAnnotations ? '对象' : '元素'}`}>
+    <Section
+      plainTitle
+      title={el(hasAnnotations ? 'alignTitleObjects' : 'alignTitleElements', {
+        count: items.length,
+      })}
+    >
       <div className="grid grid-cols-6 gap-0.5">
-        {ALIGN_BUTTONS.map(({ mode, icon: Icon, tip, min }) => {
+        {ALIGN_BUTTONS.map(({ mode, icon: Icon, tipKey, min }) => {
           const sizeOnly = mode === 'samew' || mode === 'sameh'
           const disabled = items.length < min || (sizeOnly && !allResizable)
+          const tip = tipKey
+            ? el(tipKey)
+            : translate(`alignMode.${mode}`, { ns: 'inspector' })
           return (
-            <Tip key={mode} label={sizeOnly && !allResizable ? `${tip} · 仅限子图` : tip} side="left">
+            <Tip
+              key={mode}
+              label={sizeOnly && !allResizable ? el('axesOnlySuffix', { tip }) : tip}
+              side="left"
+            >
               <Button
                 size="icon"
                 className="w-full"
                 disabled={disabled}
-                onClick={() => apply(mode, tip.replace(/（.*/, ''))}
+                onClick={() => apply(mode)}
                 aria-label={tip}
               >
                 <Icon size={14} />
@@ -1047,17 +1094,18 @@ function AlignSection({ panel, items }: { panel: PanelObject; items: MixedEntry[
       </div>
       {group && <ScaleField panel={panel} group={group} />}
       <p className="mt-2 text-xs leading-relaxed text-ink-3">
-        子图改的是它在整张图里的占比（matplotlib position），文字与图例改的是锚点位置，
-        都不影响画布上的面板尺寸。
-        {hasAnnotations && '画布标注跟着同一条基线排，位置改在画布对象上。'}
-        {group && '拖画布上的组包围框手柄也能成组缩放。'}
+        {el('alignHint')}
+        {hasAnnotations && el('alignHintAnnotations')}
+        {group && el('alignHintGroup')}
       </p>
       <ul className="mt-2 flex flex-col gap-0.5">
         {items.map((it, i) => (
           <li key={it.key} className="flex items-center gap-1.5 text-xs text-ink-2">
-            <span className="truncate">{it.label}</span>
+            <span className="truncate">{engineLabel(it.label)}</span>
             {i === items.length - 1 && (
-              <span className="ml-auto shrink-0 font-mono text-xs text-accent/70">基准</span>
+              <span className="ml-auto shrink-0 font-mono text-xs text-accent/70">
+                {el('alignBaseline')}
+              </span>
             )}
           </li>
         ))}
@@ -1087,8 +1135,8 @@ function AxesSizeMm({
   if (!rect) return null
   const [figW, figH] = sizeMm
 
-  const write = (next: Rect4, label: string) =>
-    setOverrides(panel.id, label, [
+  const write = (next: Rect4, key: string) =>
+    setOverrides(panel.id, elMsg(key), [
       { gid: element.gid, prop: 'position', value: next.map(round4) },
     ])
 
@@ -1096,7 +1144,7 @@ function AxesSizeMm({
     <div className="mt-2 border-t border-border pt-2">
       {proxied && (
         <p className="mb-1.5 text-xs leading-relaxed text-ink-3">
-          位置与大小作用于宿主子图「{element.label}」。
+          {el('proxiedGeometry', { label: engineLabel(element.label) })}
         </p>
       )}
       <Grid2>
@@ -1107,7 +1155,7 @@ function AxesSizeMm({
           step={0.5}
           min={1}
           max={figW}
-          onChange={(v) => write([rect[0], rect[1], mmToFrac(v, figW), rect[3]], '修改子图宽度')}
+          onChange={(v) => write([rect[0], rect[1], mmToFrac(v, figW), rect[3]], 'setAxesWidth')}
         />
         <NumberField
           prefix="H"
@@ -1120,7 +1168,7 @@ function AxesSizeMm({
             // 高度以顶边为锚点变化，和等高对齐的行为保持一致
             write(
               [rect[0], rect[1] + rect[3] - mmToFrac(v, figH), rect[2], mmToFrac(v, figH)],
-              '修改子图高度',
+              'setAxesHeight',
             )
           }
         />
@@ -1131,23 +1179,23 @@ function AxesSizeMm({
           variant="outline"
           size="sm"
           className="flex-1"
-          onClick={() => write(centerInFigure(rect, 'x'), '子图水平居中')}
+          onClick={() => write(centerInFigure(rect, 'x'), 'centerAxesH')}
         >
           <AlignCenterVertical size={13} />
-          水平居中
+          {el('centerH')}
         </Button>
         <Button
           variant="outline"
           size="sm"
           className="flex-1"
-          onClick={() => write(centerInFigure(rect, 'y'), '子图垂直居中')}
+          onClick={() => write(centerInFigure(rect, 'y'), 'centerAxesV')}
         >
           <AlignCenterHorizontal size={13} />
-          垂直居中
+          {el('centerV')}
         </Button>
       </div>
       <p className="mt-1.5 font-mono text-xs text-ink-3">
-        整图 {figW}×{figH} mm
+        {el('figureSize', { w: figW, h: figH })}
       </p>
     </div>
   )
@@ -1167,7 +1215,7 @@ function AdvancedSection({ panel, gid }: { panel: PanelObject; gid?: string }) {
         className="flex w-full items-center gap-1 text-left text-xs text-ink-2 hover:text-ink"
       >
         <ChevronRight size={11} className={cn('shrink-0 transition-transform', open && 'rotate-90')} />
-        高级
+        {el('advanced')}
       </button>
       {open && (
         <div className="mt-1.5 flex flex-col gap-1.5">
@@ -1176,11 +1224,13 @@ function AdvancedSection({ panel, gid }: { panel: PanelObject; gid?: string }) {
             size="sm"
             className="w-full"
             disabled={!panel.overrides.length}
-            title="清空全部图内修改（含写回原始文件时继承来的基线），回到脚本的原始输出"
+            title={el('resetTitle')}
             onClick={() => resetOverrides(panel.id)}
           >
             <RotateCcw size={13} />
-            重置到脚本原始{panel.overrides.length ? `（${panel.overrides.length}）` : ''}
+            {panel.overrides.length
+              ? el('resetToScriptCount', { count: panel.overrides.length })
+              : el('resetToScript')}
           </Button>
           <SyncOverridesButton panel={panel} />
           <HowItWorks />
@@ -1200,7 +1250,7 @@ function AdvancedSection({ panel, gid }: { panel: PanelObject; gid?: string }) {
  * 不画空白页，也不摆假的 disabled 控件。
  */
 function UnsupportedNote({ role }: { role: string }) {
-  const info = UNSUPPORTED[role]
+  const info = unsupportedOf(role)
   if (!info) return null
   return (
     <div className="mt-2 rounded-sm border border-border bg-surface-2 p-2">
@@ -1213,7 +1263,7 @@ function UnsupportedNote({ role }: { role: string }) {
         className="mt-1.5 w-full"
         onClick={() => useUiStore.getState().setRightTab('assistant')}
       >
-        用改图助手完成
+        {el('useAssistant')}
       </Button>
     </div>
   )
@@ -1234,21 +1284,21 @@ function HiddenElements({ panel, manifest }: { panel: PanelObject; manifest?: Ma
         className="flex w-full items-center gap-1 text-left text-xs text-ink-2 hover:text-ink"
       >
         <ChevronRight size={11} className={cn('shrink-0 transition-transform', open && 'rotate-90')} />
-        已隐藏元素（{hidden.length}）
+        {el('hiddenElements', { count: hidden.length })}
       </button>
       {open && (
         <ul className="mt-1 flex flex-col gap-0.5">
-          {hidden.map((el) => (
-            <li key={el.gid} className="flex items-center gap-1.5">
-              <span className="min-w-0 flex-1 truncate text-xs text-ink-3" title={el.gid}>
-                {el.label}
+          {hidden.map((item) => (
+            <li key={item.gid} className="flex items-center gap-1.5">
+              <span className="min-w-0 flex-1 truncate text-xs text-ink-3" title={item.gid}>
+                {engineLabel(item.label)}
               </span>
               <Button
                 size="sm"
                 className="shrink-0 text-ink-2"
-                onClick={() => unhideElement(panel.id, el.gid)}
+                onClick={() => unhideElement(panel.id, item.gid)}
               >
-                恢复
+                {el('restore')}
               </Button>
             </li>
           ))}

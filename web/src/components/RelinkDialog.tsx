@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Link2, TriangleAlert } from 'lucide-react'
 import {
   materializePaste,
@@ -16,6 +17,7 @@ import { Select } from './ui/Select'
  * 要么重新链接到现有素材，要么明确跳过——绝不静默生成空面板。
  */
 export function RelinkDialog() {
+  const { t } = useTranslation('dialogs')
   const pending = useClipboardStore((s) => s.pending)
   const setPending = useClipboardStore((s) => s.setPending)
   const assets = useAssetStore((s) => s.byId)
@@ -39,7 +41,7 @@ export function RelinkDialog() {
 
   const options = Object.values(assets)
     .sort((a, b) => a.name.localeCompare(b.name))
-    .map((a) => ({ value: a.id, label: `${a.name}（${a.folder}）` }))
+    .map((a) => ({ value: a.id, label: t('relink.assetOption', { name: a.name, folder: a.folder }) }))
 
   const confirm = () => {
     if (pending.mode === 'paste') materializePaste(pending.payload, choices)
@@ -51,21 +53,17 @@ export function RelinkDialog() {
     <Dialog
       open
       onOpenChange={(v) => !v && setPending(null)}
-      title={isPaste ? '粘贴的面板缺少素材' : '文档里的面板缺少素材'}
-      description={
-        isPaste
-          ? '剪贴板里的面板引用了当前图库中不存在的文件。逐个选择替代素材，或跳过该面板。'
-          : '布局引用了当前图库中不存在的文件（常见于换机器打开项目包）。逐个选择替代素材；不处理的面板会保持缺失状态并在导出前检查里提示。'
-      }
+      title={t(isPaste ? 'relink.titlePaste' : 'relink.titleDoc')}
+      description={t(isPaste ? 'relink.descPaste' : 'relink.descDoc')}
       size="lg"
       footer={
         <>
           <Button variant="outline" size="md" onClick={() => setPending(null)}>
-            {isPaste ? '取消粘贴' : '暂不处理'}
+            {t(isPaste ? 'relink.cancelPaste' : 'relink.cancelDoc')}
           </Button>
           <Button variant="primary" size="md" onClick={confirm}>
             <Link2 size={14} />
-            {isPaste ? '按上述处置粘贴' : '重新链接所选素材'}
+            {t(isPaste ? 'relink.confirmPaste' : 'relink.confirmDoc')}
           </Button>
         </>
       }
@@ -77,33 +75,32 @@ export function RelinkDialog() {
             <div className="min-w-0 flex-1">
               <p className="truncate text-xs text-ink" title={m.fileId}>
                 {m.name}
-                {m.count > 1 && <span className="text-ink-3">（{m.count} 个面板引用）</span>}
+                {m.count > 1 && (
+                  <span className="text-ink-3">{t('relink.refCount', { count: m.count })}</span>
+                )}
               </p>
               <p className="truncate text-xs text-ink-3">{m.fileId}</p>
             </div>
             <div className="w-56 shrink-0">
               <Select
                 value={m.relinkTo ?? ''}
-                placeholder={isPaste ? '跳过该面板' : '保持缺失'}
+                placeholder={t(isPaste ? 'relink.skipPanel' : 'relink.keepMissing')}
                 onChange={(v) =>
                   setChoices((cs) =>
                     cs.map((c, j) => (j === i ? { ...c, relinkTo: v || undefined } : c)),
                   )
                 }
                 options={[
-                  { value: '', label: isPaste ? '跳过该面板' : '保持缺失' },
+                  { value: '', label: t(isPaste ? 'relink.skipPanel' : 'relink.keepMissing') },
                   ...options,
                 ]}
-                ariaLabel={`为 ${m.name} 选择替代素材`}
+                ariaLabel={t('relink.selectAria', { name: m.name })}
               />
             </div>
           </li>
         ))}
       </ul>
-      <p className="mt-2 text-xs leading-relaxed text-ink-3">
-        重新链接会按新素材的尺寸与脚本重置图内修改（overrides 绑定在原脚本的元素上，
-        跨素材搬运不可靠）；位置、大小、层级与成组关系保留。
-      </p>
+      <p className="mt-2 text-xs leading-relaxed text-ink-3">{t('relink.footnote')}</p>
     </Dialog>
   )
 }
