@@ -228,6 +228,17 @@ Windows 代码签名都是两回事）：公钥写死在 `src-tauri/tauri.conf.j
    `plugins.updater.pubkey` 一致。**换密钥 = 老版本的用户再也收不到更新**
    （他们壳里烧的是旧公钥），只能引导手动下载一次，非必要不要换。
 
+4. **发版前核一次配对**（配错了极其安静：CI 全绿、资产齐全，只有用户那边
+   「更新失败」）：
+
+   ```sh
+   printf probe > /tmp/probe.bin
+   pnpm dlx @tauri-apps/cli@2.11.4 signer sign -f ~/magplot-updater.key -p "" /tmp/probe.bin
+   python scripts/check_updater_key.py --sig /tmp/probe.bin.sig
+   ```
+
+   对不上就别发——按那份配置发出去的更新，用户下载完校验失败、装不上。
+
 发出去之后自查：Release 资产里应当有 `latest.json`、`Magplot.app.tar.gz(.sig)`、
 `Magplot_<ver>_x64-setup.nsis.zip(.sig)`。少了 `latest.json`，壳那边的表现是
 **一直显示「已是最新版本」**——用户停在旧版本上而 CI 全绿，这条要盯。
