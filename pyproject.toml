@@ -61,8 +61,12 @@ artifacts = ["src/magplot/web/**"]
 # 不属于 pip 包。**必须显式 exclude**——sdist 的 include 里那条 `tests` 是
 # gitignore 风格的模式，会把任何一层的 `tests/` 都收进来，`workerd/tests/` 正好
 # 撞上（实测过：不加这条，sdist 里会多出三个 .rs 文件和一个 fake worker）。
+# Codex 插件（codex-plugin/ + 仓库根的 .agents/ 市场清单）同理：它随 Codex 的
+# 插件市场分发，不属于 pip 包。sdist 的 include 里那条 `tests` 是 gitignore 风格
+# 的模式，任何一层的 `tests/` 都会被收走——插件将来加 tests/ 就会撞上。
 exclude = ["runtime", "runtime/**", "build/runtime-cache/**",
-           "workerd", "workerd/**"]
+           "workerd", "workerd/**",
+           "codex-plugin", "codex-plugin/**", ".agents", ".agents/**"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/magplot"]

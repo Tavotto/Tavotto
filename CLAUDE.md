@@ -458,6 +458,37 @@ Python，首次渲染也不联网：
 - 前端测试：`cd web && pnpm test`（vitest+jsdom；NODE_OPTIONS 里禁用了
   node 内建 webstorage，否则 jsdom localStorage 被遮蔽）。
 
+## 外部交接与 Codex 插件（2026-08-18）
+
+完整版在 `docs/adr/0005-external-handoff-and-codex-plugin.md`，改动前先读。
+
+- **入口是 `magplot open <产物|脚本|目录>`**（`engine/handoff.py`，纯标准库）：
+  解析目标 → 登记 stem → 唤起界面。子命令在 argparse **之前**分派——主入口是纯
+  flag 形态（`magplot --figures …`），改成 subparsers 会把既有命令行整个换掉。
+  项目 = 含 `mm_registry.json` 的那一层（向上找 ≤3 层，**有上限**：静默把上层目录
+  当图库会把一整棵源码树当素材扫）。注册表合并复用 `discover.merge`，
+  **不另写裁决**；读不懂就报错，绝不重写用户手写的注册表。
+- **桌面契约是 argv `--open <目录> [--stem <stem>]`**：生产者唯一
+  `handoff.desktop_argv()`，消费者唯一 `src-tauri/src/main.rs::parse_open_args()`，
+  两侧各有单测，改一边必须同步另一边。macOS 上**直接 exec 包内二进制**——App
+  已在跑时 `open -a … --args` 送不到，交接会静默失败。
+  首启：项目 → sidecar 的 `--figures`，stem → 落地 URL 的 `?open=`；
+  已开着窗口：单实例转发 argv → emit `magplot:open`。两条路汇进前端同一个
+  `lib/openRequest.ts`（浏览器模式共用 `?open=`，定位逻辑只有一份）。
+- **前端交接三条纪律**（`applyOpenRequest`）：① 同项目**绝不**调
+  `projectStore.open`（那条路 switchDocument 成空白文档，用户排的版当场没）；
+  ② 必须重扫素材（交接的图刚写到磁盘，实例手里那份 panels 是旧的）；
+  ③ 找不到就说找不到，绝不退而求其次选别的面板。重复交接同一张只选中，不叠第二份。
+- **Codex 插件在 `codex-plugin/`**，市场清单在仓库根 `.agents/plugins/marketplace.json`
+  （仓库即市场根）。**skills-only**：不做 MCP server（Codex 本就能跑 Python，
+  缺的是约定与最后一跳），不做 `.app.json`（需要 OpenAI 侧注册的托管 App id）。
+  pyproject 的 `exclude` 显式挡住它进 wheel/sdist。插件版本 == `magplot.__version__`
+  （`tests/test_codex_plugin.py` 看护）。
+- **技能的第一条硬约定：脚本与产物同目录、且必须先落成文件**（禁 `python -c` 出图）
+  ——「stem ↔ 产出它的脚本」是图能不能双击进去改的全部依据。自检不靠祈祷：
+  `scripts/handoff.py` 读 `magplot open --json` 的 `registry.parameterizable`，
+  为 false 时**退出码 4**。图出来了但只是死图，那不是成功。
+
 ## AI 桥
 
 - `POST /api/ai/run` → spawn `codex exec`（默认）或 `claude -p`，cwd=figures 目录；

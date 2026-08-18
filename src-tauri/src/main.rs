@@ -18,6 +18,46 @@ struct AppState {
     sidecar: Mutex<Option<sidecar::Sidecar>>,
     port: Arc<OnceLock<u16>>,
     nonce: String,
+    /// 本次启动带进来的交接请求（`Magplot --open <目录> [--stem <s>]`）。
+    /// 首启走这条：项目交给 sidecar 的 `--figures`，stem 拼进落地 URL 的
+    /// `?open=`。**第二次启动不走这里**——单实例插件会把 argv 转发给已经在
+    /// 跑的窗口，那条路发 `magplot:open` 事件。
+    open: Option<OpenRequest>,
+}
+
+/// 交接契约：`Magplot --open <项目目录> [--stem <stem>]`。
+///
+/// **与 `src/magplot/engine/handoff.py` 的 `desktop_argv()` 严格同源**——
+/// 那边是唯一的生产者，这边是唯一的消费者，改一边必须同步另一边
+/// （Python 侧看护 `tests/test_handoff.py::test_desktop_argv_contract`，
+/// Rust 侧看护本文件末尾的单测）。
+#[derive(Clone, serde::Serialize)]
+struct OpenRequest {
+    project: String,
+    stem: Option<String>,
+}
+
+/// 认不出的参数一律忽略：macOS 从 Finder / Dock 启动会塞 `-psn_0_12345`，
+/// Windows 的关联启动会塞文件路径，这些都不该让交接解析失败。
+fn parse_open_args(args: &[String]) -> Option<OpenRequest> {
+    let mut project: Option<String> = None;
+    let mut stem: Option<String> = None;
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--open" => project = it.next().cloned(),
+            "--stem" => stem = it.next().cloned(),
+            _ => {}
+        }
+    }
+    let project = project?;
+    if project.trim().is_empty() {
+        return None;
+    }
+    Some(OpenRequest {
+        project,
+        stem: stem.filter(|s| !s.trim().is_empty()),
+    })
 }
 
 impl AppState {
@@ -161,6 +201,7 @@ fn spawn_sidecar_and_navigate(app: tauri::AppHandle) {
     let state = app.state::<AppState>();
     let nonce = state.nonce.clone();
     let port_cell = state.port.clone();
+    let open = state.open.clone();
 
     std::thread::spawn(move || {
         let resource_dir = app.path().resource_dir().ok();
@@ -169,7 +210,8 @@ fn spawn_sidecar_and_navigate(app: tauri::AppHandle) {
             .app_log_dir()
             .unwrap_or_else(|_| std::env::temp_dir().join("magplot-logs"));
 
-        let result = sidecar::Sidecar::start(resource_dir, &log_dir, &nonce);
+        let project = open.as_ref().map(|o| o.project.as_str());
+        let result = sidecar::Sidecar::start(resource_dir, &log_dir, &nonce, project);
         let Some(win) = app.get_webview_window("main") else {
             if let Ok((sc, _)) = result {
                 sc.shutdown();
@@ -181,10 +223,19 @@ fn spawn_sidecar_and_navigate(app: tauri::AppHandle) {
                 let log_path = sc.log_path.clone();
                 *app.state::<AppState>().sidecar.lock().unwrap() = Some(sc);
                 let _ = port_cell.set(port);
-                // fragment 携带一次性 nonce：不进 HTTP 请求行，也就不进任何访问日志
-                let url = format!("http://127.0.0.1:{port}/#dnonce={nonce}");
+                // fragment 携带一次性 nonce：不进 HTTP 请求行，也就不进任何访问日志。
+                // `?open=<stem>` 是首启交接的落点（前端 lib/openRequest.ts 消费），
+                // 与浏览器模式共用同一份语义——桌面首启不必再多发一次事件。
+                let query = match open.as_ref().and_then(|o| o.stem.as_deref()) {
+                    Some(stem) => format!(
+                        "?open={}",
+                        utf8_percent_encode(stem, NON_ALPHANUMERIC)
+                    ),
+                    None => String::new(),
+                };
+                let url = format!("http://127.0.0.1:{port}/{query}#dnonce={nonce}");
                 if win
-                    .eval(&format!("window.location.replace({})", js_string(&url)))
+                    .eval(format!("window.location.replace({})", js_string(&url)))
                     .is_err()
                 {
                     show_error(&win, "窗口初始化失败", &log_path.display().to_string());
@@ -208,7 +259,7 @@ fn show_error(win: &tauri::WebviewWindow, msg: &str, log_path: &str) {
         utf8_percent_encode(msg, NON_ALPHANUMERIC),
         utf8_percent_encode(log_path, NON_ALPHANUMERIC)
     );
-    let _ = win.eval(&format!("window.location.replace({})", js_string(&q)));
+    let _ = win.eval(format!("window.location.replace({})", js_string(&q)));
 }
 
 fn main() {
@@ -216,15 +267,21 @@ fn main() {
         sidecar: Mutex::new(None),
         port: Arc::new(OnceLock::new()),
         nonce: random_nonce(),
+        open: parse_open_args(&std::env::args().skip(1).collect::<Vec<_>>()),
     };
 
     let app = tauri::Builder::default()
-        // 单实例必须最先注册：第二次启动只聚焦已有窗口，绝不再起一套后端
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+        // 单实例必须最先注册：第二次启动只聚焦已有窗口，绝不再起一套后端。
+        // 「已经开着 Magplot 再交接一张图」走的正是这条——argv 转发过来，
+        // 前端换项目 / 定位面板，后端一套进程不动。
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.unminimize();
                 let _ = w.show();
                 let _ = w.set_focus();
+            }
+            if let Some(req) = parse_open_args(argv.get(1..).unwrap_or(&[])) {
+                let _ = app.emit_to("main", "magplot:open", req);
             }
         }))
         .plugin(tauri_plugin_window_state::Builder::default().build())
@@ -280,4 +337,56 @@ fn main() {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn parses_the_handoff_contract() {
+        let req = parse_open_args(&args(&["--open", "/p/figures", "--stem", "Fig1"])).unwrap();
+        assert_eq!(req.project, "/p/figures");
+        assert_eq!(req.stem.as_deref(), Some("Fig1"));
+    }
+
+    #[test]
+    fn stem_is_optional() {
+        let req = parse_open_args(&args(&["--open", "/p/figures"])).unwrap();
+        assert_eq!(req.stem, None);
+    }
+
+    #[test]
+    fn ignores_unknown_arguments() {
+        // macOS 从 Finder / Dock 启动会塞 -psn_0_12345；漏掉这条，
+        // 双击图标启动会被当成一次「参数不认识」的失败。
+        let req = parse_open_args(&args(&["-psn_0_12345", "--open", "/p", "--verbose"]));
+        assert_eq!(req.unwrap().project, "/p");
+    }
+
+    #[test]
+    fn no_open_flag_means_normal_launch() {
+        assert!(parse_open_args(&args(&[])).is_none());
+        assert!(parse_open_args(&args(&["--stem", "Fig1"])).is_none());
+        assert!(parse_open_args(&args(&["--open"])).is_none()); // 值缺失
+        assert!(parse_open_args(&args(&["--open", "  "])).is_none()); // 空白路径
+    }
+
+    #[test]
+    fn blank_stem_is_dropped_not_forwarded() {
+        // 空 stem 拼进 URL 就是 `?open=`，前端会去找一个叫空串的面板。
+        let req = parse_open_args(&args(&["--open", "/p", "--stem", " "])).unwrap();
+        assert_eq!(req.stem, None);
+    }
+
+    #[test]
+    fn paths_with_spaces_and_cjk_survive() {
+        let req = parse_open_args(&args(&["--open", "/用户/我的 图库", "--stem", "图 1"])).unwrap();
+        assert_eq!(req.project, "/用户/我的 图库");
+        assert_eq!(req.stem.as_deref(), Some("图 1"));
+    }
 }

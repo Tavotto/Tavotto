@@ -153,6 +153,39 @@ edit the script itself — for example "move the legend to the top left and make
 Your script is snapshotted first; afterwards you see the diff and the figure re-renders,
 and one click reverts it. Everything else works without these tools installed.
 
+## Sending a figure in from elsewhere
+
+Just made a figure somewhere else — ran a script yourself, or had Codex / Claude write one?
+One command hands it over:
+
+```bash
+magplot open figures/Fig1_kinetics.pdf   # the output file
+magplot open figures/fig1_kinetics.py    # or the script — output name is resolved for you
+magplot open figures/                    # or the whole figure library
+```
+
+It opens the figure's library as a project, adds any missing entries to the script registry,
+then launches the **desktop app** (if it's already running the figure goes straight into that
+window — no second copy). Without the desktop app it falls back to browser mode.
+
+### Codex plugin
+
+Install it and the matplotlib figures Codex writes come out in a shape Magplot can take over
+(script next to its output, vector PDF, statically resolvable output name), and are handed
+over automatically when they're done:
+
+```bash
+codex plugin marketplace add erwanjun/magplot && codex plugin add magplot@magplot
+```
+
+Start a new session afterwards. The CLI and the Codex desktop app share one plugin directory,
+so **installing once covers both**; `codex plugin marketplace upgrade magplot` pulls updates.
+
+Legend position, font sizes, line widths and ticks are then a drag or a click away in Magplot —
+no need to describe them to an AI again. See [`codex-plugin/README.md`](codex-plugin/README.md);
+the distribution roadmap (including the official directory submission checklist) is in
+[`docs/codex-plugin-distribution.md`](docs/codex-plugin-distribution.md).
+
 ## Where your data lives
 
 On your machine. Rendering, composition and export are all local processes; nothing about

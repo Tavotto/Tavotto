@@ -266,10 +266,55 @@ def test_packaging_entry_points_reconfigure_stdout_to_utf8():
                 "scripts/build_desktop.py",
                 "scripts/build_worker_runtime.py",
                 "scripts/smoke_app.py",
-                "scripts/smoke_desktop.py"):
+                "scripts/smoke_desktop.py",
+                # Codex 插件的交接脚本：Codex 调它时 stdout 就是管道，
+                # 输出的 JSON 带中文（hint / magplot open 回来的错误）
+                "codex-plugin/skills/magplot-figure/scripts/handoff.py"):
         src = (repo / rel).read_text(encoding="utf-8")
         assert 'reconfigure(encoding="utf-8"' in src, \
             f"{rel} 没做 stdout reconfigure，Windows 管道下中文日志会打死进程"
+
+
+def test_codex_handoff_json_survives_cp1252_stdout():
+    """Codex 插件的交接脚本在非 UTF-8 stdout 下必须照样吐出那行 JSON。
+
+    实测（CI 的 windows-latest 腿）：Codex 调这个脚本时 stdout 是管道，Windows 上
+    于是退回 cp1252/cp936；输出里有中文（这里走的是「路径不存在」那条），
+    第一次 print 直接 UnicodeEncodeError——**调用方看到的是脚本挂了，
+    而不是那行说明该怎么修的 JSON**，整条交接在 Windows 上等于不可用。
+    """
+    repo = Path(__file__).resolve().parent.parent
+    script = repo / "codex-plugin/skills/magplot-figure/scripts/handoff.py"
+    r = subprocess.run(
+        [sys.executable, str(script), str(repo / "不存在的图.pdf")],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
+        env={**os.environ, "PYTHONIOENCODING": "cp1252"})
+    assert r.returncode == 2, r.stderr        # 2 = 路径不对，不是 1（崩了）
+    assert "路径不存在" in json.loads(r.stdout.strip().splitlines()[-1])["error"]
+
+
+def test_codex_handoff_pins_utf8_on_every_decoding_spawn():
+    """它读的是 `magplot open` 的中文 JSON 与用户脚本的 traceback。
+
+    `text=True` 不钉 encoding 就跟随系统区域编码，cp936 下解码当场抛——
+    与 `test_every_backend_subprocess_that_decodes_pins_utf8` 同一条纪律，
+    只是那条只扫 engine/ 与 app.py，够不到插件目录。
+    """
+    repo = Path(__file__).resolve().parent.parent
+    script = repo / "codex-plugin/skills/magplot-figure/scripts/handoff.py"
+    tree = ast.parse(script.read_text(encoding="utf-8"))
+    checked = 0
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "run"):
+            continue
+        kwargs = {kw.arg for kw in node.keywords}
+        if "text" not in kwargs:
+            continue                          # 只看 returncode 的那次不解码
+        assert "encoding" in kwargs and "errors" in kwargs, \
+            f"handoff.py 第 {node.lineno} 行 text=True 却没钉 encoding/errors"
+        checked += 1
+    assert checked >= 2, "一处都没扫到 = 匹配逻辑坏了，别让空断言冒充通过"
 
 
 def test_runtime_build_log_survives_cp1252_stdout():

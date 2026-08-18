@@ -138,6 +138,15 @@ jobs:
           MAGPLOT_REQUIRE_RUNTIME: ${{ runner.os == 'Windows' && '1' || '0' }}
         run: python scripts/build_desktop.py --skip-tauri
 
+      - name: 壳的单测（交接契约 --open/--stem）
+        # **只在 macOS 这条腿跑一份**：解析的是纯字符串 argv，没有平台分支，
+        # 两边各跑一遍只是多花一次 debug 编译。放在 sidecar 构建之后是因为
+        # build.rs 要 ../dist/Magplot 这个资源存在才肯生成清单。
+        # 契约的另一半在 Python 侧（tests/test_handoff.py::test_desktop_argv_contract）。
+        if: runner.os == 'macOS'
+        working-directory: src-tauri
+        run: cargo test
+
       - name: 渲染 worker 环境（仅 macOS：冒烟的渲染/导出腿需要 matplotlib）
         # Windows 刻意不建也不设 MM_WORKER_PYTHON——sidecar 冒烟的渲染腿
         # 必须走内置 runtime，一台碰巧装着 matplotlib 的机器不该让它绿灯
