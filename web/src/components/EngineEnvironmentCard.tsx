@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useEnvStore } from '@/store/envStore'
+import { t as translate } from '@/i18n'
 import type { EngineSource } from '@/lib/api'
 import { Button } from './ui/Button'
 import { TextInput } from './ui/Input'
@@ -20,16 +22,16 @@ import { TextInput } from './ui/Input'
  * MissingDependencyCard），不在这里处理——那时环境本身是好的。
  */
 
-const SOURCE_LABEL: Record<Exclude<EngineSource, ''>, string> = {
-  bundled: 'Magplot 内置环境',
-  configured: '你指定的环境',
-  managed_venv: 'Magplot 自建的环境',
-  env_override: '环境变量 MM_WORKER_PYTHON',
-  current_process: 'Magplot 自身的解释器',
-  system: '系统 Python / Conda',
-}
+/** 本卡片的文案在 errors:engine.* 下 */
+const en = (key: string, values?: Record<string, unknown>) =>
+  translate(`engine.${key}`, { ns: 'errors', ...(values ?? {}) })
+
+/** 后端给的是稳定的 source 枚举，人话在这里按当前语言取 */
+const sourceLabel = (source: EngineSource): string =>
+  en(`sourceLabel.${source || 'unknown'}`)
 
 export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
+  useTranslation('errors')
   const { env, log, installing, refresh, install, setPython } = useEnvStore()
   const [manual, setManual] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -44,30 +46,29 @@ export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
   if (env.ok && compact) return null
 
   const apply = async () => {
-    const msg = await setPython(manual.trim() || null)
-    setError(msg)
-    if (!msg) setManual('')
+    const failure = await setPython(manual.trim() || null)
+    setError(failure)
+    if (!failure) setManual('')
   }
 
   const advancedBlock = (
     <div className="flex flex-col gap-1.5 border-t border-border pt-2.5">
       {advanced ? (
         <>
-          <span className="text-xs text-ink-2">使用其他 Python 环境</span>
+          <span className="text-xs text-ink-2">{en('useOther')}</span>
           <div className="flex items-center gap-1.5">
             <TextInput
               value={manual}
               onChange={(e) => setManual(e.target.value)}
-              placeholder="/path/to/python 或 conda 环境里的 python"
-              aria-label="渲染解释器路径"
+              placeholder={en('pathPlaceholder')}
+              aria-label={en('pathAria')}
             />
-            <Button onClick={() => void apply()}>应用</Button>
+            <Button onClick={() => void apply()}>{en('apply')}</Button>
           </div>
           <p className="text-xs leading-relaxed text-ink-3">
-            脚本用到内置环境里没有的包（rdkit、astropy…）时换成你自己那套。
-            留空并应用即可恢复默认。Magplot
-            <strong className="font-medium text-ink-2">不会改动你选中的环境</strong>，
-            只是启动它来渲染。
+            {en('useOtherHintBefore')}
+            <strong className="font-medium text-ink-2">{en('useOtherHintStrong')}</strong>
+            {en('useOtherHintAfter')}
           </p>
           {error && <p className="text-xs text-danger">{error}</p>}
         </>
@@ -77,7 +78,7 @@ export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
           onClick={() => setAdvanced(true)}
           className="self-start text-xs text-accent hover:underline"
         >
-          使用其他 Python 环境…
+          {en('useOtherLink')}
         </button>
       )}
     </div>
@@ -85,11 +86,11 @@ export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
 
   // ---- 1. 一切正常 -------------------------------------------------------
   if (env.ok) {
-    const label = env.source ? SOURCE_LABEL[env.source] : '已配置的环境'
+    const label = sourceLabel(env.source)
     return (
       <div className="flex flex-col gap-2.5 rounded-md border border-border bg-surface p-3">
         <div>
-          <h3 className="text-xs font-medium text-ink">渲染环境</h3>
+          <h3 className="text-xs font-medium text-ink">{en('okTitle')}</h3>
           <p className="mt-1 text-xs leading-relaxed text-ink-2">
             {label}
             {env.matplotlib && (
@@ -97,17 +98,16 @@ export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
             )}
           </p>
           {env.bundled ? (
-            <p className="mt-1 text-xs leading-relaxed text-ink-3">
-              常用科学栈（numpy / matplotlib / pandas / scipy / seaborn / Pillow）已随
-              Magplot 一起安装，不需要你另外装 Python，首次渲染也不联网。
-            </p>
+            <p className="mt-1 text-xs leading-relaxed text-ink-3">{en('bundledHint')}</p>
           ) : (
             <p className="mt-1 break-all font-mono text-xs text-ink-3">{env.python}</p>
           )}
         </div>
         {env.bundled && Object.keys(env.runtime?.packages ?? {}).length > 0 && (
           <details className="text-xs text-ink-3">
-            <summary className="cursor-pointer select-none text-ink-2">内置包版本</summary>
+            <summary className="cursor-pointer select-none text-ink-2">
+              {en('bundledPackages')}
+            </summary>
             <ul className="mt-1 flex flex-col gap-0.5 font-mono">
               {Object.entries(env.runtime.packages).map(([name, ver]) => (
                 <li key={name}>
@@ -127,17 +127,13 @@ export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
     return (
       <div className="flex flex-col gap-2.5 rounded-md border border-border bg-surface p-3">
         <div>
-          <h3 className="text-xs font-medium text-ink">安装文件不完整</h3>
+          <h3 className="text-xs font-medium text-ink">{en('incompleteTitle')}</h3>
           <p className="mt-1 text-xs leading-relaxed text-ink-2">
-            Magplot 自带的渲染环境
-            {env.code === 'bundled_runtime_invalid' ? '已损坏' : '不见了'}
-            ——请重新安装 Magplot。如果是杀毒软件误删，安装后把 Magplot
-            的安装目录加入白名单。
+            {en('incompleteBefore')}
+            {en(env.code === 'bundled_runtime_invalid' ? 'incompleteInvalid' : 'incompleteMissing')}
+            {en('incompleteAfter')}
           </p>
-          <p className="mt-1 text-xs leading-relaxed text-ink-3">
-            排版、标注和导出不受影响，只有图内元素编辑需要渲染环境。
-            设置 →「环境诊断」可以导出诊断包。
-          </p>
+          <p className="mt-1 text-xs leading-relaxed text-ink-3">{en('incompleteHint')}</p>
         </div>
         {!compact && advancedBlock}
       </div>
@@ -148,36 +144,33 @@ export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
   return (
     <div className="flex flex-col gap-2.5 rounded-md border border-border bg-surface p-3">
       <div>
-        <h3 className="text-xs font-medium text-ink">尚未配置渲染环境</h3>
-        <p className="mt-1 text-xs leading-relaxed text-ink-2">
-          图内元素编辑需要一个装了 matplotlib 的 Python——Magplot 运行的是你自己的脚本，
-          解释器得能 import 它们用到的库。排版、标注和导出不受影响。
-        </p>
+        <h3 className="text-xs font-medium text-ink">{en('missingTitle')}</h3>
+        <p className="mt-1 text-xs leading-relaxed text-ink-2">{en('missingBody')}</p>
       </div>
 
       {env.can_install ? (
         <>
           <Button variant="primary" onClick={() => void install()} disabled={installing}>
-            {installing ? '正在安装…' : '自动安装'}
+            {en(installing ? 'installing' : 'autoInstall')}
           </Button>
           <p className="text-xs leading-relaxed text-ink-3">
-            会在 Magplot 自己的目录里建一个独立环境并装上 matplotlib，
-            <strong className="font-medium text-ink-2">不会改动你现有的任何 Python 环境</strong>。
-            首次需要下载几十 MB。
+            {en('autoInstallHintBefore')}
+            <strong className="font-medium text-ink-2">{en('autoInstallHintStrong')}</strong>
+            {en('autoInstallHintAfter')}
           </p>
         </>
       ) : (
         <p className="text-xs leading-relaxed text-danger">
-          这台机器上没找到可用的 Python。请先安装{' '}
+          {en('noPythonBefore')}{' '}
           <a
             href="https://www.python.org/downloads/"
             target="_blank"
             rel="noreferrer"
             className="text-accent hover:underline"
           >
-            Python 3.10 以上
+            {en('noPythonLink')}
           </a>
-          （或 Anaconda），再回到这里。
+          {en('noPythonAfter')}
         </p>
       )}
 
@@ -200,6 +193,7 @@ export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
  * 那套已经装好这些包的科研环境。
  */
 export function MissingDependencyCard({ module }: { module: string }) {
+  useTranslation('errors')
   const { setPython } = useEnvStore()
   const [manual, setManual] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -208,29 +202,27 @@ export function MissingDependencyCard({ module }: { module: string }) {
     <div className="flex flex-col gap-2.5 rounded-md border border-border bg-surface p-3">
       <div>
         <h3 className="text-xs font-medium text-ink">
-          渲染环境里没有 <span className="font-mono">{module || '这个包'}</span>
+          {/* 包名是脚本里的标识符，原样显示 */}
+          {en('missingModuleTitle', { module: module || en('missingModulePackage') })}
         </h3>
-        <p className="mt-1 text-xs leading-relaxed text-ink-2">
-          Magplot 内置的是常用科学栈（numpy / matplotlib / pandas / scipy / seaborn /
-          Pillow）。这个脚本还需要别的包——把渲染环境换成你平时跑它的那套
-          Python / Conda 环境即可。
-        </p>
+        <p className="mt-1 text-xs leading-relaxed text-ink-2">{en('missingModuleBody')}</p>
       </div>
       <div className="flex items-center gap-1.5">
         <TextInput
           value={manual}
           onChange={(e) => setManual(e.target.value)}
-          placeholder="/path/to/python 或 conda 环境里的 python"
-          aria-label="渲染解释器路径"
+          placeholder={en('pathPlaceholder')}
+          aria-label={en('pathAria')}
         />
         <Button onClick={() => void setPython(manual.trim() || null).then(setError)}>
-          应用
+          {en('apply')}
         </Button>
       </div>
       {error && <p className="text-xs text-danger">{error}</p>}
       <p className="text-xs leading-relaxed text-ink-3">
-        Magplot 只是启动它来渲染，
-        <strong className="font-medium text-ink-2">不会往里面安装任何东西</strong>。
+        {en('missingModuleNoteBefore')}
+        <strong className="font-medium text-ink-2">{en('missingModuleNoteStrong')}</strong>
+        {en('missingModuleNoteAfter')}
       </p>
     </div>
   )

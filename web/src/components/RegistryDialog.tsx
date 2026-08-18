@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { AlertTriangle, Braces, Check, Play, RefreshCw } from 'lucide-react'
 import {
   fetchRegistry,
@@ -9,6 +10,8 @@ import {
   type RegistryView,
 } from '@/lib/api'
 import { cn } from '@/lib/utils'
+import { msg, t as translate } from '@/i18n'
+import { listJoin } from '@/i18n/format'
 import { useAssetStore } from '@/store/assetStore'
 import { useUiStore } from '@/store/uiStore'
 import { Button } from './ui/Button'
@@ -28,18 +31,24 @@ import { TextInput } from './ui/Input'
  *     真实产出登记，这是唯一可靠的办法；
  *   * 手工填写 —— 归属冲突的裁决，以及前两条都失手时的兜底。
  */
+/** 本对话框的文案在 dialogs:registry.* 下 */
+const rg = (key: string, values?: Record<string, unknown>) =>
+  translate(`registry.${key}`, { ns: 'dialogs', ...(values ?? {}) })
+
 export function RegistryDialog() {
+  useTranslation('dialogs')
   const open = useUiStore((s) => s.registryOpen)
   const setOpen = useUiStore((s) => s.setRegistryOpen)
   if (!open) return null
   return (
-    <Dialog open onOpenChange={setOpen} title="脚本注册表" size="lg">
+    <Dialog open onOpenChange={setOpen} title={rg('title')} size="lg">
       <RegistryBody />
     </Dialog>
   )
 }
 
 function RegistryBody() {
+  useTranslation('dialogs')
   const [view, setView] = useState<RegistryView | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
@@ -79,7 +88,11 @@ function RegistryBody() {
       const n = res.changes.added_scripts.length
       useUiStore
         .getState()
-        .setStatus(n ? `已登记 ${n} 个脚本` : '扫描完成，没有发现新的可登记脚本')
+        .setStatus(
+          n
+            ? msg('registry.registered', { count: n }, 'dialogs')
+            : msg('registry.nothingNew', undefined, 'dialogs'),
+        )
     })
 
   const probe = (script: string) =>
@@ -87,9 +100,9 @@ function RegistryBody() {
       const res = await probeScript(script)
       if (res.error) {
         setProbed((p) => ({ ...p, [script]: res.error! }))
-        throw new Error(`${script} 试运行失败：${res.error}`)
+        throw new Error(rg('probeFailed', { script, error: res.error }))
       }
-      setProbed((p) => ({ ...p, [script]: `已登记 ${res.stems.join('、')}` }))
+      setProbed((p) => ({ ...p, [script]: rg('probeRegistered', { stems: listJoin(res.stems) }) }))
     })
 
   const registered = Object.entries(view?.scripts ?? {})
@@ -99,12 +112,12 @@ function RegistryBody() {
     <div className="flex flex-col gap-3">
       <div className="flex items-start justify-between gap-3">
         <p className="text-xs leading-relaxed text-ink-3">
-          登记过的脚本，它产出的面板才带 <Braces size={11} className="inline -mt-0.5" />
-          （可参数化编辑）。注册表存在图库目录的 mm_registry.json，随图库走。
+          {rg('introBefore')} <Braces size={11} className="inline -mt-0.5" />
+          {rg('introAfter')}
         </p>
         <Button variant="outline" size="sm" disabled={busy !== null} onClick={() => void scan()}>
           <RefreshCw size={13} className={cn(busy === 'scan' && 'animate-spin')} />
-          重新扫描
+          {rg('rescan')}
         </Button>
       </div>
 
@@ -118,25 +131,24 @@ function RegistryBody() {
         <section className="rounded-md border border-border bg-surface-2 p-2">
           <h3 className="mb-1 flex items-center gap-1.5 text-xs font-medium text-ink">
             <AlertTriangle size={12} className="text-danger" />
-            归属冲突（未分配，需要你裁决）
+            {rg('conflictsTitle')}
           </h3>
           <ul className="flex flex-col gap-0.5">
             {conflicts.map(([stem, scripts]) => (
               <li key={stem} className="text-xs text-ink-2">
-                <span className="font-mono text-ink">{stem}</span>：{scripts.join(' vs ')}
+                <span className="font-mono text-ink">{stem}</span>
+                {rg('conflictScripts', { scripts: scripts.join(' vs ') })}
               </li>
             ))}
           </ul>
-          <p className="mt-1 text-xs text-ink-3">
-            在下面把该 stem 填给其中一个脚本即可；另一个脚本对它的认领会自动摘掉。
-          </p>
+          <p className="mt-1 text-xs text-ink-3">{rg('conflictHint')}</p>
         </section>
       )}
 
       <section>
-        <h3 className="mb-1 text-xs font-medium text-ink-2">未登记的绘图脚本</h3>
+        <h3 className="mb-1 text-xs font-medium text-ink-2">{rg('candidatesTitle')}</h3>
         {view && view.candidates.length === 0 ? (
-          <p className="text-xs text-ink-3">没有发现未登记的脚本。</p>
+          <p className="text-xs text-ink-3">{rg('noCandidates')}</p>
         ) : (
           <ul className="flex flex-col gap-1.5">
             {view?.candidates.map((c) => (
@@ -159,12 +171,14 @@ function RegistryBody() {
       </section>
 
       <section>
-        <h3 className="mb-1 text-xs font-medium text-ink-2">已登记（{registered.length}）</h3>
+        <h3 className="mb-1 text-xs font-medium text-ink-2">
+          {rg('registeredTitle', { count: registered.length })}
+        </h3>
         {registered.length === 0 ? (
           <EmptyState
             icon={Braces}
-            title="注册表是空的"
-            hint="先「重新扫描」；文件名只有运行时才知道的脚本用「试运行」登记。"
+            title={rg('emptyTitle')}
+            hint={rg('emptyHint')}
           />
         ) : (
           <ul className="max-h-40 overflow-y-auto rounded-sm border border-border">
@@ -175,8 +189,11 @@ function RegistryBody() {
               >
                 <span className="shrink-0 font-mono text-xs text-ink">{script}</span>
                 <span className="shrink-0 text-xs text-ink-3">[{cfg.entry}]</span>
-                <span className="min-w-0 flex-1 truncate text-xs text-ink-2" title={cfg.stems.join('、')}>
-                  {cfg.stems.join('、')}
+                <span
+                  className="min-w-0 flex-1 truncate text-xs text-ink-2"
+                  title={listJoin(cfg.stems)}
+                >
+                  {listJoin(cfg.stems)}
                 </span>
                 {/* 脚本改了、多出了图：重跑一遍按真实产出重新登记 */}
                 <button
@@ -187,7 +204,7 @@ function RegistryBody() {
                     'hover:text-ink focus-visible:focus-ring disabled:opacity-40',
                   )}
                 >
-                  {busy === script ? '运行中…' : '重新试运行'}
+                  {rg(busy === script ? 'running' : 'reprobe')}
                 </button>
               </li>
             ))}
@@ -196,7 +213,7 @@ function RegistryBody() {
       </section>
 
       <p className="text-xs leading-relaxed text-ink-3">
-        注册表来源：<span className="font-mono">{view?.source ?? '—'}</span>
+        {rg('sourcePrefix')}<span className="font-mono">{view?.source ?? rg('none')}</span>
       </p>
     </div>
   )
@@ -217,6 +234,7 @@ function CandidateRow({
   onProbe: () => void
   onRegister: (stems: string[], entry: string) => void
 }) {
+  useTranslation('dialogs')
   const [manual, setManual] = useState('')
   const canRegisterStatically = candidate.new_stems.length > 0
 
@@ -226,19 +244,20 @@ function CandidateRow({
         <span className="min-w-0 flex-1 truncate font-mono text-xs text-ink">
           {candidate.script}
         </span>
-        <span className="shrink-0 text-xs text-ink-3">入口 {candidate.entry}</span>
+        <span className="shrink-0 text-xs text-ink-3">{rg('entry', { entry: candidate.entry })}</span>
       </div>
 
       {canRegisterStatically ? (
         <p className="mt-0.5 text-xs text-ink-2">
-          可登记：<span className="font-mono">{candidate.new_stems.join('、')}</span>
+          {rg('canRegister')}
+          <span className="font-mono">{listJoin(candidate.new_stems)}</span>
         </p>
       ) : (
         <p className="mt-0.5 text-xs text-ink-2">
-          有 {candidate.save_calls} 处存图调用，但文件名只有运行时才知道
+          {rg('runtimeOnly', { count: candidate.save_calls })}
           {candidate.unresolved.length > 0 &&
-            `（对不上磁盘产物：${candidate.unresolved.join('、')}）`}
-          。跑一遍就能按真实产出登记。
+            rg('unresolved', { names: listJoin(candidate.unresolved) })}
+          {rg('runtimeOnlyTail')}
         </p>
       )}
 
@@ -251,18 +270,18 @@ function CandidateRow({
             onClick={() => onRegister(candidate.new_stems, candidate.entry)}
           >
             <Check size={13} />
-            登记
+            {rg('register')}
           </Button>
         )}
         <Button variant="outline" size="sm" disabled={disabled} onClick={onProbe}>
           <Play size={13} className={cn(busy && 'animate-pulse')} />
-          {busy ? '运行中…' : '试运行并登记'}
+          {rg(busy ? 'running' : 'probeAndRegister')}
         </Button>
         <TextInput
           value={manual}
           onChange={(e) => setManual(e.target.value)}
-          placeholder="或手工填 stem，逗号分隔"
-          aria-label={`${candidate.script} 的 stem`}
+          placeholder={rg('manualPlaceholder')}
+          aria-label={rg('manualAria', { script: candidate.script })}
           className="h-7 min-w-40 flex-1 font-mono"
           spellCheck={false}
         />
@@ -279,7 +298,7 @@ function CandidateRow({
             )
           }
         >
-          写入
+          {rg('write')}
         </Button>
       </div>
 
