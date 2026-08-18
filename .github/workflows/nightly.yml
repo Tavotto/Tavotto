@@ -173,6 +173,28 @@ jobs:
         # 这里不再走 build_desktop.py 的完整链路，只补最后一步。
         run: pnpm dlx @tauri-apps/cli@2.11.4 build --bundles nsis
 
+      # 仓库模板只是原料：真正喂给 makensis 的是 Tauri 把 {{...}} 展开后的
+      # 那份中间脚本。installMode / license / startMenuFolder / 语言表都是
+      # 打包器那一刻才落定的——「没配许可证所以没有许可证页」这种话，只有
+      # 在中间脚本里才算得上证据。找不到脚本直接失败：静默 skip 的门禁比
+      # 没有门禁更坏，它还在报平安。
+      - name: 生成的中间 NSIS 脚本也得是这套页面
+        if: matrix.python == 'none'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $gen = @(Get-ChildItem src-tauri\target\release\nsis -Recurse `
+                     -Filter installer.nsi -ErrorAction SilentlyContinue)
+          if ($gen.Count -lt 1) {
+            throw "找不到 tauri 渲染出来的中间脚本（打包器换了输出布局？）"
+          }
+          # 这一档的 venv 只装了打包用的东西，pytest 得现装
+          python -m pip install --quiet --disable-pip-version-check pytest
+          $env:MAGPLOT_NSIS_GENERATED = $gen[0].FullName
+          Write-Host "中间脚本: $env:MAGPLOT_NSIS_GENERATED"
+          python -m pytest -q tests/test_nsis_template.py
+          if ($LASTEXITCODE -ne 0) { throw "中间脚本的页面结构不对（退出码 $LASTEXITCODE）" }
+
       - name: 安装器 → 启动 → 升级覆盖 → 卸载
         if: matrix.python == 'none'
         shell: pwsh
@@ -305,6 +327,126 @@ jobs:
             }
           }
           Write-Host "✓ 安装 → 启动 → 渲染 → 升级覆盖 → 卸载 全链路通过"
+
+      # ---------------- 首次安装的页面序列（真 GUI，不给 /S） ----------------
+      # 上一步全程 /S，验的是装出来的东西对不对；用户看到的**那几屏**它一个
+      # 都没碰过。这一步接在卸载之后跑，所以又是一次干净的首次安装：
+      # 启动安装器 → 直接是真实安装进度 → 自动进完成页，中间不许出现
+      # 「你要装到哪儿」。判据是安装器窗口上真实出现过的控件文字，不是源码。
+      - name: 首次安装的页面序列（真 GUI）
+        if: matrix.python == 'none'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $setup = @(Get-ChildItem src-tauri\target\release\bundle\nsis\*.exe)[0].FullName
+
+          # 先看一件与运行账户无关的硬事实：PE 清单里的 requestedExecutionLevel。
+          # 这台 runner 本身就是管理员，「没弹 UAC」在这儿什么都证明不了，
+          # 清单里写着 asInvoker 才是「不会提权」的证据。
+          $len   = (Get-Item $setup).Length
+          $probe = [int][Math]::Min([double]$len, 33554432)
+          $fs = [IO.File]::OpenRead($setup)
+          try {
+            $buf = New-Object byte[] $probe
+            $null = $fs.Read($buf, 0, $probe)
+          } finally { $fs.Dispose() }
+          $head = [Text.Encoding]::ASCII.GetString($buf)
+          if ($head -match 'level="requireAdministrator"') { throw "安装器清单要求管理员权限" }
+          if ($head -notmatch 'requestedExecutionLevel[^>]*level="asInvoker"') {
+            throw "安装器清单里找不到 asInvoker（扫了前 $probe 字节）"
+          }
+          Write-Host "✓ 清单 asInvoker：安装器不请求提权"
+
+          Add-Type -Language CSharp -TypeDefinition @'
+          using System;
+          using System.Collections.Generic;
+          using System.Runtime.InteropServices;
+          using System.Text;
+          public static class NsisProbe {
+            delegate bool EnumProc(IntPtr h, IntPtr l);
+            [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr h, EnumProc cb, IntPtr l);
+            [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetWindowTextW(IntPtr h, StringBuilder s, int n);
+            [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+            public static string[] VisibleTexts(IntPtr root) {
+              var found = new List<string>();
+              EnumChildWindows(root, delegate(IntPtr h, IntPtr l) {
+                if (IsWindowVisible(h)) {
+                  var sb = new StringBuilder(1024);
+                  GetWindowTextW(h, sb, sb.Capacity);
+                  string t = sb.ToString().Trim();
+                  if (t.Length > 0) found.Add(t);
+                }
+                return true;
+              }, IntPtr.Zero);
+              return found.ToArray();
+            }
+          }
+          '@
+
+          # 安装器按系统区域挑语言（en-US 的 runner 会挑英文），两种都认。
+          # 中文常量用码点拼，免得 YAML → .ps1 的编码把它们弄坏。
+          $zhOpen       = [string][char]0x6253 + [char]0x5F00 + ' Magplot'          # 打开 Magplot
+          $zhInstalling = [string][char]0x6B63 + [char]0x5728 + [char]0x5B89 + [char]0x88C5 + ' Magplot'
+          $zhBrowse     = [string][char]0x6D4F + [char]0x89C8                        # 浏览
+          $reFinish     = [regex]::Escape('Open Magplot')       + '|' + [regex]::Escape($zhOpen)
+          $reInstalling = [regex]::Escape('Installing Magplot') + '|' + [regex]::Escape($zhInstalling)
+          $reBrowse     = 'Browse' + '|' + [regex]::Escape($zhBrowse)
+
+          $seen = New-Object 'System.Collections.Generic.HashSet[string]'
+          $p = Start-Process -PassThru $setup
+          $sawFinish = $false
+          foreach ($i in 1..600) {          # 0.25s × 600 = 150s 上限
+            Start-Sleep -Milliseconds 250
+            $p.Refresh()
+            if ($p.HasExited) { break }
+            if ($p.MainWindowHandle -eq [IntPtr]::Zero) { continue }
+            foreach ($t in [NsisProbe]::VisibleTexts($p.MainWindowHandle)) { [void]$seen.Add($t) }
+            if (($seen -join "`n") -match $reFinish) { $sawFinish = $true; break }
+          }
+          $all = ($seen | Sort-Object) -join "`n"
+          Write-Host "---- 安装器上出现过的可见控件文字 ----"
+          Write-Host $all
+          Write-Host "--------------------------------------"
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+
+          if (-not $sawFinish) { throw "150 秒内没走到完成页（没出现「打开 Magplot」）" }
+          if ($all -match $reBrowse) { throw "出现了安装目录选择页（看到了浏览按钮）" }
+          if ($all -notmatch $reInstalling) { throw "没出现进度页的品牌页眉（页眉补丁没生效？）" }
+          # MUI 默认会在装完那一瞬把页眉换成这两句传统安装器说明。断言只对
+          # 英文写死：runner 是 en-US，安装器就挑英文；换成中文机器时这条会
+          # 空过，那时该补的是中文串，不是把它删掉。
+          if ($all -match 'Setup was completed successfully') {
+            throw "进度页装完时闪了 MUI 默认页眉（FINISHHEADER 补丁没生效？）"
+          }
+          if ($all -match 'Installation Complete') {
+            throw "进度页装完时闪了 MUI 默认页眉标题"
+          }
+          Write-Host "✓ 页面序列：进度页 → 完成页，没有目录页"
+
+          # 装出来的落点与快捷方式策略——首次安装固定 %LOCALAPPDATA%\Magplot
+          $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Magplot"
+          if (-not (Test-Path $key)) { throw "GUI 安装没写卸载注册表项" }
+          $inst = (Get-ItemProperty $key).InstallLocation -replace '^"|"$', ''
+          if ($inst -ne "$env:LOCALAPPDATA\Magplot") {
+            throw "首次安装没落在 %LOCALAPPDATA%\Magplot，而是 $inst"
+          }
+          $desktop = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Magplot.lnk'
+          $smenu   = Join-Path ([Environment]::GetFolderPath('Programs')) 'Magplot.lnk'
+          # 桌面快捷方式的**行为变化**：完成页那个复选框（默认勾选）没了，
+          # 改由 Section Install 无条件创建，所以 GUI 安装必须照样有
+          if (-not (Test-Path $desktop)) { throw "GUI 安装没建桌面快捷方式: $desktop" }
+          if (-not (Test-Path $smenu))   { throw "GUI 安装没建开始菜单快捷方式: $smenu" }
+          Write-Host "✓ 安装位置 $inst；桌面与开始菜单快捷方式都在"
+
+          Start-Process -Wait "$inst\uninstall.exe" -ArgumentList "/S"
+          foreach ($i in 1..30) {
+            Start-Sleep -Milliseconds 500
+            if (-not (Test-Path $key) -and -not (Test-Path $desktop)) { break }
+          }
+          if (Test-Path $key)     { throw "卸载后注册表项仍在" }
+          if (Test-Path $desktop) { throw "卸载后桌面快捷方式仍在" }
+          if (Test-Path $smenu)   { throw "卸载后开始菜单快捷方式仍在" }
+          Write-Host "✓ 卸载清干净"
 
       - name: 失败时收集日志
         if: failure()
