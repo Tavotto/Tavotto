@@ -154,7 +154,9 @@ def ensure_registered(project: str, stem: str | None) -> dict:
     except OSError as exc:
         raise HandoffError(f"无法读取图库目录 {project}: {exc}") from exc
 
-    engine_discover.write_config(project, cfg)
+    should_write = (not existed) or changes["added_scripts"] or changes["added_stems"]
+    if should_write:
+        engine_discover.write_config(project, cfg)
     info["created"] = not existed
     info["added_scripts"] = list(changes["added_scripts"])
     info["added_stems"] = {k: list(v) for k, v in changes["added_stems"].items()}
