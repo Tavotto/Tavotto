@@ -239,7 +239,13 @@ cd web && pnpm build              # type-check (tsc -b) + bundle
 python scripts/build_worker_runtime.py
 ```
 
-Issues and pull requests are welcome.
+Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for
+how to verify a change and which boundaries the codebase keeps deliberately. When
+reporting a bug, **Settings → Privacy, diagnostics and About → Download diagnostics
+bundle** collects everything usually needed, with keys and personal paths redacted.
+Security issues go through
+[private reporting](https://github.com/erwanjun/magplot/security/advisories/new),
+not a public issue.
 
 ## License
 

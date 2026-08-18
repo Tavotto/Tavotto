@@ -1,0 +1,85 @@
+name: Bug report
+description: Something in Magplot behaves wrongly
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. The single most useful attachment is the
+        **diagnostics bundle** — in the app, **Settings → Privacy, diagnostics
+        and About → Download diagnostics bundle**. It carries the version, your
+        platform and encoding, which Python is rendering and what matplotlib it
+        has, and the recent log. Keys and personal paths are redacted before it
+        is written, so it is safe to attach here.
+
+        If this is a **security** issue, please don't file it publicly — use
+        [private reporting](https://github.com/erwanjun/magplot/security/advisories/new)
+        instead.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you saw, and what you expected instead.
+      placeholder: |
+        I double-clicked a panel to edit it, and …
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: |
+        Step by step. If a specific figure is involved, a **cut-down script**
+        that still shows the problem is far more useful than the PDF — please
+        don't attach unpublished research data, fake numbers are fine.
+      placeholder: |
+        1. Open a project with …
+        2. Drag the panel onto the page
+        3. …
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Magplot version
+      description: Settings → Privacy, diagnostics and About, or `magplot --version`.
+      placeholder: "0.7.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: How did you install it
+      description: This decides which Python does the rendering, which is behind a lot of reports.
+      options:
+        - Windows installer (.exe)
+        - macOS disk image (.dmg)
+        - pipx
+        - pip
+        - From source
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: Operating system
+      placeholder: "Windows 11 24H2 / macOS 15.3 / Ubuntu 24.04"
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics bundle
+      description: Drag the downloaded file into this box. Optional, but it usually saves a round trip.
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Screenshots, the exact error text, what you'd already tried.

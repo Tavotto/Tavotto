@@ -1,0 +1,37 @@
+name: Feature request
+description: Suggest something Magplot should be able to do
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do
+      description: |
+        Describe the situation rather than the solution — what you're preparing,
+        where Magplot makes you stop, what you do instead today.
+      placeholder: |
+        When a figure has two panels sharing a colourbar, I …
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you'd like to happen
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do today instead
+      description: The workaround, even if it's "go back to the script and re-run it".
+
+  - type: markdown
+    attributes:
+      value: |
+        **One thing worth knowing**: Magplot deliberately doesn't edit
+        data-space properties — axis limits, scales, spines, colourbar
+        orientation. Those belong in your script, and the boundary is what
+        keeps the figure and the code from disagreeing. Requests to change
+        that are still worth filing, but they'll be weighed against it.

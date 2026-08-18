@@ -217,7 +217,11 @@ cd web && pnpm build              # 类型检查（tsc -b）+ 打包
 python scripts/build_worker_runtime.py
 ```
 
-欢迎提 issue 与 PR。
+欢迎提 issue 与 PR——改动怎么验、代码库刻意守着哪些边界，见
+[CONTRIBUTING.md](CONTRIBUTING.md)。报 bug 时，「设置 → 隐私、诊断与 About →
+下载诊断包」会把通常需要的信息一次收齐（密钥与个人路径已脱敏）。安全问题请走
+[私密报告](https://github.com/erwanjun/magplot/security/advisories/new)，
+不要开公开 issue。
 
 ## 许可证
 
