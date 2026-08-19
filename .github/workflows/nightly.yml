@@ -270,7 +270,15 @@ jobs:
 
           # 壳探针：用户从开始菜单点的就是它。这一步同时是安装布局的**唯一
           # 权威验证**——壳靠 resource_dir() 找 sidecar，找得到才说明落点真的对。
-          $p = Start-Process -FilePath $shell -PassThru
+          # **把壳自己的 stdout/stderr 接出来。** 它是 windows 子系统的可执行
+          # 文件（`windows_subsystem = "windows"`），没有控制台时 stderr 是个
+          # 无效句柄，Rust 的 panic 信息（`.expect("Magplot 桌面壳初始化失败")`
+          # 那条）就此消失得无影无踪——2026-08-18 起这条腿一直红着，而唯一的
+          # 线索只有「壳退了」。重定向给了它一个有效句柄，panic 会落进文件。
+          $shellOut = Join-Path $env:RUNNER_TEMP "shell-stdout.log"
+          $shellErr = Join-Path $env:RUNNER_TEMP "shell-stderr.log"
+          $p = Start-Process -FilePath $shell -PassThru `
+               -RedirectStandardOutput $shellOut -RedirectStandardError $shellErr
           $child = $null
           foreach ($i in 1..60) {
             Start-Sleep -Milliseconds 500
@@ -286,7 +294,15 @@ jobs:
             # 日志转储一行都跑不到，CI 里只剩一句与病因毫不相干的
             # PowerShell 报错。2026-08-18 那晚就是这么丢掉证据的。
             $alive = $null -ne (Get-Process -Id $p.Id -ErrorAction SilentlyContinue)
-            if (-not $alive) { Write-Host "! 壳进程 $($p.Id) 已自行退出（连 sidecar 都没起）" }
+            if (-not $alive) {
+              Write-Host "! 壳进程 $($p.Id) 已自行退出（连 sidecar 都没起），退出码 $($p.ExitCode)"
+            }
+            # 壳自己那两条流：sidecar.log 还不存在时，这里是唯一的线索
+            @($shellOut, $shellErr) | Where-Object { Test-Path $_ } | ForEach-Object {
+              $body = (Get-Content $_ -Raw)
+              if ($body) { Write-Host "---- $_ ----"; Write-Host $body }
+              else { Write-Host "---- $_ ---- （空）" }
+            }
             # 失败路径不许吞：壳把 sidecar 的日志写在 app_log_dir（起不来时
             # 界面上显示的也是这个路径），起不来的原因全在里面
             @("$env:LOCALAPPDATA\com.erwanjun.magplot\logs\sidecar.log",
