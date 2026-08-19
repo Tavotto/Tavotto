@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from magplot.engine import discover, registry
+from tavotto.engine import discover, registry
 
 
 @pytest.fixture
@@ -169,7 +169,7 @@ def main():
 def test_runtime_only_names_reported_not_guessed(figs):
     """stem 真的只有运行期才知道（来自目录遍历）：报出来，但绝不猜。
 
-    静默跳过的后果是用户拿到一份空的 mm_registry.json，面板上没有 ⚡，
+    静默跳过的后果是用户拿到一份空的 tavotto_registry.json，面板上没有 ⚡，
     却完全不知道原因——所以必须留 dynamic_names 让上层引导「试运行探测」。
     """
     _script(figs, "scan_panels.py", RUNTIME_NAME_SCRIPT)
@@ -236,7 +236,7 @@ def test_non_plotting_module_stays_quiet(figs):
 
 
 def test_registry_write_is_atomic(figs, monkeypatch):
-    """落盘失败时，用户的 mm_registry.json 必须一个字节没动，也不留半成品。
+    """落盘失败时，用户的 tavotto_registry.json 必须一个字节没动，也不留半成品。
 
     注册表**随图库走**，坏掉的是用户目录里的文件——重装应用也修不回来，
     下次打开这个项目只会看到「注册表不是合法 JSON」。桌面壳强退、OOM、

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-r"""给 macOS 的 Magplot.app 逐个签名并验收（纯标准库 + 系统 codesign）。
+r"""给 macOS 的 Tavotto.app 逐个签名并验收（纯标准库 + 系统 codesign）。
 
 为什么需要这个脚本，而不是一行 `codesign --deep`：
 
@@ -19,12 +19,12 @@ r"""给 macOS 的 Magplot.app 逐个签名并验收（纯标准库 + 系统 code
 不必再 fork 一次 `lipo`。
 
 用法：
-    python scripts/codesign_macos.py sign   --app path/to/Magplot.app \
+    python scripts/codesign_macos.py sign   --app path/to/Tavotto.app \
         --identity "Developer ID Application: ..." \
         --entitlements packaging/entitlements.plist
-    python scripts/codesign_macos.py verify --app path/to/Magplot.app \
+    python scripts/codesign_macos.py verify --app path/to/Tavotto.app \
         --expect-arch arm64
-    python scripts/codesign_macos.py scan   --app path/to/Magplot.app
+    python scripts/codesign_macos.py scan   --app path/to/Tavotto.app
 """
 from __future__ import annotations
 
@@ -222,13 +222,13 @@ def _verify_one(path: Path) -> tuple[Path, bool, str]:
 def bundle_main_executables(app: Path) -> set[Path]:
     """那些**不能单独验**的 Mach-O：某个 bundle 的主可执行文件。
 
-    `codesign --verify <Magplot.app/Contents/MacOS/Magplot>` 会报
+    `codesign --verify <Tavotto.app/Contents/MacOS/Tavotto>` 会报
     "invalid resource directory"——主可执行文件的签名是连同整个 bundle 的资源
     封条一起成立的，脱离 bundle 去验它本身就是问的错问题。它们由前面那次
     `--verify --deep --strict <app>` 覆盖，不是漏验。
 
     判据是布局而不是文件名：`*/Contents/MacOS/*` 就是 bundle 的主可执行位置。
-    onedir 形态（没有 .app 外壳，直接是 `dist/Magplot/Magplot`）另算一条。
+    onedir 形态（没有 .app 外壳，直接是 `dist/Tavotto/Tavotto`）另算一条。
     """
     skip: set[Path] = set()
     for root, _dirs, files in os.walk(app):

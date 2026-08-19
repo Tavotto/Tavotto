@@ -1,4 +1,4 @@
-# ADR 0004：Rust supervisor `magplot-workerd` 与 supervisor 协议 v1
+# ADR 0004：Rust supervisor `tavotto-workerd` 与 supervisor 协议 v1
 
 日期：2026-08-18 ｜ 状态：已采纳（Python 池完整保留为回退与参考实现）
 
@@ -18,7 +18,7 @@ worker 协议 v1（[ADR 0003](0003-worker-protocol-v1.md)）把**一条会话上
   同一把 `w.lock`，正在渲染时就一起卡住，`finally` 里的 `proc.kill()` 永远走不到。
 
 这三条都不是「再加个超时」能治的，它们的共同根因是**控制面与数据面挤在同一把
-锁上**。所以把生命周期管理挪进一个独立的 Rust 进程 `magplot-workerd`：它有真正的
+锁上**。所以把生命周期管理挪进一个独立的 Rust 进程 `tavotto-workerd`：它有真正的
 线程模型（每会话一条线程 + 独立的读写线程），杀进程是任何线程随时能做到的事。
 
 ## 决定
@@ -111,7 +111,7 @@ import matplotlib），占住主循环的话别的会话连一条 ping 都发不
 反过来，「写回前的干净重放」（`pool.one_shot()`）要的恰恰是**必然不复用**：
 它必须是一条从零跑过脚本的新会话，复用热会话就等于什么都没验。这件事**不需要
 supervisor 增加任何概念**——一次性 worker 本来就有自己的 out_dir/sandbox
-（argv 因此不同），再加一个一次性的 `MAGPLOT_REPLAY_NONCE` salt env 作双保险，
+（argv 因此不同），再加一个一次性的 `TAVOTTO_REPLAY_NONCE` salt env 作双保险，
 spec 哈希必然不同。用完走普通 `close_session`，引用归零即真关
 （`test_workerd_write_back_replays_without_leaking_a_session` 用 `sessions` op
 断言写回之后 supervisor 手里只剩热会话那一条）。
@@ -227,7 +227,7 @@ worker 那五个（`bad_request` / `unknown_cmd` / `unknown_stem` / `script_erro
   同形，切控制面对上层透明。
 - **Python 池完整保留**，`pool.py` 里那条路径一行都没删：它是找不到二进制时的
   回退，也是 workerd 行为的参考实现（reference oracle）。开关是
-  `MAGPLOT_WORKERD`（`0`/`off`/`false`/`no` = 禁用，其余非空值 = 指定路径；
+  `TAVOTTO_WORKERD`（`0`/`off`/`false`/`no` = 禁用，其余非空值 = 指定路径；
   开发态自动找 `workerd/target/{release,debug}/`）。**pytest 的 conftest 默认把它钉成
   `0`**——否则开发机上 `cargo build` 之后整套既有用例会在不知不觉间换一条控制面跑。
 - **不做的**：真正的协作中断（worker 单线程串行读 stdin，见 ADR 0003 §6）、

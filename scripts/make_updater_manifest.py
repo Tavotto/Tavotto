@@ -95,8 +95,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--artifacts", required=True, type=Path,
                     help="收集到的产物目录（递归扫描）")
     ap.add_argument("--tag", required=True, help="Release tag，如 v0.6.1")
-    ap.add_argument("--owner", default="erwanjun")
-    ap.add_argument("--repo", default="magplot")
+    ap.add_argument("--owner", default="Tavotto")
+    ap.add_argument("--repo", default="tavotto")
     ap.add_argument("--notes", default="", help="更新说明（原样写进清单）")
     ap.add_argument("--require", default="",
                     help="必须齐全的平台（逗号分隔），缺一个即失败")

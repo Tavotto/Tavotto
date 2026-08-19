@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""构建 Magplot 内置渲染 runtime（Windows / macOS 桌面版）。
+"""构建 Tavotto 内置渲染 runtime（Windows / macOS 桌面版）。
 
 产出一个自成一体的 CPython + 科学栈目录，跟着安装包一起发：
 
@@ -11,7 +11,7 @@
       runtime-manifest.json                      runtime-manifest.json
       （windows-embeddable）                    （macos-standalone）
 
-这样普通用户装完 Magplot 就能渲染：不需要先装 Python、首次渲染不联网、
+这样普通用户装完 Tavotto 就能渲染：不需要先装 Python、首次渲染不联网、
 不依赖 PATH / Store Python / Homebrew / Conda，也**不碰用户已有的任何环境**。
 
 两个平台的上游发行版不同，理由也不同：
@@ -252,7 +252,7 @@ def check_runtime_dir(manifest_file: Path, require_smoke: bool,
                       host: tuple[str, str] | None = None) -> dict:
     """判定「磁盘上这份 runtime 能不能进本次构建的包」，不行就抛 BuildError。
 
-    **packaging/magplot.spec 与 scripts/build_desktop.py 共用这一份判据**——
+    **packaging/tavotto.spec 与 scripts/build_desktop.py 共用这一份判据**——
     分头各写一遍的话，迟早一边放行另一边拦住，而放行的那一边才是发出去的。
 
     光看清单在不在是不够的：`runtime/` 里躺着的可能是上一次给另一个平台构建的
@@ -279,7 +279,7 @@ def check_runtime_dir(manifest_file: Path, require_smoke: bool,
         raise BuildError(
             f"runtime 是给 {got_os}/{got_arch} 的，这次构建的是 {want_os}/{want_arch}。\n"
             "  重建：python scripts/build_worker_runtime.py --clean\n"
-            "  （交叉构建请用 --target 显式指定，并用 MAGPLOT_RUNTIME_SRC 指过来）")
+            "  （交叉构建请用 --target 显式指定，并用 TAVOTTO_RUNTIME_SRC 指过来）")
 
     smoke = (info.get("build") or {}).get("smoke") or ""
     if require_smoke and smoke != "passed":
@@ -315,7 +315,7 @@ def pth_lines(stdlib_zip: str) -> list[str]:
         ".",
         "Lib\\site-packages",
         "",
-        "# Magplot: 上面一行是内置科学栈的落点；下面这行让 site.main() 跑起来，",
+        "# Tavotto: 上面一行是内置科学栈的落点；下面这行让 site.main() 跑起来，",
         "# 否则 site-packages 里的 .pth 文件不会被处理。",
         "import site",
     ]
@@ -339,7 +339,7 @@ def site_packages(out: Path, target: dict) -> Path:
 #:
 #: 剪掉它们是安全的，因为谁都不靠这两个名字：
 #:   * 上游自带的 pip / idle / pydoc 包装脚本 exec 的是 `python3.13`（版本化实体名）；
-#:   * Magplot 自己经 `engine/runtime.resolve_python()` 按 glob 找实体；
+#:   * Tavotto 自己经 `engine/runtime.resolve_python()` 按 glob 找实体；
 #:   * 用户脚本里的 `python3` 走的是 PATH，而 runtime 的 bin 从来不在 PATH 上，
 #:     所以剪掉前后行为完全一致。
 ALIAS_BINARIES = ("python", "python3")
@@ -405,7 +405,7 @@ def manifest_dict(lock: dict, name: str, target: dict, build_id: str,
     pip = target.get("pip") or {}
     return {
         "schema": MANIFEST_SCHEMA,
-        "product": "Magplot",
+        "product": "Tavotto",
         "kind": target["kind"],
         "target": name,
         "python": {
@@ -510,7 +510,7 @@ def extract_macos_standalone(archive: Path, out: Path, target: dict) -> None:
 
     符号链接必须**保留**（`bin/python3 → python3.13`、几个 .dylib）：
     拍平成副本会让 200 MB 的产物凭空再胖一圈，而 PyInstaller 那边的
-    datas 复制才是真正会拍平它们的地方（见 packaging/magplot.spec 的说明）。
+    datas 复制才是真正会拍平它们的地方（见 packaging/tavotto.spec 的说明）。
     """
     root = target["python"]["archive_root"]
     staging = out.with_name(out.name + ".unpack")
@@ -626,7 +626,7 @@ PRUNE_DIRS = {"tests", "test", "__pycache__"}
 def prune(out: Path, target: dict) -> tuple[int, int]:
     """删掉科学栈自带的测试套件与字节码缓存。
 
-    scipy + pandas 的 tests 占 85 MiB 上下——用户装 Magplot 是来画图的，
+    scipy + pandas 的 tests 占 85 MiB 上下——用户装 Tavotto 是来画图的，
     不会去跑 scipy 的测试。删完仍然要过 import + 真实渲染冒烟，
     所以这不是「赌它不影响」，是被验证过的。
 
@@ -810,11 +810,11 @@ def collect_licenses(out: Path, name: str, target: dict) -> int:
         shutil.rmtree(lic_root)
     lic_root.mkdir(parents=True, exist_ok=True)
 
-    index = ["# Magplot 内置渲染环境 · 第三方组件许可证",
+    index = ["# Tavotto 内置渲染环境 · 第三方组件许可证",
              "",
              f"目标：`{name}`（{target['os']}/{target['arch']}，{target['kind']}）",
              "",
-             "本目录随 Magplot 安装包一起分发。下列组件均为各自作者版权所有，",
+             "本目录随 Tavotto 安装包一起分发。下列组件均为各自作者版权所有，",
              "以其原始许可证条款提供；完整许可证正文见各子目录。",
              ""]
 

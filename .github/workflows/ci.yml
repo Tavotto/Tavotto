@@ -135,27 +135,27 @@ jobs:
           python -m venv /tmp/smoke
           BIN=/tmp/smoke/bin; [ -d "$BIN" ] || BIN=/tmp/smoke/Scripts
           "$BIN/python" -m pip install --quiet dist/*.whl
-          "$BIN/python" -c "import magplot; print('version', magplot.__version__)"
+          "$BIN/python" -c "import tavotto; print('version', tavotto.__version__)"
           "$BIN/python" -c "
           from pathlib import Path
-          import magplot
-          web = Path(magplot.__file__).parent / 'web' / 'index.html'
+          import tavotto
+          web = Path(tavotto.__file__).parent / 'web' / 'index.html'
           assert web.is_file(), 'wheel 里没有前端构建产物'
           print('frontend ok')
           "
           "$BIN/python" -c "
-          from magplot.engine import pool
+          from tavotto.engine import pool
           assert pool.WORKER_PY.is_file(), 'wheel 里没有 worker.py'
           print('worker ok')
           "
       - name: 起服务并请求首页
         shell: bash
         env:
-          MAGPLOT_DATA_DIR: ${{ runner.temp }}/magplot-data
-          MAGPLOT_CONFIG_DIR: ${{ runner.temp }}/magplot-config
+          TAVOTTO_DATA_DIR: ${{ runner.temp }}/tavotto-data
+          TAVOTTO_CONFIG_DIR: ${{ runner.temp }}/tavotto-config
         run: |
           BIN=/tmp/smoke/bin; [ -d "$BIN" ] || BIN=/tmp/smoke/Scripts
-          "$BIN/python" -m magplot --port 5199 --no-browser &
+          "$BIN/python" -m tavotto --port 5199 --no-browser &
           sleep 8
           curl -sf http://127.0.0.1:5199/ -o /dev/null
           curl -sf http://127.0.0.1:5199/api/version
@@ -168,7 +168,7 @@ jobs:
     #
     # **本作业是内置渲染 runtime 的唯一真验证点**：Windows 桌面版承诺
     # 「没装过 Python 的电脑装完就能渲染、首次不联网」，而这条承诺只有把
-    # runtime 真构建出来、真打进 .exe、再在**不给 MM_WORKER_PYTHON** 的
+    # runtime 真构建出来、真打进 .exe、再在**不给 TAVOTTO_WORKER_PYTHON** 的
     # 情况下真跑一次渲染与导出，才算验过。所以它进 PR/main 门禁，
     # 不是只挂在手动的 Release 工作流上。
     #
@@ -192,14 +192,14 @@ jobs:
       - name: 构建前端进包
         run: python scripts/build_frontend.py
 
-      # Rust supervisor：magplot.spec 从 workerd/target/release/ 取，取不到直接
-      # 失败。**不设 MAGPLOT_WORKERD**——下面的冒烟要验的正是「产物自带的那份
+      # Rust supervisor：tavotto.spec 从 workerd/target/release/ 取，取不到直接
+      # 失败。**不设 TAVOTTO_WORKERD**——下面的冒烟要验的正是「产物自带的那份
       # 被自动找到并真的用上了」。
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: workerd
-      - name: 构建 Rust supervisor（magplot-workerd）
+      - name: 构建 Rust supervisor（tavotto-workerd）
         run: cargo build --release --manifest-path workerd/Cargo.toml
 
       - name: 缓存 CPython 归档下载
@@ -226,12 +226,12 @@ jobs:
 
       - name: PyInstaller（内置 runtime 必须进包）
         env:
-          MAGPLOT_REQUIRE_RUNTIME: "1"
-        run: pyinstaller packaging/magplot.spec --noconfirm
+          TAVOTTO_REQUIRE_RUNTIME: "1"
+        run: pyinstaller packaging/tavotto.spec --noconfirm
 
       - name: 断言产物里真有 workerd
         run: |
-          $bin = "dist\Magplot\_internal\magplot-workerd.exe"
+          $bin = "dist\Tavotto\_internal\tavotto-workerd.exe"
           if (-not (Test-Path $bin)) {
             throw "产物里没有 $bin——渲染会静默回退到 Python 池（功能全在、只是慢）"
           }
@@ -242,21 +242,21 @@ jobs:
       # 只能证明 spec 里写了，证明不了打出来的东西真能当命令行用。
       - name: 断言产物里有 console 版 CLI，并且它真能当命令行用
         run: |
-          $cli = "dist\Magplot\magplot-cli.exe"
+          $cli = "dist\Tavotto\tavotto-cli.exe"
           if (-not (Test-Path $cli)) {
-            throw "产物里没有 $cli——只装桌面版的用户那里 Codex 插件会报「没找到 Magplot」"
+            throw "产物里没有 $cli——只装桌面版的用户那里 Codex 插件会报「没找到 Tavotto」"
           }
-          # GUI 版 Magplot.exe 拿不到 stdout（输出会被改道进 app.log），
+          # GUI 版 Tavotto.exe 拿不到 stdout（输出会被改道进 app.log），
           # console 版必须**真的**把那行 JSON 交到管道里来。
-          $env:MAGPLOT_CONFIG_DIR = "$env:RUNNER_TEMP\cli-cfg"
-          $env:MAGPLOT_DATA_DIR   = "$env:RUNNER_TEMP\cli-data"
+          $env:TAVOTTO_CONFIG_DIR = "$env:RUNNER_TEMP\cli-cfg"
+          $env:TAVOTTO_DATA_DIR   = "$env:RUNNER_TEMP\cli-data"
           $out = & $cli doctor --json
-          if ($LASTEXITCODE -ne 0) { throw "magplot-cli doctor 失败（$LASTEXITCODE）: $out" }
+          if ($LASTEXITCODE -ne 0) { throw "tavotto-cli doctor 失败（$LASTEXITCODE）: $out" }
           $j = $out | Select-Object -Last 1 | ConvertFrom-Json
           if (-not $j.ok) { throw "doctor 报了问题: $out" }
           if (-not $j.frozen) { throw "doctor 没认出自己是冻结产物: $out" }
           if (-not $j.cli) { throw "doctor 定位不到自己的 CLI: $out" }
-          Write-Host "magplot-cli: $($j.cli)（协议 v$($j.protocol)）"
+          Write-Host "tavotto-cli: $($j.cli)（协议 v$($j.protocol)）"
 
           # 交接协议在真产物上跑一遍：登记 + 不唤起界面，路径带中文和空格
           $proj = "$env:RUNNER_TEMP\我的 图库"
@@ -264,16 +264,16 @@ jobs:
           Copy-Item examples\runtime_check\*.py $proj -Force
           $script = @(Get-ChildItem $proj -Filter *.py)[0].FullName
           $out = & $cli open "$script" --json --no-launch
-          if ($LASTEXITCODE -ne 0) { throw "magplot-cli open 失败（$LASTEXITCODE）: $out" }
+          if ($LASTEXITCODE -ne 0) { throw "tavotto-cli open 失败（$LASTEXITCODE）: $out" }
           $j = $out | Select-Object -Last 1 | ConvertFrom-Json
           if (-not $j.ok) { throw "open 回了 ok=false: $out" }
           if ($j.launch) { throw "--no-launch 却起了界面: $out" }
-          if (-not (Test-Path "$proj\mm_registry.json")) { throw "没生成 mm_registry.json" }
+          if (-not (Test-Path "$proj\tavotto_registry.json")) { throw "没生成 tavotto_registry.json" }
           Write-Host "✓ 真产物上的 doctor / open --json --no-launch 都通了"
 
       - name: 断言产物里真有内置 runtime
         run: |
-          $rt = "dist\Magplot\_internal\runtime"
+          $rt = "dist\Tavotto\_internal\runtime"
           if (-not (Test-Path "$rt\python.exe")) { throw "产物里没有 $rt\python.exe" }
           if (-not (Test-Path "$rt\runtime-manifest.json")) { throw "产物里没有 runtime 清单" }
           $m = Get-Content "$rt\runtime-manifest.json" -Raw | ConvertFrom-Json
@@ -281,18 +281,18 @@ jobs:
           Write-Host "内置 runtime: Python $($m.python.version)，$($m.packages.PSObject.Properties.Count) 个锁定包"
           "{0:N0} MiB" -f ((Get-ChildItem $rt -Recurse -File | Measure-Object Length -Sum).Sum / 1MB)
 
-      - name: 冒烟①：干净 Windows（无 Python / 无 MM_WORKER_PYTHON）
+      - name: 冒烟①：干净 Windows（无 Python / 无 TAVOTTO_WORKER_PYTHON）
         # **本次改动的核心验收**。--expect-source bundled 断言渲染真的走了内置
         # runtime：少了它，一台碰巧装着 matplotlib 的 CI 机器会让「runtime 根本
-        # 没打进去」全程绿灯。smoke_app.py 还会主动把 MM_WORKER_PYTHON 摘掉。
+        # 没打进去」全程绿灯。smoke_app.py 还会主动把 TAVOTTO_WORKER_PYTHON 摘掉。
         # 此刻运行器上**尚未** pip install matplotlib（在下一步才装），
         # 所以这一步同时也证明了「机器上没有科学栈也能渲染」。
         # --expect-control-plane workerd 是同一条思路的另一面：产物自带的
         # Rust supervisor 被自动找到、并且这次渲染真的跑在它上面
         # （回退到 Python 池是静默降级，不断言就永远发现不了）。
         run: |
-          $env:MM_WORKER_PYTHON = $null
-          python scripts/smoke_app.py --exe dist/Magplot/Magplot.exe `
+          $env:TAVOTTO_WORKER_PYTHON = $null
+          python scripts/smoke_app.py --exe dist/Tavotto/Tavotto.exe `
             --figures examples/runtime_check `
             --expect-source bundled --expect-runtime `
             --expect-control-plane workerd `
@@ -302,11 +302,11 @@ jobs:
         # 用户名带中文、项目路径带空格是国内最常见的组合，也是历来最容易
         # 出问题的一档（编码、引号、路径分隔符）
         run: |
-          $env:MM_WORKER_PYTHON = $null
+          $env:TAVOTTO_WORKER_PYTHON = $null
           $dst = "$env:RUNNER_TEMP\我的 论文 图\figures"
           New-Item -ItemType Directory -Force -Path $dst | Out-Null
           Copy-Item examples\runtime_check\* $dst -Recurse -Force
-          python scripts/smoke_app.py --exe dist/Magplot/Magplot.exe `
+          python scripts/smoke_app.py --exe dist/Tavotto/Tavotto.exe `
             --figures "$dst" --expect-source bundled
 
       - name: 准备渲染环境（模拟用户自己的 Python）
@@ -316,15 +316,15 @@ jobs:
         # 高级用户的出口不能被内置 runtime 挤掉——脚本要 rdkit / 自家实验室的库时
         # 只有他自己那套环境才行。expect-source=env_override 就是这条的看护。
         run: |
-          $env:MM_WORKER_PYTHON = (Get-Command python).Source
-          python scripts/smoke_app.py --exe dist/Magplot/Magplot.exe `
+          $env:TAVOTTO_WORKER_PYTHON = (Get-Command python).Source
+          python scripts/smoke_app.py --exe dist/Tavotto/Tavotto.exe `
             --expect-source env_override
 
       - name: Playwright 黄金路径（真实界面 + 打包产物 + 内置 runtime）
         working-directory: web
         run: |
-          $env:MM_WORKER_PYTHON = $null
-          $env:MAGPLOT_EXE = "$env:GITHUB_WORKSPACE\dist\Magplot\Magplot.exe"
+          $env:TAVOTTO_WORKER_PYTHON = $null
+          $env:TAVOTTO_EXE = "$env:GITHUB_WORKSPACE\dist\Tavotto\Tavotto.exe"
           pnpm install --frozen-lockfile
           pnpm exec playwright install --with-deps chromium
           pnpm e2e
@@ -337,7 +337,7 @@ jobs:
           path: |
             ${{ runner.temp }}/**/app.log
             ${{ runner.temp }}/**/worker.log
-            dist/Magplot/_internal/runtime/runtime-manifest.json
+            dist/Tavotto/_internal/runtime/runtime-manifest.json
             build/**/warn-*.txt
             web/playwright-report/**
             web/test-results/**
@@ -350,7 +350,7 @@ jobs:
     # macOS 桌面版从这一版开始也自带内置渲染 runtime，于是同一条承诺
     # 「没装过 Python / Homebrew / Conda 的 Mac 装完就能渲染、首次不联网」
     # 也需要一个真验证点。**它必须真构建 runtime、真打进产物、再在不给
-    # MM_WORKER_PYTHON 的情况下真跑一次渲染与导出**——否则一台碰巧装着
+    # TAVOTTO_WORKER_PYTHON 的情况下真跑一次渲染与导出**——否则一台碰巧装着
     # matplotlib 的运行器会让「runtime 根本没打进去」全程绿灯，而那正是
     # 用户装完打不开图的原因。
     #
@@ -377,12 +377,12 @@ jobs:
       - name: 构建前端进包
         run: python scripts/build_frontend.py
 
-      # **不设 MAGPLOT_WORKERD**——冒烟要验的正是「产物自带的那份被自动找到」
+      # **不设 TAVOTTO_WORKERD**——冒烟要验的正是「产物自带的那份被自动找到」
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: workerd
-      - name: 构建 Rust supervisor（magplot-workerd）
+      - name: 构建 Rust supervisor（tavotto-workerd）
         run: cargo build --release --manifest-path workerd/Cargo.toml
 
       - name: 缓存 CPython 归档下载
@@ -405,16 +405,16 @@ jobs:
 
       - name: PyInstaller（内置 runtime 必须进包）
         env:
-          MAGPLOT_REQUIRE_RUNTIME: "1"
-        run: pyinstaller packaging/magplot.spec --noconfirm
+          TAVOTTO_REQUIRE_RUNTIME: "1"
+        run: pyinstaller packaging/tavotto.spec --noconfirm
 
       - name: 断言产物里真有 workerd 与内置 runtime
         run: |
           set -euo pipefail
-          BIN=dist/Magplot/_internal/magplot-workerd
+          BIN=dist/Tavotto/_internal/tavotto-workerd
           test -x "$BIN" || { echo "::error::产物里没有 $BIN——渲染会静默回退到 Python 池"; exit 1; }
 
-          RT=dist/Magplot/_internal/runtime
+          RT=dist/Tavotto/_internal/runtime
           test -f "$RT/runtime-manifest.json" || { echo "::error::产物里没有 runtime 清单"; exit 1; }
           # 解释器的落点**从清单里读**，不写死 bin/python3——构建时会把
           # python / python3 两个别名剪掉（Tauri 拍平符号链接 = 白搭 34 MiB），
@@ -438,17 +438,17 @@ jobs:
         # 一个 x86_64 的 .so 混进 arm64 的包里，签名/公证都可能过，
         # 症状要等到用户 import 那个包时才出现
         run: |
-          python scripts/codesign_macos.py scan --app dist/Magplot --quiet \
+          python scripts/codesign_macos.py scan --app dist/Tavotto --quiet \
             --expect-arch "$(python -c 'import platform;print(platform.machine())')"
 
-      - name: 冒烟①：干净 Mac（无 Homebrew/Conda 干扰、无 MM_WORKER_PYTHON）
+      - name: 冒烟①：干净 Mac（无 Homebrew/Conda 干扰、无 TAVOTTO_WORKER_PYTHON）
         # **本次改动的核心验收**。--expect-source bundled 断言渲染真的走了内置
         # runtime；--expect-runtime 再断言「本该带 runtime 且带的这份完整」。
         # 此刻运行器上**尚未** pip install matplotlib（在下一步才装），
         # 所以这一步同时证明了「机器上没有科学栈也能渲染」。
-        # smoke_app.py 会主动把 MM_WORKER_PYTHON / Conda / PYTHONHOME 摘掉。
+        # smoke_app.py 会主动把 TAVOTTO_WORKER_PYTHON / Conda / PYTHONHOME 摘掉。
         run: |
-          python scripts/smoke_app.py --exe dist/Magplot/Magplot \
+          python scripts/smoke_app.py --exe dist/Tavotto/Tavotto \
             --figures examples/runtime_check \
             --expect-source bundled --expect-runtime \
             --expect-control-plane workerd \
@@ -461,7 +461,7 @@ jobs:
           DST="$RUNNER_TEMP/我的 论文 图/figures"
           mkdir -p "$DST"
           cp -R examples/runtime_check/. "$DST/"
-          python scripts/smoke_app.py --exe dist/Magplot/Magplot \
+          python scripts/smoke_app.py --exe dist/Tavotto/Tavotto \
             --figures "$DST" --workdir "$RUNNER_TEMP/我的 数据 目录" \
             --expect-source bundled --expect-runtime
 
@@ -472,8 +472,8 @@ jobs:
         # 高级用户的出口不能被内置 runtime 挤掉——脚本要 rdkit / 自家实验室的库时
         # 只有他自己那套环境才行
         run: |
-          MM_WORKER_PYTHON="$(command -v python)" \
-            python scripts/smoke_app.py --exe dist/Magplot/Magplot \
+          TAVOTTO_WORKER_PYTHON="$(command -v python)" \
+            python scripts/smoke_app.py --exe dist/Tavotto/Tavotto \
               --expect-source env_override
 
       - name: 失败时收集日志
@@ -484,7 +484,7 @@ jobs:
           path: |
             ${{ runner.temp }}/**/app.log
             ${{ runner.temp }}/**/worker.log
-            dist/Magplot/_internal/runtime/runtime-manifest.json
+            dist/Tavotto/_internal/runtime/runtime-manifest.json
             build/**/warn-*.txt
           if-no-files-found: warn
           retention-days: 7

@@ -1,4 +1,4 @@
-"""`magplot open` 的交接链路：解析目标 → 登记 stem → 唤起界面。
+"""`tavotto open` 的交接链路：解析目标 → 登记 stem → 唤起界面。
 
 平台分支（桌面 App 在哪儿）在**任意一个平台上**都必须能测——所以
 engine/handoff.py 全程 os.path 拼字符串。这里的 win32 用例跑在 macOS/Linux
@@ -13,7 +13,7 @@ import sys
 
 import pytest
 
-from magplot.engine import handoff, registry as engine_registry
+from tavotto.engine import handoff, registry as engine_registry
 
 
 SCRIPT = '''\
@@ -212,7 +212,7 @@ def test_structurally_broken_registry_still_carries_a_code(figures, body):
     以前只有「JSON 语法坏」这一条被接住：`{"scripts": "x"}` 会在
     `discover.merge` 里 `scripts.values()` 抛 AttributeError——既不是
     ValueError 也不是 OSError，穿透 handoff 的 try/except、`cli()` 的
-    HandoffError 捕获与所有外层，于是 `magplot open --json` 吐的是一段
+    HandoffError 捕获与所有外层，于是 `tavotto open --json` 吐的是一段
     traceback 而不是契约里那行 JSON，调用方（Codex 插件读最后一行）的
     分诊逻辑当场失灵。用户手写/误改注册表就够触发。
     """
@@ -227,20 +227,20 @@ def test_structurally_broken_registry_still_carries_a_code(figures, body):
 # --------------------------- 3. 唤起界面 ---------------------------------
 def test_macos_candidates_are_bundle_binaries():
     got = handoff.desktop_app_candidates(system="darwin", environ={"HOME": "/Users/x"})
-    assert got == ["/Applications/Magplot.app/Contents/MacOS/Magplot",
-                   "/Users/x/Applications/Magplot.app/Contents/MacOS/Magplot"]
+    assert got == ["/Applications/Tavotto.app/Contents/MacOS/Tavotto",
+                   "/Users/x/Applications/Tavotto.app/Contents/MacOS/Tavotto"]
 
 
 def test_windows_candidates_start_at_localappdata():
-    """NSIS 是 currentUser 安装：新装固定 $LOCALAPPDATA\\Magplot。
+    """NSIS 是 currentUser 安装：新装固定 $LOCALAPPDATA\\Tavotto。
 
     这条用例跑在 macOS/Linux 上——handoff 里一个 pathlib 都不用，就是为了它。
     """
     env = {"LOCALAPPDATA": "C:\\Users\\x\\AppData\\Local",
            "PROGRAMFILES": "C:\\Program Files"}
     assert handoff.desktop_app_candidates(system="win32", environ=env) == [
-        "C:\\Users\\x\\AppData\\Local\\Magplot\\Magplot.exe",
-        "C:\\Program Files\\Magplot\\Magplot.exe"]
+        "C:\\Users\\x\\AppData\\Local\\Tavotto\\Tavotto.exe",
+        "C:\\Program Files\\Tavotto\\Tavotto.exe"]
 
 
 def test_linux_has_no_desktop_build():
@@ -248,27 +248,27 @@ def test_linux_has_no_desktop_build():
 
 
 def test_env_override_wins():
-    env = {handoff.APP_ENV: "/tmp/dist/Magplot/Magplot", "HOME": "/Users/x"}
+    env = {handoff.APP_ENV: "/tmp/dist/Tavotto/Tavotto", "HOME": "/Users/x"}
     assert handoff.desktop_app_candidates(system="darwin", environ=env)[0] == \
-        "/tmp/dist/Magplot/Magplot"
+        "/tmp/dist/Tavotto/Tavotto"
 
 
 def test_desktop_argv_contract():
     """与 src-tauri/src/main.rs 的 parse_open_args 同源：改一边必须同步另一边。"""
-    assert handoff.desktop_argv("/A/Magplot", handoff.Target("/p", "Fig1")) == \
-        ["/A/Magplot", "--open", "/p", "--stem", "Fig1"]
-    assert handoff.desktop_argv("/A/Magplot", handoff.Target("/p", None)) == \
-        ["/A/Magplot", "--open", "/p"]
+    assert handoff.desktop_argv("/A/Tavotto", handoff.Target("/p", "Fig1")) == \
+        ["/A/Tavotto", "--open", "/p", "--stem", "Fig1"]
+    assert handoff.desktop_argv("/A/Tavotto", handoff.Target("/p", None)) == \
+        ["/A/Tavotto", "--open", "/p"]
 
 
 def test_launch_desktop_spawns_the_app():
     seen = []
     out = handoff.launch(handoff.Target("/p", "Fig1"), system="darwin",
-                         environ={handoff.APP_ENV: "/A/Magplot"},
-                         isfile=lambda p: p == "/A/Magplot",
+                         environ={handoff.APP_ENV: "/A/Tavotto"},
+                         isfile=lambda p: p == "/A/Tavotto",
                          spawn=lambda argv, **kw: seen.append((argv, kw)))
     assert out["mode"] == "desktop"
-    assert seen[0][0] == ["/A/Magplot", "--open", "/p", "--stem", "Fig1"]
+    assert seen[0][0] == ["/A/Tavotto", "--open", "/p", "--stem", "Fig1"]
 
 
 def test_launch_desktop_required_but_missing():
@@ -302,7 +302,7 @@ def test_launch_browser_starts_a_new_instance():
                          spawn=lambda argv, **kw: seen.append(argv),
                          browse=lambda url: pytest.fail("新进程自己开浏览器"))
     assert out["mode"] == "browser-new"
-    assert seen[0][1:] == ["-m", "magplot", "--figures", "/p",
+    assert seen[0][1:] == ["-m", "tavotto", "--figures", "/p",
                            "--port", "5089", "--open-stem", "Fig1"]
 
 
@@ -344,24 +344,24 @@ def test_handoff_stays_stdlib_only():
     src = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src")
     out = subprocess.run(
         [sys.executable, "-c",
-         "import sys; import magplot.engine.handoff; "
+         "import sys; import tavotto.engine.handoff; "
          "print([m for m in ('flask', 'matplotlib', 'numpy') if m in sys.modules])"],
         capture_output=True, text=True, check=True,
         env={**os.environ, "PYTHONPATH": src})
     assert out.stdout.strip() == "[]"
 
 
-# ========================= `magplot open` 的机器接口 ======================
+# ========================= `tavotto open` 的机器接口 ======================
 # 外部程序（Codex 插件、编辑器、安装器）读的就是这一层：一行 JSON + 稳定的
 # error code + 「--no-launch 真的不起界面」。这几条把它钉住。
 
 def _run_cli(argv, monkeypatch):
-    """跑一次 `magplot open …`，返回 (退出码, 解析出来的 JSON, 起过的界面)。"""
+    """跑一次 `tavotto open …`，返回 (退出码, 解析出来的 JSON, 起过的界面)。"""
     launched = []
     monkeypatch.setattr(handoff, "_spawn_detached",
                         lambda argv, **kw: launched.append(argv))
     monkeypatch.setattr(handoff, "find_desktop_app",
-                        lambda **kw: "/Applications/Magplot.app/Contents/MacOS/Magplot")
+                        lambda **kw: "/Applications/Tavotto.app/Contents/MacOS/Tavotto")
     import io
     import contextlib
     buf = io.StringIO()
@@ -395,7 +395,7 @@ def test_second_call_launches_the_native_app(figures, monkeypatch):
     rc, out, launched = _run_cli([str(figures / "Fig1_demo.pdf"), "--json"], monkeypatch)
     assert rc == 0
     assert out["launch"]["mode"] == "desktop"
-    assert launched == [["/Applications/Magplot.app/Contents/MacOS/Magplot",
+    assert launched == [["/Applications/Tavotto.app/Contents/MacOS/Tavotto",
                          "--open", str(figures), "--stem", "Fig1_demo"]]
     assert opened == []                     # 装了桌面版就绝不弹浏览器
 
@@ -450,7 +450,7 @@ _is_root = getattr(os, "geteuid", lambda: -1)() == 0
 def test_unwritable_project_reports_registry_write_failed(figures, monkeypatch):
     """图库目录只读时报 `registry_write_failed`，**不是** traceback。
 
-    以前 write_config 的 OSError 会一路冒到 `magplot open` 外面：插件那侧看到的
+    以前 write_config 的 OSError 会一路冒到 `tavotto open` 外面：插件那侧看到的
     是「脚本挂了」，用户完全不知道要去改目录权限。
     """
     figures.chmod(0o500)
@@ -465,7 +465,7 @@ def test_unwritable_project_reports_registry_write_failed(figures, monkeypatch):
 
 def test_launch_failure_has_a_stable_code(figures, monkeypatch):
     """桌面应用在、但起不来（权限/被杀软拦）——与「没装」是两回事。"""
-    monkeypatch.setattr(handoff, "find_desktop_app", lambda **kw: "/A/Magplot")
+    monkeypatch.setattr(handoff, "find_desktop_app", lambda **kw: "/A/Tavotto")
 
     def boom(argv, **kw):
         raise OSError(13, "Permission denied")
@@ -503,11 +503,11 @@ def test_every_handoff_error_carries_a_code():
 # 浏览器模式。这几条把「唤起也认清单 / 也认自己旁边那个壳」钉住。
 
 def test_launch_uses_the_desktop_recorded_in_the_manifest(tmp_path, monkeypatch):
-    """用户把 Magplot.app 拖出了 /Applications：清单里记着它在哪。"""
-    moved = tmp_path / "Tools" / "Magplot.app" / "Contents" / "MacOS" / "Magplot"
+    """用户把 Tavotto.app 拖出了 /Applications：清单里记着它在哪。"""
+    moved = tmp_path / "Tools" / "Tavotto.app" / "Contents" / "MacOS" / "Tavotto"
     moved.parent.mkdir(parents=True)
     moved.write_text("gui", encoding="utf-8")
-    from magplot.engine import locate
+    from tavotto.engine import locate
     locate.write_manifest({"version": "1", "cli": None, "desktop": str(moved),
                            "install_dir": None, "source": "app"})
 
@@ -522,8 +522,8 @@ def test_manifest_desktop_that_no_longer_exists_is_ignored(tmp_path):
     （不断言「找不到任何桌面 App」——开发机上 /Applications 里可能真装着一个，
     那属于惯例位置那条腿，与这里要验的事无关。）
     """
-    from magplot.engine import locate
-    gone = str(tmp_path / "gone" / "Magplot")
+    from tavotto.engine import locate
+    gone = str(tmp_path / "gone" / "Tavotto")
     locate.write_manifest({"version": "1", "cli": None, "desktop": gone,
                            "install_dir": None, "source": "app"})
     assert gone not in handoff.desktop_app_candidates(environ=dict(os.environ))
@@ -535,8 +535,8 @@ def test_frozen_prefers_the_shell_sitting_next_to_itself(tmp_path, monkeypatch):
     落点用 locate 自己算（各平台形状不同，写死就只在写它的那个平台上成立）；
     这条验的是**优先级**，形状本身由 test_install_locate 的 describe_self 用例看着。
     """
-    from magplot.engine import locate
-    root = tmp_path / ("Magplot.app" if sys.platform == "darwin" else "Magplot")
+    from tavotto.engine import locate
+    root = tmp_path / ("Tavotto.app" if sys.platform == "darwin" else "Tavotto")
     cli = pathlib.Path(locate.cli_exe_for(str(root)))
     shell = pathlib.Path(locate.desktop_exe_for(str(root)))
     for path, body in ((cli, "cli"), (shell, "gui")):
@@ -556,11 +556,11 @@ def test_candidates_have_no_duplicates(tmp_path):
     assert len(got) == len(set(got))
 
 
-def test_frozen_browser_fallback_never_builds_dash_m_magplot(figures, monkeypatch):
-    """冻结产物里没有 `-m magplot` 这回事。
+def test_frozen_browser_fallback_never_builds_dash_m_tavotto(figures, monkeypatch):
+    """冻结产物里没有 `-m tavotto` 这回事。
 
-    那时 `sys.executable` 就是 Magplot 自己（magplot-cli.exe / Magplot.exe），
-    拼成 `magplot-cli -m magplot --figures …` 会在 argparse 里报
+    那时 `sys.executable` 就是 Tavotto 自己（tavotto-cli.exe / Tavotto.exe），
+    拼成 `tavotto-cli -m tavotto --figures …` 会在 argparse 里报
     unrecognized arguments 当场退出——用户看到的是「点了没反应」。
     """
     spawned = []
@@ -569,16 +569,16 @@ def test_frozen_browser_fallback_never_builds_dash_m_magplot(figures, monkeypatc
                         lambda argv, **kw: spawned.append(argv))
     monkeypatch.setattr(handoff, "_http_json", lambda *a, **kw: None)
     monkeypatch.setattr(sys, "frozen", True, raising=False)
-    monkeypatch.setattr(sys, "executable", "C:\\P\\Magplot\\magplot-cli.exe")
+    monkeypatch.setattr(sys, "executable", "C:\\P\\Tavotto\\tavotto-cli.exe")
     out = handoff.launch(handoff.Target(str(figures), "Fig1_demo"),
                          prefer="browser", http=lambda *a, **kw: None)
     assert out["mode"] == "browser-new"
     assert "-m" not in spawned[0], f"冻结产物拼出了 -m: {spawned[0]}"
-    assert spawned[0][:2] == ["C:\\P\\Magplot\\magplot-cli.exe", "--figures"]
+    assert spawned[0][:2] == ["C:\\P\\Tavotto\\tavotto-cli.exe", "--figures"]
 
 
 def test_source_mode_browser_fallback_still_uses_dash_m(figures, monkeypatch):
-    """源码 / pip 模式照旧走 `python -m magplot`——那条路一个字没改。"""
+    """源码 / pip 模式照旧走 `python -m tavotto`——那条路一个字没改。"""
     spawned = []
     monkeypatch.setattr(handoff, "find_desktop_app", lambda **kw: None)
     monkeypatch.setattr(handoff, "_spawn_detached",
@@ -586,4 +586,4 @@ def test_source_mode_browser_fallback_still_uses_dash_m(figures, monkeypatch):
     monkeypatch.delattr(sys, "frozen", raising=False)
     handoff.launch(handoff.Target(str(figures), None), prefer="browser",
                    http=lambda *a, **kw: None)
-    assert spawned[0][:3] == [sys.executable, "-m", "magplot"]
+    assert spawned[0][:3] == [sys.executable, "-m", "tavotto"]

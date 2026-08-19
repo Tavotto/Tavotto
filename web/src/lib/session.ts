@@ -7,11 +7,11 @@
  * 请求靠 pj 认领（app.py 的 _request_ctx）。
  *
  * pj 必须同时走两条路：
- *   * 请求头 X-Magplot-Project —— fetch 统一带上；
+ *   * 请求头 X-Tavotto-Project —— fetch 统一带上；
  *   * 查询参数 pj —— `<img src>` 与 EventSource 加不了请求头。
  * 只做一条会让一半 API 串到别的项目上（图能出、但出的是另一个图库的）。
  */
-const KEY = 'magplot:project'
+const KEY = 'tavotto:project'
 
 let current: string | null = boot()
 
@@ -63,5 +63,5 @@ export function apiUrl(path: string): string {
 /** 给 fetch 的 init 补上项目请求头，保留调用方自己的 headers。 */
 export function withProject(init?: RequestInit): RequestInit | undefined {
   if (!current) return init
-  return { ...init, headers: { ...(init?.headers ?? {}), 'X-Magplot-Project': current } }
+  return { ...init, headers: { ...(init?.headers ?? {}), 'X-Tavotto-Project': current } }
 }

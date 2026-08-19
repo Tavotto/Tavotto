@@ -26,7 +26,7 @@
     "resolveJsonModule": true,
     "paths": {
       "@/*": ["./src/*"],
-      "@profiles": ["../src/magplot/profiles/publication.json"]
+      "@profiles": ["../src/tavotto/profiles/publication.json"]
     }
   },
   "include": ["src"]

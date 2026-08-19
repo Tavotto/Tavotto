@@ -1,17 +1,17 @@
 ; ======================================================================
-; MAGPLOT VENDORED TEMPLATE
+; TAVOTTO VENDORED TEMPLATE
 ; 上游：tauri-apps/tauri @ tauri-cli-v2.11.4
 ;       crates/tauri-bundler/src/bundle/windows/nsis/installer.nsi
-; 改动：全部以 `MAGPLOT PATCH` 注释标出。首次 GUI 安装只剩两页——
+; 改动：全部以 `TAVOTTO PATCH` 注释标出。首次 GUI 安装只剩两页——
 ;       真实安装进度（MUI_PAGE_INSTFILES）→ 完成页（MUI_PAGE_FINISH）：
 ;       欢迎页删除、目录页与开始菜单页恒被 Skip 掉、日志列表 nevershow、
-;       完成页去掉伪 README 复选框并本地化「打开 Magplot」。
+;       完成页去掉伪 README 复选框并本地化「打开 Tavotto」。
 ;       异常流程（同版本 / 降级 / WiX 迁移 / 应用在跑 / WebView2 失败 /
 ;       卸载）的页面与判断一个都没动。头图与侧栏图不在此文件——走
 ;       tauri.conf.json 的 nsis.headerImage / sidebarImage。
-;       另有一处与界面无关的补丁：装完/卸载时调 magplot-cli 维护**安装清单**
-;       （见 Section Install / Section Uninstall 里的 MAGPLOT PATCH），
-;       外部程序（Codex 插件）靠它发现这台机器上的 Magplot CLI。
+;       另有一处与界面无关的补丁：装完/卸载时调 tavotto-cli 维护**安装清单**
+;       （见 Section Install / Section Uninstall 里的 TAVOTTO PATCH），
+;       外部程序（Codex 插件）靠它发现这台机器上的 Tavotto CLI。
 ; 升级 @tauri-apps/cli 时：模板与打包器必须同源——取新版模板重打
 ;       这些补丁，并同步 scripts/build_desktop.py 与
 ;       .github/workflows/desktop-tauri.yml 里钉住的版本号。
@@ -95,7 +95,7 @@ Var WixMode
 Var OldMainBinaryName
 
 Name "${PRODUCTNAME}"
-; MAGPLOT PATCH: 左下角不放角标文字，界面更安静
+; TAVOTTO PATCH: 左下角不放角标文字，界面更安静
 BrandingText " "
 OutFile "${OUTFILE}"
 
@@ -183,7 +183,7 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 !define MUI_LANGDLL_REGISTRY_KEY "${MANUPRODUCTKEY}"
 !define MUI_LANGDLL_REGISTRY_VALUENAME "Installer Language"
 
-; MAGPLOT PATCH: 品牌极简界面 ------------------------------------------
+; TAVOTTO PATCH: 品牌极简界面 ------------------------------------------
 ; 纸色底 + ink 文字（web/src/index.css 的 --color-bg / --color-ink），
 ; 安装过程只留一根进度条，不出日志列表与 Nullsoft 角标。
 !define MUI_BGCOLOR "F2F2EF"
@@ -197,11 +197,11 @@ ShowUninstDetails nevershow
 ; 不分格；颜色仍由系统主题画，**不做假的百分比也不做假的染色**。
 !define MUI_INSTFILESPAGE_COLORS "1B1B18 F2F2EF"
 !define MUI_INSTFILESPAGE_PROGRESSBAR "smooth"
-; MAGPLOT PATCH END ----------------------------------------------------
+; TAVOTTO PATCH END ----------------------------------------------------
 
 ; Installer pages, must be ordered as they appear
 ; 1. Welcome Page
-; MAGPLOT PATCH: 欢迎页删除（宏一并去掉，不是藏起来）。
+; TAVOTTO PATCH: 欢迎页删除（宏一并去掉，不是藏起来）。
 ; 首次 GUI 安装从这里直接落到进度页：没有欢迎页、没有目录页、
 ; 没有开始菜单页、没有许可证页——启动安装器即开始装。
 
@@ -421,8 +421,8 @@ Function PageLeaveReinstall
 FunctionEnd
 
 ; 5. Choose install directory page
-; MAGPLOT PATCH: 目录页恒不可见（PRE 从 SkipIfPassive 换成 Skip = 无条件
-; Abort）。安装位置由 .onInit 决定：新装固定 $LOCALAPPDATA\Magplot，
+; TAVOTTO PATCH: 目录页恒不可见（PRE 从 SkipIfPassive 换成 Skip = 无条件
+; Abort）。安装位置由 .onInit 决定：新装固定 $LOCALAPPDATA\Tavotto，
 ; 已有安装则 RestorePreviousInstallLocation 从注册表读回老路径。
 ; **宏本身保留**——它是 Tauri 模板的既有依赖，命令行 /D= 也照旧生效；
 ; 这里删的只是那一屏「你要装到哪儿」，不是安装位置的能力。
@@ -430,9 +430,9 @@ FunctionEnd
 !insertmacro MUI_PAGE_DIRECTORY
 
 ; 6. Start menu shortcut page
-; MAGPLOT PATCH: 开始菜单文件夹选择页恒不可见（两个分支都 Skip）。
-; 上游只在没配 startMenuFolder 时才 Skip；Magplot 确实没配（快捷方式直接
-; 落在 $SMPROGRAMS\Magplot.lnk），但「页面可见与否」不该由一个可选配置
+; TAVOTTO PATCH: 开始菜单文件夹选择页恒不可见（两个分支都 Skip）。
+; 上游只在没配 startMenuFolder 时才 Skip；Tavotto 确实没配（快捷方式直接
+; 落在 $SMPROGRAMS\Tavotto.lnk），但「页面可见与否」不该由一个可选配置
 ; 顺带决定——那样以后有人加一行配置，选择页就会无声地回来。
 ; **宏本身保留**：$AppStartMenuFolder 与 MUI_STARTMENU_WRITE_BEGIN /
 ; MUI_STARTMENU_GETFOLDER 是安装与卸载两侧的既有依赖，删掉会连带把
@@ -445,13 +445,13 @@ Var AppStartMenuFolder
 !insertmacro MUI_PAGE_STARTMENU Application $AppStartMenuFolder
 
 ; 7. Installation page
-; MAGPLOT PATCH: 页眉说人话。上游用的是 NSIS 语言包里的
-; 「正在安装 / 请稍候，安装程序正在安装 Magplot……」——后半句是典型的
-; 传统安装器说明，删掉；标题换成本地化的「正在安装 Magplot」。
+; TAVOTTO PATCH: 页眉说人话。上游用的是 NSIS 语言包里的
+; 「正在安装 / 请稍候，安装程序正在安装 Tavotto……」——后半句是典型的
+; 传统安装器说明，删掉；标题换成本地化的「正在安装 Tavotto」。
 ; MUI_PAGE_HEADER_TEXT/SUBTEXT 是 MUI2 的每页官方开关，用完自动 unset。
-!define MUI_PAGE_HEADER_TEXT "$(installingMagplot)"
+!define MUI_PAGE_HEADER_TEXT "$(installingTavotto)"
 !define MUI_PAGE_HEADER_SUBTEXT ""
-; MAGPLOT PATCH: 装完那一瞬的页眉也归自己管。MUI 在 instfiles 的 LEAVE 里
+; TAVOTTO PATCH: 装完那一瞬的页眉也归自己管。MUI 在 instfiles 的 LEAVE 里
 ; 把页眉换成 $(MUI_TEXT_FINISH_TITLE)/$(SUBTITLE)——「Installation Complete /
 ; Setup was completed successfully.」，又是一句传统安装器说明，而且它就闪在
 ; 自动跳完成页之前（nightly 的 GUI 探针在真安装器上抓到过这两行）。换成与
@@ -465,11 +465,11 @@ Var AppStartMenuFolder
 ;
 ; Don't auto jump to finish page after installation page,
 ; because the installation page has useful info that can be used debug any issues with the installer.
-; MAGPLOT PATCH: 进度页不再展示日志，装完直接进完成页。
+; TAVOTTO PATCH: 进度页不再展示日志，装完直接进完成页。
 ; **不要重新 !define MUI_FINISHPAGE_NOAUTOCLOSE**——上游那一行正是
 ; 「装完还停在日志页、要再点一次」的来源（test_nsis_template 看护它不存在）。
 ;
-; MAGPLOT PATCH: 完成页只剩品牌文案 + 一个「打开 Magplot」。
+; TAVOTTO PATCH: 完成页只剩品牌文案 + 一个「打开 Tavotto」。
 ; 上游把 showreadme 复选框借去当「创建桌面快捷方式」（伪 README 选项），
 ; 这里删掉。**桌面快捷方式本身没删**——它默认就是勾上的，等于既有默认
 ; 行为，现在改由 Section Install 无条件创建，与静默/被动安装同一条路径。
@@ -482,7 +482,7 @@ Var AppStartMenuFolder
 ; MUI 官方控件，只把文案本地化。启动仍走 RunAsUser（见 RunMainBinary）：
 ; 普通 Exec 会把安装器的令牌继承给应用，那是权限继承事故的来源。
 !define MUI_FINISHPAGE_RUN
-!define MUI_FINISHPAGE_RUN_TEXT "$(openMagplot)"
+!define MUI_FINISHPAGE_RUN_TEXT "$(openTavotto)"
 !define MUI_FINISHPAGE_RUN_FUNCTION RunMainBinary
 !define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
 !insertmacro MUI_PAGE_FINISH
@@ -545,29 +545,29 @@ FunctionEnd
   !include "{{this}}"
 {{/each}}
 
-; MAGPLOT PATCH: 品牌文案。安装器只剩两页，这几句就是用户会读到的全部。
+; TAVOTTO PATCH: 品牌文案。安装器只剩两页，这几句就是用户会读到的全部。
 ; 为什么不走 tauri.conf.json 的 customLanguageFiles：那个开关是**整份替换**
-; 内置语言文件，为一句「打开 Magplot」要把上游三十来条字符串抄一份，
+; 内置语言文件，为一句「打开 Tavotto」要把上游三十来条字符串抄一份，
 ; 升级 CLI 时必然漂。就地 LangString 更小也更难错。
 ; NSIS 允许先引用后定义（上游自己的 $(alreadyInstalled) 就在前面用着）。
 ; **新增 nsis.languages 时必须在这里补齐对应语言**，否则 NSIS 只给一条
 ; 警告然后把空字符串顶上去——安装器照样打得出来，只是完成页没字。
 ; tests/test_nsis_template.py 拿 tauri.conf.json 的语言表逐个对。
 !ifdef LANG_ENGLISH
-  LangString preparingMagplot  ${LANG_ENGLISH} "Preparing Magplot"
-  LangString installingMagplot ${LANG_ENGLISH} "Installing Magplot"
-  LangString finishTitle       ${LANG_ENGLISH} "Magplot is ready"
-  LangString finishText        ${LANG_ENGLISH} "Magplot has been installed on this computer."
-  LangString openMagplot       ${LANG_ENGLISH} "Open Magplot"
-  LangString registeringMagplot ${LANG_ENGLISH} "Registering the Magplot command line"
+  LangString preparingTavotto  ${LANG_ENGLISH} "Preparing Tavotto"
+  LangString installingTavotto ${LANG_ENGLISH} "Installing Tavotto"
+  LangString finishTitle       ${LANG_ENGLISH} "Tavotto is ready"
+  LangString finishText        ${LANG_ENGLISH} "Tavotto has been installed on this computer."
+  LangString openTavotto       ${LANG_ENGLISH} "Open Tavotto"
+  LangString registeringTavotto ${LANG_ENGLISH} "Registering the Tavotto command line"
 !endif
 !ifdef LANG_SIMPCHINESE
-  LangString preparingMagplot  ${LANG_SIMPCHINESE} "正在准备 Magplot"
-  LangString installingMagplot ${LANG_SIMPCHINESE} "正在安装 Magplot"
-  LangString finishTitle       ${LANG_SIMPCHINESE} "Magplot 已安装完成"
-  LangString finishText        ${LANG_SIMPCHINESE} "Magplot 已经装到这台电脑上。"
-  LangString openMagplot       ${LANG_SIMPCHINESE} "打开 Magplot"
-  LangString registeringMagplot ${LANG_SIMPCHINESE} "正在登记 Magplot 命令行入口"
+  LangString preparingTavotto  ${LANG_SIMPCHINESE} "正在准备 Tavotto"
+  LangString installingTavotto ${LANG_SIMPCHINESE} "正在安装 Tavotto"
+  LangString finishTitle       ${LANG_SIMPCHINESE} "Tavotto 已安装完成"
+  LangString finishText        ${LANG_SIMPCHINESE} "Tavotto 已经装到这台电脑上。"
+  LangString openTavotto       ${LANG_SIMPCHINESE} "打开 Tavotto"
+  LangString registeringTavotto ${LANG_SIMPCHINESE} "正在登记 Tavotto 命令行入口"
 !endif
 
 Function .onInit
@@ -621,8 +621,8 @@ FunctionEnd
 
 
 Section EarlyChecks
-  ; MAGPLOT PATCH: 状态行说实话——这一档在做降级判断，还没开始装
-  DetailPrint "$(preparingMagplot)"
+  ; TAVOTTO PATCH: 状态行说实话——这一档在做降级判断，还没开始装
+  DetailPrint "$(preparingTavotto)"
 
   ; Abort silent installer if downgrades is disabled
   !if "${ALLOWDOWNGRADES}" == "false"
@@ -735,12 +735,12 @@ Section WebView2
 SectionEnd
 
 Section Install
-  ; MAGPLOT PATCH: 进度条上方那行只说人话。
+  ; TAVOTTO PATCH: 进度条上方那行只说人话。
   ; 展开文件时 NSIS 默认把每个文件名刷上去（Extract: python313.dll…），
   ; 内置渲染 runtime 有几千个文件，那一行会疯狂闪。listonly 让这些只进
   ; 日志（诊断照旧留着，只是 nevershow 不给用户看），状态行停在
-  ; 「正在安装 Magplot」；复制完再还原 both，后面的 DetailPrint 两边都进。
-  DetailPrint "$(installingMagplot)"
+  ; 「正在安装 Tavotto」；复制完再还原 both，后面的 DetailPrint 两边都进。
+  DetailPrint "$(installingTavotto)"
   SetDetailsPrint listonly
 
   SetOutPath $INSTDIR
@@ -767,7 +767,7 @@ Section Install
     File /a "/oname={{this}}" "{{no-escape @key}}"
   {{/each}}
 
-  ; MAGPLOT PATCH: 文件展开完毕，状态行交还给后面的 DetailPrint
+  ; TAVOTTO PATCH: 文件展开完毕，状态行交还给后面的 DetailPrint
   SetDetailsPrint both
 
   ; Create file associations
@@ -833,40 +833,40 @@ Section Install
     Call CreateOrUpdateStartMenuShortcut
   !insertmacro MUI_STARTMENU_WRITE_END
 
-  ; MAGPLOT PATCH: 桌面快捷方式改为无条件创建。
+  ; TAVOTTO PATCH: 桌面快捷方式改为无条件创建。
   ; 上游只在静默/被动安装时建，GUI 安装靠完成页那个伪 README 复选框——
-  ; 而它**默认就是勾上的**，所以「装完桌面上有 Magplot」一直是既有默认
+  ; 而它**默认就是勾上的**，所以「装完桌面上有 Tavotto」一直是既有默认
   ; 行为。完成页不再提供这个选择，就把同一件事收进这里，三种安装方式
   ; 一致。/NS（不建快捷方式）与 /UPDATE（升级不动用户已有快捷方式）的
   ; 豁免在 CreateOrUpdateDesktopShortcut 内部，语义一个字没改。
   Call CreateOrUpdateDesktopShortcut
 
-  ; MAGPLOT PATCH: 登记安装清单，让外部程序发现得了这台机器上的 CLI ------
-  ; 只写卸载注册表**不等于** Codex 能找到 Magplot：插件不读卸载信息，也不该
+  ; TAVOTTO PATCH: 登记安装清单，让外部程序发现得了这台机器上的 CLI ------
+  ; 只写卸载注册表**不等于** Codex 能找到 Tavotto：插件不读卸载信息，也不该
   ; 只靠注册表（企业策略能锁掉它）。这里跑一次装进来的 console 版 CLI，由它
   ; 把自己的绝对路径写进用户配置目录的 install.json——顺带就是一次**无 GUI
   ; 的装后健康检查**：这条命令跑不通，等于这个包发出去也只会表现为
-  ; 「Codex 找不到 Magplot」。
+  ; 「Codex 找不到 Tavotto」。
   ;
-  ; · 路径与 tauri.conf.json 的 bundle.resources（"../dist/Magplot":
-  ;   "sidecar/Magplot"）同源，改那份映射要同步这里（tests/test_nsis_template.py
+  ; · 路径与 tauri.conf.json 的 bundle.resources（"../dist/Tavotto":
+  ;   "sidecar/Tavotto"）同源，改那份映射要同步这里（tests/test_nsis_template.py
   ;   的 test_install_manifest_is_registered_from_the_bundled_cli 看护）。
   ; · nsExec 不弹窗口、不闪黑框；/TIMEOUT 保证冷启动异常时不会把安装器挂住。
   ; · **失败绝不中断安装**：清单只是快路径，已知安装位置那条腿还在。
   SetDetailsPrint both
-  DetailPrint "$(registeringMagplot)"
-  StrCpy $R8 "$INSTDIR\sidecar\Magplot\magplot-cli.exe"
+  DetailPrint "$(registeringTavotto)"
+  StrCpy $R8 "$INSTDIR\sidecar\Tavotto\tavotto-cli.exe"
   ${If} ${FileExists} "$R8"
     nsExec::ExecToStack /TIMEOUT=60000 '"$R8" doctor --json --write-manifest'
     Pop $R9
     Pop $R7
     ${If} $R9 != 0
-      DetailPrint "magplot-cli doctor 未通过（$R9）: $R7"
+      DetailPrint "tavotto-cli doctor 未通过（$R9）: $R7"
     ${EndIf}
   ${Else}
-    DetailPrint "未找到 $R8：外部程序将改用已知安装位置发现 Magplot"
+    DetailPrint "未找到 $R8：外部程序将改用已知安装位置发现 Tavotto"
   ${EndIf}
-  ; MAGPLOT PATCH END ----------------------------------------------------
+  ; TAVOTTO PATCH END ----------------------------------------------------
 
   !ifmacrodef NSIS_HOOK_POSTINSTALL
     !insertmacro NSIS_HOOK_POSTINSTALL
@@ -919,18 +919,18 @@ Section Uninstall
 
   !insertmacro CheckIfAppIsRunning "${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
 
-  ; MAGPLOT PATCH: 先清安装清单，再删文件 --------------------------------
+  ; TAVOTTO PATCH: 先清安装清单，再删文件 --------------------------------
   ; 顺序不能换：清单是那个 CLI 自己删的，文件删完就没人删得掉了。留下一份
   ; 指向已卸载路径的清单，外部程序会拿着一条不存在的路径去 spawn——报出来
   ; 的错是「执行不了」而不是「没装」。（读的一方也会核实路径还在，这里是
   ; 第一道。）升级时卸载器先跑、安装段随后重写，两边都对。
-  StrCpy $R8 "$INSTDIR\sidecar\Magplot\magplot-cli.exe"
+  StrCpy $R8 "$INSTDIR\sidecar\Tavotto\tavotto-cli.exe"
   ${If} ${FileExists} "$R8"
     nsExec::ExecToStack /TIMEOUT=60000 '"$R8" doctor --json --remove-manifest'
     Pop $R9
     Pop $R7
   ${EndIf}
-  ; MAGPLOT PATCH END ----------------------------------------------------
+  ; TAVOTTO PATCH END ----------------------------------------------------
 
   ; Delete the app directory and its content from disk
   ; Copy main executable

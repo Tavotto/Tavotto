@@ -1,12 +1,24 @@
-# Magplot — 开发约定
+# Tavotto — 开发约定
 
-产品名 **Magplot**（拼写大小写固定；旧名 Magic Matplot 只在兼容读取与
-历史格式说明中出现）。品牌与格式常量唯一出处：`web/src/lib/brand.ts`、
-`engine/brand.py`——界面/导出格式不得手写产品名。对象层级
-Project / Canvas / Tab / Object 见 `docs/adr/0001-project-canvas-tab-object.md`。
+产品名 **Tavotto**（拼写大小写固定）。品牌与格式常量唯一出处：
+`web/src/lib/brand.ts`、`engine/brand.py`——界面/导出格式不得手写产品名。
+对象层级 Project / Canvas / Tab / Object 见
+`docs/adr/0001-project-canvas-tab-object.md`。
 
-论文 Figure 排版 + 参数化图表编辑工具。Flask 后端（`src/magplot/app.py`）+
-PyMuPDF（**只经 `src/magplot/pdfbackend/`**），前端 `web/`
+**2026-08-20 从 Magplot 改名为 Tavotto，选的是干净断裂**：`magplot-package` /
+`.magplot` / `magplot-proof` / `magplot/objects@1` / `magplot.*` 的 localStorage 键
+一律不再认，Magic Matplot 时代那一档 `LEGACY_*` 也一并删了——只认两代前的名字、
+却不认上一代的，比干净断裂更难解释。`brand.py` / `brand.ts` 因此**没有
+LEGACY_ 常量**，别照着旧模式再加一档。两个例外都在 mm 前缀那一族，它们指的是
+**用户自己磁盘上的东西、我们改不到**：图库里的 `mm_registry.json`（读取端回退，
+唯一判据 `registry.existing_registry_path()`，写出永远新名）与用户 shell 里的
+`MM_WORKER_PYTHON`（读取端回退，唯一判据 `pool.worker_python_env()`）。
+文档 schema 的迁移（`migrateToProject`，接受 2/3）与品牌无关，照旧。
+桌面标识符换成了 `com.tavotto.tavotto`：存量 0.7.0 桌面版**不会原地升级**，
+发版说明里要写明先卸载旧版。
+
+论文 Figure 排版 + 参数化图表编辑工具。Flask 后端（`src/tavotto/app.py`）+
+PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
 （Vite + React 19 + TS + Tailwind v4）；旧 v1 前端已于 2026-08-15 删除（git 可找回）。
 
 ## 进程与依赖边界（重要）
@@ -16,23 +28,23 @@ PyMuPDF（**只经 `src/magplot/pdfbackend/`**），前端 `web/`
   `engine/updater.py`、`engine/runtime.py` 被 Flask import，
   **必须保持纯标准库**。
 - `engine/worker.py`、`engine/manifest.py`、`engine/overrides.py` 只在 worker 子进程里跑，
-  解释器由 `pool.find_worker_python()` 探测（需科学栈；可用 `MM_WORKER_PYTHON` 覆盖）。
+  解释器由 `pool.find_worker_python()` 探测（需科学栈；可用 `TAVOTTO_WORKER_PYTHON` 覆盖）。
 
 ## 打包与启动（src layout，2026-08-16）
 
-- 代码在 `src/magplot/`，`pyproject.toml`（hatchling）声明依赖与
-  `magplot = "magplot.cli_entry:main"` 入口（**纯标准库的轻量入口**：
+- 代码在 `src/tavotto/`，`pyproject.toml`（hatchling）声明依赖与
+  `tavotto = "tavotto.cli_entry:main"` 入口（**纯标准库的轻量入口**：
   `open`/`doctor` 要在 import Flask 之前分派掉，见下面「外部交接」一节）。`run.sh` = 自建 `.venv` +
-  `pip install -e .` + `exec .venv/bin/magplot`；**不要再写 `python app.py`**，
+  `pip install -e .` + `exec .venv/bin/tavotto`；**不要再写 `python app.py`**，
   根目录已无该文件（旧进程内存里的老路径正是「worker 进程崩溃（无响应）」的成因）。
 - extras：`worker`（matplotlib/numpy，装了就用同解释器渲染）、`dev`（pytest/build）。
-- 前端产物 `src/magplot/web/` 由 `scripts/build_frontend.py` 从 `web/dist` 拷入，
+- 前端产物 `src/tavotto/web/` 由 `scripts/build_frontend.py` 从 `web/dist` 拷入，
   进 .gitignore；hatchling 默认跳过 VCS 忽略的文件，**必须靠 pyproject 的
   `[tool.hatch.build] artifacts` 收回**，否则 wheel 里没有界面（首页 404）。
   开发态包内无 `web/` 时 `app.py` 自动回退到 `web/dist`。
 - CI 的 package job 看护这条链路：build_frontend → wheel → 断言含
-  `magplot/web/index.html` + entry point → 干净 venv 装 wheel 跑 `magplot --help`。
-- 运行时可写数据一律走 `engine/config.data_dir()`（`MAGPLOT_DATA_DIR` 可覆盖，
+  `tavotto/web/index.html` + entry point → 干净 venv 装 wheel 跑 `tavotto --help`。
+- 运行时可写数据一律走 `engine/config.data_dir()`（`TAVOTTO_DATA_DIR` 可覆盖，
   conftest 已全局隔离）：cache / layouts / exports / baked_overrides/&lt;项目id&gt;.json /
   ai_history.sqlite3 / ai_snapshots 全在那儿。**不要再往包目录或仓库根写东西**
   ——site-packages 不可写，装成 wheel 后会直接崩。
@@ -41,19 +53,19 @@ PyMuPDF（**只经 `src/magplot/pdfbackend/`**），前端 `web/`
 
 架构与安全模型的完整版在 `docs/adr/0002-tauri-desktop-shell.md`，改动前先读。
 
-- **进程关系**：Tauri 壳（`src-tauri/`）→ spawn `magplot --desktop-sidecar`
+- **进程关系**：Tauri 壳（`src-tauri/`）→ spawn `tavotto --desktop-sidecar`
   （PyInstaller onedir，无 matplotlib）→ 现有 worker 协议。前端仍由 sidecar 的
   Flask 提供，**不走 Tauri frontendDist**——桌面与浏览器跑同一份界面。
-- **桌面模式差异全部收在 `src/magplot/desktop.py`**：`127.0.0.1:0` 动态端口
+- **桌面模式差异全部收在 `src/tavotto/desktop.py`**：`127.0.0.1:0` 动态端口
   （werkzeug `make_server`，可优雅 shutdown）、一次性 nonce → HttpOnly cookie
   认证（nonce 走 **stdin 首行**，环境变量对同用户进程可见；`/`、`/assets/*`、
   bootstrap 之外全部 401 兜底）、Host/Origin 校验、握手文件（无密钥、原子写、
   退出清理）、stdin EOF + 父 PID 双路「壳没了就自杀」。浏览器/CLI 模式下这些
   钩子**必须完全旁路**（`test_desktop_sidecar.py` 看护）——别让桌面逻辑漏进
-  `magplot` 普通启动路径。
+  `tavotto` 普通启动路径。
 - **前端唯一桌面感知点是 `web/src/lib/desktop.ts`**：组件不得直接 import
   `@tauri-apps/*`；每个能力都有浏览器回退（vitest 看护）。菜单事件 id 与
-  `src-tauri/src/main.rs` 严格同源（`magplot:menu`）。
+  `src-tauri/src/main.rs` 严格同源（`tavotto:menu`）。
 - **Tauri 2 的 ACL 对应用自定义命令同样生效**：新增 `#[tauri::command]` 必须
   三处同步——`build.rs` 的 `AppManifest::commands`、`capabilities/main.json`
   加 `allow-<命令名连字符化>`、`main.rs` 的 `generate_handler`。漏掉前两处
@@ -62,7 +74,7 @@ PyMuPDF（**只经 `src/magplot/pdfbackend/`**），前端 `web/`
 - **桌面模式下 Python updater 停用**（升级归 Tauri 层），`/api/update/*` 回
   禁用响应；浏览器模式照旧。
 - 构建：`python scripts/build_desktop.py`；验收：`python scripts/smoke_desktop.py
-  --sidecar dist/Magplot/Magplot`（真产物全链路：认证/项目/渲染/导出/退出无孤儿）。
+  --sidecar dist/Tavotto/Tavotto`（真产物全链路：认证/项目/渲染/导出/退出无孤儿）。
   CI 在 `desktop-tauri.yml`——v0.3.0 起是唯一桌面发行链（旧 `desktop.yml`/
   Inno Setup/免安装 zip 已退役删除，git 可找回）；Windows NSIS 自带内置渲染
   runtime，桌面产物一律真窗口、不再有「启动后开浏览器」的形态。
@@ -73,13 +85,13 @@ PyMuPDF（**只经 `src/magplot/pdfbackend/`**），前端 `web/`
   （PyMuPDF 直绘，图标落点与 `make_dmg.sh` 的 Finder 版式严格同源），
   make_dmg.sh 里 Finder 脚本失败只降级为朴素版式、绝不断发布链。
   Windows NSIS 用 vendored 模板 `src-tauri/windows/installer.nsi`
-  （上游 tauri-cli v2.11.4 + `MAGPLOT PATCH` 标注的最小补丁：去欢迎页 /
+  （上游 tauri-cli v2.11.4 + `TAVOTTO PATCH` 标注的最小补丁：去欢迎页 /
   极简进度 / 品牌配色；头图侧栏图走 tauri.conf.json 的 nsis.* 配置）。
   **@tauri-apps/cli 钉死在 2.11.4**——模板与打包器必须同源，升级 CLI 时
   取新模板重打补丁并同步 build_desktop.py / desktop-tauri.yml / nightly.yml
   （tests/test_nsis_template.py 看护四处版本一致与 BMP 形态）。
 
-## Rust supervisor `magplot-workerd`（2026-08-18，与 Python 池并行）
+## Rust supervisor `tavotto-workerd`（2026-08-18，与 Python 池并行）
 
 架构、协议与错误码的完整版在 `docs/adr/0004-workerd-supervisor.md`，改动前先读。
 
@@ -90,7 +102,7 @@ PyMuPDF（**只经 `src/magplot/pdfbackend/`**），前端 `web/`
   内置 runtime 的 `-B`/env、超时档位、会话与队列上限**全部留在 Python**，
   Flask 把完整 spawn 规格（argv/env/log_path/握手期限）交给 workerd。
   **别在 Rust 里重写探测或渲染**——那是制造第二个权威。
-- `pool.py` 的 Python 实现**一行没删**：找不到二进制或 `MAGPLOT_WORKERD=0` 就原路走它，
+- `pool.py` 的 Python 实现**一行没删**：找不到二进制或 `TAVOTTO_WORKERD=0` 就原路走它，
   它同时是 workerd 的参考实现。**pytest 的 conftest 默认把开关钉成 `0`**，
   否则 `cargo build` 之后整套既有用例会悄悄换一条控制面跑。
 - `workerd/src/patchspec.rs` + `pyfloat.rs` 必须**逐字节复现** `engine/patchspec.py`，
@@ -110,7 +122,7 @@ PyMuPDF（**只经 `src/magplot/pdfbackend/`**），前端 `web/`
 
 ## PDF 后端边界（许可证相关，勿破坏）
 
-- `src/magplot/pdfbackend/pymupdf_backend.py` 是**全仓库唯一** import pymupdf 的
+- `src/tavotto/pdfbackend/pymupdf_backend.py` 是**全仓库唯一** import pymupdf 的
   模块；`__init__.py` 是与实现无关的契约层（probe_asset / render_preview_png /
   text_width / compose + mm2pt / hex2rgb）。`app.py` 只认这些名字。
 - 为什么在意：PDF 库是可替换的实现细节，收敛成单一模块后换后端只需重写这一个
@@ -141,11 +153,11 @@ PyMuPDF（**只经 `src/magplot/pdfbackend/`**），前端 `web/`
 
 ## 内置渲染 runtime（Windows 2026-08-17；macOS 2026-08-18）
 
-**两个桌面安装包都自带一套 Magplot 私有的 Python 渲染环境**，用户不需要先装
+**两个桌面安装包都自带一套 Tavotto 私有的 Python 渲染环境**，用户不需要先装
 Python，首次渲染也不联网：
 
-    Windows: Magplot.exe → _internal\runtime\python.exe    → engine/worker.py → 用户的脚本
-    macOS:   Magplot.app → …/_internal/runtime/bin/python3.13 → engine/worker.py → 用户的脚本
+    Windows: Tavotto.exe → _internal\runtime\python.exe    → engine/worker.py → 用户的脚本
+    macOS:   Tavotto.app → …/_internal/runtime/bin/python3.13 → engine/worker.py → 用户的脚本
 
 - **上游发行版按平台分，理由不同**：Windows 用官方 embeddable（Python 官方就把它
   定位成「应用私有的运行时」）；macOS 用 **python-build-standalone 的 install_only**
@@ -167,7 +179,7 @@ Python，首次渲染也不联网：
   不产出 universal2——科学栈 wheel 分架构发布，硬拼没验证过。
   改这条之前不许在 README 里写「支持 Intel」。
 - **`engine/runtime.py` 是路径判断的唯一出处**（frozen 的 `_MEIPASS` / exe 同级 /
-  源码树 / `MAGPLOT_RUNTIME_DIR` 覆盖）。这一段**全程 os.path 拼字符串，一个
+  源码树 / `TAVOTTO_RUNTIME_DIR` 覆盖）。这一段**全程 os.path 拼字符串，一个
   pathlib 都不用**：`Path()` 按 `os.name` 分派，在别的平台上构造另一半直接抛
   UnsupportedOperation，连在 macOS 上单测 Windows 分支都做不到
   （test_runtime_path_logic_never_instantiates_a_foreign_pathlib 看护）。
@@ -175,7 +187,7 @@ Python，首次渲染也不联网：
   runtime，只认本平台那种会误报「不完整」。**版本化实体名按 glob 找，不写死
   3.13**：写死的话升到 CPython 3.14 会突然「找不到解释器」，而提示是
   「安装文件不完整」——与真实原因毫不相干。
-- **`MAGPLOT_RUNTIME_DIR` 覆盖是排他的**：指了就只认这一个，指到空处即等于
+- **`TAVOTTO_RUNTIME_DIR` 覆盖是排他的**：指了就只认这一个，指到空处即等于
   「没有」。「覆盖了却被别处那份悄悄顶掉」是最难查的一种——你以为在验刚构建的
   产物，实际验的是上一次留下的，两边日志一模一样。
 - **manifest schema 2 会校验平台/架构**（`platform_mismatch()`）：装错架构的包
@@ -187,7 +199,7 @@ Python，首次渲染也不联网：
   `PYTHONHOME`/`PYTHONPATH` 会让探测那句 `import matplotlib` 失败，一个好用的
   内置 runtime 被判成不可用（只在「从终端启动」时复现）。
 - **解释器优先级（`pool._prioritized_candidates()` 是唯一出处）**：
-  `MM_WORKER_PYTHON` → 用户在设置里指定的 → **内置 runtime** → 自身
+  `TAVOTTO_WORKER_PYTHON` → 用户在设置里指定的 → **内置 runtime** → 自身
   （非 frozen）→ 系统 Python/Conda 探测。用户显式指定的永远优先；
   第 5 条是兼容回退，不是摆设（脚本要 rdkit 这类内置环境没有的包时靠它）。
   来源标签 `env_override/configured/managed_venv/bundled/current_process/system`
@@ -201,7 +213,7 @@ Python，首次渲染也不联网：
   代码签名，用户下次启动看到「应用已损坏」**。
 - **`child_env()` 还要摘掉 `PYTHONHOME`/`PYTHONPATH`/`PYTHONSTARTUP`/
   `PYTHONUSERBASE`**：Windows 上 `._pth` 的隔离模式顺手挡住了它们，
-  **macOS 上没有任何东西挡**。用户从终端启动 Magplot 时，shell 里为 Conda 或
+  **macOS 上没有任何东西挡**。用户从终端启动 Tavotto 时，shell 里为 Conda 或
   自家项目设的那几个会原样传给内置解释器——轻则 import 到别的 numpy，重则
   解释器起不来；而且只在「从终端启动」时复现，Finder 双击一切正常。
 - **缺失/损坏/架构不符报专用 code**（`bundled_runtime_missing` /
@@ -216,7 +228,7 @@ Python，首次渲染也不联网：
   内置环境覆盖的是常用科学栈，不承诺覆盖任意用户脚本的依赖。
 - **构建链的三道闸**（漏一道就会安静地发出「装完不能渲染」的包）：
   ① 构建脚本自己逐个 import + 画真图，不过就失败在构建机；
-  ② `MAGPLOT_REQUIRE_RUNTIME=1` 时 `magplot.spec` 经
+  ② `TAVOTTO_REQUIRE_RUNTIME=1` 时 `tavotto.spec` 经
   `build_worker_runtime.check_runtime_dir()`（**与 build_desktop.py 共用同一把尺**）
   确认 schema / 平台架构 / 冒烟状态；③ 打包后 `smoke_app.py
   --expect-source bundled --expect-runtime` 真启动真渲染。
@@ -229,17 +241,17 @@ Python，首次渲染也不联网：
   **全部平台无关**）+ `tests/test_runtime_build.py`（锁文件分层、布局、
   `._pth`、构建判据、打包卫生，另有几条只在本机构建过 runtime 时才跑的
   **真 import + 真绘图**用例）+ CI 的 `windows-exe-smoke` 与 desktop-tauri 的
-  两条腿（真产物、**不给 MM_WORKER_PYTHON**、断言 `--expect-source bundled
+  两条腿（真产物、**不给 TAVOTTO_WORKER_PYTHON**、断言 `--expect-source bundled
   --expect-runtime` 并逐个 import 内置科学栈；macOS 还要对**签完名的 .app**
   从中文+空格路径再冒烟一次）。
 - **别把「借一个解释器」加回冒烟**：macOS 这条腿一度现建 worker-env 再设
-  `MM_WORKER_PYTHON`，于是「runtime 根本没打进去」全程绿灯——空转的门禁比
+  `TAVOTTO_WORKER_PYTHON`，于是「runtime 根本没打进去」全程绿灯——空转的门禁比
   没有门禁更坏（`test_macos_ci_no_longer_fakes_a_worker_env` 看护）。
 
 ## 检查更新
 
 - `engine/updater.py`（纯标准库）：查 GitHub Releases 最新 tag → 与
-  `magplot.__version__` 比 → 按安装方式给升级命令。仓库地址等常量在
+  `tavotto.__version__` 比 → 按安装方式给升级命令。仓库地址等常量在
   `engine/brand.py`，别处不得手写。
 - 默认每天一次、可在设置里关（关了**一个包都不发**）；升级永不静默进行，
   且升级后 `restart_required`（进程内存里还是旧代码）。
@@ -499,7 +511,7 @@ Python，首次渲染也不联网：
   都以 ModuleNotFoundError 开局，一张图都渲染不了（test_build_without_paper_style 看护）。
 - 素材扫描用 `os.walk` 当场剪枝隐藏目录（.venv/.git/.rendered/.qa_*）与隐藏文件，
   不是 rglob 后过滤——既是噪音也是性能（图库旁边常年躺着工具产物）。
-- 新脚本 / stem 变化：改**图库目录下的 `mm_registry.json`**（注册表随图库走；
+- 新脚本 / stem 变化：改**图库目录下的 `tavotto_registry.json`**（注册表随图库走；
   `engine/registry.py` 只负责加载校验，重复 stem 仍直接报错；
   一脚本多产物 / 归属有歧义的 stem，裁决结果记在各图库自己的注册表文件里，勿改）。
   `entry` **不限于 main/render/__main__**——worker 就是 `getattr(module, entry)()`，
@@ -510,7 +522,7 @@ Python，首次渲染也不联网：
   `os.path.join()`、`.format()`、`%`、`+` 拼接、`Path(__file__)` 自命名，
   以及**跨函数传播**（`save_panel(fig, "Fig1")` → 包装函数里的 `OUT / f"{stem}.pdf"`）
   与常量 for 循环展开。递归扫子目录（剪掉 .venv/__pycache__/node_modules…）。
-  手动生成/合并：`python -m magplot.engine.discover <figures_dir> --write`
+  手动生成/合并：`python -m tavotto.engine.discover <figures_dir> --write`
   （现有条目永远优先，冲突 stem 只报告不裁决）。
 - **试运行探测（`engine/probe.py`）**：stem 真的只有运行期才知道时（遍历数据
   目录、读配置、命令行参数），把脚本**跑一遍**按真实产出登记——worker 本来
@@ -532,26 +544,26 @@ Python，首次渲染也不联网：
 - **项目包**：`POST /api/package` 打 zip（layout+素材+脚本+sha1 清单）；
   `POST /api/package/open` 检视（缺失/sha1 漂移），素材永不自动写入图库。
 - **导出**：请求可带 `proof` 对象 → 随成图写 `_proof.json`。
-- **项目文件统一收纳在项目内的 `magplotfile/`（2026-08-17 定版）**：命名画布
-  布局直接放 `magplotfile/`，导出默认 `magplotfile/export/`（settings.export_dir
+- **项目文件统一收纳在项目内的 `tavottofile/`（2026-08-17 定版）**：命名画布
+  布局直接放 `tavottofile/`，导出默认 `tavottofile/export/`（settings.export_dir
   可覆盖；建不出来退回数据目录，测试读响应里的 export_dir 而不是猜路径），
-  布局版本历史 `magplotfile/versions/`。旧位置（项目 `canvases/`、项目同级
+  布局版本历史 `tavottofile/versions/`。旧位置（项目 `canvases/`、项目同级
   `<项目名>-exports/`、数据目录 layouts/ 与 layouts/_versions/）只读兼容、
-  合并列出，重名以 magplotfile 为准；**素材扫描的 EXCLUDE_DIRS 必须含
-  magplotfile**，否则导出成图会混进素材面板。autosave / styles 等
+  合并列出，重名以 tavottofile 为准；**素材扫描的 EXCLUDE_DIRS 必须含
+  tavottofile**，否则导出成图会混进素材面板。autosave / styles 等
   跨项目或内部机制仍留在数据目录。
 - 前端文档模型新增可选字段（schema 仍为 2，旧文档兼容）：
   `PanelObject.lockedGids / flipH / flipV`、`ObjectBase.layoutPinned`、
   `FigureDocument.layoutGroups`（行/列/网格约束，id 即 groupId，
   尺寸变化自动重排、undo/redo 不触发）。
 
-## 项目系统与多画布（Magplot 成熟化，2026-08-15）
+## 项目系统与多画布（Tavotto 成熟化，2026-08-15）
 
 - **项目（多开，2026-08-16 起）**：`app.py` 无默认路径；`PROJECTS: dict[id, ProjectCtx]`
   同时端着多个图库，`DEFAULT_PROJECT` 只是「不带 pj 的请求落到哪」。未打开项目时
   API 回 409 `code=no_project`，前端渲染 ProjectPicker。用户级配置在
-  `engine/config.py`（macOS `~/Library/Application Support/Magplot/config.json`，
-  测试用 `MAGPLOT_CONFIG_DIR` 重定向——conftest 已全局隔离）。
+  `engine/config.py`（macOS `~/Library/Application Support/Tavotto/config.json`，
+  测试用 `TAVOTTO_CONFIG_DIR` 重定向——conftest 已全局隔离）。
   每项目设置（导出/备份目录、`allow_write_back` 只读）经
   `PATCH /api/project/settings`；写回类端点先过 `_write_back_forbidden()`。
 - **每标签页一个项目**：请求靠 `pj` 认领（`_request_ctx()`）——**查询参数与
@@ -595,7 +607,7 @@ Python，首次渲染也不联网：
 - **自动保存**：磁盘为主（`PUT /api/autosave/<docId>` 原子写
   `layouts/_autosave/`），localStorage 只留索引 + 崩溃兜底副本
   （写盘成功即清、读取按 updatedAt 取新）。失败发
-  `magplot:autosave-error` 事件 → 常驻错误 toast。
+  `tavotto:autosave-error` 事件 → 常驻错误 toast。
 - **标注**：任意角度 `rotationDeg`（面板除外；导出走 PyMuPDF morph，
   CSS 顺时针 = Matrix(deg)）；形状 triangle/diamond/polygon/brace + 圆角/
   虚线/填充透明度；箭头 headStart/headEnd（triangle/open/bar，旧 head 字段
@@ -624,25 +636,25 @@ Python，首次渲染也不联网：
 
 完整版在 `docs/adr/0005-external-handoff-and-codex-plugin.md`，改动前先读。
 
-- **发现链的唯一权威是 `engine/locate.py`**（纯标准库）：`MAGPLOT_CLI` → PATH →
+- **发现链的唯一权威是 `engine/locate.py`**（纯标准库）：`TAVOTTO_CLI` → PATH →
   安装清单 `install.json` → 已知安装位置 → HKCU（只当补充）→ 当前解释器。
   **只装了桌面版也必须能被发现**——这是 2026-08-18 修的那个 bug：装出来的
-  `Magplot.exe` 与 sidecar 都是 GUI 子系统可执行文件，没有真终端时
+  `Tavotto.exe` 与 sidecar 都是 GUI 子系统可执行文件，没有真终端时
   `sys.stdout is None`、输出被 `entry.py` 改道进 app.log，**调用方拿到的是空
-  stdout**。所以 `packaging/magplot.spec` 从同一个 Analysis 多出一个
-  `console=True` 的 `magplot-cli`（共用 `_internal/`，只多 ~1.5 MB）。
+  stdout**。所以 `packaging/tavotto.spec` 从同一个 Analysis 多出一个
+  `console=True` 的 `tavotto-cli`（共用 `_internal/`，只多 ~1.5 MB）。
   **别把 GUI exe 当 CLI 调**，哪怕它接受同样的参数。
   安装清单落在**用户配置目录**（安装目录可能只读、卸载会被删）：安装器装完跑
-  `magplot-cli doctor --json --write-manifest`（让 CLI 自己写，NSIS 不拼 JSON），
+  `tavotto-cli doctor --json --write-manifest`（让 CLI 自己写，NSIS 不拼 JSON），
   应用每次启动 `locate.refresh_manifest()` 刷一遍（**只补充不抹掉**：pip 装的
   那份是非冻结进程、只去惯例位置找壳，无条件写下去会把桌面版记的非惯例路径
-  抹成空，一次 `magplot --figures …` 就够），卸载器在**删文件之前**移除。
+  抹成空，一次 `tavotto --figures …` 就够），卸载器在**删文件之前**移除。
   读的一方要核实里面的路径还在——清单是缓存不是真相。**任何单一机制都不是
   唯一依据**（清单可能没写成、注册表可能被策略锁住），也**不动用户 PATH**。
-  `sidecar/Magplot` 这一段的出处只有 `tauri.conf.json` 的 `bundle.resources`，
+  `sidecar/Tavotto` 这一段的出处只有 `tauri.conf.json` 的 `bundle.resources`，
   Rust 壳 / locate / NSIS 三处同源。协议与错误码全文在 `docs/handoff-protocol.md`。
 - **子命令在 `engine/cli.py`（`open` / `doctor`）**，三个入口都先问它一句：
-  `magplot/cli_entry.py`（pip/pipx 的 console script 与 `python -m magplot`）、
+  `tavotto/cli_entry.py`（pip/pipx 的 console script 与 `python -m tavotto`）、
   `packaging/entry.py`（冻结产物）、`app.main()`（兼容旧调用方式）。
   分派**必须在 import Flask 之前**：一次交接用不上任何 HTTP 端点，却要付
   整个 Flask + PyMuPDF 的冷启动；更要紧的是 `doctor` 本该是「装坏了怎么查」
@@ -652,10 +664,10 @@ Python，首次渲染也不联网：
   `path_not_found` / `launch_failed` …），`--json` 失败也输出一行 JSON。
   文案随时可改，code 不行——调用方按它分诊。裸抛的那条由
   `test_every_handoff_error_carries_a_code` 挡住。
-- **入口是 `magplot open <产物|脚本|目录>`**（`engine/handoff.py`，纯标准库）：
+- **入口是 `tavotto open <产物|脚本|目录>`**（`engine/handoff.py`，纯标准库）：
   解析目标 → 登记 stem → 唤起界面。子命令在 argparse **之前**分派——主入口是纯
-  flag 形态（`magplot --figures …`），改成 subparsers 会把既有命令行整个换掉。
-  项目 = 含 `mm_registry.json` 的那一层（向上找 ≤3 层，**有上限**：静默把上层目录
+  flag 形态（`tavotto --figures …`），改成 subparsers 会把既有命令行整个换掉。
+  项目 = 含 `tavotto_registry.json` 的那一层（向上找 ≤3 层，**有上限**：静默把上层目录
   当图库会把一整棵源码树当素材扫）。注册表合并复用 `discover.merge`，
   **不另写裁决**；读不懂就报错，绝不重写用户手写的注册表。
 - **桌面契约是 argv `--open <目录> [--stem <stem>]`**：生产者唯一
@@ -663,7 +675,7 @@ Python，首次渲染也不联网：
   两侧各有单测，改一边必须同步另一边。macOS 上**直接 exec 包内二进制**——App
   已在跑时 `open -a … --args` 送不到，交接会静默失败。
   首启：项目 → sidecar 的 `--figures`，stem → 落地 URL 的 `?open=`；
-  已开着窗口：单实例转发 argv → emit `magplot:open`。两条路汇进前端同一个
+  已开着窗口：单实例转发 argv → emit `tavotto:open`。两条路汇进前端同一个
   `lib/openRequest.ts`（浏览器模式共用 `?open=`，定位逻辑只有一份）。
 - **前端交接三条纪律**（`applyOpenRequest`）：① 同项目**绝不**调
   `projectStore.open`（那条路 switchDocument 成空白文档，用户排的版当场没）；
@@ -674,8 +686,8 @@ Python，首次渲染也不联网：
   MCP server 与内嵌画布（见下面「Codex MCP server 与内嵌画布」一节与 ADR 0006）；
   交接这条路一字未改。**仍不做 `.app.json`**（需要 OpenAI 侧注册的托管 App id）。
   pyproject 的 `exclude` 显式挡住 `codex-plugin/` 进 wheel/sdist。插件版本 ==
-  `magplot.__version__`（`tests/test_codex_plugin.py` 看护）。
-- **插件里那份路径规则是 `engine/locate.py` 的镜像**（插件 import 不到 magplot，
+  `tavotto.__version__`（`tests/test_codex_plugin.py` 看护）。
+- **插件里那份路径规则是 `engine/locate.py` 的镜像**（插件 import 不到 tavotto，
   这份重复无法避免）。能避免的是两边悄悄漂开：
   `tests/test_install_locate.py::test_plugin_mirrors_the_locator` 在
   Windows/macOS/Linux × 有无环境变量 × 空格与中文的矩阵上逐条比对两侧输出，
@@ -685,19 +697,19 @@ Python，首次渲染也不联网：
   每 24 小时一次（失败 1 小时后可重试）、1.5 秒超时、缓存落
   `config_dir()/codex-plugin-update.json`（**绝不往插件目录写**——那儿归 Codex
   管、可能只读、升级时整个被换掉）。四条底线：不阻塞出图、**不污染 stdout**
-  （调用方读的是最后一行 JSON）、不自动下载执行、**插件版本 ≠ Magplot 版本**
-  （当前版本只从 plugin.json 读，`min_magplot_version` 比的是 `magplot open`
+  （调用方读的是最后一行 JSON）、不自动下载执行、**插件版本 ≠ Tavotto 版本**
+  （当前版本只从 plugin.json 读，`min_tavotto_version` 比的是 `tavotto open`
   回报的那个版本）。清单由 `scripts/make_plugin_manifest.py` 在 **release.yml**
   生成——**不能挪进 desktop-tauri.yml 的 updater-manifest**，那个 job 没配
   minisign 私钥就整个跳过，插件的更新通道会跟着悄悄停而且全绿。
 - **技能的第一条硬约定：脚本与产物同目录、且必须先落成文件**（禁 `python -c` 出图）
   ——「stem ↔ 产出它的脚本」是图能不能双击进去改的全部依据。自检不靠祈祷：
-  `scripts/handoff.py` 读 `magplot open --json` 的 `registry.parameterizable`，
+  `scripts/handoff.py` 读 `tavotto open --json` 的 `registry.parameterizable`，
   为 false 时**退出码 4**。图出来了但只是死图，那不是成功。
 
 ## 出版规范 profile 与预检（2026-08-18）
 
-- **规则的唯一权威文件是 `src/magplot/profiles/publication.json`**（随 wheel 分发）。
+- **规则的唯一权威文件是 `src/tavotto/profiles/publication.json`**（随 wheel 分发）。
   Python 走 `engine/profiles.py`（`importlib.resources` 定位，装成 wheel 后源码树的
   相对路径不存在），TypeScript 经 **`@profiles` 路径别名**整份 import 进 bundle
   （`web/vite.config.ts` / `vitest.config.ts` / `vite.mcp.config.ts` **各配一次**）。
@@ -720,7 +732,7 @@ Python，首次渲染也不联网：
   刻意不是 suggestion——忘了登记会让用户以为它通过了。
 - 文档里**只存 `{id, journal}`，不存规则**（`FigureDocument.profile`，可选，schema 仍是 2）。
   期刊自定义走覆盖（浅合并 + 几个子对象深合并），结果带 `derived_from`/`journal` 并进
-  proof report。整套换掉用 `MAGPLOT_PROFILES_FILE`。
+  proof report。整套换掉用 `TAVOTTO_PROFILES_FILE`。
 - 导出目录规则收在 `engine/config.project_export_dir(project, fallback)` —— Flask 与
   MCP server 都调它（`fallback` 是参数不是常量：app 的 `EXPORT_DIR` 会被测试 monkeypatch）。
 
@@ -732,18 +744,18 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被它推翻**（
 - 插件清单加 `"mcpServers": "./.mcp.json"`；`.mcp.json` 是**本地 stdio**
   （`command: python3` + `args: ["./mcp/server.py"]` + `cwd/env_vars/tool_timeout_sec`）。
   字段形状取自 Codex 官方插件装出来的清单，**不要猜**。
-- **`codex-plugin/mcp/magplot_mcp/` 只翻译不实现**：会话、manifest、override、patch 规范化、
-  导出全部落回 `magplot.engine.{pool,registry,handoff,patchspec,profiles,preflight}`。
+- **`codex-plugin/mcp/tavotto_mcp/` 只翻译不实现**：会话、manifest、override、patch 规范化、
+  导出全部落回 `tavotto.engine.{pool,registry,handoff,patchspec,profiles,preflight}`。
   发给 worker 的 patches 与 Flask `/api/engine/render` 走同一条路径，所以 ADR 0003 的
   等价性不变式原样成立（`tests/test_mcp_roundtrip.py` 用真 matplotlib + 真 stdio 逐条验：
   热态 == 全新 worker 重放、figure 尺寸变、axes 几何变、关掉重开）。
 - **stdout 归协议独占**：`rpc.hijack_stdout()` 把 `sys.stdout` 改道到 stderr，**必须先
   存下真正的 stdout 句柄**（`_REAL_STDOUT`）。顺序反了协议帧全写到 stderr 上，症状是
   「initialize 永远等不到响应」且零报错（开发期真撞到过）。
-- **路径范围**：`MAGPLOT_MCP_ROOTS` → 宿主的工作区变量（`MAGPLOT_MCP_WORKSPACE` /
+- **路径范围**：`TAVOTTO_MCP_ROOTS` → 宿主的工作区变量（`TAVOTTO_MCP_WORKSPACE` /
   `CODEX_*`）→ 进程 cwd**且它不在插件包里**（装好的插件 cwd 正是插件目录，
   拿它当边界会把用户每张图判成越界）。一个都没有时报 `no_workspace_root`
-  并说清要设什么。越界一律拒，**绝不「就近找一个能用的」**。**没装 Magplot 时降级而不是退出**（降级 server 握手正常、每个工具说人话）
+  并说清要设什么。越界一律拒，**绝不「就近找一个能用的」**。**没装 Tavotto 时降级而不是退出**（降级 server 握手正常、每个工具说人话）
   ——静默退出在 Codex 里表现为「插件没有工具」。
 - **导出先预检**：有 error **或 `not_verifiable`** 且没有 `explicit_confirm` 时
   一张图都不出（`needs_confirm`，与导出对话框同一判据；`blocking` 仍只表示
@@ -753,12 +765,12 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被它推翻**（
 - **会话不抱 worker 引用**：池的 `MAX_ALIVE` 与桥的 `MAX_SESSIONS` 是两个数，
   必然打架——每次操作前 `pool.get()` 重新取（`Session.acquire()`）。
   会话**渲染成功之后**才登记，否则失败的 open 会堆满账本并挤掉在用的会话。
-- **内嵌画布 = Magplot 前端那一份代码**（`CanvasStage`/`OverlaySvg`/`interactions.ts`/
+- **内嵌画布 = Tavotto 前端那一份代码**（`CanvasStage`/`OverlaySvg`/`interactions.ts`/
   `ElementInspector`/既有 stores），拖拽、命中、吸附、undo、patch 状态**没有第二份实现**。
   唯一改动是 `web/src/lib/engineTransport.ts`：一个**可选覆盖**（HTTP ↔ `tools/call`）。
   它**不 import `lib/api`**——搬默认实现进去会与 api 绕成环（TDZ），而且既有单测大量
   `vi.mock('@/lib/api')` 打桩 `engineRender`，实测会炸 7 个文件。
-- UI 只挂在 `magplot_open_figure` / `magplot_apply_overrides` 上（其余工具的产出是文字与
+- UI 只挂在 `tavotto_open_figure` / `tavotto_apply_overrides` 上（其余工具的产出是文字与
   文件，挂 UI 只会让画布不停重建）；CSP 的 `connectDomains` **是空的**（sidecar 端口动态，
   写不进白名单，这也是必须走 `tools/call` 的原因）；**绝不用「开浏览器」冒充内嵌画布**；
   iframe 的 `localStorage`/`widgetState` **不存业务数据**。
@@ -789,8 +801,8 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被它推翻**（
   写个「透明度调到 50%」就够出事）。路径拼接一律用字符串，不用 pathlib
   （`os.name` 一变 Path 就分派到另一半实现，连跨平台测这段都做不到）。
 - **第三方 API 接入（`engine/ai_providers.py`）**：claude 走 `ANTHROPIC_BASE_URL`/
-  `ANTHROPIC_AUTH_TOKEN` 环境变量，codex 走 `-c model_provider=magplot` +
-  `[model_providers.magplot]` 临时覆盖 + `MAGPLOT_CODEX_API_KEY`。
+  `ANTHROPIC_AUTH_TOKEN` 环境变量，codex 走 `-c model_provider=tavotto` +
+  `[model_providers.tavotto]` 临时覆盖 + `TAVOTTO_CODEX_API_KEY`。
   **一律 spawn 时注入，绝不改写用户的 `~/.claude/settings.json` 或
   `~/.codex/config.toml`**（cc-switch 是改文件的，那对它合理，对我们是越权：
   用户在别的终端里跑 claude/codex 必须还是他自己那套）。密钥存用户配置
@@ -810,7 +822,7 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被它推翻**（
 ## 文字：行内上下标与大小写
 
 - **画布标注**用行内标记 `^{…}` / `_{…}`（`web/src/lib/richText.ts` ↔
-  `src/magplot/richtext.py` **严格同源**：`SCRIPT_SIZE/SUP_RISE/SUB_DROP`
+  `src/tavotto/richtext.py` **严格同源**：`SCRIPT_SIZE/SUP_RISE/SUB_DROP`
   三个常量与 parse 规则改一边必须同步另一边，pytest 用真实 PDF 的字形
   字号与基线做几何级看护）。只有 `^{`/`_{` 才触发，正文里孤立的 `^`/`_`
   原样显示；`\^`、`\_`、`\\` 是转义。序列化**按需转义**——无脑加反斜杠会让
@@ -826,7 +838,7 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被它推翻**（
 - 技术栈 i18next + react-i18next + 官方 `i18next-cli`；**资源静态 import 进
   bundle**（离线桌面版是硬要求，不连 CDN）。八个命名空间在
   `web/src/i18n/locales/<语言>/`。默认仍是 **zh-CN**；优先级
-  手动 > 系统 > zh-CN，偏好存独立的 `magplot.locale`，**不进 .magplot 文档**。
+  手动 > 系统 > zh-CN，偏好存独立的 `tavotto.locale`，**不进 .tavotto 文档**。
 - 组件用 `useTranslation()`；store / lib 用 `import { t } from '@/i18n'`。
   **活得比一次渲染长的文本存描述符** `UiMessage {key, ns?, values?}`
   （撤销标签、toast、确认框），显示那一刻才翻——存成字符串的话切语言后历史
@@ -852,7 +864,7 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被它推翻**（
   `preflight.golden.test.ts` 明确**只比判据不比措辞**，所以两侧求值器的中英文
   措辞可以各自演进。proof report 里写的是**当前语言的成文**（人要读）+ id。
 - **MCP 画布里的预检条目是例外**：那份 payload 来自 Python 求值器
-  （`magplot_preflight` 工具），`it.text` 原样显示——Codex 那一侧不知道这个
+  （`tavotto_preflight` 工具），`it.text` 原样显示——Codex 那一侧不知道这个
   webview 用的是哪门语言。widget 自己的按钮/状态/标题照常翻。
 - **桌面壳自带一份文案**（`src-tauri/src/i18n.rs`）：原生菜单在 webview
   起来之前就要建。改菜单文案要**改两处**；切语言只换显示文案，菜单项 id 与
@@ -893,7 +905,7 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被它推翻**（
     「从零按这组 patches 重放一次的样子」（FigS3 事故就是这个差）。一次性
     worker 不进 `_workers`，目录独立（`cache/engine/_replay-…`，登记进
     `_oneshot_bases` 免得被 prune 删掉），workerd 那边靠独立 out_dir +
-    `MAGPLOT_REPLAY_NONCE` salt env 绕开 spec 哈希复用，用完 `discard()`。
+    `TAVOTTO_REPLAY_NONCE` salt env 绕开 spec 哈希复用，用完 `discard()`。
     同一次写回只 build 一次（override + PDF + PNG 共用）。
     热会话最后应用的正是这组 patches 时（`worker.last_patch_hash`），把两份
     manifest 逐元素比 bbox/anchor（容差 0.5% figure 分数）与 size_mm（0.01mm），
@@ -934,17 +946,17 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被它推翻**（
   （与写回放行/阻断同一把尺）。四条腿各起独立 worker，核心场景在 workerd 控制面
   再走一遍。缺 matplotlib / 缺 CJK 字体各自 skip 并注明理由。
 - **端到端冒烟**：`python scripts/smoke_app.py --python .venv/bin/python`
-  （或 `--exe dist/Magplot/Magplot.exe`）。隔离用户目录 → **渲染环境自检** →
+  （或 `--exe dist/Tavotto/Tavotto.exe`）。隔离用户目录 → **渲染环境自检** →
   打开项目 → 渲染 → 导出 → 覆盖导出 → **干净退出**（走 `/api/shutdown`，需
-  `MAGPLOT_ALLOW_SHUTDOWN`；退出后断言没有残留 worker 子进程）。
+  `TAVOTTO_ALLOW_SHUTDOWN`；退出后断言没有残留 worker 子进程）。
   `--expect-source bundled` / `--expect-packages numpy,pandas,…` 是 Windows 桌面版
   的核心验收：少了它，一台碰巧装着 matplotlib 的 CI 机器会让「内置 runtime 根本
   没打进去」全程绿灯。CI 的 windows-exe-smoke 与 nightly 共用它。
   验收项目在 `examples/runtime_check/`（一个把整套内置科学栈都用一遍的脚本）。
   `--expect-control-plane workerd` 同理盯另一件静默失灵：桌面产物必须自带
-  Rust supervisor（`build_desktop.py` 先 cargo build，`magplot.spec` 收进
+  Rust supervisor（`build_desktop.py` 先 cargo build，`tavotto.spec` 收进
   `_internal/`），少了它渲染回退到 Python 池——功能全在、只是慢、零报错。
-  两条冒烟腿都**不设 `MAGPLOT_WORKERD`**：要验的正是自动发现。
+  两条冒烟腿都**不设 `TAVOTTO_WORKERD`**：要验的正是自动发现。
 - **nightly 的安装链路（`nightly.yml`，每晚一次）**：三档代表性环境
   （无 Python / 官方 Python / Conda）× 中文用户名 + 中文区域 + cp936。
   冒烟项目**按档给**——`examples/runtime_check` 要整套科学栈，只有内置 runtime
@@ -954,15 +966,15 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被它推翻**（
   runtime + workerd → 起真壳确认它能拉起 sidecar 且退出不留孤儿 → 对装出来的
   sidecar 冒烟 → 覆盖安装（升级）再冒一次 → 静默卸载。这条链路只有真装一遍
   才知道，而且必须挂在**在发的那个发行形态**上：它一度判的是早已退役删除的
-  `packaging/magplot.iss`，于是每晚只打一条 notice 就过——**空转的门禁比没有
+  `packaging/tavotto.iss`，于是每晚只打一条 notice 就过——**空转的门禁比没有
   门禁更坏**，它还在报平安。
-- **黄金路径 E2E**：`cd web && pnpm e2e`（Playwright，`MAGPLOT_EXE` 指打包产物、
-  缺省用 `python -m magplot`）。跑之前先 `python scripts/build_frontend.py`——
-  包内 `src/magplot/web/` 优先于 `web/dist`，只跑 `pnpm build` 测的还是旧界面。
+- **黄金路径 E2E**：`cd web && pnpm e2e`（Playwright，`TAVOTTO_EXE` 指打包产物、
+  缺省用 `python -m tavotto`）。跑之前先 `python scripts/build_frontend.py`——
+  包内 `src/tavotto/web/` 优先于 `web/dist`，只跑 `pnpm build` 测的还是旧界面。
 - **Windows 回归**：`tests/test_windows_regressions.py`。约定是
   **每个「只在别人电脑上发生」的 bug 先变成这里的用例再谈修**（cp936 编码、
   文件占用、盘符/反斜杠/中文路径、端口占用、CLI 只有 .cmd、解释器探测）。
-- 后端冒烟（示例项目）：`magplot --figures examples/figures --no-browser` 后
+- 后端冒烟（示例项目）：`tavotto --figures examples/figures --no-browser` 后
   `curl -X POST /api/engine/render -d '{"id":"Fig1_kinetics.pdf","patches":[]}'`
 - **Codex 插件**：`.venv/bin/python -m pytest tests/test_mcp_server.py
   tests/test_mcp_roundtrip.py tests/test_codex_plugin.py tests/test_preflight.py`；
@@ -979,7 +991,7 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被它推翻**（
 - 前端（web/）：`pnpm test && pnpm build`；界面用 agent-browser 实测。
   **别用 `tsc --noEmit` 当类型检查**：根 tsconfig 是 `files:[]`+references 的方案文件，
   `--noEmit` 不走项目引用、什么都不编、恒假绿；`pnpm build` 里的 `tsc -b` 才是真检查。
-  跑过 `scripts/build_frontend.py` 之后包内 `src/magplot/web/` 优先于 `web/dist`，
+  跑过 `scripts/build_frontend.py` 之后包内 `src/tavotto/web/` 优先于 `web/dist`，
   改完前端要么再同步一次，要么把它删掉退回开发态。
 - 引擎改动后重启服务：
   `lsof -ti:5089 -sTCP:LISTEN | xargs kill; ./run.sh --no-browser`

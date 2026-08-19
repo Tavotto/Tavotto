@@ -1,4 +1,4 @@
-# Magplot v2 — 前端工作台
+# Tavotto v2 — 前端工作台
 
 论文 Figure 排版 + 参数化图表编辑的浏览器工作台。Vite + React 19 + TypeScript +
 Tailwind v4 + Radix + Zustand/Immer。

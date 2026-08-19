@@ -1,16 +1,16 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/erwanjun/magplot/main/assets/readme/hero.svg" width="100%"
-       alt="Magplot — arrange matplotlib panels on a page, edit the elements inside them, export a true-vector PDF">
+  <img src="https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/hero.svg" width="100%"
+       alt="Tavotto — arrange matplotlib panels on a page, edit the elements inside them, export a true-vector PDF">
 </p>
 
 <p align="center">
-  <b>English</b> · <a href="https://github.com/erwanjun/magplot/blob/main/README.zh-CN.md">简体中文</a>
+  <b>English</b> · <a href="https://github.com/Tavotto/Tavotto/blob/main/README.zh-CN.md">简体中文</a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/erwanjun/magplot/releases"><img alt="Release" src="https://img.shields.io/github/v/release/erwanjun/magplot?style=flat-square&color=2868b7&labelColor=1b1b18"></a>
-  <a href="https://github.com/erwanjun/magplot/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/erwanjun/magplot/ci.yml?branch=main&style=flat-square&labelColor=1b1b18"></a>
-  <a href="https://github.com/erwanjun/magplot/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0--only-2868b7?style=flat-square&labelColor=1b1b18"></a>
+  <a href="https://github.com/Tavotto/Tavotto/releases"><img alt="Release" src="https://img.shields.io/github/v/release/Tavotto/Tavotto?style=flat-square&color=2868b7&labelColor=1b1b18"></a>
+  <a href="https://github.com/Tavotto/Tavotto/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Tavotto/Tavotto/ci.yml?branch=main&style=flat-square&labelColor=1b1b18"></a>
+  <a href="https://github.com/Tavotto/Tavotto/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0--only-2868b7?style=flat-square&labelColor=1b1b18"></a>
   <img alt="Python" src="https://img.shields.io/badge/python-3.10%20–%203.13-1b1b18?style=flat-square&labelColor=1b1b18">
   <img alt="Platform" src="https://img.shields.io/badge/macOS%20·%20Windows%20·%20Linux-1b1b18?style=flat-square&labelColor=1b1b18">
 </p>
@@ -22,7 +22,7 @@ they have to become Figure 1 — resize the fonts, move the legend, align everyt
 So you go back to Python, change a line, re-run the script, look again. Twenty times.
 Or you drag the PDFs into Illustrator and lose the connection to your code for good.
 
-**Magplot lets you edit the figure directly.** Drop your matplotlib panels onto a page
+**Tavotto lets you edit the figure directly.** Drop your matplotlib panels onto a page
 and arrange them freely. Double-click any panel and you can select the things inside
 it — title, axis labels, curves, legend — then change the font size, the colour, or
 just drag them. **Dragging and dialling are instant** — the figure follows your
@@ -33,16 +33,16 @@ be undone. On export the engine re-renders each panel at full quality and compos
 PDF whose text is still real, selectable vector text.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/erwanjun/magplot/main/assets/readme/workbench.png" width="100%"
-       alt="The Magplot workbench: an element tree on the left listing the title and axis labels, three panels arranged as (a)(b)(c) on the page, and the properties of the selected title on the right">
+  <img src="https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/workbench.png" width="100%"
+       alt="The Tavotto workbench: an element tree on the left listing the title and axis labels, three panels arranged as (a)(b)(c) on the page, and the properties of the selected title on the right">
 </p>
 
 <p align="center"><sub>Left: elements inside the figure · Middle: a 150 × 130 mm page · Right: properties of the selected title — the source file is still <code>fig1_kinetics.py</code></sub></p>
 
 ## Install
 
-**Download an installer** from the [latest release](https://github.com/erwanjun/magplot/releases/latest)
-— `.dmg` for macOS, `.exe` for Windows — install it, and double-click. Magplot opens
+**Download an installer** from the [latest release](https://github.com/Tavotto/Tavotto/releases/latest)
+— `.dmg` for macOS, `.exe` for Windows — install it, and double-click. Tavotto opens
 in its own desktop window, and updates itself from then on — it checks, downloads,
 installs and restarts without sending you back to this page.
 
@@ -50,9 +50,9 @@ installs and restarts without sending you back to this page.
 private Python runtime with the usual scientific stack already in it — numpy, matplotlib,
 pandas, scipy, seaborn and Pillow, at pinned versions, identical on both platforms so the
 same script draws the same figure. Rendering works the moment the installer finishes, with
-no download and no network, and without Homebrew, Conda or Xcode. Magplot never touches a
+no download and no network, and without Homebrew, Conda or Xcode. Tavotto never touches a
 Python or Conda you already have; if a figure of yours needs a package that is not in that
-list, point Magplot at your own environment under **Settings → Rendering environment**.
+list, point Tavotto at your own environment under **Settings → Rendering environment**.
 See [Good to know](#good-to-know).
 
 The macOS build is **Apple Silicon (arm64) only**. Intel Macs are not currently built or
@@ -61,8 +61,8 @@ tested — use the PyPI install below.
 **Or install from PyPI**, which works the same on all three platforms:
 
 ```sh
-pipx install "magplot[worker]"
-magplot
+pipx install "tavotto[worker]"
+tavotto
 ```
 
 Your browser opens at `http://127.0.0.1:5089`.
@@ -73,32 +73,32 @@ Your browser opens at `http://127.0.0.1:5089`.
 **pip** (installs into the current environment):
 
 ```sh
-pip install "magplot[worker]"
-magplot
+pip install "tavotto[worker]"
+tavotto
 ```
 
 **Reuse the environment your figures were made in.** Drop the `[worker]` extra and
-point Magplot at your own interpreter, so figures render against exactly the
+point Tavotto at your own interpreter, so figures render against exactly the
 dependencies they were written for:
 
 ```sh
-pipx install magplot
-export MM_WORKER_PYTHON=/path/to/your/env/bin/python     # Windows: setx MM_WORKER_PYTHON "..."
-magplot
+pipx install tavotto
+export TAVOTTO_WORKER_PYTHON=/path/to/your/env/bin/python     # Windows: setx TAVOTTO_WORKER_PYTHON "..."
+tavotto
 ```
 
 **From source** (needs node + pnpm to build the interface):
 
 ```sh
-git clone https://github.com/erwanjun/magplot.git && cd magplot
+git clone https://github.com/Tavotto/Tavotto.git && cd Tavotto
 python -m venv .venv && .venv/bin/pip install -e ".[worker,dev]"
 python scripts/build_frontend.py
-.venv/bin/magplot
+.venv/bin/tavotto
 ```
 
 </details>
 
-**Options**: `magplot --figures <dir>` opens a figure directory straight away;
+**Options**: `tavotto --figures <dir>` opens a figure directory straight away;
 `--port 5089` changes the port; `--no-browser` skips opening a browser.
 
 ## Try it
@@ -106,13 +106,13 @@ python scripts/build_frontend.py
 A ready-to-open example project ships with the repository:
 
 ```sh
-magplot --figures examples/figures
+tavotto --figures examples/figures
 ```
 
 Three panels appear in the asset browser. Drag them onto the page, then double-click
 one — you get a tree of everything inside that figure, and clicking the title lets you
 change its size. `examples/figures/` holds two perfectly ordinary matplotlib scripts;
-Magplot does not ask you to write them in any special way.
+Tavotto does not ask you to write them in any special way.
 
 ## What you can edit inside a figure
 
@@ -135,7 +135,7 @@ tabs, a version timeline, and named styles you can apply across a whole document
 
 PDF export embeds each original vector panel as-is, so **the text stays selectable and
 searchable**. PNG is rendered from that same PDF, so the two can never disagree. Before
-exporting, Magplot checks for panels off the page, overlaps, tiny fonts, low effective
+exporting, Tavotto checks for panels off the page, overlaps, tiny fonts, low effective
 DPI, stale renders and missing assets, and can write a proof report alongside the figure
 for your submission records.
 
@@ -163,9 +163,9 @@ Just made a figure somewhere else — ran a script yourself, or had Codex / Clau
 One command hands it over:
 
 ```bash
-magplot open figures/Fig1_kinetics.pdf   # the output file
-magplot open figures/fig1_kinetics.py    # or the script — output name is resolved for you
-magplot open figures/                    # or the whole figure library
+tavotto open figures/Fig1_kinetics.pdf   # the output file
+tavotto open figures/fig1_kinetics.py    # or the script — output name is resolved for you
+tavotto open figures/                    # or the whole figure library
 ```
 
 It opens the figure's library as a project, adds any missing entries to the script registry,
@@ -174,20 +174,20 @@ window — no second copy). Without the desktop app it falls back to browser mod
 
 ### Codex plugin
 
-Install it and the matplotlib figures Codex writes come out in a shape Magplot can take over
+Install it and the matplotlib figures Codex writes come out in a shape Tavotto can take over
 (script next to its output, vector PDF, statically resolvable output name) — **and you can
 finish them without leaving Codex**:
 
 ```bash
-codex plugin marketplace add erwanjun/magplot && codex plugin add magplot@magplot
+codex plugin marketplace add Tavotto/Tavotto && codex plugin add tavotto@tavotto
 ```
 
 Start a new session afterwards. The CLI and the Codex desktop app share one plugin directory,
-so **installing once covers both**; `codex plugin marketplace upgrade magplot` pulls updates.
+so **installing once covers both**; `codex plugin marketplace upgrade tavotto` pulls updates.
 
 The plugin ships three layers with clear boundaries:
 
-* a **skill** that teaches Codex the conventions a Magplot-editable figure has to satisfy;
+* a **skill** that teaches Codex the conventions a Tavotto-editable figure has to satisfy;
 * a local **MCP server** exposing the engine — open a figure, apply canonical overrides,
   run a publication preflight, export true-vector PDF/SVG or PNG at an explicit DPI.
   All six tools work in hosts with no UI at all;
@@ -195,7 +195,7 @@ The plugin ships three layers with clear boundaries:
   desktop app uses — dragging, hit-testing, snapping and undo have no second implementation.
 
 Every edit is an override; **your Python source is never rewritten**. Multi-panel layout,
-canvas annotations and write-back still live in the Magplot window, one `magplot open` away.
+canvas annotations and write-back still live in the Tavotto window, one `tavotto open` away.
 
 See [`codex-plugin/README.md`](codex-plugin/README.md) — including which parts are *not yet
 verified inside a real Codex Desktop*. Design notes are in
@@ -206,7 +206,7 @@ verified inside a real Codex Desktop*. Design notes are in
 ## Publication profile and preflight
 
 Export runs a **profile-driven preflight** first. The rules live in one versioned JSON file
-(`src/magplot/profiles/publication.json`) that both the Python engine and the TypeScript
+(`src/tavotto/profiles/publication.json`) that both the Python engine and the TypeScript
 frontend read — so there is no second copy to drift.
 
 The default `lab-publication-v1` encodes: 80 mm single / 150 mm double column, 16:9 · 4:3 · 1:1
@@ -233,8 +233,8 @@ your figures or data is uploaded.
 
 | | |
 |---|---|
-| Documents and autosaves | `~/Library/Application Support/Magplot/` (Linux `~/.local/share/magplot/`, Windows `%LOCALAPPDATA%\Magplot\`) |
-| Exports, canvas files and version history | Inside your project, in one `magplotfile/` folder: exports in `magplotfile/export/`, named canvases alongside them, version history in `magplotfile/versions/`. Visible, backupable, and synced with your figures. Files written by older versions stay readable where they were. |
+| Documents and autosaves | `~/Library/Application Support/Tavotto/` (Linux `~/.local/share/tavotto/`, Windows `%LOCALAPPDATA%\Tavotto\`) |
+| Exports, canvas files and version history | Inside your project, in one `tavottofile/` folder: exports in `tavottofile/export/`, named canvases alongside them, version history in `tavottofile/versions/`. Visible, backupable, and synced with your figures. Files written by older versions stay readable where they were. |
 | Your scripts and figures | Read-only, unless you explicitly choose "write back to original file" — which can be locked off per project |
 | The only outbound request | A once-a-day check for a new release — plus the download itself, if you accept an update in the desktop app. Both stop when you turn the check off in Settings → Check for updates. |
 
@@ -243,7 +243,7 @@ your figures or data is uploaded.
 - **The first open of a figure runs your script.** Light figures take a second; heavy
   ones take as long as they normally do. Every edit after that is sub-second.
 - **Rendering needs a Python that can import what your scripts import.** Where that
-  Python comes from depends on how you installed Magplot:
+  Python comes from depends on how you installed Tavotto:
 
   | Install | Interpreter used for rendering |
   |---|---|
@@ -251,18 +251,18 @@ your figures or data is uploaded.
   | macOS `.dmg` (arm64) | The same **bundled runtime**, same pinned versions. No Homebrew, Conda or Xcode needed. |
   | PyPI with the `[worker]` extra | The environment you installed it into. |
 
-  Magplot picks in this order: `MM_WORKER_PYTHON` → the interpreter you chose in
+  Tavotto picks in this order: `TAVOTTO_WORKER_PYTHON` → the interpreter you chose in
   Settings → the bundled runtime → its own interpreter → a Python/Conda it finds on the
-  machine. **Whatever you choose explicitly always wins**, and Magplot only *launches*
+  machine. **Whatever you choose explicitly always wins**, and Tavotto only *launches*
   the environment you point it at — it never installs anything into it, and never
   modifies an existing Python or Conda. The bundled runtime is likewise never written
-  to: bytecode and the Matplotlib font cache go to Magplot's own data folder, so the
+  to: bytecode and the Matplotlib font cache go to Tavotto's own data folder, so the
   installed app stays byte-identical (on macOS, writing into it would break the code
   signature).
 
   The bundled runtime covers the common scientific stack — **it is not a promise to
   cover whatever your scripts import**. If a script needs a package it does not have
-  (rdkit, astropy, your lab's own library), Magplot says which package is missing and
+  (rdkit, astropy, your lab's own library), Tavotto says which package is missing and
   offers to switch to your own environment under **Settings → Rendering environment**;
   it will not install that package for you, into its own runtime or into yours.
   Without any working interpreter, layout, annotation and export still work — only
@@ -302,25 +302,25 @@ how to verify a change and which boundaries the codebase keeps deliberately. Whe
 reporting a bug, **Settings → Privacy, diagnostics and About → Download diagnostics
 bundle** collects everything usually needed, with keys and personal paths redacted.
 Security issues go through
-[private reporting](https://github.com/erwanjun/magplot/security/advisories/new),
+[private reporting](https://github.com/Tavotto/Tavotto/security/advisories/new),
 not a public issue.
 
 ## License
 
-[AGPL-3.0-only](https://github.com/erwanjun/magplot/blob/main/LICENSE).
+[AGPL-3.0-only](https://github.com/Tavotto/Tavotto/blob/main/LICENSE).
 
-Using Magplot, modifying it, and running it inside your lab are all unrestricted, and
+Using Tavotto, modifying it, and running it inside your lab are all unrestricted, and
 **the figures and PDFs you produce with it are entirely yours** — the licence does not
-reach your work. The obligations apply to distribution: if you give a modified Magplot
+reach your work. The obligations apply to distribution: if you give a modified Tavotto
 to others or run it as a network service for them, the corresponding source has to be
 available to those users.
 
 ## Star history
 
-<a href="https://www.star-history.com/?repos=erwanjun%2Fmagplot&type=date&legend=bottom-right">
+<a href="https://www.star-history.com/?repos=Tavotto%2FTavotto&type=date&legend=bottom-right">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=erwanjun/magplot&type=date&theme=dark&legend=bottom-right&sealed_token=N_HkVy3WXmZ-L-LdXjq8yjVIGq3O6NWzfAI0NxRWdgJomReAYwu9qlvk78IdfeG8loxZTvRLP_VjiVIrO3ZIrfe8yEzeeklvUfkoRjpWy1Zm5SazecpETgwnZyseVroitCM5lhCLnTU7dorXRnk3FnU34Auy9YsfWrfmlPEb0IP0Sjwaz_7q47jCFt4C" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=erwanjun/magplot&type=date&legend=bottom-right&sealed_token=N_HkVy3WXmZ-L-LdXjq8yjVIGq3O6NWzfAI0NxRWdgJomReAYwu9qlvk78IdfeG8loxZTvRLP_VjiVIrO3ZIrfe8yEzeeklvUfkoRjpWy1Zm5SazecpETgwnZyseVroitCM5lhCLnTU7dorXRnk3FnU34Auy9YsfWrfmlPEb0IP0Sjwaz_7q47jCFt4C" />
-    <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=erwanjun/magplot&type=date&legend=bottom-right&sealed_token=N_HkVy3WXmZ-L-LdXjq8yjVIGq3O6NWzfAI0NxRWdgJomReAYwu9qlvk78IdfeG8loxZTvRLP_VjiVIrO3ZIrfe8yEzeeklvUfkoRjpWy1Zm5SazecpETgwnZyseVroitCM5lhCLnTU7dorXRnk3FnU34Auy9YsfWrfmlPEb0IP0Sjwaz_7q47jCFt4C" />
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=Tavotto/Tavotto&type=date&theme=dark&legend=bottom-right&sealed_token=N_HkVy3WXmZ-L-LdXjq8yjVIGq3O6NWzfAI0NxRWdgJomReAYwu9qlvk78IdfeG8loxZTvRLP_VjiVIrO3ZIrfe8yEzeeklvUfkoRjpWy1Zm5SazecpETgwnZyseVroitCM5lhCLnTU7dorXRnk3FnU34Auy9YsfWrfmlPEb0IP0Sjwaz_7q47jCFt4C" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=Tavotto/Tavotto&type=date&legend=bottom-right&sealed_token=N_HkVy3WXmZ-L-LdXjq8yjVIGq3O6NWzfAI0NxRWdgJomReAYwu9qlvk78IdfeG8loxZTvRLP_VjiVIrO3ZIrfe8yEzeeklvUfkoRjpWy1Zm5SazecpETgwnZyseVroitCM5lhCLnTU7dorXRnk3FnU34Auy9YsfWrfmlPEb0IP0Sjwaz_7q47jCFt4C" />
+    <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=Tavotto/Tavotto&type=date&legend=bottom-right&sealed_token=N_HkVy3WXmZ-L-LdXjq8yjVIGq3O6NWzfAI0NxRWdgJomReAYwu9qlvk78IdfeG8loxZTvRLP_VjiVIrO3ZIrfe8yEzeeklvUfkoRjpWy1Zm5SazecpETgwnZyseVroitCM5lhCLnTU7dorXRnk3FnU34Auy9YsfWrfmlPEb0IP0Sjwaz_7q47jCFt4C" />
   </picture>
 </a>

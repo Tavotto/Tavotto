@@ -1,12 +1,12 @@
 {
   "mcpServers": {
-    "magplot": {
-      "title": "Magplot",
-      "description": "打开 Magplot 交互画布：拖图例与图内文字、改字号线宽刻度、跑出版规范预检、导出真矢量 PDF。",
+    "tavotto": {
+      "title": "Tavotto",
+      "description": "打开 Tavotto 交互画布：拖图例与图内文字、改字号线宽刻度、跑出版规范预检、导出真矢量 PDF。",
       "command": "python3",
       "args": ["./mcp/server.py"],
       "cwd": ".",
-      "env_vars": ["MAGPLOT_CLI", "MAGPLOT_MCP_ROOTS", "MAGPLOT_MCP_WORKSPACE", "CODEX_WORKSPACE_ROOT", "CODEX_PROJECT_ROOT", "CODEX_WORKSPACE_DIR", "MAGPLOT_MCP_WIDGET", "MM_WORKER_PYTHON", "MAGPLOT_DATA_DIR", "PATH", "HOME", "USERPROFILE", "LOCALAPPDATA"],
+      "env_vars": ["TAVOTTO_CLI", "TAVOTTO_MCP_ROOTS", "TAVOTTO_MCP_WORKSPACE", "CODEX_WORKSPACE_ROOT", "CODEX_PROJECT_ROOT", "CODEX_WORKSPACE_DIR", "TAVOTTO_MCP_WIDGET", "TAVOTTO_WORKER_PYTHON", "TAVOTTO_DATA_DIR", "PATH", "HOME", "USERPROFILE", "LOCALAPPDATA"],
       "startup_timeout_sec": 30,
       "tool_timeout_sec": 1800
     }

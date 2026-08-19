@@ -1,6 +1,6 @@
 # License
 
-Magplot is released under **AGPL-3.0-only**. The full text is in
+Tavotto is released under **AGPL-3.0-only**. The full text is in
 [`LICENSE`](../LICENSE) at the root of the repository.
 
 ## What this means in practice
@@ -11,9 +11,9 @@ For almost everyone, nothing changes:
   does not govern private use.
 - **The figures and PDFs you produce** — entirely yours. The licence does not reach
   the output.
-- **Citing Magplot in a paper** — nothing needs to be open-sourced.
+- **Citing Tavotto in a paper** — nothing needs to be open-sourced.
 
-The obligations apply to **distribution**. If you give a modified Magplot to other
+The obligations apply to **distribution**. If you give a modified Tavotto to other
 people, or run it as a service others reach over a network, the corresponding source
 has to be made available to those users (AGPL sections 5 and 13).
 

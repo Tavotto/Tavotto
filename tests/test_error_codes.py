@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-APP = ROOT / "src" / "magplot" / "app.py"
+APP = ROOT / "src" / "tavotto" / "app.py"
 LOCALES = ROOT / "web" / "src" / "i18n" / "locales"
 
 # code → 后端会塞进 params 的键

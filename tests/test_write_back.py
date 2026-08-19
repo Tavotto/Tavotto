@@ -28,9 +28,9 @@ from pathlib import Path
 import pymupdf
 import pytest
 
-from magplot import app as m
-from magplot.engine import patchspec
-from magplot.engine import pool as engine_pool
+from tavotto import app as m
+from tavotto.engine import patchspec
+from tavotto.engine import pool as engine_pool
 
 
 @pytest.fixture
@@ -54,7 +54,7 @@ def _figs(tmp_path, with_png: bool = True) -> Path:
     doc.close()
     if with_png:
         (figs / "Fig1.png").write_bytes(b"\x89PNG\r\n\x1a\nORIGINAL")
-    (figs / "mm_registry.json").write_text(json.dumps({"version": 1, "scripts": {
+    (figs / "tavotto_registry.json").write_text(json.dumps({"version": 1, "scripts": {
         "fig1.py": {"entry": "main", "cost": "light", "notes": "", "stems": ["Fig1"]},
     }}), encoding="utf-8")
     (figs / "fig1.py").write_text("def main():\n    pass\n", encoding="utf-8")

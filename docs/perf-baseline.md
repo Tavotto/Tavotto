@@ -2,7 +2,7 @@
 
 日期：2026-08-18 ｜ 复现命令：`python scripts/bench_render.py --python .venv/bin/python --repeat 9`
 
-这份文档是**测出来的**，不是估出来的。它存在的理由只有一个：Magplot 之后的任何
+这份文档是**测出来的**，不是估出来的。它存在的理由只有一个：Tavotto 之后的任何
 「优化」都必须先在这里指出一个具体的数字，改完再回到这里给出同一张表的前后对照。
 没有数字支撑的改动一律不做——那不是优化，是赌。
 
@@ -13,7 +13,7 @@
 | 机器 | Apple M4 Pro（12 核）/ macOS 26.6.1 / `macOS-26.6.1-arm64-arm-64bit-Mach-O` |
 | Flask 侧 | Python 3.13.11 + Flask 3.1.3 + PyMuPDF 1.28.2（`.venv`，无 matplotlib） |
 | 渲染 worker | Python 3.13.11（Homebrew，来源 `system`）+ matplotlib 3.10.8 + numpy 2.4.3 |
-| supervisor | `magplot-workerd` release 构建（cargo 1.95.0） |
+| supervisor | `tavotto-workerd` release 构建（cargo 1.95.0） |
 | 图库 | `examples/figures`（3 个面板 / 2 个脚本，全部 `cost=light`、**纯矢量**） |
 
 ## 方法（以及几个刻意的选择）
@@ -31,7 +31,7 @@
 
 ## 基线
 
-### 控制面：Python 池（`MAGPLOT_WORKERD=0`）
+### 控制面：Python 池（`TAVOTTO_WORKERD=0`）
 
 | 面板 | cost | 冷 wall | 冷 worker_get | 冷 build 往返 | 冷 script_build | 热 wall(中位) | queue_wait | patch_apply | canvas_draw | manifest | worker total | SVG | 导出 wall |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|

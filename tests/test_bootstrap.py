@@ -8,13 +8,13 @@ import subprocess
 
 import pytest
 
-from magplot.engine import bootstrap, config, pool
+from tavotto.engine import bootstrap, config, pool
 
 
 @pytest.fixture(autouse=True)
 def _clean(monkeypatch, tmp_path):
     """每个用例独立的数据目录与干净的解释器缓存。"""
-    monkeypatch.setenv("MAGPLOT_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "data"))
     pool.reset_worker_python()
     bootstrap._progress.update(state="idle", log="", error=None)
     yield
@@ -51,7 +51,7 @@ def test_status_admits_it_cannot_help_without_any_python(monkeypatch):
 
 # ---------------- 隔离边界（最要紧的一条） -------------------------------------
 def test_install_never_touches_the_users_own_environment(monkeypatch, tmp_path):
-    """安装必须发生在 Magplot 的数据目录里，且 pip 只对着那个 venv 跑。
+    """安装必须发生在 Tavotto 的数据目录里，且 pip 只对着那个 venv 跑。
 
     往用户的 conda / 系统 Python 里 pip install 是能省事，但那是他做研究用的
     环境——这条断言就是防止哪天有人图省事把它改回去。
@@ -148,7 +148,7 @@ def test_real_install_end_to_end(monkeypatch):
 # ---------------- HTTP 端点 ---------------------------------------------------
 @pytest.fixture
 def client():
-    from magplot import app as m
+    from tavotto import app as m
     m.app.config["TESTING"] = True
     return m.app.test_client()
 
@@ -199,7 +199,7 @@ def test_set_python_empty_clears_back_to_autodetect(client, monkeypatch, tmp_pat
 
 def test_render_failure_carries_machine_readable_code(client, monkeypatch, tmp_path):
     """前端靠 code 区分「缺环境」与「脚本报错」，不能只回一段文字。"""
-    from magplot import app as m
+    from tavotto import app as m
 
     figs = tmp_path / "figs"
     figs.mkdir()

@@ -29,14 +29,14 @@ import {
 } from './session'
 
 /**
- * Codex 内嵌的 Magplot 画布。
+ * Codex 内嵌的 Tavotto 画布。
  *
  * 这个组件本身**不做任何图形编辑逻辑**——拖拽、命中测试、shift 锁向、吸附、
  * 属性表单、撤销重做全部由 `CanvasStage` / `ElementInspector` / 既有 stores
- * 承担，与 Magplot 桌面版跑的是同一份代码。这里只负责三件事：
+ * 承担，与 Tavotto 桌面版跑的是同一份代码。这里只负责三件事：
  *
  *   1. 顶部把「按哪套规范、多大、预检怎么样、有没有还没画上的改动、渲染错了没」
- *      摆出来（用户在别人的界面里，看不到 Magplot 的状态栏）；
+ *      摆出来（用户在别人的界面里，看不到 Tavotto 的状态栏）；
  *   2. 预检 / 导出这两个动作转成 `tools/call`；
  *   3. 拿不出结构化控件的属性，如实说「这条得回代码改」，而不是造一个点了没用的开关。
  */
@@ -92,7 +92,7 @@ export function McpApp({
     setBusy('preflight')
     setNotice(null)
     try {
-      const body = unwrap(await bridge.callTool('magplot_preflight', { session_id: sessionId }))
+      const body = unwrap(await bridge.callTool('tavotto_preflight', { session_id: sessionId }))
       setPreflight(body as unknown as PreflightPayload)
       setPreflightStale(false)
     } catch (err) {
@@ -108,7 +108,7 @@ export function McpApp({
       setNotice(null)
       try {
         const body = unwrap(
-          await bridge.callTool('magplot_export', {
+          await bridge.callTool('tavotto_export', {
             session_id: sessionId,
             formats,
             explicit_confirm: confirmForced,
@@ -409,7 +409,7 @@ function IssueList({
                     it.severity === 'error' ? 'text-danger' : 'text-ink-3',
                   )}
                 />
-                {/* 文案来自 **Python 侧的求值器**（MCP server 的 magplot_preflight），
+                {/* 文案来自 **Python 侧的求值器**（MCP server 的 tavotto_preflight），
                     原样显示：那一侧不知道这个 webview 用的是哪门语言，而 id / gids /
                     detail 才是机器可读的部分。见 docs/i18n.md 的「MCP 画布」一节。 */}
                 <span className="min-w-0 flex-1">{it.text}</span>

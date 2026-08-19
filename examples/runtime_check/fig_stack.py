@@ -1,7 +1,7 @@
 """内置渲染环境的验收脚本：把整套科学栈都用上一遍，画一张真图。
 
 这不是给用户看的示例，是 CI 的证据：Windows 桌面版的
-`Magplot.exe → runtime/python.exe → engine/worker.py → 本脚本` 这条链路
+`Tavotto.exe → runtime/python.exe → engine/worker.py → 本脚本` 这条链路
 真的能跑通，而且**不需要用户机器上有任何 Python**。
 
 刻意不 import paper_style：内置 runtime 不该依赖任何图库方言，

@@ -61,7 +61,7 @@
     "staleOtherWindow": "该文档已在其他窗口保存了更新的版本，本窗口的改动已暂存本机，未写入磁盘"
   },
   "boot": {
-    "desktopSessionFailed": "Magplot 桌面会话建立失败：请关闭窗口后重新打开应用。"
+    "desktopSessionFailed": "Tavotto 桌面会话建立失败：请关闭窗口后重新打开应用。"
   },
   "canvasList": {
     "canvasName": "画布名",
@@ -378,7 +378,7 @@
     "export": "导出",
     "exportTip": "导出 PNG / PDF",
     "fitCanvas": "适应画布",
-    "importPackage": "导入项目包（.magplot）…",
+    "importPackage": "导入项目包（.tavotto）…",
     "insertShape": "插入形状",
     "loadCanvasFile": "载入画布文件…",
     "more": "更多",

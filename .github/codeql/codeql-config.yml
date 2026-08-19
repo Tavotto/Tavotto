@@ -1,11 +1,11 @@
 # CodeQL 的规则裁剪。**这个文件只在 advanced setup（.github/workflows/codeql.yml）
 # 下生效**——GitHub 的 default setup 读不到它，那也正是这个仓库从 default 切到
 # advanced 的唯一理由：default setup 只能选语言与 query suite，关不掉单条规则。
-name: "Magplot CodeQL config"
+name: "Tavotto CodeQL config"
 
 query-filters:
   # py/stack-trace-exposure：在 app.py 上一次报 27 条，全部是同一个模式——把
-  # 后端异常原文交给客户端。放在通用 Web 服务里这是对的，放在 Magplot 上不是：
+  # 后端异常原文交给客户端。放在通用 Web 服务里这是对的，放在 Tavotto 上不是：
   #   * 服务只绑 127.0.0.1，桌面模式另有一次性 nonce → HttpOnly cookie 认证
   #     加 Host/Origin 校验，`/`、`/assets/*`、bootstrap 之外一律 401 兜底；
   #   * 「诊断材料（traceback / 日志 / 后端报错原文）不翻译、原样透出」是写进

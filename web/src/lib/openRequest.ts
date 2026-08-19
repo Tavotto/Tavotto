@@ -1,12 +1,12 @@
 /**
- * 交接请求：外部程序（Codex 插件、`magplot open`、编辑器、别的 Agent）把一张
+ * 交接请求：外部程序（Codex 插件、`tavotto open`、编辑器、别的 Agent）把一张
  * 刚画好的图送进来时，前端要做的三件事——切到那个项目、把面板放进画布、选中它。
  *
  * 两条入口共用这一份实现，**语义必须完全一样**：
  *   * 浏览器模式 / 桌面首启：地址栏 `?open=<stem>`（项目已由后端 `--figures`
  *     或 `?pj=` 认领），落地形状的唯一出处是
- *     `src/magplot/engine/handoff.py` 的 `browser_url()`；
- *   * 桌面二次交接：Tauri 事件 `magplot:open`（带 project + stem）——单实例插件
+ *     `src/tavotto/engine/handoff.py` 的 `browser_url()`；
+ *   * 桌面二次交接：Tauri 事件 `tavotto:open`（带 project + stem）——单实例插件
  *     把第二次启动的 argv 转发给已经在跑的窗口，后端一套进程不动。
  *
  * 三条纪律：
@@ -30,7 +30,7 @@ export interface OpenRequest {
   /** 图库目录绝对路径；桌面事件才有，URL 形态下项目由后端认领 */
   project?: string | null
   /** 产物文件名主干（Fig1_kinetics）——注册表与引擎认的就是它。
-   *  可以没有：`magplot open <目录>` 是「把这个图库打开」，不指定面板。 */
+   *  可以没有：`tavotto open <目录>` 是「把这个图库打开」，不指定面板。 */
   stem?: string | null
 }
 
@@ -102,7 +102,7 @@ export async function applyOpenRequest(req: OpenRequest): Promise<OpenOutcome> {
     return 'failed'
   }
 
-  // `magplot open <目录>`：只把图库换过来，不指定面板
+  // `tavotto open <目录>`：只把图库换过来，不指定面板
   if (!stem) {
     ui.setStatus(
       msg('handoff.projectOpened', { name: useProjectStore.getState().project?.name ?? '' }, 'project'),

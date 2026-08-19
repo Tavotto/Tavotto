@@ -126,7 +126,7 @@ function GeneralSection() {
     <div className="flex flex-col gap-2.5">
       {/*
         语言：选完立刻生效（i18next 的 languageChanged 会让整棵树重渲染），
-        偏好写在独立的 magplot.locale 里，不进任何文档或项目数据。
+        偏好写在独立的 tavotto.locale 里，不进任何文档或项目数据。
       */}
       <Row label={st('general.language')}>
         <select
@@ -150,7 +150,7 @@ function GeneralSection() {
           size="sm"
           onClick={() => {
             try {
-              localStorage.removeItem('magplot.ui')
+              localStorage.removeItem('tavotto.ui')
             } catch {
               /* 忽略 */
             }
@@ -1075,7 +1075,7 @@ function AboutSection() {
       <p className="text-xs leading-relaxed text-ink-3">
         {st('about.licenseBefore')}{' '}
         <a
-          href="https://github.com/erwanjun/magplot"
+          href="https://github.com/Tavotto/Tavotto"
           target="_blank"
           rel="noreferrer"
           className="text-accent hover:underline"

@@ -164,7 +164,7 @@ describe('MCP 传输', () => {
     )
 
     expect(bridge.calls).toHaveLength(1)
-    expect(bridge.calls[0].name).toBe('magplot_apply_overrides')
+    expect(bridge.calls[0].name).toBe('tavotto_apply_overrides')
     expect(bridge.calls[0].args.session_id).toBe('s-abc')
     // **全量列表语义**：发的是完整的一份，不是增量
     expect(bridge.calls[0].args.patches).toEqual([

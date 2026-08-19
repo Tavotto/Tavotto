@@ -64,7 +64,7 @@
     "staleOtherWindow": "Another window has saved a newer version of this document. Your changes are kept locally but were not written to disk."
   },
   "boot": {
-    "desktopSessionFailed": "Magplot could not establish a desktop session. Please close this window and reopen the app."
+    "desktopSessionFailed": "Tavotto could not establish a desktop session. Please close this window and reopen the app."
   },
   "canvasList": {
     "canvasName": "Canvas name",
@@ -407,7 +407,7 @@
     "export": "Export",
     "exportTip": "Export PNG / PDF",
     "fitCanvas": "Fit canvas",
-    "importPackage": "Import project package (.magplot)…",
+    "importPackage": "Import project package (.tavotto)…",
     "insertShape": "Insert shape",
     "loadCanvasFile": "Load canvas file…",
     "more": "More",
@@ -438,6 +438,6 @@
     "zoomValue": "Zoom {{percent}}%"
   },
   "update": {
-    "banner": "Magplot has been updated. Reload to use the new version — this page still works in the meantime."
+    "banner": "Tavotto has been updated. Reload to use the new version — this page still works in the meantime."
   }
 }

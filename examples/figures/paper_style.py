@@ -1,12 +1,12 @@
 """示例图库的统一出版样式。
 
 真实项目里这个文件通常长得多（期刊配色、字体嵌入、多种画幅规格），
-但 Magplot 只依赖两件事：
+但 Tavotto 只依赖两件事：
 
   1. 图由脚本里的 `main()` 生成；
   2. 出图走 `save(fig, stem)` 或 `fig.savefig(...)`。
 
-Magplot 的 worker 会拦截这两个调用把 Figure 留在内存里——所以在编辑器里
+Tavotto 的 worker 会拦截这两个调用把 Figure 留在内存里——所以在编辑器里
 改元素时**不会**真的重写磁盘上的 PDF，你的脚本和产物都不被动。
 """
 from pathlib import Path

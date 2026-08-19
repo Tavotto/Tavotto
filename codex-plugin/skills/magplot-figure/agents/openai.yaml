@@ -1,6 +1,0 @@
-interface:
-  display_name: "Magplot Figure"
-  short_description: "画论文级 matplotlib 图，画完直接进 Magplot 微调"
-  default_prompt: "用 $magplot-figure 画这张图，画完交给 Magplot 打开——图例位置、字号、线宽这些我自己在里面拖。"
-policy:
-  allow_implicit_invocation: true

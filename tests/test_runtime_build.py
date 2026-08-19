@@ -307,7 +307,7 @@ def test_layout_matches_what_the_runtime_module_will_look_for(tmp_path, lock):
     两边各写各的查找顺序，是「构建期用一个、运行期用另一个，只有其中一个
     被冒烟验过」这类 bug 的源头。所以这里在真磁盘上比对两个实现。
     """
-    from magplot.engine import runtime
+    from tavotto.engine import runtime
 
     mac = lock["targets"]["macos-arm64"]
     real = _fake_pbs_bin(tmp_path)
@@ -329,7 +329,7 @@ def test_interpreter_discovery_is_not_hardcoded_to_313(tmp_path):
     写死 `python3.13` 的话，症状会是「安装文件不完整」——一个与真实原因
     （只是换了个小版本）毫不相干的提示。
     """
-    from magplot.engine import runtime
+    from tavotto.engine import runtime
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(parents=True)
@@ -341,7 +341,7 @@ def test_interpreter_discovery_is_not_hardcoded_to_313(tmp_path):
 
 def test_windows_layout_is_still_found(tmp_path):
     """别为了 macOS 把 Windows 的 python.exe 弄丢。"""
-    from magplot.engine import runtime
+    from tavotto.engine import runtime
 
     exe = tmp_path / "python.exe"
     exe.write_text("", encoding="utf-8")
@@ -390,7 +390,7 @@ def test_manifest_records_everything_needed_to_diagnose(lock, name):
 def test_manifest_schema_matches_the_reader():
     """构建脚本写的 schema 与 engine/runtime.py 认的必须是同一个数字，
     否则打出来的包一装上就被自己判成「损坏」。"""
-    from magplot.engine import runtime
+    from tavotto.engine import runtime
     assert brt.MANIFEST_SCHEMA == runtime.MANIFEST_SCHEMA
     assert brt.MANIFEST_NAME == runtime.MANIFEST_NAME
 
@@ -400,7 +400,7 @@ def test_manifest_is_readable_by_the_runtime_module(tmp_path, lock, name,
                                                     monkeypatch):
     """端到端：构建脚本产出的清单，engine/runtime.py 必须能读懂，
     而且**架构核对要判它是给本机的**（打桩成该目标的平台再问一次）。"""
-    from magplot.engine import runtime
+    from tavotto.engine import runtime
 
     target = lock["targets"][name]
     root = tmp_path / "rt"
@@ -491,7 +491,7 @@ def test_check_runtime_dir_rejects_an_unreadable_or_stale_manifest(tmp_path, loc
 
 def test_spec_and_build_script_share_one_judgement():
     """两处各写一遍的话，迟早一边放行另一边拦住——而放行的那一边才是发出去的。"""
-    spec = (REPO / "packaging" / "magplot.spec").read_text(encoding="utf-8")
+    spec = (REPO / "packaging" / "tavotto.spec").read_text(encoding="utf-8")
     desktop = (REPO / "scripts" / "build_desktop.py").read_text(encoding="utf-8")
     assert "check_runtime_dir" in spec
     assert "check_runtime_dir" in desktop
@@ -580,9 +580,9 @@ def test_wheel_and_sdist_never_pick_up_the_runtime():
 
 def test_spec_ships_runtime_when_it_exists():
     """没跑过构建脚本的开发机上，spec 必须照常工作（只是产物不可发行）。"""
-    spec = (REPO / "packaging" / "magplot.spec").read_text(encoding="utf-8")
+    spec = (REPO / "packaging" / "tavotto.spec").read_text(encoding="utf-8")
     assert "runtime-manifest.json" in spec, "spec 要按清单判断 runtime 在不在"
-    assert "MAGPLOT_REQUIRE_RUNTIME" in spec, "发行流水线要能把「必须带」打开"
+    assert "TAVOTTO_REQUIRE_RUNTIME" in spec, "发行流水线要能把「必须带」打开"
     assert '"runtime"' in spec, "runtime 要作为 datas 进包"
 
 
@@ -600,7 +600,7 @@ def test_spec_ships_every_module_the_worker_imports():
     """
     import ast
 
-    engine = REPO / "src" / "magplot" / "engine"
+    engine = REPO / "src" / "tavotto" / "engine"
 
     def flat_imports(path):
         tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -624,31 +624,31 @@ def test_spec_ships_every_module_the_worker_imports():
     assert "pathgeom.py" in siblings, \
         "用例前提：manifest 确实平铺 import 了 pathgeom（传递闭包这一层的样本）"
 
-    spec = (REPO / "packaging" / "magplot.spec").read_text(encoding="utf-8")
+    spec = (REPO / "packaging" / "tavotto.spec").read_text(encoding="utf-8")
     shipped = set(re.findall(r'"(\w+\.py)"', spec))
     missing = siblings - shipped
-    assert not missing, f"packaging/magplot.spec 漏了 worker 要用的模块: {missing}"
+    assert not missing, f"packaging/tavotto.spec 漏了 worker 要用的模块: {missing}"
 
 
 def test_release_chain_refuses_to_ship_without_the_runtime():
     """漏了 runtime 照样能编出安装包，而那个包只有到了用户手里才暴露问题。
 
-    **两个平台**都由发行工作流扛：构建 sidecar 时开 MAGPLOT_REQUIRE_RUNTIME
+    **两个平台**都由发行工作流扛：构建 sidecar 时开 TAVOTTO_REQUIRE_RUNTIME
     （spec 当场失败），安装包经 tauri.conf.json 的 bundle.resources 把整个
     sidecar 目录（含 _internal/runtime）收走，打完还要过
     `--expect-source bundled --expect-runtime` 的真渲染冒烟。
     """
     wf = (REPO / ".github" / "workflows" / "desktop-tauri.yml").read_text(
         encoding="utf-8")
-    assert "MAGPLOT_REQUIRE_RUNTIME" in wf, "构建必须能把「必须带 runtime」打开"
+    assert "TAVOTTO_REQUIRE_RUNTIME" in wf, "构建必须能把「必须带 runtime」打开"
     assert "--expect-source bundled" in wf, "打包后必须断言渲染真的走了内置 runtime"
     assert "--expect-runtime" in wf, "还要断言 runtime 本身 expected + valid"
     conf = (REPO / "src-tauri" / "tauri.conf.json").read_text(encoding="utf-8")
-    assert "../dist/Magplot" in conf, "NSIS/.app 必须把整个 sidecar 目录作为资源收走"
+    assert "../dist/Tavotto" in conf, "NSIS/.app 必须把整个 sidecar 目录作为资源收走"
 
 
 def test_macos_ci_no_longer_fakes_a_worker_env():
-    """macOS 这条腿曾经现建一个 worker-env 再设 MM_WORKER_PYTHON。
+    """macOS 这条腿曾经现建一个 worker-env 再设 TAVOTTO_WORKER_PYTHON。
 
     代价是整条门禁失去意义：借来的解释器让冒烟一路绿灯，而「内置 runtime
     根本没打进安装包」这件事没有任何一处会发现——那正是用户装完打不开图的原因。
@@ -656,7 +656,7 @@ def test_macos_ci_no_longer_fakes_a_worker_env():
     """
     wf = (REPO / ".github" / "workflows" / "desktop-tauri.yml").read_text(
         encoding="utf-8")
-    assert "MM_WORKER_PYTHON=" not in wf, \
+    assert "TAVOTTO_WORKER_PYTHON=" not in wf, \
         "发行冒烟不许借用外部解释器——那会让「runtime 没打进去」全程绿灯"
     assert "python -m venv worker-env" not in wf
 
@@ -675,7 +675,7 @@ def test_orphan_check_does_not_rely_on_a_dead_parent_pid():
     # 只盯**调用形态**（argv 列表里的 "pgrep"），别把解释这件事的注释也判红
     assert '"pgrep"' not in src, \
         "父进程已退出时按 PPID 查孤儿必然一无所获——这条断言恒真"
-    # 两条判据缺一不可：pid 快照精确（连没有命令行特征的 magplot-workerd 也
+    # 两条判据缺一不可：pid 快照精确（连没有命令行特征的 tavotto-workerd 也
     # 盖得住），命令行扫描兜住父子关系没记全的那些
     assert "_descendants(proc.pid)" in src, "退出前要把后代 pid 快照下来"
     assert "_leftover_workers" in src, "还要按命令行内容做一次全局扫描"
@@ -735,7 +735,7 @@ def test_built_runtime_is_usable_by_the_engine_and_really_renders():
     """
     import subprocess
 
-    from magplot.engine import runtime
+    from tavotto.engine import runtime
 
     st = runtime.status()
     assert st["valid"] is True, f"engine 认为这份 runtime 不可用: {st}"
@@ -770,7 +770,7 @@ def test_built_runtime_does_not_write_into_itself_while_rendering():
     """
     import subprocess
 
-    from magplot.engine import runtime
+    from tavotto.engine import runtime
 
     before = {p for p in RUNTIME_DIR.rglob("*") if p.is_file()}
     py = runtime.status()["python"]

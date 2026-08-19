@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from magplot.engine import preflight, profiles
+from tavotto.engine import preflight, profiles
 
 ROOT = Path(__file__).resolve().parent.parent
 GOLDEN = ROOT / "tests" / "golden" / "preflight_vectors.json"
@@ -27,7 +27,7 @@ def test_canonical_file_lives_in_the_package():
     assert path.is_file()
     assert path.name == profiles.PROFILE_FILE
     assert path.parent.name == "profiles"
-    assert path.parent.parent.name == "magplot"
+    assert path.parent.parent.name == "tavotto"
 
 
 def test_typescript_reads_the_same_file():
@@ -35,7 +35,7 @@ def test_typescript_reads_the_same_file():
     for cfg in ("vite.config.ts", "vitest.config.ts"):
         text = (ROOT / "web" / cfg).read_text(encoding="utf-8")
         assert "'@profiles'" in text, f"{cfg} 没配 @profiles 别名"
-        assert "../src/magplot/profiles/publication.json" in text, (
+        assert "../src/tavotto/profiles/publication.json" in text, (
             f"{cfg} 的 @profiles 指到了别的文件——两侧规则一分叉，"
             "同一张图会得到两个互相矛盾的体检结论")
 
@@ -118,7 +118,7 @@ def _all_check_ids() -> set[str]:
     data = json.loads(GOLDEN.read_text(encoding="utf-8"))
     for case in data["cases"]:
         ids |= {i["id"] for i in case["expected"]}
-    src = (ROOT / "src" / "magplot" / "engine" / "preflight.py").read_text(encoding="utf-8")
+    src = (ROOT / "src" / "tavotto" / "engine" / "preflight.py").read_text(encoding="utf-8")
     import re
     ids |= set(re.findall(r'sink\.add\(\s*"([a-z0-9-]+)"', src))
     return ids

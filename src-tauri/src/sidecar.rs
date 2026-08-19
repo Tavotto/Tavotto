@@ -37,16 +37,16 @@ pub struct Sidecar {
 }
 
 /// 解析 sidecar 可执行文件。优先级：
-/// 1. `MAGPLOT_SIDECAR_EXE`（开发/排障覆盖，可配 `MAGPLOT_SIDECAR_ARGS`）
-/// 2. 打包资源 `resources/sidecar/Magplot/Magplot(.exe)`（PyInstaller onedir）
-/// 3. 源码树回退：从可执行文件与 cwd 向上找 `pyproject.toml` 旁的 `.venv` 里的 magplot
+/// 1. `TAVOTTO_SIDECAR_EXE`（开发/排障覆盖，可配 `TAVOTTO_SIDECAR_ARGS`）
+/// 2. 打包资源 `resources/sidecar/Tavotto/Tavotto(.exe)`（PyInstaller onedir）
+/// 3. 源码树回退：从可执行文件与 cwd 向上找 `pyproject.toml` 旁的 `.venv` 里的 tavotto
 fn resolve_command(
     resource_dir: Option<&Path>,
     locale: crate::i18n::Locale,
 ) -> Result<(PathBuf, Vec<String>), String> {
     let m = crate::i18n::text(locale);
-    if let Ok(exe) = std::env::var("MAGPLOT_SIDECAR_EXE") {
-        let args = std::env::var("MAGPLOT_SIDECAR_ARGS")
+    if let Ok(exe) = std::env::var("TAVOTTO_SIDECAR_EXE") {
+        let args = std::env::var("TAVOTTO_SIDECAR_ARGS")
             .map(|s| s.split_whitespace().map(String::from).collect())
             .unwrap_or_default();
         let p = PathBuf::from(exe);
@@ -59,21 +59,21 @@ fn resolve_command(
     }
 
     let exe_name = if cfg!(windows) {
-        "Magplot.exe"
+        "Tavotto.exe"
     } else {
-        "Magplot"
+        "Tavotto"
     };
     if let Some(res) = resource_dir {
-        let bundled = res.join("sidecar").join("Magplot").join(exe_name);
+        let bundled = res.join("sidecar").join("Tavotto").join(exe_name);
         if bundled.is_file() {
             return Ok((bundled, Vec::new()));
         }
     }
 
     let cli_name = if cfg!(windows) {
-        "Scripts\\magplot.exe"
+        "Scripts\\tavotto.exe"
     } else {
-        "bin/magplot"
+        "bin/tavotto"
     };
     let mut starts: Vec<PathBuf> = Vec::new();
     if let Ok(me) = std::env::current_exe() {
@@ -115,7 +115,7 @@ fn log_tail(path: &Path, max: u64) -> String {
 
 impl Sidecar {
     /// 启动 sidecar 并等到握手完成，返回 (Sidecar, 端口)。
-    /// `project` 是首启交接（`Magplot --open <目录>`）带来的项目目录：原样转成
+    /// `project` 是首启交接（`Tavotto --open <目录>`）带来的项目目录：原样转成
     /// sidecar 的 `--figures`。**不做任何存在性判断**——目录有没有、注册表长
     /// 什么样，是 Python 那边（app.open_project）唯一说了算的事，壳里再判一次
     /// 只会制造第二个权威，还会在两边给出不一样的错误。
@@ -154,7 +154,7 @@ impl Sidecar {
             .map_err(|e| m.sidecar_log_clone_failed.replace("{err}", &e.to_string()))?;
 
         let handshake = std::env::temp_dir().join(format!(
-            "magplot-handshake-{}-{:016x}.json",
+            "tavotto-handshake-{}-{:016x}.json",
             std::process::id(),
             rand::random::<u64>()
         ));
@@ -166,7 +166,7 @@ impl Sidecar {
             cmd.arg("--figures").arg(dir);
         }
         cmd.arg("--desktop-sidecar")
-            .env("MAGPLOT_DESKTOP_HANDSHAKE", &handshake)
+            .env("TAVOTTO_DESKTOP_HANDSHAKE", &handshake)
             .stdin(Stdio::piped())
             .stdout(Stdio::from(log_out))
             .stderr(Stdio::from(log_err));

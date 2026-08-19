@@ -39,11 +39,11 @@ const onConflict = (ev: Event) => {
 describe('跨标签页文档占用提示', () => {
   beforeEach(() => {
     conflicts.length = 0
-    window.addEventListener('magplot:doc-conflict', onConflict)
+    window.addEventListener('tavotto:doc-conflict', onConflict)
   })
 
   afterEach(() => {
-    window.removeEventListener('magplot:doc-conflict', onConflict)
+    window.removeEventListener('tavotto:doc-conflict', onConflict)
     __setPresenceChannelFactory(null)
     last = null
   })
@@ -64,7 +64,7 @@ describe('跨标签页文档占用提示', () => {
 
   it('打开文档时广播 doc-open', () => {
     __setPresenceChannelFactory((name) => {
-      expect(name).toBe('magplot:doc-presence') // 频道名派生自品牌常量
+      expect(name).toBe('tavotto:doc-presence') // 频道名派生自品牌常量
       last = new FakeChannel()
       return last
     })

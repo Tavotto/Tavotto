@@ -8,15 +8,15 @@
 ## 1. 现状：仓库即市场（今天就能用）
 
 ```sh
-codex plugin marketplace add erwanjun/magplot && codex plugin add magplot@magplot
+codex plugin marketplace add Tavotto/Tavotto && codex plugin add tavotto@tavotto
 ```
 
 Codex 支持把任意 Git 仓库当插件市场：认的是仓库根的
 `.agents/plugins/marketplace.json`（本仓库已经有）。加完之后
-`codex plugin marketplace upgrade magplot` 就能拉新版本。
+`codex plugin marketplace upgrade tavotto` 就能拉新版本。
 
-* **优点**：零审核、零第三方依赖，随 Magplot 发版即生效（插件版本 ==
-  `magplot.__version__`，`tests/test_codex_plugin.py` 看着）。CLI 与 Codex 桌面应用
+* **优点**：零审核、零第三方依赖，随 Tavotto 发版即生效（插件版本 ==
+  `tavotto.__version__`，`tests/test_codex_plugin.py` 看着）。CLI 与 Codex 桌面应用
   共用同一份 `~/.codex` 插件目录，装一次两边都在。
 * **缺点**：用户得先知道这条命令——插件不会出现在任何"目录"里被搜到。
 
@@ -27,7 +27,7 @@ Codex 支持把任意 Git 仓库当插件市场：认的是仓库根的
 ## 2. 目标：官方 Plugins Directory（真正的一句话 / 一次点击）
 
 审核通过后插件进入 **ChatGPT 与 Codex 共用的插件目录**，用户在界面里点安装，
-或直接 `codex plugin add magplot`。
+或直接 `codex plugin add tavotto`。
 
 **skills-only 插件明确合格**——官方列的三类可提交形态，第一类就是
 "A skills-only plugin that packages reusable workflows"。我们没有 MCP server，
@@ -45,7 +45,7 @@ Codex 支持把任意 Git 仓库当插件市场：认的是仓库根的
 | 项 | 状态 |
 | --- | --- |
 | 插件名 / 短描述 / 长描述 / 分类 | ✅ 已在 `.codex-plugin/plugin.json` 的 `interface` |
-| logo | ✅ `assets/magplot.svg`（门户若要求位图，用 `scripts/build_brand_assets.py` 出 PNG） |
+| logo | ✅ `assets/tavotto.svg`（门户若要求位图，用 `scripts/build_brand_assets.py` 出 PNG） |
 | website URL | ✅ GitHub 仓库 |
 | support URL | ❌ 用 GitHub Issues 即可，提交时填 |
 | privacy policy URL | ❌ `docs/privacy.md` 得先进 main 并有公开链接 |
@@ -70,14 +70,14 @@ OpenAI builds and scales the review process"）→ 批准后**由我们自己点
 ## 3. 备选：社区市场 codex-marketplace.com（一条命令，但非官方）
 
 ```sh
-npx codex-marketplace add erwanjun/magplot --plugin
+npx codex-marketplace add Tavotto/Tavotto --plugin
 ```
 
 提交只要给 GitHub 仓库 URL，自动审核 + 人工兜底。但它页脚写着
 **"Not affiliated with OpenAI"**——等于把安装入口交给一个第三方 npm 包。
-**列为备选，不做首推**：Magplot 自己发的东西，安装链路不该经过一个我们不控制的中间人。
+**列为备选，不做首推**：Tavotto 自己发的东西，安装链路不该经过一个我们不控制的中间人。
 
-## 4. 不必等审核的「一次点击」：Magplot 自己代劳
+## 4. 不必等审核的「一次点击」：Tavotto 自己代劳
 
 设置 →「改图助手」里加一个「安装 Codex 插件」按钮，用用户机器上已有的 `codex` CLI
 跑第 1 条那两句。AI 桥已经有现成的 CLI 定位与 PATH 增强（`engine/ai_bridge.py` 的

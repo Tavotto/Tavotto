@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """桌面 sidecar 的端到端冒烟：对**最终用户拿到的产物**做验收，不是对源码。
 
-    python scripts/smoke_desktop.py --sidecar dist/Magplot/Magplot
-    python scripts/smoke_desktop.py --sidecar .venv/bin/magplot   # 源码模式
+    python scripts/smoke_desktop.py --sidecar dist/Tavotto/Tavotto
+    python scripts/smoke_desktop.py --sidecar .venv/bin/tavotto   # 源码模式
 
 走的是 Tauri 壳同一套协议（stdin 首行 JSON 送 nonce、握手文件、stdin EOF =
 父进程退出），依次验证：
@@ -11,7 +11,7 @@
 2. 未认证请求 401；错误 nonce 403；正确 nonce → cookie；nonce 重放 403
 3. Host/Origin 校验
 4. 打开 examples/figures 项目 → 素材扫描
-5. 渲染控制面：产物里带着 magplot-workerd，且渲染**真的走了它**
+5. 渲染控制面：产物里带着 tavotto-workerd，且渲染**真的走了它**
 6. 参数化渲染 + PDF/PNG 导出（渲染环境缺 matplotlib 时如实跳过并报告）
 7. 关 stdin（模拟壳退出）→ sidecar 限时内自行退出，且不留 worker 孤儿
 
@@ -54,9 +54,9 @@ def _descendants(pid: int) -> set[int]:
     init/launchd（PID 1）名下，进程树当场断开。这也正是
     `pgrep -P <已退出的 pid>` 恒等于空的原因。
 
-    比按命令行扫更准：sidecar 起的 `magplot-workerd` 是
+    比按命令行扫更准：sidecar 起的 `tavotto-workerd` 是
     `Popen([exe])`——命令行里没有本次运行的任何标识，按名字扫会把用户自己
-    开着的另一个 Magplot 算成残留。假报一次，下次真出问题时这条提示就已经
+    开着的另一个 Tavotto 算成残留。假报一次，下次真出问题时这条提示就已经
     被学会无视了。
     没有 `ps` 的平台（Windows）回空集：那儿由 `_leftover_workers` 兜底。
     """
@@ -110,7 +110,7 @@ def is_packaged(exe: Path) -> bool:
     """这是不是 PyInstaller 打出来的真产物（旁边有 _internal/）。
 
     与 smoke_app.py 找内置 runtime 清单用的是同一条线索，别再发明第二种判法。
-    源码模式（`--sidecar .venv/bin/magplot`）下 workerd 只是「开发机上建过就
+    源码模式（`--sidecar .venv/bin/tavotto`）下 workerd 只是「开发机上建过就
     有」，那时缺失只警告；真产物缺失一律判失败。
     """
     return (exe.parent / "_internal").is_dir()
@@ -131,7 +131,7 @@ def check_control_plane(port: int, cookie: str, packaged: bool,
 
     if selected != "workerd":
         msg = (f"渲染控制面是 {selected!r} 而不是 workerd——"
-               "产物里没有 magplot-workerd，渲染会静默回退到 Python 渲染池")
+               "产物里没有 tavotto-workerd，渲染会静默回退到 Python 渲染池")
         if packaged:
             fail(msg)
         print(f"⚠ {msg}；源码模式下先跑 "
@@ -182,7 +182,7 @@ def request(port: int, method: str, path: str, body: dict | None = None,
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--sidecar", required=True,
-                    help="sidecar 可执行文件（dist/Magplot/Magplot 或 .venv/bin/magplot）")
+                    help="sidecar 可执行文件（dist/Tavotto/Tavotto 或 .venv/bin/tavotto）")
     ap.add_argument("--figures", default=str(ROOT / "examples" / "figures"))
     args = ap.parse_args()
 
@@ -190,13 +190,13 @@ def main() -> None:
     if not exe.is_file():
         fail(f"sidecar 不存在: {exe}")
 
-    tmp = Path(tempfile.mkdtemp(prefix="magplot-smoke-"))
+    tmp = Path(tempfile.mkdtemp(prefix="tavotto-smoke-"))
     handshake = tmp / "handshake.json"
     env = {**os.environ,
-           "MAGPLOT_DATA_DIR": str(tmp / "data"),
-           "MAGPLOT_CONFIG_DIR": str(tmp / "config"),
-           "MAGPLOT_DESKTOP_HANDSHAKE": str(handshake)}
-    env.pop("MAGPLOT_DESKTOP_NONCE", None)
+           "TAVOTTO_DATA_DIR": str(tmp / "data"),
+           "TAVOTTO_CONFIG_DIR": str(tmp / "config"),
+           "TAVOTTO_DESKTOP_HANDSHAKE": str(handshake)}
+    env.pop("TAVOTTO_DESKTOP_NONCE", None)
 
     proc = subprocess.Popen(
         [str(exe), "--desktop-sidecar"],
@@ -293,7 +293,7 @@ def main() -> None:
 
         # ---- 退出：关 stdin = 壳没了 ----
         # 关停**之前**把整棵后代快照下来（见 `_descendants`：父进程一死树就断）。
-        # 覆盖的不只是 python worker，还有 sidecar 起的 magplot-workerd——
+        # 覆盖的不只是 python worker，还有 sidecar 起的 tavotto-workerd——
         # 会话都正常关了、supervisor 自己没退出，同样是孤儿。
         descendants = _descendants(proc.pid)
         proc.stdin.close()
@@ -315,7 +315,7 @@ def main() -> None:
         # 空转的门禁比没有门禁更坏——它还在报平安。
         # 改成两条互补的判据：
         #   ① 退出前快照下来的后代，事后逐个查存活——精确到 pid，
-        #      连没有任何命令行特征的 magplot-workerd 也盖得住；
+        #      连没有任何命令行特征的 tavotto-workerd 也盖得住；
         #   ② 按命令行内容做全局扫描，兜住父子关系没记全的那些
         #      （与 `smoke_app._leftover_workers` 同一把尺）。
         survivors = sorted(p for p in descendants if _alive(p))

@@ -6,7 +6,7 @@
         --zip out/codex-plugin-0.7.1.zip
 
 发布时把这两份挂到 GitHub Release，插件下次被调用就会看到新版本
-（`codex-plugin/skills/magplot-figure/scripts/update_check.py` 拉的
+（`codex-plugin/skills/tavotto-figure/scripts/update_check.py` 拉的
 `releases/latest/download/codex-plugin.json` 就是它）。
 
 **为什么不放在 desktop-tauri.yml 的 updater-manifest 里**：那个 job 依赖桌面
@@ -32,12 +32,12 @@ PLUGIN_JSON = PLUGIN_DIR / ".codex-plugin" / "plugin.json"
 
 #: 清单 schema。改字段语义要 +1，读的一方（update_check.SCHEMA）同步。
 SCHEMA = 1
-#: 这个插件最低要求的 Magplot 版本 = **第一个带 `magplot open` 的版本**
-#: （v0.7.0，见 git log src/magplot/engine/handoff.py）。没有它交接根本无从谈起。
-#: 往上调之前想清楚：这个值会让老用户看到「去升级 Magplot」的提示。
-MIN_MAGPLOT_VERSION = "0.7.0"
+#: 这个插件最低要求的 Tavotto 版本 = **第一个带 `tavotto open` 的版本**
+#: （v0.7.0，见 git log src/tavotto/engine/handoff.py）。没有它交接根本无从谈起。
+#: 往上调之前想清楚：这个值会让老用户看到「去升级 Tavotto」的提示。
+MIN_TAVOTTO_VERSION = "0.7.0"
 CHANNEL = "stable"
-REPO = "erwanjun/magplot"
+REPO = "Tavotto/Tavotto"
 
 #: 打包时跳过的东西（缓存与本机产物，跟插件本身无关）
 ZIP_SKIP = {"__pycache__", ".DS_Store", ".pytest_cache"}
@@ -64,12 +64,12 @@ def build_manifest(tag: str, version: str, *, published_at: str | None = None) -
     base = f"https://github.com/{REPO}/releases"
     out = {
         "schema": SCHEMA,
-        "plugin": "magplot",
+        "plugin": "tavotto",
         "channel": CHANNEL,
         "latest_version": version,
         "download_url": f"{base}/download/{tag}/codex-plugin-{version}.zip",
         "release_notes_url": f"{base}/tag/{tag}",
-        "min_magplot_version": MIN_MAGPLOT_VERSION,
+        "min_tavotto_version": MIN_TAVOTTO_VERSION,
     }
     if published_at:
         out["published_at"] = published_at

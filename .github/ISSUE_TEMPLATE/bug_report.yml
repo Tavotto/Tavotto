@@ -1,5 +1,5 @@
 name: Bug report
-description: Something in Magplot behaves wrongly
+description: Something in Tavotto behaves wrongly
 labels: ["bug"]
 body:
   - type: markdown
@@ -13,7 +13,7 @@ body:
         is written, so it is safe to attach here.
 
         If this is a **security** issue, please don't file it publicly — use
-        [private reporting](https://github.com/erwanjun/magplot/security/advisories/new)
+        [private reporting](https://github.com/Tavotto/Tavotto/security/advisories/new)
         instead.
 
   - type: textarea
@@ -44,8 +44,8 @@ body:
   - type: input
     id: version
     attributes:
-      label: Magplot version
-      description: Settings → Privacy, diagnostics and About, or `magplot --version`.
+      label: Tavotto version
+      description: Settings → Privacy, diagnostics and About, or `tavotto --version`.
       placeholder: "0.7.0"
     validations:
       required: true

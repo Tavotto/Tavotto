@@ -20,7 +20,7 @@
 随安装包附带的内置 runtime，不是运行器上碰巧装着的 Python。没有这条断言，
 一台装了 matplotlib 的 CI 机器会让「内置环境根本没打进去」全程绿灯。
 加上这个参数时，会话环境里所有可能抢在内置 runtime 前面的东西
-（`MM_WORKER_PYTHON`、Conda、`PYTHONHOME`/`PYTHONPATH`、活动 venv）
+（`TAVOTTO_WORKER_PYTHON`、Conda、`PYTHONHOME`/`PYTHONPATH`、活动 venv）
 都会被**摘干净**——要验的是「一台干净电脑上装完即可用」。
 
 `--expect-runtime` 再往前一步：断言 `runtime.expected` 与 `runtime.valid`
@@ -30,12 +30,12 @@
 
 `--expect-control-plane workerd` 是同一条思路的另一面：断言渲染真的跑在
 Rust supervisor 上。回退到 Python 渲染池是**静默**的降级，包里没打进
-magplot-workerd 时功能一样不缺、只是慢，不断言就永远发现不了。
+tavotto-workerd 时功能一样不缺、只是慢，不断言就永远发现不了。
 
 用法：
-    python scripts/smoke_app.py --exe dist/Magplot/Magplot.exe
+    python scripts/smoke_app.py --exe dist/Tavotto/Tavotto.exe
     python scripts/smoke_app.py --python .venv/bin/python      # 源码树/wheel
-    python scripts/smoke_app.py --exe dist/Magplot/Magplot.exe \
+    python scripts/smoke_app.py --exe dist/Tavotto/Tavotto.exe \
         --figures examples/runtime_check --expect-source bundled \
         --expect-runtime --expect-control-plane workerd \
         --expect-packages numpy,pandas,scipy,seaborn,PIL,matplotlib
@@ -71,13 +71,13 @@ RENDER_TIMEOUT_S = 300    # 冷启动一个 matplotlib 会话
 #: `--expect-source bundled` 时必须从子进程环境里摘掉的变量。
 #:
 #: 每一条都能让内置 runtime 轮不上，且失败方式各不相同：
-#:   MM_WORKER_PYTHON           优先级第一，直接顶掉内置的
+#:   TAVOTTO_WORKER_PYTHON           优先级第一，直接顶掉内置的
 #:   CONDA_PREFIX / CONDA_*     CI harness 或开发机的 conda 泄进来
 #:   VIRTUAL_ENV                激活着的 venv 同理
 #:   PYTHONHOME                 最狠的一条：内置解释器被指到别的前缀，起都起不来
 #:   PYTHONPATH / PYTHONUSERBASE  import 到别处的 numpy，版本对不上却「能跑」
 _HOSTILE_TO_BUNDLED = (
-    "MM_WORKER_PYTHON",
+    "TAVOTTO_WORKER_PYTHON",
     "CONDA_PREFIX", "CONDA_DEFAULT_ENV", "CONDA_EXE", "CONDA_PYTHON_EXE",
     "CONDA_PROMPT_MODIFIER", "CONDA_SHLVL",
     "VIRTUAL_ENV", "VIRTUAL_ENV_PROMPT",
@@ -137,12 +137,12 @@ def _leftover_workers(data_dir: Path) -> list[str]:
     * `--figures-dir`——只匹配路径的话，连「正在查找 worker.py」的那条
       shell 命令自己都会被算成残留进程；
     * **本次隔离数据目录**出现在命令行里（worker 的 `--out-dir` 落在它下面）。
-      少了这条，开发机上只要**另一个 Magplot 正开着**（用户自己那份、
+      少了这条，开发机上只要**另一个 Tavotto 正开着**（用户自己那份、
       另一个终端里的实例），冒烟就会报「退出后仍有 worker 残留」——
       而那个进程与本次运行毫无关系。假报一次，下次真出问题时这条提示
       就已经被学会无视了。
     """
-    marker = os.path.join("magplot", "engine", "worker.py")
+    marker = os.path.join("tavotto", "engine", "worker.py")
     ours = str(data_dir)
     try:
         if os.name == "nt":
@@ -225,7 +225,7 @@ def _check_environment(base: str, expect_source: str | None,
 def _check_control_plane(base: str, expect: str | None) -> None:
     """渲染控制面自检：**在渲染之后**问，那时池里才有真会话。
 
-    `selected` 回答「产物里有没有 magplot-workerd」，`sessions` 回答「刚才那次
+    `selected` 回答「产物里有没有 tavotto-workerd」，`sessions` 回答「刚才那次
     渲染到底走了谁」。只看第一个不够：workerd 建会话失败会静默回退到 Python
     渲染池（那是刻意设计的降级），做出来的包功能一样不缺、只是慢，界面上
     一点异常都没有。
@@ -238,7 +238,7 @@ def _check_control_plane(base: str, expect: str | None) -> None:
     if selected != expect:
         raise SmokeError(
             f"渲染控制面应为 {expect}，实际是 {selected}"
-            "（产物里没打进 magplot-workerd？）")
+            "（产物里没打进 tavotto-workerd？）")
     if expect == "workerd" and "workerd" not in sessions:
         raise SmokeError(
             f"二进制在，但刚才那次渲染走的是 {sessions}——workerd 起不来，"
@@ -262,23 +262,23 @@ def run_smoke(launch: list[str], figures: Path, workdir: Path,
     # 首次启动场景每次都真的从零开始
     env = {
         **os.environ,
-        "MAGPLOT_DATA_DIR": str(data_dir),
-        "MAGPLOT_CONFIG_DIR": str(config_dir),
+        "TAVOTTO_DATA_DIR": str(data_dir),
+        "TAVOTTO_CONFIG_DIR": str(config_dir),
         "APPDATA": str(workdir / "AppData" / "Roaming"),
         "LOCALAPPDATA": str(workdir / "AppData" / "Local"),
         "HOME": str(workdir / "home"),
         "USERPROFILE": str(workdir / "home"),
         # 关掉联网检查更新：冒烟不该依赖 GitHub 可达
-        "MAGPLOT_NO_UPDATE_CHECK": "1",
+        "TAVOTTO_NO_UPDATE_CHECK": "1",
         # 让 /api/shutdown 可用：冒烟要验证的是**干净退出**，不是硬停
-        "MAGPLOT_ALLOW_SHUTDOWN": "1",
+        "TAVOTTO_ALLOW_SHUTDOWN": "1",
     }
     for key in ("APPDATA", "LOCALAPPDATA", "HOME", "USERPROFILE"):
         Path(env[key]).mkdir(parents=True, exist_ok=True)
 
     if expect_source == "bundled":
         # 要验的是「一台干净电脑上装完即可用」，那台电脑上不会有这些东西。
-        # 残留任何一个都会让内置 runtime 根本轮不上（`MM_WORKER_PYTHON` 直接
+        # 残留任何一个都会让内置 runtime 根本轮不上（`TAVOTTO_WORKER_PYTHON` 直接
         # 抢第一，Conda/venv 让 CI 的 harness 环境泄进来，PYTHONHOME 更狠——
         # 它会让内置解释器指向别的前缀，连启动都启动不了）。
         # 与其看着断言失败，不如在这里就摘干净并逐条说清楚。
@@ -441,7 +441,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--exe", help="打好的可执行文件（PyInstaller 产物）")
-    g.add_argument("--python", help="解释器路径，用 `-m magplot` 启动")
+    g.add_argument("--python", help="解释器路径，用 `-m tavotto` 启动")
     ap.add_argument("--figures", default=str(DEFAULT_FIGURES))
     ap.add_argument("--port", type=int, default=None)
     ap.add_argument("--keep", action="store_true", help="保留临时工作目录便于排查")
@@ -463,7 +463,7 @@ def main(argv: list[str] | None = None) -> int:
                          "指到中文/带空格的路径可覆盖那一档回归")
     args = ap.parse_args(argv)
 
-    launch = [args.exe] if args.exe else [args.python, "-m", "magplot"]
+    launch = [args.exe] if args.exe else [args.python, "-m", "tavotto"]
     if args.exe and not Path(args.exe).is_file():
         print(f"找不到可执行文件: {args.exe}", file=sys.stderr)
         return 2
@@ -478,9 +478,9 @@ def main(argv: list[str] | None = None) -> int:
         # 调用方指定的路径可能带中文/空格——那正是要覆盖的一档，别去规避它
         base_dir = Path(args.workdir)
         base_dir.mkdir(parents=True, exist_ok=True)
-        workdir = Path(tempfile.mkdtemp(prefix="magplot-smoke-", dir=str(base_dir)))
+        workdir = Path(tempfile.mkdtemp(prefix="tavotto-smoke-", dir=str(base_dir)))
     else:
-        workdir = Path(tempfile.mkdtemp(prefix="magplot-smoke-"))
+        workdir = Path(tempfile.mkdtemp(prefix="tavotto-smoke-"))
     print(f"· 隔离用户目录: {workdir}")
     try:
         run_smoke(launch, figures, workdir, args.port,

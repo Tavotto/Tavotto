@@ -1,5 +1,5 @@
 blank_issues_enabled: true
 contact_links:
   - name: Security vulnerability
-    url: https://github.com/erwanjun/magplot/security/advisories/new
+    url: https://github.com/Tavotto/Tavotto/security/advisories/new
     about: Please report privately, not as a public issue.

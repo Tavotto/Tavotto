@@ -1,9 +1,9 @@
-"""「这台机器上的 Magplot 在哪」——安装清单与发现链。
+"""「这台机器上的 Tavotto 在哪」——安装清单与发现链。
 
 背景（也是这一整个文件存在的理由）：只装了桌面版的 Windows 用户那里，Codex
-插件一直报「没装 Magplot」。桌面版装的 `Magplot.exe` 是 **GUI 子系统**的可执行
-文件，当命令行调它拿不到 stdout；插件当时只会查 `MAGPLOT_CLI` / PATH /
-当前解释器，三条全落空。修法是安装包里另带一个 console 版 `magplot-cli`，
+插件一直报「没装 Tavotto」。桌面版装的 `Tavotto.exe` 是 **GUI 子系统**的可执行
+文件，当命令行调它拿不到 stdout；插件当时只会查 `TAVOTTO_CLI` / PATH /
+当前解释器，三条全落空。修法是安装包里另带一个 console 版 `tavotto-cli`，
 再用一份**安装清单**把它的绝对路径记下来。
 
 这里的 Windows 用例全部跑在 macOS/Linux 的 CI 上——`engine/locate.py` 与插件
@@ -19,11 +19,11 @@ from pathlib import Path
 
 import pytest
 
-from magplot.engine import config as engine_config
-from magplot.engine import locate
+from tavotto.engine import config as engine_config
+from tavotto.engine import locate
 
 ROOT = Path(__file__).resolve().parent.parent
-PLUGIN_HANDOFF = (ROOT / "codex-plugin" / "skills" / "magplot-figure" /
+PLUGIN_HANDOFF = (ROOT / "codex-plugin" / "skills" / "tavotto-figure" /
                   "scripts" / "handoff.py")
 
 WIN_ENV = {
@@ -32,10 +32,10 @@ WIN_ENV = {
     "PROGRAMFILES(X86)": "C:\\Program Files (x86)",
     "APPDATA": "C:\\Users\\张三\\AppData\\Roaming",
 }
-WIN_CURRENT_USER = "C:\\Users\\张三\\AppData\\Local\\Magplot"
-WIN_CLI = WIN_CURRENT_USER + "\\sidecar\\Magplot\\magplot-cli.exe"
-WIN_DESKTOP = WIN_CURRENT_USER + "\\Magplot.exe"
-PF_ROOT = "C:\\Program Files\\Magplot"
+WIN_CURRENT_USER = "C:\\Users\\张三\\AppData\\Local\\Tavotto"
+WIN_CLI = WIN_CURRENT_USER + "\\sidecar\\Tavotto\\tavotto-cli.exe"
+WIN_DESKTOP = WIN_CURRENT_USER + "\\Tavotto.exe"
+PF_ROOT = "C:\\Program Files\\Tavotto"
 
 
 def only(*paths: str):
@@ -116,21 +116,21 @@ def test_remove_manifest_is_idempotent(tmp_path):
 
 # ------------------------------ 发现链顺序 -------------------------------
 def test_explicit_override_wins_over_everything():
-    """MAGPLOT_CLI 是高级覆盖：用户指定的永远第一，哪怕别处也找得到。"""
-    env = {**WIN_ENV, locate.CLI_ENV: "D:\\我的 工具\\magplot.exe"}
+    """TAVOTTO_CLI 是高级覆盖：用户指定的永远第一，哪怕别处也找得到。"""
+    env = {**WIN_ENV, locate.CLI_ENV: "D:\\我的 工具\\tavotto.exe"}
     got = locate.find_cli(system="win32", environ=env, isfile=only(WIN_CLI),
-                          which=lambda n: "C:\\py\\Scripts\\magplot.exe",
+                          which=lambda n: "C:\\py\\Scripts\\tavotto.exe",
                           reg_dirs=())
-    assert got["cmd"] == ["D:\\我的 工具\\magplot.exe"]
+    assert got["cmd"] == ["D:\\我的 工具\\tavotto.exe"]
     assert got["source"] == "env"
 
 
 def test_path_cli_beats_the_desktop_install():
-    """PATH 里有 magplot（pip/pipx 装的）就用它——既有行为，不许被新链路顶掉。"""
+    """PATH 里有 tavotto（pip/pipx 装的）就用它——既有行为，不许被新链路顶掉。"""
     got = locate.find_cli(system="win32", environ=WIN_ENV, isfile=only(WIN_CLI),
-                          which=lambda n: "C:\\py\\Scripts\\magplot.exe",
+                          which=lambda n: "C:\\py\\Scripts\\tavotto.exe",
                           reg_dirs=())
-    assert got["cmd"] == ["C:\\py\\Scripts\\magplot.exe"]
+    assert got["cmd"] == ["C:\\py\\Scripts\\tavotto.exe"]
     assert got["source"] == "path"
 
 
@@ -140,9 +140,9 @@ def test_manifest_is_used_when_path_has_nothing(tmp_path):
     这条用**本平台**跑（清单要真的落在磁盘上），路径形状的跨平台部分由
     test_plugin_mirrors_the_locator 与 manifest_path 的用例覆盖。
     """
-    env = {"MAGPLOT_CONFIG_DIR": str(tmp_path)}
+    env = {"TAVOTTO_CONFIG_DIR": str(tmp_path)}
     manifest = locate.manifest_path(environ=env)
-    portable = str(tmp_path / "便携版" / "Magplot" / "magplot-cli")
+    portable = str(tmp_path / "便携版" / "Tavotto" / "tavotto-cli")
     locate.write_manifest({"version": "1", "cli": portable, "desktop": None,
                            "install_dir": None, "source": "app"}, path=manifest)
     got = locate.find_cli(environ=env, isfile=only(portable, manifest),
@@ -155,7 +155,7 @@ def test_known_locations_still_work_when_the_manifest_is_gone(tmp_path):
 
     这就是「不把任何单一机制当唯一依据」的实测——清单、注册表都可能不在。
     """
-    env = {**WIN_ENV, "MAGPLOT_CONFIG_DIR": str(tmp_path)}   # 目录里没有 install.json
+    env = {**WIN_ENV, "TAVOTTO_CONFIG_DIR": str(tmp_path)}   # 目录里没有 install.json
     got = locate.find_cli(system="win32", environ=env, isfile=only(WIN_CLI),
                           which=nothing_on_path, reg_dirs=())
     assert got["cmd"] == [WIN_CLI] and got["source"] == "install"
@@ -171,15 +171,15 @@ def test_current_user_install_is_found_without_a_manifest():
 
 def test_legacy_program_files_install_is_found():
     """老的管理员安装位置仍然认——升级上来的用户 $INSTDIR 就在那儿。"""
-    cli = PF_ROOT + "\\sidecar\\Magplot\\magplot-cli.exe"
-    got = find("win32", WIN_ENV, only(cli, PF_ROOT + "\\Magplot.exe"))
+    cli = PF_ROOT + "\\sidecar\\Tavotto\\tavotto-cli.exe"
+    got = find("win32", WIN_ENV, only(cli, PF_ROOT + "\\Tavotto.exe"))
     assert got["cmd"] == [cli] and got["source"] == "install"
 
 
 def test_paths_with_spaces_and_chinese_survive():
     env = {"LOCALAPPDATA": "D:\\我的 程序\\Local",
            "APPDATA": "D:\\我的 程序\\Roaming"}
-    cli = "D:\\我的 程序\\Local\\Magplot\\sidecar\\Magplot\\magplot-cli.exe"
+    cli = "D:\\我的 程序\\Local\\Tavotto\\sidecar\\Tavotto\\tavotto-cli.exe"
     got = find("win32", env, only(cli))
     assert got["cmd"] == [cli]
     # 交给 subprocess 的是**数组**，路径原样一条，绝不在这里被空格拆开
@@ -187,7 +187,7 @@ def test_paths_with_spaces_and_chinese_survive():
 
 
 def test_macos_app_bundle_is_found():
-    cli = "/Applications/Magplot.app/Contents/Resources/sidecar/Magplot/magplot-cli"
+    cli = "/Applications/Tavotto.app/Contents/Resources/sidecar/Tavotto/tavotto-cli"
     got = find("darwin", {"HOME": "/Users/张三"}, only(cli))
     assert got["cmd"] == [cli]
 
@@ -195,8 +195,8 @@ def test_macos_app_bundle_is_found():
 def test_desktop_without_cli_is_reported_separately():
     """装了桌面版但那一版没带 CLI（旧安装包）。
 
-    这**不是**「没装 Magplot」：用户明明装了，该提示的是升级。笼统报
-    magplot_missing 会让他去装一个已经装着的东西，然后发现还是不行。
+    这**不是**「没装 Tavotto」：用户明明装了，该提示的是升级。笼统报
+    tavotto_missing 会让他去装一个已经装着的东西，然后发现还是不行。
     """
     got = find("win32", WIN_ENV, only(WIN_DESKTOP))
     assert got["cmd"] is None
@@ -207,7 +207,7 @@ def test_nothing_installed_reports_nothing_and_says_where_it_looked():
     got = find("win32", WIN_ENV, only())
     assert got["cmd"] is None and got["desktop"] is None
     # 找过哪儿要说出来：用户装到了别处时，这份清单就是他要看的东西
-    assert any("magplot-cli.exe" in p for p in got["searched"])
+    assert any("tavotto-cli.exe" in p for p in got["searched"])
 
 
 def test_registry_is_a_supplement_not_the_only_way():
@@ -216,8 +216,8 @@ def test_registry_is_a_supplement_not_the_only_way():
     企业策略能锁注册表，所以它既不能是唯一依据（前两条腿仍要管用），
     也不能被忽略（用户装到了非默认位置时只有它知道）。
     """
-    odd = "E:\\Tools\\Magplot"
-    cli = odd + "\\sidecar\\Magplot\\magplot-cli.exe"
+    odd = "E:\\Tools\\Tavotto"
+    cli = odd + "\\sidecar\\Tavotto\\tavotto-cli.exe"
     # 只有注册表知道这个位置
     got = locate.find_cli(system="win32", environ=WIN_ENV, isfile=only(cli),
                           which=nothing_on_path, reg_dirs=(odd,))
@@ -235,7 +235,7 @@ def test_hkcu_lookup_is_silent_off_windows():
 # --------------------------- 我自己装在哪儿 ------------------------------
 def test_describe_self_from_a_frozen_windows_sidecar():
     """sidecar 认得出自己旁边的 CLI 和上两层的壳——安装到哪个盘都不用猜。"""
-    exe = WIN_CURRENT_USER + "\\sidecar\\Magplot\\Magplot.exe"
+    exe = WIN_CURRENT_USER + "\\sidecar\\Tavotto\\Tavotto.exe"
     me = locate.describe_self(executable=exe, frozen=True, system="win32",
                               environ=WIN_ENV, version="1.2.3",
                               isfile=only(WIN_CLI, WIN_DESKTOP))
@@ -245,10 +245,10 @@ def test_describe_self_from_a_frozen_windows_sidecar():
 
 
 def test_describe_self_from_a_frozen_macos_bundle():
-    app = "/Applications/Magplot.app"
-    exe = app + "/Contents/Resources/sidecar/Magplot/Magplot"
-    cli = app + "/Contents/Resources/sidecar/Magplot/magplot-cli"
-    desktop = app + "/Contents/MacOS/Magplot"
+    app = "/Applications/Tavotto.app"
+    exe = app + "/Contents/Resources/sidecar/Tavotto/Tavotto"
+    cli = app + "/Contents/Resources/sidecar/Tavotto/tavotto-cli"
+    desktop = app + "/Contents/MacOS/Tavotto"
     me = locate.describe_self(executable=exe, frozen=True, system="darwin",
                               environ={"HOME": "/Users/x"}, version="1.2.3",
                               isfile=only(cli, desktop))
@@ -257,7 +257,7 @@ def test_describe_self_from_a_frozen_macos_bundle():
 
 
 def test_describe_self_from_the_cli_shim_itself():
-    """被调用的就是 magplot-cli 时，它认自己，不去旁边找另一个。"""
+    """被调用的就是 tavotto-cli 时，它认自己，不去旁边找另一个。"""
     me = locate.describe_self(executable=WIN_CLI, frozen=True, system="win32",
                               environ=WIN_ENV, version="1", isfile=only(WIN_CLI))
     assert me["cli"] == WIN_CLI
@@ -267,12 +267,12 @@ def test_describe_self_from_a_pip_install(tmp_path):
     r"""pip / pipx 装的：CLI 是解释器同级的 console script。
 
     这条**按本平台**跑（要真的建文件），所以目录名与后缀都得跟着平台走：
-    Windows 是 `Scripts\magplot.exe`，POSIX 是 `bin/magplot`。
+    Windows 是 `Scripts\tavotto.exe`，POSIX 是 `bin/tavotto`。
     """
     win = os.name == "nt"
     scripts = tmp_path / ("Scripts" if win else "bin")
     scripts.mkdir()
-    exe = scripts / ("magplot.exe" if win else "magplot")
+    exe = scripts / ("tavotto.exe" if win else "tavotto")
     exe.write_text("#!/bin/sh\n", encoding="utf-8")
     me = locate.describe_self(executable=str(scripts / "python"), frozen=False,
                               prefix=str(tmp_path), environ={"HOME": str(tmp_path)},
@@ -283,13 +283,13 @@ def test_describe_self_from_a_pip_install(tmp_path):
 
 def test_dev_tree_dist_has_no_desktop_shell():
     """`python scripts/build_desktop.py --skip-tauri` 只出 sidecar，没有壳。"""
-    exe = "/repo/dist/Magplot/Magplot"
+    exe = "/repo/dist/Tavotto/Tavotto"
     me = locate.describe_self(executable=exe, frozen=True, system="darwin",
                               environ={"HOME": "/h"}, version="1",
-                              isfile=only("/repo/dist/Magplot/magplot-cli"))
-    assert me["cli"] == "/repo/dist/Magplot/magplot-cli"
+                              isfile=only("/repo/dist/Tavotto/tavotto-cli"))
+    assert me["cli"] == "/repo/dist/Tavotto/tavotto-cli"
     assert me["desktop"] is None
-    assert me["install_dir"] == "/repo/dist/Magplot"
+    assert me["install_dir"] == "/repo/dist/Tavotto"
 
 
 # --------------------------- 与插件那侧同源 ------------------------------
@@ -315,7 +315,7 @@ MIRROR_ENVS = [
 def test_plugin_mirrors_the_locator():
     """插件那份路径规则与 engine/locate.py 逐条相等。
 
-    插件跑在用户机器上，import 不到 magplot——这份镜像无法避免。能避免的是
+    插件跑在用户机器上，import 不到 tavotto——这份镜像无法避免。能避免的是
     「两侧悄悄漂开」：改一边不同步另一边，表现是某类安装突然发现不了，
     而两边的源码各看各的都很合理。所以在一整张环境矩阵上比，不比源码文本。
     """
@@ -332,7 +332,7 @@ def test_plugin_mirrors_the_locator():
         assert plugin.install_roots(system, env) == roots, (system, env)
         # HKCU 问出来的位置（第 5 条腿）两侧的排法也必须一样：只有一侧有的话，
         # 「装在非默认目录 + 没有清单」的机器上会出现两个不同的答案
-        extra = ("E:\\Tools\\Magplot", "  ", roots[0] if roots else "X")
+        extra = ("E:\\Tools\\Tavotto", "  ", roots[0] if roots else "X")
         assert plugin.install_roots(system, env, extra) == \
             locate.install_roots(system=system, environ=env, extra=extra), (system, env)
         assert plugin.manifest_path(system, env) == \
@@ -344,8 +344,8 @@ def test_plugin_mirrors_the_locator():
                 locate.desktop_exe_for(root, system=system), (system, root)
 
 
-REG_ROOT = "E:\\Tools\\Magplot"
-REG_CLI = REG_ROOT + "\\sidecar\\Magplot\\magplot-cli.exe"
+REG_ROOT = "E:\\Tools\\Tavotto"
+REG_CLI = REG_ROOT + "\\sidecar\\Tavotto\\tavotto-cli.exe"
 
 
 @pytest.mark.parametrize("present,reg,expect_source", [
@@ -366,7 +366,7 @@ def test_plugin_and_locator_agree_on_the_same_filesystem(present, reg, expect_so
     isfile = only(*present)
     mine = locate.find_cli(system="win32", environ=WIN_ENV, isfile=isfile,
                            which=nothing_on_path, reg_dirs=reg)
-    theirs = plugin.find_magplot("win32", WIN_ENV, isfile, nothing_on_path,
+    theirs = plugin.find_tavotto("win32", WIN_ENV, isfile, nothing_on_path,
                                  reg_dirs=reg)
     for key in ("cmd", "source", "desktop"):
         assert mine[key] == theirs[key], key
@@ -381,7 +381,7 @@ def test_locator_never_instantiates_a_foreign_pathlib():
     UnsupportedOperation——上面那一整批 win32 用例会连跑都跑不起来。
     （同 engine/runtime.py 的同名纪律。）
     """
-    for path in (ROOT / "src" / "magplot" / "engine" / "locate.py", PLUGIN_HANDOFF):
+    for path in (ROOT / "src" / "tavotto" / "engine" / "locate.py", PLUGIN_HANDOFF):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
@@ -390,30 +390,30 @@ def test_locator_never_instantiates_a_foreign_pathlib():
 
 
 def test_spec_ships_a_console_cli_next_to_the_gui_binary():
-    """`packaging/magplot.spec` 必须出第二个 console 版 exe，名字对得上。
+    """`packaging/tavotto.spec` 必须出第二个 console 版 exe，名字对得上。
 
     少了它，桌面安装包里就只有不能当 CLI 用的 GUI 可执行文件——功能一样不缺，
-    只有「Codex 插件找不到 Magplot」这一种表现，而那要等用户装完才发现。
+    只有「Codex 插件找不到 Tavotto」这一种表现，而那要等用户装完才发现。
     """
-    spec = (ROOT / "packaging" / "magplot.spec").read_text(encoding="utf-8")
-    assert 'name="magplot-cli"' in spec
+    spec = (ROOT / "packaging" / "tavotto.spec").read_text(encoding="utf-8")
+    assert 'name="tavotto-cli"' in spec
     assert "console=True" in spec
     # 两个 exe 必须进同一个 COLLECT：分开打就是两份 _internal，包大一倍
     collect = spec.split("coll = COLLECT(")[1].split(")")[0]
     assert "exe," in collect and "cli," in collect
     # 名字是发现链的一部分
-    assert locate.CLI_NAME.replace(".exe", "") == "magplot-cli"
+    assert locate.CLI_NAME.replace(".exe", "") == "tavotto-cli"
 
 
 def test_frozen_entry_dispatches_subcommands_before_importing_flask():
-    """`magplot-cli open …` 不该为一次交接付整个 Flask 的冷启动。"""
+    """`tavotto-cli open …` 不该为一次交接付整个 Flask 的冷启动。"""
     entry = (ROOT / "packaging" / "entry.py").read_text(encoding="utf-8")
-    before, after = entry.split("from magplot.app import main as app_main")
+    before, after = entry.split("from tavotto.app import main as app_main")
     assert "engine_cli.dispatch" in before, "子命令分派必须在 import app 之前"
-    assert "from magplot.engine import cli" in before
+    assert "from tavotto.engine import cli" in before
 
 
-# ============================ `magplot doctor` ===========================
+# ============================ `tavotto doctor` ===========================
 # 装完之后的**无 GUI 健康检查**，安装器跑的就是它。这几条起真进程、读真 JSON
 # ——不是对源码的断言。
 
@@ -421,9 +421,9 @@ import subprocess                                                     # noqa: E4
 
 
 def _doctor(tmp_path, *args, env=None):
-    environ = {**os.environ, "MAGPLOT_CONFIG_DIR": str(tmp_path),
+    environ = {**os.environ, "TAVOTTO_CONFIG_DIR": str(tmp_path),
                "PYTHONPATH": str(ROOT / "src"), **(env or {})}
-    proc = subprocess.run([sys.executable, "-m", "magplot", "doctor", *args],
+    proc = subprocess.run([sys.executable, "-m", "tavotto", "doctor", *args],
                           capture_output=True, text=True, encoding="utf-8",
                           errors="replace", env=environ)
     return proc
@@ -434,7 +434,7 @@ def test_doctor_json_is_machine_readable_and_starts_nothing(tmp_path):
     assert proc.returncode == 0, proc.stderr
     out = json.loads(proc.stdout.strip().splitlines()[-1])
     assert out["ok"] is True
-    assert out["product"] == "Magplot"
+    assert out["product"] == "Tavotto"
     assert out["protocol"] == locate.PROTOCOL_VERSION
     assert out["manifest"]["path"].endswith("install.json")
     # 只体检不写盘
@@ -451,7 +451,7 @@ def test_doctor_writes_the_manifest_for_the_installer(tmp_path):
     assert out["manifest"]["written"] is True
     written = json.loads((tmp_path / "install.json").read_text(encoding="utf-8"))
     assert written["protocol"] == locate.PROTOCOL_VERSION
-    assert written["product"] == "Magplot"
+    assert written["product"] == "Tavotto"
     assert written["cli"] == out["cli"]
 
 
@@ -475,14 +475,14 @@ def test_doctor_reads_back_what_it_wrote(tmp_path):
 def test_doctor_speaks_human_without_json(tmp_path):
     proc = _doctor(tmp_path)
     assert proc.returncode == 0, proc.stderr
-    assert "Magplot" in proc.stdout and "交接协议" in proc.stdout
+    assert "Tavotto" in proc.stdout and "交接协议" in proc.stdout
 
 
 def test_doctor_rejects_contradictory_flags(tmp_path):
     """参数拼错了也要回 JSON——`--json` 给了就一律给 JSON。
 
     这条最该被程序读懂：它恰恰是调用方自己把参数拼错了。只往 stderr 写一句
-    中文，对面只能去匹配字符串（与 `magplot open` 的 bad_launch_mode 同一条纪律）。
+    中文，对面只能去匹配字符串（与 `tavotto open` 的 bad_launch_mode 同一条纪律）。
     """
     proc = _doctor(tmp_path, "--json", "--write-manifest", "--remove-manifest")
     assert proc.returncode == 2
@@ -506,7 +506,7 @@ def test_every_doctor_json_failure_has_a_code():
 
     新增一条早退分支时最容易漏掉的就是这件事——`open` 那边已经栽过一次。
     """
-    src = (ROOT / "src" / "magplot" / "engine" / "cli.py").read_text(encoding="utf-8")
+    src = (ROOT / "src" / "tavotto" / "engine" / "cli.py").read_text(encoding="utf-8")
     tree = ast.parse(src)
     dumps = [n for n in ast.walk(tree)
              if isinstance(n, ast.Call)
@@ -524,20 +524,20 @@ def test_every_doctor_json_failure_has_a_code():
 def test_open_and_doctor_are_dispatched_before_argparse():
     """两条子命令都必须在主入口的 argparse 之前拦下来。
 
-    主入口是纯 flag 形态（`magplot --figures …`），改成 subparsers 会把既有
+    主入口是纯 flag 形态（`tavotto --figures …`），改成 subparsers 会把既有
     命令行整个换掉；而 argparse 见到位置参数 `doctor` 只会报 unrecognized。
     """
-    from magplot.engine import cli as engine_cli
+    from tavotto.engine import cli as engine_cli
     assert set(engine_cli.COMMANDS) == {"open", "doctor"}
     assert engine_cli.dispatch([]) is None
     assert engine_cli.dispatch(["--figures", "/tmp"]) is None
-    app_src = (ROOT / "src" / "magplot" / "app.py").read_text(encoding="utf-8")
+    app_src = (ROOT / "src" / "tavotto" / "app.py").read_text(encoding="utf-8")
     body = app_src.split("def main():")[1]
     assert body.index("engine_cli.dispatch") < body.index("argparse.ArgumentParser")
 
 
 # --------------------- doctor 的失败也要有稳定 code ----------------------
-# 与 `magplot open` 同一条纪律：文案随时可改，code 不行。只给一句中文的话，
+# 与 `tavotto open` 同一条纪律：文案随时可改，code 不行。只给一句中文的话，
 # 调用方要区分「清单写不出来」和「这个包漏打了 CLI」就只能去匹配字符串——
 # 而这两件事的处置完全不同：前者还能用，后者得重装。
 
@@ -567,7 +567,7 @@ def test_doctor_reports_no_code_when_healthy(tmp_path):
 
 def test_every_doctor_problem_is_a_coded_dict():
     """新增 problem 时不许再往里塞裸字符串。"""
-    src = (ROOT / "src" / "magplot" / "engine" / "cli.py").read_text(encoding="utf-8")
+    src = (ROOT / "src" / "tavotto" / "engine" / "cli.py").read_text(encoding="utf-8")
     tree = ast.parse(src)
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and getattr(node.func, "attr", "") == "append" \
@@ -634,20 +634,20 @@ def test_nightly_shell_probe_dumps_the_log_before_it_cleans_up():
 
 # ------------------- 刷新清单只补充，不抹掉（Codex #6） -------------------
 def test_refresh_keeps_a_desktop_path_it_cannot_rediscover(tmp_path, monkeypatch):
-    """pip 装的 magplot 跑一次，不许把桌面版记下的 desktop 抹成空。
+    """pip 装的 tavotto 跑一次，不许把桌面版记下的 desktop 抹成空。
 
-    同一台机器上可以既有装在非惯例位置的桌面版、又有 pip 装的 magplot。
+    同一台机器上可以既有装在非惯例位置的桌面版、又有 pip 装的 tavotto。
     pip 那次是非冻结进程，`describe_self()` 只去惯例位置找壳、找不到就是 None；
-    无条件写下去 = 桌面版那条仍然有效的路径没了，此后 `magplot open` 再也
+    无条件写下去 = 桌面版那条仍然有效的路径没了，此后 `tavotto open` 再也
     定位不到那个窗口，**静默**退回浏览器模式。
     """
-    monkeypatch.setenv("MAGPLOT_CONFIG_DIR", str(tmp_path))
-    moved = tmp_path / "Tools" / "Magplot.app" / "Contents" / "MacOS" / "Magplot"
+    monkeypatch.setenv("TAVOTTO_CONFIG_DIR", str(tmp_path))
+    moved = tmp_path / "Tools" / "Tavotto.app" / "Contents" / "MacOS" / "Tavotto"
     moved.parent.mkdir(parents=True)
     moved.write_text("gui", encoding="utf-8")
     # 桌面版（冻结）先写下它在哪
     locate.write_manifest({"version": "1", "cli": None, "desktop": str(moved),
-                           "install_dir": str(tmp_path / "Tools" / "Magplot.app"),
+                           "install_dir": str(tmp_path / "Tools" / "Tavotto.app"),
                            "source": "app"})
 
     # pip 装的那份跑一次。用 system="linux" 表示「惯例位置里没有壳」——那儿
@@ -662,9 +662,9 @@ def test_refresh_keeps_a_desktop_path_it_cannot_rediscover(tmp_path, monkeypatch
 
 def test_refresh_drops_a_desktop_path_that_no_longer_exists(tmp_path, monkeypatch):
     """沿用的前提是它**还在**——read_manifest 已经核实过，别把死路径留下来。"""
-    monkeypatch.setenv("MAGPLOT_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("TAVOTTO_CONFIG_DIR", str(tmp_path))
     locate.write_manifest({"version": "1", "cli": None,
-                           "desktop": str(tmp_path / "gone" / "Magplot"),
+                           "desktop": str(tmp_path / "gone" / "Tavotto"),
                            "install_dir": None, "source": "app"})
     locate.refresh_manifest(frozen=False, system="linux", prefix=str(tmp_path),
                             environ={"HOME": str(tmp_path)}, version="1")
@@ -673,8 +673,8 @@ def test_refresh_drops_a_desktop_path_that_no_longer_exists(tmp_path, monkeypatc
 
 def test_refresh_still_updates_what_it_does_know(tmp_path, monkeypatch):
     """「只补充不抹掉」不等于「不再更新」：问得到的照旧覆盖。"""
-    monkeypatch.setenv("MAGPLOT_CONFIG_DIR", str(tmp_path))
-    old_cli = tmp_path / "old" / "magplot"
+    monkeypatch.setenv("TAVOTTO_CONFIG_DIR", str(tmp_path))
+    old_cli = tmp_path / "old" / "tavotto"
     old_cli.parent.mkdir()
     old_cli.write_text("x", encoding="utf-8")
     locate.write_manifest({"version": "0.0.1", "cli": str(old_cli), "desktop": None,
@@ -682,7 +682,7 @@ def test_refresh_still_updates_what_it_does_know(tmp_path, monkeypatch):
 
     scripts = tmp_path / ("Scripts" if os.name == "nt" else "bin")
     scripts.mkdir()
-    new_cli = scripts / ("magplot.exe" if os.name == "nt" else "magplot")
+    new_cli = scripts / ("tavotto.exe" if os.name == "nt" else "tavotto")
     new_cli.write_text("x", encoding="utf-8")
     locate.refresh_manifest(frozen=False, prefix=str(tmp_path),
                             environ={"HOME": str(tmp_path)}, version="9.9.9")
@@ -714,15 +714,15 @@ sys.meta_path.insert(0, _Block())
 
 
 def test_installed_entry_point_dispatches_before_importing_the_app():
-    """pip / pipx 装出来的 `magplot` 指向轻量入口，不是 `magplot.app:main`。
+    """pip / pipx 装出来的 `tavotto` 指向轻量入口，不是 `tavotto.app:main`。
 
     冻结产物（`packaging/entry.py`）一直是先分派后 import，pip 这条却不是——
-    同一条命令在两种安装形态下行为不同：插件的交接连着调两次 `magplot open`，
+    同一条命令在两种安装形态下行为不同：插件的交接连着调两次 `tavotto open`，
     每次都白付一整个 Flask + PyMuPDF 的冷启动。
     """
     text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert 'magplot = "magplot.cli_entry:main"' in text
-    src = (ROOT / "src" / "magplot" / "cli_entry.py").read_text(encoding="utf-8")
+    assert 'tavotto = "tavotto.cli_entry:main"' in text
+    src = (ROOT / "src" / "tavotto" / "cli_entry.py").read_text(encoding="utf-8")
     tree = ast.parse(src)
     top = [n for n in tree.body if isinstance(n, (ast.Import, ast.ImportFrom))]
     for node in top:
@@ -746,12 +746,12 @@ def test_subcommands_run_without_flask_or_pymupdf(tmp_path, argv):
     import subprocess
     env = {**os.environ,
            "PYTHONPATH": str(ROOT / "src"),
-           "MAGPLOT_CONFIG_DIR": str(tmp_path / "cfg"),
-           "MAGPLOT_DATA_DIR": str(tmp_path / "data")}
+           "TAVOTTO_CONFIG_DIR": str(tmp_path / "cfg"),
+           "TAVOTTO_DATA_DIR": str(tmp_path / "data")}
     code = _BLOCK_UI_IMPORTS + (
         "import sys\n"
-        f"sys.argv = ['magplot', {', '.join(repr(a) for a in argv)}]\n"
-        "from magplot.cli_entry import main\n"
+        f"sys.argv = ['tavotto', {', '.join(repr(a) for a in argv)}]\n"
+        "from tavotto.cli_entry import main\n"
         "try:\n"
         "    main()\n"
         "except SystemExit as e:\n"

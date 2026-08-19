@@ -1,8 +1,8 @@
 """缓存治理：渲染缓存预算、备份保留、AI 快照保留。"""
 import os
 
-from magplot import app as m
-from magplot.engine import ai_bridge
+from tavotto import app as m
+from tavotto.engine import ai_bridge
 
 
 def _aged(path, size: int, order: int) -> None:

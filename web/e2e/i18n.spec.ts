@@ -54,7 +54,7 @@ const LOCALES = [
   },
 ] as const
 
-const LOCALE_KEY = 'magplot.locale'
+const LOCALE_KEY = 'tavotto.locale'
 
 for (const L of LOCALES) {
   test.describe(`界面语言 ${L.tag}`, () => {
@@ -204,7 +204,7 @@ test.describe('英文界面的排版', () => {
    */
   test('超长项目名不会把顶栏撑开', async ({ app, page }) => {
     const longName = 'a_project_folder_name_nobody_would_ever_shorten_for_you_2026'
-    const dir = path.join(os.tmpdir(), `magplot-e2e-long-${process.pid}`, longName)
+    const dir = path.join(os.tmpdir(), `tavotto-e2e-long-${process.pid}`, longName)
     mkdirSync(dir, { recursive: true })
     for (const f of readdirSync(path.join(REPO, 'examples', 'figures'))) {
       const src = path.join(REPO, 'examples', 'figures', f)

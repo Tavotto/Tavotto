@@ -4,8 +4,8 @@ import json
 import pytest
 from werkzeug.exceptions import HTTPException
 
-from magplot import app as m
-from magplot.pdfbackend import pymupdf_backend as pb
+from tavotto import app as m
+from tavotto.pdfbackend import pymupdf_backend as pb
 
 
 @pytest.fixture
@@ -64,7 +64,7 @@ def _make_project(tmp_path, name: str, stems: list[str]):
     figs = tmp_path / name
     figs.mkdir(parents=True, exist_ok=True)
     (figs / "fig.py").write_text("def main():\n    pass\n", encoding="utf-8")
-    (figs / "mm_registry.json").write_text(json.dumps({"version": 1, "scripts": {
+    (figs / "tavotto_registry.json").write_text(json.dumps({"version": 1, "scripts": {
         "fig.py": {"entry": "main", "cost": "light", "notes": "", "stems": stems},
     }}), encoding="utf-8")
     m.open_project(str(figs))
@@ -78,7 +78,7 @@ def baked(tmp_path, monkeypatch):
     旧的全局 baked_overrides.json 只作为一次性迁移源，测试里也指到临时文件，
     绝不碰真实数据目录。
     """
-    from magplot.engine import pool as engine_pool
+    from tavotto.engine import pool as engine_pool
     m.reset_projects()
     monkeypatch.setattr(m, "BAKED_DIR", tmp_path / "_baked")
     monkeypatch.setattr(m, "BAKED_PATH", tmp_path / "_legacy_baked.json")
@@ -196,23 +196,23 @@ def test_hex2rgb():
     assert pb.hex2rgb(None) == (0.0, 0.0, 0.0)
 
 
-def test_magplotfile_store(figs, monkeypatch):
-    """项目内 magplotfile/ 统一收纳（2026-08-17 产品决定）：
+def test_tavottofile_store(figs, monkeypatch):
+    """项目内 tavottofile/ 统一收纳（2026-08-17 产品决定）：
 
-    - 命名画布保存进 `magplotfile/`，旧位置（项目 canvases/、数据目录
+    - 命名画布保存进 `tavottofile/`，旧位置（项目 canvases/、数据目录
       layouts/）只读兼容、合并列出；
-    - 布局版本历史写进 `magplotfile/versions/`，数据目录旧历史仍可见；
-    - 素材扫描剪掉整个 magplotfile/——导出的成图绝不能混进素材面板。
+    - 布局版本历史写进 `tavottofile/versions/`，数据目录旧历史仍可见；
+    - 素材扫描剪掉整个 tavottofile/——导出的成图绝不能混进素材面板。
     """
     monkeypatch.setattr(m, "LAYOUT_DIR", figs / "_data_layouts")
     monkeypatch.setattr(m, "VERSIONS_DIR", figs / "_data_layouts" / "_versions")
     m.app.config["TESTING"] = True
     client = m.app.test_client()
 
-    # 保存画布 → 项目 magplotfile/
+    # 保存画布 → 项目 tavottofile/
     r = client.post("/api/layouts/主图", json={"schema": 2})
     assert r.status_code == 200
-    assert (figs / "magplotfile" / "主图.json").is_file()
+    assert (figs / "tavottofile" / "主图.json").is_file()
 
     # 旧位置只读兼容：canvases/ 与数据目录 layouts/ 都列得出、读得到
     (figs / "canvases").mkdir()
@@ -223,11 +223,11 @@ def test_magplotfile_store(figs, monkeypatch):
     assert {"主图", "旧画布", "更早"} <= set(names)
     assert client.get("/api/layouts/旧画布").status_code == 200
 
-    # 版本历史 → magplotfile/versions/
+    # 版本历史 → tavottofile/versions/
     ok = client.post("/api/versions/doc9", json={
         "doc": {"schema": 2, "page": {"w": 10, "h": 10}, "objects": [], "guides": []}})
     assert ok.status_code == 200, ok.get_json()
-    assert (figs / "magplotfile" / "versions" / "doc9.json").is_file()
+    assert (figs / "tavottofile" / "versions" / "doc9.json").is_file()
 
     # 数据目录里升级前的历史只读兜底
     m.VERSIONS_DIR.mkdir(parents=True, exist_ok=True)
@@ -237,9 +237,9 @@ def test_magplotfile_store(figs, monkeypatch):
     got = client.get("/api/versions/docold").get_json()["versions"]
     assert [v["id"] for v in got] == ["v1"]
 
-    # 素材扫描剪掉 magplotfile/：同一份真 PDF，根目录的收录、export/ 里的不收
+    # 素材扫描剪掉 tavottofile/：同一份真 PDF，根目录的收录、export/ 里的不收
     import pymupdf
-    exp = figs / "magplotfile" / "export"
+    exp = figs / "tavottofile" / "export"
     exp.mkdir(parents=True, exist_ok=True)
     doc = pymupdf.open()
     doc.new_page(width=100, height=50)
@@ -247,5 +247,5 @@ def test_magplotfile_store(figs, monkeypatch):
     doc.save(exp / "out.pdf")
     doc.close()
     ids = {p["id"] for p in client.get("/api/panels").get_json()["panels"]}
-    assert not any("magplotfile" in i for i in ids), ids
+    assert not any("tavottofile" in i for i in ids), ids
     assert "real.pdf" in ids

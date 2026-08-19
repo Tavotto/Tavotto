@@ -27,16 +27,16 @@
 渲染引擎的本体是「在常驻 matplotlib Figure 上做 override」，必须活在 Python
 里；PyMuPDF 合成、AI 桥、注册表也全是既有 Python 资产。桌面化的目标是换壳，
 不是重写引擎。前端继续由 sidecar 的 Flask 提供（`http://127.0.0.1:<port>`），
-**不走 Tauri 的 frontendDist**——保证浏览器模式（`magplot` CLI/PyPI 安装）与
+**不走 Tauri 的 frontendDist**——保证浏览器模式（`tavotto` CLI/PyPI 安装）与
 桌面模式跑的是同一份界面、同一套 API 语义。
 
 ## 进程模型与生命周期
 
 ```text
-Tauri 壳（Magplot.app / Magplot.exe）
+Tauri 壳（Tavotto.app / Tavotto.exe）
   │ spawn，stdin 管道保持打开
   ▼
-magplot --desktop-sidecar（PyInstaller onedir，无 matplotlib）
+tavotto --desktop-sidecar（PyInstaller onedir，无 matplotlib）
   │ 现有 worker 协议（pool.py）
   ▼
 matplotlib worker（用户/内置 Python，独立子进程）
@@ -45,7 +45,7 @@ matplotlib worker（用户/内置 Python，独立子进程）
 - **启动**：壳生成 128-bit 随机 nonce → spawn sidecar（`--desktop-sidecar`）→
   **stdin 首行** JSON `{nonce, parent_pid}` → sidecar 绑 `127.0.0.1:0`（端口 0 =
   OS 分配，天然无「先查再绑」竞态，5089 被占也无感）→ 原子写握手文件
-  （`MAGPLOT_DESKTOP_HANDSHAKE` 路径，内容仅 ready/port/pid 或 error，**无密钥**）
+  （`TAVOTTO_DESKTOP_HANDSHAKE` 路径，内容仅 ready/port/pid 或 error，**无密钥**）
   → 壳读到 ready 后把窗口从 splash 导航到 `http://127.0.0.1:<port>/#dnonce=<nonce>`。
   失败则导航到内置 error.html（含日志路径）。
 - **退出（正常）**：窗口关闭 / ⌘Q → Tauri `RunEvent::Exit` → 关 sidecar stdin →
@@ -66,7 +66,7 @@ matplotlib worker（用户/内置 Python，独立子进程）
 （drive-by localhost 攻击、DNS rebinding）。
 
 1. nonce 经 **stdin** 传入而不是环境变量——macOS/Linux 上同用户进程可读他进程
-   env（`ps eww`），管道不可见。`MAGPLOT_DESKTOP_NONCE` env 仅作调试回退，
+   env（`ps eww`），管道不可见。`TAVOTTO_DESKTOP_NONCE` env 仅作调试回退，
    读到立即 `os.environ.pop`（不让 worker/AI 子进程继承）。任务书原型写的是
    env 传递；实现改为 stdin-first 正是为满足其中「不暴露给其他进程」这条更硬
    的约束。
@@ -78,12 +78,12 @@ matplotlib worker（用户/内置 Python，独立子进程）
 4. 此后 `/api/*`、`/exports/*`、`/api/render`、SSE 一律凭 cookie（401 否则）；
    `/`、`/assets/*`、bootstrap 本身公开（不含用户数据，页面得先加载起来）。
    同时校验 Host（仅 `127.0.0.1:<port>` 一种写法）与 Origin。
-5. **浏览器/CLI 模式完全不变**：钩子在 `MAGPLOT_DESKTOP_STATE` 缺席时直接放行，
+5. **浏览器/CLI 模式完全不变**：钩子在 `TAVOTTO_DESKTOP_STATE` 缺席时直接放行，
    bootstrap 端点 404。
 
 ## 桌面/浏览器模式边界
 
-| | 浏览器模式（`magplot`） | 桌面模式（`--desktop-sidecar`） |
+| | 浏览器模式（`tavotto`） | 桌面模式（`--desktop-sidecar`） |
 |---|---|---|
 | 端口 | 5089 顺延探测 | `127.0.0.1:0` OS 分配 |
 | server | `Flask.app.run` | werkzeug `make_server`（可优雅 shutdown） |
@@ -112,14 +112,14 @@ matplotlib worker（用户/内置 Python，独立子进程）
 ## 打包（PyInstaller onedir，不用 onefile）
 
 onefile 每次启动要把整个运行时解压到临时目录——科学栈体量下是数秒到数十秒的
-冷启动税，且杀软最爱盯着它。保留 onedir（`packaging/magplot.spec` 原封不动），
-Tauri 把整个 `dist/Magplot/` 目录作为资源打进壳
-（`bundle.resources: {"../dist/Magplot": "sidecar/Magplot"}`）。既有边界全部
+冷启动税，且杀软最爱盯着它。保留 onedir（`packaging/tavotto.spec` 原封不动），
+Tauri 把整个 `dist/Tavotto/` 目录作为资源打进壳
+（`bundle.resources: {"../dist/Tavotto": "sidecar/Tavotto"}`）。既有边界全部
 维持：sidecar 不含 matplotlib；`worker.py`/`manifest.py`/`overrides.py` 仍是
 磁盘上的真 .py（外部解释器要按路径读）；wheel/sdist 不含 `src-tauri/`（hatchling
 白名单本来就不收）；可写数据一律 `engine/config.data_dir()`。
 
-sidecar 可执行解析顺序（`src-tauri/src/sidecar.rs`）：`MAGPLOT_SIDECAR_EXE`
+sidecar 可执行解析顺序（`src-tauri/src/sidecar.rs`）：`TAVOTTO_SIDECAR_EXE`
 （开发/排障）→ 打包资源 → 源码树 `.venv`（向上找 `pyproject.toml`）。
 
 构建入口：`python scripts/build_desktop.py`（版本同步 → 前端 → PyInstaller →
@@ -170,7 +170,7 @@ Tauri bundler）。
   之后合成。要点见下节。
 - 画布级 ⌘C/⌘V 在桌面菜单预定义角色下的行为需人工回归一轮（文本框内已保证）；
   发现异常的回退方案是把剪贴板项换成自定义转发（同撤销/重做路径）。
-- 双击 .magplot 项目包 / 文件关联未做。
+- 双击 .tavotto 项目包 / 文件关联未做。
 
 ## 应用内更新（2026-08-18）
 

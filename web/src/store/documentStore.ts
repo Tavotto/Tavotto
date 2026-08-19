@@ -32,7 +32,7 @@ export interface RecentDoc {
  * label 是**描述符**而不是翻译好的字符串：撤销栈活得比一次渲染长，存
  * "删除 3 个对象" 之后用户切到英文，历史面板与撤销 toast 里还是中文，而且
  * 再也换不回来（参数已经被拼死在字符串里）。
- * 这是运行时状态，**不进 .magplot 文档**——文档 schema 一个字节没动。
+ * 这是运行时状态，**不进 .tavotto 文档**——文档 schema 一个字节没动。
  */
 export interface HistoryEntry {
   label: UiMessage
@@ -528,25 +528,23 @@ function nextCanvasName(canvases: CanvasData[]): string {
 /* --------------------------- 本机自动保存 --------------------------------- */
 
 /**
- * 自动保存按文档隔离：一个文档一个槽位 `mm2.autosave.<documentId>`，
- * 另有一份轻量索引 `mm2.docIndex` 供「最近文档」列表使用（列菜单时不必反序列化
- * 每个完整文档）。`mm2.currentDoc` 记住刷新后该恢复哪一个。
+ * 自动保存按文档隔离：一个文档一个槽位 `tavotto.autosave.<documentId>`，
+ * 另有一份轻量索引 `tavotto.docIndex` 供「最近文档」列表使用（列菜单时不必反序列化
+ * 每个完整文档）。`tavotto.currentDoc` 记住刷新后该恢复哪一个。
  *
  * 注意：本机自动保存与「布局文件」是两件事——前者是浏览器里的工作副本，
  * 后者是写到服务器 layouts 的命名文件。保存布局文件不会改变文档身份。
  */
-const SLOT_PREFIX = 'magplot.autosave.'
-const INDEX_KEY = 'magplot.docIndex'
-const CURRENT_KEY = 'magplot.currentDoc'
-/** 更老的单槽自动保存（Magic Matplot 时代），只读不写 */
-const LEGACY_KEY = 'mm2.autosave'
+const SLOT_PREFIX = 'tavotto.autosave.'
+const INDEX_KEY = 'tavotto.docIndex'
+const CURRENT_KEY = 'tavotto.currentDoc'
 const MAX_SLOTS = 12
 const DEBOUNCE_MS = 1000
 
 export type FlushResult = 'saved' | 'empty' | 'error'
 
 const slotKey = (id: string) => SLOT_PREFIX + id
-const TABS_PREFIX = 'magplot.tabs.'
+const TABS_PREFIX = 'tavotto.tabs.'
 
 /** 打开标签的本机持久化：{ open: canvasId[], active }，按 documentId 一档 */
 function persistTabs(): void {
@@ -681,7 +679,7 @@ function scheduleDiskWrite(id: string, pd: ProjectDocument): void {
       // 磁盘写失败（含被 409 挡下的过期写）：本机副本仍在（flush 时已写，
       // 这里绝不清），提示由监听方处理。stale 与 io 的文案不一样，带上原因。
       window.dispatchEvent(
-        new CustomEvent('magplot:autosave-error', {
+        new CustomEvent('tavotto:autosave-error', {
           detail: { id, reason: isStaleWrite(err) ? 'stale' : 'io' },
         }),
       )
@@ -768,38 +766,13 @@ export async function readAutosaveDoc(id: string): Promise<ProjectDocument | nul
   return winner
 }
 
-/** 老版本只有一个固定槽位 mm2.autosave；搬进新结构后删掉，只做一次。 */
-function migrateLegacySlot(): void {
-  try {
-    const raw = localStorage.getItem(LEGACY_KEY)
-    if (!raw) return
-    const doc = JSON.parse(raw)
-    if (!readIndex().length && doc?.schema === 2 && Array.isArray(doc.objects)) {
-      const id = newId('d')
-      localStorage.setItem(slotKey(id), raw)
-      writeIndex([
-        {
-          id,
-          name: typeof doc.name === 'string' ? doc.name : 'fig_layout',
-          savedAt: Date.now(),
-          objects: doc.objects.length,
-        },
-      ])
-      writeCurrentId(id)
-    }
-    localStorage.removeItem(LEGACY_KEY)
-  } catch {
-    /* 迁移失败就当没有历史自动保存 */
-  }
-}
-
 /** 启动时恢复上次的当前文档（含旧单槽自动保存的一次性迁移） */
 /**
  * 崩溃逃生开关：界面因某个文档反复崩溃时，「刷新」只会把同一份文档再读回来，
  * 用户就此卡死。ErrorBoundary 置上这个一次性标记后刷新 = 这次开空白文档；
  * 磁盘/localStorage 上的文档一个都不删，仍可从「最近文档」取回。
  */
-const SKIP_RESTORE_KEY = 'magplot:skip-restore'
+const SKIP_RESTORE_KEY = 'tavotto:skip-restore'
 
 export function requestBlankStart(): void {
   try {
@@ -820,7 +793,6 @@ function consumeSkipRestore(): boolean {
 }
 
 export async function restoreSession(): Promise<boolean> {
-  migrateLegacySlot()
   const index = readIndex()
   useDocumentStore.setState({ recentDocs: index })
   if (consumeSkipRestore()) return false

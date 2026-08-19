@@ -1,6 +1,6 @@
 //! supervisor 的行为验收：队列合并、有界拒绝、超时强杀、代序、取消、淘汰。
 //!
-//! 驱动的是**真的 magplot-workerd 二进制**（`CARGO_BIN_EXE_*`），worker 那一端
+//! 驱动的是**真的 tavotto-workerd 二进制**（`CARGO_BIN_EXE_*`），worker 那一端
 //! 换成 `tests/fake_worker.py`（说 v1 协议的小脚本）。这样每条用例验的都是
 //! supervisor 自己那部分，不掺 matplotlib 的启动时间与随机慢。
 
@@ -36,12 +36,12 @@ struct Workerd {
 
 impl Workerd {
     fn start() -> Workerd {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_magplot-workerd"))
+        let mut child = Command::new(env!("CARGO_BIN_EXE_tavotto-workerd"))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .spawn()
-            .expect("起 magplot-workerd");
+            .expect("起 tavotto-workerd");
         let stdin = child.stdin.take().unwrap();
         let stdout = child.stdout.take().unwrap();
         let inbox = Arc::new((Mutex::new(Vec::new()), Condvar::new()));
@@ -165,7 +165,7 @@ impl Drop for Workerd {
 }
 
 fn trace_path(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join("magplot-workerd-tests");
+    let dir = std::env::temp_dir().join("tavotto-workerd-tests");
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join(format!("{name}-{}.jsonl", std::process::id()));
     let _ = std::fs::remove_file(&path);

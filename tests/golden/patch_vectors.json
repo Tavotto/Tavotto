@@ -1,8 +1,8 @@
 {
   "_README": [
-    "Magplot worker 协议 v1 —— patch 规范化 golden vectors。",
-    "唯一权威实现: src/magplot/engine/patchspec.py；契约: docs/adr/0003-worker-protocol-v1.md。",
-    "Rust 实现（magplot-workerd）必须逐字节复现 canonical_json 与 hash——",
+    "Tavotto worker 协议 v1 —— patch 规范化 golden vectors。",
+    "唯一权威实现: src/tavotto/engine/patchspec.py；契约: docs/adr/0003-worker-protocol-v1.md。",
+    "Rust 实现（tavotto-workerd）必须逐字节复现 canonical_json 与 hash——",
     "改动任何一侧都必须同步另一侧并更新本文件，否则两边算出的 patch 身份会静默分叉。",
     "字段: input=原始 patch 列表, canonical=规范化结果, dropped=被剔除条目的原因,",
     "canonical_json=确定性序列化(UTF-8), hash=sha256: 前缀的十六进制摘要。"

@@ -10,7 +10,7 @@ import { ENVIRONMENT_CODES } from '@/lib/api'
 
 const BUNDLED = {
   ok: true,
-  python: 'C:\\Program Files\\Magplot\\_internal\\runtime\\python.exe',
+  python: 'C:\\Program Files\\Tavotto\\_internal\\runtime\\python.exe',
   source: 'bundled',
   matplotlib: '3.11.1',
   managed: false,

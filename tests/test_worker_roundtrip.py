@@ -18,7 +18,7 @@ from pathlib import Path
 import pymupdf
 import pytest
 
-from magplot.engine import patchspec, pool
+from tavotto.engine import patchspec, pool
 
 try:
     WORKER_PY = pool.find_worker_python()
@@ -26,7 +26,7 @@ except pool.WorkerError:
     WORKER_PY = None
 
 pytestmark = pytest.mark.skipif(
-    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（MM_WORKER_PYTHON）")
+    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）")
 
 FIG_SCRIPT = """\
 import matplotlib.pyplot as plt
@@ -1355,34 +1355,34 @@ def test_v1_preview_dpi_is_optional_and_validated(worker):
 
 
 # ================== workerd 控制面（ADR 0004，Phase C） ==================
-# 上面那些用例跑的是 Python 池（conftest 把 MAGPLOT_WORKERD 钉成 0，Python 实现
+# 上面那些用例跑的是 Python 池（conftest 把 TAVOTTO_WORKERD 钉成 0，Python 实现
 # 始终是参考实现）。这一节把**同样几件事**在 Rust supervisor 上再走一遍：
 # 渲染 / 全量列表还原 / 导出状态中立 / 超时重建。两条控制面在这些语义上必须
 # 逐条一致——有一条不一致，用户就会在「装没装 workerd」之间看到不同的图。
 
 def _workerd_binary() -> str | None:
     """忽略 conftest 的默认禁用开关，只看 cargo 产物在不在。"""
-    saved = os.environ.pop("MAGPLOT_WORKERD", None)
+    saved = os.environ.pop("TAVOTTO_WORKERD", None)
     try:
-        from magplot.engine import workerd_client
+        from tavotto.engine import workerd_client
         return workerd_client.find_workerd()
     finally:
         if saved is not None:
-            os.environ["MAGPLOT_WORKERD"] = saved
+            os.environ["TAVOTTO_WORKERD"] = saved
 
 
 WORKERD_EXE = _workerd_binary()
 needs_workerd = pytest.mark.skipif(
     WORKERD_EXE is None,
-    reason="没有 magplot-workerd 产物（先在 workerd/ 里 cargo build）")
+    reason="没有 tavotto-workerd 产物（先在 workerd/ 里 cargo build）")
 
 
 @pytest.fixture
 def workerd_figs(tmp_path, monkeypatch):
     """一个用 workerd 控制面的图库目录。"""
-    from magplot.engine import workerd_client
+    from tavotto.engine import workerd_client
 
-    monkeypatch.setenv("MAGPLOT_WORKERD", WORKERD_EXE or "0")
+    monkeypatch.setenv("TAVOTTO_WORKERD", WORKERD_EXE or "0")
     workerd_client.reset_client()
     figs = tmp_path / "figures"
     figs.mkdir()
@@ -1475,11 +1475,11 @@ def test_workerd_timeout_kills_and_rebuilds(tmp_path, monkeypatch):
     对照 Python 池的 `test_request_timeout_kills_and_rebuilds_worker`：
     报 code=worker_timeout、`alive()` 转 False、`get()` 原地重建。
     """
-    from magplot.engine import workerd_client
+    from tavotto.engine import workerd_client
 
     if WORKERD_EXE is None:
-        pytest.skip("没有 magplot-workerd 产物")
-    monkeypatch.setenv("MAGPLOT_WORKERD", WORKERD_EXE)
+        pytest.skip("没有 tavotto-workerd 产物")
+    monkeypatch.setenv("TAVOTTO_WORKERD", WORKERD_EXE)
     workerd_client.reset_client()
     figs = tmp_path / "figures"
     figs.mkdir()
@@ -1516,7 +1516,7 @@ REGISTRY = json.dumps({"version": 1, "scripts": {
 
 def _write_back_project(tmp_path, monkeypatch):
     """真图库 + 真渲染的 Flask test client。返回 (app 模块, client, figs)。"""
-    from magplot import app as m
+    from tavotto import app as m
 
     m.app.config["TESTING"] = True
     m.reset_projects()
@@ -1528,7 +1528,7 @@ def _write_back_project(tmp_path, monkeypatch):
     figs.mkdir()
     (figs / "paper_style.py").write_text(PAPER_STYLE_STUB, encoding="utf-8")
     (figs / "fig_test.py").write_text(FIG_SCRIPT, encoding="utf-8")
-    (figs / "mm_registry.json").write_text(REGISTRY, encoding="utf-8")
+    (figs / "tavotto_registry.json").write_text(REGISTRY, encoding="utf-8")
     # 写回覆盖的是磁盘上**已有**的原件（真实图库里它由脚本跑出来），先放一张
     doc = pymupdf.open()
     doc.new_page(width=200, height=100)
@@ -1540,7 +1540,7 @@ def _write_back_project(tmp_path, monkeypatch):
 
 @pytest.fixture
 def write_back(tmp_path, monkeypatch):
-    from magplot import app as m
+    from tavotto import app as m
 
     ctx = _write_back_project(tmp_path, monkeypatch)
     try:
@@ -1652,7 +1652,7 @@ def _figs3_patches(client) -> tuple[list, str]:
 
 def _run_write_back(client, figs):
     """热会话应用 patches → 写回；返回 (响应体, patches)。"""
-    from magplot.engine import patchspec as ps
+    from tavotto.engine import patchspec as ps
 
     patches, _gid = _figs3_patches(client)
     r = client.post("/api/engine/render",
@@ -1723,10 +1723,10 @@ def test_workerd_write_back_replays_without_leaking_a_session(tmp_path, monkeypa
     out_dir + 一次性 salt env 拿到自己的那条。写完之后 supervisor 手里只该剩下
     热会话——泄漏的话每写回一次就多端一份整套 Figure 的内存。
     """
-    from magplot import app as m
-    from magplot.engine import workerd_client
+    from tavotto import app as m
+    from tavotto.engine import workerd_client
 
-    monkeypatch.setenv("MAGPLOT_WORKERD", WORKERD_EXE or "0")
+    monkeypatch.setenv("TAVOTTO_WORKERD", WORKERD_EXE or "0")
     workerd_client.reset_client()
     _m, client, figs = _write_back_project(tmp_path, monkeypatch)
     try:

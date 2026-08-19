@@ -1,4 +1,4 @@
-//! supervisor 协议（Flask ↔ magplot-workerd）——**与 worker 协议是两套东西**。
+//! supervisor 协议（Flask ↔ tavotto-workerd）——**与 worker 协议是两套东西**。
 //!
 //! worker 协议 v1（ADR 0003）是 workerd ↔ worker 子进程之间那条；这里这套是
 //! Flask ↔ workerd。分开是因为两条管道的性质完全不同：worker 那条严格串行、

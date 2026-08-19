@@ -8,8 +8,7 @@ export type Tool = 'select' | 'text' | 'arrow' | 'rect' | 'ellipse' | 'line'
 /** 工作区断点：≥1440 可双栏钉住 / 1024–1439 左右互斥 / <1024 覆盖式抽屉 */
 export type WorkspaceLayout = 'wide' | 'medium' | 'narrow'
 
-/** 旧键 mm3.ui 由 storageMigration 一次性搬迁过来 */
-const LS_KEY = 'magplot.ui'
+const LS_KEY = 'tavotto.ui'
 
 export const LEFT_MIN = 280
 export const LEFT_MAX = 360

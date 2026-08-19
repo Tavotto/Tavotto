@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { fetchPanels, type PanelInfo } from '@/lib/api'
 import { t } from '@/i18n'
 
-const USED_KEY = 'magplot.assetUsed'
+const USED_KEY = 'tavotto.assetUsed'
 
 function readUsed(): Record<string, number> {
   try {

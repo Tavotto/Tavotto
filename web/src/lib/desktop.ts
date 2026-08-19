@@ -3,12 +3,12 @@
  * 每个能力在浏览器模式下都有安全回退；@tauri-apps 模块全部按需动态 import，
  * 浏览器模式的 bundle 路径上一行 Tauri 代码都不会执行。
  *
- * 认证模型（与 src/magplot/desktop.py 对应）：壳把一次性 nonce 放在首个页面的
+ * 认证模型（与 src/tavotto/desktop.py 对应）：壳把一次性 nonce 放在首个页面的
  * URL fragment 里（fragment 不进 HTTP 请求行，也就不进任何访问日志），页面
  * 启动时先经 POST /api/desktop/bootstrap 换成 HttpOnly 会话 cookie，再进界面。
  */
 
-/** Tauri 2 注入的 IPC 标记；存在即运行在 Magplot 桌面壳里 */
+/** Tauri 2 注入的 IPC 标记；存在即运行在 Tavotto 桌面壳里 */
 import { t } from '@/i18n'
 
 export function isDesktop(): boolean {
@@ -50,7 +50,7 @@ export async function onDesktopMenu(
 ): Promise<() => void> {
   if (!isDesktop()) return () => {}
   const { listen } = await import('@tauri-apps/api/event')
-  return listen<string>('magplot:menu', (e) => handler(e.payload as MenuAction))
+  return listen<string>('tavotto:menu', (e) => handler(e.payload as MenuAction))
 }
 
 /** 桌面交接事件的载荷（与 src-tauri/src/main.rs 的 OpenRequest 严格同源） */
@@ -70,7 +70,7 @@ export async function onDesktopOpen(
 ): Promise<() => void> {
   if (!isDesktop()) return () => {}
   const { listen } = await import('@tauri-apps/api/event')
-  return listen<DesktopOpenPayload>('magplot:open', (e) => handler(e.payload))
+  return listen<DesktopOpenPayload>('tavotto:open', (e) => handler(e.payload))
 }
 
 /**

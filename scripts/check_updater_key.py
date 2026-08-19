@@ -14,7 +14,7 @@
 
     # 1) 用私钥签一个探针文件
     printf probe > /tmp/probe.bin
-    pnpm dlx @tauri-apps/cli@2.11.4 signer sign -f ~/magplot-updater.key -p "" /tmp/probe.bin
+    pnpm dlx @tauri-apps/cli@2.11.4 signer sign -f ~/tavotto-updater.key -p "" /tmp/probe.bin
     # 2) 核对
     python scripts/check_updater_key.py --sig /tmp/probe.bin.sig
 """

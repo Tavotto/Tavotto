@@ -1,4 +1,4 @@
-# Contributing to Magplot
+# Contributing to Tavotto
 
 Thanks for taking the time. Issues and pull requests are both welcome — a good
 bug report is worth as much as a patch.
@@ -7,7 +7,7 @@ bug report is worth as much as a patch.
 
 The most useful thing you can attach is the **diagnostics bundle**: in the app,
 **Settings → Privacy, diagnostics and About → Download diagnostics bundle**. It
-collects the version, your platform and encoding, how Magplot was installed,
+collects the version, your platform and encoding, how Tavotto was installed,
 which Python interpreter is doing the rendering and what matplotlib it has, the
 last errors and the log. Keys and personal paths are redacted before it is
 written, so it is safe to attach to a public issue.
@@ -20,18 +20,18 @@ numbers is what we can actually work with.
 ## Getting set up
 
 ```sh
-git clone https://github.com/erwanjun/magplot.git && cd magplot
+git clone https://github.com/Tavotto/Tavotto.git && cd Tavotto
 python -m venv .venv && .venv/bin/pip install -e ".[worker,dev]"
 python scripts/build_frontend.py     # needs node + pnpm
-.venv/bin/magplot
+.venv/bin/tavotto
 ```
 
 `run.sh` does the same thing in one step. Note that there is **no `app.py` at the
-repository root** — the entry point is `magplot` (`src/magplot/app.py`).
+repository root** — the entry point is `tavotto` (`src/tavotto/app.py`).
 
 The frontend lives in `web/` (Vite + React 19 + TypeScript + Tailwind v4). While
 working on it, `pnpm dev` is faster than rebuilding; just remember that a built
-`src/magplot/web/` takes priority over `web/dist`, so after running
+`src/tavotto/web/` takes priority over `web/dist`, so after running
 `scripts/build_frontend.py` you should either re-run it or delete that directory
 to get back to development mode.
 
@@ -54,7 +54,7 @@ Bigger changes have their own gates:
 |---|---|
 | Render engine | `tests/test_equivalence_matrix.py` — hot edit, full replay, fresh worker and reopen-after-write-back must all agree |
 | End to end | `python scripts/smoke_app.py --python .venv/bin/python` |
-| Desktop build | `python scripts/build_desktop.py`, then `python scripts/smoke_desktop.py --sidecar dist/Magplot/Magplot` |
+| Desktop build | `python scripts/build_desktop.py`, then `python scripts/smoke_desktop.py --sidecar dist/Tavotto/Tavotto` |
 | Golden path in a real browser | `cd web && pnpm e2e` (build the frontend first) |
 | Rust supervisor | `cd workerd && cargo test && cargo clippy --all-targets -- -D warnings && cargo fmt --check` |
 
@@ -66,7 +66,7 @@ isn't one, so a `.venv` without the scientific stack still runs most of the suit
 These aren't style preferences — each one is a boundary that took a real bug to
 establish. `CLAUDE.md` has the full list with the reasoning.
 
-- **`import pymupdf` outside `src/magplot/pdfbackend/`.** That package is the only
+- **`import pymupdf` outside `src/tavotto/pdfbackend/`.** That package is the only
   module allowed to touch the PDF library; everything above it goes through the
   contract layer in `pdfbackend/__init__.py`. This is what makes the backend
   replaceable, and it matters for licensing.
@@ -79,7 +79,7 @@ establish. `CLAUDE.md` has the full list with the reasoning.
   isn't writable and this crashes outright.
 - **Changing one side of a dual-source pair.** `engine/patchspec.py` ↔
   `workerd/src/patchspec.rs` (byte-identical, pinned by `tests/golden/patch_vectors.json`),
-  `web/src/lib/richText.ts` ↔ `src/magplot/richtext.py`, `web/src/lib/shapeGeometry.ts` ↔
+  `web/src/lib/richText.ts` ↔ `src/tavotto/richtext.py`, `web/src/lib/shapeGeometry.ts` ↔
   the geometry in `pdfbackend/pymupdf_backend.py`. Change both, or neither.
 - **Adding a Tauri command without updating all three places** — `build.rs`, the
   capability file, and `generate_handler`. Miss the first two and the call is

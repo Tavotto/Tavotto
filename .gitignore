@@ -14,7 +14,7 @@ __pycache__/
 /runtime/
 
 # 前端构建产物（scripts/build_frontend.py 生成，随 wheel 分发但不进仓库）
-/src/magplot/web/
+/src/tavotto/web/
 web/node_modules/
 web/dist/
 web/test-results/
@@ -25,8 +25,8 @@ test-results/
 playwright-report/
 
 # 运行时数据：装成包后一律落在用户数据目录
-# （macOS ~/Library/Application Support/Magplot、Linux ~/.local/share/magplot、
-#  Windows %LOCALAPPDATA%\Magplot）。下面几个是旧版本在仓库里留下的残余。
+# （macOS ~/Library/Application Support/Tavotto、Linux ~/.local/share/tavotto、
+#  Windows %LOCALAPPDATA%\Tavotto）。下面几个是旧版本在仓库里留下的残余。
 /cache/
 /exports/
 /layouts/
@@ -38,7 +38,7 @@ playwright-report/
 src-tauri/target/
 src-tauri/gen/
 
-# Rust supervisor magplot-workerd（workerd/ 源码进仓库；构建产物不进）
+# Rust supervisor tavotto-workerd（workerd/ 源码进仓库；构建产物不进）
 workerd/target/
 
 # 工具与系统
@@ -48,8 +48,10 @@ workerd/target/
 # 开发期界面验证截图：含真实研究图，不进公开仓
 /docs/verify/
 
-# 内部执行清单 / 路线图，不进公开仓
+# 内部执行清单 / 路线图，不进公开仓。
+# 旧名一并保留：这两条挡的是工作副本里的真实文件，改名不等于用户本机的文件也改了名。
 /docs/MAGPLOT_RENAME_AND_MATURITY_PLAN.md
+/docs/TAVOTTO_RENAME_AND_MATURITY_PLAN.md
 .impeccable/
 
 # CodeGraph 本地索引（可再生）
@@ -59,6 +61,11 @@ workerd/target/
 /logo.ai
 /logo.pdf
 /Magplot Brand System.html
+/Tavotto Brand System.html
 
 # MCP App 画布的中间产物（最终单文件在 codex-plugin/mcp/widget/canvas.html，那个进 git）
 web/dist-mcp/
+
+# 冒烟 / 手工跑示例项目时，导出与画布布局落在项目自己的 tavottofile/ 里
+# （engine/config.project_export_dir）。`git add -A` 会顺手把它收进提交。
+/examples/*/tavottofile/

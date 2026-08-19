@@ -96,10 +96,10 @@ describe('优先级：手动 > 系统 > zh-CN', () => {
 })
 
 describe('持久化', () => {
-  it('偏好存在独立的 magplot.locale 里，不碰文档/项目数据', () => {
+  it('偏好存在独立的 tavotto.locale 里，不碰文档/项目数据', () => {
     writeStoredLocale('en-US')
     expect(localStorage.getItem(LOCALE_STORAGE_KEY)).toBe('en-US')
-    expect(LOCALE_STORAGE_KEY).toBe('magplot.locale')
+    expect(LOCALE_STORAGE_KEY).toBe('tavotto.locale')
     // 只多这一个键，别的什么都没写
     expect(Object.keys(localStorage)).toEqual([LOCALE_STORAGE_KEY])
   })

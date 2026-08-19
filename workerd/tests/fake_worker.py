@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """说 worker 协议 v1 的假 worker——**只给 workerd 的 cargo test 用**。
 
-真 worker（`src/magplot/engine/worker.py`）要科学栈，起一次几秒钟，而这里要验的
+真 worker（`src/tavotto/engine/worker.py`）要科学栈，起一次几秒钟，而这里要验的
 全是 supervisor 自己的行为：队列合并、超时强杀、代序隔离、回显错位。用真 worker
 既慢又会把「是 supervisor 错了还是 matplotlib 慢了」搅在一起。
 

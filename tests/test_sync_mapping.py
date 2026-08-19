@@ -1,7 +1,7 @@
 """组图↔子图 override 同步的纯函数测试（_remap_point / _best_offset / _axes_info）。"""
 import pytest
 
-from magplot import app as m
+from tavotto import app as m
 
 
 def test_remap_point_identity():

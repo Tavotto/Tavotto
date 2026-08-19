@@ -6,22 +6,22 @@
 
 链路（顺序即依赖）：
 
-1. 版本同步：src/magplot/__init__.py 是唯一出处，写进 src-tauri/tauri.conf.json
+1. 版本同步：src/tavotto/__init__.py 是唯一出处，写进 src-tauri/tauri.conf.json
    与 src-tauri/Cargo.toml（Tauri 的 About/安装包版本号不允许漂移）。
-2. 前端：scripts/build_frontend.py → src/magplot/web/（sidecar 从这里出界面）。
+2. 前端：scripts/build_frontend.py → src/tavotto/web/（sidecar 从这里出界面）。
 3. Rust supervisor：cargo build --release → workerd/target/release/，由
-   packaging/magplot.spec 收进 sidecar 的 _internal/。**没有 cargo 就直接中止**
+   packaging/tavotto.spec 收进 sidecar 的 _internal/。**没有 cargo 就直接中止**
    ——回退到 Python 渲染池是静默的，做出来的包功能一样不缺、只是慢，
    发出去也不会有人发现。
 4. 内置渲染 runtime：scripts/build_worker_runtime.py → runtime/，由
-   packaging/magplot.spec 收进 sidecar 的 _internal/runtime。**Windows 与 macOS
+   packaging/tavotto.spec 收进 sidecar 的 _internal/runtime。**Windows 与 macOS
    都要**——没有它，用户得先自己装 Python，而这正是这条链要消灭的东西。
    已有一份且平台/锁文件都对得上时直接复用（重建一次要下 25 MiB + 装 300 MiB）。
-5. sidecar：PyInstaller onedir（packaging/magplot.spec，刻意不含 matplotlib，
-   不用 onefile——科学场景的启动解压等不起）→ dist/Magplot/。同一份 Analysis
-   里还出一个 console 版 `magplot-cli`，那是外部程序（Codex 插件）唯一能当
+5. sidecar：PyInstaller onedir（packaging/tavotto.spec，刻意不含 matplotlib，
+   不用 onefile——科学场景的启动解压等不起）→ dist/Tavotto/。同一份 Analysis
+   里还出一个 console 版 `tavotto-cli`，那是外部程序（Codex 插件）唯一能当
    命令行调的入口——GUI 子系统的 exe 没有 stdout，交接的 JSON 会落进 app.log。
-6. Tauri：pnpm dlx @tauri-apps/cli build，把 dist/Magplot 作为资源打进壳
+6. Tauri：pnpm dlx @tauri-apps/cli build，把 dist/Tavotto 作为资源打进壳
    （src-tauri/tauri.conf.json 的 bundle.resources）。
 
 签名/公证不在本脚本内：本地无证书时产物是未签名测试包（macOS 上 Tauri 会
@@ -54,10 +54,10 @@ def run(cmd: list[str], **kw) -> None:
 
 
 def read_version() -> str:
-    text = (ROOT / "src" / "magplot" / "__init__.py").read_text(encoding="utf-8")
+    text = (ROOT / "src" / "tavotto" / "__init__.py").read_text(encoding="utf-8")
     m = re.search(r'__version__\s*=\s*"([^"]+)"', text)
     if not m:
-        raise SystemExit("src/magplot/__init__.py 里找不到 __version__")
+        raise SystemExit("src/tavotto/__init__.py 里找不到 __version__")
     return m.group(1)
 
 
@@ -78,29 +78,29 @@ def sync_version(version: str) -> None:
         print(f"* Cargo.toml 版本 → {version}")
 
 
-WORKERD_NAME = "magplot-workerd.exe" if sys.platform == "win32" else "magplot-workerd"
+WORKERD_NAME = "tavotto-workerd.exe" if sys.platform == "win32" else "tavotto-workerd"
 
 
 def build_workerd() -> Path:
-    """构建 Rust supervisor，返回二进制路径（magplot.spec 从同一位置取）。
+    """构建 Rust supervisor，返回二进制路径（tavotto.spec 从同一位置取）。
 
-    `MAGPLOT_WORKERD_BIN` 可指到已经构建好的产物（交叉编译 / CI 分步构建时用），
+    `TAVOTTO_WORKERD_BIN` 可指到已经构建好的产物（交叉编译 / CI 分步构建时用），
     此时不跑 cargo。两条路都会**确认文件真的在**：桌面产物缺了 workerd 不会
     报错、只会悄悄慢下来，所以这里宁可当场中止也不留下一个「看起来正常」的包。
     """
-    prebuilt = os.environ.get("MAGPLOT_WORKERD_BIN")
+    prebuilt = os.environ.get("TAVOTTO_WORKERD_BIN")
     if prebuilt:
         exe = Path(prebuilt)
         if not exe.is_file():
-            raise SystemExit(f"MAGPLOT_WORKERD_BIN 指向的文件不存在: {exe}")
+            raise SystemExit(f"TAVOTTO_WORKERD_BIN 指向的文件不存在: {exe}")
         print(f"* workerd（沿用现成产物）: {exe}")
         return exe
 
     if shutil.which("cargo") is None:
         raise SystemExit(
-            "找不到 cargo，无法构建 magplot-workerd（Rust supervisor）。\n"
+            "找不到 cargo，无法构建 tavotto-workerd（Rust supervisor）。\n"
             "  · 装一次 Rust 工具链：https://rustup.rs\n"
-            "  · 或者在别处构建好，用 MAGPLOT_WORKERD_BIN=<路径> 指过来\n"
+            "  · 或者在别处构建好，用 TAVOTTO_WORKERD_BIN=<路径> 指过来\n"
             "桌面产物必须自带 workerd——缺了它渲染静默回退到 Python 池，"
             "队列合并/超时强杀/取消全部失效，而界面上一点异常都看不出来。")
     run(["cargo", "build", "--release",
@@ -124,7 +124,7 @@ def _runtime_is_current() -> str:
     """现成的 runtime/ 能不能直接用；能用回空串，不能用回原因。
 
     判据三条，缺一不可：平台/架构对得上、冒烟真的过了、锁文件没变过。
-    前两条与 packaging/magplot.spec 共用 `check_runtime_dir()`（同一把尺）；
+    前两条与 packaging/tavotto.spec 共用 `check_runtime_dir()`（同一把尺）；
     第三条是本地复用特有的——改了锁文件却复用旧产物，等于「以为换了 numpy
     版本，其实一个字节都没动」，而这种错要到用户报「版本不对」时才发现。
     """
@@ -148,7 +148,7 @@ def build_runtime(skip: bool, force: bool) -> None:
 
     `--skip-runtime` 是**开发态**的省时开关：产物照样能跑，只是渲染会回退到
     机器上已有的 Python。发行构建绝不能用它——CI 那边还会加
-    `MAGPLOT_REQUIRE_RUNTIME=1`，spec 会当场把没有 runtime 的包拦下来。
+    `TAVOTTO_REQUIRE_RUNTIME=1`，spec 会当场把没有 runtime 的包拦下来。
     """
     if skip:
         print("* --skip-runtime：不构建内置 runtime"
@@ -179,17 +179,17 @@ def main() -> None:
     args = ap.parse_args()
 
     version = read_version()
-    print(f"* Magplot {version}")
+    print(f"* Tavotto {version}")
     sync_version(version)
 
     run([sys.executable, str(ROOT / "scripts" / "build_frontend.py")])
     build_workerd()
     build_runtime(args.skip_runtime, args.rebuild_runtime)
     run([sys.executable, "-m", "PyInstaller",
-         str(ROOT / "packaging" / "magplot.spec"), "--noconfirm"])
+         str(ROOT / "packaging" / "tavotto.spec"), "--noconfirm"])
 
-    sidecar = ROOT / "dist" / "Magplot" / \
-        ("Magplot.exe" if sys.platform == "win32" else "Magplot")
+    sidecar = ROOT / "dist" / "Tavotto" / \
+        ("Tavotto.exe" if sys.platform == "win32" else "Tavotto")
     if not sidecar.is_file():
         raise SystemExit(f"sidecar 产物缺失: {sidecar}")
     # spec 里那条 binaries 真的落到 _internal/ 了没有——这一步只花一次 stat，
@@ -198,17 +198,17 @@ def main() -> None:
     if not packed.is_file():
         raise SystemExit(
             f"sidecar 里没有 workerd: {packed}\n"
-            "  packaging/magplot.spec 的 binaries 落点与 "
+            "  packaging/tavotto.spec 的 binaries 落点与 "
             "engine/workerd_client.find_workerd() 对不上了。")
 
     # console 版 CLI 同理**缺了就中止**：少了它，装完的桌面版功能一样不缺，
-    # 只有「Codex 插件找不到 Magplot」这一种表现，而那要等用户装完才发现。
-    cli = sidecar.parent / ("magplot-cli.exe" if sys.platform == "win32"
-                            else "magplot-cli")
+    # 只有「Codex 插件找不到 Tavotto」这一种表现，而那要等用户装完才发现。
+    cli = sidecar.parent / ("tavotto-cli.exe" if sys.platform == "win32"
+                            else "tavotto-cli")
     if not cli.is_file():
         raise SystemExit(
             f"sidecar 目录里没有 console 版 CLI: {cli}\n"
-            "  packaging/magplot.spec 的第二个 EXE 落点与 "
+            "  packaging/tavotto.spec 的第二个 EXE 落点与 "
             "engine/locate.CLI_NAME 对不上了。")
     # 装完的机器上安装器跑的就是这一条；在这儿先跑一次，把「打出来的 CLI 起不来」
     # 挡在发布之前（真产物、真 argv、真 JSON，不是对源码的断言）。
@@ -221,10 +221,10 @@ def main() -> None:
         report = {}
     if not report.get("cli"):
         raise SystemExit(
-            f"magplot-cli 自检没过（退出码 {probe.returncode}）:\n"
+            f"tavotto-cli 自检没过（退出码 {probe.returncode}）:\n"
             f"  stdout: {(probe.stdout or '').strip()[:400]}\n"
             f"  stderr: {(probe.stderr or '').strip()[:400]}")
-    print(f"* magplot-cli: {cli}（doctor 自检通过，协议 v{report.get('protocol')}）")
+    print(f"* tavotto-cli: {cli}（doctor 自检通过，协议 v{report.get('protocol')}）")
 
     if args.skip_tauri:
         print("* --skip-tauri：到此为止")

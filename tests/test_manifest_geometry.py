@@ -14,7 +14,7 @@
 """
 import pytest
 
-from magplot.engine import pool
+from tavotto.engine import pool
 
 try:
     WORKER_PY = pool.find_worker_python()
@@ -22,7 +22,7 @@ except pool.WorkerError:
     WORKER_PY = None
 
 pytestmark = pytest.mark.skipif(
-    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（MM_WORKER_PYTHON）")
+    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）")
 
 SCRIPT_NAME = "fig_geometry.py"
 ENTRY = "main"

@@ -7,8 +7,8 @@
 import pymupdf
 import pytest
 
-from magplot import app as m
-from magplot.pdfbackend import pymupdf_backend as pb
+from tavotto import app as m
+from tavotto.pdfbackend import pymupdf_backend as pb
 
 
 def _draw(t: dict) -> pymupdf.Page:
@@ -151,7 +151,7 @@ def _spans(page):
 def test_superscript_is_smaller_and_raised():
     """cm^{-1}：上标字号 = 正文 × SCRIPT_SIZE，基线抬高 = 正文 × SUP_RISE。
     常量与前端 lib/richText.ts 同源，改一边必须同步另一边。"""
-    from magplot import richtext
+    from tavotto import richtext
 
     page = _draw(_base("cm^{-1}"))
     spans = _spans(page)
@@ -162,7 +162,7 @@ def test_superscript_is_smaller_and_raised():
 
 
 def test_subscript_is_smaller_and_lowered():
-    from magplot import richtext
+    from tavotto import richtext
 
     page = _draw(_base("H_{2}O"))
     spans = _spans(page)
@@ -246,7 +246,7 @@ def test_normal_words_wrap_exactly_as_before_the_force_break_fallback(w_mm, expe
 def test_force_break_keeps_script_marks_on_each_char():
     """上下标段被逐字拆开后，script 标记要跟着每个字符走：下标仍是小字号 +
     下沉基线，不能因为断行退化成正文。"""
-    from magplot import richtext
+    from tavotto import richtext
 
     t = _base("Ca_{10}(PO_{4})_{6}(OH)_{2}",
               x_mm=10, w_mm=20, h_mm=30, size_pt=12)
@@ -267,7 +267,7 @@ def test_force_break_keeps_script_marks_on_each_char():
 def test_script_width_uses_smaller_size_for_wrapping():
     """折行按上下标的真实（更小的）宽度算，不能当正文宽度——
     否则一行明明放得下也会被提前折断。"""
-    from magplot import richtext
+    from tavotto import richtext
 
     body_only = _draw(_base("mmmm", w_mm=200))
     marked = _draw(_base("^{mmmm}", w_mm=200))

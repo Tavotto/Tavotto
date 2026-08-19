@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Codex 起 MCP server 的那一跳：**先找到装着 magplot 的解释器，再交棒**。
+"""Codex 起 MCP server 的那一跳：**先找到装着 tavotto 的解释器，再交棒**。
 
 Codex 用 `python3 ./mcp/server.py` 启动本文件（见 `.mcp.json`），而那个 `python3`
-不一定是装了 Magplot 的那个——用户多半是 `pipx install magplot` 或装的桌面版。
+不一定是装了 Tavotto 的那个——用户多半是 `pipx install tavotto` 或装的桌面版。
 所以本文件的全部职责就是：
 
-  1. 当前解释器 `import magplot` 成功 → 直接跑，不折腾；
-  2. 否则用**插件自带的定位器**（`skills/magplot-figure/scripts/handoff.py` 的
-     `find_magplot()`，它是 `engine/locate.py` 的镜像，两侧由
+  1. 当前解释器 `import tavotto` 成功 → 直接跑，不折腾；
+  2. 否则用**插件自带的定位器**（`skills/tavotto-figure/scripts/handoff.py` 的
+     `find_tavotto()`，它是 `engine/locate.py` 的镜像，两侧由
      `tests/test_install_locate.py::test_plugin_mirrors_the_locator` 在一整张
-     环境矩阵上比对）找到 magplot 命令行，再从它**反推出解释器**
+     环境矩阵上比对）找到 tavotto 命令行，再从它**反推出解释器**
      （shebang / 同目录的 python），`os.execv` 交棒过去——同一个进程，
      stdio 原样继承，host 那边察觉不到换过人。**这里绝不抄第三遍路径规则**。
   3. 找不到解释器时起一个**只会说人话的降级 server**：initialize / tools/list
@@ -20,16 +20,16 @@ Codex 用 `python3 ./mcp/server.py` 启动本文件（见 `.mcp.json`），而�
 
 这里与交接（`handoff.py`）的要求**不一样**，这是本文件唯一需要自己判断的事：
 
-* 交接只要能**执行** `magplot open`，桌面版带的 `magplot-cli` 完全够用；
-* 但 MCP server 是一个 Python 模块，它要 `import magplot.engine.*` 在进程内
-  驱动引擎。桌面版的 `magplot-cli` 是 PyInstaller 打的 frozen 可执行文件，
-  **给不出一个能 import magplot 的解释器**。
+* 交接只要能**执行** `tavotto open`，桌面版带的 `tavotto-cli` 完全够用；
+* 但 MCP server 是一个 Python 模块，它要 `import tavotto.engine.*` 在进程内
+  驱动引擎。桌面版的 `tavotto-cli` 是 PyInstaller 打的 frozen 可执行文件，
+  **给不出一个能 import tavotto 的解释器**。
 
 所以「只装了桌面版」这一格要报 `desktop_only` 并说清：交接照常能用，画布与
-六个工具需要一个 Python 环境（`pipx install magplot`）。笼统地说「没装 Magplot」
+六个工具需要一个 Python 环境（`pipx install tavotto`）。笼统地说「没装 Tavotto」
 是错的——他明明装了（这正是 #7 修过的那类错，别在新入口上重犯）。
 
-纯标准库，Python 3.8+（找不到 magplot 时用户机器上的 python3 可能很老）。
+纯标准库，Python 3.8+（找不到 tavotto 时用户机器上的 python3 可能很老）。
 """
 from __future__ import annotations
 
@@ -40,19 +40,19 @@ import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-#: 只装了桌面版时的那一格。**不能说「没装 Magplot」**——他明明装了。
+#: 只装了桌面版时的那一格。**不能说「没装 Tavotto」**——他明明装了。
 DESKTOP_ONLY_HINT = (
-    "这台机器上装的是 Magplot 桌面版。交接（把图交给 Magplot 窗口打开）照常能用，"
-    "但 Codex 里的画布与这六个工具需要一个能 import magplot 的 Python 环境——"
-    "桌面版带的 magplot-cli 是打包成单文件的可执行程序，给不出解释器。"
-    "跑一句 `pipx install magplot`（或 `pip install magplot`）就好，"
+    "这台机器上装的是 Tavotto 桌面版。交接（把图交给 Tavotto 窗口打开）照常能用，"
+    "但 Codex 里的画布与这六个工具需要一个能 import tavotto 的 Python 环境——"
+    "桌面版带的 tavotto-cli 是打包成单文件的可执行程序，给不出解释器。"
+    "跑一句 `pipx install tavotto`（或 `pip install tavotto`）就好，"
     "两者可以共存。装完重开一次 Codex 会话。"
 )
 
 
 def _importable(python: str) -> bool:
     try:
-        proc = subprocess.run([python, "-c", "import magplot"],
+        proc = subprocess.run([python, "-c", "import tavotto"],
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except OSError:
         return False
@@ -63,10 +63,10 @@ def _plugin_locator():
     """插件自带的那份定位器（`engine/locate.py` 的镜像，有矩阵测试看着）。
 
     与本文件同属一个插件包，按相对路径 import 即可——**不在这里抄第三遍**
-    路径规则（Magplot 一份、插件的 handoff 一份，已经是能接受的上限）。
+    路径规则（Tavotto 一份、插件的 handoff 一份，已经是能接受的上限）。
     """
     scripts = os.path.abspath(os.path.join(HERE, "..", "skills",
-                                           "magplot-figure", "scripts"))
+                                           "tavotto-figure", "scripts"))
     if scripts not in sys.path:
         sys.path.insert(0, scripts)
     import handoff                                    # noqa: PLC0415
@@ -74,10 +74,10 @@ def _plugin_locator():
 
 
 def _shebang_interpreter(script: str) -> "str | None":
-    """console script 的 shebang → 装着 magplot 的那个解释器。
+    """console script 的 shebang → 装着 tavotto 的那个解释器。
 
-    pip / pipx 生成的 `magplot` 就是一个带 `#!<venv>/bin/python` 的小脚本，
-    这一行是「哪个环境装了它」最可靠的答案。桌面版的 `magplot-cli` 是
+    pip / pipx 生成的 `tavotto` 就是一个带 `#!<venv>/bin/python` 的小脚本，
+    这一行是「哪个环境装了它」最可靠的答案。桌面版的 `tavotto-cli` 是
     frozen 二进制，没有 shebang——它走不到这条，正好是我们要区分的那一格。
     """
     try:
@@ -95,7 +95,7 @@ def _shebang_interpreter(script: str) -> "str | None":
 
 
 #: 扫 Windows 启动器里那行 shebang 时的体积上限。distlib 的 launcher 约
-#: 100 KB；桌面版那个 frozen 的 `magplot-cli.exe` 是几十 MB——上限顺带保住了
+#: 100 KB；桌面版那个 frozen 的 `tavotto-cli.exe` 是几十 MB——上限顺带保住了
 #: 「这条腿能区分 pip 装的与桌面版自带的」这个性质。
 _LAUNCHER_SCAN_MAX = 2 * 1024 * 1024
 
@@ -103,13 +103,13 @@ _LAUNCHER_SCAN_MAX = 2 * 1024 * 1024
 def _embedded_shebang(exe: str) -> "str | None":
     r"""Windows console script `.exe` 里嵌着的解释器路径。
 
-    pip / pipx 在 Windows 上生成的 `magplot.exe` 是 distlib 启动器：
+    pip / pipx 在 Windows 上生成的 `tavotto.exe` 是 distlib 启动器：
     `launcher.exe` + `b"#!<venv>\Scripts\python.exe
 "` + 一个 zip。
     **pipx 还会把它复制到共享的 bin 目录暴露出来**，那儿旁边根本没有 python
-    （venv 在 `pipx/venvs/magplot` 里），`_interpreter_beside` 因此一无所获，
+    （venv 在 `pipx/venvs/tavotto` 里），`_interpreter_beside` 因此一无所获，
     `_shebang_interpreter` 又只读头 512 字节的文本 shebang——两条都落空，
-    于是官方推荐的 `pipx install magplot` 在 Windows 上被判成 `desktop_only`，
+    于是官方推荐的 `pipx install tavotto` 在 Windows 上被判成 `desktop_only`，
     MCP 的工具一个都不出现。复制品里那行 shebang 仍然指着 venv，
     它是「哪个环境装了它」在 Windows 上唯一可靠的答案。
     """
@@ -133,9 +133,9 @@ def _embedded_shebang(exe: str) -> "str | None":
 
 
 def _interpreter_beside(exe: str) -> "list[str]":
-    """与 `magplot.exe` / pipx shim 同目录的 python（Windows 上没有 shebang）。
+    """与 `tavotto.exe` / pipx shim 同目录的 python（Windows 上没有 shebang）。
 
-    桌面版的 `magplot-cli.exe` 旁边**没有** python（PyInstaller onedir 把运行时
+    桌面版的 `tavotto-cli.exe` 旁边**没有** python（PyInstaller onedir 把运行时
     放在 `_internal/`），所以这条天然区分「pip 装的」与「桌面版带的」。
     """
     base = os.path.dirname(os.path.abspath(exe))
@@ -144,7 +144,7 @@ def _interpreter_beside(exe: str) -> "list[str]":
 
 
 def _interpreters_for(found: dict) -> "list[str]":
-    """定位结果 → 可能能 import magplot 的解释器候选。"""
+    """定位结果 → 可能能 import tavotto 的解释器候选。"""
     out: "list[str]" = []
     for exe in (found.get("cmd") or []):
         interp = _shebang_interpreter(exe) or _embedded_shebang(exe)
@@ -167,9 +167,9 @@ def _interpreters_for(found: dict) -> "list[str]":
 def diagnose(found: dict) -> "tuple[str, str]":
     """定位结果 + 找不到解释器 → (机器可读 code, 说人话的 hint)。
 
-    三态互斥，**不许混成一句「没装 Magplot」**：
-      magplot_missing            真没装
-      desktop_found_cli_missing  桌面版装了，但那一版没带 magplot-cli（旧安装）
+    三态互斥，**不许混成一句「没装 Tavotto」**：
+      tavotto_missing            真没装
+      desktop_found_cli_missing  桌面版装了，但那一版没带 tavotto-cli（旧安装）
       desktop_only               装的是桌面版：交接能用，但 MCP 要 Python 环境
     """
     handoff = _plugin_locator()
@@ -177,7 +177,7 @@ def diagnose(found: dict) -> "tuple[str, str]":
         return "desktop_only", DESKTOP_ONLY_HINT
     if found.get("desktop"):
         return "desktop_found_cli_missing", handoff.UPGRADE_HINT
-    return "magplot_missing", handoff.INSTALL_HINT
+    return "tavotto_missing", handoff.INSTALL_HINT
 
 
 def _degraded_server(code: str, hint: str) -> int:
@@ -187,9 +187,9 @@ def _degraded_server(code: str, hint: str) -> int:
     tools = [{"name": n, "description": "本工具当前不可用。" + hint,
               "inputSchema": {"type": "object", "properties": {},
                               "additionalProperties": True}}
-             for n in ("magplot_open_figure", "magplot_apply_overrides",
-                       "magplot_preflight", "magplot_export",
-                       "magplot_verify_replay", "magplot_close_session")]
+             for n in ("tavotto_open_figure", "tavotto_apply_overrides",
+                       "tavotto_preflight", "tavotto_export",
+                       "tavotto_verify_replay", "tavotto_close_session")]
 
     def send(obj):
         sys.stdout.write(json.dumps(obj, ensure_ascii=False) + "\n")
@@ -211,7 +211,7 @@ def _degraded_server(code: str, hint: str) -> int:
             send({"jsonrpc": "2.0", "id": rid, "result": {
                 "protocolVersion": want if isinstance(want, str) else "2025-11-25",
                 "capabilities": {"tools": {"listChanged": False}},
-                "serverInfo": {"name": "magplot", "version": "0"},
+                "serverInfo": {"name": "tavotto", "version": "0"},
                 "instructions": hint}})
         elif method == "tools/list":
             send({"jsonrpc": "2.0", "id": rid, "result": {"tools": tools}})
@@ -230,18 +230,18 @@ def _degraded_server(code: str, hint: str) -> int:
 
 
 def main() -> int:
-    sys.path.insert(0, HERE)            # 让 `magplot_mcp` 包可 import
+    sys.path.insert(0, HERE)            # 让 `tavotto_mcp` 包可 import
     try:
-        import magplot  # noqa: F401
+        import tavotto  # noqa: F401
     except ImportError:
         pass
     else:
-        from magplot_mcp.rpc import StdioConnection
+        from tavotto_mcp.rpc import StdioConnection
         StdioConnection.hijack_stdout()
-        from magplot_mcp.server import main as run
+        from tavotto_mcp.server import main as run
         return run(sys.argv[1:])
 
-    found = _plugin_locator().find_magplot()
+    found = _plugin_locator().find_tavotto()
     for python in _interpreters_for(found):
         if os.path.realpath(python) == os.path.realpath(sys.executable):
             continue                    # 刚试过就是它
@@ -250,7 +250,7 @@ def main() -> int:
             # host 那边不会看到管道换了一层（也不用管转发与信号）
             os.execv(python, [python, os.path.abspath(__file__), *sys.argv[1:]])
     code, hint = diagnose(found)
-    print(f"magplot-mcp: 没找到能 import magplot 的解释器（{code}），进入降级模式。"
+    print(f"tavotto-mcp: 没找到能 import tavotto 的解释器（{code}），进入降级模式。"
           + hint, file=sys.stderr)
     return _degraded_server(code, hint)
 

@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from magplot.engine import brand, updater
+from tavotto.engine import brand, updater
 
 
 # ---------------- 版本比较 ---------------------------------------------------
@@ -28,8 +28,8 @@ def test_is_newer(latest, current, expected):
 
 
 def test_current_version_matches_package():
-    import magplot
-    assert updater.current_version() == magplot.__version__
+    import tavotto
+    assert updater.current_version() == tavotto.__version__
 
 
 # ---------------- 升级命令 ---------------------------------------------------
@@ -40,8 +40,8 @@ def _release(assets=()):
 
 def test_upgrade_command_pip_prefers_release_wheel(monkeypatch):
     monkeypatch.setattr(updater, "install_method", lambda: "pip")
-    url = "https://example/magplot-9.9.9-py3-none-any.whl"
-    cmd = updater.upgrade_command(_release([("magplot-9.9.9-py3-none-any.whl", url)]))
+    url = "https://example/tavotto-9.9.9-py3-none-any.whl"
+    cmd = updater.upgrade_command(_release([("tavotto-9.9.9-py3-none-any.whl", url)]))
     assert cmd[1:] == ["-m", "pip", "install", "--upgrade", url]
 
 
@@ -54,8 +54,8 @@ def test_upgrade_command_pip_falls_back_to_package_name(monkeypatch):
 def test_upgrade_command_pipx(monkeypatch):
     monkeypatch.setattr(updater, "install_method", lambda: "pipx")
     assert updater.upgrade_command(_release()) == ["pipx", "upgrade", brand.DIST_NAME]
-    url = "https://example/magplot-9.9.9-py3-none-any.whl"
-    cmd = updater.upgrade_command(_release([("magplot-9.9.9-py3-none-any.whl", url)]))
+    url = "https://example/tavotto-9.9.9-py3-none-any.whl"
+    cmd = updater.upgrade_command(_release([("tavotto-9.9.9-py3-none-any.whl", url)]))
     assert cmd == ["pipx", "install", "--force", url]
 
 
@@ -134,24 +134,24 @@ def test_cached_result_recomputes_against_running_version(monkeypatch):
 
 # ---------------- worker 解释器探测（跨平台） --------------------------------
 def test_worker_python_candidates_prefer_env_then_self(monkeypatch, tmp_path):
-    """单环境安装（pip install magplot[worker]）时，跑 Flask 的解释器自己就带
+    """单环境安装（pip install tavotto[worker]）时，跑 Flask 的解释器自己就带
     科学栈——sys.executable 必须排在系统路径之前，否则会去用别的 python。
 
-    前提是「这台机器上没有内置 runtime」，所以这里把 MAGPLOT_RUNTIME_DIR 指到
+    前提是「这台机器上没有内置 runtime」，所以这里把 TAVOTTO_RUNTIME_DIR 指到
     一个空处显式声明它（覆盖是排他的）。不声明的话，开发机上只要跑过一次
     scripts/build_worker_runtime.py，仓库根就真的躺着一份 runtime——它**本来
     就该**排在 sys.executable 前面，于是这条用例在本机红、在 CI 绿。
     """
     import sys
 
-    from magplot.engine import pool
+    from tavotto.engine import pool
 
-    monkeypatch.delenv("MM_WORKER_PYTHON", raising=False)
-    monkeypatch.setenv("MAGPLOT_RUNTIME_DIR", str(tmp_path / "_no_runtime_here"))
+    monkeypatch.delenv("TAVOTTO_WORKER_PYTHON", raising=False)
+    monkeypatch.setenv("TAVOTTO_RUNTIME_DIR", str(tmp_path / "_no_runtime_here"))
     cands = [c for c in pool._candidate_pythons() if c]
     assert cands[0] == sys.executable
 
-    monkeypatch.setenv("MM_WORKER_PYTHON", "/custom/python")
+    monkeypatch.setenv("TAVOTTO_WORKER_PYTHON", "/custom/python")
     cands = [c for c in pool._candidate_pythons() if c]
     assert cands[0] == "/custom/python" and cands[1] == sys.executable
 
@@ -160,9 +160,9 @@ def test_worker_python_candidates_on_windows(monkeypatch):
     """Windows 上没有 python3 这个名字，也没有 /opt/homebrew。"""
     import os
 
-    from magplot.engine import pool
+    from tavotto.engine import pool
 
-    monkeypatch.delenv("MM_WORKER_PYTHON", raising=False)
+    monkeypatch.delenv("TAVOTTO_WORKER_PYTHON", raising=False)
     monkeypatch.setattr(os, "name", "nt")
     monkeypatch.setattr(pool.shutil, "which", lambda n: f"C:\\Python\\{n}.exe")
     # 本例只验证候选清单的平台分支：把读配置这步短路掉，否则 pathlib 会按被
@@ -175,6 +175,6 @@ def test_worker_python_candidates_on_windows(monkeypatch):
 
 def test_worker_py_ships_with_the_package():
     """worker.py 是按路径 spawn 的，装成 wheel 后这个文件必须真实存在。"""
-    from magplot.engine import pool
+    from tavotto.engine import pool
 
     assert pool.WORKER_PY.is_file()

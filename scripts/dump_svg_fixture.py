@@ -27,7 +27,7 @@ OUT = os.path.join(ROOT, "web", "src", "lib", "__fixtures__", "matplotlibSvg.ts"
 # 子进程里跑：本脚本所在解释器不一定有 matplotlib
 _CHILD = r'''
 import sys, os, re, json
-sys.path.insert(0, os.path.join(%(root)r, "src", "magplot", "engine"))
+sys.path.insert(0, os.path.join(%(root)r, "src", "tavotto", "engine"))
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -137,11 +137,11 @@ def shrink(svg: str) -> str:
 
 def build() -> str:
     sys.path.insert(0, os.path.join(ROOT, "src"))
-    from magplot.engine import pool  # noqa: PLC0415 — 只有这里要
+    from tavotto.engine import pool  # noqa: PLC0415 — 只有这里要
 
     py = pool.find_worker_python()
     if not py:
-        raise SystemExit("找不到带科学栈的解释器（MM_WORKER_PYTHON 可覆盖）")
+        raise SystemExit("找不到带科学栈的解释器（TAVOTTO_WORKER_PYTHON 可覆盖）")
     out = subprocess.run([py, "-c", _CHILD], capture_output=True, text=True, check=True)
     import json
     data = json.loads(out.stdout.strip().splitlines()[-1])

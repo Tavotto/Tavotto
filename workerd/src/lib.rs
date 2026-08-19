@@ -1,4 +1,4 @@
-//! `magplot-workerd`——Magplot 渲染 worker 的 supervisor。
+//! `tavotto-workerd`——Tavotto 渲染 worker 的 supervisor。
 //!
 //! Flask（`engine/workerd_client.py`）用一条 stdio JSON 行协议驱动它；它再按
 //! worker 协议 v1（ADR 0003）驱动一到多个渲染子进程。契约见

@@ -90,10 +90,10 @@ pub struct ShellText {
 }
 
 const ZH: ShellText = ShellText {
-    app_about: "关于 Magplot",
-    app_hide: "隐藏 Magplot",
+    app_about: "关于 Tavotto",
+    app_hide: "隐藏 Tavotto",
     app_hide_others: "隐藏其他",
-    app_quit: "退出 Magplot",
+    app_quit: "退出 Tavotto",
     file: "文件",
     file_open_project: "打开项目…",
     file_export: "导出…",
@@ -114,8 +114,8 @@ const ZH: ShellText = ShellText {
     sidecar_spawn_failed: "无法启动渲染服务 {path}: {err}",
     sidecar_stdin_missing: "拿不到 sidecar stdin",
     sidecar_stdin_write_failed: "写入启动凭据失败: {err}",
-    sidecar_exe_missing: "MAGPLOT_SIDECAR_EXE 指向的文件不存在: {path}",
-    sidecar_not_found: "找不到 Magplot 渲染服务：安装文件可能不完整，请重新安装",
+    sidecar_exe_missing: "TAVOTTO_SIDECAR_EXE 指向的文件不存在: {path}",
+    sidecar_not_found: "找不到 Tavotto 渲染服务：安装文件可能不完整，请重新安装",
     sidecar_handshake_no_port: "握手数据缺少端口",
     sidecar_start_failed: "渲染服务启动失败",
     sidecar_exited: "渲染服务提前退出（{status}）。日志末尾：\n{tail}",
@@ -123,10 +123,10 @@ const ZH: ShellText = ShellText {
 };
 
 const EN: ShellText = ShellText {
-    app_about: "About Magplot",
-    app_hide: "Hide Magplot",
+    app_about: "About Tavotto",
+    app_hide: "Hide Tavotto",
     app_hide_others: "Hide Others",
-    app_quit: "Quit Magplot",
+    app_quit: "Quit Tavotto",
     file: "File",
     file_open_project: "Open Project…",
     file_export: "Export…",
@@ -147,9 +147,9 @@ const EN: ShellText = ShellText {
     sidecar_spawn_failed: "Could not start the render service {path}: {err}",
     sidecar_stdin_missing: "Could not obtain the sidecar's stdin",
     sidecar_stdin_write_failed: "Could not write the startup credentials: {err}",
-    sidecar_exe_missing: "MAGPLOT_SIDECAR_EXE points at a file that does not exist: {path}",
+    sidecar_exe_missing: "TAVOTTO_SIDECAR_EXE points at a file that does not exist: {path}",
     sidecar_not_found:
-        "Cannot find the Magplot render service — the installation may be incomplete. Please reinstall.",
+        "Cannot find the Tavotto render service — the installation may be incomplete. Please reinstall.",
     sidecar_handshake_no_port: "The handshake data has no port",
     sidecar_start_failed: "The render service failed to start",
     sidecar_exited: "The render service exited early ({status}). End of the log:\n{tail}",

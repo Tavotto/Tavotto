@@ -191,7 +191,7 @@ describe('多画布数据层', () => {
 
     // 换到别处，再像启动那样恢复回来（订阅先于恢复完成挂上，与 App.tsx 同序）
     await useDocumentStore.getState().switchDocument(emptyProject(), 'd_other')
-    localStorage.setItem('magplot.currentDoc', docId)   // switchDocument 会覆盖它
+    localStorage.setItem('tavotto.currentDoc', docId)   // switchDocument 会覆盖它
     const stop = startAutosave()
     try {
       expect(await restoreSession()).toBe(true)
@@ -216,12 +216,12 @@ describe('多画布数据层', () => {
     expect(disk.schema).toBe(3)
     expect(disk.canvases[0].objects[0].id).toBe('t1')
     // 磁盘写成功 → localStorage 不再保存文档主体
-    expect(localStorage.getItem(`magplot.autosave.${s().documentId}`)).toBeNull()
+    expect(localStorage.getItem(`tavotto.autosave.${s().documentId}`)).toBeNull()
   })
 
   it('schema 2 旧本机槽位读取时自动迁移并转正到磁盘', async () => {
     localStorage.setItem(
-      'magplot.autosave.d_old',
+      'tavotto.autosave.d_old',
       JSON.stringify({ schema: 2, name: 'old', page: { w: 80, h: 60 },
                        objects: [text('t9', 'legacy')], guides: [] }),
     )
@@ -237,7 +237,7 @@ describe('多画布数据层', () => {
     const older = { ...emptyProject(), updatedAt: 100 }
     const newer = { ...emptyProject(), updatedAt: 200 }
     diskSlots.set('d_x', JSON.stringify(older))
-    localStorage.setItem('magplot.autosave.d_x', JSON.stringify(newer))
+    localStorage.setItem('tavotto.autosave.d_x', JSON.stringify(newer))
     const pd = (await readAutosaveDoc('d_x'))!
     expect(pd.updatedAt).toBe(200)
   })
@@ -408,7 +408,7 @@ describe('自动保存磁盘写入队列', () => {
     await tick()
   }
 
-  const slot = (id: string) => localStorage.getItem(`magplot.autosave.${id}`)
+  const slot = (id: string) => localStorage.getItem(`tavotto.autosave.${id}`)
 
   beforeEach(async () => {
     globalThis.fetch = gatedFetch
@@ -537,7 +537,7 @@ describe('自动保存的跨标签页写覆盖', () => {
   const drain = async () => {
     while (gate.length) await releaseNext()
   }
-  const slot = (id: string) => localStorage.getItem(`magplot.autosave.${id}`)
+  const slot = (id: string) => localStorage.getItem(`tavotto.autosave.${id}`)
   const onError = (ev: Event) => {
     errors.push((ev as CustomEvent<{ id: string; reason: string }>).detail)
   }
@@ -553,13 +553,13 @@ describe('自动保存的跨标签页写覆盖', () => {
     errors.length = 0
     diskSlots.clear()
     localStorage.clear()
-    window.addEventListener('magplot:autosave-error', onError)
+    window.addEventListener('tavotto:autosave-error', onError)
   })
 
   afterEach(async () => {
     stale = false
     await drain() // 别把在途请求漏给下一个用例（diskBusy 是模块级的）
-    window.removeEventListener('magplot:autosave-error', onError)
+    window.removeEventListener('tavotto:autosave-error', onError)
     globalThis.fetch = baseFetch
   })
 

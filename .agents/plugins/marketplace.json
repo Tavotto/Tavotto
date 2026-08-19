@@ -1,11 +1,11 @@
 {
-  "name": "magplot",
+  "name": "tavotto",
   "interface": {
-    "displayName": "Magplot"
+    "displayName": "Tavotto"
   },
   "plugins": [
     {
-      "name": "magplot",
+      "name": "tavotto",
       "source": {
         "source": "local",
         "path": "./codex-plugin"

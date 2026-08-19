@@ -12,9 +12,9 @@
 import pymupdf
 import pytest
 
-from magplot import app as m
-from magplot.engine import patchspec
-from magplot.engine import pool as engine_pool
+from tavotto import app as m
+from tavotto.engine import patchspec
+from tavotto.engine import pool as engine_pool
 
 
 @pytest.fixture

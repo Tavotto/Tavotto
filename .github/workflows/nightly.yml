@@ -55,7 +55,7 @@ jobs:
       - name: 构建前端进包
         run: python scripts/build_frontend.py
 
-      # magplot.spec 从 workerd/target/release/ 取 Rust supervisor，取不到直接
+      # tavotto.spec 从 workerd/target/release/ 取 Rust supervisor，取不到直接
       # 失败（桌面产物必须自带它）
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -65,7 +65,7 @@ jobs:
           workspaces: |
             workerd
             src-tauri
-      - name: 构建 Rust supervisor（magplot-workerd）
+      - name: 构建 Rust supervisor（tavotto-workerd）
         run: cargo build --release --manifest-path workerd/Cargo.toml
 
       - name: 缓存 CPython embeddable 下载
@@ -79,11 +79,11 @@ jobs:
 
       - name: 打包（内置 runtime 必须进包）
         env:
-          MAGPLOT_REQUIRE_RUNTIME: "1"
+          TAVOTTO_REQUIRE_RUNTIME: "1"
         run: |
           python -m pip install --upgrade pip pyinstaller
           python -m pip install "flask>=3.1,<4" "pymupdf>=1.24,<2"
-          pyinstaller packaging/magplot.spec --noconfirm
+          pyinstaller packaging/tavotto.spec --noconfirm
 
       - name: 准备「用户的 Python」— conda
         if: matrix.python == 'conda'
@@ -114,17 +114,17 @@ jobs:
           # none：什么都不指定 → 必须落到内置 runtime 并**完整跑通**渲染与导出。
           # 其余两档：显式指定用户自己的解释器 → 必须压过内置的。
           if ("${{ matrix.python }}" -ne "none") {
-            $env:MM_WORKER_PYTHON = (Get-Command python).Source
+            $env:TAVOTTO_WORKER_PYTHON = (Get-Command python).Source
             $expect = "env_override"
           } else {
-            $env:MM_WORKER_PYTHON = $null
+            $env:TAVOTTO_WORKER_PYTHON = $null
             $expect = "bundled"
           }
           # 控制面与解释器是两回事：不管渲染跑在谁的 Python 上，产物自带的
           # Rust supervisor 都必须被自动找到并真的用上——回退到 Python 池
           # 功能全在、只是慢、零报错，不断言就永远发现不了。
-          # 这里**不设 MAGPLOT_WORKERD**：要验的正是自动发现。
-          python scripts/smoke_app.py --exe dist\Magplot\Magplot.exe `
+          # 这里**不设 TAVOTTO_WORKERD**：要验的正是自动发现。
+          python scripts/smoke_app.py --exe dist\Tavotto\Tavotto.exe `
             --figures "$dst" --expect-source $expect `
             --expect-control-plane workerd
 
@@ -134,8 +134,8 @@ jobs:
         if: matrix.python == 'none'
         shell: pwsh
         run: |
-          $env:MM_WORKER_PYTHON = $null
-          python scripts/smoke_app.py --exe dist\Magplot\Magplot.exe `
+          $env:TAVOTTO_WORKER_PYTHON = $null
+          python scripts/smoke_app.py --exe dist\Tavotto\Tavotto.exe `
             --figures examples\runtime_check --expect-source bundled `
             --expect-control-plane workerd `
             --expect-packages numpy,pandas,scipy,seaborn,PIL,matplotlib
@@ -144,8 +144,8 @@ jobs:
         # 检查更新是唯一的对外请求；断网时必须照常可用
         shell: pwsh
         run: |
-          $env:MAGPLOT_NO_UPDATE_CHECK = "1"
-          $p = Start-Process -PassThru dist\Magplot\Magplot.exe `
+          $env:TAVOTTO_NO_UPDATE_CHECK = "1"
+          $p = Start-Process -PassThru dist\Tavotto\Tavotto.exe `
                -ArgumentList "--port","5398","--no-browser"
           try {
             foreach ($i in 1..60) {
@@ -158,7 +158,7 @@ jobs:
 
       # ---------------- 装一遍再冒烟：NSIS → 启动 → 升级覆盖 → 卸载 ----------------
       # 这条链路只有真装一遍才知道，而它一度是**空转**的：判的是
-      # packaging\magplot.iss，而 Inno Setup 那条链在 v0.3.0 随旧 desktop.yml
+      # packaging\tavotto.iss，而 Inno Setup 那条链在 v0.3.0 随旧 desktop.yml
       # 一起退役删除了，于是每晚只打一条 notice 就过。现在改挂唯一在发的
       # Windows 发行形态——Tauri 的 NSIS 安装器。
       #
@@ -206,8 +206,8 @@ jobs:
           }
           # 这一档的 venv 只装了打包用的东西，pytest 得现装
           python -m pip install --quiet --disable-pip-version-check pytest
-          $env:MAGPLOT_NSIS_GENERATED = $gen[0].FullName
-          Write-Host "中间脚本: $env:MAGPLOT_NSIS_GENERATED"
+          $env:TAVOTTO_NSIS_GENERATED = $gen[0].FullName
+          Write-Host "中间脚本: $env:TAVOTTO_NSIS_GENERATED"
           python -m pytest -q tests/test_nsis_template.py
           if ($LASTEXITCODE -ne 0) { throw "中间脚本的页面结构不对（退出码 $LASTEXITCODE）" }
 
@@ -217,8 +217,8 @@ jobs:
         env:
           # 壳探针那段会真起一次应用：数据目录必须隔离，别把 runner 的
           # 用户目录当垃圾场，也别让上一步的状态泄进来
-          MAGPLOT_DATA_DIR: ${{ runner.temp }}\inst-data
-          MAGPLOT_CONFIG_DIR: ${{ runner.temp }}\inst-config
+          TAVOTTO_DATA_DIR: ${{ runner.temp }}\inst-data
+          TAVOTTO_CONFIG_DIR: ${{ runner.temp }}\inst-config
         run: |
           $ErrorActionPreference = "Stop"
           $nsis = @(Get-ChildItem src-tauri\target\release\bundle\nsis\*.exe)
@@ -232,16 +232,16 @@ jobs:
           # 安装位置以**注册表为准**（模板把 InstallLocation 写进 UNINSTKEY，
           # 值带引号），读不到才退回 currentUser 模式的默认落点。顺带验了一件
           # 用户真会碰的事：控制面板的「应用」列表里认不认得它。
-          $key  = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Magplot"
+          $key  = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Tavotto"
           $inst = $null
           if (Test-Path $key) {
             $inst = (Get-ItemProperty $key).InstallLocation -replace '^"|"$', ''
           }
           if (-not $inst) {
             Write-Warning "注册表里没有 InstallLocation（控制面板里将看不到它），退回默认位置"
-            $inst = "$env:LOCALAPPDATA\Magplot"
+            $inst = "$env:LOCALAPPDATA\Tavotto"
           }
-          $shell = Join-Path $inst "Magplot.exe"
+          $shell = Join-Path $inst "Tavotto.exe"
           if (-not (Test-Path $shell)) { throw "装完找不到壳: $shell" }
           Write-Host "安装位置: $inst"
 
@@ -251,7 +251,7 @@ jobs:
           # runtime 带过来」——漏收它们是「本地能跑、用户装完不能渲染」最
           # 典型的成因，而界面上一点症状都没有。
           function Find-Sidecar($root, $shellExe) {
-            $hit = Get-ChildItem $root -Recurse -Filter Magplot.exe -ErrorAction SilentlyContinue |
+            $hit = Get-ChildItem $root -Recurse -Filter Tavotto.exe -ErrorAction SilentlyContinue |
                    Where-Object { $_.FullName -ne $shellExe } | Select-Object -First 1
             if (-not $hit) { throw "装出来的目录里没有 sidecar（bundle.resources 漏了？）" }
             return $hit
@@ -261,7 +261,7 @@ jobs:
           $internal = Join-Path $side.Directory.FullName "_internal"
           foreach ($rel in @("runtime\python.exe",
                              "runtime\runtime-manifest.json",
-                             "magplot-workerd.exe")) {
+                             "tavotto-workerd.exe")) {
             if (-not (Test-Path (Join-Path $internal $rel))) {
               throw "安装后缺 $rel（安装器没把它带进来）"
             }
@@ -272,7 +272,7 @@ jobs:
           # 权威验证**——壳靠 resource_dir() 找 sidecar，找得到才说明落点真的对。
           # **把壳自己的 stdout/stderr 接出来。** 它是 windows 子系统的可执行
           # 文件（`windows_subsystem = "windows"`），没有控制台时 stderr 是个
-          # 无效句柄，Rust 的 panic 信息（`.expect("Magplot 桌面壳初始化失败")`
+          # 无效句柄，Rust 的 panic 信息（`.expect("Tavotto 桌面壳初始化失败")`
           # 那条）就此消失得无影无踪——2026-08-18 起这条腿一直红着，而唯一的
           # 线索只有「壳退了」。重定向给了它一个有效句柄，panic 会落进文件。
           $shellOut = Join-Path $env:RUNNER_TEMP "shell-stdout.log"
@@ -305,8 +305,8 @@ jobs:
             }
             # 失败路径不许吞：壳把 sidecar 的日志写在 app_log_dir（起不来时
             # 界面上显示的也是这个路径），起不来的原因全在里面
-            @("$env:LOCALAPPDATA\com.erwanjun.magplot\logs\sidecar.log",
-              "$env:TEMP\magplot-logs\sidecar.log") |
+            @("$env:LOCALAPPDATA\com.tavotto.tavotto\logs\sidecar.log",
+              "$env:TEMP\tavotto-logs\sidecar.log") |
               Where-Object { Test-Path $_ } | ForEach-Object {
                 Write-Host "---- $_ ----"; Get-Content $_ -Tail 60
               }
@@ -324,10 +324,10 @@ jobs:
           }
           Write-Host "✓ 壳 → sidecar → 跟随退出"
 
-          # 装出来的东西真能渲染。**不设 MM_WORKER_PYTHON**：这台机器上要么
+          # 装出来的东西真能渲染。**不设 TAVOTTO_WORKER_PYTHON**：这台机器上要么
           # 没有科学栈、要么与内置的无关，渲染必须落到装进来的那份 runtime；
           # 控制面同理，回退到 Python 池是静默降级，不断言就发现不了。
-          $env:MM_WORKER_PYTHON = $null
+          $env:TAVOTTO_WORKER_PYTHON = $null
           # 每次调用后显式看 $LASTEXITCODE：pwsh 里原生命令的失败**不会**
           # 中断脚本（是否随 $ErrorActionPreference 走要看 PowerShell 版本），
           # 而 runner 只把最后一条命令的退出码当成步骤结果——中间这条冒烟
@@ -348,17 +348,17 @@ jobs:
             --expect-control-plane workerd
           if ($LASTEXITCODE -ne 0) { throw "覆盖安装后冒烟失败（退出码 $LASTEXITCODE）" }
 
-          # ---- 外部程序（Codex 插件）在这台机器上发现得了 Magplot 吗 ----
+          # ---- 外部程序（Codex 插件）在这台机器上发现得了 Tavotto 吗 ----
           # 这是本条链路唯一能回答的问题：只装了桌面程序、没有用户 Python、
-          # PATH 里没有 magplot、没设 MAGPLOT_CLI。源码级测试证明不了它——
-          # 要装出来的那份 magplot-cli 真的在、真的能跑、清单真的写了。
-          $env:MAGPLOT_CLI = $null
-          if (Get-Command magplot -ErrorAction SilentlyContinue) {
-            throw "PATH 里有 magplot，这一步就验不到「只装了桌面版」了"
+          # PATH 里没有 tavotto、没设 TAVOTTO_CLI。源码级测试证明不了它——
+          # 要装出来的那份 tavotto-cli 真的在、真的能跑、清单真的写了。
+          $env:TAVOTTO_CLI = $null
+          if (Get-Command tavotto -ErrorAction SilentlyContinue) {
+            throw "PATH 里有 tavotto，这一步就验不到「只装了桌面版」了"
           }
 
           # 安装器装完就该有清单（NSIS 段里那次 doctor --write-manifest）
-          $manifest = "$env:MAGPLOT_CONFIG_DIR\install.json"
+          $manifest = "$env:TAVOTTO_CONFIG_DIR\install.json"
           if (-not (Test-Path $manifest)) { throw "安装器没写安装清单: $manifest" }
           $mf = Get-Content $manifest -Raw | ConvertFrom-Json
           if (-not (Test-Path $mf.cli)) { throw "清单里的 CLI 不存在: $($mf.cli)" }
@@ -366,7 +366,7 @@ jobs:
 
           # 装出来的 CLI 自己也得能体检（无 GUI、不起服务）
           & $mf.cli doctor --json | Out-Null
-          if ($LASTEXITCODE -ne 0) { throw "装出来的 magplot-cli doctor 失败" }
+          if ($LASTEXITCODE -ne 0) { throw "装出来的 tavotto-cli doctor 失败" }
 
           # 中文 + 空格的项目路径：交接全程不许被拆开
           $proj = "$env:RUNNER_TEMP\我的 图库"
@@ -375,20 +375,20 @@ jobs:
           $script = @(Get-ChildItem $proj -Filter *.py)[0].FullName
 
           # --no-launch：只登记，不起界面
-          $plugin = "codex-plugin\skills\magplot-figure\scripts\handoff.py"
+          $plugin = "codex-plugin\skills\tavotto-figure\scripts\handoff.py"
           $out = python $plugin "$script" --run never --no-launch
           if ($LASTEXITCODE -ne 0) { throw "插件交接失败（退出码 $LASTEXITCODE）: $out" }
           $j = $out | Select-Object -Last 1 | ConvertFrom-Json
           if (-not $j.ok) { throw "插件回了 ok=false: $out" }
           if ($j.parameterizable -ne $true) { throw "图不可参数化: $out" }
           if ($j.launch) { throw "--no-launch 却起了界面: $($j.launch)" }
-          if ($j.magplot.source -notin @("manifest", "install")) {
-            throw "CLI 不是从桌面安装里发现的（source=$($j.magplot.source)）"
+          if ($j.tavotto.source -notin @("manifest", "install")) {
+            throw "CLI 不是从桌面安装里发现的（source=$($j.tavotto.source)）"
           }
-          if (-not (Test-Path "$proj\mm_registry.json")) {
-            throw "没有生成 mm_registry.json: $proj"
+          if (-not (Test-Path "$proj\tavotto_registry.json")) {
+            throw "没有生成 tavotto_registry.json: $proj"
           }
-          Write-Host "✓ 插件发现 Magplot（source=$($j.magplot.source)）并生成了注册表"
+          Write-Host "✓ 插件发现 Tavotto（source=$($j.tavotto.source)）并生成了注册表"
 
           # 清单被删掉（企业策略、用户清理）也要能走通——不许把任何单一
           # 机制当成唯一依据。这次只能靠已知安装位置。
@@ -396,13 +396,13 @@ jobs:
           $out = python $plugin "$script" --run never --no-launch
           if ($LASTEXITCODE -ne 0) { throw "没有清单时交接失败: $out" }
           $j = $out | Select-Object -Last 1 | ConvertFrom-Json
-          if ($j.magplot.source -ne "install") {
-            throw "清单没了却不是从已知安装位置找到的（source=$($j.magplot.source)）"
+          if ($j.tavotto.source -ne "install") {
+            throw "清单没了却不是从已知安装位置找到的（source=$($j.tavotto.source)）"
           }
           Write-Host "✓ 清单缺失时仍能按已知安装位置发现"
 
           # 不带 --no-launch：必须拉起**原生窗口**（不是浏览器）
-          $before = @(Get-Process Magplot -ErrorAction SilentlyContinue).Id
+          $before = @(Get-Process Tavotto -ErrorAction SilentlyContinue).Id
           $out = python $plugin "$script" --run never
           if ($LASTEXITCODE -ne 0) { throw "带唤起的交接失败: $out" }
           $j = $out | Select-Object -Last 1 | ConvertFrom-Json
@@ -410,12 +410,12 @@ jobs:
           $spawned = $null
           foreach ($i in 1..60) {
             Start-Sleep -Milliseconds 500
-            $spawned = @(Get-Process Magplot -ErrorAction SilentlyContinue) |
+            $spawned = @(Get-Process Tavotto -ErrorAction SilentlyContinue) |
                        Where-Object { $_.Id -notin $before }
             if ($spawned) { break }
           }
-          if (-not $spawned) { throw "交接没有拉起 Magplot 窗口进程" }
-          Write-Host "✓ 交接拉起了原生 Magplot（pid $($spawned.Id -join ','))"
+          if (-not $spawned) { throw "交接没有拉起 Tavotto 窗口进程" }
+          Write-Host "✓ 交接拉起了原生 Tavotto（pid $($spawned.Id -join ','))"
 
           # 起来的这一下应该把清单**刷回来**（应用每次启动刷一遍）。这是
           # 「用户把 .app 拖到别处 / 免安装形态 / macOS 没有装后钩子」那条自愈
@@ -437,9 +437,9 @@ jobs:
           $spawned | ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
           foreach ($i in 1..30) {
             Start-Sleep -Milliseconds 500
-            if (-not (Get-Process -Name Magplot -ErrorAction SilentlyContinue)) { break }
+            if (-not (Get-Process -Name Tavotto -ErrorAction SilentlyContinue)) { break }
           }
-          Get-Process -Name Magplot -ErrorAction SilentlyContinue |
+          Get-Process -Name Tavotto -ErrorAction SilentlyContinue |
             ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
 
           # 卸载
@@ -526,11 +526,11 @@ jobs:
 
           # 安装器按系统区域挑语言（en-US 的 runner 会挑英文），两种都认。
           # 中文常量用码点拼，免得 YAML → .ps1 的编码把它们弄坏。
-          $zhOpen       = [string][char]0x6253 + [char]0x5F00 + ' Magplot'          # 打开 Magplot
-          $zhInstalling = [string][char]0x6B63 + [char]0x5728 + [char]0x5B89 + [char]0x88C5 + ' Magplot'
+          $zhOpen       = [string][char]0x6253 + [char]0x5F00 + ' Tavotto'          # 打开 Tavotto
+          $zhInstalling = [string][char]0x6B63 + [char]0x5728 + [char]0x5B89 + [char]0x88C5 + ' Tavotto'
           $zhBrowse     = [string][char]0x6D4F + [char]0x89C8                        # 浏览
-          $reFinish     = [regex]::Escape('Open Magplot')       + '|' + [regex]::Escape($zhOpen)
-          $reInstalling = [regex]::Escape('Installing Magplot') + '|' + [regex]::Escape($zhInstalling)
+          $reFinish     = [regex]::Escape('Open Tavotto')       + '|' + [regex]::Escape($zhOpen)
+          $reInstalling = [regex]::Escape('Installing Tavotto') + '|' + [regex]::Escape($zhInstalling)
           $reBrowse     = 'Browse' + '|' + [regex]::Escape($zhBrowse)
 
           $seen = New-Object 'System.Collections.Generic.HashSet[string]'
@@ -550,7 +550,7 @@ jobs:
           Write-Host "--------------------------------------"
           Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
 
-          if (-not $sawFinish) { throw "150 秒内没走到完成页（没出现「打开 Magplot」）" }
+          if (-not $sawFinish) { throw "150 秒内没走到完成页（没出现「打开 Tavotto」）" }
           if ($all -match $reBrowse) { throw "出现了安装目录选择页（看到了浏览按钮）" }
           if ($all -notmatch $reInstalling) { throw "没出现进度页的品牌页眉（页眉补丁没生效？）" }
           # MUI 默认会在装完那一瞬把页眉换成这两句传统安装器说明。断言只对
@@ -564,15 +564,15 @@ jobs:
           }
           Write-Host "✓ 页面序列：进度页 → 完成页，没有目录页"
 
-          # 装出来的落点与快捷方式策略——首次安装固定 %LOCALAPPDATA%\Magplot
-          $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Magplot"
+          # 装出来的落点与快捷方式策略——首次安装固定 %LOCALAPPDATA%\Tavotto
+          $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Tavotto"
           if (-not (Test-Path $key)) { throw "GUI 安装没写卸载注册表项" }
           $inst = (Get-ItemProperty $key).InstallLocation -replace '^"|"$', ''
-          if ($inst -ne "$env:LOCALAPPDATA\Magplot") {
-            throw "首次安装没落在 %LOCALAPPDATA%\Magplot，而是 $inst"
+          if ($inst -ne "$env:LOCALAPPDATA\Tavotto") {
+            throw "首次安装没落在 %LOCALAPPDATA%\Tavotto，而是 $inst"
           }
-          $desktop = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Magplot.lnk'
-          $smenu   = Join-Path ([Environment]::GetFolderPath('Programs')) 'Magplot.lnk'
+          $desktop = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Tavotto.lnk'
+          $smenu   = Join-Path ([Environment]::GetFolderPath('Programs')) 'Tavotto.lnk'
           # 桌面快捷方式的**行为变化**：完成页那个复选框（默认勾选）没了，
           # 改由 Section Install 无条件创建，所以 GUI 安装必须照样有
           if (-not (Test-Path $desktop)) { throw "GUI 安装没建桌面快捷方式: $desktop" }
@@ -597,7 +597,7 @@ jobs:
           path: |
             ${{ runner.temp }}/**/app.log
             ${{ runner.temp }}/**/worker.log
-            dist/Magplot/_internal/runtime/runtime-manifest.json
+            dist/Tavotto/_internal/runtime/runtime-manifest.json
             build/**/warn-*.txt
           if-no-files-found: warn
           retention-days: 14

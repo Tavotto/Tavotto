@@ -1,6 +1,6 @@
 """patch 规范化的唯一权威实现（engine/patchspec.py）+ golden vectors。
 
-这套断言的存在意义是**跨语言对齐**：Rust supervisor（magplot-workerd）要
+这套断言的存在意义是**跨语言对齐**：Rust supervisor（tavotto-workerd）要
 逐字节复现同一份 canonical JSON 与哈希。任何一侧改了规则，另一侧算出来的
 patch 身份就静默变了——表现是缓存永远不命中、幂等重放变成重复渲染，
 没人会立刻联想到「序列化细节」。所以浮点写法、键序、剔除规则全是硬断言。
@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from magplot.engine import patchspec
+from tavotto.engine import patchspec
 
 GOLDEN = Path(__file__).parent / "golden" / "patch_vectors.json"
 

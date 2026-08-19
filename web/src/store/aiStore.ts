@@ -76,8 +76,8 @@ interface AiState {
 }
 
 const MAX_LINES = 600
-const LS_AGENT = 'magplot.ai.agent'
-const LS_PREFS = 'magplot.ai.prefs'
+const LS_AGENT = 'tavotto.ai.agent'
+const LS_PREFS = 'tavotto.ai.prefs'
 
 function readAgent(): AiAgent {
   try {

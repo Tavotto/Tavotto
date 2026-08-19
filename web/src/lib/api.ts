@@ -42,7 +42,7 @@ export class ApiError extends Error {
 /**
  * 后端错误 → 当前语言的一句话。
  *
- * 约定见 `src/magplot/app.py` 顶部：用户会看到的失败带稳定 `code` + `params`，
+ * 约定见 `src/tavotto/app.py` 顶部：用户会看到的失败带稳定 `code` + `params`，
  * `error` 里的中文原文只是回退。**先查 code**，查不到才用原文——后端不知道
  * 用户选了哪门语言，让它去猜等于把语言偏好搬到服务端。
  *
@@ -1213,11 +1213,11 @@ export const applyUpdate = () =>
 // ---------------------------------------------------------------------------
 /** 渲染解释器是从哪来的——同一条路径，来源不同排障含义完全不同 */
 export type EngineSource =
-  | 'env_override'    // 环境变量 MM_WORKER_PYTHON
+  | 'env_override'    // 环境变量 TAVOTTO_WORKER_PYTHON
   | 'configured'      // 用户在设置里指定的
-  | 'managed_venv'    // Magplot 在源码模式下自建的 venv
+  | 'managed_venv'    // Tavotto 在源码模式下自建的 venv
   | 'bundled'         // Windows 桌面版随包附带的内置环境
-  | 'current_process' // Magplot 自身的解释器（pip install magplot[worker]）
+  | 'current_process' // Tavotto 自身的解释器（pip install tavotto[worker]）
   | 'system'          // 探测到的系统 Python / Conda
   | ''
 
@@ -1239,7 +1239,7 @@ export interface EngineEnvironment {
   python: string | null
   source: EngineSource
   matplotlib: string | null
-  /** true = 用的是 Magplot 自建的 venv，而非用户自己的 */
+  /** true = 用的是 Tavotto 自建的 venv，而非用户自己的 */
   managed: boolean
   /** true = 用的是随安装包附带的内置环境（装完即用，不联网） */
   bundled: boolean
@@ -1279,7 +1279,7 @@ export const setEngineEnvironment = (python: string | null) =>
 
 /* --------------------------- 脚本注册表（stem ↔ 脚本） ----------------------- */
 /**
- * 「面板上没有 ⚡」几乎总是注册表的问题，以前只能手改 mm_registry.json。
+ * 「面板上没有 ⚡」几乎总是注册表的问题，以前只能手改 tavotto_registry.json。
  * 这组接口把整条链路搬到界面上：看现状 → 重扫 → 跑一遍认领 → 手工裁决。
  */
 

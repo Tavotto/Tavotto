@@ -8,10 +8,10 @@
   * 不联网超过 2 秒，网络挂了不报错、不阻塞
   * 不往插件目录里写任何东西（那目录归 Codex 管，可能只读）
   * 不按字符串比版本号（0.10.0 vs 0.9.0）
-  * 不把插件版本当成 Magplot 版本
+  * 不把插件版本当成 Tavotto 版本
 
-跑的是插件自己的脚本（`codex-plugin/skills/magplot-figure/scripts/`），
-不是 magplot 包里的代码。
+跑的是插件自己的脚本（`codex-plugin/skills/tavotto-figure/scripts/`），
+不是 tavotto 包里的代码。
 """
 import ast
 import importlib.util
@@ -24,10 +24,10 @@ from pathlib import Path
 
 import pytest
 
-import magplot
+import tavotto
 
 ROOT = Path(__file__).resolve().parent.parent
-SCRIPTS = ROOT / "codex-plugin" / "skills" / "magplot-figure" / "scripts"
+SCRIPTS = ROOT / "codex-plugin" / "skills" / "tavotto-figure" / "scripts"
 PLUGIN_JSON = ROOT / "codex-plugin" / ".codex-plugin" / "plugin.json"
 
 
@@ -48,7 +48,7 @@ def uc():
 
 
 def manifest(version="0.9.9", **extra):
-    out = {"schema": 1, "plugin": "magplot", "channel": "stable",
+    out = {"schema": 1, "plugin": "tavotto", "channel": "stable",
            "latest_version": version,
            "download_url": "https://example.com/p.zip",
            "release_notes_url": "https://example.com/notes",
@@ -97,7 +97,7 @@ def test_current_version_comes_from_plugin_json(uc, tmp_path):
     """当前版本从 plugin.json 读——发版只改那一个文件。"""
     assert uc.current_version() == json.loads(
         PLUGIN_JSON.read_text(encoding="utf-8"))["version"]
-    assert uc.current_version() == magplot.__version__   # 既有约定：随产品发版
+    assert uc.current_version() == tavotto.__version__   # 既有约定：随产品发版
 
     other = tmp_path / "plugin.json"
     other.write_text(json.dumps({"version": "1.2.3"}), encoding="utf-8")
@@ -110,7 +110,7 @@ def test_no_version_string_is_hardcoded_in_the_script():
     tree = ast.parse(src)
     for node in ast.walk(tree):
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
-            assert node.value != magplot.__version__, \
+            assert node.value != tavotto.__version__, \
                 f"第 {node.lineno} 行写死了版本号"
 
 
@@ -121,7 +121,7 @@ def test_missing_plugin_json_is_not_a_crash(uc, tmp_path):
 # ------------------------------ 缓存与频率 -------------------------------
 def test_first_check_hits_the_network_then_caches(uc, tmp_path):
     calls = []
-    env = {"MAGPLOT_CONFIG_DIR": str(tmp_path)}
+    env = {"TAVOTTO_CONFIG_DIR": str(tmp_path)}
     got = uc.check(environ=env, fetcher=fetcher_for(manifest(), calls),
                    version="0.7.0", now=1000.0)
     assert got["status"] == "available" and got["source"] == "network"
@@ -132,7 +132,7 @@ def test_first_check_hits_the_network_then_caches(uc, tmp_path):
 
 def test_second_check_within_24h_does_not_touch_the_network(uc, tmp_path):
     """默认每 24 小时一次。每次画图都发一个请求 = 我们在替用户交网络税。"""
-    env = {"MAGPLOT_CONFIG_DIR": str(tmp_path)}
+    env = {"TAVOTTO_CONFIG_DIR": str(tmp_path)}
     uc.check(environ=env, fetcher=fetcher_for(manifest()), version="0.7.0", now=1000.0)
     calls = []
     got = uc.check(environ=env, fetcher=fetcher_for(manifest(), calls),
@@ -148,7 +148,7 @@ def test_second_check_within_24h_does_not_touch_the_network(uc, tmp_path):
 
 
 def test_force_ignores_the_cache(uc, tmp_path):
-    env = {"MAGPLOT_CONFIG_DIR": str(tmp_path)}
+    env = {"TAVOTTO_CONFIG_DIR": str(tmp_path)}
     uc.check(environ=env, fetcher=fetcher_for(manifest()), version="0.7.0", now=1000.0)
     calls = []
     uc.check(environ=env, fetcher=fetcher_for(manifest(), calls),
@@ -157,7 +157,7 @@ def test_force_ignores_the_cache(uc, tmp_path):
 
 
 def test_network_failure_falls_back_to_the_last_good_answer(uc, tmp_path):
-    env = {"MAGPLOT_CONFIG_DIR": str(tmp_path)}
+    env = {"TAVOTTO_CONFIG_DIR": str(tmp_path)}
     uc.check(environ=env, fetcher=fetcher_for(manifest()), version="0.7.0", now=1000.0)
     got = uc.check(environ=env, fetcher=fetcher_for(None), version="0.7.0",
                    now=1000.0 + 25 * 3600)
@@ -167,7 +167,7 @@ def test_network_failure_falls_back_to_the_last_good_answer(uc, tmp_path):
 
 def test_network_failure_without_a_cache_says_nothing(uc, tmp_path):
     """问不到又没缓存：闭嘴。绝不报错，也绝不假装「已是最新」。"""
-    env = {"MAGPLOT_CONFIG_DIR": str(tmp_path)}
+    env = {"TAVOTTO_CONFIG_DIR": str(tmp_path)}
     got = uc.check(environ=env, fetcher=fetcher_for(None), version="0.7.0", now=1000.0)
     assert got["status"] == "unknown"
     assert got["latest_version"] is None
@@ -176,7 +176,7 @@ def test_network_failure_without_a_cache_says_nothing(uc, tmp_path):
 def test_failure_backs_off_but_not_for_a_whole_day(uc, tmp_path):
     """失败后 1 小时内不再请求——离线的人不该每次画图都白等 1.5 秒；
     但也不该为一次超时等满一天。"""
-    env = {"MAGPLOT_CONFIG_DIR": str(tmp_path)}
+    env = {"TAVOTTO_CONFIG_DIR": str(tmp_path)}
     uc.check(environ=env, fetcher=fetcher_for(None), version="0.7.0", now=1000.0)
     calls = []
     uc.check(environ=env, fetcher=fetcher_for(None, calls), version="0.7.0",
@@ -189,17 +189,17 @@ def test_failure_backs_off_but_not_for_a_whole_day(uc, tmp_path):
 
 
 def test_changing_the_url_invalidates_the_cache(uc, tmp_path):
-    env = {"MAGPLOT_CONFIG_DIR": str(tmp_path)}
+    env = {"TAVOTTO_CONFIG_DIR": str(tmp_path)}
     uc.check(environ=env, fetcher=fetcher_for(manifest()), version="0.7.0", now=1000.0)
     calls = []
-    uc.check(environ={**env, "MAGPLOT_UPDATE_URL": "https://elsewhere/x.json"},
+    uc.check(environ={**env, "TAVOTTO_UPDATE_URL": "https://elsewhere/x.json"},
              fetcher=fetcher_for(manifest(), calls), version="0.7.0", now=1001.0)
     assert len(calls) == 1 and calls[0][0] == "https://elsewhere/x.json"
 
 
 def test_corrupt_cache_is_not_a_crash(uc, tmp_path):
     (tmp_path / "codex-plugin-update.json").write_text("{ 不是 JSON", encoding="utf-8")
-    env = {"MAGPLOT_CONFIG_DIR": str(tmp_path)}
+    env = {"TAVOTTO_CONFIG_DIR": str(tmp_path)}
     got = uc.check(environ=env, fetcher=fetcher_for(manifest()), version="0.7.0",
                    now=1000.0)
     assert got["status"] == "available"
@@ -216,7 +216,7 @@ def test_readonly_cache_dir_is_not_a_crash(uc, tmp_path):
     readonly.mkdir()
     readonly.chmod(0o500)
     try:
-        got = uc.check(environ={"MAGPLOT_CONFIG_DIR": str(readonly)},
+        got = uc.check(environ={"TAVOTTO_CONFIG_DIR": str(readonly)},
                        fetcher=fetcher_for(manifest()), version="0.7.0", now=1000.0)
     finally:
         readonly.chmod(0o700)
@@ -224,19 +224,19 @@ def test_readonly_cache_dir_is_not_a_crash(uc, tmp_path):
 
 
 def test_a_garbage_config_dir_is_not_a_crash(uc, tmp_path):
-    """`MAGPLOT_CONFIG_DIR` 是用户给的，可能压根不是个合法路径。
+    """`TAVOTTO_CONFIG_DIR` 是用户给的，可能压根不是个合法路径。
 
     `os.makedirs` 对空字节抛的是 ValueError 不是 OSError——只接 OSError
     的话，一个环境变量就能让「画张图」整个失败。
     """
-    got = uc.check(environ={"MAGPLOT_CONFIG_DIR": str(tmp_path / "\0bad")},
+    got = uc.check(environ={"TAVOTTO_CONFIG_DIR": str(tmp_path / "\0bad")},
                    fetcher=fetcher_for(manifest()), version="0.7.0", now=1000.0)
     assert got["status"] == "available"
 
 
 def test_the_cache_never_lands_in_the_plugin_directory(uc, tmp_path):
     """插件目录归 Codex 管，可能只读，升级时还会被整个换掉。"""
-    env = {"MAGPLOT_CONFIG_DIR": str(tmp_path)}
+    env = {"TAVOTTO_CONFIG_DIR": str(tmp_path)}
     before = {p for p in (ROOT / "codex-plugin").rglob("*")}
     uc.check(environ=env, fetcher=fetcher_for(manifest()), version="0.7.0", now=1000.0)
     assert {p for p in (ROOT / "codex-plugin").rglob("*")} == before
@@ -247,8 +247,8 @@ def test_the_cache_never_lands_in_the_plugin_directory(uc, tmp_path):
 def test_disable_env_sends_nothing(uc, tmp_path):
     calls = []
     for value in ("1", "true", "yes", "on"):
-        got = uc.check(environ={"MAGPLOT_CONFIG_DIR": str(tmp_path),
-                                "MAGPLOT_DISABLE_UPDATE_CHECK": value},
+        got = uc.check(environ={"TAVOTTO_CONFIG_DIR": str(tmp_path),
+                                "TAVOTTO_DISABLE_UPDATE_CHECK": value},
                        fetcher=fetcher_for(manifest(), calls), version="0.7.0")
         assert got["status"] == "disabled"
     assert calls == [], "关掉了还发请求"
@@ -256,15 +256,15 @@ def test_disable_env_sends_nothing(uc, tmp_path):
 
 def test_custom_url_env_is_honoured(uc, tmp_path):
     calls = []
-    uc.check(environ={"MAGPLOT_CONFIG_DIR": str(tmp_path),
-                      "MAGPLOT_UPDATE_URL": "https://mirror.internal/plugin.json"},
+    uc.check(environ={"TAVOTTO_CONFIG_DIR": str(tmp_path),
+                      "TAVOTTO_UPDATE_URL": "https://mirror.internal/plugin.json"},
              fetcher=fetcher_for(manifest(), calls), version="0.7.0")
     assert calls[0][0] == "https://mirror.internal/plugin.json"
 
 
 def test_default_url_is_a_release_asset(uc):
     """默认地址跟着 Release 走，不是某个分支的当前内容。"""
-    assert uc.DEFAULT_URL.startswith("https://github.com/erwanjun/magplot/releases/")
+    assert uc.DEFAULT_URL.startswith("https://github.com/Tavotto/Tavotto/releases/")
     assert uc.DEFAULT_URL.endswith(".json")
 
 
@@ -274,7 +274,7 @@ def test_network_timeout_is_short(uc):
 
 
 def test_manifest_from_another_schema_is_ignored(uc, tmp_path):
-    env = {"MAGPLOT_CONFIG_DIR": str(tmp_path)}
+    env = {"TAVOTTO_CONFIG_DIR": str(tmp_path)}
     got = uc.check(environ=env, version="0.7.0", now=1000.0,
                    fetcher=fetcher_for(None))          # fetch 自己会挡掉 schema
     assert got["status"] == "unknown"
@@ -297,35 +297,35 @@ def test_real_fetch_survives_a_dead_address(uc, tmp_path):
     assert uc.fetch("http://127.0.0.1:1/x.json", timeout=1.0) is None
 
 
-# --------------------- 插件版本 ≠ Magplot 版本 ---------------------------
-def test_min_magplot_version_is_compared_against_magplot_not_the_plugin(uc, tmp_path):
+# --------------------- 插件版本 ≠ Tavotto 版本 ---------------------------
+def test_min_tavotto_version_is_compared_against_tavotto_not_the_plugin(uc, tmp_path):
     """两个版本号各有各的升级节奏，绝不能混。
 
-    插件 0.7.0、要求 Magplot ≥ 0.7.0：本机 Magplot 是 0.6.0 就该提示升级
-    **Magplot**；插件自己的版本一个字都不该被拿来顶替它。
+    插件 0.7.0、要求 Tavotto ≥ 0.7.0：本机 Tavotto 是 0.6.0 就该提示升级
+    **Tavotto**；插件自己的版本一个字都不该被拿来顶替它。
     """
-    env = {"MAGPLOT_CONFIG_DIR": str(tmp_path)}
-    payload = manifest(min_magplot_version="0.7.0")
+    env = {"TAVOTTO_CONFIG_DIR": str(tmp_path)}
+    payload = manifest(min_tavotto_version="0.7.0")
     got = uc.check(environ=env, fetcher=fetcher_for(payload), version="0.7.0",
-                   magplot_version="0.6.0", now=1000.0)
-    assert got["magplot"] == {"status": "too_old", "current_version": "0.6.0",
+                   tavotto_version="0.6.0", now=1000.0)
+    assert got["tavotto"] == {"status": "too_old", "current_version": "0.6.0",
                               "required_version": "0.7.0"}
-    assert "Magplot 是 0.6.0" in uc.magplot_hint(got)
+    assert "Tavotto 是 0.6.0" in uc.tavotto_hint(got)
 
 
-def test_new_enough_magplot_is_not_nagged(uc, tmp_path):
-    env = {"MAGPLOT_CONFIG_DIR": str(tmp_path)}
-    got = uc.check(environ=env, fetcher=fetcher_for(manifest(min_magplot_version="0.7.0")),
-                   version="0.7.0", magplot_version="0.7.0", now=1000.0)
-    assert "magplot" not in got
+def test_new_enough_tavotto_is_not_nagged(uc, tmp_path):
+    env = {"TAVOTTO_CONFIG_DIR": str(tmp_path)}
+    got = uc.check(environ=env, fetcher=fetcher_for(manifest(min_tavotto_version="0.7.0")),
+                   version="0.7.0", tavotto_version="0.7.0", now=1000.0)
+    assert "tavotto" not in got
 
 
-def test_unknown_magplot_version_says_nothing(uc, tmp_path):
+def test_unknown_tavotto_version_says_nothing(uc, tmp_path):
     """发现链是从 PATH 走的时候拿不到版本——那就别猜。"""
-    env = {"MAGPLOT_CONFIG_DIR": str(tmp_path)}
-    got = uc.check(environ=env, fetcher=fetcher_for(manifest(min_magplot_version="9.9.9")),
-                   version="0.7.0", magplot_version=None, now=1000.0)
-    assert "magplot" not in got
+    env = {"TAVOTTO_CONFIG_DIR": str(tmp_path)}
+    got = uc.check(environ=env, fetcher=fetcher_for(manifest(min_tavotto_version="9.9.9")),
+                   version="0.7.0", tavotto_version=None, now=1000.0)
+    assert "tavotto" not in got
 
 
 # -------------------------------- 提示语 ---------------------------------
@@ -335,17 +335,17 @@ def test_hint_only_speaks_when_there_is_an_update(uc):
     assert uc.hint({}) is None
     text = uc.hint({"status": "available", "latest_version": "0.7.1",
                     "current_version": "0.7.0",
-                    "upgrade_command": "codex plugin marketplace upgrade magplot",
+                    "upgrade_command": "codex plugin marketplace upgrade tavotto",
                     "release_notes_url": "https://example.com/n"})
-    assert "0.7.1" in text and "0.7.0" in text and "upgrade magplot" in text
+    assert "0.7.1" in text and "0.7.0" in text and "upgrade tavotto" in text
 
 
 # ------------------------- 与 handoff.py 的接线 ---------------------------
 def _run_handoff(tmp_path, target, env_extra, *args):
     env = {**os.environ,
-           "MAGPLOT_CONFIG_DIR": str(tmp_path / "cfg"),
-           "MAGPLOT_DATA_DIR": str(tmp_path / "data"), **env_extra}
-    env.pop("MAGPLOT_CLI", None)
+           "TAVOTTO_CONFIG_DIR": str(tmp_path / "cfg"),
+           "TAVOTTO_DATA_DIR": str(tmp_path / "data"), **env_extra}
+    env.pop("TAVOTTO_CLI", None)
     env.update(env_extra)
     return subprocess.run(
         [sys.executable, str(SCRIPTS / "handoff.py"), str(target), *args],
@@ -360,7 +360,7 @@ def project(tmp_path):
     return d
 
 
-@pytest.mark.skipif(not (ROOT / "src" / "magplot" / "__init__.py").is_file(),
+@pytest.mark.skipif(not (ROOT / "src" / "tavotto" / "__init__.py").is_file(),
                     reason="需要源码树")
 def test_handoff_stdout_stays_one_parseable_json_line(tmp_path, project):
     """**最重要的一条**：提醒绝不能把那行 JSON 弄脏。
@@ -371,8 +371,8 @@ def test_handoff_stdout_stays_one_parseable_json_line(tmp_path, project):
     remote = tmp_path / "latest.json"
     remote.write_text(json.dumps(manifest("99.0.0")), encoding="utf-8")
     proc = _run_handoff(tmp_path, project / "Fig1.pdf",
-                        {"MAGPLOT_UPDATE_URL": remote.as_uri(),
-                         "MAGPLOT_CLI": str(tmp_path / "没有这个 CLI")})
+                        {"TAVOTTO_UPDATE_URL": remote.as_uri(),
+                         "TAVOTTO_CLI": str(tmp_path / "没有这个 CLI")})
     lines = proc.stdout.strip().splitlines()
     assert len(lines) == 1, f"stdout 不止一行: {lines}"
     out = json.loads(lines[0])
@@ -383,24 +383,24 @@ def test_handoff_stdout_stays_one_parseable_json_line(tmp_path, project):
     assert "有新版本" not in proc.stdout
 
 
-@pytest.mark.skipif(not (ROOT / "src" / "magplot" / "__init__.py").is_file(),
+@pytest.mark.skipif(not (ROOT / "src" / "tavotto" / "__init__.py").is_file(),
                     reason="需要源码树")
 def test_handoff_omits_the_field_entirely_when_disabled(tmp_path, project):
     proc = _run_handoff(tmp_path, project / "Fig1.pdf",
-                        {"MAGPLOT_DISABLE_UPDATE_CHECK": "1",
-                         "MAGPLOT_CLI": str(tmp_path / "没有这个 CLI")})
+                        {"TAVOTTO_DISABLE_UPDATE_CHECK": "1",
+                         "TAVOTTO_CLI": str(tmp_path / "没有这个 CLI")})
     out = json.loads(proc.stdout.strip().splitlines()[-1])
     assert "update" not in out
     assert proc.stderr.strip() == "" or "有新版本" not in proc.stderr
 
 
-@pytest.mark.skipif(not (ROOT / "src" / "magplot" / "__init__.py").is_file(),
+@pytest.mark.skipif(not (ROOT / "src" / "tavotto" / "__init__.py").is_file(),
                     reason="需要源码树")
 def test_a_broken_update_check_never_breaks_the_handoff(tmp_path, project):
     """更新检查炸了，交接照常。它是提醒，不是功能。"""
     proc = _run_handoff(tmp_path, project / "Fig1.pdf",
-                        {"MAGPLOT_UPDATE_URL": "http://127.0.0.1:1/x.json",
-                         "MAGPLOT_CLI": str(tmp_path / "没有这个 CLI")})
+                        {"TAVOTTO_UPDATE_URL": "http://127.0.0.1:1/x.json",
+                         "TAVOTTO_CLI": str(tmp_path / "没有这个 CLI")})
     out = json.loads(proc.stdout.strip().splitlines()[-1])
     assert out["error_code"] == "cli_exec_failed"       # 该报的还是照报
     assert out.get("update", {}).get("status") in (None, "unknown")
@@ -410,8 +410,8 @@ def test_a_broken_update_check_never_breaks_the_handoff(tmp_path, project):
 def test_explicit_entry_point_json(tmp_path):
     remote = tmp_path / "latest.json"
     remote.write_text(json.dumps(manifest("1.0.0")), encoding="utf-8")
-    env = {**os.environ, "MAGPLOT_CONFIG_DIR": str(tmp_path / "cfg"),
-           "MAGPLOT_UPDATE_URL": remote.as_uri()}
+    env = {**os.environ, "TAVOTTO_CONFIG_DIR": str(tmp_path / "cfg"),
+           "TAVOTTO_UPDATE_URL": remote.as_uri()}
     proc = subprocess.run([sys.executable, str(SCRIPTS / "update_check.py"),
                            "--json", "--force"],
                           capture_output=True, text=True, encoding="utf-8",
@@ -423,9 +423,9 @@ def test_explicit_entry_point_json(tmp_path):
 
 def test_explicit_entry_point_human(tmp_path):
     remote = tmp_path / "latest.json"
-    remote.write_text(json.dumps(manifest(magplot.__version__)), encoding="utf-8")
-    env = {**os.environ, "MAGPLOT_CONFIG_DIR": str(tmp_path / "cfg"),
-           "MAGPLOT_UPDATE_URL": remote.as_uri()}
+    remote.write_text(json.dumps(manifest(tavotto.__version__)), encoding="utf-8")
+    env = {**os.environ, "TAVOTTO_CONFIG_DIR": str(tmp_path / "cfg"),
+           "TAVOTTO_UPDATE_URL": remote.as_uri()}
     proc = subprocess.run([sys.executable, str(SCRIPTS / "update_check.py"), "--force"],
                           capture_output=True, text=True, encoding="utf-8",
                           errors="replace", env=env)

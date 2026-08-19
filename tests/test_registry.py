@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from magplot.engine import registry
+from tavotto.engine import registry
 
 
 @pytest.fixture(autouse=True)

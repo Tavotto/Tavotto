@@ -1,7 +1,7 @@
 {
   "schema": 2,
   "_comment": [
-    "Magplot 桌面版内置渲染 runtime 的锁文件——scripts/build_worker_runtime.py 的唯一输入。",
+    "Tavotto 桌面版内置渲染 runtime 的锁文件——scripts/build_worker_runtime.py 的唯一输入。",
     "改这里 = 改所有用户拿到的渲染环境，所以每一项都必须是精确版本，不允许 latest / 范围。",
     "",
     "schema 2 起按**目标**分层（schema 1 只有 Windows 一档，平铺在顶层）。每个平台/架构",

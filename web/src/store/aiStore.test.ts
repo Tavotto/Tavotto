@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { prunePrefs, useAiStore, type AiAgent } from './aiStore'
 
-const LS_PREFS = 'magplot.ai.prefs'
+const LS_PREFS = 'tavotto.ai.prefs'
 
 /** 本机 CLI 能力：codex 只认当前配置里的模型，claude 不给强度开关 */
 const CAPS = {
