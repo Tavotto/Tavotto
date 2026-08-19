@@ -233,3 +233,63 @@ def test_non_plotting_module_stays_quiet(figs):
     """没有任何 save 调用的模块不该被当成「命名有问题的绘图脚本」报出来。"""
     _script(figs, "helpers_mod.py", 'def main():\n    return compute()\n')
     assert discover.discover(figs)["scripts"] == {}
+
+
+def test_registry_write_is_atomic(figs, monkeypatch):
+    """落盘失败时，用户的 mm_registry.json 必须一个字节没动，也不留半成品。
+
+    注册表**随图库走**，坏掉的是用户目录里的文件——重装应用也修不回来，
+    下次打开这个项目只会看到「注册表不是合法 JSON」。桌面壳强退、OOM、
+    断电，Windows 上杀毒软件在写入期间短暂锁定，都会走到这条路径。
+
+    故障注入打在 `Path.replace` 上，而不是某个具体的写文件调用：那样这条
+    用例就不绑死在「用 write_text 还是 fdopen」上。**如果实现哪天退回直写，
+    这里会以「DID NOT RAISE」变红**——直写根本不会调用 replace。
+    """
+    from pathlib import Path
+
+    path = registry.registry_path(figs)
+    original = json.dumps({"version": 1, "scripts": {}}, ensure_ascii=False, indent=1)
+    path.write_text(original, encoding="utf-8")
+
+    def boom(self, target):
+        raise OSError("模拟换名那一刻掉电")
+
+    monkeypatch.setattr(Path, "replace", boom)
+    with pytest.raises(OSError):
+        discover.write_config(figs, {"version": 1, "scripts": {
+            "a.py": {"entry": "main", "cost": "medium", "notes": "", "stems": ["A"]}}})
+    monkeypatch.undo()
+
+    assert path.read_text(encoding="utf-8") == original      # 原件一个字节没动
+    assert json.loads(path.read_text(encoding="utf-8"))      # 仍然读得回来
+    leftovers = [p.name for p in figs.iterdir() if p.name != path.name]
+    assert not leftovers, f"半成品留在用户的图库目录里了: {leftovers}"
+
+
+def test_concurrent_registry_writes_do_not_share_a_temp_file(figs, monkeypatch):
+    """每次写用**各自的**临时文件。
+
+    固定的 `<name>.tmp` 在并发下会互相踩：Flask 是多线程的（/api/registry/scan
+    与 open_project 起草、MCP 那侧的登记都会走到这儿），两个写者写同一个路径，
+    先 replace 的把它搬走、后一个当场 FileNotFoundError；更坏的是两份内容交错，
+    读者拿到一个谁也没打算写出来的文件——原子写反倒成了摆设。
+    """
+    from pathlib import Path
+
+    seen: list[str] = []
+    real_replace = Path.replace
+
+    def spy(self, target):
+        seen.append(str(self))
+        return real_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", spy)
+    for stem in ("A", "B"):
+        discover.write_config(figs, {"version": 1, "scripts": {
+            f"{stem}.py": {"entry": "main", "cost": "medium", "notes": "", "stems": [stem]}}})
+
+    assert len(seen) == 2
+    assert seen[0] != seen[1], f"两次写用了同一个临时文件名: {seen[0]}"
+    # 收尾干净：目录里只剩注册表本身
+    assert [p.name for p in figs.iterdir()] == [registry.registry_path(figs).name]

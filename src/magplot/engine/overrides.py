@@ -683,9 +683,35 @@ def _major_locs(axis) -> list[float]:
         return []
 
 
-def _guess_step(axis) -> float:
-    """当前刻度的间距（切到「固定间隔」时的缺省值，避免视觉上突然跳一下）。"""
-    locs = _major_locs(axis)
+def _baseline_major_locs(axis, cfg: dict) -> list[float]:
+    """**脚本原样**那份 locator 算出来的主刻度位置。
+
+    刻度模型里凡是「没给具体值就沿用当前刻度」的档位，都必须锚到这一份，
+    不能读 `axis.get_majorticklocs()`。后者回答的是「此刻 locator 是什么」，
+    而这在两条路径上根本不是同一件事：
+
+    * 热会话里，它可能是上一次 `FixedLocator([5,10,15])` 留下的痕迹；
+    * 全量重放里（重开工程、会话空闲被杀后重建、写回自检的一次性 worker），
+      同一份 patch 列表落到一张全新的 figure 上，它就是脚本自己的刻度。
+
+    于是同一组 override 画出两张不同的图，而 applied 表里一个字节都没变——
+    正是 CLAUDE.md 那条「热态所见 == 全量重放 == 写回 == 重开」要挡的东西。
+    锚到 `orig_major_locator` 之后，这一档的取值只跟 patch 列表有关。
+    """
+    orig = cfg.get("orig_major_locator")
+    if orig is None:
+        return _major_locs(axis)
+    keep = axis.get_major_locator()
+    try:
+        axis.set_major_locator(orig)          # 绑定到本轴，取值才用对 view interval
+        return _major_locs(axis)
+    except Exception:  # noqa: BLE001 — 取不到就退回当前值，总好过抛
+        return _major_locs(axis)
+    finally:
+        axis.set_major_locator(keep)
+
+
+def _step_of(axis, locs: list[float]) -> float:
     if len(locs) >= 2:
         step = abs(locs[1] - locs[0])
         if step > 0:
@@ -693,6 +719,21 @@ def _guess_step(axis) -> float:
     lo, hi = axis.get_view_interval()
     span = abs(float(hi) - float(lo))
     return float(span / 5.0) if span > 0 else 1.0
+
+
+def _guess_step(axis) -> float:
+    """**当前**刻度的间距。给 getter 用——manifest 里的字段是实况回读。"""
+    return _step_of(axis, _major_locs(axis))
+
+
+def _baseline_step(axis, cfg: dict) -> float:
+    """脚本原样刻度的间距（切到「固定间隔」时的缺省值，避免视觉上突然跳一下）。
+
+    给 `apply_tick_model` 用，理由同 `_baseline_major_locs`：读实时刻度会让
+    「只给了 major_mode、没给 major_step」的那条 patch 在热态与重放里猜出
+    两个步长。apply 完之后实况就等于这里算出来的值，getter 照旧回读实况。
+    """
+    return _step_of(axis, _baseline_major_locs(axis, cfg))
 
 
 def _formatter_for(name, orig):
@@ -729,12 +770,13 @@ def apply_tick_model(ax: Axes, which: str) -> None:
     mode = cfg["major_mode"] or "auto"
     if mode == "fixed":
         vals = cfg["major_values"]
-        vals = [float(v) for v in vals] if vals else _major_locs(axis)
+        # 界面承诺「留空 = 用当前刻度」，而这里的「当前」必须取脚本原样那一份
+        vals = [float(v) for v in vals] if vals else _baseline_major_locs(axis, cfg)
         axis.set_major_locator(mticker.FixedLocator(vals))
     elif mode == "step":
         step = float(cfg["major_step"] or 0.0)
         if step <= 0:
-            step = _guess_step(axis)
+            step = _baseline_step(axis, cfg)
         axis.set_major_locator(mticker.MultipleLocator(step))
     else:
         axis.set_major_locator(cfg["orig_major_locator"])
@@ -778,6 +820,8 @@ def tick_major_step(ax: Axes, which: str) -> float:
 
 
 def tick_major_values(ax: Axes, which: str) -> list[float]:
+    # manifest 的这个字段是**实况回读**（step 模式下回的就是等间隔那组），
+    # 不是编辑器里那行输入。apply 之后实况即 apply 算出来的值，两者自洽。
     cfg = tick_cfg(ax, which)
     vals = cfg["major_values"] if cfg["major_values"] else _major_locs(_axis_of(ax, which))
     return [round(float(v), 6) for v in vals]

@@ -51,12 +51,19 @@ class WorkerdError(RuntimeError):
     """supervisor 层的结构化错误（`pool` 再转成 `WorkerError`）。"""
 
     def __init__(self, message: str, code: str = "", retryable: bool = False,
-                 traceback_text: str = "", extra: dict | None = None):
+                 traceback_text: str = "", extra: dict | None = None,
+                 session_id: str = ""):
         super().__init__(message)
         self.code = code
         self.retryable = retryable
         self.traceback_text = traceback_text
         self.extra = extra or {}
+        #: 失败响应里带回来的会话 id（workerd 的 `.with_session()` 在**成功与
+        #: 失败两条路上都会附**）。open 失败时它就是唯一的线索：不认领的话，
+        #: supervisor 的 sessions / by_hash 里那条记录谁也够不着——refs 停在
+        #: 1，只能等超出 max_sessions 时被淘汰，而被挤掉的往往是真正在用的
+        #: 那条。
+        self.session_id = session_id
 
 
 def _dev_tree_candidates() -> list[str]:
@@ -359,6 +366,9 @@ class WorkerdClient:
             traceback_text=err.get("traceback", ""),
             extra={k: v for k, v in err.items()
                    if k not in ("code", "retryable", "message", "traceback")},
+            # **顶层字段**，不在 error 里面：以前这里只拆 `resp["error"]`，
+            # 于是 open 失败时调用方永远学不到这条会话的 id。
+            session_id=str(resp.get("session_id") or ""),
         )
 
 

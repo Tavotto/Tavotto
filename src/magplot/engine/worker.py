@@ -336,10 +336,13 @@ class Worker:
         """历史版本预览：临时应用指定 patches 出图，随后还原当前会话状态。"""
         state = STATES[stem]
         prev = self._snapshot(state)
-        overrides_mod.apply(state, patches)
-        w_in = float(state.fig.get_size_inches()[0])
-        path = self.out_dir / f"{stem}__{tag}.png"
+        # `try` 必须从 apply 之前起：apply 自己会抛（属性不认、值越界），
+        # 起晚了的话异常路径上还原就不执行，这次预览专用的 patches 留在常驻
+        # figure 上，此后前端手里的 lastPatches 与 worker 真实状态错位。
         try:
+            overrides_mod.apply(state, patches)
+            w_in = float(state.fig.get_size_inches()[0])
+            path = self.out_dir / f"{stem}__{tag}.png"
             with _real_output():
                 state.fig.savefig(path, format="png", dpi=max(50, int(width) / w_in))
         finally:
@@ -359,12 +362,16 @@ class Worker:
         """
         state = STATES[stem]
         prev = self._snapshot(state)
-        t0 = time.perf_counter()
-        warnings = overrides_mod.apply(state, patches)
-        t1 = time.perf_counter()
         out = Path(path)
-        out.parent.mkdir(parents=True, exist_ok=True)
+        # `try` 从 apply 之前起（见 _do_preview_png 的同款说明）：apply 与
+        # mkdir 都会抛——目标目录不可写、路径过长、Windows 上被占用——而它们
+        # 恰恰是最需要还原的那两步。画布合成导出用的是**热会话**，一次没还原
+        # 就把这一个面板的 overrides 留在了下一个面板的渲染上。
         try:
+            t0 = time.perf_counter()
+            warnings = overrides_mod.apply(state, patches)
+            t1 = time.perf_counter()
+            out.parent.mkdir(parents=True, exist_ok=True)
             with _real_output():
                 state.fig.savefig(out, format=fmt, dpi=int(dpi))
             if timings is not None:

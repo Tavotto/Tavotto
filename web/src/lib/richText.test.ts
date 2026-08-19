@@ -42,6 +42,18 @@ describe('parseRuns', () => {
     }
   })
 
+  it('结尾的孤立反斜杠不加倍 —— 后面没有片段就不可能被误读', () => {
+    // 粘一段 Windows 路径就够触发：以前每点一次「大小写」末尾就多一个 `\`
+    for (const s of ['C:\\figs\\', '\\', 'a^{2} b\\']) {
+      expect(serializeRuns(parseRuns(s))).toBe(s)
+    }
+    expect(transformCase('abc\\', 'upper')).toBe('ABC\\')
+    // 反过来：后面**确实**还有片段时那个反斜杠仍要成对写出，否则拼接成
+    // `\^{2}` 会被读成字面 `^{2}`，上标就没了
+    expect(plainText(serializeRuns(parseRuns(String.raw`a\\^{2}`))))
+      .toBe(plainText(String.raw`a\\^{2}`))
+  })
+
   it('多余的转义会被规范化掉，但语义不变', () => {
     // `\^y` 里的反斜杠本来就没必要（^ 后面不是 `{`）；去掉它不改变任何显示，
     // 反过来无脑保留/添加反斜杠才会让用户的正文越点越脏

@@ -771,7 +771,9 @@ export function buildSpec(
         px_w: o.pxW ?? null,
         missing: !assets[o.fileId],
         stale: !!r?.stale,
-        render_error: o.overrides.length > 0 && r?.status === 'error' ? (r.error ?? 'error') : null,
+        render_error: o.overrides.length > 0 && r?.status === 'error'
+          ? (formatMessage(r.error) || 'error')
+          : null,
         // 有 override 但引擎那边还没画出这一版：成图会与画布不一致
         unapplied_overrides:
           o.overrides.length > 0 && r?.lastPatches !== JSON.stringify(o.overrides)

@@ -10,6 +10,7 @@
  * 3. **失败不静默**：被拒的 patch、渲染错误都要能透出去。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { formatMessage } from '@/i18n'
 import type { Manifest } from '@/lib/api'
 import { EngineError } from '@/lib/api'
 import { engineTransport, setEngineTransport } from '@/lib/engineTransport'
@@ -55,7 +56,14 @@ function fakeBridge(handler: (name: string, args: Record<string, unknown>) => To
   const calls: { name: string; args: Record<string, unknown> }[] = []
   const bridge = {
     calls,
-    callTool: vi.fn(async (name: string, args: Record<string, unknown>) => {
+    // 形参与真 AppsBridge.callTool 对齐（含 timeoutMs / signal）——假件比真件
+    // 少一个参数的话，「signal 有没有转下去」这类断言根本写不出来
+    callTool: vi.fn(async (
+      name: string,
+      args: Record<string, unknown>,
+      _timeoutMs?: number,
+      _signal?: AbortSignal,
+    ) => {
       calls.push({ name, args })
       return handler(name, args)
     }),
@@ -170,6 +178,21 @@ describe('MCP 传输', () => {
     expect(entry.rev).toBe(2)
   })
 
+  it('render 把 AbortSignal 转给 callTool —— 否则看门狗对内嵌画布形同虚设', async () => {
+    // renderStore 给每次渲染挂了按脚本 cost 分级的看门狗（2/5/15 分钟），
+    // 超时调 ctrl.abort()。HTTP 那条路把 signal 交给 fetch；这条路要是把它
+    // 丢掉，卡死的渲染既不会被取消也不会报错，画布一直转。
+    const { fileId } = seedSession(openResult())
+    const bridge = fakeBridge(() =>
+      okResult({ manifest: manifest(), svg: '<svg/>', render_revision: 2 }),
+    )
+    restore = installMcpTransport(bridge)
+
+    const ctrl = new AbortController()
+    await engineTransport()!.render(fileId, [], { signal: ctrl.signal })
+    expect(bridge.callTool.mock.calls[0][3]).toBe(ctrl.signal)
+  })
+
   it('工具报错 → 渲染态转 error 并带上机器可读 code，不静默', async () => {
     const { fileId } = seedSession(openResult())
     const bridge = fakeBridge(() => ({
@@ -184,7 +207,8 @@ describe('MCP 传输', () => {
     const entry = useRenderStore.getState().byKey[renderKey(fileId, patches)]
     expect(entry.status).toBe('error')
     expect(entry.code).toBe('worker_timeout')
-    expect(entry.error).toContain('渲染超时')
+    // error 是**描述符**（切语言后要跟着换），显示那一刻才成文
+    expect(formatMessage(entry.error)).toContain('渲染超时')
   })
 
   it('iframe 里没有可寻址的 HTTP 资源：panelSrc 回 null，显示退回 SVG', () => {

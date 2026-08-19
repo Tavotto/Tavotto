@@ -82,8 +82,8 @@ function matchBrace(text: string, open: number): number {
 /** 片段列表 → 标记文本（大小写转换等改完内容后写回用）。 */
 export function serializeRuns(runs: TextRun[]): string {
   return runs
-    .map((r) => {
-      const body = r.script ? r.text : escapeLiteral(r.text)
+    .map((r, i) => {
+      const body = r.script ? r.text : escapeLiteral(r.text, i < runs.length - 1)
       return r.script === 'sup' ? `^{${body}}` : r.script === 'sub' ? `_{${body}}` : body
     })
     .join('')
@@ -95,11 +95,19 @@ export function serializeRuns(runs: TextRun[]): string {
  * 无脑转义的后果：`a^b`、`100%` 这类正文里的孤立符号，用户点一次「大小写」
  * 就会凭空多出 `\`——文本被工具改成了自己没写过的样子。
  *   * `^`/`_` 只有紧跟 `{` 时才是标记开头，其余原样；
- *   * `\` 只有当它后面是 `\ ^ _`、或位于片段末尾（后面可能立刻接一个标记）
- *     时才需要成对写出。
+ *   * `\` 只有当它后面是 `\ ^ _`、或位于片段末尾**且后面还有片段**（拼接后
+ *     紧跟的就是 `^{`/`_{`，`\^` 会被读成转义）时才需要成对写出。
+ *
+ * `followedByRun` 这个参数不能省：正则里的 `$` 匹配的是**这一段自己**的末尾，
+ * 而整段文本的最后一段后面什么都没有，那个孤立的 `\` 不可能被误读。省掉它
+ * 的后果是用户每点一次「大小写」，以反斜杠结尾的文本（粘一段 Windows 路径
+ * 就够了）末尾就多一个 `\`——`serializeRuns(parseRuns(s)) === s` 这条往返
+ * 不变式当场破掉，而且是每点一次多一个。
  */
-const escapeLiteral = (s: string) =>
-  s.replace(/\\(?=[\\^_]|$)/g, '\\\\').replace(/([\^_])(?=\{)/g, '\\$1')
+const escapeLiteral = (s: string, followedByRun: boolean) =>
+  s
+    .replace(followedByRun ? /\\(?=[\\^_]|$)/g : /\\(?=[\\^_])/g, '\\\\')
+    .replace(/([\^_])(?=\{)/g, '\\$1')
 
 /** 去掉全部标记，只留可读文本（搜索、导出元数据、无障碍标签用）。 */
 export const plainText = (text: string) => parseRuns(text).map((r) => r.text).join('')

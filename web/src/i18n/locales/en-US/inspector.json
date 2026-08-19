@@ -188,7 +188,7 @@
     "numberList": {
       "count_one": "{{count}} tick",
       "count_other": "{{count}} ticks",
-      "empty": "Leave empty to keep the current ticks",
+      "empty": "This axis has no ticks right now",
       "placeholder": "e.g. 0, 0.5, 1"
     },
     "orderEntry": "Entry {{index}}",

@@ -106,6 +106,36 @@ _lock = threading.Lock()
 _EMPTY_PATCH_HASH = patchspec.patch_hash([])
 
 
+def stem_patch_hash(worker, stem: str) -> str:
+    """`worker` 上**这个 stem** 最后应用的那组 patches 的规范哈希。
+
+    必须按 stem 问，不能只看 worker 级的 `last_patch_hash`：池键是
+    `(figures_dir, script_name)`、**不含 stem**，一个脚本登记多个 stem 时
+    它们共用同一条会话（`examples/figures` 里的 `fig2.py` 就登记了
+    `Fig2_yield` 与 `Fig2_correlation` 两个）。只看 worker 级的话，先改完
+    A 再对 B 点「更新原图」，只要两次 patches 的哈希碰巧相同（最常见的就是
+    两边都是空列表），写回自检就会拿 **A 的热态 manifest** 去和 B 的重放
+    结果比——而那道校验正是「热态所见 == 写进文件的」这条不变式的最后一道
+    防线，比错了要么误报 409、要么把真实分歧放过去。
+
+    **账本里有记录就以它为准，不再看 `built`。** `built` 是包装对象的记账，
+    而 workerd 那条路的透明重开（`_call` 撞上 `unknown_session` → `_open()`
+    → 重试）会把它置回 False——即便重试的那次 render 成功了、这个 stem 的
+    哈希也已经记下。拿 `built` 当前置条件的话，那次成功的热态会被当成「没有
+    基准」，写回于是悄悄降级成 `fresh_only`，跳过热态与重放的分歧比对——
+    而那正是这道校验存在的全部意义。
+
+    账本里没有记录时才轮到 `built` 说话：build 过 = 这个 stem 就是脚本原样
+    （空 patch 列表）；没 build 过 = 压根没有基准（回空串）。
+    """
+    by_stem = getattr(worker, "last_patch_hash_by_stem", None)
+    if by_stem is None:                       # 没有按 stem 账本的实现（假件）
+        return getattr(worker, "last_patch_hash", "")
+    if stem in by_stem:
+        return by_stem[stem]
+    return _EMPTY_PATCH_HASH if getattr(worker, "built", False) else ""
+
+
 def _merge_timings(resp: dict, queue_wait_ms: float, total_ms: float) -> dict:
     """把控制面自己的两段计时并进 worker 回来的 `timings`。
 
@@ -153,13 +183,17 @@ def _fold_build_timings(resp: dict, build: dict | None) -> dict:
 
 
 def _norm_dir(figures_dir: str | Path) -> str:
-    """池键里的项目标识：解析成绝对路径，大小写不敏感的平台统一小写。"""
+    """池键里的项目标识：解析成绝对路径，大小写不敏感的**卷**上统一小写。
+
+    按卷探测而不是按 `os.name` 判（macOS 的 APFS 同样大小写不敏感）——
+    与 `app._project_id()` 共用 `config.normalize_path_identity`，两边分头
+    判断的话，一个认为是同一个项目、另一个认为是两个，池与写回基线对不上。
+    """
     try:
         p = str(Path(figures_dir).expanduser().resolve())
     except OSError:
         p = str(figures_dir)
-    import os
-    return p.lower() if os.name == "nt" else p
+    return config.normalize_path_identity(p)
 
 
 def _next_generation(key: tuple[str, str]) -> int:
@@ -485,6 +519,8 @@ class EngineWorker:
         #: 这条会话上最后一次 `override()` 的规范 patch 哈希（build 之后是空列表）。
         #: 写回时据此判断「热态手里的这份 manifest 是不是同一组 patches 出的」。
         self.last_patch_hash = ""
+        #: **按 stem** 记的同一件事，见 `stem_patch_hash()`。
+        self.last_patch_hash_by_stem: dict[str, str] = {}
         self.lock = threading.Lock()
         self.built = False
         self.last_used = time.time()
@@ -694,6 +730,7 @@ class EngineWorker:
         resp = self.request({"cmd": "build"}, BUILD_TIMEOUT)
         self.built = True
         self.last_patch_hash = _EMPTY_PATCH_HASH
+        self.last_patch_hash_by_stem.clear()      # 每个 stem 都回到脚本原样
         return resp
 
     def override(self, stem: str, patches: list,
@@ -709,6 +746,7 @@ class EngineWorker:
         resp = self.request(payload, REQUEST_TIMEOUT)
         self.rev += 1
         self.last_patch_hash = patchspec.patch_hash(patches)
+        self.last_patch_hash_by_stem[stem] = self.last_patch_hash
         return _fold_build_timings(resp, build)
 
     def export(self, stem: str, patches: list, path: str,
@@ -871,6 +909,7 @@ class WorkerdWorker:
         # 与 EngineWorker 同源：spawn 时的脚本指纹 + 最后应用的 patch 哈希
         self.script_sha1 = script_sha1(figures_dir, script_name)
         self.last_patch_hash = ""
+        self.last_patch_hash_by_stem: dict[str, str] = {}
         # workerd 自己排队，这把锁只是为了与 EngineWorker 同形（调用方不该关心
         # 是哪条路径）。**绝不拿它包住一次请求**——那会把 workerd 好不容易解开的
         # 「一个慢请求占死整条会话」重新绑回来。
@@ -902,6 +941,20 @@ class WorkerdWorker:
                                      timeout=HANDSHAKE_TIMEOUT)
         except workerd_client.WorkerdError as exc:
             self._dead = True
+            # **失败也要认领 session_id 并把它关掉。**
+            # workerd 在 open 的那一刻就把会话记进了 sessions / by_hash，
+            # 握手或 spawn 失败时那条记录不会自己消失；而失败响应里的
+            # session_id 是唯一的线索，不认领的话它就成了谁也够不着的幽灵：
+            # refs 停在 1，只能等超出 max_sessions 时被淘汰——被挤掉的往往是
+            # **真正在用**的那条会话。
+            # 关不掉就算了（workerd 可能已经整个没了），绝不让清理动作把
+            # 真正的失败原因盖过去。
+            if exc.session_id:
+                try:
+                    self._client.call("close_session", session_id=exc.session_id,
+                                      payload={"force": True}, timeout=5.0)
+                except workerd_client.WorkerdError:
+                    LOG.debug("open 失败后清理会话 %s 也没成功", exc.session_id)
             raise self._to_worker_error(exc) from exc
         self._session_id = resp.get("session_id", "")
         self.built = False
@@ -981,6 +1034,7 @@ class WorkerdWorker:
         resp = self._call("build", BUILD_TIMEOUT)
         self.built = True
         self.last_patch_hash = _EMPTY_PATCH_HASH
+        self.last_patch_hash_by_stem.clear()      # 每个 stem 都回到脚本原样
         return resp
 
     def override(self, stem: str, patches: list,
@@ -995,6 +1049,7 @@ class WorkerdWorker:
         resp = self._call("render", REQUEST_TIMEOUT, stem=stem, payload=payload)
         self.rev += 1
         self.last_patch_hash = patchspec.patch_hash(patches)
+        self.last_patch_hash_by_stem[stem] = self.last_patch_hash
         return _fold_build_timings(resp, build)
 
     def export(self, stem: str, patches: list, path: str,

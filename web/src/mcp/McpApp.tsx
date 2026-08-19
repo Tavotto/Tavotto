@@ -13,7 +13,7 @@ import {
 import { CanvasStage } from '@/canvas/CanvasStage'
 import { ElementInspector } from '@/components/inspector/ElementInspector'
 import { useEngineSync } from '@/hooks/useEngineSync'
-import { t as translate } from '@/i18n'
+import { formatMessage, t as translate, type UiMessage } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { useDocumentStore } from '@/store/documentStore'
 import { usePanelRender } from '@/store/renderStore'
@@ -280,11 +280,12 @@ function RenderState({
 }: {
   rendering: boolean
   pending: boolean
-  error: string | null
+  error: UiMessage | null
 }) {
   if (error) {
     return (
-      <span className="flex shrink-0 items-center gap-1 text-xs text-danger" title={error}>
+      <span className="flex shrink-0 items-center gap-1 text-xs text-danger"
+            title={formatMessage(error)}>
         <TriangleAlert size={12} />
         {mc('renderFailed')}
       </span>

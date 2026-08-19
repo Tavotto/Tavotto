@@ -480,7 +480,8 @@ Python，首次渲染也不联网：
   **箭头也不给**（它有 `arrow_endpoints` 那套契约，两套并存只会打架）。
   `ax.fill()` 的 Polygon 与 PathPatch 现在登记成 `axes_i.patches_j`（role=patch）。
   前端：命中 / 框选 / 描边全在 `web/src/lib/pathGeom.ts`（距离一律换到 mm 再比，
-  与图内箭头同一口径；填充按 even-odd 算内部，空心只在描边附近命中；框选是
+  与图内箭头同一口径；填充按 nonzero 缠绕数算内部（判据见「PDF 后端边界」
+  一节，别在别处另写一份 even-odd 的），空心只在描边附近命中；框选是
   「圈墨迹」不是「戳进去」）；`OverlaySvg` 画 `<path>` 并套上引擎给的 clip 框。
   **文字 / 图例 / 子图 / 组选择继续用矩形**——它们本来就是矩形语义，别为了统一
   硬转路径。画布**原生**形状同理：`lib/shapeGeometry.ts` 的 `shapeOutline` 是

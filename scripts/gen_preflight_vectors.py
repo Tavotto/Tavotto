@@ -174,6 +174,32 @@ def cases() -> list[dict]:
                                       rect_mm=[0, 0, 178.0, 100.125], scale=1.0)],
                               page=(178.0, 100.125))})
 
+    # 9c. journal 把容差覆盖成 **0**（「页宽必须精确等于规范值」）：80.3mm 必须报。
+    #     这一对用例守的是「显式 0 ≠ 没表态」——Python 侧一度写成
+    #     `_num(...) or 0.5`，把 0 当成缺省又换回 0.5mm，于是偷偷放行了
+    #     不合规的页宽，而 TS 侧用 `??`、忠实执行 0，两条链路结论相反。
+    out.append({"name": "journal-zero-width-tolerance", "profile_id": "lab-publication-v1",
+                "journal": {"widths_mm": {"tolerance_mm": 0.0}},
+                "spec": _spec([_panel("p1", manifest=_clean_manifest(),
+                                      rect_mm=[0, 0, 80.3, 60.0])],
+                              page=(80.3, 60.0))})
+
+    # 9d. 同一份 80.3mm **不带覆盖**：默认 0.5mm 容差盖得住，不该报页宽
+    #     （证明上一条的 error 真的来自那个 0，而不是这张图本来就不合规）
+    out.append({"name": "journal-zero-width-tolerance-baseline",
+                "profile_id": "lab-publication-v1",
+                "spec": _spec([_panel("p1", manifest=_clean_manifest(),
+                                      rect_mm=[0, 0, 80.3, 60.0])],
+                              page=(80.3, 60.0))})
+
+    # 9e. journal 把绝对字号下限覆盖成 **0**（「不设下限」）：4pt 不该再触发
+    #     font-below-absolute-floor（font-too-small 仍会响，那是另一条规则）。
+    m0 = _clean_manifest()
+    m0["elements"][1]["editable"][1]["value"] = 4.0        # xticks fontsize
+    out.append({"name": "journal-zero-font-floor", "profile_id": "lab-publication-v1",
+                "journal": {"absolute_min_font_size_pt": 0.0},
+                "spec": _spec([_panel("p1", manifest=m0)])})
+
     # 10. free-form profile：同一份输入，等级整体降一档（severity 表说了算）。
     #     4pt 才低于它的 6pt 下限——同样一张图在严格 profile 下是 error。
     m = _clean_manifest()

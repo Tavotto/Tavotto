@@ -156,7 +156,16 @@ export function segIntersectsRect(
   return false
 }
 
-/** 可拖动文字 / 图例的当前锚点（top-origin，优先 override） */
+/**
+ * 可拖动文字 / 图例的当前锚点（top-origin，**优先尚未渲染回来的 override**）。
+ *
+ * 拖动起手时的基准必须走这里，不能直接读 `el.anchor`：后者来自
+ * `usePanelManifest`，而自己那份变体还没画出来时 `panelRender` 会退回
+ * `latest[fileId]`——也就是**上一次提交之前**的 manifest。于是「拖一下、
+ * 不等画完再拖一下」的第二次手势以旧锚点起算，而 `setOverride` 是整条替换
+ * 语义，第一次在另一个方向上的位移被整个覆盖丢弃：不报错、界面上也看不出来，
+ * 用户以为是两次叠加。脚本越重、往返越慢，这个窗口越大。
+ */
 export function anchorOf(panel: PanelObject, el: ManifestElement): [number, number] | null {
   if (!el.anchor || !el.drag_prop) return null
   const ov = panel.overrides.find((o) => o.gid === el.gid && o.prop === el.drag_prop)

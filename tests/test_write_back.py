@@ -499,3 +499,40 @@ def test_history_restore_honours_expected_mtime(client, tmp_path, monkeypatch):
                              "expected_mtime": _mtime(figs / "Fig1.pdf") - 100})
     assert resp.status_code == 409
     assert resp.get_json()["code"] == "source_changed"
+
+
+def test_hot_manifest_is_matched_per_stem_not_per_worker(tmp_path):
+    """池键是 (figures_dir, script_name)、**不含 stem**：一个脚本登记多个
+    stem 时（examples 里的 fig2.py 就有两个）它们共用同一条会话。
+
+    只看 worker 级的 `last_patch_hash`，就会出现这种事：先编辑 A 并渲染，
+    再对 **B** 点「更新原图」，而两次的 patches 恰好同一组（最常见的就是
+    两边都是空列表，或用户在两张图上做了同样的改动）——写回自检于是认为
+    「热态就是这组 patches」，拿 B 那份**从没被 override 过**的热态
+    manifest 去和 B 的全量重放结果比，比出一堆假分歧，一次合法的写回被
+    409 `replay_divergence` 拦下。反过来（该比的没比）同样成立。
+
+    判据必须按 stem 问：B 没被 override 过，它的热态是「脚本原样」，
+    与请求里的这组 patches 不是一回事，直接判为不可比（回 None，
+    响应据实写 `replay: fresh_only`）。
+    """
+    out = tmp_path / "out"
+    out.mkdir()
+    patches = [{"gid": "axes_0.title", "prop": "fontsize", "value": 7}]
+    for stem in ("Fig2_yield", "Fig2_correlation"):
+        man = {**_manifest(), "stem": stem}
+        (out / f"{stem}.json").write_text(json.dumps(man), encoding="utf-8")
+
+    class Hot:
+        """热会话：只在 Fig2_yield 上应用过 patches。"""
+        built = True
+        out_dir = out
+        last_patch_hash = patchspec.patch_hash(patches)     # worker 级：像是「就是它」
+        last_patch_hash_by_stem = {"Fig2_yield": patchspec.patch_hash(patches)}
+
+        def override(self, *a, **k):                        # pragma: no cover
+            raise AssertionError("不可比的 stem 不该触发重渲染")
+
+    hot = Hot()
+    assert m._hot_manifest(hot, "Fig2_yield", patches) is not None       # 这个才可比
+    assert m._hot_manifest(hot, "Fig2_correlation", patches) is None     # 另一个不可比

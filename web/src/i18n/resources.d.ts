@@ -1074,7 +1074,7 @@ export default interface Resources {
       "moveUp": "上移",
       "numberList": {
         "count_other": "{{count}} 个刻度",
-        "empty": "留空 = 用当前刻度",
+        "empty": "这条轴当前没有刻度",
         "placeholder": "例：0, 0.5, 1"
       },
       "orderEntry": "条目 {{index}}",

@@ -661,6 +661,26 @@ def test_macos_ci_no_longer_fakes_a_worker_env():
     assert "python -m venv worker-env" not in wf
 
 
+def test_orphan_check_does_not_rely_on_a_dead_parent_pid():
+    """孤儿 worker 的检测不许再用 `pgrep -P <sidecar pid>`。
+
+    那条断言恒真：进程一终止，它还活着的子进程立刻被重新挂到 init/launchd
+    （PID 1）名下——PPID 在父进程死亡的那一刻就变了，而这段检查恰恰跑在
+    「已确认 sidecar 退出」之后。于是不管有没有真的泄漏，都查不到任何东西，
+    `ok("无孤儿子进程")` 照打。**空转的门禁比没有门禁更坏**：它还在报平安。
+    正确做法是按命令行内容做全局扫描（`smoke_app._leftover_workers`），
+    两个冒烟脚本共用同一把尺。
+    """
+    src = (REPO / "scripts" / "smoke_desktop.py").read_text(encoding="utf-8")
+    # 只盯**调用形态**（argv 列表里的 "pgrep"），别把解释这件事的注释也判红
+    assert '"pgrep"' not in src, \
+        "父进程已退出时按 PPID 查孤儿必然一无所获——这条断言恒真"
+    # 两条判据缺一不可：pid 快照精确（连没有命令行特征的 magplot-workerd 也
+    # 盖得住），命令行扫描兜住父子关系没记全的那些
+    assert "_descendants(proc.pid)" in src, "退出前要把后代 pid 快照下来"
+    assert "_leftover_workers" in src, "还要按命令行内容做一次全局扫描"
+
+
 def test_macos_release_signs_and_verifies_every_nested_macho():
     """`--deep` 签不到 Resources 里的内置 runtime（500+ 个 .so）：它们不被
     识别为嵌套代码。漏签的表现是公证 Invalid，或者更坏——公证过了但

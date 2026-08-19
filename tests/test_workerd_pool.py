@@ -8,7 +8,7 @@ import subprocess
 
 import pytest
 
-from magplot.engine import pool, runtime, workerd_client
+from magplot.engine import patchspec, pool, runtime, workerd_client
 
 
 # ------------------------------ 选路 ------------------------------
@@ -319,3 +319,77 @@ def test_subprocess_is_still_imported_for_the_python_path():
     assert pool.subprocess is subprocess
     assert hasattr(pool.EngineWorker, "request")
     assert hasattr(pool.EngineWorker, "_readline")
+
+
+def test_a_failed_open_claims_and_closes_the_ghost_session(monkeypatch, tmp_path):
+    """open 失败时也要认领响应里的 session_id，并把那条会话关掉。
+
+    workerd 在 `open_session` 的**那一刻**就把会话记进了 sessions / by_hash，
+    握手或 spawn 失败时那条记录不会自己消失。失败响应里的 `session_id`
+    （workerd 的 `.with_session()` 成功失败两条路都附）是唯一的线索——
+    以前 `_call_on` 只拆 `resp["error"]`，把它丢了，于是那条会话谁也够不着：
+    refs 停在 1，只能等超出 max_sessions 时被淘汰，而被挤掉的往往是**真正
+    在用**的那条。
+    """
+    calls: list[dict] = []
+
+    class FakeClient:
+        def call(self, op, *, session_id=None, stem=None, payload=None,
+                 timeout=None, slack=None):
+            calls.append({"op": op, "session_id": session_id, "payload": payload})
+            if op == "open_session":
+                raise workerd_client.WorkerdError(
+                    "握手超时", code="handshake_timeout", retryable=True,
+                    session_id="s-7")
+            return {"ok": True}
+
+    monkeypatch.setattr(pool, "select_worker_python",
+                        lambda *a, **k: ("/usr/bin/python3", pool.SOURCE_SYSTEM))
+    with pytest.raises(pool.WorkerError):
+        pool.WorkerdWorker("fig.py", str(tmp_path), "main",
+                           client=FakeClient(), base_dir=tmp_path / "b")
+
+    assert [c["op"] for c in calls] == ["open_session", "close_session"]
+    assert calls[1]["session_id"] == "s-7"
+    assert calls[1]["payload"] == {"force": True}
+
+
+def test_cleanup_failure_never_hides_the_real_open_error(monkeypatch, tmp_path):
+    """清理动作自己失败了，抛给调用方的仍必须是**真正的**失败原因。"""
+    class FakeClient:
+        def call(self, op, *, session_id=None, stem=None, payload=None,
+                 timeout=None, slack=None):
+            if op == "open_session":
+                raise workerd_client.WorkerdError(
+                    "起不来", code="spawn_failed", session_id="s-9")
+            raise workerd_client.WorkerdError("workerd 也没了",
+                                              code="workerd_unavailable")
+
+    monkeypatch.setattr(pool, "select_worker_python",
+                        lambda *a, **k: ("/usr/bin/python3", pool.SOURCE_SYSTEM))
+    with pytest.raises(pool.WorkerError) as exc:
+        pool.WorkerdWorker("fig.py", str(tmp_path), "main",
+                           client=FakeClient(), base_dir=tmp_path / "b")
+    assert exc.value.code == "spawn_failed"
+
+
+def test_recorded_stem_hash_survives_a_transparent_session_reopen():
+    """账本里有记录就以它为准，**不再看 `built`**。
+
+    workerd 那条路的透明重开（`_call` 撞上 unknown_session → `_open()` → 重试）
+    会把包装对象的 `built` 置回 False，即便重试的那次 render 成功了、这个 stem
+    的哈希也已经记下。拿 `built` 当前置条件的话，那次成功的热态会被当成「没有
+    基准」，写回于是悄悄降级成 `fresh_only`，跳过热态与重放的分歧比对——而那
+    正是这道校验存在的全部意义。
+    """
+    class W:
+        built = False                                   # 重开之后就是这个样子
+        last_patch_hash = "sha256:whatever"
+        last_patch_hash_by_stem = {"Fig2_yield": "sha256:aaa"}
+
+    w = W()
+    assert pool.stem_patch_hash(w, "Fig2_yield") == "sha256:aaa"
+    # 账本里没有这个 stem 时才轮到 built 说话
+    assert pool.stem_patch_hash(w, "Fig2_correlation") == ""
+    W.built = True
+    assert pool.stem_patch_hash(w, "Fig2_correlation") == patchspec.patch_hash([])

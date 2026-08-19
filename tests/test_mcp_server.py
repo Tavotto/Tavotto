@@ -191,6 +191,20 @@ def test_protocol_owns_the_real_stdout(monkeypatch):
     assert b'"ok"' in real.getvalue()        # 协议帧仍走真正的 stdout
 
 
+def test_a_flood_of_blank_lines_does_not_blow_the_stack():
+    """跳过空行必须是循环，不能是递归。
+
+    递归会让栈深度跟着对端输入走：连续上千个裸换行（管道拥塞、被截断的
+    写入都会产生）就抛 `RecursionError`，而 `serve_forever()` 只捕获
+    RpcError/OSError/ValueError，于是整个 server 进程当场终止——host 那边
+    看到的是「服务器意外断开」，JSON-RPC 层面一条错误响应都没有。
+    """
+    flood = b"\n" * 5000 + b'{"jsonrpc":"2.0","id":1,"method":"ping"}\n'
+    conn = rpc.StdioConnection(io.BytesIO(flood), io.BytesIO())
+    assert conn.read() == {"jsonrpc": "2.0", "id": 1, "method": "ping"}
+    assert conn.read() is None                # 空行吃完即 EOF，不是无限循环
+
+
 # ------------------------------ 路径范围 ------------------------------------
 def test_paths_outside_the_allowed_roots_are_refused(tmp_path, monkeypatch):
     """越界一律拒，并如实回报**规范化后的那个路径**。
@@ -495,6 +509,44 @@ def test_failed_first_render_leaves_no_session_behind(project, monkeypatch):
         with pytest.raises(bridge.BridgeError):
             bridge.open_figure(str(project))
     assert bridge.sessions() == {}, "失败的 open 在账本里留下了够不着的会话"
+
+
+def test_preview_png_failure_still_hands_back_the_session(project, fake_pool,
+                                                          monkeypatch):
+    """位图那一跳失败不能把会话变成「够不着的幽灵」。
+
+    主渲染成功后会话已经登记，而 `include_png` 的位图是**第二次独立的
+    worker 调用**（超时/崩溃/磁盘错误都可能）。让它抛出去的话，调用方拿到
+    的是一条 isError 结果、里面没有 session_id——这条会话谁也关不掉，占着
+    账本直到被 `_evict_if_needed()` 挤掉，而被挤掉的往往是真正在用的那条。
+    位图是顺带产物：降级，但如实回一个 code（不静默）。
+    """
+    def boom(*a, **k):
+        raise bridge.BridgeError("位图挂了", code="preview_failed")
+
+    monkeypatch.setattr(bridge, "preview_png", boom)
+    out = bridge.open_figure(str(project), include_png=True)
+    assert out["ok"] is True
+    assert out["session_id"] in bridge.sessions(), "会话必须还够得着"
+    assert "preview_png_base64" not in out
+    assert out["preview_png_error"] == "preview_failed"     # 不静默
+
+
+def test_unreadable_preview_file_is_still_a_bridge_error(project, fake_pool,
+                                                          tmp_path):
+    """worker 说成了、文件却读不出来，也必须走降级而不是裸 OSError。
+
+    `Path(path).read_bytes()` 那一步在 try 之外，抛的是 OSError（被杀毒隔离、
+    磁盘满、缓存目录被清都会）。`open_figure` 的降级只接 BridgeError，接不住
+    它——那条刚登记的会话又变回谁也够不着的幽灵，正是这次修复要堵的洞。
+    """
+    # worker 报告成功、文件却不在（被杀毒隔离、缓存目录被清、磁盘满写了个寂寞）
+    fake_pool.preview_png = lambda stem, patches, width, tag: str(
+        tmp_path / "gone" / "nope.png")
+    out = bridge.open_figure(str(project), include_png=True)
+    assert out["ok"] is True
+    assert out["session_id"] in bridge.sessions()
+    assert out["preview_png_error"] == "preview_unreadable"
 
 
 def test_every_operation_reacquires_the_worker_from_the_pool(project, monkeypatch):

@@ -373,7 +373,10 @@ def _project_id(path: Path) -> str:
     URL 参数（`?pj=`）与 `<img src>` 都要带上它，用完整路径既难看又会把
     用户的目录结构塞进浏览器历史；短 id 还天然对大小写/分隔符差异免疫。
     """
-    key = str(path).lower() if os.name == "nt" else str(path)
+    # 归一化按**卷**判而不是按 os.name（macOS 的 APFS 同样大小写不敏感）：
+    # 与 `pool._norm_dir()` 共用 `config.normalize_path_identity`，两边分头
+    # 判断的话，一个认为是同一个项目、另一个认为是两个。
+    key = engine_config.normalize_path_identity(path)
     return hashlib.sha1(key.encode("utf-8")).hexdigest()[:12]
 
 
@@ -1861,7 +1864,9 @@ def _hot_manifest(worker, stem: str, patches: list) -> dict | None:
     「这个提示可以无视」，真出事那天它就不再是防线了。
     """
     want = engine_patchspec.patch_hash(patches)
-    if getattr(worker, "last_patch_hash", "") != want:
+    # 按 **stem** 问，不是按 worker 问：一个脚本可以登记多个 stem，它们共用
+    # 同一条会话（见 `pool.stem_patch_hash` 的说明）。
+    if engine_pool.stem_patch_hash(worker, stem) != want:
         return None
     path = Path(worker.out_dir) / f"{stem}.json"
     if not path.exists():

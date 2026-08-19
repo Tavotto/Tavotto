@@ -92,21 +92,50 @@ export class AppsBridge {
     this.post({ jsonrpc: '2.0', method, ...(params !== undefined ? { params } : {}) })
   }
 
-  request<T = unknown>(method: string, params?: unknown, timeoutMs = 900_000): Promise<T> {
+  /**
+   * `signal` 不是可选的锦上添花：`renderStore` 给每次渲染挂了按脚本 cost 分级的
+   * 看门狗（light 2min / medium 5min / heavy 15min），超时就 `ctrl.abort()`。
+   * HTTP 那条路把 signal 转给 fetch，abort 当场 reject；这条路要是把它丢掉，
+   * 看门狗对内嵌画布就完全不起作用——一次卡死的渲染会一直转到 request 自己
+   * 那 15 分钟的兜底超时，中途用户点什么都取消不掉。
+   */
+  request<T = unknown>(
+    method: string,
+    params?: unknown,
+    timeoutMs = 900_000,
+    signal?: AbortSignal,
+  ): Promise<T> {
     if (!this.target) {
       return Promise.reject(
         new Error('没有 MCP host（这块画布要在 Codex 里打开，不能直接开 HTML 文件）'),
       )
     }
+    if (signal?.aborted) return Promise.reject(new DOMException('已取消', 'AbortError'))
     const id = ++this.id
     return new Promise<T>((resolve, reject) => {
-      const timer = window.setTimeout(() => {
+      const done = () => {
         this.pending.delete(id)
+        window.clearTimeout(timer)
+        signal?.removeEventListener('abort', onAbort)
+      }
+      const onAbort = () => {
+        done()
+        reject(new DOMException('已取消', 'AbortError'))
+      }
+      const timer = window.setTimeout(() => {
+        done()
         reject(new Error(`${method} 超时（${Math.round(timeoutMs / 1000)}s 没有响应）`))
       }, timeoutMs)
+      signal?.addEventListener('abort', onAbort, { once: true })
       this.pending.set(id, {
-        resolve: resolve as (v: unknown) => void,
-        reject,
+        resolve: (v) => {
+          done()
+          ;(resolve as (x: unknown) => void)(v)
+        },
+        reject: (e) => {
+          done()
+          reject(e)
+        },
         timer,
       })
       this.post({ jsonrpc: '2.0', id, method, ...(params !== undefined ? { params } : {}) })
@@ -137,8 +166,13 @@ export class AppsBridge {
   }
 
   /** 调 server 上的工具。**画布与后端之间的唯一通道**（没有任何跨源请求）。 */
-  callTool(name: string, args: Record<string, unknown>, timeoutMs?: number): Promise<ToolCallResult> {
-    return this.request<ToolCallResult>('tools/call', { name, arguments: args }, timeoutMs)
+  callTool(
+    name: string,
+    args: Record<string, unknown>,
+    timeoutMs?: number,
+    signal?: AbortSignal,
+  ): Promise<ToolCallResult> {
+    return this.request<ToolCallResult>('tools/call', { name, arguments: args }, timeoutMs, signal)
   }
 
   /** 请求全屏：复杂编辑画布的主要形态（inline 那点高度放不下一张图 + 属性页）。 */

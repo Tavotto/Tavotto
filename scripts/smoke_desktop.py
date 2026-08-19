@@ -41,6 +41,61 @@ for _stream in (sys.stdout, sys.stderr):
 ROOT = Path(__file__).resolve().parent.parent
 NONCE = "smoke-" + os.urandom(16).hex()
 
+sys.path.insert(0, str(ROOT / "scripts"))
+# 「按命令行内容找残留 worker」两个冒烟脚本共用**同一把尺**，别再写第二份。
+# 这里另有一条更精确的判据（`_descendants` 的 pid 快照），两条互补。
+from smoke_app import _leftover_workers  # noqa: E402
+
+
+def _descendants(pid: int) -> set[int]:
+    """`pid` 的**全部后代**（递归）。
+
+    必须趁父进程**还活着**时问：进程一终止，它还活着的孩子立刻被重新挂到
+    init/launchd（PID 1）名下，进程树当场断开。这也正是
+    `pgrep -P <已退出的 pid>` 恒等于空的原因。
+
+    比按命令行扫更准：sidecar 起的 `magplot-workerd` 是
+    `Popen([exe])`——命令行里没有本次运行的任何标识，按名字扫会把用户自己
+    开着的另一个 Magplot 算成残留。假报一次，下次真出问题时这条提示就已经
+    被学会无视了。
+    没有 `ps` 的平台（Windows）回空集：那儿由 `_leftover_workers` 兜底。
+    """
+    try:
+        out = subprocess.run(["ps", "-eo", "pid=,ppid="], capture_output=True,
+                             text=True, timeout=20).stdout
+    except (OSError, subprocess.SubprocessError):
+        return set()
+    kids: dict[int, list[int]] = {}
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) != 2:
+            continue
+        try:
+            child, parent = int(parts[0]), int(parts[1])
+        except ValueError:
+            continue
+        kids.setdefault(parent, []).append(child)
+    seen: set[int] = set()
+    stack = [pid]
+    while stack:
+        for child in kids.get(stack.pop(), []):
+            if child not in seen:
+                seen.add(child)
+                stack.append(child)
+    return seen
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True                      # 还在，只是不归我们管
+    except OSError:
+        return False
+    return True
+
 
 def fail(msg: str) -> None:
     print(f"✗ {msg}")
@@ -237,6 +292,10 @@ def main() -> None:
         check_control_plane(port, cookie, is_packaged(exe), rendered)
 
         # ---- 退出：关 stdin = 壳没了 ----
+        # 关停**之前**把整棵后代快照下来（见 `_descendants`：父进程一死树就断）。
+        # 覆盖的不只是 python worker，还有 sidecar 起的 magplot-workerd——
+        # 会话都正常关了、supervisor 自己没退出，同样是孤儿。
+        descendants = _descendants(proc.pid)
         proc.stdin.close()
         deadline = time.time() + 15
         while time.time() < deadline and proc.poll() is None:
@@ -246,14 +305,24 @@ def main() -> None:
         assert not handshake.exists(), "退出后握手文件未清理"
         ok("握手文件已清理")
 
-        # worker 孤儿检查：sidecar 的子进程应全部随之消失
-        try:
-            out = subprocess.run(["pgrep", "-P", str(proc.pid)],
-                                 capture_output=True, text=True)
-            assert not out.stdout.strip(), f"发现孤儿子进程: {out.stdout}"
-            ok("无孤儿子进程")
-        except FileNotFoundError:
-            pass  # Windows 无 pgrep；CI 上由任务管理器断言
+        # worker 孤儿检查：sidecar 的子进程应全部随之消失。
+        #
+        # **不能用 `pgrep -P <sidecar pid>`**：进程一终止，它还活着的子进程
+        # 立刻被系统重新挂到 init/launchd（PID 1）名下——PPID 在父进程死亡
+        # 的那一刻就变了，不是等到查询那一刻。而这段代码跑在
+        # `proc.poll() is not None` 之后，也就是父进程**必然已经退出**。
+        # 于是不管有没有真的泄漏，这条断言都查不到任何东西，恒真。
+        # 空转的门禁比没有门禁更坏——它还在报平安。
+        # 改成两条互补的判据：
+        #   ① 退出前快照下来的后代，事后逐个查存活——精确到 pid，
+        #      连没有任何命令行特征的 magplot-workerd 也盖得住；
+        #   ② 按命令行内容做全局扫描，兜住父子关系没记全的那些
+        #      （与 `smoke_app._leftover_workers` 同一把尺）。
+        survivors = sorted(p for p in descendants if _alive(p))
+        assert not survivors, f"sidecar 退出后仍活着的后代进程: {survivors}"
+        leftover = _leftover_workers(tmp)
+        assert not leftover, f"发现孤儿 worker 子进程: {leftover}"
+        ok(f"无孤儿子进程（退出前快照 {len(descendants)} 个后代，全部已退出）")
 
         print("\n桌面 sidecar 冒烟全部通过 ✔")
     finally:

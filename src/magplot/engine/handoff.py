@@ -171,8 +171,10 @@ def ensure_registered(project: str, stem: str | None) -> dict:
     existed = os.path.isfile(os.path.join(project, engine_registry.REGISTRY_NAME))
     try:
         cfg, rep, changes = engine_discover.merge(project)
-    except ValueError as exc:                        # 用户手写的 JSON 坏了
-        raise HandoffError(f"注册表不是合法 JSON，未做任何改动: {exc}",
+    except ValueError as exc:                        # 用户手写的注册表坏了
+        # 语法坏（不是合法 JSON）与结构坏（scripts 不是对象、stems 不是字符串
+        # 列表、stem 重复登记…）都走这条：code 稳定不变，文案覆盖两种。
+        raise HandoffError(f"注册表读不懂，未做任何改动: {exc}",
                            "registry_invalid") from exc
     except OSError as exc:
         raise HandoffError(f"无法读取图库目录 {project}: {exc}",

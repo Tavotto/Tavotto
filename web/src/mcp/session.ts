@@ -92,11 +92,18 @@ export function installMcpTransport(bridge: AppsBridge): () => void {
     async render(id, patches, opts) {
       const sid = sessionIdFor(id)
       if (!sid) throw new EngineError(`没有这个面板的 MCP 会话: ${id}`, '', 'no_session', '')
-      const res = await bridge.callTool('magplot_apply_overrides', {
-        session_id: sid,
-        patches,
-        ...(opts?.previewDpi ? { preview_dpi: opts.previewDpi } : {}),
-      })
+      // signal 必须转下去：renderStore 的看门狗（按脚本 cost 分 2/5/15 分钟）
+      // 就靠它取消，丢掉的话内嵌画布里一次卡死的渲染永远转下去
+      const res = await bridge.callTool(
+        'magplot_apply_overrides',
+        {
+          session_id: sid,
+          patches,
+          ...(opts?.previewDpi ? { preview_dpi: opts.previewDpi } : {}),
+        },
+        undefined,
+        opts?.signal,
+      )
       const body = unwrap(res)
       return {
         rev: Number(body.render_revision ?? 0),

@@ -322,7 +322,20 @@ def open_figure(target: str, *, stem: str | None = None,
         **render,
     }
     if include_png:
-        out["preview_png_base64"] = preview_png(session, [], 1600)
+        # 位图是**顺带产物**，不是这次 open 的成败判据。
+        #
+        # 它由第二次独立的 worker 调用产出（超时/崩溃/磁盘错误都可能），而
+        # 会话此刻**已经建好并登记**了。让它抛出去的话，调用方收到的是一条
+        # isError 结果，`BridgeError.payload()` 里没有 session_id——于是这条
+        # 会话谁也关不掉，占着账本直到被 `_evict_if_needed()` 挤出去，
+        # 而被挤掉的往往是**真正在用**的那条。
+        #
+        # 失败不静默：降级但如实回一个 code，调用方要么重试要么就看 SVG
+        # （显示本来就走 SVG，位图只是给不能渲染 SVG 的 host 兜底）。
+        try:
+            out["preview_png_base64"] = preview_png(session, [], 1600)
+        except BridgeError as exc:
+            out["preview_png_error"] = exc.code or "preview_failed"
     return out
 
 
@@ -386,7 +399,16 @@ def preview_png(session: Session, patches: list, width_px: int) -> str:
     except engine_pool.WorkerError as exc:
         raise BridgeError(str(exc), code=exc.code or "preview_failed",
                           traceback=exc.traceback_text) from exc
-    return base64.b64encode(Path(path).read_bytes()).decode("ascii")
+    try:
+        data = Path(path).read_bytes()
+    except OSError as exc:
+        # worker 说成了、文件却读不出来（被杀毒隔离、磁盘满、缓存目录被清）。
+        # 这一步以前在 try 之外，裸 OSError 会绕过所有 BridgeError 处理——
+        # `open_figure` 的降级也就接不住它，那条刚登记的会话又变回谁也够不着
+        # 的幽灵。**这个函数对外只许抛 BridgeError**。
+        raise BridgeError(f"位图出来了却读不出来 {path}: {exc}",
+                          code="preview_unreadable") from exc
+    return base64.b64encode(data).decode("ascii")
 
 
 # -------------------------------- 预检 --------------------------------------

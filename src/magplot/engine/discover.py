@@ -27,7 +27,9 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import os
 import re
+import tempfile
 from pathlib import Path, PurePosixPath
 
 from . import registry
@@ -666,9 +668,33 @@ def build_draft(figures_dir: str | Path) -> tuple[dict, dict]:
 
 
 def write_config(figures_dir: str | Path, cfg: dict) -> Path:
+    """临时文件 + replace 原子落盘（同 `app._write_baked`）。
+
+    直写会在进程被杀的那一刻把 `mm_registry.json` 截断成非法 JSON——桌面壳
+    强退、OOM、断电，Windows 上杀毒软件写入期间短暂锁定也够。下次打开同一
+    项目时 `registry.load()` 抛「注册表不是合法 JSON」，而**注册表随图库走**，
+    坏掉的是用户目录里的文件，重装应用也修不回来。
+    这是 mm_registry.json 唯一的写入函数，三条路径（首次打开起草、
+    /api/registry/scan 合并、手工裁决登记）都经过它。
+    """
     path = registry.registry_path(figures_dir)
-    path.write_text(json.dumps(cfg, ensure_ascii=False, indent=1),
-                    encoding="utf-8")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # 临时文件名**每次调用都不同**。用固定的 `<name>.tmp` 的话，两个并发写
+    # （Flask 是多线程的：/api/registry/scan 与 open_project 起草、MCP 那侧的
+    # 登记都会走到这儿）会写同一个路径：先 replace 的那个把它搬走，后一个
+    # 的 replace 直接 FileNotFoundError；更坏的情况是两份内容交错，读者拿到
+    # 一个谁也没打算写出来的文件——原子写反倒成了摆设。
+    # 同目录是硬要求：跨设备的 replace 不是原子操作。
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent),
+                                    prefix=path.name + ".", suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(cfg, ensure_ascii=False, indent=1))
+        tmp.replace(path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)             # 半成品不留在用户的图库目录里
+        raise
     return path
 
 
@@ -684,6 +710,21 @@ def merge(figures_dir: str | Path) -> tuple[dict, dict, dict]:
         return draft, rep, changes
 
     merged = json.loads(path.read_text(encoding="utf-8"))
+    # **先按 registry 的那把尺校验，再动手合并。**
+    # 这里以前直接 `scripts.values()`：`{"scripts": "x"}` 这种结构合法但类型
+    # 错的注册表（用户手写/误改就够）会抛 AttributeError——既不是 ValueError
+    # 也不是 OSError，穿透 handoff 的 try/except、cli() 的 HandoffError 捕获与
+    # 所有外层，`magplot open --json` 于是吐一段 traceback 而不是那行契约里的
+    # JSON，调用方的分诊逻辑当场失灵。
+    # 复用 `Registry.load_data` 而不是另写一份校验：两份迟早分叉，而分叉的
+    # 表现是「open 说没问题、打开项目却报注册表非法」。用**新实例**校验，
+    # 不碰模块级默认实例的状态。
+    if not isinstance(merged, dict):
+        raise ValueError(f"{path}: 注册表顶层必须是对象")
+    try:
+        registry.Registry().load_data(merged, source=str(path))
+    except RuntimeError as exc:                      # 结构/类型不对
+        raise ValueError(str(exc)) from exc
     scripts = merged.setdefault("scripts", {})
     registered = {s for c in scripts.values() for s in c.get("stems", [])}
     added_scripts: list[str] = []

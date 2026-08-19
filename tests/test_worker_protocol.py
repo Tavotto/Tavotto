@@ -78,6 +78,8 @@ def _worker(responder, tmp_path) -> pool.EngineWorker:
     w.rev = 0
     w.generation = 4
     w.built = True
+    w.last_patch_hash = ""
+    w.last_patch_hash_by_stem = {}           # 写回自检按 stem 问的那份账本
     w.last_used = 0.0
     w._touched = float("inf")                # 关掉 _touch 的落盘（无 base 目录也不炸）
     w.proc = _FakeProc(responder)

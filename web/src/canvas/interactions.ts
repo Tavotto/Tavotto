@@ -15,6 +15,7 @@ import {
 import type { Manifest, ManifestElement } from '@/lib/api'
 import { flipY, resizeGroup, round4, unionBox, type Rect4 } from '@/lib/axesLayout'
 import {
+  anchorOf,
   arrowEndpointsOf,
   axesCompanions,
   elementSnapCandidates,
@@ -986,8 +987,9 @@ export function startElementDrag(
 ) {
   if (!element.anchor || !element.drag_prop) return
   e.stopPropagation()
-  const anchor = element.anchor
   const dragProp = element.drag_prop
+  // 基准走 anchorOf：它优先取文档里已写下的 override（见那边的说明）
+  const anchor = anchorOf(panel, element) ?? element.anchor
 
   interaction().begin('element')
   beginElementPreview(panel)

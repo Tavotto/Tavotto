@@ -537,3 +537,64 @@ def test_registry_probe_rejects_paths_outside_project(client, tmp_path):
     client.post("/api/projects/open", json={"path": str(figs)})
     for bad in ("../outside.py", "nope.py", "mm_registry.json"):
         assert client.post("/api/registry/probe", json={"script": bad}).status_code == 404
+
+
+# --------------------- 路径身份：按卷判，不按 os.name --------------------------
+def test_case_probe_agrees_with_the_actual_filesystem(tmp_path):
+    """探测结果必须与这台机器上**真实**的行为一致（平台无关的写法）。
+
+    在大小写不敏感的卷上，换个大小写拼出来的路径本来就指向同一个目录；
+    敏感的卷上则不存在。两边都拿真实文件系统当答案，Linux/macOS/Windows
+    上跑的是同一条断言。
+    """
+    d = tmp_path / "Probe"
+    d.mkdir()
+    reality = (tmp_path / "pROBE").exists()
+    assert engine_config.path_is_case_insensitive(d) is reality
+
+
+def test_project_identity_follows_the_volume_not_the_os_name(tmp_path, monkeypatch):
+    """同一个图库换个大小写打开，必须还是同一个项目——判据是**卷**。
+
+    这里以前写的是 `os.name == "nt"`，而 macOS 默认的 APFS/HFS+ 同样是
+    大小写不敏感的（那儿 `os.name` 是 "posix"）。于是从 Finder 拖进来一次、
+    从「最近项目」里手输一次，同一个图库会得到两个不同的 pid 与两个不同的
+    池键：两套 worker、两份 `baked_overrides/<项目id>.json` 写回基线，
+    用户在一边做的事另一边完全看不见。
+    `Path.resolve()` 救不了——POSIX 上它只解析符号链接与 . / ..，不会向
+    文件系统问规范大小写。
+    """
+    a, b = tmp_path / "Figs", tmp_path / "FIGS"
+
+    monkeypatch.setattr(engine_config, "path_is_case_insensitive", lambda p: True)
+    assert m._project_id(a) == m._project_id(b)
+    assert engine_pool._norm_dir(a) == engine_pool._norm_dir(b)
+
+    monkeypatch.setattr(engine_config, "path_is_case_insensitive", lambda p: False)
+    assert m._project_id(a) != m._project_id(b)
+    assert engine_pool._norm_dir(a) != engine_pool._norm_dir(b)
+
+
+def test_case_probe_walks_up_past_uncaseable_components(tmp_path):
+    """末段没有字母可翻时要往上走，**不能就此认定平台默认值**。
+
+    `/Volumes/CaseSensitive/Foo/123` 这种目录名全是数字的，翻大小写翻不出
+    另一个名字，探测无从下手。以前这时直接留兜底值——而 macOS 的兜底是
+    「不敏感」，于是在**大小写敏感**的 macOS 卷上，`/Foo/123` 与 `/foo/123`
+    会共用一个项目 id、一个 worker 池、一份写回基线，可它们是两个目录。
+    往上找一个有字母的祖先来探，同一个卷答案是一样的。
+    """
+    parent = tmp_path / "Probe"          # 这一层有字母，探得动
+    leaf = parent / "123"                # 这一层没有
+    leaf.mkdir(parents=True)
+    reality = (tmp_path / "pROBE").exists()
+
+    # 两层问出来的答案必须一致——它们在同一个卷上
+    assert engine_config.path_is_case_insensitive(leaf) is reality
+    assert engine_config.path_is_case_insensitive(parent) is reality
+
+
+def test_case_probe_answers_the_same_for_paths_that_do_not_exist_yet(tmp_path):
+    """还没建出来的路径按最近的存在祖先探——项目目录可能刚被删掉。"""
+    reality = engine_config.path_is_case_insensitive(tmp_path)
+    assert engine_config.path_is_case_insensitive(tmp_path / "Nope" / "Deeper") is reality

@@ -200,6 +200,30 @@ def test_broken_registry_is_never_overwritten(figures):
     assert path.read_text(encoding="utf-8") == "{ 这不是 JSON"
 
 
+@pytest.mark.parametrize("body", [
+    '{"scripts": "not-a-dict"}',          # 结构合法、类型不对
+    '{"scripts": {"a.py": "not-a-dict"}}',  # 某个脚本条目不是对象
+    '{"scripts": {"a.py": {"stems": "Fig1"}}}',  # stems 不是列表
+    '["不是对象"]',                        # 顶层不是对象
+])
+def test_structurally_broken_registry_still_carries_a_code(figures, body):
+    """**结构**坏掉的注册表也要走 HandoffError，不能抛裸异常。
+
+    以前只有「JSON 语法坏」这一条被接住：`{"scripts": "x"}` 会在
+    `discover.merge` 里 `scripts.values()` 抛 AttributeError——既不是
+    ValueError 也不是 OSError，穿透 handoff 的 try/except、`cli()` 的
+    HandoffError 捕获与所有外层，于是 `magplot open --json` 吐的是一段
+    traceback 而不是契约里那行 JSON，调用方（Codex 插件读最后一行）的
+    分诊逻辑当场失灵。用户手写/误改注册表就够触发。
+    """
+    path = engine_registry.registry_path(figures)
+    path.write_text(body, encoding="utf-8")
+    with pytest.raises(handoff.HandoffError) as exc:
+        handoff.ensure_registered(str(figures), None)
+    assert exc.value.code == "registry_invalid"
+    assert path.read_text(encoding="utf-8") == body      # 一个字节都没动
+
+
 # --------------------------- 3. 唤起界面 ---------------------------------
 def test_macos_candidates_are_bundle_binaries():
     got = handoff.desktop_app_candidates(system="darwin", environ={"HOME": "/Users/x"})
