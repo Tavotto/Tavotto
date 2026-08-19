@@ -171,12 +171,35 @@ def write_cache(path: str, data: dict) -> None:
 
 
 # ------------------------------ 远程清单 ---------------------------------
+#: 一次读多少。分块读是为了能在**块与块之间**掐表——见 `fetch` 的说明。
+_CHUNK = 8 * 1024
+
+
 def fetch(url: str, timeout: float = TIMEOUT) -> dict | None:
-    """拉清单。**任何失败都回 None**，不抛、不打日志、不拖时间。"""
+    """拉清单。**任何失败都回 None**，不抛、不打日志、不拖时间。
+
+    `timeout` 是**总墙钟**，不只是 socket 超时。这两件事差得很远：
+    `urlopen(timeout=)` 管的是「单次 IO 等多久」，每成功读到一点数据就重新
+    计时。一个每 1.4 秒挤出几个字节的服务器（挂了的代理、被限速的镜像、
+    存心的慢速响应）能让 1.5 秒的「硬上限」变成无限久——而这次检查是
+    **同步跑在出图那条路上**的（`emit()` 里到点就查一次），于是一个跟出图
+    毫无关系的更新端点把用户的图卡在那儿。所以逐块读、每块之间掐一次表，
+    超了就当没查到。
+    """
+    deadline = time.monotonic() + max(0.1, float(timeout))
     try:
         req = urllib.request.Request(url, headers={"Accept": "application/json"})
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            raw = resp.read(64 * 1024)               # 清单是几百字节，封个顶
+            chunks, total = [], 0
+            while total < 64 * 1024:                 # 清单是几百字节，封个顶
+                if time.monotonic() >= deadline:
+                    return None
+                block = resp.read(min(_CHUNK, 64 * 1024 - total))
+                if not block:
+                    break
+                chunks.append(block)
+                total += len(block)
+            raw = b"".join(chunks)
         data = json.loads(raw.decode("utf-8", "replace"))
     except (urllib.error.URLError, OSError, ValueError):
         return None

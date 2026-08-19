@@ -484,23 +484,31 @@ def child_env(base: dict[str, str] | None = None) -> dict[str, str]:
     `MPLCONFIGDIR` 是这里的重点：matplotlib 自己读 `os.environ`，不受 `._pth`
     的隔离影响，所以这条一定生效——否则字体缓存会落到 `~/.matplotlib`。
 
-    另外两条在 Windows 上属于尽力而为（`._pth` 下可能被忽略，真正的保证是
-    `child_args()` 里的 `-B`），在 macOS 上则实打实生效：
-      PYTHONPYCACHEPREFIX  .pyc 落到数据目录
-      PYTHONNOUSERSITE     不吃用户 site-packages——内置环境要可预期，
-                           用户在别处 pip install 的东西不该悄悄改变它
+    `PYTHONNOUSERSITE` 同理一定生效：不吃用户 site-packages——内置环境要
+    可预期，用户在别处 pip install 的东西不该悄悄改变它。
+
+    **刻意不设 `PYTHONPYCACHEPREFIX`。** 它改的不只是写的位置，**读的位置
+    也跟着改**（实测：设了之后 `__cached__` 变成 `<prefix>/<绝对路径镜像>/
+    mod.cpython-313.pyc`，源码旁边那份 `__pycache__` 再也不看）。而
+    `child_args()` 的 `-B` 又禁止写入，于是那个 prefix 目录永远是空的——
+    两条合起来的结果是：`scripts/build_worker_runtime.py` 在构建期编好、
+    随包发出去的 UNCHECKED_HASH 字节码**一份都用不上**，每个冷启动的
+    worker 都要把整个科学栈从源码重编一遍，正好把预编译要省的那笔钱又
+    花了回去。Windows 上 `._pth` 的隔离模式忽略环境变量，所以这条只在
+    macOS 上发作——而 macOS 的内置 runtime 正是 #9 新加的那套。
+
+    「不往安装目录写东西」这条纪律由 `-B` 保证，不需要它。
     """
     from . import config
     env = dict(base if base is not None else os.environ)
     for key in _HOSTILE_ENV:
         env.pop(key, None)
     cache = os.path.join(str(config.data_dir()), "cache")
-    env["PYTHONPYCACHEPREFIX"] = os.path.join(cache, "pycache")
+    env.pop("PYTHONPYCACHEPREFIX", None)   # 见 docstring：它会把**读**也改道
     env["MPLCONFIGDIR"] = os.path.join(cache, "mpl")
     env["PYTHONNOUSERSITE"] = "1"
-    for key in ("PYTHONPYCACHEPREFIX", "MPLCONFIGDIR"):
-        try:
-            os.makedirs(env[key], exist_ok=True)
-        except OSError:
-            pass
+    try:
+        os.makedirs(env["MPLCONFIGDIR"], exist_ok=True)
+    except OSError:
+        pass
     return env

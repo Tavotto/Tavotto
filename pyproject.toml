@@ -38,7 +38,7 @@ worker = ["matplotlib>=3.8", "numpy>=1.24"]
 dev = ["pytest>=8", "build>=1.2", "twine>=5"]
 
 [project.scripts]
-magplot = "magplot.app:main"
+magplot = "magplot.cli_entry:main"
 
 [project.urls]
 Homepage = "https://github.com/erwanjun/magplot"

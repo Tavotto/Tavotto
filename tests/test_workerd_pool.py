@@ -107,15 +107,18 @@ def test_the_spawn_spec_matches_what_the_python_pool_would_have_run(monkeypatch,
 
 
 def test_the_bundled_runtime_still_gets_its_args_and_env(monkeypatch, tmp_path):
-    """内置 runtime 的 `-B` 与改道的 PYTHONPYCACHEPREFIX/MPLCONFIGDIR 是
-    「不往安装目录写东西」那条纪律的实体，换控制面不许把它们丢掉。"""
+    """内置 runtime 的 `-B` 与改道的 MPLCONFIGDIR 是「不往安装目录写东西」
+    那条纪律的实体，换控制面不许把它们丢掉。
+
+    `PYTHONPYCACHEPREFIX` **刻意不在里面**（见 `runtime.child_env` 的
+    docstring：它会把读也改道，预编译字节码就白发了）。"""
     w, box = _capture_engine_worker_argv(monkeypatch, tmp_path, pool.SOURCE_BUNDLED)
     spec = pool._spawn_spec("fig.py", str(tmp_path), "draw", w.out_dir, w.sandbox,
                             w.log_path, "/usr/bin/python3", pool.SOURCE_BUNDLED)
     assert spec["argv"] == box["argv"]
     assert spec["argv"][1] == "-B"
     assert set(runtime.child_args()).issubset(spec["argv"])
-    assert set(spec["env"]) == {"PYTHONPYCACHEPREFIX", "MPLCONFIGDIR", "PYTHONNOUSERSITE"}
+    assert set(spec["env"]) == {"MPLCONFIGDIR", "PYTHONNOUSERSITE"}
     # env 只给增量：workerd 继承的本来就是 Flask 的环境
     assert "PATH" not in spec["env"]
 

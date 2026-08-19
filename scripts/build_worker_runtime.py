@@ -287,6 +287,18 @@ def check_runtime_dir(manifest_file: Path, require_smoke: bool,
             f"这份 runtime 的冒烟状态是 {smoke!r}（不是 passed）。\n"
             "  未经 import + 真实绘图验证的 runtime 不得进发行包——"
             "在能执行该架构的机器上重新构建。")
+    # 锁文件把某个目标标成 shipped=false，意思是「版本锁着，但**没构建过也
+    # 没冒烟过**，不许发」（当前的 macos-x86_64 就是这一格）。构建脚本里那句
+    # 只是一条 warning，构建照常继续——发行链上没有任何一道闸拦它，于是
+    # `macos-latest` 这种浮动 runner 哪天换成 Intel，我们就会把一个文档里
+    # 明写着「不支持」的目标发出去，而且全程绿灯。
+    if require_smoke and not (info.get("build") or {}).get("shipped"):
+        plat = info.get("platform") or {}
+        raise BuildError(
+            f"这份 runtime 的目标 {plat.get('os')}/{plat.get('arch')} 在锁文件里是 "
+            "shipped=false（锁着版本但未验证），不得进发行包。\n"
+            "  要发它：先在能执行该架构的机器上真构建 + 真冒烟，"
+            "再把 packaging/runtime-lock.json 里该目标改成 shipped=true。")
     return info
 
 
