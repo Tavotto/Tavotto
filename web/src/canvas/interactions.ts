@@ -30,6 +30,7 @@ import {
   geomAreaFrac,
   geomContains,
   geomDistMm,
+  geomHitTolMm,
   geomInkAreaFrac,
 } from '@/lib/pathGeom'
 import { clamp } from '@/lib/units'
@@ -941,14 +942,17 @@ export function pickElement(
     // 空心的只在描边附近命中。裁剪框之外一律不命中（那儿本来就看不见）。
     if (el.geometry) {
       const geom = el.geometry
+      // 容差要把**画出来的那条粗线**算进去：固定 1.5mm 只覆盖中心线，
+      // 粗线的边缘像素会落在容差之外（geomHitTolMm 的注释里有账）
+      const tol = geomHitTolMm(geom, PATH_HIT_MM)
       const inside = geomContains(geom, fx, fy)
       const dist = inside ? 0 : geomDistMm(geom, manifest.size_mm, fx, fy)
-      if (!inside && dist > PATH_HIT_MM) continue
+      if (!inside && dist > tol) continue
       // 评分与 bbox 面积同一量纲：填充按真实面积（小的赢），空心按墨迹面积
       // （一条线的墨迹极小，因此总能从子图容器手里把点击拿回来）
       const score = inside
         ? geomAreaFrac(geom) * (HIT_PENALTY[el.role] ?? 1)
-        : geomInkAreaFrac(geom, manifest.size_mm, PATH_HIT_MM)
+        : geomInkAreaFrac(geom, manifest.size_mm, tol)
       if (score < bestScore) {
         bestScore = score
         best = el

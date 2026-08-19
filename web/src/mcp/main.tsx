@@ -27,9 +27,28 @@ const bridge = new AppsBridge()
 // 会打到一个不存在的 /api（iframe 里没有 Magplot 服务）
 installMcpTransport(bridge)
 
+/**
+ * 只接受**完整的** open 结果。
+ *
+ * `magplot_apply_overrides` 的响应也挂着同一份 widget 资源，也就能用来初始化
+ * 一个新 iframe——而它带着 `session_id` 与 `manifest`，只看这两项的话会被
+ * 当成 open 结果收下。可它没有 `profile` / `project` / `script`：`McpApp`
+ * 一读 `open.profile.profile_id` 就当场崩掉；就算把那次读取包起来，用
+ * `overrides: []` 去 seed 也会把已经应用的整份 patch 集忘干净——画布看起来
+ * 正常，用户的修改却已经不在账本里了。
+ */
 function isOpenResult(v: unknown): v is OpenFigureResult {
   const o = v as OpenFigureResult | null
-  return !!o && typeof o === 'object' && typeof o.session_id === 'string' && !!o.manifest
+  if (!o || typeof o !== 'object') return false
+  return (
+    typeof o.session_id === 'string' &&
+    !!o.manifest &&
+    typeof o.project === 'string' &&
+    typeof o.stem === 'string' &&
+    typeof o.script === 'string' &&
+    !!o.profile &&
+    typeof o.profile.profile_id === 'string'
+  )
 }
 
 function Boot() {

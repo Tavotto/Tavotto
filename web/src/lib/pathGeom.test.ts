@@ -38,7 +38,8 @@ const triangle: ElementGeometry = {
 }
 
 /** 外环 + 内环（even-odd → 中间是洞） */
-const ring: ElementGeometry = {
+/** 内外环**同向**。matplotlib 用 nonzero，中间那块是**实心**的（下方有实测账） */
+const nestedSameDir: ElementGeometry = {
   kind: 'multi_path',
   paths: [
     { points: [[0, 0], [1, 0], [1, 1], [0, 1]], closed: true },
@@ -46,6 +47,15 @@ const ring: ElementGeometry = {
   ],
   fill: true,
   stroke: false,
+}
+
+/** 内环**反向**：nonzero 下这才是洞 */
+const ringWithHole: ElementGeometry = {
+  ...nestedSameDir,
+  paths: [
+    { points: [[0, 0], [1, 0], [1, 1], [0, 1]], closed: true },
+    { points: [[0.4, 0.6], [0.6, 0.6], [0.6, 0.4], [0.4, 0.4]], closed: true },
+  ],
 }
 
 describe('geomDistMm：点到路径的距离按 mm 算', () => {
@@ -87,9 +97,38 @@ describe('geomContains：填充内部算命中', () => {
     expect(geomContains({ ...triangle, fill: false }, 0.5, 0.4)).toBe(false)
   })
 
-  it('even-odd：环里套环，中间那块是洞', () => {
-    expect(geomContains(ring, 0.2, 0.2)).toBe(true)
-    expect(geomContains(ring, 0.5, 0.5)).toBe(false)
+  /**
+   * 判据跟渲染器走，不跟直觉走。实测（matplotlib 3.10.8，Agg，
+   * `PathPatch(facecolor="black")` 后读像素）：
+   *   同向嵌套 → 中心像素 (0,0,0)   ← 实心
+   *   反向嵌套 → 中心像素 (255,255,255) ← 洞
+   * 也就是 SVG/PDF/Agg 一致的 **nonzero**。旧实现按 even-odd 逐次翻转，
+   * 于是第一种情况下点在明明填了色的像素上却选不中。
+   */
+  it('nonzero：同向嵌套，中间那块是实心的', () => {
+    expect(geomContains(nestedSameDir, 0.2, 0.2)).toBe(true)
+    expect(geomContains(nestedSameDir, 0.5, 0.5)).toBe(true)
+  })
+
+  it('nonzero：反向嵌套才是洞', () => {
+    expect(geomContains(ringWithHole, 0.2, 0.2)).toBe(true)
+    expect(geomContains(ringWithHole, 0.5, 0.5)).toBe(false)
+  })
+
+  /**
+   * 实测同一批：`Path` 只给 MOVETO/LINETO、没有 CLOSEPOLY，`PathPatch` 照样
+   * 把它隐式闭合并填出来（中心像素 (0,0,0)）。`closed` 是 false，所以按
+   * `closed` 过滤会把整块可见的填充区判成不存在。
+   */
+  it('填充路径没有 CLOSEPOLY 时也要算内部（matplotlib 隐式闭合）', () => {
+    const openCoded: ElementGeometry = {
+      kind: 'path',
+      paths: [{ points: [[0.1, 0.1], [0.9, 0.1], [0.5, 0.9]], closed: false }],
+      fill: true,
+      stroke: false,
+    }
+    expect(geomContains(openCoded, 0.5, 0.3)).toBe(true)
+    expect(geomContains(openCoded, 0.05, 0.05)).toBe(false)
   })
 })
 
@@ -107,7 +146,7 @@ describe('geomHitsRect：框选按路径相交', () => {
   })
 
   it('框整个落在一大块填充内部**不**算圈中（框选是圈墨迹，不是戳进去）', () => {
-    expect(geomHitsRect(ring, { x: 0.45, y: 0.45, w: 0.02, h: 0.02 })).toBe(false)
+    expect(geomHitsRect(nestedSameDir, { x: 0.45, y: 0.45, w: 0.02, h: 0.02 })).toBe(false)
   })
 
   it('裁剪框之外的框选不圈中', () => {
@@ -151,7 +190,7 @@ describe('geomPathD：SVG 路径串', () => {
   })
 
   it('多条子路径各自一个 M（断开的曲线不会被连起来）', () => {
-    const d = geomPathD(ring, toPoint)
+    const d = geomPathD(nestedSameDir, toPoint)
     expect(d.match(/M/g)?.length).toBe(2)
   })
 })

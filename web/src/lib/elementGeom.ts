@@ -1,4 +1,5 @@
 import type { Manifest, ManifestElement } from './api'
+import { segIntersectsSeg } from './pathGeom'
 import { t } from '@/i18n'
 import type { AlignMode } from './geometry'
 import {
@@ -141,18 +142,16 @@ export function segIntersectsRect(
   const inside = (p: [number, number]) =>
     p[0] >= r.x && p[0] <= r.x + r.w && p[1] >= r.y && p[1] <= r.y + r.h
   if (inside(a) || inside(b)) return true
-  const cross = (o: [number, number], p: [number, number], q: [number, number]) =>
-    (p[0] - o[0]) * (q[1] - o[1]) - (p[1] - o[1]) * (q[0] - o[0])
   const corners: [number, number][] = [
     [r.x, r.y],
     [r.x + r.w, r.y],
     [r.x + r.w, r.y + r.h],
     [r.x, r.y + r.h],
   ]
+  // 共线那一格靠 `segIntersectsSeg` 里的区间比对挡住——用叉积乘积 `<= 0`
+  // 的老写法会把「四点共线但两段离得老远」判成相交（pathGeom 那份同疾同治）
   for (let i = 0; i < 4; i++) {
-    const c = corners[i]
-    const d = corners[(i + 1) % 4]
-    if (cross(a, b, c) * cross(a, b, d) <= 0 && cross(c, d, a) * cross(c, d, b) <= 0) return true
+    if (segIntersectsSeg(a, b, corners[i], corners[(i + 1) % 4])) return true
   }
   return false
 }

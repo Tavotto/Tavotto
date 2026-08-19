@@ -250,7 +250,8 @@ def _clip_rect(artist, W: float, H: float):
             round(bb.width / W, _ND), round(bb.height / H, _ND)]
 
 
-def _pack(subpaths, W, H, *, fill: bool, stroke: bool, clip, budget) -> dict | None:
+def _pack(subpaths, W, H, *, fill: bool, stroke: bool, clip, budget,
+          stroke_pt: float = 0.0) -> dict | None:
     paths = []
     total = 0
     for pts, closed in subpaths:
@@ -265,6 +266,12 @@ def _pack(subpaths, W, H, *, fill: bool, stroke: bool, clip, budget) -> dict | N
         return None
     kind = "multi_path" if len(paths) > 1 else ("path" if paths[0]["closed"] else "polyline")
     geom = {"kind": kind, "paths": paths, "fill": bool(fill), "stroke": bool(stroke)}
+    # 描边宽度（pt）。前端的命中容差是**中心线**容差，一条 12pt 的粗线有
+    # 半宽 ≈2.1mm 落在 1.5mm 容差之外——点在明明画出来的像素上却选不中它，
+    # 而改成按路径命中之前的 bbox 判据是能选中的。宽度只有引擎知道，
+    # 让它随几何一起下来，前端不推算。
+    if stroke and stroke_pt > 0:
+        geom["stroke_pt"] = round(float(stroke_pt), 3)
     if clip is not None:
         geom["clip"] = clip
     return geom
@@ -296,10 +303,16 @@ def _collection_subpaths(coll) -> list[tuple[list, bool]]:
         toffs = np.zeros((1, 2))
     if len(toffs) == 0:
         toffs = np.zeros((1, 2))
+    # **按渲染器的循环走**：offsets 比 paths 多时 matplotlib 会循环使用路径、
+    # 每个 offset 画一份（`Collection.draw` 里就是 `zip(cycle(paths), offsets)`
+    # 那套语义）。只枚举 `len(paths)` 的话后面那些副本一条都不出——而元素一旦
+    # 有了 geometry，前端就不再退回整体 bbox，于是那些**明明画出来的**多边形
+    # 变得既点不中也框不到。
+    count = len(paths) if len(toffs) <= 1 else max(len(paths), len(toffs))
     out: list[tuple] = []
-    for i, p in enumerate(paths):
+    for i in range(count):
         dx, dy = toffs[i % len(toffs)]
-        for pts, closed in _display_subpaths(p, trans):
+        for pts, closed in _display_subpaths(paths[i % len(paths)], trans):
             if dx or dy:
                 pts = pts + np.asarray([float(dx), float(dy)])
             out.append((pts, closed))
@@ -326,6 +339,7 @@ def element_geometry(artist, W: float, H: float, budget: Budget) -> dict | None:
                 return None
             subs = _display_subpaths(artist.get_path(), artist.get_transform())
             return _pack(subs, W, H, fill=False, stroke=True,
+                         stroke_pt=float(artist.get_linewidth() or 0.0),
                          clip=_clip_rect(artist, W, H), budget=budget)
         if isinstance(artist, PolyCollection):
             subs = _collection_subpaths(artist)
@@ -333,12 +347,14 @@ def element_geometry(artist, W: float, H: float, budget: Budget) -> dict | None:
             return _pack(subs, W, H,
                          fill=_has_paint(artist.get_facecolor()),
                          stroke=_has_paint(artist.get_edgecolor()) and bool(len(lw)) and lw[0] > 0,
+                         stroke_pt=float(lw[0]) if len(lw) else 0.0,
                          clip=_clip_rect(artist, W, H), budget=budget)
         if isinstance(artist, (Polygon, PathPatch)):
             subs = _display_subpaths(artist.get_path(), artist.get_transform())
             return _pack(subs, W, H,
                          fill=bool(artist.get_fill()) and _has_paint(artist.get_facecolor()),
                          stroke=_has_paint(artist.get_edgecolor()) and artist.get_linewidth() > 0,
+                         stroke_pt=float(artist.get_linewidth() or 0.0),
                          clip=_clip_rect(artist, W, H), budget=budget)
     except Exception as exc:  # noqa: BLE001 — 取几何失败只是少一条轮廓，不拦渲染
         print(f"[geometry] {type(artist).__name__} 取路径失败: {exc}", file=sys.stderr)

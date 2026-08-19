@@ -577,6 +577,8 @@ export interface ElementGeometry {
   fill: boolean
   /** 这条路径有描边 */
   stroke: boolean
+  /** 描边宽度（pt）。命中容差要把可见墨迹的半宽算进去，宽度只有引擎知道 */
+  stroke_pt?: number
   /** 裁剪框（figure 分数、y 向下）；只有矩形裁剪才给，非矩形裁剪不给 */
   clip?: [number, number, number, number]
 }

@@ -94,6 +94,44 @@ def _shebang_interpreter(script: str) -> "str | None":
     return parts[0] if os.path.isfile(parts[0]) else None
 
 
+#: 扫 Windows 启动器里那行 shebang 时的体积上限。distlib 的 launcher 约
+#: 100 KB；桌面版那个 frozen 的 `magplot-cli.exe` 是几十 MB——上限顺带保住了
+#: 「这条腿能区分 pip 装的与桌面版自带的」这个性质。
+_LAUNCHER_SCAN_MAX = 2 * 1024 * 1024
+
+
+def _embedded_shebang(exe: str) -> "str | None":
+    r"""Windows console script `.exe` 里嵌着的解释器路径。
+
+    pip / pipx 在 Windows 上生成的 `magplot.exe` 是 distlib 启动器：
+    `launcher.exe` + `b"#!<venv>\Scripts\python.exe
+"` + 一个 zip。
+    **pipx 还会把它复制到共享的 bin 目录暴露出来**，那儿旁边根本没有 python
+    （venv 在 `pipx/venvs/magplot` 里），`_interpreter_beside` 因此一无所获，
+    `_shebang_interpreter` 又只读头 512 字节的文本 shebang——两条都落空，
+    于是官方推荐的 `pipx install magplot` 在 Windows 上被判成 `desktop_only`，
+    MCP 的工具一个都不出现。复制品里那行 shebang 仍然指着 venv，
+    它是「哪个环境装了它」在 Windows 上唯一可靠的答案。
+    """
+    try:
+        if os.path.getsize(exe) > _LAUNCHER_SCAN_MAX:
+            return None
+        with open(exe, "rb") as fh:
+            blob = fh.read(_LAUNCHER_SCAN_MAX)
+    except OSError:
+        return None
+    at = blob.rfind(b"#!")
+    while at != -1:
+        line = blob[at + 2:blob.find(b"\n", at) if blob.find(b"\n", at) != -1
+                    else len(blob)]
+        cand = line.strip().strip(b'"').decode("utf-8", "replace").strip()
+        # 只认指向真实文件的绝对路径；`#!/usr/bin/env python3` 给不出环境
+        if cand and not cand.endswith("env") and os.path.isfile(cand):
+            return cand
+        at = blob.rfind(b"#!", 0, at)
+    return None
+
+
 def _interpreter_beside(exe: str) -> "list[str]":
     """与 `magplot.exe` / pipx shim 同目录的 python（Windows 上没有 shebang）。
 
@@ -109,7 +147,7 @@ def _interpreters_for(found: dict) -> "list[str]":
     """定位结果 → 可能能 import magplot 的解释器候选。"""
     out: "list[str]" = []
     for exe in (found.get("cmd") or []):
-        interp = _shebang_interpreter(exe)
+        interp = _shebang_interpreter(exe) or _embedded_shebang(exe)
         if interp:
             out.append(interp)
         out.extend(_interpreter_beside(exe))
