@@ -917,10 +917,22 @@ function FieldRow({
                 }
               }}
               onBlur={(e) => {
-                const next = parseNumberList(e.target.value)
+                const typed = parseNumberList(e.target.value)
+                // **清空 = 把此刻这组刻度定格下来**，而不是提交一个「空」。
+                //
+                // 空列表的含义要到应用那一刻才由引擎解析成具体位置（脚本原样
+                // 的那组），所以清空会让画面当场跳一下——而用户按下删除键时
+                // 想的是「就保持现在这个样子」。定格成真数字则所见即所得，
+                // 而且这组值实打实进了文档，重开、写回、换台机器都一样。
+                // 想让刻度重新跟着脚本走是「自动」档的事，不是清空的事。
+                const next = typed.length ? typed : arr
                 if (next.length !== arr.length || next.some((v, i) => v !== arr[i])) {
                   write(next, true)
                   gesture.end()
+                } else if (!typed.length) {
+                  // 没写盘（值没变），得自己把定格下来的那组显示回去——
+                  // 输入框的 key 跟着权威值走，值没变就不会重挂载
+                  e.target.value = formatNumberList(next)
                 }
               }}
             />
