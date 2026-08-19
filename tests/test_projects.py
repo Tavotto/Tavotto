@@ -573,3 +573,28 @@ def test_project_identity_follows_the_volume_not_the_os_name(tmp_path, monkeypat
     monkeypatch.setattr(engine_config, "path_is_case_insensitive", lambda p: False)
     assert m._project_id(a) != m._project_id(b)
     assert engine_pool._norm_dir(a) != engine_pool._norm_dir(b)
+
+
+def test_case_probe_walks_up_past_uncaseable_components(tmp_path):
+    """末段没有字母可翻时要往上走，**不能就此认定平台默认值**。
+
+    `/Volumes/CaseSensitive/Foo/123` 这种目录名全是数字的，翻大小写翻不出
+    另一个名字，探测无从下手。以前这时直接留兜底值——而 macOS 的兜底是
+    「不敏感」，于是在**大小写敏感**的 macOS 卷上，`/Foo/123` 与 `/foo/123`
+    会共用一个项目 id、一个 worker 池、一份写回基线，可它们是两个目录。
+    往上找一个有字母的祖先来探，同一个卷答案是一样的。
+    """
+    parent = tmp_path / "Probe"          # 这一层有字母，探得动
+    leaf = parent / "123"                # 这一层没有
+    leaf.mkdir(parents=True)
+    reality = (tmp_path / "pROBE").exists()
+
+    # 两层问出来的答案必须一致——它们在同一个卷上
+    assert engine_config.path_is_case_insensitive(leaf) is reality
+    assert engine_config.path_is_case_insensitive(parent) is reality
+
+
+def test_case_probe_answers_the_same_for_paths_that_do_not_exist_yet(tmp_path):
+    """还没建出来的路径按最近的存在祖先探——项目目录可能刚被删掉。"""
+    reality = engine_config.path_is_case_insensitive(tmp_path)
+    assert engine_config.path_is_case_insensitive(tmp_path / "Nope" / "Deeper") is reality

@@ -532,6 +532,23 @@ def test_preview_png_failure_still_hands_back_the_session(project, fake_pool,
     assert out["preview_png_error"] == "preview_failed"     # 不静默
 
 
+def test_unreadable_preview_file_is_still_a_bridge_error(project, fake_pool,
+                                                          tmp_path):
+    """worker 说成了、文件却读不出来，也必须走降级而不是裸 OSError。
+
+    `Path(path).read_bytes()` 那一步在 try 之外，抛的是 OSError（被杀毒隔离、
+    磁盘满、缓存目录被清都会）。`open_figure` 的降级只接 BridgeError，接不住
+    它——那条刚登记的会话又变回谁也够不着的幽灵，正是这次修复要堵的洞。
+    """
+    # worker 报告成功、文件却不在（被杀毒隔离、缓存目录被清、磁盘满写了个寂寞）
+    fake_pool.preview_png = lambda stem, patches, width, tag: str(
+        tmp_path / "gone" / "nope.png")
+    out = bridge.open_figure(str(project), include_png=True)
+    assert out["ok"] is True
+    assert out["session_id"] in bridge.sessions()
+    assert out["preview_png_error"] == "preview_unreadable"
+
+
 def test_every_operation_reacquires_the_worker_from_the_pool(project, monkeypatch):
     """池按 MAX_ALIVE 淘汰，桥的会话上限是另一个数——两者必然打架。
 

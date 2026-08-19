@@ -27,7 +27,9 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import os
 import re
+import tempfile
 from pathlib import Path, PurePosixPath
 
 from . import registry
@@ -677,9 +679,22 @@ def write_config(figures_dir: str | Path, cfg: dict) -> Path:
     """
     path = registry.registry_path(figures_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(cfg, ensure_ascii=False, indent=1), encoding="utf-8")
-    tmp.replace(path)
+    # 临时文件名**每次调用都不同**。用固定的 `<name>.tmp` 的话，两个并发写
+    # （Flask 是多线程的：/api/registry/scan 与 open_project 起草、MCP 那侧的
+    # 登记都会走到这儿）会写同一个路径：先 replace 的那个把它搬走，后一个
+    # 的 replace 直接 FileNotFoundError；更坏的情况是两份内容交错，读者拿到
+    # 一个谁也没打算写出来的文件——原子写反倒成了摆设。
+    # 同目录是硬要求：跨设备的 replace 不是原子操作。
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent),
+                                    prefix=path.name + ".", suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(cfg, ensure_ascii=False, indent=1))
+        tmp.replace(path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)             # 半成品不留在用户的图库目录里
+        raise
     return path
 
 

@@ -675,7 +675,10 @@ def test_orphan_check_does_not_rely_on_a_dead_parent_pid():
     # 只盯**调用形态**（argv 列表里的 "pgrep"），别把解释这件事的注释也判红
     assert '"pgrep"' not in src, \
         "父进程已退出时按 PPID 查孤儿必然一无所获——这条断言恒真"
-    assert "_leftover_workers" in src, "改用按命令行内容的全局扫描"
+    # 两条判据缺一不可：pid 快照精确（连没有命令行特征的 magplot-workerd 也
+    # 盖得住），命令行扫描兜住父子关系没记全的那些
+    assert "_descendants(proc.pid)" in src, "退出前要把后代 pid 快照下来"
+    assert "_leftover_workers" in src, "还要按命令行内容做一次全局扫描"
 
 
 def test_macos_release_signs_and_verifies_every_nested_macho():

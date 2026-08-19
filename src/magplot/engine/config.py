@@ -59,23 +59,27 @@ def path_is_case_insensitive(path: str | Path) -> bool:
 
     result = _casefold_default()
     probe = key
-    while probe and not os.path.exists(probe):
+    while probe:
         parent = os.path.dirname(probe)
-        if parent == probe:                     # 到根了还不存在
-            probe = ""
-            break
-        probe = parent
-    if probe:
         head, tail = os.path.split(probe)
         flipped = tail.swapcase()
-        if flipped and flipped != tail:         # 有字母可翻才谈得上探测
+        # 只有「存在」且「最后一段里有字母可翻」的祖先才探得动。
+        # 两个条件缺一就继续往上走，**不能就此认定平台默认值**：
+        # `/Volumes/CaseSensitive/Foo/123` 的末段全是数字，翻不动，
+        # 而在 macOS 上兜底会说「不敏感」，于是 `/Foo/123` 与 `/foo/123`
+        # 共用一个项目 id、一个 worker 池、一份写回基线——它们是两个目录。
+        if flipped != tail and os.path.exists(probe):
             try:
                 st = os.stat(probe)
                 other = os.path.join(head, flipped)
                 result = (os.path.exists(other)
                           and os.path.samestat(st, os.stat(other)))
+                break
             except OSError:
-                pass                            # 权限/竞态：留兜底值
+                pass                            # 权限/竞态：换上一层再试
+        if parent == probe:                     # 到根了，只能用兜底值
+            break
+        probe = parent
     _CASEFOLD_CACHE[key] = result
     return result
 

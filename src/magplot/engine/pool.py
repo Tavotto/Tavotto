@@ -118,15 +118,22 @@ def stem_patch_hash(worker, stem: str) -> str:
     结果比——而那道校验正是「热态所见 == 写进文件的」这条不变式的最后一道
     防线，比错了要么误报 409、要么把真实分歧放过去。
 
-    没 build 过就没有基准（回空串）；build 过但这个 stem 一次都没被
-    override，那它就是脚本原样，即空 patch 列表。
+    **账本里有记录就以它为准，不再看 `built`。** `built` 是包装对象的记账，
+    而 workerd 那条路的透明重开（`_call` 撞上 `unknown_session` → `_open()`
+    → 重试）会把它置回 False——即便重试的那次 render 成功了、这个 stem 的
+    哈希也已经记下。拿 `built` 当前置条件的话，那次成功的热态会被当成「没有
+    基准」，写回于是悄悄降级成 `fresh_only`，跳过热态与重放的分歧比对——
+    而那正是这道校验存在的全部意义。
+
+    账本里没有记录时才轮到 `built` 说话：build 过 = 这个 stem 就是脚本原样
+    （空 patch 列表）；没 build 过 = 压根没有基准（回空串）。
     """
-    if not getattr(worker, "built", False):
-        return ""
     by_stem = getattr(worker, "last_patch_hash_by_stem", None)
     if by_stem is None:                       # 没有按 stem 账本的实现（假件）
         return getattr(worker, "last_patch_hash", "")
-    return by_stem.get(stem, _EMPTY_PATCH_HASH)
+    if stem in by_stem:
+        return by_stem[stem]
+    return _EMPTY_PATCH_HASH if getattr(worker, "built", False) else ""
 
 
 def _merge_timings(resp: dict, queue_wait_ms: float, total_ms: float) -> dict:

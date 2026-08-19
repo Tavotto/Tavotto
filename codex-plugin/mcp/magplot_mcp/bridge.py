@@ -399,7 +399,16 @@ def preview_png(session: Session, patches: list, width_px: int) -> str:
     except engine_pool.WorkerError as exc:
         raise BridgeError(str(exc), code=exc.code or "preview_failed",
                           traceback=exc.traceback_text) from exc
-    return base64.b64encode(Path(path).read_bytes()).decode("ascii")
+    try:
+        data = Path(path).read_bytes()
+    except OSError as exc:
+        # worker 说成了、文件却读不出来（被杀毒隔离、磁盘满、缓存目录被清）。
+        # 这一步以前在 try 之外，裸 OSError 会绕过所有 BridgeError 处理——
+        # `open_figure` 的降级也就接不住它，那条刚登记的会话又变回谁也够不着
+        # 的幽灵。**这个函数对外只许抛 BridgeError**。
+        raise BridgeError(f"位图出来了却读不出来 {path}: {exc}",
+                          code="preview_unreadable") from exc
+    return base64.b64encode(data).decode("ascii")
 
 
 # -------------------------------- 预检 --------------------------------------

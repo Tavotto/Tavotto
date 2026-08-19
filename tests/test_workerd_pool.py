@@ -8,7 +8,7 @@ import subprocess
 
 import pytest
 
-from magplot.engine import pool, runtime, workerd_client
+from magplot.engine import patchspec, pool, runtime, workerd_client
 
 
 # ------------------------------ 选路 ------------------------------
@@ -371,3 +371,25 @@ def test_cleanup_failure_never_hides_the_real_open_error(monkeypatch, tmp_path):
         pool.WorkerdWorker("fig.py", str(tmp_path), "main",
                            client=FakeClient(), base_dir=tmp_path / "b")
     assert exc.value.code == "spawn_failed"
+
+
+def test_recorded_stem_hash_survives_a_transparent_session_reopen():
+    """账本里有记录就以它为准，**不再看 `built`**。
+
+    workerd 那条路的透明重开（`_call` 撞上 unknown_session → `_open()` → 重试）
+    会把包装对象的 `built` 置回 False，即便重试的那次 render 成功了、这个 stem
+    的哈希也已经记下。拿 `built` 当前置条件的话，那次成功的热态会被当成「没有
+    基准」，写回于是悄悄降级成 `fresh_only`，跳过热态与重放的分歧比对——而那
+    正是这道校验存在的全部意义。
+    """
+    class W:
+        built = False                                   # 重开之后就是这个样子
+        last_patch_hash = "sha256:whatever"
+        last_patch_hash_by_stem = {"Fig2_yield": "sha256:aaa"}
+
+    w = W()
+    assert pool.stem_patch_hash(w, "Fig2_yield") == "sha256:aaa"
+    # 账本里没有这个 stem 时才轮到 built 说话
+    assert pool.stem_patch_hash(w, "Fig2_correlation") == ""
+    W.built = True
+    assert pool.stem_patch_hash(w, "Fig2_correlation") == patchspec.patch_hash([])
