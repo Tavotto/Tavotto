@@ -443,6 +443,21 @@ def test_check_runtime_dir_rejects_a_foreign_platform(tmp_path, lock):
         brt.check_runtime_dir(path, require_smoke=True, host=("macos", "arm64"))
 
 
+def test_check_runtime_dir_rejects_an_unshipped_target_in_release_builds(tmp_path, lock):
+    """`shipped=false` = 「锁着版本，但没构建过也没冒烟过，不许发」。
+
+    构建脚本里那句只是 warning，构建照常继续；发行链上以前没有任何一道闸
+    拦它。`macos-latest` 这种浮动 runner 哪天换成 Intel，我们就会把一个
+    文档里明写着「不支持 Intel」的目标发出去，而且全程绿灯。
+    """
+    path = _write_manifest(tmp_path, lock, "macos-x86_64")
+    with pytest.raises(brt.BuildError, match="shipped=false"):
+        brt.check_runtime_dir(path, require_smoke=True, host=("macos", "x86_64"))
+    # 非发行构建（--allow-skip-smoke 那一档）照旧放行：本地要能拿它调试
+    info = brt.check_runtime_dir(path, require_smoke=False, host=("macos", "x86_64"))
+    assert info["target"] == "macos-x86_64"
+
+
 def test_check_runtime_dir_rejects_a_foreign_arch(tmp_path, lock):
     path = _write_manifest(tmp_path, lock, "macos-x86_64")
     with pytest.raises(brt.BuildError, match="x86_64"):

@@ -78,7 +78,6 @@ export function PanelView({ obj }: { obj: PanelObject }) {
 
   // 编辑态用 SVG（要 gid 命中）；退出后有 override 的用引擎 PNG（imshow 面板不发糊）
   const svgHtml = editing ? (render?.svg ?? null) : null
-  const showSvg = svgHtml != null
 
   // 预览平面与权威 SVG 的接合点：内联 SVG 每换一次就来认领一次。
   // 换上来的正是等的那一版 → 预览功成身退（DOM 已经整个换掉）；还是原来那一版
@@ -117,6 +116,13 @@ export function PanelView({ obj }: { obj: PanelObject }) {
     ? transport.panelSrc(obj.fileId, obj.fileKind, bucket, mtime)
     : panelSrc(obj.fileId, obj.fileKind, bucket, mtime)
   const src = (useEnginePng && enginePng) || fileSrc || ''
+  // 一个可寻址地址都拿不到时**退回这一版的权威 SVG**，绝不留一个空 src。
+  // Codex 内嵌画布退出图内编辑后正好落在这一格：会话把文件标成 tracked
+  // → `useEnginePng` 为真 → MCP 传输拒掉每一次 `previewPngUrl()`，而它的
+  // `panelSrc()` 本来就回 null（iframe 里没有 HTTP 服务）。旧写法在这里
+  // 解出空串，用户看到的是**图整个消失**。
+  const inlineSvg = svgHtml ?? (src ? null : (render?.svg ?? null))
+  const showSvg = inlineSvg != null
 
   return (
     <div className="absolute inset-0 overflow-hidden">
@@ -145,7 +151,7 @@ export function PanelView({ obj }: { obj: PanelObject }) {
             data-element-svg={obj.id}
             className="absolute"
             style={{ ...layout, maxWidth: 'none' }}
-            dangerouslySetInnerHTML={{ __html: svgHtml }}
+            dangerouslySetInnerHTML={{ __html: inlineSvg }}
           />
         ) : (
           <CrossfadeImage

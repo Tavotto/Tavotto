@@ -47,6 +47,10 @@ def main() -> None:
     # 走 app.main() 会 import Flask + pymupdf + 整个 app.py，而一次交接
     # 一个 HTTP 端点都用不上——那份冷启动全是白付的。
     from magplot.engine import cli as engine_cli
+    # Windows 上冻结的 console exe 被安装器 / Codex 用管道接管时，stdout 退回
+    # cp1252/cp936——中文一出现就 UnicodeEncodeError，调用方等的那行 JSON
+    # 一个字节都收不到。实现只有一份（engine/cli.py）。
+    engine_cli.use_utf8_streams()
     rc = engine_cli.dispatch(sys.argv[1:])
     if rc is not None:
         sys.exit(rc)

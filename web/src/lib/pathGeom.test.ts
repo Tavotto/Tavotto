@@ -12,6 +12,7 @@ import {
   geomAreaFrac,
   geomContains,
   geomDistMm,
+  geomHitTolMm,
   geomHitsRect,
   geomInkAreaFrac,
   geomPathD,
@@ -38,7 +39,8 @@ const triangle: ElementGeometry = {
 }
 
 /** 外环 + 内环（even-odd → 中间是洞） */
-const ring: ElementGeometry = {
+/** 内外环**同向**。matplotlib 用 nonzero，中间那块是**实心**的（下方有实测账） */
+const nestedSameDir: ElementGeometry = {
   kind: 'multi_path',
   paths: [
     { points: [[0, 0], [1, 0], [1, 1], [0, 1]], closed: true },
@@ -46,6 +48,15 @@ const ring: ElementGeometry = {
   ],
   fill: true,
   stroke: false,
+}
+
+/** 内环**反向**：nonzero 下这才是洞 */
+const ringWithHole: ElementGeometry = {
+  ...nestedSameDir,
+  paths: [
+    { points: [[0, 0], [1, 0], [1, 1], [0, 1]], closed: true },
+    { points: [[0.4, 0.6], [0.6, 0.6], [0.6, 0.4], [0.4, 0.4]], closed: true },
+  ],
 }
 
 describe('geomDistMm：点到路径的距离按 mm 算', () => {
@@ -87,9 +98,38 @@ describe('geomContains：填充内部算命中', () => {
     expect(geomContains({ ...triangle, fill: false }, 0.5, 0.4)).toBe(false)
   })
 
-  it('even-odd：环里套环，中间那块是洞', () => {
-    expect(geomContains(ring, 0.2, 0.2)).toBe(true)
-    expect(geomContains(ring, 0.5, 0.5)).toBe(false)
+  /**
+   * 判据跟渲染器走，不跟直觉走。实测（matplotlib 3.10.8，Agg，
+   * `PathPatch(facecolor="black")` 后读像素）：
+   *   同向嵌套 → 中心像素 (0,0,0)   ← 实心
+   *   反向嵌套 → 中心像素 (255,255,255) ← 洞
+   * 也就是 SVG/PDF/Agg 一致的 **nonzero**。旧实现按 even-odd 逐次翻转，
+   * 于是第一种情况下点在明明填了色的像素上却选不中。
+   */
+  it('nonzero：同向嵌套，中间那块是实心的', () => {
+    expect(geomContains(nestedSameDir, 0.2, 0.2)).toBe(true)
+    expect(geomContains(nestedSameDir, 0.5, 0.5)).toBe(true)
+  })
+
+  it('nonzero：反向嵌套才是洞', () => {
+    expect(geomContains(ringWithHole, 0.2, 0.2)).toBe(true)
+    expect(geomContains(ringWithHole, 0.5, 0.5)).toBe(false)
+  })
+
+  /**
+   * 实测同一批：`Path` 只给 MOVETO/LINETO、没有 CLOSEPOLY，`PathPatch` 照样
+   * 把它隐式闭合并填出来（中心像素 (0,0,0)）。`closed` 是 false，所以按
+   * `closed` 过滤会把整块可见的填充区判成不存在。
+   */
+  it('填充路径没有 CLOSEPOLY 时也要算内部（matplotlib 隐式闭合）', () => {
+    const openCoded: ElementGeometry = {
+      kind: 'path',
+      paths: [{ points: [[0.1, 0.1], [0.9, 0.1], [0.5, 0.9]], closed: false }],
+      fill: true,
+      stroke: false,
+    }
+    expect(geomContains(openCoded, 0.5, 0.3)).toBe(true)
+    expect(geomContains(openCoded, 0.05, 0.05)).toBe(false)
   })
 })
 
@@ -107,7 +147,7 @@ describe('geomHitsRect：框选按路径相交', () => {
   })
 
   it('框整个落在一大块填充内部**不**算圈中（框选是圈墨迹，不是戳进去）', () => {
-    expect(geomHitsRect(ring, { x: 0.45, y: 0.45, w: 0.02, h: 0.02 })).toBe(false)
+    expect(geomHitsRect(nestedSameDir, { x: 0.45, y: 0.45, w: 0.02, h: 0.02 })).toBe(false)
   })
 
   it('裁剪框之外的框选不圈中', () => {
@@ -151,7 +191,83 @@ describe('geomPathD：SVG 路径串', () => {
   })
 
   it('多条子路径各自一个 M（断开的曲线不会被连起来）', () => {
-    const d = geomPathD(ring, toPoint)
+    const d = geomPathD(nestedSameDir, toPoint)
     expect(d.match(/M/g)?.length).toBe(2)
+  })
+})
+
+
+/* -------------------------------------------------------------------------- */
+/*  框选：共线与裁剪                                                            */
+/* -------------------------------------------------------------------------- */
+
+describe('框选不该收走看不见的东西', () => {
+  /**
+   * 四个叉积全为 0 只说明四点在同一条直线上，**说不了两段有重叠**。
+   * 旧判据用叉积乘积 `<= 0`，于是 x=0–0.1 的水平段会被一个 x=0.8–0.9、
+   * y 相同的选择框边判成相交——框选把老远之外的水平/垂直线一起收走。
+   */
+  it('与选择框边共线、但区间完全不重叠的线段不算命中', () => {
+    const horiz: ElementGeometry = {
+      kind: 'polyline',
+      paths: [{ points: [[0, 0.5], [0.1, 0.5]], closed: false }],
+      fill: false,
+      stroke: true,
+    }
+    // 选择框的上下边正好在 y=0.5 与 y=0.6，横向落在 0.8–0.9：与线段共线但离得老远
+    expect(geomHitsRect(horiz, { x: 0.8, y: 0.5, w: 0.1, h: 0.1 })).toBe(false)
+    // 真的压上去才算
+    expect(geomHitsRect(horiz, { x: 0.05, y: 0.5, w: 0.1, h: 0.1 })).toBe(true)
+  })
+
+  /**
+   * clip 之外那截 matplotlib 根本没画。只做一次「框与 clip 有重叠」的粗判
+   * 不够：横跨子图边界的框会只与那截**不可见的延长线**相交。
+   */
+  it('横跨裁剪边界的框，只碰到框外那截时不算命中', () => {
+    const line: ElementGeometry = {
+      kind: 'polyline',
+      // 从 clip 内一路画到 clip 外
+      paths: [{ points: [[0.2, 0.2], [0.9, 0.9]], closed: false }],
+      fill: false,
+      stroke: true,
+      clip: [0, 0, 0.5, 0.5],
+    }
+    // 选择框跨过 clip 右下角，但它与线的交点全在 clip 之外
+    expect(geomHitsRect(line, { x: 0.45, y: 0.6, w: 0.3, h: 0.3 })).toBe(false)
+    // 落在 clip 之内的那段仍然选得中
+    expect(geomHitsRect(line, { x: 0.25, y: 0.25, w: 0.1, h: 0.1 })).toBe(true)
+  })
+})
+
+describe('geomHitTolMm：容差要盖住画出来的墨迹', () => {
+  const thin: ElementGeometry = {
+    kind: 'polyline',
+    paths: [{ points: [[0, 0], [1, 1]], closed: false }],
+    fill: false,
+    stroke: true,
+    stroke_pt: 1,
+  }
+
+  it('细线用基础容差（可用性下限，不是墨迹宽度）', () => {
+    expect(geomHitTolMm(thin, 1.5)).toBeCloseTo(1.5, 6)
+  })
+
+  /**
+   * 12pt ≈ 4.23mm 宽，半宽 ≈2.12mm——超出 1.5mm 的固定容差。点在明明画着墨的
+   * 像素上却选不中，而改成按路径命中之前的 bbox 判据是能选中的。
+   */
+  it('粗线取描边半宽', () => {
+    expect(geomHitTolMm({ ...thin, stroke_pt: 12 }, 1.5)).toBeCloseTo((12 * 25.4) / 72 / 2, 6)
+  })
+
+  it('没有描边的填充路径不吃这条（半宽对它没意义）', () => {
+    expect(geomHitTolMm({ ...thin, stroke: false, stroke_pt: 12 }, 1.5)).toBeCloseTo(1.5, 6)
+  })
+
+  it('引擎没给 stroke_pt 时退回基础容差，不报错', () => {
+    const noWidth = { ...thin }
+    delete (noWidth as { stroke_pt?: number }).stroke_pt
+    expect(geomHitTolMm(noWidth, 1.5)).toBeCloseTo(1.5, 6)
   })
 })

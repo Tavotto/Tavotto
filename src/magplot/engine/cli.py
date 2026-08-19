@@ -22,10 +22,34 @@ import sys
 COMMANDS = ("open", "doctor")
 
 
+def use_utf8_streams() -> None:
+    """把 stdout/stderr 钉成 UTF-8。**每个入口在做任何输出之前都要调一次。**
+
+    Windows 上 stdout 一旦不是真控制台（被重定向到文件、由安装器或 Codex
+    接管管道），就退回系统区域编码（cp1252 / cp936）。`doctor` 的结论、
+    `open` 的提示、启动信息全是中文，一句 `print` 就是 UnicodeEncodeError
+    直接打死进程——用户看到的是「启动即崩」或者一堆 traceback，而调用方
+    等的是那行 JSON。
+
+    这一份是**唯一出处**：`app.main()`、`magplot/cli_entry.py` 与
+    `packaging/entry.py` 都调它。分派提前到 cli_entry 之后，`doctor` 会跑在
+    `app.main()` 那次重配**之前**——同一个坑必须由入口自己先填上
+    （`test_cli_entry_survives_a_non_utf8_console` 看护）。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except (ValueError, OSError):
+                pass          # 已经被接管成不可重配的对象：不值得为它崩
+
+
 def dispatch(argv: list[str]) -> int | None:
     """argv[0] 是子命令就执行并返回退出码；不是就返回 None（交回主入口）。"""
     if not argv or argv[0] not in COMMANDS:
         return None
+    # 子命令的输出全是中文，而它们可能跑在 `app.main()` 的重配之前
+    use_utf8_streams()
     if argv[0] == "open":
         from . import handoff
         return handoff.cli(argv[1:])

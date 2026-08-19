@@ -1157,6 +1157,36 @@ def _cb_tick_color(p: "ColorbarProxy"):
 # ---------------------------------------------------------------------------
 _CB_TICKLOC = {"vertical": "right", "horizontal": "bottom"}
 
+#: 翻转时「原来那一侧」映到哪一侧。`fig.colorbar(location="left"/"top")` 是
+#: 完全合法的写法，而旧实现无论从哪儿来都只会落到 right/bottom：一个左侧
+#: 竖色条翻成横的再翻回来，就永久搬到了右边——**方向明明转回原值了，
+#: 图却回不去**，刻度也跟着换了边。撤销那条路（`_restore_cb_orientation`）
+#: 一直是对的，走「把值设回去」这条路的才坏，两条路必须给出同一张图。
+_CB_SIDE_FLIP = {"right": "bottom", "bottom": "right",
+                 "left": "top", "top": "left"}
+#: 每种方向合法的侧（防止外部塞进来的怪值把落位算成 NaN）
+_CB_SIDES = {"vertical": ("left", "right"), "horizontal": ("top", "bottom")}
+
+
+def _cb_side0(cb) -> str:
+    """脚本原本把色条放在哪一侧（首次改动前记下，之后一直用它当基准）。"""
+    if not hasattr(cb, "_mm_cb_side0"):
+        side = str(getattr(cb, "ticklocation", "") or "")
+        orient = str(getattr(cb, "orientation", "vertical"))
+        if side not in _CB_SIDES.get(orient, ()):
+            side = _CB_TICKLOC.get(orient, "right")
+        cb._mm_cb_side0 = side           # noqa: SLF001
+        cb._mm_cb_orient0 = orient       # noqa: SLF001
+    return cb._mm_cb_side0               # noqa: SLF001
+
+
+def _cb_target_side(cb, to: str) -> str:
+    """翻到 `to` 之后该落在哪一侧：回到原方向就用原侧，否则按 flip 表映过去。"""
+    side0 = _cb_side0(cb)
+    orient0 = getattr(cb, "_mm_cb_orient0", "vertical")
+    side = side0 if to == orient0 else _CB_SIDE_FLIP.get(side0, "")
+    return side if side in _CB_SIDES[to] else _CB_TICKLOC[to]
+
 #: `Colorbar._inside` 是按 extend 切出来的那段 boundaries。它**只在 `__init__`
 #: 里设过一次**——改 `cb.extend` 不动它，于是 `_draw_all()` 会拿 259 条边界去配
 #: 256 块颜色，当场 TypeError。两者必须一起改。
@@ -1203,26 +1233,44 @@ def _cb_label_text(cb) -> str:
             else cb.ax.get_xlabel())
 
 
-def _cb_place(host_rect, cur_rect, to: str) -> list[float]:
+def _cb_place(host_rect, cur_rect, to: str, *,
+              from_side: str = "", to_side: str = "") -> list[float]:
     """翻转后色条轴该落在哪儿（figure 分数，matplotlib 的 bottom-origin）。
 
     规则：厚度取色条自己的短边、间距沿用它与宿主之间原本那道缝，长边跟宿主
-    对齐——竖条在右侧，横条就到下方，长度铺满宿主。竖↔横来回翻**逐位可逆**
+    对齐——竖条在左/右，横条在上/下，长度铺满宿主。竖↔横来回翻**逐位可逆**
     （thick 与 pad 都能从对侧原样反解出来），所以撤销回来的图与没改过的
     完全一样。
+
+    `from_side` 决定那道缝从哪个方向反解：色条在宿主左边时缝是
+    `hx - (cx + cw)`，在右边时是 `cx - (hx + hw)`——按右侧一种算法反解一个
+    左侧色条，得到的是一个负得离谱的 pad，随后被兜底成 0.04，缝就变了。
     """
     hx, hy, hw, hh = (float(v) for v in host_rect)
     cx, cy, cw, ch = (float(v) for v in cur_rect)
     thick = min(cw, ch)
-    if to == "horizontal":
-        pad = cx - (hx + hw)
-        if not 0.0 <= pad <= 0.4:
-            pad = 0.04
-        return [hx, hy - pad - thick, hw, thick]
-    pad = hy - (cy + ch)
+    from_side = from_side or ("bottom" if to == "vertical" else "right")
+    to_side = to_side or _CB_TICKLOC[to]
+    pad = {"right": cx - (hx + hw),
+           "left": hx - (cx + cw),
+           "bottom": hy - (cy + ch),
+           "top": cy - (hy + hh)}.get(from_side, 0.04)
     if not 0.0 <= pad <= 0.4:
         pad = 0.04
-    return [hx + hw + pad, hy, thick, hh]
+    if to == "horizontal":
+        return ([hx, hy + hh + pad, hw, thick] if to_side == "top"
+                else [hx, hy - pad - thick, hw, thick])
+    return ([hx - pad - thick, hy, thick, hh] if to_side == "left"
+            else [hx + hw + pad, hy, thick, hh])
+
+
+def _cb_current_side(cb) -> str:
+    """色条**此刻**在宿主的哪一侧（用来反解那道缝）。"""
+    orient = str(getattr(cb, "orientation", "vertical"))
+    side = str(getattr(cb, "ticklocation", "") or "")
+    if side in _CB_SIDES.get(orient, ()):
+        return side
+    return _CB_TICKLOC.get(orient, "right")
 
 
 def _cb_target_rect(p: "ColorbarProxy", to: str, state: "FigState"):
@@ -1244,15 +1292,20 @@ def _cb_target_rect(p: "ColorbarProxy", to: str, state: "FigState"):
     # ——`original` 还没经过 box_aspect 收缩，拿它反解厚度会粗好几倍。
     # extend 的收缩只发生在长轴上，而 `_cb_place` 读的恰好是短边与短轴方向的
     # 间距，两者不打架。
-    return _cb_place(host_rect, p.cb.ax.get_position().bounds, to)
+    return _cb_place(host_rect, p.cb.ax.get_position().bounds, to,
+                     from_side=_cb_current_side(p.cb),
+                     to_side=_cb_target_side(p.cb, to))
 
 
 def _cb_reorient(p: "ColorbarProxy", to: str, state: "FigState") -> None:
     cb = p.cb
     label = _cb_label_text(cb)
+    # **必须在改 orientation/ticklocation 之前问一次**：`_cb_side0` 是惰性
+    # 记账的，晚一步记下的就已经是被我们改过的值了
+    side = _cb_target_side(cb, to)
     rect = _cb_target_rect(p, to, state)
     cb.orientation = to
-    cb.ticklocation = _CB_TICKLOC[to]
+    cb.ticklocation = side
     # 两条轴的标签都先清掉：旧长轴那份不清就会变成「横过来了但左边还挂着
     # 一行竖排文字」
     cb.ax.set_xlabel("")
@@ -1314,6 +1367,9 @@ def _restore_cb_orientation(p: "ColorbarProxy", orig, state: "FigState") -> None
     ax = cb.ax
     cb.orientation = orig["orientation"]
     cb.ticklocation = orig["ticklocation"]
+    # 基准也一并放回：还原之后再改一次方向，得从脚本那份原样重新起算
+    cb._mm_cb_side0 = orig["ticklocation"]      # noqa: SLF001
+    cb._mm_cb_orient0 = orig["orientation"]     # noqa: SLF001
     ax.set_xlabel("")
     ax.set_ylabel("")
     ax.set_box_aspect(orig["box_aspect0"])

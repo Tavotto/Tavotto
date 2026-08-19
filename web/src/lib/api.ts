@@ -1,5 +1,5 @@
 import { apiUrl, withProject } from '@/lib/session'
-import { i18n, t } from '@/i18n'
+import { formatMessage, i18n, literal, msg, t, type UiMessage } from '@/i18n'
 import type { FigureDocument, ProjectDocument } from '@/types/document'
 
 export interface PanelInfo {
@@ -50,6 +50,18 @@ export class ApiError extends Error {
  * 一串 `errors:backend.xxx` 有用，也比「发生了未知错误」有用。
  */
 export function backendErrorText(e: unknown): string {
+  return formatMessage(backendErrorMsg(e))
+}
+
+/**
+ * 同一条错误的**描述符**版本，给活得比一次渲染长的地方用（常驻错误 toast、
+ * 确认框、历史标签）。
+ *
+ * `backendErrorText` 是当场翻的：错误 toast 会一直挂到用户手动关掉，中途
+ * 切语言时 `StatusToasts` 会重渲染，可里面那句话早已被 `literal()` 冻成上
+ * 一门语言，**再也换不回来**（code 与 params 都被拼进字符串了）。
+ */
+export function backendErrorMsg(e: unknown): UiMessage {
   if (e instanceof ApiError) {
     const code = typeof e.body?.code === 'string' ? e.body.code : ''
     // 用 exists 而不是 defaultValue 判「有没有这条」：i18n 那边的
@@ -57,10 +69,11 @@ export function backendErrorText(e: unknown): string {
     // 那样 defaultValue 永远轮不到，缺文案时用户看到的就是 `backend.xxx`。
     if (code && i18n.exists(`backend.${code}`, { ns: 'errors' })) {
       const params = (e.body?.params ?? {}) as Record<string, unknown>
-      return t(`backend.${code}`, { ns: 'errors', ...params })
+      return msg(`backend.${code}`, params, 'errors')
     }
   }
-  return e instanceof Error ? e.message : String(e)
+  // 后端没给 code（或本地还没有这条文案）：原文照抄，不翻
+  return literal(e instanceof Error ? e.message : String(e))
 }
 
 /* --------------------- 项目失效（409 no_project）的统一出口 ------------------- */
@@ -577,6 +590,8 @@ export interface ElementGeometry {
   fill: boolean
   /** 这条路径有描边 */
   stroke: boolean
+  /** 描边宽度（pt）。命中容差要把可见墨迹的半宽算进去，宽度只有引擎知道 */
+  stroke_pt?: number
   /** 裁剪框（figure 分数、y 向下）；只有矩形裁剪才给，非矩形裁剪不给 */
   clip?: [number, number, number, number]
 }

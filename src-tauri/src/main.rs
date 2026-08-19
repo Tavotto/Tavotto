@@ -208,10 +208,22 @@ fn build_menu_in<R: tauri::Runtime>(
     Ok(menu)
 }
 
-/// 启动时用的那次：语言取上次记下的偏好（没有就是 zh-CN）。
+/// `.menu()` 那次：**只能用默认语言建**。
+///
+/// 这个闭包跑在 `Builder::build()` 里、Tauri 把 `PathResolver` manage 进去
+/// **之前**，此时 `handle.path()` 会直接 panic：
+///
+///     state() called before manage() for tauri::path::desktop::PathResolver<…>
+///
+/// 而壳是 windows 子系统的可执行文件，panic 写到一个无效的 stderr 句柄上，
+/// 用户看到的只是「双击图标什么都没发生」——2026-08-18 起 Windows 桌面版
+/// 每次启动都是这么死的（退出码 101），nightly 的壳探针红了一整晚而唯一的
+/// 线索是「壳退了」。
+///
+/// 上次记下的语言在 `setup()` 里读（那时 PathResolver 已经就位），读到不一样
+/// 就地重建一次——重建发生在窗口显示之前，用户看不到中间态。
 fn build_menu<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) -> tauri::Result<Menu<R>> {
-    let locale = i18n::read_locale(i18n::locale_file(handle.path().app_config_dir().ok()));
-    build_menu_in(handle, locale)
+    build_menu_in(handle, i18n::DEFAULT_LOCALE)
 }
 
 /// 前端切了界面语言 → 重建原生菜单，并把选择记下来给下次启动用。
@@ -219,19 +231,38 @@ fn build_menu<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) -> tauri::Result<
 /// 前端在 i18n 就绪时（还没挂 React）就会调一次，用户在设置里换语言时再调。
 /// 语言认不出来一律忽略：菜单保持现状比换成一堆空词条好。
 #[tauri::command]
-fn set_menu_locale(app: tauri::AppHandle, locale: String) -> Result<(), String> {
+fn set_menu_locale(
+    app: tauri::AppHandle,
+    locale: String,
+    // 用户亲手选的（设置里换语言），还是只是「当前生效」的汇报（i18n 就绪）。
+    // 桌面模式下这是**唯一**能把「手动选择 > 系统语言」还给用户的信息：
+    // sidecar 绑 `127.0.0.1:0`，端口每次都变，前端 localStorage 的偏好活不
+    // 过一次重启（端口是 Web Storage origin 的一部分）。
+    explicit: Option<bool>,
+) -> Result<(), String> {
     let Some(next) = i18n::normalize(&locale) else {
         return Err(format!("不支持的语言：{locale}"));
     };
-    let state = app.state::<AppState>();
-    {
+    let explicit = explicit.unwrap_or(false);
+    let changed = {
+        let state = app.state::<AppState>();
         let mut cur = state.menu_locale.lock().unwrap();
-        if *cur == next {
-            return Ok(());
-        }
+        let changed = *cur != next;
         *cur = next;
+        changed
+    };
+    // 显式选择即使「和现在一样」也要落盘：上一次可能只是跟随系统的汇报，
+    // 那时文件里没有 explicit 标记，重启后就又退回系统语言了。
+    if changed || explicit {
+        i18n::write_locale(
+            i18n::locale_file(app.path().app_config_dir().ok()),
+            next,
+            explicit,
+        );
     }
-    i18n::write_locale(i18n::locale_file(app.path().app_config_dir().ok()), next);
+    if !changed {
+        return Ok(());
+    }
     let menu = build_menu_in(&app, next).map_err(|e| e.to_string())?;
     app.set_menu(menu).map_err(|e| e.to_string())?;
     Ok(())
@@ -244,6 +275,10 @@ fn spawn_sidecar_and_navigate(app: tauri::AppHandle) {
     let open = state.open.clone();
     // 起 sidecar 这段跑在前端加载之前，语言只能取记下来的那个偏好
     let menu_locale = *state.menu_locale.lock().unwrap();
+    // 记下来的那份是不是「用户亲手选的」——只有它才该盖过前端的系统语言探测
+    let chosen_locale = i18n::read_stored(i18n::locale_file(app.path().app_config_dir().ok()))
+        .filter(|s| s.explicit)
+        .map(|s| s.locale);
 
     std::thread::spawn(move || {
         let resource_dir = app.path().resource_dir().ok();
@@ -268,9 +303,26 @@ fn spawn_sidecar_and_navigate(app: tauri::AppHandle) {
                 // fragment 携带一次性 nonce：不进 HTTP 请求行，也就不进任何访问日志。
                 // `?open=<stem>` 是首启交接的落点（前端 lib/openRequest.ts 消费），
                 // 与浏览器模式共用同一份语义——桌面首启不必再多发一次事件。
-                let query = match open.as_ref().and_then(|o| o.stem.as_deref()) {
-                    Some(stem) => format!("?open={}", utf8_percent_encode(stem, NON_ALPHANUMERIC)),
-                    None => String::new(),
+                // `lang=` 只在用户**亲手选过**语言时带（见 `set_menu_locale`
+                // 的 explicit 参数）。桌面模式下 sidecar 绑 `127.0.0.1:0`，
+                // 端口每次都变，而端口是 Web Storage origin 的一部分——前端
+                // 存在 localStorage 的语言偏好活不过一次重启，`detectLocale()`
+                // 会退回系统语言，再把那个退回值报给壳，把用户真正的选择
+                // **覆盖掉**。壳记的这份是唯一活得下来的存储，所以由它带过去。
+                let mut params: Vec<String> = Vec::new();
+                if let Some(stem) = open.as_ref().and_then(|o| o.stem.as_deref()) {
+                    params.push(format!(
+                        "open={}",
+                        utf8_percent_encode(stem, NON_ALPHANUMERIC)
+                    ));
+                }
+                if chosen_locale.is_some() {
+                    params.push(format!("lang={}", menu_locale.tag()));
+                }
+                let query = if params.is_empty() {
+                    String::new()
+                } else {
+                    format!("?{}", params.join("&"))
                 };
                 let url = format!("http://127.0.0.1:{port}/{query}#dnonce={nonce}");
                 if win
@@ -358,9 +410,20 @@ fn main() {
             let nav_handle = handle.clone();
             // 上次记下的语言。菜单与启动画面都用它——「装完第一次打开」之外
             // 每一次启动，用户看到的第一屏就已经是他选的语言。
+            // 这里才是第一个能安全用 `handle.path()` 的地方（见 build_menu）
             let boot_locale =
                 i18n::read_locale(i18n::locale_file(handle.path().app_config_dir().ok()));
             *app.state::<AppState>().menu_locale.lock().unwrap() = boot_locale;
+            if boot_locale != i18n::DEFAULT_LOCALE {
+                // `.menu()` 那次只能建默认档，这里补上真正的语言。
+                // 失败不拦启动：菜单文案不对总好过应用起不来。
+                match build_menu_in(&handle, boot_locale) {
+                    Ok(menu) => {
+                        let _ = app.set_menu(menu);
+                    }
+                    Err(e) => eprintln!("rebuild menu for {}: {e}", boot_locale.tag()),
+                }
+            }
             let win = tauri::WebviewWindowBuilder::new(
                 app,
                 "main",
@@ -407,6 +470,32 @@ mod tests {
 
     fn args(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// `.menu()` 的闭包里**绝不能碰 `handle.path()`**。
+    ///
+    /// 它跑在 Tauri manage `PathResolver` 之前，一碰就是
+    /// `state() called before manage()` 的 panic。壳是 windows 子系统的
+    /// 可执行文件，panic 写到无效的 stderr 句柄上——用户看到的只是「双击
+    /// 图标什么都没发生」，退出码 101。这条在 2026-08-18 到 08-19 之间让
+    /// Windows 桌面版每次启动都当场死掉，而唯一的线索是 nightly 里一句
+    /// 「壳退了」。要读配置目录，去 `setup()` 里读。
+    #[test]
+    fn the_menu_builder_never_touches_the_path_resolver() {
+        let src = include_str!("main.rs");
+        let start = src
+            .find("fn build_menu<R: tauri::Runtime>")
+            .expect("build_menu 不见了");
+        let body = &src[start..];
+        let end = body.find("\n}\n").expect("找不到 build_menu 的结尾");
+        let body = &body[..end];
+        for line in body.lines() {
+            let code = line.split("//").next().unwrap_or("");
+            assert!(
+                !code.contains(".path()"),
+                "build_menu 里碰了 path()：那时 PathResolver 还没被 manage：{code}"
+            );
+        }
     }
 
     #[test]

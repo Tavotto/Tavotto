@@ -321,16 +321,28 @@ def _glob(pattern: str) -> list[str]:
         return []
 
 
-def _has_matplotlib(python: str) -> bool:
+def _has_matplotlib(python: str, *, bundled: bool = False) -> bool:
     """真去 import 一次。manifest 说装了不算数——DLL 缺失、被杀毒软件隔离了
-    某个 .pyd，都是「文件在但 import 不了」。"""
+    某个 .pyd，都是「文件在但 import 不了」。
+
+    **探测与真正起 worker 必须用同一套 env/args**（`bundled` 时的
+    `child_env()` / `child_args()`）。Windows 上 `._pth` 的隔离模式顺手挡住了
+    敌意环境变量，**macOS 上没有任何东西挡**：用户从终端启动 Magplot 时，
+    shell 里为 Conda 或自家项目设的 `PYTHONHOME` / `PYTHONPATH` 会原样传给
+    内置解释器，这一句 `import matplotlib` 当场失败——于是一个完全好用的
+    内置 runtime 被判成「不可用」，退回别的 Python 甚至报「没有渲染环境」，
+    而同一个解释器在 worker 那条路上是好的。只在「从终端启动」时复现，
+    从 Finder 双击一切正常。
+    """
+    args = runtime.child_args() if bundled else []
+    env = runtime.child_env() if bundled else None
     try:
         # stdin 必须显式断开：桌面 sidecar 的 stdin 是「父进程死亡信号」管道，
         # 绝不能被子进程继承（Windows 上实测继承它会让子解释器启动挂死 30s，
         # 症状是桌面版「渲染环境不可用」而同一解释器在终端里探测秒过）
-        probe = subprocess.run([python, "-c", "import matplotlib"],
+        probe = subprocess.run([python, *args, "-c", "import matplotlib"],
                                capture_output=True, timeout=30,
-                               stdin=subprocess.DEVNULL,
+                               stdin=subprocess.DEVNULL, env=env,
                                creationflags=runtime.CREATE_NO_WINDOW)
     except (OSError, subprocess.SubprocessError):
         return False
@@ -373,7 +385,7 @@ def select_worker_python() -> tuple[str, str]:
                 continue
         except OSError:
             continue
-        if _has_matplotlib(cand):
+        if _has_matplotlib(cand, bundled=source == SOURCE_BUNDLED):
             _worker_python, _worker_source = cand, source
             LOG.info("渲染解释器: %s（来源 %s）", cand, source)
             return cand, source

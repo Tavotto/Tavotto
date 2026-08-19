@@ -38,6 +38,10 @@ CBAX = "axes_1"
 #: 必须与「一开始就这么建」逐位相同，这张图就是那把尺子。
 STEM_NATIVE = "CbarNative"
 
+#: 色条在**左边**的那张。`fig.colorbar(location="left")` 是完全合法的写法，
+#: 而翻转的落位规则一度只会算出 right/bottom。
+STEM_LEFT = "CbarLeft"
+
 LIBRARY = '''\
 import numpy as np
 import matplotlib.pyplot as plt
@@ -55,6 +59,7 @@ def _draw(stem, **kw):
 def main():
     _draw("CbarFig")
     _draw("CbarNative", extend="both")
+    _draw("CbarLeft", location="left")
 '''
 
 
@@ -459,3 +464,50 @@ def test_extend_hot_replay_and_fresh_worker_agree(library):
     man_fresh = _render(library, full)
     assert _bboxes(man_hot) == pytest.approx(_bboxes(man_replay), abs=5e-3)
     assert _bboxes(man_hot) == pytest.approx(_bboxes(man_fresh), abs=5e-3)
+
+
+# ---------------------------------------------------------------------------
+# 非默认那一侧（location="left"）：翻过去再翻回来必须回到左边
+# ---------------------------------------------------------------------------
+def _bbox(man, gid):
+    return _el(man, gid)["bbox"]
+
+
+def test_left_colorbar_flips_to_the_top_not_the_bottom(library):
+    """左侧竖色条翻成横向应当去**上方**，不是下方。
+
+    宿主的相对位置是脚本作者的排版意图。无论从哪一侧出发都往 right/bottom
+    落，等于翻一次就把色条搬了家——而用户以为自己只是换了个方向。
+    """
+    base = _render(library, stem=STEM_LEFT)
+    assert _field(base, CB, "orientation") == "vertical"
+    host = _bbox(base, "axes_0")
+    cbx, _cby, cbw, _cbh = _bbox(base, CBAX)
+    assert cbx + cbw <= host[0] + 1e-3, "这张图的色条本来就在宿主左边"
+
+    man = _render(library, HORIZONTAL, stem=STEM_LEFT)
+    assert _field(man, CB, "orientation") == "horizontal"
+    host = _bbox(man, "axes_0")
+    _x, y, w, h = _bbox(man, CBAX)
+    assert w > h, "翻成横向后必须是扁宽的"
+    # manifest 的 bbox 是 y 向下的 figure 分数：在宿主上方 = y+h 不超过宿主顶边
+    assert y + h <= host[1] + 1e-3, "左侧色条翻横向应当落在宿主上方"
+
+
+def test_flipping_back_returns_a_left_colorbar_to_the_left(library):
+    """来回翻一次要逐位回到原样——**方向转回原值，图也得转回原样**。
+
+    这条与「撤销」是两条不同的路：撤销走 `_restore_cb_orientation`（按快照
+    放回，一直是对的），这里走的是「把 orientation 显式设回 vertical」，
+    旧实现在这条路上把色条永久搬到了右边，刻度也跟着换边。
+    """
+    base = _render(library, stem=STEM_LEFT)
+    back = _render(library, [{"gid": CB, "prop": "orientation", "value": "horizontal"},
+                             {"gid": CB, "prop": "orientation", "value": "vertical"}],
+                   stem=STEM_LEFT)
+    assert _field(back, CB, "orientation") == "vertical"
+    for i, axis in enumerate("xywh"):
+        assert _bbox(back, CBAX)[i] == pytest.approx(_bbox(base, CBAX)[i], abs=2e-3), \
+            f"翻回来之后 bbox.{axis} 变了：色条被搬了家"
+    # 刻度也要回到左边（右边不该有）
+    assert _tick_gids(back, CBAX, "y"), "竖色条的刻度应当在 y 轴上"

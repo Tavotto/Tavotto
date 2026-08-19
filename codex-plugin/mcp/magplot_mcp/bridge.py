@@ -39,9 +39,20 @@ from magplot.engine import (
     registry as engine_registry,
 )
 
-#: 允许打开的项目根（os.pathsep 分隔）。不给就用进程 cwd —— Codex 起 MCP server
-#: 时 cwd 就是用户的工作目录，这正是「当前项目」的自然边界。
+#: 允许打开的项目根（os.pathsep 分隔）。
 ROOTS_ENV = "MAGPLOT_MCP_ROOTS"
+#: 工作区提示：装好的插件里 `.mcp.json` 的 `cwd` 指向**插件自己的目录**
+#: （`./mcp/server.py` 要靠它解析），于是「不给就用进程 cwd」在真实安装下
+#: 等于把用户工作区里的每一张图都判成 `path_out_of_scope`——默认流程根本
+#: 跑不起来。所以 cwd 只在它**不是插件目录**时才算数（源码树里直接跑
+#: `python codex-plugin/mcp/server.py` 的开发态就是这一格），否则退回宿主
+#: 传过来的工作区变量。一个都拿不到时**报错说清楚要设什么**，绝不就近
+#: 挑一个目录顶上。
+WORKSPACE_ENVS = ("MAGPLOT_MCP_WORKSPACE", "CODEX_WORKSPACE_ROOT",
+                  "CODEX_PROJECT_ROOT", "CODEX_WORKSPACE_DIR")
+#: 插件包自己所在的目录（`codex-plugin/`）——cwd 落在它里面就说明这是
+#: Codex 用来定位 `./mcp/server.py` 的那个 cwd，不是用户的工作区。
+_PLUGIN_DIR = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 #: 会话上限：一个 Codex 会话同时端着几十张图没有意义，而每个 worker 都是一个
 #: 常驻 Python 进程（几百 MB）。超了按最久未用淘汰。
 MAX_SESSIONS = 8
@@ -67,7 +78,27 @@ def allowed_roots() -> list[str]:
     if raw:
         return [os.path.realpath(os.path.expanduser(p))
                 for p in raw.split(os.pathsep) if p.strip()]
-    return [os.path.realpath(os.getcwd())]
+    for name in WORKSPACE_ENVS:
+        hint = (os.environ.get(name) or "").strip()
+        if hint:
+            return [os.path.realpath(os.path.expanduser(hint))]
+    cwd = os.path.realpath(os.getcwd())
+    if not _within(cwd, _PLUGIN_DIR):
+        return [cwd]
+    return []
+
+
+def _no_roots_error() -> "BridgeError":
+    """一个可用的根都没有时说人话。
+
+    静默放行等于没有边界，静默拒绝等于「装了插件但什么都打不开」且毫无线索
+    ——两种都不行，所以这里把**要设哪个变量**直接写出来。
+    """
+    return BridgeError(
+        f"没有可用的项目根：{ROOTS_ENV} 没设，宿主也没给工作区目录"
+        f"（找过 {', '.join(WORKSPACE_ENVS)}），而进程 cwd 是插件自己的目录。"
+        f"把 {ROOTS_ENV} 设成你的工作目录（{os.pathsep} 分隔多个）再试。",
+        code="no_workspace_root", roots=[])
 
 
 def _within(path: str, root: str) -> bool:
@@ -85,6 +116,8 @@ def check_scope(path: str) -> str:
     """
     real = os.path.realpath(os.path.expanduser(str(path)))
     roots = allowed_roots()
+    if not roots:
+        raise _no_roots_error()
     if any(_within(real, r) for r in roots):
         return real
     raise BridgeError(
@@ -101,7 +134,6 @@ class Session:
     stem: str
     script: str
     entry: str
-    worker: object
     profile: dict
     #: 最近一次成功应用的 patches（**全量列表语义**，与前端一致）
     patches: list = field(default_factory=list)
@@ -113,6 +145,22 @@ class Session:
 
     def patch_hash(self) -> str:
         return patchspec.patch_hash(self.patches)
+
+    def acquire(self):
+        """**每次操作前**从池里重新取 worker，绝不长期抱着引用。
+
+        两个上限是不同的数，而且必然会打架：池按 `MAX_ALIVE`（3）做 LRU
+        淘汰，这里的会话上限是 `MAX_SESSIONS`（8）。开到第 4 个脚本时，
+        第 1 个会话手里那个 worker 已经被池 shutdown 了，可它在账本里还
+        「开着」——用户看到的是「会话明明还在，一 apply 就说 worker 死了」，
+        而且没有任何办法恢复。`pool.get()` 本来就负责「死了就重建」，
+        每次问它一遍即可，代价是一次字典查找。
+        """
+        try:
+            return engine_pool.get(self.script, self.project, self.entry)
+        except engine_pool.WorkerError as exc:
+            raise BridgeError(str(exc), code=exc.code or "worker_error",
+                              traceback=exc.traceback_text) from exc
 
 
 _SESSIONS: dict[str, Session] = {}
@@ -206,11 +254,19 @@ def open_figure(target: str, *, stem: str | None = None,
         raise BridgeError(f"路径不存在: {real}", code="not_found")
     try:
         found = engine_handoff.resolve_target(real)
-        reg_info = engine_handoff.ensure_registered(found.project, found.stem or stem)
     except engine_handoff.HandoffError as exc:
         raise BridgeError(str(exc), code="handoff_failed") from exc
 
+    # **范围校验必须在 `ensure_registered` 之前**：解析会沿目录向上找
+    # `mm_registry.json`（最多三层），允许的根嵌套在一个本身已是图库的目录
+    # 下面时，`found.project` 会落到根之外。而 `ensure_registered` 是**写**
+    # 操作（合并并写回注册表）——先登记后校验的话，一次「最终被拒绝」的
+    # 调用照样改了范围外的文件，边界就形同虚设了。
     project = check_scope(found.project)
+    try:
+        reg_info = engine_handoff.ensure_registered(project, found.stem or stem)
+    except engine_handoff.HandoffError as exc:
+        raise BridgeError(str(exc), code="handoff_failed") from exc
     try:
         registry = engine_registry.open_registry(project)
     except FileNotFoundError as exc:
@@ -232,21 +288,22 @@ def open_figure(target: str, *, stem: str | None = None,
     if reg_info.get("parameterizable") is None:
         reg_info["parameterizable"] = registry.for_stem(chosen) is not None
 
-    profile = engine_profiles.load(profile_id, journal)
-
+    # `run_preflight` 那条路早就把 ProfileError 翻成了 `unknown_profile`，
+    # 这条入口漏了——同一个坏 profile_id，从 open 进来是一条泛化的 JSON-RPC
+    # internal error（调用方分诊不了），从 preflight 进来才是可读的 code。
     try:
-        worker = engine_pool.get(info["script"], project, info["entry"])
-    except engine_pool.WorkerError as exc:
-        raise BridgeError(str(exc), code=exc.code or "worker_error",
-                          traceback=exc.traceback_text) from exc
+        profile = engine_profiles.load(profile_id, journal)
+    except engine_profiles.ProfileError as exc:
+        raise BridgeError(str(exc), code="unknown_profile") from exc
 
     session = Session(id="s-" + uuid.uuid4().hex[:12], project=project, stem=chosen,
-                      script=info["script"], entry=info["entry"], worker=worker,
-                      profile=profile)
+                      script=info["script"], entry=info["entry"], profile=profile)
+    # **先渲染成功，再登记会话**：脚本 build 阶段抛异常时调用方只拿到一个
+    # 错误，永远拿不到 session_id，也就永远关不掉它。反复失败的 open 会把
+    # 账本堆满，再靠 `_evict_if_needed()` 把**真正在用的**会话挤出去。
+    render = _render(session, [], preview_dpi=None)
     _SESSIONS[session.id] = session
     _evict_if_needed()
-
-    render = _render(session, [], preview_dpi=None)
     out = {
         "ok": True,
         "session_id": session.id,
@@ -271,9 +328,10 @@ def open_figure(target: str, *, stem: str | None = None,
 
 # ------------------------------- 渲染 / 应用 ---------------------------------
 def _render(session: Session, patches: list, *, preview_dpi: int | None) -> dict:
+    worker = session.acquire()
     try:
-        resp = session.worker.override(session.stem, patches, preview_dpi,
-                                       inline_svg=True)
+        resp = worker.override(session.stem, patches, preview_dpi,
+                               inline_svg=True)
     except engine_pool.WorkerError as exc:
         raise BridgeError(str(exc), code=exc.code or "render_failed",
                           traceback=exc.traceback_text,
@@ -281,13 +339,13 @@ def _render(session: Session, patches: list, *, preview_dpi: int | None) -> dict
     session.patches = list(patches)
     session.manifest = resp["manifest"]
     session.svg = resp.get("svg")
-    session.rev = getattr(session.worker, "rev", session.rev + 1)
+    session.rev = getattr(worker, "rev", session.rev + 1)
     session.last_used = time.time()
     return {
         "manifest": session.manifest,
         "svg": session.svg,
         "patch_hash": session.patch_hash(),
-        "worker_generation": getattr(session.worker, "generation", None),
+        "worker_generation": getattr(worker, "generation", None),
         "render_revision": session.rev,
         "warnings": resp.get("warnings", []),
         "timings": resp.get("timings", {}),
@@ -322,8 +380,9 @@ def apply_overrides(session_id: str, patches: object, *,
 def preview_png(session: Session, patches: list, width_px: int) -> str:
     """按 patches 出一张高清位图（base64）。**状态中立**：worker 出完就还原。"""
     tag = "v" + patchspec.patch_hash(patches).split(":")[-1][:12]
+    worker = session.acquire()
     try:
-        path = session.worker.preview_png(session.stem, patches, int(width_px), tag=tag)
+        path = worker.preview_png(session.stem, patches, int(width_px), tag=tag)
     except engine_pool.WorkerError as exc:
         raise BridgeError(str(exc), code=exc.code or "preview_failed",
                           traceback=exc.traceback_text) from exc
@@ -341,8 +400,42 @@ def resolve_profile(session: Session, profile_id: str | None,
         raise BridgeError(str(exc), code="unknown_profile") from exc
 
 
+def export_raster_issues(profile: dict, formats: list[str] | None,
+                         dpi: int | None) -> list[dict]:
+    """「这次导出请求本身」带来的检查项：位图格式的 dpi 够不够规范。
+
+    `engine/preflight.py` 的 `raster-dpi` 判的是**面板素材**的等效分辨率
+    （画布那条入口有 px_w，MCP 这条没有）；这里判的是「现在就按这个 dpi 出
+    一张图」。判据是同一条规范，所以**复用同一个 id 与同一张 severity 表**
+    ——另起一个 code 的话，期刊覆盖里把 `raster-dpi` 调成 warn 对导出这条路
+    就不生效了，同一份规范在两条入口上说不同的话。
+    """
+    if not formats or dpi is None:
+        return []
+    raster = {str(f).lower() for f in
+              ((profile.get("preferred_formats") or {}).get("raster") or ())}
+    hit = [f for f in formats if f in raster]
+    if not hit:
+        return []
+    try:
+        min_dpi, got = float(profile.get("min_raster_dpi") or 0), float(dpi)
+    except (TypeError, ValueError):
+        return []
+    if not min_dpi or got >= min_dpi:
+        return []
+    return [{
+        "id": "raster-dpi",
+        "severity": engine_profiles.severity_of(profile, "raster-dpi"),
+        "text": f"导出 {'/'.join(hit)} 用的 {got:g}dpi 低于规范的 {min_dpi:g}dpi",
+        "object_ids": [], "gids": [],
+        "detail": {"dpi": got, "min_dpi": min_dpi, "formats": hit},
+    }]
+
+
 def run_preflight(session_id: str, *, profile_id: str | None = None,
-                  journal: dict | None = None) -> dict:
+                  journal: dict | None = None,
+                  export_formats: list[str] | None = None,
+                  export_dpi: int | None = None) -> dict:
     session = get_session(session_id)
     if session.manifest is None:
         raise BridgeError("会话还没有 manifest（先 apply 一次 override 或重新 open）",
@@ -351,6 +444,7 @@ def run_preflight(session_id: str, *, profile_id: str | None = None,
     spec = engine_preflight.spec_from_manifest(
         session.manifest, panel_id=session.stem, kind="pdf", scale=1.0)
     issues = engine_preflight.run(spec, profile)
+    issues += export_raster_issues(profile, export_formats, export_dpi)
     summary = engine_preflight.summarize(issues)
     return {
         "ok": True,
@@ -365,6 +459,11 @@ def run_preflight(session_id: str, *, profile_id: str | None = None,
         "suggestions": summary["suggestions"],
         "counts": summary["counts"],
         "blocking": summary["blocking"],
+        # 「要用户点头」≠「有阻断项」：`not_verifiable` 按定义查不了
+        # （位图内部的文字），规范要求人工确认并写进 proof。导出对话框一直是
+        # 这么判的（`needsConfirm = errors || notVerifiable`），MCP 这条入口
+        # 只看 error，于是同一份图在两条路上给出不同的放行结论。
+        "needs_confirm": bool(summary["blocking"] or summary["not_verifiable"]),
         "report": format_preflight(session, profile, issues, summary),
     }
 
@@ -412,8 +511,12 @@ def export(session_id: str, *, formats: list[str], dpi: int = 600,
         raise BridgeError(f"不支持的导出格式: {', '.join(bad)}"
                           f"（支持 {', '.join(EXPORT_FORMATS)}）",
                           code="bad_format")
+    # 默认格式取**这次调用的** profile，不是会话打开时那份：调用方带了
+    # `profile_id` 或期刊覆盖时，预检与 proof 盖的都是新 profile 的章，
+    # 而格式却还按旧的来——一份说「默认出 SVG」的覆盖会静默出成 PDF+PNG。
+    call_profile = resolve_profile(session, profile_id, journal)
     if not fmts:
-        fmts = list(session.profile["preferred_formats"]["export_default"])
+        fmts = list(call_profile["preferred_formats"]["export_default"])
     try:
         dpi = int(dpi)
     except (TypeError, ValueError):
@@ -421,25 +524,35 @@ def export(session_id: str, *, formats: list[str], dpi: int = 600,
     if dpi <= 0:
         raise BridgeError(f"dpi 必须为正: {dpi}", code="bad_dpi")
 
-    checks = run_preflight(session.id, profile_id=profile_id, journal=journal)
-    if checks["blocking"] and not explicit_confirm:
+    checks = run_preflight(session.id, profile_id=profile_id, journal=journal,
+                           export_formats=fmts, export_dpi=dpi)
+    if checks["needs_confirm"] and not explicit_confirm:
         raise BridgeError(
-            f"预检有 {len(checks['errors'])} 类阻断性问题，未导出。"
+            f"预检有 {len(checks['errors'])} 类阻断性问题、"
+            f"{len(checks['not_verifiable'])} 类无法核验项，未导出。"
             "修好它们，或者在用户明确要求后带 explicit_confirm=true 再调一次。",
             code="preflight_blocked", preflight=checks)
 
-    target_dir = Path(check_scope(out_dir)) if out_dir else \
-        engine_config.project_export_dir(session.project)
+    if out_dir:
+        target_dir = Path(check_scope(out_dir))
+    else:
+        # 项目设置里的 `export_dir` 可以是任意绝对路径（桌面版下完全合法），
+        # 但 MCP 这条入口的边界是 `MAGPLOT_MCP_ROOTS`。默认值不过尺的话，
+        # 一个对桌面版有效的项目就能让导出落到范围之外——而调用方**显式**
+        # 传同一个路径反而会被拒。边界只有一条，默认值也得走它。
+        target_dir = Path(check_scope(str(
+            engine_config.project_export_dir(session.project))))
     target_dir.mkdir(parents=True, exist_ok=True)
     name = _safe_stem(stem or session.stem)
     ts = time.strftime("%m%d_%H%M%S")
 
     files, warnings = [], []
+    worker = session.acquire()
     for fmt in fmts:
         path = target_dir / f"{name}_{ts}.{fmt}"
         try:
-            resp = session.worker.export(session.stem, session.patches,
-                                         str(path), fmt, dpi)
+            resp = worker.export(session.stem, session.patches,
+                                 str(path), fmt, dpi)
         except engine_pool.WorkerError as exc:
             raise BridgeError(f"导出 {fmt} 失败: {exc}",
                               code=exc.code or "export_failed",
@@ -458,13 +571,19 @@ def export(session_id: str, *, formats: list[str], dpi: int = 600,
               "patch_hash": session.patch_hash(),
               "profile": checks["profile"], "warnings": warnings,
               "preflight": {k: checks[k] for k in
-                            ("counts", "blocking", "errors", "warnings",
-                             "not_verifiable", "suggestions")},
-              "forced": bool(checks["blocking"] and explicit_confirm)}
+                            ("counts", "blocking", "needs_confirm", "errors",
+                             "warnings", "not_verifiable", "suggestions")},
+              # `forced` 只说「有 error 却还是出了」；无法核验项要的是确认、
+              # 不是强制，两件事在留档里必须分得开
+              "forced": bool(checks["blocking"] and explicit_confirm),
+              "acknowledged": ([i["id"] for i in checks["errors"]] +
+                               [i["id"] for i in checks["not_verifiable"]])
+                              if (checks["needs_confirm"] and explicit_confirm) else []}
     if proof:
         result["proof_path"] = _write_proof(target_dir, f"{name}_{ts}", session,
                                             checks, files, dpi, fmts,
-                                            forced=result["forced"])
+                                            forced=result["forced"],
+                                            acknowledged=result["acknowledged"])
     return result
 
 
@@ -475,7 +594,7 @@ def _safe_stem(raw: str) -> str:
 
 def _write_proof(out_dir: Path, base: str, session: Session, checks: dict,
                  files: list[dict], dpi: int, formats: list[str],
-                 *, forced: bool) -> str:
+                 *, forced: bool, acknowledged: list[str]) -> str:
     """proof report：profile 身份 + 全部检查结果 + 无法核验项 + 是否强制导出。
 
     与画布导出的 proof 同一个 kind/version（`web/src/lib/preflight.ts` 的
@@ -507,8 +626,7 @@ def _write_proof(out_dir: Path, base: str, session: Session, checks: dict,
                             "object_ids": i["object_ids"]}
                            for i in checks["not_verifiable"]],
         "forced": forced,
-        "acknowledged": ([i["id"] for i in checks["errors"]] +
-                         [i["id"] for i in checks["not_verifiable"]]) if forced else [],
+        "acknowledged": acknowledged,
         "files": [f["path"] for f in files],
         "exported_at": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
@@ -570,11 +688,19 @@ def compare_manifests(hot: dict, fresh: dict) -> tuple[list[dict], int]:
             diffs.append({"gid": "figure", "field": f"size_mm.{axis}",
                           "hot": a, "fresh": b})
     by_gid = {e.get("gid"): e for e in fresh.get("elements") or []}
+    matched: set = set()
     compared = 0
     for el in hot.get("elements") or []:
-        other = by_gid.get(el.get("gid"))
+        gid = el.get("gid")
+        other = by_gid.get(gid)
         if other is None:
+            # **结构分歧也是分歧**：重放里根本没有这个元素时静默跳过，等于
+            # 让 `ok: true` 出现在两张画得完全不一样的图上——而「脚本不确定
+            # / 重放有 bug」恰恰是这个自检唯一要抓的东西。
+            diffs.append({"gid": gid, "field": "missing_in_fresh",
+                          "hot": "present", "fresh": None})
             continue
+        matched.add(gid)
         compared += 1
         for field_name in ("bbox", "anchor"):
             a, b = el.get(field_name), other.get(field_name)
@@ -585,6 +711,12 @@ def compare_manifests(hot: dict, fresh: dict) -> tuple[list[dict], int]:
                 if fx is None or fy is None or abs(fx - fy) > _BBOX_TOL:
                     diffs.append({"gid": el.get("gid"), "field": f"{field_name}[{k}]",
                                   "hot": fx, "fresh": fy})
+    # 只在重放里出现的元素同样要报：热会话少画了一个 artist 与多画了一个，
+    # 对「用户拿去投稿的是重放那份」来说是同一类问题
+    for gid in by_gid:
+        if gid not in matched:
+            diffs.append({"gid": gid, "field": "missing_in_hot",
+                          "hot": None, "fresh": "present"})
     return diffs, compared
 
 

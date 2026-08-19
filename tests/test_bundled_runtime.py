@@ -282,7 +282,7 @@ def test_bundled_runtime_is_used_when_nothing_else_configured(
     py = _bundled(tmp_path, monkeypatch)
     monkeypatch.setattr(runtime, "is_frozen", lambda: True)   # 桌面版：跳过 sys.executable
     monkeypatch.setattr(pool, "is_frozen", lambda: True)
-    monkeypatch.setattr(pool, "_has_matplotlib", lambda p: True)
+    monkeypatch.setattr(pool, "_has_matplotlib", lambda p, **kw: True)
     assert pool.select_worker_python() == (py, pool.SOURCE_BUNDLED)
 
 
@@ -293,7 +293,7 @@ def test_env_override_beats_bundled(tmp_path, monkeypatch):
     mine.parent.mkdir(parents=True)
     mine.write_text("#!/bin/sh\n")
     monkeypatch.setenv("MM_WORKER_PYTHON", str(mine))
-    monkeypatch.setattr(pool, "_has_matplotlib", lambda p: True)
+    monkeypatch.setattr(pool, "_has_matplotlib", lambda p, **kw: True)
     assert pool.select_worker_python() == (str(mine), pool.SOURCE_ENV)
 
 
@@ -305,7 +305,7 @@ def test_user_configured_interpreter_beats_bundled(tmp_path, monkeypatch):
     mine.parent.mkdir(parents=True)
     mine.write_text("#!/bin/sh\n")
     config.set_worker_python(str(mine))
-    monkeypatch.setattr(pool, "_has_matplotlib", lambda p: True)
+    monkeypatch.setattr(pool, "_has_matplotlib", lambda p, **kw: True)
     assert pool.select_worker_python() == (str(mine), pool.SOURCE_CONFIGURED)
 
 
@@ -316,7 +316,7 @@ def test_managed_venv_is_labelled_apart_from_user_choice(tmp_path, monkeypatch):
     managed.parent.mkdir(parents=True, exist_ok=True)
     managed.write_text("#!/bin/sh\n")
     config.set_worker_python(str(managed))
-    monkeypatch.setattr(pool, "_has_matplotlib", lambda p: True)
+    monkeypatch.setattr(pool, "_has_matplotlib", lambda p, **kw: True)
     assert pool.select_worker_python() == (str(managed), pool.SOURCE_MANAGED)
 
 
@@ -355,7 +355,7 @@ def test_source_of_classifies_without_probing(tmp_path, monkeypatch):
     py = _bundled(tmp_path, monkeypatch)
     called = []
     monkeypatch.setattr(pool, "_has_matplotlib",
-                        lambda p: called.append(p) or True)
+                        lambda p, **kw: called.append(p) or True)
     assert pool.source_of(py) == pool.SOURCE_BUNDLED
     assert called == [], "source_of 不允许启动子进程"
 
@@ -383,7 +383,7 @@ def test_runtime_present_but_imports_fail_is_caught(tmp_path, monkeypatch):
     _bundled(tmp_path, monkeypatch)
     monkeypatch.setattr(runtime, "is_frozen", lambda: True)
     monkeypatch.setattr(pool, "is_frozen", lambda: True)
-    monkeypatch.setattr(pool, "_has_matplotlib", lambda p: False)
+    monkeypatch.setattr(pool, "_has_matplotlib", lambda p, **kw: False)
     with pytest.raises(pool.WorkerError):
         pool.select_worker_python()
 
@@ -428,7 +428,7 @@ def test_only_the_bundled_runtime_gets_b_flag(tmp_path, monkeypatch):
     """`-B` 只加给内置 runtime。用户自己的环境是他的地盘——替他关掉字节码缓存
     会让每次冷启动都变慢，而我们没有理由那么做。"""
     py = _bundled(tmp_path, monkeypatch)
-    monkeypatch.setattr(pool, "_has_matplotlib", lambda p: True)
+    monkeypatch.setattr(pool, "_has_matplotlib", lambda p, **kw: True)
     monkeypatch.setattr(runtime, "is_frozen", lambda: True)
     monkeypatch.setattr(pool, "is_frozen", lambda: True)
 
@@ -764,7 +764,7 @@ def test_macos_desktop_uses_bundled_runtime_by_default(tmp_path, monkeypatch):
     monkeypatch.setenv("MAGPLOT_RUNTIME_DIR", str(tmp_path / "rt"))
     monkeypatch.setattr(runtime, "is_frozen", lambda: True)
     monkeypatch.setattr(pool, "is_frozen", lambda: True)
-    monkeypatch.setattr(pool, "_has_matplotlib", lambda p: True)
+    monkeypatch.setattr(pool, "_has_matplotlib", lambda p, **kw: True)
     assert pool.select_worker_python() == (py, pool.SOURCE_BUNDLED)
 
 
@@ -778,7 +778,7 @@ def test_macos_user_choice_still_beats_the_bundled_runtime(tmp_path, monkeypatch
     monkeypatch.setenv("MAGPLOT_RUNTIME_DIR", str(tmp_path / "rt"))
     monkeypatch.setattr(runtime, "is_frozen", lambda: True)
     monkeypatch.setattr(pool, "is_frozen", lambda: True)
-    monkeypatch.setattr(pool, "_has_matplotlib", lambda p: True)
+    monkeypatch.setattr(pool, "_has_matplotlib", lambda p, **kw: True)
 
     mine = tmp_path / "miniconda3" / "bin" / "python3"
     mine.parent.mkdir(parents=True)
@@ -819,5 +819,22 @@ def test_bundled_runtime_never_writes_into_a_signed_app_bundle():
     assert "-B" in runtime.child_args()
     env = runtime.child_env({})
     data = str(config.data_dir())
-    assert env["PYTHONPYCACHEPREFIX"].startswith(data)
     assert env["MPLCONFIGDIR"].startswith(data)
+
+
+def test_child_env_never_redirects_the_bytecode_cache():
+    """**不许再设 `PYTHONPYCACHEPREFIX`。**
+
+    它改的不只是写的位置，读的位置也跟着改（实测 `__cached__` 变成
+    `<prefix>/<绝对路径镜像>/mod.cpython-313.pyc`，源码旁边那份
+    `__pycache__` 再也不看）。而 `-B` 又禁止写入——两条合起来，构建期
+    编好随包发出的 UNCHECKED_HASH 字节码一份都用不上，每个冷启动的 worker
+    都要把整个科学栈从源码重编一遍，预编译要省的钱全花回去了。
+
+    Windows 上 `._pth` 的隔离模式会忽略它，所以症状只在 macOS 上出现——
+    也就是最容易被「本机试了没问题」漏掉的那一格。
+    """
+    assert "PYTHONPYCACHEPREFIX" not in runtime.child_env({})
+    # 用户 shell 里设了也要摘掉：它同样会让内置 runtime 读错地方
+    assert "PYTHONPYCACHEPREFIX" not in runtime.child_env(
+        {"PYTHONPYCACHEPREFIX": "/somewhere/else"})

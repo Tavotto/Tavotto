@@ -226,8 +226,8 @@ def _call_open(args: dict) -> dict:
                              include_png=bool(args.get("include_png")))
     checks = bridge.run_preflight(out["session_id"])
     out["preflight"] = {k: checks[k] for k in
-                        ("counts", "blocking", "errors", "warnings",
-                         "not_verifiable", "suggestions")}
+                        ("counts", "blocking", "needs_confirm", "errors",
+                         "warnings", "not_verifiable", "suggestions")}
     lines = [
         f"已打开 {out['stem']}（会话 {out['session_id']}）",
         _brief_manifest(out.get("manifest")),

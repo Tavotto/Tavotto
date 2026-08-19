@@ -597,6 +597,41 @@ def test_nightly_uninstall_assertion_is_not_vacuous():
     assert removed < uninstalled < gone
 
 
+def test_nightly_shell_probe_dumps_the_log_before_it_cleans_up():
+    """壳没拉起 sidecar 时，**日志转储必须排在清理动作前面**。
+
+    2026-08-18 夜里这条腿红了，而 CI 上留下的唯一线索是一句
+    `Stop-Process: Cannot find a process with the process identifier 7176`
+    ——壳自己先退了（正是「起不来」的典型样子），`Stop-Process` 于是失败，
+    在 `$ErrorActionPreference = "Stop"` 下当场中断脚本，紧跟其后的
+    sidecar.log 转储一行都没跑到。**门禁把自己的证据吞了**，剩下的报错与
+    病因毫不相干。
+
+    判据同样是顺序：先转储、再清理（且清理带 -ErrorAction SilentlyContinue）。
+    """
+    text = (ROOT / ".github" / "workflows" / "nightly.yml").read_text(encoding="utf-8")
+    # 只看代码那一半：注释里提到 Stop-Process 是在解释这条纪律本身
+    def code_only(block: str) -> str:
+        return "\n".join(l for l in block.splitlines()
+                          if not l.strip().startswith("#"))
+
+    branch = code_only(
+        text[text.index("if (-not $child) {"):text.index('throw "装好的壳没有拉起 sidecar')])
+    dump = branch.index("sidecar.log")
+    kill = branch.index("Stop-Process")
+    assert dump < kill, "清理排在日志转储前面：壳先退时会把真正的失败原因吞掉"
+    assert "-ErrorAction SilentlyContinue" in branch[kill:], \
+        "Stop-Process 没带 -ErrorAction SilentlyContinue：进程已退时它自己会抛"
+    # 整个 nightly 里不许再有会自己抛的 Stop-Process
+    for i, line in enumerate(text.splitlines(), 1):
+        bare = line.strip()
+        if bare.startswith("#"):
+            continue
+        if "Stop-Process" in bare and "SilentlyContinue" not in bare:
+            raise AssertionError(
+                f"nightly.yml:{i} 的 Stop-Process 没兜住「进程已经退了」：{bare}")
+
+
 # ------------------- 刷新清单只补充，不抹掉（Codex #6） -------------------
 def test_refresh_keeps_a_desktop_path_it_cannot_rediscover(tmp_path, monkeypatch):
     """pip 装的 magplot 跑一次，不许把桌面版记下的 desktop 抹成空。
@@ -655,3 +690,74 @@ def test_refresh_still_updates_what_it_does_know(tmp_path, monkeypatch):
     got = locate.read_manifest()
     assert os.path.normpath(got["cli"]) == os.path.normpath(str(new_cli))
     assert got["version"] == "9.9.9"
+
+
+# ---------------------------------------------------------------------------
+# 子命令必须在 import Flask **之前**分派掉
+# ---------------------------------------------------------------------------
+#: 让 Flask / PyMuPDF 一 import 就炸，用来证明子命令根本没走到它们。
+_BLOCK_UI_IMPORTS = """
+import sys
+
+
+class _Block:
+    BAD = {"flask", "werkzeug", "pymupdf", "fitz"}
+
+    def find_spec(self, name, path=None, target=None):
+        if name.split(".")[0] in self.BAD:
+            raise ImportError("这次交接不该 import " + name)
+        return None
+
+
+sys.meta_path.insert(0, _Block())
+"""
+
+
+def test_installed_entry_point_dispatches_before_importing_the_app():
+    """pip / pipx 装出来的 `magplot` 指向轻量入口，不是 `magplot.app:main`。
+
+    冻结产物（`packaging/entry.py`）一直是先分派后 import，pip 这条却不是——
+    同一条命令在两种安装形态下行为不同：插件的交接连着调两次 `magplot open`，
+    每次都白付一整个 Flask + PyMuPDF 的冷启动。
+    """
+    text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert 'magplot = "magplot.cli_entry:main"' in text
+    src = (ROOT / "src" / "magplot" / "cli_entry.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    top = [n for n in tree.body if isinstance(n, (ast.Import, ast.ImportFrom))]
+    for node in top:
+        mod = getattr(node, "module", "") or ""
+        names = {a.name for a in node.names}
+        assert "app" not in mod and "app" not in names, \
+            "cli_entry 在模块层 import 了 app —— 那就等于没有轻量入口"
+
+
+@pytest.mark.parametrize("argv", [
+    ["doctor", "--json"],
+    ["open", "--help"],
+])
+def test_subcommands_run_without_flask_or_pymupdf(tmp_path, argv):
+    """把 flask / pymupdf 变成 import 就炸，子命令仍要跑通。
+
+    这条同时是 `doctor` 的存在理由：它本该是「装坏了怎么查」的那把工具，
+    可只要某个界面依赖 import 失败（缺 DLL、装了一半、wheel 与解释器不匹配），
+    旧入口会先崩在 import 上——最需要它的时候正好用不了。
+    """
+    import subprocess
+    env = {**os.environ,
+           "PYTHONPATH": str(ROOT / "src"),
+           "MAGPLOT_CONFIG_DIR": str(tmp_path / "cfg"),
+           "MAGPLOT_DATA_DIR": str(tmp_path / "data")}
+    code = _BLOCK_UI_IMPORTS + (
+        "import sys\n"
+        f"sys.argv = ['magplot', {', '.join(repr(a) for a in argv)}]\n"
+        "from magplot.cli_entry import main\n"
+        "try:\n"
+        "    main()\n"
+        "except SystemExit as e:\n"
+        "    raise SystemExit(e.code)\n"
+    )
+    proc = subprocess.run([sys.executable, "-c", code], capture_output=True,
+                          text=True, env=env, timeout=120)
+    assert "不该 import" not in proc.stderr, proc.stderr
+    assert proc.returncode == 0, proc.stderr

@@ -269,10 +269,30 @@ python codex-plugin/mcp/server.py --self-check
 
 | 变量 | 作用 |
 | --- | --- |
-| `MAGPLOT_MCP_ROOTS` | 允许打开的项目根（`os.pathsep` 分隔）；缺省是进程 cwd。**越界一律拒** |
+| `MAGPLOT_MCP_ROOTS` | 允许打开的项目根（`os.pathsep` 分隔）。**越界一律拒** |
+| `MAGPLOT_MCP_WORKSPACE` | 没设 `MAGPLOT_MCP_ROOTS` 时的工作区目录（宿主的 `CODEX_WORKSPACE_ROOT` 等同样认） |
 | `MAGPLOT_CLI` | 指向 magplot 可执行文件（启动器据此找解释器） |
 | `MAGPLOT_MCP_WIDGET` | 指向另一份画布 HTML（边改边试） |
 | `MAGPLOT_PROFILES_FILE` | 指向另一份出版规范 JSON |
+
+**允许打开的目录怎么定**（按顺序，第一个命中就用它）：`MAGPLOT_MCP_ROOTS` →
+宿主传过来的工作区变量（`MAGPLOT_MCP_WORKSPACE` / `CODEX_WORKSPACE_ROOT` /
+`CODEX_PROJECT_ROOT` / `CODEX_WORKSPACE_DIR`）→ 进程 cwd，**且它不在插件包
+自己的目录里**。装好的插件跑起来时 cwd 正是插件目录（`./mcp/server.py` 要靠
+它解析），拿它当边界的话用户工作区里的每张图都会被判成越界。一个都拿不到时
+报 `no_workspace_root` 并直说要设哪个变量——不静默放行，也不静默拒绝。
+
+## 已知限制
+
+**Windows 上 `.mcp.json` 里的 `command: python3` 可能不存在。** 官方安装器
+装出来的是 `python.exe`，`python3.exe` 只是 Microsoft Store 的执行别名存根
+（而 macOS 12.3 起没有 `python`，两边没有一个通用的名字）。清单的字段形状取自
+Codex 官方插件装出来的那份，里面没有按平台分支的写法，我们**不猜**——猜错的
+下场是清单不合法、插件整个装不上。症状是「插件装上了，但一个工具都看不见」；
+对策是把 `.mcp.json` 的 `command` 改成你那个解释器的绝对路径。
+
+（`pipx install magplot` 那条已经好了：启动器会去读 Windows console script
+`.exe` 里嵌着的 shebang，找到 pipx venv 的解释器。）
 
 ## 尚未验证的部分
 
