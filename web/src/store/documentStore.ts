@@ -66,6 +66,17 @@ interface DocumentState {
   openTabs: string[]
   /** 有改动尚未写入本机自动保存 */
   dirty: boolean
+  /**
+   * 「整体换文档」的代次，每次载入 +1（磁盘恢复 / 载入布局 / 切项目）。
+   *
+   * 自动保存的订阅靠它把**载入**与**编辑**区分开。两者都会换掉 `doc` 与
+   * `canvases`，光看引用变化分不出来；而把一次载入当成编辑的后果是：刚打开
+   * 一个文档，1 秒后它就被原样重写一遍并带上新的 `updatedAt`——另一个标签页
+   * 开着同一份时，这一下足以撞出 `stale_write`。
+   * 载入路径自己会在同一次 set 里写 `dirty: false`，那正是「这不是一次编辑」
+   * 的声明，订阅不该把它翻回来。
+   */
+  loadSeq: number
   /** 上次写入本机自动保存的时间戳 */
   lastPersisted: number | null
   /** 本机自动保存过的文档（含当前文档），按最近保存时间倒序 */
@@ -168,6 +179,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   canvasSessions: {},
   openTabs: [INITIAL.activeCanvasId],
   dirty: false,
+  loadSeq: 0,
   lastPersisted: null,
   recentDocs: [],
   past: [],
@@ -486,6 +498,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       canvasSessions: {},
       openTabs: restoreTabs(nextId, pd.canvases, active.id),
       dirty: false,
+      loadSeq: get().loadSeq + 1,
       lastPersisted: null,
       past: [],
       future: [],
@@ -824,6 +837,7 @@ export async function restoreSession(): Promise<boolean> {
     canvasSessions: {},
     openTabs: restoreTabs(id, pd.canvases, active.id),
     dirty: false,
+    loadSeq: useDocumentStore.getState().loadSeq + 1,
     lastPersisted: index.find((e) => e.id === id)?.savedAt ?? null,
     past: [],
     future: [],
@@ -846,6 +860,10 @@ export function startAutosave(): () => void {
     // 落盘，用户做完不再编辑激活画布就关掉应用（非优雅退出时连 beforeunload
     // 的兜底也没有），改动直接没了。
     // `openTabs` 不在此列：它按机器存 localStorage，走 persistTabs()。
+    // 整体换文档不是编辑：磁盘恢复根本不该回写（内容就是从那儿读的），
+    // 载入 / 切项目那条自己已经显式 flush 过一次了（为了立刻进「最近文档」），
+    // 再排一次防抖写只会多一个新的 updatedAt 去和别的标签页抢。
+    if (state.loadSeq !== prev.loadSeq) return
     if (state.doc === prev.doc && state.canvases === prev.canvases) return
     if (!state.dirty) useDocumentStore.setState({ dirty: true })
     window.clearTimeout(timer)

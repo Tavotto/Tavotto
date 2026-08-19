@@ -5,6 +5,7 @@ import type { TextObject } from '@/types/document'
 import {
   flushAutosave,
   readAutosaveDoc,
+  restoreSession,
   startAutosave,
   useDocumentStore,
 } from './documentStore'
@@ -173,6 +174,32 @@ describe('多画布数据层', () => {
       useDocumentStore.setState({ dirty: false })
       s().reorderCanvases(0, 1)
       expect(s().dirty).toBe(true)
+    } finally {
+      stop()
+    }
+  })
+
+  it('从磁盘恢复不是一次编辑 —— 打开文档不该把它重写一遍', async () => {
+    // 磁盘上先有一份文档，且它就是「上次打开的那个」
+    const s = () => useDocumentStore.getState()
+    s().commit(literal('加字'), (d) => {
+      d.objects.push(text('t1', 'x'))
+    })
+    expect(flushAutosave()).toBe('saved')
+    await tick()
+    const docId = s().documentId
+
+    // 换到别处，再像启动那样恢复回来（订阅先于恢复完成挂上，与 App.tsx 同序）
+    await useDocumentStore.getState().switchDocument(emptyProject(), 'd_other')
+    localStorage.setItem('magplot.currentDoc', docId)   // switchDocument 会覆盖它
+    const stop = startAutosave()
+    try {
+      expect(await restoreSession()).toBe(true)
+      expect(s().documentId).toBe(docId)
+      // 恢复自己写的就是 dirty:false，订阅不许把它翻回来：否则一开文档就
+      // 在 1 秒后原样重写一遍（带新的 updatedAt），另一个标签页开着同一份
+      // 时还会撞出 stale_write
+      expect(s().dirty).toBe(false)
     } finally {
       stop()
     }
