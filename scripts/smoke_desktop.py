@@ -41,6 +41,11 @@ for _stream in (sys.stdout, sys.stderr):
 ROOT = Path(__file__).resolve().parent.parent
 NONCE = "smoke-" + os.urandom(16).hex()
 
+sys.path.insert(0, str(ROOT / "scripts"))
+# 「有没有留下 worker 孤儿」两个冒烟脚本必须用**同一把尺**：按命令行内容做
+# 全局扫描，不靠父子关系（父进程一退出，孤儿的 PPID 就变成 1 了）。
+from smoke_app import _leftover_workers  # noqa: E402
+
 
 def fail(msg: str) -> None:
     print(f"✗ {msg}")
@@ -246,14 +251,18 @@ def main() -> None:
         assert not handshake.exists(), "退出后握手文件未清理"
         ok("握手文件已清理")
 
-        # worker 孤儿检查：sidecar 的子进程应全部随之消失
-        try:
-            out = subprocess.run(["pgrep", "-P", str(proc.pid)],
-                                 capture_output=True, text=True)
-            assert not out.stdout.strip(), f"发现孤儿子进程: {out.stdout}"
-            ok("无孤儿子进程")
-        except FileNotFoundError:
-            pass  # Windows 无 pgrep；CI 上由任务管理器断言
+        # worker 孤儿检查：sidecar 的子进程应全部随之消失。
+        #
+        # **不能用 `pgrep -P <sidecar pid>`**：进程一终止，它还活着的子进程
+        # 立刻被系统重新挂到 init/launchd（PID 1）名下——PPID 在父进程死亡
+        # 的那一刻就变了，不是等到查询那一刻。而这段代码跑在
+        # `proc.poll() is not None` 之后，也就是父进程**必然已经退出**。
+        # 于是不管有没有真的泄漏，这条断言都查不到任何东西，恒真。
+        # 空转的门禁比没有门禁更坏——它还在报平安。
+        # 改按命令行内容做全局扫描，与 `smoke_app._leftover_workers` 同一把尺。
+        leftover = _leftover_workers(tmp)
+        assert not leftover, f"发现孤儿 worker 子进程: {leftover}"
+        ok("无孤儿子进程")
 
         print("\n桌面 sidecar 冒烟全部通过 ✔")
     finally:

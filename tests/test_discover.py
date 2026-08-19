@@ -233,3 +233,34 @@ def test_non_plotting_module_stays_quiet(figs):
     """没有任何 save 调用的模块不该被当成「命名有问题的绘图脚本」报出来。"""
     _script(figs, "helpers_mod.py", 'def main():\n    return compute()\n')
     assert discover.discover(figs)["scripts"] == {}
+
+
+def test_registry_write_is_atomic(figs, monkeypatch):
+    """写到一半被杀，不能把用户的 mm_registry.json 截断成非法 JSON。
+
+    注册表**随图库走**，坏掉的是用户目录里的文件——重装应用也修不回来，
+    下次打开这个项目只会看到「注册表不是合法 JSON」。桌面壳强退、OOM、
+    断电，Windows 上杀毒软件在写入期间短暂锁定，都会走到这条路径。
+    仓库里 baked 基线 / 用户配置 / 握手文件 / 安装清单一律是临时文件 +
+    replace，这里曾经是唯一的直写例外。
+    """
+    from pathlib import Path
+
+    path = registry.registry_path(figs)
+    original = json.dumps({"version": 1, "scripts": {}}, ensure_ascii=False, indent=1)
+    path.write_text(original, encoding="utf-8")
+
+    real_write = Path.write_text
+
+    def half_then_die(self, data, *a, **kw):
+        real_write(self, data[: len(data) // 2], *a, **kw)   # 写一半
+        raise OSError("模拟写入过程中进程被杀")
+
+    monkeypatch.setattr(Path, "write_text", half_then_die)
+    with pytest.raises(OSError):
+        discover.write_config(figs, {"version": 1, "scripts": {
+            "a.py": {"entry": "main", "cost": "medium", "notes": "", "stems": ["A"]}}})
+    monkeypatch.undo()
+
+    assert path.read_text(encoding="utf-8") == original      # 原件一个字节没动
+    assert json.loads(path.read_text(encoding="utf-8"))      # 仍然读得回来

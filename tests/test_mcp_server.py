@@ -511,6 +511,27 @@ def test_failed_first_render_leaves_no_session_behind(project, monkeypatch):
     assert bridge.sessions() == {}, "失败的 open 在账本里留下了够不着的会话"
 
 
+def test_preview_png_failure_still_hands_back_the_session(project, fake_pool,
+                                                          monkeypatch):
+    """位图那一跳失败不能把会话变成「够不着的幽灵」。
+
+    主渲染成功后会话已经登记，而 `include_png` 的位图是**第二次独立的
+    worker 调用**（超时/崩溃/磁盘错误都可能）。让它抛出去的话，调用方拿到
+    的是一条 isError 结果、里面没有 session_id——这条会话谁也关不掉，占着
+    账本直到被 `_evict_if_needed()` 挤掉，而被挤掉的往往是真正在用的那条。
+    位图是顺带产物：降级，但如实回一个 code（不静默）。
+    """
+    def boom(*a, **k):
+        raise bridge.BridgeError("位图挂了", code="preview_failed")
+
+    monkeypatch.setattr(bridge, "preview_png", boom)
+    out = bridge.open_figure(str(project), include_png=True)
+    assert out["ok"] is True
+    assert out["session_id"] in bridge.sessions(), "会话必须还够得着"
+    assert "preview_png_base64" not in out
+    assert out["preview_png_error"] == "preview_failed"     # 不静默
+
+
 def test_every_operation_reacquires_the_worker_from_the_pool(project, monkeypatch):
     """池按 MAX_ALIVE 淘汰，桥的会话上限是另一个数——两者必然打架。
 

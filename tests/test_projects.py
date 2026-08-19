@@ -537,3 +537,39 @@ def test_registry_probe_rejects_paths_outside_project(client, tmp_path):
     client.post("/api/projects/open", json={"path": str(figs)})
     for bad in ("../outside.py", "nope.py", "mm_registry.json"):
         assert client.post("/api/registry/probe", json={"script": bad}).status_code == 404
+
+
+# --------------------- 路径身份：按卷判，不按 os.name --------------------------
+def test_case_probe_agrees_with_the_actual_filesystem(tmp_path):
+    """探测结果必须与这台机器上**真实**的行为一致（平台无关的写法）。
+
+    在大小写不敏感的卷上，换个大小写拼出来的路径本来就指向同一个目录；
+    敏感的卷上则不存在。两边都拿真实文件系统当答案，Linux/macOS/Windows
+    上跑的是同一条断言。
+    """
+    d = tmp_path / "Probe"
+    d.mkdir()
+    reality = (tmp_path / "pROBE").exists()
+    assert engine_config.path_is_case_insensitive(d) is reality
+
+
+def test_project_identity_follows_the_volume_not_the_os_name(tmp_path, monkeypatch):
+    """同一个图库换个大小写打开，必须还是同一个项目——判据是**卷**。
+
+    这里以前写的是 `os.name == "nt"`，而 macOS 默认的 APFS/HFS+ 同样是
+    大小写不敏感的（那儿 `os.name` 是 "posix"）。于是从 Finder 拖进来一次、
+    从「最近项目」里手输一次，同一个图库会得到两个不同的 pid 与两个不同的
+    池键：两套 worker、两份 `baked_overrides/<项目id>.json` 写回基线，
+    用户在一边做的事另一边完全看不见。
+    `Path.resolve()` 救不了——POSIX 上它只解析符号链接与 . / ..，不会向
+    文件系统问规范大小写。
+    """
+    a, b = tmp_path / "Figs", tmp_path / "FIGS"
+
+    monkeypatch.setattr(engine_config, "path_is_case_insensitive", lambda p: True)
+    assert m._project_id(a) == m._project_id(b)
+    assert engine_pool._norm_dir(a) == engine_pool._norm_dir(b)
+
+    monkeypatch.setattr(engine_config, "path_is_case_insensitive", lambda p: False)
+    assert m._project_id(a) != m._project_id(b)
+    assert engine_pool._norm_dir(a) != engine_pool._norm_dir(b)

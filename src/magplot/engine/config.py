@@ -26,6 +26,69 @@ RECENT_KEEP = 20
 
 _LOCK = threading.Lock()
 
+#: 「这个卷大小写敏感吗」的探测结果，按绝对路径缓存（探测要 stat，而问它的
+#: 那两个地方在热路径上）。
+_CASEFOLD_CACHE: dict[str, bool] = {}
+
+
+def _casefold_default() -> bool:
+    """探不动时的兜底：Windows 与 macOS 的默认文件系统都是大小写不敏感的。"""
+    return os.name == "nt" or sys.platform == "darwin"
+
+
+def path_is_case_insensitive(path: str | Path) -> bool:
+    """`path` 所在的卷是不是**大小写不敏感**（用于把路径归一化成项目身份）。
+
+    **不能按 `os.name` 判。** macOS 默认的 APFS/HFS+ 同样是大小写不敏感、
+    大小写保留的，而那里 `os.name` 是 `"posix"`；Linux 上也可能挂着
+    exFAT/NTFS。按平台硬编码的后果是：同一个图库用不同大小写的路径打开两次
+    （从 Finder 拖进来一次、从「最近项目」里手输一次就够）会被当成**两个
+    互不知情的项目**——各自的 worker 池、各自的 `baked_overrides/<项目id>.json`
+    写回基线，用户在一边做的事另一边完全看不见。
+    `Path.resolve()` 在 POSIX 上只解析符号链接与 `.`/`..`，不会向文件系统
+    问「规范大小写是什么」，所以它救不了这件事。
+
+    探测法：把路径最后一段的大小写整体翻转，看是否仍指向同一个 inode。
+    路径不存在就向上找最近的存在的祖先；实在探不动（没有字母、权限不够）
+    按平台惯例兜底。
+    """
+    key = os.path.abspath(os.fspath(path))
+    cached = _CASEFOLD_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    result = _casefold_default()
+    probe = key
+    while probe and not os.path.exists(probe):
+        parent = os.path.dirname(probe)
+        if parent == probe:                     # 到根了还不存在
+            probe = ""
+            break
+        probe = parent
+    if probe:
+        head, tail = os.path.split(probe)
+        flipped = tail.swapcase()
+        if flipped and flipped != tail:         # 有字母可翻才谈得上探测
+            try:
+                st = os.stat(probe)
+                other = os.path.join(head, flipped)
+                result = (os.path.exists(other)
+                          and os.path.samestat(st, os.stat(other)))
+            except OSError:
+                pass                            # 权限/竞态：留兜底值
+    _CASEFOLD_CACHE[key] = result
+    return result
+
+
+def normalize_path_identity(path: str | Path) -> str:
+    """把路径变成**项目身份**用的规范串：大小写不敏感的卷上统一小写。
+
+    `app._project_id()` 与 `pool._norm_dir()` 必须用同一份判断，否则一个
+    认为是同一个项目、另一个认为是两个，池与写回基线当场对不上。
+    """
+    text = os.fspath(path)
+    return text.lower() if path_is_case_insensitive(text) else text
+
 
 def config_dir() -> Path:
     override = os.environ.get("MAGPLOT_CONFIG_DIR")

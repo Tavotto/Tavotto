@@ -201,6 +201,48 @@ def test_export_is_state_neutral(worker):
     assert png_after == png_before, "export 污染了热会话状态"
 
 
+def test_export_stays_state_neutral_when_it_fails(worker):
+    """导出**失败**时同样要还原——异常路径才是最需要这条纪律的地方。
+
+    `try` 曾经起在 `apply()` 与 `mkdir()` 之后，只护住 savefig。可这两步才是
+    会抛的那两步（目标目录不可写、路径过长、Windows 上被占用），于是失败一次
+    就把这次导出专用的 patches 留在了常驻 figure 上。画布合成导出用的是**热
+    会话**逐个面板应用各自的 overrides，一次没还原，后面每个面板都画错。
+    这里用「把目标目录做成一个文件」制造 mkdir 失败，不依赖权限位（CI 上常以
+    root 跑，chmod 挡不住它）。
+    """
+    proc, out, tmp = worker
+    _rpc(proc, {"cmd": "build"})
+    man = json.loads((out / "TestFig_a.json").read_text(encoding="utf-8"))
+    title_gid = next(
+        el["gid"] for el in man["elements"]
+        for f in el.get("editable", [])
+        if f["prop"] == "text" and f["value"] == "Original Title")
+
+    patch = [{"gid": title_gid, "prop": "text", "value": "Hot Session Title"}]
+    _rpc(proc, {"cmd": "override", "stem": "TestFig_a", "patches": patch})
+    resp = _rpc(proc, {"cmd": "render_png", "stem": "TestFig_a", "width": 400})
+    png_before = Path(resp["path"]).read_bytes()
+
+    blocker = tmp / "blocker"           # 是文件，不是目录 → mkdir 必炸
+    blocker.write_bytes(b"x")
+    # 手写协议：_rpc 断言 ok=True，而本例要的正是一次失败（同 _assert_unknown_stem）
+    proc.stdin.write(json.dumps({"cmd": "export", "stem": "TestFig_a", "patches": [],
+                                 "path": str(blocker / "nope.pdf"),
+                                 "format": "pdf", "dpi": 200}) + "\n")
+    proc.stdin.flush()
+    box: list = []
+    reader = threading.Thread(target=lambda: box.append(proc.stdout.readline()),
+                              daemon=True)
+    reader.start()
+    reader.join(120)
+    assert not reader.is_alive() and box and box[0], "worker 对失败的导出无回应"
+    assert json.loads(box[0])["ok"] is False, "导出本该失败"
+
+    resp = _rpc(proc, {"cmd": "render_png", "stem": "TestFig_a", "width": 400})
+    assert Path(resp["path"]).read_bytes() == png_before, "失败的导出污染了热会话状态"
+
+
 def _pos_of(manifest, gid):
     el = next(e for e in manifest["elements"] if e["gid"] == gid)
     return next(f["value"] for f in el.get("editable", []) if f["prop"] == "position")

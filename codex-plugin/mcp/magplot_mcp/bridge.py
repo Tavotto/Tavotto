@@ -322,7 +322,20 @@ def open_figure(target: str, *, stem: str | None = None,
         **render,
     }
     if include_png:
-        out["preview_png_base64"] = preview_png(session, [], 1600)
+        # 位图是**顺带产物**，不是这次 open 的成败判据。
+        #
+        # 它由第二次独立的 worker 调用产出（超时/崩溃/磁盘错误都可能），而
+        # 会话此刻**已经建好并登记**了。让它抛出去的话，调用方收到的是一条
+        # isError 结果，`BridgeError.payload()` 里没有 session_id——于是这条
+        # 会话谁也关不掉，占着账本直到被 `_evict_if_needed()` 挤出去，
+        # 而被挤掉的往往是**真正在用**的那条。
+        #
+        # 失败不静默：降级但如实回一个 code，调用方要么重试要么就看 SVG
+        # （显示本来就走 SVG，位图只是给不能渲染 SVG 的 host 兜底）。
+        try:
+            out["preview_png_base64"] = preview_png(session, [], 1600)
+        except BridgeError as exc:
+            out["preview_png_error"] = exc.code or "preview_failed"
     return out
 
 

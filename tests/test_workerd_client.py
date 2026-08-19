@@ -51,13 +51,18 @@ for line in sys.stdin:
 
         threading.Thread(target=later, daemon=True).start()
     elif op == "fail":
-        emit({"supervisor_protocol_version": VERSION,
-              "request_id": req["request_id"], "ok": False,
-              "error": {"code": payload.get("code", "internal"),
-                        "retryable": bool(payload.get("retryable")),
-                        "message": payload.get("message", "boom"),
-                        "traceback": payload.get("traceback", ""),
-                        "known": ["Fig1"]}})
+        env = {"supervisor_protocol_version": VERSION,
+               "request_id": req["request_id"], "ok": False,
+               "error": {"code": payload.get("code", "internal"),
+                         "retryable": bool(payload.get("retryable")),
+                         "message": payload.get("message", "boom"),
+                         "traceback": payload.get("traceback", ""),
+                         "known": ["Fig1"]}}
+        # workerd 的 `.with_session()` 在成功与失败两条路上都会附**顶层**
+        # session_id；open 失败时它是调用方唯一的线索
+        if payload.get("session_id"):
+            env["session_id"] = payload["session_id"]
+        emit(env)
     elif op == "never":
         pass                      # 收下但永不回应
     else:
@@ -183,6 +188,21 @@ def test_error_envelopes_become_structured_exceptions(client):
     assert e.value.code == "unknown_stem"
     assert e.value.traceback_text == "tb"
     assert e.value.extra["known"] == ["Fig1"]     # 多带的字段原样转交
+
+
+def test_the_session_id_on_a_failure_envelope_is_not_dropped(client):
+    """失败响应的**顶层** session_id 必须转交给调用方。
+
+    这里以前只拆 `resp["error"]`，把顶层那个丢了。后果落在 open 上：
+    握手/spawn 失败时 workerd 已经把会话记进了 sessions / by_hash，而调用方
+    永远学不到它的 id，也就永远关不掉——refs 停在 1，只能等超出 max_sessions
+    时被淘汰，而被挤掉的往往是**真正在用**的那条会话。
+    """
+    client.ensure_started()
+    with pytest.raises(workerd_client.WorkerdError) as e:
+        client.call("fail", payload={"code": "handshake_timeout",
+                                     "session_id": "s-42"}, timeout=10)
+    assert e.value.session_id == "s-42"
 
 
 # ------------------------------ 崩溃与重启 ------------------------------
