@@ -208,10 +208,22 @@ fn build_menu_in<R: tauri::Runtime>(
     Ok(menu)
 }
 
-/// 启动时用的那次：语言取上次记下的偏好（没有就是 zh-CN）。
+/// `.menu()` 那次：**只能用默认语言建**。
+///
+/// 这个闭包跑在 `Builder::build()` 里、Tauri 把 `PathResolver` manage 进去
+/// **之前**，此时 `handle.path()` 会直接 panic：
+///
+///     state() called before manage() for tauri::path::desktop::PathResolver<…>
+///
+/// 而壳是 windows 子系统的可执行文件，panic 写到一个无效的 stderr 句柄上，
+/// 用户看到的只是「双击图标什么都没发生」——2026-08-18 起 Windows 桌面版
+/// 每次启动都是这么死的（退出码 101），nightly 的壳探针红了一整晚而唯一的
+/// 线索是「壳退了」。
+///
+/// 上次记下的语言在 `setup()` 里读（那时 PathResolver 已经就位），读到不一样
+/// 就地重建一次——重建发生在窗口显示之前，用户看不到中间态。
 fn build_menu<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) -> tauri::Result<Menu<R>> {
-    let locale = i18n::read_locale(i18n::locale_file(handle.path().app_config_dir().ok()));
-    build_menu_in(handle, locale)
+    build_menu_in(handle, i18n::DEFAULT_LOCALE)
 }
 
 /// 前端切了界面语言 → 重建原生菜单，并把选择记下来给下次启动用。
@@ -256,7 +268,6 @@ fn set_menu_locale(
     Ok(())
 }
 
-
 fn spawn_sidecar_and_navigate(app: tauri::AppHandle) {
     let state = app.state::<AppState>();
     let nonce = state.nonce.clone();
@@ -300,7 +311,10 @@ fn spawn_sidecar_and_navigate(app: tauri::AppHandle) {
                 // **覆盖掉**。壳记的这份是唯一活得下来的存储，所以由它带过去。
                 let mut params: Vec<String> = Vec::new();
                 if let Some(stem) = open.as_ref().and_then(|o| o.stem.as_deref()) {
-                    params.push(format!("open={}", utf8_percent_encode(stem, NON_ALPHANUMERIC)));
+                    params.push(format!(
+                        "open={}",
+                        utf8_percent_encode(stem, NON_ALPHANUMERIC)
+                    ));
                 }
                 if chosen_locale.is_some() {
                     params.push(format!("lang={}", menu_locale.tag()));
@@ -396,9 +410,20 @@ fn main() {
             let nav_handle = handle.clone();
             // 上次记下的语言。菜单与启动画面都用它——「装完第一次打开」之外
             // 每一次启动，用户看到的第一屏就已经是他选的语言。
+            // 这里才是第一个能安全用 `handle.path()` 的地方（见 build_menu）
             let boot_locale =
                 i18n::read_locale(i18n::locale_file(handle.path().app_config_dir().ok()));
             *app.state::<AppState>().menu_locale.lock().unwrap() = boot_locale;
+            if boot_locale != i18n::DEFAULT_LOCALE {
+                // `.menu()` 那次只能建默认档，这里补上真正的语言。
+                // 失败不拦启动：菜单文案不对总好过应用起不来。
+                match build_menu_in(&handle, boot_locale) {
+                    Ok(menu) => {
+                        let _ = app.set_menu(menu);
+                    }
+                    Err(e) => eprintln!("rebuild menu for {}: {e}", boot_locale.tag()),
+                }
+            }
             let win = tauri::WebviewWindowBuilder::new(
                 app,
                 "main",
@@ -445,6 +470,32 @@ mod tests {
 
     fn args(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// `.menu()` 的闭包里**绝不能碰 `handle.path()`**。
+    ///
+    /// 它跑在 Tauri manage `PathResolver` 之前，一碰就是
+    /// `state() called before manage()` 的 panic。壳是 windows 子系统的
+    /// 可执行文件，panic 写到无效的 stderr 句柄上——用户看到的只是「双击
+    /// 图标什么都没发生」，退出码 101。这条在 2026-08-18 到 08-19 之间让
+    /// Windows 桌面版每次启动都当场死掉，而唯一的线索是 nightly 里一句
+    /// 「壳退了」。要读配置目录，去 `setup()` 里读。
+    #[test]
+    fn the_menu_builder_never_touches_the_path_resolver() {
+        let src = include_str!("main.rs");
+        let start = src
+            .find("fn build_menu<R: tauri::Runtime>")
+            .expect("build_menu 不见了");
+        let body = &src[start..];
+        let end = body.find("\n}\n").expect("找不到 build_menu 的结尾");
+        let body = &body[..end];
+        for line in body.lines() {
+            let code = line.split("//").next().unwrap_or("");
+            assert!(
+                !code.contains(".path()"),
+                "build_menu 里碰了 path()：那时 PathResolver 还没被 manage：{code}"
+            );
+        }
     }
 
     #[test]

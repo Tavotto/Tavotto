@@ -193,7 +193,9 @@ pub fn read_stored(path: Option<PathBuf>) -> Option<StoredLocale> {
 }
 
 pub fn read_locale(path: Option<PathBuf>) -> Locale {
-    read_stored(path).map(|s| s.locale).unwrap_or(DEFAULT_LOCALE)
+    read_stored(path)
+        .map(|s| s.locale)
+        .unwrap_or(DEFAULT_LOCALE)
 }
 
 pub fn write_locale(path: Option<PathBuf>, locale: Locale, explicit: bool) {
