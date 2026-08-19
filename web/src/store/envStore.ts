@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { t } from '@/i18n'
 import {
   fetchEngineEnvironment,
   installEngineEnvironment,
@@ -44,7 +45,10 @@ export const useEnvStore = create<EnvState>((set, get) => ({
     try {
       await installEngineEnvironment()
     } catch (e) {
-      set({ installing: false, log: e instanceof Error ? e.message : '安装失败' })
+      set({
+        installing: false,
+        log: e instanceof Error ? e.message : t('engine.installFailed', { ns: 'errors' }),
+      })
     }
   },
 
@@ -53,7 +57,7 @@ export const useEnvStore = create<EnvState>((set, get) => ({
       set({ env: await setEngineEnvironment(path) })
       return null
     } catch (e) {
-      return e instanceof Error ? e.message : '设置失败'
+      return e instanceof Error ? e.message : t('engine.setPythonFailed', { ns: 'errors' })
     }
   },
 

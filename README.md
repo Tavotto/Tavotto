@@ -46,15 +46,17 @@ PDF whose text is still real, selectable vector text.
 in its own desktop window, and updates itself from then on — it checks, downloads,
 installs and restarts without sending you back to this page.
 
-**On Windows you do not need to install Python.** The installer ships a private Python
-runtime with the usual scientific stack already in it — numpy, matplotlib, pandas, scipy,
-seaborn and Pillow, at pinned versions. Rendering works the moment the installer finishes,
-with no download and no network. Magplot never touches a Python or Conda you already have;
-if a figure of yours needs a package that is not in that list, point Magplot at your own
-environment under **Settings → Rendering environment**. See [Good to know](#good-to-know).
+**You do not need to install Python.** Both the macOS and the Windows installer ship a
+private Python runtime with the usual scientific stack already in it — numpy, matplotlib,
+pandas, scipy, seaborn and Pillow, at pinned versions, identical on both platforms so the
+same script draws the same figure. Rendering works the moment the installer finishes, with
+no download and no network, and without Homebrew, Conda or Xcode. Magplot never touches a
+Python or Conda you already have; if a figure of yours needs a package that is not in that
+list, point Magplot at your own environment under **Settings → Rendering environment**.
+See [Good to know](#good-to-know).
 
-On macOS, rendering uses the Python you already have (or one Magplot sets up for you in
-its own folder, on request).
+The macOS build is **Apple Silicon (arm64) only**. Intel Macs are not currently built or
+tested — use the PyPI install below.
 
 **Or install from PyPI**, which works the same on all three platforms:
 
@@ -173,8 +175,8 @@ window — no second copy). Without the desktop app it falls back to browser mod
 ### Codex plugin
 
 Install it and the matplotlib figures Codex writes come out in a shape Magplot can take over
-(script next to its output, vector PDF, statically resolvable output name), and are handed
-over automatically when they're done:
+(script next to its output, vector PDF, statically resolvable output name) — **and you can
+finish them without leaving Codex**:
 
 ```bash
 codex plugin marketplace add erwanjun/magplot && codex plugin add magplot@magplot
@@ -183,10 +185,46 @@ codex plugin marketplace add erwanjun/magplot && codex plugin add magplot@magplo
 Start a new session afterwards. The CLI and the Codex desktop app share one plugin directory,
 so **installing once covers both**; `codex plugin marketplace upgrade magplot` pulls updates.
 
-Legend position, font sizes, line widths and ticks are then a drag or a click away in Magplot —
-no need to describe them to an AI again. See [`codex-plugin/README.md`](codex-plugin/README.md);
-the distribution roadmap (including the official directory submission checklist) is in
+The plugin ships three layers with clear boundaries:
+
+* a **skill** that teaches Codex the conventions a Magplot-editable figure has to satisfy;
+* a local **MCP server** exposing the engine — open a figure, apply canonical overrides,
+  run a publication preflight, export true-vector PDF/SVG or PNG at an explicit DPI.
+  All six tools work in hosts with no UI at all;
+* an **MCP App canvas** rendered inside Codex, built from the *same* frontend code the
+  desktop app uses — dragging, hit-testing, snapping and undo have no second implementation.
+
+Every edit is an override; **your Python source is never rewritten**. Multi-panel layout,
+canvas annotations and write-back still live in the Magplot window, one `magplot open` away.
+
+See [`codex-plugin/README.md`](codex-plugin/README.md) — including which parts are *not yet
+verified inside a real Codex Desktop*. Design notes are in
+[ADR 0006](docs/adr/0006-codex-mcp-app-and-publication-profile.md); the distribution roadmap
+(including the official directory submission checklist) is in
 [`docs/codex-plugin-distribution.md`](docs/codex-plugin-distribution.md).
+
+## Publication profile and preflight
+
+Export runs a **profile-driven preflight** first. The rules live in one versioned JSON file
+(`src/magplot/profiles/publication.json`) that both the Python engine and the TypeScript
+frontend read — so there is no second copy to drift.
+
+The default `lab-publication-v1` encodes: 80 mm single / 150 mm double column, 16:9 · 4:3 · 1:1
+aspect ratios, 9 pt body text with a hard floor of **more than 8 pt of final effective size**
+(8.5 pt strict), ≥ 300 dpi rasters, Times New Roman plus an explicit CJK fallback, 0.5 / 0.75 /
+1.0 / 1.5 pt line widths, ticks in, enclosed spines, frameless legends, `Title (unit)` axis
+labels, and Scientific colour maps by semantic type.
+
+Font sizes are checked at their **final physical size** — a panel scaled to 60 % is judged on
+`fontsize × 0.6`, not on what the script asked for. Findings come in four levels: `error`
+blocks export until you explicitly confirm, `warn` is always shown, `not_verifiable` is what
+we honestly cannot check (text inside an external bitmap) and needs a human, and `suggestion`
+never decides anything for you. Everything, including the confirmation, is written into the
+proof report next to the exported files.
+
+Journals with their own widths need an override, not a fork:
+`{"widths_mm": {"double": 178}}` — the rest is inherited, and the override is recorded in the
+proof report.
 
 ## Where your data lives
 
@@ -210,21 +248,37 @@ your figures or data is uploaded.
   | Install | Interpreter used for rendering |
   |---|---|
   | Windows `.exe` | The **bundled runtime** that ships inside the installer — CPython 3.13 with numpy, matplotlib, pandas, scipy, seaborn and Pillow at pinned versions. Nothing to install, nothing to download. |
-  | macOS `.dmg` | Your own Python; Magplot can also build an isolated one for you inside its own data folder. |
+  | macOS `.dmg` (arm64) | The same **bundled runtime**, same pinned versions. No Homebrew, Conda or Xcode needed. |
   | PyPI with the `[worker]` extra | The environment you installed it into. |
 
   Magplot picks in this order: `MM_WORKER_PYTHON` → the interpreter you chose in
   Settings → the bundled runtime → its own interpreter → a Python/Conda it finds on the
   machine. **Whatever you choose explicitly always wins**, and Magplot only *launches*
   the environment you point it at — it never installs anything into it, and never
-  modifies an existing Python or Conda.
+  modifies an existing Python or Conda. The bundled runtime is likewise never written
+  to: bytecode and the Matplotlib font cache go to Magplot's own data folder, so the
+  installed app stays byte-identical (on macOS, writing into it would break the code
+  signature).
 
-  If a script needs a package the bundled runtime does not have (rdkit, astropy, your
-  lab's own library), Magplot says which package is missing and offers to switch to your
-  own environment under **Settings → Rendering environment**. Without any working
-  interpreter, layout, annotation and export still work — only in-figure editing needs one.
-  **Settings → Privacy, diagnostics and About** always shows which interpreter is in use
-  and where it came from.
+  The bundled runtime covers the common scientific stack — **it is not a promise to
+  cover whatever your scripts import**. If a script needs a package it does not have
+  (rdkit, astropy, your lab's own library), Magplot says which package is missing and
+  offers to switch to your own environment under **Settings → Rendering environment**;
+  it will not install that package for you, into its own runtime or into yours.
+  Without any working interpreter, layout, annotation and export still work — only
+  in-figure editing needs one.
+
+  **Settings → Privacy, diagnostics and About** shows which interpreter is in use, where
+  it came from (`bundled`, `configured`, `system`, …), and — for the bundled runtime —
+  its Python version and the exact pinned version of every package, read from the
+  `runtime-manifest.json` that ships beside it. The same information is in the
+  diagnostics bundle.
+
+- **Desktop installers are large: ~180 MB to download, ~490 MB installed** (measured
+  on macOS arm64; v0.7.0, without the bundled runtime, was 62 MB / 131 MB). The
+  difference is the runtime: CPython plus numpy/scipy/pandas/matplotlib and their
+  compiled extensions. It is the price of "install and render", paid once, offline.
+  The PyPI install stays a few MB because it reuses the Python you already have.
 
 ## Development
 
@@ -233,10 +287,14 @@ your figures or data is uploaded.
 cd web && pnpm test               # frontend
 cd web && pnpm build              # type-check (tsc -b) + bundle
 
-# Windows desktop only: build the bundled rendering runtime before packaging.
-# Versions are pinned in packaging/runtime-lock.json; the script verifies the
-# CPython download's SHA-256 and import-tests every package it installs.
-python scripts/build_worker_runtime.py
+# Desktop builds (macOS and Windows): build the bundled rendering runtime first.
+# Versions are pinned per platform/arch in packaging/runtime-lock.json; the script
+# verifies the CPython download's SHA-256, checks every installed version against
+# the lock, then imports each package with the freshly built interpreter and draws
+# a real PDF. Any step failing fails the build.
+python scripts/build_worker_runtime.py              # picks the target for this host
+python scripts/build_worker_runtime.py --list-targets
+python scripts/build_desktop.py                     # full desktop chain (includes it)
 ```
 
 Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for

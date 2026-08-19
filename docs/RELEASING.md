@@ -101,6 +101,41 @@ tag 与 `__version__` 对不上时 `build` job 直接失败，不会发出错版
 
 `docs/release-notes/v0.1.1.md` 是范例。
 
+## Codex 插件的更新提醒
+
+插件（`codex-plugin/`）随 Magplot 一起发。装了它的用户**不会自动收到更新**——
+Codex 不管这件事，所以插件自己每 24 小时查一次清单，有新版就在交接结果里
+附一句提醒（只提醒，不下载、不安装）。
+
+发版时这一步是自动的（`release.yml` 的「生成 Codex 插件清单与安装包」），
+产出两份挂到 Release：
+
+* `codex-plugin.json` —— 版本清单。**文件名不能改**：插件拉的是
+  `releases/latest/download/codex-plugin.json`（`update_check.DEFAULT_URL`）。
+* `codex-plugin-<版本>.zip` —— 插件安装包，清单的 `download_url` 指向它。
+
+要手动做一次（或者本地看看长什么样）：
+
+```bash
+python scripts/make_plugin_manifest.py --tag v0.7.1 \
+  --out out/codex-plugin.json --zip out/codex-plugin-0.7.1.zip
+```
+
+**发插件新版的完整流程**：
+
+1. 改 `codex-plugin/.codex-plugin/plugin.json` 的 `version`
+   （版本号只有这一处；`tests/test_codex_plugin.py` 盯着它与 `magplot.__version__` 一致）；
+2. 正常打 tag 发版——上面那步会自动生成清单与 zip；
+3. 用户下次调用插件时看到提醒，执行
+   `codex plugin marketplace upgrade magplot` 并重载 Codex。
+
+改 `min_magplot_version`（`scripts/make_plugin_manifest.py` 里的常量）之前想清楚：
+那个值会让本机 Magplot 更老的用户看到「去升级 Magplot」的提示。当前是 `0.7.0`
+——第一个带 `magplot open` 的版本，没有它交接根本无从谈起。
+
+排障与用户侧开关（`MAGPLOT_UPDATE_URL` / `MAGPLOT_DISABLE_UPDATE_CHECK`）见
+`docs/handoff-protocol.md`。
+
 ## 本地自检
 
 上传不可撤销，本地先过一遍：
@@ -133,12 +168,16 @@ sidecar → Tauri bundler）。CI 门禁打的是最终产物：sidecar 真二�
 
 | 平台 | 产物 | 说明 |
 |---|---|---|
-| macOS | `Magplot-X.Y.Z-macOS.dmg` | Tauri .app（内嵌 sidecar）；签名 + 公证复用下述同一套 secret 与流程 |
+| macOS | `Magplot-X.Y.Z-macOS.dmg` | Tauri .app（内嵌 sidecar）；**含内置渲染 runtime**；**仅 arm64**；签名 + 公证复用下述同一套 secret 与流程 |
 | Windows | `Magplot-X.Y.Z-Windows-Setup.exe` | NSIS（收集时改成与 wheel/dmg 一致的命名），装到用户目录；**含内置渲染 runtime**；SignPath 启用后由 SignPath Foundation 证书签名 |
 
 macOS 签名注意：sidecar 是 `.app` 里 `Resources/sidecar/` 下的 PyInstaller
-onedir，签名必须继续「按 `file` 判断签**所有** Mach-O、自底向上」——只签壳
-本体公证会 Invalid（教训同旧链路）。
+onedir，签名必须继续「签**所有**嵌套 Mach-O、自内向外」——只签壳本体公证会
+Invalid（教训同旧链路）。内置 runtime 进来之后这件事从「几十个」变成
+「五百多个」（解释器 + numpy/scipy/pandas 的全部扩展模块），且它们全都躺在
+`Contents/Resources` 下、**不被 `codesign --deep` 识别为嵌套代码**——所以签名与
+验收都走 `scripts/codesign_macos.py`（读魔数找 Mach-O、深度降序自内向外、
+只给可执行文件挂 entitlements、最后逐个 `--verify` 一遍）。
 
 **Flask 主进程里始终不含 matplotlib**：科学栈只存在于 worker 那一侧。
 这条边界一破，包大小与依赖关系立刻失控（`packaging/magplot.spec` 文件头有完整说明）。
@@ -147,35 +186,74 @@ onedir，签名必须继续「按 `file` 判断签**所有** Mach-O、自底向�
 免安装 zip 随旧链一起退役：它本质是浏览器模式的 PyInstaller 目录，与「桌面
 产物一律真窗口」冲突；确有需要时从历史 tag 走旧链构建。
 
-### Windows 内置渲染 runtime
+### 内置渲染 runtime（macOS 与 Windows）
 
-Windows 安装包**自带一套 Magplot 私有的 Python 渲染环境**，
+两个平台的安装包都**自带一套 Magplot 私有的 Python 渲染环境**，
 用户不需要先装 Python，首次渲染也不联网：
 
 ```
-Magplot.exe → _internal\runtime\python.exe → engine\worker.py → 用户的图表脚本
+Windows: Magplot.exe → _internal\runtime\python.exe  → engine\worker.py → 用户的脚本
+macOS:   Magplot.app → …/_internal/runtime/bin/python3.13 → engine/worker.py → 用户的脚本
 ```
 
 | 东西 | 在哪 |
 |---|---|
-| 版本锁（CPython 下载地址 + SHA-256、科学栈的完整传递闭包） | `packaging/runtime-lock.json` |
+| 版本锁（CPython 下载地址 + SHA-256、科学栈的完整传递闭包，**按平台/架构分层**） | `packaging/runtime-lock.json`（schema 2） |
 | 构建脚本 | `scripts/build_worker_runtime.py` |
 | 定位与校验（唯一出处） | `src/magplot/engine/runtime.py` |
-| 产物 | 仓库根的 `runtime/`（**不进 Git**，200 MiB 上下） |
+| 「这份 runtime 配不配得上这次构建」的唯一判据 | `build_worker_runtime.check_runtime_dir()`（spec 与 build_desktop 共用） |
+| 签名与验收 | `scripts/codesign_macos.py` |
+| 产物 | 仓库根的 `runtime/`（**不进 Git**，300 MiB 上下） |
 
-发行流水线里这条链路是这样护住的：
+**两个平台的上游发行版不同，理由也不同：**
 
-1. `desktop-tauri.yml` 先跑 `scripts/build_worker_runtime.py`。脚本自己会校验
-   CPython 压缩包的 SHA-256、按 `.dist-info` 核对装出来的版本、**逐个 import 并
-   画一张真图**——任何一步不过就失败在构建机上，而不是留到用户电脑上。
-2. sidecar 构建带 `MAGPLOT_REQUIRE_RUNTIME=1`：忘了构建 runtime 会当场失败，
-   而不是安静地产出一个装完不能渲染的包。
-3. NSIS 经 `tauri.conf.json` 的 `bundle.resources` 把整个 sidecar 目录
-   （含 `_internal\runtime`）收走——第 2 条保证了它此刻一定在。
-4. 打包后跑一次 `scripts/smoke_app.py --expect-source bundled`：真启动 .exe、
-   真渲染、真导出，并断言用的是**内置**解释器而不是构建机上碰巧装着的 Python；
-   sidecar 全链路冒烟（smoke_desktop.py）在 Windows 上也刻意不给
-   `MM_WORKER_PYTHON`，渲染腿必须走内置 runtime。
+| 平台 | 上游 | 为什么是它 |
+|---|---|---|
+| Windows | 官方 [embeddable 发行版](https://docs.python.org/3/using/windows.html#the-embeddable-package) | Python 官方就把它定位成「应用私有的运行时，第三方包由安装程序一起提供」 |
+| macOS | [python-build-standalone](https://github.com/astral-sh/python-build-standalone)（`install_only`） | 官方 macOS 安装器装的是 `/Library/Frameworks` 下的固定路径，**不可重定位**，嵌不进 `.app`；Homebrew / Conda 是用户自己的环境，我们不碰。pbs 的 prefix 由解释器自身路径推导，挪到哪都能跑，而且是逐个可 codesign 的普通 Mach-O——公证要求每个嵌套二进制都签得到名 |
+
+**三个目标的闭包目前逐字相同**，这是刻意维持的：同版本的 matplotlib/numpy 才能
+保证同一个脚本在 Windows 和 macOS 上画出同一张图（`tests/test_runtime_build.py`
+里有一条用例盯着）。哪天解析结果真的分叉了，不要硬凑——如实记下来并在发布说明里讲清楚。
+
+**架构范围（如实记录，别扩大）**：目前只发 **macOS arm64**。`macos-x86_64`
+在锁文件里标着 `shipped: false`——版本锁着是为了「要发时不用临时定版本」，但
+CI 的 macOS runner 只有 Apple Silicon 一档，因此那个目标**既没构建过也没冒烟过**。
+真要发 Intel 版，先有 Intel runner（或带 Rosetta 的机器）跑完整的 import +
+真实绘图冒烟，把 `shipped` 改成 true，再改 README——**在那之前 README 里不许
+出现「支持 Intel」**。同理，目前**不产出 universal2**：科学栈的 wheel 是分架构
+发布的，把两份 .so 硬拼成 universal2 没有验证过，不能凭「应该可以」就发。
+
+发行流水线里这条链路是这样护住的（**两个平台同一套**）：
+
+1. `desktop-tauri.yml` 先跑 `scripts/build_worker_runtime.py`（目标按 runner 的
+   平台/架构自动挑）。脚本自己会校验 CPython 归档的 SHA-256（macOS 那份的期望值
+   取自 pbs 上游发布的 `SHA256SUMS`）、按 `.dist-info` 核对装出来的版本、
+   **用刚装好的解释器逐个 import 并画一张真图**——任何一步不过就失败在构建机上，
+   而不是留到用户电脑上。
+2. sidecar 构建带 `MAGPLOT_REQUIRE_RUNTIME=1`。此时 `magplot.spec` 会再确认三件事：
+   清单 schema 对得上、**平台/架构与本次构建一致**、冒烟状态是 `passed`。
+   第二条挡的是最贵的一种错——Windows 的 runtime 被打进 `.app`，用户那边的症状是
+   「渲染环境不可用」而构建全程绿灯。第三条挡的是 `--allow-skip-smoke` 产出的
+   中间件混进安装包（那份一个 import 都没跑过）。
+3. NSIS / `.app` 经 `tauri.conf.json` 的 `bundle.resources` 把整个 sidecar 目录
+   （含 `_internal/runtime`）收走——第 2 条保证了它此刻一定在。
+4. 打包后跑 `scripts/smoke_app.py --expect-source bundled --expect-runtime`：
+   真启动、真渲染两次（冷 + 热）、真导出两次（含覆盖），并断言用的是**内置**
+   解释器、runtime 本身 `expected` 且 `valid`、控制面确实是 workerd。
+   脚本会把 `MM_WORKER_PYTHON`、Conda、`PYTHONHOME`/`PYTHONPATH`、活动 venv
+   一律从子进程环境摘掉——**验的是「一台干净电脑上装完即可用」**。
+5. macOS 额外再来一遍：签完名之后，把 `.app` 用 `ditto` 拷到一个**中文 + 空格**
+   的路径，重验签名，再对 `.app` 里的 sidecar 跑一次同样的 smoke_app。
+   前面那次打的是 `dist/Magplot`（PyInstaller 裸产物），这一次打的才是用户拿到
+   的东西——hardened runtime 会不会拦下内置解释器加载 numpy 的 .dylib、
+   签名有没有把某个扩展模块弄坏，只有真跑一次才知道。
+
+> **曾经的坑**：macOS 这条腿上一度有一步「现建 worker-env 再设
+> `MM_WORKER_PYTHON`」。代价是整条门禁失去意义——借来的解释器让冒烟一路绿灯，
+> 而「内置 runtime 根本没打进安装包」这件事没有任何一处会发现。
+> `tests/test_runtime_build.py::test_macos_ci_no_longer_fakes_a_worker_env`
+> 盯着它别被人顺手加回来。
 
 同一套门禁在 `ci.yml` 的 `windows-exe-smoke` 里对每个 PR 都跑一遍
 （还额外验中文 + 空格路径、以及 `MM_WORKER_PYTHON` 仍然优先）。
@@ -183,24 +261,36 @@ Magplot.exe → _internal\runtime\python.exe → engine\worker.py → 用户的�
 **换版本怎么办**（升 CPython 补丁版或某个科学包）：
 
 ```sh
-# 只换包版本：先改 runtime-lock.json 的 top_level/packages，再重解析闭包
-python scripts/build_worker_runtime.py --resolve
+python scripts/build_worker_runtime.py --list-targets
 
-# 连 CPython 一起换：脚本会下载、重算 sha256、核对 _pth 名字
-python scripts/build_worker_runtime.py --resolve --python-version 3.13.16
+# 只换包版本：先改 runtime-lock.json 的 top_level/packages，再逐个目标重解析闭包
+python scripts/build_worker_runtime.py --resolve --target windows-amd64
+python scripts/build_worker_runtime.py --resolve --target macos-arm64
+python scripts/build_worker_runtime.py --resolve --target macos-x86_64
+
+# 连 CPython 一起换
+python scripts/build_worker_runtime.py --resolve --target windows-amd64 \
+    --python-version 3.13.16        # 下载、重算 sha256、核对 _pth 名字
+python scripts/build_worker_runtime.py --resolve --target macos-arm64 \
+    --pbs-release 20260814          # 从上游 SHA256SUMS 取校验和
 ```
 
-`--resolve` 只改锁文件，不构建。改完提交锁文件，让 Windows CI 去验实际能不能用。
+`--resolve` 只改锁文件，不构建。**三个目标要一起换**，否则跨平台版本会漂移
+（那条用例会红）。改完提交锁文件，让 CI 去验实际能不能用。
 **别手写闭包**——手写迟早漏一个传递依赖，而漏掉的那个会在用户机器上以
 ModuleNotFoundError 的形式出现。
-
-**macOS 不带内置 runtime**，这是有意的：那边装 Python 的门槛低得多，而 `.dmg`
-还要过公证——多几万个二进制文件会让签名与公证时间失控。runtime 不存在时
-spec 自动跳过，macOS 构建与从前完全一样。
 
 **第三方许可证**：构建脚本会把 CPython 与每个包的许可证收进
 `runtime/licenses/`，并生成 `THIRD-PARTY-NOTICES.md` 索引，随安装包一起分发。
 新增依赖时不需要额外做什么，但**要确认新包的许可证允许再分发**。
+
+macOS 的 pbs 发行版把 OpenSSL、SQLite、libffi、libedit、Tcl/Tk、zlib、bzip2、XZ
+静态链接进 CPython，**全部是宽松许可**（Apache-2.0 / MIT / BSD / 公有领域）；
+行编辑用的是 **libedit 而不是 GNU readline**（实测
+`readline._READLINE_LIBRARY_VERSION == "EditLine wrapper"`），因此桌面分发
+不引入任何 copyleft 义务。来源与说明写进
+`runtime/licenses/cpython/UPSTREAM-BUILD.md` 随包发出。
+**换上游或换 flavor 时必须重新确认这一条**，别默认它还成立。
 
 ### 应用内更新的一次性设置（更新器签名密钥）
 
@@ -286,7 +376,7 @@ Windows 代码签名都是两回事）：公钥写死在 `src-tauri/tauri.conf.j
 `Authority=Developer ID Application: …`。**只看 `codesign --verify` 会被骗**——
 PyInstaller 留下的 adhoc 签名同样能通过 verify；流水线里已加了显式断言。
 
-踩过的两个坑（都已在流水线里堵上，改动签名步骤前先读这段）：
+踩过的坑（都已在流水线里堵上，改动签名步骤前先读这段）：
 
 1. **`codesign` 只在钥匙串搜索列表里找身份。** 光 `default-keychain -s` 或传
    `--keychain` 都不够（新版 macOS 上后者不可靠），症状是 `no identity found`。
@@ -295,9 +385,26 @@ PyInstaller 留下的 adhoc 签名同样能通过 verify；流水线里已加了
    `security list-keychains -d user -s` 显式加入，还显式断言
    `Authority=Developer ID Application`。
 
-2. **要签的不只是 `*.dylib` / `*.so`。** 包里还有两个无后缀的 Mach-O——
-   `Contents/MacOS/Magplot` 和 `Contents/Frameworks/Python.framework/Versions/*/Python`，
-   漏签就公证 Invalid。改成按 `file` 的判断签所有 Mach-O。
+2. **要签的不只是 `*.dylib` / `*.so`。** 包里还有无后缀的 Mach-O——
+   `Contents/MacOS/Magplot`、sidecar 的 `Magplot`、内置 runtime 的
+   `bin/python3.13`——漏签就公证 Invalid。所以判据是**读魔数**（`scripts/
+   codesign_macos.py`），不是看扩展名。
+
+3. **`--deep` 不是签名策略。** Apple 自己把它标为「仅用于救急」，它对
+   `Contents/Resources` 下那些**不被识别为嵌套代码**的 Mach-O 根本不去签——
+   而内置渲染 runtime 的五百多个 `.so`/`.dylib` 正好全在那儿。
+   同理，`codesign --verify --deep` **也验不出**「Resources 里躺着一个没签名的
+   .so」：那种文件是被当作*资源*封进签名的，封条本身合法。所以验收必须
+   **逐个** `--verify`（`codesign_macos.py verify` 就是干这个的，
+   顺带核对每个 Mach-O 的架构）。
+
+4. **顺序必须自内向外。** 先签好每个嵌套二进制，最后再签 `.app`；反过来的话，
+   外层签名会被内层的后续改动作废。脚本按路径深度降序排，天然满足。
+
+5. **entitlements 只给可执行文件。** 内置解释器需要
+   `disable-library-validation` 才敢加载 numpy/scipy 带的那些 `.dylib`；
+   给 `.dylib` 挂 entitlements 是无意义的噪音。
+
    公证失败时流水线会自动打印 `notarytool log`——没有它，`status: Invalid`
    就是个哑谜。
 

@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { t } from '@/i18n'
 import {
   aiCancel,
   aiRevert,
@@ -281,11 +282,8 @@ export const AGENT_LABEL: Record<AiAgent, string> = {
   claude: 'Claude',
 }
 
-export const SCOPE_LABEL: Record<AiScope, string> = {
-  element: '当前元素',
-  axes: '当前子图',
-  figure: '整张图',
-}
+/** 作用域名；是函数不是常量表——常量在模块求值时就把语言定死了 */
+export const scopeLabel = (scope: AiScope): string => t(`scope.${scope}`, { ns: 'ai' })
 
 /** 路径取文件名：会话与面板可能一个存绝对路径一个存相对路径 */
 export const scriptName = (p: string) => p.split(/[\\/]/).pop() ?? p

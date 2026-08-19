@@ -131,45 +131,96 @@ PyMuPDF（**只经 `src/magplot/pdfbackend/`**），前端 `web/`
   出来的面板）。看护 `tests/test_render_cache.py` 与
   `tests/test_windows_regressions.py`。
 
-## Windows 内置渲染 runtime（2026-08-17）
+## 内置渲染 runtime（Windows 2026-08-17；macOS 2026-08-18）
 
-Windows 桌面安装包**自带一套 Magplot 私有的 Python 渲染环境**，用户不需要先装
+**两个桌面安装包都自带一套 Magplot 私有的 Python 渲染环境**，用户不需要先装
 Python，首次渲染也不联网：
 
-    Magplot.exe → _internal\runtime\python.exe → engine/worker.py → 用户的图表脚本
+    Windows: Magplot.exe → _internal\runtime\python.exe    → engine/worker.py → 用户的脚本
+    macOS:   Magplot.app → …/_internal/runtime/bin/python3.13 → engine/worker.py → 用户的脚本
 
-- **版本锁 `packaging/runtime-lock.json` 是唯一输入**：CPython 3.13.x embeddable 的
-  官方下载地址 + SHA-256，以及科学栈的**完整传递闭包**（精确版本，不允许范围/
-  latest）。构建脚本 `scripts/build_worker_runtime.py` 只执行、不做版本决策
-  （`--resolve` 是维护者更新锁文件时才跑的那一档）。**别手写闭包**——漏掉的传递
-  依赖会在用户机器上以 ModuleNotFoundError 出现。产物在仓库根的 `runtime/`，
-  进 .gitignore，并在 pyproject 里显式 exclude（wheel/sdist 绝不能被它污染）。
+- **上游发行版按平台分，理由不同**：Windows 用官方 embeddable（Python 官方就把它
+  定位成「应用私有的运行时」）；macOS 用 **python-build-standalone 的 install_only**
+  ——官方 macOS 安装器装的是 `/Library/Frameworks` 下的固定路径、**不可重定位**，
+  嵌不进 `.app`，而 Homebrew/Conda 是用户的环境，不碰。pbs 的 prefix 由解释器
+  自身路径推导，且是逐个可 codesign 的普通 Mach-O（公证要求每个嵌套二进制都签到）。
+- **版本锁 `packaging/runtime-lock.json`（schema 2）是唯一输入**，**按目标分层**
+  （`windows-amd64` / `macos-arm64` / `macos-x86_64`）：CPython 下载地址 + SHA-256，
+  以及科学栈的**完整传递闭包**（精确版本，不允许范围/latest）。分层不是洁癖——
+  一个平台的 wheel 绝不能被另一个平台复用。**三个目标的闭包刻意保持逐字相同**：
+  同版本的 matplotlib/numpy 才能让同一个脚本在两个平台画出同一张图
+  （`test_all_targets_pin_the_same_versions` 看护）。构建脚本
+  `scripts/build_worker_runtime.py` 只执行、不做版本决策（`--resolve` 是维护者
+  更新锁文件时才跑的那一档）。**别手写闭包**——漏掉的传递依赖会在用户机器上以
+  ModuleNotFoundError 出现。产物在仓库根的 `runtime/`，进 .gitignore，并在
+  pyproject 里显式 exclude（wheel/sdist 绝不能被它污染）。
+- **架构范围如实记录**：目前只发 **macOS arm64**；`macos-x86_64` 标着
+  `shipped: false`（锁着版本但**没构建过也没冒烟过**，CI 没有 Intel runner）。
+  不产出 universal2——科学栈 wheel 分架构发布，硬拼没验证过。
+  改这条之前不许在 README 里写「支持 Intel」。
 - **`engine/runtime.py` 是路径判断的唯一出处**（frozen 的 `_MEIPASS` / exe 同级 /
   源码树 / `MAGPLOT_RUNTIME_DIR` 覆盖）。这一段**全程 os.path 拼字符串，一个
   pathlib 都不用**：`Path()` 按 `os.name` 分派，在别的平台上构造另一半直接抛
   UnsupportedOperation，连在 macOS 上单测 Windows 分支都做不到
   （test_runtime_path_logic_never_instantiates_a_foreign_pathlib 看护）。
+  两种布局（`python.exe` / `bin/python3*`）都要认——构建机会交叉产出另一平台的
+  runtime，只认本平台那种会误报「不完整」。**版本化实体名按 glob 找，不写死
+  3.13**：写死的话升到 CPython 3.14 会突然「找不到解释器」，而提示是
+  「安装文件不完整」——与真实原因毫不相干。
+- **`MAGPLOT_RUNTIME_DIR` 覆盖是排他的**：指了就只认这一个，指到空处即等于
+  「没有」。「覆盖了却被别处那份悄悄顶掉」是最难查的一种——你以为在验刚构建的
+  产物，实际验的是上一次留下的，两边日志一模一样。
+- **manifest schema 2 会校验平台/架构**（`platform_mismatch()`）：装错架构的包
+  启动时就报 `bundled_runtime_invalid`，而不是等第一次渲染甩一句
+  "incompatible architecture"。宿主平台经 `host_os()`/`host_arch()` 取，
+  做成函数是为了能在任何一台机器上单测另一台的分支。
 - **解释器优先级（`pool._prioritized_candidates()` 是唯一出处）**：
   `MM_WORKER_PYTHON` → 用户在设置里指定的 → **内置 runtime** → 自身
   （非 frozen）→ 系统 Python/Conda 探测。用户显式指定的永远优先；
   第 5 条是兼容回退，不是摆设（脚本要 rdkit 这类内置环境没有的包时靠它）。
   来源标签 `env_override/configured/managed_venv/bundled/current_process/system`
   经环境状态 API、诊断包与冒烟断言一路暴露出来。
-- **不往安装目录写任何东西**：内置 runtime 起 worker 时注入
-  `PYTHONPYCACHEPREFIX` / `MPLCONFIGDIR`（改道到数据目录）+ `PYTHONNOUSERSITE`。
-  安装目录可能在 Program Files（没写权限），卸载后也不该留垃圾。
-- **缺失/损坏报专用 code**（`bundled_runtime_missing` / `bundled_runtime_invalid`），
-  提示「安装文件不完整，请重新安装」——**不是**「请先安装 Python」。那时
-  `can_install` 必须为 false：embeddable 里连 pip 都没有，现场建 venv 只是
-  把包装问题伪装成用户的环境问题。macOS / pip / 源码模式不带 runtime，
-  那里 runtime 缺失是正常状态，两个 code 都不给。
+- **不往安装目录写任何东西**：`child_args()` 的 `-B` 是硬保证，
+  `child_env()` 再注入 `PYTHONPYCACHEPREFIX` / `MPLCONFIGDIR`（改道到数据目录）
+  + `PYTHONNOUSERSITE`。Windows 上安装目录可能在 Program Files（没写权限）；
+  **macOS 上后果更硬——`.app` 是签过名的，往里写一个 `__pycache__` 当场破坏
+  代码签名，用户下次启动看到「应用已损坏」**。
+- **`child_env()` 还要摘掉 `PYTHONHOME`/`PYTHONPATH`/`PYTHONSTARTUP`/
+  `PYTHONUSERBASE`**：Windows 上 `._pth` 的隔离模式顺手挡住了它们，
+  **macOS 上没有任何东西挡**。用户从终端启动 Magplot 时，shell 里为 Conda 或
+  自家项目设的那几个会原样传给内置解释器——轻则 import 到别的 numpy，重则
+  解释器起不来；而且只在「从终端启动」时复现，Finder 双击一切正常。
+- **缺失/损坏/架构不符报专用 code**（`bundled_runtime_missing` /
+  `bundled_runtime_invalid`），提示「安装文件不完整，请重新安装」——**不是**
+  「请先安装 Python」。那时 `can_install` 必须为 false：embeddable 里连 pip 都
+  没有，现场建 venv 只是把包装问题伪装成用户的环境问题。pip / 源码 / Linux
+  不带 runtime，那里 runtime 缺失是正常状态，两个 code 都不给
+  （`ships_bundled_runtime()` 是这条判断的唯一出处）。
 - **本阶段不做包管理**：脚本缺包时报结构化的 `missing_dependency` + 包名，
   引导用户换成自己的环境；**绝不按 ModuleNotFoundError 自动 pip install**——
   那会让内置环境不再可复现，也让「重装就能修」这条退路失效。
-- 验证：`tests/test_bundled_runtime.py`（定位/优先级/失败路径，平台无关）+
-  `tests/test_runtime_build.py`（锁文件、`._pth`、打包卫生）+ CI 的
-  `windows-exe-smoke`（真 .exe、**不给 MM_WORKER_PYTHON**、断言
-  `--expect-source bundled` 并逐个 import 内置科学栈）。
+  内置环境覆盖的是常用科学栈，不承诺覆盖任意用户脚本的依赖。
+- **构建链的三道闸**（漏一道就会安静地发出「装完不能渲染」的包）：
+  ① 构建脚本自己逐个 import + 画真图，不过就失败在构建机；
+  ② `MAGPLOT_REQUIRE_RUNTIME=1` 时 `magplot.spec` 经
+  `build_worker_runtime.check_runtime_dir()`（**与 build_desktop.py 共用同一把尺**）
+  确认 schema / 平台架构 / 冒烟状态；③ 打包后 `smoke_app.py
+  --expect-source bundled --expect-runtime` 真启动真渲染。
+- **macOS 签名**：内置 runtime 让嵌套 Mach-O 从几十个变成五百多个，且全在
+  `Contents/Resources` 下——**`codesign --deep` 既签不到也验不出**（它们被当作
+  *资源*封进签名，封条本身合法）。签名与验收统一走 `scripts/codesign_macos.py`
+  （读魔数找 Mach-O、深度降序自内向外、只给可执行文件挂 entitlements、
+  最后逐个 `--verify` 并核对架构）。
+- 验证：`tests/test_bundled_runtime.py`（定位/优先级/布局/架构/失败路径，
+  **全部平台无关**）+ `tests/test_runtime_build.py`（锁文件分层、布局、
+  `._pth`、构建判据、打包卫生，另有几条只在本机构建过 runtime 时才跑的
+  **真 import + 真绘图**用例）+ CI 的 `windows-exe-smoke` 与 desktop-tauri 的
+  两条腿（真产物、**不给 MM_WORKER_PYTHON**、断言 `--expect-source bundled
+  --expect-runtime` 并逐个 import 内置科学栈；macOS 还要对**签完名的 .app**
+  从中文+空格路径再冒烟一次）。
+- **别把「借一个解释器」加回冒烟**：macOS 这条腿一度现建 worker-env 再设
+  `MM_WORKER_PYTHON`，于是「runtime 根本没打进去」全程绿灯——空转的门禁比
+  没有门禁更坏（`test_macos_ci_no_longer_fakes_a_worker_env` 看护）。
 
 ## 检查更新
 
@@ -261,6 +312,15 @@ Python，首次渲染也不联网：
     通用规则是「只改本来就声明了该属性、且值不是 `none` 的叶子」，因此
     `fill: none` 的线不会被 facecolor 填实、箭头杆与箭头帽各得其所。文字是唯一
     例外（颜色在字形组上，默认黑色时那条 style 根本不存在，必须允许新增）。
+    **能力表说「支持」不等于这个 artist 上改得到**：同一个 role 的两个 artist
+    在 SVG 上可以长得完全不同（`fill=False` 的 PathPatch 写的是 `fill: none`，
+    改 facecolor 一个叶子都碰不到）。所以 `previewStyle` 除了查 gid 节点在不在，
+    还要同步跑一遍 `canStyleEditApply`——它与 `applyStyleEdit` **共用
+    `styleTargets` 这一份实现**，分成两份迟早分叉，而分叉的表现正是
+    「界面说预览生效了，画面纹丝不动」（预览一旦回 true，调用方就把渲染策略
+    降成 `'none'`，那一轮**根本不会发后端**）。`patch` 角色在表里，
+    但它的 `fill` 开关**不在**：把 `none` 换成颜色是新增语义，只能让
+    matplotlib 自己重画。
     还原记的是**整条 style 属性原文**而不是逐条属性：CSSOM 会把颜色规范化成
     `rgb(...)`，逐条还原写回去的已经不是 matplotlib 给的那份文本了。
     **实测不可预览、必须回退后端的**：`image.alpha`（透明度烤进 PNG 栅格）、
@@ -296,7 +356,14 @@ Python，首次渲染也不联网：
   死循环脚本持着 `w.lock` 把整个会话占死，连 shutdown 都抢不到锁
   （test_request_timeout_kills_and_rebuilds_worker 看护）。
 - **应用顺序规范化 + figure 锚定 prop 的重放（2026-08-17，数据损坏级）**：
-  `overrides.apply` 按 size_mm → 子图 position → 其余（列表序）应用；
+  `overrides.apply` 按**七档规范顺序**应用（`_apply_rank` 是唯一出处）：
+  图幅 size_mm → 色条方向 → 色条 extend → 子图 position → 刻度类型
+  （set_[xy]scale 会把 locator/formatter 整套换掉）→ 其余（列表序）→
+  刻度定位模型 → 单条刻度文字（冻结整条轴，必须最后）。色条方向必须先于
+  extend：方向要拿色条**当前**的矩形反解厚度与间距。跨档的先后不是
+  口味问题：顺序一乱，同一组 patch 在热会话与全量重放里会落成两张图。
+  刻度类的 prop 还必须**每次都重放**（`_must_replay`）——它们按当前状态重算，
+  而 applied 表里的值一个字节没变，走「值没变就跳过」的捷径就会停在旧刻度上；
   pos_frac / loc_frac / endpoints_frac 的 setter 在应用那一刻把 figure 分数换算进
   artist 本地坐标，**几何一变（含还原）必须重放它们**，否则热会话状态 ≠ 全量
   重放——用户「写回时的样子」重开后全体文字错位（FigS3 事故，
@@ -336,7 +403,77 @@ Python，首次渲染也不联网：
   `_legend_box.set_offset(leg._findoffset)` 重挂定位回调**，否则导出时图例整块
   消失（ncol 等旧重建路径同修）。散点/扁平线的 bbox 走 `_padded_bbox`
   （PathCollection 用 datalim 换算，零厚度边垫 4px，否则进不了 manifest）。
-- 色条方向仍明确不支持：翻转需销毁重建色条轴，会打乱 axes gid 稳定编号。
+- **色条方向（2026-08-18）**：**就地**结构改造，不是普通 setter，也不是销毁
+  重建。`overrides._cb_reorient` 在同一个 Axes 对象上换 orientation/ticklocation
+  → 按 `_cb_place` 重算落位（竖↔横逐位可逆）→ `_reset_locator_formatter_scale()`
+  + `_draw_all()` 让 matplotlib 自己重建色带/outline/刻度/xlim,ylim → 把长轴标签
+  搬到新长轴（**旧轴那份要清掉**）。`fig.axes` 顺序一个字节不动 → gid 稳定 →
+  撤销 / 写回 / 重开全链路照旧。落位参照取 `state.pending` 里**这一次改完之后**
+  的宿主 position（只看实况的话，热会话与全量重放会算出两个位置）；用户自己
+  摆过色条轴时不动它的落位，交给 position override。翻完要 `invalidate_tick_cfg`
+  （locator 被整套换过）并重算 `axes_follow`。色条另有**稳定语义身份**
+  `cbar:<宿主 gid>:<序号>`（manifest 的 `colorbar_key`），与 `axes_i.colorbar`
+  一起登记在 index 里。
+  **两端延伸三角 `extend`**（neither/both/min/max）同样是就地结构改造，两个坑：
+  ① `cb._inside` 是按 extend 切出来的那段 boundaries，**只在 `__init__` 里设过
+  一次**——只改 `cb.extend` 就 `_draw_all()` 会拿 259 条边界配 256 块颜色，当场
+  TypeError，两者必须一起改；② 落位其实由 matplotlib 自己的
+  `_ColorbarAxesLocator` 每帧从 `get_position(original=True)` 重算，它顺手把
+  `box_aspect` 改成 `aspect*shrink`，却在 extend=='neither' 时**提前 return
+  不收回去**——不管这一点的话「开了又关」的色条比从没开过的宽 10%，而且回不去。
+  修法是每次改 extend 前把 box_aspect 放回基线（基线在 `ColorbarProxy.__init__`
+  即 instrument 时采，那一刻才是脚本原样），做完的落位与原生
+  `fig.colorbar(..., extend=…)` **逐位相同**（用例是这么断言的）。翻转之后
+  `_colorbar_info['aspect']=False`：落位归我们，locator 不能再按 aspect 反推厚度。
+  **色条轴上的 patch 一律不登记成可编辑形状**——延伸三角就是 PathPatch，而且每次
+  `_draw_all()` 都被删掉重建。看护 `tests/test_colorbar_orientation.py`。
+- **刻度定位走 Locator / Formatter，不是改已经生成出来的 Text**（2026-08-18）：
+  刻度标签每次 draw 由 locator 现算、Text 对象现建，改 Text 属性只能靠
+  tick_params 持久（字号/颜色/朝向那一档），而「几个刻度、落在哪、写成什么」
+  只有 locator 与 formatter 说了算。模型存在**轴对象**上
+  （`axis._mm_tick_cfg`，`tick_cfg` / `apply_tick_model` 是唯一出处）：
+  major_mode(auto|step|fixed) / major_step / major_values / minor_visible /
+  minor_mode / minor_step / format / minor_format。次刻度的格式多一档 "none"
+  （不标数字）——**那才是默认**；开了之后 `TickSet.labels` 把次刻度标签也算进
+  刻度组，否则那一排点不中、对齐也对不准。**没表态 = 用脚本原样**，不是我们另挑一个
+  AutoLocator（对数轴的 LogLocator 换成 AutoLocator 就是把用户的图改了）；
+  setter 一律写进 cfg 再**整体重建**，所以 prop 之间的应用顺序不影响结果；
+  `set_[xy]scale` 之后必须 `invalidate_tick_cfg` 重采「脚本原样」。
+  单条刻度文字（`ticklabel.text`）冻结整条轴（FixedLocator + FixedFormatter），
+  身份是**序号**：冻结前先回模型态、再把该轴上全部仍在生效的编辑一起盖上，
+  序号越界就**抛异常**（→ warning → 写回阻断），绝不静默返回。刻度伪元素
+  每次 `build_manifest` 按当前状态重登记（`manifest.sync_tick_elements`），
+  `FigState.resolve` 还能按 gid 形状**现解**尚未登记的那些——「先改刻度定位、
+  再改新出现的那条刻度」在全量重放里才不会报「元素不存在」。
+- **边框模型（2026-08-18）**：与刻度模型同一套路数（写进 cfg 再**整体重建**，
+  `spine_cfg` / `apply_spine_model` 是唯一出处）。一档「全部」（`spine_color` /
+  `spine_linewidth`，作用于 `ax.spines` 的**每一条**，含色条轴的 'outline'）+
+  四条各自可覆盖（`spine_<side>_color` / `spine_<side>_linewidth`）。优先级：
+  自己的设定 > 「全部」 > 脚本原样；撤销一条 = 退回未表态（落回上一档），
+  不是把当前推断出来的值钉死。**为什么要模型化**：「全部灰色」与「上边红色」
+  是两条会互相盖写的 setter，直接改的话谁先谁后就是两张图——而 patch 列表序
+  在热会话与全量重放之间并不保证同序。
+- **路径几何 `geometry`（2026-08-18）**：manifest 给曲线 / fill_between /
+  `ax.fill()` 的 Polygon / PathPatch 带上**真正画出来的那条路径**（figure 分数、
+  y 向下，与 bbox 同一套），前端据此沿路径描边与命中——bbox 里绝大部分是空白，
+  拿它画选择框会画出与图形对不上的矩形，拿它做命中会让用户在空白处误选。
+  唯一实现 `engine/pathgeom.py`：`Path.cleaned()` 一次拿 numpy 数组（逐段迭代
+  在两万点谱线上要 +550ms）、非仿射先 `transform_path_non_affine`、贝塞尔在
+  display 空间细分、NaN 拆子路径、超长路径先按段取极值再 RDP（见
+  docs/perf-baseline.md 的「路径几何」一节）。它是**渲染派生数据**：不进用户
+  文档、不是 override、不参与写回，几何一变下一版自然就是新的。
+  **散点与只有 marker 的曲线有意不给**（bbox 降级，记录在案）；
+  **箭头也不给**（它有 `arrow_endpoints` 那套契约，两套并存只会打架）。
+  `ax.fill()` 的 Polygon 与 PathPatch 现在登记成 `axes_i.patches_j`（role=patch）。
+  前端：命中 / 框选 / 描边全在 `web/src/lib/pathGeom.ts`（距离一律换到 mm 再比，
+  与图内箭头同一口径；填充按 even-odd 算内部，空心只在描边附近命中；框选是
+  「圈墨迹」不是「戳进去」）；`OverlaySvg` 画 `<path>` 并套上引擎给的 clip 框。
+  **文字 / 图例 / 子图 / 组选择继续用矩形**——它们本来就是矩形语义，别为了统一
+  硬转路径。画布**原生**形状同理：`lib/shapeGeometry.ts` 的 `shapeOutline` 是
+  ShapeView 显示、透明命中层、覆盖层选中描示**三处唯一的一份轮廓**
+  （椭圆/三角/菱形/多边形/大括号；矩形不在此列，直线走端点那套）。
+  看护 `tests/test_manifest_geometry.py` + `web` 的 `pathGeom.test.ts` /
+  `elementPathSelection.test.tsx` / `shapeOutline.test.tsx`。
 - 面板翻转（flip_h/flip_v，先翻转后旋转）：导出按 dpi 位图嵌入
   （show_pdf_page 无镜像；flipH = 行倒序 + 旋转 180°），与 opacity<1 同一取舍。
 - 安全：worker `cwd=沙盒`（挡相对路径写出/删除）+ `Path.unlink` 守卫
@@ -472,6 +609,30 @@ Python，首次渲染也不联网：
 
 完整版在 `docs/adr/0005-external-handoff-and-codex-plugin.md`，改动前先读。
 
+- **发现链的唯一权威是 `engine/locate.py`**（纯标准库）：`MAGPLOT_CLI` → PATH →
+  安装清单 `install.json` → 已知安装位置 → HKCU（只当补充）→ 当前解释器。
+  **只装了桌面版也必须能被发现**——这是 2026-08-18 修的那个 bug：装出来的
+  `Magplot.exe` 与 sidecar 都是 GUI 子系统可执行文件，没有真终端时
+  `sys.stdout is None`、输出被 `entry.py` 改道进 app.log，**调用方拿到的是空
+  stdout**。所以 `packaging/magplot.spec` 从同一个 Analysis 多出一个
+  `console=True` 的 `magplot-cli`（共用 `_internal/`，只多 ~1.5 MB）。
+  **别把 GUI exe 当 CLI 调**，哪怕它接受同样的参数。
+  安装清单落在**用户配置目录**（安装目录可能只读、卸载会被删）：安装器装完跑
+  `magplot-cli doctor --json --write-manifest`（让 CLI 自己写，NSIS 不拼 JSON），
+  应用每次启动 `locate.refresh_manifest()` 刷一遍（**只补充不抹掉**：pip 装的
+  那份是非冻结进程、只去惯例位置找壳，无条件写下去会把桌面版记的非惯例路径
+  抹成空，一次 `magplot --figures …` 就够），卸载器在**删文件之前**移除。
+  读的一方要核实里面的路径还在——清单是缓存不是真相。**任何单一机制都不是
+  唯一依据**（清单可能没写成、注册表可能被策略锁住），也**不动用户 PATH**。
+  `sidecar/Magplot` 这一段的出处只有 `tauri.conf.json` 的 `bundle.resources`，
+  Rust 壳 / locate / NSIS 三处同源。协议与错误码全文在 `docs/handoff-protocol.md`。
+- **子命令在 `engine/cli.py`（`open` / `doctor`）**，`app.main()` 与
+  `packaging/entry.py` 都先问它一句。分派**必须在 import Flask 之前**：一次交接
+  用不上任何 HTTP 端点，冻结产物却要为它付整个 Flask 的冷启动。
+- **`HandoffError` 一律带稳定 `code`**（`registry_write_failed` /
+  `path_not_found` / `launch_failed` …），`--json` 失败也输出一行 JSON。
+  文案随时可改，code 不行——调用方按它分诊。裸抛的那条由
+  `test_every_handoff_error_carries_a_code` 挡住。
 - **入口是 `magplot open <产物|脚本|目录>`**（`engine/handoff.py`，纯标准库）：
   解析目标 → 登记 stem → 唤起界面。子命令在 argparse **之前**分派——主入口是纯
   flag 形态（`magplot --figures …`），改成 subparsers 会把既有命令行整个换掉。
@@ -490,14 +651,94 @@ Python，首次渲染也不联网：
   ② 必须重扫素材（交接的图刚写到磁盘，实例手里那份 panels 是旧的）；
   ③ 找不到就说找不到，绝不退而求其次选别的面板。重复交接同一张只选中，不叠第二份。
 - **Codex 插件在 `codex-plugin/`**，市场清单在仓库根 `.agents/plugins/marketplace.json`
-  （仓库即市场根）。**skills-only**：不做 MCP server（Codex 本就能跑 Python，
-  缺的是约定与最后一跳），不做 `.app.json`（需要 OpenAI 侧注册的托管 App id）。
-  pyproject 的 `exclude` 显式挡住它进 wheel/sdist。插件版本 == `magplot.__version__`
-  （`tests/test_codex_plugin.py` 看护）。
+  （仓库即市场根）。**已不再是 skills-only**：2026-08-18 起同时带一个本地 stdio
+  MCP server 与内嵌画布（见下面「Codex MCP server 与内嵌画布」一节与 ADR 0006）；
+  交接这条路一字未改。**仍不做 `.app.json`**（需要 OpenAI 侧注册的托管 App id）。
+  pyproject 的 `exclude` 显式挡住 `codex-plugin/` 进 wheel/sdist。插件版本 ==
+  `magplot.__version__`（`tests/test_codex_plugin.py` 看护）。
+- **插件里那份路径规则是 `engine/locate.py` 的镜像**（插件 import 不到 magplot，
+  这份重复无法避免）。能避免的是两边悄悄漂开：
+  `tests/test_install_locate.py::test_plugin_mirrors_the_locator` 在
+  Windows/macOS/Linux × 有无环境变量 × 空格与中文的矩阵上逐条比对两侧输出，
+  改一边必须同步另一边。两侧都**一个 pathlib 都不用**（`Path()` 按 `os.name`
+  分派，在 macOS 上连构造一条 Windows 路径都做不到）。
+- **插件自己的更新检查在 `codex-plugin/.../scripts/update_check.py`**：
+  每 24 小时一次（失败 1 小时后可重试）、1.5 秒超时、缓存落
+  `config_dir()/codex-plugin-update.json`（**绝不往插件目录写**——那儿归 Codex
+  管、可能只读、升级时整个被换掉）。四条底线：不阻塞出图、**不污染 stdout**
+  （调用方读的是最后一行 JSON）、不自动下载执行、**插件版本 ≠ Magplot 版本**
+  （当前版本只从 plugin.json 读，`min_magplot_version` 比的是 `magplot open`
+  回报的那个版本）。清单由 `scripts/make_plugin_manifest.py` 在 **release.yml**
+  生成——**不能挪进 desktop-tauri.yml 的 updater-manifest**，那个 job 没配
+  minisign 私钥就整个跳过，插件的更新通道会跟着悄悄停而且全绿。
 - **技能的第一条硬约定：脚本与产物同目录、且必须先落成文件**（禁 `python -c` 出图）
   ——「stem ↔ 产出它的脚本」是图能不能双击进去改的全部依据。自检不靠祈祷：
   `scripts/handoff.py` 读 `magplot open --json` 的 `registry.parameterizable`，
   为 false 时**退出码 4**。图出来了但只是死图，那不是成功。
+
+## 出版规范 profile 与预检（2026-08-18）
+
+- **规则的唯一权威文件是 `src/magplot/profiles/publication.json`**（随 wheel 分发）。
+  Python 走 `engine/profiles.py`（`importlib.resources` 定位，装成 wheel 后源码树的
+  相对路径不存在），TypeScript 经 **`@profiles` 路径别名**整份 import 进 bundle
+  （`web/vite.config.ts` / `vitest.config.ts` / `vite.mcp.config.ts` **各配一次**）。
+  **绝不在任一侧硬编码同一条规则**——旧代码里 `preflight.ts` 的 6pt/300dpi 与
+  ExportDialog 的 85/150/180mm 就是各写一份，规范一改两处同时开始撒谎。
+- **预检有两个求值器**（`engine/preflight.py` 给 MCP，`web/src/lib/preflight.ts` 给
+  画布与导出对话框）——浏览器跑不了 Python，这是必需的第二份，不是重复。
+  两份靠 `tests/golden/preflight_vectors.json` 对齐：**pytest 与 vitest 各跑一遍同一份
+  向量**（与 patchspec ↔ Rust 同一套纪律），只比 `id/severity/object_ids/gids/detail`，
+  不比中文措辞。改任一侧跑 `python scripts/gen_preflight_vectors.py --write` 并人工读 diff。
+- 输入是**规范化的 figure spec**（页面 + 面板 + 文字 + 对象几何），不是画布文档也不是
+  manifest 本身：同一套规则同时服务「一张图」（MCP，scale=1）与「多面板拼版」
+  （画布，每面板带自己的 scale）。
+- **字号按最终物理尺寸判**：manifest 的 `fontsize` 是脚本坐标系里的 pt，面板缩到 60%
+  时读者量到的是 `fontsize × scale`。只看原始值 = 「缩一缩就放行」。阈值 8.5pt（严格）
+  与 8.0pt（绝对下限，**正好 8.0 不算过**）。
+- 四档：`error`（默认阻止导出，显式确认才放行且写进 proof）/ `warn`（放行必展示）/
+  `not_verifiable`（**查不了**，如位图内部文字，需人工确认并写进 proof）/ `suggestion`
+  （数据语义类全在这档，**绝不替用户裁决**）。**没登记的检查项兜底为 warn**，
+  刻意不是 suggestion——忘了登记会让用户以为它通过了。
+- 文档里**只存 `{id, journal}`，不存规则**（`FigureDocument.profile`，可选，schema 仍是 2）。
+  期刊自定义走覆盖（浅合并 + 几个子对象深合并），结果带 `derived_from`/`journal` 并进
+  proof report。整套换掉用 `MAGPLOT_PROFILES_FILE`。
+- 导出目录规则收在 `engine/config.project_export_dir(project, fallback)` —— Flask 与
+  MCP server 都调它（`fallback` 是参数不是常量：app 的 `EXPORT_DIR` 会被测试 monkeypatch）。
+
+## Codex MCP server 与内嵌画布（2026-08-18）
+
+完整版在 `docs/adr/0006-codex-mcp-app-and-publication-profile.md`，改动前先读。
+ADR 0005 的「skills-only / 不做 MCP server」这一条**已被它推翻**（交接那条路不变）。
+
+- 插件清单加 `"mcpServers": "./.mcp.json"`；`.mcp.json` 是**本地 stdio**
+  （`command: python3` + `args: ["./mcp/server.py"]` + `cwd/env_vars/tool_timeout_sec`）。
+  字段形状取自 Codex 官方插件装出来的清单，**不要猜**。
+- **`codex-plugin/mcp/magplot_mcp/` 只翻译不实现**：会话、manifest、override、patch 规范化、
+  导出全部落回 `magplot.engine.{pool,registry,handoff,patchspec,profiles,preflight}`。
+  发给 worker 的 patches 与 Flask `/api/engine/render` 走同一条路径，所以 ADR 0003 的
+  等价性不变式原样成立（`tests/test_mcp_roundtrip.py` 用真 matplotlib + 真 stdio 逐条验：
+  热态 == 全新 worker 重放、figure 尺寸变、axes 几何变、关掉重开）。
+- **stdout 归协议独占**：`rpc.hijack_stdout()` 把 `sys.stdout` 改道到 stderr，**必须先
+  存下真正的 stdout 句柄**（`_REAL_STDOUT`）。顺序反了协议帧全写到 stderr 上，症状是
+  「initialize 永远等不到响应」且零报错（开发期真撞到过）。
+- **路径范围**：`MAGPLOT_MCP_ROOTS`（缺省进程 cwd），越界一律拒，**绝不「就近找一个
+  能用的」**。**没装 Magplot 时降级而不是退出**（降级 server 握手正常、每个工具说人话）
+  ——静默退出在 Codex 里表现为「插件没有工具」。
+- **导出先预检**：有 error 且没有 `explicit_confirm` 时一张图都不出；强制导出记进 proof。
+- **内嵌画布 = Magplot 前端那一份代码**（`CanvasStage`/`OverlaySvg`/`interactions.ts`/
+  `ElementInspector`/既有 stores），拖拽、命中、吸附、undo、patch 状态**没有第二份实现**。
+  唯一改动是 `web/src/lib/engineTransport.ts`：一个**可选覆盖**（HTTP ↔ `tools/call`）。
+  它**不 import `lib/api`**——搬默认实现进去会与 api 绕成环（TDZ），而且既有单测大量
+  `vi.mock('@/lib/api')` 打桩 `engineRender`，实测会炸 7 个文件。
+- UI 只挂在 `magplot_open_figure` / `magplot_apply_overrides` 上（其余工具的产出是文字与
+  文件，挂 UI 只会让画布不停重建）；CSP 的 `connectDomains` **是空的**（sidecar 端口动态，
+  写不进白名单，这也是必须走 `tools/call` 的原因）；**绝不用「开浏览器」冒充内嵌画布**；
+  iframe 的 `localStorage`/`widgetState` **不存业务数据**。
+- 画布产物 `codex-plugin/mcp/widget/canvas.html` 是**受管构建物**（进 git）：
+  `python scripts/build_mcp_widget.py`，`--check` 在 CI 的 frontend job 与 pytest 里各看一道。
+  **改了 `web/src` 就得重跑**，否则用户装到的是上一版画布（功能全在、只是旧、零报错）。
+- **Codex Desktop 里的 iframe 渲染尚未实测**——协议层与画布逻辑都有自动化看护，
+  但「真桌面应用把这块 HTML 跑起来」这一步没验过，README 里如实写着。
 
 ## AI 桥
 
@@ -549,6 +790,56 @@ Python，首次渲染也不联网：
 - **图内元素文字**走 matplotlib mathtext（`cm$^{-1}$`），不是上面那套标记；
   大小写转换要 `protectMath`（`$…$` 里是 `\alpha` 这类命令，改大小写就废）。
 - 大小写是**一次性动作**，直接改文本内容（可撤销），不新增字段、导出零改动。
+
+## 多语言（zh-CN / en-US，2026-08-18）
+
+完整版在 `docs/i18n.md`，改动前先读。
+
+- 技术栈 i18next + react-i18next + 官方 `i18next-cli`；**资源静态 import 进
+  bundle**（离线桌面版是硬要求，不连 CDN）。八个命名空间在
+  `web/src/i18n/locales/<语言>/`。默认仍是 **zh-CN**；优先级
+  手动 > 系统 > zh-CN，偏好存独立的 `magplot.locale`，**不进 .magplot 文档**。
+- 组件用 `useTranslation()`；store / lib 用 `import { t } from '@/i18n'`。
+  **活得比一次渲染长的文本存描述符** `UiMessage {key, ns?, values?}`
+  （撤销标签、toast、确认框），显示那一刻才翻——存成字符串的话切语言后历史
+  面板永远停在旧语言，而且再也换不回来（参数已经拼进去了）。用户自己的内容
+  包 `literal(text)` 原样透出。这是运行时状态，**文档 schema 一个字节没动**。
+- **复数形态按语言定**（`Intl.PluralRules`）：英文 `_one`+`_other`，中文只有
+  `_other`。中文写 `_one` 不报错但永远选不中，那句译文是死的。**「单数是
+  另一句话」的必须自己分 key**（`deleteObject` / `deleteObjects` 等四对），
+  交给复数规则会让「删除 折线图.pdf」在中文界面变成「删除 1 个对象」。
+- **不翻**：用户内容（项目/画布/文档名、路径、脚本、图内文字、matplotlib
+  输出）、诊断材料（traceback / 日志 / 后端报错原文 / console）。matplotlib
+  的属性名与枚举是**开集**，`propLabel/optionLabel` 查不到就回退原文。
+- **引擎协议里的中文不动**：manifest 的 `group`/`label` 仍由
+  `engine/manifest.py` 发中文，前端 `roles/registry.ts` 用 `ENGINE_GROUP` 表 +
+  `ENGINE_LABEL_PATTERNS` 正则翻结构部分、用户内容原样带过去；`GROUP_ORDER`
+  仍按引擎名排序（分区顺序不该跟着界面语言变）。
+- **Python 不决定界面语言**：用户可见的失败带稳定 `code` + `params`
+  （约定写在 `app.py` 的 API 段首），前端 `backendErrorText()` 按 code 翻，
+  `error` 原文留作回退。**code 一旦发布不能改名**。
+- **出版规范预检的文案在前端**：`web/src/lib/preflight.ts` 的 `PreflightIssue`
+  存的是描述符（`message: UiMessage`），`id` 才是稳定身份——golden vectors
+  （`tests/golden/preflight_vectors.json`）与 proof report 认的都是 id，
+  `preflight.golden.test.ts` 明确**只比判据不比措辞**，所以两侧求值器的中英文
+  措辞可以各自演进。proof report 里写的是**当前语言的成文**（人要读）+ id。
+- **MCP 画布里的预检条目是例外**：那份 payload 来自 Python 求值器
+  （`magplot_preflight` 工具），`it.text` 原样显示——Codex 那一侧不知道这个
+  webview 用的是哪门语言。widget 自己的按钮/状态/标题照常翻。
+- **桌面壳自带一份文案**（`src-tauri/src/i18n.rs`）：原生菜单在 webview
+  起来之前就要建。改菜单文案要**改两处**；切语言只换显示文案，菜单项 id 与
+  加速键一个字节不动。splash/error 页在 `tauri://` 源下，两份文案内联、
+  语言由壳经 `?lang=` 带过去。首启（还没有 `menu-locale` 文件）菜单是默认档，
+  前端起来后重建——已知限制，见 docs/i18n.md。
+- **维护**：`cd web && pnpm i18n:check`（= `types --ci` + 自建检查脚本 +
+  `lint`），查 key 对齐 / 漏翻多余 / 空翻译 / 插值一致 / 复数形态 / 无用 key /
+  硬编码文案 / 类型过期。**CI 里是硬门禁，缺翻译直接红**：接在 ci.yml 的
+  frontend job 与 `scripts/build_frontend.py`（每条打包链路都过它）。
+  官方提取器覆盖不了本仓库的短助手（`hist('setPageW')` 这种），所以自己写了
+  `web/scripts/i18n-check.mjs`——**别为了让官方 CLI 过而降低检查范围**。
+- 英文更长：`web/src/i18n/overflow.test.tsx` 守字数预算与截断兜底，
+  `e2e/i18n.spec.ts` 在真浏览器 1024px 下量 `scrollWidth > clientWidth`
+  （jsdom 没有布局引擎，量不出溢出）。
 
 ## 诊断与排障
 
@@ -645,6 +936,12 @@ Python，首次渲染也不联网：
   文件占用、盘符/反斜杠/中文路径、端口占用、CLI 只有 .cmd、解释器探测）。
 - 后端冒烟（示例项目）：`magplot --figures examples/figures --no-browser` 后
   `curl -X POST /api/engine/render -d '{"id":"Fig1_kinetics.pdf","patches":[]}'`
+- **Codex 插件**：`.venv/bin/python -m pytest tests/test_mcp_server.py
+  tests/test_mcp_roundtrip.py tests/test_codex_plugin.py tests/test_preflight.py`；
+  画布产物 `python scripts/build_mcp_widget.py --check`（改了 web/src 就得重跑构建）；
+  预检向量 `python scripts/gen_preflight_vectors.py`（`--write` 重新生成后人工读 diff，
+  并让 `cd web && pnpm test` 也绿——两个求值器跑的是同一份向量）；
+  MCP 手动冒烟 `python codex-plugin/mcp/server.py --self-check`。
 - **性能基线**：`python scripts/bench_render.py --python .venv/bin/python`
   （真 HTTP 链路、冷启动/热 override 中位/导出、两条控制面对照）。结论与前后对照
   都写进 `docs/perf-baseline.md`——**改性能前先在那儿指出一个数字**。

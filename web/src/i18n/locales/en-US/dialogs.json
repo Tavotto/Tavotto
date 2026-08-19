@@ -1,0 +1,622 @@
+{
+  "export": {
+    "blockedTitle": "There are blocking problems or items that cannot be verified automatically — tick the confirmation above before exporting",
+    "composing": "Composing…",
+    "confirmBoth": "I understand the {{errors}} blocking problems and {{notVerifiable}} items that cannot be verified automatically, and want to export anyway. The confirmation is recorded in the proof report.",
+    "confirmErrors": "I understand the {{errors}} blocking problems and want to export anyway. The confirmation is recorded in the proof report.",
+    "confirmNotVerifiable": "I understand the {{notVerifiable}} items that cannot be verified automatically and want to export anyway. The confirmation is recorded in the proof report.",
+    "dpiHint": {
+      "1200": "maximum",
+      "300": "submission",
+      "600": "print",
+      "900": "large format"
+    },
+    "dpiLabel": "Resolution",
+    "dpiSelectLabel": "Export resolution",
+    "exported": "Exported: {{files}}",
+    "facts": {
+      "column": "Column",
+      "columnDouble": "Double {{mm}}mm",
+      "columnNone": "No match (profile: {{single}}/{{double}}mm)",
+      "columnSingle": "Single {{mm}}mm",
+      "dpi": "Export DPI",
+      "dpiValue": "{{dpi}} dpi (profile floor {{min}})",
+      "minFont": "Smallest effective size",
+      "minFontNone": "No text found below {{min}}pt",
+      "minFontValue": "{{pt}}pt",
+      "page": "Page",
+      "pageValue": "{{w}} × {{h}} mm",
+      "raster": "Raster formats",
+      "vector": "Vector formats"
+    },
+    "formatLabel": "Format",
+    "issueOccurrences": " ({{count}} places)",
+    "journalWidthHint": "Overrides this profile's double-column width (only that one rule; the rest is inherited). Stored in the document and recorded in the proof.",
+    "journalWidthLabel": "Journal width",
+    "journalWidthReset": "Reset",
+    "locate": "Locate",
+    "moreOptions": "More export options",
+    "operationFailed": "Operation failed: {{error}}",
+    "package": "Package project (.magplot)",
+    "packaged_one": "Project package {{name}} created with {{count}} asset — open it elsewhere via Document menu → Import project package",
+    "packaged_other": "Project package {{name}} created with {{count}} assets — open it elsewhere via Document menu → Import project package",
+    "pageMismatch": "The page is {{current}}mm wide, but \"{{preset}}\" expects {{want}}mm. Presets never change the page — adjust it on the Canvas tab if you want to.",
+    "pdfDpiIrrelevant": "dpi does not affect PDF",
+    "pdfHint": "True vector, best for submission",
+    "pngHint": "Raster, rendered at the chosen dpi",
+    "preflightOk": "Pre-export checks passed",
+    "preflightParts": "Preflight: {{parts}}",
+    "presetLabel": "Preset",
+    "presets": {
+      "both": {
+        "hint": "PDF+PNG · {{dpi}}dpi",
+        "label": "PDF + PNG"
+      },
+      "double": {
+        "hint": "PDF · {{mm}}mm double column",
+        "label": "Double column"
+      },
+      "screen": {
+        "hint": "PNG {{dpi}}dpi",
+        "label": "Screen preview"
+      },
+      "single": {
+        "hint": "PDF · {{mm}}mm single column",
+        "label": "Single column"
+      }
+    },
+    "profileAria": "Publication profile",
+    "profileLabel": "Profile",
+    "profileStamp": "{{id}} · v{{version}}",
+    "proofLabel": "Record",
+    "proofTitle": "JSON record: profile identity + every preflight result (including not-verifiable items) + asset list + export settings, written into the export folder alongside the output",
+    "proofToggle": "Write a proof report alongside the output",
+    "revealFailed": "Could not reveal it in the file manager. The file is at: {{path}}",
+    "savedTo": "Saved to {{dir}}",
+    "severity": {
+      "error": "Blocking",
+      "notVerifiable": "Not verifiable",
+      "suggestion": "Suggestion",
+      "warn": "Warning"
+    },
+    "severityCount": "{{count}} {{label}}",
+    "start": "Export",
+    "stemLabel": "File name",
+    "summary": "{{w}}×{{h}} mm · {{panels}} panels · {{texts}} texts · {{marks}} annotations",
+    "svgNote": "The profile also accepts SVG, but canvas composition only produces PDF/PNG (composition goes through PyMuPDF). For SVG, export a single figure — write-back from figure editing and the Codex plugin's magplot_export both produce true vector SVG.",
+    "timestampSuffix": "_timestamp",
+    "title": "Export",
+    "warningsIntro": "These edits could not be applied to the re-rendered panels, so the output may differ from the canvas:"
+  },
+  "layout": {
+    "description": "A canvas file is a named saved version you can load at any time; everyday edits are already autosaved on this machine",
+    "empty": "No canvas file has been saved yet",
+    "load": "Load",
+    "loadHeading": "Load a canvas file",
+    "namePlaceholder": "Layout name",
+    "saveAs": "Save as canvas file",
+    "saveHeading": "Save as canvas file",
+    "saved": "Saved as canvas file: {{name}}",
+    "saving": "Saving…",
+    "title": "Canvas files"
+  },
+  "mcp": {
+    "confirmBoth": "Export anyway: I understand the {{errors}} blocking problems and {{notVerifiable}} items that cannot be verified automatically. The confirmation is recorded in the proof report.",
+    "confirmErrors": "Export anyway: I understand the {{errors}} blocking problems. The confirmation is recorded in the proof report.",
+    "exportBlockedTitle": "There are blocking or not-verifiable items: tick the confirmation below first",
+    "exportBoth": "Export PDF+PNG",
+    "exportPendingTitle": "Some edits have not been drawn yet — wait for this render to finish before exporting",
+    "exported": "Exported {{files}}",
+    "issuesTitle": "Publication preflight",
+    "issuesTitleStale": "Publication preflight (the figure changed; this verdict is from the previous version)",
+    "panelGone": "The panel is gone — ask Codex to open this figure again.",
+    "pending": "Edits pending",
+    "pillClean": "Preflight passed",
+    "pillCounts": "{{errors}} blocking · {{warnings}} warnings · {{notVerifiable}} to verify",
+    "pillStale": "Preflight out of date",
+    "pillStaleTitle": "The figure changed — this verdict is from the previous version. Click to re-run.",
+    "pillTitle": "Run the publication preflight again",
+    "renderFailed": "Render failed",
+    "rendering": "Re-rendering",
+    "synced": "In sync"
+  },
+  "palette": {
+    "commands": {
+      "add-text": {
+        "keywords": "text add label annotation",
+        "label": "Add text"
+      },
+      "canvas-settings": {
+        "keywords": "canvas page settings size",
+        "label": "Canvas settings"
+      },
+      "edit-elements": {
+        "keywords": "edit element figure inner",
+        "label": "Edit figure elements of the selected panel"
+      },
+      "export": {
+        "keywords": "export pdf png save out",
+        "label": "Export PDF / PNG…"
+      },
+      "fit": {
+        "keywords": "fit zoom canvas page",
+        "label": "Zoom to fit canvas"
+      },
+      "grid": {
+        "keywords": "grid background squares",
+        "label": "Show / hide grid"
+      },
+      "group": {
+        "keywords": "group selection combine",
+        "label": "Group selected objects"
+      },
+      "layout-col": {
+        "keywords": "column layout vertical arrange",
+        "label": "Create column layout"
+      },
+      "layout-grid": {
+        "keywords": "grid layout matrix arrange",
+        "label": "Create grid layout"
+      },
+      "layout-row": {
+        "keywords": "row layout horizontal arrange",
+        "label": "Create row layout"
+      },
+      "left-assets": {
+        "keywords": "asset panel figures browser",
+        "label": "Open assets"
+      },
+      "left-elements": {
+        "keywords": "element tree figure inner",
+        "label": "Open figure element tree"
+      },
+      "left-layers": {
+        "keywords": "layer structure stacking order",
+        "label": "Open structure (layers)"
+      },
+      "load-layout": {
+        "keywords": "open load layout canvas file",
+        "label": "Load canvas file…"
+      },
+      "new-doc": {
+        "keywords": "new blank document empty",
+        "label": "New blank document"
+      },
+      "rulers": {
+        "keywords": "ruler guides measure",
+        "label": "Show / hide rulers"
+      },
+      "save-layout": {
+        "keywords": "save layout canvas file",
+        "label": "Save as canvas file…"
+      },
+      "select-all": {
+        "keywords": "select all everything",
+        "label": "Select all"
+      },
+      "shortcut-help": {
+        "keywords": "shortcut help keys keyboard",
+        "label": "Keyboard shortcuts"
+      },
+      "styles": {
+        "keywords": "style token preset journal paper",
+        "label": "Paper styles…"
+      },
+      "sub-labels": {
+        "keywords": "label abc subfigure panel letters",
+        "label": "Add (a)(b)(c) panel labels"
+      },
+      "ungroup": {
+        "keywords": "ungroup split separate",
+        "label": "Ungroup"
+      },
+      "versions": {
+        "keywords": "version history timeline snapshot",
+        "label": "Layout version timeline…"
+      }
+    },
+    "listLabel": "Commands",
+    "needPanel": "Select a parameterizable panel first",
+    "noMatch": "No matching command",
+    "placeholder": "Type a command…",
+    "searchLabel": "Search commands"
+  },
+  "presets": {
+    "insertSymbolAria": "Insert symbol {{symbol}}",
+    "items": {
+      "axes": {
+        "hint": "x / y direction indicator",
+        "label": "Axis directions"
+      },
+      "braceGroup": {
+        "hint": "Brace with a caption",
+        "label": "Brace grouping"
+      },
+      "callout": {
+        "hint": "Leader line with text",
+        "label": "Leader callout"
+      },
+      "crystal": {
+        "hint": "Arrow with a [001] label",
+        "label": "Crystal direction arrow"
+      },
+      "dimension": {
+        "hint": "Double-headed arrow with end caps",
+        "label": "Dimension line"
+      },
+      "errorbar": {
+        "hint": "I-beam with a ± value",
+        "label": "Error annotation"
+      },
+      "magnifier": {
+        "hint": "Dashed box, leader line and enlarged box",
+        "label": "Zoom inset"
+      },
+      "reversible": {
+        "hint": "Two opposing arrows (⇌)",
+        "label": "Reversible reaction arrows"
+      },
+      "scalebar": {
+        "hint": "Thick line with a length label",
+        "label": "Scale bar"
+      }
+    },
+    "symbolsHeading": "Common symbols",
+    "title": "Research presets"
+  },
+  "registry": {
+    "canRegister": "Registrable: ",
+    "candidatesTitle": "Unregistered plotting scripts",
+    "conflictHint": "Assign the stem to one of the scripts below; the other script's claim on it is dropped automatically.",
+    "conflictScripts": ": {{scripts}}",
+    "conflictsTitle": "Ownership conflicts (unassigned — you decide)",
+    "emptyHint": "Start with “Rescan”; use “Trial run” for scripts whose file names are only known at runtime.",
+    "emptyTitle": "The registry is empty",
+    "entry": "entry {{entry}}",
+    "introAfter": " badge (parameterizable editing). The registry lives in mm_registry.json inside the figure library and travels with it.",
+    "introBefore": "Only panels produced by a registered script get the",
+    "manualAria": "Stems for {{script}}",
+    "manualPlaceholder": "…or type stems manually, comma separated",
+    "noCandidates": "No unregistered script found.",
+    "none": "—",
+    "nothingNew": "Scan finished; no new registrable script was found",
+    "probeAndRegister": "Trial run and register",
+    "probeFailed": "Trial run of {{script}} failed: {{error}}",
+    "probeRegistered": "Registered {{stems}}",
+    "register": "Register",
+    "registeredTitle_one": "Registered ({{count}})",
+    "registeredTitle_other": "Registered ({{count}})",
+    "registered_one": "Registered {{count}} script",
+    "registered_other": "Registered {{count}} scripts",
+    "reprobe": "Run again",
+    "rescan": "Rescan",
+    "running": "Running…",
+    "runtimeOnlyTail": ". One trial run registers them from the real output.",
+    "runtimeOnly_one": "{{count}} save call found, but the file name is only known at runtime",
+    "runtimeOnly_other": "{{count}} save calls found, but the file names are only known at runtime",
+    "sourcePrefix": "Registry source: ",
+    "title": "Script registry",
+    "unresolved": " (no matching output on disk: {{names}})",
+    "write": "Write"
+  },
+  "relink": {
+    "assetOption": "{{name}} ({{folder}})",
+    "cancelDoc": "Not now",
+    "cancelPaste": "Cancel paste",
+    "confirmDoc": "Relink the selected assets",
+    "confirmPaste": "Paste with these choices",
+    "descDoc": "This layout references files that do not exist in the current figure library (common when opening a project package on another machine). Pick a replacement for each; panels you leave alone stay missing and will be flagged by the pre-export check.",
+    "descPaste": "Panels on the clipboard reference files that do not exist in the current figure library. Pick a replacement for each, or skip that panel.",
+    "footnote": "Relinking resets the figure edits to the new asset's size and script (overrides are bound to elements of the original script, so they do not transfer reliably). Position, size, stacking order and grouping are kept.",
+    "keepMissing": "Leave missing",
+    "refCount_one": " (referenced by {{count}} panel)",
+    "refCount_other": " (referenced by {{count}} panels)",
+    "selectAria": "Choose a replacement asset for {{name}}",
+    "skipPanel": "Skip this panel",
+    "titleDoc": "Panels in this document are missing assets",
+    "titlePaste": "The pasted panels are missing assets"
+  },
+  "settings": {
+    "about": {
+      "check": {
+        "bundled_runtime": "Bundled rendering environment",
+        "cli_claude": "Claude CLI",
+        "cli_codex": "Codex CLI",
+        "matplotlib": "matplotlib",
+        "project_open": "Project",
+        "project_readable": "Project folder readable",
+        "project_writable": "Project folder writable (needed for write-back)",
+        "registry_conflicts": "Registry stem ownership",
+        "worker_python": "Rendering engine Python"
+      },
+      "detecting": "Checking…",
+      "diagnosticsHintAfter": ".",
+      "diagnosticsHintBefore": "When something goes wrong, export a zip and send it to us: it contains the version, your platform, the rendering interpreter, AI CLI detection results and recent logs. ",
+      "diagnosticsHintStrong": "Keys and your home directory are redacted automatically",
+      "diagnosticsTitle": "Environment diagnostics",
+      "exportBundle": "Export a diagnostics bundle",
+      "licenseAfter": ".",
+      "licenseBefore": "Free software, released under AGPL-3.0-only —",
+      "privacy": "All data and rendering stay on this machine; nothing is uploaded. The assistant runs the Codex / Claude command-line tools installed locally. The only outbound request is the update check, which you can turn off under “Updates”.",
+      "source": "get the source",
+      "tagline": "Figure layout and parameterized chart editing for papers"
+    },
+    "ai": {
+      "addEndpoint": "Add endpoint…",
+      "addEndpointTitle": "Add an endpoint for {{agent}}",
+      "apiKey": "API key",
+      "apiKeySaved": "{{hint}} saved; leave empty to keep it",
+      "baseUrl": "Base URL",
+      "brokenAfter": " (usually a leftover Microsoft Store execution alias); skipped:",
+      "brokenBefore": "Found an installation that",
+      "brokenStrong": "cannot start",
+      "claudePath": "Claude path",
+      "codexPath": "Codex path",
+      "delete": "Delete",
+      "edit": "Edit",
+      "editEndpointTitle": "Edit endpoint — {{label}}",
+      "endpoint": "Endpoint",
+      "endpointAria": "Endpoint used by {{label}}",
+      "installError": {
+        "installed_but_not_found": "npm finished, but no usable CLI was detected. Restart the app and try again, or set the path manually below.",
+        "npm_missing": "npm not found: install Node.js LTS (nodejs.org) first.",
+        "other": "The install failed. Check the log or retry.",
+        "timeout": "The install timed out (slow network or unreachable npm registry). You can retry."
+      },
+      "installLog": "Install log",
+      "installWithNpm": "Install {{label}} with npm",
+      "installing": "Installing…",
+      "introAfter": ".",
+      "introBefore": "The assistant borrows the codex / claude command-line tools you already have. When you point it at a third-party endpoint, the environment variables are injected only while launching them —",
+      "introStrong": "your own ~/.claude or ~/.codex config is never rewritten",
+      "keyNote": "The key is stored in a local config file (the folder is readable only by you) and is passed to the CLI as an environment variable at launch. It never appears in a command line, a log or a project file.",
+      "models": "Models",
+      "modelsPlaceholder": "Comma separated; the first one is the default",
+      "name": "Name",
+      "noKeySuffix": " (no key set)",
+      "noNpm": "npm is not available on this machine. Install Node.js LTS (nodejs.org) first, then come back and click install.",
+      "notDetected": "not detected",
+      "npmCommand": "npm install -g {{package}}",
+      "officialBaseUrl": "(official default address)",
+      "officialLogin": "The CLI's own login (official)",
+      "pathPlaceholder": "Leave empty to search automatically (PATH and common install locations)",
+      "preset": "Preset",
+      "presetAria": "Endpoint preset",
+      "presetPlaceholder": "Pick a preset to fill in the address…",
+      "redetect": "Detect again",
+      "searchedHint": "If it is installed elsewhere, enter the executable's path below.",
+      "searchedSummary": "Places we looked",
+      "wire": "Protocol",
+      "wireChat": "chat (OpenAI Chat Completions compatible — most gateways)",
+      "wireResponses": "responses (native OpenAI Responses)"
+    },
+    "canvas": {
+      "companionsExplain": "Companion elements are titles, axis labels and legends you have positioned by hand, plus colorbar axes and twinx twins. They are either pinned to figure coordinates or are sibling axes, so without this they stay behind when the axes move. Turn it off to move only the axes themselves.",
+      "dragCompanions": "Drag axes with companions",
+      "dragCompanionsAria": "Bring companion elements along when dragging axes",
+      "dragCompanionsHint": "Companion elements move with the axes",
+      "elsewhere": "Grid, snapping, rulers and the safe area live on the “Canvas” tab of the right panel, next to the canvas itself.",
+      "openCanvasSettings": "Open canvas settings"
+    },
+    "export": {
+      "defaultDpi": "Default DPI",
+      "defaultFormats": "Default formats",
+      "hint": "These are the export dialog's starting values; a single export can still change them.",
+      "proof": "Proof record",
+      "proofAria": "Write a proof report with every export by default",
+      "proofHint": "Write a proof report (JSON record) alongside the output"
+    },
+    "general": {
+      "autosaveHint": "Changes are saved automatically: one second after you stop editing they are written to this machine (layouts/_autosave/). There is nothing to save manually; use “Save as canvas file” for a named version.",
+      "language": "Language",
+      "languageHint": "Affects the interface only. Project names, canvas names, scripts and text inside figures are never translated.",
+      "layoutReset": "Interface layout reset; reload the page to see it",
+      "resetLayout": "Reset the interface layout",
+      "resetLayoutHint": "Sidebar widths, snapping toggles and other interface preferences return to their defaults."
+    },
+    "navLabel": "Settings sections",
+    "project": {
+      "backupDir": "Backup folder",
+      "current": "Current project",
+      "defaultPlaceholder": "Default {{path}}",
+      "dirHint": "Leave a folder empty to use the default location. These settings are stored per project.",
+      "exportDir": "Export folder",
+      "noScriptsSuffix": " (panels cannot enter figure editing)",
+      "readOnly": "Read-only project",
+      "readOnlyAria": "Read-only project (write-back to original files disabled)",
+      "readOnlyHint": "When on, “Write back to the original file” is disabled and source figures are never overwritten",
+      "registry": "Script registry…",
+      "scriptCount_one": "{{count}} script registered",
+      "scriptCount_other": "{{count}} scripts registered",
+      "scripts": "Parameterizable scripts",
+      "switch": "Switch project…"
+    },
+    "section": {
+      "about": "Privacy, diagnostics and About",
+      "ai": "AI tools",
+      "canvas": "Canvas and editing",
+      "export": "Export defaults",
+      "general": "General",
+      "project": "Project and paths",
+      "shortcuts": "Shortcuts",
+      "sidebars": "Sidebar behaviour",
+      "update": "Updates"
+    },
+    "shortcuts": {
+      "hint": "Every shortcut is in the cheat sheet (press ? at any time).",
+      "open": "Open the shortcut cheat sheet"
+    },
+    "sidebars": {
+      "breakpoints": "At ≥1440px both sides can be pinned at once; between 1024 and 1439px they are mutually exclusive; below that the sidebars show as temporary overlays and pinning has no effect.",
+      "leftPinned": "Pin the left drawer",
+      "leftPinnedHint": "The asset drawer does not step aside when an object is selected",
+      "rightPinned": "Pin the right panel",
+      "rightPinnedHint": "The properties panel stays open when the selection is cleared"
+    },
+    "title": "Settings",
+    "update": {
+      "autoCheck": "Check automatically",
+      "autoCheckAria": "Check for updates daily",
+      "autoCheckHint": "Once a day; with this off, no network request is ever made",
+      "available": "Update available:",
+      "checkNow": "Check now",
+      "checking": "Checking…",
+      "currentIs": "current {{version}}",
+      "currentVersion": "Current version",
+      "downloadAndInstall": "Download and install",
+      "downloadAndUpgrade": "Download and upgrade",
+      "downloadProgressAria": "Downloading the update",
+      "downloading": "Downloading…",
+      "downloadingPct": "Downloading {{pct}}%",
+      "installMethod": "Installed via",
+      "installedHint": "Installed — this window is still the old version; restart to use the new one.",
+      "lastChecked": "Last checked: {{time}}",
+      "manualDownload": "If the update service is unreachable, you can also download from Releases manually",
+      "methodSource": "source checkout (upgrade with git pull)",
+      "neverChecked": "Never checked",
+      "relaunch": "Restart into the new version",
+      "releaseNotes": "Release notes",
+      "restartAfter": " to use it — this process is still running the old code.",
+      "restartBefore": "Upgrade complete. ",
+      "restartStrong": "Restart Magplot",
+      "signatureNote": "Update packages are officially signed and the shell verifies the signature before installing; a failed check means nothing is installed. Projects, canvases and settings live in the user data folder and are unaffected.",
+      "sourceUpgrade": "For a source checkout, run",
+      "upToDate": "You are on the latest version.",
+      "upgrading": "Upgrading…"
+    }
+  },
+  "style": {
+    "annotationCount_one": "Annotation text: {{count}}",
+    "annotationCount_other": "Annotation text: {{count}}",
+    "annotationText": "Annotation text",
+    "applyScope": "Scope",
+    "applyTo": "Apply to {{scope}}",
+    "bold": "Bold",
+    "confirmApply": "Apply",
+    "confirmBody_one": "This overwrites {{count}} existing figure edit ({{undo}} undoes all of it).",
+    "confirmBody_other": "This overwrites {{count}} existing figure edits ({{undo}} undoes all of it).",
+    "confirmTitle": "Apply style “{{name}}”?",
+    "deleteBody": "It cannot be recovered (edits already applied to the document are unaffected).",
+    "deleteStyleAria": "Delete style {{name}}",
+    "deleteTitle": "Delete style “{{name}}”?",
+    "description": "Save font sizes, line widths, ticks and palettes as a named style and apply it to panels in bulk. Only figure edits are written; source files are never touched.",
+    "descriptionEmpty": "Save font sizes, line widths, ticks and palettes as a named style and apply it in bulk. Only figure edits are written; source files are never touched.",
+    "emptyBody": "No styles saved yet. Select a rendered, parameterizable panel and extract its font sizes, line widths, ticks and palette as a starting point.",
+    "emptyDraft": "Empty style. Click “Extract from the current panel” to read the selected panel's font sizes, line widths, ticks and palette, then delete anything you don't want to unify and save.",
+    "extract": "Extract from the current panel",
+    "extractFrom": "Read the current values from “{{name}}”",
+    "extractNeedPanel": "Select a rendered, parameterizable panel to extract from",
+    "includePageSize": "Include page size",
+    "namePlaceholder": "Style name (e.g. “AMFE main text”)",
+    "nameRequired": "Give the style a name first",
+    "needPanel": "Select a rendered, parameterizable panel on the canvas first",
+    "newStyle": "New style",
+    "noPanelsPanel": "Select a parameterizable panel on the canvas first",
+    "noPanelsScope": "No parameterizable panel in this scope",
+    "noSavedStyles": "No styles saved yet",
+    "pageSizeSuffix": " ({{w}}×{{h}} mm)",
+    "pageSizeTo": "Page size → {{w}}×{{h}} mm",
+    "paletteTitle": "Series palette (cycled in the order lines / scatters / bars appear)",
+    "panelOverwrites_one": " (overwrites {{count}} existing edit)",
+    "panelOverwrites_other": " (overwrites {{count}} existing edits)",
+    "panelPatches_one": ": {{count}} item",
+    "panelPatches_other": ": {{count}} items",
+    "panelUnmappable_one": "; {{count}} item cannot be mapped",
+    "panelUnmappable_other": "; {{count}} items cannot be mapped",
+    "removeColor": "Remove colour",
+    "removeEntry": "Remove this item",
+    "roleLabel": {
+      "axes": "Axes frame",
+      "axis_label": "Axis label",
+      "bar_series": "Bar series",
+      "colorbar": "Colorbar",
+      "errorbar": "Error bars",
+      "legend": "Legend",
+      "line": "Lines",
+      "text": "Figure text",
+      "ticks": "Ticks",
+      "title": "Title"
+    },
+    "saved": "Saved style “{{name}}”",
+    "savedStyles": "Saved styles",
+    "scopeDocument": "Document",
+    "scopeLabel": {
+      "document": "the whole document",
+      "panel": "the current panel",
+      "sameScript": "every panel from the same script",
+      "selection": "the selected panels"
+    },
+    "scopePanel": "Panel",
+    "scopeSameScript": "Same script",
+    "scopeSelection": "Selection",
+    "subLabel": "Panel labels (a)(b)(c)",
+    "subLabelCount_one": "Panel labels: {{count}}",
+    "subLabelCount_other": "Panel labels: {{count}}",
+    "title": "Paper styles",
+    "unmappableDetails": "Unmappable details",
+    "unmappableEntry": "{{label}}: no “{{prop}}”",
+    "unrendered": "{{name}}: not rendered yet, so nothing can be mapped (enter figure editing once to render it)",
+    "untitled": "Untitled",
+    "untitledStyle": "Untitled style",
+    "willAffect": "Will affect",
+    "withAnnotations": "Include canvas annotations and panel labels"
+  },
+  "versions": {
+    "autoBadge": "auto",
+    "beforeRestore": "Before restore ({{time}})",
+    "close": "Close layout versions",
+    "compareAria": "Overlay comparison",
+    "compareDescription": "Base = this version; translucent outline = current layout",
+    "compareTip": "Large overlay comparison (base = this version, outline = current)",
+    "compareTitle": "Overlay comparison",
+    "delete": "Delete version",
+    "deleteBody": "A deleted version cannot be recovered (the current document is unaffected).",
+    "deleteTitle": "Delete version “{{name}}”?",
+    "diff": {
+      "added": "Added since: {{name}}",
+      "assetReplaced": "{{name}}: asset replaced",
+      "cropChanged": "{{name}}: crop changed",
+      "guides": "Guides: {{from}} → {{to}}",
+      "hidden": "{{name}}: hidden",
+      "locked": "{{name}}: locked",
+      "moved": "{{name}}: moved {{dx}}, {{dy}} mm",
+      "movedAndResized": "{{name}}: position and size changed",
+      "overrides": "{{name}}: figure edits {{from}} → {{to}}",
+      "pageBackground": "Page background settings differ",
+      "pageMargin": "Safe-area margin: {{a}} → {{b}} mm",
+      "pageSize": "Page size: {{aw}}×{{ah}} → {{bw}}×{{bh}} mm",
+      "removed": "Deleted since: {{name}}",
+      "resized": "{{name}}: size changed",
+      "rotationChanged": "{{name}}: rotation {{from}}° → {{to}}°",
+      "shown": "{{name}}: shown",
+      "textChanged": "{{name}}: text content changed",
+      "textStyleChanged": "{{name}}: text style changed",
+      "unlocked": "{{name}}: unlocked",
+      "zorder": "Stacking order differs"
+    },
+    "drawerLabel": "Layout version timeline",
+    "duplicate": "Duplicate version",
+    "emptyHint": "Use “Save version”, or keep editing and checkpoints appear automatically after a few minutes.",
+    "emptyTitle": "No versions yet",
+    "intro": "Server-side snapshots of the whole layout. Restoring creates a new version, is undoable, and never touches a source file.",
+    "keep": "Keep",
+    "keepTitle": "Automatic checkpoints are cleaned up over time; promoting one keeps it like a manual version",
+    "listLabel": "Version list",
+    "loadingSnapshot": "Loading the snapshot…",
+    "metaObjects_one": "{{time}} · {{count}} object",
+    "metaObjects_other": "{{time}} · {{count}} objects",
+    "metaPage": " · {{w}}×{{h}}mm",
+    "namePlaceholder": "Version name (optional)",
+    "noDiff": "No differences from the current layout",
+    "rename": "Rename version",
+    "restore": "Restore as a new version",
+    "restoreHistory": "Restore layout version “{{name}}”",
+    "restored": "Restored layout version “{{name}}” (undoable; no source file was touched)",
+    "save": "Save version",
+    "saved": "Saved the current layout as a new version",
+    "title": "Layout versions",
+    "versionName": "Version name",
+    "viewCurrent": "Current",
+    "viewVersion": "This version"
+  }
+}

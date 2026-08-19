@@ -1,6 +1,9 @@
 import { useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { FileUp, ShieldAlert, TriangleAlert } from 'lucide-react'
 import { ApiError, updateSourceFiles, type WriteBackDiff } from '@/lib/api'
+import { msg, t as translate } from '@/i18n'
+import { listJoin } from '@/i18n/format'
 import {
   annotationsBlocked,
   collectPanelAnnotations,
@@ -19,6 +22,10 @@ import { Toggle } from '../ui/Toggle'
 import { Tip } from '../ui/Tooltip'
 
 const stemOf = (fileId: string) => fileId.split('/').pop()?.replace(/\.[^.]+$/, '') ?? fileId
+
+/** 本组文案在 inspector:writeBack.* 下 */
+const wb = (key: string, values?: Record<string, unknown>) =>
+  translate(`writeBack.${key}`, { ns: 'inspector', ...(values ?? {}) })
 
 /**
  * 把图内修改按全质量写回 figures 目录里的原始 PDF/PNG。
@@ -75,11 +82,15 @@ async function runWriteBack(
           : verified + res.verification.elements
       if (res.post_check === 'size_mismatch') sizeMismatch = true
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
+      const detail = e instanceof Error ? e.message : String(e)
       throw new WriteBackFailure(
         updated.length
-          ? `${stemOf(p.fileId)} 写回失败：${msg}（已完成：${updated.join('、')}）`
-          : `${stemOf(p.fileId)} 写回失败：${msg}`,
+          ? wb('failedPartial', {
+              stem: stemOf(p.fileId),
+              error: detail,
+              done: listJoin(updated),
+            })
+          : wb('failed', { stem: stemOf(p.fileId), error: detail }),
         e instanceof ApiError ? e : null,
       )
     }
@@ -92,17 +103,19 @@ async function runWriteBack(
  * 文案必须说清楚「为什么被拦」和「该做什么」，否则用户只会反复点确认。
  */
 function BlockedNotice({ error }: { error: WriteBackFailure }) {
+  useTranslation('inspector')
   const body = (error.api?.body ?? {}) as {
     code?: string
     file?: string
     script?: string
     diffs?: WriteBackDiff[]
   }
+  // 后端只给稳定 code + 参数，人话在前端按当前语言拼（见 docs/i18n.md）
   const detail =
     body.code === 'source_changed'
-      ? `素材 ${body.file ?? ''} 已被本工具之外改动。请刷新素材面板（重新载入图库）确认当前内容后再写回。`
+      ? wb('sourceChanged', { file: body.file ?? '' })
       : body.code === 'script_changed'
-        ? `生成脚本 ${body.script ?? ''} 在本次编辑期间被改过，当前渲染的仍是旧代码。请重新渲染该面板，确认效果后再写回。`
+        ? wb('scriptChanged', { script: body.script ?? '' })
         : null
 
   if (body.code === 'replay_divergence') {
@@ -112,9 +125,8 @@ function BlockedNotice({ error }: { error: WriteBackFailure }) {
         <p className="flex items-start gap-1.5 text-xs leading-relaxed text-ink">
           <ShieldAlert size={12} className="mt-0.5 shrink-0 text-danger" />
           <span>
-            <b className="font-medium">写回已阻断</b>
-            ：当前编辑状态与「重开项目后重放一遍」的结果不一致，原文件未做任何改动。
-            这属于引擎级问题，请把下面的信息报告给开发者。
+            <b className="font-medium">{wb('divergenceTitle')}</b>
+            {wb('divergenceBody')}
           </span>
         </p>
         {diffs.length > 0 && (
@@ -125,7 +137,7 @@ function BlockedNotice({ error }: { error: WriteBackFailure }) {
               </li>
             ))}
             {diffs.length > 5 && (
-              <li className="text-[11px] text-ink-3">另有 {diffs.length - 5} 处…</li>
+              <li className="text-[11px] text-ink-3">{wb('moreDiffs', { count: diffs.length - 5 })}</li>
             )}
           </ul>
         )}
@@ -139,7 +151,7 @@ function BlockedNotice({ error }: { error: WriteBackFailure }) {
       </p>
     )
   }
-  return <p className="text-xs text-danger">更新失败：{error.message}</p>
+  return <p className="text-xs text-danger">{wb('updateFailed', { error: error.message })}</p>
 }
 
 export function WriteBackDialog({
@@ -151,6 +163,7 @@ export function WriteBackDialog({
   open: boolean
   onOpenChange: (v: boolean) => void
 }) {
+  useTranslation('inspector')
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<WriteBackResult | null>(null)
   const [error, setError] = useState<WriteBackFailure | null>(null)
@@ -195,9 +208,11 @@ export function WriteBackDialog({
       if (useAnn) {
         // 标注已经烙进原图：画布上的原件移除（可撤销），否则成图里会出现两份
         const ids = [...annMap.values()].flatMap((a) => a.objectIds)
-        useDocumentStore.getState().commit(`标注写回原图（${ids.length} 条）`, (d) => {
-          d.objects = d.objects.filter((o) => !ids.includes(o.id))
-        })
+        useDocumentStore
+          .getState()
+          .commit(msg('history.annotationsWrittenBack', { count: ids.length }, 'inspector'), (d) => {
+            d.objects = d.objects.filter((o) => !ids.includes(o.id))
+          })
         useSelectionStore.getState().clear()
       }
       // 重拉面板列表拿到新 mtime；所有图片 URL 带 m 参数，缩略图与画布面板都会自动重取
@@ -205,9 +220,17 @@ export function WriteBackDialog({
       useUiStore
         .getState()
         .setStatus(
-          `已写回原始文件：${res.updated.join('、')}` +
-            (useAnn ? `（含 ${annCount} 条标注，` : '（') +
-            `备份在 ${res.backup_dir}）`,
+          useAnn
+            ? msg(
+                'writeBack.statusWithAnnotations',
+                { files: listJoin(res.updated), count: annCount, dir: res.backup_dir },
+                'inspector',
+              )
+            : msg(
+                'writeBack.statusPlain',
+                { files: listJoin(res.updated), dir: res.backup_dir },
+                'inspector',
+              ),
         )
     } catch (e) {
       setError(
@@ -231,33 +254,33 @@ export function WriteBackDialog({
           setWithAnnotations(false)
         }
       }}
-      title="写回原始文件"
+      title={wb('title')}
       description={
         panels.length === 1
-          ? `${panels[0]?.overrides.length ?? 0} 处图内修改将覆盖磁盘上的原始文件`
-          : `${panels.length} 个面板的图内修改将覆盖磁盘上的原始文件`
+          ? wb('descOne', { count: panels[0]?.overrides.length ?? 0 })
+          : wb('descMany', { count: panels.length })
       }
       size="md"
       busy={busy}
       footer={
         result ? (
           <Button variant="outline" size="md" onClick={() => onOpenChange(false)}>
-            完成
+            {wb('done')}
           </Button>
         ) : (
           <>
             <Button variant="outline" size="md" disabled={busy} onClick={() => onOpenChange(false)}>
-              取消
+              {translate('actions.cancel')}
             </Button>
             <Button
               variant="primary"
               size="md"
               loading={busy}
-              loadingLabel="正在重出…"
+              loadingLabel={wb('rewriting')}
               onClick={run}
             >
               <FileUp size={14} />
-              确认写回
+              {wb('confirm')}
             </Button>
           </>
         )
@@ -265,7 +288,7 @@ export function WriteBackDialog({
     >
       {result ? (
         <div className="flex flex-col gap-2">
-          <p className="text-xs text-ink-2">已更新以下文件：</p>
+          <p className="text-xs text-ink-2">{wb('updatedIntro')}</p>
           <ul className="flex flex-col gap-0.5 rounded-sm border border-border bg-surface-2 p-2">
             {result.updated.map((f) => (
               <li key={f} className="font-mono text-xs text-ink">
@@ -274,20 +297,15 @@ export function WriteBackDialog({
             ))}
           </ul>
           <p className="text-xs leading-relaxed text-ink-3">
-            原文件已备份到
+            {wb('backupPrefix')}
             <span className="mx-1 font-mono text-ink-2">{result.backup_dir}</span>
-            需要时可从那里取回。
+            {wb('backupSuffix')}
           </p>
           {result.verified !== null && (
-            <p className="text-xs text-ink-3">
-              已通过干净重放校验（{result.verified} 个元素一致）
-            </p>
+            <p className="text-xs text-ink-3">{wb('verified', { count: result.verified })}</p>
           )}
           {result.sizeMismatch && (
-            <p className="text-xs leading-relaxed text-danger">
-              写回后的页面尺寸与重放结果对不上。文件已替换，原件仍在备份目录里，
-              建议核对后从备份取回并报告给开发者。
-            </p>
+            <p className="text-xs leading-relaxed text-danger">{wb('sizeMismatch')}</p>
           )}
         </div>
       ) : (
@@ -296,34 +314,36 @@ export function WriteBackDialog({
             <TriangleAlert size={12} className="mt-0.5 shrink-0 text-danger" />
             <div className="text-xs leading-relaxed text-ink-2">
               <p>
-                <b className="font-medium text-ink">覆盖</b>：用当前的图内修改重出
+                <b className="font-medium text-ink">{wb('overwriteLabel')}</b>
+                {wb('overwriteBody')}
                 <span className="mx-1 font-mono text-ink">
-                  {stems.map((s) => `${s}.pdf / ${s}.png`).join('，')}
+                  {listJoin(stems.map((stem) => `${stem}.pdf / ${stem}.png`))}
                 </span>
-                并替换 figures 目录里的同名文件。
+                {wb('overwriteTail')}
               </p>
               <p className="mt-1">
-                <b className="font-medium text-ink">备份</b>：覆盖前自动把原文件复制到
+                <b className="font-medium text-ink">{wb('backupLabel')}</b>
+                {wb('backupBody')}
                 <span className="mx-1 break-all font-mono text-ink-2">{backupDir}</span>
-                按时间戳分目录存放。
+                {wb('backupTail')}
               </p>
               <p className="mt-1">
-                <b className="font-medium text-ink">恢复</b>：面板的「历史」里可回到任一版本；
-                也可直接从备份目录把文件拷回来。生成图的脚本不会被改动。
+                <b className="font-medium text-ink">{wb('restoreLabel')}</b>
+                {wb('restoreBody')}
               </p>
             </div>
           </div>
           {annCount > 0 ? (
             <label
               className="flex items-center gap-1.5 text-xs text-ink-2"
-              title="压在面板上的画布箭头/文字/形状按当前位置矢量画进原 PDF（PNG 同步重出），写回后从画布移除（可撤销）"
+              title={wb('annotationsTitle')}
             >
               <Toggle checked={withAnnotations} onChange={setWithAnnotations} />
-              连同画布标注一并写回（{annCount} 条）
+              {wb('withAnnotations', { count: annCount })}
             </label>
           ) : (
             blockedReason && (
-              <p className="text-xs text-ink-3">画布标注无法随写回：{blockedReason}。</p>
+              <p className="text-xs text-ink-3">{wb('annotationsBlocked', { reason: blockedReason })}</p>
             )
           )}
           {error && <BlockedNotice error={error} />}
@@ -335,6 +355,7 @@ export function WriteBackDialog({
 
 /** 属性页入口：作用于当前选中的单个面板 */
 export function UpdateSourceButton({ panel }: { panel: PanelObject }) {
+  useTranslation('inspector')
   const [open, setOpen] = useState(false)
   // 项目级只读：按钮保留但禁用，原因写在 title 里
   const readOnly = useProjectStore((s) => s.project?.settings?.allow_write_back === false)
@@ -346,17 +367,17 @@ export function UpdateSourceButton({ panel }: { panel: PanelObject }) {
         size="sm"
         className="flex-1"
         disabled={!panel.overrides.length || readOnly}
-        title={
+        title={wb(
           readOnly
-            ? '该项目已设为只读：不允许写回原始文件（可在项目设置中恢复可写）'
+            ? 'readOnlyTitle'
             : panel.overrides.length
-              ? '用当前图内修改覆盖 figures 里的原始 PDF/PNG'
-              : '还没有可写回的图内修改'
-        }
+              ? 'hasOverridesTitle'
+              : 'noOverridesTitle',
+        )}
         onClick={() => setOpen(true)}
       >
         <FileUp size={13} />
-        写回原始文件
+        {wb('buttonLabel')}
       </Button>
       <WriteBackDialog panels={[panel]} open={open} onOpenChange={setOpen} />
     </>
@@ -396,18 +417,19 @@ export function useWriteBackTargets(): PanelObject[] {
 
 /** 顶栏入口：高频动作常驻在「导出」左侧；无可写回内容时禁用而不消失 */
 export function WriteBackTopBarButton() {
+  useTranslation('inspector')
   const [open, setOpen] = useState(false)
   const targets = useWriteBackTargets()
   const readOnly = useProjectStore((s) => s.project?.settings?.allow_write_back === false)
   const disabled = !targets.length || readOnly
 
   const tip = readOnly
-    ? '项目已设为只读，不允许写回原始文件'
+    ? wb('topBarReadOnly')
     : !targets.length
-      ? '还没有可写回的图内修改'
+      ? wb('noOverridesTitle')
       : targets.length === 1
-        ? `写回原始文件：${stemOf(targets[0].fileId)}`
-        : `写回原始文件：${targets.length} 个面板`
+        ? wb('topBarOne', { stem: stemOf(targets[0].fileId) })
+        : wb('topBarMany', { count: targets.length })
 
   return (
     <>
@@ -416,11 +438,11 @@ export function WriteBackTopBarButton() {
           variant="outline"
           size="md"
           disabled={disabled}
-          aria-label="写回原始文件"
+          aria-label={wb('buttonLabel')}
           onClick={() => setOpen(true)}
         >
           <FileUp size={14} />
-          写回{targets.length > 1 ? ` ${targets.length}` : ''}
+          {targets.length > 1 ? wb('topBarShortCount', { count: targets.length }) : wb('topBarShort')}
         </Button>
       </Tip>
       <WriteBackDialog panels={targets} open={open} onOpenChange={setOpen} />

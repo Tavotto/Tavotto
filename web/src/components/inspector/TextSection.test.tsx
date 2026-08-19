@@ -12,6 +12,7 @@
  * 第 3 条断言的是「事件没被认领」（defaultPrevented=false + 文本不变），
  * 光标真移动那一半由浏览器自己保证。
  */
+import { literal } from '@/i18n'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -68,7 +69,7 @@ beforeEach(async () => {
   localStorage.clear()
   useSelectionStore.getState().clear()
   await s().switchDocument(emptyProject(), 'd_textsection')
-  s().commit('放入对象', (d) => {
+  s().commit(literal('放入对象'), (d) => {
     d.objects.push(textObj())
   })
   container = document.createElement('div')
@@ -173,7 +174,7 @@ describe('Mod+↑ / Mod+↓ 在文字框里', () => {
 
     // 退回原文再用按钮走一遍
     act(() => {
-      s().commit('复位', (d) => {
+      s().commit(literal('复位'), (d) => {
         const o = d.objects[0]
         if (o.type === 'text') o.text = 'H2O'
       })

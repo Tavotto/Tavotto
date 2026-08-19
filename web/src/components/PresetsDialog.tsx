@@ -1,4 +1,12 @@
-import { insertPreset, insertSymbol, PRESETS, SYMBOLS } from '@/lib/presets'
+import { useTranslation } from 'react-i18next'
+import {
+  insertPreset,
+  insertSymbol,
+  PRESET_IDS,
+  presetHint,
+  presetLabel,
+  SYMBOLS,
+} from '@/lib/presets'
 import { Button } from './ui/Button'
 import { Dialog } from './ui/Dialog'
 
@@ -7,29 +15,30 @@ import { Dialog } from './ui/Dialog'
  * 点击即插入到视口中心并关闭；全部可 ⌘Z 撤销。
  */
 export function PresetsDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { t } = useTranslation('dialogs')
   if (!open) return null
   return (
-    <Dialog open onOpenChange={(v) => !v && onClose()} title="科研预设" size="md">
+    <Dialog open onOpenChange={(v) => !v && onClose()} title={t('presets.title')} size="md">
       <div className="flex flex-col gap-3">
         <div className="grid grid-cols-2 gap-1.5">
-          {PRESETS.map((p) => (
+          {PRESET_IDS.map((id) => (
             <Button
-              key={p.id}
+              key={id}
               variant="outline"
               size="md"
               className="justify-start"
-              title={p.hint}
+              title={presetHint(id)}
               onClick={() => {
-                insertPreset(p.id)
+                insertPreset(id)
                 onClose()
               }}
             >
-              {p.label}
+              {presetLabel(id)}
             </Button>
           ))}
         </div>
         <div>
-          <h3 className="mb-1 text-xs font-medium text-ink-2">常用符号</h3>
+          <h3 className="mb-1 text-xs font-medium text-ink-2">{t('presets.symbolsHeading')}</h3>
           <div className="grid grid-cols-8 gap-0.5">
             {SYMBOLS.map((s) => (
               <button
@@ -38,7 +47,7 @@ export function PresetsDialog({ open, onClose }: { open: boolean; onClose: () =>
                   insertSymbol(s)
                   onClose()
                 }}
-                aria-label={`插入符号 ${s}`}
+                aria-label={t('presets.insertSymbolAria', { symbol: s })}
                 className="flex h-8 items-center justify-center rounded-sm text-sm text-ink outline-none hover:bg-ink/[.055] focus-visible:focus-ring"
                 style={{ fontFamily: 'var(--font-doc)' }}
               >

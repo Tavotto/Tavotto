@@ -1,4 +1,5 @@
 import ReactMarkdown, { type Components } from 'react-markdown'
+import { t } from '@/i18n'
 import remarkGfm from 'remark-gfm'
 
 /**
@@ -88,7 +89,11 @@ const components: Components = {
     <td className="border border-border px-1.5 py-1 align-top break-words text-ink-2">{children}</td>
   ),
 
-  img: ({ alt }) => <span className="text-xs text-ink-3">[图片：{alt || '未命名'}]</span>,
+  img: ({ alt }) => (
+    <span className="text-xs text-ink-3">
+      {t('markdown.image', { ns: 'ai', alt: alt || t('markdown.untitled', { ns: 'ai' }) })}
+    </span>
+  ),
 }
 
 export function Markdown({ text }: { text: string }) {

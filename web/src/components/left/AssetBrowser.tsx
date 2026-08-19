@@ -1,4 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { t as translate } from '@/i18n'
 import { Braces, ListFilter, Plus, RotateCw, Search, X,
   SearchX,
   ImageOff,
@@ -26,18 +28,23 @@ const formatOf = (p: PanelInfo) => (p.kind === 'pdf' ? 'PDF' : 'PNG')
 type TypeFilter = 'all' | 'pdf' | 'raster' | 'script'
 type SortKey = 'name' | 'recent' | 'used'
 
-const TYPE_OPTIONS: { value: TypeFilter; label: string }[] = [
-  { value: 'all', label: '全部类型' },
-  { value: 'pdf', label: 'PDF' },
-  { value: 'raster', label: '图片' },
-  { value: 'script', label: '可参数化' },
-]
+/** 本组文案在 workspace:assets.* 下 */
+const ab = (key: string, values?: Record<string, unknown>) =>
+  translate(`assets.${key}`, { ns: 'workspace', ...(values ?? {}) })
 
-const SORT_OPTIONS: { value: SortKey; label: string }[] = [
-  { value: 'name', label: '按名称' },
-  { value: 'recent', label: '最近使用' },
-  { value: 'used', label: '使用次数' },
-]
+const TYPE_VALUES: TypeFilter[] = ['all', 'pdf', 'raster', 'script']
+const SORT_VALUES: SortKey[] = ['name', 'recent', 'used']
+
+/** PDF 是格式名，不翻译；其余按 key 取当前语言 */
+const typeLabel = (v: TypeFilter) =>
+  v === 'pdf'
+    ? 'PDF'
+    : ab(v === 'all' ? 'typeAll' : v === 'raster' ? 'typeRaster' : 'typeScript')
+const sortLabel = (v: SortKey) =>
+  ab(v === 'name' ? 'sortName' : v === 'recent' ? 'sortRecent' : 'sortUsed')
+
+const typeOptions = () => TYPE_VALUES.map((value) => ({ value, label: typeLabel(value) }))
+const sortOptions = () => SORT_VALUES.map((value) => ({ value, label: sortLabel(value) }))
 
 interface Filters {
   source: string
@@ -139,13 +146,9 @@ export function AssetBrowser() {
   /** 非默认筛选条件 → 可移除的标签 */
   const chips: { key: keyof Filters; label: string }[] = []
   if (source !== 'all') chips.push({ key: 'source', label: folderLabel(source) })
-  if (type !== 'all') {
-    chips.push({ key: 'type', label: TYPE_OPTIONS.find((o) => o.value === type)?.label ?? type })
-  }
-  if (usedOnly) chips.push({ key: 'usedOnly', label: '已使用' })
-  if (sort !== 'name') {
-    chips.push({ key: 'sort', label: SORT_OPTIONS.find((o) => o.value === sort)?.label ?? sort })
-  }
+  if (type !== 'all') chips.push({ key: 'type', label: typeLabel(type) })
+  if (usedOnly) chips.push({ key: 'usedOnly', label: ab('usedChip') })
+  if (sort !== 'name') chips.push({ key: 'sort', label: sortLabel(sort) })
 
   const clearChip = (key: keyof Filters) =>
     setFilters((f) => ({ ...f, [key]: DEFAULT_FILTERS[key] }))
@@ -160,8 +163,8 @@ export function AssetBrowser() {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => e.stopPropagation()}
-              placeholder="搜索面板…"
-              aria-label="搜索面板"
+              placeholder={ab('search')}
+              aria-label={ab('searchAria')}
               className={cn(
                 'h-7 w-full rounded-sm border border-transparent bg-surface-2 pl-6.5 pr-1.5 text-xs',
                 'text-ink placeholder:text-ink-faint outline-none transition-colors',
@@ -171,14 +174,14 @@ export function AssetBrowser() {
           </div>
           {/* 一键只看可参数化：等价于筛选弹层里的类型=可参数化，走同一份状态，
               生效时下方出现同一个可移除的筛选标签 */}
-          <Tip label="只看可参数化面板">
+          <Tip label={ab('scriptOnly')}>
             <Button
               size="icon-sm"
               active={type === 'script'}
               onClick={() =>
                 setFilters((f) => ({ ...f, type: f.type === 'script' ? 'all' : 'script' }))
               }
-              aria-label="只看可参数化面板"
+              aria-label={ab('scriptOnly')}
               aria-pressed={type === 'script'}
             >
               <Braces size={12} />
@@ -190,20 +193,24 @@ export function AssetBrowser() {
             activeCount={chips.length}
             onChange={setFilters}
           />
-          <Tip label="重新扫描素材目录">
-            <Button size="icon-sm" onClick={() => useAssetStore.getState().load()} aria-label="重新扫描">
+          <Tip label={ab('rescanTip')}>
+            <Button
+              size="icon-sm"
+              onClick={() => useAssetStore.getState().load()}
+              aria-label={ab('rescan')}
+            >
               <RotateCw size={12} className={loading ? 'animate-spin text-ink-3' : 'text-ink-2'} />
             </Button>
           </Tip>
         </div>
 
         {chips.length > 0 && (
-          <div className="flex flex-wrap gap-1" aria-label="生效中的筛选">
+          <div className="flex flex-wrap gap-1" aria-label={ab('activeFilters')}>
             {chips.map((c) => (
               <button
                 key={c.key}
                 onClick={() => clearChip(c.key)}
-                aria-label={`移除筛选：${c.label}`}
+                aria-label={ab('removeFilter', { label: c.label })}
                 className={cn(
                   'flex h-6 items-center gap-1 rounded-sm bg-accent-subtle px-1.5 text-xs text-accent',
                   'outline-none transition-colors hover:bg-accent/15 focus-visible:focus-ring',
@@ -218,11 +225,11 @@ export function AssetBrowser() {
       </div>
 
       {loading && loaded && (
-        <p className="px-3 py-1 text-xs text-ink-3">正在重新扫描…</p>
+        <p className="px-3 py-1 text-xs text-ink-3">{ab('rescanning')}</p>
       )}
       {error && loaded && (
         <p className="bg-danger-subtle px-3 py-1.5 text-xs text-danger">
-          刷新失败：{error}
+          {ab('refreshFailed', { error })}
         </p>
       )}
 
@@ -230,9 +237,9 @@ export function AssetBrowser() {
         {error && !loaded && (
           <EmptyState
             icon={TriangleAlert}
-            title="素材库读取失败"
+            title={ab('loadFailed')}
             hint={error}
-            action={{ label: '重试', onClick: () => void useAssetStore.getState().load() }}
+            action={{ label: ab('retry'), onClick: () => void useAssetStore.getState().load() }}
           />
         )}
 
@@ -240,12 +247,12 @@ export function AssetBrowser() {
 
         {loaded && !error && items.length === 0 && (
           query || chips.length ? (
-            <EmptyState icon={SearchX} title="没有符合条件的面板" />
+            <EmptyState icon={SearchX} title={ab('noMatch')} />
           ) : (
             <EmptyState
               icon={ImageOff}
-              title="项目里还没有可用面板"
-              hint="把 matplotlib 输出的 PDF/PNG 放进项目目录即可出现在这里。"
+              title={ab('emptyTitle')}
+              hint={ab('emptyHint')}
             />
           )
         )}
@@ -253,7 +260,7 @@ export function AssetBrowser() {
         {items.length > 0 && (
           <ul
             role="listbox"
-            aria-label="素材面板"
+            aria-label={ab('listLabel')}
             className="grid gap-2"
             style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
           >
@@ -297,7 +304,7 @@ export function AssetBrowser() {
             }}
           >
             <Plus size={14} />
-            加入画布
+            {ab('addToCanvas')}
           </Button>
         }
       >
@@ -305,7 +312,7 @@ export function AssetBrowser() {
           <div className="flex items-center justify-center rounded-sm border border-border bg-white p-2">
             <img
               src={renderUrl(zoomed.id, 800, zoomed.mtime)}
-              alt={`${fileName(zoomed.id)} 大图预览`}
+              alt={ab('zoomAlt', { name: fileName(zoomed.id) })}
               className="max-h-[56vh] max-w-full object-contain"
             />
           </div>
@@ -327,6 +334,7 @@ function FilterButton({
   activeCount: number
   onChange: (f: Filters) => void
 }) {
+  useTranslation('workspace')
   const patch = (p: Partial<Filters>) => onChange({ ...filters, ...p })
   return (
     <Popover
@@ -336,53 +344,53 @@ function FilterButton({
         <Button
           size="icon-sm"
           active={activeCount > 0}
-          aria-label={activeCount ? `筛选（${activeCount} 项生效）` : '筛选'}
+          aria-label={activeCount ? ab('filterActiveAria', { count: activeCount }) : ab('filterAria')}
         >
           <ListFilter size={13} className={activeCount ? undefined : 'text-ink-2'} />
         </Button>
       }
     >
       <div className="flex flex-col gap-1.5">
-        <Row label="来源" labelWidth={36}>
+        <Row label={ab('source')} labelWidth={36}>
           <Select
             className="min-w-0 flex-1"
             value={filters.source}
             onChange={(source) => patch({ source })}
-            ariaLabel="来源筛选"
+            ariaLabel={ab('sourceAria')}
             options={[
-              { value: 'all', label: '全部来源' },
+              { value: 'all', label: ab('sourceAll') },
               ...folders.map((f) => ({ value: f, label: folderLabel(f) })),
             ]}
           />
         </Row>
-        <Row label="类型" labelWidth={36}>
+        <Row label={ab('type')} labelWidth={36}>
           <Select
             className="min-w-0 flex-1"
             value={filters.type}
             onChange={(type) => patch({ type })}
-            ariaLabel="类型筛选"
-            options={TYPE_OPTIONS}
+            ariaLabel={ab('typeAria')}
+            options={typeOptions()}
           />
         </Row>
-        <Row label="排序" labelWidth={36}>
+        <Row label={ab('sort')} labelWidth={36}>
           <Select
             className="min-w-0 flex-1"
             value={filters.sort}
             onChange={(sort) => patch({ sort })}
-            ariaLabel="排序方式"
-            options={SORT_OPTIONS}
+            ariaLabel={ab('sortAria')}
+            options={sortOptions()}
           />
         </Row>
-        <Row label="已使用" labelWidth={36}>
+        <Row label={ab('usedOnly')} labelWidth={36}>
           <Toggle
             checked={filters.usedOnly}
             onChange={(usedOnly) => patch({ usedOnly })}
-            aria-label="只看当前文档已使用的素材"
+            aria-label={ab('usedOnlyAria')}
           />
         </Row>
         {activeCount > 0 && (
           <Button size="sm" className="self-end text-ink-2" onClick={() => onChange(DEFAULT_FILTERS)}>
-            重置筛选
+            {ab('resetFilters')}
           </Button>
         )}
       </div>
@@ -436,13 +444,17 @@ function AssetCard({
   onMove: (delta: number) => void
   columns: number
 }) {
+  useTranslation('workspace')
   const name = fileName(panel.id)
   const label = [
     name,
     formatOf(panel),
-    panel.script ? '可参数化' : null,
-    `${formatCm(panel.native_w_mm)}×${formatCm(panel.native_h_mm)} 厘米`,
-    used ? `当前文档已用 ${used} 次` : null,
+    panel.script ? ab('cardParameterizable') : null,
+    ab('cardSize', {
+      w: formatCm(panel.native_w_mm),
+      h: formatCm(panel.native_h_mm),
+    }),
+    used ? ab('cardUsed', { count: used }) : null,
   ]
     .filter(Boolean)
     .join('，')
@@ -480,7 +492,7 @@ function AssetCard({
           onMove(step[e.key])
         }
       }}
-      title={`${panel.id}\n单击选中 · Enter 加入画布 · 空格看大图 · 也可直接拖到画布`}
+      title={ab('cardTitle', { id: panel.id })}
       className={cn(
         'group relative cursor-grab overflow-hidden rounded-sm border bg-surface outline-none',
         'transition-colors active:cursor-grabbing',
@@ -507,7 +519,7 @@ function AssetCard({
           {panel.script && (
             <span
               className="flex h-4 w-4 items-center justify-center rounded-[3px] bg-ink/[.55] text-white"
-              title="可参数化：由 matplotlib 脚本生成"
+              title={ab('scriptBadgeTitle')}
             >
               <Braces size={10} />
             </span>
@@ -517,7 +529,7 @@ function AssetCard({
         {used > 0 && (
           <span
             className="pointer-events-none absolute right-1 top-1 rounded-[3px] bg-ink/[.55] px-1 font-mono text-xs leading-4 text-white"
-            title={`当前文档已用 ${used} 次`}
+            title={ab('cardUsed', { count: used })}
           >
             ×{used}
           </span>
@@ -527,7 +539,7 @@ function AssetCard({
           size="sm"
           variant="outline"
           tabIndex={-1}
-          aria-label={`把 ${name} 加入画布`}
+          aria-label={ab('addAria', { name })}
           onClick={(e) => {
             e.stopPropagation()
             onAdd()
@@ -539,7 +551,7 @@ function AssetCard({
           )}
         >
           <Plus size={11} />
-          加入画布
+          {ab('addToCanvas')}
         </Button>
       </div>
 
@@ -552,8 +564,11 @@ function AssetCard({
           {name}
         </p>
         <p className="truncate font-mono text-xs leading-4 text-ink-3">
-          {formatCm(panel.native_w_mm)}×{formatCm(panel.native_h_mm)}cm
-          {used ? ` · 已用 ${used} 次` : ''}
+          {translate('measure.cmSize', {
+            w: formatCm(panel.native_w_mm),
+            h: formatCm(panel.native_h_mm),
+          })}
+          {used ? ab('usedSuffix', { count: used }) : ''}
         </p>
       </div>
     </li>
@@ -562,6 +577,7 @@ function AssetCard({
 
 /** 目录路径是排查用信息，收进可折叠的一行 */
 function FolderInfo({ dir, shown, total }: { dir: string; shown: number; total: number }) {
+  useTranslation('workspace')
   const [open, setOpen] = useState(false)
   return (
     <div className="shrink-0 px-3 py-1.5">
@@ -570,7 +586,7 @@ function FolderInfo({ dir, shown, total }: { dir: string; shown: number; total: 
         aria-expanded={open}
         className="flex w-full items-center gap-1 rounded-sm text-left text-xs text-ink-3 outline-none hover:text-ink-2 focus-visible:focus-ring"
       >
-        文件夹信息
+        {ab('folderInfo')}
         <span className="ml-auto font-mono">
           {shown === total ? total : `${shown} / ${total}`}
         </span>

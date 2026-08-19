@@ -13,6 +13,7 @@ import {
   adapterFor,
   applyStyleEdit,
   canPreviewStyle,
+  canStyleEditApply,
   restoreStyleEdits,
   unitsPerPt,
   type StyleEdit,
@@ -86,6 +87,11 @@ describe('能力表是白名单', () => {
     expect(canPreviewStyle('axes', 'xlim')).toBe(false)
     expect(canPreviewStyle('axes', 'position')).toBe(false)
     expect(canPreviewStyle('colorbar', 'cmap')).toBe(false)
+    // patch 的样式在表里，但**「填充」那个开关不在**：空心 patch 的 SVG 是
+    // `fill: none`，把它换成颜色是新增语义，通用规则不许，只能回退后端
+    expect(canPreviewStyle('patch', 'facecolor')).toBe(true)
+    expect(canPreviewStyle('patch', 'fill')).toBe(false)
+    expect(canPreviewStyle('patch', 'linestyle')).toBe(false)
     expect(canPreviewStyle('legend', 'ncol')).toBe(false)
     expect(canPreviewStyle('legend', 'fontsize')).toBe(false)
     expect(canPreviewStyle('图上没有的角色', 'color')).toBe(false)
@@ -234,6 +240,128 @@ describe('arrow_patch：杆 fill:none、帽 fill:<色>', () => {
     // 帽跟着变色，杆仍然是 none
     expect(colors('axes_0.arrows_3', 'fill').sort()).toEqual(hex('#00aa00', 'none').sort())
     t.restore()
+  })
+})
+
+/* --------------------------- 「改得到吗」的判据 ----------------------------- */
+
+describe('canStyleEditApply：能力表说「支持」不等于这个 artist 上改得到', () => {
+  it('与 applyStyleEdit 逐一对齐（同一份 styleTargets，不许分叉）', () => {
+    const cases: [string, Parameters<typeof applyStyleEdit>[1], unknown][] = [
+      ['axes_0.lines_0', 'stroke', '#00aa00'],
+      ['axes_0.lines_0', 'fill', '#00aa00'],          // 线是 fill: none → 改不到
+      ['axes_0.patches_4', 'fill', '#00aa00'],
+      ['axes_0.patches_5', 'fill', '#00aa00'],        // 空心 → 改不到
+      ['axes_0.patches_5', 'stroke', '#00aa00'],
+      ['axes_0.lines_0', 'strokeWidth', 2],
+      ['axes_0.lines_0', 'opacity', 0.5],
+      ['axes_0.title', 'textFill', '#ff0000'],
+      ['axes_0.lines_0', 'display', false],
+    ]
+    for (const [gid, kind, value] of cases) {
+      const el = node(gid)
+      const predicted = canStyleEditApply(el, kind, value, ctx)
+      const edits = applyStyleEdit(el, kind, value, ctx)
+      expect(predicted, `${gid} / ${kind}`).toBe(edits.length > 0)
+      restoreStyleEdits(edits)
+    }
+  })
+
+  it('值本身不合法（颜色框里是空串）时同样回 false', () => {
+    expect(canStyleEditApply(node('axes_0.lines_0'), 'stroke', '', ctx)).toBe(false)
+    expect(canStyleEditApply(node('axes_0.lines_0'), 'strokeWidth', 'abc', ctx)).toBe(false)
+  })
+
+  it('判据本身不碰 DOM', () => {
+    const before = node('axes_0.patches_4').outerHTML
+    canStyleEditApply(node('axes_0.patches_4'), 'fill', '#00aa00', ctx)
+    expect(node('axes_0.patches_4').outerHTML).toBe(before)
+  })
+})
+
+/* ------------------------------- 独立形状 --------------------------------- */
+
+describe('patch：`ax.fill()` 的 Polygon（fill 与 stroke 各一条）', () => {
+  const FILLED = 'axes_0.patches_4'
+
+  it('原始输出就是 fill + stroke 两条，互不串味', () => {
+    expect(colors(FILLED, 'fill')).toEqual(hex('#17becf'))
+    expect(colors(FILLED, 'stroke')).toEqual(hex('#5a3286'))
+  })
+
+  it('facecolor 只改 fill，描边分毫不动', () => {
+    const t = roundTrip(FILLED, 'fill', '#00aa00')
+    expect(colors(FILLED, 'fill')).toEqual(hex('#00aa00'))
+    expect(colors(FILLED, 'stroke')).toEqual(hex('#5a3286'))
+    t.restore()
+  })
+
+  it('edgecolor 只改 stroke，填充分毫不动', () => {
+    const t = roundTrip(FILLED, 'stroke', '#aa0000')
+    expect(colors(FILLED, 'stroke')).toEqual(hex('#aa0000'))
+    expect(colors(FILLED, 'fill')).toEqual(hex('#17becf'))
+    t.restore()
+  })
+
+  it('linewidth 写 stroke-width，并按 pt→user unit 换算', () => {
+    expect(declared(FILLED, 'stroke-width')).toEqual(['1.2'])
+    const t = roundTrip(FILLED, 'strokeWidth', 3)
+    expect(declared(FILLED, 'stroke-width')).toEqual(['3'])
+    t.restore()
+
+    const scaled = applyStyleEdit(node(FILLED), 'strokeWidth', 3, { unitsPerPt: 2 })
+    expect(declared(FILLED, 'stroke-width')).toEqual(['6'])
+    restoreStyleEdits(scaled)
+  })
+
+  it('alpha 同时写 fill-opacity 与 stroke-opacity（两条都画着）', () => {
+    const t = roundTrip(FILLED, 'opacity', 0.35)
+    expect(declared(FILLED, 'fill-opacity')).toEqual(['0.35'])
+    expect(declared(FILLED, 'stroke-opacity')).toEqual(['0.35'])
+    // 不能顺手多写一条 opacity：那会与已有语义叠乘，也还原不回去
+    expect(declared(FILLED, 'opacity')).toEqual([])
+    t.restore()
+  })
+
+  it('visible 只在 gid 根节点上写 display，还原后属性整条消失', () => {
+    const el = node(FILLED)
+    const edits = applyStyleEdit(el, 'display', false, ctx)
+    expect((el as unknown as SVGElement).style.display).toBe('none')
+    restoreStyleEdits(edits)
+    expect((el as unknown as SVGElement).style.getPropertyValue('display')).toBe('')
+  })
+})
+
+describe('patch：`fill=False` 的 PathPatch —— facecolor 绝不把它填实', () => {
+  const HOLLOW = 'axes_0.patches_5'
+
+  it('原始输出是 fill: none', () => {
+    expect(colors(HOLLOW, 'fill')).toEqual(['none'])
+    expect(colors(HOLLOW, 'stroke')).toEqual(hex('#7f7f0f'))
+  })
+
+  it('改 facecolor：一个字节都不动，且如实报告「预览没生效」', () => {
+    const before = node(HOLLOW).outerHTML
+    const edits = applyStyleEdit(node(HOLLOW), 'fill', '#00aa00', ctx)
+    expect(edits).toEqual([])          // 空数组 = 调用方据此回退后端
+    expect(node(HOLLOW).outerHTML).toBe(before)
+    expect(colors(HOLLOW, 'fill')).toEqual(['none'])
+  })
+
+  it('空心的描边照样能改（颜色 / 线宽 / alpha）', () => {
+    const c = roundTrip(HOLLOW, 'stroke', '#0000aa')
+    expect(colors(HOLLOW, 'stroke')).toEqual(hex('#0000aa'))
+    c.restore()
+
+    const w = roundTrip(HOLLOW, 'strokeWidth', 4)
+    expect(declared(HOLLOW, 'stroke-width')).toEqual(['4'])
+    w.restore()
+
+    const a = roundTrip(HOLLOW, 'opacity', 0.5)
+    expect(declared(HOLLOW, 'stroke-opacity')).toEqual(['0.5'])
+    // 没有 fill 就不该凭空多一条 fill-opacity
+    expect(declared(HOLLOW, 'fill-opacity')).toEqual([])
+    a.restore()
   })
 })
 

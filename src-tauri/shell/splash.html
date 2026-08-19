@@ -25,7 +25,27 @@
 <body>
   <main>
     <h1>Magplot</h1>
-    <p>正在启动渲染服务<span class="dot"></span><span class="dot"></span><span class="dot"></span></p>
+    <p><span id="booting">正在启动渲染服务</span><span class="dot"></span><span class="dot"></span><span class="dot"></span></p>
   </main>
+  <script>
+    // 这张页面在 tauri:// 源下，既没有 i18next，也读不到 sidecar 那个源的
+    // localStorage——文案只能内联两份。语言由壳经 ?lang= 带过来（它记着上次
+    // 的选择），拿不到再退回系统语言，最后才是中文。
+    const STRINGS = {
+      'zh-CN': { booting: '正在启动渲染服务' },
+      'en-US': { booting: 'Starting the render service' },
+    }
+    // 与 web/src/i18n/locale.ts 的 normalizeLocale 同一条规则：只看主子标签
+    const pick = (tag) => {
+      const primary = String(tag || '').trim().toLowerCase().replace(/_/g, '-').split('-')[0]
+      if (primary === 'zh') return 'zh-CN'
+      if (primary === 'en') return 'en-US'
+      return null
+    }
+    const q = new URLSearchParams(location.search)
+    const locale = pick(q.get('lang')) || pick(navigator.language) || 'zh-CN'
+    document.documentElement.lang = locale
+    document.getElementById('booting').textContent = STRINGS[locale].booting
+  </script>
 </body>
 </html>

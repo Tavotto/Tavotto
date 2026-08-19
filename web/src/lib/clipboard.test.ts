@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { formatMessage } from '@/i18n'
 import { CLIPBOARD_FORMAT } from './brand'
 
 /**
@@ -55,21 +56,21 @@ async function load() {
     txn: null,
   })
   useSelectionStore.getState().set([])
-  useUiStore.getState().setStatus('')
+  useUiStore.getState().setStatus(null)
   openedUi = useUiStore
   return { clipboard, useUiStore, useDocumentStore, useSelectionStore }
 }
 
 type Loaded = Awaited<ReturnType<typeof load>>
 
-const status = (l: Loaded) => l.useUiStore.getState().status
+const status = (l: Loaded) => formatMessage(l.useUiStore.getState().status)
 
 beforeEach(() => {
   vi.spyOn(document, 'hasFocus').mockReturnValue(true)
 })
 
 afterEach(() => {
-  openedUi?.getState().setStatus('') // 顺手清掉 4.5s 的状态计时器
+  openedUi?.getState().setStatus(null) // 顺手清掉 4.5s 的状态计时器
   openedUi = null
   vi.restoreAllMocks()
 })
@@ -89,7 +90,7 @@ describe('pasteObjects 读剪贴板失败', () => {
     expect(l.useUiStore.getState().statusTone).toBe('error')
 
     // 同一会话里再按几次粘贴键：不再刷提示
-    l.useUiStore.getState().setStatus('')
+    l.useUiStore.getState().setStatus(null)
     expect(await l.clipboard.pasteObjects()).toBe(false)
     expect(await l.clipboard.pasteObjects()).toBe(false)
     expect(status(l)).toBe('')

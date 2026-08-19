@@ -1,16 +1,22 @@
 """内置渲染 runtime：定位、校验、解释器优先级、失败路径。
 
-为什么这一整套都必须**平台无关**：内置 runtime 是 Windows 桌面版才发的东西，
-但决定它命不命中的逻辑（frozen 判断、路径解析、优先级、大小写）在三个平台上
-都得一样，而日常开发在 macOS 上。只能靠「真在磁盘上摆一个假 runtime + 把
-os.name / sys.frozen 打桩」来测——所以 engine/runtime.py 全程 os.path 拼字符串，
-一个 pathlib 都不用（`Path()` 会按 os.name 分派，在别的平台上直接抛异常）。
+为什么这一整套都必须**平台无关**：内置 runtime 是桌面版才发的东西
+（Windows 的官方 embeddable、macOS 的 python-build-standalone），但决定它
+命不命中的逻辑（frozen 判断、路径解析、布局识别、架构核对、优先级、大小写）
+在三个平台上都得一样，而日常开发只在其中一台机器上。只能靠「真在磁盘上摆一个
+假 runtime + 把 os.name / sys.platform / sys.frozen / host_arch 打桩」来测——
+所以 engine/runtime.py 全程 os.path 拼字符串，一个 pathlib 都不用
+（`Path()` 会按 os.name 分派，在别的平台上直接抛异常），架构与平台也做成了
+可打桩的函数（`host_os()` / `host_arch()`）而不是在判断里直接读 platform。
 
 **产品承诺**（每条对应下面的用例）：
-  * 干净的 Windows 电脑（没有 Python / Conda）装完就能渲染，首次不联网；
+  * 干净的 Windows / macOS 电脑（没有 Python / Conda / Homebrew）装完就能渲染，
+    首次不联网；
   * 用户显式指定的解释器永远压过内置的；
-  * 内置的缺了/坏了要报「安装文件不完整」，不能悄悄回退到别的东西；
-  * 源码模式的自建 venv 行为一点不变。
+  * 内置的缺了 / 坏了 / **架构装错了**要报「安装文件不完整」，
+    不能悄悄回退到别的东西；
+  * pip / 源码模式不受影响，也不该被误判成「缺 runtime」；
+  * 内置 runtime 绝不往安装目录写东西，也绝不吃用户环境里的 PYTHONHOME/PYTHONPATH。
 """
 import json
 import os
@@ -20,24 +26,71 @@ import pytest
 
 from magplot.engine import bootstrap, config, pool, runtime
 
+
+def _host_platform_block():
+    """默认的 manifest 平台段 = **当前这台机器**。
+
+    写死成 windows/amd64 的话，macOS 上跑测试时每个用例都会撞上「架构不符」
+    这条新校验。要测不匹配的那一档，用下面的 `foreign_manifest()` 显式构造——
+    默认值应当表示「一切正常」，不匹配是特例。
+    """
+    return {"os": runtime.host_os(), "arch": runtime.host_arch(),
+            "tag": "test", "pip_platforms": ["test"]}
+
+
 MANIFEST = {
-    "schema": 1,
+    "schema": 2,
     "product": "Magplot",
-    "kind": "windows-embeddable",
+    "kind": "test",
+    "target": "test",
     "python": {"version": "3.13.15", "implementation": "cpython",
-               "source": "https://www.python.org/ftp/python/3.13.15/x.zip"},
-    "platform": {"os": "windows", "arch": "amd64", "tag": "cp313-win_amd64"},
+               "source": "https://example.invalid/x.tar.gz"},
+    "platform": _host_platform_block(),
     "top_level": ["numpy", "matplotlib", "pillow"],
     "packages": {"numpy": "2.5.2", "matplotlib": "3.11.1", "pillow": "12.3.0"},
-    "build": {"id": "test", "built_at": "2026-08-17T00:00:00Z"},
+    "build": {"id": "test", "built_at": "2026-08-17T00:00:00Z", "smoke": "passed"},
 }
 
+#: 两种真实布局里解释器的相对位置（与 engine/runtime._INTERPRETER_RELPATHS 对应）
+LAYOUTS = {"windows": ("python.exe",), "posix": ("bin", "python3")}
 
-def make_runtime(root, manifest=MANIFEST, with_python=True):
-    """在磁盘上摆一个「看起来像内置 runtime」的目录，返回解释器路径。"""
+
+def manifest_claiming(os_name=None, arch=None):
+    """一份「声称自己是给某平台/某架构」的 manifest（不给的字段沿用本机）。"""
+    plat = dict(MANIFEST["platform"])
+    if os_name:
+        plat["os"] = os_name
+    if arch:
+        plat["arch"] = arch
+    return {**MANIFEST, "platform": plat}
+
+
+#: 与本机不符的那一份——用来验平台/架构核对真的会拦。
+foreign_manifest = manifest_claiming
+
+#: 配合「把 sys.platform 打桩成 darwin 来模拟 macOS」的用例。
+#:
+#: **打桩了平台，清单就得跟着打桩**：MANIFEST 默认按**真实**宿主生成，而
+#: schema 2 会校验平台——在 Linux/Windows 上模拟 macOS 时，一份写着 linux 的
+#: 清单会被判成「平台不符」，于是 `bundled_python()` 回 None，用例悄悄退到
+#: 系统 Python 上去。CI 上「macOS 绿、Linux/Windows 红」正是这么来的：
+#: 本机恰好是 macOS，两边对得上，于是本地怎么跑都发现不了。
+def macos_manifest():
+    return manifest_claiming(os_name="macos")
+
+
+def make_runtime(root, manifest=MANIFEST, with_python=True, layout=None):
+    """在磁盘上摆一个「看起来像内置 runtime」的目录，返回解释器路径。
+
+    `layout` 不给就按本机习惯（Windows 是 `python.exe`，别处是 `bin/python3`）；
+    给了就强制用那一种——这样能在一台机器上同时验两种布局都认得出来。
+    """
     root = str(root)
     os.makedirs(root, exist_ok=True)
-    py = runtime.runtime_python(root)
+    if layout:
+        py = os.path.join(root, *LAYOUTS[layout])
+    else:
+        py = runtime.runtime_python(root)
     if with_python:
         os.makedirs(os.path.dirname(py), exist_ok=True)
         with open(py, "w", encoding="utf-8") as fh:
@@ -55,10 +108,18 @@ def _clean(monkeypatch, tmp_path):
 
     数据目录必须逐例隔离：自建 venv 就落在那儿，上一个用例摆下的假 venv
     会让下一个用例的 install() 直接跳过建 venv 那一步（真踩过）。
+
+    `MAGPLOT_RUNTIME_DIR` 指向一个**不存在**的目录而不是删掉它：开发机上
+    仓库根真的可能躺着一份构建好的 `runtime/`（跑过 build_worker_runtime.py
+    之后就有），删掉环境变量的话源码模式的候选里就会冒出那一份，
+    「没有内置 runtime」这个前提当场不成立——本机绿、CI 红，或者反过来。
+    覆盖是排他的（见 runtime._candidate_roots），指到空处即等于「没有」。
+    要验非覆盖路径的用例自己 delenv，那也顺便把意图写明了。
     """
     monkeypatch.setenv("MAGPLOT_DATA_DIR", str(tmp_path / "_data"))
-    monkeypatch.delenv("MAGPLOT_RUNTIME_DIR", raising=False)
+    monkeypatch.setenv("MAGPLOT_RUNTIME_DIR", str(tmp_path / "_no_runtime_here"))
     monkeypatch.delenv("MM_WORKER_PYTHON", raising=False)
+    monkeypatch.delenv("MAGPLOT_RUNTIME_HOST_ARCH", raising=False)
     pool.reset_worker_python()
     bootstrap._progress.update(state="idle", log="", error=None)
     yield
@@ -77,6 +138,7 @@ def test_env_override_wins_over_everything(tmp_path, monkeypatch):
 def test_frozen_app_finds_runtime_next_to_meipass(tmp_path, monkeypatch):
     """onedir 布局：`Magplot.exe` + `_internal/`，_MEIPASS 就是 `_internal`，
     runtime 经 spec 的 datas 落在 `_internal/runtime`。"""
+    monkeypatch.delenv("MAGPLOT_RUNTIME_DIR")   # 验的正是非覆盖的定位路径
     internal = tmp_path / "_internal"
     make_runtime(internal / "runtime")
     monkeypatch.setattr(runtime, "is_frozen", lambda: True)
@@ -88,6 +150,7 @@ def test_frozen_app_finds_runtime_next_to_meipass(tmp_path, monkeypatch):
 def test_frozen_app_falls_back_to_exe_dir_layouts(tmp_path, monkeypatch):
     """换 PyInstaller 版本 / 手工摆产物时布局可能变；exe 同级与
     exe/_internal 两条兜底不能少，否则一次升级就让内置环境集体失灵。"""
+    monkeypatch.delenv("MAGPLOT_RUNTIME_DIR")   # 验的正是非覆盖的定位路径
     monkeypatch.setattr(runtime, "is_frozen", lambda: True)
     monkeypatch.delattr(sys, "_MEIPASS", raising=False)
     monkeypatch.setattr(sys, "executable", str(tmp_path / "Magplot.exe"))
@@ -98,6 +161,7 @@ def test_frozen_app_falls_back_to_exe_dir_layouts(tmp_path, monkeypatch):
 
 def test_source_tree_looks_at_repo_root(monkeypatch):
     """源码模式下 scripts/build_worker_runtime.py 默认产出到仓库根的 runtime/。"""
+    monkeypatch.delenv("MAGPLOT_RUNTIME_DIR")   # 验的正是非覆盖的定位路径
     monkeypatch.setattr(runtime, "is_frozen", lambda: False)
     roots = runtime._candidate_roots()
     assert roots, "源码模式至少要有一个候选位置"
@@ -506,3 +570,254 @@ def test_render_failure_carries_missing_module(client, monkeypatch, tmp_path):
     body = client.post("/api/engine/render",
                        json={"id": "p1.pdf", "patches": []}).get_json()
     assert body["code"] == "missing_dependency" and body["module"] == "rdkit"
+
+
+# ---------------- macOS 也开始发内置 runtime（2026-08-18）----------------------
+#
+# 这一节全是**跨平台可跑**的：靠打桩 os.name / sys.platform / host_arch 模拟
+# 另一台机器。原因还是那句——「装错架构」「Windows 的 runtime 混进 .app」
+# 这类故障只有在别人的电脑上才复现，而它们必须在这里就被钉住。
+@pytest.mark.parametrize("os_name,plat,frozen,expected", [
+    ("nt",    "win32",  True,  True),    # Windows 桌面版：NSIS 带 runtime
+    ("posix", "darwin", True,  True),    # macOS 桌面版：.app 带 runtime
+    ("posix", "linux",  True,  False),   # Linux 没有桌面发行形态
+    ("nt",    "win32",  False, False),   # pip / 源码：本来就不带
+    ("posix", "darwin", False, False),
+])
+def test_which_install_shapes_are_expected_to_ship_a_runtime(
+        monkeypatch, os_name, plat, frozen, expected):
+    """`ships_bundled_runtime()` 回答的是「**本该**有吗」，不是「有没有」。
+
+    判错的代价是两头的：判成 True 而实际不带（pip 安装被当成损坏的桌面版），
+    用户会被劝去「重新安装 Magplot」——而他根本没装过安装包；判成 False 而
+    实际该带（macOS 桌面版在这次改动之前就是这样），runtime 没打进去时
+    一句提示都没有，只会安静地去找用户机器上的 Python。
+    """
+    monkeypatch.setattr(os, "name", os_name)
+    monkeypatch.setattr(sys, "platform", plat)
+    monkeypatch.setattr(runtime, "is_frozen", lambda: frozen)
+    assert runtime.ships_bundled_runtime() is expected
+
+
+def test_macos_desktop_missing_runtime_reports_reinstall_not_install_python(
+        monkeypatch, tmp_path):
+    """macOS 桌面版缺 runtime 时的提示必须与 Windows 对等：**重装**，
+    而不是「请先安装 Python」——用户装的是「开箱即用」的 dmg。"""
+    monkeypatch.setattr(os, "name", "posix")
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(runtime, "is_frozen", lambda: True)
+    monkeypatch.setattr(pool, "is_frozen", lambda: True)
+    monkeypatch.setattr(pool, "_prioritized_candidates", lambda: [])
+
+    st = runtime.status()
+    assert st["code"] == runtime.CODE_MISSING and st["valid"] is False
+
+    with pytest.raises(pool.WorkerError) as exc:
+        pool.select_worker_python()
+    assert exc.value.code == runtime.CODE_MISSING
+    assert "重新安装" in str(exc.value)
+    assert "安装 Python" not in str(exc.value)
+
+
+def test_wrong_arch_runtime_is_invalid_not_silently_used(tmp_path, monkeypatch):
+    """Intel 的机器上装了 arm64 的包（或反过来）。
+
+    不拦的话，第一次渲染才会炸，而错误是一句
+    "mach-o file, but is an incompatible architecture"——没有任何用户能
+    从那句话推出「你下错安装包了」。
+    """
+    root = tmp_path / "rt"
+    make_runtime(root, manifest=foreign_manifest(arch="x86_64"))
+    monkeypatch.setenv("MAGPLOT_RUNTIME_DIR", str(root))
+    monkeypatch.setattr(runtime, "host_arch", lambda: "arm64")
+    monkeypatch.setattr(runtime, "is_frozen", lambda: True)
+
+    st = runtime.status()
+    assert st["valid"] is False and st["code"] == runtime.CODE_INVALID
+    assert "x86_64" in st["error"] and "arm64" in st["error"]
+    # 清单仍要交出来：诊断包得说清楚「拿到的是哪一份」，
+    # 只回一句「损坏」等于让排障的人自己去翻文件
+    assert st["manifest"]["platform"]["arch"] == "x86_64"
+    assert runtime.bundled_python() is None
+
+
+def test_wrong_os_runtime_is_invalid(tmp_path, monkeypatch):
+    """构建链把 Windows 的 runtime 打进了 .app——发出去之前必须炸，
+    但万一漏到用户手里，启动时也要说人话而不是等渲染时崩。"""
+    root = tmp_path / "rt"
+    make_runtime(root, manifest=foreign_manifest(os_name="windows"))
+    monkeypatch.setenv("MAGPLOT_RUNTIME_DIR", str(root))
+    monkeypatch.setattr(runtime, "host_os", lambda: "macos")
+    st = runtime.status()
+    assert st["valid"] is False and st["code"] == runtime.CODE_INVALID
+    assert "windows" in st["error"] and "macos" in st["error"]
+
+
+def test_arch_aliases_are_normalised_before_comparing(tmp_path, monkeypatch):
+    """锁文件写 amd64、`platform.machine()` 回 AMD64、wheel 标签写 x86_64——
+    三边用词不同。不归一就会「明明是对的却报架构不符」。"""
+    assert runtime.normalize_arch("AMD64") == "x86_64"
+    assert runtime.normalize_arch("x86_64") == "x86_64"
+    assert runtime.normalize_arch("aarch64") == "arm64"
+    assert runtime.normalize_arch("arm64") == "arm64"
+
+    root = tmp_path / "rt"
+    make_runtime(root, manifest=foreign_manifest(arch="amd64"))
+    monkeypatch.setenv("MAGPLOT_RUNTIME_DIR", str(root))
+    monkeypatch.setattr(runtime, "host_arch", lambda: "x86_64")
+    assert runtime.status()["valid"] is True
+
+
+def test_unknown_host_arch_does_not_condemn_a_good_runtime(tmp_path, monkeypatch):
+    """`platform.machine()` 在冷门平台上可能是空串。
+    把「我不知道」当成「不匹配」会让一份本来能用的 runtime 被判死刑。"""
+    root = tmp_path / "rt"
+    make_runtime(root)
+    monkeypatch.setenv("MAGPLOT_RUNTIME_DIR", str(root))
+    monkeypatch.setattr(runtime, "host_arch", lambda: "")
+    assert runtime.status()["valid"] is True
+
+
+def test_host_arch_can_be_overridden_for_cross_checks(monkeypatch):
+    """构建机上要能问「这份 runtime 会被 arm64 的 app 接受吗」。"""
+    monkeypatch.setenv("MAGPLOT_RUNTIME_HOST_ARCH", "AMD64")
+    assert runtime.host_arch() == "x86_64"
+
+
+def test_manifest_without_platform_block_is_rejected(tmp_path):
+    """schema 2 起 platform.os / platform.arch 是硬要求：没有它们就无从判断
+    这份 runtime 是不是给本机的，而那正是要挡的一档。"""
+    bads = [{**MANIFEST, "platform": {}},
+            {**MANIFEST, "platform": {"os": "macos"}},      # 缺 arch
+            {**MANIFEST, "platform": {"arch": "arm64"}},    # 缺 os
+            {**MANIFEST, "platform": "macos"}]              # 类型不对
+    for i, bad in enumerate(bads):
+        root = tmp_path / f"rt{i}"
+        make_runtime(root, manifest=bad)
+        assert runtime.read_manifest(str(root)) is None
+
+
+# ---------------- 两种布局都要认得 --------------------------------------------
+@pytest.mark.parametrize("layout,tail", [
+    ("windows", "python.exe"),                    # 官方 embeddable
+    ("posix", os.path.join("bin", "python3")),    # python-build-standalone
+])
+def test_both_runtime_layouts_are_recognised(tmp_path, monkeypatch, layout, tail):
+    """定位不能只认本平台那一种布局。
+
+    构建机会在 Linux/macOS 上交叉产出 Windows 的 runtime，冒烟脚本也会在
+    一台机器上检视另一份产物；只认本平台的话，那些场景一律误报「不完整」。
+    """
+    root = tmp_path / "rt"
+    py = make_runtime(root, layout=layout)
+    monkeypatch.setenv("MAGPLOT_RUNTIME_DIR", str(root))
+    assert runtime.resolve_python(str(root)) == py
+    assert py.endswith(tail)
+    assert runtime.runtime_root() == str(root)
+    assert runtime.status()["python"] == py
+
+
+def test_runtime_python_stays_a_pure_function(monkeypatch):
+    """`runtime_python()` 回答「该长什么样」，不碰磁盘——它要能在任何平台上
+    被单测。真实落点由 `resolve_python()` 去 stat。"""
+    monkeypatch.setattr(os, "name", "nt")
+    assert runtime.runtime_python(r"C:\Program Files\Magplot\runtime") == \
+        r"C:\Program Files\Magplot\runtime\python.exe"
+    monkeypatch.setattr(os, "name", "posix")
+    assert runtime.runtime_python("/Applications/Magplot.app/runtime") == \
+        "/Applications/Magplot.app/runtime/bin/python3"
+
+
+def test_explicit_runtime_dir_override_is_exclusive(tmp_path, monkeypatch):
+    """指了 MAGPLOT_RUNTIME_DIR 就只认这一个——指到一个空目录也不许悄悄
+    回退到别处那份。「覆盖了却被别处顶掉」是最难查的一种：你以为在验刚构建的
+    那份，实际验的是上一次留下的产物，两边日志一模一样。"""
+    monkeypatch.setenv("MAGPLOT_RUNTIME_DIR", str(tmp_path / "nothing_here"))
+    monkeypatch.setattr(runtime, "is_frozen", lambda: False)
+    assert runtime._candidate_roots() == [str(tmp_path / "nothing_here")]
+    assert runtime.runtime_root() is None
+
+
+# ---------------- macOS 上的解释器优先级与不写安装目录 ------------------------
+#: 在 Windows 上模拟 POSIX 是**做不到**的，只要那条路径会碰到 pathlib：
+#: `pool.select_worker_python()` 里有 `Path(cand)`，而把 `os.name` 打桩成
+#: "posix" 之后它会分派到 PosixPath，在 Windows 上直接抛
+#: `UnsupportedOperation: cannot instantiate 'PosixPath'`（反方向同理，
+#: 在 macOS 上伪装 nt 会抛 WindowsPath）。这正是 `engine/runtime.py` 全程
+#: os.path 拼字符串、一个 pathlib 都不用的原因——**它**因此三平台可测。
+#:
+#: 所以下面两条「跑完整优先级链」的用例只在 POSIX 宿主上跑。macOS 特有的那几条
+#: 保证并没有因此失去看护，它们由**不碰 pathlib**、因而 Windows 上照跑的用例
+#: 分别覆盖：`ships_bundled_runtime()` 的形态矩阵、两种布局的识别、平台/架构核对。
+posix_host_only = pytest.mark.skipif(
+    os.name == "nt",
+    reason="Windows 上无法模拟 POSIX 宿主：pool 里的 Path() 会分派到 PosixPath")
+
+
+@posix_host_only
+def test_macos_desktop_uses_bundled_runtime_by_default(tmp_path, monkeypatch):
+    """**macOS 的产品承诺本身**：没有 Python / Homebrew / Conda 的 Mac 上，
+    装完 dmg 就能渲染。"""
+    monkeypatch.setattr(os, "name", "posix")
+    monkeypatch.setattr(sys, "platform", "darwin")
+    py = make_runtime(tmp_path / "rt", manifest=macos_manifest(), layout="posix")
+    monkeypatch.setenv("MAGPLOT_RUNTIME_DIR", str(tmp_path / "rt"))
+    monkeypatch.setattr(runtime, "is_frozen", lambda: True)
+    monkeypatch.setattr(pool, "is_frozen", lambda: True)
+    monkeypatch.setattr(pool, "_has_matplotlib", lambda p: True)
+    assert pool.select_worker_python() == (py, pool.SOURCE_BUNDLED)
+
+
+@posix_host_only
+def test_macos_user_choice_still_beats_the_bundled_runtime(tmp_path, monkeypatch):
+    """高级用户的脚本要 rdkit / astropy，内置环境里没有——他挑的 conda
+    必须继续赢。内置 runtime 是**默认**，不是**强制**。"""
+    monkeypatch.setattr(os, "name", "posix")
+    monkeypatch.setattr(sys, "platform", "darwin")
+    make_runtime(tmp_path / "rt", manifest=macos_manifest(), layout="posix")
+    monkeypatch.setenv("MAGPLOT_RUNTIME_DIR", str(tmp_path / "rt"))
+    monkeypatch.setattr(runtime, "is_frozen", lambda: True)
+    monkeypatch.setattr(pool, "is_frozen", lambda: True)
+    monkeypatch.setattr(pool, "_has_matplotlib", lambda p: True)
+
+    mine = tmp_path / "miniconda3" / "bin" / "python3"
+    mine.parent.mkdir(parents=True)
+    mine.write_text("#!/bin/sh\n")
+    config.set_worker_python(str(mine))
+    assert pool.select_worker_python() == (str(mine), pool.SOURCE_CONFIGURED)
+
+
+def test_bundled_child_env_drops_hostile_python_vars():
+    """macOS 上没有 `._pth` 那层隔离：用户从终端启动 Magplot 时，shell 里为
+    Conda / 自家项目设的 PYTHONHOME、PYTHONPATH 会原样传给内置解释器——
+    轻则 import 到别的 numpy，重则解释器根本起不来。
+
+    这一档还只在「从终端启动」时复现，从 Finder 双击一切正常，最难查。
+    """
+    hostile = {
+        "PYTHONHOME": "/opt/homebrew/opt/python@3.12",
+        "PYTHONPATH": "/Users/me/myproject",
+        "PYTHONSTARTUP": "/Users/me/.pythonrc",
+        "PYTHONUSERBASE": "/Users/me/.local",
+        "PATH": "/usr/bin",
+        "LANG": "zh_CN.UTF-8",
+    }
+    env = runtime.child_env(hostile)
+    for key in ("PYTHONHOME", "PYTHONPATH", "PYTHONSTARTUP", "PYTHONUSERBASE"):
+        assert key not in env, f"{key} 会把内置 runtime 带跑偏，必须摘掉"
+    # 与 Python 无关的变量一个都不许动——那是用户的环境
+    assert env["PATH"] == "/usr/bin" and env["LANG"] == "zh_CN.UTF-8"
+    assert env["PYTHONNOUSERSITE"] == "1"
+
+
+def test_bundled_runtime_never_writes_into_a_signed_app_bundle():
+    """`.app` 是**签过名**的：往里面写一个 __pycache__ 当场破坏代码签名，
+    用户下次启动看到的是「应用已损坏」，而不是「多了几个缓存文件」。
+
+    保证这条的是 `-B`（命令行参数任何时候都算数），环境变量只是补充。
+    """
+    assert "-B" in runtime.child_args()
+    env = runtime.child_env({})
+    data = str(config.data_dir())
+    assert env["PYTHONPYCACHEPREFIX"].startswith(data)
+    assert env["MPLCONFIGDIR"].startswith(data)

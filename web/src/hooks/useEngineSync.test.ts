@@ -1,3 +1,4 @@
+import { literal } from '@/i18n'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushRender, renderTargets, requestRender, syncEngine } from './useEngineSync'
 import { renderKeyOf, useRenderStore } from '@/store/renderStore'
@@ -206,7 +207,7 @@ describe('flushRender：交互结束后必须回到定稿质量', () => {
 
   it('降质渲染过的变体，冲刷时按默认 dpi 重发一次', async () => {
     const p = panel('a', 'Fig1.pdf', 1)
-    useDocumentStore.getState().commit('加面板', (d) => {
+    useDocumentStore.getState().commit(literal('加面板'), (d) => {
       d.objects.push(p)
     })
     useRenderStore.getState().patch(renderKeyOf(p), {
@@ -223,7 +224,7 @@ describe('flushRender：交互结束后必须回到定稿质量', () => {
 
   it('已经是定稿质量就不白跑一次', () => {
     const p = panel('a', 'Fig1.pdf', 1)
-    useDocumentStore.getState().commit('加面板', (d) => {
+    useDocumentStore.getState().commit(literal('加面板'), (d) => {
       d.objects.push(p)
     })
     useRenderStore.getState().patch(renderKeyOf(p), {
@@ -247,7 +248,7 @@ describe("render:'none'：手势期间不麻烦 matplotlib，收尾时定稿一�
   })
 
   const putPanel = (p: PanelObject) => {
-    useDocumentStore.getState().commit('加面板', (d) => {
+    useDocumentStore.getState().commit(literal('加面板'), (d) => {
       d.objects.push(p)
     })
   }
@@ -290,7 +291,7 @@ describe("render:'none'：手势期间不麻烦 matplotlib，收尾时定稿一�
     putPanel(p)
     for (let i = 1; i <= 10; i++) {
       p = panel('a', 'Fig1.pdf', i)
-      useDocumentStore.getState().commit('改一个值', (d) => {
+      useDocumentStore.getState().commit(literal('改一个值'), (d) => {
         const o = d.objects.find((x) => x.id === 'a')
         if (o?.type === 'panel') o.overrides = p.overrides
       })

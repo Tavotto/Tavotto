@@ -23,7 +23,11 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true,
 
-    "paths": { "@/*": ["./src/*"] }
+    "resolveJsonModule": true,
+    "paths": {
+      "@/*": ["./src/*"],
+      "@profiles": ["../src/magplot/profiles/publication.json"]
+    }
   },
   "include": ["src"]
 }

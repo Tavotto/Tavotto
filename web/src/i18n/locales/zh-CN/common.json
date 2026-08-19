@@ -1,0 +1,50 @@
+{
+  "actions": {
+    "cancel": "取消",
+    "close": "关闭",
+    "continue": "继续",
+    "copy": "复制",
+    "delete": "删除",
+    "refresh": "刷新",
+    "reload": "重新加载",
+    "save": "保存"
+  },
+  "count": {
+    "selectedObjects_other": "已选 {{count}} 个对象"
+  },
+  "keycap": {
+    "esc": "Esc"
+  },
+  "literal": "{{text}}",
+  "measure": {
+    "cmSize": "{{w}}×{{h}}cm",
+    "cmSizeSpaced": "{{w}}×{{h}} cm",
+    "dpi": "{{value}} dpi",
+    "mm": "{{value}} mm",
+    "mmPair": "{{a}}, {{b}} mm",
+    "mmSize": "{{w}}×{{h}} mm",
+    "mmSizeSpaced": "{{w}} × {{h}} mm",
+    "pxSize": "{{w}} × {{h}} px"
+  },
+  "mixed": "多个值",
+  "objectType": {
+    "arrow": "箭头",
+    "emptyText": "空文字",
+    "panel": "面板",
+    "shape": "形状",
+    "text": "文字"
+  },
+  "presetText": {
+    "annotation": "标注",
+    "group": "分组"
+  },
+  "shape": {
+    "brace": "大括号",
+    "diamond": "菱形",
+    "ellipse": "椭圆",
+    "line": "直线",
+    "polygon": "多边形",
+    "rect": "矩形",
+    "triangle": "三角形"
+  }
+}

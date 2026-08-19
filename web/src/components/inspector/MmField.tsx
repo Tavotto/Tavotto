@@ -1,4 +1,5 @@
 import { useDocumentStore } from '@/store/documentStore'
+import type { UiMessage } from '@/i18n'
 import { NumberField } from '../ui/Input'
 
 /** mm 数值输入：拖动改数时开事务，把连续修改合并成一条撤销记录。 */
@@ -19,7 +20,8 @@ export function MmField({
   step?: number
   disabled?: boolean
   suffix?: string
-  historyLabel: string
+  /** 落进撤销栈的标签（描述符：切语言后历史跟着换） */
+  historyLabel: UiMessage
   min?: number
   title?: string
 }) {

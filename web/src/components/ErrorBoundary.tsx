@@ -1,5 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
 import { requestBlankStart } from '@/store/documentStore'
+import { t } from '@/i18n'
 
 interface State {
   error: Error | null
@@ -9,6 +10,9 @@ interface State {
  * 全局兜底：任何组件抛错不再白屏。文档由 documentStore 的防抖自动保存
  * 兜住（localStorage），刷新即可恢复到最后一次快照。
  * 刻意不依赖 ui/ 组件——它们崩了这里还得能渲染。
+ *
+ * 同样刻意**不用 useTranslation**：这是 class 组件，而且它渲染的时候
+ * 界面已经崩了，能少一层订阅就少一层。直接取当前语言的文本。
  */
 export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
   state: State = { error: null }
@@ -18,6 +22,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
+    // console 是开发/诊断通道，不翻译（见 docs/i18n.md 的边界一节）
     console.error('界面崩溃:', error, info.componentStack)
   }
 
@@ -26,11 +31,11 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
     return (
       <div className="flex h-screen items-center justify-center bg-bg">
         <div className="w-[420px] rounded-lg border border-border bg-surface p-5">
-          <div className="mb-1 text-[13px] font-medium text-ink">界面出错了</div>
+          <div className="mb-1 text-[13px] font-medium text-ink">
+            {t('crash.title', { ns: 'workspace' })}
+          </div>
           <div className="mb-3 text-xs leading-relaxed text-ink-2">
-            文档已自动保存在本机，刷新后可从最后一次快照继续。
-            如果一刷新就再次出错，改用「打开空白文档」——文档不会被删除，
-            仍可从顶栏「最近文档」取回。
+            {t('crash.body', { ns: 'workspace' })}
           </div>
           <pre className="mb-4 max-h-40 overflow-auto rounded-sm border border-border bg-surface-2 px-2 py-1.5 font-mono text-[11px] leading-relaxed text-ink-2">
             {this.state.error.message}
@@ -40,7 +45,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
               onClick={() => location.reload()}
               className="h-7 rounded-md border border-border bg-surface px-3 text-xs text-ink transition-colors hover:border-border-strong"
             >
-              重新加载
+              {t('actions.reload')}
             </button>
             <button
               onClick={() => {
@@ -49,7 +54,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
               }}
               className="h-7 rounded-md border border-border bg-surface px-3 text-xs text-ink-2 transition-colors hover:border-border-strong hover:text-ink"
             >
-              打开空白文档
+              {t('crash.blank', { ns: 'workspace' })}
             </button>
           </div>
         </div>

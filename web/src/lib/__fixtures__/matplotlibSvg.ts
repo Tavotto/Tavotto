@@ -17,6 +17,8 @@
  *   fill      `<use style="fill: …; fill-opacity: 0.5; stroke: …; stroke-opacity: 0.5">`
  *             ——alpha 是分开的两条，不是一个 opacity
  *   arrow     杆 `fill: none` + 帽 `fill: <色>`，颜色要同时作用于两者
+ *   patch     `ax.fill()` 的 Polygon → `fill: <色>; stroke: <色>`；
+ *             `fill=False` 的 PathPatch → `fill: none`（facecolor 不许填实它）
  *   text      `<g style="fill: #123456" transform="…">`；**默认黑色时没有这条 style**
  *   image     gid 落在 `<image>` 自身，且自带 transform（alpha 烤进 PNG，改不了）
  *
@@ -30,19 +32,19 @@ export const MATPLOTLIB_SVG = String.raw`<svg xmlns:xlink="http://www.w3.org/199
  </defs>
  <g id="figure_1">
   <g id="patch_1">
-   <path d="M 0 216 
-L 288 216 
-L 288 0 
-L 0 0 
+   <path d="M 0 216
+L 288 216
+L 288 0
+L 0 0
 z
 " style="fill: #ffffff"/>
   </g>
   <g id="axes_0">
    <g id="patch_2">
-    <path d="M 36 136.98 
-L 259.2 136.98 
-L 259.2 81.18 
-L 36 81.18 
+    <path d="M 36 136.98
+L 259.2 136.98
+L 259.2 81.18
+L 36 81.18
 z
 " style="fill: #ffffff"/>
    </g>
@@ -74,12 +76,22 @@ z
     <path d="M 0 0 L 1 1" clip-path="url(#p000)" style="fill: none; stroke: #e377c2; stroke-width: 1.4; stroke-linecap: round"/>
     <path d="M 0 0 L 1 1" clip-path="url(#p000)" style="fill: #e377c2; stroke: #e377c2; stroke-width: 1.4; stroke-linecap: round"/>
    </g>
+   <g id="axes_0.patches_4">
+    <path d="M -480.15 353.205
+L -340.65 353.205
+L -410.4 297.405
+z
+" clip-path="url(#p000)" style="fill: #17becf; stroke: #5a3286; stroke-width: 1.2; stroke-linejoin: miter"/>
+   </g>
+   <g id="axes_0.patches_5">
+    <path d="M 0 0 L 1 1" clip-path="url(#p000)" style="fill: none; stroke: #7f7f0f; stroke-width: 1.6; stroke-linejoin: miter"/>
+   </g>
    <g id="matplotlib.axis_1">
     <g id="xtick_1">
      <g id="line2d_1">
       <defs>
-       <path id="m002" d="M 0 0 
-L 0 3.5 
+       <path id="m002" d="M 0 0
+L 0 3.5
 " style="stroke: #000000; stroke-width: 0.8"/>
       </defs>
       <g>
@@ -91,11 +103,11 @@ L 0 3.5
       <g transform="translate(31.842188 151.578438) scale(0.1 -0.1)">
        <defs>
         <path id="DejaVuSans-34" d="M 0 0 L 1 1" transform="scale(0.015625)"/>
-        <path id="DejaVuSans-2e" d="M 684 794 
-L 1344 794 
-L 1344 0 
-L 684 0 
-L 684 794 
+        <path id="DejaVuSans-2e" d="M 684 794
+L 1344 794
+L 1344 0
+L 684 0
+L 684 794
 z
 " transform="scale(0.015625)"/>
         <path id="DejaVuSans-32" d="M 0 0 L 1 1" transform="scale(0.015625)"/>
@@ -216,11 +228,11 @@ z
       <defs>
        <path id="DejaVuSans-58" d="M 0 0 L 1 1" transform="scale(0.015625)"/>
        <path id="DejaVuSans-20" transform="scale(0.015625)"/>
-       <path id="DejaVuSans-6c" d="M 603 4863 
-L 1178 4863 
-L 1178 0 
-L 603 0 
-L 603 4863 
+       <path id="DejaVuSans-6c" d="M 603 4863
+L 1178 4863
+L 1178 0
+L 603 0
+L 603 4863
 z
 " transform="scale(0.015625)"/>
        <path id="DejaVuSans-61" d="M 0 0 L 1 1" transform="scale(0.015625)"/>
@@ -241,8 +253,8 @@ z
     <g id="ytick_1">
      <g id="line2d_8">
       <defs>
-       <path id="m003" d="M 0 0 
-L -3.5 0 
+       <path id="m003" d="M 0 0
+L -3.5 0
 " style="stroke: #000000; stroke-width: 0.8"/>
       </defs>
       <g>
@@ -307,8 +319,8 @@ L -3.5 0
    </g>
    <g id="line2d_10">
     <defs>
-     <path id="m004" d="M 3 0 
-L -3 -0 
+     <path id="m004" d="M 3 0
+L -3 -0
 " style="stroke: #9467bd"/>
     </defs>
     <g clip-path="url(#p000)">
@@ -332,23 +344,23 @@ L -3 -0
     </g>
    </g>
    <g id="patch_3">
-    <path d="M 36 136.98 
-L 36 81.18 
+    <path d="M 36 136.98
+L 36 81.18
 " style="fill: none; stroke: #000000; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
    </g>
    <g id="patch_4">
-    <path d="M 259.2 136.98 
-L 259.2 81.18 
+    <path d="M 259.2 136.98
+L 259.2 81.18
 " style="fill: none; stroke: #000000; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
    </g>
    <g id="patch_5">
-    <path d="M 36 136.98 
-L 259.2 136.98 
+    <path d="M 36 136.98
+L 259.2 136.98
 " style="fill: none; stroke: #000000; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
    </g>
    <g id="patch_6">
-    <path d="M 36 81.18 
-L 259.2 81.18 
+    <path d="M 36 81.18
+L 259.2 81.18
 " style="fill: none; stroke: #000000; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
    </g>
    <g id="axes_0.texts_0">
@@ -469,8 +481,8 @@ L 259.2 81.18
      </g>
     </g>
     <g id="LineCollection_2">
-     <path d="M 210.403125 157.990937 
-L 210.403125 147.990937 
+     <path d="M 210.403125 157.990937
+L 210.403125 147.990937
 " style="fill: none; stroke: #9467bd; stroke-width: 1.2"/>
     </g>
     <g id="line2d_15">

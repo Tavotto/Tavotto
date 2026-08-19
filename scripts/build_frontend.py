@@ -37,6 +37,11 @@ def main() -> int:
         return 1
     if "--skip-install" not in sys.argv:
         run([pnpm, "install", "--frozen-lockfile"])
+    # 翻译检查放在这里而不是只放在 CI 的某个 job 里：**每一条把前端打进产物的
+    # 路径都经过这个脚本**（release / nightly / desktop-tauri / 本地 python -m
+    # build），挂在这儿就不会有哪条发布链绕过去。漏翻的表现是界面上一串
+    # `project.actions.create`——那种东西一旦发出去，用户装的就是它。
+    run([pnpm, "i18n:check"])
     run([pnpm, "build"])
 
     if not (DIST / "index.html").is_file():

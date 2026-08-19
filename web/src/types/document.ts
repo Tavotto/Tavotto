@@ -1,4 +1,5 @@
 /** 文档模型 —— 单位一律 mm，数组顺序即 z 序（末尾在最上）。 */
+import { t } from '@/i18n'
 import { newId } from '@/lib/id'
 
 export interface ObjectBase {
@@ -235,6 +236,18 @@ export interface PageSetup {
   margin?: number
 }
 
+/**
+ * 这张图按哪套出版规范做预检 / 导出。
+ * **可选字段，旧文档没有它 —— 缺省即规范文件里的 default_profile**
+ * （规则本身一条都不存在文档里，只存 id 与期刊覆盖；规范升级后旧文档
+ * 自动跟着新规则走，而不是把一份过期的规则冻在布局文件里）。
+ */
+export interface DocumentProfile {
+  id: string
+  /** 期刊自定义覆盖（如把双栏宽改成 178mm）；结构见 lib/profile.ts */
+  journal?: Record<string, unknown>
+}
+
 export interface FigureDocument {
   schema: 2
   name: string
@@ -243,6 +256,8 @@ export interface FigureDocument {
   guides: Guide[]
   /** 可选的结构化布局组；旧文档没有该字段，自由排版行为完全不变 */
   layoutGroups?: LayoutGroup[]
+  /** 可选的出版规范绑定；缺省走默认 profile */
+  profile?: DocumentProfile
 }
 
 /* ------------------------- schema 3：项目 / 画布 --------------------------- */
@@ -260,6 +275,8 @@ export interface CanvasData {
   objects: CanvasObject[]
   guides: Guide[]
   layoutGroups?: LayoutGroup[]
+  /** 每张画布各自的出版规范绑定；缺省走默认 profile */
+  profile?: DocumentProfile
 }
 
 export interface ProjectDocument {
@@ -281,6 +298,7 @@ export function canvasToDoc(c: CanvasData): FigureDocument {
     objects: c.objects,
     guides: c.guides,
     ...(c.layoutGroups ? { layoutGroups: c.layoutGroups } : {}),
+    ...(c.profile ? { profile: c.profile } : {}),
   }
 }
 
@@ -292,6 +310,7 @@ export function docToCanvas(doc: FigureDocument, id: string): CanvasData {
     objects: doc.objects,
     guides: doc.guides,
     ...(doc.layoutGroups ? { layoutGroups: doc.layoutGroups } : {}),
+    ...(doc.profile ? { profile: doc.profile } : {}),
   }
 }
 
@@ -340,12 +359,12 @@ export function emptyProject(): ProjectDocument {
   }
 }
 
-export const OBJECT_TYPE_LABEL: Record<ObjectType, string> = {
-  panel: '面板',
-  text: '文字',
-  arrow: '箭头',
-  shape: '形状',
-}
+/**
+ * 对象类型名。**是函数不是常量表**：常量在模块求值那一刻就把当时的语言
+ * 定死了，之后切语言再也换不掉。
+ */
+export const objectTypeLabel = (type: ObjectType): string =>
+  t(`objectType.${type}`, { ns: 'common' })
 
 export function emptyDocument(): FigureDocument {
   return {
@@ -404,24 +423,22 @@ export function unrotateVec(x: number, y: number, r: PanelRotation): [number, nu
   return rotateVec(x, y, ((360 - r) % 360) as PanelRotation)
 }
 
+/**
+ * 图层树/历史/检查器里显示的对象名。
+ *
+ * **用户自己起的名字、文字内容、素材文件名一律原样透出，绝不翻译**——
+ * 只有「箭头」「矩形」这类兜底的类型名才是界面文案。
+ */
 export function objectLabel(o: CanvasObject): string {
   if (o.name) return o.name
   switch (o.type) {
     case 'panel':
-      return o.fileId.split('/').pop()?.replace(/\.[^.]+$/, '') ?? '面板'
+      return o.fileId.split('/').pop()?.replace(/\.[^.]+$/, '') ?? t('objectType.panel')
     case 'text':
-      return o.text.trim().slice(0, 18) || '空文字'
+      return o.text.trim().slice(0, 18) || t('objectType.emptyText')
     case 'arrow':
-      return '箭头'
+      return t('objectType.arrow')
     case 'shape':
-      return {
-        rect: '矩形',
-        ellipse: '椭圆',
-        line: '直线',
-        triangle: '三角形',
-        diamond: '菱形',
-        polygon: '多边形',
-        brace: '大括号',
-      }[o.shape]
+      return t(`shape.${o.shape}`)
   }
 }

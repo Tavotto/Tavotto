@@ -41,10 +41,12 @@ from .engine import ai_bridge as engine_ai
 from .engine import bootstrap as engine_bootstrap
 from .engine import ai_history as engine_ai_history
 from .engine import brand as engine_brand
+from .engine import cli as engine_cli
 from .engine import config as engine_config
 from .engine import diagnostics as engine_diagnostics
 from .engine import discover as engine_discover
 from .engine import handoff as engine_handoff
+from .engine import locate as engine_locate
 from .engine import patchspec as engine_patchspec
 from .engine import pool as engine_pool
 from .engine import probe as engine_probe
@@ -497,6 +499,18 @@ def scan_panels() -> list[dict]:
 
 # ---------------------------------------------------------------------------
 # API
+#
+# **错误响应的语言归前端管**（界面支持中英文，见 docs/i18n.md）。后端不知道、
+# 也不该知道用户选了哪门语言——它没有 Accept-Language 之外的线索，而语言偏好
+# 存在浏览器/桌面壳这一侧。
+#
+# 于是约定：用户会看到的失败一律带 **稳定的 `code` + `params`**，前端按 code
+# 查自己的文案、把 params 插进去；`error` 字段保留人可读的中文原文，作为
+# ① 老前端与 curl 调试的回退，② 前端没有对应文案时的兜底。**code 一旦发布就
+# 不能改名**——改了等于让所有装着旧前端的用户看到一句英文 key。
+#
+# 只在请求本身畸形时才出现的校验错误（"patches 必须是数组"这类）不给 code：
+# 用户点不出来，给了也没人翻。traceback / 日志同理，那是诊断材料，不翻译。
 # ---------------------------------------------------------------------------
 @app.errorhandler(NoProjectError)
 def _no_project(_exc):
@@ -1027,29 +1041,18 @@ def project_store_dir(ctx: "ProjectCtx | None" = None) -> Path | None:
     用户在自己的项目目录里就能看到、随项目一起备份/同步/迁移。
     未打开项目时返回 None（调用方各自退回数据目录）。"""
     ctx = ctx if ctx is not None else _request_ctx()
-    return None if ctx is None else ctx.path / "magplotfile"
+    return None if ctx is None else engine_config.project_store_dir(ctx.path)
 
 
 def project_export_dir(ctx: "ProjectCtx | None" = None) -> Path:
     """项目的导出目录（项目设置可覆盖）。
 
-    缺省 `<项目>/magplotfile/export/`——导出的成图要交给投稿/合作者，
-    跟着项目走才找得到（旧版的 `<项目名>-exports/` 同级目录不再新建，
-    已有的留在原地不动）。项目目录建不出来（只读、网络盘等）退回数据目录
-    exports/。未打开项目时（纯文字/形状导出不依赖项目）直接用数据目录。"""
+    规则本身在 `engine/config.project_export_dir()`——**Codex 插件的 MCP server
+    也导出成图**，两条入口各写一份的话，用户会在两个地方找同一张图。
+    这里只负责把请求上下文翻译成项目路径。"""
     ctx = ctx if ctx is not None else _request_ctx()
-    if ctx is None:
-        return EXPORT_DIR
-    d = engine_config.project_settings(str(ctx.path)).get("export_dir")
-    if d:
-        return Path(d).expanduser()
-    store = project_store_dir(ctx)
-    assert store is not None
-    try:
-        (store / "export").mkdir(parents=True, exist_ok=True)
-        return store / "export"
-    except OSError:
-        return EXPORT_DIR
+    return engine_config.project_export_dir(
+        None if ctx is None else ctx.path, fallback=EXPORT_DIR)
 
 
 def project_backup_dir(ctx: "ProjectCtx | None" = None) -> Path:
@@ -1226,17 +1229,21 @@ def api_projects_open():
     body = request.get_json(force=True)
     raw = str(body.get("path") or "").strip()
     if not raw:
-        return jsonify({"error": "缺少项目路径"}), 400
+        return jsonify({"error": "缺少项目路径", "code": "missing_path"}), 400
     p = Path(raw).expanduser()
     if body.get("create"):
         try:
             p.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
-            return jsonify({"error": f"无法创建目录: {exc}"}), 400
+            return jsonify({"error": f"无法创建目录: {exc}",
+                            "code": "mkdir_failed",
+                            "params": {"reason": str(exc)}}), 400
     try:
         return jsonify(open_project(str(p), make_default=body.get("default", True)))
     except (RuntimeError, OSError) as exc:
-        return jsonify({"error": str(exc)}), 400
+        return jsonify({"error": str(exc),
+                        "code": "open_project_failed",
+                        "params": {"reason": str(exc)}}), 400
 
 
 @app.post("/api/projects/close")
@@ -1303,13 +1310,15 @@ def api_projects_browse():
         p = Path(raw).expanduser()
         p = p.resolve() if p.exists() else Path(os.path.abspath(str(p)))
     except (OSError, ValueError):
-        return jsonify({"error": "路径无效"}), 400
+        return jsonify({"error": "路径无效", "code": "invalid_path"}), 400
     if not p.is_dir():
         # 找一个还存在的祖先，前端可以一键跳过去继续找
         near = p
         while near != near.parent and not near.is_dir():
             near = near.parent
         return jsonify({"error": f"目录不存在: {p}",
+                        "code": "dir_missing",
+                        "params": {"path": str(p)},
                         "nearest": str(near) if near.is_dir() else None}), 400
     dirs = []
     try:
@@ -1323,9 +1332,13 @@ def api_projects_browse():
                 continue
             dirs.append({"name": child.name, "path": str(child)})
     except PermissionError:
-        return jsonify({"error": f"无权限读取: {p}"}), 403
+        return jsonify({"error": f"无权限读取: {p}",
+                        "code": "permission_denied",
+                        "params": {"path": str(p)}}), 403
     except OSError as exc:
-        return jsonify({"error": f"无法读取: {exc}"}), 400
+        return jsonify({"error": f"无法读取: {exc}",
+                        "code": "read_failed",
+                        "params": {"reason": str(exc)}}), 400
     # 盘符根的上一级是「此电脑」那一层虚拟根，不是它自己
     parent = str(p.parent) if p != p.parent else ("@roots" if os.name == "nt" else None)
     return jsonify({"path": str(p), "parent": parent, "is_roots": False,
@@ -2910,18 +2923,22 @@ def main():
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
 
-    # `magplot open <路径>`：外部程序（Codex 插件、编辑器、别的 Agent、用户自己）
-    # 把一张刚画好的图交接进来的入口。**必须在 argparse 之前拦**——主入口是纯
-    # flag 形态（`magplot --figures …`），改成 subparsers 会把既有命令行整个换掉。
-    if len(sys.argv) > 1 and sys.argv[1] == "open":
-        sys.exit(engine_handoff.cli(sys.argv[2:]))
+    # 子命令（`magplot open` / `magplot doctor`）：外部程序（Codex 插件、安装器、
+    # 编辑器、别的 Agent、用户自己）的入口。**必须在 argparse 之前拦**——主入口
+    # 是纯 flag 形态（`magplot --figures …`），改成 subparsers 会把既有命令行
+    # 整个换掉。分派本身在 engine/cli.py（纯标准库），打包出来的 magplot-cli
+    # 走的是同一份，不必为一次交接付整个 Flask 的冷启动。
+    rc = engine_cli.dispatch(sys.argv[1:])
+    if rc is not None:
+        sys.exit(rc)
 
     ap = argparse.ArgumentParser(
         description=__doc__,
         # 子命令在上面就分派掉了，argparse 看不见它——不在这儿写一句，
         # `magplot --help` 里就查无此命令
-        epilog="另有子命令: magplot open <图|脚本|目录>  "
-               "把一张刚画好的图交给 Magplot 打开（详见 magplot open --help）",
+        epilog="另有子命令（详见各自的 --help）:\n"
+               "  magplot open <图|脚本|目录>  把一张刚画好的图交给 Magplot 打开\n"
+               "  magplot doctor               检查本机安装并维护交接用的安装清单",
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--figures", default=None,
                     help="面板图所在目录（缺省恢复最近打开的项目）")
@@ -2935,6 +2952,12 @@ def main():
     args = ap.parse_args()
 
     setup_logging()
+    # 安装清单刷成「这套 Magplot 现在在这儿」。安装器只写得了装的那一刻，
+    # 而用户会把 .app 拖到别处、会用免安装形态、macOS 压根没有安装后钩子——
+    # 每次启动刷一遍，外部程序（Codex 插件）查到的就永远是最后真跑起来过的
+    # 那一套。**失败一律不打扰用户**：清单只是快路径，已知安装位置那条腿还在。
+    if engine_locate.refresh_manifest() is None:
+        LOG.debug("安装清单未能刷新（不影响使用）")
     threading.Thread(target=prune_render_cache, daemon=True,
                      name="mm-cache-prune").start()  # 启动清一次历史存量
     # 引擎会话缓存同理：get() 里的触发点只在新建会话时走，长开不新建的实例靠这次

@@ -1,4 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { t as translate } from '@/i18n'
 import { Images } from 'lucide-react'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { useAssetStore } from '@/store/assetStore'
@@ -278,22 +280,28 @@ function ElementEditBar() {
     <div className="absolute left-1/2 top-2 z-30 -translate-x-1/2">
       <div className="flex h-7 items-center gap-2 rounded-md border border-border bg-surface pl-2.5 pr-1 shadow-pop">
         <span className="max-w-64 truncate text-xs text-ink-2">
-          图内编辑{name ? <span className="text-ink">：{name}</span> : null}
+          {sg('elementEditing')}
+          {name ? <span className="text-ink">{sg('elementEditingName', { name })}</span> : null}
         </span>
         <button
           onClick={exit}
-          title="退出图内编辑，回到画布层（Esc）"
+          title={sg('exitTitle')}
           className="flex h-5 items-center gap-1 rounded-sm border border-border bg-surface px-1.5 text-xs text-ink transition-colors hover:bg-ink/[.055]"
         >
-          返回画布
-          <span className="font-mono text-xs text-ink-3">Esc</span>
+          {sg('backToCanvas')}
+          <span className="font-mono text-xs text-ink-3">{translate('keycap.esc')}</span>
         </button>
       </div>
     </div>
   )
 }
 
+/** 画布层的文案在 workspace:stage.* 下 */
+const sg = (key: string, values?: Record<string, unknown>) =>
+  translate(`stage.${key}`, { ns: 'workspace', ...(values ?? {}) })
+
 function EmptyHint() {
+  useTranslation('workspace')
   const setLeftTab = useUiStore((s) => s.setLeftTab)
   const selectionEmpty = useSelectionStore((s) => s.ids.length === 0)
   const zoom = useViewportStore((s) => s.zoom)
@@ -313,9 +321,9 @@ function EmptyHint() {
       <div className="pointer-events-auto">
         <EmptyState
           icon={Images}
-          title="画布是空的"
-          hint="从素材库拖入面板，或双击列表项加入画布。"
-          action={{ label: '打开素材库', onClick: () => setLeftTab('assets') }}
+          title={sg('emptyTitle')}
+          hint={sg('emptyHint')}
+          action={{ label: sg('openAssets'), onClick: () => setLeftTab('assets') }}
         />
       </div>
     </div>

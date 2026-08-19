@@ -40,19 +40,29 @@ pub struct Sidecar {
 /// 1. `MAGPLOT_SIDECAR_EXE`（开发/排障覆盖，可配 `MAGPLOT_SIDECAR_ARGS`）
 /// 2. 打包资源 `resources/sidecar/Magplot/Magplot(.exe)`（PyInstaller onedir）
 /// 3. 源码树回退：从可执行文件与 cwd 向上找 `pyproject.toml` 旁的 `.venv` 里的 magplot
-fn resolve_command(resource_dir: Option<&Path>) -> Result<(PathBuf, Vec<String>), String> {
+fn resolve_command(
+    resource_dir: Option<&Path>,
+    locale: crate::i18n::Locale,
+) -> Result<(PathBuf, Vec<String>), String> {
+    let m = crate::i18n::text(locale);
     if let Ok(exe) = std::env::var("MAGPLOT_SIDECAR_EXE") {
         let args = std::env::var("MAGPLOT_SIDECAR_ARGS")
             .map(|s| s.split_whitespace().map(String::from).collect())
             .unwrap_or_default();
         let p = PathBuf::from(exe);
         if !p.is_file() {
-            return Err(format!("MAGPLOT_SIDECAR_EXE 指向的文件不存在: {}", p.display()));
+            return Err(m
+                .sidecar_exe_missing
+                .replace("{path}", &p.display().to_string()));
         }
         return Ok((p, args));
     }
 
-    let exe_name = if cfg!(windows) { "Magplot.exe" } else { "Magplot" };
+    let exe_name = if cfg!(windows) {
+        "Magplot.exe"
+    } else {
+        "Magplot"
+    };
     if let Some(res) = resource_dir {
         let bundled = res.join("sidecar").join("Magplot").join(exe_name);
         if bundled.is_file() {
@@ -60,7 +70,11 @@ fn resolve_command(resource_dir: Option<&Path>) -> Result<(PathBuf, Vec<String>)
         }
     }
 
-    let cli_name = if cfg!(windows) { "Scripts\\magplot.exe" } else { "bin/magplot" };
+    let cli_name = if cfg!(windows) {
+        "Scripts\\magplot.exe"
+    } else {
+        "bin/magplot"
+    };
     let mut starts: Vec<PathBuf> = Vec::new();
     if let Ok(me) = std::env::current_exe() {
         starts.push(me);
@@ -78,7 +92,7 @@ fn resolve_command(resource_dir: Option<&Path>) -> Result<(PathBuf, Vec<String>)
             }
         }
     }
-    Err("找不到 Magplot 渲染服务：安装文件可能不完整，请重新安装".into())
+    Err(m.sidecar_not_found.into())
 }
 
 fn log_tail(path: &Path, max: u64) -> String {
@@ -103,8 +117,11 @@ impl Sidecar {
         log_dir: &Path,
         nonce: &str,
         project: Option<&str>,
+        // 起不来时这些话会显示在 error.html 上，得说用户选的那门语言
+        locale: crate::i18n::Locale,
     ) -> Result<(Sidecar, u16), String> {
-        let (exe, extra_args) = resolve_command(resource_dir.as_deref())?;
+        let m = crate::i18n::text(locale);
+        let (exe, extra_args) = resolve_command(resource_dir.as_deref(), locale)?;
 
         std::fs::create_dir_all(log_dir)
             .map_err(|e| format!("无法创建日志目录 {}: {e}", log_dir.display()))?;
@@ -170,21 +187,24 @@ impl Sidecar {
                             Some(p) => break p,
                             None => {
                                 let _ = child.kill();
-                                return Err("握手数据缺少端口".into());
+                                return Err(m.sidecar_handshake_no_port.into());
                             }
                         }
                     }
                     let _ = child.kill();
-                    return Err(hs.error.unwrap_or_else(|| "渲染服务启动失败".into()));
+                    return Err(hs.error.unwrap_or_else(|| m.sidecar_start_failed.into()));
                 }
             }
             if let Ok(Some(status)) = child.try_wait() {
                 let tail = log_tail(&log_path, 2000);
-                return Err(format!("渲染服务提前退出（{status}）。日志末尾：\n{tail}"));
+                return Err(m
+                    .sidecar_exited
+                    .replace("{status}", &status.to_string())
+                    .replace("{tail}", &tail));
             }
             if Instant::now() >= deadline {
                 let _ = child.kill();
-                return Err("等待渲染服务就绪超时（60 秒）".into());
+                return Err(m.sidecar_timeout.into());
             }
             std::thread::sleep(Duration::from_millis(100));
         };

@@ -1,5 +1,8 @@
 import { useEffect, useRef } from 'react'
+import { useTranslation } from 'react-i18next'
 import { X } from 'lucide-react'
+import { t as translate, type UiMessage } from '@/i18n'
+import { useFormatMessage } from '@/i18n/react'
 import { DURATION, usePresence } from '@/lib/motion'
 import { formatMm } from '@/lib/units'
 import { cn } from '@/lib/utils'
@@ -21,6 +24,7 @@ import { boundsOf } from '@/lib/geometry'
 const GEOMETRY_KINDS = new Set(['move', 'resize', 'draw', 'crop', 'endpoint', 'element', 'guide'])
 
 export function CanvasHud() {
+  const { t } = useTranslation('workspace')
   const kind = useInteractionStore((s) => s.kind)
   const cursor = useInteractionStore((s) => s.cursor)
   const tool = useUiStore((s) => s.tool)
@@ -28,7 +32,7 @@ export function CanvasHud() {
   const ids = useSelectionStore((s) => s.ids)
 
   const interacting = GEOMETRY_KINDS.has(kind)
-  const hint = tool !== 'select' ? TOOL_HINT[tool] : null
+  const hint = tool !== 'select' ? t(`toolHint.${tool}`) : null
   if (!interacting && !hint) return null
 
   const selected = objects.filter((o) => ids.includes(o.id))
@@ -43,12 +47,12 @@ export function CanvasHud() {
         <div className="flex items-center gap-2 rounded-sm border border-border bg-surface px-2 py-1 font-mono text-xs tabular-nums text-ink-2">
           {cursor && (
             <span>
-              {formatMm(cursor.x)}, {formatMm(cursor.y)} mm
+              {translate('measure.mmPair', { a: formatMm(cursor.x), b: formatMm(cursor.y) })}
             </span>
           )}
           {bounds && (
             <span className="text-ink-3">
-              {formatMm(bounds.w)}×{formatMm(bounds.h)} mm
+              {translate('measure.mmSize', { w: formatMm(bounds.w), h: formatMm(bounds.h) })}
             </span>
           )}
         </div>
@@ -63,25 +67,33 @@ export function CanvasHud() {
 }
 
 export function StatusToasts() {
+  const { t } = useTranslation('workspace')
+  const fmt = useFormatMessage()
   const status = useUiStore((s) => s.status)
   const tone = useUiStore((s) => s.statusTone)
-  // 退场那 90ms 里 status 已经是空串了，得把最后一条文案留着播完，
-  // 否则会看到一个空壳滑下去
-  const last = useRef<{ status: string; tone: typeof tone }>({ status: '', tone: 'info' })
+  // 退场那 90ms 里 status 已经是 null 了，得把最后一条文案留着播完，
+  // 否则会看到一个空壳滑下去。留的是**描述符**，不是翻好的字符串：
+  // 退场期间切语言也跟着换。
+  const last = useRef<{ status: UiMessage | null; tone: typeof tone }>({
+    status: null,
+    tone: 'info',
+  })
   useEffect(() => {
     if (status) last.current = { status, tone }
   }, [status, tone])
   const shown = status ? { status, tone } : last.current
+  const shownText = fmt(shown.status)
+  const liveText = fmt(status)
   const { mounted, state } = usePresence(!!status, DURATION.exit)
 
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex justify-center px-4">
       {/* aria-live 常驻在 DOM 里，读屏器才能捕捉内容变化 */}
       <div aria-live="polite" role="status" className="sr-only">
-        {tone === 'info' ? status : ''}
+        {tone === 'info' ? liveText : ''}
       </div>
       <div aria-live="assertive" role="alert" className="sr-only">
-        {tone === 'error' ? status : ''}
+        {tone === 'error' ? liveText : ''}
       </div>
       {mounted && (
         <div
@@ -94,11 +106,11 @@ export function StatusToasts() {
             'data-[state=open]:animate-rise-in data-[state=closed]:animate-rise-out',
           )}
         >
-          <span className="min-w-0 flex-1">{shown.status}</span>
+          <span className="min-w-0 flex-1">{shownText}</span>
           {shown.tone === 'error' && (
             <button
-              onClick={() => useUiStore.getState().setStatus('')}
-              aria-label="关闭错误提示"
+              onClick={() => useUiStore.getState().setStatus(null)}
+              aria-label={t('status.dismissError')}
               className="flex h-5 w-5 shrink-0 items-center justify-center rounded-sm hover:bg-danger/10"
             >
               <X size={12} />
@@ -108,12 +120,4 @@ export function StatusToasts() {
       )}
     </div>
   )
-}
-
-const TOOL_HINT: Record<string, string> = {
-  text: '在画布上拖出文字框，或单击放置默认大小；Esc 取消',
-  arrow: '拖动画出箭头，Shift 吸附 15° 角；Esc 取消',
-  rect: '拖动画出矩形；Esc 取消',
-  ellipse: '拖动画出椭圆；Esc 取消',
-  line: '拖动画出直线；Esc 取消',
 }

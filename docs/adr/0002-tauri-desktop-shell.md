@@ -127,11 +127,27 @@ Tauri bundler）。
 
 ## 平台范围
 
-- **macOS**：`.app` + `.dmg`。签名/公证沿用已趟通的经验（全量 Mach-O 自底向上
+- **macOS**：`.app` + `.dmg`。签名/公证沿用已趟通的经验（全量 Mach-O 自内向外
   签、hardened runtime、notarytool + staple）；PyInstaller onedir 作为嵌套资源
-  意味着签名脚本必须继续「按 `file` 判断签所有 Mach-O」，Tauri 的 `signingIdentity`
-  只签壳本体。**macOS 尚无内置科学运行时**——worker 仍按现有优先级找用户
-  Python，这是下一阶段的产品化缺口。
+  意味着签名必须继续「签**所有** Mach-O」，Tauri 的 `signingIdentity`
+  只签壳本体。
+
+  ~~**macOS 尚无内置科学运行时**——worker 仍按现有优先级找用户 Python，
+  这是下一阶段的产品化缺口。~~
+  **2026-08-18 更新：这个缺口已补上。** macOS `.app` 现在与 Windows 一样自带
+  内置渲染 runtime（上游是 python-build-standalone 的 `install_only` 发行版，
+  可重定位、逐个可签名），装完即可渲染，不依赖 Homebrew / Conda / 系统 Python。
+  两个后果要记住：
+  * 嵌套 Mach-O 从几十个变成五百多个，且全在 `Contents/Resources` 下，
+    **`codesign --deep` 既签不到也验不出**（它们被当作*资源*封进签名）。
+    签名与验收统一走 `scripts/codesign_macos.py`（读魔数、深度降序、逐个 verify
+    并核对架构）。
+  * `.app` 是签过名的，运行时**一个字节都不能往里写**，否则代码签名当场作废、
+    下次启动报「应用已损坏」——worker 一律带 `-B` 起，字节码与 Matplotlib
+    字体缓存改道到数据目录（`engine/runtime.child_args/child_env`）。
+
+  仍然只发 **arm64**；Intel 目标在锁文件里标着 `shipped: false`，
+  **没有构建过也没有冒烟过**，不得对外称「支持 Intel」。详见 docs/RELEASING.md。
 - **Windows**：NSIS 安装包（替代 Inno Setup 的候选，旧链路暂不删）。内置
   CPython runtime（`packaging/runtime-lock.json` 那套）继续作为独立资源目录
   随包分发（在另一条在途改动里，见「与主工作树的边界」）。

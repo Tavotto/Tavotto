@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { ChevronDown, Plus, X } from 'lucide-react'
 import { useFlip } from '@/lib/motion'
 import { cn } from '@/lib/utils'
@@ -13,6 +14,7 @@ import { Tip } from './ui/Tooltip'
  * 单击切换、双击重命名、拖动重排、× 关闭；激活画布切换后视口自动 fit。
  */
 export function CanvasTabs() {
+  const { t } = useTranslation('workspace')
   const openTabs = useDocumentStore((s) => s.openTabs)
   const activeId = useDocumentStore((s) => s.activeCanvasId)
   const canvases = useDocumentStore((s) => s.canvases)
@@ -35,7 +37,7 @@ export function CanvasTabs() {
   return (
     <div
       role="tablist"
-      aria-label="画布标签"
+      aria-label={t('tabs.listLabel')}
       className="flex h-8 shrink-0 items-center gap-0.5 border-b border-border bg-surface px-2"
     >
       <div ref={strip} className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
@@ -63,10 +65,10 @@ export function CanvasTabs() {
         ))}
       </div>
 
-      <Tip label="新建画布">
+      <Tip label={t('tabs.newCanvas')}>
         <Button
           size="icon-sm"
-          aria-label="新建画布"
+          aria-label={t('tabs.newCanvas')}
           onClick={() => void createCanvasAndActivate()}
         >
           <Plus size={13} />
@@ -111,6 +113,7 @@ function TabItem({
   dragOver: boolean
   setDragOver: (i: number | null) => void
 }) {
+  const { t } = useTranslation('workspace')
   const [draft, setDraft] = useState(name)
   useEffect(() => {
     if (renaming) setDraft(name)
@@ -121,7 +124,7 @@ function TabItem({
       <input
         autoFocus
         value={draft}
-        aria-label="画布名"
+        aria-label={t('tabs.canvasName')}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={() => onRenamed(draft.trim() || null)}
         onKeyDown={(e) => {
@@ -187,13 +190,13 @@ function TabItem({
       <span className="truncate text-xs">{name}</span>
       {dirty && (
         <span
-          aria-label="有未保存的改动"
+          aria-label={t('tabs.unsaved')}
           className="h-1.5 w-1.5 shrink-0 rounded-full bg-ink-3"
         />
       )}
       {closable && (
         <button
-          aria-label={`关闭标签 ${name}`}
+          aria-label={t('tabs.closeTab', { name })}
           onClick={(e) => {
             e.stopPropagation()
             onClose()
@@ -213,6 +216,7 @@ function TabItem({
 
 /** 标签放不下 / 有未打开画布时的总览菜单 */
 function AllCanvasesMenu({ activate }: { activate: (id: string) => void }) {
+  const { t } = useTranslation('workspace')
   const canvases = useDocumentStore((s) => s.canvases)
   const openTabs = useDocumentStore((s) => s.openTabs)
   const activeId = useDocumentStore((s) => s.activeCanvasId)
@@ -224,7 +228,7 @@ function AllCanvasesMenu({ activate }: { activate: (id: string) => void }) {
       width={208}
       align="end"
       trigger={
-        <Button size="icon-sm" aria-label="全部画布">
+        <Button size="icon-sm" aria-label={t('tabs.allCanvases')}>
           <ChevronDown size={13} className="text-ink-2" />
         </Button>
       }

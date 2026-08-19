@@ -6,6 +6,7 @@ import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import type { CanvasObject } from '@/types/document'
 import { isLinear, objectRotation, panelRotation } from '@/types/document'
+import { PATH_HIT_SHAPES } from '@/lib/shapeGeometry'
 import { startMoveDrag } from './interactions'
 import { openQuickEdit } from './quickEditStore'
 import { ArrowView } from './ArrowView'
@@ -30,6 +31,10 @@ export const ObjectView = memo(function ObjectView({ obj }: { obj: CanvasObject 
   // 斜放时整个矩形吃点击、误伤下层面板。命中改为交给沿线段的透明 stroke
   // （ArrowView / ShapeView 里的 data-hit-line），外层 div 整个让位。
   const isThinLinear = isLinear(obj)
+  // 椭圆 / 三角 / 菱形 / 多边形 / 大括号的包围盒里大半是空白，按盒命中会让
+  // 空白角也吃点击（还挡住底下的面板）。与细长线状对象同一个修法：外层 div
+  // 整个让位，命中交给 ShapeView 里沿真实轮廓的透明层
+  const pathHitShape = obj.type === 'shape' && PATH_HIT_SHAPES.has(obj.shape)
   const hit = obj.locked || drawing || spaceDown ? 'none' : 'stroke'
 
   const onPointerDown = (e: React.PointerEvent) => {
@@ -111,7 +116,7 @@ export const ObjectView = memo(function ObjectView({ obj }: { obj: CanvasObject 
         transform: objectRotation(obj) ? `rotate(${objectRotation(obj)}deg)` : undefined,
         // 不写 'auto'：绘制工具激活时世界层整体设为 none，靠继承让对象一起失去命中。
         // 细长线状对象让位给自己的命中线（事件仍会从命中线冒泡到这里的 handler）
-        pointerEvents: obj.locked || isThinLinear ? 'none' : undefined,
+        pointerEvents: obj.locked || isThinLinear || pathHitShape ? 'none' : undefined,
         cursor: editing ? 'text' : 'default',
       }}
     >

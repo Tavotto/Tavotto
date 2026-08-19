@@ -1,3 +1,4 @@
+import { formatMessage } from '@/i18n'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { applyOpenRequest, readOpenRequestFromUrl, stemOf } from '@/lib/openRequest'
 import { useAssetStore } from '@/store/assetStore'
@@ -158,6 +159,6 @@ describe('applyOpenRequest', () => {
     } as never)
 
     expect(await applyOpenRequest({ project: '/gone', stem: 'Fig1' })).toBe('failed')
-    expect(useUiStore.getState().status).toContain('目录不存在')
+    expect(formatMessage(useUiStore.getState().status)).toContain('目录不存在')
   })
 })

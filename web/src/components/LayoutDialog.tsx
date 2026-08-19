@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { msg } from '@/i18n'
 import { FolderOpen, Save } from 'lucide-react'
-import { fetchLayout, fetchLayoutNames, saveLayout } from '@/lib/api'
+import { backendErrorText, fetchLayout, fetchLayoutNames, saveLayout } from '@/lib/api'
 import { normalizeLayout } from '@/lib/migrate'
 import { cn } from '@/lib/utils'
 import { openLayoutDocument } from '@/store/actions'
@@ -11,6 +13,7 @@ import { Dialog } from './ui/Dialog'
 import { TextInput } from './ui/Input'
 
 export function LayoutDialog() {
+  const { t } = useTranslation(['dialogs', 'common'])
   const open = useUiStore((s) => s.layoutOpen)
   const setOpen = useUiStore((s) => s.setLayoutOpen)
   const docName = useDocumentStore((s) => s.doc.name)
@@ -29,7 +32,7 @@ export function LayoutDialog() {
     setError(null)
     fetchLayoutNames()
       .then(setNames)
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+      .catch((e) => setError(backendErrorText(e)))
   }, [open, docName])
 
   // 从菜单进来时焦点直接落在用户选的那件事上。
@@ -58,10 +61,10 @@ export function LayoutDialog() {
       store.renameProject(stem)
       await saveLayout(stem, useDocumentStore.getState().buildProject())
       setNames(await fetchLayoutNames())
-      useUiStore.getState().setStatus(`已保存为画布文件：${stem}`)
+      useUiStore.getState().setStatus(msg('layout.saved', { name: stem }, 'dialogs'))
       setOpen(false)
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(backendErrorText(e))
     } finally {
       setBusy(false)
     }
@@ -75,7 +78,7 @@ export function LayoutDialog() {
       openLayoutDocument(normalizeLayout(payload, target))
       setOpen(false)
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(backendErrorText(e))
     } finally {
       setBusy(false)
     }
@@ -85,25 +88,25 @@ export function LayoutDialog() {
     <Dialog
       open={open}
       onOpenChange={setOpen}
-      title="画布文件"
-      description="画布文件是命名保存的版本，可随时载入；日常编辑本身已自动保存在本机"
+      title={t('dialogs:layout.title')}
+      description={t('dialogs:layout.description')}
       size="md"
       busy={busy}
       footer={
         <>
           <Button variant="outline" size="md" disabled={busy} onClick={() => setOpen(false)}>
-            关闭
+            {t('common:actions.close')}
           </Button>
           <Button
             variant="primary"
             size="md"
             disabled={!name.trim()}
             loading={busy}
-            loadingLabel="正在保存…"
+            loadingLabel={t('dialogs:layout.saving')}
             onClick={doSave}
           >
             <Save size={14} />
-            保存为画布文件
+            {t('dialogs:layout.saveAs')}
           </Button>
         </>
       }
@@ -111,7 +114,7 @@ export function LayoutDialog() {
       <div className="flex flex-col gap-3">
         <div>
           <h3 className="mb-1.5 text-xs font-medium uppercase tracking-[.06em] text-ink-3">
-            保存为画布文件
+            {t('dialogs:layout.saveHeading')}
           </h3>
           <TextInput
             ref={nameRef}
@@ -120,17 +123,17 @@ export function LayoutDialog() {
             onKeyDown={(e) => {
               if (e.key === 'Enter') doSave()
             }}
-            placeholder="布局名称"
+            placeholder={t('dialogs:layout.namePlaceholder')}
             className="h-7"
           />
         </div>
 
         <div>
           <h3 className="mb-1.5 text-xs font-medium uppercase tracking-[.06em] text-ink-3">
-            载入画布文件
+            {t('dialogs:layout.loadHeading')}
           </h3>
           {names.length === 0 ? (
-            <p className="py-2 text-xs text-ink-3">还没有保存过画布文件</p>
+            <p className="py-2 text-xs text-ink-3">{t('dialogs:layout.empty')}</p>
           ) : (
             <ul ref={listRef} className="max-h-56 overflow-y-auto rounded-sm border border-border">
               {names.map((n, i) => (
@@ -146,7 +149,7 @@ export function LayoutDialog() {
                   >
                     <FolderOpen size={12} className="shrink-0 text-ink-3" />
                     <span className="min-w-0 flex-1 truncate">{n}</span>
-                    <span className="shrink-0 text-xs text-ink-3">载入</span>
+                    <span className="shrink-0 text-xs text-ink-3">{t('dialogs:layout.load')}</span>
                   </button>
                 </li>
               ))}

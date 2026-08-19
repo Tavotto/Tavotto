@@ -26,7 +26,11 @@
  *   * `image.alpha` —— 透明度被烤进 PNG 栅格数据，SVG 上没有任何旋钮；
  *   * `errorbar.*` / `bar_series.*` —— 它们是 manifest 的伪元素（SeriesGroup），
  *     成员在 SVG 里拿的是 matplotlib 自动 id，gid 整个不存在 → 查不到节点，
- *     按「查不到就回退」处理（见 findGidNode 的调用方）。
+ *     按「查不到就回退」处理（见 findGidNode 的调用方）；
+ *   * `patch.facecolor` **在 `fill=False` 的那些形状上** —— 表里有这一行，
+ *     但那个 artist 的 SVG 是 `fill: none`，一个叶子都改不到。能力表是按
+ *     role+prop 发的，管不了这种「同 role 不同形状」，所以调用方必须再跑一遍
+ *     `canStyleEditApply`（与 applyStyleEdit 共用 styleTargets 那一份实现）。
  */
 
 /**
@@ -83,6 +87,17 @@ export const STYLE_ADAPTERS: Record<string, Record<string, AdapterKind>> = {
     visible: 'display',
   },
   fill: {
+    facecolor: 'fill',
+    edgecolor: 'stroke',
+    linewidth: 'strokeWidth',
+    alpha: 'opacity',
+    visible: 'display',
+  },
+  // 脚本 add_patch 的独立形状（`ax.fill()` 的 Polygon、手搓的 PathPatch）。
+  // **`fill` 那个开关不在表里**：空心 patch 的 SVG 写的是 `fill: none`，而
+  // 通用规则只改「本来就画着的叶子」——把 none 换成颜色是新增语义，只能
+  // 让 matplotlib 自己重画。少认它一条，好过给一个假的填充预览。
+  patch: {
     facecolor: 'fill',
     edgecolor: 'stroke',
     linewidth: 'strokeWidth',
@@ -180,58 +195,93 @@ export function applyStyleEdit(
   ctx: StyleContext,
 ): StyleEdit[] {
   const edits: StyleEdit[] = []
+  for (const t of styleTargets(node, kind, value, ctx)) setStyle(t.el, t.prop, t.value, edits)
+  return edits
+}
 
+/**
+ * 这次预览**会不会真的改到东西**（只算，不碰 DOM）。
+ *
+ * 为什么需要单独一个判据：能力表按 role+prop 发，但同一个 role 的两个 artist
+ * 在 SVG 上可以长得完全不同——`fill=False` 的 PathPatch 写的是 `fill: none`，
+ * 而「只改本来就画着的叶子」这条规则不许把它填实。调用方
+ * （`svgPreviewStore.previewStyle`）据此回退后端；不判的话它会把渲染策略降成
+ * `'none'`，用户拖着改颜色**整轮什么都不会发生**——比每次都发后端更糟。
+ *
+ * 与 `applyStyleEdit` **共用 `styleTargets` 这一份实现**：分成两份迟早分叉，
+ * 而分叉的表现正是「界面说预览生效了，画面纹丝不动」。
+ */
+export function canStyleEditApply(
+  node: Element,
+  kind: AdapterKind,
+  value: unknown,
+  ctx: StyleContext,
+): boolean {
+  return styleTargets(node, kind, value, ctx).length > 0
+}
+
+interface StyleTarget {
+  el: Styled
+  prop: string
+  value: string
+}
+
+/** 这次预览要落到哪些叶子上、各写什么值。空数组 = 这次预览改不到任何东西。 */
+function styleTargets(
+  node: Element,
+  kind: AdapterKind,
+  value: unknown,
+  ctx: StyleContext,
+): StyleTarget[] {
   if (kind === 'display') {
-    const el = node as Styled
-    setStyle(el, 'display', value ? '' : 'none', edits)
-    return edits
+    return [{ el: node as Styled, prop: 'display', value: value ? '' : 'none' }]
   }
 
   if (kind === 'textFill' || kind === 'textOpacity') {
     const prop = kind === 'textFill' ? 'fill' : 'opacity'
     const v = kind === 'textFill' ? colorOf(value) : numberOf(value)
-    if (v == null) return edits
-    for (const el of glyphGroups(node)) setStyle(el, prop, String(v), edits)
-    return edits
+    if (v == null) return []
+    return glyphGroups(node).map((el) => ({ el, prop, value: String(v) }))
   }
 
   if (kind === 'strokeWidth') {
     const n = numberOf(value)
-    if (n == null) return edits
+    if (n == null) return []
     const w = String(n * ctx.unitsPerPt)
-    for (const el of leaves(node)) {
-      // 线宽只对「真的描着边」的叶子有意义。matplotlib 在线宽等于默认值时
-      // 不输出 stroke-width，所以判据是 stroke 而不是 stroke-width——
-      // 只认后者的话，柱形的默认 1.0pt 边框会拖不动
-      if (paints(el, 'stroke')) setStyle(el, 'stroke-width', w, edits)
-    }
-    return edits
+    // 线宽只对「真的描着边」的叶子有意义。matplotlib 在线宽等于默认值时
+    // 不输出 stroke-width，所以判据是 stroke 而不是 stroke-width——
+    // 只认后者的话，柱形的默认 1.0pt 边框会拖不动
+    return leaves(node)
+      .filter((el) => paints(el, 'stroke'))
+      .map((el) => ({ el, prop: 'stroke-width', value: w }))
   }
 
   if (kind === 'opacity') {
     const n = numberOf(value)
-    if (n == null) return edits
+    if (n == null) return []
     const a = String(n)
+    const out: StyleTarget[] = []
     for (const el of leaves(node)) {
       // matplotlib 自己就是分开写 fill-opacity / stroke-opacity 的
       // （见 fill_between 的输出）；粗暴地盖一个 `opacity` 会连带把
       // 已有的 fill-opacity 语义改掉，也无法准确还原
-      if (paints(el, 'fill')) setStyle(el, 'fill-opacity', a, edits)
-      if (paints(el, 'stroke')) setStyle(el, 'stroke-opacity', a, edits)
+      if (paints(el, 'fill')) out.push({ el, prop: 'fill-opacity', value: a })
+      if (paints(el, 'stroke')) out.push({ el, prop: 'stroke-opacity', value: a })
     }
-    return edits
+    return out
   }
 
   const c = colorOf(value)
-  if (c == null) return edits
-  const targets: ('fill' | 'stroke')[] =
+  if (c == null) return []
+  const props: ('fill' | 'stroke')[] =
     kind === 'stroke' ? ['stroke'] : kind === 'fill' ? ['fill'] : ['stroke', 'fill']
+  const out: StyleTarget[] = []
   for (const el of leaves(node)) {
-    for (const prop of targets) {
-      if (paints(el, prop)) setStyle(el, prop, c, edits)
+    for (const prop of props) {
+      if (paints(el, prop)) out.push({ el, prop, value: c })
     }
   }
-  return edits
+  return out
 }
 
 /** 逐条还原（倒序：同一元素被记过多次时最早那条才是 base） */

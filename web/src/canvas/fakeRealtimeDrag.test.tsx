@@ -9,6 +9,7 @@
  *   5. undo/redo 恢复的是**正式 override 的准确值**，并触发新的权威渲染；
  *   6. 权威渲染失败时历史照样在（渲染成不成功与记不记账无关）。
  */
+import { literal } from '@/i18n'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { MATPLOTLIB_SVG } from '@/lib/__fixtures__/matplotlibSvg'
@@ -144,7 +145,7 @@ beforeEach(async () => {
   useSelectionStore.getState().clear()
   useRenderStore.getState().clear()
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_fake_realtime')
-  useDocumentStore.getState().commit('加面板', (d) => {
+  useDocumentStore.getState().commit(literal('加面板'), (d) => {
     d.objects.push(panelOf())
   })
   // 画布上挂着这一版：SVG 与 manifest 同一次响应（inline_svg）

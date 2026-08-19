@@ -1,5 +1,8 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { ChevronDown, Folder, SquareArrowOutUpRight } from 'lucide-react'
+import { literal } from '@/i18n'
+import { backendErrorText } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
@@ -19,6 +22,7 @@ const RECENT_IN_MENU = 6
  * 上的（lib/session.ts），所以两个图库可以真正同时开着，互不干扰。
  */
 export function ProjectSwitcher() {
+  const { t } = useTranslation('project')
   const project = useProjectStore((s) => s.project)
   const recent = useProjectStore((s) => s.recent)
   const opened = useProjectStore((s) => s.opened)
@@ -29,7 +33,8 @@ export function ProjectSwitcher() {
 
   const go = (path: string, create = false) => {
     void open(path, create).catch((e: unknown) =>
-      useUiStore.getState().setStatus(e instanceof Error ? e.message : String(e), 'error'),
+      // 后端给了稳定 code 就按当前语言说；没给就原样透出它那句话
+      useUiStore.getState().setStatus(literal(backendErrorText(e)), 'error'),
     )
   }
 
@@ -55,7 +60,7 @@ export function ProjectSwitcher() {
               'flex h-7 min-w-0 max-w-56 shrink items-center gap-1 rounded-md px-1.5 text-xs',
               'text-ink-2 outline-none hover:bg-ink/[.045] hover:text-ink focus-visible:focus-ring',
             )}
-            aria-label={`当前项目 ${project.name}，点击切换`}
+            aria-label={t('switcher.trigger', { name: project.name })}
           >
             <Folder size={13} className="shrink-0 text-ink-3" />
             <span className="truncate">{project.name}</span>
@@ -63,22 +68,22 @@ export function ProjectSwitcher() {
           </button>
         }
       >
-        <MenuLabel>当前项目</MenuLabel>
+        <MenuLabel>{t('switcher.current')}</MenuLabel>
         {/* 宽度必须钉死：图库路径动辄上百字符，不封顶会把整个浮层撑成一条 */}
         <div className="w-[264px] px-2 pb-1">
           <div className="truncate font-mono text-xs text-ink-2" title={project.figures_dir}>
             {project.figures_dir}
           </div>
           <div className="mt-0.5 text-xs text-ink-3">
-            {project.scripts ?? 0} 个可参数化脚本
-            {project.settings?.allow_write_back === false && ' · 只读'}
+            {t('switcher.scriptCount', { count: project.scripts ?? 0 })}
+            {project.settings?.allow_write_back === false && t('switcher.readOnlySuffix')}
           </div>
         </div>
 
         {others.length > 0 && (
           <>
             <MenuSeparator />
-            <MenuLabel>已打开</MenuLabel>
+            <MenuLabel>{t('switcher.opened')}</MenuLabel>
             {others.map((p) => (
               <MenuItem key={p.id} onSelect={() => go(p.figures_dir!)}>
                 {p.name}
@@ -90,7 +95,7 @@ export function ProjectSwitcher() {
         {recentRest.length > 0 && (
           <>
             <MenuSeparator />
-            <MenuLabel>最近</MenuLabel>
+            <MenuLabel>{t('switcher.recent')}</MenuLabel>
             {recentRest.map((r) => (
               <MenuItem key={r.path} disabled={!r.exists} onSelect={() => go(r.path)}>
                 {r.name}
@@ -101,13 +106,15 @@ export function ProjectSwitcher() {
 
         <MenuSeparator />
         <MenuItem onSelect={() => useUiStore.getState().setRegistryOpen(true)}>
-          脚本注册表…
+          {t('switcher.registry')}
         </MenuItem>
-        <MenuItem onSelect={() => setBrowse('open')}>浏览目录…</MenuItem>
-        <MenuItem onSelect={() => setBrowse('create')}>新建项目…</MenuItem>
-        <MenuItem onSelect={() => openInNewTab(project.id)}>在新标签页打开本项目</MenuItem>
+        <MenuItem onSelect={() => setBrowse('open')}>{t('switcher.browse')}</MenuItem>
+        <MenuItem onSelect={() => setBrowse('create')}>{t('switcher.create')}</MenuItem>
+        <MenuItem onSelect={() => openInNewTab(project.id)}>
+          {t('switcher.openInNewTab')}
+        </MenuItem>
         <MenuItem onSelect={() => useProjectStore.setState({ phase: 'none' })}>
-          全部项目…
+          {t('switcher.allProjects')}
         </MenuItem>
       </Menu>
 
@@ -128,15 +135,16 @@ export function ProjectSwitcher() {
 
 /** 顶栏上「把当前项目再开一个标签页」的快捷入口（图标按钮，不占字宽） */
 export function OpenInNewTabButton() {
+  const { t } = useTranslation('project')
   const id = useProjectStore((s) => s.project?.id)
   if (!id) return null
   return (
-    <Tip label="在新标签页打开（可在那边切到另一个项目）">
+    <Tip label={t('switcher.newTabTip')}>
       <button
         onClick={() =>
           window.open(`${location.pathname}?pj=${encodeURIComponent(id)}`, '_blank', 'noopener')
         }
-        aria-label="在新标签页打开"
+        aria-label={t('switcher.newTabLabel')}
         className={cn(
           'flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ink-3',
           'outline-none hover:bg-ink/[.045] hover:text-ink focus-visible:focus-ring',

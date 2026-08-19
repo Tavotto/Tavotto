@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { fetchPanels, type PanelInfo } from '@/lib/api'
+import { t } from '@/i18n'
 
 const USED_KEY = 'magplot.assetUsed'
 
@@ -64,12 +65,18 @@ export const useAssetStore = create<AssetState>((set) => ({
     }),
 }))
 
-/** 文件夹名的中文显示，未知目录原样显示 */
-export const FOLDER_LABEL: Record<string, string> = {
-  '.': 'figures 根目录',
-  main_text_panels: '正文面板',
-  supplementary_panels: '补充材料',
-  base: '素材',
+/**
+ * 约定俗成的几个目录有专属显示名；**其余目录一律原样显示**——那是用户自己
+ * 起的文件夹名，翻译它只会让人对不上磁盘。
+ */
+const FOLDER_KEYS: Record<string, string> = {
+  '.': 'folderRoot',
+  main_text_panels: 'folderMainText',
+  supplementary_panels: 'folderSupplementary',
+  base: 'folderBase',
 }
 
-export const folderLabel = (folder: string) => FOLDER_LABEL[folder] ?? folder
+export const folderLabel = (folder: string): string => {
+  const key = FOLDER_KEYS[folder]
+  return key ? t(`assets.${key}`, { ns: 'workspace' }) : folder
+}

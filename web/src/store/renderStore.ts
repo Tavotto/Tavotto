@@ -1,6 +1,8 @@
 import { useMemo } from 'react'
+import { t } from '@/i18n'
 import { create } from 'zustand'
 import { EngineError, engineRender, type Manifest } from '@/lib/api'
+import { engineTransport } from '@/lib/engineTransport'
 import { useAssetStore } from '@/store/assetStore'
 import type { PanelObject } from '@/types/document'
 
@@ -218,10 +220,14 @@ export const useRenderStore = create<RenderState>((set, get) => ({
         try {
           // SVG 与 manifest 同一响应（inline_svg）：第二跳 GET 读的是磁盘上
           // 那一份，另一个变体的渲染插进来就会与本次 manifest 错配
-          const res = await engineRender(fileId, current, {
-            signal: ctrl.signal,
-            previewDpi: dpi,
-          })
+          // 装了替代传输就走它（Codex 内嵌画布 → MCP 的 tools/call），
+          // 否则还是原来那条 HTTP。两侧最终落到同一个 worker.override，
+          // 这里以下的逻辑一行都不分叉
+          const opts = { signal: ctrl.signal, previewDpi: dpi }
+          const transport = engineTransport()
+          const res = transport
+            ? await transport.render(fileId, current, opts)
+            : await engineRender(fileId, current, opts)
           const next: Partial<PanelRender> = {
             fileId,
             rev: res.rev,
@@ -258,7 +264,10 @@ export const useRenderStore = create<RenderState>((set, get) => ({
             code: err instanceof EngineError ? err.code : '',
             module: err instanceof EngineError ? err.module : '',
             error: timedOut
-              ? `渲染超过 ${Math.round(timeoutMs / 60_000)} 分钟无响应，已断开请求；服务可能仍在后台运行，可稍后重试`
+              ? t('render.timeout', {
+                  ns: 'errors',
+                  minutes: Math.round(timeoutMs / 60_000),
+                })
               : err instanceof Error
                 ? err.message
                 : String(err),

@@ -41,13 +41,15 @@
 取 macOS 的 `.dmg` 或 Windows 的 `.exe`，装完双击即用，Magplot 在自己的桌面窗口中打开。
 之后的升级都在软件里完成——自己检查、下载、安装、重启，不用再回发行页。
 
-**Windows 用户不需要自己装 Python。** 安装包里自带一套 Magplot 专用的 Python
-运行环境，常用科学栈已经装好——numpy、matplotlib、pandas、scipy、seaborn、Pillow，
-版本都是固定的。装完立刻就能渲染，不用下载、不用联网。它**不会碰你已有的任何
-Python 或 Conda**；如果某张图要用到清单之外的包，在「设置 →「渲染环境」」里
-换成你自己那套环境即可。见[使用须知](#使用须知)。
+**你不需要自己装 Python。** macOS 与 Windows 的安装包**都**自带一套 Magplot 专用的
+Python 运行环境，常用科学栈已经装好——numpy、matplotlib、pandas、scipy、seaborn、
+Pillow，版本都是固定的，而且**两个平台锁的是同一组版本**，同一个脚本在两边画出
+同一张图。装完立刻就能渲染，不用下载、不用联网，也不需要 Homebrew、Conda 或
+Xcode。它**不会碰你已有的任何 Python 或 Conda**；如果某张图要用到清单之外的包，
+在「设置 →「渲染环境」」里换成你自己那套环境即可。见[使用须知](#使用须知)。
 
-macOS 版仍然用你已有的 Python（或让 Magplot 在自己的目录里建一个隔离环境）。
+macOS 版**只发 Apple Silicon（arm64）**。Intel Mac 目前没有构建、也没有验证过，
+请走下面的 PyPI 安装。
 
 **或者从 PyPI 装**，三个平台命令相同：
 
@@ -190,19 +192,33 @@ codex plugin marketplace add erwanjun/magplot && codex plugin add magplot@magplo
   | 安装方式 | 渲染用的解释器 |
   |---|---|
   | Windows `.exe` | 安装包**自带的内置环境**：CPython 3.13 + numpy / matplotlib / pandas / scipy / seaborn / Pillow（版本固定）。不用装、不用下载。 |
-  | macOS `.dmg` | 你自己的 Python；也可以让 Magplot 在它自己的数据目录里建一个隔离环境。 |
+  | macOS `.dmg`（arm64） | **同一套内置环境**，版本完全相同。不需要 Homebrew / Conda / Xcode。 |
   | PyPI + `[worker]` | 你装它的那个环境。 |
 
   选择顺序：`MM_WORKER_PYTHON` → 你在设置里指定的 → 内置环境 → Magplot 自身的
   解释器 → 机器上探测到的 Python / Conda。**你显式指定的永远优先**；
   Magplot 只是**启动**你指定的环境来渲染，
   绝不往里面装任何东西，也绝不修改你已有的 Python / Conda。
+  内置环境同样**只读**：字节码与 Matplotlib 字体缓存都改道到 Magplot 自己的
+  数据目录，安装目录一个字节都不写（macOS 上往签过名的 `.app` 里写东西会直接
+  破坏代码签名，下次启动就成了「应用已损坏」）。
 
+  内置环境覆盖的是**常用**科学栈，**不承诺覆盖你脚本可能 import 的任意包**。
   脚本要用内置环境里没有的包（rdkit、astropy、自家实验室的库）时，Magplot 会
   直接告诉你缺的是哪个包，并给出「换成你自己的环境」的入口
-  （设置 →「渲染环境」）。一个可用解释器都没有时，排版、标注、导出照常，
-  只有图内编辑用不了。「设置 → 隐私、诊断与 About」始终显示当前用的是
-  哪个解释器、来自哪里。
+  （设置 →「渲染环境」）；它**不会**替你把那个包装进内置环境，也不会装进你的环境
+  ——那样内置环境就不再可复现，「重装就能修」这条退路也没了。
+  一个可用解释器都没有时，排版、标注、导出照常，只有图内编辑用不了。
+
+  「设置 → 隐私、诊断与 About」始终显示当前用的是哪个解释器、来自哪里
+  （`bundled` / `configured` / `system` …）；用内置环境时还会显示它的 Python
+  版本与每个包的精确版本——那份数据读的是随包分发的 `runtime-manifest.json`，
+  诊断包里也有同一份。
+
+- **桌面安装包比较大：下载约 180 MB，装完约 490 MB**（macOS arm64 实测；
+  不带内置环境的 v0.7.0 是 62 MB / 131 MB）。多出来的就是内置环境：CPython 加上
+  numpy / scipy / pandas / matplotlib 及其编译扩展。这是「装完即可渲染」的代价，
+  只付一次、且完全离线。PyPI 安装仍然只有几 MB，因为它复用你已有的 Python。
 
 ## 开发
 
@@ -211,10 +227,13 @@ codex plugin marketplace add erwanjun/magplot && codex plugin add magplot@magplo
 cd web && pnpm test               # 前端
 cd web && pnpm build              # 类型检查（tsc -b）+ 打包
 
-# 只有打 Windows 桌面版才需要：构建内置渲染环境。
-# 版本锁在 packaging/runtime-lock.json；脚本会校验 CPython 下载的 SHA-256，
-# 并逐个 import 测试装进去的每个包。
-python scripts/build_worker_runtime.py
+# 打桌面版（macOS / Windows 都要）：构建内置渲染环境。
+# 版本锁在 packaging/runtime-lock.json（按平台/架构分层）；脚本会校验 CPython
+# 下载的 SHA-256、按 .dist-info 核对每个包的版本，最后用刚装好的解释器逐个
+# import 并真画一张 PDF——任何一步不过就当场失败。
+python scripts/build_worker_runtime.py              # 按本机平台/架构挑目标
+python scripts/build_worker_runtime.py --list-targets
+python scripts/build_desktop.py                     # 完整桌面链路（含上面这步）
 ```
 
 欢迎提 issue 与 PR——改动怎么验、代码库刻意守着哪些边界，见

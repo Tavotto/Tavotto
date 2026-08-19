@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { t as translate } from '@/i18n'
 import { enginePreviewPng, panelSrc } from '@/lib/api'
+import { engineTransport } from '@/lib/engineTransport'
 import { alignEntries, geomGid, geomTarget, segIntersectsRect } from '@/lib/elementGeom'
 import { DURATION, prefersReducedMotion, usePresence } from '@/lib/motion'
+import { geomHitsRect } from '@/lib/pathGeom'
 import { pickBucket } from '@/lib/units'
 import { cn } from '@/lib/utils'
 import { isJustBakedBaseline } from '@/store/actions'
@@ -38,6 +41,9 @@ import { openQuickEdit } from './quickEditStore'
  * 旋转：对象的 x/y/w/h 是旋转后的页面落位，内容层按未旋转尺寸铺好、
  * 居中后整体 CSS rotate；90/270 时两者长宽互换，正好填满包围盒。
  */
+/** 面板角标的文案（workspace:panelBadge.*） */
+const badge = (key: string) => translate(`panelBadge.${key}`, { ns: 'workspace' })
+
 export function PanelView({ obj }: { obj: PanelObject }) {
   const zoom = useViewportStore((s) => s.zoom)
   // 「写回原始文件」后 mtime 变化 → URL 变化 → 画布上已放置的同源面板自动重取
@@ -104,9 +110,13 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   const needsEngine = (obj.overrides.length > 0 && !isJustBakedBaseline(obj)) || tracked
   const useEnginePng = !editing && needsEngine && (render?.rev ?? 0) > 0
   const enginePng = useEnginePngBlob(obj, bucket, useEnginePng, render?.rev ?? 0)
-  const src = useEnginePng && enginePng
-    ? enginePng
+  // 替代传输给不出可寻址地址时（Codex 内嵌画布里没有 HTTP 服务）退回空串，
+  // 此时显示走 SVG——绝不留一个连不上的 URL 让画布挂一个碎图标
+  const transport = engineTransport()
+  const fileSrc = transport
+    ? transport.panelSrc(obj.fileId, obj.fileKind, bucket, mtime)
     : panelSrc(obj.fileId, obj.fileKind, bucket, mtime)
+  const src = (useEnginePng && enginePng) || fileSrc || ''
 
   return (
     <div className="absolute inset-0 overflow-hidden">
@@ -180,10 +190,15 @@ function useEnginePngBlob(
     if (!enabled) return
     const ctrl = new AbortController()
     let landed = false
-    void enginePreviewPng(fileId, overrides, bucket, ctrl.signal)
-      .then((blob) => {
+    const transport = engineTransport()
+    const pending = transport
+      ? transport.previewPngUrl(fileId, overrides, bucket, ctrl.signal)
+      : enginePreviewPng(fileId, overrides, bucket, ctrl.signal).then((blob) =>
+          URL.createObjectURL(blob),
+        )
+    void pending
+      .then((next) => {
         landed = true
-        const next = URL.createObjectURL(blob)
         if (urlRef.current) URL.revokeObjectURL(urlRef.current)
         urlRef.current = next
         setUrl(next)
@@ -363,6 +378,9 @@ function ElementHitLayer({
             if (el.arrow_endpoints && el.arrow_endpoints.length >= 2) {
               return segIntersectsRect(el.arrow_endpoints[0], el.arrow_endpoints[1], r)
             }
+            // 有真实路径的（曲线 / 填充 / 独立形状）按**路径**与框相交，同理：
+            // 一条 U 形曲线的 bbox 中间那块全是空白，框在那儿不该圈中它
+            if (el.geometry) return geomHitsRect(el.geometry, r)
             const [bx, by, bw, bh] = el.bbox
             if (el.role === 'axes' || el.role === 'axes3d') {
               return bx >= r.x && by >= r.y && bx + bw <= r.x + r.w && by + bh <= r.y + r.h
@@ -491,15 +509,19 @@ function RenderStatusBadge({ obj }: { obj: PanelObject }) {
       return {
         tone: 'busy' as const,
         cold: !!building?.cold,
-        text: building?.cold
-          ? building.cost === 'heavy'
-            ? '冷启动中，可能需要几分钟…'
-            : '首次构建中…'
-          : '渲染中…',
+        text: badge(
+          building?.cold
+            ? building.cost === 'heavy'
+              ? 'cold'
+              : 'firstBuild'
+            : 'rendering',
+        ),
       }
     }
-    if (render?.status === 'error') return { tone: 'error' as const, cold: false, text: '渲染失败' }
-    if (render?.stale) return { tone: 'stale' as const, cold: false, text: '脚本已更新' }
+    if (render?.status === 'error') {
+      return { tone: 'error' as const, cold: false, text: badge('error') }
+    }
+    if (render?.stale) return { tone: 'stale' as const, cold: false, text: badge('stale') }
     return null
   }, [render, relevant, building])
 

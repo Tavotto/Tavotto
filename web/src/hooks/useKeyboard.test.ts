@@ -1,3 +1,4 @@
+import { formatMessage, literal } from '@/i18n'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { runUndoRedo, undoRedoBlocked } from './useKeyboard'
 import { useDocumentStore } from '@/store/documentStore'
@@ -61,17 +62,17 @@ describe('undoRedoBlocked', () => {
 
 describe('拖动中途按 ⌘Z', () => {
   beforeEach(reset)
-  afterEach(() => useUiStore.getState().setStatus('')) // 顺手清掉 4.5s 的状态计时器
+  afterEach(() => useUiStore.getState().setStatus(null)) // 顺手清掉 4.5s 的状态计时器
 
   it('拖动进行中根本不会调到 documentStore.undo/redo', () => {
-    s().commit('改文字', (d) => {
+    s().commit(literal('改文字'), (d) => {
       const o = d.objects[0]
       if (o.type === 'text') o.text = 'B'
     })
 
     // pointerdown：interactions.ts 先 begin('move') 再 beginTxn
     useInteractionStore.getState().begin('move')
-    s().beginTxn('移动对象')
+    s().beginTxn(literal('移动对象'))
     s().txnUpdate((d) => {
       d.objects[0].x = 2
     })
@@ -84,7 +85,7 @@ describe('拖动中途按 ⌘Z', () => {
     spies.restore()
 
     // 事务原封不动，拖动照常继续
-    expect(s().txn?.label).toBe('移动对象')
+    expect(formatMessage(s().txn?.label)).toBe('移动对象')
     expect(s().past).toHaveLength(1)
     expect(s().doc.objects[0].x).toBe(2)
 
@@ -95,12 +96,12 @@ describe('拖动中途按 ⌘Z', () => {
     useInteractionStore.getState().end()
     s().endTxn()
     expect(s().past).toHaveLength(2)
-    expect(s().past.at(-1)?.label).toBe('移动对象')
+    expect(formatMessage(s().past.at(-1)?.label)).toBe('移动对象')
 
     // 松手后再按 ⌘Z，撤的就是这次拖动本身，不是更早那条
     runUndoRedo(false)
     expect(s().past).toHaveLength(1)
-    expect(s().past.at(-1)?.label).toBe('改文字')
+    expect(formatMessage(s().past.at(-1)?.label)).toBe('改文字')
     // 整段拖动一次退回，中途那次 ⌘Z 没留下残留位移。
     // 「回到 0 而不是倒数第二步」由 documentStore.compress() 的反向补丁方向保证——
     // 这里红了先看那儿，不是本文件的拦截逻辑坏了
@@ -112,16 +113,16 @@ describe('拖动中途按 ⌘Z', () => {
     // 加速键这类入口。第二道防线在 documentStore.txnUpdate：没有进行中的
     // 事务就丢弃更新——丢一帧拖动无害，绕过历史写文档是数据损坏
     // （真实撞见过：成组文字回到原位、图片停在新位、撤销无能为力）。
-    s().commit('改文字', (d) => {
+    s().commit(literal('改文字'), (d) => {
       const o = d.objects[0]
       if (o.type === 'text') o.text = 'B'
     })
-    s().beginTxn('移动对象')
+    s().beginTxn(literal('移动对象'))
     s().txnUpdate((d) => {
       d.objects[0].x = 2
     })
 
-    expect(s().undo()).toBe('移动对象') // 结算成历史 + 立刻撤销，一次调用里连着发生
+    expect(formatMessage(s().undo())).toBe('移动对象') // 结算成历史 + 立刻撤销，一次调用里连着发生
     expect(s().past).toHaveLength(1) // past 净变化为 0
     expect(s().txn).toBeNull()
     expect(s().doc.objects[0].x).toBe(0)
@@ -137,7 +138,7 @@ describe('拖动中途按 ⌘Z', () => {
     expect(s().past).toHaveLength(1)
 
     // 再按 ⌘Z 撤的是「改文字」，没有任何残留位移
-    expect(s().undo()).toBe('改文字')
+    expect(formatMessage(s().undo())).toBe('改文字')
     expect(firstText()).toBe('A')
     expect(s().doc.objects[0].x).toBe(0)
   })

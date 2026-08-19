@@ -1,4 +1,5 @@
 import { apiUrl, withProject } from '@/lib/session'
+import { i18n, t } from '@/i18n'
 import type { FigureDocument, ProjectDocument } from '@/types/document'
 
 export interface PanelInfo {
@@ -36,6 +37,30 @@ export class ApiError extends Error {
     this.status = status
     this.body = body
   }
+}
+
+/**
+ * 后端错误 → 当前语言的一句话。
+ *
+ * 约定见 `src/magplot/app.py` 顶部：用户会看到的失败带稳定 `code` + `params`，
+ * `error` 里的中文原文只是回退。**先查 code**，查不到才用原文——后端不知道
+ * 用户选了哪门语言，让它去猜等于把语言偏好搬到服务端。
+ *
+ * 没 code、或本前端还不认识这个 code 时原样透出后端那句话：一句中文总比
+ * 一串 `errors:backend.xxx` 有用，也比「发生了未知错误」有用。
+ */
+export function backendErrorText(e: unknown): string {
+  if (e instanceof ApiError) {
+    const code = typeof e.body?.code === 'string' ? e.body.code : ''
+    // 用 exists 而不是 defaultValue 判「有没有这条」：i18n 那边的
+    // parseMissingKeyHandler 会把缺失的 key 原样吐回来（界面上看得见是哪条），
+    // 那样 defaultValue 永远轮不到，缺文案时用户看到的就是 `backend.xxx`。
+    if (code && i18n.exists(`backend.${code}`, { ns: 'errors' })) {
+      const params = (e.body?.params ?? {}) as Record<string, unknown>
+      return t(`backend.${code}`, { ns: 'errors', ...params })
+    }
+  }
+  return e instanceof Error ? e.message : String(e)
 }
 
 /* --------------------- 项目失效（409 no_project）的统一出口 ------------------- */
@@ -498,8 +523,20 @@ export function openPackage(file: File): Promise<PackageOpenResult> {
 /** manifest 里一个可编辑字段；ElementInspector 完全由它驱动，前端不硬编码属性名 */
 export interface EditableField {
   prop: string
-  /** order：可重排列表（图例条目顺序），value 为原始序号排列，options 为显示文字 */
-  type: 'text' | 'number' | 'color' | 'bool' | 'enum' | 'pair' | 'rect' | 'order'
+  /**
+   * order：可重排列表（图例条目顺序），value 为原始序号排列，options 为显示文字。
+   * number_list：一串数（固定刻度位置），value 为 number[]。
+   */
+  type:
+    | 'text'
+    | 'number'
+    | 'color'
+    | 'bool'
+    | 'enum'
+    | 'pair'
+    | 'rect'
+    | 'order'
+    | 'number_list'
   value: unknown
   min?: number
   max?: number
@@ -510,12 +547,48 @@ export interface EditableField {
   group?: string
 }
 
+/** 路径几何的一条子路径（figure 分数、y 向下） */
+export interface GeometryPath {
+  points: [number, number][]
+  closed: boolean
+}
+
+/**
+ * 元素**真正画出来的那条路径**（曲线 / 填充 / 独立形状）。
+ *
+ * 为什么需要它：bbox 回答的是「占了多大一块」，当不了选中轮廓也当不了命中
+ * 判据——斜曲线、fill_between、多边形的包围盒里绝大部分是空白，用它画选择框
+ * 会画出一个与图形对不上的矩形，用它做命中会让用户在空白处误选。
+ *
+ * 约定（与 engine/pathgeom.py 同源）：
+ * * 坐标与 bbox 同一套：figure 分数、y 向下；
+ * * 它是**渲染派生数据**：每次渲染由引擎现算，不进用户文档、不是 override、
+ *   不参与写回。xlim / scale / axes position / figsize / aspect / 色条方向一变，
+ *   下一版 manifest 里它自然就是新的——前端**绝不**自己推算它；
+ * * bbox 一个字节没少：布局、缩放、对齐、resize 手柄仍然只认 bbox，
+ *   没有 geometry 的元素（文字、图例、子图、散点）也仍然只用 bbox。
+ * * 散点与「只有 marker 没有连线」的曲线**有意不给** geometry：一个 marker
+ *   一条小路径撑爆 manifest，而那条穿过点位的折线图上根本不存在。
+ */
+export interface ElementGeometry {
+  kind: 'polyline' | 'path' | 'multi_path'
+  paths: GeometryPath[]
+  /** 这条路径是填充的（选中时给一层很淡的底色，命中含内部） */
+  fill: boolean
+  /** 这条路径有描边 */
+  stroke: boolean
+  /** 裁剪框（figure 分数、y 向下）；只有矩形裁剪才给，非矩形裁剪不给 */
+  clip?: [number, number, number, number]
+}
+
 export interface ManifestElement {
   gid: string
   role: string
   label: string
   /** figure 分数坐标，y 向下：[x, y, w, h] */
   bbox: [number, number, number, number]
+  /** 真实路径（见 ElementGeometry）；没有就退回 bbox */
+  geometry?: ElementGeometry
   editable: EditableField[]
   draggable: boolean
   /** axes：可在画布上直接拖动/缩放子图占比（写 position override） */
@@ -528,6 +601,13 @@ export interface ManifestElement {
   /** 该 axes 其实是色条轴；属性页应改用它的色条元素 */
   is_colorbar?: boolean
   colorbar_gid?: string
+  /**
+   * 色条元素的**稳定语义身份**（`cbar:<宿主 axes gid>:<序号>`）与宿主 gid。
+   * `axes_i.colorbar` 是按 fig.axes 的排序编出来的名字，语义身份才是「这是谁的
+   * 色条」；引擎在 index 里两个都认，所以旧文档的 gid 照旧生效。
+   */
+  colorbar_key?: string
+  host_gid?: string
   /**
    * 拖动这个 axes 时该一起走的**其他 axes**（色条轴、twinx/twiny 的孪生轴）。
    * 由引擎裁决（只有那边有 matplotlib 的共享关系与落点），前端只负责把同一个
@@ -628,7 +708,7 @@ export async function engineRender(
   if (!res.ok) {
     noteProjectGone(res.status, body)
     throw new EngineError(
-      (body.error as string) || `渲染失败（HTTP ${res.status}）`,
+      (body.error as string) || t('render.failed', { ns: 'errors', status: res.status }),
       (body.traceback as string) || '',
       (body.code as string) || '',
       (body.module as string) || '',
@@ -661,7 +741,7 @@ export async function enginePreviewPng(
     const body = await errorBody(res)
     noteProjectGone(res.status, body)
     throw new EngineError(
-      (body.error as string) || `取预览位图失败（HTTP ${res.status}）`,
+      (body.error as string) || t('render.previewPngFailed', { ns: 'errors', status: res.status }),
       (body.traceback as string) || '',
       (body.code as string) || '',
       (body.module as string) || '',

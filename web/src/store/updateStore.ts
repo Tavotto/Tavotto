@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { t } from '@/i18n'
 import { applyUpdate, checkUpdate, patchUpdateSettings, type UpdateStatus } from '@/lib/api'
 import {
   checkDesktopUpdate,
@@ -83,7 +84,9 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
       if (force) {
         set({
           checkError:
-            e instanceof Error ? `检查失败：${e.message}` : '检查失败：无法连接本地服务',
+            e instanceof Error
+              ? t('update.checkFailed', { ns: 'errors', error: e.message })
+              : t('update.checkFailedOffline', { ns: 'errors' }),
         })
       }
     } finally {
@@ -98,7 +101,7 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
       const res = await applyUpdate()
       set({ applyLog: res.log, restartRequired: res.restart_required })
     } catch (e) {
-      set({ applyLog: e instanceof Error ? e.message : '升级失败' })
+      set({ applyLog: e instanceof Error ? e.message : t('update.applyFailed', { ns: 'errors' }) })
     } finally {
       set({ applying: false })
     }
@@ -120,7 +123,9 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
       set({ desktopUpdate: info, desktopChecked: true, dismissed: false })
     } catch (e) {
       // 离线是常态，但用户按下的按钮必须有下文——无声无息的按钮和坏掉没区别
-      set({ desktopError: e instanceof Error ? e.message : '检查更新失败' })
+      set({
+        desktopError: e instanceof Error ? e.message : t('update.desktopCheckFailed', { ns: 'errors' }),
+      })
     } finally {
       set({ desktopPhase: 'idle' })
     }
@@ -137,7 +142,8 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
       set({
         desktopPhase: 'idle',
         desktopProgress: null,
-        desktopError: e instanceof Error ? e.message : '下载或安装失败',
+        desktopError:
+          e instanceof Error ? e.message : t('update.desktopInstallFailed', { ns: 'errors' }),
       })
     }
   },
@@ -146,7 +152,9 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
     try {
       await relaunchDesktop()
     } catch (e) {
-      set({ desktopError: e instanceof Error ? e.message : '重启失败，请手动退出后重新打开' })
+      set({
+        desktopError: e instanceof Error ? e.message : t('update.relaunchFailed', { ns: 'errors' }),
+      })
     }
   },
 }))

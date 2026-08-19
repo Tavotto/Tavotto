@@ -409,6 +409,86 @@ def _g_scatter_marker(_getbase):
     )
 
 
+def _g_axes_range_scale_and_ticks(_getbase):
+    """坐标轴范围 / 缩放类型 / spine + 刻度定位模型（Locator + Formatter）。
+
+    最容易分岔的一组：`set_xscale` 会把该轴的 locator/formatter 整套换掉，
+    所以「换刻度类型」必须先于「配置刻度定位」，而刻度定位又必须先于
+    「改单条刻度文字」（冻结整条轴是最后一步）。这些先后关系是
+    `overrides._apply_rank` 的规范档位，本组就是它的压力测试。
+    """
+    return _cumulative(
+        {"gid": "axes_0", "prop": "xlim", "value": [0.4, 4.4]},
+        {"gid": "axes_0", "prop": "ylim", "value": [-1.4, 1.4]},
+        {"gid": "axes_0", "prop": "xscale", "value": "log"},
+        {"gid": "axes_0", "prop": "spine_top", "value": False},
+        {"gid": "axes_0", "prop": "spine_linewidth", "value": 1.4},
+        # 「全部」与「逐条」是两条会互相盖写的 setter：一起出现才验得出
+        # 「谁先谁后都是同一张图」
+        {"gid": "axes_0", "prop": "spine_left_linewidth", "value": 2.2},
+        {"gid": "axes_0", "prop": "spine_bottom_color", "value": "#B34700"},
+        {"gid": "axes_0.yticks", "prop": "major_mode", "value": "step"},
+        {"gid": "axes_0.yticks", "prop": "major_step", "value": 0.5},
+        {"gid": "axes_0.yticks", "prop": "minor_visible", "value": True},
+        {"gid": "axes_0.yticks", "prop": "format", "value": "%.2f"},
+        {"gid": "axes_0.yticks", "prop": "minor_format", "value": "%.1f"},
+    )
+
+
+def _g_fixed_ticks_and_label_text(getbase):
+    """固定刻度位置 + 直接改其中一条刻度的文字。
+
+    冻结整条轴（FixedLocator + FixedFormatter）是最后一档，先冻的会被后来的
+    locator 换掉——顺序反了，热会话与全量重放会得到两组不同的刻度文字。
+    """
+    # 刻度文字刻意用 ASCII：这条用例最后要从写回的 PDF 里把它读出来，而中文
+    # 得先有 CJK 字体（s6 为此专门做了字体探测）。要验的是「文字留住了没有」，
+    # 不是字体，别把两件事绑在一起。
+    xticks = [e["gid"] for e in getbase()["elements"]
+              if e["role"] == "ticklabel" and e["gid"].startswith("axes_0.xtick")]
+    return _cumulative(
+        {"gid": "axes_0.xticks", "prop": "major_mode", "value": "fixed"},
+        {"gid": "axes_0.xticks", "prop": "major_values", "value": [0.5, 1.5, 2.5, 3.5]},
+        {"gid": "axes_0.xticklabels_1", "prop": "text", "value": "mid-tick"},
+        {"gid": xticks[0], "prop": "text", "value": "start"},
+    )
+
+
+def _g_nonlinear_scales(_getbase):
+    """symlog / logit：界面里出得来，就必须真的跑得起来并且四路一致。"""
+    return _cumulative(
+        {"gid": "axes_0", "prop": "yscale", "value": "symlog"},
+        {"gid": "axes_1", "prop": "xscale", "value": "logit"},
+    )
+
+
+def _g_legend_item_text(_getbase):
+    """单个图例项的文字 + 图例标题 + 重建型布局（ncol）。
+
+    三件事必须分得清：改图例项文字、改源曲线 label、触发图例重建。ncol 是
+    重建型的（文字对象整批换新），重建之后已应用的文字 override 必须被重放到
+    新对象上，否则「改过的图例项在换列数之后自己变回去」。
+    """
+    return _cumulative(
+        {"gid": "axes_0.legend.texts_0", "prop": "text", "value": "sin(x)"},
+        {"gid": "axes_0.legend", "prop": "title", "value": "Series"},
+        {"gid": "axes_0.legend", "prop": "ncol", "value": 2},
+    )
+
+
+def _g_colorbar_orientation(_getbase):
+    """色条方向翻转 + 两端延伸三角（两次就地结构改造）+ 既有属性一并保留。"""
+    return _cumulative(
+        {"gid": "axes_2.colorbar", "prop": "orientation", "value": "horizontal"},
+        # extend 与方向是两次结构改造，且**必须**方向在前（方向要拿色条当前
+        # 的矩形反解厚度与间距）——把它们放进同一组才验得到这条先后
+        {"gid": "axes_2.colorbar", "prop": "extend", "value": "both"},
+        {"gid": "axes_2.colorbar", "prop": "label", "value": "intensity"},
+        {"gid": "axes_2.colorbar", "prop": "tick_fontsize", "value": 6.0},
+        {"gid": "axes_2.colorbar", "prop": "vmin", "value": 6.0},
+    )
+
+
 def _g_mixed(_getbase):
     """混合大组合：12 条 patch 跨 figure / 子图 / 文字 / 标签 / 图例 / 数据系列 /
     刻度七类，且几何与 figure 锚定属性交错——重放顺序规范化真正的压力测试。"""
@@ -434,7 +514,12 @@ GROUPS = [
     ("s1-labels-and-title", "EqvMulti", _g_labels_and_title),
     ("s1-legend-reorder",   "EqvMulti", _g_legend_move_and_reorder),
     ("s1-mixed-12-patches", "EqvMulti", _g_mixed),
+    ("s1-range-scale-ticks", "EqvMulti", _g_axes_range_scale_and_ticks),
+    ("s1-fixed-ticks-text", "EqvMulti", _g_fixed_ticks_and_label_text),
+    ("s1-nonlinear-scales", "EqvMulti", _g_nonlinear_scales),
+    ("s1-legend-item-text", "EqvMulti", _g_legend_item_text),
     ("s2-colorbar-range",   "EqvImage", _g_colorbar_range),
+    ("s2-colorbar-orientation", "EqvImage", _g_colorbar_orientation),
     ("s2-scatter-marker",   "EqvImage", _g_scatter_marker),
     ("s3-annotation-move",  "EqvAnnot", _g_annotation_text_move),
     ("s3-arrow-endpoints",  "EqvAnnot", _g_arrow_endpoints),
@@ -502,10 +587,11 @@ def _flask_project(tmp_path, monkeypatch, library: Path):
         (library / SCRIPT_NAME).read_text(encoding="utf-8"), encoding="utf-8")
     (figs / "mm_registry.json").write_text(REGISTRY, encoding="utf-8")
     # 写回覆盖的是磁盘上**已有**的原件（真实图库里它由脚本跑出来）
-    doc = pymupdf.open()
-    doc.new_page(width=200, height=100)
-    doc.save(figs / "EqvMulti.pdf")
-    doc.close()
+    for stem in ("EqvMulti", "EqvImage"):
+        doc = pymupdf.open()
+        doc.new_page(width=200, height=100)
+        doc.save(figs / f"{stem}.pdf")
+        doc.close()
 
     m.app.config["TESTING"] = True
     m.reset_projects()
@@ -544,17 +630,30 @@ def _all_pairs_agree(arms: dict) -> None:
             _assert_same(a, arms[a], b, arms[b])
 
 
-def test_write_back_then_reopen_matches_the_hot_session(project, library):
+#: 第四路（写回后重开）跑哪几组。混合大组合是 FigS3 事故的形状；后面三组是
+#: 新增能力里**改结构**的那些（换刻度类型 / 重建刻度 / 翻转色条方向），
+#: 它们才是「热态所见 ≠ 重开后重放」最可能重新出现的地方。
+WRITE_BACK_GROUPS = [
+    ("s1-mixed-12-patches", "EqvMulti", _g_mixed, ("Panel A", "sin")),
+    ("s1-range-scale-ticks", "EqvMulti", _g_axes_range_scale_and_ticks, ("Panel A",)),
+    ("s1-fixed-ticks-text", "EqvMulti", _g_fixed_ticks_and_label_text, ("mid-tick", "start")),
+    ("s1-legend-item-text", "EqvMulti", _g_legend_item_text, ("sin(x)", "Series")),
+    ("s2-colorbar-orientation", "EqvImage", _g_colorbar_orientation, ("intensity",)),
+]
+
+
+@pytest.mark.parametrize("case_id,stem,builder,markers", WRITE_BACK_GROUPS,
+                         ids=[g[0] for g in WRITE_BACK_GROUPS])
+def test_write_back_then_reopen_matches_the_hot_session(
+        project, library, case_id, stem, builder, markers):
     """完整四路：热态 / 清空重放 / 全新 worker / **写回原件后重开**，两两一致。
 
     第四条腿走的是产品路径 `POST /api/engine/update_source`——它内部已有一次性
     worker 的干净重放校验，这里在它之外再验一遍「写回之后」：写回不得反过来
-    改动热会话，也不得让下一次冷启动落到另一个状态上。用的是 12 条 patch 的
-    混合大组合，正是几何与 figure 锚定属性交错的那一型（FigS3 事故的形状）。
+    改动热会话，也不得让下一次冷启动落到另一个状态上。
     """
     _m, client, figs = project
-    stem = "EqvMulti"
-    steps = _g_mixed(None)
+    steps = builder(_base_getter(library, stem))
     full = steps[-1]
 
     for step in steps:                      # 热态：一下一下地改
@@ -607,7 +706,8 @@ def test_write_back_then_reopen_matches_the_hot_session(project, library):
         h_mm = page.rect.height / 72.0 * 25.4
         assert [w_mm, h_mm] == pytest.approx(man_hot["size_mm"], abs=0.2)
         text = page.get_text()
-    assert "Panel A" in text and "sin" in text
+    for marker in markers:
+        assert marker in text, (marker, text[:400])
 
 
 # ===========================================================================

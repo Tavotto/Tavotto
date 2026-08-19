@@ -8,6 +8,7 @@ import {
   type ReactNode,
   type TextareaHTMLAttributes,
 } from 'react'
+import { t } from '@/i18n'
 import { cn } from '@/lib/utils'
 
 export const TextInput = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(
@@ -167,7 +168,7 @@ export function NumberField({
         inputMode="decimal"
         disabled={disabled}
         value={text}
-        placeholder={mixed ? '多个值' : undefined}
+        placeholder={mixed ? t('mixed') : undefined}
         onChange={(e) => setText(e.target.value)}
         onFocus={(e) => {
           setFocused(true)
