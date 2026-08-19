@@ -249,11 +249,51 @@ def test_worker_pipes_survive_non_utf8_locale(tmp_path):
         proc.wait(timeout=10)
 
 
-def test_startup_prints_reconfigure_stdout_to_utf8():
-    """启动信息里有中文；stdout 一旦不是真控制台就退回系统区域编码，
-    print 会 UnicodeEncodeError 直接打死进程（用户看到「启动即崩」）。"""
-    src = Path(m.__file__).read_text(encoding="utf-8")
-    assert 'reconfigure(encoding="utf-8"' in src
+def test_every_entry_point_reconfigures_stdout_to_utf8():
+    """启动信息与子命令的输出都有中文；stdout 一旦不是真控制台就退回系统
+    区域编码，print 会 UnicodeEncodeError 直接打死进程（用户看到「启动即崩」，
+    调用方拿到的是 traceback 而不是那行 JSON）。
+
+    实现是**唯一一份**（`engine/cli.py::use_utf8_streams`），三个入口各自
+    在做任何输出之前调它一次。少一个都会在某条安装形态上复现：
+      * `magplot/cli_entry.py` —— pip/pipx 的 console script 与 `python -m magplot`
+      * `packaging/entry.py`   —— 冻结产物（Magplot.exe / magplot-cli.exe）
+      * `app.py::main`         —— 主入口自己
+    """
+    repo = Path(__file__).resolve().parent.parent
+    impl = (repo / "src" / "magplot" / "engine" / "cli.py").read_text(encoding="utf-8")
+    assert 'reconfigure(encoding="utf-8"' in impl
+    for rel in ("src/magplot/cli_entry.py",
+                "packaging/entry.py",
+                "src/magplot/app.py"):
+        src = (repo / rel).read_text(encoding="utf-8")
+        assert "use_utf8_streams()" in src, f"{rel} 没有把 stdout 钉成 UTF-8"
+
+
+@pytest.mark.parametrize("argv", [["doctor"], ["doctor", "--json"], ["--help"]])
+def test_cli_entry_survives_a_non_utf8_console(tmp_path, argv):
+    """**子命令的输出全是中文，而分派发生在 UTF-8 重配之前就会当场崩。**
+
+    `app.main()` 一开头就把 stdout/stderr reconfigure 成 utf-8，正是为了
+    Windows 上「stdout 不是真控制台就退回系统区域编码」这件事。把子命令
+    分派提前到 `magplot/cli_entry.py`（为了不为一次交接付 Flask 的冷启动）
+    之后，`doctor` 跑在重配**之前**：cp1252/cp936 的控制台上第一句
+    `print(f"* Magplot …（交接协议 v1）")` 直接 UnicodeEncodeError，
+    退出码 1，调用方（安装器、Codex 插件）拿到的是一堆 traceback。
+
+    只在 Windows 上发作，本机与 Linux 全绿——所以用 `PYTHONIOENCODING`
+    把那台机器搬过来（与本文件里 worker 那条同一手法）。
+    """
+    env = {**os.environ,
+           "PYTHONIOENCODING": "cp1252",
+           "MAGPLOT_CONFIG_DIR": str(tmp_path / "cfg"),
+           "MAGPLOT_DATA_DIR": str(tmp_path / "data"),
+           "PYTHONPATH": str(Path(__file__).resolve().parent.parent / "src")}
+    proc = subprocess.run([sys.executable, "-m", "magplot", *argv],
+                          capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", env=env, timeout=120)
+    assert "UnicodeEncodeError" not in proc.stderr, proc.stderr
+    assert proc.returncode == 0, proc.stderr
 
 
 def test_packaging_entry_points_reconfigure_stdout_to_utf8():

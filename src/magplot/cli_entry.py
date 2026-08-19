@@ -19,6 +19,9 @@ import sys
 
 def main() -> None:
     from .engine import cli as engine_cli
+    # 输出里全是中文，而 Windows 上 stdout 不是真控制台时会退回系统区域编码
+    # ——**在任何一句 print 之前**先把流钉成 UTF-8（实现只有一份，见那边）。
+    engine_cli.use_utf8_streams()
     rc = engine_cli.dispatch(sys.argv[1:])
     if rc is not None:
         sys.exit(rc)

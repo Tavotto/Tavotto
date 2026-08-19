@@ -2919,9 +2919,8 @@ def main():
     # 启动信息里有中文。Windows 上 stdout 一旦不是真控制台（被重定向到文件、
     # 由启动器接管管道）就退回系统区域编码，print 会 UnicodeEncodeError 直接
     # 打死进程——用户看到的是「启动即崩」，却查不出原因。
-    for stream in (sys.stdout, sys.stderr):
-        if hasattr(stream, "reconfigure"):
-            stream.reconfigure(encoding="utf-8", errors="replace")
+    # 实现收在 engine/cli.py（纯标准库，三个入口共用同一份）。
+    engine_cli.use_utf8_streams()
 
     # 子命令（`magplot open` / `magplot doctor`）：外部程序（Codex 插件、安装器、
     # 编辑器、别的 Agent、用户自己）的入口。**必须在 argparse 之前拦**——主入口
