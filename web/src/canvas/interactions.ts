@@ -82,12 +82,15 @@ const hist = (key: string, values?: Record<string, unknown>): UiMessage =>
  * 两个分支各自收窄成自己的字面量联合：模板 key 的静态展开按**参数类型**走，
  * 传整个 `Tool` 进去会让提取器同时要求 `shape.text`、`objectType.rect` 这类
  * 根本不存在的条目。
+ *
+ * 回**描述符**而不是翻好的字符串：历史条目活得比一次渲染长，把「矩形」
+ * 当场翻好塞进去，切到英文后历史面板只重翻外层模板，显示成「Add 矩形」，
+ * 而且换不回来（原始 tool 已经没了）。
  */
-const objectToolLabel = (tool: 'text' | 'arrow'): string => t(`objectType.${tool}`)
-const shapeToolLabel = (tool: 'rect' | 'ellipse' | 'line'): string => t(`shape.${tool}`)
-
-const drawnToolLabel = (tool: Exclude<Tool, 'select'>): string =>
-  tool === 'text' || tool === 'arrow' ? objectToolLabel(tool) : shapeToolLabel(tool)
+const drawnToolMsg = (tool: Exclude<Tool, 'select'>): UiMessage =>
+  tool === 'text' || tool === 'arrow'
+    ? msg(`objectType.${tool}`)
+    : msg(`shape.${tool}`)
 
 /* -------------------------------------------------------------------------- */
 /*  指针追踪骨架                                                               */
@@ -669,7 +672,7 @@ export function startDraw(e: ReactPointerEvent, tool: Exclude<Tool, 'select'>) {
         created = shape
       }
 
-      store.commit(hist('addShape', { shape: drawnToolLabel(tool) }), (d) => {
+      store.commit(hist('addShape', { shape: drawnToolMsg(tool) }), (d) => {
         d.objects.push(created)
       })
       const ui = useUiStore.getState()

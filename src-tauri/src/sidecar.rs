@@ -95,6 +95,13 @@ fn resolve_command(
     Err(m.sidecar_not_found.into())
 }
 
+/// `{path}` + `{err}` 两个占位符一起填。文案模板里的占位符名字与
+/// `i18n.rs` 里那几条严格对应——两侧都是纯字符串替换，没有格式化宏参与，
+/// 所以加一条文案不必再动这里。
+fn fill2(template: &str, path: &str, err: &str) -> String {
+    template.replace("{path}", path).replace("{err}", err)
+}
+
 fn log_tail(path: &Path, max: u64) -> String {
     let Ok(mut f) = std::fs::File::open(path) else {
         return String::new();
@@ -123,17 +130,28 @@ impl Sidecar {
         let m = crate::i18n::text(locale);
         let (exe, extra_args) = resolve_command(resource_dir.as_deref(), locale)?;
 
-        std::fs::create_dir_all(log_dir)
-            .map_err(|e| format!("无法创建日志目录 {}: {e}", log_dir.display()))?;
+        std::fs::create_dir_all(log_dir).map_err(|e| {
+            fill2(
+                m.sidecar_log_dir_failed,
+                &log_dir.display().to_string(),
+                &e.to_string(),
+            )
+        })?;
         let log_path = log_dir.join("sidecar.log");
         let log_out = OpenOptions::new()
             .create(true)
             .append(true)
             .open(&log_path)
-            .map_err(|e| format!("无法打开日志文件 {}: {e}", log_path.display()))?;
+            .map_err(|e| {
+                fill2(
+                    m.sidecar_log_open_failed,
+                    &log_path.display().to_string(),
+                    &e.to_string(),
+                )
+            })?;
         let log_err = log_out
             .try_clone()
-            .map_err(|e| format!("日志句柄复制失败: {e}"))?;
+            .map_err(|e| m.sidecar_log_clone_failed.replace("{err}", &e.to_string()))?;
 
         let handshake = std::env::temp_dir().join(format!(
             "magplot-handshake-{}-{:016x}.json",
@@ -159,12 +177,16 @@ impl Sidecar {
             cmd.creation_flags(CREATE_NO_WINDOW);
         }
 
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| format!("无法启动渲染服务 {}: {e}", exe.display()))?;
+        let mut child = cmd.spawn().map_err(|e| {
+            fill2(
+                m.sidecar_spawn_failed,
+                &exe.display().to_string(),
+                &e.to_string(),
+            )
+        })?;
 
         // 凭据走 stdin 首行；这条管道随后保持打开作为「父进程还活着」的信号
-        let mut stdin = child.stdin.take().ok_or("拿不到 sidecar stdin")?;
+        let mut stdin = child.stdin.take().ok_or(m.sidecar_stdin_missing)?;
         let hello = serde_json::json!({
             "nonce": nonce,
             "parent_pid": std::process::id(),
@@ -174,7 +196,8 @@ impl Sidecar {
             .and_then(|()| stdin.flush())
             .map_err(|e| {
                 let _ = child.kill();
-                format!("写入启动凭据失败: {e}")
+                m.sidecar_stdin_write_failed
+                    .replace("{err}", &e.to_string())
             })?;
 
         let deadline = Instant::now() + HANDSHAKE_TIMEOUT;

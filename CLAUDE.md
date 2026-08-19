@@ -21,7 +21,8 @@ PyMuPDF（**只经 `src/magplot/pdfbackend/`**），前端 `web/`
 ## 打包与启动（src layout，2026-08-16）
 
 - 代码在 `src/magplot/`，`pyproject.toml`（hatchling）声明依赖与
-  `magplot = "magplot.app:main"` 入口。`run.sh` = 自建 `.venv` +
+  `magplot = "magplot.cli_entry:main"` 入口（**纯标准库的轻量入口**：
+  `open`/`doctor` 要在 import Flask 之前分派掉，见下面「外部交接」一节）。`run.sh` = 自建 `.venv` +
   `pip install -e .` + `exec .venv/bin/magplot`；**不要再写 `python app.py`**，
   根目录已无该文件（旧进程内存里的老路径正是「worker 进程崩溃（无响应）」的成因）。
 - extras：`worker`（matplotlib/numpy，装了就用同解释器渲染）、`dev`（pytest/build）。
@@ -115,6 +116,13 @@ PyMuPDF（**只经 `src/magplot/pdfbackend/`**），前端 `web/`
 - 为什么在意：PDF 库是可替换的实现细节，收敛成单一模块后换后端只需重写这一个
   文件，上层零改动。**别在 app.py 或别处新写 `import pymupdf`**——那会把这条
   边界废掉。许可证说明见 `docs/LICENSING.md`。
+- **图内元素的命中判据跟渲染器走，不跟直觉走**（`web/src/lib/pathGeom.ts`）：
+  填充用 **nonzero** 缠绕数（实测 matplotlib 3.10.8 + Agg：同向嵌套的中心
+  像素是实心的，反向才是洞；even-odd 会让点在填了色的像素上选不中），
+  填充路径没有 CLOSEPOLY 时按**隐式闭合**处理，框选**先把选择框裁进 clip**
+  再比（否则只与不可见的延长线相交也算命中），命中容差取「可用性容差」与
+  **描边半宽**的大者（`stroke_pt` 由 `engine/pathgeom.py` 随几何下发，
+  前端不推算）。共线线段必须再比一维区间，否则框选会收走老远的水平/垂直线。
 - 面板的项目路径解析与引擎重渲染留在 app 层的 `_resolve_panel_source` 回调里，
   后端只管画。几何公式仍与前端严格同源，pytest 用 get_drawings() 做几何级看护。
 - **`/api/render` 的磁盘缓存键 = `sha1(id|内容 sha1|宽度|后端-版本)`**（2026-08-18）。
@@ -174,6 +182,10 @@ Python，首次渲染也不联网：
   启动时就报 `bundled_runtime_invalid`，而不是等第一次渲染甩一句
   "incompatible architecture"。宿主平台经 `host_os()`/`host_arch()` 取，
   做成函数是为了能在任何一台机器上单测另一台的分支。
+- **探测解释器要和真起 worker 用同一套 env/args**（`_has_matplotlib(bundled=)` →
+  `child_env()`/`child_args()`）：macOS 上没有 `._pth` 挡着，用户 shell 里的
+  `PYTHONHOME`/`PYTHONPATH` 会让探测那句 `import matplotlib` 失败，一个好用的
+  内置 runtime 被判成不可用（只在「从终端启动」时复现）。
 - **解释器优先级（`pool._prioritized_candidates()` 是唯一出处）**：
   `MM_WORKER_PYTHON` → 用户在设置里指定的 → **内置 runtime** → 自身
   （非 frozen）→ 系统 Python/Conda 探测。用户显式指定的永远优先；
@@ -181,8 +193,10 @@ Python，首次渲染也不联网：
   来源标签 `env_override/configured/managed_venv/bundled/current_process/system`
   经环境状态 API、诊断包与冒烟断言一路暴露出来。
 - **不往安装目录写任何东西**：`child_args()` 的 `-B` 是硬保证，
-  `child_env()` 再注入 `PYTHONPYCACHEPREFIX` / `MPLCONFIGDIR`（改道到数据目录）
-  + `PYTHONNOUSERSITE`。Windows 上安装目录可能在 Program Files（没写权限）；
+  `child_env()` 再注入 `MPLCONFIGDIR`（改道到数据目录）+ `PYTHONNOUSERSITE`。
+  **刻意不设 `PYTHONPYCACHEPREFIX`**——它连**读**的位置一起改道，而 `-B` 又
+  禁止写，两条合起来让随包发的预编译字节码一份都用不上，每次冷启动重编
+  整个科学栈（只在 macOS 上发作：Windows 的 `._pth` 忽略环境变量）。Windows 上安装目录可能在 Program Files（没写权限）；
   **macOS 上后果更硬——`.app` 是签过名的，往里写一个 `__pycache__` 当场破坏
   代码签名，用户下次启动看到「应用已损坏」**。
 - **`child_env()` 还要摘掉 `PYTHONHOME`/`PYTHONPATH`/`PYTHONSTARTUP`/
@@ -626,9 +640,13 @@ Python，首次渲染也不联网：
   唯一依据**（清单可能没写成、注册表可能被策略锁住），也**不动用户 PATH**。
   `sidecar/Magplot` 这一段的出处只有 `tauri.conf.json` 的 `bundle.resources`，
   Rust 壳 / locate / NSIS 三处同源。协议与错误码全文在 `docs/handoff-protocol.md`。
-- **子命令在 `engine/cli.py`（`open` / `doctor`）**，`app.main()` 与
-  `packaging/entry.py` 都先问它一句。分派**必须在 import Flask 之前**：一次交接
-  用不上任何 HTTP 端点，冻结产物却要为它付整个 Flask 的冷启动。
+- **子命令在 `engine/cli.py`（`open` / `doctor`）**，三个入口都先问它一句：
+  `magplot/cli_entry.py`（pip/pipx 的 console script 与 `python -m magplot`）、
+  `packaging/entry.py`（冻结产物）、`app.main()`（兼容旧调用方式）。
+  分派**必须在 import Flask 之前**：一次交接用不上任何 HTTP 端点，却要付
+  整个 Flask + PyMuPDF 的冷启动；更要紧的是 `doctor` 本该是「装坏了怎么查」
+  的工具，界面依赖 import 失败时它自己也得能跑
+  （`test_subcommands_run_without_flask_or_pymupdf` 看护）。
 - **`HandoffError` 一律带稳定 `code`**（`registry_write_failed` /
   `path_not_found` / `launch_failed` …），`--json` 失败也输出一行 JSON。
   文案随时可改，code 不行——调用方按它分诊。裸抛的那条由
@@ -721,10 +739,19 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被它推翻**（
 - **stdout 归协议独占**：`rpc.hijack_stdout()` 把 `sys.stdout` 改道到 stderr，**必须先
   存下真正的 stdout 句柄**（`_REAL_STDOUT`）。顺序反了协议帧全写到 stderr 上，症状是
   「initialize 永远等不到响应」且零报错（开发期真撞到过）。
-- **路径范围**：`MAGPLOT_MCP_ROOTS`（缺省进程 cwd），越界一律拒，**绝不「就近找一个
-  能用的」**。**没装 Magplot 时降级而不是退出**（降级 server 握手正常、每个工具说人话）
+- **路径范围**：`MAGPLOT_MCP_ROOTS` → 宿主的工作区变量（`MAGPLOT_MCP_WORKSPACE` /
+  `CODEX_*`）→ 进程 cwd**且它不在插件包里**（装好的插件 cwd 正是插件目录，
+  拿它当边界会把用户每张图判成越界）。一个都没有时报 `no_workspace_root`
+  并说清要设什么。越界一律拒，**绝不「就近找一个能用的」**。**没装 Magplot 时降级而不是退出**（降级 server 握手正常、每个工具说人话）
   ——静默退出在 Codex 里表现为「插件没有工具」。
-- **导出先预检**：有 error 且没有 `explicit_confirm` 时一张图都不出；强制导出记进 proof。
+- **导出先预检**：有 error **或 `not_verifiable`** 且没有 `explicit_confirm` 时
+  一张图都不出（`needs_confirm`，与导出对话框同一判据；`blocking` 仍只表示
+  error）。PNG 的 dpi 与 profile 的 `min_raster_dpi` 比一次，复用同一个
+  `raster-dpi` id 与同一张 severity 表。默认格式取**这次调用**的 profile，
+  默认导出目录也要过 `check_scope`。强制导出与确认项都记进 proof。
+- **会话不抱 worker 引用**：池的 `MAX_ALIVE` 与桥的 `MAX_SESSIONS` 是两个数，
+  必然打架——每次操作前 `pool.get()` 重新取（`Session.acquire()`）。
+  会话**渲染成功之后**才登记，否则失败的 open 会堆满账本并挤掉在用的会话。
 - **内嵌画布 = Magplot 前端那一份代码**（`CanvasStage`/`OverlaySvg`/`interactions.ts`/
   `ElementInspector`/既有 stores），拖拽、命中、吸附、undo、patch 状态**没有第二份实现**。
   唯一改动是 `web/src/lib/engineTransport.ts`：一个**可选覆盖**（HTTP ↔ `tools/call`）。

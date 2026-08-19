@@ -127,8 +127,23 @@ export interface PreflightSpec {
 
 /* ------------------------------- 收集器 ------------------------------------ */
 
+/**
+ * 一条检查项一个条目，命中的对象累积进 objectIds/gids。
+ *
+ * **文案与 detail 必须来自同一次命中。** 旧实现保留第一条命中的文案，却让
+ * detail 被最后一条无条件覆盖：8.1pt 与 8.4pt 两个字号先后命中
+ * `font-too-small`，文案说 8.1，`effective_pt` 却是 8.4——导出对话框据此把
+ * 8.4 显示成「最小字号」，写进 proof 的那份留档自相矛盾。
+ *
+ * 规则（`engine/preflight.py` 的 `_Sink` 逐条同源）：
+ * * 命中带 `worse`（越大越糟的量化排名）时，**最糟的那次**同时决定文案与
+ *   detail，其余的只贡献 objectIds/gids；
+ * * 不带 `worse` 的（family / cmap / 文本这类没法比大小的），**第一次命中
+ *   说了算**——与保留第一条文案的做法一致，至少永远自洽。
+ */
 class Sink {
   private items = new Map<string, PreflightIssue>()
+  private worst = new Map<string, number>()
   private order: string[] = []
   private profile: PublicationProfile
 
@@ -139,16 +154,30 @@ class Sink {
   add(
     id: string,
     message: UiMessage,
-    opts: { objectIds?: string[]; gids?: string[]; detail?: Record<string, unknown> } = {},
+    opts: {
+      objectIds?: string[]
+      gids?: string[]
+      detail?: Record<string, unknown>
+      worse?: number
+    } = {},
   ): void {
     let item = this.items.get(id)
+    let fresh = false
     if (!item) {
       item = { id, severity: severityOf(this.profile, id), message, objectIds: [], gids: [], detail: {} }
       this.items.set(id, item)
       this.order.push(id)
+      fresh = true
     }
     for (const oid of opts.objectIds ?? []) if (!item.objectIds.includes(oid)) item.objectIds.push(oid)
     for (const gid of opts.gids ?? []) if (!item.gids.includes(gid)) item.gids.push(gid)
+
+    const prev = this.worst.get(id)
+    const ranked = opts.worse != null
+    const wins = fresh || (ranked && (prev == null || opts.worse! > prev))
+    if (ranked && (prev == null || opts.worse! > prev)) this.worst.set(id, opts.worse!)
+    if (!wins) return
+    item.message = message
     if (opts.detail) item.detail = { ...item.detail, ...opts.detail }
   }
 
@@ -226,6 +255,7 @@ function checkPanelState(panel: PreflightPanelSpec, sink: Sink): void {
     sink.add('unapplied-override', pf('unappliedOverride', { count: n }), {
       objectIds: [pid],
       detail: { count: n },
+      worse: n,
     })
   }
   if (panel.bitmap_embed) {
@@ -249,7 +279,7 @@ function checkPanelRaster(
       sink.add(
         'raster-dpi',
         pf('rasterDpi', { dpi: dpi.toFixed(0), min: g(minDpi) }),
-        { objectIds: [pid], detail: { dpi: r2(dpi), min_dpi: minDpi } },
+        { objectIds: [pid], detail: { dpi: r2(dpi), min_dpi: minDpi }, worse: -dpi },
       )
     }
   }
@@ -299,20 +329,20 @@ function checkPanelFonts(
       sink.add(
         'font-below-absolute-floor',
         pf('fontBelowFloor', { effective: eff.toFixed(2), floor: g(floor) }),
-        { objectIds: [pid], gids: [gid], detail: { effective_pt: r2(eff), floor_pt: floor } },
+        { objectIds: [pid], gids: [gid], detail: { effective_pt: r2(eff), floor_pt: floor }, worse: -eff },
       )
     } else if (eff < strict) {
       sink.add(
         'font-too-small',
         pf('fontTooSmall', { effective: eff.toFixed(2), min: g(strict) }),
-        { objectIds: [pid], gids: [gid], detail: { effective_pt: r2(eff), min_pt: strict } },
+        { objectIds: [pid], gids: [gid], detail: { effective_pt: r2(eff), min_pt: strict }, worse: -eff },
       )
     }
     if (eff > biggest) {
       sink.add(
         'font-too-large',
         pf('fontTooLarge', { effective: eff.toFixed(2), max: g(biggest) }),
-        { objectIds: [pid], gids: [gid], detail: { effective_pt: r2(eff), max_pt: biggest } },
+        { objectIds: [pid], gids: [gid], detail: { effective_pt: r2(eff), max_pt: biggest }, worse: eff },
       )
     }
   }
@@ -401,7 +431,9 @@ function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, 
           sink.add(
             'legend-font-size',
             pf('legendFontSize', { effective: eff.toFixed(2), min: g(lo), max: g(hi) }),
-            { objectIds: [pid], gids: [gid], detail: { effective_pt: r2(eff) } },
+            // 越出区间越远越糟（两边都可能出界，所以取到区间的距离）
+            { objectIds: [pid], gids: [gid], detail: { effective_pt: r2(eff) },
+              worse: Math.max(lo - eff, eff - hi) },
           )
         }
       }
@@ -444,7 +476,8 @@ function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, 
           sink.add(
             'line-width-off-preset',
             pf('frameWidthOffPreset', { effective: eff.toFixed(2), presets: frameLw.map(g).join('/') }),
-            { objectIds: [pid], gids: [gid], detail: { effective_pt: r2(eff) } },
+            { objectIds: [pid], gids: [gid], detail: { effective_pt: r2(eff) },
+              worse: Math.min(...frameLw.map((v) => Math.abs(eff - v))) },
           )
         }
       }
@@ -471,7 +504,8 @@ function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, 
           sink.add(
             'line-width-off-preset',
             pf('lineWidthOffPreset', { effective: eff.toFixed(2), presets: presets.map(g).join('/') }),
-            { objectIds: [pid], gids: [gid], detail: { effective_pt: r2(eff) } },
+            { objectIds: [pid], gids: [gid], detail: { effective_pt: r2(eff) },
+              worse: Math.min(...presets.map((v) => Math.abs(eff - v))) },
           )
         }
       }
@@ -508,7 +542,7 @@ function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, 
       sink.add(
         'tick-label-count',
         pf('tickLabelCount', { axis: prefix, count, max: maxLabels }),
-        { objectIds: [pid], gids: [prefix], detail: { count } },
+        { objectIds: [pid], gids: [prefix], detail: { count }, worse: count },
       )
     }
   }
@@ -538,7 +572,7 @@ function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, 
       sink.add(
         'palette-line-markers',
         pf('paletteLineMarkers', { count: lines.length }),
-        { objectIds: [pid], gids: [ax], detail: { lines: lines.length } },
+        { objectIds: [pid], gids: [ax], detail: { lines: lines.length }, worse: lines.length },
       )
     }
   }
@@ -610,11 +644,13 @@ function checkTexts(spec: PreflightSpec, profile: PublicationProfile, sink: Sink
       sink.add('font-below-absolute-floor', pf('textBelowFloor', { size: g(size), floor: g(floor) }), {
         objectIds: [t.id],
         detail: { effective_pt: r2(size), floor_pt: floor },
+        worse: -size,
       })
     } else if (size < strict) {
       sink.add('font-too-small', pf('textTooSmall', { size: g(size), min: g(strict) }), {
         objectIds: [t.id],
         detail: { effective_pt: r2(size), min_pt: strict },
+        worse: -size,
       })
     }
     if (hasCjk(t.text) && cjk.required && !(cjk.accepted ?? []).length) {
@@ -701,7 +737,26 @@ export function buildSpec(
   assets: Record<string, PanelInfo>,
   render: { byKey: Record<string, PanelRender>; latest: Record<string, string> },
 ): PreflightSpec {
-  const rect = (o: CanvasObject): [number, number, number, number] => [o.x, o.y, o.w, o.h]
+  /**
+   * 对象在页面上**真正占的**轴对齐包围盒。
+   *
+   * `x/y/w/h` 是**未旋转**的框；文字/箭头/形状可以带任意角度 `rotationDeg`
+   * （绕包围盒中心，与导出时 `pymupdf.Matrix(deg)` 的 morph 同一约定）。
+   * 直接拿未旋转的框去判出血、页边距与重叠，一条细长标注贴着页边旋转 45°
+   * 时会「通过」预检，导出的几何却已经被裁掉；重叠也会同时出现漏报与误报。
+   * 面板不带 `rotationDeg`（它用的是 90° 档的 `rotation`，w/h 已经互换过），
+   * 所以这里只对有这个字段的对象生效。
+   */
+  const rect = (o: CanvasObject): [number, number, number, number] => {
+    const deg = (o as { rotationDeg?: number }).rotationDeg ?? 0
+    if (!deg) return [o.x, o.y, o.w, o.h]
+    const rad = (deg * Math.PI) / 180
+    const c = Math.abs(Math.cos(rad))
+    const sn = Math.abs(Math.sin(rad))
+    const w = o.w * c + o.h * sn
+    const h = o.w * sn + o.h * c
+    return [o.x + (o.w - w) / 2, o.y + (o.h - h) / 2, w, h]
+  }
   const panels: PreflightPanelSpec[] = doc.objects
     .filter((o): o is PanelObject => o.type === 'panel')
     .map((o) => {

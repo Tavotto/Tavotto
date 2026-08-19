@@ -802,6 +802,9 @@ export function applyStylePlan(plan: StylePlan, preset: StylePreset) {
 
 /* ------------------------------ 结构化布局组 -------------------------------- */
 
+export const layoutKindMsg = (kind: LayoutGroup['kind']): UiMessage =>
+  msg(`layoutKind.${kind}`, undefined, 'workspace')
+
 export const layoutKindLabel = (kind: LayoutGroup['kind']): string =>
   t(`layoutKind.${kind}`, { ns: 'workspace' })
 
@@ -839,7 +842,7 @@ export function createLayoutGroup(kind: LayoutGroup['kind']) {
     align: 'start',
     uniform: null,
   }
-  commit(hist('createLayoutGroup', { kind: layoutKindLabel(kind) }), (d) => {
+  commit(hist('createLayoutGroup', { kind: layoutKindMsg(kind) }), (d) => {
     for (const o of d.objects) if (ids.includes(o.id)) o.groupId = gid
     d.layoutGroups = [...(d.layoutGroups ?? []), group]
     applyReflowDraft(d, group)
@@ -1078,6 +1081,19 @@ export const alignRefLabel = (ref: AlignRef): string =>
 export const alignModeLabel = (mode: AlignMode): string =>
   t(`alignMode.${mode}`, { ns: 'inspector' })
 
+/**
+ * 同样两句话的**描述符**版本，给活得比一次渲染长的地方用（历史标签）。
+ *
+ * 上面两个 `*Label` 是**当场翻**的，按钮 tooltip 那种一次性显示用它们没问题；
+ * 塞进历史条目就不行了——历史面板重翻的只是外层模板，参数早已被拼成上一门
+ * 语言的字符串，切语言之后会变成「英文模板 + 中文参数」，而且换不回来。
+ */
+export const alignRefMsg = (ref: AlignRef): UiMessage =>
+  msg(`alignRef.${ref}`, undefined, 'inspector')
+
+export const alignModeMsg = (mode: AlignMode): UiMessage =>
+  msg(`alignMode.${mode}`, undefined, 'inspector')
+
 /** 在给定参照框里就地对齐；直接改传入对象（immer draft） */
 function alignIn(objs: CanvasObject[], mode: AlignMode, box: Rect): void {
   if (mode === 'hdist' || mode === 'vdist') {
@@ -1132,7 +1148,7 @@ export function alignSelectedTo(mode: AlignMode, ref: AlignRef) {
     return
   }
   const primaryId = ids.at(-1)!
-  commit(hist('alignWithRef', { mode: alignModeLabel(mode), ref: alignRefLabel(ref) }), (d) => {
+  commit(hist('alignWithRef', { mode: alignModeMsg(mode), ref: alignRefMsg(ref) }), (d) => {
     const objs = d.objects.filter((o) => ids.includes(o.id))
     if (!objs.length) return
     const primary = objs.find((o) => o.id === primaryId) ?? objs[objs.length - 1]

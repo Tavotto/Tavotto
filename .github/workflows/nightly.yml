@@ -279,7 +279,14 @@ jobs:
             if ($child) { break }
           }
           if (-not $child) {
-            Stop-Process -Id $p.Id -Force
+            # **诊断在前，清理在后**，而且清理不许自己抛。
+            # 壳自己先退了（起不来的典型样子）时 Stop-Process 会以
+            # 「Cannot find a process with the process identifier」失败，
+            # 在 $ErrorActionPreference="Stop" 下当场中断脚本——底下那段
+            # 日志转储一行都跑不到，CI 里只剩一句与病因毫不相干的
+            # PowerShell 报错。2026-08-18 那晚就是这么丢掉证据的。
+            $alive = $null -ne (Get-Process -Id $p.Id -ErrorAction SilentlyContinue)
+            if (-not $alive) { Write-Host "! 壳进程 $($p.Id) 已自行退出（连 sidecar 都没起）" }
             # 失败路径不许吞：壳把 sidecar 的日志写在 app_log_dir（起不来时
             # 界面上显示的也是这个路径），起不来的原因全在里面
             @("$env:LOCALAPPDATA\com.erwanjun.magplot\logs\sidecar.log",
@@ -287,9 +294,11 @@ jobs:
               Where-Object { Test-Path $_ } | ForEach-Object {
                 Write-Host "---- $_ ----"; Get-Content $_ -Tail 60
               }
-            throw "装好的壳没有拉起 sidecar"
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            throw "装好的壳没有拉起 sidecar（壳进程存活=$alive）"
           }
-          Stop-Process -Id $p.Id -Force   # 模拟异常退出：sidecar 必须自行跟随退出
+          # 模拟异常退出：sidecar 必须自行跟随退出
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
           foreach ($i in 1..30) {
             Start-Sleep -Milliseconds 500
             if (-not (Get-Process -Id $child.ProcessId -ErrorAction SilentlyContinue)) { break }
@@ -403,18 +412,19 @@ jobs:
             Start-Sleep -Milliseconds 500
           }
           if (-not (Test-Path $manifest)) {
-            $spawned | ForEach-Object { Stop-Process -Id $_.Id -Force }
+            # 同上：清理不许把真正的失败信息挤掉
+            $spawned | ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
             throw "应用启动后没有刷新安装清单: $manifest"
           }
           Write-Host "✓ 应用启动时把安装清单刷了回来"
 
-          $spawned | ForEach-Object { Stop-Process -Id $_.Id -Force }
+          $spawned | ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
           foreach ($i in 1..30) {
             Start-Sleep -Milliseconds 500
             if (-not (Get-Process -Name Magplot -ErrorAction SilentlyContinue)) { break }
           }
           Get-Process -Name Magplot -ErrorAction SilentlyContinue |
-            ForEach-Object { Stop-Process -Id $_.Id -Force }
+            ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
 
           # 卸载
           $uninst = "$inst\uninstall.exe"

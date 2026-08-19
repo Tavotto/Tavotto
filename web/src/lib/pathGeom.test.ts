@@ -12,6 +12,7 @@ import {
   geomAreaFrac,
   geomContains,
   geomDistMm,
+  geomHitTolMm,
   geomHitsRect,
   geomInkAreaFrac,
   geomPathD,
@@ -192,5 +193,81 @@ describe('geomPathD：SVG 路径串', () => {
   it('多条子路径各自一个 M（断开的曲线不会被连起来）', () => {
     const d = geomPathD(nestedSameDir, toPoint)
     expect(d.match(/M/g)?.length).toBe(2)
+  })
+})
+
+
+/* -------------------------------------------------------------------------- */
+/*  框选：共线与裁剪                                                            */
+/* -------------------------------------------------------------------------- */
+
+describe('框选不该收走看不见的东西', () => {
+  /**
+   * 四个叉积全为 0 只说明四点在同一条直线上，**说不了两段有重叠**。
+   * 旧判据用叉积乘积 `<= 0`，于是 x=0–0.1 的水平段会被一个 x=0.8–0.9、
+   * y 相同的选择框边判成相交——框选把老远之外的水平/垂直线一起收走。
+   */
+  it('与选择框边共线、但区间完全不重叠的线段不算命中', () => {
+    const horiz: ElementGeometry = {
+      kind: 'polyline',
+      paths: [{ points: [[0, 0.5], [0.1, 0.5]], closed: false }],
+      fill: false,
+      stroke: true,
+    }
+    // 选择框的上下边正好在 y=0.5 与 y=0.6，横向落在 0.8–0.9：与线段共线但离得老远
+    expect(geomHitsRect(horiz, { x: 0.8, y: 0.5, w: 0.1, h: 0.1 })).toBe(false)
+    // 真的压上去才算
+    expect(geomHitsRect(horiz, { x: 0.05, y: 0.5, w: 0.1, h: 0.1 })).toBe(true)
+  })
+
+  /**
+   * clip 之外那截 matplotlib 根本没画。只做一次「框与 clip 有重叠」的粗判
+   * 不够：横跨子图边界的框会只与那截**不可见的延长线**相交。
+   */
+  it('横跨裁剪边界的框，只碰到框外那截时不算命中', () => {
+    const line: ElementGeometry = {
+      kind: 'polyline',
+      // 从 clip 内一路画到 clip 外
+      paths: [{ points: [[0.2, 0.2], [0.9, 0.9]], closed: false }],
+      fill: false,
+      stroke: true,
+      clip: [0, 0, 0.5, 0.5],
+    }
+    // 选择框跨过 clip 右下角，但它与线的交点全在 clip 之外
+    expect(geomHitsRect(line, { x: 0.45, y: 0.6, w: 0.3, h: 0.3 })).toBe(false)
+    // 落在 clip 之内的那段仍然选得中
+    expect(geomHitsRect(line, { x: 0.25, y: 0.25, w: 0.1, h: 0.1 })).toBe(true)
+  })
+})
+
+describe('geomHitTolMm：容差要盖住画出来的墨迹', () => {
+  const thin: ElementGeometry = {
+    kind: 'polyline',
+    paths: [{ points: [[0, 0], [1, 1]], closed: false }],
+    fill: false,
+    stroke: true,
+    stroke_pt: 1,
+  }
+
+  it('细线用基础容差（可用性下限，不是墨迹宽度）', () => {
+    expect(geomHitTolMm(thin, 1.5)).toBeCloseTo(1.5, 6)
+  })
+
+  /**
+   * 12pt ≈ 4.23mm 宽，半宽 ≈2.12mm——超出 1.5mm 的固定容差。点在明明画着墨的
+   * 像素上却选不中，而改成按路径命中之前的 bbox 判据是能选中的。
+   */
+  it('粗线取描边半宽', () => {
+    expect(geomHitTolMm({ ...thin, stroke_pt: 12 }, 1.5)).toBeCloseTo((12 * 25.4) / 72 / 2, 6)
+  })
+
+  it('没有描边的填充路径不吃这条（半宽对它没意义）', () => {
+    expect(geomHitTolMm({ ...thin, stroke: false, stroke_pt: 12 }, 1.5)).toBeCloseTo(1.5, 6)
+  })
+
+  it('引擎没给 stroke_pt 时退回基础容差，不报错', () => {
+    const noWidth = { ...thin }
+    delete (noWidth as { stroke_pt?: number }).stroke_pt
+    expect(geomHitTolMm(noWidth, 1.5)).toBeCloseTo(1.5, 6)
   })
 })

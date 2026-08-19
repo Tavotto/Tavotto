@@ -411,3 +411,187 @@ def test_server_degrades_cleanly_without_the_widget(monkeypatch):
     assert s.dispatch("resources/list", {})["resources"] == []
     assert "resources" not in s.dispatch("initialize", {})["capabilities"]
     assert all("_meta" not in t for t in s.dispatch("tools/list", {})["tools"])
+
+
+# ===========================================================================
+# Codex review (#8/#10) 抓到的那批：桥接层的边界、会话生命周期与导出判据
+# ===========================================================================
+
+# ------------------------------ 允许的项目根 ---------------------------------
+def test_plugin_cwd_is_not_a_workspace(monkeypatch):
+    """装好的插件里 cwd 就是**插件自己的目录**（`./mcp/server.py` 靠它解析）。
+
+    「不给 MAGPLOT_MCP_ROOTS 就用 cwd」在真实安装下于是把用户工作区里的
+    每一张图都判成 `path_out_of_scope`——默认流程根本跑不起来，而报出来的
+    话又与真实原因（谁都没设过那个变量）毫不相干。
+    """
+    monkeypatch.delenv(bridge.ROOTS_ENV, raising=False)
+    for name in bridge.WORKSPACE_ENVS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.chdir(PLUGIN / "mcp")
+    assert bridge.allowed_roots() == []
+    with pytest.raises(bridge.BridgeError) as exc:
+        bridge.check_scope(str(PLUGIN / "mcp"))
+    # 说清楚要设什么，而不是甩一句「不在允许范围内」
+    assert exc.value.code == "no_workspace_root"
+    assert bridge.ROOTS_ENV in str(exc.value)
+
+
+@pytest.mark.parametrize("name", bridge.WORKSPACE_ENVS)
+def test_host_workspace_env_supplies_the_default_root(monkeypatch, tmp_path, name):
+    monkeypatch.delenv(bridge.ROOTS_ENV, raising=False)
+    for other in bridge.WORKSPACE_ENVS:
+        monkeypatch.delenv(other, raising=False)
+    monkeypatch.chdir(PLUGIN / "mcp")
+    monkeypatch.setenv(name, str(tmp_path))
+    assert bridge.allowed_roots() == [os.path.realpath(str(tmp_path))]
+
+
+def test_registry_outside_the_root_is_never_written(tmp_path, monkeypatch, fake_pool):
+    """**范围校验要在 `ensure_registered` 之前**——后者是写操作。
+
+    允许的根嵌套在一个本身已是图库的目录下面时，`resolve_target` 会向上走到
+    那个父目录。旧顺序是「先登记再校验」：调用最终被拒，可范围外那份注册表
+    **已经被改过了**，边界形同虚设。
+    """
+    outer = tmp_path / "outer"
+    inner = outer / "inner"
+    inner.mkdir(parents=True)
+    reg = outer / "mm_registry.json"
+    before = json.dumps({"scripts": {"a.py": {"entry": "main", "stems": ["A"]}}})
+    reg.write_text(before, encoding="utf-8")
+    # 脚本必须是**能被静态扫描认出来**的形态：那样 ensure_registered 才真的
+    # 会去写 outer/mm_registry.json（实测 status=merged）。写不动的脚本会让
+    # 这条用例变成空转的门禁——它还在报平安。
+    (inner / "fig1.py").write_text(
+        "import matplotlib.pyplot as plt\n\n\n"
+        "def main():\n    fig = plt.figure()\n    fig.savefig(\"Fig1.pdf\")\n",
+        encoding="utf-8")
+    (inner / "Fig1.pdf").write_bytes(b"%PDF-1.4\n")
+    monkeypatch.setenv(bridge.ROOTS_ENV, str(inner))       # 只允许 inner
+
+    with pytest.raises(bridge.BridgeError) as exc:
+        bridge.open_figure(str(inner / "Fig1.pdf"))
+    assert exc.value.code == "path_out_of_scope"
+    assert reg.read_text(encoding="utf-8") == before, "范围外的注册表被改写了"
+
+
+# ------------------------------ 会话生命周期 ---------------------------------
+def test_failed_first_render_leaves_no_session_behind(project, monkeypatch):
+    """渲染失败时调用方只拿到错误，**永远拿不到 session_id**，也就关不掉它。
+
+    先登记后渲染的话，反复失败的 open 会把账本堆满，再靠 `_evict_if_needed()`
+    把**真正在用的**会话挤出去。
+    """
+    class Boom:
+        rev = 0
+        generation = 1
+
+        def override(self, *a, **k):
+            raise bridge.engine_pool.WorkerError("脚本自己抛了", code="build_failed")
+
+    monkeypatch.setattr(bridge.engine_pool, "get", lambda *a, **k: Boom())
+    for _ in range(bridge.MAX_SESSIONS + 3):
+        with pytest.raises(bridge.BridgeError):
+            bridge.open_figure(str(project))
+    assert bridge.sessions() == {}, "失败的 open 在账本里留下了够不着的会话"
+
+
+def test_every_operation_reacquires_the_worker_from_the_pool(project, monkeypatch):
+    """池按 MAX_ALIVE 淘汰，桥的会话上限是另一个数——两者必然打架。
+
+    抱着 worker 引用的话，第 4 个脚本一开，第 1 个会话手里那个已经被池
+    shutdown 了，可它在账本里还「开着」：用户看到「会话还在，一 apply 就说
+    worker 死了」，且没有任何办法恢复。
+    """
+    workers = [FakeWorker()]
+    monkeypatch.setattr(bridge.engine_pool, "get", lambda *a, **k: workers[-1])
+    sid = bridge.open_figure(str(project))["session_id"]
+    assert workers[0].calls, "第一次渲染应当用当时池里那个"
+
+    # 池把它淘汰后重建了：现在 get() 回的是另一个对象
+    workers.append(FakeWorker())
+    bridge.apply_overrides(sid, [])
+    assert workers[1].calls, "后续操作没有向池重新要 worker，还抱着旧引用"
+
+    # 导出与位图预览同理
+    workers.append(FakeWorker())
+    bridge.export(sid, formats=["pdf"])
+    assert workers[2].exported, "导出还在用旧的 worker 引用"
+
+
+# -------------------------------- 导出判据 ----------------------------------
+def _open(project) -> str:
+    return bridge.open_figure(str(project))["session_id"]
+
+
+def test_export_default_dir_goes_through_check_scope(project, fake_pool, tmp_path,
+                                                     monkeypatch):
+    """项目设置里的 `export_dir` 可以是任意绝对路径（桌面版下完全合法）。
+
+    默认值不过尺的话，一个对桌面版有效的项目就能让导出落到 MCP 的边界之外
+    ——而调用方**显式**传同一个路径反而会被拒。
+    """
+    sid = _open(project)
+    outside = tmp_path.parent / "elsewhere-export"
+    monkeypatch.setattr(bridge.engine_config, "project_export_dir",
+                        lambda *a, **k: outside)
+    with pytest.raises(bridge.BridgeError) as exc:
+        bridge.export(sid, formats=["pdf"])
+    assert exc.value.code == "path_out_of_scope"
+    assert not outside.exists(), "被拒之前就已经把目录建出来了"
+
+
+def test_png_below_the_profile_dpi_needs_explicit_confirm(project, fake_pool):
+    """`dpi=72` 以前只要是正数就放行，proof 里还盖着「已按规范检查」的章。"""
+    sid = _open(project)
+    with pytest.raises(bridge.BridgeError) as exc:
+        bridge.export(sid, formats=["png"], dpi=72)
+    assert exc.value.code == "preflight_blocked"
+    ids = [i["id"] for i in exc.value.extra["preflight"]["errors"]]
+    assert "raster-dpi" in ids, "低 dpi 没进预检结论"
+    # 明确要求后可以出，但要记进 proof
+    done = bridge.export(sid, formats=["png"], dpi=72, explicit_confirm=True)
+    assert done["forced"] is True
+    assert "raster-dpi" in done["acknowledged"]
+    # 矢量格式不吃这条
+    assert bridge.export(sid, formats=["pdf"], dpi=72)["files"][0]["format"] == "pdf"
+
+
+def test_default_formats_follow_the_profile_of_this_call(project, fake_pool):
+    """带了 journal 覆盖时，预检与 proof 盖的是新 profile 的章——格式也必须是。"""
+    sid = _open(project)
+    done = bridge.export(sid, formats=[], journal={
+        "name": "Some Journal",
+        "preferred_formats": {"export_default": ["svg"]},
+    })
+    assert [f["format"] for f in done["files"]] == ["svg"]
+
+
+# ------------------------------ 重放自检 ------------------------------------
+def test_replay_reports_missing_and_extra_elements():
+    """结构分歧也是分歧。
+
+    静默跳过「重放里没有这个元素」会让 `ok: true` 出现在两张画得完全不一样
+    的图上——而脚本不确定 / 重放有 bug 正是这个自检唯一要抓的东西。
+    """
+    hot = {"size_mm": [80.0, 60.0], "elements": [
+        {"gid": "figure", "bbox": [0, 0, 1, 1]},
+        {"gid": "axes_0.line_0", "bbox": [0.1, 0.1, 0.5, 0.5]},
+    ]}
+    fresh = {"size_mm": [80.0, 60.0], "elements": [
+        {"gid": "figure", "bbox": [0, 0, 1, 1]},
+        {"gid": "axes_0.line_1", "bbox": [0.1, 0.1, 0.5, 0.5]},
+    ]}
+    diffs, compared = bridge.compare_manifests(hot, fresh)
+    fields = {d["field"] for d in diffs}
+    assert "missing_in_fresh" in fields, "热态有、重放没有的元素被静默跳过了"
+    assert "missing_in_hot" in fields, "只在重放里出现的元素也要报"
+    assert compared == 1
+
+
+def test_open_with_an_unknown_profile_carries_a_code(project, fake_pool):
+    """`run_preflight` 早就把 ProfileError 翻成 unknown_profile，open 这条漏了。"""
+    with pytest.raises(bridge.BridgeError) as exc:
+        bridge.open_figure(str(project), profile_id="没有这个规范")
+    assert exc.value.code == "unknown_profile"

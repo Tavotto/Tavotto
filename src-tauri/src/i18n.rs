@@ -72,6 +72,14 @@ pub struct ShellText {
 
     /* --- sidecar 起不来的几种说法。都会显示在 error.html 的报错框里 --- */
     /// `{path}` = 环境变量指到的路径
+    /// 起 sidecar 之前那几步的失败（日志目录/日志文件/句柄/spawn/stdin）。
+    /// 这些同样会显示在启动失败页上——最需要看懂的时候，不能是另一门语言。
+    pub sidecar_log_dir_failed: &'static str,
+    pub sidecar_log_open_failed: &'static str,
+    pub sidecar_log_clone_failed: &'static str,
+    pub sidecar_spawn_failed: &'static str,
+    pub sidecar_stdin_missing: &'static str,
+    pub sidecar_stdin_write_failed: &'static str,
     pub sidecar_exe_missing: &'static str,
     pub sidecar_not_found: &'static str,
     pub sidecar_handshake_no_port: &'static str,
@@ -100,6 +108,12 @@ const ZH: ShellText = ShellText {
     help: "帮助",
     about_comments: "论文 Figure 排版 + 参数化图表编辑",
     window_init_failed: "窗口初始化失败",
+    sidecar_log_dir_failed: "无法创建日志目录 {path}: {err}",
+    sidecar_log_open_failed: "无法打开日志文件 {path}: {err}",
+    sidecar_log_clone_failed: "日志句柄复制失败: {err}",
+    sidecar_spawn_failed: "无法启动渲染服务 {path}: {err}",
+    sidecar_stdin_missing: "拿不到 sidecar stdin",
+    sidecar_stdin_write_failed: "写入启动凭据失败: {err}",
     sidecar_exe_missing: "MAGPLOT_SIDECAR_EXE 指向的文件不存在: {path}",
     sidecar_not_found: "找不到 Magplot 渲染服务：安装文件可能不完整，请重新安装",
     sidecar_handshake_no_port: "握手数据缺少端口",
@@ -127,6 +141,12 @@ const EN: ShellText = ShellText {
     help: "Help",
     about_comments: "Figure layout and parametric plot editing for papers",
     window_init_failed: "Window initialization failed",
+    sidecar_log_dir_failed: "Could not create the log directory {path}: {err}",
+    sidecar_log_open_failed: "Could not open the log file {path}: {err}",
+    sidecar_log_clone_failed: "Could not duplicate the log handle: {err}",
+    sidecar_spawn_failed: "Could not start the render service {path}: {err}",
+    sidecar_stdin_missing: "Could not obtain the sidecar's stdin",
+    sidecar_stdin_write_failed: "Could not write the startup credentials: {err}",
     sidecar_exe_missing: "MAGPLOT_SIDECAR_EXE points at a file that does not exist: {path}",
     sidecar_not_found:
         "Cannot find the Magplot render service — the installation may be incomplete. Please reinstall.",
@@ -149,20 +169,46 @@ pub fn locale_file(config_dir: Option<PathBuf>) -> Option<PathBuf> {
     config_dir.map(|d| d.join("menu-locale"))
 }
 
-pub fn read_locale(path: Option<PathBuf>) -> Locale {
-    path.and_then(|p| std::fs::read_to_string(p).ok())
-        .and_then(|s| normalize(&s))
-        .unwrap_or(DEFAULT_LOCALE)
+/// 记下来的语言，外加**它是不是用户亲手选的**。
+///
+/// 这个区分不是洁癖：前端在 i18n 就绪时会把**当前生效**的语言报上来给菜单
+/// 用，那一次可能只是「跟随系统」的结果。桌面模式下 sidecar 绑的是
+/// `127.0.0.1:0`，端口每次都变，而端口是 Web Storage origin 的一部分——
+/// 前端的 `localStorage` 偏好**根本活不过一次重启**，壳记的这份是唯一的存储。
+/// 两种来源混在一起的话，我们没法回答「用户到底选过没有」，也就没法把
+/// 「手动选择 > 系统语言」这条优先级还给桌面版。
+pub struct StoredLocale {
+    pub locale: Locale,
+    pub explicit: bool,
 }
 
-pub fn write_locale(path: Option<PathBuf>, locale: Locale) {
+/// 文件格式：第一行是语言标签，第二行有 `explicit` 就表示是用户亲手选的。
+/// 0.7.0 写下的单行文件当成「非显式」——那是安全的一侧（顶多退回系统语言）。
+pub fn read_stored(path: Option<PathBuf>) -> Option<StoredLocale> {
+    let text = path.and_then(|p| std::fs::read_to_string(p).ok())?;
+    let mut lines = text.lines();
+    let locale = normalize(lines.next().unwrap_or(""))?;
+    let explicit = lines.any(|l| l.trim() == "explicit");
+    Some(StoredLocale { locale, explicit })
+}
+
+pub fn read_locale(path: Option<PathBuf>) -> Locale {
+    read_stored(path).map(|s| s.locale).unwrap_or(DEFAULT_LOCALE)
+}
+
+pub fn write_locale(path: Option<PathBuf>, locale: Locale, explicit: bool) {
     let Some(path) = path else { return };
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
+    let body = if explicit {
+        format!("{}\nexplicit\n", locale.tag())
+    } else {
+        format!("{}\n", locale.tag())
+    };
     // 写不进去只影响下次启动的头一秒（菜单先是默认语言，前端一报就换过来），
     // 不值得打断任何事情。
-    let _ = std::fs::write(path, locale.tag());
+    let _ = std::fs::write(path, body);
 }
 
 #[cfg(test)]
@@ -211,6 +257,12 @@ mod tests {
                 t.help,
                 t.about_comments,
                 t.window_init_failed,
+                t.sidecar_log_dir_failed,
+                t.sidecar_log_open_failed,
+                t.sidecar_log_clone_failed,
+                t.sidecar_spawn_failed,
+                t.sidecar_stdin_missing,
+                t.sidecar_stdin_write_failed,
                 t.sidecar_exe_missing,
                 t.sidecar_not_found,
                 t.sidecar_handshake_no_port,
@@ -220,6 +272,38 @@ mod tests {
             ] {
                 assert!(!s.trim().is_empty());
             }
+        }
+    }
+
+    /// `sidecar.rs` 里**一句用户可见的中文都不许有**。
+    ///
+    /// 逐条往 `ShellText` 里加字段这件事很容易漏：#10 把握手与超时那几条翻
+    /// 了，紧挨着的日志目录、日志文件、句柄复制、spawn、stdin 五条却还在
+    /// 原地 `format!("无法…")` 拼中文——而它们最终都会作为 `msg` 送到那张
+    /// **已经翻成英文**的启动失败页上，于是选了英文的用户在最需要看懂的
+    /// 时候读到一句中文（杀毒软件拦了可执行文件、日志目录不可写，正是这类）。
+    /// 所以这里不数字段，直接扫源码。
+    ///
+    /// **只扫 `sidecar.rs`**：`Sidecar::start` 的 `Result<_, String>` 是唯一
+    /// 一条「错误原文直接显示给用户」的链路。`main.rs` 里 `reveal_export` /
+    /// `set_menu_locale` 的 `Err(String)` 全被前端 `catch { return false }`
+    /// 吞掉并走回退（`web/src/lib/desktop.ts`），一个字都不会显示——把它们
+    /// 也算进来只会逼人为看不见的字符串编两份文案。这条边界哪天变了
+    /// （前端开始显示 invoke 的失败原文），这里要跟着扩。
+    #[test]
+    fn sidecar_errors_are_never_hardcoded_chinese() {
+        let src = include_str!("sidecar.rs");
+        for (i, line) in src.lines().enumerate() {
+            let code = line.trim_start();
+            if code.starts_with("//") {
+                continue; // 注释里的中文是写给我们自己看的
+            }
+            let code = code.split("//").next().unwrap_or("");
+            assert!(
+                !code.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)),
+                "sidecar.rs:{} 有中文字面量，用户可见文案必须收进 i18n.rs：{code}",
+                i + 1
+            );
         }
     }
 
@@ -245,6 +329,12 @@ mod tests {
             EN.help,
             EN.about_comments,
             EN.window_init_failed,
+            EN.sidecar_log_dir_failed,
+            EN.sidecar_log_open_failed,
+            EN.sidecar_log_clone_failed,
+            EN.sidecar_spawn_failed,
+            EN.sidecar_stdin_missing,
+            EN.sidecar_stdin_write_failed,
             EN.sidecar_exe_missing,
             EN.sidecar_not_found,
             EN.sidecar_handshake_no_port,

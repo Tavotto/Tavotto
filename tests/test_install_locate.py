@@ -597,6 +597,41 @@ def test_nightly_uninstall_assertion_is_not_vacuous():
     assert removed < uninstalled < gone
 
 
+def test_nightly_shell_probe_dumps_the_log_before_it_cleans_up():
+    """壳没拉起 sidecar 时，**日志转储必须排在清理动作前面**。
+
+    2026-08-18 夜里这条腿红了，而 CI 上留下的唯一线索是一句
+    `Stop-Process: Cannot find a process with the process identifier 7176`
+    ——壳自己先退了（正是「起不来」的典型样子），`Stop-Process` 于是失败，
+    在 `$ErrorActionPreference = "Stop"` 下当场中断脚本，紧跟其后的
+    sidecar.log 转储一行都没跑到。**门禁把自己的证据吞了**，剩下的报错与
+    病因毫不相干。
+
+    判据同样是顺序：先转储、再清理（且清理带 -ErrorAction SilentlyContinue）。
+    """
+    text = (ROOT / ".github" / "workflows" / "nightly.yml").read_text(encoding="utf-8")
+    # 只看代码那一半：注释里提到 Stop-Process 是在解释这条纪律本身
+    def code_only(block: str) -> str:
+        return "\n".join(l for l in block.splitlines()
+                          if not l.strip().startswith("#"))
+
+    branch = code_only(
+        text[text.index("if (-not $child) {"):text.index('throw "装好的壳没有拉起 sidecar')])
+    dump = branch.index("sidecar.log")
+    kill = branch.index("Stop-Process")
+    assert dump < kill, "清理排在日志转储前面：壳先退时会把真正的失败原因吞掉"
+    assert "-ErrorAction SilentlyContinue" in branch[kill:], \
+        "Stop-Process 没带 -ErrorAction SilentlyContinue：进程已退时它自己会抛"
+    # 整个 nightly 里不许再有会自己抛的 Stop-Process
+    for i, line in enumerate(text.splitlines(), 1):
+        bare = line.strip()
+        if bare.startswith("#"):
+            continue
+        if "Stop-Process" in bare and "SilentlyContinue" not in bare:
+            raise AssertionError(
+                f"nightly.yml:{i} 的 Stop-Process 没兜住「进程已经退了」：{bare}")
+
+
 # ------------------- 刷新清单只补充，不抹掉（Codex #6） -------------------
 def test_refresh_keeps_a_desktop_path_it_cannot_rediscover(tmp_path, monkeypatch):
     """pip 装的 magplot 跑一次，不许把桌面版记下的 desktop 抹成空。

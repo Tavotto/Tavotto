@@ -14,7 +14,7 @@ import i18n from 'i18next'
 import { initReactI18next } from 'react-i18next'
 
 import { DEFAULT_LOCALE, detectLocale, normalizeLocale, writeStoredLocale, type Locale } from './locale'
-import type { UiMessage } from './message'
+import { isUiMessage, type UiMessage } from './message'
 
 import zhCommon from './locales/zh-CN/common.json'
 import zhWorkspace from './locales/zh-CN/workspace.json'
@@ -134,7 +134,17 @@ export const t = i18n.t.bind(i18n)
  * 这个合法取值，调用点各自补一次三目只会到处漏。
  */
 export function formatMessage(m: UiMessage | null | undefined): string {
-  return m ? i18n.t(m.key, { ns: m.ns ?? DEFAULT_NS, ...(m.values ?? {}) }) : ''
+  if (!m) return ''
+  // 插值里可以再放描述符（`hist('alignWithRef', { mode: msg(...) })`）：
+  // **它们同样要等到显示那一刻才翻**。存成翻好的字符串的话，中文界面下做的
+  // 一次对齐，切到英文后历史面板会显示成「英文模板 + 中文参数」——外层
+  // 重翻了、参数没有，而且再也换不回来。
+  const values = m.values
+    ? Object.fromEntries(
+        Object.entries(m.values).map(([k, v]) => [k, isUiMessage(v) ? formatMessage(v) : v]),
+      )
+    : {}
+  return i18n.t(m.key, { ns: m.ns ?? DEFAULT_NS, ...values })
 }
 
 export { i18n }

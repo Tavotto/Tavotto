@@ -108,6 +108,25 @@ canonical patch 哈希、出版规范预检、真矢量导出。这些没有一�
 | `magplot_verify_replay` | 起一次性 worker 全量重放，与热态逐元素比几何 |
 | `magplot_close_session` | 释放会话；用户项目数据零改动 |
 
+### 两处已知限制（如实记着，别当成已经解决）
+
+**① `command` 是写死的 `python3`，Windows 上未必存在。** 官方安装器装出来的
+Python 有 `python.exe`，`python3.exe` 只是 Microsoft Store 的执行别名存根；
+反过来 macOS 12.3 起 `/usr/bin/python` 已经没了，`python` 同样不能通用。清单
+的字段形状取自 Codex 官方插件装出来的那份，**里面没有按平台分支的写法**，而
+这里的纪律是「不要猜」——猜一个字段名的下场是清单 schema 不合法、插件整个
+装不上，比现在坏得多。目前的对策是如实写在这儿与 README 里：Windows 用户若
+遇到「插件装上了但一个工具都没有」，把 `.mcp.json` 的 `command` 改成自己那个
+解释器的绝对路径即可。等确认了官方清单的平台分支写法再收掉这一条。
+
+**② 允许的项目根不能只看进程 cwd。** 装好的插件里 `.mcp.json` 的 `cwd` 指向
+**插件自己的目录**（`./mcp/server.py` 要靠它解析），「不给 `MAGPLOT_MCP_ROOTS`
+就用 cwd」于是把用户工作区里的每一张图都判成 `path_out_of_scope`——默认流程
+根本跑不起来。现在的顺序是：`MAGPLOT_MCP_ROOTS` → 宿主传过来的工作区变量
+（`MAGPLOT_MCP_WORKSPACE` / `CODEX_*`，都已进 `env_vars` 白名单）→ 进程 cwd
+**且它不在插件包里**。一个都拿不到时报 `no_workspace_root` 并直说要设什么：
+静默放行等于没有边界，静默拒绝等于「装了插件但什么都打不开」且毫无线索。
+
 **这一层只翻译，不实现**：会话、manifest、override、patch 规范化、导出全部落回
 `magplot.engine.{pool,registry,handoff,patchspec,profiles,preflight}`。发给 worker 的
 patches 与 Flask `/api/engine/render` 走的是同一条路径，所以 ADR 0003 的不变式原样成立：

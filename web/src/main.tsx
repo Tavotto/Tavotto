@@ -16,8 +16,11 @@ document.documentElement.lang = currentLocale()
 // 原生菜单的文案在壳里另有一份（Rust 在 webview 起来之前就要建菜单）。
 // 这条通知**放在这儿而不是放进 `@/i18n`**：i18n 模块被 store / lib / 单测到处
 // import，让它反过来依赖 `lib/desktop` 会绕成环。浏览器模式下这两句都是 no-op。
+// 头一次是**汇报**当前生效的语言（可能只是跟随系统），后面每一次
+// languageChanged 都来自用户在设置里换语言（`setLocale` 是唯一入口）——
+// 只有后者算「亲手选的」，壳据此决定要不要把它记成跨重启的偏好。
 void setDesktopMenuLocale(currentLocale())
-i18n.on('languageChanged', (lng) => void setDesktopMenuLocale(lng))
+i18n.on('languageChanged', (lng) => void setDesktopMenuLocale(lng, true))
 
 const rootEl = document.getElementById('root')!
 

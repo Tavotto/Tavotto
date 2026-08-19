@@ -153,3 +153,50 @@ describe('语言清单', () => {
     expect(LOCALE_LABELS['en-US']).toBe('English')
   })
 })
+
+
+/**
+ * 桌面壳带过来的语言（落地 URL 的 `?lang=`）。
+ *
+ * 这条盯的是一个只在真桌面版上才发作的坏法：sidecar 绑 `127.0.0.1:0`，端口
+ * 每次启动都不一样，而端口是 Web Storage origin 的一部分——localStorage 的
+ * 语言偏好活不过一次重启。于是 `detectLocale()` 退回系统语言，`main.tsx` 又
+ * 把这个退回值报给壳，把用户真正选过的那门语言连同原生菜单一起覆盖掉：
+ * 选了跟系统不同语言的用户，每次重启都被打回去。
+ */
+describe('桌面壳经 ?lang= 带过来的选择', () => {
+  const detect = async () => (await import('./locale')).detectLocale()
+  const setSearch = (search: string) => {
+    Object.defineProperty(window, 'location', {
+      value: { ...window.location, search },
+      writable: true,
+      configurable: true,
+    })
+  }
+
+  afterEach(() => setSearch(''))
+
+  it('没有手动选择时用壳带来的那门语言，而不是系统语言', async () => {
+    setSearch('?lang=en-US')
+    asSystem('zh-CN')
+    expect(await detect()).toBe('en-US')
+  })
+
+  it('本次会话里刚做的选择优先于壳带来的那份', async () => {
+    setSearch('?lang=en-US')
+    writeStoredLocale('zh-CN')
+    expect(await detect()).toBe('zh-CN')
+  })
+
+  it('壳没带（浏览器模式）时行为一个字节不变', async () => {
+    setSearch('?open=Fig1')
+    asSystem('en-GB')
+    expect(await detect()).toBe('en-US')
+  })
+
+  it('认不出来的 lang 直接忽略，不当成一次选择', async () => {
+    setSearch('?lang=fr-FR')
+    asSystem('zh-CN')
+    expect(await detect()).toBe('zh-CN')
+  })
+})

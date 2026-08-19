@@ -189,6 +189,11 @@ export function ExportDialog() {
 
   /** 需要用户点头才放行的东西：阻断项 + 无法核验项 */
   const needsConfirm = sum.errors.length > 0 || sum.notVerifiable.length > 0
+  // 勾了确认框就**必须**留档。确认框上写着「这次确认会记录在留档里」，而
+  // 用户可能早就把留档关掉了（这是个记住的偏好）——那样承诺的记录一份都
+  // 不会产生，导出对话框在骗人。所以确认一旦成立，留档不再是可选项。
+  const proofRequired = needsConfirm && confirmed
+  const proofOn = withProof || proofRequired
   const blocked = needsConfirm && !confirmed
 
   const applyProfile = (id: string, width: number | null) => {
@@ -244,7 +249,7 @@ export function ExportDialog() {
         stem: settings.stem,
         objects: toExportObjects(doc.objects),
         // proof 里必须带 profile 身份与全部检查结果，含 not_verifiable
-        proof: withProof
+        proof: proofOn
           ? buildProofPayload(doc, assets, issues, settings, profile, {
               forced: sum.errors.length > 0 && confirmed,
               acknowledged: needsConfirm
@@ -505,7 +510,7 @@ export function ExportDialog() {
 
         <Row label={ex('proofLabel')} labelWidth={52}>
           <label className="flex items-center gap-1.5 text-xs text-ink-2" title={ex('proofTitle')}>
-            <Toggle checked={withProof} onChange={setWithProof} />
+            <Toggle checked={proofOn} onChange={setWithProof} disabled={proofRequired} />
             {ex('proofToggle')}
           </label>
         </Row>

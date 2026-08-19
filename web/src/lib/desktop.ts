@@ -109,12 +109,20 @@ export async function revealExportedFile(dir: string, name: string): Promise<boo
  *
  * 浏览器模式下没有原生菜单，直接返回 false——**不抛**：语言切换是纯界面动作，
  * 不该因为壳不在就失败。
+ *
+ * `explicit` 区分「用户在设置里换了语言」与「i18n 就绪时汇报当前生效的那门」。
+ * 桌面模式下 sidecar 绑 `127.0.0.1:0`，端口每次都变，前端 localStorage 的偏好
+ * 活不过一次重启——壳记的那份是唯一活得下来的存储，而它必须知道哪次是真正的
+ * 选择，否则一次「跟随系统」的汇报就把用户选过的语言洗掉了。
  */
-export async function setDesktopMenuLocale(locale: string): Promise<boolean> {
+export async function setDesktopMenuLocale(
+  locale: string,
+  explicit = false,
+): Promise<boolean> {
   if (!isDesktop()) return false
   try {
     const { invoke } = await import('@tauri-apps/api/core')
-    await invoke('set_menu_locale', { locale })
+    await invoke('set_menu_locale', { locale, explicit })
     return true
   } catch {
     // 老版本的壳没有这个命令（ACL 会直接拒），菜单保持旧语言即可

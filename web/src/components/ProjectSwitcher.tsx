@@ -1,8 +1,7 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronDown, Folder, SquareArrowOutUpRight } from 'lucide-react'
-import { literal } from '@/i18n'
-import { backendErrorText } from '@/lib/api'
+import { backendErrorMsg } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
@@ -33,8 +32,10 @@ export function ProjectSwitcher() {
 
   const go = (path: string, create = false) => {
     void open(path, create).catch((e: unknown) =>
-      // 后端给了稳定 code 就按当前语言说；没给就原样透出它那句话
-      useUiStore.getState().setStatus(literal(backendErrorText(e)), 'error'),
+      // 存**描述符**而不是翻好的字符串：错误 toast 一直挂到用户手动关掉，
+      // 中途切语言时它会重渲染，冻成字符串的那句再也换不回来。
+      // 后端没给 code 时 backendErrorMsg 内部会 literal() 原样透出。
+      useUiStore.getState().setStatus(backendErrorMsg(e), 'error'),
     )
   }
 

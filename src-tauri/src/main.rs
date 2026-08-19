@@ -219,23 +219,43 @@ fn build_menu<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) -> tauri::Result<
 /// 前端在 i18n 就绪时（还没挂 React）就会调一次，用户在设置里换语言时再调。
 /// 语言认不出来一律忽略：菜单保持现状比换成一堆空词条好。
 #[tauri::command]
-fn set_menu_locale(app: tauri::AppHandle, locale: String) -> Result<(), String> {
+fn set_menu_locale(
+    app: tauri::AppHandle,
+    locale: String,
+    // 用户亲手选的（设置里换语言），还是只是「当前生效」的汇报（i18n 就绪）。
+    // 桌面模式下这是**唯一**能把「手动选择 > 系统语言」还给用户的信息：
+    // sidecar 绑 `127.0.0.1:0`，端口每次都变，前端 localStorage 的偏好活不
+    // 过一次重启（端口是 Web Storage origin 的一部分）。
+    explicit: Option<bool>,
+) -> Result<(), String> {
     let Some(next) = i18n::normalize(&locale) else {
         return Err(format!("不支持的语言：{locale}"));
     };
-    let state = app.state::<AppState>();
-    {
+    let explicit = explicit.unwrap_or(false);
+    let changed = {
+        let state = app.state::<AppState>();
         let mut cur = state.menu_locale.lock().unwrap();
-        if *cur == next {
-            return Ok(());
-        }
+        let changed = *cur != next;
         *cur = next;
+        changed
+    };
+    // 显式选择即使「和现在一样」也要落盘：上一次可能只是跟随系统的汇报，
+    // 那时文件里没有 explicit 标记，重启后就又退回系统语言了。
+    if changed || explicit {
+        i18n::write_locale(
+            i18n::locale_file(app.path().app_config_dir().ok()),
+            next,
+            explicit,
+        );
     }
-    i18n::write_locale(i18n::locale_file(app.path().app_config_dir().ok()), next);
+    if !changed {
+        return Ok(());
+    }
     let menu = build_menu_in(&app, next).map_err(|e| e.to_string())?;
     app.set_menu(menu).map_err(|e| e.to_string())?;
     Ok(())
 }
+
 
 fn spawn_sidecar_and_navigate(app: tauri::AppHandle) {
     let state = app.state::<AppState>();
@@ -244,6 +264,10 @@ fn spawn_sidecar_and_navigate(app: tauri::AppHandle) {
     let open = state.open.clone();
     // 起 sidecar 这段跑在前端加载之前，语言只能取记下来的那个偏好
     let menu_locale = *state.menu_locale.lock().unwrap();
+    // 记下来的那份是不是「用户亲手选的」——只有它才该盖过前端的系统语言探测
+    let chosen_locale = i18n::read_stored(i18n::locale_file(app.path().app_config_dir().ok()))
+        .filter(|s| s.explicit)
+        .map(|s| s.locale);
 
     std::thread::spawn(move || {
         let resource_dir = app.path().resource_dir().ok();
@@ -268,9 +292,23 @@ fn spawn_sidecar_and_navigate(app: tauri::AppHandle) {
                 // fragment 携带一次性 nonce：不进 HTTP 请求行，也就不进任何访问日志。
                 // `?open=<stem>` 是首启交接的落点（前端 lib/openRequest.ts 消费），
                 // 与浏览器模式共用同一份语义——桌面首启不必再多发一次事件。
-                let query = match open.as_ref().and_then(|o| o.stem.as_deref()) {
-                    Some(stem) => format!("?open={}", utf8_percent_encode(stem, NON_ALPHANUMERIC)),
-                    None => String::new(),
+                // `lang=` 只在用户**亲手选过**语言时带（见 `set_menu_locale`
+                // 的 explicit 参数）。桌面模式下 sidecar 绑 `127.0.0.1:0`，
+                // 端口每次都变，而端口是 Web Storage origin 的一部分——前端
+                // 存在 localStorage 的语言偏好活不过一次重启，`detectLocale()`
+                // 会退回系统语言，再把那个退回值报给壳，把用户真正的选择
+                // **覆盖掉**。壳记的这份是唯一活得下来的存储，所以由它带过去。
+                let mut params: Vec<String> = Vec::new();
+                if let Some(stem) = open.as_ref().and_then(|o| o.stem.as_deref()) {
+                    params.push(format!("open={}", utf8_percent_encode(stem, NON_ALPHANUMERIC)));
+                }
+                if chosen_locale.is_some() {
+                    params.push(format!("lang={}", menu_locale.tag()));
+                }
+                let query = if params.is_empty() {
+                    String::new()
+                } else {
+                    format!("?{}", params.join("&"))
                 };
                 let url = format!("http://127.0.0.1:{port}/{query}#dnonce={nonce}");
                 if win
