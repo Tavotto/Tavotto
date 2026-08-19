@@ -70,6 +70,21 @@ def _num(value: object) -> float | None:
     return float(value)
 
 
+def _num_or(value: object, default: float) -> float:
+    """取数值，**显式的 0 也算数**；只有真的没给（或不是数）才用 default。
+
+    这一条不许退回 `_num(x) or default` 的写法。Python 的真值判断分不清
+    「没表态」与「明确设成 0」，而期刊覆盖里 0 恰恰是有意义的值：
+    `widths_mm.tolerance_mm = 0` 是「页宽必须精确等于规范值」、
+    `absolute_min_font_size_pt = 0` 是「不设绝对字号下限」。用 `or` 的话
+    这两条都会被悄悄换回我们的默认值，而 `web/src/lib/preflight.ts` 那份
+    求值器用的是 `??`、忠实执行 0——同一份 spec 在 MCP 与画布两条链路上
+    于是给出相反的合规结论，且更危险的方向是 Python 一侧**偷偷放宽**了检查。
+    """
+    got = _num(value)
+    return default if got is None else got
+
+
 def _field(element: dict, prop: str):
     for f in element.get("editable") or []:
         if f.get("prop") == prop:
@@ -142,10 +157,10 @@ class _Sink:
 # ------------------------------ 各组检查 ------------------------------------
 def _check_page(spec: dict, profile: dict, sink: _Sink) -> None:
     page = spec.get("page") or {}
-    w = _num(page.get("w_mm")) or 0.0
-    h = _num(page.get("h_mm")) or 0.0
+    w = _num_or(page.get("w_mm"), 0.0)
+    h = _num_or(page.get("h_mm"), 0.0)
     widths = profile.get("widths_mm") or {}
-    tol = _num(widths.get("tolerance_mm")) or 0.5
+    tol = _num_or(widths.get("tolerance_mm"), 0.5)
     single, double = _num(widths.get("single")), _num(widths.get("double"))
     matched = None
     for name, target in (("single", single), ("double", double)):
@@ -161,7 +176,7 @@ def _check_page(spec: dict, profile: dict, sink: _Sink) -> None:
 
     ratios = profile.get("allowed_aspect_ratios") or []
     if ratios and w > 0 and h > 0:
-        tol_r = _num(profile.get("aspect_tolerance")) or 0.04
+        tol_r = _num_or(profile.get("aspect_tolerance"), 0.04)
         actual = w / h
         best = None
         for r in ratios:
@@ -207,9 +222,9 @@ def _check_panel_state(panel: dict, sink: _Sink) -> None:
 def _check_panel_raster(panel: dict, profile: dict, sink: _Sink) -> None:
     pid = panel.get("id", "")
     rect = panel.get("rect_mm") or [0, 0, 0, 0]
-    w_mm = _num(rect[2]) or 0.0
+    w_mm = _num_or(rect[2], 0.0)
     px_w = panel.get("px_w")
-    min_dpi = _num(profile.get("min_raster_dpi")) or 300
+    min_dpi = _num_or(profile.get("min_raster_dpi"), 300)
     if px_w and w_mm > 0:
         dpi = float(px_w) / (w_mm / 25.4)
         if dpi < min_dpi:
@@ -243,10 +258,10 @@ def _check_panel_fonts(panel: dict, profile: dict, sink: _Sink) -> None:
     if not isinstance(manifest, dict):
         return
     pid = panel.get("id", "")
-    scale = _num(panel.get("scale")) or 1.0
-    strict = _num(profile.get("min_effective_font_size_pt")) or 8.5
-    floor = _num(profile.get("absolute_min_font_size_pt")) or 8.0
-    biggest = _num(profile.get("max_font_size_pt")) or 72.0
+    scale = _num_or(panel.get("scale"), 1.0)
+    strict = _num_or(profile.get("min_effective_font_size_pt"), 8.5)
+    floor = _num_or(profile.get("absolute_min_font_size_pt"), 8.0)
+    biggest = _num_or(profile.get("max_font_size_pt"), 72.0)
     fam = profile.get("font_family") or {}
     accepted = {str(x).lower() for x in (fam.get("latin_accepted") or [])}
     flagged = {str(x).lower() for x in (fam.get("latin_substitutes_flagged") or [])}
@@ -312,11 +327,11 @@ def _check_panel_axes(panel: dict, profile: dict, sink: _Sink) -> None:
     if not isinstance(manifest, dict):
         return
     pid = panel.get("id", "")
-    scale = _num(panel.get("scale")) or 1.0
+    scale = _num_or(panel.get("scale"), 1.0)
     axis = profile.get("axis_policy") or {}
     legend = profile.get("legend_policy") or {}
     presets = [float(v) for v in (profile.get("line_widths_pt") or [])]
-    tol = _num(profile.get("line_width_tolerance_pt")) or 0.08
+    tol = _num_or(profile.get("line_width_tolerance_pt"), 0.08)
     want_dir = axis.get("tick_direction")
     enclosed = bool(axis.get("enclosed_spines"))
     max_labels = int(axis.get("max_tick_labels") or 0)
@@ -459,9 +474,9 @@ def _rects(spec: dict) -> list[tuple[str, list[float], bool, str]]:
 
 def _check_geometry(spec: dict, sink: _Sink) -> None:
     page = spec.get("page") or {}
-    pw = _num(page.get("w_mm")) or 0.0
-    ph = _num(page.get("h_mm")) or 0.0
-    margin = _num(page.get("margin_mm")) or 0.0
+    pw = _num_or(page.get("w_mm"), 0.0)
+    ph = _num_or(page.get("h_mm"), 0.0)
+    margin = _num_or(page.get("margin_mm"), 0.0)
     items = _rects(spec)
     visible = [(i, r, t) for i, r, hidden, t in items if not hidden]
 
@@ -502,14 +517,14 @@ def _check_geometry(spec: dict, sink: _Sink) -> None:
 
 
 def _check_texts(spec: dict, profile: dict, sink: _Sink) -> None:
-    strict = _num(profile.get("min_effective_font_size_pt")) or 8.5
-    floor = _num(profile.get("absolute_min_font_size_pt")) or 8.0
+    strict = _num_or(profile.get("min_effective_font_size_pt"), 8.5)
+    floor = _num_or(profile.get("absolute_min_font_size_pt"), 8.0)
     cjk = profile.get("cjk_fallback") or {}
     for t in spec.get("texts") or []:
         if t.get("hidden"):
             continue
         tid = t.get("id", "")
-        size = _num(t.get("size_pt")) or 0.0
+        size = _num_or(t.get("size_pt"), 0.0)
         # 画布标注的 size_pt 已经是页面上的绝对 pt：不再乘 scale
         if size <= floor:
             sink.add("font-below-absolute-floor",

@@ -258,7 +258,9 @@ export function geomInkAreaFrac(
         (pts[i][1] - pts[i - 1][1]) * size[1],
       )
     }
-    if (p.closed && pts.length > 2) {
+    // 填充路径按隐式闭合算（与 L79/L205/L232 同一判据）：少算这条边会让
+    // 墨迹面积被低估，重叠元素的命中胜者可能因此反转
+    if ((p.closed || geom.fill) && pts.length > 2) {
       lenMm += Math.hypot(
         (pts[0][0] - pts[pts.length - 1][0]) * size[0],
         (pts[0][1] - pts[pts.length - 1][1]) * size[1],

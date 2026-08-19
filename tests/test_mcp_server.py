@@ -191,6 +191,20 @@ def test_protocol_owns_the_real_stdout(monkeypatch):
     assert b'"ok"' in real.getvalue()        # 协议帧仍走真正的 stdout
 
 
+def test_a_flood_of_blank_lines_does_not_blow_the_stack():
+    """跳过空行必须是循环，不能是递归。
+
+    递归会让栈深度跟着对端输入走：连续上千个裸换行（管道拥塞、被截断的
+    写入都会产生）就抛 `RecursionError`，而 `serve_forever()` 只捕获
+    RpcError/OSError/ValueError，于是整个 server 进程当场终止——host 那边
+    看到的是「服务器意外断开」，JSON-RPC 层面一条错误响应都没有。
+    """
+    flood = b"\n" * 5000 + b'{"jsonrpc":"2.0","id":1,"method":"ping"}\n'
+    conn = rpc.StdioConnection(io.BytesIO(flood), io.BytesIO())
+    assert conn.read() == {"jsonrpc": "2.0", "id": 1, "method": "ping"}
+    assert conn.read() is None                # 空行吃完即 EOF，不是无限循环
+
+
 # ------------------------------ 路径范围 ------------------------------------
 def test_paths_outside_the_allowed_roots_are_refused(tmp_path, monkeypatch):
     """越界一律拒，并如实回报**规范化后的那个路径**。

@@ -302,6 +302,36 @@ def test_fixed_values_place_exactly_those_ticks(library):
     assert len(_tick_texts(man)) == 3
 
 
+def test_clearing_fixed_values_replays_the_same_as_a_fresh_worker(library):
+    """「固定刻度值」清空之后，热会话与全量重放必须落到同一组刻度。
+
+    界面上这一档写着「留空 = 用当前刻度」，而「当前」曾经取的是
+    `axis.get_majorticklocs()`——热会话里那是上一次 `FixedLocator` 留下的
+    痕迹，全新 worker 重放同一份 patch 列表时却是脚本自己的刻度。于是
+    「所见 == 全量重放 == 写回 == 重开」这条不变式在这一档上破了：用户
+    重开工程会发现刻度自己变了，applied 表里却一个字节没动。
+    """
+    final = [
+        {"gid": "axes_0", "prop": "xlim", "value": [0.0, 1.0]},
+        {"gid": "axes_0.xticks", "prop": "major_mode", "value": "fixed"},
+        {"gid": "axes_0.xticks", "prop": "major_values", "value": []},
+    ]
+    hot = _worker(library)
+    try:
+        first = hot.override(STEM, final[:2] + [
+            {"gid": "axes_0.xticks", "prop": "major_values", "value": [0.2, 0.5, 0.8]}])
+        assert _field(first["manifest"], "axes_0.xticks", "major_values") \
+            == pytest.approx([0.2, 0.5, 0.8])
+        hot_man = hot.override(STEM, final)["manifest"]      # 清空（仍是全量列表）
+    finally:
+        pool.discard(hot)
+
+    replay_man = _render(library, final)                     # 全新 worker 一次性重放
+    assert _field(hot_man, "axes_0.xticks", "major_values") == pytest.approx(
+        _field(replay_man, "axes_0.xticks", "major_values"))
+    assert _tick_texts(hot_man) == _tick_texts(replay_man)
+
+
 def test_format_changes_the_major_formatter(library):
     man = _render(library, [{"gid": "axes_0.xticks", "prop": "format", "value": "%.3f"}])
     assert _field(man, "axes_0.xticks", "format") == "%.3f"

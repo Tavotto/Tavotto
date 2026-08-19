@@ -167,6 +167,17 @@ describe('命中评分：与 bbox 面积同一量纲', () => {
     expect(ink).toBeLessThan(0.05)
     expect(ink).toBeGreaterThan(0)
   })
+
+  it('填充路径按隐式闭合算墨迹 —— 没有 CLOSEPOLY 也要算上收口那条边', () => {
+    // 与 geomDistMm/geomHitsRect/geomAreaFrac 同一判据。少算这条边会让
+    // 墨迹面积被低估，重叠元素的命中胜者可能因此反转。
+    const openTri: ElementGeometry = {
+      ...triangle,
+      paths: [{ points: triangle.paths[0].points, closed: false }],
+    }
+    expect(geomInkAreaFrac(openTri, SIZE, 1.5))
+      .toBeCloseTo(geomInkAreaFrac(triangle, SIZE, 1.5), 12)
+  })
 })
 
 describe('translateGeom：拖动中的乐观位移', () => {

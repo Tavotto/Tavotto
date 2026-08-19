@@ -77,13 +77,21 @@ class StdioConnection:
         sys.stdout = sys.stderr
 
     def read(self) -> dict | None:
-        """读一条消息；EOF 回 None。非 JSON 的行抛 RpcError（调用方回 -32700）。"""
-        line = self._in.readline()
-        if not line:
-            return None
-        text = line.decode("utf-8", "replace").strip()
-        if not text:
-            return self.read()
+        """读一条消息；EOF 回 None。非 JSON 的行抛 RpcError（调用方回 -32700）。
+
+        跳过空行用**循环**而不是递归：递归会把栈深度变成对端输入的函数，
+        连续上千个裸换行（管道拥塞、被截断的写入都会产生）就足以抛出
+        `RecursionError`——而它不在 `serve_forever()` 捕获的那几类里，
+        整个 server 进程当场终止，host 侧只看到「服务器意外断开」，
+        JSON-RPC 层面一个字节的错误响应都没有。
+        """
+        while True:
+            line = self._in.readline()
+            if not line:
+                return None
+            text = line.decode("utf-8", "replace").strip()
+            if text:
+                break
         try:
             msg = json.loads(text)
         except ValueError as exc:
