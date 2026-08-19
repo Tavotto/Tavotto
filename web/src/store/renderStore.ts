@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { t } from '@/i18n'
+import { literal, msg, type UiMessage } from '@/i18n'
 import { create } from 'zustand'
 import { EngineError, engineRender, type Manifest } from '@/lib/api'
 import { engineTransport } from '@/lib/engineTransport'
@@ -16,7 +16,14 @@ export interface PanelRender {
   /** 已处理好的 SVG 文本（去掉 width/height，铺满容器） */
   svg: string | null
   status: RenderStatus
-  error: string | null
+  /**
+   * 失败原因（**描述符**，不是翻译好的字符串）。渲染失败会一直挂在 store 里
+   * 直到这一版重新画成功或再次失败——heavy 脚本的看门狗档位是 15 分钟，
+   * 中途用户在设置里切了界面语言，周围文案即时跟着换，唯独这条角标会永远
+   * 停在旧语言（参数已经拼死在字符串里，再也换不回来）。
+   * 后端/脚本原文属于诊断材料、不翻译，用 `literal()` 原样透出。
+   */
+  error: UiMessage | null
   /**
    * 机器可读的失败原因。属于 ENVIRONMENT_CODES 的那几个是「缺件」而不是
    * 「脚本报错」，界面给出口而不是 traceback。
@@ -264,13 +271,9 @@ export const useRenderStore = create<RenderState>((set, get) => ({
             code: err instanceof EngineError ? err.code : '',
             module: err instanceof EngineError ? err.module : '',
             error: timedOut
-              ? t('render.timeout', {
-                  ns: 'errors',
-                  minutes: Math.round(timeoutMs / 60_000),
-                })
-              : err instanceof Error
-                ? err.message
-                : String(err),
+              ? msg('render.timeout',
+                    { minutes: Math.round(timeoutMs / 60_000) }, 'errors')
+              : literal(err instanceof Error ? err.message : String(err)),
             traceback: err instanceof EngineError ? err.traceback : '',
           })
           return

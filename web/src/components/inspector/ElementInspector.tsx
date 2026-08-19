@@ -20,7 +20,7 @@ import {
   TriangleAlert,
 } from 'lucide-react'
 import type { AlignMode } from '@/lib/geometry'
-import { msg, t as translate } from '@/i18n'
+import { formatMessage, msg, t as translate, type UiMessage } from '@/i18n'
 import { ENVIRONMENT_CODES } from '@/lib/api'
 import type { EditableField, Manifest, ManifestElement } from '@/lib/api'
 import { requestRender } from '@/hooks/useEngineSync'
@@ -309,7 +309,7 @@ function ErrorBlock({
   traceback,
   onRetry,
 }: {
-  error: string
+  error: UiMessage
   traceback: string
   onRetry?: () => void
 }) {
@@ -317,7 +317,8 @@ function ErrorBlock({
   return (
     <Section>
       <div className="rounded-sm bg-danger-subtle px-2 py-1.5">
-        <p className="text-xs text-danger">{error}</p>
+        {/* 描述符在**显示这一刻**才翻，切语言后这条跟着换 */}
+        <p className="text-xs text-danger">{formatMessage(error)}</p>
         <div className="mt-0.5 flex items-center gap-2">
           <p className="text-xs text-danger/70">{el('keptPrevious')}</p>
           {onRetry && (

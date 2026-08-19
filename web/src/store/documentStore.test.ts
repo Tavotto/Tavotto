@@ -5,6 +5,7 @@ import type { TextObject } from '@/types/document'
 import {
   flushAutosave,
   readAutosaveDoc,
+  startAutosave,
   useDocumentStore,
 } from './documentStore'
 
@@ -154,6 +155,27 @@ describe('多画布数据层', () => {
     expect(s().openTabs).toContain(second)
     s().deleteCanvas(second)
     expect(s().openTabs).not.toContain(second)
+  })
+
+  it('画布列表的结构性改动也要置 dirty —— 它们只动 canvases，不动 doc', () => {
+    const s = () => useDocumentStore.getState()
+    const first = s().activeCanvasId
+    s().addCanvas()                              // 切到新画布，first 变成非激活
+    const stop = startAutosave()
+    try {
+      // 重命名**非激活**画布：走的是 set({ canvases }) 那条分支，doc 不变
+      useDocumentStore.setState({ dirty: false })
+      s().renameCanvas(first, '改过的名字')
+      expect(s().canvases.find((c) => c.id === first)!.name).toBe('改过的名字')
+      expect(s().dirty).toBe(true)
+
+      // 调整画布顺序同理：doc 一个字节没动
+      useDocumentStore.setState({ dirty: false })
+      s().reorderCanvases(0, 1)
+      expect(s().dirty).toBe(true)
+    } finally {
+      stop()
+    }
   })
 
   it('自动保存：磁盘落 schema 3，成功后本机副本清空', async () => {

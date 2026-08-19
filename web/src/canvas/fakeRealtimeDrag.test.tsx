@@ -329,6 +329,26 @@ describe('历史：一次拖动一条', () => {
     expect(useDocumentStore.getState().past).toHaveLength(2)
   })
 
+  it('连续两次拖动是累加的 —— 第二次绝不能拿 manifest 上的旧锚点起算', () => {
+    // 第二次手势若以 `el.anchor` 为基准，而不是文档里已经写下的那条 override，
+    // 第一次在另一个方向上的位移会被 setOverride 的整条替换语义整个覆盖掉：
+    // 不报错、界面上也看不出来，用户以为是两次叠加。权威渲染还没回来时
+    // （`panelRender` 退回 latest[fileId] 的那段窗口）这就是必然发生的。
+    startElementDrag(down(0, 0), livePanel(), textEl, layout)
+    dragTo(80, 0, 10)                                   // 只往右
+    fire('pointerup', 80, 0)
+    const after1 = overrideOf('axes_0.title', 'pos_frac') as number[]
+    expect(after1[0]).toBeGreaterThan(textEl.anchor![0])
+
+    startElementDrag(down(0, 0), livePanel(), textEl, layout)
+    dragTo(0, 60, 10)                                   // 只往下
+    fire('pointerup', 0, 60)
+    const after2 = overrideOf('axes_0.title', 'pos_frac') as number[]
+
+    expect(after2[0]).toBeCloseTo(after1[0], 9)         // 第一次的横向位移还在
+    expect(after2[1]).not.toBeCloseTo(after1[1], 6)     // 纵向确实动了
+  })
+
   it('没真的动过（只是点了一下）不产生历史，也不渲染', () => {
     startElementDrag(down(0, 0), livePanel(), textEl, layout)
     fire('pointerup', 0, 0)

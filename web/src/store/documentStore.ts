@@ -840,7 +840,13 @@ export function startAutosave(): () => void {
     flushAutosave()
   }
   const unsubscribe = useDocumentStore.subscribe((state, prev) => {
-    if (state.doc === prev.doc) return
+    // `doc` 只是**激活画布**的编辑态。画布列表本身的结构性改动——重命名
+    // 非激活画布、删除非激活画布、复制画布、调整画布顺序——只动 `canvases`，
+    // 一个字节都不碰 `doc`。只盯 doc 的话这几类改动既不置 dirty 也不排队
+    // 落盘，用户做完不再编辑激活画布就关掉应用（非优雅退出时连 beforeunload
+    // 的兜底也没有），改动直接没了。
+    // `openTabs` 不在此列：它按机器存 localStorage，走 persistTabs()。
+    if (state.doc === prev.doc && state.canvases === prev.canvases) return
     if (!state.dirty) useDocumentStore.setState({ dirty: true })
     window.clearTimeout(timer)
     timer = window.setTimeout(flushAutosave, DEBOUNCE_MS)
