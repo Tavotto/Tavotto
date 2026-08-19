@@ -5,6 +5,13 @@ on:
     branches: [main]
   pull_request:
 
+# 这个工作流从头到尾只读代码、跑测试、造临时产物，一个字节都不往仓库写。
+# 不显式收紧的话 GITHUB_TOKEN 会拿到仓库默认的那套权限（含 contents: write），
+# 于是任何一个被拉进来的 action 或被改坏的测试脚本都能推 commit、改 Release。
+# 顶层一句管住全部 job；将来真需要写权限的 job 自己在 job 级声明，加得显眼。
+permissions:
+  contents: read
+
 jobs:
   backend:
     # 跨平台是产品承诺，就得跨平台跑。Linux 上多铺几个 Python 版本盯住
@@ -66,6 +73,38 @@ jobs:
       - name: MCP 画布产物与前端源码同步
         working-directory: .
         run: python3 scripts/build_mcp_widget.py --check
+
+  # Rust supervisor 的静态门禁。desktop-tauri.yml 里也有一份，但那个工作流只在
+  # 打 tag / workflow_dispatch 时跑——改了 workerd 的 PR 因此一路全绿，要等到
+  # 发版那天才知道 clippy 挑了刺或 golden vectors 对不上。而
+  # workerd/src/patchspec.rs 必须**逐字节**复现 engine/patchspec.py，硬验收
+  # （tests/golden/patch_vectors.json）正是跑在 cargo test 里的：跨侧漂移是这个
+  # 仓库最贵的一类缺陷，它的门禁不能只挂在发行链上。
+  #
+  # **刻意不做 paths 过滤**。它与 backend / *-smoke 那几档并行，本机整套
+  # fmt+clippy+test 12 秒，CI 上加缓存命中的编译也远不到 PR 的瓶颈；而漏配一条
+  # 路径（忘了 patchspec.py、忘了 golden vectors）换来的是「改了跨侧契约却没人
+  # 跑 Rust」——静默不跑的门禁与空转的门禁一样坏，省这一两分钟不值。
+  #
+  # 只在 Linux 上跑一份：纯标准库 + serde 的 stdio 进程，没有平台分支。
+  workerd:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: workerd
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: workerd
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      # supervisor_behaviour.rs 起的是真二进制 + tests/fake_worker.py，
+      # 靠 runner 自带的 python3（`PYTHON` 可覆盖）
+      - run: cargo test
 
   package:
     # 装出来的 wheel 必须自带界面并且能真的起起来——这条流水线专门盯

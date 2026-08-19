@@ -1,0 +1,51 @@
+name: CodeQL
+
+# 从 GitHub 的 default setup 迁过来的（2026-08-19）。迁移的唯一动机是
+# **default setup 关不掉单条规则**：它只让你选语言和 query suite，而 py/stack-trace-exposure
+# 在 app.py 上一次报 27 条、条条都是刻意为之的设计（理由写在 codeql-config.yml 里）。
+# 规则裁剪要落进版本控制、能在 PR 里被评审，而不是散在网页设置和一堆 dismiss 记录里。
+#
+# 语言与 category 与原 default setup 逐字对齐（actions / javascript-typescript /
+# python / rust，category 仍是 `/language:<lang>`），既有 alert 才认得出是同一份分析、
+# 不会整批作废重来。threat model 保持默认的 remote，也与原配置一致。
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # 与原 default setup 的 weekly 对齐。定时跑不是摆设：query 包本身在更新，
+    # 一行没改的代码明天可能就有新结论。
+    - cron: "23 4 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: CodeQL (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write   # 上传 SARIF，这个工作流存在的意义
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # 四种语言全部走 build-mode: none —— 后端是 Python、前端是 TS、workerd 与
+        # 桌面壳的 Rust 都由 CodeQL 直接解析源码。**刻意不 autobuild**：编译 Tauri
+        # 那棵依赖树要好几分钟，而它买不到任何额外结论。
+        language: [actions, javascript-typescript, python, rust]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 初始化 CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          config-file: ./.github/codeql/codeql-config.yml
+
+      - name: 分析
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"

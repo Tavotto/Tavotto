@@ -23,6 +23,12 @@ on:
         type: choice
         options: [none, testpypi, pypi]
 
+# 默认只读。真正要写的两个 job（github_release 建 Release、pypi 走 OIDC）
+# 已各自在 job 级声明了自己那份权限——build 只是造产物，不该继承仓库默认的
+# contents: write。
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest

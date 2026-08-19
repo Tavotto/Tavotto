@@ -1,0 +1,23 @@
+# CodeQL 的规则裁剪。**这个文件只在 advanced setup（.github/workflows/codeql.yml）
+# 下生效**——GitHub 的 default setup 读不到它，那也正是这个仓库从 default 切到
+# advanced 的唯一理由：default setup 只能选语言与 query suite，关不掉单条规则。
+name: "Magplot CodeQL config"
+
+query-filters:
+  # py/stack-trace-exposure：在 app.py 上一次报 27 条，全部是同一个模式——把
+  # 后端异常原文交给客户端。放在通用 Web 服务里这是对的，放在 Magplot 上不是：
+  #   * 服务只绑 127.0.0.1，桌面模式另有一次性 nonce → HttpOnly cookie 认证
+  #     加 Host/Origin 校验，`/`、`/assets/*`、bootstrap 之外一律 401 兜底；
+  #   * 「诊断材料（traceback / 日志 / 后端报错原文）不翻译、原样透出」是写进
+  #     CLAUDE.md 的产品约定——用户要把它贴进 issue，我们要它一个字不改。
+  # 27 条永远修不掉的 high-signal 噪音会把 Security 页面变成背景板，那时候旁边
+  # 那 15 条 py/path-injection 也一起没人看了。所以整条关掉，而不是逐条 dismiss
+  # ——逐条只压住今天这 27 处，明天新加一个端点又冒一条。
+  - exclude:
+      id: py/stack-trace-exposure
+
+paths-ignore:
+  # 受管构建物：web/src 打出来的单文件 bundle，随 Codex 插件提交进仓库
+  # （scripts/build_mcp_widget.py，CI 有 --check 看护）。扫 minified 产物既查不出
+  # 真问题也定位不到源码行——真正该扫的是 web/src 那份，它就在扫描范围里。
+  - codex-plugin/mcp/widget/canvas.html
