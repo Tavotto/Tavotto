@@ -6,14 +6,14 @@
 #   2. 在 https://developer.apple.com/account/resources/certificates/add
 #      选 "Developer ID Application"、上传该 CSR、下载 .cer 放进同一目录
 #
-# 用法： scripts/setup_macos_signing.sh [证书目录]（缺省 ~/magplot-signing）
+# 用法： scripts/setup_macos_signing.sh [证书目录]（缺省 ~/tavotto-signing）
 #
 # 私钥与 .p12 只留在这个目录里，绝不进版本库。
 set -eu
 
-DIR="${1:-$HOME/magplot-signing}"
+DIR="${1:-$HOME/tavotto-signing}"
 KEY="$DIR/developerID.key"
-REPO="erwanjun/magplot"
+REPO="Tavotto/Tavotto"
 
 [ -f "$KEY" ] || { echo "找不到私钥 $KEY" >&2; exit 1; }
 

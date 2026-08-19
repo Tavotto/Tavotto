@@ -1,9 +1,9 @@
 """独立应用（.app / .exe）的入口。**两个可执行文件共用这一份。**
 
-`packaging/magplot.spec` 从同一个 Analysis 出两个 exe，只差 console 子系统：
+`packaging/tavotto.spec` 从同一个 Analysis 出两个 exe，只差 console 子系统：
 
-  * `Magplot(.exe)`  —— `console=False`。双击不弹黑窗；桌面壳启动它当 sidecar。
-  * `magplot-cli(.exe)` —— `console=True`。**外部程序（Codex 插件、安装器、
+  * `Tavotto(.exe)`  —— `console=False`。双击不弹黑窗；桌面壳启动它当 sidecar。
+  * `tavotto-cli(.exe)` —— `console=True`。**外部程序（Codex 插件、安装器、
     编辑器）唯一能当命令行调的那个**：GUI 子系统的 exe 在没有真终端时
     `sys.stdout is None`，下面 `_redirect_streams` 会把输出改道到 app.log，
     调用方 `capture_output` 拿到的是空的 stdout 而不是那行 JSON。
@@ -24,7 +24,7 @@ def _redirect_streams() -> None:
     if sys.stdout is not None and sys.stderr is not None:
         return                     # 有真终端（比如从命令行启动 .app 里的可执行文件）
     try:
-        from magplot.engine import config
+        from tavotto.engine import config
         log_dir = config.data_dir() / "cache"
         log_dir.mkdir(parents=True, exist_ok=True)
         target = open(log_dir / "app.log", "a", encoding="utf-8",
@@ -46,7 +46,7 @@ def main() -> None:
     # 子命令（open / doctor）只用纯标准库那点逻辑，**在这里就分派掉**：
     # 走 app.main() 会 import Flask + pymupdf + 整个 app.py，而一次交接
     # 一个 HTTP 端点都用不上——那份冷启动全是白付的。
-    from magplot.engine import cli as engine_cli
+    from tavotto.engine import cli as engine_cli
     # Windows 上冻结的 console exe 被安装器 / Codex 用管道接管时，stdout 退回
     # cp1252/cp936——中文一出现就 UnicodeEncodeError，调用方等的那行 JSON
     # 一个字节都收不到。实现只有一份（engine/cli.py）。
@@ -54,7 +54,7 @@ def main() -> None:
     rc = engine_cli.dispatch(sys.argv[1:])
     if rc is not None:
         sys.exit(rc)
-    from magplot.app import main as app_main
+    from tavotto.app import main as app_main
     app_main()
 
 

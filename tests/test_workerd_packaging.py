@@ -6,10 +6,10 @@
 所以这条链的每一环都得有人盯着，而不是等用户来报「怎么有点卡」。
 
 三个环节：
-  1. `packaging/magplot.spec` 把它收进 `_internal/`，缺了当场失败；
+  1. `packaging/tavotto.spec` 把它收进 `_internal/`，缺了当场失败；
   2. `scripts/build_desktop.py` 在 PyInstaller 之前 cargo build，并回头确认落点；
   3. CI 两条腿（desktop-tauri 的发布链 + ci.yml 的 windows-exe-smoke）
-     都**不设 MAGPLOT_WORKERD**，靠 `--expect-control-plane workerd` 断言
+     都**不设 TAVOTTO_WORKERD**，靠 `--expect-control-plane workerd` 断言
      产物自带的那份真的被找到并用上了。
 """
 import sys
@@ -17,14 +17,14 @@ from pathlib import Path
 
 import pytest
 
-from magplot.engine import workerd_client
+from tavotto.engine import workerd_client
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "scripts"))
 
 import build_desktop as bd  # noqa: E402
 
-SPEC = (REPO / "packaging" / "magplot.spec").read_text(encoding="utf-8")
+SPEC = (REPO / "packaging" / "tavotto.spec").read_text(encoding="utf-8")
 DESKTOP_WF = (REPO / ".github" / "workflows"
               / "desktop-tauri.yml").read_text(encoding="utf-8")
 CI_WF = (REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
@@ -48,7 +48,7 @@ def test_the_spec_takes_workerd_from_cargos_own_output_dir():
     「开发机上好好的、打出来的包里没有」这种事就会周期性地发生。
     """
     assert '"workerd" / "target" / "release"' in SPEC
-    assert "MAGPLOT_WORKERD_BIN" in SPEC, "交叉编译/分步构建要能指到别处"
+    assert "TAVOTTO_WORKERD_BIN" in SPEC, "交叉编译/分步构建要能指到别处"
 
 
 def test_the_spec_refuses_to_build_without_workerd():
@@ -93,7 +93,7 @@ def test_the_release_workflow_gates_the_rust_crate():
 
 @pytest.mark.parametrize("name", ["desktop-tauri.yml", "ci.yml"])
 def test_the_smoke_legs_assert_the_control_plane_without_forcing_it(name):
-    """两条冒烟腿都**不设 MAGPLOT_WORKERD**，只断言结果。
+    """两条冒烟腿都**不设 TAVOTTO_WORKERD**，只断言结果。
 
     设了就等于自己把答案填上：要验的恰恰是「产物自带的那份被自动找到」。
 
@@ -108,14 +108,14 @@ def test_the_smoke_legs_assert_the_control_plane_without_forcing_it(name):
     # 注释里提它是好事（写清楚为什么不设），要挡的是真把它设进环境
     steps = "\n".join(ln for ln in wf.splitlines()
                       if not ln.lstrip().startswith("#"))
-    assert "MAGPLOT_WORKERD" not in steps, \
-        f"{name} 里不该真的设 MAGPLOT_WORKERD——自动发现才是要验的东西"
+    assert "TAVOTTO_WORKERD" not in steps, \
+        f"{name} 里不该真的设 TAVOTTO_WORKERD——自动发现才是要验的东西"
 
 
 def test_ci_builds_and_asserts_the_binary_in_the_windows_artifact():
     """windows-exe-smoke 直接调 PyInstaller，所以它自己要先 cargo build。"""
     assert "cargo build --release --manifest-path workerd/Cargo.toml" in CI_WF
-    assert "_internal\\magplot-workerd.exe" in CI_WF, \
+    assert "_internal\\tavotto-workerd.exe" in CI_WF, \
         "产物里有没有它，先用一次 Test-Path 确认，再谈冒烟"
 
 

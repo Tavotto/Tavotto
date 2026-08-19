@@ -41,7 +41,7 @@ describe('withProject', () => {
     const init = withProject({ method: 'POST', headers: { 'Content-Type': 'application/json' } })
     expect(init).toEqual({
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Magplot-Project': 'p2' },
+      headers: { 'Content-Type': 'application/json', 'X-Tavotto-Project': 'p2' },
     })
   })
 

@@ -23,7 +23,7 @@ Fixes #
 ## Checklist
 
 - [ ] A bug that only reproduces on Windows was turned into a case in `tests/test_windows_regressions.py` first, and that case was seen failing
-- [ ] Nothing new imports `pymupdf` outside `src/magplot/pdfbackend/`
+- [ ] Nothing new imports `pymupdf` outside `src/tavotto/pdfbackend/`
 - [ ] Nothing Flask imports gained a non-stdlib dependency (`engine/registry.py`, `pool.py`, `ai_bridge.py`, `config.py`, `updater.py`, `runtime.py`)
 - [ ] Dual-source pairs changed on both sides — `engine/patchspec.py` ↔ `workerd/src/patchspec.rs`, `lib/richText.ts` ↔ `richtext.py`, `lib/shapeGeometry.ts` ↔ the geometry in `pymupdf_backend.py`
 - [ ] A new Tauri command was registered in all three places (`build.rs`, `capabilities/main.json`, `generate_handler`) — miss one and the call is silently rejected

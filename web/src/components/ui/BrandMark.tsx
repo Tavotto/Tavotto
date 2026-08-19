@@ -57,7 +57,7 @@ export interface BrandMarkProps extends Omit<SVGProps<SVGSVGElement>, 'width' | 
   tone?: Tone
   /**
    * 可访问名称。与产品名文字并排时不要传（图形是装饰，aria-hidden）；
-   * 单独出现时传 'Magplot'。
+   * 单独出现时传 'Tavotto'。
    */
   title?: string
 }

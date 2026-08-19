@@ -10,7 +10,7 @@
    WiX 迁移——每一条都还在。
 3. 四处 CLI 版本同源、配置引用的品牌资产真实存在且是 NSIS 吃得下的形态。
 4. **装完真的登记了 CLI 入口**。只写卸载注册表不等于外部程序（Codex 插件）
-   能发现 Magplot——它不读卸载信息，也不该只靠注册表（企业策略能锁掉它）。
+   能发现 Tavotto——它不读卸载信息，也不该只靠注册表（企业策略能锁掉它）。
 
 **这些是源码级看护，不是「装出来是这样」的证据**：安装器真实页面序列、
 UAC、中文路径这些只有 Windows 上跑真产物才算数，走
@@ -38,12 +38,12 @@ CODE = "\n".join(ln for ln in LINES if not ln.lstrip().startswith(";"))
 
 # 补丁新增的 LangString。安装器只剩两页，这几条就是用户会读到的全部文案。
 BRAND_STRINGS = (
-    "preparingMagplot",
-    "installingMagplot",
+    "preparingTavotto",
+    "installingTavotto",
     "finishTitle",
     "finishText",
-    "openMagplot",
-    "registeringMagplot",
+    "openTavotto",
+    "registeringTavotto",
 )
 
 
@@ -133,7 +133,7 @@ def test_finish_page_has_no_fake_readme_option():
 
 
 def test_finish_page_runs_via_run_as_user():
-    """「打开 Magplot」走 MUI 官方 RUN 控件 + RunAsUser。"""
+    """「打开 Tavotto」走 MUI 官方 RUN 控件 + RunAsUser。"""
     assert "!define MUI_FINISHPAGE_RUN\n" in TEXT
     assert "!define MUI_FINISHPAGE_RUN_FUNCTION RunMainBinary" in TEXT
     body = TEXT.split("Function RunMainBinary\n")[1].split("FunctionEnd")[0]
@@ -165,7 +165,7 @@ def test_progress_page_header_is_ours_start_to_finish():
     instfiles 的 LEAVE 里塞的，就闪在自动跳完成页之前——nightly 的 GUI 探针
     在真安装器上抓到过它。
     """
-    assert '!define MUI_PAGE_HEADER_TEXT "$(installingMagplot)"' in TEXT
+    assert '!define MUI_PAGE_HEADER_TEXT "$(installingTavotto)"' in TEXT
     assert '!define MUI_PAGE_HEADER_SUBTEXT ""' in TEXT
     assert '!define MUI_INSTFILESPAGE_FINISHHEADER_TEXT "$(finishTitle)"' in TEXT
     assert '!define MUI_INSTFILESPAGE_FINISHHEADER_SUBTEXT ""' in TEXT
@@ -175,8 +175,8 @@ def test_progress_page_header_is_ours_start_to_finish():
 
 def test_status_text_is_honest():
     """进度页的状态行说的是真在做的事，不是假百分比。"""
-    assert 'DetailPrint "$(preparingMagplot)"' in TEXT
-    assert 'DetailPrint "$(installingMagplot)"' in TEXT
+    assert 'DetailPrint "$(preparingTavotto)"' in TEXT
+    assert 'DetailPrint "$(installingTavotto)"' in TEXT
     assert 'DetailPrint "$(installingWebview2)"' in TEXT  # 上游字符串，已本地化
     # 展开文件时的 `Extract: xxx.dll` 只进日志，不刷状态行；复制完还原
     assert "SetDetailsPrint listonly" in TEXT
@@ -195,7 +195,7 @@ def test_current_user_install_without_admin():
 
 
 def test_install_dir_is_localappdata_and_upgrades_keep_old_path():
-    """新装固定 %LOCALAPPDATA%\\Magplot；已有安装沿用注册表里的老路径。"""
+    """新装固定 %LOCALAPPDATA%\\Tavotto；已有安装沿用注册表里的老路径。"""
     assert 'InstallDir "${PLACEHOLDER_INSTALL_DIR}"' in TEXT
     assert '${If} $INSTDIR == "${PLACEHOLDER_INSTALL_DIR}"' in TEXT
     assert 'StrCpy $INSTDIR "$LOCALAPPDATA\\${PRODUCTNAME}"' in TEXT
@@ -278,7 +278,7 @@ def _pinned_versions() -> dict[str, str]:
 
 
 def test_template_exists_with_patch_markers():
-    assert "MAGPLOT PATCH" in TEXT
+    assert "TAVOTTO PATCH" in TEXT
     assert 'MUI_BGCOLOR "F2F2EF"' in TEXT
     assert 'MUI_TEXTCOLOR "1B1B18"' in TEXT
     # 前端的 selection blue #2F6FED 不是安装器主色，别混用
@@ -312,10 +312,10 @@ def test_nsis_config_paths_resolve():
 # `startMenuFolder` / `license` / 语言表都是那时候才落定的——模板里写着
 # 「没配许可证就不插许可证页」，配置真值只有在中间脚本里才看得见。
 #
-# 只有 Windows 构建之后才有这个文件。CI 用 MAGPLOT_NSIS_GENERATED 指名，
+# 只有 Windows 构建之后才有这个文件。CI 用 TAVOTTO_NSIS_GENERATED 指名，
 # 指了就**必须**存在：让它悄悄 skip 等于把门禁变成一条 notice。
 
-GENERATED_ENV = "MAGPLOT_NSIS_GENERATED"
+GENERATED_ENV = "TAVOTTO_NSIS_GENERATED"
 
 
 def _generated_script() -> Path | None:
@@ -368,18 +368,18 @@ def test_generated_script_has_the_same_two_pages():
                 f"中间脚本缺 {lang} 的 {key}"
 
     # 精简没有把要装的东西弄丢：sidecar / workerd / 内置 runtime 都在
-    assert '!define MAINBINARYNAME "Magplot"' in code
+    assert '!define MAINBINARYNAME "Tavotto"' in code
     assert re.search(r'^\s*File /a "/oname=', code, re.M), "中间脚本里没有任何 binaries/resources"
 
 
 # ------------------------------------------- 外部程序发现得了这台机器上的 CLI
 #
-# 起因：只装了桌面版的 Windows 用户那里，Codex 插件一直报「没找到 Magplot」。
-# 装出来的 Magplot.exe 是 GUI 子系统的可执行文件，当命令行调它拿不到 stdout。
-# 修法是安装包里另带一个 console 版 magplot-cli，并在装完时由它写一份
+# 起因：只装了桌面版的 Windows 用户那里，Codex 插件一直报「没找到 Tavotto」。
+# 装出来的 Tavotto.exe 是 GUI 子系统的可执行文件，当命令行调它拿不到 stdout。
+# 修法是安装包里另带一个 console 版 tavotto-cli，并在装完时由它写一份
 # 安装清单。下面几条盯的是「安装器有没有真的把这一步做掉」。
 
-from magplot.engine import locate                                    # noqa: E402
+from tavotto.engine import locate                                    # noqa: E402
 
 SECTION_INSTALL = TEXT.split("Section Install\n")[1].split("SectionEnd")[0]
 SECTION_UNINSTALL = TEXT.split("Section Uninstall\n")[1].split("SectionEnd")[0]
@@ -389,9 +389,9 @@ def _bundled_cli_path() -> str:
     """安装后 CLI 的落点，**由 tauri.conf.json 的 resources 映射推出来**。
 
     在测试里重新推一遍而不是写死，是为了让「改了那份映射却忘了改安装器」
-    当场变红——那种漏改的表现是装完一切正常，只有外部程序发现不了 Magplot。
+    当场变红——那种漏改的表现是装完一切正常，只有外部程序发现不了 Tavotto。
     """
-    target = CONFIG["bundle"]["resources"]["../dist/Magplot"]
+    target = CONFIG["bundle"]["resources"]["../dist/Tavotto"]
     return "$INSTDIR\\" + target.replace("/", "\\") + "\\" + locate.CLI_NAME
 
 
@@ -401,7 +401,7 @@ def test_sidecar_layout_has_a_single_source_of_truth():
     Rust 壳（src-tauri/src/sidecar.rs）、Python 定位器、NSIS 安装段三处都按
     这个布局找 sidecar 目录；映射一改，三处必须同时改。
     """
-    assert CONFIG["bundle"]["resources"]["../dist/Magplot"] == \
+    assert CONFIG["bundle"]["resources"]["../dist/Tavotto"] == \
         "/".join(locate.SIDECAR_REL)
     rust = (ROOT / "src-tauri" / "src" / "sidecar.rs").read_text(encoding="utf-8")
     for part in locate.SIDECAR_REL:
@@ -409,11 +409,11 @@ def test_sidecar_layout_has_a_single_source_of_truth():
 
 
 def test_install_registers_the_cli_through_the_bundled_binary():
-    """装完跑一次装进来的 magplot-cli，由它写安装清单。
+    """装完跑一次装进来的 tavotto-cli，由它写安装清单。
 
     为什么让 CLI 自己写、而不是让 NSIS 拼 JSON：安装目录可能带空格和中文，
     NSIS 里手工转义 JSON 反斜杠是纯粹的自找麻烦；而且这一跑同时就是**无 GUI
-    的装后健康检查**——CLI 起不来的包，发出去只会表现为「Codex 找不到 Magplot」。
+    的装后健康检查**——CLI 起不来的包，发出去只会表现为「Codex 找不到 Tavotto」。
     """
     assert _bundled_cli_path() in SECTION_INSTALL
     assert "doctor --json --write-manifest" in SECTION_INSTALL
@@ -427,8 +427,8 @@ def test_registration_failure_never_aborts_the_install():
     已知安装位置那条腿还在，用户照样能用；为一个可选的加速文件把安装打断，
     换来的是一个装不上的产品。
     """
-    block = SECTION_INSTALL.split("$(registeringMagplot)")[1]
-    block = block.split("MAGPLOT PATCH END")[0]
+    block = SECTION_INSTALL.split("$(registeringTavotto)")[1]
+    block = block.split("TAVOTTO PATCH END")[0]
     assert "Abort" not in block
     assert "DetailPrint" in block                 # 但要留下痕迹，别静默
 

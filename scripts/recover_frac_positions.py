@@ -7,7 +7,7 @@
 但事故期间保存的文档需要把这些 override 改写成写回 PDF 里的真实位置。
 
 做法（对文档里每个有风险的面板）：
-  1. 起隔离数据目录的 magplot 实例，用文档 overrides 全量重放，拿 manifest
+  1. 起隔离数据目录的 tavotto 实例，用文档 overrides 全量重放，拿 manifest
      （修复后的引擎里，重放位置 == 文档声明位置）；
   2. 读写回 PDF 的**矢量文字层**（get_text 的行 bbox，精确坐标、无栅格误差）；
   3. 按归一化文本内容配对（mathtext 标记剥掉）；重复文字（两个 "100 W"）靠
@@ -49,10 +49,10 @@ MIN_DELTA = 0.002      # 小于它视作没漂，不改写
 
 def start_server(figures: Path, port: int, scratch: Path) -> subprocess.Popen:
     env = dict(os.environ,
-               MAGPLOT_DATA_DIR=str(scratch / "data"),
-               MAGPLOT_CONFIG_DIR=str(scratch / "cfg"))
+               TAVOTTO_DATA_DIR=str(scratch / "data"),
+               TAVOTTO_CONFIG_DIR=str(scratch / "cfg"))
     proc = subprocess.Popen(
-        [str(ROOT / ".venv/bin/magplot"), "--figures", str(figures),
+        [str(ROOT / ".venv/bin/tavotto"), "--figures", str(figures),
          "--no-browser", "--port", str(port)],
         env=env, cwd=str(ROOT),
         stdout=open(scratch / "srv.log", "w"), stderr=subprocess.STDOUT)
@@ -331,7 +331,7 @@ def main() -> None:
     figures = Path(args.figures).expanduser().resolve()
     doc = json.loads(Path(args.doc).read_text(encoding="utf-8"))
 
-    with tempfile.TemporaryDirectory(prefix="magplot_recover_") as td:
+    with tempfile.TemporaryDirectory(prefix="tavotto_recover_") as td:
         scratch = Path(td)
         srv = start_server(figures, args.port, scratch)
         base = f"http://127.0.0.1:{args.port}"

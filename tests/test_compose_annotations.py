@@ -7,7 +7,7 @@ import math
 import pymupdf
 import pytest
 
-from magplot import app as m
+from tavotto import app as m
 
 MM = 72 / 25.4
 
@@ -16,7 +16,7 @@ MM = 72 / 25.4
 def client(tmp_path, monkeypatch):
     monkeypatch.setattr(m, "EXPORT_DIR", tmp_path)
     # 纯标注导出不依赖项目；清掉别的测试模块残留的已打开项目，
-    # 否则导出会落到那个项目的 magplotfile/export/（project_export_dir 的默认）
+    # 否则导出会落到那个项目的 tavottofile/export/（project_export_dir 的默认）
     monkeypatch.setattr(m, "PROJECTS", {})
     monkeypatch.setattr(m, "DEFAULT_PROJECT", None)
     m.app.config["TESTING"] = True

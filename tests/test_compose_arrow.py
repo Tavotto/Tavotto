@@ -6,8 +6,8 @@
 import pymupdf
 import pytest
 
-from magplot import app as m
-from magplot.pdfbackend import pymupdf_backend as pb
+from tavotto import app as m
+from tavotto.pdfbackend import pymupdf_backend as pb
 
 SW = 2.0  # stroke_pt
 

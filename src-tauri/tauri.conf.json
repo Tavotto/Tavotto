@@ -1,9 +1,9 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Magplot",
-  "mainBinaryName": "Magplot",
+  "productName": "Tavotto",
+  "mainBinaryName": "Tavotto",
   "version": "0.7.0",
-  "identifier": "com.erwanjun.magplot",
+  "identifier": "com.tavotto.tavotto",
   "build": {
     "frontendDist": "shell"
   },
@@ -16,7 +16,7 @@
   "plugins": {
     "updater": {
       "endpoints": [
-        "https://github.com/erwanjun/magplot/releases/latest/download/latest.json"
+        "https://github.com/Tavotto/Tavotto/releases/latest/download/latest.json"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk0NzUwNTc4QzY3QjYyMTEKUldRUlludkdlQVYxbEtlaGEwY1kvNVl2N0ViOFV1bndiNTI5dHdNdzRrRDE5L3NmY0VEWXlQUWMK",
       "windows": {
@@ -35,7 +35,7 @@
       "../assets/icon/icon.ico"
     ],
     "resources": {
-      "../dist/Magplot": "sidecar/Magplot"
+      "../dist/Tavotto": "sidecar/Tavotto"
     },
     "macOS": {
       "minimumSystemVersion": "11.0"

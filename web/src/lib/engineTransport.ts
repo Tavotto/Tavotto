@@ -6,11 +6,11 @@ import type { EngineRenderOptions, EngineRenderResponse } from './api'
  * 画布这一整套（`canvas/*` + stores）只关心「发一组全量 patches，拿回 manifest
  * 与 SVG」。它跑在两个地方：
  *
- *   * Magplot 自己的界面 —— 走 HTTP 打到本机 Flask（`lib/api.ts` 的
+ *   * Tavotto 自己的界面 —— 走 HTTP 打到本机 Flask（`lib/api.ts` 的
  *     `engineRender` / `enginePreviewPng` / `panelSrc`，行为一字未改）；
  *   * Codex 内嵌的 MCP App 画布 —— iframe 里**没有**可连的 HTTP 服务（sidecar
  *     端口是动态的，MCP Apps 的 CSP 也不许连），所有往来经 `tools/call` 回到
- *     Magplot 的 MCP server。
+ *     Tavotto 的 MCP server。
  *
  * **这不是第二套渲染路径**：两侧最终都落到同一个 `pool.EngineWorker.override`，
  * 只是消息怎么送过去不同。拖拽、命中测试、吸附、undo、patch 状态一行都没有

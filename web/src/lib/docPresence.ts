@@ -61,7 +61,7 @@ function receive(data: unknown): void {
     channel?.postMessage({ type: 'doc-held', docId: heldDocId, tabId: TAB_ID })
   } else if (msg.type === 'doc-held') {
     window.dispatchEvent(
-      new CustomEvent('magplot:doc-conflict', { detail: { id: heldDocId } }),
+      new CustomEvent('tavotto:doc-conflict', { detail: { id: heldDocId } }),
     )
   }
 }

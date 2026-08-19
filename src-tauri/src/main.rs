@@ -1,4 +1,4 @@
-//! Magplot 桌面壳：只做窗口、生命周期、菜单与安全边界，业务全在 Python sidecar。
+//! Tavotto 桌面壳：只做窗口、生命周期、菜单与安全边界，业务全在 Python sidecar。
 //! 见 docs/adr/0002-tauri-desktop-shell.md。
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
@@ -22,16 +22,16 @@ struct AppState {
     menu_locale: Mutex<i18n::Locale>,
     port: Arc<OnceLock<u16>>,
     nonce: String,
-    /// 本次启动带进来的交接请求（`Magplot --open <目录> [--stem <s>]`）。
+    /// 本次启动带进来的交接请求（`Tavotto --open <目录> [--stem <s>]`）。
     /// 首启走这条：项目交给 sidecar 的 `--figures`，stem 拼进落地 URL 的
     /// `?open=`。**第二次启动不走这里**——单实例插件会把 argv 转发给已经在
-    /// 跑的窗口，那条路发 `magplot:open` 事件。
+    /// 跑的窗口，那条路发 `tavotto:open` 事件。
     open: Option<OpenRequest>,
 }
 
-/// 交接契约：`Magplot --open <项目目录> [--stem <stem>]`。
+/// 交接契约：`Tavotto --open <项目目录> [--stem <stem>]`。
 ///
-/// **与 `src/magplot/engine/handoff.py` 的 `desktop_argv()` 严格同源**——
+/// **与 `src/tavotto/engine/handoff.py` 的 `desktop_argv()` 严格同源**——
 /// 那边是唯一的生产者，这边是唯一的消费者，改一边必须同步另一边
 /// （Python 侧看护 `tests/test_handoff.py::test_desktop_argv_contract`，
 /// Rust 侧看护本文件末尾的单测）。
@@ -131,7 +131,7 @@ fn reveal_export(app: tauri::AppHandle, dir: String, name: String) -> Result<(),
 }
 
 /// 建菜单。**菜单项 id 与加速键在两种语言下完全相同**——只有显示文案换，
-/// 事件转发（`magplot:menu`）与 `CmdOrCtrl+*` 一个字节不动：切语言绝不能
+/// 事件转发（`tavotto:menu`）与 `CmdOrCtrl+*` 一个字节不动：切语言绝不能
 /// 让 ⌘Z 失灵，那种坏法用户根本不会往语言上联想。
 fn build_menu_in<R: tauri::Runtime>(
     handle: &tauri::AppHandle<R>,
@@ -139,9 +139,9 @@ fn build_menu_in<R: tauri::Runtime>(
 ) -> tauri::Result<Menu<R>> {
     let m = i18n::text(locale);
     let about = AboutMetadataBuilder::new()
-        .name(Some("Magplot"))
+        .name(Some("Tavotto"))
         .version(Some(env!("CARGO_PKG_VERSION")))
-        .website(Some("https://github.com/erwanjun/magplot"))
+        .website(Some("https://github.com/Tavotto/Tavotto"))
         .comments(Some(m.about_comments))
         .build();
 
@@ -149,7 +149,7 @@ fn build_menu_in<R: tauri::Runtime>(
 
     #[cfg(target_os = "macos")]
     {
-        let app_menu = SubmenuBuilder::new(handle, "Magplot")
+        let app_menu = SubmenuBuilder::new(handle, "Tavotto")
             .about_with_text(m.app_about, Some(about.clone()))
             .separator()
             .hide_with_text(m.app_hide)
@@ -285,7 +285,7 @@ fn spawn_sidecar_and_navigate(app: tauri::AppHandle) {
         let log_dir = app
             .path()
             .app_log_dir()
-            .unwrap_or_else(|_| std::env::temp_dir().join("magplot-logs"));
+            .unwrap_or_else(|_| std::env::temp_dir().join("tavotto-logs"));
 
         let project = open.as_ref().map(|o| o.project.as_str());
         let result = sidecar::Sidecar::start(resource_dir, &log_dir, &nonce, project, menu_locale);
@@ -375,7 +375,7 @@ fn main() {
 
     let app = tauri::Builder::default()
         // 单实例必须最先注册：第二次启动只聚焦已有窗口，绝不再起一套后端。
-        // 「已经开着 Magplot 再交接一张图」走的正是这条——argv 转发过来，
+        // 「已经开着 Tavotto 再交接一张图」走的正是这条——argv 转发过来，
         // 前端换项目 / 定位面板，后端一套进程不动。
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             if let Some(w) = app.get_webview_window("main") {
@@ -384,7 +384,7 @@ fn main() {
                 let _ = w.set_focus();
             }
             if let Some(req) = parse_open_args(argv.get(1..).unwrap_or(&[])) {
-                let _ = app.emit_to("main", "magplot:open", req);
+                let _ = app.emit_to("main", "tavotto:open", req);
             }
         }))
         .plugin(tauri_plugin_window_state::Builder::default().build())
@@ -401,7 +401,7 @@ fn main() {
         .on_menu_event(|app, event| {
             let id = event.id().as_ref();
             if id.starts_with("menu-") {
-                let _ = app.emit_to("main", "magplot:menu", id.to_string());
+                let _ = app.emit_to("main", "tavotto:menu", id.to_string());
             }
         })
         .setup(|app| {
@@ -430,7 +430,7 @@ fn main() {
                 // 启动画面同样带上语言：它比前端先出现，读不到 i18next
                 tauri::WebviewUrl::App(format!("splash.html?lang={}", boot_locale.tag()).into()),
             )
-            .title("Magplot")
+            .title("Tavotto")
             .inner_size(1280.0, 860.0)
             // 三栏工作台的断点下限：再窄左右栏会互相挤压（见 CLAUDE.md 视觉纪律）
             .min_inner_size(1024.0, 680.0)
@@ -452,7 +452,7 @@ fn main() {
             Ok(())
         })
         .build(tauri::generate_context!())
-        .expect("Magplot 桌面壳初始化失败");
+        .expect("Tavotto 桌面壳初始化失败");
 
     app.run(|app_handle, event| {
         if let tauri::RunEvent::Exit = event {

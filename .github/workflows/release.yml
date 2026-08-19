@@ -61,7 +61,7 @@ jobs:
         run: |
           set -euo pipefail
           VER="${TAG#v}"
-          test -f "dist/magplot-${VER}-py3-none-any.whl" || {
+          test -f "dist/tavotto-${VER}-py3-none-any.whl" || {
             echo "::error::tag $TAG 与 __init__.py 里的版本对不上；dist/ 实际内容："
             ls dist/
             exit 1
@@ -78,9 +78,9 @@ jobs:
           /tmp/smoke/bin/pip install --quiet dist/*.whl
           /tmp/smoke/bin/python -c "
           from pathlib import Path
-          import magplot
-          assert (Path(magplot.__file__).parent / 'web' / 'index.html').is_file()
-          print('ok', magplot.__version__)
+          import tavotto
+          assert (Path(tavotto.__file__).parent / 'web' / 'index.html').is_file()
+          print('ok', tavotto.__version__)
           "
 
       - uses: actions/upload-artifact@v4
@@ -179,7 +179,7 @@ jobs:
     # environment 让正式发布可以卡一道人工确认（给它加 required reviewers 即可）。
     environment:
       name: ${{ inputs.pypi == 'testpypi' && 'testpypi' || 'pypi' }}
-      url: ${{ inputs.pypi == 'testpypi' && 'https://test.pypi.org/p/magplot' || 'https://pypi.org/p/magplot' }}
+      url: ${{ inputs.pypi == 'testpypi' && 'https://test.pypi.org/p/tavotto' || 'https://pypi.org/p/tavotto' }}
     permissions:
       id-token: write     # OIDC 签发，Trusted Publishing 的必需权限
     steps:

@@ -30,9 +30,9 @@ Trusted Publishing 用 OIDC 换短时凭据，仓库里不存任何 API token。
 
 | 字段 | 值 |
 |---|---|
-| PyPI Project Name | `magplot` |
-| Owner | `erwanjun` |
-| Repository name | `magplot` |
+| PyPI Project Name | `tavotto` |
+| Owner | `Tavotto` |
+| Repository name | `tavotto` |
 | Workflow name | `release.yml` |
 | Environment name | `pypi` |
 
@@ -64,20 +64,20 @@ Actions → **Release** → Run workflow，填 tag（如 `v0.1.1`）、pypi 选 
 
 ```sh
 pip install --index-url https://test.pypi.org/simple/ \
-            --extra-index-url https://pypi.org/simple/ magplot
+            --extra-index-url https://pypi.org/simple/ tavotto
 ```
 
 （`--extra-index-url` 是必要的：TestPyPI 上没有 flask / pymupdf 这些依赖。）
 
 ## 发一个新版本
 
-1. 改 `src/magplot/__init__.py` 里的 `__version__`（版本号唯一出处）。
+1. 改 `src/tavotto/__init__.py` 里的 `__version__`（版本号唯一出处）。
 2. 写 `docs/release-notes/vX.Y.Z.md`（见下）。
 3. 提交、打 tag、推送：
 
    ```sh
    git commit -am "0.2.0"
-   git tag -a v0.2.0 -m "Magplot 0.2.0"
+   git tag -a v0.2.0 -m "Tavotto 0.2.0"
    git push origin main v0.2.0
    ```
 
@@ -103,7 +103,7 @@ tag 与 `__version__` 对不上时 `build` job 直接失败，不会发出错版
 
 ## Codex 插件的更新提醒
 
-插件（`codex-plugin/`）随 Magplot 一起发。装了它的用户**不会自动收到更新**——
+插件（`codex-plugin/`）随 Tavotto 一起发。装了它的用户**不会自动收到更新**——
 Codex 不管这件事，所以插件自己每 24 小时查一次清单，有新版就在交接结果里
 附一句提醒（只提醒，不下载、不安装）。
 
@@ -124,16 +124,16 @@ python scripts/make_plugin_manifest.py --tag v0.7.1 \
 **发插件新版的完整流程**：
 
 1. 改 `codex-plugin/.codex-plugin/plugin.json` 的 `version`
-   （版本号只有这一处；`tests/test_codex_plugin.py` 盯着它与 `magplot.__version__` 一致）；
+   （版本号只有这一处；`tests/test_codex_plugin.py` 盯着它与 `tavotto.__version__` 一致）；
 2. 正常打 tag 发版——上面那步会自动生成清单与 zip；
 3. 用户下次调用插件时看到提醒，执行
-   `codex plugin marketplace upgrade magplot` 并重载 Codex。
+   `codex plugin marketplace upgrade tavotto` 并重载 Codex。
 
-改 `min_magplot_version`（`scripts/make_plugin_manifest.py` 里的常量）之前想清楚：
-那个值会让本机 Magplot 更老的用户看到「去升级 Magplot」的提示。当前是 `0.7.0`
-——第一个带 `magplot open` 的版本，没有它交接根本无从谈起。
+改 `min_tavotto_version`（`scripts/make_plugin_manifest.py` 里的常量）之前想清楚：
+那个值会让本机 Tavotto 更老的用户看到「去升级 Tavotto」的提示。当前是 `0.7.0`
+——第一个带 `tavotto open` 的版本，没有它交接根本无从谈起。
 
-排障与用户侧开关（`MAGPLOT_UPDATE_URL` / `MAGPLOT_DISABLE_UPDATE_CHECK`）见
+排障与用户侧开关（`TAVOTTO_UPDATE_URL` / `TAVOTTO_DISABLE_UPDATE_CHECK`）见
 `docs/handoff-protocol.md`。
 
 ## 本地自检
@@ -156,7 +156,7 @@ dispatch，后 attach 的旧链 dmg 顶掉了 Tauri dmg）。
 
 ### Tauri 桌面壳（desktop-tauri.yml）
 
-真正的桌面窗口（不再开系统浏览器）：Tauri 2 壳 + `magplot --desktop-sidecar`
+真正的桌面窗口（不再开系统浏览器）：Tauri 2 壳 + `tavotto --desktop-sidecar`
 后端（127.0.0.1 动态端口 + 一次性 nonce 认证），架构与安全模型见
 `docs/adr/0002-tauri-desktop-shell.md`。
 
@@ -168,8 +168,8 @@ sidecar → Tauri bundler）。CI 门禁打的是最终产物：sidecar 真二�
 
 | 平台 | 产物 | 说明 |
 |---|---|---|
-| macOS | `Magplot-X.Y.Z-macOS.dmg` | Tauri .app（内嵌 sidecar）；**含内置渲染 runtime**；**仅 arm64**；签名 + 公证复用下述同一套 secret 与流程 |
-| Windows | `Magplot-X.Y.Z-Windows-Setup.exe` | NSIS（收集时改成与 wheel/dmg 一致的命名），装到用户目录；**含内置渲染 runtime**；SignPath 启用后由 SignPath Foundation 证书签名 |
+| macOS | `Tavotto-X.Y.Z-macOS.dmg` | Tauri .app（内嵌 sidecar）；**含内置渲染 runtime**；**仅 arm64**；签名 + 公证复用下述同一套 secret 与流程 |
+| Windows | `Tavotto-X.Y.Z-Windows-Setup.exe` | NSIS（收集时改成与 wheel/dmg 一致的命名），装到用户目录；**含内置渲染 runtime**；SignPath 启用后由 SignPath Foundation 证书签名 |
 
 macOS 签名注意：sidecar 是 `.app` 里 `Resources/sidecar/` 下的 PyInstaller
 onedir，签名必须继续「签**所有**嵌套 Mach-O、自内向外」——只签壳本体公证会
@@ -180,7 +180,7 @@ Invalid（教训同旧链路）。内置 runtime 进来之后这件事从「几�
 只给可执行文件挂 entitlements、最后逐个 `--verify` 一遍）。
 
 **Flask 主进程里始终不含 matplotlib**：科学栈只存在于 worker 那一侧。
-这条边界一破，包大小与依赖关系立刻失控（`packaging/magplot.spec` 文件头有完整说明）。
+这条边界一破，包大小与依赖关系立刻失控（`packaging/tavotto.spec` 文件头有完整说明）。
 
 打包配置从 tag 检出，所以只能构建含 `src-tauri/` 的 tag（v0.2.0 起）。
 免安装 zip 随旧链一起退役：它本质是浏览器模式的 PyInstaller 目录，与「桌面
@@ -188,19 +188,19 @@ Invalid（教训同旧链路）。内置 runtime 进来之后这件事从「几�
 
 ### 内置渲染 runtime（macOS 与 Windows）
 
-两个平台的安装包都**自带一套 Magplot 私有的 Python 渲染环境**，
+两个平台的安装包都**自带一套 Tavotto 私有的 Python 渲染环境**，
 用户不需要先装 Python，首次渲染也不联网：
 
 ```
-Windows: Magplot.exe → _internal\runtime\python.exe  → engine\worker.py → 用户的脚本
-macOS:   Magplot.app → …/_internal/runtime/bin/python3.13 → engine/worker.py → 用户的脚本
+Windows: Tavotto.exe → _internal\runtime\python.exe  → engine\worker.py → 用户的脚本
+macOS:   Tavotto.app → …/_internal/runtime/bin/python3.13 → engine/worker.py → 用户的脚本
 ```
 
 | 东西 | 在哪 |
 |---|---|
 | 版本锁（CPython 下载地址 + SHA-256、科学栈的完整传递闭包，**按平台/架构分层**） | `packaging/runtime-lock.json`（schema 2） |
 | 构建脚本 | `scripts/build_worker_runtime.py` |
-| 定位与校验（唯一出处） | `src/magplot/engine/runtime.py` |
+| 定位与校验（唯一出处） | `src/tavotto/engine/runtime.py` |
 | 「这份 runtime 配不配得上这次构建」的唯一判据 | `build_worker_runtime.check_runtime_dir()`（spec 与 build_desktop 共用） |
 | 签名与验收 | `scripts/codesign_macos.py` |
 | 产物 | 仓库根的 `runtime/`（**不进 Git**，300 MiB 上下） |
@@ -231,7 +231,7 @@ CI 的 macOS runner 只有 Apple Silicon 一档，因此那个目标**既没构�
    取自 pbs 上游发布的 `SHA256SUMS`）、按 `.dist-info` 核对装出来的版本、
    **用刚装好的解释器逐个 import 并画一张真图**——任何一步不过就失败在构建机上，
    而不是留到用户电脑上。
-2. sidecar 构建带 `MAGPLOT_REQUIRE_RUNTIME=1`。此时 `magplot.spec` 会再确认三件事：
+2. sidecar 构建带 `TAVOTTO_REQUIRE_RUNTIME=1`。此时 `tavotto.spec` 会再确认三件事：
    清单 schema 对得上、**平台/架构与本次构建一致**、冒烟状态是 `passed`。
    第二条挡的是最贵的一种错——Windows 的 runtime 被打进 `.app`，用户那边的症状是
    「渲染环境不可用」而构建全程绿灯。第三条挡的是 `--allow-skip-smoke` 产出的
@@ -241,22 +241,22 @@ CI 的 macOS runner 只有 Apple Silicon 一档，因此那个目标**既没构�
 4. 打包后跑 `scripts/smoke_app.py --expect-source bundled --expect-runtime`：
    真启动、真渲染两次（冷 + 热）、真导出两次（含覆盖），并断言用的是**内置**
    解释器、runtime 本身 `expected` 且 `valid`、控制面确实是 workerd。
-   脚本会把 `MM_WORKER_PYTHON`、Conda、`PYTHONHOME`/`PYTHONPATH`、活动 venv
+   脚本会把 `TAVOTTO_WORKER_PYTHON`、Conda、`PYTHONHOME`/`PYTHONPATH`、活动 venv
    一律从子进程环境摘掉——**验的是「一台干净电脑上装完即可用」**。
 5. macOS 额外再来一遍：签完名之后，把 `.app` 用 `ditto` 拷到一个**中文 + 空格**
    的路径，重验签名，再对 `.app` 里的 sidecar 跑一次同样的 smoke_app。
-   前面那次打的是 `dist/Magplot`（PyInstaller 裸产物），这一次打的才是用户拿到
+   前面那次打的是 `dist/Tavotto`（PyInstaller 裸产物），这一次打的才是用户拿到
    的东西——hardened runtime 会不会拦下内置解释器加载 numpy 的 .dylib、
    签名有没有把某个扩展模块弄坏，只有真跑一次才知道。
 
 > **曾经的坑**：macOS 这条腿上一度有一步「现建 worker-env 再设
-> `MM_WORKER_PYTHON`」。代价是整条门禁失去意义——借来的解释器让冒烟一路绿灯，
+> `TAVOTTO_WORKER_PYTHON`」。代价是整条门禁失去意义——借来的解释器让冒烟一路绿灯，
 > 而「内置 runtime 根本没打进安装包」这件事没有任何一处会发现。
 > `tests/test_runtime_build.py::test_macos_ci_no_longer_fakes_a_worker_env`
 > 盯着它别被人顺手加回来。
 
 同一套门禁在 `ci.yml` 的 `windows-exe-smoke` 里对每个 PR 都跑一遍
-（还额外验中文 + 空格路径、以及 `MM_WORKER_PYTHON` 仍然优先）。
+（还额外验中文 + 空格路径、以及 `TAVOTTO_WORKER_PYTHON` 仍然优先）。
 
 **换版本怎么办**（升 CPython 补丁版或某个科学包）：
 
@@ -301,20 +301,26 @@ Windows 代码签名都是两回事）：公钥写死在 `src-tauri/tauri.conf.j
 **没配这对密钥时发行链照常出安装包**，只是这一版进不了自动更新——构建会打
 一条 warning，`updater-manifest` job 也会如实跳过。
 
+> **改名不换密钥。** 这对密钥是 Magplot 时代生成的，本机那份仍叫
+> `~/magplot-updater.key`，Actions 里的 secret 也没动。下面写的是新名，
+> 只是本地文件名的约定——`mv ~/magplot-updater.key ~/tavotto-updater.key`
+> （连 `.pub` 一起）即可，**密钥内容一个字节都不许换**：壳里烧的是旧公钥，
+> 换了等于 0.7.0 及更早的用户再也收不到更新。
+
 1. 生成一对（**私钥丢了就没法给已发出去的用户推更新**，请妥善保存）：
 
    ```sh
-   pnpm dlx @tauri-apps/cli@2.11.4 signer generate -w ~/magplot-updater.key
+   pnpm dlx @tauri-apps/cli@2.11.4 signer generate -w ~/tavotto-updater.key
    ```
 
 2. 仓库 Settings → Secrets and variables → Actions 加两条：
 
    | Secret | 值 |
    |---|---|
-   | `TAURI_SIGNING_PRIVATE_KEY` | `~/magplot-updater.key` 的**全部内容** |
+   | `TAURI_SIGNING_PRIVATE_KEY` | `~/tavotto-updater.key` 的**全部内容** |
    | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | 生成时设的口令（没设就留空/不建） |
 
-3. 公钥（`~/magplot-updater.key.pub` 的内容）要与 `tauri.conf.json` 里的
+3. 公钥（`~/tavotto-updater.key.pub` 的内容）要与 `tauri.conf.json` 里的
    `plugins.updater.pubkey` 一致。**换密钥 = 老版本的用户再也收不到更新**
    （他们壳里烧的是旧公钥），只能引导手动下载一次，非必要不要换。
 
@@ -323,14 +329,14 @@ Windows 代码签名都是两回事）：公钥写死在 `src-tauri/tauri.conf.j
 
    ```sh
    printf probe > /tmp/probe.bin
-   pnpm dlx @tauri-apps/cli@2.11.4 signer sign -f ~/magplot-updater.key -p "" /tmp/probe.bin
+   pnpm dlx @tauri-apps/cli@2.11.4 signer sign -f ~/tavotto-updater.key -p "" /tmp/probe.bin
    python scripts/check_updater_key.py --sig /tmp/probe.bin.sig
    ```
 
    对不上就别发——按那份配置发出去的更新，用户下载完校验失败、装不上。
 
-发出去之后自查：Release 资产里应当有 `latest.json`、`Magplot.app.tar.gz(.sig)`、
-`Magplot_<ver>_x64-setup.nsis.zip(.sig)`。少了 `latest.json`，壳那边的表现是
+发出去之后自查：Release 资产里应当有 `latest.json`、`Tavotto.app.tar.gz(.sig)`、
+`Tavotto_<ver>_x64-setup.nsis.zip(.sig)`。少了 `latest.json`，壳那边的表现是
 **一直显示「已是最新版本」**——用户停在旧版本上而 CI 全绿，这条要盯。
 
 ### macOS 签名与公证的一次性设置
@@ -338,11 +344,14 @@ Windows 代码签名都是两回事）：公钥写死在 `src-tauri/tauri.conf.j
 不配下面这些 secret 时，流水线照常出包，只是未签名（adhoc），用户首次打开要
 右键 → 打开。配齐后自动变成签名 + 公证 + 装订，双击即开。
 
+> 目录名跟着改名换成了 `~/tavotto-signing`。本机已有 `~/magplot-signing` 的话
+> 直接 `mv` 过去即可——证书与私钥本身与产品名无关，不必重新申请。
+
 1. 加入 [Apple Developer Program](https://developer.apple.com/programs/)（$99/年）。
 2. 生成私钥与 CSR：
 
    ```sh
-   mkdir -p ~/magplot-signing && chmod 700 ~/magplot-signing && cd ~/magplot-signing
+   mkdir -p ~/tavotto-signing && chmod 700 ~/tavotto-signing && cd ~/tavotto-signing
    openssl genrsa -out developerID.key 2048 && chmod 600 developerID.key
    openssl req -new -key developerID.key -out developerID.csr \
      -subj "/emailAddress=<你的邮箱>/CN=<你的名字>/C=CN"
@@ -351,7 +360,7 @@ Windows 代码签名都是两回事）：公钥写死在 `src-tauri/tauri.conf.j
 3. 到 <https://developer.apple.com/account/resources/certificates/add> 选
    **Developer ID Application**（**不是** Apple Development——后者只能在自己
    设备上跑，不能对外分发也过不了公证），上传 `developerID.csr`，
-   把下载到的 `.cer` 放回 `~/magplot-signing/`。
+   把下载到的 `.cer` 放回 `~/tavotto-signing/`。
 4. 一条命令完成打包与写入 secret：
 
    ```sh
@@ -365,14 +374,14 @@ Windows 代码签名都是两回事）：公钥写死在 `src-tauri/tauri.conf.j
 5. 公证还需要一个 App 专用密码（<https://appleid.apple.com> → 登录与安全）：
 
    ```sh
-   printf '<App 专用密码>' | gh secret set APPLE_APP_PASSWORD --repo erwanjun/magplot
+   printf '<App 专用密码>' | gh secret set APPLE_APP_PASSWORD --repo Tavotto/Tavotto
    ```
 
 `APPLE_ID`（邮箱）与 `APPLE_TEAM_ID`（10 位，可从
 `security find-identity -v` 的证书名括号里读到）也要设上，共六个。
-私钥和 .p12 只留在 `~/magplot-signing/`，绝不进版本库。
+私钥和 .p12 只留在 `~/tavotto-signing/`，绝不进版本库。
 
-验证签名是否真的生效：下载 dmg 后 `codesign -dvvv Magplot.app`，要看到
+验证签名是否真的生效：下载 dmg 后 `codesign -dvvv Tavotto.app`，要看到
 `Authority=Developer ID Application: …`。**只看 `codesign --verify` 会被骗**——
 PyInstaller 留下的 adhoc 签名同样能通过 verify；流水线里已加了显式断言。
 
@@ -386,7 +395,7 @@ PyInstaller 留下的 adhoc 签名同样能通过 verify；流水线里已加了
    `Authority=Developer ID Application`。
 
 2. **要签的不只是 `*.dylib` / `*.so`。** 包里还有无后缀的 Mach-O——
-   `Contents/MacOS/Magplot`、sidecar 的 `Magplot`、内置 runtime 的
+   `Contents/MacOS/Tavotto`、sidecar 的 `Tavotto`、内置 runtime 的
    `bin/python3.13`——漏签就公证 Invalid。所以判据是**读魔数**（`scripts/
    codesign_macos.py`），不是看扩展名。
 

@@ -9,7 +9,7 @@ async function freshStore() {
   return (await import('./uiStore')).useUiStore.getState()
 }
 
-const LS_KEY = 'magplot.ui'
+const LS_KEY = 'tavotto.ui'
 
 describe('右栏默认常驻', () => {
   beforeEach(() => {

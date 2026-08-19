@@ -10,7 +10,7 @@ import threading
 
 import pytest
 
-from magplot.engine import patchspec, pool
+from tavotto.engine import patchspec, pool
 
 
 class _FakePipe:
@@ -210,7 +210,7 @@ def test_hash_mismatch_is_logged_but_the_result_is_used(tmp_path, caplog):
                                   hash_mismatch=True,
                                   worker_patch_hash="sha256:" + "1" * 64),
                 tmp_path)
-    with caplog.at_level("WARNING", logger="mm.engine"):
+    with caplog.at_level("WARNING", logger="tavotto.engine"):
         resp = w.override("Fig1", [{"gid": "g", "prop": "text", "value": "x"}])
     assert resp["manifest"] == {"elements": []}
     assert any("哈希不一致" in r.getMessage() for r in caplog.records)

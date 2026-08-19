@@ -1,5 +1,5 @@
 #!/bin/sh
-# 把 dist/Magplot.app 打成带品牌安装界面的 .dmg。
+# 把 dist/Tavotto.app 打成带品牌安装界面的 .dmg。
 #
 # 仍只用 macOS 自带工具（hdiutil / osascript / SetFile），CI 上零依赖：
 #   1. 暂存目录：.app + Applications 快捷方式 + .background/ 背景图 + 卷图标
@@ -15,16 +15,16 @@ set -eu
 
 DIST="${1:?用法: make_dmg.sh <dist 目录> <输出 dmg>}"
 OUT="${2:?用法: make_dmg.sh <dist 目录> <输出 dmg>}"
-APP="$DIST/Magplot.app"
+APP="$DIST/Tavotto.app"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BG="$ROOT/assets/brand/dmg-background.png"
 ICNS="$ROOT/assets/icon/icon.icns"
-VOL="Magplot"
+VOL="Tavotto"
 
 [ -d "$APP" ] || { echo "找不到 $APP" >&2; exit 1; }
 
 STAGE="$(mktemp -d)"
-RW="$(mktemp -d)/magplot-rw.dmg"
+RW="$(mktemp -d)/tavotto-rw.dmg"
 trap 'rm -rf "$STAGE" "$(dirname "$RW")"' EXIT
 
 cp -R "$APP" "$STAGE/"
@@ -63,7 +63,7 @@ tell application "Finder"
     set text size of opts to 13
     set arrangement of opts to not arranged
     set background picture of opts to file ".background:background.png"
-    set position of item "Magplot.app" of container window to {165, 190}
+    set position of item "Tavotto.app" of container window to {165, 190}
     set position of item "Applications" of container window to {495, 190}
     close
     open

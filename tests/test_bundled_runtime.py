@@ -24,7 +24,7 @@ import sys
 
 import pytest
 
-from magplot.engine import bootstrap, config, pool, runtime
+from tavotto.engine import bootstrap, config, pool, runtime
 
 
 def _host_platform_block():
@@ -40,7 +40,7 @@ def _host_platform_block():
 
 MANIFEST = {
     "schema": 2,
-    "product": "Magplot",
+    "product": "Tavotto",
     "kind": "test",
     "target": "test",
     "python": {"version": "3.13.15", "implementation": "cpython",
@@ -109,17 +109,17 @@ def _clean(monkeypatch, tmp_path):
     数据目录必须逐例隔离：自建 venv 就落在那儿，上一个用例摆下的假 venv
     会让下一个用例的 install() 直接跳过建 venv 那一步（真踩过）。
 
-    `MAGPLOT_RUNTIME_DIR` 指向一个**不存在**的目录而不是删掉它：开发机上
+    `TAVOTTO_RUNTIME_DIR` 指向一个**不存在**的目录而不是删掉它：开发机上
     仓库根真的可能躺着一份构建好的 `runtime/`（跑过 build_worker_runtime.py
     之后就有），删掉环境变量的话源码模式的候选里就会冒出那一份，
     「没有内置 runtime」这个前提当场不成立——本机绿、CI 红，或者反过来。
     覆盖是排他的（见 runtime._candidate_roots），指到空处即等于「没有」。
     要验非覆盖路径的用例自己 delenv，那也顺便把意图写明了。
     """
-    monkeypatch.setenv("MAGPLOT_DATA_DIR", str(tmp_path / "_data"))
-    monkeypatch.setenv("MAGPLOT_RUNTIME_DIR", str(tmp_path / "_no_runtime_here"))
-    monkeypatch.delenv("MM_WORKER_PYTHON", raising=False)
-    monkeypatch.delenv("MAGPLOT_RUNTIME_HOST_ARCH", raising=False)
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "_data"))
+    monkeypatch.setenv("TAVOTTO_RUNTIME_DIR", str(tmp_path / "_no_runtime_here"))
+    monkeypatch.delenv("TAVOTTO_WORKER_PYTHON", raising=False)
+    monkeypatch.delenv("TAVOTTO_RUNTIME_HOST_ARCH", raising=False)
     pool.reset_worker_python()
     bootstrap._progress.update(state="idle", log="", error=None)
     yield
@@ -130,30 +130,30 @@ def _clean(monkeypatch, tmp_path):
 def test_env_override_wins_over_everything(tmp_path, monkeypatch):
     """CI 与单测靠它把 runtime 指到临时目录，不必真去打包一次。"""
     make_runtime(tmp_path / "rt")
-    monkeypatch.setenv("MAGPLOT_RUNTIME_DIR", str(tmp_path / "rt"))
+    monkeypatch.setenv("TAVOTTO_RUNTIME_DIR", str(tmp_path / "rt"))
     assert runtime.runtime_root() == str(tmp_path / "rt")
     assert runtime.status()["valid"] is True
 
 
 def test_frozen_app_finds_runtime_next_to_meipass(tmp_path, monkeypatch):
-    """onedir 布局：`Magplot.exe` + `_internal/`，_MEIPASS 就是 `_internal`，
+    """onedir 布局：`Tavotto.exe` + `_internal/`，_MEIPASS 就是 `_internal`，
     runtime 经 spec 的 datas 落在 `_internal/runtime`。"""
-    monkeypatch.delenv("MAGPLOT_RUNTIME_DIR")   # 验的正是非覆盖的定位路径
+    monkeypatch.delenv("TAVOTTO_RUNTIME_DIR")   # 验的正是非覆盖的定位路径
     internal = tmp_path / "_internal"
     make_runtime(internal / "runtime")
     monkeypatch.setattr(runtime, "is_frozen", lambda: True)
     monkeypatch.setattr(sys, "_MEIPASS", str(internal), raising=False)
-    monkeypatch.setattr(sys, "executable", str(tmp_path / "Magplot.exe"))
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "Tavotto.exe"))
     assert runtime.runtime_root() == str(internal / "runtime")
 
 
 def test_frozen_app_falls_back_to_exe_dir_layouts(tmp_path, monkeypatch):
     """换 PyInstaller 版本 / 手工摆产物时布局可能变；exe 同级与
     exe/_internal 两条兜底不能少，否则一次升级就让内置环境集体失灵。"""
-    monkeypatch.delenv("MAGPLOT_RUNTIME_DIR")   # 验的正是非覆盖的定位路径
+    monkeypatch.delenv("TAVOTTO_RUNTIME_DIR")   # 验的正是非覆盖的定位路径
     monkeypatch.setattr(runtime, "is_frozen", lambda: True)
     monkeypatch.delattr(sys, "_MEIPASS", raising=False)
-    monkeypatch.setattr(sys, "executable", str(tmp_path / "Magplot.exe"))
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "Tavotto.exe"))
 
     make_runtime(tmp_path / "runtime")
     assert runtime.runtime_root() == str(tmp_path / "runtime")
@@ -161,7 +161,7 @@ def test_frozen_app_falls_back_to_exe_dir_layouts(tmp_path, monkeypatch):
 
 def test_source_tree_looks_at_repo_root(monkeypatch):
     """源码模式下 scripts/build_worker_runtime.py 默认产出到仓库根的 runtime/。"""
-    monkeypatch.delenv("MAGPLOT_RUNTIME_DIR")   # 验的正是非覆盖的定位路径
+    monkeypatch.delenv("TAVOTTO_RUNTIME_DIR")   # 验的正是非覆盖的定位路径
     monkeypatch.setattr(runtime, "is_frozen", lambda: False)
     roots = runtime._candidate_roots()
     assert roots, "源码模式至少要有一个候选位置"
@@ -182,7 +182,7 @@ def test_missing_runtime_on_windows_desktop_is_reported(monkeypatch, tmp_path):
     monkeypatch.setattr(runtime, "is_frozen", lambda: True)
     monkeypatch.setattr(os, "name", "nt")
     monkeypatch.delattr(sys, "_MEIPASS", raising=False)
-    monkeypatch.setattr(sys, "executable", str(tmp_path / "Magplot.exe"))
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "Tavotto.exe"))
     st = runtime.status()
     assert st["code"] == runtime.CODE_MISSING
     assert st["valid"] is False
@@ -194,7 +194,7 @@ def test_broken_runtime_on_windows_desktop_is_invalid_not_missing(
     前者提示重装能修，后者可能是包本身就没打对。"""
     root = tmp_path / "rt"
     make_runtime(root, manifest=None)          # 有解释器没清单
-    monkeypatch.setenv("MAGPLOT_RUNTIME_DIR", str(root))
+    monkeypatch.setenv("TAVOTTO_RUNTIME_DIR", str(root))
     monkeypatch.setattr(runtime, "is_frozen", lambda: True)
     monkeypatch.setattr(os, "name", "nt")
     st = runtime.status()
@@ -205,7 +205,7 @@ def test_manifest_with_unknown_schema_is_rejected(tmp_path, monkeypatch):
     """清单比本程序新 = 用户装了个更新的包但主程序是旧的。硬着头皮往下跑
     等于拿一份读不懂的清单当真，宁可报损坏。"""
     make_runtime(tmp_path / "rt", manifest={**MANIFEST, "schema": 99})
-    monkeypatch.setenv("MAGPLOT_RUNTIME_DIR", str(tmp_path / "rt"))
+    monkeypatch.setenv("TAVOTTO_RUNTIME_DIR", str(tmp_path / "rt"))
     assert runtime.read_manifest(str(tmp_path / "rt")) is None
     assert runtime.status()["valid"] is False
 
@@ -224,14 +224,14 @@ def test_corrupt_manifest_json_does_not_crash(tmp_path, monkeypatch):
     make_runtime(tmp_path / "rt")
     with open(runtime.manifest_path(str(tmp_path / "rt")), "w") as fh:
         fh.write("{ this is not json")
-    monkeypatch.setenv("MAGPLOT_RUNTIME_DIR", str(tmp_path / "rt"))
+    monkeypatch.setenv("TAVOTTO_RUNTIME_DIR", str(tmp_path / "rt"))
     assert runtime.read_manifest(str(tmp_path / "rt")) is None
     assert runtime.status()["valid"] is False
 
 
 def test_manifest_reports_pinned_package_versions(tmp_path, monkeypatch):
     make_runtime(tmp_path / "rt")
-    monkeypatch.setenv("MAGPLOT_RUNTIME_DIR", str(tmp_path / "rt"))
+    monkeypatch.setenv("TAVOTTO_RUNTIME_DIR", str(tmp_path / "rt"))
     info = runtime.manifest()
     assert info["python"]["version"] == "3.13.15"
     assert info["packages"]["matplotlib"] == "3.11.1"
@@ -240,11 +240,11 @@ def test_manifest_reports_pinned_package_versions(tmp_path, monkeypatch):
 # ---------------- Windows 路径习惯 --------------------------------------------
 def test_runtime_python_layout_per_platform(monkeypatch, tmp_path):
     monkeypatch.setattr(os, "name", "nt")
-    assert runtime.runtime_python(r"C:\Program Files\Magplot\runtime") == \
-        r"C:\Program Files\Magplot\runtime\python.exe"
+    assert runtime.runtime_python(r"C:\Program Files\Tavotto\runtime") == \
+        r"C:\Program Files\Tavotto\runtime\python.exe"
     monkeypatch.setattr(os, "name", "posix")
-    assert runtime.runtime_python("/opt/magplot/runtime") == \
-        "/opt/magplot/runtime/bin/python3"
+    assert runtime.runtime_python("/opt/tavotto/runtime") == \
+        "/opt/tavotto/runtime/bin/python3"
 
 
 def test_same_python_is_case_and_separator_insensitive_on_windows(monkeypatch):
@@ -263,7 +263,7 @@ def test_paths_with_chinese_and_spaces_work(tmp_path, monkeypatch):
     """国内最常见的一档：用户名是中文、路径带空格。"""
     root = tmp_path / "我的 文档" / "Program Files" / "runtime"
     py = make_runtime(root)
-    monkeypatch.setenv("MAGPLOT_RUNTIME_DIR", str(root))
+    monkeypatch.setenv("TAVOTTO_RUNTIME_DIR", str(root))
     st = runtime.status()
     assert st["valid"] is True and st["python"] == py
     assert pool.same_python(st["python"], py)
@@ -272,7 +272,7 @@ def test_paths_with_chinese_and_spaces_work(tmp_path, monkeypatch):
 # ---------------- 解释器优先级 -------------------------------------------------
 def _bundled(tmp_path, monkeypatch):
     py = make_runtime(tmp_path / "rt")
-    monkeypatch.setenv("MAGPLOT_RUNTIME_DIR", str(tmp_path / "rt"))
+    monkeypatch.setenv("TAVOTTO_RUNTIME_DIR", str(tmp_path / "rt"))
     return py
 
 
@@ -287,12 +287,12 @@ def test_bundled_runtime_is_used_when_nothing_else_configured(
 
 
 def test_env_override_beats_bundled(tmp_path, monkeypatch):
-    """高级用户的应急出口：MM_WORKER_PYTHON 永远第一。"""
+    """高级用户的应急出口：TAVOTTO_WORKER_PYTHON 永远第一。"""
     _bundled(tmp_path, monkeypatch)
     mine = tmp_path / "mine" / "python3"
     mine.parent.mkdir(parents=True)
     mine.write_text("#!/bin/sh\n")
-    monkeypatch.setenv("MM_WORKER_PYTHON", str(mine))
+    monkeypatch.setenv("TAVOTTO_WORKER_PYTHON", str(mine))
     monkeypatch.setattr(pool, "_has_matplotlib", lambda p, **kw: True)
     assert pool.select_worker_python() == (str(mine), pool.SOURCE_ENV)
 
@@ -369,7 +369,7 @@ def test_desktop_missing_runtime_raises_machine_readable_code(monkeypatch,
     monkeypatch.setattr(pool, "is_frozen", lambda: True)
     monkeypatch.setattr(os, "name", "nt")
     monkeypatch.delattr(sys, "_MEIPASS", raising=False)
-    monkeypatch.setattr(sys, "executable", str(tmp_path / "Magplot.exe"))
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "Tavotto.exe"))
     monkeypatch.setattr(pool, "_prioritized_candidates", lambda: [])
     with pytest.raises(pool.WorkerError) as exc:
         pool.select_worker_python()
@@ -453,7 +453,7 @@ def test_only_the_bundled_runtime_gets_b_flag(tmp_path, monkeypatch):
     mine = tmp_path / "mine" / "python3"
     mine.parent.mkdir(parents=True)
     mine.write_text("#!/bin/sh\n")
-    monkeypatch.setenv("MM_WORKER_PYTHON", str(mine))
+    monkeypatch.setenv("TAVOTTO_WORKER_PYTHON", str(mine))
     pool.EngineWorker("f.py", str(figs), "main")
     assert seen[0][0] == str(mine) and "-B" not in seen[0]
 
@@ -461,7 +461,7 @@ def test_only_the_bundled_runtime_gets_b_flag(tmp_path, monkeypatch):
 # ---------------- bootstrap：不再劝用户装 Python -------------------------------
 def test_bootstrap_status_says_bundled_and_offers_no_install(
         tmp_path, monkeypatch):
-    """有内置环境时界面必须显示「Magplot 内置环境」，且**不出现任何安装引导**
+    """有内置环境时界面必须显示「Tavotto 内置环境」，且**不出现任何安装引导**
     ——那时什么都不缺，弹窗只会让人以为出了问题。"""
     py = _bundled(tmp_path, monkeypatch)
     monkeypatch.setattr(pool, "find_worker_python", lambda: py)
@@ -513,7 +513,7 @@ def test_source_mode_bootstrap_behaviour_is_unchanged(monkeypatch):
 # ---------------- HTTP -------------------------------------------------------
 @pytest.fixture
 def client():
-    from magplot import app as m
+    from tavotto import app as m
     m.app.config["TESTING"] = True
     return m.app.test_client()
 
@@ -552,7 +552,7 @@ def test_install_endpoint_tells_desktop_users_to_reinstall(client, monkeypatch):
 
 def test_render_failure_carries_missing_module(client, monkeypatch, tmp_path):
     """前端据此给「换成你自己的环境」，而不是一段 ModuleNotFoundError。"""
-    from magplot import app as m
+    from tavotto import app as m
 
     figs = tmp_path / "figs"
     figs.mkdir()
@@ -589,7 +589,7 @@ def test_which_install_shapes_are_expected_to_ship_a_runtime(
     """`ships_bundled_runtime()` 回答的是「**本该**有吗」，不是「有没有」。
 
     判错的代价是两头的：判成 True 而实际不带（pip 安装被当成损坏的桌面版），
-    用户会被劝去「重新安装 Magplot」——而他根本没装过安装包；判成 False 而
+    用户会被劝去「重新安装 Tavotto」——而他根本没装过安装包；判成 False 而
     实际该带（macOS 桌面版在这次改动之前就是这样），runtime 没打进去时
     一句提示都没有，只会安静地去找用户机器上的 Python。
     """
@@ -628,7 +628,7 @@ def test_wrong_arch_runtime_is_invalid_not_silently_used(tmp_path, monkeypatch):
     """
     root = tmp_path / "rt"
     make_runtime(root, manifest=foreign_manifest(arch="x86_64"))
-    monkeypatch.setenv("MAGPLOT_RUNTIME_DIR", str(root))
+    monkeypatch.setenv("TAVOTTO_RUNTIME_DIR", str(root))
     monkeypatch.setattr(runtime, "host_arch", lambda: "arm64")
     monkeypatch.setattr(runtime, "is_frozen", lambda: True)
 
@@ -646,7 +646,7 @@ def test_wrong_os_runtime_is_invalid(tmp_path, monkeypatch):
     但万一漏到用户手里，启动时也要说人话而不是等渲染时崩。"""
     root = tmp_path / "rt"
     make_runtime(root, manifest=foreign_manifest(os_name="windows"))
-    monkeypatch.setenv("MAGPLOT_RUNTIME_DIR", str(root))
+    monkeypatch.setenv("TAVOTTO_RUNTIME_DIR", str(root))
     monkeypatch.setattr(runtime, "host_os", lambda: "macos")
     st = runtime.status()
     assert st["valid"] is False and st["code"] == runtime.CODE_INVALID
@@ -663,7 +663,7 @@ def test_arch_aliases_are_normalised_before_comparing(tmp_path, monkeypatch):
 
     root = tmp_path / "rt"
     make_runtime(root, manifest=foreign_manifest(arch="amd64"))
-    monkeypatch.setenv("MAGPLOT_RUNTIME_DIR", str(root))
+    monkeypatch.setenv("TAVOTTO_RUNTIME_DIR", str(root))
     monkeypatch.setattr(runtime, "host_arch", lambda: "x86_64")
     assert runtime.status()["valid"] is True
 
@@ -673,14 +673,14 @@ def test_unknown_host_arch_does_not_condemn_a_good_runtime(tmp_path, monkeypatch
     把「我不知道」当成「不匹配」会让一份本来能用的 runtime 被判死刑。"""
     root = tmp_path / "rt"
     make_runtime(root)
-    monkeypatch.setenv("MAGPLOT_RUNTIME_DIR", str(root))
+    monkeypatch.setenv("TAVOTTO_RUNTIME_DIR", str(root))
     monkeypatch.setattr(runtime, "host_arch", lambda: "")
     assert runtime.status()["valid"] is True
 
 
 def test_host_arch_can_be_overridden_for_cross_checks(monkeypatch):
     """构建机上要能问「这份 runtime 会被 arm64 的 app 接受吗」。"""
-    monkeypatch.setenv("MAGPLOT_RUNTIME_HOST_ARCH", "AMD64")
+    monkeypatch.setenv("TAVOTTO_RUNTIME_HOST_ARCH", "AMD64")
     assert runtime.host_arch() == "x86_64"
 
 
@@ -710,7 +710,7 @@ def test_both_runtime_layouts_are_recognised(tmp_path, monkeypatch, layout, tail
     """
     root = tmp_path / "rt"
     py = make_runtime(root, layout=layout)
-    monkeypatch.setenv("MAGPLOT_RUNTIME_DIR", str(root))
+    monkeypatch.setenv("TAVOTTO_RUNTIME_DIR", str(root))
     assert runtime.resolve_python(str(root)) == py
     assert py.endswith(tail)
     assert runtime.runtime_root() == str(root)
@@ -721,18 +721,18 @@ def test_runtime_python_stays_a_pure_function(monkeypatch):
     """`runtime_python()` 回答「该长什么样」，不碰磁盘——它要能在任何平台上
     被单测。真实落点由 `resolve_python()` 去 stat。"""
     monkeypatch.setattr(os, "name", "nt")
-    assert runtime.runtime_python(r"C:\Program Files\Magplot\runtime") == \
-        r"C:\Program Files\Magplot\runtime\python.exe"
+    assert runtime.runtime_python(r"C:\Program Files\Tavotto\runtime") == \
+        r"C:\Program Files\Tavotto\runtime\python.exe"
     monkeypatch.setattr(os, "name", "posix")
-    assert runtime.runtime_python("/Applications/Magplot.app/runtime") == \
-        "/Applications/Magplot.app/runtime/bin/python3"
+    assert runtime.runtime_python("/Applications/Tavotto.app/runtime") == \
+        "/Applications/Tavotto.app/runtime/bin/python3"
 
 
 def test_explicit_runtime_dir_override_is_exclusive(tmp_path, monkeypatch):
-    """指了 MAGPLOT_RUNTIME_DIR 就只认这一个——指到一个空目录也不许悄悄
+    """指了 TAVOTTO_RUNTIME_DIR 就只认这一个——指到一个空目录也不许悄悄
     回退到别处那份。「覆盖了却被别处顶掉」是最难查的一种：你以为在验刚构建的
     那份，实际验的是上一次留下的产物，两边日志一模一样。"""
-    monkeypatch.setenv("MAGPLOT_RUNTIME_DIR", str(tmp_path / "nothing_here"))
+    monkeypatch.setenv("TAVOTTO_RUNTIME_DIR", str(tmp_path / "nothing_here"))
     monkeypatch.setattr(runtime, "is_frozen", lambda: False)
     assert runtime._candidate_roots() == [str(tmp_path / "nothing_here")]
     assert runtime.runtime_root() is None
@@ -761,7 +761,7 @@ def test_macos_desktop_uses_bundled_runtime_by_default(tmp_path, monkeypatch):
     monkeypatch.setattr(os, "name", "posix")
     monkeypatch.setattr(sys, "platform", "darwin")
     py = make_runtime(tmp_path / "rt", manifest=macos_manifest(), layout="posix")
-    monkeypatch.setenv("MAGPLOT_RUNTIME_DIR", str(tmp_path / "rt"))
+    monkeypatch.setenv("TAVOTTO_RUNTIME_DIR", str(tmp_path / "rt"))
     monkeypatch.setattr(runtime, "is_frozen", lambda: True)
     monkeypatch.setattr(pool, "is_frozen", lambda: True)
     monkeypatch.setattr(pool, "_has_matplotlib", lambda p, **kw: True)
@@ -775,7 +775,7 @@ def test_macos_user_choice_still_beats_the_bundled_runtime(tmp_path, monkeypatch
     monkeypatch.setattr(os, "name", "posix")
     monkeypatch.setattr(sys, "platform", "darwin")
     make_runtime(tmp_path / "rt", manifest=macos_manifest(), layout="posix")
-    monkeypatch.setenv("MAGPLOT_RUNTIME_DIR", str(tmp_path / "rt"))
+    monkeypatch.setenv("TAVOTTO_RUNTIME_DIR", str(tmp_path / "rt"))
     monkeypatch.setattr(runtime, "is_frozen", lambda: True)
     monkeypatch.setattr(pool, "is_frozen", lambda: True)
     monkeypatch.setattr(pool, "_has_matplotlib", lambda p, **kw: True)
@@ -788,7 +788,7 @@ def test_macos_user_choice_still_beats_the_bundled_runtime(tmp_path, monkeypatch
 
 
 def test_bundled_child_env_drops_hostile_python_vars():
-    """macOS 上没有 `._pth` 那层隔离：用户从终端启动 Magplot 时，shell 里为
+    """macOS 上没有 `._pth` 那层隔离：用户从终端启动 Tavotto 时，shell 里为
     Conda / 自家项目设的 PYTHONHOME、PYTHONPATH 会原样传给内置解释器——
     轻则 import 到别的 numpy，重则解释器根本起不来。
 

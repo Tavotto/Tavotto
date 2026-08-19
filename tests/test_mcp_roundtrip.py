@@ -24,7 +24,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "codex-plugin" / "mcp"))
 
-from magplot.engine import pool as engine_pool  # noqa: E402
+from tavotto.engine import pool as engine_pool  # noqa: E402
 
 SCRIPT = '''\
 """两条曲线 + 图例 + 误差棒：能覆盖大多数可编辑角色。"""
@@ -106,7 +106,7 @@ def project(tmp_path):
     figures = tmp_path / "figures"
     figures.mkdir()
     (figures / "figm.py").write_text(SCRIPT, encoding="utf-8")
-    (figures / "mm_registry.json").write_text(
+    (figures / "tavotto_registry.json").write_text(
         json.dumps(REGISTRY, ensure_ascii=False), encoding="utf-8")
     proc = subprocess.run([_worker_python(), str(figures / "figm.py")],
                           capture_output=True, text=True, cwd=str(figures))
@@ -120,8 +120,8 @@ class Client:
 
     def __init__(self, roots: str, data_dir: str):
         env = {**os.environ,
-               "MAGPLOT_MCP_ROOTS": roots,
-               "MAGPLOT_DATA_DIR": data_dir,
+               "TAVOTTO_MCP_ROOTS": roots,
+               "TAVOTTO_DATA_DIR": data_dir,
                "PYTHONPATH": str(ROOT / "src")}
         self.proc = subprocess.Popen(
             [sys.executable, str(ROOT / "codex-plugin" / "mcp" / "server.py")],
@@ -167,7 +167,7 @@ def client(project, tmp_path):
 
 def test_full_flow_over_real_stdio(client, project, tmp_path):
     """打开 → 改 → 预检 → 导出 → 关。**没有 UI 也能走完**。"""
-    opened = client.tool("magplot_open_figure", {"project_path": str(project)})
+    opened = client.tool("tavotto_open_figure", {"project_path": str(project)})
     sid = opened["session_id"]
     assert opened["stem"] == "FigM"
     assert opened["registry"]["parameterizable"] is True
@@ -176,17 +176,17 @@ def test_full_flow_over_real_stdio(client, project, tmp_path):
     assert {"axes", "legend", "line", "ticks", "axis_label", "title"} <= roles
 
     patches = patches_for(opened["manifest"])
-    applied = client.tool("magplot_apply_overrides",
+    applied = client.tool("tavotto_apply_overrides",
                           {"session_id": sid, "patches": patches})
     assert applied["applied"] == len(patches) and applied["rejected"] == []
     assert applied["warnings"] == [], f"override 没写进去: {applied['warnings']}"
 
-    checks = client.tool("magplot_preflight", {"session_id": sid})
+    checks = client.tool("tavotto_preflight", {"session_id": sid})
     assert set(checks["counts"]) == {"error", "warn", "not_verifiable", "suggestion"}
     assert checks["profile"]["profile_id"] == "lab-publication-v1"
 
     out_dir = tmp_path / "export"
-    done = client.tool("magplot_export",
+    done = client.tool("tavotto_export",
                        {"session_id": sid, "formats": ["pdf", "png", "svg"],
                         "dpi": 300, "out_dir": str(out_dir),
                         "explicit_confirm": True})
@@ -219,16 +219,16 @@ def test_full_flow_over_real_stdio(client, project, tmp_path):
     assert proof["forced"] is False and done["forced"] is False
     assert checks["counts"]["error"] == 0
 
-    assert client.tool("magplot_close_session", {"session_id": sid})["closed"] is True
+    assert client.tool("tavotto_close_session", {"session_id": sid})["closed"] is True
 
 
 def test_hot_equals_fresh_worker_replay(client, project):
     """不变式一：热态 == 全新 worker 从零全量重放。"""
-    opened = client.tool("magplot_open_figure", {"project_path": str(project)})
+    opened = client.tool("tavotto_open_figure", {"project_path": str(project)})
     sid = opened["session_id"]
-    client.tool("magplot_apply_overrides",
+    client.tool("tavotto_apply_overrides",
                 {"session_id": sid, "patches": patches_for(opened["manifest"])})
-    verdict = client.tool("magplot_verify_replay", {"session_id": sid})
+    verdict = client.tool("tavotto_verify_replay", {"session_id": sid})
     assert verdict["ok"], json.dumps(verdict["divergence"][:8], ensure_ascii=False)
     assert verdict["compared_elements"] > 10
     assert verdict["hot_manifest_hash"] == verdict["fresh_manifest_hash"]
@@ -241,27 +241,27 @@ def test_figure_size_change_keeps_frac_anchored_props(client, project):
     坐标——几何一变就必须重放它们，否则热态 ≠ 全量重放（FigS3 事故）。
     这条经 MCP 入口再走一遍。
     """
-    opened = client.tool("magplot_open_figure", {"project_path": str(project)})
+    opened = client.tool("tavotto_open_figure", {"project_path": str(project)})
     sid = opened["session_id"]
     patches = [{"gid": "figure", "prop": "size_mm", "value": [120.0, 70.0]},
                *patches_for(opened["manifest"])]
-    applied = client.tool("magplot_apply_overrides", {"session_id": sid, "patches": patches})
+    applied = client.tool("tavotto_apply_overrides", {"session_id": sid, "patches": patches})
     assert applied["manifest"]["size_mm"] == [120.0, 70.0]
-    verdict = client.tool("magplot_verify_replay", {"session_id": sid})
+    verdict = client.tool("tavotto_verify_replay", {"session_id": sid})
     assert verdict["ok"], json.dumps(verdict["divergence"][:8], ensure_ascii=False)
 
 
 def test_axes_position_change_keeps_dependent_props(client, project):
     """不变式三：子图几何变了之后，依赖 axes 几何的属性仍然正确。"""
-    opened = client.tool("magplot_open_figure", {"project_path": str(project)})
+    opened = client.tool("tavotto_open_figure", {"project_path": str(project)})
     sid = opened["session_id"]
     man = opened["manifest"]
     patches = [{"gid": _gid(man, "axes"), "prop": "position",
                 "value": [0.25, 0.28, 0.6, 0.6]},
                {"gid": _gid(man, "title"), "prop": "pos_frac", "value": [0.4, 0.06]},
                {"gid": _gid(man, "legend"), "prop": "loc_frac", "value": [0.3, 0.5]}]
-    client.tool("magplot_apply_overrides", {"session_id": sid, "patches": patches})
-    verdict = client.tool("magplot_verify_replay", {"session_id": sid})
+    client.tool("tavotto_apply_overrides", {"session_id": sid, "patches": patches})
+    verdict = client.tool("tavotto_verify_replay", {"session_id": sid})
     assert verdict["ok"], json.dumps(verdict["divergence"][:8], ensure_ascii=False)
 
 
@@ -271,18 +271,18 @@ def test_reopening_a_session_replays_to_the_same_place(client, project):
     这是用户真正会做的事（关掉 Codex 明天接着改），也是「重开就变样」这类
     事故最常见的入口。
     """
-    first = client.tool("magplot_open_figure", {"project_path": str(project)})
+    first = client.tool("tavotto_open_figure", {"project_path": str(project)})
     patches = patches_for(first["manifest"])
-    a = client.tool("magplot_apply_overrides",
+    a = client.tool("tavotto_apply_overrides",
                     {"session_id": first["session_id"], "patches": patches})
-    client.tool("magplot_close_session", {"session_id": first["session_id"]})
+    client.tool("tavotto_close_session", {"session_id": first["session_id"]})
 
-    second = client.tool("magplot_open_figure", {"project_path": str(project)})
-    b = client.tool("magplot_apply_overrides",
+    second = client.tool("tavotto_open_figure", {"project_path": str(project)})
+    b = client.tool("tavotto_apply_overrides",
                     {"session_id": second["session_id"], "patches": patches})
     assert a["patch_hash"] == b["patch_hash"]
 
-    from magplot_mcp import bridge
+    from tavotto_mcp import bridge
     diffs, compared = bridge.compare_manifests(a["manifest"], b["manifest"])
     assert not diffs, json.dumps(diffs[:8], ensure_ascii=False)
     assert compared > 10
@@ -290,9 +290,9 @@ def test_reopening_a_session_replays_to_the_same_place(client, project):
 
 
 def test_rejected_patches_are_never_silently_dropped(client, project):
-    opened = client.tool("magplot_open_figure", {"project_path": str(project)})
+    opened = client.tool("tavotto_open_figure", {"project_path": str(project)})
     sid = opened["session_id"]
-    body = client.tool("magplot_apply_overrides", {
+    body = client.tool("tavotto_apply_overrides", {
         "session_id": sid,
         "patches": [{"gid": _gid(opened["manifest"], "title"),
                      "prop": "fontsize", "value": 10.0},
@@ -303,15 +303,15 @@ def test_rejected_patches_are_never_silently_dropped(client, project):
 
 
 def test_export_is_blocked_until_explicitly_confirmed(client, project, tmp_path):
-    opened = client.tool("magplot_open_figure", {"project_path": str(project)})
+    opened = client.tool("tavotto_open_figure", {"project_path": str(project)})
     sid = opened["session_id"]
     # 把刻度字号压到 6pt：一定撞绝对下限
-    client.tool("magplot_apply_overrides", {
+    client.tool("tavotto_apply_overrides", {
         "session_id": sid,
         "patches": [{"gid": _gid(opened["manifest"], "ticks", "xticks"),
                      "prop": "fontsize", "value": 6.0}]})
     out = tmp_path / "blocked"
-    res = client.call("tools/call", {"name": "magplot_export",
+    res = client.call("tools/call", {"name": "tavotto_export",
                                      "arguments": {"session_id": sid,
                                                    "formats": ["pdf"],
                                                    "out_dir": str(out)}})["result"]
@@ -320,7 +320,7 @@ def test_export_is_blocked_until_explicitly_confirmed(client, project, tmp_path)
     assert not out.exists(), "被阻断时一张图都不该出"
 
     # 明确确认之后放行，并且**记进 proof**——「这次是带着问题出的」必须留痕
-    done = client.tool("magplot_export", {"session_id": sid, "formats": ["pdf"],
+    done = client.tool("tavotto_export", {"session_id": sid, "formats": ["pdf"],
                                           "out_dir": str(out),
                                           "explicit_confirm": True})
     assert done["forced"] is True

@@ -7,7 +7,7 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
       // 与 vite.config.ts 同源：单测跑的必须是同一份规范文件
       '@profiles': fileURLToPath(
-        new URL('../src/magplot/profiles/publication.json', import.meta.url),
+        new URL('../src/tavotto/profiles/publication.json', import.meta.url),
       ),
     },
   },

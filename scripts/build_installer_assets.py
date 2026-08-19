@@ -2,7 +2,7 @@
 """生成 Windows NSIS 安装器的品牌位图（assets/brand/installer-*.bmp）。
 
 MUI2 的经典尺寸：头图 150×57、欢迎/完成页侧栏 164×314（24 位 BMP）。
-设计遵循 Magplot Brand System：纸色底、compact 标志、字标；几何从
+设计遵循 Tavotto Brand System：纸色底、compact 标志、字标；几何从
 build_brand_assets 导入。PyMuPDF 绘制，BMP 编码内置（bottom-up BGR——
 NSIS 吃的是最保守的 BMP3 形态，sips 输出的 top-down DIB 反而有兼容风险）。
 产物提交进仓库，Windows 构建直接取用。
@@ -72,7 +72,7 @@ def header() -> None:
     page.draw_rect(page.rect, color=None, fill=PAPER)
     draw_mark(page, 14, 17, 23)
     tw = pymupdf.TextWriter(page.rect, color=INK)
-    tw.append((45, 34), "Magplot", font=pymupdf.Font("helvetica-bold"), fontsize=13)
+    tw.append((45, 34), "Tavotto", font=pymupdf.Font("helvetica-bold"), fontsize=13)
     tw.write_text(page)
     save_bmp(page, BRAND / "installer-header.bmp")
 
@@ -83,7 +83,7 @@ def sidebar() -> None:
     page.draw_rect(page.rect, color=None, fill=PAPER)
     draw_mark(page, 50, 92, 64, variant="full")
     helv_bold = pymupdf.Font("helvetica-bold")
-    name = "Magplot"
+    name = "Tavotto"
     w = helv_bold.text_length(name, fontsize=15)
     tw = pymupdf.TextWriter(page.rect, color=INK)
     tw.append(((164 - w) / 2, 192), name, font=helv_bold, fontsize=15)

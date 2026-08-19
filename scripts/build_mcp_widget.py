@@ -17,7 +17,7 @@
   默认状态。所以它和 `src-tauri/windows/installer.nsi` 一样是**受管的产物**：
   由脚本生成，改前端后必须重跑（`--check` 在 CI 里看着）。
 
-画布的源码是 `web/src/mcp/`，它 import 的是 Magplot 前端**同一份**
+画布的源码是 `web/src/mcp/`，它 import 的是 Tavotto 前端**同一份**
 `canvas/` + stores + types——拖拽、命中测试、吸附、undo、patch 状态没有第二份实现。
 
 纯标准库。
@@ -39,7 +39,7 @@ WEB = ROOT / "web"
 DIST = WEB / "dist-mcp"
 OUT = ROOT / "codex-plugin" / "mcp" / "widget" / "canvas.html"
 #: 产物开头的指纹注释：`--check` 靠它判断「源码改了但没重新构建」
-STAMP = "<!-- magplot-mcp-widget "
+STAMP = "<!-- tavotto-mcp-widget "
 
 
 def _force_utf8() -> None:
@@ -48,7 +48,7 @@ def _force_utf8() -> None:
     输出里全是中文，而被 subprocess 捕获（pytest 就是这么调的）或重定向时，
     Windows 上 stdout 会退回系统区域编码 cp1252/cp936——第一次 print 就
     UnicodeEncodeError 打死进程，调用方看到的是「脚本挂了」而不是那行结论。
-    同 `codex-plugin/skills/magplot-figure/scripts/handoff.py` 的 `_force_utf8()`。
+    同 `codex-plugin/skills/tavotto-figure/scripts/handoff.py` 的 `_force_utf8()`。
     """
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
@@ -107,7 +107,7 @@ def source_fingerprint() -> str:
             if p.is_file() and p.suffix in (".ts", ".tsx", ".css") and ".test." not in p.name:
                 files.append(p)
     files += [WEB / "mcp.html", WEB / "vite.mcp.config.ts", WEB / "package.json",
-              ROOT / "src" / "magplot" / "profiles" / "publication.json"]
+              ROOT / "src" / "tavotto" / "profiles" / "publication.json"]
     return digest((p.relative_to(ROOT), p.read_bytes()) for p in files if p.is_file())
 
 

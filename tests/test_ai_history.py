@@ -1,8 +1,8 @@
 """AI 历史（SQLite）与 capabilities 探测、CLI 命令构造。"""
 import pytest
 
-from magplot.engine import ai_bridge
-from magplot.engine import ai_history
+from tavotto.engine import ai_bridge
+from tavotto.engine import ai_history
 
 
 @pytest.fixture
@@ -168,11 +168,11 @@ def test_cmd_injects_third_party_endpoint(monkeypatch):
                 "base_url": "https://api.deepseek.com/v1", "wire_api": "chat"}
     cmd, env = ai_bridge._cmd("codex", "p", "/cwd", endpoint=codex_ep)
     joined = " ".join(cmd)
-    assert 'model_provider="magplot"' in joined
-    assert 'model_providers.magplot.base_url="https://api.deepseek.com/v1"' in joined
-    assert 'model_providers.magplot.wire_api="chat"' in joined
+    assert 'model_provider="tavotto"' in joined
+    assert 'model_providers.tavotto.base_url="https://api.deepseek.com/v1"' in joined
+    assert 'model_providers.tavotto.wire_api="chat"' in joined
     # 密钥走环境变量，命令行里只出现变量名
-    assert env == {"MAGPLOT_CODEX_API_KEY": "sk-d"}
+    assert env == {"TAVOTTO_CODEX_API_KEY": "sk-d"}
     assert "sk-d" not in joined
 
 

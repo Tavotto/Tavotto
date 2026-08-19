@@ -109,15 +109,15 @@ function Workspace() {
       useUiStore
         .getState()
         .setStatus(msg('autosave.docConflict', undefined, 'workspace'), 'error')
-    window.addEventListener('magplot:autosave-error', onAutosaveError)
-    window.addEventListener('magplot:doc-conflict', onDocConflict)
+    window.addEventListener('tavotto:autosave-error', onAutosaveError)
+    window.addEventListener('tavotto:doc-conflict', onDocConflict)
     return () => {
       stopAutosave()
       stopPrune()
       stopCheckpoints()
       stopReflow()
-      window.removeEventListener('magplot:autosave-error', onAutosaveError)
-      window.removeEventListener('magplot:doc-conflict', onDocConflict)
+      window.removeEventListener('tavotto:autosave-error', onAutosaveError)
+      window.removeEventListener('tavotto:doc-conflict', onDocConflict)
     }
   }, [])
 
@@ -166,13 +166,13 @@ function Workspace() {
 }
 
 /**
- * 外部交接（`magplot open` / Codex 插件）→ 打开项目 + 定位面板。
+ * 外部交接（`tavotto open` / Codex 插件）→ 打开项目 + 定位面板。
  *
  * 两条入口、一个执行体（lib/openRequest.ts）：
  *   * 地址栏 `?open=<stem>` —— 浏览器模式与桌面**首启**都走它。只认一次，
  *     且必须等 `phase === 'open'`：素材是从项目里扫出来的，项目还没就位时
  *     去找面板必然「找不到」，用户得到的就是一条假错误。
- *   * Tauri 事件 `magplot:open` —— 桌面**再次**交接（单实例转发 argv）。
+ *   * Tauri 事件 `tavotto:open` —— 桌面**再次**交接（单实例转发 argv）。
  *     它自带项目路径，所以在 Project Picker 上也能直接落地。
  */
 function useHandoff() {

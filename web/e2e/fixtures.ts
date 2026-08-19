@@ -10,18 +10,18 @@ const REPO = path.resolve(import.meta.dirname, '..', '..')
 /**
  * 启动被测应用。
  *
- * 默认打的是**打包产物**（`MAGPLOT_EXE`），CI 上就是 PyInstaller 出来的
+ * 默认打的是**打包产物**（`TAVOTTO_EXE`），CI 上就是 PyInstaller 出来的
  * .exe——「本地能跑、装完就崩」的问题只有这样才拦得住。本地没有产物时
- * 退回 `python -m magplot`，方便边写边跑。
+ * 退回 `python -m tavotto`，方便边写边跑。
  *
- * 本地跑之前记得 `python scripts/build_frontend.py`：包内 `src/magplot/web/`
+ * 本地跑之前记得 `python scripts/build_frontend.py`：包内 `src/tavotto/web/`
  * 优先于 `web/dist`，只跑 `pnpm build` 的话测的还是上一次的界面。
  */
 function launchCommand(): { cmd: string; args: string[] } {
-  const exe = process.env.MAGPLOT_EXE
+  const exe = process.env.TAVOTTO_EXE
   if (exe) return { cmd: exe, args: [] }
-  const py = process.env.MAGPLOT_PYTHON ?? path.join(REPO, '.venv', 'bin', 'python')
-  return { cmd: py, args: ['-m', 'magplot'] }
+  const py = process.env.TAVOTTO_PYTHON ?? path.join(REPO, '.venv', 'bin', 'python')
+  return { cmd: py, args: ['-m', 'tavotto'] }
 }
 
 async function freePort(): Promise<number> {
@@ -60,7 +60,7 @@ export interface RunningApp {
 
 /** 起一个**全新用户目录**的实例：每个场景都真的从零开始。 */
 export async function startApp(opts: AppOptions = {}): Promise<RunningApp> {
-  const workdir = mkdtempSync(path.join(os.tmpdir(), 'magplot-e2e-'))
+  const workdir = mkdtempSync(path.join(os.tmpdir(), 'tavotto-e2e-'))
   const home = path.join(workdir, 'home')
   const dataDir = path.join(workdir, 'data')
   for (const d of [home, dataDir, path.join(workdir, 'AppData', 'Roaming'),
@@ -83,9 +83,9 @@ export async function startApp(opts: AppOptions = {}): Promise<RunningApp> {
     {
       env: {
         ...process.env,
-        MAGPLOT_DATA_DIR: dataDir,
-        MAGPLOT_CONFIG_DIR: path.join(workdir, 'config'),
-        MAGPLOT_ALLOW_SHUTDOWN: '1',
+        TAVOTTO_DATA_DIR: dataDir,
+        TAVOTTO_CONFIG_DIR: path.join(workdir, 'config'),
+        TAVOTTO_ALLOW_SHUTDOWN: '1',
         HOME: home,
         USERPROFILE: home,
         APPDATA: path.join(workdir, 'AppData', 'Roaming'),
@@ -161,7 +161,7 @@ export function writeRuntimeNamedProject(dir: string): void {
     ].join('\n'),
     'utf-8',
   )
-  writeFileSync(path.join(dir, 'mm_registry.json'),
+  writeFileSync(path.join(dir, 'tavotto_registry.json'),
                 JSON.stringify({ version: 1, scripts: {} }), 'utf-8')
 }
 

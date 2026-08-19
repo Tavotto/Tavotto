@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """生成 macOS 安装 .dmg 的窗口背景图（assets/brand/dmg-background.png）。
 
-设计遵循 Magplot Brand System：纸色 #f2f2ef 底、左上角 compact 标志 + 字标、
+设计遵循 Tavotto Brand System：纸色 #f2f2ef 底、左上角 compact 标志 + 字标、
 中部「App → Applications」的极简引导箭头、下方一行说明文字。图标落点必须
 与 scripts/make_dmg.sh 里 Finder 的 icon position 保持一致（app 165,190 /
 Applications 495,190，窗口内容 660×400）。
@@ -73,7 +73,7 @@ def main() -> int:
     draw_mark(page, 28, 26, 26)
     helv_bold = pymupdf.Font("helvetica-bold")
     tw = pymupdf.TextWriter(page.rect, color=INK)
-    tw.append((64, 26 + 20), "Magplot", font=helv_bold, fontsize=15)
+    tw.append((64, 26 + 20), "Tavotto", font=helv_bold, fontsize=15)
     tw.write_text(page)
 
     # 中部引导箭头：App 图标 → Applications（落点为图标中心连线）
@@ -86,8 +86,8 @@ def main() -> int:
     # 说明文字：主句中文，副句英文（图标标签在 y≈270，说明再往下留足空档）
     cjk = pymupdf.Font("china-s")
     helv = pymupdf.Font("helvetica")
-    centered(page, cjk, "把 Magplot 拖进 Applications 完成安装", W / 2, 320, 13, INK2)
-    centered(page, helv, "Drag Magplot to Applications to install", W / 2, 340, 10, FAINT)
+    centered(page, cjk, "把 Tavotto 拖进 Applications 完成安装", W / 2, 320, 13, INK2)
+    centered(page, helv, "Drag Tavotto to Applications to install", W / 2, 340, 10, FAINT)
 
     pix = page.get_pixmap(matrix=pymupdf.Matrix(2, 2), alpha=False)
     pix.set_dpi(144, 144)  # Finder 按 dpi 折算：1320×800 px = 660×400 pt（Retina @2x）

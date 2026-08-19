@@ -1,7 +1,7 @@
 /**
  * 出版规范 profile 的加载与合并。
  *
- * 规则本身来自 `src/magplot/profiles/publication.json`（`@profiles` 别名），
+ * 规则本身来自 `src/tavotto/profiles/publication.json`（`@profiles` 别名），
  * 与 Python 的 `engine/profiles.py` 是**同一个文件**。这里盯的是取用侧：
  * 旧文档没有 profile 字段、存了一个已经删掉的 id、期刊覆盖的合并语义。
  */

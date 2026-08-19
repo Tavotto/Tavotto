@@ -8,7 +8,7 @@ import subprocess
 
 import pytest
 
-from magplot.engine import patchspec, pool, runtime, workerd_client
+from tavotto.engine import patchspec, pool, runtime, workerd_client
 
 
 # ------------------------------ 选路 ------------------------------
@@ -38,7 +38,7 @@ def test_a_failing_workerd_falls_back_to_the_python_pool(monkeypatch, tmp_path, 
 
     monkeypatch.setattr(pool, "WorkerdWorker", boom)
     monkeypatch.setattr(pool, "EngineWorker", lambda *a: "python-pool")
-    with caplog.at_level("WARNING", logger="mm.engine"):
+    with caplog.at_level("WARNING", logger="tavotto.engine"):
         assert pool._new_worker("fig.py", str(tmp_path), "main") == "python-pool"
     assert any("回退" in r.getMessage() for r in caplog.records)
 
@@ -294,7 +294,7 @@ def test_a_hash_mismatch_is_logged_but_the_result_is_used(monkeypatch, tmp_path,
          "hash_mismatch": True, "canonical_patch_hash": "sha256:aaa",
          "worker_patch_hash": "sha256:bbb"},
     ])
-    with caplog.at_level("WARNING", logger="mm.engine"):
+    with caplog.at_level("WARNING", logger="tavotto.engine"):
         resp = w.override("Fig1", [{"gid": "g", "prop": "text", "value": "x"}])
     assert resp["manifest"] == {"elements": []}
     assert any("哈希不一致" in r.getMessage() for r in caplog.records)

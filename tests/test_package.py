@@ -6,7 +6,7 @@ import zipfile
 import pymupdf
 import pytest
 
-from magplot import app as m
+from tavotto import app as m
 
 
 @pytest.fixture
@@ -40,10 +40,10 @@ def test_package_roundtrip(env):
     body = resp.get_json()
     assert resp.status_code == 200, body
     assert body["assets"] == 1 and body["missing"] == []
-    # 新包：.magplot 扩展 + magplot-package 标识
-    assert body["name"].endswith(".magplot")
+    # 新包：.tavotto 扩展 + tavotto-package 标识
+    assert body["name"].endswith(".tavotto")
 
-    zpath = figs / "magplotfile" / "export" / body["name"]
+    zpath = figs / "tavottofile" / "export" / body["name"]
     with zipfile.ZipFile(zpath) as z:
         names = set(z.namelist())
         assert "layout.json" in names
@@ -51,7 +51,7 @@ def test_package_roundtrip(env):
         assert "assets/p1.pdf" in names
         man = json.loads(z.read("package_manifest.json"))
         assert man["assets"][0]["sha1"]
-        assert man["kind"] == "magplot-package"
+        assert man["kind"] == "tavotto-package"
 
     # 原机检视：素材齐全
     with open(zpath, "rb") as f:
@@ -66,7 +66,7 @@ def test_package_roundtrip(env):
 def test_package_open_reports_missing_and_drift(env, tmp_path):
     client, figs, tmp = env
     zdata = client.post("/api/package", json={"doc": _layout()}).get_json()
-    zpath = figs / "magplotfile" / "export" / zdata["name"]
+    zpath = figs / "tavottofile" / "export" / zdata["name"]
 
     # 素材内容漂移
     doc = pymupdf.open()
@@ -110,19 +110,26 @@ def test_package_schema3_collects_assets_across_canvases(env, tmp_path):
     }
     body = client.post("/api/package", json={"doc": pd}).get_json()
     assert body["assets"] == 2  # 两张画布的素材都进包
-    zpath = figs / "magplotfile" / "export" / body["name"]
+    zpath = figs / "tavottofile" / "export" / body["name"]
     with zipfile.ZipFile(zpath) as z:
         assert json.loads(z.read("layout.json"))["schema"] == 3
     with open(zpath, "rb") as f:
         opened = client.post("/api/package/open",
-                             data={"package": (io.BytesIO(f.read()), "x.magplot")},
+                             data={"package": (io.BytesIO(f.read()), "x.tavotto")},
                              content_type="multipart/form-data").get_json()
     assert opened["doc"]["schema"] == 3
     assert opened["missing"] == []
 
 
-def test_legacy_mmpack_zip_still_opens(env):
-    """Magic Matplot 时代的 .mmpack.zip（kind=magic-matplot-package）必须继续可开。"""
+def test_package_open_keys_off_structure_not_kind_or_extension(env):
+    """检视只认 zip 里的结构，不认 `kind` 字符串、也不认扩展名。
+
+    这条**不是**在承诺旧包的兼容（改名到 Tavotto 时选的是干净断裂，见
+    `engine/brand.py`），而是钉住 `api_package_open` 的判据：改成按 `kind`
+    白名单放行的话，同一份布局换个字段就打不开了，而用户看到的只是
+    「不是有效的项目包」。这里拿一个改名前的包当输入，正因为它是最典型的
+    「结构对、名字不对」的样本。
+    """
     client, figs, tmp = env
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
@@ -152,10 +159,10 @@ def test_export_writes_proof_report(env):
     resp = client.post("/api/export", json={
         "page_w_mm": 100, "page_h_mm": 50, "formats": ["pdf"], "stem": "pf",
         "objects": [],
-        "proof": {"kind": "magplot-proof", "checks": []},
+        "proof": {"kind": "tavotto-proof", "checks": []},
     })
     files = resp.get_json()["files"]
     proof = next(f for f in files if f["name"].endswith("_proof.json"))
-    data = json.loads((figs / "magplotfile" / "export" / proof["name"]).read_text(encoding="utf-8"))
-    assert data["kind"] == "magplot-proof"
+    data = json.loads((figs / "tavottofile" / "export" / proof["name"]).read_text(encoding="utf-8"))
+    assert data["kind"] == "tavotto-proof"
     assert data["files"]  # 成图文件名回填进 report

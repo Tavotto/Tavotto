@@ -5,9 +5,9 @@ from pathlib import Path
 import pymupdf
 import pytest
 
-from magplot import app as m
-from magplot.engine import config as engine_config
-from magplot.engine import pool as engine_pool
+from tavotto import app as m
+from tavotto.engine import config as engine_config
+from tavotto.engine import pool as engine_pool
 
 
 @pytest.fixture
@@ -84,7 +84,7 @@ def test_open_project_and_recent(client, tmp_path, monkeypatch):
     assert resp.status_code == 200, body
     assert body["open"] is True and body["figures_dir"] == str(figs)
     # 无注册表的目录自动起草
-    assert (figs / "mm_registry.json").exists()
+    assert (figs / "tavotto_registry.json").exists()
     # 面板能列出来
     panels = client.get("/api/panels").get_json()["panels"]
     assert [p["id"] for p in panels] == ["p1.pdf"]
@@ -145,7 +145,7 @@ def test_watcher_replacement_stops_old(tmp_path):
 
 
 def test_ai_interrupt_all_marks_running_sessions():
-    from magplot.engine import ai_bridge
+    from tavotto.engine import ai_bridge
 
     class FakeProc:
         killed = False
@@ -282,22 +282,22 @@ def test_resolve_port_uses_preferred_when_free(monkeypatch):
     assert m.resolve_port(5089) == 5089
 
 
-def test_resolve_port_returns_none_when_magplot_already_running(monkeypatch):
-    """端口上是另一个 Magplot：不再起第二个，调用方把浏览器指过去即可。"""
+def test_resolve_port_returns_none_when_tavotto_already_running(monkeypatch):
+    """端口上是另一个 Tavotto：不再起第二个，调用方把浏览器指过去即可。"""
     monkeypatch.setattr(m, "port_is_free", lambda p: False)
-    monkeypatch.setattr(m, "magplot_is_serving", lambda p: True)
+    monkeypatch.setattr(m, "tavotto_is_serving", lambda p: True)
     assert m.resolve_port(5089) is None
 
 
 def test_resolve_port_steps_aside_for_other_programs(monkeypatch):
     """端口被别的程序占了就顺延——窗口化应用报不出 traceback，不能直接崩。"""
-    monkeypatch.setattr(m, "magplot_is_serving", lambda p: False)
+    monkeypatch.setattr(m, "tavotto_is_serving", lambda p: False)
     monkeypatch.setattr(m, "port_is_free", lambda p: p >= 5092)
     assert m.resolve_port(5089) == 5092
 
 
 def test_resolve_port_gives_up_gracefully(monkeypatch):
-    monkeypatch.setattr(m, "magplot_is_serving", lambda p: False)
+    monkeypatch.setattr(m, "tavotto_is_serving", lambda p: False)
     monkeypatch.setattr(m, "port_is_free", lambda p: False)
     assert m.resolve_port(5089, tries=3) == 5089   # 交给 app.run 报错，有日志可查
 
@@ -322,7 +322,7 @@ def test_two_projects_open_at_once_and_pj_routes_requests(client, tmp_path):
     assert m.default_project_path() == a
 
     # 请求头与查询参数两条路都要认（<img src> / EventSource 加不了请求头）
-    via_header = client.get("/api/panels", headers={"X-Magplot-Project": idb})
+    via_header = client.get("/api/panels", headers={"X-Tavotto-Project": idb})
     assert via_header.get_json()["figures_dir"] == str(b)
     assert client.get(f"/api/panels?pj={ida}").get_json()["figures_dir"] == str(a)
     # 不带 pj = 默认项目
@@ -341,7 +341,7 @@ def test_unknown_pj_is_409_not_silently_another_project(client, tmp_path):
     """
     figs = _make_figs(tmp_path)
     client.post("/api/projects/open", json={"path": str(figs)})
-    resp = client.get("/api/panels", headers={"X-Magplot-Project": "deadbeef0000"})
+    resp = client.get("/api/panels", headers={"X-Tavotto-Project": "deadbeef0000"})
     assert resp.status_code == 409
     assert resp.get_json()["code"] == "no_project"
 
@@ -360,7 +360,7 @@ def test_close_project_leaves_others_alone(client, tmp_path):
     assert client.post("/api/projects/close", json={"id": ida}).get_json()["ok"] is True
     ids = [p["id"] for p in client.get("/api/projects").get_json()["projects"]]
     assert ids == [idb]
-    assert client.get("/api/panels", headers={"X-Magplot-Project": ida}).status_code == 409
+    assert client.get("/api/panels", headers={"X-Tavotto-Project": ida}).status_code == 409
 
 
 class _FakeWorker:
@@ -408,7 +408,7 @@ def test_render_events_carry_pj(client, tmp_path, monkeypatch, sse_spy):
     _stub_engine(monkeypatch, _FakeWorker())
 
     resp = client.post("/api/engine/render", json={"id": "p1.pdf", "patches": []},
-                       headers={"X-Magplot-Project": idb})
+                       headers={"X-Tavotto-Project": idb})
     assert resp.status_code == 200
     sent = dict(sse_spy)
     assert sent["render.started"]["pj"] == idb
@@ -494,7 +494,7 @@ def test_browse_missing_path_reports_nearest_existing(client, tmp_path):
 def test_registry_lists_unregistered_candidates(client, tmp_path):
     """空注册表 + 在存图的脚本 = 必须被报成候选，不能让用户对着空列表猜。"""
     figs = _make_figs(tmp_path)
-    (figs / "mm_registry.json").write_text('{"version":1,"scripts":{}}', encoding="utf-8")
+    (figs / "tavotto_registry.json").write_text('{"version":1,"scripts":{}}', encoding="utf-8")
     (figs / "plot_it.py").write_text(
         'from pathlib import Path\n'
         'OUT = Path(__file__).parent\n'
@@ -518,7 +518,7 @@ def test_registry_manual_write_resolves_conflict(client, tmp_path):
     """手工裁决：把 stem 判给某个脚本，其它脚本对它的认领一并摘掉。
     否则 registry.load 会因 stem 重复直接报错，整个项目打不开。"""
     figs = _make_figs(tmp_path)
-    (figs / "mm_registry.json").write_text(json.dumps({"version": 1, "scripts": {
+    (figs / "tavotto_registry.json").write_text(json.dumps({"version": 1, "scripts": {
         "one.py": {"entry": "main", "cost": "light", "notes": "", "stems": ["Shared", "Own"]},
     }}), encoding="utf-8")
     client.post("/api/projects/open", json={"path": str(figs)})
@@ -535,7 +535,7 @@ def test_registry_probe_rejects_paths_outside_project(client, tmp_path):
     figs = _make_figs(tmp_path)
     (tmp_path / "outside.py").write_text("def main():\n    pass\n", encoding="utf-8")
     client.post("/api/projects/open", json={"path": str(figs)})
-    for bad in ("../outside.py", "nope.py", "mm_registry.json"):
+    for bad in ("../outside.py", "nope.py", "tavotto_registry.json"):
         assert client.post("/api/registry/probe", json={"script": bad}).status_code == 404
 
 

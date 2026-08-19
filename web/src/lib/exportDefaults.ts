@@ -1,7 +1,7 @@
 /** 导出默认值（设置里改，导出对话框作为初始值读取）。localStorage 轻量偏好。 */
 import { DEFAULT_PROFILE_ID, hasProfile } from './profile'
 
-const KEY = 'magplot.export.defaults'
+const KEY = 'tavotto.export.defaults'
 
 export interface ExportDefaults {
   dpi: string

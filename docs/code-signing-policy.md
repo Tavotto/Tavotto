@@ -2,20 +2,20 @@
 
 Free code signing provided by SignPath.io, certificate by SignPath Foundation.
 
-This policy applies to Magplot releases published from
-<https://github.com/erwanjun/magplot>.
+This policy applies to Tavotto releases published from
+<https://github.com/Tavotto/Tavotto>.
 
 ## Project and scope
 
-Magplot is an open-source scientific-figure layout and editing application for
+Tavotto is an open-source scientific-figure layout and editing application for
 Matplotlib. The project is released under AGPL-3.0-only. This subscription is
-used only for Magplot artifacts built from this repository, currently the Windows
-NSIS installer named `Magplot-<version>-Windows-Setup.exe`.
+used only for Tavotto artifacts built from this repository, currently the Windows
+NSIS installer named `Tavotto-<version>-Windows-Setup.exe`.
 
 The project team does not submit binaries from other projects or binaries built
 from a source tree that is not this repository. Third-party open-source
 components may be included in the installer, but they are not presented as
-Magplot-authored source and are not independently signed with this subscription.
+Tavotto-authored source and are not independently signed with this subscription.
 
 ## Build and release process
 
@@ -62,9 +62,9 @@ request is reviewed before approval.
 
 ## Privacy
 
-Magplot does not transfer user figures, scripts, project files or exports to the
+Tavotto does not transfer user figures, scripts, project files or exports to the
 maintainers. The complete project privacy policy is available at
-<https://github.com/erwanjun/magplot/blob/main/docs/privacy.md>.
+<https://github.com/Tavotto/Tavotto/blob/main/docs/privacy.md>.
 
 ## Verification
 

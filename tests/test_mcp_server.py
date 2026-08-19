@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parent.parent
 PLUGIN = ROOT / "codex-plugin"
 sys.path.insert(0, str(PLUGIN / "mcp"))
 
-from magplot_mcp import bridge, rpc, server, widget  # noqa: E402
+from tavotto_mcp import bridge, rpc, server, widget  # noqa: E402
 
 
 # ------------------------------ 假 worker -----------------------------------
@@ -90,7 +90,7 @@ def project(tmp_path, monkeypatch):
     figures.mkdir()
     (figures / "fig1.py").write_text("def main():\n    pass\n", encoding="utf-8")
     (figures / "Fig1.pdf").write_bytes(b"%PDF-1.4\n")
-    (figures / "mm_registry.json").write_text(json.dumps(
+    (figures / "tavotto_registry.json").write_text(json.dumps(
         {"scripts": {"fig1.py": {"entry": "main", "cost": "light", "stems": ["Fig1"]}}}),
         encoding="utf-8")
     monkeypatch.setenv(bridge.ROOTS_ENV, str(tmp_path))
@@ -118,8 +118,8 @@ def test_initialize_echoes_a_version_we_support():
     res = s.dispatch("initialize", {"protocolVersion": "2025-06-18"})
     assert res["protocolVersion"] == "2025-06-18"
     assert res["capabilities"]["tools"] == {"listChanged": False}
-    assert res["serverInfo"]["name"] == "magplot"
-    assert "magplot_open_figure" in res["instructions"]
+    assert res["serverInfo"]["name"] == "tavotto"
+    assert "tavotto_open_figure" in res["instructions"]
 
 
 def test_initialize_falls_back_to_our_latest_for_unknown_versions():
@@ -132,9 +132,9 @@ def test_tools_list_shape():
     tools = server.Server(rpc.StdioConnection(io.BytesIO(), io.BytesIO())) \
         .dispatch("tools/list", {})["tools"]
     names = [t["name"] for t in tools]
-    assert names == ["magplot_open_figure", "magplot_apply_overrides",
-                     "magplot_preflight", "magplot_export",
-                     "magplot_verify_replay", "magplot_close_session"]
+    assert names == ["tavotto_open_figure", "tavotto_apply_overrides",
+                     "tavotto_preflight", "tavotto_export",
+                     "tavotto_verify_replay", "tavotto_close_session"]
     for t in tools:
         assert t["description"] and t["inputSchema"]["type"] == "object"
 
@@ -146,7 +146,7 @@ def test_only_canvas_tools_carry_the_ui_resource():
     tools = {t["name"]: t for t in server._tools()}
     for name in server.UI_TOOLS:
         assert tools[name]["_meta"]["ui"]["resourceUri"] == widget.RESOURCE_URI
-    for name in ("magplot_preflight", "magplot_export", "magplot_close_session"):
+    for name in ("tavotto_preflight", "tavotto_export", "tavotto_close_session"):
         assert "_meta" not in tools[name]
 
 
@@ -236,14 +236,14 @@ def test_allowed_roots_default_to_cwd(monkeypatch, tmp_path):
 
 
 def test_open_refuses_out_of_scope(project, fake_pool):
-    res = _call("magplot_open_figure", {"project_path": "/etc"})
+    res = _call("tavotto_open_figure", {"project_path": "/etc"})
     assert res["isError"] and _body(res)["code"] == "path_out_of_scope"
 
 
 # ------------------------------ 会话生命周期 ---------------------------------
 def test_open_apply_preflight_export_close_without_any_ui(project, fake_pool, tmp_path):
     """**没有 UI 的 host 里这条链必须完整**——这就是 fallback 的验收。"""
-    res = _call("magplot_open_figure", {"project_path": str(project)})
+    res = _call("tavotto_open_figure", {"project_path": str(project)})
     assert not res.get("isError"), _body(res)
     opened = _body(res)
     sid = opened["session_id"]
@@ -255,24 +255,24 @@ def test_open_apply_preflight_export_close_without_any_ui(project, fake_pool, tm
     assert res["content"][0]["text"]
 
     patches = [{"gid": "axes_0.xticks", "prop": "fontsize", "value": 7.0}]
-    applied = _body(_call("magplot_apply_overrides",
+    applied = _body(_call("tavotto_apply_overrides",
                           {"session_id": sid, "patches": patches}))
     assert applied["applied"] == 1 and applied["rejected"] == []
     # worker 拿到的是**过滤后仍保持原始顺序**的那份，与 Flask 走的完全一样
     assert fake_pool.calls[-1][2] == patches
 
-    checks = _body(_call("magplot_preflight", {"session_id": sid}))
+    checks = _body(_call("tavotto_preflight", {"session_id": sid}))
     assert checks["blocking"] is True          # 7pt 撞绝对下限
     assert any(i["id"] == "font-below-absolute-floor" for i in checks["errors"])
     assert "阻断" in checks["report"]
 
     out_dir = tmp_path / "out"
-    blocked = _call("magplot_export", {"session_id": sid, "formats": ["pdf"],
+    blocked = _call("tavotto_export", {"session_id": sid, "formats": ["pdf"],
                                        "out_dir": str(out_dir)})
     assert blocked["isError"] and _body(blocked)["code"] == "preflight_blocked"
     assert not out_dir.exists(), "被阻断时一张图都不该出"
 
-    done = _body(_call("magplot_export",
+    done = _body(_call("tavotto_export",
                        {"session_id": sid, "formats": ["pdf", "png"], "dpi": 300,
                         "out_dir": str(out_dir), "explicit_confirm": True}))
     assert [f["format"] for f in done["files"]] == ["pdf", "png"]
@@ -280,25 +280,25 @@ def test_open_apply_preflight_export_close_without_any_ui(project, fake_pool, tm
     assert [f["vector"] for f in done["files"]] == [True, False]
     assert done["files"][1]["dpi"] == 300
 
-    closed = _body(_call("magplot_close_session", {"session_id": sid}))
+    closed = _body(_call("tavotto_close_session", {"session_id": sid}))
     assert closed["closed"] is True
     # 重复关闭不算错（Codex 可能重试）
-    assert _body(_call("magplot_close_session", {"session_id": sid}))["closed"] is False
+    assert _body(_call("tavotto_close_session", {"session_id": sid}))["closed"] is False
 
 
 def test_unknown_session_says_which_ones_exist(project, fake_pool):
-    res = _call("magplot_apply_overrides", {"session_id": "s-nope", "patches": []})
+    res = _call("tavotto_apply_overrides", {"session_id": "s-nope", "patches": []})
     assert res["isError"] and _body(res)["code"] == "unknown_session"
 
 
 def test_patches_are_a_full_list_and_dirty_entries_are_reported(project, fake_pool):
-    sid = _body(_call("magplot_open_figure", {"project_path": str(project)}))["session_id"]
+    sid = _body(_call("tavotto_open_figure", {"project_path": str(project)}))["session_id"]
     patches = [
         {"gid": "axes_0.xticks", "prop": "fontsize", "value": 9.0},
         {"gid": "", "prop": "x", "value": 1},                    # 坏 gid
         {"gid": "a", "prop": "b", "value": float("inf")},        # 非有限浮点
     ]
-    body = _body(_call("magplot_apply_overrides",
+    body = _body(_call("tavotto_apply_overrides",
                        {"session_id": sid, "patches": patches}))
     # 脏条目**不静默丢**：连同原因一起交出来
     assert [d["reason"] for d in body["rejected"]] == ["bad_gid", "non_finite_float"]
@@ -307,34 +307,34 @@ def test_patches_are_a_full_list_and_dirty_entries_are_reported(project, fake_po
 
 
 def test_patch_hash_is_the_canonical_one(project, fake_pool):
-    from magplot.engine import patchspec
-    sid = _body(_call("magplot_open_figure", {"project_path": str(project)}))["session_id"]
+    from tavotto.engine import patchspec
+    sid = _body(_call("tavotto_open_figure", {"project_path": str(project)}))["session_id"]
     a = [{"gid": "g2", "prop": "p", "value": 1}, {"gid": "g1", "prop": "p", "value": 2}]
     b = [{"gid": "g1", "prop": "p", "value": 2}, {"gid": "g2", "prop": "p", "value": 1}]
-    ha = _body(_call("magplot_apply_overrides", {"session_id": sid, "patches": a}))["patch_hash"]
-    hb = _body(_call("magplot_apply_overrides", {"session_id": sid, "patches": b}))["patch_hash"]
+    ha = _body(_call("tavotto_apply_overrides", {"session_id": sid, "patches": a}))["patch_hash"]
+    hb = _body(_call("tavotto_apply_overrides", {"session_id": sid, "patches": b}))["patch_hash"]
     # 顺序不同、内容相同 → 同一个身份（与 patchspec 的规范化一致）
     assert ha == hb == patchspec.patch_hash(a)
 
 
 def test_export_defaults_to_the_project_export_dir(project, fake_pool, monkeypatch):
     """与画布导出同一条规则（engine/config.project_export_dir），不另写一份。"""
-    from magplot.engine import config as engine_config
-    sid = _body(_call("magplot_open_figure", {"project_path": str(project)}))["session_id"]
-    _call("magplot_apply_overrides", {"session_id": sid, "patches": []})
-    done = _body(_call("magplot_export", {"session_id": sid, "formats": ["pdf"],
+    from tavotto.engine import config as engine_config
+    sid = _body(_call("tavotto_open_figure", {"project_path": str(project)}))["session_id"]
+    _call("tavotto_apply_overrides", {"session_id": sid, "patches": []})
+    done = _body(_call("tavotto_export", {"session_id": sid, "formats": ["pdf"],
                                           "explicit_confirm": True}))
     assert Path(done["export_dir"]) == engine_config.project_export_dir(str(project))
     assert Path(done["export_dir"]).name == "export"
 
 
 def test_export_writes_a_proof_report(project, fake_pool, tmp_path):
-    from magplot.engine.brand import PROOF_KIND
-    sid = _body(_call("magplot_open_figure", {"project_path": str(project)}))["session_id"]
-    _call("magplot_apply_overrides",
+    from tavotto.engine.brand import PROOF_KIND
+    sid = _body(_call("tavotto_open_figure", {"project_path": str(project)}))["session_id"]
+    _call("tavotto_apply_overrides",
           {"session_id": sid,
            "patches": [{"gid": "axes_0.xticks", "prop": "fontsize", "value": 7.0}]})
-    done = _body(_call("magplot_export",
+    done = _body(_call("tavotto_export",
                        {"session_id": sid, "formats": ["pdf"], "explicit_confirm": True,
                         "out_dir": str(tmp_path / "out")}))
     proof = json.loads(Path(done["proof_path"]).read_text(encoding="utf-8"))
@@ -349,10 +349,10 @@ def test_export_writes_a_proof_report(project, fake_pool, tmp_path):
 
 
 def test_journal_override_reaches_preflight(project, fake_pool):
-    sid = _body(_call("magplot_open_figure", {"project_path": str(project)}))["session_id"]
-    base = _body(_call("magplot_preflight", {"session_id": sid}))
+    sid = _body(_call("tavotto_open_figure", {"project_path": str(project)}))["session_id"]
+    base = _body(_call("tavotto_preflight", {"session_id": sid}))
     assert not any(i["id"] == "page-width" for i in base["errors"])
-    tight = _body(_call("magplot_preflight",
+    tight = _body(_call("tavotto_preflight",
                         {"session_id": sid,
                          "journal": {"widths_mm": {"single": 55.0, "double": 120.0}}}))
     assert any(i["id"] == "page-width" for i in tight["errors"])
@@ -360,24 +360,24 @@ def test_journal_override_reaches_preflight(project, fake_pool):
 
 
 def test_bad_format_and_dpi_are_refused(project, fake_pool):
-    sid = _body(_call("magplot_open_figure", {"project_path": str(project)}))["session_id"]
-    assert _body(_call("magplot_export", {"session_id": sid, "formats": ["docx"]}))["code"] \
+    sid = _body(_call("tavotto_open_figure", {"project_path": str(project)}))["session_id"]
+    assert _body(_call("tavotto_export", {"session_id": sid, "formats": ["docx"]}))["code"] \
         == "bad_format"
-    assert _body(_call("magplot_export", {"session_id": sid, "dpi": 0}))["code"] == "bad_dpi"
+    assert _body(_call("tavotto_export", {"session_id": sid, "dpi": 0}))["code"] == "bad_dpi"
 
 
 def test_a_directory_without_a_registry_is_a_clear_error(tmp_path, monkeypatch, fake_pool):
     monkeypatch.setenv(bridge.ROOTS_ENV, str(tmp_path))
     empty = tmp_path / "empty"
     empty.mkdir()
-    res = _call("magplot_open_figure", {"project_path": str(empty)})
+    res = _call("tavotto_open_figure", {"project_path": str(empty)})
     assert res["isError"]
     assert _body(res)["code"] in ("no_registry", "no_figure")
 
 
 def test_session_eviction_keeps_the_lid_on(project, fake_pool, monkeypatch):
     monkeypatch.setattr(bridge, "MAX_SESSIONS", 2)
-    ids = [_body(_call("magplot_open_figure", {"project_path": str(project)}))["session_id"]
+    ids = [_body(_call("tavotto_open_figure", {"project_path": str(project)}))["session_id"]
            for _ in range(4)]
     assert len(bridge.sessions()) == 2
     assert ids[-1] in bridge.sessions()
@@ -435,7 +435,7 @@ def test_server_degrades_cleanly_without_the_widget(monkeypatch):
 def test_plugin_cwd_is_not_a_workspace(monkeypatch):
     """装好的插件里 cwd 就是**插件自己的目录**（`./mcp/server.py` 靠它解析）。
 
-    「不给 MAGPLOT_MCP_ROOTS 就用 cwd」在真实安装下于是把用户工作区里的
+    「不给 TAVOTTO_MCP_ROOTS 就用 cwd」在真实安装下于是把用户工作区里的
     每一张图都判成 `path_out_of_scope`——默认流程根本跑不起来，而报出来的
     话又与真实原因（谁都没设过那个变量）毫不相干。
     """
@@ -471,11 +471,11 @@ def test_registry_outside_the_root_is_never_written(tmp_path, monkeypatch, fake_
     outer = tmp_path / "outer"
     inner = outer / "inner"
     inner.mkdir(parents=True)
-    reg = outer / "mm_registry.json"
+    reg = outer / "tavotto_registry.json"
     before = json.dumps({"scripts": {"a.py": {"entry": "main", "stems": ["A"]}}})
     reg.write_text(before, encoding="utf-8")
     # 脚本必须是**能被静态扫描认出来**的形态：那样 ensure_registered 才真的
-    # 会去写 outer/mm_registry.json（实测 status=merged）。写不动的脚本会让
+    # 会去写 outer/tavotto_registry.json（实测 status=merged）。写不动的脚本会让
     # 这条用例变成空转的门禁——它还在报平安。
     (inner / "fig1.py").write_text(
         "import matplotlib.pyplot as plt\n\n\n"

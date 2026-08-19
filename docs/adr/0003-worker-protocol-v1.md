@@ -11,7 +11,7 @@
 - **没有请求标识**：管道是串行的，靠「写一行读一行」的隐式配对。worker 少回
   或多回一条，之后每一条响应都错位——A 图的 manifest 落到 B 图上，而且**不报错**。
 - **没有版本号**：任何字段变更都是猜谜；第三方实现（下一阶段的 Rust
-  supervisor `magplot-workerd`）无从判断对面说的是哪一套。
+  supervisor `tavotto-workerd`）无从判断对面说的是哪一套。
 - **错误没有 code**：父进程靠正则从 traceback 里认 `missing_dependency`，
   其余一律当成「渲染失败」。
 - **patch 列表没有身份**：同一份修改可以有无数种等价写法（顺序不同、

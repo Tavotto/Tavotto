@@ -11,7 +11,7 @@ import time
 
 import pytest
 
-from magplot.engine import workerd_client
+from tavotto.engine import workerd_client
 
 FAKE_SUPERVISOR = '''\
 import json, sys, threading, time
@@ -97,16 +97,16 @@ def client(tmp_path):
 
 # ------------------------------ 二进制发现 ------------------------------
 def test_the_env_switch_can_disable_workerd_entirely(monkeypatch):
-    """`MAGPLOT_WORKERD=0` 一律走 Python 池——排障时要能一键切回参考实现。"""
+    """`TAVOTTO_WORKERD=0` 一律走 Python 池——排障时要能一键切回参考实现。"""
     for value in ("0", "off", "FALSE", "No"):
-        monkeypatch.setenv("MAGPLOT_WORKERD", value)
+        monkeypatch.setenv("TAVOTTO_WORKERD", value)
         assert workerd_client.find_workerd() is None
 
 
 def test_an_explicit_path_is_honoured(monkeypatch, tmp_path):
-    exe = tmp_path / "magplot-workerd"
+    exe = tmp_path / "tavotto-workerd"
     exe.write_text("#!/bin/sh\n", encoding="utf-8")
-    monkeypatch.setenv("MAGPLOT_WORKERD", str(exe))
+    monkeypatch.setenv("TAVOTTO_WORKERD", str(exe))
     assert workerd_client.find_workerd() == str(exe)
 
 
@@ -115,8 +115,8 @@ def test_a_bad_explicit_path_falls_back_instead_of_crashing(monkeypatch, caplog)
 
     静默回退是最难排查的一种失灵：他以为在测 workerd，其实一直跑的 Python 池。
     """
-    monkeypatch.setenv("MAGPLOT_WORKERD", "/nope/magplot-workerd")
-    with caplog.at_level("WARNING", logger="mm.engine"):
+    monkeypatch.setenv("TAVOTTO_WORKERD", "/nope/tavotto-workerd")
+    with caplog.at_level("WARNING", logger="tavotto.engine"):
         assert workerd_client.find_workerd() is None
     assert any("不存在" in r.getMessage() for r in caplog.records)
 

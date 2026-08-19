@@ -40,7 +40,7 @@ test('首次启动：用户目录为空时进项目选择器，而不是白屏',
 })
 
 test('直接粘贴路径打开项目（含中文与空格）', async ({ app, page }) => {
-  const dir = path.join(os.tmpdir(), `magplot-e2e-${Date.now()}`, '我的 论文 图', 'figures')
+  const dir = path.join(os.tmpdir(), `tavotto-e2e-${Date.now()}`, '我的 论文 图', 'figures')
   copyTree(path.join(REPO, 'examples', 'figures'), dir)
   // 自证拷贝真的落盘——后续「素材空」时才能把责任划给后端而不是这里
   const copied = readdirSync(dir)
@@ -92,7 +92,7 @@ test('注册表为空时，界面给得出「扫描 / 试运行」而不是让�
   app,
   page,
 }) => {
-  const dir = path.join(os.tmpdir(), `magplot-e2e-reg-${Date.now()}`)
+  const dir = path.join(os.tmpdir(), `tavotto-e2e-reg-${Date.now()}`)
   writeRuntimeNamedProject(dir)
 
   const a = await app({ figures: dir })
@@ -109,7 +109,7 @@ test('注册表为空时，界面给得出「扫描 / 试运行」而不是让�
 
 test('没装 Python 时给出引导，而不是闪退', async ({ app, page }) => {
   // 把探测强制指到一个不存在的解释器：等价于「这台机器上没有可用的 Python」
-  const a = await app({ env: { MM_WORKER_PYTHON: path.join(os.tmpdir(), 'no-such-python') } })
+  const a = await app({ env: { TAVOTTO_WORKER_PYTHON: path.join(os.tmpdir(), 'no-such-python') } })
   await page.goto(a.baseURL)
 
   // 应用照常起来（这是关键：不闪退）

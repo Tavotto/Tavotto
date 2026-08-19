@@ -18,7 +18,7 @@
 * **导出**：带 override 的单面板 `/api/export`（走 worker 的全质量出图 +
   PyMuPDF 合成）。
 
-两条控制面各跑一遍（Python 池 `MAGPLOT_WORKERD=0` / Rust supervisor），
+两条控制面各跑一遍（Python 池 `TAVOTTO_WORKERD=0` / Rust supervisor），
 数据目录每次都是全新的临时目录——引擎缓存留在上一轮里的话，「冷启动」量到的
 就是别人的热态。
 
@@ -225,13 +225,13 @@ def run_plane(launch: list[str], figures: Path, workdir: Path, plane: str,
 
     env = {
         **os.environ,
-        "MAGPLOT_DATA_DIR": str(data_dir),
-        "MAGPLOT_CONFIG_DIR": str(config_dir),
-        "MAGPLOT_NO_UPDATE_CHECK": "1",
-        "MAGPLOT_ALLOW_SHUTDOWN": "1",
+        "TAVOTTO_DATA_DIR": str(data_dir),
+        "TAVOTTO_CONFIG_DIR": str(config_dir),
+        "TAVOTTO_NO_UPDATE_CHECK": "1",
+        "TAVOTTO_ALLOW_SHUTDOWN": "1",
         # 显式指定控制面：不指定的话开发机上有没有 cargo 产物会让两次运行
         # 悄悄跑在不同的实现上——那就不是对照了
-        "MAGPLOT_WORKERD": workerd or "0",
+        "TAVOTTO_WORKERD": workerd or "0",
     }
     if fresh_home:
         home = workdir / "home"
@@ -245,7 +245,7 @@ def run_plane(launch: list[str], figures: Path, workdir: Path, plane: str,
                             encoding="utf-8", errors="replace")
     try:
         _wait_ready(base, proc, BOOT_TIMEOUT_S)
-        # 导出落到临时目录：默认是项目内的 magplotfile/export/，
+        # 导出落到临时目录：默认是项目内的 tavottofile/export/，
         # 跑一次基线就往用户（或仓库的 examples/）图库里塞一堆成图
         _patch(f"{base}/api/project/settings", {"export_dir": str(export_dir)})
 
@@ -333,7 +333,7 @@ def markdown(rows: list[dict], meta: dict) -> str:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--python", default=sys.executable,
-                    help="跑 Magplot 的解释器（默认当前解释器）")
+                    help="跑 Tavotto 的解释器（默认当前解释器）")
     ap.add_argument("--exe", default=None, help="打包产物（与 --python 二选一）")
     ap.add_argument("--figures", default=str(DEFAULT_FIGURES))
     ap.add_argument("--repeat", type=int, default=7, help="热 override 采样次数")
@@ -347,7 +347,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--json", default=None, help="原始测量结果（便于事后对比）")
     args = ap.parse_args(argv)
 
-    launch = [args.exe] if args.exe else [args.python, "-m", "magplot"]
+    launch = [args.exe] if args.exe else [args.python, "-m", "tavotto"]
     figures = Path(args.figures).resolve()
     if not figures.is_dir():
         print(f"图库目录不存在: {figures}", file=sys.stderr)
@@ -355,26 +355,26 @@ def main(argv: list[str] | None = None) -> int:
 
     # workerd 二进制：release 优先（debug 版的 Rust 慢得没有参考价值）
     workerd = next(
-        (str(p) for p in (REPO / "workerd" / "target" / "release" / "magplot-workerd",
-                          REPO / "workerd" / "target" / "debug" / "magplot-workerd")
+        (str(p) for p in (REPO / "workerd" / "target" / "release" / "tavotto-workerd",
+                          REPO / "workerd" / "target" / "debug" / "tavotto-workerd")
          if p.is_file()), None)
 
     planes: list[tuple[str, str | None]] = []
     if args.plane in ("both", "python"):
-        planes.append(("Python 池（MAGPLOT_WORKERD=0）", None))
+        planes.append(("Python 池（TAVOTTO_WORKERD=0）", None))
     if args.plane in ("both", "workerd"):
         if workerd:
             planes.append((f"workerd（{Path(workerd).parent.name}）", workerd))
         elif args.plane == "workerd":
-            print("找不到 magplot-workerd 二进制（先 cargo build --release）",
+            print("找不到 tavotto-workerd 二进制（先 cargo build --release）",
                   file=sys.stderr)
             return 2
         else:
-            print("! 没有 magplot-workerd 二进制，跳过该控制面", file=sys.stderr)
+            print("! 没有 tavotto-workerd 二进制，跳过该控制面", file=sys.stderr)
 
     rows: list[dict] = []
     for label, exe in planes:
-        workdir = Path(tempfile.mkdtemp(prefix="magplot-bench-"))
+        workdir = Path(tempfile.mkdtemp(prefix="tavotto-bench-"))
         try:
             rows += run_plane(launch, figures, workdir, label, exe, args.repeat,
                               args.fresh_home, args.preview_dpi)

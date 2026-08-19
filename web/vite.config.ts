@@ -14,7 +14,7 @@ export default defineConfig({
       // 这里按路径别名整份 import 进 bundle：规则常量绝不在 TS 侧再抄一遍，
       // 否则「双栏 150mm」改一处、另一处照旧放行。
       '@profiles': fileURLToPath(
-        new URL('../src/magplot/profiles/publication.json', import.meta.url),
+        new URL('../src/tavotto/profiles/publication.json', import.meta.url),
       ),
     },
   },

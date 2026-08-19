@@ -8,7 +8,7 @@ import os
 
 import pytest
 
-from magplot.engine import ai_bridge
+from tavotto.engine import ai_bridge
 
 
 @pytest.fixture(autouse=True)

@@ -6,10 +6,10 @@ import { loadProfile, type JournalOverride } from './profile'
 /**
  * 预检的**跨语言等价性**看护。
  *
- * 规则只有一份（`src/magplot/profiles/publication.json`），但求值器有两个：
+ * 规则只有一份（`src/tavotto/profiles/publication.json`），但求值器有两个：
  * Python 的 `engine/preflight.py` 服务 Codex 的 MCP server，本文件这一侧服务
  * 画布与导出对话框。浏览器里跑不了 Python，所以第二份是必需的——代价是它随时
- * 可能与第一份分叉，而分叉的症状是「Codex 说这张图过了，Magplot 说没过」。
+ * 可能与第一份分叉，而分叉的症状是「Codex 说这张图过了，Tavotto 说没过」。
  *
  * 所以两边跑**同一份向量**（tests/golden/preflight_vectors.json，由
  * `python scripts/gen_preflight_vectors.py --write` 按 Python 侧生成，

@@ -111,8 +111,9 @@ export function TopBar() {
 function importPackage() {
   const input = document.createElement('input')
   input.type = 'file'
-  // 新格式 .magplot（zip 容器）；旧 .mmpack.zip 照常可选可开
-  input.accept = '.magplot,.zip,application/zip'
+  // 包是 .tavotto（zip 容器）。`.zip` 一起收在 accept 里：检视端点按结构判断、
+  // 不看扩展名，用户手里那些别的后缀的包因此仍选得中、打得开。
+  input.accept = '.tavotto,.zip,application/zip'
   input.onchange = async () => {
     const file = input.files?.[0]
     if (!file) return

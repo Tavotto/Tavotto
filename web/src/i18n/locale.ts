@@ -4,7 +4,7 @@
  * 只有两档界面语言：简体中文与英文。**默认永远是 zh-CN**——老用户升级上来
  * 不该被系统语言悄悄换掉界面。优先级：用户手动选择 > 系统语言 > zh-CN。
  *
- * 语言偏好存在独立的 `magplot.locale` 里，**不进 .magplot 文档、不进项目数据**：
+ * 语言偏好存在独立的 `tavotto.locale` 里，**不进 .tavotto 文档、不进项目数据**：
  * 它是这台机器上这个人的偏好，跟着文档走会让同一份排版在别人机器上换语言。
  */
 export const SUPPORTED_LOCALES = ['zh-CN', 'en-US'] as const
@@ -13,7 +13,7 @@ export type Locale = (typeof SUPPORTED_LOCALES)[number]
 export const DEFAULT_LOCALE: Locale = 'zh-CN'
 
 /** 独立于文档与项目数据的偏好键 */
-export const LOCALE_STORAGE_KEY = 'magplot.locale'
+export const LOCALE_STORAGE_KEY = 'tavotto.locale'
 
 /**
  * BCP-47 标签 → 支持的语言。

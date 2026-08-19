@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
-<title>Magplot</title>
+<title>Tavotto</title>
 <style>
   html, body { height: 100%; margin: 0; }
   body {
@@ -27,11 +27,11 @@
 </head>
 <body>
   <main>
-    <h1 id="title">Magplot 启动失败</h1>
+    <h1 id="title">Tavotto 启动失败</h1>
     <p id="body">本机渲染服务没有启动成功。重新打开应用通常可以恢复；若反复出现，请重新安装。</p>
     <div class="msg" id="msg">未知错误</div>
     <p class="log"><span id="logLabel">日志文件（反馈问题时请附上）：</span><br /><code id="log"></code></p>
-    <p class="hint" id="hint">Magplot 完全在本机运行，此页面不涉及任何网络请求。</p>
+    <p class="hint" id="hint">Tavotto 完全在本机运行，此页面不涉及任何网络请求。</p>
   </main>
   <script>
     // 内联两份文案的理由见 splash.html：tauri:// 源下没有 i18next，也读不到
@@ -39,18 +39,18 @@
     // 它的时候正需要看懂上面写了什么。
     const STRINGS = {
       'zh-CN': {
-        title: 'Magplot 启动失败',
+        title: 'Tavotto 启动失败',
         body: '本机渲染服务没有启动成功。重新打开应用通常可以恢复；若反复出现，请重新安装。',
         unknown: '未知错误',
         logLabel: '日志文件（反馈问题时请附上）：',
-        hint: 'Magplot 完全在本机运行，此页面不涉及任何网络请求。',
+        hint: 'Tavotto 完全在本机运行，此页面不涉及任何网络请求。',
       },
       'en-US': {
-        title: 'Magplot failed to start',
+        title: 'Tavotto failed to start',
         body: 'The local render service did not start. Reopening the app usually fixes it; if it keeps happening, reinstall.',
         unknown: 'Unknown error',
         logLabel: 'Log file (please attach it when reporting the problem):',
-        hint: 'Magplot runs entirely on this machine; this page makes no network requests.',
+        hint: 'Tavotto runs entirely on this machine; this page makes no network requests.',
       },
     }
     // 与 web/src/i18n/locale.ts 的 normalizeLocale 同一条规则：只看主子标签

@@ -29,8 +29,8 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 import pymupdf
 import pytest
 
-from magplot import app as m
-from magplot.engine import ai_bridge, pool, workerd_client
+from tavotto import app as m
+from tavotto.engine import ai_bridge, pool, workerd_client
 
 
 @pytest.fixture
@@ -49,7 +49,7 @@ def _figs(tmp_path, name="figs"):
     doc.new_page(width=100, height=50)
     doc.save(figs / "Fig1.pdf")
     doc.close()
-    (figs / "mm_registry.json").write_text(json.dumps({"version": 1, "scripts": {
+    (figs / "tavotto_registry.json").write_text(json.dumps({"version": 1, "scripts": {
         "fig1.py": {"entry": "main", "cost": "light", "notes": "", "stems": ["Fig1"]},
     }}), encoding="utf-8")
     (figs / "fig1.py").write_text("def main():\n    pass\n", encoding="utf-8")
@@ -256,16 +256,16 @@ def test_every_entry_point_reconfigures_stdout_to_utf8():
 
     实现是**唯一一份**（`engine/cli.py::use_utf8_streams`），三个入口各自
     在做任何输出之前调它一次。少一个都会在某条安装形态上复现：
-      * `magplot/cli_entry.py` —— pip/pipx 的 console script 与 `python -m magplot`
-      * `packaging/entry.py`   —— 冻结产物（Magplot.exe / magplot-cli.exe）
+      * `tavotto/cli_entry.py` —— pip/pipx 的 console script 与 `python -m tavotto`
+      * `packaging/entry.py`   —— 冻结产物（Tavotto.exe / tavotto-cli.exe）
       * `app.py::main`         —— 主入口自己
     """
     repo = Path(__file__).resolve().parent.parent
-    impl = (repo / "src" / "magplot" / "engine" / "cli.py").read_text(encoding="utf-8")
+    impl = (repo / "src" / "tavotto" / "engine" / "cli.py").read_text(encoding="utf-8")
     assert 'reconfigure(encoding="utf-8"' in impl
-    for rel in ("src/magplot/cli_entry.py",
+    for rel in ("src/tavotto/cli_entry.py",
                 "packaging/entry.py",
-                "src/magplot/app.py"):
+                "src/tavotto/app.py"):
         src = (repo / rel).read_text(encoding="utf-8")
         assert "use_utf8_streams()" in src, f"{rel} 没有把 stdout 钉成 UTF-8"
 
@@ -276,9 +276,9 @@ def test_cli_entry_survives_a_non_utf8_console(tmp_path, argv):
 
     `app.main()` 一开头就把 stdout/stderr reconfigure 成 utf-8，正是为了
     Windows 上「stdout 不是真控制台就退回系统区域编码」这件事。把子命令
-    分派提前到 `magplot/cli_entry.py`（为了不为一次交接付 Flask 的冷启动）
+    分派提前到 `tavotto/cli_entry.py`（为了不为一次交接付 Flask 的冷启动）
     之后，`doctor` 跑在重配**之前**：cp1252/cp936 的控制台上第一句
-    `print(f"* Magplot …（交接协议 v1）")` 直接 UnicodeEncodeError，
+    `print(f"* Tavotto …（交接协议 v1）")` 直接 UnicodeEncodeError，
     退出码 1，调用方（安装器、Codex 插件）拿到的是一堆 traceback。
 
     只在 Windows 上发作，本机与 Linux 全绿——所以用 `PYTHONIOENCODING`
@@ -286,10 +286,10 @@ def test_cli_entry_survives_a_non_utf8_console(tmp_path, argv):
     """
     env = {**os.environ,
            "PYTHONIOENCODING": "cp1252",
-           "MAGPLOT_CONFIG_DIR": str(tmp_path / "cfg"),
-           "MAGPLOT_DATA_DIR": str(tmp_path / "data"),
+           "TAVOTTO_CONFIG_DIR": str(tmp_path / "cfg"),
+           "TAVOTTO_DATA_DIR": str(tmp_path / "data"),
            "PYTHONPATH": str(Path(__file__).resolve().parent.parent / "src")}
-    proc = subprocess.run([sys.executable, "-m", "magplot", *argv],
+    proc = subprocess.run([sys.executable, "-m", "tavotto", *argv],
                           capture_output=True, text=True, encoding="utf-8",
                           errors="replace", env=env, timeout=120)
     assert "UnicodeEncodeError" not in proc.stderr, proc.stderr
@@ -300,18 +300,18 @@ def test_packaging_entry_points_reconfigure_stdout_to_utf8():
     """打包/冒烟脚本的日志带中文与 ✓✗↓；Windows 管道 stdout 默认 cp1252/cp936，
     不 reconfigure 的话第一条日志就 UnicodeEncodeError 打死整个构建
     （windows-exe-smoke 首跑连撞两处：build_worker_runtime 的「↓」、
-    magplot.spec 的中文 print）。新加的入口脚本都要沿用 build_frontend.py
+    tavotto.spec 的中文 print）。新加的入口脚本都要沿用 build_frontend.py
     的同一段写法。"""
     repo = Path(__file__).resolve().parent.parent
-    for rel in ("packaging/magplot.spec",
+    for rel in ("packaging/tavotto.spec",
                 "scripts/build_frontend.py",
                 "scripts/build_desktop.py",
                 "scripts/build_worker_runtime.py",
                 "scripts/smoke_app.py",
                 "scripts/smoke_desktop.py",
                 # Codex 插件的交接脚本：Codex 调它时 stdout 就是管道，
-                # 输出的 JSON 带中文（hint / magplot open 回来的错误）
-                "codex-plugin/skills/magplot-figure/scripts/handoff.py",
+                # 输出的 JSON 带中文（hint / tavotto open 回来的错误）
+                "codex-plugin/skills/tavotto-figure/scripts/handoff.py",
                 # 这两个的结论全是中文，而 pytest 与 CI 都是捕获着调它们的
                 "scripts/gen_preflight_vectors.py",
                 "scripts/build_mcp_widget.py"):
@@ -329,7 +329,7 @@ def test_codex_handoff_json_survives_cp1252_stdout():
     而不是那行说明该怎么修的 JSON**，整条交接在 Windows 上等于不可用。
     """
     repo = Path(__file__).resolve().parent.parent
-    script = repo / "codex-plugin/skills/magplot-figure/scripts/handoff.py"
+    script = repo / "codex-plugin/skills/tavotto-figure/scripts/handoff.py"
     r = subprocess.run(
         [sys.executable, str(script), str(repo / "不存在的图.pdf")],
         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
@@ -413,14 +413,14 @@ def test_widget_fingerprint_still_notices_a_real_change():
 
 
 def test_codex_handoff_pins_utf8_on_every_decoding_spawn():
-    """它读的是 `magplot open` 的中文 JSON 与用户脚本的 traceback。
+    """它读的是 `tavotto open` 的中文 JSON 与用户脚本的 traceback。
 
     `text=True` 不钉 encoding 就跟随系统区域编码，cp936 下解码当场抛——
     与 `test_every_backend_subprocess_that_decodes_pins_utf8` 同一条纪律，
     只是那条只扫 engine/ 与 app.py，够不到插件目录。
     """
     repo = Path(__file__).resolve().parent.parent
-    script = repo / "codex-plugin/skills/magplot-figure/scripts/handoff.py"
+    script = repo / "codex-plugin/skills/tavotto-figure/scripts/handoff.py"
     tree = ast.parse(script.read_text(encoding="utf-8"))
     checked = 0
     for node in ast.walk(tree):
@@ -527,7 +527,7 @@ def test_worker_python_candidates_cover_common_windows_installs(monkeypatch):
 
 
 def test_frozen_app_never_probes_its_own_executable(monkeypatch):
-    """打包成独立应用时 sys.executable 是 Magplot 自己，不是解释器。
+    """打包成独立应用时 sys.executable 是 Tavotto 自己，不是解释器。
     拿它去 `-c "import matplotlib"` 会以莫名其妙的参数把应用再启动一次。"""
     monkeypatch.setattr(pool, "is_frozen", lambda: True)
     assert sys.executable not in pool._candidate_pythons()
@@ -542,7 +542,7 @@ def test_diagnostics_bundle_redacts_secrets_and_home(client, tmp_path, monkeypat
     import io
     import zipfile
 
-    from magplot.engine import ai_providers, diagnostics
+    from tavotto.engine import ai_providers, diagnostics
 
     ai_providers.save({"label": "Kimi", "agent": "claude", "api_key": "sk-abcdef123456",
                        "base_url": "https://api.moonshot.cn/anthropic"})
@@ -560,14 +560,14 @@ def test_diagnostics_bundle_redacts_secrets_and_home(client, tmp_path, monkeypat
     assert "sk-abcdef123456" not in blob        # 密钥
     assert os.path.expanduser("~") not in blob  # 个人主目录
     report = json.loads(z.read("report.json"))
-    assert report["magplot"]["version"]
+    assert report["tavotto"]["version"]
     assert "platform" in report["system"]
     assert report["ai_endpoints"][0]["has_key"] is True   # 有没有 key 要报，key 本身不报
 
 
 def test_diagnostics_bundle_survives_missing_log(client, monkeypatch):
     """日志文件还没生成时也要出得来包——排障工具自己不能先炸。"""
-    from magplot.engine import diagnostics
+    from tavotto.engine import diagnostics
 
     monkeypatch.setattr(diagnostics, "_log_path", lambda: Path("/nonexistent/app.log"))
     assert client.get("/api/diagnostics/bundle").status_code == 200
@@ -588,7 +588,7 @@ def test_runtime_path_logic_never_instantiates_a_foreign_pathlib():
     engine/runtime.py 的定位逻辑因此全程 os.path 拼字符串。这条用例盯住它，
     别哪天有人图省事又把 pathlib 写回去。
     """
-    from magplot.engine import runtime as rt
+    from tavotto.engine import runtime as rt
 
     src = Path(rt.__file__).read_text(encoding="utf-8")
     body = src.split("# 定位", 1)[1].split("# manifest", 1)[0]
@@ -604,18 +604,18 @@ def test_runtime_path_logic_never_instantiates_a_foreign_pathlib():
         _os.name = "nt"
         rt._candidate_roots()
         rt.status()
-        assert rt.runtime_python(r"C:\Magplot\runtime").endswith(r"\python.exe")
+        assert rt.runtime_python(r"C:\Tavotto\runtime").endswith(r"\python.exe")
     finally:
         _os.name = old
 
 
 def test_bundled_runtime_lives_under_the_onedir_internal_folder(tmp_path, monkeypatch):
-    """PyInstaller onedir 的布局是 `Magplot.exe` + `_internal\\`，
+    """PyInstaller onedir 的布局是 `Tavotto.exe` + `_internal\\`，
     spec 的 datas 落在 `_internal\\runtime`。安装程序按 recursesubdirs 收，
     免安装 zip 直接打包整个目录——两条发行路径都指望这个落点。"""
     import json as _json
 
-    from magplot.engine import runtime as rt
+    from tavotto.engine import runtime as rt
 
     internal = tmp_path / "_internal" / "runtime"
     internal.mkdir(parents=True)
@@ -631,16 +631,16 @@ def test_bundled_runtime_lives_under_the_onedir_internal_folder(tmp_path, monkey
 
     monkeypatch.setattr(rt, "is_frozen", lambda: True)
     monkeypatch.delattr(sys, "_MEIPASS", raising=False)
-    monkeypatch.setattr(sys, "executable", str(tmp_path / "Magplot.exe"))
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "Tavotto.exe"))
     assert rt.runtime_root() == str(internal)
 
 
 def test_bundled_worker_writes_no_cache_into_the_install_directory(monkeypatch):
-    """安装目录常在 `C:\\Program Files\\Magplot`（普通用户没写权限），
+    """安装目录常在 `C:\\Program Files\\Tavotto`（普通用户没写权限），
     而 Python 默认会往 site-packages 旁边写 __pycache__、matplotlib 会往
     `~/.matplotlib` 写字体缓存。前者会报权限错，后者卸载后留垃圾。"""
-    from magplot.engine import config as cfg
-    from magplot.engine import runtime as rt
+    from tavotto.engine import config as cfg
+    from tavotto.engine import runtime as rt
 
     # 真正的保证是命令行的 -B：embeddable 靠 ._pth 定路径，而 CPython 找到
     # ._pth 就 use_environment = 0，PYTHON* 那条路在这里不可靠
@@ -656,14 +656,14 @@ def test_windows_desktop_missing_runtime_says_reinstall_not_install_python(
         tmp_path, monkeypatch):
     """朋友那台机器上如果 runtime 没打进去，弹「请先安装 Python 3.10 以上」
     是纯粹的误导——他什么都没做错，是我们的包不完整。"""
-    from magplot.engine import runtime as rt
+    from tavotto.engine import runtime as rt
 
     monkeypatch.setattr(rt, "is_frozen", lambda: True)
     monkeypatch.setattr(pool, "is_frozen", lambda: True)
     monkeypatch.setattr(os, "name", "nt")
     monkeypatch.delattr(sys, "_MEIPASS", raising=False)
-    monkeypatch.setattr(sys, "executable", str(tmp_path / "Magplot.exe"))
-    monkeypatch.delenv("MAGPLOT_RUNTIME_DIR", raising=False)
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "Tavotto.exe"))
+    monkeypatch.delenv("TAVOTTO_RUNTIME_DIR", raising=False)
     monkeypatch.setattr(pool, "_prioritized_candidates", lambda: [])
     pool.reset_worker_python()
     try:
@@ -759,7 +759,7 @@ def test_create_no_window_has_exactly_one_definition():
 
     唯一出处是 runtime.py——CLAUDE.md 把它定为 Windows 平台判断的唯一出处。
     """
-    from magplot.engine import runtime as rt
+    from tavotto.engine import runtime as rt
 
     engine = Path(pool.__file__).parent
     definers = [py.name for py in sorted(engine.glob("*.py"))
@@ -777,7 +777,7 @@ def test_upgrade_pins_utf8_so_pip_output_cannot_explode(monkeypatch):
     UnicodeDecodeError，而 apply_upgrade 只接 OSError/TimeoutExpired——
     异常会原样逃出去变成 500，用户点「立即升级」拿到一串 traceback。
     """
-    from magplot.engine import updater
+    from tavotto.engine import updater
 
     seen = {}
 
@@ -889,7 +889,7 @@ def test_workerd_that_dies_while_poll_still_says_alive_gets_disabled(monkeypatch
     _ZombiePopen.instances = []
     monkeypatch.setattr(workerd_client.subprocess, "Popen", _ZombiePopen)
 
-    c = workerd_client.WorkerdClient("magplot-workerd")
+    c = workerd_client.WorkerdClient("tavotto-workerd")
     for _ in range(6):
         try:
             c.ensure_started()
@@ -942,12 +942,12 @@ def test_no_test_id_can_blow_the_windows_env_var_limit():
 
 # ---------------- 只装桌面版：外部程序发现不了 CLI ----------------------------
 #
-# 朋友的现象：Windows 上装好 Magplot 桌面程序，Codex 的 Magplot 插件一直说
-# 「没找到 Magplot」。他没装 Python、没装 Conda、PATH 里没有 magplot、也没设
-# MAGPLOT_CLI——插件当时查的正好就是这三处。
+# 朋友的现象：Windows 上装好 Tavotto 桌面程序，Codex 的 Tavotto 插件一直说
+# 「没找到 Tavotto」。他没装 Python、没装 Conda、PATH 里没有 tavotto、也没设
+# TAVOTTO_CLI——插件当时查的正好就是这三处。
 #
 # 根因不是「少查了一个目录」，而是**装出来的东西里根本没有能当命令行用的
-# 可执行文件**：Magplot.exe（Tauri 壳）与 sidecar 都是 console=False 打的，
+# 可执行文件**：Tavotto.exe（Tauri 壳）与 sidecar 都是 console=False 打的，
 # 没有真终端时 sys.stdout 是 None，packaging/entry.py 会把输出改道进 app.log，
 # 调用方 capture_output 拿到的是空 stdout 而不是那行 JSON。
 #
@@ -955,9 +955,9 @@ def test_no_test_id_can_blow_the_windows_env_var_limit():
 # 显式 system="win32"），完整的环境矩阵与插件那侧的同源比对在
 # tests/test_install_locate.py，真安装产物的验收在 nightly 的「装一遍再冒烟」。
 
-WIN_INSTALL = "C:\\Users\\张三\\AppData\\Local\\Magplot"
-WIN_DESKTOP_EXE = WIN_INSTALL + "\\Magplot.exe"
-WIN_CLI_EXE = WIN_INSTALL + "\\sidecar\\Magplot\\magplot-cli.exe"
+WIN_INSTALL = "C:\\Users\\张三\\AppData\\Local\\Tavotto"
+WIN_DESKTOP_EXE = WIN_INSTALL + "\\Tavotto.exe"
+WIN_CLI_EXE = WIN_INSTALL + "\\sidecar\\Tavotto\\tavotto-cli.exe"
 WIN_ENVIRON = {"LOCALAPPDATA": "C:\\Users\\张三\\AppData\\Local",
                "APPDATA": "C:\\Users\\张三\\AppData\\Roaming"}
 
@@ -965,10 +965,10 @@ WIN_ENVIRON = {"LOCALAPPDATA": "C:\\Users\\张三\\AppData\\Local",
 def test_desktop_only_windows_install_exposes_a_usable_cli():
     """只装了桌面版的 Windows 机器上，必须找得到一条能当命令行调的入口。
 
-    没有 MAGPLOT_CLI、PATH 里没有 magplot、没有安装清单（模拟被清掉的情况）
+    没有 TAVOTTO_CLI、PATH 里没有 tavotto、没有安装清单（模拟被清掉的情况）
     ——只剩「按已知安装位置找」这一条腿，它必须撑得住。
     """
-    from magplot.engine import locate
+    from tavotto.engine import locate
 
     installed = {WIN_DESKTOP_EXE, WIN_CLI_EXE}
     got = locate.find_cli(system="win32", environ=WIN_ENVIRON,
@@ -979,13 +979,13 @@ def test_desktop_only_windows_install_exposes_a_usable_cli():
 
 
 def test_the_gui_binary_is_never_offered_as_a_command_line():
-    """**绝不能把 Magplot.exe 当命令行交出去。**
+    """**绝不能把 Tavotto.exe 当命令行交出去。**
 
     它是 GUI 子系统的可执行文件：调用方拿不到 stdout，只会看到「命令没有输出」。
-    这一版没带 magplot-cli（v0.7.0 及更早的安装包就是这样）时，正确的回答是
-    「装了但缺 CLI，去升级」，而不是拿 Magplot.exe 顶上，也不是说「没装」。
+    这一版没带 tavotto-cli（v0.7.0 及更早的安装包就是这样）时，正确的回答是
+    「装了但缺 CLI，去升级」，而不是拿 Tavotto.exe 顶上，也不是说「没装」。
     """
-    from magplot.engine import locate
+    from tavotto.engine import locate
 
     only_gui = {WIN_DESKTOP_EXE}
     got = locate.find_cli(system="win32", environ=WIN_ENVIRON,
@@ -996,19 +996,19 @@ def test_the_gui_binary_is_never_offered_as_a_command_line():
 
 
 def test_the_windows_installer_ships_and_registers_that_cli():
-    """光有发现逻辑不够：安装器得真的把 magplot-cli 装进来并登记。
+    """光有发现逻辑不够：安装器得真的把 tavotto-cli 装进来并登记。
 
-    这三处任何一处漏掉，上面两条仍然全绿，而用户那里照旧「找不到 Magplot」。
+    这三处任何一处漏掉，上面两条仍然全绿，而用户那里照旧「找不到 Tavotto」。
     """
     root = Path(__file__).resolve().parent.parent
-    spec = (root / "packaging" / "magplot.spec").read_text(encoding="utf-8")
-    assert 'name="magplot-cli"' in spec, "安装产物里没有 console 版 CLI"
+    spec = (root / "packaging" / "tavotto.spec").read_text(encoding="utf-8")
+    assert 'name="tavotto-cli"' in spec, "安装产物里没有 console 版 CLI"
     assert "console=True" in spec
 
     nsi = (root / "src-tauri" / "windows" /
            "installer.nsi").read_text(encoding="utf-8")
-    from magplot.engine import locate
-    assert locate.CLI_NAME in nsi, "安装器没提到 magplot-cli.exe"
+    from tavotto.engine import locate
+    assert locate.CLI_NAME in nsi, "安装器没提到 tavotto-cli.exe"
     assert "doctor --json --write-manifest" in nsi, "装完没有登记安装清单"
 
 

@@ -6,7 +6,7 @@ name: Desktop apps (Tauri)
 # v0.3.0 退役删除，git 历史可找回。架构见 docs/adr/0002-tauri-desktop-shell.md。
 #
 # **两个平台的安装包都带内置渲染 runtime**（进 sidecar 的 _internal/runtime，
-# 由 scripts/build_worker_runtime.py 生成、经 packaging/magplot.spec 收进）：
+# 由 scripts/build_worker_runtime.py 生成、经 packaging/tavotto.spec 收进）：
 # 用户不用装 Python，首次渲染不联网。
 #   Windows: 官方 embeddable          → runtime\python.exe
 #   macOS:   python-build-standalone  → runtime/bin/python3.13（可重定位，逐个可签名；
@@ -19,7 +19,7 @@ name: Desktop apps (Tauri)
 #    动态端口 / nonce 认证 / 重放拒绝 / 打开项目 / 渲染 / 导出 / EOF 退出无孤儿；
 # 2. 两个平台都跑 smoke_app.py --expect-source bundled --expect-runtime
 #    （内置 runtime 真能渲染，且是「本该带、带的这份完整」）。
-#    **刻意不建 worker-env、不设 MM_WORKER_PYTHON**：一条借来的解释器会让
+#    **刻意不建 worker-env、不设 TAVOTTO_WORKER_PYTHON**：一条借来的解释器会让
 #    「runtime 根本没打进去」全程绿灯，而那正是这条门禁唯一要挡的东西；
 # 3. macOS 还要对**签完名的 .app 本体**再跑一次 smoke_app（从中文+空格路径），
 #    并逐个校验 .app 里每个 Mach-O 都签到了、架构都对——签名/公证之后产物
@@ -145,28 +145,28 @@ jobs:
           python -m pip install "flask>=3.1,<4" "pymupdf>=1.24,<2"
 
       - name: 构建前端 + workerd + sidecar（PyInstaller onedir）
-        # build_desktop.py 会先 cargo build --release 出 magplot-workerd，
-        # magplot.spec 再把它收进 _internal/。cargo 缺席时脚本当场中止——
+        # build_desktop.py 会先 cargo build --release 出 tavotto-workerd，
+        # tavotto.spec 再把它收进 _internal/。cargo 缺席时脚本当场中止——
         # 静默少一个 workerd 的包在界面上完全看不出来（功能全在、只是慢）
         env:
           # **两个平台的发行包都必须自带 runtime**（落在 sidecar 的
           # _internal/runtime；NSIS 与 .app 各自经 bundle.resources 一起收走）。
-          # 打开它之后 magplot.spec 会额外确认：清单 schema 对、平台/架构与本次
+          # 打开它之后 tavotto.spec 会额外确认：清单 schema 对、平台/架构与本次
           # 构建一致、冒烟状态是 passed——少任何一条都当场失败，而不是安静地
           # 产出一个「装完不能渲染」的安装包。
-          MAGPLOT_REQUIRE_RUNTIME: "1"
+          TAVOTTO_REQUIRE_RUNTIME: "1"
         run: python scripts/build_desktop.py --skip-tauri
 
       - name: 壳的单测（交接契约 --open/--stem）
         # **只在 macOS 这条腿跑一份**：解析的是纯字符串 argv，没有平台分支，
         # 两边各跑一遍只是多花一次 debug 编译。放在 sidecar 构建之后是因为
-        # build.rs 要 ../dist/Magplot 这个资源存在才肯生成清单。
+        # build.rs 要 ../dist/Tavotto 这个资源存在才肯生成清单。
         # 契约的另一半在 Python 侧（tests/test_handoff.py::test_desktop_argv_contract）。
         if: runner.os == 'macOS'
         working-directory: src-tauri
         run: cargo test
 
-      # 这里**刻意没有**「建一个 worker-env 再设 MM_WORKER_PYTHON」那一步。
+      # 这里**刻意没有**「建一个 worker-env 再设 TAVOTTO_WORKER_PYTHON」那一步。
       # 它曾经存在于 macOS 这条腿上，代价是整条门禁失去意义：借来的解释器让
       # 冒烟一路绿灯，而「内置 runtime 根本没打进安装包」这件事没有任何一处
       # 会发现——那正是用户装完打不开图的原因。渲染腿现在只能走内置 runtime，
@@ -175,8 +175,8 @@ jobs:
       - name: sidecar 冒烟（真产物：认证/项目/渲染/导出/退出）
         shell: bash
         run: |
-          if [ "$RUNNER_OS" = "Windows" ]; then EXE=dist/Magplot/Magplot.exe
-          else EXE=dist/Magplot/Magplot; fi
+          if [ "$RUNNER_OS" = "Windows" ]; then EXE=dist/Tavotto/Tavotto.exe
+          else EXE=dist/Tavotto/Tavotto; fi
           python scripts/smoke_desktop.py --sidecar "$EXE"
 
       - name: 发布前冒烟：内置 runtime 真能渲染
@@ -186,13 +186,13 @@ jobs:
         # --expect-control-plane      这次渲染真的跑在 Rust supervisor 上
         # 少了它们，「runtime / workerd 根本没打进去」都会全程绿灯——
         # 两种缺失在界面上都毫无症状。
-        # **刻意不设 MAGPLOT_WORKERD**：要验的是产物自带的那份被自动找到。
-        # 脚本自己会把 MM_WORKER_PYTHON / Conda / PYTHONHOME 等一律摘干净。
+        # **刻意不设 TAVOTTO_WORKERD**：要验的是产物自带的那份被自动找到。
+        # 脚本自己会把 TAVOTTO_WORKER_PYTHON / Conda / PYTHONHOME 等一律摘干净。
         shell: bash
         run: |
           set -euo pipefail
-          if [ "$RUNNER_OS" = "Windows" ]; then EXE=dist/Magplot/Magplot.exe
-          else EXE=dist/Magplot/Magplot; fi
+          if [ "$RUNNER_OS" = "Windows" ]; then EXE=dist/Tavotto/Tavotto.exe
+          else EXE=dist/Tavotto/Tavotto; fi
           python scripts/smoke_app.py --exe "$EXE" \
             --figures examples/runtime_check \
             --expect-source bundled --expect-runtime \
@@ -234,7 +234,7 @@ jobs:
           }
           # 这一档的 venv 只装了打包用的东西，pytest 得现装
           python -m pip install --quiet --disable-pip-version-check pytest
-          $env:MAGPLOT_NSIS_GENERATED = $gen[0].FullName
+          $env:TAVOTTO_NSIS_GENERATED = $gen[0].FullName
           python -m pytest -q tests/test_nsis_template.py
           if ($LASTEXITCODE -ne 0) { throw "安装界面门禁不过（退出码 $LASTEXITCODE）" }
 
@@ -268,7 +268,7 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           set -euo pipefail
-          APP=src-tauri/target/release/bundle/macos/Magplot.app
+          APP=src-tauri/target/release/bundle/macos/Tavotto.app
           python scripts/codesign_macos.py scan --app "$APP" --quiet \
             --expect-arch "$(python -c 'import platform;print(platform.machine())')"
 
@@ -276,7 +276,7 @@ jobs:
         if: runner.os == 'macOS' && env.MACOS_SIGN_IDENTITY != ''
         run: |
           set -euo pipefail
-          APP=src-tauri/target/release/bundle/macos/Magplot.app
+          APP=src-tauri/target/release/bundle/macos/Tavotto.app
           # 自内向外签**所有** Mach-O——漏一个公证就 Invalid，这是 0.1.3 时代
           # 用真公证换来的教训。内置 runtime 进来之后这件事从「几十个」变成
           # 「五百多个」（解释器 + numpy/scipy/pandas 的全部扩展模块），
@@ -290,7 +290,7 @@ jobs:
         if: runner.os == 'macOS' && env.MACOS_SIGN_IDENTITY != ''
         run: |
           set -euo pipefail
-          APP=src-tauri/target/release/bundle/macos/Magplot.app
+          APP=src-tauri/target/release/bundle/macos/Tavotto.app
           ARCH=$(python -c "import platform;print(platform.machine())")
           # `--verify --deep` 验不出「Resources 里躺着一个没签名的 .so」——
           # 那种文件是被当作*资源*封进签名的，封条本身合法。所以必须逐个验。
@@ -300,7 +300,7 @@ jobs:
 
       - name: 最终 .app 冒烟（签完名的产物，中文 + 空格路径）
         # **这一步才是「用户拿到的东西能不能用」**。前面那次冒烟打的是
-        # dist/Magplot（PyInstaller 的裸产物），此刻这份已经被 Tauri 收进
+        # dist/Tavotto（PyInstaller 的裸产物），此刻这份已经被 Tauri 收进
         # .app、又被逐个重签过——hardened runtime 会不会拦下内置解释器加载
         # numpy 的 .dylib、签名有没有把某个扩展模块弄坏，只有真跑一次才知道。
         #
@@ -311,15 +311,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          SRC=src-tauri/target/release/bundle/macos/Magplot.app
+          SRC=src-tauri/target/release/bundle/macos/Tavotto.app
           DEST="$RUNNER_TEMP/我的 应用 目录"
           mkdir -p "$DEST"
-          ditto "$SRC" "$DEST/Magplot.app"
-          SIDECAR="$DEST/Magplot.app/Contents/Resources/sidecar/Magplot/Magplot"
+          ditto "$SRC" "$DEST/Tavotto.app"
+          SIDECAR="$DEST/Tavotto.app/Contents/Resources/sidecar/Tavotto/Tavotto"
           test -x "$SIDECAR" || { echo "::error::.app 里没有可执行的 sidecar: $SIDECAR"; exit 1; }
           # 拷完再验一次签名：ditto 保不住签名的话，用户从 dmg 拖进
           # /Applications 的那一份也一样坏
-          codesign --verify --deep --strict "$DEST/Magplot.app"
+          codesign --verify --deep --strict "$DEST/Tavotto.app"
           python scripts/smoke_app.py --exe "$SIDECAR" \
             --figures examples/runtime_check \
             --workdir "$RUNNER_TEMP/冒烟 数据" \
@@ -334,14 +334,14 @@ jobs:
           set -euo pipefail
           mkdir -p out
           VER="$RELEASE_TAG"; VER="${VER#v}"
-          scripts/make_dmg.sh src-tauri/target/release/bundle/macos "out/Magplot-$VER-macOS.dmg"
+          scripts/make_dmg.sh src-tauri/target/release/bundle/macos "out/Tavotto-$VER-macOS.dmg"
 
       - name: 公证 .dmg
         if: runner.os == 'macOS' && env.APPLE_ID != ''
         run: |
           set -euo pipefail
           VER="$RELEASE_TAG"; VER="${VER#v}"
-          DMG="out/Magplot-$VER-macOS.dmg"
+          DMG="out/Tavotto-$VER-macOS.dmg"
           codesign --force --timestamp --sign "$MACOS_SIGN_IDENTITY" "$DMG"
           CREDS="--apple-id $APPLE_ID --password $APPLE_APP_PASSWORD --team-id $APPLE_TEAM_ID"
           # shellcheck disable=SC2086
@@ -372,16 +372,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          APP=src-tauri/target/release/bundle/macos/Magplot.app
+          APP=src-tauri/target/release/bundle/macos/Tavotto.app
           test -d "$APP" || { echo "::error::找不到 $APP"; exit 1; }
           # 公证过就把票据钉进 .app：更新器换上去的那份也要能离线过 Gatekeeper。
           # 没公证（本地/无证书构建）时 stapler 会失败，那不该拦住整条链。
           xcrun stapler staple "$APP" || echo "::warning::.app 未公证，更新包不带票据"
           mkdir -p out
-          tar -czf out/Magplot.app.tar.gz -C "$(dirname "$APP")" "$(basename "$APP")"
-          pnpm dlx @tauri-apps/cli@2.11.4 signer sign out/Magplot.app.tar.gz
-          test -f out/Magplot.app.tar.gz.sig || { echo "::error::签名文件没生成"; exit 1; }
-          ls -l out/Magplot.app.tar.gz*
+          tar -czf out/Tavotto.app.tar.gz -C "$(dirname "$APP")" "$(basename "$APP")"
+          pnpm dlx @tauri-apps/cli@2.11.4 signer sign out/Tavotto.app.tar.gz
+          test -f out/Tavotto.app.tar.gz.sig || { echo "::error::签名文件没生成"; exit 1; }
+          ls -l out/Tavotto.app.tar.gz*
 
       - name: 未签名提示（缺证书时如实标注，不冒充可发行）
         if: runner.os == 'macOS' && env.MACOS_SIGN_IDENTITY == ''
@@ -392,9 +392,9 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $env:MAGPLOT_DATA_DIR   = "$env:RUNNER_TEMP\mp-data"
-          $env:MAGPLOT_CONFIG_DIR = "$env:RUNNER_TEMP\mp-config"
-          $exe = "src-tauri\target\release\Magplot.exe"
+          $env:TAVOTTO_DATA_DIR   = "$env:RUNNER_TEMP\mp-data"
+          $env:TAVOTTO_CONFIG_DIR = "$env:RUNNER_TEMP\mp-config"
+          $exe = "src-tauri\target\release\Tavotto.exe"
           if (!(Test-Path $exe)) { throw "壳二进制缺失: $exe" }
           $p = Start-Process -FilePath $exe -PassThru
           $side = $null
@@ -421,12 +421,14 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path out | Out-Null
-          # 命名与 wheel / dmg 一致（Magplot-<ver>-Windows-Setup.exe），
-          # 不用 NSIS 默认的 Magplot_<ver>_x64-setup.exe——升级用户认的是老名字
+          # 命名与 wheel / dmg 一致（Tavotto-<ver>-Windows-Setup.exe），不用 NSIS
+          # 默认的 Tavotto_<ver>_x64-setup.exe。**SignPath 的 artifact 配置按这个
+          # 文件名匹配**（signpath/windows-installer.artifact-configuration.xml），
+          # 改名字要两处一起改，否则签名步骤找不到文件、发出去的是未签名安装包。
           $ver = "$env:RELEASE_TAG" -replace '^v', ''
           $nsis = @(Get-ChildItem src-tauri\target\release\bundle\nsis\*.exe)
           if ($nsis.Count -ne 1) { throw "NSIS 产物数量异常（$($nsis.Count) 个）" }
-          Copy-Item $nsis[0].FullName "out\Magplot-$ver-Windows-Setup.exe"
+          Copy-Item $nsis[0].FullName "out\Tavotto-$ver-Windows-Setup.exe"
           # 更新包不在这里收：它要装**签过名的**那个 exe，而签名要等 SignPath
           # 回来（见后面「Windows 更新包」那步）。此刻 out/ 整个目录会被当成
           # 签名请求的输入，多塞一个 zip 进去只会让 SignPath 那边对不上。
@@ -462,12 +464,12 @@ jobs:
         if: runner.os == 'Windows' && vars.SIGNPATH_ENABLED == 'true'
         shell: pwsh
         run: |
-          $signed = @(Get-ChildItem signed-out -Recurse -File -Filter "Magplot-$env:APP_VERSION-Windows-Setup.exe")
+          $signed = @(Get-ChildItem signed-out -Recurse -File -Filter "Tavotto-$env:APP_VERSION-Windows-Setup.exe")
           if ($signed.Count -ne 1) {
             throw "SignPath 返回的签名安装包数量异常（$($signed.Count) 个）"
           }
-          Copy-Item $signed[0].FullName "out\Magplot-$env:APP_VERSION-Windows-Setup.exe" -Force
-          $signature = Get-AuthenticodeSignature "out\Magplot-$env:APP_VERSION-Windows-Setup.exe"
+          Copy-Item $signed[0].FullName "out\Tavotto-$env:APP_VERSION-Windows-Setup.exe" -Force
+          $signature = Get-AuthenticodeSignature "out\Tavotto-$env:APP_VERSION-Windows-Setup.exe"
           if ($signature.Status -ne 'Valid') {
             throw "SignPath 返回的安装包签名无效：$($signature.Status)"
           }
@@ -489,9 +491,9 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $exe = "out\Magplot-$env:APP_VERSION-Windows-Setup.exe"
+          $exe = "out\Tavotto-$env:APP_VERSION-Windows-Setup.exe"
           if (!(Test-Path $exe)) { throw "找不到最终安装包: $exe" }
-          $zip = "out\Magplot_${env:APP_VERSION}_x64-setup.nsis.zip"
+          $zip = "out\Tavotto_${env:APP_VERSION}_x64-setup.nsis.zip"
           Compress-Archive -Path $exe -DestinationPath $zip -Force
           pnpm dlx @tauri-apps/cli@2.11.4 signer sign $zip
           if (!(Test-Path "$zip.sig")) { throw "更新包签名没生成" }
@@ -499,7 +501,7 @@ jobs:
 
       # **两条腿都要传**：updater-manifest 只看 desktop-tauri-* 这些 artifact，
       # 「挂到 Release」那步喂不到它。这里曾经写着 runner.os == 'Windows'，
-      # 于是 macOS 的 Magplot.app.tar.gz(.sig) 只上了 Release、从没进过清单，
+      # 于是 macOS 的 Tavotto.app.tar.gz(.sig) 只上了 Release、从没进过清单，
       # latest.json 里一直只有 windows-x86_64——dmg 装的那批用户永远查不到
       # 新版本，而整条链全绿（v0.7.0 就是这么发出去的）。
       - name: 上传最终桌面产物（更新清单的输入）

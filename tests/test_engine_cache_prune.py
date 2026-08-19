@@ -9,7 +9,7 @@ import threading
 
 import pytest
 
-from magplot.engine import pool
+from tavotto.engine import pool
 
 
 def _aged_dir(root, name: str, order: int, size: int = 0):

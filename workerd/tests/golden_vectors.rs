@@ -7,10 +7,10 @@
 
 use std::path::PathBuf;
 
-use magplot_workerd::patchspec::{
+use serde_json::Value;
+use tavotto_workerd::patchspec::{
     canonical_json, canonicalize_with_diagnostics, patch_hash, write_value,
 };
-use serde_json::Value;
 
 fn vectors_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

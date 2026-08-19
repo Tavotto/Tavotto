@@ -2,7 +2,7 @@
  * 出版规范 profile（TypeScript 侧读取）。
  *
  * **规则常量一个字都不在这里写**：整份规范来自 `@profiles` 别名指向的
- * `src/magplot/profiles/publication.json`——与 Python 的 `engine/profiles.py`
+ * `src/tavotto/profiles/publication.json`——与 Python 的 `engine/profiles.py`
  * 读的是同一个文件（别名配置在 vite.config.ts 与 vitest.config.ts，各一处）。
  * 抄一份到 TS 里的代价是「双栏 150mm 改一处、另一处照旧放行」，用户会拿到两个
  * 互相矛盾的体检结论。

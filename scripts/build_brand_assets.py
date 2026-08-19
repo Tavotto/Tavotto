@@ -6,7 +6,7 @@
     full     ≥ 40 px   五元素齐全，两级线宽 20 / 10
     compact  22–39 px  去分栏线，结构线加粗到 32
     mini     ≤ 21 px   反转为实心 Ink 底，只剩色块
-几何与配色规则来自 Magplot Brand System Rev 2.0。改动几何只改本文件，
+几何与配色规则来自 Tavotto Brand System Rev 2.0。改动几何只改本文件，
 然后重跑：
 
     python scripts/build_brand_assets.py      # 再跑 build_icons.py 重出 .icns/.ico
@@ -92,7 +92,7 @@ def rects(variant: str, palette: dict[str, str], indent: str = "  ") -> str:
 def mark_svg(variant: str, palette_name: str) -> str:
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"\n'
-        f'     role="img" aria-label="Magplot">\n'
+        f'     role="img" aria-label="Tavotto">\n'
         f"  <!-- {GENERATED} · {variant} / {palette_name} -->\n"
         f"{rects(variant, PALETTES[palette_name])}\n"
         f"</svg>\n"
@@ -108,7 +108,7 @@ def icon_svg() -> str:
     """
     return (
         '<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"\n'
-        '     viewBox="0 0 1024 1024" role="img" aria-label="Magplot">\n'
+        '     viewBox="0 0 1024 1024" role="img" aria-label="Tavotto">\n'
         f"  <!-- {GENERATED} -->\n"
         "  <defs>\n"
         '    <clipPath id="squircle">\n'
@@ -141,12 +141,12 @@ def favicon_href() -> str:
 def main() -> int:
     BRAND_DIR.mkdir(parents=True, exist_ok=True)
     files = {
-        "magplot-mark.svg": mark_svg("full", "surface"),
-        "magplot-mark-compact.svg": mark_svg("compact", "surface"),
-        "magplot-mark-mini.svg": mark_svg("mini", "surface"),
-        "magplot-mark-paper.svg": mark_svg("full", "paper"),
-        "magplot-mark-reverse.svg": mark_svg("full", "reverse"),
-        "magplot-mark-mono.svg": mark_svg("full", "mono"),
+        "tavotto-mark.svg": mark_svg("full", "surface"),
+        "tavotto-mark-compact.svg": mark_svg("compact", "surface"),
+        "tavotto-mark-mini.svg": mark_svg("mini", "surface"),
+        "tavotto-mark-paper.svg": mark_svg("full", "paper"),
+        "tavotto-mark-reverse.svg": mark_svg("full", "reverse"),
+        "tavotto-mark-mono.svg": mark_svg("full", "mono"),
     }
     for name, text in files.items():
         (BRAND_DIR / name).write_text(text, encoding="utf-8")

@@ -6,7 +6,7 @@
 
 代码与界面里混用了「项目、项目包、布局、文档、画布」五个词指代三种东西：
 `FigureDocument`（schema 2 的单画布文档）、layouts/ 下的命名 JSON、
-`.mmpack.zip` 项目包。Magplot 要支持一个项目多张图，必须先固定名词。
+`.mmpack.zip` 项目包。Tavotto 要支持一个项目多张图，必须先固定名词。
 
 ## 决定
 
@@ -14,14 +14,14 @@
 
 | 层级 | 定义 | 承载 |
 |---|---|---|
-| **Project** | 一个 Magplot 项目 | 图库路径（figures 目录）、素材根、导出位置、项目设置、布局版本、AI 历史 |
+| **Project** | 一个 Tavotto 项目 | 图库路径（figures 目录）、素材根、导出位置、项目设置、布局版本、AI 历史 |
 | **Canvas** | 项目中一张可独立编辑、命名、排序、导出的科学图 | page、objects、guides、layoutGroups（即原 schema 2 文档的主体） |
 | **Tab** | 当前项目里**已打开**的 Canvas | 打开顺序、激活态、dirty 点；≠ 最近文件列表 |
 | **Object** | Canvas 内的面板 / 文字 / 箭头 / 形状 | 现有 CanvasObject 类型不变 |
 
 命名统一：
 
-- 前端类型：`MagplotProject`（schema 3 顶层）、`Canvas`、`CanvasObject`；
+- 前端类型：`TavottoProject`（schema 3 顶层）、`Canvas`、`CanvasObject`；
   「布局文档 / 文档」在代码注释与 UI 里一律改称「项目 /（某张）画布」。
 - 后端：`FIGURES_DIR` 语义为「当前项目的图库目录」；layouts/ 下的持久化按
   项目组织。
@@ -31,10 +31,15 @@
 
 - **工作态**：项目目录 + manifest（服务器端 `layouts/` 内按项目存 JSON，
   自动保存原子写）。可 diff、可增量、可被版本时间线复用。
-- **便携分享**：单文件 **`.magplot`** 压缩包（zip 容器：`project.json` +
-  `assets/` + `scripts/` + sha1 清单），kind=`magplot-package`。
-- **兼容**：读取端继续接受 `.mmpack.zip`（kind=`magic-matplot-package`、
-  layout.json schema 2）；打开时迁移为单 Canvas 的 schema 3 项目。
+- **便携分享**：单文件 **`.tavotto`** 压缩包（zip 容器：`project.json` +
+  `assets/` + `scripts/` + sha1 清单），kind=`tavotto-package`。
+- ~~**兼容**：读取端继续接受 `.mmpack.zip`（kind=`magic-matplot-package`、
+  layout.json schema 2）；打开时迁移为单 Canvas 的 schema 3 项目。~~
+  **2026-08-20 作废**：从 Magplot 改名为 Tavotto 时选了干净断裂，
+  `brand.py` / `brand.ts` 不再有 `LEGACY_*` 那一档（连带 `magplot-package` /
+  `.magplot` 也不认）。检视端点仍按 zip 的结构而非 `kind`/扩展名判断，
+  所以老包实际上还打得开——但那是不校验的副作用，不再是承诺。
+  schema 2 → 3 的迁移（`migrateToProject`）与品牌无关，照旧。
 
 ## Schema 3 概要
 

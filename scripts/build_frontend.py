@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""构建前端并把产物放进包里（src/magplot/web），wheel 直接带着走。
+"""构建前端并把产物放进包里（src/tavotto/web），wheel 直接带着走。
 
 打包前必须先跑这个——用户装 wheel 时不该需要 node/pnpm。
 CI 的发布流水线和本地 `python -m build` 之前都走同一条命令：
@@ -22,7 +22,7 @@ for _stream in (sys.stdout, sys.stderr):
 ROOT = Path(__file__).resolve().parent.parent
 WEB_SRC = ROOT / "web"
 DIST = WEB_SRC / "dist"
-TARGET = ROOT / "src" / "magplot" / "web"
+TARGET = ROOT / "src" / "tavotto" / "web"
 
 
 def run(cmd: list[str]) -> None:

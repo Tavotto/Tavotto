@@ -20,11 +20,16 @@ import { modKey } from '@/lib/utils'
  *   绝不静默生成空面板。
  */
 
-import { CLIPBOARD_FORMAT, LEGACY_CLIPBOARD_FORMAT } from '@/lib/brand'
+import { CLIPBOARD_FORMAT } from '@/lib/brand'
 
-/** 写出用新魔数；读取同时接受旧魔数（换版本前复制的内容仍可粘贴） */
+/**
+ * 只认一个魔数。改名到 Tavotto 时旧魔数（`magplot/objects@1` 与更早的
+ * `magic-matplot/objects@1`）一并去掉了——见 `lib/brand.ts` 的干净断裂说明。
+ * 数组这个形状留着：它是「读取端可以比写出端宽」的接口，将来真要认第二种
+ * 负载时不必再改调用方。
+ */
 const MAGIC = CLIPBOARD_FORMAT
-const MAGICS: string[] = [CLIPBOARD_FORMAT, LEGACY_CLIPBOARD_FORMAT]
+const MAGICS: string[] = [CLIPBOARD_FORMAT]
 
 interface ClipPayload {
   magic: string

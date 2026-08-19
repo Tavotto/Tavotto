@@ -71,20 +71,20 @@ export function traceFrame(t: PreviewTiming): void {
   t.preview_frame_count++
   if (t.preview_first_frame == null) {
     t.preview_first_frame = now() - t.preview_session_start
-    mark('magplot:preview_first_frame')
+    mark('tavotto:preview_first_frame')
   }
 }
 
 export function traceCommit(t: PreviewTiming): void {
   t.commit_start = now() - t.preview_session_start
-  mark('magplot:preview_commit_start')
+  mark('tavotto:preview_commit_start')
 }
 
 export function traceAuthority(t: PreviewTiming): void {
   const at = now() - t.preview_session_start
   t.authority_svg_replaced = at
   if (t.commit_start != null) t.commit_to_authority_ms = at - t.commit_start
-  mark('magplot:preview_authority_svg')
+  mark('tavotto:preview_authority_svg')
   report(t)
 }
 
@@ -100,7 +100,7 @@ export function report(t: PreviewTiming): void {
   }
   if (!traceEnabled()) return
   console.info(
-    `[magplot preview] ${t.panelId} 首帧 ${fmt(t.preview_first_frame)}ms · ` +
+    `[tavotto preview] ${t.panelId} 首帧 ${fmt(t.preview_first_frame)}ms · ` +
       `${t.preview_frame_count}/${t.preview_move_count} 帧 · ` +
       `commit→权威 ${fmt(t.commit_to_authority_ms)}ms`,
     t,

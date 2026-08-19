@@ -145,7 +145,7 @@ describe('项目失效（409 no_project）的前端出口', () => {
     await fetchPanels().catch(() => {})
 
     // 兜底副本：磁盘那份此刻必然写不进去，本机这份绝不能跟着没
-    expect(localStorage.getItem('magplot.autosave.d_gone')).not.toBeNull()
+    expect(localStorage.getItem('tavotto.autosave.d_gone')).not.toBeNull()
     // 先冲刷再忘掉 pj：这次 PUT 仍带着失效的 p_dead，不会落到后端默认项目上
     const put = calls.find((c) => c.method === 'PUT' && c.url.includes('/api/autosave/'))
     expect(put?.url).toContain('pj=p_dead')

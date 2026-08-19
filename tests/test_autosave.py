@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from magplot import app as m
+from tavotto import app as m
 
 
 @pytest.fixture

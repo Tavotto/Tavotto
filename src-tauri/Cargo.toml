@@ -1,9 +1,9 @@
-# Magplot 桌面壳（Tauri 2）：窗口 + 生命周期 + 菜单，业务全部在 Python sidecar。
+# Tavotto 桌面壳（Tauri 2）：窗口 + 生命周期 + 菜单，业务全部在 Python sidecar。
 # 架构与安全模型见 docs/adr/0002-tauri-desktop-shell.md。
 [package]
-name = "magplot-desktop"
+name = "tavotto-desktop"
 version = "0.7.0"
-description = "Magplot 桌面应用外壳"
+description = "Tavotto 桌面应用外壳"
 edition = "2021"
 license = "AGPL-3.0-only"
 publish = false

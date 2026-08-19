@@ -20,7 +20,7 @@ import path from 'node:path'
 
 const REPO = path.resolve(import.meta.dirname, '..', '..')
 const WIDGET = path.join(REPO, 'codex-plugin', 'mcp', 'widget', 'canvas.html')
-const ORIGIN = 'http://magplot-mcp.test'
+const ORIGIN = 'http://tavotto-mcp.test'
 
 /** 一张最小但真实的 manifest：figure + axes + 可拖的标题 + 图例 */
 function makeManifest(titlePt: number, titleAt: [number, number]) {
@@ -193,7 +193,7 @@ async function boot(page: Page): Promise<FrameLocator> {
         `return (${mkManifest})(pt, at)`,
       ) as (pt: number, at: [number, number]) => unknown
       w.__REPLY__ = (params: ToolCall) => {
-        if (params.name === 'magplot_apply_overrides') {
+        if (params.name === 'tavotto_apply_overrides') {
           const patches = (params.arguments.patches ?? []) as {
             gid: string
             prop: string
@@ -229,13 +229,13 @@ async function boot(page: Page): Promise<FrameLocator> {
           not_verifiable: [],
           suggestions: [],
         }
-        if (params.name === 'magplot_preflight') {
+        if (params.name === 'tavotto_preflight') {
           return {
             content: [{ type: 'text', text: '✓ 全部通过' }],
             structuredContent: { ok: true, ...clean },
           }
         }
-        if (params.name === 'magplot_export') {
+        if (params.name === 'tavotto_export') {
           return {
             content: [{ type: 'text', text: '已导出' }],
             structuredContent: {
@@ -292,9 +292,9 @@ test('用鼠标拖图内标题 → tools/call 发全量 patches → 用响应更
 
   await expect
     .poll(async () => (await calls(page)).map((c) => c.name), { timeout: 30_000 })
-    .toContain('magplot_apply_overrides')
+    .toContain('tavotto_apply_overrides')
 
-  const applied = (await calls(page)).find((c) => c.name === 'magplot_apply_overrides')!
+  const applied = (await calls(page)).find((c) => c.name === 'tavotto_apply_overrides')!
   expect(applied.arguments.session_id).toBe('s-e2e')
   const patches = applied.arguments.patches as { gid: string; prop: string; value: unknown }[]
   // **全量列表**，而且拖出来的正是那条 figure 锚定的位置 override
@@ -324,8 +324,8 @@ test('预检与导出都走 tools/call，结果回到界面上', async ({ page }
   await expect(frame.getByText('/tmp/out/FigE2E.pdf')).toBeVisible({ timeout: 20_000 })
 
   const list = await calls(page)
-  expect(list.map((c) => c.name)).toContain('magplot_preflight')
-  const exp = list.find((c) => c.name === 'magplot_export')!
+  expect(list.map((c) => c.name)).toContain('tavotto_preflight')
+  const exp = list.find((c) => c.name === 'tavotto_export')!
   expect(exp.arguments.session_id).toBe('s-e2e')
   // 没有阻断项时不该带强制标记
   expect(exp.arguments.explicit_confirm).toBe(false)

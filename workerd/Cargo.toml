@@ -1,18 +1,18 @@
 [package]
-name = "magplot-workerd"
+name = "tavotto-workerd"
 version = "0.7.0"
 edition = "2021"
 rust-version = "1.75"
 license = "AGPL-3.0-only"
-description = "Magplot 渲染 worker 的 supervisor：进程生命周期、队列合并、超时与取消"
+description = "Tavotto 渲染 worker 的 supervisor：进程生命周期、队列合并、超时与取消"
 publish = false
 
 [lib]
-name = "magplot_workerd"
+name = "tavotto_workerd"
 path = "src/lib.rs"
 
 [[bin]]
-name = "magplot-workerd"
+name = "tavotto-workerd"
 path = "src/main.rs"
 
 [dependencies]

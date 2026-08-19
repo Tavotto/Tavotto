@@ -7,7 +7,7 @@
 ## 背景
 
 ADR 0005 把插件定成 **skills-only**，理由是「Codex 本来就能跑 Python、读写文件，
-缺的是约定与最后一跳」。这个判断在「生成脚本 → 交接 → 打开 Magplot」这条链上是对的，
+缺的是约定与最后一跳」。这个判断在「生成脚本 → 交接 → 打开 Tavotto」这条链上是对的，
 但它有一个前提：**用户愿意离开 Codex**。
 
 实际用起来，被抱怨的正是那一跳：图刚画完，用户想挪一下图例、把刻度字号从 8 改成 9，
@@ -24,7 +24,7 @@ ADR 0005 把插件定成 **skills-only**，理由是「Codex 本来就能跑 Pyt
 
 ### 1. 出版规范是一份版本化的 canonical JSON，Python 与 TypeScript 共读
 
-`src/magplot/profiles/publication.json`（随 wheel 分发）是**规则的唯一出处**：
+`src/tavotto/profiles/publication.json`（随 wheel 分发）是**规则的唯一出处**：
 
 * Python 侧 `engine/profiles.py` 走 `importlib.resources` 定位（装成 wheel 后源码树的
   相对路径不存在）；
@@ -51,7 +51,7 @@ profile 里有 `profile_id` / `version` / `widths_mm` / `allowed_aspect_ratios` 
 
 | 求值器 | 服务谁 |
 | --- | --- |
-| `src/magplot/engine/preflight.py` | MCP server 的 `magplot_preflight` / `magplot_export` |
+| `src/tavotto/engine/preflight.py` | MCP server 的 `tavotto_preflight` / `tavotto_export` |
 | `web/src/lib/preflight.ts` | 画布与导出对话框 |
 
 **两份不许分叉**，办法与 patchspec ↔ Rust supervisor 完全一样：同一份输入
@@ -91,7 +91,7 @@ profile 里有 `profile_id` / `version` / `widths_mm` / `allowed_aspect_ratios` 
 ### 3. 插件加一个本地 stdio MCP server —— 推翻 ADR 0005 的「不做 MCP server」
 
 ADR 0005 说「多一个常驻进程只是把简单事情复杂化」。那个判断的适用范围是**生成脚本**：
-Codex 确实不需要我们帮它写文件。但**结构化图表编辑**不是这样——它要的是 Magplot 的
+Codex 确实不需要我们帮它写文件。但**结构化图表编辑**不是这样——它要的是 Tavotto 的
 manifest（哪些元素可改、每个元素有哪些属性）、override 语义（全量列表 + 自动还原）、
 canonical patch 哈希、出版规范预检、真矢量导出。这些没有一样是「跑个 Python 脚本」
 能替代的，而把它们塞进技能文档等于让模型每次现推一遍。
@@ -101,12 +101,12 @@ canonical patch 哈希、出版规范预检、真矢量导出。这些没有一�
 
 | 工具 | 干什么 |
 | --- | --- |
-| `magplot_open_figure` | 解析 → 登记 → 起引擎会话 → 渲染一次；回 manifest / SVG / patch hash / profile / 预检 |
-| `magplot_apply_overrides` | 应用**全量** patches 并重渲染；回新 manifest / SVG / warnings / 被拒条目 |
-| `magplot_preflight` | 出版规范体检，机器可读 + 人类可读两份 |
-| `magplot_export` | **先预检**，有 error 且没有 `explicit_confirm` 时一张图都不出；写 proof report |
-| `magplot_verify_replay` | 起一次性 worker 全量重放，与热态逐元素比几何 |
-| `magplot_close_session` | 释放会话；用户项目数据零改动 |
+| `tavotto_open_figure` | 解析 → 登记 → 起引擎会话 → 渲染一次；回 manifest / SVG / patch hash / profile / 预检 |
+| `tavotto_apply_overrides` | 应用**全量** patches 并重渲染；回新 manifest / SVG / warnings / 被拒条目 |
+| `tavotto_preflight` | 出版规范体检，机器可读 + 人类可读两份 |
+| `tavotto_export` | **先预检**，有 error 且没有 `explicit_confirm` 时一张图都不出；写 proof report |
+| `tavotto_verify_replay` | 起一次性 worker 全量重放，与热态逐元素比几何 |
+| `tavotto_close_session` | 释放会话；用户项目数据零改动 |
 
 ### 两处已知限制（如实记着，别当成已经解决）
 
@@ -120,15 +120,15 @@ Python 有 `python.exe`，`python3.exe` 只是 Microsoft Store 的执行别名�
 解释器的绝对路径即可。等确认了官方清单的平台分支写法再收掉这一条。
 
 **② 允许的项目根不能只看进程 cwd。** 装好的插件里 `.mcp.json` 的 `cwd` 指向
-**插件自己的目录**（`./mcp/server.py` 要靠它解析），「不给 `MAGPLOT_MCP_ROOTS`
+**插件自己的目录**（`./mcp/server.py` 要靠它解析），「不给 `TAVOTTO_MCP_ROOTS`
 就用 cwd」于是把用户工作区里的每一张图都判成 `path_out_of_scope`——默认流程
-根本跑不起来。现在的顺序是：`MAGPLOT_MCP_ROOTS` → 宿主传过来的工作区变量
-（`MAGPLOT_MCP_WORKSPACE` / `CODEX_*`，都已进 `env_vars` 白名单）→ 进程 cwd
+根本跑不起来。现在的顺序是：`TAVOTTO_MCP_ROOTS` → 宿主传过来的工作区变量
+（`TAVOTTO_MCP_WORKSPACE` / `CODEX_*`，都已进 `env_vars` 白名单）→ 进程 cwd
 **且它不在插件包里**。一个都拿不到时报 `no_workspace_root` 并直说要设什么：
 静默放行等于没有边界，静默拒绝等于「装了插件但什么都打不开」且毫无线索。
 
 **这一层只翻译，不实现**：会话、manifest、override、patch 规范化、导出全部落回
-`magplot.engine.{pool,registry,handoff,patchspec,profiles,preflight}`。发给 worker 的
+`tavotto.engine.{pool,registry,handoff,patchspec,profiles,preflight}`。发给 worker 的
 patches 与 Flask `/api/engine/render` 走的是同一条路径，所以 ADR 0003 的不变式原样成立：
 
     hot_apply(canonical_patches)
@@ -140,29 +140,29 @@ patches 与 Flask `/api/engine/render` 走的是同一条路径，所以 ADR 000
 
 三条边界：
 
-* **路径范围校验**（`MAGPLOT_MCP_ROOTS`，缺省进程 cwd）：Codex 传来的路径可能是模型
+* **路径范围校验**（`TAVOTTO_MCP_ROOTS`，缺省进程 cwd）：Codex 传来的路径可能是模型
   推断的，越界一律拒，**绝不「就近找一个能用的」**；
 * **stdout 归协议独占**：`hijack_stdout()` 把 `sys.stdout` 改道到 stderr 并**先存下真正
   的 stdout 句柄**。存的顺序反了，协议帧全写到 stderr 上，症状是「initialize 永远等不到
   响应」且没有任何报错（开发期真撞到过，`test_protocol_owns_the_real_stdout` 看着）；
-* **没装 Magplot 时降级而不是退出**：启动器找不到能 import magplot 的解释器就起一个
+* **没装 Tavotto 时降级而不是退出**：启动器找不到能 import tavotto 的解释器就起一个
   只会说人话的 server（握手正常，每个工具回「这么装」）。静默退出在 Codex 里表现为
   「插件没有工具」。
 
 ### 4. 内嵌画布是 MCP App，UI 只挂在需要它的两个工具上
 
-`ui://magplot/canvas/v1.html`，MIME `text/html;profile=mcp-app`，协议是 MCP Apps 的
+`ui://tavotto/canvas/v1.html`，MIME `text/html;profile=mcp-app`，协议是 MCP Apps 的
 **JSON-RPC over postMessage**（`ui/initialize` → `ui/notifications/initialized`；
 host 推 `ui/notifications/tool-result`；app 发 `tools/call` / `ui/message` /
 `ui/request-display-mode`）。桥是手写的一百来行（`web/src/mcp/appsBridge.ts`），
 不引 SDK——那是个 npm 包，而画布要打成单文件塞进资源里。
 `window.openai.*` 只在标准路径拿不到东西时兜底，且逐个 feature-detect。
 
-**画布本体就是 Magplot 前端那一份代码**：`CanvasStage` / `OverlaySvg` /
+**画布本体就是 Tavotto 前端那一份代码**：`CanvasStage` / `OverlaySvg` /
 `interactions.ts` / `ObjectView` / `TextView` / `ArrowView` / `ElementInspector` /
 既有 stores，拖拽、命中测试、shift 锁向、吸附、undo/redo、patch 状态**一行都没有第二份
 实现**。接进去只改了一处：`lib/engineTransport.ts` 让「消息怎么送到引擎」可替换——
-Magplot 界面里是 HTTP，iframe 里是 `tools/call`。两侧最终落到同一个
+Tavotto 界面里是 HTTP，iframe 里是 `tools/call`。两侧最终落到同一个
 `pool.EngineWorker.override`。
 
 那一处的设计有个坑值得记：传输层**不 import `lib/api`**，只存一个可选覆盖。
@@ -170,7 +170,7 @@ Magplot 界面里是 HTTP，iframe 里是 `tools/call`。两侧最终落到同�
 而且既有单测大量 `vi.mock('@/lib/api')` 打桩 `engineRender`，搬进闭包会让那些桩全部
 失效（实测炸了 7 个文件）。
 
-* **UI 只挂在 `magplot_open_figure` 与 `magplot_apply_overrides` 上**：预检 / 导出 /
+* **UI 只挂在 `tavotto_open_figure` 与 `tavotto_apply_overrides` 上**：预检 / 导出 /
   关会话的产出本来就是文字与文件，给它们挂 UI 只会让画布不停重建。
 * **CSP 的 `connectDomains` 是空的**：画布不发任何跨源请求。sidecar 的端口是动态的
   （`127.0.0.1:0`），根本没法提前写进白名单——这也是为什么必须走 `tools/call` 而不是
@@ -195,5 +195,5 @@ Magplot 界面里是 HTTP，iframe 里是 `tools/call`。两侧最终落到同�
   `$\\mathrm{cm^{-1}}$` 这类数学式在 matplotlib 里会落到 DejaVu 的数学字形上——
   导出的 PDF 里能看到两个字体。预检查不出这一条。
 * **画布合成的导出仍只出 PDF/PNG**（走 PyMuPDF）。SVG 只在单图这一侧给
-  （`magplot_export` / 引擎导出），导出对话框里如实说明。
+  （`tavotto_export` / 引擎导出），导出对话框里如实说明。
 * MCP 会话上限 8 个，超了按最久未用淘汰——每个会话背后是一个常驻 Python 进程。

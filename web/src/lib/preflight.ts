@@ -11,8 +11,8 @@ import type { Manifest, ManifestElement } from './api'
  * 出版规范预检 —— **规则全部来自 profile，一条都不在这里硬编码**。
  *
  * 这是同一套规则的第二个求值器：权威规范文件是
- * `src/magplot/profiles/publication.json`（经 `@profiles` 别名 import），
- * Python 侧的求值器是 `src/magplot/engine/preflight.py`（MCP server 走那条）。
+ * `src/tavotto/profiles/publication.json`（经 `@profiles` 别名 import），
+ * Python 侧的求值器是 `src/tavotto/engine/preflight.py`（MCP server 走那条）。
  * 浏览器里跑不了 Python，所以求值器必须有两份；两份的判据靠
  * `tests/golden/preflight_vectors.json` 对齐——**pytest 与 vitest 各跑一遍
  * 同一份向量**，改任一侧必须让两边同时绿。

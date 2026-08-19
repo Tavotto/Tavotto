@@ -1,4 +1,4 @@
-"""桌面 sidecar（`magplot --desktop-sidecar`）的护栏。
+"""桌面 sidecar（`tavotto --desktop-sidecar`）的护栏。
 
 真 HTTP 打真 server（不是 test_client）：认证、Host/Origin、SSE、握手、
 优雅关停走的都是 werkzeug 线程 server 的真实路径。浏览器模式回归用例
@@ -19,8 +19,8 @@ from pathlib import Path
 
 import pytest
 
-from magplot import app as appmod
-from magplot import desktop
+from tavotto import app as appmod
+from tavotto import desktop
 
 NONCE = "test-nonce-0123456789abcdef"
 
@@ -53,8 +53,8 @@ def sidecar(tmp_path):
     yield sc
     sc.stop()
     # 桌面模式标记必须被清理干净，否则污染其他（浏览器模式）测试
-    assert "MAGPLOT_DESKTOP_STATE" not in appmod.app.config
-    assert "MAGPLOT_DESKTOP_MODE" not in appmod.app.config
+    assert "TAVOTTO_DESKTOP_STATE" not in appmod.app.config
+    assert "TAVOTTO_DESKTOP_MODE" not in appmod.app.config
 
 
 def http_get(url: str, headers: dict | None = None):
@@ -279,12 +279,12 @@ def test_parent_stdin_eof_triggers_shutdown(tmp_path):
 # 启动凭据读取
 # ---------------------------------------------------------------------------
 def test_read_credentials_env_takes_priority_and_is_scrubbed():
-    env = {"MAGPLOT_DESKTOP_NONCE": "env-nonce",
-           "MAGPLOT_DESKTOP_PARENT_PID": "4242"}
+    env = {"TAVOTTO_DESKTOP_NONCE": "env-nonce",
+           "TAVOTTO_DESKTOP_PARENT_PID": "4242"}
     nonce, pid, _ = desktop.read_launch_credentials(stdin=io.StringIO(""),
                                                     environ=env)
     assert nonce == "env-nonce" and pid == 4242
-    assert "MAGPLOT_DESKTOP_NONCE" not in env  # 用后即焚，不让子进程继承
+    assert "TAVOTTO_DESKTOP_NONCE" not in env  # 用后即焚，不让子进程继承
 
 
 def test_read_credentials_from_stdin_line():
@@ -311,8 +311,8 @@ def test_read_credentials_tty_never_blocks():
 def test_run_refuses_without_nonce(tmp_path, monkeypatch):
     """没有启动凭据坚决不起无认证的桌面后端：握手报错 + 非零退出码。"""
     hs = tmp_path / "hs.json"
-    monkeypatch.setenv("MAGPLOT_DESKTOP_HANDSHAKE", str(hs))
-    monkeypatch.delenv("MAGPLOT_DESKTOP_NONCE", raising=False)
+    monkeypatch.setenv("TAVOTTO_DESKTOP_HANDSHAKE", str(hs))
+    monkeypatch.delenv("TAVOTTO_DESKTOP_NONCE", raising=False)
 
     class Tty(io.StringIO):
         def isatty(self):
@@ -322,7 +322,7 @@ def test_run_refuses_without_nonce(tmp_path, monkeypatch):
     assert desktop.run(appmod.app) == 2
     data = json.loads(hs.read_text(encoding="utf-8"))
     assert data["ready"] is False and "凭据" in data["error"]
-    assert "MAGPLOT_DESKTOP_STATE" not in appmod.app.config
+    assert "TAVOTTO_DESKTOP_STATE" not in appmod.app.config
 
 
 # ---------------------------------------------------------------------------
@@ -342,7 +342,7 @@ def test_engine_subprocess_calls_never_pop_console_windows():
        探测/安装/AI CLI 一律 stdin=DEVNULL，渲染 worker 是 stdin=PIPE（协议）。
     """
     import re
-    root = Path(__file__).resolve().parent.parent / "src" / "magplot"
+    root = Path(__file__).resolve().parent.parent / "src" / "tavotto"
     files = [root / "engine" / n for n in
              ("pool.py", "bootstrap.py", "ai_bridge.py")] + [root / "app.py"]
     missing = []
@@ -360,7 +360,7 @@ def test_engine_subprocess_calls_never_pop_console_windows():
 def test_no_window_flag_value():
     import subprocess as sp
 
-    from magplot.engine import runtime
+    from tavotto.engine import runtime
     if os.name == "nt":
         assert runtime.CREATE_NO_WINDOW == sp.CREATE_NO_WINDOW
     else:

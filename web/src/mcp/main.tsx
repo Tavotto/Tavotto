@@ -12,7 +12,7 @@ import '@/index.css'
  * 生命周期：
  *   1. 装 MCP 传输（画布里的一切引擎往来都要走它，**必须在挂载之前**）；
  *   2. 与 host 握手（`ui/initialize`），失败也照常挂载——好告诉用户为什么空着；
- *   3. 等 `ui/notifications/tool-result` 送来 `magplot_open_figure` 的结果；
+ *   3. 等 `ui/notifications/tool-result` 送来 `tavotto_open_figure` 的结果；
  *      `window.openai.toolOutput` 是**兜底**（feature-detect，只在标准路径
  *      拿不到东西时看一眼）；
  *   4. 把结果灌进既有 stores，挂 `McpApp`。
@@ -24,13 +24,13 @@ import '@/index.css'
 const rootEl = document.getElementById('root')!
 const bridge = new AppsBridge()
 // 传输必须先装：store 一旦挂载就可能发渲染请求，那时候拿到默认的 HTTP 传输
-// 会打到一个不存在的 /api（iframe 里没有 Magplot 服务）
+// 会打到一个不存在的 /api（iframe 里没有 Tavotto 服务）
 installMcpTransport(bridge)
 
 /**
  * 只接受**完整的** open 结果。
  *
- * `magplot_apply_overrides` 的响应也挂着同一份 widget 资源，也就能用来初始化
+ * `tavotto_apply_overrides` 的响应也挂着同一份 widget 资源，也就能用来初始化
  * 一个新 iframe——而它带着 `session_id` 与 `manifest`，只看这两项的话会被
  * 当成 open 结果收下。可它没有 `profile` / `project` / `script`：`McpApp`
  * 一读 `open.profile.profile_id` 就当场崩掉；就算把那次读取包起来，用
@@ -74,7 +74,7 @@ function Boot() {
       accept(result?.structuredContent ?? (result?._meta?.widgetData as unknown))
     })
 
-    void bridge.connect({ name: 'magplot-canvas', version: '1' }).then((ok) => {
+    void bridge.connect({ name: 'tavotto-canvas', version: '1' }).then((ok) => {
       if (!ok) {
         setState('nohost')
         return
@@ -103,10 +103,10 @@ function Boot() {
 function Splash({ state }: { state: 'connecting' | 'waiting' | 'nohost' }) {
   const text =
     state === 'nohost'
-      ? '这块画布要在支持 MCP Apps 的 Codex 里打开。没有 UI 的 host 里，同一套 magplot_* 工具也能完成打开 / 改图 / 预检 / 导出。'
+      ? '这块画布要在支持 MCP Apps 的 Codex 里打开。没有 UI 的 host 里，同一套 tavotto_* 工具也能完成打开 / 改图 / 预检 / 导出。'
       : state === 'connecting'
         ? '正在连接 Codex…'
-        : '正在等待 magplot_open_figure 的结果…'
+        : '正在等待 tavotto_open_figure 的结果…'
   return (
     <div className="flex h-full w-full items-center justify-center bg-bg p-6">
       <p className="max-w-md text-center text-[13px] leading-relaxed text-ink-2">{text}</p>

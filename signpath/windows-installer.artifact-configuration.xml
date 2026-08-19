@@ -5,13 +5,13 @@
   </parameters>
   <zip-file>
     <pe-file
-      path="Magplot-${version}-Windows-Setup.exe"
-      product-name="Magplot"
+      path="Tavotto-${version}-Windows-Setup.exe"
+      product-name="Tavotto"
       product-version="${version}"
       file-version="${version}">
       <authenticode-sign
-        description="Magplot Windows installer"
-        description-url="https://github.com/erwanjun/magplot" />
+        description="Tavotto Windows installer"
+        description-url="https://github.com/Tavotto/Tavotto" />
     </pe-file>
   </zip-file>
 </artifact-configuration>

@@ -161,7 +161,7 @@ describe('SettingsDialog', () => {
       select.dispatchEvent(new Event('change', { bubbles: true }))
     })
 
-    expect(localStorage.getItem('magplot.locale')).toBe('en-US')
+    expect(localStorage.getItem('tavotto.locale')).toBe('en-US')
     expect(document.documentElement.lang).toBe('en-US')
     const text = uiText()
     expect(text).toContain('Settings')

@@ -17,7 +17,7 @@ export default defineConfig({
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
       '@profiles': fileURLToPath(
-        new URL('../src/magplot/profiles/publication.json', import.meta.url),
+        new URL('../src/tavotto/profiles/publication.json', import.meta.url),
       ),
     },
   },

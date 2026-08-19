@@ -26,7 +26,7 @@ from pathlib import Path
 import pymupdf
 import pytest
 
-from magplot.engine import pool
+from tavotto.engine import pool
 
 try:
     WORKER_PY = pool.find_worker_python()
@@ -34,7 +34,7 @@ except pool.WorkerError:
     WORKER_PY = None
 
 pytestmark = pytest.mark.skipif(
-    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（MM_WORKER_PYTHON）")
+    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）")
 
 SCRIPT_NAME = "fig_equivalence.py"
 ENTRY = "main"
@@ -196,7 +196,7 @@ def _worker(figs: Path):
 # 比较：直接复用写回事务的判据
 # ---------------------------------------------------------------------------
 def _compare(a: dict, b: dict) -> tuple[list, int]:
-    from magplot.app import _compare_manifests
+    from tavotto.app import _compare_manifests
     return _compare_manifests(a, b)
 
 
@@ -579,13 +579,13 @@ def _flask_project(tmp_path, monkeypatch, library: Path):
     图库目录不能直接用 session 级的那份：写回会**原地替换**里面的 PDF，
     污染了后面所有用例的输入。这里整份拷贝一次。
     """
-    from magplot import app as m
+    from tavotto import app as m
 
     figs = tmp_path / "figures"
     figs.mkdir()
     (figs / SCRIPT_NAME).write_text(
         (library / SCRIPT_NAME).read_text(encoding="utf-8"), encoding="utf-8")
-    (figs / "mm_registry.json").write_text(REGISTRY, encoding="utf-8")
+    (figs / "tavotto_registry.json").write_text(REGISTRY, encoding="utf-8")
     # 写回覆盖的是磁盘上**已有**的原件（真实图库里它由脚本跑出来）
     for stem in ("EqvMulti", "EqvImage"):
         doc = pymupdf.open()
@@ -604,7 +604,7 @@ def _flask_project(tmp_path, monkeypatch, library: Path):
 
 @pytest.fixture
 def project(tmp_path, monkeypatch, library):
-    from magplot import app as m
+    from tavotto import app as m
 
     ctx = _flask_project(tmp_path, monkeypatch, library)
     try:
@@ -715,27 +715,27 @@ def test_write_back_then_reopen_matches_the_hot_session(
 # ===========================================================================
 def _workerd_binary() -> str | None:
     """忽略 conftest 的默认禁用开关，只看 cargo 产物在不在。"""
-    saved = os.environ.pop("MAGPLOT_WORKERD", None)
+    saved = os.environ.pop("TAVOTTO_WORKERD", None)
     try:
-        from magplot.engine import workerd_client
+        from tavotto.engine import workerd_client
         return workerd_client.find_workerd()
     finally:
         if saved is not None:
-            os.environ["MAGPLOT_WORKERD"] = saved
+            os.environ["TAVOTTO_WORKERD"] = saved
 
 
 WORKERD_EXE = _workerd_binary()
 needs_workerd = pytest.mark.skipif(
     WORKERD_EXE is None,
-    reason="没有 magplot-workerd 产物（先在 workerd/ 里 cargo build）")
+    reason="没有 tavotto-workerd 产物（先在 workerd/ 里 cargo build）")
 
 
 @pytest.fixture
 def workerd(monkeypatch):
     """把本用例的渲染控制面切到 Rust supervisor 上。"""
-    from magplot.engine import workerd_client
+    from tavotto.engine import workerd_client
 
-    monkeypatch.setenv("MAGPLOT_WORKERD", WORKERD_EXE or "0")
+    monkeypatch.setenv("TAVOTTO_WORKERD", WORKERD_EXE or "0")
     workerd_client.reset_client()
     try:
         yield

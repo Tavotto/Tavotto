@@ -66,7 +66,7 @@ test('弹窗 / 菜单 / toast 的进出场都在播，且弹窗播放期间保�
 
   // ---- toast
   const toast = await page.evaluate(async () => {
-    window.dispatchEvent(new CustomEvent('magplot:autosave-error', { detail: {} }))
+    window.dispatchEvent(new CustomEvent('tavotto:autosave-error', { detail: {} }))
     await new Promise((r) => requestAnimationFrame(r))
     await new Promise((r) => requestAnimationFrame(r))
     const t = document.querySelector('[data-state][class*=rise]') as HTMLElement | null

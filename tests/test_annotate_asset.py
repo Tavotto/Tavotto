@@ -6,7 +6,7 @@ PNG 由注好的 PDF 重新栅格化——两种载体同源。绘制函数与�
 """
 import pymupdf
 
-from magplot import pdfbackend
+from tavotto import pdfbackend
 
 MM = 72 / 25.4
 

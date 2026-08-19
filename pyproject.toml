@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "magplot"
+name = "tavotto"
 dynamic = ["version"]
-description = "论文 Figure 排版 + 参数化图表编辑工具：matplotlib 面板拖拽排版，双击进图内改元素，导出真矢量 PDF"
+description = "Make AI-generated scientific figures editable without losing the code behind them."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "AGPL-3.0-only"
@@ -38,21 +38,21 @@ worker = ["matplotlib>=3.8", "numpy>=1.24"]
 dev = ["pytest>=8", "build>=1.2", "twine>=5"]
 
 [project.scripts]
-magplot = "magplot.cli_entry:main"
+tavotto = "tavotto.cli_entry:main"
 
 [project.urls]
-Homepage = "https://github.com/erwanjun/magplot"
-Issues = "https://github.com/erwanjun/magplot/issues"
-Changelog = "https://github.com/erwanjun/magplot/releases"
+Homepage = "https://github.com/Tavotto/Tavotto"
+Issues = "https://github.com/Tavotto/Tavotto/issues"
+Changelog = "https://github.com/Tavotto/Tavotto/releases"
 
 [tool.hatch.version]
-path = "src/magplot/__init__.py"
+path = "src/tavotto/__init__.py"
 
-# 前端产物 src/magplot/web/ 由 scripts/build_frontend.py 生成，进 .gitignore（可再生）。
+# 前端产物 src/tavotto/web/ 由 scripts/build_frontend.py 生成，进 .gitignore（可再生）。
 # hatchling 默认跳过 VCS 忽略的文件，targets 的 include 也救不回来——必须在这里
 # 用 artifacts 显式收回，否则打出来的包没有界面（首页 404）。
 [tool.hatch.build]
-artifacts = ["src/magplot/web/**"]
+artifacts = ["src/tavotto/web/**"]
 # Windows 桌面版的内置渲染 runtime（仓库根的 runtime/，200 MiB 上下）只跟着
 # 安装包走，**绝不能混进 wheel / sdist**：pip 用户拿到的是轻量包，
 # 而且那是一堆 Windows 二进制。它已经在 .gitignore 里（hatchling 默认就会跳过），
@@ -69,12 +69,12 @@ exclude = ["runtime", "runtime/**", "build/runtime-cache/**",
            "codex-plugin", "codex-plugin/**", ".agents", ".agents/**"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/magplot"]
+packages = ["src/tavotto"]
 
 [tool.hatch.build.targets.sdist]
-# 源码包里带上前端构建产物（src/magplot/web），从 sdist 装也不需要 node。
+# 源码包里带上前端构建产物（src/tavotto/web），从 sdist 装也不需要 node。
 include = [
-    "src/magplot",
+    "src/tavotto",
     "tests",
     "web/src",
     "web/package.json",

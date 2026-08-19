@@ -1,4 +1,4 @@
-//! patch 规范化与内容寻址哈希——**`src/magplot/engine/patchspec.py` 的 Rust 复刻**。
+//! patch 规范化与内容寻址哈希——**`src/tavotto/engine/patchspec.py` 的 Rust 复刻**。
 //!
 //! 权威实现在 Python 那边；这里的唯一职责是**逐字节复现它的输出**。
 //! 硬验收是 `tests/golden/patch_vectors.json`（仓库根，两侧共用同一份），

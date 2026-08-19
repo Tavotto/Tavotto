@@ -10,7 +10,7 @@ import {
 /**
  * 渲染环境状态。⚡ 参数化编辑需要一个能 import 用户脚本依赖的 Python；
  * 找不到时不该把「找不到装有 matplotlib 的 Python」这句话甩给用户，
- * 而是给一个能点的出口：让 Magplot 自己装一个，或指定已有的解释器。
+ * 而是给一个能点的出口：让 Tavotto 自己装一个，或指定已有的解释器。
  *
  * 安装进度由后端经 SSE `engine.bootstrap` 推过来（useServerEvents 转发到这里）。
  */
