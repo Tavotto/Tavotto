@@ -345,7 +345,9 @@
         "never": "figures, scripts, filenames, paths, scientific data, text inside figures, or assistant prompts.",
         "neverLabel": "Never sent: ",
         "policy": "Privacy policy",
-        "sends": "Sent: app version, operating system and architecture, which broad features are used, and whether preflight and export succeed. The identifier is a random UUID generated on this machine that **stays the same across restarts** (otherwise “did they come back a week later” cannot be answered), but is not tied to any account, device information or network address.",
+        "sendsAfter": " (otherwise “did they come back a week later” cannot be answered). It is not tied to any account, and carries no hardware serial, MAC address or other identifier that could single out a specific device.",
+        "sendsBefore": "Sent: app version, operating system and architecture, which broad features are used, and whether preflight and export succeed. The identifier is a random UUID generated on this machine that ",
+        "sendsPersist": "stays the same across restarts",
         "title": "Anonymous usage statistics",
         "toggle": "Share anonymous usage statistics"
       }

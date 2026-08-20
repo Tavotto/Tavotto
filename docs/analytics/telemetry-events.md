@@ -55,7 +55,8 @@ lower bound on real users and is not a headcount. See
 **Say "anonymous" carefully.** The ID is stable across restarts *on purpose* —
 without that, D7/D30 retention could not be computed at all. So events from one
 installation are linkable to each other over time; they are simply not linkable
-to a person, account, device or address. That is **pseudonymous**, not
+to a person, account, network address, or any *specific* device — `platform` and
+`arch` are coarse buckets, not machine identifiers. That is **pseudonymous**, not
 anonymised in the data-protection sense. In the product UI "anonymous usage
 statistics" is the phrase users actually understand, and the honesty is carried
 by the sentence next to it, which states that the identifier persists across

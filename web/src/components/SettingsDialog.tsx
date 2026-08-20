@@ -1079,7 +1079,18 @@ function TelemetrySection() {
           onChange={(v) => void choose(v ? 'enabled' : 'disabled', 'settings')}
         />
       </div>
-      <p className="text-xs leading-relaxed text-ink-3">{st('about.telemetry.sends')}</p>
+      {/*
+        「跨会话稳定」这一句要突出：它是这段话诚实性的关键——没有它，读者会以为
+        每次启动都是全新的匿名身份，而我们确实靠它算留存。
+        **强调走 JSX 的 <strong>，不是文案里的 Markdown `**`**：这个 <p> 是纯文本
+        插值，不是 Markdown 渲染器，写 `**` 用户就会看到两个字面星号
+        （与 about.diagnosticsHint* 同一套写法）。
+      */}
+      <p className="text-xs leading-relaxed text-ink-3">
+        {st('about.telemetry.sendsBefore')}
+        <strong className="font-medium text-ink-2">{st('about.telemetry.sendsPersist')}</strong>
+        {st('about.telemetry.sendsAfter')}
+      </p>
       <p className="mt-1 text-xs leading-relaxed text-ink-3">
         <strong className="font-medium text-ink-2">{st('about.telemetry.neverLabel')}</strong>
         {st('about.telemetry.never')}

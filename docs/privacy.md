@@ -83,7 +83,10 @@ explicitly opts in**, either in the one-time first-run prompt or under
   installation from a new one, and questions like "do people come back a week
   later" would be unanswerable. So events from one installation *can* be linked
   to each other over time. What they cannot be linked to is a person, an
-  account, an email, a device, or a network address. In data-protection terms
+  account, an email, or a network address — nor to a *specific* device: the
+  events do carry a coarse `platform` and `arch` (macos/windows/linux,
+  arm64/x86_64), but never a hardware serial, MAC address, machine GUID or
+  anything else that could single one machine out. In data-protection terms
   this is pseudonymous rather than anonymised, and the sections below describe
   exactly what that pseudonym is attached to.
 * **What is sent.** Broad product events (application started, a figure opened
