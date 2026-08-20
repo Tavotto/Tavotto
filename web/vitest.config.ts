@@ -9,6 +9,10 @@ export default defineConfig({
       '@profiles': fileURLToPath(
         new URL('../src/tavotto/profiles/publication.json', import.meta.url),
       ),
+      // 与 vite.playground.config.ts 同源：playground 运行时锁的唯一权威
+      '@playground-runtime': fileURLToPath(
+        new URL('../packaging/playground-runtime.json', import.meta.url),
+      ),
     },
   },
   test: {

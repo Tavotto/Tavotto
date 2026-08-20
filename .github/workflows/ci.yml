@@ -81,6 +81,13 @@ jobs:
       - name: MCP 画布产物与前端源码同步
         working-directory: .
         run: python3 scripts/build_mcp_widget.py --check
+      # 浏览器 playground（网站 /try，ADR 0007）：产物由本仓库构建、由网站仓库
+      # 提交。这里真跑一遍构建（vite + engine.zip + 指纹 manifest），保证构建
+      # 脚本随前端一起是活的；「网站上那份是不是过期」的门禁在网站仓库——
+      # `pnpm check-playground` 调本仓库的 --fingerprint 重算比对。
+      - name: 浏览器 playground 构建
+        working-directory: .
+        run: python3 scripts/build_browser_playground.py
 
   # Rust supervisor 的静态门禁。desktop-tauri.yml 里也有一份，但那个工作流只在
   # 打 tag / workflow_dispatch 时跑——改了 workerd 的 PR 因此一路全绿，要等到

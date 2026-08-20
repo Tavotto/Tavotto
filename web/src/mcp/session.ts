@@ -1,13 +1,8 @@
-import type { Manifest, PanelInfo } from '@/lib/api'
+import type { Manifest } from '@/lib/api'
 import { setEngineTransport, type EngineTransport } from '@/lib/engineTransport'
 import { EngineError } from '@/lib/api'
 import { msg } from '@/i18n'
-import { useAssetStore } from '@/store/assetStore'
-import { useDocumentStore } from '@/store/documentStore'
-import { renderKey, useRenderStore } from '@/store/renderStore'
-import { useUiStore } from '@/store/uiStore'
-import { newId } from '@/lib/id'
-import type { PanelObject } from '@/types/document'
+import { embeddedFileIdFor, seedEmbeddedSession } from '@/embedded/session'
 import type { AppsBridge, ToolCallResult } from './appsBridge'
 
 /**
@@ -59,7 +54,7 @@ export interface PreflightPayload {
 /** 面板 id ↔ MCP 会话。一个 widget 目前只端一张图，留表是为了以后多图拼版。 */
 const sessionOf = new Map<string, string>()
 
-export const fileIdFor = (stem: string) => `${stem}.pdf`
+export const fileIdFor = embeddedFileIdFor
 
 export function sessionIdFor(fileId: string): string | null {
   return sessionOf.get(fileId) ?? null
@@ -128,103 +123,22 @@ export function installMcpTransport(bridge: AppsBridge): () => void {
 /**
  * 把 `tavotto_open_figure` 的结果灌进既有 stores，让画布把它当成一个普通面板。
  *
- * 灌的东西一件不多：assetStore 一条素材、documentStore 一个面板、renderStore
- * 一份「已经画好了」的渲染态。之后的拖拽、命中测试、属性编辑、undo/redo
- * 全部是既有代码在跑。
+ * 种子逻辑在 `embedded/session.ts`（浏览器 playground 与这里共用同一份，
+ * 不许各自复制然后漂移）；MCP 特有的只有「fileId ↔ session_id」这张表。
  */
 export function seedSession(open: OpenFigureResult): { panelId: string; fileId: string } {
-  const [wMm, hMm] = open.manifest.size_mm
-  const fileId = fileIdFor(open.stem)
-  sessionOf.set(fileId, open.session_id)
-
-  const info: PanelInfo = {
-    id: fileId,
-    name: open.stem,
-    folder: open.project,
-    kind: 'pdf',
-    native_w_mm: wMm,
-    native_h_mm: hMm,
-    mtime: 0,
-    script: open.script,
-    cost: open.cost ?? 'medium',
-  }
-  useAssetStore.setState({
-    byId: { [fileId]: info },
-    panels: [info],
-    figuresDir: open.project,
-    loaded: true,
-    loading: false,
-    error: null,
-  })
-
-  const panelId = newId('o')
-  const panel: PanelObject = {
-    id: panelId,
-    type: 'panel',
-    x: 0,
-    y: 0,
-    w: wMm,
-    h: hMm,
-    fileId,
-    fileKind: 'pdf',
-    nativeW: wMm,
-    nativeH: hMm,
-    script: open.script,
-    cost: open.cost,
-    overrides: [],
-  }
-
-  const store = useDocumentStore.getState()
-  store.commit(msg('history.mcpOpenFigure', undefined, 'workspace'), (d) => {
-    d.name = open.stem
-    // 页面就是这张图自己的尺寸：MCP 画布编辑的是**一张图**，不是拼版
-    d.page = { w: wMm, h: hMm }
-    d.objects = [panel]
-    d.guides = []
-  })
-  // 打开动作不该出现在撤销栈里（用户的第一次撤销要回到「刚打开的样子」）
-  useDocumentStore.setState({ past: [], future: [], dirty: false })
-
-  const key = renderKey(fileId, [])
-  useRenderStore.setState({
-    byKey: {
-      [key]: {
-        fileId,
-        rev: open.render_revision ?? 1,
-        manifest: open.manifest,
-        svg: open.svg ? prepareSvg(open.svg) : null,
-        status: 'ready',
-        error: null,
-        code: '',
-        module: '',
-        traceback: '',
-        warnings: open.warnings ?? [],
-        timings: {},
-        stale: false,
-        lastPatches: '[]',
-        wantPatches: '[]',
-        previewDpi: null,
-      },
+  sessionOf.set(fileIdFor(open.stem), open.session_id)
+  return seedEmbeddedSession(
+    {
+      stem: open.stem,
+      project: open.project,
+      script: open.script,
+      cost: open.cost,
+      manifest: open.manifest,
+      svg: open.svg,
+      renderRevision: open.render_revision,
+      warnings: open.warnings,
     },
-    // 文件级跟踪位：显示必须走引擎产物，而不是并不存在的 /api/render
-    tracked: { [fileId]: true },
-    latest: { [fileId]: key },
-    building: {},
-  })
-
-  // 直接进图内编辑态：这块画布存在的全部理由就是改图里的元素
-  useUiStore.getState().setElementPanel(panelId)
-  return { panelId, fileId }
-}
-
-/**
- * matplotlib 的 SVG 自带 pt 单位的 width/height，去掉后配合
- * preserveAspectRatio=none 才能精确铺满面板框。与 renderStore 里那份同源
- * ——种子数据也必须过同一道处理，否则第一帧与之后每一帧的尺寸口径不同。
- */
-function prepareSvg(text: string): string {
-  return text.replace(/<svg([^>]*)>/, (_m, attrs: string) => {
-    const cleaned = attrs.replace(/\s(?:width|height)="[^"]*"/g, '')
-    return `<svg${cleaned} preserveAspectRatio="none" style="width:100%;height:100%;display:block">`
-  })
+    msg('history.mcpOpenFigure', undefined, 'workspace'),
+  )
 }

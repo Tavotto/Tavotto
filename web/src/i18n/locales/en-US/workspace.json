@@ -179,6 +179,8 @@
     "lockObject": "Lock object",
     "mcpOpenFigure": "Open figure",
     "moveElement": "Move {{label}}",
+    "playgroundOpenFigure": "Open figure",
+    "playgroundResetEdits": "Reset edits",
     "moveElements": "Move {{count}} figure elements",
     "moveGuide": "Move guide",
     "moveObject": "Move object",
