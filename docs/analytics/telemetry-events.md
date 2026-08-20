@@ -17,15 +17,30 @@ a drift test costs one function. **If you change one side, change the other.**
    consent is unset, no identifier is generated and no request is made.
 2. **`TAVOTTO_NO_TELEMETRY=1` wins over everything**, including a saved
    `enabled`, and suppresses the first-run prompt.
-3. **Only allowlisted events and properties.** Unknown event → dropped by the
+3. **Delivery is best-effort and geographically uneven.** The endpoint is not
+   reachable from mainland China, and the client drops events silently rather
+   than failing — so mainland installs are *absent* from product metrics, not
+   under-counted. Recorded as a known bias in [`yc-metrics.md`](yc-metrics.md);
+   the deployment path that would fix it is in
+   `services/telemetry_proxy/README.md`.
+4. **Only allowlisted events and properties.** Unknown event → dropped by the
    client, rejected with 400 by the proxy. Unknown property → same. Values may
    only be `bool`, a bounded non-negative `int`, a short enum string, a date
    (`YYYY-MM-DD`), or a version string (`[0-9A-Za-z.+_-]{1,32}`). No nested
    objects or arrays exist anywhere in the schema, so user content cannot be
    smuggled through a container.
-4. **Track success, not intent.** Events named `*_completed` fire after the work
+5. **Track success, not intent.** Events named `*_completed` fire after the work
    succeeded, never when it started.
-5. **No autocapture, no session replay, no click tracking, no DOM capture.**
+6. **No autocapture, no session replay, no click tracking, no DOM capture.**
+7. **Consent is versioned, and the version is enforced.** Stored consent carries
+   the `CONSENT_VERSION` it was given for, and `enabled()` requires
+   `saved_consent_version >= CONSENT_VERSION`. Raise the constant and every
+   existing consent stops being sufficient *that instant* — nothing is sent
+   until the user is asked again (`needs_reconsent` drives the prompt).
+   Re-consenting **keeps the same `install_id`**: minting a new one would
+   fabricate a wave of "new installs" on upgrade day and break every retention
+   curve. Declining is not stale consent — someone who said no is not asked
+   again on the next version bump.
 
 ## `anonymous install ID != human identity`
 

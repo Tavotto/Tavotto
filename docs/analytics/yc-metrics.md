@@ -19,7 +19,7 @@ Companion files:
 | **distribution download** | one increment of a GitHub asset counter or one PyPI download | an install, a user, a retained user |
 | **engaged** | performed ≥1 meaningful event (not merely started the app) | opened the app |
 
-### The three caveats that must travel with the numbers
+### The four caveats that must travel with the numbers
 
 1. **Product metrics are opt-in only.** Anyone who declined, never answered
    (they are asked once), or runs with `TAVOTTO_NO_TELEMETRY=1` is invisible.
@@ -30,6 +30,44 @@ Companion files:
    (reinstalls, CI, mirrors, curiosity) and under-count (one download can serve a
    lab). Never add downloads to observed users, and never present their sum as a
    user count.
+4. **Mainland China is missing from the product metrics.** See below — this one
+   is easy to forget precisely because it produces no errors.
+
+### Known bias: mainland China is not reachable
+
+The telemetry endpoint (`telemetry.tavotto.com`) resolves to Vercel, which is not
+reachable from mainland China. The client does not fail loudly there — events are
+dropped by design, the user notices nothing, and no error is logged anywhere.
+
+**So mainland users are not under-reported; they are absent.** Every product
+metric in this document — Weekly Successful Exporters, Engaged WAU/MAU,
+activation, retention, AI adoption, platform mix — counts only installs that
+could reach the endpoint. Given who Tavotto is built for, the missing share is
+plausibly large, and its size is **unknown and unmeasurable from this data**:
+the same silence covers "no mainland users" and "many mainland users".
+
+What this does *not* affect: the **distribution metrics** (GitHub asset
+downloads, PyPI, stars). Those are collected by a scheduled job running in GitHub
+Actions against public APIs, never by the client, so they include mainland
+downloads normally. Which means the two families of numbers have *different*
+geographic coverage — another reason never to mix them into one figure.
+
+When quoting product metrics externally, the honest framing is:
+
+> N weekly successful exporters among opted-in anonymous installs **that can
+> reach our telemetry endpoint** (mainland China excluded).
+
+**Fixing it is deliberately deferred.** The mechanism is understood and the code
+is ready — a second instance on Tencent Cloud SCF, split-horizon DNS, client
+unchanged; steps are in `services/telemetry_proxy/README.md`. The blocker is that
+pointing `telemetry.tavotto.com` at a mainland provider requires an ICP filing
+(mainland legal entity, 10–20 working days). The alternative — baking a provider
+domain such as `service-xxx.gz.apigw.tencentcs.com` into shipped clients — was
+rejected: it hard-codes a vendor into binaries that live on users' machines,
+which is exactly what a self-owned `DEFAULT_ENDPOINT` exists to prevent.
+
+Revisit when there is evidence of mainland usage worth measuring — GitHub
+installer downloads with no matching product events would be one such signal.
 
 ## North Star
 
@@ -204,8 +242,9 @@ repository popularity, not usage.
 
 Put one line under the card:
 
-> Product metrics cover opted-in anonymous installs only and are a lower bound.
-> Download counts are public distribution counts, not users.
+> Product metrics cover opted-in anonymous installs that can reach our telemetry
+> endpoint (mainland China excluded) and are a lower bound. Download counts are
+> public distribution counts, not users, and do include mainland downloads.
 
 ## What must never be called a user count
 
@@ -215,6 +254,9 @@ Put one line under the card:
 * `latest.json` requests or any `updater`-role asset
 * the sum of any of the above
 * `app_started` event count (it is events, not people, and launching is not usage)
+
+And one phrase to avoid: **"we have no users in China."** The data cannot say
+that. It says nothing at all about China.
 
 ## Reproducing the dashboard
 
