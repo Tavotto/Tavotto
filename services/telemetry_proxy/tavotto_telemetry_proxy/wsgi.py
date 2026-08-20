@@ -31,6 +31,16 @@ def application(environ, start_response):
         length = int(environ.get("CONTENT_LENGTH") or 0)
     except ValueError:
         length = 0
+    if length < 0:
+        # 负的 Content-Length 是畸形请求。不拦的话 min(length, MAX+1) 还是负数，
+        # 某些 WSGI 服务器把 read(-1) 当成「读到 EOF」——keep-alive 连接上这一读
+        # 会挂到对端超时，一个畸形请求就占死一个线程（PR #21 评审指出）。
+        payload = json.dumps({"error": "invalid content-length"}).encode("utf-8")
+        start_response("400 Bad Request",
+                       [("Content-Type", "application/json"),
+                        ("Content-Length", str(len(payload))),
+                        ("Cache-Control", "no-store")])
+        return [payload]
     # 多读一个字节：让 core 能把「超限」和「刚好到限」分开
     from .core import MAX_METRICS_BODY
     raw = environ["wsgi.input"].read(min(length, MAX_METRICS_BODY + 1)) if length else b""
