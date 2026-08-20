@@ -12,6 +12,7 @@ publish = false
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+sys-locale = "0.3"
 tauri = { version = "2", features = [] }
 tauri-plugin-single-instance = "2"
 tauri-plugin-window-state = "2"
