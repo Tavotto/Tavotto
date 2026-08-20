@@ -509,7 +509,9 @@ export default interface Resources {
           "never": "图、脚本、文件名、路径、科研数据、图内文字、改图助手的提示词。",
           "neverLabel": "绝不发送：",
           "policy": "隐私政策",
-          "sends": "会发送：版本号、操作系统与架构、用到了哪几类功能、预检与导出是否成功。标识是本机随机生成的一串 UUID，与任何账号无关。",
+          "sendsAfter": "（否则算不出「一周后还在不在用」），与任何账号无关，也不含硬件序列号、MAC 地址这类能唯一指认某台设备的标识。",
+          "sendsBefore": "会发送：版本号、操作系统与架构、用到了哪几类功能、预检与导出是否成功。标识是本机随机生成的一串 UUID，",
+          "sendsPersist": "多次启动之间保持不变",
           "title": "匿名用量统计",
           "toggle": "分享匿名用量统计"
         }
@@ -730,7 +732,7 @@ export default interface Resources {
     "telemetry": {
       "allow": "分享匿名用量",
       "decline": "暂不",
-      "intro": "Tavotto 可以发送一份匿名的使用统计，帮我们知道哪些功能真的有人用。默认不发，由你决定。",
+      "intro": "Tavotto 可以发送一份匿名的使用统计，帮我们知道哪些功能真的有人用。默认不发，由你决定。标识是本机随机生成的一串 UUID，多次启动之间保持不变，与任何账号无关。",
       "later": "随时可在「设置 → 隐私、诊断与 About」里改。",
       "neverData": "科研数据与图内文字",
       "neverFigures": "你的图与项目文件",

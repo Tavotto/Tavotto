@@ -170,6 +170,67 @@ client that emits an event the deployed proxy has not learned yet means that
 event is silently 400'd for as long as the old proxy is live — the client drops
 it and nobody notices.
 
+## Deploying to Tencent Cloud SCF (mainland China reachability)
+
+`*.vercel.app` and anything CNAME'd to Vercel is unreachable from mainland China.
+The client fails **silently** there (events are dropped, the user notices
+nothing), which means mainland users would be invisible in the data rather than
+producing errors. If that matters for your numbers, run a second instance on
+Tencent Cloud SCF.
+
+The proxy needs no code changes: SCF's **Web function** type just wants a process
+listening on `0.0.0.0:9000`, and `scf_bootstrap` in this directory does exactly
+that by starting the same `application` used everywhere else.
+
+### The ICP filing fork — decide this first
+
+| Domain | ICP filing | Client change |
+|---|---|---|
+| API-gateway default third-level domain (`service-xxx.gz.apigw.tencentcs.com`) | not required | **required** — and it hard-codes a provider domain into shipped binaries, the exact thing `DEFAULT_ENDPOINT` avoids |
+| `telemetry.tavotto.com` pointed at Tencent Cloud | **required** | none — split-horizon DNS handles it |
+
+Tencent Cloud API Gateway requires any mainland-facing custom domain to have a
+valid ICP filing (obtained anywhere, not necessarily at Tencent). Filing needs a
+mainland legal entity and typically takes 10–20 working days.
+
+**Recommendation:** if the domain can be filed, do that and split DNS. If it
+cannot, do not ship a provider domain inside the client — record the mainland
+gap as a known bias in `docs/analytics/yc-metrics.md` instead and revisit when
+there is evidence of mainland users to lose.
+
+### Steps
+
+1. **Package.** From this directory:
+   ```bash
+   zip -r ../proxy-scf.zip . -x '.vercel/*' '.git/*' '__pycache__/*'
+   ```
+   `scf_bootstrap` must keep its executable bit — `zip` preserves it; building
+   the archive on Windows generally does not.
+2. **Create the function.** SCF console → 函数服务 → 新建 → **Web 函数**,
+   Python 3 runtime, upload the zip. No dependencies to install: the proxy is
+   standard library only.
+3. **Environment variables**: `POSTHOG_INGEST_URL`, `POSTHOG_PROJECT_KEY`,
+   `TAVOTTO_METRICS_TOKEN` — the same values as the other deployment, so both
+   instances write into one PostHog project.
+4. **Trigger**: an API-gateway trigger. Leave the path as `/` with "path
+   passthrough" enabled so `/healthz` and `/v1/*` reach the function unchanged —
+   the proxy routes on `PATH_INFO`. (Rewriting the path at the gateway is how
+   the Vercel deployment first broke; see the WSGI module docstring.)
+5. **Verify** against whichever domain you ended up with:
+   ```bash
+   curl -sS https://<host>/healthz
+   ```
+6. **Split DNS** (only on the filed-domain path): in DNSPod, give
+   `telemetry.tavotto.com` two records — 境内 line → the API gateway, 境外/默认
+   line → the Vercel deployment. The client keeps its single hard-coded URL.
+
+### What stays the same
+
+Both instances share one PostHog project and one metrics token, so the
+distribution collector can keep pointing at whichever is closest to CI. Event
+schema, allowlists and the `snapshot_key` dedup rule are identical — the two
+deployments are the same code, not a fork.
+
 ## Rate limiting (do this at the edge)
 
 `/v1/events` is necessarily public: a desktop application cannot hold a secret.
