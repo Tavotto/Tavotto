@@ -42,8 +42,16 @@ import uuid
 from . import brand, config
 
 SCHEMA_VERSION = 1
-#: 同意书版本。将来实质性扩大采集范围时 +1，并把已同意的用户退回 unset
-#: 重新征求——「当初同意的不是这一版」是个真问题，不是形式主义。
+#: 同意书版本。将来**实质性扩大采集范围**时 +1：保存下来的同意会立刻失效
+#: （`enabled()` 当场变 false，一个字节都不再发），界面重新征求一次。
+#:
+#: 「当初同意的不是这一版」是个真问题，不是形式主义——用户同意的是 v1 那张
+#: 事件表，你把表加长了还按老同意接着发，等于替他做了他没做过的决定。
+#:
+#: **重新同意不换 install_id**：换一个等于在升版那天凭空造出一批「新安装」，
+#: 留存曲线断掉、活跃数虚高一轮，而实际上一个新用户都没有。
+#: 判据用 `>=` 而不是 `==`：降级回旧版本时，保存的是范围更大的那一版同意，
+#: 它涵盖旧版本要采的东西，不该反过来失效。
 CONSENT_VERSION = 1
 
 #: 生产默认投递地址。**只发到 Tavotto 自己的代理**，应用里没有、也不该有
@@ -227,6 +235,8 @@ def public_settings() -> dict:
         "hard_disabled": hard_disabled(),
         "consent_version": CONSENT_VERSION,
         "saved_consent_version": st["consent_version"],
+        # 同意过、但同意的是上一版采集范围 —— 界面据此重新问一次
+        "needs_reconsent": needs_reconsent(),
     }
 
 
@@ -239,10 +249,35 @@ def _save(patch: dict) -> dict:
     return settings()
 
 
+def _consent_is_current(st: dict) -> bool:
+    """这份保存下来的同意，是不是**当前这一版采集范围**的同意。
+
+    `enabled()` 与 `capture()` 共用这一个判据——分成两份迟早分叉，而分叉的
+    表现是「界面说没在发，实际还在发」。
+    """
+    return (st["consent"] == CONSENT_ENABLED
+            and st["consent_version"] >= CONSENT_VERSION)
+
+
+def needs_reconsent() -> bool:
+    """同意过，但同意的是上一版采集范围 —— 界面要再问一次。
+
+    与「从没问过」(`unset`) 分开：那两种都要弹框，但这一种**不是新用户**，
+    重新同意时不发 telemetry_enabled、也不换 install_id。
+    说过「不」的人不在此列——升版之后再去问一次是骚扰，不是征求同意。
+    硬开关关着时也不问：那个框点了也没用。
+    """
+    if hard_disabled():
+        return False
+    st = settings()
+    return (st["consent"] == CONSENT_ENABLED
+            and st["consent_version"] < CONSENT_VERSION)
+
+
 def enabled() -> bool:
     if hard_disabled():
         return False
-    return settings()["consent"] == CONSENT_ENABLED
+    return _consent_is_current(settings())
 
 
 def install_id() -> str | None:
@@ -368,7 +403,7 @@ def capture(event: str, properties: dict | None = None) -> bool:
         # 一次性读完设置：`enabled()` 与 `install_id()` 各读一次配置文件，
         # 而这个函数挂在编辑/导出这类调用路径上——没必要为一条埋点读两遍盘。
         st = settings()
-        if hard_disabled() or st["consent"] != CONSENT_ENABLED:
+        if hard_disabled() or not _consent_is_current(st):
             return False
         props = validate(event, properties)
         ident = st["install_id"]

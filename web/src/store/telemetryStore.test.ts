@@ -24,6 +24,7 @@ const settings = (over: Partial<Awaited<ReturnType<typeof fetchTelemetrySettings
   hard_disabled: false,
   consent_version: 1,
   saved_consent_version: 0,
+  needs_reconsent: false,
   ...over,
 })
 
@@ -54,6 +55,22 @@ describe('load', () => {
     await useTelemetryStore.getState().load()
     expect(useTelemetryStore.getState().askOpen).toBe(false)
     expect(telemetryEnabled()).toBe(false)
+  })
+
+  it('同意的是上一版采集范围 → 再问一次，且此时不发', async () => {
+    // 后端升了 CONSENT_VERSION：用户确实同意过，但同意的是 v1 那张事件表
+    fetchMock.mockResolvedValue(
+      settings({ consent: 'enabled', enabled: false, saved_consent_version: 1, needs_reconsent: true }),
+    )
+    await useTelemetryStore.getState().load()
+    expect(useTelemetryStore.getState().askOpen).toBe(true)
+    expect(telemetryEnabled()).toBe(false)
+  })
+
+  it('说过「不」的人升版之后不再被问——那是骚扰，不是征求同意', async () => {
+    fetchMock.mockResolvedValue(settings({ consent: 'disabled', needs_reconsent: false }))
+    await useTelemetryStore.getState().load()
+    expect(useTelemetryStore.getState().askOpen).toBe(false)
   })
 
   it('硬开关关着时不问——点了也没用的框只会让人以为是自己关的', async () => {
