@@ -62,7 +62,15 @@ PYPI_HEAL_DAYS = 14
 
 
 class CollectError(RuntimeError):
-    """采集失败。**大声失败**——定时任务红一次远好过看板缺一段没人知道。"""
+    """采集失败。**大声失败**——定时任务红一次远好过看板缺一段没人知道。
+
+    `status` 是上游的 HTTP 状态码（没有就是 None）。**「大声失败」有一个例外**：
+    数据源本身还不存在（404）不是故障，是预期内的状态，见 `fetch_pypi`。
+    """
+
+    def __init__(self, message: str, status: int | None = None):
+        super().__init__(message)
+        self.status = status
 
 
 # ---------------------------------------------------------------------------
@@ -78,7 +86,7 @@ def _get_json(url: str, token: str | None = None) -> object:
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         # 不回显 token；URL 里也不放密钥（它在请求头里）
-        raise CollectError(f"GET {url} 失败: HTTP {exc.code}") from None
+        raise CollectError(f"GET {url} 失败: HTTP {exc.code}", status=exc.code) from None
     except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
         raise CollectError(f"GET {url} 失败: {type(exc).__name__}") from None
 
@@ -262,7 +270,24 @@ def fetch_github(token: str | None) -> tuple[list[dict], dict]:
 
 
 def fetch_pypi() -> dict:
-    payload = _get_json(f"{PYPISTATS_API}/packages/{PYPI_PACKAGE}/overall")
+    """PyPI 日下载量。**包还没发布时回空，不是失败。**
+
+    PyPIStats 对不存在的包回 404。那不是故障，是「这个数据源还没开始存在」——
+    `tavotto` 发到 PyPI 之前每天都会撞上它。让它把整个采集拖红的话，
+    **GitHub 那半边的发行量也一起丢**，而且每晚红一次直到有人去看。
+
+    但也**绝不静默跳过**：打一条 GitHub Actions 的 notice 说清楚跳过了什么。
+    静默跳过 = 有人对着一张永远没有 PyPI 曲线的看板，却不知道为什么。
+    其余状态码（500 / 429 / 超时）照旧硬失败——那些是真故障。
+    """
+    try:
+        payload = _get_json(f"{PYPISTATS_API}/packages/{PYPI_PACKAGE}/overall")
+    except CollectError as exc:
+        if exc.status == 404:
+            print(f"::notice::PyPI 上还没有 {PYPI_PACKAGE}（发布之前这是正常的），"
+                  "本次跳过 PyPI 下载量，GitHub 部分照常采集", file=sys.stderr)
+            return {}
+        raise
     return payload if isinstance(payload, dict) else {}
 
 
@@ -319,6 +344,8 @@ def summarize(events: list[dict]) -> dict:
             by_role.get("installer", {}).get("downloads_total", 0),
         "pypi_days": len(pypi),
         "pypi_downloads_in_window": sum(e["properties"]["downloads"] for e in pypi),
+        # 0 天可能是「包还没发布」也可能是「今天没人下」，别让看的人自己猜
+        "pypi_note": ("PyPI 上还没有这个包（或窗口内无数据）" if not pypi else ""),
         "note": "downloads != users（重装 / CI / 自动化都在里面）",
     }
 

@@ -185,6 +185,58 @@ def test_reruns_produce_identical_pypi_snapshot_keys():
 
 
 # ---------------------------------------------------------------------------
+# 数据源还不存在 ≠ 采集失败
+#
+# 2026-08-20 首次真跑就撞上：`tavotto` 还没发到 PyPI，PyPIStats 回 404，
+# 整个 workflow 红——**连 GitHub 那半边的发行量也一起丢**，而且会每晚红一次
+# 直到有人去看。「大声失败」这条纪律对真故障成立，对「这个数据源还没开始
+# 存在」不成立。
+# ---------------------------------------------------------------------------
+def test_missing_pypi_package_is_skipped_not_fatal(monkeypatch, capsys):
+    """包还没发布（404）→ 跳过 PyPI、GitHub 照常，且**说清楚跳过了什么**。"""
+    def not_found(url, token=None):
+        if "pypistats" in url:
+            raise collector.CollectError("GET … 失败: HTTP 404", status=404)
+        raise AssertionError("不该走到 GitHub")
+
+    monkeypatch.setattr(collector, "_get_json", not_found)
+    assert collector.fetch_pypi() == {}
+    assert "PyPI 上还没有" in capsys.readouterr().err, "静默跳过 = 没人知道为什么没数据"
+
+
+def test_missing_pypi_package_still_collects_github(capsys):
+    """整条 collect() 也要活下来，GitHub 的快照一条不少。"""
+    import json as _json
+
+    fixture = _json.loads(GITHUB_FIXTURE.read_text(encoding="utf-8"))
+    expected = sum(len(r["assets"]) for r in fixture["releases"]) + 1   # +1 = repo 快照
+
+    def only_pypi_404(url, token=None):
+        if "pypistats" in url:
+            raise collector.CollectError("GET … 失败: HTTP 404", status=404)
+        raise AssertionError("本用例用 fixture 喂 GitHub")
+
+    import unittest.mock as mock
+    with mock.patch.object(collector, "_get_json", only_pypi_404):
+        events = collector.collect("2026-08-20", github_token=None,
+                                   github_json=str(GITHUB_FIXTURE))
+    assert len(events) == expected
+    assert not [e for e in events if e["event"] == "pypi_daily_downloads"]
+    assert collector.summarize(events)["pypi_note"]
+
+
+@pytest.mark.parametrize("status", [500, 429, 403, None])
+def test_real_pypi_failures_are_still_loud(monkeypatch, status):
+    """其余状态码照旧硬失败——那些是真故障，悄悄跳过会让看板静默缺一段。"""
+    def boom(url, token=None):
+        raise collector.CollectError("上游炸了", status=status)
+
+    monkeypatch.setattr(collector, "_get_json", boom)
+    with pytest.raises(collector.CollectError):
+        collector.fetch_pypi()
+
+
+# ---------------------------------------------------------------------------
 # 与代理契约的对拍 + CLI
 # ---------------------------------------------------------------------------
 def test_every_collected_event_passes_the_proxy_schema(events, monkeypatch):
