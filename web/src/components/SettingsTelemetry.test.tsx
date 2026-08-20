@@ -37,6 +37,7 @@ const settings = (over: Record<string, unknown> = {}) =>
     hard_disabled: false,
     consent_version: 1,
     saved_consent_version: 1,
+  needs_reconsent: false,
     ...over,
   }) as Awaited<ReturnType<typeof fetchTelemetrySettings>>
 
@@ -85,7 +86,11 @@ describe('设置里的开关', () => {
     await open()
     const text = document.body.textContent ?? ''
     expect(text).toContain(st('about.telemetry.title'))
-    expect(text).toContain(st('about.telemetry.sends'))
+    expect(text).toContain(st('about.telemetry.sendsBefore'))
+    // 跨会话稳定这一句必须真的出现，而且**不能带字面 Markdown 星号**
+    expect(text).toContain(st('about.telemetry.sendsPersist'))
+    expect(text).toContain(st('about.telemetry.sendsAfter'))
+    expect(text).not.toContain('**')
     expect(text).toContain(st('about.telemetry.never'))
     const link = [...document.querySelectorAll('a')].find(
       (a) => a.textContent?.trim() === st('about.telemetry.policy'),

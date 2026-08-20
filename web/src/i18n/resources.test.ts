@@ -205,6 +205,43 @@ describe('资源里没有把内容当 key 的写法', () => {
   })
 })
 
+describe('文案里不许写不会被渲染的 Markdown', () => {
+  /**
+   * 绝大多数文案是**纯文本插值**（`{t('x')}` 直接进 `<p>`/`<span>`），没有
+   * Markdown 渲染器。文案里写 `**强调**`，用户看到的就是两个字面星号。
+   *
+   * 真实发生过（2026-08-20，遥测那段隐私说明）：`**多次启动之间保持不变**`
+   * 原样显示在设置里，而且随受管的 Codex 画布产物一起发了出去。
+   * 需要强调时按仓库既有写法拆成 before/strong/after 三个 key，用 JSX 的
+   * `<strong>`（见 `settings.about.diagnosticsHint*` 与 `telemetry.sends*`）。
+   *
+   * 例外只有一处：AI 面板里 **模型自己的输出**走 react-markdown，但那不是
+   * 翻译资源，是运行期内容，不经过这里。
+   */
+  const MARKDOWN = [
+    { name: '粗体 **…**', re: /\*\*[^*]+\*\*/ },
+    { name: '标题 # ', re: /(^|\n)#{1,6}\s/ },
+    { name: '行内代码 `…`', re: /`[^`]+`/ },
+    { name: '链接 [x](y)', re: /\[[^\]]+\]\([^)]+\)/ },
+  ]
+
+  for (const locale of SUPPORTED_LOCALES) {
+    for (const ns of NAMESPACES) {
+      it(`${locale}:${ns}`, () => {
+        const flat = flatten(resources[locale][ns] as Json)
+        const bad: string[] = []
+        for (const [key, text] of flat) {
+          if (typeof text !== 'string') continue
+          for (const { name, re } of MARKDOWN) {
+            if (re.test(text)) bad.push(`${ns}:${key} 含${name}`)
+          }
+        }
+        expect(bad, bad.join('\n')).toEqual([])
+      })
+    }
+  }
+})
+
 describe('缺 key 时的回退', () => {
   /**
    * 这一层有一批**开放集合**：matplotlib 的属性名、色图名（viridis）、刻度

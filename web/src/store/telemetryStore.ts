@@ -43,9 +43,15 @@ export const useTelemetryStore = create<TelemetryState>((set) => ({
       const settings = adopt(await fetchTelemetrySettings())
       set({
         settings,
-        // 硬开关关着时**不问**：管理员已经替这台机器做了决定，
-        // 弹一个点了也没用的框只会让人以为是自己关的
-        askOpen: settings.consent === 'unset' && !settings.hard_disabled,
+        // 两种情况都要问一次：**从没问过**（unset），以及**同意的是上一版
+        // 采集范围**（后端升了 CONSENT_VERSION）。后者不是新用户——重新同意
+        // 不换 install_id、也不再发 telemetry_enabled，由后端负责。
+        // 硬开关关着时**不问**：管理员已经替这台机器做了决定，弹一个点了
+        // 也没用的框只会让人以为是自己关的（needs_reconsent 后端已经算进去了，
+        // 这里对 unset 那一路再挡一道）。
+        askOpen:
+          (settings.consent === 'unset' && !settings.hard_disabled) ||
+          settings.needs_reconsent,
       })
     } catch {
       // 取不到就当没开：宁可少发，也不能在不知道同意态时发

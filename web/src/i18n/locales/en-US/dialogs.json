@@ -345,7 +345,9 @@
         "never": "figures, scripts, filenames, paths, scientific data, text inside figures, or assistant prompts.",
         "neverLabel": "Never sent: ",
         "policy": "Privacy policy",
-        "sends": "Sent: app version, operating system and architecture, which broad features are used, and whether preflight and export succeed. The identifier is a random UUID generated on this machine and is not tied to any account.",
+        "sendsAfter": " (otherwise “did they come back a week later” cannot be answered). It is not tied to any account, and carries no hardware serial, MAC address or other identifier that could single out a specific device.",
+        "sendsBefore": "Sent: app version, operating system and architecture, which broad features are used, and whether preflight and export succeed. The identifier is a random UUID generated on this machine that ",
+        "sendsPersist": "stays the same across restarts",
         "title": "Anonymous usage statistics",
         "toggle": "Share anonymous usage statistics"
       }
@@ -573,7 +575,7 @@
   "telemetry": {
     "allow": "Share anonymous usage",
     "decline": "Not now",
-    "intro": "Tavotto can send anonymous product usage statistics so we can see which features people actually use. It is off unless you turn it on.",
+    "intro": "Tavotto can send anonymous product usage statistics so we can see which features people actually use. It is off unless you turn it on. The identifier is a random UUID generated on this machine; it stays the same across restarts and is not tied to any account.",
     "later": "You can change this any time under Settings → Privacy, diagnostics & About.",
     "neverData": "Scientific data and text inside figures",
     "neverFigures": "Your figures and project files",
