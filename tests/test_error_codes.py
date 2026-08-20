@@ -63,6 +63,8 @@ USER_VISIBLE_CODES = {
     "endpoint_invalid": {"reason"},
     "ai_start_failed": {"reason"},
     "ai_revert_failed": {"reason"},
+    # --- #24（ADR 0008 会话认证）带来的用户可见 code ---
+    "session_auth_required": set(),
     # --- 早已有 code、这次补上文案的存量 ---
     "annotations_need_pdf": set(),
     "desktop_updater_disabled": set(),

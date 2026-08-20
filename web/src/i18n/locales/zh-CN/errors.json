@@ -37,6 +37,7 @@
     "script_changed": "写回被阻止：脚本在会话期间被修改过，请重新渲染后再试",
     "script_name_missing": "缺少脚本名",
     "script_not_in_project": "脚本不存在或不在项目目录内",
+    "session_auth_required": "会话未建立或已失效：请重新启动 Tavotto，从它打开的链接进入。",
     "settings_dir_unusable": "{{key}} 不可用：{{reason}}",
     "source_changed": "写回被阻止：原始文件在此期间被修改过，请刷新素材后再试",
     "stale_write": "自动保存冲突：磁盘上已有更新的版本",

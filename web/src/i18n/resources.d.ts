@@ -903,6 +903,7 @@ export default interface Resources {
       "script_changed": "写回被阻止：脚本在会话期间被修改过，请重新渲染后再试",
       "script_name_missing": "缺少脚本名",
       "script_not_in_project": "脚本不存在或不在项目目录内",
+      "session_auth_required": "会话未建立或已失效：请重新启动 Tavotto，从它打开的链接进入。",
       "settings_dir_unusable": "{{key}} 不可用：{{reason}}",
       "source_changed": "写回被阻止：原始文件在此期间被修改过，请刷新素材后再试",
       "stale_write": "自动保存冲突：磁盘上已有更新的版本",
@@ -2112,7 +2113,8 @@ export default interface Resources {
       "staleOtherWindow": "该文档已在其他窗口保存了更新的版本，本窗口的改动已暂存本机，未写入磁盘"
     },
     "boot": {
-      "desktopSessionFailed": "Tavotto 桌面会话建立失败：请关闭窗口后重新打开应用。"
+      "desktopSessionFailed": "Tavotto 桌面会话建立失败：请关闭窗口后重新打开应用。",
+      "sessionUnauthenticated": "这个页面没有 Tavotto 会话：请回到终端或应用重新启动 Tavotto，用它打开的带凭据链接进入。"
     },
     "canvasList": {
       "canvasName": "画布名",
