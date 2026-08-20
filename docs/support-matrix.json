@@ -1,0 +1,45 @@
+{
+  "schema": 1,
+  "note": "支持矩阵的唯一权威文件（1.0 审计 P1-06）。README、发布页、官网、应用内文案都以这里为准；tests/test_support_matrix.py 逐条与 pyproject / runtime-lock 对拍，防止承诺与事实分叉。status 语义：supported = 有安装包 + CI 门禁 + 真产物冒烟；beta = 可用但验收面没到 supported；unsupported = 不构建不承诺（能跑也别写进宣传）。",
+  "python": {
+    "requires": ">=3.10,<3.14",
+    "tested": ["3.10", "3.11", "3.12", "3.13"],
+    "note": "与 CI 矩阵一致；3.14 验证过（backend/wheel/worker/golden/smoke）再放开上界"
+  },
+  "targets": [
+    {
+      "id": "windows-x64-desktop",
+      "label": "Windows x64 桌面版",
+      "status": "supported",
+      "channel": "NSIS 安装包（含内置渲染 runtime 与 Rust supervisor）",
+      "gates": "windows-exe-smoke + desktop-tauri 真产物冒烟 + nightly 安装/升级/卸载链路"
+    },
+    {
+      "id": "macos-arm64-desktop",
+      "label": "macOS Apple Silicon 桌面版",
+      "status": "supported",
+      "channel": "dmg（签名 + 公证；含内置渲染 runtime）",
+      "gates": "macos-app-smoke + 签完名的 .app 从中文+空格路径冒烟"
+    },
+    {
+      "id": "macos-x86_64",
+      "label": "macOS Intel",
+      "status": "unsupported",
+      "channel": "pip / pipx（浏览器模式）",
+      "note": "桌面产物没构建过也没冒烟过（runtime-lock 里 shipped=false，CI 无 Intel runner）。宣传物料不得写「支持 Intel」。"
+    },
+    {
+      "id": "windows-arm64",
+      "label": "Windows ARM",
+      "status": "unsupported",
+      "note": "无原生产物与真机/仿真验收。"
+    },
+    {
+      "id": "linux",
+      "label": "Linux",
+      "status": "beta",
+      "channel": "pip / pipx（浏览器模式；会话认证默认启用，ADR 0008）",
+      "note": "无桌面安装包，不写 desktop support；CI 的 backend/package 矩阵在 Linux 上最全，但没有发行安装物验收。"
+    }
+  ]
+}

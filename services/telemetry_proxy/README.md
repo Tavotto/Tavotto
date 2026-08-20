@@ -37,12 +37,20 @@ services/telemetry_proxy/
     contract.py   event + property allowlists (mirror of the client's)
     core.py       validation, auth, routing — all business logic, platform-neutral
     posthog.py    the ONLY module that knows PostHog's JSON
-    wsgi.py       generic WSGI adapter + `python -m …wsgi` dev server
-  api/index.py    thin Vercel entry point (protocol shuttling only)
-  vercel.json     rewrites /healthz and /v1/* onto that one function
+    wsgi.py       THE entry point: generic WSGI app + `python -m …wsgi` dev server
+  pyproject.toml  `[tool.vercel] entrypoint` → wsgi.application
+  vercel.json     function limits only (maxDuration) — no routing, no rewrites
+  scf_bootstrap   Tencent SCF web-function launcher (runs the same wsgi app)
 ```
 
-Swapping hosting providers means rewriting `api/index.py`. Nothing else.
+There is **one** entry layer: `wsgi.application`. Vercel runs it directly via
+`[tool.vercel]` in `pyproject.toml`; local dev and Tencent SCF run the built-in
+server in the same module. The old `api/index.py` + `vercel.json` rewrites were
+removed on 2026-08-20 — Vercel's internal rewrites hand the function the
+*rewritten* path, so path-routing code passed every local test and 404'd the
+whole site once deployed (the lesson is written up at the top of `wsgi.py`).
+Swapping hosting providers means pointing the new host at `wsgi.application`.
+Nothing else.
 
 ## Endpoints
 
@@ -115,7 +123,8 @@ deduplicate on it explicitly (see `docs/analytics/yc-dashboard.json`).
    cd services/telemetry_proxy
    vercel deploy --prod
    ```
-   `vercel.json` routes `/healthz` and `/v1/*` to `api/index.py`. There is
+   `pyproject.toml`'s `[tool.vercel] entrypoint` hands every route straight to
+   `wsgi.application` (no rewrites, no second entry file). There is
    nothing to build — no dependencies, no lockfile.
 8. **Map `telemetry.tavotto.com`** to the deployment (host dashboard → Domains →
    add `telemetry.tavotto.com`, then add the CNAME/A record the host shows at

@@ -187,7 +187,10 @@ That runtime is also why the installers are large: **195 MB to download on macOS
 
 > macOS builds are **Apple Silicon (arm64) only**. Intel Macs are neither built nor
 > tested — use the PyPI install below. There is no Linux installer; Linux runs from
-> PyPI.
+> PyPI (browser mode, beta). The single source of truth for what is supported,
+> beta, and unsupported — per platform and per Python version — is
+> [`docs/support-matrix.json`](docs/support-matrix.json); release pages, the
+> website and in-app copy must match it (a test enforces the facts it can check).
 
 ### PyPI
 
