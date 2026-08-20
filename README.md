@@ -101,13 +101,13 @@ and tells you what a reviewer would have told you three weeks later:
        alt="The preflight list in the export dialog: two blocking findings about text below the profile's 8.5 pt and 8 pt floors, warnings about a frame line width and a legend font size, suggestions about bold legend text, axis-label format and lines drawn without markers, and one item marked not verifiable.">
 </p>
 
-Font sizes are judged at their **final physical size** — a panel placed at 60 % is
+Font sizes are judged at their **final physical size** — a panel placed at 60% is
 checked against `fontsize × 0.6`, not against what the script asked for. Findings come
-in four levels: `error` blocks the export until you confirm in writing, `warn` is
-always shown, `not_verifiable` is what genuinely cannot be checked (text inside an
-imported bitmap) and needs a human, and `suggestion` never decides anything for you.
-All of it, your confirmation included, goes into an optional proof report written
-next to the exported files.
+in four levels. **Blocking** stops the export until you confirm in writing.
+**Warning** is always shown. **Not verifiable** is what genuinely cannot be checked —
+text inside an imported bitmap — and needs a human. **Suggestion** never decides
+anything for you. All of it, your confirmation included, goes into an optional proof
+report written next to the exported files.
 
 ## Finish figures an AI wrote
 
