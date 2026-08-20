@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 import uuid
 from pathlib import Path
@@ -392,3 +393,108 @@ def test_every_client_event_is_accepted_end_to_end(upstream):
         status, body = _post("/v1/events", _event(event=name,
                                                   properties={**auto, **props}))
         assert status == 200, (name, body)
+
+
+# ---------------------------------------------------------------------------
+# 真实入口层（WSGI）
+#
+# 这一组是 2026-08-20 首次部署那个 bug 的看护，而它的教训**不是**「换个部署
+# 方案」，是：**只测 `core.handle` 看不出入口层坏没坏**。当时入口靠
+# `self.path` 路由，而 Vercel 的 rewrite 会把函数收到的路径换成 destination
+# （`/api/index`）——上面那 40 多条用例全绿，一部署整站 404。
+#
+# 现在对外只有一个入口 `wsgi.application`，本地 / 测试 / Vercel 跑的是同一个，
+# 下面这几条直接打在它身上。
+# ---------------------------------------------------------------------------
+PUBLIC_ROUTES = ["/healthz", "/v1/events", "/v1/metrics"]
+
+
+def _wsgi(method: str, path: str, body: bytes = b"", headers: dict | None = None):
+    """像真实服务器那样调 `application`，返回 (状态行, 头, 响应体)。"""
+    import io
+
+    from tavotto_telemetry_proxy.wsgi import application
+
+    environ = {
+        "REQUEST_METHOD": method,
+        "PATH_INFO": path,
+        "CONTENT_LENGTH": str(len(body)) if body else "",
+        "CONTENT_TYPE": (headers or {}).get("content-type", "application/json"),
+        "wsgi.input": io.BytesIO(body),
+    }
+    if (headers or {}).get("authorization"):
+        environ["HTTP_AUTHORIZATION"] = headers["authorization"]
+    captured = {}
+
+    def start_response(status, response_headers):
+        captured["status"] = status
+        captured["headers"] = response_headers
+
+    chunks = application(environ, start_response)
+    return captured["status"], dict(captured["headers"]), b"".join(chunks)
+
+
+@pytest.mark.parametrize("route", PUBLIC_ROUTES)
+def test_wsgi_serves_every_public_route(upstream, route):
+    """每个对外路径经**真实入口**都必须被认出来——404 就说明部署出去是死的。"""
+    method = "GET" if route == "/healthz" else "POST"
+    status, _headers, body = _wsgi(method, route, b"{}")
+    assert json.loads(body).get("code") != "not_found", f"{route} 在 WSGI 层是 404"
+    assert not status.startswith("404")
+
+
+def test_wsgi_routes_on_the_real_request_path(upstream):
+    """它按 PATH_INFO 路由：未知路径才是 404，已知路径不许是。"""
+    status, _h, body = _wsgi("GET", "/nope")
+    assert status.startswith("404") and json.loads(body)["code"] == "not_found"
+
+
+def test_wsgi_status_line_has_a_reason_phrase(upstream):
+    """WSGI 规范要 `"200 OK"` 而不是光一个数字——有的服务器直接拒，
+    而那种失败只会在部署之后出现。"""
+    for method, route in [("GET", "/healthz"), ("GET", "/nope")]:
+        status, _h, _b = _wsgi(method, route)
+        assert re.fullmatch(r"\d{3} [A-Za-z][A-Za-z ']*", status), repr(status)
+
+
+def test_wsgi_rejects_content_bearing_properties_end_to_end(upstream):
+    """夹带文件名的事件，走完整入口也必须被拒。"""
+    ev = _event()
+    ev["properties"]["stem"] = "Fig1_保密数据"
+    status, _h, body = _wsgi("POST", "/v1/events",
+                             json.dumps(ev).encode("utf-8"))
+    assert status.startswith("400")
+    assert json.loads(body)["code"] == "unknown_property"
+    assert "保密数据" not in body.decode("utf-8")
+    assert upstream == []
+
+
+def test_wsgi_metrics_still_needs_the_token(upstream):
+    status, _h, body = _wsgi("POST", "/v1/metrics",
+                             json.dumps({"schema_version": 1, "events": []}).encode())
+    assert status.startswith("401")
+
+
+def test_vercel_entrypoint_points_at_the_wsgi_app():
+    """`pyproject.toml` 里配的 entrypoint 必须真的存在且可调用。
+
+    配错了的表现是构建期报「No python entrypoint found」——发布链上才发现。
+    """
+    text = (PROXY_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    m = re.search(r'entrypoint\s*=\s*"([^"]+)"', text)
+    assert m, "pyproject.toml 里没有 [tool.vercel] entrypoint"
+    module_path, _, attr = m.group(1).partition(":")
+    import importlib
+
+    module = importlib.import_module(module_path)
+    assert callable(getattr(module, attr, None)), f"{m.group(1)} 不可调用"
+
+
+def test_no_second_entrypoint_layer_creeps_back():
+    """对外只能有一个入口。`api/` 文件路由那条路会重新引入
+    「本地全绿、部署 404」的失败模式——别加回来。"""
+    assert not (PROXY_ROOT / "api").exists(), \
+        "services/telemetry_proxy/api/ 又出现了：见本节开头"
+    conf = json.loads((PROXY_ROOT / "vercel.json").read_text(encoding="utf-8"))
+    assert "rewrites" not in conf, \
+        "rewrites 会用重写后的 destination 路由，正是当初那个 bug"

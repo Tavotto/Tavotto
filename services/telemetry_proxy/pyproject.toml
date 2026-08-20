@@ -1,0 +1,21 @@
+# 这个文件**只为部署存在**：它不是一个要发布的 Python 包，也和仓库根的
+# pyproject.toml（Tavotto 本体）毫无关系——那边的 exclude 显式挡住了 services/。
+#
+# Vercel 的 Python runtime 会把带 WSGI 变量的项目识别成 backend framework，
+# 要一个**单一 entrypoint**。指向我们本来就有的、平台无关的 WSGI 应用即可：
+# 于是整个 Vercel 适配层消失了，换托管方时连这一个文件都不用改。
+#
+# **为什么不用 `api/` 文件路由 + rewrites**（2026-08-20 部署时踩过）：
+# Vercel 的内部 rewrite 会用**重写后的 destination** 去路由，函数拿到的
+# `self.path` 是 `/api/index` 而不是原始的 `/v1/events`。靠请求路径路由的写法
+# 因此本地全绿、一部署整站 404，而且 404 是我们自己的代码返回的，看起来像
+# rewrite 没配。WSGI 这条路没有这个问题：`PATH_INFO` 就是原始路径。
+[project]
+name = "tavotto-telemetry-proxy"
+version = "1.0.0"
+description = "Tavotto 匿名遥测代理（纯标准库，无依赖）"
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.vercel]
+entrypoint = "tavotto_telemetry_proxy.wsgi:application"
