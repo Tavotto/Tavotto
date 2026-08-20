@@ -131,7 +131,7 @@ def data_path(*parts: str) -> Path:
 
 def _defaults() -> dict:
     return {"recent_projects": [], "projects": {}, "ai": {}, "updates": {},
-            "worker": {}}
+            "worker": {}, "telemetry": {}}
 
 
 def load() -> dict:
@@ -156,6 +156,11 @@ def load() -> dict:
         out["updates"] = data["updates"]
     if isinstance(data.get("worker"), dict):
         out["worker"] = data["worker"]
+    # 匿名遥测的同意态与随机 install_id（engine/telemetry.py 是唯一读写方）。
+    # **必须在这里显式收下**：load() 是白名单式的，漏一个键就等于每次 save()
+    # 都把它抹掉——表现是「同意了，但下次启动又来问一遍」。
+    if isinstance(data.get("telemetry"), dict):
+        out["telemetry"] = data["telemetry"]
     return out
 
 

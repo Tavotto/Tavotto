@@ -13,7 +13,16 @@ import { literal } from '@/i18n'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+// 预检埋点走的是 `/api/telemetry/event`；这里只把那一个函数换掉，
+// 其余 api 保持真实实现（本文件靠 stubFetch 打桩 /api/export）
+vi.mock('@/lib/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api')>()),
+  postTelemetryEvent: vi.fn(() => Promise.resolve({ accepted: true })),
+}))
+
 import { ExportDialog } from '@/components/ExportDialog'
+import { postTelemetryEvent } from '@/lib/api'
+import { setTelemetryEnabled } from '@/lib/telemetry'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
@@ -239,5 +248,42 @@ describe('warn 与 not_verifiable 必须看得见', () => {
     await click(toggle!)
     expect(text()).toContain('页面比例')
     expect(text()).toContain('警告')
+  })
+})
+
+describe('预检的匿名用量统计', () => {
+  it('只发计数，不发任何一条检查项的文字 / 字体名 / 对象 id', async () => {
+    const posted = vi.mocked(postTelemetryEvent)
+    posted.mockClear()
+    setTelemetryEnabled(true)
+    try {
+      await setup(8)                       // 8pt 刻度：撞绝对下限 → 1 条 error
+      const calls = posted.mock.calls.filter(([event]) => event === 'preflight_completed')
+      expect(calls).toHaveLength(1)
+      const props = calls[0][1] as Record<string, unknown>
+      expect(Object.keys(props).sort()).toEqual([
+        'errors', 'not_verifiable', 'passed', 'suggestions', 'warnings',
+      ])
+      expect(props.errors).toBeGreaterThan(0)
+      expect(props.passed).toBe(false)
+      for (const v of Object.values(props)) {
+        expect(typeof v === 'number' || typeof v === 'boolean').toBe(true)
+      }
+      // 面板里真实存在的那些文字一个都不能出现在载荷里
+      const blob = JSON.stringify(props)
+      for (const leaked of ['Fig1', '.pdf', 'axes_0', 'x 刻度', '字号']) {
+        expect(blob).not.toContain(leaked)
+      }
+    } finally {
+      setTelemetryEnabled(false)
+    }
+  })
+
+  it('没同意时一条都不发', async () => {
+    const posted = vi.mocked(postTelemetryEvent)
+    posted.mockClear()
+    setTelemetryEnabled(false)
+    await setup(9)
+    expect(posted).not.toHaveBeenCalled()
   })
 })

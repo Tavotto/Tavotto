@@ -195,6 +195,8 @@ def main() -> None:
     env = {**os.environ,
            "TAVOTTO_DATA_DIR": str(tmp / "data"),
            "TAVOTTO_CONFIG_DIR": str(tmp / "config"),
+           # CI / 冒烟绝不产生真实的产品事件
+           "TAVOTTO_NO_TELEMETRY": "1",
            "TAVOTTO_DESKTOP_HANDSHAKE": str(handshake)}
     env.pop("TAVOTTO_DESKTOP_NONCE", None)
 

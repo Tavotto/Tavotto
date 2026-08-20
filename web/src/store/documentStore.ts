@@ -4,6 +4,7 @@ import { ApiError, deleteAutosave, fetchAutosave, putAutosave } from '@/lib/api'
 import { announceDocOpen } from '@/lib/docPresence'
 import { msg, t, type UiMessage } from '@/i18n'
 import { newId } from '@/lib/id'
+import { boundedCount, captureTelemetry, classifyEditKind } from '@/lib/telemetry'
 import type { CanvasData, FigureDocument, ProjectDocument } from '@/types/document'
 import {
   canvasToDoc,
@@ -161,6 +162,15 @@ function compress(patches: Patch[], inverse: Patch[]): [Patch[], Patch[]] {
 function pushHistory(state: DocumentState, entry: HistoryEntry): Partial<DocumentState> {
   const past = [...state.past, entry]
   if (past.length > HISTORY_LIMIT) past.splice(0, past.length - HISTORY_LIMIT)
+  // 匿名用量统计**唯一**的编辑埋点。挂在这里而不是散落在各个控件上：
+  // 一次拖动 = 一条事务 = 一条历史 = **一个事件**，而不是 120 次 pointermove；
+  // 而且 commit 与 endTxn 都汇到这一个函数，新增编辑动作自动被覆盖。
+  // 发出去的只有「哪一类」和「几条补丁」——分类查的是开发者写死的标签 key
+  // （闭表，落不到就是 other），补丁内容一个字节都不参与。
+  captureTelemetry('figure_edit_completed', {
+    edit_kind: classifyEditKind(entry.label?.key),
+    patch_count: boundedCount(entry.patches.length),
+  })
   return { past, future: [] }
 }
 
@@ -385,6 +395,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
     set({ canvases: [...s.canvases, canvas] })
     get().switchCanvas(id)
+    captureTelemetry('canvas_created', { creation_kind: 'blank' })
     return id
   },
 
@@ -441,6 +452,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const canvases = [...s.canvases]
     canvases.splice(idx + 1, 0, copy)
     set({ canvases })
+    captureTelemetry('canvas_created', { creation_kind: 'duplicate' })
     return nid
   },
 

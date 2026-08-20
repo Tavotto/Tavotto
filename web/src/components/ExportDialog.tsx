@@ -32,6 +32,7 @@ import {
   type Severity,
 } from '@/lib/profile'
 import { apiUrl } from '@/lib/session'
+import { boundedCount, captureTelemetry } from '@/lib/telemetry'
 import { cn } from '@/lib/utils'
 import { isDesktop, revealExportedFile } from '@/lib/desktop'
 import { revealObjects } from '@/store/actions'
@@ -189,6 +190,27 @@ export function ExportDialog() {
 
   /** 需要用户点头才放行的东西：阻断项 + 无法核验项 */
   const needsConfirm = sum.errors.length > 0 || sum.notVerifiable.length > 0
+
+  /**
+   * 匿名用量统计：**预检真的算完之后**记一次，每次打开导出对话框一条。
+   *
+   * 这一条刻意记在前端而不是后端：画布这一侧的预检求值器就是
+   * `lib/preflight.ts`（两个求值器的分工见 CLAUDE.md），Flask 没有对应端点。
+   * 发出去的只有**四个计数 + 一个布尔**——检查项的文案、字体名、对象 id、
+   * 文件名一个都不发（白名单里也没有这些属性）。
+   */
+  useEffect(() => {
+    if (!open) return
+    captureTelemetry('preflight_completed', {
+      errors: boundedCount(sum.counts.error),
+      warnings: boundedCount(sum.counts.warn),
+      not_verifiable: boundedCount(sum.counts.not_verifiable),
+      suggestions: boundedCount(sum.counts.suggestion),
+      passed: sum.counts.error === 0 && sum.counts.warn === 0,
+    })
+    // 依赖里**只有 open**：把 sum 放进去的话，用户在对话框里换一次期刊规范
+    // 就会再发一条，而那不是一次新的体检行为
+  }, [open])                                    // eslint-disable-line
   // 勾了确认框就**必须**留档。确认框上写着「这次确认会记录在留档里」，而
   // 用户可能早就把留档关掉了（这是个记住的偏好）——那样承诺的记录一份都
   // 不会产生，导出对话框在骗人。所以确认一旦成立，留档不再是可选项。

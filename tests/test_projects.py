@@ -33,7 +33,8 @@ def _make_figs(tmp_path, name="figs"):
 
 def test_config_defaults_when_missing():
     assert engine_config.load() == {"recent_projects": [], "projects": {},
-                                    "ai": {}, "updates": {}, "worker": {}}
+                                    "ai": {}, "updates": {}, "worker": {},
+                                    "telemetry": {}}
 
 
 def test_config_corrupted_file_falls_back():

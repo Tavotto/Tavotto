@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { t } from '@/i18n'
+import { captureTelemetry } from '@/lib/telemetry'
 import { applyUpdate, checkUpdate, patchUpdateSettings, type UpdateStatus } from '@/lib/api'
 import {
   checkDesktopUpdate,
@@ -138,6 +139,16 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
       await installDesktopUpdate((f) => set({ desktopProgress: f }))
       // 装完了但还跑着旧进程：与 pip 那条同一条纪律，重启才算换版本
       set({ desktopPhase: 'installed' })
+      // 匿名用量统计：**装成功之后**才记（下载失败 / 用户中途取消都不算）。
+      // 桌面这条通道整个在 Tauri 层，后端 updater 在桌面模式是关着的，
+      // 所以这一条只能由前端记；pip / pipx 那条由后端 updater 自己记。
+      const version = get().desktopUpdate?.version
+      captureTelemetry('update_completed', {
+        update_kind: 'desktop',
+        // 空串在白名单里是非法值（会让整条事件被丢掉），所以拿不到版本号时
+        // 干脆不带这个属性——少一个属性好过少一条事件
+        ...(version ? { target_version: version } : {}),
+      })
     } catch (e) {
       set({
         desktopPhase: 'idle',

@@ -270,6 +270,11 @@ def run_smoke(launch: list[str], figures: Path, workdir: Path,
         "USERPROFILE": str(workdir / "home"),
         # 关掉联网检查更新：冒烟不该依赖 GitHub 可达
         "TAVOTTO_NO_UPDATE_CHECK": "1",
+        # 匿名用量统计**硬关**。两个理由，缺一不可：① CI 与冒烟绝不能产生
+        # 真实的产品事件（那会把「有多少人在用」直接污染掉）；② 冒烟不该
+        # 依赖 telemetry.tavotto.com 可达。它与上面那条是两个独立开关，
+        # 别指望关了检查更新就顺带关掉这条。
+        "TAVOTTO_NO_TELEMETRY": "1",
         # 让 /api/shutdown 可用：冒烟要验证的是**干净退出**，不是硬停
         "TAVOTTO_ALLOW_SHUTDOWN": "1",
     }

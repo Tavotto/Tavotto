@@ -1,0 +1,15 @@
+{
+  "_note": "PyPIStats /api/packages/<pkg>/overall 的裁剪样本。两个 category 都在——用例要证明只有 without_mirrors 被采用。",
+  "package": "tavotto",
+  "type": "overall_downloads",
+  "data": [
+    {"category": "with_mirrors", "date": "2026-08-17", "downloads": 940},
+    {"category": "without_mirrors", "date": "2026-08-17", "downloads": 121},
+    {"category": "with_mirrors", "date": "2026-08-18", "downloads": 1012},
+    {"category": "without_mirrors", "date": "2026-08-18", "downloads": 143},
+    {"category": "with_mirrors", "date": "2026-08-19", "downloads": 998},
+    {"category": "without_mirrors", "date": "2026-08-19", "downloads": 156},
+    {"category": "without_mirrors", "date": "2026-07-01", "downloads": 77},
+    {"category": "without_mirrors", "date": "2026-09-30", "downloads": 999}
+  ]
+}

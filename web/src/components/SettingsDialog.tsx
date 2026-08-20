@@ -25,6 +25,7 @@ import { cn } from '@/lib/utils'
 import { useAiStore } from '@/store/aiStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
+import { useTelemetryStore } from '@/store/telemetryStore'
 import { useUpdateStore } from '@/store/updateStore'
 import { BrandMark } from './ui/BrandMark'
 import { Button } from './ui/Button'
@@ -1048,6 +1049,58 @@ function DesktopUpdateSection({ status }: { status: UpdateStatus }) {
   )
 }
 
+/**
+ * 匿名用量统计的开关。**放在「隐私、诊断与 About」这一档里**，而不是新开一个
+ * 分区：这一档本来就是隐私相关的落点（隐私声明 + 诊断包就在同一屏），
+ * 用户找「这东西会不会上传我的图」时会来这里。
+ *
+ * 描述必须同时写清楚**发什么**和**绝不发什么**——只写前者的开关等于没解释。
+ */
+function TelemetrySection() {
+  useTranslation('dialogs')
+  const settings = useTelemetryStore((s) => s.settings)
+  const choose = useTelemetryStore((s) => s.choose)
+  const load = useTelemetryStore((s) => s.load)
+  useEffect(() => {
+    if (!settings) void load()
+  }, [settings, load])
+
+  const hard = settings?.hard_disabled ?? false
+  return (
+    <div className="rounded-md border border-border p-2.5">
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <h3 className="text-xs font-medium text-ink-2">{st('about.telemetry.title')}</h3>
+        <Toggle
+          checked={settings?.enabled ?? false}
+          // 管理员关掉时开关是死的：还能点的话用户会以为自己打开了，
+          // 而实际上一个字节都不会发
+          disabled={hard || !settings}
+          aria-label={st('about.telemetry.toggle')}
+          onChange={(v) => void choose(v ? 'enabled' : 'disabled', 'settings')}
+        />
+      </div>
+      <p className="text-xs leading-relaxed text-ink-3">{st('about.telemetry.sends')}</p>
+      <p className="mt-1 text-xs leading-relaxed text-ink-3">
+        <strong className="font-medium text-ink-2">{st('about.telemetry.neverLabel')}</strong>
+        {st('about.telemetry.never')}
+      </p>
+      {hard && (
+        <p className="mt-1 text-xs leading-relaxed text-ink-2">
+          {st('about.telemetry.hardDisabled')}
+        </p>
+      )}
+      <a
+        href="https://github.com/Tavotto/Tavotto/blob/main/docs/privacy.md"
+        target="_blank"
+        rel="noreferrer"
+        className="mt-1 inline-block text-xs text-accent hover:underline"
+      >
+        {st('about.telemetry.policy')}
+      </a>
+    </div>
+  )
+}
+
 function AboutSection() {
   useTranslation('dialogs')
   const version = useUpdateStore((s) => s.status?.current)
@@ -1072,6 +1125,7 @@ function AboutSection() {
         </p>
       </div>
       <p className="text-xs leading-relaxed text-ink-3">{st('about.privacy')}</p>
+      <TelemetrySection />
       <p className="text-xs leading-relaxed text-ink-3">
         {st('about.licenseBefore')}{' '}
         <a

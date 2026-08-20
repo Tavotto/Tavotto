@@ -57,6 +57,8 @@ Bigger changes have their own gates:
 | Desktop build | `python scripts/build_desktop.py`, then `python scripts/smoke_desktop.py --sidecar dist/Tavotto/Tavotto` |
 | Golden path in a real browser | `cd web && pnpm e2e` (build the frontend first) |
 | Rust supervisor | `cd workerd && cargo test && cargo clippy --all-targets -- -D warnings && cargo fmt --check` |
+| Telemetry / analytics | `pytest tests/test_telemetry.py tests/test_telemetry_api.py tests/test_telemetry_invariants.py tests/test_telemetry_proxy.py tests/test_distribution_metrics.py` — no test makes a real network request; `tests/conftest.py` pins `TAVOTTO_NO_TELEMETRY=1` |
+| Distribution collector | `python scripts/collect_distribution_metrics.py --dry-run` |
 
 Tests that need matplotlib spawn their own interpreter and skip cleanly if there
 isn't one, so a `.venv` without the scientific stack still runs most of the suite.

@@ -236,7 +236,8 @@ your figures or data is uploaded.
 | Documents and autosaves | `~/Library/Application Support/Tavotto/` (Linux `~/.local/share/tavotto/`, Windows `%LOCALAPPDATA%\Tavotto\`) |
 | Exports, canvas files and version history | Inside your project, in one `tavottofile/` folder: exports in `tavottofile/export/`, named canvases alongside them, version history in `tavottofile/versions/`. Visible, backupable, and synced with your figures. Files written by older versions stay readable where they were. |
 | Your scripts and figures | Read-only, unless you explicitly choose "write back to original file" — which can be locked off per project |
-| The only outbound request | A once-a-day check for a new release — plus the download itself, if you accept an update in the desktop app. Both stop when you turn the check off in Settings → Check for updates. |
+| Outbound requests | A once-a-day check for a new release — plus the download itself, if you accept an update in the desktop app. Both stop when you turn the check off in Settings → Check for updates. |
+| Anonymous usage statistics | **Off until you say yes.** Asked once, on first run. If you opt in, Tavotto sends broad feature events (app started, figure opened, edit committed, export succeeded) plus version, OS family and architecture, tagged with a random UUID generated on your machine. Never your figures, scripts, filenames, paths, data, figure text or assistant prompts. Turn it off any time in Settings → Privacy, diagnostics & About, or set `TAVOTTO_NO_TELEMETRY=1`. [Details](docs/analytics/telemetry-events.md) · [Privacy policy](docs/privacy.md) |
 
 ## Good to know
 
@@ -296,6 +297,33 @@ python scripts/build_worker_runtime.py              # picks the target for this 
 python scripts/build_worker_runtime.py --list-targets
 python scripts/build_desktop.py                     # full desktop chain (includes it)
 ```
+
+### Working on telemetry
+
+Nothing here needs a PostHog account. The test suites never make a real request:
+`tests/conftest.py` pins `TAVOTTO_NO_TELEMETRY=1` for every test, and the
+telemetry tests replace the transport with a collector.
+
+```sh
+# Run a local proxy instead of the production one (no PostHog key needed until
+# it actually forwards — validation and rejection paths work without one).
+cd services/telemetry_proxy && python3 -m tavotto_telemetry_proxy.wsgi   # :8787
+
+# Point a dev client at it, then opt in when the first-run prompt appears.
+TAVOTTO_TELEMETRY_ENDPOINT=http://127.0.0.1:8787/v1/events tavotto
+
+# Or make sure nothing is ever sent, whatever the saved setting says.
+TAVOTTO_NO_TELEMETRY=1 tavotto
+
+# Preview the distribution collector without transmitting anything.
+python scripts/collect_distribution_metrics.py --dry-run
+```
+
+`TAVOTTO_NO_TELEMETRY` and `TAVOTTO_NO_UPDATE_CHECK` are independent switches;
+neither one covers the other. Deployment steps for the proxy are in
+[services/telemetry_proxy/README.md](services/telemetry_proxy/README.md), the
+event contract in
+[docs/analytics/telemetry-events.md](docs/analytics/telemetry-events.md).
 
 Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for
 how to verify a change and which boundaries the codebase keeps deliberately. When

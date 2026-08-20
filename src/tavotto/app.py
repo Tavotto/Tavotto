@@ -53,6 +53,7 @@ from .engine import probe as engine_probe
 from .engine import ai_providers as engine_ai_providers
 from .engine import registry as engine_registry
 from .engine import runtime as engine_runtime
+from .engine import telemetry as engine_telemetry
 from .engine import updater as engine_updater
 
 PKG_ROOT = Path(__file__).resolve().parent   # 只读：包自带资源（前端构建产物）
@@ -747,6 +748,18 @@ def api_export():
              f"，{len(warnings)} 条警告" if warnings else "")
     if warnings:
         LOG.warning("导出警告: %s", warnings)
+    # 激活事件：**文件真的写完之后**才记，且只记形状不记内容——没有 stem、
+    # 没有导出目录、没有画布名、没有项目信息。埋点在服务端而不是前端，是因为
+    # 前端记的是「用户点了导出」，点了之后还可能失败；这里记的是「导出成功了」。
+    # capture() 自己吞掉一切失败，这一行不可能影响上面这个响应。
+    engine_telemetry.capture("export_completed", {
+        "pdf": "pdf" in formats,
+        "png": "png" in formats,
+        "with_proof": isinstance(spec.get("proof"), dict),
+        "panel_count": min(sum(1 for o in objects
+                               if o.get("type") == "panel" and not o.get("hidden")),
+                           1000),
+    })
     return jsonify({"files": out_files, "export_dir": str(out_dir),
                     "warnings": warnings})
 
@@ -2410,6 +2423,54 @@ def api_update_apply():
     return jsonify(result), (200 if result["ok"] else 500)
 
 
+# ------------------------- 匿名用量统计 -------------------------------------
+# 与 /api/update/* 同构的一小组端点。**刻意不回 install_id**：界面只需要知道
+# 「现在发不发」，把假名标识交给前端只会让它出现在截图、localStorage 与前端
+# 日志里，而界面拿它没有任何用处（engine/telemetry.public_settings 是唯一出口）。
+@app.get("/api/telemetry/settings")
+def api_telemetry_settings():
+    return jsonify(engine_telemetry.public_settings())
+
+
+@app.patch("/api/telemetry/settings")
+def api_telemetry_settings_patch():
+    body = request.get_json(force=True)
+    consent = body.get("consent")
+    if consent not in ("unset", "enabled", "disabled"):
+        return jsonify({"error": "consent 必须是 unset / enabled / disabled"}), 400
+    # source 只影响 telemetry_enabled 的那一条属性，取值受白名单约束
+    source = body.get("source") if body.get("source") in ("first_run", "settings") else "settings"
+    engine_telemetry.set_consent(consent, source=source)
+    return jsonify(engine_telemetry.public_settings())
+
+
+@app.post("/api/telemetry/event")
+def api_telemetry_event():
+    """前端语义事件的入口（服务端推断不出来的那几个：进图内编辑、一次编辑
+    落进历史、新建画布、预检完成、桌面版更新装完）。
+
+    校验用的是**和后端调用同一份白名单**（engine/telemetry.validate）：
+    这个端点在桌面模式下同样被 sidecar 的认证挡着，但即便如此也不该有一条
+    「前端说什么就发什么」的通路——白名单是结构性的防线，不是礼貌性的检查。
+    """
+    body = request.get_json(force=True)
+    event = body.get("event")
+    props = body.get("properties") or {}
+    if not isinstance(event, str) or not isinstance(props, dict):
+        return jsonify({"error": "event 必须是字符串、properties 必须是对象"}), 400
+    try:
+        engine_telemetry.validate(event, props)
+    except Exception:                          # noqa: BLE001 — 白名单外一律拒绝
+        # 不回显收到了什么：那正是不该被记录、也不该被回声出去的东西。
+        # 这个 code **不是**用户可见的失败（前端的 captureTelemetry 把一切吞掉，
+        # 界面上永远看不到它），所以按 API 段首的约定它没有、也不需要 i18n 文案；
+        # 它的用处是让开发者和用例分清「被白名单拒了」与「请求本身畸形」。
+        return jsonify({"error": "事件或属性不在白名单内",
+                        "code": "telemetry_rejected"}), 400
+    accepted = engine_telemetry.capture(event, props)
+    return jsonify({"accepted": accepted})
+
+
 @app.patch("/api/ai/settings")
 def api_ai_settings():
     """AI CLI 的用户级设置（自定义可执行路径）；改完立即重探测。"""
@@ -2482,6 +2543,11 @@ def api_ai_run():
         LOG.error("AI 任务启动失败: %s %s: %s", agent, info["script"], exc)
         return jsonify({"error": str(exc)}), 500
     LOG.info("AI 任务启动: %s %s（session %s）", agent, info["script"], sid)
+    # **只在会话真的起来之后**记一条，且只记用了哪个 agent。
+    # 提示词、脚本、stem、gid、label、target、画布名、会话 id ——一个都不发；
+    # agent 走枚举白名单，用户自定义的名字落成 "other" 而不是原样透出。
+    engine_telemetry.capture("ai_assistant_invoked", {
+        "agent": agent if agent in ("codex", "claude") else "other"})
     return jsonify({"session": sid, "script": info["script"]})
 
 
@@ -3000,6 +3066,12 @@ def main():
         print(f"* 尚未选择项目：请在{where}中新建或打开一个项目")
 
     if args.desktop_sidecar:
+        # 一次**真实的应用会话**开始了。放在这里而不是 import 时：
+        # `tavotto --help` / `tavotto doctor` / 打包脚本 / 单测都会 import
+        # 到 app 模块，把它们算进 DAU 会让这个数字从第一天起就是假的。
+        # 没同意时这一行什么都不做；用户在本次会话里同意之后由
+        # telemetry.set_consent 补发（同一次会话只发一条）。
+        engine_telemetry.note_app_started("desktop")
         sys.exit(desktop_mode.run(app))
 
     # 落地地址的形状（含 `?open=<stem>`）只有 handoff.browser_url 一个出处：
@@ -3023,6 +3095,9 @@ def main():
     print(f"* 打开 {url}")
     if not args.no_browser:
         threading.Timer(0.8, lambda: webbrowser.open(url)).start()
+    # 同上：真的要开始服务了才算一次会话。**上面「已有实例在跑，把浏览器
+    # 指过去就完事」那条分支刻意不记**——那个进程没有提供任何服务。
+    engine_telemetry.note_app_started("browser")
     app.run(host="127.0.0.1", port=port, threaded=True)
 
 

@@ -2,8 +2,12 @@
 
 设计取舍：
 - **联网是可关的**。默认每 24 小时向 GitHub Releases 查一次，用户可在
-  「设置 → 隐私、诊断与 About」关掉；关掉后除非手动点「立即检查」，
-  进程一个字节都不往外发。查询只发 GET，不带任何身份或使用数据。
+  「设置 → 检查更新」关掉；关掉后除非手动点「立即检查」，这条通道
+  一个字节都不往外发。查询只发 GET，不带任何身份或使用数据。
+- **它不再是唯一的对外请求**（2026-08-20）。同一个进程里还有一条
+  `engine/telemetry.py` 的匿名用量通道，但那条**默认关闭、要显式同意**，
+  且与本模块的开关完全独立：`TAVOTTO_NO_UPDATE_CHECK` 只管更新检查，
+  `TAVOTTO_NO_TELEMETRY` 只管遥测，谁都不代管对方。
 - **升级方式跟着安装方式走**。pipx 装的用 `pipx upgrade`，pip 装的用
   `pip install --upgrade`，git 检出的不代劳（只告诉用户 `git pull`）——
   在源码树里跑 pip 会把用户的工作副本覆盖掉。
@@ -25,7 +29,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from . import brand, config, runtime
+from . import brand, config, runtime, telemetry
 
 CHECK_INTERVAL_S = 24 * 3600
 NETWORK_TIMEOUT_S = 6
@@ -183,8 +187,10 @@ def check(force: bool = False) -> dict:
 def check_in_background() -> None:
     """启动时的静默检查——失败一律吞掉，绝不影响进程启动。
 
-    `TAVOTTO_NO_UPDATE_CHECK=1` 完全关掉它：检查更新是本应用唯一的对外请求，
-    CI 冒烟与断网启动测试都不该被它拖住（也不该因为 GitHub 不可达而变慢）。
+    `TAVOTTO_NO_UPDATE_CHECK=1` 完全关掉它：CI 冒烟与断网启动测试不该被它
+    拖住（也不该因为 GitHub 不可达而变慢）。**只管这一条通道**——匿名遥测
+    有自己的 `TAVOTTO_NO_TELEMETRY`，两个开关刻意不互相代管：把它们合成一个，
+    用户想关掉用量统计就得连安全更新提醒一起关掉。
     """
     if os.environ.get("TAVOTTO_NO_UPDATE_CHECK"):
         return
@@ -207,6 +213,7 @@ def apply_upgrade() -> dict:
         release = _fetch_latest_release()
     except (urllib.error.URLError, TimeoutError, OSError, ValueError):
         release = None
+    method = install_method()
     cmd = upgrade_command(release)
     if cmd is None:
         return {"ok": False, "command": "git pull", "restart_required": False,
@@ -224,5 +231,12 @@ def apply_upgrade() -> dict:
                 "log": f"升级命令执行失败: {exc}"}
     log = (proc.stdout or "") + (proc.stderr or "")
     ok = proc.returncode == 0
+    if ok:
+        # **装成功之后**才记一条，且不带 release notes 的任何文字。
+        # 埋点失败绝不影响这里的返回值：capture() 自己吞掉一切。
+        telemetry.capture("update_completed", {
+            "update_kind": method,
+            "target_version": str((release or {}).get("tag_name") or "").lstrip("v"),
+        })
     return {"ok": ok, "command": " ".join(cmd), "restart_required": ok,
             "log": log[-8000:]}

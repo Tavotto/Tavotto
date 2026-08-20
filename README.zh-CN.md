@@ -180,7 +180,8 @@ codex plugin marketplace add Tavotto/Tavotto && codex plugin add tavotto@tavotto
 | 文档与自动保存 | `~/Library/Application Support/Tavotto/`（Linux `~/.local/share/tavotto/`，Windows `%LOCALAPPDATA%\Tavotto\`） |
 | 导出成图、画布文件与版本历史 | 都收在项目内的一个 `tavottofile/` 里：导出在 `tavottofile/export/`，命名画布就在旁边，版本历史在 `tavottofile/versions/`——找得到、好备份、跟着图一起同步。旧版本写在老位置的文件仍可读 |
 | 你的脚本与图 | 只读——除非你明确选择「写回原始文件」，且该权限可按项目锁死 |
-| 唯一的对外请求 | 每天一次检查有没有新版本；桌面版里你接受更新时，还会下载那个安装包。关掉「设置 → 检查更新」后两者都不再发生 |
+| 对外请求 | 每天一次检查有没有新版本；桌面版里你接受更新时，还会下载那个安装包。关掉「设置 → 检查更新」后两者都不再发生 |
+| 匿名用量统计 | **默认不发，首启问一次，你同意才开始**。开了之后发的是粗粒度的功能事件（启动、打开图、一次编辑、导出成功）加上版本号、操作系统与架构，标识是本机随机生成的一串 UUID。**绝不发送**你的图、脚本、文件名、路径、科研数据、图内文字与改图助手的提示词。随时可在「设置 → 隐私、诊断与 About」关掉，或设 `TAVOTTO_NO_TELEMETRY=1`。[发了什么](docs/analytics/telemetry-events.md) · [隐私政策](docs/privacy.md) |
 
 ## 使用须知
 

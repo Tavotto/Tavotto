@@ -64,9 +64,15 @@ artifacts = ["src/tavotto/web/**"]
 # Codex 插件（codex-plugin/ + 仓库根的 .agents/ 市场清单）同理：它随 Codex 的
 # 插件市场分发，不属于 pip 包。sdist 的 include 里那条 `tests` 是 gitignore 风格
 # 的模式，任何一层的 `tests/` 都会被收走——插件将来加 tests/ 就会撞上。
+# 遥测代理（services/telemetry_proxy/）是一个**独立部署的服务**，不是 Tavotto
+# 运行时的一部分：客户端只知道一个 URL，代理跑在别处。它进 wheel 唯一的效果是
+# 给每个 pip 用户塞一份用不到的服务端代码，还会让「Tavotto 里有没有 PostHog
+# 相关代码」这个问题变得需要解释。sdist 的 include 里那条 `tests` 是 gitignore
+# 风格的模式，将来给代理加 tests/ 就会撞上，所以这里也显式挡掉。
 exclude = ["runtime", "runtime/**", "build/runtime-cache/**",
            "workerd", "workerd/**",
-           "codex-plugin", "codex-plugin/**", ".agents", ".agents/**"]
+           "codex-plugin", "codex-plugin/**", ".agents", ".agents/**",
+           "services", "services/**"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tavotto"]

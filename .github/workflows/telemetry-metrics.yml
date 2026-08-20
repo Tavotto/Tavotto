@@ -1,0 +1,66 @@
+name: Distribution metrics
+
+# 每天一次，把**发行量**（GitHub Release 资产下载数、PyPI 日下载量、仓库 star）
+# 采集成快照送进分析后端。
+#
+# **和桌面遥测是两条完全不同的链路，别混。**
+#   * 桌面遥测：用户显式同意后，从他自己的机器上发；丢事件必须无声无息。
+#   * 这一条：公开数据，从 CI 上发，不对应任何一个人；**丢数据必须有人看见**，
+#     所以采集器失败就让这个 workflow 红。
+#
+# GitHub 的 download_count 是**累计计数器**，采集器发的是快照，区间下载量由
+# 看板在两个快照之间做差（见 docs/analytics/yc-metrics.md）。因此重跑这个
+# workflow 不会让数字翻倍——同一天同一个资产的 snapshot_key 是一样的。
+
+on:
+  schedule:
+    # 每天 03:17 UTC。**刻意不是整点**：整点是 GitHub Actions 的高峰，
+    # 排队几十分钟很常见，而 PyPIStats 的当日数据本来就要等它自己跑批。
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "只采集与打印，不上报"
+        type: boolean
+        default: false
+
+# 只读。这个工作流不写仓库、不建 Release、不碰 Pages。
+permissions:
+  contents: read
+
+concurrency:
+  # 两次运行同时上报同一天的快照没有正确性问题（snapshot_key 会去重），
+  # 但没必要；后来者等前面那次跑完。
+  group: distribution-metrics
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
+
+      - name: 演练（只打印，不上报）
+        if: inputs.dry_run
+        run: python scripts/collect_distribution_metrics.py --dry-run
+
+      - name: 采集并上报
+        if: ${{ !inputs.dry_run }}
+        env:
+          # 内置 token，**只用来读**公开的 Releases API（提高配额而已）。
+          # 上面的 permissions: contents: read 已经把它限死。
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 代理的 bearer token。**只能来自 secret**——YAML 里一个字节都不许写。
+          TAVOTTO_METRICS_TOKEN: ${{ secrets.TAVOTTO_METRICS_TOKEN }}
+          # 地址不是秘密：用仓库变量覆盖（演练环境指向自己的代理），
+          # 没配就走脚本里的默认值 https://telemetry.tavotto.com/v1/metrics
+          TAVOTTO_TELEMETRY_METRICS_URL: ${{ vars.TAVOTTO_TELEMETRY_METRICS_URL }}
+        run: |
+          if [ -z "${TAVOTTO_METRICS_TOKEN}" ]; then
+            echo "::error::仓库还没配 TAVOTTO_METRICS_TOKEN——见 services/telemetry_proxy/README.md"
+            exit 1
+          fi
+          python scripts/collect_distribution_metrics.py

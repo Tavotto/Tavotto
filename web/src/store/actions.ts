@@ -6,6 +6,7 @@ import { flipCapture } from '@/lib/motion'
 import { applyAlign, boundsOf, readingOrder, type AlignMode } from '@/lib/geometry'
 import { clamp } from '@/lib/units'
 import { modKey } from '@/lib/utils'
+import { captureTelemetry } from '@/lib/telemetry'
 import type { PanelInfo } from '@/lib/api'
 import type { StylePlan, StylePreset } from '@/lib/stylePresets'
 import { reflowPatches, sizeSignature } from '@/lib/layoutGroups'
@@ -729,6 +730,17 @@ export function enterElementEdit(panelId: string) {
   const seeded = seedBakedOverrides(panelId)
   const ui = useUiStore.getState()
   ui.setElementPanel(panelId)
+  // 匿名用量统计：**真的进了图内编辑流程**才算「打开一张图」，不是每次预览图
+  // 请求。只发载体类型与「可不可参数化」——面板 id、文件名、stem、脚本名
+  // 一个都不发（白名单里根本没有这些属性）。
+  const opened = findObject(panelId)
+  if (opened?.type === 'panel') {
+    const asset = useAssetStore.getState().byId[opened.fileId]
+    captureTelemetry('figure_opened', {
+      asset_kind: asset?.kind === 'raster' ? 'raster' : 'pdf',
+      editable: !!(opened.script ?? asset?.script),
+    })
+  }
   // 三栏布局下左栏顺手切到元素树；窄断点不动（左右互斥，抢掉属性页得不偿失）
   if (ui.layout === 'wide' && ui.leftOpen && ui.leftTab !== 'elements') {
     ui.setLeftTab('elements')

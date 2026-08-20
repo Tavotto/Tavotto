@@ -69,3 +69,6 @@ web/dist-mcp/
 # 冒烟 / 手工跑示例项目时，导出与画布布局落在项目自己的 tavottofile/ 里
 # （engine/config.project_export_dir）。`git add -A` 会顺手把它收进提交。
 /examples/*/tavottofile/
+
+# 遥测代理的部署元数据（Vercel CLI 生成，含本机链接的项目 id）
+/services/telemetry_proxy/.vercel/

@@ -40,10 +40,18 @@ overwriting files as a side effect of being run by a tool. **It is not a securit
 boundary against a hostile script.** Treat a figure library the way you'd treat
 any other directory of executable code.
 
-**Nothing is uploaded.** Rendering, composition and export are local processes.
-The only outbound requests are the once-a-day release check and, if you accept an
-update in the desktop app, the download of that update. Both stop when you turn
-the check off.
+**Your content is never uploaded.** Rendering, composition and export are local
+processes. Outbound requests are limited to: the once-a-day release check (and
+the update download, if you accept one in the desktop app); the AI assistant you
+invoke yourself, which runs a CLI installed on your machine; and — only after you
+explicitly opt in — anonymous usage statistics. The telemetry channel carries a
+fixed allowlist of events whose properties are booleans, bounded integers and
+short enum strings; figures, scripts, filenames, paths, data, figure text and
+prompts are not representable in it. It is off until you opt in, can be turned
+off in Settings, and is disabled entirely by `TAVOTTO_NO_TELEMETRY=1`
+(a separate control from `TAVOTTO_NO_UPDATE_CHECK`). See
+[docs/privacy.md](docs/privacy.md) and
+[docs/analytics/telemetry-events.md](docs/analytics/telemetry-events.md).
 
 **In scope, and taken seriously:**
 

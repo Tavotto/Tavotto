@@ -86,6 +86,10 @@ export async function startApp(opts: AppOptions = {}): Promise<RunningApp> {
         TAVOTTO_DATA_DIR: dataDir,
         TAVOTTO_CONFIG_DIR: path.join(workdir, 'config'),
         TAVOTTO_ALLOW_SHUTDOWN: '1',
+        // 匿名用量统计硬关。两件事：① e2e 每次都是全新的配置目录，
+        // 同意态是 unset，首启询问框会盖在画布上，之后每一次点击都点在
+        // 遮罩上；② 就算它不挡路，CI 也绝不该产生真实的产品事件。
+        TAVOTTO_NO_TELEMETRY: '1',
         HOME: home,
         USERPROFILE: home,
         APPDATA: path.join(workdir, 'AppData', 'Roaming'),
