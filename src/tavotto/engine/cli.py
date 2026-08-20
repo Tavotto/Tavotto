@@ -56,6 +56,71 @@ def dispatch(argv: list[str]) -> int | None:
     return doctor(argv[1:])
 
 
+# ------------------------- doctor --migrate（P1-08） -----------------------
+def _doctor_migrate(args) -> int:
+    """Magplot 0.7 → Tavotto 的数据迁移入口（实现见 engine/migrate.py）。
+
+    退出码：0 = 完成（含「没什么可迁」）；1 = 有冲突（部分文件因目标已存在
+    被跳过，逐条列出）；2 = 参数冲突。dry-run 永远 0。
+    """
+    from . import migrate
+
+    if args.migrate and args.rollback_migration:
+        msg = "--migrate 与 --rollback-migration 不能同时给"
+        if args.json:
+            print(json.dumps({"ok": False, "code": "bad_migrate_action",
+                              "error": msg}, ensure_ascii=False))
+        else:
+            print(msg, file=sys.stderr)
+        return 2
+
+    if args.rollback_migration:
+        result = migrate.rollback()
+        if args.json:
+            print(json.dumps({"ok": result["rolled_back"],
+                              "code": (None if result["rolled_back"]
+                                       else "rollback_unavailable"),
+                              **result},
+                             ensure_ascii=False))
+        else:
+            if result["rolled_back"]:
+                print(f"* 已回滚迁移：删除 {len(result['removed'])} 个文件"
+                      f"（Magplot 旧数据从头到尾没动过）")
+            else:
+                print(f"* 无法回滚：{result['reason']}")
+        return 0 if result["rolled_back"] else 1
+
+    report = migrate.execute(dry_run=args.dry_run)
+    plan = report["plan"]
+    if args.json:
+        print(json.dumps({"ok": True, "code": None, **report},
+                         ensure_ascii=False))
+    else:
+        if plan["nothing_to_migrate"]:
+            print("* 没找到可迁移的 Magplot 数据"
+                  f"（找过 {plan['legacy_config_dir']} 与 {plan['legacy_data_dir']}）")
+        elif args.dry_run:
+            print(f"* 迁移计划（dry-run，一个字节没写）：")
+            print(f"  将复制 {len(plan['copies'])} 个文件 → {plan['target_data_dir']}")
+            if plan["config_merge"]:
+                print(f"  将合并配置 {plan['config_merge']}（只补缺，不覆盖）")
+            for rel in plan["conflicts"]:
+                print(f"  ⚠ 目标已存在且内容不同，将跳过: {rel}")
+        else:
+            print(f"* 已复制 {len(report['created'])} 个文件"
+                  f" → {plan['target_data_dir']}")
+            if report.get("config", {}) and report["config"].get("merged"):
+                a = report["config"]["added"]
+                print(f"* 配置已合并：补入 {a['recent_projects']} 条最近项目、"
+                      f"{a['projects']} 个项目设置")
+            for rel in plan["conflicts"]:
+                print(f"⚠ 跳过（目标已存在且内容不同）: {rel}")
+            print(f"* 迁移报告: {migrate.report_path()}"
+                  "（回滚用 tavotto doctor --rollback-migration）")
+            print("* Magplot 旧数据原样保留，确认无误后可自行删除")
+    return 1 if (not args.dry_run and plan["conflicts"]) else 0
+
+
 # ---------------------------------- doctor --------------------------------
 def doctor(argv: list[str]) -> int:
     """`tavotto doctor`：不起界面、不起服务的健康检查 + 安装清单维护。
@@ -83,6 +148,13 @@ def doctor(argv: list[str]) -> int:
                     help="把安装清单刷新成当前这套安装（安装器/升级时用）")
     ap.add_argument("--remove-manifest", action="store_true",
                     help="删除安装清单（卸载时用）")
+    ap.add_argument("--migrate", action="store_true",
+                    help="把 Magplot 0.7 的用户数据（配置/布局/版本历史/AI 记录）"
+                         "迁入 Tavotto。只复制不覆盖，旧数据一个字节不动")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="与 --migrate 连用：只输出迁移计划，不写任何东西")
+    ap.add_argument("--rollback-migration", action="store_true",
+                    help="按上次迁移报告删除迁移时创建的文件（旧数据无关）")
     args = ap.parse_args(argv)
 
     from . import locate
@@ -102,6 +174,9 @@ def doctor(argv: list[str]) -> int:
         else:
             print(msg, file=sys.stderr)
         return 2
+
+    if args.migrate or args.rollback_migration:
+        return _doctor_migrate(args)
 
     problems: list[dict] = []
     me = locate.describe_self()
@@ -164,6 +239,19 @@ def doctor(argv: list[str]) -> int:
             "message": f"安装目录名与产品不符：{install_dir}"
                        "（多半是旧版本目录被就地升级）。功能不受影响；"
                        "如桌面启动异常，先卸载这份、重装到 Tavotto.app"})
+    # 旧 Magplot 数据还在、又没迁移过：明说有一条产品化的迁移路，
+    # 别让最早那批用户以为升级 = 从零开始（P1-08）。
+    try:
+        from . import migrate
+        if migrate.legacy_found() and not migrate.report_path().is_file():
+            notes.append({
+                "code": "magplot_data_found",
+                "message": "检测到 Magplot 0.7 的用户数据。"
+                           "运行 `tavotto doctor --migrate` 可把配置/布局/"
+                           "版本历史/AI 记录迁入 Tavotto（只复制不覆盖，"
+                           "旧数据一个字节不动；--dry-run 先看计划）"})
+    except Exception:  # noqa: BLE001 — 体检的附注绝不能把体检本身弄挂
+        pass
     report["ok"] = not problems
     # 顶层也给一个 code：调用方最常问的就是「这次到底哪儿不对」，
     # 不该逼它先去翻数组。多个问题时取第一个（严重程度按追加顺序）。
