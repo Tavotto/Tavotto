@@ -341,7 +341,9 @@ jobs:
           $env:TAVOTTO_WORKER_PYTHON = $null
           $env:TAVOTTO_EXE = "$env:GITHUB_WORKSPACE\dist\Tavotto\Tavotto.exe"
           pnpm install --frozen-lockfile
-          pnpm exec playwright install --with-deps chromium
+          # webkit = macOS 桌面壳（WKWebView）与 Safari 的引擎（审计 P1-03）：
+          # 黄金路径与可访问性在它上面各跑一遍
+          pnpm exec playwright install --with-deps chromium webkit
           pnpm e2e
 
       - name: 失败时收集日志与操作轨迹

@@ -103,6 +103,8 @@ function ElementCount() {
 /** 右边缘的拖拽把手：卡片网格的列宽由它决定，所以宽度值得可调且记住 */
 function WidthHandle() {
   const { t } = useTranslation('workspace')
+  // 可聚焦的 separator 是个真控件：必须报出当前值与值域（axe critical）
+  const width = useUiStore((s) => s.leftWidth)
   const start = (e: React.PointerEvent) => {
     e.preventDefault()
     const from = useUiStore.getState().leftWidth
@@ -121,6 +123,9 @@ function WidthHandle() {
       role="separator"
       aria-orientation="vertical"
       aria-label={t('drawer.resize', { min: LEFT_MIN, max: LEFT_MAX })}
+      aria-valuenow={Math.round(width)}
+      aria-valuemin={LEFT_MIN}
+      aria-valuemax={LEFT_MAX}
       tabIndex={0}
       onPointerDown={start}
       onKeyDown={(e) => {

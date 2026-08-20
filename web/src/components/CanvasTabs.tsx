@@ -35,12 +35,15 @@ export function CanvasTabs() {
   const activate = (id: string) => activateCanvas(id)
 
   return (
-    <div
-      role="tablist"
-      aria-label={t('tabs.listLabel')}
-      className="flex h-8 shrink-0 items-center gap-0.5 border-b border-border bg-surface px-2"
-    >
-      <div ref={strip} className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
+    <div className="flex h-8 shrink-0 items-center gap-0.5 border-b border-border bg-surface px-2">
+      {/* tablist 只许直接拥有 tab 子项（ARIA 硬性要求，axe critical）：
+          role 挂在真正装着 TabItem 的滚动条上；「+」与画布菜单在 tablist 外 */}
+      <div
+        ref={strip}
+        role="tablist"
+        aria-label={t('tabs.listLabel')}
+        className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto"
+      >
         {openTabs.map((id, i) => (
           <TabItem
             key={id}

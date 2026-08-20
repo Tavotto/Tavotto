@@ -1,7 +1,7 @@
 import * as RD from '@radix-ui/react-dialog'
 import { t } from '@/i18n'
 import { X } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { useRef, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 
 export type DialogSize = 'sm' | 'md' | 'lg'
@@ -40,6 +40,10 @@ export function Dialog({
   blockDismiss = false,
 }: DialogProps) {
   const locked = busy || blockDismiss
+  // 本仓库的对话框全部由 store 驱动、没有 Radix Trigger：关闭时 Radix 找不到
+  // 触发元素，焦点会掉回 body——键盘用户按 Esc 后不知道自己在哪（审计 P1-09）。
+  // 在 Radix 挪焦点**之前**（onOpenAutoFocus）记下打开前的焦点，关闭时还回去。
+  const restoreTo = useRef<HTMLElement | null>(null)
 
   return (
     <RD.Root open={open} onOpenChange={(v) => (locked && !v ? undefined : onOpenChange(v))}>
@@ -54,6 +58,17 @@ export function Dialog({
           style={{ width: width ?? WIDTH[size] }}
           aria-busy={busy || undefined}
           onKeyDown={(e) => e.stopPropagation()}
+          onOpenAutoFocus={() => {
+            if (document.activeElement instanceof HTMLElement)
+              restoreTo.current = document.activeElement
+          }}
+          onCloseAutoFocus={(e) => {
+            const el = restoreTo.current
+            if (el?.isConnected) {
+              e.preventDefault()
+              el.focus()
+            }
+          }}
           onEscapeKeyDown={(e) => locked && e.preventDefault()}
           onInteractOutside={(e) => locked && e.preventDefault()}
           className={cn(

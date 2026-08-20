@@ -436,6 +436,7 @@ export function ExportDialog() {
               step={0.5}
               precision={2}
               suffix="mm"
+              ariaLabel={ex('journalWidthLabel')}
               className="w-24"
               onChange={(v) => {
                 setJournalWidth(v)
