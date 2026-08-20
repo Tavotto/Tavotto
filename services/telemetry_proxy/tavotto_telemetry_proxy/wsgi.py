@@ -18,7 +18,10 @@ WSGI 这条路没有这个问题：`PATH_INFO` 就是原始请求路径，没有
 from __future__ import annotations
 
 import json
+import os
+import socketserver
 from http import HTTPStatus
+from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
 
 from .core import handle
 
@@ -47,13 +50,52 @@ def application(environ, start_response):
     return [payload]
 
 
-def main() -> None:                     # pragma: no cover - 本地调试用
-    import os
-    from wsgiref.simple_server import make_server
+class _QuietHandler(WSGIRequestHandler):
+    """**不打访问日志。**
 
+    `wsgiref` 默认把 `<客户端 IP> - - [时间] "GET /healthz" 200` 打到 stderr。
+    自己起 server 的场景（本地调试、腾讯云 SCF 的 Web 函数）里那会直接进云日志
+    服务——等于**我们自己主动**记了一份带来源地址的访问日志，而
+    `docs/privacy.md` 承诺的是「不刻意记录来源地址」。
+
+    托管方自身的访问日志不归我们控制（政策里如实写着这一点，不做证明不了的
+    承诺），但我们不再往上叠一份。
+    """
+
+    def log_message(self, *_args) -> None:
+        return
+
+    def address_string(self) -> str:
+        # 连「拿一下对端地址」都不做：日志关了它也不该被求值
+        return "-"
+
+
+class _ThreadingWSGIServer(socketserver.ThreadingMixIn, WSGIServer):
+    """每个请求一个线程。
+
+    `wsgiref` 默认单线程：一个请求卡在上游超时（最长 5 秒）时后面的全部排队，
+    于是「丢一条事件」变成「丢一串事件」，连健康检查也跟着超时——那会让托管
+    平台以为实例挂了。`daemon_threads` 让实例被回收时不等在飞的请求。
+    """
+
+    daemon_threads = True
+
+
+def main() -> None:                     # pragma: no cover - 本地调试与 FaaS 都走它
+    """起一个 HTTP server 跑 `application`。
+
+    本地调试、腾讯云 SCF 的 **Web 函数**、以及任何「给我一个监听端口的进程」的
+    托管方式共用这一个入口；Vercel 那种直接吃 WSGI 的则根本不经过它。
+
+    **默认只听回环**：对外监听必须显式 `HOST=0.0.0.0`。少了这条默认值，
+    本地调试时一不留神就会把一个无鉴权的公开端点暴露到局域网里。
+    """
+    host = os.environ.get("HOST") or "127.0.0.1"
+    # SCF 的 Web 函数**限定 9000 端口**；本地随便挑
     port = int(os.environ.get("PORT") or 8787)
-    print(f"* telemetry proxy on http://127.0.0.1:{port}")
-    make_server("127.0.0.1", port, application).serve_forever()
+    print(f"* telemetry proxy on http://{host}:{port}", flush=True)
+    make_server(host, port, application, server_class=_ThreadingWSGIServer,
+                handler_class=_QuietHandler).serve_forever()
 
 
 if __name__ == "__main__":              # pragma: no cover

@@ -498,3 +498,61 @@ def test_no_second_entrypoint_layer_creeps_back():
     conf = json.loads((PROXY_ROOT / "vercel.json").read_text(encoding="utf-8"))
     assert "rewrites" not in conf, \
         "rewrites 会用重写后的 destination 路由，正是当初那个 bug"
+
+
+def test_self_hosted_server_never_logs_remote_addresses(upstream, capfd):
+    """自己起 server 时**不许**打访问日志——那里面有客户端 IP。
+
+    `wsgiref` 的默认 handler 会把 `<IP> - - [时间] "GET /x" 200` 打到 stderr。
+    在 FaaS（腾讯云 SCF 的 Web 函数）或自托管上，那会直接进云日志服务——
+    等于我们**自己主动**记了一份带来源地址的访问日志，而 docs/privacy.md
+    承诺的是「不刻意记录来源地址」。托管方自身的日志不归我们控制（政策里
+    如实写着），但我们不能再往上叠一份。
+    """
+    import http.client
+    import threading
+    from wsgiref.simple_server import make_server
+
+    from tavotto_telemetry_proxy.wsgi import (_QuietHandler, _ThreadingWSGIServer,
+                                              application)
+
+    srv = make_server("127.0.0.1", 0, application,
+                      server_class=_ThreadingWSGIServer,
+                      handler_class=_QuietHandler)
+    port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        conn.request("GET", "/healthz")
+        assert conn.getresponse().status == 200
+        conn.close()
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+    out, err = capfd.readouterr()
+    blob = out + err
+    assert "127.0.0.1" not in blob, f"访问日志里出现了来源地址：{blob!r}"
+    assert "GET /healthz" not in blob, f"打了访问日志：{blob!r}"
+
+
+def test_scf_bootstrap_is_executable_and_binds_the_required_port():
+    """SCF 的 Web 函数契约：可执行的 `scf_bootstrap` + 监听 0.0.0.0:9000。
+
+    权限少了函数起不来；端口不对平台探活失败——两者都只在部署之后才暴露。
+    """
+    boot = PROXY_ROOT / "scf_bootstrap"
+    if not boot.exists():
+        pytest.skip("这份部署里没有 scf_bootstrap")
+    assert boot.stat().st_mode & 0o111, "scf_bootstrap 没有可执行权限，函数起不来"
+    text = boot.read_text(encoding="utf-8")
+    assert "HOST=0.0.0.0" in text and "PORT=9000" in text
+    assert "-u" in text, "不加 -u 的话日志要等缓冲区满才出现，排障时像是没日志"
+
+
+def test_public_listen_requires_an_explicit_opt_in():
+    """默认只听回环。少了这条默认值，本地调试会把一个无鉴权的公开端点
+    暴露到局域网里。"""
+    src = (PROXY_ROOT / "tavotto_telemetry_proxy" / "wsgi.py").read_text(encoding="utf-8")
+    assert 'os.environ.get("HOST") or "127.0.0.1"' in src
+
