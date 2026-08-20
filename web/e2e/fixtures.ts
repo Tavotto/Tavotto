@@ -86,6 +86,10 @@ export async function startApp(opts: AppOptions = {}): Promise<RunningApp> {
         TAVOTTO_DATA_DIR: dataDir,
         TAVOTTO_CONFIG_DIR: path.join(workdir, 'config'),
         TAVOTTO_ALLOW_SHUTDOWN: '1',
+        // e2e 测的是界面行为，不是会话认证；认证有自己的真 HTTP 套件
+        // （tests/test_browser_auth.py）与 smoke_app 的强制断言。开着的话
+        // 每个 page.goto 都得先带 fragment 换 cookie，与多标签页用例互相绞。
+        TAVOTTO_INSECURE_NO_AUTH: '1',
         // 匿名用量统计硬关。两件事：① e2e 每次都是全新的配置目录，
         // 同意态是 unset，首启询问框会盖在画布上，之后每一次点击都点在
         // 遮罩上；② 就算它不挡路，CI 也绝不该产生真实的产品事件。

@@ -3,9 +3,10 @@
  * 每个能力在浏览器模式下都有安全回退；@tauri-apps 模块全部按需动态 import，
  * 浏览器模式的 bundle 路径上一行 Tauri 代码都不会执行。
  *
- * 认证模型（与 src/tavotto/desktop.py 对应）：壳把一次性 nonce 放在首个页面的
- * URL fragment 里（fragment 不进 HTTP 请求行，也就不进任何访问日志），页面
- * 启动时先经 POST /api/desktop/bootstrap 换成 HttpOnly 会话 cookie，再进界面。
+ * 认证模型（与 src/tavotto/security.py 对应，桌面与浏览器模式共用一道边界）：
+ * 启动方把一次性 nonce 放在首个页面的 URL fragment 里（fragment 不进 HTTP
+ * 请求行，也就不进任何访问日志），页面启动时先经 POST /api/session/bootstrap
+ * 换成 HttpOnly 会话 cookie，再进界面。
  */
 
 /** Tauri 2 注入的 IPC 标记；存在即运行在 Tavotto 桌面壳里 */
@@ -15,24 +16,42 @@ export function isDesktop(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 }
 
-export type BootstrapResult = 'ok' | 'failed' | 'skipped'
+export type BootstrapResult = 'ok' | 'failed' | 'skipped' | 'unauthenticated'
 
 /**
- * 一次性桌面会话建立。必须在任何 API 调用之前完成（main.tsx 等它 resolve 后
- * 才 render）；fragment 先清后请求，nonce 不留在地址栏与会话历史里。
- * 浏览器模式（无 fragment）直接 skipped，零开销。
+ * 一次性会话建立（桌面与浏览器模式同一条路）。必须在任何 API 调用之前完成
+ * （main.tsx 等它 resolve 后才 render）；fragment 先清后请求，nonce 不留在
+ * 地址栏与会话历史里。
+ *
+ * 无 fragment 时问一次 /api/session/ping：401 = 认证开着但这个浏览器没有
+ * 会话（cookie 过期 / 服务器重启过 / 手敲地址）——返回 'unauthenticated'，
+ * 让 main.tsx 给出「重新运行 tavotto」的可操作提示，而不是白屏 + 一串 401。
+ * ping 通（或根本没启用认证，如测试与 dev proxy）返回 'skipped'。
+ *
+ * nonce 已被用过（用户把终端里打印的链接点了第二次）时同一浏览器往往已经
+ * 持有有效 cookie：bootstrap 403 后再 ping 一次，通了照样 'ok'。
  */
 export async function bootstrapDesktopSession(): Promise<BootstrapResult> {
   const m = /[#&]dnonce=([A-Za-z0-9_-]+)/.exec(window.location.hash)
-  if (!m) return 'skipped'
+  if (!m) {
+    try {
+      const ping = await fetch('/api/session/ping')
+      if (ping.status === 401) return 'unauthenticated'
+    } catch {
+      /* 网络层失败交给正常的 API 错误路径 */
+    }
+    return 'skipped'
+  }
   history.replaceState(null, '', window.location.pathname + window.location.search)
   try {
-    const res = await fetch('/api/desktop/bootstrap', {
+    const res = await fetch('/api/session/bootstrap', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ nonce: m[1] }),
     })
-    return res.ok ? 'ok' : 'failed'
+    if (res.ok) return 'ok'
+    const ping = await fetch('/api/session/ping')
+    return ping.ok ? 'ok' : 'failed'
   } catch {
     return 'failed'
   }

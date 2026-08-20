@@ -64,7 +64,8 @@
     "staleOtherWindow": "Another window has saved a newer version of this document. Your changes are kept locally but were not written to disk."
   },
   "boot": {
-    "desktopSessionFailed": "Tavotto could not establish a desktop session. Please close this window and reopen the app."
+    "desktopSessionFailed": "Tavotto could not establish a desktop session. Please close this window and reopen the app.",
+    "sessionUnauthenticated": "This page has no Tavotto session. Launch Tavotto again from your terminal or app and enter through the credentialed link it opens."
   },
   "canvasList": {
     "canvasName": "Canvas name",

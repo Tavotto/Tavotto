@@ -234,6 +234,9 @@ def run_plane(launch: list[str], figures: Path, workdir: Path, plane: str,
         # 显式指定控制面：不指定的话开发机上有没有 cargo 产物会让两次运行
         # 悄悄跑在不同的实现上——那就不是对照了
         "TAVOTTO_WORKERD": workerd or "0",
+        # 基线量的是渲染链路；会话认证（微秒级 guard）另有专属测试，
+        # 开着只会让每条 HTTP 都要先办 cookie 手续
+        "TAVOTTO_INSECURE_NO_AUTH": "1",
     }
     if fresh_home:
         home = workdir / "home"

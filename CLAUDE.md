@@ -56,13 +56,24 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
 - **进程关系**：Tauri 壳（`src-tauri/`）→ spawn `tavotto --desktop-sidecar`
   （PyInstaller onedir，无 matplotlib）→ 现有 worker 协议。前端仍由 sidecar 的
   Flask 提供，**不走 Tauri frontendDist**——桌面与浏览器跑同一份界面。
-- **桌面模式差异全部收在 `src/tavotto/desktop.py`**：`127.0.0.1:0` 动态端口
-  （werkzeug `make_server`，可优雅 shutdown）、一次性 nonce → HttpOnly cookie
-  认证（nonce 走 **stdin 首行**，环境变量对同用户进程可见；`/`、`/assets/*`、
-  bootstrap 之外全部 401 兜底）、Host/Origin 校验、握手文件（无密钥、原子写、
-  退出清理）、stdin EOF + 父 PID 双路「壳没了就自杀」。浏览器/CLI 模式下这些
-  钩子**必须完全旁路**（`test_desktop_sidecar.py` 看护）——别让桌面逻辑漏进
-  `tavotto` 普通启动路径。
+- **会话认证在 `src/tavotto/security.py`，桌面与浏览器模式共用一道边界**
+  （2026-08-21，ADR 0008，1.0 审计的 P0 修复）：一次性 nonce →
+  `POST /api/session/bootstrap` → HttpOnly + SameSite=Strict cookie，
+  Host 只认 `127.0.0.1:<port>`、带 Origin 必须同源，`/`、`/assets/*`、
+  `/api/version`、bootstrap/relaunch 之外全部 401 兜底。浏览器模式的 nonce
+  在落地 URL 的 fragment（`#dnonce=`），另写 0600 的本机凭据文件
+  （`engine/session_client.py`，**纯标准库**——Flask 父进程与 handoff 都
+  import 它）：本机 CLI/冒烟凭 `X-Tavotto-Auth` 头直连，二次启动/交接凭
+  `/api/session/relaunch` 换新 nonce（实例复用 = 安全的 token 交接）。
+  **旁路只有三个**：pytest 的 test_client（无状态天然旁路）、
+  `--insecure-no-auth` / `TAVOTTO_INSECURE_NO_AUTH=1`（vite dev proxy、
+  e2e、手工 curl；启动时打印警告）。看护 `tests/test_browser_auth.py` +
+  smoke_app 的「未认证必须 401」硬断言——**别再让任何新端点绕过 guard**。
+- **桌面模式差异收在 `src/tavotto/desktop.py`**：`127.0.0.1:0` 动态端口
+  （werkzeug `make_server`，可优雅 shutdown）、nonce 走 **stdin 首行**
+  （环境变量对同用户进程可见；桌面**不写**磁盘凭据文件，实例复用由壳的
+  单实例 argv 转发负责）、握手文件（无密钥、原子写、退出清理）、
+  stdin EOF + 父 PID 双路「壳没了就自杀」（`test_desktop_sidecar.py` 看护）。
 - **前端唯一桌面感知点是 `web/src/lib/desktop.ts`**：组件不得直接 import
   `@tauri-apps/*`；每个能力都有浏览器回退（vitest 看护）。菜单事件 id 与
   `src-tauri/src/main.rs` 严格同源（`tavotto:menu`）。
@@ -1105,8 +1116,13 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被它推翻**（
 - **Windows 回归**：`tests/test_windows_regressions.py`。约定是
   **每个「只在别人电脑上发生」的 bug 先变成这里的用例再谈修**（cp936 编码、
   文件占用、盘符/反斜杠/中文路径、端口占用、CLI 只有 .cmd、解释器探测）。
-- 后端冒烟（示例项目）：`tavotto --figures examples/figures --no-browser` 后
+- 后端冒烟（示例项目）：`tavotto --figures examples/figures --no-browser
+  --insecure-no-auth` 后
   `curl -X POST /api/engine/render -d '{"id":"Fig1_kinetics.pdf","patches":[]}'`
+  （不带 `--insecure-no-auth` 时 curl 要加
+  `-H "X-Tavotto-Auth: $(python3 -c 'import json;print(json.load(open(
+  "<data_dir>/session/port-5089.json"))["secret"])')"`；会话认证默认开着，
+  见 ADR 0008）
 - **Codex 插件**：`.venv/bin/python -m pytest tests/test_mcp_server.py
   tests/test_mcp_roundtrip.py tests/test_codex_plugin.py tests/test_preflight.py`；
   画布产物 `python scripts/build_mcp_widget.py --check`（改了 web/src 就得重跑构建）；
