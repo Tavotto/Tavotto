@@ -113,7 +113,10 @@ function importPackage() {
   input.type = 'file'
   // 包是 .tavotto（zip 容器）。`.zip` 一起收在 accept 里：检视端点按结构判断、
   // 不看扩展名，用户手里那些别的后缀的包因此仍选得中、打得开。
-  input.accept = '.tavotto,.zip,application/zip'
+  // `.magplot` 是 0.7 时代导出的同结构包（P1-08 迁移路的一部分）：读取端
+  // 本来就打得开，只有这个文件选择器会把它滤掉——所以列进来。写出永远是
+  // .tavotto，这不是运行时兼容层回潮。
+  input.accept = '.tavotto,.magplot,.zip,application/zip'
   input.onchange = async () => {
     const file = input.files?.[0]
     if (!file) return
