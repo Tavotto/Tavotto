@@ -97,7 +97,7 @@ PNG 由同一份版面栅格化，两者绝不会不一致。两处明示的例�
 ## 收尾 AI 画的图
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/workflow.svg" width="100%"
+  <img src="https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/workflow.zh.svg" width="100%"
        alt="工作流：你、Claude 或 Codex 写的 Python 脚本跑 matplotlib 产出矢量 PDF；Tavotto 负责图内编辑、排版与投稿前检查；结果是 PDF 或 PNG。脚本全程是源头。">
 </p>
 
