@@ -15,118 +15,41 @@
   退出时 sidecar 也必须跟着退，不能留孤儿。
 - 桌面模式下 Python updater 完全停用（升级归 Tauri 层），浏览器/CLI 模式不变。
 
-认证模型（一次性 bootstrap）：
+认证模型（一次性 bootstrap；实现已泛化到 tavotto/security.py，浏览器模式
+共用同一道边界，见 ADR 0008）：
 
     Tauri 生成 nonce ──stdin──▶ sidecar 持有
     Tauri 让首个页面带 URL fragment（fragment 不进 HTTP 日志）
-    页面 POST /api/desktop/bootstrap {nonce} ──▶ 验证后当场作废 nonce，
+    页面 POST /api/session/bootstrap {nonce} ──▶ 验证后当场作废 nonce，
         Set-Cookie: HttpOnly + SameSite=Strict 的会话 cookie
     此后 /api、/exports、渲染图片、SSE 一律凭 cookie；Host/Origin 同时校验。
 
-浏览器模式下这些钩子全部旁路（`TAVOTTO_DESKTOP_STATE` 未设置即直接放行），
-bootstrap 端点回 404——普通 `tavotto` CLI 的行为一个字节都不变。
+桌面与浏览器模式的差别只剩参数：桌面的 cookie 是会话级（窗口即进程）、
+没有磁盘上的本机凭据文件（nonce 走 stdin，实例复用由壳的单实例转发负责）。
 """
 from __future__ import annotations
 
-import hmac
 import json
 import logging
 import os
-import secrets
 import signal
 import sys
 import threading
 import time
 from pathlib import Path
 
-from flask import jsonify, request
 from werkzeug.serving import make_server
 
+from . import security
 from .engine import ai_bridge as engine_ai
 from .engine import pool as engine_pool
 
 LOG = logging.getLogger("tavotto.desktop")
 
-COOKIE_NAME = "tavotto_desktop"
-BOOTSTRAP_PATH = "/api/desktop/bootstrap"
-
-# 无会话即可访问的路径：首屏 HTML 与静态构建产物（不含任何用户数据），
-# 以及 bootstrap 本身。其余（/api、/exports、/api/render 图片、SSE）一律凭 cookie。
-_PUBLIC_PATHS = {"/", "/favicon.ico", BOOTSTRAP_PATH}
-_PUBLIC_PREFIXES = ("/assets/",)
-
-
-class DesktopState:
-    """一次性 nonce 与进程内会话 token。全部只存内存，进程退出即失效。"""
-
-    def __init__(self, nonce: str) -> None:
-        self._nonce: str | None = nonce
-        self._token: str | None = None
-        self._lock = threading.Lock()
-        self.port: int | None = None
-
-    def redeem(self, submitted: str) -> str | None:
-        """核对并作废 nonce，签发会话 token；错误的猜测不作废（否则任何本地
-        进程都能抢在真页面前面用错误 nonce 把应用 DoS 掉；256 位随机值也
-        没有可行的爆破空间）。"""
-        with self._lock:
-            if not self._nonce or not submitted:
-                return None
-            if not hmac.compare_digest(self._nonce, submitted):
-                return None
-            self._nonce = None
-            self._token = secrets.token_urlsafe(32)
-            return self._token
-
-    def valid_cookie(self, token: str | None) -> bool:
-        with self._lock:
-            return bool(self._token) and bool(token) \
-                and hmac.compare_digest(self._token, token)
-
-
-def install(flask_app) -> None:
-    """在 app 创建期挂上桌面认证钩子与 bootstrap 端点。
-
-    必须在处理第一个请求前调用（app.py import 期）；浏览器模式下
-    `TAVOTTO_DESKTOP_STATE` 不存在，钩子直接放行、端点 404，行为零变化。
-    """
-
-    @flask_app.post(BOOTSTRAP_PATH)
-    def _desktop_bootstrap():
-        state: DesktopState | None = flask_app.config.get("TAVOTTO_DESKTOP_STATE")
-        if state is None:
-            return jsonify({"error": "非桌面模式"}), 404
-        body = request.get_json(force=True, silent=True) or {}
-        token = state.redeem(str(body.get("nonce") or ""))
-        if token is None:
-            return jsonify({"error": "启动凭据无效或已使用",
-                            "code": "bad_nonce"}), 403
-        resp = jsonify({"ok": True})
-        # 会话 cookie（无 Max-Age）：窗口关闭即消失；token 反正只在本进程内有效
-        resp.set_cookie(COOKIE_NAME, token, httponly=True, samesite="Strict",
-                        secure=False, path="/")
-        return resp
-
-    @flask_app.before_request
-    def _desktop_guard():
-        state: DesktopState | None = flask_app.config.get("TAVOTTO_DESKTOP_STATE")
-        if state is None:
-            return None  # 浏览器 / CLI 模式：不做任何桌面校验
-        # Host / Origin：sidecar 只被 127.0.0.1:<port> 上的本应用访问。
-        # DNS rebinding、localhost 花式写法、别的本地页面发起的跨源请求全拒。
-        if state.port is not None:
-            if request.headers.get("Host", "") != f"127.0.0.1:{state.port}":
-                return jsonify({"error": "拒绝的 Host", "code": "bad_host"}), 403
-            origin = request.headers.get("Origin")
-            if origin and origin != f"http://127.0.0.1:{state.port}":
-                return jsonify({"error": "拒绝的来源", "code": "bad_origin"}), 403
-        p = request.path
-        if p in _PUBLIC_PATHS or p.startswith(_PUBLIC_PREFIXES):
-            return None
-        if state.valid_cookie(request.cookies.get(COOKIE_NAME)):
-            return None
-        return jsonify({"error": "桌面会话未建立或已失效",
-                        "code": "desktop_auth_required"}), 401
+# 兼容再导出：smoke_desktop / 测试用这些名字
+COOKIE_NAME = security.COOKIE_NAME
+BOOTSTRAP_PATH = security.LEGACY_BOOTSTRAP_PATH
+DesktopState = security.SessionState
 
 
 # ---------------------------------------------------------------------------
@@ -248,7 +171,7 @@ class SidecarServer:
         self._srv = make_server("127.0.0.1", 0, flask_app, threaded=True)
         state.port = self._srv.server_port
         flask_app.config["TAVOTTO_DESKTOP_MODE"] = True
-        flask_app.config["TAVOTTO_DESKTOP_STATE"] = state
+        flask_app.config[security.STATE_KEY] = state
         self._shutting_down = threading.Event()
         self._stopped = threading.Event()
 
@@ -295,7 +218,7 @@ class SidecarServer:
                 self._handshake.unlink(missing_ok=True)
             except OSError:
                 pass
-        self._app.config.pop("TAVOTTO_DESKTOP_STATE", None)
+        self._app.config.pop(security.STATE_KEY, None)
         self._app.config.pop("TAVOTTO_DESKTOP_MODE", None)
 
 
