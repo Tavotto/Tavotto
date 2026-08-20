@@ -7,11 +7,14 @@
 //! `tests/test_desktop_i18n.py` 看护两侧对得上：撤销/重做/导出这几条菜单与
 //! 界面必须说同一个词，英文表里不许残留中文。
 //!
-//! 语言从哪儿来（见 `menu_locale`）：
+//! 语言从哪儿来（见 `read_locale`）：
 //!   ① 上次前端报上来的那个，落在应用配置目录里的 `menu-locale`；
-//!   ② 读不到就用 zh-CN——与前端 `DEFAULT_LOCALE` 同一档。
+//!   ② 读不到（首启）就按**系统语言**——zh* → zh-CN、en* → en-US、
+//!     其他语言 → en-US（与前端 `detectLocale` 同一条规则，审计 P1-02：
+//!     日语/法语系统的第一屏菜单不该是简体中文）；
+//!   ③ 连系统语言都取不到才落回 zh-CN。
 //! 前端每次 i18n 就绪或用户切语言都会 invoke `set_menu_locale`，Rust 重建菜单
-//! 并把新值写回文件，所以「装完第一次打开」之外的每一次启动都是对的。
+//! 并把新值写回文件，所以此后每一次启动都是用户实际用的那门语言。
 
 use std::path::PathBuf;
 
@@ -192,10 +195,21 @@ pub fn read_stored(path: Option<PathBuf>) -> Option<StoredLocale> {
     Some(StoredLocale { locale, explicit })
 }
 
+/// 首启（没有存储偏好）的档位：系统语言认得出就用它；是我们不支持的第三门
+/// 语言就退英文（对 ja/fr/de 用户英文比简体中文近）；连系统语言都取不到
+/// （极少见）才落回 zh-CN。与 `web/src/i18n/locale.ts` 的 `detectLocale`
+/// 同一条规则——两侧分叉的表现是「菜单一种语言、界面另一种」。
+pub fn initial_from_tag(tag: Option<&str>) -> Locale {
+    match tag {
+        Some(t) if !t.trim().is_empty() => normalize(t).unwrap_or(Locale::EnUs),
+        _ => DEFAULT_LOCALE,
+    }
+}
+
 pub fn read_locale(path: Option<PathBuf>) -> Locale {
     read_stored(path)
         .map(|s| s.locale)
-        .unwrap_or(DEFAULT_LOCALE)
+        .unwrap_or_else(|| initial_from_tag(sys_locale::get_locale().as_deref()))
 }
 
 pub fn write_locale(path: Option<PathBuf>, locale: Locale, explicit: bool) {
@@ -231,8 +245,17 @@ mod tests {
     }
 
     #[test]
-    fn unknown_or_missing_preference_falls_back_to_zh() {
-        assert_eq!(read_locale(None), Locale::ZhCn);
+    fn first_run_follows_the_system_language() {
+        // 与前端 detectLocale 同一条规则（审计 P1-02）
+        assert_eq!(initial_from_tag(Some("zh-CN")), Locale::ZhCn);
+        assert_eq!(initial_from_tag(Some("zh-TW")), Locale::ZhCn);
+        assert_eq!(initial_from_tag(Some("en-GB")), Locale::EnUs);
+        for other in ["ja-JP", "fr-FR", "de-DE", "pt-BR"] {
+            assert_eq!(initial_from_tag(Some(other)), Locale::EnUs, "{other}");
+        }
+        // 连系统语言都取不到才落回默认档
+        assert_eq!(initial_from_tag(None), Locale::ZhCn);
+        assert_eq!(initial_from_tag(Some("  ")), Locale::ZhCn);
         assert_eq!(DEFAULT_LOCALE, Locale::ZhCn);
     }
 
