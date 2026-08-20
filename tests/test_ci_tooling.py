@@ -109,7 +109,9 @@ class TestStateRoot:
         monkeypatch.setenv("RUNNER_TEMP", "/some/ephemeral/path")
         root = str(_common.state_root())
         assert "ephemeral" not in root
-        assert root == _common.DEFAULT_STATE_ROOT
+        # 按 Path 比：默认值是 lab runner（Linux）上的路径，Windows 的
+        # str(Path) 会把分隔符翻成反斜杠，字符串比对在那儿必红
+        assert _common.state_root() == Path(_common.DEFAULT_STATE_ROOT)
 
     def test_ensure_layout_creates_all_and_is_idempotent(self, tmp_path):
         root = tmp_path / "state"

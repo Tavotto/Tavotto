@@ -381,17 +381,21 @@ def _pids_of(exe: str, *, run=subprocess.run) -> "list[int] | None":
     return pids
 
 
+# 负 returncode 的编号是 POSIX 语义，解码表就该按 POSIX 编号写死——
+# 不能用宿主的 signal 模块：Windows 上 SIGABRT 是 22，Signals(6) 要么解不出
+# 要么解成别的名字，同一段代码在两个平台上给出两个答案（CI 实测）。
+_POSIX_SIGNALS = {1: "SIGHUP", 2: "SIGINT", 3: "SIGQUIT", 4: "SIGILL",
+                  6: "SIGABRT", 8: "SIGFPE", 9: "SIGKILL", 10: "SIGBUS",
+                  11: "SIGSEGV", 13: "SIGPIPE", 14: "SIGALRM", 15: "SIGTERM"}
+
+
 def _exit_details(returncode: int) -> dict:
     """Popen 的 returncode → 结构化的 exit_code / signal。
 
     POSIX 上被信号杀死是负数：`-6` = SIGABRT，按 shell 惯例 exit_code 记 134。
     """
     if returncode < 0:
-        import signal as _signal
-        try:
-            name = _signal.Signals(-returncode).name
-        except ValueError:
-            name = f"signal {-returncode}"
+        name = _POSIX_SIGNALS.get(-returncode, f"signal {-returncode}")
         return {"exit_code": 128 - returncode, "signal": name}
     return {"exit_code": returncode, "signal": None}
 
