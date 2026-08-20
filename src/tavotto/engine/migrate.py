@@ -135,13 +135,15 @@ def build_plan() -> dict:
         else:
             continue
         for f in files:
-            rel = f.relative_to(ldata)
+            # 计划与报告里的相对路径一律 POSIX 形式：报告是回滚的账本，
+            # 格式必须跨平台稳定（Windows 的反斜杠会让同一份账本两种写法）
+            rel = f.relative_to(ldata).as_posix()
             dst = tdata / rel
             if dst.exists():
                 bucket = "identical" if _same_bytes(f, dst) else "conflicts"
-                plan[bucket].append(str(rel))
+                plan[bucket].append(rel)
             else:
-                plan["copies"].append(str(rel))
+                plan["copies"].append(rel)
 
     if (plan["config_merge"] is None and not plan["copies"]
             and not plan["conflicts"] and not plan["identical"]):
@@ -224,7 +226,7 @@ def execute(dry_run: bool = False) -> dict:
             plan["conflicts"].append(rel)
             continue
         shutil.copy2(src, dst)
-        report["created"].append(str(rel))
+        report["created"].append(rel)
 
     if plan["config_merge"]:
         _merge_config(Path(plan["config_merge"]), report)
