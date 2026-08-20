@@ -23,6 +23,14 @@ ROOT = Path(__file__).resolve().parent.parent
 APP = ROOT / "src" / "tavotto" / "app.py"
 LOCALES = ROOT / "web" / "src" / "i18n" / "locales"
 
+
+def _all_error_sources() -> str:
+    """会发用户可见错误的全部模块源码（app.py + #24 起的 security.py 等）。"""
+    root = ROOT / "src" / "tavotto"
+    return "\n".join((root / n).read_text(encoding="utf-8")
+                     for n in ("app.py", "security.py", "desktop.py")
+                     if (root / n).is_file())
+
 # code → 后端会塞进 params 的键（2026-08-21 起覆盖 app.py 的**全部**字面量
 # code——审计 P1-02：错误尾部不许泄漏中文，所以每个 code 都要有两种语言的
 # 文案，且占位符与 params 对得上）
@@ -89,8 +97,8 @@ def _errors(locale: str) -> dict:
 
 @pytest.mark.parametrize("code", sorted(USER_VISIBLE_CODES))
 def test_backend_emits_the_code(code: str):
-    src = APP.read_text(encoding="utf-8")
-    assert f'"code": "{code}"' in src, f"app.py 里没有发出 {code}"
+    src = _all_error_sources()
+    assert f'"code": "{code}"' in src, f"后端源码里没有发出 {code}"
 
 
 @pytest.mark.parametrize("locale", ["zh-CN", "en-US"])
@@ -120,7 +128,7 @@ def test_error_field_is_still_there_as_the_fallback():
     `error` 里的中文原文是回退，不能因为有了 code 就删掉：装着旧前端的用户、
     以及 curl 调试的人只看得到它。
     """
-    src = APP.read_text(encoding="utf-8")
+    src = _all_error_sources()
     for code in USER_VISIBLE_CODES:
         idx = src.index(f'"code": "{code}"')
         # code 与 error 在同一个 jsonify 里：往前找最近的 jsonify( 起点
