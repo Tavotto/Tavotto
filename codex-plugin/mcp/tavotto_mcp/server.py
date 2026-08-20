@@ -14,6 +14,7 @@ manifest / SVG 这类大字段只进 `structuredContent`，不进 `content` 文�
 from __future__ import annotations
 
 import json
+import os
 import sys
 import traceback
 
@@ -47,6 +48,25 @@ def _version() -> str:
 def _tools() -> list[dict]:
     ui = widget.available()
     tools = [
+        {
+            "name": "tavotto_health",
+            "title": "Tavotto 健康检查",
+            "description": (
+                "确认 Tavotto 图形能力就绪：引擎版本、内嵌画布资源在不在、"
+                "允许的项目根。**准备出图/改图前先调它**——能力缺口在这里"
+                "暴露，比画完图才发现便宜得多。可选 probe_worker=true 顺带"
+                "探测渲染解释器（要花几秒）。"
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "probe_worker": {"type": "boolean",
+                                     "description": "顺带探测渲染解释器（matplotlib"
+                                                    " 在哪个环境），较慢"},
+                },
+                "additionalProperties": False,
+            },
+        },
         {
             "name": "tavotto_open_figure",
             "title": "打开一张 Tavotto 图",
@@ -301,7 +321,39 @@ def _call_close(args: dict) -> dict:
             "structuredContent": out}
 
 
+def _call_health(args: dict) -> dict:
+    """能力自检：引擎 / 画布 / 项目根，一次说清。**先体检再出图**（便宜）。"""
+    import time as _time
+    t0 = _time.monotonic()
+    out: dict = {
+        "ok": True,
+        "mode": "engine",
+        "engine": {"available": True, "version": _version()},
+        "canvas": {"available": widget.available(),
+                   "resource_uri": widget.RESOURCE_URI,
+                   "path": str(widget.widget_path())},
+        "roots": bridge.allowed_roots(),
+        "sessions": sorted(bridge.sessions()),
+    }
+    if not widget.available():
+        out["canvas"]["reason"] = widget.missing_reason()
+    if args.get("probe_worker"):
+        try:
+            from tavotto.engine import pool as _pool
+            python, source = _pool.select_worker_python()
+            out["worker"] = {"python": python, "source": source}
+        except Exception as exc:            # noqa: BLE001 — 探测失败也要如实说
+            out["worker"] = {"error": str(exc)}
+    out["timings"] = {"health_ms": int((_time.monotonic() - t0) * 1000)}
+    lines = [f"引擎就绪（tavotto {out['engine']['version']}）",
+             "画布资源就绪" if out["canvas"]["available"]
+             else "! 画布资源缺失：" + out["canvas"].get("reason", ""),
+             "允许的项目根: " + (os.pathsep.join(out["roots"]) or "（未配置）")]
+    return {"content": _text(*lines), "structuredContent": out}
+
+
 HANDLERS = {
+    "tavotto_health": _call_health,
     "tavotto_open_figure": _call_open,
     "tavotto_apply_overrides": _call_apply,
     "tavotto_preflight": _call_preflight,
@@ -328,12 +380,26 @@ def call_tool(name: str, args: dict) -> dict:
         return {"isError": True,
                 "content": _text(f"[{payload['code']}] {payload['error']}"),
                 "structuredContent": payload}
-    if name in UI_TOOLS and widget.available():
-        meta = dict(widget.resource_meta())
-        # widgetData 是 host 递给 iframe 的初始负载（ChatGPT 侧的约定）；
-        # MCP Apps 标准路径下 iframe 从 ui/notifications/tool-result 拿同一份。
-        meta["widgetData"] = result["structuredContent"]
-        result["_meta"] = meta
+    if name in UI_TOOLS:
+        if widget.available():
+            meta = dict(widget.resource_meta())
+            # widgetData 是 host 递给 iframe 的初始负载（ChatGPT 侧的约定）；
+            # MCP Apps 标准路径下 iframe 从 ui/notifications/tool-result 拿同一份。
+            meta["widgetData"] = result["structuredContent"]
+            result["_meta"] = meta
+        else:
+            # 画布产物缺失：工具照常干活（manifest/SVG 都在），但**必须把
+            # 「这次没有内嵌画布、为什么」说出口**——静默少一块 UI，用户看到
+            # 的是「说好的画布呢」，而且没有任何线索。
+            reason = widget.missing_reason()
+            result["structuredContent"]["canvas_ui"] = {
+                "available": False, "code": "widget_missing", "reason": reason}
+            note = f"! 内嵌画布不可用：{reason}"
+            content = result.get("content") or []
+            if content and content[0].get("type") == "text":
+                content[0]["text"] += "\n" + note
+            else:
+                result["content"] = _text(note)
     return result
 
 
@@ -376,8 +442,13 @@ class Server:
             return {"resourceTemplates": []}
         if method == "resources/read":
             uri = params.get("uri")
-            if uri != widget.RESOURCE_URI or not widget.available():
+            if uri != widget.RESOURCE_URI:
                 raise RpcError(INVALID_PARAMS, f"没有这个资源: {uri}")
+            if not widget.available():
+                # 资源 URI 对、文件却不在：**明确报缺失与修法**，不给空 HTML
+                # ——空的会渲染成一个白框，用户与 host 都拿不到任何线索。
+                raise RpcError(INVALID_PARAMS,
+                               f"画布资源缺失: {widget.missing_reason()}")
             return {"contents": [widget.resource_contents()]}
         if method == "prompts/list":
             return {"prompts": []}

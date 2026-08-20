@@ -132,7 +132,8 @@ def test_tools_list_shape():
     tools = server.Server(rpc.StdioConnection(io.BytesIO(), io.BytesIO())) \
         .dispatch("tools/list", {})["tools"]
     names = [t["name"] for t in tools]
-    assert names == ["tavotto_open_figure", "tavotto_apply_overrides",
+    assert names == ["tavotto_health",
+                     "tavotto_open_figure", "tavotto_apply_overrides",
                      "tavotto_preflight", "tavotto_export",
                      "tavotto_verify_replay", "tavotto_close_session"]
     for t in tools:
@@ -425,6 +426,38 @@ def test_server_degrades_cleanly_without_the_widget(monkeypatch):
     assert s.dispatch("resources/list", {})["resources"] == []
     assert "resources" not in s.dispatch("initialize", {})["capabilities"]
     assert all("_meta" not in t for t in s.dispatch("tools/list", {})["tools"])
+
+
+def test_missing_widget_is_said_out_loud_on_open(project, fake_pool, monkeypatch):
+    """产物缺失时 open 照常干活，但**必须把「这次没有画布、为什么」说出口**
+    ——不说的话用户看到的是「说好的画布呢」，零线索（C5 假成功修复）。"""
+    monkeypatch.setattr(widget, "available", lambda: False)
+    res = _call("tavotto_open_figure", {"project_path": str(project)})
+    body = _body(res)
+    assert body["ok"] is True                      # 工具本身没坏
+    assert body["canvas_ui"]["available"] is False
+    assert body["canvas_ui"]["code"] == "widget_missing"
+    assert "内嵌画布不可用" in res["content"][0]["text"]
+    assert "_meta" not in res
+
+
+def test_resources_read_for_a_missing_widget_is_an_explicit_error(monkeypatch):
+    """URI 对、文件不在：报「缺失 + 怎么修」，绝不回一段空 HTML（白框）。"""
+    monkeypatch.setattr(widget, "available", lambda: False)
+    s = server.Server(rpc.StdioConnection(io.BytesIO(), io.BytesIO()))
+    with pytest.raises(rpc.RpcError, match="画布资源缺失"):
+        s.dispatch("resources/read", {"uri": widget.RESOURCE_URI})
+
+
+def test_health_tool_reports_capabilities(project, fake_pool):
+    """能力体检：引擎版本、画布可用性、允许的根——出图前的第一站。"""
+    res = _call("tavotto_health", {})
+    body = _body(res)
+    assert body["ok"] is True and body["engine"]["available"] is True
+    assert body["canvas"]["resource_uri"] == widget.RESOURCE_URI
+    assert body["roots"], "允许的根要能看见"
+    assert "health_ms" in body["timings"]
+    assert "_meta" not in res, "体检不挂 UI——它的产出是文字"
 
 
 # ===========================================================================

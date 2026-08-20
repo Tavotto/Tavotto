@@ -13,10 +13,13 @@ Codex 插件（`codex-plugin/`）跑完脚本后调的就是这条命令，但�
   2. **登记 stem**。注册表里缺这一条，图能显示但双击进不去（不可参数化，
      `registry.for_stem` 回 None）。合并走 `discover.merge`——「现有条目永远优先、
      冲突只报告不裁决」的语义在那儿，**这里绝不另写一套裁决**。
-  3. **唤起**。优先桌面 App：单实例插件会把第二次启动的 argv 转发给已经在跑的
-     那个窗口（所以这里**直接 exec 包内二进制**，不用 macOS 的 `open -a`——
-     App 已在运行时 `open -a` 的 `--args` 根本不会送达）。没有桌面 App 才退回
-     浏览器模式。
+  3. **唤起**。优先桌面 App，且 **`ok` 是等出来的**（进程存在且活过稳定窗，
+     或单实例转发完成；崩了报 `launch_failed` + 信号/日志）。macOS 走
+     `open -na <bundle> --args …`——`-n` 让「App 已在跑」时也起一个新实例去
+     转发 argv（单实例插件负责），而 spawn 本身交给 launchd：从受限上下文
+     直接 exec GUI 二进制会在 AppKit `RegisterApplication` 处 SIGABRT
+     （2026-08-20 实测）。Windows / 裸二进制覆盖仍直接 spawn。
+     没有桌面 App 才退回浏览器模式。
 
 纯标准库，Flask 父进程可安全 import（不碰 matplotlib，也不 import app）。
 
@@ -62,11 +65,20 @@ class HandoffError(RuntimeError):
     分诊——「注册表写不进去」该提示改目录权限，「桌面版没装」该提示去下载，
     两件事都塞进一句中文 `error` 里，对面只能做字符串匹配。文案可以随时改，
     code 不行。全部 code 见 `docs/handoff-protocol.md`。
+
+    `extra` 是随失败一起交出去的结构化细节（`--json` 时逐键并入输出）：
+    桌面启动失败要带 `app` / `exit_code` / `signal` / `log_path` / `retryable`
+    ——调用方拿它们分诊「装坏了」还是「这个环境起不了 GUI」，只给一句中文
+    的话对面只能猜。
     """
 
-    def __init__(self, message: str, code: str = "handoff_failed") -> None:
+    def __init__(self, message: str, code: str = "handoff_failed", **extra) -> None:
         super().__init__(message)
         self.code = code
+        self.extra = extra
+
+    def payload(self) -> dict:
+        return {"ok": False, "code": self.code, "error": str(self), **self.extra}
 
 
 class Target(NamedTuple):
@@ -276,8 +288,24 @@ def desktop_argv(app: str, target: Target) -> list[str]:
     return argv
 
 
-def _spawn_detached(argv: list[str], *, spawn=subprocess.Popen) -> None:
-    """起一个不随本进程生死的界面进程：CLI 交接完就该退出，不当爹。"""
+#: 桌面启动的就绪判据（全部可 monkeypatch；**不是 sleep，是带限期的轮询**）：
+#: READY_TIMEOUT  从唤起到「进程存在且活过 SETTLE」的总限期
+#: SETTLE         进程出现后还要活这么久才算「起来了」——启动即崩的进程
+#:                在这窗口里就消失了
+#: CRASH_WINDOW   直接 spawn 那条路上观察「起来就死」的窗口
+#: POLL           轮询间隔
+LAUNCH_READY_TIMEOUT = 20.0
+LAUNCH_SETTLE = 1.5
+LAUNCH_CRASH_WINDOW = 6.0
+LAUNCH_POLL = 0.15
+
+
+def _spawn_detached(argv: list[str], *, spawn=subprocess.Popen):
+    """起一个不随本进程生死的界面进程：CLI 交接完就该退出，不当爹。
+
+    返回 spawn 的进程对象（要靠它 `poll()` 出「起来就死」——以前丢掉返回值、
+    起了就报成功，SIGABRT 的桌面进程照样拿到 `ok: true`）。
+    """
     kwargs: dict = {"stdin": subprocess.DEVNULL,
                     "stdout": subprocess.DEVNULL,
                     "stderr": subprocess.DEVNULL}
@@ -286,7 +314,217 @@ def _spawn_detached(argv: list[str], *, spawn=subprocess.Popen) -> None:
     else:
         # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP：控制台关了也不带走窗口
         kwargs["creationflags"] = 0x00000008 | 0x00000200
-    spawn(argv, **kwargs)
+    return spawn(argv, **kwargs)
+
+
+def _bundle_root(app_exe: str) -> str | None:
+    """macOS：`…/Foo.app/Contents/MacOS/<名字>` → `…/Foo.app`；不是这个形状回 None。
+
+    唤起要交给 LaunchServices（`open`）的是 **bundle**，不是裸二进制。
+    """
+    parts = app_exe.split("/")
+    if len(parts) >= 4 and parts[-2] == "MacOS" and parts[-3] == "Contents" \
+            and parts[-4].endswith(".app"):
+        return "/".join(parts[:-3]).rstrip("/")
+    return None
+
+
+def sidecar_log_path(*, system: str | None = None, environ: dict | None = None) -> str | None:
+    """桌面壳把 sidecar 输出写到哪儿（tauri 的 app_log_dir）。
+
+    启动失败时把它交给用户/调用方——崩溃前 sidecar 的最后几行就在里面。
+    推导规则与 tauri v2 同源：macOS `~/Library/Logs/<bundle id>/sidecar.log`，
+    Windows `%LOCALAPPDATA%\\<bundle id>\\logs\\sidecar.log`。拿不到就 None。
+    """
+    from .brand import DESKTOP_BUNDLE_ID
+    system = sys.platform if system is None else system
+    env = os.environ if environ is None else environ
+    if system == "darwin":
+        home = (env.get("HOME") or "").rstrip("/")
+        if home:
+            return f"{home}/Library/Logs/{DESKTOP_BUNDLE_ID}/sidecar.log"
+    elif system.startswith("win"):
+        base = (env.get("LOCALAPPDATA") or "").rstrip("\\")
+        if base:
+            return f"{base}\\{DESKTOP_BUNDLE_ID}\\logs\\sidecar.log"
+    return None
+
+
+def _pids_of(exe: str, *, run=subprocess.run) -> "list[int] | None":
+    """正在跑这个可执行文件的进程号。查不了（非 POSIX、ps 失败）回 None。
+
+    macOS 上 `ps -axo pid=,comm=` 的 comm 是完整可执行路径——按整条路径比，
+    不做子串匹配（`Tavotto` 会撞上别的进程）。
+    """
+    if os.name != "posix":
+        return None
+    try:
+        proc = run(["ps", "-axo", "pid=,comm="], capture_output=True, text=True,
+                   timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    pids: list[int] = []
+    for line in (proc.stdout or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        pid_s, _, comm = line.partition(" ")
+        if comm.strip() == exe:
+            try:
+                pids.append(int(pid_s))
+            except ValueError:
+                continue
+    return pids
+
+
+def _exit_details(returncode: int) -> dict:
+    """Popen 的 returncode → 结构化的 exit_code / signal。
+
+    POSIX 上被信号杀死是负数：`-6` = SIGABRT，按 shell 惯例 exit_code 记 134。
+    """
+    if returncode < 0:
+        import signal as _signal
+        try:
+            name = _signal.Signals(-returncode).name
+        except ValueError:
+            name = f"signal {-returncode}"
+        return {"exit_code": 128 - returncode, "signal": name}
+    return {"exit_code": returncode, "signal": None}
+
+
+def _launch_failed(message: str, app: str, *, code: str = "launch_failed",
+                   retryable: bool = False, **extra) -> HandoffError:
+    log = sidecar_log_path()
+    return HandoffError(message, code, app=app, log_path=log,
+                        retryable=retryable, **extra)
+
+
+def _launch_desktop_via_open(app: str, bundle: str, target: Target, *,
+                             run=None, pids_of=None,
+                             clock=None, sleep=None) -> dict:
+    """macOS：经 LaunchServices（`open -na <bundle> --args …`）唤起。
+
+    为什么不再直接 exec 包内二进制：GUI 进程会继承调用方的执行上下文——从
+    受限环境（沙箱里的 shell、没有 Aqua 会话的终端）直接 exec，AppKit 在
+    `RegisterApplication` 拿不到 LaunchServices 连接就 abort()（SIGABRT，
+    实测见 2026-08-20 的崩溃报告），而且**转发 argv 的第二个实例也一样崩**
+    ——NSApplication 初始化在单实例检查之前。`open` 把 spawn 委托给
+    launchd，App 落在用户的 GUI 会话里，与调用方的上下文无关。
+
+    `-n` 是关键：App 已在跑时它照样起一个新实例，argv 交给单实例插件转发
+    ——`open -a`（不带 `-n`）在那种情况下只会激活窗口，`--args` 根本送不到
+    （这正是旧注释里「open 送不到」的那半句；另一半「直接 exec」的代价上面
+    说过了）。就绪判据：App 的进程出现且活过 SETTLE——转发场景下老实例本来
+    就活着，天然满足；启动即崩的场景下进程出现又消失，如实报 launch_failed。
+    """
+    import time as _time
+    run = subprocess.run if run is None else run
+    pids_of = _pids_of if pids_of is None else pids_of
+    clock = _time.monotonic if clock is None else clock
+    sleep = _time.sleep if sleep is None else sleep
+
+    pre = pids_of(app)
+    already = bool(pre)
+    argv = ["open", "-na", bundle, "--args", "--open", target.project]
+    if target.stem:
+        argv += ["--stem", target.stem]
+    try:
+        proc = run(argv, capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise _launch_failed(f"经 LaunchServices 启动失败: {exc}", app,
+                             retryable=True) from exc
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "").strip()[:300]
+        raise _launch_failed(
+            f"LaunchServices 拒绝启动 {bundle}: {err or f'open 退出码 {proc.returncode}'}",
+            app, exit_code=proc.returncode)
+
+    start = clock()
+    deadline = start + LAUNCH_READY_TIMEOUT
+    seen_at: float | None = None
+    saw_pid = False
+    while clock() < deadline:
+        pids = pids_of(app)
+        if pids is None:
+            # 查不了进程表：只能相信 open 的成功退出码，如实说清就绪没核实
+            return {"mode": "desktop", "app": app, "argv": argv, "via": "launchservices",
+                    "handoff": "forwarded" if already else "launched",
+                    "pid": None, "ready": "unverified",
+                    "ready_ms": int((clock() - start) * 1000)}
+        if pids:
+            saw_pid = True
+            now = clock()
+            if seen_at is None:
+                seen_at = now
+            if now - seen_at >= LAUNCH_SETTLE:
+                return {"mode": "desktop", "app": app, "argv": argv,
+                        "via": "launchservices",
+                        "handoff": "forwarded" if already else "launched",
+                        "pid": pids[0], "ready": "process_alive",
+                        "ready_ms": int((now - start) * 1000)}
+        else:
+            seen_at = None
+        sleep(LAUNCH_POLL)
+    if saw_pid:
+        raise _launch_failed(
+            "Tavotto 桌面进程启动后立即退出（多半是崩溃）。"
+            "崩溃报告在 ~/Library/Logs/DiagnosticReports/，sidecar 日志见 log_path。",
+            app, signal=None, exit_code=None)
+    raise _launch_failed(
+        f"Tavotto 桌面进程在 {LAUNCH_READY_TIMEOUT:g}s 内没有出现",
+        app, code="launch_timeout", retryable=True)
+
+
+def _launch_desktop_via_spawn(app: str, target: Target, *,
+                              spawn=None, clock=None, sleep=None) -> dict:
+    """Windows（以及指到裸二进制、拼不出 bundle 的 macOS 覆盖）：直接 spawn。
+
+    就绪判据（带限期的轮询，不是 sleep）：
+      * 进程在观察窗口里退出且退出码非零 → launch_failed（带 exit_code/signal）
+      * 进程很快以 0 退出 → 单实例转发给了已在跑的窗口，算成功（forwarded）
+      * 进程活过观察窗口 → 算起来了（process_alive）
+    """
+    import time as _time
+    spawn = subprocess.Popen if spawn is None else spawn
+    clock = _time.monotonic if clock is None else clock
+    sleep = _time.sleep if sleep is None else sleep
+
+    argv = desktop_argv(app, target)
+    try:
+        proc = _spawn_detached(argv, spawn=spawn)
+    except OSError as exc:
+        # 文件在、但起不来（权限、被杀软拦、可执行位丢了）。裸 OSError
+        # 冒出去只会变成 traceback，调用方分不清「没装」和「起不来」。
+        raise _launch_failed(f"Tavotto 桌面应用启动失败 {app}: {exc}", app) from exc
+    if proc is None or not hasattr(proc, "poll"):
+        # 注入的 spawn 没给进程对象（老测试桩）：保持旧行为，如实说没核实
+        return {"mode": "desktop", "app": app, "argv": argv, "via": "spawn",
+                "handoff": "launched", "pid": None, "ready": "unverified",
+                "ready_ms": 0}
+
+    start = clock()
+    while clock() - start < LAUNCH_CRASH_WINDOW:
+        rc = proc.poll()
+        if rc is None:
+            sleep(LAUNCH_POLL)
+            continue
+        if rc == 0:
+            return {"mode": "desktop", "app": app, "argv": argv, "via": "spawn",
+                    "handoff": "forwarded", "pid": getattr(proc, "pid", None),
+                    "ready": "forwarder_exited",
+                    "ready_ms": int((clock() - start) * 1000)}
+        details = _exit_details(rc)
+        raise _launch_failed(
+            "Tavotto 桌面进程在就绪前退出"
+            + (f"（信号 {details['signal']}）" if details["signal"]
+               else f"（退出码 {details['exit_code']}）"),
+            app, **details)
+    return {"mode": "desktop", "app": app, "argv": argv, "via": "spawn",
+            "handoff": "launched", "pid": getattr(proc, "pid", None),
+            "ready": "process_alive",
+            "ready_ms": int((clock() - start) * 1000)}
 
 
 def _http_json(url: str, payload: dict | None = None, timeout: float = 1.0) -> dict | None:
@@ -314,24 +552,29 @@ def browser_url(port: int, target: Target, pj: str | None = None) -> str:
 
 def launch(target: Target, *, prefer: str = "auto", port: int = DEFAULT_PORT,
            system: str | None = None, environ: dict | None = None,
-           isfile=os.path.isfile, spawn=subprocess.Popen,
-           http=_http_json, browse=webbrowser.open) -> dict:
-    """唤起界面。返回 {"mode": ..., ...}；mode 是给插件看的机器可读值。"""
+           isfile=os.path.isfile, spawn=None,
+           http=_http_json, browse=webbrowser.open,
+           run=None, pids_of=None,
+           clock=None, sleep=None) -> dict:
+    """唤起界面。返回 {"mode": ..., ...}；mode 是给插件看的机器可读值。
+
+    桌面路径**必须等到就绪或失败才返回**：起了就报成功的话，SIGABRT 的桌面
+    进程照样拿到 `ok: true`，用户对着一个没出现的窗口等（2026-08-20 实测）。
+    """
     if prefer not in ("auto", "desktop", "browser"):
         raise HandoffError(f"未知的唤起方式: {prefer}", "bad_launch_mode")
 
     if prefer != "browser":
         app = find_desktop_app(system=system, environ=environ, isfile=isfile)
         if app:
-            argv = desktop_argv(app, target)
-            try:
-                _spawn_detached(argv, spawn=spawn)
-            except OSError as exc:
-                # 文件在、但起不来（权限、被杀软拦、可执行位丢了）。裸 OSError
-                # 冒出去只会变成 traceback，调用方分不清「没装」和「起不来」。
-                raise HandoffError(f"Tavotto 桌面应用启动失败 {app}: {exc}",
-                                   "launch_failed") from exc
-            return {"mode": "desktop", "app": app, "argv": argv}
+            sysname = sys.platform if system is None else system
+            bundle = _bundle_root(app) if sysname == "darwin" else None
+            if bundle:
+                return _launch_desktop_via_open(app, bundle, target, run=run,
+                                                pids_of=pids_of, clock=clock,
+                                                sleep=sleep)
+            return _launch_desktop_via_spawn(app, target, spawn=spawn,
+                                             clock=clock, sleep=sleep)
         if prefer == "desktop":
             raise HandoffError(
                 "没找到 Tavotto 桌面应用。装一个（GitHub Releases），"
@@ -360,7 +603,7 @@ def launch(target: Target, *, prefer: str = "auto", port: int = DEFAULT_PORT,
     if target.stem:
         argv += ["--open-stem", target.stem]
     try:
-        _spawn_detached(argv, spawn=spawn)
+        _spawn_detached(argv, spawn=subprocess.Popen if spawn is None else spawn)
     except OSError as exc:
         raise HandoffError(f"Tavotto 启动失败: {exc}", "launch_failed") from exc
     return {"mode": "browser-new", "argv": argv, "url": browser_url(port, target)}
@@ -411,7 +654,11 @@ def _report(result: dict) -> None:
         return
     mode = launch_info["mode"]
     if mode == "desktop":
-        print("* 已交给 Tavotto 桌面应用")
+        if launch_info.get("handoff") == "forwarded":
+            print("* 已转发给正在运行的 Tavotto 桌面应用")
+        else:
+            print(f"* Tavotto 桌面应用已启动"
+                  f"（{launch_info.get('ready_ms', 0)}ms 就绪）")
     elif mode == "browser-existing":
         print(f"* 已交给正在运行的 Tavotto: {launch_info['url']}")
     else:
@@ -455,13 +702,17 @@ def cli(argv: list[str]) -> int:
     except HandoffError as exc:
         # 失败也必须是**机器可解析的一行 JSON**：调用方按 `code` 分诊，
         # 拿不到 JSON 就只能去猜 stderr 里那句中文是什么意思。
+        # 桌面启动失败随附 `app` / `exit_code` / `signal` / `log_path` /
+        # `retryable`（HandoffError.extra），逐键并入这一行。
         if args.json:
-            print(json.dumps({"ok": False,
-                              "protocol": engine_locate.PROTOCOL_VERSION,
-                              "code": exc.code, "error": str(exc)},
+            print(json.dumps({"protocol": engine_locate.PROTOCOL_VERSION,
+                              **exc.payload()},
                              ensure_ascii=False))
         else:
             print(f"打不开: {exc}", file=sys.stderr)
+            log = exc.extra.get("log_path")
+            if log:
+                print(f"  日志: {log}", file=sys.stderr)
         return 2
     if args.json:
         print(json.dumps(result, ensure_ascii=False))

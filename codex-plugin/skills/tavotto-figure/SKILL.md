@@ -138,6 +138,25 @@ if __name__ == "__main__":
 
 ## 图画完之后：先用 MCP 工具
 
+**动手前先体检一次（会话里第一次用 Tavotto 时）：**
+
+```
+tavotto_health {}
+```
+
+几十毫秒就回来：引擎在不在、内嵌画布资源在不在、允许的项目根。要是工具列表里
+**只有 `tavotto_health`**（或它报 `ok: false`），说明这台机器还没有可用的
+Tavotto 引擎——**先按它给的 `recovery` 步骤引导用户**（一条
+`python3 <插件目录>/mcp/server.py --provision`，或 `pipx install tavotto`，
+装完**新开 Codex 会话**），**不要**先把图画出来再撞上 `desktop_only`，
+那是白花几分钟。三条铁律：
+
+* 引擎不可用 ≠ 可以拿桌面窗口或浏览器顶替内嵌画布——那是两条路，不许冒充；
+* 插件 enabled ≠ 工具可用：装完插件/引擎必须**新开会话**才能拿到工具；
+* 工具回了结构化错误就把 `code` + 恢复步骤转达给用户，绝不自己编一个成功。
+
+体检通过后：
+
 ```
 tavotto_open_figure { "project_path": "figures", "stem": "Fig1_removal_rate" }
 ```
@@ -167,7 +186,9 @@ tavotto_open_figure { "project_path": "figures", "stem": "Fig1_removal_rate" }
 
 ## 交接给 Tavotto 桌面窗口
 
-要多图拼版、加画布标注、(a)(b) 编号、版本历史、把修改写回原始 PDF/PNG 时，
+**只在用户明确要外部窗口、或需求超出 MCP 工具能力时才走这条**（多图拼版、
+加画布标注、(a)(b) 编号、版本历史、把修改写回原始 PDF/PNG）。日常改图一律
+用上面的 MCP 工具与内嵌画布——桌面窗口不是它的替代品，反过来也一样。
 执行本技能自带的（路径相对本技能目录）：
 
 ```
@@ -194,6 +215,14 @@ python3 scripts/handoff.py <脚本路径>
   ——他会去装一个已经装着的东西，然后发现还是不行。
 * `"error_code": "registry_write_failed"` —— 图库目录不可写。把图和脚本换到一个
   可写的目录，或让用户修好权限，然后重新交接。原文件一个字节都没动。
+* `"error_code": "launch_failed"` —— 桌面应用**起来了但没活下来**（或起不来）。
+  `ok: true` 是等出来的：CLI 会等桌面进程存在且就绪，崩了就带着
+  `exit_code` / `signal` / `log_path` 回这条。把这三样念给用户
+  （`signal: "SIGABRT"` 多半是安装损坏或从受限环境启动 GUI），指给他
+  `log_path` 的 sidecar 日志与 `~/Library/Logs/DiagnosticReports/` 的崩溃
+  报告；`retryable: false` 时**不要**自己重试一个已知会崩的程序。
+* `"error_code": "launch_timeout"` —— 唤起后进程在限期内没出现。
+  `retryable: true`，可以重试一次；再超时就把 `log_path` 给用户。
 * 顺便留意 `conflicts`（两个脚本抢同一个 stem）和 `dynamic_names`（某些脚本的产出名
   静态解不出）——只报告不自动裁决，需要时告诉用户。
 

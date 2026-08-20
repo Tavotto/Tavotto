@@ -45,6 +45,17 @@ def available() -> bool:
         return False
 
 
+def missing_reason() -> str:
+    """产物为什么不可用——给 host / 用户一句能行动的话，不是一个白框。"""
+    path = widget_path()
+    override = (os.environ.get(WIDGET_ENV) or "").strip()
+    where = f"{WIDGET_ENV} 指向的 {path}" if override else str(path)
+    return (f"画布产物不存在或为空：{where}。源码态跑一次 "
+            "`python scripts/build_mcp_widget.py`；装好的插件里缺这个文件"
+            "说明安装不完整，重装插件即可。工具本身照常可用（改图走 "
+            "tavotto_apply_overrides，产出 manifest 与 SVG）。")
+
+
 def html() -> str:
     return widget_path().read_text(encoding="utf-8")
 

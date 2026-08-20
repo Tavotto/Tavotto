@@ -356,10 +356,25 @@ def test_handoff_stays_stdlib_only():
 # error code + 「--no-launch 真的不起界面」。这几条把它钉住。
 
 def _run_cli(argv, monkeypatch):
-    """跑一次 `tavotto open …`，返回 (退出码, 解析出来的 JSON, 起过的界面)。"""
+    """跑一次 `tavotto open …`，返回 (退出码, 解析出来的 JSON, 起过的界面)。
+
+    桌面唤起的两条真实现（LaunchServices / spawn+就绪轮询）各有自己的单测；
+    这里只验 CLI 契约，把它们替换成「记下 argv 契约、立刻就绪」的假实现。
+    """
     launched = []
-    monkeypatch.setattr(handoff, "_spawn_detached",
-                        lambda argv, **kw: launched.append(argv))
+
+    def fake_launch(app, *a, **kw):
+        target = a[-1] if a and isinstance(a[-1], handoff.Target) else a[0]
+        argv_contract = handoff.desktop_argv(app, target)
+        launched.append(argv_contract)
+        return {"mode": "desktop", "app": app, "argv": argv_contract,
+                "via": "fake", "handoff": "launched", "pid": 4242,
+                "ready": "process_alive", "ready_ms": 1}
+
+    monkeypatch.setattr(handoff, "_launch_desktop_via_open",
+                        lambda app, bundle, target, **kw: fake_launch(app, target))
+    monkeypatch.setattr(handoff, "_launch_desktop_via_spawn",
+                        lambda app, target, **kw: fake_launch(app, target))
     monkeypatch.setattr(handoff, "find_desktop_app",
                         lambda **kw: "/Applications/Tavotto.app/Contents/MacOS/Tavotto")
     import io

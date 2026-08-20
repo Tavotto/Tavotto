@@ -35,7 +35,9 @@ tavotto doctor [--json] [--write-manifest|--remove-manifest]
               "conflicts": [],
               "dynamic_names": [],
               "parameterizable": true},
- "launch": {"mode": "desktop", "app": "…/Tavotto.exe", "argv": [...]}}
+ "launch": {"mode": "desktop", "app": "…/Tavotto.exe", "argv": [...],
+            "via": "launchservices", "handoff": "launched",
+            "pid": 4242, "ready": "process_alive", "ready_ms": 1834}}
 ```
 
 `registry.status` 四种取值互斥，用来回答「注册表被动了没有、怎么动的」：
@@ -54,6 +56,18 @@ tavotto doctor [--json] [--write-manifest|--remove-manifest]
 Tavotto 里只能当素材排版、双击进不去图内编辑，多半是脚本没跟产物放在同一个目录。
 
 `launch.mode`：`desktop` / `browser-existing` / `browser-new`。
+
+**桌面模式的 `ok: true` 是等出来的，不是「命令发出去了」**（2026-08-20 起）：
+`tavotto open` 会等到桌面进程存在且活过稳定窗口（或单实例转发完成）才返回。
+随附字段：`via`（`launchservices`=macOS 经 `open -na` 交给 launchd；
+`spawn`=Windows / 裸二进制覆盖直接拉起）、`handoff`（`launched`=新起的窗口；
+`forwarded`=argv 转发给了已在跑的实例）、`pid`、`ready`
+（`process_alive` / `forwarder_exited` / `unverified`——最后一种是进程表
+查不了、只能相信 LaunchServices 的退出码，如实标注）、`ready_ms`（就绪耗时）。
+macOS 上**不再直接 exec 包内二进制**：GUI 进程会继承调用方的执行上下文，从
+受限环境（沙箱 shell、无 Aqua 会话）直接 exec 会在 AppKit `RegisterApplication`
+处 SIGABRT——转发实例也一样，NSApplication 初始化先于单实例检查。`open -na`
+把 spawn 委托给 launchd，两种场景（新起 / 转发）都覆盖。
 
 **唤起时找桌面 App 的顺序**与找 CLI 是两件事，但同样不能只认惯例位置
 （用户会把 `Tavotto.app` 拖出 `/Applications`、会装在非默认盘）：
@@ -78,7 +92,8 @@ CLI、唤起却静默退回浏览器模式——用户明明装了桌面版却�
 | `registry_write_failed` | 图库目录不可写 | 提示用户改目录权限，或把图放到可写的目录 |
 | `project_unreadable` | 图库目录读不了 | 同上 |
 | `desktop_missing` | 给了 `--desktop` 但没装桌面版 | 去装，或去掉 `--desktop` |
-| `launch_failed` | 界面在、但起不起来（权限 / 杀软 / 可执行位丢了） | 报给用户，**别当成「没装」** |
+| `launch_failed` | 界面在、但起不起来 / **起来就崩**（权限、杀软、可执行位丢了、SIGABRT） | 报给用户，**别当成「没装」**；随附 `app` / `exit_code` / `signal` / `log_path` / `retryable` |
+| `launch_timeout` | 唤起后进程在限期内没有出现 | 让用户看 `log_path`；`retryable: true`，可重试一次 |
 | `remote_open_failed` | 已在运行的实例打不开这个项目 | 把 `error` 转达给用户 |
 | `bad_launch_mode` | `--desktop` 与 `--browser` 同时给了 | 修调用 |
 
