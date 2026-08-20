@@ -1,0 +1,20 @@
+{
+  "_comment": "验收 corpus 的 stem ↔ 脚本映射。手工维护，不要让静态扫描覆盖它——一脚本多产物的归属在这里是刻意裁决过的（见 tests/acceptance/manifest.json）。cost 全部 light：corpus 刻意只用写死的数值，冷启动就是 import 科学栈那一下。",
+  "scripts": {
+    "c01_lines_scatter_bars.py": {
+      "entry": "main",
+      "cost": "light",
+      "stems": ["c01_line", "c01_scatter", "c01_bar", "c01_errorbar"]
+    },
+    "c02_axes_and_scales.py": {
+      "entry": "main",
+      "cost": "light",
+      "stems": ["c02_subplots", "c02_twinx", "c02_loglog", "c02_constrained"]
+    },
+    "c03_text_legend_images.py": {
+      "entry": "main",
+      "cost": "light",
+      "stems": ["c03_legend", "c03_annotations", "c03_scinotation", "c03_image", "c03_cjk"]
+    }
+  }
+}

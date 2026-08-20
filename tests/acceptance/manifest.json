@@ -1,0 +1,46 @@
+{
+  "_comment": "验收 corpus 的期望清单。visual_regression.py 与 golden 结构检查都读它。每一条 exception 都必须写明理由——没有理由的例外，下一个人就无法判断它还该不该存在。",
+  "schema": 1,
+
+  "defaults": {
+    "visual": true,
+    "structural": true,
+    "export_formats": ["pdf", "png"],
+    "tolerance": {
+      "_comment": "三个指标同时看。changed_ratio 抓『大片变了』，mean_abs 抓『整体偏移』，max_abs 抓『局部剧变』。任何一个越界即判回归——单看比例会漏掉『一小块彻底变了』，单看最大值会被一个抗锯齿像素点带偏。",
+      "changed_pixel_ratio": 0.002,
+      "mean_abs_diff": 0.9,
+      "max_abs_diff": 96
+    }
+  },
+
+  "cases": {
+    "c01_line": {"script": "c01_lines_scatter_bars.py"},
+    "c01_scatter": {"script": "c01_lines_scatter_bars.py"},
+    "c01_bar": {"script": "c01_lines_scatter_bars.py"},
+    "c01_errorbar": {"script": "c01_lines_scatter_bars.py"},
+
+    "c02_subplots": {"script": "c02_axes_and_scales.py"},
+    "c02_twinx": {"script": "c02_axes_and_scales.py"},
+    "c02_loglog": {"script": "c02_axes_and_scales.py"},
+    "c02_constrained": {
+      "script": "c02_axes_and_scales.py",
+      "tolerance": {
+        "changed_pixel_ratio": 0.004,
+        "mean_abs_diff": 1.4,
+        "max_abs_diff": 110
+      },
+      "tolerance_reason": "constrained_layout 的落位由 matplotlib 每帧重算，色条厚度会随 box_aspect 有亚像素级抖动。收到与其它 case 同档会在无产品改动时偶发变红；放宽到这一档之后，真正的『色条翻转/extend 开关』改动仍然远超阈值（实测那类改动的 changed_ratio 在 0.05 量级）。"
+    },
+
+    "c03_legend": {"script": "c03_text_legend_images.py"},
+    "c03_annotations": {"script": "c03_text_legend_images.py"},
+    "c03_scinotation": {"script": "c03_text_legend_images.py"},
+    "c03_image": {"script": "c03_text_legend_images.py"},
+    "c03_cjk": {
+      "script": "c03_text_legend_images.py",
+      "visual": false,
+      "visual_skip_reason": "CJK 字体的字形与度量随 fonts-noto-cjk 版本变化，像素基线会在一次与产品完全无关的字体包升级里整片变红。结构与导出照验——中文必须能画出来；只是不拿它当像素基线。要恢复像素比对，需要先把字体版本锁进内置 runtime（packaging/runtime-lock.json 那一套）并让 baseline 与该版本绑定。"
+    }
+  }
+}

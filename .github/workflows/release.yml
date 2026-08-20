@@ -97,8 +97,163 @@ jobs:
           path: dist/
           if-no-files-found: error
 
-  github_release:
+  # ────────────────────────────────────────────────────────────────
+  # 发行资格验证（实验室 Linux runner）
+  #
+  # 插在 build 与「建 Release / 发 PyPI」之间。它验的是 **build 产出的那一份
+  # wheel**，不是「同一个 commit 重新造一个差不多的东西」——本工作流开头那条
+  # 「三个 job 共用 build 产出的同一份产物」的原则，在这里同样成立。
+  #
+  # 安全：这两个 job 都不需要写权限。顶层已是 contents: read，此处不再上调；
+  # 长期 runner 拿不到 id-token / contents: write，也就拿不到 PyPI 与 Release
+  # 的任何签发能力。
+  # ────────────────────────────────────────────────────────────────
+  lab_gate_trust:
+    # 在 **GitHub 托管机** 上把 tag 解析成精确 SHA 并验明正身。
+    # 不能把 tag 名一路传给 self-hosted 再解析：tag 是可移动的引用，
+    # 验证之后、执行之前它仍可能被指向别处。
     needs: build
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: resolve
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          if ! SHA="$(git rev-parse --verify "refs/tags/${TAG}^{commit}" 2>/dev/null)"; then
+            echo "::error::$TAG 不是本仓库里的一个 tag——拒绝送上 self-hosted runner"
+            exit 1
+          fi
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "✅ $TAG → $SHA"
+
+  lab_release_gate:
+    needs: [build, lab_gate_trust]
+    runs-on: [self-hosted, linux, x64, tavotto-lab]
+    timeout-minutes: 180
+    concurrency:
+      # 与 lab-ci.yml 共用同一个槽：benchmark 与 soak 都要求独占机器。
+      group: lab-qualification
+      cancel-in-progress: false
+    env:
+      LAB_MODE: release
+      TAVOTTO_CI_STATE_ROOT: ${{ vars.LAB_CI_STATE_ROOT || '/srv/tavotto-ci' }}
+      LAB_PERF_GATE: ${{ vars.LAB_PERF_GATE || 'false' }}
+      GITHUB_TOKEN: ${{ github.token }}
+      TZ: UTC
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+      PYTHONHASHSEED: "0"
+      MPLBACKEND: Agg
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.lab_gate_trust.outputs.sha }}
+          clean: true
+
+      # **同一份产物**：不重新 build。这是整条门禁的立足点。
+      - uses: actions/download-artifact@v4
+        with: { name: dist, path: dist }
+
+      - name: 开跑前体检
+        run: python3 scripts/ci/lab_preflight.py --mode release
+
+      - name: 清理上一轮残留
+        run: python3 scripts/ci/cleanup.py
+
+      - name: 候选包验收（exact artifact）
+        run: python3 scripts/ci/lab_acceptance.py --dist dist
+
+      - name: 建验证环境
+        id: venv
+        run: |
+          set -euo pipefail
+          VENV="$TAVOTTO_CI_STATE_ROOT/tmp/venv-rel-${GITHUB_RUN_ID}"
+          rm -rf "$VENV"
+          python3 -m venv "$VENV"
+          "$VENV/bin/pip" install -q --disable-pip-version-check --upgrade pip
+          "$VENV/bin/pip" install -q -e ".[dev,ci]"
+          # **科学栈版本取自 packaging/runtime-lock.json**，不用 `pip install matplotlib`。
+          # 视觉基线是像素级的：matplotlib 换个小版本就可能改掉抗锯齿或字体度量，
+          # 让整片 corpus 在一次与产品无关的依赖升级里同时变红。用锁文件还有第二个
+          # 好处——CI 的渲染环境与桌面版用户拿到的内置 runtime 逐字一致，
+          # 基线因此真正代表「用户会看到的那张图」。
+          # shellcheck disable=SC2046
+          "$VENV/bin/pip" install -q $(python3 scripts/ci/runtime_pins.py)
+          echo "python=$VENV/bin/python" >> "$GITHUB_OUTPUT"
+
+      - name: slow / 集成用例
+        run: |
+          set -euo pipefail
+          N=$(${{ steps.venv.outputs.python }} -m pytest -m slow --collect-only -q 2>/dev/null | grep -c "::" || true)
+          if [ "$N" -eq 0 ]; then
+            echo "::error::-m slow 一条都没选中；标记被删或 pytest.ini 变了"
+            exit 1
+          fi
+          ${{ steps.venv.outputs.python }} -m pytest -q
+          ${{ steps.venv.outputs.python }} -m pytest -m slow -q
+
+      - name: 升级验收 N-1 → 候选
+        run: |
+          set -euo pipefail
+          # 用 glob 而不是 ls|grep：文件名里出现空格或非 ASCII 时 ls 的输出
+          # 没法安全地按行切。dist/ 里有且只有一个 wheel（lab_acceptance.py
+          # 会在上一步就为「多于一个」失败），所以这里直接展开。
+          shopt -s nullglob
+          WHEELS=(dist/*.whl)
+          if [ "${#WHEELS[@]}" -ne 1 ]; then
+            echo "::error::dist/ 里应有且仅有一个 wheel，实际 ${#WHEELS[@]} 个"
+            exit 1
+          fi
+          ${{ steps.venv.outputs.python }} scripts/ci/upgrade_acceptance.py \
+            --candidate "${WHEELS[0]}"
+
+      - name: Golden 视觉回归
+        run: |
+          ${{ steps.venv.outputs.python }} scripts/ci/visual_regression.py \
+            --python ${{ steps.venv.outputs.python }} --out "$RUNNER_TEMP/visual"
+
+      - name: 发行档 soak 与泄漏检测
+        run: |
+          ${{ steps.venv.outputs.python }} scripts/ci/soak.py \
+            --python ${{ steps.venv.outputs.python }} \
+            --iterations 800 --json "$RUNNER_TEMP/soak-metrics.json"
+
+      - name: 性能回归（候选版**不写基线**）
+        run: |
+          ${{ steps.venv.outputs.python }} scripts/ci/benchmark.py \
+            --python ${{ steps.venv.outputs.python }} --mode release --no-update
+
+      - name: 汇总
+        if: always()
+        run: ${{ steps.venv.outputs.python }} scripts/ci/summarize.py --mode release
+
+      - name: 失败诊断包
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lab-release-gate-diagnostics-${{ github.run_id }}
+          path: |
+            ${{ env.TAVOTTO_CI_STATE_ROOT }}/reports/*.json
+            ${{ runner.temp }}/visual/**
+            ${{ runner.temp }}/soak-metrics.json
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: 回收一次性环境
+        if: always()
+        run: rm -rf "$TAVOTTO_CI_STATE_ROOT/tmp/venv-rel-${GITHUB_RUN_ID}"
+
+  github_release:
+    # lab gate 不过就不建 Release。**刻意不给 fallback**：
+    # 「runner 离线 → 跳过 gate → 照发」等于这条门禁在最需要它的时候自动消失。
+    # runner 不可用时这个 job 会排队或失败，那正是期望行为。
+    needs: [build, lab_release_gate]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -175,7 +330,9 @@ jobs:
             out/codex-plugin-*.zip
 
   pypi:
-    needs: build
+    # 同上：lab gate 不过就不发 PyPI。PyPI 上的同名文件永远不能重传，
+    # 所以这里比 Release 更没有「先发了再说」的余地。
+    needs: [build, lab_release_gate]
     # PyPI 侧的 trusted publisher 配好之前，自动发布只会红一次给人添堵——
     # 用仓库变量 PYPI_PUBLISH_ENABLED=true 开闸（Settings → Variables）。
     # 手动 dispatch 时按 inputs.pypi 走，none 则整个跳过。

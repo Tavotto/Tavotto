@@ -1,0 +1,15 @@
+# actionlint 的自定义 runner 标签声明。
+#
+# 没有这份文件时，actionlint 会把实验室 runner 的标签报成 "label is unknown"，
+# 于是每次 lint 都带着两条已知噪声——而噪声一多，真正的告警就会被一起忽略。
+#
+# 这些标签对应实验室里那台长期 Linux runner（见 docs/ci/self-hosted-runner.md）。
+# 改标签时**必须同步改这里**，否则 lint 会重新开始报未知标签。
+self-hosted-runner:
+  labels:
+    # 实验室 qualification runner。lab-ci.yml 与 release.yml 的
+    # lab_release_gate 靠它定向。
+    - tavotto-lab
+    # 预留：组织升级到支持 runner group 之后，用它把可用范围
+    # 收到 Tavotto/Tavotto 与明确的 trusted workflow。
+    - tavotto-trusted

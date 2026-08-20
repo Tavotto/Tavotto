@@ -36,6 +36,11 @@ dependencies = [
 # 单环境安装：渲染 worker 直接用当前解释器，无需另找科学栈 python。
 worker = ["matplotlib>=3.8", "numpy>=1.24"]
 dev = ["pytest>=8", "build>=1.2", "twine>=5"]
+# 实验室 CI（scripts/ci/）专用。**刻意不进 dev**：普通开发与 PR 上的
+# `pip install -e ".[dev]"` 不该被迫拖进图像库，而 Flask 父进程的依赖边界
+# （只有 flask + pymupdf，没有科学栈）更是一个字都不能松。
+# 视觉回归要解码 PNG 并做像素级比较，这是它唯一需要的两样东西。
+ci = ["numpy>=1.24", "Pillow>=10"]
 
 [project.scripts]
 tavotto = "tavotto.cli_entry:main"
@@ -89,3 +94,29 @@ include = [
     "LICENSE",
     "pytest.ini",
 ]
+
+# ---------------------------------------------------------------------------
+# Mutation testing（实验室 weekly CI，见 scripts/ci/mutation.py）
+#
+# **mutmut 3.x 只从 cwd 的 pyproject.toml / setup.cfg 读配置**——没有命令行
+# 或环境变量能覆盖它（实测 `mutmut.configuration._config_reader` 里硬编码了
+# 这两个文件名）。所以这段必须留在仓库里，也因此它会被 code review 看到，
+# 这正好是我们想要的：scope 圈了哪些模块，是需要有人负责的决定。
+#
+# `only_mutate` 逐个审计过，共同点是**纯标准库 + 逻辑密集 + 算错了会安静地
+# 产生错误结果**。刻意排除 app.py（庞大的 HTTP/subprocess 集成层）、
+# worker.py（要科学栈）、desktop.py 与 runtime.py（平台分支会产出大量
+# 「另一个平台才走到」的 survived，纯噪声）、pathgeom.py（依赖 numpy）。
+#
+# 键名按 3.x 的实际字段：`source_paths`（`paths_to_mutate` 已废弃并会告警）、
+# `only_mutate`（每项必须以 .py 或 * 结尾）、`pytest_add_cli_args`。
+[tool.mutmut]
+source_paths = ["src/tavotto"]
+only_mutate = [
+    "src/tavotto/engine/patchspec.py",
+    "src/tavotto/engine/registry.py",
+    "src/tavotto/engine/locate.py",
+    "src/tavotto/engine/preflight.py",
+    "src/tavotto/engine/profiles.py",
+]
+pytest_add_cli_args = ["-q", "-p", "no:cacheprovider"]

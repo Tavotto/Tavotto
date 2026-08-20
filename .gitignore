@@ -72,3 +72,11 @@ web/dist-mcp/
 
 # 遥测代理的部署元数据（Vercel CLI 生成，含本机链接的项目 id）
 /services/telemetry_proxy/.vercel/
+
+# 验收 corpus 的产物。visual_regression.py 会把 corpus 复制到临时目录再跑，
+# 正常流程不会在这里落文件；但有人手工跑一遍脚本调试时会，而一堆 PDF 混进
+# 版本库既没意义又会让「工作目录干净」的判定失效。
+# **基线（tests/acceptance/baselines/*.png）不在此列**——它是需要 code review
+# 的资产，必须随代码走。
+/tests/acceptance/corpus/*.pdf
+/tests/acceptance/corpus/*.png
