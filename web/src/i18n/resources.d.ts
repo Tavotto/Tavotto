@@ -873,7 +873,8 @@ export default interface Resources {
       "no_project": "尚未打开项目",
       "open_project_failed": "打不开这个项目：{{reason}}",
       "permission_denied": "无权限读取：{{path}}",
-      "read_failed": "无法读取：{{reason}}"
+      "read_failed": "无法读取：{{reason}}",
+      "session_auth_required": "会话未建立或已失效：请重新启动 Tavotto，从它打开的链接进入。"
     },
     "engine": {
       "apply": "应用",
@@ -2076,7 +2077,8 @@ export default interface Resources {
       "staleOtherWindow": "该文档已在其他窗口保存了更新的版本，本窗口的改动已暂存本机，未写入磁盘"
     },
     "boot": {
-      "desktopSessionFailed": "Tavotto 桌面会话建立失败：请关闭窗口后重新打开应用。"
+      "desktopSessionFailed": "Tavotto 桌面会话建立失败：请关闭窗口后重新打开应用。",
+      "sessionUnauthenticated": "这个页面没有 Tavotto 会话：请回到终端或应用重新启动 Tavotto，用它打开的带凭据链接进入。"
     },
     "canvasList": {
       "canvasName": "画布名",

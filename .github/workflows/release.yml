@@ -38,18 +38,50 @@ env:
   TAVOTTO_NO_TELEMETRY: "1"
 
 jobs:
+  # ────────────────────────────────────────────────────────────────
+  # 信任链第一环（GitHub 托管机）：把 tag 解析成精确 SHA，并验证它
+  # **可达于受保护的 origin/main**。tag 是可移动的引用，而本工作流后面
+  # 站着 PyPI OIDC 与 Release 写权限——一个指向未经评审 commit 的 tag
+  # 绝不能进入任何 secret-bearing 路径（1.0 审计 P1-04）。
+  # 其余所有 job 只认这里输出的 SHA，不再各自 checkout tag 名。
+  # ────────────────────────────────────────────────────────────────
+  trust:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - id: resolve
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          if ! SHA="$(git rev-parse --verify "refs/tags/${TAG}^{commit}" 2>/dev/null)"; then
+            echo "::error::$TAG 不是本仓库里的一个 tag——拒绝进入发布链"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$SHA" origin/main; then
+            echo "::error::$TAG → $SHA 不可达于 origin/main——发布只接受已经合并进受保护 main 的提交"
+            exit 1
+          fi
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "✅ $TAG → $SHA（可达 origin/main）"
+
   build:
+    needs: trust
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ needs.trust.outputs.sha }}
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with: { python-version: "3.13" }
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with: { version: 11 }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: pnpm
@@ -91,7 +123,7 @@ jobs:
           print('ok', tavotto.__version__)
           "
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: dist
           path: dist/
@@ -104,36 +136,16 @@ jobs:
   # wheel**，不是「同一个 commit 重新造一个差不多的东西」——本工作流开头那条
   # 「三个 job 共用 build 产出的同一份产物」的原则，在这里同样成立。
   #
-  # 安全：这两个 job 都不需要写权限。顶层已是 contents: read，此处不再上调；
+  # tag → SHA 的解析与 main 可达性验证在最上面的 trust job（GitHub 托管机）：
+  # 不能把 tag 名一路传给 self-hosted 再解析——tag 是可移动的引用，
+  # 验证之后、执行之前它仍可能被指向别处。
+  #
+  # 安全：这个 job 不需要写权限。顶层已是 contents: read，此处不再上调；
   # 长期 runner 拿不到 id-token / contents: write，也就拿不到 PyPI 与 Release
   # 的任何签发能力。
   # ────────────────────────────────────────────────────────────────
-  lab_gate_trust:
-    # 在 **GitHub 托管机** 上把 tag 解析成精确 SHA 并验明正身。
-    # 不能把 tag 名一路传给 self-hosted 再解析：tag 是可移动的引用，
-    # 验证之后、执行之前它仍可能被指向别处。
-    needs: build
-    runs-on: ubuntu-latest
-    outputs:
-      sha: ${{ steps.resolve.outputs.sha }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - id: resolve
-        env:
-          TAG: ${{ inputs.tag || github.ref_name }}
-        run: |
-          set -euo pipefail
-          if ! SHA="$(git rev-parse --verify "refs/tags/${TAG}^{commit}" 2>/dev/null)"; then
-            echo "::error::$TAG 不是本仓库里的一个 tag——拒绝送上 self-hosted runner"
-            exit 1
-          fi
-          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
-          echo "✅ $TAG → $SHA"
-
   lab_release_gate:
-    needs: [build, lab_gate_trust]
+    needs: [build, trust]
     runs-on: [self-hosted, linux, x64, tavotto-lab]
     timeout-minutes: 180
     concurrency:
@@ -151,13 +163,13 @@ jobs:
       PYTHONHASHSEED: "0"
       MPLBACKEND: Agg
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ needs.lab_gate_trust.outputs.sha }}
+          ref: ${{ needs.trust.outputs.sha }}
           clean: true
 
       # **同一份产物**：不重新 build。这是整条门禁的立足点。
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with: { name: dist, path: dist }
 
       - name: 开跑前体检
@@ -235,7 +247,7 @@ jobs:
 
       - name: 失败诊断包
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: lab-release-gate-diagnostics-${{ github.run_id }}
           path: |
@@ -253,18 +265,18 @@ jobs:
     # lab gate 不过就不建 Release。**刻意不给 fallback**：
     # 「runner 离线 → 跳过 gate → 照发」等于这条门禁在最需要它的时候自动消失。
     # runner 不可用时这个 job 会排队或失败，那正是期望行为。
-    needs: [build, lab_release_gate]
+    needs: [build, trust, lab_release_gate]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ inputs.tag || github.ref }}
-      - uses: actions/download-artifact@v4
+          ref: ${{ needs.trust.outputs.sha }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with: { name: dist, path: dist }
       # 插件清单那步要跑 Python（这个 job 原本只用 bash，没装过）
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with: { python-version: "3.13" }
 
       - name: 找手写的 release notes
@@ -315,7 +327,7 @@ jobs:
             --published-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           cat out/codex-plugin.json
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
           draft: false
@@ -348,12 +360,12 @@ jobs:
     permissions:
       id-token: write     # OIDC 签发，Trusted Publishing 的必需权限
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with: { name: dist, path: dist }
 
       - name: 发布到 TestPyPI
         if: inputs.pypi == 'testpypi'
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
           print-hash: true
@@ -361,6 +373,6 @@ jobs:
 
       - name: 发布到 PyPI
         if: inputs.pypi != 'testpypi'
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
         with:
           print-hash: true

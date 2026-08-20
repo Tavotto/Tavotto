@@ -7,7 +7,10 @@ name = "tavotto"
 dynamic = ["version"]
 description = "Make AI-generated scientific figures editable without losing the code behind them."
 readme = "README.md"
-requires-python = ">=3.10"
+# 上界与 CI 实测范围一致（1.0 审计 P1-05）：矩阵铺的是 3.10–3.13，元数据就
+# 只承诺 3.10–3.13。3.14 验证过（backend/wheel/worker/smoke 全绿）再放开——
+# 「pip 允许装」必须等于「我们真的测过」，classifiers 同步列出已验证版本。
+requires-python = ">=3.10,<3.14"
 license = "AGPL-3.0-only"
 license-files = ["LICENSE"]
 authors = [{ name = "erwanjun" }]
@@ -21,6 +24,10 @@ classifiers = [
     "Operating System :: Microsoft :: Windows",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Visualization",
     "Topic :: Multimedia :: Graphics :: Editors :: Vector-Based",
 ]
@@ -34,7 +41,10 @@ dependencies = [
 
 [project.optional-dependencies]
 # 单环境安装：渲染 worker 直接用当前解释器，无需另找科学栈 python。
-worker = ["matplotlib>=3.8", "numpy>=1.24"]
+# 上界跟着实测走（P1-05）：runtime-lock 与视觉基线在 matplotlib 3.11 /
+# numpy 2.x 上验证，matplotlib 的 minor 升版历史上多次破坏私有接口
+# （axis3d 几何助手、colorbar 落位），未验证的下一档 minor 不该被顺手装上。
+worker = ["matplotlib>=3.8,<3.12", "numpy>=1.24,<3"]
 dev = ["pytest>=8", "build>=1.2", "twine>=5"]
 # 实验室 CI（scripts/ci/）专用。**刻意不进 dev**：普通开发与 PR 上的
 # `pip install -e ".[dev]"` 不该被迫拖进图像库，而 Flask 父进程的依赖边界

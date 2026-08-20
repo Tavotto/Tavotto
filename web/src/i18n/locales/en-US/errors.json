@@ -7,7 +7,8 @@
     "no_project": "No project is open yet",
     "open_project_failed": "Cannot open this project: {{reason}}",
     "permission_denied": "No permission to read: {{path}}",
-    "read_failed": "Cannot read: {{reason}}"
+    "read_failed": "Cannot read: {{reason}}",
+    "session_auth_required": "No active session. Relaunch Tavotto and enter through the link it opens."
   },
   "engine": {
     "apply": "Apply",

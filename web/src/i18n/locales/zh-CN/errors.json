@@ -7,7 +7,8 @@
     "no_project": "尚未打开项目",
     "open_project_failed": "打不开这个项目：{{reason}}",
     "permission_denied": "无权限读取：{{path}}",
-    "read_failed": "无法读取：{{reason}}"
+    "read_failed": "无法读取：{{reason}}",
+    "session_auth_required": "会话未建立或已失效：请重新启动 Tavotto，从它打开的链接进入。"
   },
   "engine": {
     "apply": "应用",

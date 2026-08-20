@@ -1,16 +1,23 @@
 # 发版
 
-一条流水线 `release.yml`，推 `v*` tag 触发，三个 job：
+一条流水线 `release.yml`，推 `v*` tag 触发，五个 job：
 
 | job | 做什么 |
 |---|---|
+| `trust` | tag → 精确 SHA，并验证它**可达于 origin/main**——发布只接受已合并进受保护 main 的提交；之后所有 job 只认这个 SHA |
 | `build` | 构建前端 → 打 wheel + sdist → 核对版本 → `twine check` → 干净环境装一遍冒烟 |
+| `lab_release_gate` | 实验室 runner 上的 exact-artifact 发行资格验证：全量 + slow 用例、N-1 升级验收、Golden 视觉回归、soak/泄漏、性能对照——**这一关不过，Release 与 PyPI 都不发** |
 | `github_release` | 建 GitHub Release，挂上产物 |
 | `pypi` | 发到 PyPI（需开闸，见下） |
 
-后两个 job 用的是 `build` 上传的**同一份** artifact——GitHub Release 上的 wheel
+发布 job 用的是 `build` 上传的**同一份** artifact——GitHub Release 上的 wheel
 与 PyPI 上的必须字节一致，否则「检查更新」装到的和 `pip install` 装到的会是两个
-不同的东西。
+不同的东西。`lab_release_gate` 验的也是这同一份 wheel，不重新构建。
+
+桌面链（`desktop-tauri.yml`）有同构的 `trust` job 与**发行签名门禁**：
+发行构建（push tag / attach=true）缺任一签名、公证或 updater 私钥直接失败，
+不再是 warning 后继续；第三方 Actions 在两条 secret-bearing 工作流里一律
+钉死到 commit SHA。
 
 > **为什么 PyPI 发布不是单独一个工作流**：Release 是本工作流用 `GITHUB_TOKEN`
 > 建的，而 GitHub 明确规定 `GITHUB_TOKEN` 触发的事件**不会**再触发新的工作流运行
@@ -83,7 +90,10 @@ pip install --index-url https://test.pypi.org/simple/ \
 
 tag 与 `__version__` 对不上时 `build` job 直接失败，不会发出错版本。
 
-**发之前确认 CI 是绿的**——`release.yml` 不重跑测试，它只负责构建与分发。
+**发之前确认 CI 是绿的**——`release.yml` 的 `lab_release_gate` 会对候选 wheel
+重跑全量 + slow 用例、升级验收与视觉回归（exact artifact），但那是**发行资格
+验证**，不是替代日常 CI：tag 只应打在 CI 已经全绿、且已合并进 main 的提交上
+（`trust` job 会硬校验 main 可达性，够不着直接拒）。
 
 ## Release notes
 

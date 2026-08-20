@@ -40,8 +40,11 @@ on:
         type: boolean
         default: true
 
+# 默认只读（1.0 审计 P1-04：secret-bearing 工作流最小权限）。
+# 真要写 Release 的两个 job（build 的「挂到 Release」、updater-manifest）
+# 各自在 job 级声明 contents: write；workerd 静态门禁全程只读。
 permissions:
-  contents: write
+  contents: read
   actions: read
 
 # CI 里跑起来的每一个 Tavotto 进程都**硬关**匿名用量统计。
@@ -53,24 +56,55 @@ env:
   TAVOTTO_NO_TELEMETRY: "1"
 
 jobs:
+  # ────────────────────────────────────────────────────────────────
+  # 信任链第一环（与 release.yml 的 trust 同构）：tag → 精确 SHA，且必须
+  # 可达于受保护的 origin/main。本工作流握着 macOS 证书、Apple 公证凭据与
+  # updater 私钥——一个指向未经评审 commit 的 tag 绝不能碰到它们
+  # （1.0 审计 P1-04）。之后所有 job 只认这里输出的 SHA。
+  # ────────────────────────────────────────────────────────────────
+  trust:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - id: resolve
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          if ! SHA="$(git rev-parse --verify "refs/tags/${TAG}^{commit}" 2>/dev/null)"; then
+            echo "::error::$TAG 不是本仓库里的一个 tag——拒绝进入桌面发布链"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$SHA" origin/main; then
+            echo "::error::$TAG → $SHA 不可达于 origin/main——发布只接受已经合并进受保护 main 的提交"
+            exit 1
+          fi
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "✅ $TAG → $SHA（可达 origin/main）"
+
   # Rust supervisor 的静态门禁。**只在 Linux 上跑一份**：它是纯标准库 + serde
   # 的 stdio 进程，没有任何平台分支，三平台各跑一遍只是把发布慢三倍。
   # 刻意不做 build 的 `needs`：clippy 挑剔一条命名不该把发行链堵死，
   # 但它必须与桌面构建同时可见（golden vectors 是 patch 身份的硬验收，
   # 那条真跑在 cargo test 里）。
   workerd:
+    needs: trust
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: workerd
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ inputs.tag || github.ref_name }}
-      - uses: dtolnay/rust-toolchain@stable
+          ref: ${{ needs.trust.outputs.sha }}
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
         with:
           components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: workerd
       - run: cargo fmt --check
@@ -80,6 +114,7 @@ jobs:
       - run: cargo test
 
   build:
+    needs: trust
     strategy:
       fail-fast: false
       matrix:
@@ -87,9 +122,16 @@ jobs:
           - { os: macos-latest,   bundles: app,  artifact: dmg }
           - { os: windows-latest, bundles: nsis, artifact: nsis }
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write   # 「挂到 Release」需要；其余步骤只读
+      actions: read
     env:
       # tag 触发时 inputs 为空，一律经这个变量取目标 tag
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      # 发行构建 = 产物会挂上 Release。签名门禁按它分岔：发行构建缺任一
+      # 签名/公证凭据必须**失败**而不是 warning（1.0 审计 P1-07）；
+      # 非发行的 dispatch 构建（attach=false）保留降级路径，便于试构建。
+      IS_RELEASE_BUILD: ${{ (github.event_name == 'push' || inputs.attach) && '1' || '0' }}
       MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
       MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
       MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
@@ -102,9 +144,9 @@ jobs:
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ inputs.tag || github.ref_name }}
+          ref: ${{ needs.trust.outputs.sha }}
 
       - name: 确认该 tag 含 Tauri 配置
         shell: bash
@@ -114,17 +156,43 @@ jobs:
             exit 1
           }
 
-      - uses: actions/setup-python@v5
+      - name: 发行签名门禁（缺凭据的发行构建就失败在这里，不是 warning）
+        # 1.0 审计 P1-07：签名与安全更新不能是「可选能力」。发出去的安装包
+        # 必须签名（macOS 还要能公证），更新包必须带 minisign 签名——缺任一
+        # secret 的「发行」等于把 SmartScreen 警告与不可信更新链发给全体用户，
+        # 而且工作流全绿。试构建（workflow_dispatch + attach=false）不受影响。
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$IS_RELEASE_BUILD" = "1" ] || { echo "非发行构建：跳过签名门禁"; exit 0; }
+          missing=()
+          [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ] || missing+=("TAURI_SIGNING_PRIVATE_KEY（更新包签名）")
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            [ -n "${MACOS_CERTIFICATE:-}" ]   || missing+=("MACOS_CERTIFICATE")
+            [ -n "${MACOS_SIGN_IDENTITY:-}" ] || missing+=("MACOS_SIGN_IDENTITY")
+            [ -n "${APPLE_ID:-}" ]            || missing+=("APPLE_ID（公证）")
+          else
+            [ "${SIGNPATH_ENABLED_VAR:-}" = "true" ] || missing+=("vars.SIGNPATH_ENABLED（Windows 安装包签名）")
+          fi
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf '::error::发行构建缺少签名凭据：%s\n' "${missing[*]}"
+            exit 1
+          fi
+          echo "✅ 签名凭据齐全"
+        env:
+          SIGNPATH_ENABLED_VAR: ${{ vars.SIGNPATH_ENABLED }}
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with: { python-version: "3.13" }
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with: { version: 11 }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           # 两个 crate 都要缓存：src-tauri 是壳，workerd 是随 sidecar 一起发出去的
           # Rust supervisor（由 build_desktop.py 在 PyInstaller 之前 cargo build，
@@ -134,7 +202,7 @@ jobs:
             workerd
 
       - name: 缓存 CPython 归档下载
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: build/runtime-cache
           key: cpython-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packaging/runtime-lock.json') }}
@@ -446,7 +514,7 @@ jobs:
       - name: 上传待签名 Windows 安装包
         if: runner.os == 'Windows'
         id: upload-unsigned-windows-artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: windows-installer-signing-input-${{ github.run_id }}
           path: out/*
@@ -455,7 +523,7 @@ jobs:
       - name: 提交 Windows 安装包到 SignPath
         if: runner.os == 'Windows' && vars.SIGNPATH_ENABLED == 'true'
         id: signpath-windows
-        uses: signpath/github-action-submit-signing-request@v2
+        uses: signpath/github-action-submit-signing-request@c92b958760219087e01f8d67a1669ed57afe2627 # v2
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
           organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
@@ -513,7 +581,7 @@ jobs:
       # latest.json 里一直只有 windows-x86_64——dmg 装的那批用户永远查不到
       # 新版本，而整条链全绿（v0.7.0 就是这么发出去的）。
       - name: 上传最终桌面产物（更新清单的输入）
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: desktop-tauri-${{ matrix.artifact }}
           path: out/*
@@ -539,7 +607,7 @@ jobs:
 
       - name: 挂到 Release
         if: ${{ github.event_name == 'push' || inputs.attach }}
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
           files: out/*
@@ -551,32 +619,37 @@ jobs:
   # 拉 latest.json → 比版本 → 下载对应平台的包 → 用内置公钥校验签名 → 安装。
   # **没有这一份，壳永远查不到新版本**，前一版的用户就停在原地了。
   updater-manifest:
-    needs: build
+    needs: [trust, build]
     if: ${{ github.event_name == 'push' || inputs.attach }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # latest.json 要挂上 Release
     env:
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ inputs.tag || github.ref_name }}
-      - uses: actions/setup-python@v5
+          ref: ${{ needs.trust.outputs.sha }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with: { python-version: "3.13" }
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: artifacts
           pattern: desktop-tauri-*
 
-      - name: 有没有更新包（没配私钥就如实跳过，不产出半份清单）
+      - name: 有没有更新包（发行构建缺了就失败——半份更新链不许全绿）
         id: probe
         shell: bash
         run: |
           if compgen -G "artifacts/**/*.sig" > /dev/null; then
             echo "have=1" >> "$GITHUB_OUTPUT"
           else
-            echo "have=0" >> "$GITHUB_OUTPUT"
-            echo "::warning::本次没有任何更新包（未配置 TAURI_SIGNING_PRIVATE_KEY）——桌面版这一版无法自动更新"
+            # 本 job 只在发行构建（push tag / attach=true）触发，走到这里
+            # 意味着发出去的桌面版无法自动更新。这必须红（P1-07），
+            # 不是一条没人看的 warning——空转的更新链比没有更坏。
+            echo "::error::本次发行没有任何更新包（TAURI_SIGNING_PRIVATE_KEY 缺失或签名步骤没跑）——桌面版这一版将无法自动更新"
+            exit 1
           fi
 
       - name: 合成 latest.json
@@ -598,7 +671,7 @@ jobs:
 
       - name: 挂到 Release
         if: steps.probe.outputs.have == '1'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
           files: out/latest.json
