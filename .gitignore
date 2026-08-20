@@ -70,6 +70,7 @@ workerd/target/
 
 # MCP App 画布的中间产物（最终单文件在 codex-plugin/mcp/widget/canvas.html，那个进 git）
 web/dist-mcp/
+web/dist-playground/
 
 # 冒烟 / 手工跑示例项目时，导出与画布布局落在项目自己的 tavottofile/ 里
 # （engine/config.project_export_dir）。`git add -A` 会顺手把它收进提交。

@@ -810,6 +810,34 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被它推翻**（
 - **Codex Desktop 里的 iframe 渲染尚未实测**——协议层与画布逻辑都有自动化看护，
   但「真桌面应用把这块 HTML 跑起来」这一步没验过，README 里如实写着。
 
+## 浏览器 playground（网站 /try，2026-08-21）
+
+完整版在 `docs/adr/0007-browser-playground.md`，改动前先读。
+
+- **Pyodide 里跑的是同一份引擎**：`engine/browser.py` 平铺 import
+  `manifest/overrides/pathgeom/patchspec`（与 worker.py 同一条 sys.path 纪律），
+  **不许出现 browser_manifest.py 这类分叉**。前端走 `engineTransport` 的第三条
+  传输（`web/src/playground/`），画布 / inspector / stores / undo 与桌面同一份；
+  MCP 与 playground 共用的种子层在 `web/src/embedded/session.ts`。
+- **Pyodide 版本与包白名单钉死在 `packaging/playground-runtime.json`**（唯一
+  权威；前端 JSON import + 构建脚本共读）。不自动装任意 PyPI 包；不支持的
+  import 在下载科学栈**之前**报 `unsupported_import`（`engine/browser_imports.py`
+  纯标准库，分类必须先于 matplotlib 下载）。
+- **超时与取消在 Worker 边界**：任意同步 Python 没有协作取消，到点
+  `worker.terminate()` 且**会话作废**；一个文件 = 一个 Worker，换文件不复用
+  解释器。主线程只接受 id 配对 + 形状合法的 Worker 消息（Python 摸得到
+  postMessage）。
+- **隐私是可验证的**：源码只进 Worker，不进 localStorage / 不出网
+  （e2e 哨兵测试盯着）；「figure.py · 未改动」是逐字节比对的结论。
+- 产物：`python scripts/build_browser_playground.py` → `web/dist-playground/`
+  （确定性 engine.zip + 指纹 manifest，指纹算法复用 build_mcp_widget.digest）。
+  网站仓库 `pnpm sync-playground` 收走并提交、`pnpm check-playground` 防漂移
+  ——改了 web/src 或引擎四模块，**playground 与 MCP 画布两个产物都要重建**。
+- 验证：`tests/test_browser_session.py`（CPython 上跑同一份 browser.py：
+  fixture 矩阵 / 错误分诊 / 跨进程 patch_hash 一致）+
+  `web/src/playground/*.test.ts` + `web/e2e/playground.spec.ts`
+  （真浏览器 + 真 CDN Pyodide，慢，专属放宽超时）。
+
 ## AI 桥
 
 - `POST /api/ai/run` → spawn `codex exec`（默认）或 `claude -p`，cwd=figures 目录；

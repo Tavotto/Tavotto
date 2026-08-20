@@ -10,6 +10,10 @@
  */
 export const PRODUCT_NAME = 'Tavotto'
 
+/** 仓库与发行地址（与 `engine/brand.py` 的 REPO_URL 同源） */
+export const REPO_URL = 'https://github.com/Tavotto/Tavotto'
+export const RELEASES_LATEST_URL = `${REPO_URL}/releases/latest`
+
 export const PACKAGE_KIND = 'tavotto-package'
 export const PROOF_KIND = 'tavotto-proof'
 export const CLIPBOARD_FORMAT = 'tavotto/objects@1'

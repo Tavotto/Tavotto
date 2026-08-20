@@ -172,6 +172,8 @@
     "lockObject": "锁定对象",
     "mcpOpenFigure": "打开图",
     "moveElement": "移动{{label}}",
+    "playgroundOpenFigure": "打开图",
+    "playgroundResetEdits": "重置修改",
     "moveElements": "移动 {{count}} 个图内元素",
     "moveGuide": "移动参考线",
     "moveObject": "移动对象",

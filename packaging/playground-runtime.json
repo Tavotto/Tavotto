@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "comment": "浏览器 playground 的 Python 运行时锁——唯一权威（ADR 0007）。前端经 vite 的 JSON import 读它，scripts/build_browser_playground.py 把它写进产物 manifest。改版本先在真浏览器里跑 web/e2e/playground.spec.ts 再动手。版本号必须是精确值，不许 latest/范围。",
+  "pyodide_version": "314.0.5",
+  "python": "3.14.2",
+  "cdn_base": "https://cdn.jsdelivr.net/pyodide/v314.0.5/full/",
+  "packages": {
+    "matplotlib": "3.10.8",
+    "numpy": "2.4.6",
+    "pandas": "3.0.2",
+    "scipy": "1.18.0",
+    "pillow": "12.2.0"
+  },
+  "import_roots": {
+    "matplotlib": "matplotlib",
+    "mpl_toolkits": "matplotlib",
+    "pylab": "matplotlib",
+    "numpy": "numpy",
+    "pandas": "pandas",
+    "scipy": "scipy",
+    "PIL": "pillow"
+  }
+}

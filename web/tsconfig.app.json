@@ -26,7 +26,8 @@
     "resolveJsonModule": true,
     "paths": {
       "@/*": ["./src/*"],
-      "@profiles": ["../src/tavotto/profiles/publication.json"]
+      "@profiles": ["../src/tavotto/profiles/publication.json"],
+      "@playground-runtime": ["../packaging/playground-runtime.json"]
     }
   },
   "include": ["src"]
