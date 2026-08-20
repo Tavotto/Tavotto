@@ -151,6 +151,19 @@ def doctor(argv: list[str]) -> int:
             "code": "bundled_cli_missing",
             "message": "这套安装里没有 tavotto-cli（console 版命令行）——"
                        "外部程序将无法通过安装位置发现 Tavotto，请重新安装最新版本"})
+    # `notes` 是**不翻 ok 的提示**：装置能用，但有一件事值得知道。
+    # 2026-08-20 实测的那台机器就是这样：旧 Magplot.app 目录被就地升级成了
+    # Tavotto 0.8.0，文件都在、签名有效，doctor 报「一切正常」——而桌面启动
+    # 异常时这条目录名错位正是第一线索，不说出来用户毫无抓手。
+    notes: list[dict] = report.setdefault("notes", [])
+    install_dir = me["install_dir"] or ""
+    if sys.platform == "darwin" and install_dir.endswith(".app") \
+            and not install_dir.endswith("/Tavotto.app"):
+        notes.append({
+            "code": "bundle_dir_renamed",
+            "message": f"安装目录名与产品不符：{install_dir}"
+                       "（多半是旧版本目录被就地升级）。功能不受影响；"
+                       "如桌面启动异常，先卸载这份、重装到 Tavotto.app"})
     report["ok"] = not problems
     # 顶层也给一个 code：调用方最常问的就是「这次到底哪儿不对」，
     # 不该逼它先去翻数组。多个问题时取第一个（严重程度按追加顺序）。
@@ -167,4 +180,6 @@ def doctor(argv: list[str]) -> int:
               f"（{report['manifest']['action']}）")
         for problem in problems:
             print(f"! [{problem['code']}] {problem['message']}")
+        for note in report["notes"]:
+            print(f"~ [{note['code']}] {note['message']}")
     return 0 if report["ok"] else 1

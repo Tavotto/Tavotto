@@ -1,5 +1,10 @@
 # Python
-.venv/
+# **不带斜杠**：带斜杠只匹配目录，而这个仓库里 `.venv` 一度是个**被提交进去的
+# 符号链接**（mode 120000，内容指向它自己的绝对路径），`.venv/` 完全挡不住它。
+# 后果不是「多了个文件」——git 会在 stash pop / checkout / 目录改名时忠实地把
+# 那个自引用链接恢复回来，**当场顶掉开发者真正的 venv**，然后
+# `.venv/bin/python` 报 "too many levels of symbolic links"。两天内踩了两次。
+.venv
 __pycache__/
 *.pyc
 

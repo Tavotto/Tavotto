@@ -22,3 +22,8 @@ REPO_NAME = "Tavotto"
 REPO_URL = f"https://github.com/{REPO_OWNER}/{REPO_NAME}"
 RELEASES_API = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/latest"
 RELEASES_URL = f"{REPO_URL}/releases"
+
+# 桌面壳的 bundle 标识，与 src-tauri/tauri.conf.json 的 identifier 严格同源。
+# 桌面日志目录（tauri 的 app_log_dir）按它推导：macOS 是
+# ~/Library/Logs/<id>/，Windows 是 %LOCALAPPDATA%\<id>\logs\。
+DESKTOP_BUNDLE_ID = "com.tavotto.tavotto"

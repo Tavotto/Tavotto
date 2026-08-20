@@ -197,3 +197,21 @@ Tavotto 界面里是 HTTP，iframe 里是 `tools/call`。两侧最终落到同�
 * **画布合成的导出仍只出 PDF/PNG**（走 PyMuPDF）。SVG 只在单图这一侧给
   （`tavotto_export` / 引擎导出），导出对话框里如实说明。
 * MCP 会话上限 8 个，超了按最久未用淘汰——每个会话背后是一个常驻 Python 进程。
+
+## 追记（2026-08-20）：运行时解析器、自管环境与诚实的降级
+
+实测撞到的形态：Codex 用 Homebrew 的 `python3` 起 `mcp/server.py`，机器上只有
+桌面版——启动器找不到能 import 引擎的解释器，进入降级模式；而旧降级 server 把
+六个工具原样列进 tools/list（调用才发现「当前不可用」），用户看到的是「插件
+说自己能用、实际一个能用的都没有」。据此改了三件事（详规见 CLAUDE.md 的
+「Codex MCP server 与内嵌画布」一节与 `tests/test_mcp_resolver.py` /
+`tests/test_mcp_stdio.py`）：
+
+1. **解析器**：候选链扩到 显式 `TAVOTTO_MCP_PYTHON` → worker env/设置 →
+   插件自管 venv → CLI 反推 → PATH，每一条都真的验证 `import tavotto.engine`；
+2. **自管环境**：`--provision` 在 Tavotto 配置目录下建插件专属 venv（钉插件
+   版本，可复现，绝不碰用户全局环境）——「只装桌面版」的用户一条命令补齐；
+   `--health` 输出一行 JSON 体检；
+3. **降级 server 不再伪装**：tools/list 只列真的可用的 `tavotto_health`，
+   六个工具名的调用回结构化错误（code + 缺什么 + 恢复步骤），不声明资源。
+   内嵌画布与桌面窗口/浏览器是两条隔离的路，谁也不冒充谁。

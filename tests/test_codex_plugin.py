@@ -155,7 +155,7 @@ posix_shim_only = pytest.mark.skipif(
     os.name == "nt", reason="假 CLI 用 shebang 脚本，Windows 上起不来")
 
 
-def _run_handoff(tmp_path, response: dict, *args):
+def _run_handoff(tmp_path, response: dict, *args, _target=None):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     fake = bin_dir / "tavotto"
@@ -167,8 +167,11 @@ def _run_handoff(tmp_path, response: dict, *args):
     resp_file.write_text(json.dumps(response), encoding="utf-8")
     log = tmp_path / "calls.log"
 
-    target = tmp_path / "Fig1.pdf"
-    target.write_bytes(b"%PDF-1.4\n%%EOF\n")
+    if _target is None:
+        target = tmp_path / "Fig1.pdf"
+        target.write_bytes(b"%PDF-1.4\n%%EOF\n")
+    else:
+        target = _target
 
     env = {**os.environ, "PATH": str(bin_dir), "FAKE_RESPONSE": str(resp_file),
            "FAKE_LOG": str(log)}
@@ -190,8 +193,59 @@ def test_handoff_succeeds_when_the_figure_is_parameterizable(tmp_path):
     assert proc.returncode == 0, proc.stderr
     out = json.loads(proc.stdout.strip().splitlines()[-1])
     assert out["parameterizable"] is True and out["launch"] == "desktop"
-    # 先探测（--no-launch）再交接：跑完脚本可能多出新 stem，必须重新解析
-    assert len(calls) == 2 and "--no-launch" in calls[0] and "--no-launch" not in calls[1]
+    # **稳定产物（.pdf）只交接一次**：needs_run 恒为 False，先探测那跳只会把
+    # 同一份注册表再读一遍，白付一次 CLI 冷启动（frozen CLI 一跳几百 ms）
+    assert len(calls) == 1 and "--no-launch" not in calls[0]
+    assert "timings" in out and "open_ms" in out["timings"]
+
+
+def _load_plugin_handoff():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "_plugin_handoff_env", SKILL_DIR / "scripts" / "handoff.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_script_env_is_headless_with_a_stable_mpl_cache(tmp_path, monkeypatch):
+    """跑用户脚本的环境必须无头（Agg）且字体缓存目录固定——沙箱里默认 GUI
+    backend 会崩在 AppKit 初始化上，HOME 只读时 matplotlib 每次重建字体缓存
+    白付十来秒（2026-08-20 实测的两条慢因）。"""
+    mod = _load_plugin_handoff()
+    monkeypatch.setenv("TAVOTTO_CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.delenv("MPLBACKEND", raising=False)
+    monkeypatch.delenv("MPLCONFIGDIR", raising=False)
+    env = mod.script_env()
+    assert env["MPLBACKEND"] == "Agg"
+    assert env["MPLCONFIGDIR"].startswith(str(tmp_path / "cfg"))
+    assert os.path.isdir(env["MPLCONFIGDIR"]), "缓存目录要建好，matplotlib 不会自己建"
+    # 第二次拿到同一个目录——缓存才能复用
+    assert mod.script_env()["MPLCONFIGDIR"] == env["MPLCONFIGDIR"]
+
+
+def test_script_env_never_overrides_the_users_choice(monkeypatch):
+    mod = _load_plugin_handoff()
+    monkeypatch.setenv("MPLBACKEND", "QtAgg")
+    monkeypatch.setenv("MPLCONFIGDIR", "/my/own")
+    env = mod.script_env()
+    assert env["MPLBACKEND"] == "QtAgg" and env["MPLCONFIGDIR"] == "/my/own"
+
+
+@posix_shim_only
+def test_handoff_probes_before_running_a_script(tmp_path):
+    """给的是 .py 时仍要**先探测再交接**：跑完脚本可能多出新 stem，
+    第一次探测时它还不在磁盘上（登记与定位都会落空）。"""
+    script = tmp_path / "fig1.py"
+    script.write_text("print('ok')\n", encoding="utf-8")
+    proc, calls = _run_handoff(
+        tmp_path, {"ok": True, "project": str(tmp_path), "stem": None,
+                   "registry": {"parameterizable": True, "conflicts": [],
+                                "dynamic_names": []}},
+        _target=script)
+    assert proc.returncode == 0, proc.stderr
+    assert len(calls) == 2
+    assert "--no-launch" in calls[0] and "--no-launch" not in calls[1]
 
 
 @posix_shim_only
@@ -369,9 +423,9 @@ def test_desktop_only_install_is_discovered(clean_python, tmp_path):
     assert out["ok"] is True and out["parameterizable"] is True
     assert out["tavotto"]["source"] == "install"
     assert out["launch"] == "desktop"          # 原生窗口，不是浏览器
-    # 先探测（--no-launch）再交接
-    assert len(calls) == 2
-    assert "--no-launch" in calls[0] and "--no-launch" not in calls[1]
+    # 稳定产物（.pdf）单跳交接，不再有多余的探测那一跳
+    assert len(calls) == 1
+    assert "--no-launch" not in calls[0]
     assert calls[0][:3] == ["open", str(target), "--json"]
 
 
@@ -761,8 +815,8 @@ def test_launcher_is_stdlib_only_and_parses():
             imported |= {a.name.split(".")[0] for a in node.names}
         elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
             imported.add(node.module.split(".")[0])
-    allowed = {"json", "os", "shutil", "subprocess", "sys", "__future__",
-               "tavotto", "tavotto_mcp", "handoff"}
+    allowed = {"json", "os", "shutil", "subprocess", "sys", "time",
+               "__future__", "tavotto", "tavotto_mcp", "handoff"}
     assert not (imported - allowed), f"启动器引入了非标准库: {sorted(imported - allowed)}"
 
 

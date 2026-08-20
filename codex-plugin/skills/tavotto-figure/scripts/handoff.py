@@ -370,15 +370,49 @@ def needs_run(script: str, project: str, stem: str | None, mode: str) -> bool:
     return os.path.getmtime(product) < os.path.getmtime(script)
 
 
+def script_env(environ: dict | None = None) -> dict:
+    """跑用户脚本时的环境：**无头 + 稳定的 matplotlib 缓存目录**。
+
+    * `MPLBACKEND=Agg`（用户没自己设时）——出图脚本从 Agent/CI 里跑，默认
+      GUI backend 在没有显示会话的环境里会崩在 AppKit/Qt 初始化上；
+    * `MPLCONFIGDIR` 指到 Tavotto 配置目录下的固定位置（用户没设、且原位置
+      需要兜底时）——沙箱里 HOME 只读时 matplotlib 每次都重建字体缓存，
+      一次十来秒，还写不进去刷警告。固定目录 = 缓存建一次以后一直用。
+
+    只补缺，不覆盖：用户显式设过的两个变量原样保留。判据是「设没设」而不是
+    「能不能写」——探测可写性本身就要写文件，不值得。
+    """
+    env = dict(os.environ if environ is None else environ)
+    env.setdefault("MPLBACKEND", "Agg")
+    if "MPLCONFIGDIR" not in env:
+        cache = _join(sys.platform, config_dir(), "mpl-cache")
+        try:
+            os.makedirs(cache, exist_ok=True)
+            env["MPLCONFIGDIR"] = cache
+        except OSError:
+            pass                       # 建不出来就让 matplotlib 走自己的默认
+    return env
+
+
 def run_script(python: str, script: str) -> tuple[bool, str]:
-    """在脚本自己的目录里跑它——脚本里的相对路径按这个目录解析。"""
+    """在脚本自己的目录里跑它——脚本里的相对路径按这个目录解析。
+
+    成败**只看退出码**：matplotlib 的 UserWarning/DeprecationWarning 走 stderr，
+    把 stderr 有内容当失败会把一半正常脚本误杀。
+    """
     proc = subprocess.run([python, script], capture_output=True, text=True,
                           encoding="utf-8", errors="replace",
+                          env=script_env(),
                           cwd=os.path.dirname(os.path.abspath(script)) or ".")
     if proc.returncode == 0:
         return True, ""
     tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-25:]
     return False, "\n".join(tail)
+
+
+#: `tavotto open` 失败时随 code 一起透传的结构化细节（桌面启动失败的分诊线索：
+#: 是「装坏了」还是「这个环境起不了 GUI」，只有 `signal` / `log_path` 说得清）
+_FAILURE_DETAIL_KEYS = ("app", "exit_code", "signal", "log_path", "retryable")
 
 
 def _open_failure(result: dict, tavotto: dict, **extra) -> dict:
@@ -389,12 +423,21 @@ def _open_failure(result: dict, tavotto: dict, **extra) -> dict:
     `path_not_found` 要去看路径。把它们统统压成 `open_failed`、真 code 藏进
     第二层，等于让对面多猜一次——而 SKILL.md 里写的恰恰是按 `error_code`
     分支，两边当场对不上。CLI 没给 code（老版本 / 没有输出）才回 open_failed。
+
+    `launch_failed` / `launch_timeout` 随附的细节（`exit_code`、`signal`、
+    `log_path`…）**逐键透传**——桌面进程 SIGABRT 与「权限不够」在上层要走
+    不同的话术，压掉细节等于让 Codex 只能对用户说「失败了」。
     """
     code = result.get("code")
-    return {"ok": False, "tavotto": tavotto,
-            "error_code": code or "open_failed",
-            "code": code,
-            "error": result.get("error", "tavotto open 失败"), **extra}
+    out = {"ok": False, "tavotto": tavotto,
+           "error_code": code or "open_failed",
+           "code": code,
+           "error": result.get("error", "tavotto open 失败")}
+    for key in _FAILURE_DETAIL_KEYS:
+        if key in result:
+            out[key] = result[key]
+    out.update(extra)
+    return out
 
 
 def update_notice(tavotto_version: str | None = None) -> dict | None:
@@ -474,32 +517,47 @@ def main(argv: list[str] | None = None) -> int:
 
     cmd = found["cmd"]
     tavotto = {"source": found["source"], "cmd": cmd[0]}
+    import time
+    t0 = time.monotonic()
+    timings: dict = {}
 
-    # 1. 先问 Tavotto：这是哪个项目、哪个 stem（顺手把注册表补齐）
-    probe = run_tavotto_open(cmd, path, launch=False)
-    if not probe.get("ok"):
-        return emit(_open_failure(probe, tavotto), 2)
-
-    # 2. 需要的话跑一遍脚本
+    # 稳定产物（给的是 .pdf/.png…）或 `--run never` 时 `needs_run` 恒为 False：
+    # 先探测再交接的两跳退化成**一跳**——探测那次除了把同一份注册表再读一遍
+    # 什么都不产出，白付一次 CLI 冷启动（frozen CLI 一跳几百 ms）。
+    probe: dict = {}
     ran = False
-    if needs_run(path, probe["project"], probe.get("stem"), args.run):
-        ran, err = run_script(args.python, path)
-        if not ran:
-            return emit({"ok": False, "error_code": "script_failed",
-                         "error": "脚本运行失败", "stderr": err,
-                         "project": probe["project"]}, 1)
+    if args.run != "never" and path.endswith(".py"):
+        # 1. 先问 Tavotto：这是哪个项目、哪个 stem（顺手把注册表补齐）
+        t = time.monotonic()
+        probe = run_tavotto_open(cmd, path, launch=False)
+        timings["probe_ms"] = int((time.monotonic() - t) * 1000)
+        if not probe.get("ok"):
+            return emit(_open_failure(probe, tavotto), 2)
 
-    # 3. 交接。**必须再解析一次**：脚本刚跑出来的产物可能带来新的 stem，
+        # 2. 需要的话跑一遍脚本
+        if needs_run(path, probe["project"], probe.get("stem"), args.run):
+            t = time.monotonic()
+            ran, err = run_script(args.python, path)
+            timings["run_ms"] = int((time.monotonic() - t) * 1000)
+            if not ran:
+                return emit({"ok": False, "error_code": "script_failed",
+                             "error": "脚本运行失败", "stderr": err,
+                             "project": probe["project"]}, 1)
+
+    # 3. 交接。跑过脚本时**必须再解析一次**：刚跑出来的产物可能带来新的 stem，
     #    第一次探测时它还不在磁盘上（登记与定位都会落空）。
+    t = time.monotonic()
     final = run_tavotto_open(cmd, path, launch=not args.no_launch)
+    timings["open_ms"] = int((time.monotonic() - t) * 1000)
+    timings["total_ms"] = int((time.monotonic() - t0) * 1000)
     if not final.get("ok"):
-        return emit(_open_failure(final, tavotto, ran=ran), 2)
+        return emit(_open_failure(final, tavotto, ran=ran, timings=timings), 2)
 
     version = final.get("version") or probe.get("version")
     reg = final.get("registry", {})
-    # 注册表状态取**两次调用里更有信息量的那个**。交接固定调两次
-    # （先探测再交接），第一次就把注册表建好了，第二次自然回 already——
-    # 直接报第二次的话，「这次新建了注册表」永远显示不出来。
+    # 注册表状态取**两次调用里更有信息量的那个**。走了探测那条路时，第一次
+    # 就把注册表建好了，第二次自然回 already——直接报第二次的话，
+    # 「这次新建了注册表」永远显示不出来。
     status = reg.get("status")
     first = (probe.get("registry") or {}).get("status")
     if status in ("already", "unchanged") and first in ("created", "merged"):
@@ -515,6 +573,7 @@ def main(argv: list[str] | None = None) -> int:
         "conflicts": reg.get("conflicts", []),
         "dynamic_names": reg.get("dynamic_names", []),
         "tavotto": tavotto,
+        "timings": timings,
     }
     if payload["parameterizable"] is not True:
         payload["ok"] = False

@@ -39,8 +39,12 @@ codex plugin marketplace upgrade tavotto
 codex plugin marketplace add /path/to/tavotto && codex plugin add tavotto@tavotto
 ```
 
-装完**新开一个会话**。CLI 里用 `$tavotto-figure` 显式调用技能，或者直接说「画张图」
-让它隐式命中；MCP 工具由 Codex 按需调用（也可以直接说「用 Tavotto 打开这张图」）。
+装完（以及每次升级插件、装好引擎之后）**必须新开一个 Codex 会话/线程**：
+已经开着的会话**不会**重新加载 MCP 工具——`codex plugin list` 显示
+installed/enabled 只说明插件装上了，不代表当前会话拿得到工具，也不代表
+MCP server 健康（健康与否用下面的 `--health` 查）。CLI 里用
+`$tavotto-figure` 显式调用技能，或者直接说「画张图」让它隐式命中；
+MCP 工具由 Codex 按需调用（也可以直接说「用 Tavotto 打开这张图」）。
 
 还需要机器上有 Tavotto 本体：
 
@@ -76,17 +80,68 @@ server 是一个 Python 模块——它要 `import tavotto.engine.*` 在进程�
 | --- | --- | --- |
 | `pipx install tavotto` | ✅ | ✅ |
 | 桌面版 + pipx | ✅ | ✅ |
-| **只有桌面版** | ✅ | ❌ 报 `desktop_only`，提示 `pipx install tavotto` |
+| **只有桌面版** | ✅ | ❌ 报 `desktop_only`——一条命令补上（见下） |
 | 都没装 | ❌ | ❌ 报 `tavotto_missing` |
+
+启动器（`mcp/server.py`）按固定优先级找一个**验证过能
+`import tavotto.engine`** 的解释器，前面的赢：
+
+1. 启动它的那个 `python3` 本身
+2. `TAVOTTO_MCP_PYTHON`（显式指给 MCP 的；指错了会指名道姓地报
+   `engine_unavailable`，不会悄悄换别的）
+3. `TAVOTTO_WORKER_PYTHON` / 设置里指定的渲染解释器（装了 tavotto 才算数）
+4. **插件自管环境**（下面 `--provision` 建的那个）
+5. 从 `tavotto` 命令行反推（pip/pipx console script 的 shebang）
+6. PATH 里的 `python3` / `python`
+
+每个候选都真的跑一遍 import 才算数——桌面版的 frozen `tavotto-cli`
+永远不会被误当成解释器。
+
+### 只装了桌面版：一条命令补齐引擎（零手工配置）
+
+```bash
+python3 <插件目录>/mcp/server.py --provision
+```
+
+它在 **Tavotto 用户配置目录**下建一个插件专属 venv（`mcp-runtime/venv`），
+装与插件同版本的 `tavotto`（钉版本，可复现）。**不碰**系统 Python、Conda、
+用户 site-packages 或 shell 配置；删掉 `mcp-runtime` 目录即卸载。离线环境
+用 `--from /path/to/tavotto-x.y.z-py3-none-any.whl`（或源码目录）。
+装完**新开一个 Codex 会话**。
+
+### 健康检查
+
+```bash
+python3 <插件目录>/mcp/server.py --health
+```
+
+一行 JSON 说清：引擎找没找到（以及 resolver 每一步的结论与耗时）、画布产物
+在不在、桌面版装没装。它能区分开在 `codex plugin list` 里长得一模一样的
+几种状态：插件装了但没引擎（`desktop_only` / `tavotto_missing`）、显式指的
+解释器用不了（`engine_unavailable`）、一切就绪但**当前会话还没重载工具**
+（health 是绿的，那就新开会话）。
 
 「只有桌面版」这一格**绝不会被说成「没装 Tavotto」**——你明明装了，缺的只是
 一个 Python 环境，两者可以共存。启动器找不到可用解释器时不会静默退出，而是起
-一个降级 server：握手正常、每个工具回一句可操作的原因，否则你在 Codex 里只会
-看到「插件没有工具」。
+一个**降级 server**：握手正常（`serverInfo.version` 固定为 `0`，这是「引擎
+不在」的显性信号），tools/list **只列真的可用的 `tavotto_health`**——不可用
+的六个工具不会被伪装成可用；对着旧会话里记住的工具名调用会得到结构化错误
+（code + 缺什么 + 恢复步骤），**绝不会**返回「画布已打开」之类的成功。
 
 定位规则本身**不在这里重复**：启动器直接调用
 `skills/tavotto-figure/scripts/handoff.py` 的 `find_tavotto()`（它是
 `src/tavotto/engine/locate.py` 的镜像，两侧有跨平台矩阵测试比对）。
+
+### 内嵌画布与桌面窗口是两条隔离的路
+
+* **Codex 内嵌画布**只跑在 MCP server 里：画布资源
+  `ui://tavotto/canvas/v1.html` 经 `resources/read` 交给 host，widget 与
+  引擎的一切往来走 MCP `tools/call`。它**从不**打开浏览器、从不唤起桌面
+  窗口——那两样不是内嵌画布的替代品，插件也绝不会拿它们冒充。
+* **桌面窗口**只在你明确要求交接时出现（`tavotto open` / 技能的
+  handoff）。它有自己的就绪判据与失败上报（见
+  [`../docs/handoff-protocol.md`](../docs/handoff-protocol.md)），
+  桌面进程崩溃时你会拿到 `launch_failed` + 信号/日志路径，不会拿到假成功。
 
 ## 插件自己的更新
 
@@ -306,7 +361,8 @@ Codex 官方插件装出来的那份，里面没有按平台分支的写法，�
 * 资源声明形状（`text/html;profile=mcp-app`、`_meta.ui.resourceUri`、空 CSP）有断言。
 
 没验证的是「Codex 真的把这块 HTML 塞进 iframe 并跑起来、握手成功、拖动能回到 server」
-这一整条。装上插件后如果画布不出现，六个工具照常可用——那正是 fallback 的设计目的。
+这一整条。装上插件后如果画布不出现，工具照常可用（open/apply 的返回里会带
+`canvas_ui` 说明画布为什么没出现）——那正是 fallback 的设计目的。
 
 技术细节与取舍见 [ADR 0006](../docs/adr/0006-codex-mcp-app-and-publication-profile.md)。
 交接那条路（`tavotto open`）见 [ADR 0005](../docs/adr/0005-external-handoff-and-codex-plugin.md)。

@@ -326,3 +326,37 @@ def test_export_is_blocked_until_explicitly_confirmed(client, project, tmp_path)
     assert done["forced"] is True
     proof = json.loads(Path(done["proof_path"]).read_text(encoding="utf-8"))
     assert proof["forced"] is True and proof["acknowledged"]
+
+
+def test_open_and_apply_latency_budget(client, project):
+    """性能预算（固定 fixture 图，真渲染链路）：
+
+    * open（冷启动：spawn worker + import 科学栈 + 跑脚本）预算 60s——正常
+      在几秒内，超一个量级说明冷启动链路坏了（比如字体缓存每次重建）；
+    * 热 apply 预算 5s——正常几十到几百 ms，超了说明热会话没被复用。
+
+    实测值随断言打印，进 perf 报告。
+    """
+    import time as _time
+    t0 = _time.monotonic()
+    opened = client.tool("tavotto_open_figure", {"project_path": str(project)})
+    open_ms = int((_time.monotonic() - t0) * 1000)
+    sid = opened["session_id"]
+
+    patches = [{"gid": _gid(opened["manifest"], "title"),
+                "prop": "fontsize", "value": 10.0}]
+    t1 = _time.monotonic()
+    client.tool("tavotto_apply_overrides", {"session_id": sid,
+                                            "patches": patches})
+    first_apply_ms = int((_time.monotonic() - t1) * 1000)
+    t2 = _time.monotonic()
+    body = client.tool("tavotto_apply_overrides", {"session_id": sid,
+                                                   "patches": patches})
+    hot_apply_ms = int((_time.monotonic() - t2) * 1000)
+    print(f"\n[perf] open(cold): {open_ms}ms  apply#1: {first_apply_ms}ms  "
+          f"apply#2(hot): {hot_apply_ms}ms  worker timings: {body['timings']}")
+    assert open_ms < 60_000, f"冷启动 {open_ms}ms 超预算"
+    assert hot_apply_ms < 5_000, f"热 apply {hot_apply_ms}ms 超预算——会话没复用？"
+    # 热路径不该重跑脚本：worker 计时里没有 script_build（只有 patch/draw）
+    assert not body["timings"].get("script_build_ms"), \
+        "热 apply 重跑了脚本 build——稳定产物被重复渲染"

@@ -59,3 +59,46 @@ def test_no_literal_nul_in_text_sources() -> None:
         "从此无法 diff 审查（需要 NUL 当值时请写成 '\\u0000' 转义）：\n  "
         + "\n  ".join(offenders)
     )
+
+
+def test_no_venv_or_self_referential_symlink_is_tracked() -> None:
+    """版本库里不许有 `.venv`，也不许有**指向仓库内部的绝对路径符号链接**。
+
+    真实事故（2026-08-19 ~ 20，两天内两次）：`.venv` 被误提交成一个 mode 120000
+    的符号链接，内容是它自己的绝对路径。`.gitignore` 当时写的是 `.venv/`
+    ——**带斜杠只匹配目录**，挡不住这个符号链接文件。
+
+    后果不是「仓库里多个没用的文件」，而是 git 会在 `stash pop`、`checkout`、
+    目录改名这些**普通操作**里忠实地把它恢复回来，**当场顶掉开发者真正的
+    venv**，然后 `.venv/bin/python` 报 "too many levels of symbolic links"。
+    第一次是 stash pop 触发的，第二次是把检出目录改名触发的。
+
+    绝对路径的符号链接进版本库一律是错的：它在别人机器上必然指向不存在的地方，
+    而在原作者机器上则可能自引用。
+    """
+    out = subprocess.run(
+        ["git", "ls-files", "-s"],
+        cwd=ROOT, capture_output=True, text=True, check=True,
+    ).stdout
+
+    offenders = []
+    for line in out.splitlines():
+        meta, _, name = line.partition("\t")
+        mode = meta.split()[0]
+        if name in (".venv", "venv") or name.endswith("/.venv"):
+            offenders.append(f"{name}（虚拟环境不该进版本库）")
+            continue
+        if mode != "120000":                 # 只有符号链接需要再查内容
+            continue
+        try:
+            target = (ROOT / name).readlink()
+        except OSError:
+            continue
+        if target.is_absolute():
+            offenders.append(f"{name} → {target}（绝对路径符号链接）")
+
+    assert not offenders, (
+        "这些条目会在别人机器上（或改名/stash 之后）指向错误的位置：\n  "
+        + "\n  ".join(offenders)
+    )
+

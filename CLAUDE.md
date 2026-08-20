@@ -672,11 +672,25 @@ Python，首次渲染也不联网：
   **不另写裁决**；读不懂就报错，绝不重写用户手写的注册表。
 - **桌面契约是 argv `--open <目录> [--stem <stem>]`**：生产者唯一
   `handoff.desktop_argv()`，消费者唯一 `src-tauri/src/main.rs::parse_open_args()`，
-  两侧各有单测，改一边必须同步另一边。macOS 上**直接 exec 包内二进制**——App
-  已在跑时 `open -a … --args` 送不到，交接会静默失败。
+  两侧各有单测，改一边必须同步另一边。
   首启：项目 → sidecar 的 `--figures`，stem → 落地 URL 的 `?open=`；
   已开着窗口：单实例转发 argv → emit `tavotto:open`。两条路汇进前端同一个
   `lib/openRequest.ts`（浏览器模式共用 `?open=`，定位逻辑只有一份）。
+- **macOS 唤起走 `open -na <bundle> --args …`，不再直接 exec 包内二进制**
+  （2026-08-20 实测修复）：GUI 进程会继承调用方的执行上下文，从受限环境
+  （沙箱 shell、无 Aqua 会话）直接 exec 会在 AppKit `RegisterApplication`
+  处 SIGABRT——**转发 argv 的第二个实例也一样崩**（NSApplication 初始化先于
+  单实例检查），所以旧注释「open 送不到、只能直接 exec」只说对了不带 `-n`
+  的那半：`-n` 起的新实例照样把 argv 交给单实例插件转发。`open` 把 spawn
+  委托给 launchd，App 落在用户 GUI 会话里。Windows / 裸二进制覆盖仍直接
+  spawn。
+- **桌面模式的 `ok: true` 是等出来的**（`_launch_desktop_via_open` /
+  `_launch_desktop_via_spawn`，带限期轮询、可注入时钟，**不是 sleep**）：
+  进程存在且活过稳定窗（或单实例转发完成）才算成功；起来就死回
+  `launch_failed` + `exit_code`/`signal`/`log_path`/`retryable`（HandoffError
+  的 `extra`，`--json` 逐键并入输出），限期内没出现回 `launch_timeout`。
+  sidecar 日志路径由 `handoff.sidecar_log_path()` 按 `brand.DESKTOP_BUNDLE_ID`
+  推导（与 tauri 的 app_log_dir 同源）。看护 `tests/test_desktop_launch.py`。
 - **前端交接三条纪律**（`applyOpenRequest`）：① 同项目**绝不**调
   `projectStore.open`（那条路 switchDocument 成空白文档，用户排的版当场没）；
   ② 必须重扫素材（交接的图刚写到磁盘，实例手里那份 panels 是旧的）；
@@ -757,6 +771,22 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被它推翻**（
   拿它当边界会把用户每张图判成越界）。一个都没有时报 `no_workspace_root`
   并说清要设什么。越界一律拒，**绝不「就近找一个能用的」**。**没装 Tavotto 时降级而不是退出**（降级 server 握手正常、每个工具说人话）
   ——静默退出在 Codex 里表现为「插件没有工具」。
+- **启动器 `mcp/server.py` 是运行时解析器（2026-08-20 重做）**：候选链
+  当前解释器 → `TAVOTTO_MCP_PYTHON`（显式，失败要指名道姓报
+  `engine_unavailable`）→ `TAVOTTO_WORKER_PYTHON`/设置里的 worker.python →
+  **插件自管 venv**（`<配置目录>/mcp-runtime/venv`，`--provision` 建、
+  钉插件版本、绝不碰用户全局环境）→ 从 CLI 反推 shebang → PATH。**每个候选
+  都要真的验证 `import tavotto.engine`**；frozen `tavotto-cli` 永远出不了
+  候选。降级 server 的 tools/list **只列 `tavotto_health`**（不把六个不可用
+  工具伪装成可用），`serverInfo.version` 固定 "0"，六个工具名的调用回结构化
+  错误 + 恢复步骤，不声明任何资源。`--health` 输出一行 JSON 体检（引擎/
+  画布/桌面版/每个候选的结论与耗时）。真 server 也有 `tavotto_health` 工具
+  （出图前的能力门槛）；widget 缺失时 open/apply 在 structuredContent 里带
+  `canvas_ui: {available: false, code: "widget_missing"}` 并在文字里说出口，
+  `resources/read` 对缺失产物报「缺失 + 修法」而不是回空 HTML。
+  看护 `tests/test_mcp_resolver.py` + `tests/test_mcp_stdio.py`。
+  **装完插件/引擎必须新开 Codex 会话**——已开的会话不重载工具，
+  `codex plugin list` 的 enabled 不代表 server 健康（README 里写明了）。
 - **导出先预检**：有 error **或 `not_verifiable`** 且没有 `explicit_confirm` 时
   一张图都不出（`needs_confirm`，与导出对话框同一判据；`blocking` 仍只表示
   error）。PNG 的 dpi 与 profile 的 `min_raster_dpi` 比一次，复用同一个
