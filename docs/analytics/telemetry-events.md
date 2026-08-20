@@ -17,15 +17,24 @@ a drift test costs one function. **If you change one side, change the other.**
    consent is unset, no identifier is generated and no request is made.
 2. **`TAVOTTO_NO_TELEMETRY=1` wins over everything**, including a saved
    `enabled`, and suppresses the first-run prompt.
-3. **Only allowlisted events and properties.** Unknown event → dropped by the
+3. **Consent is versioned, and the version is enforced.** Stored consent carries
+   the `CONSENT_VERSION` it was given for. `enabled()` requires
+   `saved_consent_version >= CONSENT_VERSION`; raise the constant and every
+   existing consent stops being sufficient *that instant* — no event is sent
+   until the user is asked again (`needs_reconsent` drives the prompt).
+   Re-consenting **keeps the same `install_id`**: minting a new one would
+   fabricate a wave of "new installs" on upgrade day, breaking every retention
+   curve. Declining is not stale consent — someone who said no is not asked
+   again on the next version bump.
+4. **Only allowlisted events and properties.** Unknown event → dropped by the
    client, rejected with 400 by the proxy. Unknown property → same. Values may
    only be `bool`, a bounded non-negative `int`, a short enum string, a date
    (`YYYY-MM-DD`), or a version string (`[0-9A-Za-z.+_-]{1,32}`). No nested
    objects or arrays exist anywhere in the schema, so user content cannot be
    smuggled through a container.
-4. **Track success, not intent.** Events named `*_completed` fire after the work
+5. **Track success, not intent.** Events named `*_completed` fire after the work
    succeeded, never when it started.
-5. **No autocapture, no session replay, no click tracking, no DOM capture.**
+6. **No autocapture, no session replay, no click tracking, no DOM capture.**
 
 ## `anonymous install ID != human identity`
 
@@ -42,6 +51,18 @@ So the correct phrase for a count of distinct IDs is **"opted-in anonymous
 installs"**, or "observed users" if you say clearly what observed means. It is a
 lower bound on real users and is not a headcount. See
 [`yc-metrics.md`](yc-metrics.md).
+
+**Say "anonymous" carefully.** The ID is stable across restarts *on purpose* —
+without that, D7/D30 retention could not be computed at all. So events from one
+installation are linkable to each other over time; they are simply not linkable
+to a person, account, device or address. That is **pseudonymous**, not
+anonymised in the data-protection sense. In the product UI "anonymous usage
+statistics" is the phrase users actually understand, and the honesty is carried
+by the sentence next to it, which states that the identifier persists across
+restarts. In anything written for investors, a website, or a policy document,
+prefer **"opt-in anonymous install telemetry"** or **"pseudonymous,
+installation-level"** — and never imply that individual events cannot be
+correlated across sessions.
 
 ## `download != user`
 

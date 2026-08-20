@@ -153,6 +153,84 @@ def test_distinct_id_is_the_install_id(sent):
 
 
 # ---------------------------------------------------------------------------
+# 同意书版本：**同意的是哪一版**
+# ---------------------------------------------------------------------------
+def test_stale_consent_stops_sending_until_the_user_is_asked_again(sent, monkeypatch):
+    """采集范围实质性扩大（CONSENT_VERSION +1）之后，旧的同意**不再算数**。
+
+    用户当初同意的是 v1 那一版的采集范围。把范围扩大了还接着按老同意发，
+    等于替用户做了他没做过的决定——模块顶部的注释一直是这么承诺的，
+    但代码里 `enabled()` 只比 consent 不比版本，那句承诺是空的。
+    """
+    _enable()
+    sent.clear()
+
+    monkeypatch.setattr(telemetry, "CONSENT_VERSION", telemetry.CONSENT_VERSION + 1)
+
+    assert telemetry.enabled() is False
+    assert telemetry.capture("export_completed", {"pdf": True}) is False
+    _flush()
+    assert sent == []
+
+
+def test_stale_consent_is_surfaced_to_the_ui(sent, monkeypatch):
+    """界面要分得清「从没问过」和「问过了但那是上一版」——两种都要再问一次，
+    但后者不能把用户当成新用户。"""
+    _enable()
+    monkeypatch.setattr(telemetry, "CONSENT_VERSION", telemetry.CONSENT_VERSION + 1)
+    pub = telemetry.public_settings()
+    assert pub["needs_reconsent"] is True
+    assert pub["enabled"] is False
+    # consent 本身仍然是 enabled：用户确实同意过，只是同意的是上一版
+    assert pub["consent"] == "enabled"
+
+
+def test_reconsent_keeps_the_same_install_id(sent, monkeypatch):
+    """重新征求同意**不换 UUID**。
+
+    换一个等于在升级那天凭空造出一批「新安装」：留存曲线断掉，
+    活跃数虚高一轮，而实际上一个新用户都没有。
+    """
+    _enable()
+    ident = telemetry.install_id()
+    monkeypatch.setattr(telemetry, "CONSENT_VERSION", telemetry.CONSENT_VERSION + 1)
+    sent.clear()
+
+    telemetry.set_consent(telemetry.CONSENT_ENABLED, source="first_run")
+    _flush()
+
+    assert telemetry.install_id() == ident
+    assert telemetry.enabled() is True
+    assert telemetry.settings()["consent_version"] == telemetry.CONSENT_VERSION
+    # ever_enabled 早就是 true，不该再发一条「新用户」
+    assert [p for p in sent if p["event"] == "telemetry_enabled"] == []
+
+
+def test_hard_switch_still_wins_over_a_stale_consent(sent, monkeypatch):
+    _enable()
+    monkeypatch.setattr(telemetry, "CONSENT_VERSION", telemetry.CONSENT_VERSION + 1)
+    monkeypatch.setenv("TAVOTTO_NO_TELEMETRY", "1")
+    pub = telemetry.public_settings()
+    assert pub["enabled"] is False
+    # 硬开关关着时不该再去骚扰用户重新同意——那个框点了也没用
+    assert pub["needs_reconsent"] is False
+
+
+def test_a_fresh_consent_is_current(sent):
+    _enable()
+    pub = telemetry.public_settings()
+    assert pub["needs_reconsent"] is False
+    assert pub["saved_consent_version"] == telemetry.CONSENT_VERSION
+
+
+def test_declining_is_not_stale_consent(sent, monkeypatch):
+    """说过「不」的人，升版之后也不该被再问一次——那是骚扰，不是征求同意。"""
+    telemetry.set_consent(telemetry.CONSENT_DISABLED)
+    monkeypatch.setattr(telemetry, "CONSENT_VERSION", telemetry.CONSENT_VERSION + 1)
+    assert telemetry.public_settings()["needs_reconsent"] is False
+
+
+# ---------------------------------------------------------------------------
 # 白名单
 # ---------------------------------------------------------------------------
 def test_unknown_event_is_dropped(sent):

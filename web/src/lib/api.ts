@@ -1224,6 +1224,12 @@ export interface TelemetrySettings {
   hard_disabled: boolean
   consent_version: number
   saved_consent_version: number
+  /**
+   * 同意过，但同意的是**上一版采集范围**（后端升了 CONSENT_VERSION）。
+   * 与 `consent === 'unset'`（从没问过）分开：两种都要再问一次，但这一种
+   * 不是新用户——重新同意不换 install_id、也不再发 telemetry_enabled。
+   */
+  needs_reconsent: boolean
 }
 
 export const fetchTelemetrySettings = () =>

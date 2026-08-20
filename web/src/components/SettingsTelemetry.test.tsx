@@ -37,6 +37,7 @@ const settings = (over: Record<string, unknown> = {}) =>
     hard_disabled: false,
     consent_version: 1,
     saved_consent_version: 1,
+  needs_reconsent: false,
     ...over,
   }) as Awaited<ReturnType<typeof fetchTelemetrySettings>>
 

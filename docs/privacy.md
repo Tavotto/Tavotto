@@ -66,12 +66,26 @@ explicitly opts in**, either in the one-time first-run prompt or under
 * **Disabled until consent.** Consent is stored as one of three states — unset,
   enabled, disabled. A missing setting is never treated as consent. While consent
   is unset, no event is transmitted and no identifier is even generated.
+* **Consent is versioned.** The stored consent records which version of this
+  collection scope it was given for. If that scope is ever materially widened,
+  the version is raised, previously stored consent stops being sufficient —
+  transmission halts immediately — and Tavotto asks again. Re-consenting keeps
+  the existing identifier rather than minting a new one.
 * **Random anonymous identifier.** When telemetry is first enabled, Tavotto
   generates a random UUIDv4 and stores it locally. It is not derived from any
   machine information — no MAC address, no machine GUID, no hostname, no
   username, no hardware serial. It is a pseudonym, not an identity: the same
   person on two machines is two identifiers, and reinstalling produces a new one.
   Tavotto does not build a device fingerprint.
+
+  To be precise rather than flattering: this identifier is **stable across
+  restarts, and that is deliberate**. Without it we could not tell a returning
+  installation from a new one, and questions like "do people come back a week
+  later" would be unanswerable. So events from one installation *can* be linked
+  to each other over time. What they cannot be linked to is a person, an
+  account, an email, a device, or a network address. In data-protection terms
+  this is pseudonymous rather than anonymised, and the sections below describe
+  exactly what that pseudonym is attached to.
 * **What is sent.** Broad product events (application started, a figure opened
   for editing, an edit committed, a canvas created, a preflight run finished, an
   export succeeded, the assistant started, an update installed), plus the
