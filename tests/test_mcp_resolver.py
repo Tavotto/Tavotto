@@ -121,6 +121,27 @@ def test_managed_runtime_wins_over_discovered(tmp_path, monkeypatch,
     assert os.path.realpath(out["python"]) == os.path.realpath(str(managed))
 
 
+def test_a_venv_symlink_to_the_current_interpreter_is_still_probed(
+        tmp_path, monkeypatch, no_path_pythons):
+    """**2026-08-20 实测回归**：venv 的 `bin/python3` 是指向基础解释器的符号
+    链接。按 realpath 判「就是当前解释器」会把刚 provision 好的自管环境
+    跳过不探测——provision 刚报成功，server 转头就降级。身份必须按调用
+    路径算：链接到同一个二进制的 venv 是另一个解释器。"""
+    managed = Path(launcher.managed_python())
+    managed.parent.mkdir(parents=True, exist_ok=True)
+    managed.symlink_to(sys.executable)          # 与真实 venv 一模一样的形状
+    probed = []
+
+    def fake_importable(p, **kw):
+        probed.append(p)
+        return True
+
+    monkeypatch.setattr(launcher, "_importable", fake_importable)
+    out = launcher.resolve({"cmd": None})
+    assert str(managed) in probed, "realpath 又把 venv 符号链接当成了当前解释器"
+    assert out["source"] == "managed" and out["python"] == str(managed)
+
+
 def test_explicit_override_that_fails_is_engine_unavailable(tmp_path):
     """用户显式指的解释器用不了 → `engine_unavailable`，指名道姓，
     绝不静默落回「桌面版 / 没装」那两格。"""
@@ -145,6 +166,27 @@ def test_diagnose_without_override_keeps_the_three_states():
     code, _ = launcher.diagnose_resolved({"cmd": None, "desktop": None},
                                          resolution)
     assert code == "tavotto_missing"
+
+
+def test_bridge_import_probe_matches_the_bridge():
+    """**2026-08-20 实测回归**：PyPI 的 0.8.0 wheel 发在 telemetry 合并之前，
+    `import tavotto.engine` 过了、bridge 一 import 就炸——resolver 交棒过去
+    server 当场崩死。探测语句必须覆盖 bridge 真正 import 的整组模块，
+    两侧对拍，改 bridge 的 import 必须同步 `_BRIDGE_IMPORT`。"""
+    import ast
+    src = (PLUGIN / "mcp" / "tavotto_mcp" / "bridge.py").read_text(encoding="utf-8")
+    bridge_imports = set()
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, ast.ImportFrom) and node.module == "tavotto.engine":
+            bridge_imports |= {a.name for a in node.names}
+    probe = launcher._BRIDGE_IMPORT
+    assert probe.startswith("from tavotto.engine import ")
+    probed = {n.strip() for n in
+              probe.removeprefix("from tavotto.engine import ").split(",")}
+    assert bridge_imports, "bridge.py 里没找到 tavotto.engine 的 import？"
+    assert bridge_imports <= probed, (
+        f"bridge 需要但探测没验的模块: {sorted(bridge_imports - probed)}"
+        "——放过它们的下场是交棒后崩死")
 
 
 # ------------------------------ 降级 server --------------------------------

@@ -71,19 +71,39 @@ DESKTOP_ONLY_HINT = (
 
 
 # ------------------------------ 单点探测 -----------------------------------
-def _importable(python: str, timeout: float = 30.0) -> bool:
-    """这个解释器能不能 import Tavotto **引擎**。
+#: 桥（tavotto_mcp/bridge.py）真正 import 的那组引擎模块。**验证的就是这组**，
+#: 不是笼统的 `import tavotto.engine`：2026-08-20 实测，PyPI 的 0.8.0 wheel
+#: 发在 telemetry 合并之前——engine 包 import 得动、bridge 一 import 就
+#: ImportError，resolver 交棒过去 server 当场崩死（比诚实降级糟得多）。
+#: 两侧由 tests/test_mcp_resolver.py::test_bridge_import_probe_matches_the_bridge
+#: 对拍，改 bridge 的 import 必须同步这里。
+_BRIDGE_IMPORT = ("from tavotto.engine import config, handoff, patchspec, "
+                  "pool, preflight, profiles, registry, telemetry")
 
-    判据是 `import tavotto.engine` 而不是 `import tavotto`：MCP 桥要的是
-    `tavotto.engine.{pool,registry,…}`；一个只装了同名空壳的环境不算数。
+
+def _importable(python: str, timeout: float = 30.0) -> bool:
+    """这个解释器装的 tavotto 引擎**够不够本插件用**。
+
+    判据是 `_BRIDGE_IMPORT`（桥需要的整组模块）而不是 `import tavotto`：
+    同名空壳、或版本太旧缺模块的环境都不算数——放它过关的下场是交棒后
+    在 host 面前崩死。
     """
     try:
-        proc = subprocess.run([python, "-c", "import tavotto.engine"],
+        proc = subprocess.run([python, "-c", _BRIDGE_IMPORT],
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                               timeout=timeout)
     except (OSError, subprocess.TimeoutExpired):
         return False
     return proc.returncode == 0
+
+
+def _current_engine_ok() -> bool:
+    """当前解释器里的引擎够不够用（与 `_importable` 同一把尺，进程内验）。"""
+    try:
+        exec(_BRIDGE_IMPORT, {})
+    except Exception:                       # noqa: BLE001 — 缺模块/坏安装都算不够
+        return False
+    return True
 
 
 def _plugin_locator():
@@ -170,6 +190,18 @@ def _interpreter_beside(exe: str) -> "list[str]":
             if os.path.isfile(os.path.join(base, n))]
 
 
+def _interp_key(path: str) -> str:
+    """解释器的**身份键**：规范化路径，但**绝不 realpath**。
+
+    venv 的 `bin/python3` 是指向基础解释器的符号链接，realpath 会把它解析成
+    `/opt/homebrew/...python3.13`——于是「自管 venv」被判成「就是当前解释器」
+    而**跳过探测**（2026-08-20 实测：provision 刚成功，server 却照样降级）。
+    符号链接指向同一个二进制的两个 venv 是**两个不同的解释器**（pyvenv.cfg
+    与 argv0 决定 site-packages），身份必须按调用路径算。
+    """
+    return os.path.normcase(os.path.normpath(os.path.abspath(path)))
+
+
 def _interpreters_for(found: dict) -> "list[str]":
     """定位结果 → 可能能 import tavotto 的解释器候选（CLI 反推 + PATH 兜底）。"""
     out: "list[str]" = []
@@ -184,9 +216,9 @@ def _interpreters_for(found: dict) -> "list[str]":
             out.append(which)
     seen, uniq = set(), []
     for p in out:
-        real = os.path.realpath(p)
-        if real not in seen:
-            seen.add(real)
+        key = _interp_key(p)
+        if key not in seen:
+            seen.add(key)
             uniq.append(p)
     return uniq
 
@@ -259,9 +291,9 @@ def resolver_candidates(found: dict, environ: "dict | None" = None
         cands.append((python, "discovered"))
     seen, uniq = set(), []
     for path, source in cands:
-        real = os.path.realpath(path)
-        if real not in seen:
-            seen.add(real)
+        key = _interp_key(path)                      # 不 realpath，见 _interp_key
+        if key not in seen:
+            seen.add(key)
             uniq.append((path, source))
     return uniq
 
@@ -274,8 +306,10 @@ def resolve(found: dict) -> dict:
     for python, source in resolver_candidates(found):
         entry = {"python": python, "source": source,
                  "exists": os.path.isfile(python), "importable": False, "ms": 0}
-        if entry["exists"] and \
-                os.path.realpath(python) != os.path.realpath(sys.executable):
+        # 「刚试过就是它」只认**同一条路径**，不 realpath（见 _interp_key）：
+        # venv 的 python 是指向基础解释器的符号链接，realpath 相同 ≠ 同一个
+        # 解释器——按 realpath 跳过会把刚 provision 好的自管环境略过不探测。
+        if entry["exists"] and _interp_key(python) != _interp_key(sys.executable):
             t = time.monotonic()
             entry["importable"] = _importable(python)
             entry["ms"] = int((time.monotonic() - t) * 1000)
@@ -447,12 +481,7 @@ def _degraded_server(code: str, hint: str, resolution: "dict | None" = None,
 def health() -> "tuple[dict, int]":
     """`--health`：一行 JSON 说清现状。退出码 0 = 引擎可用。"""
     t0 = time.monotonic()
-    current_ok = False
-    try:
-        import tavotto.engine  # noqa: F401
-        current_ok = True
-    except ImportError:
-        pass
+    current_ok = _current_engine_ok()
     handoff = _plugin_locator()
     found = handoff.find_tavotto()
     widget_file = os.path.join(HERE, "widget", "canvas.html")
@@ -597,11 +626,7 @@ def main() -> int:
         return rc
 
     sys.path.insert(0, HERE)            # 让 `tavotto_mcp` 包可 import
-    try:
-        import tavotto.engine  # noqa: F401
-    except ImportError:
-        pass
-    else:
+    if _current_engine_ok():
         from tavotto_mcp.rpc import StdioConnection
         StdioConnection.hijack_stdout()
         from tavotto_mcp.server import main as run
