@@ -29,10 +29,17 @@ Codex 支持把任意 Git 仓库当插件市场：认的是仓库根的
 审核通过后插件进入 **ChatGPT 与 Codex 共用的插件目录**，用户在界面里点安装，
 或直接 `codex plugin add tavotto`。
 
-**skills-only 插件明确合格**——官方列的三类可提交形态，第一类就是
+> **2026-08-21 更新：本插件已不是 skills-only。** 2026-08-18 起插件带本地
+> stdio MCP server 与内嵌画布（ADR 0006 推翻了 ADR 0005 的 skills-only
+> 决定），下面这段的「红利」**不再适用**：提交官方目录时要按 MCP 形态
+> 准备 tool annotations（七个工具的 readOnlyHint/destructiveHint）、
+> 审核用演示材料；server 是本地 stdio、不出网，域名验证按「无远程端点」
+> 如实填。交接（`tavotto open`）那条路与本文其余部分仍然有效。
+
+~~**skills-only 插件明确合格**——官方列的三类可提交形态，第一类就是
 "A skills-only plugin that packages reusable workflows"。我们没有 MCP server，
 于是**域名验证、tool annotations（readOnlyHint/openWorldHint/destructiveHint）、
-审核用 demo 凭据这一整块全部不适用**，这是 skills-only 的红利。
+审核用 demo 凭据这一整块全部不适用**，这是 skills-only 的红利。~~
 
 ### 前置条件（人的事，不是代码的事）
 
@@ -48,7 +55,7 @@ Codex 支持把任意 Git 仓库当插件市场：认的是仓库根的
 | logo | ✅ `assets/tavotto.svg`（门户若要求位图，用 `scripts/build_brand_assets.py` 出 PNG） |
 | website URL | ✅ GitHub 仓库 |
 | support URL | ❌ 用 GitHub Issues 即可，提交时填 |
-| privacy policy URL | ❌ `docs/privacy.md` 得先进 main 并有公开链接 |
+| privacy policy URL | ✅ `docs/privacy.md` 已在 main（2026-08-20 起），公开链接即仓库路径 |
 | terms of service URL | ❌ 需要一页（AGPL 之外的使用条款） |
 | `SKILL.md`（含触发条件与边界） | ✅ |
 | ≥3 条起始提示 | ✅ `interface.defaultPrompt` 里三条 |
