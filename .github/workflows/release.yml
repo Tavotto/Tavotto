@@ -269,6 +269,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # 供应链证明（审计 P1-04）：为 wheel/sdist 签发 build provenance
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -278,6 +281,34 @@ jobs:
       # 插件清单那步要跑 Python（这个 job 原本只用 bash，没装过）
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with: { python-version: "3.13" }
+
+      # 供应链证明与 SBOM（审计 P1-04 / Gate B）：
+      # - provenance：把「这份 wheel 出自本仓库这个 workflow 的这次运行」签成
+      #   可验证的 attestation（用户 `gh attestation verify dist/*.whl -R Tavotto/Tavotto`）
+      # - SBOM：wheel 的依赖清单（SPDX），随 Release 附上
+      # - SHA-256：发布页正文之外再给一份校验文件
+      - name: 构建产物 provenance
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: |
+            dist/*.whl
+            dist/*.tar.gz
+
+      - name: 生成 SBOM（SPDX）
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          file: dist/*.whl
+          format: spdx-json
+          output-file: out/tavotto-sbom.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: SHA-256 校验清单
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          (cd dist && shasum -a 256 -- *) > out/SHA256SUMS.txt
+          cat out/SHA256SUMS.txt
 
       - name: 找手写的 release notes
         id: notes
@@ -338,6 +369,8 @@ jobs:
           files: |
             dist/*.whl
             dist/*.tar.gz
+            out/SHA256SUMS.txt
+            out/tavotto-sbom.spdx.json
             out/codex-plugin.json
             out/codex-plugin-*.zip
 
