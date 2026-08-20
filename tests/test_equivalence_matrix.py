@@ -46,7 +46,12 @@ ENTRY = "main"
 #   Eqv3D     s4 3D axes（文字 + 视角 + zlabel）
 #   EqvMath   s5 mathtext + serif/sans 混排
 #   EqvCJK    s6 中文标签（探测不到 CJK 字体时该场景的用例单独 skip）
-_SCENARIOS = ("EqvMulti", "EqvImage", "EqvAnnot", "Eqv3D", "EqvMath", "EqvCJK")
+#   EqvFam    s7 Artist family（2026-08-21）：Collection 族（fill_between /
+#             pcolormesh / contour / LineCollection）、Patch 族（Wedge /
+#             Rectangle / StepPatch）、stem 容器。新开放的能力必须与老的
+#             一样满足四路一致——否则「写回时的样子 ≠ 重开后的样子」
+_SCENARIOS = ("EqvMulti", "EqvImage", "EqvAnnot", "Eqv3D", "EqvMath", "EqvCJK",
+              "EqvFam")
 
 #: s6 用的中文字体候选。matplotlib 找不到任何一个时 s6 的用例 **skip 并注明
 #: 理由**——静默换成拉丁文本跑过去，等于宣称测过中文而实际没有。
@@ -137,6 +142,20 @@ def main():
         fx.set_ylabel("Intensity")
         fx.text(0.12, 0.78, "peak", transform=fx.transAxes)
     fig6.savefig("EqvCJK.pdf")
+
+    # ---- s7：Artist family（Collection / Patch / 容器）----
+    fig7, (gx1, gx2) = plt.subplots(1, 2, figsize=(5.2, 2.4))
+    u = np.linspace(0.5, 6.0, 24)
+    M = np.arange(64).reshape(8, 8) / 64.0
+    gx1.fill_between(u, 0.0, np.sin(u) + 1.2, alpha=0.3)      # fill_0
+    gx1.pcolormesh(np.linspace(7, 9, 9), np.linspace(0, 1, 9), M)   # collections_1
+    gx1.contour(np.linspace(7, 9, 8), np.linspace(1.4, 2.4, 8), M)  # collections_2
+    gx1.stem([1.0, 2.0, 3.0], [1.8, 2.2, 1.5])               # stemseries_0
+    gx1.set_xlim(0, 10)
+    gx1.set_ylim(-0.4, 2.6)
+    gx1.set_title("Families")
+    gx2.pie([3, 4, 5])                                       # patches_0..2 (Wedge)
+    fig7.savefig("EqvFam.pdf")
 '''
 
 _FONT_PROBE = """\
@@ -409,6 +428,38 @@ def _g_scatter_marker(_getbase):
     )
 
 
+def _g_collection_family(_getbase):
+    """Collection 族：填充 / 彩色网格 / 等值线各改一组样式。
+
+    `pcolormesh` 与 `contour` 从前根本进不了元素表，所以这一格既是能力的
+    证明，也是它们**不会**把热态与全量重放拉开的证明——颜色映射类的
+    facecolors 每次 draw 由 `update_scalarmappable()` 重算，如果哪天有人把
+    facecolor 加回这些元素上，这里会当场分岔。
+    """
+    return _cumulative(
+        {"gid": "axes_0.fill_0", "prop": "facecolor", "value": "#B34700"},
+        {"gid": "axes_0.fill_0", "prop": "hatch", "value": "//"},
+        {"gid": "axes_0.collections_1", "prop": "edgecolor", "value": "#333333"},
+        {"gid": "axes_0.collections_1", "prop": "cmap", "value": "plasma"},
+        {"gid": "axes_0.collections_2", "prop": "linewidth", "value": 1.8},
+    )
+
+
+def _g_patch_family_and_stem(_getbase):
+    """Patch 族（pie 的扇形）+ stem 容器，再叠一次图幅变化。
+
+    图幅一变所有分数坐标的物理落点都变（`_apply_rank` 的 0 档），三条腿在
+    这之后仍要收敛到同一个几何——新元素也不例外。
+    """
+    return _cumulative(
+        {"gid": "axes_1.patches_0", "prop": "facecolor", "value": "#2A6F3C"},
+        {"gid": "axes_1.patches_1", "prop": "hatch", "value": "xx"},
+        {"gid": "axes_0.stemseries_0", "prop": "color", "value": "#76008A"},
+        {"gid": "axes_0.stemseries_0", "prop": "markersize", "value": 9.0},
+        {"gid": "figure", "prop": "size_mm", "value": [148.0, 66.0]},
+    )
+
+
 def _g_axes_range_scale_and_ticks(_getbase):
     """坐标轴范围 / 缩放类型 / spine + 刻度定位模型（Locator + Formatter）。
 
@@ -525,6 +576,8 @@ GROUPS = [
     ("s3-arrow-endpoints",  "EqvAnnot", _g_arrow_endpoints),
     ("s4-view3d-visible",   "Eqv3D",    _g_view3d_and_visible),
     ("s5-mathtext-labels",  "EqvMath",  _g_labels_and_title),
+    ("s7-collection-family", "EqvFam",  _g_collection_family),
+    ("s7-patch-and-stem",   "EqvFam",   _g_patch_family_and_stem),
 ]
 
 
@@ -587,7 +640,7 @@ def _flask_project(tmp_path, monkeypatch, library: Path):
         (library / SCRIPT_NAME).read_text(encoding="utf-8"), encoding="utf-8")
     (figs / "tavotto_registry.json").write_text(REGISTRY, encoding="utf-8")
     # 写回覆盖的是磁盘上**已有**的原件（真实图库里它由脚本跑出来）
-    for stem in ("EqvMulti", "EqvImage"):
+    for stem in ("EqvMulti", "EqvImage", "EqvFam"):
         doc = pymupdf.open()
         doc.new_page(width=200, height=100)
         doc.save(figs / f"{stem}.pdf")
@@ -639,6 +692,9 @@ WRITE_BACK_GROUPS = [
     ("s1-fixed-ticks-text", "EqvMulti", _g_fixed_ticks_and_label_text, ("mid-tick", "start")),
     ("s1-legend-item-text", "EqvMulti", _g_legend_item_text, ("sin(x)", "Series")),
     ("s2-colorbar-orientation", "EqvImage", _g_colorbar_orientation, ("intensity",)),
+    # 新开放的 family 也要走一遍**写回原件 → 重开**：能改却写不回去，
+    # 等于给用户一个下次打开就消失的编辑（§49）
+    ("s7-collection-family", "EqvFam", _g_collection_family, ("Families",)),
 ]
 
 

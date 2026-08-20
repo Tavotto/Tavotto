@@ -11,16 +11,20 @@ from __future__ import annotations
 
 import sys
 
+from matplotlib.artist import Artist
 from matplotlib.axes import Axes
-from matplotlib.collections import PathCollection, PolyCollection
-from matplotlib.container import BarContainer, ErrorbarContainer
-from matplotlib.patches import FancyArrowPatch, PathPatch, Polygon
+from matplotlib.collections import Collection, PathCollection, PolyCollection
+from matplotlib.axis import Axis
+from matplotlib.container import (BarContainer, ErrorbarContainer,
+                                  StemContainer)
+from matplotlib.patches import FancyArrowPatch, Patch
 from matplotlib.text import Text
 
 import pathgeom
-from overrides import (ColorbarProxy, FigState, HANDLERS, SeriesGroup, TickLabel,
-                       TickSet, _ARROWSTYLES, _CB_EXTENDS, _LEGEND_LOCS,
+from overrides import (ColorbarProxy, FigState, HANDLERS, HATCHES, SeriesGroup,
+                       TickLabel, TickSet, _ARROWSTYLES, _CB_EXTENDS, _LEGEND_LOCS,
                        _TICK_FORMATS, _TICK_MINOR_FORMATS,
+                       collection_caps, is_color_mapped,
                        _arrow_style, _arrowstyle_name, _axis_arrows_on,
                        _linestyle_name, _boxstyle_info, _cb_axis, _cb_tick_color,
                        _cb_tick_fontsize, _cls_key, _grid_prop, _grid_visible,
@@ -56,6 +60,49 @@ def _register(state: FigState, gid: str, artist, role: str, label: str,
     state.index[gid] = artist
     state.elements.append({"gid": gid, "artist": artist, "role": role,
                            "label": label, "draggable": draggable})
+
+
+#: Collection 的显示名。`isinstance` 链**只影响这行中文**，不影响能力——
+#: 能改什么由 `collection_caps()` 按真实 getter 实况说了算。认不出来的类回落到
+#: 类名本身：显示 "QuadMesh 3" 比显示「集合 3」有用得多，也不会假装认识它。
+_COLL_NAMES = [
+    ("QuadMesh", "彩色网格"), ("PolyQuadMesh", "彩色网格"),
+    ("ContourSet", "等值线"), ("QuadContourSet", "等值线"),
+    ("EventCollection", "事件标记"), ("LineCollection", "线集合"),
+    ("Quiver", "矢量场"), ("Barbs", "风羽"),
+    ("FillBetweenPolyCollection", "填充区域"), ("PolyCollection", "填充区域"),
+]
+
+
+def _coll_label(coll, j: int) -> str:
+    names = {c.__name__ for c in type(coll).__mro__}
+    for cls_name, nice in _COLL_NAMES:
+        if cls_name in names:
+            return f"{nice} {j + 1}"
+    return f"{type(coll).__name__} {j + 1}"
+
+
+def _is_seq(obj) -> bool:
+    """是不是「一串 artist」。`StemContainer.stemlines` 在不同 matplotlib 版本
+    上可能是一个 LineCollection，也可能是一串 Line2D（`use_line_collection=False`
+    的旧写法），两种都要认。"""
+    return isinstance(obj, (list, tuple))
+
+
+def _alias_consumed_line(state: FigState, ax, ax_gid: str, line) -> None:
+    """给被容器消费掉的曲线登记它**从前**的 gid 别名（只进 index，不进 elements）。
+
+    容器化是把「三个 artist」收成「一条系列」，代价是那几个成员从前各自的
+    `axes_i.lines_k` 不再出现在元素表里。历史文档里可能有针对它们的 override
+    ——别名让那些 override 继续落在同一个 artist 上，而不是变成孤儿。
+    """
+    if line is None:
+        return
+    try:
+        k = list(ax.lines).index(line)
+    except ValueError:
+        return
+    state.index.setdefault(f"{ax_gid}.lines_{k}", line)
 
 
 def _tick_label_entries(ax, which: str, ax_gid: str) -> list[tuple]:
@@ -209,6 +256,26 @@ def instrument(state: FigState) -> None:
                               f"误差棒 {j + 1}")
                     for m in grp.members():
                         skip_ids.add(id(m))
+                elif isinstance(cont, StemContainer):
+                    # 一次 `ax.stem()` 在用户眼里是**一条**系列，在 artist 树上
+                    # 却是三样东西：markerline / stemlines / baseline。前两样
+                    # 归这个容器，baseline（零线）继续以普通曲线的身份单独可编辑
+                    grp = SeriesGroup("stem_series",
+                                      {"marker": cont.markerline,
+                                       "stems": list(cont.stemlines)
+                                       if _is_seq(cont.stemlines) else [cont.stemlines]},
+                                      cont)
+                    lab = str(cont.get_label() or "")
+                    nice = f"茎叶系列 “{_snippet(lab)}”" if lab and not lab.startswith("_") \
+                        else f"茎叶系列 {j + 1}"
+                    _register(state, f"axes_{i}.stemseries_{j}", grp, "stem_series", nice)
+                    for m in grp.members():
+                        skip_ids.add(id(m))
+                    # **旧 gid 别名**：markerline 从前是一条普通曲线
+                    # （axes_i.lines_k），历史文档里可能有针对它的 override。
+                    # 别名只进 index、不进 elements——界面上不会多出条目，
+                    # 旧 override 却还认得出同一个 artist（ColorbarProxy 同样思路）
+                    _alias_consumed_line(state, ax, f"axes_{i}", cont.markerline)
             for j, ln in enumerate(ax.lines):
                 if id(ln) in skip_ids:
                     continue
@@ -217,8 +284,19 @@ def instrument(state: FigState) -> None:
                 _register(state, f"axes_{i}.lines_{j}", ln, "line", nice)
             for j, im in enumerate(ax.images):
                 _register(state, f"axes_{i}.images_{j}", im, "image", f"图像 {j + 1}")
+            # Collection family：三条 gid 分支的**唯一理由是向后兼容**——
+            # `axes_i.scatter_j` 与 `axes_i.fill_j` 是已经发出去的名字，历史
+            # 文档里有针对它们的 override，不能换。序号 j 是 `ax.collections`
+            # 里的下标（不是每种角色各自计数），所以把从前没登记的那些补登记
+            # 进来**不会挪动**已有 gid。能改什么全部由 `collection_caps()` 按
+            # 真实 getter 实况决定，与这里挑哪个前缀无关。
             for j, coll in enumerate(ax.collections):
-                if id(coll) in skip_ids:
+                # 色条轴上的 collection 不是用户的图元：`cb.solids` 是那条色带
+                # 本身、`cb.dividers` 是分隔线，两者每次 `_draw_all()` 都被删掉
+                # 重建（与 extend 的延伸三角同一类）。登记它们等于在元素表里放
+                # 两个随时换身份的幽灵条目，而且与色条代理重复——色条轴对外
+                # 只有一个元素，就是 `axes_i.colorbar`
+                if id(coll) in skip_ids or ax in cbar_of_ax:
                     continue
                 if isinstance(coll, PathCollection):
                     lab = str(coll.get_label())
@@ -226,11 +304,18 @@ def instrument(state: FigState) -> None:
                         else f"散点系列 {j + 1}"
                     _register(state, f"axes_{i}.scatter_{j}", coll, "scatter", nice)
                 elif isinstance(coll, PolyCollection):
-                    _register(state, f"axes_{i}.fill_{j}", coll, "fill", f"填充区域 {j + 1}")
-            # 脚本直接 add_patch 的独立箭头（XPS 峰位标注这类画法）与独立形状
-            # （`ax.fill()` 出的 Polygon、手搓的 PathPatch）。gid 用 patches 里的
-            # 树序 j 保证重建稳定，label 各自计数。柱形系列的 Rectangle 也在
-            # ax.patches 里，已经登记过，这里必须跳过（skip_ids 收了它们）
+                    _register(state, f"axes_{i}.fill_{j}", coll, "fill",
+                              _coll_label(coll, j))
+                else:
+                    _register(state, f"axes_{i}.collections_{j}", coll, "collection",
+                              _coll_label(coll, j))
+            # 脚本直接 add_patch 的独立箭头（XPS 峰位标注这类画法）与独立形状。
+            # 形状按 **Patch family** 认，不逐个列类名：`ax.fill()` 的 Polygon、
+            # 手搓的 PathPatch 之外还有 pie 的 Wedge、axhspan/axvspan 的
+            # Rectangle、Circle / Ellipse / Arc / FancyBboxPatch / stairs 的
+            # StepPatch，以及用户自己继承的子类——它们的样式契约完全相同。
+            # gid 用 patches 里的树序 j 保证重建稳定，label 各自计数。柱形系列的
+            # Rectangle 也在 ax.patches 里，已经登记过，这里必须跳过（skip_ids 收了它们）
             arrow_n = 0
             shape_n = 0
             # 色条轴上的 patch 不是用户的形状：`extend` 的两个延伸三角就是
@@ -245,11 +330,23 @@ def instrument(state: FigState) -> None:
                     pt._mm_arrow_standalone = True  # noqa: SLF001
                     _register(state, f"axes_{i}.arrows_{j}", pt,
                               "arrow_patch", f"箭头 {arrow_n}")
-                elif (isinstance(pt, (Polygon, PathPatch))
+                elif (isinstance(pt, Patch)
                       and id(pt) not in skip_ids and not is_cbax):
                     shape_n += 1
                     _register(state, f"axes_{i}.patches_{j}", pt, "patch",
                               f"形状 {shape_n}")
+        # `ax.add_artist(...)` 放进来的东西（AnchoredText、自定义 Artist…）。
+        # matplotlib 会把认得的类型改道进 lines/patches/collections，所以这里
+        # 剩下的基本都是「我们不认识的」——**登记但只开 visible/zorder**
+        # （见 overrides._GENERIC_CAPS）。不登记的话它们在元素树里根本不存在，
+        # 用户看得见画面上有东西却点不中，还不知道为什么。
+        for j, art in enumerate(getattr(ax, "artists", []) or []):
+            if id(art) in state.index_ids():
+                continue
+            _register(state, f"axes_{i}.artists_{j}", art, "artist",
+                      f"{type(art).__name__} {j + 1}")
+        for j, tbl in enumerate(getattr(ax, "tables", []) or []):
+            _register(state, f"axes_{i}.tables_{j}", tbl, "artist", f"表格 {j + 1}")
         leg = ax.get_legend()
         if leg is not None:
             _register(state, f"axes_{i}.legend", leg, "legend", "图例", draggable=True)
@@ -278,6 +375,72 @@ def instrument(state: FigState) -> None:
             _register(state, f"axes_{i}.{which}ticks", TickSet(ax, which), "ticks",
                       f"{cn} 刻度文字")
             _sync_tick_labels(state, ax, which, f"axes_{i}")
+
+    state.unregistered = census(fig, state)
+
+
+#: 每张 Axes 上属于 matplotlib 自己的结构件——它们不是「Tavotto 漏掉的用户
+#: 元素」。轴与它的整棵子树（刻度线、刻度标签、offset text）由刻度模型代表，
+#: 边框由边框模型代表，背景矩形由 axes 的 facecolor 代表。
+def _internal_ids(fig, colorbar_axes=()) -> set[int]:
+    ids = {id(fig.patch)}
+    for ax in fig.axes:
+        ids.add(id(ax))
+        ids.add(id(ax.patch))
+        ids.update(id(sp) for sp in getattr(ax, "spines", {}).values())
+        for name in ("xaxis", "yaxis", "zaxis"):
+            axis = getattr(ax, name, None)
+            if axis is not None:
+                ids.add(id(axis))
+        if ax in colorbar_axes:
+            # 色条轴的内部件（色带 solids、分隔线 dividers、extend 的延伸三角）
+            # **有意**不登记：全是 `_draw_all()` 每次删掉重建的幽灵，而且色条
+            # 对外只有 `axes_i.colorbar` 一个元素。不把它们归成结构件的话，
+            # 每张带 extend 的图都会凭空多出一条「漏掉了 PathPatch」——
+            # 普查一旦开始喊狼来了，真正的缺口就没人看了
+            ids.update(id(a) for a in getattr(ax, "patches", []))
+            ids.update(id(a) for a in getattr(ax, "collections", []))
+    return ids
+
+
+def census(fig, state: FigState) -> list[dict]:
+    """诊断用的 artist 普查：**画在图上、却没有进元素表**的那些。
+
+    产品路径不依赖它——`instrument` 的语义化遍历才是权威，这里只回答一个
+    问题：「有没有东西被我们悄悄漏掉了」。§35 的底线是**不许静默消失**：
+    漏掉的类名要说得出来，才有可能被修；说不出来就只剩用户一句「我的图里
+    那块东西点不中」。
+
+    只走一层 `get_children()`，不递归——图例、注释、色条内部件各有自己的
+    代表元素，递归进去只会把结构件重新数一遍。空文字（还没写字的标题、
+    轴标签）不算漏：它们本来就不该出现在元素树里。
+
+    每次 build 跑一次（不是每帧），代价是每张 Axes 一次列表拼接。
+    """
+    known = state.index_ids() | _internal_ids(fig, state.colorbar_axes)
+    # 被语义容器消费掉的成员（柱形系列的柱、误差棒的横杠、茎叶的茎）已经由
+    # 容器代表了，不是「漏掉的」——`skip_ids` 那条纪律在普查这一侧的对应物
+    for el in state.elements:
+        art = el["artist"]
+        if isinstance(art, SeriesGroup):
+            known.update(id(m) for m in art.members())
+            known.update(id(m) for m in (art.artists if isinstance(art.artists, list) else []))
+    seen: dict[tuple, int] = {}
+    for gid, owner in [("figure", fig)] + [(f"axes_{i}", ax) for i, ax in enumerate(fig.axes)]:
+        try:
+            children = list(owner.get_children())
+        except Exception:  # noqa: BLE001 — 普查失败绝不能拖垮渲染
+            continue
+        for child in children:
+            if id(child) in known or isinstance(child, (Axes, Axis)):
+                continue
+            if isinstance(child, Text) and not child.get_text():
+                continue
+            cls = type(child)
+            key = (f"{cls.__module__}.{cls.__qualname__}", gid)
+            seen[key] = seen.get(key, 0) + 1
+    return [{"cls": cls, "where": where, "count": n}
+            for (cls, where), n in sorted(seen.items())]
 
 
 # ---------------------------------------------------------------------------
@@ -382,42 +545,95 @@ def _line_fields(ln) -> list[dict]:
     ]
 
 
-def _collection_fields(coll, with_size: bool) -> list[dict]:
+def _collection_fields(coll, *, label: bool) -> list[dict]:
+    """Collection family 的字段表——**由能力探针驱动，不由类名驱动**。
+
+    `collection_caps()` 读的是这个对象此刻真实的 getter 实况，所以：
+    * `scatter(x, y)` 出 facecolor，`scatter(x, y, c=z)` 出 cmap/vmin/vmax
+      而**不出** facecolor——后者的 facecolors 每次 draw 由
+      `update_scalarmappable()` 从数组重算，给了也是白给（见 overrides 的
+      能力层抬头）；
+    * LineCollection 没有 face 可填，只出描边；
+    * `pcolormesh` 的 QuadMesh 现在没有边，但**加得上**边（网格线），
+      所以描边照出。
+
+    `label` 参数只是为了不给历史上的「填充区域」凭空多一个字段——
+    那是显示口径的取舍，不是能力问题。
+    """
     import numpy as np  # noqa: PLC0415 — worker 侧有科学栈
-    fc = coll.get_facecolor()
+    caps = collection_caps(coll)
     ec = coll.get_edgecolor()
-    lw = coll.get_linewidths()
+    lw = np.atleast_1d(coll.get_linewidths())
     lab = str(coll.get_label())
-    fields = [
-        {"prop": "label", "type": "text", "value": "" if lab.startswith("_") else lab},
-        {"prop": "facecolor", "type": "color",
-         "value": to_hex(fc[0]) if len(fc) else "#000000"},
+    fields: list[dict] = []
+    if label:
+        fields.append({"prop": "label", "type": "text",
+                       "value": "" if lab.startswith("_") else lab})
+    if "fill" in caps:
+        fc = coll.get_facecolor()
+        fields.append({"prop": "facecolor", "type": "color",
+                       "value": to_hex(fc[0]) if len(fc) else "#000000"})
+    if "sizes" in caps:
+        sizes = coll.get_sizes()
+        fields.append({"prop": "size", "type": "number",
+                       "value": round(float(np.mean(sizes)), 1) if len(sizes) else 20.0,
+                       "min": 1, "max": 400, "step": 1, "unit": "pt²"})
+    if "marker" in caps:
+        # marker 形状可整体替换（set_paths）；"original" = 脚本原始路径
+        cur = getattr(coll, "_mm_marker", None) or "original"
+        m_opts = ["original", "o", "s", "D", "^", "v", "<", ">", "x", "+", "*", ".",
+                  "p", "h"]
+        fields.append({"prop": "marker", "type": "enum", "value": cur,
+                       "options": ([cur] if cur not in m_opts else []) + m_opts})
+    fields += [
         {"prop": "edgecolor", "type": "color",
          "value": to_hex(ec[0]) if len(ec) else "#000000"},
         {"prop": "linewidth", "type": "number",
          "value": round(float(lw[0]), 2) if len(lw) else 0.0,
          "min": 0, "max": 8, "step": 0.1, "unit": "pt"},
+        {"prop": "linestyle", "type": "enum", "value": _linestyle_name(coll),
+         "options": ["-", "--", "-.", ":"], "group": "线条与填充"},
+        {"prop": "hatch", "type": "enum", "value": str(coll.get_hatch() or ""),
+         "options": _hatch_options(coll.get_hatch()), "group": "线条与填充"},
         {"prop": "alpha", "type": "number",
          "value": 1.0 if coll.get_alpha() is None else round(float(coll.get_alpha()), 2),
          "min": 0, "max": 1, "step": 0.05},
         {"prop": "visible", "type": "bool", "value": bool(coll.get_visible())},
-        {"prop": "zorder", "type": "number", "value": round(float(coll.get_zorder()), 1),
-         "min": -5, "max": 50, "step": 1, "group": "排列"},
     ]
-    if with_size:
-        sizes = coll.get_sizes()
-        fields.insert(2, {"prop": "size", "type": "number",
-                          "value": round(float(np.mean(sizes)), 1) if len(sizes) else 20.0,
-                          "min": 1, "max": 400, "step": 1, "unit": "pt²"})
-        # marker 形状可整体替换（set_paths）；"original" = 脚本原始路径
-        cur = getattr(coll, "_mm_marker", None) or "original"
-        m_opts = ["original", "o", "s", "D", "^", "v", "<", ">", "x", "+", "*", ".",
-                  "p", "h"]
-        fields.insert(3, {"prop": "marker", "type": "enum", "value": cur,
-                          "options": ([cur] if cur not in m_opts else []) + m_opts})
-    else:
-        fields.pop(0)  # fill 无 label 语义
+    if "mapped" in caps:
+        fields += _colormap_fields(coll)
+    fields.append({"prop": "zorder", "type": "number",
+                   "value": round(float(coll.get_zorder()), 1),
+                   "min": -5, "max": 50, "step": 1, "group": "排列"})
     return fields
+
+
+def _hatch_options(current) -> list[str]:
+    cur = str(current or "")
+    return ([cur] if cur and cur not in HATCHES else []) + HATCHES
+
+
+def _colormap_fields(m) -> list[dict]:
+    """ScalarMappable（Collection / AxesImage 共用）的颜色映射字段。
+
+    `norm` **刻意不开放**：换 norm 改的是「数据怎么被解释成颜色」，那是
+    科学结论的一部分，不是排版。vmin/vmax 只是同一个 norm 的定义域，改它
+    等价于脚本里写 `clim=`——仍在展示范畴里。
+    """
+    vmin, vmax = m.get_clim()
+    span = abs(float(vmax) - float(vmin)) if vmin is not None and vmax is not None else 1.0
+    step = max(span / 100.0, 1e-6)
+    cname = m.get_cmap().name
+    return [
+        {"prop": "cmap", "type": "enum", "value": cname,
+         "options": _cmap_options(cname), "group": "颜色映射"},
+        {"prop": "vmin", "type": "number",
+         "value": None if vmin is None else round(float(vmin), 4),
+         "step": round(step, 4), "group": "颜色映射"},
+        {"prop": "vmax", "type": "number",
+         "value": None if vmax is None else round(float(vmax), 4),
+         "step": round(step, 4), "group": "颜色映射"},
+    ]
 
 
 def _bar_series_fields(grp) -> list[dict]:
@@ -522,7 +738,9 @@ def _arrowpatch_fields(a) -> list[dict]:
 
 
 def _patch_fields(pt) -> list[dict]:
-    """独立形状 patch（`ax.fill()` 的 Polygon / 手搓的 PathPatch）。
+    """Patch family 的形状：`ax.fill()` 的 Polygon、手搓的 PathPatch、pie 的
+    Wedge、axhspan 的 Rectangle、Circle / Ellipse / Arc / FancyBboxPatch /
+    StepPatch，以及用户自己继承出来的子类——这些 getter 全在 `Patch` 基类上。
 
     几何不给编辑字段——它由脚本的数据决定，改它等于改数据。选中 / 命中 /
     框选靠 manifest 的 `geometry`（沿真实闭合路径），样式在这里。
@@ -536,6 +754,8 @@ def _patch_fields(pt) -> list[dict]:
          "min": 0, "max": 8, "step": 0.1, "unit": "pt"},
         {"prop": "linestyle", "type": "enum", "value": _linestyle_name(pt),
          "options": ["-", "--", "-.", ":"]},
+        {"prop": "hatch", "type": "enum", "value": str(pt.get_hatch() or ""),
+         "options": _hatch_options(pt.get_hatch())},
         {"prop": "alpha", "type": "number",
          "value": 1.0 if alpha is None else round(float(alpha), 2),
          "min": 0, "max": 1, "step": 0.05},
@@ -556,20 +776,9 @@ def _image_fields(im) -> list[dict]:
         fields.append({"prop": "gradient_color", "type": "color", "value": grad,
                        "group": "渐变填充"})
     if mappable:
-        vmin, vmax = im.get_clim()
-        span = abs(float(vmax) - float(vmin)) if vmin is not None and vmax is not None else 1.0
-        step = max(span / 100.0, 1e-6)
-        cname = im.get_cmap().name
-        fields += [
-            {"prop": "cmap", "type": "enum", "value": cname,
-             "options": _cmap_options(cname), "group": "颜色映射"},
-            {"prop": "vmin", "type": "number",
-             "value": None if vmin is None else round(float(vmin), 4),
-             "step": round(step, 4), "group": "颜色映射"},
-            {"prop": "vmax", "type": "number",
-             "value": None if vmax is None else round(float(vmax), 4),
-             "step": round(step, 4), "group": "颜色映射"},
-        ]
+        # 与 Collection 共用同一份「颜色映射」字段：AxesImage 与 Collection 在
+        # matplotlib 里同属 ColorizingArtist，cmap/clim 的语义逐字相同
+        fields += _colormap_fields(im)
     interp = str(im.get_interpolation())
     i_opts = ["auto", "nearest", "bilinear", "bicubic", "lanczos", "none"]
     if interp not in i_opts:
@@ -853,6 +1062,66 @@ def _axes3d_fields(ax) -> list[dict]:
     return fields
 
 
+def _stem_fields(grp) -> list[dict]:
+    """茎叶系列（StemContainer）：markerline + stemlines 统一改。
+
+    baseline 不在这里——它是零线，以普通曲线的身份单独可编辑。
+    """
+    marker = grp.artists.get("marker")
+    stems = grp.artists["stems"]
+    probe = marker if marker is not None else (stems[0] if stems else None)
+    if probe is None:
+        return []
+    lab = str(grp.container.get_label() or "") if grp.container is not None else ""
+    color = probe.get_color()
+    if hasattr(color, "__len__") and not isinstance(color, str) and len(color) \
+            and not isinstance(color[0], (int, float)):
+        color = color[0]
+    stem0 = stems[0] if stems else None
+    lw = stem0.get_linewidth() if stem0 is not None else 1.0
+    if hasattr(lw, "__len__"):
+        lw = lw[0] if len(lw) else 1.0
+    m_name = str(marker.get_marker()) if marker is not None else "None"
+    m_opts = ["None", "o", "s", "D", "^", "v", "<", ">", "x", "+", "*", "."]
+    if m_name not in m_opts:
+        m_opts = [m_name] + m_opts
+    return [
+        {"prop": "label", "type": "text", "value": "" if lab.startswith("_") else lab},
+        {"prop": "color", "type": "color", "value": to_hex(color)},
+        {"prop": "linewidth", "type": "number", "value": round(float(lw), 2),
+         "min": 0.1, "max": 8, "step": 0.1, "unit": "pt"},
+        {"prop": "linestyle", "type": "enum",
+         "value": _linestyle_name(stem0) if stem0 is not None else "-",
+         "options": ["-", "--", "-.", ":"]},
+        {"prop": "marker", "type": "enum", "value": m_name, "options": m_opts,
+         "group": "标记"},
+        {"prop": "markersize", "type": "number",
+         "value": round(float(marker.get_markersize()), 2) if marker is not None else 6.0,
+         "min": 0, "max": 20, "step": 0.5, "unit": "pt", "group": "标记"},
+        {"prop": "alpha", "type": "number",
+         "value": 1.0 if probe.get_alpha() is None else round(float(probe.get_alpha()), 2),
+         "min": 0, "max": 1, "step": 0.05},
+        {"prop": "visible", "type": "bool", "value": bool(probe.get_visible())},
+        {"prop": "zorder", "type": "number", "value": round(float(probe.get_zorder()), 1),
+         "min": -5, "max": 50, "step": 1, "group": "排列"},
+    ]
+
+
+def _generic_fields(a) -> list[dict]:
+    """认不出来的 Artist：只给 `visible` 与 `zorder`。
+
+    两者由 draw 的公共机制兑现，任何 Artist 子类都逃不掉——所以这两个开关
+    **一定**是真的。`alpha` 不给：它要靠每个 artist 自己在 draw 里读，基类
+    不保证，给了就又多一个「点了没反应」的控件（§36：宁可少开放，不可开放
+    了却不对）。识别 + 可选中 + 能藏起来，对第一版已经够用了。
+    """
+    return [
+        {"prop": "visible", "type": "bool", "value": bool(a.get_visible())},
+        {"prop": "zorder", "type": "number", "value": round(float(a.get_zorder()), 1),
+         "min": -5, "max": 50, "step": 1, "group": "排列"},
+    ]
+
+
 def _fields_for(el) -> list[dict]:
     artist, role = el["artist"], el["role"]
     if role == "figure":
@@ -884,10 +1153,13 @@ def _fields_for(el) -> list[dict]:
         return _arrowpatch_fields(artist)
     if key == "patch":
         return _patch_fields(artist)
-    if key == "scatter":
-        return _collection_fields(artist, with_size=True)
-    if key == "fill":
-        return _collection_fields(artist, with_size=False)
+    if key == "collection":
+        # 历史上「填充区域」没有 label 字段，保持原样；其余 Collection 都给
+        return _collection_fields(artist, label=(role != "fill"))
+    if key == "artist":
+        return _generic_fields(artist)
+    if key == "stem_series":
+        return _stem_fields(artist)
     if key == "bar_series":
         return _bar_series_fields(artist)
     if key == "bar":
@@ -909,6 +1181,42 @@ def _padded_bbox(bb, W: float, H: float) -> list[float]:
     x0 = float(bb.x0) - (w - float(bb.width)) / 2
     y1 = float(bb.y1) + (h - float(bb.height)) / 2
     return [x0 / W, 1.0 - y1 / H, w / W, h / H]
+
+
+def _collection_bbox(coll, renderer):
+    """Collection 的 display 包围盒；量不出来返回 None（元素就不进 manifest）。
+
+    `get_window_extent` 对多数 Collection 回的是**无穷大空框**
+    （`Bbox([[inf, inf], [-inf, -inf]])`）——`pcolor` / `hexbin` / `contour` /
+    `LineCollection` 实测都是。老代码走 `else` 分支拿到这个框，判据
+    `width <= 0 and height <= 0` 恰好成立，于是元素被**静默丢掉**：图上明明
+    有东西，元素表里没有，也没有任何一行日志说为什么。
+
+    退路是 `get_tightbbox(renderer)`——它是公开 API，且会与 artist 的裁剪框
+    求交，所以永远落在子图里、永远有限。代价是对稀疏集合偏大（LineCollection
+    实测取到整块子图），换来的是「点得中」而不是「不存在」。已经量得出有限
+    框的（fill_between / quiver / violin 的多边形）继续走原路，包围盒一个
+    像素不变——写回自检比的就是这个框。
+    """
+    def _ok(bb):
+        if bb is None:
+            return False
+        w, h = float(bb.width), float(bb.height)
+        return (w == w and h == h                      # NaN 自比不等
+                and abs(w) != float("inf") and abs(h) != float("inf")
+                and (w > 0 or h > 0))
+
+    try:
+        bb = coll.get_window_extent(renderer)
+    except Exception:  # noqa: BLE001
+        bb = None
+    if _ok(bb):
+        return bb
+    try:
+        bb = coll.get_tightbbox(renderer)
+    except Exception:  # noqa: BLE001
+        return None
+    return bb if _ok(bb) else None
 
 
 def _ensure_agg_canvas(fig):
@@ -991,11 +1299,15 @@ def build_manifest(state: FigState, stem: str) -> dict:
             entry["bbox"] = [x0 / W, 1.0 - y1 / H, (x1 - x0) / W, (y1 - y0) / H]
         elif isinstance(artist, SeriesGroup):
             boxes = []
-            members = artist.members() if artist.kind == "errorbar" else artist.artists
+            members = (artist.artists if artist.kind == "bar_series"
+                       else artist.members())
             for m in members:
                 try:
-                    bb = m.get_window_extent(renderer)
-                    if bb.width > 0 or bb.height > 0:
+                    # 成员里混着 Collection（误差棒的横杠、茎叶的茎）——它们的
+                    # get_window_extent 多半是无穷大空框，走同一条退路
+                    bb = (_collection_bbox(m, renderer) if isinstance(m, Collection)
+                          else m.get_window_extent(renderer))
+                    if bb is not None and (bb.width > 0 or bb.height > 0):
                         boxes.append(bb)
                 except Exception:
                     pass
@@ -1025,6 +1337,11 @@ def build_manifest(state: FigState, stem: str) -> dict:
                 entry["bbox"] = _padded_bbox(bb, W, H)
             except Exception:
                 continue
+        elif isinstance(artist, Collection):
+            bb = _collection_bbox(artist, renderer)
+            if bb is None:
+                continue
+            entry["bbox"] = _padded_bbox(bb, W, H)
         else:
             try:
                 bb = artist.get_window_extent(renderer)
@@ -1077,5 +1394,12 @@ def build_manifest(state: FigState, stem: str) -> dict:
               f"（TOTAL_BUDGET={pathgeom.TOTAL_BUDGET}）", file=sys.stderr)
 
     w_in, h_in = fig.get_size_inches()
-    return {"stem": stem, "size_mm": [round(float(w_in) * 25.4, 2), round(float(h_in) * 25.4, 2)],
-            "elements": elements}
+    out = {"stem": stem,
+           "size_mm": [round(float(w_in) * 25.4, 2), round(float(h_in) * 25.4, 2)],
+           "elements": elements}
+    # 诊断字段：画在图上、却没进元素表的 artist（`census` 在 instrument 里采）。
+    # 可选、只在非空时出现——旧前端不认识它会原样忽略，写回自检只比 gid 集合
+    # 与几何，不看这里。有它才谈得上「知道自己漏了什么」（§35）。
+    if state.unregistered:
+        out["unsupported"] = state.unregistered
+    return out

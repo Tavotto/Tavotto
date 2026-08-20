@@ -512,6 +512,43 @@ Python，首次渲染也不联网：
   （椭圆/三角/菱形/多边形/大括号；矩形不在此列，直线走端点那套）。
   看护 `tests/test_manifest_geometry.py` + `web` 的 `pathGeom.test.ts` /
   `elementPathSelection.test.tsx` / `shapeOutline.test.tsx`。
+- **Artist family 能力层（2026-08-21）**：`_cls_key` 从「逐个类名的 isinstance 表」
+  改成**按 family 认**——任何 `Patch` 子类归 `patch`、任何 `Collection` 子类归
+  `collection`、认不出来的 Artist 归 `artist`。同一条 prop 只写一次：
+  `_COLLECTION_CAPS` / `_PATCH_CAPS` / `_GENERIC_CAPS` 三张表经 `_install_caps`
+  （**setdefault**，族里的专用契约永远优先）注册给 family key。于是 pie 的
+  Wedge、axhspan 的 Rectangle、stairs 的 StepPatch、`pcolormesh` 的 QuadMesh、
+  `contour` 的 ContourSet、`eventplot` 的 EventCollection、以及**用户自己继承的
+  子类**都不用再各写一份。完整对象模型与支持矩阵在
+  `docs/architecture/matplotlib-artist-capability-map.md`，升级 matplotlib 走
+  `docs/ci/matplotlib-upgrade-checklist.md`。
+  * **能力按真实 getter 实况判，不按类名**（`collection_caps()`）。颜色映射中的
+    Collection **不给 facecolor**：它的 facecolors 每次 draw 由
+    `update_scalarmappable()` 从数组重算，`set_facecolor` 在屏幕上一个像素都不
+    会变（3.10.8 / 3.11.1 实测一致）。`pcolor` 的 PolyQuadMesh 与 `hexbin` 的
+    PolyCollection 都是 PolyCollection 的子类却永远映射——按类名开放就是
+    「界面说改了、画面没动」。反过来 **stroke 对任何 Collection 都开放**：
+    此刻没有边不代表加不上边（给 pcolormesh 加网格线是常见需求）。
+  * **gid 一个都没变**：`axes_i.scatter_j` / `axes_i.fill_j` / `axes_i.patches_j`
+    的序号取的一直是所属列表（`ax.collections` / `ax.patches`）的下标，不是
+    「第几个散点」，所以把从前没登记的那些补登记进来不挪动任何已有名字。
+    被 stem 容器消费掉的 markerline 另外登记**旧 gid 别名**（只进 `state.index`、
+    不进元素表）——历史 override 仍落在同一个 artist 上，界面上不多出条目。
+  * **Collection 的包围盒有第二条路**：多数 Collection 的 `get_window_extent`
+    回的是无穷大空框（`pcolor` / `hexbin` / `contour` / LineCollection 实测都是），
+    老代码判 `width<=0 and height<=0` 恰好成立，于是元素被**静默丢掉**。退路是
+    `get_tightbbox(renderer)`（公开 API，与裁剪框求交，永远有限、永远在子图里）。
+    已经量得出有限框的继续走原路，包围盒一个像素不变——写回自检比的就是它。
+  * **认不出来的 Artist 只开 `visible` / `zorder`**，不开 alpha：前两者由 draw
+    的公共机制兑现、任何子类都逃不掉，alpha 要靠每个 artist 自己在 draw 里读。
+    宁可少开放，不可开放了却不生效。
+  * **manifest 多一个可选的 `unsupported` 诊断清单**（`manifest.census`，
+    instrument 时采一次，不是每帧）：画在图上、既没进元素表也不是结构件的那些，
+    按类名 + 归属报出来。容器消费掉的成员不算漏。旧前端不认识这个键会原样忽略，
+    写回自检只比 gid 集合与几何。
+  * 开发工具 `scripts/dev/matplotlib_artist_census.py`（`--api --with-seaborn`）
+    普查任意脚本或代表性 API 的 artist 图与 Tavotto 覆盖度。**只用于开发/审计，
+    产品路径不依赖它**——`instrument()` 的语义化遍历才是权威。
 - 面板翻转（flip_h/flip_v，先翻转后旋转）：导出按 dpi 位图嵌入
   （show_pdf_page 无镜像；flipH = 行倒序 + 旋转 180°），与 opacity<1 同一取舍。
 - 安全：worker `cwd=沙盒`（挡相对路径写出/删除）+ `Path.unlink` 守卫

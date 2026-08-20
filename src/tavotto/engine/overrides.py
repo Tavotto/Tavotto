@@ -16,15 +16,15 @@ import numpy as np
 import matplotlib as mpl
 import matplotlib.colors as mcolors
 import matplotlib.patheffects as mpatheffects
+from matplotlib.artist import Artist
 from matplotlib.axes import Axes
-from matplotlib.collections import PathCollection, PolyCollection
-from matplotlib.container import BarContainer, ErrorbarContainer
+from matplotlib.collections import Collection, PathCollection
+from matplotlib.container import BarContainer
 from matplotlib.figure import Figure
 from matplotlib.legend import Legend
 from matplotlib.lines import Line2D
 from matplotlib.markers import MarkerStyle
-from matplotlib.patches import (BoxStyle, FancyArrowPatch, PathPatch, Polygon,
-                                Rectangle)
+from matplotlib.patches import BoxStyle, FancyArrowPatch, Patch, Rectangle
 from mpl_toolkits.mplot3d import proj3d
 from matplotlib.text import Text
 import matplotlib.ticker as mticker
@@ -47,11 +47,17 @@ class FigState:
         self.colorbar_axes: set = set()     # 承载色条的轴（manifest 标记用）
         # 宿主 axes gid -> 拖动它时应当一起走的其他 axes gid（色条轴 / 孪生轴）
         self.axes_follow: dict[str, list[str]] = {}
+        # 画在图上、却没进元素表的 artist（manifest.census 填充，诊断用）
+        self.unregistered: list[dict] = []
         # 本次 apply 的**全量** patch 表 {(gid, prop): value}，只在 apply() 期间有值。
         # 结构性 setter（色条方向）要按「这一次改完之后」的落位算几何，而不是
         # 按此刻的实况——热会话里 position 可能已经先改过，全量重放里它还没轮到，
         # 只看实况两条路就会算出不同的位置。
         self.pending: dict[tuple, object] = {}
+
+    def index_ids(self) -> set[int]:
+        """已登记 artist 的 `id()` 集合（伪元素也在，它们不是真 artist 但不碍事）。"""
+        return {id(a) for a in self.index.values()}
 
     def resolve(self, gid: str):
         """gid → artist / 伪元素。查不到就试着**按需现解**刻度标签。
@@ -91,8 +97,9 @@ class FigState:
 class SeriesGroup:
     """一组同质 artist 的伪元素（柱形系列 / 误差棒），属性统一应用、按成员还原。
 
-    kind="bar_series": artists = [Rectangle...]
-    kind="errorbar":   artists = {"line": Line2D|None, "caps": [Line2D], "bars": [LineCollection]}
+    kind="bar_series":  artists = [Rectangle...]
+    kind="errorbar":    artists = {"line": Line2D|None, "caps": [Line2D], "bars": [LineCollection]}
+    kind="stem_series": artists = {"marker": Line2D|None, "stems": [LineCollection]}
     """
 
     def __init__(self, kind: str, artists, container=None):
@@ -107,6 +114,11 @@ class SeriesGroup:
         if self.kind == "errorbar":
             line = self.artists.get("line")
             return ([line] if line is not None else []) + self.artists["caps"] + self.artists["bars"]
+        if self.kind == "stem_series":
+            # baseline **不进成员**：它是零线，不是这条系列的一部分，仍以普通
+            # 曲线（axes_i.lines_j）的身份单独可编辑
+            m = self.artists.get("marker")
+            return ([m] if m is not None else []) + self.artists["stems"]
         return list(self.artists)
 
 
@@ -1168,6 +1180,18 @@ def _set_collection_lw(coll, v) -> None:
     coll.set_linewidth(float(v) if isinstance(v, (int, float)) else v)
 
 
+def _set_linestyle(a, v) -> None:
+    """线型 setter，**两种输入都要吃**。
+
+    用户发来的是名字（"--"），还原路径放回来的却是 matplotlib 自己的 dash
+    规格——Collection 的 `get_linestyle()` 回的是 `[(0.0, None)]`，Patch 上
+    也可能是 `(offset, seq)`。无脑 `str(v)` 把它 stringify 成
+    `"[(np.float64(0.0), None)]"`，`set_linestyle` 当场抛 ValueError：
+    **用户按了撤销，线型回不去，而且只在改过线型的元素上发作**。
+    """
+    a.set_linestyle(v if isinstance(v, (list, tuple)) else str(v))
+
+
 def _cb_axis(p: "ColorbarProxy"):
     cb = p.cb
     return cb.ax.yaxis if getattr(cb, "orientation", "vertical") == "vertical" else cb.ax.xaxis
@@ -1673,15 +1697,174 @@ def _cls_key(artist) -> str | None:
         return "image"
     if isinstance(artist, Rectangle) and getattr(artist, "_mm_bar", False):
         return "bar"
-    # 脚本 add_patch 的独立形状（`ax.fill()` 出的 Polygon、手搓的 PathPatch）。
-    # 必须排在 FancyArrowPatch / bar 之后：它们也是 Patch，各有各的契约
-    if isinstance(artist, (Polygon, PathPatch)):
+    # Patch family：`ax.fill()` 的 Polygon、手搓的 PathPatch，以及 pie 的
+    # Wedge、axhspan 的 Rectangle、Circle / Ellipse / Arc / FancyBboxPatch /
+    # StepPatch，还有用户自己继承出来的子类——**按 family 认，不逐个列类名**。
+    # 必须排在 FancyArrowPatch / bar 之后：它们也是 Patch，各有各的契约。
+    if isinstance(artist, Patch):
         return "patch"
-    if isinstance(artist, PathCollection):
-        return "scatter"
-    if isinstance(artist, PolyCollection):
-        return "fill"
+    # Collection family：散点（PathCollection）与填充（PolyCollection）之外
+    # 还有 LineCollection / QuadMesh / ContourSet / EventCollection / Quiver…
+    # **能改什么由 `collection_caps()` 按真实 getter 实况决定**，不按类名——
+    # 所以这里一个 key 就够，manifest 那边再决定advertise 哪几条。
+    if isinstance(artist, Collection):
+        return "collection"
+    # 认不出来的 Artist：不是「不支持」，是「只支持得起两条」。
+    # `_GENERIC_CAPS` 只给 visible / zorder——它们由 draw 的公共机制兑现，
+    # 任何子类都逃不掉。别在这里加 alpha：那要靠每个 artist 自己在 draw 里读。
+    if isinstance(artist, Artist):
+        return "artist"
     return None
+
+
+# ---------------------------------------------------------------------------
+# Artist family 能力层（2026-08-21）
+#
+# 一条 prop 只写一次、注册给整个 family。`("patch","alpha")` 与
+# `("bar","alpha")` 曾经是两份逐字相同的 lambda，`("scatter","facecolor")`
+# 与 `("fill","facecolor")` 也是。重复本身不致命，**分叉**才是：改了一处忘了
+# 另一处，同一个属性在两种元素上行为不同，而没有任何东西会报出来。
+#
+# 能力**按真实 getter 实况判，不按类名**。`pcolor()` 出的 PolyQuadMesh 是
+# PolyCollection 的子类，却永远按 cmap 上色——给它开 facecolor，用户点了颜色、
+# `Collection.update_scalarmappable()` 在下一次 draw 里原样覆盖回去，屏幕上
+# 一个像素都不变（mpl 3.10.8 / 3.11.1 实测一致）。「界面说改了、画面没动」
+# 是最坏的一种假支持，所以 fill 能力的判据是「此刻真的有 facecolors **且**
+# 没在做颜色映射」，不是「它是不是 PolyCollection」。
+#
+# 反过来 stroke（edgecolor / linewidth / linestyle）对任何 Collection 都成立
+# ——此刻没有边不代表加不上边，`pcolormesh` 加网格线正是常见需求。
+# ---------------------------------------------------------------------------
+#: Collection / Patch 通用的「安全 setter」——都是 Artist 基类或 family 基类
+#: 上的公开 API，子类没有一个重定义成别的语义。
+_CAP_ALPHA = (lambda a: a.get_alpha(),
+              lambda a, v: a.set_alpha(None if v is None else float(v)))
+_CAP_VISIBLE = (lambda a: a.get_visible(), lambda a, v: a.set_visible(bool(v)))
+_CAP_ZORDER = (lambda a: float(a.get_zorder()), lambda a, v: a.set_zorder(float(v)))
+_CAP_LABEL = (lambda a: str(a.get_label()), lambda a, v: a.set_label(str(v)))
+_CAP_HATCH = (lambda a: a.get_hatch(),
+              lambda a, v: a.set_hatch(None if v in (None, "", "none") else str(v)))
+#: 颜色映射（ScalarMappable / ColorizingArtist）：Collection 与 AxesImage 共享。
+#: 原生值存 Colormap 对象本身，`set_cmap` 两种都吃。
+_CAP_CMAP = (lambda a: a.get_cmap(), lambda a, v: a.set_cmap(v))
+_CAP_VMIN = (lambda a: a.get_clim()[0],
+             lambda a, v: a.set_clim(vmin=(None if v is None else float(v))))
+_CAP_VMAX = (lambda a: a.get_clim()[1],
+             lambda a, v: a.set_clim(vmax=(None if v is None else float(v))))
+
+#: 花纹的可选项。`""` = 不用花纹（黑白印刷时区分同色区块的标准手段）。
+HATCHES = ["", "/", "\\", "|", "-", "+", "x", "o", "O", ".", "*",
+           "//", "\\\\", "xx", "..", "++"]
+
+#: Collection family（PathCollection / PolyCollection / LineCollection /
+#: QuadMesh / ContourSet / EventCollection / Quiver …）。颜色与线宽都是
+#: **逐元素数组**，原生值必须 `.copy()`——不拷贝的话 restore 拿到的是同一个
+#: 数组对象，setter 就地改完原值也跟着变，还原等于什么都没做。
+_COLLECTION_CAPS: dict[str, tuple] = {
+    "label": _CAP_LABEL,
+    "facecolor": (lambda a: a.get_facecolor().copy(), lambda a, v: a.set_facecolor(v)),
+    "edgecolor": (lambda a: a.get_edgecolor().copy(), lambda a, v: a.set_edgecolor(v)),
+    "linewidth": (lambda a: a.get_linewidths().copy(), _set_collection_lw),
+    "linestyle": (lambda a: a.get_linestyle(), _set_linestyle),
+    "hatch": _CAP_HATCH,
+    "size": (lambda a: a.get_sizes().copy(), _set_collection_sizes),
+    "marker": (lambda a: list(a.get_paths()), _set_scatter_marker),
+    "cmap": _CAP_CMAP,
+    "vmin": _CAP_VMIN,
+    "vmax": _CAP_VMAX,
+    "alpha": _CAP_ALPHA,
+    "visible": _CAP_VISIBLE,
+    "zorder": _CAP_ZORDER,
+}
+
+#: Patch family（Rectangle / Polygon / PathPatch / Wedge / Circle / Ellipse /
+#: Arc / FancyBboxPatch / StepPatch / Annulus …，以及用户自己继承的子类）。
+#: 这些 getter/setter 全在 `Patch` 基类上，子类一个都没改语义。
+_PATCH_CAPS: dict[str, tuple] = {
+    "facecolor": (lambda a: a.get_facecolor(), lambda a, v: a.set_facecolor(v)),
+    "edgecolor": (lambda a: a.get_edgecolor(), lambda a, v: a.set_edgecolor(v)),
+    "linewidth": (lambda a: float(a.get_linewidth()), lambda a, v: a.set_linewidth(float(v))),
+    "linestyle": (lambda a: a.get_linestyle(), _set_linestyle),
+    "hatch": _CAP_HATCH,
+    "fill": (lambda a: bool(a.get_fill()), lambda a, v: a.set_fill(bool(v))),
+    "alpha": _CAP_ALPHA,
+    "visible": _CAP_VISIBLE,
+    "zorder": _CAP_ZORDER,
+}
+
+#: 认不出来的 Artist 只开这两条。两者都由 `Axes.draw` / `Artist.draw` 的
+#: 公共机制兑现，任何 Artist 子类都逃不掉；`alpha` **刻意不给**——它要靠每个
+#: artist 自己在 draw 里读，基类不保证，给了就是又一个「点了没反应」的开关。
+_GENERIC_CAPS: dict[str, tuple] = {
+    "visible": _CAP_VISIBLE,
+    "zorder": _CAP_ZORDER,
+}
+
+
+def _len0(seq) -> int:
+    """长度；拿不到长度的（None / 标量）算 0。"""
+    try:
+        return len(seq)
+    except TypeError:
+        return 0
+
+
+def is_color_mapped(artist) -> bool:
+    """此刻是不是**按数值映射颜色**（cmap/norm 说了算）。
+
+    判据是 `get_array() is not None`，不是类名：同一个 PathCollection，
+    `scatter(x, y)` 不映射、`scatter(x, y, c=z)` 映射；而 `pcolor()` 出的
+    PolyQuadMesh 是 PolyCollection 的子类却**永远**映射。
+    """
+    get = getattr(artist, "get_array", None)
+    if get is None:
+        return False
+    try:
+        return get() is not None
+    except Exception:  # noqa: BLE001 — 探针失败一律当「没在映射」
+        return False
+
+
+def collection_caps(coll) -> frozenset[str]:
+    """这个 Collection 上**真正改得动**的能力集。manifest 与 handler 共用它。
+
+    * ``stroke``  边线：任何 Collection 都能加/改边（现在没有边 ≠ 加不上）
+    * ``fill``    填充：此刻有 facecolors **且**没在做颜色映射（见本节抬头）
+    * ``mapped``  颜色映射：cmap / vmin / vmax
+    * ``sizes``   标记大小：`_CollectionWithSizes` 且此刻真的有 sizes
+    * ``marker``  标记形状整体替换：**只有 PathCollection**。`set_paths` 对
+                  散点是换 marker，对 PolyCollection 是把用户的多边形几何整个
+                  换掉——那是改数据，不是改样式。
+    """
+    caps = {"base", "stroke"}
+    if is_color_mapped(coll):
+        caps.add("mapped")
+    else:
+        try:
+            if _len0(coll.get_facecolor()):
+                caps.add("fill")
+        except Exception:  # noqa: BLE001
+            pass
+    get_sizes = getattr(coll, "get_sizes", None)
+    if get_sizes is not None:
+        try:
+            if _len0(get_sizes()):
+                caps.add("sizes")
+                if isinstance(coll, PathCollection):
+                    caps.add("marker")
+        except Exception:  # noqa: BLE001
+            pass
+    return frozenset(caps)
+
+
+def _install_caps(key: str, caps: dict[str, tuple]) -> None:
+    """把一族能力注册到 HANDLERS[(key, prop)]。
+
+    `setdefault` 是有意的：族里已经有的**专用**实现永远优先（色条的 label、
+    柱的 bar_width…）。能力层是补齐重复的那一层，不是推翻既有裁决的那一层。
+    """
+    for prop, handler in caps.items():
+        HANDLERS.setdefault((key, prop), handler)
 
 
 # ---------------------------------------------------------------------------
@@ -1986,48 +2169,8 @@ HANDLERS: dict[tuple[str, str], tuple] = {
     ("line", "markeredgecolor"): (lambda a: a.get_markeredgecolor(),
                                   lambda a, v: a.set_markeredgecolor(v)),
 
-    # ---- scatter (PathCollection) / fill (PolyCollection) ----
-    ("scatter", "marker"): (lambda a: list(a.get_paths()), _set_scatter_marker),
-    ("scatter", "facecolor"): (lambda a: a.get_facecolor().copy(),
-                               lambda a, v: a.set_facecolor(v)),
-    ("scatter", "edgecolor"): (lambda a: a.get_edgecolor().copy(),
-                               lambda a, v: a.set_edgecolor(v)),
-    ("scatter", "size"): (lambda a: a.get_sizes().copy(), _set_collection_sizes),
-    ("scatter", "linewidth"): (lambda a: a.get_linewidths().copy(), _set_collection_lw),
-    ("scatter", "alpha"): (lambda a: a.get_alpha(),
-                           lambda a, v: a.set_alpha(None if v is None else float(v))),
-    ("scatter", "zorder"): (lambda a: float(a.get_zorder()), lambda a, v: a.set_zorder(float(v))),
-    ("scatter", "visible"): (lambda a: a.get_visible(), lambda a, v: a.set_visible(bool(v))),
-    ("scatter", "label"): (lambda a: str(a.get_label()), lambda a, v: a.set_label(str(v))),
-    ("fill", "facecolor"): (lambda a: a.get_facecolor().copy(), lambda a, v: a.set_facecolor(v)),
-    ("fill", "edgecolor"): (lambda a: a.get_edgecolor().copy(), lambda a, v: a.set_edgecolor(v)),
-    ("fill", "linewidth"): (lambda a: a.get_linewidths().copy(), _set_collection_lw),
-    ("fill", "alpha"): (lambda a: a.get_alpha(),
-                        lambda a, v: a.set_alpha(None if v is None else float(v))),
-    ("fill", "zorder"): (lambda a: float(a.get_zorder()), lambda a, v: a.set_zorder(float(v))),
-    ("fill", "visible"): (lambda a: a.get_visible(), lambda a, v: a.set_visible(bool(v))),
-
-    # ---- 独立形状 patch（ax.fill() 的 Polygon / 手搓的 PathPatch）----
-    ("patch", "facecolor"): (lambda a: a.get_facecolor(), lambda a, v: a.set_facecolor(v)),
-    ("patch", "edgecolor"): (lambda a: a.get_edgecolor(), lambda a, v: a.set_edgecolor(v)),
-    ("patch", "linewidth"): (lambda a: float(a.get_linewidth()),
-                             lambda a, v: a.set_linewidth(float(v))),
-    ("patch", "linestyle"): (lambda a: a.get_linestyle(),
-                             lambda a, v: a.set_linestyle(str(v))),
-    ("patch", "fill"): (lambda a: bool(a.get_fill()), lambda a, v: a.set_fill(bool(v))),
-    ("patch", "alpha"): (lambda a: a.get_alpha(),
-                         lambda a, v: a.set_alpha(None if v is None else float(v))),
-    ("patch", "zorder"): (lambda a: float(a.get_zorder()), lambda a, v: a.set_zorder(float(v))),
-    ("patch", "visible"): (lambda a: a.get_visible(), lambda a, v: a.set_visible(bool(v))),
-
-    # ---- 单根柱（BarContainer 成员，_mm_bar 标记）----
-    ("bar", "facecolor"): (lambda a: a.get_facecolor(), lambda a, v: a.set_facecolor(v)),
-    ("bar", "edgecolor"): (lambda a: a.get_edgecolor(), lambda a, v: a.set_edgecolor(v)),
-    ("bar", "linewidth"): (lambda a: float(a.get_linewidth()),
-                           lambda a, v: a.set_linewidth(float(v))),
-    ("bar", "alpha"): (lambda a: a.get_alpha(),
-                       lambda a, v: a.set_alpha(None if v is None else float(v))),
-    ("bar", "visible"): (lambda a: a.get_visible(), lambda a, v: a.set_visible(bool(v))),
+    # ---- collection / patch / bar 的通用属性走能力层（见 _install_caps 那一节）；
+    # 这里只留族里的**专用**契约 ----
 
     # ---- legend: 预设位置 / 标题 / 边框样式 ----
     ("legend", "loc"): (_get_legend_loc, _set_legend_loc_preset),
@@ -2136,6 +2279,60 @@ for _prop, _pair in [
     HANDLERS[("errorbar", _prop)] = _pair[0]
     _PENDING_RESTORES[("errorbar", _prop)] = _pair[1]
 
+# ---------------------------------------------------------------------------
+# stem 系列（StemContainer）：markerline(Line2D) + stemlines(LineCollection)
+#   + baseline(Line2D)。三个成员两种类型，但用到的 setter 全是 Artist 或
+# 两族的公共 API（set_color / set_linewidth / set_alpha / set_visible），所以
+# 复用误差棒那套「统一应用、按成员列表还原」的组合器就够——不需要为它再写
+# 一个 handler 家族。
+#
+# 为什么必须做成容器而不是让成员各自登记：`ax.stem()` 在用户眼里是**一个**
+# 数据系列。不消费成员的话 markerline 与 baseline 会变成两条无名「曲线」、
+# 而 stemlines 那条 LineCollection 是茎本身——三样东西各改各的，改完还对不齐。
+# ---------------------------------------------------------------------------
+def _stem_stems(grp):
+    return grp.artists["stems"]
+
+
+def _stem_markers(grp):
+    m = grp.artists.get("marker")
+    return [m] if m is not None else []
+
+
+def _stem_marker_get(a):
+    return str(a.get_marker())
+
+
+for _prop, _pair in [
+    ("color", _eb_handler(lambda a: a.get_color(), lambda a, v: a.set_color(v))),
+    ("linewidth", _eb_handler(lambda a: a.get_linewidth(),
+                              lambda a, v: a.set_linewidth(v), _stem_stems)),
+    ("linestyle", _eb_handler(lambda a: a.get_linestyle(), _set_linestyle, _stem_stems)),
+    ("marker", _eb_handler(_stem_marker_get,
+                           lambda a, v: a.set_marker(str(v)), _stem_markers)),
+    ("markersize", _eb_handler(lambda a: float(a.get_markersize()),
+                               lambda a, v: a.set_markersize(float(v)), _stem_markers)),
+    ("alpha", _eb_handler(lambda a: a.get_alpha(),
+                          lambda a, v: a.set_alpha(None if v is None else float(v)))),
+    ("visible", _eb_handler(lambda a: a.get_visible(), lambda a, v: a.set_visible(bool(v)))),
+    ("zorder", _eb_handler(lambda a: float(a.get_zorder()),
+                           lambda a, v: a.set_zorder(float(v)))),
+]:
+    HANDLERS[("stem_series", _prop)] = _pair[0]
+    _PENDING_RESTORES[("stem_series", _prop)] = _pair[1]
+
+HANDLERS[("stem_series", "label")] = (
+    lambda g: str(g.container.get_label()) if g.container is not None else "",
+    lambda g, v: g.container.set_label(str(v)) if g.container is not None else None)
+
+# ---- 能力层落地：一族一份实现，注册给对应的 family key ----
+# `_install_caps` 用 setdefault，所以上面所有**专用**契约（色条的 label、
+# 柱的 bar_width、箭头的端点…）都优先，这一步只补齐族里通用的那些。
+_install_caps("collection", _COLLECTION_CAPS)
+for _k in ("patch", "bar"):
+    _install_caps(_k, _PATCH_CAPS)
+_install_caps("artist", _GENERIC_CAPS)
+
 # 3D 轴线 / 背景面板：作用于 x/y/z 三条轴，原值按轴列表还原
 for _prop, _g3, _s3 in [
     ("axline_color", lambda ax: ax.line.get_color(), lambda ax, v: ax.line.set_color(v)),
@@ -2153,7 +2350,7 @@ for _prop, _g3, _s3 in [
 # 恢复原值时 pos_frac / loc_frac 的原生值需要走原生 setter。
 # 标了 `_needs_state` 的 restore 函数额外收一个 state（与 setter 同一约定）。
 _RESTORE: dict[tuple[str, str], object] = {
-    ("scatter", "marker"):  _restore_scatter_marker,
+    ("collection", "marker"):  _restore_scatter_marker,
     ("arrowpatch", "endpoints_frac"): _restore_arrow_endpoints,
     ("arrowpatch", "arrowstyle"): lambda a, orig: a.set_arrowstyle(orig),
     ("arrowpatch", "linestyle"): lambda a, orig: a.set_linestyle(orig),
