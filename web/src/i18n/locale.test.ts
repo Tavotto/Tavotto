@@ -7,7 +7,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
-  DEFAULT_LOCALE,
   LOCALE_LABELS,
   LOCALE_STORAGE_KEY,
   SUPPORTED_LOCALES,
@@ -56,7 +55,7 @@ describe('normalizeLocale', () => {
   })
 })
 
-describe('优先级：手动 > 系统 > zh-CN', () => {
+describe('优先级：手动 > 系统 >（非中文系统）en-US > zh-CN', () => {
   /**
    * detectLocale 在模块求值时不缓存任何东西，但它读的 readStoredLocale /
    * systemLocale 都是现读，所以这里直接调即可。
@@ -73,10 +72,18 @@ describe('优先级：手动 > 系统 > zh-CN', () => {
     expect(await detect()).toBe('en-US')
   })
 
-  it('没选过 + 系统是不支持的语言 → 兜底 zh-CN', async () => {
-    asSystem('ja-JP', 'ko-KR')
-    expect(await detect()).toBe(DEFAULT_LOCALE)
-    expect(DEFAULT_LOCALE).toBe('zh-CN')
+  it('没选过 + 系统是不支持的第三门语言 → en-US（1.0 审计 P1-02：国际用户第一屏绝不是简体中文）', async () => {
+    for (const tags of [['ja-JP', 'ko-KR'], ['fr-FR'], ['de-DE'], ['pt-BR', 'es-ES']]) {
+      asSystem(...(tags as [string, ...string[]]))
+      expect(await detect()).toBe('en-US')
+    }
+  })
+
+  it('繁体中文仍归 zh-CN（离它最近的一档；zh-Hant 单独翻译落地前不变）', async () => {
+    asSystem('zh-TW')
+    expect(await detect()).toBe('zh-CN')
+    asSystem('zh-HK', 'en-US')
+    expect(await detect()).toBe('zh-CN')
   })
 
   it('navigator.languages 里第一个不支持的被跳过，取第一个认得的', async () => {
