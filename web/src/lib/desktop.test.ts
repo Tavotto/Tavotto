@@ -27,22 +27,32 @@ describe('isDesktop', () => {
 })
 
 describe('bootstrapDesktopSession', () => {
-  it('无 fragment：skipped，且完全不发请求', async () => {
-    const fetchSpy = vi.fn()
+  it('无 fragment：ping 通（未启用认证）→ skipped', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true, status: 200 })
     vi.stubGlobal('fetch', fetchSpy)
     expect(await bootstrapDesktopSession()).toBe('skipped')
-    expect(fetchSpy).not.toHaveBeenCalled()
+    expect(fetchSpy).toHaveBeenCalledWith('/api/session/ping')
+  })
+
+  it('无 fragment 且 ping 401（认证开着但没有会话）→ unauthenticated', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 401 }))
+    expect(await bootstrapDesktopSession()).toBe('unauthenticated')
+  })
+
+  it('无 fragment、ping 网络异常 → skipped（交给正常错误路径）', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('boom')))
+    expect(await bootstrapDesktopSession()).toBe('skipped')
   })
 
   it('带 nonce fragment：先清 fragment 再 POST，成功返回 ok', async () => {
     history.replaceState(null, '', '/#dnonce=abc-123_XY')
-    const fetchSpy = vi.fn().mockResolvedValue({ ok: true })
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true, status: 200 })
     vi.stubGlobal('fetch', fetchSpy)
 
     expect(await bootstrapDesktopSession()).toBe('ok')
     expect(window.location.hash).toBe('')
     expect(fetchSpy).toHaveBeenCalledWith(
-      '/api/desktop/bootstrap',
+      '/api/session/bootstrap',
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({ nonce: 'abc-123_XY' }),
@@ -50,10 +60,20 @@ describe('bootstrapDesktopSession', () => {
     )
   })
 
-  it('后端拒绝（重放/伪造）→ failed', async () => {
+  it('后端拒绝且无既有会话 → failed', async () => {
     history.replaceState(null, '', '/#dnonce=stale')
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false }))
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 403 }))
     expect(await bootstrapDesktopSession()).toBe('failed')
+  })
+
+  it('nonce 已用过但同浏览器已持有 cookie（重复点终端链接）→ ok', async () => {
+    history.replaceState(null, '', '/#dnonce=used-twice')
+    const fetchSpy = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 403 }) // bootstrap 被拒
+      .mockResolvedValueOnce({ ok: true, status: 200 }) // ping：cookie 还在
+    vi.stubGlobal('fetch', fetchSpy)
+    expect(await bootstrapDesktopSession()).toBe('ok')
   })
 
   it('网络异常 → failed 而不是抛出', async () => {

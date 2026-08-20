@@ -458,6 +458,34 @@ def test_wsgi_status_line_has_a_reason_phrase(upstream):
         assert re.fullmatch(r"\d{3} [A-Za-z][A-Za-z ']*", status), repr(status)
 
 
+def test_wsgi_rejects_negative_content_length(upstream):
+    """负 Content-Length 必须当场 400，且**一个字节都不读**。
+
+    不拦的话 `min(length, MAX+1)` 还是负数，某些 WSGI 服务器把 `read(-1)`
+    当「读到 EOF」——keep-alive 连接上这一读会挂到对端超时，一个畸形请求
+    占死一个线程（PR #21 评审指出的输入边界）。
+    """
+    import io
+
+    from tavotto_telemetry_proxy.wsgi import application
+
+    class MustNotRead(io.BytesIO):
+        def read(self, *a):  # pragma: no cover - 被调用即失败
+            raise AssertionError("负 Content-Length 不该触发任何 read")
+
+    environ = {
+        "REQUEST_METHOD": "POST",
+        "PATH_INFO": "/v1/events",
+        "CONTENT_LENGTH": "-1",
+        "CONTENT_TYPE": "application/json",
+        "wsgi.input": MustNotRead(),
+    }
+    captured = {}
+    chunks = application(environ, lambda s, h: captured.update(status=s))
+    assert captured["status"].startswith("400")
+    assert b"content-length" in b"".join(chunks)
+
+
 def test_wsgi_rejects_content_bearing_properties_end_to_end(upstream):
     """夹带文件名的事件，走完整入口也必须被拒。"""
     ev = _event()

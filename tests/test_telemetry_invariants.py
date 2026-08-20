@@ -172,7 +172,7 @@ def test_ai_is_captured_after_the_session_exists():
     at_capture = src.index('engine_telemetry.capture("ai_assistant_invoked"')
     assert src.index("sid = engine_ai.run(") < at_capture
     # 失败分支（except → 500）必须在埋点之前就 return 掉
-    assert src.index('return jsonify({"error": str(exc)}), 500') < at_capture
+    assert src.index('"code": "ai_start_failed"') < at_capture
 
 
 def test_app_started_is_only_called_from_main():

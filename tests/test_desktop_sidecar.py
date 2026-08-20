@@ -53,7 +53,7 @@ def sidecar(tmp_path):
     yield sc
     sc.stop()
     # 桌面模式标记必须被清理干净，否则污染其他（浏览器模式）测试
-    assert "TAVOTTO_DESKTOP_STATE" not in appmod.app.config
+    assert "TAVOTTO_SESSION_STATE" not in appmod.app.config
     assert "TAVOTTO_DESKTOP_MODE" not in appmod.app.config
 
 
@@ -145,7 +145,7 @@ def test_bootstrap_flow_and_replay(sidecar):
     # 未认证访问敏感 API → 401（连 409 no_project 都不该看到）
     status, _, body = http_get(sidecar.url("/api/panels"))
     assert status == 401
-    assert json.loads(body)["code"] == "desktop_auth_required"
+    assert json.loads(body)["code"] == "session_auth_required"
 
     # 错误 nonce → 403，且不作废真 nonce
     status, _, body = http_post_json(sidecar.url(desktop.BOOTSTRAP_PATH),
@@ -322,7 +322,7 @@ def test_run_refuses_without_nonce(tmp_path, monkeypatch):
     assert desktop.run(appmod.app) == 2
     data = json.loads(hs.read_text(encoding="utf-8"))
     assert data["ready"] is False and "凭据" in data["error"]
-    assert "TAVOTTO_DESKTOP_STATE" not in appmod.app.config
+    assert "TAVOTTO_SESSION_STATE" not in appmod.app.config
 
 
 # ---------------------------------------------------------------------------

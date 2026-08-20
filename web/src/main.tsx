@@ -26,15 +26,20 @@ const rootEl = document.getElementById('root')!
 // 桌面模式先换会话（fragment nonce → HttpOnly cookie）再挂载：store 一挂载就会
 // 发 API，会话没建立时全是 401。浏览器模式下 bootstrap 立即返回 skipped。
 void bootstrapDesktopSession().then((r) => {
-  if (r === 'failed') {
-    // 极少数情况（nonce 被吃掉/重复使用）：给出可操作的提示而不是白屏 + 一串 401
+  if (r === 'failed' || r === 'unauthenticated') {
+    // 极少数情况（nonce 被吃掉/重复使用，或没有会话的手敲地址）：
+    // 给出可操作的提示而不是白屏 + 一串 401
     const div = document.createElement('div')
     div.setAttribute(
       'style',
       'display:flex;height:100%;align-items:center;justify-content:center;' +
+        'padding:0 24px;text-align:center;' +
         'font:13px/1.6 -apple-system,sans-serif;color:#3D3D39;background:#F2F2EF',
     )
-    div.textContent = t('boot.desktopSessionFailed', { ns: 'workspace' })
+    div.textContent =
+      r === 'unauthenticated'
+        ? t('boot.sessionUnauthenticated', { ns: 'workspace' })
+        : t('boot.desktopSessionFailed', { ns: 'workspace' })
     rootEl.replaceChildren(div)
     return
   }
