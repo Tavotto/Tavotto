@@ -28,6 +28,17 @@ import sys
 import time
 from pathlib import Path
 
+# Windows 上 stdout 一旦不是真控制台（被 CI/测试捕获）就退回 cp1252，
+# argparse 打印中文 help 直接 UnicodeEncodeError 打死进程——`--help` 都跑
+# 不了的诊断工具比没有更糟。与 engine/cli.use_utf8_streams 同一手法；
+# 放在 import 期，所有 `import _common` 的脚本连 argparse 之前就已生效。
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError):
+            pass
+
 # 持久化根目录下的固定布局。谁都不许在别处另开一套。
 LAYOUT = (
     "cache",
