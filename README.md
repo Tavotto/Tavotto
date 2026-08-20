@@ -152,10 +152,21 @@ yet verified inside a real Codex Desktop**.
 
 Rendering, composition and export are local processes. Tavotto does not upload your
 figures, scripts, project files or data anywhere, and unpublished results do not leave
-the building. The only request it makes on its own is a once-a-day check of GitHub
-Releases for a new version — turn it off under **Settings → Check for updates** (or set
-`TAVOTTO_NO_UPDATE_CHECK=1`) and there is none at all. Details in the
-[privacy policy](docs/privacy.md).
+the building. It makes exactly two requests on its own:
+
+- **A once-a-day check** of GitHub Releases for a new version. Turn it off under
+  **Settings → Check for updates** (or set `TAVOTTO_NO_UPDATE_CHECK=1`).
+- **Anonymous usage statistics — off until you say yes.** You are asked once, on first
+  run. If you opt in, Tavotto sends broad feature events (app started, figure opened,
+  edit committed, export succeeded) plus version, OS family and architecture, tagged
+  with a random UUID generated on your machine. Never your figures, scripts, filenames,
+  paths, data, figure text or assistant prompts — the event schema cannot represent
+  them. Turn it off under **Settings → Privacy, diagnostics & About** (or set
+  `TAVOTTO_NO_TELEMETRY=1`).
+
+The two switches are independent; neither covers the other. Details in the
+[privacy policy](docs/privacy.md) and the
+[event contract](docs/analytics/telemetry-events.md).
 
 ## Get started
 

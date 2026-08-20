@@ -1,0 +1,12 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "rewrites": [
+    { "source": "/healthz", "destination": "/api/index" },
+    { "source": "/v1/(.*)", "destination": "/api/index" }
+  ],
+  "functions": {
+    "api/**/*.py": {
+      "maxDuration": 10
+    }
+  }
+}

@@ -1,0 +1,281 @@
+{
+  "schema_version": 1,
+  "generated_for": "Tavotto",
+  "provider": "posthog",
+  "provider_note": "Deliberately provider-oriented but free of PostHog insight/dashboard IDs: those are unstable and would rot faster than the definitions. Rebuild insights from the fields below.",
+  "docs": {
+    "events": "docs/analytics/telemetry-events.md",
+    "dictionary": "docs/analytics/yc-metrics.md",
+    "privacy": "docs/privacy.md"
+  },
+  "north_star": "weekly_successful_exporters",
+  "populations": {
+    "opted_in_install": {
+      "description": "One random UUIDv4 distinct_id that has sent at least one product event. NOT a person and NOT every user — telemetry is opt-in, so all product metrics are a lower bound.",
+      "distinct_id": "random UUIDv4 generated on the machine at opt-in"
+    },
+    "distribution_metrics": {
+      "description": "Scheduled collector rows. Constant distinct_id 'distribution_metrics'. Never mix into user cohorts.",
+      "distinct_id": "distribution_metrics"
+    }
+  },
+  "engaged_events": [
+    "figure_opened",
+    "figure_edit_completed",
+    "canvas_created",
+    "preflight_completed",
+    "export_completed",
+    "ai_assistant_invoked"
+  ],
+  "engaged_events_note": "app_started is deliberately excluded: launching the app is not usage, and including it is the easiest way to make retention look better than the product is.",
+  "metrics": [
+    {
+      "id": "weekly_successful_exporters",
+      "title": "Weekly Successful Exporters",
+      "north_star": true,
+      "source": "product_events",
+      "population": "opted_in_install",
+      "event": "export_completed",
+      "aggregation": "unique_distinct_id",
+      "window_days": 7,
+      "label": "opted-in anonymous installs with >= 1 successful export in the trailing 7 days",
+      "not": "not a user count; not export attempts"
+    },
+    {
+      "id": "wse_wow_growth",
+      "title": "WoW growth of Weekly Successful Exporters",
+      "source": "derived",
+      "depends_on": ["weekly_successful_exporters"],
+      "aggregation": "period_over_period_ratio",
+      "window_days": 7,
+      "formula": "wse(this_week) / wse(previous_week) - 1"
+    },
+    {
+      "id": "engaged_wau",
+      "title": "Engaged WAU",
+      "source": "product_events",
+      "population": "opted_in_install",
+      "event_any_of": "$engaged_events",
+      "aggregation": "unique_distinct_id",
+      "window_days": 7
+    },
+    {
+      "id": "engaged_mau",
+      "title": "Engaged MAU",
+      "source": "product_events",
+      "population": "opted_in_install",
+      "event_any_of": "$engaged_events",
+      "aggregation": "unique_distinct_id",
+      "window_days": 30
+    },
+    {
+      "id": "stickiness_wau_over_mau",
+      "title": "Stickiness (WAU / MAU)",
+      "source": "derived",
+      "depends_on": ["engaged_wau", "engaged_mau"],
+      "aggregation": "ratio",
+      "formula": "engaged_wau / engaged_mau"
+    },
+    {
+      "id": "activation_funnel",
+      "title": "Activation funnel",
+      "source": "product_events",
+      "population": "opted_in_install",
+      "aggregation": "funnel_unique_distinct_id",
+      "ordered": true,
+      "steps": ["app_started", "figure_opened", "figure_edit_completed", "export_completed"],
+      "cohort": "first observed app_started within the cohort window",
+      "conversion_window_days": 7
+    },
+    {
+      "id": "activation_rate_7d",
+      "title": "7-day activation rate",
+      "source": "product_events",
+      "population": "opted_in_install",
+      "aggregation": "cohort_conversion_rate",
+      "cohort_event": "app_started",
+      "cohort_anchor": "first_seen",
+      "conversion_event": "export_completed",
+      "conversion_window_days": 7,
+      "caveat": "An install that opts in after weeks of use enters the cohort on the day we first saw it, which biases this upward. For a clean number restrict the cohort to installs whose first app_started and telemetry_enabled are within 24h of each other, and say which variant you reported."
+    },
+    {
+      "id": "activation_rate_24h",
+      "title": "24-hour activation rate",
+      "source": "product_events",
+      "population": "opted_in_install",
+      "aggregation": "cohort_conversion_rate",
+      "cohort_event": "app_started",
+      "cohort_anchor": "first_seen",
+      "conversion_event": "export_completed",
+      "conversion_window_hours": 24
+    },
+    {
+      "id": "time_to_first_export",
+      "title": "Median time to first successful export",
+      "source": "product_events",
+      "population": "opted_in_install",
+      "aggregation": "median_duration",
+      "from_event": "app_started",
+      "from_anchor": "first_seen",
+      "to_event": "export_completed",
+      "to_anchor": "first_seen",
+      "caveat": "Computed over installs that ever exported; report the never-exported share alongside it or it is a survivorship number."
+    },
+    {
+      "id": "retention_engagement",
+      "title": "Engagement retention (D1 / D7 / D30)",
+      "source": "product_events",
+      "population": "opted_in_install",
+      "aggregation": "retention",
+      "cohort_event": "app_started",
+      "cohort_anchor": "first_seen",
+      "return_event_any_of": "$engaged_events",
+      "buckets": ["D1", "D7", "D30"],
+      "granularity": "day"
+    },
+    {
+      "id": "retention_core_value",
+      "title": "Core-value retention (W1 / W2 / W4)",
+      "source": "product_events",
+      "population": "opted_in_install",
+      "aggregation": "retention",
+      "cohort_event": "export_completed",
+      "cohort_anchor": "first_seen",
+      "return_event": "export_completed",
+      "buckets": ["W1", "W2", "W4"],
+      "granularity": "week",
+      "rationale": "Weekly, not daily: expecting a researcher to export a figure on two consecutive days measures deadline proximity, not product value."
+    },
+    {
+      "id": "export_intensity_per_exporter",
+      "title": "Exports per weekly successful exporter",
+      "source": "derived",
+      "depends_on": ["weekly_successful_exporters"],
+      "aggregation": "ratio",
+      "formula": "count(export_completed, 7d) / weekly_successful_exporters"
+    },
+    {
+      "id": "export_intensity_per_engaged",
+      "title": "Exports per engaged WAU",
+      "source": "derived",
+      "depends_on": ["engaged_wau"],
+      "aggregation": "ratio",
+      "formula": "count(export_completed, 7d) / engaged_wau"
+    },
+    {
+      "id": "ai_adoption",
+      "title": "AI adoption",
+      "source": "derived",
+      "depends_on": ["engaged_wau"],
+      "aggregation": "ratio",
+      "formula": "unique_distinct_id(ai_assistant_invoked, 7d) / engaged_wau"
+    },
+    {
+      "id": "preflight_clean_rate",
+      "title": "Preflight runs with zero errors",
+      "source": "product_events",
+      "aggregation": "ratio_of_event_counts",
+      "numerator": { "event": "preflight_completed", "filter": { "errors": 0 } },
+      "denominator": { "event": "preflight_completed" },
+      "window_days": 30
+    },
+    {
+      "id": "platform_mix",
+      "title": "Platform mix",
+      "source": "product_events",
+      "population": "opted_in_install",
+      "event_any_of": "$engaged_events",
+      "aggregation": "unique_distinct_id",
+      "breakdown": "platform",
+      "breakdown_values": ["macos", "windows", "linux", "other"],
+      "window_days": 30
+    },
+    {
+      "id": "github_installer_downloads_lifetime",
+      "title": "GitHub installer downloads (lifetime)",
+      "source": "distribution_metrics",
+      "population": "distribution_metrics",
+      "event": "github_release_asset_snapshot",
+      "filter": { "asset_role": "installer" },
+      "aggregation": "sum_of_per_asset_max",
+      "group_by": "asset_id",
+      "value_property": "download_count_total",
+      "dedupe_by": "snapshot_key",
+      "query_note": "download_count_total is a CUMULATIVE counter snapshotted daily. Take MAX per asset_id, then sum across asset_ids. Summing snapshot rows multiplies the number by the number of collection days. Per-asset MAX also preserves history for assets that were deleted or replaced.",
+      "not": "not users; not installs; excludes updater/checksum/wheel/sdist/plugin roles on purpose"
+    },
+    {
+      "id": "github_installer_downloads_30d",
+      "title": "GitHub installer downloads (30d)",
+      "source": "distribution_metrics",
+      "population": "distribution_metrics",
+      "event": "github_release_asset_snapshot",
+      "filter": { "asset_role": "installer" },
+      "aggregation": "sum_of_per_asset_counter_delta",
+      "group_by": "asset_id",
+      "value_property": "download_count_total",
+      "window_days": 30,
+      "dedupe_by": "snapshot_key",
+      "query_note": "per asset_id: last = MAX(value) where observed_date <= period_end; first = MAX(value) where observed_date <= period_start else 0; delta = max(0, last - first); then sum. Baseline 0 makes a release published mid-period contribute all of its downloads; max(0,...) guards a replaced asset whose counter appears to move backwards."
+    },
+    {
+      "id": "pypi_downloads_30d",
+      "title": "PyPI downloads (30d, excluding known mirrors)",
+      "source": "distribution_metrics",
+      "population": "distribution_metrics",
+      "event": "pypi_daily_downloads",
+      "filter": { "category": "without_mirrors" },
+      "aggregation": "sum_of_deduplicated_daily_values",
+      "value_property": "downloads",
+      "dedupe_by": "snapshot_key",
+      "window_days": 30,
+      "query_note": "The collector re-reports a 14-day healing window every run, so the same date arrives many times. Take ONE row per snapshot_key (pypi:tavotto:<date>) before summing.",
+      "not": "not users; includes CI, Docker builds, dependency scanners and other automation even with known mirrors excluded"
+    },
+    {
+      "id": "distribution_downloads_30d",
+      "title": "Distribution downloads (30d)",
+      "source": "derived",
+      "depends_on": ["github_installer_downloads_30d", "pypi_downloads_30d"],
+      "aggregation": "sum",
+      "label_must_be": "Distribution downloads",
+      "label_must_not_be": ["Users", "Installs", "Customers"],
+      "caveat": "Reinstalls, updates, CI and automation are included, and the two sources count different things."
+    },
+    {
+      "id": "github_stars",
+      "title": "GitHub stars",
+      "source": "distribution_metrics",
+      "population": "distribution_metrics",
+      "event": "github_repo_snapshot",
+      "aggregation": "latest_value",
+      "value_property": "stars",
+      "dedupe_by": "snapshot_key",
+      "not": "not users; repository popularity only"
+    }
+  ],
+  "summary_card": [
+    { "metric": "weekly_successful_exporters", "kind": "observed_opt_in" },
+    { "metric": "engaged_wau", "kind": "observed_opt_in" },
+    { "metric": "engaged_mau", "kind": "observed_opt_in" },
+    { "metric": "retention_engagement", "kind": "observed_opt_in" },
+    { "metric": "activation_rate_7d", "kind": "observed_opt_in" },
+    { "metric": "time_to_first_export", "kind": "observed_opt_in" },
+    { "metric": "github_installer_downloads_30d", "kind": "public_distribution_count" },
+    { "metric": "github_installer_downloads_lifetime", "kind": "public_distribution_count" },
+    { "metric": "pypi_downloads_30d", "kind": "public_distribution_count" },
+    { "metric": "github_stars", "kind": "public_repository_count" },
+    { "metric": "wse_wow_growth", "kind": "observed_opt_in" }
+  ],
+  "never_call_these_users": [
+    "github_release_asset_snapshot.download_count_total (any asset_role, installers included)",
+    "pypi_daily_downloads.downloads",
+    "github_repo_snapshot.stars",
+    "github_repo_snapshot.forks",
+    "any asset_role = updater (Tavotto.app.tar.gz, *-setup.nsis.zip, latest.json)",
+    "the sum of any of the above",
+    "count of app_started events"
+  ],
+  "disclaimer": "Product metrics cover opted-in anonymous installs only and are a lower bound on real usage. Download counts are public distribution counts, not users."
+}

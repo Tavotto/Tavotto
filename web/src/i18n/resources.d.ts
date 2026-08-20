@@ -501,9 +501,18 @@ export default interface Resources {
         "exportBundle": "导出诊断包",
         "licenseAfter": "。",
         "licenseBefore": "自由软件，以 AGPL-3.0-only 发布 ——",
-        "privacy": "所有数据与渲染都在本机完成，不上传任何内容；改图助手调用的是你本机的 Codex / Claude 命令行工具。唯一的对外请求是检查更新（可在「检查更新」里关闭）。",
+        "privacy": "所有数据与渲染都在本机完成，不上传任何内容；改图助手调用的是你本机的 Codex / Claude 命令行工具。对外请求只有两条：检查更新（可在「检查更新」里关闭），以及下面这份默认关闭、需要你显式同意的匿名用量统计。",
         "source": "获取源代码",
-        "tagline": "论文图排版与参数化图表编辑"
+        "tagline": "论文图排版与参数化图表编辑",
+        "telemetry": {
+          "hardDisabled": "本机已由 TAVOTTO_NO_TELEMETRY=1 关闭，这里的开关不生效。",
+          "never": "图、脚本、文件名、路径、科研数据、图内文字、改图助手的提示词。",
+          "neverLabel": "绝不发送：",
+          "policy": "隐私政策",
+          "sends": "会发送：版本号、操作系统与架构、用到了哪几类功能、预检与导出是否成功。标识是本机随机生成的一串 UUID，与任何账号无关。",
+          "title": "匿名用量统计",
+          "toggle": "分享匿名用量统计"
+        }
       },
       "ai": {
         "addEndpoint": "添加接口…",
@@ -717,6 +726,25 @@ export default interface Resources {
       "untitledStyle": "未命名样式",
       "willAffect": "将影响",
       "withAnnotations": "含画布标注与序号标签"
+    },
+    "telemetry": {
+      "allow": "分享匿名用量",
+      "decline": "暂不",
+      "intro": "Tavotto 可以发送一份匿名的使用统计，帮我们知道哪些功能真的有人用。默认不发，由你决定。",
+      "later": "随时可在「设置 → 隐私、诊断与 About」里改。",
+      "neverData": "科研数据与图内文字",
+      "neverFigures": "你的图与项目文件",
+      "neverPaths": "文件名与路径",
+      "neverPrompts": "改图助手的提示词与回复",
+      "neverScripts": "脚本与源码",
+      "neverTitle": "绝不发送",
+      "policy": "隐私政策",
+      "sendsFeatures": "用到了哪几类功能（打开图、编辑、导出、改图助手）",
+      "sendsOutcome": "预检与导出是否成功",
+      "sendsPlatform": "操作系统与处理器架构",
+      "sendsTitle": "会发送",
+      "sendsVersion": "Tavotto 的版本号",
+      "title": "帮助改进 Tavotto"
     },
     "versions": {
       "autoBadge": "自动",

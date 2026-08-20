@@ -131,9 +131,17 @@ codex plugin marketplace add Tavotto/Tavotto && codex plugin add tavotto@tavotto
 ## 全部在本机运行
 
 渲染、合成、导出都是本地进程。Tavotto 不会把你的图、脚本、项目文件或数据上传到任何地方，
-未发表的结果不出这台机器。它自己发起的唯一一条对外请求，是每天一次去 GitHub Releases
-看有没有新版本——在**设置 → 检查更新**里关掉（或设 `TAVOTTO_NO_UPDATE_CHECK=1`）之后，
-连这一条也没有了。细节见[隐私政策](docs/privacy.md)。
+未发表的结果不出这台机器。它自己发起的对外请求只有两条：
+
+- **每天一次**去 GitHub Releases 看有没有新版本。在**设置 → 检查更新**里关掉
+  （或设 `TAVOTTO_NO_UPDATE_CHECK=1`）。
+- **匿名用量统计——默认不发，问过你、你同意了才开始。** 首启询问一次。开了之后发的是
+  粗粒度的功能事件（启动、打开图、一次编辑、导出成功）加上版本号、操作系统与架构，
+  标识是本机随机生成的一串 UUID。**绝不发送**你的图、脚本、文件名、路径、科研数据、
+  图内文字与改图助手的提示词——事件结构上就装不下它们。在
+  **设置 → 隐私、诊断与 About** 里关掉（或设 `TAVOTTO_NO_TELEMETRY=1`）。
+
+两个开关互不代管。细节见[隐私政策](docs/privacy.md)与[事件契约](docs/analytics/telemetry-events.md)。
 
 ## 上手
 

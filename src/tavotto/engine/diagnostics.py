@@ -27,7 +27,7 @@ import sys
 import zipfile
 from pathlib import Path
 
-from . import ai_bridge, bootstrap, config, pool, runtime, updater
+from . import ai_bridge, bootstrap, config, pool, runtime, telemetry, updater
 
 LOG_TAIL_LINES = 400
 ERROR_TAIL = 30          # 报告里单列的最近错误条数
@@ -37,10 +37,30 @@ _SECRET_VALUE = re.compile(
     r"\b(sk-[A-Za-z0-9_\-]{8,}|ghp_[A-Za-z0-9]{10,}|[A-Fa-f0-9]{32,})\b")
 _SECRET_KEYS = ("api_key", "token", "secret", "password", "auth")
 
+#: 假名标识：不是密钥，但也不该被顺手复制进 issue 或群聊。
+#: 它把这台机器的**全部**遥测事件串在一起——诊断包里带上它，等于把
+#: 「这条 issue 的作者」和后台那串匿名行为对上号，而排障一次都用不到它。
+#: 开关本身（enabled / consent）不脱敏：知道遥测开没开对排障是有用的。
+_PSEUDONYM_KEYS = ("install_id", "anonymous_id", "distinct_id")
+
+
+def _install_id() -> str:
+    """本机的匿名遥测标识（没同意过就是空串）。只用来把它从输出里抹掉。"""
+    try:
+        from . import telemetry
+        return telemetry.install_id() or ""
+    except Exception:                          # noqa: BLE001 — 脱敏不该被它拖垮
+        return ""
+
 
 def _redact_text(text: str) -> str:
-    """文本脱敏：先抹密钥再抹个人路径。顺序无所谓，但两步都不能省。"""
+    """文本脱敏：先抹密钥再抹个人路径。顺序无所谓，但三步都不能省。"""
     text = _SECRET_VALUE.sub("***", text)
+    # 按**值**再抹一次假名标识：按键名那道只挡得住结构化的
+    # `"install_id": "..."`，挡不住它偶然出现在别的字符串里。
+    ident = _install_id()
+    if ident:
+        text = text.replace(ident, "***")
     home = os.path.expanduser("~")
     if home and home != os.sep:
         text = text.replace(home, "~")
@@ -57,7 +77,8 @@ def _redact_obj(obj):
     if isinstance(obj, dict):
         out = {}
         for k, v in obj.items():
-            if any(s in str(k).lower() for s in _SECRET_KEYS):
+            key = str(k).lower()
+            if any(s in key for s in _SECRET_KEYS) or key in _PSEUDONYM_KEYS:
                 out[k] = "***" if v else v
             else:
                 out[k] = _redact_obj(v)
@@ -81,8 +102,12 @@ def _log_tail(n: int = LOG_TAIL_LINES) -> list[str]:
     return lines[-n:]
 
 
-def _install_kind() -> str:
-    """怎么装的——升级指令、路径写权限、能不能自己修都由它决定。"""
+def install_kind() -> str:
+    """怎么装的——升级指令、路径写权限、能不能自己修都由它决定。
+
+    **这是安装方式的唯一出处**：诊断报告与遥测的 `distribution` 属性都调它。
+    埋点为了拿这个值另写一份探测，就是制造第二个权威，两边迟早给出不同答案。
+    """
     if pool.is_frozen():
         return "desktop"          # .app / .exe 独立应用
     return updater.install_method()
@@ -130,7 +155,7 @@ def build_report(project: dict | None = None, port: int | None = None) -> dict:
     report = {
         "tavotto": {
             "version": __version__,
-            "install": _install_kind(),
+            "install": install_kind(),
             "frozen": pool.is_frozen(),
             "executable": sys.executable,
             "port": port,
@@ -178,6 +203,13 @@ def build_report(project: dict | None = None, port: int | None = None) -> dict:
              "base_url": e["base_url"], "has_key": e["has_key"]}
             for e in caps.get("endpoints", [])
         ],
+        # 遥测**开没开**对排障有用（「我关了它为什么还联网」），
+        # 所以这里给状态；假名 id 由 _redact_obj / _redact_text 抹掉。
+        "telemetry": {
+            "consent": telemetry.settings()["consent"],
+            "enabled": telemetry.enabled(),
+            "hard_disabled": telemetry.hard_disabled(),
+        },
         "project": project or {"open": False},
         "recent_errors": errors,
     }

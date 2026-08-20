@@ -2,6 +2,7 @@
 
 按 CLAUDE.md 的验证约定，导出 PDF 用 pymupdf get_text() 验证矢量文字。
 """
+import json
 from pathlib import Path
 
 import pymupdf
@@ -149,3 +150,121 @@ def test_export_stem_sanitized(client, tmp_path):
     name = resp.get_json()["files"][0]["name"]
     assert "/" not in name and ".." not in name
     assert name.startswith("图9_")
+
+
+# ---------------------------------------------------------------------------
+# 匿名用量统计：导出是最重要的一条激活事件，因此**只在服务端、只在成功之后**记。
+# 前端记的是「用户点了导出」，点了之后还可能失败；这里记的是「导出成功了」。
+# ---------------------------------------------------------------------------
+def _telemetry_flush():
+    from tavotto.engine import telemetry
+    assert telemetry.flush(5.0)
+
+
+def _exports(box):
+    return [p for p in box if p["event"] == "export_completed"]
+
+
+def test_successful_export_captures_exactly_one_event(client, tmp_path, telemetry_sent):
+    resp = client.post("/api/export", json={
+        "page_w_mm": 100, "page_h_mm": 50, "formats": ["pdf"],
+        "objects": [_text_obj("hello")]})
+    assert resp.status_code == 200
+    _telemetry_flush()
+    assert len(_exports(telemetry_sent)) == 1
+
+
+def test_export_event_carries_only_shape_not_content(client, tmp_path, telemetry_sent):
+    """事件里不许出现 stem、导出目录、文件名、画布名或项目信息。"""
+    resp = client.post("/api/export", json={
+        "page_w_mm": 100, "page_h_mm": 50, "formats": ["pdf", "png"],
+        "stem": "Fig1_kinetics_保密数据",
+        "proof": {"kind": "tavotto-proof"},
+        "objects": [_text_obj("hello")]})
+    assert resp.status_code == 200
+    out_dir = resp.get_json()["export_dir"]
+    _telemetry_flush()
+    (event,) = _exports(telemetry_sent)
+    assert event["properties"]["pdf"] is True
+    assert event["properties"]["png"] is True
+    assert event["properties"]["with_proof"] is True
+    blob = json.dumps(event, ensure_ascii=False)
+    assert "Fig1_kinetics" not in blob
+    assert "保密数据" not in blob
+    assert out_dir not in blob
+    for name in [f["name"] for f in resp.get_json()["files"]]:
+        assert name not in blob
+
+
+def test_export_event_counts_only_visible_panels(client, tmp_path, telemetry_sent):
+    m.open_project(str(_asym_panel_dir(tmp_path)))
+    resp = client.post("/api/export", json={
+        "page_w_mm": 100, "page_h_mm": 50, "formats": ["pdf"],
+        "objects": [
+            {"type": "panel", "id": "asym.pdf", "x_mm": 0, "y_mm": 0,
+             "w_mm": 40, "h_mm": 20},
+            {"type": "panel", "id": "asym.pdf", "x_mm": 0, "y_mm": 25,
+             "w_mm": 40, "h_mm": 20, "hidden": True},
+            _text_obj("hello"),
+        ]})
+    assert resp.status_code == 200
+    _telemetry_flush()
+    (event,) = _exports(telemetry_sent)
+    assert event["properties"]["panel_count"] == 1
+
+
+def test_failed_export_captures_nothing(client, tmp_path, telemetry_sent, monkeypatch):
+    """失败的导出绝不能被记成成功——那会让激活率凭空变高。"""
+    real_compose = m.pdfbackend.compose
+
+    def exploding_compose(w, h):
+        canvas = real_compose(w, h)
+        def boom(*_a, **_kw):
+            raise OSError("磁盘满了")
+        canvas.save_pdf = boom
+        return canvas
+
+    monkeypatch.setattr(m.pdfbackend, "compose", exploding_compose)
+    resp = client.post("/api/export", json={
+        "page_w_mm": 100, "page_h_mm": 50, "formats": ["pdf"],
+        "objects": [_text_obj("hello")]})
+    assert resp.status_code == 500
+    _telemetry_flush()
+    assert _exports(telemetry_sent) == []
+
+
+def test_export_succeeds_even_when_telemetry_transport_fails(client, tmp_path,
+                                                             telemetry_sent,
+                                                             monkeypatch):
+    """代理挂了 / 断网 / 埋点自己有 bug —— 导出的响应契约一个字节都不许变。"""
+    from tavotto.engine import telemetry
+
+    def boom(_payload):
+        raise OSError("代理挂了")
+
+    monkeypatch.setattr(telemetry, "_post", boom)
+    monkeypatch.setattr(telemetry, "validate",
+                        lambda *_a, **_kw: (_ for _ in ()).throw(RuntimeError("埋点炸了")))
+    resp = client.post("/api/export", json={
+        "page_w_mm": 100, "page_h_mm": 50, "formats": ["pdf"],
+        "objects": [_text_obj("hello")]})
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["files"] and body["export_dir"] and body["warnings"] == []
+
+
+def test_export_captures_nothing_without_consent(client, tmp_path, monkeypatch):
+    from tavotto.engine import telemetry
+
+    monkeypatch.delenv("TAVOTTO_NO_TELEMETRY", raising=False)
+    telemetry.reset_for_tests()
+    box: list[dict] = []
+    monkeypatch.setattr(telemetry, "_post", box.append)
+    assert telemetry.settings()["consent"] == "unset"
+    resp = client.post("/api/export", json={
+        "page_w_mm": 100, "page_h_mm": 50, "formats": ["pdf"],
+        "objects": [_text_obj("hello")]})
+    assert resp.status_code == 200
+    assert telemetry.flush(5.0)
+    assert box == []
+    telemetry.reset_for_tests()

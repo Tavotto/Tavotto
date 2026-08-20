@@ -337,9 +337,18 @@
       "exportBundle": "Export a diagnostics bundle",
       "licenseAfter": ".",
       "licenseBefore": "Free software, released under AGPL-3.0-only —",
-      "privacy": "All data and rendering stay on this machine; nothing is uploaded. The assistant runs the Codex / Claude command-line tools installed locally. The only outbound request is the update check, which you can turn off under “Updates”.",
+      "privacy": "All data and rendering stay on this machine; nothing is uploaded. The assistant runs the Codex / Claude command-line tools installed locally. There are only two outbound requests: the update check (which you can turn off under “Updates”) and the anonymous usage statistics below, which stay off until you explicitly opt in.",
       "source": "get the source",
-      "tagline": "Figure layout and parameterized chart editing for papers"
+      "tagline": "Figure layout and parameterized chart editing for papers",
+      "telemetry": {
+        "hardDisabled": "Disabled on this machine by TAVOTTO_NO_TELEMETRY=1; this switch has no effect.",
+        "never": "figures, scripts, filenames, paths, scientific data, text inside figures, or assistant prompts.",
+        "neverLabel": "Never sent: ",
+        "policy": "Privacy policy",
+        "sends": "Sent: app version, operating system and architecture, which broad features are used, and whether preflight and export succeed. The identifier is a random UUID generated on this machine and is not tied to any account.",
+        "title": "Anonymous usage statistics",
+        "toggle": "Share anonymous usage statistics"
+      }
     },
     "ai": {
       "addEndpoint": "Add endpoint…",
@@ -560,6 +569,25 @@
     "untitledStyle": "Untitled style",
     "willAffect": "Will affect",
     "withAnnotations": "Include canvas annotations and panel labels"
+  },
+  "telemetry": {
+    "allow": "Share anonymous usage",
+    "decline": "Not now",
+    "intro": "Tavotto can send anonymous product usage statistics so we can see which features people actually use. It is off unless you turn it on.",
+    "later": "You can change this any time under Settings → Privacy, diagnostics & About.",
+    "neverData": "Scientific data and text inside figures",
+    "neverFigures": "Your figures and project files",
+    "neverPaths": "Filenames and paths",
+    "neverPrompts": "Assistant prompts and replies",
+    "neverScripts": "Scripts and source code",
+    "neverTitle": "What is never sent",
+    "policy": "Privacy policy",
+    "sendsFeatures": "Which broad features are used (opening a figure, editing, exporting, the assistant)",
+    "sendsOutcome": "Whether preflight and export succeed",
+    "sendsPlatform": "Operating system family and processor architecture",
+    "sendsTitle": "What is sent",
+    "sendsVersion": "The Tavotto version",
+    "title": "Help improve Tavotto"
   },
   "versions": {
     "autoBadge": "auto",

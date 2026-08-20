@@ -37,6 +37,7 @@ from tavotto.engine import (
     preflight as engine_preflight,
     profiles as engine_profiles,
     registry as engine_registry,
+    telemetry as engine_telemetry,
 )
 
 #: 允许打开的项目根（os.pathsep 分隔）。
@@ -468,6 +469,18 @@ def run_preflight(session_id: str, *, profile_id: str | None = None,
     issues = engine_preflight.run(spec, profile)
     issues += export_raster_issues(profile, export_formats, export_dpi)
     summary = engine_preflight.summarize(issues)
+    # 匿名用量统计：**结果算完之后**记一次，且只记四个计数 + 一个布尔。
+    # 检查项的文案、字体名、gid、对象 id、stem 一个都不发（白名单里没有这些
+    # 属性）。没同意 / 硬开关关着时这一行什么都不做。画布那一侧的预检由前端
+    # 的求值器记（两个求值器的分工见 CLAUDE.md），两条入口对应两种用户流程。
+    counts = summary["counts"]
+    engine_telemetry.capture("preflight_completed", {
+        "errors": min(counts.get("error", 0), 1000),
+        "warnings": min(counts.get("warn", 0), 1000),
+        "not_verifiable": min(counts.get("not_verifiable", 0), 1000),
+        "suggestions": min(counts.get("suggestion", 0), 1000),
+        "passed": not counts.get("error", 0) and not counts.get("warn", 0),
+    })
     return {
         "ok": True,
         "session_id": session.id,

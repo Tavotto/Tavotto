@@ -228,6 +228,8 @@ def run_plane(launch: list[str], figures: Path, workdir: Path, plane: str,
         "TAVOTTO_DATA_DIR": str(data_dir),
         "TAVOTTO_CONFIG_DIR": str(config_dir),
         "TAVOTTO_NO_UPDATE_CHECK": "1",
+        # 跑基准既不该联网，也不该往真实的分析后端灌一堆机器造出来的事件
+        "TAVOTTO_NO_TELEMETRY": "1",
         "TAVOTTO_ALLOW_SHUTDOWN": "1",
         # 显式指定控制面：不指定的话开发机上有没有 cargo 产物会让两次运行
         # 悄悄跑在不同的实现上——那就不是对照了

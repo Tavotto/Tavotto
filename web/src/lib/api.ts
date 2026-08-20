@@ -1209,6 +1209,48 @@ export const applyUpdate = () =>
   jsonFetch<UpdateApplyResult>('/api/update/apply', { method: 'POST' })
 
 // ---------------------------------------------------------------------------
+// 匿名用量统计
+//
+// **后端刻意不回 install_id**：界面只需要知道「现在发不发」。把假名标识交给
+// 前端只会让它出现在截图、localStorage 与前端日志里，而界面拿它没有任何用处。
+// ---------------------------------------------------------------------------
+export type TelemetryConsent = 'unset' | 'enabled' | 'disabled'
+
+export interface TelemetrySettings {
+  consent: TelemetryConsent
+  /** 现在到底发不发（consent=enabled 且没被硬开关关掉） */
+  enabled: boolean
+  /** `TAVOTTO_NO_TELEMETRY=1`：管理员/CI 关的，界面要说清楚不是用户自己关的 */
+  hard_disabled: boolean
+  consent_version: number
+  saved_consent_version: number
+}
+
+export const fetchTelemetrySettings = () =>
+  jsonFetch<TelemetrySettings>('/api/telemetry/settings')
+
+export const patchTelemetryConsent = (
+  consent: TelemetryConsent,
+  source: 'first_run' | 'settings',
+) =>
+  jsonFetch<TelemetrySettings>('/api/telemetry/settings', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ consent, source }),
+  })
+
+/**
+ * 语义事件（服务端推断不出来的那几个）。属性经过与后端**同一份**白名单校验，
+ * 白名单外的一律 400——前端这一侧没有「想发什么就发什么」的通路。
+ */
+export const postTelemetryEvent = (event: string, properties: Record<string, unknown>) =>
+  jsonFetch<{ accepted: boolean }>('/api/telemetry/event', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ event, properties }),
+  })
+
+// ---------------------------------------------------------------------------
 // 渲染环境（缺 matplotlib 时的自助安装）
 // ---------------------------------------------------------------------------
 /** 渲染解释器是从哪来的——同一条路径，来源不同排障含义完全不同 */

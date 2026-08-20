@@ -1,0 +1,38 @@
+{
+  "_note": "GitHub Releases API 的裁剪样本（真实字段形状），只留分类要用到的键。资产清单覆盖 release.yml 与 desktop-tauri.yml 实际会挂上去的每一类。",
+  "releases": [
+    {
+      "id": 900801,
+      "tag_name": "v0.8.0",
+      "published_at": "2026-08-20T09:12:00Z",
+      "assets": [
+        {"id": 5001, "name": "Tavotto-0.8.0-macOS.dmg", "download_count": 137},
+        {"id": 5002, "name": "Tavotto-0.8.0-Windows-Setup.exe", "download_count": 402},
+        {"id": 5003, "name": "Tavotto.app.tar.gz", "download_count": 1188},
+        {"id": 5004, "name": "Tavotto.app.tar.gz.sig", "download_count": 1190},
+        {"id": 5005, "name": "Tavotto_0.8.0_x64-setup.nsis.zip", "download_count": 2043},
+        {"id": 5006, "name": "Tavotto_0.8.0_x64-setup.nsis.zip.sig", "download_count": 2045},
+        {"id": 5007, "name": "latest.json", "download_count": 88104},
+        {"id": 5008, "name": "tavotto-0.8.0-py3-none-any.whl", "download_count": 61},
+        {"id": 5009, "name": "tavotto-0.8.0.tar.gz", "download_count": 9},
+        {"id": 5010, "name": "codex-plugin.json", "download_count": 314},
+        {"id": 5011, "name": "codex-plugin-0.8.0.zip", "download_count": 27}
+      ]
+    },
+    {
+      "id": 900701,
+      "tag_name": "v0.7.0",
+      "published_at": "2026-08-19T08:00:00Z",
+      "assets": [
+        {"id": 4001, "name": "Tavotto-0.7.0-macOS.dmg", "download_count": 512},
+        {"id": 4002, "name": "Tavotto-0.7.0-Windows-Setup.exe", "download_count": 908},
+        {"id": 4003, "name": "some-unlabelled-artifact.bin", "download_count": 3}
+      ]
+    }
+  ],
+  "repo": {
+    "full_name": "Tavotto/Tavotto",
+    "stargazers_count": 421,
+    "forks_count": 23
+  }
+}

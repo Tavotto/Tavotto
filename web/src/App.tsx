@@ -10,6 +10,7 @@ import { CommandPalette } from '@/components/CommandPalette'
 import { RegistryDialog } from '@/components/RegistryDialog'
 import { RelinkDialog } from '@/components/RelinkDialog'
 import { SettingsDialog } from '@/components/SettingsDialog'
+import { TelemetryConsentDialog } from '@/components/TelemetryConsentDialog'
 import { ShortcutHelp } from '@/components/ShortcutHelp'
 import { StyleDialog } from '@/components/StyleDialog'
 import { VersionDrawer } from '@/components/VersionDialog'
@@ -30,6 +31,7 @@ import { useAiStore } from '@/store/aiStore'
 import { useAssetStore } from '@/store/assetStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useEnvStore } from '@/store/envStore'
+import { useTelemetryStore } from '@/store/telemetryStore'
 import { checkUpdateOnStartup } from '@/store/updateStore'
 import { restoreSession, startAutosave, useDocumentStore } from '@/store/documentStore'
 import { useViewportStore } from '@/store/viewportStore'
@@ -52,13 +54,25 @@ export function App() {
     checkUpdateOnStartup()
     // 渲染环境状态：缺 matplotlib 时属性栏与设置里都要能给出引导
     void useEnvStore.getState().refresh()
+    // 匿名用量统计的同意态。**只是读一下**——没同意之前后端一个事件都不发，
+    // 连 install_id 都不会生成；同意态还是 unset 时由 TelemetryConsentDialog
+    // 问一次（问之前同样什么都没发）。
+    void useTelemetryStore.getState().load()
   }, [])
   useDesktopMenu()
   useHandoff()
 
   // 启动探测中不闪 Picker；探测完没有项目 → Picker 接管整个界面
   if (phase === 'loading') return <div className="h-full bg-bg" />
-  if (phase === 'none') return <ProjectPicker />
+  // 首启询问挂在 Picker 与 Workspace **共同的**根上：还没打开项目的用户
+  // 一样该被问到，而不是等他开了项目才弹
+  if (phase === 'none')
+    return (
+      <>
+        <ProjectPicker />
+        <TelemetryConsentDialog />
+      </>
+    )
   return <Workspace />
 }
 
@@ -157,6 +171,7 @@ function Workspace() {
         <StyleDialog />
         <RegistryDialog />
       <RelinkDialog />
+        <TelemetryConsentDialog />
         <CommandPalette />
         <ShortcutHelp />
         <ConfirmDialog />
