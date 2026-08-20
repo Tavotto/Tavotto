@@ -167,6 +167,9 @@ export function Inspector({
 
 function WidthHandle() {
   const { t } = useTranslation('inspector')
+  // 可聚焦的 separator 在 ARIA 里是个真控件：必须报出当前值与值域，
+  // 否则屏幕阅读器只会念一句「分隔条」，用户不知道自己在调什么、调到了哪
+  const width = useUiStore((s) => s.rightWidth)
   const start = (e: React.PointerEvent) => {
     e.preventDefault()
     const from = useUiStore.getState().rightWidth
@@ -185,6 +188,9 @@ function WidthHandle() {
       role="separator"
       aria-orientation="vertical"
       aria-label={t('resize', { min: RIGHT_MIN, max: RIGHT_MAX })}
+      aria-valuenow={Math.round(width)}
+      aria-valuemin={RIGHT_MIN}
+      aria-valuemax={RIGHT_MAX}
       tabIndex={0}
       onPointerDown={start}
       onKeyDown={(e) => {

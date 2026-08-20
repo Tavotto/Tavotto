@@ -201,6 +201,13 @@ export function useKeyboard() {
         return
       }
       if (e.key === 'Enter') {
+        // 焦点在按钮/链接/菜单项上时 Enter 的意思是「激活它」，不是画布捷径。
+        // 抢走（preventDefault）的话浏览器不再合成 click——键盘用户选中一个
+        // 面板后，顶栏的每一颗按钮都按不动了（审计 P1-09 实测撞见：焦点在
+        // 「导出」上按 Enter，打开的却是图内编辑）。
+        const at = e.target
+        if (at instanceof HTMLElement &&
+            at.closest('button, a, [role="button"], [role="menuitem"]')) return
         const ids = useSelectionStore.getState().ids
         if (ui.cropTargetId) {
           ui.setCropTarget(null)

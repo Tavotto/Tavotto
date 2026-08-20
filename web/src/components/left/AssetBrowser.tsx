@@ -513,12 +513,12 @@ function AssetCard({
         />
 
         <span className="pointer-events-none absolute left-1 top-1 flex items-center gap-1">
-          <span className="rounded-[3px] bg-ink/[.55] px-1 font-mono text-xs leading-4 text-white">
+          <span className="rounded-[3px] bg-ink/[.72] px-1 font-mono text-xs leading-4 text-white">
             {formatOf(panel)}
           </span>
           {panel.script && (
             <span
-              className="flex h-4 w-4 items-center justify-center rounded-[3px] bg-ink/[.55] text-white"
+              className="flex h-4 w-4 items-center justify-center rounded-[3px] bg-ink/[.72] text-white"
               title={ab('scriptBadgeTitle')}
             >
               <Braces size={10} />
@@ -528,31 +528,34 @@ function AssetCard({
 
         {used > 0 && (
           <span
-            className="pointer-events-none absolute right-1 top-1 rounded-[3px] bg-ink/[.55] px-1 font-mono text-xs leading-4 text-white"
+            className="pointer-events-none absolute right-1 top-1 rounded-[3px] bg-ink/[.72] px-1 font-mono text-xs leading-4 text-white"
             title={ab('cardUsed', { count: used })}
           >
             ×{used}
           </span>
         )}
 
-        <Button
-          size="sm"
-          variant="outline"
-          tabIndex={-1}
-          aria-label={ab('addAria', { name })}
+        {/* 不是 <button>：option 里不许再嵌交互控件（axe nested-interactive，
+            serious）——哪怕 tabIndex=-1 也算。它只是鼠标用户的就近入口，
+            键盘/读屏用户在 option 上按 Enter 走的就是同一个 onAdd（可达名
+            由 addAria 落在 option 的 aria-keyshortcuts 语境里，能力没少）。 */}
+        <span
+          title={ab('addAria', { name })}
           onClick={(e) => {
             e.stopPropagation()
             onAdd()
           }}
           className={cn(
-            'absolute bottom-1 right-1 h-6 px-1.5 text-xs opacity-0 transition-opacity',
-            'group-hover:opacity-100 group-focus-visible:opacity-100 focus-visible:opacity-100',
+            'absolute bottom-1 right-1 flex h-6 cursor-pointer items-center gap-1 rounded-sm',
+            'border border-border bg-surface px-1.5 text-xs text-ink hover:border-border-strong hover:bg-surface-2',
+            'opacity-0 transition-opacity select-none',
+            'group-hover:opacity-100 group-focus-visible:opacity-100',
             selected && 'opacity-100',
           )}
         >
           <Plus size={11} />
           {ab('addToCanvas')}
-        </Button>
+        </span>
       </div>
 
       {/* 文字区压到最薄：图片区要占到卡片约 80%，识别靠图不靠字 */}

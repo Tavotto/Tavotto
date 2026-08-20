@@ -63,6 +63,9 @@ interface NumberFieldProps {
   mixed?: boolean
   className?: string
   title?: string
+  /** 无障碍名。缺省时从字符串 prefix/suffix 推导（"X (mm)"）；prefix 不是
+   *  字符串又不给这个的话，屏幕阅读器只会念「编辑文本」——axe critical */
+  ariaLabel?: string
   /** 拖动改数时把连续修改合并成一条撤销记录 */
   onScrubStart?: () => void
   onScrubEnd?: () => void
@@ -85,9 +88,17 @@ export function NumberField({
   mixed,
   className,
   title,
+  ariaLabel,
   onScrubStart,
   onScrubEnd,
 }: NumberFieldProps) {
+  const derivedLabel =
+    ariaLabel ??
+    (typeof prefix === 'string' && prefix
+      ? typeof suffix === 'string' && suffix
+        ? `${prefix} (${suffix})`
+        : prefix
+      : (title ?? undefined))
   const [text, setText] = useState('')
   const [focused, setFocused] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -166,6 +177,7 @@ export function NumberField({
         ref={inputRef}
         type="text"
         inputMode="decimal"
+        aria-label={derivedLabel}
         disabled={disabled}
         value={text}
         placeholder={mixed ? t('mixed') : undefined}

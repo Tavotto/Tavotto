@@ -29,5 +29,22 @@ export default defineConfig({
     screenshot: 'only-on-failure',
     locale: 'zh-CN',
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  projects: [
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    // WebKit 是 macOS 桌面壳（WKWebView）与 Safari 用户的引擎（审计 P1-03）：
+    // 只跑黄金路径与可访问性——全量跑三遍只是把门禁拉长三倍，而剩下那些
+    // spec 测的是与引擎无关的后端行为。zh-CN：spec 里的可达名是中文。
+    {
+      name: 'webkit',
+      use: { ...devices['Desktop Safari'] },
+      testMatch: ['golden-paths.spec.ts', 'a11y.spec.ts'],
+    },
+    // 英文 locale（审计 P1-02/P1-03）：a11y spec 是语言无关写法；
+    // 英文的完整流程覆盖在 i18n.spec.ts（两种语言各走一遍）。
+    {
+      name: 'chromium-en',
+      use: { ...devices['Desktop Chrome'], locale: 'en-US' },
+      testMatch: ['a11y.spec.ts'],
+    },
+  ],
 })
