@@ -226,7 +226,8 @@ def test_plugin_version_is_read_from_the_manifest():
 
 
 def test_provision_pins_the_plugin_version_and_verifies(tmp_path, monkeypatch):
-    """默认装 `tavotto==<插件版本>`（可复现），装完必须验证过 import。"""
+    """默认装 `tavotto[worker]==<插件版本>`（钉版本可复现；`[worker]` 自带
+    渲染栈——pip 形态发现不了桌面 App 的内置 runtime），装完必须验证过 import。"""
     ran = []
 
     def fake_run(argv, **kw):
@@ -245,7 +246,7 @@ def test_provision_pins_the_plugin_version_and_verifies(tmp_path, monkeypatch):
     monkeypatch.setattr(launcher, "_importable", lambda p, **kw: True)
     report, rc = launcher.provision()
     assert rc == 0 and report["ok"] is True
-    assert report["spec"] == f"tavotto=={launcher._plugin_version()}"
+    assert report["spec"] == f"tavotto[worker]=={launcher._plugin_version()}"
     pip_call = next(c for c in ran if "pip" in c)
     assert report["spec"] in pip_call
     # 只写自管目录，不碰任何全局环境

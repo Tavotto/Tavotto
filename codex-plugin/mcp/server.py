@@ -519,7 +519,10 @@ def provision(spec: "str | None" = None) -> "tuple[dict, int]":
 
     * 只写 Tavotto 配置目录下的 `mcp-runtime/`——**绝不动**系统 Python、
       Conda、用户 site-packages、shell 配置；
-    * 默认装 `tavotto==<插件版本>`（两者本来就同步发版）；`--from` 可指
+    * 默认装 `tavotto[worker]==<插件版本>`（版本与插件同步发版；`[worker]`
+      带上 matplotlib/numpy——pip 形态的引擎发现不了桌面 App 里的内置
+      runtime，自管环境不自带渲染栈的话，没有科学栈的机器上 open 第一步
+      就会倒在「找不到渲染解释器」，零配置就落空了）；`--from` 可指
       wheel 文件 / 源码目录 / 任意 pip requirement（离线或开发态用）；
     * 装完**验证** `import tavotto.engine`，验证不过就如实失败——半成品
       环境比没有环境更难查。
@@ -527,7 +530,7 @@ def provision(spec: "str | None" = None) -> "tuple[dict, int]":
     t0 = time.monotonic()
     if spec is None:
         version = _plugin_version()
-        spec = f"tavotto=={version}" if version else "tavotto"
+        spec = f"tavotto[worker]=={version}" if version else "tavotto[worker]"
     root = managed_runtime_dir()
     venv_dir = os.path.join(root, "venv")
     python = managed_python()
