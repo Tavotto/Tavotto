@@ -2770,9 +2770,9 @@ def api_autosave_put(doc_id):
     theirs = _autosave_newer_than(p, request.args.get("base"))
     if theirs is not None:
         return jsonify({
+            "error": "该文档已在其他窗口保存了更新的版本",
             "code": "stale_write",
             "theirs": theirs,
-            "error": "该文档已在其他窗口保存了更新的版本",
         }), 409
     AUTOSAVE_DIR.mkdir(parents=True, exist_ok=True)
     tmp = p.with_name(p.name + ".tmp")
