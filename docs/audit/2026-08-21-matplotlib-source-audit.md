@@ -288,7 +288,50 @@ stem / pie 的 Wedge，两组 patch，外加一条**写回原件 → 重开**的
 * **`PieContainer`（3.11+）** 将来可以给 pie 一层系列语义（统一改所有扇形），
   但要等浏览器 runtime 也到 3.11。
 
-## 12. 给 CompatBench 的建议 case
+## 12. 与并行 CompatBench 分支的交叠
+
+本次工作在独立 worktree `feat/matplotlib-source-audit` 上做，
+**未触碰** `tests/compat/**`、`scripts/ci/compat_*`、
+`docs/ci/matplotlib-compatibility.md`、任何 baseline，以及 `web/**`。
+
+但两边**都动了共享引擎的两个文件**，交叠必须如实记账：
+
+### 撞在一起的（5 处，语义完全相同）
+
+两边独立地做了**同一个** Patch family 泛化——`isinstance(pt, Patch)` /
+`isinstance(artist, Patch)`，连理由都一样（Wedge / axhspan 的 Rectangle /
+Circle 从前在界面上不存在）。冲突是**文本冲突不是语义冲突**，只是注释措辞不同：
+
+| 文件 | 位置 |
+| --- | --- |
+| `manifest.py` | `from matplotlib.patches import …` |
+| `manifest.py` | `ax.patches` 循环的注释块 |
+| `manifest.py` | `elif isinstance(pt, Patch)` |
+| `overrides.py` | `from matplotlib.patches import …` |
+| `overrides.py` | `_cls_key` 的 Patch 分支 |
+
+合并办法：留任一侧的 `isinstance(..., Patch)`，import 行取并集
+（本分支还额外要 `Collection` / `Artist` / `Axis` / `StemContainer`）。
+
+> 两条独立路径撞出同一个结论，本身就是这个方向对了的旁证——一边是从源码
+> 继承关系推的，一边是被真实脚本的失败 case 逼出来的。
+
+### 只在 CompatBench 侧的（本分支没有，合并时要保留）
+
+`overrides._set_legend_fontsize`：`("legend", "fontsize")` 的 getter 回**逐条**
+列表，setter 只吃标量，于是改过图例字号之后**撤销回不去**
+（`float() argument must be a string or a real number, not 'list'`）。
+
+**这与本分支修的 `linestyle` 是同一类 bug**：getter 回的形状 ≠ setter 吃的形状，
+而 restore 走的正是 `setter(artist, originals[key])`，所以只在撤销那一刻才炸。
+
+合并之后有一个一行的收口：把 `"fontsize"` 加进
+`tests/test_artist_families.py` 的 `_FAMILY_PROPS`，
+`test_every_family_prop_restores_exactly` 就会覆盖它。**已经实测过**——在本分支
+（没有那个修复）上加这一个词，用例当场复现出一字不差的同一条错误。
+一个一次性的 CompatBench 发现于是变成一条常驻的通用防线。
+
+## 13. 给 CompatBench 的建议 case
 
 按「最能暴露真实兼容缺口」排序。**本次没有改动任何 CompatBench 文件与 baseline
 ——数字变化应当由它自己重跑来证明。**
