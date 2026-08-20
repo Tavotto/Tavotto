@@ -96,17 +96,47 @@ def _free_port() -> int:
         return int(s.getsockname()[1])
 
 
+# 会话认证（ADR 0008）：_assert_auth_enforced 验证默认 deny 后从凭据文件
+# 装上本机认证头，此后所有请求都带着它
+_AUTH: dict[str, str] = {}
+
+
 def _get(url: str, timeout: float = 30) -> dict:
-    with urllib.request.urlopen(url, timeout=timeout) as r:
+    req = urllib.request.Request(url, headers=dict(_AUTH))
+    with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode("utf-8"))
 
 
 def _post(url: str, payload: dict, timeout: float = 30) -> dict:
     req = urllib.request.Request(
         url, data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"}, method="POST")
+        headers={"Content-Type": "application/json", **_AUTH}, method="POST")
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode("utf-8"))
+
+
+def _assert_auth_enforced(base: str, data_dir: Path, port: int) -> None:
+    """默认 deny 是 1.0 的安全底线：未认证请求必须 401，凭据文件必须在。
+
+    这里同时验证两件事——① 打包产物里认证真的开着（不是只在源码树里开）；
+    ② 本机进程的凭据交接（0600 文件 + X-Tavotto-Auth 头）真的能用。
+    验完把认证头装上，后续冒烟全部带着它走。
+    """
+    _AUTH.clear()  # 同进程跑第二轮冒烟时不许带着上一轮的凭据验「默认 deny」
+    try:
+        _get(f"{base}/api/project", timeout=10)
+    except urllib.error.HTTPError as e:
+        if e.code != 401:
+            raise SmokeError(f"未认证请求应 401，实际 {e.code}")
+    else:
+        raise SmokeError("未认证请求被放行了——会话认证没有生效（P0 回归）")
+    secret_file = data_dir / "session" / f"port-{port}.json"
+    if not secret_file.is_file():
+        raise SmokeError(f"本机会话凭据文件缺失: {secret_file}")
+    secret = json.loads(secret_file.read_text(encoding="utf-8"))["secret"]
+    _AUTH["X-Tavotto-Auth"] = secret
+    _get(f"{base}/api/session/ping", timeout=10)
+    print("✓ 会话认证：默认 deny + 本机凭据交接可用")
 
 
 def _wait_ready(base: str, proc: subprocess.Popen, timeout: float) -> dict:
@@ -278,6 +308,8 @@ def run_smoke(launch: list[str], figures: Path, workdir: Path,
         # 让 /api/shutdown 可用：冒烟要验证的是**干净退出**，不是硬停
         "TAVOTTO_ALLOW_SHUTDOWN": "1",
     }
+    # 冒烟验证的就是「认证默认开着」，外面误设的开发旁路不许泄进来
+    env.pop("TAVOTTO_INSECURE_NO_AUTH", None)
     for key in ("APPDATA", "LOCALAPPDATA", "HOME", "USERPROFILE"):
         Path(env[key]).mkdir(parents=True, exist_ok=True)
 
@@ -310,6 +342,8 @@ def run_smoke(launch: list[str], figures: Path, workdir: Path,
         timings["app_ready_s"] = time.time() - spawned_at
         print(f"✓ 已启动: version={version.get('version')} "
               f"build={version.get('build')}（{timings['app_ready_s']:.1f}s）")
+
+        _assert_auth_enforced(base, data_dir, port)
 
         _check_environment(base, expect_source, expect_packages or [],
                            expect_runtime)

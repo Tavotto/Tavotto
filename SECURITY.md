@@ -55,10 +55,17 @@ off in Settings, and is disabled entirely by `TAVOTTO_NO_TELEMETRY=1`
 
 **In scope, and taken seriously:**
 
-- Escaping the localhost HTTP surface — the desktop shell binds `127.0.0.1` on a
-  dynamic port and authenticates with a one-time nonce passed over stdin, exchanged
-  for an HttpOnly cookie, with Host/Origin checks and a 401 fallback on everything
-  outside the bootstrap route. Any way around that is a vulnerability.
+- Escaping the localhost HTTP surface — desktop and browser mode share one security
+  middleware (ADR 0008). The desktop shell binds `127.0.0.1` on a dynamic port and
+  passes a one-time nonce over stdin; browser mode carries its one-time nonce in the
+  launch URL's fragment and additionally writes a `0600` local-process credential
+  file for CLI handoff. In both modes the nonce is exchanged once for an HttpOnly
+  `SameSite=Strict` cookie, Host is pinned to `127.0.0.1:<port>`, requests carrying
+  an Origin must be same-origin, and everything outside the first-page static assets
+  and `/api/version` answers 401 without a session. Any way around that — including
+  DNS rebinding, nonce replay, or driving the API from another local web page — is
+  a vulnerability. (`--insecure-no-auth` is a development-only bypass that prints a
+  warning; running it is an explicit choice, not a default.)
 - Reading or writing outside the project a user opened, without them asking.
 - "Write back to original file" damaging or losing a file it wasn't asked to touch,
   or leaving one in a partially written state.

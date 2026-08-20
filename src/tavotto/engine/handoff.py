@@ -38,6 +38,7 @@ import os
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 import webbrowser
 from pathlib import Path
@@ -47,6 +48,7 @@ from urllib.parse import quote
 from . import discover as engine_discover
 from . import locate as engine_locate
 from . import registry as engine_registry
+from . import session_client
 
 #: 认得的产物后缀，与静态扫描同源
 OUT_EXTS = engine_discover.OUT_EXTS
@@ -528,11 +530,21 @@ def _launch_desktop_via_spawn(app: str, target: Target, *,
 
 
 def _http_json(url: str, payload: dict | None = None, timeout: float = 1.0) -> dict | None:
-    """本机 API 的极简调用；连不上 / 不是 JSON 一律 None（探测失败不是错误）。"""
+    """本机 API 的极简调用；连不上 / 不是 JSON 一律 None（探测失败不是错误）。
+
+    自动带上本机会话凭据头（session_client.auth_headers）：对面的实例启用了
+    会话认证（ADR 0008）时，没有它连 `/api/projects/open` 都是 401；老实例 /
+    --insecure-no-auth 的实例没有凭据文件，头为空，行为不变。
+    """
+    headers: dict = {"Content-Type": "application/json"} if payload is not None else {}
+    try:
+        port = urllib.parse.urlsplit(url).port
+        if port:
+            headers.update(session_client.auth_headers(port))
+    except ValueError:
+        pass
     data = None if payload is None else json.dumps(payload).encode()
-    req = urllib.request.Request(
-        url, data=data,
-        headers={"Content-Type": "application/json"} if data else {})
+    req = urllib.request.Request(url, data=data, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8", "replace"))
@@ -590,7 +602,11 @@ def launch(target: Target, *, prefer: str = "auto", port: int = DEFAULT_PORT,
             raise HandoffError(f"已在运行的 Tavotto 打不开这个项目: {st['error']}",
                                "remote_open_failed")
         url = browser_url(port, target, st.get("id"))
-        browse(url)
+        # 安全的 token 交接（ADR 0008）：凭本机凭据换一枚一次性 nonce 拼进
+        # fragment，新开的标签页才过得了会话认证。换不到（老实例 /
+        # --insecure-no-auth）就开裸地址，行为与从前一致。
+        nonce = session_client.relaunch_nonce(port)
+        browse(url + (f"#dnonce={nonce}" if nonce else ""))
         return {"mode": "browser-existing", "url": url}
 
     # **冻结产物里没有 `-m tavotto` 这回事**：那时 sys.executable 就是

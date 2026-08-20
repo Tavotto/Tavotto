@@ -78,7 +78,9 @@ matplotlib worker（用户/内置 Python，独立子进程）
 4. 此后 `/api/*`、`/exports/*`、`/api/render`、SSE 一律凭 cookie（401 否则）；
    `/`、`/assets/*`、bootstrap 本身公开（不含用户数据，页面得先加载起来）。
    同时校验 Host（仅 `127.0.0.1:<port>` 一种写法）与 Origin。
-5. **浏览器/CLI 模式完全不变**：钩子在 `TAVOTTO_DESKTOP_STATE` 缺席时直接放行，
+5. ~~**浏览器/CLI 模式完全不变**~~（**已被 ADR 0008 推翻**，2026-08-21：浏览器
+   模式现在与桌面共用 `security.py` 的同一道会话认证——「浏览器模式无认证」
+   是 1.0 审计确认的 P0，本条只保留历史语境）：钩子在会话状态缺席时直接放行，
    bootstrap 端点 404。
 
 ## 桌面/浏览器模式边界

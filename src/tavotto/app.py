@@ -53,6 +53,7 @@ from .engine import probe as engine_probe
 from .engine import ai_providers as engine_ai_providers
 from .engine import registry as engine_registry
 from .engine import runtime as engine_runtime
+from .engine import session_client as engine_session_client
 from .engine import telemetry as engine_telemetry
 from .engine import updater as engine_updater
 
@@ -71,10 +72,12 @@ RENDER_BUCKETS = [200, 400, 800, 1600, 3200]
 
 app = Flask(__name__, static_folder=None)
 
-# 桌面 sidecar 的认证钩子必须在首个请求前注册；浏览器模式下全部旁路（零行为差异）
-from . import desktop as desktop_mode  # noqa: E402 — 需要 app 实例存在后立即挂钩
+# 会话认证钩子（浏览器与桌面模式共用，见 security.py / ADR 0008）必须在
+# 首个请求前注册；测试的 test_client 与 --insecure-no-auth 下全部旁路
+from . import security  # noqa: E402 — 需要 app 实例存在后立即挂钩
+from . import desktop as desktop_mode  # noqa: E402
 
-desktop_mode.install(app)
+security.install(app)
 
 # 打开着的项目：id → ProjectCtx。**一个进程可以同时端着多个项目**——
 # 不同浏览器标签页各开各的图库（标签页把自己的 pj 带在请求上，见
@@ -3022,6 +3025,9 @@ def main():
     ap.add_argument("--desktop-sidecar", action="store_true",
                     help="作为 Tavotto 桌面应用的后端运行：127.0.0.1 动态端口 + "
                          "桌面认证 + 父进程跟随退出（由桌面壳启动，不建议手动使用）")
+    ap.add_argument("--insecure-no-auth", action="store_true",
+                    help="禁用本地会话认证（任何本机页面/进程都能调用全部 API）。"
+                         "仅供开发调试（vite dev proxy / 手工 curl），生产环境不要用")
     args = ap.parse_args()
 
     setup_logging()
@@ -3079,17 +3085,38 @@ def main():
     def landing(p: int) -> str:
         return engine_handoff.browser_url(p, engine_handoff.Target("", args.open_stem))
 
+    insecure = (args.insecure_no_auth
+                or os.environ.get("TAVOTTO_INSECURE_NO_AUTH") == "1")
+
     port = resolve_port(args.port)
     if port is None:
         # 端口上已经有一个 Tavotto 在跑：把浏览器指过去就够了，别再起一个。
         # 双击应用图标的用户没有终端可看，这里必须自己把事办圆。
+        # 复用是一次**安全的 token 交接**：凭本机凭据文件向在跑的实例换一枚
+        # 一次性 nonce（session_client.relaunch_nonce）；对面是老版本或
+        # --insecure-no-auth 的实例时换不到，裸地址也照样能用。
         url = landing(args.port)
-        print(f"* Tavotto 已在 {url} 运行，打开现有窗口")
+        nonce = engine_session_client.relaunch_nonce(args.port)
+        if nonce:
+            url += "#dnonce=" + nonce
+        print(f"* Tavotto 已在 {landing(args.port)} 运行，打开现有窗口")
         if not args.no_browser:
             webbrowser.open(url)
         return
 
     url = landing(port)
+    if insecure:
+        print("* ⚠ 已禁用本地会话认证（--insecure-no-auth）：任何本机页面/进程"
+              "都能调用全部 API，仅供开发调试")
+    else:
+        # 浏览器模式与桌面模式共用同一道会话边界（security.py / ADR 0008）：
+        # 一次性 nonce 走落地 URL 的 fragment（不进 HTTP 请求行与访问日志），
+        # 本机 CLI/脚本凭 0600 凭据文件的 X-Tavotto-Auth 头直连。
+        state, nonce = security.new_browser_state(port)
+        app.config[security.STATE_KEY] = state
+        url += "#dnonce=" + nonce
+        import atexit
+        atexit.register(engine_session_client.remove_secret, port)
     if port != args.port:
         print(f"* 端口 {args.port} 被占用，改用 {port}")
     print(f"* 打开 {url}")
@@ -3098,7 +3125,11 @@ def main():
     # 同上：真的要开始服务了才算一次会话。**上面「已有实例在跑，把浏览器
     # 指过去就完事」那条分支刻意不记**——那个进程没有提供任何服务。
     engine_telemetry.note_app_started("browser")
-    app.run(host="127.0.0.1", port=port, threaded=True)
+    try:
+        app.run(host="127.0.0.1", port=port, threaded=True)
+    finally:
+        if not insecure:
+            engine_session_client.remove_secret(port)
 
 
 if __name__ == "__main__":
