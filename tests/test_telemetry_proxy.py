@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import json
+import re
+import subprocess
 import sys
 import uuid
 from pathlib import Path
@@ -392,3 +394,180 @@ def test_every_client_event_is_accepted_end_to_end(upstream):
         status, body = _post("/v1/events", _event(event=name,
                                                   properties={**auto, **props}))
         assert status == 200, (name, body)
+
+
+# ---------------------------------------------------------------------------
+# 真实入口层（WSGI）
+#
+# 这一组是 2026-08-20 首次部署那个 bug 的看护，而它的教训**不是**「换个部署
+# 方案」，是：**只测 `core.handle` 看不出入口层坏没坏**。当时入口靠
+# `self.path` 路由，而 Vercel 的 rewrite 会把函数收到的路径换成 destination
+# （`/api/index`）——上面那 40 多条用例全绿，一部署整站 404。
+#
+# 现在对外只有一个入口 `wsgi.application`，本地 / 测试 / Vercel 跑的是同一个，
+# 下面这几条直接打在它身上。
+# ---------------------------------------------------------------------------
+PUBLIC_ROUTES = ["/healthz", "/v1/events", "/v1/metrics"]
+
+
+def _wsgi(method: str, path: str, body: bytes = b"", headers: dict | None = None):
+    """像真实服务器那样调 `application`，返回 (状态行, 头, 响应体)。"""
+    import io
+
+    from tavotto_telemetry_proxy.wsgi import application
+
+    environ = {
+        "REQUEST_METHOD": method,
+        "PATH_INFO": path,
+        "CONTENT_LENGTH": str(len(body)) if body else "",
+        "CONTENT_TYPE": (headers or {}).get("content-type", "application/json"),
+        "wsgi.input": io.BytesIO(body),
+    }
+    if (headers or {}).get("authorization"):
+        environ["HTTP_AUTHORIZATION"] = headers["authorization"]
+    captured = {}
+
+    def start_response(status, response_headers):
+        captured["status"] = status
+        captured["headers"] = response_headers
+
+    chunks = application(environ, start_response)
+    return captured["status"], dict(captured["headers"]), b"".join(chunks)
+
+
+@pytest.mark.parametrize("route", PUBLIC_ROUTES)
+def test_wsgi_serves_every_public_route(upstream, route):
+    """每个对外路径经**真实入口**都必须被认出来——404 就说明部署出去是死的。"""
+    method = "GET" if route == "/healthz" else "POST"
+    status, _headers, body = _wsgi(method, route, b"{}")
+    assert json.loads(body).get("code") != "not_found", f"{route} 在 WSGI 层是 404"
+    assert not status.startswith("404")
+
+
+def test_wsgi_routes_on_the_real_request_path(upstream):
+    """它按 PATH_INFO 路由：未知路径才是 404，已知路径不许是。"""
+    status, _h, body = _wsgi("GET", "/nope")
+    assert status.startswith("404") and json.loads(body)["code"] == "not_found"
+
+
+def test_wsgi_status_line_has_a_reason_phrase(upstream):
+    """WSGI 规范要 `"200 OK"` 而不是光一个数字——有的服务器直接拒，
+    而那种失败只会在部署之后出现。"""
+    for method, route in [("GET", "/healthz"), ("GET", "/nope")]:
+        status, _h, _b = _wsgi(method, route)
+        assert re.fullmatch(r"\d{3} [A-Za-z][A-Za-z ']*", status), repr(status)
+
+
+def test_wsgi_rejects_content_bearing_properties_end_to_end(upstream):
+    """夹带文件名的事件，走完整入口也必须被拒。"""
+    ev = _event()
+    ev["properties"]["stem"] = "Fig1_保密数据"
+    status, _h, body = _wsgi("POST", "/v1/events",
+                             json.dumps(ev).encode("utf-8"))
+    assert status.startswith("400")
+    assert json.loads(body)["code"] == "unknown_property"
+    assert "保密数据" not in body.decode("utf-8")
+    assert upstream == []
+
+
+def test_wsgi_metrics_still_needs_the_token(upstream):
+    status, _h, body = _wsgi("POST", "/v1/metrics",
+                             json.dumps({"schema_version": 1, "events": []}).encode())
+    assert status.startswith("401")
+
+
+def test_vercel_entrypoint_points_at_the_wsgi_app():
+    """`pyproject.toml` 里配的 entrypoint 必须真的存在且可调用。
+
+    配错了的表现是构建期报「No python entrypoint found」——发布链上才发现。
+    """
+    text = (PROXY_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    m = re.search(r'entrypoint\s*=\s*"([^"]+)"', text)
+    assert m, "pyproject.toml 里没有 [tool.vercel] entrypoint"
+    module_path, _, attr = m.group(1).partition(":")
+    import importlib
+
+    module = importlib.import_module(module_path)
+    assert callable(getattr(module, attr, None)), f"{m.group(1)} 不可调用"
+
+
+def test_no_second_entrypoint_layer_creeps_back():
+    """对外只能有一个入口。`api/` 文件路由那条路会重新引入
+    「本地全绿、部署 404」的失败模式——别加回来。"""
+    assert not (PROXY_ROOT / "api").exists(), \
+        "services/telemetry_proxy/api/ 又出现了：见本节开头"
+    conf = json.loads((PROXY_ROOT / "vercel.json").read_text(encoding="utf-8"))
+    assert "rewrites" not in conf, \
+        "rewrites 会用重写后的 destination 路由，正是当初那个 bug"
+
+
+def test_self_hosted_server_never_logs_remote_addresses(upstream, capfd):
+    """自己起 server 时**不许**打访问日志——那里面有客户端 IP。
+
+    `wsgiref` 的默认 handler 会把 `<IP> - - [时间] "GET /x" 200` 打到 stderr。
+    在 FaaS（腾讯云 SCF 的 Web 函数）或自托管上，那会直接进云日志服务——
+    等于我们**自己主动**记了一份带来源地址的访问日志，而 docs/privacy.md
+    承诺的是「不刻意记录来源地址」。托管方自身的日志不归我们控制（政策里
+    如实写着），但我们不能再往上叠一份。
+    """
+    import http.client
+    import threading
+    from wsgiref.simple_server import make_server
+
+    from tavotto_telemetry_proxy.wsgi import (_QuietHandler, _ThreadingWSGIServer,
+                                              application)
+
+    srv = make_server("127.0.0.1", 0, application,
+                      server_class=_ThreadingWSGIServer,
+                      handler_class=_QuietHandler)
+    port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        conn.request("GET", "/healthz")
+        assert conn.getresponse().status == 200
+        conn.close()
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+    out, err = capfd.readouterr()
+    blob = out + err
+    assert "127.0.0.1" not in blob, f"访问日志里出现了来源地址：{blob!r}"
+    assert "GET /healthz" not in blob, f"打了访问日志：{blob!r}"
+
+
+def test_scf_bootstrap_is_executable_and_binds_the_required_port():
+    """SCF 的 Web 函数契约：可执行的 `scf_bootstrap` + 监听 0.0.0.0:9000。
+
+    权限少了函数起不来；端口不对平台探活失败——两者都只在部署之后才暴露。
+
+    **查的是 git 索引里的 mode，不是 `os.stat().st_mode`。** Windows 上普通
+    文件的 st_mode 恒为 `0o100666`，`& 0o111` 永远是 0——用它判可执行位的话
+    这条用例在 Windows 上必然红（2026-08-20 真的红了一次）。而且 git 记录的
+    `100755` 才是**真正决定** Linux/macOS 上 checkout 出来有没有 +x 的东西，
+    zip 打包时取的也是它。跨平台一致，且判的是正确的东西。
+    """
+    boot = PROXY_ROOT / "scf_bootstrap"
+    if not boot.exists():
+        pytest.skip("这份部署里没有 scf_bootstrap")
+    rel = boot.relative_to(PROXY_ROOT.parent.parent).as_posix()
+    entry = subprocess.run(
+        ["git", "ls-files", "-s", "--", rel],
+        cwd=PROXY_ROOT.parent.parent, capture_output=True, text=True, check=True,
+    ).stdout.split()
+    assert entry and entry[0] == "100755", (
+        f"git 里 {rel} 的 mode 是 {entry[0] if entry else '(未追踪)'}，不是 100755"
+        "——Linux/macOS 上 checkout 出来就没有可执行位，SCF 函数起不来"
+    )
+    text = boot.read_text(encoding="utf-8")
+    assert "HOST=0.0.0.0" in text and "PORT=9000" in text
+    assert "-u" in text, "不加 -u 的话日志要等缓冲区满才出现，排障时像是没日志"
+
+
+def test_public_listen_requires_an_explicit_opt_in():
+    """默认只听回环。少了这条默认值，本地调试会把一个无鉴权的公开端点
+    暴露到局域网里。"""
+    src = (PROXY_ROOT / "tavotto_telemetry_proxy" / "wsgi.py").read_text(encoding="utf-8")
+    assert 'os.environ.get("HOST") or "127.0.0.1"' in src
+

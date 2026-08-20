@@ -62,7 +62,15 @@ PYPI_HEAL_DAYS = 14
 
 
 class CollectError(RuntimeError):
-    """采集失败。**大声失败**——定时任务红一次远好过看板缺一段没人知道。"""
+    """采集失败。**大声失败**——定时任务红一次远好过看板缺一段没人知道。
+
+    `status` 是上游的 HTTP 状态码（没有就是 None）。**「大声失败」有一个例外**：
+    数据源本身还不存在（404）不是故障，是预期内的状态，见 `fetch_pypi`。
+    """
+
+    def __init__(self, message: str, status: int | None = None):
+        super().__init__(message)
+        self.status = status
 
 
 # ---------------------------------------------------------------------------
@@ -78,7 +86,7 @@ def _get_json(url: str, token: str | None = None) -> object:
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         # 不回显 token；URL 里也不放密钥（它在请求头里）
-        raise CollectError(f"GET {url} 失败: HTTP {exc.code}") from None
+        raise CollectError(f"GET {url} 失败: HTTP {exc.code}", status=exc.code) from None
     except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
         raise CollectError(f"GET {url} 失败: {type(exc).__name__}") from None
 
@@ -261,8 +269,54 @@ def fetch_github(token: str | None) -> tuple[list[dict], dict]:
     return releases, repo if isinstance(repo, dict) else {}
 
 
+#: 这次为什么没拿到 PyPI 数据——放进 summary，别让看的人自己猜
+_pypi_skip_reason = ""
+
+
+def _pypi_reason(exc: "CollectError") -> str:
+    """把上游状态码翻成一句**准确**的人话。
+
+    404 特别容易被误读成「包还没发布」。它其实是「**PyPIStats 上还没有这个包的
+    统计数据**」——那家服务从 PyPI 的下载日志跑批，新发布的包要等到有下载记录、
+    且当天的批跑完才会出现。包已经在 PyPI 上了也照样 404。
+    写错这一句的代价是：看到 notice 的人跑去查发布链路，而发布链路好着呢。
+    """
+    if exc.status == 404:
+        return (f"PyPIStats 上还没有 {PYPI_PACKAGE} 的统计数据"
+                "（刚发布、或还没有下载记录时正常；它按天跑批，不是实时的）")
+    if exc.status == 429:
+        return "PyPIStats 限流（429）"
+    if exc.status:
+        return f"PyPIStats 回了 HTTP {exc.status}"
+    return f"PyPIStats 取不到（{exc}）"
+
+
 def fetch_pypi() -> dict:
-    payload = _get_json(f"{PYPISTATS_API}/packages/{PYPI_PACKAGE}/overall")
+    """PyPI 日下载量。**取不到就跳过，不拖垮整次采集。**
+
+    这一段整体是「尽力而为」，和 GitHub 那段不同，理由是**自愈窗口**：每次运行
+    都重取最近 `PYPI_HEAL_DAYS` 天，所以今天漏掉的那几天明天会自动补回来
+    （同一天的 `snapshot_key` 相同，重复上报不会翻倍）。为一次限流或一次
+    跑批延迟就让 workflow 红、**顺带把 GitHub 那半边的发行量也丢掉**，
+    代价和收益完全不成比例。
+
+    GitHub 那段没有这个待遇：它是快照式的，漏一天就是看板上一个真实的缺口，
+    而且没有任何机制会补回来。
+
+    **但绝不静默跳过**：打一条 GitHub Actions 的 notice 说清原因，
+    并把原因带进 summary。静默跳过 = 有人对着一张永远没有 PyPI 曲线的看板，
+    却不知道为什么。连续多天出现同一条 notice，那才是该去查的信号。
+    """
+    global _pypi_skip_reason
+    _pypi_skip_reason = ""
+    try:
+        payload = _get_json(f"{PYPISTATS_API}/packages/{PYPI_PACKAGE}/overall")
+    except CollectError as exc:
+        _pypi_skip_reason = _pypi_reason(exc)
+        print(f"::notice::{_pypi_skip_reason}；本次跳过 PyPI 下载量，"
+              f"GitHub 部分照常采集（最近 {PYPI_HEAL_DAYS} 天的自愈窗口会在"
+              "下次运行时补上漏掉的日期）", file=sys.stderr)
+        return {}
     return payload if isinstance(payload, dict) else {}
 
 
@@ -319,6 +373,10 @@ def summarize(events: list[dict]) -> dict:
             by_role.get("installer", {}).get("downloads_total", 0),
         "pypi_days": len(pypi),
         "pypi_downloads_in_window": sum(e["properties"]["downloads"] for e in pypi),
+        # 0 天有好几种可能（统计还没出批 / 限流 / 窗口内确实没人下载），
+        # 别让看的人自己猜——取不到时 fetch_pypi 会把确切原因留在这里
+        "pypi_note": (_pypi_skip_reason or
+                      ("窗口内没有下载记录" if not pypi else "")),
         "note": "downloads != users（重装 / CI / 自动化都在里面）",
     }
 
