@@ -63,6 +63,34 @@ Bigger changes have their own gates:
 Tests that need matplotlib spawn their own interpreter and skip cleanly if there
 isn't one, so a `.venv` without the scientific stack still runs most of the suite.
 
+### Working on telemetry
+
+Nothing here needs a PostHog account. The test suites never make a real request:
+`tests/conftest.py` pins `TAVOTTO_NO_TELEMETRY=1` for every test, and the telemetry
+tests replace the transport with a collector.
+
+```sh
+# A local proxy instead of the production one. Validation and rejection paths work
+# without a PostHog key; only the final forward needs one.
+cd services/telemetry_proxy && python3 -m tavotto_telemetry_proxy.wsgi   # :8787
+
+# Point a dev client at it, then opt in when the first-run prompt appears.
+TAVOTTO_TELEMETRY_ENDPOINT=http://127.0.0.1:8787/v1/events tavotto
+
+# Or make sure nothing is ever sent, whatever the saved setting says.
+TAVOTTO_NO_TELEMETRY=1 tavotto
+
+# Preview the distribution collector without transmitting anything.
+python scripts/collect_distribution_metrics.py --dry-run
+```
+
+`TAVOTTO_NO_TELEMETRY` and `TAVOTTO_NO_UPDATE_CHECK` are independent switches; neither
+covers the other. The event contract is in
+[docs/analytics/telemetry-events.md](docs/analytics/telemetry-events.md) — it is
+duplicated on purpose between client and proxy, with a parity test holding the two
+copies together. Deployment steps live in
+[services/telemetry_proxy/README.md](services/telemetry_proxy/README.md).
+
 ## Things that will get a PR sent back
 
 These aren't style preferences — each one is a boundary that took a real bug to

@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="1200" height="240" viewBox="0 0 1200 240"
+     role="img" aria-labelledby="wf-title wf-desc">
+  <title id="wf-title">Where Tavotto sits in a figure workflow</title>
+  <desc id="wf-desc">Four steps left to right. A Python script — written by you or by Claude or Codex — runs matplotlib, which produces a vector PDF. Tavotto opens that PDF for visual editing, multi-panel layout and a publication preflight. The result is a submission-ready PDF or PNG. The script stays the source throughout.</desc>
+
+  <!--
+    Same visual language as hero.svg — change the two together.
+    Chinese twin: workflow.zh.svg (same geometry, translated <text>) — keep in step.
+    paper #f2f2ef · ink #1b1b18 · ink-2 #5c5c55 · ink-3 #6b6b64 · faint #a3a39a
+    border #e3e3dd · surface #ffffff · accent #2868b7 · accent tint #e9f0f9
+    Four <g class="step"> blocks; the copy is the <text> runs inside them.
+  -->
+  <style>
+    .ui   { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, "PingFang SC", sans-serif; }
+    .mono { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
+    .name { font-size: 21px; font-weight: 600; fill: #1b1b18; }
+    .note { font-size: 15px; fill: #6b6b64; }
+    .kick { font-size: 13px; letter-spacing: 1.6px; fill: #a3a39a; }
+  </style>
+
+  <defs>
+    <marker id="wf-arrow" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 1 L9 5 L0 9 z" fill="#a3a39a"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="240" rx="20" fill="#f2f2ef"/>
+
+  <g class="ui">
+    <!-- 1 · where the plot comes from -->
+    <g class="step" transform="translate(48 56)">
+      <rect width="222" height="128" rx="10" fill="#ffffff" stroke="#e3e3dd"/>
+      <text x="20" y="32" class="kick">YOU OR AN AI AGENT</text>
+      <text x="20" y="66" class="name">Python script</text>
+      <text x="20" y="94" class="mono note">plot.py · Claude · Codex</text>
+    </g>
+    <path d="M282 120 H322" stroke="#a3a39a" stroke-width="1.6" marker-end="url(#wf-arrow)"/>
+
+    <!-- 2 · what draws it -->
+    <g class="step" transform="translate(334 56)">
+      <rect width="200" height="128" rx="10" fill="#ffffff" stroke="#e3e3dd"/>
+      <text x="20" y="32" class="kick">RENDERS</text>
+      <text x="20" y="66" class="name">matplotlib</text>
+      <text x="20" y="94" class="note">a vector PDF</text>
+    </g>
+    <path d="M546 120 H586" stroke="#a3a39a" stroke-width="1.6" marker-end="url(#wf-arrow)"/>
+
+    <!-- 3 · the part this repository is -->
+    <g class="step" transform="translate(598 40)">
+      <rect width="286" height="160" rx="10" fill="#ffffff" stroke="#2868b7" stroke-width="1.6"/>
+      <rect x="1" y="1" width="284" height="42" rx="9" fill="#e9f0f9"/>
+      <path d="M1 43 H285" stroke="#2868b7" stroke-opacity="0.35"/>
+      <text x="20" y="29" class="name" font-size="19" fill="#2868b7">Tavotto</text>
+      <text x="20" y="76" class="note" fill="#1b1b18">Edit inside the figure</text>
+      <text x="20" y="104" class="note" fill="#1b1b18">Arrange the panels</text>
+      <text x="20" y="132" class="note" fill="#1b1b18">Check before submission</text>
+    </g>
+    <path d="M896 120 H936" stroke="#a3a39a" stroke-width="1.6" marker-end="url(#wf-arrow)"/>
+
+    <!-- 4 · what comes out -->
+    <g class="step" transform="translate(948 56)">
+      <rect width="204" height="128" rx="10" fill="#ffffff" stroke="#e3e3dd"/>
+      <text x="20" y="32" class="kick">EXPORT</text>
+      <text x="20" y="66" class="name">Figure 1</text>
+      <text x="20" y="94" class="note">PDF · PNG · proof report</text>
+    </g>
+
+    <!-- the script never stops being the source -->
+    <g>
+      <path d="M159 196 V216 H1050 V196" fill="none" stroke="#cfcfc7"
+            stroke-width="1.4" stroke-dasharray="5 5"/>
+      <rect x="470" y="202" width="260" height="28" rx="6" fill="#f2f2ef"/>
+      <text x="600" y="221" class="note" text-anchor="middle" fill="#5c5c55">
+        your script stays the source
+      </text>
+    </g>
+  </g>
+</svg>
