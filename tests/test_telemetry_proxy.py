@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import sys
 import uuid
 from pathlib import Path
@@ -540,11 +541,25 @@ def test_scf_bootstrap_is_executable_and_binds_the_required_port():
     """SCF 的 Web 函数契约：可执行的 `scf_bootstrap` + 监听 0.0.0.0:9000。
 
     权限少了函数起不来；端口不对平台探活失败——两者都只在部署之后才暴露。
+
+    **查的是 git 索引里的 mode，不是 `os.stat().st_mode`。** Windows 上普通
+    文件的 st_mode 恒为 `0o100666`，`& 0o111` 永远是 0——用它判可执行位的话
+    这条用例在 Windows 上必然红（2026-08-20 真的红了一次）。而且 git 记录的
+    `100755` 才是**真正决定** Linux/macOS 上 checkout 出来有没有 +x 的东西，
+    zip 打包时取的也是它。跨平台一致，且判的是正确的东西。
     """
     boot = PROXY_ROOT / "scf_bootstrap"
     if not boot.exists():
         pytest.skip("这份部署里没有 scf_bootstrap")
-    assert boot.stat().st_mode & 0o111, "scf_bootstrap 没有可执行权限，函数起不来"
+    rel = boot.relative_to(PROXY_ROOT.parent.parent).as_posix()
+    entry = subprocess.run(
+        ["git", "ls-files", "-s", "--", rel],
+        cwd=PROXY_ROOT.parent.parent, capture_output=True, text=True, check=True,
+    ).stdout.split()
+    assert entry and entry[0] == "100755", (
+        f"git 里 {rel} 的 mode 是 {entry[0] if entry else '(未追踪)'}，不是 100755"
+        "——Linux/macOS 上 checkout 出来就没有可执行位，SCF 函数起不来"
+    )
     text = boot.read_text(encoding="utf-8")
     assert "HOST=0.0.0.0" in text and "PORT=9000" in text
     assert "-u" in text, "不加 -u 的话日志要等缓冲区满才出现，排障时像是没日志"

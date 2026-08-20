@@ -1062,3 +1062,42 @@ def test_byte_compared_artifacts_are_pinned_to_lf(rel):
              if ln.strip() and not ln.strip().startswith("#")]
     hit = [r for r in rules if r.split()[0] in (rel, "*") and "eol=lf" in r]
     assert hit, f".gitattributes 没有把 {rel} 钉成 eol=lf；现有规则：{rules}"
+
+
+def test_no_test_judges_executability_by_filesystem_mode() -> None:
+    """用例里不许拿 `os.stat().st_mode` 判「有没有可执行位」。
+
+    Windows 上普通文件的 `st_mode` 恒为 `0o100666`，`& 0o111` **永远是 0**，
+    于是这种断言在 Windows 上必然红——而在作者的 macOS 上永远绿。
+    2026-08-20 真的红了一次（`scf_bootstrap` 那条）。
+
+    真正决定 Linux/macOS 上 checkout 出来有没有 +x 的、以及 zip 打包时取的，
+    是 **git 索引里的 mode**（`100755`）。它跨平台一致，而且判的是正确的东西：
+
+        entry = subprocess.run(["git", "ls-files", "-s", "--", rel], ...)
+        assert entry.stdout.split()[0] == "100755"
+
+    这条是 meta 检查：它不测产品行为，它拦住一类**只在别人电脑上失败**的写法。
+    """
+    import tokenize
+
+    root = Path(__file__).resolve().parent
+    offenders = []
+    for path in sorted(root.glob("test_*.py")):
+        # **按 token 扫，不是按行切 `#`**：docstring 里解释这个坑的文字
+        # 会被行级判据当成犯规（第一版就是这么误报的）。字符串与注释都跳过。
+        with tokenize.open(path) as fh:
+            names = [t for t in tokenize.generate_tokens(fh.readline)
+                     if t.type == tokenize.NAME or t.type == tokenize.NUMBER]
+        for i, tok in enumerate(names):
+            if tok.string != "st_mode":
+                continue
+            near = {t.string for t in names[max(0, i - 6):i + 7]}
+            if near & {"0o111", "0o100", "S_IXUSR", "S_IXGRP", "S_IXOTH"}:
+                offenders.append(f"{path.name}:{tok.start[0]}")
+
+    assert not offenders, (
+        "这些断言在 Windows 上恒假（st_mode 没有执行位），"
+        "改查 git 索引里的 mode：\n  " + "\n  ".join(offenders)
+    )
+
