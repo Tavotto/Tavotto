@@ -214,6 +214,16 @@ dependency scanners and other automation.** They are a distribution signal, not 
 user count, and are reported separately from GitHub installers — never merged
 into one "installs" number.
 
+**Expect this series to start late and to have holes.** PyPIStats derives its
+numbers from PyPI's download logs in a daily batch, so a freshly published
+package returns 404 there for a while even though it is already on PyPI — that
+404 means "no statistics yet", not "not published". The collector treats any
+PyPI fetch failure as best-effort: it logs a notice with the reason, skips that
+run, and lets the 14-day healing window backfill on a later run. (GitHub is
+handled the opposite way — it is snapshot-based with no backfill, so a failure
+there fails the workflow loudly.) A gap of a day or two in this series is
+therefore normal; the same notice appearing every day for a week is not.
+
 ### Combined "Distribution downloads"
 
 `GitHub installer downloads + PyPI downloads` may be shown **only** under the

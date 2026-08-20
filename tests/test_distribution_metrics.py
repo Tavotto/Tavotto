@@ -192,16 +192,46 @@ def test_reruns_produce_identical_pypi_snapshot_keys():
 # 直到有人去看。「大声失败」这条纪律对真故障成立，对「这个数据源还没开始
 # 存在」不成立。
 # ---------------------------------------------------------------------------
-def test_missing_pypi_package_is_skipped_not_fatal(monkeypatch, capsys):
-    """包还没发布（404）→ 跳过 PyPI、GitHub 照常，且**说清楚跳过了什么**。"""
-    def not_found(url, token=None):
+@pytest.mark.parametrize("status,expect", [
+    (404, "统计数据"),          # 最容易被误读成「包还没发布」的那个
+    (429, "限流"),
+    (500, "HTTP 500"),
+    (None, "取不到"),
+])
+def test_pypi_failures_are_skipped_not_fatal(monkeypatch, capsys, status, expect):
+    """取不到 PyPI → 跳过、GitHub 照常，且**说清楚为什么**。
+
+    整段是「尽力而为」，因为有 14 天自愈窗口：漏掉的日期下次会补回来。
+    为一次限流就让 workflow 红、顺带丢掉 GitHub 那半边，代价不成比例。
+    """
+    def failing(url, token=None):
         if "pypistats" in url:
-            raise collector.CollectError("GET … 失败: HTTP 404", status=404)
+            raise collector.CollectError("上游拒绝", status=status)
         raise AssertionError("不该走到 GitHub")
 
-    monkeypatch.setattr(collector, "_get_json", not_found)
+    monkeypatch.setattr(collector, "_get_json", failing)
     assert collector.fetch_pypi() == {}
-    assert "PyPI 上还没有" in capsys.readouterr().err, "静默跳过 = 没人知道为什么没数据"
+    err = capsys.readouterr().err
+    assert expect in err, f"notice 没说清原因：{err!r}"
+    assert "自愈窗口" in err, "要让人知道漏掉的日期会自己补回来"
+
+
+def test_404_is_not_described_as_unpublished(monkeypatch, capsys):
+    """404 **不等于**「包还没发布」。
+
+    PyPIStats 从下载日志按天跑批，包已经在 PyPI 上了也照样 404。
+    把它写成「还没发布」的代价是：看到 notice 的人跑去查发布链路，
+    而发布链路好着呢——这是 2026-08-20 真实发生过的一次误导。
+    """
+    def not_found(url, token=None):
+        raise collector.CollectError("HTTP 404", status=404)
+
+    monkeypatch.setattr(collector, "_get_json", not_found)
+    collector.fetch_pypi()
+    err = capsys.readouterr().err
+    assert "还没有" in err and "统计数据" in err
+    for wrong in ("还没发布", "发布之前", "PyPI 上还没有 tavotto（"):
+        assert wrong not in err, f"这句会让人以为包没发出去：{err!r}"
 
 
 def test_missing_pypi_package_still_collects_github(capsys):
@@ -225,15 +255,18 @@ def test_missing_pypi_package_still_collects_github(capsys):
     assert collector.summarize(events)["pypi_note"]
 
 
-@pytest.mark.parametrize("status", [500, 429, 403, None])
-def test_real_pypi_failures_are_still_loud(monkeypatch, status):
-    """其余状态码照旧硬失败——那些是真故障，悄悄跳过会让看板静默缺一段。"""
+def test_github_failures_are_still_loud(monkeypatch):
+    """**GitHub 那段没有这个待遇。**
+
+    它是快照式的、没有自愈窗口，漏一天就是看板上一个真实的、再也补不回来的
+    缺口。所以那边任何失败都必须让 workflow 红。
+    """
     def boom(url, token=None):
-        raise collector.CollectError("上游炸了", status=status)
+        raise collector.CollectError("GitHub 挂了", status=503)
 
     monkeypatch.setattr(collector, "_get_json", boom)
     with pytest.raises(collector.CollectError):
-        collector.fetch_pypi()
+        collector.fetch_github(None)
 
 
 # ---------------------------------------------------------------------------
