@@ -40,6 +40,7 @@ import { Tip } from '../ui/Tooltip'
 import { ArrangeSection } from './ArrangeSection'
 import { CanvasPage } from './CanvasPage'
 import { ElementInspector } from './ElementInspector'
+import { identityCrumbs } from './identityCrumbs'
 import { PanelSection } from './PanelSection'
 import { ArrowSection, ShapeSection } from './StrokeSection'
 import { TextSection } from './TextSection'
@@ -276,15 +277,12 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
     // gid 形如 axes_1.images_0：中段就是宿主子图，拼出「面板 / 子图 / 元素」
     const axesGid = gid?.includes('.') ? gid.split('.')[0] : undefined
     const axes = axesGid ? manifest?.elements.find((e) => e.gid === axesGid) : undefined
-    const crumbs = [
+    const crumbs = identityCrumbs(
       panel.name ?? panel.fileId,
-      axes && axes.gid !== gid ? axes.label : null,
-      el
-        ? el.label
-        : selectedGids.length > 1
-          ? t('elementsSelected', { count: selectedGids.length })
-          : null,
-    ].filter(Boolean) as string[]
+      axes && axes.gid !== gid ? axes.label : undefined,
+      el?.label,
+      selectedGids.length,
+    )
     const hideable =
       el && el.gid !== 'figure' && el.editable.some((f) => f.prop === 'visible')
 

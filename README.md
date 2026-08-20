@@ -1,6 +1,6 @@
 <p align="center">
   <img src="https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/hero.svg" width="100%"
-       alt="Tavotto — arrange matplotlib panels on a page, edit the elements inside them, export a true-vector PDF">
+       alt="Tavotto — a visual editor for matplotlib and AI-generated scientific figures. Edit the figure, keep the code.">
 </p>
 
 <p align="center">
@@ -8,69 +8,206 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Tavotto/Tavotto/releases"><img alt="Release" src="https://img.shields.io/github/v/release/Tavotto/Tavotto?style=flat-square&color=2868b7&labelColor=1b1b18"></a>
+  <a href="https://github.com/Tavotto/Tavotto/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/Tavotto/Tavotto?style=flat-square&color=2868b7&labelColor=1b1b18"></a>
+  <a href="https://pypi.org/project/tavotto/"><img alt="PyPI" src="https://img.shields.io/pypi/v/tavotto?style=flat-square&color=2868b7&labelColor=1b1b18"></a>
   <a href="https://github.com/Tavotto/Tavotto/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Tavotto/Tavotto/ci.yml?branch=main&style=flat-square&labelColor=1b1b18"></a>
-  <a href="https://github.com/Tavotto/Tavotto/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0--only-2868b7?style=flat-square&labelColor=1b1b18"></a>
+  <a href="https://github.com/Tavotto/Tavotto/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0--only-1b1b18?style=flat-square&labelColor=1b1b18"></a>
   <img alt="Python" src="https://img.shields.io/badge/python-3.10%20–%203.13-1b1b18?style=flat-square&labelColor=1b1b18">
-  <img alt="Platform" src="https://img.shields.io/badge/macOS%20·%20Windows%20·%20Linux-1b1b18?style=flat-square&labelColor=1b1b18">
 </p>
 
-<p align="center"><i>Edit the figure. Keep the source.</i></p>
+<p align="center">
+  <a href="https://github.com/Tavotto/Tavotto/releases/latest"><b>Download</b></a> ·
+  <a href="#get-started">Get started</a> ·
+  <a href="#what-you-can-edit-inside-a-figure">What you can edit</a> ·
+  <a href="#export-for-publication">Publication checks</a>
+</p>
 
-The last mile before submission usually goes like this: the plots are done, but now
-they have to become Figure 1 — resize the fonts, move the legend, align everything.
-So you go back to Python, change a line, re-run the script, look again. Twenty times.
-Or you drag the PDFs into Illustrator and lose the connection to your code for good.
-
-**Tavotto lets you edit the figure directly.** Drop your matplotlib panels onto a page
-and arrange them freely. Double-click any panel and you can select the things inside
-it — title, axis labels, curves, legend — then change the font size, the colour, or
-just drag them. **Dragging and dialling are instant** — the figure follows your
-cursor frame by frame, and matplotlib runs once, when you let go, to make it official.
-
-Every change is **non-destructive**: your script is never modified, and anything can
-be undone. On export the engine re-renders each panel at full quality and composes a
-PDF whose text is still real, selectable vector text.
+Your plots are finished. Turning them into **Figure 1** is not. Tavotto™ opens the
+figures matplotlib already produced and lets you click the title, the legend, a
+curve — and change it, right there.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/workbench.png" width="100%"
-       alt="The Tavotto workbench: an element tree on the left listing the title and axis labels, three panels arranged as (a)(b)(c) on the page, and the properties of the selected title on the right">
+       alt="The Tavotto window: a tree of the elements inside the figure on the left, three panels arranged as (a)(b)(c) on a 150 × 112.5 mm page in the middle, and the properties of the selected title on the right — font, 9 pt, its text, and the source file fig1_kinetics.py.">
 </p>
 
-<p align="center"><sub>Left: elements inside the figure · Middle: a 150 × 130 mm page · Right: properties of the selected title — the source file is still <code>fig1_kinetics.py</code></sub></p>
+<p align="center"><sub>The title of panel (a) is selected. Its font and size are on the right — and so is the script that drew it, <code>fig1_kinetics.py</code>, still untouched.</sub></p>
 
-## Install
+## Stop re-running a script to move a legend
 
-**Download an installer** from the [latest release](https://github.com/Tavotto/Tavotto/releases/latest)
-— `.dmg` for macOS, `.exe` for Windows — install it, and double-click. Tavotto opens
-in its own desktop window, and updates itself from then on — it checks, downloads,
-installs and restarts without sending you back to this page.
+The last stretch before submission usually goes: change a line, re-run, look, change
+it again. Twenty times, for things you can see but not easily say — the legend three
+millimetres to the left, the tick labels one point smaller, panel (b) aligned to
+panel (a).
 
-**You do not need to install Python.** Both the macOS and the Windows installer ship a
-private Python runtime with the usual scientific stack already in it — numpy, matplotlib,
-pandas, scipy, seaborn and Pillow, at pinned versions, identical on both platforms so the
-same script draws the same figure. Rendering works the moment the installer finishes, with
-no download and no network, and without Homebrew, Conda or Xcode. Tavotto never touches a
-Python or Conda you already have; if a figure of yours needs a package that is not in that
-list, point Tavotto at your own environment under **Settings → Rendering environment**.
-See [Good to know](#good-to-know).
+The other way out is to drag the PDFs into Illustrator, finish them by hand, and
+accept that the figure and the code that made it have parted company.
 
-The macOS build is **Apple Silicon (arm64) only**. Intel Macs are not currently built or
-tested — use the PyPI install below.
+Tavotto is the third option. Open the figure, change what you can see, export. The
+script stays where it was, and every change can be undone.
 
-**Or install from PyPI**, which works the same on all three platforms:
+## Edit inside the figure
+
+Double-click a panel and Tavotto runs your script once, keeping the matplotlib
+`Figure` in memory. From then on you are editing that figure directly: pick the
+title, an axis label, a tick, a curve, the legend, an arrow your script drew — from
+the tree or by clicking it on the canvas — and change its size, colour, weight, dash
+pattern, or just drag it somewhere else.
+
+**Dragging and dialling are instant.** The figure follows the cursor frame by frame;
+matplotlib runs once, when you let go, to make the change official. Hit-testing
+follows the drawn geometry rather than bounding boxes, so clicking a curve selects
+the curve and not the empty rectangle around it.
+
+## Build the page
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/layout.png" width="100%"
+       alt="The same window in layout mode: the asset library on the left showing the three source PDFs with their physical sizes, the composed page in the middle with one panel selected, and its position, size in millimetres and scale on the right.">
+</p>
+
+Panels land on a page measured in millimetres, at the size their script drew them.
+Drag them, snap them to each other, align and distribute a selection, group what
+belongs together, or bind panels into a row, column or grid that reflows when a size
+changes. Panel labels (a)(b)(c) come from one command. Annotations — text, arrows,
+shapes, at any angle — sit on top, with presets for the usual research furniture:
+reversible-reaction arrows, scale bars, zoom boxes.
+
+## Your script is still the source
+
+Editing a figure never touches your `.py` file. Every change is stored as an override
+beside the document and replayed onto a fresh run of your script whenever the figure is
+opened again — which is also why undo, version history and re-rendering at export
+quality all work on the same footing. (The one exception is the optional assistant
+below, which you have to ask for by name.)
+
+If you *do* want a change baked into the figure file on disk, "write back to the
+original file" is an explicit action: it re-runs your script from scratch to prove the
+result matches what you were looking at, and it can be locked off per project.
+
+## Export for publication
+
+PDF export embeds each original vector panel as it was drawn, so **the text stays
+real, selectable, searchable text**. PNG is rasterised from that same PDF, so the two
+can never disagree. Two deliberate exceptions: a panel with opacity below 1, or with
+a flip applied, is embedded as a bitmap at your export DPI — PDF vector content
+supports neither.
+
+Before anything is written, Tavotto checks the figure against a publication profile
+and tells you what a reviewer would have told you three weeks later:
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/preflight.png" width="82%"
+       alt="The preflight list in the export dialog: two blocking findings about text below the profile's 8.5 pt and 8 pt floors, warnings about a frame line width and a legend font size, suggestions about bold legend text, axis-label format and lines drawn without markers, and one item marked not verifiable.">
+</p>
+
+Font sizes are judged at their **final physical size** — a panel placed at 60 % is
+checked against `fontsize × 0.6`, not against what the script asked for. Findings come
+in four levels: `error` blocks the export until you confirm in writing, `warn` is
+always shown, `not_verifiable` is what genuinely cannot be checked (text inside an
+imported bitmap) and needs a human, and `suggestion` never decides anything for you.
+All of it, your confirmation included, goes into an optional proof report written
+next to the exported files.
+
+## Finish figures an AI wrote
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/workflow.svg" width="100%"
+       alt="Workflow: a Python script — written by you, Claude or Codex — runs matplotlib, which produces a vector PDF; Tavotto handles visual editing, layout and the publication preflight; the result is a PDF or PNG. The script stays the source throughout.">
+</p>
+
+Coding agents write good first-pass matplotlib. What is left over is visual — the
+legend two lines too tall, the panel that wants to be a little smaller, the label
+overlapping a data point. Describing that in a prompt is slower than doing it.
+
+Hand a figure over with one command, from a terminal or from an agent:
+
+```sh
+tavotto open figures/Fig1_kinetics.pdf   # the output file
+tavotto open figures/fig1_kinetics.py    # or the script — the output name is resolved for you
+tavotto open figures/                    # or the whole figure library
+```
+
+It opens that figure's library as a project, registers anything missing, and hands the
+figure to the desktop app — into the window that is already open, if there is one.
+Without the desktop app it falls back to browser mode.
+
+**Codex users** can install the plugin, which teaches Codex the shape a
+Tavotto-editable figure has to have (script beside its output, vector PDF, an output
+name that resolves statically) and puts the editor inside Codex itself:
+
+```sh
+codex plugin marketplace add Tavotto/Tavotto && codex plugin add tavotto@tavotto
+```
+
+It ships a skill, a local MCP server with six tools — open a figure, apply overrides,
+run the preflight, export true-vector PDF/SVG or PNG at an explicit DPI, verify a
+replay, close a session, all usable in hosts with no interface at all — and an
+embedded canvas built from the *same* frontend code the desktop app runs, so dragging,
+snapping and undo have no second implementation. See
+[`codex-plugin/README.md`](codex-plugin/README.md), including which parts are **not
+yet verified inside a real Codex Desktop**.
+
+## Everything runs on your machine
+
+Rendering, composition and export are local processes. Tavotto does not upload your
+figures, scripts, project files or data anywhere, and unpublished results do not leave
+the building. The only request it makes on its own is a once-a-day check of GitHub
+Releases for a new version — turn it off under **Settings → Check for updates** (or set
+`TAVOTTO_NO_UPDATE_CHECK=1`) and there is none at all. Details in the
+[privacy policy](docs/privacy.md).
+
+## Get started
+
+### Desktop
+
+Download from the [latest release](https://github.com/Tavotto/Tavotto/releases/latest):
+a `.dmg` for macOS (Apple Silicon) or an `.exe` for Windows. Install it, double-click,
+done — Tavotto opens in its own window and updates itself from then on.
+
+**You do not need to install Python.** Both installers carry a private Python runtime
+with the usual scientific stack already in it — numpy, matplotlib, pandas, scipy,
+seaborn, Pillow — pinned to the same versions on both platforms, so the same script
+draws the same figure. Rendering works the moment the installer finishes: offline,
+without Homebrew, Conda or Xcode, and without touching a Python you already have.
+
+That runtime is also why the installers are large: **195 MB to download on macOS,
+89 MB on Windows, around half a gigabyte once installed.** Paid once, and offline.
+
+> macOS builds are **Apple Silicon (arm64) only**. Intel Macs are neither built nor
+> tested — use the PyPI install below. There is no Linux installer; Linux runs from
+> PyPI.
+
+### PyPI
+
+Same command on all three platforms:
 
 ```sh
 pipx install "tavotto[worker]"
 tavotto
 ```
 
-Your browser opens at `http://127.0.0.1:5089`.
+Your browser opens at `http://127.0.0.1:5089`. `--figures <dir>` opens a figure
+directory straight away, `--port` changes the port, `--no-browser` skips opening a
+browser.
+
+### Try it in 30 seconds
+
+```sh
+pipx install "tavotto[worker]"
+git clone --depth 1 https://github.com/Tavotto/Tavotto.git
+tavotto --figures Tavotto/examples/figures
+```
+
+Three panels appear in the asset library. Drag one onto the page, double-click it,
+click the title in the element tree, change 9 pt to 11, export. `examples/figures/`
+holds two perfectly ordinary matplotlib scripts — Tavotto does not ask you to write
+them in any particular way.
 
 <details>
-<summary>Using pip · reusing your own scientific environment · running from source</summary>
+<summary><b>Advanced installation and Python environments</b></summary>
 
-**pip** (installs into the current environment):
+**pip**, into the current environment:
 
 ```sh
 pip install "tavotto[worker]"
@@ -83,7 +220,7 @@ dependencies they were written for:
 
 ```sh
 pipx install tavotto
-export TAVOTTO_WORKER_PYTHON=/path/to/your/env/bin/python     # Windows: setx TAVOTTO_WORKER_PYTHON "..."
+export TAVOTTO_WORKER_PYTHON=/path/to/your/env/bin/python   # Windows: setx TAVOTTO_WORKER_PYTHON "..."
 tavotto
 ```
 
@@ -96,231 +233,139 @@ python scripts/build_frontend.py
 .venv/bin/tavotto
 ```
 
+**Which interpreter renders your figures.** Tavotto picks in this order:
+`TAVOTTO_WORKER_PYTHON` → the one you chose in Settings → the bundled runtime → its
+own interpreter → a Python or Conda it finds on the machine. **Whatever you choose
+explicitly always wins**, and Tavotto only *launches* the environment you point it at:
+it never installs anything into it and never modifies an existing Python or Conda. The
+bundled runtime is likewise never written to — bytecode and the matplotlib font cache
+go to Tavotto's own data folder, so the installed app stays byte-identical (on macOS,
+writing into it would break the code signature).
+
+The bundled runtime covers the common scientific stack. It is **not** a promise to
+cover whatever your scripts import. If a script needs something it does not have
+(rdkit, astropy, your lab's own library) Tavotto names the missing package and offers
+to switch to your environment under **Settings → Rendering environment**; it will not
+install that package for you, into its runtime or into yours. With no working
+interpreter at all, layout, annotation and export still work — only editing inside a
+figure needs one.
+
+**Settings → Privacy, diagnostics and About** shows which interpreter is in use, where
+it came from (`bundled`, `configured`, `system`, …) and, for the bundled runtime, the
+exact pinned version of every package. The same information is in the diagnostics
+bundle.
+
+**The first open of a figure runs your script.** Light figures take a second; heavy
+ones take as long as they normally do. Every edit after that is sub-second.
+
 </details>
 
-**Options**: `tavotto --figures <dir>` opens a figure directory straight away;
-`--port 5089` changes the port; `--no-browser` skips opening a browser.
+## Where Tavotto fits
 
-## Try it
+|  | matplotlib alone | A vector editor | Tavotto |
+|---|---|---|---|
+| Draws the plot | ✓ | — | Uses the plots you already have |
+| Direct visual editing | Limited | ✓ | ✓ |
+| Knows what it is editing | Objects in your code | Generic paths and glyphs | Title, legend, ticks, series, colourbar |
+| Multi-panel page in millimetres | By hand in code | ✓ | ✓ |
+| Vector text in the exported PDF | ✓ | ✓ | ✓ |
+| Edits stay attached to the script | ✓ | Separate file from here on | ✓ |
+| Journal rules checked before export | — | — | ✓ |
 
-A ready-to-open example project ships with the repository:
-
-```sh
-tavotto --figures examples/figures
-```
-
-Three panels appear in the asset browser. Drag them onto the page, then double-click
-one — you get a tree of everything inside that figure, and clicking the title lets you
-change its size. `examples/figures/` holds two perfectly ordinary matplotlib scripts;
-Tavotto does not ask you to write them in any special way.
+A vector editor is the more powerful drawing tool, and always will be. It just does
+not know that the thing you clicked is a legend.
 
 ## What you can edit inside a figure
 
 | | |
 |---|---|
-| **Text** | Title, axis labels, tick labels, legend, annotations — content, size, colour, weight, style, rotation, opacity, visibility. Draggable. |
+| **Text** | Title, axis labels, tick labels, legend entries, annotations — content, size, colour, weight, style, rotation, opacity, visibility. Draggable. |
 | **Data series** | Line width, dash pattern, colour, markers (scatter markers can be swapped wholesale), legend entry order |
-| **Arrows** | Arrows your script draws (`FancyArrowPatch`): drag the whole arrow or either endpoint, and change arrow style, line style, width, head size and colour. Arrows attached to `annotate()` keep their data anchors — style only. |
-| **Axes** | Tick groups, axis lines, grid, 3D viewing angle (elev/azim/roll), 3D axis arrows and panes. Drag a subplot and what belongs to it travels along — a label you had moved, its colourbar, a twin axis. |
-| **Figure** | Overall figure size (the layout reflows), background |
-| **Not editable** | Data-space properties such as axis limits, scales and spines, and colourbar orientation. Change those in your script. |
+| **Arrows** | Arrows your script drew (`FancyArrowPatch`): drag the whole arrow or either endpoint, change arrow style, line style, width, head size, colour. Arrows attached to `annotate()` keep their data anchors — style only. |
+| **Axes** | Tick locators and formatters (how many ticks, where, written how), tick marks, grid, spines individually or all four, limits, scales, aspect. Drag a subplot and what belongs to it travels along — a label you had moved, its colourbar, a twin axis. |
+| **Colourbars** | Orientation, both-ended extend triangles, colour map, range, tick and label styling — rebuilt in place, so undo, write-back and re-export stay consistent |
+| **3D axes** | Viewing angle (elev / azim / roll), projection, axis lines, panes, grid, per-axis tick groups, optional axis arrows |
+| **Figure** | Overall size in millimetres (the layout reflows), background |
 
-Around the page there is a full layout toolset: snapping and alignment guides, multi-select
-distribute, grouping, layout groups (row / column / grid constraints that reflow when sizes
-change), text / arrow / shape annotations at any rotation, presets for research figures
-(reversible-reaction arrows, scale bars, error markers, zoom boxes), multiple canvases in
-tabs, a version timeline, and named styles you can apply across a whole document.
-
-## Export
-
-PDF export embeds each original vector panel as-is, so **the text stays selectable and
-searchable**. PNG is rendered from that same PDF, so the two can never disagree. Before
-exporting, Tavotto checks for panels off the page, overlaps, tiny fonts, low effective
-DPI, stale renders and missing assets, and can write a proof report alongside the figure
-for your submission records.
-
-Two deliberate exceptions: a panel with `opacity < 1` or a flip applied is embedded as a
-bitmap at your export DPI, because PDF vector content supports neither.
-
-## Code signing policy
-
-Free code signing provided by SignPath.io, certificate by SignPath Foundation.
-Windows release installers are built from this repository by GitHub Actions and
-are submitted for manual signing before they are described as signed releases.
-See the complete [Code signing policy](docs/code-signing-policy.md) and
-[Privacy policy](docs/privacy.md).
-
-## AI assistant (optional)
-
-The assistant panel can hand a request to the **Codex or Claude CLI** on your machine to
-edit the script itself — for example "move the legend to the top left and make it 7 pt".
-Your script is snapshotted first; afterwards you see the diff and the figure re-renders,
-and one click reverts it. Everything else works without these tools installed.
-
-## Sending a figure in from elsewhere
-
-Just made a figure somewhere else — ran a script yourself, or had Codex / Claude write one?
-One command hands it over:
-
-```bash
-tavotto open figures/Fig1_kinetics.pdf   # the output file
-tavotto open figures/fig1_kinetics.py    # or the script — output name is resolved for you
-tavotto open figures/                    # or the whole figure library
-```
-
-It opens the figure's library as a project, adds any missing entries to the script registry,
-then launches the **desktop app** (if it's already running the figure goes straight into that
-window — no second copy). Without the desktop app it falls back to browser mode.
-
-### Codex plugin
-
-Install it and the matplotlib figures Codex writes come out in a shape Tavotto can take over
-(script next to its output, vector PDF, statically resolvable output name) — **and you can
-finish them without leaving Codex**:
-
-```bash
-codex plugin marketplace add Tavotto/Tavotto && codex plugin add tavotto@tavotto
-```
-
-Start a new session afterwards. The CLI and the Codex desktop app share one plugin directory,
-so **installing once covers both**; `codex plugin marketplace upgrade tavotto` pulls updates.
-
-The plugin ships three layers with clear boundaries:
-
-* a **skill** that teaches Codex the conventions a Tavotto-editable figure has to satisfy;
-* a local **MCP server** exposing the engine — open a figure, apply canonical overrides,
-  run a publication preflight, export true-vector PDF/SVG or PNG at an explicit DPI.
-  All six tools work in hosts with no UI at all;
-* an **MCP App canvas** rendered inside Codex, built from the *same* frontend code the
-  desktop app uses — dragging, hit-testing, snapping and undo have no second implementation.
-
-Every edit is an override; **your Python source is never rewritten**. Multi-panel layout,
-canvas annotations and write-back still live in the Tavotto window, one `tavotto open` away.
-
-See [`codex-plugin/README.md`](codex-plugin/README.md) — including which parts are *not yet
-verified inside a real Codex Desktop*. Design notes are in
-[ADR 0006](docs/adr/0006-codex-mcp-app-and-publication-profile.md); the distribution roadmap
-(including the official directory submission checklist) is in
-[`docs/codex-plugin-distribution.md`](docs/codex-plugin-distribution.md).
+What Tavotto does *not* do is invent plot content. It changes the properties of things
+your script already drew; new curves, new panels and different data still come from
+the script — which is the point.
 
 ## Publication profile and preflight
 
-Export runs a **profile-driven preflight** first. The rules live in one versioned JSON file
-(`src/tavotto/profiles/publication.json`) that both the Python engine and the TypeScript
-frontend read — so there is no second copy to drift.
+The rules live in one versioned JSON file
+([`src/tavotto/profiles/publication.json`](src/tavotto/profiles/publication.json))
+that both the Python engine and the TypeScript frontend read, so there is no second
+copy to drift.
 
-The default `lab-publication-v1` encodes: 80 mm single / 150 mm double column, 16:9 · 4:3 · 1:1
-aspect ratios, 9 pt body text with a hard floor of **more than 8 pt of final effective size**
-(8.5 pt strict), ≥ 300 dpi rasters, Times New Roman plus an explicit CJK fallback, 0.5 / 0.75 /
-1.0 / 1.5 pt line widths, ticks in, enclosed spines, frameless legends, `Title (unit)` axis
-labels, and Scientific colour maps by semantic type.
+The default `lab-publication-v1` encodes 80 mm single / 150 mm double column; 16:9,
+4:3 and 1:1 aspect ratios; 9 pt body text with a hard floor above 8 pt of final
+effective size (8.5 pt strict); ≥ 300 dpi rasters; Times New Roman with an explicit
+CJK fallback; 0.5 / 0.75 / 1.0 / 1.5 pt line widths; ticks in, enclosed spines,
+frameless legends; `Title (unit)` axis labels; and Scientific colour maps by semantic
+type.
 
-Font sizes are checked at their **final physical size** — a panel scaled to 60 % is judged on
-`fontsize × 0.6`, not on what the script asked for. Findings come in four levels: `error`
-blocks export until you explicitly confirm, `warn` is always shown, `not_verifiable` is what
-we honestly cannot check (text inside an external bitmap) and needs a human, and `suggestion`
-never decides anything for you. Everything, including the confirmation, is written into the
-proof report next to the exported files.
+A journal with its own widths needs an override, not a fork:
+`{"widths_mm": {"double": 178}}` inherits the rest, and the override is recorded in
+the proof report.
 
-Journals with their own widths need an override, not a fork:
-`{"widths_mm": {"double": 178}}` — the rest is inherited, and the override is recorded in the
-proof report.
+## Assistant (optional)
 
-## Where your data lives
+The assistant panel can hand a request to the **Codex or Claude CLI** on your machine
+to edit the script itself — "move the legend to the top left and make it 7 pt". Your
+script is snapshotted first; afterwards you see the diff, the figure re-renders, and
+one click reverts it. This is the one path that touches your source, and you have to
+ask for it. Everything else works without those tools installed.
 
-On your machine. Rendering, composition and export are all local processes; nothing about
-your figures or data is uploaded.
+## Where your files live
+
+<details>
+<summary>Data directories and what goes in them</summary>
 
 | | |
 |---|---|
-| Documents and autosaves | `~/Library/Application Support/Tavotto/` (Linux `~/.local/share/tavotto/`, Windows `%LOCALAPPDATA%\Tavotto\`) |
-| Exports, canvas files and version history | Inside your project, in one `tavottofile/` folder: exports in `tavottofile/export/`, named canvases alongside them, version history in `tavottofile/versions/`. Visible, backupable, and synced with your figures. Files written by older versions stay readable where they were. |
-| Your scripts and figures | Read-only, unless you explicitly choose "write back to original file" — which can be locked off per project |
-| The only outbound request | A once-a-day check for a new release — plus the download itself, if you accept an update in the desktop app. Both stop when you turn the check off in Settings → Check for updates. |
+| Documents and autosaves | macOS `~/Library/Application Support/Tavotto/` · Linux `~/.local/share/tavotto/` · Windows `%LOCALAPPDATA%\Tavotto\` |
+| Exports, canvas files and version history | Inside your project, in one `tavottofile/` folder: exports in `tavottofile/export/`, named canvases beside them, version history in `tavottofile/versions/`. Visible, backupable, and synced along with your figures. Files written by older versions stay readable where they are. |
+| Your scripts and figures | Read-only, unless you explicitly choose "write back to the original file" — which can be locked off per project |
 
-## Good to know
+</details>
 
-- **The first open of a figure runs your script.** Light figures take a second; heavy
-  ones take as long as they normally do. Every edit after that is sub-second.
-- **Rendering needs a Python that can import what your scripts import.** Where that
-  Python comes from depends on how you installed Tavotto:
+## Security and code signing
 
-  | Install | Interpreter used for rendering |
-  |---|---|
-  | Windows `.exe` | The **bundled runtime** that ships inside the installer — CPython 3.13 with numpy, matplotlib, pandas, scipy, seaborn and Pillow at pinned versions. Nothing to install, nothing to download. |
-  | macOS `.dmg` (arm64) | The same **bundled runtime**, same pinned versions. No Homebrew, Conda or Xcode needed. |
-  | PyPI with the `[worker]` extra | The environment you installed it into. |
+Free code signing provided by SignPath.io, certificate by SignPath Foundation. Windows
+release installers are built from this repository by GitHub Actions and are submitted
+for manual signing before they are described as signed releases. See the
+[code signing policy](docs/code-signing-policy.md).
 
-  Tavotto picks in this order: `TAVOTTO_WORKER_PYTHON` → the interpreter you chose in
-  Settings → the bundled runtime → its own interpreter → a Python/Conda it finds on the
-  machine. **Whatever you choose explicitly always wins**, and Tavotto only *launches*
-  the environment you point it at — it never installs anything into it, and never
-  modifies an existing Python or Conda. The bundled runtime is likewise never written
-  to: bytecode and the Matplotlib font cache go to Tavotto's own data folder, so the
-  installed app stays byte-identical (on macOS, writing into it would break the code
-  signature).
+Report security issues through
+[private reporting](https://github.com/Tavotto/Tavotto/security/advisories/new), not a
+public issue.
 
-  The bundled runtime covers the common scientific stack — **it is not a promise to
-  cover whatever your scripts import**. If a script needs a package it does not have
-  (rdkit, astropy, your lab's own library), Tavotto says which package is missing and
-  offers to switch to your own environment under **Settings → Rendering environment**;
-  it will not install that package for you, into its own runtime or into yours.
-  Without any working interpreter, layout, annotation and export still work — only
-  in-figure editing needs one.
+## Contributing
 
-  **Settings → Privacy, diagnostics and About** shows which interpreter is in use, where
-  it came from (`bundled`, `configured`, `system`, …), and — for the bundled runtime —
-  its Python version and the exact pinned version of every package, read from the
-  `runtime-manifest.json` that ships beside it. The same information is in the
-  diagnostics bundle.
-
-- **Desktop installers are large: ~180 MB to download, ~490 MB installed** (measured
-  on macOS arm64; v0.7.0, without the bundled runtime, was 62 MB / 131 MB). The
-  difference is the runtime: CPython plus numpy/scipy/pandas/matplotlib and their
-  compiled extensions. It is the price of "install and render", paid once, offline.
-  The PyPI install stays a few MB because it reuses the Python you already have.
-
-## Development
+Issues and pull requests are welcome — [CONTRIBUTING.md](CONTRIBUTING.md) covers how to
+verify a change and which boundaries the codebase keeps deliberately. When reporting a
+bug, **Settings → Privacy, diagnostics and About → Download diagnostics bundle**
+collects everything usually needed, with keys and personal paths redacted.
 
 ```sh
 .venv/bin/python -m pytest        # backend
 cd web && pnpm test               # frontend
 cd web && pnpm build              # type-check (tsc -b) + bundle
-
-# Desktop builds (macOS and Windows): build the bundled rendering runtime first.
-# Versions are pinned per platform/arch in packaging/runtime-lock.json; the script
-# verifies the CPython download's SHA-256, checks every installed version against
-# the lock, then imports each package with the freshly built interpreter and draws
-# a real PDF. Any step failing fails the build.
-python scripts/build_worker_runtime.py              # picks the target for this host
-python scripts/build_worker_runtime.py --list-targets
-python scripts/build_desktop.py                     # full desktop chain (includes it)
 ```
-
-Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for
-how to verify a change and which boundaries the codebase keeps deliberately. When
-reporting a bug, **Settings → Privacy, diagnostics and About → Download diagnostics
-bundle** collects everything usually needed, with keys and personal paths redacted.
-Security issues go through
-[private reporting](https://github.com/Tavotto/Tavotto/security/advisories/new),
-not a public issue.
 
 ## License
 
-[AGPL-3.0-only](https://github.com/Tavotto/Tavotto/blob/main/LICENSE).
+[AGPL-3.0-only](LICENSE).
 
-Using Tavotto, modifying it, and running it inside your lab are all unrestricted, and
+Using Tavotto, modifying it and running it inside your lab are all unrestricted, and
 **the figures and PDFs you produce with it are entirely yours** — the licence does not
 reach your work. The obligations apply to distribution: if you give a modified Tavotto
-to others or run it as a network service for them, the corresponding source has to be
+to others, or run it as a network service for them, the corresponding source has to be
 available to those users.
 
-## Star history
+Tavotto™ is a trademark of the Tavotto project.
 
-<a href="https://www.star-history.com/?repos=Tavotto%2FTavotto&type=date&legend=bottom-right">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=Tavotto/Tavotto&type=date&theme=dark&legend=bottom-right&sealed_token=N_HkVy3WXmZ-L-LdXjq8yjVIGq3O6NWzfAI0NxRWdgJomReAYwu9qlvk78IdfeG8loxZTvRLP_VjiVIrO3ZIrfe8yEzeeklvUfkoRjpWy1Zm5SazecpETgwnZyseVroitCM5lhCLnTU7dorXRnk3FnU34Auy9YsfWrfmlPEb0IP0Sjwaz_7q47jCFt4C" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=Tavotto/Tavotto&type=date&legend=bottom-right&sealed_token=N_HkVy3WXmZ-L-LdXjq8yjVIGq3O6NWzfAI0NxRWdgJomReAYwu9qlvk78IdfeG8loxZTvRLP_VjiVIrO3ZIrfe8yEzeeklvUfkoRjpWy1Zm5SazecpETgwnZyseVroitCM5lhCLnTU7dorXRnk3FnU34Auy9YsfWrfmlPEb0IP0Sjwaz_7q47jCFt4C" />
-    <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=Tavotto/Tavotto&type=date&legend=bottom-right&sealed_token=N_HkVy3WXmZ-L-LdXjq8yjVIGq3O6NWzfAI0NxRWdgJomReAYwu9qlvk78IdfeG8loxZTvRLP_VjiVIrO3ZIrfe8yEzeeklvUfkoRjpWy1Zm5SazecpETgwnZyseVroitCM5lhCLnTU7dorXRnk3FnU34Auy9YsfWrfmlPEb0IP0Sjwaz_7q47jCFt4C" />
-  </picture>
-</a>
+---
+
+If Tavotto saves you an afternoon on your next figure, consider starring the repository.
