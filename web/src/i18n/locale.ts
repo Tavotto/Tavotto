@@ -1,8 +1,14 @@
 /**
  * 语言标签的规范化与持久化。
  *
- * 只有两档界面语言：简体中文与英文。**默认永远是 zh-CN**——老用户升级上来
- * 不该被系统语言悄悄换掉界面。优先级：用户手动选择 > 系统语言 > zh-CN。
+ * 只有两档界面语言：简体中文与英文。优先级：用户手动选择 > 系统语言 >
+ * （系统语言是我们不支持的第三门语言时）en-US > （连系统语言都探测不到时）
+ * zh-CN。最后那档兜底几乎只在无头/测试环境出现——真实浏览器都会报
+ * navigator.language。
+ *
+ * 「非中文系统一律回落英文」是 1.0 审计 P1-02 的硬要求：日语/法语/德语系统
+ * 的用户第一屏不该是简体中文——对他们来说英文才是「离得最近的」界面；
+ * 中文用户（zh-*）照旧全部归 zh-CN。
  *
  * 语言偏好存在独立的 `tavotto.locale` 里，**不进 .tavotto 文档、不进项目数据**：
  * 它是这台机器上这个人的偏好，跟着文档走会让同一份排版在别人机器上换语言。
@@ -75,19 +81,27 @@ export function urlLocale(): Locale | null {
   }
 }
 
-/** 系统语言（浏览器/桌面壳都走 navigator）。 */
+/**
+ * 系统语言（浏览器/桌面壳都走 navigator）。
+ *
+ * 系统语言**存在但两档都对不上**（ja/fr/de/…）时返回 en-US：那是一个真实的
+ * 「用户不是中文使用者」信号，回 null 会让 detectLocale 落到 zh-CN 兜底，
+ * 国际用户第一屏直接是简体中文（1.0 审计 P1-02）。只有连 navigator 都
+ * 没有（无头/测试环境）才返回 null。
+ */
 export function systemLocale(): Locale | null {
   if (typeof navigator === 'undefined') return null
-  const tags = navigator.languages?.length ? navigator.languages : [navigator.language]
+  const tags = (navigator.languages?.length ? navigator.languages : [navigator.language])
+    .filter(Boolean)
   for (const tag of tags) {
     const hit = normalizeLocale(tag)
     if (hit) return hit
   }
-  return null
+  return tags.length ? 'en-US' : null
 }
 
 /**
- * 用户手动选择 > 系统语言 > zh-CN。
+ * 用户手动选择 > 系统语言 >（非中文系统）en-US > zh-CN。
  *
  * 「手动选择」有两个来源：本 origin 的 localStorage（浏览器模式、以及桌面
  * 本次会话内），和桌面壳经 `?lang=` 带过来的那份（跨重启唯一活得下来的，

@@ -508,13 +508,13 @@ def scan_panels() -> list[dict]:
 # 也不该知道用户选了哪门语言——它没有 Accept-Language 之外的线索，而语言偏好
 # 存在浏览器/桌面壳这一侧。
 #
-# 于是约定：用户会看到的失败一律带 **稳定的 `code` + `params`**，前端按 code
-# 查自己的文案、把 params 插进去；`error` 字段保留人可读的中文原文，作为
-# ① 老前端与 curl 调试的回退，② 前端没有对应文案时的兜底。**code 一旦发布就
-# 不能改名**——改了等于让所有装着旧前端的用户看到一句英文 key。
-#
-# 只在请求本身畸形时才出现的校验错误（"patches 必须是数组"这类）不给 code：
-# 用户点不出来，给了也没人翻。traceback / 日志同理，那是诊断材料，不翻译。
+# 于是约定：**每一个** `{"error": ...}` 响应都带稳定的 `code`（多数还带
+# `params`），前端按 code 查自己的文案、把 params 插进去；`error` 字段保留
+# 人可读的中文原文，作为 ① 老前端与 curl 调试的回退，② 前端没有对应文案时
+# 的兜底。**code 一旦发布就不能改名**——改了等于让所有装着旧前端的用户看到
+# 一句英文 key。「请求畸形类」的校验错误也要 code（2026-08-21 起，审计
+# P1-02）：tests/test_error_codes.py 逐行扫本文件，没有 code 的 error 响应
+# 直接红——诊断材料（traceback / 日志原文）照旧原样附带，不翻译。
 # ---------------------------------------------------------------------------
 @app.errorhandler(NoProjectError)
 def _no_project(_exc):
@@ -553,7 +553,9 @@ def _unhandled(exc):
     if isinstance(exc, HTTPException):
         return exc
     LOG.exception("未处理异常: %s %s", request.method, request.path)
-    return jsonify({"error": f"{type(exc).__name__}: {exc}"}), 500
+    return jsonify({"error": f"{type(exc).__name__}: {exc}",
+                    "code": "internal_error",
+                    "params": {"reason": f"{type(exc).__name__}: {exc}"}}), 500
 
 
 @app.get("/")
@@ -718,6 +720,9 @@ def api_export():
             kind = o.get("type")
             LOG.error("导出失败: %s 重渲染出错: %s", o.get("id", kind), exc)
             return jsonify({"error": f"{o.get('id', kind)} 重渲染失败: {exc}",
+                            "code": "export_render_failed",
+                            "params": {"id": str(o.get('id', kind)),
+                                       "reason": str(exc)},
                             "traceback": exc.traceback_text}), 500
 
     out_dir = project_export_dir()
@@ -797,7 +802,8 @@ def api_package():
     body = request.get_json(force=True)
     doc = body.get("doc")
     if not isinstance(doc, dict) or doc.get("schema") not in (2, 3):
-        return jsonify({"error": "无效的布局文档"}), 400
+        return jsonify({"error": "无效的布局文档",
+                        "code": "invalid_document"}), 400
     default_stem = (doc.get("project") or {}).get("name") if doc.get("schema") == 3 \
         else doc.get("name")
     stem = re.sub(r"[^\w\-一-鿿]+", "_", body.get("stem") or default_stem or "package")
@@ -860,7 +866,8 @@ def api_package_open():
     只读不写——素材永远不会被自动安装进图库。"""
     file = request.files.get("package")
     if file is None:
-        return jsonify({"error": "缺少上传文件（multipart 字段 package）"}), 400
+        return jsonify({"error": "缺少上传文件（multipart 字段 package）",
+                        "code": "package_file_missing"}), 400
     import io
     import zipfile  # noqa: PLC0415
     try:
@@ -868,9 +875,12 @@ def api_package_open():
         doc = json.loads(z.read("layout.json"))
         manifest = json.loads(z.read("package_manifest.json"))
     except (KeyError, ValueError, zipfile.BadZipFile) as exc:
-        return jsonify({"error": f"不是有效的项目包: {exc}"}), 400
+        return jsonify({"error": f"不是有效的项目包: {exc}",
+                        "code": "package_invalid",
+                        "params": {"reason": str(exc)}}), 400
     if doc.get("schema") not in (2, 3):
-        return jsonify({"error": "项目包里的布局既不是 schema 2 也不是 schema 3"}), 400
+        return jsonify({"error": "项目包里的布局既不是 schema 2 也不是 schema 3",
+                        "code": "package_schema_unsupported"}), 400
 
     root = require_project()
     missing, drifted = [], []
@@ -1377,7 +1387,9 @@ def api_registry():
     try:
         rep = engine_discover.discover(ctx.path)
     except OSError as exc:
-        return jsonify({"error": f"扫描失败: {exc}"}), 400
+        return jsonify({"error": f"扫描失败: {exc}",
+                        "code": "scan_failed",
+                        "params": {"reason": str(exc)}}), 400
     registered_stems = {s for c in reg.values() for s in c["stems"]}
     candidates = []
     for script, info in sorted(rep["scripts"].items()):
@@ -1402,7 +1414,9 @@ def api_registry_scan():
         cfg, rep, changes = engine_discover.merge(ctx.path)
         engine_discover.write_config(ctx.path, cfg)
     except (OSError, ValueError, RuntimeError) as exc:
-        return jsonify({"error": f"扫描失败: {exc}"}), 400
+        return jsonify({"error": f"扫描失败: {exc}",
+                        "code": "scan_failed",
+                        "params": {"reason": str(exc)}}), 400
     reload_registry(ctx)
     return jsonify({"changes": changes, "conflicts": rep["conflicts"],
                     "scripts": ctx.registry.entries()})
@@ -1423,7 +1437,8 @@ def api_registry_probe():
     # 只允许跑图库目录内的 .py：这个端点会真的执行代码，越权必须挡死
     if (not script or target.suffix != ".py" or not target.is_file()
             or not target.is_relative_to(ctx.path.resolve())):
-        return jsonify({"error": "脚本不存在或不在项目目录内"}), 404
+        return jsonify({"error": "脚本不存在或不在项目目录内",
+                        "code": "script_not_in_project"}), 404
     result = engine_probe.probe_and_register(
         ctx.path, script, cost=str(body.get("cost") or "medium"))
     if result.get("registered"):
@@ -1440,10 +1455,12 @@ def api_registry_write():
     body = request.get_json(force=True)
     script = str(body.get("script") or "").strip()
     if not script:
-        return jsonify({"error": "缺少脚本名"}), 400
+        return jsonify({"error": "缺少脚本名", "code": "script_name_missing"}), 400
     entry = str(body.get("entry") or "main")
     if not engine_registry.valid_entry(entry):
-        return jsonify({"error": f"entry 非法: {entry}"}), 400
+        return jsonify({"error": f"entry 非法: {entry}",
+                        "code": "invalid_entry",
+                        "params": {"entry": entry}}), 400
     stems = [str(s).strip() for s in (body.get("stems") or []) if str(s).strip()]
     try:
         engine_discover.register(ctx.path, script, stems, entry=entry,
@@ -1451,7 +1468,9 @@ def api_registry_write():
                                  notes=str(body.get("notes") or ""))
         reload_registry(ctx)
     except (OSError, RuntimeError) as exc:
-        return jsonify({"error": str(exc)}), 400
+        return jsonify({"error": str(exc),
+                        "code": "registry_update_failed",
+                        "params": {"reason": str(exc)}}), 400
     sse_publish("registry.changed", {"pj": ctx.id, "script": script, "stems": stems})
     return jsonify({"scripts": ctx.registry.entries()})
 
@@ -1470,7 +1489,10 @@ def api_project_settings():
                 try:
                     d.mkdir(parents=True, exist_ok=True)
                 except OSError as exc:
-                    return jsonify({"error": f"{key} 不可用: {exc}"}), 400
+                    return jsonify({"error": f"{key} 不可用: {exc}",
+                                    "code": "settings_dir_unusable",
+                                    "params": {"key": key,
+                                               "reason": str(exc)}}), 400
                 patch[key] = str(d)
             else:
                 patch[key] = None
@@ -1520,9 +1542,13 @@ def api_engine_render():
         # `is not None` 而不是真值判断：显式发了 0 是写错了，不是「没给」
         preview_dpi = int(raw_dpi) if raw_dpi is not None else None
     except (TypeError, ValueError):
-        return jsonify({"error": f"preview_dpi 必须是整数: {raw_dpi!r}"}), 400
+        return jsonify({"error": f"preview_dpi 必须是整数: {raw_dpi!r}",
+                        "code": "invalid_preview_dpi",
+                        "params": {"value": repr(raw_dpi)}}), 400
     if preview_dpi is not None and preview_dpi <= 0:
-        return jsonify({"error": f"preview_dpi 必须为正: {preview_dpi}"}), 400
+        return jsonify({"error": f"preview_dpi 必须为正: {preview_dpi}",
+                        "code": "invalid_preview_dpi",
+                        "params": {"value": str(preview_dpi)}}), 400
     t0 = time.time()
     t_get = time.perf_counter()
     worker, stem = _engine_worker(rel_id)
@@ -1582,11 +1608,13 @@ def api_engine_preview_png():
     worker, stem = _engine_worker(body.get("id", ""))
     patches = body.get("patches", [])
     if not isinstance(patches, list):
-        return jsonify({"error": "patches 必须是数组"}), 400
+        return jsonify({"error": "patches 必须是数组", "code": "invalid_patches"}), 400
     try:
         want_w = int(body.get("w", 800))
     except (TypeError, ValueError):
-        return jsonify({"error": f"w 必须是整数: {body.get('w')!r}"}), 400
+        return jsonify({"error": f"w 必须是整数: {body.get('w')!r}",
+                        "code": "invalid_width",
+                        "params": {"value": repr(body.get('w'))}}), 400
     w = next((b for b in RENDER_BUCKETS if b >= want_w), RENDER_BUCKETS[-1])
     tag = "v" + engine_patchspec.patch_hash(patches).split(":")[-1][:12]
     try:
@@ -1642,7 +1670,8 @@ def api_engine_update_source():
                         "code": "annotations_need_pdf"}), 400
     info = current_registry().for_stem(src.stem)
     if info is None:
-        return jsonify({"error": "该面板不可参数化（没有对应脚本）"}), 404
+        return jsonify({"error": "该面板不可参数化（没有对应脚本）",
+                        "code": "not_parameterizable"}), 404
     worker = engine_pool.get(info["script"], str(require_project()), info["entry"])
     try:
         result = _write_source_files(src, patches, worker,
@@ -2165,7 +2194,8 @@ def api_engine_sync_overrides():
     info_s = current_registry().for_stem(src_path.stem)
     info_d = current_registry().for_stem(dst_path.stem)
     if info_s is None or info_d is None or info_s["script"] != info_d["script"]:
-        return jsonify({"error": "两张图不属于同一个脚本，无法同步"}), 400
+        return jsonify({"error": "两张图不属于同一个脚本，无法同步",
+                        "code": "sync_different_scripts"}), 400
     worker = engine_pool.get(info_s["script"], str(require_project()), info_s["entry"])
     try:
         man_s = _manifest_of(worker, src_path.stem)
@@ -2300,7 +2330,9 @@ def api_ai_install():
     """一键 `npm install -g` 装 CLI（后台线程）；agent 只认 codex/claude。"""
     agent = str((request.get_json(silent=True) or {}).get("agent") or "")
     if agent not in engine_ai.NPM_PACKAGES:
-        return jsonify({"error": f"未知 agent: {agent}"}), 400
+        return jsonify({"error": f"未知 agent: {agent}",
+                        "code": "unknown_agent",
+                        "params": {"agent": agent}}), 400
     return jsonify(engine_ai.start_install(agent))
 
 
@@ -2308,7 +2340,9 @@ def api_ai_install():
 def api_ai_install_status():
     agent = str(request.args.get("agent") or "")
     if agent not in engine_ai.NPM_PACKAGES:
-        return jsonify({"error": f"未知 agent: {agent}"}), 400
+        return jsonify({"error": f"未知 agent: {agent}",
+                        "code": "unknown_agent",
+                        "params": {"agent": agent}}), 400
     resp = jsonify(engine_ai.install_status(agent))
     resp.headers["Cache-Control"] = "no-store"
     return resp
@@ -2352,7 +2386,8 @@ def api_engine_environment_install():
                         "code": st.get("code")}), 400
     if not st.get("can_install"):
         return jsonify({"error": "这台机器上没找到可用的 Python，"
-                                 "请先安装 Python 3.10 以上再重试。"}), 400
+                                 "请先安装 Python 3.10 以上再重试。",
+                        "code": "python_missing"}), 400
     engine_bootstrap.install_async(
         lambda p: sse_publish("engine.bootstrap", p))
     return jsonify({"started": True, **engine_bootstrap.progress()})
@@ -2366,10 +2401,14 @@ def api_engine_environment_set():
     if raw:
         p = Path(raw).expanduser()
         if not p.is_file():
-            return jsonify({"error": f"找不到该文件: {p}"}), 400
+            return jsonify({"error": f"找不到该文件: {p}",
+                            "code": "interpreter_not_found",
+                            "params": {"path": str(p)}}), 400
         ver = engine_bootstrap.matplotlib_version(str(p))
         if not ver:
-            return jsonify({"error": f"{p} 里 import 不到 matplotlib"}), 400
+            return jsonify({"error": f"{p} 里 import 不到 matplotlib",
+                            "code": "interpreter_no_matplotlib",
+                            "params": {"path": str(p)}}), 400
         engine_config.set_worker_python(str(p))
     else:
         engine_config.set_worker_python(None)
@@ -2437,7 +2476,8 @@ def api_telemetry_settings_patch():
     body = request.get_json(force=True)
     consent = body.get("consent")
     if consent not in ("unset", "enabled", "disabled"):
-        return jsonify({"error": "consent 必须是 unset / enabled / disabled"}), 400
+        return jsonify({"error": "consent 必须是 unset / enabled / disabled",
+                        "code": "invalid_consent"}), 400
     # source 只影响 telemetry_enabled 的那一条属性，取值受白名单约束
     source = body.get("source") if body.get("source") in ("first_run", "settings") else "settings"
     engine_telemetry.set_consent(consent, source=source)
@@ -2457,7 +2497,8 @@ def api_telemetry_event():
     event = body.get("event")
     props = body.get("properties") or {}
     if not isinstance(event, str) or not isinstance(props, dict):
-        return jsonify({"error": "event 必须是字符串、properties 必须是对象"}), 400
+        return jsonify({"error": "event 必须是字符串、properties 必须是对象",
+                        "code": "invalid_telemetry_event"}), 400
     try:
         engine_telemetry.validate(event, props)
     except Exception:                          # noqa: BLE001 — 白名单外一律拒绝
@@ -2491,11 +2532,13 @@ def api_ai_endpoint_save():
     """新增/更新一个第三方接口。api_key 留空 = 保留原值（界面不回显密钥）。"""
     body = request.get_json(force=True)
     if not str(body.get("label") or body.get("id") or "").strip():
-        return jsonify({"error": "缺少名称"}), 400
+        return jsonify({"error": "缺少名称", "code": "name_missing"}), 400
     try:
         engine_ai_providers.save(body)
     except (ValueError, OSError) as exc:
-        return jsonify({"error": str(exc)}), 400
+        return jsonify({"error": str(exc),
+                        "code": "endpoint_save_failed",
+                        "params": {"reason": str(exc)}}), 400
     return jsonify(engine_ai.capabilities(refresh=True))
 
 
@@ -2513,7 +2556,9 @@ def api_ai_endpoint_active():
         engine_ai_providers.set_active(str(body.get("agent") or ""),
                                        body.get("id") or None)
     except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
+        return jsonify({"error": str(exc),
+                        "code": "endpoint_invalid",
+                        "params": {"reason": str(exc)}}), 400
     return jsonify(engine_ai.capabilities(refresh=True))
 
 
@@ -2528,7 +2573,8 @@ def api_ai_run():
     path = safe_resolve(body.get("id", ""))
     info = current_registry().for_stem(path.stem)
     if info is None:
-        return jsonify({"error": "该面板不可参数化（没有对应脚本）"}), 404
+        return jsonify({"error": "该面板不可参数化（没有对应脚本）",
+                        "code": "not_parameterizable"}), 404
     context = {"stem": path.stem, "gid": body.get("gid"),
                "label": body.get("label"), "overrides": body.get("overrides"),
                "scope": body.get("scope"), "target": body.get("target"),
@@ -2541,7 +2587,9 @@ def api_ai_run():
                             endpoint_id=body.get("endpoint"))
     except RuntimeError as exc:
         LOG.error("AI 任务启动失败: %s %s: %s", agent, info["script"], exc)
-        return jsonify({"error": str(exc)}), 500
+        return jsonify({"error": str(exc),
+                        "code": "ai_start_failed",
+                        "params": {"reason": str(exc)}}), 500
     LOG.info("AI 任务启动: %s %s（session %s）", agent, info["script"], sid)
     # **只在会话真的起来之后**记一条，且只记用了哪个 agent。
     # 提示词、脚本、stem、gid、label、target、画布名、会话 id ——一个都不发；
@@ -2591,7 +2639,9 @@ def api_ai_revert(sid):
     try:
         return jsonify(engine_ai.revert(sid))
     except RuntimeError as exc:
-        return jsonify({"error": str(exc)}), 400
+        return jsonify({"error": str(exc),
+                        "code": "ai_revert_failed",
+                        "params": {"reason": str(exc)}}), 400
 
 
 @app.post("/api/ai/sessions/<sid>/cancel")
@@ -2714,7 +2764,8 @@ def _autosave_newer_than(p: Path, base) -> int | None:
 def api_autosave_put(doc_id):
     body = request.get_json(force=True)
     if not isinstance(body, dict) or body.get("schema") not in (2, 3):
-        return jsonify({"error": "无效的文档（需要 schema 2 或 3）"}), 400
+        return jsonify({"error": "无效的文档（需要 schema 2 或 3）",
+                        "code": "invalid_document"}), 400
     p = _autosave_path(doc_id)
     theirs = _autosave_newer_than(p, request.args.get("base"))
     if theirs is not None:
@@ -2828,7 +2879,8 @@ def api_versions_create(doc_id):
     body = request.get_json(force=True)
     doc = body.get("doc")
     if not isinstance(doc, dict) or doc.get("schema") not in (2, 3):
-        return jsonify({"error": "无效的文档快照（需要 schema 2 或 3）"}), 400
+        return jsonify({"error": "无效的文档快照（需要 schema 2 或 3）",
+                        "code": "invalid_document"}), 400
     ver = {
         "id": _new_version_id(),
         "name": str(body.get("name") or "").strip()
@@ -2929,7 +2981,7 @@ def api_styles_list():
 def api_styles_save():
     body = request.get_json(force=True)
     if not isinstance(body, dict) or not str(body.get("name") or "").strip():
-        return jsonify({"error": "样式需要一个名称"}), 400
+        return jsonify({"error": "样式需要一个名称", "code": "name_missing"}), 400
     with _STYLES_LOCK:
         styles = _load_styles()
         sid = body.get("id") or f"s{int(time.time() * 1000):x}"
