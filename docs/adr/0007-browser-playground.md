@@ -54,6 +54,77 @@ matplotlib 那十几 MB」之前跑，而 `browser.py` 模块级就 import matpl
   `unsupported_import` + 桌面版出口。`try/except ImportError` 里的可选
   import 不算阻断。
 
+### 入口层级：示例与上传平级（2026-08-21 补）
+
+空状态原来是「拖放区 + 一行『或者试个示例』+ 三颗小 chip」——示例读起来像
+退路。但**多数第一次来的访客手边并没有一个现成的 `.py`**，而 Tavotto 想让人
+理解的东西一次点击就能看到。所以改成两条平级的路：拖放区 → `或者` 分隔线 →
+一个填色的主 CTA「直接试一个示例」（跑 `EXAMPLES` 里唯一标了 `primary` 的
+那张），其余示例退成次级文字入口。
+
+* 主示例是 `kinetics.py`：标题 / x-y 轴标签 / 两条曲线 / 图例齐全，点开就有
+  东西可选可拖，又不至于第一眼看不懂。**有且只有一个 primary**
+  （`examples.test.ts` 看护）——主路径指得到两个地方就不叫主路径了。
+* 三个示例都在 `savefig` 前 `tight_layout()`：matplotlib 的默认边距在这个
+  figsize 下会把 x/y 轴标签整条裁掉（实测三张全中）。轴标签恰恰是访客第一件
+  想点的东西，裁掉了既难看又点不着。
+* **仍然是真执行**：点下去走的是 `Browser File 等价的源码 → Pyodide →
+  matplotlib → manifest → 真编辑器`。不许为了快用预烤的 SVG/manifest——
+  那一刻演示的就不是这个产品了。
+
+### 预热：`/try` 空闲时把 Pyodide 核心装起来（2026-08-21 补）
+
+打开 `/try` 的人意图已经很明确，闲置的那几秒拿来装运行时是纯赚。
+实现在 `web/src/playground/prewarm.ts`，一台**至多一个**的暖机账本
+（`cold → warming → ready`，取走即回 cold）。
+
+* **营销首页一个字节的 Pyodide 都不加载**——那是网站仓库里的静态页面，
+  与本模块没有任何连接；预热只发生在 playground 这个应用页面上。
+* **只到核心为止**：`init` = Pyodide 核心 + `engine.zip`。科学栈仍然要等
+  `browser_imports` 分类说了话才下载（实测预热窗口里的 CDN 请求正好是
+  `pyodide.mjs` / `pyodide-lock.json` / `python_stdlib.zip` /
+  `pyodide.asm.wasm` / `pyodide.asm.mjs` 五条，**wheel 零条**）。
+* **尊重省流量与慢网**：`navigator.connection?.saveData` 为真、或
+  `effectiveType` 是 `slow-2g`/`2g` 就不预热。一律特性检测——Network
+  Information API 是 Chromium 专有的，直接读会在 Safari/Firefox 上抛。
+* **只有一条初始化路径**：`PlaygroundClient.init()` 幂等去重，预热中点了
+  示例接的是**同一个在途 Promise**，不会变成两个 Worker。
+* **「一个文件 = 一个 Worker」没有松动**：暖着的那个还没跑过任何用户代码，
+  所以它可以当第一个会话用；跑过脚本的解释器换文件时照旧 terminate 重建。
+* **预热是优化不是依赖**：失败悄悄退回 cold 并收掉半死的 Worker，用户真开
+  会话时按正常路径重来，**不弹任何错误**（在他还没动手之前弹一个全屏错误
+  是最糟的形态）。
+* 实测（12 Mbps / 40ms 节流、冷 profile、开关各两轮）：点击 → 编辑器可见
+  从 15.4/15.9s 降到 10.4/10.4s。缓存已热时 3.4s → 2.8s。
+
+### 源文件完整性：一个可验证的不变式（2026-08-21 补）
+
+界面上那句「`figure.py` · 未改动」原来的根据是
+`session.loadedSource === session.originalSource`——两个变量指向同一个 JS
+字符串，恒真，什么也没证明。现在的根据是两个隔着 Worker 边界、由两套实现
+算出来的 sha256：
+
+    主线程   crypto.subtle.digest('SHA-256', TextEncoder(原文))
+    Worker   browser.py 把 /workspace/<脚本> **从虚拟 FS 读回来** hashlib.sha256
+
+* Worker 侧的哈希在**脚本跑完之后**采：要证明的是「实际被 `runpy` 执行的
+  那个文件此刻仍与你给的一模一样」，写进去就立刻算等于只验了一次 write。
+* 复验走一条独立的轻命令 `source_status`（不搭渲染的顺风车，每次都真的
+  重新读文件重算——缓存一个「上次算过的」哈希就又回到了自证）。触发时机：
+  加载完 / **第一次改完并画出来之后** / 打开源码面板。不必每次指针事件都验。
+* 复验**只在 worker 闲着的时候发**：无阶段请求的硬超时是 30s，排在一次慢
+  渲染后面就可能到点，而到点等于整个会话被 terminate——为一条状态指示把
+  用户的编辑现场炸掉是本末倒置。
+* UI 四态 `checking / unchanged / changed / unavailable`：**没验完不许说
+  「未改动」**；算不出哈希（非安全上下文没有 `crypto.subtle`）是「查不了」
+  不是「没改」；`changed` 是不变式失效，按高严重度常驻横幅报出来并附上两个
+  短哈希，不是一条可关闭的提示。
+* 看护：`tests/test_browser_session.py`（写进虚拟 FS 的就是输入、改完图还是
+  输入、**被动过一个字节就必须报出来**——篡改钩子只在测试驱动里，产品代码
+  不给任何改工作区源文件的入口）+ `sourceIntegrity.test.ts`（对着 Python
+  hashlib 的已知向量）+ e2e（展开的完整性明细必须等于在 node 里对同一份
+  源码算出来的短哈希）。
+
 ### 边界（Phase II 刻意收窄）
 
 * **一个 `.py` 文件**（≤256 KiB）。不支持项目目录、数据文件、伴生模块——
@@ -61,8 +132,13 @@ matplotlib 那十几 MB」之前跑，而 `browser.py` 模块级就 import matpl
   项目目录」，不让用户读裸 traceback。
 * 无服务器执行、无账号、无持久化：会话只活在内存里，源码**不进**
   localStorage / IndexedDB，刷新即重置。
+* playground 是一个独立的产品界面，所以顶栏的品牌就是**回站入口**，
+  按当前界面语言落到 `../`（en）或 `../zh/`（zh）——中文访客不该被送回
+  英文首页。用相对路径而不是写死 `/`：产物挂在 `/try/` 下（vite 的
+  `base: './'`），相对路径在任何前缀下与独立托管时都指得对。
 * 不做代码写回、不做完整出版导出（那是桌面链路）；编辑只存在于 override 层，
-  界面以「`figure.py` · 未改动」逐字节比对作证。
+  界面以「`figure.py` · 未改动」作证——而那句话是上面那条**跨边界哈希比对**
+  的结论，不是一个断言。
 * Worker 生命周期：**一个文件 = 一个 Worker = 一个 Pyodide 会话**。换文件
   terminate 旧的、起新的——不跨文件复用解释器状态，也是从坏 Python 状态
   恢复的唯一可靠办法。
@@ -123,7 +199,8 @@ build_mcp_widget / sync-product-assets 同一条纪律。
   RPC 形状闸门、超时=会话作废、传输映射、示例纯净度、种子层契约；
   `mcp/session.test.ts` 原样全绿 = 共享层重构没动 MCP 行为。
 * `web/e2e/playground.spec.ts`：**真浏览器 + 真 CDN Pyodide** 的黄金路径
-  （示例 → 语义拖标题 → pos_frac override → Pyodide 重渲染 → 撤销还原 →
-  源码未改动）、哨兵防泄漏、unsupported_import 在包下载前拒绝、死循环被
-  硬超时杀掉。冷缓存 ~45s、热 ~10s，专门放宽这一个 spec 的超时。
+  （示例主 CTA → 预热只拉核心零 wheel → 语义拖标题 → pos_frac override →
+  Pyodide 重渲染 → 撤销还原 → 源码未改动 + 真哈希对得上）、哨兵防泄漏、
+  saveData 下零预热、品牌回站按语言、unsupported_import 在包下载前拒绝、
+  死循环被硬超时杀掉。冷缓存 ~45s、热 ~10s，专门放宽这一个 spec 的超时。
 * CI（ci.yml frontend）：真跑一遍构建脚本；产物过期的门禁在网站仓库。

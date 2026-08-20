@@ -143,6 +143,10 @@ async function dispatch(req: WorkerRequest): Promise<unknown> {
         patches: req.patches,
         width: req.width,
       })
+    case 'sourceStatus':
+      // 每次都真的从虚拟 FS 读文件重算——缓存一个「上次算过的」哈希就等于
+      // 又回到了「两个变量比自己」，那正是这条命令要取代的东西
+      return callPython({ cmd: 'source_status' })
   }
 }
 

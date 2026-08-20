@@ -23,11 +23,17 @@ plt.show()` 这类从不 savefig 的脚本也要能用）。
 每次调用一进一出都是 JSON 字符串——不留 PyProxy、不传对象图，Worker 一死
 什么都不泄漏。失败一律 `{ok: false, code, message, ...}`，code 是稳定的
 机器可读值（错误分诊在前端做），traceback 原文附带但有界。
+
+「源文件未被修改」在这里是**可验证的结论**而不是口号：`load` 写完文件之后
+从虚拟 FS **读回来**算一次 sha256，`source_status` 随时再读再算一次。主线程
+拿自己那份原文（Web Crypto 独立算的）与之比对——两侧的哈希来自两套实现、
+隔着 Worker 边界，比「两个变量指向同一个 JS 字符串」是完全不同的证据强度。
 """
 from __future__ import annotations
 
 import base64
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -247,8 +253,32 @@ class BrowserSession:
                 "preview": self._thumb(fig),
             })
         self.loaded = True
+        # 完整性哈希在**脚本跑完之后**采：要证明的是「实际被执行的那个文件
+        # 此刻仍与你给的一模一样」，写进去就立刻算等于只验了一次 write。
+        status = self.source_status()
         return {"ok": True, "figures": figures, "log": log.text(),
-                "truncated_figures": truncated}
+                "truncated_figures": truncated, "script": self.script_name,
+                "source_sha256": status.get("sha256", ""),
+                "source_bytes": status.get("bytes", 0)}
+
+    # ---------------- 源文件完整性 ----------------
+    def source_status(self) -> dict:
+        """把 `/workspace/<脚本>` **从虚拟 FS 读回来**再算 sha256。
+
+        「未改动」的证据就是这一句：读的是真正被 `runpy` 执行的那个文件，
+        不是内存里那份传进来的字符串。主线程用 Web Crypto 独立算原文的哈希，
+        两个数一比才叫验证过——比对两个指向同一个 JS 字符串的变量什么都没证明。
+        """
+        if not self.script_name:
+            return _err("bad_request", "还没有加载脚本")
+        path = os.path.join(self.workspace, self.script_name)
+        try:
+            with open(path, "rb") as f:
+                data = f.read()
+        except OSError as exc:
+            return _err("source_unreadable", f"读不到工作区里的源文件: {exc}")
+        return {"ok": True, "script": self.script_name, "bytes": len(data),
+                "sha256": hashlib.sha256(data).hexdigest()}
 
     def _trim_tb(self) -> str:
         """用户脚本的 traceback：去掉 runpy/browser 这几层内部帧再截尾。"""
@@ -401,9 +431,11 @@ def handle(request_json: str) -> str:
             if _ACTIVE is None:
                 _ACTIVE = BrowserSession(req.get("workspace", "/workspace"))
             out = _ACTIVE.load(req["filename"], req["source"])
-        elif cmd in ("open", "render", "preview_png"):
+        elif cmd in ("open", "render", "preview_png", "source_status"):
             if _ACTIVE is None or not _ACTIVE.loaded:
                 out = _err("bad_request", "还没有加载脚本（先发 load）")
+            elif cmd == "source_status":
+                out = _ACTIVE.source_status()
             elif cmd == "open":
                 out = _ACTIVE.open_figure(req["stem"])
             elif cmd == "render":

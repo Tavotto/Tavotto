@@ -38,6 +38,7 @@ export type WorkerRequest =
   | { id: number; type: 'open'; stem: string }
   | { id: number; type: 'render'; stem: string; patches: unknown[]; previewDpi?: number }
   | { id: number; type: 'previewPng'; stem: string; patches: unknown[]; width: number }
+  | { id: number; type: 'sourceStatus' }
 
 /** 联合类型上的分配式 Omit（普通 Omit 会把联合坍成公共字段） */
 export type DistributiveOmit<T, K extends keyof never> = T extends unknown ? Omit<T, K> : never
@@ -58,6 +59,18 @@ export interface LoadResult {
   figures: FigureChoice[]
   log: string
   truncated_figures: number
+  /** 虚拟 FS 里实际被执行的脚本名（`_safe_script_name` 收紧过的那个） */
+  script: string
+  /** `/workspace/<script>` **读回来**算的 sha256——完整性证明的 Worker 侧 */
+  source_sha256: string
+  source_bytes: number
+}
+
+/** `source_status` 的响应：随时再读再算一次。 */
+export interface SourceStatus {
+  script: string
+  sha256: string
+  bytes: number
 }
 
 export interface OpenResult {

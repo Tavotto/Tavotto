@@ -839,13 +839,38 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被它推翻**（
   解释器。主线程只接受 id 配对 + 形状合法的 Worker 消息（Python 摸得到
   postMessage）。
 - **隐私是可验证的**：源码只进 Worker，不进 localStorage / 不出网
-  （e2e 哨兵测试盯着）；「figure.py · 未改动」是逐字节比对的结论。
+  （e2e 哨兵测试盯着）。
+- **「figure.py · 未改动」是两个真哈希比出来的**（2026-08-21）：主线程用
+  Web Crypto 算原文的 sha256，Worker 里 `browser.py` 的 `source_status` 把
+  `/workspace/<脚本>` **从虚拟 FS 读回来**用 hashlib 再算一次，两个数相等
+  才显示「未改动」。**别退回 `loadedSource === originalSource` 那种写法**
+  ——两个变量指向同一个 JS 字符串，恒真，什么也没证明。Worker 侧的哈希在
+  **脚本跑完之后**采（验的是「实际被执行的那个文件」）；复验走独立的轻命令、
+  **只在 worker 闲着时发**（无阶段请求超时 30s，排在慢渲染后面到点 = 整个
+  会话被 terminate）。UI 四态：没验完不许说「未改动」，算不出哈希是「查不了」
+  不是「没改」，不相等按不变式失效常驻报警。
+- **示例是一等入口，不是脚注**（2026-08-21）：空状态两条平级的路——拖放区 +
+  一个填色主 CTA「直接试一个示例」。`EXAMPLES` 里**有且只有一个** `primary`
+  （examples.test.ts 看护）。点下去仍是真执行，**不许用预烤 SVG/manifest 提速**。
+  三个示例都在 savefig 前 `tight_layout()`：默认边距在这个 figsize 下会把
+  x/y 轴标签整条裁掉，而轴标签正是访客第一件想点的东西。
+- **`/try` 空闲时预热 Pyodide 核心**（`web/src/playground/prewarm.ts`）：
+  **只到核心 + engine.zip 为止**，科学栈仍等 import 分类说了话才下载
+  （e2e 断言预热窗口里 wheel 零条）；`saveData` 或 `slow-2g/2g` 不预热，
+  Network Information API **一律特性检测**（Safari/Firefox 上它整个不存在）；
+  `PlaygroundClient.init()` 幂等去重，「预热中点了示例」接的是同一个在途
+  Promise，**不会变成两个 Worker**；暖着的 Worker 还没跑过用户代码，所以可以
+  当第一个会话用——**「一个文件 = 一个 Worker」没有松动**。预热是优化不是
+  依赖：失败悄悄退回 cold，绝不在用户动手之前弹错误。营销首页
+  （`/`、`/zh/`）**一个字节的 Pyodide 都不加载**，那是网站仓库的静态页面。
 - 产物：`python scripts/build_browser_playground.py` → `web/dist-playground/`
   （确定性 engine.zip + 指纹 manifest，指纹算法复用 build_mcp_widget.digest）。
   网站仓库 `pnpm sync-playground` 收走并提交、`pnpm check-playground` 防漂移
   ——改了 web/src 或引擎四模块，**playground 与 MCP 画布两个产物都要重建**。
 - 验证：`tests/test_browser_session.py`（CPython 上跑同一份 browser.py：
   fixture 矩阵 / 错误分诊 / 跨进程 patch_hash 一致）+
+  写进虚拟 FS 的就是输入 / 改完图还是输入 / 被动过一个字节必须报出来——
+  **篡改钩子只在测试驱动里，产品代码不给任何改工作区源文件的入口**）+
   `web/src/playground/*.test.ts` + `web/e2e/playground.spec.ts`
   （真浏览器 + 真 CDN Pyodide，慢，专属放宽超时）。
 

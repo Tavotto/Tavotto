@@ -9,10 +9,13 @@
   * fixture 矩阵（ADR 0007 §测试）：常见 matplotlib 脚本形态逐一过
     「跑通 → 捕获 → manifest 有语义元素 → 真实 override 应用 → 空列表还原」；
   * 错误分诊：每类失败都要有稳定 code，绝不让用户读裸 traceback 猜原因；
+  * 源文件完整性：写进虚拟 FS 的那个文件**读回来**的 sha256 与输入一致，
+    改完图仍然一致，被人动过一个字节就必须报出来（篡改钩子只在测试驱动里）；
   * 跨进程哈希一致：browser 响应里的 patch_hash 必须等于父进程
     `tavotto.engine.patchspec` 对同一列表算出的值（同一份实现跑在两个
     解释器里，这是 §49「不许移植第二份规范化」的看护）。
 """
+import hashlib
 import json
 import subprocess
 import sys
@@ -43,7 +46,16 @@ import json, sys
 sys.path.insert(0, sys.argv[1])
 import browser
 reqs = json.load(sys.stdin)
-out = [json.loads(browser.handle(json.dumps(r))) for r in reqs]
+out = []
+for r in reqs:
+    # `__tamper` 只存在于这个测试驱动里——产品代码**不给**任何改工作区
+    # 源文件的入口，否则「完整性校验」就成了自证的摆设。
+    if r.get("cmd") == "__tamper":
+        with open(r["path"], "a", encoding="utf-8") as f:
+            f.write(r["append"])
+        out.append({"ok": True})
+        continue
+    out.append(json.loads(browser.handle(json.dumps(r))))
 sys.stdout.write("\\n" + json.dumps(out))
 """
 
@@ -386,6 +398,76 @@ def test_second_load_in_one_session_is_refused(tmp_path):
     a, b = drive([{"cmd": "load", "filename": "a.py", "source": src},
                   {"cmd": "load", "filename": "b.py", "source": src}], tmp_path)
     assert a["ok"] and b["ok"] is False and b["code"] == "bad_request"
+
+
+# ------------------------------------------------------- 源文件完整性
+
+#: 三张图都用得上的最小脚本（有标题，可以真的改一处再回来核对）。
+_INTEGRITY_SRC = """
+import matplotlib.pyplot as plt
+fig, ax = plt.subplots(figsize=(2.6, 2))
+ax.plot([0, 1, 2], [1, 0, 2], label="a")
+ax.set_title("Integrity")
+ax.legend()
+fig.savefig("I.pdf")
+"""
+
+
+def test_workspace_source_hash_equals_the_input_and_survives_edits(tmp_path):
+    """写进 /workspace 的就是用户给的那份，改完图之后还是那份。
+
+    这是「figure.py · 未改动」这句话的 Worker 侧证据：哈希取自**虚拟 FS 里
+    真正被 runpy 执行的那个文件**，不是内存里传进来的字符串。主线程那半边
+    （Web Crypto 算原文）在 `web/src/playground/sourceIntegrity.test.ts`。
+    """
+    want = hashlib.sha256(_INTEGRITY_SRC.encode("utf-8")).hexdigest()
+    load, opened, rendered, status = drive([
+        {"cmd": "load", "filename": "integrity.py", "source": _INTEGRITY_SRC},
+        {"cmd": "open", "stem": "I"},
+        {"cmd": "render", "stem": "I",
+         "patches": [{"gid": "axes_0.title", "prop": "fontsize", "value": 17}]},
+        {"cmd": "source_status"},
+    ], tmp_path)
+
+    assert load["ok"], load
+    assert load["script"] == "integrity.py"
+    assert load["source_sha256"] == want
+    assert load["source_bytes"] == len(_INTEGRITY_SRC.encode("utf-8"))
+    # 文件真的在工作区里，而且逐字节就是输入
+    assert (tmp_path / "ws" / "integrity.py").read_bytes() == _INTEGRITY_SRC.encode("utf-8")
+
+    assert opened["ok"] and rendered["ok"], (opened, rendered)
+    # 改了一处真的生效了——「没改源文件」不是因为什么都没做
+    assert field_value(rendered["manifest"], "axes_0.title", "fontsize") == 17
+    assert status["ok"] and status["sha256"] == want, status
+    assert status["script"] == "integrity.py"
+
+
+def test_tampered_workspace_source_is_reported_not_hidden(tmp_path):
+    """有人动了工作区里的源文件 → 哈希必须变，不许还报「未改动」。
+
+    产品代码里没有这条路（篡改指令在测试驱动里）；这条用例证明的是
+    **校验本身有效**——一个永远返回相同哈希的实现会在这里红。
+    """
+    want = hashlib.sha256(_INTEGRITY_SRC.encode("utf-8")).hexdigest()
+    load, before, _tampered, after = drive([
+        {"cmd": "load", "filename": "integrity.py", "source": _INTEGRITY_SRC},
+        {"cmd": "source_status"},
+        {"cmd": "__tamper", "path": str(tmp_path / "ws" / "integrity.py"),
+         "append": "\n# someone edited this\n"},
+        {"cmd": "source_status"},
+    ], tmp_path)
+
+    assert load["ok"] and before["ok"]
+    assert before["sha256"] == want
+    assert after["ok"]
+    assert after["sha256"] != want, "改过的文件绝不能算出原来的哈希"
+    assert after["bytes"] > before["bytes"]
+
+
+def test_source_status_before_load_is_bad_request(tmp_path):
+    (out,) = drive([{"cmd": "source_status"}], tmp_path)
+    assert out["ok"] is False and out["code"] == "bad_request"
 
 
 def test_manifest_values_are_plain_json(tmp_path):

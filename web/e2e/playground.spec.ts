@@ -1,8 +1,10 @@
 import { test, expect, type Page } from '@playwright/test'
+import { createHash } from 'node:crypto'
 import { createServer, type Server } from 'node:http'
 import { existsSync, readFileSync } from 'node:fs'
 import type { AddressInfo } from 'node:net'
 import path from 'node:path'
+import { PRIMARY_EXAMPLE } from '../src/playground/examples'
 
 /**
  * 浏览器 playground 的端到端证明（ADR 0007 的 Definition of Done）：
@@ -15,10 +17,14 @@ import path from 'node:path'
  * 下载执行——它慢（冷缓存分钟级）、要联网，是有意的：这是 Phase II 存在
  * 与否的证明，放在专门的 e2e 里跑，不摊给每个小测试。
  *
- * 附带两条安全性质：
+ * 附带的性质：
  *   * 哨兵测试：上传的源码内容**不出现在任何一个网络请求**里（隐私承诺
  *     「Tavotto 不上传你的代码」的机器可验证形式）；
- *   * 死循环：脚本阶段的硬超时把 Worker 杀掉并给出诚实的错误与出口。
+ *   * 死循环：脚本阶段的硬超时把 Worker 杀掉并给出诚实的错误与出口；
+ *   * 预热：`/try` 打开后空闲时只把 **Pyodide 核心**拉下来，**一个科学栈
+ *     的 wheel 都不拉**；`saveData` 下什么都不拉；
+ *   * 源文件完整性：界面上那句「未改动」等于 Worker 里读回来的 sha256 与
+ *     真实源码的 sha256 逐位相同——展开的完整性明细必须是这个数。
  *
  * 前置：python scripts/build_browser_playground.py（产物在 web/dist-playground）。
  */
@@ -71,6 +77,16 @@ function recordRequests(page: Page): { url: string; body: string }[] {
   return seen
 }
 
+/** 界面里那种省略过的短哈希：`ba7816b…15ad`。 */
+const shortSha = (text: string) => {
+  const hex = createHash('sha256').update(text, 'utf8').digest('hex')
+  return `${hex.slice(0, 7)}…${hex.slice(-4)}`
+}
+
+/** 只看打到钉死的 Pyodide CDN 上的请求。 */
+const cdnHits = (reqs: { url: string }[]) =>
+  reqs.filter((r) => r.url.startsWith('https://cdn.jsdelivr.net/pyodide/')).map((r) => r.url)
+
 /** 等编辑器就位：权威 SVG 挂进画布。 */
 async function waitForEditor(page: Page) {
   await expect(page.locator('[data-element-svg] svg').first()).toBeVisible({
@@ -92,18 +108,30 @@ test('黄金路径：示例脚本 → 真 Pyodide → 语义拖动标题 → 重
   const requests = recordRequests(page)
   await page.goto(`${origin}/?lang=zh`)
 
-  // 空状态是 Tavotto 的样子：拖放区 + 示例 + 隐私说明
+  // 空状态两条路平级：拖放区 + **一按就跑的示例** + 隐私说明
   await expect(page.getByText('拖入一个 Matplotlib 脚本')).toBeVisible()
   await expect(page.getByText(/不会把它上传到服务器/)).toBeVisible()
+  const sampleCta = page.getByRole('button', { name: /直接试一个示例/ })
+  await expect(sampleCta).toBeVisible()
 
-  // 选内置示例（真 Python 源码，经真 Pyodide 执行）
-  await page.getByRole('button', { name: /折线图/ }).click()
+  // 预热：壳渲染完之后空闲时把 Pyodide 核心拉下来，**科学栈一个 wheel 都不拉**
+  await expect
+    .poll(() => cdnHits(requests).some((u) => /pyodide\.asm\.wasm$/.test(u)), { timeout: 60_000 })
+    .toBe(true)
+  expect(
+    cdnHits(requests).filter((u) => /\.whl$/.test(u)),
+    '预热只到核心为止：科学栈要等 import 分类说了话才下载',
+  ).toEqual([])
+
+  // 一次点击 → 真 Python 源码经真 Pyodide 执行（不是预烤的 manifest）
+  await sampleCta.click()
   // 真话进度：阶段列表出现（不是一个空转的 spinner）
   await expect(page.getByText('加载 Python 运行时')).toBeVisible()
 
   await waitForEditor(page)
 
-  // 源码证明：文件名 + 未改动（头部那颗 chip 的可访问名就是两者拼起来的）
+  // 源码证明：文件名 + 未改动。这句话不是口号——它等于「主线程用 Web Crypto
+  // 算的原文 sha256」==「Worker 里 Python 从虚拟 FS 读回来算的 sha256」
   const sourceChip = page.getByRole('button', { name: /kinetics\.py · 未改动/ })
   await expect(sourceChip).toBeVisible()
   await expect(page.getByRole('button', { name: /0 条修改/ })).toBeVisible()
@@ -140,7 +168,11 @@ test('黄金路径：示例脚本 → 真 Pyodide → 语义拖动标题 → 重
   // 源码仍然未改动；只读源码面板能打开
   await expect(sourceChip).toBeVisible()
   await sourceChip.click()
-  await expect(page.getByRole('dialog').getByText('Reaction kinetics')).toBeVisible()
+  const dialog = page.getByRole('dialog')
+  await expect(dialog.getByText('Reaction kinetics')).toBeVisible()
+  // 完整性明细里是**真哈希**：与在 node 里对同一份源码算出来的逐位相同
+  await dialog.getByText('完整性', { exact: true }).click()
+  await expect(dialog.getByText(`SHA-256 ${shortSha(PRIMARY_EXAMPLE.source)}`)).toBeVisible()
   await page.keyboard.press('Escape')
 
   // 整个流程只碰了两类地址：本页静态资源 + 钉死的 Pyodide CDN
@@ -148,6 +180,40 @@ test('黄金路径：示例脚本 → 真 Pyodide → 语义拖动标题 → 重
     (r) => !r.url.startsWith(origin) && !r.url.startsWith('https://cdn.jsdelivr.net/pyodide/'),
   )
   expect(outside, `不该有别的外呼:\n${outside.map((r) => r.url).join('\n')}`).toEqual([])
+})
+
+test('省流量模式：一个字节的 Pyodide 都不预热', async ({ page }) => {
+  // Network Information API 只有 Chromium 有；这里显式伪造它说「省流量」
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'connection', {
+      value: { saveData: true, effectiveType: '4g' },
+      configurable: true,
+    })
+  })
+  const requests = recordRequests(page)
+  await page.goto(`${origin}/?lang=zh`)
+  await expect(page.getByRole('button', { name: /直接试一个示例/ })).toBeVisible()
+  // 给足空闲窗口（requestIdleCallback 的 timeout 是 3s），确认它**没有**发生
+  await page.waitForTimeout(8_000)
+  expect(cdnHits(requests), 'saveData 下不许在背景里替用户花流量').toEqual([])
+  // 预热不是正确性依赖：照样能开会话（这里只验按下去有反应，不等整轮下载）
+  await page.getByRole('button', { name: /直接试一个示例/ }).click()
+  await expect(page.getByText('加载 Python 运行时')).toBeVisible()
+})
+
+test('品牌回站：跟着界面语言走，中文访客不会被送回英文首页', async ({ page }) => {
+  await page.goto(`${origin}/?lang=zh`)
+  const zhBrand = page.getByRole('link', { name: 'Tavotto 官网' })
+  await expect(zhBrand).toBeVisible()
+  expect(await zhBrand.getAttribute('href')).toBe('../zh/')
+
+  await page.goto(`${origin}/?lang=en`)
+  const enBrand = page.getByRole('link', { name: 'Tavotto homepage' })
+  await expect(enBrand).toBeVisible()
+  expect(await enBrand.getAttribute('href')).toBe('../')
+  // `/try/` 下的相对路径落在站点根上——不是一个指向 playground 自己的死链
+  expect(new URL('../', `${origin}/try/`).pathname).toBe('/')
+  expect(new URL('../zh/', `${origin}/try/`).pathname).toBe('/zh/')
 })
 
 test('哨兵：上传的源码内容不出现在任何网络请求里', async ({ page }) => {
