@@ -1101,3 +1101,70 @@ def test_no_test_judges_executability_by_filesystem_mode() -> None:
         "改查 git 索引里的 mode：\n  " + "\n  ".join(offenders)
     )
 
+
+
+# ---------------------------------------------------------------------------
+# 提交进仓库的生成物：换行不许跟平台走
+# ---------------------------------------------------------------------------
+def test_compat_baseline_is_written_with_lf_on_every_platform(tmp_path):
+    """CompatBench 基线的换行必须钉死 `\\n`。
+
+    `Path.write_text` 默认文本模式（`newline=None`）会把 `\\n` 翻成
+    `os.linesep`——Windows 上就是 `\\r\\n`。基线是**提交进仓库、要被逐条读
+    diff** 的资产，而 `--update-baseline` 明确是给人在本地跑的：一个 Windows
+    开发者重生成一次，149 个 case 全变成整文件 CRLF diff，真正的分类变化就
+    淹在噪音里了。而「有人真的读过这份 diff」是整条基线纪律唯一的立足点。
+
+    本机（macOS/Linux）上这条恒真，它的价值全在 ci.yml backend 矩阵的
+    windows-latest 那一档——与本文件里其它用例同一个道理。
+
+    姊妹问题（同一类「只在别的平台上成立的不变式」）：`_common` 的 cp1252
+    stdout、`browser.py` 把用户脚本写进虚拟 FS 时的 CRLF 翻译。
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts" / "ci"))
+    import compat_corpus as CC
+
+    payload = {"schema": 1,
+               "generated_for": {"target": "bundled", "matplotlib": "3.11.1"},
+               "cases": {"a": {"classification": "full_support",
+                               "stages": {"execute": True, "capture": True}}}}
+    CC.validate_baseline(payload)
+    dest = CC.write_baseline(payload, tmp_path / "baseline.json")
+    raw = dest.read_bytes()
+    assert b"\r\n" not in raw, "基线被写成了 CRLF——review 里会变成整文件 diff"
+    assert raw.endswith(b"\n")
+    # 写出去的还得是能读回来的合法基线，别为了换行把内容写坏
+    CC.validate_baseline(json.loads(raw.decode("utf-8")))
+
+
+def test_compat_text_writes_all_pin_the_newline():
+    """CompatBench 每一处文本写盘都必须钉 `newline="\\n"`。
+
+    上面那条行为用例在 macOS/Linux 上是**恒真**的（`os.linesep` 本来就是
+    `\\n`），只有 windows-latest 那一档才抓得到——实测确认过：把
+    `newline` 摘掉，本机照样绿。所以还需要这一条**平台无关的静态检查**，
+    否则「只在别人电脑上发生」的东西在本机开发时毫无阻力地被写进来。
+
+    覆盖的是「产出物」那几处：提交进仓库的基线、会被 upload-artifact 收走
+    并拿去 diff 的报告。临时文件（driver 的请求 JSON）不在此列——它写完就
+    被同一个进程读掉，换行是什么无所谓。
+    """
+    ci = Path(__file__).resolve().parents[1] / "scripts" / "ci"
+    targets = {
+        "compat_corpus.py": ("path.write_text(",),
+        "compat_matrix.py": ("json_path.write_text(",),
+    }
+    checked = 0
+    for name, calls in targets.items():
+        lines = (ci / name).read_text(encoding="utf-8").splitlines()
+        for i, ln in enumerate(lines):
+            if not any(c in ln for c in calls):
+                continue
+            checked += 1
+            block = "\n".join(lines[i:i + 4])
+            assert 'newline="\\n"' in block, (
+                f"{name}:{i + 1} 的 write_text 没钉换行——Windows 上会写成 "
+                f"CRLF，而这是提交进仓库/要被 diff 的产出物")
+    assert checked >= 3, (
+        f"只扫到 {checked} 处写入，比预期少——写盘的地方挪了位置？"
+        f"这条用例要跟着改，别让它安静地什么都不检查")

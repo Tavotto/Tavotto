@@ -473,6 +473,25 @@ def baseline_payload(results: dict, generated_for: dict | None = None) -> dict:
     return out
 
 
+def write_baseline(payload: dict, path: Path = BASELINE_PATH) -> Path:
+    """把基线写盘。**换行钉死成 `\n`，不跟平台走。**
+
+    `Path.write_text` 默认是文本模式（`newline=None`），Windows 上会把每个
+    `\n` 翻成 `\r\n`。基线是**提交进仓库、要被逐条读 diff** 的资产，而
+    `--update-baseline` 明确是给人在本地跑的——一个 Windows 开发者重生成一次，
+    149 个 case 全变成整文件 CRLF diff，真正的分类变化就淹在里面了。
+    而「有人真的读过这份 diff」正是整条基线纪律唯一的立足点。
+
+    本机（macOS/Linux）看不出这个问题：`os.linesep` 本来就是 `\n`。
+    看护在 `tests/test_windows_regressions.py`——按本仓库的规矩，
+    「只在别人电脑上发生」的 bug 先变成那里的用例。
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8", newline="\n")
+    return path
+
+
 def diff_baseline(baseline: dict, results: dict) -> dict:
     """基线 vs 本次。返回 new / missing / changed 三张表。
 

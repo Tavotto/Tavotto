@@ -1192,15 +1192,13 @@ def main(argv: list[str] | None = None) -> int:
     json_path.parent.mkdir(parents=True, exist_ok=True)
     json_path.write_text(
         json.dumps(report, ensure_ascii=False, indent=2, sort_keys=False) + "\n",
-        encoding="utf-8")
+        encoding="utf-8", newline="\n")
 
     if args.update_baseline:
         payload = CC.baseline_payload(
             results, {"target": args.target, **{k: v for k, v in actual.items()}})
         CC.validate_baseline(payload)
-        CC.BASELINE_PATH.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8")
+        CC.write_baseline(payload)
         print(f"\n基线已重建：{CC.BASELINE_PATH}（{len(payload['cases'])} 条）")
         print("逐条读一遍再提交——尤其是 partial / unsupported / product_bug。")
         _emit_summary(report)
@@ -1230,7 +1228,8 @@ def main(argv: list[str] | None = None) -> int:
     delta = CC.diff_baseline(baseline, results)
     report["baseline_diff"] = delta
     json_path.write_text(
-        json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8", newline="\n")
 
     ok, fails = evaluate_gate(args.gate, cases, results, baseline)
     if delta["new"]:
