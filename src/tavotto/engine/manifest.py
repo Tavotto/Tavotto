@@ -27,6 +27,7 @@ from overrides import (ColorbarProxy, FigState, HANDLERS, HATCHES, SeriesGroup,
                        TickLabel, TickSet, _ARROWSTYLES, _CB_EXTENDS, _LEGEND_LOCS,
                        _TICK_FORMATS, _TICK_MINOR_FORMATS,
                        collection_caps, is_color_mapped, is_linecoll_family,
+                       patch_can_fill,
                        _arrow_style, _arrowstyle_name, _axis_arrows_on,
                        _linestyle_name, _linecoll_linestyle_name,
                        _boxstyle_info, _cb_axis, _cb_tick_color,
@@ -906,9 +907,16 @@ def _patch_fields(pt) -> list[dict]:
     框选靠 manifest 的 `geometry`（沿真实闭合路径），样式在这里。
     """
     alpha = pt.get_alpha()
-    return [
-        {"prop": "facecolor", "type": "color", "value": to_hex(pt.get_facecolor())},
-        {"prop": "fill", "type": "bool", "value": bool(pt.get_fill())},
+    fields: list[dict] = []
+    if patch_can_fill(pt):
+        # `Arc` 画不出面：facecolor / fill 设得进去、`get_*` 也照回，
+        # 但 `Arc.draw()` 从不画那个面（实测红色像素 0 vs Circle 4122）。
+        # **花纹不在此列**——它在 Arc 上是真画的，判据见 `patch_can_fill`。
+        fields += [
+            {"prop": "facecolor", "type": "color", "value": to_hex(pt.get_facecolor())},
+            {"prop": "fill", "type": "bool", "value": bool(pt.get_fill())},
+        ]
+    fields += [
         {"prop": "edgecolor", "type": "color", "value": to_hex(pt.get_edgecolor())},
         {"prop": "linewidth", "type": "number", "value": round(float(pt.get_linewidth()), 2),
          "min": 0, "max": 8, "step": 0.1, "unit": "pt"},
@@ -923,6 +931,7 @@ def _patch_fields(pt) -> list[dict]:
         {"prop": "zorder", "type": "number", "value": round(float(pt.get_zorder()), 1),
          "min": -5, "max": 50, "step": 1, "group": "排列"},
     ]
+    return fields
 
 
 def _image_fields(im) -> list[dict]:

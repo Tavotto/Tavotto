@@ -45,7 +45,7 @@ import matplotlib.pyplot as plt
 from matplotlib.artist import Artist
 from matplotlib.lines import Line2D
 from matplotlib.collections import LineCollection
-from matplotlib.patches import Circle, Rectangle
+from matplotlib.patches import Arc, Circle, Rectangle
 
 
 class GhostArtist(Artist):
@@ -106,6 +106,7 @@ def main():
     ax.pie([3, 4, 5])                                     # patches_0..2 Wedge
     ax.add_patch(Circle((0.6, 0.6), 0.15, facecolor="#B34700"))   # patches_3
     ax.add_patch(MyPatch((-0.9, -0.9), 0.3, 0.2, facecolor="#2A6F3C"))  # patches_4
+    ax.add_patch(Arc((0.0, -0.6), 0.5, 0.5, theta1=0, theta2=270))  # patches_5：画不出面
     fig.savefig("FamPatch.pdf")
 
     # ---- FamStairs：StepPatch 是 PathPatch 的子类 ----
@@ -396,6 +397,31 @@ def test_custom_subclass_inherits_family_support(hot):
     assert {"facecolor", "edgecolor", "linewidth", "alpha", "visible"} <= set(patch)
     line = _fields(_man(hot, "FamCustom"), "axes_0.lines_0")
     assert {"color", "linewidth", "linestyle", "marker"} <= set(line)
+
+
+def test_arc_gets_hatch_but_not_a_fill_it_cannot_paint(hot):
+    """`Arc` 是 matplotlib 里唯一**有意画不出面**的 Patch，而它不报错。
+
+    实测（3.10.8，同一张图同一个几何）：`set_facecolor("red")` 之后 Arc 的
+    红色像素 **0** 个、Circle 4122 个；`set_fill(True)` 与 `set_facecolor`
+    都照收、`get_*` 也照回——override 记成成功、manifest 照报，画面上什么
+    都没有。只有 `Arc(..., fill=True)` 这个**构造式**会抛。
+
+    **花纹是例外，在 Arc 上是真画的**（墨迹 427 → 1705，与 Circle 的
+    563 → 1915 同一量级）：它走 GC 的 hatch 机制、拿路径当模板，不经过填充
+    那条路。所以「有没有面」与「面归不归用户改」必须是两条判据——
+    Collection 那边的 `faces` / `fill` 是同一件事的另一半。
+    """
+    man = _man(hot, "FamPatch")
+    arc = _fields(man, "axes_0.patches_5")
+    assert "facecolor" not in arc, "Arc 给了填充色——设了也画不出来"
+    assert "fill" not in arc, "Arc 给了填充开关——它连构造式都拒绝 fill=True"
+    assert "hatch" in arc, "Arc 的花纹是真画得出来的，不该顺手一起砍掉"
+    assert {"edgecolor", "linewidth", "linestyle"} <= set(arc)
+
+    # 画得出面的照常全给——别把例外扩大成规则
+    circle = _fields(man, "axes_0.patches_3")
+    assert {"facecolor", "fill", "hatch"} <= set(circle)
 
 
 def test_unknown_artist_neither_crashes_nor_vanishes(hot):

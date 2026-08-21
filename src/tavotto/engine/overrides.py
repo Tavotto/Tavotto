@@ -1942,6 +1942,31 @@ def is_color_mapped(artist) -> bool:
         return False
 
 
+def patch_can_fill(pt) -> bool:
+    """这个 Patch 画不画得出**面**。决定要不要给 facecolor / fill。
+
+    matplotlib 里只有 `Arc` 是有意画不出面的，而它**不报错**——
+    `set_facecolor("red")` 与 `set_fill(True)` 都照收，`get_*` 也照回，
+    只是 `Arc.draw()` 从来不画那个面。实测（3.10.8，同一张图同一个几何）：
+    facecolor=red 之后 Arc 的红色像素 **0** 个，Circle 是 4122 个。
+    于是 override 被记成成功、manifest 也照报，画面上什么都没有——
+    「界面说改了、画面没动」，与映射的 Collection 那条是同一种假支持。
+
+    **只有 `hatch` 例外，它在 Arc 上是真画的**（实测墨迹 427 → 1705，
+    与 Circle 的 563 → 1915 同一量级）：花纹走 GC 的 hatch 机制、拿路径当
+    模板，不经过填充那条路。所以 Arc 给花纹、不给填充色——这也是为什么
+    「有没有面」与「面归不归用户改」必须分成两条判据（见 `collection_caps`
+    的 `faces`）。
+
+    **这里只能按类名认**：matplotlib 没有公开的「填得了吗」谓词，而
+    `set_fill(True)` 在实例上不抛（只有 `Arc(..., fill=True)` 这个构造式会抛
+    `ValueError: Arc objects cannot be filled`），探不出来。按 family 建模
+    是为了不用逐个类名补**能力**，不是说一个有据可查的例外也不许写下来。
+    """
+    from matplotlib.patches import Arc  # noqa: PLC0415 — 只在这一条判据里用
+    return not isinstance(pt, Arc)
+
+
 def is_linecoll_family(artist) -> bool:
     """归不归**线组**那一族。`manifest.instrument` 与 `_cls_key` 的**唯一判据**。
 

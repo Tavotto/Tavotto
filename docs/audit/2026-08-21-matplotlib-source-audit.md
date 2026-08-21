@@ -525,3 +525,40 @@ xlim、翻色条方向都会让整组刻度重来，把它们报进去等于让�
 `test_hatch_is_offered_only_where_there_are_faces` /
 `test_registered_artists_without_geometry_are_reported_not_dropped`，
 去掉各自的修复都当场红。
+
+## 18. 第四轮：一条实测确认、一条**实测否掉但指对了地方**
+
+### 18.1 普查工具的相对路径（确认，已修）
+
+`from_script` 先 `os.chdir(脚本目录)` 再 `os.path.abspath(path)`——而
+`abspath` 是相对**当前** cwd 算的。于是文档里那条
+`python scripts/dev/matplotlib_artist_census.py examples/figure.py` 当场
+FileNotFoundError，路径拼成了 `…/examples/examples/figure.py`（实测复现）。
+绝对路径改在 chdir **之前**解出来。看护
+`tests/test_artist_census_tool.py`——它不在产品路径上，但它是排兼容缺口时
+第一个被拿起来的东西，跑不起来就等于没有。
+
+### 18.2 `Arc` 的花纹（**否掉**）与 `Arc` 的填充（真问题，已修）
+
+审查说 `Arc` 画不出面、所以不该给 `hatch`。前半句对，后半句**实测不成立**：
+
+| 在 `Arc` 上 | 实测（3.10.8，同一张图同一个几何） |
+|---|---|
+| `hatch="///"` | 墨迹 427 → 1705（**+1278**），Circle 是 563 → 1915（+1352） |
+| `facecolor="red"` | 红色像素 **0**，Circle 是 4122 |
+| `Arc(..., fill=True)` | `ValueError: Arc objects cannot be filled` |
+
+花纹走的是 GC 的 hatch 机制、拿路径当模板，不经过填充那条路，所以在 Arc 上
+**是真画的**。按建议砍掉它，等于把一个能用的能力删了。
+
+但它指对了地方：真正「设得进去、看不出来」的是 **facecolor 与 fill**。
+`set_facecolor("red")` 与 `set_fill(True)` 在实例上都不抛、`get_*` 也照回，
+只有构造式会抛——于是 override 记成成功、manifest 照报，画面上什么都没有。
+`patch_can_fill()` 现在挡住这两条，花纹照给。
+
+**这两件事必须分成两条判据**，与 Collection 那边的 `faces` / `fill`
+（§17.2）是同一件事的另一半：「有没有面」和「面归不归用户改」不是一个问题。
+
+`patch_can_fill` 里那句 `isinstance(pt, Arc)` 是**有据可查的例外**：
+matplotlib 没有公开的「填得了吗」谓词，实例上也探不出来。按 family 建模是为了
+不用逐个类名补**能力**，不是说一个测得出来的例外也不许写下来。

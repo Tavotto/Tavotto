@@ -163,21 +163,26 @@ def _capture():
 
 
 def from_script(path: str, entry: str | None) -> list[tuple[str, Figure]]:
-    d = os.path.dirname(os.path.abspath(path))
+    # **绝对路径必须在 chdir 之前解出来**：`abspath` 是相对**当前** cwd 算的，
+    # 换过目录之后再解一次，`sub/fig.py` 会变成 `<脚本目录>/sub/fig.py`
+    # ——文档里那条 `python …/matplotlib_artist_census.py examples/figure.py`
+    # 当场 FileNotFoundError（实测路径拼成了 `…/examples/examples/figure.py`）。
+    script = os.path.abspath(path)
+    d = os.path.dirname(script)
     sys.path.insert(0, d)
     argv, cwd = sys.argv[:], os.getcwd()
-    sys.argv = [os.path.abspath(path)]
+    sys.argv = [script]
     os.chdir(d)
     try:
         with _capture() as grabbed:
             if entry:
-                mod = runpy.run_path(os.path.abspath(path), run_name="__tavotto_census__")
+                mod = runpy.run_path(script, run_name="__tavotto_census__")
                 fn = mod.get(entry)
                 if fn is None:
                     raise SystemExit(f"脚本里没有入口函数 {entry}()")
                 fn()
             else:
-                runpy.run_path(os.path.abspath(path), run_name="__main__")
+                runpy.run_path(script, run_name="__main__")
             if not grabbed:
                 grabbed.extend((f"fig{i}", plt.figure(n))
                                for i, n in enumerate(plt.get_fignums()))
