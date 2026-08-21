@@ -1050,6 +1050,27 @@ def probe_versions(python: str) -> dict:
         return {}
 
 
+def check_python_version(target: dict, actual_python: str) -> list[str]:
+    """target 钉的 Python 版本与实际跑的对不对得上（只比 major.minor）。
+
+    **这条是我自己栽过的**：`matrix.json` 的 minimum 档钉着 `python: "3.10"`，
+    而我拿一个 **3.11** 的 venv 跑完了整档、报告标着 `target: minimum` 交了
+    出去。包版本核对通过（matplotlib 3.8.4 装对了），Python 版本却没人比。
+
+    代价是实打实的：3.10 的 `pathlib` 在**类定义时**就把 `io.open` 绑进了
+    `_NormalAccessor`，`Path.read_text()` 因此绕过 monkeypatch——这个只在
+    3.10 上张开的缺口，正因为我跑的是 3.11，一路绿到 CI 才红。
+    """
+    want = str(target.get("python") or "")
+    if not want or not actual_python:
+        return []
+    want_mm = ".".join(want.split(".")[:2])
+    got_mm = ".".join(str(actual_python).split(".")[:2])
+    if want_mm != got_mm:
+        return [f"python: 期望 {want_mm}.x，实际 {actual_python}"]
+    return []
+
+
 def check_target_versions(target: dict, actual: dict) -> list[str]:
     """target 声明的版本与实际装的对不上 → 返回不符项。
 
@@ -1174,7 +1195,14 @@ def main(argv: list[str] | None = None) -> int:
     print(f"渲染解释器：{python}")
     actual = probe_versions(python)
     print(f"实际装的：{', '.join(f'{k}={v}' for k, v in sorted(actual.items()))}")
-    mismatch = check_target_versions(target, actual)
+    import platform as _pf
+    py_actual = subprocess.run(
+        [python, "-c", "import platform;print(platform.python_version())"],
+        capture_output=True, text=True, timeout=120,
+        encoding="utf-8", errors="replace").stdout.strip() or _pf.python_version()
+    print(f"渲染解释器版本：Python {py_actual}")
+    mismatch = (check_target_versions(target, actual)
+                + check_python_version(target, py_actual))
     if mismatch:
         for line in mismatch:
             print(f"::error::target {args.target} 的版本对不上——{line}",
@@ -1183,7 +1211,7 @@ def main(argv: list[str] | None = None) -> int:
               f"比没有报告更坏。装对版本再跑，或者用 --target current。",
               file=sys.stderr)
         return 2
-    target = {**target, "actual": actual}
+    target = {**target, "actual": {**actual, "python": py_actual}}
     print(f"case {len(cases)} 个，分 {len(CC.group_by_project(cases))} 组构建\n",
           flush=True)
 

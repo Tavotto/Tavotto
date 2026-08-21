@@ -53,12 +53,31 @@ worker 把 cwd 切到沙盒（挡住脚本用相对路径写/删真实图库）�
 （`../../../etc/passwd`）直接放行给原来的 open 去报它本来的错，不做「就近找
 一个能用的」。
 
-**`builtins.open` 与 `io.open` 两个都要 patch**。它们指向同一个 C 函数，
-但那是**两个独立的名字绑定**：`builtins.open = f` 改不到 `io.open`。而
-`pathlib.Path.open`（`read_text` / `read_bytes` 都走它）调的正是 `io.open`
-——只补 builtins 的话，`Path("config.json").read_text()` 仍然 FileNotFoundError，
-而 `open("config.json")` 好使，两种等价写法行为不一致。这条是 CompatBench
-的 `shape_relative_pathlib` 当场抓出来的。
+**三个入口都要 patch，而且第三个是版本相关的。**
+
+`builtins.open` 与 `io.open` 指向同一个 C 函数，但那是**两个独立的名字
+绑定**：`builtins.open = f` 改不到 `io.open`。只补前者的话
+`Path("config.json").read_text()` 仍然 FileNotFoundError 而 `open(...)` 好使
+——两种等价写法行为不一致。这条是 CompatBench 的 `shape_relative_pathlib`
+抓出来的。
+
+补完这两个仍然不够，**而且缺口只在 Python 3.10 上张开**（实测 3.10.20）：
+
+    3.10   pathlib._NormalAccessor.open is io.open  →  True
+           但它在**类定义时**就绑好了，`Path.open` 调的是
+           `self._accessor.open(...)`，patch `io.open` 对它毫无作用
+    3.11+  `_accessor` 被删掉，`Path.open` 改成调用时才查 `io.open`
+
+pyproject 的 `requires-python` 下界正是 3.10，所以这不是理论问题：同一份
+脚本在 3.13 上读得到数据、在 3.10 上 FileNotFoundError。所以第三个 patch
+打在 **`pathlib.Path.open` 本身**——`read_text` / `read_bytes` 都是
+`self.open(...)` 的实例方法查找，打在类上对每个版本都成立，也不必知道
+`_accessor` 存不存在。
+
+这三个之外不再扩大：pandas 的 `get_handle`、`numpy.load`、`PIL.Image.open`、
+`json.load(open(...))` 全部经过它们。`os.open` / `os.stat` 这类底层调用不管
+——覆盖它们要维护一张平台相关的语义表，收益却只是极少数直接玩 fd 的脚本。
+覆盖不到的那些由 CompatBench 如实记账，不靠猜。
 
 这两个之外不再扩大：pandas 的 `get_handle`、`numpy.load`、`PIL.Image.open`、
 `json.load(open(...))` 全部经过它们。`os.open` / `os.stat` 这类底层调用不管
@@ -73,6 +92,7 @@ from __future__ import annotations
 import builtins
 import io
 import os
+import pathlib
 
 __all__ = ["savefig_stem", "collect_pyplot_figures", "fallback_stems",
            "install_relative_read_fallback", "MAX_PYPLOT_FALLBACK",
@@ -167,6 +187,7 @@ def install_relative_read_fallback(script_dir: str, project_root: str):
     """
     real_open = builtins.open
     real_io_open = io.open
+    real_path_open = pathlib.Path.open
     script_dir = os.path.abspath(script_dir)
     project_root = os.path.abspath(project_root)
 
@@ -210,12 +231,27 @@ def install_relative_read_fallback(script_dir: str, project_root: str):
             return original(file, mode, *args, **kwargs)
         return guarded_open
 
+    def guarded_path_open(self, mode="r", *args, **kwargs):
+        """`Path.open` 自己也要包一层——**3.10 上它不走 `io.open`**（见模块头）。
+
+        打在类上而不是追着 `_accessor` 打：`read_text` / `read_bytes` 都是
+        `self.open(...)` 的实例方法查找，这一层对每个版本都成立。
+        """
+        if _readonly(mode):
+            alt = _fallback_path(self)
+            if alt is not None:
+                return real_path_open(pathlib.Path(alt), mode, *args, **kwargs)
+        return real_path_open(self, mode, *args, **kwargs)
+
     builtins.open = _wrap(real_open)
-    # `io.open` 是**另一个绑定**（见模块头）：pathlib 走的是它。
+    # `io.open` 是**另一个绑定**（见模块头）：3.11+ 的 pathlib 走的是它。
     io.open = _wrap(real_io_open)
+    # 3.10 的 pathlib 两个都不走，只好直接包它自己。
+    pathlib.Path.open = guarded_path_open
 
     def uninstall() -> None:
         builtins.open = real_open
         io.open = real_io_open
+        pathlib.Path.open = real_path_open
 
     return uninstall

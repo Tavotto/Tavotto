@@ -287,11 +287,19 @@ class TestReport:
 
 # ============================================================ CLI
 class TestCli:
+    #: **读取侧也要钉 UTF-8。** 两个 CLI 自己把 stdout 钉成了 UTF-8
+    #: （`_common.use_utf8_streams`），而 `text=True` 让**父进程**按本地区域
+    #: 解码——Windows 上是 cp1252，中文 help 里的 `0x81/0x8D/0x8F/0x9D` 在
+    #: 那张码表里根本没定义，于是 `out.stdout` 变成 None，断言报
+    #: 「argument of type 'NoneType' is not iterable」，与真实原因毫不相干。
+    #: 写的一侧钉了、读的一侧没钉，等于没钉——这是同一条不变式的两端。
+    _DECODE = {"encoding": "utf-8", "errors": "replace"}
+
     def _run(self, args, env=None):
         import os
         return subprocess.run(
             [sys.executable, str(CI_DIR / "compat_matrix.py"), *args],
-            capture_output=True, text=True, timeout=180,
+            capture_output=True, text=True, timeout=180, **self._DECODE,
             env={**os.environ, **(env or {})})
 
     def test_help_works(self):
@@ -323,7 +331,7 @@ class TestCli:
     def test_driver_help_works(self):
         out = subprocess.run(
             [sys.executable, str(CI_DIR / "compat_driver.py"), "--help"],
-            capture_output=True, text=True, timeout=120)
+            capture_output=True, text=True, timeout=120, **self._DECODE)
         assert out.returncode == 0
         for mode in ("native", "census", "browser"):
             assert mode in out.stdout
@@ -487,3 +495,40 @@ def test_prop_diff_uses_the_same_tolerance_as_the_edit_stage():
     assert CM._prop_diffs(a, b) == [], "微小浮点差被当成分歧了"
     c = {"elements": [{"gid": "g", "editable": [{"prop": "lw", "value": 3.0}]}]}
     assert CM._prop_diffs(a, c), "真实差异没被抓到"
+
+
+def test_target_python_version_is_checked_too():
+    """**包版本对上不等于 Python 版本对上。**
+
+    我自己栽过这条：`matrix.json` 的 minimum 档钉着 `python: "3.10"`，而我拿
+    一个 3.11 的 venv 跑完整档、报告标着 `target: minimum` 交了出去。
+    matplotlib 3.8.4 装对了，所以包版本核对一路绿。
+
+    代价实打实：3.10 的 `pathlib` 在**类定义时**就把 `io.open` 绑进了
+    `_NormalAccessor`，`Path.read_text()` 因此绕过 monkeypatch——这个只在
+    3.10 上张开的缺口，正因为我跑的是 3.11，一直绿到 CI 的 ubuntu-3.10 才红。
+    """
+    t = {"python": "3.10", "matplotlib": "3.8.4"}
+    assert CM.check_python_version(t, "3.10.20") == []
+    bad = CM.check_python_version(t, "3.11.14")
+    assert len(bad) == 1 and "3.11.14" in bad[0]
+    # 没钉版本的 target（current）不该被这条挡住
+    assert CM.check_python_version({}, "3.13.0") == []
+
+
+def test_minimum_target_pins_the_python_the_package_claims():
+    """矩阵里 minimum 档的 Python 必须就是 pyproject 的 requires-python 下界。
+
+    那条下界本来就是「我们宣称支持的最老 Python」，矩阵却验另一个版本的话，
+    宣称与验证之间就有一段没人走过的路——上面那个 pathlib 缺口正好落在那段里。
+    """
+    import re
+    spec = CC.resolve_target(CC.load_matrix(), "minimum")
+    pyproject = (CC.REPO / "pyproject.toml").read_text(encoding="utf-8")
+    # 只比**下界**，不比整串：上界（`,<3.14`）会随支持范围变，把它写死会让
+    # 这条用例在一次与本议题无关的调整里变红。
+    m = re.search(r'requires-python\s*=\s*"[^"]*?>=\s*(\d+\.\d+)', pyproject)
+    assert m, "读不出 pyproject 的 requires-python 下界"
+    assert str(spec["python"]).startswith(m.group(1)), (
+        f"pyproject 宣称的下界是 {m.group(1)}，而 matrix.json 的 minimum 档"
+        f"钉的是 {spec['python']}——宣称与验证之间会留下一段没人走过的路")

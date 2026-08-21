@@ -362,8 +362,13 @@ def test_every_lab_script_has_a_working_cli(script):
     要白等一整轮排队。
     """
     import subprocess
+    # 读取侧钉 UTF-8：这些脚本的 help 是中文，而 `text=True` 让父进程按本地
+    # 区域解码——Windows 的 cp1252 里 0x81/0x8D/0x8F/0x9D 没有定义，撞上就
+    # 把「--help 能不能跑」变成一个解码错误。写的一侧钉了、读的一侧没钉，
+    # 等于没钉。
     out = subprocess.run([sys.executable, str(CI_DIR / script), "--help"],
-                         capture_output=True, text=True, timeout=120)
+                         capture_output=True, text=True, timeout=120,
+                         encoding="utf-8", errors="replace")
     assert out.returncode == 0, f"{script} --help 失败：{out.stderr[-500:]}"
 
 
