@@ -25,13 +25,14 @@
 `tests/test_browser_session.py` 同一条纪律）。
 """
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
-from tavotto.engine import pool
+from tavotto.engine import figcapture, pool
 
 try:
     WORKER_PY = pool.find_worker_python()
@@ -430,3 +431,139 @@ def main():
         browser = sorted(f["stem"] for f in
                          browser_load(source, "guarded.py", tmp_path / "ws")["figures"])
         assert desktop == browser == ["entry_only"]
+
+
+class TestAbsolutizedRelativeRead:
+    """**把相对路径解成绝对再 open 的库，同样要救得回来。**
+
+    CompatBench 在 minimum 档（Python 3.10 / Pillow 10.4.0）上逮到的：
+    `sci_pillow` 的 `Image.open("sample.png")` 在 execute 阶段挂了，而同一条
+    在 bundled 档（Pillow 12.3.0）全绿。差别不在我们这边，在 Pillow：
+
+    * 12.3.0：`filename = os.fspath(fp)` —— 还是相对的 `"sample.png"`；
+    * 10.4.0：`filename = os.path.realpath(os.fspath(fp))` —— **先解成绝对**，
+      于是 `builtins.open` 收到的是 `<沙盒>/sample.png`。
+
+    回退的 `os.path.isabs()` 那道闸把它挡了下来，脚本拿到 FileNotFoundError。
+    这不是 Pillow 的毛病：**任何在 open 之前 realpath/abspath 一下的库都一样**
+    （h5py、部分 netCDF 绑定、用户自己写的 `os.path.abspath(p)`）。
+
+    语义上这两件事是同一件：裸相对路径就是拿 cwd 拼出来的，而 cwd 就是沙盒。
+    所以放行判据收得很紧——只认**指向沙盒内部、且在沙盒里不存在**的绝对路径，
+    仍然只读、仍然要落在项目根里。沙盒之外的绝对路径一个都不碰。
+    """
+
+    def _sandbox(self, tmp_path):
+        project = tmp_path / "project"
+        (project / "sub").mkdir(parents=True)
+        (project / "sub" / "data.csv").write_text("x,y\n1,2\n", encoding="utf-8")
+        sandbox = tmp_path / "sandbox"
+        sandbox.mkdir()
+        return project, sandbox
+
+    def test_absolute_path_into_sandbox_is_redirected(self, tmp_path, monkeypatch):
+        project, sandbox = self._sandbox(tmp_path)
+        monkeypatch.chdir(sandbox)
+        undo = figcapture.install_relative_read_fallback(
+            str(project / "sub"), str(project))
+        try:
+            # 库先把相对路径解成绝对（Pillow 10.4.0 就是这么干的），
+            # 再交给 builtins.open。
+            absolutized = os.path.realpath(os.path.join(os.getcwd(), "data.csv"))
+            assert os.path.isabs(absolutized)
+            assert not os.path.exists(absolutized)
+            with open(absolutized, "r", encoding="utf-8") as fh:
+                assert fh.read().startswith("x,y")
+        finally:
+            undo()
+
+    def test_absolute_path_outside_sandbox_is_never_redirected(self, tmp_path,
+                                                              monkeypatch):
+        """沙盒外的绝对路径一个都不碰——那是边界，不是笔误。"""
+        project, sandbox = self._sandbox(tmp_path)
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        monkeypatch.chdir(sandbox)
+        undo = figcapture.install_relative_read_fallback(
+            str(project / "sub"), str(project))
+        try:
+            with pytest.raises(FileNotFoundError):
+                open(str(elsewhere / "data.csv"), "r", encoding="utf-8")
+            # 项目根里确实有同名文件，但请求的绝对路径指向别处 —— 不许「就近找」。
+            assert (project / "sub" / "data.csv").is_file()
+        finally:
+            undo()
+
+    def test_absolute_write_into_sandbox_still_lands_in_the_sandbox(
+            self, tmp_path, monkeypatch):
+        """写永远不改道：脚本写出来的那份必须留在沙盒里。"""
+        project, sandbox = self._sandbox(tmp_path)
+        monkeypatch.chdir(sandbox)
+        undo = figcapture.install_relative_read_fallback(
+            str(project / "sub"), str(project))
+        try:
+            target = os.path.join(os.getcwd(), "data.csv")
+            with open(target, "w", encoding="utf-8") as fh:
+                fh.write("written\n")
+            assert (sandbox / "data.csv").read_text(encoding="utf-8") == "written\n"
+            # 项目里那份一个字节没动。
+            assert (project / "sub" / "data.csv").read_text(
+                encoding="utf-8").startswith("x,y")
+        finally:
+            undo()
+
+    def test_existing_sandbox_file_wins_over_the_project_copy(self, tmp_path,
+                                                             monkeypatch):
+        """沙盒里已经有了就用沙盒那份——脚本自己写出来的优先。"""
+        project, sandbox = self._sandbox(tmp_path)
+        (sandbox / "data.csv").write_text("sandbox\n", encoding="utf-8")
+        monkeypatch.chdir(sandbox)
+        undo = figcapture.install_relative_read_fallback(
+            str(project / "sub"), str(project))
+        try:
+            absolutized = os.path.realpath(os.path.join(os.getcwd(), "data.csv"))
+            with open(absolutized, "r", encoding="utf-8") as fh:
+                assert fh.read() == "sandbox\n"
+        finally:
+            undo()
+
+    def test_chdir_then_write_then_read_keeps_the_scripts_own_copy(
+            self, tmp_path, monkeypatch):
+        """脚本 `os.chdir()` 进子目录再写再读——读到的必须是它自己写的那份。
+
+        存在性判据必须跟着**真正的 open 会用的那条路径**走。拿沙盒根去判的话
+        `<沙盒>/work/data.csv` 查不到，回退就会把读改道到项目里的原件，脚本
+        刚写完的中间结果被无声换掉——比读不到还坏。
+        """
+        project, sandbox = self._sandbox(tmp_path)
+        work = sandbox / "work"
+        work.mkdir()
+        monkeypatch.chdir(work)
+        undo = figcapture.install_relative_read_fallback(
+            str(project / "sub"), str(project), sandbox_dir=str(sandbox))
+        try:
+            with open("data.csv", "w", encoding="utf-8") as fh:
+                fh.write("mine\n")
+            with open("data.csv", "r", encoding="utf-8") as fh:
+                assert fh.read() == "mine\n"          # 不是项目里那份 "x,y"
+            # 没写过的名字仍然救得回来。
+            with open("data.csv".replace("data", "data"), "r",
+                      encoding="utf-8") as fh:
+                assert fh.read() == "mine\n"
+        finally:
+            undo()
+
+    def test_chdir_then_read_a_file_only_the_project_has(self, tmp_path,
+                                                         monkeypatch):
+        """chdir 之后读一个只有项目里才有的文件——仍然要救得回来。"""
+        project, sandbox = self._sandbox(tmp_path)
+        work = sandbox / "work"
+        work.mkdir()
+        monkeypatch.chdir(work)
+        undo = figcapture.install_relative_read_fallback(
+            str(project / "sub"), str(project), sandbox_dir=str(sandbox))
+        try:
+            with open("data.csv", "r", encoding="utf-8") as fh:
+                assert fh.read().startswith("x,y")
+        finally:
+            undo()

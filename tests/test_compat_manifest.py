@@ -516,3 +516,34 @@ def test_child_axes_cases_assert_on_the_child_itself(manifest):
         targets |= {m["gid"] for m in c.get("mutations") or []}
         assert any(g.startswith("axes_1") for g in targets), (
             f"{cid} 的断言全落在宿主轴上，子 axes 回退了它也不会红：{sorted(targets)}")
+
+
+def test_fallback_only_cases_are_not_claimed_as_full_support(manifest):
+    """**没有磁盘产物的 stem 不许报「完全支持」。**
+
+    `plt.show()` 出来的图在桌面界面上够不着：面板列表按文件扫、
+    `analyze_script()` 对没有存图调用的脚本回 None、注册表对话框只给候选与
+    已登记的脚本「试运行」按钮，没有「任选一个脚本」的入口。而 CompatBench
+    走的是 `probe_and_register()` + worker——**它绕过了那条产品入口**。
+
+    据此报「完全支持」就是拿基准替产品打掩护，而这个基准存在的全部意义是
+    让 Tavotto 说真话。这一条是结构性的：判据不是某个 case 的名字，而是
+    「这个脚本有没有存图调用」——将来加同类 case 时它自动生效。
+
+    引擎阶段照常验（它们是真的），只有 `classification` 受这条约束。
+    """
+    import ast
+    offenders = []
+    for c in manifest["cases"]:
+        src = (CC.COMPAT_DIR / c["script"]).read_text(encoding="utf-8")
+        tree = ast.parse(src)
+        saves = [n for n in ast.walk(tree)
+                 if isinstance(n, ast.Call)
+                 and getattr(n.func, "attr", "") in ("savefig", "save")]
+        if saves:
+            continue                       # 有存图调用 → 磁盘上会有产物
+        if c.get("classification", "full_support") == "full_support":
+            offenders.append(c["id"])
+    assert not offenders, (
+        "这些 case 的脚本一次都不存盘，桌面界面上打不开它们，却被记成"
+        f"「完全支持」：{offenders}")

@@ -44,14 +44,38 @@ worker 把 cwd 切到沙盒（挡住脚本用相对路径写/删真实图库）�
 这里给的是**最小且不可能变成写入通道**的修法：只有
 
     * 只读模式（'r'/'rb'/'rt'，带 '+'、'w'、'a'、'x' 的一律不管），
-    * 相对路径，
-    * 在当前 cwd（沙盒）下确实不存在，
+    * 相对路径，**或指向沙盒内部的绝对路径**（见下），
+    * 按真正的 open 会用的那条路径判、确实不存在，
     * 换算到脚本目录之后仍然落在项目根**之内**，
 
 四条同时成立时，才把 `open()` 改指到脚本目录下那一份。写、改、删、重命名
 一个字节都不经过这里，所以沙盒作为**写入**边界完全没有松动；越界的读
 （`../../../etc/passwd`）直接放行给原来的 open 去报它本来的错，不做「就近找
 一个能用的」。
+
+**「先 realpath 再 open」的库同样要救得回来。**
+
+只认裸相对路径是不够的：不少库在 open 之前先把路径解成绝对再交给
+`builtins.open`，于是回退看到的是 `<沙盒>/sample.png` 而不是 `sample.png`。
+CompatBench 在 minimum 档（Python 3.10 / Pillow 10.4.0）上逮到的就是这个——
+`sci_pillow` 的 `Image.open("sample.png")` 挂在 execute，而同一条在 bundled
+档（Pillow 12.3.0）全绿：
+
+    10.4.0   filename = os.path.realpath(os.fspath(fp))   ← 先解成绝对
+    12.3.0   filename = os.fspath(fp)                      ← 还是相对的
+
+**这不是 Pillow 的毛病**，Pillow 只是撞上来的那一个：h5py、部分 netCDF 绑定、
+以及任何自己写了 `os.path.abspath(p)` 的用户脚本都是同一类。
+
+放行判据收得很紧：**只认指向沙盒内部、且按真正的 open 会用的那条路径判确实
+不存在的绝对路径**，仍然只读、仍然要落在项目根里。语义上这与相对路径是同一
+件事——裸相对路径就是拿 cwd 拼出来的，而 cwd 就是沙盒。沙盒**之外**的绝对
+路径一个都不碰：那是用户指名的位置，「就近找一个能用的」在那里是越权。
+
+存在性**必须按真正的 open 会用的那条路径判**，不能拿沙盒根去拼：脚本
+`os.chdir()` 进子目录之后自己写出来的中间结果会查不到，读被无声改道到项目里
+的原件——比读不到还坏。看护 `TestAbsolutizedRelativeRead`（改道 / 越界不改道 /
+写不改道 / 沙盒里那份优先 / chdir 后自己写的优先 / chdir 后仍救得回来）。
 
 **三个入口都要 patch，而且第三个是版本相关的。**
 
@@ -179,27 +203,66 @@ def collect_pyplot_figures(capture: dict, script_stem: str, plt,
     return stems, dropped
 
 
-def install_relative_read_fallback(script_dir: str, project_root: str):
+def install_relative_read_fallback(script_dir: str, project_root: str,
+                                   sandbox_dir: str | None = None):
     """装上「相对路径只读回退」。返回一个卸载函数（测试与嵌入场景用）。
 
     语义见模块头。四条硬约束在这里逐条落地，任何一条不成立就原样交给
     真正的 `open` —— 包括让它抛它本来会抛的那个 `FileNotFoundError`。
+
+    `sandbox_dir` 默认取安装那一刻的 cwd（两个调用方都已经把 cwd 设成沙盒）。
+    做成参数是为了能单测，也为了脚本自己 `os.chdir()` 之后判据不跟着漂——
+    沙盒是我们建的那个目录，不是「此刻碰巧在哪」。
     """
     real_open = builtins.open
     real_io_open = io.open
     real_path_open = pathlib.Path.open
     script_dir = os.path.abspath(script_dir)
     project_root = os.path.abspath(project_root)
+    sandbox_dir = os.path.abspath(sandbox_dir if sandbox_dir is not None
+                                  else os.getcwd())
+
+    def _within_sandbox(name: str) -> str | None:
+        """绝对路径 → 它相对沙盒的那一段；不在沙盒里就 None。"""
+        try:
+            real = os.path.realpath(name)
+            box = os.path.realpath(sandbox_dir)
+        except OSError:
+            return None
+        try:
+            # 跨盘符在 Windows 上抛 ValueError —— 那本来就是「不在沙盒里」。
+            if os.path.commonpath([real, box]) != box:
+                return None
+        except ValueError:
+            return None
+        rel = os.path.relpath(real, box)
+        return None if rel.startswith("..") or rel == "." else rel
 
     def _fallback_path(file) -> str | None:
         if not isinstance(file, (str, os.PathLike)):
             return None                      # 已经是 fd / 文件对象
         name = os.fspath(file)
-        if not isinstance(name, str) or not name or os.path.isabs(name):
+        if not isinstance(name, str) or not name:
             return None
+        if os.path.isabs(name):
+            # **绝对路径只在一种情况下算数**：它指向沙盒内部。裸相对路径就是
+            # 拿 cwd 拼出来的，而 cwd 就是沙盒——所以「先 realpath 再 open」的
+            # 库（Pillow 10.4.0 的 `Image.open` 正是如此，12.x 已改回 fspath）
+            # 递过来的那条路径，语义上与相对路径是同一件事。
+            #
+            # 沙盒**之外**的绝对路径一个都不碰：那是用户明确指名的位置，
+            # 「就近找一个能用的」在那里是越权，不是便利。
+            rel = _within_sandbox(name)
+            if rel is None:
+                return None
+        else:
+            rel = name
+        # 存在性**按真正的 open 会用的那条路径判**：相对的按 cwd 解（脚本
+        # 可能 `os.chdir()` 进了子目录），绝对的就用它自己。拿沙盒根去拼的话，
+        # chdir 之后脚本自己写出来的那份会被无视、读到项目里的原件。
         if os.path.exists(name):
-            return None                      # 沙盒里就有——脚本自己写出来的那份优先
-        cand = os.path.abspath(os.path.join(script_dir, name))
+            return None                      # 已经有了——脚本自己写出来的那份优先
+        cand = os.path.abspath(os.path.join(script_dir, rel))
         try:
             real = os.path.realpath(cand)
             root = os.path.realpath(project_root)

@@ -300,11 +300,19 @@ Python，首次渲染也不联网：
     保证由 `test_compat_capture_parity.py` 看护）。
   * **相对路径只读回退**：worker 的 cwd 在沙盒里（那是**写入**边界），而
     `pd.read_csv("data.csv")` 在 `python figure.py` 下天经地义。只有「只读
-    模式 + 相对路径 + 沙盒里确实没有 + 换算后仍在图库内」四条同时成立才改指
-    到脚本目录；写 / 改 / 删 / 重命名一个字节都不经过它。
+    模式 + 相对路径（或**指向沙盒内部的**绝对路径）+ 按真正的 open 会用的那条
+    路径判确实不存在 + 换算后仍在图库内」四条同时成立才改指到脚本目录；
+    写 / 改 / 删 / 重命名一个字节都不经过它。沙盒**之外**的绝对路径一个都不碰。
     **`builtins.open` 与 `io.open` 两个都要 patch**——它们指向同一个 C 函数
     却是两个独立绑定，`pathlib.Path.read_text` 走的是后者，只补前者会让
-    `open("x")` 好使而 `Path("x").read_text()` 报 FileNotFoundError。
+    `open("x")` 好使而 `Path("x").read_text()` 报 FileNotFoundError；
+    **3.10 还要第三个 patch 打在 `pathlib.Path.open` 上**（那一版
+    `_NormalAccessor.open` 在类定义时就绑好了，前两个都够不着它）。
+    **只认裸相对路径是不够的**：不少库在 open 之前先 realpath 一下
+    （Pillow 10.4.0 的 `Image.open` 就是，12.x 已改回 fspath），回退看到的是
+    `<沙盒>/x.png`——CompatBench 的 minimum 档抓到的正是这个。存在性判据
+    **必须按真正的 open 会用的那条路径走**，拿沙盒根去拼的话，脚本
+    `os.chdir()` 进子目录后自己写出来的中间结果会被无声换成图库里的原件。
   * 浏览器侧**刻意没有**这条回退：playground 是单文件的，相对读报
     `missing_file` 才是对的。桌面的 `entry` 机制同样是超集（浏览器按
     `python figure.py` 跑，只有 `def main():` 而没人调用的脚本在原生 Python

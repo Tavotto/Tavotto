@@ -29,8 +29,20 @@
         "自己有一档在验，否则「支持 3.8」只是一句没人跑过的话。",
         "3.8.4 是 3.8 系列的末版；numpy 钉在 1.26.4（2.x 与 mpl 3.8 不兼容）。",
         "Python 钉 3.10 = pyproject 的 requires-python 下界。",
-        "改这三个数之前先确认 PyPI 上真的能装到。"
-      ]
+        "改这三个数之前先确认 PyPI 上真的能装到。",
+        "",
+        "**pandas / scipy / seaborn / pillow 也必须钉在这里**，理由与上面同构：",
+        "别的档从锁文件现读（那些闭包是 numpy 2.x + py3.13 时代的，装不进",
+        "3.10 + numpy 1.26），而这一档没有对应的锁文件可读。少了它们，语料里",
+        "用到这四个库的 case 会在 execute 阶段挂掉，而它们在清单里是",
+        "full_support —— classify 于是把环境缺包记成**假的 product_bug**，",
+        "nightly 红一片却没有一条是真的兼容性问题。",
+        "这组数在真 Python 3.10.20 上装过并跑完全量语料才写进来的。"
+      ],
+      "pandas": "2.2.3",
+      "scipy": "1.14.1",
+      "seaborn": "0.13.2",
+      "pillow": "10.4.0"
     },
     "bundled": {
       "required": true,

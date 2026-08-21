@@ -93,7 +93,9 @@
       ],
       "browser_eligible": true,
       "smoke": true,
-      "notes": "AI 最常见的输出形态：pyplot + plt.show()，一次 savefig 都没有。桌面与浏览器必须都能捕获（2026-08-21 之前只有浏览器能）。静态扫描解不出（没有存图调用），走试运行探测。"
+      "notes": "AI 最常见的输出形态：pyplot + plt.show()，一次 savefig 都没有。桌面与浏览器必须都能捕获（2026-08-21 之前只有浏览器能）。静态扫描解不出（没有存图调用），走试运行探测。",
+      "classification": "partial_support",
+      "reason": "**没有 savefig 的图，三个入口里只有浏览器 playground 够得着。**引擎那一侧全通（捕获 / 打开 / 识别 / 编辑 / 撤销 / 重放 / 导出都是真的），`probe_and_register()` 也确实能把它登记进注册表——CompatBench 调的正是它。问题是**没有任何产品入口对这类脚本调它**（逐条实测过）：\n\n* **桌面界面**：面板列表按文件扫（`scan_panels()` 只列真实存在的 PDF/图片），`analyze_script()` 对没有存图调用的脚本解不出 stem、于是它进不了注册表对话框的候选，而那个对话框只给候选与已登记的脚本「试运行」按钮——没有「任选一个脚本」的入口。\n* **Codex MCP / `tavotto open`**：走的是静态发现（`ensure_registered` → `discover.merge`），不试运行。实测这类脚本连 `dynamic_names` 都进不去（回的是 `status: unchanged`、什么都没提），`bridge._pick_stem` 又要求「已登记且产物在磁盘上」，显式带 stem 也一样被拒。\n* **浏览器 playground**：够得着。它是源码进、直接跑，不经注册表也不需要产物。\n\n本 case 的引擎阶段照常验（它们是真的），但分类必须记成部分支持——CompatBench 直接调 `probe_and_register()` + worker，**绕过了三个产品入口里够不着的那两个**，据此报「完全支持」就是拿基准替产品打掩护。补法是给这类stem 一条被产品看得见的路（虚拟面板 + 注册表里能挑任意脚本试运行，或让静态发现至少把它报进 `dynamic_names`），那是独立的产品改动，不在本 PR。"
     },
     {
       "id": "shape_oo_savefig",
@@ -1036,7 +1038,9 @@
       ],
       "browser_eligible": true,
       "smoke": true,
-      "notes": "三张 pyplot Figure 全无 savefig，中间还 plt.close() 过一次。fallback stem 必须确定、稳定、互不相同，且**不按 figure 号编号**——按号编的话这里就会跳号。"
+      "notes": "三张 pyplot Figure 全无 savefig，中间还 plt.close() 过一次。fallback stem 必须确定、稳定、互不相同，且**不按 figure 号编号**——按号编的话这里就会跳号。",
+      "classification": "partial_support",
+      "reason": "**没有 savefig 的图，三个入口里只有浏览器 playground 够得着。**引擎那一侧全通（捕获 / 打开 / 识别 / 编辑 / 撤销 / 重放 / 导出都是真的），`probe_and_register()` 也确实能把它登记进注册表——CompatBench 调的正是它。问题是**没有任何产品入口对这类脚本调它**（逐条实测过）：\n\n* **桌面界面**：面板列表按文件扫（`scan_panels()` 只列真实存在的 PDF/图片），`analyze_script()` 对没有存图调用的脚本解不出 stem、于是它进不了注册表对话框的候选，而那个对话框只给候选与已登记的脚本「试运行」按钮——没有「任选一个脚本」的入口。\n* **Codex MCP / `tavotto open`**：走的是静态发现（`ensure_registered` → `discover.merge`），不试运行。实测这类脚本连 `dynamic_names` 都进不去（回的是 `status: unchanged`、什么都没提），`bridge._pick_stem` 又要求「已登记且产物在磁盘上」，显式带 stem 也一样被拒。\n* **浏览器 playground**：够得着。它是源码进、直接跑，不经注册表也不需要产物。\n\n本 case 的引擎阶段照常验（它们是真的），但分类必须记成部分支持——CompatBench 直接调 `probe_and_register()` + worker，**绕过了三个产品入口里够不着的那两个**，据此报「完全支持」就是拿基准替产品打掩护。补法是给这类stem 一条被产品看得见的路（虚拟面板 + 注册表里能挑任意脚本试运行，或让静态发现至少把它报进 `dynamic_names`），那是独立的产品改动，不在本 PR。"
     },
     {
       "id": "shape_no_savefig_multi_2",
@@ -1078,7 +1082,9 @@
       ],
       "browser_eligible": false,
       "smoke": false,
-      "notes": "第二张的 fallback stem 必须是 `<脚本名>-2`。"
+      "notes": "第二张的 fallback stem 必须是 `<脚本名>-2`。",
+      "classification": "partial_support",
+      "reason": "**没有 savefig 的图，三个入口里只有浏览器 playground 够得着。**引擎那一侧全通（捕获 / 打开 / 识别 / 编辑 / 撤销 / 重放 / 导出都是真的），`probe_and_register()` 也确实能把它登记进注册表——CompatBench 调的正是它。问题是**没有任何产品入口对这类脚本调它**（逐条实测过）：\n\n* **桌面界面**：面板列表按文件扫（`scan_panels()` 只列真实存在的 PDF/图片），`analyze_script()` 对没有存图调用的脚本解不出 stem、于是它进不了注册表对话框的候选，而那个对话框只给候选与已登记的脚本「试运行」按钮——没有「任选一个脚本」的入口。\n* **Codex MCP / `tavotto open`**：走的是静态发现（`ensure_registered` → `discover.merge`），不试运行。实测这类脚本连 `dynamic_names` 都进不去（回的是 `status: unchanged`、什么都没提），`bridge._pick_stem` 又要求「已登记且产物在磁盘上」，显式带 stem 也一样被拒。\n* **浏览器 playground**：够得着。它是源码进、直接跑，不经注册表也不需要产物。\n\n本 case 的引擎阶段照常验（它们是真的），但分类必须记成部分支持——CompatBench 直接调 `probe_and_register()` + worker，**绕过了三个产品入口里够不着的那两个**，据此报「完全支持」就是拿基准替产品打掩护。补法是给这类stem 一条被产品看得见的路（虚拟面板 + 注册表里能挑任意脚本试运行，或让静态发现至少把它报进 `dynamic_names`），那是独立的产品改动，不在本 PR。"
     },
     {
       "id": "shape_no_savefig_multi_3",
@@ -1120,7 +1126,9 @@
       ],
       "browser_eligible": false,
       "smoke": false,
-      "notes": "第三张的 fallback stem 必须是 `<脚本名>-3`（不是 -4：中间那次plt.close() 让 figure 号跳到 4）。"
+      "notes": "第三张的 fallback stem 必须是 `<脚本名>-3`（不是 -4：中间那次plt.close() 让 figure 号跳到 4）。",
+      "classification": "partial_support",
+      "reason": "**没有 savefig 的图，三个入口里只有浏览器 playground 够得着。**引擎那一侧全通（捕获 / 打开 / 识别 / 编辑 / 撤销 / 重放 / 导出都是真的），`probe_and_register()` 也确实能把它登记进注册表——CompatBench 调的正是它。问题是**没有任何产品入口对这类脚本调它**（逐条实测过）：\n\n* **桌面界面**：面板列表按文件扫（`scan_panels()` 只列真实存在的 PDF/图片），`analyze_script()` 对没有存图调用的脚本解不出 stem、于是它进不了注册表对话框的候选，而那个对话框只给候选与已登记的脚本「试运行」按钮——没有「任选一个脚本」的入口。\n* **Codex MCP / `tavotto open`**：走的是静态发现（`ensure_registered` → `discover.merge`），不试运行。实测这类脚本连 `dynamic_names` 都进不去（回的是 `status: unchanged`、什么都没提），`bridge._pick_stem` 又要求「已登记且产物在磁盘上」，显式带 stem 也一样被拒。\n* **浏览器 playground**：够得着。它是源码进、直接跑，不经注册表也不需要产物。\n\n本 case 的引擎阶段照常验（它们是真的），但分类必须记成部分支持——CompatBench 直接调 `probe_and_register()` + worker，**绕过了三个产品入口里够不着的那两个**，据此报「完全支持」就是拿基准替产品打掩护。补法是给这类stem 一条被产品看得见的路（虚拟面板 + 注册表里能挑任意脚本试运行，或让静态发现至少把它报进 `dynamic_names`），那是独立的产品改动，不在本 PR。"
     },
     {
       "id": "shape_local_helper_import",
@@ -5617,7 +5625,9 @@
       ],
       "browser_eligible": true,
       "smoke": true,
-      "notes": "双曲线 + 图例——pyplot 状态机 + plt.show()，无 savefig——桌面靠 pyplot 兜底捕获。"
+      "notes": "双曲线 + 图例——pyplot 状态机 + plt.show()，无 savefig——桌面靠 pyplot 兜底捕获。",
+      "classification": "partial_support",
+      "reason": "**没有 savefig 的图，三个入口里只有浏览器 playground 够得着。**引擎那一侧全通（捕获 / 打开 / 识别 / 编辑 / 撤销 / 重放 / 导出都是真的），`probe_and_register()` 也确实能把它登记进注册表——CompatBench 调的正是它。问题是**没有任何产品入口对这类脚本调它**（逐条实测过）：\n\n* **桌面界面**：面板列表按文件扫（`scan_panels()` 只列真实存在的 PDF/图片），`analyze_script()` 对没有存图调用的脚本解不出 stem、于是它进不了注册表对话框的候选，而那个对话框只给候选与已登记的脚本「试运行」按钮——没有「任选一个脚本」的入口。\n* **Codex MCP / `tavotto open`**：走的是静态发现（`ensure_registered` → `discover.merge`），不试运行。实测这类脚本连 `dynamic_names` 都进不去（回的是 `status: unchanged`、什么都没提），`bridge._pick_stem` 又要求「已登记且产物在磁盘上」，显式带 stem 也一样被拒。\n* **浏览器 playground**：够得着。它是源码进、直接跑，不经注册表也不需要产物。\n\n本 case 的引擎阶段照常验（它们是真的），但分类必须记成部分支持——CompatBench 直接调 `probe_and_register()` + worker，**绕过了三个产品入口里够不着的那两个**，据此报「完全支持」就是拿基准替产品打掩护。补法是给这类stem 一条被产品看得见的路（虚拟面板 + 注册表里能挑任意脚本试运行，或让静态发现至少把它报进 `dynamic_names`），那是独立的产品改动，不在本 PR。"
     },
     {
       "id": "mm_twoline_oo",
@@ -5752,7 +5762,9 @@
       ],
       "browser_eligible": true,
       "smoke": false,
-      "notes": "散点 + 拟合线——pyplot 状态机 + plt.show()，无 savefig——桌面靠 pyplot 兜底捕获。"
+      "notes": "散点 + 拟合线——pyplot 状态机 + plt.show()，无 savefig——桌面靠 pyplot 兜底捕获。",
+      "classification": "partial_support",
+      "reason": "**没有 savefig 的图，三个入口里只有浏览器 playground 够得着。**引擎那一侧全通（捕获 / 打开 / 识别 / 编辑 / 撤销 / 重放 / 导出都是真的），`probe_and_register()` 也确实能把它登记进注册表——CompatBench 调的正是它。问题是**没有任何产品入口对这类脚本调它**（逐条实测过）：\n\n* **桌面界面**：面板列表按文件扫（`scan_panels()` 只列真实存在的 PDF/图片），`analyze_script()` 对没有存图调用的脚本解不出 stem、于是它进不了注册表对话框的候选，而那个对话框只给候选与已登记的脚本「试运行」按钮——没有「任选一个脚本」的入口。\n* **Codex MCP / `tavotto open`**：走的是静态发现（`ensure_registered` → `discover.merge`），不试运行。实测这类脚本连 `dynamic_names` 都进不去（回的是 `status: unchanged`、什么都没提），`bridge._pick_stem` 又要求「已登记且产物在磁盘上」，显式带 stem 也一样被拒。\n* **浏览器 playground**：够得着。它是源码进、直接跑，不经注册表也不需要产物。\n\n本 case 的引擎阶段照常验（它们是真的），但分类必须记成部分支持——CompatBench 直接调 `probe_and_register()` + worker，**绕过了三个产品入口里够不着的那两个**，据此报「完全支持」就是拿基准替产品打掩护。补法是给这类stem 一条被产品看得见的路（虚拟面板 + 注册表里能挑任意脚本试运行，或让静态发现至少把它报进 `dynamic_names`），那是独立的产品改动，不在本 PR。"
     },
     {
       "id": "mm_scatterfit_oo",
@@ -5877,7 +5889,9 @@
       ],
       "browser_eligible": true,
       "smoke": false,
-      "notes": "带数值标签的柱状图——pyplot 状态机 + plt.show()，无 savefig——桌面靠 pyplot 兜底捕获。"
+      "notes": "带数值标签的柱状图——pyplot 状态机 + plt.show()，无 savefig——桌面靠 pyplot 兜底捕获。",
+      "classification": "partial_support",
+      "reason": "**没有 savefig 的图，三个入口里只有浏览器 playground 够得着。**引擎那一侧全通（捕获 / 打开 / 识别 / 编辑 / 撤销 / 重放 / 导出都是真的），`probe_and_register()` 也确实能把它登记进注册表——CompatBench 调的正是它。问题是**没有任何产品入口对这类脚本调它**（逐条实测过）：\n\n* **桌面界面**：面板列表按文件扫（`scan_panels()` 只列真实存在的 PDF/图片），`analyze_script()` 对没有存图调用的脚本解不出 stem、于是它进不了注册表对话框的候选，而那个对话框只给候选与已登记的脚本「试运行」按钮——没有「任选一个脚本」的入口。\n* **Codex MCP / `tavotto open`**：走的是静态发现（`ensure_registered` → `discover.merge`），不试运行。实测这类脚本连 `dynamic_names` 都进不去（回的是 `status: unchanged`、什么都没提），`bridge._pick_stem` 又要求「已登记且产物在磁盘上」，显式带 stem 也一样被拒。\n* **浏览器 playground**：够得着。它是源码进、直接跑，不经注册表也不需要产物。\n\n本 case 的引擎阶段照常验（它们是真的），但分类必须记成部分支持——CompatBench 直接调 `probe_and_register()` + worker，**绕过了三个产品入口里够不着的那两个**，据此报「完全支持」就是拿基准替产品打掩护。补法是给这类stem 一条被产品看得见的路（虚拟面板 + 注册表里能挑任意脚本试运行，或让静态发现至少把它报进 `dynamic_names`），那是独立的产品改动，不在本 PR。"
     },
     {
       "id": "mm_barlabel_oo",
@@ -5982,7 +5996,9 @@
       ],
       "browser_eligible": true,
       "smoke": false,
-      "notes": "imshow + 色条——pyplot 状态机 + plt.show()，无 savefig——桌面靠 pyplot 兜底捕获。"
+      "notes": "imshow + 色条——pyplot 状态机 + plt.show()，无 savefig——桌面靠 pyplot 兜底捕获。",
+      "classification": "partial_support",
+      "reason": "**没有 savefig 的图，三个入口里只有浏览器 playground 够得着。**引擎那一侧全通（捕获 / 打开 / 识别 / 编辑 / 撤销 / 重放 / 导出都是真的），`probe_and_register()` 也确实能把它登记进注册表——CompatBench 调的正是它。问题是**没有任何产品入口对这类脚本调它**（逐条实测过）：\n\n* **桌面界面**：面板列表按文件扫（`scan_panels()` 只列真实存在的 PDF/图片），`analyze_script()` 对没有存图调用的脚本解不出 stem、于是它进不了注册表对话框的候选，而那个对话框只给候选与已登记的脚本「试运行」按钮——没有「任选一个脚本」的入口。\n* **Codex MCP / `tavotto open`**：走的是静态发现（`ensure_registered` → `discover.merge`），不试运行。实测这类脚本连 `dynamic_names` 都进不去（回的是 `status: unchanged`、什么都没提），`bridge._pick_stem` 又要求「已登记且产物在磁盘上」，显式带 stem 也一样被拒。\n* **浏览器 playground**：够得着。它是源码进、直接跑，不经注册表也不需要产物。\n\n本 case 的引擎阶段照常验（它们是真的），但分类必须记成部分支持——CompatBench 直接调 `probe_and_register()` + worker，**绕过了三个产品入口里够不着的那两个**，据此报「完全支持」就是拿基准替产品打掩护。补法是给这类stem 一条被产品看得见的路（虚拟面板 + 注册表里能挑任意脚本试运行，或让静态发现至少把它报进 `dynamic_names`），那是独立的产品改动，不在本 PR。"
     },
     {
       "id": "mm_imagecbar_oo",
@@ -6097,7 +6113,9 @@
       ],
       "browser_eligible": true,
       "smoke": false,
-      "notes": "曲线 + annotate 箭头——pyplot 状态机 + plt.show()，无 savefig——桌面靠 pyplot 兜底捕获。"
+      "notes": "曲线 + annotate 箭头——pyplot 状态机 + plt.show()，无 savefig——桌面靠 pyplot 兜底捕获。",
+      "classification": "partial_support",
+      "reason": "**没有 savefig 的图，三个入口里只有浏览器 playground 够得着。**引擎那一侧全通（捕获 / 打开 / 识别 / 编辑 / 撤销 / 重放 / 导出都是真的），`probe_and_register()` 也确实能把它登记进注册表——CompatBench 调的正是它。问题是**没有任何产品入口对这类脚本调它**（逐条实测过）：\n\n* **桌面界面**：面板列表按文件扫（`scan_panels()` 只列真实存在的 PDF/图片），`analyze_script()` 对没有存图调用的脚本解不出 stem、于是它进不了注册表对话框的候选，而那个对话框只给候选与已登记的脚本「试运行」按钮——没有「任选一个脚本」的入口。\n* **Codex MCP / `tavotto open`**：走的是静态发现（`ensure_registered` → `discover.merge`），不试运行。实测这类脚本连 `dynamic_names` 都进不去（回的是 `status: unchanged`、什么都没提），`bridge._pick_stem` 又要求「已登记且产物在磁盘上」，显式带 stem 也一样被拒。\n* **浏览器 playground**：够得着。它是源码进、直接跑，不经注册表也不需要产物。\n\n本 case 的引擎阶段照常验（它们是真的），但分类必须记成部分支持——CompatBench 直接调 `probe_and_register()` + worker，**绕过了三个产品入口里够不着的那两个**，据此报「完全支持」就是拿基准替产品打掩护。补法是给这类stem 一条被产品看得见的路（虚拟面板 + 注册表里能挑任意脚本试运行，或让静态发现至少把它报进 `dynamic_names`），那是独立的产品改动，不在本 PR。"
     },
     {
       "id": "mm_annotated_oo",
@@ -6232,7 +6250,9 @@
       ],
       "browser_eligible": true,
       "smoke": false,
-      "notes": "均值曲线 + 误差带——pyplot 状态机 + plt.show()，无 savefig——桌面靠 pyplot 兜底捕获。"
+      "notes": "均值曲线 + 误差带——pyplot 状态机 + plt.show()，无 savefig——桌面靠 pyplot 兜底捕获。",
+      "classification": "partial_support",
+      "reason": "**没有 savefig 的图，三个入口里只有浏览器 playground 够得着。**引擎那一侧全通（捕获 / 打开 / 识别 / 编辑 / 撤销 / 重放 / 导出都是真的），`probe_and_register()` 也确实能把它登记进注册表——CompatBench 调的正是它。问题是**没有任何产品入口对这类脚本调它**（逐条实测过）：\n\n* **桌面界面**：面板列表按文件扫（`scan_panels()` 只列真实存在的 PDF/图片），`analyze_script()` 对没有存图调用的脚本解不出 stem、于是它进不了注册表对话框的候选，而那个对话框只给候选与已登记的脚本「试运行」按钮——没有「任选一个脚本」的入口。\n* **Codex MCP / `tavotto open`**：走的是静态发现（`ensure_registered` → `discover.merge`），不试运行。实测这类脚本连 `dynamic_names` 都进不去（回的是 `status: unchanged`、什么都没提），`bridge._pick_stem` 又要求「已登记且产物在磁盘上」，显式带 stem 也一样被拒。\n* **浏览器 playground**：够得着。它是源码进、直接跑，不经注册表也不需要产物。\n\n本 case 的引擎阶段照常验（它们是真的），但分类必须记成部分支持——CompatBench 直接调 `probe_and_register()` + worker，**绕过了三个产品入口里够不着的那两个**，据此报「完全支持」就是拿基准替产品打掩护。补法是给这类stem 一条被产品看得见的路（虚拟面板 + 注册表里能挑任意脚本试运行，或让静态发现至少把它报进 `dynamic_names`），那是独立的产品改动，不在本 PR。"
     },
     {
       "id": "mm_errorband_oo",
@@ -6357,7 +6377,9 @@
       ],
       "browser_eligible": true,
       "smoke": false,
-      "notes": "直方图——pyplot 状态机 + plt.show()，无 savefig——桌面靠 pyplot 兜底捕获。"
+      "notes": "直方图——pyplot 状态机 + plt.show()，无 savefig——桌面靠 pyplot 兜底捕获。",
+      "classification": "partial_support",
+      "reason": "**没有 savefig 的图，三个入口里只有浏览器 playground 够得着。**引擎那一侧全通（捕获 / 打开 / 识别 / 编辑 / 撤销 / 重放 / 导出都是真的），`probe_and_register()` 也确实能把它登记进注册表——CompatBench 调的正是它。问题是**没有任何产品入口对这类脚本调它**（逐条实测过）：\n\n* **桌面界面**：面板列表按文件扫（`scan_panels()` 只列真实存在的 PDF/图片），`analyze_script()` 对没有存图调用的脚本解不出 stem、于是它进不了注册表对话框的候选，而那个对话框只给候选与已登记的脚本「试运行」按钮——没有「任选一个脚本」的入口。\n* **Codex MCP / `tavotto open`**：走的是静态发现（`ensure_registered` → `discover.merge`），不试运行。实测这类脚本连 `dynamic_names` 都进不去（回的是 `status: unchanged`、什么都没提），`bridge._pick_stem` 又要求「已登记且产物在磁盘上」，显式带 stem 也一样被拒。\n* **浏览器 playground**：够得着。它是源码进、直接跑，不经注册表也不需要产物。\n\n本 case 的引擎阶段照常验（它们是真的），但分类必须记成部分支持——CompatBench 直接调 `probe_and_register()` + worker，**绕过了三个产品入口里够不着的那两个**，据此报「完全支持」就是拿基准替产品打掩护。补法是给这类stem 一条被产品看得见的路（虚拟面板 + 注册表里能挑任意脚本试运行，或让静态发现至少把它报进 `dynamic_names`），那是独立的产品改动，不在本 PR。"
     },
     {
       "id": "mm_histogram_oo",
@@ -6470,7 +6492,9 @@
       ],
       "browser_eligible": true,
       "smoke": false,
-      "notes": "左右两块面板——pyplot 状态机 + plt.show()，无 savefig——桌面靠 pyplot 兜底捕获。"
+      "notes": "左右两块面板——pyplot 状态机 + plt.show()，无 savefig——桌面靠 pyplot 兜底捕获。",
+      "classification": "partial_support",
+      "reason": "**没有 savefig 的图，三个入口里只有浏览器 playground 够得着。**引擎那一侧全通（捕获 / 打开 / 识别 / 编辑 / 撤销 / 重放 / 导出都是真的），`probe_and_register()` 也确实能把它登记进注册表——CompatBench 调的正是它。问题是**没有任何产品入口对这类脚本调它**（逐条实测过）：\n\n* **桌面界面**：面板列表按文件扫（`scan_panels()` 只列真实存在的 PDF/图片），`analyze_script()` 对没有存图调用的脚本解不出 stem、于是它进不了注册表对话框的候选，而那个对话框只给候选与已登记的脚本「试运行」按钮——没有「任选一个脚本」的入口。\n* **Codex MCP / `tavotto open`**：走的是静态发现（`ensure_registered` → `discover.merge`），不试运行。实测这类脚本连 `dynamic_names` 都进不去（回的是 `status: unchanged`、什么都没提），`bridge._pick_stem` 又要求「已登记且产物在磁盘上」，显式带 stem 也一样被拒。\n* **浏览器 playground**：够得着。它是源码进、直接跑，不经注册表也不需要产物。\n\n本 case 的引擎阶段照常验（它们是真的），但分类必须记成部分支持——CompatBench 直接调 `probe_and_register()` + worker，**绕过了三个产品入口里够不着的那两个**，据此报「完全支持」就是拿基准替产品打掩护。补法是给这类stem 一条被产品看得见的路（虚拟面板 + 注册表里能挑任意脚本试运行，或让静态发现至少把它报进 `dynamic_names`），那是独立的产品改动，不在本 PR。"
     },
     {
       "id": "mm_twopanel_oo",

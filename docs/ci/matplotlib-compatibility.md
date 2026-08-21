@@ -91,6 +91,42 @@ discover → execute → capture → open → semantic → edit → replay → e
 `product_bug` 另记**阶段**（`product_bug:capture` 与
 `partial_support:unsupported_artist` 是两回事）。
 
+### 九级漏斗量的是引擎，不是「产品入口够得着」
+
+这两件事在 12 条没有 savefig 的 case 上**是分开的**，而且必须分开记。引擎那
+一侧全通（捕获 / 打开 / 识别 / 编辑 / 撤销 / 重放 / 导出都是真的），
+`probe_and_register()` 也确实能把这类脚本登记进注册表——CompatBench 调的正是
+它。问题是**没有任何产品入口对这类脚本调它**。三个入口逐条实测过：
+
+| 入口 | 够得着? | 为什么 |
+|---|:--:|---|
+| 桌面界面 | ✗ | 面板列表按文件扫（`scan_panels()` 只列真实存在的产物）；`analyze_script()` 解不出 stem，于是它进不了注册表对话框的候选，而那个对话框只给候选与已登记的脚本「试运行」按钮——**没有「任选一个脚本」的入口** |
+| Codex MCP / `tavotto open` | ✗ | 只做静态发现（`ensure_registered` → `discover.merge`），不试运行。实测这类脚本**连 `dynamic_names` 都进不去**（回 `status: unchanged`，什么都没提），`bridge._pick_stem` 又要求「已登记且产物在磁盘上」，显式带 stem 一样被拒 |
+| 浏览器 playground | ✓ | 源码进、直接跑，不经注册表也不需要产物 |
+
+所以这些 case 的阶段照常记（它们是真的），`classification` 却必须是
+`partial_support`：CompatBench 绕过了三个入口里够不着的那两个，拿基准替产品
+打掩护正是这套东西存在的理由的反面。
+
+这条纪律有结构性看护：
+`test_fallback_only_cases_are_not_claimed_as_full_support` 按**脚本里有没有
+存图调用**判，不认 case 的名字——将来加同类 case 时它自动生效。
+
+**补法的出处已经查到，但刻意不在这个 PR 里做**（它是产品改动，有自己的风险
+面，且做完也不会让任何一条 case 从红转绿——桌面那一侧仍然显示不出来）：
+
+* `discover.analyze_script` 的 `if not an.sites: return None` —— `an.sites`
+  数的是 **savefig 调用点**，于是「画了图但从不存盘」被判成「压根不产图的
+  工具模块」而整个隐形。自 `figcapture` 有了 pyplot 兜底之后（2026-08-21），
+  「存不存盘」已经不能再当「产不产图」的代理。改成「有产图调用但解不出
+  stem」→ `dynamic_names: True`，脚本就会出现在 `/api/registry` 的候选里、
+  拿到注册表对话框的「试运行」按钮，`tavotto open` / MCP 也会如实报出来。
+  **CLAUDE.md 里「绝不猜，也绝不静默跳过（静默跳过 = 用户拿到空注册表却不
+  知道为什么）」这条规则，当前实现是违反的。**
+* 光有上一条还不够：桌面的面板列表按文件扫，登记完仍然显示不出来。要让桌面
+  用户真的点得到，还需要「没有源文件的面板」这个概念（写回怎么办、导出目标
+  是什么），那才是主要的设计成本。
+
 ### 只有被声明过的失败才不算缺陷
 
 这是整套东西的核心纪律：
@@ -166,6 +202,20 @@ Tavotto 与原生的差是 0.035，比原生自己两次之间的差还小。这
 宣称的下界正是 3.8。同一轮还抓到 corpus 自己的一个 fixture bug
 （`boxplot(tick_labels=…)` 是 3.9 才有的关键字）。两件事都只有在真的跑一遍
 下界版本时才会出现。
+
+第二轮又抓到一个，而且是**只在 minimum 上才张开**的那类：`sci_pillow` 的
+`Image.open("sample.png")` 在 3.10 档 execute 就挂，同一条在 bundled 档全绿。
+原因不在我们这边，在 Pillow ——
+
+    10.4.0   filename = os.path.realpath(os.fspath(fp))   ← 先把路径解成绝对
+    12.3.0   filename = os.fspath(fp)                      ← 还是相对的
+
+相对路径只读回退的 `isabs()` 那道闸于是把它挡了下来。这不是 Pillow 的毛病，
+Pillow 只是撞上来的那一个：任何在 open 之前 realpath/abspath 一下的库
+（h5py、部分 netCDF 绑定、用户自己写的 `os.path.abspath(p)`）都是同一类。
+修法见 `figcapture` 模块头，判据收紧到「指向沙盒内部、且沙盒里不存在」。
+
+三次都印证同一件事：**支持一个版本下界，只有真的在那个版本上跑一遍才算数**。
 
 **browser 这一档如实记账**：CompatBench 跑的是 `engine/browser.py` 这**同一份
 代码**在 CPython 上的行为（与 `tests/test_browser_session.py` 同一条纪律：
