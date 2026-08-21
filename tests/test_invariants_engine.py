@@ -804,6 +804,42 @@ def test_explicit_script_limits_are_not_turned_into_autoscale(hot_restore):
 
 
 @pytest.mark.parametrize("axis", ["x", "y"])
+def test_explicit_no_inversion_beats_descending_endpoints(hot_restore, axis):
+    """明确要求**不翻转**时，降序端点也要被扶正。
+
+    matplotlib 用端点顺序表达翻转，所以「范围写成降序」与「方向设为不翻转」
+    在同一次 patch 里是**互相矛盾**的两句话。谁说了算？——**明确表态的那句**。
+    不扶正端点的话 `set_[xy]lim(60, 2)` 当场又把轴翻回去，manifest 报
+    `invert=True`，而幸存的 patch 明明写着 False：用户去掉「翻转」的勾，
+    勾自己弹回来，而且不报任何错。
+
+    与 `test_range_and_direction_both_survive_together` 是同一条判据的两半：
+    那边验「明确要求翻转」，这边验「明确要求不翻转」。第一版判据只写了前一半
+    （`if lo < hi and 要翻转: 交换`），降序输入那一格根本没人管——**判据压成
+    一个布尔时，「没表态」与「表态成 False」就分不开了**。
+
+    脚本原样**已经翻转**的那格一并验（`InvScale` 的轴不翻，所以这里靠
+    `invert_*=True` 先把它翻过去，再用一条明确的 False 扶回来）。
+    """
+    stem, gid = "InvScale", "axes_0"
+    lo, hi = (1.5, 3.5) if axis == "x" else (2.0, 60.0)
+    desc = {"gid": gid, "prop": f"{axis}lim", "value": [hi, lo]}      # 降序
+    off = {"gid": gid, "prop": f"invert_{axis}", "value": False}
+
+    got = _fields(_man(hot_restore, stem, [desc, off]), gid)
+    assert got[f"invert_{axis}"]["value"] is False, (
+        f"patch 明确写了 invert_{axis}=False，manifest 却报 "
+        f"{got[f'invert_{axis}']['value']!r}——降序端点把它顶回去了")
+    assert got[f"{axis}lim"]["value"] == [lo, hi], (
+        f"不翻转时端点该是升序，读到 {got[f'{axis}lim']['value']!r}")
+
+    # 列表序不许影响结果（`_rank` 保证 invert 先、lim 后，但列表可以反着给）
+    got2 = _fields(_man(hot_restore, stem, [off, desc]), gid)
+    assert got2 == got, "同一组 patch 换个列表序落成了两张图"
+    _man(hot_restore, stem)
+
+
+@pytest.mark.parametrize("axis", ["x", "y"])
 def test_range_and_direction_both_survive_together(hot_restore, axis):
     """范围与方向是**两条正交的 prop**，同时设时两条都得生效。
 

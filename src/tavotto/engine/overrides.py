@@ -641,20 +641,27 @@ def _orig_inverted(ax, axis: str) -> bool:
     return bool(d[0 if axis == "x" else 1])
 
 
-def _requested_inverted(ax, axis: str, state) -> bool:
-    """**这一次改完之后**该是什么方向。绝不读轴的实况。
+def _pending_inverted(ax, axis: str, state):
+    """这一次的 patch 表里对这条轴的方向**有没有明确表态**。没表态回 `None`。
 
-    读实况会让热态与全量重放分叉：热会话里轴可能还带着**上一次** patch 留下
-    的翻转，而全新重放是从脚本原样起步的。实测那一格（把降序改成升序、且这次
-    没有 `invert_*`）：热态停在 `(10, 0)` 仍翻转，重放是 `(0, 10)`——
-    写回自检会拿它当 divergence 拦下来，而用户看到的是「改了没反应」。
+    「明确表态」与「没表态」必须分得开，不能压成一个布尔：
+
+      * 没表态（`None`）→ 端点顺序自己说话，只是要保住**脚本原样**的方向
+        （升序输入 + 脚本本来就翻转 → 仍然翻转）；
+      * 明确表态 → **两个方向都归一化**。`invert_y=False` 配上降序端点时，
+        不把端点扶正的话 `set_ylim(60, 2)` 当场又把轴翻回去，manifest 报
+        `invert_y=True`，而幸存的 patch 明明写着 False——用户去掉勾、勾自己
+        弹回来。
+
+    绝不读轴的实况：实况带着上一次 patch 的残留，而全量重放是从脚本原样起步的。
     """
-    if state is not None:
-        want = f"invert_{axis}"
-        for (gid, prop), val in state.pending.items():
-            if prop == want and state.index.get(gid) is ax:
-                return bool(val)
-    return _orig_inverted(ax, axis)
+    if state is None:
+        return None
+    want = f"invert_{axis}"
+    for (gid, prop), val in state.pending.items():
+        if prop == want and state.index.get(gid) is ax:
+            return bool(val)
+    return None
 
 
 def _get_axes_lim(axis: str):
@@ -740,7 +747,18 @@ def _set_axes_lim(axis: str):
         #
         # 用户直接把范围写成降序（`[60, 2]`）仍然表达翻转：那时 `lo < hi` 为
         # 假，这里不动手，端点顺序自己说话。
-        if lo < hi and _requested_inverted(ax, axis, state):
+        inv = _pending_inverted(ax, axis, state)
+        if inv is None:
+            # 没表态：端点顺序说了算，只把**脚本原样**的翻转保住。
+            # 用户直接写降序（`[60, 2]`）仍然表达翻转——那时 `lo < hi` 为假。
+            if lo < hi and _orig_inverted(ax, axis):
+                lo, hi = hi, lo
+        elif inv:
+            if lo < hi:
+                lo, hi = hi, lo
+        elif lo > hi:
+            # **明确要求不翻转**：降序端点也要扶正，否则 set_[xy]lim 当场
+            # 又把轴翻回去，而幸存的 patch 写着 False。
             lo, hi = hi, lo
         (ax.set_xlim if axis == "x" else ax.set_ylim)(lo, hi)
     put._needs_state = True                     # noqa: SLF001
