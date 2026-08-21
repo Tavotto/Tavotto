@@ -613,6 +613,9 @@ class _Autoscale:
 
 _AUTOSCALE = _Autoscale()
 
+#: 「没有值」——不能用 None，None 本身可以是一个合法的原样。
+_NOTHING = object()
+
 
 #: 脚本原样的轴方向（x, y），instrument 时采一次——**那一刻才是脚本原样**。
 #:
@@ -3567,13 +3570,19 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
         resolver = ALIAS_GROUPS.get((_cls_key(artist), key[1]))
         return resolver(state, _reverse_index(), artist) if resolver else []
 
-    # 窄 key → 它的广播 key。只对这一轮真的会碰到的广播 prop 展开。
-    owner: dict[tuple, tuple] = {}
+    # 窄 key → 盖着它的广播 key。只对这一轮真的会碰到的广播 prop 展开。
+    #
+    # **值是一个列表，不是一个 key**：同一个窄 key 可以有**多个**广播端。
+    # 一个 mappable 交给 `fig.colorbar()` 两次时，两条色条的 cmap 都解析到
+    # 同一个 `(mappable, "cmap")`——只存得下最后一个的话，撤掉第一条时另一条
+    # 不进 dirty_groups、不重放，热态于是回到脚本原样，而全新重放里第二条
+    # 还在生效（实测热态 viridis vs 重放 cividis）。
+    owner: dict[tuple, list[tuple]] = {}
     for _bkey in dict.fromkeys(list(new) + list(state.applied)):
         if _bkey[1] not in _BROADCAST_PROPS:
             continue
         for _nkey in _alias_members(_bkey, state.resolve(_bkey[0])):
-            owner[_nkey] = _bkey
+            owner.setdefault(_nkey, []).append(_bkey)
     #: 这一轮被动过的组（组 id = 广播 key）。组里任何一个成员被应用或还原，
     #: 都会把同组其他成员盖掉，所以整组都要重放——「值没变就跳过」那条捷径
     #: 对它们是错的，与 `_must_replay` 同一个道理。
@@ -3605,9 +3614,18 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
                 # 还原一个组员会把同组其他成员一起盖掉（广播还原写的是整组，
                 # 窄的还原写的是广播本该管着的那一个）——整组标脏，下面重放。
                 if key in owner:
-                    dirty_groups.add(owner[key])
-                elif _alias_members(key, artist):
-                    dirty_groups.add(key)
+                    dirty_groups.update(owner[key])
+                else:
+                    _members = _alias_members(key, artist)
+                    if _members:
+                        dirty_groups.add(key)
+                        # **对等的广播端也要标脏**。撤掉的这条把共享的那份状态
+                        # 还原成了脚本原样，而另一条色条的 override 还在生效——
+                        # 它的值一个字节没变，走「值没变就跳过」的捷径就永远
+                        # 不会被重放，热态于是停在脚本原样，而全新重放里它还在
+                        # （实测热态 viridis vs 重放 cividis）。
+                        for _nk in _members:
+                            dirty_groups.update(owner.get(_nk, ()))
             except Exception as exc:  # noqa: BLE001 — 单条失败不拖垮整次渲染
                 warnings.append(f"还原失败 {key[0]}.{key[1]}: {exc}")
         state.applied.pop(key)
@@ -3620,7 +3638,7 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
     for _nkey in list(state.alias_seeded):
         if _nkey in state.applied:
             continue
-        if owner.get(_nkey) in new:
+        if any(_b in new for _b in owner.get(_nkey, ())):
             continue
         state.originals.pop(_nkey, None)
         state.alias_seeded.discard(_nkey)
@@ -3663,14 +3681,41 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
                 if not (geometry_moved and prop in _FRAC_ANCHORED) \
                         and not _must_replay(prop, artist) \
                         and key not in dirty_groups \
-                        and owner.get(key) not in dirty_groups:
+                        and not dirty_groups.intersection(owner.get(key, ())):
                     continue
             elif _is_geometry_key(prop, artist):
                 geometry_moved = True
             getter, setter = handler
             try:
                 if key not in state.originals:
-                    state.originals[key] = getter(artist)
+                    # **同名的对等广播共用一份「原样」**。两条色条指着同一个
+                    # mappable 时，第二条的 cmap 原样是在第一条已经改过之后
+                    # 采的——采到的是 plasma 而不是脚本的 viridis，于是「两条
+                    # 都撤掉」之后热态停在中间态（实测 plasma vs 重放 viridis），
+                    # 而 `_compare_manifests` 只比几何、看不见颜色，写回会
+                    # 静默写出与用户所见不同的色图。
+                    #
+                    # 判据限得很窄：**窄成员的 prop 名与广播自己同名**——那才
+                    # 是「两个 gid 指着同一个值」。`fill` → `facecolor` 这类
+                    # 改名换型的别名不适用，照旧读实况。
+                    _seeded = _NOTHING
+                    for _nk in _alias_members(key, artist):
+                        # **判据不是「同名」**，是「这个窄成员上真的还站着
+                        # 另一个对等广播端」。柱系列的 `facecolor` 广播到每根
+                        # 柱子也是同名，但那是**容器 → 成员**：每根柱子有自己
+                        # 的一份值，共用原样会拿错形状（实测：还原时报
+                        # `Invalid RGBA argument: 0.1215…`，等价矩阵的
+                        # s8-alias-mixed-reversed 当场红）。
+                        # 只有「两个 gid 指着同一个值」才该共用，而那一定表现为
+                        # 同一个窄 key 上挂着两个以上同名广播端。
+                        if _nk[1] != key[1] or _nk not in state.originals:
+                            continue
+                        if any(_b != key and _b[1] == key[1]
+                               for _b in owner.get(_nk, ())):
+                            _seeded = state.originals[_nk]
+                            break
+                    state.originals[key] = (getter(artist) if _seeded is _NOTHING
+                                            else _seeded)
                 # 广播型 prop：**在自己动手之前**把组内窄 prop 的「脚本原样」
                 # 一起采下来。等窄 prop 自己被应用时再采就晚了——那时读到的
                 # 已经是被广播改过的值，撤销就回不到原样（这正是本 bug）。

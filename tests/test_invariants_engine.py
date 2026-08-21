@@ -150,6 +150,16 @@ def main():
     cb = fig.colorbar(im, ax=ax, extend="both")
     cb.set_label("signal")
     fig.savefig("InvCbar.pdf")
+
+    # ---- InvCbar2：**同一个 mappable 两条色条**（三个 gid 一份状态） ----
+    # 论文图里很常见（右边一条竖的、下面再来一条横的）。两条色条的
+    # cmap/vmin/vmax 都解析到同一个 `(images_0, prop)` 窄 key——那是别名簿记
+    # 里唯一一处「一个窄 key 有**两个**广播端」的形态，而簿记原来只存得下一个。
+    fig, ax = plt.subplots(figsize=(3.6, 2.9))
+    im2 = ax.imshow(rng.rand(64, 64), cmap="viridis")
+    fig.colorbar(im2, ax=ax, location="right")
+    fig.colorbar(im2, ax=ax, location="bottom", fraction=0.046)
+    fig.savefig("InvCbar2.pdf")
 '''
 
 
@@ -949,6 +959,28 @@ REMOVAL_CASES = [
     ("E-lim-ascending-then-descending-x", "InvScale",
      [[{"gid": "axes_0", "prop": "xlim", "value": [1.5, 3.5]}],
       [{"gid": "axes_0", "prop": "xlim", "value": [3.5, 1.5]}]]),
+    # ---- 一个 mappable 两条色条：一个窄 key 有**两个**广播端 ----
+    #
+    # 别名簿记原来是 `窄 key → 一个广播 key`，两条色条都解析到
+    # `(images_0, "cmap")` 时只存得下最后一个。两处后果都实测过：
+    #
+    #   撤掉第一条 → 热态 viridis，全新重放 cividis
+    #     （另一条的 override 还在，但它的值一个字节没变，走「值没变就跳过」
+    #      的捷径就永远不会重放）
+    #   两条全撤   → 热态**停在中间态 plasma**，全新重放 viridis
+    #     （第二条的「脚本原样」是在第一条改过之后采的——与 markerfacecolor
+    #      那条 P1 是同一个形状）
+    #
+    # 第二条尤其坏：`_compare_manifests` 只比几何，**看不见色图**，写回会
+    # 静默写出与用户所见不同的颜色。
+    ("F-dupcb-drop-first", "InvCbar2",
+     [[{"gid": "axes_1.colorbar", "prop": "cmap", "value": "plasma"}],
+      [{"gid": "axes_1.colorbar", "prop": "cmap", "value": "plasma"},
+       {"gid": "axes_2.colorbar", "prop": "cmap", "value": "cividis"}],
+      [{"gid": "axes_2.colorbar", "prop": "cmap", "value": "cividis"}]]),
+    ("F-dupcb-drop-both", "InvCbar2",
+     [[{"gid": "axes_1.colorbar", "prop": "cmap", "value": "plasma"},
+       {"gid": "axes_2.colorbar", "prop": "cmap", "value": "cividis"}], []]),
     ("A-colorbar-drop-mappable", "InvCbar",
      [[{"gid": "axes_0.images_0", "prop": "cmap", "value": "plasma"},
        {"gid": "axes_1.colorbar", "prop": "cmap", "value": "cividis"}],
