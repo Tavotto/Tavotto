@@ -54,11 +54,73 @@ def _relabel(registered: str, text: str) -> str:
 
 
 def _register(state: FigState, gid: str, artist, role: str, label: str,
-              draggable: bool = False) -> None:
+              draggable: bool = False, **flags) -> None:
+    """登记一个可编辑元素。
+
+    `flags` 是挂在元素上的**编辑能力标记**（`position_locked` /
+    `limits_slaved`），由 `_fields_for` 与 `build_manifest` 读取。它们必须
+    挂在元素上而不是现算：`_fields_for(el)` 只拿得到 el，而「这个 axes 是不是
+    子 axes」是遍历时才知道的信息。`sync_tick_elements` 重建刻度伪元素时
+    原样保留非 TickLabel 的元素对象，所以标记不会在同步中丢。
+    """
     artist.set_gid(gid)
     state.index[gid] = artist
     state.elements.append({"gid": gid, "artist": artist, "role": role,
-                           "label": label, "draggable": draggable})
+                           "label": label, "draggable": draggable, **flags})
+
+
+def _ordered_axes(fig) -> tuple[list, set]:
+    """(全部 axes（含子 axes）, 子 axes 的 id 集合)。
+
+    `fig.axes` 只收 `add_subplot` / `add_axes` 建出来的那些；
+    `ax.inset_axes(...)` 与 `ax.secondary_[xy]axis(...)` 建出来的挂在
+    `ax.child_axes` 上，`in fig.axes` 为 False——不遍历它们的话，插图里的
+    曲线选不中、次坐标轴的标签也改不了。
+
+    **子 axes 一律排在所有 `fig.axes` 之后**，编号继续 `axes_{i}`。这条不是
+    风格问题：`axes_i` 会进用户文档（override 的 gid），存量文档里的编号
+    一个字节都不能变。插在中间会让「同一张图、同一个 gid」在升级前后指向
+    不同的 axes——那是数据级的错位。
+
+    逐层广度优先（同一层的兄弟排完再下一层），所以同一个脚本每次跑出来的
+    gid 串完全一致；插图里再开插图也照样确定。按 `id()` 去重防环。
+    """
+    out = list(fig.axes)
+    seen = {id(a) for a in out}
+    children: set = set()
+    layer = list(out)
+    while layer:
+        nxt = []
+        for parent in layer:
+            for child in getattr(parent, "child_axes", None) or []:
+                if id(child) in seen:
+                    continue
+                seen.add(id(child))
+                children.add(id(child))
+                out.append(child)
+                nxt.append(child)
+        layer = nxt
+    return out, children
+
+
+def _is_secondary_axis(ax) -> bool:
+    """是不是 `secondary_[xy]axis()` 建出来的轴。
+
+    **这一条只能按类判**，与 position 那条不同：position 的理由（落位由
+    locator 每帧重算）对插图与次坐标轴是同一个，而「数据范围由父轴经换算
+    函数每帧重算」只对次坐标轴成立。行为上没有公开的判据可用。
+
+    `matplotlib.axes.SecondaryAxis` **不是公开名字**（3.8 上 import 得到、
+    3.11 上 import 不到），所以走私有模块路径，再退回类名字符串。两条都
+    失效时返回 False——那时最坏的后果是次坐标轴上多出一组会被顶回去的
+    数据范围字段，不会崩。`test_secondary_axis_detection_still_works`
+    看护这条依赖，matplotlib 升版把它弄坏时会当场红。
+    """
+    try:
+        from matplotlib.axes._secondary_axes import SecondaryAxis
+    except ImportError:                                 # pragma: no cover - 版本相关
+        return type(ax).__name__ == "SecondaryAxis"
+    return isinstance(ax, SecondaryAxis)
 
 
 def _tick_label_entries(ax, which: str, ax_gid: str) -> list[tuple]:
@@ -131,13 +193,35 @@ def instrument(state: FigState) -> None:
     cbar_of_ax, host_of_cbax = colorbar_maps(fig)
     state.colorbar_axes = set(cbar_of_ax)
     state.axes_follow = follow_map(fig, cbar_of_ax, host_of_cbax)
-    gid_of_ax = {ax: f"axes_{i}" for i, ax in enumerate(fig.axes)}
+    # `fig.axes` 之后再接子 axes（inset / secondary），编号继续往下走——
+    # 存量文档里的 axes_i 因此一个字节不变，见 `_ordered_axes`。
+    all_axes, child_ids = _ordered_axes(fig)
+    gid_of_ax = {ax: f"axes_{i}" for i, ax in enumerate(all_axes)}
     cbar_ordinal: dict[int, int] = {}
+    # 插图与次坐标轴**各数各的**：共用一个计数器会让「只有一个次坐标轴」的图
+    # 上出现「次坐标轴 2」，因为前面那个 1 被插图占掉了。
+    child_ordinal: dict[str, int] = {"inset": 0, "secondary": 0}
 
-    for i, ax in enumerate(fig.axes):
+    for i, ax in enumerate(all_axes):
         is3d = getattr(ax, "name", "") == "3d"
-        _register(state, f"axes_{i}", ax, "axes3d" if is3d else "axes",
-                  "色条轴" if ax in cbar_of_ax else f"子图 {i + 1}")
+        is_child = id(ax) in child_ids
+        secondary = is_child and _is_secondary_axis(ax)
+        # **落位不给编辑**：子 axes 的位置由父级的 `_axes_locator` 每帧重算，
+        # `set_position` 之后立刻读回是新值、`draw()` 一次就被顶回原值（实测）。
+        # 开放它就是「设了、界面也变了、下一帧弹回去」——比不支持严重得多。
+        # 判据是「子 axes **且** 有 locator」而不是光看 locator：色条轴也带
+        # `_ColorbarAxesLocator`，而色条的 position override 是**支持**的
+        # （用户自己摆过色条时就靠它），光判 locator 会把那条功能一起砍掉。
+        position_locked = is_child and ax.get_axes_locator() is not None
+        if is_child:
+            kind = "secondary" if secondary else "inset"
+            child_ordinal[kind] += 1
+            label = (f"次坐标轴 {child_ordinal['secondary']}" if secondary
+                     else f"插图 {child_ordinal['inset']}")
+        else:
+            label = "色条轴" if ax in cbar_of_ax else f"子图 {i + 1}"
+        _register(state, f"axes_{i}", ax, "axes3d" if is3d else "axes", label,
+                  position_locked=position_locked, limits_slaved=secondary)
         if ax in cbar_of_ax:
             host = host_of_cbax.get(ax)
             n = cbar_ordinal.get(id(host), 0)
@@ -792,15 +876,33 @@ def _tick_fields(ts: TickSet) -> list[dict]:
     return fields
 
 
-def _axes_fields(ax) -> list[dict]:
+def _axes_fields(ax, el: dict | None = None) -> list[dict]:
+    """axes 的可编辑字段。
+
+    `el` 带着遍历时才知道的能力标记（见 `_register`）：
+
+    * `position_locked` —— 子 axes（inset / secondary）的落位由父级的
+      `_axes_locator` 每帧重算，`set_position` 一 draw 就被顶回去。**不出这个
+      字段**，宁可不支持也不给一个按了会弹回来的旋钮。
+    * `limits_slaved` —— 次坐标轴的数据范围由父轴经换算函数每帧重算。实测：
+      `set_xlim` 与 `invert_xaxis` 被顶回去、`set_aspect` 被 matplotlib 自己
+      拒绝（"Secondary Axes can't set the aspect ratio"）、`get_xscale()` 回的
+      是 `'function'`（`scale_options` 给不出合理选项）。整组不出。
+
+    两条标记的**理由不同**，所以是两个字段而不是一个「这是子 axes」：
+    插图的 xlim / scale 是真能改的，只有落位不能。
+    """
+    flags = el or {}
     x0, x1 = ax.get_xlim()
     y0, y1 = ax.get_ylim()
     aspect = ax.get_aspect()
     return [
-        {"prop": "position", "type": "rect",
-         "value": [round(float(v), 4) for v in ax.get_position().bounds]},
+        *([] if flags.get("position_locked") else [
+            {"prop": "position", "type": "rect",
+             "value": [round(float(v), 4) for v in ax.get_position().bounds]}]),
         {"prop": "visible", "type": "bool", "value": bool(ax.get_visible())},
 
+        *([] if flags.get("limits_slaved") else [
         {"prop": "xlim", "type": "pair", "value": [float(x0), float(x1)],
          "group": "数据范围"},
         {"prop": "ylim", "type": "pair", "value": [float(y0), float(y1)],
@@ -818,6 +920,7 @@ def _axes_fields(ax) -> list[dict]:
         {"prop": "aspect", "type": "text",
          "value": aspect if isinstance(aspect, str) else str(round(float(aspect), 3)),
          "group": "数据范围"},
+        ]),
 
         {"prop": "grid_x", "type": "bool", "value": _grid_visible(ax, "x"),
          "group": "网格与边框"},
@@ -944,7 +1047,8 @@ def _fields_for(el) -> list[dict]:
     if key == "legend":
         return _legend_fields(artist)
     if key == "axes":
-        return _axes3d_fields(artist) if role == "axes3d" else _axes_fields(artist)
+        return (_axes3d_fields(artist) if role == "axes3d"
+                else _axes_fields(artist, el))
     if key == "image":
         return _image_fields(artist)
     if key == "arrowpatch":
@@ -1062,7 +1166,11 @@ def build_manifest(state: FigState, stem: str) -> dict:
                 continue
             entry["label"] = _relabel(el["label"], live_text)
         if el["role"] in ("axes", "axes3d"):
-            entry["resizable"] = True  # 前端可拖动/缩放子图占比（override axes position）
+            # 前端可拖动/缩放子图占比（override axes position）。子 axes 的
+            # 落位归父级的 locator 管，给不了这个能力——`_axes_fields` 那边
+            # 同步不出 `position` 字段，两处必须一致，否则前端会拿着一个
+            # 后端根本不认的 prop 发 override。
+            entry["resizable"] = not el.get("position_locked", False)
             if artist in state.colorbar_axes:
                 entry["is_colorbar"] = True
                 entry["colorbar_gid"] = f"{el['gid']}.colorbar"

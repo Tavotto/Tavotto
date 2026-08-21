@@ -2217,3 +2217,240 @@ def test_line_collections_expose_style_only_never_data(tmp_path):
         assert el.get("bbox"), "线组连 bbox 都没有，前端选不中它"
     finally:
         pool.discard(w)
+
+
+# ---------------------------------------------------------------------------
+# 子 axes（inset_axes / secondary_[xy]axis）
+# CompatBench 的 ax_inset / ax_secondary_x / ax_secondary_y 抓到的缺口
+# ---------------------------------------------------------------------------
+CHILD_AXES_LIB = '''\
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+def main():
+    x = np.linspace(1.0, 10.0, 40)
+
+    fig, ax = plt.subplots(figsize=(3.8, 2.6))
+    ax.plot(x, np.log(x))
+    ax.set_title("Host")
+    inset = ax.inset_axes([0.55, 0.14, 0.4, 0.36])
+    inset.plot(x[:12], np.log(x[:12]), color="#B4473C")
+    inset.set_title("Zoom")
+    fig.savefig("ChildInset.pdf")
+
+    fig2, bx = plt.subplots(figsize=(3.8, 2.6))
+    bx.plot(x, 1.0 / x)
+    bx.set_xlabel("wavelength (nm)")
+    sec = bx.secondary_xaxis("top", functions=(lambda v: 1000.0 / v,
+                                               lambda v: 1000.0 / v))
+    sec.set_xlabel("wavenumber")
+    fig2.savefig("ChildSecondary.pdf")
+
+    # 对照组：一张**没有**子 axes 的图，用来钉住存量 gid 编号不变
+    fig3, (c1, c2) = plt.subplots(1, 2, figsize=(4.6, 2.2))
+    c1.plot(x, x)
+    c2.plot(x, -x)
+    c2.twinx().plot(x, x ** 2)
+    fig3.savefig("ChildNone.pdf")
+'''
+
+
+def _child_axes_worker(tmp_path):
+    figs = tmp_path / "figs"
+    figs.mkdir()
+    (figs / "fig_child.py").write_text(CHILD_AXES_LIB, encoding="utf-8")
+    w = pool.one_shot("fig_child.py", str(figs), "main")
+    w.ensure_built()
+    return w
+
+
+def _el_of(man: dict, gid: str) -> dict:
+    return next(e for e in man["elements"] if e["gid"] == gid)
+
+
+def _props_of(man: dict, gid: str) -> list[str]:
+    return [f["prop"] for f in _el_of(man, gid).get("editable", [])]
+
+
+def _field_of(man: dict, gid: str, prop: str):
+    return next(f["value"] for f in _el_of(man, gid)["editable"]
+                if f["prop"] == prop)
+
+
+def test_inset_axes_contents_are_registered_and_editable(tmp_path):
+    """`ax.inset_axes(...)` 建出来的插图挂在 `ax.child_axes` 上、**不在
+    `fig.axes` 里**，instrument 以前压根不遍历它——插图里的曲线选不中。
+
+    CompatBench 的 `ax_inset` 一度全绿，正因为它的期望只写了宿主 axes 的
+    元素：宿主那条曲线满足了期望，而插图整个不存在这件事被盖住了。
+    """
+    w = _child_axes_worker(tmp_path)
+    try:
+        man = w.override("ChildInset", [])["manifest"]
+        gids = [e["gid"] for e in man["elements"]]
+        assert "axes_1" in gids, f"插图没进元素表：{gids}"
+        assert _el_of(man, "axes_1")["label"] == "插图 1"
+        assert "axes_1.lines_0" in gids, "插图里的曲线选不中"
+        assert "axes_1.title" in gids, "插图的标题选不中"
+
+        before = _field_of(man, "axes_1.title", "fontsize")
+        resp = w.override("ChildInset", [{"gid": "axes_1.title",
+                                          "prop": "fontsize", "value": 7.5}])
+        assert not (resp.get("warnings") or []), resp["warnings"]
+        assert _field_of(resp["manifest"], "axes_1.title", "fontsize") == \
+            pytest.approx(7.5)
+        back = w.override("ChildInset", [])
+        assert not (back.get("warnings") or [])
+        assert _field_of(back["manifest"], "axes_1.title", "fontsize") == \
+            pytest.approx(before)
+    finally:
+        pool.discard(w)
+
+
+def test_secondary_axis_label_is_editable(tmp_path):
+    """`secondary_xaxis()` 的轴标签必须改得动——它是这类轴上最常改的东西。"""
+    w = _child_axes_worker(tmp_path)
+    try:
+        man = w.override("ChildSecondary", [])["manifest"]
+        gids = [e["gid"] for e in man["elements"]]
+        assert "axes_1" in gids and _el_of(man, "axes_1")["label"] == "次坐标轴 1"
+        assert "axes_1.xlabel" in gids, f"次坐标轴的标签选不中：{gids}"
+
+        resp = w.override("ChildSecondary", [{"gid": "axes_1.xlabel",
+                                              "prop": "text", "value": "波数"}])
+        assert not (resp.get("warnings") or []), resp["warnings"]
+        assert _field_of(resp["manifest"], "axes_1.xlabel", "text") == "波数"
+        back = w.override("ChildSecondary", [])
+        assert _field_of(back["manifest"], "axes_1.xlabel", "text") == "wavenumber"
+    finally:
+        pool.discard(w)
+
+
+def test_child_axes_never_expose_position(tmp_path):
+    """**反向断言**：子 axes 的落位由父级 `_axes_locator` 每帧重算。
+
+    实测：`set_position([...])` 之后立刻读回是新值，`draw()` 一次就被顶回
+    原值。开放这个字段等于给用户一个「按了、界面也变了、下一帧弹回去」的
+    旋钮——按 CompatBench 自己的判据那是最不能接受的一档（看起来成功、
+    实际没生效）。将来谁想放开它，会先撞到这条用例。
+    """
+    w = _child_axes_worker(tmp_path)
+    try:
+        for stem in ("ChildInset", "ChildSecondary"):
+            man = w.override(stem, [])["manifest"]
+            assert "position" not in _props_of(man, "axes_1"), \
+                f"{stem}: 子 axes 出了 position 字段"
+            assert _el_of(man, "axes_1")["resizable"] is False, \
+                f"{stem}: resizable 与 position 字段不一致，" \
+                f"前端会拿着一个后端不认的 prop 发 override"
+            # 宿主照常可拖
+            assert "position" in _props_of(man, "axes_0")
+            assert _el_of(man, "axes_0")["resizable"] is True
+    finally:
+        pool.discard(w)
+
+
+def test_secondary_axis_hides_the_slaved_data_range(tmp_path):
+    """次坐标轴的数据范围由父轴经换算函数每帧重算，整组不出。
+
+    实测（mpl 3.11.1）：`set_xlim` 与 `invert_xaxis` 被顶回去、`set_aspect`
+    被 matplotlib 自己拒绝并 warning、`get_xscale()` 回的是 `'function'`
+    （`scale_options` 给不出合理选项）。
+
+    **插图不在此列**——它的 xlim / scale 是真能改的。两者的落位都锁着，
+    但数据范围只有次坐标轴是从的，所以是两条独立的标记而不是一条。
+    """
+    w = _child_axes_worker(tmp_path)
+    try:
+        sec = _props_of(w.override("ChildSecondary", [])["manifest"], "axes_1")
+        for prop in ("xlim", "ylim", "xscale", "yscale",
+                     "invert_x", "invert_y", "aspect"):
+            assert prop not in sec, f"次坐标轴不该出 {prop}"
+        # 断言写成「有的话不能是那几个」而不是「必须有 visible」：
+        # `SecondaryAxis` **不是 `Axes` 子类**（直接从 `_AxesBase` 派生），
+        # `overrides._cls_key()` 现在对它回 None，所以它自身一个字段都出不来。
+        # 那是另一处的一行修复（见本文件下面那条 xfail-style 说明用例）。
+        # 这条用例在修好前后都成立——它钉的是「从的那几个字段永远不出现」。
+        if sec:
+            assert "visible" in sec, "字段回来了就该带上 visible"
+
+        ins = _props_of(w.override("ChildInset", [])["manifest"], "axes_1")
+        assert "xlim" in ins and "yscale" in ins, \
+            "插图的数据范围是真能改的，不该跟着次坐标轴一起被关掉"
+        assert "visible" in ins, "插图是正经 Axes 子类，字段该齐"
+    finally:
+        pool.discard(w)
+
+
+def test_secondary_axis_container_props_are_a_known_gap(tmp_path):
+    """`SecondaryAxis` 自身的属性（visible / grid / spines）现在改不动。
+
+    根因不在本次改动里：`SecondaryAxis` 直接从 `_AxesBase` 派生，**不是
+    `Axes` 的子类**，于是 `overrides._cls_key()` 对它回 `None`，
+    `_fields_for` 走空。修法是 `_cls_key` 里那条 `isinstance(artist, Axes)`
+    放宽成 `_AxesBase`（或补一条 SecondaryAxis 分支）——一行的事，但它落在
+    另一处的所有权边界里，本次不动。
+
+    **轴标签与刻度不受影响**：它们是独立的 Text/TickSet 元素，照常可编辑
+    （见 test_secondary_axis_label_is_editable）。
+
+    这条用例故意断言「现状」，好让那一行修复落地时它当场红——那时把它改成
+    正向断言即可，而不是让缺口无声地消失或无声地留着。
+    """
+    w = _child_axes_worker(tmp_path)
+    try:
+        man = w.override("ChildSecondary", [])["manifest"]
+        assert _props_of(man, "axes_1") == [], (
+            "次坐标轴自身有可编辑字段了——说明 _cls_key 那一行修了。"
+            "把本用例改成正向断言（visible/grid 可改、xlim 那组仍不出）。")
+        # 但它的子元素必须是活的，否则这条「缺口」就不止是缺口了
+        gids = [e["gid"] for e in man["elements"]]
+        assert "axes_1.xlabel" in gids and "axes_1.xticks" in gids
+    finally:
+        pool.discard(w)
+
+
+def test_existing_gid_numbering_is_untouched(tmp_path):
+    """**存量文档的 axes 编号一个字节不能变。**
+
+    子 axes 一律排在所有 `fig.axes` 之后，所以没有子 axes 的图（这里是
+    2 个子图 + 一个 twinx）编号与改动前逐位相同。插在中间的话，「同一张图、
+    同一个 gid」在升级前后会指向不同的 axes——那是数据级的错位。
+    """
+    w = _child_axes_worker(tmp_path)
+    try:
+        man = w.override("ChildNone", [])["manifest"]
+        axes_gids = [e["gid"] for e in man["elements"] if e["role"] == "axes"]
+        assert axes_gids == ["axes_0", "axes_1", "axes_2"], axes_gids
+        assert [_el_of(man, g)["label"] for g in axes_gids] == \
+            ["子图 1", "子图 2", "子图 3"], "没有子 axes 的图不该出现插图/次坐标轴标签"
+        for g in axes_gids:
+            assert "position" in _props_of(man, g)
+            assert _el_of(man, g)["resizable"] is True
+    finally:
+        pool.discard(w)
+
+
+def test_secondary_axis_detection_still_works():
+    """看护那条私有依赖：`matplotlib.axes._secondary_axes.SecondaryAxis`。
+
+    它**不是公开名字**（3.8 上 `from matplotlib.axes import SecondaryAxis`
+    可用、3.11 上不可用），所以走私有模块路径。matplotlib 升版把它挪走时
+    这条会当场红，而不是安静地让次坐标轴多出一组会被顶回去的字段。
+    """
+    engine_dir = Path(__file__).resolve().parent.parent / "src" / "tavotto" / "engine"
+    probe = (
+        "import matplotlib; matplotlib.use('Agg');"
+        "import sys; sys.path.insert(0, %r);"
+        "import matplotlib.pyplot as plt, manifest as M;"
+        "fig, ax = plt.subplots();"
+        "s = ax.secondary_xaxis('top', functions=(lambda v: v, lambda v: v));"
+        "ins = ax.inset_axes([0.1, 0.1, 0.2, 0.2]);"
+        "print(M._is_secondary_axis(s), M._is_secondary_axis(ax),"
+        " M._is_secondary_axis(ins))" % str(engine_dir)
+    )
+    out = subprocess.run([WORKER_PY, "-c", probe], capture_output=True, text=True,
+                         timeout=180, encoding="utf-8", errors="replace")
+    assert out.returncode == 0, out.stderr[-800:]
+    assert out.stdout.split() == ["True", "False", "False"], out.stdout

@@ -239,8 +239,25 @@ def run_census(req: dict) -> int:
         total: collections.Counter = collections.Counter()
         recognized: collections.Counter = collections.Counter()
         # `fig.patch` / `ax.patch` 是画布底色，不是用户画的形状。
+        # **子 axes 的底色也要收**：`inset_axes` / `secondary_[xy]axis` 建出来的
+        # 挂在 `ax.child_axes` 上、不在 `fig.axes` 里，漏掉的话插图的背景会被
+        # 算成一个「未识别的 Rectangle」——普查是排路线图用的，这种假缺口会把
+        # 真正的缺口挤下去。
+        def _every_axes(root):
+            seen, out, layer = set(), [], list(root.axes)
+            while layer:
+                nxt = []
+                for a in layer:
+                    if id(a) in seen:
+                        continue
+                    seen.add(id(a))
+                    out.append(a)
+                    nxt += list(getattr(a, "child_axes", None) or [])
+                layer = nxt
+            return out
+
         backgrounds = {id(fig.patch)} | {id(getattr(ax, "patch", None))
-                                         for ax in fig.axes}
+                                         for ax in _every_axes(fig)}
         # **色条轴的内部不下探**：色带是 QuadMesh、outline 是 _ColorbarSpine、
         # extend 三角是 PathPatch，全部由 matplotlib 每次 `_draw_all()` 删掉
         # 重建，Tavotto 刻意不登记它们（见 CLAUDE.md 色条一节）。算进去的话
