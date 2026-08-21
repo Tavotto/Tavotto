@@ -85,7 +85,14 @@ class FigState:
         if m is None:
             return None
         i, which, j = int(m.group(1)), m.group(2), int(m.group(3))
-        axes = self.fig.axes
+        # **序号是 `_ordered_axes` 编的**，它在 `len(fig.axes)` 之后继续给子
+        # axes 编号。拿 `fig.axes` 去索引，插图的刻度文字 gid 会越界 → 回 None
+        # → apply 报「元素不存在」，而**一条 warning 就阻断写回**。
+        # 这条只在索引里还没有它时才走到（CLAUDE.md 记的「先改刻度定位、再改
+        # 新出现的那条刻度」在全量重放里的情形），但那正是写回那条路。
+        # late import：manifest 在模块层 import 本模块，反过来会成环。
+        from manifest import _ordered_axes          # noqa: PLC0415
+        axes = _ordered_axes(self.fig)[0]
         if not 0 <= i < len(axes):
             return None
         ax = axes[i]
@@ -1840,11 +1847,32 @@ _restore_cb_orientation._needs_state = True  # noqa: SLF001
 # ---------------------------------------------------------------------------
 # 色条反查与「拖它时谁跟着走」（manifest.instrument 与色条方向事务共用）
 # ---------------------------------------------------------------------------
-def colorbar_maps(fig) -> tuple[dict, dict]:
-    """(色条轴 → Colorbar, 色条轴 → 宿主 axes)。反查经 mappable.colorbar。"""
+def colorbar_maps(fig, axes) -> tuple[dict, dict]:
+    """(色条轴 → Colorbar, 色条轴 → 宿主 axes)。反查经 mappable.colorbar。
+
+    `axes` **要传 `manifest._ordered_axes(fig)[0]`**，别让它退回 `fig.axes`：
+    `ax.inset_axes()` 的宿主只存在于 `child_axes` 里，扫不到它就扫不到它身上的
+    mappable，于是那条色条**整个不被认出来**。后果不是「少一个元素」：
+
+      * 色条轴不在 `cbar_of_ax` 里 → `instrument` 不建 `ColorbarProxy`，
+        方向 / extend / 刻度那一整套没了；
+      * 更糟的是它也不再挡住 Collection 族的登记闸（`ax in cbar_of_ax`），
+        于是 `cb.solids`（QuadMesh）与 `cb.dividers`（LineCollection）被当成
+        用户的图元登记成可编辑 collection——而它们**每次 `_draw_all()` 都被
+        删掉重建**。override 于是挂在一个随时换身份的幽灵上。
+
+    实测（`fig.colorbar(im, ax=ax.inset_axes(...))`）：认出 0 个色条轴、
+    没有 colorbar 元素、`axes_1.collections_1` 泄漏进元素表。
+
+    `axes` **是必填的**，不给默认值。给了 `axes=None → fig.axes` 那种兜底之后，
+    「哪些 axes 存在」这个判断在本函数里仍然写着一次，于是
+    `tests/test_axes_traversal_authority.py` 那条源码级看护只能按函数放行整个
+    函数——而实测：把函数体里另一处改回 `fig.axes`，那条看护照样绿。
+    **一个放行整函数的豁免挡不住函数内部的回归**，不如让兜底根本不存在。
+    """
     cbar_of_ax: dict = {}
     host_of_cbax: dict = {}
-    for ax in fig.axes:
+    for ax in axes:
         for sm in [*ax.images, *ax.collections]:
             cb = getattr(sm, "colorbar", None)
             if cb is not None and cb.ax is not ax:
@@ -1853,7 +1881,7 @@ def colorbar_maps(fig) -> tuple[dict, dict]:
     return cbar_of_ax, host_of_cbax
 
 
-def follow_map(fig, cbar_of_ax: dict, host_of_cbax: dict) -> dict[str, list[str]]:
+def follow_map(fig, cbar_of_ax: dict, host_of_cbax: dict, axes) -> dict[str, list[str]]:
     """宿主 axes gid → 拖动它时该一起走的其他 axes gid。
 
     子图自己的标题 / 轴标签 / 刻度是 Axes 的孩子，set_position 一挪它们天然
@@ -1867,7 +1895,17 @@ def follow_map(fig, cbar_of_ax: dict, host_of_cbax: dict) -> dict[str, list[str]
     子图——只看共享关系会把整行子图一起拖走，所以判据必须再加「position
     基本重合」。判据用公开的 get_shared_[xy]_axes()，不碰 `_twinned_axes`。
     """
-    gid_of_ax = {ax: f"axes_{i}" for i, ax in enumerate(fig.axes)}
+    # **编号与遍历都必须用 `_ordered_axes`**（由调用方传进来）。用 `fig.axes`
+    # 的话，插图宿主不在里面 → `gid_of_ax.get(host)` 是 None → `link()` 直接
+    # 返回，这条随行关系**被无声丢掉**。实测
+    # `fig.colorbar(im, ax=ax.inset_axes(...))`：`colorbar_maps` 认出来了、
+    # `follow_map` 回 `{}`，于是拖动宿主时色条留在原地。
+    # 这是同一条纪律的第四个入口——而它是**上一个修复才让它够得着的**：色条
+    # 先要被认出来，这条关系才有机会被丢。
+    # `axes` 必填，理由同 `colorbar_maps`：留一个 `fig.axes` 兜底，源码级看护
+    # 就只能整函数放行，函数内部改回去它照样绿（实测过）。
+    ordered = axes
+    gid_of_ax = {ax: f"axes_{i}" for i, ax in enumerate(ordered)}
     follow: dict[str, list[str]] = {}
 
     def link(host, other) -> None:
@@ -1881,7 +1919,7 @@ def follow_map(fig, cbar_of_ax: dict, host_of_cbax: dict) -> dict[str, list[str]
     for cbax, host in host_of_cbax.items():
         link(host, cbax)
 
-    for ax in fig.axes:
+    for ax in ordered:
         if ax in cbar_of_ax:
             continue
         try:
@@ -1893,7 +1931,7 @@ def follow_map(fig, cbar_of_ax: dict, host_of_cbax: dict) -> dict[str, list[str]
             continue
         # 按 fig.axes 顺序遍历而不是遍历 siblings 集合：集合序不稳定，
         # manifest 要逐字节可复现（写回校验拿它比对）
-        for other in fig.axes:
+        for other in ordered:
             if other is ax or other in cbar_of_ax or other not in siblings:
                 continue
             if all(abs(a - b) < 1e-6
@@ -1906,9 +1944,14 @@ def follow_map(fig, cbar_of_ax: dict, host_of_cbax: dict) -> dict[str, list[str]
 def _refresh_axes_follow(state: "FigState") -> None:
     """结构改造之后重算随行关系（色条方向翻转会改变谁和谁挨着）。"""
     try:
-        cbar_of_ax, host_of_cbax = colorbar_maps(state.fig)
+        # 与 `instrument` 同一条遍历（插图里的宿主不在 `fig.axes` 里）。
+        # 这里靠 late import 拿 `_ordered_axes`：manifest 在模块层 import
+        # overrides，反过来在模块层 import 会成环。
+        from manifest import _ordered_axes          # noqa: PLC0415
+        _ordered = _ordered_axes(state.fig)[0]
+        cbar_of_ax, host_of_cbax = colorbar_maps(state.fig, _ordered)
         state.colorbar_axes = set(cbar_of_ax)
-        state.axes_follow = follow_map(state.fig, cbar_of_ax, host_of_cbax)
+        state.axes_follow = follow_map(state.fig, cbar_of_ax, host_of_cbax, _ordered)
     except Exception:  # noqa: BLE001 — 少一条联动不该拦渲染
         pass
 

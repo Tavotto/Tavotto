@@ -108,6 +108,14 @@ def build_figure():
     gx, gy = np.meshgrid(np.linspace(0, 1, 6), np.linspace(0, 1, 6))
     d3.plot_surface(gx, gy, gx * gy)
 
+    # **插图上的色条**：宿主只存在于 `child_axes` 里。`colorbar_maps` 只扫
+    # `fig.axes` 的时候，这条色条整个不被认出来——不但没有 ColorbarProxy，
+    # 连 Collection 族的登记闸也挡不住它，`cb.solids` / `cb.dividers` 会被
+    # 当成用户图元登记，而它们每次 `_draw_all()` 都被删掉重建。
+    ins2 = ax4.inset_axes([0.05, 0.05, 0.3, 0.3])
+    im2 = ins2.imshow(rng.rand(6, 6), cmap="viridis")
+    fig.colorbar(im2, ax=ins2)
+
     # --- 图像 + 色条（两个 gid 一份状态） ---
     im = ax4.imshow(rng.rand(8, 8), cmap="magma")
     cb = fig.colorbar(im, ax=ax4, extend="both")
@@ -208,7 +216,27 @@ def completeness(fig, state, man) -> dict:
     # 曾经按类名比过一次，当场误报。XOR 的这一半交给 ① 与 ②：登记过的必须有
     # 代表、树里的必须被普查看见，两者合起来已经不留缝。
 
+    # 色条轴上**只该有色条自己**。内部件（色带 QuadMesh、分隔线
+    # LineCollection、extend 的延伸三角）每次 `_draw_all()` 都被删掉重建，
+    # 登记它们等于让 override 挂在幽灵上。
+    # `is_colorbar` 是 **build_manifest 出的那份**上的标记，`state.elements`
+    # 只有登记信息（gid/artist/role/label/draggable）——第一版读错了地方，
+    # 于是这条检查恒回空集：一条永远绿的检查，正是本轮在收的那种空门禁。
+    cbar_gids = {e["gid"] for e in man["elements"] if e.get("is_colorbar")}
+    cbar_leaks = sorted(
+        g for g in manifest_gids
+        for cg in cbar_gids
+        if g.startswith(f"{cg}.")
+        and not g.startswith((f"{cg}.colorbar", f"{cg}.x", f"{cg}.y")))
+
+    # 随行关系：拖动宿主时该一起走的那些 axes。插图上的色条被认出来之后，
+    # 这条关系还会在 `follow_map` 里被丢一次（宿主不在 `fig.axes` 里 →
+    # `gid_of_ax.get(host)` 是 None → link 直接返回，没有任何提示）。
+    follow = {k: sorted(v) for k, v in sorted(state.axes_follow.items())}
+
     return {"orphans": orphans, "churn": churn, "unseen": unseen,
+            "colorbar_axes": sorted(cbar_gids), "colorbar_leaks": cbar_leaks,
+            "axes_follow": follow,
             "unsupported": man.get("unsupported", []),
             "element_count": len(man["elements"]),
             "registered_count": len(state.index),

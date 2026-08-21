@@ -945,6 +945,36 @@ def test_unsupported_says_what_and_why(probe):
         f"报出来了，但位置指到了主 axes 上：{poly3d[0]}"
 
 
+def test_colorbars_on_child_axes_are_recognised(probe):
+    """插图上的色条也要被认出来，它的内部件一个都不许漏进元素表。
+
+    `colorbar_maps()` 只扫 `fig.axes` 的时候，`fig.colorbar(im, ax=inset)`
+    整条色条**不被认出来**——`ax.inset_axes()` 的宿主只存在于 `child_axes` 里。
+    后果不是「少一个元素」：色条轴不在 `cbar_of_ax` 里，Collection 族的登记闸
+    （`ax in cbar_of_ax`）就挡不住它，于是 `cb.solids`（QuadMesh）与
+    `cb.dividers`（LineCollection）被当成用户图元登记成可编辑 collection——
+    而它们**每次 `_draw_all()` 都被删掉重建**，override 挂在一个随时换身份的
+    幽灵上。实测：认出 0 个色条轴、没有 colorbar 元素、`axes_1.collections_1`
+    泄漏进元素表。
+
+    这是「遍历的权威只有 `_ordered_axes` 一处」在**产品路径**上的第三个入口
+    （前两个是 `census` 与 `_internal_ids`，都在诊断侧）。
+    """
+    c = probe["completeness"]
+    assert len(c["colorbar_axes"]) >= 2, (
+        f"夹具里有两条色条（一条挂在插图上），只认出 {c['colorbar_axes']}——"
+        f"`colorbar_maps` 是不是又只走 `fig.axes` 了？")
+    # **认出来之后还得留得住**：`follow_map` 用 `fig.axes` 编 gid 的时候，
+    # 插图宿主查不到 gid，这条随行关系被**无声丢掉**（实测 `follow_map` 回
+    # `{}`）。表现是拖动宿主时色条留在原地。它是上一条修好之后才够得着的——
+    # 色条先要被认出来，这条关系才有机会被丢。
+    assert c["axes_follow"], (
+        f"一条随行关系都没有？插图上的色条该让宿主带着它走：{c['axes_follow']}")
+    assert not c["colorbar_leaks"], (
+        f"色条轴上漏出了内部件：{c['colorbar_leaks']}。它们每次 `_draw_all()` "
+        f"都被删掉重建，登记它们等于让 override 挂在幽灵上")
+
+
 def test_family_classification_has_a_single_authority(probe):
     """「这个 artist 属于哪一族」只能有一处判据。
 

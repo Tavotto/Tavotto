@@ -272,9 +272,14 @@ def instrument(state: FigState) -> None:
         _register(state, f"fig.legend_{i}", leg, "legend", "图例", draggable=True)
 
     # 色条反查：mappable.colorbar → 宿主轴（与色条方向事务共用同一份实现）
-    cbar_of_ax, host_of_cbax = colorbar_maps(fig)
+    # **传 `_ordered_axes` 的结果**：插图（`ax.inset_axes()`）只在 `child_axes`
+    # 里，`fig.axes` 扫不到它，于是挂在插图上的色条整个不被认出来——连带那条
+    # 色条的内部件（`cb.solids` / `cb.dividers`）会被当成用户图元登记，而它们
+    # 每次 `_draw_all()` 都被删掉重建。遍历的权威只有 `_ordered_axes` 一处。
+    _all_axes_for_cbar, _ = _ordered_axes(fig)
+    cbar_of_ax, host_of_cbax = colorbar_maps(fig, _all_axes_for_cbar)
     state.colorbar_axes = set(cbar_of_ax)
-    state.axes_follow = follow_map(fig, cbar_of_ax, host_of_cbax)
+    state.axes_follow = follow_map(fig, cbar_of_ax, host_of_cbax, _all_axes_for_cbar)
     # `fig.axes` 之后再接子 axes（inset / secondary），编号继续往下走——
     # 存量文档里的 axes_i 因此一个字节不变，见 `_ordered_axes`。
     all_axes, child_ids = _ordered_axes(fig)

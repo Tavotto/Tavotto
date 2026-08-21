@@ -63,6 +63,61 @@ def test_relative_path_with_directories_still_finds_the_script(tmp_path):
         encoding="utf-8", errors="replace",
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
+    # 干净的图退 0；有缺口的退非 0，见下一条
     assert "FileNotFoundError" not in (proc.stdout + proc.stderr)
     # 真的跑了这张图：捕获到的 stem 是脚本 savefig 出来的那个
     assert "census_probe" in proc.stdout, proc.stdout
+
+
+GAP_SCRIPT = """\
+import matplotlib
+matplotlib.use("Agg")
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+def main():
+    fig = plt.figure()
+    ax = fig.add_subplot(projection="3d")
+    gx, gy = np.meshgrid(np.linspace(0, 1, 6), np.linspace(0, 1, 6))
+    # Poly3DCollection：instrument 不登记，只有普查报得出来
+    ax.plot_surface(gx, gy, gx * gy)
+    fig.savefig("gap_probe.pdf")
+
+
+main()
+"""
+
+
+def test_a_census_that_lists_gaps_must_not_exit_zero(tmp_path):
+    """普查报告里列着 MISSING，退出码就不许是 0。
+
+    `print_report()` 早就算好了漏掉几类，`main()` 却把返回值扔了、无条件
+    `return 0`——于是升级检查单与 CI 拿到的是「通过」，而报告正文里列着一串
+    漏掉的类。**一份报平安的门禁比没有门禁更坏**，何况这个工具存在的唯一理由
+    就是回答「有没有东西被我们悄悄漏掉了」。
+
+    `--json` 那条路仍然回 0（除非样本自己跑挂了）：那时判定归读 JSON 的调用方，
+    工具只负责如实吐数据。
+    """
+    (tmp_path / "gap.py").write_text(GAP_SCRIPT, encoding="utf-8")
+    clean = tmp_path / "clean.py"
+    clean.write_text(SCRIPT, encoding="utf-8")
+
+    def run(script, *extra):
+        return subprocess.run([WORKER_PY, TOOL, str(script), *extra],
+                              cwd=str(tmp_path), capture_output=True,
+                              text=True, encoding="utf-8", timeout=300)
+
+    ok = run(clean)
+    assert ok.returncode == 0, ok.stdout + ok.stderr
+
+    gap = run(tmp_path / "gap.py")
+    assert gap.returncode != 0, (
+        "普查列出了漏掉的 artist，退出码却是 0——调用方会把它当成审计通过：\n"
+        + gap.stdout[-1500:])
+    assert "Poly3DCollection" in gap.stdout, gap.stdout[-1500:]
+
+    # JSON 模式把判定交给调用方，照旧回 0
+    js = run(tmp_path / "gap.py", "--json")
+    assert js.returncode == 0, js.stdout + js.stderr

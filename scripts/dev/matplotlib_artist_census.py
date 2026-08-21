@@ -349,13 +349,21 @@ def main() -> int:
             fig.canvas.draw()
             rows[stem] = census(fig)
 
+    # **退出码要说实话**。`print_report` 早就算好了漏掉几类，`main` 却把它
+    # 扔了、无条件 return 0——于是普查在报告里列着一串 MISSING、对调用方
+    # （升级检查单、CI）却是「通过」。**一份报平安的门禁比没有门禁更坏**，
+    # 而这个工具存在的唯一理由就是回答「有没有东西被我们悄悄漏掉了」。
+    #
+    # 跑不起来的样本同样算失败：`from_script` / API 表里抛了异常的那些会记成
+    # `{"error": ...}`，那时报告里连「漏没漏」都无从谈起。
+    errors = sum(1 for r in rows.values() if isinstance(r, dict) and "error" in r)
     if args.json:
         json.dump({"matplotlib": matplotlib.__version__, "figures": rows},
                   sys.stdout, ensure_ascii=False, indent=2, sort_keys=True)
         print()
-        return 0
-    print_report(rows)
-    return 0
+        return 1 if errors else 0
+    missing = print_report(rows)
+    return 1 if (missing or errors) else 0
 
 
 if __name__ == "__main__":
