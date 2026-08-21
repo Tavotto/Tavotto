@@ -9,12 +9,14 @@ build_manifest(state)：每次渲染后调用——读取元素当前属性值�
 """
 from __future__ import annotations
 
+import math
 import sys
 
 from matplotlib.axes import Axes
-from matplotlib.collections import PathCollection, PolyCollection
+from matplotlib.collections import (Collection, LineCollection, PathCollection,
+                                    PolyCollection)
 from matplotlib.container import BarContainer, ErrorbarContainer
-from matplotlib.patches import FancyArrowPatch, PathPatch, Polygon
+from matplotlib.patches import FancyArrowPatch, Patch
 from matplotlib.text import Text
 
 import pathgeom
@@ -22,7 +24,8 @@ from overrides import (ColorbarProxy, FigState, HANDLERS, SeriesGroup, TickLabel
                        TickSet, _ARROWSTYLES, _CB_EXTENDS, _LEGEND_LOCS,
                        _TICK_FORMATS, _TICK_MINOR_FORMATS,
                        _arrow_style, _arrowstyle_name, _axis_arrows_on,
-                       _linestyle_name, _boxstyle_info, _cb_axis, _cb_tick_color,
+                       _linestyle_name, _linecoll_linestyle_name,
+                       _boxstyle_info, _cb_axis, _cb_tick_color,
                        _cb_tick_fontsize, _cls_key, _grid_prop, _grid_visible,
                        _legend_entry_order, _legend_loc_name,
                        _stroke_state, _tick0, colorbar_maps, follow_map,
@@ -51,11 +54,73 @@ def _relabel(registered: str, text: str) -> str:
 
 
 def _register(state: FigState, gid: str, artist, role: str, label: str,
-              draggable: bool = False) -> None:
+              draggable: bool = False, **flags) -> None:
+    """登记一个可编辑元素。
+
+    `flags` 是挂在元素上的**编辑能力标记**（`position_locked` /
+    `limits_slaved`），由 `_fields_for` 与 `build_manifest` 读取。它们必须
+    挂在元素上而不是现算：`_fields_for(el)` 只拿得到 el，而「这个 axes 是不是
+    子 axes」是遍历时才知道的信息。`sync_tick_elements` 重建刻度伪元素时
+    原样保留非 TickLabel 的元素对象，所以标记不会在同步中丢。
+    """
     artist.set_gid(gid)
     state.index[gid] = artist
     state.elements.append({"gid": gid, "artist": artist, "role": role,
-                           "label": label, "draggable": draggable})
+                           "label": label, "draggable": draggable, **flags})
+
+
+def _ordered_axes(fig) -> tuple[list, set]:
+    """(全部 axes（含子 axes）, 子 axes 的 id 集合)。
+
+    `fig.axes` 只收 `add_subplot` / `add_axes` 建出来的那些；
+    `ax.inset_axes(...)` 与 `ax.secondary_[xy]axis(...)` 建出来的挂在
+    `ax.child_axes` 上，`in fig.axes` 为 False——不遍历它们的话，插图里的
+    曲线选不中、次坐标轴的标签也改不了。
+
+    **子 axes 一律排在所有 `fig.axes` 之后**，编号继续 `axes_{i}`。这条不是
+    风格问题：`axes_i` 会进用户文档（override 的 gid），存量文档里的编号
+    一个字节都不能变。插在中间会让「同一张图、同一个 gid」在升级前后指向
+    不同的 axes——那是数据级的错位。
+
+    逐层广度优先（同一层的兄弟排完再下一层），所以同一个脚本每次跑出来的
+    gid 串完全一致；插图里再开插图也照样确定。按 `id()` 去重防环。
+    """
+    out = list(fig.axes)
+    seen = {id(a) for a in out}
+    children: set = set()
+    layer = list(out)
+    while layer:
+        nxt = []
+        for parent in layer:
+            for child in getattr(parent, "child_axes", None) or []:
+                if id(child) in seen:
+                    continue
+                seen.add(id(child))
+                children.add(id(child))
+                out.append(child)
+                nxt.append(child)
+        layer = nxt
+    return out, children
+
+
+def _is_secondary_axis(ax) -> bool:
+    """是不是 `secondary_[xy]axis()` 建出来的轴。
+
+    **这一条只能按类判**，与 position 那条不同：position 的理由（落位由
+    locator 每帧重算）对插图与次坐标轴是同一个，而「数据范围由父轴经换算
+    函数每帧重算」只对次坐标轴成立。行为上没有公开的判据可用。
+
+    `matplotlib.axes.SecondaryAxis` **不是公开名字**（3.8 上 import 得到、
+    3.11 上 import 不到），所以走私有模块路径，再退回类名字符串。两条都
+    失效时返回 False——那时最坏的后果是次坐标轴上多出一组会被顶回去的
+    数据范围字段，不会崩。`test_secondary_axis_detection_still_works`
+    看护这条依赖，matplotlib 升版把它弄坏时会当场红。
+    """
+    try:
+        from matplotlib.axes._secondary_axes import SecondaryAxis
+    except ImportError:                                 # pragma: no cover - 版本相关
+        return type(ax).__name__ == "SecondaryAxis"
+    return isinstance(ax, SecondaryAxis)
 
 
 def _tick_label_entries(ax, which: str, ax_gid: str) -> list[tuple]:
@@ -128,13 +193,35 @@ def instrument(state: FigState) -> None:
     cbar_of_ax, host_of_cbax = colorbar_maps(fig)
     state.colorbar_axes = set(cbar_of_ax)
     state.axes_follow = follow_map(fig, cbar_of_ax, host_of_cbax)
-    gid_of_ax = {ax: f"axes_{i}" for i, ax in enumerate(fig.axes)}
+    # `fig.axes` 之后再接子 axes（inset / secondary），编号继续往下走——
+    # 存量文档里的 axes_i 因此一个字节不变，见 `_ordered_axes`。
+    all_axes, child_ids = _ordered_axes(fig)
+    gid_of_ax = {ax: f"axes_{i}" for i, ax in enumerate(all_axes)}
     cbar_ordinal: dict[int, int] = {}
+    # 插图与次坐标轴**各数各的**：共用一个计数器会让「只有一个次坐标轴」的图
+    # 上出现「次坐标轴 2」，因为前面那个 1 被插图占掉了。
+    child_ordinal: dict[str, int] = {"inset": 0, "secondary": 0}
 
-    for i, ax in enumerate(fig.axes):
+    for i, ax in enumerate(all_axes):
         is3d = getattr(ax, "name", "") == "3d"
-        _register(state, f"axes_{i}", ax, "axes3d" if is3d else "axes",
-                  "色条轴" if ax in cbar_of_ax else f"子图 {i + 1}")
+        is_child = id(ax) in child_ids
+        secondary = is_child and _is_secondary_axis(ax)
+        # **落位不给编辑**：子 axes 的位置由父级的 `_axes_locator` 每帧重算，
+        # `set_position` 之后立刻读回是新值、`draw()` 一次就被顶回原值（实测）。
+        # 开放它就是「设了、界面也变了、下一帧弹回去」——比不支持严重得多。
+        # 判据是「子 axes **且** 有 locator」而不是光看 locator：色条轴也带
+        # `_ColorbarAxesLocator`，而色条的 position override 是**支持**的
+        # （用户自己摆过色条时就靠它），光判 locator 会把那条功能一起砍掉。
+        position_locked = is_child and ax.get_axes_locator() is not None
+        if is_child:
+            kind = "secondary" if secondary else "inset"
+            child_ordinal[kind] += 1
+            label = (f"次坐标轴 {child_ordinal['secondary']}" if secondary
+                     else f"插图 {child_ordinal['inset']}")
+        else:
+            label = "色条轴" if ax in cbar_of_ax else f"子图 {i + 1}"
+        _register(state, f"axes_{i}", ax, "axes3d" if is3d else "axes", label,
+                  position_locked=position_locked, limits_slaved=secondary)
         if ax in cbar_of_ax:
             host = host_of_cbax.get(ax)
             n = cbar_ordinal.get(id(host), 0)
@@ -227,10 +314,36 @@ def instrument(state: FigState) -> None:
                     _register(state, f"axes_{i}.scatter_{j}", coll, "scatter", nice)
                 elif isinstance(coll, PolyCollection):
                     _register(state, f"axes_{i}.fill_{j}", coll, "fill", f"填充区域 {j + 1}")
-            # 脚本直接 add_patch 的独立箭头（XPS 峰位标注这类画法）与独立形状
-            # （`ax.fill()` 出的 Polygon、手搓的 PathPatch）。gid 用 patches 里的
-            # 树序 j 保证重建稳定，label 各自计数。柱形系列的 Rectangle 也在
-            # ax.patches 里，已经登记过，这里必须跳过（skip_ids 收了它们）
+                elif isinstance(coll, LineCollection) and coll.get_array() is None:
+                    # 线组：`hlines`/`vlines` 的参考线、`stem` 的竖线、
+                    # `eventplot` 的事件线（EventCollection 是它的子类）、
+                    # `streamplot` 的流线、`violinplot` 的极值线。这是 artist
+                    # 普查里权重最高的缺口（8 处 / 5 个 case），2026-08-21 之前
+                    # 它们在界面上根本不存在。
+                    #
+                    # **标量映射的一律不登记**（`get_array()` 非空）：颜色由
+                    # colormap 每次 draw 重算（`update_scalarmappable`），开放
+                    # `color` 会「设了但下一帧被顶回去」——那比不支持更坏。
+                    # 这道闸是唯一出处，`overrides._cls_key` 不重复判。
+                    # 等值线不受影响：`contour`/`contourf` 在 3.8 与 3.11 上都
+                    # 只产出**一个** `QuadContourSet`，它既不是 LineCollection
+                    # 子类、又是标量映射的，两条判据各自都挡得住（实测）。
+                    lab = str(coll.get_label())
+                    nice = f"线组 “{_snippet(lab)}”" if lab and not lab.startswith("_") \
+                        else f"线组 {j + 1}"
+                    _register(state, f"axes_{i}.linecoll_{j}", coll, "linecoll", nice)
+            # 脚本直接 add_patch 的独立箭头（XPS 峰位标注这类画法）与独立形状。
+            # 形状这一档**认任何 Patch**，不只是 Polygon / PathPatch：
+            # `Rectangle`（axhspan/axvspan）、`Circle`、`Ellipse`、`Wedge`
+            # （ax.pie）同样是用户画出来的东西，只认两种的话它们在界面上根本
+            # 不存在——CompatBench 的 art_shapes / art_axhspan_axvspan /
+            # art_pie 就是这么现形的。`patch` 那组 handler（facecolor /
+            # edgecolor / linewidth / linestyle / alpha / visible / zorder）
+            # 本来就建在 Patch 的通用 API 上，泛化不需要新写 handler。
+            # gid 用 patches 里的树序 j 保证重建稳定，label 各自计数。
+            # 柱形系列的 Rectangle 也在 ax.patches 里，已经登记过，这里必须
+            # 跳过（skip_ids 收了它们）；FancyArrowPatch 在上一支被拦掉，
+            # 它有自己的端点契约；色条轴上的 patch 由 is_cbax 挡住。
             arrow_n = 0
             shape_n = 0
             # 色条轴上的 patch 不是用户的形状：`extend` 的两个延伸三角就是
@@ -245,7 +358,7 @@ def instrument(state: FigState) -> None:
                     pt._mm_arrow_standalone = True  # noqa: SLF001
                     _register(state, f"axes_{i}.arrows_{j}", pt,
                               "arrow_patch", f"箭头 {arrow_n}")
-                elif (isinstance(pt, (Polygon, PathPatch))
+                elif (isinstance(pt, Patch)
                       and id(pt) not in skip_ids and not is_cbax):
                     shape_n += 1
                     _register(state, f"axes_{i}.patches_{j}", pt, "patch",
@@ -418,6 +531,44 @@ def _collection_fields(coll, with_size: bool) -> list[dict]:
     else:
         fields.pop(0)  # fill 无 label 语义
     return fields
+
+
+def _linecoll_fields(coll) -> list[dict]:
+    """线组（LineCollection）暴露的可编辑字段。
+
+    **只有样式**。「几条线、落在哪」是脚本的数据，改它该回代码——与 3D 盒内
+    属性、散点数据同一条产品边界。整组共用一套样式，单条线不可分别编辑
+    （matplotlib 允许逐条上色，但那属于数据表达，不是界面旋钮）。
+
+    `linestyle` 的显示值按**未缩放**规格反查成枚举名；认不出的自定义 dash
+    显示成实线占位（与 Line2D 那条同一约定）。还原走的是
+    `HANDLERS["linecoll","linestyle"]` 的 getter，存的是未缩放规格本身，
+    与这里的显示值不是同一个东西——显示可以有损，还原不行。
+    """
+    import numpy as np  # noqa: PLC0415 — worker 侧有科学栈
+    # `get_color()` 的形状**不统一**：`hlines` 出的 LineCollection 回二维
+    # `[[r,g,b,a]]`，而 `eventplot` 出的 EventCollection 回一维 `[r,g,b,a]`
+    # （实测，两个 matplotlib 版本都如此）。直接取 `colors[0]` 在后者身上
+    # 拿到的是一个浮点数，`to_hex` 会把它变成一个毫无意义的颜色。
+    colors = np.atleast_2d(coll.get_color())
+    lw = coll.get_linewidths()
+    alpha = coll.get_alpha()
+    return [
+        {"prop": "color", "type": "color",
+         "value": to_hex(colors[0]) if len(colors) else "#000000"},
+        {"prop": "linewidth", "type": "number",
+         "value": round(float(lw[0]), 2) if len(lw) else 1.0,
+         "min": 0, "max": 8, "step": 0.1, "unit": "pt"},
+        {"prop": "linestyle", "type": "enum",
+         "value": _linecoll_linestyle_name(coll),
+         "options": ["-", "--", "-.", ":"]},
+        {"prop": "alpha", "type": "number",
+         "value": 1.0 if alpha is None else round(float(alpha), 2),
+         "min": 0, "max": 1, "step": 0.05},
+        {"prop": "visible", "type": "bool", "value": bool(coll.get_visible())},
+        {"prop": "zorder", "type": "number", "value": round(float(coll.get_zorder()), 1),
+         "min": -5, "max": 50, "step": 1, "group": "排列"},
+    ]
 
 
 def _bar_series_fields(grp) -> list[dict]:
@@ -725,15 +876,33 @@ def _tick_fields(ts: TickSet) -> list[dict]:
     return fields
 
 
-def _axes_fields(ax) -> list[dict]:
+def _axes_fields(ax, el: dict | None = None) -> list[dict]:
+    """axes 的可编辑字段。
+
+    `el` 带着遍历时才知道的能力标记（见 `_register`）：
+
+    * `position_locked` —— 子 axes（inset / secondary）的落位由父级的
+      `_axes_locator` 每帧重算，`set_position` 一 draw 就被顶回去。**不出这个
+      字段**，宁可不支持也不给一个按了会弹回来的旋钮。
+    * `limits_slaved` —— 次坐标轴的数据范围由父轴经换算函数每帧重算。实测：
+      `set_xlim` 与 `invert_xaxis` 被顶回去、`set_aspect` 被 matplotlib 自己
+      拒绝（"Secondary Axes can't set the aspect ratio"）、`get_xscale()` 回的
+      是 `'function'`（`scale_options` 给不出合理选项）。整组不出。
+
+    两条标记的**理由不同**，所以是两个字段而不是一个「这是子 axes」：
+    插图的 xlim / scale 是真能改的，只有落位不能。
+    """
+    flags = el or {}
     x0, x1 = ax.get_xlim()
     y0, y1 = ax.get_ylim()
     aspect = ax.get_aspect()
     return [
-        {"prop": "position", "type": "rect",
-         "value": [round(float(v), 4) for v in ax.get_position().bounds]},
+        *([] if flags.get("position_locked") else [
+            {"prop": "position", "type": "rect",
+             "value": [round(float(v), 4) for v in ax.get_position().bounds]}]),
         {"prop": "visible", "type": "bool", "value": bool(ax.get_visible())},
 
+        *([] if flags.get("limits_slaved") else [
         {"prop": "xlim", "type": "pair", "value": [float(x0), float(x1)],
          "group": "数据范围"},
         {"prop": "ylim", "type": "pair", "value": [float(y0), float(y1)],
@@ -751,6 +920,7 @@ def _axes_fields(ax) -> list[dict]:
         {"prop": "aspect", "type": "text",
          "value": aspect if isinstance(aspect, str) else str(round(float(aspect), 3)),
          "group": "数据范围"},
+        ]),
 
         {"prop": "grid_x", "type": "bool", "value": _grid_visible(ax, "x"),
          "group": "网格与边框"},
@@ -877,7 +1047,8 @@ def _fields_for(el) -> list[dict]:
     if key == "legend":
         return _legend_fields(artist)
     if key == "axes":
-        return _axes3d_fields(artist) if role == "axes3d" else _axes_fields(artist)
+        return (_axes3d_fields(artist) if role == "axes3d"
+                else _axes_fields(artist, el))
     if key == "image":
         return _image_fields(artist)
     if key == "arrowpatch":
@@ -888,6 +1059,8 @@ def _fields_for(el) -> list[dict]:
         return _collection_fields(artist, with_size=True)
     if key == "fill":
         return _collection_fields(artist, with_size=False)
+    if key == "linecoll":
+        return _linecoll_fields(artist)
     if key == "bar_series":
         return _bar_series_fields(artist)
     if key == "bar":
@@ -900,6 +1073,73 @@ def _fields_for(el) -> list[dict]:
 
 
 _MIN_HIT_PX = 4.0  # 扁平元素最小命中厚度（display 像素）
+
+
+def _finite_geometry(entry: dict) -> bool:
+    """entry 里的几何字段全是有限值。见 `build_manifest` 里那道总闸的说明。"""
+    for field in ("bbox", "anchor", "arrow_endpoints", "geometry"):
+        v = entry.get(field)
+        if v is None:
+            continue
+        for x in _flatten_numbers(v):
+            if not math.isfinite(x):
+                return False
+    return True
+
+
+def _flatten_numbers(v):
+    """任意嵌套结构里的所有数字（bool 不算——它不是几何）。"""
+    if isinstance(v, dict):
+        v = list(v.values())
+    if isinstance(v, (list, tuple)):
+        for item in v:
+            yield from _flatten_numbers(item)
+    elif isinstance(v, (int, float)) and not isinstance(v, bool):
+        yield float(v)
+
+
+def _finite_box(bb) -> bool:
+    """包围盒的四个数都是有限值。
+
+    matplotlib 3.8 的 `PolyCollection.get_window_extent()` 回的是 **-inf**
+    （空 Bbox 的默认值），而不是零尺寸框——只判 `width <= 0` 会误以为
+    「这是个扁平元素」而不是「这个 artist 根本没给出框」。
+    """
+    try:
+        return all(math.isfinite(v) for v in (bb.x0, bb.y0, bb.x1, bb.y1))
+    except (TypeError, ValueError):
+        return False
+
+
+def _collection_datalim(artist):
+    """Collection 自己不给包围盒时，用**数据范围**换算 display 框；不适用返回 None。
+
+    散点（PathCollection）当年就栽在这里——`Artist.get_window_extent` 对集合
+    是空框，散点根本进不了 manifest。同一个坑在 **matplotlib 3.8** 上更宽：
+    那一版 `fill_between` / `fill_betweenx` / `stackplot` 出的 PolyCollection
+    的 window extent 是 `-inf`，于是**整片填充区在界面上不存在**（3.10+ 换成
+    了 `FillBetweenPolyCollection`，自带可用的框，所以只在旧版本上发作）。
+    CompatBench 的 minimum 档（matplotlib 3.8.4）是这么把它抓出来的：
+    `art_fill_between` 是 Tier 1。
+
+    **标量映射的集合刻意排除**（`get_array()` 非空：pcolor / pcolormesh /
+    hexbin / 带 C 的 barbs）。它们的颜色由 colormap 每次 draw 重算
+    （`update_scalarmappable`），放进 manifest 会让 `facecolor` 这类编辑
+    「设了但下一帧被顶回去」——那比不支持更坏。它们要的是一族网格感知的
+    handler（cmap / alpha / visible），记在 artist 普查里等排期。
+    """
+    if not isinstance(artist, Collection) or artist.get_array() is not None:
+        return None
+    ax = getattr(artist, "axes", None)
+    if ax is None:
+        return None
+    try:
+        bb = ax.transData.transform_bbox(artist.get_datalim(ax.transData))
+    except Exception:                                   # noqa: BLE001
+        return None
+    if not _finite_box(bb) or (bb.width <= 0 and bb.height <= 0):
+        return None
+    return bb
 
 
 def _padded_bbox(bb, W: float, H: float) -> list[float]:
@@ -949,7 +1189,11 @@ def build_manifest(state: FigState, stem: str) -> dict:
                 continue
             entry["label"] = _relabel(el["label"], live_text)
         if el["role"] in ("axes", "axes3d"):
-            entry["resizable"] = True  # 前端可拖动/缩放子图占比（override axes position）
+            # 前端可拖动/缩放子图占比（override axes position）。子 axes 的
+            # 落位归父级的 locator 管，给不了这个能力——`_axes_fields` 那边
+            # 同步不出 `position` 字段，两处必须一致，否则前端会拿着一个
+            # 后端根本不认的 prop 发 override。
+            entry["resizable"] = not el.get("position_locked", False)
             if artist in state.colorbar_axes:
                 entry["is_colorbar"] = True
                 entry["colorbar_gid"] = f"{el['gid']}.colorbar"
@@ -1028,8 +1272,12 @@ def build_manifest(state: FigState, stem: str) -> dict:
         else:
             try:
                 bb = artist.get_window_extent(renderer)
-                if bb.width <= 0 and bb.height <= 0:
-                    continue
+                if not _finite_box(bb) or (bb.width <= 0 and bb.height <= 0):
+                    # artist 自己给不出框：Collection 还能用数据范围换算一次
+                    # （见 `_collection_datalim`），其余的老老实实丢掉。
+                    bb = _collection_datalim(artist)
+                    if bb is None:
+                        continue
                 # 水平 / 垂直的扁平线（基线、参考线）单边为 0，垫成可点中的窄条
                 entry["bbox"] = _padded_bbox(bb, W, H)
             except Exception:
@@ -1056,6 +1304,27 @@ def build_manifest(state: FigState, stem: str) -> dict:
                         for x, y in disp]
                 except Exception:
                     pass
+        # ---- 几何总闸：非有限值一个都不许出去 ----
+        # 逐个分支补 `isfinite` 是补不完的（分支还会再长），而漏一个的后果
+        # **取决于走哪条控制面**：Python 的 `json.dumps` 照写 `NaN` /
+        # `Infinity` 字面量、`json.loads` 也照收，于是 Python 渲染池一路绿灯；
+        # 而 workerd（Rust serde_json）**严格按 RFC 8259 拒收整帧**，报
+        # 「渲染进程往协议管道里写了非 JSON 的内容」并重启会话——同一份
+        # manifest，两条控制面两个结果。
+        #
+        # 真实触发路径（CompatBench 的 ax_secondary_x 抓到的）：
+        # `secondary_xaxis(functions=(1000/v, 1000/v))` 在 v=0 处映射出 inf，
+        # 刻度标签的包围盒变成 `[inf, nan, nan, nan]`。而 ticklabel 那条分支
+        # 的守卫是 `bb.width <= 0`——**`nan <= 0` 为假**，NaN 大摇大摆地过。
+        #
+        # 量不出位置的元素本来也选不中、画不了描边，丢掉与既有「零尺寸包围盒
+        # 就 continue」是同一个取舍。丢了要说出来，别静默。
+        if not _finite_geometry(entry):
+            print(f"[manifest] {el['gid']} 的几何不是有限值，已丢弃"
+                  f"（bbox={entry.get('bbox')} anchor={entry.get('anchor')}）",
+                  file=sys.stderr)
+            continue
+
         # 可拖元素附带锚点（figure 分数、top-origin），拖动换算用
         if el["draggable"]:
             try:
@@ -1064,7 +1333,11 @@ def build_manifest(state: FigState, stem: str) -> dict:
                 else:  # Legend：锚点用 bbox 左下角
                     bb = artist.get_window_extent(renderer)
                     dx, dy = bb.x0, bb.y0
-                entry["anchor"] = [dx / W, 1.0 - dy / H]
+                anchor = [dx / W, 1.0 - dy / H]
+                if not all(math.isfinite(v) for v in anchor):
+                    # 锚点是在总闸之后算的，自己再过一遍（见上面那段说明）
+                    raise ValueError("anchor 不是有限值")
+                entry["anchor"] = anchor
                 entry["drag_prop"] = "pos_frac" if isinstance(artist, Text) else "loc_frac"
             except Exception:
                 entry["draggable"] = False

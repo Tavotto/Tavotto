@@ -32,12 +32,32 @@ ElementInspector、ElementTree、全部 zustand stores、patch 表示、undo/red
 `useEngineSync`、i18n。种子逻辑抽成 `web/src/embedded/session.ts`，
 MCP 会话与 playground 会话共用（不许复制后各自漂移）。
 
-Python 侧同理：`engine/browser.py` 是**适配层不是分叉**——它平铺 import
-的 `manifest.py` / `overrides.py` / `pathgeom.py` / `patchspec.py` 与桌面
-worker 是同一份文件（worker 式的「engine 目录进 sys.path」布局原样保留，
-见 CLAUDE.md 对平铺 import 的约定）。禁止出现 `browser_manifest.py` 这类
-复制品。`browser_imports.py` 单独成模块是因为它必须在「决定下不下载
-matplotlib 那十几 MB」之前跑，而 `browser.py` 模块级就 import matplotlib。
+Python 侧同理：`engine/browser.py` 是**适配层不是分叉**——它平铺 import 的
+模块与桌面 worker 是同一份文件（worker 式的「engine 目录进 sys.path」布局
+原样保留，见 CLAUDE.md 对平铺 import 的约定），分两类、理由不同：
+
+* `manifest.py` / `overrides.py` / `pathgeom.py` / `patchspec.py` ——
+  **语义只有一份实现**。分叉的代价是 manifest 与 override 的正确性：
+  同一组 patch 在两侧算出不同的哈希、同一个 artist 暴露不同的字段。
+* `figcapture.py`（2026-08-21 加入）—— **捕获策略只有一份实现**。它管
+  「savefig 的 stem 怎么取、脚本跑完还活着的 pyplot Figure 怎么补进来、
+  fallback stem 怎么编号」。分叉的代价不一样：同一个脚本会在两个入口
+  产出**不同的 stem**，而前端按 stem 索引一切（渲染态、override、
+  文档里的面板引用），那是数据级的错位。它必须保持**纯标准库**、
+  `matplotlib.pyplot` 由调用方传进来——桌面 worker 子进程与 Pyodide
+  都要 import 它，这是硬约束不是风格偏好。
+
+禁止出现 `browser_manifest.py` 这类复制品。`browser_imports.py` 单独成模块
+是因为它必须在「决定下不下载 matplotlib 那十几 MB」之前跑，而 `browser.py`
+模块级就 import matplotlib。
+
+**加一个平铺 import 就得同步加进 `scripts/build_browser_playground.py` 的
+`ENGINE_FILES` 白名单**（当前七个：`browser.py` / `browser_imports.py` /
+`figcapture.py` / `manifest.py` / `overrides.py` / `patchspec.py` /
+`pathgeom.py`）。漏了的话 Pyodide 里 `pyimport('browser')` 直接
+ModuleNotFoundError——而且发生在**下载完十几 MB 科学栈之后**；pytest 与
+vitest 全绿（测试驱动的 sys.path 指的是真实 engine 目录，当然找得到），
+只有真 Pyodide 的 e2e 会红。
 
 ### 运行时与包
 

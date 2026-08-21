@@ -49,6 +49,49 @@ jobs:
       - name: pytest
         run: python -m pytest
 
+  # ────────────────────────────────────────────────────────────────
+  # Matplotlib 兼容性冒烟（CompatBench 的 PR 档）
+  #
+  # 它与 backend 的 pytest 问的不是同一件事：pytest 验的是「我们写过的行为
+  # 还对不对」，这里验的是「外部 matplotlib 世界的常见写法我们还接不接得住」
+  # ——`plt.show()` 无 savefig、相对路径读盘、顶层直写、中文路径、pandas
+  # 出图这些，没有一条是我们自己的代码，却全是用户真会写的。
+  #
+  # PR 上**只跑 smoke 子集、不跑保真度**：目标 2~4 分钟。全量 150 case ×
+  # 多运行时是 nightly 的活（lab-ci.yml），塞进每个 PR 只会让人开始跳过它。
+  # 单跑一台 Linux：兼容性是引擎语义，没有平台分支；跨平台由 backend 矩阵盖。
+  # ────────────────────────────────────────────────────────────────
+  compat-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # 科学栈版本取自 packaging/runtime-lock.json，不用 `pip install matplotlib`：
+      # 零 patch 保真度与 manifest 结构都对 matplotlib 版本敏感，用锁文件才能
+      # 保证「CI 上验的」与「用户拿到的内置 runtime」是同一套。
+      - name: 安装依赖（科学栈按锁文件钉版本）
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,ci]"
+          # shellcheck disable=SC2046
+          pip install $(python scripts/ci/runtime_pins.py --include-corpus)
+          python -c "import matplotlib;print('matplotlib', matplotlib.__version__)"
+      - name: CompatBench smoke
+        run: |
+          python scripts/ci/compat_matrix.py --smoke --no-fidelity \
+            --gate pr --out "$RUNNER_TEMP/compat"
+      - name: 失败诊断
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compat-smoke-${{ github.run_id }}
+          path: ${{ runner.temp }}/compat/**
+          retention-days: 7
+          if-no-files-found: warn
+
   frontend:
     runs-on: ubuntu-latest
     defaults:

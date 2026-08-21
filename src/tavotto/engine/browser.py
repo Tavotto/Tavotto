@@ -55,6 +55,7 @@ matplotlib.use("Agg")
 import matplotlib.figure as mfigure  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 
+import figcapture  # noqa: E402
 import manifest as manifest_mod  # noqa: E402
 import overrides as overrides_mod  # noqa: E402
 import patchspec  # noqa: E402
@@ -67,7 +68,17 @@ MAX_LOG_BYTES = 64 * 1024
 #: traceback 上限（同样留尾部）。
 MAX_TRACEBACK_BYTES = 16 * 1024
 #: 捕获 Figure 数上限。超出的不是静默丢——响应里带 truncated 标记。
-MAX_FIGURES = 8
+#: 取的是桌面 pyplot 兜底那个数（`figcapture.MAX_PYPLOT_FALLBACK`），但**两侧
+#: 作用的对象不同**，别照着旧注释以为「图数因此不会分叉」——那句话是错的：
+#:
+#:   桌面   `collect_pyplot_figures(limit=8)` 只截**待补的 pyplot 兜底**，
+#:          savefig 认领的那些不受限 → 8 张 savefig + 1 张 show-only = 9 张
+#:   这里   截的是**总数** → 同一个脚本只剩 8 张
+#:
+#: 差异是自觉的（浏览器里内存与下载都更紧，总量必须有上限），所以不改行为，
+#: 改的是别再声称它不存在：CompatBench 的对拍现在逐条比张数与截断
+#: （`_browser_verdict`），分叉会被报出来而不是被这句注释盖住。
+MAX_FIGURES = figcapture.MAX_PYPLOT_FALLBACK
 #: 预览 SVG 里嵌入位图的默认 dpi，与 worker 的 `--preview-dpi` 默认一致。
 PREVIEW_DPI = 200
 #: 图选择器缩略图的目标像素宽。
@@ -81,10 +92,9 @@ def _patched_savefig(self, fname, *args, **kwargs):
     """与 worker._patched_savefig 同语义：按 stem 捕获，不写用户的输出文件。"""
     if not _intercept:
         return _REAL_SAVEFIG(self, fname, *args, **kwargs)
-    if isinstance(fname, (str, os.PathLike)):
-        stem = os.path.splitext(os.path.basename(os.fspath(fname)))[0]
-        if stem:
-            _session_capture().setdefault(stem, self)
+    stem = figcapture.savefig_stem(fname)
+    if stem:
+        _session_capture().setdefault(stem, self)
     return None
 
 
@@ -234,23 +244,15 @@ class BrowserSession:
                         log=log.text(), traceback=self._trim_tb())
 
         # pyplot 兜底：从不 savefig 的脚本（plt.plot + plt.show）也要能用。
-        # 按 Figure 身份去重——同一张图 savefig 过就不再从 pyplot 收一遍。
-        seen = {id(f) for f in self.capture.values()}
+        # 策略（去重、命名、上限）在 `figcapture` 里，与桌面 worker 共用同一份
+        # 实现——两边各写一份的话，同一个脚本会在两个入口产出不同的 stem，
+        # 而前端按 stem 索引一切。
         base = os.path.splitext(safe_name)[0]
-        for num in plt.get_fignums():
-            fig = plt.figure(num)
-            if id(fig) in seen:
-                continue
-            stem = base if base not in self.capture else f"{base}-{num}"
-            n = 2
-            while stem in self.capture:
-                stem = f"{base}-{n}"
-                n += 1
-            self.capture[stem] = fig
-            seen.add(id(fig))
+        _, dropped = figcapture.collect_pyplot_figures(
+            self.capture, base, plt, limit=MAX_FIGURES)
 
-        truncated = max(0, len(self.capture) - MAX_FIGURES)
-        if truncated:
+        truncated = dropped + max(0, len(self.capture) - MAX_FIGURES)
+        if len(self.capture) > MAX_FIGURES:
             for stem in list(self.capture)[MAX_FIGURES:]:
                 del self.capture[stem]
 

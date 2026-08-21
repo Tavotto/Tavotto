@@ -46,7 +46,10 @@ ENTRY = "main"
 #   Eqv3D     s4 3D axes（文字 + 视角 + zlabel）
 #   EqvMath   s5 mathtext + serif/sans 混排
 #   EqvCJK    s6 中文标签（探测不到 CJK 字体时该场景的用例单独 skip）
-_SCENARIOS = ("EqvMulti", "EqvImage", "EqvAnnot", "Eqv3D", "EqvMath", "EqvCJK")
+#   EqvAlias  s7 柱形系列 + 带标题的图例 + 色条——三族**别名组**一次盖到
+#             （广播型 prop 与它管着的窄 prop 同时被 override，见 ALIAS_GROUPS）
+_SCENARIOS = ("EqvMulti", "EqvImage", "EqvAnnot", "Eqv3D", "EqvMath", "EqvCJK",
+              "EqvAlias")
 
 #: s6 用的中文字体候选。matplotlib 找不到任何一个时 s6 的用例 **skip 并注明
 #: 理由**——静默换成拉丁文本跑过去，等于宣称测过中文而实际没有。
@@ -137,6 +140,20 @@ def main():
         fx.set_ylabel("Intensity")
         fx.text(0.12, 0.78, "peak", transform=fx.transAxes)
     fig6.savefig("EqvCJK.pdf")
+
+    # ---- s7：别名组（广播型 prop 与它管着的窄 prop 同时可编辑）----
+    # 柱形系列（整组 vs 单根柱）、图例（整体字号 / 标题字号 vs 单条图例项）、
+    # 色条（tick_* vs 色条轴自己的刻度组）——三族一次盖到。
+    fig7, (gx, hx) = plt.subplots(1, 2, figsize=(5.4, 2.4))
+    gx.bar(["a", "b", "c"], [3.0, 5.0, 2.0], label="counts")
+    gx.plot([0, 1, 2], [4.0, 2.0, 5.0], label="trend")
+    gx.legend(title="series")
+    gx.set_title("Bars")
+    im7 = hx.imshow(np.arange(36).reshape(6, 6), cmap="viridis")
+    fig7.colorbar(im7, ax=hx).set_label("intensity")
+    hx.set_title("Map")
+    fig7.tight_layout()
+    fig7.savefig("EqvAlias.pdf")
 '''
 
 _FONT_PROBE = """\
@@ -509,6 +526,69 @@ def _g_mixed(_getbase):
 
 
 #: (用例 id, stem, 组装函数)。**每个场景至少一条**留在默认集里。
+def _g_alias_legend(_getbase):
+    """图例的**广播型** prop 与它管着的**窄** prop 叠加。
+
+    `legend.fontsize` 写的是每一条图例项的 Text，`legend.title_fontsize` 写的
+    是标题那个 Text——而这三个 Text 各自都是登记元素、各自都有 `fontsize`。
+    两者叠加时 `originals` 的快照是顺序相关的：单条那次记下的「原样」会是被
+    整体改过的值，撤销就回不到脚本原样（见 overrides.ALIAS_GROUPS）。
+
+    这一组的意义在于：**它一定要经过四路**。热态是「先整体后单条」的增量，
+    全量重放是一次性给全表，两条路只有在广播先于窄的、且窄的在广播之后被
+    重放时才会收敛到同一张图。
+
+    窄端刻意取 `texts_1` 而不是 `texts_0`：manifest 的 `legend.fontsize` 报的
+    是 `sizes[0]`（第一条图例项的字号），覆盖第 0 条会让「广播落没落」与
+    「窄的落没落」在 manifest 上分不开，`_assert_effect` 也就失去意义。
+
+    **别名组分两种形状，这里只放得下第一种**：
+      * 一对多（整组 vs 其中一个）—— `legend.fontsize` → `texts_j`、
+        `bar_series.*` → `bar_k`。两边能同时落在不同成员上，四路可比。
+      * 一对一 / 一对全（两个名字指同一批 artist）—— `legend.title_fontsize`
+        → `legend.title`、`colorbar.tick_*` → 色条轴刻度组。后应用的必然盖掉
+        前一个，manifest 也只报得出一个值，`_assert_effect` 表达不了「两个都
+        落地」。第二种的**还原**语义同样会坏，由 test_worker_roundtrip 的别名
+        用例看着。
+    """
+    return _cumulative(
+        {"gid": "axes_0.legend", "prop": "fontsize", "value": 7.5},
+        {"gid": "axes_0.legend.texts_1", "prop": "fontsize", "value": 9.5},
+        {"gid": "axes_0.legend.texts_1", "prop": "color", "value": "#804000"},
+    )
+
+
+def _g_alias_bars(_getbase):
+    """柱形系列整组样式 + 单根柱覆盖（与图例同一类别名语义）。
+
+    刻意让**中间那根**柱与整组不同：只改第一根的话，`_bar_handler` 的
+    「按成员列表还原」恰好也能凑对，掩盖顺序问题。
+    """
+    return _cumulative(
+        {"gid": "axes_0.barseries_0", "prop": "facecolor", "value": "#775599"},
+        {"gid": "axes_0.barseries_0.bar_1", "prop": "facecolor", "value": "#22AA44"},
+        {"gid": "axes_0.barseries_0", "prop": "alpha", "value": 0.55},
+        {"gid": "axes_0.barseries_0.bar_1", "prop": "alpha", "value": 0.9},
+    )
+
+
+def _g_alias_mixed(_getbase):
+    """三族别名 + 一个与别名无关的 prop 混在一起，且**窄的排在广播之前**。
+
+    `apply` 是全量列表语义：同一组 patch 无论列表序怎么排都必须落成同一张图。
+    这一组就是把顺序故意排反，逼出排序而不是运气。
+
+    窄端一律避开成员 0（见 `_g_alias_legend` 的说明：整组字段报的是成员 0）。
+    """
+    return _cumulative(
+        {"gid": "axes_0.legend.texts_1", "prop": "fontsize", "value": 12.0},
+        {"gid": "axes_0.barseries_0.bar_2", "prop": "facecolor", "value": "#118844"},
+        {"gid": "axes_0.legend", "prop": "fontsize", "value": 8.0},
+        {"gid": "axes_0.barseries_0", "prop": "facecolor", "value": "#CC7722"},
+        {"gid": "axes_0.title", "prop": "fontsize", "value": 13.0},
+    )
+
+
 GROUPS = [
     ("s1-text-then-axes",   "EqvMulti", _g_text_then_axes),
     ("s1-labels-and-title", "EqvMulti", _g_labels_and_title),
@@ -525,6 +605,13 @@ GROUPS = [
     ("s3-arrow-endpoints",  "EqvAnnot", _g_arrow_endpoints),
     ("s4-view3d-visible",   "Eqv3D",    _g_view3d_and_visible),
     ("s5-mathtext-labels",  "EqvMath",  _g_labels_and_title),
+    # 色条的 `tick_*` 与色条轴刻度组**刻意不在这里**：它俩覆盖的是同一批
+    # 标签（不是「整组 vs 其中一个」），后应用的必然盖掉前一个，manifest 也
+    # 只报得出一个值——`_assert_effect` 表达不了「两个都落地」。它的还原语义
+    # 由 tests/test_worker_roundtrip.py 的别名组用例看着。
+    ("s7-alias-legend",     "EqvAlias", _g_alias_legend),
+    ("s7-alias-bars",       "EqvAlias", _g_alias_bars),
+    ("s7-alias-mixed-reversed", "EqvAlias", _g_alias_mixed),
 ]
 
 
@@ -586,8 +673,10 @@ def _flask_project(tmp_path, monkeypatch, library: Path):
     (figs / SCRIPT_NAME).write_text(
         (library / SCRIPT_NAME).read_text(encoding="utf-8"), encoding="utf-8")
     (figs / "tavotto_registry.json").write_text(REGISTRY, encoding="utf-8")
-    # 写回覆盖的是磁盘上**已有**的原件（真实图库里它由脚本跑出来）
-    for stem in ("EqvMulti", "EqvImage"):
+    # 写回覆盖的是磁盘上**已有**的原件（真实图库里它由脚本跑出来）。
+    # 只给真的会被写回的那几个 stem 造占位——`WRITE_BACK_GROUPS` 里出现过
+    # 的都要在这儿，漏一个的表现是 404 而不是断言失败，很容易误读成产品问题。
+    for stem in ("EqvMulti", "EqvImage", "EqvAlias"):
         doc = pymupdf.open()
         doc.new_page(width=200, height=100)
         doc.save(figs / f"{stem}.pdf")
@@ -639,6 +728,10 @@ WRITE_BACK_GROUPS = [
     ("s1-fixed-ticks-text", "EqvMulti", _g_fixed_ticks_and_label_text, ("mid-tick", "start")),
     ("s1-legend-item-text", "EqvMulti", _g_legend_item_text, ("sin(x)", "Series")),
     ("s2-colorbar-orientation", "EqvImage", _g_colorbar_orientation, ("intensity",)),
+    # 别名组：广播型 prop 与窄 prop 叠加。写回这条腿尤其要紧——热态是
+    # 「先整体后单条」的增量，写回校验拿的是**全量重放**，两者不一致时
+    # 事务会回 409 replay_divergence，正是这个 bug 当初现形的地方。
+    ("s7-alias-mixed-reversed", "EqvAlias", _g_alias_mixed, ("counts", "series")),
 ]
 
 

@@ -42,6 +42,7 @@ from _common import (  # noqa: E402
     CiError, ensure_layout, materialize_corpus, run_metadata, state_root,
     summary, summary_table, write_report,
 )
+import pixelcompare  # noqa: E402
 import smoke_app as SA  # noqa: E402
 
 REPO = _HERE.parents[1]
@@ -75,78 +76,25 @@ def case_wants_visual(manifest: dict, stem: str) -> bool:
 
 
 # ---------------------------------------------------------------- 像素比较
+# 算法与判据搬进了 `pixelcompare.py`：CompatBench 的「零 patch 原生保真度」
+# 要问的是另一个问题，但「两张 PNG 差多少算差」必须只有一个答案。
+# 这里保留同名转发，既有调用方（含 tests/test_ci_qualification.py）不动。
 def _load_pixels(path: Path):
-    """PNG → (numpy 灰度数组, 尺寸)。
-
-    比灰度不比 RGB 是有意的取舍：色相的细微变化几乎总是抗锯齿造成的，
-    而真正的回归（元素挪位、消失、字号变了）在灰度上同样显眼。这让阈值
-    更好定，也让 diff 图更好读。
-    """
     try:
-        import numpy as np
-        from PIL import Image
-    except ImportError as exc:
-        raise CiError("missing_imaging_deps",
-                      "视觉回归需要 numpy 与 Pillow：pip install -e '.[ci]'") from exc
-    with Image.open(path) as im:
-        gray = im.convert("L")
-        return np.asarray(gray, dtype="int16"), gray.size
+        return pixelcompare.load_pixels(path)
+    except pixelcompare.MissingImagingDeps as exc:
+        raise CiError("missing_imaging_deps", str(exc)) from exc
 
 
 def compare(baseline: Path, candidate: Path, diff_out: Path | None) -> dict:
-    import numpy as np
-
-    a, size_a = _load_pixels(baseline)
-    b, size_b = _load_pixels(candidate)
-    if size_a != size_b:
-        # 尺寸不同就没法逐像素比。这本身就是一次值得看的回归（figure 尺寸变了）。
-        return {"ok": False, "reason": "size_mismatch",
-                "baseline_size": list(size_a), "candidate_size": list(size_b),
-                "changed_pixel_ratio": 1.0, "mean_abs_diff": 255.0, "max_abs_diff": 255}
-
-    delta = np.abs(a - b)
-    # 噪声底噪 3：抗锯齿与 PNG 量化会让**完全相同的图形**出现 ±1~2 的逐像素
-    # 抖动。三个指标都必须先把它扣掉，否则：
-    #   * changed_ratio 恒非零，阈值无从定起；
-    #   * mean_abs_diff 被整幅图的底噪抬起来——实测每像素 ±2 的均匀噪声就能
-    #     贡献 1.2 的均值，直接顶穿任何合理阈值，而画面其实一模一样。
-    # 扣掉之后 "平均绝对差" 才名副其实：它衡量的是**真实差异**的平均强度，
-    # 而不是「真实差异 + 遍布全图的量化噪声」。
-    signal = np.where(delta > 3, delta, 0)
-    changed = int((delta > 3).sum())
-    total = int(delta.size)
-    metrics = {
-        "ok": True,
-        "changed_pixel_ratio": round(changed / total, 6),
-        "mean_abs_diff": round(float(signal.mean()), 4),
-        "max_abs_diff": int(delta.max()),
-        "changed_pixels": changed,
-        "total_pixels": total,
-        # 原始均值只作记录，不参与判定——排查时能看出「是不是整体偏了一点」。
-        "raw_mean_abs_diff": round(float(delta.mean()), 4),
-    }
-    if diff_out is not None:
-        try:
-            from PIL import Image
-            # 差异放大 4 倍再反相：肉眼看得清「哪里变了」，而不是一片近黑。
-            vis = np.clip(delta.astype("int32") * 4, 0, 255).astype("uint8")
-            Image.fromarray(255 - vis, mode="L").save(diff_out)
-        except Exception:                                  # noqa: BLE001 - diff 图是辅助产物
-            pass
-    return metrics
+    try:
+        return pixelcompare.compare(baseline, candidate, diff_out)
+    except pixelcompare.MissingImagingDeps as exc:
+        raise CiError("missing_imaging_deps", str(exc)) from exc
 
 
 def verdict(metrics: dict, tol: dict) -> tuple[bool, list[str]]:
-    """三个指标任一越界即回归。"""
-    if not metrics.get("ok", True):
-        return False, [f"尺寸不一致：基线 {metrics['baseline_size']} vs 候选 {metrics['candidate_size']}"]
-    bad: list[str] = []
-    for key, label in (("changed_pixel_ratio", "变化像素占比"),
-                       ("mean_abs_diff", "平均绝对差"),
-                       ("max_abs_diff", "最大绝对差")):
-        if key in tol and metrics[key] > tol[key]:
-            bad.append(f"{label} {metrics[key]} > 阈值 {tol[key]}")
-    return (not bad), bad
+    return pixelcompare.verdict(metrics, tol)
 
 
 # ---------------------------------------------------------------- 渲染

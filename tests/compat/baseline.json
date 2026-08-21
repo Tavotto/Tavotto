@@ -1,0 +1,2139 @@
+{
+  "schema": 1,
+  "generated_for": {
+    "matplotlib": "3.11.1",
+    "numpy": "2.5.2",
+    "pandas": "3.0.5",
+    "pillow": "12.3.0",
+    "scipy": "1.18.0",
+    "seaborn": "0.13.2",
+    "target": "bundled"
+  },
+  "cases": {
+    "art_3d_bar": {
+      "classification": "unsupported_by_design",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "3D 的产品边界是「文字类元素 + 视角 + 轴线/网格可编辑，盒内数据属性（spines / lim / scale）禁用」——立体柱（bar3d 的 Poly3DCollection） 属于**数据**，改它等于改数据，那该回代码而不是在编辑器里点。这条 case 验的是这条边界本身没有漂移，不是「3D 不好用」：标题 / 轴标签 / 刻度 / 视角照常可编辑，渲染、重放、导出全部正确。"
+    },
+    "art_3d_line": {
+      "classification": "unsupported_by_design",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "3D 的产品边界是「文字类元素 + 视角 + 轴线/网格可编辑，盒内数据属性（spines / lim / scale）禁用」——曲线（Line3D） 属于**数据**，改它等于改数据，那该回代码而不是在编辑器里点。这条 case 验的是这条边界本身没有漂移，不是「3D 不好用」：标题 / 轴标签 / 刻度 / 视角照常可编辑，渲染、重放、导出全部正确。"
+    },
+    "art_3d_scatter": {
+      "classification": "unsupported_by_design",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "3D 的产品边界是「文字类元素 + 视角 + 轴线/网格可编辑，盒内数据属性（spines / lim / scale）禁用」——散点（Path3DCollection） 属于**数据**，改它等于改数据，那该回代码而不是在编辑器里点。这条 case 验的是这条边界本身没有漂移，不是「3D 不好用」：标题 / 轴标签 / 刻度 / 视角照常可编辑，渲染、重放、导出全部正确。"
+    },
+    "art_3d_surface": {
+      "classification": "unsupported_by_design",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "3D 的产品边界是「文字类元素 + 视角 + 轴线/网格可编辑，盒内数据属性（spines / lim / scale）禁用」——曲面（Poly3DCollection） 属于**数据**，改它等于改数据，那该回代码而不是在编辑器里点。这条 case 验的是这条边界本身没有漂移，不是「3D 不好用」：标题 / 轴标签 / 刻度 / 视角照常可编辑，渲染、重放、导出全部正确。"
+    },
+    "art_3d_wireframe": {
+      "classification": "unsupported_by_design",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "3D 的产品边界是「文字类元素 + 视角 + 轴线/网格可编辑，盒内数据属性（spines / lim / scale）禁用」——线框（Line3DCollection） 属于**数据**，改它等于改数据，那该回代码而不是在编辑器里点。这条 case 验的是这条边界本身没有漂移，不是「3D 不好用」：标题 / 轴标签 / 刻度 / 视角照常可编辑，渲染、重放、导出全部正确。"
+    },
+    "art_arrow_patch": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_axhline_axvline": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_axhspan_axvspan": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_bar": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_barbs": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_barh": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_boxplot": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_colorbar": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_contour": {
+      "classification": "partial_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "等值线是 QuadContourSet（内部一族 LineCollection/PathCollection），Tavotto 不认——线本身选不中。渲染与导出正确。"
+    },
+    "art_contour_labels": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_contourf": {
+      "classification": "partial_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "填充等值线同 art_contour：QuadContourSet 不被识别，色条可编辑。"
+    },
+    "art_errorbar": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_eventplot": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_figure_legend": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_fill": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_fill_between": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_fill_betweenx": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_hexbin": {
+      "classification": "partial_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "hexbin 出的是普通 PolyCollection：instrument **认得**它（PolyCollection 的子类，登记成 axes_0.fill_0），但它的 get_window_extent 是空框，build_manifest 于是把它丢掉——界面上那块网格不存在。散点当年也栽在同一处、靠 datalim 换算救回来的；这里不能照抄：颜色由 colormap 每次 draw 重算（update_scalarmappable），把它当成 fill 角色开放 facecolor 会「设了但下一帧被顶回去」，那比不支持更坏。要修得先有一族网格感知的 handler（cmap / alpha / visible），与 QuadMesh 是同一件事。"
+    },
+    "art_hist": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_hist2d": {
+      "classification": "partial_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "hist2d 画的是 QuadMesh，Tavotto 不认这个 artist——图渲染正确、标题与刻度可编辑，但那块网格本身选不中。QuadMesh 需要一族新的handler（cmap/alpha/visible），见 artist 普查。"
+    },
+    "art_hlines_vlines": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_imshow": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_legend": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_legend_overlapping_fontsize": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_matshow": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_multi_colorbar": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_pathpatch": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_pcolor": {
+      "classification": "partial_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "pcolor 在 matplotlib 3.8+ 返回 PolyQuadMesh：instrument **认得**它（PolyCollection 的子类，登记成 axes_0.fill_0），但它的 get_window_extent 是空框，build_manifest 于是把它丢掉——界面上那块网格不存在。散点当年也栽在同一处、靠 datalim 换算救回来的；这里不能照抄：颜色由 colormap 每次 draw 重算（update_scalarmappable），把它当成 fill 角色开放 facecolor 会「设了但下一帧被顶回去」，那比不支持更坏。要修得先有一族网格感知的 handler（cmap / alpha / visible），与 QuadMesh 是同一件事。"
+    },
+    "art_pcolormesh": {
+      "classification": "partial_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "pcolormesh 画的是 QuadMesh，Tavotto 不认——色条可编辑，网格本身选不中。与 art_hist2d 同一个缺口。"
+    },
+    "art_pie": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_plot": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_polar": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_polar_bar": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_quiver": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_scatter": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_shapes": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_stackplot": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_stem": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_step": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_streamplot": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_text_annotate": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_violinplot": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_aspect_equal": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_categorical": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_constrained_layout": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true
+      }
+    },
+    "ax_custom_formatter": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_custom_locator": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_custom_ticklabels": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_datetime": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_gridspec": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_inset": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_inverted": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_linear": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_log": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_loglog": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_minor_ticks": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_mosaic": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_scinotation": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_secondary_x": {
+      "classification": "unsupported_by_design",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "次坐标轴自身与它的子元素（轴标签、刻度组）**都可编辑**——容器级的 visible / grid / spines / facecolor 一应俱全。仍然不给的只有两组，都是实测出来的产品边界而不是缺口：**落位**（position）由父轴的 `_TransformedBoundsLocator` 每帧重算，设了 draw 一次就被顶回原值；**数据范围**（xlim / invert / aspect / xscale）由主轴经函数映射决定，同样设了会被顶回去，其中 aspect 还会让 matplotlib 直接发 UserWarning。开放它们只会得到「设了但下一帧被顶回去」，那比不给更坏。"
+    },
+    "ax_secondary_y": {
+      "classification": "unsupported_by_design",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "次坐标轴自身与它的子元素（轴标签、刻度组）**都可编辑**——容器级的 visible / grid / spines / facecolor 一应俱全。仍然不给的只有两组，都是实测出来的产品边界而不是缺口：**落位**（position）由父轴的 `_TransformedBoundsLocator` 每帧重算，设了 draw 一次就被顶回原值；**数据范围**（xlim / invert / aspect / xscale）由主轴经函数映射决定，同样设了会被顶回去，其中 aspect 还会让 matplotlib 直接发 UserWarning。开放它们只会得到「设了但下一帧被顶回去」，那比不给更坏。"
+    },
+    "ax_semilogx": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_semilogy": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_sharex": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_sharey": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_subplot2grid": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_subplots": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_suptitle": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_symlog": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_tight_layout": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_title_left_right": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_twinx": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_twiny": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_annotated_helper": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_annotated_oo": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_annotated_pyplot": {
+      "classification": "partial_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "**没有 savefig 的图，三个入口里只有浏览器 playground 够得着。**引擎那一侧全通（捕获 / 打开 / 识别 / 编辑 / 撤销 / 重放 / 导出都是真的），`probe_and_register()` 也确实能把它登记进注册表——CompatBench 调的正是它。问题是**没有任何产品入口对这类脚本调它**（逐条实测过）：\n\n* **桌面界面**：面板列表按文件扫（`scan_panels()` 只列真实存在的 PDF/图片），`analyze_script()` 对没有存图调用的脚本解不出 stem、于是它进不了注册表对话框的候选，而那个对话框只给候选与已登记的脚本「试运行」按钮——没有「任选一个脚本」的入口。\n* **Codex MCP / `tavotto open`**：走的是静态发现（`ensure_registered` → `discover.merge`），不试运行。实测这类脚本连 `dynamic_names` 都进不去（回的是 `status: unchanged`、什么都没提），`bridge._pick_stem` 又要求「已登记且产物在磁盘上」，显式带 stem 也一样被拒。\n* **浏览器 playground**：够得着。它是源码进、直接跑，不经注册表也不需要产物。\n\n本 case 的引擎阶段照常验（它们是真的），但分类必须记成部分支持——CompatBench 直接调 `probe_and_register()` + worker，**绕过了三个产品入口里够不着的那两个**，据此报「完全支持」就是拿基准替产品打掩护。补法是给这类stem 一条被产品看得见的路（虚拟面板 + 注册表里能挑任意脚本试运行，或让静态发现至少把它报进 `dynamic_names`），那是独立的产品改动，不在本 PR。"
+    },
+    "mm_barlabel_helper": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_barlabel_oo": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_barlabel_pyplot": {
+      "classification": "partial_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "**没有 savefig 的图，三个入口里只有浏览器 playground 够得着。**引擎那一侧全通（捕获 / 打开 / 识别 / 编辑 / 撤销 / 重放 / 导出都是真的），`probe_and_register()` 也确实能把它登记进注册表——CompatBench 调的正是它。问题是**没有任何产品入口对这类脚本调它**（逐条实测过）：\n\n* **桌面界面**：面板列表按文件扫（`scan_panels()` 只列真实存在的 PDF/图片），`analyze_script()` 对没有存图调用的脚本解不出 stem、于是它进不了注册表对话框的候选，而那个对话框只给候选与已登记的脚本「试运行」按钮——没有「任选一个脚本」的入口。\n* **Codex MCP / `tavotto open`**：走的是静态发现（`ensure_registered` → `discover.merge`），不试运行。实测这类脚本连 `dynamic_names` 都进不去（回的是 `status: unchanged`、什么都没提），`bridge._pick_stem` 又要求「已登记且产物在磁盘上」，显式带 stem 也一样被拒。\n* **浏览器 playground**：够得着。它是源码进、直接跑，不经注册表也不需要产物。\n\n本 case 的引擎阶段照常验（它们是真的），但分类必须记成部分支持——CompatBench 直接调 `probe_and_register()` + worker，**绕过了三个产品入口里够不着的那两个**，据此报「完全支持」就是拿基准替产品打掩护。补法是给这类stem 一条被产品看得见的路（虚拟面板 + 注册表里能挑任意脚本试运行，或让静态发现至少把它报进 `dynamic_names`），那是独立的产品改动，不在本 PR。"
+    },
+    "mm_errorband_helper": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_errorband_oo": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_errorband_pyplot": {
+      "classification": "partial_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "**没有 savefig 的图，三个入口里只有浏览器 playground 够得着。**引擎那一侧全通（捕获 / 打开 / 识别 / 编辑 / 撤销 / 重放 / 导出都是真的），`probe_and_register()` 也确实能把它登记进注册表——CompatBench 调的正是它。问题是**没有任何产品入口对这类脚本调它**（逐条实测过）：\n\n* **桌面界面**：面板列表按文件扫（`scan_panels()` 只列真实存在的 PDF/图片），`analyze_script()` 对没有存图调用的脚本解不出 stem、于是它进不了注册表对话框的候选，而那个对话框只给候选与已登记的脚本「试运行」按钮——没有「任选一个脚本」的入口。\n* **Codex MCP / `tavotto open`**：走的是静态发现（`ensure_registered` → `discover.merge`），不试运行。实测这类脚本连 `dynamic_names` 都进不去（回的是 `status: unchanged`、什么都没提），`bridge._pick_stem` 又要求「已登记且产物在磁盘上」，显式带 stem 也一样被拒。\n* **浏览器 playground**：够得着。它是源码进、直接跑，不经注册表也不需要产物。\n\n本 case 的引擎阶段照常验（它们是真的），但分类必须记成部分支持——CompatBench 直接调 `probe_and_register()` + worker，**绕过了三个产品入口里够不着的那两个**，据此报「完全支持」就是拿基准替产品打掩护。补法是给这类stem 一条被产品看得见的路（虚拟面板 + 注册表里能挑任意脚本试运行，或让静态发现至少把它报进 `dynamic_names`），那是独立的产品改动，不在本 PR。"
+    },
+    "mm_histogram_helper": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_histogram_oo": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_histogram_pyplot": {
+      "classification": "partial_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "**没有 savefig 的图，三个入口里只有浏览器 playground 够得着。**引擎那一侧全通（捕获 / 打开 / 识别 / 编辑 / 撤销 / 重放 / 导出都是真的），`probe_and_register()` 也确实能把它登记进注册表——CompatBench 调的正是它。问题是**没有任何产品入口对这类脚本调它**（逐条实测过）：\n\n* **桌面界面**：面板列表按文件扫（`scan_panels()` 只列真实存在的 PDF/图片），`analyze_script()` 对没有存图调用的脚本解不出 stem、于是它进不了注册表对话框的候选，而那个对话框只给候选与已登记的脚本「试运行」按钮——没有「任选一个脚本」的入口。\n* **Codex MCP / `tavotto open`**：走的是静态发现（`ensure_registered` → `discover.merge`），不试运行。实测这类脚本连 `dynamic_names` 都进不去（回的是 `status: unchanged`、什么都没提），`bridge._pick_stem` 又要求「已登记且产物在磁盘上」，显式带 stem 也一样被拒。\n* **浏览器 playground**：够得着。它是源码进、直接跑，不经注册表也不需要产物。\n\n本 case 的引擎阶段照常验（它们是真的），但分类必须记成部分支持——CompatBench 直接调 `probe_and_register()` + worker，**绕过了三个产品入口里够不着的那两个**，据此报「完全支持」就是拿基准替产品打掩护。补法是给这类stem 一条被产品看得见的路（虚拟面板 + 注册表里能挑任意脚本试运行，或让静态发现至少把它报进 `dynamic_names`），那是独立的产品改动，不在本 PR。"
+    },
+    "mm_imagecbar_helper": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_imagecbar_oo": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_imagecbar_pyplot": {
+      "classification": "partial_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "**没有 savefig 的图，三个入口里只有浏览器 playground 够得着。**引擎那一侧全通（捕获 / 打开 / 识别 / 编辑 / 撤销 / 重放 / 导出都是真的），`probe_and_register()` 也确实能把它登记进注册表——CompatBench 调的正是它。问题是**没有任何产品入口对这类脚本调它**（逐条实测过）：\n\n* **桌面界面**：面板列表按文件扫（`scan_panels()` 只列真实存在的 PDF/图片），`analyze_script()` 对没有存图调用的脚本解不出 stem、于是它进不了注册表对话框的候选，而那个对话框只给候选与已登记的脚本「试运行」按钮——没有「任选一个脚本」的入口。\n* **Codex MCP / `tavotto open`**：走的是静态发现（`ensure_registered` → `discover.merge`），不试运行。实测这类脚本连 `dynamic_names` 都进不去（回的是 `status: unchanged`、什么都没提），`bridge._pick_stem` 又要求「已登记且产物在磁盘上」，显式带 stem 也一样被拒。\n* **浏览器 playground**：够得着。它是源码进、直接跑，不经注册表也不需要产物。\n\n本 case 的引擎阶段照常验（它们是真的），但分类必须记成部分支持——CompatBench 直接调 `probe_and_register()` + worker，**绕过了三个产品入口里够不着的那两个**，据此报「完全支持」就是拿基准替产品打掩护。补法是给这类stem 一条被产品看得见的路（虚拟面板 + 注册表里能挑任意脚本试运行，或让静态发现至少把它报进 `dynamic_names`），那是独立的产品改动，不在本 PR。"
+    },
+    "mm_scatterfit_helper": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_scatterfit_oo": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_scatterfit_pyplot": {
+      "classification": "partial_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "**没有 savefig 的图，三个入口里只有浏览器 playground 够得着。**引擎那一侧全通（捕获 / 打开 / 识别 / 编辑 / 撤销 / 重放 / 导出都是真的），`probe_and_register()` 也确实能把它登记进注册表——CompatBench 调的正是它。问题是**没有任何产品入口对这类脚本调它**（逐条实测过）：\n\n* **桌面界面**：面板列表按文件扫（`scan_panels()` 只列真实存在的 PDF/图片），`analyze_script()` 对没有存图调用的脚本解不出 stem、于是它进不了注册表对话框的候选，而那个对话框只给候选与已登记的脚本「试运行」按钮——没有「任选一个脚本」的入口。\n* **Codex MCP / `tavotto open`**：走的是静态发现（`ensure_registered` → `discover.merge`），不试运行。实测这类脚本连 `dynamic_names` 都进不去（回的是 `status: unchanged`、什么都没提），`bridge._pick_stem` 又要求「已登记且产物在磁盘上」，显式带 stem 也一样被拒。\n* **浏览器 playground**：够得着。它是源码进、直接跑，不经注册表也不需要产物。\n\n本 case 的引擎阶段照常验（它们是真的），但分类必须记成部分支持——CompatBench 直接调 `probe_and_register()` + worker，**绕过了三个产品入口里够不着的那两个**，据此报「完全支持」就是拿基准替产品打掩护。补法是给这类stem 一条被产品看得见的路（虚拟面板 + 注册表里能挑任意脚本试运行，或让静态发现至少把它报进 `dynamic_names`），那是独立的产品改动，不在本 PR。"
+    },
+    "mm_twoline_addsubplot": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_twoline_helper": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_twoline_loop": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_twoline_oo": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_twoline_pyplot": {
+      "classification": "partial_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "**没有 savefig 的图，三个入口里只有浏览器 playground 够得着。**引擎那一侧全通（捕获 / 打开 / 识别 / 编辑 / 撤销 / 重放 / 导出都是真的），`probe_and_register()` 也确实能把它登记进注册表——CompatBench 调的正是它。问题是**没有任何产品入口对这类脚本调它**（逐条实测过）：\n\n* **桌面界面**：面板列表按文件扫（`scan_panels()` 只列真实存在的 PDF/图片），`analyze_script()` 对没有存图调用的脚本解不出 stem、于是它进不了注册表对话框的候选，而那个对话框只给候选与已登记的脚本「试运行」按钮——没有「任选一个脚本」的入口。\n* **Codex MCP / `tavotto open`**：走的是静态发现（`ensure_registered` → `discover.merge`），不试运行。实测这类脚本连 `dynamic_names` 都进不去（回的是 `status: unchanged`、什么都没提），`bridge._pick_stem` 又要求「已登记且产物在磁盘上」，显式带 stem 也一样被拒。\n* **浏览器 playground**：够得着。它是源码进、直接跑，不经注册表也不需要产物。\n\n本 case 的引擎阶段照常验（它们是真的），但分类必须记成部分支持——CompatBench 直接调 `probe_and_register()` + worker，**绕过了三个产品入口里够不着的那两个**，据此报「完全支持」就是拿基准替产品打掩护。补法是给这类stem 一条被产品看得见的路（虚拟面板 + 注册表里能挑任意脚本试运行，或让静态发现至少把它报进 `dynamic_names`），那是独立的产品改动，不在本 PR。"
+    },
+    "mm_twopanel_helper": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_twopanel_oo": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_twopanel_pyplot": {
+      "classification": "partial_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "**没有 savefig 的图，三个入口里只有浏览器 playground 够得着。**引擎那一侧全通（捕获 / 打开 / 识别 / 编辑 / 撤销 / 重放 / 导出都是真的），`probe_and_register()` 也确实能把它登记进注册表——CompatBench 调的正是它。问题是**没有任何产品入口对这类脚本调它**（逐条实测过）：\n\n* **桌面界面**：面板列表按文件扫（`scan_panels()` 只列真实存在的 PDF/图片），`analyze_script()` 对没有存图调用的脚本解不出 stem、于是它进不了注册表对话框的候选，而那个对话框只给候选与已登记的脚本「试运行」按钮——没有「任选一个脚本」的入口。\n* **Codex MCP / `tavotto open`**：走的是静态发现（`ensure_registered` → `discover.merge`），不试运行。实测这类脚本连 `dynamic_names` 都进不去（回的是 `status: unchanged`、什么都没提），`bridge._pick_stem` 又要求「已登记且产物在磁盘上」，显式带 stem 也一样被拒。\n* **浏览器 playground**：够得着。它是源码进、直接跑，不经注册表也不需要产物。\n\n本 case 的引擎阶段照常验（它们是真的），但分类必须记成部分支持——CompatBench 直接调 `probe_and_register()` + worker，**绕过了三个产品入口里够不着的那两个**，据此报「完全支持」就是拿基准替产品打掩护。补法是给这类stem 一条被产品看得见的路（虚拟面板 + 注册表里能挑任意脚本试运行，或让静态发现至少把它报进 `dynamic_names`），那是独立的产品改动，不在本 PR。"
+    },
+    "sci_cjk": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true
+      }
+    },
+    "sci_mathtext": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "sci_numpy": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "sci_pandas_bar": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "sci_pandas_line": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "sci_pandas_scatter": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "sci_pillow": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "sci_scipy_fit": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "sci_sns_bar": {
+      "classification": "environment_dependency",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "seaborn 是内置渲染 runtime 里有、但普通开发机与 PR 档 CI 未必装的可选依赖（packaging/runtime-lock.json 锁着 0.13.2）。缺它时脚本以 missing_dependency 开局，那是环境前提不是引擎缺陷。装了 seaborn 的目标上这几条按 full/partial 正常判定。",
+      "note": "本次环境满足依赖，全部阶段通过"
+    },
+    "sci_sns_box": {
+      "classification": "environment_dependency",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "seaborn 是内置渲染 runtime 里有、但普通开发机与 PR 档 CI 未必装的可选依赖（packaging/runtime-lock.json 锁着 0.13.2）。缺它时脚本以 missing_dependency 开局，那是环境前提不是引擎缺陷。装了 seaborn 的目标上这几条按 full/partial 正常判定。",
+      "note": "本次环境满足依赖，全部阶段通过"
+    },
+    "sci_sns_heatmap": {
+      "classification": "environment_dependency",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "seaborn 是内置渲染 runtime 里有、但普通开发机与 PR 档 CI 未必装的可选依赖（packaging/runtime-lock.json 锁着 0.13.2）。缺它时脚本以 missing_dependency 开局，那是环境前提不是引擎缺陷。装了 seaborn 的目标上这几条按 full/partial 正常判定。",
+      "note": "本次环境满足依赖，全部阶段通过"
+    },
+    "sci_sns_line": {
+      "classification": "environment_dependency",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "seaborn 是内置渲染 runtime 里有、但普通开发机与 PR 档 CI 未必装的可选依赖（packaging/runtime-lock.json 锁着 0.13.2）。缺它时脚本以 missing_dependency 开局，那是环境前提不是引擎缺陷。装了 seaborn 的目标上这几条按 full/partial 正常判定。",
+      "note": "本次环境满足依赖，全部阶段通过"
+    },
+    "sci_sns_scatter": {
+      "classification": "environment_dependency",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "seaborn 是内置渲染 runtime 里有、但普通开发机与 PR 档 CI 未必装的可选依赖（packaging/runtime-lock.json 锁着 0.13.2）。缺它时脚本以 missing_dependency 开局，那是环境前提不是引擎缺陷。装了 seaborn 的目标上这几条按 full/partial 正常判定。",
+      "note": "本次环境满足依赖，全部阶段通过"
+    },
+    "sci_sns_violin": {
+      "classification": "environment_dependency",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "seaborn 是内置渲染 runtime 里有、但普通开发机与 PR 档 CI 未必装的可选依赖（packaging/runtime-lock.json 锁着 0.13.2）。缺它时脚本以 missing_dependency 开局，那是环境前提不是引擎缺陷。装了 seaborn 的目标上这几条按 full/partial 正常判定。",
+      "note": "本次环境满足依赖，全部阶段通过"
+    },
+    "shape_argv_isolation": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_cjk_path": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_custom_entry": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_dunder_main": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_dynamic_stem_a": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_entry_main": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_entry_render": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_fstring_output": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_local_helper_import": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_loop_figures": {
+      "classification": "partial_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "静态扫描不认 `for i, name in enumerate(CONST)`（循环变量是元组），stem 落到试运行探测。产品有这条路径且界面上有入口，因此不是失败，但记账为静态发现的缺口。"
+    },
+    "shape_module_constant_stem": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_multi_figure_a": {
+      "classification": "partial_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "静态扫描展不开 `for name, ys in ((..),(..))` 这种元组解包循环，stem 落到试运行探测那条产品既有路径（设置→脚本注册表→试运行）。跑得起来、认得出、能编辑，只是自动发现不到位。"
+    },
+    "shape_multi_figure_b": {
+      "classification": "partial_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "静态扫描展不开 `for name, ys in ((..),(..))` 这种元组解包循环，stem 落到试运行探测那条产品既有路径（设置→脚本注册表→试运行）。跑得起来、认得出、能编辑，只是自动发现不到位。"
+    },
+    "shape_multi_figure_c": {
+      "classification": "partial_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "静态扫描展不开 `for name, ys in ((..),(..))` 这种元组解包循环，stem 落到试运行探测那条产品既有路径（设置→脚本注册表→试运行）。跑得起来、认得出、能编辑，只是自动发现不到位。"
+    },
+    "shape_no_savefig_multi": {
+      "classification": "partial_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "**没有 savefig 的图，三个入口里只有浏览器 playground 够得着。**引擎那一侧全通（捕获 / 打开 / 识别 / 编辑 / 撤销 / 重放 / 导出都是真的），`probe_and_register()` 也确实能把它登记进注册表——CompatBench 调的正是它。问题是**没有任何产品入口对这类脚本调它**（逐条实测过）：\n\n* **桌面界面**：面板列表按文件扫（`scan_panels()` 只列真实存在的 PDF/图片），`analyze_script()` 对没有存图调用的脚本解不出 stem、于是它进不了注册表对话框的候选，而那个对话框只给候选与已登记的脚本「试运行」按钮——没有「任选一个脚本」的入口。\n* **Codex MCP / `tavotto open`**：走的是静态发现（`ensure_registered` → `discover.merge`），不试运行。实测这类脚本连 `dynamic_names` 都进不去（回的是 `status: unchanged`、什么都没提），`bridge._pick_stem` 又要求「已登记且产物在磁盘上」，显式带 stem 也一样被拒。\n* **浏览器 playground**：够得着。它是源码进、直接跑，不经注册表也不需要产物。\n\n本 case 的引擎阶段照常验（它们是真的），但分类必须记成部分支持——CompatBench 直接调 `probe_and_register()` + worker，**绕过了三个产品入口里够不着的那两个**，据此报「完全支持」就是拿基准替产品打掩护。补法是给这类stem 一条被产品看得见的路（虚拟面板 + 注册表里能挑任意脚本试运行，或让静态发现至少把它报进 `dynamic_names`），那是独立的产品改动，不在本 PR。"
+    },
+    "shape_no_savefig_multi_2": {
+      "classification": "partial_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "**没有 savefig 的图，三个入口里只有浏览器 playground 够得着。**引擎那一侧全通（捕获 / 打开 / 识别 / 编辑 / 撤销 / 重放 / 导出都是真的），`probe_and_register()` 也确实能把它登记进注册表——CompatBench 调的正是它。问题是**没有任何产品入口对这类脚本调它**（逐条实测过）：\n\n* **桌面界面**：面板列表按文件扫（`scan_panels()` 只列真实存在的 PDF/图片），`analyze_script()` 对没有存图调用的脚本解不出 stem、于是它进不了注册表对话框的候选，而那个对话框只给候选与已登记的脚本「试运行」按钮——没有「任选一个脚本」的入口。\n* **Codex MCP / `tavotto open`**：走的是静态发现（`ensure_registered` → `discover.merge`），不试运行。实测这类脚本连 `dynamic_names` 都进不去（回的是 `status: unchanged`、什么都没提），`bridge._pick_stem` 又要求「已登记且产物在磁盘上」，显式带 stem 也一样被拒。\n* **浏览器 playground**：够得着。它是源码进、直接跑，不经注册表也不需要产物。\n\n本 case 的引擎阶段照常验（它们是真的），但分类必须记成部分支持——CompatBench 直接调 `probe_and_register()` + worker，**绕过了三个产品入口里够不着的那两个**，据此报「完全支持」就是拿基准替产品打掩护。补法是给这类stem 一条被产品看得见的路（虚拟面板 + 注册表里能挑任意脚本试运行，或让静态发现至少把它报进 `dynamic_names`），那是独立的产品改动，不在本 PR。"
+    },
+    "shape_no_savefig_multi_3": {
+      "classification": "partial_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "**没有 savefig 的图，三个入口里只有浏览器 playground 够得着。**引擎那一侧全通（捕获 / 打开 / 识别 / 编辑 / 撤销 / 重放 / 导出都是真的），`probe_and_register()` 也确实能把它登记进注册表——CompatBench 调的正是它。问题是**没有任何产品入口对这类脚本调它**（逐条实测过）：\n\n* **桌面界面**：面板列表按文件扫（`scan_panels()` 只列真实存在的 PDF/图片），`analyze_script()` 对没有存图调用的脚本解不出 stem、于是它进不了注册表对话框的候选，而那个对话框只给候选与已登记的脚本「试运行」按钮——没有「任选一个脚本」的入口。\n* **Codex MCP / `tavotto open`**：走的是静态发现（`ensure_registered` → `discover.merge`），不试运行。实测这类脚本连 `dynamic_names` 都进不去（回的是 `status: unchanged`、什么都没提），`bridge._pick_stem` 又要求「已登记且产物在磁盘上」，显式带 stem 也一样被拒。\n* **浏览器 playground**：够得着。它是源码进、直接跑，不经注册表也不需要产物。\n\n本 case 的引擎阶段照常验（它们是真的），但分类必须记成部分支持——CompatBench 直接调 `probe_and_register()` + worker，**绕过了三个产品入口里够不着的那两个**，据此报「完全支持」就是拿基准替产品打掩护。补法是给这类stem 一条被产品看得见的路（虚拟面板 + 注册表里能挑任意脚本试运行，或让静态发现至少把它报进 `dynamic_names`），那是独立的产品改动，不在本 PR。"
+    },
+    "shape_noisy_stdout": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_oo_savefig": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_path_join_save": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_plt_savefig": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_pyplot_show_only": {
+      "classification": "partial_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "**没有 savefig 的图，三个入口里只有浏览器 playground 够得着。**引擎那一侧全通（捕获 / 打开 / 识别 / 编辑 / 撤销 / 重放 / 导出都是真的），`probe_and_register()` 也确实能把它登记进注册表——CompatBench 调的正是它。问题是**没有任何产品入口对这类脚本调它**（逐条实测过）：\n\n* **桌面界面**：面板列表按文件扫（`scan_panels()` 只列真实存在的 PDF/图片），`analyze_script()` 对没有存图调用的脚本解不出 stem、于是它进不了注册表对话框的候选，而那个对话框只给候选与已登记的脚本「试运行」按钮——没有「任选一个脚本」的入口。\n* **Codex MCP / `tavotto open`**：走的是静态发现（`ensure_registered` → `discover.merge`），不试运行。实测这类脚本连 `dynamic_names` 都进不去（回的是 `status: unchanged`、什么都没提），`bridge._pick_stem` 又要求「已登记且产物在磁盘上」，显式带 stem 也一样被拒。\n* **浏览器 playground**：够得着。它是源码进、直接跑，不经注册表也不需要产物。\n\n本 case 的引擎阶段照常验（它们是真的），但分类必须记成部分支持——CompatBench 直接调 `probe_and_register()` + worker，**绕过了三个产品入口里够不着的那两个**，据此报「完全支持」就是拿基准替产品打掩护。补法是给这类stem 一条被产品看得见的路（虚拟面板 + 注册表里能挑任意脚本试运行，或让静态发现至少把它报进 `dynamic_names`），那是独立的产品改动，不在本 PR。"
+    },
+    "shape_relative_csv": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_relative_image": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_relative_npy": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_relative_pathlib": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_same_figure_two_formats": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_sandbox_write": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_spaced_dir": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_subdir_script": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_toplevel_imperative": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_wrapper_save": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    }
+  }
+}

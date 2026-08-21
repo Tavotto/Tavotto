@@ -36,15 +36,15 @@
    GitHub 托管检查          Lab Qualification
                             16C / 32G Linux
                                  │
-                     ┌───────────┼────────────┐
-                     ▼           ▼            ▼
-                   slow        golden        soak
-                     │           │            │
-                   upgrade     visual       leaks
-                     │           │            │
-                     └──────┬────┴──────┬─────┘
-                            ▼           ▼
-                         benchmark    reports
+                     ┌───────────┼────────────┬────────────┐
+                     ▼           ▼            ▼            ▼
+                   slow        golden        soak       compat
+                     │           │            │            │
+                   upgrade     visual       leaks     native fidelity
+                     │           │            │       browser parity
+                     └──────┬────┴──────┬─────┴─────┬──────┘
+                            ▼           ▼           ▼
+                         benchmark    reports   compat-report.json
                             │
                             ▼
                         Release Gate
@@ -68,10 +68,13 @@
 
 | 档位 | 触发 | 内容 | 目标墙钟 |
 |---|---|---|---|
-| `main` | push 到 main | 常规套件 + slow + 小 golden + 100 轮 soak + 基础泄漏 | ≤ 15~20 min |
-| `nightly` | 每日 19:00 UTC | 上面全部 + 前端/Rust + 完整 golden + 视觉回归 + 500 轮 soak + benchmark | ≤ 30~45 min |
-| `release` | 打 tag（`release.yml`） | 候选包验收 + slow + 升级 + 完整 golden + 800 轮 soak + 性能（不写基线） | — |
+| `main` | push 到 main | 常规套件 + slow + 小 golden + 100 轮 soak + 基础泄漏 + **CompatBench（must+expected，无保真度）** | ≤ 15~20 min |
+| `nightly` | 每日 19:00 UTC | 上面全部 + 前端/Rust + 完整 golden + 视觉回归 + 500 轮 soak + benchmark + **CompatBench 全量（保真度 + 浏览器对拍）** | ≤ 30~45 min |
+| `release` | 打 tag（`release.yml`） | 候选包验收 + slow + 升级 + 完整 golden + 800 轮 soak + 性能（不写基线） + **CompatBench `--gate release`** | — |
 | `weekly` | 周日 20:00 UTC | 上面全部 + mutation | — |
+
+PR / 常规 CI（`ci.yml`）另跑 **CompatBench 的 smoke 子集**（`--gate pr`，
+2~4 分钟）——nightly 那份 150 case × 多运行时的东西绝不塞进每个 PR。
 
 档位由 `trust-check` 根据触发方式判定，手动触发时可显式指定。
 
@@ -206,6 +209,30 @@ review 的资产。放进持久化根的话，谁改了基线、为什么改，�
 - `c03_cjk` 跳过像素比对：CJK 字形随 `fonts-noto-cjk` 版本变化，会在一次与
   产品完全无关的字体包升级里整片变红。**结构与导出照验**——中文必须能画出来。
 
+### Matplotlib 兼容性资格 `compat_matrix.py`
+
+完整说明在 [`matplotlib-compatibility.md`](matplotlib-compatibility.md)。
+放在这里的理由：它与 golden 回归**问的不是同一个问题**。
+
+* golden 比的是「Tavotto 今天 vs Tavotto 昨天」——它抓不到「我们从第一版起
+  就一直错误地修改某个 artist」；
+* CompatBench 比的是「**原生 matplotlib** vs Tavotto 零 override」，并且沿着
+  九级漏斗（discover → execute → capture → open → semantic → edit → replay →
+  export → fidelity）回答「外部 matplotlib 世界我们兼容多少」。
+
+它同时是 1.0 的 exit rule 载体：
+
+```
+P0 compatibility bugs = 0
+Tier 1 的 execute / capture / open / export / 已知编辑目标 = 100%
+Tier 1 的 product_bug = 0（schema 层面就不许进基线）
+```
+
+基线 `tests/compat/baseline.json` 的纪律与视觉基线**逐条相同**：缺失 = FAIL、
+CI 绝不自动更新、`CI=true` 时 `--update-baseline` 被硬拒、任何更新进 review。
+另外多两条：非 `full_support` 必须写 reason，`product_bug` 还必须写
+`follow_up`——**基线不是豁免名单**。
+
 ### Soak 与泄漏检测 `soak.py`
 
 **不是** `for 1000: GET /api/version`——那只能证明 HTTP 服务器还活着。真正会
@@ -300,6 +327,7 @@ lab_release_gate（self-hosted）
     ├── slow 用例
     ├── 升级 N-1 → 候选
     ├── 完整 golden + 视觉回归
+    ├── **CompatBench 全量（--gate release：任何 product_bug 都红）**
     ├── 800 轮 soak + 泄漏检测
     └── 性能回归（不写基线）
     │

@@ -28,16 +28,27 @@ import sys
 import time
 from pathlib import Path
 
-# Windows 上 stdout 一旦不是真控制台（被 CI/测试捕获）就退回 cp1252，
-# argparse 打印中文 help 直接 UnicodeEncodeError 打死进程——`--help` 都跑
-# 不了的诊断工具比没有更糟。与 engine/cli.use_utf8_streams 同一手法；
-# 放在 import 期，所有 `import _common` 的脚本连 argparse 之前就已生效。
-for _stream in (sys.stdout, sys.stderr):
-    if hasattr(_stream, "reconfigure"):
-        try:
-            _stream.reconfigure(encoding="utf-8", errors="replace")
-        except (OSError, ValueError):
-            pass
+def use_utf8_streams() -> None:
+    """把 stdout/stderr 钉成 UTF-8。
+
+    Windows 上 stdout 一旦不是真控制台（被 CI/测试捕获）就退回 cp1252，
+    argparse 打印中文 help 直接 UnicodeEncodeError 打死进程——`--help` 都跑
+    不了的诊断工具比没有更糟。与 engine/cli.use_utf8_streams 同一手法。
+
+    **不 import `_common` 的 CLI 要自己调一次**（compat_matrix / compat_driver
+    就是这样）：靠「import 这个模块的都自动生效」是隐式耦合，下一个不需要
+    `_common` 里任何东西的脚本会安静地漏掉它，而症状只在 Windows 上出现。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except (OSError, ValueError):
+                pass
+
+
+# 放在 import 期调一次：所有 `import _common` 的脚本连 argparse 之前就已生效。
+use_utf8_streams()
 
 # 持久化根目录下的固定布局。谁都不许在别处另开一套。
 LAYOUT = (

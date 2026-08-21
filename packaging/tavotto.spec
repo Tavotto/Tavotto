@@ -7,7 +7,8 @@
    真解释器**起的子进程（用户的论文脚本要动态 import 各种东西，冻结成第二个
    黑盒立刻就 import 不进去），所以 `engine/worker.py` 以及**它平铺 import 的
    那一整条传递闭包**（`manifest.py` / `overrides.py` / `patchspec.py` /
-   `pathgeom.py`）得能被外部解释器按路径读到——只编进 PyInstaller 归档是不够的。
+   `pathgeom.py` / `figcapture.py`）得能被外部解释器按路径读到——只编进
+   PyInstaller 归档是不够的。
    漏一个的表现是「装完的桌面版一渲染就 ModuleNotFoundError」，而源码模式
    一切正常（tests/test_runtime_build.py::test_spec_ships_every_module_the_worker_imports
    看护，它自己也是按传递闭包算的：只看 worker.py 一层的话，`manifest.py`
@@ -75,7 +76,7 @@ datas = [
 ]
 # worker 子进程要用的源码（见文件头说明 1）
 for name in ("worker.py", "manifest.py", "overrides.py", "patchspec.py",
-             "pathgeom.py"):
+             "pathgeom.py", "figcapture.py"):
     datas.append((str(PKG / "engine" / name), "tavotto/engine"))
 
 # 内置渲染 runtime（见文件头说明 3）。
