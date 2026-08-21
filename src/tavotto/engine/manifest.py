@@ -155,20 +155,55 @@ def _is_seq(obj) -> bool:
     return isinstance(obj, (list, tuple))
 
 
-def _alias_consumed_line(state: FigState, ax, ax_gid: str, line) -> None:
-    """给被容器消费掉的曲线登记它**从前**的 gid 别名（只进 index，不进 elements）。
+def _collection_gid_prefix(coll) -> str:
+    """`ax.collections` 里的这一条对外用哪个 gid 前缀。**唯一出处**。
+
+    三条兼容前缀（`scatter` / `fill` / `linecoll`）加一条通用的
+    （`collections`）。登记循环按它编 gid，`_alias_consumed_member` 也按它
+    还原「这个成员从前叫什么」——分开写的话，容器化一个成员时算出来的旧
+    gid 会与当初真正发出去的那个不一样，而症状是历史 override 静默变成孤儿。
+    """
+    if isinstance(coll, PathCollection):
+        return "scatter"
+    if isinstance(coll, PolyCollection):
+        return "fill"
+    if is_linecoll_family(coll):
+        return "linecoll"
+    return "collections"
+
+
+def _alias_consumed_member(state: FigState, ax, ax_gid: str, artist) -> None:
+    """给被容器消费掉的成员登记它**从前**的 gid 别名（只进 index，不进 elements）。
 
     容器化是把「三个 artist」收成「一条系列」，代价是那几个成员从前各自的
-    `axes_i.lines_k` 不再出现在元素表里。历史文档里可能有针对它们的 override
-    ——别名让那些 override 继续落在同一个 artist 上，而不是变成孤儿。
+    gid 不再出现在元素表里。历史文档里可能有针对它们的 override——别名让那些
+    override 继续落在同一个 artist 上，而不是变成孤儿。
+
+    **两条列表都要认**。`ax.stem()` 的成员横跨两处：markerline 在 `ax.lines`
+    里（旧名 `axes_i.lines_k`），而 stemlines 是一条 **LineCollection**、在
+    `ax.collections` 里（旧名 `axes_i.linecoll_j`）。只补前者的话，把茎的
+    颜色/线宽/线型改过的历史文档一打开，那几条 override 指着一个再也解析不
+    出来的 gid——worker 报「元素不存在」，而按写回事务的规矩**一条 warning
+    就阻断写回**：用户的图从此写不回原件，提示还与真实原因毫不相干。
+
+    别名只进 `state.index`：界面上不会多出条目，`_reverse_index()` 却认得出
+    它与系列指着同一个 artist，于是撤掉任一侧都会让另一侧重放
+    （见 `overrides.ALIAS_GROUPS` 与 `apply` 的 dirty_groups）。
     """
-    if line is None:
+    if artist is None:
+        return
+    if isinstance(artist, Collection):
+        try:
+            j = list(ax.collections).index(artist)
+        except ValueError:
+            return
+        state.index.setdefault(f"{ax_gid}.{_collection_gid_prefix(artist)}_{j}", artist)
         return
     try:
-        k = list(ax.lines).index(line)
+        k = list(ax.lines).index(artist)
     except ValueError:
         return
-    state.index.setdefault(f"{ax_gid}.lines_{k}", line)
+    state.index.setdefault(f"{ax_gid}.lines_{k}", artist)
 
 
 def _tick_label_entries(ax, which: str, ax_gid: str) -> list[tuple]:
@@ -359,11 +394,15 @@ def instrument(state: FigState) -> None:
                     _register(state, f"axes_{i}.stemseries_{j}", grp, "stem_series", nice)
                     for m in grp.members():
                         skip_ids.add(id(m))
-                    # **旧 gid 别名**：markerline 从前是一条普通曲线
-                    # （axes_i.lines_k），历史文档里可能有针对它的 override。
-                    # 别名只进 index、不进 elements——界面上不会多出条目，
-                    # 旧 override 却还认得出同一个 artist（ColorbarProxy 同样思路）
-                    _alias_consumed_line(state, ax, f"axes_{i}", cont.markerline)
+                    # **旧 gid 别名**：容器化之前 markerline 是一条普通曲线
+                    # （`axes_i.lines_k`）、stemlines 是一条线组
+                    # （`axes_i.linecoll_j`），历史文档里可能有针对它们的
+                    # override。**两个都要留**——只留 markerline 那条的话，
+                    # 改过茎的颜色/线宽/线型的文档一打开就报「元素不存在」，
+                    # 而那条 warning 会直接把写回整个阻断掉。
+                    # 别名只进 index、不进 elements（ColorbarProxy 同样思路）。
+                    for _m in grp.members():
+                        _alias_consumed_member(state, ax, f"axes_{i}", _m)
             for j, ln in enumerate(ax.lines):
                 if id(ln) in skip_ids:
                     continue
@@ -386,15 +425,19 @@ def instrument(state: FigState) -> None:
                 # 只有一个元素，就是 `axes_i.colorbar`
                 if id(coll) in skip_ids or ax in cbar_of_ax:
                     continue
-                if isinstance(coll, PathCollection):
+                # gid 前缀只有 `_collection_gid_prefix` 一处出处——
+                # `_alias_consumed_member` 要按同一条规则还原「这个成员从前
+                # 叫什么」，两边分开写会让历史 override 悄悄变成孤儿。
+                prefix = _collection_gid_prefix(coll)
+                gid = f"axes_{i}.{prefix}_{j}"
+                if prefix == "scatter":
                     lab = str(coll.get_label())
                     nice = f"散点 “{_snippet(lab)}”" if lab and not lab.startswith("_") \
                         else f"散点系列 {j + 1}"
-                    _register(state, f"axes_{i}.scatter_{j}", coll, "scatter", nice)
-                elif isinstance(coll, PolyCollection):
-                    _register(state, f"axes_{i}.fill_{j}", coll, "fill",
-                              _coll_label(coll, j))
-                elif is_linecoll_family(coll):
+                    _register(state, gid, coll, "scatter", nice)
+                elif prefix == "fill":
+                    _register(state, gid, coll, "fill", _coll_label(coll, j))
+                elif prefix == "linecoll":
                     # 线组：`hlines`/`vlines` 的参考线、`stem` 的竖线、
                     # `eventplot` 的事件线（EventCollection 是它的子类）、
                     # `streamplot` 的流线、`violinplot` 的极值线。这是 artist
@@ -416,10 +459,9 @@ def instrument(state: FigState) -> None:
                     lab = str(coll.get_label())
                     nice = f"线组 “{_snippet(lab)}”" if lab and not lab.startswith("_") \
                         else f"线组 {j + 1}"
-                    _register(state, f"axes_{i}.linecoll_{j}", coll, "linecoll", nice)
+                    _register(state, gid, coll, "linecoll", nice)
                 else:
-                    _register(state, f"axes_{i}.collections_{j}", coll, "collection",
-                              _coll_label(coll, j))
+                    _register(state, gid, coll, "collection", _coll_label(coll, j))
             # 脚本直接 add_patch 的独立箭头（XPS 峰位标注这类画法）与独立形状。
             # 形状按 **Patch family** 认，不逐个列类名：`ax.fill()` 的 Polygon、
             # 手搓的 PathPatch 之外还有 pie 的 Wedge、axhspan/axvspan 的
@@ -708,7 +750,14 @@ def _collection_fields(coll, *, label: bool) -> list[dict]:
         {"prop": "linewidth", "type": "number",
          "value": round(float(lw[0]), 2) if len(lw) else 0.0,
          "min": 0, "max": 8, "step": 0.1, "unit": "pt"},
-        {"prop": "linestyle", "type": "enum", "value": _linestyle_name(coll),
+        # **显示值与 handler 的 getter 必须同源**：这一族的 linestyle 走
+        # `_get_linecoll_ls`（未缩放规格），所以反查也只能用 Collection 那条
+        # `_linecoll_linestyle_name`。用 Line2D 那条 `_linestyle_name` 的话，
+        # `Collection.get_linestyle()` 回的是 dash 元组列表、不是字符串，于是
+        # **任何**虚线都被当成自定义 dash 显示成实线占位——
+        # `LineCollection(..., linestyles="--")` 画出来是虚线、检查器说实线。
+        # 这正是「同一个判据写两遍」的标准症状（见 `is_linecoll_family`）。
+        {"prop": "linestyle", "type": "enum", "value": _linecoll_linestyle_name(coll),
          "options": ["-", "--", "-.", ":"], "group": "线条与填充"},
         {"prop": "alpha", "type": "number",
          "value": 1.0 if coll.get_alpha() is None else round(float(coll.get_alpha()), 2),
@@ -1416,13 +1465,12 @@ def _collection_datalim(artist):
     CompatBench 的 minimum 档（matplotlib 3.8.4）是这么把它抓出来的：
     `art_fill_between` 是 Tier 1。
 
-    **标量映射的集合刻意排除**（`get_array()` 非空：pcolor / pcolormesh /
-    hexbin / 带 C 的 barbs）。它们的颜色由 colormap 每次 draw 重算
-    （`update_scalarmappable`），放进 manifest 会让 `facecolor` 这类编辑
-    「设了但下一帧被顶回去」——那比不支持更坏。它们要的是一族网格感知的
-    handler（cmap / alpha / visible），记在 artist 普查里等排期。
+    **这里不再排除标量映射的集合**。那句 `get_array() is not None` 是**登记期**
+    的判据（当年映射的集合根本不进元素表），不是几何判据——它们现在照常登记，
+    再把它们的包围盒挡回去只会让 pcolormesh 退回 tightbbox（= 整块子图）。
+    能不能编辑由 `overrides.collection_caps()` 说了算，与量框无关。
     """
-    if not isinstance(artist, Collection) or artist.get_array() is not None:
+    if not isinstance(artist, Collection):
         return None
     ax = getattr(artist, "axes", None)
     if ax is None:
@@ -1446,19 +1494,42 @@ def _padded_bbox(bb, W: float, H: float) -> list[float]:
 
 
 def _collection_bbox(coll, renderer):
-    """Collection 的 display 包围盒；量不出来返回 None（元素就不进 manifest）。
+    """Collection 的 display 包围盒——**全仓库唯一一处**；量不出来返回 None。
 
-    `get_window_extent` 对多数 Collection 回的是**无穷大空框**
-    （`Bbox([[inf, inf], [-inf, -inf]])`）——`pcolor` / `hexbin` / `contour` /
-    `LineCollection` 实测都是。老代码走 `else` 分支拿到这个框，判据
-    `width <= 0 and height <= 0` 恰好成立，于是元素被**静默丢掉**：图上明明
-    有东西，元素表里没有，也没有任何一行日志说为什么。
+    三级判据，先精确后兜底：
 
-    退路是 `get_tightbbox(renderer)`——它是公开 API，且会与 artist 的裁剪框
-    求交，所以永远落在子图里、永远有限。代价是对稀疏集合偏大（LineCollection
-    实测取到整块子图），换来的是「点得中」而不是「不存在」。已经量得出有限
-    框的（fill_between / quiver / violin 的多边形）继续走原路，包围盒一个
-    像素不变——写回自检比的就是这个框。
+    1. ``get_window_extent(renderer)``——`fill_between` / `quiver` /
+       `violinplot` 的多边形自己就给得出有限框，原样用（包围盒一个像素不变，
+       写回自检比的就是这个框）；
+    2. ``get_datalim(transData)`` 换算——**多数 Collection 的 window extent 是
+       无穷大空框**（`Bbox([[inf, inf], [-inf, -inf]])`，实测 `hlines` /
+       `eventplot` / `contour` / `scatter` / `pcolormesh`… 都是）。数据范围是
+       它们真正画在哪儿的权威来源；
+    3. ``get_tightbbox(renderer)``——连数据范围都解不出时（非 data 坐标系的
+       集合）的最后一手。
+
+    ## 为什么 datalim 必须排在 tightbbox **之前**
+
+    `get_tightbbox` 会与 artist 的裁剪框求交，而稀疏集合的裁剪框就是**整块
+    子图**——实测（4×3 in / 100 dpi，子图 x[50,360] y[33,264]）：
+
+        hlines      tightbbox x[ 50,360] y[ 33,264]   datalim x[81,143] y[128,128]
+        eventplot   tightbbox x[ 50,360] y[ 33,264]   datalim x[81,143] y[229,245]
+        contour     tightbbox x[ 50,360] y[ 33,264]   datalim x[267,329] y[182,237]
+
+    前端的命中与框选用的正是 manifest 的 bbox（没有路径几何的元素只有它，
+    见 `web/src/canvas/interactions.ts`），而普通元素的命中代价低于 axes
+    ——拿整块子图当命中框的后果是**点子图里任何一处空白都会选中这条参考线，
+    框选也几乎必然把它圈进去**。这不是「偏大一点」，是让同一张图上其余元素
+    全都难以选中。
+
+    ## 为什么这个函数必须是唯一出处
+
+    这里从前有三份实现：散点分支自己拼一次 datalim、Collection 分支走
+    window_extent→tightbbox、`else` 分支再挂一次 `_collection_datalim`
+    （Collection 永远走不到它，是死代码）。于是「散点的命中框」与「参考线的
+    命中框」按两套规则算，而两套规则会各自演进——这正是 §单一权威 要挡的
+    那类分叉。SeriesGroup 的成员（误差棒的横杠、茎）也问同一个函数。
     """
     def _ok(bb):
         if bb is None:
@@ -1472,6 +1543,9 @@ def _collection_bbox(coll, renderer):
         bb = coll.get_window_extent(renderer)
     except Exception:  # noqa: BLE001
         bb = None
+    if _ok(bb):
+        return bb
+    bb = _collection_datalim(coll)
     if _ok(bb):
         return bb
     try:
@@ -1619,20 +1693,11 @@ def build_manifest(state: FigState, stem: str) -> dict:
             # 名字，这个才是「这是谁的色条」。两者都在 state.index 里认得出
             entry["colorbar_key"] = artist.identity
             entry["host_gid"] = artist.host_gid
-        elif isinstance(artist, PathCollection):
-            # Artist 默认的 get_window_extent 对散点集合是空框，此前散点
-            # 根本进不了 manifest——改用数据范围换算 display 框
-            try:
-                ax = artist.axes
-                bb = ax.transData.transform_bbox(artist.get_datalim(ax.transData))
-                if bb.width <= 0 and bb.height <= 0:
-                    _drop(el, "no_geometry")
-                    continue
-                entry["bbox"] = _padded_bbox(bb, W, H)
-            except Exception:
-                _drop(el, "no_geometry")
-                continue
         elif isinstance(artist, Collection):
+            # 散点（PathCollection）**不再单开一支**：它当年之所以有自己的
+            # 分支，是因为 `get_window_extent` 对集合回空框、需要用数据范围
+            # 换算——而那正是 `_collection_bbox` 的第二级判据。两份实现同一
+            # 件事就会各自演进，合成一处（见该函数的抬头）。
             bb = _collection_bbox(artist, renderer)
             if bb is None:
                 _drop(el, "no_geometry")
@@ -1642,12 +1707,11 @@ def build_manifest(state: FigState, stem: str) -> dict:
             try:
                 bb = artist.get_window_extent(renderer)
                 if not _finite_box(bb) or (bb.width <= 0 and bb.height <= 0):
-                    # artist 自己给不出框：Collection 还能用数据范围换算一次
-                    # （见 `_collection_datalim`），其余的老老实实丢掉。
-                    bb = _collection_datalim(artist)
-                    if bb is None:
-                        _drop(el, "no_geometry")
-                        continue
+                    # 这一支只剩**非 Collection** 的 artist（上面那支已经把
+                    # 整族接走了），它们没有数据范围可换算——量不出框就如实
+                    # 报进 `unsupported`，不许静默消失。
+                    _drop(el, "no_geometry")
+                    continue
                 # 水平 / 垂直的扁平线（基线、参考线）单边为 0，垫成可点中的窄条
                 entry["bbox"] = _padded_bbox(bb, W, H)
             except Exception:

@@ -93,8 +93,11 @@ def main():
     ax.contour(np.linspace(7, 9, 8), np.linspace(3, 5, 8), Z)      # collections_4
     ax.eventplot([[1.0, 2.0, 3.0]], lineoffsets=5.0, linelengths=0.6)  # linecoll_5
     # 标量映射的线组：**不算线组那一族**，走通用 collection（collections_6）
+    # `linestyles="--"` 是有意的：Collection 的 `get_linestyle()` 回 dash 元组
+    # 列表，用 Line2D 那条反查会把**任何**虚线显示成实线占位（实线测不出来）
     mapped_lc = LineCollection([[(0.5, -2.0), (6.0, -2.0)], [(0.5, -1.6), (6.0, -1.6)]],
-                               array=np.array([0.2, 0.8]), cmap="viridis")
+                               array=np.array([0.2, 0.8]), cmap="viridis",
+                               linestyles="--")
     ax.add_collection(mapped_lc)
     ax.set_xlim(0, 10)
     ax.set_ylim(-2.5, 6)
@@ -605,6 +608,120 @@ def test_removing_a_legacy_alias_override_replays_the_series(hot):
 
     # 全撤：回脚本原样
     hot.override("FamCont", [])
+
+
+def test_consumed_stemlines_keeps_its_old_collection_gid(hot):
+    """茎从前是 `axes_i.linecoll_j`，容器化之后那个 gid 必须还认得出来。
+
+    Codex 在 PR #48 上报的第三条 P2。别名机制原先只认 `ax.lines`
+    （`_alias_consumed_line`），而 `ax.stem()` 的成员**横跨两条列表**：
+    markerline 在 `ax.lines` 里、stemlines 是一条 LineCollection、在
+    `ax.collections` 里。补了前者没补后者的后果不是「少一个别名」这么轻：
+    改过茎的颜色 / 线宽 / 线型的历史文档一打开，那几条 override 指着一个
+    再也解析不出来的 gid → worker 报「元素不存在」 → 按写回事务的规矩
+    **一条 warning 就阻断写回**，用户的图从此写不回原件，而提示与真实原因
+    毫不相干。
+
+    修法不是给 stem 补一个专用分支，而是把「这个成员从前叫什么」做成一条
+    规则：`_alias_consumed_member` 认两条列表，旧 gid 的前缀由
+    `_collection_gid_prefix`（登记循环用的同一个函数）算出来。
+    """
+    for legacy, prop, value in (("axes_0.lines_0", "color", "#ff0000"),
+                                ("axes_0.linecoll_0", "linewidth", 4.0)):
+        resp = hot.override("FamCont", [{"gid": legacy, "prop": prop, "value": value}])
+        assert not (resp.get("warnings") or []), \
+            f"历史 gid {legacy} 解析不出来了：{resp.get('warnings')}"
+        hot.override("FamCont", [])
+
+
+def test_removing_the_stemlines_alias_replays_the_series_linewidth(hot):
+    """茎的旧 gid 与系列的 `linewidth` 指着同一个 artist —— 撤一侧要重放另一侧。
+
+    别名一旦成立，`linewidth` / `linestyle` 就从「没有重叠」变成「两个 gid
+    一份状态」，必须进 `ALIAS_GROUPS`。少了它：只撤掉别名那条时，还原把茎
+    写回脚本原样，而系列那条「值没变」于是走了跳过的捷径——热态是脚本原线宽、
+    全量重放却是新线宽，而写回自检只比几何、看不见线宽。
+    """
+    gid = "axes_0.stemseries_0"
+    base = _fields(_man(hot, "FamCont"), gid)["linewidth"]["value"]
+
+    # 两条都在：窄的（别名）排在广播的（系列）之后 → 别名说了算
+    man = _man(hot, "FamCont", [
+        {"gid": "axes_0.linecoll_0", "prop": "linewidth", "value": 5.0},
+        {"gid": gid, "prop": "linewidth", "value": 3.0},
+    ])
+    assert _fields(man, gid)["linewidth"]["value"] == 5.0
+
+    # 只撤掉别名那条：系列那条必须重放，不能退回脚本原样
+    man = _man(hot, "FamCont", [{"gid": gid, "prop": "linewidth", "value": 3.0}])
+    assert _fields(man, gid)["linewidth"]["value"] == 3.0, \
+        "撤掉别名那条把茎写回脚本原样了，而系列那条被跳过没重放"
+
+    assert _fields(_man(hot, "FamCont"), gid)["linewidth"]["value"] == base
+
+
+def test_stem_props_stay_warning_free_now_that_the_stems_have_a_gid(hot):
+    """茎有了旧 gid 别名之后，stem 系列的每条 prop 都还要一声不吭地跑完。
+
+    别名把 stemlines 变成了别名组的组员，于是那些**只写 markerline** 的 prop
+    （`marker` / `markersize`）在组里多出一个 LineCollection 成员，而
+    `("linecoll", "marker")` 这个 handler 并不存在。下游两条路径都挡得住
+    （采原样那段查不到 handler 就跳过、还原那段只走真的应用过的键），
+    但「挡得住」要有用例说话——warning 一条就阻断写回。
+
+    表本身的自洽（每个广播端都有自己的 handler）由
+    `tests/test_invariants_engine.py` 在 worker 解释器里静态核对：本进程没有
+    matplotlib，import 不动 `overrides`。
+    """
+    for prop, value in (("marker", "s"), ("markersize", 9.0),
+                        ("linewidth", 3.0), ("linestyle", ":")):
+        resp = hot.override("FamCont", [
+            {"gid": "axes_0.stemseries_0", "prop": prop, "value": value}])
+        assert not (resp.get("warnings") or []), (prop, resp["warnings"])
+        resp = hot.override("FamCont", [])
+        assert not (resp.get("warnings") or []), (prop, resp["warnings"])
+
+
+def test_sparse_collections_do_not_claim_the_whole_subplot(hot):
+    """稀疏集合的命中框取**数据范围**，不是裁剪框。
+
+    Codex 在 PR #48 上报的第一条 P2。`get_tightbbox()` 会与 artist 的裁剪框
+    求交，而稀疏集合的裁剪框就是整块子图——实测（4×3 in / 100 dpi，子图
+    x[50,360] y[33,264]）`hlines` / `eventplot` / `contour` / `scatter` 的
+    tightbbox 全是 x[50,360] y[33,264]，而数据范围分别只有几十像素宽。
+
+    没有路径几何的元素只有 bbox 可用（`web/src/canvas/interactions.ts`），
+    而普通元素的命中代价低于 axes：拿整块子图当命中框 = **点子图里任何一处
+    空白都会选中这条参考线，框选也几乎必然把它圈进去**。那不是「偏大一点」，
+    是让同一张图上其余元素全都难以选中。
+    """
+    man = _man(hot, "FamColl")
+    ax_box = _el(man, "axes_0")["bbox"]
+    ax_area = ax_box[2] * ax_box[3]
+    for gid in ("axes_0.linecoll_5", "axes_0.collections_4", "axes_0.scatter_0",
+                "axes_0.collections_6"):
+        bb = _el(man, gid)["bbox"]
+        # 每一条都必须明显小于整块子图；等于子图就是退回裁剪框了
+        assert bb[2] * bb[3] < ax_area * 0.9, \
+            f"{gid} 的命中框几乎就是整块子图：{bb} vs axes {ax_box}"
+        # 而且要落在子图里（数据范围换算对了的话必然如此）
+        assert bb[0] >= ax_box[0] - 1e-6 and bb[1] >= ax_box[1] - 1e-6, (gid, bb, ax_box)
+
+
+def test_collection_linestyle_display_matches_the_handler(hot):
+    """检查器显示的线型必须与 handler 的 getter 同源。
+
+    Codex 在 PR #48 上报的第二条 P2。这一族的 linestyle handler 走
+    `_get_linecoll_ls`（未缩放规格），显示却用了 Line2D 那条 `_linestyle_name`
+    ——而 `Collection.get_linestyle()` 回的是 dash 元组列表、不是字符串，于是
+    **任何**虚线都被当成自定义 dash 显示成实线占位。
+    `LineCollection(..., linestyles="--")` 画出来是虚线、检查器说实线：
+    「同一个判据写两遍」的标准症状。
+    """
+    man = _man(hot, "FamColl")
+    # collections_6 是脚本里那条**映射的**线组，构造时写的就是虚线
+    got = _fields(man, "axes_0.collections_6")["linestyle"]["value"]
+    assert got == "--", f"脚本写的是 linestyles='--'，检查器却说 {got!r}"
 
 
 def test_instrument_does_not_mutate_the_figure(hot):

@@ -1241,8 +1241,12 @@ def test_artist_census_prints_chinese_under_a_legacy_code_page(tmp_path):
         encoding="utf-8")
 
     env = dict(os.environ, PYTHONIOENCODING="cp1252")
+    # 父进程这一侧指名 UTF-8：工具的 stdout 已经钉成 UTF-8，而 `text=True`
+    # 用的是**父进程** locale。两边不一致时 subprocess 的读线程会死在解码上，
+    # `communicate()` 把那一路交成 None，报出来的是一句莫名其妙的 TypeError。
     proc = subprocess.run([worker_py, str(tool), "fig.py"], cwd=str(tmp_path),
-                          capture_output=True, text=True, timeout=300, env=env)
+                          capture_output=True, timeout=300, env=env,
+                          encoding="utf-8", errors="replace")
     assert "UnicodeEncodeError" not in (proc.stdout + proc.stderr), (
         "普查工具在非 UTF-8 控制台上崩了——stdout 必须钉成 UTF-8"
         f"\n{proc.stdout}\n{proc.stderr}")

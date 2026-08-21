@@ -51,9 +51,16 @@ def test_relative_path_with_directories_still_finds_the_script(tmp_path):
     sub.mkdir()
     (sub / "fig.py").write_text(SCRIPT, encoding="utf-8")
 
+    # **父进程这一侧也必须指名 UTF-8**：`text=True` 用的是父进程 locale
+    # （Windows runner 上是 cp1252），而工具的 stdout 已经钉成 UTF-8——
+    # subprocess 的读线程会在解码时抛 UnicodeDecodeError 而**死掉**，
+    # `communicate()` 于是把那一路交成 `None`，症状是
+    # `TypeError: unsupported operand type(s) for +: 'NoneType' and 'str'`
+    # ——看上去像用例写错了，其实是编码。CI 的 windows 腿实测逮到过。
     proc = subprocess.run(
         [WORKER_PY, TOOL, os.path.join("sub", "fig.py")],
-        cwd=str(tmp_path), capture_output=True, text=True, timeout=300,
+        cwd=str(tmp_path), capture_output=True, timeout=300,
+        encoding="utf-8", errors="replace",
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "FileNotFoundError" not in (proc.stdout + proc.stderr)

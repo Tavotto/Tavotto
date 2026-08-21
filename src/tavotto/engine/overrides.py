@@ -2645,6 +2645,14 @@ def _alias_by_artists(pick, narrow_prop: str):
                 out.append((gid, narrow_prop))
         return out
     return resolve
+    # 这里**刻意不再筛一遍**「窄端那一族有没有这条 prop」。组里确实会混进解析
+    # 不出 handler 的键（`("stem_series","marker")` 的成员含 stemlines，而
+    # `("linecoll","marker")` 不存在），但下游两条路径都已经挡住了：采「脚本
+    # 原样」那段查不到 handler 就 `continue`，还原那段只走 `state.applied` 里
+    # 真的应用过的键——幽灵键一个都不在里面。**试过在这儿加一道过滤，拿掉它
+    # 之后没有任何用例变红**（regression proof 跑过），那就是一道空门禁：
+    # 读的人会以为它在挡什么，而它什么都没挡。表本身的自洽由
+    # `tests/test_invariants_engine.py` 静态核对。
 
 
 def _alias_colorbar_mappable(narrow_prop: str):
@@ -2715,16 +2723,27 @@ ALIAS_GROUPS: dict[tuple[str, str], object] = {
 for _bprop in ("facecolor", "edgecolor", "linewidth", "alpha", "visible"):
     ALIAS_GROUPS[("bar_series", _bprop)] = _alias_by_artists(
         lambda g: list(g.artists), _bprop)
-# stem 系列 → 被它消费掉的 markerline。这里的「窄端」不是界面上的另一个条目，
-# 而是那条 markerline 的**旧 gid 别名**（`manifest._alias_consumed_line`）：
-# 容器化之前它是一条普通曲线，历史文档里可能有针对它的 override，两个 gid
-# 落在同一个 artist 上。走别名组的机制，撤销任一侧都会让另一侧重放。
+# stem 系列 → 被它消费掉的成员。这里的「窄端」不是界面上的另一个条目，而是
+# 那些成员的**旧 gid 别名**（`manifest._alias_consumed_member`）：容器化之前
+# markerline 是一条普通曲线（`axes_i.lines_k`）、stemlines 是一条线组
+# （`axes_i.linecoll_j`），历史文档里可能有针对它们的 override，两个 gid 落在
+# 同一个 artist 上。走别名组的机制，撤销任一侧都会让另一侧重放。
 #
-# `linewidth` / `linestyle` **不在此列**：stem 系列的这两条只写茎
-# （`_stem_stems`），碰不到 markerline，没有重叠就不该硬编成一组。
 for _sprop in ("color", "alpha", "visible", "zorder", "marker", "markersize"):
     ALIAS_GROUPS[("stem_series", _sprop)] = _alias_by_artists(
         lambda g: g.members(), _sprop)
+# `linewidth` / `linestyle` **也是别名组，但窄端只有茎**：它们经 `_stem_stems`
+# 只写 stemlines，markerline 一个字节都不碰。而茎自己也有旧 gid 别名
+# （`axes_i.linecoll_j`，容器化之前的登记名，见 `manifest._alias_consumed_member`）
+# ——所以照样是「两个 gid 一份状态」，别名一加重叠就成立了。
+#
+# **组员必须与 setter 真正写的那批 artist 逐一对上**，不能图省事写
+# `g.members()`：那会把 markerline 也声明成组员，而广播端根本不写它。声明一个
+# 不存在的重叠不会当场出错，却会让 `alias_seeded` 替 markerline 采一份没人用
+# 的「脚本原样」、并在撤销时把它算进 `dirty_groups` 白重放一轮——别名表是
+# 「谁会盖掉谁」的事实表，不是「谁跟谁沾边」。
+for _sprop in ("linewidth", "linestyle"):
+    ALIAS_GROUPS[("stem_series", _sprop)] = _alias_by_artists(_stem_stems, _sprop)
 # 色条 ↔ 它的 mappable：同一份色图与 clim，两个 gid。**这条不是本次新开的
 # 重叠**——`("image", "cmap")` 与 `("colorbar", "cmap")` 一直都在同一个
 # AxesImage 上；Collection 族开放 cmap/vmin/vmax 只是把它扩到了
