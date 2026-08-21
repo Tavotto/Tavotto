@@ -39,7 +39,8 @@ from overrides import (BBOX_DEFAULTS, ColorbarProxy, FigState, HANDLERS, HATCHES
                        spine_side_color, spine_side_width, tick_cfg,
                        tick_format_name, tick_major_mode, tick_major_step,
                        tick_major_values, tick_minor_format, tick_minor_mode,
-                       tick_minor_step, tick_minor_visible, to_hex)
+                       tick_minor_step, tick_minor_visible, to_hex,
+                       remember_axis_directions)
 
 CMAPS = ["viridis", "plasma", "inferno", "magma", "cividis", "Greys", "gray",
          "hot", "afmhot", "coolwarm", "RdBu_r", "seismic", "jet", "turbo"]
@@ -308,6 +309,10 @@ def instrument(state: FigState) -> None:
                      else f"插图 {child_ordinal['inset']}")
         else:
             label = "色条轴" if ax in cbar_of_ax else f"子图 {i + 1}"
+        # **脚本原样的轴方向要在这一刻采**：`ax.invert_yaxis()` 不关自动缩放，
+        # 所以 lim 的 originals 里只会是 `_AUTOSCALE` 哨兵，方向那一半信息
+        # 端点序里根本没有。晚一步采到的就是某次 override 之后的方向了。
+        remember_axis_directions(ax)
         _register(state, f"axes_{i}", ax, "axes3d" if is3d else "axes", label,
                   position_locked=position_locked, limits_slaved=secondary)
         if ax in cbar_of_ax:

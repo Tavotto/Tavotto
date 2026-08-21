@@ -918,6 +918,27 @@ REMOVAL_CASES = [
       [{"gid": "axes_0", "prop": "xlim", "value": [1.5, 3.5]},
        {"gid": "axes_0", "prop": "xscale", "value": "log"}],
       [{"gid": "axes_0", "prop": "xscale", "value": "log"}]]),
+    # ---- Case E：值被**改过一次**（不是删除），两次 apply ----
+    #
+    # 这一维原先一格都没有：所有 lim 用例都只 apply 一次，于是「轴此刻的方向
+    # 说了算」读起来完全合理——同一次 apply 里 invert 与 lim 谁先谁后都殊途
+    # 同归，实测也确实如此。漏掉的是**跨两次 apply**：热会话里轴还带着上一次
+    # patch 留下的翻转，全量重放却是从脚本原样起步的。
+    #
+    # 实测（修之前）：热态 xlim (10.0, 0.0) 仍翻转，重放 (0.0, 10.0)。用户把
+    # 降序改回升序，画面纹丝不动，写回还会被 divergence 拦下来。
+    #
+    # **空门禁的另一种长法**：不是用例没写，是场景少了一维。
+    ("E-lim-descending-then-ascending-x", "InvScale",
+     [[{"gid": "axes_0", "prop": "xlim", "value": [3.5, 1.5]}],
+      [{"gid": "axes_0", "prop": "xlim", "value": [1.5, 3.5]}]]),
+    ("E-lim-descending-then-ascending-y", "InvScale",
+     [[{"gid": "axes_0", "prop": "ylim", "value": [60.0, 2.0]}],
+      [{"gid": "axes_0", "prop": "ylim", "value": [2.0, 60.0]}]]),
+    # 反过来也要成立：脚本原样是升序，两次 apply 之后请求降序仍然是降序。
+    ("E-lim-ascending-then-descending-x", "InvScale",
+     [[{"gid": "axes_0", "prop": "xlim", "value": [1.5, 3.5]}],
+      [{"gid": "axes_0", "prop": "xlim", "value": [3.5, 1.5]}]]),
     ("A-colorbar-drop-mappable", "InvCbar",
      [[{"gid": "axes_0.images_0", "prop": "cmap", "value": "plasma"},
        {"gid": "axes_1.colorbar", "prop": "cmap", "value": "cividis"}],

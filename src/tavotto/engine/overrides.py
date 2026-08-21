@@ -614,6 +614,45 @@ class _Autoscale:
 _AUTOSCALE = _Autoscale()
 
 
+#: 脚本原样的轴方向（x, y），instrument 时采一次——**那一刻才是脚本原样**。
+#:
+#: 为什么不能从 originals 里的 lim 反推：`ax.invert_yaxis()` **不关自动缩放**
+#: （三个 matplotlib 版本实测一致），于是 getter 回 `_AUTOSCALE`，而这个哨兵
+#: 只记了「范围是自动的」那一半——方向是与它正交的另一半事实，端点序里一点
+#: 信息都没有。这与 §3.5 那一类是同一个形状：原样是个**模式**，而这个模式
+#: 又不止一个维度。
+_ORIG_DIR = "_mm_orig_inverted"
+
+
+def remember_axis_directions(ax) -> None:
+    """记下脚本原样的两条轴方向。instrument 调用，重复调用不覆盖。"""
+    if not hasattr(ax, _ORIG_DIR):
+        setattr(ax, _ORIG_DIR,
+                (bool(ax.xaxis_inverted()), bool(ax.yaxis_inverted())))
+
+
+def _orig_inverted(ax, axis: str) -> bool:
+    d = getattr(ax, _ORIG_DIR, None)
+    if d is None:                     # 没经过 instrument（手工构造）→ 退回实况
+        return bool(getattr(ax, f"{axis}axis_inverted")())
+    return bool(d[0 if axis == "x" else 1])
+
+
+def _requested_inverted(ax, axis: str, state) -> bool:
+    """**这一次改完之后**该是什么方向。绝不读轴的实况。
+
+    读实况会让热态与全量重放分叉：热会话里轴可能还带着**上一次** patch 留下
+    的翻转，而全新重放是从脚本原样起步的。实测那一格（把降序改成升序、且这次
+    没有 `invert_*`）：热态停在 `(10, 0)` 仍翻转，重放是 `(0, 10)`——
+    写回自检会拿它当 divergence 拦下来，而用户看到的是「改了没反应」。
+    """
+    if state is not None:
+        want = f"invert_{axis}"
+        for (gid, prop), val in state.pending.items():
+            if prop == want and state.index.get(gid) is ax:
+                return bool(val)
+    return _orig_inverted(ax, axis)
+
 
 def _get_axes_lim(axis: str):
     """坐标范围的**可回灌**表示。脚本没设过范围时回 `_AUTOSCALE` 哨兵。
@@ -675,25 +714,33 @@ def _set_axes_lim(axis: str):
     用户直接把范围写成降序（`[60, 2]`）仍然表达翻转：那时 `pending` 里没有
     `invert_*`，端点顺序照旧说了算。
     """
-    def put(ax, v):
+    def put(ax, v, state=None):
         if v is _AUTOSCALE:
             ax.autoscale(enable=True, axis=axis)
             ax.autoscale_view()
             return
         lo, hi = float(v[0]), float(v[1])
-        # **轴此刻的方向说了算，端点顺序只表达「范围是这两个数」。**
+        # **方向由「这一次该是什么方向」说了算，端点顺序只表达「范围是这两个数」。**
         #
-        # 这一句**不依赖 invert 与 lim 谁先应用**（实测过两个方向）：
-        #   * invert 先 → 这里读到已翻转，把升序换成降序，翻转保住；
-        #   * lim 先   → 这里读到未翻转、不动手，随后 invert 自己把端点翻过来。
-        # 两条路殊途同归。曾经写过一版查 `state.pending` 的「更周全」实现，
-        # **拿掉之后没有任何用例变红**——在任一排序下它都是死代码，删了。
+        # 判据是 `_requested_inverted`：这一次的 patch 表里有 `invert_<axis>`
+        # 就按它，没有就按**脚本原样**——**绝不读轴的实况**。
+        #
+        # 曾经这里读的就是实况（`ax.<axis>axis_inverted()`），理由写的是
+        # 「不依赖 invert 与 lim 谁先应用，两条路殊途同归」。那句话对，但它
+        # 只覆盖了「同一次 apply 里两条 patch 的先后」，漏掉了**跨两次 apply**：
+        # 热会话里轴还带着上一次 patch 留下的翻转，而全量重放是从脚本原样起步的。
+        # 把降序改成升序、这一次又没有 `invert_*` 时，热态停在 `(10, 0)`、
+        # 重放是 `(0, 10)`——写回自检会当 divergence 拦下来，用户看到的是
+        # 「改了没反应」。当初那版查 `pending` 的实现被删掉，正是因为夹具里
+        # 只有一次 apply，抽掉它一条用例都不红。**空门禁的另一种长法：不是
+        # 用例没写，是场景少了一维。**
         #
         # 用户直接把范围写成降序（`[60, 2]`）仍然表达翻转：那时 `lo < hi` 为
         # 假，这里不动手，端点顺序自己说话。
-        if getattr(ax, f"{axis}axis_inverted")() and lo < hi:
+        if lo < hi and _requested_inverted(ax, axis, state):
             lo, hi = hi, lo
         (ax.set_xlim if axis == "x" else ax.set_ylim)(lo, hi)
+    put._needs_state = True                     # noqa: SLF001
     return put
 
 
