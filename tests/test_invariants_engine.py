@@ -91,6 +91,11 @@ def main():
     ax.add_patch(Rectangle((1.0, -0.2), 2.2, 0.9, facecolor="#B34700"))
     ax.add_patch(Circle((2.0, 0.25), 0.5, facecolor="#2A6F3C"))
     ax.add_patch(Arc((2.0, 0.25), 1.4, 1.4, theta1=0, theta2=270))
+    # 带 marker 的曲线：`_markerfacecolor` 默认是字符串 `'auto'`（跟着线色走），
+    # 而 `get_markerfacecolor()` 会把它解析成当前 color——「先改线色再改
+    # marker 色」那条 P1 就藏在这个解析里，没有 marker 就测不到。
+    ax.plot([0.8, 3.0, 5.6], [3.4, 3.9, 3.5], marker="o", markersize=11,
+            label="mk")
     ax.set_xlim(0, 6.5)
     ax.set_ylim(-2.6, 4.6)
     ax.legend(loc="upper right")
@@ -103,6 +108,14 @@ def main():
     ax.errorbar([8.0, 9.0], [1.0, 1.5], yerr=0.25, label="err", capsize=3)
     ax.legend(loc="upper left")
     fig.savefig("InvCont.pdf")
+
+    # ---- InvScale：**严格为正**的数据，专供 scale ↔ lim 那一对 ----
+    # 其余几张图的 y 轴都跨 0，`set_yscale("log")` 在那里会被 matplotlib 夹住、
+    # 于是「换了对数轴之后自动缩放把 lim 挪走」这个副作用根本不发生——夹具
+    # 自己把要测的东西挡掉了。**这种情况改夹具，不加豁免。**
+    fig, ax = plt.subplots(figsize=(3.4, 2.6))
+    ax.plot([1.0, 2.0, 3.0, 4.0], [1.0, 12.0, 45.0, 100.0], marker="o")
+    fig.savefig("InvScale.pdf")
 
     # ---- InvCbar：图像 + 色条（两个 gid 一份状态） ----
     fig, ax = plt.subplots(figsize=(3.6, 2.9))
@@ -603,6 +616,87 @@ def test_legend_rebuild_drift_stays_where_it_is(hot_restore, stem):
     assert once == twice, "漂移是复利的——每撤销一次再坏一点，那就不止 P2 了"
 
 
+#: **同一个元素上、两条会互相影响的 prop**。这一类的杀伤力在于：单独改任何
+#: 一条都能完美还原，只有**成对**出现才坏——而不变式 2 的扫描是一条一条来的，
+#: 所以它一条都逮不到。这张表是「按对扫」的最小集，全部实测过。
+#:
+#: 成因只有一个：`originals` 是**按需、在应用那一刻**采的。先应用 A、再应用 B
+#: 时，B 采到的「脚本原样」已经被 A 的副作用污染。ALIAS_GROUPS 那套机制
+#: （广播端动手之前先替组员采原样）正是为此存在的，缺的只是这几条条目。
+_SAME_ELEMENT_PAIRS = [
+    # `set_fill(False)` 把 `_facecolor` 的 alpha 清零、RGB 留着 → facecolor
+    # 采到一个 alpha=0 的四元组当原样。**manifest 看不见**（to_hex 丢 alpha）
+    ("InvMix", "axes_0.patches_0", ("fill", False), ("facecolor", "#00aa00")),
+    ("InvCont", "axes_0.barseries_1.bar_0", ("fill", False), ("facecolor", "#00aa00")),
+    # `_markerfacecolor` 默认 `'auto'`，getter 解析成当前 color
+    ("InvMix", "axes_0.lines_0", ("color", "#ff0000"), ("markerfacecolor", "#00ff00")),
+    ("InvMix", "axes_0.lines_0", ("color", "#ff0000"), ("markeredgecolor", "#00ff00")),
+    # `set_yscale` 会重新自动缩放 → ylim 的原样是在范围变过之后采的
+    # **必须用 InvScale**：别的图 y 轴跨 0，log 轴被夹住，副作用不发生
+    ("InvScale", "axes_0", ("yscale", "log"), ("ylim", [2.0, 60.0])),
+    ("InvScale", "axes_0", ("xscale", "log"), ("xlim", [1.5, 3.5])),
+    # 翻转把上下限对调 → 回灌 get_ylim() 等于再翻一次
+    ("InvMix", "axes_0", ("invert_y", True), ("ylim", [-2.0, 4.0])),
+    ("InvMix", "axes_0", ("invert_x", True), ("xlim", [0.5, 6.0])),
+]
+
+
+@pytest.mark.parametrize("stem,gid,broad,narrow", _SAME_ELEMENT_PAIRS,
+                         ids=[f"{c[1].split('.')[-1]}-{c[2][0]}+{c[3][0]}"
+                              for c in _SAME_ELEMENT_PAIRS])
+def test_same_element_pairs_restore_exactly(hot_restore, stem, gid, broad, narrow):
+    """同一个元素上两条 prop **成对**改，撤销之后仍要逐字回到脚本原样。
+
+    不变式 2 一次只改一条，所以这一整类它一条都逮不到——而这一类里有本轮
+    **最安静**的一条：`fill` + `facecolor`。`Patch.set_fill(False)` 把
+    `_facecolor` 的 alpha 清零而 RGB 留着，`facecolor` 于是把一个 alpha=0 的
+    四元组采成了「脚本原样」；撤销之后那个面**永久透明**，而 manifest 经
+    `to_hex()` 报颜色、to_hex 丢掉 alpha —— **前后读到的是同一个色值**。
+    实测走真 worker：manifest 逐字节相同，画面差 16236 像素（整帧的 5.64%），
+    warnings 为空。写回自检只比几何，同样看不见。
+
+    **两个列表序都要试**：`_apply_rank` 的规范顺序会把「可能被污染」变成
+    「必然被污染」——`scale` 钉死在 `lim` 之前，所以那一对反过来写也照样坏。
+    """
+    base = _man(hot_restore, stem)
+    base_png = _png(hot_restore, stem, [], f"pair-base-{gid}")
+    a = {"gid": gid, "prop": broad[0], "value": broad[1]}
+    b = {"gid": gid, "prop": narrow[0], "value": narrow[1]}
+
+    for order, patch in (("broad→narrow", [a, b]), ("narrow→broad", [b, a])):
+        resp = hot_restore.override(stem, list(patch))
+        assert not (resp.get("warnings") or []), (order, resp["warnings"])
+        assert _png(hot_restore, stem, patch, f"pair-on-{gid}-{broad[0]}") != base_png, \
+            f"{order}：这一对根本没动画面，用例是空的"
+        after = _man(hot_restore, stem)
+        assert after == base, f"{order}：撤销之后 manifest 没回到脚本原样"
+        assert _png(hot_restore, stem, [], f"pair-off-{gid}-{broad[0]}") == base_png, \
+            f"{order}：manifest 回去了但**画面**没有——正是 to_hex 丢 alpha 那一类"
+
+
+def test_every_alias_group_survives_both_orders(hot_replay, library):
+    """别名表里的**每一条**都要经得起「两个序 + 撤销」。
+
+    上面那张表是手写的最小集；这一条把范围扩到整张 `ALIAS_GROUPS`——表里声明
+    过的重叠，就得真的被机制兑现。它跑在探针里（本进程 import 不动
+    matplotlib），只核对**表本身**在这张图上能解析出组员来；行为那一半由
+    上面那条与热态==重放那组负责。
+    """
+    # 表的自洽由探针核对（见 test_alias_groups_are_self_consistent）。这里补
+    # 一条**行为**上的抽样：色条 ↔ mappable 是跨 gid 的那一类，与同元素那类
+    # 走的是同一段代码，两类各留一个活的样本才说得上「机制成立」。
+    stem = "InvCbar"
+    base = _man(hot_replay, stem)
+    img = next(g for g in (e["gid"] for e in base["elements"]) if ".images_" in g)
+    cbar = next(g for g in (e["gid"] for e in base["elements"]) if g.endswith(".colorbar"))
+    for patch in ([{"gid": img, "prop": "cmap", "value": "plasma"},
+                   {"gid": cbar, "prop": "cmap", "value": "cividis"}],
+                  [{"gid": cbar, "prop": "cmap", "value": "cividis"},
+                   {"gid": img, "prop": "cmap", "value": "plasma"}]):
+        _man(hot_replay, stem, patch)
+        assert _man(hot_replay, stem) == base, "色条 ↔ mappable 那一组撤销后没回原样"
+
+
 # ---------------------------------------------------------------------------
 # 不变式 3：热态 == 全量重放（含**删除**）
 # ---------------------------------------------------------------------------
@@ -788,6 +882,18 @@ def test_unsupported_says_what_and_why(probe):
     noise = [r for r in probe["completeness"]["unsupported"]
              if r["cls"].endswith(("patches.Rectangle", "spines.Spine")) and not r.get("reason")]
     assert not noise, f"axes 的结构件被报成漏掉的 artist：{noise}"
+
+    # **普查本身也要走 child_axes**。上面两条走的是「登记了却被丢掉」那条路
+    # （`_drop`），碰不到 `census()` 的遍历——夹具里那个 3D 插图就是为此存在的：
+    # `plot_surface` 的 `Poly3DCollection` 是 instrument **不登记**、只有普查
+    # 报得出来的那一类（CompatBench 的「Top unrecognized artists」里排第一）。
+    # 少了这一条，`census()` 走不走 `_ordered_axes` 没有任何用例能证明。
+    poly3d = [r for r in probe["completeness"]["unsupported"]
+              if "Poly3DCollection" in r["cls"]]
+    assert poly3d, ("子 axes 里普查该报的东西没报出来——`census()` 是不是又只走 "
+                    f"`fig.axes` 了？{probe['completeness']['unsupported']}")
+    assert poly3d[0]["where"] != "axes_0", \
+        f"报出来了，但位置指到了主 axes 上：{poly3d[0]}"
 
 
 def test_family_classification_has_a_single_authority(probe):

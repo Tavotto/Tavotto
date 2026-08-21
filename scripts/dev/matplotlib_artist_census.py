@@ -63,22 +63,12 @@ GENERIC = "generic"            # 登记了，但只开 visible/zorder
 MISSING = "missing"            # 真的漏了
 
 
-def _internal_ids(fig, colorbar_axes=()) -> set[int]:
-    ids = {id(fig.patch)}
-    for ax in fig.axes:
-        ids.add(id(ax))
-        ids.add(id(ax.patch))
-        ids.update(id(sp) for sp in getattr(ax, "spines", {}).values())
-        for name in ("xaxis", "yaxis", "zaxis"):
-            axis = getattr(ax, name, None)
-            if axis is not None:
-                ids.add(id(axis))
-        if ax in colorbar_axes:
-            # 色条轴的内部件（色带 / 分隔线 / 延伸三角）有意不登记，见
-            # manifest._internal_ids 的注释
-            ids.update(id(a) for a in getattr(ax, "patches", []))
-            ids.update(id(a) for a in getattr(ax, "collections", []))
-    return ids
+# `_internal_ids` **不在这里重写**：`manifest` 里那份是唯一权威。曾经这里
+# 抄了一份，两份一起用 `fig.axes` 遍历——于是 `inset_axes` /
+# `secondary_[xy]axis`（它们挂在 `ax.child_axes` 上、`in fig.axes` 为 False）
+# 里的 artist 在普查报告里一个字都不出现，而报告照样给出一张干净的成绩单。
+# 修的时候只修了产品侧那份、忘了这份，就是这条重复的代价。
+_internal_ids = manifest_mod._internal_ids          # noqa: SLF001
 
 
 def _qual(obj) -> str:
@@ -112,7 +102,13 @@ def census(fig) -> dict:
     internal = _internal_ids(fig, state.colorbar_axes)
     buckets: dict[str, Counter] = {k: Counter() for k in
                                    (SEMANTIC, COMPOSITE, INTERNAL, GENERIC, MISSING)}
-    for owner in [fig] + list(fig.axes):
+    # **必须走 `_ordered_axes`**：`ax.inset_axes()` / `ax.secondary_[xy]axis()`
+    # 建出来的 axes 挂在 `ax.child_axes` 上，`in fig.axes` 为 False。
+    # `manifest.instrument` 早就按它遍历了，普查跟不上的话，插图里漏掉的
+    # artist 在报告里不出现、`n_axes` 也少数——**一份报平安的普查比没有普查
+    # 更坏**，而普查存在的唯一理由就是回答「有没有东西被我们悄悄漏掉了」。
+    _census_axes, _child_ids = manifest_mod._ordered_axes(fig)   # noqa: SLF001
+    for owner in [fig] + list(_census_axes):
         for child in owner.get_children():
             if isinstance(child, (Axes, Axis)):
                 continue
@@ -138,7 +134,8 @@ def census(fig) -> dict:
                 for el in state.elements]
     return {"buckets": {k: dict(v) for k, v in buckets.items() if v},
             "elements": elements,
-            "n_axes": len(fig.axes)}
+            # 与上面的遍历同一口径：`fig.axes` 数不到插图与次坐标轴
+            "n_axes": len(_census_axes)}
 
 
 # ---------------------------------------------------------------------------

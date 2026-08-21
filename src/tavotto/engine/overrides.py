@@ -591,6 +591,37 @@ def text_linespacing(t) -> float:
         return 1.2
 
 
+def _get_marker_color(attr: str, getter_name: str):
+    """marker 颜色的**可回灌**表示：`_marker*color` 原样（多半是 `'auto'`）。
+
+    与 `_get_linecoll_ls` / `_get_coll_edgecolor` / `_get_text_linespacing`
+    是同一个坑的第五、六个入口，而这一次坏的东西多一样：**联动关系**。
+
+    Line2D 的 `_markerfacecolor` / `_markeredgecolor` 默认是字符串
+    `'auto'`，`get_marker*color()` 会把它**解析成当前的 `color`**。于是
+
+        原始：color=#1f77b4, _markerfacecolor='auto'（marker 跟着线走）
+        改 color=#ff0000 → 再改 markerfacecolor  →  撤销
+
+    时，`markerfacecolor` 的「脚本原样」是在 color 已经改过之后采的，采到的是
+    **解析值 `#ff0000`**。撤销之后 marker 永久停在红色（实测 386 px 与原样
+    不同，而这次编辑本身只动了 1008 px）。`marker='x'` 这类不填充的 marker 在
+    `markeredgecolor` 上同样成立（189 px）。
+
+    **修法不是把它加进 ALIAS_GROUPS**。试过：那样像素能还原，但还原写进去的是
+    解析后的具体颜色，`'auto'` 这个**模式**丢了——之后用户再单独改线的颜色，
+    marker 不再跟着走。与 `_NO_BBOX` 那条是同一个道理：**真正的原样是一个模式，
+    不是一个值**，而模式只有原样回灌才留得住。
+
+    manifest 那边照旧显示 `to_hex(get_marker*color())`（解析后的具体色），
+    检查器里仍然是一个能点的色块——显示与回灌本来就该是两个口径。
+    """
+    def get(a):
+        raw = getattr(a, attr, None)
+        return raw if raw is not None else getattr(a, getter_name)()
+    return get
+
+
 def _get_text_linespacing(t):
     """行距的**可回灌**表示：`_linespacing` 原样（可能是字符串 `'normal'`）。
 
@@ -2218,7 +2249,14 @@ def color_mapping_is_live(artist) -> bool:
     if not is_color_mapped(artist):
         return False
     if not isinstance(artist, Collection):
-        return True          # AxesImage 这类：有数组就是按它上色
+        # AxesImage 这类：**只有二维数组才走色图**。`imshow` 吃的
+        # `(M, N, 3)` / `(M, N, 4)` 是已经成色的 RGB(A) 位图，`get_array()`
+        # 照样非空，但 `set_cmap` 一个像素都不动（实测：灰度 23409，
+        # RGB 与 RGBA 都是 0）。今天没有用户可见后果——`manifest._image_fields`
+        # 另有一道 `arr.ndim == 2` 的闸，色图字段本来就不出——但这条谓词写着
+        # 「有数组就是按它上色」是**假的**，下一个拿它当判据的人会踩空。
+        arr = getattr(artist, "get_array", lambda: None)()
+        return getattr(arr, "ndim", 0) == 2
     orig_fc = getattr(artist, "_original_facecolor", None)
     if not _is_none_color(orig_fc):
         return True          # 面在映射（facecolor 没被写死成 'none'）
@@ -2630,9 +2668,13 @@ HANDLERS: dict[tuple[str, str], tuple] = {
     ("line", "alpha"): (lambda a: a.get_alpha(),
                         lambda a, v: a.set_alpha(None if v is None else float(v))),
     ("line", "zorder"): (lambda a: float(a.get_zorder()), lambda a, v: a.set_zorder(float(v))),
-    ("line", "markerfacecolor"): (lambda a: a.get_markerfacecolor(),
+    # marker 的两个颜色：getter 回**原始设定**（可能是 `'auto'`），不是
+    # `get_marker*color()` 解析出来的那个具体色，见 `_get_marker_color`。
+    ("line", "markerfacecolor"): (_get_marker_color("_markerfacecolor",
+                                                    "get_markerfacecolor"),
                                   lambda a, v: a.set_markerfacecolor(v)),
-    ("line", "markeredgecolor"): (lambda a: a.get_markeredgecolor(),
+    ("line", "markeredgecolor"): (_get_marker_color("_markeredgecolor",
+                                                    "get_markeredgecolor"),
                                   lambda a, v: a.set_markeredgecolor(v)),
 
     # ---- collection / patch / bar 的通用属性走能力层（见 _install_caps 那一节）；
@@ -3019,6 +3061,25 @@ def _alias_colorbar_ticks(narrow_prop: str):
     return resolve
 
 
+def _alias_same_element(narrow_prop: str):
+    """广播端与窄端**在同一个元素上**（同一个 gid，两条 prop）。
+
+    既有的别名组都是「一个 prop 写一批**别的** artist」（图例字号 → 每条图例
+    项、色条 cmap → 它的 mappable）。这一类不是——它是「同一个 artist 上，
+    A 的 setter 顺手改变了 B 的可读状态」，而 `originals` 又是**按需、在应用
+    那一刻**采的：先应用 A 再应用 B，B 采到的「脚本原样」已经被 A 污染了。
+
+    `bbox_*` 那一组是同一个形状（当时用记号 `_mm_bbox_created` 单独解决的）。
+    机制其实早就在——广播端「动手之前先把组员的脚本原样采下来」那段逻辑不关心
+    组员是不是同一个 artist，反查表 `rev[id(artist)]` 回的正是它自己的 gid。
+    缺的只是这张表里的条目。
+    """
+    def resolve(state: "FigState", rev: dict, artist) -> list[tuple]:
+        gid = rev.get(id(artist))
+        return [(gid, narrow_prop)] if gid is not None else []
+    return resolve
+
+
 #: 广播端 `(cls_key, prop)` → 解析出「它会盖掉哪些 (窄 gid, 窄 prop)」的函数。
 #:
 #: **不在表里的，各有各的理由**（往里加之前先确认narrow 端真的是登记元素）：
@@ -3075,6 +3136,38 @@ for _sprop in ("linewidth", "linestyle"):
 # 图元自己那条说了算——色条是 mappable 的一个视图，不是反过来。
 for _cprop in ("cmap", "vmin", "vmax"):
     ALIAS_GROUPS[("colorbar", _cprop)] = _alias_colorbar_mappable(_cprop)
+
+# ---------------------------------------------------------------------------
+# **同一个元素上的重叠**（广播端与窄端同 gid）。全部实测过，三条各有各的机制：
+#
+#   * `fill` → `facecolor`：`Patch.set_fill(False)` 把 `_facecolor` 的 **alpha
+#     清零、RGB 留着**。于是 `get_facecolor()` 之后回的是一个 alpha=0 的四元组
+#     ——`facecolor` 采到它当原样，撤销之后那个面**永久透明**。
+#     **manifest 看不见**：`_fields_for` 经 `to_hex()` 报颜色，而 to_hex 丢掉
+#     alpha，前后都读成 `#3366cc`。实测走真 worker：manifest 逐字节相同，
+#     画面差 16236 像素（占整帧 5.64%），warnings 为空。这是本轮最安静的一条。
+#     邻居都干净（fill→edgecolor / linewidth / alpha 实测均可还原），所以组就
+#     是 `{fill → facecolor}` 这一对。
+#
+#   * `[xy]scale` → `[xy]lim`：`set_yscale("log")` 会重新自动缩放，于是 `ylim`
+#     的原样是在坐标范围已经变过之后采的。**两个列表序都坏**——`_apply_rank`
+#     把 scale（第 4 档）钉死在 lim（第 6 档）之前，规范顺序把「可能被污染」
+#     变成了「必然被污染」。实测 yscale+ylim 撤销后 20 处 manifest 字段不同
+#     （含 ylim、刻度值、刻度文字与一串 bbox），xscale+xlim 12 处；**各自单独
+#     应用则完全干净**。
+#
+#   * `invert_[xy]` → `[xy]lim`：翻转把上下限对调，`get_[xy]lim()` 回的是调过
+#     的那个元组，回灌它等于**再翻一次**。实测撤销后 `ylim` 从 [-0.2, 2.4]
+#     变成 [2.4, -0.2]、`invert_y` 从 False 变成 True，15 处字段不同。
+#
+# 这三条**写回自检都拦不住**：`app._compare_manifests` 只比几何，颜色差它看不见；
+# 而 scale / invert 那两条虽然动几何，热态与重放是**一起**跑偏的，比不出分歧。
+# ---------------------------------------------------------------------------
+for _fkey in ("patch", "bar"):
+    ALIAS_GROUPS[(_fkey, "fill")] = _alias_same_element("facecolor")
+for _axis in ("x", "y"):
+    ALIAS_GROUPS[("axes", f"{_axis}scale")] = _alias_same_element(f"{_axis}lim")
+    ALIAS_GROUPS[("axes", f"invert_{_axis}")] = _alias_same_element(f"{_axis}lim")
 
 #: 广播端 prop 名的集合。`apply` 拿它做**廉价预筛**：不在表里的 patch 连
 #: `state.resolve()` 都不用付。随着别名组覆盖到线组、色条 ↔ mappable，这张表
