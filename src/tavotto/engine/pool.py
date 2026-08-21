@@ -575,8 +575,15 @@ class EngineWorker:
             creationflags=runtime.CREATE_NO_WINDOW,
         )
 
+    #: 逻辑死标记。**`poll()` 一个人说了不算**：`Popen.kill()` 只发信号，不等
+    #: 进程真的退出，紧接着的 `poll()` 完全可能还回 None。那个窗口里别的线程
+    #: 调 `get()` 会把这条已经判死的 worker 当成可用的复用掉——正是这条标记要
+    #: 消除的竞态。workerd 那侧的会话本来就用逻辑标记（`alive() → not _dead`），
+    #: 两条控制面在「还活着吗」这件事上必须给出同一个答案。
+    _dead = False
+
     def alive(self) -> bool:
-        return self.proc.poll() is None
+        return not self._dead and self.proc.poll() is None
 
     def _touch(self) -> None:
         """把「最后使用时间」落到缓存根目录的 mtime 上（节流 _TOUCH_INTERVAL）。
@@ -733,21 +740,26 @@ class EngineWorker:
             self.proc.stdin.write(json.dumps(env, ensure_ascii=False) + "\n")
             self.proc.stdin.flush()
             line = self._readline(timeout)
+            if not line:
+                # **判死要在锁内、且是同步的。**
+                #
+                # 管道 EOF 就是「这个 worker 没了」的判定。第一版只在锁**外**
+                # 调 `self.proc.kill()`——两个问题：① 锁一放，别的线程就能挤进
+                # `get()`；② `kill()` 只发信号、**不等进程退出**，紧接着的
+                # `poll()` 完全可能还回 None。两条合起来，那条已经判死的 worker
+                # 会被当成可用的复用掉，下一次请求写进死管道、等满整个超时——
+                # 正是这一支本该消除的竞态。
+                self._dead = True
+                try:
+                    self.proc.kill()
+                except OSError:
+                    pass
         if not line:
-            # **管道 EOF 就是「这个 worker 没了」的判定，就地杀掉。**
-            #
-            # 不杀的话，「worker 还在不在」这件事就有了两个判据：这里按 EOF 判，
-            # `get()` 却按 `poll()` 判。子进程关掉 stdout 到被回收之间有一个窗口，
-            # `poll()` 在那期间仍回 None——`get()` 于是复用这条已经死了的 worker，
-            # 下一次请求写进死管道、等满整个超时。
+            # （EOF 的判死已在锁内完成，见上。）
             #
             # workerd 那侧是同一个坑，同一天修的（`session.rs` 的 EOF 分支就地
             # 摘掉进程）。**两条控制面必须给出同一个答案**——pool 是 workerd 的
             # 参考实现，判据分叉就等于有两套语义。
-            try:
-                self.proc.kill()
-            except OSError:
-                pass
             raise WorkerError("worker 进程崩溃（无响应）", self._log_tail())
         resp = json.loads(line)
         self._check_envelope(resp, rid)
