@@ -2419,6 +2419,34 @@ def is_linecoll_family(artist) -> bool:
     return isinstance(artist, LineCollection) and not is_color_mapped(artist)
 
 
+def honours_stroke(coll) -> bool:
+    """这个 Collection 的 draw 认不认**描边本身**（边色 / 线宽）。
+
+    `TriMesh`（`tripcolor(..., shading="gouraud")`）不认。它整块交给
+    `renderer.draw_gouraud_triangles`——那个渲染原语只接**顶点颜色**，
+    连边都不画。实测（同一张图，先设 `edgecolor="#ff00ff"` 再加 `linewidth=3`，
+    数变化的像素）：
+
+        TriMesh(gouraud)      edgecolor     0   +linewidth     0
+        QuadMesh(pcolormesh)  edgecolor  4086   +linewidth  8010
+        PolyCollection        edgecolor  1834   +linewidth  3175
+
+    注意 `QuadMesh` 与 `TriMesh` 在这里**分家**：网格类不认花纹与线型
+    （见 `honours_stroke_style`），但 `QuadMesh` 是认边色与线宽的（给
+    pcolormesh 加网格线是常见需求）。所以这是**两条**判据，不是一条。
+
+    ## 这条是怎么漏掉的
+
+    `honours_stroke_style` 那张实测表**把描边当成了基线**：它先设
+    `edgecolor` + `linewidth`，再量加上 hatch / linestyle 之后的增量。基线
+    本身有没有效果，那张表从来没问过——于是 TriMesh 的 `edgecolor` 与
+    `linewidth` 一路是「宣称了、设得进去、画面纹丝不动」。
+    现在探针把描边的像素数也一并报出来，用例两头都断言（认的必须 >0，
+    不认的必须 ==0），基线不再是没人验的那一半。
+    """
+    return not isinstance(coll, TriMesh)
+
+
 def honours_stroke_style(coll) -> bool:
     """这个 Collection 的 draw 认不认 `hatch` / `linestyle`。
 
@@ -2463,7 +2491,10 @@ def honours_stroke_style(coll) -> bool:
 def collection_caps(coll) -> frozenset[str]:
     """这个 Collection 上**真正改得动**的能力集。manifest 与 handler 共用它。
 
-    * ``stroke``  边线：任何 Collection 都能加/改边（现在没有边 ≠ 加不上）
+    * ``stroke``  边线：多数 Collection 都能加/改边（现在没有边 ≠ 加不上），
+                  但 `TriMesh` 走 `draw_gouraud_triangles`、**连边都不画**
+                  （实测 edgecolor / linewidth 各 0 像素）。判据
+                  `honours_stroke`
     * ``stroke_style`` 花纹与线型：**网格类不认**（`QuadMesh` / `TriMesh` 交给
                   `draw_quad_mesh` / `draw_gouraud_triangles`，那两个渲染原语
                   只接边色与线宽）。判据见 `honours_stroke_style` 的实测表
@@ -2481,7 +2512,9 @@ def collection_caps(coll) -> frozenset[str]:
                   散点是换 marker，对 PolyCollection 是把用户的多边形几何整个
                   换掉——那是改数据，不是改样式。
     """
-    caps = {"base", "stroke"}
+    caps = {"base"}
+    if honours_stroke(coll):
+        caps.add("stroke")
     if honours_stroke_style(coll):
         # `stroke_style` = 花纹与线型。与 `stroke`（边色 / 线宽）分开，因为
         # 网格类认后者不认前者——见 `honours_stroke_style` 的实测表。

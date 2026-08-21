@@ -1081,6 +1081,17 @@ def test_the_mesh_stroke_style_table_still_holds(probe):
     rows = probe["stroke_style_table"]
     assert len(rows) >= 6, rows
     for r in rows:
+        # **描边这一档也要两头断言**。这张表原先把 edgecolor + linewidth 当
+        # 基线、只量 hatch/linestyle 的增量——基线自己有没有效果从来没人问，
+        # 而 `TriMesh` 恰好连边都不画（`draw_gouraud_triangles` 只接顶点颜色，
+        # 实测 0 像素）。于是那两个控件一路是「宣称了、画面纹丝不动」。
+        if r["stroke"]:
+            assert r["stroke_px"] > 0, \
+                f"{r['case']}（{r['cls']}）判据说认描边，实测改了 0 个像素：{r}"
+        else:
+            assert r["stroke_px"] == 0, (
+                f"{r['case']}（{r['cls']}）现在**认**描边了（{r['stroke_px']} 像素）"
+                f"——该放开 `honours_stroke` 的例外，而不是改这条断言")
         if r["predicate"]:
             assert r["dash_px"] > 0, \
                 f"{r['case']}（{r['cls']}）判据说认线型，实测改了 0 个像素：{r}"

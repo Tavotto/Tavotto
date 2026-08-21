@@ -776,11 +776,14 @@ def _collection_fields(coll, *, label: bool) -> list[dict]:
         fields.append({"prop": "marker", "type": "enum", "value": cur,
                        "options": ([cur] if cur not in m_opts else []) + m_opts})
     fields += [
-        {"prop": "edgecolor", "type": "color",
-         "value": to_hex(ec[0]) if len(ec) else "#000000"},
-        {"prop": "linewidth", "type": "number",
-         "value": round(float(lw[0]), 2) if len(lw) else 0.0,
-         "min": 0, "max": 8, "step": 0.1, "unit": "pt"},
+        # 描边：`TriMesh` 连边都不画（`draw_gouraud_triangles` 只接顶点颜色），
+        # 判据 `overrides.honours_stroke`
+        *([{"prop": "edgecolor", "type": "color",
+            "value": to_hex(ec[0]) if len(ec) else "#000000"},
+           {"prop": "linewidth", "type": "number",
+            "value": round(float(lw[0]), 2) if len(lw) else 0.0,
+            "min": 0, "max": 8, "step": 0.1, "unit": "pt"}]
+          if "stroke" in caps else []),
         # **显示值与 handler 的 getter 必须同源**：这一族的 linestyle 走
         # `_get_linecoll_ls`（未缩放规格），所以反查也只能用 Collection 那条
         # `_linecoll_linestyle_name`。用 Line2D 那条 `_linestyle_name` 的话，

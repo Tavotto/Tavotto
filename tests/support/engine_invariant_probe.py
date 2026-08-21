@@ -346,9 +346,15 @@ def stroke_style_table() -> list[dict]:
         coll = make(ax)
         if isinstance(coll, list):
             coll = coll[0]
+        # **描边本身也要量**。这张表原先直接把 edgecolor + linewidth 当基线、
+        # 只量 hatch / linestyle 的增量——于是「基线有没有效果」从来没人问过，
+        # 而 `TriMesh` 恰好连边都不画（实测 0 像素），那两个控件一路是
+        # 「宣称了、设得进去、画面纹丝不动」。基线不能是没人验的那一半。
+        blank = ink(fig)
         coll.set_edgecolor("#ff00ff")
         coll.set_linewidth(2.0)
         base = ink(fig)
+        stroke_px = changed(blank, base)
         coll.set_hatch("//")
         hatch_px = changed(base, ink(fig))
         coll.set_hatch(None)
@@ -356,7 +362,9 @@ def stroke_style_table() -> list[dict]:
         coll.set_linestyle("--")
         dash_px = changed(base, ink(fig))
         rows.append({"case": name, "cls": type(coll).__name__,
-                     "hatch_px": hatch_px, "dash_px": dash_px,
+                     "stroke_px": stroke_px, "hatch_px": hatch_px,
+                     "dash_px": dash_px,
+                     "stroke": bool(O.honours_stroke(coll)),
                      "predicate": bool(O.honours_stroke_style(coll))})
         plt.close(fig)
     return rows
