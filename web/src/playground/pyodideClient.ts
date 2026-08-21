@@ -19,6 +19,7 @@ import {
   type PlaygroundFailure,
   type PlaygroundPhase,
   type RenderResult,
+  type SourceStatus,
   type WorkerRequest,
 } from './protocol'
 
@@ -62,6 +63,9 @@ export class PlaygroundClient {
   private pending = new Map<number, Pending>()
   private seq = 0
   private dead: PlaygroundFailure | null = null
+  /** 首次 init 的在途/已完成结果——预热与真正开会话共用同一条初始化路径 */
+  private inited: Promise<void> | null = null
+  private initDone = false
   /** 加载进度（UI 的阶段列表跟它走） */
   onProgress: ((phase: PlaygroundPhase) => void) | null = null
 
@@ -81,8 +85,26 @@ export class PlaygroundClient {
     return this.dead != null
   }
 
+  /**
+   * Pyodide 核心 + engine.zip 就位。**幂等且去重**：预热已经起过（或正在起）
+   * 时，真正开会话的那次直接接上同一个 Promise——绝不出现「预热一个 Worker、
+   * 点击又起第二个」。失败的那次不留 latch，下一次调用重新来过。
+   */
   init(pyodideBaseUrl: string, engineZipUrl: string): Promise<void> {
-    return this.request({ type: 'init', pyodideBaseUrl, engineZipUrl }, true).then(() => undefined)
+    if (this.inited) return this.inited
+    const p = this.request({ type: 'init', pyodideBaseUrl, engineZipUrl }, true).then(() => {
+      this.initDone = true
+    })
+    this.inited = p
+    p.catch(() => {
+      this.inited = null
+    })
+    return p
+  }
+
+  /** 核心**已经**就位（不是「在路上」）。预热账本据此判 ready。 */
+  get ready(): boolean {
+    return this.initDone && !this.dead
   }
 
   async load(
@@ -98,6 +120,19 @@ export class PlaygroundClient {
       figures: (r.figures as FigureChoice[]) ?? [],
       log: typeof r.log === 'string' ? r.log : '',
       truncated_figures: typeof r.truncated_figures === 'number' ? r.truncated_figures : 0,
+      script: typeof r.script === 'string' ? r.script : '',
+      source_sha256: typeof r.source_sha256 === 'string' ? r.source_sha256 : '',
+      source_bytes: typeof r.source_bytes === 'number' ? r.source_bytes : 0,
+    }
+  }
+
+  /** 让 Worker 重新读一遍工作区里的源文件并算 sha256（完整性复验）。 */
+  async sourceStatus(): Promise<SourceStatus> {
+    const r = (await this.request({ type: 'sourceStatus' }, false)) as Record<string, unknown>
+    return {
+      script: typeof r.script === 'string' ? r.script : '',
+      sha256: typeof r.sha256 === 'string' ? r.sha256 : '',
+      bytes: typeof r.bytes === 'number' ? r.bytes : 0,
     }
   }
 

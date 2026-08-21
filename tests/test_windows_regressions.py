@@ -1168,3 +1168,38 @@ def test_compat_text_writes_all_pin_the_newline():
     assert checked >= 3, (
         f"只扫到 {checked} 处写入，比预期少——写盘的地方挪了位置？"
         f"这条用例要跟着改，别让它安静地什么都不检查")
+
+
+def test_playground_writes_the_workspace_source_byte_for_byte():
+    """playground 往虚拟 FS 写用户脚本必须是**二进制写**，不能用文本模式。
+
+    文本模式在 Windows 上把 `\\n` 翻成 `\\r\\n`，于是磁盘上的字节不再是用户
+    交出来的那份，「figure.py · 未改动」那条跨边界哈希比对当场变成永远
+    mismatch——而界面把 mismatch 当作**不变式失效**，是要常驻报警的那一档。
+    CI 的 windows 腿实测逮到过（`test_workspace_source_hash_...` 与
+    `test_tampered_...` 双双红）。
+
+    生产环境（Pyodide 的 Emscripten FS）恰好不翻译换行，所以这个坑在浏览器里
+    看不出来，在 macOS/Linux 上跑测试也看不出来——**一个只在别的平台上成立的
+    不变式不算不变式**。所以这条不去比哈希（那只在 Windows 上才失败），而是
+    按源码判「写法本身对不对」，与 st_mode 那条同一路数：拦住一类只在别人
+    电脑上失败的写法。
+    """
+    import ast
+
+    repo = Path(__file__).resolve().parent.parent
+    src = (repo / "src" / "tavotto" / "engine" / "browser.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    modes = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and getattr(node.func, "id", "") == "open"):
+            continue
+        # open(path, mode) —— 只看写用户源码那一处（第二个实参是字面量）
+        if len(node.args) >= 2 and isinstance(node.args[1], ast.Constant):
+            modes.append(node.args[1].value)
+
+    writes = [m for m in modes if "w" in str(m)]
+    assert writes, "用例前提失效：browser.py 不再往工作区写脚本了？"
+    assert all("b" in str(m) for m in writes), (
+        f"browser.py 必须用二进制模式写工作区源文件（现在是 {writes}）——"
+        "文本模式会在 Windows 上翻译换行，源文件完整性校验永远 mismatch。")
