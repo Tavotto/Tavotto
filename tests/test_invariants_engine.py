@@ -674,6 +674,36 @@ def test_same_element_pairs_restore_exactly(hot_restore, stem, gid, broad, narro
             f"{order}：manifest 回去了但**画面**没有——正是 to_hex 丢 alpha 那一类"
 
 
+def test_explicit_script_limits_are_not_turned_into_autoscale(hot_restore):
+    """脚本**显式**设过范围的轴，不许被「自动缩放」那条哨兵改掉语义。
+
+    `[xy]lim` 的还原之所以要用哨兵，是因为「脚本没设过范围」这个原样是一个
+    **模式**（`autoscale[xy]_on`），不是一对数字。但反过来那一半同样重要：
+    脚本自己写了 `ax.set_ylim(-2.6, 4.6)` 的轴，自动缩放本来就是关的，撤销
+    必须把**那对数字**放回去，而不是重新打开自动缩放——否则修一个 bug 会造出
+    一个更坏的：用户的坐标范围在撤销之后自己变了。
+
+    `InvMix` 的两条轴都是脚本显式设过的（`set_xlim(0, 6.5)` /
+    `set_ylim(-2.6, 4.6)`），`InvScale` 那张则一条都没设——两半各有活样本。
+    """
+    base = _man(hot_restore, "InvMix")
+    fields = {k: v["value"] for k, v in _fields(base, "axes_0").items()}
+    assert fields["ylim"] == [-2.6, 4.6], f"夹具里这条轴该是脚本设死的：{fields['ylim']}"
+
+    _man(hot_restore, "InvMix", [{"gid": "axes_0", "prop": "ylim", "value": [0.0, 3.0]}])
+    after = _man(hot_restore, "InvMix")
+    assert after == base, "显式范围的轴撤销之后没回到脚本写的那一对数字"
+
+    # 而且后面再来一个会触发重新缩放的 prop，也不许把它变成自动缩放
+    ys = [{"gid": "axes_0", "prop": "yscale", "value": "log"}]
+    _man(hot_restore, "InvMix", [{"gid": "axes_0", "prop": "ylim", "value": [0.5, 3.0]}])
+    got = {k: v["value"]
+           for k, v in _fields(_man(hot_restore, "InvMix", ys), "axes_0").items()}
+    assert got["ylim"] == [-2.6, 4.6], \
+        f"撤掉 ylim 之后那条轴自己重新缩放了：{got['ylim']}"
+    _man(hot_restore, "InvMix")
+
+
 def test_every_alias_group_survives_both_orders(hot_replay, library):
     """别名表里的**每一条**都要经得起「两个序 + 撤销」。
 
@@ -757,6 +787,25 @@ REMOVAL_CASES = [
     ("C-colorbar-drop-both", "InvCbar",
      [[{"gid": "axes_0.images_0", "prop": "cmap", "value": "plasma"},
        {"gid": "axes_1.colorbar", "prop": "cmap", "value": "cividis"}], []]),
+    # **撤销一条 prop 之后，被它关掉的「模式」也要回来**。`ax.set_ylim(...)`
+    # 顺手把 `autoscaley_on` 关掉；撤销时把 `get_ylim()` 当原样回灌，数字对了、
+    # 自动缩放却回不来。于是后面任何触发重新缩放的 prop（`yscale=log`）在热
+    # 会话里不缩放、在全新 worker 重放里缩放——**而幸存的那串 patch 与「只设过
+    # yscale」逐字节相同**。实测 ylim 热态 [2.0, 104.95] vs 重放 [0.79, 125.89]。
+    #
+    # 这条与本组其他几格不同：写回自检**看得见**它（几何真的变了），所以它不会
+    # 静默写坏文件——代价是把一次完全正当的编辑序列拦下来。仍然是 P1：
+    # `HOT(P) == REPLAY(P)` 是写回那条主线唯一的正确性依据。
+    ("C-autoscale-restored-after-lim", "InvScale",
+     [[{"gid": "axes_0", "prop": "ylim", "value": [2.0, 60.0]}],
+      [{"gid": "axes_0", "prop": "ylim", "value": [2.0, 60.0]},
+       {"gid": "axes_0", "prop": "yscale", "value": "log"}],
+      [{"gid": "axes_0", "prop": "yscale", "value": "log"}]]),
+    ("C-autoscale-x", "InvScale",
+     [[{"gid": "axes_0", "prop": "xlim", "value": [1.5, 3.5]}],
+      [{"gid": "axes_0", "prop": "xlim", "value": [1.5, 3.5]},
+       {"gid": "axes_0", "prop": "xscale", "value": "log"}],
+      [{"gid": "axes_0", "prop": "xscale", "value": "log"}]]),
     ("A-colorbar-drop-mappable", "InvCbar",
      [[{"gid": "axes_0.images_0", "prop": "cmap", "value": "plasma"},
        {"gid": "axes_1.colorbar", "prop": "cmap", "value": "cividis"}],

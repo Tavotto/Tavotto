@@ -591,6 +591,68 @@ def text_linespacing(t) -> float:
         return 1.2
 
 
+class _Autoscale:
+    """哨兵：这条轴的「脚本原样」是**自动缩放**，不是某一对具体的上下限。
+
+    只活在 `state.originals` 里（worker 进程内），永远不进 patch、不过 JSON、
+    不到 patchspec —— 与 `_NO_BBOX` 同一条纪律。
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "<autoscale>"
+
+
+_AUTOSCALE = _Autoscale()
+
+
+def _get_axes_lim(axis: str):
+    """坐标范围的**可回灌**表示。脚本没设过范围时回 `_AUTOSCALE` 哨兵。
+
+    这是「真正的原样是一个**模式**，不是一个值」的第三个入口（前两个是
+    `_NO_BBOX` 与 marker 颜色的 `'auto'`），而这一个的后果最重：**它会让写回
+    被拦下来**。
+
+    `ax.set_ylim(...)` 有个副作用——把 `autoscaley_on` 关掉。撤销时我们把
+    `get_ylim()` 当原样回灌，数字是对了，**自动缩放却再也回不来**。于是后面
+    任何一个会触发重新缩放的 prop（`set_yscale("log")` 就是）在热会话里不再
+    缩放，而全新 worker 重放同一串 patch 时会缩放：
+
+        热态   ylim → 撤销 → yscale=log   幸存 patch 列表 = [yscale=log]
+        重放   全新 worker，[yscale=log]
+        实测   ylim 热态 [2.0, 104.95] vs 重放 [0.794, 125.893]，像素不同
+
+    **`HOT(P) == REPLAY(P)` 破了**，而幸存的那串 patch 与「只设过 yscale」
+    的那串**逐字节相同**。这条与本轮那四条颜色缺陷不同：写回自检**看得见**
+    它（几何真的变了，实测 8 处分歧），所以它不会静默写坏文件——它的代价是
+    把一次完全正当的编辑序列**拦下来**，而用户屏幕上那张图确实不等于
+    「脚本 + 这串 patch」应有的样子。
+
+    判据 `get_autoscale[xy]_on()` 是运行时实况，不是类名。manifest 那边照旧
+    读 `ax.get_[xy]lim()` 报具体数字（`_axes_fields`），检查器里仍然是两个能
+    改的数——显示与回灌本来就是两个口径。
+    """
+    def get(ax):
+        on = getattr(ax, f"get_autoscale{axis}_on", None)
+        if on is not None and on():
+            return _AUTOSCALE
+        return ax.get_xlim() if axis == "x" else ax.get_ylim()
+    return get
+
+
+def _set_axes_lim(axis: str):
+    """坐标范围：吃一对数字（用户改的）或 `_AUTOSCALE`（还原时喂回来的）。"""
+    def put(ax, v):
+        if v is _AUTOSCALE:
+            ax.autoscale(enable=True, axis=axis)
+            ax.autoscale_view()
+            return
+        lo, hi = float(v[0]), float(v[1])
+        (ax.set_xlim if axis == "x" else ax.set_ylim)(lo, hi)
+    return put
+
+
 def _get_marker_color(attr: str, getter_name: str):
     """marker 颜色的**可回灌**表示：`_marker*color` 原样（多半是 `'auto'`）。
 
@@ -2536,8 +2598,10 @@ HANDLERS: dict[tuple[str, str], tuple] = {
     ),
     ("legend", "loc_frac"): (_get_legend_loc, _set_legend_loc_frac),
 
-    ("axes", "xlim"):     (lambda a: a.get_xlim(),  lambda a, v: a.set_xlim(float(v[0]), float(v[1]))),
-    ("axes", "ylim"):     (lambda a: a.get_ylim(),  lambda a, v: a.set_ylim(float(v[0]), float(v[1]))),
+    # 坐标范围的 getter 回**可回灌**的表示：脚本没有显式设过范围时，那个
+    # 「原样」不是一对数字，而是「自动缩放」这个**模式**。见 `_get_axes_lim`。
+    ("axes", "xlim"):     (_get_axes_lim("x"), _set_axes_lim("x")),
+    ("axes", "ylim"):     (_get_axes_lim("y"), _set_axes_lim("y")),
     ("axes", "position"): (
         lambda a: list(a.get_position().bounds),
         lambda a, v: a.set_position([float(x) for x in v]),
