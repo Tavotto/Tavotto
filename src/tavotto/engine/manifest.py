@@ -1075,6 +1075,29 @@ def _fields_for(el) -> list[dict]:
 _MIN_HIT_PX = 4.0  # 扁平元素最小命中厚度（display 像素）
 
 
+def _finite_geometry(entry: dict) -> bool:
+    """entry 里的几何字段全是有限值。见 `build_manifest` 里那道总闸的说明。"""
+    for field in ("bbox", "anchor", "arrow_endpoints", "geometry"):
+        v = entry.get(field)
+        if v is None:
+            continue
+        for x in _flatten_numbers(v):
+            if not math.isfinite(x):
+                return False
+    return True
+
+
+def _flatten_numbers(v):
+    """任意嵌套结构里的所有数字（bool 不算——它不是几何）。"""
+    if isinstance(v, dict):
+        v = list(v.values())
+    if isinstance(v, (list, tuple)):
+        for item in v:
+            yield from _flatten_numbers(item)
+    elif isinstance(v, (int, float)) and not isinstance(v, bool):
+        yield float(v)
+
+
 def _finite_box(bb) -> bool:
     """包围盒的四个数都是有限值。
 
@@ -1281,6 +1304,27 @@ def build_manifest(state: FigState, stem: str) -> dict:
                         for x, y in disp]
                 except Exception:
                     pass
+        # ---- 几何总闸：非有限值一个都不许出去 ----
+        # 逐个分支补 `isfinite` 是补不完的（分支还会再长），而漏一个的后果
+        # **取决于走哪条控制面**：Python 的 `json.dumps` 照写 `NaN` /
+        # `Infinity` 字面量、`json.loads` 也照收，于是 Python 渲染池一路绿灯；
+        # 而 workerd（Rust serde_json）**严格按 RFC 8259 拒收整帧**，报
+        # 「渲染进程往协议管道里写了非 JSON 的内容」并重启会话——同一份
+        # manifest，两条控制面两个结果。
+        #
+        # 真实触发路径（CompatBench 的 ax_secondary_x 抓到的）：
+        # `secondary_xaxis(functions=(1000/v, 1000/v))` 在 v=0 处映射出 inf，
+        # 刻度标签的包围盒变成 `[inf, nan, nan, nan]`。而 ticklabel 那条分支
+        # 的守卫是 `bb.width <= 0`——**`nan <= 0` 为假**，NaN 大摇大摆地过。
+        #
+        # 量不出位置的元素本来也选不中、画不了描边，丢掉与既有「零尺寸包围盒
+        # 就 continue」是同一个取舍。丢了要说出来，别静默。
+        if not _finite_geometry(entry):
+            print(f"[manifest] {el['gid']} 的几何不是有限值，已丢弃"
+                  f"（bbox={entry.get('bbox')} anchor={entry.get('anchor')}）",
+                  file=sys.stderr)
+            continue
+
         # 可拖元素附带锚点（figure 分数、top-origin），拖动换算用
         if el["draggable"]:
             try:
@@ -1289,7 +1333,11 @@ def build_manifest(state: FigState, stem: str) -> dict:
                 else:  # Legend：锚点用 bbox 左下角
                     bb = artist.get_window_extent(renderer)
                     dx, dy = bb.x0, bb.y0
-                entry["anchor"] = [dx / W, 1.0 - dy / H]
+                anchor = [dx / W, 1.0 - dy / H]
+                if not all(math.isfinite(v) for v in anchor):
+                    # 锚点是在总闸之后算的，自己再过一遍（见上面那段说明）
+                    raise ValueError("anchor 不是有限值")
+                entry["anchor"] = anchor
                 entry["drag_prop"] = "pos_frac" if isinstance(artist, Text) else "loc_frac"
             except Exception:
                 entry["draggable"] = False

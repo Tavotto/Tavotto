@@ -8,6 +8,7 @@
   * 协议 v1 信封（文件末尾一节）：回显、错误 code、hash 自检、legacy 兼容
 """
 import json
+import math
 import os
 import subprocess
 import threading
@@ -2383,29 +2384,36 @@ def test_secondary_axis_hides_the_slaved_data_range(tmp_path):
         pool.discard(w)
 
 
-def test_secondary_axis_container_props_are_a_known_gap(tmp_path):
-    """`SecondaryAxis` 自身的属性（visible / grid / spines）现在改不动。
+def test_secondary_axis_container_props_are_editable(tmp_path):
+    """`SecondaryAxis` 自身的容器属性（visible / grid / spines）可编辑。
 
-    根因不在本次改动里：`SecondaryAxis` 直接从 `_AxesBase` 派生，**不是
-    `Axes` 的子类**，于是 `overrides._cls_key()` 对它回 `None`，
-    `_fields_for` 走空。修法是 `_cls_key` 里那条 `isinstance(artist, Axes)`
-    放宽成 `_AxesBase`（或补一条 SecondaryAxis 分支）——一行的事，但它落在
-    另一处的所有权边界里，本次不动。
+    这条曾经是反向的「已知缺口」断言：`SecondaryAxis` 直接从 `_AxesBase`
+    派生、**不是 `Axes` 的子类**（实测 mro = [SecondaryAxis, _AxesBase,
+    Artist]），于是 `overrides._cls_key()` 对它回 `None`，容器级字段一个都
+    出不来——而它的轴标签与刻度是独立元素、照常可编辑，界面上就成了
+    「这条轴的字能改、轴本身点了没反应」。`_cls_key` 放宽到 `_AxesBase`
+    之后这条翻成了正向断言。
 
-    **轴标签与刻度不受影响**：它们是独立的 Text/TickSet 元素，照常可编辑
-    （见 test_secondary_axis_label_is_editable）。
-
-    这条用例故意断言「现状」，好让那一行修复落地时它当场红——那时把它改成
-    正向断言即可，而不是让缺口无声地消失或无声地留着。
+    **数据范围那组仍然不出**（`limits_slaved`），那是另一条边界：
+    次坐标轴的 xlim/invert/aspect 由主轴的函数映射决定，设了会被 draw
+    顶回去，见 test_secondary_axis_limits_are_not_offered。
     """
     w = _child_axes_worker(tmp_path)
     try:
         man = w.override("ChildSecondary", [])["manifest"]
-        assert _props_of(man, "axes_1") == [], (
-            "次坐标轴自身有可编辑字段了——说明 _cls_key 那一行修了。"
-            "把本用例改成正向断言（visible/grid 可改、xlim 那组仍不出）。")
-        # 但它的子元素必须是活的，否则这条「缺口」就不止是缺口了
-        gids = [e["gid"] for e in man["elements"]]
+        props = _props_of(man, "axes_1")
+        assert props, "次坐标轴自身一个可编辑字段都没有——_cls_key 那条回退了？"
+        for want in ("visible", "grid_x", "spine_color"):
+            assert want in props, f"{want} 不在次坐标轴的可编辑字段里：{props}"
+        # 改得动 + 撤得回，才算真的支持
+        r = w.override("ChildSecondary",
+                       [{"gid": "axes_1", "prop": "visible", "value": False}])
+        assert not (r.get("warnings") or []), r["warnings"]
+        back = w.override("ChildSecondary", [])
+        assert not (back.get("warnings") or []), back["warnings"]
+        assert _field_of(back["manifest"], "axes_1", "visible") is True
+        # 子元素照旧是活的
+        gids = [e["gid"] for e in back["manifest"]["elements"]]
         assert "axes_1.xlabel" in gids and "axes_1.xticks" in gids
     finally:
         pool.discard(w)
@@ -2454,3 +2462,72 @@ def test_secondary_axis_detection_still_works():
                          timeout=180, encoding="utf-8", errors="replace")
     assert out.returncode == 0, out.stderr[-800:]
     assert out.stdout.split() == ["True", "False", "False"], out.stdout
+
+
+# ---------------------------------------------------------------------------
+# 非有限几何：两条控制面必须一致
+# ---------------------------------------------------------------------------
+NONFINITE_LIB = '''\
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+def main():
+    """`secondary_xaxis` 的函数映射在 v=0 处给出 inf。
+
+    刻度标签的包围盒因此是 `[inf, nan, nan, nan]`——真实用户会写的图
+    （波数 = 1000/波长 是光谱学的标准副轴）。
+    """
+    x = np.linspace(1.0, 10.0, 40)
+    fig, ax = plt.subplots(figsize=(3.8, 2.6))
+    ax.plot(x, 1.0 / x)
+    ax.secondary_xaxis("top", functions=(lambda v: 1000.0 / v,
+                                         lambda v: 1000.0 / v)).set_xlabel("wn")
+    ax.set_title("Secondary")
+    fig.savefig("NonFinite.pdf")
+'''
+
+
+def test_non_finite_geometry_never_reaches_the_protocol(tmp_path):
+    """**NaN / Infinity 不是 JSON**，一个都不许进协议帧。
+
+    Python 的 `json.dumps` 默认把它们当字面量写出去、`json.loads` 也照收，
+    所以 Python 渲染池一路绿灯；workerd（Rust serde_json）按 RFC 8259
+    严格拒收整帧，报「往协议管道里写了非 JSON 的内容」并重启会话。
+    **同一份 manifest，两条控制面两个结果**——而报出来的症状是「协议错乱」，
+    与真实原因（某个刻度标签的包围盒是 inf）毫不相干。
+
+    CompatBench 的 `ax_secondary_x` 抓到的就是这条：`secondary_xaxis` 的
+    `1000/v` 在 v=0 处给出 inf，而 ticklabel 分支的守卫是 `bb.width <= 0`
+    ——**`nan <= 0` 为假**，NaN 大摇大摆地过去了。
+    """
+    figs = tmp_path / "figs"
+    figs.mkdir()
+    (figs / "fig_nonfinite.py").write_text(NONFINITE_LIB, encoding="utf-8")
+    w = pool.one_shot("fig_nonfinite.py", str(figs), "main")
+    try:
+        w.ensure_built()
+        man = w.override("NonFinite", [])["manifest"]
+    finally:
+        pool.discard(w)
+
+    assert man["elements"], "整张图都没进 manifest"
+    bad = []
+    for el in man["elements"]:
+        for field in ("bbox", "anchor", "arrow_endpoints", "geometry"):
+            for v in _numbers(el.get(field)):
+                if not math.isfinite(v):
+                    bad.append(f"{el['gid']}.{field}")
+    assert not bad, f"这些元素的几何不是有限值，会毒死 workerd 那条控制面：{bad}"
+    # 序列化成协议帧时也必须是合法 JSON（allow_nan=False 是 worker 那道底线）
+    json.dumps(man, allow_nan=False)
+
+
+def _numbers(v):
+    if isinstance(v, dict):
+        v = list(v.values())
+    if isinstance(v, (list, tuple)):
+        for item in v:
+            yield from _numbers(item)
+    elif isinstance(v, (int, float)) and not isinstance(v, bool):
+        yield float(v)

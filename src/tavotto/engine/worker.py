@@ -709,7 +709,26 @@ def main() -> None:
             break
         except Exception as exc:  # noqa: BLE001 — 结构化返回，进程不退出
             resp = {"ok": False, "error": str(exc), "traceback": traceback.format_exc()}
-        sys.stdout.write(json.dumps(resp, ensure_ascii=False, default=_json_default) + "\n")
+        # `allow_nan=False`：**NaN / Infinity 不是 JSON**（RFC 8259），
+        # 而 Python 的 `json.dumps` 默认会把它们当字面量写出去、`json.loads`
+        # 也照收——于是 Python 渲染池一路绿灯，而 workerd（Rust serde_json）
+        # 严格拒收整帧、报「往协议管道里写了非 JSON 的内容」并重启会话。
+        # 同一份响应，两条控制面两个结果，而症状指向的是「协议错乱」，
+        # 与真实原因（某个包围盒是 inf）毫不相干。
+        #
+        # 几何那一层已经有总闸（`manifest._finite_geometry`），这里是**底线**：
+        # 将来别处再漏一个非有限值时，它变成一条**结构化错误**（两条控制面
+        # 表现一致、说得出是哪个字段），而不是一条只在其中一条上炸的坏帧。
+        try:
+            line = json.dumps(resp, ensure_ascii=False, default=_json_default,
+                              allow_nan=False)
+        except ValueError as exc:
+            line = json.dumps({"ok": False, "code": "non_finite_response",
+                               "error": f"响应里有非有限数值，无法编成合法 JSON: {exc}",
+                               "request_id": (req or {}).get("request_id")
+                               if isinstance(req, dict) else None},
+                              ensure_ascii=False)
+        sys.stdout.write(line + "\n")
         sys.stdout.flush()
 
 

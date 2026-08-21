@@ -17,6 +17,7 @@ import matplotlib as mpl
 import matplotlib.colors as mcolors
 import matplotlib.patheffects as mpatheffects
 from matplotlib.axes import Axes
+from matplotlib.axes._base import _AxesBase
 from matplotlib.collections import LineCollection, PathCollection, PolyCollection
 from matplotlib.container import BarContainer, ErrorbarContainer
 from matplotlib.figure import Figure
@@ -1763,7 +1764,15 @@ def _cls_key(artist) -> str | None:
         return "line"
     if isinstance(artist, Legend):
         return "legend"
-    if isinstance(artist, Axes):
+    # **`_AxesBase` 而不是 `Axes`**：`secondary_[xy]axis` 建出来的
+    # `SecondaryAxis` 直接从 `_AxesBase` 派生，**不是 `Axes` 的子类**
+    # （实测 mro = [SecondaryAxis, _AxesBase, Artist]）。只判 `Axes` 的话它
+    # 拿不到任何容器级字段——visible / grid / spines 一个都出不来，而它的
+    # 轴标签与刻度是独立元素、照常可编辑，于是界面上出现「这条轴的字能改、
+    # 轴本身点了没反应」这种说不通的半吊子。
+    # 私有基类是有意为之：matplotlib 没有公开的「Axes 类容器」抽象。
+    # `test_secondary_axis_detection_still_works` 看着这条依赖。
+    if isinstance(artist, _AxesBase):
         return "axes"
     if isinstance(artist, AxesImage):
         return "image"
