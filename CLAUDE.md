@@ -1210,6 +1210,34 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被它推翻**（
     `tests/test_worker_roundtrip.py` 末节（真 matplotlib + Flask 全链路，
     含 workerd 路径的一次性会话不泄漏）+ `web` 的 `WriteBackDialog.test.tsx`。
 
+## 1.0 稳定化（2026-08-21 起）
+
+退出条件、缺陷分级（P0 / P1 / release-blocking P2 / backlog P2）与 post-1.0
+架构 backlog 全在 `docs/1.0-release-readiness.md`，改动前先读。三条要点：
+
+- **收敛，不是架构完美**。除非是 correctness / safety / compatibility /
+  release blocker，**禁止扩大产品能力**，禁止趁机重写 override framework、
+  alias 系统或任何已经稳定的模块。值得改的记进那份文档的 backlog。
+- **五条结构性不变式**（`tests/test_invariants_engine.py` +
+  `tests/support/engine_invariant_probe.py`）：能力真实 / 逐字还原 /
+  热态==全量重放（含**删除**）/ 不许静默消失 / 单一权威。它们与
+  `tests/acceptance/`（我们今天 vs 昨天）和 CompatBench（原生 matplotlib vs
+  Tavotto）问的都不是同一个问题，**三者不能互相替代**。
+  能力真实那条**用像素说话**（`preview_png` 状态中立、6ms 一张、逐字节确定），
+  因为「设得进状态」证明不了「画面会变」。
+- **反空门禁纪律**：新增的核心不变式测试，提交前必须手工反证一次——把修复
+  拿掉，确认它真的红，并把结论写进 PR。本轮真撞到过一次「加了一道过滤、
+  拿掉却没有任何用例变红」，那道过滤被删掉了：**读的人会以为它在挡什么，
+  而它什么都没挡**，比没有更坏。豁免表要写得出理由，并区分「豁免」（本来
+  就不画）与「使能」（画在一个关着的通道上，开了就必须变）。
+
+CI 分三层（`.github/workflows/ci.yml` 抬头有全图）：PR 快线 / 合并资格
+（草稿 PR 上跳过，点 Ready for review 才跑）/ nightly 与 lab。**最终门禁一条
+没减，required checks 的名字一个没动**——分层用的是「草稿与否」，因为草稿
+本来就不能合并，那 5 个必需检查在草稿期没有结论完全无害，ruleset 一个字节
+不用改。ci.yml 与 codeql.yml 的 `cancel-in-progress` **只对 PR 开**：main 上
+每次 run 是那个 commit 的唯一验证记录，tag / release 链路不在分组里。
+
 ## 验证
 
 - 测试：`.venv/bin/python -m pytest`（tests/ 跑在 .venv；worker round-trip
