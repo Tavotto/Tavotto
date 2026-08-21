@@ -619,7 +619,12 @@ def _text_fields(t) -> list[dict]:
               "alpha": 1.0 if patch.get_alpha() is None else round(float(patch.get_alpha()), 2),
               "pad": round(pad, 2), "rounded": rounded}
     else:
-        bb = {"visible": False, "face": "#FFFFFF", "edge": "#000000",
+        # 还没有 bbox patch 时的合成默认值。**颜色一律经 `to_hex` 产出**，
+        # 不手写字面量：`mcolors.to_hex` 回的是小写，手写 `"#FFFFFF"` 会让
+        # 「开一次 bbox 再关掉」之后同一个字段从 `#FFFFFF` 变成 `#ffffff`
+        # ——画面一个像素没变，manifest 却不一样了，于是热态 ≠ 全量重放。
+        # 那正是「同一个值有两处出处」的最小样本（不变式 5）。
+        bb = {"visible": False, "face": to_hex("white"), "edge": to_hex("black"),
               "lw": 0.0, "alpha": 1.0, "pad": 0.3, "rounded": False}
     st = _stroke_state(t)
     axis3d = getattr(t, "_mm_axis", None)  # 3D 轴标签：labelpad 是唯一的位置旋钮
@@ -756,18 +761,25 @@ def _collection_fields(coll, *, label: bool) -> list[dict]:
         # **任何**虚线都被当成自定义 dash 显示成实线占位——
         # `LineCollection(..., linestyles="--")` 画出来是虚线、检查器说实线。
         # 这正是「同一个判据写两遍」的标准症状（见 `is_linecoll_family`）。
-        {"prop": "linestyle", "type": "enum", "value": _linecoll_linestyle_name(coll),
-         "options": ["-", "--", "-.", ":"], "group": "线条与填充"},
+        *([{"prop": "linestyle", "type": "enum",
+            "value": _linecoll_linestyle_name(coll),
+            "options": ["-", "--", "-.", ":"], "group": "线条与填充"}]
+          if "stroke_style" in caps else []),
         {"prop": "alpha", "type": "number",
          "value": 1.0 if coll.get_alpha() is None else round(float(coll.get_alpha()), 2),
          "min": 0, "max": 1, "step": 0.05},
         {"prop": "visible", "type": "bool", "value": bool(coll.get_visible())},
     ]
-    if "faces" in caps:
+    if "faces" in caps and "stroke_style" in caps:
         # 花纹画在**面**上。没有面的（LineCollection、`contour`）给了也白给
         # ——设得进状态、画面上一个像素都不变，那正是这套能力探针要挡的东西。
-        # 注意判据是 `faces` 而不是 `fill`：映射的 QuadMesh / contourf 有面，
-        # 只是那个面的颜色不归用户改。
+        # 注意判据是 `faces` 而不是 `fill`：contourf / hexbin 有面，只是那个
+        # 面的颜色不归用户改。
+        # **`pcolormesh` 有面却仍然不给**：它的 `QuadMesh` 交给
+        # `renderer.draw_quad_mesh`，那个渲染原语只接边色与线宽——花纹与线型
+        # 在参数里根本不存在（实测 hatch/linestyle 各 0 像素，而 `pcolor` 的
+        # `PolyQuadMesh` 是 10692 / 1100）。判据是 `stroke_style`，实测表见
+        # `overrides.honours_stroke_style`。
         fields.append(
             {"prop": "hatch", "type": "enum", "value": str(coll.get_hatch() or ""),
              "options": _hatch_options(coll.get_hatch()), "group": "线条与填充"})

@@ -353,21 +353,37 @@ def test_stem_linestyle_undo_does_not_widen_the_dashes(hot):
         assert after == before, f"撤销之后线型不是原来那条：{before!r} → {after!r}"
 
 
-def test_hatch_is_offered_only_where_there_are_faces(hot):
-    """花纹画在**面**上——没有面的 Collection 不许给这个开关。
+def test_hatch_needs_both_a_face_and_a_draw_path_that_paints_it(hot):
+    """花纹要**两个条件**：有面可画，而且这个 artist 的 draw 真的会画它。
 
-    Codex 在 PR #48 上报的 P2。`fill` 那道闸问的是「facecolor 归不归用户改」，
-    而花纹问的是另一件事：「有没有面可画」。映射的 QuadMesh 有面（花纹画得上，
-    只是颜色不归用户改），`contour` 与 LineCollection 的 facecolor 是 `'none'`
-    ——连面都没有，给了就是一个设得进状态、画面上一个像素都不变的开关。
+    第一条是 Codex 在 PR #48 上报的 P2：`fill` 那道闸问的是「facecolor 归不归
+    用户改」，花纹问的是「有没有面」——`contour` 与 LineCollection 的
+    facecolor 是 `'none'`（实测 `get_facecolor()` 长度 0），连面都没有。
+
+    第二条是**能力真实不变式扫出来的**，本用例的第一版还在断言相反的东西：
+    `pcolormesh` 的 `QuadMesh` 有面，花纹却照样画不出来。它不走 Collection 的
+    通用绘制路径，而是把整块网格交给 `renderer.draw_quad_mesh`——那个渲染原语
+    只接边色与线宽，**花纹和虚线在参数里根本不存在**。实测（都先设了
+    `edgecolor` + `linewidth`，数变化的像素）：
+
+        QuadMesh(pcolormesh)   hatch     0   linestyle     0
+        PolyQuadMesh(pcolor)   hatch 10692   linestyle  1100
+
+    `pcolor` 与 `pcolormesh` 落在两侧，所以这不是「网格图不支持」，是「那个
+    渲染原语不支持」。判据 `overrides.honours_stroke_style`，实测表由
+    `test_invariants_engine.py::test_the_mesh_stroke_style_table_still_holds`
+    每次重新渲染核对——写死的例外不许悄悄过期。
     """
     man = _man(hot, "FamColl")
-    # 有面：pcolormesh 的 QuadMesh（映射，facecolor 不给但花纹给）、fill_between
-    for gid in ("axes_0.collections_3", "axes_0.fill_2"):
-        props = set(_fields(man, gid))
-        assert "hatch" in props, f"{gid} 有面却没给花纹"
-    assert "facecolor" not in _fields(man, "axes_0.collections_3"), \
-        "映射的网格不该给 facecolor（花纹给了不代表颜色也给）"
+    # 有面 + 通用绘制路径：fill_between 的 PolyCollection
+    assert "hatch" in _fields(man, "axes_0.fill_2"), "fill_between 有面却没给花纹"
+    # 有面、但网格类的渲染原语不画花纹与线型
+    mesh = set(_fields(man, "axes_0.collections_3"))
+    assert "hatch" not in mesh, "pcolormesh 的 QuadMesh 给了画不出来的花纹"
+    assert "linestyle" not in mesh, "pcolormesh 的 QuadMesh 给了画不出来的线型"
+    # 边色与线宽它是认的——别把例外扩大成「网格图什么都不能改」
+    assert {"edgecolor", "linewidth"} <= mesh
+    assert "facecolor" not in mesh, "映射的网格不该给 facecolor"
     # 没有面：contour 与映射的线组
     for gid in ("axes_0.collections_4", "axes_0.collections_6"):
         assert "hatch" not in _fields(man, gid), f"{gid} 没有面却给了花纹"

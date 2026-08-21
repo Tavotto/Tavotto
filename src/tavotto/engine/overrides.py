@@ -19,7 +19,8 @@ import matplotlib.patheffects as mpatheffects
 from matplotlib.artist import Artist
 from matplotlib.axes import Axes
 from matplotlib.axes._base import _AxesBase
-from matplotlib.collections import Collection, LineCollection, PathCollection
+from matplotlib.collections import (Collection, LineCollection, PathCollection,
+                                    QuadMesh, TriMesh)
 from matplotlib.container import BarContainer, ErrorbarContainer
 from matplotlib.figure import Figure
 from matplotlib.legend import Legend
@@ -1830,6 +1831,47 @@ def _cls_key(artist) -> str | None:
     return None
 
 
+def _get_coll_edgecolor(coll):
+    """边色的**可回灌**表示：`_original_edgecolor`，不是解析出来的 RGBA 数组。
+
+    与 `_get_linecoll_ls` 是同一个坑的第三个入口——**getter 回的形状 ≠ setter
+    吃的形状**，而这一次的代价不是「值不一样」，是**能力被永久杀掉**。
+
+    matplotlib 判「边归不归 colormap 管」用的是 `_set_mappable_flags()`，
+    而它只看两个原始值（实测读的就是这段源码）：
+
+        if self._A is not None:
+            if not _str_equal(self._original_facecolor, 'none'):
+                self._face_is_mapped = True
+            else:
+                if self._original_edgecolor is None:      # <── 就是这一句
+                    self._edge_is_mapped = True
+
+    `set_edgecolor(c)` 把 `_original_edgecolor` 从 `None` 换成 `c`。**没有面的
+    映射集合**（LineCollection、`contour`）的颜色正是走边这条通道，于是：
+
+        改一次边色 → 撤销（回灌解析出来的 RGBA 数组）→ 像素**看着回去了**，
+        `_original_edgecolor` 却再也不是 None → 这条元素的 colormap **永久失效**，
+        之后改 cmap / vmin / vmax 一个像素都不动，而且不报错。
+
+    实测（3.10.8，映射的 LineCollection）：改 cmap 单独跑动 3278 px；走一遍
+    「改边色再撤销」之后，同一句 `set_cmap` 变成 **0 px**。撤销把像素还了，
+    把能力吞了——界面上那三个色图控件从此是死的。
+
+    回灌 `_original_edgecolor`（映射态下就是 `None`）能让 matplotlib 自己把
+    标志位重新算对。有面的那些（pcolormesh / 映射散点）不受影响：它们的
+    mapping 走 face 通道，边色本来就是用户的。
+    """
+    return getattr(coll, "_original_edgecolor", coll.get_edgecolor())
+
+
+def _get_coll_facecolor(coll):
+    """面色的可回灌表示。理由同 `_get_coll_edgecolor`：`_set_mappable_flags()`
+    读的是 `_original_facecolor`，回灌解析后的数组会让 `'none'` 这个**字符串
+    语义**丢失（数组不等于 'none'），于是本来没有面的集合被判成有面。"""
+    return getattr(coll, "_original_facecolor", coll.get_facecolor())
+
+
 # ---------------------------------------------------------------------------
 # Artist family 能力层（2026-08-21）
 #
@@ -1875,8 +1917,11 @@ HATCHES = ["", "/", "\\", "|", "-", "+", "x", "o", "O", ".", "*",
 #: 数组对象，setter 就地改完原值也跟着变，还原等于什么都没做。
 _COLLECTION_CAPS: dict[str, tuple] = {
     "label": _CAP_LABEL,
-    "facecolor": (lambda a: a.get_facecolor().copy(), lambda a, v: a.set_facecolor(v)),
-    "edgecolor": (lambda a: a.get_edgecolor().copy(), lambda a, v: a.set_edgecolor(v)),
+    # face / edge 的 getter 回的是**原始设定**（`_original_*`），不是解析出来
+    # 的 RGBA 数组：matplotlib 判「这条通道归不归 colormap 管」只看那两个值，
+    # 回灌数组会把映射永久关掉（详见 `_get_coll_edgecolor`）。
+    "facecolor": (_get_coll_facecolor, lambda a, v: a.set_facecolor(v)),
+    "edgecolor": (_get_coll_edgecolor, lambda a, v: a.set_edgecolor(v)),
     "linewidth": (lambda a: a.get_linewidths().copy(), _set_collection_lw),
     # 线型的 getter 走**未缩放**规格（`_us_linestyles`）而不是
     # `get_linestyle()`：后者回的是按线宽缩放过的 dash，`set_linestyle()` 会
@@ -1957,10 +2002,54 @@ def is_linecoll_family(artist) -> bool:
     return isinstance(artist, LineCollection) and not is_color_mapped(artist)
 
 
+def honours_stroke_style(coll) -> bool:
+    """这个 Collection 的 draw 认不认 `hatch` / `linestyle`。
+
+    **网格类不认**。`QuadMesh`（`pcolormesh`）与 `TriMesh`（`tripcolor(...,
+    shading="gouraud")`）不走 Collection 的通用绘制路径，而是把整块网格交给
+    `renderer.draw_quad_mesh` / `draw_gouraud_triangles`——那两个渲染原语只接
+    边色与线宽，**花纹和虚线在参数里根本不存在**。setter 照收、getter 照回、
+    manifest 照报，画面一个像素都不动。
+
+    实测（3.10.8，同一张图、都先设了 `edgecolor="#ff00ff"` + `linewidth=2`，
+    数的是变化的像素数）：
+
+        QuadMesh(pcolormesh)          hatch      0   linestyle      0
+        TriMesh(tripcolor gouraud)    hatch      0   linestyle      0
+        PolyQuadMesh(pcolor)          hatch  10692   linestyle   1100
+        PolyCollection(fill_between)  hatch   8304   linestyle   2616
+        PathCollection(scatter)       hatch   5036   linestyle   3560
+        EllipseCollection             hatch   1202   linestyle    771
+        RegularPolyCollection         hatch   1952   linestyle   1063
+        CircleCollection              hatch   2787   linestyle   1290
+        PatchCollection               hatch   4585   linestyle   1589
+        hexbin(PolyCollection)        hatch  11017   linestyle   2088
+
+    注意 `pcolor` 与 `pcolormesh` 落在**两侧**：前者出 `PolyQuadMesh`，走通用
+    路径，两条都认。所以这不是「网格图不支持」，是「那两个渲染原语不支持」。
+
+    ## 为什么这里仍然是 isinstance
+
+    matplotlib 没有公开的「你的 draw 认不认 hatch」谓词，而 `draw` 被
+    `@allow_rasterization` 包过，按字节码反查用的哪个渲染原语拿到的是包装器的
+    code——试过，`co_names` 里什么都没有。
+
+    但**这条例外与 `Arc` 那条不是一回事**：Arc 那次是照着注释推理、没做同类
+    对比（漏了 `fill` 默认为 False），而这张表是同条件量出来的，并且由
+    `tests/test_invariants_engine.py::test_the_mesh_stroke_style_table_still_holds`
+    **每次跑都重新渲染一遍**。哪天 matplotlib 给 `draw_quad_mesh` 补上花纹，
+    那条用例会红，我们跟着放开——例外不会悄悄过期。
+    """
+    return not isinstance(coll, (QuadMesh, TriMesh))
+
+
 def collection_caps(coll) -> frozenset[str]:
     """这个 Collection 上**真正改得动**的能力集。manifest 与 handler 共用它。
 
     * ``stroke``  边线：任何 Collection 都能加/改边（现在没有边 ≠ 加不上）
+    * ``stroke_style`` 花纹与线型：**网格类不认**（`QuadMesh` / `TriMesh` 交给
+                  `draw_quad_mesh` / `draw_gouraud_triangles`，那两个渲染原语
+                  只接边色与线宽）。判据见 `honours_stroke_style` 的实测表
     * ``faces``   **有面可画**：`get_facecolor()` 非空。这与 `fill` 是两件事
                   ——映射的 QuadMesh / contourf / hexbin 有面（花纹画得上）
                   但 facecolor 不归用户改；而 LineCollection 与 `contour`
@@ -1976,6 +2065,10 @@ def collection_caps(coll) -> frozenset[str]:
                   换掉——那是改数据，不是改样式。
     """
     caps = {"base", "stroke"}
+    if honours_stroke_style(coll):
+        # `stroke_style` = 花纹与线型。与 `stroke`（边色 / 线宽）分开，因为
+        # 网格类认后者不认前者——见 `honours_stroke_style` 的实测表。
+        caps.add("stroke_style")
     try:
         if _len0(coll.get_facecolor()):
             caps.add("faces")
