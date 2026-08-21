@@ -182,8 +182,12 @@ class BrowserSession:
                             MAX_TRACEBACK_BYTES))
 
         os.makedirs(self.workspace, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(source)
+        # **二进制写**：文本模式在 Windows 上把 `\n` 翻成 `\r\n`，磁盘上的字节
+        # 就不再是用户交出来的那份，完整性比对当场失效（CI 的 windows 腿实测
+        # 逮到过）。Pyodide 的 Emscripten FS 恰好不翻译，所以生产环境看不出来
+        # ——一个只在别的平台上成立的不变式不算不变式。
+        with open(path, "wb") as f:
+            f.write(source.encode("utf-8"))
         os.chdir(self.workspace)
         if self.workspace not in sys.path:
             sys.path.insert(0, self.workspace)
