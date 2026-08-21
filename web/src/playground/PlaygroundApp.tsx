@@ -622,7 +622,10 @@ function EditorView({
   const [cueDismissed, setCueDismissed] = useState(false)
   // 会话起来时那次核对的结论；下面在有意义的时刻重新核对
   const [integrity, setIntegrity] = useState<SourceIntegrity>(session.integrity)
-  const [recheckSeq, setRecheckSeq] = useState(0)
+  // 从 1 起：**进编辑态本身就要复核一次**。load 时那次摘要是在 `open` 之前
+  // 采的，而 `open` 会再画一遍——脚本注册的 `draw_event` 回调正是在那一刻
+  // 才有机会改写自己的源文件。只信 load 那次，等于漏掉了两者之间的窗口。
+  const [recheckSeq, setRecheckSeq] = useState(1)
 
   // ⌘Z / ⌘⇧Z：与工作台同一条 runUndoRedo 通道（带 undoRedoBlocked 守卫）
   useEffect(() => {
@@ -650,11 +653,16 @@ function EditorView({
   const servedRef = useRef(0)
   useEffect(() => {
     if (recheckSeq === servedRef.current || busy) return
-    servedRef.current = recheckSeq
     let alive = true
     setIntegrity((cur) => ({ ...cur, verdict: 'checking' }))
     void verifySourceIntegrity(session).then((next) => {
-      if (alive) setIntegrity(next)
+      if (!alive) return
+      // **采纳了结果才算服务过**。在 then 之前就推进 servedRef 的话，用户在
+      // 核对在途时动一下（busy 翻转 → cleanup 把 alive 置 false）就会把结果
+      // 丢掉，而序号已经推过、busy 落下来也不会再发一次——徽章永远停在
+      // 「核对中」，一次本该报出来的 mismatch 就此隐身。
+      servedRef.current = recheckSeq
+      setIntegrity(next)
     })
     return () => {
       alive = false

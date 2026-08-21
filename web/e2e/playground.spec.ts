@@ -414,6 +414,42 @@ test('没有 Web Crypto 时降级成「未核对」，而不是把整个会话�
   await expect(page.getByRole('alert')).toHaveCount(0)
 })
 
+test('draw_event 里改写自己：load 之后 open 之前的窗口也要核到', async ({ page }) => {
+  // 网站 PR 上那条审查意见：load 时采的摘要在 `open` **之前**，而 `open` 会
+  // 再画一遍——脚本注册的 `draw_event` 回调正是在那一刻才动手改自己的源文件。
+  // 只信 load 那一次，编辑器会带着「未改动」开起来，而文件已经变了。
+  // 修法是进编辑态本身就复核一次（recheckSeq 从 1 起）。
+  const src = [
+    'import matplotlib.pyplot as plt',
+    '',
+    '_n = [0]',
+    'def _on_draw(evt):',
+    '    _n[0] += 1',
+    '    if _n[0] == 2:',
+    '        with open(__file__, "ab") as f:',
+    '            f.write(b"\\n# rewritten during draw\\n")',
+    '',
+    'fig, ax = plt.subplots(figsize=(2.6, 2))',
+    'ax.plot([0, 1, 2], [1, 0, 2])',
+    'ax.set_title("DrawEvent")',
+    'fig.canvas.mpl_connect("draw_event", _on_draw)',
+    'fig.savefig("drawevt.pdf")',
+    '',
+  ].join('\n')
+
+  await page.goto(`${origin}/?lang=zh`)
+  await page.locator('input[type=file]').setInputFiles({
+    name: 'drawevt.py',
+    mimeType: 'text/x-python',
+    buffer: Buffer.from(src, 'utf-8'),
+  })
+  await waitForEditor(page)
+
+  // 进编辑态之后那次复核必须逮到它
+  await expect(page.getByRole('alert')).toContainText('意外改动', { timeout: 60_000 })
+  await expect(page.getByText('· 未改动')).toHaveCount(0)
+})
+
 test('不支持的依赖：在下载科学栈之前拒绝，并给桌面版出口', async ({ page }) => {
   const requests = recordRequests(page)
   await page.goto(`${origin}/?lang=zh`)
