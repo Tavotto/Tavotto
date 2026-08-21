@@ -256,7 +256,7 @@
       }
     },
     "art_eventplot": {
-      "classification": "partial_support",
+      "classification": "full_support",
       "stages": {
         "discover": true,
         "execute": true,
@@ -267,8 +267,7 @@
         "replay": true,
         "export": true,
         "fidelity": true
-      },
-      "reason": "eventplot 画的是 EventCollection（LineCollection 的子类），Tavotto 不认——事件竖线选不中。与 art_stem / art_hlines_vlines 同一个缺口。"
+      }
     },
     "art_figure_legend": {
       "classification": "full_support",
@@ -371,7 +370,7 @@
       "reason": "hist2d 画的是 QuadMesh，Tavotto 不认这个 artist——图渲染正确、标题与刻度可编辑，但那块网格本身选不中。QuadMesh 需要一族新的handler（cmap/alpha/visible），见 artist 普查。"
     },
     "art_hlines_vlines": {
-      "classification": "partial_support",
+      "classification": "full_support",
       "stages": {
         "discover": true,
         "execute": true,
@@ -382,8 +381,7 @@
         "replay": true,
         "export": true,
         "fidelity": true
-      },
-      "reason": "hlines/vlines 出的是 LineCollection，Tavotto 不认——manifest 里只有主曲线那条 Line2D，参考线选不中。这是 artist 普查里权重最高的一个缺口（LineCollection 横跨 hlines/vlines、stem、eventplot、streamplot 四类）。"
+      }
     },
     "art_imshow": {
       "classification": "full_support",
@@ -414,22 +412,18 @@
       }
     },
     "art_legend_overlapping_fontsize": {
-      "classification": "product_bug",
+      "classification": "full_support",
       "stages": {
         "discover": true,
         "execute": true,
         "capture": true,
         "open": true,
         "semantic": true,
-        "edit": false,
+        "edit": true,
         "replay": true,
         "export": true,
         "fidelity": true
-      },
-      "reason": "`legend.fontsize` 与 `legend.texts_j.fontsize` 指向同一批 Text。先改整体、再改单条时，单条那次记下的 originals 已经是被整体改过的值（7.5 而不是脚本原样的 10.0），于是撤销之后字号停在 7.5，回不到原样。应用与渲染都正确，只有撤销回不去。",
-      "follow_up": "重叠 override 的 originals 快照是顺序相关的，这是 overrides.apply 的通用问题（不是图例特有）。修法要么给「广播型」prop 标一个别名组、让组内的窄 prop 在广播 prop 还原后强制重放，要么在首次快照时按别名组一起采。**不是数据损坏级**：写回事务的`_compare_manifests` 会当场发现热态与全量重放不一致并回 409 `replay_divergence`（实测 26 个元素里 4 处分歧），所以坏状态写不进用户的原件——用户看到的是「撤销没生效」+「写回被拦」，不是悄悄写坏。修之前不要把这条从基线里拿掉。",
-      "stage": "edit",
-      "note": "未通过：['edit']"
+      }
     },
     "art_matshow": {
       "classification": "full_support",
@@ -616,7 +610,7 @@
       }
     },
     "art_stem": {
-      "classification": "partial_support",
+      "classification": "full_support",
       "stages": {
         "discover": true,
         "execute": true,
@@ -627,8 +621,7 @@
         "replay": true,
         "export": true,
         "fidelity": true
-      },
-      "reason": "stem 的竖线是 LineCollection，Tavotto 不认（manifest 里只有基线那条 Line2D）。渲染与导出完全正确，只是竖线选不中也改不了。补它要新写一族 LineCollection handler，不是现有 line 角色能覆盖的。"
+      }
     },
     "art_step": {
       "classification": "full_support",
@@ -645,7 +638,7 @@
       }
     },
     "art_streamplot": {
-      "classification": "partial_support",
+      "classification": "full_support",
       "stages": {
         "discover": true,
         "execute": true,
@@ -656,8 +649,7 @@
         "replay": true,
         "export": true,
         "fidelity": true
-      },
-      "reason": "streamplot 的箭头帽是 FancyArrowPatch（认得、可编辑），但流线本身是 LineCollection（不认）。同一张图上两半待遇不同，是LineCollection 缺口最直观的一个例子。"
+      }
     },
     "art_text_annotate": {
       "classification": "full_support",
@@ -799,7 +791,7 @@
       }
     },
     "ax_inset": {
-      "classification": "partial_support",
+      "classification": "full_support",
       "stages": {
         "discover": true,
         "execute": true,
@@ -810,8 +802,7 @@
         "replay": true,
         "export": true,
         "fidelity": true
-      },
-      "reason": "`instrument` 只遍历 `fig.axes`，而 `secondary_[xy]axis` / `inset_axes` 建出来的是 **`ax.child_axes`**——它们整个不在元素表里：插图里的曲线选不中、次坐标轴的标签也改不了。宿主 axes 的一切照常可编辑，渲染与导出完全正确。补它不是「多遍历一个列表」那么简单：子 axes 由父级的 `_axes_locator` 每帧重新定位，直接开放 position override 会出现「设了但下一帧被顶回去」——那比不支持更坏。"
+      }
     },
     "ax_inverted": {
       "classification": "full_support",
@@ -924,7 +915,7 @@
         "export": true,
         "fidelity": true
       },
-      "reason": "`instrument` 只遍历 `fig.axes`，而 `secondary_[xy]axis` / `inset_axes` 建出来的是 **`ax.child_axes`**——它们整个不在元素表里：插图里的曲线选不中、次坐标轴的标签也改不了。宿主 axes 的一切照常可编辑，渲染与导出完全正确。补它不是「多遍历一个列表」那么简单：子 axes 由父级的 `_axes_locator` 每帧重新定位，直接开放 position override 会出现「设了但下一帧被顶回去」——那比不支持更坏。"
+      "reason": "次坐标轴的内容现在进得了元素表（轴标签与刻度都可编辑），但**它自身的属性仍改不动**：`SecondaryAxis` 直接从 `_AxesBase` 派生、**不是 `Axes` 的子类**，`overrides._cls_key()` 对它回 None，于是 visible / grid / spines 这一组一个字段都出不来。修法是 `_cls_key` 里那条 `isinstance(artist, Axes)` 放宽（一行），本次刻意没动——它落在另一处的所有权边界里。另外数据范围那一组是**故意不出**的：实测 set_xlim 与 invert_xaxis 会被父轴的换算函数每帧顶回去、set_aspect 被 matplotlib 自己拒绝并 warning，出了就是一个按了会弹回来的旋钮。"
     },
     "ax_secondary_y": {
       "classification": "partial_support",
@@ -939,7 +930,7 @@
         "export": true,
         "fidelity": true
       },
-      "reason": "`instrument` 只遍历 `fig.axes`，而 `secondary_[xy]axis` / `inset_axes` 建出来的是 **`ax.child_axes`**——它们整个不在元素表里：插图里的曲线选不中、次坐标轴的标签也改不了。宿主 axes 的一切照常可编辑，渲染与导出完全正确。补它不是「多遍历一个列表」那么简单：子 axes 由父级的 `_axes_locator` 每帧重新定位，直接开放 position override 会出现「设了但下一帧被顶回去」——那比不支持更坏。"
+      "reason": "次坐标轴的内容现在进得了元素表（轴标签与刻度都可编辑），但**它自身的属性仍改不动**：`SecondaryAxis` 直接从 `_AxesBase` 派生、**不是 `Axes` 的子类**，`overrides._cls_key()` 对它回 None，于是 visible / grid / spines 这一组一个字段都出不来。修法是 `_cls_key` 里那条 `isinstance(artist, Axes)` 放宽（一行），本次刻意没动——它落在另一处的所有权边界里。另外数据范围那一组是**故意不出**的：实测 set_xlim 与 invert_xaxis 会被父轴的换算函数每帧顶回去、set_aspect 被 matplotlib 自己拒绝并 warning，出了就是一个按了会弹回来的旋钮。"
     },
     "ax_semilogx": {
       "classification": "full_support",
