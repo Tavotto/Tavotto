@@ -49,6 +49,7 @@ RUNTIME_LOCK = ROOT / "packaging" / "playground-runtime.json"
 ENGINE_FILES = [
     "browser.py",
     "browser_imports.py",
+    "figcapture.py",
     "manifest.py",
     "overrides.py",
     "patchspec.py",

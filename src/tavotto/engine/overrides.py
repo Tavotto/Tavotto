@@ -23,7 +23,7 @@ from matplotlib.figure import Figure
 from matplotlib.legend import Legend
 from matplotlib.lines import Line2D
 from matplotlib.markers import MarkerStyle
-from matplotlib.patches import (BoxStyle, FancyArrowPatch, PathPatch, Polygon,
+from matplotlib.patches import (BoxStyle, FancyArrowPatch, Patch,
                                 Rectangle)
 from mpl_toolkits.mplot3d import proj3d
 from matplotlib.text import Text
@@ -556,6 +556,24 @@ def spine_side_width(ax: Axes, side: str) -> float:
         return float(cfg[f"{side}_width"])
     sp = ax.spines.get(side)
     return float(sp.get_linewidth()) if sp is not None else spine_all_width(ax)
+
+
+def _set_legend_fontsize(leg, value) -> None:
+    """图例字号：标量作用于每一条，序列逐条对应（多余的忽略、缺的沿用最后一个）。
+
+    序列那一支是给**撤销**用的：`originals` 里存的就是 getter 回的那份逐条
+    列表。只认标量的话，改过图例字号之后就再也还原不回去。
+    """
+    texts = list(leg.get_texts())
+    if isinstance(value, (list, tuple)):
+        if not value:
+            return
+        for i, t in enumerate(texts):
+            t.set_fontsize(float(value[min(i, len(value) - 1)]))
+        return
+    size = float(value)
+    for t in texts:
+        t.set_fontsize(size)
 
 
 def _mk_spine_handler(key: str, read):
@@ -1673,9 +1691,12 @@ def _cls_key(artist) -> str | None:
         return "image"
     if isinstance(artist, Rectangle) and getattr(artist, "_mm_bar", False):
         return "bar"
-    # 脚本 add_patch 的独立形状（`ax.fill()` 出的 Polygon、手搓的 PathPatch）。
-    # 必须排在 FancyArrowPatch / bar 之后：它们也是 Patch，各有各的契约
-    if isinstance(artist, (Polygon, PathPatch)):
+    # 脚本 add_patch 的独立形状。**任何 Patch 都算**——`ax.fill()` 的 Polygon、
+    # 手搓的 PathPatch，也包括 `Rectangle`（axhspan/axvspan）、`Circle`、
+    # `Ellipse`、`Wedge`（ax.pie）。这一组 handler 用的全是 Patch 的通用
+    # API，泛化不引入新语义。必须排在 FancyArrowPatch / bar 之后：它们也是
+    # Patch，各有各的契约（箭头有端点、柱属于系列）。
+    if isinstance(artist, Patch):
         return "patch"
     if isinstance(artist, PathCollection):
         return "scatter"
@@ -1843,9 +1864,15 @@ HANDLERS: dict[tuple[str, str], tuple] = {
 
     ("legend", "visible"):  (lambda a: a.get_visible(), lambda a, v: a.set_visible(bool(v))),
     ("legend", "frameon"):  (lambda a: a.get_frame_on(), lambda a, v: a.set_frame_on(bool(v))),
+    # getter 回**一条一个**的列表（脚本可以把某一条设成别的字号，撤销时要能
+    # 逐条还原回去），所以 setter 必须同时吃标量与序列——**restore 走的正是
+    # `setter(artist, originals[key])`**，两边形状不一致的话「改了图例字号
+    # 之后撤销不回来」，而且只在撤销那一刻才炸（`float() argument must be a
+    # string or a real number, not 'list'`）。CompatBench 的 art_legend 就是
+    # 这么把它抓出来的。
     ("legend", "fontsize"): (
         lambda a: [t.get_fontsize() for t in a.get_texts()],
-        lambda a, v: [t.set_fontsize(float(v)) for t in a.get_texts()],
+        lambda a, v: _set_legend_fontsize(a, v),
     ),
     ("legend", "loc_frac"): (_get_legend_loc, _set_legend_loc_frac),
 

@@ -1822,3 +1822,80 @@ def test_axes_follow_gids_cover_colorbar_and_twin_but_not_shared(tmp_path):
         if proc.poll() is None:
             proc.kill()
         proc.wait(timeout=10)
+
+
+# ---------------------------------------------------------------------------
+# Collection 的包围盒兜底（CompatBench minimum 档抓到的）
+# ---------------------------------------------------------------------------
+FILL_LIB = '''\
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+def main():
+    t = np.linspace(0.0, 6.0, 40)
+    a = np.sin(t) + 1.5
+    fig, ax = plt.subplots(figsize=(3.6, 2.4))
+    ax.plot(t, a, label="mean")
+    ax.fill_between(t, a - 0.3, a + 0.3, alpha=0.35, label="band")
+    ax.set_title("Error band")
+    ax.legend()
+    fig.savefig("FillBand.pdf")
+
+    fig2, bx = plt.subplots(figsize=(3.2, 2.8))
+    bx.pcolor(np.arange(64, dtype="float64").reshape(8, 8), cmap="viridis")
+    bx.set_title("Mesh")
+    fig2.savefig("FillMesh.pdf")
+'''
+
+
+def test_fill_between_area_is_editable(tmp_path):
+    """`fill_between` 的填充区必须进 manifest 并且真的能改。
+
+    **matplotlib 3.8 上 `PolyCollection.get_window_extent()` 回的是 `-inf`**
+    （3.10+ 换成 FillBetweenPolyCollection 才自带可用的框），于是整片填充区
+    在界面上不存在——而 pyproject 宣称的下界正是 3.8。CompatBench 的
+    minimum 档把它抓了出来（`art_fill_between` 是 Tier 1）。修法与散点当年
+    同一条：artist 给不出框时用数据范围换算。
+    """
+    figs = tmp_path / "figs"
+    figs.mkdir()
+    (figs / "fig_fill.py").write_text(FILL_LIB, encoding="utf-8")
+    w = pool.one_shot("fig_fill.py", str(figs), "main")
+    try:
+        w.ensure_built()
+        man = w.override("FillBand", [])["manifest"]
+        fills = [e for e in man["elements"] if e["role"] == "fill"]
+        assert fills, "fill_between 的填充区没有进 manifest"
+        gid = fills[0]["gid"]
+        resp = w.override("FillBand", [{"gid": gid, "prop": "facecolor",
+                                        "value": "#AA5533"}])
+        assert not (resp.get("warnings") or []), resp["warnings"]
+        got = next(f["value"] for e in resp["manifest"]["elements"]
+                   if e["gid"] == gid for f in e["editable"]
+                   if f["prop"] == "facecolor")
+        assert got.lower() == "#aa5533"
+    finally:
+        pool.discard(w)
+
+
+def test_scalar_mapped_meshes_stay_out_of_the_manifest(tmp_path):
+    """标量映射的网格（pcolor / pcolormesh / hexbin）**刻意**不进 manifest。
+
+    它们的颜色由 colormap 每次 draw 重算（`update_scalarmappable`），放进去
+    会让 facecolor 这类编辑「设了但下一帧被顶回去」——那比不支持更坏。
+    这条钉住的是那个取舍本身：包围盒兜底不许顺手把它们也放进来。
+    """
+    figs = tmp_path / "figs"
+    figs.mkdir()
+    (figs / "fig_fill.py").write_text(FILL_LIB, encoding="utf-8")
+    w = pool.one_shot("fig_fill.py", str(figs), "main")
+    try:
+        w.ensure_built()
+        man = w.override("FillMesh", [])["manifest"]
+        assert not [e for e in man["elements"] if e["role"] == "fill"], \
+            "标量映射的网格进了 manifest——它的 facecolor 编辑不会生效"
+        assert [e for e in man["elements"] if e["role"] == "title"], \
+            "整张图都没进 manifest，兜底判据写反了"
+    finally:
+        pool.discard(w)

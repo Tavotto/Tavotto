@@ -1,0 +1,59 @@
+{
+  "schema": 1,
+  "_comment": [
+    "CompatBench 的版本矩阵。**这里只写「去哪读版本」，绝不复制版本号**",
+    "——版本锁是唯一输入（CLAUDE.md），复制一份必然在某次升级里悄悄漂开，",
+    "而漂开的表现是「CI 上验的 matplotlib 和用户拿到的不是同一个」。",
+    "",
+    "带 source 的 target 从锁文件现读；只有 minimum 那一档写死精确版本，",
+    "因为它不对应任何发行产物——它是 pyproject 声明的 `matplotlib>=3.8`",
+    "那条下界，必须自己钉一个精确的补丁版本（`pip install matplotlib>=3.8`",
+    "在 CI 上等于装 latest，那样这一档什么都没验）。"
+  ],
+  "targets": {
+    "current": {
+      "required": false,
+      "note": [
+        "「当前环境里装的是什么就用什么」。本地开发与 `--target current`",
+        "走它——不做任何版本断言，因此**不能**作为发行判据。"
+      ]
+    },
+    "minimum": {
+      "required": true,
+      "python": "3.10",
+      "matplotlib": "3.8.4",
+      "numpy": "1.26.4",
+      "note": [
+        "pyproject 的 `worker` extras 宣称 `matplotlib>=3.8`，而实际发行的",
+        "内置 runtime 是 3.11.x——两者不是同一个东西，宣称的那条下界必须",
+        "自己有一档在验，否则「支持 3.8」只是一句没人跑过的话。",
+        "3.8.4 是 3.8 系列的末版；numpy 钉在 1.26.4（2.x 与 mpl 3.8 不兼容）。",
+        "Python 钉 3.10 = pyproject 的 requires-python 下界。",
+        "改这三个数之前先确认 PyPI 上真的能装到。"
+      ]
+    },
+    "bundled": {
+      "required": true,
+      "source": "packaging/runtime-lock.json",
+      "note": [
+        "桌面版内置渲染 runtime 的那一套（用户真正拿到的）。版本从锁文件",
+        "现读——三个平台目标的闭包刻意逐字相同，取任意一个即可。"
+      ]
+    },
+    "browser": {
+      "required": true,
+      "subset": true,
+      "source": "packaging/playground-runtime.json",
+      "note": [
+        "浏览器 playground（网站 /try）的 Pyodide 运行时。只跑",
+        "browser_eligible 的子集。",
+        "",
+        "**如实记账**：CompatBench 在这一档跑的是 `engine/browser.py` 这**同",
+        "一份代码**在 CPython 上的行为（与 tests/test_browser_session.py 同一",
+        "条纪律：语义与解释器无关）。真 Pyodide + 真 CDN 的那一步在",
+        "`web/e2e/playground.spec.ts`，不在这里——所以这一档验的是**语义**",
+        "对拍，不是 WASM 运行时本身。别把它当成「Pyodide 上跑过了」。"
+      ]
+    }
+  }
+}

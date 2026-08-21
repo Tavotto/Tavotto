@@ -626,7 +626,17 @@ def analyze_script(path: Path, figures_dir: Path) -> dict | None:
         return None
     entry = _entry_of(tree)
     if entry is None:
-        return None
+        # 顶层直写、既没有函数也没有 `if __name__` 守卫——AI 生成的
+        # matplotlib 脚本最常见的形态之一：
+        #
+        #     import matplotlib.pyplot as plt
+        #     fig, ax = plt.subplots(); ax.bar(...); fig.savefig("x.pdf")
+        #
+        # 以前这里直接判「不是绘图脚本」，于是整个脚本对 Tavotto 隐形，
+        # 而它跑起来与 `python figure.py` 一模一样。**先按内联脚本试**，
+        # 底下那道 `if not an.sites` 仍然会把真正不产图的模块挡掉
+        # （工具/样式模块照旧返回 None），所以这里放宽不会引入误报。
+        entry = registry.INLINE_ENTRY
     an = _Analyzer(tree, path.name)
     an.run(entry)
     if not an.sites:

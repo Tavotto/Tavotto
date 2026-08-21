@@ -353,6 +353,7 @@ class TestUpgradeAcceptance:
 @pytest.mark.parametrize("script", [
     "lab_acceptance.py", "soak.py", "visual_regression.py",
     "benchmark.py", "upgrade_acceptance.py",
+    "compat_matrix.py", "compat_driver.py",
 ])
 def test_every_lab_script_has_a_working_cli(script):
     """每个脚本都要能 `--help`。

@@ -9,12 +9,13 @@ build_manifest(state)：每次渲染后调用——读取元素当前属性值�
 """
 from __future__ import annotations
 
+import math
 import sys
 
 from matplotlib.axes import Axes
-from matplotlib.collections import PathCollection, PolyCollection
+from matplotlib.collections import Collection, PathCollection, PolyCollection
 from matplotlib.container import BarContainer, ErrorbarContainer
-from matplotlib.patches import FancyArrowPatch, PathPatch, Polygon
+from matplotlib.patches import FancyArrowPatch, Patch
 from matplotlib.text import Text
 
 import pathgeom
@@ -227,10 +228,18 @@ def instrument(state: FigState) -> None:
                     _register(state, f"axes_{i}.scatter_{j}", coll, "scatter", nice)
                 elif isinstance(coll, PolyCollection):
                     _register(state, f"axes_{i}.fill_{j}", coll, "fill", f"填充区域 {j + 1}")
-            # 脚本直接 add_patch 的独立箭头（XPS 峰位标注这类画法）与独立形状
-            # （`ax.fill()` 出的 Polygon、手搓的 PathPatch）。gid 用 patches 里的
-            # 树序 j 保证重建稳定，label 各自计数。柱形系列的 Rectangle 也在
-            # ax.patches 里，已经登记过，这里必须跳过（skip_ids 收了它们）
+            # 脚本直接 add_patch 的独立箭头（XPS 峰位标注这类画法）与独立形状。
+            # 形状这一档**认任何 Patch**，不只是 Polygon / PathPatch：
+            # `Rectangle`（axhspan/axvspan）、`Circle`、`Ellipse`、`Wedge`
+            # （ax.pie）同样是用户画出来的东西，只认两种的话它们在界面上根本
+            # 不存在——CompatBench 的 art_shapes / art_axhspan_axvspan /
+            # art_pie 就是这么现形的。`patch` 那组 handler（facecolor /
+            # edgecolor / linewidth / linestyle / alpha / visible / zorder）
+            # 本来就建在 Patch 的通用 API 上，泛化不需要新写 handler。
+            # gid 用 patches 里的树序 j 保证重建稳定，label 各自计数。
+            # 柱形系列的 Rectangle 也在 ax.patches 里，已经登记过，这里必须
+            # 跳过（skip_ids 收了它们）；FancyArrowPatch 在上一支被拦掉，
+            # 它有自己的端点契约；色条轴上的 patch 由 is_cbax 挡住。
             arrow_n = 0
             shape_n = 0
             # 色条轴上的 patch 不是用户的形状：`extend` 的两个延伸三角就是
@@ -245,7 +254,7 @@ def instrument(state: FigState) -> None:
                     pt._mm_arrow_standalone = True  # noqa: SLF001
                     _register(state, f"axes_{i}.arrows_{j}", pt,
                               "arrow_patch", f"箭头 {arrow_n}")
-                elif (isinstance(pt, (Polygon, PathPatch))
+                elif (isinstance(pt, Patch)
                       and id(pt) not in skip_ids and not is_cbax):
                     shape_n += 1
                     _register(state, f"axes_{i}.patches_{j}", pt, "patch",
@@ -902,6 +911,50 @@ def _fields_for(el) -> list[dict]:
 _MIN_HIT_PX = 4.0  # 扁平元素最小命中厚度（display 像素）
 
 
+def _finite_box(bb) -> bool:
+    """包围盒的四个数都是有限值。
+
+    matplotlib 3.8 的 `PolyCollection.get_window_extent()` 回的是 **-inf**
+    （空 Bbox 的默认值），而不是零尺寸框——只判 `width <= 0` 会误以为
+    「这是个扁平元素」而不是「这个 artist 根本没给出框」。
+    """
+    try:
+        return all(math.isfinite(v) for v in (bb.x0, bb.y0, bb.x1, bb.y1))
+    except (TypeError, ValueError):
+        return False
+
+
+def _collection_datalim(artist):
+    """Collection 自己不给包围盒时，用**数据范围**换算 display 框；不适用返回 None。
+
+    散点（PathCollection）当年就栽在这里——`Artist.get_window_extent` 对集合
+    是空框，散点根本进不了 manifest。同一个坑在 **matplotlib 3.8** 上更宽：
+    那一版 `fill_between` / `fill_betweenx` / `stackplot` 出的 PolyCollection
+    的 window extent 是 `-inf`，于是**整片填充区在界面上不存在**（3.10+ 换成
+    了 `FillBetweenPolyCollection`，自带可用的框，所以只在旧版本上发作）。
+    CompatBench 的 minimum 档（matplotlib 3.8.4）是这么把它抓出来的：
+    `art_fill_between` 是 Tier 1。
+
+    **标量映射的集合刻意排除**（`get_array()` 非空：pcolor / pcolormesh /
+    hexbin / 带 C 的 barbs）。它们的颜色由 colormap 每次 draw 重算
+    （`update_scalarmappable`），放进 manifest 会让 `facecolor` 这类编辑
+    「设了但下一帧被顶回去」——那比不支持更坏。它们要的是一族网格感知的
+    handler（cmap / alpha / visible），记在 artist 普查里等排期。
+    """
+    if not isinstance(artist, Collection) or artist.get_array() is not None:
+        return None
+    ax = getattr(artist, "axes", None)
+    if ax is None:
+        return None
+    try:
+        bb = ax.transData.transform_bbox(artist.get_datalim(ax.transData))
+    except Exception:                                   # noqa: BLE001
+        return None
+    if not _finite_box(bb) or (bb.width <= 0 and bb.height <= 0):
+        return None
+    return bb
+
+
 def _padded_bbox(bb, W: float, H: float) -> list[float]:
     """display Bbox → figure 分数（top-origin），零厚度的边垫到可点中。"""
     w = max(float(bb.width), _MIN_HIT_PX)
@@ -1028,8 +1081,12 @@ def build_manifest(state: FigState, stem: str) -> dict:
         else:
             try:
                 bb = artist.get_window_extent(renderer)
-                if bb.width <= 0 and bb.height <= 0:
-                    continue
+                if not _finite_box(bb) or (bb.width <= 0 and bb.height <= 0):
+                    # artist 自己给不出框：Collection 还能用数据范围换算一次
+                    # （见 `_collection_datalim`），其余的老老实实丢掉。
+                    bb = _collection_datalim(artist)
+                    if bb is None:
+                        continue
                 # 水平 / 垂直的扁平线（基线、参考线）单边为 0，垫成可点中的窄条
                 entry["bbox"] = _padded_bbox(bb, W, H)
             except Exception:

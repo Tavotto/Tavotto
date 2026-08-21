@@ -58,8 +58,16 @@ import overrides as overrides_mod  # noqa: E402
 # 在这里复制一份「一样的算法」= 两边迟早分叉，而分叉的表现是哈希对不上、
 # 缓存永远不命中，没人会立刻联想到序列化细节。
 import patchspec  # noqa: E402
+# Figure 捕获策略（savefig stem 怎么取、跑完之后还活着的 pyplot Figure 怎么
+# 补进来、相对路径只读回退）与浏览器 playground **共用同一份实现**。抄一份
+# 进来的话，同一个脚本会在两个入口里产出不同的 stem——前端按 stem 索引一切。
+import figcapture  # noqa: E402
 
 CAPTURE: dict[str, object] = {}   # stem -> Figure（脚本产出顺序）
+#: 每个 stem 的捕获来源（figcapture.SOURCE_*）。`pyplot` 的那些从没存过盘，
+#: 因此**没有原始产物可写回**——build 响应如实带出去，别让调用方以为
+#: 「捕获到了」就等于「磁盘上有一份原件」。
+CAPTURE_SOURCE: dict[str, str] = {}
 STATES: dict[str, overrides_mod.FigState] = {}
 _intercept = True
 _REAL_SAVEFIG = mfigure.Figure.savefig
@@ -125,10 +133,10 @@ def _patched_savefig(self, fname, *args, **kwargs):
     """通用兜底：raw fig.savefig 的脚本也被捕获；同 stem 的 pdf/png 只记一次。"""
     if not _intercept:
         return _REAL_SAVEFIG(self, fname, *args, **kwargs)
-    if isinstance(fname, (str, os.PathLike)):
-        stem = Path(os.fspath(fname)).stem
-        if stem:
-            CAPTURE.setdefault(stem, self)
+    stem = figcapture.savefig_stem(fname)
+    if stem:
+        CAPTURE.setdefault(stem, self)
+        CAPTURE_SOURCE.setdefault(stem, figcapture.SOURCE_SAVEFIG)
     return None
 
 
@@ -158,6 +166,8 @@ class Worker:
         self.entry = args.entry
         self.preview_dpi = args.preview_dpi
         self.built = False
+        #: pyplot 兜底因上限丢掉的张数（0 = 一张没丢）。build 响应带出去。
+        self.dropped_figures = 0
         self._manifest_cache: dict[str, dict] = {}
         # 见过的 request_id（v1 的 cancel 用来分辨「那条已经跑完了」和
         # 「根本没见过这个 id」）。worker 串行读 stdin，能读到 cancel 就说明
@@ -217,6 +227,13 @@ class Worker:
 
         Path.write_text = _guarded_write_text
 
+        # 相对路径**只读**回退：cwd 在沙盒里，而 `pd.read_csv("data.csv")` 这类
+        # 写法在 `python figure.py` 下是天经地义的。只读、只在沙盒里确实没有
+        # 这个文件时、且换算后仍落在图库内才生效——写/删/改一个字节都不经过
+        # 它，沙盒作为**写入**边界完全没有松动（语义与理由见 figcapture）。
+        figcapture.install_relative_read_fallback(str(self.script.parent),
+                                                 str(self.figures_dir))
+
         # 拦截必须发生在 import 脚本之前（多数脚本 from paper_style import save）
         mfigure.Figure.savefig = _patched_savefig
         # paper_style 是某些图库的私有方言，不是引擎的依赖：没有就跳过，
@@ -246,6 +263,27 @@ class Worker:
                 getattr(module, self.entry)()
         script_ms = _ms(t_script)
 
+        # pyplot 兜底：从不 savefig 的脚本（`plt.plot(...); plt.show()` 这种
+        # AI 最常写的形态）也要能用。**与浏览器 playground 同一份策略**——
+        # 抄一份进来的话同一个脚本会在两个入口产出不同的 stem。
+        #
+        # 只在脚本真的 import 过 pyplot 时才问它：没 import 过就不可能有 pyplot
+        # figure，而在这里 import 一次要白付几十毫秒（还会给纯 OO API 的脚本
+        # 凭空建一个 figure 管理器）。
+        _plt = sys.modules.get("matplotlib.pyplot")
+        if _plt is not None:
+            fallback, dropped = figcapture.collect_pyplot_figures(
+                CAPTURE, self.script.stem, _plt)
+            for stem in fallback:
+                CAPTURE_SOURCE[stem] = figcapture.SOURCE_PYPLOT
+            if dropped:
+                # 丢了就说，绝不静默：用户会数图。
+                print(f"[capture] 脚本留下的 pyplot Figure 超过 "
+                      f"{figcapture.MAX_PYPLOT_FALLBACK} 张上限，"
+                      f"未捕获 {dropped} 张（显式 savefig 的不受此限）",
+                      file=sys.stderr)
+                self.dropped_figures = dropped
+
         for stem, fig in CAPTURE.items():
             state = overrides_mod.FigState(fig)
             manifest_mod.instrument(state)
@@ -258,8 +296,16 @@ class Worker:
         return self._stems_summary()
 
     def _stems_summary(self) -> dict:
-        return {"stems": {s: {"size_mm": self._manifest_cache[s]["size_mm"]}
-                          for s in STATES}}
+        # `source` 是加字段，不升协议版本（ADR 0003 §1：两侧容忍未知字段）。
+        # 它回答的是「这张图有没有原始产物」——`pyplot` 的那些从没存过盘，
+        # 渲染/编辑/导出都成立，写回无从谈起。
+        out = {"stems": {s: {"size_mm": self._manifest_cache[s]["size_mm"],
+                             "source": CAPTURE_SOURCE.get(
+                                 s, figcapture.SOURCE_SAVEFIG)}
+                         for s in STATES}}
+        if self.dropped_figures:
+            out["dropped_figures"] = self.dropped_figures
+        return out
 
     def _render(self, stem: str, timings: dict | None = None,
                 preview_dpi: int | None = None) -> dict:

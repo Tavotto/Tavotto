@@ -281,6 +281,45 @@ jobs:
             --python ${{ steps.venv.outputs.python }} \
             --out "$RUNNER_TEMP/visual"
 
+      # ── 兼容性资格（CompatBench）────────────────────────────────
+      # 与 golden 视觉回归**问的不是同一个问题**：那边比「Tavotto 今天 vs
+      # 昨天」，这边比「原生 matplotlib vs Tavotto 零 override」，并沿九级
+      # 漏斗回答「外部 matplotlib 世界我们兼容多少」。完整说明见
+      # docs/ci/matplotlib-compatibility.md。
+      #
+      # main 档只跑 must+expected 且不跑保真度（保真度要为每个脚本多起一个
+      # 进程再渲一遍图，会把「≤ 15~20 分钟」直接冲垮）；nightly 及以上跑全量
+      # + 保真度 + 桌面/浏览器语义对拍。门禁档位与运行档位同名。
+      - name: Matplotlib 兼容性资格
+        id: compat
+        run: |
+          set -euo pipefail
+          case "$LAB_MODE" in
+            main)
+              ARGS="--tier must,expected --no-fidelity --gate main" ;;
+            release)
+              ARGS="--all --fidelity --browser --gate release" ;;
+            *)
+              ARGS="--all --fidelity --browser --gate nightly" ;;
+          esac
+          # shellcheck disable=SC2086
+          ${{ steps.venv.outputs.python }} scripts/ci/compat_matrix.py $ARGS \
+            --out "$RUNNER_TEMP/compat" \
+            --json "$TAVOTTO_CI_STATE_ROOT/reports/compat.json"
+
+      # 只对**失败 case** 上传重文件（control/tavotto/diff 三张 PNG）。
+      # 成功的 100+ case 全量上传会让 artifact 直接撑爆，而它们对排查毫无帮助。
+      - name: 兼容性失败诊断
+        if: failure() && steps.compat.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: compat-diagnostics-${{ needs.trust-check.outputs.mode }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/compat/**
+            ${{ env.TAVOTTO_CI_STATE_ROOT }}/reports/compat.json
+          retention-days: 14
+          if-no-files-found: warn
+
       # ── soak / 泄漏 ───────────────────────────────────────────
       - name: Soak 与泄漏检测
         run: |
@@ -327,6 +366,7 @@ jobs:
           path: |
             ${{ env.TAVOTTO_CI_STATE_ROOT }}/reports/*.json
             ${{ runner.temp }}/visual/**
+            ${{ runner.temp }}/compat/**
             ${{ runner.temp }}/soak-metrics.json
           retention-days: 14
           if-no-files-found: warn
@@ -339,6 +379,7 @@ jobs:
           path: |
             ${{ env.TAVOTTO_CI_STATE_ROOT }}/reports/benchmark.json
             ${{ env.TAVOTTO_CI_STATE_ROOT }}/reports/soak.json
+            ${{ env.TAVOTTO_CI_STATE_ROOT }}/reports/compat.json
           retention-days: 30
           if-no-files-found: ignore
 

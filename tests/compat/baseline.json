@@ -1,0 +1,2136 @@
+{
+  "schema": 1,
+  "generated_for": {
+    "matplotlib": "3.11.1",
+    "numpy": "2.5.2",
+    "pandas": "3.0.5",
+    "pillow": "12.3.0",
+    "scipy": "1.18.0",
+    "seaborn": "0.13.2",
+    "target": "bundled"
+  },
+  "cases": {
+    "art_3d_bar": {
+      "classification": "unsupported_by_design",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "3D 的产品边界是「文字类元素 + 视角 + 轴线/网格可编辑，盒内数据属性（spines / lim / scale）禁用」——立体柱（bar3d 的 Poly3DCollection） 属于**数据**，改它等于改数据，那该回代码而不是在编辑器里点。这条 case 验的是这条边界本身没有漂移，不是「3D 不好用」：标题 / 轴标签 / 刻度 / 视角照常可编辑，渲染、重放、导出全部正确。"
+    },
+    "art_3d_line": {
+      "classification": "unsupported_by_design",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "3D 的产品边界是「文字类元素 + 视角 + 轴线/网格可编辑，盒内数据属性（spines / lim / scale）禁用」——曲线（Line3D） 属于**数据**，改它等于改数据，那该回代码而不是在编辑器里点。这条 case 验的是这条边界本身没有漂移，不是「3D 不好用」：标题 / 轴标签 / 刻度 / 视角照常可编辑，渲染、重放、导出全部正确。"
+    },
+    "art_3d_scatter": {
+      "classification": "unsupported_by_design",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "3D 的产品边界是「文字类元素 + 视角 + 轴线/网格可编辑，盒内数据属性（spines / lim / scale）禁用」——散点（Path3DCollection） 属于**数据**，改它等于改数据，那该回代码而不是在编辑器里点。这条 case 验的是这条边界本身没有漂移，不是「3D 不好用」：标题 / 轴标签 / 刻度 / 视角照常可编辑，渲染、重放、导出全部正确。"
+    },
+    "art_3d_surface": {
+      "classification": "unsupported_by_design",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "3D 的产品边界是「文字类元素 + 视角 + 轴线/网格可编辑，盒内数据属性（spines / lim / scale）禁用」——曲面（Poly3DCollection） 属于**数据**，改它等于改数据，那该回代码而不是在编辑器里点。这条 case 验的是这条边界本身没有漂移，不是「3D 不好用」：标题 / 轴标签 / 刻度 / 视角照常可编辑，渲染、重放、导出全部正确。"
+    },
+    "art_3d_wireframe": {
+      "classification": "unsupported_by_design",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "3D 的产品边界是「文字类元素 + 视角 + 轴线/网格可编辑，盒内数据属性（spines / lim / scale）禁用」——线框（Line3DCollection） 属于**数据**，改它等于改数据，那该回代码而不是在编辑器里点。这条 case 验的是这条边界本身没有漂移，不是「3D 不好用」：标题 / 轴标签 / 刻度 / 视角照常可编辑，渲染、重放、导出全部正确。"
+    },
+    "art_arrow_patch": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_axhline_axvline": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_axhspan_axvspan": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_bar": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_barbs": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_barh": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_boxplot": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_colorbar": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_contour": {
+      "classification": "partial_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "等值线是 QuadContourSet（内部一族 LineCollection/PathCollection），Tavotto 不认——线本身选不中。渲染与导出正确。"
+    },
+    "art_contour_labels": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_contourf": {
+      "classification": "partial_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "填充等值线同 art_contour：QuadContourSet 不被识别，色条可编辑。"
+    },
+    "art_errorbar": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_eventplot": {
+      "classification": "partial_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "eventplot 画的是 EventCollection（LineCollection 的子类），Tavotto 不认——事件竖线选不中。与 art_stem / art_hlines_vlines 同一个缺口。"
+    },
+    "art_figure_legend": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_fill": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_fill_between": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_fill_betweenx": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_hexbin": {
+      "classification": "partial_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "hexbin 出的是普通 PolyCollection：instrument **认得**它（PolyCollection 的子类，登记成 axes_0.fill_0），但它的 get_window_extent 是空框，build_manifest 于是把它丢掉——界面上那块网格不存在。散点当年也栽在同一处、靠 datalim 换算救回来的；这里不能照抄：颜色由 colormap 每次 draw 重算（update_scalarmappable），把它当成 fill 角色开放 facecolor 会「设了但下一帧被顶回去」，那比不支持更坏。要修得先有一族网格感知的 handler（cmap / alpha / visible），与 QuadMesh 是同一件事。"
+    },
+    "art_hist": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_hist2d": {
+      "classification": "partial_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "hist2d 画的是 QuadMesh，Tavotto 不认这个 artist——图渲染正确、标题与刻度可编辑，但那块网格本身选不中。QuadMesh 需要一族新的handler（cmap/alpha/visible），见 artist 普查。"
+    },
+    "art_hlines_vlines": {
+      "classification": "partial_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "hlines/vlines 出的是 LineCollection，Tavotto 不认——manifest 里只有主曲线那条 Line2D，参考线选不中。这是 artist 普查里权重最高的一个缺口（LineCollection 横跨 hlines/vlines、stem、eventplot、streamplot 四类）。"
+    },
+    "art_imshow": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_legend": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_legend_overlapping_fontsize": {
+      "classification": "product_bug",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": false,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "`legend.fontsize` 与 `legend.texts_j.fontsize` 指向同一批 Text。先改整体、再改单条时，单条那次记下的 originals 已经是被整体改过的值（7.5 而不是脚本原样的 10.0），于是撤销之后字号停在 7.5，回不到原样。应用与渲染都正确，只有撤销回不去。",
+      "follow_up": "重叠 override 的 originals 快照是顺序相关的，这是 overrides.apply 的通用问题（不是图例特有）。修法要么给「广播型」prop 标一个别名组、让组内的窄 prop 在广播 prop 还原后强制重放，要么在首次快照时按别名组一起采。**不是数据损坏级**：写回事务的`_compare_manifests` 会当场发现热态与全量重放不一致并回 409 `replay_divergence`（实测 26 个元素里 4 处分歧），所以坏状态写不进用户的原件——用户看到的是「撤销没生效」+「写回被拦」，不是悄悄写坏。修之前不要把这条从基线里拿掉。",
+      "stage": "edit",
+      "note": "未通过：['edit']"
+    },
+    "art_matshow": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_multi_colorbar": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_pathpatch": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_pcolor": {
+      "classification": "partial_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "pcolor 在 matplotlib 3.8+ 返回 PolyQuadMesh：instrument **认得**它（PolyCollection 的子类，登记成 axes_0.fill_0），但它的 get_window_extent 是空框，build_manifest 于是把它丢掉——界面上那块网格不存在。散点当年也栽在同一处、靠 datalim 换算救回来的；这里不能照抄：颜色由 colormap 每次 draw 重算（update_scalarmappable），把它当成 fill 角色开放 facecolor 会「设了但下一帧被顶回去」，那比不支持更坏。要修得先有一族网格感知的 handler（cmap / alpha / visible），与 QuadMesh 是同一件事。"
+    },
+    "art_pcolormesh": {
+      "classification": "partial_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "pcolormesh 画的是 QuadMesh，Tavotto 不认——色条可编辑，网格本身选不中。与 art_hist2d 同一个缺口。"
+    },
+    "art_pie": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_plot": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_polar": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_polar_bar": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_quiver": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_scatter": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_shapes": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_stackplot": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_stem": {
+      "classification": "partial_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "stem 的竖线是 LineCollection，Tavotto 不认（manifest 里只有基线那条 Line2D）。渲染与导出完全正确，只是竖线选不中也改不了。补它要新写一族 LineCollection handler，不是现有 line 角色能覆盖的。"
+    },
+    "art_step": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_streamplot": {
+      "classification": "partial_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "streamplot 的箭头帽是 FancyArrowPatch（认得、可编辑），但流线本身是 LineCollection（不认）。同一张图上两半待遇不同，是LineCollection 缺口最直观的一个例子。"
+    },
+    "art_text_annotate": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_violinplot": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_aspect_equal": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_categorical": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_constrained_layout": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true
+      }
+    },
+    "ax_custom_formatter": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_custom_locator": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_custom_ticklabels": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_datetime": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_gridspec": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_inset": {
+      "classification": "partial_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "`instrument` 只遍历 `fig.axes`，而 `secondary_[xy]axis` / `inset_axes` 建出来的是 **`ax.child_axes`**——它们整个不在元素表里：插图里的曲线选不中、次坐标轴的标签也改不了。宿主 axes 的一切照常可编辑，渲染与导出完全正确。补它不是「多遍历一个列表」那么简单：子 axes 由父级的 `_axes_locator` 每帧重新定位，直接开放 position override 会出现「设了但下一帧被顶回去」——那比不支持更坏。"
+    },
+    "ax_inverted": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_linear": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_log": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_loglog": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_minor_ticks": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_mosaic": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_scinotation": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_secondary_x": {
+      "classification": "partial_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "`instrument` 只遍历 `fig.axes`，而 `secondary_[xy]axis` / `inset_axes` 建出来的是 **`ax.child_axes`**——它们整个不在元素表里：插图里的曲线选不中、次坐标轴的标签也改不了。宿主 axes 的一切照常可编辑，渲染与导出完全正确。补它不是「多遍历一个列表」那么简单：子 axes 由父级的 `_axes_locator` 每帧重新定位，直接开放 position override 会出现「设了但下一帧被顶回去」——那比不支持更坏。"
+    },
+    "ax_secondary_y": {
+      "classification": "partial_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "`instrument` 只遍历 `fig.axes`，而 `secondary_[xy]axis` / `inset_axes` 建出来的是 **`ax.child_axes`**——它们整个不在元素表里：插图里的曲线选不中、次坐标轴的标签也改不了。宿主 axes 的一切照常可编辑，渲染与导出完全正确。补它不是「多遍历一个列表」那么简单：子 axes 由父级的 `_axes_locator` 每帧重新定位，直接开放 position override 会出现「设了但下一帧被顶回去」——那比不支持更坏。"
+    },
+    "ax_semilogx": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_semilogy": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_sharex": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_sharey": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_subplot2grid": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_subplots": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_suptitle": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_symlog": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_tight_layout": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_title_left_right": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_twinx": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "ax_twiny": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_annotated_helper": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_annotated_oo": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_annotated_pyplot": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_barlabel_helper": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_barlabel_oo": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_barlabel_pyplot": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_errorband_helper": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_errorband_oo": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_errorband_pyplot": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_histogram_helper": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_histogram_oo": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_histogram_pyplot": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_imagecbar_helper": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_imagecbar_oo": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_imagecbar_pyplot": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_scatterfit_helper": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_scatterfit_oo": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_scatterfit_pyplot": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_twoline_addsubplot": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_twoline_helper": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_twoline_loop": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_twoline_oo": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_twoline_pyplot": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_twopanel_helper": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_twopanel_oo": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "mm_twopanel_pyplot": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "sci_cjk": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true
+      }
+    },
+    "sci_mathtext": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "sci_numpy": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "sci_pandas_bar": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "sci_pandas_line": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "sci_pandas_scatter": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "sci_pillow": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "sci_scipy_fit": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "sci_sns_bar": {
+      "classification": "environment_dependency",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "seaborn 是内置渲染 runtime 里有、但普通开发机与 PR 档 CI 未必装的可选依赖（packaging/runtime-lock.json 锁着 0.13.2）。缺它时脚本以 missing_dependency 开局，那是环境前提不是引擎缺陷。装了 seaborn 的目标上这几条按 full/partial 正常判定。",
+      "note": "本次环境满足依赖，全部阶段通过"
+    },
+    "sci_sns_box": {
+      "classification": "environment_dependency",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "seaborn 是内置渲染 runtime 里有、但普通开发机与 PR 档 CI 未必装的可选依赖（packaging/runtime-lock.json 锁着 0.13.2）。缺它时脚本以 missing_dependency 开局，那是环境前提不是引擎缺陷。装了 seaborn 的目标上这几条按 full/partial 正常判定。",
+      "note": "本次环境满足依赖，全部阶段通过"
+    },
+    "sci_sns_heatmap": {
+      "classification": "environment_dependency",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "seaborn 是内置渲染 runtime 里有、但普通开发机与 PR 档 CI 未必装的可选依赖（packaging/runtime-lock.json 锁着 0.13.2）。缺它时脚本以 missing_dependency 开局，那是环境前提不是引擎缺陷。装了 seaborn 的目标上这几条按 full/partial 正常判定。",
+      "note": "本次环境满足依赖，全部阶段通过"
+    },
+    "sci_sns_line": {
+      "classification": "environment_dependency",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "seaborn 是内置渲染 runtime 里有、但普通开发机与 PR 档 CI 未必装的可选依赖（packaging/runtime-lock.json 锁着 0.13.2）。缺它时脚本以 missing_dependency 开局，那是环境前提不是引擎缺陷。装了 seaborn 的目标上这几条按 full/partial 正常判定。",
+      "note": "本次环境满足依赖，全部阶段通过"
+    },
+    "sci_sns_scatter": {
+      "classification": "environment_dependency",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "seaborn 是内置渲染 runtime 里有、但普通开发机与 PR 档 CI 未必装的可选依赖（packaging/runtime-lock.json 锁着 0.13.2）。缺它时脚本以 missing_dependency 开局，那是环境前提不是引擎缺陷。装了 seaborn 的目标上这几条按 full/partial 正常判定。",
+      "note": "本次环境满足依赖，全部阶段通过"
+    },
+    "sci_sns_violin": {
+      "classification": "environment_dependency",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "seaborn 是内置渲染 runtime 里有、但普通开发机与 PR 档 CI 未必装的可选依赖（packaging/runtime-lock.json 锁着 0.13.2）。缺它时脚本以 missing_dependency 开局，那是环境前提不是引擎缺陷。装了 seaborn 的目标上这几条按 full/partial 正常判定。",
+      "note": "本次环境满足依赖，全部阶段通过"
+    },
+    "shape_argv_isolation": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_cjk_path": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_custom_entry": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_dunder_main": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_dynamic_stem_a": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_entry_main": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_entry_render": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_fstring_output": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_local_helper_import": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_loop_figures": {
+      "classification": "partial_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "静态扫描不认 `for i, name in enumerate(CONST)`（循环变量是元组），stem 落到试运行探测。产品有这条路径且界面上有入口，因此不是失败，但记账为静态发现的缺口。"
+    },
+    "shape_module_constant_stem": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_multi_figure_a": {
+      "classification": "partial_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "静态扫描展不开 `for name, ys in ((..),(..))` 这种元组解包循环，stem 落到试运行探测那条产品既有路径（设置→脚本注册表→试运行）。跑得起来、认得出、能编辑，只是自动发现不到位。"
+    },
+    "shape_multi_figure_b": {
+      "classification": "partial_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "静态扫描展不开 `for name, ys in ((..),(..))` 这种元组解包循环，stem 落到试运行探测那条产品既有路径（设置→脚本注册表→试运行）。跑得起来、认得出、能编辑，只是自动发现不到位。"
+    },
+    "shape_multi_figure_c": {
+      "classification": "partial_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "静态扫描展不开 `for name, ys in ((..),(..))` 这种元组解包循环，stem 落到试运行探测那条产品既有路径（设置→脚本注册表→试运行）。跑得起来、认得出、能编辑，只是自动发现不到位。"
+    },
+    "shape_no_savefig_multi": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_no_savefig_multi_2": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_no_savefig_multi_3": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_noisy_stdout": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_oo_savefig": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_path_join_save": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_plt_savefig": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_pyplot_show_only": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_relative_csv": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_relative_image": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_relative_npy": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_relative_pathlib": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_same_figure_two_formats": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_sandbox_write": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_spaced_dir": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_subdir_script": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_toplevel_imperative": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_wrapper_save": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    }
+  }
+}

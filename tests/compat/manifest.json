@@ -1,0 +1,6635 @@
+{
+  "schema": 1,
+  "_comment": [
+    "Tavotto Matplotlib CompatBench 的 case 清单——**意图**在这里，",
+    "观测结果在 baseline.json，版本目标在 matrix.json。三者不许兼任。",
+    "",
+    "每个 case 必须让 reviewer 一眼看出：它为什么存在、期望是什么、",
+    "如果部分不支持那是为什么。任何非 full_support 的分类都必须写",
+    "reason（schema 强制），product_bug 还必须写 follow_up。",
+    "",
+    "字段：",
+    "  id          稳定身份。基线与报告都按它对齐，**发布后不许改名**。",
+    "  category    script_shapes | core_artists | axes_layout |",
+    "              scientific_stack | metamorphic",
+    "  script      相对 tests/compat/ 的脚本路径",
+    "  script_dest 在临时项目里的落点（默认 = 脚本基本名）。中文/空格/",
+    "              子目录这几档靠它。",
+    "  extra_files 一并复制进项目的附带文件（本地 helper import）",
+    "  assets      从 assets/ 复制到**脚本旁边**的数据文件",
+    "  stem        这个 case 对应哪张图（一个脚本多张图时各占一条 case，",
+    "              共用一次 build）",
+    "  entry       入口函数名或 __main__",
+    "  discovery   discoverable（静态扫得出）| requires_probe（要试运行）",
+    "              | manual_registry（只能手写注册表）。runner 会核对声明",
+    "              与实际是否一致——本该自动发现却只能手写，那是 bug 不是 pass。",
+    "  tier        must（标准 matplotlib 高频路径）| expected（常见长尾）",
+    "              | exploratory（罕见 artist / 别扭 API）",
+    "  expected    逐阶段的期望（缺省全 true）。写 false 表示**声明过的**",
+    "              产品边界，那一级不过不算缺陷。",
+    "  semantic_expectations  必须出现的角色 + 必须存在的可编辑字段",
+    "  mutations   1~5 个代表性编辑目标（应用 → 反映 → 撤销 → 还原 → 重放）",
+    "  browser_eligible  是否参与桌面/浏览器语义对拍",
+    "  smoke       是否进 PR 档的最小子集"
+  ],
+  "cases": [
+    {
+      "id": "shape_pyplot_show_only",
+      "category": "script_shapes",
+      "script": "cases/script_shapes/pyplot_show_only.py",
+      "stem": "pyplot_show_only",
+      "entry": "__main__",
+      "tier": "must",
+      "discovery": "requires_probe",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title",
+          "axis_label"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ],
+          [
+            "axes_0.title",
+            "fontsize"
+          ],
+          [
+            "axes_0.title",
+            "color"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "fontsize",
+          "value": 13.5
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "color",
+          "value": "#804000"
+        }
+      ],
+      "browser_eligible": true,
+      "smoke": true,
+      "notes": "AI 最常见的输出形态：pyplot + plt.show()，一次 savefig 都没有。桌面与浏览器必须都能捕获（2026-08-21 之前只有浏览器能）。静态扫描解不出（没有存图调用），走试运行探测。"
+    },
+    {
+      "id": "shape_oo_savefig",
+      "category": "script_shapes",
+      "script": "cases/script_shapes/oo_savefig.py",
+      "stem": "shape_oo",
+      "entry": "main",
+      "tier": "must",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title",
+          "axis_label",
+          "legend"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ],
+          [
+            "axes_0.title",
+            "fontsize"
+          ],
+          [
+            "axes_0.title",
+            "color"
+          ],
+          [
+            "axes_0.legend",
+            "loc"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "fontsize",
+          "value": 13.5
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "color",
+          "value": "#804000"
+        },
+        {
+          "gid": "axes_0.legend",
+          "prop": "loc",
+          "value": "lower right"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": true,
+      "notes": "官方推荐的 OO 写法，Tavotto 的主路径。"
+    },
+    {
+      "id": "shape_toplevel_imperative",
+      "category": "script_shapes",
+      "script": "cases/script_shapes/toplevel_imperative.py",
+      "stem": "shape_toplevel",
+      "entry": "__main__",
+      "tier": "must",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "bar_series",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.barseries_0",
+            "facecolor"
+          ],
+          [
+            "axes_0.title",
+            "fontsize"
+          ],
+          [
+            "axes_0.title",
+            "color"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.barseries_0",
+          "prop": "facecolor",
+          "value": "#775599"
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "fontsize",
+          "value": 13.5
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "color",
+          "value": "#804000"
+        }
+      ],
+      "browser_eligible": true,
+      "smoke": true,
+      "notes": "顶层直写、既没有函数也没有 __main__ 守卫。静态扫描一度判它「不是绘图脚本」，整个脚本对 Tavotto 隐形。"
+    },
+    {
+      "id": "shape_dunder_main",
+      "category": "script_shapes",
+      "script": "cases/script_shapes/dunder_main.py",
+      "stem": "shape_dunder",
+      "entry": "build",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ],
+          [
+            "axes_0.title",
+            "fontsize"
+          ],
+          [
+            "axes_0.title",
+            "color"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "fontsize",
+          "value": 13.5
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "color",
+          "value": "#804000"
+        }
+      ],
+      "browser_eligible": true,
+      "smoke": false,
+      "notes": ""
+    },
+    {
+      "id": "shape_entry_main",
+      "category": "script_shapes",
+      "script": "cases/script_shapes/entry_main.py",
+      "stem": "shape_entry_main",
+      "entry": "main",
+      "tier": "must",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "scatter",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.scatter_0",
+            "facecolor"
+          ],
+          [
+            "axes_0.scatter_0",
+            "size"
+          ],
+          [
+            "axes_0.title",
+            "fontsize"
+          ],
+          [
+            "axes_0.title",
+            "color"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.scatter_0",
+          "prop": "facecolor",
+          "value": "#118844"
+        },
+        {
+          "gid": "axes_0.scatter_0",
+          "prop": "size",
+          "value": 42.0
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "fontsize",
+          "value": 13.5
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "color",
+          "value": "#804000"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": true,
+      "notes": ""
+    },
+    {
+      "id": "shape_entry_render",
+      "category": "script_shapes",
+      "script": "cases/script_shapes/entry_render.py",
+      "stem": "shape_entry_render",
+      "entry": "render",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": ""
+    },
+    {
+      "id": "shape_custom_entry",
+      "category": "script_shapes",
+      "script": "cases/script_shapes/custom_entry.py",
+      "stem": "shape_custom_entry",
+      "entry": "build_figure",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "入口是作者自己起的名字——worker 就是 getattr(module, entry)()。"
+    },
+    {
+      "id": "shape_multi_figure_a",
+      "category": "script_shapes",
+      "script": "cases/script_shapes/multi_figure.py",
+      "stem": "shape_multi_a",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "requires_probe",
+      "expected_figures": 3,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "一个脚本三张图。",
+      "classification": "partial_support",
+      "reason": "静态扫描展不开 `for name, ys in ((..),(..))` 这种元组解包循环，stem 落到试运行探测那条产品既有路径（设置→脚本注册表→试运行）。跑得起来、认得出、能编辑，只是自动发现不到位。"
+    },
+    {
+      "id": "shape_multi_figure_b",
+      "category": "script_shapes",
+      "script": "cases/script_shapes/multi_figure.py",
+      "stem": "shape_multi_b",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "requires_probe",
+      "expected_figures": 3,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "",
+      "classification": "partial_support",
+      "reason": "静态扫描展不开 `for name, ys in ((..),(..))` 这种元组解包循环，stem 落到试运行探测那条产品既有路径（设置→脚本注册表→试运行）。跑得起来、认得出、能编辑，只是自动发现不到位。"
+    },
+    {
+      "id": "shape_multi_figure_c",
+      "category": "script_shapes",
+      "script": "cases/script_shapes/multi_figure.py",
+      "stem": "shape_multi_c",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "requires_probe",
+      "expected_figures": 3,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "",
+      "classification": "partial_support",
+      "reason": "静态扫描展不开 `for name, ys in ((..),(..))` 这种元组解包循环，stem 落到试运行探测那条产品既有路径（设置→脚本注册表→试运行）。跑得起来、认得出、能编辑，只是自动发现不到位。"
+    },
+    {
+      "id": "shape_same_figure_two_formats",
+      "category": "script_shapes",
+      "script": "cases/script_shapes/same_figure_two_formats.py",
+      "stem": "shape_two_formats",
+      "entry": "main",
+      "tier": "must",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": true,
+      "notes": "同一张 Figure 存 pdf + png。必须只算一张图，不是两个面板。"
+    },
+    {
+      "id": "shape_plt_savefig",
+      "category": "script_shapes",
+      "script": "cases/script_shapes/plt_savefig.py",
+      "stem": "shape_plt_savefig",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "plt.savefig()（当前 figure）而不是 Figure.savefig()。"
+    },
+    {
+      "id": "shape_path_join_save",
+      "category": "script_shapes",
+      "script": "cases/script_shapes/path_join_save.py",
+      "stem": "shape_path_join",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "输出路径由 Path(\"out\") / \"figure.pdf\" 拼出来。"
+    },
+    {
+      "id": "shape_wrapper_save",
+      "category": "script_shapes",
+      "script": "cases/script_shapes/wrapper_save.py",
+      "stem": "shape_wrapper",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "存图包在工具函数里，stem 要跨函数传播才解得出来。"
+    },
+    {
+      "id": "shape_fstring_output",
+      "category": "script_shapes",
+      "script": "cases/script_shapes/fstring_output.py",
+      "stem": "shape_fstring_panel",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "文件名由 f-string 从模块级常量拼出来。"
+    },
+    {
+      "id": "shape_loop_figures",
+      "category": "script_shapes",
+      "script": "cases/script_shapes/loop_figures.py",
+      "stem": "shape_loop_1",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "requires_probe",
+      "expected_figures": 3,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "",
+      "classification": "partial_support",
+      "reason": "静态扫描不认 `for i, name in enumerate(CONST)`（循环变量是元组），stem 落到试运行探测。产品有这条路径且界面上有入口，因此不是失败，但记账为静态发现的缺口。"
+    },
+    {
+      "id": "shape_dynamic_stem_a",
+      "category": "script_shapes",
+      "script": "cases/script_shapes/dynamic_stem.py",
+      "stem": "shape_dynamic_a",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "requires_probe",
+      "expected_figures": 2,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "stem 只有运行期才知道（读数据文件决定文件名）——静态永远解不出，这正是 engine/probe.py 存在的理由。",
+      "assets": [
+        "data.csv"
+      ]
+    },
+    {
+      "id": "shape_module_constant_stem",
+      "category": "script_shapes",
+      "script": "cases/script_shapes/module_constant_stem.py",
+      "stem": "shape_module_const",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": ""
+    },
+    {
+      "id": "shape_noisy_stdout",
+      "category": "script_shapes",
+      "script": "cases/script_shapes/noisy_stdout.py",
+      "stem": "shape_noisy",
+      "entry": "main",
+      "tier": "must",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": true,
+      "notes": "脚本往 stdout 狂打 200 行日志。worker 的 JSON 协议通道必须不被污染。"
+    },
+    {
+      "id": "shape_argv_isolation",
+      "category": "script_shapes",
+      "script": "cases/script_shapes/argv_isolation.py",
+      "stem": "shape_argv",
+      "entry": "main",
+      "tier": "must",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": true,
+      "notes": "脚本自己断言 sys.argv 里没有 worker 的内部参数。不隔离的话按参数命名输出的脚本会存出一堆叫 --entry 的图。"
+    },
+    {
+      "id": "shape_no_savefig_multi",
+      "category": "script_shapes",
+      "script": "cases/script_shapes/no_savefig_multi.py",
+      "stem": "no_savefig_multi",
+      "entry": "__main__",
+      "tier": "must",
+      "discovery": "requires_probe",
+      "expected_figures": 3,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": true,
+      "smoke": true,
+      "notes": "三张 pyplot Figure 全无 savefig，中间还 plt.close() 过一次。fallback stem 必须确定、稳定、互不相同，且**不按 figure 号编号**——按号编的话这里就会跳号。"
+    },
+    {
+      "id": "shape_no_savefig_multi_2",
+      "category": "script_shapes",
+      "script": "cases/script_shapes/no_savefig_multi.py",
+      "stem": "no_savefig_multi-2",
+      "entry": "__main__",
+      "tier": "must",
+      "discovery": "requires_probe",
+      "expected_figures": 3,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "第二张的 fallback stem 必须是 `<脚本名>-2`。"
+    },
+    {
+      "id": "shape_no_savefig_multi_3",
+      "category": "script_shapes",
+      "script": "cases/script_shapes/no_savefig_multi.py",
+      "stem": "no_savefig_multi-3",
+      "entry": "__main__",
+      "tier": "must",
+      "discovery": "requires_probe",
+      "expected_figures": 3,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "第三张的 fallback stem 必须是 `<脚本名>-3`（不是 -4：中间那次plt.close() 让 figure 号跳到 4）。"
+    },
+    {
+      "id": "shape_local_helper_import",
+      "category": "script_shapes",
+      "script": "cases/script_shapes/local_helper_import.py",
+      "stem": "shape_local_helper",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title",
+          "axis_label"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "from _style_helpers import ...：脚本自己所在目录必须在 sys.path 里。",
+      "extra_files": {
+        "_style_helpers.py": "cases/script_shapes/_style_helpers.py"
+      }
+    },
+    {
+      "id": "shape_subdir_script",
+      "category": "script_shapes",
+      "script": "cases/script_shapes/panels/subdir_panel.py",
+      "stem": "shape_subdir",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "面板脚本躺在 panels/ 子目录里。",
+      "script_dest": "panels/subdir_panel.py"
+    },
+    {
+      "id": "shape_cjk_path",
+      "category": "script_shapes",
+      "script": "cases/script_shapes/cjk_path.py",
+      "stem": "shape_cjk_path",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "中文目录名 + 中文脚本名 + 目录里还有空格。",
+      "script_dest": "图表 目录/中文脚本.py"
+    },
+    {
+      "id": "shape_spaced_dir",
+      "category": "script_shapes",
+      "script": "cases/script_shapes/spaced_dir.py",
+      "stem": "shape_spaced_dir",
+      "entry": "__main__",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "目录名与文件名里都有空格。带空格的文件名不是合法模块名，只能走 entry=__main__（runpy）——真实用户会撞上的那一档。",
+      "script_dest": "my figures/spaced panel.py"
+    },
+    {
+      "id": "shape_relative_csv",
+      "category": "script_shapes",
+      "script": "cases/script_shapes/relative_csv.py",
+      "stem": "shape_relative_csv",
+      "entry": "main",
+      "tier": "must",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": true,
+      "notes": "pd/csv 风格的相对路径读盘。worker 的 cwd 在沙盒里，只读回退必须让它按脚本目录解析。",
+      "assets": [
+        "data.csv"
+      ]
+    },
+    {
+      "id": "shape_relative_image",
+      "category": "script_shapes",
+      "script": "cases/script_shapes/relative_image.py",
+      "stem": "shape_relative_image",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "image",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.images_0",
+            "alpha"
+          ],
+          [
+            "axes_0.images_0",
+            "interpolation"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.images_0",
+          "prop": "alpha",
+          "value": 0.75
+        },
+        {
+          "gid": "axes_0.images_0",
+          "prop": "interpolation",
+          "value": "nearest"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "plt.imread(\"sample.png\") 出的是 RGB 位图——它没有 cmap，色表只对标量映射的数据有意义。",
+      "assets": [
+        "sample.png"
+      ]
+    },
+    {
+      "id": "shape_relative_npy",
+      "category": "script_shapes",
+      "script": "cases/script_shapes/relative_npy.py",
+      "stem": "shape_relative_npy",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "image",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.images_0",
+            "cmap"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.images_0",
+          "prop": "cmap",
+          "value": "plasma"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "np.load(\"series.npy\")。",
+      "assets": [
+        "series.npy"
+      ]
+    },
+    {
+      "id": "shape_relative_pathlib",
+      "category": "script_shapes",
+      "script": "cases/script_shapes/relative_pathlib_read.py",
+      "stem": "shape_relative_pathlib",
+      "entry": "main",
+      "tier": "must",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title",
+          "axis_label"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": true,
+      "notes": "Path(\"config.json\").read_text()。pathlib 走的是 io.open 而不是builtins.open——只 patch 后者的话这条会失败而 open() 好使，两种等价写法行为不一致。",
+      "assets": [
+        "config.json"
+      ]
+    },
+    {
+      "id": "shape_sandbox_write",
+      "category": "script_shapes",
+      "script": "cases/script_shapes/relative_write_stays_sandboxed.py",
+      "stem": "shape_sandbox_write",
+      "entry": "main",
+      "tier": "must",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": true,
+      "notes": "脚本相对路径写中间文件再读回来。写必须落沙盒（绝不污染用户项目），读要先看沙盒那一份——只读回退不能把脚本刚写出来的东西顶掉。"
+    },
+    {
+      "id": "art_plot",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_basic_series.py",
+      "stem": "art_plot",
+      "entry": "main",
+      "tier": "must",
+      "discovery": "discoverable",
+      "expected_figures": 7,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title",
+          "axis_label",
+          "legend"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ],
+          [
+            "axes_0.title",
+            "fontsize"
+          ],
+          [
+            "axes_0.title",
+            "color"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "fontsize",
+          "value": 13.5
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "color",
+          "value": "#804000"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": true,
+      "notes": ""
+    },
+    {
+      "id": "art_scatter",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_basic_series.py",
+      "stem": "art_scatter",
+      "entry": "main",
+      "tier": "must",
+      "discovery": "discoverable",
+      "expected_figures": 7,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "scatter",
+          "title",
+          "legend"
+        ],
+        "editable": [
+          [
+            "axes_0.scatter_0",
+            "facecolor"
+          ],
+          [
+            "axes_0.scatter_0",
+            "size"
+          ],
+          [
+            "axes_0.legend",
+            "loc"
+          ],
+          [
+            "axes_0.legend",
+            "fontsize"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.scatter_0",
+          "prop": "facecolor",
+          "value": "#118844"
+        },
+        {
+          "gid": "axes_0.scatter_0",
+          "prop": "size",
+          "value": 42.0
+        },
+        {
+          "gid": "axes_0.legend",
+          "prop": "loc",
+          "value": "lower left"
+        },
+        {
+          "gid": "axes_0.legend",
+          "prop": "fontsize",
+          "value": 7.5
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": ""
+    },
+    {
+      "id": "art_bar",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_basic_series.py",
+      "stem": "art_bar",
+      "entry": "main",
+      "tier": "must",
+      "discovery": "discoverable",
+      "expected_figures": 7,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "bar_series",
+          "bar",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.barseries_0",
+            "facecolor"
+          ],
+          [
+            "axes_0.title",
+            "fontsize"
+          ],
+          [
+            "axes_0.title",
+            "color"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.barseries_0",
+          "prop": "facecolor",
+          "value": "#775599"
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "fontsize",
+          "value": 13.5
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "color",
+          "value": "#804000"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": ""
+    },
+    {
+      "id": "art_barh",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_basic_series.py",
+      "stem": "art_barh",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 7,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "bar_series",
+          "bar",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.barseries_0",
+            "facecolor"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.barseries_0",
+          "prop": "facecolor",
+          "value": "#775599"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": ""
+    },
+    {
+      "id": "art_errorbar",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_basic_series.py",
+      "stem": "art_errorbar",
+      "entry": "main",
+      "tier": "must",
+      "discovery": "discoverable",
+      "expected_figures": 7,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "errorbar",
+          "title",
+          "legend"
+        ],
+        "editable": [
+          [
+            "axes_0.errorbar_0",
+            "color"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.errorbar_0",
+          "prop": "color",
+          "value": "#AA2255"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": ""
+    },
+    {
+      "id": "art_step",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_basic_series.py",
+      "stem": "art_step",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 7,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title",
+          "legend"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": ""
+    },
+    {
+      "id": "art_stem",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_basic_series.py",
+      "stem": "art_stem",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 7,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "",
+      "classification": "partial_support",
+      "reason": "stem 的竖线是 LineCollection，Tavotto 不认（manifest 里只有基线那条 Line2D）。渲染与导出完全正确，只是竖线选不中也改不了。补它要新写一族 LineCollection handler，不是现有 line 角色能覆盖的。"
+    },
+    {
+      "id": "art_hist",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_distributions.py",
+      "stem": "art_hist",
+      "entry": "main",
+      "tier": "must",
+      "discovery": "discoverable",
+      "expected_figures": 6,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "bar_series",
+          "bar",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.barseries_0",
+            "facecolor"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.barseries_0",
+          "prop": "facecolor",
+          "value": "#775599"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": ""
+    },
+    {
+      "id": "art_hist2d",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_distributions.py",
+      "stem": "art_hist2d",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 6,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.title",
+            "fontsize"
+          ],
+          [
+            "axes_0.title",
+            "color"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.title",
+          "prop": "fontsize",
+          "value": 13.5
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "color",
+          "value": "#804000"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "",
+      "classification": "partial_support",
+      "reason": "hist2d 画的是 QuadMesh，Tavotto 不认这个 artist——图渲染正确、标题与刻度可编辑，但那块网格本身选不中。QuadMesh 需要一族新的handler（cmap/alpha/visible），见 artist 普查。"
+    },
+    {
+      "id": "art_boxplot",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_distributions.py",
+      "stem": "art_boxplot",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 6,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "boxplot 的须与中位线都是 Line2D，逐条可编辑；箱体是 PathPatch（patch_artist=False 时是 Line2D）。"
+    },
+    {
+      "id": "art_violinplot",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_distributions.py",
+      "stem": "art_violinplot",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 6,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "fill",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.fill_0",
+            "facecolor"
+          ],
+          [
+            "axes_0.fill_0",
+            "alpha"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.fill_0",
+          "prop": "facecolor",
+          "value": "#AA5533"
+        },
+        {
+          "gid": "axes_0.fill_0",
+          "prop": "alpha",
+          "value": 0.6
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "violin 的琴身是 PolyCollection → fill 角色。"
+    },
+    {
+      "id": "art_eventplot",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_distributions.py",
+      "stem": "art_eventplot",
+      "entry": "main",
+      "tier": "exploratory",
+      "discovery": "discoverable",
+      "expected_figures": 6,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.title",
+            "fontsize"
+          ],
+          [
+            "axes_0.title",
+            "color"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.title",
+          "prop": "fontsize",
+          "value": 13.5
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "color",
+          "value": "#804000"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "",
+      "classification": "partial_support",
+      "reason": "eventplot 画的是 EventCollection（LineCollection 的子类），Tavotto 不认——事件竖线选不中。与 art_stem / art_hlines_vlines 同一个缺口。"
+    },
+    {
+      "id": "art_pie",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_distributions.py",
+      "stem": "art_pie",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 6,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "patch",
+          "text",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.patches_0",
+            "facecolor"
+          ],
+          [
+            "axes_0.patches_0",
+            "alpha"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.patches_0",
+          "prop": "facecolor",
+          "value": "#3399AA"
+        },
+        {
+          "gid": "axes_0.patches_0",
+          "prop": "alpha",
+          "value": 0.55
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "饼图的扇区是 Wedge。形状登记泛化到任意 Patch 之后它们才可编辑（2026-08-21 由本 case 促成）。"
+    },
+    {
+      "id": "art_fill",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_fills.py",
+      "stem": "art_fill",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 4,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "patch",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.patches_0",
+            "facecolor"
+          ],
+          [
+            "axes_0.patches_0",
+            "alpha"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.patches_0",
+          "prop": "facecolor",
+          "value": "#3399AA"
+        },
+        {
+          "gid": "axes_0.patches_0",
+          "prop": "alpha",
+          "value": 0.55
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": ""
+    },
+    {
+      "id": "art_fill_between",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_fills.py",
+      "stem": "art_fill_between",
+      "entry": "main",
+      "tier": "must",
+      "discovery": "discoverable",
+      "expected_figures": 4,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "fill",
+          "line",
+          "title",
+          "legend"
+        ],
+        "editable": [
+          [
+            "axes_0.fill_0",
+            "facecolor"
+          ],
+          [
+            "axes_0.fill_0",
+            "alpha"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.fill_0",
+          "prop": "facecolor",
+          "value": "#AA5533"
+        },
+        {
+          "gid": "axes_0.fill_0",
+          "prop": "alpha",
+          "value": 0.6
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": ""
+    },
+    {
+      "id": "art_fill_betweenx",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_fills.py",
+      "stem": "art_fill_betweenx",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 4,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "fill",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.fill_0",
+            "facecolor"
+          ],
+          [
+            "axes_0.fill_0",
+            "alpha"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.fill_0",
+          "prop": "facecolor",
+          "value": "#AA5533"
+        },
+        {
+          "gid": "axes_0.fill_0",
+          "prop": "alpha",
+          "value": 0.6
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": ""
+    },
+    {
+      "id": "art_stackplot",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_fills.py",
+      "stem": "art_stackplot",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 4,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "fill",
+          "title",
+          "legend"
+        ],
+        "editable": [
+          [
+            "axes_0.fill_0",
+            "facecolor"
+          ],
+          [
+            "axes_0.fill_0",
+            "alpha"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.fill_0",
+          "prop": "facecolor",
+          "value": "#AA5533"
+        },
+        {
+          "gid": "axes_0.fill_0",
+          "prop": "alpha",
+          "value": 0.6
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": ""
+    },
+    {
+      "id": "art_hlines_vlines",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_lines_spans.py",
+      "stem": "art_hlines_vlines",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 3,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "",
+      "classification": "partial_support",
+      "reason": "hlines/vlines 出的是 LineCollection，Tavotto 不认——manifest 里只有主曲线那条 Line2D，参考线选不中。这是 artist 普查里权重最高的一个缺口（LineCollection 横跨 hlines/vlines、stem、eventplot、streamplot 四类）。"
+    },
+    {
+      "id": "art_axhline_axvline",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_lines_spans.py",
+      "stem": "art_axhline_axvline",
+      "entry": "main",
+      "tier": "must",
+      "discovery": "discoverable",
+      "expected_figures": 3,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title",
+          "legend"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_1",
+            "color"
+          ],
+          [
+            "axes_0.lines_1",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_1",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_1",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "axhline/axvline 出的是普通 Line2D，与 hlines/vlines 完全不同——这一对刻意分开测，正是为了看出那个差别。"
+    },
+    {
+      "id": "art_axhspan_axvspan",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_lines_spans.py",
+      "stem": "art_axhspan_axvspan",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 3,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "patch",
+          "line",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.patches_0",
+            "facecolor"
+          ],
+          [
+            "axes_0.patches_0",
+            "alpha"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.patches_0",
+          "prop": "facecolor",
+          "value": "#3399AA"
+        },
+        {
+          "gid": "axes_0.patches_0",
+          "prop": "alpha",
+          "value": 0.55
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "axhspan/axvspan 出的是 Rectangle。形状登记泛化到任意 Patch 之后它们才可编辑（2026-08-21 由本 case 促成）。"
+    },
+    {
+      "id": "art_imshow",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_images.py",
+      "stem": "art_imshow",
+      "entry": "main",
+      "tier": "must",
+      "discovery": "discoverable",
+      "expected_figures": 5,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "image",
+          "colorbar",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.images_0",
+            "cmap"
+          ],
+          [
+            "axes_0.title",
+            "fontsize"
+          ],
+          [
+            "axes_0.title",
+            "color"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.images_0",
+          "prop": "cmap",
+          "value": "plasma"
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "fontsize",
+          "value": 13.5
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "color",
+          "value": "#804000"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": true,
+      "notes": ""
+    },
+    {
+      "id": "art_matshow",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_images.py",
+      "stem": "art_matshow",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 5,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "image",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.images_0",
+            "cmap"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.images_0",
+          "prop": "cmap",
+          "value": "plasma"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": ""
+    },
+    {
+      "id": "art_pcolor",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_images.py",
+      "stem": "art_pcolor",
+      "entry": "main",
+      "tier": "exploratory",
+      "discovery": "discoverable",
+      "expected_figures": 5,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.title",
+            "fontsize"
+          ],
+          [
+            "axes_0.title",
+            "color"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.title",
+          "prop": "fontsize",
+          "value": 13.5
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "color",
+          "value": "#804000"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "",
+      "classification": "partial_support",
+      "reason": "pcolor 在 matplotlib 3.8+ 返回 PolyQuadMesh：instrument **认得**它（PolyCollection 的子类，登记成 axes_0.fill_0），但它的 get_window_extent 是空框，build_manifest 于是把它丢掉——界面上那块网格不存在。散点当年也栽在同一处、靠 datalim 换算救回来的；这里不能照抄：颜色由 colormap 每次 draw 重算（update_scalarmappable），把它当成 fill 角色开放 facecolor 会「设了但下一帧被顶回去」，那比不支持更坏。要修得先有一族网格感知的 handler（cmap / alpha / visible），与 QuadMesh 是同一件事。"
+    },
+    {
+      "id": "art_pcolormesh",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_images.py",
+      "stem": "art_pcolormesh",
+      "entry": "main",
+      "tier": "exploratory",
+      "discovery": "discoverable",
+      "expected_figures": 5,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "colorbar",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_1.colorbar",
+            "orientation"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_1.colorbar",
+          "prop": "orientation",
+          "value": "horizontal"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "",
+      "classification": "partial_support",
+      "reason": "pcolormesh 画的是 QuadMesh，Tavotto 不认——色条可编辑，网格本身选不中。与 art_hist2d 同一个缺口。"
+    },
+    {
+      "id": "art_hexbin",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_images.py",
+      "stem": "art_hexbin",
+      "entry": "main",
+      "tier": "exploratory",
+      "discovery": "discoverable",
+      "expected_figures": 5,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.title",
+            "fontsize"
+          ],
+          [
+            "axes_0.title",
+            "color"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.title",
+          "prop": "fontsize",
+          "value": 13.5
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "color",
+          "value": "#804000"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "",
+      "classification": "partial_support",
+      "reason": "hexbin 出的是普通 PolyCollection：instrument **认得**它（PolyCollection 的子类，登记成 axes_0.fill_0），但它的 get_window_extent 是空框，build_manifest 于是把它丢掉——界面上那块网格不存在。散点当年也栽在同一处、靠 datalim 换算救回来的；这里不能照抄：颜色由 colormap 每次 draw 重算（update_scalarmappable），把它当成 fill 角色开放 facecolor 会「设了但下一帧被顶回去」，那比不支持更坏。要修得先有一族网格感知的 handler（cmap / alpha / visible），与 QuadMesh 是同一件事。"
+    },
+    {
+      "id": "art_contour",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_contours.py",
+      "stem": "art_contour",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 3,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.title",
+            "fontsize"
+          ],
+          [
+            "axes_0.title",
+            "color"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.title",
+          "prop": "fontsize",
+          "value": 13.5
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "color",
+          "value": "#804000"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "",
+      "classification": "partial_support",
+      "reason": "等值线是 QuadContourSet（内部一族 LineCollection/PathCollection），Tavotto 不认——线本身选不中。渲染与导出正确。"
+    },
+    {
+      "id": "art_contourf",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_contours.py",
+      "stem": "art_contourf",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 3,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "colorbar",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_1.colorbar",
+            "orientation"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_1.colorbar",
+          "prop": "orientation",
+          "value": "horizontal"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "",
+      "classification": "partial_support",
+      "reason": "填充等值线同 art_contour：QuadContourSet 不被识别，色条可编辑。"
+    },
+    {
+      "id": "art_contour_labels",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_contours.py",
+      "stem": "art_contour_labels",
+      "entry": "main",
+      "tier": "exploratory",
+      "discovery": "discoverable",
+      "expected_figures": 3,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "text",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.texts_0",
+            "fontsize"
+          ],
+          [
+            "axes_0.texts_0",
+            "color"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.texts_0",
+          "prop": "fontsize",
+          "value": 13.5
+        },
+        {
+          "gid": "axes_0.texts_0",
+          "prop": "color",
+          "value": "#804000"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "clabel 出的等值线标注是普通 Text，逐个可编辑——等值线本身不可编辑，但它的标签可以，这个区别值得单独记一条。"
+    },
+    {
+      "id": "art_quiver",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_vectorfields.py",
+      "stem": "art_quiver",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 3,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "fill",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.fill_0",
+            "facecolor"
+          ],
+          [
+            "axes_0.fill_0",
+            "alpha"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.fill_0",
+          "prop": "facecolor",
+          "value": "#AA5533"
+        },
+        {
+          "gid": "axes_0.fill_0",
+          "prop": "alpha",
+          "value": 0.6
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "Quiver 是 PolyCollection 的子类，落在 fill 角色上——整组箭头共用一套样式属性，单支箭头不可分别编辑。"
+    },
+    {
+      "id": "art_streamplot",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_vectorfields.py",
+      "stem": "art_streamplot",
+      "entry": "main",
+      "tier": "exploratory",
+      "discovery": "discoverable",
+      "expected_figures": 3,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "arrow_patch",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.arrows_0",
+            "color"
+          ],
+          [
+            "axes_0.arrows_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.arrows_0",
+          "prop": "color",
+          "value": "#227744"
+        },
+        {
+          "gid": "axes_0.arrows_0",
+          "prop": "linewidth",
+          "value": 2.0
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "",
+      "classification": "partial_support",
+      "reason": "streamplot 的箭头帽是 FancyArrowPatch（认得、可编辑），但流线本身是 LineCollection（不认）。同一张图上两半待遇不同，是LineCollection 缺口最直观的一个例子。"
+    },
+    {
+      "id": "art_barbs",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_vectorfields.py",
+      "stem": "art_barbs",
+      "entry": "main",
+      "tier": "exploratory",
+      "discovery": "discoverable",
+      "expected_figures": 3,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "fill",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.fill_0",
+            "facecolor"
+          ],
+          [
+            "axes_0.fill_0",
+            "alpha"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.fill_0",
+          "prop": "facecolor",
+          "value": "#AA5533"
+        },
+        {
+          "gid": "axes_0.fill_0",
+          "prop": "alpha",
+          "value": 0.6
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "风羽是 Barbs（PolyCollection 子类）。不带 C 时它**不是标量映射的**，整片风羽落在 fill 角色上、样式可整体编辑（单支不可分别改）。2026-08-21 之前它进不了 manifest——`get_window_extent` 给不出框，与 art_fill_between 在 matplotlib 3.8 上同一个根因。"
+    },
+    {
+      "id": "art_text_annotate",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_text_shapes.py",
+      "stem": "art_text_annotate",
+      "entry": "main",
+      "tier": "must",
+      "discovery": "discoverable",
+      "expected_figures": 4,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "text",
+          "arrow_patch",
+          "line",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.texts_0",
+            "fontsize"
+          ],
+          [
+            "axes_0.texts_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.texts_0",
+          "prop": "fontsize",
+          "value": 13.5
+        },
+        {
+          "gid": "axes_0.texts_0",
+          "prop": "color",
+          "value": "#804000"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": true,
+      "notes": ""
+    },
+    {
+      "id": "art_arrow_patch",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_text_shapes.py",
+      "stem": "art_arrow_patch",
+      "entry": "main",
+      "tier": "must",
+      "discovery": "discoverable",
+      "expected_figures": 4,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "arrow_patch",
+          "line",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.arrows_0",
+            "color"
+          ],
+          [
+            "axes_0.arrows_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.arrows_0",
+          "prop": "color",
+          "value": "#227744"
+        },
+        {
+          "gid": "axes_0.arrows_0",
+          "prop": "linewidth",
+          "value": 2.0
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": ""
+    },
+    {
+      "id": "art_shapes",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_text_shapes.py",
+      "stem": "art_shapes",
+      "entry": "main",
+      "tier": "must",
+      "discovery": "discoverable",
+      "expected_figures": 4,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "patch",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.patches_0",
+            "facecolor"
+          ],
+          [
+            "axes_0.patches_0",
+            "alpha"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.patches_0",
+          "prop": "facecolor",
+          "value": "#3399AA"
+        },
+        {
+          "gid": "axes_0.patches_0",
+          "prop": "alpha",
+          "value": 0.55
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "Rectangle / Circle / Ellipse / Polygon 四种形状。泛化之前只有Polygon 那一个进得了 manifest，另外三个在界面上根本不存在。"
+    },
+    {
+      "id": "art_pathpatch",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_text_shapes.py",
+      "stem": "art_pathpatch",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 4,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "patch",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.patches_0",
+            "facecolor"
+          ],
+          [
+            "axes_0.patches_0",
+            "alpha"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.patches_0",
+          "prop": "facecolor",
+          "value": "#3399AA"
+        },
+        {
+          "gid": "axes_0.patches_0",
+          "prop": "alpha",
+          "value": 0.55
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": ""
+    },
+    {
+      "id": "art_legend",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_legend_colorbar.py",
+      "stem": "art_legend",
+      "entry": "main",
+      "tier": "must",
+      "discovery": "discoverable",
+      "expected_figures": 4,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "legend",
+          "legend_text",
+          "line"
+        ],
+        "editable": [
+          [
+            "axes_0.legend",
+            "loc"
+          ],
+          [
+            "axes_0.legend",
+            "fontsize"
+          ],
+          [
+            "axes_0.legend.texts_0",
+            "color"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.legend",
+          "prop": "loc",
+          "value": "lower left"
+        },
+        {
+          "gid": "axes_0.legend",
+          "prop": "fontsize",
+          "value": 7.5
+        },
+        {
+          "gid": "axes_0.legend.texts_0",
+          "prop": "color",
+          "value": "#804000"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": true,
+      "notes": "图例整体（loc / fontsize）+ 单条图例项的颜色。**刻意不在这一条里同时改 legend.fontsize 与 legend.texts_0.fontsize**——那两个指向同一批 Text，重叠语义单开一条 art_legend_overlapping_fontsize 记账。"
+    },
+    {
+      "id": "art_legend_overlapping_fontsize",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_legend_colorbar.py",
+      "stem": "art_legend",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 4,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "legend",
+          "legend_text"
+        ],
+        "editable": [
+          [
+            "axes_0.legend",
+            "fontsize"
+          ],
+          [
+            "axes_0.legend.texts_0",
+            "fontsize"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.legend",
+          "prop": "fontsize",
+          "value": 7.5
+        },
+        {
+          "gid": "axes_0.legend.texts_0",
+          "prop": "fontsize",
+          "value": 8.0
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "重叠 override 的别名语义。tier 刻意不是 must（must 不允许存在 product_bug），但也不是 exploratory——这是用户点得到的路径。",
+      "classification": "product_bug",
+      "reason": "`legend.fontsize` 与 `legend.texts_j.fontsize` 指向同一批 Text。先改整体、再改单条时，单条那次记下的 originals 已经是被整体改过的值（7.5 而不是脚本原样的 10.0），于是撤销之后字号停在 7.5，回不到原样。应用与渲染都正确，只有撤销回不去。",
+      "follow_up": "重叠 override 的 originals 快照是顺序相关的，这是 overrides.apply 的通用问题（不是图例特有）。修法要么给「广播型」prop 标一个别名组、让组内的窄 prop 在广播 prop 还原后强制重放，要么在首次快照时按别名组一起采。**不是数据损坏级**：写回事务的`_compare_manifests` 会当场发现热态与全量重放不一致并回 409 `replay_divergence`（实测 26 个元素里 4 处分歧），所以坏状态写不进用户的原件——用户看到的是「撤销没生效」+「写回被拦」，不是悄悄写坏。修之前不要把这条从基线里拿掉。"
+    },
+    {
+      "id": "art_figure_legend",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_legend_colorbar.py",
+      "stem": "art_figure_legend",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 4,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "legend",
+          "line",
+          "text"
+        ],
+        "editable": [
+          [
+            "fig.legend_0",
+            "loc"
+          ],
+          [
+            "fig.legend_0",
+            "fontsize"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "fig.legend_0",
+          "prop": "loc",
+          "value": "lower left"
+        },
+        {
+          "gid": "fig.legend_0",
+          "prop": "fontsize",
+          "value": 7.5
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "figure 级图例的 gid 是 fig.legend_0，不是 axes_0.legend。"
+    },
+    {
+      "id": "art_colorbar",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_legend_colorbar.py",
+      "stem": "art_colorbar",
+      "entry": "main",
+      "tier": "must",
+      "discovery": "discoverable",
+      "expected_figures": 4,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "image",
+          "colorbar",
+          "axis_label"
+        ],
+        "editable": [
+          [
+            "axes_1.colorbar",
+            "orientation"
+          ],
+          [
+            "axes_0.images_0",
+            "cmap"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_1.colorbar",
+          "prop": "orientation",
+          "value": "horizontal"
+        },
+        {
+          "gid": "axes_0.images_0",
+          "prop": "cmap",
+          "value": "plasma"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": true,
+      "notes": ""
+    },
+    {
+      "id": "art_multi_colorbar",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_legend_colorbar.py",
+      "stem": "art_multi_colorbar",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 4,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "image",
+          "colorbar",
+          "text"
+        ],
+        "editable": [
+          [
+            "axes_2.colorbar",
+            "orientation"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_2.colorbar",
+          "prop": "orientation",
+          "value": "horizontal"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "两个色条各自独立。gid 由 fig.axes 的树序决定。"
+    },
+    {
+      "id": "art_3d_line",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_mplot3d.py",
+      "stem": "art_3d_line",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 5,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes3d",
+          "axis_label",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.zlabel",
+            "fontsize"
+          ],
+          [
+            "axes_0.zlabel",
+            "color"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.zlabel",
+          "prop": "fontsize",
+          "value": 13.5
+        },
+        {
+          "gid": "axes_0.zlabel",
+          "prop": "color",
+          "value": "#804000"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "3D 曲线。",
+      "classification": "unsupported_by_design",
+      "reason": "3D 的产品边界是「文字类元素 + 视角 + 轴线/网格可编辑，盒内数据属性（spines / lim / scale）禁用」——曲线（Line3D） 属于**数据**，改它等于改数据，那该回代码而不是在编辑器里点。这条 case 验的是这条边界本身没有漂移，不是「3D 不好用」：标题 / 轴标签 / 刻度 / 视角照常可编辑，渲染、重放、导出全部正确。"
+    },
+    {
+      "id": "art_3d_scatter",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_mplot3d.py",
+      "stem": "art_3d_scatter",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 5,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes3d",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.title",
+            "fontsize"
+          ],
+          [
+            "axes_0.title",
+            "color"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.title",
+          "prop": "fontsize",
+          "value": 13.5
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "color",
+          "value": "#804000"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "",
+      "classification": "unsupported_by_design",
+      "reason": "3D 的产品边界是「文字类元素 + 视角 + 轴线/网格可编辑，盒内数据属性（spines / lim / scale）禁用」——散点（Path3DCollection） 属于**数据**，改它等于改数据，那该回代码而不是在编辑器里点。这条 case 验的是这条边界本身没有漂移，不是「3D 不好用」：标题 / 轴标签 / 刻度 / 视角照常可编辑，渲染、重放、导出全部正确。"
+    },
+    {
+      "id": "art_3d_surface",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_mplot3d.py",
+      "stem": "art_3d_surface",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 5,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes3d",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.title",
+            "fontsize"
+          ],
+          [
+            "axes_0.title",
+            "color"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.title",
+          "prop": "fontsize",
+          "value": 13.5
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "color",
+          "value": "#804000"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "",
+      "classification": "unsupported_by_design",
+      "reason": "3D 的产品边界是「文字类元素 + 视角 + 轴线/网格可编辑，盒内数据属性（spines / lim / scale）禁用」——曲面（Poly3DCollection） 属于**数据**，改它等于改数据，那该回代码而不是在编辑器里点。这条 case 验的是这条边界本身没有漂移，不是「3D 不好用」：标题 / 轴标签 / 刻度 / 视角照常可编辑，渲染、重放、导出全部正确。"
+    },
+    {
+      "id": "art_3d_wireframe",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_mplot3d.py",
+      "stem": "art_3d_wireframe",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 5,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes3d",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.title",
+            "fontsize"
+          ],
+          [
+            "axes_0.title",
+            "color"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.title",
+          "prop": "fontsize",
+          "value": 13.5
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "color",
+          "value": "#804000"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "",
+      "classification": "unsupported_by_design",
+      "reason": "3D 的产品边界是「文字类元素 + 视角 + 轴线/网格可编辑，盒内数据属性（spines / lim / scale）禁用」——线框（Line3DCollection） 属于**数据**，改它等于改数据，那该回代码而不是在编辑器里点。这条 case 验的是这条边界本身没有漂移，不是「3D 不好用」：标题 / 轴标签 / 刻度 / 视角照常可编辑，渲染、重放、导出全部正确。"
+    },
+    {
+      "id": "art_3d_bar",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_mplot3d.py",
+      "stem": "art_3d_bar",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 5,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes3d",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.title",
+            "fontsize"
+          ],
+          [
+            "axes_0.title",
+            "color"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.title",
+          "prop": "fontsize",
+          "value": 13.5
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "color",
+          "value": "#804000"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "",
+      "classification": "unsupported_by_design",
+      "reason": "3D 的产品边界是「文字类元素 + 视角 + 轴线/网格可编辑，盒内数据属性（spines / lim / scale）禁用」——立体柱（bar3d 的 Poly3DCollection） 属于**数据**，改它等于改数据，那该回代码而不是在编辑器里点。这条 case 验的是这条边界本身没有漂移，不是「3D 不好用」：标题 / 轴标签 / 刻度 / 视角照常可编辑，渲染、重放、导出全部正确。"
+    },
+    {
+      "id": "art_polar",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_projections.py",
+      "stem": "art_polar",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 2,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "极坐标轴：曲线仍是 Line2D，可编辑；刻度是 ThetaTick/RadialTick。"
+    },
+    {
+      "id": "art_polar_bar",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_projections.py",
+      "stem": "art_polar_bar",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 2,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "bar_series",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.barseries_0",
+            "facecolor"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.barseries_0",
+          "prop": "facecolor",
+          "value": "#775599"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": ""
+    },
+    {
+      "id": "ax_subplots",
+      "category": "axes_layout",
+      "script": "cases/axes_layout/al_grids.py",
+      "stem": "ax_subplots",
+      "entry": "main",
+      "tier": "must",
+      "discovery": "discoverable",
+      "expected_figures": 4,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title",
+          "text"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ],
+          [
+            "figure",
+            "size_mm"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        },
+        {
+          "gid": "figure",
+          "prop": "size_mm",
+          "value": [
+            120.0,
+            80.0
+          ]
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": true,
+      "notes": ""
+    },
+    {
+      "id": "ax_gridspec",
+      "category": "axes_layout",
+      "script": "cases/axes_layout/al_grids.py",
+      "stem": "ax_gridspec",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 4,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "text"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": ""
+    },
+    {
+      "id": "ax_mosaic",
+      "category": "axes_layout",
+      "script": "cases/axes_layout/al_grids.py",
+      "stem": "ax_mosaic",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 4,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "scatter",
+          "bar_series",
+          "text"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": ""
+    },
+    {
+      "id": "ax_subplot2grid",
+      "category": "axes_layout",
+      "script": "cases/axes_layout/al_grids.py",
+      "stem": "ax_subplot2grid",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 4,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "text"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": ""
+    },
+    {
+      "id": "ax_sharex",
+      "category": "axes_layout",
+      "script": "cases/axes_layout/al_shared_twin.py",
+      "stem": "ax_sharex",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 4,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "axis_label",
+          "text"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": ""
+    },
+    {
+      "id": "ax_sharey",
+      "category": "axes_layout",
+      "script": "cases/axes_layout/al_shared_twin.py",
+      "stem": "ax_sharey",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 4,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "axis_label",
+          "text"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": ""
+    },
+    {
+      "id": "ax_twinx",
+      "category": "axes_layout",
+      "script": "cases/axes_layout/al_shared_twin.py",
+      "stem": "ax_twinx",
+      "entry": "main",
+      "tier": "must",
+      "discovery": "discoverable",
+      "expected_figures": 4,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "axis_label",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "twinx 建的是第二个 Axes，共享 x。gid 顺序按 fig.axes 的树序。"
+    },
+    {
+      "id": "ax_twiny",
+      "category": "axes_layout",
+      "script": "cases/axes_layout/al_shared_twin.py",
+      "stem": "ax_twiny",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 4,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "axis_label",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": ""
+    },
+    {
+      "id": "ax_secondary_x",
+      "category": "axes_layout",
+      "script": "cases/axes_layout/al_secondary_inset.py",
+      "stem": "ax_secondary_x",
+      "entry": "main",
+      "tier": "exploratory",
+      "discovery": "discoverable",
+      "expected_figures": 3,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "axis_label",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "secondary_xaxis 建的是 SecondaryAxis，挂在 ax.child_axes 上。",
+      "classification": "partial_support",
+      "reason": "`instrument` 只遍历 `fig.axes`，而 `secondary_[xy]axis` / `inset_axes` 建出来的是 **`ax.child_axes`**——它们整个不在元素表里：插图里的曲线选不中、次坐标轴的标签也改不了。宿主 axes 的一切照常可编辑，渲染与导出完全正确。补它不是「多遍历一个列表」那么简单：子 axes 由父级的 `_axes_locator` 每帧重新定位，直接开放 position override 会出现「设了但下一帧被顶回去」——那比不支持更坏。"
+    },
+    {
+      "id": "ax_secondary_y",
+      "category": "axes_layout",
+      "script": "cases/axes_layout/al_secondary_inset.py",
+      "stem": "ax_secondary_y",
+      "entry": "main",
+      "tier": "exploratory",
+      "discovery": "discoverable",
+      "expected_figures": 3,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "axis_label",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "secondary_yaxis 同 ax_secondary_x。",
+      "classification": "partial_support",
+      "reason": "`instrument` 只遍历 `fig.axes`，而 `secondary_[xy]axis` / `inset_axes` 建出来的是 **`ax.child_axes`**——它们整个不在元素表里：插图里的曲线选不中、次坐标轴的标签也改不了。宿主 axes 的一切照常可编辑，渲染与导出完全正确。补它不是「多遍历一个列表」那么简单：子 axes 由父级的 `_axes_locator` 每帧重新定位，直接开放 position override 会出现「设了但下一帧被顶回去」——那比不支持更坏。"
+    },
+    {
+      "id": "ax_inset",
+      "category": "axes_layout",
+      "script": "cases/axes_layout/al_secondary_inset.py",
+      "stem": "ax_inset",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 3,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "`ax.inset_axes(...)` 建出来的插图轴不在 fig.axes 里。这条 case 的期望刻意只写宿主 axes 的元素——它一度全绿，正是因为宿主那条曲线满足了期望，而插图整个不存在这件事被盖住了。分类记的就是它。",
+      "classification": "partial_support",
+      "reason": "`instrument` 只遍历 `fig.axes`，而 `secondary_[xy]axis` / `inset_axes` 建出来的是 **`ax.child_axes`**——它们整个不在元素表里：插图里的曲线选不中、次坐标轴的标签也改不了。宿主 axes 的一切照常可编辑，渲染与导出完全正确。补它不是「多遍历一个列表」那么简单：子 axes 由父级的 `_axes_locator` 每帧重新定位，直接开放 position override 会出现「设了但下一帧被顶回去」——那比不支持更坏。"
+    },
+    {
+      "id": "ax_tight_layout",
+      "category": "axes_layout",
+      "script": "cases/axes_layout/al_layout_engines.py",
+      "stem": "ax_tight_layout",
+      "entry": "main",
+      "tier": "must",
+      "discovery": "discoverable",
+      "expected_figures": 3,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "axis_label",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ],
+          [
+            "figure",
+            "size_mm"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        },
+        {
+          "gid": "figure",
+          "prop": "size_mm",
+          "value": [
+            120.0,
+            80.0
+          ]
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": true,
+      "notes": "tight_layout 之后改图幅：几何组的应用顺序（size_mm 最先）在这里最容易露馅。"
+    },
+    {
+      "id": "ax_constrained_layout",
+      "category": "axes_layout",
+      "script": "cases/axes_layout/al_layout_engines.py",
+      "stem": "ax_constrained_layout",
+      "entry": "main",
+      "tier": "must",
+      "discovery": "discoverable",
+      "expected_figures": 3,
+      "expected": {
+        "fidelity": false
+      },
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "image",
+          "colorbar",
+          "line",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.images_0",
+            "cmap"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.images_0",
+          "prop": "cmap",
+          "value": "plasma"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "constrained_layout + 色条：落位由 matplotlib 每帧重算。",
+      "expected_false_reasons": {
+        "fidelity": "**constrained_layout 在原生 matplotlib 里就不是幂等的**：同一个 Figure 连存两次，第二张与第一张的 changed_ratio 实测 0.099（本机 mpl 3.10.8，640px 宽）——布局引擎每帧迭代逼近，还没收敛。Tavotto 与原生的差是 0.035，比原生自己两次之间的差还小，所以这里没有一个稳定的参照物可比，不是「Tavotto 改了用户的图」。结构 / 编辑 / 重放 / 导出照验；要恢复像素判据，得先让对照组也 draw 到收敛，而那本身已经不是「原生行为」了。"
+      }
+    },
+    {
+      "id": "ax_aspect_equal",
+      "category": "axes_layout",
+      "script": "cases/axes_layout/al_layout_engines.py",
+      "stem": "ax_aspect_equal",
+      "entry": "main",
+      "tier": "must",
+      "discovery": "discoverable",
+      "expected_figures": 3,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "image",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.images_0",
+            "cmap"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.images_0",
+          "prop": "cmap",
+          "value": "plasma"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "aspect=\"equal\" 的子图只有 draw 才 apply_aspect——几何组应用完必须 draw_without_rendering 刷新布局再应用其余 prop。"
+    },
+    {
+      "id": "ax_linear",
+      "category": "axes_layout",
+      "script": "cases/axes_layout/al_scales.py",
+      "stem": "ax_linear",
+      "entry": "main",
+      "tier": "must",
+      "discovery": "discoverable",
+      "expected_figures": 7,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "线性轴（对照组）"
+    },
+    {
+      "id": "ax_log",
+      "category": "axes_layout",
+      "script": "cases/axes_layout/al_scales.py",
+      "stem": "ax_log",
+      "entry": "main",
+      "tier": "must",
+      "discovery": "discoverable",
+      "expected_figures": 7,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": true,
+      "notes": "set_yscale(\"log\")：LogLocator 必须原样保留，不许被换成 AutoLocator"
+    },
+    {
+      "id": "ax_loglog",
+      "category": "axes_layout",
+      "script": "cases/axes_layout/al_scales.py",
+      "stem": "ax_loglog",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 7,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "双对数"
+    },
+    {
+      "id": "ax_semilogx",
+      "category": "axes_layout",
+      "script": "cases/axes_layout/al_scales.py",
+      "stem": "ax_semilogx",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 7,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "半对数（x）"
+    },
+    {
+      "id": "ax_semilogy",
+      "category": "axes_layout",
+      "script": "cases/axes_layout/al_scales.py",
+      "stem": "ax_semilogy",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 7,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "半对数（y）"
+    },
+    {
+      "id": "ax_symlog",
+      "category": "axes_layout",
+      "script": "cases/axes_layout/al_scales.py",
+      "stem": "ax_symlog",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 7,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "symlog（含线性区）"
+    },
+    {
+      "id": "ax_inverted",
+      "category": "axes_layout",
+      "script": "cases/axes_layout/al_scales.py",
+      "stem": "ax_inverted",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 7,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "两轴都反转——bbox/anchor 的 y 向下约定在这里最容易翻车"
+    },
+    {
+      "id": "ax_categorical",
+      "category": "axes_layout",
+      "script": "cases/axes_layout/al_ticks.py",
+      "stem": "ax_categorical",
+      "entry": "main",
+      "tier": "must",
+      "discovery": "discoverable",
+      "expected_figures": 7,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "bar_series",
+          "ticklabel",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.barseries_0",
+            "facecolor"
+          ],
+          [
+            "axes_0.xticks",
+            "fontsize"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.barseries_0",
+          "prop": "facecolor",
+          "value": "#775599"
+        },
+        {
+          "gid": "axes_0.xticks",
+          "prop": "fontsize",
+          "value": 7.0
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": ""
+    },
+    {
+      "id": "ax_datetime",
+      "category": "axes_layout",
+      "script": "cases/axes_layout/al_ticks.py",
+      "stem": "ax_datetime",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 7,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "ticklabel",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "日期用写死的日期，绝不用 datetime.now()——当前日期会让 manifest 与像素基线每天都变。"
+    },
+    {
+      "id": "ax_scinotation",
+      "category": "axes_layout",
+      "script": "cases/axes_layout/al_ticks.py",
+      "stem": "ax_scinotation",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 7,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "ticks",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ],
+          [
+            "axes_0.xticks",
+            "fontsize"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        },
+        {
+          "gid": "axes_0.xticks",
+          "prop": "fontsize",
+          "value": 7.0
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": ""
+    },
+    {
+      "id": "ax_custom_ticklabels",
+      "category": "axes_layout",
+      "script": "cases/axes_layout/al_ticks.py",
+      "stem": "ax_custom_ticklabels",
+      "entry": "main",
+      "tier": "must",
+      "discovery": "discoverable",
+      "expected_figures": 7,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "ticklabel",
+          "ticks",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.xticklabels_0",
+            "text"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.xticklabels_0",
+          "prop": "text",
+          "value": "ZERO"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": true,
+      "notes": "单条刻度文字冻结整条轴（FixedLocator + FixedFormatter），身份是序号。"
+    },
+    {
+      "id": "ax_minor_ticks",
+      "category": "axes_layout",
+      "script": "cases/axes_layout/al_ticks.py",
+      "stem": "ax_minor_ticks",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 7,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "ticks",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.xticks",
+            "minor_visible"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.xticks",
+          "prop": "minor_visible",
+          "value": false
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "次刻度模型：改的是 locator 而不是已经生成出来的 Text。"
+    },
+    {
+      "id": "ax_custom_formatter",
+      "category": "axes_layout",
+      "script": "cases/axes_layout/al_ticks.py",
+      "stem": "ax_custom_formatter",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 7,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "ticks",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ],
+          [
+            "axes_0.yticks",
+            "fontsize"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        },
+        {
+          "gid": "axes_0.yticks",
+          "prop": "fontsize",
+          "value": 7.0
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "脚本自带 FuncFormatter：没表态就该保留脚本原样，不许被换掉。"
+    },
+    {
+      "id": "ax_custom_locator",
+      "category": "axes_layout",
+      "script": "cases/axes_layout/al_ticks.py",
+      "stem": "ax_custom_locator",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 7,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "ticks",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "脚本自带 FixedLocator，同上。"
+    },
+    {
+      "id": "ax_suptitle",
+      "category": "axes_layout",
+      "script": "cases/axes_layout/al_titles.py",
+      "stem": "ax_suptitle",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 2,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "text",
+          "title"
+        ],
+        "editable": [
+          [
+            "fig.texts_0",
+            "fontsize"
+          ],
+          [
+            "fig.texts_0",
+            "color"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "fig.texts_0",
+          "prop": "fontsize",
+          "value": 13.5
+        },
+        {
+          "gid": "fig.texts_0",
+          "prop": "color",
+          "value": "#804000"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "suptitle 的 gid 是 fig.texts_0（figure 级文字）。"
+    },
+    {
+      "id": "ax_title_left_right",
+      "category": "axes_layout",
+      "script": "cases/axes_layout/al_titles.py",
+      "stem": "ax_title_left_right",
+      "entry": "main",
+      "tier": "must",
+      "discovery": "discoverable",
+      "expected_figures": 2,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title",
+          "axis_label"
+        ],
+        "editable": [
+          [
+            "axes_0.title_left",
+            "fontsize"
+          ],
+          [
+            "axes_0.title_left",
+            "color"
+          ],
+          [
+            "axes_0.title_right",
+            "fontsize"
+          ],
+          [
+            "axes_0.title_right",
+            "color"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.title_left",
+          "prop": "fontsize",
+          "value": 13.5
+        },
+        {
+          "gid": "axes_0.title_left",
+          "prop": "color",
+          "value": "#804000"
+        },
+        {
+          "gid": "axes_0.title_right",
+          "prop": "fontsize",
+          "value": 9.0
+        },
+        {
+          "gid": "axes_0.title_right",
+          "prop": "color",
+          "value": "#804000"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "loc=\"left\"/\"right\" 的标题各是独立 Text，gid 是 title_left / title_right。"
+    },
+    {
+      "id": "sci_numpy",
+      "category": "scientific_stack",
+      "script": "cases/scientific_stack/sci_numpy.py",
+      "stem": "sci_numpy",
+      "entry": "main",
+      "tier": "must",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "fill",
+          "title",
+          "legend"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": true,
+      "notes": ""
+    },
+    {
+      "id": "sci_pandas_line",
+      "category": "scientific_stack",
+      "script": "cases/scientific_stack/sci_pandas.py",
+      "stem": "sci_pandas_line",
+      "entry": "main",
+      "tier": "must",
+      "discovery": "discoverable",
+      "expected_figures": 3,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title",
+          "legend"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "DataFrame.plot() 自己建 Figure/Axes，写法与手搓完全不同。"
+    },
+    {
+      "id": "sci_pandas_bar",
+      "category": "scientific_stack",
+      "script": "cases/scientific_stack/sci_pandas.py",
+      "stem": "sci_pandas_bar",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 3,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "bar_series",
+          "title",
+          "legend"
+        ],
+        "editable": [
+          [
+            "axes_0.barseries_0",
+            "facecolor"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.barseries_0",
+          "prop": "facecolor",
+          "value": "#775599"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": ""
+    },
+    {
+      "id": "sci_pandas_scatter",
+      "category": "scientific_stack",
+      "script": "cases/scientific_stack/sci_pandas.py",
+      "stem": "sci_pandas_scatter",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 3,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "scatter",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.scatter_0",
+            "facecolor"
+          ],
+          [
+            "axes_0.scatter_0",
+            "size"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.scatter_0",
+          "prop": "facecolor",
+          "value": "#118844"
+        },
+        {
+          "gid": "axes_0.scatter_0",
+          "prop": "size",
+          "value": 42.0
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": ""
+    },
+    {
+      "id": "sci_scipy_fit",
+      "category": "scientific_stack",
+      "script": "cases/scientific_stack/sci_scipy.py",
+      "stem": "sci_scipy_fit",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "scatter",
+          "title",
+          "axis_label",
+          "legend"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "curve_fit 之后画拟合线。验的是「科学依赖 + matplotlib 输出」这条链路。"
+    },
+    {
+      "id": "sci_sns_line",
+      "category": "scientific_stack",
+      "script": "cases/scientific_stack/sci_seaborn.py",
+      "stem": "sci_sns_line",
+      "entry": "main",
+      "tier": "exploratory",
+      "discovery": "discoverable",
+      "expected_figures": 6,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title",
+          "legend"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "seaborn 产出的是 collections/containers/patches 的组合，是 artist 长尾最集中的一处。",
+      "classification": "environment_dependency",
+      "reason": "seaborn 是内置渲染 runtime 里有、但普通开发机与 PR 档 CI 未必装的可选依赖（packaging/runtime-lock.json 锁着 0.13.2）。缺它时脚本以 missing_dependency 开局，那是环境前提不是引擎缺陷。装了 seaborn 的目标上这几条按 full/partial 正常判定。"
+    },
+    {
+      "id": "sci_sns_scatter",
+      "category": "scientific_stack",
+      "script": "cases/scientific_stack/sci_seaborn.py",
+      "stem": "sci_sns_scatter",
+      "entry": "main",
+      "tier": "exploratory",
+      "discovery": "discoverable",
+      "expected_figures": 6,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "scatter",
+          "title",
+          "legend"
+        ],
+        "editable": [
+          [
+            "axes_0.scatter_0",
+            "facecolor"
+          ],
+          [
+            "axes_0.scatter_0",
+            "size"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.scatter_0",
+          "prop": "facecolor",
+          "value": "#118844"
+        },
+        {
+          "gid": "axes_0.scatter_0",
+          "prop": "size",
+          "value": 42.0
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "seaborn 产出的是 collections/containers/patches 的组合，是 artist 长尾最集中的一处。",
+      "classification": "environment_dependency",
+      "reason": "seaborn 是内置渲染 runtime 里有、但普通开发机与 PR 档 CI 未必装的可选依赖（packaging/runtime-lock.json 锁着 0.13.2）。缺它时脚本以 missing_dependency 开局，那是环境前提不是引擎缺陷。装了 seaborn 的目标上这几条按 full/partial 正常判定。"
+    },
+    {
+      "id": "sci_sns_bar",
+      "category": "scientific_stack",
+      "script": "cases/scientific_stack/sci_seaborn.py",
+      "stem": "sci_sns_bar",
+      "entry": "main",
+      "tier": "exploratory",
+      "discovery": "discoverable",
+      "expected_figures": 6,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "bar_series",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.barseries_0",
+            "facecolor"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.barseries_0",
+          "prop": "facecolor",
+          "value": "#775599"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "seaborn 产出的是 collections/containers/patches 的组合，是 artist 长尾最集中的一处。",
+      "classification": "environment_dependency",
+      "reason": "seaborn 是内置渲染 runtime 里有、但普通开发机与 PR 档 CI 未必装的可选依赖（packaging/runtime-lock.json 锁着 0.13.2）。缺它时脚本以 missing_dependency 开局，那是环境前提不是引擎缺陷。装了 seaborn 的目标上这几条按 full/partial 正常判定。"
+    },
+    {
+      "id": "sci_sns_heatmap",
+      "category": "scientific_stack",
+      "script": "cases/scientific_stack/sci_seaborn.py",
+      "stem": "sci_sns_heatmap",
+      "entry": "main",
+      "tier": "exploratory",
+      "discovery": "discoverable",
+      "expected_figures": 6,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.title",
+            "fontsize"
+          ],
+          [
+            "axes_0.title",
+            "color"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.title",
+          "prop": "fontsize",
+          "value": 13.5
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "color",
+          "value": "#804000"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "seaborn 产出的是 collections/containers/patches 的组合，是 artist 长尾最集中的一处。",
+      "classification": "environment_dependency",
+      "reason": "seaborn 是内置渲染 runtime 里有、但普通开发机与 PR 档 CI 未必装的可选依赖（packaging/runtime-lock.json 锁着 0.13.2）。缺它时脚本以 missing_dependency 开局，那是环境前提不是引擎缺陷。装了 seaborn 的目标上这几条按 full/partial 正常判定。"
+    },
+    {
+      "id": "sci_sns_box",
+      "category": "scientific_stack",
+      "script": "cases/scientific_stack/sci_seaborn.py",
+      "stem": "sci_sns_box",
+      "entry": "main",
+      "tier": "exploratory",
+      "discovery": "discoverable",
+      "expected_figures": 6,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.title",
+            "fontsize"
+          ],
+          [
+            "axes_0.title",
+            "color"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.title",
+          "prop": "fontsize",
+          "value": 13.5
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "color",
+          "value": "#804000"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "seaborn 产出的是 collections/containers/patches 的组合，是 artist 长尾最集中的一处。",
+      "classification": "environment_dependency",
+      "reason": "seaborn 是内置渲染 runtime 里有、但普通开发机与 PR 档 CI 未必装的可选依赖（packaging/runtime-lock.json 锁着 0.13.2）。缺它时脚本以 missing_dependency 开局，那是环境前提不是引擎缺陷。装了 seaborn 的目标上这几条按 full/partial 正常判定。"
+    },
+    {
+      "id": "sci_sns_violin",
+      "category": "scientific_stack",
+      "script": "cases/scientific_stack/sci_seaborn.py",
+      "stem": "sci_sns_violin",
+      "entry": "main",
+      "tier": "exploratory",
+      "discovery": "discoverable",
+      "expected_figures": 6,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.title",
+            "fontsize"
+          ],
+          [
+            "axes_0.title",
+            "color"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.title",
+          "prop": "fontsize",
+          "value": 13.5
+        },
+        {
+          "gid": "axes_0.title",
+          "prop": "color",
+          "value": "#804000"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "seaborn 产出的是 collections/containers/patches 的组合，是 artist 长尾最集中的一处。",
+      "classification": "environment_dependency",
+      "reason": "seaborn 是内置渲染 runtime 里有、但普通开发机与 PR 档 CI 未必装的可选依赖（packaging/runtime-lock.json 锁着 0.13.2）。缺它时脚本以 missing_dependency 开局，那是环境前提不是引擎缺陷。装了 seaborn 的目标上这几条按 full/partial 正常判定。"
+    },
+    {
+      "id": "sci_pillow",
+      "category": "scientific_stack",
+      "script": "cases/scientific_stack/sci_pillow.py",
+      "stem": "sci_pillow",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "image",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.images_0",
+            "alpha"
+          ],
+          [
+            "axes_0.images_0",
+            "interpolation"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.images_0",
+          "prop": "alpha",
+          "value": 0.75
+        },
+        {
+          "gid": "axes_0.images_0",
+          "prop": "interpolation",
+          "value": "nearest"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "Pillow 读进来的也是 RGB 位图，同样没有 cmap。",
+      "assets": [
+        "sample.png"
+      ]
+    },
+    {
+      "id": "sci_mathtext",
+      "category": "scientific_stack",
+      "script": "cases/scientific_stack/sci_typography.py",
+      "stem": "sci_mathtext",
+      "entry": "main",
+      "tier": "must",
+      "discovery": "discoverable",
+      "expected_figures": 2,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "text",
+          "title",
+          "axis_label"
+        ],
+        "editable": [
+          [
+            "axes_0.texts_0",
+            "fontsize"
+          ],
+          [
+            "axes_0.texts_0",
+            "color"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.texts_0",
+          "prop": "fontsize",
+          "value": 13.5
+        },
+        {
+          "gid": "axes_0.texts_0",
+          "prop": "color",
+          "value": "#804000"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": true,
+      "notes": "图内元素文字走 matplotlib mathtext（cm$^{-1}$ 这一套），不是画布标注那套行内标记。"
+    },
+    {
+      "id": "sci_cjk",
+      "category": "scientific_stack",
+      "script": "cases/scientific_stack/sci_typography.py",
+      "stem": "sci_cjk",
+      "entry": "main",
+      "tier": "exploratory",
+      "discovery": "discoverable",
+      "expected_figures": 2,
+      "expected": {
+        "fidelity": false
+      },
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "text",
+          "title",
+          "axis_label"
+        ],
+        "editable": [
+          [
+            "axes_0.texts_0",
+            "fontsize"
+          ],
+          [
+            "axes_0.texts_0",
+            "color"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.texts_0",
+          "prop": "fontsize",
+          "value": 13.5
+        },
+        {
+          "gid": "axes_0.texts_0",
+          "prop": "color",
+          "value": "#804000"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "环境里没有 CJK 字体时画出来是豆腐块，那是环境依赖不是引擎 bug。",
+      "expected_false_reasons": {
+        "fidelity": "CJK 字形与度量随字体包版本变化，像素比对会在一次与产品完全无关的 fonts-noto-cjk 升级里整片变红。结构与导出照验——中文必须能画出来；只是不拿它做像素判据。（与 tests/acceptance 的 c03_cjk 同一条取舍。）"
+      }
+    },
+    {
+      "id": "mm_twoline_pyplot",
+      "category": "metamorphic",
+      "script": "cases/metamorphic/mm_twoline_pyplot.py",
+      "stem": "mm_twoline_pyplot",
+      "entry": "__main__",
+      "tier": "expected",
+      "discovery": "requires_probe",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title",
+          "axis_label",
+          "legend"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": true,
+      "smoke": true,
+      "notes": "双曲线 + 图例——pyplot 状态机 + plt.show()，无 savefig——桌面靠 pyplot 兜底捕获。"
+    },
+    {
+      "id": "mm_twoline_oo",
+      "category": "metamorphic",
+      "script": "cases/metamorphic/mm_twoline_oo.py",
+      "stem": "mm_twoline_oo",
+      "entry": "main",
+      "tier": "exploratory",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title",
+          "axis_label",
+          "legend"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "双曲线 + 图例——OO API + main()。"
+    },
+    {
+      "id": "mm_twoline_helper",
+      "category": "metamorphic",
+      "script": "cases/metamorphic/mm_twoline_helper.py",
+      "stem": "mm_twoline_helper",
+      "entry": "main",
+      "tier": "exploratory",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title",
+          "axis_label",
+          "legend"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "双曲线 + 图例——helper/wrapper 函数 + Path 保存。"
+    },
+    {
+      "id": "mm_scatterfit_pyplot",
+      "category": "metamorphic",
+      "script": "cases/metamorphic/mm_scatterfit_pyplot.py",
+      "stem": "mm_scatterfit_pyplot",
+      "entry": "__main__",
+      "tier": "expected",
+      "discovery": "requires_probe",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "scatter",
+          "line",
+          "title",
+          "legend"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": true,
+      "smoke": false,
+      "notes": "散点 + 拟合线——pyplot 状态机 + plt.show()，无 savefig——桌面靠 pyplot 兜底捕获。"
+    },
+    {
+      "id": "mm_scatterfit_oo",
+      "category": "metamorphic",
+      "script": "cases/metamorphic/mm_scatterfit_oo.py",
+      "stem": "mm_scatterfit_oo",
+      "entry": "main",
+      "tier": "exploratory",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "scatter",
+          "line",
+          "title",
+          "legend"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "散点 + 拟合线——OO API + main()。"
+    },
+    {
+      "id": "mm_scatterfit_helper",
+      "category": "metamorphic",
+      "script": "cases/metamorphic/mm_scatterfit_helper.py",
+      "stem": "mm_scatterfit_helper",
+      "entry": "main",
+      "tier": "exploratory",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "scatter",
+          "line",
+          "title",
+          "legend"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "散点 + 拟合线——helper/wrapper 函数 + Path 保存。"
+    },
+    {
+      "id": "mm_barlabel_pyplot",
+      "category": "metamorphic",
+      "script": "cases/metamorphic/mm_barlabel_pyplot.py",
+      "stem": "mm_barlabel_pyplot",
+      "entry": "__main__",
+      "tier": "expected",
+      "discovery": "requires_probe",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "bar_series",
+          "text",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.barseries_0",
+            "facecolor"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.barseries_0",
+          "prop": "facecolor",
+          "value": "#775599"
+        }
+      ],
+      "browser_eligible": true,
+      "smoke": false,
+      "notes": "带数值标签的柱状图——pyplot 状态机 + plt.show()，无 savefig——桌面靠 pyplot 兜底捕获。"
+    },
+    {
+      "id": "mm_barlabel_oo",
+      "category": "metamorphic",
+      "script": "cases/metamorphic/mm_barlabel_oo.py",
+      "stem": "mm_barlabel_oo",
+      "entry": "main",
+      "tier": "exploratory",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "bar_series",
+          "text",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.barseries_0",
+            "facecolor"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.barseries_0",
+          "prop": "facecolor",
+          "value": "#775599"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "带数值标签的柱状图——OO API + main()。"
+    },
+    {
+      "id": "mm_barlabel_helper",
+      "category": "metamorphic",
+      "script": "cases/metamorphic/mm_barlabel_helper.py",
+      "stem": "mm_barlabel_helper",
+      "entry": "main",
+      "tier": "exploratory",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "bar_series",
+          "text",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.barseries_0",
+            "facecolor"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.barseries_0",
+          "prop": "facecolor",
+          "value": "#775599"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "带数值标签的柱状图——helper/wrapper 函数 + Path 保存。"
+    },
+    {
+      "id": "mm_imagecbar_pyplot",
+      "category": "metamorphic",
+      "script": "cases/metamorphic/mm_imagecbar_pyplot.py",
+      "stem": "mm_imagecbar_pyplot",
+      "entry": "__main__",
+      "tier": "expected",
+      "discovery": "requires_probe",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "image",
+          "colorbar",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.images_0",
+            "cmap"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.images_0",
+          "prop": "cmap",
+          "value": "plasma"
+        }
+      ],
+      "browser_eligible": true,
+      "smoke": false,
+      "notes": "imshow + 色条——pyplot 状态机 + plt.show()，无 savefig——桌面靠 pyplot 兜底捕获。"
+    },
+    {
+      "id": "mm_imagecbar_oo",
+      "category": "metamorphic",
+      "script": "cases/metamorphic/mm_imagecbar_oo.py",
+      "stem": "mm_imagecbar_oo",
+      "entry": "main",
+      "tier": "exploratory",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "image",
+          "colorbar",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.images_0",
+            "cmap"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.images_0",
+          "prop": "cmap",
+          "value": "plasma"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "imshow + 色条——OO API + main()。"
+    },
+    {
+      "id": "mm_imagecbar_helper",
+      "category": "metamorphic",
+      "script": "cases/metamorphic/mm_imagecbar_helper.py",
+      "stem": "mm_imagecbar_helper",
+      "entry": "main",
+      "tier": "exploratory",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "image",
+          "colorbar",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.images_0",
+            "cmap"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.images_0",
+          "prop": "cmap",
+          "value": "plasma"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "imshow + 色条——helper/wrapper 函数 + Path 保存。"
+    },
+    {
+      "id": "mm_annotated_pyplot",
+      "category": "metamorphic",
+      "script": "cases/metamorphic/mm_annotated_pyplot.py",
+      "stem": "mm_annotated_pyplot",
+      "entry": "__main__",
+      "tier": "expected",
+      "discovery": "requires_probe",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "text",
+          "arrow_patch",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": true,
+      "smoke": false,
+      "notes": "曲线 + annotate 箭头——pyplot 状态机 + plt.show()，无 savefig——桌面靠 pyplot 兜底捕获。"
+    },
+    {
+      "id": "mm_annotated_oo",
+      "category": "metamorphic",
+      "script": "cases/metamorphic/mm_annotated_oo.py",
+      "stem": "mm_annotated_oo",
+      "entry": "main",
+      "tier": "exploratory",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "text",
+          "arrow_patch",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "曲线 + annotate 箭头——OO API + main()。"
+    },
+    {
+      "id": "mm_annotated_helper",
+      "category": "metamorphic",
+      "script": "cases/metamorphic/mm_annotated_helper.py",
+      "stem": "mm_annotated_helper",
+      "entry": "main",
+      "tier": "exploratory",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "text",
+          "arrow_patch",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "曲线 + annotate 箭头——helper/wrapper 函数 + Path 保存。"
+    },
+    {
+      "id": "mm_errorband_pyplot",
+      "category": "metamorphic",
+      "script": "cases/metamorphic/mm_errorband_pyplot.py",
+      "stem": "mm_errorband_pyplot",
+      "entry": "__main__",
+      "tier": "expected",
+      "discovery": "requires_probe",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "fill",
+          "title",
+          "legend"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": true,
+      "smoke": false,
+      "notes": "均值曲线 + 误差带——pyplot 状态机 + plt.show()，无 savefig——桌面靠 pyplot 兜底捕获。"
+    },
+    {
+      "id": "mm_errorband_oo",
+      "category": "metamorphic",
+      "script": "cases/metamorphic/mm_errorband_oo.py",
+      "stem": "mm_errorband_oo",
+      "entry": "main",
+      "tier": "exploratory",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "fill",
+          "title",
+          "legend"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "均值曲线 + 误差带——OO API + main()。"
+    },
+    {
+      "id": "mm_errorband_helper",
+      "category": "metamorphic",
+      "script": "cases/metamorphic/mm_errorband_helper.py",
+      "stem": "mm_errorband_helper",
+      "entry": "main",
+      "tier": "exploratory",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "fill",
+          "title",
+          "legend"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "均值曲线 + 误差带——helper/wrapper 函数 + Path 保存。"
+    },
+    {
+      "id": "mm_histogram_pyplot",
+      "category": "metamorphic",
+      "script": "cases/metamorphic/mm_histogram_pyplot.py",
+      "stem": "mm_histogram_pyplot",
+      "entry": "__main__",
+      "tier": "expected",
+      "discovery": "requires_probe",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "bar_series",
+          "title",
+          "axis_label"
+        ],
+        "editable": [
+          [
+            "axes_0.barseries_0",
+            "facecolor"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.barseries_0",
+          "prop": "facecolor",
+          "value": "#775599"
+        }
+      ],
+      "browser_eligible": true,
+      "smoke": false,
+      "notes": "直方图——pyplot 状态机 + plt.show()，无 savefig——桌面靠 pyplot 兜底捕获。"
+    },
+    {
+      "id": "mm_histogram_oo",
+      "category": "metamorphic",
+      "script": "cases/metamorphic/mm_histogram_oo.py",
+      "stem": "mm_histogram_oo",
+      "entry": "main",
+      "tier": "exploratory",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "bar_series",
+          "title",
+          "axis_label"
+        ],
+        "editable": [
+          [
+            "axes_0.barseries_0",
+            "facecolor"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.barseries_0",
+          "prop": "facecolor",
+          "value": "#775599"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "直方图——OO API + main()。"
+    },
+    {
+      "id": "mm_histogram_helper",
+      "category": "metamorphic",
+      "script": "cases/metamorphic/mm_histogram_helper.py",
+      "stem": "mm_histogram_helper",
+      "entry": "main",
+      "tier": "exploratory",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "bar_series",
+          "title",
+          "axis_label"
+        ],
+        "editable": [
+          [
+            "axes_0.barseries_0",
+            "facecolor"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.barseries_0",
+          "prop": "facecolor",
+          "value": "#775599"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "直方图——helper/wrapper 函数 + Path 保存。"
+    },
+    {
+      "id": "mm_twopanel_pyplot",
+      "category": "metamorphic",
+      "script": "cases/metamorphic/mm_twopanel_pyplot.py",
+      "stem": "mm_twopanel_pyplot",
+      "entry": "__main__",
+      "tier": "expected",
+      "discovery": "requires_probe",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": true,
+      "smoke": false,
+      "notes": "左右两块面板——pyplot 状态机 + plt.show()，无 savefig——桌面靠 pyplot 兜底捕获。"
+    },
+    {
+      "id": "mm_twopanel_oo",
+      "category": "metamorphic",
+      "script": "cases/metamorphic/mm_twopanel_oo.py",
+      "stem": "mm_twopanel_oo",
+      "entry": "main",
+      "tier": "exploratory",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "左右两块面板——OO API + main()。"
+    },
+    {
+      "id": "mm_twopanel_helper",
+      "category": "metamorphic",
+      "script": "cases/metamorphic/mm_twopanel_helper.py",
+      "stem": "mm_twopanel_helper",
+      "entry": "main",
+      "tier": "exploratory",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "左右两块面板——helper/wrapper 函数 + Path 保存。"
+    },
+    {
+      "id": "mm_twoline_addsubplot",
+      "category": "metamorphic",
+      "script": "cases/metamorphic/mm_twoline_addsubplot.py",
+      "stem": "mm_twoline_addsubplot",
+      "entry": "build_figure",
+      "tier": "exploratory",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title",
+          "axis_label",
+          "legend"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "双曲线 + 图例——Figure + add_subplot，**完全不 import pyplot**：没有 figure 管理器，pyplot 兜底一张都不该多捕获。"
+    },
+    {
+      "id": "mm_twoline_loop",
+      "category": "metamorphic",
+      "script": "cases/metamorphic/mm_twoline_loop.py",
+      "stem": "mm_twoline_loop",
+      "entry": "render",
+      "tier": "exploratory",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title",
+          "axis_label",
+          "legend"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "双曲线 + 图例——常量 for 循环 + entry=render。"
+    }
+  ]
+}
