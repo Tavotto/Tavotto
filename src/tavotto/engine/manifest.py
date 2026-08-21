@@ -631,6 +631,34 @@ def census(fig, state: FigState) -> list[dict]:
 # ---------------------------------------------------------------------------
 # 每类元素暴露的可编辑字段（读取当前值）
 # ---------------------------------------------------------------------------
+def _alpha_field(artist) -> list[dict]:
+    """透明度那个滑块——**alpha 是逐元素数组时一条都不给**。
+
+    `pcolormesh(..., alpha=<2维数组>)` / `scatter(..., alpha=<1维数组>)` /
+    `imshow(..., alpha=<2维数组>)` 的 `get_alpha()` 回 ndarray。两件事同时坏：
+
+      * `float(ndarray)` 抛 TypeError，**整份 manifest 建不出来**——一张完全
+        正常的图直接打不开（P1，本轮实测撞到的就是这个）；
+      * 就算显示那侧绕过去，这个控件也**根本用不了**：matplotlib 自己的
+        `Artist.set_alpha` 里写着 `if alpha != self._alpha`，`_alpha` 是数组时
+        那句当场 ValueError。三个版本（3.8.4 / 3.10.8 / 3.11.1）× 三种 artist
+        逐格实测一致：`set_alpha(0.3)` 与 `set_alpha(None)` **都**抛
+        ValueError。连清空都做不到。
+
+    所以这不是「藏起一个能用的控件」（`Arc` 那次的教训），是**它真的不能用**
+    ——上游改不动。等哪天 matplotlib 让数组 alpha 可以被标量覆盖，这里再放开，
+    看护会先红。
+
+    做成共享助手而不是在三处各写一遍：这条判断只该有一处出处。
+    """
+    a = getattr(artist, "get_alpha", lambda: None)()
+    if a is not None and hasattr(a, "shape") and getattr(a, "ndim", 0) > 0:
+        return []
+    return [{"prop": "alpha", "type": "number",
+             "value": 1.0 if a is None else round(float(a), 2),
+             "min": 0, "max": 1, "step": 0.05}]
+
+
 def _text_fields(t) -> list[dict]:
     alpha = t.get_alpha()
     fam = (t.get_fontfamily() or ["serif"])[0]
@@ -801,9 +829,7 @@ def _collection_fields(coll, *, label: bool) -> list[dict]:
             "value": _linecoll_linestyle_name(coll),
             "options": ["-", "--", "-.", ":"], "group": "线条与填充"}]
           if "stroke_style" in caps else []),
-        {"prop": "alpha", "type": "number",
-         "value": 1.0 if coll.get_alpha() is None else round(float(coll.get_alpha()), 2),
-         "min": 0, "max": 1, "step": 0.05},
+        *_alpha_field(coll),
         {"prop": "visible", "type": "bool", "value": bool(coll.get_visible())},
     ]
     if "faces" in caps and "stroke_style" in caps:
@@ -874,7 +900,6 @@ def _linecoll_fields(coll) -> list[dict]:
     # 拿到的是一个浮点数，`to_hex` 会把它变成一个毫无意义的颜色。
     colors = np.atleast_2d(coll.get_color())
     lw = coll.get_linewidths()
-    alpha = coll.get_alpha()
     return [
         {"prop": "color", "type": "color",
          "value": to_hex(colors[0]) if len(colors) else "#000000"},
@@ -884,9 +909,7 @@ def _linecoll_fields(coll) -> list[dict]:
         {"prop": "linestyle", "type": "enum",
          "value": _linecoll_linestyle_name(coll),
          "options": ["-", "--", "-.", ":"]},
-        {"prop": "alpha", "type": "number",
-         "value": 1.0 if alpha is None else round(float(alpha), 2),
-         "min": 0, "max": 1, "step": 0.05},
+        *_alpha_field(coll),
         {"prop": "visible", "type": "bool", "value": bool(coll.get_visible())},
         {"prop": "zorder", "type": "number", "value": round(float(coll.get_zorder()), 1),
          "min": -5, "max": 50, "step": 1, "group": "排列"},
@@ -1103,9 +1126,7 @@ def _image_fields(im) -> list[dict]:
     i_opts = _interpolation_options(interp)
     fields += [
         {"prop": "interpolation", "type": "enum", "value": interp, "options": i_opts},
-        {"prop": "alpha", "type": "number",
-         "value": 1.0 if im.get_alpha() is None else round(float(im.get_alpha()), 2),
-         "min": 0, "max": 1, "step": 0.05},
+        *_alpha_field(im),
         {"prop": "origin", "type": "enum", "value": str(im.origin),
          "options": ["upper", "lower"], "group": "高级"},
         {"prop": "zorder", "type": "number", "value": round(float(im.get_zorder()), 1),

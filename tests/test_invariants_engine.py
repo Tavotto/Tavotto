@@ -100,6 +100,13 @@ def main():
     # `collections_6` / `collections_7`，插在中间会把编号整个顶掉。
     ax.scatter(x, np.tan(x / 8.0) + 3.2, s=80, marker="D",
                facecolors="none", edgecolors="#8844CC", label="hollow")
+    # **逐元素 alpha**：`get_alpha()` 回 ndarray。`float(ndarray)` 抛 TypeError，
+    # 整份 manifest 建不出来——一张完全正常的图直接打不开（P1）。而且这个控件
+    # 本身也用不了：matplotlib 的 `Artist.set_alpha` 里 `if alpha != self._alpha`
+    # 对数组当场 ValueError（三个版本 × 三种 artist 实测一致，连
+    # `set_alpha(None)` 都抛）。所以夹具里必须真有这么一个。
+    ax.scatter(x, np.cos(x) - 1.6, s=70, marker="P",
+               alpha=np.linspace(0.25, 0.95, len(x)), label="alpha-array")
     ax.add_patch(Rectangle((1.0, -0.2), 2.2, 0.9, facecolor="#B34700"))
     ax.add_patch(Circle((2.0, 0.25), 0.5, facecolor="#2A6F3C"))
     ax.add_patch(Arc((2.0, 0.25), 1.4, 1.4, theta1=0, theta2=270))
