@@ -20,10 +20,37 @@ interface PyodideLike {
   unpackArchive(buf: ArrayBuffer, format: string, opts?: { extractDir?: string }): void
   runPython(code: string): unknown
   pyimport(name: string): { handle?: (s: string) => string; classify_json?: (s: string) => string }
+  /** Emscripten 虚拟 FS。完整性摘要经它读字节——**绕开 Python 解释器**。 */
+  FS: { readFile(path: string, opts?: { encoding?: string }): Uint8Array }
 }
 
 let pyodide: PyodideLike | null = null
 let handleFn: ((s: string) => string) | null = null
+/** 用户脚本在虚拟 FS 里的绝对路径，`load` 成功时记下——**存在 JS 这一侧**。 */
+let workspacePath = ''
+
+/**
+ * 工作区源文件的 SHA-256，**在 Python 之外算**。
+ *
+ * 为什么不能让 Python 自己算（codex 审查 P2，判断是对的）：用户脚本跑在
+ * **同一个解释器**里，而且跑在这次核对**之前**。它完全可以在改掉自己的文件
+ * 之后 monkeypatch `builtins.open` 或换掉 `hashlib.sha256`、甚至直接改
+ * `sys.modules['browser']` 的全局，让 `source_status` 继续回报原来的摘要。
+ * 那样界面会宣称「未改动」，而实际执行的文件已经变了——**一个能被它所校验的
+ * 代码改写的校验，不叫校验**，而这条状态是当作独立验证展示给用户的。
+ *
+ * 所以字节由 `pyodide.FS.readFile` 直接从 Emscripten FS 取，摘要由 Worker 的
+ * Web Crypto 算，全程不经过用户能触及的 Python 名字空间。
+ * （`import js` 这类反向逃逸由 `browser_imports` 在执行前就拦掉了。）
+ */
+async function fsDigest(path: string): Promise<{ sha256: string; bytes: number }> {
+  const data = pyodide!.FS.readFile(path, { encoding: 'binary' })
+  // 复制进独立的 ArrayBuffer：FS 给的是 WASM 堆上的视图，堆一增长就失效
+  const copy = new Uint8Array(data)
+  const buf = await crypto.subtle.digest('SHA-256', copy)
+  const sha256 = [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('')
+  return { sha256, bytes: copy.byteLength }
+}
 
 const post = (m: unknown) => (self as unknown as DedicatedWorkerGlobalScope).postMessage(m)
 const progress = (id: number, phase: PlaygroundPhase) => post({ id, progress: phase })
@@ -118,6 +145,20 @@ async function load(
   handleFn = (s: string) => browser.handle!(s)
   const out = callPython({ cmd: 'load', filename, source })
   progress(id, 'figures')
+  // 完整性摘要**以 FS 上的字节为准**，覆盖掉 Python 自己报的那个（理由见
+  // fsDigest）。Python 那份仍然存在且被 CPython 测试盖着——它验的是引擎语义，
+  // 这里验的是「实际躺在虚拟 FS 上的那个文件」，两者要的东西不同。
+  workspacePath = `/workspace/${typeof out.script === 'string' ? out.script : 'figure.py'}`
+  try {
+    const d = await fsDigest(workspacePath)
+    out.source_sha256 = d.sha256
+    out.source_bytes = d.bytes
+  } catch {
+    // 拿不到 FS 或没有 Web Crypto：交空串，主线程据此显示「查不了」，
+    // **绝不退回 Python 那份**——退回去就等于把刚拆掉的自证又装回来
+    out.source_sha256 = ''
+    out.source_bytes = 0
+  }
   return out
 }
 
@@ -143,10 +184,19 @@ async function dispatch(req: WorkerRequest): Promise<unknown> {
         patches: req.patches,
         width: req.width,
       })
-    case 'sourceStatus':
+    case 'sourceStatus': {
       // 每次都真的从虚拟 FS 读文件重算——缓存一个「上次算过的」哈希就等于
-      // 又回到了「两个变量比自己」，那正是这条命令要取代的东西
-      return callPython({ cmd: 'source_status' })
+      // 又回到了「两个变量比自己」，那正是这条命令要取代的东西。
+      // 读与算都在 Python 之外（见 fsDigest）。
+      if (!pyodide || !workspacePath) return fail('bad_request', '还没有加载脚本')
+      const script = workspacePath.slice(workspacePath.lastIndexOf('/') + 1)
+      try {
+        return { script, ...(await fsDigest(workspacePath)) }
+      } catch (err) {
+        return fail('source_unreadable',
+          `读不到工作区里的源文件: ${err instanceof Error ? err.message : err}`)
+      }
+    }
   }
 }
 

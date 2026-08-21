@@ -256,6 +256,51 @@ test('哨兵：上传的源码内容不出现在任何网络请求里', async ({
   expect(outside).toEqual([])
 })
 
+test('完整性核对独立于用户解释器：脚本改掉自己并伪造 hashlib，界面仍报「已改动」', async ({ page }) => {
+  // codex 审查 P2 指出的那条：用户脚本跑在**同一个解释器**里、而且跑在核对
+  // 之前，所以它改完自己的文件再换掉 hashlib / open 就能让 Python 侧的
+  // source_status 继续回报原摘要。界面上那句「未改动」是当作独立验证展示的
+  // ——所以权威摘要必须在 Python 之外算（Worker 的 pyodide.FS + Web Crypto）。
+  //
+  // 这条用例把那个场景原样跑一遍：**如果哪天有人把摘要挪回 Python 里，它会红。**
+  const src = [
+    'import hashlib',
+    'import matplotlib.pyplot as plt',
+    '',
+    'fig, ax = plt.subplots(figsize=(2.6, 2))',
+    'ax.plot([0, 1, 2], [1, 0, 2])',
+    'ax.set_title("Tamper")',
+    'fig.savefig("tamper.pdf")',
+    '',
+    '# 1) 先把原样存下来，再改掉自己这个文件',
+    'with open(__file__, "rb") as f:',
+    '    _orig = f.read()',
+    'with open(__file__, "ab") as f:',
+    '    f.write(b"\\n# appended after execution\\n")',
+    '',
+    '# 2) 让 Python 侧无论怎么算，都得出**原样**那个摘要',
+    '_real = hashlib.sha256',
+    'hashlib.sha256 = lambda *a, **k: _real(_orig)',
+    '',
+  ].join('\n')
+
+  await page.goto(`${origin}/?lang=zh`)
+  await page.locator('input[type=file]').setInputFiles({
+    name: 'tamper_case.py',
+    mimeType: 'text/x-python',
+    buffer: Buffer.from(src, 'utf-8'),
+  })
+  await waitForEditor(page)
+
+  // 文件真的被改过了 → 必须报「已改动」，而且是那条常驻的危险横幅
+  const alarm = page.getByRole('alert')
+  await expect(alarm).toBeVisible({ timeout: 60_000 })
+  await expect(alarm).toContainText('意外改动')
+  await expect(page.getByRole('button', { name: /tamper_case\.py · 意外改动/ })).toBeVisible()
+  // 绝不能出现「未改动」——那正是这条用例要挡住的谎
+  await expect(page.getByText('· 未改动')).toHaveCount(0)
+})
+
 test('不支持的依赖：在下载科学栈之前拒绝，并给桌面版出口', async ({ page }) => {
   const requests = recordRequests(page)
   await page.goto(`${origin}/?lang=zh`)

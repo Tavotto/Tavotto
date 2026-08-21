@@ -841,13 +841,21 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被它推翻**（
 - **隐私是可验证的**：源码只进 Worker，不进 localStorage / 不出网
   （e2e 哨兵测试盯着）。
 - **「figure.py · 未改动」是两个真哈希比出来的**（2026-08-21）：主线程用
-  Web Crypto 算原文的 sha256，Worker 里 `browser.py` 的 `source_status` 把
-  `/workspace/<脚本>` **从虚拟 FS 读回来**用 hashlib 再算一次，两个数相等
-  才显示「未改动」。**别退回 `loadedSource === originalSource` 那种写法**
-  ——两个变量指向同一个 JS 字符串，恒真，什么也没证明。Worker 侧的哈希在
-  **脚本跑完之后**采（验的是「实际被执行的那个文件」）；复验走独立的轻命令、
-  **只在 worker 闲着时发**（无阶段请求超时 30s，排在慢渲染后面到点 = 整个
-  会话被 terminate）。UI 四态：没验完不许说「未改动」，算不出哈希是「查不了」
+  Web Crypto 算原文的 sha256，Worker 侧用 `pyodide.FS.readFile` 把
+  `/workspace/<脚本>` 的字节读出来再用 Web Crypto 算一次，两个数相等才显示
+  「未改动」。**别退回 `loadedSource === originalSource` 那种写法**——两个
+  变量指向同一个 JS 字符串，恒真，什么也没证明。
+  **权威摘要必须在用户的 Python 解释器之外算**（`pyodide.worker.ts` 的
+  `fsDigest`）：用户脚本跑在同一个解释器里、而且跑在核对之前，改完自己的文件
+  再 monkeypatch `builtins.open` / 换掉 `hashlib.sha256` / 改
+  `sys.modules['browser']` 的全局，就能让 Python 侧继续回报原摘要——
+  **一个能被它所校验的代码改写的校验不叫校验**（e2e 原样跑那个场景，
+  把摘要挪回 Python 就红）。`browser.py` 的 `source_status` 保留，验的是
+  引擎语义、跑在 Pyodide 之外，不是重复。写文件必须**二进制**——文本模式在
+  Windows 上翻译换行，比对永远 mismatch（只有 CI 的 windows 腿逮得到）。
+  Worker 侧的哈希在**脚本跑完之后**采；复验走独立的轻命令、**只在 worker
+  闲着时发**（无阶段请求超时 30s，排在慢渲染后面到点 = 整个会话被
+  terminate）。UI 四态：没验完不许说「未改动」，算不出哈希是「查不了」
   不是「没改」，不相等按不变式失效常驻报警。
 - **示例是一等入口，不是脚注**（2026-08-21）：空状态两条平级的路——拖放区 +
   一个填色主 CTA「直接试一个示例」。`EXAMPLES` 里**有且只有一个** `primary`

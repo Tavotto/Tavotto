@@ -24,10 +24,16 @@ plt.show()` 这类从不 savefig 的脚本也要能用）。
 什么都不泄漏。失败一律 `{ok: false, code, message, ...}`，code 是稳定的
 机器可读值（错误分诊在前端做），traceback 原文附带但有界。
 
-「源文件未被修改」在这里是**可验证的结论**而不是口号：`load` 写完文件之后
-从虚拟 FS **读回来**算一次 sha256，`source_status` 随时再读再算一次。主线程
-拿自己那份原文（Web Crypto 独立算的）与之比对——两侧的哈希来自两套实现、
-隔着 Worker 边界，比「两个变量指向同一个 JS 字符串」是完全不同的证据强度。
+「源文件未被修改」是**可验证的结论**而不是口号，但**权威摘要不在这个模块里**：
+界面用的那个由 Worker 侧的 JS 直接从 Emscripten FS 读字节、用 Web Crypto 算
+（`pyodide.worker.ts` 的 `fsDigest`）。原因很实在——用户脚本跑在**同一个
+解释器**里、而且跑在核对**之前**，它改完自己的文件再 monkeypatch
+`builtins.open` 或换掉 `hashlib.sha256` 就能让下面这个函数继续回报原摘要。
+**一个能被它所校验的代码改写的校验，不叫校验。**
+
+这里的 `source_status` 仍然保留并被 CPython 测试盖着：它验的是引擎语义
+（写进去的就是收到的、脚本跑完还是那份），跑在 Pyodide 之外、没有那个威胁
+模型。两者要的东西不同，别把其中一个删掉当重复。
 """
 from __future__ import annotations
 
@@ -269,9 +275,12 @@ class BrowserSession:
     def source_status(self) -> dict:
         """把 `/workspace/<脚本>` **从虚拟 FS 读回来**再算 sha256。
 
-        「未改动」的证据就是这一句：读的是真正被 `runpy` 执行的那个文件，
-        不是内存里那份传进来的字符串。主线程用 Web Crypto 独立算原文的哈希，
-        两个数一比才叫验证过——比对两个指向同一个 JS 字符串的变量什么都没证明。
+        读的是真正被 `runpy` 执行的那个文件，不是内存里那份传进来的字符串。
+
+        **注意这不是界面上那句「未改动」的依据**（见模块 docstring）：它跑在
+        用户脚本之后、同一个解释器里，`open` 与 `hashlib` 都在对方够得着的
+        地方。界面用的权威摘要由 Worker 的 JS 在 Python 之外算。这个函数的
+        价值在 Pyodide 之外——CPython 测试拿它验引擎语义，那里没有这个威胁。
         """
         if not self.script_name:
             return _err("bad_request", "还没有加载脚本")

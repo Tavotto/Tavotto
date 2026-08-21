@@ -101,14 +101,31 @@ matplotlib 那十几 MB」之前跑，而 `browser.py` 模块级就 import matpl
 
 界面上那句「`figure.py` · 未改动」原来的根据是
 `session.loadedSource === session.originalSource`——两个变量指向同一个 JS
-字符串，恒真，什么也没证明。现在的根据是两个隔着 Worker 边界、由两套实现
-算出来的 sha256：
+字符串，恒真，什么也没证明。现在的根据是两个隔着 Worker 边界算出来的 sha256：
 
     主线程   crypto.subtle.digest('SHA-256', TextEncoder(原文))
-    Worker   browser.py 把 /workspace/<脚本> **从虚拟 FS 读回来** hashlib.sha256
+    Worker   pyodide.FS.readFile(/workspace/<脚本>) → crypto.subtle
+             （`pyodide.worker.ts` 的 fsDigest，**在 Python 之外**）
 
+* **权威摘要必须在用户的解释器之外算**，这是这条不变式成立的前提。用户脚本
+  跑在**同一个** Python 解释器里、而且跑在核对**之前**，它改完自己的文件再
+  monkeypatch `builtins.open`、换掉 `hashlib.sha256`、或直接改
+  `sys.modules['browser']` 的全局，就能让 Python 侧的 `source_status` 继续
+  回报原摘要——界面于是宣称「未改动」，而实际执行的文件已经变了。
+  **一个能被它所校验的代码改写的校验，不叫校验。** 所以字节由
+  `pyodide.FS.readFile` 直接从 Emscripten FS 取、摘要由 Worker 的 Web Crypto
+  算，全程不经过用户够得着的 Python 名字空间（`import js` 这类反向逃逸由
+  `browser_imports` 在执行前就拦掉）。这条有 e2e 原样跑那个场景钉着，
+  **把摘要挪回 Python 就会红**。
+* `engine/browser.py` 的 `source_status` 保留并继续被 CPython 测试盖着：
+  它验的是**引擎语义**（写进去的就是收到的、脚本跑完还是那份），跑在 Pyodide
+  之外、没有那个威胁模型。两者要的东西不同，别把其中一个当重复删掉。
 * Worker 侧的哈希在**脚本跑完之后**采：要证明的是「实际被 `runpy` 执行的
   那个文件此刻仍与你给的一模一样」，写进去就立刻算等于只验了一次 write。
+* 写文件必须**二进制**（`open(path, "wb")`）：文本模式在 Windows 上把 `\n`
+  翻成 `\r\n`，磁盘上的字节不再是用户给的那份，比对永远 mismatch。Pyodide
+  的 Emscripten FS 恰好不翻译，所以只有 CI 的 windows 腿逮得到——
+  **一个只在别的平台上成立的不变式不算不变式。**
 * 复验走一条独立的轻命令 `source_status`（不搭渲染的顺风车，每次都真的
   重新读文件重算——缓存一个「上次算过的」哈希就又回到了自证）。触发时机：
   加载完 / **第一次改完并画出来之后** / 打开源码面板。不必每次指针事件都验。
