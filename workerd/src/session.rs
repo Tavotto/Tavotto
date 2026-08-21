@@ -602,6 +602,24 @@ fn await_response(
                     state.cancel_in_flight = false;
                     flag
                 };
+                // **管道 EOF 就是「这个 worker 没了」的判定，就地把进程摘掉。**
+                //
+                // 不摘的话，「worker 还在不在」这件事就有了**两个判据**：这里按
+                // EOF 判，`ensure_worker` 却按 `try_wait()` 判。子进程关掉 stdout
+                // 到被回收之间有一个窗口，`try_wait()` 在那期间回 `Ok(None)`
+                // ——`ensure_worker` 于是认为「还活着」、**不重建**，把下一条请求
+                // 写进一根死管道，等满整个超时才回 `worker_timeout`。
+                //
+                // 实测就是这么红的（CI 上约 7% 复现，main 上也红过一次）：
+                // `a_crashed_worker_reports_session_dead_and_rebuilds` 的第一句
+                // 断言（session_dead）过了，第二句（重建后 generation==2）拿到的
+                // 是 10 秒后的 worker_timeout 且 generation 仍是 1。
+                //
+                // 这与 ADR 0004 里「『起来了』= hello 握过手，不是『进程对象还在』」
+                // 是同一条纪律的另一半：**「没了」同样不能只看进程对象**。
+                if let Some(proc) = inner.proc.lock().unwrap().take() {
+                    proc.kill();
+                }
                 return Err(if cancelled {
                     ProtoError::new(CODE_CANCELLED, false, "请求已取消（渲染进程被终止）")
                 } else {
@@ -614,11 +632,15 @@ fn await_response(
             }
             Err(RecvTimeoutError::Timeout) => return Err(timeout_error(inner, timeout)),
             Err(RecvTimeoutError::Disconnected) => {
+                // 读线程整个没了 —— 与 EOF 同一个判定，同样就地摘掉进程。
+                if let Some(proc) = inner.proc.lock().unwrap().take() {
+                    proc.kill();
+                }
                 return Err(ProtoError::new(
                     CODE_SESSION_DEAD,
                     true,
                     "渲染进程的读通道已断开，会话需要重建",
-                ))
+                ));
             }
         }
     }

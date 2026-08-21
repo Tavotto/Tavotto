@@ -675,6 +675,46 @@ fn a_crashed_worker_reports_session_dead_and_rebuilds() {
     assert_eq!(resp["generation"], 2);
 }
 
+#[test]
+fn a_worker_that_closed_the_pipe_but_has_not_exited_yet_still_rebuilds() {
+    // **「没了」不能只看进程对象。** 子进程关掉 stdout 到被回收之间有一个窗口，
+    // `try_wait()` 在那期间回 `Ok(None)`——如果 `ensure_worker` 只信这一个判据，
+    // 它会认为「还活着」、**不重建**，把下一条请求写进一根死管道，等满整个
+    // 超时才回 `worker_timeout`。
+    //
+    // 真实崩溃里这个窗口是几微秒，只是**偶尔**被撞上：CI 上约 7% 复现，main
+    // 上也红过一次（`a_crashed_worker_reports_session_dead_and_rebuilds` 的第二
+    // 句断言拿到 10 秒后的 worker_timeout 且 generation 仍是 1）。
+    //
+    // 这条用例把窗口拉长到 1.5 秒，让它从抖动变成**必然**——一个间歇性红的门禁
+    // 与空门禁一样有害：它训练人忽略红灯。
+    //
+    // 与 ADR 0004 里「『起来了』= hello 握过手，不是『进程对象还在』」是同一条
+    // 纪律的另一半。
+    let mut wd = Workerd::start();
+    let (sid, _) = wd.open(
+        &["--die-on-render", "--linger-after-close-ms", "1500"],
+        10_000,
+    );
+    let resp = wd.call(
+        "render",
+        json!({"patches": []}),
+        Some(&sid),
+        Some("Fig1"),
+        10_000,
+    );
+    assert_eq!(err_code(&resp), "session_dead", "{resp:#?}");
+
+    // 此刻子进程**还没退**（还在 linger 里），`try_wait()` 回 Ok(None)。
+    // 只信它的话下面这条会写进死管道、等满超时。
+    let resp = wd.call("build", json!({}), Some(&sid), None, 10_000);
+    assert_eq!(
+        resp["ok"], true,
+        "管道已经 EOF，进程对象却还在——重建被跳过了：{resp:#?}"
+    );
+    assert_eq!(resp["generation"], 2, "没有重建就不会有新的 generation");
+}
+
 // ------------------------------ 会话表 ------------------------------
 
 #[test]

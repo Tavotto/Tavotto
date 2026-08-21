@@ -734,6 +734,20 @@ class EngineWorker:
             self.proc.stdin.flush()
             line = self._readline(timeout)
         if not line:
+            # **管道 EOF 就是「这个 worker 没了」的判定，就地杀掉。**
+            #
+            # 不杀的话，「worker 还在不在」这件事就有了两个判据：这里按 EOF 判，
+            # `get()` 却按 `poll()` 判。子进程关掉 stdout 到被回收之间有一个窗口，
+            # `poll()` 在那期间仍回 None——`get()` 于是复用这条已经死了的 worker，
+            # 下一次请求写进死管道、等满整个超时。
+            #
+            # workerd 那侧是同一个坑，同一天修的（`session.rs` 的 EOF 分支就地
+            # 摘掉进程）。**两条控制面必须给出同一个答案**——pool 是 workerd 的
+            # 参考实现，判据分叉就等于有两套语义。
+            try:
+                self.proc.kill()
+            except OSError:
+                pass
             raise WorkerError("worker 进程崩溃（无响应）", self._log_tail())
         resp = json.loads(line)
         self._check_envelope(resp, rid)
