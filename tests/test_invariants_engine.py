@@ -88,6 +88,16 @@ def main():
         [[(0.5, -2.4), (6.0, -2.4)]], colors="#804000",
         array=np.array([0.5]), cmap="viridis", linewidths=3))
     # 三个形状**叠在一起**：zorder 想验出效果，必须有东西可挡
+    # **空心散点**（`facecolors="none"`）：`get_facecolor()` 长度为 0，而
+    # marker 路径是闭合可填的——`set_facecolor` 实测改 1197 像素、draw 之后
+    # 精确等于请求的颜色。「此刻有没有面色」当判据时它拿不到 facecolor 控件，
+    # 那是**能改却不宣称**。夹具里原来两个散点一个实心一个映射，恰好把这一格
+    # 漏掉了。marker 用 `D`：默认是 `o` 的话「换成 o」测不出变化。
+    #
+    # **必须排在本轴全部 collection 之后**——上面几条用例写死了
+    # `collections_6` / `collections_7`，插在中间会把编号整个顶掉。
+    ax.scatter(x, np.tan(x / 8.0) + 3.2, s=80, marker="D",
+               facecolors="none", edgecolors="#8844CC", label="hollow")
     ax.add_patch(Rectangle((1.0, -0.2), 2.2, 0.9, facecolor="#B34700"))
     ax.add_patch(Circle((2.0, 0.25), 0.5, facecolor="#2A6F3C"))
     ax.add_patch(Arc((2.0, 0.25), 1.4, 1.4, theta1=0, theta2=270))
@@ -1154,6 +1164,48 @@ def test_every_advertised_prop_has_a_handler(probe):
     assert not missing, (
         "宣称了却没有 handler：\n  "
         + "\n  ".join(f"{m['gid']} {m['cls_key']}.{m['prop']}" for m in missing))
+
+
+def test_the_faces_table_holds_in_both_directions(probe):
+    """`facecolor` 能不能用，判据与实测必须**双向**吻合。
+
+    能力真实那条只走一个方向：**宣称了就得改得动**。它抓不到反过来的
+    ——**改得动却没宣称**。这一轮真被这个方向咬了一次：
+    `scatter(facecolors="none")` 的 `get_facecolor()` 长度为 0，于是
+    「此刻有没有面色」那个判据不给 facecolor 控件，而实测 `set_facecolor`
+    在画布上涂出 9235 个请求色像素。**用户拿不到一个确实能用的控件**，
+    而且这是 family 重构引入的回归（旧的散点契约无条件给）。
+
+    量的是**画布上有没有请求的那个颜色**，不是「像素变没变」，更不是读回
+    属性：
+
+      * 「像素变没变」在映射类上是假阳性——`contour` 的 `set_facecolor` 改了
+        34565 个像素，可那不是你设的颜色，它只是把原本 `none` 的面打开、
+        随后由映射色重画（请求色像素 **0**）。`LineCollection` 同理
+        （1324 个像素变化，请求色 **0** 个，那是描边抗锯齿的边缘）。
+      * 「读回属性」只证明设进去了：没人盖它属性的那些（LineCollection）
+        属性永远等于请求值，那个判据对它恒真。
+
+    实测表（三个 matplotlib 版本逐格一致）：
+
+        scatter_hollow  变 11976  请求色  9235   → 能改，必须给
+        scatter_solid   变 10988  请求色  9656   → 能改，必须给
+        PolyCollection  变 27078  请求色 26656   → 能改，必须给
+        LineCollection  变  1324  请求色     0   → 改不动，不许给
+        contour         变 34565  请求色     0   → 改不动，不许给（映射在管）
+        scatter_mapped  变     0  请求色     0   → 映射在管，不许给
+        QuadMesh        变     0  请求色     0   → 映射在管，不许给
+    """
+    for row in probe["faces_table"]:
+        works = row.get("painted_px", 0) > 0
+        offered = bool(row["predicate"]) and not row["mapping_live"]
+        assert works == offered, (
+            f"{row['case']}（{row['cls']}）：画布上的请求色像素 "
+            f"{row.get('painted_px')}，而判据说"
+            f"{'给' if offered else '不给'}。"
+            + ("**能改却不宣称**——用户拿不到一个确实能用的控件"
+               if works else
+               "**宣称却改不动**——用户改了、以为改了、把图交出去了"))
 
 
 def test_the_mesh_stroke_style_table_still_holds(probe):

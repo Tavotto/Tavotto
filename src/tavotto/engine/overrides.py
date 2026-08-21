@@ -2511,6 +2511,40 @@ def is_linecoll_family(artist) -> bool:
     return isinstance(artist, LineCollection) and not is_color_mapped(artist)
 
 
+def honours_faces(coll) -> bool:
+    """这个 Collection 上 `set_facecolor` 到底**能不能把面涂成你要的颜色**。
+
+    判据**不是「此刻有没有面色」**。`scatter(facecolors="none")` 的
+    `get_facecolor()` 长度为 0，而 marker 路径是闭合可填的：实测
+    `set_facecolor("#FF00FF")` 改 1197 像素，且 draw 之后 `get_facecolor()[0]`
+    **精确等于品红**。那是「能改却不宣称」——与「宣称却改不动」同样是能力
+    不真实，只是方向相反，而这一条还是本次 family 重构**引入的回归**
+    （旧的散点契约是无条件给 facecolor 的）。
+
+    实测表（三个 matplotlib 版本逐格一致，`set_facecolor("#FF00FF")`）：
+
+        scatter facecolors="none"  长度 0   1197 px   draw 后**是品红**   → 给
+        scatter 默认                长度 1   1120 px   draw 后**是品红**   → 给
+        scatter marker="x"         长度 1    569 px   draw 后**是品红**   → 给
+        LineCollection             长度 0      0 px                      → 不给
+        contour（映射）             长度 0  48654 px   draw 后**是 viridis** → 不给
+        fill_between               长度 1  30061 px   draw 后**是品红**   → 给
+
+    **contour 那一格是这条判据最容易踩的坑**：它像素变了整整 48654 个，
+    只看「像素变没变」会判成「能改」。但那不是你设的颜色——`set_facecolor`
+    只是把原本 `none` 的面打开，随后 `update_scalarmappable()` 用映射色重画。
+    像素变了 ≠ 变成了你要的。（映射中的那些由 `color_mapping_is_live` 挡在
+    更上游，这里只是把理由记清楚。）
+    """
+    if isinstance(coll, PathCollection):
+        # marker 路径天然可填，与此刻是不是空心无关。
+        return True
+    try:
+        return bool(_len0(coll.get_facecolor()))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def honours_stroke(coll) -> bool:
     """这个 Collection 的 draw 认不认**描边本身**（边色 / 线宽）。
 
@@ -2611,11 +2645,8 @@ def collection_caps(coll) -> frozenset[str]:
         # `stroke_style` = 花纹与线型。与 `stroke`（边色 / 线宽）分开，因为
         # 网格类认后者不认前者——见 `honours_stroke_style` 的实测表。
         caps.add("stroke_style")
-    try:
-        if _len0(coll.get_facecolor()):
-            caps.add("faces")
-    except Exception:  # noqa: BLE001
-        pass
+    if honours_faces(coll):
+        caps.add("faces")
     # **判据是「此刻在不在映射」，不是「带不带数组」**：脚本写死了颜色、或者
     # 用户设过我们开放的 edgecolor 之后，数组还在、映射已经不在了——那时
     # cmap/vmin/vmax 是三个设得进状态、画面纹丝不动的控件（实测 0 像素）。

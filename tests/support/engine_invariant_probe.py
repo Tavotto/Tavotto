@@ -400,6 +400,78 @@ def stroke_style_table() -> list[dict]:
     return rows
 
 
+def faces_table() -> list[dict]:
+    """`set_facecolor` 在每一族上到底**能不能把面涂成请求的颜色**。
+
+    与 `stroke_style_table` 同一路数，但多量一件事：**draw 之后颜色是不是
+    请求的那个**。只问「像素变没变」会在映射类上给出假阳性——`contour` 的
+    `set_facecolor` 改了 48654 个像素，可那不是你设的颜色：它只是把原本
+    `none` 的面打开，随后 `update_scalarmappable()` 用映射色重画。
+
+    `honours_faces` 的判据因此**不能是「此刻有没有面色」**：
+    `scatter(facecolors="none")` 的 `get_facecolor()` 长度为 0，而 marker 路径
+    是闭合可填的。这张表把两个方向都量出来，判定归调用方。
+    """
+    def ink(fig):
+        fig.canvas.draw()
+        return np.asarray(fig.canvas.buffer_rgba()).copy()
+
+    def changed(a, b):
+        return int((np.abs(a.astype(int) - b.astype(int)).sum(axis=2) > 0).sum())
+
+    want = (255, 0, 255)          # 画布是 RGBA uint8
+    rng = np.random.RandomState(0)
+    grid = np.linspace(0, 1, 4)
+    cases = {
+        "scatter_hollow": lambda ax: ax.scatter(rng.rand(9), rng.rand(9), s=900,
+                                                facecolors="none", edgecolors="C0"),
+        "scatter_solid": lambda ax: ax.scatter(rng.rand(9), rng.rand(9), s=900),
+        "scatter_mapped": lambda ax: ax.scatter(rng.rand(9), rng.rand(9), s=900,
+                                                c=rng.rand(9)),
+        "PolyCollection": lambda ax: ax.fill_between(np.linspace(0, 1, 20), 0,
+                                                     np.linspace(0, 1, 20)),
+        "LineCollection": lambda ax: ax.add_collection(LineCollection(
+            [[(0.0, 0.0), (1.0, 1.0)]], linewidths=3)),
+        "contour": lambda ax: ax.contour(grid, grid, rng.rand(4, 4)),
+        "QuadMesh": lambda ax: ax.pcolormesh(grid, grid, rng.rand(3, 3)),
+    }
+    rows = []
+    for name, make in cases.items():
+        fig, ax = plt.subplots(figsize=(3.0, 3.0), dpi=100)
+        ax.set_axis_off()
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        coll = make(ax)
+        if isinstance(coll, list):
+            coll = coll[0]
+        base = ink(fig)
+        # **判据必须在动手之前采**。写在 set_facecolor 之后的话，
+        # `get_facecolor()` 已经被这一次设值填上了，`honours_faces` 于是对每
+        # 一族都回 True——一张恒真的表，正是它本该抓的那种空门禁。
+        # 与 `stroke_style_table` 当初「把描边当成没人验的基线」是同一个坑。
+        before = {"predicate": bool(O.honours_faces(coll)),
+                  "mapping_live": bool(O.color_mapping_is_live(coll)),
+                  "advertised": "faces" in O.collection_caps(coll)}
+        try:
+            coll.set_facecolor("#FF00FF")
+            after = ink(fig)
+            px = changed(base, after)
+            # **在画布上找请求色，不读回属性**。读属性只能证明「设进去了」：
+            # 映射类会把属性也盖回去（contour 实测回 viridis），可 LineCollection
+            # 这类没人盖它属性的，属性永远等于请求值——那个判据对它恒真，
+            # 什么也没证明。真正要问的是「画出来的那片像素是不是请求的颜色」。
+            painted = int(((after[..., 0] == want[0]) & (after[..., 1] == want[1])
+                           & (after[..., 2] == want[2])).sum())
+            got_want = painted > 0
+        except Exception as exc:                       # noqa: BLE001
+            px, got_want = f"raised:{type(exc).__name__}", False
+        rows.append({"case": name, "cls": type(coll).__name__,
+                     "face_px": px, "painted_px": painted if got_want or isinstance(px, int) else 0,
+                     "became_requested": got_want, **before})
+        plt.close(fig)
+    return rows
+
+
 def main() -> int:
     fig = build_figure()
     state = O.FigState(fig)
@@ -408,7 +480,8 @@ def main() -> int:
     report = {"matplotlib": matplotlib.__version__,
               "completeness": completeness(fig, state, man),
               "single_authority": single_authority(fig, state, man),
-              "stroke_style_table": stroke_style_table()}
+              "stroke_style_table": stroke_style_table(),
+              "faces_table": faces_table()}
     if "--pretty" in sys.argv:
         print(json.dumps(report, ensure_ascii=False, indent=2))
     else:
