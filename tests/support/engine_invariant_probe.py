@@ -120,6 +120,11 @@ def build_figure():
     im = ax4.imshow(rng.rand(8, 8), cmap="magma")
     cb = fig.colorbar(im, ax=ax4, extend="both")
     cb.set_label("signal")
+    # **同一个 mappable 的第二条色条**（论文图里很常见：右边一条竖的、
+    # 下面再来一条横的）。`im.colorbar` 只存得下**最后**建的那个引用，所以
+    # 只从 mappable 正查的话，先建的那条整个不被认出来，它的 solids /
+    # dividers 泄漏进元素表。夹具要真的建两条，这条路才有用例可证。
+    fig.colorbar(im, ax=ax4, orientation="horizontal", fraction=0.046)
     ax4.text(1.0, 1.0, "note", color="#804000")
 
     fig.tight_layout()
@@ -223,9 +228,21 @@ def completeness(fig, state, man) -> dict:
     # 只有登记信息（gid/artist/role/label/draggable）——第一版读错了地方，
     # 于是这条检查恒回空集：一条永远绿的检查，正是本轮在收的那种空门禁。
     cbar_gids = {e["gid"] for e in man["elements"] if e.get("is_colorbar")}
+
+    # **真值另取一份**：哪些轴是色条轴，问 matplotlib 自己（`cax._colorbar`
+    # 一根轴一条，不像 `mappable.colorbar` 只存得下最后一条）。拿我们**自己
+    # 认出来的**那份去找泄漏，漏掉的色条压根不进集合，检查对它恒空——这是
+    # 本轮反复在收的那种空门禁：越是没认出来的，越检查不到。
+    # gid 编号必须与产品同源（`_ordered_axes` 是那个唯一权威），这里要的
+    # 独立性是**「哪些轴是色条轴」这个判据**：`cax._colorbar` 而不是
+    # `mappable.colorbar`。
+    _cb_axes = M._ordered_axes(fig)[0]                        # noqa: SLF001
+    gid_of_ax = {a: f"axes_{i}" for i, a in enumerate(_cb_axes)}
+    mpl_cbar_gids = {gid_of_ax[a] for a in _cb_axes
+                     if getattr(a, "_colorbar", None) is not None}
     cbar_leaks = sorted(
         g for g in manifest_gids
-        for cg in cbar_gids
+        for cg in (cbar_gids | mpl_cbar_gids)
         if g.startswith(f"{cg}.")
         and not g.startswith((f"{cg}.colorbar", f"{cg}.x", f"{cg}.y")))
 
@@ -236,6 +253,7 @@ def completeness(fig, state, man) -> dict:
 
     return {"orphans": orphans, "churn": churn, "unseen": unseen,
             "colorbar_axes": sorted(cbar_gids), "colorbar_leaks": cbar_leaks,
+            "colorbar_axes_missed": sorted(mpl_cbar_gids - cbar_gids),
             "axes_follow": follow,
             "unsupported": man.get("unsupported", []),
             "element_count": len(man["elements"]),

@@ -1884,7 +1884,18 @@ _restore_cb_orientation._needs_state = True  # noqa: SLF001
 # 色条反查与「拖它时谁跟着走」（manifest.instrument 与色条方向事务共用）
 # ---------------------------------------------------------------------------
 def colorbar_maps(fig, axes) -> tuple[dict, dict]:
-    """(色条轴 → Colorbar, 色条轴 → 宿主 axes)。反查经 mappable.colorbar。
+    """(色条轴 → Colorbar, 色条轴 → 宿主 axes)。**两个方向取并集**。
+
+    **只走 `mappable.colorbar` 是不够的**：那是一个 mappable 上的**单个**引用，
+    同一个 mappable 交给 `fig.colorbar()` 两次（左边一条竖的、下面一条横的，
+    论文图里很常见），它只指向**最后**建的那条，先建的那条整个不被认出来。
+    一根色条轴只承载一条色条，所以从**轴**反查（`cax._colorbar`）才是一对一的。
+    实测（3.8.4 / 3.10.8 / 3.11.1 一致，`ax=` / `cax=` / `ax=[多宿主]` 三种建法
+    也一致）：正查认出 1 条、漏 1 条，反查两条都在。
+
+    宿主取 `cb.mappable.axes`，**不取 `cax._colorbar_info["parents"]`**——
+    显式 `fig.colorbar(im, cax=…)` 那条路上 `_colorbar_info` 根本不存在
+    （三个版本实测一致），而 `mappable.axes` 三种建法都对。
 
     `axes` **要传 `manifest._ordered_axes(fig)[0]`**，别让它退回 `fig.axes`：
     `ax.inset_axes()` 的宿主只存在于 `child_axes` 里，扫不到它就扫不到它身上的
@@ -1908,12 +1919,28 @@ def colorbar_maps(fig, axes) -> tuple[dict, dict]:
     """
     cbar_of_ax: dict = {}
     host_of_cbax: dict = {}
+
+    def _remember(cb, cax, host) -> None:
+        cbar_of_ax[cax] = cb
+        if host is not None and host is not cax and host in axes:
+            host_of_cbax[cax] = host
+
+    # ① 从**色条轴自己**反查。这是完整的那一半：一根轴只承载一条色条，
+    #    所以 `cax._colorbar` 是一对一的，同一个 mappable 建了几条都数得清。
+    for ax in axes:
+        cb = getattr(ax, "_colorbar", None)
+        if cb is not None and getattr(cb, "ax", None) is ax:
+            _remember(cb, ax, getattr(getattr(cb, "mappable", None), "axes", None))
+
+    # ② 再从 mappable 正查一遍。①用的是**私有**属性，哪天上游改名，只剩这一条
+    #    也还认得出单色条的常规图——而不是一个色条都认不出来（那会让每张带色条
+    #    的图都泄漏内部件，是静默的全面失效）。两个方向取并集，谁先谁后不影响
+    #    结果：同一根 cax 反查出来的必然是同一个 Colorbar。
     for ax in axes:
         for sm in [*ax.images, *ax.collections]:
             cb = getattr(sm, "colorbar", None)
             if cb is not None and cb.ax is not ax:
-                cbar_of_ax[cb.ax] = cb
-                host_of_cbax[cb.ax] = ax
+                _remember(cb, cb.ax, ax)
     return cbar_of_ax, host_of_cbax
 
 

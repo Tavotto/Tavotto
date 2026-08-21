@@ -1085,6 +1085,14 @@ def test_colorbars_on_child_axes_are_recognised(probe):
     assert not c["colorbar_leaks"], (
         f"色条轴上漏出了内部件：{c['colorbar_leaks']}。它们每次 `_draw_all()` "
         f"都被删掉重建，登记它们等于让 override 挂在幽灵上")
+    # **一条都不许漏**，判据取 matplotlib 自己的 `cax._colorbar`。
+    # 只从 `mappable.colorbar` 正查的时候，同一个 mappable 建的第二条色条会把
+    # 第一条的引用**顶掉**，先建的那条整个不被认出来——而拿「我们自己认出来的
+    # 色条轴」去找泄漏，对它恒空。所以真值必须另取一份。
+    assert not c["colorbar_axes_missed"], (
+        f"matplotlib 认为这些轴是色条轴，我们没认出来：{c['colorbar_axes_missed']}。"
+        f"`colorbar_maps` 是不是又只走 `mappable.colorbar` 了？那是**单个**引用，"
+        f"同一个 mappable 建两条色条时它只指向最后那条")
 
 
 def test_family_classification_has_a_single_authority(probe):
