@@ -625,6 +625,13 @@ def run_group(group: list[dict], *, python: str, root: Path, out_dir: Path,
             sem = stage_semantic(base_man, ca)
             r["stages"]["semantic"] = sem["ok"]
             r["detail"]["semantic"] = sem["detail"]
+            # 桌面侧的完整可编辑集合——对拍要用它比浏览器那份（见
+            # `_browser_verdict`）。存在 detail 里而不是当场比，是因为浏览器
+            # 那一趟晚得多（整组 case 跑完才发一次驱动）。
+            r["detail"]["semantic"]["editable_all"] = sorted(
+                f"{el['gid']}.{f['prop']}"
+                for el in base_man.get("elements", [])
+                for f in el.get("editable", []))
 
             # 保真度必须在**任何编辑之前**量：零 patch 的定义就是「还没动过」。
             # 放在 edit/还原之后的话，一个还原不干净的 case 会把自己的污染
@@ -741,9 +748,17 @@ def _browser_verdict(case: dict, br: dict, desktop: dict) -> dict:
         return {"ok": False,
                 "reason": f"浏览器没有捕获到 {stem}（捕获到 {figures}）",
                 "figures": figures}
-    desktop_roles = set((desktop.get("detail", {}).get("semantic") or {}).get("roles") or [])
+    dsem = desktop.get("detail", {}).get("semantic") or {}
+    desktop_roles = set(dsem.get("roles") or [])
     browser_roles = set(sem.get("roles") or [])
     role_diff = sorted(desktop_roles.symmetric_difference(browser_roles))
+
+    # **可编辑属性集合也要比。** 文档从第一版起就写着对拍覆盖「可编辑属性」，
+    # 而代码只比了角色与哈希——浏览器侧多出或少掉任何一个属性、只要角色不变，
+    # 这条就报成功。文档说的和代码做的不是一回事，比两边都不做更坏。
+    desktop_edit = set(dsem.get("editable_all") or [])
+    browser_edit = set(sem.get("editable") or [])
+    edit_diff = sorted(desktop_edit.symmetric_difference(browser_edit))
 
     # patch 规范化只有**一份实现**（`engine/patchspec.py`，桌面 worker 与
     # Pyodide 平铺 import 的是同一个文件）。父进程算一遍、浏览器侧算一遍，
@@ -761,6 +776,8 @@ def _browser_verdict(case: dict, br: dict, desktop: dict) -> dict:
     reasons = []
     if role_diff:
         reasons.append(f"角色不一致：{role_diff}")
+    if edit_diff:
+        reasons.append(f"可编辑属性不一致（{len(edit_diff)} 处）：{edit_diff[:8]}")
     if not hash_ok:
         reasons.append(
             f"patch 应用不一致：hash {sem.get('applied_patch_hash')!r} vs "
@@ -770,6 +787,8 @@ def _browser_verdict(case: dict, br: dict, desktop: dict) -> dict:
             "figures": figures,
             "roles_only_desktop": sorted(desktop_roles - browser_roles),
             "roles_only_browser": sorted(browser_roles - desktop_roles),
+            "editable_only_desktop": sorted(desktop_edit - browser_edit)[:20],
+            "editable_only_browser": sorted(browser_edit - desktop_edit)[:20],
             "patch_hash": sem.get("patch_hash", ""),
             "applied_patch_hash": sem.get("applied_patch_hash", ""),
             "expected_patch_hash": want_hash,
@@ -957,7 +976,17 @@ def evaluate_gate(gate: str, cases: list[dict], results: dict,
     2. **新出现的 product_bug 一律红** —— 已经在基线里的那些属于「看住」，
        但 `release` 档连它们都不放过（1.0 的 exit rule 是 P0 = 0）；
     3. **分类比基线变差就红** —— 把 case 从 `full_support` 改成
-       `unsupported_by_design` 让 CI 变绿，是这里唯一真正想拦的作弊。
+       `unsupported_by_design` 让 CI 变绿，是这里唯一真正想拦的作弊；
+    4. **桌面/浏览器语义分叉一律红**，不分档位。
+
+    第 4 条是补上的：对拍结果原本只写进 `results[cid]["browser"]`，报告里
+    打出一节「Browser / Desktop semantic divergence」，然后**门禁照常放行**
+    ——`_finish()` 只从 `stages` 分类，`evaluate_gate()` 只看 stages 与
+    classification，两处都够不着它。一个把分叉打印出来、然后说「通过」的
+    门禁，比不检查更坏：它让人以为这件事有人看着。
+
+    不分档位是有意的：同一份脚本在两个产品入口给出不同语义，本身就是缺陷，
+    没有「PR 档可以先放过」的版本。
     """
     spec = GATES[gate]
     fails: list[str] = []
@@ -982,6 +1011,16 @@ def evaluate_gate(gate: str, cases: list[dict], results: dict,
         fails.append(f"新出现的 product_bug：{new_bugs}")
     if bugs and not spec["allow_baseline_bugs"]:
         fails.append(f"{gate} 档不接受任何 product_bug（含基线里已知的）：{bugs}")
+
+    # 桌面/浏览器语义分叉：任何档位一律红（见 docstring 第 4 条）
+    parity_bad = [c["id"] for c in cases
+                  if (results[c["id"]].get("browser") or {}).get("ok") is False]
+    if parity_bad:
+        detail = []
+        for cid in parity_bad[:5]:
+            why = (results[cid].get("browser") or {}).get("reason") or "见报告"
+            detail.append(f"{cid}（{why}）")
+        fails.append("桌面/浏览器语义分叉：" + "；".join(detail))
 
     if baseline:
         rank = {c: i for i, c in enumerate(
@@ -1164,6 +1203,15 @@ def main(argv: list[str] | None = None) -> int:
     except CC.CorpusError as exc:
         print(f"::error::{exc.message}", file=sys.stderr)
         return 2
+    # target 声明了只跑某个子集就照做（`matrix.json` 的 `subset`）。
+    # 不照做的后果不是「多跑几条」而是**说假话**：browser 那一档会跑满 149 条
+    # 桌面脚本，而 workflow 注释与文档都写着它跑的是 12 条对拍子集。
+    subset = target.get("subset")
+    if subset == "browser_eligible":
+        before = len(cases)
+        cases = [c for c in cases if c.get("browser_eligible")]
+        print(f"target {args.target!r} 声明只跑 browser_eligible 子集："
+              f"{before} → {len(cases)} 个 case")
     if not cases:
         print("::error::选出来一个 case 都没有", file=sys.stderr)
         return 2

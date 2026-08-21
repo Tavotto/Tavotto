@@ -208,7 +208,7 @@ jobs:
           # 好处——CI 的渲染环境与桌面版用户拿到的内置 runtime 逐字一致，
           # 基线因此真正代表「用户会看到的那张图」。
           # shellcheck disable=SC2046
-          "$VENV/bin/pip" install -q $(python3 scripts/ci/runtime_pins.py)
+          "$VENV/bin/pip" install -q $(python3 scripts/ci/runtime_pins.py --include-corpus)
           echo "python=$VENV/bin/python" >> "$GITHUB_OUTPUT"
           "$VENV/bin/python" -c "import tavotto,matplotlib,numpy,PIL;print('环境就绪', tavotto.__version__)"
 

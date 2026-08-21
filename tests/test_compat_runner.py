@@ -532,3 +532,63 @@ def test_minimum_target_pins_the_python_the_package_claims():
     assert str(spec["python"]).startswith(m.group(1)), (
         f"pyproject 宣称的下界是 {m.group(1)}，而 matrix.json 的 minimum 档"
         f"钉的是 {spec['python']}——宣称与验证之间会留下一段没人走过的路")
+
+
+class TestParityGate:
+    """桌面/浏览器语义分叉必须让门禁红——**任何档位**。
+
+    这条曾经是空转的：对拍结果只写进 `results[cid]["browser"]`，报告里打出
+    一节「Browser / Desktop semantic divergence」，然后门禁照常放行。
+    `_finish()` 只从 `stages` 分类、`evaluate_gate()` 只看 stages 与
+    classification，两处都够不着它。**一个把分叉打印出来、然后说「通过」的
+    门禁，比不检查更坏**——它让人以为这件事有人看着。
+    """
+
+    def _case_and_result(self, parity_ok):
+        c = case("x", tier="expected")
+        r = {"x": {"id": "x", "tier": "expected", "classification": "full_support",
+                   "stages": {s: True for s in CC.STAGES},
+                   "browser": {"ok": parity_ok, "reason": "角色不一致：['line']"}}}
+        return [c], r
+
+    @pytest.mark.parametrize("gate", sorted(CM.GATES))
+    def test_divergence_fails_every_gate(self, gate):
+        cases, results = self._case_and_result(False)
+        ok, fails = CM.evaluate_gate(gate, cases, results, {"cases": {}})
+        assert not ok, f"{gate} 档放过了语义分叉"
+        assert any("语义分叉" in f for f in fails), fails
+
+    def test_agreement_passes(self):
+        cases, results = self._case_and_result(True)
+        assert CM.evaluate_gate("release", cases, results, {"cases": {}})[0]
+
+    def test_cases_without_parity_data_are_not_penalised(self):
+        """没跑对拍的 case（不是 browser_eligible，或本次没开 --browser）
+        不该被这条当成分叉。"""
+        c = case("x")
+        r = {"x": {"id": "x", "tier": "expected", "classification": "full_support",
+                   "stages": {s: True for s in CC.STAGES}, "browser": None}}
+        assert CM.evaluate_gate("release", [c], r, {"cases": {}})[0]
+
+
+def test_browser_verdict_compares_editable_sets():
+    """对拍要比可编辑属性集合——文档从第一版起就是这么写的。
+
+    只比角色的话，浏览器侧多出或少掉任何一个属性、只要角色不变，这条就报
+    成功。**文档说的和代码做的不是一回事，比两边都不做更坏。**
+    """
+    c = case("x")
+    c["mutations"] = []
+    desktop = {"detail": {"semantic": {"roles": ["axes", "line"],
+                                       "editable_all": ["axes_0.lines_0.color",
+                                                        "axes_0.lines_0.linewidth"]}}}
+    same = {"ok": True, "figures": ["s"], "semantics": {"s": {
+        "roles": ["axes", "line"],
+        "editable": ["axes_0.lines_0.color", "axes_0.lines_0.linewidth"]}}}
+    assert CM._browser_verdict(c, same, desktop)["ok"]
+
+    fewer = {"ok": True, "figures": ["s"], "semantics": {"s": {
+        "roles": ["axes", "line"], "editable": ["axes_0.lines_0.color"]}}}
+    v = CM._browser_verdict(c, fewer, desktop)
+    assert not v["ok"] and "可编辑属性不一致" in v["reason"]
+    assert v["editable_only_desktop"] == ["axes_0.lines_0.linewidth"]

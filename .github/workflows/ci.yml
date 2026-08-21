@@ -77,7 +77,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev,ci]"
           # shellcheck disable=SC2046
-          pip install $(python scripts/ci/runtime_pins.py)
+          pip install $(python scripts/ci/runtime_pins.py --include-corpus)
           python -c "import matplotlib;print('matplotlib', matplotlib.__version__)"
       - name: CompatBench smoke
         run: |

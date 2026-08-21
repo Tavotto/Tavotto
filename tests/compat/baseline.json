@@ -903,7 +903,7 @@
       }
     },
     "ax_secondary_x": {
-      "classification": "partial_support",
+      "classification": "unsupported_by_design",
       "stages": {
         "discover": true,
         "execute": true,
@@ -915,10 +915,10 @@
         "export": true,
         "fidelity": true
       },
-      "reason": "次坐标轴的内容现在进得了元素表（轴标签与刻度都可编辑），但**它自身的属性仍改不动**：`SecondaryAxis` 直接从 `_AxesBase` 派生、**不是 `Axes` 的子类**，`overrides._cls_key()` 对它回 None，于是 visible / grid / spines 这一组一个字段都出不来。修法是 `_cls_key` 里那条 `isinstance(artist, Axes)` 放宽（一行），本次刻意没动——它落在另一处的所有权边界里。另外数据范围那一组是**故意不出**的：实测 set_xlim 与 invert_xaxis 会被父轴的换算函数每帧顶回去、set_aspect 被 matplotlib 自己拒绝并 warning，出了就是一个按了会弹回来的旋钮。"
+      "reason": "次坐标轴自身与它的子元素（轴标签、刻度组）**都可编辑**——容器级的 visible / grid / spines / facecolor 一应俱全。仍然不给的只有两组，都是实测出来的产品边界而不是缺口：**落位**（position）由父轴的 `_TransformedBoundsLocator` 每帧重算，设了 draw 一次就被顶回原值；**数据范围**（xlim / invert / aspect / xscale）由主轴经函数映射决定，同样设了会被顶回去，其中 aspect 还会让 matplotlib 直接发 UserWarning。开放它们只会得到「设了但下一帧被顶回去」，那比不给更坏。"
     },
     "ax_secondary_y": {
-      "classification": "partial_support",
+      "classification": "unsupported_by_design",
       "stages": {
         "discover": true,
         "execute": true,
@@ -930,7 +930,7 @@
         "export": true,
         "fidelity": true
       },
-      "reason": "次坐标轴的内容现在进得了元素表（轴标签与刻度都可编辑），但**它自身的属性仍改不动**：`SecondaryAxis` 直接从 `_AxesBase` 派生、**不是 `Axes` 的子类**，`overrides._cls_key()` 对它回 None，于是 visible / grid / spines 这一组一个字段都出不来。修法是 `_cls_key` 里那条 `isinstance(artist, Axes)` 放宽（一行），本次刻意没动——它落在另一处的所有权边界里。另外数据范围那一组是**故意不出**的：实测 set_xlim 与 invert_xaxis 会被父轴的换算函数每帧顶回去、set_aspect 被 matplotlib 自己拒绝并 warning，出了就是一个按了会弹回来的旋钮。"
+      "reason": "次坐标轴自身与它的子元素（轴标签、刻度组）**都可编辑**——容器级的 visible / grid / spines / facecolor 一应俱全。仍然不给的只有两组，都是实测出来的产品边界而不是缺口：**落位**（position）由父轴的 `_TransformedBoundsLocator` 每帧重算，设了 draw 一次就被顶回原值；**数据范围**（xlim / invert / aspect / xscale）由主轴经函数映射决定，同样设了会被顶回去，其中 aspect 还会让 matplotlib 直接发 UserWarning。开放它们只会得到「设了但下一帧被顶回去」，那比不给更坏。"
     },
     "ax_semilogx": {
       "classification": "full_support",

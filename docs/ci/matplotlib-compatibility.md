@@ -177,9 +177,14 @@ Tavotto 与原生的差是 0.035，比原生自己两次之间的差还小。这
 ## 7. Browser / Desktop 语义对拍
 
 只比语义，不比像素：字体栈、matplotlib 版本、WASM 后端都会造成合理的像素
-差异；**语义随入口改变才是事故**。比的是：捕获到哪些 stem、有哪些角色、
-可编辑属性、以及同一组 patch 的规范化哈希（父进程与浏览器侧各算一遍，
-必须逐字相同——`engine/patchspec.py` 只有一份实现）。
+差异；**语义随入口改变才是事故**。比四样：捕获到哪些 stem、有哪些角色、
+**完整的可编辑属性集合**、以及同一组 patch 的规范化哈希（父进程与浏览器侧
+各算一遍，必须逐字相同——`engine/patchspec.py` 只有一份实现）。
+
+**分叉一律让门禁红，不分档位。** 早期版本把对拍结果只写进报告的一节
+「Browser / Desktop semantic divergence」，而 `evaluate_gate()` 只看 stages 与
+classification——于是它把分叉打印出来、然后说「通过」。一个这样的门禁比不
+检查更坏：它让人以为这件事有人看着。
 
 钉死的一条：`plt.plot(...) + plt.show()`（无 savefig）两个入口都必须捕获，
 fallback stem 逐字相同。看护在 `tests/test_compat_capture_parity.py`。

@@ -42,7 +42,7 @@
     },
     "browser": {
       "required": true,
-      "subset": true,
+      "subset": "browser_eligible",
       "source": "packaging/playground-runtime.json",
       "note": [
         "浏览器 playground（网站 /try）的 Pyodide 运行时。只跑",

@@ -479,3 +479,40 @@ class TestReasonsAreReviewable:
         assert gen["target"] == "bundled"
         assert gen["matplotlib"] == CC.resolve_target(
             CC.load_matrix(), "bundled")["matplotlib"]
+
+
+def test_no_case_asserts_a_limitation_that_no_longer_exists(manifest):
+    """清单里的 reason 不许描述**已经被修掉**的限制。
+
+    这条是 codex 审查抓到的：`ax_secondary_x` 的 reason 一直写着
+    「`_cls_key()` 对 SecondaryAxis 回 None，容器字段一个都出不来」，而同一个
+    PR 里那一行已经放宽成 `_AxesBase` 了。报告因此在**发布一条假的限制**——
+    对一个存在意义就是「让 Tavotto 说真话」的基准来说，这是最不能有的失误。
+
+    静态判据：reason 里如果点名了某个函数「返回 None / 不认得」，那个说法必须
+    在源码里仍然成立。这里只查这一条已知的，加新说法时照此扩充。
+    """
+    src = (CC.REPO / "src" / "tavotto" / "engine" / "overrides.py").read_text(
+        encoding="utf-8")
+    cls_key_takes_axesbase = "isinstance(artist, _AxesBase)" in src
+    for c in manifest["cases"]:
+        reason = str(c.get("reason", ""))
+        if "_cls_key" in reason and "回 None" in reason:
+            assert not cls_key_takes_axesbase, (
+                f"{c['id']} 的 reason 说 _cls_key 回 None，但源码里它已经认"
+                f"_AxesBase 了——这条限制不存在了，reason 要跟着改")
+
+
+def test_child_axes_cases_assert_on_the_child_itself(manifest):
+    """子 axes 的 case 必须在**子 axes 上**有断言。
+
+    只盯宿主轴的元素（`axes_0.lines_0`）的话，子 axes 那部分支持悄悄回退了，
+    这条 case 照样全绿——它一度就是这样，而 reason 里还写着一条早已不成立的
+    限制。断言要落在这条 case 声称自己在验的那个东西上。
+    """
+    for cid in ("ax_secondary_x", "ax_secondary_y", "ax_inset"):
+        c = next(x for x in manifest["cases"] if x["id"] == cid)
+        targets = {gid for gid, _p in c["semantic_expectations"]["editable"]}
+        targets |= {m["gid"] for m in c.get("mutations") or []}
+        assert any(g.startswith("axes_1") for g in targets), (
+            f"{cid} 的断言全落在宿主轴上，子 axes 回退了它也不会红：{sorted(targets)}")

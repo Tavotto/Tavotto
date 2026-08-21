@@ -31,6 +31,16 @@ LOCK = REPO / "packaging" / "runtime-lock.json"
 RENDER_CRITICAL = ("matplotlib", "numpy", "pillow", "contourpy", "fonttools",
                    "kiwisolver", "cycler", "pyparsing")
 
+#: CompatBench 的语料另外用到的科学栈。**刻意不并进 RENDER_CRITICAL**：
+#: 那一组的判据是「影响像素」，视觉回归的环境按它装；pandas / scipy / seaborn
+#: 不影响像素，却是 `sci_pandas_*` / `sci_scipy_fit` / `sci_sns_*` 跑得起来的
+#: 前提。混成一组的话，改动其中一个的理由会被另一个的判据挡住。
+#:
+#: 不装它们的后果是**门禁永久红**而不是「少跑几条」：那四条 pandas/scipy 的
+#: case 在清单里是 full_support，execute 失败 → classify 记成新的
+#: product_bug → release 档一个 product_bug 都不接受。
+CORPUS_EXTRA = ("pandas", "scipy", "seaborn")
+
 
 def _packages(target: dict) -> dict[str, str]:
     """锁文件里一个 target 的 包名 → 版本。两种形状都认。"""
@@ -44,7 +54,7 @@ def _packages(target: dict) -> dict[str, str]:
     return out
 
 
-def pins(lock_path: Path = LOCK) -> list[str]:
+def pins(lock_path: Path = LOCK, include_corpus: bool = False) -> list[str]:
     """返回 ["matplotlib==3.11.1", ...]。
 
     取任意一个 target 即可：CLAUDE.md 明确记着**三个目标的闭包刻意逐字相同**
@@ -57,10 +67,15 @@ def pins(lock_path: Path = LOCK) -> list[str]:
         raise SystemExit(f"{lock_path} 里没有 targets——锁文件格式变了？")
     pkgs = _packages(next(iter(targets.values())))
     out = []
-    for name in RENDER_CRITICAL:
+    wanted = RENDER_CRITICAL + (CORPUS_EXTRA if include_corpus else ())
+    for name in wanted:
         ver = pkgs.get(name)
         if ver:
             out.append(f"{name}=={ver}")
+        elif include_corpus and name in CORPUS_EXTRA:
+            raise SystemExit(
+                f"锁文件里没有 {name}——CompatBench 的语料要用它，"
+                f"缺了会让 sci_* 那几条 case 变成假的 product_bug")
     if not any(p.startswith("matplotlib==") for p in out):
         raise SystemExit("锁文件里没有 matplotlib——视觉基线将失去版本保证，拒绝继续")
     return out
@@ -69,8 +84,10 @@ def pins(lock_path: Path = LOCK) -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="输出与内置 runtime 一致的科学栈版本")
     ap.add_argument("--format", choices=["args", "lines"], default="args")
+    ap.add_argument("--include-corpus", action="store_true",
+                    help="连 CompatBench 语料要用的 pandas / scipy / seaborn 一起吐")
     args = ap.parse_args(argv)
-    got = pins()
+    got = pins(include_corpus=args.include_corpus)
     print("\n".join(got) if args.format == "lines" else " ".join(got))
     return 0
 

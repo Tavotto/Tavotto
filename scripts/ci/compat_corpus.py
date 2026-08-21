@@ -244,6 +244,11 @@ def _validate_smoke_subset(cases: list[dict]) -> None:
             f"smoke 子集没覆盖到这些有 Tier 1 case 的类别：{sorted(missing)}")
 
 
+#: `matrix.json` 里 target 可以声明只跑一个子集。值即判据名，闭集——
+#: 写错一个字当场报错，不当成「一个我们没见过的新子集」放行。
+SUBSETS = ("browser_eligible",)
+
+
 def select(cases: list[dict], *, ids: list[str] | None = None,
            tiers: list[str] | None = None, categories: list[str] | None = None,
            smoke: bool = False, browser_only: bool = False) -> list[dict]:
@@ -315,6 +320,13 @@ def validate_matrix(data: dict) -> None:
     for name, spec in targets.items():
         if not isinstance(spec, dict):
             raise CorpusError("target_invalid", f"target {name} 必须是对象")
+        sub = spec.get("subset")
+        if sub is not None and sub not in SUBSETS:
+            raise CorpusError(
+                "unknown_subset",
+                f"target {name} 的 subset 非法 {sub!r}（可选 {list(SUBSETS)}）。"
+                f"`true` 这种写法不再接受——它说不出**跑哪个**子集，"
+                f"于是 runner 只能忽略它，而 workflow 的注释还在说它跑了子集")
         src = spec.get("source")
         if src is not None:
             # 版本真相只有一份：这里只准写「去哪读」。
@@ -364,7 +376,12 @@ def _versions_from_lock(path: Path) -> dict:
     """从两种锁文件里取科学栈版本。两种形状各自认，不做「猜一个」。"""
     data = _load(path, "lock")
     if "pyodide_version" in data:                       # playground-runtime.json
-        return {"python": data.get("python", ""),
+        # **键名是 `pyodide_python` 而不是 `python`**：那一档锁的是 Pyodide
+        # 里那个解释器的版本，与「拿哪个 CPython 跑 browser.py」无关。叫
+        # `python` 的话会被 runner 的 Python 版本核对当成运行时要求——实测
+        # 后果是 nightly 的 browser 那条腿**永久红**（矩阵给 3.13，锁文件说
+        # 3.14.2，版本核对当场退出 2，一个 case 都跑不到）。
+        return {"pyodide_python": data.get("python", ""),
                 "pyodide": data.get("pyodide_version", ""),
                 **{k: v for k, v in (data.get("packages") or {}).items()}}
     targets = data.get("targets") or {}                 # runtime-lock.json
