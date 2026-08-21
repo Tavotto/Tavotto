@@ -1724,6 +1724,7 @@ export default interface Resources {
       "legend": "图例",
       "legend_text": "图例项",
       "line": "曲线",
+      "linecoll": "线组",
       "patch": "形状",
       "scatter": "散点系列",
       "text": "文字",

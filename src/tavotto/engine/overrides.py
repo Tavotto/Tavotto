@@ -17,7 +17,7 @@ import matplotlib as mpl
 import matplotlib.colors as mcolors
 import matplotlib.patheffects as mpatheffects
 from matplotlib.axes import Axes
-from matplotlib.collections import PathCollection, PolyCollection
+from matplotlib.collections import LineCollection, PathCollection, PolyCollection
 from matplotlib.container import BarContainer, ErrorbarContainer
 from matplotlib.figure import Figure
 from matplotlib.legend import Legend
@@ -1190,6 +1190,80 @@ def _set_collection_lw(coll, v) -> None:
     coll.set_linewidth(float(v) if isinstance(v, (int, float)) else v)
 
 
+#: 四种命名线型的**未缩放** dash 规格（`Collection._us_linestyles` 的形状）。
+#: 用来把当前线型反查成界面上那个枚举名。数值取自 matplotlib 自己的
+#: `_get_dash_pattern`，两个版本（3.8.4 / 3.11.1）实测一致。
+_LC_DASHES = {
+    (): "-",
+    (3.7, 1.6): "--",
+    (6.4, 1.6, 1.0, 1.6): "-.",
+    (1.0, 1.65): ":",
+}
+
+
+def _linecoll_linestyle_name(coll) -> str:
+    """LineCollection 当前线型 → 枚举名；认不出的按实线占位。
+
+    与 `_linestyle_name`（Line2D 那条）同一个产品约定：自定义 dash 显示成
+    实线占位，用户改了才覆盖。反查用的是**未缩放**规格——`get_linestyle()`
+    回的是按线宽缩放过的那份，同一个 "--" 在 lw=1.5 与 lw=3 下数值不同，
+    拿它当键必然认不出来。
+    """
+    us = getattr(coll, "_us_linestyles", None)  # noqa: SLF001 — 见 _get_linecoll_ls
+    if not us:
+        return "-"
+    _offset, seq = us[0]
+    return _LC_DASHES.get(tuple(seq) if seq else (), "-")
+
+
+def _get_linecoll_ls(coll):
+    """线型的**可回灌**表示：未缩放规格 `_us_linestyles`。
+
+    **不能用 `get_linestyle()`**：它回的是按线宽缩放之后的 dash 序列，
+    而 `set_linestyle()` 会把喂进去的值再缩放一遍。实测（两个 matplotlib
+    版本都一样）：`--` 在 lw=1.5 下是 `[(0.0, [5.55, 2.4])]`，把这个值原样
+    回灌得到 `[(0.0, [8.325, 3.6])]`——**撤销之后线型不是原来那条**，而且
+    每撤销一次就再放大一次。`_us_linestyles` 是 matplotlib 自己为这件事保留
+    的未缩放副本，回灌它得到逐位相同的结果（有实测用例看护）。
+
+    私有属性不在时退回 `get_linestyle()`：那时至少不会崩，代价是自定义
+    dash 的还原会有缩放偏差——总比整个属性不可用好。
+
+    ## 这是正确性，不是显示精度——别把它当优化删掉
+
+    `overrides` 是**全量列表**语义：撤销 = 用空列表全量重放，而重放必须落回
+    脚本原样。这里回不去的话，**没有任何下游门禁拦得住**——实测过，不是推的：
+
+    * 写回事务的 `app._compare_manifests` **只比几何**（bbox / anchor /
+      size_mm，它自己的 docstring 写着）。dash 变了不动任何包围盒：同一张图
+      上人为制造这个偏差之后，它比过 19 个元素、报 **0 处分歧**。所以写回
+      **不会**回 409 `replay_divergence`，坏状态直接写进用户的原件。
+    * 四路等价性矩阵那三条腿用的是同一个比较器，同样看不见。
+    * `apply` 也不会报 warning：setter 没抛，它就是成功。
+
+    更难查的是它**同时把界面也带偏**：双重缩放之后的 dash 在
+    `_LC_DASHES` 里查不到，`_linecoll_linestyle_name` 退回实线占位——检查器
+    显示「实线」，画面上却是一条比原来更疏的虚线。**界面说的和画出来的不是
+    一回事**，而这正是这套东西最不能接受的一种失败。
+
+    而且它是复利的：每撤销一次再放大一次，每次 ×1.5
+    （实测 5.55 → 8.325 → 12.488 → 18.731）。
+
+    浏览器 playground 走的是**同一份 `overrides.apply`**（`browser.py` 平铺
+    import 的就是这个模块），所以 /try 里一模一样地发作。
+    """
+    us = getattr(coll, "_us_linestyles", None)  # noqa: SLF001
+    return list(us) if us else coll.get_linestyle()
+
+
+def _set_linecoll_ls(coll, v) -> None:
+    """线型：吃枚举名（用户改的）或未缩放规格（还原时喂回来的那份）。
+
+    两种形状都要认——`originals` 里存的正是 `_get_linecoll_ls` 回的那份。
+    """
+    coll.set_linestyle(v)
+
+
 def _cb_axis(p: "ColorbarProxy"):
     cb = p.cb
     return cb.ax.yaxis if getattr(cb, "orientation", "vertical") == "vertical" else cb.ax.xaxis
@@ -1706,6 +1780,14 @@ def _cls_key(artist) -> str | None:
         return "scatter"
     if isinstance(artist, PolyCollection):
         return "fill"
+    # 线组：hlines / vlines 的参考线、stem 的竖线、eventplot 的事件线、
+    # streamplot 的流线、violinplot 的极值线——全是 LineCollection（含它的
+    # 子类 EventCollection）。**刻意不并进 `line`**：Line2D 的 getter 回标量、
+    # LineCollection 回数组，setter 也各吃各的，硬合成一族迟早分叉。
+    # 「标量映射的不登记」那道闸在 `manifest.instrument` 里（唯一出处），
+    # 这里不重复判——两处判据分开写必然漂开。
+    if isinstance(artist, LineCollection):
+        return "linecoll"
     return None
 
 
@@ -2037,6 +2119,29 @@ HANDLERS: dict[tuple[str, str], tuple] = {
                         lambda a, v: a.set_alpha(None if v is None else float(v))),
     ("fill", "zorder"): (lambda a: float(a.get_zorder()), lambda a, v: a.set_zorder(float(v))),
     ("fill", "visible"): (lambda a: a.get_visible(), lambda a, v: a.set_visible(bool(v))),
+
+    # ---- 线组 LineCollection（hlines/vlines、stem、eventplot、streamplot）----
+    # **只开样式，不开数据**：几条线、落在哪，是脚本的数据，改它该回代码
+    # （与 3D 盒内属性、散点数据同一条产品边界）。
+    #
+    # getter 一律 `.copy()`：`get_color()` / `get_linewidths()` **把内部对象
+    # 本身交出来**（实测 `get_color() is get_color()` 为 True，两个 matplotlib
+    # 版本一致），存进 `originals` 就是存了一个活引用。**今天还咬不到人**
+    # ——`set_color` / `set_linewidth` 是整个替换那个数组而不是原地改，所以
+    # 拿未拷贝的旧引用还原，结果目前是对的（也实测过）。但那是 matplotlib 的
+    # 实现细节、不是它承诺的契约（那个数组 `flags.writeable` 是 True），而
+    # `originals` 存错一次的后果是撤销回不到原样。拷一份的代价是几个浮点数。
+    # 与 `("fill",…)` / `("scatter",…)` 那两族的 `.copy()` 同一个理由。
+    ("linecoll", "color"): (lambda a: a.get_color().copy(),
+                            lambda a, v: a.set_color(v)),
+    ("linecoll", "linewidth"): (lambda a: a.get_linewidths().copy(), _set_collection_lw),
+    ("linecoll", "linestyle"): (_get_linecoll_ls, _set_linecoll_ls),
+    ("linecoll", "alpha"): (lambda a: a.get_alpha(),
+                            lambda a, v: a.set_alpha(None if v is None else float(v))),
+    ("linecoll", "zorder"): (lambda a: float(a.get_zorder()),
+                             lambda a, v: a.set_zorder(float(v))),
+    ("linecoll", "visible"): (lambda a: a.get_visible(),
+                              lambda a, v: a.set_visible(bool(v))),
 
     # ---- 独立形状 patch（ax.fill() 的 Polygon / 手搓的 PathPatch）----
     ("patch", "facecolor"): (lambda a: a.get_facecolor(), lambda a, v: a.set_facecolor(v)),

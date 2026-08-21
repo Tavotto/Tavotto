@@ -1826,36 +1826,35 @@
         "roles_present": [
           "axes",
           "line",
+          "linecoll",
           "title"
         ],
         "editable": [
           [
-            "axes_0.lines_0",
+            "axes_0.linecoll_0",
             "color"
           ],
           [
-            "axes_0.lines_0",
+            "axes_0.linecoll_0",
             "linewidth"
           ]
         ]
       },
       "mutations": [
         {
-          "gid": "axes_0.lines_0",
+          "gid": "axes_0.linecoll_0",
           "prop": "color",
-          "value": "#123456"
+          "value": "#118844"
         },
         {
-          "gid": "axes_0.lines_0",
+          "gid": "axes_0.linecoll_0",
           "prop": "linewidth",
           "value": 2.75
         }
       ],
       "browser_eligible": false,
       "smoke": false,
-      "notes": "",
-      "classification": "partial_support",
-      "reason": "stem 的竖线是 LineCollection，Tavotto 不认（manifest 里只有基线那条 Line2D）。渲染与导出完全正确，只是竖线选不中也改不了。补它要新写一族 LineCollection handler，不是现有 line 角色能覆盖的。"
+      "notes": "`stem` 的竖线是一条 LineCollection（8 条路径），基线是 Line2D。两者现在都可编辑。线组不给路径几何（`pathgeom.element_geometry` 是按单条路径写的，线组有 N 条），选中/命中退回 bbox——如实记账，没硬做。"
     },
     {
       "id": "art_hist",
@@ -2020,7 +2019,7 @@
       ],
       "browser_eligible": false,
       "smoke": false,
-      "notes": "violin 的琴身是 PolyCollection → fill 角色。"
+      "notes": "violin 的琴身是 PolyCollection → fill 角色；cbars/cmins/cmaxes/cmeans 四条极值线是 LineCollection → linecoll 角色。fill 的 gid 编号按 `ax.collections` 的下标走，所以补线组支持不会把已有的 fill_0 挪号——存量文档里的 override 不受影响。"
     },
     {
       "id": "art_eventplot",
@@ -2035,36 +2034,35 @@
       "semantic_expectations": {
         "roles_present": [
           "axes",
+          "linecoll",
           "title"
         ],
         "editable": [
           [
-            "axes_0.title",
-            "fontsize"
+            "axes_0.linecoll_0",
+            "color"
           ],
           [
-            "axes_0.title",
-            "color"
+            "axes_0.linecoll_0",
+            "linewidth"
           ]
         ]
       },
       "mutations": [
         {
-          "gid": "axes_0.title",
-          "prop": "fontsize",
-          "value": 13.5
+          "gid": "axes_0.linecoll_0",
+          "prop": "color",
+          "value": "#118844"
         },
         {
-          "gid": "axes_0.title",
-          "prop": "color",
-          "value": "#804000"
+          "gid": "axes_0.linecoll_0",
+          "prop": "linewidth",
+          "value": 2.75
         }
       ],
       "browser_eligible": false,
       "smoke": false,
-      "notes": "",
-      "classification": "partial_support",
-      "reason": "eventplot 画的是 EventCollection（LineCollection 的子类），Tavotto 不认——事件竖线选不中。与 art_stem / art_hlines_vlines 同一个缺口。"
+      "notes": "`eventplot` 出的 EventCollection 是 LineCollection 的子类，而且它的 `get_color()` 回**一维** RGBA（hlines 回二维）——形状不归一的话界面上那个颜色是从一个浮点数编出来的垃圾。线组不给路径几何（`pathgeom.element_geometry` 是按单条路径写的，线组有 N 条），选中/命中退回 bbox——如实记账，没硬做。"
     },
     {
       "id": "art_pie",
@@ -2299,36 +2297,35 @@
         "roles_present": [
           "axes",
           "line",
+          "linecoll",
           "title"
         ],
         "editable": [
           [
-            "axes_0.lines_0",
+            "axes_0.linecoll_0",
             "color"
           ],
           [
-            "axes_0.lines_0",
+            "axes_0.linecoll_0",
             "linewidth"
           ]
         ]
       },
       "mutations": [
         {
-          "gid": "axes_0.lines_0",
+          "gid": "axes_0.linecoll_0",
           "prop": "color",
-          "value": "#123456"
+          "value": "#118844"
         },
         {
-          "gid": "axes_0.lines_0",
+          "gid": "axes_0.linecoll_0",
           "prop": "linewidth",
           "value": 2.75
         }
       ],
       "browser_eligible": false,
       "smoke": false,
-      "notes": "",
-      "classification": "partial_support",
-      "reason": "hlines/vlines 出的是 LineCollection，Tavotto 不认——manifest 里只有主曲线那条 Line2D，参考线选不中。这是 artist 普查里权重最高的一个缺口（LineCollection 横跨 hlines/vlines、stem、eventplot、streamplot 四类）。"
+      "notes": "`hlines`/`vlines` 出的是 LineCollection（两条：横的一条、竖的一条），与 `axhline`/`axvline` 的 Line2D 完全不同——这一对刻意分开测，正是为了看出那个差别。2026-08-21 补上线组支持之后参考线可整体改样式。线组不给路径几何（`pathgeom.element_geometry` 是按单条路径写的，线组有 N 条），选中/命中退回 bbox——如实记账，没硬做。"
     },
     {
       "id": "art_axhline_axvline",
@@ -2809,6 +2806,7 @@
         "roles_present": [
           "axes",
           "arrow_patch",
+          "linecoll",
           "title"
         ],
         "editable": [
@@ -2817,8 +2815,8 @@
             "color"
           ],
           [
-            "axes_0.arrows_0",
-            "linewidth"
+            "axes_0.linecoll_0",
+            "color"
           ]
         ]
       },
@@ -2829,16 +2827,14 @@
           "value": "#227744"
         },
         {
-          "gid": "axes_0.arrows_0",
-          "prop": "linewidth",
-          "value": 2.0
+          "gid": "axes_0.linecoll_0",
+          "prop": "color",
+          "value": "#118844"
         }
       ],
       "browser_eligible": false,
       "smoke": false,
-      "notes": "",
-      "classification": "partial_support",
-      "reason": "streamplot 的箭头帽是 FancyArrowPatch（认得、可编辑），但流线本身是 LineCollection（不认）。同一张图上两半待遇不同，是LineCollection 缺口最直观的一个例子。"
+      "notes": "`streamplot` 的箭头帽是 FancyArrowPatch、流线是 LineCollection。以前同一张图上两半待遇不同（箭头可编辑、流线不认），是线组缺口最直观的例子；现在两半都可编辑，所以这条 case 同时点名两者。线组不给路径几何（`pathgeom.element_geometry` 是按单条路径写的，线组有 N 条），选中/命中退回 bbox——如实记账，没硬做。"
     },
     {
       "id": "art_barbs",

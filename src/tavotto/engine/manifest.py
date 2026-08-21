@@ -13,7 +13,8 @@ import math
 import sys
 
 from matplotlib.axes import Axes
-from matplotlib.collections import Collection, PathCollection, PolyCollection
+from matplotlib.collections import (Collection, LineCollection, PathCollection,
+                                    PolyCollection)
 from matplotlib.container import BarContainer, ErrorbarContainer
 from matplotlib.patches import FancyArrowPatch, Patch
 from matplotlib.text import Text
@@ -23,7 +24,8 @@ from overrides import (ColorbarProxy, FigState, HANDLERS, SeriesGroup, TickLabel
                        TickSet, _ARROWSTYLES, _CB_EXTENDS, _LEGEND_LOCS,
                        _TICK_FORMATS, _TICK_MINOR_FORMATS,
                        _arrow_style, _arrowstyle_name, _axis_arrows_on,
-                       _linestyle_name, _boxstyle_info, _cb_axis, _cb_tick_color,
+                       _linestyle_name, _linecoll_linestyle_name,
+                       _boxstyle_info, _cb_axis, _cb_tick_color,
                        _cb_tick_fontsize, _cls_key, _grid_prop, _grid_visible,
                        _legend_entry_order, _legend_loc_name,
                        _stroke_state, _tick0, colorbar_maps, follow_map,
@@ -228,6 +230,24 @@ def instrument(state: FigState) -> None:
                     _register(state, f"axes_{i}.scatter_{j}", coll, "scatter", nice)
                 elif isinstance(coll, PolyCollection):
                     _register(state, f"axes_{i}.fill_{j}", coll, "fill", f"填充区域 {j + 1}")
+                elif isinstance(coll, LineCollection) and coll.get_array() is None:
+                    # 线组：`hlines`/`vlines` 的参考线、`stem` 的竖线、
+                    # `eventplot` 的事件线（EventCollection 是它的子类）、
+                    # `streamplot` 的流线、`violinplot` 的极值线。这是 artist
+                    # 普查里权重最高的缺口（8 处 / 5 个 case），2026-08-21 之前
+                    # 它们在界面上根本不存在。
+                    #
+                    # **标量映射的一律不登记**（`get_array()` 非空）：颜色由
+                    # colormap 每次 draw 重算（`update_scalarmappable`），开放
+                    # `color` 会「设了但下一帧被顶回去」——那比不支持更坏。
+                    # 这道闸是唯一出处，`overrides._cls_key` 不重复判。
+                    # 等值线不受影响：`contour`/`contourf` 在 3.8 与 3.11 上都
+                    # 只产出**一个** `QuadContourSet`，它既不是 LineCollection
+                    # 子类、又是标量映射的，两条判据各自都挡得住（实测）。
+                    lab = str(coll.get_label())
+                    nice = f"线组 “{_snippet(lab)}”" if lab and not lab.startswith("_") \
+                        else f"线组 {j + 1}"
+                    _register(state, f"axes_{i}.linecoll_{j}", coll, "linecoll", nice)
             # 脚本直接 add_patch 的独立箭头（XPS 峰位标注这类画法）与独立形状。
             # 形状这一档**认任何 Patch**，不只是 Polygon / PathPatch：
             # `Rectangle`（axhspan/axvspan）、`Circle`、`Ellipse`、`Wedge`
@@ -427,6 +447,44 @@ def _collection_fields(coll, with_size: bool) -> list[dict]:
     else:
         fields.pop(0)  # fill 无 label 语义
     return fields
+
+
+def _linecoll_fields(coll) -> list[dict]:
+    """线组（LineCollection）暴露的可编辑字段。
+
+    **只有样式**。「几条线、落在哪」是脚本的数据，改它该回代码——与 3D 盒内
+    属性、散点数据同一条产品边界。整组共用一套样式，单条线不可分别编辑
+    （matplotlib 允许逐条上色，但那属于数据表达，不是界面旋钮）。
+
+    `linestyle` 的显示值按**未缩放**规格反查成枚举名；认不出的自定义 dash
+    显示成实线占位（与 Line2D 那条同一约定）。还原走的是
+    `HANDLERS["linecoll","linestyle"]` 的 getter，存的是未缩放规格本身，
+    与这里的显示值不是同一个东西——显示可以有损，还原不行。
+    """
+    import numpy as np  # noqa: PLC0415 — worker 侧有科学栈
+    # `get_color()` 的形状**不统一**：`hlines` 出的 LineCollection 回二维
+    # `[[r,g,b,a]]`，而 `eventplot` 出的 EventCollection 回一维 `[r,g,b,a]`
+    # （实测，两个 matplotlib 版本都如此）。直接取 `colors[0]` 在后者身上
+    # 拿到的是一个浮点数，`to_hex` 会把它变成一个毫无意义的颜色。
+    colors = np.atleast_2d(coll.get_color())
+    lw = coll.get_linewidths()
+    alpha = coll.get_alpha()
+    return [
+        {"prop": "color", "type": "color",
+         "value": to_hex(colors[0]) if len(colors) else "#000000"},
+        {"prop": "linewidth", "type": "number",
+         "value": round(float(lw[0]), 2) if len(lw) else 1.0,
+         "min": 0, "max": 8, "step": 0.1, "unit": "pt"},
+        {"prop": "linestyle", "type": "enum",
+         "value": _linecoll_linestyle_name(coll),
+         "options": ["-", "--", "-.", ":"]},
+        {"prop": "alpha", "type": "number",
+         "value": 1.0 if alpha is None else round(float(alpha), 2),
+         "min": 0, "max": 1, "step": 0.05},
+        {"prop": "visible", "type": "bool", "value": bool(coll.get_visible())},
+        {"prop": "zorder", "type": "number", "value": round(float(coll.get_zorder()), 1),
+         "min": -5, "max": 50, "step": 1, "group": "排列"},
+    ]
 
 
 def _bar_series_fields(grp) -> list[dict]:
@@ -897,6 +955,8 @@ def _fields_for(el) -> list[dict]:
         return _collection_fields(artist, with_size=True)
     if key == "fill":
         return _collection_fields(artist, with_size=False)
+    if key == "linecoll":
+        return _linecoll_fields(artist)
     if key == "bar_series":
         return _bar_series_fields(artist)
     if key == "bar":

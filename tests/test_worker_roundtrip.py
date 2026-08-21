@@ -2055,3 +2055,165 @@ def test_overlapping_override_is_independent_of_patch_list_order(tmp_path):
         assert got_f == got_r == [8.0, 12.0], (got_f, got_r)
     finally:
         pool.discard(w)
+
+
+# ---------------------------------------------------------------------------
+# 线组 LineCollection（CompatBench artist 普查里权重最高的缺口）
+# ---------------------------------------------------------------------------
+LINECOLL_LIB = '''\
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+def main():
+    # hlines / vlines：两条独立的 LineCollection
+    fig, ax = plt.subplots(figsize=(3.6, 2.4))
+    ax.plot([0, 1, 2, 3], [1, 3, 2, 4])
+    ax.hlines([1.5, 2.5], xmin=0, xmax=3, colors="#B4473C", linestyles="--")
+    ax.vlines([1.0, 2.0], ymin=1, ymax=4, colors="#5B8C5A")
+    ax.set_title("Reference lines")
+    fig.savefig("LcLines.pdf")
+
+    # eventplot：EventCollection 是 LineCollection 的子类，而且 get_color()
+    # 回的是**一维**数组（hlines 回二维）——两种形状都要认
+    fig2, bx = plt.subplots(figsize=(3.6, 2.4))
+    bx.eventplot([np.linspace(0, 1, 12)], colors=["#2F6FB2"])
+    bx.set_title("Events")
+    fig2.savefig("LcEvents.pdf")
+
+    # contour：**必须仍然不被登记**（QuadContourSet 是标量映射的，而且不是
+    # LineCollection 子类）。它是这条改动最容易误伤的东西。
+    x = np.linspace(-2.0, 2.0, 30)
+    xx, yy = np.meshgrid(x, x)
+    fig3, cx = plt.subplots(figsize=(3.2, 2.8))
+    cx.contour(xx, yy, np.exp(-(xx ** 2 + yy ** 2)), levels=6, cmap="viridis")
+    cx.set_title("Contour")
+    fig3.savefig("LcContour.pdf")
+'''
+
+
+def _lc_worker(tmp_path):
+    figs = tmp_path / "figs"
+    figs.mkdir()
+    (figs / "fig_lc.py").write_text(LINECOLL_LIB, encoding="utf-8")
+    w = pool.one_shot("fig_lc.py", str(figs), "main")
+    w.ensure_built()
+    return w
+
+
+def _lc_field(man, gid, prop):
+    for el in man["elements"]:
+        if el["gid"] == gid:
+            for f in el.get("editable", []):
+                if f["prop"] == prop:
+                    return f["value"]
+    return None
+
+
+def test_line_collections_are_registered_and_editable(tmp_path):
+    """`hlines`/`vlines` 的参考线必须进 manifest 且样式改得动。
+
+    它们是 LineCollection，2026-08-21 之前整族不被识别——artist 普查里
+    未识别 8/10、涉及 5 个 case，是当时权重最高的缺口。
+    """
+    w = _lc_worker(tmp_path)
+    try:
+        man = w.override("LcLines", [])["manifest"]
+        lcs = [e for e in man["elements"] if e["role"] == "linecoll"]
+        assert len(lcs) == 2, f"hlines + vlines 应是两条线组，实际 {len(lcs)}"
+        gid = lcs[0]["gid"]
+        assert _lc_field(man, gid, "color").lower() == "#b4473c"
+        assert _lc_field(man, gid, "linestyle") == "--"
+
+        resp = w.override("LcLines", [
+            {"gid": gid, "prop": "color", "value": "#118844"},
+            {"gid": gid, "prop": "linewidth", "value": 3.0},
+            {"gid": gid, "prop": "linestyle", "value": ":"},
+        ])
+        assert not (resp.get("warnings") or []), resp["warnings"]
+        got = resp["manifest"]
+        assert _lc_field(got, gid, "color").lower() == "#118844"
+        assert _lc_field(got, gid, "linewidth") == pytest.approx(3.0)
+        assert _lc_field(got, gid, "linestyle") == ":"
+    finally:
+        pool.discard(w)
+
+
+def test_line_collection_edits_undo_exactly(tmp_path):
+    """撤销必须回到**脚本原样**，一个字节不差。
+
+    `linestyle` 是这里的雷：`get_linestyle()` 回的是按线宽缩放过的 dash
+    序列，而 `set_linestyle()` 会把喂进去的值再缩放一遍——拿它当 originals
+    存，撤销之后线型不是原来那条，而且每撤一次再放大一次（实测 `--` 在
+    lw=1.5 下 5.55 → 回灌成 8.325）。所以 getter 存的是未缩放规格。
+    """
+    w = _lc_worker(tmp_path)
+    try:
+        base = w.override("LcLines", [])["manifest"]
+        gid = next(e["gid"] for e in base["elements"] if e["role"] == "linecoll")
+        before = {p: _lc_field(base, gid, p)
+                  for p in ("color", "linewidth", "linestyle", "alpha", "visible")}
+
+        w.override("LcLines", [
+            {"gid": gid, "prop": "color", "value": "#118844"},
+            {"gid": gid, "prop": "linewidth", "value": 3.0},
+            {"gid": gid, "prop": "linestyle", "value": ":"},
+        ])
+        restored = w.override("LcLines", [])
+        assert not (restored.get("warnings") or []), restored["warnings"]
+        after = {p: _lc_field(restored["manifest"], gid, p) for p in before}
+        assert after == before, f"撤销没回到原样：{before} → {after}"
+    finally:
+        pool.discard(w)
+
+
+def test_event_collection_color_survives_the_one_dimensional_array(tmp_path):
+    """EventCollection 的 `get_color()` 回**一维** RGBA（hlines 回二维）。
+
+    不做形状归一的话 `colors[0]` 取到的是一个浮点数，界面上那个颜色就是
+    从 0.18 编出来的一串垃圾。
+    """
+    w = _lc_worker(tmp_path)
+    try:
+        man = w.override("LcEvents", [])["manifest"]
+        gid = next(e["gid"] for e in man["elements"] if e["role"] == "linecoll")
+        assert _lc_field(man, gid, "color").lower() == "#2f6fb2"
+    finally:
+        pool.discard(w)
+
+
+def test_contour_is_still_not_registered_as_line_collections(tmp_path):
+    """等值线**必须仍然不被登记**——这是线组那条改动最容易误伤的东西。
+
+    `contour` / `contourf` 在 3.8 与 3.11 上都只产出**一个**
+    `QuadContourSet`：它既不是 LineCollection 子类、又是标量映射的
+    （颜色由 colormap 每帧重算），两条判据各自都挡得住。放它进来的话
+    `art_contour` 会从「一个干净的已知缺口」变成一堆改了不生效的条目。
+    """
+    w = _lc_worker(tmp_path)
+    try:
+        man = w.override("LcContour", [])["manifest"]
+        assert not [e for e in man["elements"] if e["role"] == "linecoll"], \
+            "等值线被当成线组登记了——它的 color 编辑会被 colormap 顶回去"
+        assert [e for e in man["elements"] if e["role"] == "title"], \
+            "整张图都没进 manifest，判据写反了"
+    finally:
+        pool.discard(w)
+
+
+def test_line_collections_expose_style_only_never_data(tmp_path):
+    """线组**只开样式**。「几条线、落在哪」是脚本的数据，改它该回代码——
+    与 3D 盒内属性、散点数据同一条产品边界。这条钉住边界不被顺手放宽。"""
+    w = _lc_worker(tmp_path)
+    try:
+        man = w.override("LcLines", [])["manifest"]
+        el = next(e for e in man["elements"] if e["role"] == "linecoll")
+        props = {f["prop"] for f in el["editable"]}
+        assert props == {"color", "linewidth", "linestyle", "alpha",
+                         "visible", "zorder"}, props
+        # 路径几何刻意不给（pathgeom 是按单条路径写的，线组有 N 条），
+        # 降级成 bbox 并如实记录
+        assert "geometry" not in el
+        assert el.get("bbox"), "线组连 bbox 都没有，前端选不中它"
+    finally:
+        pool.discard(w)
