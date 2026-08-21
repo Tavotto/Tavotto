@@ -117,6 +117,20 @@ def main():
     ax.plot([1.0, 2.0, 3.0, 4.0], [1.0, 12.0, 45.0, 100.0], marker="o")
     fig.savefig("InvScale.pdf")
 
+    # ---- InvCbarLC：**映射的线组 + 它的色条** ----
+    # 面在映射时（imshow / pcolormesh）设 edgecolor 断不了映射，所以那条
+    # 「色条与 mappable 同一道闸」测不出来。必须用**边在映射**的那种：
+    # 线组没有面，颜色走边这条通道，`set_edgecolor` 一设映射就断。
+    fig, ax = plt.subplots(figsize=(3.4, 2.6))
+    segs = [[(0.0, i), (1.0, i)] for i in range(6)]
+    lc_cb = LineCollection(segs, array=np.linspace(0.0, 1.0, 6),
+                           cmap="viridis", linewidths=6)
+    ax.add_collection(lc_cb)
+    ax.set_xlim(0, 1)
+    ax.set_ylim(-0.5, 5.5)
+    fig.colorbar(lc_cb, ax=ax)
+    fig.savefig("InvCbarLC.pdf")
+
     # ---- InvCbar：图像 + 色条（两个 gid 一份状态） ----
     fig, ax = plt.subplots(figsize=(3.6, 2.9))
     # 512×512 画进一个两英寸的轴 = 真正的**降采样**，`interpolation` 才有
@@ -466,6 +480,47 @@ def test_colormap_controls_appear_only_while_the_mapping_is_live(hot):
 # ---------------------------------------------------------------------------
 # 不变式 2：逐字还原（exact restore）
 # ---------------------------------------------------------------------------
+def test_colorbar_mapping_controls_follow_the_same_gate(hot_restore):
+    """色条的 cmap / vmin / vmax 与**它的 mappable** 用同一道闸。
+
+    色条与 mappable 是同一份状态的两个 gid（见 `ALIAS_GROUPS`），所以「此刻
+    映射还在不在」也只能有一处答案。少了这道闸的样子（实测，映射的
+    `LineCollection` + 它的色条）：给线组设过 `edgecolor` 之后，集合那侧的
+    cmap 正确地不再宣称，**色条这侧却还在**。这时改色条的色标——
+
+        正常时      线组区域变 14820 像素，色条区域变 2301（两者同步）
+        设过边色后  线组区域变 **0** 像素，色条区域变 2301（**脱节**）
+
+    色条自己换了颜色、图上的线一根没动。这比「什么都不发生」更坏：它给了
+    明确的「生效了」信号，而**色标与数据的对应关系已经断了**——科学图表里
+    这是最不能接受的一种错。
+
+    **必须用「边在映射」的那种**（线组没有面，颜色走边这条通道）：
+    `imshow` / `pcolormesh` 是面在映射，设 edgecolor 断不了映射，用它们做
+    夹具这条根本测不出来——那正是这条缺陷躲过上一轮修复的原因。
+    """
+    stem = "InvCbarLC"
+    base = _man(hot_restore, stem)
+    lc = next(e["gid"] for e in base["elements"] if e["role"] == "collection")
+    cb = next(e["gid"] for e in base["elements"] if e["gid"].endswith(".colorbar"))
+    for gid in (lc, cb):
+        assert {"cmap", "vmin", "vmax"} <= set(_fields(base, gid)), \
+            f"基线上 {gid} 就该有色图控件"
+
+    man = _man(hot_restore, stem, [{"gid": lc, "prop": "edgecolor", "value": "#123456"}])
+    for gid in (lc, cb):
+        assert not ({"cmap", "vmin", "vmax"} & set(_fields(man, gid))), (
+            f"边色 override 生效期间 {gid} 还摆着色图控件——改它只会让色条自己"
+            f"换色，而图上的线纹丝不动，色标与数据就此对不上")
+
+    # 撤掉边色，两边一起回来
+    back = _man(hot_restore, stem)
+    for gid in (lc, cb):
+        assert {"cmap", "vmin", "vmax"} <= set(_fields(back, gid)), \
+            f"撤掉边色之后 {gid} 的色图控件没回来"
+    assert back == base
+
+
 @pytest.mark.parametrize("stem", STEMS)
 def test_exact_restore_is_pixel_and_manifest_identical(hot_restore, stem):
     """改一条 → 撤销 → **像素与 manifest 都逐位回到原样**。

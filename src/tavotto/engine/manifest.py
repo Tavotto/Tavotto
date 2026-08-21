@@ -26,7 +26,8 @@ import pathgeom
 from overrides import (BBOX_DEFAULTS, ColorbarProxy, FigState, HANDLERS, HATCHES, SeriesGroup,
                        TickLabel, TickSet, _ARROWSTYLES, _CB_EXTENDS, _LEGEND_LOCS,
                        _TICK_FORMATS, _TICK_MINOR_FORMATS,
-                       collection_caps, is_color_mapped, is_linecoll_family,
+                       collection_caps, color_mapping_is_live,
+                       is_color_mapped, is_linecoll_family,
                        _arrow_style, _arrowstyle_name, _axis_arrows_on,
                        _linestyle_name, _linecoll_linestyle_name,
                        _boxstyle_info, _cb_axis, _cb_tick_color,
@@ -1127,14 +1128,33 @@ def _colorbar_fields(p) -> list[dict]:
         {"prop": "extend", "type": "enum",
          "value": str(getattr(cb, "extend", "neither")),
          "options": list(_CB_EXTENDS)},
-        {"prop": "cmap", "type": "enum", "value": cname, "options": _cmap_options(cname),
-         "group": "颜色映射"},
-        {"prop": "vmin", "type": "number",
-         "value": None if vmin is None else round(float(vmin), 4),
-         "step": round(step, 4), "group": "颜色映射"},
-        {"prop": "vmax", "type": "number",
-         "value": None if vmax is None else round(float(vmax), 4),
-         "step": round(step, 4), "group": "颜色映射"},
+        # 色图这三条要与**它的 mappable** 同一个判据开闸。色条与 mappable 是
+        # 同一份状态的两个 gid（见 ALIAS_GROUPS），所以「此刻映射还在不在」
+        # 也只能有一处答案——`color_mapping_is_live`。
+        #
+        # 少了这道闸的样子（实测，映射的 LineCollection + 它的色条）：用户给
+        # 线组设过 `edgecolor` 之后，集合那侧的 cmap 正确地不再宣称，色条这侧
+        # 却还在。这时改色条的色标——
+        #
+        #     正常时      线组区域变 14820 像素，色条区域变 2301（两者同步）
+        #     设过边色后  线组区域变 **0** 像素，色条区域变 2301（**脱节**）
+        #
+        # 色条自己换了颜色、图上的线一根没动。这比「什么都不发生」更坏：它给
+        # 了明确的「生效了」信号，而**色标与数据的对应关系已经断了**——在
+        # 科学图表里这是最不能接受的一种错。
+        #
+        # 刻意**不**反过来禁掉线组的 `edgecolor`：那个能力是真的（给映射线组
+        # 定个固定颜色是正当需求），藏起一个能用的属性正是 `Arc` 那次的教训。
+        # 撤掉边色 override，这三条自己就回来了。
+        *([{"prop": "cmap", "type": "enum", "value": cname,
+            "options": _cmap_options(cname), "group": "颜色映射"},
+           {"prop": "vmin", "type": "number",
+            "value": None if vmin is None else round(float(vmin), 4),
+            "step": round(step, 4), "group": "颜色映射"},
+           {"prop": "vmax", "type": "number",
+            "value": None if vmax is None else round(float(vmax), 4),
+            "step": round(step, 4), "group": "颜色映射"}]
+          if color_mapping_is_live(cb.mappable) else []),
         {"prop": "tick_fontsize", "type": "number", "value": round(_cb_tick_fontsize(p), 2),
          "min": 3, "max": 24, "step": 0.5, "unit": "pt", "group": "刻度"},
         {"prop": "tick_color", "type": "color", "value": to_hex(_cb_tick_color(p)),
