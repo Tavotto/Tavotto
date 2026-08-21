@@ -402,6 +402,38 @@ def test_consumed_markerline_keeps_its_old_gid_as_an_alias(hot):
     hot.override("FamCont", [])
 
 
+def test_removing_a_legacy_alias_override_replays_the_series(hot):
+    """旧 gid 别名与系列指着**同一个 artist**——撤掉别名那条，系列那条必须重放。
+
+    Codex 在 PR #48 上报的 P2，实测复现得到（本用例就是那个复现）：文档里同时
+    留着历史的 `axes_0.lines_0.color`（markerline 容器化之前的名字）与
+    `axes_0.stemseries_0.color`。只撤掉前者时，还原把 markerline 写回脚本原样，
+    而系列那条「值没变」于是走了跳过的捷径——**茎是新颜色、marker 退回原色**，
+    全量重放却两者都是新颜色。热态 ≠ 重放，而写回自检（`_compare_manifests`）
+    只比几何、看不见颜色，坏状态会直接写进用户的原件。
+
+    修法是把别名 gid 也算进别名组（`ALIAS_GROUPS[("stem_series", …)]` +
+    `apply` 的反查表覆盖 index-only 别名），与柱形系列 / 图例字号同一套机制。
+    """
+    # 两条都在：窄的（别名）排在广播的（系列）之后 → marker 归别名那条管
+    man = _man(hot, "FamCont", [
+        {"gid": "axes_0.lines_0", "prop": "color", "value": "#ff0000"},
+        {"gid": "axes_0.stemseries_0", "prop": "color", "value": "#0000ff"},
+    ])
+    # 系列的 color 字段读的正是 markerline（见 manifest._stem_fields 的 probe）
+    assert _fields(man, "axes_0.stemseries_0")["color"]["value"].lower() == "#ff0000"
+
+    # 只撤掉历史那条，系列那条一个字节没变
+    man = _man(hot, "FamCont", [
+        {"gid": "axes_0.stemseries_0", "prop": "color", "value": "#0000ff"},
+    ])
+    assert _fields(man, "axes_0.stemseries_0")["color"]["value"].lower() == "#0000ff", \
+        "marker 退回了脚本原色——别名的还原把系列的值盖掉了，而系列被跳过没重放"
+
+    # 全撤：回脚本原样
+    hot.override("FamCont", [])
+
+
 def test_instrument_does_not_mutate_the_figure(hot):
     """零 patch 连着渲染两次，manifest 必须**逐位相同**。
 

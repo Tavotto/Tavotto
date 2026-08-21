@@ -412,3 +412,29 @@ prop 名与 gid 一起换掉，而 override 是按 `{gid, prop}` 存的。族抽
    加网格线都做不到，而**那三件事是真的生效的**。用例改名为
    `test_scalar_mapped_meshes_never_advertise_facecolor` 并守住新判据。
 
+## 15. Codex 在 PR 上报的 P2：别名 gid 与系列的重叠（已修）
+
+自动审查提的那条**实测复现得到**，而且比它描述的更宽：容器消费掉的成员只在
+`state.index` 里留了一条旧 gid 别名，`apply` 的别名反查表只扫元素表，于是
+「别名」与「系列」这两个指着同一个 artist 的 gid **不算同一组**。
+
+文档里同时留着历史的 `axes_0.lines_0.color`（markerline 容器化之前的名字）与
+`axes_0.stemseries_0.color` 时，只撤掉前者：还原把 markerline 写回脚本原样，
+系列那条「值没变」于是走了跳过的捷径——**茎是新颜色、marker 退回原色**，
+而全量重放两者都是新颜色。热态 ≠ 重放，写回自检 `_compare_manifests` 只比几何、
+看不见颜色，坏状态会直接写进用户的原件。
+
+修法不新造机制，走既有的那套：
+
+* `apply` 的反查表 `_reverse_index()` 补上 **index-only 的别名 gid**
+  （元素表里已有的优先，别名只作补充）；
+* `ALIAS_GROUPS[("stem_series", …)]` 登记 `color` / `alpha` / `visible` /
+  `zorder` / `marker` / `markersize`——**`linewidth` / `linestyle` 不登记**，
+  stem 系列的这两条只写茎（`_stem_stems`），碰不到 markerline，没有重叠就不该
+  硬编成一组。
+
+顺带把顺序也定死了：`_rank` 让组内窄 prop 排在广播 prop 之后，所以「别名 +
+系列」这组 patch 无论列表序怎么写都落成同一张图（实测两种顺序逐位相同），
+全撤之后逐位回到脚本原样。看护
+`tests/test_artist_families.py::test_removing_a_legacy_alias_override_replays_the_series`
+——去掉修复它当场红。

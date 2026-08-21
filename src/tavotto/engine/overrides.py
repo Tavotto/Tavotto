@@ -2640,6 +2640,17 @@ ALIAS_GROUPS: dict[tuple[str, str], object] = {
 for _bprop in ("facecolor", "edgecolor", "linewidth", "alpha", "visible"):
     ALIAS_GROUPS[("bar_series", _bprop)] = _alias_by_artists(
         lambda g: list(g.artists), _bprop)
+# stem 系列 → 被它消费掉的 markerline。这里的「窄端」不是界面上的另一个条目，
+# 而是那条 markerline 的**旧 gid 别名**（`manifest._alias_consumed_line`）：
+# 容器化之前它是一条普通曲线，历史文档里可能有针对它的 override，两个 gid
+# 落在同一个 artist 上。走别名组的机制，撤销任一侧都会让另一侧重放。
+#
+# `linewidth` / `linestyle` **不在此列**：stem 系列的这两条只写茎
+# （`_stem_stems`），碰不到 markerline，没有重叠就不该硬编成一组。
+for _sprop in ("color", "alpha", "visible", "zorder", "marker", "markersize"):
+    ALIAS_GROUPS[("stem_series", _sprop)] = _alias_by_artists(
+        lambda g: g.members(), _sprop)
+
 #: 广播端 prop 名的集合。`apply` 拿它做**廉价预筛**——绝大多数 patch 与别名
 #: 无关，不该为它们付一次 `state.resolve()` 的代价。
 _BROADCAST_PROPS = frozenset(prop for _cls, prop in ALIAS_GROUPS)
@@ -2715,6 +2726,16 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
         nonlocal _rev, _rev_built
         if not _rev_built:
             _rev = {id(el["artist"]): el["gid"] for el in state.elements}
+            # **别名 gid 也算组员**。容器消费掉的成员（stem 的 markerline）只在
+            # `state.index` 里留了一条旧 gid 别名，元素表里没有它——而别名与
+            # 系列指着**同一个 artist**。不算进来的话：历史文档里那条
+            # `axes_i.lines_k` 被撤掉时，成员被还原成脚本原样，系列那条值没变
+            # 于是走了「跳过」的捷径，结果是**茎还是新颜色、marker 却退回原色**，
+            # 而全量重放两者都是新颜色——热态 ≠ 重放，写回自检又只比几何、
+            # 看不见颜色，坏状态会直接写进用户的原件。
+            # 元素表里已有的 gid 优先（setdefault）：别名是补充，不是改名。
+            for _gid, _artist in state.index.items():
+                _rev.setdefault(id(_artist), _gid)
             _rev_built = True
         return _rev
 
