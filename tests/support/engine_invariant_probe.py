@@ -125,6 +125,15 @@ def build_figure():
     # 只从 mappable 正查的话，先建的那条整个不被认出来，它的 solids /
     # dividers 泄漏进元素表。夹具要真的建两条，这条路才有用例可证。
     fig.colorbar(im, ax=ax4, orientation="horizontal", fraction=0.046)
+
+    # **独立 mappable**（matplotlib 文档里的用法：给一段 Normalize + cmap 做
+    # 图例，图上并没有对应的 artist）。这个 mappable **不属于任何 axes**，
+    # `mappable.axes` 是 None——只认它的话这条色条没有宿主，而没有宿主的后果
+    # 不是「少一条随行关系」：语义身份退化成 `cbar:?:0`，方向翻转算不出新矩形，
+    # 横色条被塞在原来那个竖框里，全程无报错。
+    from matplotlib.cm import ScalarMappable
+    from matplotlib.colors import Normalize
+    fig.colorbar(ScalarMappable(norm=Normalize(0, 1), cmap="cividis"), ax=ax3)
     ax4.text(1.0, 1.0, "note", color="#804000")
 
     fig.tight_layout()
@@ -254,6 +263,9 @@ def completeness(fig, state, man) -> dict:
     return {"orphans": orphans, "churn": churn, "unseen": unseen,
             "colorbar_axes": sorted(cbar_gids), "colorbar_leaks": cbar_leaks,
             "colorbar_axes_missed": sorted(mpl_cbar_gids - cbar_gids),
+            "colorbar_hostless": sorted(
+                e["gid"] for e in man["elements"]
+                if e.get("role") == "colorbar" and not e.get("host_gid")),
             "axes_follow": follow,
             "unsupported": man.get("unsupported", []),
             "element_count": len(man["elements"]),

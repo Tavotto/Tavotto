@@ -614,6 +614,7 @@ class _Autoscale:
 _AUTOSCALE = _Autoscale()
 
 
+
 def _get_axes_lim(axis: str):
     """坐标范围的**可回灌**表示。脚本没设过范围时回 `_AUTOSCALE` 哨兵。
 
@@ -1893,9 +1894,17 @@ def colorbar_maps(fig, axes) -> tuple[dict, dict]:
     实测（3.8.4 / 3.10.8 / 3.11.1 一致，`ax=` / `cax=` / `ax=[多宿主]` 三种建法
     也一致）：正查认出 1 条、漏 1 条，反查两条都在。
 
-    宿主取 `cb.mappable.axes`，**不取 `cax._colorbar_info["parents"]`**——
-    显式 `fig.colorbar(im, cax=…)` 那条路上 `_colorbar_info` 根本不存在
-    （三个版本实测一致），而 `mappable.axes` 三种建法都对。
+    **宿主也要两条路**：主判据是 `cb.mappable.axes`，`_colorbar_info["parents"]`
+    是回退。两者各有各的盲区，谁都不能单独用：
+
+      * 显式 `fig.colorbar(im, cax=…)` 那条路上 `_colorbar_info` **根本不存在**；
+      * 文档里的独立 mappable 用法 `fig.colorbar(ScalarMappable(...), ax=ax)`
+        里，那个 mappable **不属于任何 axes**，`mappable.axes` 是 None。
+
+    没有宿主不是「少一条随行关系」那么轻：`host_gid` 空 → 语义身份退化成
+    `cbar:?:0` → 不进 `axes_follow`（拖宿主色条不跟着走）→ **方向翻转算不出
+    新矩形**。实测：翻成横向之后色条轴仍是 `0.116 × 0.77` 的竖条（有宿主的
+    对照是 `0.462 × 0.116`），一根横色条被塞在竖框里，全程无报错。
 
     `axes` **要传 `manifest._ordered_axes(fig)[0]`**，别让它退回 `fig.axes`：
     `ax.inset_axes()` 的宿主只存在于 `child_axes` 里，扫不到它就扫不到它身上的
@@ -1927,10 +1936,19 @@ def colorbar_maps(fig, axes) -> tuple[dict, dict]:
 
     # ① 从**色条轴自己**反查。这是完整的那一半：一根轴只承载一条色条，
     #    所以 `cax._colorbar` 是一对一的，同一个 mappable 建了几条都数得清。
+    def _host_of(cb, cax):
+        host = getattr(getattr(cb, "mappable", None), "axes", None)
+        if host is not None:
+            return host
+        # 独立 mappable（`ScalarMappable(...)` 不挂在任何 axes 上）走这条。
+        info = getattr(cax, "_colorbar_info", None)
+        parents = info.get("parents") if isinstance(info, dict) else None
+        return parents[0] if parents else None
+
     for ax in axes:
         cb = getattr(ax, "_colorbar", None)
         if cb is not None and getattr(cb, "ax", None) is ax:
-            _remember(cb, ax, getattr(getattr(cb, "mappable", None), "axes", None))
+            _remember(cb, ax, _host_of(cb, ax))
 
     # ② 再从 mappable 正查一遍。①用的是**私有**属性，哪天上游改名，只剩这一条
     #    也还认得出单色条的常规图——而不是一个色条都认不出来（那会让每张带色条

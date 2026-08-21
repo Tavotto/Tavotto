@@ -1089,6 +1089,14 @@ def test_colorbars_on_child_axes_are_recognised(probe):
     # 只从 `mappable.colorbar` 正查的时候，同一个 mappable 建的第二条色条会把
     # 第一条的引用**顶掉**，先建的那条整个不被认出来——而拿「我们自己认出来的
     # 色条轴」去找泄漏，对它恒空。所以真值必须另取一份。
+    # **认出来还不够，得有宿主。** `fig.colorbar(ScalarMappable(...), ax=ax)`
+    # 是 matplotlib 文档里的用法，那个 mappable 不属于任何 axes，只查
+    # `mappable.axes` 会得到 None。没有宿主的后果不是「少一条随行关系」：
+    # 语义身份退化成 `cbar:?:0`，**方向翻转算不出新矩形**——实测翻成横向后
+    # 色条轴仍是 0.116×0.77 的竖条（有宿主的对照是 0.462×0.116）。
+    assert not c["colorbar_hostless"], (
+        f"这些色条没有宿主：{c['colorbar_hostless']}。`_colorbar_info[\"parents\"]` "
+        f"那条回退是不是掉了？")
     assert not c["colorbar_axes_missed"], (
         f"matplotlib 认为这些轴是色条轴，我们没认出来：{c['colorbar_axes_missed']}。"
         f"`colorbar_maps` 是不是又只走 `mappable.colorbar` 了？那是**单个**引用，"
