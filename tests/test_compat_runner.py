@@ -592,3 +592,60 @@ def test_browser_verdict_compares_editable_sets():
     v = CM._browser_verdict(c, fewer, desktop)
     assert not v["ok"] and "可编辑属性不一致" in v["reason"]
     assert v["editable_only_desktop"] == ["axes_0.lines_0.linewidth"]
+
+
+def test_browser_verdict_compares_capture_counts():
+    """**捕获到几张也要比。**
+
+    `MAX_FIGURES` 在两侧作用的对象不同：桌面 `collect_pyplot_figures(limit=8)`
+    只截待补的 pyplot 兜底（savefig 认领的那些不受限），浏览器 `browser.py`
+    截的是**总数**。8 张 savefig + 1 张 show-only 于是桌面 9、浏览器 8——而
+    保留下来的那张显式 stem 角色与可编辑属性完全一致，旧判据照报成功。
+
+    `browser.py` 第 71 行写着「两个入口捕获到的图数因此不会分叉」，这条用例
+    就是那句话的反例。
+    """
+    c = case("x", expected_figures=9)
+    c["mutations"] = []
+    sem = {"roles": ["axes", "line"], "editable": ["axes_0.lines_0.color"]}
+    desktop = {"detail": {
+        "semantic": {"roles": ["axes", "line"],
+                     "editable_all": ["axes_0.lines_0.color"]},
+        "capture": {"stems": [f"s{i}" for i in range(9)], "got_figures": 9}}}
+
+    # 两侧都是 9 张 → 通过。
+    ok = {"ok": True, "figures": [f"s{i}" for i in range(9)],
+          "truncated": 0, "semantics": {"s": sem}}
+    assert CM._browser_verdict(c, ok, desktop)["ok"]
+
+    # 浏览器只剩 8 张、并如实报了截断 → 必须红，且两条理由分开说。
+    short = {"ok": True, "figures": [f"s{i}" for i in range(8)],
+             "truncated": 1, "semantics": {"s": sem}}
+    v = CM._browser_verdict(c, short, desktop)
+    assert not v["ok"], "少捕获一张却报成功——这正是要挡的"
+    assert "捕获张数不一致" in v["reason"]
+    assert "截断了 1 张" in v["reason"]
+    assert v["truncated"] == 1 and len(v["desktop_stems"]) == 9
+
+
+def test_browser_verdict_flags_extra_figures_too():
+    """多捕获也是分叉——判据是「不一致」，不是「少了」。"""
+    c = case("x", expected_figures=1)
+    c["mutations"] = []
+    sem = {"roles": ["axes"], "editable": []}
+    desktop = {"detail": {"semantic": {"roles": ["axes"], "editable_all": []},
+                          "capture": {"stems": ["s"], "got_figures": 1}}}
+    more = {"ok": True, "figures": ["s", "s-2"], "truncated": 0,
+            "semantics": {"s": sem}}
+    v = CM._browser_verdict(c, more, desktop)
+    assert not v["ok"] and "捕获张数不一致" in v["reason"]
+
+
+def test_browser_verdict_without_desktop_capture_detail_is_not_penalised():
+    """桌面侧没有 capture 明细时不拿张数说事——那是缺数据，不是分叉。"""
+    c = case("x", expected_figures=1)
+    c["mutations"] = []
+    desktop = {"detail": {"semantic": {"roles": ["axes"], "editable_all": []}}}
+    ok = {"ok": True, "figures": ["s"], "truncated": 0,
+          "semantics": {"s": {"roles": ["axes"], "editable": []}}}
+    assert CM._browser_verdict(c, ok, desktop)["ok"]

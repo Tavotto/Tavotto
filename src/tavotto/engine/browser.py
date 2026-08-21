@@ -68,8 +68,16 @@ MAX_LOG_BYTES = 64 * 1024
 #: traceback 上限（同样留尾部）。
 MAX_TRACEBACK_BYTES = 16 * 1024
 #: 捕获 Figure 数上限。超出的不是静默丢——响应里带 truncated 标记。
-#: 与桌面 worker 的 pyplot 兜底上限同一个数（`figcapture.MAX_PYPLOT_FALLBACK`），
-#: 两个入口捕获到的图数因此不会分叉。
+#: 取的是桌面 pyplot 兜底那个数（`figcapture.MAX_PYPLOT_FALLBACK`），但**两侧
+#: 作用的对象不同**，别照着旧注释以为「图数因此不会分叉」——那句话是错的：
+#:
+#:   桌面   `collect_pyplot_figures(limit=8)` 只截**待补的 pyplot 兜底**，
+#:          savefig 认领的那些不受限 → 8 张 savefig + 1 张 show-only = 9 张
+#:   这里   截的是**总数** → 同一个脚本只剩 8 张
+#:
+#: 差异是自觉的（浏览器里内存与下载都更紧，总量必须有上限），所以不改行为，
+#: 改的是别再声称它不存在：CompatBench 的对拍现在逐条比张数与截断
+#: （`_browser_verdict`），分叉会被报出来而不是被这句注释盖住。
 MAX_FIGURES = figcapture.MAX_PYPLOT_FALLBACK
 #: 预览 SVG 里嵌入位图的默认 dpi，与 worker 的 `--preview-dpi` 默认一致。
 PREVIEW_DPI = 200

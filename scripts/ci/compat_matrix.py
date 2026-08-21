@@ -748,6 +748,33 @@ def _browser_verdict(case: dict, br: dict, desktop: dict) -> dict:
         return {"ok": False,
                 "reason": f"浏览器没有捕获到 {stem}（捕获到 {figures}）",
                 "figures": figures}
+    # **捕获到几张也要比，而且要比截断。** 上面那句「数量对上、角色对上就够」
+    # 说的是「不按名字猜测匹配」，可代码里 `figures` 只在 stem 缺失那一支用过
+    # ——数量从来没真的比过。这不是假想：`MAX_FIGURES` 在两侧作用的对象不同，
+    #
+    #   桌面   `collect_pyplot_figures(limit=8)` 只截**待补的 pyplot 兜底**，
+    #          savefig 认领的那些不受限 → 8 张 savefig + 1 张 show-only = 9
+    #   浏览器 `browser.py` 截的是**总数** → 同一个脚本只剩 8 张
+    #
+    # 于是保留下来的那张显式 stem 角色与可编辑属性完全一致、对拍照报成功，
+    # 而两个入口给用户的图数不同。`browser.py` 第 71 行那句「两个入口捕获到的
+    # 图数因此不会分叉」正是被这条证伪的。
+    #
+    # 截断单独报：它与「少捕获了一张」原因不同（一个是上限、一个是能力差），
+    # 混成一句话会让人查错方向。
+    desktop_stems = list((desktop.get("detail", {}).get("capture") or {})
+                         .get("stems") or [])
+    count_reasons = []
+    if desktop_stems and len(figures) != len(desktop_stems):
+        count_reasons.append(
+            f"捕获张数不一致：桌面 {len(desktop_stems)}（{desktop_stems}）"
+            f" vs 浏览器 {len(figures)}")
+    want_figs = case.get("expected_figures")
+    if want_figs is not None and len(figures) != want_figs:
+        count_reasons.append(f"浏览器捕获 {len(figures)} 张，清单期望 {want_figs} 张")
+    if br.get("truncated"):
+        count_reasons.append(f"浏览器截断了 {br['truncated']} 张（MAX_FIGURES 上限）")
+
     dsem = desktop.get("detail", {}).get("semantic") or {}
     desktop_roles = set(dsem.get("roles") or [])
     browser_roles = set(sem.get("roles") or [])
@@ -773,7 +800,7 @@ def _browser_verdict(case: dict, br: dict, desktop: dict) -> dict:
         hash_ok = (bool(sem.get("apply_ok"))
                    and not sem.get("apply_warnings")
                    and sem.get("applied_patch_hash") == want_hash)
-    reasons = []
+    reasons = list(count_reasons)
     if role_diff:
         reasons.append(f"角色不一致：{role_diff}")
     if edit_diff:
@@ -785,6 +812,8 @@ def _browser_verdict(case: dict, br: dict, desktop: dict) -> dict:
     return {"ok": not reasons,
             "reason": "；".join(reasons),
             "figures": figures,
+            "desktop_stems": desktop_stems,
+            "truncated": br.get("truncated", 0),
             "roles_only_desktop": sorted(desktop_roles - browser_roles),
             "roles_only_browser": sorted(browser_roles - desktop_roles),
             "editable_only_desktop": sorted(desktop_edit - browser_edit)[:20],

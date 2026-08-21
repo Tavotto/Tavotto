@@ -227,9 +227,18 @@ Pillow 只是撞上来的那一个：任何在 open 之前 realpath/abspath 一�
 ## 7. Browser / Desktop 语义对拍
 
 只比语义，不比像素：字体栈、matplotlib 版本、WASM 后端都会造成合理的像素
-差异；**语义随入口改变才是事故**。比四样：捕获到哪些 stem、有哪些角色、
-**完整的可编辑属性集合**、以及同一组 patch 的规范化哈希（父进程与浏览器侧
-各算一遍，必须逐字相同——`engine/patchspec.py` 只有一份实现）。
+差异；**语义随入口改变才是事故**。比五样：捕获到哪些 stem、**捕获到几张
+（含截断）**、有哪些角色、**完整的可编辑属性集合**、以及同一组 patch 的
+规范化哈希（父进程与浏览器侧各算一遍，必须逐字相同——`engine/patchspec.py`
+只有一份实现）。
+
+「几张」那条是补上的，而且它挡的是一个真实存在的分叉：`MAX_FIGURES` 在两侧
+**作用的对象不同**——桌面 `collect_pyplot_figures(limit=8)` 只截待补的 pyplot
+兜底（savefig 认领的不受限），浏览器 `browser.py` 截的是总数。8 张 savefig +
+1 张 show-only 于是桌面 9、浏览器 8，而保留下来的那张显式 stem 角色与可编辑
+属性完全一致，旧判据照报成功。行为差异是自觉的（浏览器里内存与下载都更紧），
+改的是**别再声称它不存在**：`browser.py` 里原本写着「两个入口捕获到的图数
+因此不会分叉」，那句话已经删掉。
 
 **分叉一律让门禁红，不分档位。** 早期版本把对拍结果只写进报告的一节
 「Browser / Desktop semantic divergence」，而 `evaluate_gate()` 只看 stages 与
