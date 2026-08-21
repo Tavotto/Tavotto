@@ -1899,3 +1899,159 @@ def test_scalar_mapped_meshes_stay_out_of_the_manifest(tmp_path):
             "整张图都没进 manifest，兜底判据写反了"
     finally:
         pool.discard(w)
+
+
+# ---------------------------------------------------------------------------
+# 别名组：广播型 prop 与它管着的窄 prop（overrides.ALIAS_GROUPS）
+# ---------------------------------------------------------------------------
+ALIAS_LIB = '''\
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+def main():
+    fig, (ax, bx) = plt.subplots(1, 2, figsize=(5.4, 2.4))
+    ax.bar(["a", "b", "c"], [3.0, 5.0, 2.0], label="counts")
+    ax.plot([0, 1, 2], [4.0, 2.0, 5.0], label="trend")
+    ax.legend(title="series")
+    ax.set_title("Bars")
+    im = bx.imshow(np.arange(36).reshape(6, 6), cmap="viridis")
+    fig.colorbar(im, ax=bx).set_label("intensity")
+    bx.set_title("Map")
+    fig.tight_layout()
+    fig.savefig("Alias.pdf")
+'''
+
+#: (广播 gid, 广播 prop, 广播值, 窄 gid, 窄 prop, 窄值)。三族别名各取一条。
+#: 窄端一律避开成员 0——整组字段报的是成员 0，覆盖它会让「广播落没落」在
+#: manifest 上分不出来（同 test_equivalence_matrix 里那条说明）。
+ALIAS_CASES = [
+    ("axes_0.legend", "fontsize", 7.5, "axes_0.legend.texts_1", "fontsize", 9.5),
+    ("axes_0.legend", "title_fontsize", 7.0, "axes_0.legend.title", "fontsize", 11.0),
+    ("axes_0.barseries_0", "facecolor", "#775599",
+     "axes_0.barseries_0.bar_1", "facecolor", "#22aa44"),
+    ("axes_2.colorbar", "tick_fontsize", 6.0, "axes_2.yticks", "fontsize", 9.0),
+]
+
+
+def _alias_worker(tmp_path):
+    figs = tmp_path / "figs"
+    figs.mkdir()
+    (figs / "fig_alias.py").write_text(ALIAS_LIB, encoding="utf-8")
+    w = pool.one_shot("fig_alias.py", str(figs), "main")
+    w.ensure_built()
+    return w
+
+
+def _same_val(a, b) -> bool:
+    if isinstance(a, str) or isinstance(b, str):
+        return str(a).lower() == str(b).lower()
+    return a == pytest.approx(b, rel=1e-6, abs=1e-6)
+
+
+@pytest.mark.parametrize(
+    "bgid,bprop,bval,ngid,nprop,nval", ALIAS_CASES,
+    ids=[f"{c[0].split('.')[-1]}-{c[1]}" for c in ALIAS_CASES])
+def test_overlapping_override_undo_returns_to_the_script_original(
+        tmp_path, bgid, bprop, bval, ngid, nprop, nval):
+    """广播 → 窄 → 撤销窄 → 撤销广播，每一步都核对，最后必须回到脚本原样。
+
+    坏掉的样子：`originals` 存的是「第一次碰到这个 key 时的当前值」，所以窄
+    prop 记下的「原样」已经是被广播改过的值。撤销之后字号/颜色停在广播值，
+    **回不到脚本原样**，而且全程零 warning。
+
+    **等价性矩阵看不到这一条**：`_three_ways` 的「清空 → 重放同一份全量」会
+    立刻把同样的值再设回去，坏掉的清空被下一步盖住了。撤销语义只能在这里钉。
+
+    步骤顺序是**刻意**的：③ 必须从「两条都在」**直接**回到空列表。中间先撤
+    窄的再撤广播的话，窄那次的还原（写的是被广播改过的值）恰好把状态摆成
+    对的，第二次还原就看不出问题了——这条用例最早正是这么写的，修复前照样
+    全绿。一条在 bug 面前也绿的用例，比没有更坏。
+    """
+    w = _alias_worker(tmp_path)
+    try:
+        base = w.override("Alias", [])["manifest"]
+        b0 = _field_value(base, bgid, bprop)
+        n0 = _field_value(base, ngid, nprop)
+        bpatch = {"gid": bgid, "prop": bprop, "value": bval}
+        npatch = {"gid": ngid, "prop": nprop, "value": nval}
+
+        # ① 只有广播：窄端跟着走（这条 case 的前提）
+        r = w.override("Alias", [bpatch])
+        assert not (r.get("warnings") or []), r["warnings"]
+        assert _same_val(_field_value(r["manifest"], ngid, nprop), bval), \
+            "广播 prop 没有作用到窄端——这条 case 的前提就不成立"
+
+        # ② 加上窄端：窄端听自己的
+        r = w.override("Alias", [bpatch, npatch])
+        assert not (r.get("warnings") or []), r["warnings"]
+        assert _same_val(_field_value(r["manifest"], ngid, nprop), nval)
+
+        # ③ **两条 → 空**，一步到位。这一步才是原 bug 的现场。
+        r = w.override("Alias", [])
+        assert not (r.get("warnings") or []), r["warnings"]
+        got = _field_value(r["manifest"], ngid, nprop)
+        assert _same_val(got, n0), f"{ngid}.{nprop} 没回到脚本原样：{n0!r} → {got!r}"
+        assert _same_val(_field_value(r["manifest"], bgid, bprop), b0)
+
+        # ④ 再摆一次，这次只撤窄的：**回落到广播那一档**，不是脚本原样
+        w.override("Alias", [bpatch, npatch])
+        r = w.override("Alias", [bpatch])
+        assert not (r.get("warnings") or []), r["warnings"]
+        assert _same_val(_field_value(r["manifest"], ngid, nprop), bval), \
+            "撤销窄 override 应当回落到广播那一档，而不是脚本原样"
+
+        # ⑤ 收尾：广播也撤掉，仍然回得到脚本原样
+        r = w.override("Alias", [])
+        assert not (r.get("warnings") or []), r["warnings"]
+        assert _same_val(_field_value(r["manifest"], ngid, nprop), n0)
+    finally:
+        pool.discard(w)
+
+
+def test_overlapping_override_undo_of_the_broadcast_keeps_the_narrow_one(tmp_path):
+    """反过来：撤销**广播**、留着窄的。窄的那一条必须活着，其余回原样。
+
+    还原广播写的是整组，会把窄 prop 一起冲掉——不重放的话用户会看到
+    「我只取消了整体设置，单条的也跟着没了」。
+    """
+    w = _alias_worker(tmp_path)
+    try:
+        base = w.override("Alias", [])["manifest"]
+        n0_other = _field_value(base, "axes_0.legend.texts_0", "fontsize")
+
+        w.override("Alias", [
+            {"gid": "axes_0.legend", "prop": "fontsize", "value": 7.5},
+            {"gid": "axes_0.legend.texts_1", "prop": "fontsize", "value": 9.5}])
+        r = w.override("Alias", [
+            {"gid": "axes_0.legend.texts_1", "prop": "fontsize", "value": 9.5}])
+        assert not (r.get("warnings") or []), r["warnings"]
+        man = r["manifest"]
+        assert _same_val(_field_value(man, "axes_0.legend.texts_1", "fontsize"), 9.5), \
+            "撤销广播把窄 override 一起冲掉了"
+        assert _same_val(_field_value(man, "axes_0.legend.texts_0", "fontsize"),
+                         n0_other), "没被单独 override 的那一条应当回到脚本原样"
+    finally:
+        pool.discard(w)
+
+
+def test_overlapping_override_is_independent_of_patch_list_order(tmp_path):
+    """`apply` 是**全量列表**语义：同一组 patch 无论列表序如何都落成同一张图。
+
+    广播必须先于它管着的窄 prop。顺序一乱，同一份文档在热会话与全量重放里
+    会画出两张图——而那正是写回自检 409 的成因。
+    """
+    w = _alias_worker(tmp_path)
+    try:
+        b = {"gid": "axes_0.legend", "prop": "fontsize", "value": 8.0}
+        n = {"gid": "axes_0.legend.texts_1", "prop": "fontsize", "value": 12.0}
+        forward = w.override("Alias", [b, n])["manifest"]
+        got_f = [_field_value(forward, f"axes_0.legend.texts_{i}", "fontsize")
+                 for i in (0, 1)]
+        w.override("Alias", [])
+        reverse = w.override("Alias", [n, b])["manifest"]
+        got_r = [_field_value(reverse, f"axes_0.legend.texts_{i}", "fontsize")
+                 for i in (0, 1)]
+        assert got_f == got_r == [8.0, 12.0], (got_f, got_r)
+    finally:
+        pool.discard(w)

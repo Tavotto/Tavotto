@@ -3170,10 +3170,7 @@
       ],
       "browser_eligible": false,
       "smoke": false,
-      "notes": "重叠 override 的别名语义。tier 刻意不是 must（must 不允许存在 product_bug），但也不是 exploratory——这是用户点得到的路径。",
-      "classification": "product_bug",
-      "reason": "`legend.fontsize` 与 `legend.texts_j.fontsize` 指向同一批 Text。先改整体、再改单条时，单条那次记下的 originals 已经是被整体改过的值（7.5 而不是脚本原样的 10.0），于是撤销之后字号停在 7.5，回不到原样。应用与渲染都正确，只有撤销回不去。",
-      "follow_up": "重叠 override 的 originals 快照是顺序相关的，这是 overrides.apply 的通用问题（不是图例特有）。修法要么给「广播型」prop 标一个别名组、让组内的窄 prop 在广播 prop 还原后强制重放，要么在首次快照时按别名组一起采。**不是数据损坏级**：写回事务的`_compare_manifests` 会当场发现热态与全量重放不一致并回 409 `replay_divergence`（实测 26 个元素里 4 处分歧），所以坏状态写不进用户的原件——用户看到的是「撤销没生效」+「写回被拦」，不是悄悄写坏。修之前不要把这条从基线里拿掉。"
+      "notes": "重叠 override 的别名语义：`legend.fontsize` 与 `legend.texts_j.fontsize` 指向同一批 Text。2026-08-21 之前这里是 product_bug——先改整体、再改单条时，单条那次记下的 originals 已经是被整体改过的值，撤销之后回不到脚本原样（应用与渲染都正确，只有撤销回不去）。修法是 overrides.ALIAS_GROUPS：一张显式的「广播型 prop → 它盖掉哪些窄 prop」表，广播应用时**代采**组内窄 prop 的脚本原样，且组内任一成员被应用/还原后整组重放。同一个根因当时还查出另外四组（图例标题字号、柱形系列的五个样式 prop、色条刻度字号与颜色），一并修掉。tier 刻意不是 must（must 不允许存在 product_bug），但也不是 exploratory——这是用户点得到的路径。"
     },
     {
       "id": "art_figure_legend",

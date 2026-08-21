@@ -44,6 +44,10 @@ class FigState:
         self.index: dict[str, object] = {}  # gid -> artist（"figure" -> Figure）
         self.applied: dict[tuple, object] = {}    # (gid,prop) -> 请求值
         self.originals: dict[tuple, object] = {}  # (gid,prop) -> 原生值
+        # 由**广播型 prop** 代为采下的「脚本原样」（见 ALIAS_GROUPS）。它们
+        # 是 originals 里没有对应 applied 条目的那些，单独记一笔才能在广播
+        # 撤销之后跟着清掉——否则 originals 里会留下永远没人回收的条目。
+        self.alias_seeded: set[tuple] = set()
         self.colorbar_axes: set = set()     # 承载色条的轴（manifest 标记用）
         # 宿主 axes gid -> 拖动它时应当一起走的其他 axes gid（色条轴 / 孪生轴）
         self.axes_follow: dict[str, list[str]] = {}
@@ -2243,6 +2247,88 @@ def _must_replay(prop: str, artist) -> bool:
     return isinstance(artist, TickLabel) and prop == "text"
 
 
+# ---------------------------------------------------------------------------
+# 别名组：广播型 prop 与它会盖掉的窄 prop
+#
+# 「广播型」= setter 一次写**一组** artist，而那组 artist **本身也是登记元素**
+# （各有自己的 gid 和同名 prop）。两者叠加时 `originals` 的快照是顺序相关的：
+# 先改整体、再改单条，单条那次记下的「原样」已经是被整体改过的值，撤销就回
+# 不到脚本原样。实测五组全中（下表），所以这不是图例特有的毛病，必须有表。
+#
+# 表要**显式**、单一出处：靠 setter 里顺手记一笔那种隐式做法，下一个人加
+# handler 时必然漏掉，而漏掉的症状是「撤销少还原一个」——没有报错。
+# ---------------------------------------------------------------------------
+def _alias_by_artists(pick, narrow_prop: str):
+    """广播端直接写的那批 artist —— 按**对象身份**反查它们的 gid。
+
+    刻意不拼 gid 字符串：`axes_0.legend.texts_j` 这类命名规则一旦变，或者
+    某个成员根本没被登记（空文字的图例项就不登记），拼出来的 gid 会指向不
+    存在的元素，而症状是撤销时静默少还原一个。身份反查天然只命中真的登记
+    过的那些。
+    """
+    def resolve(state: "FigState", rev: dict, artist) -> list[tuple]:
+        try:
+            members = pick(artist)
+        except Exception:                    # noqa: BLE001 — 结构不符就当没有
+            return []
+        out = []
+        for m in members:
+            gid = rev.get(id(m))
+            if gid is not None:
+                out.append((gid, narrow_prop))
+        return out
+    return resolve
+
+
+def _alias_colorbar_ticks(narrow_prop: str):
+    """色条的 `tick_*` 写的是 `cb.ax.tick_params(...)`（默认 axis="both"），
+    盖掉的是**色条轴自己那两组刻度**的同名 prop。
+
+    刻度组是伪元素（`TickSet`），不在广播端写的 artist 列表里，只能按结构找
+    ——这也是别名解析要做成函数而不是静态映射的原因。
+    """
+    def resolve(state: "FigState", rev: dict, artist) -> list[tuple]:
+        cb_ax = getattr(getattr(artist, "cb", None), "ax", None)
+        if cb_ax is None:
+            return []
+        return [(el["gid"], narrow_prop) for el in state.elements
+                if isinstance(el["artist"], TickSet) and el["artist"].ax is cb_ax]
+    return resolve
+
+
+#: 广播端 `(cls_key, prop)` → 解析出「它会盖掉哪些 (窄 gid, 窄 prop)」的函数。
+#:
+#: **不在表里的，各有各的理由**（往里加之前先确认narrow 端真的是登记元素）：
+#:   * `spine_*` 与 `ticks` 的模型类 prop —— 它们是「写进 cfg 再整体重建」的
+#:     路数，撤销一条 = 退回未表态，天然没有快照问题；
+#:   * `errorbar.*` —— 它写的成员（line / caps / bars）**没有单独登记**，
+#:     不存在能和它打架的窄 gid；
+#:   * 3D 的 `axline_* / pane_*` —— 同上，x/y/z 轴对象不是登记元素；
+#:   * `ticks.*` → `ticklabel.text` —— 刻度文字只暴露 `text` 一个 prop，与
+#:     刻度模型不同名，而且它俩的先后已经由 `_RANK_TICK_TEXT` + `_must_replay`
+#:     管住了（刻度文字永远最后、且每次重放）。
+ALIAS_GROUPS: dict[tuple[str, str], object] = {
+    # 图例整体字号 → 每一条图例项的字号
+    ("legend", "fontsize"): _alias_by_artists(
+        lambda leg: list(leg.get_texts()), "fontsize"),
+    # 图例标题字号 → 图例标题那个 Text（它不在 get_texts() 里，单独一条）
+    ("legend", "title_fontsize"): _alias_by_artists(
+        lambda leg: [leg.get_title()], "fontsize"),
+    # 色条刻度 → 色条轴上的刻度组（tick_params 默认写 x/y 两条）
+    ("colorbar", "tick_fontsize"): _alias_colorbar_ticks("fontsize"),
+    ("colorbar", "tick_color"): _alias_colorbar_ticks("color"),
+}
+# 柱形系列的样式 prop → 每一根柱的同名 prop。`bar_width` 与 `label` 不在此列：
+# 前者窄端没有对应 prop（`bar` 不暴露宽度），后者写的是 container 不是柱。
+for _bprop in ("facecolor", "edgecolor", "linewidth", "alpha", "visible"):
+    ALIAS_GROUPS[("bar_series", _bprop)] = _alias_by_artists(
+        lambda g: list(g.artists), _bprop)
+
+#: 广播端 prop 名的集合。`apply` 拿它做**廉价预筛**——绝大多数 patch 与别名
+#: 无关，不该为它们付一次 `state.resolve()` 的代价。
+_BROADCAST_PROPS = frozenset(prop for _cls, prop in ALIAS_GROUPS)
+
+
 #: 应用顺序的**规范档位**。同档内保持列表序（sorted 稳定），跨档必须按这里
 #: 的先后，否则同一组 patch 在热会话与全量重放里会落成两张不同的图。
 #:
@@ -2303,6 +2389,38 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
     # patch 表去算落位
     state.pending = new
 
+    # ---------------- 别名组（见 ALIAS_GROUPS）----------------
+    # 反查表按需建：它是 O(元素数) 的，而绝大多数 apply 一个广播型 prop 都
+    # 没碰到，不该为它们付这笔钱。
+    _rev: dict[int, str] = {}
+    _rev_built = False
+
+    def _reverse_index() -> dict:
+        nonlocal _rev, _rev_built
+        if not _rev_built:
+            _rev = {id(el["artist"]): el["gid"] for el in state.elements}
+            _rev_built = True
+        return _rev
+
+    def _alias_members(key: tuple, artist) -> list[tuple]:
+        """这个 key 如果是广播型的，它会盖掉哪些窄 key。"""
+        if key[1] not in _BROADCAST_PROPS or artist is None:
+            return []
+        resolver = ALIAS_GROUPS.get((_cls_key(artist), key[1]))
+        return resolver(state, _reverse_index(), artist) if resolver else []
+
+    # 窄 key → 它的广播 key。只对这一轮真的会碰到的广播 prop 展开。
+    owner: dict[tuple, tuple] = {}
+    for _bkey in dict.fromkeys(list(new) + list(state.applied)):
+        if _bkey[1] not in _BROADCAST_PROPS:
+            continue
+        for _nkey in _alias_members(_bkey, state.resolve(_bkey[0])):
+            owner[_nkey] = _bkey
+    #: 这一轮被动过的组（组 id = 广播 key）。组里任何一个成员被应用或还原，
+    #: 都会把同组其他成员盖掉，所以整组都要重放——「值没变就跳过」那条捷径
+    #: 对它们是错的，与 `_must_replay` 同一个道理。
+    dirty_groups: set[tuple] = set()
+
     # 上次应用、这次不在 → 恢复原值（originals 存的是本地坐标，与几何无关）
     for key in list(state.applied):
         if key in new:
@@ -2326,15 +2444,37 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
                         setter(artist, orig)
                 if _is_geometry_key(key[1], artist):
                     geometry_moved = True
+                # 还原一个组员会把同组其他成员一起盖掉（广播还原写的是整组，
+                # 窄的还原写的是广播本该管着的那一个）——整组标脏，下面重放。
+                if key in owner:
+                    dirty_groups.add(owner[key])
+                elif _alias_members(key, artist):
+                    dirty_groups.add(key)
             except Exception as exc:  # noqa: BLE001 — 单条失败不拖垮整次渲染
                 warnings.append(f"还原失败 {key[0]}.{key[1]}: {exc}")
         state.applied.pop(key)
         state.originals.pop(key, None)
+        state.alias_seeded.discard(key)
+
+    # 广播 prop 代采的「脚本原样」：广播自己也退场了就跟着清掉，否则
+    # `originals` 会攒下一堆没有 applied 条目、永远没人回收的记录。
+    # 广播还在的（只撤了窄的那一条）要留着——用户再点回来时还要用它。
+    for _nkey in list(state.alias_seeded):
+        if _nkey in state.applied:
+            continue
+        if owner.get(_nkey) in new:
+            continue
+        state.originals.pop(_nkey, None)
+        state.alias_seeded.discard(_nkey)
 
     # 应用新值：七档规范顺序（组内保持列表序，sorted 稳定）
     def _rank(item):
         (gid, prop), _value = item
-        return _apply_rank(prop, state.resolve(gid), gid)
+        # 次序位：组内成员必须排在**它的广播 prop 之后**。同一组 patch 无论
+        # 列表序怎么排都得落成同一张图——热会话与全量重放同序是写回自检的
+        # 前提。默认 0，不影响任何非别名 prop 的既有相对顺序。
+        return (_apply_rank(prop, state.resolve(gid), gid),
+                1 if (gid, prop) in owner else 0)
 
     drawn_after_geometry = False
     try:
@@ -2360,9 +2500,12 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
                     pass
             if state.applied.get(key) == value:
                 # 值没变也要重放：① figure 锚定的位置（几何动过，本地坐标已失效）；
-                # ② 刻度定位与刻度文字（它们按当前状态重算，见 `_must_replay`）
+                # ② 刻度定位与刻度文字（它们按当前状态重算，见 `_must_replay`）；
+                # ③ 别名组里被同组其他成员盖掉的（见 ALIAS_GROUPS / dirty_groups）
                 if not (geometry_moved and prop in _FRAC_ANCHORED) \
-                        and not _must_replay(prop, artist):
+                        and not _must_replay(prop, artist) \
+                        and key not in dirty_groups \
+                        and owner.get(key) not in dirty_groups:
                     continue
             elif _is_geometry_key(prop, artist):
                 geometry_moved = True
@@ -2370,6 +2513,25 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
             try:
                 if key not in state.originals:
                     state.originals[key] = getter(artist)
+                # 广播型 prop：**在自己动手之前**把组内窄 prop 的「脚本原样」
+                # 一起采下来。等窄 prop 自己被应用时再采就晚了——那时读到的
+                # 已经是被广播改过的值，撤销就回不到原样（这正是本 bug）。
+                members = _alias_members(key, artist)
+                if members:
+                    dirty_groups.add(key)
+                    for nkey in members:
+                        if nkey in state.originals:
+                            continue
+                        nart = state.resolve(nkey[0])
+                        nh = (HANDLERS.get((_cls_key(nart), nkey[1]))
+                              if nart is not None else None)
+                        if nh is None:
+                            continue
+                        try:
+                            state.originals[nkey] = nh[0](nart)
+                            state.alias_seeded.add(nkey)
+                        except Exception:      # noqa: BLE001 — 采不到就退回旧行为
+                            pass
                 if getattr(setter, "_needs_state", False):
                     setter(artist, value, state)
                 else:
