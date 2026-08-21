@@ -57,6 +57,8 @@ LIBRARY = '''\
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
+from matplotlib.cm import ScalarMappable
+from matplotlib.colors import Normalize
 from matplotlib.patches import Arc, Circle, Rectangle
 
 
@@ -159,6 +161,13 @@ def main():
     im2 = ax.imshow(rng.rand(64, 64), cmap="viridis")
     fig.colorbar(im2, ax=ax, location="right")
     fig.colorbar(im2, ax=ax, location="bottom", fraction=0.046)
+    # **独立 mappable 的两条色条**（同一张图，排在上面两条之后，gid 不受影响）。
+    # 这条路与上面那对的区别在于：`ScalarMappable` **不是 Artist**，`HANDLERS`
+    # 里没有它的 cmap，所以别名的窄成员**采不到原样**——共享原样只能走
+    # 「对等广播端」那条回退。少了它，两条全撤之后停在中间态。
+    sm = ScalarMappable(norm=Normalize(0.0, 1.0), cmap="viridis")
+    fig.colorbar(sm, ax=ax, location="left")
+    fig.colorbar(sm, ax=ax, location="top", fraction=0.046)
     fig.savefig("InvCbar2.pdf")
 '''
 
@@ -1017,6 +1026,15 @@ REMOVAL_CASES = [
     ("F-dupcb-drop-both", "InvCbar2",
      [[{"gid": "axes_1.colorbar", "prop": "cmap", "value": "plasma"},
        {"gid": "axes_2.colorbar", "prop": "cmap", "value": "cividis"}], []]),
+    # 独立 mappable 的两条色条：窄成员**没有 handler**，共享原样只能靠对等广播端
+    ("G-smcb-drop-first", "InvCbar2",
+     [[{"gid": "axes_3.colorbar", "prop": "cmap", "value": "plasma"}],
+      [{"gid": "axes_3.colorbar", "prop": "cmap", "value": "plasma"},
+       {"gid": "axes_4.colorbar", "prop": "cmap", "value": "cividis"}],
+      [{"gid": "axes_4.colorbar", "prop": "cmap", "value": "cividis"}]]),
+    ("G-smcb-drop-both", "InvCbar2",
+     [[{"gid": "axes_3.colorbar", "prop": "cmap", "value": "plasma"},
+       {"gid": "axes_4.colorbar", "prop": "cmap", "value": "cividis"}], []]),
     ("A-colorbar-drop-mappable", "InvCbar",
      [[{"gid": "axes_0.images_0", "prop": "cmap", "value": "plasma"},
        {"gid": "axes_1.colorbar", "prop": "cmap", "value": "cividis"}],

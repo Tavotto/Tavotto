@@ -3361,7 +3361,23 @@ def _alias_colorbar_mappable(narrow_prop: str):
         if m is None:
             return []
         gid = rev.get(id(m))
-        return [(gid, narrow_prop)] if gid is not None else []
+        if gid is None:
+            # **独立 mappable**（`fig.colorbar(ScalarMappable(...), ax=ax)`）：
+            # 它不属于任何 axes，不在元素表里，也**不该**被塞进 `state.index`
+            # ——它不是可编辑元素，塞进去会被「不许静默消失」那条正确地抓成
+            # 孤儿（试过，用例当场红）。
+            #
+            # 这里要的只是一个**分组令牌**：同一个 mappable 的两条色条算出同一
+            # 个字符串，它们就落进同一个别名组。令牌只活在本次会话的
+            # `owner` / `originals` / `alias_seeded` 里，**不进 manifest、不进
+            # patch、不跨进程**，所以拿对象身份当键是安全的。
+            #
+            # 顺带一提：这个窄成员**采不到原样**——`ScalarMappable` 不是
+            # Artist，`HANDLERS` 里没有它的 cmap，`state.resolve` 也回 None。
+            # 共享原样因此走「对等广播端」那条回退（见 `apply` 里采 originals
+            # 那一段）。分组令牌照样是需要的：没有它连组都不成立。
+            return [(f"mappable#{id(m):x}", narrow_prop)]
+        return [(gid, narrow_prop)]
     return resolve
 
 
@@ -3717,6 +3733,14 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
                     # 是「两个 gid 指着同一个值」。`fill` → `facecolor` 这类
                     # 改名换型的别名不适用，照旧读实况。
                     _seeded = _NOTHING
+                    # 两条路都指向同一件事——「这个值的脚本原样已经有人采过了」：
+                    #   ① 窄成员自己被采过（mappable 在元素表里的常规情形）；
+                    #   ② 只有**对等的广播端**采过。独立 mappable
+                    #      （`fig.colorbar(ScalarMappable(...), ax=ax)`）走的是
+                    #      这一条：那个 mappable **不是 Artist**，`HANDLERS` 里
+                    #      没有它的 cmap，窄成员根本采不了原样（`alias_seeded`
+                    #      为空）。对等广播端的 getter 与自己是同一个，类型天然
+                    #      一致。
                     for _nk in _alias_members(key, artist):
                         # **判据不是「同名」**，是「这个窄成员上真的还站着
                         # 另一个对等广播端」。柱系列的 `facecolor` 广播到每根
@@ -3732,6 +3756,15 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
                                for _b in owner.get(_nk, ())):
                             _seeded = state.originals[_nk]
                             break
+                    if _seeded is _NOTHING:
+                        for _nk in _alias_members(key, artist):
+                            for _b in owner.get(_nk, ()):
+                                if (_b != key and _b[1] == key[1]
+                                        and _b in state.originals):
+                                    _seeded = state.originals[_b]
+                                    break
+                            if _seeded is not _NOTHING:
+                                break
                     state.originals[key] = (getter(artist) if _seeded is _NOTHING
                                             else _seeded)
                 # 广播型 prop：**在自己动手之前**把组内窄 prop 的「脚本原样」
