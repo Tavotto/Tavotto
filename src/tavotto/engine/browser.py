@@ -440,6 +440,13 @@ def handle(request_json: str) -> str:
         if cmd == "classify":
             out = {"ok": True,
                    **classify_imports(req["source"], req["supported_roots"])}
+        elif cmd == "safe_name":
+            # **无状态、且必须在跑用户脚本之前调**：Worker 拿它把工作区里的
+            # 脚本路径钉死在 JS 那一侧。路径要是等 `load` 跑完再从回应里取，
+            # 用户脚本就能先留一个内容是原样的诱饵、再把 `_ACTIVE.script_name`
+            # 改到诱饵头上——摘要算得再独立也只是在给诱饵作证。
+            # 收紧规则只有 `_safe_script_name` 这一份实现，别在 JS 侧抄第二份。
+            out = {"ok": True, "script": _safe_script_name(req["filename"])}
         elif cmd == "load":
             if _ACTIVE is None:
                 _ACTIVE = BrowserSession(req.get("workspace", "/workspace"))

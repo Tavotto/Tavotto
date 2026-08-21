@@ -465,6 +465,34 @@ def test_tampered_workspace_source_is_reported_not_hidden(tmp_path):
     assert after["bytes"] > before["bytes"]
 
 
+def test_safe_name_is_stateless_and_answerable_before_any_user_code(tmp_path):
+    """`safe_name` 必须在**没有会话、没跑过任何用户代码**的时候就能回答。
+
+    Worker 靠它把工作区里的脚本路径钉死在 JS 那一侧，而钉死这个动作必须发生在
+    `load` **之前**——等 load 跑完再从回应里取名字的话，用户脚本可以先留一个
+    内容是原样的诱饵文件、再改掉 `_ACTIVE.script_name`，于是摘要算得再独立，
+    也只是在给诱饵作证（codex 审查第二轮指出的那条）。
+
+    收紧规则只有 `_safe_script_name` 一份实现，所以这条同时钉住「JS 侧不许
+    抄第二份」：抄了就会漂，而漂的表现是「界面核对的文件不是被执行的那个」。
+    """
+    cases = [
+        ("my fig.py", "my fig.py"),
+        # 目录部分一律丢掉，路径绝不许穿出工作区
+        ("a/b.py", "b.py"),
+        ("../../etc/passwd", "figure.py"),
+        (".hidden.py", "figure.py"),
+        ("x.txt", "figure.py"),
+        # 非 ASCII **是保留的**（`str.isalnum()` 对 CJK 为真）。这条是有意
+        # 钉住的事实：谁想收紧到纯 ASCII，得先面对「用户的文件名突然变成
+        # figure.py」这个后果，而不是顺手改掉这行判据。
+        ("\u4e2d\u6587.py", "\u4e2d\u6587.py"),
+    ]
+    out = drive([{"cmd": "safe_name", "filename": n} for n, _ in cases], tmp_path)
+    assert all(o["ok"] for o in out), out
+    assert [o["script"] for o in out] == [want for _, want in cases]
+
+
 def test_source_status_before_load_is_bad_request(tmp_path):
     (out,) = drive([{"cmd": "source_status"}], tmp_path)
     assert out["ok"] is False and out["code"] == "bad_request"

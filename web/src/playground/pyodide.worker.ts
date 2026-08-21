@@ -143,12 +143,23 @@ async function load(
   progress(id, 'script')
   const browser = pyodide.pyimport('browser')
   handleFn = (s: string) => browser.handle!(s)
+
+  // **先把路径钉死，再跑用户代码**。收紧规则（`_safe_script_name`）只有
+  // Python 那一份实现，所以问它——但要在它还没跑过任何用户代码的时候问。
+  // 等 `load` 回来再从回应里取 `script` 是不行的：脚本可以先留一个内容是
+  // 原样的诱饵文件，再改掉 `sys.modules['browser']._ACTIVE.script_name`，
+  // 于是摘要算得再独立，也只是在给诱饵作证。
+  const named = callPython({ cmd: 'safe_name', filename })
+  workspacePath = `/workspace/${typeof named.script === 'string' ? named.script : 'figure.py'}`
+
   const out = callPython({ cmd: 'load', filename, source })
   progress(id, 'figures')
-  // 完整性摘要**以 FS 上的字节为准**，覆盖掉 Python 自己报的那个（理由见
-  // fsDigest）。Python 那份仍然存在且被 CPython 测试盖着——它验的是引擎语义，
-  // 这里验的是「实际躺在虚拟 FS 上的那个文件」，两者要的东西不同。
-  workspacePath = `/workspace/${typeof out.script === 'string' ? out.script : 'figure.py'}`
+  // 界面上「文件名 · 未改动」是一句话：名字也必须是**被核对的那个**。
+  // 用 Python 跑完之后回报的名字，等于让脚本自己决定这句证词说的是哪个文件。
+  out.script = workspacePath.slice(workspacePath.lastIndexOf('/') + 1)
+  // 完整性摘要**以 FS 上那条钉死路径的字节为准**，覆盖掉 Python 自己报的那个
+  // （理由见 fsDigest）。Python 那份仍然存在且被 CPython 测试盖着——它验的是
+  // 引擎语义，这里验的是「实际躺在虚拟 FS 上的那个文件」，两者要的东西不同。
   try {
     const d = await fsDigest(workspacePath)
     out.source_sha256 = d.sha256

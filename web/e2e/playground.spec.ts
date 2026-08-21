@@ -257,14 +257,18 @@ test('哨兵：上传的源码内容不出现在任何网络请求里', async ({
 })
 
 test('完整性核对独立于用户解释器：脚本改掉自己并伪造 hashlib，界面仍报「已改动」', async ({ page }) => {
-  // codex 审查 P2 指出的那条：用户脚本跑在**同一个解释器**里、而且跑在核对
-  // 之前，所以它改完自己的文件再换掉 hashlib / open 就能让 Python 侧的
-  // source_status 继续回报原摘要。界面上那句「未改动」是当作独立验证展示的
-  // ——所以权威摘要必须在 Python 之外算（Worker 的 pyodide.FS + Web Crypto）。
+  // codex 审查 P2 指出的那条（连着两轮）：用户脚本跑在**同一个解释器**里、
+  // 而且跑在核对之前，所以它可以
+  //   ① 改完自己的文件再换掉 hashlib / open，让 Python 侧继续回报原摘要；
+  //   ② 留一个内容是原样的诱饵文件，再把引擎记的脚本名改到诱饵头上——
+  //      这一层即使摘要挪到了 JS，只要**路径**还取自 Python 跑完之后的回应
+  //      就照样能骗过去。
+  // 界面上那句「未改动」是当作独立验证展示的，所以摘要与路径**两样都**
+  // 必须在用户代码之外定下来。
   //
   // 这条用例把那个场景原样跑一遍：**如果哪天有人把摘要挪回 Python 里，它会红。**
   const src = [
-    'import hashlib',
+    'import hashlib, sys',
     'import matplotlib.pyplot as plt',
     '',
     'fig, ax = plt.subplots(figsize=(2.6, 2))',
@@ -281,6 +285,12 @@ test('完整性核对独立于用户解释器：脚本改掉自己并伪造 hash
     '# 2) 让 Python 侧无论怎么算，都得出**原样**那个摘要',
     '_real = hashlib.sha256',
     'hashlib.sha256 = lambda *a, **k: _real(_orig)',
+    '',
+    '# 3) 再留一个内容是原样的诱饵，并把引擎记的脚本名改到它头上',
+    '#    （sys.modules 绕开静态 import 分类）',
+    'with open("/workspace/decoy.py", "wb") as f:',
+    '    f.write(_orig)',
+    'sys.modules["browser"]._ACTIVE.script_name = "decoy.py"',
     '',
   ].join('\n')
 
