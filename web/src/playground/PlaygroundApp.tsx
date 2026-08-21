@@ -4,8 +4,10 @@ import {
   Download,
   FileCode2,
   Loader2,
+  Play,
   RotateCcw,
   RotateCw,
+  ShieldAlert,
   TriangleAlert,
   Upload,
   X,
@@ -21,16 +23,19 @@ import { cn } from '@/lib/utils'
 import { useDocumentStore } from '@/store/documentStore'
 import { usePanelRender } from '@/store/renderStore'
 import type { PanelObject } from '@/types/document'
-import { EXAMPLES } from './examples'
+import { PRIMARY_EXAMPLE, SECONDARY_EXAMPLES } from './examples'
 import {
   openFigure,
   startSession,
   teardownSession,
+  verifySourceIntegrity,
   type ActiveSession,
 } from './playgroundSession'
+import { discardWarmClient, onIdle, prewarm } from './prewarm'
 import { PlaygroundError } from './pyodideClient'
 import type { FigureChoice, PlaygroundFailure, PlaygroundPhase } from './protocol'
 import { MAX_SOURCE_BYTES, PYODIDE_VERSION, RUNTIME_PACKAGES } from './runtime'
+import { shortHash, type SourceIntegrity } from './sourceIntegrity'
 
 /** playground 这一屏的文案都在 `dialogs:playground.*` 下 */
 const pg = (key: string, values?: Record<string, unknown>) =>
@@ -38,6 +43,30 @@ const pg = (key: string, values?: Record<string, unknown>) =>
 
 /** 拖放区里的文件名示意——语言中立的字面量，不进翻译 */
 const SAMPLE_FILENAME = 'figure.py'
+
+/** 摘要算法名同理：它是技术标识，不是文案，翻译它只会让人对不上号 */
+const HASH_ALGO = 'SHA-256'
+
+/**
+ * 回站首页的地址，**跟着当前界面语言走**：中文会话回中文首页。
+ * 用相对路径而不是写死 `/`：产物挂在 `/try/` 下（vite 的 `base: './'`），
+ * 相对路径让它在任何前缀下、以及独立托管时都指得对。
+ */
+const homeHref = () => (currentLocale() === 'zh-CN' ? '../zh/' : '../')
+
+/** 顶栏左上角的品牌 = 回站入口。两处 header 共用同一份，别各写一个。 */
+function BrandLink() {
+  return (
+    <a
+      href={homeHref()}
+      title={pg('backHome')}
+      aria-label={pg('backHome')}
+      className="shrink-0 rounded-sm text-[13px] font-semibold tracking-tight text-ink transition-colors hover:text-sel"
+    >
+      {PRODUCT_NAME}
+    </a>
+  )
+}
 
 type Stage =
   | { kind: 'idle' }
@@ -61,7 +90,29 @@ export function PlaygroundApp() {
   // 语言切换要触发重渲染（本组件大量用 pg() 而不是 useTranslation）
   const [, setLocaleTick] = useState(0)
 
-  useEffect(() => () => teardownSession(sessionRef.current), [])
+  useEffect(
+    () => () => {
+      teardownSession(sessionRef.current)
+      discardWarmClient()
+    },
+    [],
+  )
+
+  /**
+   * 空闲时预热 Pyodide 核心（`prewarm.ts`）。挂载后与每次回到空状态各一次。
+   *
+   * 三条纪律：① 只发生在 `/try` 这个应用页面上——营销首页是另一个仓库里的
+   * 静态页，与本模块毫无连接，一个字节的 Pyodide 都不会加载；② 首帧不等它，
+   * 排在 idle 回调里（本组件的壳早就渲染完了）；③ **只到核心为止**，科学栈
+   * 仍然要等 import 分类说了话才下载。
+   *
+   * 离开空状态时 cleanup 取消尚未触发的那次；已经在暖的那个由
+   * `takeWarmClient()` 直接接手——绝不会变成两个 Worker。
+   */
+  useEffect(() => {
+    if (stage.kind !== 'idle') return
+    return onIdle(() => prewarm())
+  }, [stage.kind])
 
   const fail = useCallback((failure: PlaygroundFailure, filename: string) => {
     teardownSession(sessionRef.current)
@@ -173,7 +224,7 @@ export function PlaygroundApp() {
   const chrome = (body: React.ReactNode) => (
     <div className="flex h-full w-full flex-col bg-bg text-ink">
       <header className="flex h-11 shrink-0 items-center gap-3 border-b border-border bg-surface px-4">
-        <span className="text-[13px] font-semibold tracking-tight">{PRODUCT_NAME}</span>
+        <BrandLink />
         <span className="text-xs text-ink-3">{pg('title')}</span>
         <span className="flex-1" />
         <button
@@ -197,7 +248,9 @@ export function PlaygroundApp() {
 
   switch (stage.kind) {
     case 'idle':
-      return chrome(<IdleView onFile={(f) => void openFile(f)} onExample={(f, s) => void openSource(f, s)} />)
+      return chrome(
+        <IdleView onFile={(f) => void openFile(f)} onExample={(f, s) => void openSource(f, s)} />,
+      )
     case 'loading':
       return chrome(<LoadingView phase={stage.phase} filename={stage.filename} />)
     case 'pick':
@@ -233,7 +286,7 @@ function IdleView({
   const inputRef = useRef<HTMLInputElement>(null)
   return (
     <div className="flex min-h-0 flex-1 items-start justify-center overflow-y-auto p-6">
-      <div className="w-full max-w-[560px] pt-[7vh]">
+      <div className="w-full max-w-[560px] pt-[6vh]">
         <div
           role="button"
           tabIndex={0}
@@ -283,18 +336,38 @@ function IdleView({
           }}
         />
 
-        <p className="mt-5 text-center text-xs text-ink-3">{pg('orExample')}</p>
-        <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
-          {EXAMPLES.map((ex) => (
-            <button
-              key={ex.id}
-              onClick={() => onExample(ex.filename, ex.source)}
-              className="flex h-7 items-center gap-1.5 rounded-sm border border-border bg-surface px-2.5 text-xs text-ink-2 hover:text-ink"
-            >
-              {pg(ex.labelKey)}
-              <span className="font-mono text-[11px] text-ink-faint">{ex.filename}</span>
-            </button>
-          ))}
+        {/* 两条路等价，不是「上传」加一个脚注：没有现成脚本的访客同样
+            应该在一次点击之内看到真东西。跑的是真示例源码经真 Pyodide，
+            **绝不是预烤的 manifest**——那演示的就不是这个产品了。 */}
+        <div className="my-5 flex items-center gap-3" aria-hidden>
+          <span className="h-px flex-1 bg-border" />
+          <span className="text-xs text-ink-3">{pg('orDivider')}</span>
+          <span className="h-px flex-1 bg-border" />
+        </div>
+
+        <div className="flex flex-col items-center">
+          <button
+            onClick={() => onExample(PRIMARY_EXAMPLE.filename, PRIMARY_EXAMPLE.source)}
+            className="flex h-9 items-center gap-2 rounded-[6px] bg-ink px-4 text-[13px] font-medium text-white transition-opacity hover:opacity-90"
+          >
+            <Play size={13} aria-hidden />
+            {pg('runSample')}
+            <span className="font-mono text-[11px] text-white/60">{PRIMARY_EXAMPLE.filename}</span>
+          </button>
+          <p className="mt-2 text-xs text-ink-3">{pg('runSampleNote')}</p>
+
+          <div className="mt-4 flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5">
+            <span className="text-xs text-ink-3">{pg('otherExamples')}</span>
+            {SECONDARY_EXAMPLES.map((ex) => (
+              <button
+                key={ex.id}
+                onClick={() => onExample(ex.filename, ex.source)}
+                className="text-xs text-ink-2 underline-offset-2 hover:text-ink hover:underline"
+              >
+                {pg(ex.labelKey)}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="mt-8 border-t border-border pt-4 text-center">
@@ -547,6 +620,12 @@ function EditorView({
   const [showSource, setShowSource] = useState(false)
   const [showPatches, setShowPatches] = useState(false)
   const [cueDismissed, setCueDismissed] = useState(false)
+  // 会话起来时那次核对的结论；下面在有意义的时刻重新核对
+  const [integrity, setIntegrity] = useState<SourceIntegrity>(session.integrity)
+  // 从 1 起：**进编辑态本身就要复核一次**。load 时那次摘要是在 `open` 之前
+  // 采的，而 `open` 会再画一遍——脚本注册的 `draw_event` 回调正是在那一刻
+  // 才有机会改写自己的源文件。只信 load 那次，等于漏掉了两者之间的窗口。
+  const [recheckSeq, setRecheckSeq] = useState(1)
 
   // ⌘Z / ⌘⇧Z：与工作台同一条 runUndoRedo 通道（带 undoRedoBlocked 守卫）
   useEffect(() => {
@@ -561,9 +640,48 @@ function EditorView({
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  // 「源文件未被修改」不是口号，是逐字节比对的结论
-  const unchanged = session.loadedSource === session.originalSource
   const overrideCount = panel?.overrides.length ?? 0
+
+  /**
+   * 复验源文件完整性：让 Worker 再读一次虚拟 FS 里的脚本重算 sha256。
+   *
+   * **只在 worker 闲着的时候发**：无阶段请求的硬超时是 30s，排在一次慢渲染
+   * 后面就可能到点，而到点等于整个会话被 terminate——为一条状态指示把用户
+   * 的编辑现场炸掉，那是本末倒置。所以请求排队，等这一版画完再发。
+   */
+  const busy = rendering || pending
+  const servedRef = useRef(0)
+  useEffect(() => {
+    if (recheckSeq === servedRef.current || busy) return
+    let alive = true
+    setIntegrity((cur) => ({ ...cur, verdict: 'checking' }))
+    void verifySourceIntegrity(session).then((next) => {
+      if (!alive) return
+      // **采纳了结果才算服务过**。在 then 之前就推进 servedRef 的话，用户在
+      // 核对在途时动一下（busy 翻转 → cleanup 把 alive 置 false）就会把结果
+      // 丢掉，而序号已经推过、busy 落下来也不会再发一次——徽章永远停在
+      // 「核对中」，一次本该报出来的 mismatch 就此隐身。
+      servedRef.current = recheckSeq
+      setIntegrity(next)
+    })
+    return () => {
+      alive = false
+    }
+  }, [recheckSeq, busy, session])
+
+  // 第一次真的改完并画出来之后复验一次——「我改了图，源文件仍然一个字节
+  // 没动」正是这句话该被证明的时刻
+  const checkedAfterEdit = useRef(false)
+  useEffect(() => {
+    if (overrideCount === 0 || checkedAfterEdit.current) return
+    checkedAfterEdit.current = true
+    setRecheckSeq((n) => n + 1)
+  }, [overrideCount])
+
+  const openSourceDialog = () => {
+    setShowSource(true)
+    setRecheckSeq((n) => n + 1)
+  }
 
   const resetEdits = () => {
     if (!panel || panel.overrides.length === 0) return
@@ -580,20 +698,18 @@ function EditorView({
   return (
     <div className="flex h-full w-full flex-col bg-bg text-ink">
       <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border bg-surface px-3">
-        <span className="text-[13px] font-semibold tracking-tight">{PRODUCT_NAME}</span>
+        <BrandLink />
         <span className="hidden text-xs text-ink-3 sm:inline">{pg('title')}</span>
 
         <span className="mx-1 h-4 w-px bg-border" />
         <button
-          onClick={() => setShowSource(true)}
+          onClick={openSourceDialog}
           className="flex h-7 items-center gap-1.5 rounded-sm px-2 font-mono text-[11px] text-ink-2 hover:bg-surface-2"
           title={pg('sourceNote')}
         >
           <FileCode2 size={12} aria-hidden />
-          <span className="max-w-[16ch] truncate">{session.filename}</span>
-          <span className={cn('flex items-center gap-1', unchanged ? 'text-ink-3' : 'text-danger')}>
-            · {unchanged ? pg('unchanged') : pg('changed')}
-          </span>
+          <span className="max-w-[16ch] truncate">{session.scriptName}</span>
+          <IntegrityBadge integrity={integrity} />
         </button>
         <button
           onClick={() => setShowPatches((v) => !v)}
@@ -630,6 +746,26 @@ function EditorView({
           {currentLocale() === 'zh-CN' ? 'EN' : '中文'}
         </button>
       </header>
+
+      {/* 不变式失效：Tavotto 保证碰不到源文件，而工作区里那个文件确实变了。
+          这不是一条提示，是「别再信这个会话」——所以常驻、不可关、带技术细节。 */}
+      {integrity.verdict === 'changed' && (
+        <div
+          role="alert"
+          className="flex shrink-0 items-start gap-2 border-b border-danger/40 bg-danger/8 px-3 py-2"
+        >
+          <ShieldAlert size={14} className="mt-0.5 shrink-0 text-danger" aria-hidden />
+          <div className="min-w-0 text-xs leading-relaxed text-ink-2">
+            <p className="font-medium text-danger">
+              {session.scriptName} · {pg('changed')}
+            </p>
+            <p className="mt-0.5">{pg('integrityMismatchNote')}</p>
+            <p className="mt-1 font-mono text-[11px] text-ink-3">
+              {shortHash(integrity.originalSha256)} → {shortHash(integrity.workspaceSha256)}
+            </p>
+          </div>
+        </div>
+      )}
 
       {showPatches && (
         <div className="shrink-0 border-b border-border bg-surface px-3 py-2">
@@ -679,9 +815,74 @@ function EditorView({
       )}
 
       {showSource && (
-        <SourceDialog filename={session.filename} source={session.originalSource} unchanged={unchanged} onClose={() => setShowSource(false)} />
+        <SourceDialog
+          filename={session.scriptName}
+          source={session.originalSource}
+          integrity={integrity}
+          onClose={() => setShowSource(false)}
+        />
       )}
     </div>
+  )
+}
+
+/**
+ * 源文件完整性的一枚小徽章。四种状态各说各的话：
+ *
+ *   checking      还在核对——**这时候不许说「未改动」**
+ *   unchanged     两个 sha256 相等（一个在主线程算原文，一个在 Worker 里读
+ *                 虚拟 FS 算实际执行的那份）
+ *   changed       不变式失效，按危险色报
+ *   unavailable   这个浏览器算不出哈希（非安全上下文没有 crypto.subtle），
+ *                 或者 Worker 那次查询失败——「查不了」不是「没改」
+ */
+function IntegrityBadge({ integrity }: { integrity: SourceIntegrity }) {
+  const { verdict } = integrity
+  const label =
+    verdict === 'unchanged'
+      ? pg('unchanged')
+      : verdict === 'changed'
+        ? pg('changed')
+        : verdict === 'checking'
+          ? pg('integrityChecking')
+          : pg('integrityUnverified')
+  return (
+    <span
+      className={cn(
+        'flex items-center gap-1',
+        verdict === 'changed' ? 'text-danger' : verdict === 'unchanged' ? 'text-ink-3' : 'text-ink-faint',
+      )}
+    >
+      {verdict === 'changed' && <ShieldAlert size={11} aria-hidden />}
+      · {label}
+    </span>
+  )
+}
+
+/** 完整性明细：默认收起的一行技术事实，不做成安全仪表盘。 */
+function IntegrityDetails({ integrity }: { integrity: SourceIntegrity }) {
+  const { verdict, originalSha256, workspaceSha256 } = integrity
+  const note =
+    verdict === 'changed'
+      ? pg('integrityMismatchNote')
+      : verdict === 'unavailable'
+        ? pg('integrityUnavailableNote')
+        : pg('integrityNote')
+  return (
+    <details className="shrink-0 border-t border-border px-4 py-2">
+      <summary className="cursor-pointer text-xs text-ink-3">{pg('integrityTitle')}</summary>
+      <p className={cn('mt-1.5 text-xs leading-relaxed', verdict === 'changed' ? 'text-danger' : 'text-ink-3')}>
+        {note}
+      </p>
+      {(originalSha256 || workspaceSha256) && (
+        <p className="mt-1.5 font-mono text-[11px] text-ink-2">
+          {HASH_ALGO}{' '}
+          {verdict === 'changed'
+            ? `${shortHash(originalSha256)} → ${shortHash(workspaceSha256)}`
+            : shortHash(workspaceSha256 || originalSha256)}
+        </p>
+      )}
+    </details>
   )
 }
 
@@ -689,12 +890,12 @@ function EditorView({
 function SourceDialog({
   filename,
   source,
-  unchanged,
+  integrity,
   onClose,
 }: {
   filename: string
   source: string
-  unchanged: boolean
+  integrity: SourceIntegrity
   onClose: () => void
 }) {
   useEffect(() => {
@@ -718,8 +919,8 @@ function SourceDialog({
       >
         <div className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-2.5">
           <span className="font-mono text-xs">{filename}</span>
-          <span className={cn('text-xs', unchanged ? 'text-ink-3' : 'text-danger')}>
-            · {unchanged ? pg('unchanged') : pg('changed')}
+          <span className="font-mono text-xs">
+            <IntegrityBadge integrity={integrity} />
           </span>
           <span className="flex-1" />
           <button
@@ -736,6 +937,7 @@ function SourceDialog({
         <pre className="min-h-0 flex-1 overflow-auto p-4 font-mono text-[12px] leading-relaxed text-ink-2">
           {source}
         </pre>
+        <IntegrityDetails integrity={integrity} />
       </div>
     </div>
   )

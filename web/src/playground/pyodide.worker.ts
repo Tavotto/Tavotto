@@ -20,10 +20,60 @@ interface PyodideLike {
   unpackArchive(buf: ArrayBuffer, format: string, opts?: { extractDir?: string }): void
   runPython(code: string): unknown
   pyimport(name: string): { handle?: (s: string) => string; classify_json?: (s: string) => string }
+  /** Emscripten 虚拟 FS。完整性摘要经它读字节——**绕开 Python 解释器**。 */
+  FS: { readFile(path: string, opts?: { encoding?: string }): Uint8Array }
 }
 
+/**
+ * **在任何用户代码之前**捕获的可信原语。
+ *
+ * 完整性核对不能在核对那一刻才去全局对象上取 `crypto.subtle.digest`——那时
+ * 用户脚本已经跑过了。这里的绑定发生在模块求值期，比 Pyodide 起来还早。
+ */
+// **可选地**绑定：非安全上下文（比如局域网的 http:// 地址）根本没有
+// `crypto.subtle`，模块求值期直接 `.digest.bind(...)` 会抛，而这一抛发生在
+// 装 `onmessage` 之前——整个 Worker 起不来，会话以 `worker_crashed` 收场。
+// 那与本模块自己的设计相矛盾：算不出哈希是「查不了」（unavailable），
+// playground 其余部分照常可用，不该被一条状态指示拖死。
+const TRUSTED_DIGEST: ((alg: string, data: BufferSource) => Promise<ArrayBuffer>) | null =
+  typeof crypto !== 'undefined' && typeof crypto.subtle?.digest === 'function'
+    ? crypto.subtle.digest.bind(crypto.subtle)
+    : null
+const TrustedU8 = Uint8Array
+
 let pyodide: PyodideLike | null = null
+/** init 期捕获的 FS 读取函数（同样早于用户代码）。 */
+let trustedReadFile: ((p: string) => Uint8Array) | null = null
 let handleFn: ((s: string) => string) | null = null
+/** 用户脚本在虚拟 FS 里的绝对路径，`load` 成功时记下——**存在 JS 这一侧**。 */
+let workspacePath = ''
+
+/**
+ * 工作区源文件的 SHA-256，**在 Python 之外算**。
+ *
+ * 为什么不能让 Python 自己算（codex 审查 P2，判断是对的）：用户脚本跑在
+ * **同一个解释器**里，而且跑在这次核对**之前**。它完全可以在改掉自己的文件
+ * 之后 monkeypatch `builtins.open` 或换掉 `hashlib.sha256`、甚至直接改
+ * `sys.modules['browser']` 的全局，让 `source_status` 继续回报原来的摘要。
+ * 那样界面会宣称「未改动」，而实际执行的文件已经变了——**一个能被它所校验的
+ * 代码改写的校验，不叫校验**，而这条状态是当作独立验证展示给用户的。
+ *
+ * 所以字节由 `pyodide.FS.readFile` 直接从 Emscripten FS 取，摘要由 Worker 的
+ * Web Crypto 算，全程不经过用户能触及的 Python 名字空间。
+ * （`import js` 这类反向逃逸由 `browser_imports` 在执行前就拦掉了。）
+ */
+async function fsDigest(path: string): Promise<{ sha256: string; bytes: number }> {
+  if (!trustedReadFile) fail('bad_request', 'Pyodide 还没初始化')
+  // 没有 Web Crypto：交空摘要，主线程据此显示「查不了」——**不是**「未改动」，
+  // 也不是把会话弄死
+  if (!TRUSTED_DIGEST) return { sha256: '', bytes: 0 }
+  const data = trustedReadFile!(path)
+  // 复制进独立的 ArrayBuffer：FS 给的是 WASM 堆上的视图，堆一增长就失效
+  const copy = new TrustedU8(data)
+  const buf = await TRUSTED_DIGEST('SHA-256', copy)
+  const sha256 = [...new TrustedU8(buf)].map((b) => b.toString(16).padStart(2, '0')).join('')
+  return { sha256, bytes: copy.byteLength }
+}
 
 const post = (m: unknown) => (self as unknown as DedicatedWorkerGlobalScope).postMessage(m)
 const progress = (id: number, phase: PlaygroundPhase) => post({ id, progress: phase })
@@ -64,9 +114,23 @@ async function init(id: number, pyodideBaseUrl: string, engineZipUrl: string): P
   // 版本钉死在 packaging/playground-runtime.json（URL 由主线程传入）。
   // @vite-ignore：这是**有意的**运行时外部地址——Pyodide 不打进 bundle。
   const mod = (await import(/* @vite-ignore */ `${pyodideBaseUrl}pyodide.mjs`)) as {
-    loadPyodide(opts: { indexURL: string }): Promise<PyodideLike>
+    loadPyodide(opts: { indexURL: string; jsglobals?: object }): Promise<PyodideLike>
   }
-  pyodide = await mod.loadPyodide({ indexURL: pyodideBaseUrl })
+  // `jsglobals` **切断 Python 的 `js` 逃逸口**，而且必须是 `Object.create(null)`
+  // 这种**无原型**对象：普通 `{}` 还挂着 `Object.prototype`，于是
+  // `__import__('js').constructor.constructor('return globalThis')()` 就是一台
+  // Function 构造器，一句话把 Worker 全局捞回来——`js.eval` 关了也白关。这不是洁癖：`import js`
+  // 之后 `js.eval` 就能改 Worker 的任何全局——换掉 `crypto.subtle.digest`
+  // 让它在算之前先把追加的尾巴削掉、甚至直接 `self.postMessage` 伪造一整条
+  // 响应。**Python 一旦够得着 js，这个 Worker 里就没有任何东西可信**，
+  // 完整性核对连同协议本身一起失效。静态分类拦不住这条：
+  // `browser_imports` 有意放行 try/except 里的可选 import，而 `__import__('js')`
+  // 它根本看不见——所以防线必须在这里，用 Pyodide 官方的 jsglobals。
+  // 代价是脚本用不了 js 互操作；playground 接的是普通 matplotlib 脚本，
+  // 本来就不该用它（示例纯净度用例也一直这么要求）。
+  // e2e 的 `Python 够不着 js` 把 `js.eval` 与 constructor 两条路都跑一遍。
+  pyodide = await mod.loadPyodide({ indexURL: pyodideBaseUrl, jsglobals: Object.create(null) })
+  trustedReadFile = (p: string) => pyodide!.FS.readFile(p, { encoding: 'binary' })
 
   progress(id, 'engine')
   const res = await fetch(engineZipUrl)
@@ -116,8 +180,33 @@ async function load(
   progress(id, 'script')
   const browser = pyodide.pyimport('browser')
   handleFn = (s: string) => browser.handle!(s)
+
+  // **先把路径钉死，再跑用户代码**。收紧规则（`_safe_script_name`）只有
+  // Python 那一份实现，所以问它——但要在它还没跑过任何用户代码的时候问。
+  // 等 `load` 回来再从回应里取 `script` 是不行的：脚本可以先留一个内容是
+  // 原样的诱饵文件，再改掉 `sys.modules['browser']._ACTIVE.script_name`，
+  // 于是摘要算得再独立，也只是在给诱饵作证。
+  const named = callPython({ cmd: 'safe_name', filename })
+  workspacePath = `/workspace/${typeof named.script === 'string' ? named.script : 'figure.py'}`
+
   const out = callPython({ cmd: 'load', filename, source })
   progress(id, 'figures')
+  // 界面上「文件名 · 未改动」是一句话：名字也必须是**被核对的那个**。
+  // 用 Python 跑完之后回报的名字，等于让脚本自己决定这句证词说的是哪个文件。
+  out.script = workspacePath.slice(workspacePath.lastIndexOf('/') + 1)
+  // 完整性摘要**以 FS 上那条钉死路径的字节为准**，覆盖掉 Python 自己报的那个
+  // （理由见 fsDigest）。Python 那份仍然存在且被 CPython 测试盖着——它验的是
+  // 引擎语义，这里验的是「实际躺在虚拟 FS 上的那个文件」，两者要的东西不同。
+  try {
+    const d = await fsDigest(workspacePath)
+    out.source_sha256 = d.sha256
+    out.source_bytes = d.bytes
+  } catch {
+    // 拿不到 FS 或没有 Web Crypto：交空串，主线程据此显示「查不了」，
+    // **绝不退回 Python 那份**——退回去就等于把刚拆掉的自证又装回来
+    out.source_sha256 = ''
+    out.source_bytes = 0
+  }
   return out
 }
 
@@ -143,6 +232,21 @@ async function dispatch(req: WorkerRequest): Promise<unknown> {
         patches: req.patches,
         width: req.width,
       })
+    case 'sourceStatus': {
+      // 每次都真的从虚拟 FS 读文件重算——缓存一个「上次算过的」哈希就等于
+      // 又回到了「两个变量比自己」，那正是这条命令要取代的东西。
+      // 读与算都在 Python 之外（见 fsDigest）。
+      if (!pyodide || !workspacePath) return fail('bad_request', '还没有加载脚本')
+      const script = workspacePath.slice(workspacePath.lastIndexOf('/') + 1)
+      try {
+        const d = await fsDigest(workspacePath)
+        if (!d.sha256) return fail('source_unreadable', '这个浏览器没有 Web Crypto，算不出摘要')
+        return { script, ...d }
+      } catch (err) {
+        return fail('source_unreadable',
+          `读不到工作区里的源文件: ${err instanceof Error ? err.message : err}`)
+      }
+    }
   }
 }
 

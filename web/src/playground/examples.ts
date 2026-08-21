@@ -4,6 +4,10 @@
  *     Tavotto 专有 API，Tavotto 接的是用户**本来就在写**的图；
  *   * 小到能读完；
  *   * 真的经过 Pyodide 执行——不是预烤的 manifest（那是在演示假东西）。
+ *
+ * 三张都在 savefig 前 `tight_layout()`：matplotlib 的默认边距在这个尺寸下
+ * 会把 x/y 轴标签裁掉（实测三张全中）。轴标签恰恰是访客第一件想点的东西，
+ * 裁掉了就既难看又点不着——示例是第一印象，不是一个待修的 bug 展台。
  */
 export interface Example {
   id: string
@@ -11,6 +15,11 @@ export interface Example {
   labelKey: string
   filename: string
   source: string
+  /**
+   * 空状态里那个一按就跑的主 CTA 用的示例。**有且只有一个**
+   * （`examples.test.ts` 看护）：主路径要是能指到两个地方，它就不是主路径了。
+   */
+  primary?: true
 }
 
 export const EXAMPLES: Example[] = [
@@ -18,6 +27,9 @@ export const EXAMPLES: Example[] = [
     id: 'kinetics',
     labelKey: 'exampleKinetics',
     filename: 'kinetics.py',
+    // 主 CTA 就是它：标题 / 轴标签 / 图例 / 两条曲线，点开就有东西可选可拖，
+    // 又不至于复杂到第一眼看不懂。别为了「功能多」换成更花的那张。
+    primary: true,
     // 标题 / 轴标签 / 图例 / 两条 Line2D 全齐——语义选择一眼可见
     source: `import numpy as np
 import matplotlib.pyplot as plt
@@ -35,6 +47,7 @@ ax.set_title("Reaction kinetics")
 ax.set_xlim(0, 60)
 ax.set_ylim(0, 1.05)
 ax.legend(loc="lower right")
+fig.tight_layout()
 fig.savefig("kinetics.pdf")
 `,
   },
@@ -58,6 +71,7 @@ ax.set_xlabel("Concentration (mM)")
 ax.set_ylabel("Signal (a.u.)")
 ax.set_title("Calibration curve")
 ax.legend(loc="upper left")
+fig.tight_layout()
 fig.savefig("calibration.pdf")
 `,
   },
@@ -82,7 +96,14 @@ ax.set_ylabel("Absorbance")
 ax.set_title("Absorption spectrum")
 ax.set_xticks([400, 500, 600, 700, 800])
 ax.set_ylim(0, 1.1)
+fig.tight_layout()
 fig.savefig("spectrum.pdf")
 `,
   },
 ]
+
+/** 空状态主 CTA 跑的那个（`primary`）。 */
+export const PRIMARY_EXAMPLE: Example = EXAMPLES.find((e) => e.primary) ?? EXAMPLES[0]
+
+/** 其余示例——次级入口，不与主 CTA 重复。 */
+export const SECONDARY_EXAMPLES: Example[] = EXAMPLES.filter((e) => e !== PRIMARY_EXAMPLE)

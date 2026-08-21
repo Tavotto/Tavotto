@@ -116,6 +116,58 @@ describe('PlaygroundClient', () => {
     await expect(p).resolves.toBeUndefined()
   })
 
+  it('init 幂等去重：预热起过之后再调不会发第二条 init', async () => {
+    const c = new PlaygroundClient()
+    const a = c.init('https://cdn/', 'https://x/engine.zip')
+    const b = c.init('https://cdn/', 'https://x/engine.zip')
+    const w = lastWorker()
+    expect(w.posted.filter((m) => m.type === 'init')).toHaveLength(1)
+    expect(c.ready).toBe(false) // 「在路上」不算就位
+    w.emit({ id: w.posted[0].id, ok: true, result: {} })
+    await Promise.all([a, b])
+    expect(c.ready).toBe(true)
+    await c.init('https://cdn/', 'https://x/engine.zip')
+    expect(w.posted.filter((m) => m.type === 'init')).toHaveLength(1)
+  })
+
+  it('init 失败不留 latch：下一次调用重新来过', async () => {
+    const c = new PlaygroundClient()
+    const first = c.init('https://cdn/', 'https://x/engine.zip').catch((e) => e)
+    const w = lastWorker()
+    w.emit({ id: w.posted[0].id, ok: false, code: 'runtime_failure', message: 'CDN 挂了' })
+    expect(((await first) as PlaygroundError).failure.code).toBe('runtime_failure')
+    expect(c.ready).toBe(false)
+    void c.init('https://cdn/', 'https://x/engine.zip')
+    expect(w.posted.filter((m) => m.type === 'init')).toHaveLength(2)
+  })
+
+  it('load 把完整性字段一起带回来（缺了就是空串/0，绝不编）', async () => {
+    const c = new PlaygroundClient()
+    const p = c.load('f.py', 'x = 1', {})
+    const w = lastWorker()
+    w.emit({
+      id: w.posted[0].id,
+      ok: true,
+      result: { figures: [], log: '', script: 'f.py', source_sha256: 'abc', source_bytes: 5 },
+    })
+    await expect(p).resolves.toMatchObject({ script: 'f.py', source_sha256: 'abc', source_bytes: 5 })
+
+    const c2 = new PlaygroundClient()
+    const p2 = c2.load('f.py', 'x = 1', {})
+    const w2 = lastWorker()
+    w2.emit({ id: w2.posted[0].id, ok: true, result: { figures: [] } })
+    await expect(p2).resolves.toMatchObject({ script: '', source_sha256: '', source_bytes: 0 })
+  })
+
+  it('sourceStatus 是一条独立命令（不搭渲染的顺风车）', async () => {
+    const c = new PlaygroundClient()
+    const p = c.sourceStatus()
+    const w = lastWorker()
+    expect(w.posted[0]).toMatchObject({ type: 'sourceStatus' })
+    w.emit({ id: w.posted[0].id, ok: true, result: { script: 'f.py', sha256: 'deadbeef', bytes: 12 } })
+    await expect(p).resolves.toEqual({ script: 'f.py', sha256: 'deadbeef', bytes: 12 })
+  })
+
   it('abort 只放弃这一条的结果，不终结会话', async () => {
     const c = new PlaygroundClient()
     const ctrl = new AbortController()
