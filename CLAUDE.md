@@ -283,6 +283,40 @@ Python，首次渲染也不联网：
 
 ## 渲染引擎核心机制
 
+- **Figure 捕获策略是共享语义（`engine/figcapture.py`，2026-08-21）**：
+  桌面 worker 与浏览器 playground **各调一次同一份实现**。三件事只有这一个
+  出处：`savefig` 的 stem 怎么取、脚本跑完还活着的 pyplot Figure 怎么补进来
+  （去重按 Figure 身份、上限 `MAX_PYPLOT_FALLBACK=8`）、相对路径只读回退。
+  * **没有 savefig 的脚本也要捕获**（`plt.plot(...); plt.show()` 是 AI 最常见
+    的输出形态）。以前只有 browser.py 有兜底，桌面一张都捕获不到——同一份
+    脚本两个入口两个答案，是数据级的分叉。
+  * **fallback stem 按「本次捕获里的第几张」编号**（`<脚本名>`、`-2`、`-3`），
+    **不按 `plt.get_fignums()` 的 figure 号**：脚本中途 `plt.close()` 过一次
+    号就跳，用户的 override 于是挂在一个不存在的 stem 上，表现是「打开是
+    空白的，什么都没报错」。
+  * build 响应按 stem 带 `source`（`savefig` / `pyplot`）。`pyplot` 的那些
+    **没有原始产物**：渲染 / 编辑 / 导出都成立，「写回原始文件」无从谈起
+    （面板列表扫的是磁盘产物，因此它们天然不成为可写回的面板——这条结构性
+    保证由 `test_compat_capture_parity.py` 看护）。
+  * **相对路径只读回退**：worker 的 cwd 在沙盒里（那是**写入**边界），而
+    `pd.read_csv("data.csv")` 在 `python figure.py` 下天经地义。只有「只读
+    模式 + 相对路径（或**指向沙盒内部的**绝对路径）+ 按真正的 open 会用的那条
+    路径判确实不存在 + 换算后仍在图库内」四条同时成立才改指到脚本目录；
+    写 / 改 / 删 / 重命名一个字节都不经过它。沙盒**之外**的绝对路径一个都不碰。
+    **`builtins.open` 与 `io.open` 两个都要 patch**——它们指向同一个 C 函数
+    却是两个独立绑定，`pathlib.Path.read_text` 走的是后者，只补前者会让
+    `open("x")` 好使而 `Path("x").read_text()` 报 FileNotFoundError；
+    **3.10 还要第三个 patch 打在 `pathlib.Path.open` 上**（那一版
+    `_NormalAccessor.open` 在类定义时就绑好了，前两个都够不着它）。
+    **只认裸相对路径是不够的**：不少库在 open 之前先 realpath 一下
+    （Pillow 10.4.0 的 `Image.open` 就是，12.x 已改回 fspath），回退看到的是
+    `<沙盒>/x.png`——CompatBench 的 minimum 档抓到的正是这个。存在性判据
+    **必须按真正的 open 会用的那条路径走**，拿沙盒根去拼的话，脚本
+    `os.chdir()` 进子目录后自己写出来的中间结果会被无声换成图库里的原件。
+  * 浏览器侧**刻意没有**这条回退：playground 是单文件的，相对读报
+    `missing_file` 才是对的。桌面的 `entry` 机制同样是超集（浏览器按
+    `python figure.py` 跑，只有 `def main():` 而没人调用的脚本在原生 Python
+    下也不画图）——这两条差异是**记录在案的**，不是疏漏。
 - **worker 协议 v1（2026-08-18）**：请求带 `protocol_version/request_id/
   worker_generation/render_revision/canonical_patch_hash` 信封，命令
   ping/build/render/render_png/preview_png/export/cancel/shutdown，
@@ -514,7 +548,11 @@ Python，首次渲染也不联网：
   `elementPathSelection.test.tsx` / `shapeOutline.test.tsx`。
 - **Artist family 能力层（2026-08-21）**：`_cls_key` 从「逐个类名的 isinstance 表」
   改成**按 family 认**——任何 `Patch` 子类归 `patch`、任何 `Collection` 子类归
-  `collection`、认不出来的 Artist 归 `artist`。同一条 prop 只写一次：
+  `collection`、认不出来的 Artist 归 `artist`。**唯一的例外是线组**
+  （`LineCollection` / `EventCollection` → `linecoll`，排在 `collection` 之前）：
+  它对外那套 prop 名是 `color`（Line2D 口径）而不是 `edgecolor`，gid 也是
+  `axes_i.linecoll_j`，两者都已经发出去了——族抽象省的是实现里的重复，不是
+  改掉已承诺接口的理由（裁决记在 `docs/audit/2026-08-21-matplotlib-source-audit.md` §14）。同一条 prop 只写一次：
   `_COLLECTION_CAPS` / `_PATCH_CAPS` / `_GENERIC_CAPS` 三张表经 `_install_caps`
   （**setdefault**，族里的专用契约永远优先）注册给 family key。于是 pie 的
   Wedge、axhspan 的 Rectangle、stairs 的 StepPatch、`pcolormesh` 的 QuadMesh、
@@ -863,8 +901,16 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被它推翻**（
 完整版在 `docs/adr/0007-browser-playground.md`，改动前先读。
 
 - **Pyodide 里跑的是同一份引擎**：`engine/browser.py` 平铺 import
-  `manifest/overrides/pathgeom/patchspec`（与 worker.py 同一条 sys.path 纪律），
-  **不许出现 browser_manifest.py 这类分叉**。前端走 `engineTransport` 的第三条
+  `manifest/overrides/pathgeom/patchspec`（**语义只有一份实现**）与
+  `figcapture`（**捕获策略只有一份实现**——理由不同：前四个关乎 manifest /
+  override 的正确性，后者关乎「同一个脚本在桌面与浏览器必须产出同一串
+  stem」，前端按 stem 索引一切）。与 worker.py 同一条 sys.path 纪律，
+  **不许出现 browser_manifest.py 这类分叉**。
+  engine.zip 的模块白名单在 `scripts/build_browser_playground.py` 的
+  `ENGINE_FILES`：**加一个 flat import 就得同步加进去**，漏了的话 Pyodide 里
+  `pyimport('browser')` 直接 ModuleNotFoundError——而且发生在下载完十几 MB
+  科学栈之后，pytest / vitest 全绿（测试驱动的 sys.path 指的是真实目录），
+  只有真 Pyodide 的 e2e 会红。前端走 `engineTransport` 的第三条
   传输（`web/src/playground/`），画布 / inspector / stores / undo 与桌面同一份；
   MCP 与 playground 共用的种子层在 `web/src/embedded/session.ts`。
 - **Pyodide 版本与包白名单钉死在 `packaging/playground-runtime.json`**（唯一
@@ -876,13 +922,62 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被它推翻**（
   解释器。主线程只接受 id 配对 + 形状合法的 Worker 消息（Python 摸得到
   postMessage）。
 - **隐私是可验证的**：源码只进 Worker，不进 localStorage / 不出网
-  （e2e 哨兵测试盯着）；「figure.py · 未改动」是逐字节比对的结论。
+  （e2e 哨兵测试盯着）。
+- **「figure.py · 未改动」是两个真哈希比出来的**（2026-08-21）：主线程用
+  Web Crypto 算原文的 sha256，Worker 侧用 `pyodide.FS.readFile` 把
+  `/workspace/<脚本>` 的字节读出来再用 Web Crypto 算一次，两个数相等才显示
+  「未改动」。**别退回 `loadedSource === originalSource` 那种写法**——两个
+  变量指向同一个 JS 字符串，恒真，什么也没证明。
+  **权威摘要必须在用户的 Python 解释器之外算**（`pyodide.worker.ts` 的
+  `fsDigest`）：用户脚本跑在同一个解释器里、而且跑在核对之前，改完自己的文件
+  再 monkeypatch `builtins.open` / 换掉 `hashlib.sha256` / 改
+  `sys.modules['browser']` 的全局，就能让 Python 侧继续回报原摘要——
+  **一个能被它所校验的代码改写的校验不叫校验**（e2e 原样跑那个场景，
+  把摘要挪回 Python 就红）。`browser.py` 的 `source_status` 保留，验的是
+  引擎语义、跑在 Pyodide 之外，不是重复。写文件必须**二进制**——文本模式在
+  Windows 上翻译换行，比对永远 mismatch（只有 CI 的 windows 腿逮得到）。
+  **`import js` 必须够不着**（`loadPyodide` 的
+  `jsglobals: Object.create(null)`，**无原型是硬要求**——普通 `{}` 上
+  `constructor.constructor('return globalThis')()` 就是一台 Function 构造器）
+  ——这是上面
+  那条成立的前提：Python 拿到 `js` 就能 `js.eval` 改 Worker 任何全局，
+  连 `self.postMessage` 伪造整条响应都做得到（请求 id 自增、猜得到），
+  那时**这个 Worker 里没有任何东西可信**。静态分类不是防线：
+  `browser_imports` 有意放行 try/except 里的可选 import，`__import__('js')`
+  它更看不见。可信原语（digest / Uint8Array / FS 读取）一律在模块求值期与
+  init 期绑定好，是纵深防御。两道防线各有判据，少一道都有用例红。
+  **定位是「查意外，不是防蓄意」**：`pyodide_js` 是 Pyodide 的基础设施、删不掉，
+  而 `pyodide_js.constructor.constructor("return globalThis")()` 实测能拿到
+  Worker 全局——只要用户 Python 与验证代码同在一个 Worker，蓄意规避总是做得到。
+  按模块名封堵是打不完的地鼠，「挪到独立 Worker 验」也不成立（虚拟 FS 就在
+  被攻陷的那个 Worker 里）。**界面上不许出现比这更强的说法**，源码面板的
+  完整性明细里已经写明。
+  Worker 侧的哈希在**脚本跑完之后**采；复验走独立的轻命令、**只在 worker
+  闲着时发**（无阶段请求超时 30s，排在慢渲染后面到点 = 整个会话被
+  terminate）。UI 四态：没验完不许说「未改动」，算不出哈希是「查不了」
+  不是「没改」，不相等按不变式失效常驻报警。
+- **示例是一等入口，不是脚注**（2026-08-21）：空状态两条平级的路——拖放区 +
+  一个填色主 CTA「直接试一个示例」。`EXAMPLES` 里**有且只有一个** `primary`
+  （examples.test.ts 看护）。点下去仍是真执行，**不许用预烤 SVG/manifest 提速**。
+  三个示例都在 savefig 前 `tight_layout()`：默认边距在这个 figsize 下会把
+  x/y 轴标签整条裁掉，而轴标签正是访客第一件想点的东西。
+- **`/try` 空闲时预热 Pyodide 核心**（`web/src/playground/prewarm.ts`）：
+  **只到核心 + engine.zip 为止**，科学栈仍等 import 分类说了话才下载
+  （e2e 断言预热窗口里 wheel 零条）；`saveData` 或 `slow-2g/2g` 不预热，
+  Network Information API **一律特性检测**（Safari/Firefox 上它整个不存在）；
+  `PlaygroundClient.init()` 幂等去重，「预热中点了示例」接的是同一个在途
+  Promise，**不会变成两个 Worker**；暖着的 Worker 还没跑过用户代码，所以可以
+  当第一个会话用——**「一个文件 = 一个 Worker」没有松动**。预热是优化不是
+  依赖：失败悄悄退回 cold，绝不在用户动手之前弹错误。营销首页
+  （`/`、`/zh/`）**一个字节的 Pyodide 都不加载**，那是网站仓库的静态页面。
 - 产物：`python scripts/build_browser_playground.py` → `web/dist-playground/`
   （确定性 engine.zip + 指纹 manifest，指纹算法复用 build_mcp_widget.digest）。
   网站仓库 `pnpm sync-playground` 收走并提交、`pnpm check-playground` 防漂移
   ——改了 web/src 或引擎四模块，**playground 与 MCP 画布两个产物都要重建**。
 - 验证：`tests/test_browser_session.py`（CPython 上跑同一份 browser.py：
   fixture 矩阵 / 错误分诊 / 跨进程 patch_hash 一致）+
+  写进虚拟 FS 的就是输入 / 改完图还是输入 / 被动过一个字节必须报出来——
+  **篡改钩子只在测试驱动里，产品代码不给任何改工作区源文件的入口**）+
   `web/src/playground/*.test.ts` + `web/e2e/playground.spec.ts`
   （真浏览器 + 真 CDN Pyodide，慢，专属放宽超时）。
 
@@ -1119,6 +1214,30 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被它推翻**（
 
 - 测试：`.venv/bin/python -m pytest`（tests/ 跑在 .venv；worker round-trip
   用例自行 spawn 科学栈解释器，无 matplotlib 则跳过）。
+- **Matplotlib CompatBench**（`tests/compat/` + `scripts/ci/compat_matrix.py`，
+  完整说明 `docs/ci/matplotlib-compatibility.md`）：与 `tests/acceptance/`
+  **问的不是同一个问题**——那边比「Tavotto 今天 vs 昨天」（抓不到「我们从
+  第一版起就一直改错某个 artist」），这边比「**原生 matplotlib** vs Tavotto
+  零 override」，并沿九级漏斗（discover → execute → capture → open →
+  semantic → edit → replay → export → fidelity）量化「外部 matplotlib 世界
+  我们兼容多少」。两套 corpus **不许合并**，合了就再也分不清「我们退步了」
+  和「我们本来就不支持」。
+  * 结果分六类（`full_support` / `partial_support` / `unsupported_by_design` /
+    `environment_dependency` / `product_bug` / `invalid_fixture`），
+    **清单里没有声明过的失败一律记成 `product_bug`**；想声明某一级不该过
+    要具体到阶段（`expected.<stage>=false` + `expected_false_reasons`），
+    而 `execute` / `capture` / `open` **任何档位都不许声明成 false**。
+  * 基线 `tests/compat/baseline.json` 与视觉基线同一套纪律（缺失 = FAIL、
+    CI 绝不自动更新、`CI=true` 时 `--update-baseline` 被硬拒）；另加两条：
+    非 full_support 必须写 reason、`product_bug` 还必须写 follow_up、
+    **Tier 1 不许存在 product_bug**（schema 层面挡住）。**基线不是豁免名单。**
+  * 判据一律复用产品自己的：重放比对走 `app._compare_manifests`（与写回放行/
+    阻断同一把尺），像素比对走 `scripts/ci/pixelcompare.py`（与 golden 视觉
+    回归**同一份算法**，从 `visual_regression.py` 提取出来的，不许再写第二份）。
+  * artist 普查是**诊断**不是门禁：它回答「哪个 matplotlib artist 是最大的
+    兼容缺口」，用来排产品路线图。真正的 pass/fail 一律走生产路径的 worker。
+  * 跑法：`--smoke`（PR，2~4 分钟）/ `--all` / `--target bundled|minimum|browser`
+    / `--case <id>` / `--gate pr|main|nightly|release`。
 - **四路等价性矩阵**（`tests/test_equivalence_matrix.py`，引擎的最终验收物）：
   `hot_apply(patches) == 清空后全量重放 == 全新 worker 重放 == 写回文件后全新
   worker 重放`，六个场景 × 十组 patch，判据直接复用 `app._compare_manifests`

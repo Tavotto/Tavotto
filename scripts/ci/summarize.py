@@ -29,6 +29,7 @@ SECTIONS = [
     ("acceptance.json", "候选包验收", "correctness"),
     ("upgrade.json", "升级 N-1 → N", "correctness"),
     ("visual.json", "Golden 视觉回归", "correctness"),
+    ("compat.json", "Matplotlib 兼容性", "correctness"),
     ("soak.json", "Soak 与泄漏", "correctness"),
     ("benchmark.json", "性能回归", "performance"),
     ("mutation.json", "Mutation", "advisory"),
@@ -70,6 +71,24 @@ def _detail(name: str, data: dict) -> str:
         if skipped:
             base += f"（{skipped} 张按 manifest 跳过像素比对）"
         return base if not bad else base + " — 变化：" + "、".join(bad[:3])
+    if name == "compat.json":
+        s2 = data.get("summary", {})
+        cls = s2.get("classification", {})
+        funnel = {r["stage"]: r for r in s2.get("funnel", [])}
+        cap = funnel.get("capture", {})
+        parts = [f"{s2.get('cases', 0)} case",
+                 f"目标 {data.get('target', '?')}",
+                 f"捕获 {cap.get('passed', 0)}/{cap.get('total', 0)}",
+                 f"完全支持 {cls.get('full_support', 0)}"]
+        # **product_bug 必须出现在这一行**：把它折进「部分支持」的数字里，
+        # 扫读的人就永远看不到「有几个是我们自己的缺陷」。
+        bugs = s2.get("product_bugs", [])
+        if bugs:
+            parts.append("产品缺陷 " + "、".join(
+                f"{b['id']}:{b['stage'] or '?'}" for b in bugs[:3]))
+        else:
+            parts.append("产品缺陷 0")
+        return "，".join(parts)
     if name == "soak.json":
         a = data.get("analysis", {})
         parts = [f"{data.get('operations', 0)} 次操作 / {len(data.get('errors', []))} 次错误",

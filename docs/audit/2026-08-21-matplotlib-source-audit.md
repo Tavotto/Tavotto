@@ -365,3 +365,50 @@ Circle 从前在界面上不存在）。冲突是**文本冲突不是语义冲�
 
 16. 同一份脚本在 3.10.8（浏览器）与 3.11.1（桌面）上的 manifest 元素集合对比
     ——`PieContainer` 是已知的唯一版本相关点，出现别的差异就是新的对象模型变更
+
+## 14. 合并 CompatBench（#49）之后：LineCollection 归属的裁决
+
+两条分支独立做了同一个 Patch family 泛化（文本冲突、零语义冲突，按第 12 节
+预期）。真正需要裁决的只有一处：CompatBench 侧新开了**线组**这一族
+（`linecoll`），而本分支的通用 Collection 族在类型上把它整个包住了。
+
+**裁决：`linecoll` 保留为独立的一族，排在通用 `collection` 之前。**
+
+不是因为 family 抽象在这里失效，而是因为**对外的名字已经发出去了**：线组那族
+的 prop 叫 `color`（Line2D 的口径），Collection 族叫 `facecolor`/`edgecolor`；
+gid 是 `axes_i.linecoll_j`，不是 `collections_j`。合并两族等于把存量文档里的
+prop 名与 gid 一起换掉，而 override 是按 `{gid, prop}` 存的。族抽象省的是
+**实现**里的重复，不是改掉已经承诺过的接口的理由。
+
+三条随之而来的收口：
+
+1. **标量映射的 LineCollection 改走通用分支**（CompatBench 侧是「一律不登记」）。
+   实测（mpl 3.10.8）纠正了当时的判断：`Collection._set_mappable_flags` 只在
+   `_original_edgecolor is None` 时才把边设成映射的，用户一旦显式
+   `set_edgecolor(...)`，映射当场关掉、颜色**留得住**——所以「设了下一帧被顶
+   回去」在描边这条路上并不成立（填充那条成立，`collection_caps` 本来就挡着）。
+   但 `color` 那个**单值**口径表达不了逐条映射出来的颜色，所以它进的是按
+   `collection_caps()` 实况说话的通用分支，而不是线组族。
+   等值线仍然两条判据都不沾（`QuadContourSet` 不是 LineCollection 子类），
+   `test_contour_is_still_not_registered_as_line_collections` 与本分支的
+   `axes_0.collections_4` 用例同时成立。
+   `eventplot` 的 EventCollection 是 LineCollection 子类，因此归线组族。
+
+2. **未缩放 dash 的 getter 推广到整个 Collection 族**。CompatBench 侧的
+   `_get_linecoll_ls` 修的是「`get_linestyle()` 回缩放过的 dash、
+   `set_linestyle()` 再缩放一遍，每撤销一次疏一档」——这是 `Collection` 基类的
+   毛病，不是线组独有的。本分支的 `_COLLECTION_CAPS["linestyle"]` 原本正是那条
+   有问题的写法，合并时换成了同一对 getter/setter。
+
+3. **`_FAMILY_PROPS` 加上 `"fontsize"`**（第 12 节说的那个一行收口），
+   四路等价性矩阵同时保留两边新加的场景：s7 `EqvFam`（本分支）与 s8
+   `EqvAlias`（CompatBench）。
+
+4. **「标量映射的网格整个不登记」这条被推翻了**（CompatBench 侧新加的
+   `test_scalar_mapped_meshes_stay_out_of_the_manifest`）。取舍没变——
+   `facecolor` 仍然一个字都不给——但判据从「元素表的黑名单」换成了
+   `collection_caps()` 的能力探针：`pcolor` / `pcolormesh` / `hexbin` 进元素
+   表，只开 cmap / vmin / vmax 与描边。旧写法的代价是用户连改色图、改 clim、
+   加网格线都做不到，而**那三件事是真的生效的**。用例改名为
+   `test_scalar_mapped_meshes_never_advertise_facecolor` 并守住新判据。
+

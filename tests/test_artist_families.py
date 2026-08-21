@@ -79,7 +79,7 @@ def main():
     ax.fill_between(x, -1.2, np.sin(x) - 1.0, alpha=0.3)  # fill_2
     ax.pcolormesh(np.linspace(7, 9, 9), np.linspace(0, 2, 9), Z)   # collections_3
     ax.contour(np.linspace(7, 9, 8), np.linspace(3, 5, 8), Z)      # collections_4
-    ax.eventplot([[1.0, 2.0, 3.0]], lineoffsets=5.0, linelengths=0.6)  # collections_5
+    ax.eventplot([[1.0, 2.0, 3.0]], lineoffsets=5.0, linelengths=0.6)  # linecoll_5
     ax.set_xlim(0, 10)
     ax.set_ylim(-2.5, 6)
     ax.legend()
@@ -165,7 +165,10 @@ def test_collection_family_is_registered(hot):
     ContourSet、eventplot 的 EventCollection 一个都进不了元素表。"""
     gids = _gids(_man(hot, "FamColl"))
     assert {"axes_0.scatter_0", "axes_0.scatter_1", "axes_0.fill_2"} <= gids, "旧 gid 必须原样还在"
-    assert {"axes_0.collections_3", "axes_0.collections_4", "axes_0.collections_5"} <= gids
+    assert {"axes_0.collections_3", "axes_0.collections_4"} <= gids
+    # EventCollection 是 LineCollection 的子类，走**线组**那一族（`color` 口径），
+    # 不是通用 collection——两套 prop 名都已经发出去了，不能合并
+    assert "axes_0.linecoll_5" in gids
 
 
 def test_patch_family_is_registered(hot):
@@ -220,10 +223,11 @@ def test_every_collection_can_be_stroked(hot):
     """现在没有边 ≠ 加不上边：给 pcolormesh 加网格线是常见需求，
     等值线的线宽/颜色更是。"""
     man = _man(hot, "FamColl")
-    for gid in ("axes_0.fill_2", "axes_0.collections_3",
-                "axes_0.collections_4", "axes_0.collections_5"):
+    for gid in ("axes_0.fill_2", "axes_0.collections_3", "axes_0.collections_4"):
         props = set(_fields(man, gid))
         assert {"edgecolor", "linewidth"} <= props, gid
+    # 线组那一族对外叫 `color`（Line2D 口径），描边能力是同一件事、名字不同
+    assert {"color", "linewidth"} <= set(_fields(man, "axes_0.linecoll_5"))
 
 
 def test_marker_replacement_stays_a_scatter_only_contract(hot):
@@ -231,7 +235,7 @@ def test_marker_replacement_stays_a_scatter_only_contract(hot):
     ——那是改数据。所以 marker 只给 PathCollection。"""
     man = _man(hot, "FamColl")
     assert "marker" in _fields(man, "axes_0.scatter_0")
-    for gid in ("axes_0.fill_2", "axes_0.collections_3", "axes_0.collections_5"):
+    for gid in ("axes_0.fill_2", "axes_0.collections_3", "axes_0.linecoll_5"):
         assert "marker" not in _fields(man, gid), gid
 
 
@@ -321,9 +325,15 @@ def _sample_value(field):
 
 
 #: 族里通用的那些属性——能力层新开放的与原本就有的一起过一遍。
+#: `fontsize` 在这张表里是**并行分支带回来的一条实测**（CompatBench 侧的
+#: `_set_legend_fontsize`）：图例的 fontsize getter 回的是数值、setter 却只
+#: 吃 Legend 自己那套重建路径，撤销那一刻才炸——与本分支修的 linestyle 是
+#: 同一类 bug（getter 回的形状 ≠ setter 吃的形状）。放进通用还原用例，
+#: 那条一次性修复就变成常设看护。
 _FAMILY_PROPS = ("facecolor", "edgecolor", "linewidth", "linestyle", "hatch",
                  "fill", "alpha", "visible", "zorder", "size", "marker",
-                 "markersize", "color", "cmap", "vmin", "vmax", "label")
+                 "markersize", "color", "cmap", "vmin", "vmax", "label",
+                 "fontsize")
 
 
 def _roundtrip_targets(man):
@@ -367,7 +377,7 @@ def test_every_family_prop_restores_exactly(hot, stem):
     ("FamPatch", "axes_0.patches_3", "hatch", "//"),            # Circle 的花纹
     ("FamColl", "axes_0.collections_3", "edgecolor", "#123456"),  # pcolormesh 网格线
     ("FamColl", "axes_0.collections_4", "cmap", "plasma"),      # contour 的色图
-    ("FamColl", "axes_0.collections_5", "linewidth", 3.0),      # eventplot 线宽
+    ("FamColl", "axes_0.linecoll_5", "linewidth", 3.0),         # eventplot 线宽
     ("FamCont", "axes_0.stemseries_0", "color", "#123456"),     # 茎叶系列整体
 ])
 def test_representative_family_edits_actually_change_the_manifest(hot, stem, gid, prop, value):

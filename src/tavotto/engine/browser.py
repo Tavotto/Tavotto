@@ -23,11 +23,23 @@ plt.show()` 这类从不 savefig 的脚本也要能用）。
 每次调用一进一出都是 JSON 字符串——不留 PyProxy、不传对象图，Worker 一死
 什么都不泄漏。失败一律 `{ok: false, code, message, ...}`，code 是稳定的
 机器可读值（错误分诊在前端做），traceback 原文附带但有界。
+
+「源文件未被修改」是**可验证的结论**而不是口号，但**权威摘要不在这个模块里**：
+界面用的那个由 Worker 侧的 JS 直接从 Emscripten FS 读字节、用 Web Crypto 算
+（`pyodide.worker.ts` 的 `fsDigest`）。原因很实在——用户脚本跑在**同一个
+解释器**里、而且跑在核对**之前**，它改完自己的文件再 monkeypatch
+`builtins.open` 或换掉 `hashlib.sha256` 就能让下面这个函数继续回报原摘要。
+**一个能被它所校验的代码改写的校验，不叫校验。**
+
+这里的 `source_status` 仍然保留并被 CPython 测试盖着：它验的是引擎语义
+（写进去的就是收到的、脚本跑完还是那份），跑在 Pyodide 之外、没有那个威胁
+模型。两者要的东西不同，别把其中一个删掉当重复。
 """
 from __future__ import annotations
 
 import base64
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -43,6 +55,7 @@ matplotlib.use("Agg")
 import matplotlib.figure as mfigure  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 
+import figcapture  # noqa: E402
 import manifest as manifest_mod  # noqa: E402
 import overrides as overrides_mod  # noqa: E402
 import patchspec  # noqa: E402
@@ -55,7 +68,17 @@ MAX_LOG_BYTES = 64 * 1024
 #: traceback 上限（同样留尾部）。
 MAX_TRACEBACK_BYTES = 16 * 1024
 #: 捕获 Figure 数上限。超出的不是静默丢——响应里带 truncated 标记。
-MAX_FIGURES = 8
+#: 取的是桌面 pyplot 兜底那个数（`figcapture.MAX_PYPLOT_FALLBACK`），但**两侧
+#: 作用的对象不同**，别照着旧注释以为「图数因此不会分叉」——那句话是错的：
+#:
+#:   桌面   `collect_pyplot_figures(limit=8)` 只截**待补的 pyplot 兜底**，
+#:          savefig 认领的那些不受限 → 8 张 savefig + 1 张 show-only = 9 张
+#:   这里   截的是**总数** → 同一个脚本只剩 8 张
+#:
+#: 差异是自觉的（浏览器里内存与下载都更紧，总量必须有上限），所以不改行为，
+#: 改的是别再声称它不存在：CompatBench 的对拍现在逐条比张数与截断
+#: （`_browser_verdict`），分叉会被报出来而不是被这句注释盖住。
+MAX_FIGURES = figcapture.MAX_PYPLOT_FALLBACK
 #: 预览 SVG 里嵌入位图的默认 dpi，与 worker 的 `--preview-dpi` 默认一致。
 PREVIEW_DPI = 200
 #: 图选择器缩略图的目标像素宽。
@@ -69,10 +92,9 @@ def _patched_savefig(self, fname, *args, **kwargs):
     """与 worker._patched_savefig 同语义：按 stem 捕获，不写用户的输出文件。"""
     if not _intercept:
         return _REAL_SAVEFIG(self, fname, *args, **kwargs)
-    if isinstance(fname, (str, os.PathLike)):
-        stem = os.path.splitext(os.path.basename(os.fspath(fname)))[0]
-        if stem:
-            _session_capture().setdefault(stem, self)
+    stem = figcapture.savefig_stem(fname)
+    if stem:
+        _session_capture().setdefault(stem, self)
     return None
 
 
@@ -176,8 +198,12 @@ class BrowserSession:
                             MAX_TRACEBACK_BYTES))
 
         os.makedirs(self.workspace, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(source)
+        # **二进制写**：文本模式在 Windows 上把 `\n` 翻成 `\r\n`，磁盘上的字节
+        # 就不再是用户交出来的那份，完整性比对当场失效（CI 的 windows 腿实测
+        # 逮到过）。Pyodide 的 Emscripten FS 恰好不翻译，所以生产环境看不出来
+        # ——一个只在别的平台上成立的不变式不算不变式。
+        with open(path, "wb") as f:
+            f.write(source.encode("utf-8"))
         os.chdir(self.workspace)
         if self.workspace not in sys.path:
             sys.path.insert(0, self.workspace)
@@ -218,23 +244,15 @@ class BrowserSession:
                         log=log.text(), traceback=self._trim_tb())
 
         # pyplot 兜底：从不 savefig 的脚本（plt.plot + plt.show）也要能用。
-        # 按 Figure 身份去重——同一张图 savefig 过就不再从 pyplot 收一遍。
-        seen = {id(f) for f in self.capture.values()}
+        # 策略（去重、命名、上限）在 `figcapture` 里，与桌面 worker 共用同一份
+        # 实现——两边各写一份的话，同一个脚本会在两个入口产出不同的 stem，
+        # 而前端按 stem 索引一切。
         base = os.path.splitext(safe_name)[0]
-        for num in plt.get_fignums():
-            fig = plt.figure(num)
-            if id(fig) in seen:
-                continue
-            stem = base if base not in self.capture else f"{base}-{num}"
-            n = 2
-            while stem in self.capture:
-                stem = f"{base}-{n}"
-                n += 1
-            self.capture[stem] = fig
-            seen.add(id(fig))
+        _, dropped = figcapture.collect_pyplot_figures(
+            self.capture, base, plt, limit=MAX_FIGURES)
 
-        truncated = max(0, len(self.capture) - MAX_FIGURES)
-        if truncated:
+        truncated = dropped + max(0, len(self.capture) - MAX_FIGURES)
+        if len(self.capture) > MAX_FIGURES:
             for stem in list(self.capture)[MAX_FIGURES:]:
                 del self.capture[stem]
 
@@ -247,8 +265,35 @@ class BrowserSession:
                 "preview": self._thumb(fig),
             })
         self.loaded = True
+        # 完整性哈希在**脚本跑完之后**采：要证明的是「实际被执行的那个文件
+        # 此刻仍与你给的一模一样」，写进去就立刻算等于只验了一次 write。
+        status = self.source_status()
         return {"ok": True, "figures": figures, "log": log.text(),
-                "truncated_figures": truncated}
+                "truncated_figures": truncated, "script": self.script_name,
+                "source_sha256": status.get("sha256", ""),
+                "source_bytes": status.get("bytes", 0)}
+
+    # ---------------- 源文件完整性 ----------------
+    def source_status(self) -> dict:
+        """把 `/workspace/<脚本>` **从虚拟 FS 读回来**再算 sha256。
+
+        读的是真正被 `runpy` 执行的那个文件，不是内存里那份传进来的字符串。
+
+        **注意这不是界面上那句「未改动」的依据**（见模块 docstring）：它跑在
+        用户脚本之后、同一个解释器里，`open` 与 `hashlib` 都在对方够得着的
+        地方。界面用的权威摘要由 Worker 的 JS 在 Python 之外算。这个函数的
+        价值在 Pyodide 之外——CPython 测试拿它验引擎语义，那里没有这个威胁。
+        """
+        if not self.script_name:
+            return _err("bad_request", "还没有加载脚本")
+        path = os.path.join(self.workspace, self.script_name)
+        try:
+            with open(path, "rb") as f:
+                data = f.read()
+        except OSError as exc:
+            return _err("source_unreadable", f"读不到工作区里的源文件: {exc}")
+        return {"ok": True, "script": self.script_name, "bytes": len(data),
+                "sha256": hashlib.sha256(data).hexdigest()}
 
     def _trim_tb(self) -> str:
         """用户脚本的 traceback：去掉 runpy/browser 这几层内部帧再截尾。"""
@@ -397,13 +442,22 @@ def handle(request_json: str) -> str:
         if cmd == "classify":
             out = {"ok": True,
                    **classify_imports(req["source"], req["supported_roots"])}
+        elif cmd == "safe_name":
+            # **无状态、且必须在跑用户脚本之前调**：Worker 拿它把工作区里的
+            # 脚本路径钉死在 JS 那一侧。路径要是等 `load` 跑完再从回应里取，
+            # 用户脚本就能先留一个内容是原样的诱饵、再把 `_ACTIVE.script_name`
+            # 改到诱饵头上——摘要算得再独立也只是在给诱饵作证。
+            # 收紧规则只有 `_safe_script_name` 这一份实现，别在 JS 侧抄第二份。
+            out = {"ok": True, "script": _safe_script_name(req["filename"])}
         elif cmd == "load":
             if _ACTIVE is None:
                 _ACTIVE = BrowserSession(req.get("workspace", "/workspace"))
             out = _ACTIVE.load(req["filename"], req["source"])
-        elif cmd in ("open", "render", "preview_png"):
+        elif cmd in ("open", "render", "preview_png", "source_status"):
             if _ACTIVE is None or not _ACTIVE.loaded:
                 out = _err("bad_request", "还没有加载脚本（先发 load）")
+            elif cmd == "source_status":
+                out = _ACTIVE.source_status()
             elif cmd == "open":
                 out = _ACTIVE.open_figure(req["stem"])
             elif cmd == "render":

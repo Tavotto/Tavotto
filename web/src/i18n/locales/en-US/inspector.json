@@ -717,6 +717,7 @@
     "legend": "Legend",
     "legend_text": "Legend entry",
     "line": "Line",
+    "linecoll": "Line group",
     "patch": "Shape",
     "scatter": "Scatter series",
     "text": "Text",

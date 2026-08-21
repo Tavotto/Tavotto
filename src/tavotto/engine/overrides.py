@@ -18,8 +18,9 @@ import matplotlib.colors as mcolors
 import matplotlib.patheffects as mpatheffects
 from matplotlib.artist import Artist
 from matplotlib.axes import Axes
-from matplotlib.collections import Collection, PathCollection
-from matplotlib.container import BarContainer
+from matplotlib.axes._base import _AxesBase
+from matplotlib.collections import Collection, LineCollection, PathCollection
+from matplotlib.container import BarContainer, ErrorbarContainer
 from matplotlib.figure import Figure
 from matplotlib.legend import Legend
 from matplotlib.lines import Line2D
@@ -44,6 +45,10 @@ class FigState:
         self.index: dict[str, object] = {}  # gid -> artist（"figure" -> Figure）
         self.applied: dict[tuple, object] = {}    # (gid,prop) -> 请求值
         self.originals: dict[tuple, object] = {}  # (gid,prop) -> 原生值
+        # 由**广播型 prop** 代为采下的「脚本原样」（见 ALIAS_GROUPS）。它们
+        # 是 originals 里没有对应 applied 条目的那些，单独记一笔才能在广播
+        # 撤销之后跟着清掉——否则 originals 里会留下永远没人回收的条目。
+        self.alias_seeded: set[tuple] = set()
         self.colorbar_axes: set = set()     # 承载色条的轴（manifest 标记用）
         # 宿主 axes gid -> 拖动它时应当一起走的其他 axes gid（色条轴 / 孪生轴）
         self.axes_follow: dict[str, list[str]] = {}
@@ -568,6 +573,24 @@ def spine_side_width(ax: Axes, side: str) -> float:
         return float(cfg[f"{side}_width"])
     sp = ax.spines.get(side)
     return float(sp.get_linewidth()) if sp is not None else spine_all_width(ax)
+
+
+def _set_legend_fontsize(leg, value) -> None:
+    """图例字号：标量作用于每一条，序列逐条对应（多余的忽略、缺的沿用最后一个）。
+
+    序列那一支是给**撤销**用的：`originals` 里存的就是 getter 回的那份逐条
+    列表。只认标量的话，改过图例字号之后就再也还原不回去。
+    """
+    texts = list(leg.get_texts())
+    if isinstance(value, (list, tuple)):
+        if not value:
+            return
+        for i, t in enumerate(texts):
+            t.set_fontsize(float(value[min(i, len(value) - 1)]))
+        return
+    size = float(value)
+    for t in texts:
+        t.set_fontsize(size)
 
 
 def _mk_spine_handler(key: str, read):
@@ -1192,6 +1215,80 @@ def _set_linestyle(a, v) -> None:
     a.set_linestyle(v if isinstance(v, (list, tuple)) else str(v))
 
 
+#: 四种命名线型的**未缩放** dash 规格（`Collection._us_linestyles` 的形状）。
+#: 用来把当前线型反查成界面上那个枚举名。数值取自 matplotlib 自己的
+#: `_get_dash_pattern`，两个版本（3.8.4 / 3.11.1）实测一致。
+_LC_DASHES = {
+    (): "-",
+    (3.7, 1.6): "--",
+    (6.4, 1.6, 1.0, 1.6): "-.",
+    (1.0, 1.65): ":",
+}
+
+
+def _linecoll_linestyle_name(coll) -> str:
+    """LineCollection 当前线型 → 枚举名；认不出的按实线占位。
+
+    与 `_linestyle_name`（Line2D 那条）同一个产品约定：自定义 dash 显示成
+    实线占位，用户改了才覆盖。反查用的是**未缩放**规格——`get_linestyle()`
+    回的是按线宽缩放过的那份，同一个 "--" 在 lw=1.5 与 lw=3 下数值不同，
+    拿它当键必然认不出来。
+    """
+    us = getattr(coll, "_us_linestyles", None)  # noqa: SLF001 — 见 _get_linecoll_ls
+    if not us:
+        return "-"
+    _offset, seq = us[0]
+    return _LC_DASHES.get(tuple(seq) if seq else (), "-")
+
+
+def _get_linecoll_ls(coll):
+    """线型的**可回灌**表示：未缩放规格 `_us_linestyles`。
+
+    **不能用 `get_linestyle()`**：它回的是按线宽缩放之后的 dash 序列，
+    而 `set_linestyle()` 会把喂进去的值再缩放一遍。实测（两个 matplotlib
+    版本都一样）：`--` 在 lw=1.5 下是 `[(0.0, [5.55, 2.4])]`，把这个值原样
+    回灌得到 `[(0.0, [8.325, 3.6])]`——**撤销之后线型不是原来那条**，而且
+    每撤销一次就再放大一次。`_us_linestyles` 是 matplotlib 自己为这件事保留
+    的未缩放副本，回灌它得到逐位相同的结果（有实测用例看护）。
+
+    私有属性不在时退回 `get_linestyle()`：那时至少不会崩，代价是自定义
+    dash 的还原会有缩放偏差——总比整个属性不可用好。
+
+    ## 这是正确性，不是显示精度——别把它当优化删掉
+
+    `overrides` 是**全量列表**语义：撤销 = 用空列表全量重放，而重放必须落回
+    脚本原样。这里回不去的话，**没有任何下游门禁拦得住**——实测过，不是推的：
+
+    * 写回事务的 `app._compare_manifests` **只比几何**（bbox / anchor /
+      size_mm，它自己的 docstring 写着）。dash 变了不动任何包围盒：同一张图
+      上人为制造这个偏差之后，它比过 19 个元素、报 **0 处分歧**。所以写回
+      **不会**回 409 `replay_divergence`，坏状态直接写进用户的原件。
+    * 四路等价性矩阵那三条腿用的是同一个比较器，同样看不见。
+    * `apply` 也不会报 warning：setter 没抛，它就是成功。
+
+    更难查的是它**同时把界面也带偏**：双重缩放之后的 dash 在
+    `_LC_DASHES` 里查不到，`_linecoll_linestyle_name` 退回实线占位——检查器
+    显示「实线」，画面上却是一条比原来更疏的虚线。**界面说的和画出来的不是
+    一回事**，而这正是这套东西最不能接受的一种失败。
+
+    而且它是复利的：每撤销一次再放大一次，每次 ×1.5
+    （实测 5.55 → 8.325 → 12.488 → 18.731）。
+
+    浏览器 playground 走的是**同一份 `overrides.apply`**（`browser.py` 平铺
+    import 的就是这个模块），所以 /try 里一模一样地发作。
+    """
+    us = getattr(coll, "_us_linestyles", None)  # noqa: SLF001
+    return list(us) if us else coll.get_linestyle()
+
+
+def _set_linecoll_ls(coll, v) -> None:
+    """线型：吃枚举名（用户改的）或未缩放规格（还原时喂回来的那份）。
+
+    两种形状都要认——`originals` 里存的正是 `_get_linecoll_ls` 回的那份。
+    """
+    coll.set_linestyle(v)
+
+
 def _cb_axis(p: "ColorbarProxy"):
     cb = p.cb
     return cb.ax.yaxis if getattr(cb, "orientation", "vertical") == "vertical" else cb.ax.xaxis
@@ -1691,7 +1788,15 @@ def _cls_key(artist) -> str | None:
         return "line"
     if isinstance(artist, Legend):
         return "legend"
-    if isinstance(artist, Axes):
+    # **`_AxesBase` 而不是 `Axes`**：`secondary_[xy]axis` 建出来的
+    # `SecondaryAxis` 直接从 `_AxesBase` 派生，**不是 `Axes` 的子类**
+    # （实测 mro = [SecondaryAxis, _AxesBase, Artist]）。只判 `Axes` 的话它
+    # 拿不到任何容器级字段——visible / grid / spines 一个都出不来，而它的
+    # 轴标签与刻度是独立元素、照常可编辑，于是界面上出现「这条轴的字能改、
+    # 轴本身点了没反应」这种说不通的半吊子。
+    # 私有基类是有意为之：matplotlib 没有公开的「Axes 类容器」抽象。
+    # `test_secondary_axis_detection_still_works` 看着这条依赖。
+    if isinstance(artist, _AxesBase):
         return "axes"
     if isinstance(artist, AxesImage):
         return "image"
@@ -1703,10 +1808,20 @@ def _cls_key(artist) -> str | None:
     # 必须排在 FancyArrowPatch / bar 之后：它们也是 Patch，各有各的契约。
     if isinstance(artist, Patch):
         return "patch"
+    # 线组：hlines / vlines 的参考线、stem 的竖线、eventplot 的事件线、
+    # streamplot 的流线、violinplot 的极值线——全是 LineCollection（含它的
+    # 子类 EventCollection）。**刻意不并进 `line`**：Line2D 的 getter 回标量、
+    # LineCollection 回数组，setter 也各吃各的，硬合成一族迟早分叉。
+    # 也**刻意不并进下面的 `collection`**：它对外的 prop 是 `color`，而
+    # Collection 族给的是 facecolor / edgecolor——两套命名都已经发出去了。
+    # 「标量映射的走通用分支」那道闸在 `manifest.instrument` 里（唯一出处），
+    # 这里不重复判——两处判据分开写必然漂开。
+    if isinstance(artist, LineCollection):
+        return "linecoll"
     # Collection family：散点（PathCollection）与填充（PolyCollection）之外
-    # 还有 LineCollection / QuadMesh / ContourSet / EventCollection / Quiver…
+    # 还有 QuadMesh / ContourSet / Quiver / Barbs…
     # **能改什么由 `collection_caps()` 按真实 getter 实况决定**，不按类名——
-    # 所以这里一个 key 就够，manifest 那边再决定advertise 哪几条。
+    # 所以这里一个 key 就够，manifest 那边再决定 advertise 哪几条。
     if isinstance(artist, Collection):
         return "collection"
     # 认不出来的 Artist：不是「不支持」，是「只支持得起两条」。
@@ -1765,7 +1880,11 @@ _COLLECTION_CAPS: dict[str, tuple] = {
     "facecolor": (lambda a: a.get_facecolor().copy(), lambda a, v: a.set_facecolor(v)),
     "edgecolor": (lambda a: a.get_edgecolor().copy(), lambda a, v: a.set_edgecolor(v)),
     "linewidth": (lambda a: a.get_linewidths().copy(), _set_collection_lw),
-    "linestyle": (lambda a: a.get_linestyle(), _set_linestyle),
+    # 线型的 getter 走**未缩放**规格（`_us_linestyles`）而不是
+    # `get_linestyle()`：后者回的是按线宽缩放过的 dash，`set_linestyle()` 会
+    # 把喂进去的值再缩放一遍，撤销一次线型就疏一档、复利放大。整个
+    # Collection 族都是这个毛病，不只线组——判据与理由见 `_get_linecoll_ls`。
+    "linestyle": (_get_linecoll_ls, _set_linecoll_ls),
     "hatch": _CAP_HATCH,
     "size": (lambda a: a.get_sizes().copy(), _set_collection_sizes),
     "marker": (lambda a: list(a.get_paths()), _set_scatter_marker),
@@ -2026,9 +2145,15 @@ HANDLERS: dict[tuple[str, str], tuple] = {
 
     ("legend", "visible"):  (lambda a: a.get_visible(), lambda a, v: a.set_visible(bool(v))),
     ("legend", "frameon"):  (lambda a: a.get_frame_on(), lambda a, v: a.set_frame_on(bool(v))),
+    # getter 回**一条一个**的列表（脚本可以把某一条设成别的字号，撤销时要能
+    # 逐条还原回去），所以 setter 必须同时吃标量与序列——**restore 走的正是
+    # `setter(artist, originals[key])`**，两边形状不一致的话「改了图例字号
+    # 之后撤销不回来」，而且只在撤销那一刻才炸（`float() argument must be a
+    # string or a real number, not 'list'`）。CompatBench 的 art_legend 就是
+    # 这么把它抓出来的。
     ("legend", "fontsize"): (
         lambda a: [t.get_fontsize() for t in a.get_texts()],
-        lambda a, v: [t.set_fontsize(float(v)) for t in a.get_texts()],
+        lambda a, v: _set_legend_fontsize(a, v),
     ),
     ("legend", "loc_frac"): (_get_legend_loc, _set_legend_loc_frac),
 
@@ -2171,6 +2296,32 @@ HANDLERS: dict[tuple[str, str], tuple] = {
 
     # ---- collection / patch / bar 的通用属性走能力层（见 _install_caps 那一节）；
     # 这里只留族里的**专用**契约 ----
+
+    # ---- 线组 LineCollection（hlines/vlines、stem、eventplot、streamplot）----
+    # 它**不**走能力层：对外那套 prop 名（`color` 而不是 edgecolor）是已经
+    # 发出去的契约，与 Collection 族并不同名。
+    #
+    # **只开样式，不开数据**：几条线、落在哪，是脚本的数据，改它该回代码
+    # （与 3D 盒内属性、散点数据同一条产品边界）。
+    #
+    # getter 一律 `.copy()`：`get_color()` / `get_linewidths()` **把内部对象
+    # 本身交出来**（实测 `get_color() is get_color()` 为 True，两个 matplotlib
+    # 版本一致），存进 `originals` 就是存了一个活引用。**今天还咬不到人**
+    # ——`set_color` / `set_linewidth` 是整个替换那个数组而不是原地改，所以
+    # 拿未拷贝的旧引用还原，结果目前是对的（也实测过）。但那是 matplotlib 的
+    # 实现细节、不是它承诺的契约（那个数组 `flags.writeable` 是 True），而
+    # `originals` 存错一次的后果是撤销回不到原样。拷一份的代价是几个浮点数。
+    # 与 `_COLLECTION_CAPS` 那一族的 `.copy()` 同一个理由。
+    ("linecoll", "color"): (lambda a: a.get_color().copy(),
+                            lambda a, v: a.set_color(v)),
+    ("linecoll", "linewidth"): (lambda a: a.get_linewidths().copy(), _set_collection_lw),
+    ("linecoll", "linestyle"): (_get_linecoll_ls, _set_linecoll_ls),
+    ("linecoll", "alpha"): (lambda a: a.get_alpha(),
+                            lambda a, v: a.set_alpha(None if v is None else float(v))),
+    ("linecoll", "zorder"): (lambda a: float(a.get_zorder()),
+                             lambda a, v: a.set_zorder(float(v))),
+    ("linecoll", "visible"): (lambda a: a.get_visible(),
+                              lambda a, v: a.set_visible(bool(v))),
 
     # ---- legend: 预设位置 / 标题 / 边框样式 ----
     ("legend", "loc"): (_get_legend_loc, _set_legend_loc_preset),
@@ -2413,6 +2564,87 @@ def _must_replay(prop: str, artist) -> bool:
     return isinstance(artist, TickLabel) and prop == "text"
 
 
+# ---------------------------------------------------------------------------
+# 别名组：广播型 prop 与它会盖掉的窄 prop
+#
+# 「广播型」= setter 一次写**一组** artist，而那组 artist **本身也是登记元素**
+# （各有自己的 gid 和同名 prop）。两者叠加时 `originals` 的快照是顺序相关的：
+# 先改整体、再改单条，单条那次记下的「原样」已经是被整体改过的值，撤销就回
+# 不到脚本原样。实测五组全中（下表），所以这不是图例特有的毛病，必须有表。
+#
+# 表要**显式**、单一出处：靠 setter 里顺手记一笔那种隐式做法，下一个人加
+# handler 时必然漏掉，而漏掉的症状是「撤销少还原一个」——没有报错。
+# ---------------------------------------------------------------------------
+def _alias_by_artists(pick, narrow_prop: str):
+    """广播端直接写的那批 artist —— 按**对象身份**反查它们的 gid。
+
+    刻意不拼 gid 字符串：`axes_0.legend.texts_j` 这类命名规则一旦变，或者
+    某个成员根本没被登记（空文字的图例项就不登记），拼出来的 gid 会指向不
+    存在的元素，而症状是撤销时静默少还原一个。身份反查天然只命中真的登记
+    过的那些。
+    """
+    def resolve(state: "FigState", rev: dict, artist) -> list[tuple]:
+        try:
+            members = pick(artist)
+        except Exception:                    # noqa: BLE001 — 结构不符就当没有
+            return []
+        out = []
+        for m in members:
+            gid = rev.get(id(m))
+            if gid is not None:
+                out.append((gid, narrow_prop))
+        return out
+    return resolve
+
+
+def _alias_colorbar_ticks(narrow_prop: str):
+    """色条的 `tick_*` 写的是 `cb.ax.tick_params(...)`（默认 axis="both"），
+    盖掉的是**色条轴自己那两组刻度**的同名 prop。
+
+    刻度组是伪元素（`TickSet`），不在广播端写的 artist 列表里，只能按结构找
+    ——这也是别名解析要做成函数而不是静态映射的原因。
+    """
+    def resolve(state: "FigState", rev: dict, artist) -> list[tuple]:
+        cb_ax = getattr(getattr(artist, "cb", None), "ax", None)
+        if cb_ax is None:
+            return []
+        return [(el["gid"], narrow_prop) for el in state.elements
+                if isinstance(el["artist"], TickSet) and el["artist"].ax is cb_ax]
+    return resolve
+
+
+#: 广播端 `(cls_key, prop)` → 解析出「它会盖掉哪些 (窄 gid, 窄 prop)」的函数。
+#:
+#: **不在表里的，各有各的理由**（往里加之前先确认narrow 端真的是登记元素）：
+#:   * `spine_*` 与 `ticks` 的模型类 prop —— 它们是「写进 cfg 再整体重建」的
+#:     路数，撤销一条 = 退回未表态，天然没有快照问题；
+#:   * `errorbar.*` —— 它写的成员（line / caps / bars）**没有单独登记**，
+#:     不存在能和它打架的窄 gid；
+#:   * 3D 的 `axline_* / pane_*` —— 同上，x/y/z 轴对象不是登记元素；
+#:   * `ticks.*` → `ticklabel.text` —— 刻度文字只暴露 `text` 一个 prop，与
+#:     刻度模型不同名，而且它俩的先后已经由 `_RANK_TICK_TEXT` + `_must_replay`
+#:     管住了（刻度文字永远最后、且每次重放）。
+ALIAS_GROUPS: dict[tuple[str, str], object] = {
+    # 图例整体字号 → 每一条图例项的字号
+    ("legend", "fontsize"): _alias_by_artists(
+        lambda leg: list(leg.get_texts()), "fontsize"),
+    # 图例标题字号 → 图例标题那个 Text（它不在 get_texts() 里，单独一条）
+    ("legend", "title_fontsize"): _alias_by_artists(
+        lambda leg: [leg.get_title()], "fontsize"),
+    # 色条刻度 → 色条轴上的刻度组（tick_params 默认写 x/y 两条）
+    ("colorbar", "tick_fontsize"): _alias_colorbar_ticks("fontsize"),
+    ("colorbar", "tick_color"): _alias_colorbar_ticks("color"),
+}
+# 柱形系列的样式 prop → 每一根柱的同名 prop。`bar_width` 与 `label` 不在此列：
+# 前者窄端没有对应 prop（`bar` 不暴露宽度），后者写的是 container 不是柱。
+for _bprop in ("facecolor", "edgecolor", "linewidth", "alpha", "visible"):
+    ALIAS_GROUPS[("bar_series", _bprop)] = _alias_by_artists(
+        lambda g: list(g.artists), _bprop)
+#: 广播端 prop 名的集合。`apply` 拿它做**廉价预筛**——绝大多数 patch 与别名
+#: 无关，不该为它们付一次 `state.resolve()` 的代价。
+_BROADCAST_PROPS = frozenset(prop for _cls, prop in ALIAS_GROUPS)
+
+
 #: 应用顺序的**规范档位**。同档内保持列表序（sorted 稳定），跨档必须按这里
 #: 的先后，否则同一组 patch 在热会话与全量重放里会落成两张不同的图。
 #:
@@ -2473,6 +2705,38 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
     # patch 表去算落位
     state.pending = new
 
+    # ---------------- 别名组（见 ALIAS_GROUPS）----------------
+    # 反查表按需建：它是 O(元素数) 的，而绝大多数 apply 一个广播型 prop 都
+    # 没碰到，不该为它们付这笔钱。
+    _rev: dict[int, str] = {}
+    _rev_built = False
+
+    def _reverse_index() -> dict:
+        nonlocal _rev, _rev_built
+        if not _rev_built:
+            _rev = {id(el["artist"]): el["gid"] for el in state.elements}
+            _rev_built = True
+        return _rev
+
+    def _alias_members(key: tuple, artist) -> list[tuple]:
+        """这个 key 如果是广播型的，它会盖掉哪些窄 key。"""
+        if key[1] not in _BROADCAST_PROPS or artist is None:
+            return []
+        resolver = ALIAS_GROUPS.get((_cls_key(artist), key[1]))
+        return resolver(state, _reverse_index(), artist) if resolver else []
+
+    # 窄 key → 它的广播 key。只对这一轮真的会碰到的广播 prop 展开。
+    owner: dict[tuple, tuple] = {}
+    for _bkey in dict.fromkeys(list(new) + list(state.applied)):
+        if _bkey[1] not in _BROADCAST_PROPS:
+            continue
+        for _nkey in _alias_members(_bkey, state.resolve(_bkey[0])):
+            owner[_nkey] = _bkey
+    #: 这一轮被动过的组（组 id = 广播 key）。组里任何一个成员被应用或还原，
+    #: 都会把同组其他成员盖掉，所以整组都要重放——「值没变就跳过」那条捷径
+    #: 对它们是错的，与 `_must_replay` 同一个道理。
+    dirty_groups: set[tuple] = set()
+
     # 上次应用、这次不在 → 恢复原值（originals 存的是本地坐标，与几何无关）
     for key in list(state.applied):
         if key in new:
@@ -2496,15 +2760,37 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
                         setter(artist, orig)
                 if _is_geometry_key(key[1], artist):
                     geometry_moved = True
+                # 还原一个组员会把同组其他成员一起盖掉（广播还原写的是整组，
+                # 窄的还原写的是广播本该管着的那一个）——整组标脏，下面重放。
+                if key in owner:
+                    dirty_groups.add(owner[key])
+                elif _alias_members(key, artist):
+                    dirty_groups.add(key)
             except Exception as exc:  # noqa: BLE001 — 单条失败不拖垮整次渲染
                 warnings.append(f"还原失败 {key[0]}.{key[1]}: {exc}")
         state.applied.pop(key)
         state.originals.pop(key, None)
+        state.alias_seeded.discard(key)
+
+    # 广播 prop 代采的「脚本原样」：广播自己也退场了就跟着清掉，否则
+    # `originals` 会攒下一堆没有 applied 条目、永远没人回收的记录。
+    # 广播还在的（只撤了窄的那一条）要留着——用户再点回来时还要用它。
+    for _nkey in list(state.alias_seeded):
+        if _nkey in state.applied:
+            continue
+        if owner.get(_nkey) in new:
+            continue
+        state.originals.pop(_nkey, None)
+        state.alias_seeded.discard(_nkey)
 
     # 应用新值：七档规范顺序（组内保持列表序，sorted 稳定）
     def _rank(item):
         (gid, prop), _value = item
-        return _apply_rank(prop, state.resolve(gid), gid)
+        # 次序位：组内成员必须排在**它的广播 prop 之后**。同一组 patch 无论
+        # 列表序怎么排都得落成同一张图——热会话与全量重放同序是写回自检的
+        # 前提。默认 0，不影响任何非别名 prop 的既有相对顺序。
+        return (_apply_rank(prop, state.resolve(gid), gid),
+                1 if (gid, prop) in owner else 0)
 
     drawn_after_geometry = False
     try:
@@ -2530,9 +2816,12 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
                     pass
             if state.applied.get(key) == value:
                 # 值没变也要重放：① figure 锚定的位置（几何动过，本地坐标已失效）；
-                # ② 刻度定位与刻度文字（它们按当前状态重算，见 `_must_replay`）
+                # ② 刻度定位与刻度文字（它们按当前状态重算，见 `_must_replay`）；
+                # ③ 别名组里被同组其他成员盖掉的（见 ALIAS_GROUPS / dirty_groups）
                 if not (geometry_moved and prop in _FRAC_ANCHORED) \
-                        and not _must_replay(prop, artist):
+                        and not _must_replay(prop, artist) \
+                        and key not in dirty_groups \
+                        and owner.get(key) not in dirty_groups:
                     continue
             elif _is_geometry_key(prop, artist):
                 geometry_moved = True
@@ -2540,6 +2829,25 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
             try:
                 if key not in state.originals:
                     state.originals[key] = getter(artist)
+                # 广播型 prop：**在自己动手之前**把组内窄 prop 的「脚本原样」
+                # 一起采下来。等窄 prop 自己被应用时再采就晚了——那时读到的
+                # 已经是被广播改过的值，撤销就回不到原样（这正是本 bug）。
+                members = _alias_members(key, artist)
+                if members:
+                    dirty_groups.add(key)
+                    for nkey in members:
+                        if nkey in state.originals:
+                            continue
+                        nart = state.resolve(nkey[0])
+                        nh = (HANDLERS.get((_cls_key(nart), nkey[1]))
+                              if nart is not None else None)
+                        if nh is None:
+                            continue
+                        try:
+                            state.originals[nkey] = nh[0](nart)
+                            state.alias_seeded.add(nkey)
+                        except Exception:      # noqa: BLE001 — 采不到就退回旧行为
+                            pass
                 if getattr(setter, "_needs_state", False):
                     setter(artist, value, state)
                 else:

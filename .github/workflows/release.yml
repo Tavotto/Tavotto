@@ -196,7 +196,7 @@ jobs:
           # 好处——CI 的渲染环境与桌面版用户拿到的内置 runtime 逐字一致，
           # 基线因此真正代表「用户会看到的那张图」。
           # shellcheck disable=SC2046
-          "$VENV/bin/pip" install -q $(python3 scripts/ci/runtime_pins.py)
+          "$VENV/bin/pip" install -q $(python3 scripts/ci/runtime_pins.py --include-corpus)
           echo "python=$VENV/bin/python" >> "$GITHUB_OUTPUT"
 
       - name: slow / 集成用例
@@ -230,6 +230,17 @@ jobs:
           ${{ steps.venv.outputs.python }} scripts/ci/visual_regression.py \
             --python ${{ steps.venv.outputs.python }} --out "$RUNNER_TEMP/visual"
 
+      # 发行档的兼容性资格：`--gate release` 是唯一**连基线里已知的
+      # product_bug 都不放过**的档位——1.0 的 exit rule 是 P0 = 0。
+      # 详见 docs/ci/matplotlib-compatibility.md。
+      - name: Matplotlib 兼容性资格（发行档）
+        run: |
+          ${{ steps.venv.outputs.python }} scripts/ci/compat_matrix.py \
+            --all --fidelity --browser --gate release \
+            --python ${{ steps.venv.outputs.python }} \
+            --out "$RUNNER_TEMP/compat" \
+            --json "$TAVOTTO_CI_STATE_ROOT/reports/compat.json"
+
       - name: 发行档 soak 与泄漏检测
         run: |
           ${{ steps.venv.outputs.python }} scripts/ci/soak.py \
@@ -253,6 +264,7 @@ jobs:
           path: |
             ${{ env.TAVOTTO_CI_STATE_ROOT }}/reports/*.json
             ${{ runner.temp }}/visual/**
+            ${{ runner.temp }}/compat/**
             ${{ runner.temp }}/soak-metrics.json
           retention-days: 14
           if-no-files-found: warn

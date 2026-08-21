@@ -25,6 +25,98 @@ env:
   TAVOTTO_NO_TELEMETRY: "1"
 
 jobs:
+  # ────────────────────────────────────────────────────────────────
+  # Matplotlib 版本矩阵（CompatBench）
+  #
+  # 「Tavotto 支持 matplotlib >= 3.8」以前只是 pyproject 里的一句话——
+  # 实际发行的内置 runtime 是 3.11.x，浏览器 playground 是 3.10.x，而宣称的
+  # 那条下界**从来没有人跑过**。这个 job 让三档都真的跑一遍 corpus。
+  #
+  # 版本从锁文件现读（`tests/compat/matrix.json` 只写「去哪读」），唯一写死
+  # 精确版本的是 minimum——它不对应任何发行产物，而 `pip install
+  # matplotlib>=3.8` 在 CI 上等于装 latest，那样这一档什么都没验。
+  #
+  # 放在 GitHub 托管机上：minimum 那档要 Python 3.10（matplotlib 3.8 不支持
+  # 3.13），self-hosted 实验室机上未必有；`setup-python` 现成。
+  # 不跑保真度：那是 lab-ci 的 nightly 档在**一个固定机器**上做的事，
+  # 换机器比像素没有意义。
+  # ────────────────────────────────────────────────────────────────
+  compat-version-matrix:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # minimum：pyproject 宣称的下界。numpy 必须 <2（mpl 3.8 不兼容 2.x）。
+          - { target: minimum, python: "3.10" }
+          # bundled：桌面版内置 runtime——用户真正拿到的那一套。
+          - { target: bundled, python: "3.13" }
+          # browser：playground 的 Pyodide 版本组合，只跑 browser_eligible 子集
+          # （子集由 tests/compat/matrix.json 的 `subset` 声明，runner 照做）。
+          #
+          # **这里的 3.13 是「拿哪个 CPython 跑 browser.py」，不是 Pyodide 的
+          # 那个 Python。** 锁文件里的 `python: 3.14.2` 说的是 Pyodide 内部的
+          # 解释器版本，与 runner 无关——所以它在 matrix.json 里解析成
+          # `pyodide_python`，不参与 runner 的 Python 版本核对。写成 `python`
+          # 的那一版让这条腿**永久红**：版本核对当场退出 2，一个 case 都跑不到。
+          #
+          # **如实记账**：跑的是 engine/browser.py 在 CPython 上的语义，
+          # 真 Pyodide 在 web/e2e/playground.spec.ts，不在这里。
+          - { target: browser, python: "3.13" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: 装依赖（版本由 tests/compat/matrix.json 指到的锁文件决定）
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,ci]"
+          PINS=$(python - <<'EOF'
+          import sys
+          sys.path.insert(0, "scripts/ci")
+          import compat_corpus as CC
+          spec = CC.resolve_target(CC.load_matrix(), "${{ matrix.target }}")
+          # 装渲染相关 + CompatBench 语料要用的那几个。少装 pandas/scipy 的话
+          # sci_pandas_* / sci_scipy_fit 会在 execute 挂掉，而它们在清单里是
+          # full_support —— classify 会把它们记成**假的 product_bug**。
+          want = ("matplotlib", "numpy", "pandas", "scipy", "seaborn", "pillow")
+          print(" ".join(f"{k}=={spec[k]}" for k in want if spec.get(k)))
+          EOF
+          )
+          echo "pins: $PINS"
+          # shellcheck disable=SC2086
+          pip install $PINS
+          python -c "import matplotlib, numpy; print(matplotlib.__version__, numpy.__version__)"
+
+      - name: CompatBench
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.target }}" = "browser" ]; then
+            # 浏览器这一档只有 browser_eligible 的子集有意义。
+            ARGS="--all --browser --no-fidelity"
+          else
+            ARGS="--all --no-fidelity"
+          fi
+          # shellcheck disable=SC2086
+          python scripts/ci/compat_matrix.py $ARGS \
+            --target "${{ matrix.target }}" --gate nightly \
+            --out "$RUNNER_TEMP/compat" \
+            --json "$RUNNER_TEMP/compat-${{ matrix.target }}.json"
+
+      - name: 诊断
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compat-${{ matrix.target }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/compat/**
+            ${{ runner.temp }}/compat-${{ matrix.target }}.json
+          retention-days: 14
+          if-no-files-found: warn
+
   windows-install:
     runs-on: windows-latest
     strategy:

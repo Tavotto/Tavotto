@@ -8,6 +8,7 @@
   * 协议 v1 信封（文件末尾一节）：回显、错误 code、hash 自检、legacy 兼容
 """
 import json
+import math
 import os
 import subprocess
 import threading
@@ -1822,3 +1823,724 @@ def test_axes_follow_gids_cover_colorbar_and_twin_but_not_shared(tmp_path):
         if proc.poll() is None:
             proc.kill()
         proc.wait(timeout=10)
+
+
+# ---------------------------------------------------------------------------
+# Collection 的包围盒兜底（CompatBench minimum 档抓到的）
+# ---------------------------------------------------------------------------
+FILL_LIB = '''\
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+def main():
+    t = np.linspace(0.0, 6.0, 40)
+    a = np.sin(t) + 1.5
+    fig, ax = plt.subplots(figsize=(3.6, 2.4))
+    ax.plot(t, a, label="mean")
+    ax.fill_between(t, a - 0.3, a + 0.3, alpha=0.35, label="band")
+    ax.set_title("Error band")
+    ax.legend()
+    fig.savefig("FillBand.pdf")
+
+    fig2, bx = plt.subplots(figsize=(3.2, 2.8))
+    bx.pcolor(np.arange(64, dtype="float64").reshape(8, 8), cmap="viridis")
+    bx.set_title("Mesh")
+    fig2.savefig("FillMesh.pdf")
+'''
+
+
+def test_fill_between_area_is_editable(tmp_path):
+    """`fill_between` 的填充区必须进 manifest 并且真的能改。
+
+    **matplotlib 3.8 上 `PolyCollection.get_window_extent()` 回的是 `-inf`**
+    （3.10+ 换成 FillBetweenPolyCollection 才自带可用的框），于是整片填充区
+    在界面上不存在——而 pyproject 宣称的下界正是 3.8。CompatBench 的
+    minimum 档把它抓了出来（`art_fill_between` 是 Tier 1）。修法与散点当年
+    同一条：artist 给不出框时用数据范围换算。
+    """
+    figs = tmp_path / "figs"
+    figs.mkdir()
+    (figs / "fig_fill.py").write_text(FILL_LIB, encoding="utf-8")
+    w = pool.one_shot("fig_fill.py", str(figs), "main")
+    try:
+        w.ensure_built()
+        man = w.override("FillBand", [])["manifest"]
+        fills = [e for e in man["elements"] if e["role"] == "fill"]
+        assert fills, "fill_between 的填充区没有进 manifest"
+        gid = fills[0]["gid"]
+        resp = w.override("FillBand", [{"gid": gid, "prop": "facecolor",
+                                        "value": "#AA5533"}])
+        assert not (resp.get("warnings") or []), resp["warnings"]
+        got = next(f["value"] for e in resp["manifest"]["elements"]
+                   if e["gid"] == gid for f in e["editable"]
+                   if f["prop"] == "facecolor")
+        assert got.lower() == "#aa5533"
+    finally:
+        pool.discard(w)
+
+
+def test_scalar_mapped_meshes_never_advertise_facecolor(tmp_path):
+    """标量映射的网格（pcolor / pcolormesh / hexbin）**进 manifest，但不给
+    facecolor**。
+
+    钉住的取舍没变，只是判据变准了：它们的 facecolors 每次 draw 由
+    `update_scalarmappable()` 从数组重算，`set_facecolor` 在屏幕上一个像素
+    都不会变——「设了下一帧被顶回去」比不支持更坏。2026-08-21 之前这条靠
+    「整个不登记」实现，代价是用户连改色图、改 clim、加网格线都做不到，而
+    那三件事**是真的生效的**。现在由 `overrides.collection_caps()` 按真实
+    getter 实况裁决：`facecolor` 不给，`cmap` / `vmin` / `vmax` 与描边照给。
+
+    换句话说这条用例现在守的是**能力探针**，不是元素表的黑名单；
+    `tests/test_artist_families.py::test_color_mapped_collections_do_not_advertise_facecolor`
+    从另一头（散点 + QuadMesh）守着同一条判据。
+    """
+    figs = tmp_path / "figs"
+    figs.mkdir()
+    (figs / "fig_fill.py").write_text(FILL_LIB, encoding="utf-8")
+    w = pool.one_shot("fig_fill.py", str(figs), "main")
+    try:
+        w.ensure_built()
+        man = w.override("FillMesh", [])["manifest"]
+        meshes = [e for e in man["elements"] if e["role"] in ("fill", "collection")]
+        assert meshes, "标量映射的网格整个没进 manifest——它的色图与描边是真改得动的"
+        props = {f["prop"] for e in meshes for f in e["editable"]}
+        assert "facecolor" not in props, \
+            "映射中的网格给了 facecolor——它的编辑会被 colormap 顶回去"
+        assert {"cmap", "vmin", "vmax"} <= props, \
+            "映射中的网格连色图都改不了"
+        assert [e for e in man["elements"] if e["role"] == "title"], \
+            "整张图都没进 manifest，兜底判据写反了"
+    finally:
+        pool.discard(w)
+
+
+# ---------------------------------------------------------------------------
+# 别名组：广播型 prop 与它管着的窄 prop（overrides.ALIAS_GROUPS）
+# ---------------------------------------------------------------------------
+ALIAS_LIB = '''\
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+def main():
+    fig, (ax, bx) = plt.subplots(1, 2, figsize=(5.4, 2.4))
+    ax.bar(["a", "b", "c"], [3.0, 5.0, 2.0], label="counts")
+    ax.plot([0, 1, 2], [4.0, 2.0, 5.0], label="trend")
+    ax.legend(title="series")
+    ax.set_title("Bars")
+    im = bx.imshow(np.arange(36).reshape(6, 6), cmap="viridis")
+    fig.colorbar(im, ax=bx).set_label("intensity")
+    bx.set_title("Map")
+    fig.tight_layout()
+    fig.savefig("Alias.pdf")
+'''
+
+#: (广播 gid, 广播 prop, 广播值, 窄 gid, 窄 prop, 窄值)。三族别名各取一条。
+#: 窄端一律避开成员 0——整组字段报的是成员 0，覆盖它会让「广播落没落」在
+#: manifest 上分不出来（同 test_equivalence_matrix 里那条说明）。
+ALIAS_CASES = [
+    ("axes_0.legend", "fontsize", 7.5, "axes_0.legend.texts_1", "fontsize", 9.5),
+    ("axes_0.legend", "title_fontsize", 7.0, "axes_0.legend.title", "fontsize", 11.0),
+    ("axes_0.barseries_0", "facecolor", "#775599",
+     "axes_0.barseries_0.bar_1", "facecolor", "#22aa44"),
+    ("axes_2.colorbar", "tick_fontsize", 6.0, "axes_2.yticks", "fontsize", 9.0),
+]
+
+
+def _alias_worker(tmp_path):
+    figs = tmp_path / "figs"
+    figs.mkdir()
+    (figs / "fig_alias.py").write_text(ALIAS_LIB, encoding="utf-8")
+    w = pool.one_shot("fig_alias.py", str(figs), "main")
+    w.ensure_built()
+    return w
+
+
+def _same_val(a, b) -> bool:
+    if isinstance(a, str) or isinstance(b, str):
+        return str(a).lower() == str(b).lower()
+    return a == pytest.approx(b, rel=1e-6, abs=1e-6)
+
+
+@pytest.mark.parametrize(
+    "bgid,bprop,bval,ngid,nprop,nval", ALIAS_CASES,
+    ids=[f"{c[0].split('.')[-1]}-{c[1]}" for c in ALIAS_CASES])
+def test_overlapping_override_undo_returns_to_the_script_original(
+        tmp_path, bgid, bprop, bval, ngid, nprop, nval):
+    """广播 → 窄 → 撤销窄 → 撤销广播，每一步都核对，最后必须回到脚本原样。
+
+    坏掉的样子：`originals` 存的是「第一次碰到这个 key 时的当前值」，所以窄
+    prop 记下的「原样」已经是被广播改过的值。撤销之后字号/颜色停在广播值，
+    **回不到脚本原样**，而且全程零 warning。
+
+    **等价性矩阵看不到这一条**：`_three_ways` 的「清空 → 重放同一份全量」会
+    立刻把同样的值再设回去，坏掉的清空被下一步盖住了。撤销语义只能在这里钉。
+
+    步骤顺序是**刻意**的：③ 必须从「两条都在」**直接**回到空列表。中间先撤
+    窄的再撤广播的话，窄那次的还原（写的是被广播改过的值）恰好把状态摆成
+    对的，第二次还原就看不出问题了——这条用例最早正是这么写的，修复前照样
+    全绿。一条在 bug 面前也绿的用例，比没有更坏。
+    """
+    w = _alias_worker(tmp_path)
+    try:
+        base = w.override("Alias", [])["manifest"]
+        b0 = _field_value(base, bgid, bprop)
+        n0 = _field_value(base, ngid, nprop)
+        bpatch = {"gid": bgid, "prop": bprop, "value": bval}
+        npatch = {"gid": ngid, "prop": nprop, "value": nval}
+
+        # ① 只有广播：窄端跟着走（这条 case 的前提）
+        r = w.override("Alias", [bpatch])
+        assert not (r.get("warnings") or []), r["warnings"]
+        assert _same_val(_field_value(r["manifest"], ngid, nprop), bval), \
+            "广播 prop 没有作用到窄端——这条 case 的前提就不成立"
+
+        # ② 加上窄端：窄端听自己的
+        r = w.override("Alias", [bpatch, npatch])
+        assert not (r.get("warnings") or []), r["warnings"]
+        assert _same_val(_field_value(r["manifest"], ngid, nprop), nval)
+
+        # ③ **两条 → 空**，一步到位。这一步才是原 bug 的现场。
+        r = w.override("Alias", [])
+        assert not (r.get("warnings") or []), r["warnings"]
+        got = _field_value(r["manifest"], ngid, nprop)
+        assert _same_val(got, n0), f"{ngid}.{nprop} 没回到脚本原样：{n0!r} → {got!r}"
+        assert _same_val(_field_value(r["manifest"], bgid, bprop), b0)
+
+        # ④ 再摆一次，这次只撤窄的：**回落到广播那一档**，不是脚本原样
+        w.override("Alias", [bpatch, npatch])
+        r = w.override("Alias", [bpatch])
+        assert not (r.get("warnings") or []), r["warnings"]
+        assert _same_val(_field_value(r["manifest"], ngid, nprop), bval), \
+            "撤销窄 override 应当回落到广播那一档，而不是脚本原样"
+
+        # ⑤ 收尾：广播也撤掉，仍然回得到脚本原样
+        r = w.override("Alias", [])
+        assert not (r.get("warnings") or []), r["warnings"]
+        assert _same_val(_field_value(r["manifest"], ngid, nprop), n0)
+    finally:
+        pool.discard(w)
+
+
+def test_overlapping_override_undo_of_the_broadcast_keeps_the_narrow_one(tmp_path):
+    """反过来：撤销**广播**、留着窄的。窄的那一条必须活着，其余回原样。
+
+    还原广播写的是整组，会把窄 prop 一起冲掉——不重放的话用户会看到
+    「我只取消了整体设置，单条的也跟着没了」。
+    """
+    w = _alias_worker(tmp_path)
+    try:
+        base = w.override("Alias", [])["manifest"]
+        n0_other = _field_value(base, "axes_0.legend.texts_0", "fontsize")
+
+        w.override("Alias", [
+            {"gid": "axes_0.legend", "prop": "fontsize", "value": 7.5},
+            {"gid": "axes_0.legend.texts_1", "prop": "fontsize", "value": 9.5}])
+        r = w.override("Alias", [
+            {"gid": "axes_0.legend.texts_1", "prop": "fontsize", "value": 9.5}])
+        assert not (r.get("warnings") or []), r["warnings"]
+        man = r["manifest"]
+        assert _same_val(_field_value(man, "axes_0.legend.texts_1", "fontsize"), 9.5), \
+            "撤销广播把窄 override 一起冲掉了"
+        assert _same_val(_field_value(man, "axes_0.legend.texts_0", "fontsize"),
+                         n0_other), "没被单独 override 的那一条应当回到脚本原样"
+    finally:
+        pool.discard(w)
+
+
+def test_overlapping_override_is_independent_of_patch_list_order(tmp_path):
+    """`apply` 是**全量列表**语义：同一组 patch 无论列表序如何都落成同一张图。
+
+    广播必须先于它管着的窄 prop。顺序一乱，同一份文档在热会话与全量重放里
+    会画出两张图——而那正是写回自检 409 的成因。
+    """
+    w = _alias_worker(tmp_path)
+    try:
+        b = {"gid": "axes_0.legend", "prop": "fontsize", "value": 8.0}
+        n = {"gid": "axes_0.legend.texts_1", "prop": "fontsize", "value": 12.0}
+        forward = w.override("Alias", [b, n])["manifest"]
+        got_f = [_field_value(forward, f"axes_0.legend.texts_{i}", "fontsize")
+                 for i in (0, 1)]
+        w.override("Alias", [])
+        reverse = w.override("Alias", [n, b])["manifest"]
+        got_r = [_field_value(reverse, f"axes_0.legend.texts_{i}", "fontsize")
+                 for i in (0, 1)]
+        assert got_f == got_r == [8.0, 12.0], (got_f, got_r)
+    finally:
+        pool.discard(w)
+
+
+# ---------------------------------------------------------------------------
+# 线组 LineCollection（CompatBench artist 普查里权重最高的缺口）
+# ---------------------------------------------------------------------------
+LINECOLL_LIB = '''\
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+def main():
+    # hlines / vlines：两条独立的 LineCollection
+    fig, ax = plt.subplots(figsize=(3.6, 2.4))
+    ax.plot([0, 1, 2, 3], [1, 3, 2, 4])
+    ax.hlines([1.5, 2.5], xmin=0, xmax=3, colors="#B4473C", linestyles="--")
+    ax.vlines([1.0, 2.0], ymin=1, ymax=4, colors="#5B8C5A")
+    ax.set_title("Reference lines")
+    fig.savefig("LcLines.pdf")
+
+    # eventplot：EventCollection 是 LineCollection 的子类，而且 get_color()
+    # 回的是**一维**数组（hlines 回二维）——两种形状都要认
+    fig2, bx = plt.subplots(figsize=(3.6, 2.4))
+    bx.eventplot([np.linspace(0, 1, 12)], colors=["#2F6FB2"])
+    bx.set_title("Events")
+    fig2.savefig("LcEvents.pdf")
+
+    # contour：**必须仍然不被登记**（QuadContourSet 是标量映射的，而且不是
+    # LineCollection 子类）。它是这条改动最容易误伤的东西。
+    x = np.linspace(-2.0, 2.0, 30)
+    xx, yy = np.meshgrid(x, x)
+    fig3, cx = plt.subplots(figsize=(3.2, 2.8))
+    cx.contour(xx, yy, np.exp(-(xx ** 2 + yy ** 2)), levels=6, cmap="viridis")
+    cx.set_title("Contour")
+    fig3.savefig("LcContour.pdf")
+'''
+
+
+def _lc_worker(tmp_path):
+    figs = tmp_path / "figs"
+    figs.mkdir()
+    (figs / "fig_lc.py").write_text(LINECOLL_LIB, encoding="utf-8")
+    w = pool.one_shot("fig_lc.py", str(figs), "main")
+    w.ensure_built()
+    return w
+
+
+def _lc_field(man, gid, prop):
+    for el in man["elements"]:
+        if el["gid"] == gid:
+            for f in el.get("editable", []):
+                if f["prop"] == prop:
+                    return f["value"]
+    return None
+
+
+def test_line_collections_are_registered_and_editable(tmp_path):
+    """`hlines`/`vlines` 的参考线必须进 manifest 且样式改得动。
+
+    它们是 LineCollection，2026-08-21 之前整族不被识别——artist 普查里
+    未识别 8/10、涉及 5 个 case，是当时权重最高的缺口。
+    """
+    w = _lc_worker(tmp_path)
+    try:
+        man = w.override("LcLines", [])["manifest"]
+        lcs = [e for e in man["elements"] if e["role"] == "linecoll"]
+        assert len(lcs) == 2, f"hlines + vlines 应是两条线组，实际 {len(lcs)}"
+        gid = lcs[0]["gid"]
+        assert _lc_field(man, gid, "color").lower() == "#b4473c"
+        assert _lc_field(man, gid, "linestyle") == "--"
+
+        resp = w.override("LcLines", [
+            {"gid": gid, "prop": "color", "value": "#118844"},
+            {"gid": gid, "prop": "linewidth", "value": 3.0},
+            {"gid": gid, "prop": "linestyle", "value": ":"},
+        ])
+        assert not (resp.get("warnings") or []), resp["warnings"]
+        got = resp["manifest"]
+        assert _lc_field(got, gid, "color").lower() == "#118844"
+        assert _lc_field(got, gid, "linewidth") == pytest.approx(3.0)
+        assert _lc_field(got, gid, "linestyle") == ":"
+    finally:
+        pool.discard(w)
+
+
+def test_line_collection_edits_undo_exactly(tmp_path):
+    """撤销必须回到**脚本原样**，一个字节不差。
+
+    `linestyle` 是这里的雷：`get_linestyle()` 回的是按线宽缩放过的 dash
+    序列，而 `set_linestyle()` 会把喂进去的值再缩放一遍——拿它当 originals
+    存，撤销之后线型不是原来那条，而且每撤一次再放大一次（实测 `--` 在
+    lw=1.5 下 5.55 → 回灌成 8.325）。所以 getter 存的是未缩放规格。
+    """
+    w = _lc_worker(tmp_path)
+    try:
+        base = w.override("LcLines", [])["manifest"]
+        gid = next(e["gid"] for e in base["elements"] if e["role"] == "linecoll")
+        before = {p: _lc_field(base, gid, p)
+                  for p in ("color", "linewidth", "linestyle", "alpha", "visible")}
+
+        w.override("LcLines", [
+            {"gid": gid, "prop": "color", "value": "#118844"},
+            {"gid": gid, "prop": "linewidth", "value": 3.0},
+            {"gid": gid, "prop": "linestyle", "value": ":"},
+        ])
+        restored = w.override("LcLines", [])
+        assert not (restored.get("warnings") or []), restored["warnings"]
+        after = {p: _lc_field(restored["manifest"], gid, p) for p in before}
+        assert after == before, f"撤销没回到原样：{before} → {after}"
+    finally:
+        pool.discard(w)
+
+
+def test_event_collection_color_survives_the_one_dimensional_array(tmp_path):
+    """EventCollection 的 `get_color()` 回**一维** RGBA（hlines 回二维）。
+
+    不做形状归一的话 `colors[0]` 取到的是一个浮点数，界面上那个颜色就是
+    从 0.18 编出来的一串垃圾。
+    """
+    w = _lc_worker(tmp_path)
+    try:
+        man = w.override("LcEvents", [])["manifest"]
+        gid = next(e["gid"] for e in man["elements"] if e["role"] == "linecoll")
+        assert _lc_field(man, gid, "color").lower() == "#2f6fb2"
+    finally:
+        pool.discard(w)
+
+
+def test_contour_is_still_not_registered_as_line_collections(tmp_path):
+    """等值线**必须仍然不被登记**——这是线组那条改动最容易误伤的东西。
+
+    `contour` / `contourf` 在 3.8 与 3.11 上都只产出**一个**
+    `QuadContourSet`：它既不是 LineCollection 子类、又是标量映射的
+    （颜色由 colormap 每帧重算），两条判据各自都挡得住。放它进来的话
+    `art_contour` 会从「一个干净的已知缺口」变成一堆改了不生效的条目。
+    """
+    w = _lc_worker(tmp_path)
+    try:
+        man = w.override("LcContour", [])["manifest"]
+        assert not [e for e in man["elements"] if e["role"] == "linecoll"], \
+            "等值线被当成线组登记了——它的 color 编辑会被 colormap 顶回去"
+        assert [e for e in man["elements"] if e["role"] == "title"], \
+            "整张图都没进 manifest，判据写反了"
+    finally:
+        pool.discard(w)
+
+
+def test_line_collections_expose_style_only_never_data(tmp_path):
+    """线组**只开样式**。「几条线、落在哪」是脚本的数据，改它该回代码——
+    与 3D 盒内属性、散点数据同一条产品边界。这条钉住边界不被顺手放宽。"""
+    w = _lc_worker(tmp_path)
+    try:
+        man = w.override("LcLines", [])["manifest"]
+        el = next(e for e in man["elements"] if e["role"] == "linecoll")
+        props = {f["prop"] for f in el["editable"]}
+        assert props == {"color", "linewidth", "linestyle", "alpha",
+                         "visible", "zorder"}, props
+        # 路径几何刻意不给（pathgeom 是按单条路径写的，线组有 N 条），
+        # 降级成 bbox 并如实记录
+        assert "geometry" not in el
+        assert el.get("bbox"), "线组连 bbox 都没有，前端选不中它"
+    finally:
+        pool.discard(w)
+
+
+# ---------------------------------------------------------------------------
+# 子 axes（inset_axes / secondary_[xy]axis）
+# CompatBench 的 ax_inset / ax_secondary_x / ax_secondary_y 抓到的缺口
+# ---------------------------------------------------------------------------
+CHILD_AXES_LIB = '''\
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+def main():
+    x = np.linspace(1.0, 10.0, 40)
+
+    fig, ax = plt.subplots(figsize=(3.8, 2.6))
+    ax.plot(x, np.log(x))
+    ax.set_title("Host")
+    inset = ax.inset_axes([0.55, 0.14, 0.4, 0.36])
+    inset.plot(x[:12], np.log(x[:12]), color="#B4473C")
+    inset.set_title("Zoom")
+    fig.savefig("ChildInset.pdf")
+
+    fig2, bx = plt.subplots(figsize=(3.8, 2.6))
+    bx.plot(x, 1.0 / x)
+    bx.set_xlabel("wavelength (nm)")
+    sec = bx.secondary_xaxis("top", functions=(lambda v: 1000.0 / v,
+                                               lambda v: 1000.0 / v))
+    sec.set_xlabel("wavenumber")
+    fig2.savefig("ChildSecondary.pdf")
+
+    # 对照组：一张**没有**子 axes 的图，用来钉住存量 gid 编号不变
+    fig3, (c1, c2) = plt.subplots(1, 2, figsize=(4.6, 2.2))
+    c1.plot(x, x)
+    c2.plot(x, -x)
+    c2.twinx().plot(x, x ** 2)
+    fig3.savefig("ChildNone.pdf")
+'''
+
+
+def _child_axes_worker(tmp_path):
+    figs = tmp_path / "figs"
+    figs.mkdir()
+    (figs / "fig_child.py").write_text(CHILD_AXES_LIB, encoding="utf-8")
+    w = pool.one_shot("fig_child.py", str(figs), "main")
+    w.ensure_built()
+    return w
+
+
+def _el_of(man: dict, gid: str) -> dict:
+    return next(e for e in man["elements"] if e["gid"] == gid)
+
+
+def _props_of(man: dict, gid: str) -> list[str]:
+    return [f["prop"] for f in _el_of(man, gid).get("editable", [])]
+
+
+def _field_of(man: dict, gid: str, prop: str):
+    return next(f["value"] for f in _el_of(man, gid)["editable"]
+                if f["prop"] == prop)
+
+
+def test_inset_axes_contents_are_registered_and_editable(tmp_path):
+    """`ax.inset_axes(...)` 建出来的插图挂在 `ax.child_axes` 上、**不在
+    `fig.axes` 里**，instrument 以前压根不遍历它——插图里的曲线选不中。
+
+    CompatBench 的 `ax_inset` 一度全绿，正因为它的期望只写了宿主 axes 的
+    元素：宿主那条曲线满足了期望，而插图整个不存在这件事被盖住了。
+    """
+    w = _child_axes_worker(tmp_path)
+    try:
+        man = w.override("ChildInset", [])["manifest"]
+        gids = [e["gid"] for e in man["elements"]]
+        assert "axes_1" in gids, f"插图没进元素表：{gids}"
+        assert _el_of(man, "axes_1")["label"] == "插图 1"
+        assert "axes_1.lines_0" in gids, "插图里的曲线选不中"
+        assert "axes_1.title" in gids, "插图的标题选不中"
+
+        before = _field_of(man, "axes_1.title", "fontsize")
+        resp = w.override("ChildInset", [{"gid": "axes_1.title",
+                                          "prop": "fontsize", "value": 7.5}])
+        assert not (resp.get("warnings") or []), resp["warnings"]
+        assert _field_of(resp["manifest"], "axes_1.title", "fontsize") == \
+            pytest.approx(7.5)
+        back = w.override("ChildInset", [])
+        assert not (back.get("warnings") or [])
+        assert _field_of(back["manifest"], "axes_1.title", "fontsize") == \
+            pytest.approx(before)
+    finally:
+        pool.discard(w)
+
+
+def test_secondary_axis_label_is_editable(tmp_path):
+    """`secondary_xaxis()` 的轴标签必须改得动——它是这类轴上最常改的东西。"""
+    w = _child_axes_worker(tmp_path)
+    try:
+        man = w.override("ChildSecondary", [])["manifest"]
+        gids = [e["gid"] for e in man["elements"]]
+        assert "axes_1" in gids and _el_of(man, "axes_1")["label"] == "次坐标轴 1"
+        assert "axes_1.xlabel" in gids, f"次坐标轴的标签选不中：{gids}"
+
+        resp = w.override("ChildSecondary", [{"gid": "axes_1.xlabel",
+                                              "prop": "text", "value": "波数"}])
+        assert not (resp.get("warnings") or []), resp["warnings"]
+        assert _field_of(resp["manifest"], "axes_1.xlabel", "text") == "波数"
+        back = w.override("ChildSecondary", [])
+        assert _field_of(back["manifest"], "axes_1.xlabel", "text") == "wavenumber"
+    finally:
+        pool.discard(w)
+
+
+def test_child_axes_never_expose_position(tmp_path):
+    """**反向断言**：子 axes 的落位由父级 `_axes_locator` 每帧重算。
+
+    实测：`set_position([...])` 之后立刻读回是新值，`draw()` 一次就被顶回
+    原值。开放这个字段等于给用户一个「按了、界面也变了、下一帧弹回去」的
+    旋钮——按 CompatBench 自己的判据那是最不能接受的一档（看起来成功、
+    实际没生效）。将来谁想放开它，会先撞到这条用例。
+    """
+    w = _child_axes_worker(tmp_path)
+    try:
+        for stem in ("ChildInset", "ChildSecondary"):
+            man = w.override(stem, [])["manifest"]
+            assert "position" not in _props_of(man, "axes_1"), \
+                f"{stem}: 子 axes 出了 position 字段"
+            assert _el_of(man, "axes_1")["resizable"] is False, \
+                f"{stem}: resizable 与 position 字段不一致，" \
+                f"前端会拿着一个后端不认的 prop 发 override"
+            # 宿主照常可拖
+            assert "position" in _props_of(man, "axes_0")
+            assert _el_of(man, "axes_0")["resizable"] is True
+    finally:
+        pool.discard(w)
+
+
+def test_secondary_axis_hides_the_slaved_data_range(tmp_path):
+    """次坐标轴的数据范围由父轴经换算函数每帧重算，整组不出。
+
+    实测（mpl 3.11.1）：`set_xlim` 与 `invert_xaxis` 被顶回去、`set_aspect`
+    被 matplotlib 自己拒绝并 warning、`get_xscale()` 回的是 `'function'`
+    （`scale_options` 给不出合理选项）。
+
+    **插图不在此列**——它的 xlim / scale 是真能改的。两者的落位都锁着，
+    但数据范围只有次坐标轴是从的，所以是两条独立的标记而不是一条。
+    """
+    w = _child_axes_worker(tmp_path)
+    try:
+        sec = _props_of(w.override("ChildSecondary", [])["manifest"], "axes_1")
+        for prop in ("xlim", "ylim", "xscale", "yscale",
+                     "invert_x", "invert_y", "aspect"):
+            assert prop not in sec, f"次坐标轴不该出 {prop}"
+        # 断言写成「有的话不能是那几个」而不是「必须有 visible」：
+        # `SecondaryAxis` **不是 `Axes` 子类**（直接从 `_AxesBase` 派生），
+        # `overrides._cls_key()` 现在对它回 None，所以它自身一个字段都出不来。
+        # 那是另一处的一行修复（见本文件下面那条 xfail-style 说明用例）。
+        # 这条用例在修好前后都成立——它钉的是「从的那几个字段永远不出现」。
+        if sec:
+            assert "visible" in sec, "字段回来了就该带上 visible"
+
+        ins = _props_of(w.override("ChildInset", [])["manifest"], "axes_1")
+        assert "xlim" in ins and "yscale" in ins, \
+            "插图的数据范围是真能改的，不该跟着次坐标轴一起被关掉"
+        assert "visible" in ins, "插图是正经 Axes 子类，字段该齐"
+    finally:
+        pool.discard(w)
+
+
+def test_secondary_axis_container_props_are_editable(tmp_path):
+    """`SecondaryAxis` 自身的容器属性（visible / grid / spines）可编辑。
+
+    这条曾经是反向的「已知缺口」断言：`SecondaryAxis` 直接从 `_AxesBase`
+    派生、**不是 `Axes` 的子类**（实测 mro = [SecondaryAxis, _AxesBase,
+    Artist]），于是 `overrides._cls_key()` 对它回 `None`，容器级字段一个都
+    出不来——而它的轴标签与刻度是独立元素、照常可编辑，界面上就成了
+    「这条轴的字能改、轴本身点了没反应」。`_cls_key` 放宽到 `_AxesBase`
+    之后这条翻成了正向断言。
+
+    **数据范围那组仍然不出**（`limits_slaved`），那是另一条边界：
+    次坐标轴的 xlim/invert/aspect 由主轴的函数映射决定，设了会被 draw
+    顶回去，见 test_secondary_axis_limits_are_not_offered。
+    """
+    w = _child_axes_worker(tmp_path)
+    try:
+        man = w.override("ChildSecondary", [])["manifest"]
+        props = _props_of(man, "axes_1")
+        assert props, "次坐标轴自身一个可编辑字段都没有——_cls_key 那条回退了？"
+        for want in ("visible", "grid_x", "spine_color"):
+            assert want in props, f"{want} 不在次坐标轴的可编辑字段里：{props}"
+        # 改得动 + 撤得回，才算真的支持
+        r = w.override("ChildSecondary",
+                       [{"gid": "axes_1", "prop": "visible", "value": False}])
+        assert not (r.get("warnings") or []), r["warnings"]
+        back = w.override("ChildSecondary", [])
+        assert not (back.get("warnings") or []), back["warnings"]
+        assert _field_of(back["manifest"], "axes_1", "visible") is True
+        # 子元素照旧是活的
+        gids = [e["gid"] for e in back["manifest"]["elements"]]
+        assert "axes_1.xlabel" in gids and "axes_1.xticks" in gids
+    finally:
+        pool.discard(w)
+
+
+def test_existing_gid_numbering_is_untouched(tmp_path):
+    """**存量文档的 axes 编号一个字节不能变。**
+
+    子 axes 一律排在所有 `fig.axes` 之后，所以没有子 axes 的图（这里是
+    2 个子图 + 一个 twinx）编号与改动前逐位相同。插在中间的话，「同一张图、
+    同一个 gid」在升级前后会指向不同的 axes——那是数据级的错位。
+    """
+    w = _child_axes_worker(tmp_path)
+    try:
+        man = w.override("ChildNone", [])["manifest"]
+        axes_gids = [e["gid"] for e in man["elements"] if e["role"] == "axes"]
+        assert axes_gids == ["axes_0", "axes_1", "axes_2"], axes_gids
+        assert [_el_of(man, g)["label"] for g in axes_gids] == \
+            ["子图 1", "子图 2", "子图 3"], "没有子 axes 的图不该出现插图/次坐标轴标签"
+        for g in axes_gids:
+            assert "position" in _props_of(man, g)
+            assert _el_of(man, g)["resizable"] is True
+    finally:
+        pool.discard(w)
+
+
+def test_secondary_axis_detection_still_works():
+    """看护那条私有依赖：`matplotlib.axes._secondary_axes.SecondaryAxis`。
+
+    它**不是公开名字**（3.8 上 `from matplotlib.axes import SecondaryAxis`
+    可用、3.11 上不可用），所以走私有模块路径。matplotlib 升版把它挪走时
+    这条会当场红，而不是安静地让次坐标轴多出一组会被顶回去的字段。
+    """
+    engine_dir = Path(__file__).resolve().parent.parent / "src" / "tavotto" / "engine"
+    probe = (
+        "import matplotlib; matplotlib.use('Agg');"
+        "import sys; sys.path.insert(0, %r);"
+        "import matplotlib.pyplot as plt, manifest as M;"
+        "fig, ax = plt.subplots();"
+        "s = ax.secondary_xaxis('top', functions=(lambda v: v, lambda v: v));"
+        "ins = ax.inset_axes([0.1, 0.1, 0.2, 0.2]);"
+        "print(M._is_secondary_axis(s), M._is_secondary_axis(ax),"
+        " M._is_secondary_axis(ins))" % str(engine_dir)
+    )
+    out = subprocess.run([WORKER_PY, "-c", probe], capture_output=True, text=True,
+                         timeout=180, encoding="utf-8", errors="replace")
+    assert out.returncode == 0, out.stderr[-800:]
+    assert out.stdout.split() == ["True", "False", "False"], out.stdout
+
+
+# ---------------------------------------------------------------------------
+# 非有限几何：两条控制面必须一致
+# ---------------------------------------------------------------------------
+NONFINITE_LIB = '''\
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+def main():
+    """`secondary_xaxis` 的函数映射在 v=0 处给出 inf。
+
+    刻度标签的包围盒因此是 `[inf, nan, nan, nan]`——真实用户会写的图
+    （波数 = 1000/波长 是光谱学的标准副轴）。
+    """
+    x = np.linspace(1.0, 10.0, 40)
+    fig, ax = plt.subplots(figsize=(3.8, 2.6))
+    ax.plot(x, 1.0 / x)
+    ax.secondary_xaxis("top", functions=(lambda v: 1000.0 / v,
+                                         lambda v: 1000.0 / v)).set_xlabel("wn")
+    ax.set_title("Secondary")
+    fig.savefig("NonFinite.pdf")
+'''
+
+
+def test_non_finite_geometry_never_reaches_the_protocol(tmp_path):
+    """**NaN / Infinity 不是 JSON**，一个都不许进协议帧。
+
+    Python 的 `json.dumps` 默认把它们当字面量写出去、`json.loads` 也照收，
+    所以 Python 渲染池一路绿灯；workerd（Rust serde_json）按 RFC 8259
+    严格拒收整帧，报「往协议管道里写了非 JSON 的内容」并重启会话。
+    **同一份 manifest，两条控制面两个结果**——而报出来的症状是「协议错乱」，
+    与真实原因（某个刻度标签的包围盒是 inf）毫不相干。
+
+    CompatBench 的 `ax_secondary_x` 抓到的就是这条：`secondary_xaxis` 的
+    `1000/v` 在 v=0 处给出 inf，而 ticklabel 分支的守卫是 `bb.width <= 0`
+    ——**`nan <= 0` 为假**，NaN 大摇大摆地过去了。
+    """
+    figs = tmp_path / "figs"
+    figs.mkdir()
+    (figs / "fig_nonfinite.py").write_text(NONFINITE_LIB, encoding="utf-8")
+    w = pool.one_shot("fig_nonfinite.py", str(figs), "main")
+    try:
+        w.ensure_built()
+        man = w.override("NonFinite", [])["manifest"]
+    finally:
+        pool.discard(w)
+
+    assert man["elements"], "整张图都没进 manifest"
+    bad = []
+    for el in man["elements"]:
+        for field in ("bbox", "anchor", "arrow_endpoints", "geometry"):
+            for v in _numbers(el.get(field)):
+                if not math.isfinite(v):
+                    bad.append(f"{el['gid']}.{field}")
+    assert not bad, f"这些元素的几何不是有限值，会毒死 workerd 那条控制面：{bad}"
+    # 序列化成协议帧时也必须是合法 JSON（allow_nan=False 是 worker 那道底线）
+    json.dumps(man, allow_nan=False)
+
+
+def _numbers(v):
+    if isinstance(v, dict):
+        v = list(v.values())
+    if isinstance(v, (list, tuple)):
+        for item in v:
+            yield from _numbers(item)
+    elif isinstance(v, (int, float)) and not isinstance(v, bool):
+        yield float(v)

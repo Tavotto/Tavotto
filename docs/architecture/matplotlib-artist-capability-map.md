@@ -139,7 +139,8 @@ census()：既没登记、也不是结构件的 → manifest 的 `unsupported` �
 
 | Family | 代表类 | 语义元素 | 开放什么 |
 | --- | --- | --- | --- |
-| Collection·描边型 | `LineCollection` `EventCollection` `ContourSet` | `axes_i.collections_j` | 描边（色/宽/线型）、花纹、alpha、visible、zorder；映射的另给 cmap/clim |
+| 线组 | `LineCollection` `EventCollection` | `axes_i.linecoll_j` | `color` / 线宽 / 线型 / alpha / visible / zorder（Line2D 的口径；**标量映射的不走这族**，见下一行） |
+| Collection·描边型 | `ContourSet` 与标量映射的 `LineCollection` | `axes_i.collections_j` | 描边（edgecolor/宽/线型）、花纹、alpha、visible、zorder；映射的另给 cmap/clim |
 | Collection·填充型 | `PolyCollection` `FillBetweenPolyCollection` `Quiver` `Barbs` | `axes_i.fill_j` | 上面那些 + facecolor（未映射时） |
 | Collection·网格型 | `QuadMesh` `PolyQuadMesh` | `axes_i.collections_j` / `axes_i.fill_j` | cmap/vmin/vmax + 描边（加网格线）；**不给 facecolor** |
 | 散点 | `PathCollection` | `axes_i.scatter_j` | 再加 size / marker 整体替换 |
