@@ -853,6 +853,13 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被它推翻**（
   把摘要挪回 Python 就红）。`browser.py` 的 `source_status` 保留，验的是
   引擎语义、跑在 Pyodide 之外，不是重复。写文件必须**二进制**——文本模式在
   Windows 上翻译换行，比对永远 mismatch（只有 CI 的 windows 腿逮得到）。
+  **`import js` 必须够不着**（`loadPyodide` 的 `jsglobals: {}`）——这是上面
+  那条成立的前提：Python 拿到 `js` 就能 `js.eval` 改 Worker 任何全局，
+  连 `self.postMessage` 伪造整条响应都做得到（请求 id 自增、猜得到），
+  那时**这个 Worker 里没有任何东西可信**。静态分类不是防线：
+  `browser_imports` 有意放行 try/except 里的可选 import，`__import__('js')`
+  它更看不见。可信原语（digest / Uint8Array / FS 读取）一律在模块求值期与
+  init 期绑定好，是纵深防御。两道防线各有判据，少一道都有用例红。
   Worker 侧的哈希在**脚本跑完之后**采；复验走独立的轻命令、**只在 worker
   闲着时发**（无阶段请求超时 30s，排在慢渲染后面到点 = 整个会话被
   terminate）。UI 四态：没验完不许说「未改动」，算不出哈希是「查不了」

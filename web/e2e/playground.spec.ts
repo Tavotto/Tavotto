@@ -311,6 +311,62 @@ test('完整性核对独立于用户解释器：脚本改掉自己并伪造 hash
   await expect(page.getByText('· 未改动')).toHaveCount(0)
 })
 
+test('Python 够不着 js：拿不到 Worker 全局，也就伪造不了完整性核对', async ({ page }) => {
+  // codex 审查第三轮 P2。前两轮把摘要与路径都挪出了 Python，但只要脚本能
+  // `import js`，它就能 `js.eval` 改掉 Worker 的任何全局——换掉
+  // `crypto.subtle.digest` 让它先削掉追加的尾巴再算，甚至直接
+  // `self.postMessage` 伪造一整条响应。**Python 一旦够得着 js，这个 Worker
+  // 里就没有任何东西可信**，完整性核对连同协议本身一起失效。
+  //
+  // 静态分类拦不住：`browser_imports` 有意放行 try/except 里的可选 import，
+  // 而 `__import__('js')` 它根本看不见。所以防线在 `loadPyodide` 的
+  // `jsglobals: {}`。这条用例把那个逃逸原样跑一遍——**把 jsglobals 去掉就会红**。
+  const src = [
+    'import matplotlib.pyplot as plt',
+    'fig, ax = plt.subplots(figsize=(2.6, 2))',
+    'ax.plot([0, 1, 2], [1, 0, 2])',
+    'ax.set_title("JsEsc")',
+    'fig.savefig("jsesc.pdf")',
+    '',
+    '# 改掉自己，尾巴是一串已知字节',
+    'with open(__file__, "ab") as f:',
+    '    f.write(b"\\n# appended\\n")',
+    '',
+    '# try/except 里的可选 import 正是分类器有意放行的那一档；拿到 js 之后',
+    '# 换掉 Worker 的 crypto.subtle.digest：算之前先把那串尾巴削回去。',
+    'try:',
+    '    import js',
+    "    js.eval(\"(() => { const real = crypto.subtle.digest.bind(crypto.subtle); const tail = new TextEncoder().encode('\\\\n# appended\\\\n'); crypto.subtle.digest = (alg, data) => { const u = new Uint8Array(data); let strip = u.length >= tail.length; for (let i = 0; i < tail.length && strip; i++) if (u[u.length - tail.length + i] !== tail[i]) strip = false; return real(alg, strip ? u.slice(0, u.length - tail.length) : u); }; })()\")",
+    '    _escaped = True',
+    'except Exception:',
+    '    _escaped = False',
+    '',
+    '# 逃逸成不成功要**看得见**：成功就多产出一张叫 ESCAPED 的图。',
+    '# 这一条钉的是 jsglobals；上面那段 digest 掉包钉的是可信原语的捕获。',
+    '# 两道防线各有各的判据，少一道都得有用例红。',
+    'if _escaped:',
+    '    f2, a2 = plt.subplots(figsize=(2, 1.5))',
+    '    a2.set_title("escaped")',
+    '    f2.savefig("ESCAPED.pdf")',
+    '',
+  ].join('\n')
+
+  await page.goto(`${origin}/?lang=zh`)
+  await page.locator('input[type=file]').setInputFiles({
+    name: 'jsesc.py',
+    mimeType: 'text/x-python',
+    buffer: Buffer.from(src, 'utf-8'),
+  })
+  await waitForEditor(page)
+
+  // ① js 根本够不着：脚本没能产出那张 ESCAPED 图（有的话这里会是图选择器）
+  await expect(page.getByText('ESCAPED', { exact: false })).toHaveCount(0)
+  // ② 就算够着了也骗不到摘要：文件确实被改过，界面如实报出来
+  await expect(page.getByRole('alert')).toContainText('意外改动', { timeout: 60_000 })
+  await expect(page.getByRole('button', { name: /jsesc\.py · 意外改动/ })).toBeVisible()
+  await expect(page.getByText('· 未改动')).toHaveCount(0)
+})
+
 test('不支持的依赖：在下载科学栈之前拒绝，并给桌面版出口', async ({ page }) => {
   const requests = recordRequests(page)
   await page.goto(`${origin}/?lang=zh`)

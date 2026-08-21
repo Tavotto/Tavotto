@@ -24,7 +24,18 @@ interface PyodideLike {
   FS: { readFile(path: string, opts?: { encoding?: string }): Uint8Array }
 }
 
+/**
+ * **在任何用户代码之前**捕获的可信原语。
+ *
+ * 完整性核对不能在核对那一刻才去全局对象上取 `crypto.subtle.digest`——那时
+ * 用户脚本已经跑过了。这里的绑定发生在模块求值期，比 Pyodide 起来还早。
+ */
+const TRUSTED_DIGEST = crypto.subtle.digest.bind(crypto.subtle)
+const TrustedU8 = Uint8Array
+
 let pyodide: PyodideLike | null = null
+/** init 期捕获的 FS 读取函数（同样早于用户代码）。 */
+let trustedReadFile: ((p: string) => Uint8Array) | null = null
 let handleFn: ((s: string) => string) | null = null
 /** 用户脚本在虚拟 FS 里的绝对路径，`load` 成功时记下——**存在 JS 这一侧**。 */
 let workspacePath = ''
@@ -44,11 +55,12 @@ let workspacePath = ''
  * （`import js` 这类反向逃逸由 `browser_imports` 在执行前就拦掉了。）
  */
 async function fsDigest(path: string): Promise<{ sha256: string; bytes: number }> {
-  const data = pyodide!.FS.readFile(path, { encoding: 'binary' })
+  if (!trustedReadFile) fail('bad_request', 'Pyodide 还没初始化')
+  const data = trustedReadFile!(path)
   // 复制进独立的 ArrayBuffer：FS 给的是 WASM 堆上的视图，堆一增长就失效
-  const copy = new Uint8Array(data)
-  const buf = await crypto.subtle.digest('SHA-256', copy)
-  const sha256 = [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('')
+  const copy = new TrustedU8(data)
+  const buf = await TRUSTED_DIGEST('SHA-256', copy)
+  const sha256 = [...new TrustedU8(buf)].map((b) => b.toString(16).padStart(2, '0')).join('')
   return { sha256, bytes: copy.byteLength }
 }
 
@@ -91,9 +103,19 @@ async function init(id: number, pyodideBaseUrl: string, engineZipUrl: string): P
   // 版本钉死在 packaging/playground-runtime.json（URL 由主线程传入）。
   // @vite-ignore：这是**有意的**运行时外部地址——Pyodide 不打进 bundle。
   const mod = (await import(/* @vite-ignore */ `${pyodideBaseUrl}pyodide.mjs`)) as {
-    loadPyodide(opts: { indexURL: string }): Promise<PyodideLike>
+    loadPyodide(opts: { indexURL: string; jsglobals?: object }): Promise<PyodideLike>
   }
-  pyodide = await mod.loadPyodide({ indexURL: pyodideBaseUrl })
+  // `jsglobals: {}` **切断 Python 的 `js` 逃逸口**。这不是洁癖：`import js`
+  // 之后 `js.eval` 就能改 Worker 的任何全局——换掉 `crypto.subtle.digest`
+  // 让它在算之前先把追加的尾巴削掉、甚至直接 `self.postMessage` 伪造一整条
+  // 响应。**Python 一旦够得着 js，这个 Worker 里就没有任何东西可信**，
+  // 完整性核对连同协议本身一起失效。静态分类拦不住这条：
+  // `browser_imports` 有意放行 try/except 里的可选 import，而 `__import__('js')`
+  // 它根本看不见——所以防线必须在这里，用 Pyodide 官方的 jsglobals。
+  // 代价是脚本用不了 js 互操作；playground 接的是普通 matplotlib 脚本，
+  // 本来就不该用它（示例纯净度用例也一直这么要求）。
+  pyodide = await mod.loadPyodide({ indexURL: pyodideBaseUrl, jsglobals: {} })
+  trustedReadFile = (p: string) => pyodide!.FS.readFile(p, { encoding: 'binary' })
 
   progress(id, 'engine')
   const res = await fetch(engineZipUrl)
