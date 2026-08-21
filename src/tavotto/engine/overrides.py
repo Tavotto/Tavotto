@@ -1814,9 +1814,7 @@ def _cls_key(artist) -> str | None:
     # LineCollection 回数组，setter 也各吃各的，硬合成一族迟早分叉。
     # 也**刻意不并进下面的 `collection`**：它对外的 prop 是 `color`，而
     # Collection 族给的是 facecolor / edgecolor——两套命名都已经发出去了。
-    # 「标量映射的走通用分支」那道闸在 `manifest.instrument` 里（唯一出处），
-    # 这里不重复判——两处判据分开写必然漂开。
-    if isinstance(artist, LineCollection):
+    if is_linecoll_family(artist):
         return "linecoll"
     # Collection family：散点（PathCollection）与填充（PolyCollection）之外
     # 还有 QuadMesh / ContourSet / Quiver / Barbs…
@@ -1942,6 +1940,21 @@ def is_color_mapped(artist) -> bool:
         return get() is not None
     except Exception:  # noqa: BLE001 — 探针失败一律当「没在映射」
         return False
+
+
+def is_linecoll_family(artist) -> bool:
+    """归不归**线组**那一族。`manifest.instrument` 与 `_cls_key` 的**唯一判据**。
+
+    两处必须问同一个函数：登记时按它挑 gid 前缀与 role，dispatch 时按它挑
+    handler 家族与字段表。分开写必然漂开，而漂开的表现是「manifest 说这是个
+    映射色的通用 collection、检查器却按线组给了 `color`」——界面上那个控件
+    改不动任何东西，因为 `HANDLERS[("linecoll", …)]` 根本不在这个元素上。
+
+    **标量映射的不算线组**：那时颜色由 colormap 每次 draw 重算，线组对外的
+    `color` 是个单值，表达不了逐条颜色。它们走通用 Collection 族，由
+    `collection_caps()` 按实况给出 cmap / vmin / vmax 与描边。
+    """
+    return isinstance(artist, LineCollection) and not is_color_mapped(artist)
 
 
 def collection_caps(coll) -> frozenset[str]:
@@ -2597,6 +2610,31 @@ def _alias_by_artists(pick, narrow_prop: str):
     return resolve
 
 
+def _alias_colorbar_mappable(narrow_prop: str):
+    """色条的 `cmap` / `vmin` / `vmax` 写的是 **`cb.mappable`**——而那个
+    mappable 自己也是元素表里的一条（imshow 的 AxesImage、pcolormesh 的
+    QuadMesh、scatter(c=z) 的 PathCollection…）。两个 gid 指着同一份状态。
+
+    不把它们连成一组的话（实测，`imshow` + colorbar）：
+
+    * 两条都设过、只撤掉 mappable 那条 → 还原把色图写回脚本原样，色条那条
+      「值没变」于是被跳过，**热态回到 viridis、全量重放却是 magma**；
+    * 两条**全撤** → 后采的那份 originals 记的是「已经被另一条改过之后」的
+      值，于是撤销回到的是**中间态**（实测停在 plasma，回不到 viridis）。
+      用户按了撤销、图还是花的，而且再也回不去。
+
+    第二条比第一条更要命，也正是广播端「动手之前先把组员的脚本原样采下来」
+    那段逻辑存在的理由。
+    """
+    def resolve(state: "FigState", rev: dict, artist) -> list[tuple]:
+        m = getattr(getattr(artist, "cb", None), "mappable", None)
+        if m is None:
+            return []
+        gid = rev.get(id(m))
+        return [(gid, narrow_prop)] if gid is not None else []
+    return resolve
+
+
 def _alias_colorbar_ticks(narrow_prop: str):
     """色条的 `tick_*` 写的是 `cb.ax.tick_params(...)`（默认 axis="both"），
     盖掉的是**色条轴自己那两组刻度**的同名 prop。
@@ -2650,9 +2688,21 @@ for _bprop in ("facecolor", "edgecolor", "linewidth", "alpha", "visible"):
 for _sprop in ("color", "alpha", "visible", "zorder", "marker", "markersize"):
     ALIAS_GROUPS[("stem_series", _sprop)] = _alias_by_artists(
         lambda g: g.members(), _sprop)
+# 色条 ↔ 它的 mappable：同一份色图与 clim，两个 gid。**这条不是本次新开的
+# 重叠**——`("image", "cmap")` 与 `("colorbar", "cmap")` 一直都在同一个
+# AxesImage 上；Collection 族开放 cmap/vmin/vmax 只是把它扩到了
+# pcolormesh / contour / scatter(c=z)。既然机制在这儿，一起收了。
+# 谁在前：mappable 那条排在色条之后（`_rank` 的组内次序），所以两条都设过时
+# 图元自己那条说了算——色条是 mappable 的一个视图，不是反过来。
+for _cprop in ("cmap", "vmin", "vmax"):
+    ALIAS_GROUPS[("colorbar", _cprop)] = _alias_colorbar_mappable(_cprop)
 
-#: 广播端 prop 名的集合。`apply` 拿它做**廉价预筛**——绝大多数 patch 与别名
-#: 无关，不该为它们付一次 `state.resolve()` 的代价。
+#: 广播端 prop 名的集合。`apply` 拿它做**廉价预筛**：不在表里的 patch 连
+#: `state.resolve()` 都不用付。随着别名组覆盖到线组、色条 ↔ mappable，这张表
+#: 已经收进了 color / alpha / visible / zorder / cmap 这些**很常见**的名字，
+#: 预筛能挡掉的比当初少了不少——它挡的是 prop 名，不是元素。真正的花销仍然
+#: 由 `_alias_members` 里那句 `ALIAS_GROUPS.get((_cls_key(artist), prop))` 兜住
+#: （查不到就立刻回空，反查表也不会被建起来）。
 _BROADCAST_PROPS = frozenset(prop for _cls, prop in ALIAS_GROUPS)
 
 

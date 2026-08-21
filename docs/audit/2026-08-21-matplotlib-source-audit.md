@@ -438,3 +438,44 @@ prop 名与 gid 一起换掉，而 override 是按 `{gid, prop}` 存的。族抽
 全撤之后逐位回到脚本原样。看护
 `tests/test_artist_families.py::test_removing_a_legacy_alias_override_replays_the_series`
 ——去掉修复它当场红。
+
+## 16. 第二轮自动审查的两条 P2（都实测复现，都已修）
+
+### 16.1 登记与 dispatch 用了两条判据
+
+§14 的裁决把标量映射的 LineCollection 放进通用 `collection` 分支，但
+`_cls_key` 仍然无条件对**任何** LineCollection 回 `linecoll`——两条判据分开写，
+当场就漂开了：元素表说它是通用 collection（gid `collections_j`），检查器却按
+线组给了 `color`，而 `HANDLERS[("linecoll", …)]` 根本不在这个元素上。
+那个控件在界面上看得见、一个像素都改不动，而且不报任何错。
+
+判据收成**一个函数** `overrides.is_linecoll_family(artist)`，`manifest.instrument`
+与 `_cls_key` 都问它。看护
+`test_mapped_line_collections_leave_the_linecoll_family`。
+
+### 16.2 色条与它的 mappable 是同一份状态、两个 gid
+
+`("colorbar", "cmap"/"vmin"/"vmax")` 写的是 `cb.mappable`，而那个 mappable
+自己也是元素表里的一条。**这条重叠不是本次新开的**——`("image","cmap")` 与
+`("colorbar","cmap")` 一直落在同一个 AxesImage 上；Collection 族开放
+cmap/vmin/vmax 只是把它扩到了 pcolormesh / contour / scatter(c=z)。既然
+§15 已经把机制建好，一起收了。
+
+实测（`imshow` + colorbar）两个症状：
+
+* 两条都设过、只撤掉 mappable 那条 → 热态 viridis、全量重放 magma；
+* 两条**全撤** → 停在**中间态**（实测 plasma，回不到 viridis）。用户按了撤销、
+  图还是花的，而且再也回不去。第二条正是「广播端动手之前先采下组员的脚本
+  原样」那段逻辑存在的理由。
+
+`ALIAS_GROUPS[("colorbar", cmap/vmin/vmax)] = _alias_colorbar_mappable(...)`。
+两条都设过时**图元自己那条说了算**（`_rank` 的组内次序：色条是 mappable 的
+一个视图，不是反过来）。看护 `test_colorbar_and_its_mappable_are_one_alias_group`
+——去掉修复两条断言各自当场红。
+
+### 这三条 P2 是同一个形状
+
+§15 与本节的两条都是「**两个 gid 指着同一份状态**」，而 `apply` 的
+「值没变就跳过」捷径对它们是错的。别名组 + `dirty_groups` 就是为这件事建的；
+以后再开放任何一条「同一份状态的第二个入口」，先问一句它该不该进
+`ALIAS_GROUPS`。

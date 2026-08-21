@@ -44,6 +44,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.artist import Artist
 from matplotlib.lines import Line2D
+from matplotlib.collections import LineCollection
 from matplotlib.patches import Circle, Rectangle
 
 
@@ -80,6 +81,10 @@ def main():
     ax.pcolormesh(np.linspace(7, 9, 9), np.linspace(0, 2, 9), Z)   # collections_3
     ax.contour(np.linspace(7, 9, 8), np.linspace(3, 5, 8), Z)      # collections_4
     ax.eventplot([[1.0, 2.0, 3.0]], lineoffsets=5.0, linelengths=0.6)  # linecoll_5
+    # 标量映射的线组：**不算线组那一族**，走通用 collection（collections_6）
+    mapped_lc = LineCollection([[(0.5, -2.0), (6.0, -2.0)], [(0.5, -1.6), (6.0, -1.6)]],
+                               array=np.array([0.2, 0.8]), cmap="viridis")
+    ax.add_collection(mapped_lc)
     ax.set_xlim(0, 10)
     ax.set_ylim(-2.5, 6)
     ax.legend()
@@ -228,6 +233,71 @@ def test_every_collection_can_be_stroked(hot):
         assert {"edgecolor", "linewidth"} <= props, gid
     # 线组那一族对外叫 `color`（Line2D 口径），描边能力是同一件事、名字不同
     assert {"color", "linewidth"} <= set(_fields(man, "axes_0.linecoll_5"))
+
+
+def test_mapped_line_collections_leave_the_linecoll_family(hot):
+    """标量映射的 LineCollection 走**通用 collection**，登记与 dispatch 同一个判据。
+
+    这是把两条判据分开写的必然结局（Codex 在 PR #48 上报的 P2）：登记那头按
+    `get_array()` 把它放进 `collections_j`，`_cls_key` 却无条件回 `linecoll`
+    ——于是元素表说它是通用 collection，检查器按线组给了 `color`，而
+    `HANDLERS[("linecoll", …)]` 根本不在这个元素上，那个控件一个像素都改不动。
+    判据现在只有 `overrides.is_linecoll_family` 一处。
+    """
+    man = _man(hot, "FamColl")
+    gids = _gids(man)
+    assert "axes_0.collections_6" in gids, \
+        f"映射的线组没进通用 collection：{sorted(g for g in gids if 'coll' in g)}"
+    assert "axes_0.linecoll_6" not in gids, "映射的线组被当成线组登记了"
+
+    props = set(_fields(man, "axes_0.collections_6"))
+    assert {"cmap", "vmin", "vmax"} <= props, f"映射的线组没拿到色图控件：{props}"
+    assert "color" not in props, "映射的线组给了线组那套单值 color"
+
+    # dispatch 真的落在通用族上：改一条通用族的 prop 必须无 warning 且生效
+    resp = hot.override("FamColl", [{"gid": "axes_0.collections_6",
+                                     "prop": "cmap", "value": "plasma"}])
+    assert not (resp.get("warnings") or []), resp["warnings"]
+    got = _fields(resp["manifest"], "axes_0.collections_6")["cmap"]["value"]
+    assert got == "plasma", got
+    hot.override("FamColl", [])
+
+
+def test_colorbar_and_its_mappable_are_one_alias_group(hot):
+    """色条的 cmap / vmin / vmax 与 mappable 自己那套是**同一份状态、两个 gid**。
+
+    Codex 在 PR #48 上报的第二条 P2，实测复现得到两个症状（`imshow` + colorbar）：
+
+    * 两条都设过、只撤掉 mappable 那条 → 还原写回脚本原样，色条那条「值没变」
+      被跳过，热态回到 viridis 而全量重放是 magma；
+    * 两条**全撤** → 后采的 originals 记的是「已经被另一条改过之后」的值，
+      撤销停在**中间态**（实测 plasma），用户按了撤销、图还是花的。
+
+    第二条尤其要命：这条重叠**不是本次新开的**（`("image","cmap")` 与
+    `("colorbar","cmap")` 一直在同一个 AxesImage 上），Collection 族开放
+    cmap 只是把它扩到了 pcolormesh / scatter(c=z)。
+    """
+    base = _man(hot, "FamCbar")
+    img = next(g for g in _gids(base) if ".images_" in g)
+    cbar = next(g for g in _gids(base) if g.endswith(".colorbar"))
+    orig = _fields(base, img)["cmap"]["value"]
+
+    # 两条都设：图元自己那条说了算（组内次序由 _rank 定死）
+    man = _man(hot, "FamCbar", [
+        {"gid": img, "prop": "cmap", "value": "plasma"},
+        {"gid": cbar, "prop": "cmap", "value": "cividis"},
+    ])
+    assert _fields(man, img)["cmap"]["value"] == "plasma"
+
+    # 只撤掉图元那条：色条那条必须重放，不能退回脚本原样
+    man = _man(hot, "FamCbar", [{"gid": cbar, "prop": "cmap", "value": "cividis"}])
+    assert _fields(man, img)["cmap"]["value"] == "cividis", \
+        "撤掉图元那条把共享的 mappable 写回原样了，而色条那条被跳过没重放"
+
+    # 全撤：必须逐字回到脚本原样，不是中间态
+    man = _man(hot, "FamCbar")
+    assert _fields(man, img)["cmap"]["value"] == orig, \
+        "撤销停在中间态——广播端没有在动手之前采下组员的脚本原样"
 
 
 def test_marker_replacement_stays_a_scatter_only_contract(hot):

@@ -26,7 +26,7 @@ import pathgeom
 from overrides import (ColorbarProxy, FigState, HANDLERS, HATCHES, SeriesGroup,
                        TickLabel, TickSet, _ARROWSTYLES, _CB_EXTENDS, _LEGEND_LOCS,
                        _TICK_FORMATS, _TICK_MINOR_FORMATS,
-                       collection_caps, is_color_mapped,
+                       collection_caps, is_color_mapped, is_linecoll_family,
                        _arrow_style, _arrowstyle_name, _axis_arrows_on,
                        _linestyle_name, _linecoll_linestyle_name,
                        _boxstyle_info, _cb_axis, _cb_tick_color,
@@ -393,7 +393,7 @@ def instrument(state: FigState) -> None:
                 elif isinstance(coll, PolyCollection):
                     _register(state, f"axes_{i}.fill_{j}", coll, "fill",
                               _coll_label(coll, j))
-                elif isinstance(coll, LineCollection) and coll.get_array() is None:
+                elif is_linecoll_family(coll):
                     # 线组：`hlines`/`vlines` 的参考线、`stem` 的竖线、
                     # `eventplot` 的事件线（EventCollection 是它的子类）、
                     # `streamplot` 的流线、`violinplot` 的极值线。这是 artist
@@ -405,10 +405,13 @@ def instrument(state: FigState) -> None:
                     # Collection 族给的是 facecolor/edgecolor——两套命名已经
                     # 发出去了，合并等于换掉存量文档里的 prop 名。
                     #
-                    # **标量映射的一律走下面那支通用分支**（`get_array()` 非
-                    # 空）：那时颜色由 colormap 每次 draw 重算，`color` 这个
-                    # 单值口径表达不了逐条颜色；通用分支按 `collection_caps()`
-                    # 的实况说话，反而不会假装认识它。
+                    # **标量映射的一律走下面那支通用分支**：那时颜色由
+                    # colormap 每次 draw 重算，`color` 这个单值口径表达不了
+                    # 逐条颜色；通用分支按 `collection_caps()` 的实况说话，
+                    # 反而不会假装认识它。判据是 `overrides.is_linecoll_family`
+                    # ——**登记与 dispatch 共用同一个函数**，`_cls_key` 问的也
+                    # 是它。分开写必然漂开，而漂开的表现是元素表说通用、
+                    # 检查器却按线组给字段，那个控件一个像素都改不动。
                     lab = str(coll.get_label())
                     nice = f"线组 “{_snippet(lab)}”" if lab and not lab.startswith("_") \
                         else f"线组 {j + 1}"
