@@ -40,7 +40,8 @@ from overrides import (BBOX_DEFAULTS, ColorbarProxy, FigState, HANDLERS, HATCHES
                        tick_format_name, tick_major_mode, tick_major_step,
                        tick_major_values, tick_minor_format, tick_minor_mode,
                        tick_minor_step, tick_minor_visible, to_hex,
-                       remember_axis_directions)
+                       remember_axis_directions,
+                       colorbar_mapping_is_live)
 
 CMAPS = ["viridis", "plasma", "inferno", "magma", "cividis", "Greys", "gray",
          "hot", "afmhot", "coolwarm", "RdBu_r", "seismic", "jet", "turbo"]
@@ -1180,7 +1181,7 @@ def _colorbar_fields(p) -> list[dict]:
            {"prop": "vmax", "type": "number",
             "value": None if vmax is None else round(float(vmax), 4),
             "step": round(step, 4), "group": "颜色映射"}]
-          if color_mapping_is_live(cb.mappable) else []),
+          if colorbar_mapping_is_live(cb) else []),
         {"prop": "tick_fontsize", "type": "number", "value": round(_cb_tick_fontsize(p), 2),
          "min": 3, "max": 24, "step": 0.5, "unit": "pt", "group": "刻度"},
         {"prop": "tick_color", "type": "color", "value": to_hex(_cb_tick_color(p)),

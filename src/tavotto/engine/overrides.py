@@ -2532,6 +2532,34 @@ def is_linecoll_family(artist) -> bool:
     return isinstance(artist, LineCollection) and not is_color_mapped(artist)
 
 
+def colorbar_mapping_is_live(cb) -> bool:
+    """**色条**那一侧该不该给 cmap / vmin / vmax。
+
+    不能直接用 `color_mapping_is_live(cb.mappable)`：那条判据问的是「映射此刻
+    还在不在决定**这个 artist 的颜色**」，而 `fig.colorbar(ScalarMappable(
+    norm=…, cmap=…), ax=ax)` 里那个 mappable **根本没有数据数组**（三个版本
+    实测 `get_array()` 都是 None），于是被判成「映射不在」，色条的三个控件
+    全被摘掉——可 `set_cmap` 明明改得动色条本身。又一次「能改却不宣称」。
+
+    真正的区分点不是「有没有数组」，是**图上有没有一个会与色标对不上的
+    artist**：
+
+      * 独立 mappable **不是 Artist**（3.8.4 / 3.10.8 / 3.11.1 实测一致，
+        `_ScalarMappable` 不继承 Artist）——图上没有对应的图元，色条就是它
+        唯一的呈现，改 cmap 不存在「色标变了、数据没变」的风险 → **给**。
+      * 真正的图元（AxesImage / Collection）→ 仍然按
+        `color_mapping_is_live` 判。映射的线组被设过 edgecolor 之后，
+        映射不再决定线的颜色，那时给 cmap 就是让色标与数据脱节 → **不给**。
+        （那条闸是上一轮修的，必须原样留着。）
+    """
+    m = getattr(cb, "mappable", None)
+    if m is None:
+        return False
+    if not isinstance(m, Artist):
+        return True
+    return color_mapping_is_live(m)
+
+
 def honours_faces(coll) -> bool:
     """这个 Collection 上 `set_facecolor` 到底**能不能把面涂成你要的颜色**。
 
