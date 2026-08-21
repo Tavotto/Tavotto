@@ -23,7 +23,7 @@ from matplotlib.patches import FancyArrowPatch, Patch
 from matplotlib.text import Text
 
 import pathgeom
-from overrides import (ColorbarProxy, FigState, HANDLERS, HATCHES, SeriesGroup,
+from overrides import (BBOX_DEFAULTS, ColorbarProxy, FigState, HANDLERS, HATCHES, SeriesGroup,
                        TickLabel, TickSet, _ARROWSTYLES, _CB_EXTENDS, _LEGEND_LOCS,
                        _TICK_FORMATS, _TICK_MINOR_FORMATS,
                        collection_caps, is_color_mapped, is_linecoll_family,
@@ -540,8 +540,18 @@ def instrument(state: FigState) -> None:
 #: 元素」。轴与它的整棵子树（刻度线、刻度标签、offset text）由刻度模型代表，
 #: 边框由边框模型代表，背景矩形由 axes 的 facecolor 代表。
 def _internal_ids(fig, colorbar_axes=()) -> set[int]:
+    """axes 的**结构件**（背景 patch、四条边框、三条轴对象）的 id 集合。
+
+    它们由 `axes_i` 那个元素代表，不该被普查报成「漏掉的 artist」。
+
+    **必须走 `_ordered_axes`，不是 `fig.axes`**：`inset_axes` /
+    `secondary_[xy]axis` 挂在 `ax.child_axes` 上。少收它们的话，普查会为每个
+    插图凭空报出「漏掉了一个 Rectangle 和四条 Spine」——那正是「普查一旦开始
+    喊狼来了，真正的缺口就没人看了」。这条与 `census` 的遍历必须同源。
+    """
     ids = {id(fig.patch)}
-    for ax in fig.axes:
+    ordered, _child_ids = _ordered_axes(fig)
+    for ax in ordered:
         ids.add(id(ax))
         ids.add(id(ax.patch))
         ids.update(id(sp) for sp in getattr(ax, "spines", {}).values())
@@ -583,7 +593,14 @@ def census(fig, state: FigState) -> list[dict]:
             known.update(id(m) for m in art.members())
             known.update(id(m) for m in (art.artists if isinstance(art.artists, list) else []))
     seen: dict[tuple, int] = {}
-    for gid, owner in [("figure", fig)] + [(f"axes_{i}", ax) for i, ax in enumerate(fig.axes)]:
+    # **必须走 `_ordered_axes`，不是 `fig.axes`**：`ax.inset_axes()` 与
+    # `ax.secondary_[xy]axis()` 建出来的挂在 `ax.child_axes` 上，`in fig.axes`
+    # 为 False。`instrument` 早就按 `_ordered_axes` 遍历了，普查却只走
+    # `fig.axes`——于是插图里漏掉的 artist **在普查里也不出现**，报告照样说
+    # 「没漏」。一个报平安的普查比没有普查更坏，而它正是「不许静默消失」
+    # 那条不变式的诊断面。编号也必须同源，否则 `where` 指向另一个 axes。
+    ordered, _child_ids = _ordered_axes(fig)
+    for gid, owner in [("figure", fig)] + [(f"axes_{i}", ax) for i, ax in enumerate(ordered)]:
         try:
             children = list(owner.get_children())
         except Exception:  # noqa: BLE001 — 普查失败绝不能拖垮渲染
@@ -619,13 +636,18 @@ def _text_fields(t) -> list[dict]:
               "alpha": 1.0 if patch.get_alpha() is None else round(float(patch.get_alpha()), 2),
               "pad": round(pad, 2), "rounded": rounded}
     else:
-        # 还没有 bbox patch 时的合成默认值。**颜色一律经 `to_hex` 产出**，
-        # 不手写字面量：`mcolors.to_hex` 回的是小写，手写 `"#FFFFFF"` 会让
-        # 「开一次 bbox 再关掉」之后同一个字段从 `#FFFFFF` 变成 `#ffffff`
-        # ——画面一个像素没变，manifest 却不一样了，于是热态 ≠ 全量重放。
-        # 那正是「同一个值有两处出处」的最小样本（不变式 5）。
-        bb = {"visible": False, "face": to_hex("white"), "edge": to_hex("black"),
-              "lw": 0.0, "alpha": 1.0, "pad": 0.3, "rounded": False}
+        # 还没有 bbox patch 时的合成默认值——**取自 `overrides.BBOX_DEFAULTS`**，
+        # 那是这套默认值的唯一出处。三处消费它（现建的 patch 长什么样、还原
+        # 写回什么、没有框时显示什么），少一处对齐的代价是「开一次框再关掉」
+        # 之后 manifest 的值漂一格（手写的 `#FFFFFF` vs `to_hex` 的
+        # `#ffffff`）：画面一个像素没变，热态却已经 ≠ 全量重放。
+        bb = {"visible": BBOX_DEFAULTS["bbox_visible"],
+              "face": BBOX_DEFAULTS["bbox_facecolor"],
+              "edge": BBOX_DEFAULTS["bbox_edgecolor"],
+              "lw": BBOX_DEFAULTS["bbox_linewidth"],
+              "alpha": BBOX_DEFAULTS["bbox_alpha"],
+              "pad": BBOX_DEFAULTS["bbox_pad"],
+              "rounded": BBOX_DEFAULTS["bbox_rounded"]}
     st = _stroke_state(t)
     axis3d = getattr(t, "_mm_axis", None)  # 3D 轴标签：labelpad 是唯一的位置旋钮
     return [
@@ -1006,6 +1028,49 @@ def _patch_fields(pt) -> list[dict]:
     return fields
 
 
+#: 界面上想优先给出的插值档位（从粗到细）。**这是排序偏好，不是有效值表**
+#: ——有效值一律问 matplotlib 要，见 `_interpolation_options`。
+_INTERP_PREFERRED = ("auto", "antialiased", "nearest", "bilinear", "bicubic",
+                     "lanczos", "none")
+
+#: 同义档位：列在一起会让其中一个看起来「点了没反应」。键在时把值去掉。
+#: `auto` 是 3.9 给 `antialiased` 起的新名字，两者**逐像素相同**（实测
+#: 512×512 缩到 2 英寸：auto → antialiased 变化 0 像素，auto → nearest 是
+#: 23409）。3.8 上只有 `antialiased`，那时它自己留下。
+_INTERP_ALIASES = {"auto": "antialiased"}
+
+
+def _interpolation_options(current: str) -> list[str]:
+    """插值档位的选项表——**有效值问 matplotlib 要，不在这里写死**。
+
+    这条枚举是**开集，而且随版本变**：`"auto"` 是 3.9 才加进去的，
+    matplotlib **3.8.4（我们的最低支持运行时）上根本不存在**。写死一张表的
+    后果是：在 3.8 上界面照样把 `auto` 列出来，用户一点，`set_interpolation`
+    抛 `ValueError` → 收成一条 warning → 而**一条 warning 就阻断写回**，
+    提示还与真实原因毫不相干。这个缺口是 CompatBench 的最低运行时那一档
+    加进不变式扫描之后当场逮到的。
+
+    `matplotlib.image._interpd_` 是那张表的**唯一权威**——`set_interpolation`
+    校验用的就是它（3.8 有 19 项、3.10/3.11 有 20 项，差的正是 `auto`）。
+    私有名，所以取不到时退回「只给当前值」：少几个档位是能用的界面，
+    多一个不存在的档位是一个点了就报错、还把写回堵死的界面。
+    """
+    try:
+        from matplotlib.image import _interpd_       # noqa: PLC0415, SLF001
+        valid = set(_interpd_)
+    except Exception:                                # noqa: BLE001
+        valid = set()
+    opts = [o for o in _INTERP_PREFERRED if o in valid]
+    for keep, drop in _INTERP_ALIASES.items():
+        if keep in opts and drop in opts and drop != current:
+            opts.remove(drop)
+    if not opts:
+        opts = [current]
+    if current not in opts:
+        opts = [current] + opts
+    return opts
+
+
 def _image_fields(im) -> list[dict]:
     arr = im.get_array()
     mappable = arr is not None and getattr(arr, "ndim", 0) == 2
@@ -1021,9 +1086,7 @@ def _image_fields(im) -> list[dict]:
         # matplotlib 里同属 ColorizingArtist，cmap/clim 的语义逐字相同
         fields += _colormap_fields(im)
     interp = str(im.get_interpolation())
-    i_opts = ["auto", "nearest", "bilinear", "bicubic", "lanczos", "none"]
-    if interp not in i_opts:
-        i_opts = [interp] + i_opts
+    i_opts = _interpolation_options(interp)
     fields += [
         {"prop": "interpolation", "type": "enum", "value": interp, "options": i_opts},
         {"prop": "alpha", "type": "number",

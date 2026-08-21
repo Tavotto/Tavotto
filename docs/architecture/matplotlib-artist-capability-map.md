@@ -140,10 +140,21 @@ census()：既没登记、也不是结构件的 → manifest 的 `unsupported` �
 | Family | 代表类 | 语义元素 | 开放什么 |
 | --- | --- | --- | --- |
 | 线组 | `LineCollection` `EventCollection` | `axes_i.linecoll_j` | `color` / 线宽 / 线型 / alpha / visible / zorder（Line2D 的口径；**标量映射的不走这族**，见下一行） |
-| Collection·描边型 | `ContourSet` 与标量映射的 `LineCollection` | `axes_i.collections_j` | 描边（edgecolor/宽/线型）、花纹、alpha、visible、zorder；映射的另给 cmap/clim |
+| Collection·描边型 | `ContourSet` 与标量映射的 `LineCollection` | `axes_i.collections_j` | 描边（edgecolor/宽/线型）、alpha、visible、zorder；映射的另给 cmap/clim。**没有面就不给花纹**（`get_facecolor()` 长度实测为 0） |
 | Collection·填充型 | `PolyCollection` `FillBetweenPolyCollection` `Quiver` `Barbs` | `axes_i.fill_j` | 上面那些 + facecolor（未映射时） |
-| Collection·网格型 | `QuadMesh` `PolyQuadMesh` | `axes_i.collections_j` / `axes_i.fill_j` | cmap/vmin/vmax + 描边（加网格线）；**不给 facecolor** |
+| Collection·网格型 | `QuadMesh` `TriMesh` | `axes_i.collections_j` | cmap/vmin/vmax + 描边（边色 / 线宽，可加网格线）；**不给 facecolor**，也**不给花纹与线型**——它们走 `renderer.draw_quad_mesh` / `draw_gouraud_triangles`，那两个渲染原语只接边色与线宽（实测 hatch/linestyle 各 0 像素，判据 `overrides.honours_stroke_style`） |
+| Collection·网格型（通用路径） | `PolyQuadMesh`（`pcolor`） | `axes_i.fill_j` | 与填充型相同——它走 Collection 的通用绘制路径，花纹与线型**都认**（实测 10692 / 1100）。`pcolor` 与 `pcolormesh` 落在两侧，所以这不是「网格图不支持」，是「那个渲染原语不支持」 |
 | 散点 | `PathCollection` | `axes_i.scatter_j` | 再加 size / marker 整体替换 |
+
+> **`cmap` / `vmin` / `vmax` 只在「映射此刻真的在决定颜色」时出现**
+> （`overrides.color_mapping_is_live`，照抄 matplotlib 的
+> `Collection._set_mappable_flags()` 规则）。「有数组」不等于「在映射」：
+> `LineCollection(..., colors="red", array=z)` 两个通道都没在映射，
+> 而**用户设过 `edgecolor` 之后，映射的线组也会进入同一个状态**——那时
+> 三个色图控件一个像素都改不动（实测），所以它们会**暂时消失**，撤掉边色
+> override 之后自己回来。这与 family 判据（`is_color_mapped`，只看数组在不
+> 在）是**两个问题**：family 必须在一次会话里恒定，否则 gid 与 handler 家族
+> 会随用户的 override 翻脸。
 
 ### 3.3 只识别、不编辑（Render-only / recognized）
 

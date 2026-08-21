@@ -283,19 +283,56 @@ def _restore_text_pos(t: Text, orig) -> None:
     t.set_position(tuple(orig))
 
 
+#: matplotlib 的**通用族别名**。`font.<别名>` 是一张候选字体名清单。
+_GENERIC_FONT_FAMILIES = ("serif", "sans-serif", "cursive", "fantasy", "monospace")
+
+
+def _mathtext_font_name(fam: str) -> str | None:
+    """把字体族名换成 **mathtext 认得的具体字体名**；换不出来返回 None。
+
+    `mathtext.rm` 这几个 rcParam 走的是 FontconfigPattern 语法，只吃**具体
+    字体名**——喂 `"sans-serif"` 会当场抛：
+
+        Key mathtext.rm: sans-serif
+                             ^
+        ParseException: Expected end of text, found '-' (at char 4)
+
+    而 `sans-serif` 正是我们在检查器里列出来的选项之一。于是用户点一下
+    「无衬线」→ `apply` 报「应用失败」→ **一条 warning 就阻断写回**。
+    通用族别名要先经 `font.<别名>` 那张候选清单解析成真实字体名，
+    matplotlib 自己也是这么做的。
+    """
+    if fam in _GENERIC_FONT_FAMILIES:
+        names = list(mpl.rcParams.get(f"font.{fam}") or [])
+        return str(names[0]) if names else None
+    return fam
+
+
 def _set_text_fontfamily(t: Text, v) -> None:
     """改字体连同 mathtext 一起改。set_fontfamily 只影响正文，$…$ 里的上下标
     仍按 mathtext 字体集渲染——同一个文字框里两种字体。把该 artist 的
     math_fontfamily 切到 custom 字体集，再让 rcParams 的 mathtext.* 指向同一
     字体，正文与上下标才一致。rcParams 是进程级：多个文字分别改成**不同**
     字体时 custom 集只能指向最后一次的选择（明示的边界）；未改字体的文字
-    不在 custom 集上，不受影响。"""
+    不在 custom 集上，不受影响。
+
+    **正文字体优先落地**：mathtext 那一步是「让上下标跟着一起换」的加分项，
+    换不成也不该把整条编辑拖失败——失败的表现是 warning，而一条 warning 就
+    阻断写回。换不成时 `$…$` 留在默认字体集里，用户看得见（正文变了、公式
+    没变），不是静默的。
+    """
     fam = str(v[0]) if isinstance(v, (list, tuple)) else str(v)
     t.set_fontfamily(fam)
-    mpl.rcParams["mathtext.rm"] = fam
-    mpl.rcParams["mathtext.it"] = f"{fam}:italic"
-    mpl.rcParams["mathtext.bf"] = f"{fam}:bold"
-    mpl.rcParams["mathtext.sf"] = fam
+    math_name = _mathtext_font_name(fam)
+    if not math_name:
+        return
+    try:
+        mpl.rcParams["mathtext.rm"] = math_name
+        mpl.rcParams["mathtext.it"] = f"{math_name}:italic"
+        mpl.rcParams["mathtext.bf"] = f"{math_name}:bold"
+        mpl.rcParams["mathtext.sf"] = math_name
+    except (ValueError, KeyError):
+        return                      # 正文已经改好；上下标留在默认字体集
     t.set_math_fontfamily("custom")
 
 
@@ -390,29 +427,138 @@ def _restore_arrow_endpoints(a, orig) -> None:
 # ---------------------------------------------------------------------------
 # 文字背景框（Text.set_bbox 的 FancyBboxPatch）与描边（path_effects.withStroke）
 # ---------------------------------------------------------------------------
-_BBOX_CREATE = dict(boxstyle="square,pad=0.3", facecolor="#FFFFFF",
-                    edgecolor="#000000", linewidth=0.0, alpha=1.0)
+#: 文字背景框的默认值 —— **全仓库唯一一处**。三处消费它，少一处对齐就出问题：
+#:
+#:   1. `_BBOX_CREATE`：首次改任何背景属性时现建的那个 patch 长什么样；
+#:   2. `_bbox_handler` 的 default：还原时写回去的值；
+#:   3. `manifest._text_fields`：**还没有框**时检查器显示什么。
+#:
+#: 三处曾经各写各的，代价是「开一次框再关掉」之后 manifest 的值漂一格
+#: （手写的 `#FFFFFF` vs `to_hex` 的 `#ffffff`）——画面一个像素没变，热态却
+#: 已经 ≠ 全量重放。颜色一律经 `mcolors.to_hex`，别手写十六进制字面量。
+BBOX_DEFAULTS = {
+    "bbox_visible": False,
+    "bbox_facecolor": mcolors.to_hex("white"),
+    "bbox_edgecolor": mcolors.to_hex("black"),
+    "bbox_linewidth": 0.0,
+    "bbox_alpha": 1.0,
+    "bbox_pad": 0.3,
+    "bbox_rounded": False,
+}
+
+_BBOX_CREATE = dict(boxstyle=f"square,pad={BBOX_DEFAULTS['bbox_pad']}",
+                    facecolor=BBOX_DEFAULTS["bbox_facecolor"],
+                    edgecolor=BBOX_DEFAULTS["bbox_edgecolor"],
+                    linewidth=BBOX_DEFAULTS["bbox_linewidth"],
+                    alpha=BBOX_DEFAULTS["bbox_alpha"])
 
 
 def _bbox_ensure(t: Text):
+    """拿到（必要时现建）这个 Text 的背景框 patch。
+
+    现建时在 artist 上留一个记号 `_mm_bbox_created`——**还原要靠它，靠
+    `originals` 靠不住**：bbox_* 是六条 prop 写**同一个 patch**，谁先被应用
+    谁就把框建出来了，于是后一条 prop 的「脚本原样」是在**框已经存在之后**
+    采的（读到 `bool(patch.get_visible())` 而不是「本来没有框」）。这与
+    ALIAS_GROUPS 那条「广播端要在动手之前替组员采原样」是同一个坑，只是这里
+    的组小到不必上那套机制：记一个「这框是我们建的」就够了。
+    """
     patch = t.get_bbox_patch()
     if patch is None:
+        t._mm_bbox_created = True          # noqa: SLF001 — 见上
         t.set_bbox(dict(_BBOX_CREATE))
         patch = t.get_bbox_patch()
     return patch
 
 
+class _NoBbox:
+    """哨兵：这个 Text **原本没有背景框**。
+
+    `originals` 只活在 worker 进程里、不落盘也不过 JSON，所以可以用对象身份
+    表示「没有」。用一个普通默认值表示不行——那个值与「有一个 patch，而它的
+    facecolor 恰好是白色」在数值上完全一样，还原时分不出该不该把框摘掉。
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:                 # 诊断里要看得懂
+        return "<no bbox>"
+
+
+_NO_BBOX = _NoBbox()
+
+
+def _text_has_bbox_left(t: Text, state: "FigState") -> bool:
+    """这个 Text 上**还剩**几条 bbox_* override 生效（含正在还原的那一条）。
+
+    `apply` 的还原循环是先调 restore、再把 key 从 `state.applied` 里弹出去，
+    所以正在还原的这条此刻仍在表里：只剩它一条（≤1）时才轮到摘框。
+    多条一起还原时，前几条数出 >1 不动手，最后一条数出 1 才摘——顺序无关。
+    """
+    n = 0
+    for gid, prop in state.applied:
+        if not prop.startswith("bbox_"):
+            continue
+        try:
+            if state.resolve(gid) is t:
+                n += 1
+        except Exception:                      # noqa: BLE001 — 解析不出就不算
+            continue
+    return n > 1
+
+
 def _bbox_handler(read, write, default) -> tuple:
-    """背景框子属性：无 patch 时 getter 返回默认值（restore 会把已建 patch
-    的属性写回默认，配合 bbox_visible 恢复 False 达成视觉还原）；
-    setter 按需建 patch（首次改任何背景属性即出现背景框）。"""
+    """背景框子属性：setter 按需建 patch（首次改任何背景属性即出现背景框）。
+
+    ## 还原必须能把「本来就没有框」这个状态还回去
+
+    老实现的 getter 在没有 patch 时回 `default`，还原时又把 `default` 写进一个
+    **`_bbox_ensure` 现建出来的** patch——而新建的 patch 是可见的。于是：
+
+        文字本来没有背景框 → 用户只改了「背景色」 → 撤销 →
+        底色是还原了，**框还在**（`bbox_visible` 从 False 变成 True，
+        而且再也回不去）
+
+    这条比看上去严重：它让**热态 ≠ 全量重放**（全新 worker 重放同一组 patch
+    时那个 Text 上根本没有 patch），而 manifest 里 `bbox_visible` 真的变了值
+    ——写回自检只比几何，看不见。之所以一直没被用例逮到，是因为扫描顺序
+    恰好先把 `bbox_visible` 设成 True 建了框，后面每一条都落在「框已存在」
+    的分支上——**另一道防线恰好挡住了它**，测试全绿。换个顺序就现形。
+
+    修法：没有 patch 时 getter 回哨兵 `_NO_BBOX`，还原看到哨兵就
+    `set_bbox(None)` 把框整个摘掉。**但要先确认这个 Text 上没有别的 bbox_*
+    还生效**——那几条 prop 写的是同一个 patch，摘早了会把仍然生效的背景色
+    一起摘掉（与 ALIAS_GROUPS 处理的是同一类重叠，只是这里的「组」小到可以
+    就地数清楚）。
+    """
     def g(t):
         p = t.get_bbox_patch()
-        return read(p) if p is not None else default
+        return read(p) if p is not None else _NO_BBOX
 
     def s(t, v):
+        if v is _NO_BBOX:
+            return                              # 还原路径专用，见下面的 restore
         write(_bbox_ensure(t), v)
-    return (g, s)
+
+    def r(t, orig, state):
+        if _text_has_bbox_left(t, state):
+            # 同一个 patch 上还有别的 bbox_* 生效，框得留着——但**这一条**必须
+            # 写回去。少了这一句，「只撤掉背景色」会把颜色留在 patch 上，而
+            # 调用方看到的是「撤了却没变」。原样采晚了（`_NO_BBOX`）就写默认。
+            write(_bbox_ensure(t), default if orig is _NO_BBOX else orig)
+            return
+        if getattr(t, "_mm_bbox_created", False):
+            # 这一族的最后一条也撤了，而这个框**是我们建的** → 整个摘掉。
+            # 判据用记号而不是 `orig is _NO_BBOX`：后者会因为采样时机而失真
+            # （见 `_bbox_ensure`）。
+            t.set_bbox(None)
+            t._mm_bbox_created = False          # noqa: SLF001
+            return
+        if orig is not _NO_BBOX:
+            write(_bbox_ensure(t), orig)
+
+    r._needs_state = True                       # noqa: SLF001
+    return (g, s), r
 
 
 def _boxstyle_info(p) -> tuple[float, bool]:
@@ -434,13 +580,53 @@ def _set_bbox_visible(t: Text, v) -> None:
 
 
 def text_linespacing(t) -> float:
-    """matplotlib ≥3.11 的 Text 默认 _linespacing 是字符串 'normal'；
-    命名值按传统默认 1.2 计（manifest 与 handler 共用）。"""
+    """行距的**显示**值：命名值（'normal'）按传统默认 1.2 计。
+
+    只给 manifest 用。**还原不能用它**——见 `_get_text_linespacing`。
+    """
     v = getattr(t, "_linespacing", 1.2)
     try:
         return float(v)
     except (TypeError, ValueError):
         return 1.2
+
+
+def _get_text_linespacing(t):
+    """行距的**可回灌**表示：`_linespacing` 原样（可能是字符串 `'normal'`）。
+
+    与 `_get_linecoll_ls`、`_get_coll_edgecolor` 是同一个坑的第四个入口——
+    **getter 回的形状 ≠ setter 吃的形状**，而这一次的代价是几何漂移。
+
+    matplotlib **3.11 起** Text 的默认 `_linespacing` 是字符串 `'normal'`，
+    而 `'normal'` 与数值 `1.2` **不是同一个排版**（实测 3.11.1，一个标题的
+    `get_window_extent().y0`）：
+
+        默认（'normal'）      268.3294
+        set_linespacing(1.2)  268.8333   ← 差 0.5px，而且回不去
+        set_linespacing('normal') 268.3294  ← 只有原样回灌才回得去
+
+    把它读成 1.2 再回灌，撤销之后整块文字挪半个像素。**这不只是难看**：
+    多行文字所在的图例整块跟着重排，实测 legend 与三条图例项的 bbox 一起
+    偏移最多 0.73% figure 分数——而写回自检 `_compare_manifests` 的容差是
+    0.5%，也就是说它足以在 3.11 上把一次正常的写回**误判成 replay 分歧**
+    而阻断。3.10 / 3.8 上默认是数值，不受影响，所以这条只在 CI 钉着的那个
+    版本上现形（本地跑 3.10 全绿）。
+
+    `set_linespacing` 在 3.11 上认 `'normal'`，在 3.10 / 3.8 上不认——但那两版
+    的原样本来就是数值，回灌的是数值，碰不到这一支。
+    """
+    return getattr(t, "_linespacing", 1.2)
+
+
+def _set_text_linespacing(t: Text, v) -> None:
+    """行距：吃数值（用户改的）或命名值（还原时喂回来的 `'normal'`）。
+
+    两种形状都要认——`originals` 里存的正是 `_get_text_linespacing` 回的那份。
+    """
+    if isinstance(v, str):
+        t.set_linespacing(v)
+        return
+    t.set_linespacing(float(v))
 
 
 def _stroke_state(t: Text) -> dict:
@@ -1972,11 +2158,22 @@ def _len0(seq) -> int:
 
 
 def is_color_mapped(artist) -> bool:
-    """此刻是不是**按数值映射颜色**（cmap/norm 说了算）。
+    """这个 artist **带不带**数值→颜色的映射（`get_array()` 非空）。
 
-    判据是 `get_array() is not None`，不是类名：同一个 PathCollection，
-    `scatter(x, y)` 不映射、`scatter(x, y, c=z)` 映射；而 `pcolor()` 出的
-    PolyQuadMesh 是 PolyCollection 的子类却**永远**映射。
+    判据是数组在不在，不是类名：同一个 PathCollection，`scatter(x, y)` 不带、
+    `scatter(x, y, c=z)` 带；而 `pcolor()` 出的 PolyQuadMesh 是 PolyCollection
+    的子类却**永远**带。
+
+    ## 这条问的是「身份」，不是「此刻生不生效」
+
+    它决定 **family**（`is_linecoll_family` → gid 前缀 → handler 家族），
+    所以**必须在一次会话里恒定**。数组是脚本给的，用户的 override 动不了它。
+
+    「此刻那套色图控件生不生效」是另一个问题，问 `color_mapping_is_live()`
+    ——那个会随用户改边色而变。两者**不能合并**：合了的话，用户给一条映射的
+    线组设了边色之后 `_cls_key` 会当场从 `collection` 翻成 `linecoll`，
+    于是下一次 apply 按线组去查 handler、`HANDLERS[("linecoll","cmap")]` 不
+    存在，好端端的元素开始报「不支持的属性」。gid 与 family 的稳定性优先。
     """
     get = getattr(artist, "get_array", None)
     if get is None:
@@ -1985,6 +2182,47 @@ def is_color_mapped(artist) -> bool:
         return get() is not None
     except Exception:  # noqa: BLE001 — 探针失败一律当「没在映射」
         return False
+
+
+def _is_none_color(v) -> bool:
+    return isinstance(v, str) and v.lower() == "none"
+
+
+def color_mapping_is_live(artist) -> bool:
+    """色图**此刻真的在决定颜色**吗——决定要不要给 cmap / vmin / vmax 控件。
+
+    「有数组」不等于「在映射」。matplotlib 的 `Collection._set_mappable_flags()`
+    是这么判的（照抄它的规则，这里不重新发明）：
+
+        if self._A is not None:
+            if not _str_equal(self._original_facecolor, 'none'):
+                self._face_is_mapped = True         # 面在映射
+            else:
+                if self._original_edgecolor is None:
+                    self._edge_is_mapped = True     # 面是 none 时才轮到边
+
+    两种情况会让数组在、映射却不在（**实测两条都让 cmap 一个像素都改不动**）：
+
+      * 脚本自己写死了颜色 —— `LineCollection(..., colors="red", array=z)`：
+        面是 `'none'`、边被显式设过，两个标志都是 False；
+      * **用户设过我们自己开放的 `edgecolor`** —— 映射的线组被设了边色之后
+        进入同一个状态。那时还把 cmap / vmin / vmax 摆在界面上，就是三个
+        设得进状态、画面纹丝不动的控件。撤掉边色 override 之后它们自然回来
+        （`_get_coll_edgecolor` 回灌的是 `_original_edgecolor`）。
+
+    **不读 `_face_is_mapped` / `_edge_is_mapped` 那两个标志**：它们要等
+    `update_scalarmappable()`（即一次 draw）之后才有值，而 `instrument()` 跑在
+    第一次 draw 之前——那时读到的是 `None`，判据会随「问得早还是问得晚」变。
+    照抄规则是纯函数，什么时候问都一样。
+    """
+    if not is_color_mapped(artist):
+        return False
+    if not isinstance(artist, Collection):
+        return True          # AxesImage 这类：有数组就是按它上色
+    orig_fc = getattr(artist, "_original_facecolor", None)
+    if not _is_none_color(orig_fc):
+        return True          # 面在映射（facecolor 没被写死成 'none'）
+    return getattr(artist, "_original_edgecolor", None) is None
 
 
 def is_linecoll_family(artist) -> bool:
@@ -2074,7 +2312,11 @@ def collection_caps(coll) -> frozenset[str]:
             caps.add("faces")
     except Exception:  # noqa: BLE001
         pass
-    if is_color_mapped(coll):
+    # **判据是「此刻在不在映射」，不是「带不带数组」**：脚本写死了颜色、或者
+    # 用户设过我们开放的 edgecolor 之后，数组还在、映射已经不在了——那时
+    # cmap/vmin/vmax 是三个设得进状态、画面纹丝不动的控件（实测 0 像素）。
+    # 反过来，映射不在了 facecolor 就重新归用户管，`fill` 该给就给。
+    if color_mapping_is_live(coll):
         caps.add("mapped")
     elif "faces" in caps:
         caps.add("fill")
@@ -2196,30 +2438,15 @@ HANDLERS: dict[tuple[str, str], tuple] = {
     ("text", "fontfamily"): (_get_text_fontfamily,          _set_text_fontfamily),
     ("text", "ha"):       (lambda a: a.get_ha(),            lambda a, v: a.set_ha(v)),
     ("text", "va"):       (lambda a: a.get_va(),            lambda a, v: a.set_va(v)),
-    ("text", "linespacing"): (lambda a: text_linespacing(a),
-                              lambda a, v: a.set_linespacing(float(v))),
+    # getter 回**可回灌**的原样（可能是 `'normal'`），不是显示用的 1.2
+    ("text", "linespacing"): (_get_text_linespacing, _set_text_linespacing),
     # 仅 3D 轴标签（manifest 打了 _mm_axis 标记）：沿投影轴推远/拉近
     ("text", "labelpad"): (lambda a: float(a._mm_axis.labelpad),
                            lambda a, v: setattr(a._mm_axis, "labelpad", float(v))),
     ("text", "zorder"):   (lambda a: float(a.get_zorder()), lambda a, v: a.set_zorder(float(v))),
 
-    ("text", "bbox_visible"): (
-        lambda a: a.get_bbox_patch() is not None and bool(a.get_bbox_patch().get_visible()),
-        _set_bbox_visible,
-    ),
-    ("text", "bbox_facecolor"): _bbox_handler(
-        lambda p: p.get_facecolor(), lambda p, v: p.set_facecolor(v), "#FFFFFF"),
-    ("text", "bbox_edgecolor"): _bbox_handler(
-        lambda p: p.get_edgecolor(), lambda p, v: p.set_edgecolor(v), "#000000"),
-    ("text", "bbox_linewidth"): _bbox_handler(
-        lambda p: float(p.get_linewidth()), lambda p, v: p.set_linewidth(float(v)), 0.0),
-    ("text", "bbox_alpha"): _bbox_handler(
-        lambda p: p.get_alpha(),
-        lambda p, v: p.set_alpha(None if v is None else float(v)), 1.0),
-    ("text", "bbox_pad"): _bbox_handler(
-        lambda p: _boxstyle_info(p)[0], lambda p, v: _boxstyle_set(p, pad=v), 0.3),
-    ("text", "bbox_rounded"): _bbox_handler(
-        lambda p: _boxstyle_info(p)[1], lambda p, v: _boxstyle_set(p, rounded=v), False),
+    # 背景框那一族的注册在下面（`_BBOX_PROPS`）——它们共用一个 patch，
+    # 还原要能把「本来就没有框」整个还回去，所以 handler 与 restore 成对登记。
 
     ("text", "stroke_enabled"): (lambda a: bool(_stroke_state(a)["enabled"]),
                                  lambda a, v: _stroke_set(a, "enabled", bool(v))),
@@ -2640,6 +2867,34 @@ for _prop, _key in [("spine_color", "all_color"), ("spine_linewidth", "all_width
                       for _s in _SPINE_SIDES
                       for _n, _k in (("color", "color"), ("linewidth", "width"))]]:
     _RESTORE[("axes", _prop)] = _mk_spine_restore(_key)
+# ---------------------------------------------------------------------------
+# 背景框（bbox_*）：六条 prop 写的是**同一个 patch**，而那个 patch 可能是被
+# 第一条 override 现建出来的。所以 handler 与 restore 必须成对登记——
+# 详见 `_bbox_handler` 的抬头。
+# ---------------------------------------------------------------------------
+#: prop → (读, 写)。**默认值不在这儿**，在 `BBOX_DEFAULTS`（唯一出处）。
+_BBOX_PROPS = {
+    "bbox_visible": (lambda p: bool(p.get_visible()),
+                     lambda p, v: p.set_visible(bool(v))),
+    "bbox_facecolor": (lambda p: p.get_facecolor(), lambda p, v: p.set_facecolor(v)),
+    "bbox_edgecolor": (lambda p: p.get_edgecolor(), lambda p, v: p.set_edgecolor(v)),
+    "bbox_linewidth": (lambda p: float(p.get_linewidth()),
+                       lambda p, v: p.set_linewidth(float(v))),
+    "bbox_alpha": (lambda p: p.get_alpha(),
+                   lambda p, v: p.set_alpha(None if v is None else float(v))),
+    "bbox_pad": (lambda p: _boxstyle_info(p)[0], lambda p, v: _boxstyle_set(p, pad=v)),
+    "bbox_rounded": (lambda p: _boxstyle_info(p)[1],
+                     lambda p, v: _boxstyle_set(p, rounded=v)),
+}
+for _bp, (_bread, _bwrite) in _BBOX_PROPS.items():
+    _bpair, _brestore = _bbox_handler(_bread, _bwrite, BBOX_DEFAULTS[_bp])
+    HANDLERS[("text", _bp)] = _bpair
+    _RESTORE[("text", _bp)] = _brestore
+# `bbox_visible=False` 不该为了「关」而现建一个 patch（本来就没有框时它是
+# no-op）。其余五条照旧「首次改任何背景属性即出现背景框」。
+HANDLERS[("text", "bbox_visible")] = (
+    HANDLERS[("text", "bbox_visible")][0], _set_bbox_visible)
+
 _RESTORE.update(_PENDING_RESTORES)
 
 

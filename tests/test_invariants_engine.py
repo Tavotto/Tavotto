@@ -81,6 +81,12 @@ def main():
         [[(0.5, -2.2), (6.0, -2.2)], [(0.5, -2.0), (6.0, -2.0)]],
         array=np.array([0.2, 0.8]), cmap="viridis", linestyles="--",
         clim=(-0.5, 1.5), linewidths=3))
+    # 数组在、映射**不在**：脚本自己把颜色写死了，于是两个通道都没在映射
+    # （matplotlib 的 `_set_mappable_flags` 只在 facecolor 不是 'none'、或者
+    # edgecolor 没被显式设过时才置位）。给它 cmap 控件 = 三个死开关。
+    ax.add_collection(LineCollection(
+        [[(0.5, -2.4), (6.0, -2.4)]], colors="#804000",
+        array=np.array([0.5]), cmap="viridis", linewidths=3))
     # 三个形状**叠在一起**：zorder 想验出效果，必须有东西可挡
     ax.add_patch(Rectangle((1.0, -0.2), 2.2, 0.9, facecolor="#B34700"))
     ax.add_patch(Circle((2.0, 0.25), 0.5, facecolor="#2A6F3C"))
@@ -217,6 +223,24 @@ def _same_value(field, got, want) -> bool:
     return got == want
 
 
+def _patch_for(gid, field, advertised):
+    """(使能项 patches, 完整 patch 列表) —— **能力真实与逐字还原共用同一份**。
+
+    两条扫描必须发同一组 patch。分开写过一版，代价立刻显形：还原那条只发
+    单条 prop，于是「先把背景框打开、再改背景色」这个组合永远轮不到它，而
+    真正的还原缺陷（第一条 bbox_* 现建出来的框摘不掉）就藏在那个组合里——
+    **另一道防线恰好挡住了它**，两条用例都绿。
+    """
+    prop = field["prop"]
+    value = _SAMPLE_OVERRIDE.get(prop, _sample_value(field))
+    if value is None:
+        return None, None
+    enablers = [{"gid": gid, "prop": ep, "value": ev}
+                for ep, ev in _ENABLERS.get(prop, ())
+                if ep != prop and ep in advertised[gid]]
+    return enablers, enablers + [{"gid": gid, "prop": prop, "value": value}]
+
+
 def _editable_targets(man):
     """(gid, field) —— 跳过整块结构性的角色，它们各有各的专用用例。"""
     for el in man["elements"]:
@@ -316,13 +340,10 @@ def test_capability_truthfulness(hot, stem):
 
     for gid, field in _editable_targets(base):
         prop = field["prop"]
-        value = _SAMPLE_OVERRIDE.get(prop, _sample_value(field))
-        if value is None:
+        enablers, patch = _patch_for(gid, field, advertised)
+        if patch is None:
             continue
-        enablers = [{"gid": gid, "prop": ep, "value": ev}
-                    for ep, ev in _ENABLERS.get(prop, ())
-                    if ep != prop and ep in advertised[gid]]
-        patch = enablers + [{"gid": gid, "prop": prop, "value": value}]
+        value = patch[-1]["value"]
 
         # ① + ② dispatch 得到，且 manifest 读回来就是写进去的那个
         resp = hot.override(stem, patch)
@@ -349,6 +370,86 @@ def test_capability_truthfulness(hot, stem):
         f"写得出理由的豁免：\n  " + "\n  ".join(sorted(invisible)))
 
 
+#: 枚举里那些**故意不可回灌**的值——它们是显示占位，不是可设的值。
+_ENUM_PLACEHOLDERS = {
+    "original",   # 散点 marker：「脚本原始路径」，还原用，不是一个 marker 名
+    "custom",     # 箭头样式：识别不出的自定义样式，选它 = 不动
+}
+
+
+@pytest.mark.parametrize("stem", STEMS)
+def test_every_enum_option_can_actually_be_applied(hot, stem):
+    """下拉框里列出来的每一个选项，**选了都得能用**。
+
+    不变式 1 只验「挑一个不同的值」能不能落地，验不到第 3、第 5 个选项。而
+    枚举的有效值**随 matplotlib 版本变**：`interpolation` 的 `"auto"` 是 3.9
+    才加的，我们的**最低支持运行时 3.8.4 上根本不存在**——界面照样把它列出来,
+    用户一点，`set_interpolation` 抛 ValueError → 收成一条 warning →
+    **而一条 warning 就阻断写回**，提示还与真实原因毫不相干。
+
+    这个缺口是把 CompatBench 的最低运行时那一档接进不变式扫描之后当场逮到的。
+    修法不是把 `"auto"` 从表里删掉（那样 3.10+ 就少一个能用的档位），是**有效
+    值一律问 matplotlib 要**（`_interpolation_options`）。本用例是它的通用形态：
+    **凡是我们列出来的，就得是这一版 matplotlib 认的**。
+
+    只验「设得进去、不报 warning」，不验像素——一个枚举里多数选项之间的差别
+    本来就可能小到一张图上看不出来，那是不变式 1 该管的事（它验的是这条 prop
+    整体有没有效果）。
+    """
+    base = _man(hot, stem)
+    rejected = []
+    for gid, field in _editable_targets(base):
+        if field.get("type") != "enum":
+            continue
+        for opt in field.get("options") or []:
+            if opt in _ENUM_PLACEHOLDERS:
+                continue
+            resp = hot.override(stem, [{"gid": gid, "prop": field["prop"], "value": opt}])
+            if resp.get("warnings"):
+                rejected.append(f"{gid}.{field['prop']} = {opt!r} → {resp['warnings'][0]}")
+    _man(hot, stem)
+    assert not rejected, (
+        f"{stem}：这些选项列在界面上，选了却报错——而 warning 一条就阻断写回。"
+        f"有效值要问 matplotlib 要，不要写死一张随版本漂移的表：\n  "
+        + "\n  ".join(rejected))
+
+
+def test_colormap_controls_appear_only_while_the_mapping_is_live(hot):
+    """cmap / vmin / vmax 只在**映射此刻真的在决定颜色**时才出现。
+
+    「有数组」不等于「在映射」。matplotlib 的 `_set_mappable_flags()` 只在
+    facecolor 不是 `'none'`、或者 edgecolor 没被显式设过时才置位。两种情况
+    会让数组在、映射不在（实测两条都让 `set_cmap` 改动 **0** 个像素）：
+
+      1. 脚本自己写死了颜色 —— `LineCollection(..., colors=..., array=z)`；
+      2. **用户设过我们自己开放的 `edgecolor`** —— 映射的线组被设了边色之后
+         进入同一个状态。
+
+    第 2 条是第 1 条的动态版本，而且是我们自己造成的：`edgecolor` 这个控件
+    确实有效（它真的改颜色），但它一生效，同一个元素上的三个色图控件就变成
+    死的。不摘掉的话，用户会对着三个「点了没反应」的下拉框琢磨半天。撤掉
+    边色 override 之后它们必须自己回来。
+
+    能力真实那条扫的是单个 prop，看不见这种**组合态**——所以单列一条。
+    """
+    base = _man(hot, "InvMix")
+    dead = _fields(base, "axes_0.collections_7")      # 脚本写死颜色的那条
+    assert "cmap" not in dead, "数组在、映射不在，却给了色图控件"
+    assert {"edgecolor", "linewidth"} <= set(dead), "边色反而该给——颜色归用户了"
+
+    live_gid = "axes_0.collections_6"                  # 真的在映射的那条
+    assert {"cmap", "vmin", "vmax"} <= set(_fields(base, live_gid))
+
+    # 设了边色之后映射就断了，三个色图控件必须跟着消失
+    man = _man(hot, "InvMix", [{"gid": live_gid, "prop": "edgecolor", "value": "#123456"}])
+    after = set(_fields(man, live_gid))
+    assert not ({"cmap", "vmin", "vmax"} & after), \
+        f"边色 override 生效期间还摆着色图控件，而它们此刻一个像素都改不动：{sorted(after)}"
+
+    # 撤掉就回来（`_get_coll_edgecolor` 回灌的是 `_original_edgecolor`）
+    assert {"cmap", "vmin", "vmax"} <= set(_fields(_man(hot, "InvMix"), live_gid))
+
+
 # ---------------------------------------------------------------------------
 # 不变式 2：逐字还原（exact restore）
 # ---------------------------------------------------------------------------
@@ -367,20 +468,27 @@ def test_exact_restore_is_pixel_and_manifest_identical(hot_restore, stem):
     """
     base = _man(hot_restore, stem)
     base_png = _png(hot_restore, stem, [], "restore-base")
+    advertised = {el["gid"]: {f["prop"] for f in el["editable"]}
+                  for el in base["elements"]}
     drifted, checked = [], 0
 
     for gid, field in _editable_targets(base):
-        prop, value = field["prop"], _sample_value(field)
-        if value is None:
-            continue
+        prop = field["prop"]
         if prop in _LEGEND_REBUILD_PROPS:
             continue        # 已知缺陷，单独由下面那条用例钉着
-        hot_restore.override(stem, [{"gid": gid, "prop": prop, "value": value}])
+        _enablers, patch = _patch_for(gid, field, advertised)
+        if patch is None:
+            continue
+        # **带上使能项**：还原要能把使能项造成的副作用也还回去。第一条
+        # bbox_* 会**现建**一个背景框——只发单条 prop 的话，扫描顺序恰好
+        # 先开了框，后面每条都落在「框已存在」的分支上，那个缺陷永远碰不到。
+        hot_restore.override(stem, patch)
         after = _man(hot_restore, stem)                    # 空列表 = 全量撤销
         if after != base:
             diff = [e["gid"] for e in after["elements"]
                     if e not in base["elements"]]
-            drifted.append(f"{gid}.{prop} → manifest 变了：{diff[:4]}")
+            drifted.append(f"{gid}.{prop}（+{[e['prop'] for e in _enablers]}）"
+                           f" → manifest 变了：{diff[:4]}")
         elif _png(hot_restore, stem, [], f"restore-{gid}.{prop}") != base_png:
             drifted.append(f"{gid}.{prop} → manifest 一样但**画面**变了")
         checked += 1
@@ -389,6 +497,53 @@ def test_exact_restore_is_pixel_and_manifest_identical(hot_restore, stem):
     assert not drifted, (
         f"{stem}：撤销之后没有逐字回到脚本原样（getter 回的形状 ≠ setter 吃的"
         f"形状，是这类 bug 的通用成因）：\n  " + "\n  ".join(drifted))
+
+
+def test_undoing_a_background_edit_removes_the_box_it_created(hot_restore):
+    """只改「文字背景色」再撤销，**框要跟着消失**。
+
+    背景框那六条 prop 写的是**同一个 patch**，而那个 patch 可能是被第一条
+    override 现建出来的（`_bbox_ensure`，产品约定就是「首次改任何背景属性即
+    出现背景框」）。老实现撤销时把值写回默认、却把框留下了：
+
+        文字本来没有背景框 → 只改背景色 → 撤销 →
+        底色回去了，**框还在**，`bbox_visible` 从 False 变成 True 且回不去
+
+    两层坑，第二层才是真正难查的那个：
+
+      1. 还原要能表达「本来就没有框」——用默认值表达不了（有一个白色的框，
+         与没有框，数值上一模一样），所以 getter 回哨兵 `_NO_BBOX`；
+      2. **`originals` 的采样时机靠不住**。六条 prop 里谁先被应用谁就把框建
+         出来了，后一条采到的「脚本原样」已经是「框存在之后」的值。所以摘框
+         的判据是 `_bbox_ensure` 留下的记号，不是 `orig is _NO_BBOX`。
+         这与 ALIAS_GROUPS 那条「广播端要在动手之前替组员采原样」是同一个坑。
+
+    之所以一直没被扫出来：扫描顺序恰好先把 `bbox_visible` 设成 True 建了框，
+    后面每一条都落在「框已存在」的分支上——**另一道防线恰好挡住了它**。
+    现在两条扫描共用 `_patch_for`，发的是同一组 patch，这个组合躲不掉了。
+    """
+    gid = "axes_0.legend.texts_0"
+    base = _fields(_man(hot_restore, "InvCont"), gid)
+    assert base["bbox_visible"]["value"] is False, "夹具里这条文字本来就不该有框"
+
+    # 只改背景色（**不碰 bbox_visible**）——产品约定：框会因此出现
+    on = _fields(_man(hot_restore, "InvCont",
+                      [{"gid": gid, "prop": "bbox_facecolor", "value": "#123456"}]), gid)
+    assert on["bbox_visible"]["value"] is True, "改了背景色却没出现框？产品约定变了"
+
+    back = _fields(_man(hot_restore, "InvCont"), gid)
+    assert back["bbox_visible"]["value"] is False, "撤销之后框还在——它再也关不掉了"
+    assert back["bbox_facecolor"]["value"] == base["bbox_facecolor"]["value"]
+
+    # 组里还有别的生效时**不许**把框摘掉：只撤 pad，背景色还在
+    two = [{"gid": gid, "prop": "bbox_facecolor", "value": "#123456"},
+           {"gid": gid, "prop": "bbox_pad", "value": 0.8}]
+    _man(hot_restore, "InvCont", two)
+    left = _fields(_man(hot_restore, "InvCont", two[:1]), gid)
+    assert left["bbox_visible"]["value"] is True, "还有一条背景 override 生效，框不该被摘掉"
+    assert left["bbox_facecolor"]["value"].lower() == "#123456"
+    assert left["bbox_pad"]["value"] == base["bbox_pad"]["value"], "撤掉的那条没写回默认"
+    _man(hot_restore, "InvCont")
 
 
 #: **已知缺陷**：图例的「重建型」prop 撤销之后回不到脚本原样。
@@ -597,7 +752,9 @@ def test_no_artist_vanishes_between_elements_and_unsupported(probe):
     assert not c["unseen"], (
         "这些 artist 画在图上、普查也没报出来：\n  "
         + "\n  ".join(f"{u['where']} {u['cls']}" for u in c["unseen"]))
-    assert not c["in_both"], f"同一个类既在元素表又被报成不支持：{c['in_both']}"
+    # `unsupported` 只报类名、不报对象 id，所以「同一个 artist 同时在两边」
+    # 从 manifest 侧判不出来（`Rectangle` 既是柱、又是插图背景 patch）。XOR
+    # 的这一半由上面两条合起来保证：登记过的必须有代表 + 树里的必须被看见。
 
 
 def test_the_churn_exemption_stays_small_and_named(probe):
@@ -620,8 +777,17 @@ def test_unsupported_says_what_and_why(probe):
         assert row.get("where"), row
     ghosts = [r for r in probe["completeness"]["unsupported"]
               if "GhostArtist" in r["cls"]]
-    assert ghosts and ghosts[0].get("reason") == "no_geometry", \
+    assert ghosts and all(g.get("reason") == "no_geometry" for g in ghosts), \
         f"量不出几何的自定义 artist 没被报出来：{probe['completeness']['unsupported']}"
+    # **插图里的那个也要报出来**。`inset_axes` / `secondary_[xy]axis` 挂在
+    # `ax.child_axes` 上、不在 `fig.axes` 里——普查只走 fig.axes 的时候，插图
+    # 里漏掉的 artist 在报告里一个字都不出现，而报告照样说「没漏」。
+    assert len(ghosts) >= 2, f"插图里那个量不出几何的 artist 没被普查看见：{ghosts}"
+    # 而插图自己的结构件（背景 patch、四条边框）**不许**被报成漏掉——
+    # 它们由 `axes_i` 代表，报出来就是普查在喊狼来了
+    noise = [r for r in probe["completeness"]["unsupported"]
+             if r["cls"].endswith(("patches.Rectangle", "spines.Spine")) and not r.get("reason")]
+    assert not noise, f"axes 的结构件被报成漏掉的 artist：{noise}"
 
 
 def test_family_classification_has_a_single_authority(probe):

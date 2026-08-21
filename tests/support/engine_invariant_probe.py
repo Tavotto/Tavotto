@@ -95,6 +95,12 @@ def build_figure():
     ax3.add_artist(GhostArtist())
     ax3.legend()
 
+    # --- 子 axes：插图 + 次坐标轴（**不在 `fig.axes` 里**） ---
+    ins = ax3.inset_axes([0.62, 0.62, 0.34, 0.34])
+    ins.plot([0.0, 1.0], [0.0, 1.0], color="#804000")
+    ins.add_artist(GhostArtist())          # 插图里也放一个量不出几何的
+    ax3.secondary_xaxis("top")
+
     # --- 图像 + 色条（两个 gid 一份状态） ---
     im = ax4.imshow(rng.rand(8, 8), cmap="magma")
     cb = fig.colorbar(im, ax=ax4, extend="both")
@@ -175,8 +181,12 @@ def completeness(fig, state, man) -> dict:
     # ② census 那一层遍历里，既不在元素表、又没进 unsupported 的
     unseen = []
     known = state.index_ids() | internal | consumed
+    # 与 `census` / `instrument` 同一条遍历：`inset_axes` 与 `secondary_[xy]axis`
+    # 挂在 `ax.child_axes` 上，**不在 `fig.axes` 里**。只走 fig.axes 的话，
+    # 插图里漏掉的 artist 连这条不变式都看不见——探针自己成了那个报平安的门禁。
+    ordered, _child_ids = M._ordered_axes(fig)          # noqa: SLF001
     for owner_gid, owner in ([("figure", fig)]
-                             + [(f"axes_{i}", ax) for i, ax in enumerate(fig.axes)]):
+                             + [(f"axes_{i}", ax) for i, ax in enumerate(ordered)]):
         for child in owner.get_children():
             if id(child) in known or isinstance(child, (Axes, Axis)):
                 continue
@@ -185,11 +195,13 @@ def completeness(fig, state, man) -> dict:
             if qual(child) not in unsupported_classes:
                 unseen.append({"where": owner_gid, "cls": qual(child)})
 
-    # ③ 反过来：报进 unsupported 的不许**同时**还在元素表里（XOR 的另一半）
-    both = sorted({qual(el["artist"]) for el in state.elements
-                   if el["gid"] in manifest_gids} & unsupported_classes)
+    # `unsupported` 只报类名与位置、不报对象 id，所以「同一个 artist 是不是
+    # 同时出现在两边」从 manifest 侧**判不出来**——同一个类完全可能一半在元素
+    # 表、一半没进（`Rectangle` 既是柱形系列的柱，又是插图的背景 patch）。
+    # 曾经按类名比过一次，当场误报。XOR 的这一半交给 ① 与 ②：登记过的必须有
+    # 代表、树里的必须被普查看见，两者合起来已经不留缝。
 
-    return {"orphans": orphans, "churn": churn, "unseen": unseen, "in_both": both,
+    return {"orphans": orphans, "churn": churn, "unseen": unseen,
             "unsupported": man.get("unsupported", []),
             "element_count": len(man["elements"]),
             "registered_count": len(state.index),
