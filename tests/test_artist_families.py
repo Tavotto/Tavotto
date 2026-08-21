@@ -48,6 +48,17 @@ from matplotlib.collections import LineCollection
 from matplotlib.patches import Circle, Rectangle
 
 
+class GhostArtist(Artist):
+    """只实现 `draw()`、**没有**重写 `get_window_extent()` 的自定义 Artist。
+
+    基类回的是空框，于是它登记得进元素表、却在 build_manifest 里被丢掉——
+    两头都不出现。这正是普查要防的静默消失。
+    """
+
+    def draw(self, renderer):
+        return None
+
+
 class MyLine(Line2D):
     """用户继承出来的曲线——family 抽象的意义就是它不用我们改一行代码。"""
 
@@ -105,7 +116,8 @@ def main():
 
     # ---- FamCont：容器 ----
     fig, ax = plt.subplots(figsize=(4.0, 3.0))
-    ax.stem([1.0, 2.0, 3.0], [1.0, 2.0, 1.5], label="stems")
+    # `linefmt="--"` 是有意的：茎的线型撤销要走未缩放 dash，实线测不出那个坑
+    ax.stem([1.0, 2.0, 3.0], [1.0, 2.0, 1.5], linefmt="--", label="stems")
     ax.bar([5.0, 6.0], [1.0, 2.0], label="bars")
     ax.errorbar([8.0, 9.0], [1.0, 1.5], yerr=0.2, label="err", capsize=3)
     ax.legend()
@@ -122,6 +134,7 @@ def main():
     fig, ax = plt.subplots(figsize=(4.0, 3.0))
     ax.add_line(MyLine([0.0, 1.0], [0.0, 1.0], color="#123456"))
     ax.add_artist(Doodad())
+    ax.add_artist(GhostArtist())      # 量不出几何：必须报进 unsupported
     fig.savefig("FamCustom.pdf")
 '''
 
@@ -312,6 +325,70 @@ def test_marker_replacement_stays_a_scatter_only_contract(hot):
 # ---------------------------------------------------------------------------
 # 3. 自定义子类 / 未知 artist
 # ---------------------------------------------------------------------------
+def test_stem_linestyle_undo_does_not_widen_the_dashes(hot):
+    """茎的线型撤销必须**逐字**回到脚本原样，不是每撤一次疏一档。
+
+    Codex 在 PR #48 上报的 P2，实测复现：茎是 LineCollection，
+    `get_linestyle()` 回的是按线宽缩放过的 dash，`set_linestyle()` 会再缩
+    一遍。`ax.stem(..., linefmt="--")` 在默认 lw=1.5 下
+    5.55 → 8.325 → 12.49，每撤销一次 ×1.5，而且**没有任何下游门禁拦得住**
+    ——写回自检只比几何，dash 变了不动任何包围盒。
+    `_get_linecoll_ls` 早就为线组修过同一个坑，茎是它的第二个入口。
+    """
+    base = _man(hot, "FamCont")
+    gid = next(g for g in _gids(base) if "stemseries" in g)
+    before = _fields(base, gid)["linestyle"]["value"]
+    # 显示值本身也曾经在说谎：`_stem_fields` 用的是 Line2D 那条
+    # `_linestyle_name`，喂给 Collection 时**任何** dash 都回实线占位——
+    # 画出来是虚线、检查器说实线，而且那也让本用例整个变瞎
+    assert before == "--", f"脚本写的是 linefmt='--'，检查器却说 {before!r}"
+
+    for _ in range(3):
+        _man(hot, "FamCont", [{"gid": gid, "prop": "linestyle", "value": ":"}])
+        after = _fields(_man(hot, "FamCont"), gid)["linestyle"]["value"]
+        assert after == before, f"撤销之后线型不是原来那条：{before!r} → {after!r}"
+
+
+def test_hatch_is_offered_only_where_there_are_faces(hot):
+    """花纹画在**面**上——没有面的 Collection 不许给这个开关。
+
+    Codex 在 PR #48 上报的 P2。`fill` 那道闸问的是「facecolor 归不归用户改」，
+    而花纹问的是另一件事：「有没有面可画」。映射的 QuadMesh 有面（花纹画得上，
+    只是颜色不归用户改），`contour` 与 LineCollection 的 facecolor 是 `'none'`
+    ——连面都没有，给了就是一个设得进状态、画面上一个像素都不变的开关。
+    """
+    man = _man(hot, "FamColl")
+    # 有面：pcolormesh 的 QuadMesh（映射，facecolor 不给但花纹给）、fill_between
+    for gid in ("axes_0.collections_3", "axes_0.fill_2"):
+        props = set(_fields(man, gid))
+        assert "hatch" in props, f"{gid} 有面却没给花纹"
+    assert "facecolor" not in _fields(man, "axes_0.collections_3"), \
+        "映射的网格不该给 facecolor（花纹给了不代表颜色也给）"
+    # 没有面：contour 与映射的线组
+    for gid in ("axes_0.collections_4", "axes_0.collections_6"):
+        assert "hatch" not in _fields(man, gid), f"{gid} 没有面却给了花纹"
+    assert "hatch" not in _fields(man, "axes_0.linecoll_5"), "线组给了花纹"
+
+
+def test_registered_artists_without_geometry_are_reported_not_dropped(hot):
+    """登记了、却量不出几何的元素**必须报出来**，不能两头都不出现。
+
+    Codex 在 PR #48 上报的 P2。`census` 判「已知」用的是登记表，所以一个
+    只实现 `draw()`、没重写 `get_window_extent()` 的自定义 Artist 会：
+    登记 → 普查认为它已知 → build_manifest 量不出框把它丢掉。于是它在
+    `elements` 与 `unsupported` 两头都不出现——正是普查存在的理由被绕过。
+    """
+    man = _man(hot, "FamCustom")
+    rows = man.get("unsupported", [])
+    ghosts = [r for r in rows if "GhostArtist" in r["cls"]]
+    assert ghosts, f"量不出几何的 artist 消失得无声无息：{rows}"
+    assert ghosts[0].get("reason") == "no_geometry", ghosts[0]
+    assert not [e for e in man["elements"] if "GhostArtist" in str(e.get("label", ""))]
+
+    # 刻度那种**正常的**来去不许报进来，否则诊断喊狼来了、真缺口没人看
+    assert not [r for r in rows if "Text" in r["cls"] and r.get("reason")], rows
+
+
 def test_custom_subclass_inherits_family_support(hot):
     """`class MyPatch(Rectangle)` / `class MyLine(Line2D)`：family 抽象的价值
     就在这——matplotlib 明天多一个 Patch 子类，这里不用改一行。"""

@@ -479,3 +479,49 @@ cmap/vmin/vmax 只是把它扩到了 pcolormesh / contour / scatter(c=z)。既�
 「值没变就跳过」捷径对它们是错的。别名组 + `dirty_groups` 就是为这件事建的；
 以后再开放任何一条「同一份状态的第二个入口」，先问一句它该不该进
 `ALIAS_GROUPS`。
+
+## 17. 第三轮自动审查的三条 P2（都实测复现，都已修）
+
+### 17.1 茎的线型也是「缩放过的 dash 回灌」那个坑
+
+`("stem_series", "linestyle")` 的 getter 是 `get_linestyle()`，而茎是
+LineCollection——`set_linestyle()` 会把喂进去的值再缩一遍。实测
+`ax.stem(..., linefmt="--")` 在默认 lw=1.5 下 **5.55 → 8.325 → 12.49**，
+每撤销一次 ×1.5。§14 已经为整个 Collection 族修过同一个坑
+（`_get_linecoll_ls`），茎是它的**第二个入口**，当时漏了。
+
+顺带揪出一个**显示层**的谎：`_stem_fields` 用的是 Line2D 那条
+`_linestyle_name`，它只认字符串线型，喂给 Collection 时任何 dash 都回实线
+占位——`linefmt="--"` 画出来是虚线、检查器却说实线。改用
+`_linecoll_linestyle_name`。这也是为什么第一版看护用例是**瞎的**：显示值
+前后都是 `"-"`，怎么撤都「相等」。
+
+### 17.2 花纹画在面上，而「有没有面」与「面归不归用户改」是两件事
+
+`_collection_fields` 无条件给 `hatch`。`fill` 那道闸问的是「facecolor 归不归
+用户改」，花纹问的是另一件事。实测 `get_facecolor()` 的长度：
+pcolormesh 36 / contourf 7 / fill_between 1 / scatter 1 —— 有面；
+**contour 0 / LineCollection 0** —— 连面都没有。给后者花纹就是一个设得进
+状态、画面上一个像素都不变的开关，正是这套能力探针存在的理由。
+
+`collection_caps` 因此多一条 `faces`（`get_facecolor()` 非空），
+`fill` = `faces` 且没在映射，`hatch` 跟 `faces` 走。于是映射的 QuadMesh
+**给花纹、不给 facecolor**——两件事分开之后这个组合才表达得出来。
+
+### 17.3 登记了却量不出几何的元素，两头都不出现
+
+`census` 判「已知」用的是**登记表**。一个只实现 `draw()`、没重写
+`get_window_extent()` 的自定义 Artist（基类回空框）于是：登记 → 普查认为
+它已知 → `build_manifest` 量不出框把它 `continue` 掉。它在 `elements` 与
+`unsupported` **两头都不出现**——普查存在的理由被绕过了。§35 的底线是
+「不许静默消失」，而这正是一次静默消失。
+
+`build_manifest` 现在记一本丢弃账本并入 `unsupported`（带 `reason`）。
+**刻度那种正常的来去不报**（`ticks`/`ticklabel` 与空文字）：换 locator、改
+xlim、翻色条方向都会让整组刻度重来，把它们报进去等于让诊断喊狼来了，
+而喊狼来了之后真缺口就没人看了——与 `census` 自己那条纪律同源。
+
+看护：`test_stem_linestyle_undo_does_not_widen_the_dashes` /
+`test_hatch_is_offered_only_where_there_are_faces` /
+`test_registered_artists_without_geometry_are_reported_not_dropped`，
+去掉各自的修复都当场红。

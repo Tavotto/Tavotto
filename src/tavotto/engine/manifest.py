@@ -668,7 +668,8 @@ def _collection_fields(coll, *, label: bool) -> list[dict]:
       而**不出** facecolor——后者的 facecolors 每次 draw 由
       `update_scalarmappable()` 从数组重算，给了也是白给（见 overrides 的
       能力层抬头）；
-    * LineCollection 没有 face 可填，只出描边；
+    * LineCollection 没有 face 可填，只出描边——**连花纹都不出**（花纹画在
+      面上，见 `collection_caps` 的 `faces`）；
     * `pcolormesh` 的 QuadMesh 现在没有边，但**加得上**边（网格线），
       所以描边照出。
 
@@ -708,13 +709,19 @@ def _collection_fields(coll, *, label: bool) -> list[dict]:
          "min": 0, "max": 8, "step": 0.1, "unit": "pt"},
         {"prop": "linestyle", "type": "enum", "value": _linestyle_name(coll),
          "options": ["-", "--", "-.", ":"], "group": "线条与填充"},
-        {"prop": "hatch", "type": "enum", "value": str(coll.get_hatch() or ""),
-         "options": _hatch_options(coll.get_hatch()), "group": "线条与填充"},
         {"prop": "alpha", "type": "number",
          "value": 1.0 if coll.get_alpha() is None else round(float(coll.get_alpha()), 2),
          "min": 0, "max": 1, "step": 0.05},
         {"prop": "visible", "type": "bool", "value": bool(coll.get_visible())},
     ]
+    if "faces" in caps:
+        # 花纹画在**面**上。没有面的（LineCollection、`contour`）给了也白给
+        # ——设得进状态、画面上一个像素都不变，那正是这套能力探针要挡的东西。
+        # 注意判据是 `faces` 而不是 `fill`：映射的 QuadMesh / contourf 有面，
+        # 只是那个面的颜色不归用户改。
+        fields.append(
+            {"prop": "hatch", "type": "enum", "value": str(coll.get_hatch() or ""),
+             "options": _hatch_options(coll.get_hatch()), "group": "线条与填充"})
     if "mapped" in caps:
         fields += _colormap_fields(coll)
     fields.append({"prop": "zorder", "type": "number",
@@ -1262,8 +1269,12 @@ def _stem_fields(grp) -> list[dict]:
         {"prop": "color", "type": "color", "value": to_hex(color)},
         {"prop": "linewidth", "type": "number", "value": round(float(lw), 2),
          "min": 0.1, "max": 8, "step": 0.1, "unit": "pt"},
+        # 茎是 **LineCollection**，反查要用未缩放规格那一套：`_linestyle_name`
+        # 是 Line2D 那条（`get_linestyle()` 回字符串），喂给 Collection 时它
+        # 拿到的是 `(offset, seq)`，于是**任何** dash 都显示成实线占位——
+        # `ax.stem(..., linefmt="--")` 画出来是虚线、检查器却说实线。
         {"prop": "linestyle", "type": "enum",
-         "value": _linestyle_name(stem0) if stem0 is not None else "-",
+         "value": _linecoll_linestyle_name(stem0) if stem0 is not None else "-",
          "options": ["-", "--", "-.", ":"]},
         {"prop": "marker", "type": "enum", "value": m_name, "options": m_opts,
          "group": "标记"},
@@ -1487,6 +1498,26 @@ def build_manifest(state: FigState, stem: str) -> dict:
     budget = pathgeom.Budget()
 
     elements = []
+    #: 登记了、却在这一轮 build 里被丢掉的元素（量不出几何 / 文字空了 / 刻度
+    #: 没了）。**必须报出去**：`census` 判「已知」用的是登记表，所以这些元素
+    #: 既不在 `elements` 里、也不会被普查报成漏掉——两头都不出现，正是普查
+    #: 要防的那种静默消失（§35）。自定义 Artist 尤其容易撞上：只实现 `draw()`
+    #: 而没重写 `get_window_extent()` 的，基类回的是空框。
+    dropped: dict[tuple, int] = {}
+
+    #: 这几种「丢弃」是**正常的**，报出去只会让诊断喊狼来了：刻度不是常驻
+    #: artist（换 locator、改 xlim、翻色条方向都会让整组重来），空文字的标题
+    #: 与轴标签本来就不该进元素树（`census` 的 docstring 写着同一条）。
+    _DROP_CHURN_ROLES = ("ticks", "ticklabel")
+
+    def _drop(el, why: str):
+        if el["role"] in _DROP_CHURN_ROLES or why in ("empty_text", "gone"):
+            return
+        cls = type(el["artist"])
+        key = (f"{cls.__module__}.{cls.__qualname__}",
+               el["gid"].split(".", 1)[0], why)
+        dropped[key] = dropped.get(key, 0) + 1
+
     for el in state.elements:
         artist = el["artist"]
         entry = {"gid": el["gid"], "role": el["role"], "label": el["label"],
@@ -1496,6 +1527,7 @@ def build_manifest(state: FigState, stem: str) -> dict:
         if el["role"] in ("title", "axis_label", "text", "legend_text"):
             live_text = artist.get_text()
             if not live_text:
+                _drop(el, "empty_text")
                 continue
             entry["label"] = _relabel(el["label"], live_text)
         if el["role"] in ("axes", "axes3d"):
@@ -1520,14 +1552,17 @@ def build_manifest(state: FigState, stem: str) -> dict:
         elif el["role"] == "ticklabel":
             t = artist.live()
             if t is None or not t.get_text():
+                _drop(el, "gone")
                 continue
             entry["label"] = f"刻度 “{_snippet(t.get_text())}”"  # 改字后名字跟着变
             try:
                 bb = t.get_window_extent(renderer)
                 if bb.width <= 0 or bb.height <= 0:
+                    _drop(el, "no_geometry")
                     continue
                 entry["bbox"] = [bb.x0 / W, 1.0 - bb.y1 / H, bb.width / W, bb.height / H]
             except Exception:
+                _drop(el, "no_geometry")
                 continue
         elif el["role"] == "ticks":
             boxes = []
@@ -1539,6 +1574,7 @@ def build_manifest(state: FigState, stem: str) -> dict:
                 except Exception:
                     pass
             if not boxes:
+                _drop(el, "no_geometry")
                 continue
             x0 = min(b.x0 for b in boxes); y0 = min(b.y0 for b in boxes)
             x1 = max(b.x1 for b in boxes); y1 = max(b.y1 for b in boxes)
@@ -1558,6 +1594,7 @@ def build_manifest(state: FigState, stem: str) -> dict:
                 except Exception:
                     pass
             if not boxes:
+                _drop(el, "no_geometry")
                 continue
             x0 = min(b.x0 for b in boxes); y0 = min(b.y0 for b in boxes)
             x1 = max(b.x1 for b in boxes); y1 = max(b.y1 for b in boxes)
@@ -1567,6 +1604,7 @@ def build_manifest(state: FigState, stem: str) -> dict:
                 bb = artist.cb.ax.get_window_extent(renderer)
                 entry["bbox"] = [bb.x0 / W, 1.0 - bb.y1 / H, bb.width / W, bb.height / H]
             except Exception:
+                _drop(el, "no_geometry")
                 continue
             # 稳定语义身份（宿主 + 序号）：`axes_i.colorbar` 是按邻居排序编的
             # 名字，这个才是「这是谁的色条」。两者都在 state.index 里认得出
@@ -1579,13 +1617,16 @@ def build_manifest(state: FigState, stem: str) -> dict:
                 ax = artist.axes
                 bb = ax.transData.transform_bbox(artist.get_datalim(ax.transData))
                 if bb.width <= 0 and bb.height <= 0:
+                    _drop(el, "no_geometry")
                     continue
                 entry["bbox"] = _padded_bbox(bb, W, H)
             except Exception:
+                _drop(el, "no_geometry")
                 continue
         elif isinstance(artist, Collection):
             bb = _collection_bbox(artist, renderer)
             if bb is None:
+                _drop(el, "no_geometry")
                 continue
             entry["bbox"] = _padded_bbox(bb, W, H)
         else:
@@ -1596,10 +1637,12 @@ def build_manifest(state: FigState, stem: str) -> dict:
                     # （见 `_collection_datalim`），其余的老老实实丢掉。
                     bb = _collection_datalim(artist)
                     if bb is None:
+                        _drop(el, "no_geometry")
                         continue
                 # 水平 / 垂直的扁平线（基线、参考线）单边为 0，垫成可点中的窄条
                 entry["bbox"] = _padded_bbox(bb, W, H)
             except Exception:
+                _drop(el, "no_geometry")
                 continue
         # 路径几何（figure 分数、top-origin）：曲线 / 填充 / 独立形状的选中轮廓
         # 与命中判据。**渲染派生数据**，不进用户文档、不是 override——xlim /
@@ -1642,6 +1685,7 @@ def build_manifest(state: FigState, stem: str) -> dict:
             print(f"[manifest] {el['gid']} 的几何不是有限值，已丢弃"
                   f"（bbox={entry.get('bbox')} anchor={entry.get('anchor')}）",
                   file=sys.stderr)
+            _drop(el, "not_finite")
             continue
 
         # 可拖元素附带锚点（figure 分数、top-origin），拖动换算用
@@ -1675,6 +1719,13 @@ def build_manifest(state: FigState, stem: str) -> dict:
     # 诊断字段：画在图上、却没进元素表的 artist（`census` 在 instrument 里采）。
     # 可选、只在非空时出现——旧前端不认识它会原样忽略，写回自检只比 gid 集合
     # 与几何，不看这里。有它才谈得上「知道自己漏了什么」（§35）。
-    if state.unregistered:
-        out["unsupported"] = state.unregistered
+    # 登记了却量不出几何的那些同样要报：`census` 判「已知」用的是登记表，
+    # 不并进来的话它们在 `elements` 与 `unsupported` 两头都不出现——那正是
+    # 「不许静默消失」要防的情况（自定义 Artist 只实现 draw、没重写
+    # get_window_extent 时基类回空框，就会走到这儿）。
+    rows = list(state.unregistered)
+    rows += [{"cls": cls, "where": where, "count": n, "reason": why}
+             for (cls, where, why), n in sorted(dropped.items())]
+    if rows:
+        out["unsupported"] = rows
     return out

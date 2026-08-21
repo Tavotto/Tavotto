@@ -1961,7 +1961,14 @@ def collection_caps(coll) -> frozenset[str]:
     """这个 Collection 上**真正改得动**的能力集。manifest 与 handler 共用它。
 
     * ``stroke``  边线：任何 Collection 都能加/改边（现在没有边 ≠ 加不上）
-    * ``fill``    填充：此刻有 facecolors **且**没在做颜色映射（见本节抬头）
+    * ``faces``   **有面可画**：`get_facecolor()` 非空。这与 `fill` 是两件事
+                  ——映射的 QuadMesh / contourf / hexbin 有面（花纹画得上）
+                  但 facecolor 不归用户改；而 LineCollection 与 `contour`
+                  的 facecolor 是 `'none'`，**连面都没有**，给花纹就是给一个
+                  设得进状态、画面上一个像素都不变的开关（实测：面向的
+                  `get_facecolor()` 长度 pcolormesh 36 / contourf 7 /
+                  fill_between 1，而 contour 与 LineCollection 都是 0）
+    * ``fill``    填充：有面 **且**没在做颜色映射（见本节抬头）
     * ``mapped``  颜色映射：cmap / vmin / vmax
     * ``sizes``   标记大小：`_CollectionWithSizes` 且此刻真的有 sizes
     * ``marker``  标记形状整体替换：**只有 PathCollection**。`set_paths` 对
@@ -1969,14 +1976,15 @@ def collection_caps(coll) -> frozenset[str]:
                   换掉——那是改数据，不是改样式。
     """
     caps = {"base", "stroke"}
+    try:
+        if _len0(coll.get_facecolor()):
+            caps.add("faces")
+    except Exception:  # noqa: BLE001
+        pass
     if is_color_mapped(coll):
         caps.add("mapped")
-    else:
-        try:
-            if _len0(coll.get_facecolor()):
-                caps.add("fill")
-        except Exception:  # noqa: BLE001
-            pass
+    elif "faces" in caps:
+        caps.add("fill")
     get_sizes = getattr(coll, "get_sizes", None)
     if get_sizes is not None:
         try:
@@ -2471,7 +2479,11 @@ for _prop, _pair in [
     ("color", _eb_handler(lambda a: a.get_color(), lambda a, v: a.set_color(v))),
     ("linewidth", _eb_handler(lambda a: a.get_linewidth(),
                               lambda a, v: a.set_linewidth(v), _stem_stems)),
-    ("linestyle", _eb_handler(lambda a: a.get_linestyle(), _set_linestyle, _stem_stems)),
+    # 茎是 LineCollection，所以线型必须走**未缩放**规格：`get_linestyle()` 回的
+    # 是按线宽缩放过的 dash，`set_linestyle()` 会再缩一遍，每撤销一次疏一档
+    # （实测 `ax.stem(..., linefmt="--")` 在默认 lw=1.5 下 5.55 → 8.325 → 12.49）。
+    # 判据与理由在 `_get_linecoll_ls`——那一族已经修过，这里是同一个坑的第二个入口。
+    ("linestyle", _eb_handler(_get_linecoll_ls, _set_linecoll_ls, _stem_stems)),
     ("marker", _eb_handler(_stem_marker_get,
                            lambda a, v: a.set_marker(str(v)), _stem_markers)),
     ("markersize", _eb_handler(lambda a: float(a.get_markersize()),
