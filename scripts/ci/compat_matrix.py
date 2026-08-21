@@ -269,11 +269,42 @@ def stage_edit(worker, stem: str, case: dict, base_man: dict) -> dict:
             "full_patches": applied}
 
 
+def _editable_snapshot(man: dict) -> dict:
+    """manifest 里每个可编辑字段的当前值：`{"gid.prop": value}`。"""
+    return {f"{el['gid']}.{f['prop']}": f["value"]
+            for el in man.get("elements", []) for f in el.get("editable", [])}
+
+
+def _prop_diffs(a: dict, b: dict, limit: int = 8) -> list[str]:
+    """两份 manifest 之间**属性值**的分歧（几何之外那一半）。"""
+    sa, sb = _editable_snapshot(a), _editable_snapshot(b)
+    out = []
+    for key in sorted(set(sa) & set(sb)):
+        if not _same_value(sa[key], sb[key]):
+            out.append(f"{key}: {sa[key]!r} vs {sb[key]!r}")
+        if len(out) >= limit:
+            break
+    return out
+
+
 def stage_replay(worker, fresh, stem: str, patches: list) -> dict:
     """热态 == 清空后全量重放 == 全新 worker 重放。
 
-    判据直接复用写回事务的 `app._compare_manifests`——放行/阻断用户写回的
+    几何判据复用写回事务的 `app._compare_manifests`——放行/阻断用户写回的
     就是它，容差一字不差。另起一套只会让矩阵与产品各绿各的。
+
+    **但只用它是不够的，而这一点是实测出来的。** 那个比较器的 docstring
+    自己写着「只比几何」（gid 集合 / bbox / anchor / size_mm）。于是**纯属性
+    的分歧它一处都看不见**：实测「广播改柱色 → 单柱改色 → 全撤」之后，热态
+    的 `bar_0` 停在 `#775599` 而全新重放是 `#1f77b4`，`_compare_manifests`
+    比过 18 个元素、报 0 处分歧。放在产品里那意味着坏颜色一路烙进用户原件、
+    零报错；放在这里意味着 CompatBench 的 replay 阶段会**替产品盖住**它自己
+    的盲区——一个自称在验等价性、却看不见颜色的基准。
+
+    所以这里在几何之外**另加一层属性值比对**。这不是「第二套容差」（几何那
+    一套仍然只有 `_compare_manifests` 一份）：它比的是另一个维度，而产品的
+    写回门禁目前不比这个维度，是记录在案的既有缺口（见
+    docs/ci/matplotlib-compatibility.md）。
     """
     from tavotto.app import _compare_manifests
 
@@ -292,11 +323,14 @@ def stage_replay(worker, fresh, stem: str, patches: list) -> dict:
             legs.append({"pair": f"{name_a} vs {name_b}", "compared": 0,
                          "diffs": ["没有可比元素（manifest 空？）"]})
             continue
-        if diffs:
+        props = _prop_diffs(a, b)
+        if diffs or props:
             ok = False
         legs.append({"pair": f"{name_a} vs {name_b}", "compared": compared,
                      "diffs": [f"{d['gid'] or '<figure>'}.{d['field']}: "
-                               f"{d['hot']} vs {d['fresh']}" for d in diffs[:8]]})
+                               f"{d['hot']} vs {d['fresh']}" for d in diffs[:8]],
+                     # 几何之外那一半——产品的写回门禁看不见这一列，见 docstring
+                     "prop_diffs": props})
     fresh.override(stem, [])
     return {"ok": ok, "detail": {"legs": legs}}
 

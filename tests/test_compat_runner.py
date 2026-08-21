@@ -458,3 +458,32 @@ def test_both_clis_pin_utf8_streams():
         assert "use_utf8_streams()" in src, f"{name} 没调 use_utf8_streams"
         assert "from _common import use_utf8_streams" in src, (
             f"{name} 自己抄了一份，而不是用 _common 里那唯一的实现")
+
+
+def test_replay_stage_also_compares_property_values():
+    """replay 阶段不能只比几何——那样它会替产品盖住产品自己的盲区。
+
+    `app._compare_manifests` 的 docstring 写着「只比几何」（gid 集合 /
+    bbox / anchor / size_mm）。实测过一个纯属性分歧：「广播改柱色 → 单柱
+    改色 → 全撤」之后热态停在 `#775599`、全新重放是 `#1f77b4`，那个比较器
+    比过 18 个元素、报 **0 处分歧**。
+
+    一个自称在验等价性、却看不见颜色的基准，比没有基准更坏——它会给出
+    「四路一致」的结论，而四路里有一路的颜色是错的。
+    """
+    same = {"elements": [{"gid": "axes_0.lines_0",
+                          "editable": [{"prop": "color", "value": "#123456"}]}]}
+    other = {"elements": [{"gid": "axes_0.lines_0",
+                           "editable": [{"prop": "color", "value": "#654321"}]}]}
+    assert CM._prop_diffs(same, same) == []
+    got = CM._prop_diffs(same, other)
+    assert len(got) == 1 and "axes_0.lines_0.color" in got[0]
+
+
+def test_prop_diff_uses_the_same_tolerance_as_the_edit_stage():
+    """数值比较不许另起一套容差——与 `stage_edit` 用的是同一个 `_same_value`。"""
+    a = {"elements": [{"gid": "g", "editable": [{"prop": "lw", "value": 1.000}]}]}
+    b = {"elements": [{"gid": "g", "editable": [{"prop": "lw", "value": 1.001}]}]}
+    assert CM._prop_diffs(a, b) == [], "微小浮点差被当成分歧了"
+    c = {"elements": [{"gid": "g", "editable": [{"prop": "lw", "value": 3.0}]}]}
+    assert CM._prop_diffs(a, c), "真实差异没被抓到"
