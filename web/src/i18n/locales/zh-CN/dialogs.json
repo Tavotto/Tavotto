@@ -253,7 +253,7 @@
     "exampleScatter": "散点 + 拟合",
     "integrityChecking": "核对中",
     "integrityMismatchNote": "浏览器工作区里的文件已经和你交出来的原文不一致。别再信这个会话里的任何说法，重新加载脚本。",
-    "integrityNote": "浏览器工作区里那个真正被执行的文件的 SHA-256，与你交出来的原文逐字节比对。",
+    "integrityNote": "浏览器工作区里那个真正被执行的文件的 SHA-256，与你交出来的原文逐字节比对。它查的是「脚本或引擎意外改动了源文件」；蓄意规避这项检查的脚本不在此列——它与你的图跑在同一个解释器里。",
     "integrityTitle": "完整性",
     "integrityUnavailableNote": "这个浏览器算不出哈希，比对没有执行——所以这里不说「未改动」。",
     "integrityUnverified": "未核对",

@@ -139,6 +139,29 @@ matplotlib 那十几 MB」之前跑，而 `browser.py` 模块级就 import matpl
 * 上面两条各有各的用例判据，**少一道都会红**：去掉 `jsglobals` 时脚本能多
   产出一张 `ESCAPED` 图（逃逸可观测），去掉原语捕获时 digest 掉包会得逞。
   两条都在同一个 e2e 里（`Python 够不着 js`），反证逐一做过。
+* **威胁模型说清楚：这不是对抗性保证，也做不成。** 审查追到第七轮时问的是
+  「还有没有别的 Python→JS 桥」。实测（真 Pyodide 314.0.5，逐个探）：
+
+        js                   拿得到，但里面是空的（jsglobals 无原型）
+        js.eval              AttributeError
+        js.constructor       AttributeError
+        pyodide.code.run_js  ImportError（这个发行版里根本没有）
+        pyodide_js           **拿得到，而且是真代理**
+        pyodide_js.constructor.constructor("return globalThis")()  → 成功
+
+  `pyodide_js` 是 Pyodide 自己 Python 侧与 JS 通信的基础设施，**删不掉**。
+  所以「按模块名封堵」是打不完的地鼠。审查建议的另一条——「把验证挪到一个
+  不跑用户 Python 的独立 Worker」——同样不成立：虚拟 FS 就在被攻陷的那个
+  Worker 的内存里，任何取字节的通道都要经过它。
+
+  **结论要写在明处**：只要用户 Python 与验证代码在同一个 Worker 里，
+  蓄意规避这项检查的脚本总是做得到（改摘要、改路径、乃至直接
+  `self.postMessage` 伪造整条响应）。所以这项检查的定位是
+  **「查意外，不是防蓄意」**：它逮的是脚本或引擎**无意间**改了源文件
+  （`draw_event` 回调那一类真实场景），以及所有非对抗性的走样。
+  这句话同时写进了源码面板的完整性明细里——**产品界面上不许比这更强的
+  说法**。已修的那几条（jsglobals 无原型、可信原语、路径前置冻结）不是白做：
+  它们把「顺手就骗过去」变成「要专门写代码去骗」，并且各自有反证过的用例。
 * `engine/browser.py` 的 `source_status` 保留并继续被 CPython 测试盖着：
   它验的是**引擎语义**（写进去的就是收到的、脚本跑完还是那份），跑在 Pyodide
   之外、没有那个威胁模型。两者要的东西不同，别把其中一个当重复删掉。

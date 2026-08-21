@@ -254,7 +254,7 @@
     "exampleScatter": "Scatter + fit",
     "integrityChecking": "checking",
     "integrityMismatchNote": "The file in the browser workspace no longer matches the source you supplied. Do not trust anything this session reports; load the script again.",
-    "integrityNote": "SHA-256 of the file actually executed in the browser workspace, compared byte for byte with the source you supplied.",
+    "integrityNote": "SHA-256 of the file actually executed in the browser workspace, compared byte for byte with the source you supplied. It catches a script or the engine modifying the source unintentionally. It is not a defence against a script written to defeat it, which runs in the same interpreter as your figure.",
     "integrityTitle": "Integrity",
     "integrityUnavailableNote": "This browser could not compute the hash, so the comparison never ran — which is why this does not claim the file is unchanged.",
     "integrityUnverified": "not verified",

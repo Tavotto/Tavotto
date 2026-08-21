@@ -863,6 +863,12 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被它推翻**（
   `browser_imports` 有意放行 try/except 里的可选 import，`__import__('js')`
   它更看不见。可信原语（digest / Uint8Array / FS 读取）一律在模块求值期与
   init 期绑定好，是纵深防御。两道防线各有判据，少一道都有用例红。
+  **定位是「查意外，不是防蓄意」**：`pyodide_js` 是 Pyodide 的基础设施、删不掉，
+  而 `pyodide_js.constructor.constructor("return globalThis")()` 实测能拿到
+  Worker 全局——只要用户 Python 与验证代码同在一个 Worker，蓄意规避总是做得到。
+  按模块名封堵是打不完的地鼠，「挪到独立 Worker 验」也不成立（虚拟 FS 就在
+  被攻陷的那个 Worker 里）。**界面上不许出现比这更强的说法**，源码面板的
+  完整性明细里已经写明。
   Worker 侧的哈希在**脚本跑完之后**采；复验走独立的轻命令、**只在 worker
   闲着时发**（无阶段请求超时 30s，排在慢渲染后面到点 = 整个会话被
   terminate）。UI 四态：没验完不许说「未改动」，算不出哈希是「查不了」
