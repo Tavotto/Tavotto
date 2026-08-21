@@ -562,3 +562,29 @@ FileNotFoundError，路径拼成了 `…/examples/examples/figure.py`（实测�
 `patch_can_fill` 里那句 `isinstance(pt, Arc)` 是**有据可查的例外**：
 matplotlib 没有公开的「填得了吗」谓词，实例上也探不出来。按 family 建模是为了
 不用逐个类名补**能力**，不是说一个测得出来的例外也不许写下来。
+
+## 19. 新加的用例当场逮到一个只在 Windows 上发生的 bug
+
+§18.1 那条补的 `tests/test_artist_census_tool.py` 在 CI 的 windows 腿上**第一次
+跑就红了**，而且红的不是它防的那件事：
+
+```
+UnicodeEncodeError: 'charmap' codec can't encode characters in position 25-26
+  File "…/matplotlib_artist_census.py", line 285, in print_report
+    print(f"{'API / figure':22s} {'元素':>4s} {'语义':>4s} …")
+```
+
+普查报告的表头全是中文，而 Windows 控制台默认是本地代码页（GitHub runner 上
+cp1252、中文机器上 cp936）。macOS / Linux 上永远看不见——那儿默认就是 UTF-8。
+**这个工具在别人电脑上从来就没跑完过**，只是以前没有用例去跑它。
+
+修法是 `main()` 开头把 stdout / stderr 钉成 UTF-8（`errors="replace"`：真遇到
+画不出的字符宁可显示成 `?`，也不能让一个**诊断**工具自己崩掉——它存在的意义
+就是别人跑得起来）。
+
+看护按仓库那条老规矩放进 `tests/test_windows_regressions.py`
+（「每个『只在别人电脑上发生』的 bug 先变成这里的用例再谈修」），
+用 `PYTHONIOENCODING=cp1252` 强制旧代码页，所以**任何平台都跑得出来**。
+
+值得记一笔的是这件事本身：那个用例是为「相对路径」写的，逮到的却是编码。
+**给没人测过的东西补第一个用例，往往先掉出来的是另一个 bug。**

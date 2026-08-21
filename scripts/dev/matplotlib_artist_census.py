@@ -311,7 +311,28 @@ def print_report(rows: dict) -> int:
     return len(missing_total)
 
 
+def _force_utf8_stdio() -> None:
+    """把 stdout / stderr 钉成 UTF-8。**这份报告的表头全是中文。**
+
+    Windows 控制台默认是本地代码页（GitHub runner 上是 cp1252、中文机器上是
+    cp936），`print("元素")` 当场 `UnicodeEncodeError`，整个工具在别人电脑上
+    根本跑不完——而在 macOS / Linux 上永远看不见（那儿默认就是 UTF-8）。
+    这是本仓库那条「只在别人电脑上发生」的老毛病的又一例，看护在
+    `tests/test_windows_regressions.py`（用 `PYTHONIOENCODING` 强制旧代码页
+    复现，所以任何平台上都跑得出来）。
+
+    `errors="replace"` 是有意的：真遇到画不出的字符，宁可显示成 `?` 也不能
+    让一个**诊断**工具自己崩掉——它存在的意义就是别人跑得起来。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError):
+            pass   # 被重定向成别的对象（或已关闭）：照旧，不拦工具跑
+
+
 def main() -> int:
+    _force_utf8_stdio()
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("script", nargs="?", help="要普查的画图脚本")

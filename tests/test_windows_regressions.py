@@ -13,6 +13,7 @@
   * 渲染解释器探测：python.org / conda / 商店版
   * 只装了桌面版时外部程序找不到 CLI（GUI 子系统的 exe 没有 stdout）
   * 测试自己的 id 太长撑爆环境变量（32767 上限）
+  * 开发工具往控制台打中文（本地代码页 ≠ UTF-8）
 
 跨平台可跑：拿不到真实 Windows 语义的地方就直接测**那段逻辑本身**
 （monkeypatch 出同样的失败），而不是假装在 Windows 上跑。
@@ -1203,3 +1204,46 @@ def test_playground_writes_the_workspace_source_byte_for_byte():
     assert all("b" in str(m) for m in writes), (
         f"browser.py 必须用二进制模式写工作区源文件（现在是 {writes}）——"
         "文本模式会在 Windows 上翻译换行，源文件完整性校验永远 mismatch。")
+
+
+def test_artist_census_prints_chinese_under_a_legacy_code_page(tmp_path):
+    """普查工具的中文表头在**非 UTF-8 控制台**上必须打得出来。
+
+    CI 的 windows 腿实测逮到的：GitHub runner 的控制台是 cp1252，
+    `print("元素")` 当场 `UnicodeEncodeError`，工具在别人电脑上根本跑不完
+    ——而 macOS / Linux 上永远看不见（那儿默认就是 UTF-8）。中文机器上是
+    cp936，同一个坑。
+
+    这里用 `PYTHONIOENCODING` 把子进程的 stdio 强制成旧代码页，所以**任何
+    平台都跑得出来**——与本文件其余用例同一条纪律：拿不到真实 Windows 语义
+    的地方就直接测那段逻辑本身。
+
+    它只是个诊断工具，但正因为如此才更不能崩：它存在的意义就是别人跑得起来。
+    """
+    from tavotto.engine import pool
+
+    try:
+        worker_py = pool.find_worker_python()
+    except pool.WorkerError:
+        pytest.skip("找不到装有 matplotlib 的解释器")
+
+    repo = Path(__file__).resolve().parent.parent
+    tool = repo / "scripts" / "dev" / "matplotlib_artist_census.py"
+    script = tmp_path / "fig.py"
+    script.write_text(
+        "import matplotlib\n"
+        "matplotlib.use('Agg')\n"
+        "import matplotlib.pyplot as plt\n"
+        "fig, ax = plt.subplots()\n"
+        "ax.plot([0, 1], [0, 1])\n"
+        "ax.set_title('中文标题')\n"
+        "fig.savefig('cp_probe.pdf')\n",
+        encoding="utf-8")
+
+    env = dict(os.environ, PYTHONIOENCODING="cp1252")
+    proc = subprocess.run([worker_py, str(tool), "fig.py"], cwd=str(tmp_path),
+                          capture_output=True, text=True, timeout=300, env=env)
+    assert "UnicodeEncodeError" not in (proc.stdout + proc.stderr), (
+        "普查工具在非 UTF-8 控制台上崩了——stdout 必须钉成 UTF-8"
+        f"\n{proc.stdout}\n{proc.stderr}")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
