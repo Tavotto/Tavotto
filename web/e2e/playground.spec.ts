@@ -320,7 +320,9 @@ test('Python 够不着 js：拿不到 Worker 全局，也就伪造不了完整�
   //
   // 静态分类拦不住：`browser_imports` 有意放行 try/except 里的可选 import，
   // 而 `__import__('js')` 它根本看不见。所以防线在 `loadPyodide` 的
-  // `jsglobals: {}`。这条用例把那个逃逸原样跑一遍——**把 jsglobals 去掉就会红**。
+  // `jsglobals`，而且那个对象必须是**无原型**的：普通 `{}` 还挂着
+  // `Object.prototype`，`constructor.constructor` 就是一台 Function 构造器，
+  // 一句 `return globalThis` 照样把 Worker 全局捞回来。两条路这里都跑。
   const src = [
     'import matplotlib.pyplot as plt',
     'fig, ax = plt.subplots(figsize=(2.6, 2))',
@@ -340,6 +342,16 @@ test('Python 够不着 js：拿不到 Worker 全局，也就伪造不了完整�
     '    _escaped = True',
     'except Exception:',
     '    _escaped = False',
+    '',
+    '# 第二条路：即使 js.eval 没了，只要 jsglobals 那个对象还挂着',
+    '# Object.prototype，`constructor.constructor` 就是一台 Function 构造器，',
+    '# 一句 "return globalThis" 就把 Worker 全局捞回来了。',
+    'try:',
+    '    _g = __import__("js").constructor.constructor("return globalThis")()',
+    '    if _g is not None:',
+    '        _escaped = True',
+    'except Exception:',
+    '    pass',
     '',
     '# 逃逸成不成功要**看得见**：成功就多产出一张叫 ESCAPED 的图。',
     '# 这一条钉的是 jsglobals；上面那段 digest 掉包钉的是可信原语的捕获。',
@@ -365,6 +377,41 @@ test('Python 够不着 js：拿不到 Worker 全局，也就伪造不了完整�
   await expect(page.getByRole('alert')).toContainText('意外改动', { timeout: 60_000 })
   await expect(page.getByRole('button', { name: /jsesc\.py · 意外改动/ })).toBeVisible()
   await expect(page.getByText('· 未改动')).toHaveCount(0)
+})
+
+test('没有 Web Crypto 时降级成「未核对」，而不是把整个会话弄死', async ({ page }) => {
+  // codex 审查第四轮 P2。完整性模型自己写着「算不出哈希是**查不了**」，
+  // 可我把可信摘要绑定写在了模块求值期——非安全上下文（局域网的 http://
+  // 地址就是）根本没有 `crypto.subtle`，那一句直接抛，而且抛在装
+  // `onmessage` **之前**：整个 Worker 起不来，会话以 worker_crashed 收场。
+  // 为一条状态指示把编辑器弄死，与「预热是优化不是依赖」同一类错误。
+  // 主线程那半边：addInitScript 只作用于页面
+  await page.addInitScript(() => {
+    Object.defineProperty(globalThis.crypto, 'subtle', { value: undefined, configurable: true })
+  })
+  // **Worker 那半边**：addInitScript 进不了 Worker 的全局，得把 worker 脚本
+  // 本身截下来在最前面插一句。这一步不能省——finding 说的正是模块求值期那句
+  // 绑定会把 Worker 整个带崩，而那只在 Worker 里复现。
+  await page.route('**/pyodide.worker*.js', async (route) => {
+    const res = await route.fetch()
+    const body = await res.text()
+    await route.fulfill({
+      status: 200,
+      headers: { 'content-type': 'text/javascript; charset=utf-8' },
+      body:
+        "Object.defineProperty(self.crypto,'subtle',{value:undefined,configurable:true});\n" +
+        body,
+    })
+  })
+  await page.goto(`${origin}/?lang=zh`)
+  await page.getByRole('button', { name: /直接试一个示例/ }).click()
+
+  // 编辑器照常起来——这是这条用例的重点
+  await waitForEditor(page)
+  // 状态是「未核对」，**不是**「未改动」（没验过就不许说没改）
+  await expect(page.getByRole('button', { name: /kinetics\.py · 未核对/ })).toBeVisible()
+  await expect(page.getByText('· 未改动')).toHaveCount(0)
+  await expect(page.getByRole('alert')).toHaveCount(0)
 })
 
 test('不支持的依赖：在下载科学栈之前拒绝，并给桌面版出口', async ({ page }) => {

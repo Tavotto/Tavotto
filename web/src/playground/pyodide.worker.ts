@@ -30,7 +30,15 @@ interface PyodideLike {
  * 完整性核对不能在核对那一刻才去全局对象上取 `crypto.subtle.digest`——那时
  * 用户脚本已经跑过了。这里的绑定发生在模块求值期，比 Pyodide 起来还早。
  */
-const TRUSTED_DIGEST = crypto.subtle.digest.bind(crypto.subtle)
+// **可选地**绑定：非安全上下文（比如局域网的 http:// 地址）根本没有
+// `crypto.subtle`，模块求值期直接 `.digest.bind(...)` 会抛，而这一抛发生在
+// 装 `onmessage` 之前——整个 Worker 起不来，会话以 `worker_crashed` 收场。
+// 那与本模块自己的设计相矛盾：算不出哈希是「查不了」（unavailable），
+// playground 其余部分照常可用，不该被一条状态指示拖死。
+const TRUSTED_DIGEST: ((alg: string, data: BufferSource) => Promise<ArrayBuffer>) | null =
+  typeof crypto !== 'undefined' && typeof crypto.subtle?.digest === 'function'
+    ? crypto.subtle.digest.bind(crypto.subtle)
+    : null
 const TrustedU8 = Uint8Array
 
 let pyodide: PyodideLike | null = null
@@ -56,6 +64,9 @@ let workspacePath = ''
  */
 async function fsDigest(path: string): Promise<{ sha256: string; bytes: number }> {
   if (!trustedReadFile) fail('bad_request', 'Pyodide 还没初始化')
+  // 没有 Web Crypto：交空摘要，主线程据此显示「查不了」——**不是**「未改动」，
+  // 也不是把会话弄死
+  if (!TRUSTED_DIGEST) return { sha256: '', bytes: 0 }
   const data = trustedReadFile!(path)
   // 复制进独立的 ArrayBuffer：FS 给的是 WASM 堆上的视图，堆一增长就失效
   const copy = new TrustedU8(data)
@@ -105,7 +116,10 @@ async function init(id: number, pyodideBaseUrl: string, engineZipUrl: string): P
   const mod = (await import(/* @vite-ignore */ `${pyodideBaseUrl}pyodide.mjs`)) as {
     loadPyodide(opts: { indexURL: string; jsglobals?: object }): Promise<PyodideLike>
   }
-  // `jsglobals: {}` **切断 Python 的 `js` 逃逸口**。这不是洁癖：`import js`
+  // `jsglobals` **切断 Python 的 `js` 逃逸口**，而且必须是 `Object.create(null)`
+  // 这种**无原型**对象：普通 `{}` 还挂着 `Object.prototype`，于是
+  // `__import__('js').constructor.constructor('return globalThis')()` 就是一台
+  // Function 构造器，一句话把 Worker 全局捞回来——`js.eval` 关了也白关。这不是洁癖：`import js`
   // 之后 `js.eval` 就能改 Worker 的任何全局——换掉 `crypto.subtle.digest`
   // 让它在算之前先把追加的尾巴削掉、甚至直接 `self.postMessage` 伪造一整条
   // 响应。**Python 一旦够得着 js，这个 Worker 里就没有任何东西可信**，
@@ -114,7 +128,8 @@ async function init(id: number, pyodideBaseUrl: string, engineZipUrl: string): P
   // 它根本看不见——所以防线必须在这里，用 Pyodide 官方的 jsglobals。
   // 代价是脚本用不了 js 互操作；playground 接的是普通 matplotlib 脚本，
   // 本来就不该用它（示例纯净度用例也一直这么要求）。
-  pyodide = await mod.loadPyodide({ indexURL: pyodideBaseUrl, jsglobals: {} })
+  // e2e 的 `Python 够不着 js` 把 `js.eval` 与 constructor 两条路都跑一遍。
+  pyodide = await mod.loadPyodide({ indexURL: pyodideBaseUrl, jsglobals: Object.create(null) })
   trustedReadFile = (p: string) => pyodide!.FS.readFile(p, { encoding: 'binary' })
 
   progress(id, 'engine')
@@ -224,7 +239,9 @@ async function dispatch(req: WorkerRequest): Promise<unknown> {
       if (!pyodide || !workspacePath) return fail('bad_request', '还没有加载脚本')
       const script = workspacePath.slice(workspacePath.lastIndexOf('/') + 1)
       try {
-        return { script, ...(await fsDigest(workspacePath)) }
+        const d = await fsDigest(workspacePath)
+        if (!d.sha256) return fail('source_unreadable', '这个浏览器没有 Web Crypto，算不出摘要')
+        return { script, ...d }
       } catch (err) {
         return fail('source_unreadable',
           `读不到工作区里的源文件: ${err instanceof Error ? err.message : err}`)

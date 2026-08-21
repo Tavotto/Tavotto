@@ -117,7 +117,10 @@ matplotlib 那十几 MB」之前跑，而 `browser.py` 模块级就 import matpl
   算，全程不经过用户够得着的 Python 名字空间（`import js` 这类反向逃逸由
   `browser_imports` 在执行前就拦掉）。这条有 e2e 原样跑那个场景钉着，
   **把摘要挪回 Python 就会红**。
-* **`import js` 必须够不着**（`loadPyodide` 的 `jsglobals: {}`）。这条是前一条
+* **`import js` 必须够不着**（`loadPyodide` 的 `jsglobals: Object.create(null)`）。
+  **无原型是硬要求**：普通 `{}` 还挂着 `Object.prototype`，于是
+  `__import__('js').constructor.constructor('return globalThis')()` 就是一台
+  Function 构造器，一句话把 Worker 全局捞回来——`js.eval` 关了也白关。这条是前一条
   成立的前提，也是三轮审查里最要紧的一条：Python 一旦拿到 `js`，它就能
   `js.eval` 改 Worker 的**任何**全局——不只是把 `crypto.subtle.digest` 换成
   「算之前先削掉追加的尾巴」，还能直接 `self.postMessage` 伪造一整条响应
@@ -128,7 +131,11 @@ matplotlib 那十几 MB」之前跑，而 `browser.py` 模块级就 import matpl
   互操作——playground 接的是普通 matplotlib 脚本，本来就不该用它。
 * **可信原语在模块求值期就绑定好**（`TRUSTED_DIGEST` / `TrustedU8`，
   FS 读取在 init 期捕获）：纵深防御，万一哪天 `js` 那条防线破了，摘要这一步
-  至少不是在核对那一刻才去全局对象上取函数。
+  至少不是在核对那一刻才去全局对象上取函数。绑定必须是**可选的**
+  （`crypto.subtle?.digest` 存在才绑）：非安全上下文根本没有 `crypto.subtle`，
+  硬绑定会在装 `onmessage` **之前**抛出去，整个 Worker 起不来、会话以
+  `worker_crashed` 收场——而本节自己写着「算不出哈希是**查不了**」。
+  为一条状态指示把编辑器弄死，与「预热是优化不是依赖」同一类错误。
 * 上面两条各有各的用例判据，**少一道都会红**：去掉 `jsglobals` 时脚本能多
   产出一张 `ESCAPED` 图（逃逸可观测），去掉原语捕获时 digest 掉包会得逞。
   两条都在同一个 e2e 里（`Python 够不着 js`），反证逐一做过。

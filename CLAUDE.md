@@ -853,7 +853,10 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被它推翻**（
   把摘要挪回 Python 就红）。`browser.py` 的 `source_status` 保留，验的是
   引擎语义、跑在 Pyodide 之外，不是重复。写文件必须**二进制**——文本模式在
   Windows 上翻译换行，比对永远 mismatch（只有 CI 的 windows 腿逮得到）。
-  **`import js` 必须够不着**（`loadPyodide` 的 `jsglobals: {}`）——这是上面
+  **`import js` 必须够不着**（`loadPyodide` 的
+  `jsglobals: Object.create(null)`，**无原型是硬要求**——普通 `{}` 上
+  `constructor.constructor('return globalThis')()` 就是一台 Function 构造器）
+  ——这是上面
   那条成立的前提：Python 拿到 `js` 就能 `js.eval` 改 Worker 任何全局，
   连 `self.postMessage` 伪造整条响应都做得到（请求 id 自增、猜得到），
   那时**这个 Worker 里没有任何东西可信**。静态分类不是防线：
