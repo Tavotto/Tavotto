@@ -649,13 +649,49 @@ def _get_axes_lim(axis: str):
 
 
 def _set_axes_lim(axis: str):
-    """坐标范围：吃一对数字（用户改的）或 `_AUTOSCALE`（还原时喂回来的）。"""
+    """坐标范围：吃一对数字（用户改的）或 `_AUTOSCALE`（还原时喂回来的）。
+
+    ## 范围与方向是两条**正交**的 prop，只是共用了 `set_[xy]lim` 这一个入口
+
+    matplotlib 用**端点顺序**表达翻转：`set_ylim(2, 60)` 升序 = 不翻转，
+    而这会把之前 `invert_yaxis()` 的效果**当场抹掉**。于是「同时设了范围和
+    翻转」这个组合坏在一处谁都想不到的地方：
+
+        只 invert_y      ylim [104.95, -3.95]   invert_y True
+        ylim + invert_y  ylim [2.0, 60.0]       invert_y **False**   ← 被吃掉
+
+    用户勾了「翻转 Y 轴」、又把范围设成 2..60，界面显示没翻、画面也没翻，
+    而 patch 列表里 `invert_y=true` 明明还在。**两个列表序都坏**——
+    `_alias_same_element` 把 `ylim` 声明成 `invert_y` 的窄端，`_rank` 于是
+    保证 invert 先、lim 后，把「可能被抹掉」变成了「必然被抹掉」。
+
+    所以 lim 只管**范围大小**，方向交给 `invert_*`：写之前先问这一次的 patch
+    表（`state.pending`）里有没有对这条轴的 `invert_<axis>`，有就按它排端点；
+    没有就沿用轴当前的方向（脚本原样，或已经应用过的 override）。
+    看 `pending` 而不是只看轴的实况，是因为**这一次改完之后**才是要落的状态
+    ——与色条方向那条结构性 setter 是同一条纪律（见 `FigState.pending`）。
+
+    用户直接把范围写成降序（`[60, 2]`）仍然表达翻转：那时 `pending` 里没有
+    `invert_*`，端点顺序照旧说了算。
+    """
     def put(ax, v):
         if v is _AUTOSCALE:
             ax.autoscale(enable=True, axis=axis)
             ax.autoscale_view()
             return
         lo, hi = float(v[0]), float(v[1])
+        # **轴此刻的方向说了算，端点顺序只表达「范围是这两个数」。**
+        #
+        # 这一句**不依赖 invert 与 lim 谁先应用**（实测过两个方向）：
+        #   * invert 先 → 这里读到已翻转，把升序换成降序，翻转保住；
+        #   * lim 先   → 这里读到未翻转、不动手，随后 invert 自己把端点翻过来。
+        # 两条路殊途同归。曾经写过一版查 `state.pending` 的「更周全」实现，
+        # **拿掉之后没有任何用例变红**——在任一排序下它都是死代码，删了。
+        #
+        # 用户直接把范围写成降序（`[60, 2]`）仍然表达翻转：那时 `lo < hi` 为
+        # 假，这里不动手，端点顺序自己说话。
+        if getattr(ax, f"{axis}axis_inverted")() and lo < hi:
+            lo, hi = hi, lo
         (ax.set_xlim if axis == "x" else ax.set_ylim)(lo, hi)
     return put
 

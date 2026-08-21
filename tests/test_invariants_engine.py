@@ -668,6 +668,30 @@ def test_same_element_pairs_restore_exactly(hot_restore, stem, gid, broad, narro
         assert not (resp.get("warnings") or []), (order, resp["warnings"])
         assert _png(hot_restore, stem, patch, f"pair-on-{gid}-{broad[0]}") != base_png, \
             f"{order}：这一对根本没动画面，用例是空的"
+        # **两条都得真的落地**。第一版只验了「非空转 + 撤销回得去」，于是
+        # 漏掉了这一类里最要命的一种：两条 prop 共用一个 matplotlib 入口，
+        # 后写的把先写的**抹掉**——apply 产生了错的状态，而撤销照样回得去，
+        # 所以用例全绿。实测撞到过：`ylim` 与 `invert_y` 都设时，
+        # `set_ylim(2, 60)` 升序把翻转当场取消，manifest 报 `invert_y=False`，
+        # 画面与「只设 ylim」逐字节相同——用户勾了翻转，界面说没翻。
+        got = _fields(resp["manifest"], gid)
+        flips = any(p.startswith("invert_") for p, _ in (broad, narrow))
+        for prop, want in (broad, narrow):
+            if prop not in got:
+                # manifest 没宣称这条（`bar` 有 `fill` 的 handler、却不出这个
+                # 字段）。没宣称就谈不上「界面说改了」，跳过——能力真实那条
+                # 管的是**宣称了的**那些。
+                continue
+            value = got[prop]["value"]
+            if flips and isinstance(want, list) and isinstance(value, list):
+                # 这一对里有 `invert_*`：范围的端点顺序**本来就该跟着翻**，
+                # 比集合不比顺序。翻转生效与否由那条 `invert_*` 自己断言。
+                assert sorted(value) == sorted(float(x) for x in want), (
+                    f"{order}：{gid}.{prop} 请求 {want!r}，manifest 读回 {value!r}")
+                continue
+            assert _same_value(got[prop], value, want), (
+                f"{order}：{gid}.{prop} 请求 {want!r}，manifest 读回 "
+                f"{value!r}——这一对里有一条把另一条抹掉了")
         after = _man(hot_restore, stem)
         assert after == base, f"{order}：撤销之后 manifest 没回到脚本原样"
         assert _png(hot_restore, stem, [], f"pair-off-{gid}-{broad[0]}") == base_png, \
@@ -702,6 +726,39 @@ def test_explicit_script_limits_are_not_turned_into_autoscale(hot_restore):
     assert got["ylim"] == [-2.6, 4.6], \
         f"撤掉 ylim 之后那条轴自己重新缩放了：{got['ylim']}"
     _man(hot_restore, "InvMix")
+
+
+@pytest.mark.parametrize("axis", ["x", "y"])
+def test_range_and_direction_both_survive_together(hot_restore, axis):
+    """范围与方向是**两条正交的 prop**，同时设时两条都得生效。
+
+    matplotlib 用**端点顺序**表达翻转，于是这两条共用 `set_[xy]lim` 一个入口，
+    后写的会把先写的抹掉。坏掉的样子（实测，修之前）：`ylim` 与 `invert_y`
+    同时设时 `set_ylim(2, 60)` 升序把翻转当场取消，manifest 报
+    `invert_y=False`，画面与「只设 ylim」逐字节相同——**用户勾了翻转，
+    界面说没翻**。
+
+    **刻意不断言「谁先应用」**。第一版这条用例叫「invert 必须排在 lim 之前」，
+    而实测把别名方向反过来（lim 变广播端、invert 排到后面）**照样绿**：
+    invert 后手时它自己会把端点翻过来，殊途同归。断言一个并不成立的前提，
+    就是在测试里写一句没人验证过的话——本轮反复在收的正是这个形状。
+    这条只断言**结果**：两条 prop 都落地、画面确实不同于「只设范围」。
+    """
+    stem, gid = "InvScale", "axes_0"
+    lo, hi = (1.5, 3.5) if axis == "x" else (2.0, 60.0)
+    lim = {"gid": gid, "prop": f"{axis}lim", "value": [lo, hi]}
+    inv = {"gid": gid, "prop": f"invert_{axis}", "value": True}
+    only_lim = _png(hot_restore, stem, [lim], f"inv-{axis}-limonly")
+
+    for order, patch in (("lim→invert", [lim, inv]), ("invert→lim", [inv, lim])):
+        got = _fields(_man(hot_restore, stem, patch), gid)
+        assert got[f"invert_{axis}"]["value"] is True, \
+            f"{order}：请求了翻转，manifest 却说没翻——范围那条把它抹掉了"
+        assert got[f"{axis}lim"]["value"] == [hi, lo], (
+            f"{order}：翻转生效时端点该是降序，读到 {got[f'{axis}lim']['value']!r}")
+        assert _png(hot_restore, stem, patch, f"inv-{axis}-{order}") != only_lim, \
+            f"{order}：画面与「只设范围」一模一样，翻转根本没画出来"
+    _man(hot_restore, stem)
 
 
 def test_every_alias_group_survives_both_orders(hot_replay, library):
