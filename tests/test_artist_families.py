@@ -402,27 +402,43 @@ def test_custom_subclass_inherits_family_support(hot):
     assert {"color", "linewidth", "linestyle", "marker"} <= set(line)
 
 
-def test_arc_gets_hatch_but_not_a_fill_it_cannot_paint(hot):
-    """`Arc` 是 matplotlib 里唯一**有意画不出面**的 Patch，而它不报错。
+def test_arc_is_a_normal_patch_fill_included(hot):
+    """`Arc` 没有例外能力——**这条曾经写反过，改正的依据是重测**。
 
-    实测（3.10.8，同一张图同一个几何）：`set_facecolor("red")` 之后 Arc 的
-    红色像素 **0** 个、Circle 4122 个；`set_fill(True)` 与 `set_facecolor`
-    都照收、`get_*` 也照回——override 记成成功、manifest 照报，画面上什么
-    都没有。只有 `Arc(..., fill=True)` 这个**构造式**会抛。
+    PR #48 一度按 `isinstance(pt, Arc)` 把 `facecolor` / `fill` 藏起来，理由是
+    「Arc 画不出面」。那条测量不是同类对比：它量的是 `set_facecolor("red")`
+    单独一句（红像素 0），而 `Arc.__init__` 把 `fill` 钉成 False——同一句话在
+    `Circle(fill=False)` 上也是 0 个红像素。
 
-    **花纹是例外，在 Arc 上是真画的**（墨迹 427 → 1705，与 Circle 的
-    563 → 1915 同一量级）：它走 GC 的 hatch 机制、拿路径当模板，不经过填充
-    那条路。所以「有没有面」与「面归不归用户改」必须是两条判据——
-    Collection 那边的 `faces` / `fill` 是同一件事的另一半。
+    重测（mpl 3.10.8，两个会话各自独立量过一遍）：
+
+        Arc     facecolor=red                ->    0 红像素
+        Arc     facecolor=red + set_fill(True) -> 6081 红像素
+        Circle  facecolor=red                -> 6700 红像素
+        Circle  facecolor=red + set_fill(False) ->  0 红像素
+
+    对称。`Arc.draw()` 在弧的屏幕尺寸小于 `inv_error`（= 0.5/1.89818e-6 ≈
+    263410 px，任何现实图幅都远远够不着）时 `return Patch.draw(self, renderer)`
+    ——填充走的就是公共那条，Agg / PDF / SVG 三个后端的产物都随 fill 开关变。
+
+    所以那道闸把一个**真能用**的属性藏了起来。「宣称了却改不动」与「能改却
+    不宣称」是同一种不诚实，只是方向相反；而按类名写死的例外正是能力层要
+    消灭的东西。留下这条用例，是为了下次有人再想按类名补例外时，先被要求
+    拿出同类对比的测量。
     """
     man = _man(hot, "FamPatch")
     arc = _fields(man, "axes_0.patches_5")
-    assert "facecolor" not in arc, "Arc 给了填充色——设了也画不出来"
-    assert "fill" not in arc, "Arc 给了填充开关——它连构造式都拒绝 fill=True"
-    assert "hatch" in arc, "Arc 的花纹是真画得出来的，不该顺手一起砍掉"
-    assert {"edgecolor", "linewidth", "linestyle"} <= set(arc)
+    assert {"facecolor", "fill", "hatch", "edgecolor", "linewidth", "linestyle"} <= set(arc)
+    assert arc["fill"]["value"] is False, "Arc 的构造式把 fill 钉成 False，显示值要如实"
 
-    # 画得出面的照常全给——别把例外扩大成规则
+    # 开关真的推得动，而且撤销逐字回去
+    after = _fields(_man(hot, "FamPatch",
+                         [{"gid": "axes_0.patches_5", "prop": "fill", "value": True}]),
+                    "axes_0.patches_5")
+    assert after["fill"]["value"] is True
+    assert _fields(_man(hot, "FamPatch"), "axes_0.patches_5")["fill"]["value"] is False
+
+    # 别把例外扩大成规则：画得出面的照常全给
     circle = _fields(man, "axes_0.patches_3")
     assert {"facecolor", "fill", "hatch"} <= set(circle)
 

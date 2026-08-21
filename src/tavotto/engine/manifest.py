@@ -27,7 +27,6 @@ from overrides import (ColorbarProxy, FigState, HANDLERS, HATCHES, SeriesGroup,
                        TickLabel, TickSet, _ARROWSTYLES, _CB_EXTENDS, _LEGEND_LOCS,
                        _TICK_FORMATS, _TICK_MINOR_FORMATS,
                        collection_caps, is_color_mapped, is_linecoll_family,
-                       patch_can_fill,
                        _arrow_style, _arrowstyle_name, _axis_arrows_on,
                        _linestyle_name, _linecoll_linestyle_name,
                        _boxstyle_info, _cb_axis, _cb_tick_color,
@@ -956,15 +955,27 @@ def _patch_fields(pt) -> list[dict]:
     框选靠 manifest 的 `geometry`（沿真实闭合路径），样式在这里。
     """
     alpha = pt.get_alpha()
-    fields: list[dict] = []
-    if patch_can_fill(pt):
-        # `Arc` 画不出面：facecolor / fill 设得进去、`get_*` 也照回，
-        # 但 `Arc.draw()` 从不画那个面（实测红色像素 0 vs Circle 4122）。
-        # **花纹不在此列**——它在 Arc 上是真画的，判据见 `patch_can_fill`。
-        fields += [
-            {"prop": "facecolor", "type": "color", "value": to_hex(pt.get_facecolor())},
-            {"prop": "fill", "type": "bool", "value": bool(pt.get_fill())},
-        ]
+    fields: list[dict] = [
+        # `facecolor` 与 `fill` 对**整族**都成立，`Arc` 也不例外。
+        #
+        # 这里一度有过一道 `patch_can_fill()`，按 `isinstance(pt, Arc)` 把这
+        # 两条藏起来，理由是「Arc 画不出面」。**那条实测不成立**：它当初量的
+        # 是 `set_facecolor("red")` 单独一句（红色像素 0），而 `Arc.__init__`
+        # 把 `fill` 钉成 False——同一句话在 `Circle(fill=False)` 上也是 0 个
+        # 红像素。`Arc.draw()` 在弧的屏幕尺寸小于 `inv_error`
+        # （= 0.5/1.89818e-6 ≈ 263410 px，任何现实图幅都远远够不着）时
+        # `return Patch.draw(self, renderer)`，填充照走公共那条：实测
+        # `set_fill(True)` 之后红色像素 6081（Circle 6700），Agg / PDF / SVG
+        # 三个后端的产物**都随 fill 开关而不同**（SVG 上是
+        # `fill: none` ↔ `fill: #ff0000`）。
+        #
+        # 于是那道闸把一个真能用的属性藏了起来——与「宣称了却改不动」是同一
+        # 个不诚实，只是方向相反。判据要按运行时实况来，而这条实况是
+        # 「fill 关着时 facecolor 不显形」，那对**每个** Patch 都成立，是
+        # `fill` 这个开关的定义，不是某个类的例外。
+        {"prop": "facecolor", "type": "color", "value": to_hex(pt.get_facecolor())},
+        {"prop": "fill", "type": "bool", "value": bool(pt.get_fill())},
+    ]
     fields += [
         {"prop": "edgecolor", "type": "color", "value": to_hex(pt.get_edgecolor())},
         {"prop": "linewidth", "type": "number", "value": round(float(pt.get_linewidth()), 2),

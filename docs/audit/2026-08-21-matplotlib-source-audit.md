@@ -538,30 +538,48 @@ FileNotFoundError，路径拼成了 `…/examples/examples/figure.py`（实测�
 `tests/test_artist_census_tool.py`——它不在产品路径上，但它是排兼容缺口时
 第一个被拿起来的东西，跑不起来就等于没有。
 
-### 18.2 `Arc` 的花纹（**否掉**）与 `Arc` 的填充（真问题，已修）
+### 18.2 `Arc` 的花纹与填充（**审查否掉，本节的第一版也错了——已改正**）
 
-审查说 `Arc` 画不出面、所以不该给 `hatch`。前半句对，后半句**实测不成立**：
+审查说 `Arc` 画不出面、所以不该给 `hatch`。**前半句和后半句都不成立**，而
+本节的第一版只否掉了后半句，自己又在前半句上栽了一次——记在这里，因为它是
+「照着注释推理、没做同类对比」的标准样本。
+
+花纹这条，第一版是对的：
 
 | 在 `Arc` 上 | 实测（3.10.8，同一张图同一个几何） |
 |---|---|
 | `hatch="///"` | 墨迹 427 → 1705（**+1278**），Circle 是 563 → 1915（+1352） |
-| `facecolor="red"` | 红色像素 **0**，Circle 是 4122 |
-| `Arc(..., fill=True)` | `ValueError: Arc objects cannot be filled` |
 
-花纹走的是 GC 的 hatch 机制、拿路径当模板，不经过填充那条路，所以在 Arc 上
-**是真画的**。按建议砍掉它，等于把一个能用的能力删了。
+花纹走 GC 的 hatch 机制、拿路径当模板，在 Arc 上**是真画的**。
 
-但它指对了地方：真正「设得进去、看不出来」的是 **facecolor 与 fill**。
-`set_facecolor("red")` 与 `set_fill(True)` 在实例上都不抛、`get_*` 也照回，
-只有构造式会抛——于是 override 记成成功、manifest 照报，画面上什么都没有。
-`patch_can_fill()` 现在挡住这两条，花纹照给。
+填充那条，第一版的测量**不是同类对比**。它量的是 `set_facecolor("red")`
+单独一句，得到红像素 0，就断定「`Arc.draw()` 从不画那个面」，并据此加了一道
+`patch_can_fill()` 把 `facecolor` / `fill` 藏起来。重测（两个会话各自独立量）：
 
-**这两件事必须分成两条判据**，与 Collection 那边的 `faces` / `fill`
-（§17.2）是同一件事的另一半：「有没有面」和「面归不归用户改」不是一个问题。
+| | 只设 facecolor | 再 `set_fill(True)` |
+|---|---|---|
+| `Arc` | 0 红像素 | **6081** |
+| `Circle` | 6700 | 6700 |
+| `Circle(fill=False)` | **0** | 6700 |
 
-`patch_can_fill` 里那句 `isinstance(pt, Arc)` 是**有据可查的例外**：
-matplotlib 没有公开的「填得了吗」谓词，实例上也探不出来。按 family 建模是为了
-不用逐个类名补**能力**，不是说一个测得出来的例外也不许写下来。
+对称——`Arc.__init__` 把 `fill` 钉成 False 就是全部原因，而
+`Circle(fill=False)` 表现一模一样。翻 `Arc.draw()` 的源码可以直接确认：弧的
+屏幕尺寸小于 `inv_error`（= `0.5/1.89818e-6` ≈ 263410 px，任何现实图幅都远远
+够不着）时它 `return Patch.draw(self, renderer)`，填充走的就是公共那条。
+Agg / PDF / SVG 三个后端的产物都随 fill 开关而不同（SVG 上是
+`fill: none` ↔ `fill: #ff0000`）。只有 `Arc(..., fill=True)` 这个**构造式**
+会抛 `ValueError`。
+
+所以 `patch_can_fill` 藏起来的是一个**真能用**的属性。**「宣称了却改不动」与
+「能改却不宣称」是同一种不诚实，只是方向相反**——两者都让界面与画面对不上。
+该判据已删除，`Arc` 回到 Patch 族的通用契约；`fill` 关着时 `facecolor` 不显形
+这条实况对**每个** Patch 都成立，那是 `fill` 这个开关的定义，不是谁的例外。
+
+留在能力层里的教训不是「Arc 特殊」，而是：**按类名写例外之前，先拿出同类
+对比的测量**。§17.2 那条 Collection 侧的 `faces` / `fill` 拆分仍然站得住
+（`contour` 与 LineCollection 的 `get_facecolor()` 长度实测为 0，是真的没有
+面），它只是不再有一个 Arc 形状的兄弟。看护
+`tests/test_artist_families.py::test_arc_is_a_normal_patch_fill_included`。
 
 ## 19. 新加的用例当场逮到一个只在 Windows 上发生的 bug
 
