@@ -91,6 +91,24 @@ jobs:
           pip install $PINS
           python -c "import matplotlib, numpy; print(matplotlib.__version__, numpy.__version__)"
 
+      # 结构性不变式在**这个 target 钉的 matplotlib 版本**上再跑一遍。
+      #
+      # 环境已经在这儿了（上一步按锁文件装好了精确版本），所以这一步几乎是白捡
+      # 的覆盖——而它逮到过真东西：`interpolation` 的 `"auto"` 是 mpl 3.9 才加
+      # 的，**minimum 档的 3.8.4 上根本不存在**，界面照样把它列出来、用户一点
+      # 就报错、写回被堵死。PR 档跑的是锁文件那一版（3.11.1），那里 `auto` 合法，
+      # 怎么跑都是绿的。同一轮还逮到 `_linespacing` 的默认值在 3.11 起变成字符串
+      # `'normal'`——那条反过来只在**新**版本上现形。
+      #
+      # 一句话：不变式验的是引擎自己的契约，而**契约的对手方会随版本变**。
+      # 只在一个版本上验它，等于只验了一半。
+      - name: 结构性不变式（本 target 的 matplotlib 版本）
+        run: |
+          set -euo pipefail
+          python -m pytest -q \
+            tests/test_invariants_engine.py \
+            tests/test_artist_families.py
+
       - name: CompatBench
         run: |
           set -euo pipefail
