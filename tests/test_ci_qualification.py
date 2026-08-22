@@ -593,9 +593,17 @@ def test_every_app_launcher_adopts_credentials():
     assert len(launchers) >= 4, \
         f"只枚举到 {sorted(launchers)}——枚举判据失效了，这条用例挡不住任何东西"
     for name, src in launchers.items():
-        adopts = "adopt_session_credentials" in src
-        bypass = "TAVOTTO_INSECURE_NO_AUTH" in src
-        desktop = "/api/desktop/bootstrap" in src or "TAVOTTO_DESKTOP_HANDSHAKE" in src
+        # **注释先剥掉，并且要具体的调用形态。** 裸子串
+        # `"adopt_session_credentials" in src` 会被任何一句提到它的注释满足
+        # ——今天这个形状（判据匹配到散文）已经出现九次，其中三次是我自己写的。
+        # 实测过：当前代码里删掉真实调用这条会红（注释里没写函数名），但那是
+        # 侥幸而不是设计——谁哪天在注释里写一次函数名，这道门禁就废了。
+        code = "\n".join(ln for ln in src.splitlines()
+                         if not ln.lstrip().startswith("#"))
+        adopts = "SA.adopt_session_credentials(" in code \
+            or "adopt_session_credentials(data_dir" in code
+        bypass = '"TAVOTTO_INSECURE_NO_AUTH": "1"' in code
+        desktop = "/api/desktop/bootstrap" in code or "TAVOTTO_DESKTOP_HANDSHAKE" in code
         assert adopts or bypass or desktop, (
             f"{name} 起了实例却既不取凭据、也没显式旁路、也不是桌面握手——"
             "ADR 0008 之后它的每个 API 调用都会 401，而症状会出现在很远的地方")
