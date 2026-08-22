@@ -103,6 +103,13 @@ include = [
     "README.md",
     "LICENSE",
     "pytest.ini",
+    # 这两份是给 agent 读的行为规范，**必须成对收进来**：
+    # `tests/test_source_hygiene.py` 有一条用例逐字节对拍它们（手工并行维护
+    # 会漂开，而且真漂开过——AGENTS.md 被做过一次 claude→Codex 的全文替换，
+    # 于是那份指令里写着用 `Codex -p` 调 Claude CLI）。sdist 收了 tests 却不收
+    # 它们的话，从 sdist 跑测试会 FileNotFoundError（#59 的 review 逮到）。
+    "CLAUDE.md",
+    "AGENTS.md",
 ]
 
 # ---------------------------------------------------------------------------

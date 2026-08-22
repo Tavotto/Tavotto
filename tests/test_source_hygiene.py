@@ -260,6 +260,13 @@ def test_agent_instruction_files_do_not_diverge():
     而顺着查下去更严重的是那次替换。所以判据不是「都有那一节」，是
     **逐字节相同**：只要允许差异存在，就得有人去判断哪些差异是对的。
     """
+    # sdist 里必须两份都在（pyproject 的 sdist include 收了它们）。少任何一份
+    # 都当**失败**而不是跳过：跳过等于在最需要对拍的地方不对拍，而这两份漂开
+    # 过一次就是这么没被发现的。
+    for name in ("CLAUDE.md", "AGENTS.md"):
+        assert (ROOT / name).is_file(), (
+            f"{name} 不在源码树里——sdist 收了 tests 却没收它，"
+            "从 sdist 跑测试会在这里 FileNotFoundError")
     a = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
     b = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
     if a == b:
@@ -271,3 +278,24 @@ def test_agent_instruction_files_do_not_diverge():
     raise AssertionError(
         "两份 agent 指令漂开了——改一份必须同步另一份（内容相同，不是各自表述）：\n"
         + "\n".join(diff[:40]))
+
+
+def test_sdist_ships_the_files_its_tests_read():
+    """sdist 收了 `tests/`，就得收上它们要读的东西。
+
+    2026-08-22（#59 的 review）：`CLAUDE.md` / `AGENTS.md` 的对拍用例进了
+    sdist，而那两个文件没进——从发布的源码包跑测试会 `FileNotFoundError`，
+    而且**失败的是一条与被测代码毫无关系的用例**，读的人要绕一大圈才明白
+    「不是代码坏了，是包少收了东西」。
+    """
+    import re
+    inc = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    # 按**行首的** `[` 切下一节：直接 split("[") 会被 `include = [` 的方括号
+    # 截断，段里一个条目都不剩，而断言「tests 在不在」当场就红——那不是被测
+    # 对象错了，是切分判据错了。
+    seg = re.split(r"\n\[", inc.split("[tool.hatch.build.targets.sdist]", 1)[1], 1)[0]
+    listed = set(re.findall(r'"([^"]+)"', seg))
+    assert "tests" in listed, "sdist 不再收 tests 了——这条判据的前提没了"
+    for need in ("CLAUDE.md", "AGENTS.md"):
+        assert need in listed, (
+            f"sdist 收了 tests 却没收 {need}，而 tests 里有用例要读它")
