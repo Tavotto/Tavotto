@@ -1,0 +1,40 @@
+{
+  "_links": {
+    "html": {
+      "href": "https://github.com/Tavotto/Tavotto/rules/21121449"
+    },
+    "self": {
+      "href": "https://api.github.com/repos/Tavotto/Tavotto/rulesets/21121449"
+    }
+  },
+  "bypass_actors": [],
+  "conditions": {
+    "ref_name": {
+      "exclude": [],
+      "include": [
+        "refs/tags/v*"
+      ]
+    }
+  },
+  "created_at": "2026-08-21T09:52:35.579+08:00",
+  "current_user_can_bypass": "never",
+  "enforcement": "active",
+  "id": 21121449,
+  "name": "release tags: immutable",
+  "node_id": "RRS_lACqUmVwb3NpdG9yec5PnX5gzgFCSak",
+  "rules": [
+    {
+      "type": "deletion"
+    },
+    {
+      "type": "update"
+    },
+    {
+      "type": "non_fast_forward"
+    }
+  ],
+  "source": "Tavotto/Tavotto",
+  "source_type": "Repository",
+  "target": "tag",
+  "updated_at": "2026-08-21T09:52:35.602+08:00"
+}

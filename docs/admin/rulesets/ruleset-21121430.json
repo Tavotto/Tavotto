@@ -1,0 +1,117 @@
+{
+  "_links": {
+    "html": {
+      "href": "https://github.com/Tavotto/Tavotto/rules/21121430"
+    },
+    "self": {
+      "href": "https://api.github.com/repos/Tavotto/Tavotto/rulesets/21121430"
+    }
+  },
+  "bypass_actors": [],
+  "conditions": {
+    "ref_name": {
+      "exclude": [],
+      "include": [
+        "~DEFAULT_BRANCH"
+      ]
+    }
+  },
+  "created_at": "2026-08-21T09:51:53.363+08:00",
+  "current_user_can_bypass": "never",
+  "enforcement": "active",
+  "id": 21121430,
+  "name": "main: PR + required checks",
+  "node_id": "RRS_lACqUmVwb3NpdG9yec5PnX5gzgFCSZY",
+  "rules": [
+    {
+      "type": "deletion"
+    },
+    {
+      "type": "non_fast_forward"
+    },
+    {
+      "parameters": {
+        "allowed_merge_methods": [
+          "merge",
+          "squash"
+        ],
+        "dismiss_stale_reviews_on_push": false,
+        "dismissal_restriction": {
+          "allowed_actors": [],
+          "enabled": false
+        },
+        "require_code_owner_review": false,
+        "require_extra_approval_for_unattributed_changes": true,
+        "require_last_push_approval": false,
+        "required_approving_review_count": 0,
+        "required_review_thread_resolution": true,
+        "required_reviewers": []
+      },
+      "type": "pull_request"
+    },
+    {
+      "parameters": {
+        "do_not_enforce_on_create": false,
+        "required_status_checks": [
+          {
+            "context": "backend (ubuntu-latest, 3.10)"
+          },
+          {
+            "context": "backend (ubuntu-latest, 3.13)"
+          },
+          {
+            "context": "backend (macos-latest, 3.13)"
+          },
+          {
+            "context": "backend (windows-latest, 3.13)"
+          },
+          {
+            "context": "frontend"
+          },
+          {
+            "context": "workerd"
+          },
+          {
+            "context": "package (ubuntu-latest)"
+          },
+          {
+            "context": "package (macos-latest)"
+          },
+          {
+            "context": "package (windows-latest)"
+          },
+          {
+            "context": "windows-exe-smoke"
+          },
+          {
+            "context": "macos-app-smoke"
+          },
+          {
+            "context": "CodeQL (actions)"
+          },
+          {
+            "context": "CodeQL (javascript-typescript)"
+          },
+          {
+            "context": "CodeQL (python)"
+          },
+          {
+            "context": "CodeQL (rust)"
+          },
+          {
+            "context": "compat-smoke"
+          },
+          {
+            "context": "invariants"
+          }
+        ],
+        "strict_required_status_checks_policy": true
+      },
+      "type": "required_status_checks"
+    }
+  ],
+  "source": "Tavotto/Tavotto",
+  "source_type": "Repository",
+  "target": "branch",
+  "updated_at": "2026-08-22T09:05:07.597+08:00"
+}

@@ -1,0 +1,80 @@
+# Tavotto 标签清单 —— 这是标签的唯一权威定义。
+#
+# 同步：python3 scripts/admin/sync_github_labels.py            （dry-run，默认）
+#       python3 scripts/admin/sync_github_labels.py --apply     （真改）
+#
+# 三条纪律：
+#   1. **少而明确。** 每一维只回答一个问题，维与维之间不重叠。多出来的标签
+#      不会让人分得更清，只会让人不填。
+#   2. **不删不认识的标签。** 同步脚本只增改自己清单里的这些，别人建的一律
+#      原样留着——一个自动化脚本不该替人决定「你那个标签没用」。
+#   3. **description 要写判据，不写同义反复。** 「severity:P1 = 严重」等于没写；
+#      「必须阻塞发布」才是能照着判的。
+#
+# 分级判据的全文在 docs/engineering/review-severity-policy.md，
+# P2 的生命周期在 docs/engineering/p2-lifecycle.md。
+
+labels:
+  # ── 严重度：它挡不挡发布 ────────────────────────────────────────
+  # 判据全文 docs/engineering/review-severity-policy.md §1。
+  - name: "severity:P0"
+    color: "b60205"
+    description: "数据损坏 / 安全边界失效 / 打不开 / 工作无法恢复。必须阻塞发布。"
+  - name: "severity:P1"
+    color: "d93f0b"
+    description: "受支持的 workflow 或平台不工作 / silent wrong / 门禁空转。必须阻塞发布。"
+  - name: "severity:P2"
+    color: "fbca04"
+    description: "缺陷成立，但是否阻塞发布要按 release:blocker 的九条判据单独裁决。"
+  - name: "severity:P3"
+    color: "fef2c0"
+    description: "打磨项。不阻塞任何发布，也不进 fix train，除非顺手。"
+
+  # ── 是否阻塞本次发布：**人工升级**，不由 severity 自动推出 ──────
+  - name: "release:blocker"
+    color: "b60205"
+    description: "命中 review-severity-policy §2 九条判据之一，阻塞当前发布。P2 也可以被升到这里。"
+
+  # ── 归属面：修它要动哪一层 ──────────────────────────────────────
+  - name: "area:product"
+    color: "1d76db"
+    description: "用户直接感知的行为（编辑、撤销、导出、写回）。"
+  - name: "area:engine"
+    color: "0e8a16"
+    description: "worker / manifest / overrides / patchspec / 渲染语义。"
+  - name: "area:frontend"
+    color: "5319e7"
+    description: "web/ 的画布、inspector、stores、i18n。"
+  - name: "area:distribution"
+    color: "006b75"
+    description: "安装包、内置 runtime、签名公证、updater、PyPI 包。"
+  - name: "area:ci-harness"
+    color: "c2e0c6"
+    description: "验证我们自己的东西：测试、门禁、runner、诊断。用户看不到。"
+  - name: "area:release-infra"
+    color: "bfd4f2"
+    description: "发布编排本身：workflow 拓扑、artifact manifest、provenance。"
+  - name: "area:docs"
+    color: "d4c5f9"
+    description: "文档与支持声明。**声明与实现不符属于缺陷，不属于 docs 打磨。**"
+
+  # ── 处置：下一步是什么。**每条 open issue 必须有且只有一个。** ──
+  # 生命周期与允许的关闭理由在 docs/engineering/p2-lifecycle.md。
+  - name: "disposition:fix-now"
+    color: "d93f0b"
+    description: "本轮修。修完关闭，关闭时必须指出 acceptance test。"
+  - name: "disposition:guard"
+    color: "e99695"
+    description: "本轮加 guard（隐藏 / 降级为 unsupported / 检测后拒绝），长期修另立 issue。"
+  - name: "disposition:patch-train"
+    color: "fbca04"
+    description: "进 v1.0.1 / v1.0.2。支持范围内、失败可见、局部可修。"
+  - name: "disposition:minor-release"
+    color: "c5def5"
+    description: "进 v1.1。架构型改动，1.0 稳定期明确禁止。"
+  - name: "disposition:accepted-limitation"
+    color: "cccccc"
+    description: "不修。**前提**：UI、支持矩阵、文档三处都已如实表达这个限制。"
+  - name: "disposition:false-positive"
+    color: "ffffff"
+    description: "不成立。**前提**：附上实测证据，不是「我觉得不会」。"
