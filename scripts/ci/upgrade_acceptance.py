@@ -207,38 +207,35 @@ class Session:
         cmd = [str(self.py), "-m", "tavotto", "--port", str(port),
                "--no-browser", "--figures", str(self.project)]
         print(f"  [{self.label}] $ {' '.join(cmd[-5:])}", flush=True)
-        self.proc = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE,
-                                     stderr=subprocess.STDOUT, text=True,
-                                     encoding="utf-8", errors="replace")
+        self._child_log = (self.user_root / f"server-{port}.log").open(
+            "w", encoding="utf-8")
+        # **绝不用 PIPE**：这四个脚本一次都不读子进程的 stdout（诊断走
+        # 数据目录里的 app.log）。开了不读的管道，64 KiB 缓冲写满之后
+        # 应用**下一次写日志就永久阻塞**——而它握着 logging 的全局 handler
+        # 锁，于是每个请求线程都堵在 acquire 上，整个 HTTP 服务停摆。
+        # 2026-08-22 实测：soak 两次独立运行都确定性地死在第 160 轮
+        # （日志量正好填满缓冲），py-spy 的栈是 emit→pipe_write +
+        # 八个线程 acquire。改成落文件：既没有这个失败模式，又比 DEVNULL
+        # 多留一份启动期 traceback（那些进不了 app.log）。
+        self.proc = subprocess.Popen(cmd, env=env, stdout=self._child_log,
+                                     stderr=subprocess.STDOUT)
         SA._wait_ready(self.base, self.proc, SA.BOOT_TIMEOUT_S)
         self._adopt_credentials(port)
         return self
 
     def _adopt_credentials(self, port: int) -> None:
-        """带上本机会话凭据（ADR 0008）。**按文件在不在判，不按版本号判。**
+        """带上本机会话凭据（ADR 0008）。判据是**凭据文件在不在**，不是版本号
+        ——`--baseline` 可以指定任意历史版本，其中大多数早于这道边界。
 
-        0.9.0 起浏览器模式也要认证，而升级验收的另一头是 N-1——`--baseline`
-        可以指定任意历史版本，其中大多数早于这道边界。所以判据只能是「这一版
-        写没写凭据文件」。
-
-        不带的后果不是「少测一项」：`_wait_ready` 打的 `/api/version` 是公共
-        端点，照样就绪，随后**每一个** API 调用 401。v0.9.0 发版时就是这么
-        炸的——阶段一（0.8.0，无认证）一路绿，阶段二（候选）当场 401，而这个
-        脚本在会话认证合并之后一次都没跑过（实验室 runner 那时还没有 runner
-        领得走）。
-
-        `SA._AUTH` 是模块级的，两个阶段共用同一个进程：**先清空**，否则
-        N-1 那一轮会带着候选版的头（或反过来）。
+        实现只有一处（`smoke_app.adopt_session_credentials`）：v0.9.0 时我在这里
+        写了一份，却没扫 `visual_regression` / `soak` 两个同样的调用方，于是
+        发行链又在后面两步各撞一次同样的 401。
         """
-        SA._AUTH.clear()
-        cred = self.data_dir / "session" / f"port-{port}.json"
-        if not cred.is_file():
+        if SA.adopt_session_credentials(self.data_dir, port):
+            print(f"  [{self.label}] 已取得会话凭据", flush=True)
+        else:
             print(f"  [{self.label}] 无会话凭据文件（这一版早于 ADR 0008），裸走",
                   flush=True)
-            return
-        secret = json.loads(cred.read_text(encoding="utf-8"))["secret"]
-        SA._AUTH["X-Tavotto-Auth"] = secret
-        print(f"  [{self.label}] 已取得会话凭据", flush=True)
 
     def __exit__(self, *exc) -> None:
         try:
