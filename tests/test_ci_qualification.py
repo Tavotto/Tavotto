@@ -892,3 +892,42 @@ def test_always_steps_do_not_depend_on_a_step_that_may_not_have_run():
         "这些步骤在前序失败时照跑，却依赖「建验证环境」的输出——那时它是空串，"
         "命令退化成直接执行脚本（100644 → Permission denied）：\n  "
         + "\n  ".join(offenders))
+
+
+def test_summary_refuses_reports_from_another_run(tmp_path, monkeypatch):
+    """汇总只认本轮的报告，否则它会把没跑过的阶段标成 PASS。
+
+    `reports/` 在**持久**状态根里、保留 30 天，而 `cleanup.py` 排在体检
+    **之后**——体检早早失败时，上一轮的 `soak.json` / `visual.json` 还原样
+    躺在那儿。不核对 `metadata.run_id` 的话，汇总会报告那些阶段通过，而它们
+    这一轮根本没跑过。
+
+    **这是最坏的一种诊断失效：不是缺席，是说谎。** 而且它偏偏发生在体检失败、
+    最需要看清「究竟跑到哪一步」的时候。2026-08-22 v0.9.1 发版时，
+    汇总因为另一个 bug 直接崩了（#61），反而没来得及说这个谎——修好解释器
+    却不修这一条，等于把「崩掉」换成「说谎」。
+    """
+    import importlib.util, json as _json
+    (tmp_path / "reports").mkdir()
+    (tmp_path / "reports" / "soak.json").write_text(_json.dumps(
+        {"ok": True, "metadata": {"run_id": "1111"}}), encoding="utf-8")
+    monkeypatch.setenv("TAVOTTO_CI_STATE_ROOT", str(tmp_path))
+    monkeypatch.setenv("GITHUB_RUN_ID", "2222")          # 本轮 ≠ 报告那轮
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+
+    spec = importlib.util.spec_from_file_location("_sm", CI_DIR / "summarize.py")
+    mod = importlib.util.module_from_spec(spec)
+    import sys as _sys
+    _sys.path.insert(0, str(CI_DIR))
+    spec.loader.exec_module(mod)
+
+    import io as _io, contextlib
+    buf = _io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        mod.main(["--mode", "release"])
+    out = buf.getvalue()
+    soak_line = [ln for ln in out.splitlines() if "soak" in ln.lower()]
+    assert soak_line, f"输出里找不到 soak 那一行：\n{out[:600]}"
+    assert "PASS" not in soak_line[0], (
+        f"上一轮的报告被当成本轮的结果了：{soak_line[0]}")
+    assert "未运行" in soak_line[0], f"该标成未运行：{soak_line[0]}"
