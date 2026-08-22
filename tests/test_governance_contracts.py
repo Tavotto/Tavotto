@@ -361,3 +361,108 @@ def test_readiness_doc_points_at_the_policy_instead_of_forking_it():
                  "docs/engineering/codex-review-policy.md",
                  "docs/engineering/p2-fix-train.md"):
         assert path in section, f"退出条件这一节没有指向 {path}"
+
+
+# ── Codex 第一轮逮到的（2026-08-23）────────────────────────────────────
+
+def test_the_gate_runs_after_codex_submits_its_review():
+    """**门禁必须在 Codex 提交 review 之后跑，否则它是空转。**
+
+    点 Ready 会同时启动门禁与 Codex 的第一轮，而门禁只查一次 API、几秒
+    就跑完 —— 那时 Codex 还没提交任何东西，`codex_ran` 是 false，
+    门禁按设计回 neutral 并退出 0。于是它**永远不会真正检查任何一条发现**，
+    而且全绿。
+
+    一道检查 review 的门禁，自己栽在「跑得比被检查的东西还早」上。
+    """
+    t = _strip_yaml_comments(GATE_WF.read_text(encoding="utf-8"))
+    assert re.search(r"^\s*pull_request_review:", t, re.M), (
+        "门禁没有挂在 pull_request_review 上 —— 它会跑在 Codex 之前，"
+        "拿到 codex_ran=false 然后 neutral 退出")
+    m = re.search(r"pull_request_review:\s*\n\s*types:\s*\[([^\]]*)\]", t)
+    assert m and "submitted" in m.group(1), "至少要接 submitted"
+
+
+def test_review_threads_are_paginated():
+    """GraphQL connection 一次最多 100 条。
+
+    超过 100 之后第 101 条起的 unresolved P0/P1 **整个看不见**，
+    门禁于是报 success —— 一道漏掉阻断项的门禁比没有门禁更坏。
+    """
+    # **判 QUERY 这个常量本身，不是「文件里有没有这几个词」。**
+    # 第一版搜全文，而 `_gh_graphql` 的翻页循环里就有 `info.get("hasNextPage")`
+    # ——把 GraphQL 查询里的 `pageInfo` 整行删掉，用例照样绿。
+    # 判据的主语第 N 次错了：该问「查询请不请求下一页」。
+    q = CG.QUERY
+    assert "pageInfo" in q and "hasNextPage" in q, "reviewThreads 的查询没有请求 pageInfo"
+    assert "$cursor" in q, "查询没有游标参数"
+    assert "after:$cursor" in q.replace(" ", ""), "游标没有接到 reviewThreads 上"
+
+    # 再验**消费端**：拿到 hasNextPage 之后要真的再取一页
+    import ast
+    fn = next(n for n in ast.walk(ast.parse(
+        (CI_DIR / "codex_review_gate.py").read_text(encoding="utf-8")))
+        if isinstance(n, ast.FunctionDef) and n.name == "_gh_graphql")
+    body = ast.unparse(fn)
+    assert "hasNextPage" in body and "endCursor" in body, "拿到分页信息却没用"
+
+
+def test_restore_strips_fields_the_api_will_not_accept():
+    """**GET 的响应不是 PUT 的请求体。**
+
+    存档里带着 `_links` / `id` / `created_at` 这些服务端生成的只读字段，
+    原样 PUT 回去会被拒收 —— 而那发生在**最需要它成功的时刻**：
+    某人刚把 ruleset 改坏，正要回滚。
+
+    `docs/admin/github-ruleset-changes.md` §2.1 早就写下了这条判断，
+    而脚本自己却直接 PUT 存档文件 —— 文档与实现自相矛盾。
+    """
+    sys.path.insert(0, str(ADMIN_DIR))
+    import _strip_readonly as SR
+
+    archived = {
+        "id": 123, "node_id": "x", "name": "main", "target": "branch",
+        "enforcement": "active", "conditions": {}, "rules": [],
+        "bypass_actors": [], "_links": {"self": {}}, "source": "o/r",
+        "source_type": "Repository", "created_at": "t", "updated_at": "t",
+        "current_user_can_bypass": "never",
+    }
+    out = SR.strip(archived)
+    assert set(out) == {"name", "target", "enforcement", "conditions",
+                        "rules", "bypass_actors"}, out
+
+    # 脚本必须**真的调它**，不是 import 了放着
+    sh = (ADMIN_DIR / "apply_rulesets.sh").read_text(encoding="utf-8")
+    assert "_strip_readonly.py" in sh, "restore 没有走剥字段那一步"
+
+
+def test_no_shell_script_leaves_a_bare_var_before_a_non_ascii_char():
+    """`"$f（…"` 里的全角括号会被 bash 当成变量名的一部分。
+
+    实测（bash 5，`set -u`）::
+
+        $ f=x; echo "$f（尾）"
+        bash: f?: unbound variable
+        $ f=x; echo "${f}（尾）"
+        x（尾）
+
+    这个仓库的所有文案都是中文，所以这个形状特别容易长出来。
+    **本轮真撞到两处**，其中一处（`--diff` 的「本地没有存档」分支）
+    从写下那天起**一次都没执行过**，所以一直没暴露 ——
+    「从没执行过的代码不会保持正确」在同一轮里的又一个实例。
+
+    修法是给变量名加大括号定界：`${f}`。
+    """
+    offenders = []
+    for sh in sorted(ROOT.rglob("*.sh")):
+        if any(part in ("node_modules", "target", ".git") for part in sh.parts):
+            continue
+        for i, line in enumerate(sh.read_text(encoding="utf-8").splitlines(), 1):
+            if line.lstrip().startswith("#"):
+                continue
+            for m in re.finditer(r"\$([A-Za-z_][A-Za-z0-9_]*)(?=[^\x00-\x7f])", line):
+                offenders.append(
+                    f"{sh.relative_to(ROOT)}:{i}  ${m.group(1)} → ${{{m.group(1)}}}")
+    assert not offenders, (
+        "这些变量引用后面紧跟非 ASCII 字符，bash 会把它并进变量名：\n  "
+        + "\n  ".join(offenders))

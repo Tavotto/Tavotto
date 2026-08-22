@@ -79,7 +79,7 @@ diff)
   rc=0
   for id in $(ids); do
     f="$STORE/ruleset-$id.json"
-    if [ ! -f "$f" ]; then echo "⚠️  远程有 ruleset $id，本地没有存档"; rc=1; continue; fi
+    if [ ! -f "$f" ]; then echo "⚠️  远程有 ruleset ${id}，本地没有存档"; rc=1; continue; fi
     if gh api "repos/$REPO/rulesets/$id" | norm > /tmp/rs-remote.$$ \
        && norm < "$f" > /tmp/rs-local.$$ \
        && diff -u /tmp/rs-local.$$ /tmp/rs-remote.$$ > /tmp/rs-diff.$$; then
@@ -93,16 +93,28 @@ diff)
   ;;
 
 restore)
+  # **存档是 GET 的响应，不是 PUT 的请求体。** 里面带着一堆只读字段
+  # （`_links` / `id` / `node_id` / `created_at` / `updated_at` /
+  # `source` / `source_type` / `current_user_can_bypass`），原样 PUT 回去
+  # 会被 API 拒收 —— 而那发生在**最需要它成功的时刻**：某人刚把 ruleset
+  # 改坏，正要回滚。
+  #
+  # 这条与 docs/admin/github-ruleset-changes.md §2.1 自相矛盾过：那份文档
+  # 写着「GET 的响应不是 PUT 的请求体」，而这个脚本自己却直接 PUT。
+  # Codex 在 #64 的第一轮上指出了这个矛盾。
   for f in "$STORE"/ruleset-*.json; do
     id="$(basename "$f" .json | sed 's/^ruleset-//')"
-    echo "── ruleset $id ← $f"
+    tmp="$(mktemp)"
+    python3 "$HERE/scripts/admin/_strip_readonly.py" "$f" > "$tmp"
+    echo "── ruleset $id ← ${f}（已剥掉只读字段）"
     if [ "$APPLY" = "0" ]; then
       echo "   dry-run。真还原：$0 --restore --apply"
-      echo "   等价命令：gh api -X PUT repos/$REPO/rulesets/$id --input $f"
+      echo "   将要 PUT 的键：$(python3 -c "import json,sys;print(', '.join(sorted(json.load(open(sys.argv[1])))))" "$tmp")"
     else
-      gh api -X PUT "repos/$REPO/rulesets/$id" --input "$f" >/dev/null
+      gh api -X PUT "repos/$REPO/rulesets/$id" --input "$tmp" >/dev/null
       echo "   已还原"
     fi
+    rm -f "$tmp"
   done
   ;;
 

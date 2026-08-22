@@ -56,7 +56,7 @@ _BADGE = re.compile(r"!\[\s*(P[0-3])\s*Badge\s*\]", re.I)
 _PLAIN = re.compile(r"(?:^|[\s\*\[(])(P[0-3])(?:[\s\*\])：:]|$)")
 
 QUERY = """
-query($owner:String!, $name:String!, $number:Int!) {
+query($owner:String!, $name:String!, $number:Int!, $cursor:String) {
   repository(owner:$owner, name:$name) {
     pullRequest(number:$number) {
       number title isDraft
@@ -64,7 +64,8 @@ query($owner:String!, $name:String!, $number:Int!) {
       reviews(first:100) {
         nodes { author { login } state submittedAt commit { oid } }
       }
-      reviewThreads(first:100) {
+      reviewThreads(first:100, after:$cursor) {
+        pageInfo { hasNextPage endCursor }
         nodes {
           isResolved isOutdated
           comments(first:20) { nodes { author { login } body createdAt url } }
@@ -81,18 +82,43 @@ class GateError(Exception):
 
 
 def _gh_graphql(owner: str, name: str, number: int) -> dict:
+    """拉这条 PR 的 review 与 thread。**thread 要翻页。**
+
+    GraphQL 的 connection 一次最多 100 条，而 `reviewThreads` 没有游标就
+    只回第一页。本仓库已经有过 29 条 thread 的 PR（#48）—— 超过 100 之后
+    第 101 条起的 **unresolved P0/P1 会整个看不见**，门禁于是报 success。
+    一道漏掉阻断项的门禁比没有门禁更坏（Codex 在 #64 的第一轮上指出）。
+    """
     exe = shutil.which("gh")
     if exe is None:
         raise GateError("找不到 gh")
-    proc = subprocess.run(
-        [exe, "api", "graphql",
-         "-F", f"owner={owner}", "-F", f"name={name}", "-F", f"number={number}",
-         "-f", f"query={QUERY}"],
-        capture_output=True, encoding="utf-8", errors="replace",
-    )
-    if proc.returncode != 0:
-        raise GateError(f"gh api graphql 失败：{proc.stderr.strip()[:400]}")
-    return json.loads(proc.stdout)
+
+    merged: dict | None = None
+    cursor: str | None = None
+    for _ in range(20):          # 2000 条 thread 的硬上限，防打不完的循环
+        args = [exe, "api", "graphql",
+                "-F", f"owner={owner}", "-F", f"name={name}",
+                "-F", f"number={number}", "-f", f"query={QUERY}"]
+        if cursor:
+            args += ["-F", f"cursor={cursor}"]
+        proc = subprocess.run(args, capture_output=True,
+                              encoding="utf-8", errors="replace")
+        if proc.returncode != 0:
+            raise GateError(f"gh api graphql 失败：{proc.stderr.strip()[:400]}")
+        page = json.loads(proc.stdout)
+        pr = (page.get("data") or {}).get("repository", {}).get("pullRequest")
+        if pr is None:
+            return page
+        if merged is None:
+            merged = page
+        else:
+            merged["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"] \
+                .extend(pr["reviewThreads"]["nodes"])
+        info = pr["reviewThreads"].get("pageInfo") or {}
+        if not info.get("hasNextPage"):
+            return merged
+        cursor = info.get("endCursor")
+    raise GateError("review thread 翻页超过 20 页，拒绝继续")
 
 
 def severity_of(body: str) -> str | None:

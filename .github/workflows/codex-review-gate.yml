@@ -13,10 +13,19 @@ name: Codex Review Gate
 # 造出它要消灭的循环（每 push 一次触发一轮，188 条发现里 80% 是 P2）。
 
 on:
+  # **最要紧的一个触发时刻：有人（包括 Codex）提交了 review 之后。**
+  # 少了它这道门禁就是空转：点 Ready 会同时启动本工作流与 Codex 的第一轮，
+  # 而本工作流只查一次 API、几秒就跑完 —— 那时 Codex 还没提交任何东西，
+  # `codex_ran` 是 false，门禁按设计回 neutral 并退出 0。
+  # 于是它**永远不会真正检查任何一条发现**，而且全绿。
+  # （Codex 在 #64 的第一轮上指出了这一点 —— 一道检查 review 的门禁，
+  #   自己栽在「跑得比被检查的东西还早」上。）
+  pull_request_review:
+    types: [submitted, dismissed]
   pull_request:
-    # 只在这四个时刻跑：开、转 Ready、改标题/正文（可能补了 disposition）、
-    # 重开。**刻意不含 `synchronize`**——每次 push 都跑一遍这道门禁，
-    # 会让「轮次超了」的告警在你正在收敛的过程中反复刷屏。
+    # 开、转 Ready、改标题/正文（可能补了 disposition）、重开。
+    # **刻意不含 `synchronize`**——每次 push 都跑一遍，会让「轮次超了」
+    # 的告警在你正在收敛的过程中反复刷屏。
     types: [opened, ready_for_review, edited, reopened]
   # 收敛完想再确认一次：在 PR 页面手动跑，或者本地
   # `python3 scripts/ci/codex_review_gate.py --pr <n>`。
