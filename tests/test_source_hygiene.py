@@ -241,3 +241,65 @@ def test_windows_bound_subprocesses_pin_their_decoding():
     assert not offenders, (
         "这些 subprocess 在 Windows 上会用系统默认编码解码子进程输出，"
         "中文一出现就静默丢掉 stdout/stderr：\n  " + "\n  ".join(offenders))
+
+
+def test_agent_instruction_files_do_not_diverge():
+    """`AGENTS.md` 与 `CLAUDE.md` 必须逐字节相同。
+
+    两份都是给 agent 读的指令，但**不同的 agent 读不同的那份**——Codex 读
+    `AGENTS.md`，Claude 读 `CLAUDE.md`。手工并行维护的结果是它们会漂开，而
+    漂开的那一份在**没人读的时候**默默错着。
+
+    2026-08-22 实测到的漂移不是「少了一节」，是**内容被改错了**：某次对
+    `AGENTS.md` 做过一遍 `claude` → `Codex` 的全文替换，于是那份指令里写着
+    用 `Codex -p` 调 Claude CLI、配置在 `~/.Codex/settings.json`、以及
+    「用户在别的终端里跑 Codex/codex」。**给 agent 的指令写错，比没写更坏**
+    ——它会照着做。
+
+    Codex 在 #59 上发现这件事的入口是「新加的一节只进了 CLAUDE.md」，
+    而顺着查下去更严重的是那次替换。所以判据不是「都有那一节」，是
+    **逐字节相同**：只要允许差异存在，就得有人去判断哪些差异是对的。
+    """
+    # sdist 里必须两份都在（pyproject 的 sdist include 收了它们）。少任何一份
+    # 都当**失败**而不是跳过：跳过等于在最需要对拍的地方不对拍，而这两份漂开
+    # 过一次就是这么没被发现的。
+    for name in ("CLAUDE.md", "AGENTS.md"):
+        assert (ROOT / name).is_file(), (
+            f"{name} 不在源码树里——sdist 收了 tests 却没收它，"
+            "从 sdist 跑测试会在这里 FileNotFoundError")
+    a = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+    b = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    if a == b:
+        return
+    import difflib
+    diff = list(difflib.unified_diff(
+        a.splitlines(), b.splitlines(),
+        fromfile="CLAUDE.md", tofile="AGENTS.md", lineterm="", n=0))
+    raise AssertionError(
+        "两份 agent 指令漂开了——改一份必须同步另一份（内容相同，不是各自表述）：\n"
+        + "\n".join(diff[:40]))
+
+
+def test_sdist_ships_the_files_its_tests_read():
+    """sdist 收了 `tests/`，就得收上它们要读的东西。
+
+    2026-08-22（#59 的 review）：`CLAUDE.md` / `AGENTS.md` 的对拍用例进了
+    sdist，而那两个文件没进——从发布的源码包跑测试会 `FileNotFoundError`，
+    而且**失败的是一条与被测代码毫无关系的用例**，读的人要绕一大圈才明白
+    「不是代码坏了，是包少收了东西」。
+    """
+    import re
+    inc = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    # 按**行首的** `[` 切下一节：直接 split("[") 会被 `include = [` 的方括号
+    # 截断，段里一个条目都不剩，而断言「tests 在不在」当场就红——那不是被测
+    # 对象错了，是切分判据错了。
+    seg = re.split(r"\n\[", inc.split("[tool.hatch.build.targets.sdist]", 1)[1], 1)[0]
+    # **注释掉的条目不算数。** `# "AGENTS.md",` 里那个字符串照样能被正则捞到，
+    # 于是「清单里有它」成立、而 Hatch 根本不会收它——判据匹配到散文的又一例
+    # （#59 的 review 逮到）。先剥注释行。
+    seg = "\n".join(ln for ln in seg.splitlines() if not ln.lstrip().startswith("#"))
+    listed = set(re.findall(r'"([^"]+)"', seg))
+    assert "tests" in listed, "sdist 不再收 tests 了——这条判据的前提没了"
+    for need in ("CLAUDE.md", "AGENTS.md"):
+        assert need in listed, (
+            f"sdist 收了 tests 却没收 {need}，而 tests 里有用例要读它")
