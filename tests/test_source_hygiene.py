@@ -130,8 +130,15 @@ def test_no_launcher_leaves_a_child_pipe_undrained():
             tree = ast.parse(src)
         except SyntaxError:
             continue
-        drains = any(t in src for t in
-                     ("proc.stdout", ".communicate(", "_drain", "readline()"))
+        # **不再接受「文件里某处读过 proc.stdout」当作排空。** Codex 在 #58 上
+        # 指出：`smoke_app.py` 读它是在 `proc.wait()` **之后**，而那正是同一个
+        # 死锁——应用写满缓冲 → 阻塞在写日志 → `/api/shutdown` 不应答 →
+        # `wait()` 超时 → terminate/kill → 冒烟报「强制停止」，症状指向
+        # 「关不干净」，与真实原因毫不相干。
+        #
+        # 「排空是不是与子进程并发」静态证不了，所以判据换成更简单也更硬的一条：
+        # 这些启动器**根本不需要**流式读子进程输出（诊断走 app.log 与落盘的
+        # server-stdout.log），那就不许开这个管道。
         for node in ast.walk(tree):
             if not (isinstance(node, ast.Call)
                     and getattr(node.func, "attr", "") == "Popen"):
@@ -140,9 +147,9 @@ def test_no_launcher_leaves_a_child_pipe_undrained():
             out = kws.get("stdout", "")
             if "PIPE" not in out:
                 continue          # 落文件 / DEVNULL / 继承，都不会填满缓冲
-            if not drains:
-                offenders.append(
-                    f"{path.relative_to(ROOT)}:{node.lineno} stdout=PIPE 但全文件没有读它")
+            offenders.append(
+                f"{path.relative_to(ROOT)}:{node.lineno} stdout=PIPE"
+                "——启动器一律落文件或 DEVNULL；「稍后再读」不算排空")
     assert not offenders, (
         "这些子进程的输出管道开了却没人读，写满 64 KiB 之后应用会卡死在写日志上：\n  "
         + "\n  ".join(offenders))
