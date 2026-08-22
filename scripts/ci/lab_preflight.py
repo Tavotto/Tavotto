@@ -138,8 +138,14 @@ def check_environment() -> list[Check]:
         soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
         # 1024 是常见默认值。soak 要同时开多个 worker + HTTP 连接，撞上限时的
         # 症状是「随机的 OSError: Too many open files」，极难与真实泄漏区分。
-        checks.append(Check("文件描述符上限", soft >= 4096,
-                            f"soft={soft} hard={hard}（要求 soft ≥ 4096）",
+        # `LimitNOFILE=infinity` 时 getrlimit 回的是 RLIM_INFINITY（= -1），
+        # 直接比大小会判成「不够」——把一个**无上限**的配置报成未就绪。
+        # bootstrap_lab_runner.sh 那边读 /proc 拿到的是字符串 `unlimited`，
+        # 两边都要单独放行，否则一台设了 infinity 的机器会被两个工具一起拦下。
+        unlimited = soft == resource.RLIM_INFINITY
+        checks.append(Check("文件描述符上限", unlimited or soft >= 4096,
+                            ("soft=unlimited（无上限）" if unlimited
+                             else f"soft={soft} hard={hard}（要求 soft >= 4096）"),
                             remedy="在 runner 的 systemd unit 里设 LimitNOFILE=65536"))
     return checks
 

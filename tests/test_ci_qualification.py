@@ -942,3 +942,62 @@ def test_a_foreign_caller_is_warned_not_just_footnoted():
                .split('if [ "$PROBE_KIND" = unresolved ]', 1)[0]
     assert '"$PROBE_MODE" = foreign' in block, "第三方调用方那一档没有单独提示"
     assert "warn " in block, "残差只留在标签里，末尾的「检查通过」会盖过它"
+
+
+def test_install_mode_checks_cargo_against_every_service_path():
+    """安装路径的 cargo 也要逐份服务 PATH 查，不能只取第一份。
+
+    原先这里是 `head -1`，理由写的是「安装路径只是给人看的提示」——可它末尾照样
+    打「准备完成」。实例之间配置不同时，第一份找得到 cargo 就报已装，而 job 落到
+    另一份上照旧 command not found。与 --check 那边同一条纪律：**答案的覆盖面
+    必须对得上它宣称的**。
+    """
+    src = _bootstrap()
+    rust = src.split('say "Rust"', 1)[1].split('say "文件描述符上限"', 1)[0]
+    code = "\n".join(ln for ln in rust.splitlines()
+                     if not ln.lstrip().startswith("#"))
+    assert "$SERVICE_PATHS" in code and "while IFS=" in code, \
+        "安装路径没有逐份服务 PATH 查 cargo"
+    assert "head -1" not in code, "又只取第一份服务 PATH 了"
+
+
+def test_an_unlimited_descriptor_limit_is_not_treated_as_too_low():
+    """`LimitNOFILE=infinity` → /proc 写的是 `unlimited`，别拿它做数值比较。
+
+    `[ unlimited -ge 4096 ]` 报 "integer expression expected" 并走进失败分支，
+    于是脚本用一个 65536 的 drop-in 去**降低**一个本来就够用的设置——而且要等
+    重启才发作。判据必须排在数值比较**之前**。
+    """
+    src = _bootstrap()
+    fd = src.split('say "文件描述符上限"', 1)[1].split('say "准备完成', 1)[0]
+    code = "\n".join(ln for ln in fd.splitlines()
+                     if not ln.lstrip().startswith("#"))
+    assert '"$cur" = unlimited' in code, "没认 unlimited"
+    assert code.index('"$cur" = unlimited') < code.index('-ge "$NOFILE_MIN"'), \
+        "unlimited 的判断排在数值比较之后了——比较那一步已经先报错走了失败分支"
+    # 读坏了的值当 0，而不是原样丢进 `[ -ge ]` 再炸一次
+    assert "*[!0-9]*" in code, "非数字没有兜底"
+
+
+def test_preflight_also_accepts_an_unlimited_descriptor_limit(monkeypatch):
+    """preflight 那边有同形状的一条：RLIM_INFINITY 是 -1，比大小直接判成不够。
+
+    两边必须一起放行——否则一台设了 `infinity` 的机器会被 bootstrap 说「够了」、
+    被 preflight 当场拦下，而两边都「按自己的标准」是对的。这与
+    test_bootstrap_and_preflight_agree_on_the_fd_threshold 是同一条纪律。
+    """
+    import importlib
+    import resource
+    pf = importlib.import_module("lab_preflight")
+
+    monkeypatch.setattr(pf.resource, "getrlimit",
+                        lambda _what: (resource.RLIM_INFINITY, resource.RLIM_INFINITY))
+    fd = [c for c in pf.check_environment() if c.name == "文件描述符上限"]
+    assert fd, "preflight 里找不到「文件描述符上限」这项"
+    assert fd[0].ok, f"无上限被判成了不够：{fd[0].detail}"
+    assert "unlimited" in fd[0].detail, f"没说清是无上限：{fd[0].detail}"
+
+    # 真的不够时照旧要拦下来
+    monkeypatch.setattr(pf.resource, "getrlimit", lambda _what: (1024, 4096))
+    fd = [c for c in pf.check_environment() if c.name == "文件描述符上限"]
+    assert not fd[0].ok, "1024 应当判成不够"

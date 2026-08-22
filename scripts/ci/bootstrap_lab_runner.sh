@@ -451,30 +451,43 @@ fi
 
 say "Rust"
 # 判据与 --check 同一套：看的是 **runner 服务的 PATH**，不是谁的登录 shell。
-# 这里第一次解析出来的服务 PATH 用第一份就够（安装路径只是给人看的提示；
-# --check 那边才是逐份查的门禁）。
-if [ "$PROBE_KIND" = service ]; then
-    SERVICE_PATH="$(printf '%s\n' "$SERVICE_PATHS" | head -1 | cut -f1)"
-    SERVICE_SRC="$(printf  '%s\n' "$SERVICE_PATHS" | head -1 | cut -f2)"
-    SERVICE_ROOT="$(printf '%s\n' "$SERVICE_PATHS" | head -1 | cut -f3)"
-    SERVICE_COUNT="$(printf '%s\n' "$SERVICE_PATHS" | head -1 | cut -f4)"
-fi
-if [ -n "$(probe_cmd 'command -v -- cargo' || true)" ]; then
-    echo "  $(probe_cmd 'cargo --version') 已装（$(probe_label)）"
-elif [ -n "$(as_runner_login 'command -v -- cargo' || true)" ]; then
-    # **装了、但没接进服务 PATH。** 这条与「没装」的修法完全不同，混成一句的
-    # 后果是运维照着提示又装一遍 rustup，然后 job 照旧 command not found。
-    warn "cargo 装在 $(as_runner_login 'command -v -- cargo')，但**不在 runner 服务的
-    PATH 上**（当前服务 PATH 来自 ${SERVICE_SRC:-未确定}）——job 一起来就
+# 而且**每份不同的服务 PATH 都要查**。原先这里 `head -1` 只取第一份，理由写的是
+# 「安装路径只是给人看的提示」——可它末尾照样打「准备完成」。实例之间配置不同
+# 时，第一份找得到 cargo 就报已装，而 job 落到另一份上照旧 command not found：
+# 又一次「答案的覆盖面与它宣称的不一致」，正是这个 PR 从头在修的那种错。
+cargo_report() {
+    if [ -n "$(probe_cmd 'command -v -- cargo' || true)" ]; then
+        echo "  $(probe_cmd 'cargo --version') 已装（$(probe_label)）"
+        return 0
+    fi
+    if [ -n "$(as_runner_login 'command -v -- cargo' || true)" ]; then
+        # **装了、但没接进服务 PATH。** 这条与「没装」的修法完全不同，混成一句的
+        # 后果是运维照着提示又装一遍 rustup，然后 job 照旧 command not found。
+        warn "cargo 装在 $(as_runner_login 'command -v -- cargo')，但**不在 runner 服务的
+    PATH 上**（这份服务 PATH 来自 ${SERVICE_SRC:-未确定}）——job 一起来就
     command not found，而错误信息与真实原因毫不相干。把它所在目录加进
     ${SERVICE_ROOT:-~$RUNNER_USER/actions-runner}/.env 的 PATH= 那行，
     见 docs/ci/self-hosted-runner.md 的「工具链」一节。"
-else
+        return 1
+    fi
     warn "cargo 缺失。用 runner 用户装：
     sudo -u $RUNNER_USER sh -c 'curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --component clippy,rustfmt'
     装完记得把 ~/.cargo/bin 加进 runner 服务的 PATH（~/actions-runner/.env 的
     PATH= 那行）——systemd 的最小 PATH 与 config.sh 存下的 .path 都不含它，
     漏了的话 workerd 那几步会直接 command not found。"
+    return 1
+}
+if [ "$PROBE_KIND" = service ]; then
+    while IFS="$(printf '\t')" read -r spath ssrc sroot scount; do
+        [ -n "$spath" ] || continue
+        SERVICE_PATH="$spath"; SERVICE_SRC="$ssrc"; SERVICE_ROOT="$sroot"
+        SERVICE_COUNT="${scount:-1}"
+        cargo_report || true
+    done <<EOF
+$SERVICE_PATHS
+EOF
+else
+    cargo_report || true
 fi
 
 say "文件描述符上限"
@@ -501,7 +514,16 @@ else
     NOFILE_FIXED=0
     for unit in "${RUNNER_UNITS[@]}"; do
         cur="$(nofile_of_service "$unit" || echo 0)"
-        if [ "${cur:-0}" -ge "$NOFILE_MIN" ]; then
+        # `LimitNOFILE=infinity` 时 /proc/<pid>/limits 写的是 `unlimited`。拿它做
+        # 数值比较会报 "integer expression expected" 并**走进失败分支**——于是脚本
+        # 用一个 65536 的 drop-in 去**降低**一个本来就够用的设置，而且要等重启
+        # 才发作。非数字一律当 0（读坏了就该当没读到），unlimited 单独放行。
+        if [ "$cur" = unlimited ]; then
+            printf '  \033[32m✓\033[0m %-52s soft=unlimited\n' "$unit"
+            continue
+        fi
+        case "$cur" in ''|*[!0-9]*) cur=0 ;; esac
+        if [ "$cur" -ge "$NOFILE_MIN" ]; then
             printf '  \033[32m✓\033[0m %-52s soft=%s\n' "$unit" "$cur"
             continue
         fi
