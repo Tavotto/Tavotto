@@ -758,6 +758,6 @@ def test_subcommands_run_without_flask_or_pymupdf(tmp_path, argv):
         "    raise SystemExit(e.code)\n"
     )
     proc = subprocess.run([sys.executable, "-c", code], capture_output=True,
-                          text=True, env=env, timeout=120)
+                          text=True, encoding="utf-8", errors="replace", env=env, timeout=120)
     assert "不该 import" not in proc.stderr, proc.stderr
     assert proc.returncode == 0, proc.stderr

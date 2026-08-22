@@ -34,7 +34,7 @@ def _tracked_text_files() -> list[Path]:
     """
     out = subprocess.run(
         ["git", "ls-files", "-z"],
-        cwd=ROOT, capture_output=True, text=True, check=True,
+        cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
     ).stdout
     return [
         ROOT / name
@@ -78,7 +78,7 @@ def test_no_venv_or_self_referential_symlink_is_tracked() -> None:
     """
     out = subprocess.run(
         ["git", "ls-files", "-s"],
-        cwd=ROOT, capture_output=True, text=True, check=True,
+        cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
     ).stdout
 
     offenders = []
@@ -159,3 +159,85 @@ def test_no_launcher_leaves_a_child_pipe_undrained():
     assert not offenders, (
         "这些子进程的输出管道开了却没人读，写满 64 KiB 之后应用会卡死在写日志上：\n  "
         + "\n  ".join(offenders))
+
+
+def test_windows_bound_subprocesses_pin_their_decoding():
+    """跑在 Windows CI 上的 subprocess 必须显式指定 encoding。
+
+    不指定的话 `text=True` 用系统默认（Windows 上是 cp1252 / 中文机器是
+    cp936）解码子进程输出。我们的 CLI 与脚本大量输出中文，于是读线程当场
+    `UnicodeDecodeError` 并死掉——而 `returncode` 不经解码，照样拿得到，
+    **用例继续绿**。代价是 `out.stdout` / `out.stderr` 变成空的：那条断言
+    一旦真的失败，它的报错信息也是空的。**一个恰好在你需要它时失灵的诊断。**
+
+    2026-08-22 实测：main 上 Windows 腿每次都打这段 traceback
+    （`charmap codec can't decode byte 0x8d`），来自
+    `test_ci_tooling.py` 跑 `lab_preflight.py --help`（帮助文本是中文）。
+    而**同一个仓库的 `test_ci_qualification.py` 对同一个脚本早就写对了**
+    ——修了一处没扫其余，所以这条判据按范围扫，不逐个盯。
+
+    范围只收「会在 Windows 上跑」的：`tests/`（backend 的 windows 腿）与两个
+    冒烟脚本（windows-exe-smoke）。`scripts/ci/` 的实验室脚本只跑 Linux，
+    那里 `text=True` 没有这个问题，硬要求它们也写等于给噪音加噪音。
+    """
+    import ast
+    scope = sorted(ROOT.joinpath("tests").rglob("*.py")) + [
+        ROOT / "scripts" / "smoke_app.py", ROOT / "scripts" / "smoke_desktop.py"]
+    offenders = []
+    for path in scope:
+        if "__pycache__" in path.parts:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+            tree = ast.parse(text)
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            name = getattr(node.func, "attr", getattr(node.func, "id", "")) or ""
+            if name not in ("run", "Popen", "check_output"):
+                continue
+            kw = {k.arg for k in node.keywords}
+            # `**cfg` 展开（keyword.arg is None）静态判不出里面有没有 encoding。
+            # `test_compat_runner` 就是这么传的（`**self._DECODE`），而它本来
+            # 就是对的——把它判成违规，是判据问错了问题：要问的不是「有没有
+            # `encoding=` 这个字面关键字」，是「这个调用最终有没有设上编码」。
+            # 判不出就**不判**，并把这个盲点写在明处，别假装覆盖到了。
+            if any(k.arg is None for k in node.keywords):
+                continue
+            # **文本模式由 Python 的真实触发条件决定，不由关键字有无或函数名。**
+            # 实测（3.13）：只给 encoding → str，只给 errors → str，
+            # 裸 check_output → bytes。所以
+            #   * `run(..., encoding="cp1252")` 没有 text=True 也是文本模式，
+            #     照样复现那个 bug——上一版判据直接跳过它；
+            #   * 裸 `check_output()` 回的是 bytes，不该被判。
+            # Codex 在 #57 上指出的正是这两头。
+            texty = bool({"text", "universal_newlines", "encoding", "errors"} & kw)
+            if not texty:
+                continue
+            enc = next((k.value for k in node.keywords if k.arg == "encoding"), None)
+            if enc is None:
+                offenders.append(
+                    f"{path.relative_to(ROOT)}:{node.lineno} {name}(...) 没给 encoding")
+                continue
+            # **光有这个关键字不够**：`encoding=None` 就是「按系统默认」，
+            # `encoding="cp1252"` 更是直接复现那个 bug。判据要问的是「解码用的
+            # 是不是 UTF-8」，不是「有没有写过 encoding 这个词」——Codex 在 #57
+            # 上指出的正是这个缺口。判不出的（变量、表达式）不放行，指名道姓。
+            if (isinstance(enc, ast.Constant) and isinstance(enc.value, str)
+                    and enc.value.lower().replace("-", "") == "utf8"):
+                continue
+            # **唯一的豁免：复现这个 bug 本身。** 那条用例必须用旧代码页才能
+            # 证明「不给 utf-8 会丢掉诊断」。豁免要求同一行有 `# 复现用` 标记
+            # ——不是按文件名放行，否则那个文件里往后写的每一处都跟着白拿。
+            block = "\n".join(text.splitlines()[node.lineno - 1: node.lineno + 3])
+            if "复现用" in block:
+                continue
+            offenders.append(
+                f"{path.relative_to(ROOT)}:{node.lineno} {name}(...) "
+                f"encoding={ast.unparse(enc)}——必须是 utf-8 字面量"
+                "（复现这个 bug 的用例请在调用处标 `# 复现用`）")
+    assert not offenders, (
+        "这些 subprocess 在 Windows 上会用系统默认编码解码子进程输出，"
+        "中文一出现就静默丢掉 stdout/stderr：\n  " + "\n  ".join(offenders))

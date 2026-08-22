@@ -62,7 +62,7 @@ def _descendants(pid: int) -> set[int]:
     """
     try:
         out = subprocess.run(["ps", "-eo", "pid=,ppid="], capture_output=True,
-                             text=True, timeout=20).stdout
+                             text=True, encoding="utf-8", errors="replace", timeout=20).stdout
     except (OSError, subprocess.SubprocessError):
         return set()
     kids: dict[int, list[int]] = {}

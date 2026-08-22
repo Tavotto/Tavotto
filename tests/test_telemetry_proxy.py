@@ -251,6 +251,15 @@ def test_upstream_http_error_does_not_echo_the_response_body(monkeypatch):
         def read(self, *_a):
             return b'{"echo": "phc_test_key and the whole payload"}'
 
+        def close(self):
+            """`HTTPError` 会把 fp 交给 `addinfourl` 的 closer，GC 时调 close()。
+
+            少了它，回收期抛 `AttributeError: 'FakeResp' object has no
+            attribute 'close'`，被 pytest 记成 PytestUnraisableExceptionWarning
+            ——用例照绿，但 Windows CI 的日志里常年多一段假 traceback，读日志的人
+            要先排除它才能看见真问题。
+            """
+
     def raise_http(*_a, **_kw):
         raise urllib.error.HTTPError("https://us.i.posthog.com/batch/", 401,
                                      "Unauthorized", {}, FakeResp())
@@ -582,7 +591,7 @@ def test_scf_bootstrap_is_executable_and_binds_the_required_port():
     rel = boot.relative_to(PROXY_ROOT.parent.parent).as_posix()
     entry = subprocess.run(
         ["git", "ls-files", "-s", "--", rel],
-        cwd=PROXY_ROOT.parent.parent, capture_output=True, text=True, check=True,
+        cwd=PROXY_ROOT.parent.parent, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
     ).stdout.split()
     assert entry and entry[0] == "100755", (
         f"git 里 {rel} 的 mode 是 {entry[0] if entry else '(未追踪)'}，不是 100755"
