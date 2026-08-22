@@ -231,22 +231,68 @@ probe_cmd() {
     esac
 }
 
+# 配置改了却没重启，跑着的那个 listener 手里还是旧环境。**`.env` 的 PATH 是
+# Runner.Listener 启动时一次性读进内存的**，改文件不会传导到已经在跑的进程，
+# 也读不回来（`/proc/<pid>/environ` 是 exec 那一刻的快照，只反映 .path 那层，
+# 实测确认过）。所以「文件里配好了」不等于「下一个 job 能用上」——这与最初那个
+# 假绿是同一个形状，只是错在时间维度上。
+#
+# 判据用 mtime 比服务启动时间：改在后面 = 现在跑着的服务还没吃到这份配置。
+# 取不到时间就不判（宁可不报，也不报错的）。
+config_is_newer_than_service() {
+    local unit="$1" f="$2" started fmtime
+    started="$(systemctl show -p ActiveEnterTimestamp --value "$unit" 2>/dev/null)"
+    [ -n "$started" ] || return 1
+    started="$(date -d "$started" +%s 2>/dev/null)" || return 1
+    [ -n "$started" ] || return 1
+    fmtime="$(stat -c %Y "$f" 2>/dev/null)" || return 1
+    [ "$fmtime" -gt "$started" ]
+}
+
 # 解析出 job 真正会用的那个 PATH。多个 runner 实例各有自己的根（实验室那台
 # 有四个），逐个解析后按 PATH 去重 —— 通常配得一样，不一样就每份都要查。
-SERVICE_PATHS="$(
+#
+# **解析不了的实例不许静默丢掉。** 一个 unit 的根反推不出来、或者它的
+# .env/.path 都读不到时，早先这里是 `continue`：只要另外三个实例读得到且通过，
+# --check 就报「检查通过」，而 job 完全可能被调度到那个没验过的实例上。
+# 沉默地少验一个，与按错的账号验是同一类错——都是**答案的覆盖面与它宣称的
+# 不一致**。所以失败的实例照样进这张表，只是打上 bad 标记，由调用方算进未就绪。
+SERVICE_ROWS="$(
     for unit in $(discover_runner_units); do
-        root="$(root_of_unit "$unit")" || continue
-        line="$(service_path_of_root "$root")" || continue
-        printf '%s\t%s\n' "$line" "$root"
-    done | awk -F'\t' '
-        { if (!($1 in cnt)) { order[++n] = $1; src[$1] = $2; root[$1] = $3 }
-          cnt[$1]++ }
+        root="$(root_of_unit "$unit")"
+        if [ -z "${root:-}" ]; then
+            printf 'bad\t%s\t%s\n' "$unit" "反推不出 runner 根目录（ExecStart 读不到）"
+            continue
+        fi
+        line="$(service_path_of_root "$root")"
+        if [ -z "${line:-}" ]; then
+            printf 'bad\t%s\t%s\n' "$unit" "$root 下的 .env 与 .path 都读不到"
+            continue
+        fi
+        src="$(printf '%s' "$line" | cut -f2)"
+        if config_is_newer_than_service "$unit" "$src"; then
+            printf 'bad\t%s\t%s\n' "$unit" \
+                "$src 比服务的启动时间新——改了配置没重启，跑着的 listener 还是旧 PATH"
+            continue
+        fi
+        printf 'ok\t%s\t%s\n' "$line" "$root"
+    done
+)"
+SERVICE_BAD="$(printf '%s\n' "$SERVICE_ROWS" | sed -n 's/^bad\t//p')"
+SERVICE_PATHS="$(
+    printf '%s\n' "$SERVICE_ROWS" | sed -n 's/^ok\t//p' | awk -F'\t' '
+        NF >= 3 { if (!($1 in cnt)) { order[++n] = $1; src[$1] = $2; root[$1] = $3 }
+                  cnt[$1]++ }
         END { for (i = 1; i <= n; i++) { p = order[i]
                   printf "%s\t%s\t%s\t%d\n", p, src[p], root[p], cnt[p] } }'
 )"
 
 if [ -n "$SERVICE_PATHS" ]; then
     PROBE_KIND=service
+elif [ -n "$SERVICE_BAD" ]; then
+    # runner 注册着，只是没有一个实例的配置读得出来。**这不是「还没注册」**，
+    # 不能降级去查登录 PATH —— 那会把一台坏掉的机器报成「只差注册」。
+    PROBE_KIND=unresolved
 elif [ "$PROBE_MODE" = foreign ]; then
     # 读不到配置，又没有身份去查 —— 这时**没有**可信答案。
     PROBE_KIND=unresolved
@@ -289,6 +335,17 @@ check_tools_on() {
 if [ "$CHECK_ONLY" -eq 1 ]; then
     say "检查模式：不修改任何东西"
     MISSING=0
+    # 解析不了的实例逐条报出来并算进未就绪，**绝不静默少验一个**：job 落在
+    # 哪个实例上是调度决定的，只要有一个没验过，「检查通过」就名不副实。
+    if [ -n "$SERVICE_BAD" ]; then
+        while IFS="$(printf '\t')" read -r bunit breason; do
+            [ -n "$bunit" ] || continue
+            printf '  \033[31m✗\033[0m %s\n      %s\n' "$bunit" "$breason"
+            MISSING=$((MISSING + 1))
+        done <<EOF
+$SERVICE_BAD
+EOF
+    fi
     if [ "$PROBE_KIND" = unresolved ]; then
         # **不按调用方自己的 PATH 冒充服务 PATH。** 读不到就说读不到，
         # 并且算作未就绪 —— 一句「检查通过」而其实是按管理员的 PATH 算出来的，
@@ -337,8 +394,9 @@ EOF
     # **别把所有失败都说成「重跑就能装上」。** 「装了但不在服务 PATH 上」这一档
     # 重跑一百遍也不会好（cargo 那一支本来就只是 warn），而运维会照着提示反复
     # 装 rustup 然后一遍遍撞同一堵墙——最初那个 bug 的伤害有一半来自这句话。
-    die "$MISSING 项未就绪。标着「不在 runner 服务的 PATH 上」的那些，改对应
-    .env 的 PATH= 那行即可，**重跑本脚本不会修它**；其余的去掉 --check 重跑以安装。"
+    die "$MISSING 项未就绪。每条 ✗ 都写了各自的修法：「不在 runner 服务的 PATH 上」
+    改对应 .env 的 PATH= 那行、「没重启」重启那个服务、「读不到」查那个实例的根目录
+    ——**这几类重跑本脚本一次都不会修**。只有真正缺包的那些，去掉 --check 重跑能装上。"
 fi
 
 # ---------------------------------------------------------------- 安装
@@ -378,6 +436,11 @@ if command -v pnpm >/dev/null 2>&1; then
     echo "  pnpm $(pnpm --version) 已装"
 else
     warn "pnpm 缺失；装好 node 之后 npm i -g pnpm@11"
+fi
+
+if [ -n "$SERVICE_BAD" ]; then
+    warn "有 runner 实例的配置读不出来或已过期，下面按读得出来的那些判断：
+$(printf '%s\n' "$SERVICE_BAD" | sed 's/\t/： /; s/^/    /')"
 fi
 
 say "Rust"

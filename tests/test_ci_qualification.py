@@ -838,3 +838,93 @@ def test_both_copies_of_the_slow_gate_agree():
     for token in ("--collect-only", "rc=$?", "5)", "set +e", "slow-collect.log"):
         assert (token in a) == (token in b), \
             f"两份 slow 门禁在 {token!r} 上不一致——判据分叉了"
+
+
+def _bootstrap_rows() -> str:
+    """SERVICE_ROWS / SERVICE_BAD / SERVICE_PATHS 那一段（顶层代码，按区间抠）。"""
+    src = _bootstrap()
+    head = 'SERVICE_ROWS="$('
+    assert head in src
+    return head + src.split(head, 1)[1].split("\nif [ -n \"$SERVICE_PATHS\" ]", 1)[0]
+
+
+def test_an_unreadable_instance_is_reported_not_silently_dropped(tmp_path):
+    """一个实例解析不了，不许从表里悄悄消失。
+
+    早先这里是 `continue`：四个实例里坏一个，另外三个读得到且通过，`--check`
+    就报「检查通过」——而 job 落在哪个实例上是调度决定的。沉默地少验一个，与
+    按错的账号验是同一类错：**答案的覆盖面与它宣称的不一致**。
+    """
+    good = tmp_path / "good"
+    good.mkdir()
+    (good / ".env").write_text("PATH=/usr/bin:/bin\n", encoding="utf-8")
+    bad = tmp_path / "bad"
+    bad.mkdir()          # .env / .path 都没有
+
+    stubs = (
+        'discover_runner_units() { printf "u-good\\nu-bad\\n"; }\n'
+        f'root_of_unit() {{ [ "$1" = u-good ] && printf "{good}" || printf "{bad}"; }}\n'
+        'config_is_newer_than_service() { return 1; }\n'
+    )
+    script = (stubs + _bootstrap_funcs("env_path_of_root", "service_path_of_root")
+              + "\n" + _bootstrap_rows()
+              + '\nprintf "BAD<%s>\\nPATHS<%s>\\n" "$SERVICE_BAD" "$SERVICE_PATHS"\n')
+    r = _run_sh(script)
+    assert "u-bad" in r.stdout, \
+        f"读不到配置的实例被静默丢掉了：{r.stdout!r}"
+    assert "u-good" not in r.stdout.split("PATHS<")[0], "好实例被误判成坏的"
+    assert "/usr/bin:/bin" in r.stdout.split("PATHS<")[1], "好实例没进待查表"
+
+
+def test_config_edited_after_the_service_started_is_not_trusted(tmp_path):
+    """改了 `.env` 却没重启 = 跑着的 listener 还是旧环境，不能算配好了。
+
+    `.env` 的 PATH 是 `Runner.Listener` 启动时一次性读进内存的，改文件不会传导
+    到已经在跑的进程（`/proc/<pid>/environ` 是 exec 快照，只反映 `.path` 那层，
+    实测确认过，所以「去读活进程的 PATH」这条路对 `.env` 层根本走不通）。
+    与最初那个假绿同一个形状，只是错在时间维度上。
+    """
+    root = tmp_path / "r"
+    root.mkdir()
+    (root / ".env").write_text("PATH=/usr/bin:/bin\n", encoding="utf-8")
+
+    stubs = ('discover_runner_units() { printf "u1\\n"; }\n'
+             f'root_of_unit() {{ printf "{root}"; }}\n')
+    body = (_bootstrap_funcs("env_path_of_root", "service_path_of_root") + "\n"
+            + _bootstrap_rows()
+            + '\nprintf "BAD<%s>\\nPATHS<%s>\\n" "$SERVICE_BAD" "$SERVICE_PATHS"\n')
+
+    # 配置比服务旧 —— 正常，进待查表
+    r = _run_sh(stubs + 'config_is_newer_than_service() { return 1; }\n' + body)
+    assert "/usr/bin:/bin" in r.stdout.split("PATHS<")[1], r.stdout
+    assert r.stdout.split("BAD<")[1].startswith(">"), f"误报成过期：{r.stdout!r}"
+
+    # 配置比服务新 —— 必须报出来，且**不进**待查表（否则照旧报绿）
+    r = _run_sh(stubs + 'config_is_newer_than_service() { return 0; }\n' + body)
+    assert "没重启" in r.stdout, f"改了配置没重启，却没报出来：{r.stdout!r}"
+    assert r.stdout.split("PATHS<")[1].startswith(">"), \
+        f"过期的配置还是进了待查表：{r.stdout!r}"
+
+
+def test_all_instances_unreadable_is_not_reported_as_not_registered():
+    """全都读不出来 ≠ 还没注册。降级查登录 PATH 会把坏机器报成「只差注册」。"""
+    stubs = ("discover_runner_units() { :; }\nroot_of_unit() { return 1; }\n"
+             "service_path_of_root() { return 1; }\nwarn() { :; }\n"
+             "RUNNER_USER=github-runner\nPROBE_MODE=sudo\n"
+             'SERVICE_BAD="u1\tu1 的 .env 读不到"\nSERVICE_PATHS=""\n')
+    r = _run_sh(stubs + _bootstrap_dispatch() + '\nprintf "%s" "$PROBE_KIND"\n')
+    assert r.stdout.strip() == "unresolved", \
+        f"实例坏着却当成「还没注册」降级了：{r.stdout.strip()!r}"
+
+
+def test_a_reported_bad_instance_also_counts_as_not_ready():
+    """报出来还不够，必须算进 MISSING —— 否则末尾照旧是一句「检查通过」。
+
+    ✗ 打在屏幕上而退出码是 0，CI 与脚本调用方看到的仍然是通过；扫读的人也只会
+    记住最后那一行。「报了但不阻断」在这里等于没报。
+    """
+    src = _bootstrap()
+    branch = src.split('if [ -n "$SERVICE_BAD" ]; then', 1)[1] \
+                .split('if [ "$PROBE_KIND" = unresolved ]', 1)[0]
+    assert "MISSING=$((MISSING + 1))" in branch, \
+        "坏实例报出来了却没算进未就绪——末尾还是「检查通过」，等于没报"
