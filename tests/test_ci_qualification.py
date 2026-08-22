@@ -864,3 +864,10 @@ def test_desktop_outwaits_the_release_qualification_gate():
     dt_src = (WORKFLOWS / "desktop-tauri.yml").read_text(encoding="utf-8")
     assert dt_src.index("上传最终桌面产物") < dt_src.index("等 Release 存在"), \
         "产物上传必须排在「等 Release」之前，否则等超时会把签名公证好的东西一起丢掉"
+
+    # **最后一次 sleep 之后必须再探一次。** Release 恰好在那 30 秒里建出来时，
+    # 循环直接落到失败分支——明明已经好了却报超时，而且发生在最贵的那一刻。
+    code = "\n".join(ln for ln in tail.splitlines()
+                     if not ln.lstrip().startswith("#"))
+    assert "gh release view" in code, \
+        "循环结束后没有再探一次——最后一轮 sleep 里建出来的 Release 会被漏掉"
