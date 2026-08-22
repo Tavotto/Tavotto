@@ -36,7 +36,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _common import (  # noqa: E402
-    CiError, assert_within, ensure_layout, safe_rmtree, state_root, summary,
+    CiError, assert_within, ensure_layout, find_ci_owned_tavotto, safe_rmtree,
+    state_root, summary,
 )
 
 # 保留期。tmp 短是因为它本来就只服务当次 run；reports 长一点是为了让人能
@@ -105,29 +106,24 @@ def sweep_workspace_leftovers(root: Path, dry_run: bool = False) -> list[dict]:
 
 
 def kill_stale_processes(root: Path, dry_run: bool = False) -> list[dict]:
-    """收掉归属于本 CI 持久化根的遗留 Tavotto 进程。
+    """收掉归属于本 CI 的遗留 Tavotto 进程。
 
-    **归属判定只认 CI 持久化根出现在命令行里**——不按进程名。同一台机器上
-    维护者自己开着的 Tavotto 与本 CI 无关，误杀一次就再没人敢开这个开关。
+    **归属判据是 `_common.is_ci_owned_tavotto`——唯一实现**，与体检
+    （`lab_preflight.check_stale_processes`）用的是同一份。
+
+    从前这里自己写了一份：「命令行里有 tavotto 且出现 **CI 根**」，
+    而体检那份还认 **runner 工作目录**。于是体检判成遗留的进程，这里
+    可能一个都不认——自愈会**报告成功却什么都没做**，而机器照旧脏着跑
+    soak 和 benchmark。同一个问题两份判据，本仓库已经栽过三次。
+
+    `root` 参数保留是为了不改调用方，实际归属由 `state_root()` 与 runner
+    工作目录共同决定；传进来的 root 与 `state_root()` 不一致时按传入的算。
     """
     killed: list[dict] = []
-    proc = Path("/proc")
-    if not proc.is_dir():
-        return killed
-    marker = str(root.resolve())
-    for entry in proc.iterdir():
-        if not entry.name.isdigit():
-            continue
-        pid = int(entry.name)
-        if pid == os.getpid():
-            continue
-        try:
-            cmd = (entry / "cmdline").read_bytes().replace(b"\0", b" ").decode("utf-8", "replace")
-        except OSError:
-            continue
-        if marker not in cmd:
-            continue
-        if "tavotto" not in cmd:
+    marker = str(Path(root).resolve())
+    for pid, cmd in find_ci_owned_tavotto():
+        # 调用方显式指了另一个根时，只收那个根下的（人工排查会这么用）
+        if marker not in cmd and marker != str(state_root().resolve()):
             continue
         record = {"pid": pid, "cmd": cmd.strip()[:160], "killed": False}
         if not dry_run:

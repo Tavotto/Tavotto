@@ -1087,3 +1087,142 @@ def test_desktop_outwaits_the_release_qualification_gate():
                      if not ln.lstrip().startswith("#"))
     assert "gh release view" in code, \
         "循环结束后没有再探一次——最后一轮 sleep 里建出来的 Release 会被漏掉"
+
+
+# ============================================================ 遗留进程自愈
+#
+# 2026-08-22 实测：一个手工探测留下的进程
+# （`/srv/tavotto-ci/tmp/venv-manual-probe/… -m tavotto`）从 05:55 起把
+# **每一次** lab run 挡在门外——25 次 run 里 0 次成功。体检本身是对的
+# （残留进程确实会污染 soak 与 benchmark），坏的是**没有自愈**：
+# `cleanup.py`（会 kill）排在体检之后，体检失败它就永远轮不到。
+
+def test_the_ownership_predicate_has_exactly_one_implementation():
+    """「这个进程是不是本 CI 漏下的」只能有一份判据。
+
+    从前有两份：体检认「argv 像 Tavotto 且命令行里有 CI 根**或 runner 工作
+    目录**」，`cleanup.kill_stale_processes` 认「有 tavotto 且有 CI 根」。
+    不一致的后果不是多杀少杀，是**自愈报告成功却什么都没做**——体检判成
+    遗留、kill 那份不认、复检照旧失败。「共享判据修一处不算修完」。
+    """
+    import ast
+    import cleanup as CU
+    import lab_preflight as PF
+
+    assert PF.find_ci_owned_tavotto is _common.find_ci_owned_tavotto
+    assert CU.find_ci_owned_tavotto is _common.find_ci_owned_tavotto
+
+    # **import 了不等于用了。** 第一版只比这两个绑定，于是把 cleanup 里那句
+    # 调用换成空列表，用例照样绿——判据少了一维（问「有没有 import」，
+    # 该问「kill 那条路径走不走它」）。所以再按**调用点**判一次。
+    for mod_path, func in ((CI_DIR / "cleanup.py", "kill_stale_processes"),
+                           (CI_DIR / "lab_preflight.py", "check_stale_processes")):
+        tree = ast.parse(mod_path.read_text(encoding="utf-8"))
+        fn = next((n for n in ast.walk(tree)
+                   if isinstance(n, ast.FunctionDef) and n.name == func), None)
+        assert fn is not None, f"{mod_path.name} 里没有 {func}"
+        called = {n.func.id for n in ast.walk(fn)
+                  if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
+        assert "find_ci_owned_tavotto" in called, (
+            f"{mod_path.name}::{func} 没有调 find_ci_owned_tavotto——"
+            f"判据又分叉了，而分叉的表现是「自愈报告成功却什么都没做」")
+
+    # 两个消费方都不许再自己扫 /proc
+    for mod_path in (CI_DIR / "lab_preflight.py", CI_DIR / "cleanup.py"):
+        tree = ast.parse(mod_path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and node.value == "/proc":
+                raise AssertionError(
+                    f"{mod_path.name} 又自己扫 /proc 了——判据必须只留 _common 一份")
+
+
+def test_kill_stale_actually_reaches_a_runner_workspace_process(monkeypatch):
+    """行为级：runner 工作目录下的进程，`kill_stale_processes` 也要收。
+
+    这正是从前两份判据分叉的那一格——体检认 runner 工作目录，kill 不认。
+    静态判据（上一条）能挡住「不调共享函数」，挡不住「调了但过滤掉了」，
+    所以这一条按**真的返回了哪些 pid** 判。
+    """
+    import cleanup as CU
+    work = "/home/runner/actions-runner/_work/Tavotto"
+    monkeypatch.setenv("RUNNER_WORKSPACE", work)
+    monkeypatch.setattr(
+        "cleanup.find_ci_owned_tavotto",
+        lambda: [(4242, f"{work}/dist/tavotto --figures x")])
+    got = CU.kill_stale_processes(Path("/srv/tavotto-ci"), dry_run=True)
+    assert [r["pid"] for r in got] == [4242], (
+        "runner 工作目录下的遗留进程没被收——体检会判它遗留，而自愈收不到它")
+
+
+def test_preflight_reports_stale_processes_when_not_reaping(monkeypatch):
+    fake = [(4242, "/srv/x/venv/bin/python -m tavotto --port 1 --figures /srv/x/f")]
+    monkeypatch.setattr("lab_preflight.find_ci_owned_tavotto", lambda: fake)
+    import lab_preflight as PF
+    (check,) = PF.check_stale_processes(reap=False)
+    assert not check.ok and not check.warn, "不自愈时必须阻断"
+    assert "4242" in check.detail
+
+
+def test_preflight_self_heals_stale_processes(monkeypatch):
+    """`--reap-stale` 真的把它们清掉，并**复检**确认。"""
+    import lab_preflight as PF
+    alive = {4242, 4243}
+    fake = [(p, f"/srv/x/venv/bin/python -m tavotto --port {p}") for p in sorted(alive)]
+
+    def _find():
+        return [(p, c) for p, c in fake if p in alive]
+
+    def _kill(pid, sig):
+        alive.discard(pid)
+
+    monkeypatch.setattr("lab_preflight.find_ci_owned_tavotto", _find)
+    monkeypatch.setattr(PF.os, "kill", _kill)
+    (check,) = PF.check_stale_processes(reap=True)
+    assert check.ok, f"清干净了却没通过：{check.detail}"
+    assert check.warn, "通过了也必须在 summary 里看得见——静默自愈会掩盖真实的退出路径缺陷"
+    assert "2" in check.detail
+
+
+def test_self_heal_still_blocks_when_a_process_survives(monkeypatch):
+    """**清不掉就照旧阻断。**
+
+    「发了信号就当它死了」是最坏的写法：SIGTERM 对卡在 C 扩展里的 worker
+    可能毫无作用，而「报告已清理、其实还在」会让 soak 的泄漏判定与 benchmark
+    拿着被污染的机器继续跑——比直接失败糟糕得多。
+    """
+    import lab_preflight as PF
+    fake = [(4242, "/srv/x/venv/bin/python -m tavotto --port 4242")]
+    monkeypatch.setattr("lab_preflight.find_ci_owned_tavotto", lambda: fake)
+    monkeypatch.setattr(PF.os, "kill", lambda pid, sig: None)   # 杀不动
+    monkeypatch.setattr(PF.time, "monotonic",
+                        iter([0.0, 999.0, 999.0, 999.0]).__next__)
+    (check,) = PF.check_stale_processes(reap=True)
+    assert not check.ok and not check.warn
+    assert "没死" in check.detail
+
+
+def test_ownership_predicate_never_matches_a_maintainers_own_instance():
+    """维护者自己开的实例不归 CI 管——误杀一次就再没人敢开自愈。"""
+    markers = ["/srv/tavotto-ci", "/home/runner/actions-runner/_work/Tavotto"]
+    assert not _common.is_ci_owned_tavotto(
+        "/home/alice/.venv/bin/python -m tavotto --figures /home/alice/figs", markers)
+    assert not _common.is_ci_owned_tavotto("/usr/bin/python3 -m http.server", markers)
+    # 名字里带 tavotto 但不是启动形态的也不算
+    assert not _common.is_ci_owned_tavotto("less /srv/tavotto-ci/reports/x.json", markers)
+    # 真正归属 CI 的四种形态
+    for cmd in ("/srv/tavotto-ci/tmp/v/bin/python -m tavotto --port 1",
+                "/srv/tavotto-ci/tmp/v/bin/python /x/engine/worker.py --script a",
+                "/srv/tavotto-ci/rt/tavotto-workerd --spec x",
+                "/home/runner/actions-runner/_work/Tavotto/dist/tavotto --figures x"):
+        assert _common.is_ci_owned_tavotto(cmd, markers), cmd
+
+
+def test_the_lab_workflows_actually_pass_reap_stale():
+    """自愈写好了却没接上去，等于没写。"""
+    for name in ("lab-ci.yml", "release.yml"):
+        src = (WORKFLOWS / name).read_text(encoding="utf-8")
+        line = [ln for ln in src.splitlines()
+                if "lab_preflight.py" in ln and not ln.lstrip().startswith("#")]
+        assert line, f"{name}: 找不到调用 lab_preflight.py 的那一行"
+        for ln in line:
+            assert "--reap-stale" in ln, f"{name}: 体检没有开自愈：{ln.strip()}"
