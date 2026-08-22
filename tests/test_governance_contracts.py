@@ -520,3 +520,19 @@ def test_diff_notices_a_ruleset_that_vanished_from_the_remote():
     # 被删掉的只能 POST 重建：那个数字 id 已经不存在，PUT 会 404
     recreate = code.split("\nrecreate)")[1].split("\nadd-check")[0]
     assert "-X POST" in recreate, "重建走的不是 POST —— PUT 一个不存在的 id 会 404"
+
+
+def test_recreate_replaces_the_stale_snapshot():
+    """`--recreate` 之后旧 id 的存档要一并清掉。
+
+    不清的话 `--diff`（它比**两个集合**）会永远报「存档里的 ruleset
+    <旧 id> 在远程不存在」—— 而那条规则其实已经回来了，只是换了个 id。
+
+    **一条永远红的检查会被人忽略，那时它真的红了也没人看。**
+    这是我加 `--recreate` 时自己引入的。
+    """
+    sh = (ADMIN_DIR / "apply_rulesets.sh").read_text(encoding="utf-8")
+    code = "\n".join(l for l in sh.splitlines() if not l.lstrip().startswith("#"))
+    recreate = code.split("\nrecreate)")[1].split("\nadd-check")[0]
+    assert 'rm -f "$f"' in recreate, "重建之后没删掉旧 id 的存档"
+    assert "ruleset-${newid}.json" in recreate, "没有把新 id 的存档写下来"

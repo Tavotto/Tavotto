@@ -152,8 +152,16 @@ recreate)
   if [ "$APPLY" = "0" ]; then
     echo "   dry-run。真重建：${0} --recreate ${CHECK} --apply"
   else
-    gh api -X POST "repos/${REPO}/rulesets" --input "$tmp" --jq .id
-    echo "   **立刻跑一次 ${0} --backup**：新 id 与存档文件名不一致"
+    newid="$(gh api -X POST "repos/${REPO}/rulesets" --input "$tmp" --jq .id)"
+    echo "   已重建，新 id = ${newid}"
+    # **旧存档要一并清掉。** 不清的话 `--diff`（它比两个集合）会永远报
+    # 「存档里的 ruleset <旧 id> 在远程不存在」——而那条规则其实已经回来了，
+    # 只是换了个 id。一条永远红的检查会被人忽略，那时它真的红了也没人看。
+    gh api "repos/${REPO}/rulesets/${newid}" \
+      | python3 -c "import json,sys;json.dump(json.load(sys.stdin),open(sys.argv[1],'w'),indent=2,ensure_ascii=False,sort_keys=True)" \
+      "${STORE}/ruleset-${newid}.json"
+    rm -f "$f"
+    echo "   存档已换成 ruleset-${newid}.json（旧的 ruleset-${CHECK}.json 已删）"
   fi
   rm -f "$tmp"
   ;;
