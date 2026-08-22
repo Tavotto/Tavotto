@@ -237,16 +237,47 @@ probe_cmd() {
 # 实测确认过）。所以「文件里配好了」不等于「下一个 job 能用上」——这与最初那个
 # 假绿是同一个形状，只是错在时间维度上。
 #
-# 判据用 mtime 比服务启动时间：改在后面 = 现在跑着的服务还没吃到这份配置。
-# 取不到时间就不判（宁可不报，也不报错的）。
+# **比较必须做到亚秒。** 实测（Ubuntu 24.04 / coreutils 9.4 / systemd 255）：
+#   stat -c %Y                      → 1787209101              整秒
+#   stat -c %.9Y                    → 1787209101.000000000    有纳秒
+#   systemctl show ActiveEnterTimestamp → "Sat … 05:05:44 UTC"，
+#     date -d … +%s.%N 出来是 .000000000                      **只有整秒**
+# 也就是说「保留亚秒精度」在服务那一侧走 ActiveEnterTimestamp 是做不到的。
+# 但 `/proc/<pid>` 自己的 mtime 就是进程启动时刻，**带纳秒**
+# （实测 1787375144.246472284），而 MainPID 本来就要查——于是两侧都拿得到亚秒。
+#
+# 取 MainPID（runsvc.sh）而不是 listener：它启动更早，判据因此偏保守
+# （文件落在两者之间会报「要重启」，是假红不是假绿）。
+# 比较用 **>=**：相等时无法证明文件更旧，何况文件系统或老 coreutils 只给整秒时
+# 两边都会退化成 .0——那时相等恰恰是最可疑的情形。
+_mtime_ns() {
+    local t
+    t="$(stat -c %.9Y "$1" 2>/dev/null)" || return 1
+    case "$t" in
+        *.*)         printf '%s\n' "$t" ;;      # 有亚秒
+        ''|*[!0-9]*) return 1 ;;                # 读坏了
+        *)           printf '%s.0\n' "$t" ;;    # 老 coreutils 只给整秒
+    esac
+}
+
+# $1 >= $2 ？秒与纳秒**分开当整数比**：这两个数有 19 位有效数字，
+# 交给 awk 按浮点比会被 double 悄悄舍掉最后几位。
+_ts_ge() {
+    local as="${1%%.*}" an="${1#*.}" bs="${2%%.*}" bn="${2#*.}"
+    [ "$as" -gt "$bs" ] && return 0
+    [ "$as" -lt "$bs" ] && return 1
+    an="$(printf '%-9s' "${an:-0}" | tr ' ' '0')"
+    bn="$(printf '%-9s' "${bn:-0}" | tr ' ' '0')"
+    [ "$((10#$an))" -ge "$((10#$bn))" ]         # 10# 强制十进制，免得前导零被当八进制
+}
+
 config_is_newer_than_service() {
-    local unit="$1" f="$2" started fmtime
-    started="$(systemctl show -p ActiveEnterTimestamp --value "$unit" 2>/dev/null)"
-    [ -n "$started" ] || return 1
-    started="$(date -d "$started" +%s 2>/dev/null)" || return 1
-    [ -n "$started" ] || return 1
-    fmtime="$(stat -c %Y "$f" 2>/dev/null)" || return 1
-    [ "$fmtime" -gt "$started" ]
+    local unit="$1" f="$2" pid ft pt
+    pid="$(systemctl show -p MainPID --value "$unit" 2>/dev/null)" || return 1
+    [ -n "${pid:-}" ] && [ "$pid" != "0" ] || return 1
+    ft="$(_mtime_ns "$f")" || return 1
+    pt="$(_mtime_ns "/proc/$pid")" || return 1
+    _ts_ge "$ft" "$pt"
 }
 
 # 解析出 job 真正会用的那个 PATH。多个 runner 实例各有自己的根（实验室那台
@@ -527,7 +558,10 @@ _nofile_ge() {
 # 加载，后面的赋值赢），而且同样要等重启才发作——用一个待生效的配置换掉另一个，
 # 纯属帮倒忙。这一档只提醒重启。
 nofile_state() {
-    if _nofile_ge "$1"; then echo ok
+    # **ok 必须两边都够。** 只看运行态的话：`daemon-reload` 已经载入一个低于阈值
+    # 的新值、而服务还没重启时，跑着的进程仍然够 → 报 ok，下一次**普通重启**就掉
+    # 下去，随后 lab_preflight 拦下每个 job。那时谁也不会想到是 bootstrap 说过 ok。
+    if _nofile_ge "$1" && _nofile_ge "$2"; then echo ok
     elif _nofile_ge "$2"; then echo pending
     else echo needs_dropin; fi
 }
@@ -537,6 +571,27 @@ nofile_state() {
 # 加固、环境变量都常放在里面）。截断掉的后果要等下次重启才发作，那时谁也想不到
 # 是 bootstrap 干的。改成：文件名带自己的名字（systemd 按字典序加载 .d 下所有
 # *.conf，多一个文件不冲突），并且**只覆盖确认是自己写的那一份**。
+# **以「再问一次系统」为准，不以「我写了一个文件」为准。** systemd.unit(5)：
+# .d 下的文件按文件名字典序加载，**后面的赋值赢**。已经存在一个 99-local.conf
+# 把 LimitNOFILE 设低时，我们写的 90-… 一个字节没错却根本不生效，而脚本会报
+# 「已写 drop-in」。把名字排得更靠后是军备竞赛（别人还能再往后一格），正解是
+# 写完 daemon-reload 再问一次 systemd，不生效就如实报出来交给人处理。
+#
+# daemon-reload **不是重启**：它只让 systemd 重读 unit 文件，不打断在跑的 job。
+verify_nofile_effective() {
+    local unit="$1" now
+    systemctl daemon-reload 2>/dev/null || true
+    now="$(configured_nofile "$unit")"
+    _nofile_ge "$now" && return 0
+    warn "写完 drop-in 之后 $unit 的配置值仍是 ${now:-未知}（要求 ≥ ${NOFILE_MIN}）。
+    .d 下按文件名字典序加载、后面的赢——下面这些文件都设了 LimitNOFILE，
+    排在 $NOFILE_DROPIN_NAME **后面**的那个才是说了算的那份：
+$(systemctl cat "$unit" 2>/dev/null \
+    | awk '/^# \//{f=$2} /^[[:space:]]*LimitNOFILE=/{print "        " f ": " $0}')
+    把它改掉（或挪到 $NOFILE_DROPIN_NAME 前面）之后重跑本脚本。"
+    return 1
+}
+
 NOFILE_DROPIN_MARKER="由 scripts/ci/bootstrap_lab_runner.sh 写入"
 NOFILE_DROPIN_NAME="90-tavotto-nofile.conf"
 write_nofile_dropin() {
@@ -547,17 +602,34 @@ write_nofile_dropin() {
     请自己确认它里面的 LimitNOFILE ≥ ${NOFILE_MIN}，或者把它挪开后重跑。"
         return 1
     fi
-    cat > "$conf" <<CONF
+    # **重定向失败不会让 set -e 生效**——这个函数是作为 `if` 的条件调用的。
+    # 目标被设了 immutable、文件系统只读、磁盘满，这一句都会失败，而函数照旧
+    # 走到 return 0，调用方于是打印「已写 drop-in」。写完再回读一次：部分写入
+    # 与「写进去了但不是那个内容」也一并挡掉。
+    if ! cat > "$conf" <<CONF
 # $NOFILE_DROPIN_MARKER
 # soak 会同时开多个 worker 与 HTTP 连接；systemd 默认的 soft=1024 撞上限时
 # 表现是随机的 "Too many open files"，与真实的句柄泄漏几乎分不开。
 [Service]
 LimitNOFILE=65536
 CONF
-    # 旧版本写的是 limits.conf。**不动它**（可能已被管理员接管），只提一句。
+    then
+        warn "写不进 $conf —— 权限、immutable 属性、只读文件系统或磁盘满都会这样。"
+        return 1
+    fi
+    if ! grep -qF "LimitNOFILE=65536" "$conf" 2>/dev/null; then
+        warn "$conf 写完却读不回 LimitNOFILE=65536。"
+        return 1
+    fi
+    # 旧版本写的是 limits.conf。**它压过新文件，不是被新文件取代**——排序按
+    # 字节走，字母在数字之后（'l'=0x6C > '9'=0x39），所以 limits.conf 排在
+    # 90-tavotto-nofile.conf **后面**、最后加载、说了算。真机实测过这个顺序。
+    # **仍然不删**：管理员可能把自己的值写进了那个文件（marker 还留着）,
+    # 删掉就是把他的设定悄悄降下来。据实说明，由 verify 去判最终是否达标。
     if [ -e "$dropin/limits.conf" ] \
        && grep -qF "$NOFILE_DROPIN_MARKER" "$dropin/limits.conf" 2>/dev/null; then
-        echo "      （$dropin/limits.conf 是本脚本旧版本写的，已被 $NOFILE_DROPIN_NAME 取代，可自行删除）"
+        echo "      （$dropin/limits.conf 是本脚本旧版本写的，且排在 $NOFILE_DROPIN_NAME"
+        echo "        之后——最终生效的是它。值够就没事；不够的话下面会报出来。）"
     fi
     return 0
 }
@@ -571,6 +643,7 @@ if [ "${#RUNNER_UNITS[@]}" -eq 0 ]; then
 else
     NOFILE_FIXED=0
     NOFILE_PENDING=0
+    NOFILE_FAILED=0
     for unit in "${RUNNER_UNITS[@]}"; do
         cur="$(nofile_of_service "$unit" || echo 0)"
         want="$(configured_nofile "$unit")"
@@ -585,11 +658,18 @@ else
             NOFILE_PENDING=$((NOFILE_PENDING + 1))
             continue ;;
         esac
-        if write_nofile_dropin "/etc/systemd/system/${unit}.d"; then
-            printf '  \033[33m→\033[0m %-52s soft=%s，已写 drop-in\n' "$unit" "${cur:-未知}"
+        if write_nofile_dropin "/etc/systemd/system/${unit}.d" \
+           && verify_nofile_effective "$unit"; then
+            printf '  \033[33m→\033[0m %-52s soft=%s，已写 drop-in 并确认生效\n' \
+                "$unit" "${cur:-未知}"
             NOFILE_FIXED=$((NOFILE_FIXED + 1))
         else
-            printf '  \033[31m✗\033[0m %-52s soft=%s，drop-in 没写\n' "$unit" "${cur:-未知}"
+            # **拒绝写入 / 写了没生效都要传到退出码。** 只打一行红字然后照旧走到
+            # 「准备完成」、exit 0 的话，自动化会把这台机器当成配好了，而它的 FD
+            # 上限仍在 preflight 阈值之下——每个 lab job 都会被拦下。
+            printf '  \033[31m✗\033[0m %-52s soft=%s，drop-in 没写成或没生效\n' \
+                "$unit" "${cur:-未知}"
+            NOFILE_FAILED=$((NOFILE_FAILED + 1))
         fi
     done
     if [ "$NOFILE_PENDING" -gt 0 ]; then
@@ -619,3 +699,9 @@ cat <<EOF
   验证：sudo -u $RUNNER_USER TAVOTTO_CI_STATE_ROOT=$STATE_ROOT \\
             python3 scripts/ci/lab_preflight.py --mode nightly
 EOF
+
+if [ "${NOFILE_FAILED:-0}" -gt 0 ]; then
+    die "$NOFILE_FAILED 个 runner 服务的文件描述符上限没配好（见上面的 ✗）。
+    修好之前**这台机器不能当作已就绪**：lab_preflight 的 FD 检查是硬阻断，
+    它会拦下每一个 lab job。"
+fi

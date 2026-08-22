@@ -1043,8 +1043,12 @@ def test_a_configured_but_unrestarted_limit_is_not_overridden():
               + _bootstrap_funcs("_nofile_ge", "nofile_state")
               + '\nnofile_state "$1" "$2"\n')
     cases = [
-        ("65536", "65536",   "ok"),            # 跑着的就够
-        ("unlimited", "0",   "ok"),            # 无上限，配置读不到也无所谓
+        ("65536", "65536",   "ok"),            # 两边都够
+        # **配置读不到不算「无所谓」**：实测 `systemctl show -p LimitNOFILESoft`
+        # 连不存在的 unit 都回系统默认值（1048576），从不回空；真回空/回 0 说明
+        # 这台机器上问不出配置态，那就不能宣称 ok（后面 verify 也会失败并让
+        # 脚本非零退出）。这条原先写着 ok，编码的正是复审 :531 指出的那个 bug。
+        ("unlimited", "0",   "needs_dropin"),
         ("1024", "200000",   "pending"),       # 管理员配好了，只差重启
         ("1024", "infinity", "pending"),
         ("1024", "1024",     "needs_dropin"),  # 真没配
@@ -1534,3 +1538,260 @@ def _launch_reaches(src: str, target: str) -> bool:
             if inner is not None and target in calls_in(inner):
                 return True
     return False
+
+
+# ---- 第四轮复审的五条：都在「以再问一次系统为准」这条线上 --------------------
+
+
+@requires_posix_bash
+def test_timestamp_comparison_keeps_subsecond_precision():
+    """`stat -c %Y` 只有整秒——同一秒内改的配置会被判成「旧的」。
+
+    实测（Ubuntu 24.04 / coreutils 9.4 / systemd 255）：`stat -c %.9Y` 有纳秒，
+    而 `systemctl show ActiveEnterTimestamp` 只有整秒（`date -d … +%s.%N` 出来是
+    `.000000000`）。所以「服务那一侧保留亚秒」走 ActiveEnterTimestamp 做不到，
+    改成 `/proc/<MainPID>` 的 mtime——它就是进程启动时刻，带纳秒。
+
+    秒与纳秒**分开当整数比**：这两个数有 19 位有效数字，交给 awk 按浮点比会被
+    double 悄悄舍掉最后几位，而被舍掉的正好是要分辨的那几位。
+    """
+    script = _bootstrap_funcs("_ts_ge") + '\nif _ts_ge "$1" "$2"; then echo GE; else echo LT; fi\n'
+    cases = [
+        # 同一整秒之内：整秒比较分不出来，纳秒能
+        ("1787375144.246472284", "1787375144.246472283", "GE"),
+        ("1787375144.246472283", "1787375144.246472284", "LT"),
+        ("1787375144.000000001", "1787375144.000000000", "GE"),
+        # 相等 → 无法证明更旧，按可疑处理（文件系统只给整秒时两边都退化成 .0）
+        ("1787375144.0", "1787375144.0", "GE"),
+        # 跨秒
+        ("1787375145.0", "1787375144.999999999", "GE"),
+        ("1787375144.999999999", "1787375145.0", "LT"),
+        # 前导零的纳秒不许被当八进制（089 在 $((...)) 里会报错）
+        ("1787375144.089000000", "1787375144.088000000", "GE"),
+        # **小数位数不等长时必须先补零再比。** `_mtime_ns` 的整秒回退给的是
+        # 一位（`.0`），与 `%.9Y` 的九位会混着进来；不补零就成了 `5 >= 45`，
+        # 于是 .5 被判成早于 .45。原来那组用例全是九位，补零那一步抽掉都不红。
+        ("1787375144.5", "1787375144.45", "GE"),
+        ("1787375144.45", "1787375144.5", "LT"),
+        ("1787375144.0", "1787375144.000000001", "LT"),
+    ]
+    for a, b, want in cases:
+        r = _run_sh(script, a, b)
+        assert r.stdout.strip() == want, \
+            f"_ts_ge({a}, {b}) 回了 {r.stdout.strip()!r}，应是 {want}；stderr={r.stderr!r}"
+        assert not r.stderr.strip(), f"比较 {a} {b} 时报错了：{r.stderr!r}"
+
+
+@requires_posix_bash
+def test_ok_requires_both_the_running_and_the_configured_limit():
+    """只看运行态的 `ok` 会放过「已 daemon-reload 的低配置」。
+
+    那时跑着的进程仍然够 → 报 ok，而下一次**普通重启**就掉到低值，随后
+    lab_preflight 拦下每个 job——没人会想到是 bootstrap 说过 ok。
+    """
+    script = ("NOFILE_MIN=4096\n" + _bootstrap_funcs("_nofile_ge", "nofile_state")
+              + '\nnofile_state "$1" "$2"\n')
+    cases = [
+        ("65536", "65536",   "ok"),
+        ("65536", "1024",    "needs_dropin"),   # ← 本条要修的：配置已降，重启就掉
+        ("unlimited", "1024", "needs_dropin"),
+        ("1024", "200000",   "pending"),
+        ("1024", "1024",     "needs_dropin"),
+    ]
+    for running, configured, want in cases:
+        r = _run_sh(script, running, configured)
+        assert r.stdout.strip() == want, (
+            f"nofile_state(running={running!r}, configured={configured!r}) "
+            f"回了 {r.stdout.strip()!r}，应是 {want}")
+
+
+@requires_posix_bash
+def test_a_failed_dropin_write_is_reported_as_failure(tmp_path):
+    """重定向失败不会让 `set -e` 生效——函数被当作 `if` 的条件调用。
+
+    目标 immutable、只读文件系统、磁盘满，`cat >` 都会失败而函数照旧走到
+    `return 0`，调用方于是打印「已写 drop-in」。
+    """
+    src = _bootstrap()
+    marker = src.split('NOFILE_DROPIN_MARKER="', 1)[1].split('"', 1)[0]
+    name = src.split('NOFILE_DROPIN_NAME="', 1)[1].split('"', 1)[0]
+    base = (f'NOFILE_DROPIN_MARKER="{marker}"\nNOFILE_DROPIN_NAME="{name}"\n'
+            'NOFILE_MIN=4096\nwarn() { printf "WARN\\n"; }\n'
+            + _bootstrap_funcs("write_nofile_dropin")
+            + '\nwrite_nofile_dropin "$1"; echo "rc=$?"\n')
+
+    # 正常路径仍然成功
+    good = tmp_path / "good.d"
+    good.mkdir()
+    r = _run_sh(base, str(good))
+    assert "rc=0" in r.stdout, r.stdout + r.stderr
+    assert (good / name).exists()
+
+    # 目标是个**目录** → 重定向必然失败（不依赖 root，也不用真设 immutable）
+    bad = tmp_path / "bad.d"
+    bad.mkdir()
+    (bad / name).mkdir()
+    r = _run_sh(base, str(bad))
+    assert "rc=1" in r.stdout, \
+        f"写不进去却报了成功——调用方会打印「已写 drop-in」：{r.stdout!r}"
+
+
+@requires_posix_bash
+def test_a_refused_or_ineffective_dropin_makes_the_script_exit_nonzero():
+    """报出来还不够：照旧走到「准备完成」且退出码 0，自动化就会当成配好了。
+
+    而那台机器的 FD 上限仍在 preflight 阈值之下，每个 lab job 都会被拦下。
+    """
+    src = _bootstrap()
+    branch = src.split("            NOFILE_FAILED=$((NOFILE_FAILED + 1))", 1)[0]
+    assert "NOFILE_FAILED=$((NOFILE_FAILED + 1))" in src, "失败没有计数"
+    # 计数变量必须先初始化，否则 set -u 下末尾那句自己就炸
+    assert "NOFILE_FAILED=0" in src, "NOFILE_FAILED 没初始化"
+    # **把末尾那段真跑一遍。** 只断言「tail 里有 NOFILE_FAILED 和 die」是钉在
+    # 错的层上：把条件改成 `if false` 两个字符串都还在，用例照样绿（实测）。
+    marker = 'if [ "${NOFILE_FAILED:-0}"'
+    tail = marker + src.split(marker, 1)[1]
+    harness = 'die() { echo "DIE:$*"; exit 1; }\nNOFILE_FAILED="$1"\n' + tail
+    r = _run_sh(harness, "2")
+    assert r.returncode != 0 and "DIE:" in r.stdout, \
+        f"有失败却以 0 结束——自动化会当成配好了：rc={r.returncode} out={r.stdout!r}"
+    r = _run_sh(harness, "0")
+    assert r.returncode == 0 and "DIE:" not in r.stdout, \
+        f"没有失败却也退非零：rc={r.returncode} out={r.stdout!r}"
+
+
+def test_the_dropin_is_verified_against_systemd_not_assumed():
+    """写了文件 ≠ 值生效了：.d 下按字典序加载，排在后面的 99-local.conf 赢。
+
+    把名字排得更靠后是军备竞赛（别人还能再往后一格），正解是写完 daemon-reload
+    再问一次 systemd，不生效就如实报出来并指出是哪个文件在覆盖。
+    """
+    src = _bootstrap()
+    fn = src.split("\nverify_nofile_effective() {", 1)[1].split("\n}\n", 1)[0]
+    assert "daemon-reload" in fn, "没让 systemd 重读就去问它，问到的还是旧值"
+    assert "configured_nofile" in fn, "没有回头再问一次系统"
+    assert "systemctl cat" in fn, "不生效时没指出是哪个文件在覆盖"
+    # 调用点：写成功之后必须接着验，不能只写不验
+    call = src.split("if write_nofile_dropin ", 1)[1].split("then", 1)[0]
+    assert "verify_nofile_effective" in call, \
+        "写完没验证就报「已写 drop-in」——排在后面的 drop-in 照样赢"
+
+
+_HAS_GNU_STAT = _POSIX_BASH_OK and subprocess.run(
+    ["bash", "-c", 'stat -c %.9Y /tmp 2>/dev/null'],
+    capture_output=True).stdout.decode("ascii", "replace").strip().count(".") == 1
+requires_gnu_stat = pytest.mark.skipif(
+    not _HAS_GNU_STAT,
+    reason="没有支持 %.9Y 的 GNU stat（BSD/macOS 的 stat 连 -c 都没有）；"
+           "被测脚本只在 Linux 上跑，CI 的 ubuntu 腿会真跑这条")
+
+
+def test_mtime_helper_asks_stat_for_subsecond_precision():
+    """判据的源头是 `stat` 的格式串——`%Y` 只有整秒，必须是 `%.9Y`。
+
+    这条是结构判据、任何平台都跑。只靠下面那条行为判据不行：它要 GNU stat，
+    在 macOS 上会跳过，于是「格式串被换回 %Y」在本机一条都不红（实测过）。
+    """
+    src = _bootstrap()
+    fn = src.split("\n_mtime_ns() {", 1)[1].split("\n}\n", 1)[0]
+    code = "\n".join(ln for ln in fn.splitlines() if not ln.lstrip().startswith("#"))
+    assert "%.9Y" in code, "又用回整秒的 %Y 了——同一秒内改的配置会被判成「旧的」"
+
+
+@requires_gnu_stat
+def test_mtime_helper_really_returns_subsecond_values(tmp_path):
+    """真跑一遍：同一秒内先后写的两个文件必须分得出先后。
+
+    这正是复审说的那个窗口——`.env` 在 listener 启动后**同一个墙钟秒内**被改，
+    整秒比较会把它判成「旧的」，于是拿新 PATH 去探测而运行中的 listener 还是旧值。
+    """
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    a.write_text("a", encoding="utf-8")
+    b.write_text("b", encoding="utf-8")      # 紧挨着写，几乎必然落在同一秒
+
+    script = _bootstrap_funcs("_mtime_ns", "_ts_ge") + (
+        '\nta="$(_mtime_ns "$1")" || { echo NO_A; exit 1; }\n'
+        'tb="$(_mtime_ns "$2")" || { echo NO_B; exit 1; }\n'
+        'echo "$ta $tb"\n'
+        'if _ts_ge "$tb" "$ta"; then echo B_GE_A; else echo B_LT_A; fi\n')
+    r = _run_sh(script, str(a), str(b))
+    assert r.returncode == 0, r.stdout + r.stderr
+    ta, tb = r.stdout.split("\n")[0].split()
+    assert "." in ta and "." in tb, f"没有小数部分：{ta} {tb}"
+    assert ta.split(".")[0] == tb.split(".")[0], \
+        f"两个文件不在同一秒（{ta} vs {tb}），这次没验到要验的那个窗口"
+    assert {ta.split(".")[1], tb.split(".")[1]} != {"000000000"}, \
+        f"纳秒全是 0，这个文件系统给不了亚秒精度：{ta} {tb}"
+    assert "B_GE_A" in r.stdout, f"后写的没被判成更新：{r.stdout!r}"
+
+
+def test_the_service_side_timestamp_also_comes_from_a_subsecond_source():
+    """两侧都得有亚秒，只把文件那一侧提精度等于没提。
+
+    实测：`systemctl show -p ActiveEnterTimestamp` 只有整秒
+    （`date -d … +%s.%N` 出来是 `.000000000`），所以「服务那一侧保留亚秒」
+    走它做不到。`/proc/<MainPID>` 的 mtime 就是进程启动时刻且带纳秒
+    （实测 1787375144.246472284），而 MainPID 本来就要查。
+
+    换回 ActiveEnterTimestamp 的话，文件侧再精确也白搭——同一秒内的修改照旧
+    分辨不出来，而这正是复审 :249 指的那个窗口。
+    """
+    src = _bootstrap()
+    fn = src.split("\nconfig_is_newer_than_service() {", 1)[1].split("\n}\n", 1)[0]
+    code = "\n".join(ln for ln in fn.splitlines() if not ln.lstrip().startswith("#"))
+    assert '_mtime_ns "/proc/$pid"' in code, \
+        "服务侧的时间戳不是从 /proc/<MainPID> 取的——别的来源都只有整秒"
+    assert "Timestamp" not in code, \
+        "又用回 systemctl 的 *Timestamp 了，那些字段只有整秒精度"
+    assert "_ts_ge" in code, "没走那个分整数比的比较器"
+
+
+@requires_posix_bash
+def test_the_offender_listing_only_treats_file_headers_as_filenames():
+    """`systemctl cat` 里 `# /path` 是文件头，而 drop-in **内部**的注释也以 `# ` 开头。
+
+    真机上撞到过：我们自己写的 drop-in 里有三行中文注释，`/^# /{f=$2}` 把最后
+    一行的第二个词当成了文件名，于是清单里冒出一行「表现是随机的: LimitNOFILE=…」
+    ——而真正该被点名的那个文件反倒没出现。诊断输出里指错文件，比不输出更坏。
+    """
+    src = _bootstrap()
+    fn = src.split("\nverify_nofile_effective() {", 1)[1].split("\n}\n", 1)[0]
+    prog = fn.split("awk '", 1)[1].split("'", 1)[0]
+    assert prog.startswith("/^# \\//"), \
+        f"文件头的判据不是「# 加绝对路径」：{prog!r}"
+
+    # 真跑一遍 awk：喂一段与 systemctl cat 同形的输入，内部注释必须不被当文件头
+    sample = (
+        "# /etc/systemd/system/x.service\n"
+        "[Service]\n"
+        "LimitNOFILE=65536\n"
+        "\n"
+        "# /etc/systemd/system/x.service.d/90-tavotto-nofile.conf\n"
+        "# 由 scripts/ci/bootstrap_lab_runner.sh 写入\n"
+        "# 表现是随机的 \"Too many open files\"，与真实的句柄泄漏几乎分不开。\n"
+        "[Service]\n"
+        "LimitNOFILE=4096\n")
+    r = subprocess.run(["bash", "-c", "awk '" + prog + "'"], input=sample,
+                       capture_output=True, text=True, encoding="utf-8")
+    out = r.stdout
+    assert "表现是随机的" not in out, f"内部注释又被当成文件名了：{out!r}"
+    assert out.count("/etc/systemd/system/") == 2, f"文件名没认全：{out!r}"
+    assert "90-tavotto-nofile.conf: " in out.replace("        ", ""), \
+        f"该点名的那个文件没出现：{out!r}"
+
+
+def test_the_legacy_dropin_note_does_not_claim_it_was_superseded():
+    """`limits.conf` 排在 `90-…` **之后**，它压过新文件，不是被新文件取代。
+
+    排序按字节走，字母在数字之后（'l'=0x6C > '9'=0x39）——真机 `systemctl cat`
+    的加载顺序实测确认。原先那句提示写着「已被取代，可自行删除」，方向正好反了：
+    照着删反而会把当时唯一生效的那份设定删掉。
+    """
+    src = _bootstrap()
+    fn = src.split("\nwrite_nofile_dropin() {", 1)[1].split("\n}\n", 1)[0]
+    note = fn.split("limits.conf", 1)[1]
+    assert "取代" not in note.split("echo", 1)[0] or "之后" in note, \
+        "提示仍在说旧文件被取代"
+    for word in ("已被 $NOFILE_DROPIN_NAME 取代", "可自行删除"):
+        assert word not in fn, f"提示里还留着反的说法：{word}"
