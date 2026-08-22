@@ -202,11 +202,28 @@ jobs:
       - name: slow / 集成用例
         run: |
           set -euo pipefail
-          N=$(${{ steps.venv.outputs.python }} -m pytest -m slow --collect-only -q 2>/dev/null | grep -c "::" || true)
-          if [ "$N" -eq 0 ]; then
-            echo "::error::-m slow 一条都没选中；标记被删或 pytest.ini 变了"
-            exit 1
-          fi
+          # 判据是 pytest 的**退出码**，不是它打给人看的那段文字。
+          # 原来数的是 `--collect-only -q` 里有几行含 "::"，而 pytest 9 把这段
+          # 输出改成了按文件汇总（`tests/test_bootstrap.py: 1`，一个 "::" 都
+          # 没有）——于是 dependabot 那次 8.4.2 → 9.0.3 的升级**静默打断了这道
+          # 门禁**，症状还与真实原因毫不相干（报「标记被删」，而标记好好的）。
+          # 没人发现，是因为这条实验室通道当时根本没有 runner 领得走。
+          # 5 = EXIT_NOTESTSCOLLECTED，4 = 收集出错，都是 pytest 的稳定常量。
+          set +e
+          ${{ steps.venv.outputs.python }} -m pytest -m slow --collect-only -q \
+              > slow-collect.log 2>&1
+          rc=$?
+          set -e
+          case "$rc" in
+            0) echo "'-m slow' 选中了用例" ;;
+            5) echo "::error::'-m slow' 一条都没选中。要么标记被删/改名，要么 pytest.ini 的 markers 变了。"
+               echo "::error::空转的门禁比没有门禁更坏——它还在报平安。"
+               tail -20 slow-collect.log
+               exit 1 ;;
+            *) echo "::error::收集 '-m slow' 时出错（exit $rc）——原来这里 2>/dev/null 把它整个吞掉了"
+               tail -40 slow-collect.log
+               exit 1 ;;
+          esac
           ${{ steps.venv.outputs.python }} -m pytest -q
           ${{ steps.venv.outputs.python }} -m pytest -m slow -q
 

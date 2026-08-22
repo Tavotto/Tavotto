@@ -430,3 +430,64 @@ def _detail_for(SM, name, root):
     import json as _json
     data = _json.loads((root / "reports" / name).read_text(encoding="utf-8"))
     return SM._detail(name, data)
+
+
+# ---------------- slow 门禁的判据 ---------------------------------------------
+WORKFLOWS = CI_DIR.parents[1] / ".github" / "workflows"
+
+
+def _slow_step(name: str) -> str:
+    src = (WORKFLOWS / name).read_text(encoding="utf-8")
+    assert "slow / 集成用例" in src, f"{name} 里没有 slow 门禁了"
+    step = src.split("slow / 集成用例", 1)[1].split("\n      - name:", 1)[0]
+    # 注释与 echo 都要剥掉：解释这段历史、以及打给用户看的报错文案里，必然
+    # 出现 `2>/dev/null` 和 `::` 这些字面量。连它们一起判的话，「把原因写清楚」
+    # 反而会让用例红——仓库里 test_orphan_check_does_not_rely_on_a_dead_parent_pid
+    # 早就踩过一次，这里是第二次。
+    keep = []
+    for ln in step.splitlines():
+        t = ln.lstrip()
+        if t.startswith("#") or t.startswith("echo ") or t.startswith("tail "):
+            continue
+        keep.append(ln)
+    return "\n".join(keep)
+
+
+def test_slow_gate_reads_pytest_exit_code_not_its_human_output():
+    """判据不许再是「`--collect-only -q` 里有几行含 `::`」。
+
+    pytest 9 把那段输出改成了按文件汇总（`tests/test_bootstrap.py: 1`，一个
+    `::` 都没有）。于是 dependabot 的 8.4.2 → 9.0.3 **静默打断了这道门禁**，
+    而症状与真实原因毫不相干：它报「标记被删或 pytest.ini 变了」，可标记好好
+    地在 tests/test_bootstrap.py 里。没人发现，是因为当时没有 runner 领得走
+    实验室这条通道——v0.9.0 发版时才第一次撞上。
+
+    退出码是 pytest 的稳定契约（5 = EXIT_NOTESTSCOLLECTED，4 = 收集出错），
+    面向人的那段文字不是。
+    """
+    for wf in ("release.yml", "lab-ci.yml"):
+        step = _slow_step(wf)
+        assert 'grep -c "::"' not in step, \
+            f"{wf}：又回去数 `::` 了——那是 pytest 打给人看的格式，会随版本变"
+        assert "--collect-only" in step, f"{wf}：还是要先确认真的选得中"
+        assert "rc=$?" in step, f"{wf}：要按退出码分诊"
+        assert "5)" in step, f"{wf}：EXIT_NOTESTSCOLLECTED 那一支不见了"
+        # 正面判据：收集的输出要**留下来**。写成「不许出现 2>/dev/null」的
+        # 否定形式会被自己的报错文案咬到（那句话里就有这个字面量），而按
+        # 「留没留日志」判既准确又不受措辞影响。
+        assert "> slow-collect.log 2>&1" in step, \
+            f"{wf}：收集的输出没留下来——出错原因会像这次一样整个消失"
+
+
+def test_both_copies_of_the_slow_gate_agree():
+    """release.yml 与 lab-ci.yml 各有一份，而且**已经漂开过一次**。
+
+    RELEASING.md 写着 lab_release_gate「复用同一套 job」，实际是两份拷贝：
+    lab-ci.yml 那份后来补了「空转的门禁比没有门禁更坏」，release.yml 那份没有。
+    漂开的代价是发行链上跑的判据与 nightly 上验过的不是同一个。合成一份
+    composite action 是 post-1.0 的活；在那之前用一条对拍挡住继续分叉。
+    """
+    a, b = _slow_step("release.yml"), _slow_step("lab-ci.yml")
+    for token in ("--collect-only", "rc=$?", "5)", "set +e", "slow-collect.log"):
+        assert (token in a) == (token in b), \
+            f"两份 slow 门禁在 {token!r} 上不一致——判据分叉了"
