@@ -74,8 +74,14 @@ APT_PACKAGES=(
     ca-certificates curl wget git jq unzip zip xz-utils file
     python3 python3-pip python3-venv python3-dev
     fonts-noto-cjk            # corpus 里的中文 case 要它才画得出字
-    flock                     # 服务端互斥（GitHub concurrency 之外的第二道保险）
 )
+# **flock 刻意不在上面这张表里。** Debian/Ubuntu 没有叫 flock 的包，那个二进制
+# 来自 util-linux（essential，装不掉也卸不掉）。写进去的后果不是「多装一个包」，
+# 是 `apt-get install` 整条命令以 `E: Unable to locate package flock` 失败 ——
+# 而它是安装路径的**第一步**，于是这个脚本在 Ubuntu 上从来没有跑完过一次。
+# 2026-08-22 配置实验室 runner 时才发现：`--check` 那边查的是**二进制**
+# （command -v flock，永远存在），所以检查一路绿灯、安装当场就死。
+# 检查那张表里保留 flock 是对的——要确认的本来就是「这台机器上有没有这个命令」。
 
 check_cmd() {
     local cmd="$1" why="$2"
@@ -166,12 +172,49 @@ else
 fi
 
 say "文件描述符上限"
-CURRENT_NOFILE="$(ulimit -n)"
-echo "  当前 shell soft limit：$CURRENT_NOFILE"
-if [ "$CURRENT_NOFILE" -lt 4096 ]; then
-    warn "soak 会同时开多个 worker 与 HTTP 连接。请在 runner 的 systemd unit 里设
-    LimitNOFILE=65536 —— 撞上限的症状是随机的 'Too many open files'，
-    极难与真实的句柄泄漏区分开。"
+# **量的必须是 runner 服务，不是这个 shell。** 旧实现读 `ulimit -n`，那是
+# `sudo` 起的 root shell 的限制，与 job 真正跑在里面的那个进程毫无关系：
+# 两个数可以一个 65536 一个 1024，方向还任意。而 lab_preflight 的
+# 「文件描述符上限」是**硬阻断**（soft < 4096 直接拦下整个 lab job），
+# 所以量错对象的代价不是提示不准，是这个脚本说完「准备完成」之后，
+# 那台机器一个 lab job 都跑不起来。
+NOFILE_MIN=4096   # 与 scripts/ci/lab_preflight.py 的判据同源（有用例对拍）
+nofile_of_service() {
+    local pid; pid="$(systemctl show -p MainPID --value "$1" 2>/dev/null || true)"
+    [ -n "${pid:-}" ] && [ "$pid" != "0" ] || return 1
+    awk '/open files/ {print $4}' "/proc/$pid/limits" 2>/dev/null
+}
+mapfile -t RUNNER_UNITS < <(systemctl list-units --type=service --all --no-legend \
+                            'actions.runner.*' 2>/dev/null | awk '{print $1}')
+if [ "${#RUNNER_UNITS[@]}" -eq 0 ]; then
+    warn "还没注册 GitHub runner，跳过 FD 上限检查。注册之后重跑本脚本
+    （或手工按下面的写法配 LimitNOFILE=65536）。"
+else
+    NOFILE_FIXED=0
+    for unit in "${RUNNER_UNITS[@]}"; do
+        cur="$(nofile_of_service "$unit" || echo 0)"
+        if [ "${cur:-0}" -ge "$NOFILE_MIN" ]; then
+            printf '  \033[32m✓\033[0m %-52s soft=%s\n' "$unit" "$cur"
+            continue
+        fi
+        dropin="/etc/systemd/system/${unit}.d"
+        install -d -m 0755 "$dropin"
+        cat > "$dropin/limits.conf" <<CONF
+# 由 scripts/ci/bootstrap_lab_runner.sh 写入。
+# soak 会同时开多个 worker 与 HTTP 连接；systemd 默认的 soft=1024 撞上限时
+# 表现是随机的 "Too many open files"，与真实的句柄泄漏几乎分不开。
+[Service]
+LimitNOFILE=65536
+CONF
+        printf '  \033[33m→\033[0m %-52s soft=%s，已写 drop-in\n' "$unit" "${cur:-未知}"
+        NOFILE_FIXED=$((NOFILE_FIXED + 1))
+    done
+    if [ "$NOFILE_FIXED" -gt 0 ]; then
+        warn "$NOFILE_FIXED 个 runner 服务写了 LimitNOFILE drop-in，**需要重启才生效**。
+    本脚本刻意不替你重启——正在跑的 job 会被打断。等它们空闲时：
+        sudo systemctl daemon-reload
+        sudo systemctl restart ${RUNNER_UNITS[*]}"
+    fi
 fi
 
 echo

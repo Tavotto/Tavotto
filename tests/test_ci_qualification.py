@@ -430,3 +430,73 @@ def _detail_for(SM, name, root):
     import json as _json
     data = _json.loads((root / "reports" / name).read_text(encoding="utf-8"))
     return SM._detail(name, data)
+
+
+# ---------------- bootstrap_lab_runner.sh ------------------------------------
+# 这三条都来自 2026-08-22 配置实验室 runner 时踩到的真实故障：脚本自称
+# 「准备完成」，而那台机器一个 lab job 都跑不起来。
+
+BOOTSTRAP = CI_DIR / "bootstrap_lab_runner.sh"
+
+
+def _bootstrap() -> str:
+    return BOOTSTRAP.read_text(encoding="utf-8")
+
+
+def test_apt_list_only_contains_real_debian_packages():
+    """`flock` 不是 Debian/Ubuntu 的包名——那个二进制来自 util-linux。
+
+    写进 APT_PACKAGES 的后果不是「多装一个包」，是 `apt-get install` 整条命令
+    以 `E: Unable to locate package flock` 失败，而它是安装路径的**第一步**。
+    于是这个脚本在 Ubuntu 上从来没跑完过一次，实验室 runner 也就一直没配起来。
+
+    偏偏 `--check` 查的是**二进制**（`command -v flock`，util-linux 永远在），
+    所以检查一路绿灯、安装当场就死——两边看的不是同一个东西。这条用例只钉
+    APT 表；检查表里保留 flock 是对的，那正是要确认的事。
+    """
+    src = _bootstrap()
+    apt = src.split("APT_PACKAGES=(", 1)[1].split(")", 1)[0]
+    pkgs = [w for ln in apt.splitlines() for w in ln.split("#", 1)[0].split()]
+    assert pkgs, "APT_PACKAGES 解析成了空表——这条用例本身失效了"
+    for phantom in ("flock", "ulimit", "systemctl"):
+        assert phantom not in pkgs, \
+            f"{phantom} 不是 Debian 包名，写进去会让 apt-get install 整条失败"
+    assert "flock" in src, "检查表里仍应确认 flock 这个命令在不在"
+
+
+def test_fd_limit_is_measured_on_the_runner_service_not_the_bootstrap_shell():
+    """旧实现读 `ulimit -n`，量的是 sudo 起的 root shell，与 job 无关。
+
+    两个数可以一个 65536 一个 1024，方向还任意。而 lab_preflight 的
+    「文件描述符上限」是**硬阻断**，所以量错对象的代价不是提示不准，是脚本
+    说完「准备完成」之后那台机器一个 lab job 都跑不起来——正是本次实测。
+    """
+    src = _bootstrap()
+    fd = src.split('say "文件描述符上限"', 1)[1].split('say "准备完成', 1)[0]
+    # 只看**可执行的那几行**：解释这段历史的注释里必然出现 `ulimit -n`，
+    # 连注释一起判的话，写清楚为什么反而会让用例红（仓库里
+    # test_orphan_check_does_not_rely_on_a_dead_parent_pid 踩过同一个坑）。
+    code = "\n".join(ln for ln in fd.splitlines()
+                     if not ln.lstrip().startswith("#"))
+    assert "ulimit -n" not in code, \
+        "又回去量 bootstrap 自己那个 shell 了——那不是 job 跑在里面的进程"
+    assert "/proc/" in fd and "limits" in fd, "要读 runner 服务真实进程的 limits"
+    assert "actions.runner" in fd, "要按 runner 的 systemd unit 名去找"
+    assert "systemctl restart" in fd, "写完 drop-in 必须告诉人要重启才生效"
+
+
+def test_bootstrap_and_preflight_agree_on_the_fd_threshold():
+    """阈值写在两个文件里（一个 shell 一个 Python，没法共享常量）。
+
+    分叉的表现最难查：bootstrap 说配好了，preflight 说不够——两边都「按自己的
+    标准」是对的。所以按 patchspec ↔ Rust 那套纪律，用一条用例把它们对拍。
+    """
+    import re
+    boot = re.search(r"NOFILE_MIN=(\d+)", _bootstrap())
+    assert boot, "bootstrap 里找不到 NOFILE_MIN"
+    pf = (CI_DIR / "lab_preflight.py").read_text(encoding="utf-8")
+    pre = re.search(r"soft >= (\d+)", pf)
+    assert pre, "lab_preflight 里找不到 FD 阈值"
+    assert boot.group(1) == pre.group(1), (
+        f"阈值分叉：bootstrap={boot.group(1)} preflight={pre.group(1)}——"
+        "bootstrap 会说配好了，而 preflight 当场拦下整个 lab job")
