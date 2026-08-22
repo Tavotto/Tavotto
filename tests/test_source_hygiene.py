@@ -241,3 +241,33 @@ def test_windows_bound_subprocesses_pin_their_decoding():
     assert not offenders, (
         "这些 subprocess 在 Windows 上会用系统默认编码解码子进程输出，"
         "中文一出现就静默丢掉 stdout/stderr：\n  " + "\n  ".join(offenders))
+
+
+def test_agent_instruction_files_do_not_diverge():
+    """`AGENTS.md` 与 `CLAUDE.md` 必须逐字节相同。
+
+    两份都是给 agent 读的指令，但**不同的 agent 读不同的那份**——Codex 读
+    `AGENTS.md`，Claude 读 `CLAUDE.md`。手工并行维护的结果是它们会漂开，而
+    漂开的那一份在**没人读的时候**默默错着。
+
+    2026-08-22 实测到的漂移不是「少了一节」，是**内容被改错了**：某次对
+    `AGENTS.md` 做过一遍 `claude` → `Codex` 的全文替换，于是那份指令里写着
+    用 `Codex -p` 调 Claude CLI、配置在 `~/.Codex/settings.json`、以及
+    「用户在别的终端里跑 Codex/codex」。**给 agent 的指令写错，比没写更坏**
+    ——它会照着做。
+
+    Codex 在 #59 上发现这件事的入口是「新加的一节只进了 CLAUDE.md」，
+    而顺着查下去更严重的是那次替换。所以判据不是「都有那一节」，是
+    **逐字节相同**：只要允许差异存在，就得有人去判断哪些差异是对的。
+    """
+    a = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+    b = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    if a == b:
+        return
+    import difflib
+    diff = list(difflib.unified_diff(
+        a.splitlines(), b.splitlines(),
+        fromfile="CLAUDE.md", tofile="AGENTS.md", lineterm="", n=0))
+    raise AssertionError(
+        "两份 agent 指令漂开了——改一份必须同步另一份（内容相同，不是各自表述）：\n"
+        + "\n".join(diff[:40]))
