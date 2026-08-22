@@ -812,3 +812,33 @@ def _launch_reaches(src: str, target: str) -> bool:
             if inner is not None and target in calls_in(inner):
                 return True
     return False
+
+
+def test_single_path_action_inputs_are_not_globs():
+    """只收**一个路径**的 action 输入，不许喂 glob。
+
+    2026-08-22 v0.9.1 发版实测：`anchore/sbom-action` 的 `file:` 写成
+    `dist/*.whl`，syft 把它原样当文件名，报
+    `no source providers were able to resolve the input`。那一步是 #45 加的，
+    而 `github_release` 这个 job 在那之后**从来没成功跑到过**（几轮都卡在
+    lab gate 之前），所以整整没人发现——又一处「从没执行过所以烂着」。
+
+    `subject-path` / `files` 这类**明确支持多值**的输入不在此列：
+    `actions/attest-build-provenance` 与 `softprops/action-gh-release` 都按
+    多行 glob 收，写 glob 是对的。判据只盯单值输入，别把正当写法也判红。
+    """
+    import re
+    SINGLE_VALUE = ("file", "image", "artifact-name", "output-file")
+    offenders = []
+    for wf in sorted(WORKFLOWS.glob("*.yml")):
+        for i, line in enumerate(wf.read_text(encoding="utf-8").splitlines(), 1):
+            m = re.match(r"\s*(" + "|".join(SINGLE_VALUE) + r"):\s*(\S.*)$", line)
+            if not m:
+                continue
+            val = m.group(2).strip()
+            if val.startswith("${{"):      # 由前一步解析出来的具体路径
+                continue
+            if "*" in val or "?" in val:
+                offenders.append(f"{wf.name}:{i} {m.group(1)}: {val}")
+    assert not offenders, (
+        "这些输入只收一个路径，喂 glob 会被原样当成文件名：\n  " + "\n  ".join(offenders))
