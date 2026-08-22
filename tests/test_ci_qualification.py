@@ -526,40 +526,67 @@ def test_upgrade_acceptance_carries_session_credentials():
 
 
 def test_no_app_request_anywhere_skips_auth():
-    """**任何**起实例的脚本里，打到应用的裸 Request 都必须带 SA._AUTH。
+    """**任何**起实例的脚本里，打到应用的请求都必须带上会话凭据。
 
-    这条用例本身是本轮的教训：上一版它只扫 `upgrade_acceptance.py` 一个文件，
-    于是 `visual_regression._post_png` 那处漏掉的 `SA._AUTH` 它一点都挡不住
-    ——Codex 在 #56 上替它逮到了。**判据的范围错了，和判据本身错一样坏**，
-    而且更难发现：它一直是绿的。
+    这条用例是本轮反复的教训本身。它被 Codex 连着破了三次：
 
-    漏掉的后果都不长得像认证问题：`upgrade_acceptance` 那处 PUT 裹在
-    try/except 里，表现是 `autosave_saved=False` 静静记进报告；
-    `visual_regression` 那处表现是「面板列出来了、第一张图 401」，而
-    `adopt_session_credentials` 明明已经调过。
+    1. 范围只覆盖 `upgrade_acceptance.py` 一个文件 → `visual_regression`
+       的 `_post_png` 漏掉的 `SA._AUTH` 它一点都挡不住；
+    2. 判据是裸子串 → 注释里提一句函数名就能满足它；
+    3. 目标识别靠 URL 字面量 → `smoke_app._get/_post` 传的是变量 `url`，
+       从中心助手里摘掉 `_AUTH` 它照样绿，而下游三个脚本全部 401。
 
-    按**目标**分类：打到 `base`/`s.base`/`self.base` 的必须带头，打到
-    GitHub API 的不必。
+    三次都是同一个病根：**拿文本启发式去判源码结构**。所以改成 AST：
+    找出真实的 `urllib.request.Request(...)` 调用，按目标分类，并且**中心
+    助手单独钉死**——它们是所有调用方共用的那一层，破了下游全塌。
     """
-    import re
+    import ast
     offenders = []
     for name, src in _app_launchers().items():
-        calls = re.findall(r"urllib\.request\.Request\((.*?)\)\n", src, re.S)
-        # 注释先剥掉：解释「这里为什么要带 SA._AUTH」的那段就写在调用里，
-        # 连它一起判的话，把真正的 kwarg 删掉用例照样绿（本轮亲手撞到过）。
-        calls = ["\n".join(ln for ln in c.splitlines()
-                           if not ln.lstrip().startswith("#")) for c in calls]
-        for call in calls:
-            targets_app = any(t in call for t in
-                              ("s.base", "self.base", "{base}", "base}/api"))
-            if targets_app and "_AUTH" not in call:
-                offenders.append(f"{name}: {call.strip()[:160]}")
+        tree = ast.parse(src)
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and _is_urllib_request(node.func)):
+                continue
+            text = ast.unparse(node)
+            # 打到 GitHub API 的不必带（它用的是 Bearer token）
+            if "API}" in text or "api.github.com" in text:
+                continue
+            targets_app = any(t in text for t in
+                              ("s.base", "self.base", "base}", "{base}"))
+            if not targets_app:
+                continue
+            if "_AUTH" not in text:
+                offenders.append(f"{name}: {text[:150]}")
     assert not offenders, (
-        "这些打到应用的裸 Request 没带会话凭据，401 的症状会出现在很远的地方：\n"
+        "这些打到应用的请求没带会话凭据，401 的症状会出现在很远的地方：\n"
         + "\n".join(offenders))
 
 
-# ---------------- 会话认证：扫全部调用方 ---------------------------------------
+def test_the_central_request_helpers_carry_auth():
+    """`smoke_app._get` / `_post` 是所有调用方共用的那一层。
+
+    它们把 URL 当变量收，所以按 URL 文本分类的扫描**看不见**它们——从这里
+    摘掉 `_AUTH`，上面那条用例照样绿，而 `visual_regression` / `soak` /
+    `upgrade_acceptance` 三个脚本会全部 401。Codex 在 #56 上第三次破防打的
+    就是这个点，实测确认属实。
+
+    共用层塌了下游全塌，所以单独钉死，不靠通用启发式覆盖。
+    """
+    import ast
+    src = (SCRIPTS / "smoke_app.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    checked = set()
+    for fn in ast.walk(tree):
+        if not (isinstance(fn, ast.FunctionDef) and fn.name in ("_get", "_post", "_req")):
+            continue
+        body = ast.unparse(fn)
+        assert "_AUTH" in body, \
+            f"smoke_app.{fn.name} 不再带会话凭据——所有调用方会一起 401"
+        checked.add(fn.name)
+    assert {"_get", "_post"} <= checked, \
+        f"没找到中心助手（只找到 {sorted(checked)}）——这条用例本身失效了"
+
+
 SCRIPTS = CI_DIR.parent
 
 
@@ -593,17 +620,14 @@ def test_every_app_launcher_adopts_credentials():
     assert len(launchers) >= 4, \
         f"只枚举到 {sorted(launchers)}——枚举判据失效了，这条用例挡不住任何东西"
     for name, src in launchers.items():
-        # **注释先剥掉，并且要具体的调用形态。** 裸子串
-        # `"adopt_session_credentials" in src` 会被任何一句提到它的注释满足
-        # ——今天这个形状（判据匹配到散文）已经出现九次，其中三次是我自己写的。
-        # 实测过：当前代码里删掉真实调用这条会红（注释里没写函数名），但那是
-        # 侥幸而不是设计——谁哪天在注释里写一次函数名，这道门禁就废了。
-        code = "\n".join(ln for ln in src.splitlines()
-                         if not ln.lstrip().startswith("#"))
-        adopts = "SA.adopt_session_credentials(" in code \
-            or "adopt_session_credentials(data_dir" in code
-        bypass = '"TAVOTTO_INSECURE_NO_AUTH": "1"' in code
-        desktop = "/api/desktop/bootstrap" in code or "TAVOTTO_DESKTOP_HANDSHAKE" in code
+        # **用 AST 找真实的调用，不再做子串启发式。** 这条判据被 Codex 连破
+        # 三次，每次都是同一类漏洞：注释满足它、函数**定义**满足它、目标写成
+        # 变量就匹配不到。子串补丁打三次还漏，说明方法本身不对——源码结构的
+        # 问题要用解析源码结构来判。
+        code = _calls_named(src, "adopt_session_credentials")
+        adopts = bool(code)
+        bypass = _sets_env(src, "TAVOTTO_INSECURE_NO_AUTH")
+        desktop = "/api/desktop/bootstrap" in src or "TAVOTTO_DESKTOP_HANDSHAKE" in src
         assert adopts or bypass or desktop, (
             f"{name} 起了实例却既不取凭据、也没显式旁路、也不是桌面握手——"
             "ADR 0008 之后它的每个 API 调用都会 401，而症状会出现在很远的地方")
@@ -648,3 +672,41 @@ def test_ci_credential_path_matches_session_client():
             os.environ["TAVOTTO_DATA_DIR"] = monkey
     ours = mod.session_credential_path(root, 5089)
     assert ours == product, f"路径公式分叉：CI={ours} 产品={product}"
+
+
+def _is_urllib_request(func) -> bool:
+    """`urllib.request.Request` / `Request` 的调用目标。"""
+    import ast
+    if isinstance(func, ast.Attribute) and func.attr == "Request":
+        return True
+    return isinstance(func, ast.Name) and func.id == "Request"
+
+
+def _calls_named(src: str, name: str) -> list:
+    """源码里对 `name` 的**真实调用**（不含函数定义、不含注释、不含字符串）。
+
+    这三样正是子串判据接连失守的地方：`def adopt_session_credentials(...)`
+    这行定义、以及任何一句提到它的注释，都能满足 `name in src`。
+    """
+    import ast
+    out = []
+    for node in ast.walk(ast.parse(src)):
+        if not isinstance(node, ast.Call):
+            continue
+        f = node.func
+        hit = (isinstance(f, ast.Name) and f.id == name) or \
+              (isinstance(f, ast.Attribute) and f.attr == name)
+        if hit:
+            out.append(ast.unparse(node))
+    return out
+
+
+def _sets_env(src: str, key: str) -> bool:
+    """`key` 真的被写进某个 dict 字面量（而不是只在注释里被提到）。"""
+    import ast
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, ast.Dict):
+            for k in node.keys:
+                if isinstance(k, ast.Constant) and k.value == key:
+                    return True
+    return False
