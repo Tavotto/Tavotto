@@ -474,7 +474,9 @@ def test_fd_limit_is_measured_on_the_runner_service_not_the_bootstrap_shell():
     说完「准备完成」之后那台机器一个 lab job 都跑不起来——正是本次实测。
     """
     src = _bootstrap()
-    fd = src.split('say "文件描述符上限"', 1)[1].split('say "准备完成', 1)[0]
+    # 只读的 FD 判据现在定义在 --check **之前**（两条路共用），所以不能再按
+    # 「say 文件描述符上限 → say 准备完成」这一段来切；那样切会漏掉判据本体。
+    fd = src.split("NOFILE_MIN=", 1)[1]
     # 只看**可执行的那几行**：解释这段历史的注释里必然出现 `ulimit -n`，
     # 连注释一起判的话，写清楚为什么反而会让用例红（仓库里
     # test_orphan_check_does_not_rely_on_a_dead_parent_pid 踩过同一个坑）。
@@ -1167,7 +1169,10 @@ def test_the_pending_branch_actually_skips_writing_the_dropin():
     结果与没判一模一样：管理员刚配好的值被我们排在后面的文件顶掉。
     """
     src = _bootstrap()
-    branch = src.split("        pending)", 1)[1].split("        esac", 1)[0]
+    # `pending)` 现在有两处（--check 只读那份、安装路径写 drop-in 那份），
+    # 这条钉的是**安装路径**那份：先切到 say "文件描述符上限" 之后再找。
+    install = src.split('say "文件描述符上限"', 1)[1]
+    branch = install.split("        pending)", 1)[1].split("        esac", 1)[0]
     assert "continue" in branch, "pending 之后没有 continue，会继续往下写 drop-in"
     assert "write_nofile_dropin" not in branch, "pending 那一支还是写了 drop-in"
     assert "NOFILE_PENDING=$((NOFILE_PENDING + 1))" in branch, \
@@ -1777,3 +1782,60 @@ def test_both_config_files_are_checked_for_freshness(tmp_path):
                            env={**_os.environ, "TARGET": target})
         assert r.stdout.strip() == expect, \
             f"TARGET={target} 时回了 {r.stdout.strip()!r}，应是 {expect}"
+
+
+# ---- 第六轮复审：两条都是「--check 报了绿而 job 跑不起来」-------------------
+
+
+def test_check_mode_validates_the_descriptor_limit_too():
+    """`--check` 也要验 FD 上限——它是 lab_preflight 的**硬阻断**项。
+
+    原先只读的 FD 判据长在安装路径里，而 `--check` 分支在那之前就 `exit 0` 了。
+    于是按文档跑 `--check` 的运维会在一台 soft=1024 的机器上看到「检查通过」，
+    随后每一个 lab job 都被 preflight 拦下。
+    """
+    src = _bootstrap()
+    # 用 `say "检查通过"` 这个**代码**形态当终点：注释里也写着「检查通过」，
+    # 拿裸词切会在第一条注释处就截断（本轮踩过一次）。
+    check = src.split('if [ "$CHECK_ONLY" -eq 1 ]; then', 1)[1] \
+               .split('say "检查通过"', 1)[0]
+    code = "\n".join(ln for ln in check.splitlines()
+                     if not ln.lstrip().startswith("#"))
+    assert "nofile_state" in code, "--check 没验 FD 上限"
+    assert "nofile_of_service" in code and "configured_nofile" in code, \
+        "--check 的 FD 判据没同时看运行态与配置态"
+    # 必须**只读**：check 模式一个 drop-in 都不许写
+    assert "write_nofile_dropin" not in code, "--check 写了 drop-in——它该是只读的"
+    # 不达标要算进未就绪，否则又是「报了但不阻断」
+    fd_part = code.split("nofile_state", 1)[1]
+    assert fd_part.count("MISSING=$((MISSING + 1))") >= 2, \
+        "FD 不达标 / 只差重启 没有都算进未就绪"
+    # 判据定义必须排在 --check 分支之前，否则 check 里根本调不到
+    assert src.index("nofile_state() {") < src.index('if [ "$CHECK_ONLY" -eq 1 ]; then'), \
+        "只读判据仍定义在 --check 之后"
+
+
+@requires_posix_bash
+def test_an_explicitly_empty_service_path_is_a_bad_configuration(tmp_path):
+    """`.env` 里的 `PATH=`（值为空）会让 runner 把 PATH 整个删掉。
+
+    它是合法的一行，`env_path_of_root` 会成功返回空串；而空串会被下游的
+    `[ -n "$spath" ] || continue` 整行跳过——于是工具表**一个都没查**，
+    `--check` 照样打「检查通过」，而 job 一个命令都找不到。
+    """
+    root = tmp_path / "r"
+    root.mkdir()
+    (root / ".env").write_text("PATH=\nRUNNER_TOOL_CACHE=/opt\n", encoding="utf-8")
+    (root / ".path").write_text("/usr/bin:/bin\n", encoding="utf-8")
+
+    stubs = ('discover_runner_units() { printf "u1\\n"; }\n'
+             f'root_of_unit() {{ printf "{root}"; }}\n'
+             'stale_config_of_root() { return 1; }\n')
+    script = (stubs + _bootstrap_funcs("env_path_of_root", "service_path_of_root")
+              + "\n" + _bootstrap_rows()
+              + '\nprintf "BAD<%s>\\nPATHS<%s>\\n" "$SERVICE_BAD" "$SERVICE_PATHS"\n')
+    r = _run_sh(script)
+    assert "PATH 是空的" in r.stdout, \
+        f"空 PATH 被当成了正常配置：{r.stdout!r}"
+    assert r.stdout.split("PATHS<")[1].startswith(">"), \
+        f"空 PATH 还是进了待查表：{r.stdout!r}"

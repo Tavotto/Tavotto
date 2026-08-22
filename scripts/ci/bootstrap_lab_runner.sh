@@ -322,6 +322,16 @@ SERVICE_ROWS="$(
                 "$stale 比服务的启动时间新——改了配置没重启，跑着的 listener 还是旧 PATH"
             continue
         fi
+        # **明确为空的 PATH 也是坏配置。** `.env` 里写 `PATH=`（值为空）是合法的
+        # 一行，runner 的 LoadAndSetEnv 会用 null 调 SetEnvironmentVariable，
+        # 等于把 PATH 整个删掉——job 一个命令都找不到。而空字符串会被下面
+        # `[ -n "$spath" ] || continue` 整行跳过，于是工具表一个都没查、
+        # --check 照样打「检查通过」。又一次假绿。
+        if [ -z "$(printf '%s' "$line" | cut -f1)" ]; then
+            printf 'bad\t%s\t%s\n' "$unit" \
+                "$(printf '%s' "$line" | cut -f2) 里的 PATH 是空的——runner 会把 PATH 整个删掉，job 一个命令都找不到"
+            continue
+        fi
         printf 'ok\t%s\t%s\n' "$line" "$root"
     done
 )"
@@ -376,6 +386,48 @@ check_tools_on() {
         check_cmd "${spec%%:*}" "${spec#*:}" || missing=$((missing + 1))
     done
     return "$missing"
+}
+
+# ------------------------------------------------ 文件描述符上限（只读判据）
+# 定义放在 --check 之前：**两条路都要用它**。原先这几个函数长在安装路径里，
+# 而 --check 分支在那之前就 exit 0 了——于是「检查通过」可以在 soft=1024 的
+# 机器上打出来，而 lab_preflight 的 FD 检查是硬阻断，随后每个 lab job 都被拦下。
+NOFILE_MIN=4096   # 与 scripts/ci/lab_preflight.py 的判据同源（有用例对拍）
+nofile_of_service() {
+    local pid; pid="$(systemctl show -p MainPID --value "$1" 2>/dev/null || true)"
+    [ -n "${pid:-}" ] && [ "$pid" != "0" ] || return 1
+    awk '/open files/ {print $4}' "/proc/$pid/limits" 2>/dev/null
+}
+
+# systemd 眼里**配置**的软上限（unit 与全部 drop-in 合并后的结果），与
+# /proc 里那个**正在跑**的值是两回事。
+configured_nofile() { systemctl show -p LimitNOFILESoft --value "$1" 2>/dev/null; }
+
+# 「这个值够不够」的**唯一判据**。`LimitNOFILE=infinity` 时 /proc 写的是
+# `unlimited`、systemctl 写的是 `infinity`，拿它们做数值比较会报
+# "integer expression expected" 并走进失败分支——于是脚本用一个 65536 的
+# drop-in 去**降低**一个本来就够用的设置，而且要等重启才发作。
+# 读坏了的值当「不够」，而不是原样丢进 `[ -ge ]` 再炸一次。
+_nofile_ge() {
+    case "$1" in
+        unlimited|infinity) return 0 ;;
+        ''|*[!0-9]*)        return 1 ;;
+    esac
+    [ "$1" -ge "$NOFILE_MIN" ]
+}
+
+# 三态。**「跑着的不够」不等于「没配」**：管理员刚把 LimitNOFILE 调高、还没重启
+# 时，/proc 里还是旧值而配置里已经是新值。这时候写我们自己的 drop-in，会按字典序
+# 排在他后面**把他刚配好的值顶掉**（systemd.unit(5)：.d 下的文件按文件名字典序
+# 加载，后面的赋值赢），而且同样要等重启才发作——用一个待生效的配置换掉另一个，
+# 纯属帮倒忙。这一档只提醒重启。
+nofile_state() {
+    # **ok 必须两边都够。** 只看运行态的话：`daemon-reload` 已经载入一个低于阈值
+    # 的新值、而服务还没重启时，跑着的进程仍然够 → 报 ok，下一次**普通重启**就掉
+    # 下去，随后 lab_preflight 拦下每个 job。那时谁也不会想到是 bootstrap 说过 ok。
+    if _nofile_ge "$1" && _nofile_ge "$2"; then echo ok
+    elif _nofile_ge "$2"; then echo pending
+    else echo needs_dropin; fi
 }
 
 # ---------------------------------------------------------------- 检查模式
@@ -442,6 +494,25 @@ EOF
         printf '  \033[31m✗\033[0m 用户 %s 不存在\n' "$RUNNER_USER"
         MISSING=$((MISSING + 1))
     fi
+    # **只读地验一遍 FD 上限。** 它是 lab_preflight 的硬阻断项；不验的话
+    # 「按文档跑 --check」的运维会在一台每个 job 都跑不起来的机器上看到「检查通过」。
+    # 这里一个 drop-in 都不写——写是安装路径的事。
+    for unit in $(discover_runner_units); do
+        cur="$(nofile_of_service "$unit" || echo 0)"
+        want="$(configured_nofile "$unit")"
+        case "$(nofile_state "$cur" "$want")" in
+        ok)
+            printf '  \033[32m✓\033[0m %-52s FD soft=%s\n' "$unit" "$cur" ;;
+        pending)
+            printf '  \033[33m→\033[0m %-52s FD soft=%s，配置里已是 %s——只差重启\n' \
+                "$unit" "$cur" "$want"
+            MISSING=$((MISSING + 1)) ;;
+        *)
+            printf '  \033[31m✗\033[0m %-52s FD soft=%s（配置 %s，要求 ≥ %s）\n' \
+                "$unit" "$cur" "$want" "$NOFILE_MIN"
+            MISSING=$((MISSING + 1)) ;;
+        esac
+    done
     echo
     [ "$MISSING" -eq 0 ] && { say "检查通过"; exit 0; }
     # **别把所有失败都说成「重跑就能装上」。** 「装了但不在服务 PATH 上」这一档
@@ -544,44 +615,6 @@ say "文件描述符上限"
 # 「文件描述符上限」是**硬阻断**（soft < 4096 直接拦下整个 lab job），
 # 所以量错对象的代价不是提示不准，是这个脚本说完「准备完成」之后，
 # 那台机器一个 lab job 都跑不起来。
-NOFILE_MIN=4096   # 与 scripts/ci/lab_preflight.py 的判据同源（有用例对拍）
-nofile_of_service() {
-    local pid; pid="$(systemctl show -p MainPID --value "$1" 2>/dev/null || true)"
-    [ -n "${pid:-}" ] && [ "$pid" != "0" ] || return 1
-    awk '/open files/ {print $4}' "/proc/$pid/limits" 2>/dev/null
-}
-
-# systemd 眼里**配置**的软上限（unit 与全部 drop-in 合并后的结果），与
-# /proc 里那个**正在跑**的值是两回事。
-configured_nofile() { systemctl show -p LimitNOFILESoft --value "$1" 2>/dev/null; }
-
-# 「这个值够不够」的**唯一判据**。`LimitNOFILE=infinity` 时 /proc 写的是
-# `unlimited`、systemctl 写的是 `infinity`，拿它们做数值比较会报
-# "integer expression expected" 并走进失败分支——于是脚本用一个 65536 的
-# drop-in 去**降低**一个本来就够用的设置，而且要等重启才发作。
-# 读坏了的值当「不够」，而不是原样丢进 `[ -ge ]` 再炸一次。
-_nofile_ge() {
-    case "$1" in
-        unlimited|infinity) return 0 ;;
-        ''|*[!0-9]*)        return 1 ;;
-    esac
-    [ "$1" -ge "$NOFILE_MIN" ]
-}
-
-# 三态。**「跑着的不够」不等于「没配」**：管理员刚把 LimitNOFILE 调高、还没重启
-# 时，/proc 里还是旧值而配置里已经是新值。这时候写我们自己的 drop-in，会按字典序
-# 排在他后面**把他刚配好的值顶掉**（systemd.unit(5)：.d 下的文件按文件名字典序
-# 加载，后面的赋值赢），而且同样要等重启才发作——用一个待生效的配置换掉另一个，
-# 纯属帮倒忙。这一档只提醒重启。
-nofile_state() {
-    # **ok 必须两边都够。** 只看运行态的话：`daemon-reload` 已经载入一个低于阈值
-    # 的新值、而服务还没重启时，跑着的进程仍然够 → 报 ok，下一次**普通重启**就掉
-    # 下去，随后 lab_preflight 拦下每个 job。那时谁也不会想到是 bootstrap 说过 ok。
-    if _nofile_ge "$1" && _nofile_ge "$2"; then echo ok
-    elif _nofile_ge "$2"; then echo pending
-    else echo needs_dropin; fi
-}
-
 # 这个脚本开头就写着「不删任何未知文件」。原先它 `cat > "$dropin/limits.conf"`
 # ——而 `limits.conf` 正是管理员给 drop-in 起名时最顺手的那个词（限额之外的
 # 加固、环境变量都常放在里面）。截断掉的后果要等下次重启才发作，那时谁也想不到
