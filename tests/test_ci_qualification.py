@@ -408,9 +408,14 @@ class TestUpgradeRenameBoundary:
         """
         import summarize as SM
         _common.ensure_layout(tmp_path)
+        # **报告要盖上本轮身份**，否则汇总会先把它按「上一轮的陈旧报告」拒掉，
+        # 根本走不到「跳过怎么渲染」这一支——而这条用例验的正是后者。
+        monkeypatch.setenv("GITHUB_RUN_ID", "777")
+        monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
         _common.write_report("upgrade.json",
                              {"ok": True, "skipped": True, "reason": "rename_boundary",
-                              "detail": "跨越了产品改名边界"}, tmp_path)
+                              "detail": "跨越了产品改名边界",
+                              "metadata": {"run_id": "777", "run_attempt": "1"}}, tmp_path)
         monkeypatch.setenv("TAVOTTO_CI_STATE_ROOT", str(tmp_path))
         monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
         text = _detail_for(SM, "upgrade.json", tmp_path)
