@@ -494,3 +494,75 @@ def test_always_steps_never_depend_on_a_step_that_may_not_have_run():
     assert not offenders, (
         "这些步骤在前序失败时照跑，却依赖「建验证环境」的输出（那时是空串）：\n  "
         + "\n  ".join(offenders))
+
+
+# ── Codex 第一轮逮到的三条 P1（2026-08-23）──────────────────────────────
+
+def test_a_manually_created_tag_is_pinned_to_the_trusted_sha():
+    """`action-gh-release` 在 tag 不存在时会**替我们建一个**。
+
+    不给 `target_commitish`，它用的是 `GITHUB_SHA` —— dispatch 时的 ref
+    （例如 `main` 的当前 HEAD），而不是 `trust` 解析并验证过的那个 SHA。
+    「dispatch 之后、publish 之前 main 又前进了」时这是两个 commit，
+    而它发生在整条链**最不可逆的那一步**：tag ruleset 是 immutable，
+    建错了改不动也删不掉（仓库里已经躺着两个这样的 tag）。
+    """
+    rel = _wf(RELEASE)
+    steps = [s for s in rel.steps("github_release") if "action-gh-release" in s]
+    assert len(steps) == 1
+    w = _Workflow.with_scalars(steps[0])
+    assert w.get("target_commitish") == "${{ needs.trust.outputs.sha }}", (
+        f"建 Release 没有把 tag 钉在受信 SHA 上：target_commitish="
+        f"{w.get('target_commitish')!r}")
+
+
+def test_the_dry_run_still_exercises_signing_and_the_updater_manifest():
+    """**演练必须验签名与 updater 清单** —— 那是发布链上最容易悄悄坏掉的两段。
+
+    从前 release.yml 把 `publish` 传给桌面链，而那边同一个值控制着三件事：
+    签名凭据门禁、provenance、整个 `updater-manifest` job。于是
+    `publish=false` 的演练把它们一起关掉了 —— 演练照样全绿，而
+    「没配 minisign 私钥」「latest.json 拼不出来」这两种失败要等到正式
+    发版当天才现形。v0.7.0 就是带着一份只有 windows 的 latest.json 发出去的。
+
+    「是不是发行构建」与「挂不挂 Release」是两件事。
+    """
+    rel = _wf(RELEASE)
+    desktop = rel.jobs["desktop"]
+    assert re.search(r"release_build:\s*true", desktop), (
+        "桌面链没有恒以发行构建模式运行 —— 演练会跳过签名与更新包")
+    assert "publish" not in desktop.split("secrets:")[0].replace(
+        "release_build", ""), "桌面链又跟着 publish 走了"
+
+    desk = _wf(DESKTOP)
+    head = _strip_comments(DESKTOP.read_text(encoding="utf-8")).split("\njobs:")[0]
+    assert "release_build:" in head
+    assert "inputs.publish" not in _strip_comments(
+        DESKTOP.read_text(encoding="utf-8")), (
+        "桌面链里还有 inputs.publish —— 它不该知道挂不挂 Release")
+
+
+def test_a_missing_updater_manifest_can_never_pass_silently():
+    """少了 latest.json，桌面用户永远查不到新版本，而整条链全绿。"""
+    rel = _wf(RELEASE)
+    for step in rel.steps("validate_artifacts"):
+        if "updater-manifest" not in step:
+            continue
+        assert "continue-on-error" not in step, (
+            "取 updater 清单允许失败 —— 那会把一次 artifact 传输故障"
+            "变成「发了一个没有 latest.json 的 Release」")
+        break
+    else:
+        raise AssertionError("找不到取 updater-manifest 的那一步")
+
+
+def test_compatbench_runs_on_the_lock_pinned_interpreter():
+    """CompatBench 必须用这一轮刚建的 venv，不能走 pool 的优先级链。
+
+    实验室 runner 是**持久**的：`TAVOTTO_WORKER_PYTHON` 或设置里存下来的
+    解释器一旦存在，`_worker_python(None)` 就会拿它去跑 —— 像素基线于是
+    比的是另一套 matplotlib，而报告不会说。
+    """
+    step = [s for s in _wf(REUSABLE).steps("qualify") if "compat_matrix.py" in s]
+    assert step, "找不到 CompatBench 那一步"
+    assert "--python" in step[0], "CompatBench 没有钉解释器"
