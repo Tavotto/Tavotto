@@ -525,28 +525,38 @@ def test_upgrade_acceptance_carries_session_credentials():
         "取不到凭据要继续裸走（N-1 基线可能早于 ADR 0008），不是失败"
 
 
-def test_no_app_request_in_upgrade_acceptance_skips_auth():
-    """全文件唯一一处不经 SA._post 的应用请求（autosave 的 PUT）也要带头。
+def test_no_app_request_anywhere_skips_auth():
+    """**任何**起实例的脚本里，打到应用的裸 Request 都必须带 SA._AUTH。
 
-    漏了不会红：它裹在 try/except 里，表现是 autosave_saved=False 静静记进
-    报告，而升级验收照旧「通过」——一条本该验的东西被验没了，且没有任何人
-    会发现。这条用例按**目标**分类：打到 s.base/self.base 的请求必须带
-    SA._AUTH，打到 GitHub API 的不必。
+    这条用例本身是本轮的教训：上一版它只扫 `upgrade_acceptance.py` 一个文件，
+    于是 `visual_regression._post_png` 那处漏掉的 `SA._AUTH` 它一点都挡不住
+    ——Codex 在 #56 上替它逮到了。**判据的范围错了，和判据本身错一样坏**，
+    而且更难发现：它一直是绿的。
+
+    漏掉的后果都不长得像认证问题：`upgrade_acceptance` 那处 PUT 裹在
+    try/except 里，表现是 `autosave_saved=False` 静静记进报告；
+    `visual_regression` 那处表现是「面板列出来了、第一张图 401」，而
+    `adopt_session_credentials` 明明已经调过。
+
+    按**目标**分类：打到 `base`/`s.base`/`self.base` 的必须带头，打到
+    GitHub API 的不必。
     """
     import re
-    src = (CI_DIR / "upgrade_acceptance.py").read_text(encoding="utf-8")
-    calls = re.findall(r"urllib\.request\.Request\((.*?)\)\n", src, re.S)
-    assert calls, "解析不到任何 Request 调用——这条用例本身失效了"
-    # **注释必须先剥掉。** 解释「这里为什么要带 SA._AUTH」的那段注释就写在
-    # 调用里，连它一起判的话，把真正的 kwarg 删掉用例照样绿——本轮反证时
-    # 亲手撞到过，这已经是同一形状的第三次（前两次在 slow 门禁与 FD 检查）。
-    calls = ["\n".join(ln for ln in c.splitlines()
-                       if not ln.lstrip().startswith("#")) for c in calls]
-    app_calls = [c for c in calls if "s.base" in c or "self.base" in c]
-    assert app_calls, "一处打到应用的裸 Request 都没有？确认重构后这条还成立"
-    for call in app_calls:
-        assert "SA._AUTH" in call, \
-            f"这处打到应用的请求没带会话凭据，401 会被 try/except 吃掉：\n{call[:200]}"
+    offenders = []
+    for name, src in _app_launchers().items():
+        calls = re.findall(r"urllib\.request\.Request\((.*?)\)\n", src, re.S)
+        # 注释先剥掉：解释「这里为什么要带 SA._AUTH」的那段就写在调用里，
+        # 连它一起判的话，把真正的 kwarg 删掉用例照样绿（本轮亲手撞到过）。
+        calls = ["\n".join(ln for ln in c.splitlines()
+                           if not ln.lstrip().startswith("#")) for c in calls]
+        for call in calls:
+            targets_app = any(t in call for t in
+                              ("s.base", "self.base", "{base}", "base}/api"))
+            if targets_app and "_AUTH" not in call:
+                offenders.append(f"{name}: {call.strip()[:160]}")
+    assert not offenders, (
+        "这些打到应用的裸 Request 没带会话凭据，401 的症状会出现在很远的地方：\n"
+        + "\n".join(offenders))
 
 
 # ---------------- 会话认证：扫全部调用方 ---------------------------------------
