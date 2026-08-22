@@ -206,7 +206,14 @@ def test_windows_bound_subprocesses_pin_their_decoding():
             # 判不出就**不判**，并把这个盲点写在明处，别假装覆盖到了。
             if any(k.arg is None for k in node.keywords):
                 continue
-            texty = ("text" in kw) or ("universal_newlines" in kw) or name == "check_output"
+            # **文本模式由 Python 的真实触发条件决定，不由关键字有无或函数名。**
+            # 实测（3.13）：只给 encoding → str，只给 errors → str，
+            # 裸 check_output → bytes。所以
+            #   * `run(..., encoding="cp1252")` 没有 text=True 也是文本模式，
+            #     照样复现那个 bug——上一版判据直接跳过它；
+            #   * 裸 `check_output()` 回的是 bytes，不该被判。
+            # Codex 在 #57 上指出的正是这两头。
+            texty = bool({"text", "universal_newlines", "encoding", "errors"} & kw)
             if not texty:
                 continue
             enc = next((k.value for k in node.keywords if k.arg == "encoding"), None)
