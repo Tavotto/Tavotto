@@ -705,7 +705,8 @@ def test_probe_label_never_claims_an_account_it_did_not_use():
     assert "github-runner" in r.stdout and "服务的 PATH" in r.stdout, r.stdout
 
     r = _run_sh(base + 'PROBE_MODE=foreign PROBE_KIND=service probe_label')
-    me = subprocess.run(["id", "-un"], capture_output=True, text=True).stdout.strip()
+    me = subprocess.run(["id", "-un"], capture_output=True, text=True,
+                        encoding="utf-8").stdout.strip()
     assert me in r.stdout, \
         f"没说出真正执行探测的账号：{r.stdout!r}"
     assert "验不了" in r.stdout, \
@@ -1839,3 +1840,112 @@ def test_an_explicitly_empty_service_path_is_a_bad_configuration(tmp_path):
         f"空 PATH 被当成了正常配置：{r.stdout!r}"
     assert r.stdout.split("PATHS<")[1].startswith(">"), \
         f"空 PATH 还是进了待查表：{r.stdout!r}"
+
+
+# ---- 第七轮复审：装着但没起来的 runner ---------------------------------------
+
+
+def test_unit_discovery_looks_at_installed_files_not_only_loaded_units():
+    """`list-units` 只列**当前在内存里**的 unit，装了没起来的它看不见。
+
+    真机实测（systemd 255）：一个装好但从未启动的 `actions.runner.*` unit，
+    `list-units --all` 是 **0 行**、`list-unit-files` 是 **1 行**；
+    `systemctl --help` 的原话也是 "List units currently in memory" 对
+    "List installed unit files"。
+
+    只问前者的后果是：装了 runner 却停着的机器被当成「还没注册」，于是降级去查
+    登录 PATH、FD 那一整段跳过，最后打「检查通过」——而它一个 job 都接不了。
+    """
+    src = _bootstrap()
+    fn = src.split("\ndiscover_runner_units() {", 1)[1].split("\n}\n", 1)[0]
+    code = "\n".join(ln for ln in fn.splitlines() if not ln.lstrip().startswith("#"))
+    assert "list-unit-files" in code, "只问了内存里的 unit，装了没起来的看不见"
+    assert "list-units" in code, "只问装了哪些也不够——两边并集才是完整清单"
+    assert "sort -u" in code, "两个来源合并后要去重，否则每个 unit 会被查两遍"
+
+
+@requires_posix_bash
+def test_unit_discovery_merges_and_dedupes_both_sources():
+    """两个来源并集去重：装着在跑的只出现一次，装着没跑的也要出现。"""
+    stubs = ('systemctl() {\n'
+             '  case "$1 $2" in\n'
+             '    "list-unit-files --no-legend") printf "actions.runner.a.service enabled\\n'
+             'actions.runner.stopped.service enabled\\n" ;;\n'
+             '    "list-units --type=service") printf "actions.runner.a.service loaded active running\\n" ;;\n'
+             '  esac\n'
+             '}\n')
+    r = _run_sh(stubs + _bootstrap_funcs("discover_runner_units") + "\ndiscover_runner_units\n")
+    got = r.stdout.split()
+    assert got == ["actions.runner.a.service", "actions.runner.stopped.service"], \
+        f"并集去重不对：{got!r}"
+
+
+def test_check_mode_requires_the_runner_service_to_be_active():
+    """装着 ≠ 在跑。停着的 runner 接不了 job，`--check` 必须判它未就绪。"""
+    src = _bootstrap()
+    check = src.split('if [ "$CHECK_ONLY" -eq 1 ]; then', 1)[1] \
+               .split('say "检查通过"', 1)[0]
+    code = "\n".join(ln for ln in check.splitlines()
+                     if not ln.lstrip().startswith("#"))
+    assert "unit_is_active" in code, "--check 没判服务在不在跑"
+    branch = code.split("unit_is_active", 1)[1].split("continue", 1)[0]
+    assert "MISSING=$((MISSING + 1))" in branch, \
+        "停着的 runner 没算进未就绪——又是「报了但不阻断」"
+
+
+@requires_posix_bash
+def test_active_predicate_accepts_only_active():
+    """`is-active` 的取值不止 active/inactive（activating、failed、unknown…）。"""
+    script = ('systemctl() { printf "%s\\n" "$STATE"; }\n'
+              + _bootstrap_funcs("unit_is_active")
+              + '\nif unit_is_active u; then echo YES; else echo NO; fi\n')
+    import os as _os
+    for state, want in [("active", "YES"), ("inactive", "NO"), ("failed", "NO"),
+                        ("activating", "NO"), ("", "NO")]:
+        r = subprocess.run(["bash", "-c", script, "sh"], capture_output=True,
+                           text=True, encoding="utf-8",
+                           env={**_os.environ, "STATE": state})
+        assert r.stdout.strip() == want, \
+            f"is-active={state!r} 回了 {r.stdout.strip()!r}，应是 {want}"
+
+
+def test_no_shell_test_reaches_a_real_systemctl_or_procfs():
+    """跑 shell 的用例不许真去问 systemctl / 读 /proc——那两样 macOS 上都没有。
+
+    本轮 macOS 腿红的**不是**这个（是 `test_source_hygiene` 的钉编码判据），
+    但这类依赖一旦漏进来，症状会是「只有 macOS 腿红」而排查方向完全在别处。
+    与 `requires_posix_bash` 同一条纪律：**判据不许依赖被测平台之外的东西**。
+
+    判据只看**真正喂给 bash 的那些字符串**：用 AST 摘掉 docstring、再剥掉注释。
+    第一版直接在函数源码上找关键字，四条用例全被自己的 docstring 咬中（它们解释
+    的正是 systemctl 与 /proc 的语义）——今天第三次踩「判据匹配散文」。
+    """
+    import ast
+    tree = ast.parse(open(__file__, encoding="utf-8").read())
+    offenders = []
+    for node in tree.body:
+        if not (isinstance(node, ast.FunctionDef) and node.name.startswith("test_")):
+            continue
+        body = node.body[1:] if ast.get_docstring(node) else node.body
+        # **只看真的会执行东西的用例。** 纯文本断言里出现 "systemctl restart" /
+        # "/proc/" 是**断言的针**（在核对脚本内容），不是要跑的命令；把它们算进来
+        # 就成了另一种「判据匹配散文」。
+        runs = any(
+            (isinstance(n.func, ast.Name) and n.func.id == "_run_sh")
+            or (isinstance(n.func, ast.Attribute) and n.func.attr == "run")
+            for stmt in body for n in ast.walk(stmt) if isinstance(n, ast.Call))
+        if not runs:
+            continue
+        # 只收字符串字面量：那才是可能被喂进 bash 的东西
+        texts = [n.value for stmt in body for n in ast.walk(stmt)
+                 if isinstance(n, ast.Constant) and isinstance(n.value, str)]
+        script = "\n".join(texts)
+        code = "\n".join(ln for ln in script.splitlines()
+                          if not ln.lstrip().startswith("#"))
+        if "systemctl" in code and "systemctl() {" not in code:
+            offenders.append(f"{node.name}: 用到 systemctl 却没打桩")
+        if "/proc/" in code and "stat() {" not in code:
+            offenders.append(f"{node.name}: 读 /proc 却没打桩")
+    assert not offenders, (
+        "这些 shell 用例依赖 Linux 专有设施，macOS 腿上验的不是它自称在验的东西：\n"
+        + "\n".join(offenders))

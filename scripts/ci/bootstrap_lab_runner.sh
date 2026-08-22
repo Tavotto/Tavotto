@@ -122,9 +122,24 @@ runner_home() { getent passwd "$RUNNER_USER" 2>/dev/null | cut -d: -f6; }
 # 迟早分叉，而分叉的表现是「工具按 A 实例的配置查、FD 按 B 实例的进程量」。
 # 逐列找 `actions.runner.*` 而不是取 $1 —— 服务异常时 systemctl 会在第一列
 # 打一个 ● ，取 $1 会拿到那个圆点。
+#
+# **装了没装看 list-unit-files，起没起来另外判。** `list-units` 只列**当前在
+# 内存里**的 unit（`systemctl --help` 的原话就是 "List units currently in
+# memory"），而 `list-unit-files` 列的是"installed unit files"。真机实测：
+# 一个装好但从未启动的 unit，`list-units --all` 是 **0 行**、
+# `list-unit-files` 是 **1 行**。只问前者的后果是——装了 runner 却停着的机器
+# 被当成「还没注册」，于是降级去查登录 PATH、FD 那一整段跳过，最后打
+# 「检查通过」，而它一个 job 都接不了。
 discover_runner_units() {
-    systemctl list-units --type=service --all --no-legend 'actions.runner.*' 2>/dev/null \
-        | awk '{ for (i = 1; i <= NF; i++) if ($i ~ /^actions\.runner\./) { print $i; break } }'
+    { systemctl list-unit-files --no-legend 'actions.runner.*' 2>/dev/null
+      systemctl list-units --type=service --all --no-legend 'actions.runner.*' 2>/dev/null
+    } | awk '{ for (i = 1; i <= NF; i++) if ($i ~ /^actions\.runner\./) { print $i; break } }' \
+      | sort -u
+}
+
+# 装着 ≠ 在跑。停着的 runner 接不了任何 job，这一点要单独说。
+unit_is_active() {
+    [ "$(systemctl is-active "$1" 2>/dev/null)" = "active" ]
 }
 
 # unit → runner 根目录（ExecStart 指向根下的 runsvc.sh）
@@ -498,6 +513,12 @@ EOF
     # 「按文档跑 --check」的运维会在一台每个 job 都跑不起来的机器上看到「检查通过」。
     # 这里一个 drop-in 都不写——写是安装路径的事。
     for unit in $(discover_runner_units); do
+        if ! unit_is_active "$unit"; then
+            printf '  \033[31m✗\033[0m %-52s 没在运行（is-active=%s）——接不了任何 job\n' \
+                "$unit" "$(systemctl is-active "$unit" 2>/dev/null || echo unknown)"
+            MISSING=$((MISSING + 1))
+            continue
+        fi
         cur="$(nofile_of_service "$unit" || echo 0)"
         want="$(configured_nofile "$unit")"
         case "$(nofile_state "$cur" "$want")" in
@@ -694,6 +715,12 @@ else
     NOFILE_PENDING=0
     NOFILE_FAILED=0
     for unit in "${RUNNER_UNITS[@]}"; do
+        if ! unit_is_active "$unit"; then
+            # 本脚本刻意不启动服务，所以这里只提示、不计入失败。
+            warn "$unit 装着但没在运行（is-active=$(systemctl is-active "$unit" 2>/dev/null || echo unknown)）
+    ——它接不了任何 job，也量不出运行态的 FD 上限。启动它之后重跑本脚本。"
+            continue
+        fi
         cur="$(nofile_of_service "$unit" || echo 0)"
         want="$(configured_nofile "$unit")"
         case "$(nofile_state "$cur" "$want")" in
