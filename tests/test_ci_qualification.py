@@ -836,9 +836,14 @@ def test_single_path_action_inputs_are_not_globs():
             if not m:
                 continue
             val = m.group(2).strip()
-            if val.startswith("${{"):      # 由前一步解析出来的具体路径
+            # **表达式前缀不等于没有通配符。** `${{ github.workspace }}/dist/*.whl`
+            # 这种常见写法里，GitHub 只替换表达式、**不做 shell 展开**，剩下的
+            # `*` 会原样交给 syft——和裸 glob 一样坏。所以剥掉表达式之后再看，
+            # 别按开头是不是 `${{` 一刀放行（#63 的 review 逮到）。
+            bare = re.sub(r"\$\{\{[^}]*\}\}", "", val)
+            if not bare.strip():          # 整个值就是一个表达式：由前一步解析出的具体路径
                 continue
-            if "*" in val or "?" in val:
+            if "*" in bare or "?" in bare:
                 offenders.append(f"{wf.name}:{i} {m.group(1)}: {val}")
     assert not offenders, (
         "这些输入只收一个路径，喂 glob 会被原样当成文件名：\n  " + "\n  ".join(offenders))
