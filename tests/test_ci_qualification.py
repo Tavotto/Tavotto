@@ -911,7 +911,7 @@ def test_an_unreadable_instance_is_reported_not_silently_dropped(tmp_path):
     stubs = (
         'discover_runner_units() { printf "u-good\\nu-bad\\n"; }\n'
         f'root_of_unit() {{ [ "$1" = u-good ] && printf "{good}" || printf "{bad}"; }}\n'
-        'config_is_newer_than_service() { return 1; }\n'
+        'stale_config_of_root() { return 1; }\n'
     )
     script = (stubs + _bootstrap_funcs("env_path_of_root", "service_path_of_root")
               + "\n" + _bootstrap_rows()
@@ -943,12 +943,12 @@ def test_config_edited_after_the_service_started_is_not_trusted(tmp_path):
             + '\nprintf "BAD<%s>\\nPATHS<%s>\\n" "$SERVICE_BAD" "$SERVICE_PATHS"\n')
 
     # 配置比服务旧 —— 正常，进待查表
-    r = _run_sh(stubs + 'config_is_newer_than_service() { return 1; }\n' + body)
+    r = _run_sh(stubs + 'stale_config_of_root() { return 1; }\n' + body)
     assert "/usr/bin:/bin" in r.stdout.split("PATHS<")[1], r.stdout
     assert r.stdout.split("BAD<")[1].startswith(">"), f"误报成过期：{r.stdout!r}"
 
     # 配置比服务新 —— 必须报出来，且**不进**待查表（否则照旧报绿）
-    r = _run_sh(stubs + 'config_is_newer_than_service() { return 0; }\n' + body)
+    r = _run_sh(stubs + 'stale_config_of_root() { printf "%s/.env\\n" "$2"; }\n' + body)
     assert "没重启" in r.stdout, f"改了配置没重启，却没报出来：{r.stdout!r}"
     assert r.stdout.split("PATHS<")[1].startswith(">"), \
         f"过期的配置还是进了待查表：{r.stdout!r}"
@@ -1544,45 +1544,6 @@ def _launch_reaches(src: str, target: str) -> bool:
 
 
 @requires_posix_bash
-def test_timestamp_comparison_keeps_subsecond_precision():
-    """`stat -c %Y` 只有整秒——同一秒内改的配置会被判成「旧的」。
-
-    实测（Ubuntu 24.04 / coreutils 9.4 / systemd 255）：`stat -c %.9Y` 有纳秒，
-    而 `systemctl show ActiveEnterTimestamp` 只有整秒（`date -d … +%s.%N` 出来是
-    `.000000000`）。所以「服务那一侧保留亚秒」走 ActiveEnterTimestamp 做不到，
-    改成 `/proc/<MainPID>` 的 mtime——它就是进程启动时刻，带纳秒。
-
-    秒与纳秒**分开当整数比**：这两个数有 19 位有效数字，交给 awk 按浮点比会被
-    double 悄悄舍掉最后几位，而被舍掉的正好是要分辨的那几位。
-    """
-    script = _bootstrap_funcs("_ts_ge") + '\nif _ts_ge "$1" "$2"; then echo GE; else echo LT; fi\n'
-    cases = [
-        # 同一整秒之内：整秒比较分不出来，纳秒能
-        ("1787375144.246472284", "1787375144.246472283", "GE"),
-        ("1787375144.246472283", "1787375144.246472284", "LT"),
-        ("1787375144.000000001", "1787375144.000000000", "GE"),
-        # 相等 → 无法证明更旧，按可疑处理（文件系统只给整秒时两边都退化成 .0）
-        ("1787375144.0", "1787375144.0", "GE"),
-        # 跨秒
-        ("1787375145.0", "1787375144.999999999", "GE"),
-        ("1787375144.999999999", "1787375145.0", "LT"),
-        # 前导零的纳秒不许被当八进制（089 在 $((...)) 里会报错）
-        ("1787375144.089000000", "1787375144.088000000", "GE"),
-        # **小数位数不等长时必须先补零再比。** `_mtime_ns` 的整秒回退给的是
-        # 一位（`.0`），与 `%.9Y` 的九位会混着进来；不补零就成了 `5 >= 45`，
-        # 于是 .5 被判成早于 .45。原来那组用例全是九位，补零那一步抽掉都不红。
-        ("1787375144.5", "1787375144.45", "GE"),
-        ("1787375144.45", "1787375144.5", "LT"),
-        ("1787375144.0", "1787375144.000000001", "LT"),
-    ]
-    for a, b, want in cases:
-        r = _run_sh(script, a, b)
-        assert r.stdout.strip() == want, \
-            f"_ts_ge({a}, {b}) 回了 {r.stdout.strip()!r}，应是 {want}；stderr={r.stderr!r}"
-        assert not r.stderr.strip(), f"比较 {a} {b} 时报错了：{r.stderr!r}"
-
-
-@requires_posix_bash
 def test_ok_requires_both_the_running_and_the_configured_limit():
     """只看运行态的 `ok` 会放过「已 daemon-reload 的低配置」。
 
@@ -1677,75 +1638,6 @@ def test_the_dropin_is_verified_against_systemd_not_assumed():
         "写完没验证就报「已写 drop-in」——排在后面的 drop-in 照样赢"
 
 
-_HAS_GNU_STAT = _POSIX_BASH_OK and subprocess.run(
-    ["bash", "-c", 'stat -c %.9Y /tmp 2>/dev/null'],
-    capture_output=True).stdout.decode("ascii", "replace").strip().count(".") == 1
-requires_gnu_stat = pytest.mark.skipif(
-    not _HAS_GNU_STAT,
-    reason="没有支持 %.9Y 的 GNU stat（BSD/macOS 的 stat 连 -c 都没有）；"
-           "被测脚本只在 Linux 上跑，CI 的 ubuntu 腿会真跑这条")
-
-
-def test_mtime_helper_asks_stat_for_subsecond_precision():
-    """判据的源头是 `stat` 的格式串——`%Y` 只有整秒，必须是 `%.9Y`。
-
-    这条是结构判据、任何平台都跑。只靠下面那条行为判据不行：它要 GNU stat，
-    在 macOS 上会跳过，于是「格式串被换回 %Y」在本机一条都不红（实测过）。
-    """
-    src = _bootstrap()
-    fn = src.split("\n_mtime_ns() {", 1)[1].split("\n}\n", 1)[0]
-    code = "\n".join(ln for ln in fn.splitlines() if not ln.lstrip().startswith("#"))
-    assert "%.9Y" in code, "又用回整秒的 %Y 了——同一秒内改的配置会被判成「旧的」"
-
-
-@requires_gnu_stat
-def test_mtime_helper_really_returns_subsecond_values(tmp_path):
-    """真跑一遍：同一秒内先后写的两个文件必须分得出先后。
-
-    这正是复审说的那个窗口——`.env` 在 listener 启动后**同一个墙钟秒内**被改，
-    整秒比较会把它判成「旧的」，于是拿新 PATH 去探测而运行中的 listener 还是旧值。
-    """
-    a = tmp_path / "a"
-    b = tmp_path / "b"
-    a.write_text("a", encoding="utf-8")
-    b.write_text("b", encoding="utf-8")      # 紧挨着写，几乎必然落在同一秒
-
-    script = _bootstrap_funcs("_mtime_ns", "_ts_ge") + (
-        '\nta="$(_mtime_ns "$1")" || { echo NO_A; exit 1; }\n'
-        'tb="$(_mtime_ns "$2")" || { echo NO_B; exit 1; }\n'
-        'echo "$ta $tb"\n'
-        'if _ts_ge "$tb" "$ta"; then echo B_GE_A; else echo B_LT_A; fi\n')
-    r = _run_sh(script, str(a), str(b))
-    assert r.returncode == 0, r.stdout + r.stderr
-    ta, tb = r.stdout.split("\n")[0].split()
-    assert "." in ta and "." in tb, f"没有小数部分：{ta} {tb}"
-    assert ta.split(".")[0] == tb.split(".")[0], \
-        f"两个文件不在同一秒（{ta} vs {tb}），这次没验到要验的那个窗口"
-    assert {ta.split(".")[1], tb.split(".")[1]} != {"000000000"}, \
-        f"纳秒全是 0，这个文件系统给不了亚秒精度：{ta} {tb}"
-    assert "B_GE_A" in r.stdout, f"后写的没被判成更新：{r.stdout!r}"
-
-
-def test_the_service_side_timestamp_also_comes_from_a_subsecond_source():
-    """两侧都得有亚秒，只把文件那一侧提精度等于没提。
-
-    实测：`systemctl show -p ActiveEnterTimestamp` 只有整秒
-    （`date -d … +%s.%N` 出来是 `.000000000`），所以「服务那一侧保留亚秒」
-    走它做不到。`/proc/<MainPID>` 的 mtime 就是进程启动时刻且带纳秒
-    （实测 1787375144.246472284），而 MainPID 本来就要查。
-
-    换回 ActiveEnterTimestamp 的话，文件侧再精确也白搭——同一秒内的修改照旧
-    分辨不出来，而这正是复审 :249 指的那个窗口。
-    """
-    src = _bootstrap()
-    fn = src.split("\nconfig_is_newer_than_service() {", 1)[1].split("\n}\n", 1)[0]
-    code = "\n".join(ln for ln in fn.splitlines() if not ln.lstrip().startswith("#"))
-    assert '_mtime_ns "/proc/$pid"' in code, \
-        "服务侧的时间戳不是从 /proc/<MainPID> 取的——别的来源都只有整秒"
-    assert "Timestamp" not in code, \
-        "又用回 systemctl 的 *Timestamp 了，那些字段只有整秒精度"
-    assert "_ts_ge" in code, "没走那个分整数比的比较器"
-
 
 @requires_posix_bash
 def test_the_offender_listing_only_treats_file_headers_as_filenames():
@@ -1795,3 +1687,93 @@ def test_the_legacy_dropin_note_does_not_claim_it_was_superseded():
         "提示仍在说旧文件被取代"
     for word in ("已被 $NOFILE_DROPIN_NAME 取代", "可自行删除"):
         assert word not in fn, f"提示里还留着反的说法：{word}"
+
+
+# ---- 第五轮复审：/proc 目录 mtime 不是进程启动时刻 ---------------------------
+
+
+def test_process_start_time_is_never_taken_from_proc_dir_mtime():
+    """`/proc/<pid>` 的 mtime 是 **inode 被实例化**的时刻，不是进程起来的时刻。
+
+    真机实测（Ubuntu 24.04 / kernel 6.8）：起一个进程、**等 5 秒再第一次** stat
+    它的 /proc 目录——
+
+        T0（进程创建）  = 1787400324.471660887
+        5 秒后首次 stat = 1787400329.477145631   ← 与当时的 now 只差 4ms
+
+    它一旦实例化就不再漂（连采三次一模一样），所以长期运行的进程看上去
+    「碰巧对」。上一版正是被这个碰巧骗过去的：拿它当亚秒精度的服务启动时刻，
+    真机验证还「通过」了。**一个语义错的精确值，比一个诚实的粗略值坏得多。**
+    """
+    src = _bootstrap()
+    for fn_name in ("config_is_newer_than_service", "service_start_epoch"):
+        fn = src.split(f"\n{fn_name}() {{", 1)[1].split("\n}\n", 1)[0]
+        code = "\n".join(ln for ln in fn.splitlines()
+                         if not ln.lstrip().startswith("#"))
+        assert "/proc/" not in code, \
+            f"{fn_name} 又去读 /proc 了——那里没有「进程什么时候起来的」这个量"
+    fn = src.split("\nservice_start_epoch() {", 1)[1].split("\n}\n", 1)[0]
+    assert "ExecMainStartTimestamp" in fn, \
+        "服务启动时刻要问 systemd（语义正确，代价是只有整秒）"
+
+
+@requires_posix_bash
+def test_the_staleness_check_is_conservative_at_second_granularity():
+    """只有整秒可用时，判据必须偏向「可能更新」——假红不假绿。
+
+    不同来源之间还能差出约一秒（systemd 记的是它 exec 的时刻，内核 starttime
+    记的是进程创建，实测这台机器上两者差 0.62s），所以留一秒余量。
+    """
+    src = _bootstrap()
+    slack = int(src.split("STALE_SLACK_SEC=", 1)[1].split()[0])
+    assert slack >= 1, "没有留余量，同秒或差一秒内的修改会被放过"
+
+    script = (f"STALE_SLACK_SEC={slack}\n" + _bootstrap_funcs("_file_is_stale")
+              + '\nif _file_is_stale "$1" "$2"; then echo STALE; else echo FRESH; fi\n')
+    for ft, st, want in [
+        ("1000", "1000", "STALE"),   # 同一秒 → 不能证明更旧
+        ("1000", "1001", "STALE"),   # 落在余量之内
+        ("1000", "1005", "FRESH"),   # 明显早于服务启动
+        ("1010", "1000", "STALE"),   # 明显更新
+        ("", "1000", "FRESH"),       # 读不出来就别乱报（上层另有 bad 一档）
+        ("abc", "1000", "FRESH"),
+    ]:
+        r = _run_sh(script, ft, st)
+        assert r.stdout.strip() == want, \
+            f"_file_is_stale({ft!r}, {st!r}) 回了 {r.stdout.strip()!r}，应是 {want}"
+        assert not r.stderr.strip(), f"比较 {ft!r} {st!r} 报错了：{r.stderr!r}"
+
+
+def test_the_staleness_check_routes_through_the_shared_comparator():
+    """真实调用点必须走同一个比较器，否则上面那条只验了个孤立函数。"""
+    src = _bootstrap()
+    fn = src.split("\nconfig_is_newer_than_service() {", 1)[1].split("\n}\n", 1)[0]
+    assert "_file_is_stale" in fn, "没走共用比较器——余量与相等语义会分叉"
+
+
+@requires_posix_bash
+def test_both_config_files_are_checked_for_freshness(tmp_path):
+    """回退到 `.path` 时也要查 `.env` 的新鲜度。
+
+    管理员把 `.env` 里的 PATH= 删掉/注释掉之后，解析会回退到 `.path`——可「删掉
+    那一行」本身就是一次修改，而跑着的 listener 手里还是删之前的 `.env` PATH。
+    只查选中的那个文件，这种情况会被判成「没改过」。
+    """
+    root = tmp_path / "r"
+    root.mkdir()
+    (root / ".env").write_text("RUNNER_TOOL_CACHE=/opt\n", encoding="utf-8")  # 没有 PATH=
+    (root / ".path").write_text("/usr/bin:/bin\n", encoding="utf-8")
+
+    script = ('config_is_newer_than_service() { [ "$2" = "$TARGET" ]; }\n'
+              + _bootstrap_funcs("stale_config_of_root")
+              + '\nstale_config_of_root u "$1" || echo NONE\n')
+
+    import os as _os
+    for target, expect in [(str(root / ".env"), str(root / ".env")),
+                           (str(root / ".path"), str(root / ".path")),
+                           ("/nothing", "NONE")]:
+        r = subprocess.run(["bash", "-c", script, "sh", str(root)],
+                           capture_output=True, text=True, encoding="utf-8",
+                           env={**_os.environ, "TARGET": target})
+        assert r.stdout.strip() == expect, \
+            f"TARGET={target} 时回了 {r.stdout.strip()!r}，应是 {expect}"

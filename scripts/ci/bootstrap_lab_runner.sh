@@ -233,51 +233,67 @@ probe_cmd() {
 
 # 配置改了却没重启，跑着的那个 listener 手里还是旧环境。**`.env` 的 PATH 是
 # Runner.Listener 启动时一次性读进内存的**，改文件不会传导到已经在跑的进程，
-# 也读不回来（`/proc/<pid>/environ` 是 exec 那一刻的快照，只反映 .path 那层，
-# 实测确认过）。所以「文件里配好了」不等于「下一个 job 能用上」——这与最初那个
-# 假绿是同一个形状，只是错在时间维度上。
+# 也读不回来（`/proc/<pid>/environ` 是 exec 那一刻的快照，只反映 .path 那层）。
 #
-# **比较必须做到亚秒。** 实测（Ubuntu 24.04 / coreutils 9.4 / systemd 255）：
-#   stat -c %Y                      → 1787209101              整秒
-#   stat -c %.9Y                    → 1787209101.000000000    有纳秒
-#   systemctl show ActiveEnterTimestamp → "Sat … 05:05:44 UTC"，
-#     date -d … +%s.%N 出来是 .000000000                      **只有整秒**
-# 也就是说「保留亚秒精度」在服务那一侧走 ActiveEnterTimestamp 是做不到的。
-# 但 `/proc/<pid>` 自己的 mtime 就是进程启动时刻，**带纳秒**
-# （实测 1787375144.246472284），而 MainPID 本来就要查——于是两侧都拿得到亚秒。
+# **亚秒精度在这条路上拿不到，这一点写在明处。**
 #
-# 取 MainPID（runsvc.sh）而不是 listener：它启动更早，判据因此偏保守
-# （文件落在两者之间会报「要重启」，是假红不是假绿）。
-# 比较用 **>=**：相等时无法证明文件更旧，何况文件系统或老 coreutils 只给整秒时
-# 两边都会退化成 .0——那时相等恰恰是最可疑的情形。
-_mtime_ns() {
+# 曾经用 `/proc/<pid>` 目录的 mtime 换亚秒精度，实测证明那个量的**语义是错的**：
+# 起一个进程、**等 5 秒再第一次** stat 它的 /proc 目录，拿到的是「此刻」而不是
+# 进程创建时刻——那是 inode 被实例化的时间，不是进程起来的时间。
+#     T0（进程创建）      = 1787400324.471660887
+#     5 秒后首次 stat     = 1787400329.477145631   ← 与当时的 now 只差 4ms
+# 它一旦实例化就不再漂（连采三次一模一样），所以长期运行的进程看上去「碰巧对」
+# ——只是碰巧：那个 inode 恰好在进程刚起来时就被谁访问过。
+# **一个语义错的精确值，比一个诚实的粗略值坏得多。**
+#
+# 语义正确的来源都只有整秒：systemd 的 *Timestamp 字段实测
+# `date -d … +%s.%N` 出来是 .000000000；Monotonic 那几个有微秒，但换算回墙钟
+# 要靠 /proc/stat 的 btime，而 btime 本身又是整秒。不同来源之间还能差出约一秒
+# （systemd 记的是它 exec 的时刻，内核 starttime 记的是进程创建，实测这台机器上
+# 两者差 0.62s）。
+#
+# 所以判据**刻意做成保守的**：`文件 mtime >= 服务启动秒 - 1`。宁可多报一次
+# 「要重启」（假红，重启一次即消），也不放过一次同秒内的修改（假绿，会让
+# --check 拿着新 PATH 去探测，而跑着的 listener 用的还是旧值）。
+STALE_SLACK_SEC=1   # 覆盖「整秒 + 不同来源之间约一秒」的合计不确定度
+
+service_start_epoch() {
     local t
-    t="$(stat -c %.9Y "$1" 2>/dev/null)" || return 1
-    case "$t" in
-        *.*)         printf '%s\n' "$t" ;;      # 有亚秒
-        ''|*[!0-9]*) return 1 ;;                # 读坏了
-        *)           printf '%s.0\n' "$t" ;;    # 老 coreutils 只给整秒
-    esac
+    t="$(systemctl show -p ExecMainStartTimestamp --value "$1" 2>/dev/null)"
+    [ -n "${t:-}" ] || return 1
+    date -d "$t" +%s 2>/dev/null
 }
 
-# $1 >= $2 ？秒与纳秒**分开当整数比**：这两个数有 19 位有效数字，
-# 交给 awk 按浮点比会被 double 悄悄舍掉最后几位。
-_ts_ge() {
-    local as="${1%%.*}" an="${1#*.}" bs="${2%%.*}" bn="${2#*.}"
-    [ "$as" -gt "$bs" ] && return 0
-    [ "$as" -lt "$bs" ] && return 1
-    an="$(printf '%-9s' "${an:-0}" | tr ' ' '0')"
-    bn="$(printf '%-9s' "${bn:-0}" | tr ' ' '0')"
-    [ "$((10#$an))" -ge "$((10#$bn))" ]         # 10# 强制十进制，免得前导零被当八进制
+# 比较本身单独拿出来：它不碰 stat、不碰 systemctl，因此在任何平台上都能直接
+# 喂数跑一遍——判据的核心不该只能在 Linux 上验。
+# 参数：$1 = 文件 mtime（秒），$2 = 服务启动（秒）。
+_file_is_stale() {
+    case "$1" in ''|*[!0-9]*) return 1 ;; esac
+    case "$2" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$1" -ge "$(($2 - STALE_SLACK_SEC))" ]
 }
 
 config_is_newer_than_service() {
-    local unit="$1" f="$2" pid ft pt
-    pid="$(systemctl show -p MainPID --value "$unit" 2>/dev/null)" || return 1
-    [ -n "${pid:-}" ] && [ "$pid" != "0" ] || return 1
-    ft="$(_mtime_ns "$f")" || return 1
-    pt="$(_mtime_ns "/proc/$pid")" || return 1
-    _ts_ge "$ft" "$pt"
+    local unit="$1" f="$2" ft st
+    st="$(service_start_epoch "$unit")" || return 1
+    ft="$(stat -c %Y "$f" 2>/dev/null)" || return 1
+    _file_is_stale "$ft" "$st"
+}
+
+# **两个文件都要查新鲜度，不只是这次选中的那个。** 管理员把 `.env` 里的 PATH=
+# 删掉或注释掉之后，解析会回退到 `.path`——可「删掉那一行」本身就是一次修改，
+# 而跑着的 listener 手里还是删之前的那个 `.env` PATH。只查选中的 `.path`，
+# 这种情况会被判成「没改过」，于是拿 `.path` 的 PATH 当成 job 会用的那个。
+stale_config_of_root() {
+    local unit="$1" root="$2" f
+    for f in "$root/.env" "$root/.path"; do
+        [ -e "$f" ] || continue
+        if config_is_newer_than_service "$unit" "$f"; then
+            printf '%s\n' "$f"
+            return 0
+        fi
+    done
+    return 1
 }
 
 # 解析出 job 真正会用的那个 PATH。多个 runner 实例各有自己的根（实验室那台
@@ -300,10 +316,10 @@ SERVICE_ROWS="$(
             printf 'bad\t%s\t%s\n' "$unit" "$root 下的 .env 与 .path 都读不到"
             continue
         fi
-        src="$(printf '%s' "$line" | cut -f2)"
-        if config_is_newer_than_service "$unit" "$src"; then
+        stale="$(stale_config_of_root "$unit" "$root")" || stale=""
+        if [ -n "$stale" ]; then
             printf 'bad\t%s\t%s\n' "$unit" \
-                "$src 比服务的启动时间新——改了配置没重启，跑着的 listener 还是旧 PATH"
+                "$stale 比服务的启动时间新——改了配置没重启，跑着的 listener 还是旧 PATH"
             continue
         fi
         printf 'ok\t%s\t%s\n' "$line" "$root"
