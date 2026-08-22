@@ -151,9 +151,17 @@ def render_corpus(launch: list[str], workdir: Path, stems: list[str],
 
     cmd = [*launch, "--port", str(port), "--no-browser", "--figures", str(project)]
     print(f"$ {' '.join(cmd)}", flush=True)
-    proc = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, text=True,
-                            encoding="utf-8", errors="replace")
+    _child_log = (workdir / "server-stdout.log").open("w", encoding="utf-8")
+    # **绝不用 PIPE**：这四个脚本一次都不读子进程的 stdout（诊断走
+    # 数据目录里的 app.log）。开了不读的管道，64 KiB 缓冲写满之后
+    # 应用**下一次写日志就永久阻塞**——而它握着 logging 的全局 handler
+    # 锁，于是每个请求线程都堵在 acquire 上，整个 HTTP 服务停摆。
+    # 2026-08-22 实测：soak 两次独立运行都确定性地死在第 160 轮
+    # （日志量正好填满缓冲），py-spy 的栈是 emit→pipe_write +
+    # 八个线程 acquire。改成落文件：既没有这个失败模式，又比 DEVNULL
+    # 多留一份启动期 traceback（那些进不了 app.log）。
+    proc = subprocess.Popen(cmd, env=env, stdout=_child_log,
+                            stderr=subprocess.STDOUT)
     out: dict[str, Path] = {}
     try:
         SA._wait_ready(base, proc, SA.BOOT_TIMEOUT_S)

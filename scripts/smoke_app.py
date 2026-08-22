@@ -366,9 +366,16 @@ def run_smoke(launch: list[str], figures: Path, workdir: Path,
 
     cmd = [*launch, "--port", str(port), "--no-browser", "--figures", str(figures)]
     print(f"$ {' '.join(cmd)}", flush=True)
-    proc = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, text=True,
-                            encoding="utf-8", errors="replace")
+    # **绝不用 PIPE。** 这里读 stdout 是在 proc.wait() **之后**（见下面的
+    # 「进程输出」），而应用一旦写满 64 KiB 管道缓冲就会永久阻塞在写日志上
+    # ——`/api/shutdown` 不再应答、`wait()` 超时、走到 terminate/kill，
+    # 冒烟报「强制停止」。**症状指向「关不干净」，与真实原因毫不相干。**
+    # 「稍后再读」不构成排空：要么在子进程活着的时候并发读，要么根本别开
+    # 这个管道。落文件同时满足两件事——没有缓冲上限，诊断还留在磁盘上。
+    _child_log_path = workdir / "server-stdout.log"
+    _child_log = _child_log_path.open("w", encoding="utf-8")
+    proc = subprocess.Popen(cmd, env=env, stdout=_child_log,
+                            stderr=subprocess.STDOUT)
     log_path = data_dir / "cache" / "app.log"
     # 记几个墙钟数只是为了让排障时有个量级参照（「是不是比上次慢了一个数量级」），
     # **不是性能承诺**：CI runner 的负载天天不一样，真正的基线在
@@ -501,7 +508,12 @@ def run_smoke(launch: list[str], figures: Path, workdir: Path,
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait(timeout=10)
-        out_text = proc.stdout.read() if proc.stdout else ""
+        try:
+            _child_log.close()
+        except OSError:
+            pass
+        out_text = _child_log_path.read_text(encoding="utf-8", errors="replace") \
+            if _child_log_path.is_file() else ""
         if out_text.strip():
             print("--- 进程输出 ---")
             print(out_text[-4000:])
