@@ -1063,3 +1063,20 @@ def test_desktop_outwaits_the_release_qualification_gate():
     assert wait_minutes >= gate_minutes, (
         f"桌面链最多等 {wait_minutes:.0f} 分钟，而发行资格验证的上限是 "
         f"{gate_minutes} 分钟——门禁跑满时，已经签名公证好的桌面产物会挂不上去")
+
+    # **超时消息里不许出现写死的分钟数。** 上一版循环从 10 分钟改成 190 分钟，
+    # 而失败消息还写着「等了 10 分钟」——发布操作者会照着那个数去查一个不存在
+    # 的问题。诊断指错方向比不诊断更坏（Codex 在 #62 上指出）。
+    tail = wait.split("done", 1)[1]
+    # 注释先剥掉：解释「上一版写死了 10 分钟」的那句里必然含这四个字，
+    # 连它一起判会让「写清楚为什么」反而变红。今天这个坑踩到第四次了，
+    # 而它恰恰是我刚写进 CLAUDE.md 的那条纪律。
+    code = "\n".join(ln for ln in tail.splitlines()
+                     if not ln.lstrip().startswith("#"))
+    assert "waited=" in code, "失败消息要报**实际**等了多久，不是写死的数"
+    for stale in ("10 分钟", "10 minutes"):
+        assert stale not in code, f"失败消息里还留着写死的「{stale}」"
+    # 等不到时产物不能丢：上传要排在等待**之前**
+    dt_src = (WORKFLOWS / "desktop-tauri.yml").read_text(encoding="utf-8")
+    assert dt_src.index("上传最终桌面产物") < dt_src.index("等 Release 存在"), \
+        "产物上传必须排在「等 Release」之前，否则等超时会把签名公证好的东西一起丢掉"
