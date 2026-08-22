@@ -629,19 +629,58 @@ jobs:
       - name: 等 Release 存在（tag 触发时与 release.yml 并行，先到要等）
         # 不等就挂 = softprops 会替我们「创建」一个没有 notes 的 Release，
         # 与 release.yml 手写 notes 的那份撞车。等不到按失败处理，绝不静默。
+        #
+        # **等多久由 release.yml 的关键路径决定，不由「感觉差不多」决定。**
+        # 原来是 30×20s = 10 分钟。那个数字是 `lab_release_gate` 存在之前定的
+        # ——那时 release.yml 只有 build → github_release，两三分钟就建出来。
+        # 现在 Release 前面横着一整条发行资格验证（slow + 升级验收 + 视觉回归 +
+        # CompatBench + soak + 性能，实测 30~60 分钟），而桌面构建本身只要
+        # ~20 分钟。于是**桌面链在 tag 推送时基本不可能成功**：产物全都签好了，
+        # 只差挂不上去。2026-08-22 v0.9.1 发版时两条腿同时栽在这里。
+        #
+        # 上限取 lab_release_gate 的 job 超时（180 分钟）再留一点余量。
+        #
+        # **但要说清楚：没有任何固定上限是「够」的。** `timeout-minutes` 从 job
+        # 真正开始那一刻才计时，而它前面还有**排队**——等 `lab-qualification`
+        # 这个并发槽、或者等一台带 tavotto-lab 标签的 self-hosted runner。
+        # 排队时间没有上界：2026-08-22 之前那个标签整整几天没有任何 runner
+        # 领得走，Lab Qualification 全部卡在 queued。所以这里选的是一个
+        # **务实的上限**，不是一个可以证明的上限。
+        #
+        # 之所以敢这么选：**等不到不会丢东西**。最终产物在上一步（「上传最终
+        # 桌面产物」）就已经作为 workflow artifact 传好了，签名与公证都在里面。
+        # 等超时只是没挂到 Release 上，操作者按下面的提示手动 dispatch 一次
+        # 即可，或者直接从这次 run 的 artifact 里取。
         if: ${{ github.event_name == 'push' || inputs.attach }}
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          for i in $(seq 1 30); do
+          for i in $(seq 1 380); do
             if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              echo "✅ Release $RELEASE_TAG 已存在（等了 $(( (i - 1) * 30 / 60 )) 分钟）"
               exit 0
             fi
-            echo "· Release $RELEASE_TAG 还没建好（release.yml 可能仍在跑），20s 后重试（$i/30）"
-            sleep 20
+            if [ $(( i % 10 )) -eq 1 ]; then
+              echo "· Release $RELEASE_TAG 还没建好（release.yml 的发行资格验证通常要 30~60 分钟），已等 $(( (i - 1) * 30 / 60 )) 分钟（$i/380）"
+            fi
+            sleep 30
           done
-          echo "::error::等了 10 分钟仍没有 $RELEASE_TAG 的 Release——检查 release.yml 是否失败"
+          # **最后一次 sleep 之后再探一次。** 否则 Release 恰好在那 30 秒里
+          # 建出来时，循环直接落到失败分支——明明已经好了却报超时，而且是
+          # 在最贵的那一刻（产物签好公证好，只差挂上去）。#62 的 review 逮到。
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "✅ Release $RELEASE_TAG 在最后一轮等待中出现了"
+            exit 0
+          fi
+          # **报实际等了多久，别报一个写死的数。** 上一版这里写着「10 分钟」，
+          # 而循环早已改成 190 分钟——发布操作者会照着那个数去查一个不存在的
+          # 问题。诊断指错方向比不诊断更坏。
+          waited=$(( 380 * 30 / 60 ))
+          echo "::error::等了 ${waited} 分钟仍没有 $RELEASE_TAG 的 Release。"
+          echo "::error::常见原因：release.yml 的 lab_release_gate 失败了，或者它还在排队（等并发槽 / 等 tavotto-lab runner，排队时间没有上界）。"
+          echo "::error::**本次的桌面产物没有丢**：已作为 workflow artifact 上传（含签名与公证）。Release 建好之后手动重跑一次即可挂上去："
+          echo "::error::  gh workflow run desktop-tauri.yml --ref main -f tag=$RELEASE_TAG -f attach=true"
           exit 1
 
       - name: 挂到 Release

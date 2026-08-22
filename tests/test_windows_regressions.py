@@ -1310,3 +1310,50 @@ def test_the_repo_scripts_really_round_trip_chinese_help():
     assert out.returncode == 0, f"--help 都跑不了：{out.stderr}"
     assert any("一" <= ch <= "鿿" for ch in out.stdout), \
         "帮助文本里一个中文都没读到——要么脚本变了，要么解码又丢了"
+
+
+def test_no_ci_script_hard_codes_a_posix_only_signal():
+    """`signal.SIGKILL` **在 Windows 上不存在**，写死它会 AttributeError。
+
+    2026-08-22 实测：`lab_preflight.reap_stale_processes` 里写了
+    `signal.SIGKILL`，于是 `test_self_heal_still_blocks_when_a_process_survives`
+    在 CI 的 windows 腿上炸掉：
+
+        AttributeError: module 'signal' has no attribute 'SIGKILL'.
+                        Did you mean: 'SIGILL'?
+
+    那段代码**只在实验室的 Linux runner 上真跑**（`find_ci_owned_tavotto`
+    没有 `/proc` 就回空表），但**模块要在所有平台上 import 得动、用例要在
+    所有平台上跑得了**。「它在生产里跑不到」不是写死平台专属常量的理由——
+    本仓库这条纪律的原话是：每个「只在别人电脑上发生」的 bug 先变成这里的
+    用例再谈修。
+
+    正确写法是 `getattr(signal, "SIGKILL", signal.SIGTERM)`：Windows 上
+    `os.kill(pid, SIGTERM)` 走的是 TerminateProcess，本来就是强制终止，
+    退化成它是正确的语义、不是凑合。
+
+    判据按 **AST** 走，不按文本：注释里解释「SIGKILL 在 Windows 上不存在」
+    时必然写出这个名字，按子串判会让「把原因写清楚」反而变红
+    （这个坑本轮已经踩过四次）。
+    """
+    import ast
+
+    ci_dir = Path(__file__).resolve().parents[1] / "scripts" / "ci"
+    POSIX_ONLY = {"SIGKILL", "SIGSTOP", "SIGCONT", "SIGUSR1", "SIGUSR2", "SIGHUP"}
+    offenders = []
+    for path in sorted(ci_dir.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            # `signal.SIGKILL` / `_sig.SIGKILL` 这种直接取属性
+            if not (isinstance(node, ast.Attribute) and node.attr in POSIX_ONLY):
+                continue
+            base = node.value
+            if not (isinstance(base, ast.Name) and "sig" in base.id.lower()):
+                continue
+            # `getattr(signal, "SIGKILL", …)` 是**正确写法**，不在此列；
+            # 它是 ast.Call，走不到这个分支。
+            offenders.append(f"{path.name}:{node.lineno} {base.id}.{node.attr}")
+    assert not offenders, (
+        "这些地方直接取了 POSIX 专属信号，Windows 上会 AttributeError：\n  "
+        + "\n  ".join(offenders)
+        + "\n用 getattr(signal, \"SIGKILL\", signal.SIGTERM) 代替")

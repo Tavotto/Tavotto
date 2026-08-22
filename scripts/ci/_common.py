@@ -95,6 +95,83 @@ def state_root() -> Path:
     return Path(os.environ.get("TAVOTTO_CI_STATE_ROOT", DEFAULT_STATE_ROOT))
 
 
+# --------------------------------------------------------------------------
+# 「这个进程是不是上一轮 CI 漏下的」——**唯一权威**
+# --------------------------------------------------------------------------
+# 从前这个判据有两份：`lab_preflight.check_stale_processes()` 用
+# 「argv 长得像 Tavotto **且** 命令行里出现 CI 根 **或 runner 工作目录**」，
+# `cleanup.kill_stale_processes()` 用「命令行里有 tavotto **且** 出现 CI 根」。
+# 两份不一致的后果不是「多杀」或「少杀」，是**自愈会报告成功却什么都没做**：
+# 体检把 runner 工作目录下的那个进程判成遗留 → 自愈调 kill → kill 的判据里
+# 没有 runner 工作目录 → 一个都没杀 → 复检照旧失败。
+# 与本仓库反复撞到的「共享判据修一处不算修完」是同一个形状。
+def ci_owned_markers() -> list[str]:
+    """哪些路径出现在命令行里，就算这个进程是**本 CI 的**。
+
+    持久化根 + runner 的工作目录。**只认路径，不认进程名**——同一台机器上
+    维护者自己开着的 Tavotto 与本 CI 无关，误杀一次就再没人敢开自愈。
+    """
+    markers = [str(state_root().resolve())]
+    for env in ("RUNNER_WORKSPACE", "GITHUB_WORKSPACE"):
+        v = os.environ.get(env)
+        if v:
+            markers.append(v)
+    return [m for m in markers if m]
+
+
+def is_ci_owned_tavotto(cmd: str, markers: list[str] | None = None) -> bool:
+    """这条命令行是不是「本 CI 起的 Tavotto 进程」。
+
+    两个条件都要满足：**长得像 Tavotto**（认得出的四种启动形态），
+    **且**命令行里带着本 CI 的某个路径标记。
+    """
+    if markers is None:
+        markers = ci_owned_markers()
+    looks_tavotto = "tavotto" in cmd and (
+        "engine/worker.py" in cmd or "tavotto-workerd" in cmd
+        or "-m tavotto" in cmd or "/tavotto " in cmd)
+    return looks_tavotto and any(m in cmd for m in markers)
+
+
+def proc_cmdlines() -> list[tuple[int, str]]:
+    """`/proc` 里每个进程的 (pid, cmdline)。非 Linux 上回空列表。"""
+    out: list[tuple[int, str]] = []
+    proc = Path("/proc")
+    if not proc.is_dir():
+        return out
+    for entry in proc.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            raw = (entry / "cmdline").read_bytes()
+        except OSError:
+            continue
+        if raw:
+            out.append((int(entry.name),
+                        raw.replace(b"\0", b" ").decode("utf-8", "replace").strip()))
+    return out
+
+
+def find_ci_owned_tavotto(extra_markers: list[str] | None = None
+                          ) -> list[tuple[int, str]]:
+    """当前活着的、归属本 CI 的 Tavotto 进程。自己不算。
+
+    `extra_markers` 让调用方**追加**自己关心的路径（例如 `cleanup.py`
+    被显式指了另一个 root）。不给的话就是默认的「持久化根 + runner 工作
+    目录」。
+
+    为什么要有这个参数：`cleanup.kill_stale_processes(root)` 支持传入一个
+    与 `state_root()` 不同的 root（人工排查会这么用），但它拿到的候选集
+    是本函数按**默认** marker 筛过的 —— 那个显式 root 下的进程在进入
+    marker 比对之前就已经被丢掉了，于是 `--kill-stale` 对它一个都不收，
+    而且不报错。（Codex 在 #65 的第一轮上指出。）
+    """
+    markers = ci_owned_markers() + [m for m in (extra_markers or []) if m]
+    me = os.getpid()
+    return [(pid, cmd) for pid, cmd in proc_cmdlines()
+            if pid != me and is_ci_owned_tavotto(cmd, markers)]
+
+
 def ensure_layout(root: Path | None = None) -> Path:
     """建出固定布局并确认可写。目录已存在是正常情况（持久化本来就是目的）。"""
     root = root or state_root()
