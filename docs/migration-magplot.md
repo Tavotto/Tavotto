@@ -38,9 +38,43 @@ tavotto doctor --rollback-migration  # 后悔药：删除迁移时创建的文�
 
 ## 图库目录（你磁盘上的项目）
 
-**不需要迁移。** 旧图库里的 `mm_registry.json` Tavotto 一直读得懂
+**注册表不需要迁移。** 旧图库里的 `mm_registry.json` Tavotto 一直读得懂
 （下次写出时自动换成 `tavotto_registry.json`，旧文件保留）。项目目录里的
 `canvases/` 等旧位置也是只读兼容的。
+
+**只有 `magplotfile/` 要你自己搬**，这是本工具**刻意不碰**的一处——它在
+你自己的项目目录里，不在应用数据里，而项目在哪只有你知道。不搬的话，
+0.7 时代放在里面的命名画布、导出与布局版本历史在 Tavotto 里看不到
+（文件本身一个字节没丢，仍在原处）。
+
+**别用 `mv <项目>/magplotfile <项目>/tavottofile`。** 目标目录很可能已经
+存在了——你只要在 Tavotto 里打开过这个项目，它就被建出来了（打开项目时
+会解析导出目录，顺手创建 `tavottofile/export/`）。而目标已存在时，`mv` 的
+两操作数目录形式是把源目录**移进**目标，结果是 `tavottofile/magplotfile/…`，
+埋得比原来还深，Tavotto 照样一个都看不见——`mv` 还一声不吭地退出 0。
+
+改用下面两行：目标在不在都对，且**绝不覆盖**你已有的文件。
+
+```bash
+mkdir -p <项目>/tavottofile
+cp -R -n <项目>/magplotfile/. <项目>/tavottofile/
+```
+
+`-n` = 目标已有同名文件就跳过，与本工具「只复制、绝不覆盖」是同一个语义。
+跳过了哪些不用猜，列出来看：
+
+```bash
+diff -rq <项目>/magplotfile <项目>/tavottofile
+```
+
+`... differ` 的那几条就是两边都有、内容不同的：**留下的是你现在这份**，
+0.7 的那份仍在 `magplotfile/` 里，自己比对后决定要哪个。
+`Only in ...tavottofile` 是你在 Tavotto 里新建的，不是冲突。
+
+**旧目录一个字节没动**，确认无误后自行删除——与上面「承诺」一节同一套做法。
+
+（`cp -n` 跳过文件时，macOS 返回 1 且什么都不打印，GNU 返回 0。**别拿返回码
+当判据**，看上面那条 `diff`。）
 
 ## 项目包（.magplot 文件）
 

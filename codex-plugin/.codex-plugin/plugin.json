@@ -1,6 +1,6 @@
 {
   "name": "tavotto",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "画论文级 matplotlib 图，并在 Codex 里直接用鼠标微调：拖图例、改字号线宽、调刻度，跑出版规范预检，导出真矢量 PDF。",
   "author": {
     "name": "erwanjun",
