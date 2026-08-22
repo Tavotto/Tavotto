@@ -1029,3 +1029,37 @@ def test_every_report_writer_stamps_its_identity():
     # 所以它逮得住「整个脚本都忘了盖」（compat_matrix 当时就是），逮不住
     # 「调了但没放进这份 payload」。够用，但别当成更强的保证。
 
+
+def test_desktop_outwaits_the_release_qualification_gate():
+    """桌面链等 Release 的上限，必须盖得住 release.yml 的发行资格验证。
+
+    tag 推送时两条链**并行**启动：桌面构建约 20 分钟就出产物，而 Release 要
+    等 `lab_release_gate` 跑完（slow + 升级验收 + 视觉回归 + CompatBench +
+    soak + 性能，实测 30~60 分钟）才建得出来。桌面那边等不到就失败。
+
+    2026-08-22 v0.9.1 发版实测：两条腿**全程构建成功**（含 macOS 的签名与
+    公证），只栽在这一步——原来的上限是 30×20s = 10 分钟，而那个数字是
+    `lab_release_gate` 存在**之前**定的，那时 release.yml 两三分钟就建出
+    Release。加了门禁之后没人改它，于是桌面链在 tag 推送时**基本不可能成功**，
+    而且失败得极不划算：产物全签好了，只差挂不上去，重跑一次二十分钟、
+    macOS 还要重新公证一遍。
+
+    判据钉的是**两个数之间的关系**，不是某个具体值——门禁的超时哪天调大，
+    这条会提醒把等待也调大。
+    """
+    import re
+    rel = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
+    gate = rel.split("lab_release_gate:", 1)[1].split("\n  github_release:", 1)[0]
+    m = re.search(r"timeout-minutes:\s*(\d+)", gate)
+    assert m, "lab_release_gate 没有 timeout-minutes 了——这条判据的另一半没了"
+    gate_minutes = int(m.group(1))
+
+    dt = (WORKFLOWS / "desktop-tauri.yml").read_text(encoding="utf-8")
+    wait = dt.split("等 Release 存在", 1)[1].split("\n      - name:", 1)[0]
+    tries = int(re.search(r"seq 1 (\d+)", wait).group(1))
+    sleep_s = int(re.search(r"sleep (\d+)", wait).group(1))
+    wait_minutes = tries * sleep_s / 60
+
+    assert wait_minutes >= gate_minutes, (
+        f"桌面链最多等 {wait_minutes:.0f} 分钟，而发行资格验证的上限是 "
+        f"{gate_minutes} 分钟——门禁跑满时，已经签名公证好的桌面产物会挂不上去")
