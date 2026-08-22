@@ -812,3 +812,49 @@ def _launch_reaches(src: str, target: str) -> bool:
             if inner is not None and target in calls_in(inner):
                 return True
     return False
+
+
+def test_always_steps_do_not_depend_on_a_step_that_may_not_have_run():
+    """`always()` 的收尾步骤不能依赖某个**可能没跑过**的步骤的输出。
+
+    2026-08-22（v0.9.1 发版）实测：`lab_release_gate` 的「汇总」写的是
+    `${{ steps.venv.outputs.python }} scripts/ci/summarize.py`，而
+    `steps.venv` 来自「建验证环境」——体检先失败时它根本没跑，变量是空串，
+    命令退化成**直接执行**那个脚本；它是 100644（没有执行位），于是
+    `Permission denied` / 退出码 126。
+
+    后果是这一步最不该有的那一种：**它「总是要跑」，却恰恰在真的有失败要汇总
+    时自己挂掉**——体检报出了遗留进程，而读的人在 job summary 里只看到 126。
+    与本轮反复出现的「诊断在最需要它时失灵」是同一个形状。
+
+    判据只盯**这一处已知的依赖**（`steps.venv.outputs.python`）：泛化成
+    「扫所有 always() 步骤里的所有 steps.* 引用」会把大量正当写法也判红
+    （很多 always() 步骤本来就只在前序跑过时才有意义），那种噪音门禁活不过
+    两周。要扩就等下一次真出事，按真实案例扩。
+    """
+    # **不用 PyYAML。** 它不在 `.venv` 里（Flask 那侧刻意只有 flask+pymupdf），
+    # 而 `importorskip` 会让这条在本地开发环境静默跳过——那正是空门禁。
+    # 这里只需要「按步骤切开、看它的 if 与 run」，标准库够用。
+    import re
+    offenders = []
+    for name in ("release.yml", "lab-ci.yml"):
+        src = (WORKFLOWS / name).read_text(encoding="utf-8")
+        # 以 `      - name:` 切步骤（本仓库两个 workflow 的缩进是一致的）
+        steps = re.split(r"\n(?=      - name:)", src)
+        assert len(steps) > 10, f"{name}: 只切出 {len(steps)} 段，切分判据失效了"
+        for step in steps:
+            # **只判会在前序失败后照跑的那些。** 普通顺序步骤引用它是正当的
+            # ——venv 没建起来时它们根本不会执行。第一版没区分，把十几处正当
+            # 写法一起判红了：判据的主语又窄了一圈（该问「这一步会不会在 venv
+            # 没跑时执行」，我问的是「有没有引用这个变量」）。
+            if not re.search(r"^\s+if:.*(always\(\)|failure\(\))", step, re.M):
+                continue
+            for m in re.finditer(r"steps\.venv\.outputs\.python(.*?)\}\}", step, re.S):
+                if "||" not in m.group(1):
+                    label = re.search(r"- name: (.*)", step)
+                    offenders.append(
+                        f"{name}: 步骤「{label.group(1).strip() if label else '?'}」")
+    assert not offenders, (
+        "这些步骤在前序失败时照跑，却依赖「建验证环境」的输出——那时它是空串，"
+        "命令退化成直接执行脚本（100644 → Permission denied）：\n  "
+        + "\n  ".join(offenders))
