@@ -163,6 +163,33 @@ env_path_of_root() {
          END { if (!found) exit 1; print v }' "$f"
 }
 
+# **「文件不存在」与「文件在但读不到」是两回事。** `--check` 明确允许非 root 的
+# 管理员跑，而 `.env` 归 runner 用户所有、权限完全可能不给别人读。这时
+# `env_path_of_root` 的失败与「里面根本没有 PATH= 那一行」返回**同一个码**，
+# 于是解析悄悄回退到 `.path`——可跑着的 listener 很可能正用着 `.env` 里的 PATH，
+# 我们却拿另一个 PATH 去查工具，还可能报「检查通过」。
+#
+# 没有 `.env` 时回退到 `.path` 是**对的**（runner 自己也是这么解析的）；
+# 有 `.env` 却读不到时**没有答案**——读不到就说读不到。
+# **判据要跟着优先级走，不是「哪个读不到都算坏」。** `.env` 的 PATH= 覆盖
+# `.path`，所以：`.env` 读不到 → 一定没有答案（它可能正带着那行覆盖）；而
+# `.env` 可读且**明确没有** PATH= 时才轮到 `.path`，那时它读不到才是没有答案。
+# 反过来，`.env` 已经给出 PATH= 时 `.path` 读不读得到都无所谓——把它算成坏配置
+# 就是一次假红。
+unreadable_config_of_root() {
+    local root="$1"
+    if [ -e "$root/.env" ] && [ ! -r "$root/.env" ]; then
+        printf '%s\n' "$root/.env"
+        return 0
+    fi
+    if ! env_path_of_root "$root" >/dev/null 2>&1 \
+       && [ -e "$root/.path" ] && [ ! -r "$root/.path" ]; then
+        printf '%s\n' "$root/.path"
+        return 0
+    fi
+    return 1
+}
+
 # 服务 PATH 与它的出处（两个字段，制表符分隔）。两个文件都读不到就**失败**
 # —— 那时没有可信答案，退回去查别人的 PATH 只会把假绿印成 ✓。
 service_path_of_root() {
@@ -324,6 +351,12 @@ SERVICE_ROWS="$(
         root="$(root_of_unit "$unit")"
         if [ -z "${root:-}" ]; then
             printf 'bad\t%s\t%s\n' "$unit" "反推不出 runner 根目录（ExecStart 读不到）"
+            continue
+        fi
+        unreadable="$(unreadable_config_of_root "$root")" || unreadable=""
+        if [ -n "$unreadable" ]; then
+            printf 'bad\t%s\t%s\n' "$unit" \
+                "$unreadable 存在但当前账号读不到——看不见内容就无从判断 job 会用哪个 PATH"
             continue
         fi
         line="$(service_path_of_root "$root")"

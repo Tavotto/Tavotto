@@ -1949,3 +1949,86 @@ def test_no_shell_test_reaches_a_real_systemctl_or_procfs():
     assert not offenders, (
         "这些 shell 用例依赖 Linux 专有设施，macOS 腿上验的不是它自称在验的东西：\n"
         + "\n".join(offenders))
+
+
+@requires_posix_bash
+def test_an_unreadable_env_is_not_mistaken_for_a_missing_path_line(tmp_path):
+    """「`.env` 不存在」与「`.env` 在但读不到」必须分开。
+
+    `--check` 明确允许非 root 的管理员跑，而 `.env` 归 runner 用户所有、权限完全
+    可能不给别人读。`env_path_of_root` 对这两种情况返回**同一个码**，于是解析悄悄
+    回退到 `.path`——可跑着的 listener 很可能正用着 `.env` 里的 PATH，我们却拿另一个
+    PATH 去查工具，还可能报「检查通过」。
+
+    没有 `.env` 时回退到 `.path` 是对的（runner 自己也这么解析）；有却读不到时
+    没有答案。
+    """
+    stubs = ('discover_runner_units() { printf "u1\\n"; }\n'
+             'stale_config_of_root() { return 1; }\n')
+    funcs = _bootstrap_funcs("env_path_of_root", "service_path_of_root",
+                             "unreadable_config_of_root")
+
+    def rows(root: str) -> str:
+        script = (stubs + f'root_of_unit() {{ printf "{root}"; }}\n' + funcs
+                  + "\n" + _bootstrap_rows()
+                  + '\nprintf "BAD<%s>\\nPATHS<%s>\\n" "$SERVICE_BAD" "$SERVICE_PATHS"\n')
+        return _run_sh(script).stdout
+
+    # ① 没有 .env，只有 .path —— 回退是对的
+    a = tmp_path / "a"
+    a.mkdir()
+    (a / ".path").write_text("/usr/bin:/bin\n", encoding="utf-8")
+    out = rows(str(a))
+    assert "/usr/bin:/bin" in out.split("PATHS<")[1], f"没有 .env 时该回退到 .path：{out!r}"
+    assert out.split("BAD<")[1].startswith(">"), f"误报成坏配置：{out!r}"
+
+    # ② .env 在、但读不到 —— 必须判成坏配置，绝不回退
+    b = tmp_path / "b"
+    b.mkdir()
+    env = b / ".env"
+    env.write_text("PATH=/from/env\n", encoding="utf-8")
+    env.chmod(0o000)
+    (b / ".path").write_text("/usr/bin:/bin\n", encoding="utf-8")
+    try:
+        out = rows(str(b))
+    finally:
+        env.chmod(0o600)
+    assert "读不到" in out, f"读不到的 .env 被当成「没有 PATH= 那一行」了：{out!r}"
+    assert out.split("PATHS<")[1].startswith(">"), \
+        f"读不到 .env 却还是拿 .path 当答案了：{out!r}"
+
+    # ③ .env 可读且给了 PATH=，.path 读不到 —— **不该**报坏：.env 覆盖 .path，
+    #    .path 读不读得到都不影响 job 用哪个 PATH。判据要跟着优先级走。
+    c = tmp_path / "c"
+    c.mkdir()
+    (c / ".env").write_text("PATH=/from/env\n", encoding="utf-8")
+    pth = c / ".path"
+    pth.write_text("/usr/bin:/bin\n", encoding="utf-8")
+    pth.chmod(0o000)
+    try:
+        out = rows(str(c))
+    finally:
+        pth.chmod(0o600)
+    assert "/from/env" in out.split("PATHS<")[1], \
+        f".env 已经给出 PATH，却因为 .path 读不到而报坏——假红：{out!r}"
+    assert out.split("BAD<")[1].startswith(">"), f"误报成坏配置：{out!r}"
+
+    # ④ 没有 .env，.path 读不到 —— 这时才是真的没有答案
+    d = tmp_path / "d"
+    d.mkdir()
+    pth = d / ".path"
+    pth.write_text("/usr/bin:/bin\n", encoding="utf-8")
+    pth.chmod(0o000)
+    try:
+        out = rows(str(d))
+    finally:
+        pth.chmod(0o600)
+    assert out.split("PATHS<")[1].startswith(">"), f"读不到却还是给了答案：{out!r}"
+    # 必须**点名 .path**。少了这一支也会失败关闭（service_path_of_root 两边都取不到
+    # 就回 1），但那条消息说的是「.env 与 .path 都读不到」——而这里 .env 根本不存在。
+    # 诊断输出指错文件比不输出更坏，所以判据钉的是具体那句。
+    reason = out.split("BAD<")[1].split(">")[0]
+    assert str(pth) in reason and "存在但当前账号读不到" in reason, \
+        f"没有点名读不到的是 .path：{reason!r}"
+    assert "与 .path 都读不到" not in reason, \
+        f"把「.env 不存在」说成了「.env 读不到」：{reason!r}"
