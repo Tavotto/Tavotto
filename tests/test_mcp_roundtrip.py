@@ -109,7 +109,7 @@ def project(tmp_path):
     (figures / "tavotto_registry.json").write_text(
         json.dumps(REGISTRY, ensure_ascii=False), encoding="utf-8")
     proc = subprocess.run([_worker_python(), str(figures / "figm.py")],
-                          capture_output=True, text=True, cwd=str(figures))
+                          capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(figures))
     assert proc.returncode == 0, proc.stderr
     assert (figures / "FigM.pdf").is_file()
     return figures

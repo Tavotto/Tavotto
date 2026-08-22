@@ -346,7 +346,7 @@ def test_handoff_stays_stdlib_only():
         [sys.executable, "-c",
          "import sys; import tavotto.engine.handoff; "
          "print([m for m in ('flask', 'matplotlib', 'numpy') if m in sys.modules])"],
-        capture_output=True, text=True, check=True,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
         env={**os.environ, "PYTHONPATH": src})
     assert out.stdout.strip() == "[]"
 
