@@ -504,6 +504,34 @@ nofile_of_service() {
     awk '/open files/ {print $4}' "/proc/$pid/limits" 2>/dev/null
 }
 
+# systemd 眼里**配置**的软上限（unit 与全部 drop-in 合并后的结果），与
+# /proc 里那个**正在跑**的值是两回事。
+configured_nofile() { systemctl show -p LimitNOFILESoft --value "$1" 2>/dev/null; }
+
+# 「这个值够不够」的**唯一判据**。`LimitNOFILE=infinity` 时 /proc 写的是
+# `unlimited`、systemctl 写的是 `infinity`，拿它们做数值比较会报
+# "integer expression expected" 并走进失败分支——于是脚本用一个 65536 的
+# drop-in 去**降低**一个本来就够用的设置，而且要等重启才发作。
+# 读坏了的值当「不够」，而不是原样丢进 `[ -ge ]` 再炸一次。
+_nofile_ge() {
+    case "$1" in
+        unlimited|infinity) return 0 ;;
+        ''|*[!0-9]*)        return 1 ;;
+    esac
+    [ "$1" -ge "$NOFILE_MIN" ]
+}
+
+# 三态。**「跑着的不够」不等于「没配」**：管理员刚把 LimitNOFILE 调高、还没重启
+# 时，/proc 里还是旧值而配置里已经是新值。这时候写我们自己的 drop-in，会按字典序
+# 排在他后面**把他刚配好的值顶掉**（systemd.unit(5)：.d 下的文件按文件名字典序
+# 加载，后面的赋值赢），而且同样要等重启才发作——用一个待生效的配置换掉另一个，
+# 纯属帮倒忙。这一档只提醒重启。
+nofile_state() {
+    if _nofile_ge "$1"; then echo ok
+    elif _nofile_ge "$2"; then echo pending
+    else echo needs_dropin; fi
+}
+
 # 这个脚本开头就写着「不删任何未知文件」。原先它 `cat > "$dropin/limits.conf"`
 # ——而 `limits.conf` 正是管理员给 drop-in 起名时最顺手的那个词（限额之外的
 # 加固、环境变量都常放在里面）。截断掉的后果要等下次重启才发作，那时谁也想不到
@@ -542,21 +570,21 @@ if [ "${#RUNNER_UNITS[@]}" -eq 0 ]; then
     （或手工按下面的写法配 LimitNOFILE=65536）。"
 else
     NOFILE_FIXED=0
+    NOFILE_PENDING=0
     for unit in "${RUNNER_UNITS[@]}"; do
         cur="$(nofile_of_service "$unit" || echo 0)"
-        # `LimitNOFILE=infinity` 时 /proc/<pid>/limits 写的是 `unlimited`。拿它做
-        # 数值比较会报 "integer expression expected" 并**走进失败分支**——于是脚本
-        # 用一个 65536 的 drop-in 去**降低**一个本来就够用的设置，而且要等重启
-        # 才发作。非数字一律当 0（读坏了就该当没读到），unlimited 单独放行。
-        if [ "$cur" = unlimited ]; then
-            printf '  \033[32m✓\033[0m %-52s soft=unlimited\n' "$unit"
-            continue
-        fi
-        case "$cur" in ''|*[!0-9]*) cur=0 ;; esac
-        if [ "$cur" -ge "$NOFILE_MIN" ]; then
+        want="$(configured_nofile "$unit")"
+        case "$(nofile_state "$cur" "$want")" in
+        ok)
             printf '  \033[32m✓\033[0m %-52s soft=%s\n' "$unit" "$cur"
-            continue
-        fi
+            continue ;;
+        pending)
+            printf '  \033[33m→\033[0m %-52s soft=%s，但配置里已是 %s\n' \
+                "$unit" "$cur" "$want"
+            printf '      只差一次重启，**不写 drop-in**（写了会把这份配置顶掉）。\n'
+            NOFILE_PENDING=$((NOFILE_PENDING + 1))
+            continue ;;
+        esac
         if write_nofile_dropin "/etc/systemd/system/${unit}.d"; then
             printf '  \033[33m→\033[0m %-52s soft=%s，已写 drop-in\n' "$unit" "${cur:-未知}"
             NOFILE_FIXED=$((NOFILE_FIXED + 1))
@@ -564,6 +592,10 @@ else
             printf '  \033[31m✗\033[0m %-52s soft=%s，drop-in 没写\n' "$unit" "${cur:-未知}"
         fi
     done
+    if [ "$NOFILE_PENDING" -gt 0 ]; then
+        warn "$NOFILE_PENDING 个 runner 服务的 LimitNOFILE 已经配好、但还没生效。
+    等它们空闲时重启即可（本脚本刻意不替你重启——正在跑的 job 会被打断）。"
+    fi
     if [ "$NOFILE_FIXED" -gt 0 ]; then
         warn "$NOFILE_FIXED 个 runner 服务写了 LimitNOFILE drop-in，**需要重启才生效**。
     本脚本刻意不替你重启——正在跑的 job 会被打断。等它们空闲时：

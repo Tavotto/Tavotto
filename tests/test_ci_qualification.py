@@ -962,21 +962,48 @@ def test_install_mode_checks_cargo_against_every_service_path():
 
 
 def test_an_unlimited_descriptor_limit_is_not_treated_as_too_low():
-    """`LimitNOFILE=infinity` → /proc 写的是 `unlimited`，别拿它做数值比较。
+    """`LimitNOFILE=infinity` → /proc 写 `unlimited`、systemctl 写 `infinity`。
 
     `[ unlimited -ge 4096 ]` 报 "integer expression expected" 并走进失败分支，
-    于是脚本用一个 65536 的 drop-in 去**降低**一个本来就够用的设置——而且要等
-    重启才发作。判据必须排在数值比较**之前**。
+    于是脚本用一个 65536 的 drop-in 去**降低**一个本来就够用的设置，而且要等
+    重启才发作。判据收敛成一个 `_nofile_ge`，这里直接跑它。
     """
-    src = _bootstrap()
-    fd = src.split('say "文件描述符上限"', 1)[1].split('say "准备完成', 1)[0]
-    code = "\n".join(ln for ln in fd.splitlines()
-                     if not ln.lstrip().startswith("#"))
-    assert '"$cur" = unlimited' in code, "没认 unlimited"
-    assert code.index('"$cur" = unlimited') < code.index('-ge "$NOFILE_MIN"'), \
-        "unlimited 的判断排在数值比较之后了——比较那一步已经先报错走了失败分支"
-    # 读坏了的值当 0，而不是原样丢进 `[ -ge ]` 再炸一次
-    assert "*[!0-9]*" in code, "非数字没有兜底"
+    script = ("NOFILE_MIN=4096\n" + _bootstrap_funcs("_nofile_ge")
+              + '\nif _nofile_ge "$1"; then echo YES; else echo NO; fi\n')
+    for value, want in [("unlimited", "YES"), ("infinity", "YES"),
+                        ("65536", "YES"), ("4096", "YES"),
+                        ("1024", "NO"), ("", "NO"), ("n/a", "NO")]:
+        r = _run_sh(script, value)
+        assert r.stdout.strip() == want, \
+            f"_nofile_ge({value!r}) 回了 {r.stdout.strip()!r}，应是 {want}"
+        assert "integer expression" not in r.stderr, \
+            f"{value!r} 被丢进数值比较里炸了：{r.stderr!r}"
+
+
+def test_a_configured_but_unrestarted_limit_is_not_overridden():
+    """「跑着的不够」≠「没配」——后者才该写 drop-in。
+
+    管理员刚把 LimitNOFILE 调高、还没重启时，/proc 里还是旧值而配置里已是新值。
+    这时写我们自己的 drop-in 会按字典序排在他后面**把他刚配好的值顶掉**
+    （systemd.unit(5)：.d 下按文件名字典序加载，后面的赋值赢），而且同样要等
+    重启才发作——用一个待生效的配置换掉另一个，纯属帮倒忙。
+    """
+    script = ("NOFILE_MIN=4096\n"
+              + _bootstrap_funcs("_nofile_ge", "nofile_state")
+              + '\nnofile_state "$1" "$2"\n')
+    cases = [
+        ("65536", "65536",   "ok"),            # 跑着的就够
+        ("unlimited", "0",   "ok"),            # 无上限，配置读不到也无所谓
+        ("1024", "200000",   "pending"),       # 管理员配好了，只差重启
+        ("1024", "infinity", "pending"),
+        ("1024", "1024",     "needs_dropin"),  # 真没配
+        ("1024", "",         "needs_dropin"),  # systemctl 读不到 → 当没配
+    ]
+    for running, configured, want in cases:
+        r = _run_sh(script, running, configured)
+        assert r.stdout.strip() == want, (
+            f"nofile_state(running={running!r}, configured={configured!r}) "
+            f"回了 {r.stdout.strip()!r}，应是 {want}")
 
 
 def test_preflight_also_accepts_an_unlimited_descriptor_limit(monkeypatch):
@@ -1072,3 +1099,17 @@ def test_no_bare_variable_is_glued_to_a_cjk_character():
         for m in re.finditer(r"\$[A-Za-z_][A-Za-z0-9_]*(?=[^\x00-\x7f])", line):
             bad.append(f"L{i}: {m.group(0)} 紧跟非 ASCII 字符")
     assert not bad, "变量名与中文粘在一起，换个 locale 就会吞字节：\n" + "\n".join(bad)
+
+
+def test_the_pending_branch_actually_skips_writing_the_dropin():
+    """判对了状态还不够——`pending` 那一支必须真的不写。
+
+    `nofile_state` 回 `pending` 而循环照旧往下走到 `write_nofile_dropin`，
+    结果与没判一模一样：管理员刚配好的值被我们排在后面的文件顶掉。
+    """
+    src = _bootstrap()
+    branch = src.split("        pending)", 1)[1].split("        esac", 1)[0]
+    assert "continue" in branch, "pending 之后没有 continue，会继续往下写 drop-in"
+    assert "write_nofile_dropin" not in branch, "pending 那一支还是写了 drop-in"
+    assert "NOFILE_PENDING=$((NOFILE_PENDING + 1))" in branch, \
+        "没计数——末尾就不会提醒去重启，那这台机器永远差一次重启没人知道"
