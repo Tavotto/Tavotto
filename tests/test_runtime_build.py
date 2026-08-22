@@ -801,7 +801,7 @@ def test_built_runtime_is_usable_by_the_engine_and_really_renders():
         "print('render-ok')\n"
     )
     proc = subprocess.run([py, *runtime.child_args(), "-c", code],
-                          capture_output=True, text=True, timeout=600,
+                          capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600,
                           env=runtime.child_env())
     assert "render-ok" in proc.stdout, f"真实渲染失败：\n{proc.stderr[-2000:]}"
 
@@ -823,7 +823,7 @@ def test_built_runtime_does_not_write_into_itself_while_rendering():
             "import matplotlib.pyplot as plt, pandas, scipy\n"
             "plt.subplots()\nprint('ok')\n")
     subprocess.run([py, *runtime.child_args(), "-c", code],
-                   capture_output=True, text=True, timeout=600,
+                   capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600,
                    env=runtime.child_env())
     after = {p for p in RUNTIME_DIR.rglob("*") if p.is_file()}
     created = after - before

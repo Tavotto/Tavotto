@@ -314,5 +314,5 @@ def test_scripts_run_without_the_product_installed():
     for script in ("lab_preflight.py", "cleanup.py"):
         out = subprocess.run(
             [sys.executable, str(CI_DIR / script), "--help"],
-            capture_output=True, text=True, timeout=60)
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
         assert out.returncode == 0, f"{script} --help 都跑不了：{out.stderr}"
