@@ -258,28 +258,6 @@ def test_the_monitor_only_needs_actions_read_for_the_check():
 
 # ── Codex 第一轮逮到的（2026-08-23）────────────────────────────────────
 
-def test_a_legitimately_skipped_job_is_not_reported_as_never_run():
-    """**weekly canary 会让 `github_release` / `pypi` 合法 skipped。**
-
-    判「这个 job 有没有真跑过」时 skipped 不算一次验证 —— 那是新鲜度表的
-    问题。但判「它是不是从来没出现过」时，skipped 恰恰证明它**出现了、
-    并且被有意跳过**。
-
-    不认它的后果是每周误报一次，而**天天红的监控会在第二周被人静音，
-    静音之后它连警告都不会再发出来** —— 那正是这个脚本自己写在注释里
-    要避免的事。
-    """
-    import ast
-    src = (ROOT / "scripts" / "ci" / "check_release_health.py").read_text(encoding="utf-8")
-    tree = ast.parse(src)
-    fn = next(n for n in ast.walk(tree)
-              if isinstance(n, ast.FunctionDef) and n.name == "find_jobs_never_seen")
-    body = ast.unparse(fn)
-    assert "skipped" in body, (
-        "`find_jobs_never_seen` 不认 skipped —— canary 的 publish=false 会让"
-        "`github_release` / `pypi` 每周被误报成「从未执行」")
-
-
 def test_a_failed_fetch_still_renders_instead_of_crashing():
     """**拿不到数据是最需要它把话说出来的时候。**
 
@@ -349,42 +327,23 @@ def test_a_reusable_workflow_is_not_watched_as_a_standalone_one():
     assert "release.yml" in watched, "caller 必须还在盯着（它覆盖 reusable 的新鲜度）"
 
 
-def test_the_job_scan_looks_inside_runs_that_are_still_going():
-    """**一个「永远没人领得走」的 job 恰恰卡在 queued。**
+def test_the_job_scan_was_removed_rather_than_left_half_working():
+    """**「声明了却没执行过的 job」这个扫描已经从本工作流拿掉**（issue #78）。
 
-    而它所在的 run 因此一直是 `in_progress`。只扫 completed 的 run，
-    最典型的「从没执行过」场景一个都看不到 —— 这个扫描存在的全部理由
-    就是发现那种 job。
+    它想回答的问题是真的，但判据不够格：matrix 展开让 job 名与 id 不同，
+    于是用了子串匹配；而子串匹配让 `release.yml` 自己的 `trust` / `build`
+    和 `ci.yml` 的 `workerd` **满足了 desktop-tauri.yml 的同名声明** ——
+    那三个 job 一次没跑也会被当成「见过」。整个扫描基本是空的。
+
+    四轮 review 逐条暴露它的边界之后，正确的处置是**缩小 scope**，
+    不是继续打补丁：**一个自己就是空转的空转检测器，比没有它更坏。**
+
+    这条用例钉的是「它真的走了，没留下半个」——半拉子实现最危险，
+    因为它看起来像在守着什么。
     """
-    import ast
     src = (ROOT / "scripts" / "ci" / "check_release_health.py").read_text(encoding="utf-8")
-    fn = next(n for n in ast.walk(ast.parse(src))
-              if isinstance(n, ast.FunctionDef) and n.name == "find_jobs_never_seen")
-    body = ast.unparse(fn)
-    assert "in_progress" in body, (
-        "job 扫描跳过了 in_progress 的 run —— 卡在 queued 的 job 就在那里面")
-
-
-def test_reusable_workflow_jobs_are_scanned_through_their_callers():
-    """**reusable workflow 里声明的 job 也要能被发现「从没执行过」。**
-
-    `desktop-tauri.yml` / `_lab-qualification.yml` 没有自己的 run，
-    而 caller 文件里声明的只是 `desktop` / `lab_release_gate` 这样的
-    **调用点**，不是被调那侧的 `build` / `workerd` / `updater-manifest` /
-    `qualify`。
-
-    结果：`updater-manifest` 这种 job 哪天被永久跳过，扫描一个字都不会说
-    —— 而它正是「声明了却从没执行过」最典型的一类。
-
-    上一版把 desktop 移进 `REUSABLE_ONLY` 时，注释里写的是「『有没有执行』
-    由 job 扫描在 caller 的 job 列表里查」，**而扫描当时根本没扫那些文件**。
-    又一次「宣称指不出兑现它的代码」——而这次那句话是我自己写的。
-    """
-    import ast
-    src = (ROOT / "scripts" / "ci" / "check_release_health.py").read_text(encoding="utf-8")
-    fn = next(n for n in ast.walk(ast.parse(src))
-              if isinstance(n, ast.FunctionDef) and n.name == "find_jobs_never_seen")
-    body = ast.unparse(fn)
-    assert "REUSABLE_ONLY" in body, (
-        "job 扫描没有覆盖 reusable workflow 里声明的 job —— "
-        "它们不在 caller 文件的 job 列表里")
+    assert "def find_jobs_never_seen" not in src, "扫描还在，只是没被调用？"
+    assert "--skip-job-scan" not in src, "参数还在，用户会以为这个功能存在"
+    assert "issue #78" in src, "没有指向后续 issue —— 那就成了「删掉就算了」"
+    wf = (ROOT / ".github" / "workflows" / "release-health.yml").read_text(encoding="utf-8")
+    assert "skip-job-scan" not in wf, "workflow 还在传一个不存在的参数"

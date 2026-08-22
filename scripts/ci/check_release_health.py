@@ -190,138 +190,26 @@ def assess(spec: dict, runs: list[dict], now: datetime) -> dict:
     }
 
 
-def find_jobs_never_seen(repo: str, results: list[dict],
-                         workflows: list[str]) -> list[dict]:
-    """**声明了却从没产出过结论的 job。**
-
-    workflow 文件里新加一个 job，如果它的 `if:` 永远为假、或者它需要的
-    runner 标签没人领，它会**永远不出现**——而 workflow 整体照样绿。
-    这是本仓库反复撞到的空门禁形状里最难发现的一种：不是判据错了，
-    是那段代码**从来没被执行过**。
-
-    判据：workflow 文件里声明的 job id ∪ 最近这些 run 里真实出现过的 job 名。
-    差集就是「声明了但没见过」。**精度写在明处**：matrix 展开后的名字与
-    job id 不同（`backend (ubuntu-latest, 3.13)` vs `backend`），
-    所以按前缀匹配；`uses:` 的可复用 workflow 其 job 名带 `caller / callee`
-    前缀，同样按包含判。这条会漏报（名字碰巧包含），不会误报。
-    """
-    from pathlib import Path
-    import re
-
-    wf_dir = Path(__file__).resolve().parents[2] / ".github" / "workflows"
-    missing = []
-    for wf in workflows:
-        path = wf_dir / wf
-        if not path.is_file():
-            continue
-        text = path.read_text(encoding="utf-8")
-        m = re.search(r"^jobs:\s*$", text, re.M)
-        if not m:
-            continue
-        body = text[m.end():]
-        declared = re.findall(r"^  ([A-Za-z_][\w-]*):\s*$", body, re.M)
-        if not declared:
-            continue
-
-        seen: set[str] = set()
-        try:
-            runs = _gh_json(["run", "list", "--repo", repo, "--workflow", wf,
-                             "--limit", "12", "--json", "databaseId,status"])
-        except HealthError:
-            continue
-        for r in runs[:12]:
-            # **不跳过 in_progress 的 run。** 一个「永远没人领得走」的 job
-            # 恰恰卡在 queued，而它所在的 run 因此一直是 in_progress ——
-            # 只扫 completed 的话，最典型的「从没执行过」场景一个都看不到。
-            # 那种 job 我们照样要能报出来（它是 queued，不是 concluded，
-            # 所以不会被误算成「见过」）。
-            if r.get("status") not in ("completed", "in_progress"):
-                continue
-            try:
-                jobs = _gh_json(["run", "view", str(r["databaseId"]), "--repo", repo,
-                                 "--json", "jobs"])
-            except HealthError:
-                continue
-            for j in (jobs or {}).get("jobs", []):
-                # reusable workflow 的 job 名形如 `desktop / build (…)`，
-                # 下面按子串匹配，所以两种形状都认得出
-                # **`skipped` 也算「见过」。**
-                # 判「这个 job 有没有真跑过」时 skipped 不算一次验证（那是
-                # 上面那张表的问题）；但判「它是不是从来没出现过」时，
-                # skipped 恰恰证明它**出现了、并且被有意跳过**。
-                #
-                # 不认它的后果是每周误报一次：weekly canary 是 publish=false，
-                # `github_release` 与 `pypi` 合法 skipped，于是这里会宣布
-                # 「声明了却从没产出过结论」并让 workflow 变红。
-                # **而天天红的监控会在第二周被人静音，静音之后它连警告都
-                # 不会再发出来** —— 那正是这个脚本自己写在注释里要避免的事。
-                if j.get("conclusion") in CONCLUSIVE or j.get("conclusion") == "skipped":
-                    seen.add(j.get("name", ""))
-
-        if not seen:
-            continue     # 这个 workflow 最近就没跑完过，上面那张表已经报了
-        for job in declared:
-            if not any(job in name for name in seen):
-                missing.append({
-                    "workflow": wf, "job": job,
-                    "note": "声明了，但最近 12 次 run 里一次都没产出过结论"})
-
-    # ── reusable workflow 里声明的 job ────────────────────────────────
-    # **它们不在上面那个循环的覆盖范围里。** `desktop-tauri.yml` /
-    # `_lab-qualification.yml` 没有自己的 run，上面按 `--workflow <file>`
-    # 查它们只会查到空；而 caller 文件里声明的只是 `desktop` /
-    # `lab_release_gate` 这样的**调用点**，不是被调那侧的 `build` /
-    # `workerd` / `updater-manifest` / `qualify`。
-    #
-    # 结果就是：`updater-manifest` 这种 job 哪天被永久跳过，这个扫描
-    # 一个字都不会说 —— 而它正是「声明了却从没执行过」最典型的一类。
-    #
-    # 上一版把 desktop 移进 `REUSABLE_ONLY` 时，注释里写的是「『有没有执行』
-    # 由 job 扫描在 caller 的 job 列表里查」——**而扫描当时根本没扫那些文件**。
-    # 又一次「宣称指不出兑现它的代码」。（Codex 在 #67 第四轮上指出。）
-    #
-    # 被调侧的 job 在 caller run 里显示成 `<调用点> / <被调 job>`，
-    # 例如 `desktop / build (macos-latest, dmg)`，所以按 job id 子串仍然认得出。
-    caller_seen: set[str] = set()
-    for wf in workflows:
-        try:
-            runs = _gh_json(["run", "list", "--repo", repo, "--workflow", wf,
-                             "--limit", "12", "--json", "databaseId,status"])
-        except HealthError:
-            continue
-        for r in runs[:12]:
-            if r.get("status") not in ("completed", "in_progress"):
-                continue
-            try:
-                jobs = _gh_json(["run", "view", str(r["databaseId"]), "--repo", repo,
-                                 "--json", "jobs"])
-            except HealthError:
-                continue
-            for j in (jobs or {}).get("jobs", []):
-                if j.get("conclusion") in CONCLUSIVE or j.get("conclusion") == "skipped":
-                    caller_seen.add(j.get("name", ""))
-
-    if caller_seen:
-        for wf in REUSABLE_ONLY:
-            path = wf_dir / wf
-            if not path.is_file():
-                continue
-            text = path.read_text(encoding="utf-8")
-            m = re.search(r"^jobs:\s*$", text, re.M)
-            if not m:
-                continue
-            body = text[m.end():]
-            nxt = re.search(r"^\S", body, re.M)
-            if nxt:
-                body = body[:nxt.start()]
-            for job in re.findall(r"^  ([A-Za-z_][\w-]*):\s*$", body, re.M):
-                if not any(job in name for name in caller_seen):
-                    missing.append({
-                        "workflow": wf, "job": job,
-                        "note": "reusable workflow 里声明的 job，"
-                                "在调用方最近 12 次 run 里一次都没产出过结论"})
-    return missing
-
+# ────────────────────────────────────────────────────────────────────────
+# 「声明了却从没产出过结论的 job」这个扫描**从本工作流拿掉了**（issue #78）。
+#
+# 它想回答的问题是真的：workflow 里新加一个 job，如果它的 `if:` 永远为假、
+# 或者它要的 runner 标签没人领，它会永远不出现，而 workflow 整体照样绿。
+#
+# 拿掉的原因是**判据不够格，而不是问题不重要**。四轮 review 逐个暴露出来：
+#   · matrix 展开后 job 名与 id 不同，所以用了子串匹配；
+#   · 而子串匹配让 `release.yml` 自己的 `trust` / `build` 和 `ci.yml` 的
+#     `workerd` **满足了 desktop-tauri.yml 的同名声明** —— 那三个 job
+#     一次没跑也会被当成「见过」。整个扫描基本是空的；
+#   · 一个 job 在早先某次 run 里有过结论、却在当前 in_progress 的 run 里
+#     卡了三小时，也漏。
+#
+# 「声明了没执行」这件事的身份判定需要 `<caller-job-id> / <callee-job-id>`
+# 的**精确**结构，而不是子串。那是一次单独的实现，不该夹在这条 PR 里 ——
+# 而**一个自己就是空转的空转检测器，比没有它更坏**。
+#
+# freshness 检查（本文件的核心）不依赖它，且已经在真实数据上验证过。
+# ────────────────────────────────────────────────────────────────────────
 
 def render_summary(results: list[dict], missing: list[dict], now: datetime) -> str:
     icon = {"ok": "✅", "warning": "⚠️", "error": "❌"}
@@ -373,8 +261,6 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", help="把结构化报告写到这个文件")
     ap.add_argument("--max-age-days", type=float,
                     help="覆盖所有 workflow 的新鲜度阈值（排查用）")
-    ap.add_argument("--skip-job-scan", action="store_true",
-                    help="跳过「从没产出过结论的 job」扫描（它要拉每次 run 的 job 列表，慢）")
     a = ap.parse_args(argv)
 
     now = datetime.now(timezone.utc)
@@ -402,13 +288,7 @@ def main(argv: list[str] | None = None) -> int:
             continue
         results.append(assess(spec, runs, now))
 
-    missing = []
-    if not a.skip_job_scan:
-        try:
-            missing = find_jobs_never_seen(
-                a.repo, results, ["release.yml", "lab-ci.yml", "ci.yml"])
-        except HealthError as e:
-            print(f"::warning::job 扫描跳过：{e}", file=sys.stderr)
+    missing: list[dict] = []      # 见上：job 扫描已移出本工作流（issue #78）
 
     payload = {"checked_at": now.isoformat(timespec="seconds"),
                "repo": a.repo, "workflows": results, "never_concluded_jobs": missing}
