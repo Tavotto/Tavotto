@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -554,11 +555,50 @@ def _bootstrap_funcs(*names: str) -> str:
     return "\n".join(out)
 
 
+def _probe_posix_bash() -> tuple[bool, str]:
+    """有没有一个**能跑 POSIX 脚本的** bash——不是「PATH 上有没有叫 bash 的东西」。
+
+    windows-latest 上 `bash` 解析到的是 **WSL 的 `bash.exe`**：它确实在 PATH 上、
+    `shutil.which("bash")` 也返回真，但没装发行版，于是往 stdout 打一段 **UTF-16**
+    的 "Windows Subsystem for Linux has no installed distributions" 并 rc=1。
+    朴素的「有没有 bash」守卫一条都挡不住——判据的主语错了，与这个 PR 修的那批
+    缺陷是同一个形状。所以这里**真跑一次**，并按字节比对（不解码：那段 UTF-16
+    用 text=True 读会当场 UnicodeDecodeError，探测本身就该扛得住）。
+
+    Windows 直接判定不可用：被测对象是给 Linux runner 写的 bash 脚本，脚本自己
+    第一件事就是 `uname -s` 不是 Linux 就 die。就算 PATH 上排在前面的是 Git Bash
+    （探测能过），它的 MSYS 路径改写也会让 `/usr/bin` 这类断言变成另一回事——
+    那时红的不是被测代码，是测试环境。
+    """
+    if os.name == "nt":
+        return False, "Windows：被测脚本本身只支持 Linux（脚本开头 uname 不符即 die）"
+    try:
+        r = subprocess.run(["bash", "-c", "echo ok"], capture_output=True, timeout=30)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, f"起不来 bash：{type(exc).__name__}: {exc}"
+    if r.returncode != 0:
+        return False, f"bash -c 'echo ok' 回了 {r.returncode}，stdout={r.stdout[:120]!r}"
+    if r.stdout.strip() != b"ok":
+        return False, f"bash -c 'echo ok' 的 stdout 是 {r.stdout[:120]!r}，不是 b'ok'"
+    return True, "ok"
+
+
+_POSIX_BASH_OK, _POSIX_BASH_DETAIL = _probe_posix_bash()
+requires_posix_bash = pytest.mark.skipif(
+    not _POSIX_BASH_OK,
+    reason=f"没有能跑 POSIX 脚本的 bash，跳过这批 shell 用例（{_POSIX_BASH_DETAIL}）")
+
+
 def _run_sh(script: str, *args: str) -> subprocess.CompletedProcess:
+    # 显式 utf-8：跟着 locale 走的话，同一段脚本在别的机器上会解出不同的字节，
+    # 而本文件里正好有一条用例是靠「输出不是合法 UTF-8」抓到吞字节的
+    # （test_no_bare_variable_is_glued_to_a_cjk_character），所以**不设**
+    # errors="replace"——那会把那个信号一起抹掉。
     return subprocess.run(["bash", "-c", script, "sh"] + list(args),
-                          capture_output=True, text=True)
+                          capture_output=True, text=True, encoding="utf-8")
 
 
+@requires_posix_bash
 def test_service_path_prefers_env_over_dot_path(tmp_path):
     """`.env` 的 PATH= 覆盖 `.path`——因为 Listener 读 .env 在 runsvc.sh 之后。
 
@@ -581,6 +621,7 @@ def test_service_path_prefers_env_over_dot_path(tmp_path):
     assert source.endswith("/.env")
 
 
+@requires_posix_bash
 def test_service_path_falls_back_to_dot_path_when_env_has_none(tmp_path):
     """只认 `.env` 是不够的：从登录 shell 跑过 config.sh 的机器 cargo 在 `.path` 里。
 
@@ -603,6 +644,7 @@ def test_service_path_falls_back_to_dot_path_when_env_has_none(tmp_path):
     assert source.endswith("/.path")
 
 
+@requires_posix_bash
 def test_env_parsing_matches_the_runners_own_loader(tmp_path):
     """逐字复现 runner 的 `LoadAndSetEnv`：第一个 `=` 切开、后面的覆盖前面的。
 
@@ -630,6 +672,7 @@ def test_env_parsing_matches_the_runners_own_loader(tmp_path):
         f"解析与 runner 不一致：{r.stdout!r}"
 
 
+@requires_posix_bash
 def test_unreadable_service_config_fails_instead_of_answering(tmp_path):
     """两个文件都没有时必须**失败**，不许回一个「差不多的」PATH。
 
@@ -645,6 +688,7 @@ def test_unreadable_service_config_fails_instead_of_answering(tmp_path):
     assert r.stdout.strip() == "", f"读不到配置却输出了 PATH：{r.stdout!r}"
 
 
+@requires_posix_bash
 def test_probe_label_never_claims_an_account_it_did_not_use():
     """标签由决定探测方式的那个变量算出来，不另写一份文案。
 
@@ -697,6 +741,7 @@ def test_check_mode_probes_the_service_path_not_a_login_shell():
     assert "as_runner_login" in code, "丢掉了「装了但不在服务 PATH 上」这条提示"
 
 
+@requires_posix_bash
 def test_the_pass_criterion_never_reaches_a_login_shell(tmp_path):
     """✓ 只能由服务 PATH 给出——沿整条调用链验，不是只看最外面那一层。
 
@@ -739,6 +784,7 @@ def _bootstrap_dispatch() -> str:
     return head + src.split(head, 1)[1].split("\ncheck_cmd() {", 1)[0]
 
 
+@requires_posix_bash
 def test_a_third_party_caller_gets_no_answer_rather_than_the_wrong_one():
     """既不是 root 也不是 $RUNNER_USER、又读不到 runner 配置 → **无解**，不是降级。
 
@@ -848,6 +894,7 @@ def _bootstrap_rows() -> str:
     return head + src.split(head, 1)[1].split("\nif [ -n \"$SERVICE_PATHS\" ]", 1)[0]
 
 
+@requires_posix_bash
 def test_an_unreadable_instance_is_reported_not_silently_dropped(tmp_path):
     """一个实例解析不了，不许从表里悄悄消失。
 
@@ -876,6 +923,7 @@ def test_an_unreadable_instance_is_reported_not_silently_dropped(tmp_path):
     assert "/usr/bin:/bin" in r.stdout.split("PATHS<")[1], "好实例没进待查表"
 
 
+@requires_posix_bash
 def test_config_edited_after_the_service_started_is_not_trusted(tmp_path):
     """改了 `.env` 却没重启 = 跑着的 listener 还是旧环境，不能算配好了。
 
@@ -906,6 +954,7 @@ def test_config_edited_after_the_service_started_is_not_trusted(tmp_path):
         f"过期的配置还是进了待查表：{r.stdout!r}"
 
 
+@requires_posix_bash
 def test_all_instances_unreadable_is_not_reported_as_not_registered():
     """全都读不出来 ≠ 还没注册。降级查登录 PATH 会把坏机器报成「只差注册」。"""
     stubs = ("discover_runner_units() { :; }\nroot_of_unit() { return 1; }\n"
@@ -961,6 +1010,7 @@ def test_install_mode_checks_cargo_against_every_service_path():
     assert "head -1" not in code, "又只取第一份服务 PATH 了"
 
 
+@requires_posix_bash
 def test_an_unlimited_descriptor_limit_is_not_treated_as_too_low():
     """`LimitNOFILE=infinity` → /proc 写 `unlimited`、systemctl 写 `infinity`。
 
@@ -980,6 +1030,7 @@ def test_an_unlimited_descriptor_limit_is_not_treated_as_too_low():
             f"{value!r} 被丢进数值比较里炸了：{r.stderr!r}"
 
 
+@requires_posix_bash
 def test_a_configured_but_unrestarted_limit_is_not_overridden():
     """「跑着的不够」≠「没配」——后者才该写 drop-in。
 
@@ -1014,7 +1065,10 @@ def test_preflight_also_accepts_an_unlimited_descriptor_limit(monkeypatch):
     test_bootstrap_and_preflight_agree_on_the_fd_threshold 是同一条纪律。
     """
     import importlib
-    import resource
+    # POSIX-only 模块；Windows 上 lab_preflight 自己也把 resource 设成 None，
+    # 并让「文件描述符上限」这项直接跳过——那条路径本来就没有 rlimit 可判。
+    resource = pytest.importorskip(
+        "resource", reason="resource 是 POSIX-only；Windows 上没有 rlimit 可判")
     pf = importlib.import_module("lab_preflight")
 
     monkeypatch.setattr(pf.resource, "getrlimit",
@@ -1030,6 +1084,7 @@ def test_preflight_also_accepts_an_unlimited_descriptor_limit(monkeypatch):
     assert not fd[0].ok, "1024 应当判成不够"
 
 
+@requires_posix_bash
 def test_the_dropin_never_clobbers_a_file_it_did_not_write(tmp_path):
     """脚本开头写着「不删任何未知文件」——`cat > limits.conf` 违背了它。
 
@@ -1113,3 +1168,51 @@ def test_the_pending_branch_actually_skips_writing_the_dropin():
     assert "write_nofile_dropin" not in branch, "pending 那一支还是写了 drop-in"
     assert "NOFILE_PENDING=$((NOFILE_PENDING + 1))" in branch, \
         "没计数——末尾就不会提醒去重启，那这台机器永远差一次重启没人知道"
+
+
+def test_the_posix_bash_guard_does_not_skip_where_bash_works():
+    """守卫只该挡住「没有能跑 POSIX 脚本的 bash」的平台，不能一跳跳全部。
+
+    做成宁跳勿错的守卫，等于把上面那十几条 shell 用例整个关掉——而且全绿。
+    那是空门禁的又一种形态，还比普通空门禁更难发现：`-q` 下跳过只是一个点。
+    """
+    if os.name == "nt":
+        pytest.skip("Windows 上本就没有 POSIX bash，这条只在 POSIX 平台有意义")
+    assert _POSIX_BASH_OK, (
+        f"POSIX 平台上守卫却判定 bash 不可用（{_POSIX_BASH_DETAIL}）——"
+        "这批 shell 用例会被整体跳过而 CI 全绿")
+
+
+def test_the_posix_bash_guard_rejects_a_wsl_style_stub(tmp_path, monkeypatch):
+    """WSL 的 bash.exe **在 PATH 上**，`which` 说有——它只是跑不了 POSIX 脚本。
+
+    windows-latest 上它往 stdout 打一段 UTF-16 的
+    "Windows Subsystem for Linux has no installed distributions" 并 rc=1，
+    于是断言拿到的是那段乱码而不是 `unresolved` / `ok` / `YES`（本轮 14 条红）。
+    所以守卫必须**真跑一次**并核对输出，不能只问「有没有 bash」。
+
+    这里把那个 stub 原样重放（含 UTF-16 与 rc=1），确认探测判它不可用；顺带钉住
+    「探测自己不会被那段字节噎死」——按字节比对就是为了这个。
+    """
+    if os.name == "nt":
+        pytest.skip("这条模拟的就是 Windows 的行为，在 POSIX 上跑才有意义")
+
+    stub = tmp_path / "bash"
+    stub.write_text(
+        "#!/bin/sh\n"
+        # printf 的八进制转义写出 UTF-16LE：'W\0i\0n\0...'，与 WSL 实际输出同形
+        "printf 'W\\0i\\0n\\0d\\0o\\0w\\0s\\0 \\0S\\0u\\0b\\0s\\0y\\0s\\0t\\0e\\0m\\0'\n"
+        "exit 1\n", encoding="utf-8")
+    stub.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path), prepend=False)
+
+    ok, detail = _probe_posix_bash()
+    assert not ok, "把 WSL stub 当成可用的 bash 了——正是本轮 CI 红的那 14 条"
+    assert "1" in detail, f"没说清失败原因：{detail!r}"
+
+    # 反过来：一个正常的 bash 必须判成可用，否则守卫就是「一跳跳全部」
+    good = tmp_path / "bash"
+    good.write_text("#!/bin/sh\necho ok\n", encoding="utf-8")
+    good.chmod(0o755)
+    ok, detail = _probe_posix_bash()
+    assert ok, f"正常的 shell 被判成不可用：{detail!r}"
