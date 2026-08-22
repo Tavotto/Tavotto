@@ -466,3 +466,36 @@ def test_no_shell_script_leaves_a_bare_var_before_a_non_ascii_char():
     assert not offenders, (
         "这些变量引用后面紧跟非 ASCII 字符，bash 会把它并进变量名：\n  "
         + "\n  ".join(offenders))
+
+
+def test_the_documented_manual_restore_also_strips_read_only_fields():
+    """**文档里给错的命令比没有命令更坏。**
+
+    脚本那侧修好了（走 `_strip_readonly.py`），而文档 §3 里那条「任何时候
+    都可以手动」的回滚命令还写着直接 `--input` 存档文件 —— 人会照着执行，
+    而失败发生在最需要它成功的时刻：正要回滚。
+
+    「修一处不算修完」的又一次，这次漏的是文档里的命令。
+    """
+    doc = (ROOT / "docs" / "admin" / "github-ruleset-changes.md").read_text(encoding="utf-8")
+    for m in re.finditer(r"gh api -X PUT[^\n]*(?:\\\n[^\n]*)*", doc):
+        cmd = m.group(0)
+        assert "rulesets/" not in cmd or "--input docs/admin/rulesets/" not in cmd, (
+            f"文档里这条命令直接 PUT 存档文件（含只读字段，会被拒收）：\n  {cmd}")
+    assert "_strip_readonly.py" in doc, "文档没告诉人先剥只读字段"
+
+
+def test_the_stats_tool_says_when_it_only_saw_the_first_page():
+    """一个**悄悄少数**的统计比没有统计更坏。
+
+    `codex_review_stats.py` 产出的正是审计报告里那几个「113 次 review、
+    188 条 thread」的数字。超过 100 条的 PR 会被少数，而且不会报错。
+
+    这里选的是**如实报出截断**而不是翻页：本仓库最多的一条 PR 有 18 轮 /
+    29 条 thread，离 100 还远，而翻页要为每条 PR 各再发一串请求 ——
+    一个一次性诊断工具不值得那个复杂度。**精度写在明处**才是关键。
+    """
+    src = (ADMIN_DIR / "codex_review_stats.py").read_text(encoding="utf-8")
+    assert "totalCount" in src, "查询没有要总数，无从知道有没有被截断"
+    assert "truncated" in src, "没有把截断这件事表达出来"
+    assert "::warning::" in src, "截断了却不吭声"

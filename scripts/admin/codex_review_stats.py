@@ -34,8 +34,19 @@ query($owner:String!, $name:String!, $cursor:String) {
       pageInfo { hasNextPage endCursor }
       nodes {
         number title state
-        reviews(first:100) { nodes { author { login } commit { oid } } }
+        # **两个嵌套 connection 都只回第一页。** 超过 100 条 review 或
+        # thread 的 PR 会被少数 —— 而这个脚本产出的正是审计报告里那几个
+        # 「113 次 review、188 条 thread」的数字。少数了不会报错，
+        # 只会让结论偏保守，而读的人不知道。
+        # 本仓库最多的一条 PR 有 18 轮 / 29 条 thread，离 100 还有距离，
+        # 所以这里如实**报出被截断**而不是翻页：翻页要为每条 PR 各再发
+        # 一串请求，而这个脚本是一次性诊断工具，不值得那个复杂度。
+        reviews(first:100) {
+          totalCount
+          nodes { author { login } commit { oid } }
+        }
         reviewThreads(first:100) {
+          totalCount
           nodes { isResolved comments(first:1) { nodes { author { login } body } } }
         }
       }
@@ -86,7 +97,15 @@ def summarise(nodes: list[dict]) -> dict:
         for t in threads:
             sev[severity_of(t["comments"]["nodes"][0]["body"]) or "unknown"] += 1
         sev_all.update(sev)
+        # 被截断就如实说 —— 一个悄悄少数的统计比没有统计更坏
+        truncated = (n["reviews"].get("totalCount", 0) > len(n["reviews"]["nodes"])
+                     or n["reviewThreads"].get("totalCount", 0)
+                     > len(n["reviewThreads"]["nodes"]))
+        if truncated:
+            print(f"::warning::PR #{n['number']} 的 review 或 thread 超过 100 条，"
+                  f"本次统计只覆盖前 100 条", file=sys.stderr)
         rows.append({
+            "truncated": truncated,
             "pr": n["number"], "state": n["state"], "title": n["title"],
             "rounds": len(commits) or len(revs),
             "submissions": len(revs),
@@ -95,6 +114,7 @@ def summarise(nodes: list[dict]) -> dict:
             "severity": dict(sev),
         })
     return {
+        "any_truncated": any(r["truncated"] for r in rows),
         "rows": rows,
         "total_submissions": sum(r["submissions"] for r in rows),
         "total_threads": sum(r["threads"] for r in rows),

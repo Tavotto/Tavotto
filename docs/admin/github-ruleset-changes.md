@@ -110,12 +110,19 @@ scripts/admin/apply_rulesets.sh --restore    # dry-run，打印将要还原成�
 scripts/admin/apply_rulesets.sh --restore --apply
 ```
 
-存档文件就是 `gh api` 的原样输出，所以**任何时候都可以手动**：
+存档文件是 `gh api` 的**原样输出**，里面带着 `id` / `_links` / `source` /
+时间戳这些**只读字段** —— 直接 PUT 回去会被拒收。手动还原时同样要先剥掉：
 
 ```bash
-gh api -X PUT repos/Tavotto/Tavotto/rulesets/21121430 \
-  --input docs/admin/rulesets/ruleset-21121430.json
+python3 scripts/admin/_strip_readonly.py \
+  docs/admin/rulesets/ruleset-21121430.json > /tmp/rs.json
+gh api -X PUT repos/Tavotto/Tavotto/rulesets/21121430 --input /tmp/rs.json
 ```
+
+> 这段命令一度写成直接 `--input` 存档文件 —— 脚本那侧修好了，**文档里
+> 这条手工命令没跟上**。文档里给错的命令比没有命令更坏：人会照着执行，
+> 而失败发生在最需要它成功的时刻（正要回滚）。
+> 「修一处不算修完」的第 N 次，而这次漏的是文档。
 
 ---
 
