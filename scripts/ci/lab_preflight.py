@@ -203,6 +203,14 @@ def reap_stale_processes(stale: list[tuple[int, str]],
     """
     import signal as _sig
 
+    # **`SIGKILL` 在 Windows 上不存在**（AttributeError: module 'signal' has no
+    # attribute 'SIGKILL'）。这段只在实验室的 Linux runner 上真跑
+    # （`find_ci_owned_tavotto` 没有 /proc 就回空），但**模块要在所有平台上
+    # import 得动、用例要在所有平台上跑得了**——CI 的 windows 腿当场逮到了。
+    # Windows 上 `os.kill(pid, SIGTERM)` 走的是 TerminateProcess，本来就是
+    # 强制终止，退化成它是正确的语义。
+    _SIGKILL = getattr(_sig, "SIGKILL", _sig.SIGTERM)
+
     targets = {pid for pid, _ in stale}
     for pid in targets:
         try:
@@ -219,7 +227,7 @@ def reap_stale_processes(stale: list[tuple[int, str]],
     for pid, _ in find_ci_owned_tavotto():
         if pid in targets:
             try:
-                os.kill(pid, _sig.SIGKILL)
+                os.kill(pid, _SIGKILL)
             except OSError:
                 pass
     sleep(0.5)
