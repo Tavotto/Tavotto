@@ -1909,6 +1909,21 @@ def _cb_orientation_snapshot(p: "ColorbarProxy") -> dict:
 
 
 def _set_cb_orientation(p: "ColorbarProxy", v, state: "FigState") -> None:
+    # **第二个消费点。** manifest 那边多宿主时已经不宣称这条能力了，但
+    # 「不宣称」挡不住一份**旧文档**：用户在 1.0 之前存过一条 orientation
+    # override，重开时它照样会被发过来。只修一处等于没修
+    # （见 CLAUDE.md「共享判据修一处不算修完」）。
+    #
+    # 这里**抛**而不是静默忽略：抛出去会变成 worker 的 warning，
+    # 而 warning 一条即阻断写回——用户会看到「这条改不动」，
+    # 而不是「写回成功了，但图和屏幕上不一样」。判据与 manifest 共用
+    # `colorbar_host_count` 这一份实现。
+    hosts = colorbar_host_count(p.cb)
+    if hosts > 1:
+        raise ValueError(
+            f"multi_host_colorbar: 这条色条横跨 {hosts} 个子图，"
+            f"方向切换在 1.0 里不支持（落位只按第一个宿主算，翻转后会被缩到"
+            f"一图宽）。issue #69")
     to = "horizontal" if str(v) == "horizontal" else "vertical"
     _cb_reorient(p, to, state)
 
@@ -1952,6 +1967,36 @@ _restore_cb_orientation._needs_state = True  # noqa: SLF001
 # ---------------------------------------------------------------------------
 # 色条反查与「拖它时谁跟着走」（manifest.instrument 与色条方向事务共用）
 # ---------------------------------------------------------------------------
+def colorbar_host_count(cb) -> int:
+    """这条色条**声明了几个宿主**。1 = 常规；>1 = 横跨多个子图。
+
+    唯一判据是 matplotlib 自己记的 `cax._colorbar_info["parents"]`。
+    实测（3.10.8，六种建法逐个量过，见
+    `tests/test_colorbar_orientation.py::test_the_multi_host_predicate_matches_matplotlib`）::
+
+        ax=ax                    parents=1
+        ax=[a1, a2]              parents=2
+        ax=[a, b, c]             parents=3
+        cax=<用户自己建的轴>       没有 _colorbar_info      → 按 1 算
+        ScalarMappable + ax=ax   parents=1（mappable.axes 是 None）
+        ScalarMappable + ax=[..] parents=2
+
+    `cax=` 那条按 1 算是对的、不是兜底：用户自己建了色条轴、自己摆好了位置，
+    「宿主是谁」这个问题在那条路上根本不存在，落位也不归我们算。
+
+    **为什么要有这个函数**：`_cb_target_rect()` 反解新矩形时只拿得到
+    `cb.mappable.axes`，也就是**第一个**宿主。多宿主色条翻转方向之后会被缩到
+    一图宽（实测 3.10.8 / 3.11.1：应当 0.620 宽，实际 0.282）。
+    真修法要把宿主从一个 axes 改成一组、`_cb_place` / `_cb_target_rect` /
+    `axes_follow` 三处按并集算——那是落位模型的改动，1.0 稳定期不做（issue #69）。
+    在那之前**不宣称这条能力**：宁可少开放一个，不可开放了却画错。
+    """
+    cax = getattr(cb, "ax", None)
+    info = getattr(cax, "_colorbar_info", None)
+    parents = info.get("parents") if isinstance(info, dict) else None
+    return len(parents) if parents else 1
+
+
 def colorbar_maps(fig, axes) -> tuple[dict, dict]:
     """(色条轴 → Colorbar, 色条轴 → 宿主 axes)。**两个方向取并集**。
 
