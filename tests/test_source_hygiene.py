@@ -102,3 +102,47 @@ def test_no_venv_or_self_referential_symlink_is_tracked() -> None:
         + "\n  ".join(offenders)
     )
 
+
+
+def test_no_launcher_leaves_a_child_pipe_undrained():
+    """开了 `stdout=PIPE` 就必须读它，否则应用会在 64 KiB 之后整个卡死。
+
+    2026-08-22 实测（soak 第一次真正跑起来时发现）：`soak.py` 用
+    `stdout=PIPE` 起应用却一次都不读，日志写满管道缓冲之后，应用**下一次
+    写日志永久阻塞**——而 `logging` 的 handler 锁在它手里，于是每个请求线程
+    都堵在 `acquire` 上，`/api/version` 都不再应答。
+
+    症状极具误导性：看上去像**产品死锁**（8 个线程 futex_wait + 1 个
+    pipe_write），我一度就是这么判断的。py-spy 的栈才指到 `logging.emit`。
+    两次独立运行都确定性地停在第 160 轮——正是日志量填满缓冲的那一刻。
+
+    判据要求二选一：**要么不开 PIPE**（落文件或 DEVNULL），**要么真的读**。
+    这四个脚本的诊断本来就走数据目录里的 `app.log`，所以一律落文件——比
+    DEVNULL 还多留一份启动期 traceback（那些进不了 app.log）。
+    """
+    import ast
+    offenders = []
+    for path in sorted((ROOT / "scripts").rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        src = path.read_text(encoding="utf-8")
+        try:
+            tree = ast.parse(src)
+        except SyntaxError:
+            continue
+        drains = any(t in src for t in
+                     ("proc.stdout", ".communicate(", "_drain", "readline()"))
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call)
+                    and getattr(node.func, "attr", "") == "Popen"):
+                continue
+            kws = {k.arg: ast.unparse(k.value) for k in node.keywords if k.arg}
+            out = kws.get("stdout", "")
+            if "PIPE" not in out:
+                continue          # 落文件 / DEVNULL / 继承，都不会填满缓冲
+            if not drains:
+                offenders.append(
+                    f"{path.relative_to(ROOT)}:{node.lineno} stdout=PIPE 但全文件没有读它")
+    assert not offenders, (
+        "这些子进程的输出管道开了却没人读，写满 64 KiB 之后应用会卡死在写日志上：\n  "
+        + "\n  ".join(offenders))
