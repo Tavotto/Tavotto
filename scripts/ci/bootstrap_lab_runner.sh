@@ -346,6 +346,12 @@ if [ "$CHECK_ONLY" -eq 1 ]; then
 $SERVICE_BAD
 EOF
     fi
+    # 残差要摆到显眼处，不能只留在那行标签的括号里——末尾一句干净的「检查通过」
+    # 会盖过它。PATH 判断是准的（.env/.path 谁读都一样），没验的是执行权限。
+    if [ "$PROBE_MODE" = foreign ] && [ "$PROBE_KIND" != unresolved ]; then
+        warn "探测不是以 $RUNNER_USER 跑的：PATH 判断是准的（.env/.path 谁读都一样），
+    但「这些二进制 $RUNNER_USER 有没有权限执行」没验。要验就用 sudo 重跑。"
+    fi
     if [ "$PROBE_KIND" = unresolved ]; then
         # **不按调用方自己的 PATH 冒充服务 PATH。** 读不到就说读不到，
         # 并且算作未就绪 —— 一句「检查通过」而其实是按管理员的 PATH 算出来的，

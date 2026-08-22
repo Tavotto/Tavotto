@@ -928,3 +928,17 @@ def test_a_reported_bad_instance_also_counts_as_not_ready():
                 .split('if [ "$PROBE_KIND" = unresolved ]', 1)[0]
     assert "MISSING=$((MISSING + 1))" in branch, \
         "坏实例报出来了却没算进未就绪——末尾还是「检查通过」，等于没报"
+
+
+def test_a_foreign_caller_is_warned_not_just_footnoted():
+    """残差不能只写在那行标签的括号里——末尾一句「检查通过」会盖过它。
+
+    非 root、且不是 $RUNNER_USER 的调用方：PATH 判断是准的（`.env`/`.path` 谁读
+    都一样），没验的是「这些二进制 $RUNNER_USER 有没有权限执行」。这一项值得
+    一条 warn，而不是一个括号。
+    """
+    src = _bootstrap()
+    block = src.split('say "检查模式：不修改任何东西"', 1)[1] \
+               .split('if [ "$PROBE_KIND" = unresolved ]', 1)[0]
+    assert '"$PROBE_MODE" = foreign' in block, "第三方调用方那一档没有单独提示"
+    assert "warn " in block, "残差只留在标签里，末尾的「检查通过」会盖过它"
