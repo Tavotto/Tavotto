@@ -368,27 +368,51 @@ _age_says_stale() {
     awk -v a="$fa" -v b="$pa" -v k="$STALE_SKEW_SEC" 'BEGIN { exit !(a < b + k) }'
 }
 
+# **量不出来 ≠ 确实更旧。** 三态：0=比服务新、1=确实更旧、2=量不出来。
+# 以前两者都回 1，调用方一律当成「没改过」，于是非 root 管理员在看不到别人
+# 进程元数据的机器上（hidepid 之类）会拿磁盘上的当前 PATH 去查工具，而 listener
+# 还用着旧的——又一条静默假绿。读不到就说读不到。
 config_is_newer_than_service() {
     local unit="$1" f="$2" pid fa pa
-    pid="$(systemctl show -p MainPID --value "$unit" 2>/dev/null)" || return 1
-    [ -n "${pid:-}" ] && [ "$pid" != "0" ] || return 1
-    fa="$(_file_age_sec "$f")" || return 1
-    pa="$(_proc_age_sec "$pid")" || return 1
-    _age_says_stale "$fa" "$pa"
+    pid="$(systemctl show -p MainPID --value "$unit" 2>/dev/null)" || return 2
+    [ -n "${pid:-}" ] && [ "$pid" != "0" ] || return 2
+    fa="$(_file_age_sec "$f")" || return 2
+    pa="$(_proc_age_sec "$pid")" || return 2
+    _age_says_stale "$fa" "$pa" && return 0
+    return 1
 }
 
 # **两个文件都要查新鲜度，不只是这次选中的那个。** 管理员把 `.env` 里的 PATH=
 # 删掉或注释掉之后，解析会回退到 `.path`——可「删掉那一行」本身就是一次修改，
 # 而跑着的 listener 手里还是删之前的那个 `.env` PATH。只查选中的 `.path`，
 # 这种情况会被判成「没改过」，于是拿 `.path` 的 PATH 当成 job 会用的那个。
+# 输出一句**完整的**原因（调用方原样用），返回 0 表示「有问题」。
 stale_config_of_root() {
-    local unit="$1" root="$2" f
+    local unit="$1" root="$2" f rc
+    # **`.env` 不见了本身就是异常。** runner 的 config.sh 会调 env.sh，而 env.sh
+    # 无条件 `touch .env`（没有就建），所以注册过的 runner 根目录**一定**有它。
+    # 它不在，说明被人删过——而跑着的 listener 手里可能还端着那份已删文件里的
+    # PATH=，这时回退去读 `.path` 就是拿另一个 PATH 当答案。删除这件事没有 mtime
+    # 可比（文件都没了），只能靠「它本该在」这条来认。
+    #
+    # 试过用**目录 mtime** 来发现删除：POSIX 语义上目录项的增删确实更新目录
+    # mtime（实测确认），但**这台机器上 `~/actions-runner` 自己的 mtime 比服务启动
+    # 还新 5000 多秒**——runner 运行期间会在根目录里增删条目。拿它当判据等于常年
+    # 报红。又一个「看起来能代表那件事」的近似量，不用。
+    if [ ! -e "$root/.env" ]; then
+        printf '%s/.env 不见了——config.sh 一定会建它，不在说明被删过；跑着的 listener 可能还用着那份已删配置里的 PATH\n' "$root"
+        return 0
+    fi
     for f in "$root/.env" "$root/.path"; do
         [ -e "$f" ] || continue
-        if config_is_newer_than_service "$unit" "$f"; then
-            printf '%s\n' "$f"
-            return 0
-        fi
+        config_is_newer_than_service "$unit" "$f"
+        rc=$?
+        case "$rc" in
+            0) printf '%s 比服务的启动时间新——改了配置没重启，跑着的 listener 还是旧 PATH\n' "$f"
+               return 0 ;;
+            2) printf '%s 的新鲜度量不出来（取不到进程启动时刻或文件 mtime）——无从判断配置是否已生效\n' "$f"
+               return 0 ;;
+        esac
     done
     return 1
 }
@@ -421,8 +445,7 @@ SERVICE_ROWS="$(
         fi
         stale="$(stale_config_of_root "$unit" "$root")" || stale=""
         if [ -n "$stale" ]; then
-            printf 'bad\t%s\t%s\n' "$unit" \
-                "$stale 比服务的启动时间新——改了配置没重启，跑着的 listener 还是旧 PATH"
+            printf 'bad\t%s\t%s\n' "$unit" "$stale"
             continue
         fi
         # **明确为空的 PATH 也是坏配置。** `.env` 里写 `PATH=`（值为空）是合法的

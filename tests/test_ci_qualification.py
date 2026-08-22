@@ -951,7 +951,7 @@ def test_config_edited_after_the_service_started_is_not_trusted(tmp_path):
     assert r.stdout.split("BAD<")[1].startswith(">"), f"误报成过期：{r.stdout!r}"
 
     # 配置比服务新 —— 必须报出来，且**不进**待查表（否则照旧报绿）
-    r = _run_sh(stubs + 'stale_config_of_root() { printf "%s/.env\\n" "$2"; }\n' + body)
+    r = _run_sh(stubs + 'stale_config_of_root() { printf "%s/.env 比服务的启动时间新——改了配置没重启\\n" "$2"; }\n' + body)
     assert "没重启" in r.stdout, f"改了配置没重启，却没报出来：{r.stdout!r}"
     assert r.stdout.split("PATHS<")[1].startswith(">"), \
         f"过期的配置还是进了待查表：{r.stdout!r}"
@@ -1700,30 +1700,43 @@ def test_the_legacy_dropin_note_does_not_claim_it_was_superseded():
 
 @requires_posix_bash
 def test_both_config_files_are_checked_for_freshness(tmp_path):
-    """回退到 `.path` 时也要查 `.env` 的新鲜度。
+    """回退到 `.path` 时也要查 `.env` 的新鲜度，且「量不出来」不等于「更旧」。
 
     管理员把 `.env` 里的 PATH= 删掉/注释掉之后，解析会回退到 `.path`——可「删掉
     那一行」本身就是一次修改，而跑着的 listener 手里还是删之前的 `.env` PATH。
-    只查选中的那个文件，这种情况会被判成「没改过」。
+
+    判据是三态的：0=比服务新、1=确实更旧、2=量不出来。**2 不能当成 1**——
+    非 root 管理员在看不到别人进程元数据的机器上（hidepid 之类）会落进这一格，
+    那时拿磁盘上的当前 PATH 去查工具就是又一条静默假绿。
     """
     root = tmp_path / "r"
     root.mkdir()
     (root / ".env").write_text("RUNNER_TOOL_CACHE=/opt\n", encoding="utf-8")  # 没有 PATH=
     (root / ".path").write_text("/usr/bin:/bin\n", encoding="utf-8")
 
-    script = ('config_is_newer_than_service() { [ "$2" = "$TARGET" ]; }\n'
+    script = ('config_is_newer_than_service() {\n'
+              '  [ "$2" = "$TARGET" ] && return "$RC"\n'
+              '  return 1\n'
+              '}\n'
               + _bootstrap_funcs("stale_config_of_root")
               + '\nstale_config_of_root u "$1" || echo NONE\n')
 
     import os as _os
-    for target, expect in [(str(root / ".env"), str(root / ".env")),
-                           (str(root / ".path"), str(root / ".path")),
-                           ("/nothing", "NONE")]:
+    cases = [
+        (str(root / ".env"),  "0", "比服务的启动时间新"),
+        (str(root / ".path"), "0", "比服务的启动时间新"),
+        (str(root / ".env"),  "2", "量不出来"),      # ← 量不出来必须报，不能当成 fresh
+        (str(root / ".path"), "2", "量不出来"),
+        ("/nothing",          "0", "NONE"),
+    ]
+    for target, rc, expect in cases:
         r = subprocess.run(["bash", "-c", script, "sh", str(root)],
                            capture_output=True, text=True, encoding="utf-8",
-                           env={**_os.environ, "TARGET": target})
-        assert r.stdout.strip() == expect, \
-            f"TARGET={target} 时回了 {r.stdout.strip()!r}，应是 {expect}"
+                           env={**_os.environ, "TARGET": target, "RC": rc})
+        assert expect in r.stdout, \
+            f"TARGET={target} RC={rc} 回了 {r.stdout.strip()!r}，应含 {expect!r}"
+        if expect != "NONE":
+            assert target in r.stdout, f"没点名是哪个文件：{r.stdout!r}"
 
 
 # ---- 第六轮复审：两条都是「--check 报了绿而 job 跑不起来」-------------------
@@ -1933,9 +1946,12 @@ def test_an_unreadable_env_is_not_mistaken_for_a_missing_path_line(tmp_path):
                   + '\nprintf "BAD<%s>\\nPATHS<%s>\\n" "$SERVICE_BAD" "$SERVICE_PATHS"\n')
         return _run_sh(script).stdout
 
-    # ① 没有 .env，只有 .path —— 回退是对的
+    # ① `.env` 在、但里面没有 PATH= —— 这时回退到 .path 是对的
+    #    （**不能**用「没有 .env」来构造这一格：注册过的 runner 一定有 .env，
+    #      env.sh 无条件 touch 它；没有就是被删过，另有一条用例钉那种情形）
     a = tmp_path / "a"
     a.mkdir()
+    (a / ".env").write_text("RUNNER_TOOL_CACHE=/opt\n", encoding="utf-8")
     (a / ".path").write_text("/usr/bin:/bin\n", encoding="utf-8")
     out = rows(str(a))
     assert "/usr/bin:/bin" in out.split("PATHS<")[1], f"没有 .env 时该回退到 .path：{out!r}"
@@ -1978,6 +1994,7 @@ def test_an_unreadable_env_is_not_mistaken_for_a_missing_path_line(tmp_path):
     # ④ 没有 .env，.path 读不到 —— 这时才是真的没有答案
     d = tmp_path / "d"
     d.mkdir()
+    (d / ".env").write_text("RUNNER_TOOL_CACHE=/opt\n", encoding="utf-8")  # 有 .env、无 PATH=
     pth = d / ".path"
     pth.write_text("/usr/bin:/bin\n", encoding="utf-8")
     if not _make_unreadable(pth):
@@ -2187,3 +2204,58 @@ def test_the_unreadable_precondition_is_verified_not_assumed():
     assert not bad, (
         f"这些用例直接 chmod 000：{bad}。root 下它拦不住读，前提会悄悄不成立——"
         "走 _make_unreadable，它会真读一次来核实")
+
+
+# ---- 第十轮复审：.env 被删；以及「量不出来」不等于「更旧」---------------------
+
+
+@requires_posix_bash
+def test_a_deleted_env_is_treated_as_needing_a_restart(tmp_path):
+    """`.env` 被删掉时没有 mtime 可比——靠「它本该在」这条来认。
+
+    runner 的 `config.sh` 会调 `env.sh`，而 `env.sh` **无条件** `touch .env`
+    （没有就建），所以注册过的 runner 根目录一定有它。它不在，说明被人删过；
+    而跑着的 listener 手里可能还端着那份已删文件里的 `PATH=`，这时回退去读
+    `.path` 就是拿另一个 PATH 当答案——`--check` 可能在那儿找到 cargo 并报通过，
+    而 job 根本跑不了。
+
+    **不用目录 mtime 来发现删除**：POSIX 语义上目录项的增删确实更新目录 mtime
+    （实测确认过），但真机上 `~/actions-runner` 自己的 mtime 比服务启动还新
+    5000 多秒——runner 运行期间会在根目录里增删条目，拿它当判据等于常年报红。
+    """
+    script = ('config_is_newer_than_service() { return 1; }\n'   # 一切都「确实更旧」
+              + _bootstrap_funcs("stale_config_of_root")
+              + '\nstale_config_of_root u "$1" || echo NONE\n')
+
+    # .env 在（无 PATH=）+ .path 在 → 正常回退，不报
+    ok = tmp_path / "ok"
+    ok.mkdir()
+    (ok / ".env").write_text("X=1\n", encoding="utf-8")
+    (ok / ".path").write_text("/usr/bin:/bin\n", encoding="utf-8")
+    assert "NONE" in _run_sh(script, str(ok)).stdout
+
+    # .env 被删（只剩 .path）→ 必须报，且点名 .env
+    gone = tmp_path / "gone"
+    gone.mkdir()
+    (gone / ".path").write_text("/usr/bin:/bin\n", encoding="utf-8")
+    out = _run_sh(script, str(gone)).stdout
+    assert "NONE" not in out, f".env 被删掉却没报出来：{out!r}"
+    assert "/.env" in out and "不见了" in out, f"没点名是 .env 不见了：{out!r}"
+
+
+def test_the_freshness_predicate_is_tri_state():
+    """0=比服务新 / 1=确实更旧 / 2=量不出来，三者必须分开。
+
+    以前「量不出来」与「确实更旧」都回 1，调用方一律当成「没改过」——非 root
+    管理员在看不到别人进程元数据的机器上（hidepid）就落进这一格，于是拿磁盘上的
+    当前 PATH 去查工具，而 listener 还用着旧的。又一条静默假绿。
+    """
+    src = _bootstrap()
+    fn = src.split("\nconfig_is_newer_than_service() {", 1)[1].split("\n}\n", 1)[0]
+    code = "\n".join(ln for ln in fn.splitlines() if not ln.lstrip().startswith("#"))
+    assert code.count("return 2") >= 4, \
+        "取不到 pid / 文件年龄 / 进程年龄 时都该回 2（量不出来），而不是 1"
+    assert "return 1" in code, "「确实更旧」那一格没了"
+    # 调用方必须把 2 单独处理，而不是与 1 合流
+    caller = src.split("\nstale_config_of_root() {", 1)[1].split("\n}\n", 1)[0]
+    assert "2)" in caller, "stale_config_of_root 没有单独处理「量不出来」"
