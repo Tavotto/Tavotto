@@ -26,7 +26,7 @@ import pathgeom
 from overrides import (BBOX_DEFAULTS, ColorbarProxy, FigState, HANDLERS, HATCHES, SeriesGroup,
                        TickLabel, TickSet, _ARROWSTYLES, _CB_EXTENDS, _LEGEND_LOCS,
                        _TICK_FORMATS, _TICK_MINOR_FORMATS,
-                       collection_caps, color_mapping_is_live,
+                       collection_caps, color_mapping_is_live, colorbar_host_count,
                        is_color_mapped, is_linecoll_family,
                        _arrow_style, _arrowstyle_name, _axis_arrows_on,
                        _linestyle_name, _linecoll_linestyle_name,
@@ -1146,10 +1146,26 @@ def _colorbar_fields(p) -> list[dict]:
     return [
         {"prop": "label", "type": "text", "value": _cb_axis(p).label.get_text()},
         # 方向：就地结构改造（长短轴互换 + 重画色带 + 刻度换轴），实现见
-        # overrides._cb_reorient。`fig.axes` 顺序不动，所以 gid / 撤销 / 写回照旧
-        {"prop": "orientation", "type": "enum",
-         "value": str(getattr(cb, "orientation", "vertical")),
-         "options": ["vertical", "horizontal"]},
+        # overrides._cb_reorient。`fig.axes` 顺序不动，所以 gid / 撤销 / 写回照旧。
+        #
+        # **多宿主色条不宣称这条能力**（1.0 的 guard，issue #69）：
+        # `_cb_target_rect()` 反解新矩形时只拿得到 `cb.mappable.axes`，也就是
+        # **第一个**宿主。`fig.colorbar(im, ax=[a1, a2])` 的色条视觉上横跨两图，
+        # 翻转之后会被缩到一图宽——实测 3.10.8 / 3.11.1：
+        #
+        #     a1 的 x 跨度  (0.125, 0.407)
+        #     a2 的 x 跨度  (0.463, 0.745)
+        #     翻转后        x0=0.125  宽 0.282     ← 只跨 a1
+        #     应当          x0=0.125  宽 0.620
+        #
+        # **宁可少开放一个，不可开放了却画错**：一个「点了就把图排版弄坏」的
+        # 控件比一个不存在的控件糟糕得多，而用户没有理由预料到它会这样。
+        # 真修法要把宿主从一个 axes 改成一组、`_cb_place` / `_cb_target_rect` /
+        # `axes_follow` 三处按并集算——那是落位模型的改动，1.0 稳定期不做。
+        *([{"prop": "orientation", "type": "enum",
+            "value": str(getattr(cb, "orientation", "vertical")),
+            "options": ["vertical", "horizontal"]}]
+          if colorbar_host_count(cb) == 1 else []),
         # 两端的延伸三角（「超出色阶的值画成箭头」）。同样是结构改造：
         # 见 overrides._set_cb_extend
         {"prop": "extend", "type": "enum",
@@ -1834,6 +1850,20 @@ def build_manifest(state: FigState, stem: str) -> dict:
             # 名字，这个才是「这是谁的色条」。两者都在 state.index 里认得出
             entry["colorbar_key"] = artist.identity
             entry["host_gid"] = artist.host_gid
+            # **能力为什么不在，要说出来。** 少一个控件而不给理由，用户只会
+            # 以为是漏了或是坏了。这里给的是稳定 code，供界面按 code 翻译成
+            # 「这条色条横跨多个子图，方向切换在 1.0 里不支持」。
+            #
+            # **前端目前还没有渲染它**（issue #76）：`ManifestElement` 没声明
+            # 这个字段，inspector 只按 `editable` 建 UI。所以此刻这条 reason
+            # 只到 manifest、没到眼睛。写在这里而不是含糊过去，是因为
+            # 隔壁那份文档一度写着「界面才说得出」——而那句话当时不成立。
+            # 可选字段：旧前端不认识它会原样忽略，写回自检只比 gid 集合与几何。
+            hosts = colorbar_host_count(artist.cb)
+            if hosts > 1:
+                entry["unsupported_props"] = [
+                    {"prop": "orientation", "reason": "multi_host_colorbar",
+                     "detail": {"hosts": hosts}}]
         elif isinstance(artist, Collection):
             # 散点（PathCollection）**不再单开一支**：它当年之所以有自己的
             # 分支，是因为 `get_window_extent` 对集合回空框、需要用数据范围
