@@ -931,3 +931,96 @@ def test_summary_refuses_reports_from_another_run(tmp_path, monkeypatch):
     assert "PASS" not in soak_line[0], (
         f"上一轮的报告被当成本轮的结果了：{soak_line[0]}")
     assert "未运行" in soak_line[0], f"该标成未运行：{soak_line[0]}"
+
+
+def test_summary_keeps_this_runs_report_even_across_a_rerun(tmp_path, monkeypatch):
+    """身份要带 attempt，而且**每个写报告的脚本都得真的写 metadata**。
+
+    两条都是 #61 的 review 逮到的，方向相反、后果一样坏：
+
+    * `GITHUB_RUN_ID` 在「Re-run jobs」时**复用**，只有 `GITHUB_RUN_ATTEMPT`
+      递增——只比 run_id 的话，上一次尝试留下的报告会被当成本次的（说谎）。
+    * `compat_matrix` 当时**根本没写 metadata**，于是本轮真跑出来的
+      CompatBench 报告会被一律拒收（误报未运行）。**我修「说谎」的时候造出了
+      「误报」**，两头都是诊断失真。
+    """
+    import importlib.util, json as _json, io as _io, contextlib, sys as _sys
+    (tmp_path / "reports").mkdir()
+    # 本轮 attempt=2；报告来自 attempt=1（同一个 run_id）
+    (tmp_path / "reports" / "soak.json").write_text(_json.dumps(
+        {"ok": True, "metadata": {"run_id": "42", "run_attempt": "1"}}), encoding="utf-8")
+    # 本轮自己的 CompatBench 报告，必须留下
+    (tmp_path / "reports" / "compat.json").write_text(_json.dumps(
+        {"ok": True, "metadata": {"run_id": "42", "run_attempt": "2"}}), encoding="utf-8")
+    monkeypatch.setenv("TAVOTTO_CI_STATE_ROOT", str(tmp_path))
+    monkeypatch.setenv("GITHUB_RUN_ID", "42")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+
+    spec = importlib.util.spec_from_file_location("_sm2", CI_DIR / "summarize.py")
+    mod = importlib.util.module_from_spec(spec)
+    _sys.path.insert(0, str(CI_DIR))
+    spec.loader.exec_module(mod)
+    buf = _io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        mod.main(["--mode", "release"])
+    out = buf.getvalue()
+
+    soak = [ln for ln in out.splitlines() if "soak" in ln.lower()][0]
+    assert "PASS" not in soak, f"上一次 attempt 的报告被当成本次的了：{soak}"
+    compat = [ln for ln in out.splitlines()
+              if "兼容" in ln or "compat" in ln.lower()][0]
+    assert "未运行" not in compat, f"本轮自己的报告被误判成未运行了：{compat}"
+
+
+def test_every_report_writer_stamps_its_identity():
+    """写报告的脚本都要 `run_metadata()`，否则汇总认不出它是本轮的。
+
+    `compat_matrix` 当时就漏了——而漏掉的表现不是报错，是那一行永远显示
+    「未运行」。判据按**调用点**扫，别只看文件里出现过这个名字。
+    """
+    # **主语第三次才对。** 依次错过：只扫 `write_report()` 的调用点
+    # （compat_matrix 自己 json.dump，不走那个助手）、按「源码里出现哪个报告名」
+    # 扫（compat.json 这个名字压根不在它源码里，是 workflow 用 `--json` 传进去的）。
+    # 正确的问法是：**workflow 里哪个脚本产出 SECTIONS 里的那份报告。**
+    import ast, re
+    spec_src = (CI_DIR / "summarize.py").read_text(encoding="utf-8")
+    wanted = set(re.findall(r'"(\w+\.json)"', spec_src.split("SECTIONS", 1)[1][:800]))
+    assert len(wanted) >= 4, f"只解析出 {wanted}——SECTIONS 的形状变了，判据失效"
+
+    # 报告有两种产出方式，都要认：
+    #   ① 脚本自己 `write_report("x.json", ...)`（多数）
+    #   ② workflow 用 `--json .../x.json` 把路径传进去（compat_matrix 是这种，
+    #      所以它源码里根本没有 "compat.json" 这个字面量）
+    producers: dict[str, str] = {}
+    for path in sorted(CI_DIR.glob("*.py")):
+        src = path.read_text(encoding="utf-8")
+        for rep in wanted:
+            if f'"{rep}"' in src:
+                producers[rep] = path.name
+    wf = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
+    for step in re.split(r"\n(?=      - name:)", wf):
+        m = re.search(r"scripts/ci/(\w+)\.py", step)
+        if not m:
+            continue
+        for rep in wanted:
+            if rep in step:
+                producers[rep] = m.group(1) + ".py"
+    assert len(producers) >= 5, f"只对上 {producers}——产出关系解析失效了"
+
+    missing = []
+    for rep, script in sorted(producers.items()):
+        src = (CI_DIR / script).read_text(encoding="utf-8")
+        calls = {getattr(n.func, "attr", getattr(n.func, "id", ""))
+                 for n in ast.walk(ast.parse(src)) if isinstance(n, ast.Call)}
+        if "run_metadata" not in calls:
+            missing.append(f"{script}（产出 {rep}）")
+    assert not missing, (
+        f"这些脚本产出了汇总要读的报告，却一次都没调 run_metadata()——"
+        f"汇总会把它们当成上一轮的、标成「未运行」：{missing}")
+
+    # **精度写在明处**：判的是「这个脚本调没调过 run_metadata()」，不是
+    # 「写这份报告时盖上了没有」。后者要跟着数据流走，静态做不可靠。
+    # 所以它逮得住「整个脚本都忘了盖」（compat_matrix 当时就是），逮不住
+    # 「调了但没放进这份 payload」。够用，但别当成更强的保证。
+

@@ -144,13 +144,23 @@ def main(argv: list[str] | None = None) -> int:
     # 失败、最需要看清「究竟跑到哪一步」的时候。
     # 拿不到 GITHUB_RUN_ID（本地手工跑）时不设限——那时本来就没有「本轮」
     # 可言，硬判会让本地跑出来的汇总全是「未运行」。
-    this_run = os.environ.get("GITHUB_RUN_ID", "")
+    # **身份要带 attempt。** GitHub 的「Re-run jobs」复用同一个 GITHUB_RUN_ID，
+    # 只有 GITHUB_RUN_ATTEMPT 递增——只比 run_id 的话，上一次尝试留下的报告
+    # 会被当成本次的（#61 的 review 逮到）。
+    def _identity(env_or_meta) -> tuple:
+        get = (env_or_meta.get if isinstance(env_or_meta, dict) else None)
+        src = env_or_meta if get else os.environ
+        return (str(src.get("run_id" if get else "GITHUB_RUN_ID", "") or ""),
+                str(src.get("run_attempt" if get else "GITHUB_RUN_ATTEMPT", "") or ""))
+
+    this_run = _identity(os.environ)
 
     for fname, label, kind in SECTIONS:
         data = _read(d / fname)
-        if data is not None and this_run:
-            got = str(((data.get("metadata") or {}).get("run_id") or ""))
-            if got != this_run:
+        if data is not None and this_run[0]:
+            meta_id = _identity(data.get("metadata") or {})
+            got = meta_id[0]
+            if meta_id != this_run:
                 rows.append(f"| {label} | — | 未运行（跳过上一轮的报告 run_id={got or '缺失'}）|")
                 continue
         if data is None:
