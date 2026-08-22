@@ -1270,7 +1270,15 @@ def test_child_output_survives_a_legacy_codepage():
     这条**平台无关**：不假装在 Windows 上跑，而是显式指定那个失败的编码，
     直接测那段逻辑本身——与本文件其余用例同一策略。
     """
-    child = "import sys; sys.stdout.write('渲染环境不可用：缺少 matplotlib')"
+    # **子进程必须是确定性的 UTF-8 字节生产者。** 写成 `sys.stdout.write(中文)`
+    # 是不行的：Windows 旧代码页下子进程的 stdout（管道）按那个代码页编码，
+    # 写中文当场 `UnicodeEncodeError`，`returncode != 0`——用例会在它本该保护
+    # 的那个平台上直接失败，而且失败原因与被测的「父进程解码」毫无关系。
+    # 走 `stdout.buffer.write` 绕开文本层，产出的字节与 locale 无关。
+    # （Codex 在 #57 上指出的正是这个：上一版只控制了父进程的解码器。）
+    child = ("import sys; "
+             "sys.stdout.buffer.write('渲染环境不可用：缺少 matplotlib'"
+             ".encode('utf-8'))")
 
     # ① 按旧代码页解码：诊断没了（丢字节或整段变成替换字符）
     legacy = subprocess.run(  # 复现用：这里就是要那个会丢字节的旧代码页
