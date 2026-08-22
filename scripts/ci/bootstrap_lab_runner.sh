@@ -158,9 +158,21 @@ root_of_unit() {
 env_path_of_root() {
     local f="$1/.env"
     [ -r "$f" ] || return 1
-    awk '{ i = index($0, "=")
+    # **先把 CR 当行终止符处理。** runner 读 .env 用的是 .NET 的
+    # `File.ReadAllLines`，它把 `\r\n`、`\n`、**以及单独的 `\r`** 都当行终止符
+    # 并剔除；awk 只认 `\n`，于是 CRLF 的 .env 会让 PATH 的**最后一段**带上一个
+    # `\r`（`…/.cargo/bin\r`）。那个目录不存在，于是我们报「cargo 缺失」，而跑着
+    # 的 listener 找得到它——一次不该有的红。`tr '\r' '\n'` 逐字复现 ReadAllLines
+    # 的三种终止符（多出来的空行两边都会跳过）。
+    #
+    # **`.path` 刻意不这么处理**：runsvc.sh 用的是 `export PATH=$(cat .path)`，
+    # 命令替换只吃掉结尾的换行、**不吃 `\r`**。CRLF 的 .path 会让 runner 自己的
+    # PATH 真的带上 `\r`，那时报「找不到」才是**对的**。两个文件的读法不同，
+    # 判据就得跟着不同。
+    tr '\r' '\n' < "$f" \
+    | awk '{ i = index($0, "=")
            if (i > 1 && substr($0, 1, i - 1) == "PATH") { v = substr($0, i + 1); found = 1 } }
-         END { if (!found) exit 1; print v }' "$f"
+         END { if (!found) exit 1; print v }'
 }
 
 # **「文件不存在」与「文件在但读不到」是两回事。** `--check` 明确允许非 root 的
@@ -297,29 +309,60 @@ probe_cmd() {
 # 所以判据**刻意做成保守的**：`文件 mtime >= 服务启动秒 - 1`。宁可多报一次
 # 「要重启」（假红，重启一次即消），也不放过一次同秒内的修改（假绿，会让
 # --check 拿着新 PATH 去探测，而跑着的 listener 用的还是旧值）。
-STALE_SLACK_SEC=1   # 覆盖「整秒 + 不同来源之间约一秒」的合计不确定度
+# 判据用**年龄差**，两侧各自在自己的时钟域里做差，不跨域比绝对值：
+#
+#     file_age = now(REALTIME)   - mtime(REALTIME)
+#     proc_age = uptime(BOOTTIME) - starttime/HZ(BOOTTIME)
+#     文件比进程新  ⟺  file_age < proc_age
+#
+# 这样绕开了此前那两条死路：systemd 的 *Timestamp 只有整秒；而 btime 换算回墙钟
+# 也只有整秒（绕一圈精度照样丢）。年龄差两边都精确到约 10ms（HZ=100 实测，
+# /proc/uptime 给到厘秒），**而且语义正确**——starttime 是内核自己记的进程创建
+# 时刻，不是 `/proc/<pid>` 目录的 mtime（那个是 inode 被实例化的时间，实测过，
+# 别再回去用它）。
+#
+# 精度到位之后，此前那个 1 秒保守余量**必须去掉**：`.env` 写在第 N 秒、listener
+# 在第 N 或 N+1 秒重启时，带余量的判据会一直报「没重启」——一次**清不掉**的假红，
+# 而运维学到的是「这个提示可以无视」。实测两格都对：先起进程再改文件 → stale；
+# 先改文件再起进程（同一秒内）→ fresh。
+#
+# 只留一点点采样偏斜余量：uptime 与 now 是两次独立读取，差几毫秒。余量加在
+# proc_age 上，偏斜方向因此指向「可疑」而不是「放过」。
+STALE_SKEW_SEC=0.05
 
-service_start_epoch() {
-    local t
-    t="$(systemctl show -p ExecMainStartTimestamp --value "$1" 2>/dev/null)"
-    [ -n "${t:-}" ] || return 1
-    date -d "$t" +%s 2>/dev/null
+_proc_age_sec() {
+    local pid="$1" up st hz
+    up="$(cut -d' ' -f1 /proc/uptime 2>/dev/null)" || return 1
+    st="$(awk '{print $22}' "/proc/$pid/stat" 2>/dev/null)" || return 1
+    hz="$(getconf CLK_TCK 2>/dev/null)" || return 1
+    [ -n "$up" ] && [ -n "$st" ] && [ -n "$hz" ] || return 1
+    awk -v u="$up" -v s="$st" -v h="$hz" 'BEGIN { printf "%.3f", u - s / h }'
 }
 
-# 比较本身单独拿出来：它不碰 stat、不碰 systemctl，因此在任何平台上都能直接
-# 喂数跑一遍——判据的核心不该只能在 Linux 上验。
-# 参数：$1 = 文件 mtime（秒），$2 = 服务启动（秒）。
-_file_is_stale() {
-    case "$1" in ''|*[!0-9]*) return 1 ;; esac
-    case "$2" in ''|*[!0-9]*) return 1 ;; esac
-    [ "$1" -ge "$(($2 - STALE_SLACK_SEC))" ]
+_file_age_sec() {
+    local f="$1" now mt
+    now="$(date +%s.%N 2>/dev/null)" || return 1
+    mt="$(stat -c %.9Y "$f" 2>/dev/null)" || return 1
+    case "$mt" in ''|*[!0-9.]*) return 1 ;; esac
+    awk -v n="$now" -v m="$mt" 'BEGIN { printf "%.3f", n - m }'
+}
+
+# 这里用 awk 的浮点比是安全的：比的是**秒数之差**（几百到几十万，三位小数），
+# 不是 19 位有效数字的 epoch —— 那种才会被 double 悄悄舍掉要分辨的那几位。
+_age_says_stale() {
+    local fa="$1" pa="$2"
+    case "$fa" in ''|*[!0-9.-]*) return 1 ;; esac
+    case "$pa" in ''|*[!0-9.-]*) return 1 ;; esac
+    awk -v a="$fa" -v b="$pa" -v k="$STALE_SKEW_SEC" 'BEGIN { exit !(a < b + k) }'
 }
 
 config_is_newer_than_service() {
-    local unit="$1" f="$2" ft st
-    st="$(service_start_epoch "$unit")" || return 1
-    ft="$(stat -c %Y "$f" 2>/dev/null)" || return 1
-    _file_is_stale "$ft" "$st"
+    local unit="$1" f="$2" pid fa pa
+    pid="$(systemctl show -p MainPID --value "$unit" 2>/dev/null)" || return 1
+    [ -n "${pid:-}" ] && [ "$pid" != "0" ] || return 1
+    fa="$(_file_age_sec "$f")" || return 1
+    pa="$(_proc_age_sec "$pid")" || return 1
+    _age_says_stale "$fa" "$pa"
 }
 
 # **两个文件都要查新鲜度，不只是这次选中的那个。** 管理员把 `.env` 里的 PATH=

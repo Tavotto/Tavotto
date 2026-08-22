@@ -1698,65 +1698,6 @@ def test_the_legacy_dropin_note_does_not_claim_it_was_superseded():
 # ---- 第五轮复审：/proc 目录 mtime 不是进程启动时刻 ---------------------------
 
 
-def test_process_start_time_is_never_taken_from_proc_dir_mtime():
-    """`/proc/<pid>` 的 mtime 是 **inode 被实例化**的时刻，不是进程起来的时刻。
-
-    真机实测（Ubuntu 24.04 / kernel 6.8）：起一个进程、**等 5 秒再第一次** stat
-    它的 /proc 目录——
-
-        T0（进程创建）  = 1787400324.471660887
-        5 秒后首次 stat = 1787400329.477145631   ← 与当时的 now 只差 4ms
-
-    它一旦实例化就不再漂（连采三次一模一样），所以长期运行的进程看上去
-    「碰巧对」。上一版正是被这个碰巧骗过去的：拿它当亚秒精度的服务启动时刻，
-    真机验证还「通过」了。**一个语义错的精确值，比一个诚实的粗略值坏得多。**
-    """
-    src = _bootstrap()
-    for fn_name in ("config_is_newer_than_service", "service_start_epoch"):
-        fn = src.split(f"\n{fn_name}() {{", 1)[1].split("\n}\n", 1)[0]
-        code = "\n".join(ln for ln in fn.splitlines()
-                         if not ln.lstrip().startswith("#"))
-        assert "/proc/" not in code, \
-            f"{fn_name} 又去读 /proc 了——那里没有「进程什么时候起来的」这个量"
-    fn = src.split("\nservice_start_epoch() {", 1)[1].split("\n}\n", 1)[0]
-    assert "ExecMainStartTimestamp" in fn, \
-        "服务启动时刻要问 systemd（语义正确，代价是只有整秒）"
-
-
-@requires_posix_bash
-def test_the_staleness_check_is_conservative_at_second_granularity():
-    """只有整秒可用时，判据必须偏向「可能更新」——假红不假绿。
-
-    不同来源之间还能差出约一秒（systemd 记的是它 exec 的时刻，内核 starttime
-    记的是进程创建，实测这台机器上两者差 0.62s），所以留一秒余量。
-    """
-    src = _bootstrap()
-    slack = int(src.split("STALE_SLACK_SEC=", 1)[1].split()[0])
-    assert slack >= 1, "没有留余量，同秒或差一秒内的修改会被放过"
-
-    script = (f"STALE_SLACK_SEC={slack}\n" + _bootstrap_funcs("_file_is_stale")
-              + '\nif _file_is_stale "$1" "$2"; then echo STALE; else echo FRESH; fi\n')
-    for ft, st, want in [
-        ("1000", "1000", "STALE"),   # 同一秒 → 不能证明更旧
-        ("1000", "1001", "STALE"),   # 落在余量之内
-        ("1000", "1005", "FRESH"),   # 明显早于服务启动
-        ("1010", "1000", "STALE"),   # 明显更新
-        ("", "1000", "FRESH"),       # 读不出来就别乱报（上层另有 bad 一档）
-        ("abc", "1000", "FRESH"),
-    ]:
-        r = _run_sh(script, ft, st)
-        assert r.stdout.strip() == want, \
-            f"_file_is_stale({ft!r}, {st!r}) 回了 {r.stdout.strip()!r}，应是 {want}"
-        assert not r.stderr.strip(), f"比较 {ft!r} {st!r} 报错了：{r.stderr!r}"
-
-
-def test_the_staleness_check_routes_through_the_shared_comparator():
-    """真实调用点必须走同一个比较器，否则上面那条只验了个孤立函数。"""
-    src = _bootstrap()
-    fn = src.split("\nconfig_is_newer_than_service() {", 1)[1].split("\n}\n", 1)[0]
-    assert "_file_is_stale" in fn, "没走共用比较器——余量与相等语义会分叉"
-
-
 @requires_posix_bash
 def test_both_config_files_are_checked_for_freshness(tmp_path):
     """回退到 `.path` 时也要查 `.env` 的新鲜度。
@@ -2032,3 +1973,93 @@ def test_an_unreadable_env_is_not_mistaken_for_a_missing_path_line(tmp_path):
         f"没有点名读不到的是 .path：{reason!r}"
     assert "与 .path 都读不到" not in reason, \
         f"把「.env 不存在」说成了「.env 读不到」：{reason!r}"
+
+
+# ---- 第八轮复审：重启完必须能清掉，以及 CRLF ---------------------------------
+
+
+def test_process_start_time_comes_from_the_kernel_not_the_proc_dir_mtime():
+    """`/proc/<pid>/stat` 的 starttime 是内核记的进程创建时刻；目录 mtime 不是。
+
+    这两个都长在 `/proc/<pid>` 下，但只有前者对。目录 mtime 是 **inode 被实例化**
+    的时间——真机实测：起进程、等 5 秒再第一次 stat，拿到的是「此刻」。
+    判据必须能分清这两个，光禁止 `/proc` 会把对的那个也一起禁掉。
+    """
+    src = _bootstrap()
+    fn = src.split("\n_proc_age_sec() {", 1)[1].split("\n}\n", 1)[0]
+    code = "\n".join(ln for ln in fn.splitlines() if not ln.lstrip().startswith("#"))
+    assert "/stat" in code and "$22" in code, "没用内核记的 starttime（stat 第 22 字段）"
+    assert "/proc/uptime" in code, "没取 uptime——年龄差要在同一个时钟域里做"
+    assert "CLK_TCK" in code, "ticks 没换算成秒"
+    whole = src.split("\nconfig_is_newer_than_service() {", 1)[1].split("\n}\n", 1)[0]
+    assert 'stat -c %Y "/proc/' not in whole and 'stat -c %.9Y "/proc/' not in whole, \
+        "又回去读 /proc/<pid> 目录的 mtime 了"
+
+
+@requires_posix_bash
+def test_a_restart_after_the_edit_clears_the_stale_report():
+    """改完就重启必须能清掉——否则那是一次**清不掉**的假红。
+
+    这正是上一版 1 秒保守余量的代价：`.env` 写在第 N 秒、listener 在 N 或 N+1 秒
+    重启，判据仍然报「没重启」，运维学到的是「这个提示可以无视」。
+    年龄差把精度提到约 10ms 之后，两格都分得开。
+    """
+    # **余量要从脚本里读**，不能在用例里另写一个数——写死的话「把余量放大回 1 秒」
+    # 这种变异一条都不会红（实测过），而那正是这条用例存在的理由。
+    src = _bootstrap()
+    skew = float(src.split("STALE_SKEW_SEC=", 1)[1].split()[0])
+    assert skew < 0.2, (
+        f"采样偏斜余量 {skew}s 太大：它只该覆盖 uptime 与 now 两次读取之间的几毫秒。"
+        "放大到接近一次重启的量级，就会变成清不掉的假红")
+    script = (f"STALE_SKEW_SEC={skew}\n" + _bootstrap_funcs("_age_says_stale")
+              + '\nif _age_says_stale "$1" "$2"; then echo STALE; else echo FRESH; fi\n')
+    cases = [
+        # file_age, proc_age
+        ("0.007", "0.160", "STALE"),   # 先起进程、再改文件（真机实测的那组数）
+        ("0.312", "0.150", "FRESH"),   # 先改文件、再起进程 ← 复审说的那格
+        ("195286.182", "29242.930", "FRESH"),  # 两天前写的 .env，今天启动的服务
+        ("10.0", "0.5", "FRESH"),      # 改完 9.5 秒后重启 → 必须清掉
+        ("0.5", "10.0", "STALE"),      # 服务起来 10 秒后才改的文件
+    ]
+    for fa, pa, want in cases:
+        r = _run_sh(script, fa, pa)
+        assert r.stdout.strip() == want, \
+            f"file_age={fa} proc_age={pa} 回了 {r.stdout.strip()!r}，应是 {want}"
+
+
+@requires_posix_bash
+def test_crlf_line_endings_do_not_leak_a_carriage_return_into_path(tmp_path):
+    """CRLF 的 `.env` 不许把 `\\r` 带进 PATH 的最后一段。
+
+    runner 读 `.env` 用 .NET 的 `File.ReadAllLines`，`\\r\\n` / `\\n` / 单独的 `\\r`
+    都当行终止符剔除；awk 只认 `\\n`。差异的后果是 PATH 末段变成
+    `…/.cargo/bin\\r`，那个目录不存在——我们报「cargo 缺失」，而跑着的 listener
+    找得到它。一次不该有的红。
+    """
+    root = tmp_path / "r"
+    root.mkdir()
+    (root / ".env").write_bytes(b"# note\r\nPATH=/a:/b:/home/runner/.cargo/bin\r\nX=1\r\n")
+    script = _bootstrap_funcs("env_path_of_root") + '\nenv_path_of_root "$1" | od -An -c | tr -s " "\n'
+    r = _run_sh(script, str(root))
+    assert "\\r" not in r.stdout, f"PATH 末段带上了 CR：{r.stdout!r}"
+    assert "b i n \\n" in r.stdout, f"末段不是干净地以换行收尾：{r.stdout!r}"
+
+    # 单独的 \r 也是 .NET 的行终止符，同样不能把两行黏成一行
+    (root / ".env").write_bytes(b"X=1\rPATH=/only\r")
+    script2 = _bootstrap_funcs("env_path_of_root") + '\nenv_path_of_root "$1"\n'
+    r = _run_sh(script2, str(root))
+    assert r.stdout.strip() == "/only", f"单独的 CR 没被当成行终止符：{r.stdout!r}"
+
+
+def test_dot_path_deliberately_keeps_a_carriage_return():
+    """`.path` **刻意不**剥 `\\r`——runsvc.sh 是 `export PATH=$(cat .path)`。
+
+    命令替换只吃掉结尾的换行、不吃 `\\r`，所以 CRLF 的 `.path` 会让 runner 自己的
+    PATH 真的带上 `\\r`。那时报「找不到」是**对的**。两个文件的读法不同，判据就得
+    跟着不同——把 `.path` 也一起「修好」反而会造出一次假绿。
+    """
+    src = _bootstrap()
+    fn = src.split("\nservice_path_of_root() {", 1)[1].split("\n}\n", 1)[0]
+    code = "\n".join(ln for ln in fn.splitlines() if not ln.lstrip().startswith("#"))
+    assert "cat \"$root/.path\"" in code, ".path 的读法变了，先确认与 runsvc.sh 是否仍同源"
+    assert "tr " not in code, ".path 也去剥 \\r 了——那会与 runsvc.sh 的实际行为分叉"
