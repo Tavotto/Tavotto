@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -481,8 +482,12 @@ def test_fd_limit_is_measured_on_the_runner_service_not_the_bootstrap_shell():
     assert "ulimit -n" not in code, \
         "又回去量 bootstrap 自己那个 shell 了——那不是 job 跑在里面的进程"
     assert "/proc/" in fd and "limits" in fd, "要读 runner 服务真实进程的 limits"
-    assert "actions.runner" in fd, "要按 runner 的 systemd unit 名去找"
     assert "systemctl restart" in fd, "写完 drop-in 必须告诉人要重启才生效"
+    # unit 的发现只有一处（工具探测那边解析服务 PATH 用的是同一张表）。
+    # 两处各写一份的话，会出现「工具按 A 实例的配置查、FD 按 B 实例的进程量」。
+    assert "discover_runner_units" in code, "FD 那段要走共用的 unit 发现"
+    disc = src.split("\ndiscover_runner_units() {", 1)[1].split("\n}\n", 1)[0]
+    assert "actions.runner" in disc, "要按 runner 的 systemd unit 名去找"
 
 
 def test_bootstrap_and_preflight_agree_on_the_fd_threshold():
@@ -502,26 +507,275 @@ def test_bootstrap_and_preflight_agree_on_the_fd_threshold():
         "bootstrap 会说配好了，而 preflight 当场拦下整个 lab job")
 
 
-def test_tools_are_probed_as_the_runner_user_not_as_root():
-    """脚本要 root 才能装包，但 job 以 $RUNNER_USER 跑，两者 PATH 不是一回事。
+def test_tools_are_never_probed_with_the_callers_own_path():
+    """判据不许来自「谁在跑这个脚本」——root 的 PATH 和管理员的 PATH 都不算。
 
-    最典型的是 cargo：脚本**自己**给的装法是 `sudo -u $RUNNER_USER ... rustup`，
-    装进 `~$RUNNER_USER/.cargo/bin`，root 的 PATH 里根本没有。以 root 查的后果
-    是一台**配置正确**的机器被判成「1 项未就绪」，而提示写着「去掉 --check
-    重跑以安装」——重跑也不会装（cargo 那一支只是 warn）。这台机器于是永远
-    报没配好，而运维照着提示做永远也修不好它。2026-08-22 在真机上实测到。
+    最初的错是以 root 查：脚本**自己**给的装法把 cargo 装进
+    `~$RUNNER_USER/.cargo/bin`，root 的 PATH 里根本没有，于是一台配置正确的
+    机器被判成「1 项未就绪」，而提示写着「去掉 --check 重跑以安装」——重跑也
+    不会装（cargo 那一支只是 warn）。第二个错是改用 $RUNNER_USER 的**登录**
+    shell：那读 ~/.profile，`.env` 没配的机器照样报 ✓，而 job 一起来就
+    command not found。两个错同一个形状：量错了对象。
 
-    与 FD 那条是同一个形状的错：量错了对象。
+    对的对象只有一个——runner 服务真正生效的 PATH。所以探测必须 `env -i`
+    清干净再显式喂 `$SERVICE_PATH`，绝不继承调用方的环境。
     """
     src = _bootstrap()
     code = "\n".join(ln for ln in src.splitlines()
                      if not ln.lstrip().startswith("#"))
-    assert "as_runner" in code, "工具探测要经 as_runner 走 $RUNNER_USER 的 PATH"
-    assert 'sudo -u "$RUNNER_USER" -i' in code, \
-        "要走 login shell——rustup 把 ~/.cargo/bin 写在 ~/.profile 里"
-    # check_cmd 与 Rust 那一段都不许再直接 `command -v`（那查的是 root）
-    body = code.split("check_cmd() {", 1)[1].split("\n}", 1)[0]
-    assert "as_runner" in body and "command -v $cmd" not in body.replace(
-        'as_runner "command -v $cmd"', ""), "check_cmd 又直接按当前用户查了"
-    rust = code.split('say "Rust"', 1)[1].split('say "', 1)[0]
-    assert "as_runner" in rust, "Rust 那一段也要按 runner 用户查"
+    body = code.split("\nrun_in_service_path() {", 1)[1].split("\n}\n", 1)[0]
+    assert "env -i" in body, \
+        "没清环境——继承调用方的 PATH 等于又把「谁在跑脚本」混进判据"
+    assert 'PATH="$SERVICE_PATH"' in body, "要显式喂 runner 服务的 PATH"
+    assert '-i sh -lc' not in body, "又走回登录 shell 了（那读的是 ~/.profile）"
+    assert 'sudo -u "$RUNNER_USER"' in body, \
+        "有 root 时要以 $RUNNER_USER 执行——光有路径不够，还得那个账号跑得起来"
+
+
+# ---- 服务 PATH：判据必须与 job 真实生效的环境一致 -----------------------------
+# 下面这几条**不是文本断言**：它们把脚本里的函数原样抠出来，喂真实 fixture
+# 跑一遍。文本断言只能证明「某几个字还在」，证明不了解析对不对——而本轮两条
+# 意见指的恰恰是「量的对象错了」，那只有真跑一遍才看得见。
+
+
+def _bootstrap_funcs(*names: str) -> str:
+    """把脚本里指定的几个 shell 函数原样抠出来（含函数体）。
+
+    脚本开头就 `die` 在非 Linux 上，整份 source 不进来；而这几个函数不碰任何
+    全局，抠出来单独跑与它们在脚本里跑是同一份代码——**不是复制一份**。
+    """
+    src = _bootstrap()
+    out = []
+    for name in names:
+        head = f"\n{name}() {{\n"
+        assert head in src, f"脚本里找不到函数 {name}()"
+        body = src.split(head, 1)[1].split("\n}\n", 1)[0]
+        out.append(f"{name}() {{\n{body}\n}}")
+    return "\n".join(out)
+
+
+def _run_sh(script: str, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["bash", "-c", script, "sh"] + list(args),
+                          capture_output=True, text=True)
+
+
+def test_service_path_prefers_env_over_dot_path(tmp_path):
+    """`.env` 的 PATH= 覆盖 `.path`——因为 Listener 读 .env 在 runsvc.sh 之后。
+
+    实验室 runner（tavotto-ci-01）上实测过这条优先级：`.path` 里没有
+    `~/.cargo/bin`、`.env` 里有，而 job 里的 `cargo build` 是成功的。
+    """
+    root = tmp_path / "actions-runner"
+    root.mkdir()
+    (root / ".path").write_text("/usr/bin:/bin\n", encoding="utf-8")
+    (root / ".env").write_text(
+        "PATH=/home/runner/.cargo/bin:/usr/bin:/bin\n"
+        "RUNNER_TOOL_CACHE=/opt/hostedtoolcache\n", encoding="utf-8")
+    script = _bootstrap_funcs("env_path_of_root", "service_path_of_root") + \
+        '\nservice_path_of_root "$1"\n'
+    r = _run_sh(script, str(root))
+    assert r.returncode == 0, r.stderr
+    value, source = r.stdout.rstrip("\n").split("\t")
+    assert value == "/home/runner/.cargo/bin:/usr/bin:/bin", \
+        f"没取 .env 的 PATH，取到的是 {value!r}——那是 runsvc.sh 之前的那一层"
+    assert source.endswith("/.env")
+
+
+def test_service_path_falls_back_to_dot_path_when_env_has_none(tmp_path):
+    """只认 `.env` 是不够的：从登录 shell 跑过 config.sh 的机器 cargo 在 `.path` 里。
+
+    `.path` 存的是 `echo $PATH>.path`，即配置那一刻那个 shell 的 PATH。那种机器
+    不配 `.env` 也跑得起来，只认 `.env` 会把它**误报成红**——与本条要修的假绿
+    是同一个错的两个方向。
+    """
+    root = tmp_path / "actions-runner"
+    root.mkdir()
+    (root / ".path").write_text("/home/runner/.cargo/bin:/usr/bin:/bin\n",
+                                encoding="utf-8")
+    (root / ".env").write_text("RUNNER_TOOL_CACHE=/opt/hostedtoolcache\n",
+                               encoding="utf-8")
+    script = _bootstrap_funcs("env_path_of_root", "service_path_of_root") + \
+        '\nservice_path_of_root "$1"\n'
+    r = _run_sh(script, str(root))
+    assert r.returncode == 0, r.stderr
+    value, source = r.stdout.rstrip("\n").split("\t")
+    assert value == "/home/runner/.cargo/bin:/usr/bin:/bin"
+    assert source.endswith("/.path")
+
+
+def test_env_parsing_matches_the_runners_own_loader(tmp_path):
+    """逐字复现 runner 的 `LoadAndSetEnv`：第一个 `=` 切开、后面的覆盖前面的。
+
+    它**不认注释**——`# PATH=/x` 只是键叫 `# PATH` 而已。所以判据必须是
+    「`=` 之前那段整体等于 PATH」：拿子串去匹配的话，一条被注释掉的旧 PATH
+    会被当成生效的那条，而那正是运维为了排障顺手注释掉的那一行。
+    """
+    root = tmp_path / "actions-runner"
+    root.mkdir()
+    (root / ".env").write_text(
+        "# 这一行有 = 号但键不是 PATH\n"
+        "# PATH=/decoy/commented-out\n"
+        "\n"
+        "PATH=/first/wins-not\n"
+        "PATHX=/decoy/prefix\n"
+        "PATH=/real/last-wins\n"
+        # **诱饵必须排在真值之后**：全放前面的话，子串匹配（`$0 ~ /PATH=/`）
+        # 取「最后一条」照样能撞对答案，这条用例就什么都没证明。
+        "MY_PATH=/decoy/suffix-afterwards\n"
+        "# PATH=/decoy/commented-out-afterwards\n", encoding="utf-8")
+    script = _bootstrap_funcs("env_path_of_root") + '\nenv_path_of_root "$1"\n'
+    r = _run_sh(script, str(root))
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.rstrip("\n") == "/real/last-wins", \
+        f"解析与 runner 不一致：{r.stdout!r}"
+
+
+def test_unreadable_service_config_fails_instead_of_answering(tmp_path):
+    """两个文件都没有时必须**失败**，不许回一个「差不多的」PATH。
+
+    这是 P2 的根：读不到就没有可信答案，退回去查调用方自己的 PATH 只会把假绿
+    印成 ✓。失败才能让上层把它算进「未就绪」。
+    """
+    root = tmp_path / "actions-runner"
+    root.mkdir()
+    script = _bootstrap_funcs("env_path_of_root", "service_path_of_root") + \
+        '\nservice_path_of_root "$1"\n'
+    r = _run_sh(script, str(root))
+    assert r.returncode != 0, f"读不到配置却成功返回了：{r.stdout!r}"
+    assert r.stdout.strip() == "", f"读不到配置却输出了 PATH：{r.stdout!r}"
+
+
+def test_probe_label_never_claims_an_account_it_did_not_use():
+    """标签由决定探测方式的那个变量算出来，不另写一份文案。
+
+    P2 的表现就是这个：非 root、且不是 $RUNNER_USER 的管理员跑 `--check`，
+    探测以**他自己**的身份执行，输出却写着「按 $RUNNER_USER 的 PATH 查」。
+    管理员装了而 runner 没装是假绿，反过来是假红，两个方向都错。
+    """
+    funcs = _bootstrap_funcs("probe_label")
+    base = 'RUNNER_USER=github-runner\nSERVICE_SRC=/srv/r/.env\n' + funcs + "\n"
+
+    r = _run_sh(base + 'PROBE_MODE=sudo PROBE_KIND=service probe_label')
+    assert "github-runner" in r.stdout and "服务的 PATH" in r.stdout, r.stdout
+
+    r = _run_sh(base + 'PROBE_MODE=foreign PROBE_KIND=service probe_label')
+    me = subprocess.run(["id", "-un"], capture_output=True, text=True).stdout.strip()
+    assert me in r.stdout, \
+        f"没说出真正执行探测的账号：{r.stdout!r}"
+    assert "验不了" in r.stdout, \
+        f"以别人的身份查完却没说这一点：{r.stdout!r}"
+
+    # 「登录 PATH」这一档（runner 还没注册）必须自己说清它不是服务 PATH。
+    r = _run_sh(base + 'PROBE_MODE=sudo PROBE_KIND=login probe_label')
+    assert "不是服务 PATH" in r.stdout, r.stdout
+
+    # 点名一个 .env、而那份配置由 N 个实例共用（实验室那台有四个），会让运维
+    # 只改其中一个，剩下几个照旧坏着——而 job 落在哪个实例上是调度决定的。
+    r = _run_sh(base + 'SERVICE_COUNT=4 PROBE_MODE=sudo PROBE_KIND=service probe_label')
+    assert "另 3 个实例同配置" in r.stdout, \
+        f"没说清这份 PATH 覆盖几个实例：{r.stdout!r}"
+    r = _run_sh(base + 'SERVICE_COUNT=1 PROBE_MODE=sudo PROBE_KIND=service probe_label')
+    assert "实例同配置" not in r.stdout, f"只有一个实例却说有别的：{r.stdout!r}"
+
+
+def test_check_mode_probes_the_service_path_not_a_login_shell():
+    """`--check` 的 ✓ 只能由服务 PATH 给出，登录 shell 只配当 ✗ 的补充说明。
+
+    上一版用 `sudo -u … -i`（login shell，读 ~/.profile）查 cargo：`.env` 没配
+    的机器照样报 ✓，而 job 一起来就 command not found——正是这道检查本该逮住的
+    那种错配。所以 `check_cmd` 的**通过判据**必须走 probe_cmd/服务 PATH。
+    """
+    src = _bootstrap()
+    body = src.split("\ncheck_cmd() {", 1)[1].split("\n}\n", 1)[0]
+    code = "\n".join(ln for ln in body.splitlines()
+                     if not ln.lstrip().startswith("#"))
+    ok = code.split("printf", 1)[0]          # ✓ 之前，即判据本身
+    assert "probe_cmd" in ok, "✓ 的判据没走服务 PATH"
+    assert "as_runner_login" not in ok, \
+        "✓ 的判据又回到登录 shell 了——.env 没配的机器会报绿"
+    # 登录 shell 仍在，但只出现在 ✗ 之后（区分「没装」与「装了没接上」）
+    assert "as_runner_login" in code, "丢掉了「装了但不在服务 PATH 上」这条提示"
+
+
+def test_the_pass_criterion_never_reaches_a_login_shell(tmp_path):
+    """✓ 只能由服务 PATH 给出——沿整条调用链验，不是只看最外面那一层。
+
+    上一版用 `sudo -u … -i`（login shell，读 ~/.profile）查 cargo：`.env` 没配
+    的机器照样报 ✓，而 job 一起来就 command not found，正是这道检查本该逮住的
+    那种错配。**只断言 `check_cmd` 调了 `probe_cmd` 是不够的**：把登录 shell
+    塞回 `probe_cmd` 内部，那种断言一样绿（实测过）。所以这里把登录 shell 换成
+    哨兵，判据只要碰它一下就会拿到假路径。
+    """
+    svcbin = tmp_path / "svcbin"
+    svcbin.mkdir()
+    tool = svcbin / "onlyinservicepath"
+    tool.write_text("#!/bin/sh\necho ok\n", encoding="utf-8")
+    tool.chmod(0o755)
+
+    stub = 'as_runner_login() { printf "/DECOY/FROM-LOGIN-SHELL\\n"; }\n'
+    script = ("RUNNER_USER=nobody\nPROBE_MODE=foreign\nPROBE_KIND=service\n"
+              # 服务 PATH 里得有 sh 本身：`env -i PATH=… sh -c` 是拿这个
+              # PATH 去找 sh 的。真机上的服务 PATH 当然含 /usr/bin。
+              f'SERVICE_PATH={svcbin}:/usr/bin:/bin\n' + stub
+              + _bootstrap_funcs("run_in_service_path", "probe_cmd")
+              + '\nprobe_cmd "$1"\n')
+
+    r = _run_sh(script, "command -v -- onlyinservicepath")
+    assert r.stdout.strip() == str(tool), \
+        f"服务 PATH 上的工具没查出来（拿到 {r.stdout.strip()!r}）"
+
+    # 服务 PATH 上没有的东西，判据必须回空——绝不能靠登录 shell 补上一个 ✓
+    r = _run_sh(script, "command -v -- notonanypathatall")
+    assert "DECOY" not in r.stdout, \
+        "判据回落到登录 shell 了——.env 没配的机器会报绿"
+    assert r.stdout.strip() == "", f"凭空查出了 {r.stdout.strip()!r}"
+
+
+def _bootstrap_dispatch() -> str:
+    """解析结果 → PROBE_KIND 的那段分派（顶层代码，不是函数，只能按区间抠）。"""
+    src = _bootstrap()
+    head = 'SERVICE_PATHS="$('
+    assert head in src
+    return head + src.split(head, 1)[1].split("\ncheck_cmd() {", 1)[0]
+
+
+def test_a_third_party_caller_gets_no_answer_rather_than_the_wrong_one():
+    """既不是 root 也不是 $RUNNER_USER、又读不到 runner 配置 → **无解**，不是降级。
+
+    `--check` 明确允许无 root 跑（前置检查那一行），所以调用方完全可能是第三个
+    账号。这时按**他自己**的 PATH 查完再当成结论，管理员装了而 runner 没装是
+    假绿，反过来是假红——两个方向都错，而假绿更坏：它会让人以为这台机器可以
+    接活。所以这一档必须落到 `unresolved`（下面另一条钉它算进「未就绪」），
+    而不是悄悄降级成 `login` 去查别人的 PATH。
+
+    有 root（或本来就是 runner）时降级成 `login` 才是对的：那是「runner 还没
+    注册」的正常状态，与 FD 那段的处理一致。
+    """
+    stubs = ("discover_runner_units() { :; }\n"      # 一个 unit 都没有
+             "root_of_unit() { return 1; }\n"
+             "service_path_of_root() { return 1; }\n"
+             "warn() { :; }\n"
+             "RUNNER_USER=github-runner\n")
+    tail = '\nprintf "%s" "$PROBE_KIND"\n'
+
+    r = _run_sh(stubs + "PROBE_MODE=foreign\n" + _bootstrap_dispatch() + tail)
+    assert r.stdout.strip() == "unresolved", \
+        f"第三方账号读不到配置却给了结论：PROBE_KIND={r.stdout.strip()!r}"
+
+    r = _run_sh(stubs + "PROBE_MODE=sudo\n" + _bootstrap_dispatch() + tail)
+    assert r.stdout.strip() == "login", \
+        f"有 root 时该降级查「装没装」，却成了 {r.stdout.strip()!r}"
+
+
+def test_an_unresolved_service_path_counts_as_not_ready():
+    """`unresolved` 必须算进 MISSING，且**不许**再去跑工具表。
+
+    「检查通过」而其实一项都没验，比没有这道检查更坏——它还在报平安。
+    """
+    src = _bootstrap()
+    branch = src.split('if [ "$PROBE_KIND" = unresolved ]; then', 1)[1] \
+                .split('elif [ "$PROBE_KIND" = login ]', 1)[0]
+    assert "MISSING=$((MISSING + 1))" in branch, \
+        "读不到服务 PATH 却没算进未就绪——那句「检查通过」是假的"
+    assert "check_tools_on" not in branch, \
+        "没有可信 PATH 还是把工具表跑了一遍，等于按调用方的环境出结论"
