@@ -623,8 +623,13 @@ print(json.dumps(out))
 '''
     import json
     import subprocess
+    # **显式钉 utf-8**：不给的话 Windows 按系统代码页解码，探针里那些中文
+    # 一出现就把 stdout/stderr 静默丢掉（#57）。这条是仓库既有的硬门禁
+    # （`test_source_hygiene.py::test_windows_bound_subprocesses_pin_their_decoding`）
+    # ——本轮它当场逮到了这一处。
     r = subprocess.run([WORKER_PY, "-c", probe], capture_output=True,
-                       text=True, timeout=180)
+                       text=True, encoding="utf-8", errors="replace",
+                       timeout=180)
     assert r.returncode == 0, r.stderr[-800:]
     got = json.loads(r.stdout.strip().splitlines()[-1])
     assert got == {"single": 1, "two": 2, "three": 3,
