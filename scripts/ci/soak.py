@@ -217,6 +217,9 @@ def run_soak(launch: list[str], figures: Path, workdir: Path, iterations: int,
     started = time.time()
     try:
         SA._wait_ready(base, proc, SA.BOOT_TIMEOUT_S)
+        # ADR 0008，同 visual_regression。soak 一轮里会连起多个实例，
+        # 而 `_AUTH` 是模块级的——helper 每次先清空正是为了这个。
+        SA.adopt_session_credentials(data_dir, port)
         panels = SA._get(f"{base}/api/panels")["panels"]
         scripted = [p for p in panels if p.get("script")]
         if not scripted:

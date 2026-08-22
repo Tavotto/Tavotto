@@ -215,30 +215,18 @@ class Session:
         return self
 
     def _adopt_credentials(self, port: int) -> None:
-        """带上本机会话凭据（ADR 0008）。**按文件在不在判，不按版本号判。**
+        """带上本机会话凭据（ADR 0008）。判据是**凭据文件在不在**，不是版本号
+        ——`--baseline` 可以指定任意历史版本，其中大多数早于这道边界。
 
-        0.9.0 起浏览器模式也要认证，而升级验收的另一头是 N-1——`--baseline`
-        可以指定任意历史版本，其中大多数早于这道边界。所以判据只能是「这一版
-        写没写凭据文件」。
-
-        不带的后果不是「少测一项」：`_wait_ready` 打的 `/api/version` 是公共
-        端点，照样就绪，随后**每一个** API 调用 401。v0.9.0 发版时就是这么
-        炸的——阶段一（0.8.0，无认证）一路绿，阶段二（候选）当场 401，而这个
-        脚本在会话认证合并之后一次都没跑过（实验室 runner 那时还没有 runner
-        领得走）。
-
-        `SA._AUTH` 是模块级的，两个阶段共用同一个进程：**先清空**，否则
-        N-1 那一轮会带着候选版的头（或反过来）。
+        实现只有一处（`smoke_app.adopt_session_credentials`）：v0.9.0 时我在这里
+        写了一份，却没扫 `visual_regression` / `soak` 两个同样的调用方，于是
+        发行链又在后面两步各撞一次同样的 401。
         """
-        SA._AUTH.clear()
-        cred = self.data_dir / "session" / f"port-{port}.json"
-        if not cred.is_file():
+        if SA.adopt_session_credentials(self.data_dir, port):
+            print(f"  [{self.label}] 已取得会话凭据", flush=True)
+        else:
             print(f"  [{self.label}] 无会话凭据文件（这一版早于 ADR 0008），裸走",
                   flush=True)
-            return
-        secret = json.loads(cred.read_text(encoding="utf-8"))["secret"]
-        SA._AUTH["X-Tavotto-Auth"] = secret
-        print(f"  [{self.label}] 已取得会话凭据", flush=True)
 
     def __exit__(self, *exc) -> None:
         try:

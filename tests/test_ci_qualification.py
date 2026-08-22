@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -503,8 +504,11 @@ def test_upgrade_acceptance_carries_session_credentials():
     无认证）一路绿、阶段二（候选）当场 401——而这个脚本在会话认证合并之后
     一次都没跑过，因为那时没有 runner 领得走实验室这条通道。
 
-    判据必须是「凭据文件在不在」而不是版本号：`--baseline` 可以指定任意历史
-    版本，其中大多数早于这道边界。
+    **实现不在这里**：装载凭据的判据只有 `smoke_app.adopt_session_credentials`
+    一处（`visual_regression` / `soak` 是同一批受害者，见
+    `test_every_app_launcher_adopts_credentials`）。这条只钉两件事：起完实例
+    真的调了它，以及「取不到凭据」是**继续裸走**而不是失败——`--baseline`
+    可以指定任意历史版本，其中大多数早于这道边界。
     """
     src = (CI_DIR / "upgrade_acceptance.py").read_text(encoding="utf-8")
     # 盯**调用点**而不是「文件里出现过这个名字」：把方法改名成
@@ -512,11 +516,13 @@ def test_upgrade_acceptance_carries_session_credentials():
     # 一次都不会被调用——那正是这条用例要挡的失效形态。
     assert "self._adopt_credentials(port)" in src, \
         "起完实例必须真的调用它，光定义在那儿不算"
-    assert "SA._AUTH.clear()" in src, \
-        "两个阶段共用同一个进程，不先清空会让 N-1 带着候选版的头"
-    assert 'f"port-{port}.json"' in src, "凭据文件按端口取"
-    assert "cred.is_file()" in src, \
-        "要按文件在不在判——N-1 基线可能早于 ADR 0008，那时裸走才是对的"
+    assert "SA.adopt_session_credentials(" in src, \
+        "必须走唯一实现，别在这里再写一份"
+    body = src.split("def _adopt_credentials", 1)[1].split("\n    def ", 1)[0]
+    code = "\n".join(ln for ln in body.splitlines()
+                     if not ln.lstrip().startswith("#"))
+    assert "else:" in code and "裸走" in code, \
+        "取不到凭据要继续裸走（N-1 基线可能早于 ADR 0008），不是失败"
 
 
 def test_no_app_request_in_upgrade_acceptance_skips_auth():
@@ -541,3 +547,86 @@ def test_no_app_request_in_upgrade_acceptance_skips_auth():
     for call in app_calls:
         assert "SA._AUTH" in call, \
             f"这处打到应用的请求没带会话凭据，401 会被 try/except 吃掉：\n{call[:200]}"
+
+
+# ---------------- 会话认证：扫全部调用方 ---------------------------------------
+SCRIPTS = CI_DIR.parent
+
+
+def _app_launchers() -> dict[str, str]:
+    """会自己起一个 Tavotto 实例的脚本 = 源码里给子进程塞了 TAVOTTO_DATA_DIR。
+
+    按**行为**枚举而不是写死一张名单：名单会在下一个脚本加进来时悄悄漏掉它，
+    而漏掉的表现正是本轮那种——发行链跑到那一步才 401。
+    """
+    found = {}
+    for path in sorted(SCRIPTS.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        src = path.read_text(encoding="utf-8")
+        if '"TAVOTTO_DATA_DIR"' in src and "subprocess.Popen" in src:
+            found[path.name] = src
+    return found
+
+
+def test_every_app_launcher_adopts_credentials():
+    """ADR 0008 之后，**每一个**起实例的脚本都要处理认证，三选一。
+
+    v0.9.0 的教训：`upgrade_acceptance` / `visual_regression` / `soak` 三个脚本
+    在会话认证合并之后全都还在裸调 API，而它们**一个都没跑过**。发行链第一次
+    真跑时，三步各 401 一次——我修了第一个却没扫另外两个，于是同一个 401 在
+    两轮 CI 里又出现了两次（`fix-the-predicate-sweep-the-consumers`）。
+
+    所以判据放在这里，按行为枚举调用方，而不是逐个脚本各写一条用例。
+    """
+    launchers = _app_launchers()
+    assert len(launchers) >= 4, \
+        f"只枚举到 {sorted(launchers)}——枚举判据失效了，这条用例挡不住任何东西"
+    for name, src in launchers.items():
+        adopts = "adopt_session_credentials" in src
+        bypass = "TAVOTTO_INSECURE_NO_AUTH" in src
+        desktop = "/api/desktop/bootstrap" in src or "TAVOTTO_DESKTOP_HANDSHAKE" in src
+        assert adopts or bypass or desktop, (
+            f"{name} 起了实例却既不取凭据、也没显式旁路、也不是桌面握手——"
+            "ADR 0008 之后它的每个 API 调用都会 401，而症状会出现在很远的地方")
+
+
+def test_session_credential_logic_has_a_single_implementation():
+    """凭据装载只能有一处，否则修一个漏一个——本轮已经付过这笔学费。"""
+    hits = [n for n, src in _app_launchers().items()
+            if 'session" / f"port-' in src or "['secret']" in src
+            or '["secret"]' in src]
+    assert hits == ["smoke_app.py"], \
+        f"除 smoke_app 外还有人自己解析凭据文件：{hits}"
+
+
+def test_ci_credential_path_matches_session_client():
+    """CI 侧的路径公式必须与产品那份逐字一致。
+
+    产品那份（`engine/session_client.session_file_path`）从**当前进程**的
+    `config.data_dir()` 推路径，而 CI 是把 `TAVOTTO_DATA_DIR` 塞进**子进程**
+    env 的，父进程用不了它——所以这里必然是第二份表达。两份就要对拍
+    （与 patchspec ↔ Rust、preflight 双求值器同一套纪律）。
+    """
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "_smoke_app_probe", SCRIPTS / "smoke_app.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    from tavotto.engine import session_client
+
+    root = Path("/tmp/whatever-data-dir")
+    monkey = os.environ.get("TAVOTTO_DATA_DIR")
+    os.environ["TAVOTTO_DATA_DIR"] = str(root)
+    try:
+        from tavotto.engine import config
+        config.data_dir.cache_clear() if hasattr(config.data_dir, "cache_clear") else None
+        product = Path(session_client.session_file_path(5089))
+    finally:
+        if monkey is None:
+            os.environ.pop("TAVOTTO_DATA_DIR", None)
+        else:
+            os.environ["TAVOTTO_DATA_DIR"] = monkey
+    ours = mod.session_credential_path(root, 5089)
+    assert ours == product, f"路径公式分叉：CI={ours} 产品={product}"

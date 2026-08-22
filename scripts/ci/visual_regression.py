@@ -152,6 +152,10 @@ def render_corpus(launch: list[str], workdir: Path, stems: list[str],
     out: dict[str, Path] = {}
     try:
         SA._wait_ready(base, proc, SA.BOOT_TIMEOUT_S)
+        # ADR 0008：不装凭据的话下面每一个 API 调用都是 401。
+        # `_wait_ready` 打的 /api/version 是公共端点，就绪永远成立——
+        # 症状会是「起来了又立刻全挂」，与真实原因隔着一层。
+        SA.adopt_session_credentials(data_dir, port)
         panels = SA._get(f"{base}/api/panels")["panels"]
         by_stem = {p["id"].rsplit(".", 1)[0]: p["id"] for p in panels if p.get("script")}
         missing = [s for s in stems if s not in by_stem]
