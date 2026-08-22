@@ -121,14 +121,15 @@ PR #48/#49 之后事实上已经冻结。
 | `ci.yml` | 2026-08-22 ✅ | 2026-08-22 | 健康 |
 | `codeql.yml` | 2026-08-22 ✅ | 2026-08-22 | 健康 |
 | `telemetry-metrics.yml` | 2026-08-22 ✅ | 2026-08-22 | 健康 |
-| `lab-ci.yml` | 2026-08-22 ❌ failure | **从来没有过** | **success=0 / failure=8 / cancelled=17** |
+| `lab-ci.yml` | 2026-08-22 ❌ failure | **从来没有过**（→ §11.1：14:53Z 起有了） | **success=0 / failure=8 / cancelled=17** |
 | `release.yml` | 2026-08-22 ❌ failure | 2026-08-20（`v0.8.0`） | v0.9.0、v0.9.1 两次 tag 均失败 |
 | `desktop-tauri.yml` | 2026-08-22 ❌ failure | 2026-08-20（`v0.8.0`） | 同上 |
 | `nightly.yml` | 2026-08-21 ❌ failure | 2026-08-19（**且是 workflow_dispatch，不是 schedule**） | schedule 腿连续 4 晚失败 |
 
 ### 5.1 从未真正执行过的 job / step
 
-- **`lab-ci.yml` 的 `qualify` 从未跑完过任何一次。** 25 次 run 里 17 次是
+- **`lab-ci.yml` 的 `qualify` 从未跑完过任何一次**（截至取数时刻；§11.1 记录了
+  它在 14:53Z 第一次跑完并通过）。 25 次 run 里 17 次是
   cancelled（并发槽 `lab-qualification` 被顶掉），8 次 failure——而 8 次
   failure **全部**停在第一步「开跑前体检」，后面 14 个步骤一次都没执行。
   也就是说 **slow 用例、包验收、升级验收、Golden 视觉回归、CompatBench、
@@ -398,3 +399,77 @@ python3 scripts/ci/check_release_health.py --json
 scripts/admin/apply_rulesets.sh --backup            # 存档当前配置
 scripts/admin/apply_rulesets.sh --diff              # 与仓库里的期望配置比对
 ```
+
+---
+
+## 11. 补记（2026-08-22 15:00–16:00Z）：审计之后事实变了三处
+
+**审计的取数时刻是 14:35Z。** 下面三条是此后发生的，都经过复核。
+写进同一份文档而不是另起一份，是因为**读的人只会读一份**；
+而「审计时是这样、现在是那样」本身就是这次要交付的结论之一。
+
+### 11.1 Lab Qualification **第一次跑完了，而且是绿的**
+
+`gh run view 32578843563`（main，14:29Z 起，14:53Z 完成）：
+
+| 步骤 | 结果 |
+|---|---|
+| 开跑前体检 | ✅ `上一轮遗留的 Tavotto 进程: 无` |
+| 常规测试套件 / slow / 包验收 | ✅ |
+| Golden 视觉回归 / Matplotlib 兼容性资格 | ✅ |
+| Soak 与泄漏检测 / 性能回归 | ✅ |
+| 升级验收 / 前端与 Rust / mutation | skipped（main 档本来就不跑） |
+
+那个 `venv-manual-probe` 的残留进程消失了（自己退了，或有人清掉了）。
+于是**§5.1 说的「八道门禁一次都没真正跑过」到此不再成立**：
+它们在 main 档下全部真实执行并通过了。
+
+**这不改变 §5.2 根因 A 的结论。** 修的是「一个手工探测能把整条通道停掉
+九小时，而唯一的解法是有人 SSH 上去」这件事，不是「今天那个进程还在不在」。
+`--reap-stale`（PR #65）防的是下一次。
+
+### 11.2 `release.yml` 的 `lab_release_gate` 也过了，`github_release` **第一次真正执行**
+
+两个 workflow_dispatch run（32574690161、32578844828）都走到了：
+
+    trust ✅ → build ✅ → lab_release_gate ✅ → github_release ❌ → pypi（waiting）
+
+`github_release` 是自 v0.8.0 以来**第一次真正跑起来**。它在这里失败：
+
+```
+[command] syft scan file:dist/tavotto-0.9.1-py3-none-any.whl -o spdx-json
+SBOM scan completed in: 2.123s                       ← #63 的修复生效了
+##[error]ENOENT: no such file or directory, open 'out/tavotto-sbom.spdx.json'
+```
+
+**#63 修对了，而下一环立刻现形**：`out/` 目录不存在，因为 `mkdir -p out`
+排在下一步（SHA-256 那步）。sbom-action 不会替你建目录。
+
+这是本轮审计最有说服力的一条实证：**这条链的每一步都是第一次执行，
+所以它会一步一步地依次失败**，而每一次现形都消耗一个改不动也删不掉的
+正式 tag。修复与看护在 `ci/release-orchestrator`。
+
+### 11.3 两个 release run 卡在 `pypi` 的 environment 审批上
+
+两个 run 的 `pypi` job 状态是 `waiting`——`pypi` environment 配了
+`required_reviewers`，在等人批。它们会一直挂着直到有人批准或拒绝。
+
+**本轮没有动它们**：批准会真的发布到 PyPI，而 PyPI 上同名文件永远不能重传。
+这是发布负责人的决定，不是审计的。见 §12 的待办。
+
+---
+
+## 12. 需要人来决定的两件事
+
+1. **两个 `waiting` 的 release run**（32574690161、32578844828）：
+   `github_release` 已经失败，`pypi` 还在等审批。建议**拒绝**这两个部署
+   （产物没有完整校验过，且 `github_release` 失败意味着 Release 根本没建出来，
+   发上 PyPI 会造成「PyPI 上有 0.9.1 而 GitHub 上没有」的分叉）。
+   ```
+   # 在 https://github.com/Tavotto/Tavotto/actions/runs/<id> 页面上 Reject
+   ```
+2. **v0.9.0 / v0.9.1 这两个没有 Release 的 tag 怎么办。**
+   ruleset 禁止移动与删除，所以只有两个选择：
+   (a) 就让它们留着，1.0 的 release notes 里说明这两个版本没有发布过；
+   (b) 管理员临时改 ruleset 删掉它们，删完立刻改回来。
+   **本轮不做任何一种**——这是发布负责人的决定，且 (b) 要动 ruleset。
