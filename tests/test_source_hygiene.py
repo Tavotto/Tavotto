@@ -294,6 +294,10 @@ def test_sdist_ships_the_files_its_tests_read():
     # 截断，段里一个条目都不剩，而断言「tests 在不在」当场就红——那不是被测
     # 对象错了，是切分判据错了。
     seg = re.split(r"\n\[", inc.split("[tool.hatch.build.targets.sdist]", 1)[1], 1)[0]
+    # **注释掉的条目不算数。** `# "AGENTS.md",` 里那个字符串照样能被正则捞到，
+    # 于是「清单里有它」成立、而 Hatch 根本不会收它——判据匹配到散文的又一例
+    # （#59 的 review 逮到）。先剥注释行。
+    seg = "\n".join(ln for ln in seg.splitlines() if not ln.lstrip().startswith("#"))
     listed = set(re.findall(r'"([^"]+)"', seg))
     assert "tests" in listed, "sdist 不再收 tests 了——这条判据的前提没了"
     for need in ("CLAUDE.md", "AGENTS.md"):
