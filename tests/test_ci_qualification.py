@@ -847,3 +847,62 @@ def test_single_path_action_inputs_are_not_globs():
                 offenders.append(f"{wf.name}:{i} {m.group(1)}: {val}")
     assert not offenders, (
         "这些输入只收一个路径，喂 glob 会被原样当成文件名：\n  " + "\n  ".join(offenders))
+
+
+def test_desktop_outwaits_the_release_qualification_gate():
+    """桌面链等 Release 的上限，必须盖得住 release.yml 的发行资格验证。
+
+    tag 推送时两条链**并行**启动：桌面构建约 20 分钟就出产物，而 Release 要
+    等 `lab_release_gate` 跑完（slow + 升级验收 + 视觉回归 + CompatBench +
+    soak + 性能，实测 30~60 分钟）才建得出来。桌面那边等不到就失败。
+
+    2026-08-22 v0.9.1 发版实测：两条腿**全程构建成功**（含 macOS 的签名与
+    公证），只栽在这一步——原来的上限是 30×20s = 10 分钟，而那个数字是
+    `lab_release_gate` 存在**之前**定的，那时 release.yml 两三分钟就建出
+    Release。加了门禁之后没人改它，于是桌面链在 tag 推送时**基本不可能成功**，
+    而且失败得极不划算：产物全签好了，只差挂不上去，重跑一次二十分钟、
+    macOS 还要重新公证一遍。
+
+    判据钉的是**两个数之间的关系**，不是某个具体值——门禁的超时哪天调大，
+    这条会提醒把等待也调大。
+    """
+    import re
+    rel = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
+    gate = rel.split("lab_release_gate:", 1)[1].split("\n  github_release:", 1)[0]
+    m = re.search(r"timeout-minutes:\s*(\d+)", gate)
+    assert m, "lab_release_gate 没有 timeout-minutes 了——这条判据的另一半没了"
+    gate_minutes = int(m.group(1))
+
+    dt = (WORKFLOWS / "desktop-tauri.yml").read_text(encoding="utf-8")
+    wait = dt.split("等 Release 存在", 1)[1].split("\n      - name:", 1)[0]
+    tries = int(re.search(r"seq 1 (\d+)", wait).group(1))
+    sleep_s = int(re.search(r"sleep (\d+)", wait).group(1))
+    wait_minutes = tries * sleep_s / 60
+
+    assert wait_minutes >= gate_minutes, (
+        f"桌面链最多等 {wait_minutes:.0f} 分钟，而发行资格验证的上限是 "
+        f"{gate_minutes} 分钟——门禁跑满时，已经签名公证好的桌面产物会挂不上去")
+
+    # **超时消息里不许出现写死的分钟数。** 上一版循环从 10 分钟改成 190 分钟，
+    # 而失败消息还写着「等了 10 分钟」——发布操作者会照着那个数去查一个不存在
+    # 的问题。诊断指错方向比不诊断更坏（Codex 在 #62 上指出）。
+    tail = wait.split("done", 1)[1]
+    # 注释先剥掉：解释「上一版写死了 10 分钟」的那句里必然含这四个字，
+    # 连它一起判会让「写清楚为什么」反而变红。今天这个坑踩到第四次了，
+    # 而它恰恰是我刚写进 CLAUDE.md 的那条纪律。
+    code = "\n".join(ln for ln in tail.splitlines()
+                     if not ln.lstrip().startswith("#"))
+    assert "waited=" in code, "失败消息要报**实际**等了多久，不是写死的数"
+    for stale in ("10 分钟", "10 minutes"):
+        assert stale not in code, f"失败消息里还留着写死的「{stale}」"
+    # 等不到时产物不能丢：上传要排在等待**之前**
+    dt_src = (WORKFLOWS / "desktop-tauri.yml").read_text(encoding="utf-8")
+    assert dt_src.index("上传最终桌面产物") < dt_src.index("等 Release 存在"), \
+        "产物上传必须排在「等 Release」之前，否则等超时会把签名公证好的东西一起丢掉"
+
+    # **最后一次 sleep 之后必须再探一次。** Release 恰好在那 30 秒里建出来时，
+    # 循环直接落到失败分支——明明已经好了却报超时，而且发生在最贵的那一刻。
+    code = "\n".join(ln for ln in tail.splitlines()
+                     if not ln.lstrip().startswith("#"))
+    assert "gh release view" in code, \
+        "循环结束后没有再探一次——最后一轮 sleep 里建出来的 Release 会被漏掉"
