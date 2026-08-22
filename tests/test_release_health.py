@@ -243,3 +243,74 @@ def test_the_monitor_only_needs_actions_read_for_the_check():
     code = "\n".join(ln for ln in fresh.splitlines()
                      if not ln.lstrip().startswith("#"))
     assert "write" not in code, "freshness 只读，不该有任何 write 权限"
+
+
+# ── Codex 第一轮逮到的（2026-08-23）────────────────────────────────────
+
+def test_a_legitimately_skipped_job_is_not_reported_as_never_run():
+    """**weekly canary 会让 `github_release` / `pypi` 合法 skipped。**
+
+    判「这个 job 有没有真跑过」时 skipped 不算一次验证 —— 那是新鲜度表的
+    问题。但判「它是不是从来没出现过」时，skipped 恰恰证明它**出现了、
+    并且被有意跳过**。
+
+    不认它的后果是每周误报一次，而**天天红的监控会在第二周被人静音，
+    静音之后它连警告都不会再发出来** —— 那正是这个脚本自己写在注释里
+    要避免的事。
+    """
+    import ast
+    src = (ROOT / "scripts" / "ci" / "check_release_health.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    fn = next(n for n in ast.walk(tree)
+              if isinstance(n, ast.FunctionDef) and n.name == "find_jobs_never_seen")
+    body = ast.unparse(fn)
+    assert "skipped" in body, (
+        "`find_jobs_never_seen` 不认 skipped —— canary 的 publish=false 会让"
+        "`github_release` / `pypi` 每周被误报成「从未执行」")
+
+
+def test_a_failed_fetch_still_renders_instead_of_crashing():
+    """**拿不到数据是最需要它把话说出来的时候。**
+
+    `render_summary()` 无条件读 `counts['success'] / ['failure'] / ['cancelled']`。
+    fetch 失败那条路径从前把 `counts` 设成 `{}`，于是渲染当场 KeyError ——
+    诊断在最需要时自己挂掉，与 #61 是同一个形状。
+    """
+    from datetime import datetime, timezone
+    broken = {"file": "release.yml", "label": "发布编排", "level": "warning",
+              "max_age_days": 8, "why": "x" * 20, "runs_examined": 0,
+              "last_conclusive": None, "last_success": None,
+              "queued": 0, "stuck_in_queue": 0,
+              "counts": {"success": 0, "failure": 0, "cancelled": 0},
+              "problems": ["拿不到数据：boom"]}
+    out = RH.render_summary([broken], [], datetime(2026, 8, 23, tzinfo=timezone.utc))
+    assert "拿不到数据" in out and "release.yml" in out
+
+
+def test_the_fetch_failure_path_supplies_every_key_render_summary_reads():
+    """把两半接起来：**失败路径造出来的那个 dict，渲染读得动。**
+
+    上一条验渲染，这一条验**生产者**——只验渲染的话，
+    把 `counts` 改回 `{}` 照样绿。
+    """
+    import ast
+    src = (ROOT / "scripts" / "ci" / "check_release_health.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    main = next(n for n in ast.walk(tree)
+                if isinstance(n, ast.FunctionDef) and n.name == "main")
+    # 失败分支里给 counts 的那个字面量必须带齐三个键
+    found = False
+    for node in ast.walk(main):
+        if not isinstance(node, ast.Dict):
+            continue
+        keys = {k.value for k in node.keys if isinstance(k, ast.Constant)}
+        if "counts" not in keys:
+            continue
+        for k, v in zip(node.keys, node.values):
+            if isinstance(k, ast.Constant) and k.value == "counts":
+                if isinstance(v, ast.Dict):
+                    inner = {kk.value for kk in v.keys if isinstance(kk, ast.Constant)}
+                    assert {"success", "failure", "cancelled"} <= inner, (
+                        f"失败路径的 counts 缺键：{inner} —— render_summary 会 KeyError")
+                    found = True
+    assert found, "找不到失败路径里那个带 counts 的字面量"

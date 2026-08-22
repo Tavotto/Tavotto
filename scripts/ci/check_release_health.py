@@ -225,7 +225,17 @@ def find_jobs_never_seen(repo: str, results: list[dict],
             except HealthError:
                 continue
             for j in (jobs or {}).get("jobs", []):
-                if j.get("conclusion") in CONCLUSIVE:
+                # **`skipped` 也算「见过」。**
+                # 判「这个 job 有没有真跑过」时 skipped 不算一次验证（那是
+                # 上面那张表的问题）；但判「它是不是从来没出现过」时，
+                # skipped 恰恰证明它**出现了、并且被有意跳过**。
+                #
+                # 不认它的后果是每周误报一次：weekly canary 是 publish=false，
+                # `github_release` 与 `pypi` 合法 skipped，于是这里会宣布
+                # 「声明了却从没产出过结论」并让 workflow 变红。
+                # **而天天红的监控会在第二周被人静音，静音之后它连警告都
+                # 不会再发出来** —— 那正是这个脚本自己写在注释里要避免的事。
+                if j.get("conclusion") in CONCLUSIVE or j.get("conclusion") == "skipped":
                     seen.add(j.get("name", ""))
 
         if not seen:
@@ -305,7 +315,15 @@ def main(argv: list[str] | None = None) -> int:
                             "level": "warning", "max_age_days": spec["max_age_days"],
                             "why": spec["why"], "runs_examined": 0,
                             "last_conclusive": None, "last_success": None,
-                            "queued": 0, "counts": {}, "problems": [f"拿不到数据：{e}"]})
+                            "queued": 0, "stuck_in_queue": 0,
+                            # **键要齐。** `render_summary()` 无条件读
+                            # `c['success'] / c['failure'] / c['cancelled']`，
+                            # 空 dict 会让它 KeyError —— 而这条路径正是
+                            # 「GitHub API 抽风」时走的，也就是最需要它把话
+                            # 说出来的时候。诊断在最需要时自己挂掉，是本轮
+                            # 反复出现的那个形状（#61）。
+                            "counts": {"success": 0, "failure": 0, "cancelled": 0},
+                            "problems": [f"拿不到数据：{e}"]})
             continue
         results.append(assess(spec, runs, now))
 
