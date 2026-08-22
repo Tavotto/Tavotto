@@ -226,8 +226,28 @@ RUNNER_TOOL_CACHE=/opt/hostedtoolcache
 AGENT_TOOLSDIRECTORY=/opt/hostedtoolcache
 ```
 
-`runsvc.sh` 继承的是 systemd 的最小 PATH，**不含 `~/.cargo/bin`**——漏了这条，
+job 真正生效的 PATH 由**三层**叠出来，后面的覆盖前面的：
+
+| 层 | 谁写的 | 什么时候生效 |
+|---|---|---|
+| systemd 的最小 PATH | unit 里没有 `Environment=PATH` | 服务起来那一刻 |
+| `<根>/.path` | `config.sh` 调 `env.sh`（`echo $PATH>.path`） | `runsvc.sh` 开头 `export PATH=$(cat .path)` |
+| `<根>/.env` 的 `PATH=` | 手工写（就是上面那段） | `Runner.Listener` 启动时 `LoadAndSetEnv`，**在 `runsvc.sh` 之后** |
+
+所以 `.env` 说了算，而 `.path` 存的是**配置那一刻那个 shell** 的 PATH——
+从非登录 shell 跑 `config.sh` 时它不含 `~/.cargo/bin`。漏了 `.env` 这条，
 workerd 那几步会直接 `command not found`，而错误信息与真实原因毫不相干。
+
+反过来也成立：从**登录** shell 跑过 `config.sh` 的机器，cargo 已经在 `.path`
+里了，不配 `.env` 也跑得起来。所以判断「服务 PATH 里有没有某个工具」必须
+按上面三层的优先级解析，只认 `.env` 会把这种机器误报成红——
+`scripts/ci/bootstrap_lab_runner.sh` 的 `service_path_of_root()` 是这条规则的
+唯一实现，`--check` 与安装路径共用它。
+
+> `.env` 的解析规则来自 runner 自己的 `LoadAndSetEnv`：按**第一个** `=` 切开，
+> 键不做 trim、注释不作特殊处理、后面的覆盖前面的。于是 `# PATH=/x` 的键是
+> `# PATH` 而不是 `PATH`——注释掉一行确实等于让它失效，但**不是因为 `#` 被
+> 识别成注释**，而是因为键不再叫 `PATH` 了。
 
 ---
 
