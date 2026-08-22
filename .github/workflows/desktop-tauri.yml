@@ -134,6 +134,7 @@ jobs:
       # 发行构建 = 产物会挂上 Release。签名门禁按它分岔：发行构建缺任一
       # 签名/公证凭据必须**失败**而不是 warning（1.0 审计 P1-07）；
       # 非发行的 dispatch 构建（attach=false）保留降级路径，便于试构建。
+      # **Windows 的 Authenticode 是这条纪律里唯一的例外**，理由见下面门禁那一步。
       IS_RELEASE_BUILD: ${{ (github.event_name == 'push' || inputs.attach) && '1' || '0' }}
       MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
       MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
@@ -162,8 +163,22 @@ jobs:
       - name: 发行签名门禁（缺凭据的发行构建就失败在这里，不是 warning）
         # 1.0 审计 P1-07：签名与安全更新不能是「可选能力」。发出去的安装包
         # 必须签名（macOS 还要能公证），更新包必须带 minisign 签名——缺任一
-        # secret 的「发行」等于把 SmartScreen 警告与不可信更新链发给全体用户，
-        # 而且工作流全绿。试构建（workflow_dispatch + attach=false）不受影响。
+        # secret 的「发行」等于把不可信更新链发给全体用户，而且工作流全绿。
+        # 试构建（workflow_dispatch + attach=false）不受影响。
+        #
+        # **Windows 的 Authenticode 是唯一的例外，而且是自觉的**（2026-08-22，
+        # v0.9.0 第一次真正触发这道门禁时定的）：SignPath Foundation 的开源订阅
+        # 要外部审批，拿不到之前这条硬失败挡掉的不是「未签名的安装包」，而是
+        # **整个 Windows 桌面版**——连带 updater-manifest 的两平台硬要求一起
+        # 落空，于是 macOS 用户也收不到更新（latest.json 根本不合成）。
+        # 「Windows 用户没有安装包、macOS 用户没有更新」比「Windows 安装包未签名」
+        # 坏得多，而后者正是 0.8.0 及更早一直在发的形态，不是本次新增的风险。
+        #
+        # 例外只限 Authenticode 这一项，其余一条没松：`TAURI_SIGNING_PRIVATE_KEY`
+        # 仍是硬要求（更新链的可信度不靠 Authenticode，靠 minisign），macOS 的
+        # 证书与公证仍是硬要求。SignPath 配好之后把 `if` 那支改回 `missing+=`
+        # 即可恢复原纪律——那时它挡的才是真的「本可以签却没签」。
+        # 政策与措辞见 docs/code-signing-policy.md。
         shell: bash
         run: |
           set -euo pipefail
@@ -174,14 +189,27 @@ jobs:
             [ -n "${MACOS_CERTIFICATE:-}" ]   || missing+=("MACOS_CERTIFICATE")
             [ -n "${MACOS_SIGN_IDENTITY:-}" ] || missing+=("MACOS_SIGN_IDENTITY")
             [ -n "${APPLE_ID:-}" ]            || missing+=("APPLE_ID（公证）")
-          else
-            [ "${SIGNPATH_ENABLED_VAR:-}" = "true" ] || missing+=("vars.SIGNPATH_ENABLED（Windows 安装包签名）")
+          elif [ "${SIGNPATH_ENABLED_VAR:-}" != "true" ]; then
+            # 不进 missing——见上面那段。但要在**运行页顶部**看得见，而不是
+            # 只在第 33 步的日志里躺着：发出去的东西没签名，得有人知道。
+            echo "::warning title=Windows 安装包未签名::vars.SIGNPATH_ENABLED 未开启——本次发行的 Windows 安装包没有 Authenticode 签名，用户首次运行会看到 SmartScreen 警告。更新包仍有 minisign 签名，自动更新链是可信的。"
+            {
+              echo "### ⚠️ Windows 安装包未签名"
+              echo
+              echo "\`vars.SIGNPATH_ENABLED\` 未开启，本次发行的 \`Tavotto-*-Windows-Setup.exe\` **没有 Authenticode 签名**。"
+              echo
+              echo "- 用户首次运行会看到 SmartScreen 警告；"
+              echo "- 更新包（\`*-setup.nsis.zip\`）仍带 minisign 签名，自动更新链本身可信；"
+              echo "- 安装包仍有 build provenance attestation，可用 \`gh attestation verify\` 核对来源。"
+              echo
+              echo "配好 SignPath 之后这条会自动消失，见 \`docs/code-signing-policy.md\`。"
+            } >> "$GITHUB_STEP_SUMMARY"
           fi
           if [ "${#missing[@]}" -gt 0 ]; then
             printf '::error::发行构建缺少签名凭据：%s\n' "${missing[*]}"
             exit 1
           fi
-          echo "✅ 签名凭据齐全"
+          echo "✅ 签名凭据齐全（Windows Authenticode 见上面的例外说明）"
         env:
           SIGNPATH_ENABLED_VAR: ${{ vars.SIGNPATH_ENABLED }}
 
@@ -554,9 +582,9 @@ jobs:
           }
           Write-Host "SignPath 签名有效：$($signature.SignerCertificate.Subject)"
 
-      - name: 标记未签名测试产物
+      - name: 标记未签名产物
         if: runner.os == 'Windows' && vars.SIGNPATH_ENABLED != 'true'
-        run: Write-Warning "SIGNPATH_ENABLED 未开启：Windows 安装包未签名，仅供测试分发"
+        run: Write-Warning "SIGNPATH_ENABLED 未开启：本次 Windows 安装包没有 Authenticode 签名（更新包的 minisign 签名不受影响）"
 
       - name: Windows 更新包（必须在 SignPath 签名之后重做）
         # 与 macOS 同一条道理：打包器顺手打的那个 nsis.zip 装的是**还没签名**的
