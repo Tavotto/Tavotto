@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -135,8 +136,23 @@ def main(argv: list[str] | None = None) -> int:
     verdicts = {"correctness": True, "performance": True}
     present = 0
 
+    # **只认本轮的报告。** `reports/` 在持久状态根里、保留 30 天，而
+    # `cleanup.py` 排在体检**之后**——体检早早失败时，上一轮的 soak.json /
+    # visual.json 还原样躺在那儿。不核对 run_id 的话，汇总会把那些阶段标成
+    # PASS，而它们这一轮**根本没跑过**。
+    # 这是最坏的一种诊断失效：不是缺席，是**说谎**。而且它偏偏发生在体检
+    # 失败、最需要看清「究竟跑到哪一步」的时候。
+    # 拿不到 GITHUB_RUN_ID（本地手工跑）时不设限——那时本来就没有「本轮」
+    # 可言，硬判会让本地跑出来的汇总全是「未运行」。
+    this_run = os.environ.get("GITHUB_RUN_ID", "")
+
     for fname, label, kind in SECTIONS:
         data = _read(d / fname)
+        if data is not None and this_run:
+            got = str(((data.get("metadata") or {}).get("run_id") or ""))
+            if got != this_run:
+                rows.append(f"| {label} | — | 未运行（跳过上一轮的报告 run_id={got or '缺失'}）|")
+                continue
         if data is None:
             rows.append(f"| {label} | — | 未运行 |")
             continue
