@@ -332,6 +332,45 @@ def test_single_value_action_inputs_come_from_the_manifest():
     assert not offenders, ("这些单值输入拿到了通配符：\n  " + "\n  ".join(offenders))
 
 
+def test_an_action_output_directory_exists_before_the_action_writes_to_it():
+    """写文件的 action 之前，那个目录必须已经建好。
+
+    2026-08-22 实测（run 32578844828，`github_release` 这个 job **有史以来
+    第一次真正执行**）：#63 的修复生效了，syft 拿到具体路径并成功扫完
+    ——然后 sbom-action 写输出时报
+
+        ENOENT: no such file or directory, open 'out/tavotto-sbom.spdx.json'
+
+    因为 `mkdir -p out` 排在**下一步**（SHA-256 那步）。整条链就是这么
+    一步一步依次失败的：每一步都是第一次执行。
+
+    **判据只盯 `output-file` 这一类「action 自己写文件」的输入**——
+    `run:` 里的重定向由 shell 负责，那是另一回事，混在一起判会把大量
+    正当写法判红。
+    """
+    offenders = []
+    for p_ in sorted(WF.glob("*.yml")):
+        wf = _wf(p_)
+        for job in wf.jobs:
+            steps = wf.steps(job)
+            for idx, step in enumerate(steps):
+                out = wf.with_scalars(step).get("output-file")
+                if not out or "/" not in out:
+                    continue
+                d = out.rsplit("/", 1)[0]
+                # 这一步之前（同 job 内）有没有把这个目录建出来？
+                made = any(f"mkdir -p {d}" in prior or f"mkdir -p ./{d}" in prior
+                           for prior in steps[:idx])
+                if not made:
+                    name = _Workflow.field(step, "name") or "?"
+                    offenders.append(
+                        f"{p_.name}::{job} 步骤「{name}」写 {out}，"
+                        f"而前面没有任何一步 `mkdir -p {d}`")
+    assert not offenders, (
+        "这些 action 要往一个还不存在的目录里写文件（实测报 ENOENT）：\n  "
+        + "\n  ".join(offenders))
+
+
 def test_every_build_leg_emits_a_manifest():
     """两条构建链（Python / 桌面）都要产出自己那份清单。
 

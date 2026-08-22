@@ -371,6 +371,21 @@ jobs:
         id: paths
         run: |
           set -euo pipefail
+          # **`out/` 要在这里就建好。** 2026-08-22 实测（run 32578844828，
+          # `github_release` 这个 job **有史以来第一次真正执行**）：#63 的修复
+          # 生效了，syft 拿到具体路径并成功扫完——然后 sbom-action 写输出时
+          # 报 `ENOENT: no such file or directory, open 'out/…'`，因为
+          # `mkdir -p out` 在**下一步**（SHA-256 那步）才做。
+          #
+          # 这正是这条链的固有形状：每一步都是第一次执行，于是一步一步地
+          # 依次失败。`publish=false` 演练就是为了让这种失败发生在演练里，
+          # 而不是发生在一个改不动也删不掉的正式 tag 上。
+          #
+          # **不靠上面那个 download-artifact 顺带建出 out/**：它带着
+          # `continue-on-error`（没配 minisign 私钥时那个 artifact 不存在），
+          # 于是 out/ 存不存在取决于有没有配签名密钥——一个下游步骤的成败
+          # 取决于一件与它完全无关的事，那种耦合迟早出事。
+          mkdir -p out
           W="$(python3 scripts/ci/artifact_manifest.py path artifact-manifest.json --role wheel)"
           echo "wheel=$W" >> "$GITHUB_OUTPUT"
           echo "SBOM 输入: $W"
