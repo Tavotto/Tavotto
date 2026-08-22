@@ -35,6 +35,7 @@ while [ $# -gt 0 ]; do
     --restore)    MODE="restore" ;;
     --add-check)  MODE="add-check"; CHECK="${2:?--add-check 要一个 check 名}"; shift ;;
     --rm-check)   MODE="rm-check";   CHECK="${2:?--rm-check 要一个 check 名}"; shift ;;
+    --recreate)   MODE="recreate";   CHECK="${2:?--recreate 要一个存档 id}"; shift ;;
     --force)      FORCE=1 ;;
     --repo)       REPO="${2:?}"; shift ;;
     -h|--help)    sed -n '2,30p' "${BASH_SOURCE[0]}"; exit 0 ;;
@@ -77,7 +78,24 @@ json.dump(json.load(sys.stdin),sys.stdout,indent=2,ensure_ascii=False,sort_keys=
 
 diff)
   rc=0
-  for id in $(ids); do
+  # **两个集合都要比。** 只遍历远程 id 的话，某条 ruleset 被**删掉**之后
+  # 它压根不出现在循环里 —— `--diff` 于是报绿，而那条规则保护的东西
+  # （PR 要求、必需检查、禁止直推 main）已经全部消失。
+  # **一个用来检测保护是否完好的工具，在保护完全消失时报平安** ——
+  # 这正是这套 CI 反复在消灭的那种失效，而它长在了检测工具自己身上。
+  # （Codex 在 #64 第三轮上指出。）
+  remote_ids="$(ids)"
+  for f in "$STORE"/ruleset-*.json; do
+    [ -e "$f" ] || continue
+    aid="$(basename "$f" .json | sed 's/^ruleset-//')"
+    if ! printf '%s\n' "$remote_ids" | grep -qx "$aid"; then
+      name="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('name','?'))" "$f")"
+      echo "❌ 存档里的 ruleset ${aid}（${name}）在远程**不存在了** —— 它保护的东西现在没人守"
+      echo "   重建：${0} --recreate ${aid} --apply"
+      rc=1
+    fi
+  done
+  for id in $remote_ids; do
     f="$STORE/ruleset-$id.json"
     if [ ! -f "$f" ]; then echo "⚠️  远程有 ruleset ${id}，本地没有存档"; rc=1; continue; fi
     if gh api "repos/$REPO/rulesets/$id" | norm > /tmp/rs-remote.$$ \
@@ -116,6 +134,28 @@ restore)
     fi
     rm -f "$tmp"
   done
+  ;;
+
+recreate)
+  # 被删掉的 ruleset **只能 POST 重建**：那个数字 id 已经不存在，
+  # `PUT /rulesets/<id>` 会回 404 而不是把它建回来。
+  # 重建出来的是一个**新 id**，所以完事必须重新 --backup，
+  # 否则下一次 --diff 会说「存档里这条在远程不存在」——而那时它其实在。
+  f="$STORE/ruleset-${CHECK}.json"
+  [ -f "$f" ] || { echo "找不到存档 $f" >&2; exit 1; }
+  if printf '%s\n' "$(ids)" | grep -qx "$CHECK"; then
+    echo "ruleset ${CHECK} 在远程还在，用 --restore 而不是 --recreate" >&2; exit 1
+  fi
+  tmp="$(mktemp)"
+  python3 "$HERE/scripts/admin/_strip_readonly.py" "$f" > "$tmp"
+  echo "── 重建 ruleset ${CHECK}（POST，会得到一个新 id）"
+  if [ "$APPLY" = "0" ]; then
+    echo "   dry-run。真重建：${0} --recreate ${CHECK} --apply"
+  else
+    gh api -X POST "repos/${REPO}/rulesets" --input "$tmp" --jq .id
+    echo "   **立刻跑一次 ${0} --backup**：新 id 与存档文件名不一致"
+  fi
+  rm -f "$tmp"
   ;;
 
 add-check|rm-check)

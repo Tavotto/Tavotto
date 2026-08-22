@@ -499,3 +499,24 @@ def test_the_stats_tool_says_when_it_only_saw_the_first_page():
     assert "totalCount" in src, "查询没有要总数，无从知道有没有被截断"
     assert "truncated" in src, "没有把截断这件事表达出来"
     assert "::warning::" in src, "截断了却不吭声"
+
+
+def test_diff_notices_a_ruleset_that_vanished_from_the_remote():
+    """**一个检测保护是否完好的工具，不许在保护完全消失时报平安。**
+
+    `--diff` 原来遍历的是**远程**的 ruleset id。某条被删掉之后它压根不出现在
+    循环里 —— `--diff` 于是 exit 0，而那条规则保护的东西（PR 要求、17 项
+    必需检查、禁止直推 main）已经全部没了。
+
+    这正是这套 CI 反复在消灭的那种失效，而它长在了检测工具自己身上。
+    """
+    sh = (ADMIN_DIR / "apply_rulesets.sh").read_text(encoding="utf-8")
+    code = "\n".join(l for l in sh.splitlines() if not l.lstrip().startswith("#"))
+    diff = code.split("\ndiff)")[1].split("\nrestore)")[0]
+    assert 'for f in "$STORE"/ruleset-*.json' in diff, (
+        "--diff 没有遍历**存档**那一侧 —— 远程被删掉的 ruleset 它看不见")
+    assert "--recreate" in code, "没有给消失的 ruleset 一条重建路径"
+
+    # 被删掉的只能 POST 重建：那个数字 id 已经不存在，PUT 会 404
+    recreate = code.split("\nrecreate)")[1].split("\nadd-check")[0]
+    assert "-X POST" in recreate, "重建走的不是 POST —— PUT 一个不存在的 id 会 404"
