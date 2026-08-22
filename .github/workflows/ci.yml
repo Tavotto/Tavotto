@@ -1,9 +1,51 @@
 name: CI
 
+# ═══════════════════════════════════════════════════════════════════════════
+# 三层反馈（2026-08-21）。**分层是为了让第一层早回来，不是为了少跑测试**——
+# 最终门禁一条没减，required checks 的名字一个没动。
+#
+#   第 1 层  PR 快线（每次 push 都跑，目标是「这个 commit 还值不值得继续」）
+#            invariants / backend / frontend / workerd / compat-smoke / CodeQL
+#
+#   第 2 层  合并资格（PR 从草稿变成 Ready for review 之后才跑）
+#            package ×3 / windows-exe-smoke / macos-app-smoke
+#            —— 三个平台的打包、装 wheel 冒烟、真 .exe / 真 .app、内置 runtime、
+#            workerd 自动发现。单条 60 分钟上限，是这套 CI 里最贵的部分。
+#
+#   第 3 层  nightly / lab（nightly.yml + lab-ci.yml）
+#            全量 CompatBench × 多运行时、最小运行时、浏览器运行时、保真度、
+#            视觉回归、安装链路（真装真卸）、soak 与 mutation。
+#
+# **为什么用「草稿与否」而不是别的信号**：required status checks 一共 16 个
+# context，第 2 层占了 5 个。任何让它们在某些 push 上不产出结论的做法，都要
+# 面对「skipped 的必需检查算不算通过」这个随 GitHub 行为变化的问题。而草稿 PR
+# **本来就不能合并**——那 5 个检查在草稿期没有结论完全无害，作者点下
+# 「Ready for review」的那一刻它们就照常跑、照常报。ruleset 一个字节都不用改，
+# 也就不会出现「先登记必需检查、再合产出它的 job」那种把仓库锁死的顺序错误。
+#
+# 想在草稿期就跑全套：给 PR 打 `full-ci` 标签。
+# ═══════════════════════════════════════════════════════════════════════════
+
 on:
   push:
     branches: [main]
   pull_request:
+    # `ready_for_review` 不是默认事件类型（默认只有 opened/synchronize/reopened）。
+    # 下面那几档重活按「草稿与否」分层，少了这条，作者点「Ready for review」时
+    # 不会有新的 workflow run，重活永远不跑——一个分层方案最容易踩空的地方。
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+
+# 同一个 PR 上新 push 之后，旧 SHA 的 run 立刻取消：它就算全绿也已经没有 merge
+# value，占着的却是所有人共用的运行器额度。
+#
+# **cancel-in-progress 只对 PR 开**：push 到 main 的每一次 run 都是那个 commit
+# 的唯一验证记录，连着合两个 PR 时把前一个取消掉，main 上就留了一段没验过的
+# 历史。tag / release 工作流不在这个文件里，天然不受影响。
+#
+# group 里带 `github.workflow`：codeql.yml 各有各的槽，别互相取消。
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # 这个工作流从头到尾只读代码、跑测试、造临时产物，一个字节都不往仓库写。
 # 不显式收紧的话 GITHUB_TOKEN 会拿到仓库默认的那套权限（含 contents: write），
@@ -21,6 +63,56 @@ env:
   TAVOTTO_NO_TELEMETRY: "1"
 
 jobs:
+  # ────────────────────────────────────────────────────────────────
+  # 第 1 层最靠前的一格：引擎的**结构性不变式**（tests/test_invariants_engine.py
+  # + 与它同一族的 artist family / patchspec / preflight 契约）。
+  #
+  # 它跑的是 backend 的**子集**，所以不是新增门禁，是把最会红的那几条提前
+  # 到两三分钟内回来——backend 是 4 条腿的全量矩阵，等它跑完再发现「撤销回
+  # 不到原样」太晚了。真正的 pass/fail 仍然由 backend 负责（那 4 个 context
+  # 是 required checks），这一格红了 backend 必然也红。
+  #
+  # **刻意暂不登记成必需检查**：必需检查只能登记 main 上已经产出过结论的
+  # job，反过来会把整个仓库锁死（先登记、再合并产出它的 workflow = 所有 PR
+  # 永远等一个永远不会出现的 context）。这一格随本 PR 合进 main、在 main 上
+  # 绿过一次之后再登记。
+  #
+  # 不做 paths 过滤：不变式验的是引擎语义与它的对外契约，而「哪些文件会影响
+  # 引擎语义」本身就是一个会漏配的判断——漏一条换来的是「改了契约却没人跑
+  # 不变式」，静默不跑的门禁与空转的门禁一样坏。
+  # ────────────────────────────────────────────────────────────────
+  invariants:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # 科学栈按锁文件钉版本：不变式里有几条是**按实测写死的例外**
+      # （`honours_stroke_style` 的网格表），版本一换实测结论可能就变了，
+      # 而那正是我们想被告知的事——用的必须是用户拿到的那一套。
+      - name: 安装依赖（科学栈按锁文件钉版本）
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,ci]"
+          # shellcheck disable=SC2046
+          pip install $(python scripts/ci/runtime_pins.py)
+          python -c "import matplotlib;print('matplotlib', matplotlib.__version__)"
+      - name: 结构性不变式
+        run: |
+          python -m pytest -q \
+            tests/test_invariants_engine.py \
+            tests/test_artist_families.py \
+            tests/test_artist_census_tool.py \
+            tests/test_patchspec.py \
+            tests/test_preflight.py
+      # 探针自己也要能单独跑起来——它是排兼容缺口时第一个被拿起来的东西
+      - name: 不变式探针（人看的那份）
+        if: always()
+        run: python tests/support/engine_invariant_probe.py --pretty
+
   backend:
     # 跨平台是产品承诺，就得跨平台跑。Linux 上多铺几个 Python 版本盯住
     # requires-python 的下界，mac / Windows 各跑一档确认平台相关代码
@@ -167,6 +259,12 @@ jobs:
   package:
     # 装出来的 wheel 必须自带界面并且能真的起起来——这条流水线专门盯
     # 「本地能跑但打包后 404」这类只在发布时才暴露的问题。
+    # 第 2 层（合并资格）：草稿 PR 上跳过——草稿本来就不能合并，而这一档是
+    # 这套 CI 里最贵的部分。点「Ready for review」或打 `full-ci` 标签即照常跑。
+    if: >-
+      github.event_name != 'pull_request'
+      || github.event.pull_request.draft == false
+      || contains(github.event.pull_request.labels.*.name, 'full-ci')
     needs: [backend, frontend]
     strategy:
       fail-fast: false
@@ -232,6 +330,12 @@ jobs:
     #
     # 走的是 scripts/smoke_app.py（与 nightly 共用同一条路径），失败时把
     # app.log / worker.log / runtime 清单一起传上来。
+    # 第 2 层（合并资格）：草稿 PR 上跳过——草稿本来就不能合并，而这一档是
+    # 这套 CI 里最贵的部分。点「Ready for review」或打 `full-ci` 标签即照常跑。
+    if: >-
+      github.event_name != 'pull_request'
+      || github.event.pull_request.draft == false
+      || contains(github.event.pull_request.labels.*.name, 'full-ci')
     needs: [backend, frontend]
     runs-on: windows-latest
     timeout-minutes: 60
@@ -419,6 +523,12 @@ jobs:
     # worker-env 撑着的，等于什么都没验。
     #
     # e2e 不在这里跑（Windows 那条已经覆盖真实界面），避免把 PR 门禁再拉长一倍。
+    # 第 2 层（合并资格）：草稿 PR 上跳过——草稿本来就不能合并，而这一档是
+    # 这套 CI 里最贵的部分。点「Ready for review」或打 `full-ci` 标签即照常跑。
+    if: >-
+      github.event_name != 'pull_request'
+      || github.event.pull_request.draft == false
+      || contains(github.event.pull_request.labels.*.name, 'full-ci')
     needs: [backend, frontend]
     runs-on: macos-latest        # 目前只有 Apple Silicon 一档；Intel 未构建未验证
     timeout-minutes: 60

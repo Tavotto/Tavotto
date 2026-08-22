@@ -10,6 +10,7 @@
 """
 import argparse
 import json
+import os
 import sys
 import time
 
@@ -56,6 +57,11 @@ def main():
                     help="往 stdout 写一行非 JSON")
     ap.add_argument("--die-on-render", action="store_true",
                     help="收到 render 就直接退出（模拟 worker 崩溃）")
+    ap.add_argument("--linger-after-close-ms", type=float, default=0.0,
+                    help="配合 --die-on-render：关掉 stdout（管道 EOF）之后**先赖着**"
+                         "不退这么久。真实崩溃里这个窗口是几微秒、只是偶尔被撞上；"
+                         "把它拉长，'try_wait() 还回 Ok(None)' 就从抖动变成必然，"
+                         "让「EOF 之后必须重建」这条有确定性的用例可证。")
     ap.add_argument("--trace", default="",
                     help="把收到的每条请求追加到这个文件（一行一条 JSON）")
     args = ap.parse_args()
@@ -93,6 +99,12 @@ def main():
             resp = reply(req, {"stems": stems})
         elif cmd in ("render", "render_png", "preview_png", "export"):
             if args.die_on_render:
+                if args.linger_after_close_ms:
+                    # 先制造 EOF，再赖着不退：进程对象仍然「活着」，而协议管道
+                    # 已经断了——两个判据在这个窗口里给出相反的答案。
+                    sys.stdout.close()
+                    os.close(1)
+                    time.sleep(args.linger_after_close_ms / 1000.0)
                 return
             if args.hang:
                 time.sleep(3600)

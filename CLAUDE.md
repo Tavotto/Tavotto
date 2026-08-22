@@ -546,6 +546,47 @@ Python，首次渲染也不联网：
   （椭圆/三角/菱形/多边形/大括号；矩形不在此列，直线走端点那套）。
   看护 `tests/test_manifest_geometry.py` + `web` 的 `pathGeom.test.ts` /
   `elementPathSelection.test.tsx` / `shapeOutline.test.tsx`。
+- **Artist family 能力层（2026-08-21）**：`_cls_key` 从「逐个类名的 isinstance 表」
+  改成**按 family 认**——任何 `Patch` 子类归 `patch`、任何 `Collection` 子类归
+  `collection`、认不出来的 Artist 归 `artist`。**唯一的例外是线组**
+  （`LineCollection` / `EventCollection` → `linecoll`，排在 `collection` 之前）：
+  它对外那套 prop 名是 `color`（Line2D 口径）而不是 `edgecolor`，gid 也是
+  `axes_i.linecoll_j`，两者都已经发出去了——族抽象省的是实现里的重复，不是
+  改掉已承诺接口的理由（裁决记在 `docs/audit/2026-08-21-matplotlib-source-audit.md` §14）。同一条 prop 只写一次：
+  `_COLLECTION_CAPS` / `_PATCH_CAPS` / `_GENERIC_CAPS` 三张表经 `_install_caps`
+  （**setdefault**，族里的专用契约永远优先）注册给 family key。于是 pie 的
+  Wedge、axhspan 的 Rectangle、stairs 的 StepPatch、`pcolormesh` 的 QuadMesh、
+  `contour` 的 ContourSet、`eventplot` 的 EventCollection、以及**用户自己继承的
+  子类**都不用再各写一份。完整对象模型与支持矩阵在
+  `docs/architecture/matplotlib-artist-capability-map.md`，升级 matplotlib 走
+  `docs/ci/matplotlib-upgrade-checklist.md`。
+  * **能力按真实 getter 实况判，不按类名**（`collection_caps()`）。颜色映射中的
+    Collection **不给 facecolor**：它的 facecolors 每次 draw 由
+    `update_scalarmappable()` 从数组重算，`set_facecolor` 在屏幕上一个像素都不
+    会变（3.10.8 / 3.11.1 实测一致）。`pcolor` 的 PolyQuadMesh 与 `hexbin` 的
+    PolyCollection 都是 PolyCollection 的子类却永远映射——按类名开放就是
+    「界面说改了、画面没动」。反过来 **stroke 对任何 Collection 都开放**：
+    此刻没有边不代表加不上边（给 pcolormesh 加网格线是常见需求）。
+  * **gid 一个都没变**：`axes_i.scatter_j` / `axes_i.fill_j` / `axes_i.patches_j`
+    的序号取的一直是所属列表（`ax.collections` / `ax.patches`）的下标，不是
+    「第几个散点」，所以把从前没登记的那些补登记进来不挪动任何已有名字。
+    被 stem 容器消费掉的 markerline 另外登记**旧 gid 别名**（只进 `state.index`、
+    不进元素表）——历史 override 仍落在同一个 artist 上，界面上不多出条目。
+  * **Collection 的包围盒有第二条路**：多数 Collection 的 `get_window_extent`
+    回的是无穷大空框（`pcolor` / `hexbin` / `contour` / LineCollection 实测都是），
+    老代码判 `width<=0 and height<=0` 恰好成立，于是元素被**静默丢掉**。退路是
+    `get_tightbbox(renderer)`（公开 API，与裁剪框求交，永远有限、永远在子图里）。
+    已经量得出有限框的继续走原路，包围盒一个像素不变——写回自检比的就是它。
+  * **认不出来的 Artist 只开 `visible` / `zorder`**，不开 alpha：前两者由 draw
+    的公共机制兑现、任何子类都逃不掉，alpha 要靠每个 artist 自己在 draw 里读。
+    宁可少开放，不可开放了却不生效。
+  * **manifest 多一个可选的 `unsupported` 诊断清单**（`manifest.census`，
+    instrument 时采一次，不是每帧）：画在图上、既没进元素表也不是结构件的那些，
+    按类名 + 归属报出来。容器消费掉的成员不算漏。旧前端不认识这个键会原样忽略，
+    写回自检只比 gid 集合与几何。
+  * 开发工具 `scripts/dev/matplotlib_artist_census.py`（`--api --with-seaborn`）
+    普查任意脚本或代表性 API 的 artist 图与 Tavotto 覆盖度。**只用于开发/审计，
+    产品路径不依赖它**——`instrument()` 的语义化遍历才是权威。
 - 面板翻转（flip_h/flip_v，先翻转后旋转）：导出按 dpi 位图嵌入
   （show_pdf_page 无镜像；flipH = 行倒序 + 旋转 180°），与 opacity<1 同一取舍。
 - 安全：worker `cwd=沙盒`（挡相对路径写出/删除）+ `Path.unlink` 守卫
@@ -1168,6 +1209,34 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被它推翻**（
   * 看护：`tests/test_write_back.py`（假 worker，全部分支）+
     `tests/test_worker_roundtrip.py` 末节（真 matplotlib + Flask 全链路，
     含 workerd 路径的一次性会话不泄漏）+ `web` 的 `WriteBackDialog.test.tsx`。
+
+## 1.0 稳定化（2026-08-21 起）
+
+退出条件、缺陷分级（P0 / P1 / release-blocking P2 / backlog P2）与 post-1.0
+架构 backlog 全在 `docs/1.0-release-readiness.md`，改动前先读。三条要点：
+
+- **收敛，不是架构完美**。除非是 correctness / safety / compatibility /
+  release blocker，**禁止扩大产品能力**，禁止趁机重写 override framework、
+  alias 系统或任何已经稳定的模块。值得改的记进那份文档的 backlog。
+- **五条结构性不变式**（`tests/test_invariants_engine.py` +
+  `tests/support/engine_invariant_probe.py`）：能力真实 / 逐字还原 /
+  热态==全量重放（含**删除**）/ 不许静默消失 / 单一权威。它们与
+  `tests/acceptance/`（我们今天 vs 昨天）和 CompatBench（原生 matplotlib vs
+  Tavotto）问的都不是同一个问题，**三者不能互相替代**。
+  能力真实那条**用像素说话**（`preview_png` 状态中立、6ms 一张、逐字节确定），
+  因为「设得进状态」证明不了「画面会变」。
+- **反空门禁纪律**：新增的核心不变式测试，提交前必须手工反证一次——把修复
+  拿掉，确认它真的红，并把结论写进 PR。本轮真撞到过一次「加了一道过滤、
+  拿掉却没有任何用例变红」，那道过滤被删掉了：**读的人会以为它在挡什么，
+  而它什么都没挡**，比没有更坏。豁免表要写得出理由，并区分「豁免」（本来
+  就不画）与「使能」（画在一个关着的通道上，开了就必须变）。
+
+CI 分三层（`.github/workflows/ci.yml` 抬头有全图）：PR 快线 / 合并资格
+（草稿 PR 上跳过，点 Ready for review 才跑）/ nightly 与 lab。**最终门禁一条
+没减，required checks 的名字一个没动**——分层用的是「草稿与否」，因为草稿
+本来就不能合并，那 5 个必需检查在草稿期没有结论完全无害，ruleset 一个字节
+不用改。ci.yml 与 codeql.yml 的 `cancel-in-progress` **只对 PR 开**：main 上
+每次 run 是那个 commit 的唯一验证记录，tag / release 链路不在分组里。
 
 ## 验证
 

@@ -1833,36 +1833,40 @@
       "semantic_expectations": {
         "roles_present": [
           "axes",
+          "stem_series",
           "line",
-          "linecoll",
           "title"
         ],
         "editable": [
           [
-            "axes_0.linecoll_0",
+            "axes_0.stemseries_0",
             "color"
           ],
           [
-            "axes_0.linecoll_0",
+            "axes_0.stemseries_0",
             "linewidth"
+          ],
+          [
+            "axes_0.stemseries_0",
+            "marker"
           ]
         ]
       },
       "mutations": [
         {
-          "gid": "axes_0.linecoll_0",
+          "gid": "axes_0.stemseries_0",
           "prop": "color",
           "value": "#118844"
         },
         {
-          "gid": "axes_0.linecoll_0",
+          "gid": "axes_0.stemseries_0",
           "prop": "linewidth",
           "value": 2.75
         }
       ],
       "browser_eligible": false,
-      "smoke": false,
-      "notes": "`stem` 的竖线是一条 LineCollection（8 条路径），基线是 Line2D。两者现在都可编辑。线组不给路径几何（`pathgeom.element_geometry` 是按单条路径写的，线组有 N 条），选中/命中退回 bbox——如实记账，没硬做。"
+      "smoke": true,
+      "notes": "`ax.stem()` 在用户眼里是**一条**系列，所以 markerline 与 stemlines 归 `axes_0.stemseries_0` 这个容器，baseline（零线）继续以普通曲线单独可编辑。容器化之前茎是 `axes_0.linecoll_0`、marker 是 `axes_0.lines_0`，两个旧 gid 作为 **index-only 别名**保留住了（存量文档里有针对它们的 override）——那条兼容承诺由 `tests/test_artist_families.py` 看护，**不放在这里**：别名不进元素表，而本 runner 的 mutation 校验是从元素表里读 before/after 的。线组不给路径几何（`pathgeom.element_geometry` 是按单条路径写的，线组有 N 条），选中/命中退回 bbox——如实记账，没硬做。"
     },
     {
       "id": "art_hist",
@@ -1912,7 +1916,8 @@
       "semantic_expectations": {
         "roles_present": [
           "axes",
-          "title"
+          "title",
+          "collection"
         ],
         "editable": [
           [
@@ -1922,6 +1927,10 @@
           [
             "axes_0.title",
             "color"
+          ],
+          [
+            "axes_0.collections_0",
+            "cmap"
           ]
         ]
       },
@@ -1935,13 +1944,16 @@
           "gid": "axes_0.title",
           "prop": "color",
           "value": "#804000"
+        },
+        {
+          "gid": "axes_0.collections_0",
+          "prop": "cmap",
+          "value": "plasma"
         }
       ],
       "browser_eligible": false,
       "smoke": false,
-      "notes": "",
-      "classification": "partial_support",
-      "reason": "hist2d 画的是 QuadMesh，Tavotto 不认这个 artist——图渲染正确、标题与刻度可编辑，但那块网格本身选不中。QuadMesh 需要一族新的handler（cmap/alpha/visible），见 artist 普查。"
+      "notes": "hist2d 的 QuadMesh 同 art_pcolormesh。"
     },
     {
       "id": "art_boxplot",
@@ -2523,7 +2535,8 @@
       "semantic_expectations": {
         "roles_present": [
           "axes",
-          "title"
+          "title",
+          "fill"
         ],
         "editable": [
           [
@@ -2533,6 +2546,10 @@
           [
             "axes_0.title",
             "color"
+          ],
+          [
+            "axes_0.fill_0",
+            "edgecolor"
           ]
         ]
       },
@@ -2546,13 +2563,16 @@
           "gid": "axes_0.title",
           "prop": "color",
           "value": "#804000"
+        },
+        {
+          "gid": "axes_0.fill_0",
+          "prop": "edgecolor",
+          "value": "#804000"
         }
       ],
       "browser_eligible": false,
       "smoke": false,
-      "notes": "",
-      "classification": "partial_support",
-      "reason": "pcolor 在 matplotlib 3.8+ 返回 PolyQuadMesh：instrument **认得**它（PolyCollection 的子类，登记成 axes_0.fill_0），但它的 get_window_extent 是空框，build_manifest 于是把它丢掉——界面上那块网格不存在。散点当年也栽在同一处、靠 datalim 换算救回来的；这里不能照抄：颜色由 colormap 每次 draw 重算（update_scalarmappable），把它当成 fill 角色开放 facecolor 会「设了但下一帧被顶回去」，那比不支持更坏。要修得先有一族网格感知的 handler（cmap / alpha / visible），与 QuadMesh 是同一件事。"
+      "notes": "pcolor 出的 PolyQuadMesh 走 Collection 的**通用**绘制路径，花纹与线型都认。"
     },
     {
       "id": "art_pcolormesh",
@@ -2568,12 +2588,17 @@
         "roles_present": [
           "axes",
           "colorbar",
-          "title"
+          "title",
+          "collection"
         ],
         "editable": [
           [
             "axes_1.colorbar",
             "orientation"
+          ],
+          [
+            "axes_0.collections_0",
+            "cmap"
           ]
         ]
       },
@@ -2582,13 +2607,16 @@
           "gid": "axes_1.colorbar",
           "prop": "orientation",
           "value": "horizontal"
+        },
+        {
+          "gid": "axes_0.collections_0",
+          "prop": "cmap",
+          "value": "plasma"
         }
       ],
       "browser_eligible": false,
       "smoke": false,
-      "notes": "",
-      "classification": "partial_support",
-      "reason": "pcolormesh 画的是 QuadMesh，Tavotto 不认——色条可编辑，网格本身选不中。与 art_hist2d 同一个缺口。"
+      "notes": "pcolormesh 的 QuadMesh 现在按 Collection family 登记，cmap/clim 与描边可编辑。花纹与线型**有意不给**——它走 renderer.draw_quad_mesh，那个渲染原语只接边色与线宽。"
     },
     {
       "id": "art_hexbin",
@@ -2603,7 +2631,8 @@
       "semantic_expectations": {
         "roles_present": [
           "axes",
-          "title"
+          "title",
+          "fill"
         ],
         "editable": [
           [
@@ -2613,6 +2642,10 @@
           [
             "axes_0.title",
             "color"
+          ],
+          [
+            "axes_0.fill_0",
+            "edgecolor"
           ]
         ]
       },
@@ -2626,13 +2659,16 @@
           "gid": "axes_0.title",
           "prop": "color",
           "value": "#804000"
+        },
+        {
+          "gid": "axes_0.fill_0",
+          "prop": "edgecolor",
+          "value": "#804000"
         }
       ],
       "browser_eligible": false,
       "smoke": false,
-      "notes": "",
-      "classification": "partial_support",
-      "reason": "hexbin 出的是普通 PolyCollection：instrument **认得**它（PolyCollection 的子类，登记成 axes_0.fill_0），但它的 get_window_extent 是空框，build_manifest 于是把它丢掉——界面上那块网格不存在。散点当年也栽在同一处、靠 datalim 换算救回来的；这里不能照抄：颜色由 colormap 每次 draw 重算（update_scalarmappable），把它当成 fill 角色开放 facecolor 会「设了但下一帧被顶回去」，那比不支持更坏。要修得先有一族网格感知的 handler（cmap / alpha / visible），与 QuadMesh 是同一件事。"
+      "notes": "hexbin 的 PolyCollection 现在进得了元素表：它的 window extent 是空框，而 `_collection_bbox` 的第二级判据（数据范围）把它救回来了。"
     },
     {
       "id": "art_contour",

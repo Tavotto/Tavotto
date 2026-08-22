@@ -1880,12 +1880,20 @@ def test_fill_between_area_is_editable(tmp_path):
         pool.discard(w)
 
 
-def test_scalar_mapped_meshes_stay_out_of_the_manifest(tmp_path):
-    """标量映射的网格（pcolor / pcolormesh / hexbin）**刻意**不进 manifest。
+def test_scalar_mapped_meshes_never_advertise_facecolor(tmp_path):
+    """标量映射的网格（pcolor / pcolormesh / hexbin）**进 manifest，但不给
+    facecolor**。
 
-    它们的颜色由 colormap 每次 draw 重算（`update_scalarmappable`），放进去
-    会让 facecolor 这类编辑「设了但下一帧被顶回去」——那比不支持更坏。
-    这条钉住的是那个取舍本身：包围盒兜底不许顺手把它们也放进来。
+    钉住的取舍没变，只是判据变准了：它们的 facecolors 每次 draw 由
+    `update_scalarmappable()` 从数组重算，`set_facecolor` 在屏幕上一个像素
+    都不会变——「设了下一帧被顶回去」比不支持更坏。2026-08-21 之前这条靠
+    「整个不登记」实现，代价是用户连改色图、改 clim、加网格线都做不到，而
+    那三件事**是真的生效的**。现在由 `overrides.collection_caps()` 按真实
+    getter 实况裁决：`facecolor` 不给，`cmap` / `vmin` / `vmax` 与描边照给。
+
+    换句话说这条用例现在守的是**能力探针**，不是元素表的黑名单；
+    `tests/test_artist_families.py::test_color_mapped_collections_do_not_advertise_facecolor`
+    从另一头（散点 + QuadMesh）守着同一条判据。
     """
     figs = tmp_path / "figs"
     figs.mkdir()
@@ -1894,8 +1902,13 @@ def test_scalar_mapped_meshes_stay_out_of_the_manifest(tmp_path):
     try:
         w.ensure_built()
         man = w.override("FillMesh", [])["manifest"]
-        assert not [e for e in man["elements"] if e["role"] == "fill"], \
-            "标量映射的网格进了 manifest——它的 facecolor 编辑不会生效"
+        meshes = [e for e in man["elements"] if e["role"] in ("fill", "collection")]
+        assert meshes, "标量映射的网格整个没进 manifest——它的色图与描边是真改得动的"
+        props = {f["prop"] for e in meshes for f in e["editable"]}
+        assert "facecolor" not in props, \
+            "映射中的网格给了 facecolor——它的编辑会被 colormap 顶回去"
+        assert {"cmap", "vmin", "vmax"} <= props, \
+            "映射中的网格连色图都改不了"
         assert [e for e in man["elements"] if e["role"] == "title"], \
             "整张图都没进 manifest，兜底判据写反了"
     finally:

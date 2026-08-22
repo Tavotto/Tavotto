@@ -17,6 +17,13 @@ on:
     # 一行没改的代码明天可能就有新结论。
     - cron: "23 4 * * 1"
 
+# 与 ci.yml 同一条纪律：同一个 PR 上新 push 之后取消旧 SHA 的扫描。
+# group 里带 `github.workflow`，所以它与 CI 各占各的槽、不会互相取消；
+# main 上的 push 不取消（那是那个 commit 的唯一一次扫描记录）。
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 

@@ -57,9 +57,17 @@ class _FakeProc:
     def poll(self):
         return self.returncode
 
+    #: 真实的 `Popen.kill()` **只发信号**，不等进程退出——紧接着的 `poll()`
+    #: 完全可能还回 None。假进程默认照着这个现实来（`reap_on_kill=False`）：
+    #: 假的比真的更配合，用例就测不到真实的竞态（这条正是 review 抓到的：
+    #: 第一版假进程在 kill 里同步设了 returncode，于是「kill 完 alive() 未必
+    #: 是假」这个窗口在用例里根本不存在）。
+    reap_on_kill = False
+
     def kill(self) -> None:
         self.killed = True
-        self.returncode = -9
+        if self.reap_on_kill:
+            self.returncode = -9
 
     def wait(self, timeout=None):
         return self.returncode if self.returncode is not None else 0
@@ -167,6 +175,34 @@ def test_request_id_mismatch_kills_the_session(tmp_path):
     assert e.value.code == "protocol_mismatch"
     assert "重试" in str(e.value)
     assert w.proc.killed, "协议错乱的 worker 必须被 kill，不许留在池里复用"
+
+
+def test_pipe_eof_kills_the_session_so_get_cannot_reuse_it(tmp_path):
+    """管道 EOF 之后 `alive()` 必须立刻是假——否则 `get()` 会复用一条死 worker。
+
+    「这个 worker 还在不在」只能有**一个**判据。读到 EOF 的那一刻我们已经知道
+    答案了，可 `alive()` 问的是 `poll()`：子进程关掉 stdout 到被回收之间有一个
+    窗口，`poll()` 在那期间仍回 None。不就地杀掉的话，`pool.get()` 会认为这条
+    worker 还能用、直接复用，下一次请求写进死管道、等满整个超时才失败。
+
+    **workerd 那侧是同一个坑，同一天修的**（`session.rs` 的 EOF 分支就地摘掉
+    进程）。pool 是 workerd 的参考实现，判据分叉就等于有两套语义——所以两边
+    各有一条用例。那边的窗口是靠假 worker「关了 stdout 先赖 1.5 秒」拉长成必然
+    的；这边用假进程直接把 `poll()` 钉成 None。
+    """
+    w = _worker(lambda env: "", tmp_path)        # responder 回 "" = 读到 EOF
+    assert w.proc.poll() is None, "前提：进程对象此刻还『活着』"
+    with pytest.raises(pool.WorkerError) as e:
+        w.request({"cmd": "ping"})
+    assert "崩溃" in str(e.value)
+    assert w.proc.killed, "读到 EOF 的 worker 必须就地杀掉，不许留给 get() 复用"
+    # **关键的一句**：假进程的 `kill()` 刻意**不**同步回收（真的 `Popen.kill()`
+    # 也不会），所以 `poll()` 此刻**仍然回 None**。`alive()` 还敢说「活着」的话，
+    # `get()` 就会把这条死 worker 复用掉。
+    assert w.proc.poll() is None, "前提：kill 之后进程还没被回收（真实情形）"
+    assert not w.alive(), (
+        "kill 完 alive() 必须立刻是假。只问 `poll()` 的话这里会回 True——"
+        "而 `Popen.kill()` 只发信号、不等退出")
 
 
 def test_protocol_version_mismatch_kills_the_session(tmp_path):

@@ -46,10 +46,14 @@ ENTRY = "main"
 #   Eqv3D     s4 3D axes（文字 + 视角 + zlabel）
 #   EqvMath   s5 mathtext + serif/sans 混排
 #   EqvCJK    s6 中文标签（探测不到 CJK 字体时该场景的用例单独 skip）
-#   EqvAlias  s7 柱形系列 + 带标题的图例 + 色条——三族**别名组**一次盖到
+#   EqvFam    s7 Artist family（2026-08-21）：Collection 族（fill_between /
+#             pcolormesh / contour / LineCollection）、Patch 族（Wedge /
+#             Rectangle / StepPatch）、stem 容器。新开放的能力必须与老的
+#             一样满足四路一致——否则「写回时的样子 ≠ 重开后的样子」
+#   EqvAlias  s8 柱形系列 + 带标题的图例 + 色条——三族**别名组**一次盖到
 #             （广播型 prop 与它管着的窄 prop 同时被 override，见 ALIAS_GROUPS）
 _SCENARIOS = ("EqvMulti", "EqvImage", "EqvAnnot", "Eqv3D", "EqvMath", "EqvCJK",
-              "EqvAlias")
+              "EqvFam", "EqvAlias")
 
 #: s6 用的中文字体候选。matplotlib 找不到任何一个时 s6 的用例 **skip 并注明
 #: 理由**——静默换成拉丁文本跑过去，等于宣称测过中文而实际没有。
@@ -141,19 +145,33 @@ def main():
         fx.text(0.12, 0.78, "peak", transform=fx.transAxes)
     fig6.savefig("EqvCJK.pdf")
 
-    # ---- s7：别名组（广播型 prop 与它管着的窄 prop 同时可编辑）----
+    # ---- s7：Artist family（Collection / Patch / 容器）----
+    fig7, (gx1, gx2) = plt.subplots(1, 2, figsize=(5.2, 2.4))
+    u = np.linspace(0.5, 6.0, 24)
+    M = np.arange(64).reshape(8, 8) / 64.0
+    gx1.fill_between(u, 0.0, np.sin(u) + 1.2, alpha=0.3)      # fill_0
+    gx1.pcolormesh(np.linspace(7, 9, 9), np.linspace(0, 1, 9), M)   # collections_1
+    gx1.contour(np.linspace(7, 9, 8), np.linspace(1.4, 2.4, 8), M)  # collections_2
+    gx1.stem([1.0, 2.0, 3.0], [1.8, 2.2, 1.5])               # stemseries_0
+    gx1.set_xlim(0, 10)
+    gx1.set_ylim(-0.4, 2.6)
+    gx1.set_title("Families")
+    gx2.pie([3, 4, 5])                                       # patches_0..2 (Wedge)
+    fig7.savefig("EqvFam.pdf")
+
+    # ---- s8：别名组（广播型 prop 与它管着的窄 prop 同时可编辑）----
     # 柱形系列（整组 vs 单根柱）、图例（整体字号 / 标题字号 vs 单条图例项）、
     # 色条（tick_* vs 色条轴自己的刻度组）——三族一次盖到。
-    fig7, (gx, hx) = plt.subplots(1, 2, figsize=(5.4, 2.4))
+    fig8, (gx, hx) = plt.subplots(1, 2, figsize=(5.4, 2.4))
     gx.bar(["a", "b", "c"], [3.0, 5.0, 2.0], label="counts")
     gx.plot([0, 1, 2], [4.0, 2.0, 5.0], label="trend")
     gx.legend(title="series")
     gx.set_title("Bars")
-    im7 = hx.imshow(np.arange(36).reshape(6, 6), cmap="viridis")
-    fig7.colorbar(im7, ax=hx).set_label("intensity")
+    im8 = hx.imshow(np.arange(36).reshape(6, 6), cmap="viridis")
+    fig8.colorbar(im8, ax=hx).set_label("intensity")
     hx.set_title("Map")
-    fig7.tight_layout()
-    fig7.savefig("EqvAlias.pdf")
+    fig8.tight_layout()
+    fig8.savefig("EqvAlias.pdf")
 '''
 
 _FONT_PROBE = """\
@@ -426,6 +444,38 @@ def _g_scatter_marker(_getbase):
     )
 
 
+def _g_collection_family(_getbase):
+    """Collection 族：填充 / 彩色网格 / 等值线各改一组样式。
+
+    `pcolormesh` 与 `contour` 从前根本进不了元素表，所以这一格既是能力的
+    证明，也是它们**不会**把热态与全量重放拉开的证明——颜色映射类的
+    facecolors 每次 draw 由 `update_scalarmappable()` 重算，如果哪天有人把
+    facecolor 加回这些元素上，这里会当场分岔。
+    """
+    return _cumulative(
+        {"gid": "axes_0.fill_0", "prop": "facecolor", "value": "#B34700"},
+        {"gid": "axes_0.fill_0", "prop": "hatch", "value": "//"},
+        {"gid": "axes_0.collections_1", "prop": "edgecolor", "value": "#333333"},
+        {"gid": "axes_0.collections_1", "prop": "cmap", "value": "plasma"},
+        {"gid": "axes_0.collections_2", "prop": "linewidth", "value": 1.8},
+    )
+
+
+def _g_patch_family_and_stem(_getbase):
+    """Patch 族（pie 的扇形）+ stem 容器，再叠一次图幅变化。
+
+    图幅一变所有分数坐标的物理落点都变（`_apply_rank` 的 0 档），三条腿在
+    这之后仍要收敛到同一个几何——新元素也不例外。
+    """
+    return _cumulative(
+        {"gid": "axes_1.patches_0", "prop": "facecolor", "value": "#2A6F3C"},
+        {"gid": "axes_1.patches_1", "prop": "hatch", "value": "xx"},
+        {"gid": "axes_0.stemseries_0", "prop": "color", "value": "#76008A"},
+        {"gid": "axes_0.stemseries_0", "prop": "markersize", "value": 9.0},
+        {"gid": "figure", "prop": "size_mm", "value": [148.0, 66.0]},
+    )
+
+
 def _g_axes_range_scale_and_ticks(_getbase):
     """坐标轴范围 / 缩放类型 / spine + 刻度定位模型（Locator + Formatter）。
 
@@ -605,13 +655,15 @@ GROUPS = [
     ("s3-arrow-endpoints",  "EqvAnnot", _g_arrow_endpoints),
     ("s4-view3d-visible",   "Eqv3D",    _g_view3d_and_visible),
     ("s5-mathtext-labels",  "EqvMath",  _g_labels_and_title),
+    ("s7-collection-family", "EqvFam",  _g_collection_family),
+    ("s7-patch-and-stem",   "EqvFam",   _g_patch_family_and_stem),
     # 色条的 `tick_*` 与色条轴刻度组**刻意不在这里**：它俩覆盖的是同一批
     # 标签（不是「整组 vs 其中一个」），后应用的必然盖掉前一个，manifest 也
     # 只报得出一个值——`_assert_effect` 表达不了「两个都落地」。它的还原语义
     # 由 tests/test_worker_roundtrip.py 的别名组用例看着。
-    ("s7-alias-legend",     "EqvAlias", _g_alias_legend),
-    ("s7-alias-bars",       "EqvAlias", _g_alias_bars),
-    ("s7-alias-mixed-reversed", "EqvAlias", _g_alias_mixed),
+    ("s8-alias-legend",     "EqvAlias", _g_alias_legend),
+    ("s8-alias-bars",       "EqvAlias", _g_alias_bars),
+    ("s8-alias-mixed-reversed", "EqvAlias", _g_alias_mixed),
 ]
 
 
@@ -676,7 +728,7 @@ def _flask_project(tmp_path, monkeypatch, library: Path):
     # 写回覆盖的是磁盘上**已有**的原件（真实图库里它由脚本跑出来）。
     # 只给真的会被写回的那几个 stem 造占位——`WRITE_BACK_GROUPS` 里出现过
     # 的都要在这儿，漏一个的表现是 404 而不是断言失败，很容易误读成产品问题。
-    for stem in ("EqvMulti", "EqvImage", "EqvAlias"):
+    for stem in ("EqvMulti", "EqvImage", "EqvFam", "EqvAlias"):
         doc = pymupdf.open()
         doc.new_page(width=200, height=100)
         doc.save(figs / f"{stem}.pdf")
@@ -728,10 +780,13 @@ WRITE_BACK_GROUPS = [
     ("s1-fixed-ticks-text", "EqvMulti", _g_fixed_ticks_and_label_text, ("mid-tick", "start")),
     ("s1-legend-item-text", "EqvMulti", _g_legend_item_text, ("sin(x)", "Series")),
     ("s2-colorbar-orientation", "EqvImage", _g_colorbar_orientation, ("intensity",)),
+    # 新开放的 family 也要走一遍**写回原件 → 重开**：能改却写不回去，
+    # 等于给用户一个下次打开就消失的编辑（§49）
+    ("s7-collection-family", "EqvFam", _g_collection_family, ("Families",)),
     # 别名组：广播型 prop 与窄 prop 叠加。写回这条腿尤其要紧——热态是
     # 「先整体后单条」的增量，写回校验拿的是**全量重放**，两者不一致时
     # 事务会回 409 replay_divergence，正是这个 bug 当初现形的地方。
-    ("s7-alias-mixed-reversed", "EqvAlias", _g_alias_mixed, ("counts", "series")),
+    ("s8-alias-mixed-reversed", "EqvAlias", _g_alias_mixed, ("counts", "series")),
 ]
 
 
