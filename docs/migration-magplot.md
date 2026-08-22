@@ -38,9 +38,19 @@ tavotto doctor --rollback-migration  # 后悔药：删除迁移时创建的文�
 
 ## 图库目录（你磁盘上的项目）
 
-**不需要迁移。** 旧图库里的 `mm_registry.json` Tavotto 一直读得懂
+**注册表不需要迁移。** 旧图库里的 `mm_registry.json` Tavotto 一直读得懂
 （下次写出时自动换成 `tavotto_registry.json`，旧文件保留）。项目目录里的
 `canvases/` 等旧位置也是只读兼容的。
+
+**只有 `magplotfile/` 要你自己改名**，这是本工具**刻意不碰**的一处——它在
+你自己的项目目录里，不在应用数据里，而项目在哪只有你知道：
+
+```bash
+mv <项目>/magplotfile <项目>/tavottofile
+```
+
+不改的话，0.7 时代放在里面的命名画布、导出与布局版本历史在 Tavotto 里
+看不到（文件本身一个字节没丢，仍在原处）。
 
 ## 项目包（.magplot 文件）
 
