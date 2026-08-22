@@ -629,17 +629,32 @@ jobs:
       - name: 等 Release 存在（tag 触发时与 release.yml 并行，先到要等）
         # 不等就挂 = softprops 会替我们「创建」一个没有 notes 的 Release，
         # 与 release.yml 手写 notes 的那份撞车。等不到按失败处理，绝不静默。
+        #
+        # **等多久由 release.yml 的关键路径决定，不由「感觉差不多」决定。**
+        # 原来是 30×20s = 10 分钟。那个数字是 `lab_release_gate` 存在之前定的
+        # ——那时 release.yml 只有 build → github_release，两三分钟就建出来。
+        # 现在 Release 前面横着一整条发行资格验证（slow + 升级验收 + 视觉回归 +
+        # CompatBench + soak + 性能，实测 30~60 分钟），而桌面构建本身只要
+        # ~20 分钟。于是**桌面链在 tag 推送时基本不可能成功**：产物全都签好了，
+        # 只差挂不上去。2026-08-22 v0.9.1 发版时两条腿同时栽在这里。
+        #
+        # 上限取 lab_release_gate 的 job 超时（180 分钟）再留一点余量：宁可
+        # 多等，也别把一份已经签名公证好的产物丢掉——重跑一次要二十分钟，
+        # 而且 macOS 那边每次都要重新公证。
         if: ${{ github.event_name == 'push' || inputs.attach }}
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          for i in $(seq 1 30); do
+          for i in $(seq 1 380); do
             if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              echo "✅ Release $RELEASE_TAG 已存在（等了 $(( (i - 1) * 30 / 60 )) 分钟）"
               exit 0
             fi
-            echo "· Release $RELEASE_TAG 还没建好（release.yml 可能仍在跑），20s 后重试（$i/30）"
-            sleep 20
+            if [ $(( i % 10 )) -eq 1 ]; then
+              echo "· Release $RELEASE_TAG 还没建好（release.yml 的发行资格验证通常要 30~60 分钟），已等 $(( (i - 1) * 30 / 60 )) 分钟（$i/380）"
+            fi
+            sleep 30
           done
           echo "::error::等了 10 分钟仍没有 $RELEASE_TAG 的 Release——检查 release.yml 是否失败"
           exit 1
