@@ -152,9 +152,21 @@ def proc_cmdlines() -> list[tuple[int, str]]:
     return out
 
 
-def find_ci_owned_tavotto() -> list[tuple[int, str]]:
-    """当前活着的、归属本 CI 的 Tavotto 进程。自己不算。"""
-    markers = ci_owned_markers()
+def find_ci_owned_tavotto(extra_markers: list[str] | None = None
+                          ) -> list[tuple[int, str]]:
+    """当前活着的、归属本 CI 的 Tavotto 进程。自己不算。
+
+    `extra_markers` 让调用方**追加**自己关心的路径（例如 `cleanup.py`
+    被显式指了另一个 root）。不给的话就是默认的「持久化根 + runner 工作
+    目录」。
+
+    为什么要有这个参数：`cleanup.kill_stale_processes(root)` 支持传入一个
+    与 `state_root()` 不同的 root（人工排查会这么用），但它拿到的候选集
+    是本函数按**默认** marker 筛过的 —— 那个显式 root 下的进程在进入
+    marker 比对之前就已经被丢掉了，于是 `--kill-stale` 对它一个都不收，
+    而且不报错。（Codex 在 #65 的第一轮上指出。）
+    """
+    markers = ci_owned_markers() + [m for m in (extra_markers or []) if m]
     me = os.getpid()
     return [(pid, cmd) for pid, cmd in proc_cmdlines()
             if pid != me and is_ci_owned_tavotto(cmd, markers)]
