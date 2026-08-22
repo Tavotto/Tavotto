@@ -49,9 +49,22 @@ WATCH = [
             "超期意味着下一次正式发版又会是这条链的第一次执行"},
     {"file": "nightly.yml", "label": "安装链路 nightly", "max_age_days": 3,
      "why": "每晚一次。它验的是「真装一遍」，而那条路只有真装才知道"},
-    {"file": "desktop-tauri.yml", "label": "桌面构建", "max_age_days": 8,
-     "why": "由 release.yml 经 workflow_call 调用，跟着演练一起新鲜"},
 ]
+
+# **`desktop-tauri.yml` 刻意不在上面这张表里。**
+# 它已经改成 `workflow_call`（见 ci/release-orchestrator），被调用时**不产生
+# 独立的 workflow run** —— 那些 job 挂在 caller（release.yml）的 run 上。
+# `gh run list --workflow desktop-tauri.yml` 现在只回得出改动**之前**的
+# push run，而且越来越旧：盯着它等于每过 8 天误报一次「桌面构建超期」，
+# 而真实情况是它每次演练都在跑。
+#
+# 它的新鲜度由 release.yml 覆盖；「它到底有没有执行」由下面的
+# `find_jobs_never_seen` 在 caller 的 job 列表里查（reusable 的 job 名
+# 形如 `desktop / build (macos-latest, dmg)`）。
+#
+# 这条是 #66 把桌面链改成 workflow_call 时**直接引入的**对本监控的破坏——
+# 改了一处、忘了另一个消费点，本轮第 N 次。（Codex 在 #67 第三轮上指出。）
+REUSABLE_ONLY = ("desktop-tauri.yml", "_lab-qualification.yml")
 
 CONCLUSIVE = {"success", "failure", "timed_out", "action_required", "neutral"}
 
@@ -217,7 +230,12 @@ def find_jobs_never_seen(repo: str, results: list[dict],
         except HealthError:
             continue
         for r in runs[:12]:
-            if r.get("status") != "completed":
+            # **不跳过 in_progress 的 run。** 一个「永远没人领得走」的 job
+            # 恰恰卡在 queued，而它所在的 run 因此一直是 in_progress ——
+            # 只扫 completed 的话，最典型的「从没执行过」场景一个都看不到。
+            # 那种 job 我们照样要能报出来（它是 queued，不是 concluded，
+            # 所以不会被误算成「见过」）。
+            if r.get("status") not in ("completed", "in_progress"):
                 continue
             try:
                 jobs = _gh_json(["run", "view", str(r["databaseId"]), "--repo", repo,
@@ -225,6 +243,8 @@ def find_jobs_never_seen(repo: str, results: list[dict],
             except HealthError:
                 continue
             for j in (jobs or {}).get("jobs", []):
+                # reusable workflow 的 job 名形如 `desktop / build (…)`，
+                # 下面按子串匹配，所以两种形状都认得出
                 # **`skipped` 也算「见过」。**
                 # 判「这个 job 有没有真跑过」时 skipped 不算一次验证（那是
                 # 上面那张表的问题）；但判「它是不是从来没出现过」时，

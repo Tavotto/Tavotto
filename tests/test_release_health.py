@@ -129,10 +129,21 @@ def test_stuck_queue_threshold_leaves_room_for_a_real_run():
 
 # ── 被盯的对象 ────────────────────────────────────────────────────────────
 
-def test_every_release_critical_workflow_is_watched():
+def test_every_release_critical_workflow_is_covered():
+    """发布链上的每个 workflow 都要被覆盖 —— **但覆盖方式有两种**。
+
+    判据换过一次：原来断言「都在 `WATCH` 里」，而 `desktop-tauri.yml`
+    改成 `workflow_call` 之后没有自己的 run 了，盯它只会稳定误报。
+    现在它由 caller（release.yml）覆盖新鲜度、由 job 扫描覆盖「有没有执行」。
+
+    **这不是放松**：换成「要么被盯、要么明确登记成 reusable」之后，
+    一个 workflow 被**悄悄漏掉**仍然会红 —— 少了它两张表都不认。
+    """
     watched = {w["file"] for w in RH.WATCH}
-    for f in ("release.yml", "lab-ci.yml", "nightly.yml", "desktop-tauri.yml"):
-        assert f in watched, f"{f} 没有被盯着"
+    covered = watched | set(RH.REUSABLE_ONLY)
+    for f in ("release.yml", "lab-ci.yml", "nightly.yml",
+              "desktop-tauri.yml", "_lab-qualification.yml"):
+        assert f in covered, f"{f} 既没被盯，也没登记成 reusable —— 它被漏掉了"
 
 
 def test_every_watched_workflow_says_why():
@@ -314,3 +325,41 @@ def test_the_fetch_failure_path_supplies_every_key_render_summary_reads():
                         f"失败路径的 counts 缺键：{inner} —— render_summary 会 KeyError")
                     found = True
     assert found, "找不到失败路径里那个带 counts 的字面量"
+
+
+def test_a_reusable_workflow_is_not_watched_as_a_standalone_one():
+    """**`workflow_call` 的 workflow 不产生独立 run。**
+
+    `desktop-tauri.yml` 改成 reusable 之后，它的 job 挂在 caller
+    （release.yml）的 run 上，`gh run list --workflow desktop-tauri.yml`
+    只回得出改动**之前**的 push run —— 而且越来越旧。盯着它等于每过 8 天
+    误报一次「桌面构建超期」，而真实情况是它每次演练都在跑。
+
+    **误报的监控会被静音，静音之后它连真警告都不会再发出来。**
+
+    这条是 #66 把桌面链改成 workflow_call 时直接引入的破坏 ——
+    改了一处、忘了另一个消费点。
+    """
+    watched = {w["file"] for w in RH.WATCH}
+    for f in RH.REUSABLE_ONLY:
+        assert f not in watched, (
+            f"{f} 是 reusable workflow，没有自己的 run —— "
+            f"盯着它只会稳定误报「超期」")
+    assert "desktop-tauri.yml" in RH.REUSABLE_ONLY
+    assert "release.yml" in watched, "caller 必须还在盯着（它覆盖 reusable 的新鲜度）"
+
+
+def test_the_job_scan_looks_inside_runs_that_are_still_going():
+    """**一个「永远没人领得走」的 job 恰恰卡在 queued。**
+
+    而它所在的 run 因此一直是 `in_progress`。只扫 completed 的 run，
+    最典型的「从没执行过」场景一个都看不到 —— 这个扫描存在的全部理由
+    就是发现那种 job。
+    """
+    import ast
+    src = (ROOT / "scripts" / "ci" / "check_release_health.py").read_text(encoding="utf-8")
+    fn = next(n for n in ast.walk(ast.parse(src))
+              if isinstance(n, ast.FunctionDef) and n.name == "find_jobs_never_seen")
+    body = ast.unparse(fn)
+    assert "in_progress" in body, (
+        "job 扫描跳过了 in_progress 的 run —— 卡在 queued 的 job 就在那里面")
