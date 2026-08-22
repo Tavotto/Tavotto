@@ -131,7 +131,8 @@ def test_windows_bound_subprocesses_pin_their_decoding():
         if "__pycache__" in path.parts:
             continue
         try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
+            text = path.read_text(encoding="utf-8")
+            tree = ast.parse(text)
         except SyntaxError:
             continue
         for node in ast.walk(tree):
@@ -149,8 +150,30 @@ def test_windows_bound_subprocesses_pin_their_decoding():
             if any(k.arg is None for k in node.keywords):
                 continue
             texty = ("text" in kw) or ("universal_newlines" in kw) or name == "check_output"
-            if texty and "encoding" not in kw:
-                offenders.append(f"{path.relative_to(ROOT)}:{node.lineno} {name}(...)")
+            if not texty:
+                continue
+            enc = next((k.value for k in node.keywords if k.arg == "encoding"), None)
+            if enc is None:
+                offenders.append(
+                    f"{path.relative_to(ROOT)}:{node.lineno} {name}(...) 没给 encoding")
+                continue
+            # **光有这个关键字不够**：`encoding=None` 就是「按系统默认」，
+            # `encoding="cp1252"` 更是直接复现那个 bug。判据要问的是「解码用的
+            # 是不是 UTF-8」，不是「有没有写过 encoding 这个词」——Codex 在 #57
+            # 上指出的正是这个缺口。判不出的（变量、表达式）不放行，指名道姓。
+            if (isinstance(enc, ast.Constant) and isinstance(enc.value, str)
+                    and enc.value.lower().replace("-", "") == "utf8"):
+                continue
+            # **唯一的豁免：复现这个 bug 本身。** 那条用例必须用旧代码页才能
+            # 证明「不给 utf-8 会丢掉诊断」。豁免要求同一行有 `# 复现用` 标记
+            # ——不是按文件名放行，否则那个文件里往后写的每一处都跟着白拿。
+            block = "\n".join(text.splitlines()[node.lineno - 1: node.lineno + 3])
+            if "复现用" in block:
+                continue
+            offenders.append(
+                f"{path.relative_to(ROOT)}:{node.lineno} {name}(...) "
+                f"encoding={ast.unparse(enc)}——必须是 utf-8 字面量"
+                "（复现这个 bug 的用例请在调用处标 `# 复现用`）")
     assert not offenders, (
         "这些 subprocess 在 Windows 上会用系统默认编码解码子进程输出，"
         "中文一出现就静默丢掉 stdout/stderr：\n  " + "\n  ".join(offenders))
