@@ -34,7 +34,7 @@ def _tracked_text_files() -> list[Path]:
     """
     out = subprocess.run(
         ["git", "ls-files", "-z"],
-        cwd=ROOT, capture_output=True, text=True, check=True,
+        cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
     ).stdout
     return [
         ROOT / name
@@ -78,7 +78,7 @@ def test_no_venv_or_self_referential_symlink_is_tracked() -> None:
     """
     out = subprocess.run(
         ["git", "ls-files", "-s"],
-        cwd=ROOT, capture_output=True, text=True, check=True,
+        cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
     ).stdout
 
     offenders = []
@@ -102,3 +102,55 @@ def test_no_venv_or_self_referential_symlink_is_tracked() -> None:
         + "\n  ".join(offenders)
     )
 
+
+
+def test_windows_bound_subprocesses_pin_their_decoding():
+    """跑在 Windows CI 上的 subprocess 必须显式指定 encoding。
+
+    不指定的话 `text=True` 用系统默认（Windows 上是 cp1252 / 中文机器是
+    cp936）解码子进程输出。我们的 CLI 与脚本大量输出中文，于是读线程当场
+    `UnicodeDecodeError` 并死掉——而 `returncode` 不经解码，照样拿得到，
+    **用例继续绿**。代价是 `out.stdout` / `out.stderr` 变成空的：那条断言
+    一旦真的失败，它的报错信息也是空的。**一个恰好在你需要它时失灵的诊断。**
+
+    2026-08-22 实测：main 上 Windows 腿每次都打这段 traceback
+    （`charmap codec can't decode byte 0x8d`），来自
+    `test_ci_tooling.py` 跑 `lab_preflight.py --help`（帮助文本是中文）。
+    而**同一个仓库的 `test_ci_qualification.py` 对同一个脚本早就写对了**
+    ——修了一处没扫其余，所以这条判据按范围扫，不逐个盯。
+
+    范围只收「会在 Windows 上跑」的：`tests/`（backend 的 windows 腿）与两个
+    冒烟脚本（windows-exe-smoke）。`scripts/ci/` 的实验室脚本只跑 Linux，
+    那里 `text=True` 没有这个问题，硬要求它们也写等于给噪音加噪音。
+    """
+    import ast
+    scope = sorted(ROOT.joinpath("tests").rglob("*.py")) + [
+        ROOT / "scripts" / "smoke_app.py", ROOT / "scripts" / "smoke_desktop.py"]
+    offenders = []
+    for path in scope:
+        if "__pycache__" in path.parts:
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            name = getattr(node.func, "attr", getattr(node.func, "id", "")) or ""
+            if name not in ("run", "Popen", "check_output"):
+                continue
+            kw = {k.arg for k in node.keywords}
+            # `**cfg` 展开（keyword.arg is None）静态判不出里面有没有 encoding。
+            # `test_compat_runner` 就是这么传的（`**self._DECODE`），而它本来
+            # 就是对的——把它判成违规，是判据问错了问题：要问的不是「有没有
+            # `encoding=` 这个字面关键字」，是「这个调用最终有没有设上编码」。
+            # 判不出就**不判**，并把这个盲点写在明处，别假装覆盖到了。
+            if any(k.arg is None for k in node.keywords):
+                continue
+            texty = ("text" in kw) or ("universal_newlines" in kw) or name == "check_output"
+            if texty and "encoding" not in kw:
+                offenders.append(f"{path.relative_to(ROOT)}:{node.lineno} {name}(...)")
+    assert not offenders, (
+        "这些 subprocess 在 Windows 上会用系统默认编码解码子进程输出，"
+        "中文一出现就静默丢掉 stdout/stderr：\n  " + "\n  ".join(offenders))

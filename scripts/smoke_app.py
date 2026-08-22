@@ -183,7 +183,7 @@ def _leftover_workers(data_dir: Path) -> list[str]:
         else:
             # -ww：不按终端宽度截断（截断了就什么都匹配不上）
             out = subprocess.run(["ps", "-eww", "-o", "args="],
-                                 capture_output=True, text=True,
+                                 capture_output=True, text=True, encoding="utf-8", errors="replace",
                                  timeout=20).stdout
     except (OSError, subprocess.SubprocessError):
         return []
