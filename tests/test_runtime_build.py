@@ -692,6 +692,51 @@ def test_macos_release_signs_and_verifies_every_nested_macho():
     assert "--expect-arch" in wf, "还要核对架构：混进另一个架构的 .so 签名照样能过"
 
 
+def _release_signing_gate() -> str:
+    """desktop-tauri.yml 里那一步「发行签名门禁」的正文。"""
+    wf = (REPO / ".github" / "workflows" / "desktop-tauri.yml").read_text(
+        encoding="utf-8")
+    assert "发行签名门禁" in wf, "签名门禁整个不见了"
+    step = wf.split("发行签名门禁", 1)[1].split("\n      - name:", 1)[0]
+    assert "IS_RELEASE_BUILD" in step, "门禁必须只对发行构建生效"
+    return step
+
+
+def test_release_signing_gate_still_hard_fails_on_everything_but_authenticode():
+    """Windows 的 Authenticode 是这道门禁**唯一**的例外，别顺手再开第二个。
+
+    2026-08-22（v0.9.0）把 SignPath 那条从硬失败降成警告：拿不到开源订阅之前，
+    它挡掉的不是「未签名的安装包」而是**整个 Windows 桌面版**，还连带
+    updater-manifest 的两平台硬要求一起落空，于是 macOS 用户也收不到更新。
+
+    但这条例外**极容易被复制**——下一个被某个 secret 卡住的人会照着把 macOS
+    那几条也改成 warning，而那时门禁就只剩一句好听的话。所以逐条钉死：更新包
+    的 minisign 私钥与 macOS 的证书/身份/公证账号仍必须让发行构建**失败**。
+    """
+    step = _release_signing_gate()
+    hard = [ln.strip() for ln in step.splitlines() if "missing+=" in ln]
+    joined = "\n".join(hard)
+    for cred in ("TAURI_SIGNING_PRIVATE_KEY", "MACOS_CERTIFICATE",
+                 "MACOS_SIGN_IDENTITY", "APPLE_ID"):
+        assert cred in joined, f"{cred} 不再让发行构建失败——门禁被掏空了"
+    assert "exit 1" in step, "凑齐 missing 之后必须真的退出非零"
+    # 例外只有这一个，而且不许扩散到别处
+    assert "SIGNPATH" not in joined,         "SignPath 是自觉的例外（见 docs/code-signing-policy.md），不该回到硬失败；"         "要恢复的话连同这条用例一起改"
+
+
+def test_unsigned_windows_release_is_loud_not_silent():
+    """降级成 warning 的那一支必须**看得见**，否则就是 P1-07 原本要挡的东西。
+
+    审计 P1-07 的真正指控不是「没签名」，是「没签名而且工作流全绿」。所以
+    例外成立的前提是它自己会喊：运行页顶部一条 annotation + job summary 里
+    一段说明。把这两样删掉，这道门禁就退化成一句注释。
+    """
+    step = _release_signing_gate()
+    assert "::warning" in step, "未签名的发行必须在运行页顶部留下 annotation"
+    assert "GITHUB_STEP_SUMMARY" in step,         "还要写进 job summary——日志第 33 步里的一行 warning 没人会翻到"
+    assert "minisign" in step,         "摘要要说清更新链仍可信，否则读的人会以为自动更新也不安全了"
+
+
 # ---------------- 真产物（构建过才跑）------------------------------------------
 RUNTIME_DIR = REPO / "runtime"
 _has_runtime = (RUNTIME_DIR / brt.MANIFEST_NAME).is_file()
