@@ -142,6 +142,25 @@ jobs:
           fi
           [ -n "$REL_TAG" ] || REL_TAG="v$VER"
 
+          # **tag 已经存在时，它必须指向同一个 commit。**
+          # `action-gh-release` 的 `target_commitish` 只在 tag **不存在**时
+          # 起作用；tag 已存在的话它直接复用现有那个，而现有 tag 完全可能
+          # 指向别处 —— 那时 Release 挂的 tag 与产物来自两个 commit，
+          # 而没有任何一步会报错。
+          #
+          # 这不是假想：仓库里此刻就躺着 v0.9.0 与 v0.9.1 两个指向旧 commit、
+          # 且因为 immutable ruleset 改不动也删不掉的 tag。一次
+          # 「补发 v0.9.1」的手工 dispatch 正好会踩中。
+          # （Codex 在第二轮上指出。）
+          if EXISTING="$(git rev-parse --verify "refs/tags/${REL_TAG}^{commit}" 2>/dev/null)"; then
+            if [ "$EXISTING" != "$SHA" ]; then
+              echo "::error::tag $REL_TAG 已经存在，且指向 $EXISTING —— 而本次要发布的是 $SHA。"
+              echo "::error::tag ruleset 是 immutable，它移不动。要发这个 SHA 请换一个版本号。"
+              exit 1
+            fi
+            echo "· tag $REL_TAG 已存在且指向同一个 commit，复用它"
+          fi
+
           {
             echo "sha=$SHA"
             echo "version=$VER"
@@ -610,6 +629,12 @@ jobs:
     permissions:
       id-token: write     # OIDC 签发，Trusted Publishing 的必需权限
     steps:
+      # 要跑 `artifact_manifest.py`，所以这个 job 也得有仓库
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.trust.outputs.sha }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with: { python-version: "3.13" }
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with: { name: release-assets, path: assets }
 
@@ -617,11 +642,29 @@ jobs:
         # `release-assets` 里还有安装包、SBOM、清单——PyPI 只收 wheel/sdist，
         # 多喂一个它会整批拒收，而那时**前面的文件可能已经传上去了**
         # （同名文件永远不能重传，等于这个版本号作废）。
+        #
+        # **路径从清单取，不 glob。** 上一版写的是
+        # `cp assets/dist/*.whl assets/dist/*.tar.gz dist/`——而摊平之后
+        # `dist/` 里的 `*.tar.gz` **同时匹配 Python sdist 与 macOS 的
+        # `Tavotto.app.tar.gz`**（那是桌面更新包）。于是这一步会把一个
+        # 桌面更新包交给 PyPI。
+        #
+        # 这正是「七个下游步骤各自猜文件名」（#63）的复发，而且发生在
+        # **刚刚引入产物清单的这条 PR 里** —— 清单就是为了让这种猜测不可能。
+        # （Codex 在第二轮上指出。）
         run: |
           set -euo pipefail
           mkdir -p dist
-          cp assets/dist/*.whl assets/dist/*.tar.gz dist/
+          M=assets/dist/artifact-manifest.json
+          for role in wheel sdist; do
+            src="assets/$(python3 scripts/ci/artifact_manifest.py path "$M" --role "$role")"
+            echo "PyPI ← $role: $src"
+            cp "$src" dist/
+          done
           ls -la dist/
+          # 二次确认：交给 PyPI 的必须**恰好两个**文件
+          n=$(find dist -maxdepth 1 -type f | wc -l | tr -d ' ')
+          [ "$n" = "2" ] || { echo "::error::dist/ 里有 $n 个文件，PyPI 只该收 2 个"; exit 1; }
 
       - name: 发布到 TestPyPI
         if: inputs.pypi == 'testpypi'

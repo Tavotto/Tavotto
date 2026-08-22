@@ -137,7 +137,15 @@ class _Workflow:
 
     @staticmethod
     def field(step: str, key: str) -> str | None:
-        m = re.search(rf"^\s+{re.escape(key)}:[ \t]*(\S.*?)\s*$", step, re.M)
+        """取步骤里某个标量键。
+
+        **步骤块的第一行是 ``      - name: …``**，键前面还有一个 ``- ``。
+        第一版的正则少了那一段，于是它对**每个步骤的 name 都返回 None**
+        —— 而调用方多半写着 ``field(step, "name") or "?"``，
+        于是这个失效一直没有症状。判据静默失效的又一种形状。
+        """
+        m = re.search(rf"^\s+(?:-\s+)?{re.escape(key)}:[ \t]*(\S.*?)\s*$",
+                      step, re.M)
         return m.group(1) if m else None
 
     @staticmethod
@@ -566,3 +574,50 @@ def test_compatbench_runs_on_the_lock_pinned_interpreter():
     step = [s for s in _wf(REUSABLE).steps("qualify") if "compat_matrix.py" in s]
     assert step, "找不到 CompatBench 那一步"
     assert "--python" in step[0], "CompatBench 没有钉解释器"
+
+
+def test_pypi_gets_exactly_the_two_files_the_manifest_names():
+    """**PyPI 那一步不许 glob。**
+
+    摊平之后 `dist/` 里的 `*.tar.gz` **同时匹配 Python sdist 与 macOS 的
+    `Tavotto.app.tar.gz`**（桌面更新包）。用 glob 就会把一个桌面更新包
+    交给 PyPI —— 而 PyPI 上同名文件永远不能重传，失败时前面的可能已经传上去了。
+
+    这是「七个下游步骤各自猜文件名」（#63）的复发，而且发生在**刚刚引入
+    产物清单的这条 PR 里** —— 清单存在的意义就是让这种猜测不可能。
+    """
+    rel = _wf(RELEASE)
+    steps = [s for s in rel.steps("pypi") if "PyPI" in (
+        _Workflow.field(s, "name") or "")]
+    assert steps, "找不到把产物交给 PyPI 的那一步"
+    body = "\n".join(steps)
+    assert "artifact_manifest.py path" in body, "PyPI 的输入不是从清单解出来的"
+    assert "*.tar.gz" not in body, (
+        "PyPI 那一步还有 `*.tar.gz` —— 它会同时匹配 macOS 的 Tavotto.app.tar.gz")
+    assert "*.whl" not in body
+
+
+def test_the_pypi_job_can_actually_run_the_manifest_script():
+    """它要跑仓库里的脚本，就得先有仓库。
+
+    只改「从清单取路径」而忘了 checkout，症状是 `No such file or directory`
+    —— 发生在整条链的最后一步，且此时 GitHub Release 已经建好了。
+    """
+    rel = _wf(RELEASE)
+    assert any("actions/checkout" in s for s in rel.steps("pypi")), \
+        "pypi job 没有 checkout，却要跑 scripts/ci/artifact_manifest.py"
+
+
+def test_an_existing_tag_pointing_elsewhere_is_refused():
+    """`target_commitish` 只在 tag **不存在**时起作用。
+
+    tag 已存在的话 `action-gh-release` 直接复用现有那个，而现有 tag 完全
+    可能指向别处 —— 那时 Release 挂的 tag 与产物来自两个 commit，
+    而没有任何一步会报错。
+
+    这不是假想：仓库里此刻就躺着 v0.9.0 与 v0.9.1 两个指向旧 commit、
+    且因为 immutable ruleset 改不动也删不掉的 tag。
+    """
+    trust = _wf(RELEASE).jobs["trust"]
+    assert "refs/tags/${REL_TAG}" in trust, "trust 没有检查 tag 是否已存在"
+    assert 'EXISTING" != "$SHA' in trust, "存在的 tag 没有与本次 SHA 比对"
