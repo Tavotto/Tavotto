@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -209,7 +210,12 @@ class TestReport:
         b = CM.build_report(list(reversed(cases)),
                             dict(reversed(list(results.items()))), {},
                             "current", "all")
-        a.pop("generated_at"), b.pop("generated_at")
+        # generated_at 与 metadata 都是**随这一次运行变化**的身份字段，
+        # 本来就不该参与「同样的输入是否产出同样的报告」。metadata 是本 PR
+        # 加的：汇总要靠它认出「这份是本轮的」。
+        for d in (a, b):
+            d.pop("generated_at", None)
+            d.pop("metadata", None)
         assert json.dumps(a, sort_keys=False) == json.dumps(b, sort_keys=False)
 
     def test_funnel_denominator_only_counts_cases_that_got_there(self):
@@ -464,7 +470,11 @@ def test_both_clis_pin_utf8_streams():
     for name in ("compat_matrix.py", "compat_driver.py"):
         src = (CI_DIR / name).read_text(encoding="utf-8")
         assert "use_utf8_streams()" in src, f"{name} 没调 use_utf8_streams"
-        assert "from _common import use_utf8_streams" in src, (
+        # 钉的是**从 _common 导入了这个名字**，不是某一种写法——
+        # `from _common import run_metadata, use_utf8_streams` 一样成立。
+        # 上一版把字面写法钉死，于是 compat_matrix 多导一个符号就红了，
+        # 而「用的是不是唯一那份实现」完全没变。
+        assert re.search(r"from _common import [^\n]*\buse_utf8_streams\b", src), (
             f"{name} 自己抄了一份，而不是用 _common 里那唯一的实现")
 
 
