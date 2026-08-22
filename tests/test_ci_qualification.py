@@ -548,12 +548,12 @@ def test_no_app_request_anywhere_skips_auth():
             if not (isinstance(node, ast.Call) and _is_urllib_request(node.func)):
                 continue
             text = ast.unparse(node)
-            # 打到 GitHub API 的不必带（它用的是 Bearer token）
-            if "API}" in text or "api.github.com" in text:
-                continue
-            targets_app = any(t in text for t in
-                              ("s.base", "self.base", "base}", "{base}"))
-            if not targets_app:
+            # **按目标表达式引用了谁分类，不按 URL 里有没有某个子串。**
+            # 「URL 含 api.github.com」这种判据 CodeQL 会告（子串可以出现在
+            # 任意位置），而且本来就脆——真正要问的是「这个请求打的是本机
+            # 实例还是 GitHub」，那是源码结构问题：本机实例的 URL 一律由
+            # `base` / `s.base` / `self.base` 拼出来。
+            if not _references_local_base(node):
                 continue
             if "_AUTH" not in text:
                 offenders.append(f"{name}: {text[:150]}")
@@ -595,13 +595,19 @@ def _app_launchers() -> dict[str, str]:
 
     按**行为**枚举而不是写死一张名单：名单会在下一个脚本加进来时悄悄漏掉它，
     而漏掉的表现正是本轮那种——发行链跑到那一步才 401。
+
+    **枚举本身也不能靠一种拼写。** 上一版判据是 `'"TAVOTTO_DATA_DIR"' in src`，
+    只认 dict 字面量的字符串键；`recover_frac_positions.py` 用的是
+    `dict(os.environ, TAVOTTO_DATA_DIR=...)` 关键字形式，于是整个文件都没进
+    枚举——两条认证扫描对它一路绿，而它在 0.9.0 上会空转 120 次然后报
+    「隔离实例没起来」。Codex 在 #56 上第四次破这条用例打的就是这个点。
     """
     found = {}
     for path in sorted(SCRIPTS.rglob("*.py")):
         if "__pycache__" in path.parts:
             continue
         src = path.read_text(encoding="utf-8")
-        if '"TAVOTTO_DATA_DIR"' in src and "subprocess.Popen" in src:
+        if _sets_env(src, "TAVOTTO_DATA_DIR") and "subprocess.Popen" in src:
             found[path.name] = src
     return found
 
@@ -624,8 +630,7 @@ def test_every_app_launcher_adopts_credentials():
         # 三次，每次都是同一类漏洞：注释满足它、函数**定义**满足它、目标写成
         # 变量就匹配不到。子串补丁打三次还漏，说明方法本身不对——源码结构的
         # 问题要用解析源码结构来判。
-        code = _calls_named(src, "adopt_session_credentials")
-        adopts = bool(code)
+        adopts = _launch_reaches(src, "adopt_session_credentials")
         bypass = _sets_env(src, "TAVOTTO_INSECURE_NO_AUTH")
         desktop = "/api/desktop/bootstrap" in src or "TAVOTTO_DESKTOP_HANDSHAKE" in src
         assert adopts or bypass or desktop, (
@@ -702,11 +707,83 @@ def _calls_named(src: str, name: str) -> list:
 
 
 def _sets_env(src: str, key: str) -> bool:
-    """`key` 真的被写进某个 dict 字面量（而不是只在注释里被提到）。"""
+    """`key` 真的被设成了环境变量——**两种拼法都要认**。
+
+        env = {"TAVOTTO_DATA_DIR": ...}          # dict 字面量的字符串键
+        env = dict(os.environ, TAVOTTO_DATA_DIR=...)   # 关键字实参
+
+    只认前一种的代价是真实的：`recover_frac_positions.py` 用的是后一种，
+    于是它整个躲开了认证扫描（#56 的第四条 review）。注释里提一句不算。
+    """
     import ast
     for node in ast.walk(ast.parse(src)):
         if isinstance(node, ast.Dict):
             for k in node.keys:
                 if isinstance(k, ast.Constant) and k.value == key:
                     return True
+        elif isinstance(node, ast.Call):
+            for kw in node.keywords:
+                if kw.arg == key:
+                    return True
+    return False
+
+
+def _references_local_base(call) -> bool:
+    """这个 Request 打的是本机实例吗——看它的目标表达式引用了谁。
+
+    本机实例的 URL 一律从 `base` / `s.base` / `self.base` 拼出来；GitHub API
+    那几处引用的是模块级的 `API` / `REPO_SLUG`。按**引用的名字**判，而不是按
+    URL 文本里有没有某个域名子串（后者 CodeQL 会告，且子串可以出现在任意位置）。
+    """
+    import ast
+    if not call.args:
+        return False
+    for node in ast.walk(call.args[0]):
+        if isinstance(node, ast.Name) and node.id == "base":
+            return True
+        if isinstance(node, ast.Attribute) and node.attr == "base":
+            return True
+    return False
+
+
+def _launch_reaches(src: str, target: str) -> bool:
+    """「起实例」这条路上真的会走到 `target` 吗——一层可达性。
+
+    只问「文件里有没有对 target 的调用」是不够的：把调用包进一个**没人调**的
+    helper（`def _adopt(...): return _SA.adopt_session_credentials(...)`）照样
+    满足它，而实例起来之后一次都不会执行。本轮反证时亲手撞到过，它和
+    「函数定义满足子串」是同一类洞的不同深度。
+
+    所以从**含 `subprocess.Popen` 的那个函数**出发，把它自己 + 它直接调用的
+    函数体合起来找 target。一层足够覆盖真实写法（直接调、或经一个薄包装），
+    再深就该用真正的调用图了——那时更该问的是「为什么这条路这么绕」。
+    """
+    import ast
+    tree = ast.parse(src)
+    funcs = {n.name: n for n in ast.walk(tree)
+             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+
+    def calls_in(node) -> set:
+        out = set()
+        for x in ast.walk(node):
+            if isinstance(x, ast.Call):
+                f = x.func
+                if isinstance(f, ast.Name):
+                    out.add(f.id)
+                elif isinstance(f, ast.Attribute):
+                    out.add(f.attr)
+        return out
+
+    launchers = [fn for fn in funcs.values()
+                 if "Popen" in calls_in(fn)]
+    if not launchers:                      # 模块级 Popen：退回全文件
+        launchers = [tree]
+    for fn in launchers:
+        reachable = calls_in(fn)
+        if target in reachable:
+            return True
+        for name in list(reachable):
+            inner = funcs.get(name)
+            if inner is not None and target in calls_in(inner):
+                return True
     return False
