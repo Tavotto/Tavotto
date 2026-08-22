@@ -99,15 +99,24 @@ fix-now      guard    patch-train   minor-release   accepted-limitation
 | 下游猜产物文件名（根因 D，#63 已修一处） | release-infra | ✅ | ✅ SBOM 静默产出空清单 | ❌ | **fix-now** | 1.0-blocker | artifact manifest 成为唯一出处 | `tests/test_artifact_manifest.py` |
 | 资格验证两份手抄定义 | ci-harness | ✅（#61 要改两处） | ❌ | ❌ | **fix-now** | 1.0-blocker | 收敛成 reusable workflow | `test_release_workflow_contract.py::test_qualification_is_defined_once` |
 | issue 无 severity/area/disposition 标签 | 流程 | ✅ | ✅ 退出条件不可查询 | ❌ | **fix-now** | 1.0-blocker | `.github/labels.yml` + 同步脚本（已应用） | `tests/test_governance_contracts.py` |
-| #46 写回 verify 一次性 worker 目录泄漏 | engine | 偶发（Windows） | ❌（只是垃圾目录） | ❌ | **patch-train** | v1.0.1 | — | 需要先写一条稳定复现 |
-| #39 文档与实现对齐 | docs | ✅ | ❌ | ❌ | **patch-train** | v1.0.1 | 清单生成 | 由清单脚本对拍 |
-| §4.8 多宿主色条只记第一个宿主 | engine | ✅ 实测数字在 §4.8 | ❌（肉眼可见缩到一边） | ❌ | **guard** → **minor-release** | v1.1 | **本轮加**：多宿主时不给 orientation + `multi_host_colorbar` reason | `test_colorbar_orientation.py::test_multi_host_colorbar_does_not_offer_orientation` |
-| §4.1 图例重建路径不幂等 | engine | ✅ 实测像素 | ❌（manifest 不变，写回安全） | ❌ | **minor-release** | v1.1 | 已有 `test_legend_rebuild_drift_stays_where_it_is` | 同左 |
-| §4.2 alias/originals/replay 建模 | engine | n/a（不是缺陷，是形态） | — | ❌ | **minor-release** | v1.1 | 不变式 3 已钉住语义 | `test_invariants_engine.py` |
-| §4.3 `honours_stroke_style` 按类名的例外 | engine | ✅ | ❌ | ❌ | **patch-train** | v1.0.1 | 已有每次重渲的复测 | `test_the_mesh_stroke_style_table_still_holds` |
-| §4.5 「按对扫」harness 收进仓库 | ci-harness | n/a（新增能力） | — | ❌ | **minor-release** | v1.1 | — | — |
-| §4.6 Collection 能力表剩余 196 格 | engine | 部分 | ❌ | ❌ | **accepted-limitation** | — | 能力真实不变式按**运行时实况**判，不按白名单 | `test_invariants_engine.py`（能力真实） |
-| §4.4 CompatBench 分类是声明出来的 | ci-harness | ✅ | ⚠️ 报不出「变好了」 | ❌ | **patch-train** | v1.0.1 | 基线 schema 已要求写 reason/follow_up | `scripts/ci/compat_matrix.py` 的 schema 校验 |
+| **#46** 写回 verify 一次性 worker 目录泄漏 | engine | 偶发（Windows） | ❌（只是垃圾目录） | ❌ | **patch-train** | v1.0.1 | — | 需要先写一条稳定复现 |
+| **#39** 文档与实现对齐 | docs | ✅ | ❌ | ❌ | **patch-train** | v1.0.1 | 清单生成 | 由清单脚本对拍 |
+| **#69** 多宿主色条只记第一个宿主（§4.8） | engine | ✅ 实测数字在 §4.8 | ❌（肉眼可见缩到一边） | ❌ | **guard** → **minor-release** | v1.1 | **本轮加**：多宿主时不给 orientation + `multi_host_colorbar` reason | `test_colorbar_orientation.py::test_multi_host_colorbar_does_not_offer_orientation` |
+| **#68** 图例重建路径不幂等（§4.1） | engine | ✅ 实测像素 | ❌（manifest 不变，写回安全） | ❌ | **minor-release** | v1.1 | 已有 `test_legend_rebuild_drift_stays_where_it_is` | 同左 |
+| **#74** alias/originals/replay 建模（§4.2） | engine | n/a（不是缺陷，是形态） | — | ❌ | **minor-release** | v1.1 | 不变式 3 已钉住语义 | `test_invariants_engine.py` |
+| **#72** `honours_stroke_style` 按类名的例外（§4.3） | engine | ✅ | ❌ | ❌ | **patch-train** | v1.0.1 | 已有每次重渲的复测 | `test_the_mesh_stroke_style_table_still_holds` |
+| **#71** 「按对扫」harness 收进仓库（§4.5） | ci-harness | n/a（新增能力） | — | ❌ | **minor-release** | v1.1 | — | — |
+| **#73** Collection 能力表剩余 196 格（§4.6） | engine | 部分 | ❌ | ❌ | **accepted-limitation** | — | 能力真实不变式按**运行时实况**判，不按白名单 | `test_invariants_engine.py`（能力真实） |
+| **#70** CompatBench 分类是声明出来的（§4.4） | ci-harness | ✅ | ⚠️ 报不出「变好了」 | ❌ | **patch-train** | v1.0.1 | 基线 schema 已要求写 reason/follow_up | `scripts/ci/compat_matrix.py` 的 schema 校验 |
 
 **这张表里凡是写了 Guard 的，本轮都要落成代码**，不是落成计划。
 落到哪个 PR 见 `docs/engineering/p2-fix-train.md` §4。
+
+**每一条 backlog 都已经有对应的 open issue**（#68–#74，2026-08-22 建）。
+这是 §3 那条规矩的直接兑现：`docs/1.0-release-readiness.md` §4 是 backlog，
+不是 issue tracker——backlog 里的每一条都该有一个 open issue 与之对应，
+否则它只是一份档案。
+
+多宿主色条的 guard 已落地（PR #75）：多宿主时不宣称 `orientation`，
+manifest 给稳定 reason `multi_host_colorbar`，setter 同样拦并抛异常
+（→ warning → 写回阻断）。**#69 保持 open**——guard 不是修复。
