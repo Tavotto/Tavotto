@@ -187,10 +187,11 @@ class Session:
         self.config_dir = user_root / "config"
         self.proc: subprocess.Popen | None = None
         self.base = ""
+        self.port = 0
         self.log: list[str] = []
 
     def __enter__(self) -> "Session":
-        port = SA._free_port()
+        port = self.port = SA._free_port()
         self.base = f"http://127.0.0.1:{port}"
         for d in (self.data_dir, self.config_dir, self.user_root / "home"):
             d.mkdir(parents=True, exist_ok=True)
@@ -210,7 +211,34 @@ class Session:
                                      stderr=subprocess.STDOUT, text=True,
                                      encoding="utf-8", errors="replace")
         SA._wait_ready(self.base, self.proc, SA.BOOT_TIMEOUT_S)
+        self._adopt_credentials(port)
         return self
+
+    def _adopt_credentials(self, port: int) -> None:
+        """带上本机会话凭据（ADR 0008）。**按文件在不在判，不按版本号判。**
+
+        0.9.0 起浏览器模式也要认证，而升级验收的另一头是 N-1——`--baseline`
+        可以指定任意历史版本，其中大多数早于这道边界。所以判据只能是「这一版
+        写没写凭据文件」。
+
+        不带的后果不是「少测一项」：`_wait_ready` 打的 `/api/version` 是公共
+        端点，照样就绪，随后**每一个** API 调用 401。v0.9.0 发版时就是这么
+        炸的——阶段一（0.8.0，无认证）一路绿，阶段二（候选）当场 401，而这个
+        脚本在会话认证合并之后一次都没跑过（实验室 runner 那时还没有 runner
+        领得走）。
+
+        `SA._AUTH` 是模块级的，两个阶段共用同一个进程：**先清空**，否则
+        N-1 那一轮会带着候选版的头（或反过来）。
+        """
+        SA._AUTH.clear()
+        cred = self.data_dir / "session" / f"port-{port}.json"
+        if not cred.is_file():
+            print(f"  [{self.label}] 无会话凭据文件（这一版早于 ADR 0008），裸走",
+                  flush=True)
+            return
+        secret = json.loads(cred.read_text(encoding="utf-8"))["secret"]
+        SA._AUTH["X-Tavotto-Auth"] = secret
+        print(f"  [{self.label}] 已取得会话凭据", flush=True)
 
     def __exit__(self, *exc) -> None:
         try:
@@ -278,7 +306,12 @@ def write_state_with_old(py: Path, user_root: Path, project: Path) -> dict:
             req = urllib.request.Request(
                 f"{s.base}/api/autosave/upgrade-doc",
                 data=json.dumps({"doc": doc, "updatedAt": int(time.time() * 1000)}).encode(),
-                headers={"Content-Type": "application/json"}, method="PUT")
+                # **SA._AUTH 不能漏**：这里是全文件唯一一处不经 SA._post 的
+                # 应用请求（PUT，SA 没有对应助手），而它外面裹着 try/except，
+                # 漏了的话表现是 autosave_saved=False 静静记进报告，
+                # 升级验收照旧「通过」——一条本该验的东西被验没了。
+                headers={"Content-Type": "application/json", **SA._AUTH},
+                method="PUT")
             urllib.request.urlopen(req, timeout=60).read()
             facts["autosave_saved"] = True
         except Exception as exc:                              # noqa: BLE001

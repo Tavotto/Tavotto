@@ -491,3 +491,53 @@ def test_both_copies_of_the_slow_gate_agree():
     for token in ("--collect-only", "rc=$?", "5)", "set +e", "slow-collect.log"):
         assert (token in a) == (token in b), \
             f"两份 slow 门禁在 {token!r} 上不一致——判据分叉了"
+
+
+# ---------------- 升级验收与会话认证 -------------------------------------------
+
+def test_upgrade_acceptance_carries_session_credentials():
+    """0.9.0 起浏览器模式也要认证（ADR 0008），这个脚本当时没跟上。
+
+    症状极具迷惑性：`_wait_ready` 打的 `/api/version` 是**公共端点**，所以
+    「就绪」永远成立，随后每一个 API 调用 401。v0.9.0 发版时阶段一（0.8.0，
+    无认证）一路绿、阶段二（候选）当场 401——而这个脚本在会话认证合并之后
+    一次都没跑过，因为那时没有 runner 领得走实验室这条通道。
+
+    判据必须是「凭据文件在不在」而不是版本号：`--baseline` 可以指定任意历史
+    版本，其中大多数早于这道边界。
+    """
+    src = (CI_DIR / "upgrade_acceptance.py").read_text(encoding="utf-8")
+    # 盯**调用点**而不是「文件里出现过这个名字」：把方法改名成
+    # `_unused_adopt_credentials` 之类，子串匹配照样成立，而实例起来之后
+    # 一次都不会被调用——那正是这条用例要挡的失效形态。
+    assert "self._adopt_credentials(port)" in src, \
+        "起完实例必须真的调用它，光定义在那儿不算"
+    assert "SA._AUTH.clear()" in src, \
+        "两个阶段共用同一个进程，不先清空会让 N-1 带着候选版的头"
+    assert 'f"port-{port}.json"' in src, "凭据文件按端口取"
+    assert "cred.is_file()" in src, \
+        "要按文件在不在判——N-1 基线可能早于 ADR 0008，那时裸走才是对的"
+
+
+def test_no_app_request_in_upgrade_acceptance_skips_auth():
+    """全文件唯一一处不经 SA._post 的应用请求（autosave 的 PUT）也要带头。
+
+    漏了不会红：它裹在 try/except 里，表现是 autosave_saved=False 静静记进
+    报告，而升级验收照旧「通过」——一条本该验的东西被验没了，且没有任何人
+    会发现。这条用例按**目标**分类：打到 s.base/self.base 的请求必须带
+    SA._AUTH，打到 GitHub API 的不必。
+    """
+    import re
+    src = (CI_DIR / "upgrade_acceptance.py").read_text(encoding="utf-8")
+    calls = re.findall(r"urllib\.request\.Request\((.*?)\)\n", src, re.S)
+    assert calls, "解析不到任何 Request 调用——这条用例本身失效了"
+    # **注释必须先剥掉。** 解释「这里为什么要带 SA._AUTH」的那段注释就写在
+    # 调用里，连它一起判的话，把真正的 kwarg 删掉用例照样绿——本轮反证时
+    # 亲手撞到过，这已经是同一形状的第三次（前两次在 slow 门禁与 FD 检查）。
+    calls = ["\n".join(ln for ln in c.splitlines()
+                       if not ln.lstrip().startswith("#")) for c in calls]
+    app_calls = [c for c in calls if "s.base" in c or "self.base" in c]
+    assert app_calls, "一处打到应用的裸 Request 都没有？确认重构后这条还成立"
+    for call in app_calls:
+        assert "SA._AUTH" in call, \
+            f"这处打到应用的请求没带会话凭据，401 会被 try/except 吃掉：\n{call[:200]}"
