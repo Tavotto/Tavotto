@@ -1892,6 +1892,24 @@ def test_no_shell_test_reaches_a_real_systemctl_or_procfs():
         + "\n".join(offenders))
 
 
+def _make_unreadable(path) -> bool:
+    """把文件设成读不到，并**真读一次**确认前提成立。
+
+    `chmod 000` 对 root 无效（CAP_DAC_OVERRIDE），而 CI 容器里 pytest 常常就是
+    root 跑的。不核实前提的话，这条用例会在后面的断言上失败，看上去像被测代码
+    坏了——**实际是用例的前提在这个环境下不成立**。所以核实一次，不成立就跳过
+    并注明理由，而不是假装测过。
+
+    `os.access` 不能用：它对 root 一律回 True。只能真去 open。
+    """
+    path.chmod(0o000)
+    try:
+        with open(path, "rb"):
+            return False          # 读得到 —— 前提不成立（多半是以 root 在跑）
+    except PermissionError:
+        return True
+
+
 @requires_posix_bash
 def test_an_unreadable_env_is_not_mistaken_for_a_missing_path_line(tmp_path):
     """「`.env` 不存在」与「`.env` 在但读不到」必须分开。
@@ -1928,7 +1946,9 @@ def test_an_unreadable_env_is_not_mistaken_for_a_missing_path_line(tmp_path):
     b.mkdir()
     env = b / ".env"
     env.write_text("PATH=/from/env\n", encoding="utf-8")
-    env.chmod(0o000)
+    if not _make_unreadable(env):
+        pytest.skip("当前账号（多半是 root）连 mode 000 的文件也读得到，"
+                    "这条用例的前提在这个环境下不成立")
     (b / ".path").write_text("/usr/bin:/bin\n", encoding="utf-8")
     try:
         out = rows(str(b))
@@ -1945,7 +1965,8 @@ def test_an_unreadable_env_is_not_mistaken_for_a_missing_path_line(tmp_path):
     (c / ".env").write_text("PATH=/from/env\n", encoding="utf-8")
     pth = c / ".path"
     pth.write_text("/usr/bin:/bin\n", encoding="utf-8")
-    pth.chmod(0o000)
+    if not _make_unreadable(pth):
+        pytest.skip("当前账号读得到 mode 000 的文件，前提不成立")
     try:
         out = rows(str(c))
     finally:
@@ -1959,7 +1980,8 @@ def test_an_unreadable_env_is_not_mistaken_for_a_missing_path_line(tmp_path):
     d.mkdir()
     pth = d / ".path"
     pth.write_text("/usr/bin:/bin\n", encoding="utf-8")
-    pth.chmod(0o000)
+    if not _make_unreadable(pth):
+        pytest.skip("当前账号读得到 mode 000 的文件，前提不成立")
     try:
         out = rows(str(d))
     finally:
@@ -2063,3 +2085,105 @@ def test_dot_path_deliberately_keeps_a_carriage_return():
     code = "\n".join(ln for ln in fn.splitlines() if not ln.lstrip().startswith("#"))
     assert "cat \"$root/.path\"" in code, ".path 的读法变了，先确认与 runsvc.sh 是否仍同源"
     assert "tr " not in code, ".path 也去剥 \\r 了——那会与 runsvc.sh 的实际行为分叉"
+
+
+# ---- 第九轮复审：unit 文件改了没 reload；以及用例前提在 root 下不成立 --------
+
+
+@requires_posix_bash
+def test_a_pending_daemon_reload_is_detected_by_asking_systemd():
+    """unit 文件改了没 `daemon-reload` 时，`systemctl show` 回的是内存里的旧值。
+
+    这是「改了没重启」的另一半：那边是「配置进了 manager、进程还没吃到」，
+    这边是「文件改了、manager 自己都还没读」。据那个过期的「配置态」判 FD，
+    结论就是过期的。
+
+    **不用比 mtime——systemd 自己记着这件事。** 真机实测（systemd 255）：
+    写完 drop-in 不 reload → `NeedDaemonReload=yes` 且 `LimitNOFILESoft` 仍是旧值；
+    `daemon-reload` 之后 → `no`，值也跟着变。
+    """
+    src = _bootstrap()
+    fn = src.split("\nneeds_daemon_reload() {", 1)[1].split("\n}\n", 1)[0]
+    assert "NeedDaemonReload" in fn, "没问 systemd 自己记的那个量"
+
+    script = ('systemctl() { printf "%s\\n" "$STATE"; }\n'
+              + _bootstrap_funcs("needs_daemon_reload")
+              + '\nif needs_daemon_reload u; then echo PENDING; else echo CLEAN; fi\n')
+    import os as _os
+    for state, want in [("yes", "PENDING"), ("no", "CLEAN"), ("", "CLEAN")]:
+        r = subprocess.run(["bash", "-c", script, "sh"], capture_output=True,
+                           text=True, encoding="utf-8",
+                           env={**_os.environ, "STATE": state})
+        assert r.stdout.strip() == want, \
+            f"NeedDaemonReload={state!r} 回了 {r.stdout.strip()!r}，应是 {want}"
+
+
+def test_check_mode_refuses_to_judge_on_a_stale_manager_view():
+    """`--check` 承诺不改任何东西，所以它**不** daemon-reload，只报并算未就绪。
+
+    安装路径反过来：那里本来就是 root、下面还要写 drop-in，先 reload 再判才对。
+    两条路的处理不同是有意的，各自钉一条。
+    """
+    src = _bootstrap()
+    check = src.split('if [ "$CHECK_ONLY" -eq 1 ]; then', 1)[1] \
+               .split('say "检查通过"', 1)[0]
+    code = "\n".join(ln for ln in check.splitlines()
+                     if not ln.lstrip().startswith("#"))
+    assert "needs_daemon_reload" in code, "--check 没判「改了没 reload」"
+    branch = code.split("needs_daemon_reload", 1)[1].split("continue", 1)[0]
+    assert "MISSING=$((MISSING + 1))" in branch, "没算进未就绪"
+    # 判「有没有**执行**」，不是「有没有出现这几个字」：这一支的 printf 正是在
+    # 告诉用户去跑 daemon-reload，连提示文案一起判就成了又一次「判据匹配散文」。
+    executed = [ln.strip() for ln in branch.splitlines()
+                if ln.strip().startswith("systemctl daemon-reload")]
+    assert not executed, f"--check 里执行了 daemon-reload——它承诺不修改任何东西：{executed}"
+
+    install = src.split('say "文件描述符上限"', 1)[1]
+    icode = "\n".join(ln for ln in install.splitlines()
+                      if not ln.lstrip().startswith("#"))
+    ibranch = icode.split("needs_daemon_reload", 1)[1].split("cur=", 1)[0]
+    assert any(ln.strip().startswith("systemctl daemon-reload")
+               for ln in ibranch.splitlines()), \
+        "安装路径该先 reload 再判，否则判据用的是过期的配置态"
+
+
+def test_the_unreadable_precondition_is_verified_not_assumed():
+    """`chmod 000` 对 root 无效——用例必须先核实前提，不成立就 skip。
+
+    CI 容器里 pytest 常常以 root 跑，那时 mode 000 拦不住读（CAP_DAC_OVERRIDE），
+    后面的断言会失败，看上去像被测代码坏了，**实际是用例的前提不成立**。
+    真机实测：以 runner 跑 `_make_unreadable` 回 True，以 root 跑回 False。
+
+    `os.access` 不能用来核实——它对 root 一律回 True，只能真去 open。
+    """
+    import ast
+    src = open(__file__, encoding="utf-8").read()
+    tree = ast.parse(src)
+    helper = next(n for n in tree.body
+                  if isinstance(n, ast.FunctionDef) and n.name == "_make_unreadable")
+    # 摘掉 docstring 再看：它里面正解释着「os.access 为什么不能用」，
+    # 连解释一起判就是又一次「判据匹配散文」（这一轮已经踩到第三次）。
+    body = helper.body[1:] if ast.get_docstring(helper) else helper.body
+    code = "\n".join(ast.get_source_segment(src, st) or "" for st in body)
+    assert "open(" in code and "PermissionError" in code, "没有真读一次来核实前提"
+    assert "os.access" not in code, "os.access 对 root 一律回 True，核实不了"
+
+    # **用例里一处 `chmod(0o000)` 都不许有**，一律走 `_make_unreadable`。
+    # 「有 chmod 就得有 _make_unreadable」这种配对判据挡不住实际情况：同一个用例
+    # 里已经有别的地方调了 helper，再多一处裸 chmod 照样绿（实测过）。
+    # 扫的是**可执行的那几行**：docstring 与注释里提到它是在解释规则，不是在犯规。
+    # 头两版都栽在这上面——先是自己的注释、再是自己的字面量把自己扫成了违规。
+    needle = "chmod(0o" + "000)"
+    bad = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.FunctionDef) and node.name.startswith("test_")):
+            continue
+        stmts = node.body[1:] if ast.get_docstring(node) else node.body
+        code = "\n".join(ast.get_source_segment(src, st) or "" for st in stmts)
+        code = "\n".join(ln for ln in code.splitlines()
+                         if not ln.lstrip().startswith("#"))
+        if needle in code:
+            bad.append(node.name)
+    assert not bad, (
+        f"这些用例直接 chmod 000：{bad}。root 下它拦不住读，前提会悄悄不成立——"
+        "走 _make_unreadable，它会真读一次来核实")

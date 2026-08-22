@@ -137,6 +137,18 @@ discover_runner_units() {
       | sort -u
 }
 
+# **unit 文件改过但没 daemon-reload 时，`systemctl show` 回的是 manager 内存里的
+# 旧值。** 这是「改了没重启」的另一半：那边是「配置进了 manager、进程还没吃到」，
+# 这边是「文件改了、manager 自己都还没读」。拿那个过期的「配置态」去判 FD，
+# 结论就是过期的。
+#
+# 不用比 mtime——**systemd 自己就记着这件事**，直接问它。实测（systemd 255）：
+# 写完 drop-in 不 reload → NeedDaemonReload=yes 且 LimitNOFILESoft 仍是旧值；
+# daemon-reload 之后 → no，值也跟着变了。
+needs_daemon_reload() {
+    [ "$(systemctl show -p NeedDaemonReload --value "$1" 2>/dev/null)" = "yes" ]
+}
+
 # 装着 ≠ 在跑。停着的 runner 接不了任何 job，这一点要单独说。
 unit_is_active() {
     [ "$(systemctl is-active "$1" 2>/dev/null)" = "active" ]
@@ -595,6 +607,14 @@ EOF
             MISSING=$((MISSING + 1))
             continue
         fi
+        if needs_daemon_reload "$unit"; then
+            # `--check` 承诺不改任何东西，所以这里**不** daemon-reload，只报。
+            printf '  \033[31m✗\033[0m %-52s unit 文件改过但没 daemon-reload\n' "$unit"
+            printf '      systemctl 报的是 manager 内存里的旧值，据它判 FD 会得出过期结论。\n'
+            printf '      先 sudo systemctl daemon-reload，再重跑本脚本。\n'
+            MISSING=$((MISSING + 1))
+            continue
+        fi
         cur="$(nofile_of_service "$unit" || echo 0)"
         want="$(configured_nofile "$unit")"
         case "$(nofile_state "$cur" "$want")" in
@@ -796,6 +816,13 @@ else
             warn "$unit 装着但没在运行（is-active=$(systemctl is-active "$unit" 2>/dev/null || echo unknown)）
     ——它接不了任何 job，也量不出运行态的 FD 上限。启动它之后重跑本脚本。"
             continue
+        fi
+        if needs_daemon_reload "$unit"; then
+            # 安装路径本来就是 root、而且下面还要写 drop-in，先让 manager 读一遍
+            # 磁盘上的现状再判——否则判据用的是过期的「配置态」。
+            # daemon-reload **不是重启**，不打断在跑的 job。
+            echo "  $unit 的 unit 文件改过但没 reload，先 daemon-reload 一次"
+            systemctl daemon-reload 2>/dev/null || true
         fi
         cur="$(nofile_of_service "$unit" || echo 0)"
         want="$(configured_nofile "$unit")"
