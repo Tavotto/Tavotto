@@ -130,13 +130,51 @@ def _assert_auth_enforced(base: str, data_dir: Path, port: int) -> None:
             raise SmokeError(f"未认证请求应 401，实际 {e.code}")
     else:
         raise SmokeError("未认证请求被放行了——会话认证没有生效（P0 回归）")
-    secret_file = data_dir / "session" / f"port-{port}.json"
-    if not secret_file.is_file():
-        raise SmokeError(f"本机会话凭据文件缺失: {secret_file}")
-    secret = json.loads(secret_file.read_text(encoding="utf-8"))["secret"]
-    _AUTH["X-Tavotto-Auth"] = secret
+    if not adopt_session_credentials(data_dir, port):
+        raise SmokeError(
+            f"本机会话凭据文件缺失: {session_credential_path(data_dir, port)}")
     _get(f"{base}/api/session/ping", timeout=10)
     print("✓ 会话认证：默认 deny + 本机凭据交接可用")
+
+
+def session_credential_path(data_dir: Path, port: int) -> Path:
+    """本机会话凭据文件（ADR 0008）。
+
+    路径公式与 `engine/session_client.session_file_path()` 是**同一条**，但那
+    一份从**当前进程**的 `config.data_dir()` 推路径，而 CI 脚本是把
+    `TAVOTTO_DATA_DIR` 塞进**子进程** env 的——父进程用不了它。所以这里按显式
+    data_dir 再表达一次，并用 `test_ci_credential_path_matches_session_client`
+    与产品那份对拍（与 patchspec ↔ Rust、preflight 双求值器同一套纪律）。
+    """
+    return data_dir / "session" / f"port-{port}.json"
+
+
+def adopt_session_credentials(data_dir: Path, port: int) -> bool:
+    """把本机会话凭据装进 `_AUTH`，装上了回 True。**这是唯一实现。**
+
+    起完实例的每个调用方都要调它一次。凭据文件不在就什么都不装并回 False
+    ——那可能是 `--insecure-no-auth`，也可能是早于 ADR 0008 的老版本（升级
+    验收的 N-1 就是），两种都该继续裸走而不是失败。
+
+    **每次都先清空**：`_AUTH` 是模块级的，一个进程里连起两个实例（升级验收的
+    两个阶段、soak 的多轮）时，不清空会让后一个带着前一个的头。
+
+    这个函数存在的理由是 v0.9.0 的教训：ADR 0008 之后，
+    `upgrade_acceptance` / `visual_regression` / `soak` / `bench_render` 四个
+    脚本全部还在裸调 API，而它们**一个都没跑过**，直到发行链第一次真正执行。
+    我修了第一个却没扫其余三个——所以判据只能有一处，并且要有一条扫全部
+    调用方的看护（`test_every_app_launcher_adopts_credentials`）。
+    """
+    _AUTH.clear()
+    path = session_credential_path(data_dir, port)
+    try:
+        secret = json.loads(path.read_text(encoding="utf-8"))["secret"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+    if not isinstance(secret, str) or not secret:
+        return False
+    _AUTH["X-Tavotto-Auth"] = secret
+    return True
 
 
 def _wait_ready(base: str, proc: subprocess.Popen, timeout: float) -> dict:

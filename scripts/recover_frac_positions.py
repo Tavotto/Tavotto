@@ -32,6 +32,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.request
@@ -47,6 +48,19 @@ DELTA_TOL = 0.006      # 同轴成员漂移一致性的容差（figure 分数）
 MIN_DELTA = 0.002      # 小于它视作没漂，不改写
 
 
+# 会话凭据（ADR 0008）。装载判据只有一处——`smoke_app.adopt_session_credentials`
+# ——所以这里代理过去而不是自己再解析一遍凭据文件（`smoke_app` 纯标准库，
+# 白拿这一份实现不额外引入任何依赖）。
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import smoke_app as _SA  # noqa: E402
+
+_AUTH = _SA._AUTH
+
+
+def _adopt(data_dir: Path, port: int) -> bool:
+    return _SA.adopt_session_credentials(data_dir, port)
+
+
 def start_server(figures: Path, port: int, scratch: Path) -> subprocess.Popen:
     env = dict(os.environ,
                TAVOTTO_DATA_DIR=str(scratch / "data"),
@@ -57,9 +71,17 @@ def start_server(figures: Path, port: int, scratch: Path) -> subprocess.Popen:
         env=env, cwd=str(ROOT),
         stdout=open(scratch / "srv.log", "w"), stderr=subprocess.STDOUT)
     base = f"http://127.0.0.1:{port}"
+    data_dir = scratch / "data"
     for _ in range(120):
+        # 会话认证（ADR 0008）：/api/panels 是受保护端点，不带凭据一律 401，
+        # 而这个循环把 401 和「还没起来」都当成同一种失败——0.9.0 上的表现是
+        # 空转 120 次然后报「隔离实例没起来」，与真实原因毫不相干。
+        # 凭据文件要等服务写出来，所以每轮都试一次。
+        _adopt(data_dir, port)
         try:
-            urllib.request.urlopen(base + "/api/panels", timeout=5).read()
+            urllib.request.urlopen(
+                urllib.request.Request(base + "/api/panels", headers=_AUTH),
+                timeout=5).read()
             return proc
         except Exception:
             time.sleep(0.3)
@@ -68,7 +90,7 @@ def start_server(figures: Path, port: int, scratch: Path) -> subprocess.Popen:
 
 
 def req(base: str, path: str, body=None, timeout=900):
-    r = urllib.request.Request(base + path)
+    r = urllib.request.Request(base + path, headers=dict(_AUTH))
     if body is not None:
         r.add_header("Content-Type", "application/json")
         r.data = json.dumps(body).encode()

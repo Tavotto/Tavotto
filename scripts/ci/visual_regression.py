@@ -100,8 +100,13 @@ def verdict(metrics: dict, tol: dict) -> tuple[bool, list[str]]:
 # ---------------------------------------------------------------- 渲染
 def _post_png(base: str, stem_id: str, out: Path, timeout: int = 600) -> None:
     body = json.dumps({"id": stem_id, "patches": [], "w": RENDER_WIDTH}).encode()
+    # **SA._AUTH 不能漏。** 这是本文件唯一一处不经 SA._post 的应用请求
+    # （要的是 PNG 字节而不是 JSON，SA 没有对应助手）。漏了的表现是
+    # 「面板列出来了、第一张图 401」——而 `adopt_session_credentials` 明明
+    # 已经调过，看上去像认证装了却不生效。Codex 在 #56 上逮到的正是它。
     req = urllib.request.Request(f"{base}/api/engine/preview_png", data=body,
-                                 headers={"Content-Type": "application/json"})
+                                 headers={"Content-Type": "application/json",
+                                          **SA._AUTH})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         if resp.status != 200:
             raise CiError("preview_png_failed", f"{stem_id}: HTTP {resp.status}")
@@ -152,6 +157,10 @@ def render_corpus(launch: list[str], workdir: Path, stems: list[str],
     out: dict[str, Path] = {}
     try:
         SA._wait_ready(base, proc, SA.BOOT_TIMEOUT_S)
+        # ADR 0008：不装凭据的话下面每一个 API 调用都是 401。
+        # `_wait_ready` 打的 /api/version 是公共端点，就绪永远成立——
+        # 症状会是「起来了又立刻全挂」，与真实原因隔着一层。
+        SA.adopt_session_credentials(data_dir, port)
         panels = SA._get(f"{base}/api/panels")["panels"]
         by_stem = {p["id"].rsplit(".", 1)[0]: p["id"] for p in panels if p.get("script")}
         missing = [s for s in stems if s not in by_stem]
