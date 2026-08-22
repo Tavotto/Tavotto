@@ -323,10 +323,28 @@ jobs:
             dist/*.whl
             dist/*.tar.gz
 
+      # syft 的 `file:` 收的是**一个具体路径**，不是 glob——`dist/*.whl` 会被
+      # 原样当成文件名，报 `no source providers were able to resolve the input`。
+      # 这一步是 #45 加的，而 `github_release` 这个 job 在那之后**从来没成功
+      # 跑到过**（v0.9.0 的几轮全卡在 lab gate 之前），所以没人发现。
+      # 2026-08-22 v0.9.1 发版时第一次真正执行，当场失败。
+      - name: 解析 wheel 的真实路径（syft 不认 glob）
+        id: wheelpath
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          WHEELS=(dist/*.whl)
+          if [ "${#WHEELS[@]}" -ne 1 ]; then
+            echo "::error::dist/ 里应有且仅有一个 wheel，实际 ${#WHEELS[@]} 个"
+            exit 1
+          fi
+          echo "path=${WHEELS[0]}" >> "$GITHUB_OUTPUT"
+          echo "SBOM 输入: ${WHEELS[0]}"
+
       - name: 生成 SBOM（SPDX）
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
-          file: dist/*.whl
+          file: ${{ steps.wheelpath.outputs.path }}
           format: spdx-json
           output-file: out/tavotto-sbom.spdx.json
           upload-artifact: false

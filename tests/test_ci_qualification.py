@@ -814,6 +814,41 @@ def _launch_reaches(src: str, target: str) -> bool:
     return False
 
 
+def test_single_path_action_inputs_are_not_globs():
+    """只收**一个路径**的 action 输入，不许喂 glob。
+
+    2026-08-22 v0.9.1 发版实测：`anchore/sbom-action` 的 `file:` 写成
+    `dist/*.whl`，syft 把它原样当文件名，报
+    `no source providers were able to resolve the input`。那一步是 #45 加的，
+    而 `github_release` 这个 job 在那之后**从来没成功跑到过**（几轮都卡在
+    lab gate 之前），所以整整没人发现——又一处「从没执行过所以烂着」。
+
+    `subject-path` / `files` 这类**明确支持多值**的输入不在此列：
+    `actions/attest-build-provenance` 与 `softprops/action-gh-release` 都按
+    多行 glob 收，写 glob 是对的。判据只盯单值输入，别把正当写法也判红。
+    """
+    import re
+    SINGLE_VALUE = ("file", "image", "artifact-name", "output-file")
+    offenders = []
+    for wf in sorted(WORKFLOWS.glob("*.yml")):
+        for i, line in enumerate(wf.read_text(encoding="utf-8").splitlines(), 1):
+            m = re.match(r"\s*(" + "|".join(SINGLE_VALUE) + r"):\s*(\S.*)$", line)
+            if not m:
+                continue
+            val = m.group(2).strip()
+            # **表达式前缀不等于没有通配符。** `${{ github.workspace }}/dist/*.whl`
+            # 这种常见写法里，GitHub 只替换表达式、**不做 shell 展开**，剩下的
+            # `*` 会原样交给 syft——和裸 glob 一样坏。所以剥掉表达式之后再看，
+            # 别按开头是不是 `${{` 一刀放行（#63 的 review 逮到）。
+            bare = re.sub(r"\$\{\{[^}]*\}\}", "", val)
+            if not bare.strip():          # 整个值就是一个表达式：由前一步解析出的具体路径
+                continue
+            if "*" in bare or "?" in bare:
+                offenders.append(f"{wf.name}:{i} {m.group(1)}: {val}")
+    assert not offenders, (
+        "这些输入只收一个路径，喂 glob 会被原样当成文件名：\n  " + "\n  ".join(offenders))
+
+
 def test_desktop_outwaits_the_release_qualification_gate():
     """桌面链等 Release 的上限，必须盖得住 release.yml 的发行资格验证。
 
