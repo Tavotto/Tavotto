@@ -442,7 +442,14 @@ def _detail_for(SM, name, root):
 WORKFLOWS = CI_DIR.parents[1] / ".github" / "workflows"
 
 
-def _slow_step(name: str) -> str:
+def _slow_step(name: str = "_lab-qualification.yml") -> str:
+    """slow 门禁那一步的正文。
+
+    **默认参数从 `release.yml` 改成了 `_lab-qualification.yml`**：
+    发行资格验证已经收敛成唯一一份可复用 workflow（见
+    `tests/test_release_workflow_contract.py::test_qualification_is_defined_exactly_once`），
+    release.yml 与 lab-ci.yml 现在都只是调用它。
+    """
     src = (WORKFLOWS / name).read_text(encoding="utf-8")
     assert "slow / 集成用例" in src, f"{name} 里没有 slow 门禁了"
     step = src.split("slow / 集成用例", 1)[1].split("\n      - name:", 1)[0]
@@ -471,7 +478,8 @@ def test_slow_gate_reads_pytest_exit_code_not_its_human_output():
     退出码是 pytest 的稳定契约（5 = EXIT_NOTESTSCOLLECTED，4 = 收集出错），
     面向人的那段文字不是。
     """
-    for wf in ("release.yml", "lab-ci.yml"):
+    # 只剩一份定义了（见 test_there_is_only_one_copy_of_the_slow_gate）。
+    for wf in ("_lab-qualification.yml",):
         step = _slow_step(wf)
         assert 'grep -c "::"' not in step, \
             f"{wf}：又回去数 `::` 了——那是 pytest 打给人看的格式，会随版本变"
@@ -485,18 +493,34 @@ def test_slow_gate_reads_pytest_exit_code_not_its_human_output():
             f"{wf}：收集的输出没留下来——出错原因会像这次一样整个消失"
 
 
-def test_both_copies_of_the_slow_gate_agree():
-    """release.yml 与 lab-ci.yml 各有一份，而且**已经漂开过一次**。
+def test_there_is_only_one_copy_of_the_slow_gate():
+    """**这条用例换过一次判据，理由值得记下来。**
 
-    RELEASING.md 写着 lab_release_gate「复用同一套 job」，实际是两份拷贝：
-    lab-ci.yml 那份后来补了「空转的门禁比没有门禁更坏」，release.yml 那份没有。
-    漂开的代价是发行链上跑的判据与 nightly 上验过的不是同一个。合成一份
-    composite action 是 post-1.0 的活；在那之前用一条对拍挡住继续分叉。
+    从前它叫 `test_both_copies_of_the_slow_gate_agree`，逐 token 对拍
+    release.yml 与 lab-ci.yml 里那两份手抄的 slow 门禁——因为它们**已经
+    漂开过一次**（lab-ci 那份补了「空转的门禁比没有门禁更坏」，release 那份
+    没有）。那条用例的原话是：「合成一份 composite action 是 post-1.0 的活；
+    在那之前用一条对拍挡住继续分叉。」
+
+    现在那件事做完了：资格验证收敛成 `_lab-qualification.yml` 一份，
+    两个调用方都只是 `uses:` 它。**对拍的前提消失了**——没有第二份可拍。
+    于是判据从「两份要一致」换成「不许有第二份」：这不是放松，是把
+    「为什么需要对拍」那个根因直接拿掉，而拿掉之后仍然留一道门看着它别回来。
+
+    结构性的那半（两个调用方都走同一个文件）由
+    `tests/test_release_workflow_contract.py::test_qualification_is_defined_exactly_once`
+    看护，这里只钉「别处不许再出现一份」。
     """
-    a, b = _slow_step("release.yml"), _slow_step("lab-ci.yml")
-    for token in ("--collect-only", "rc=$?", "5)", "set +e", "slow-collect.log"):
-        assert (token in a) == (token in b), \
-            f"两份 slow 门禁在 {token!r} 上不一致——判据分叉了"
+    others = []
+    for wf in sorted(WORKFLOWS.glob("*.yml")):
+        if wf.name == "_lab-qualification.yml":
+            continue
+        if "slow / 集成用例" in wf.read_text(encoding="utf-8"):
+            others.append(wf.name)
+    assert not others, (
+        f"这些文件里又出现了一份 slow 门禁：{others}。"
+        f"资格验证只能有一份定义——两份必然漂开，而漂开的代价是"
+        f"发行链上跑的判据与 nightly 上验过的不是同一个")
 
 
 # ---------------- 升级验收与会话认证 -------------------------------------------
@@ -876,11 +900,21 @@ def test_always_steps_do_not_depend_on_a_step_that_may_not_have_run():
     # 这里只需要「按步骤切开、看它的 if 与 run」，标准库够用。
     import re
     offenders = []
-    for name in ("release.yml", "lab-ci.yml"):
-        src = (WORKFLOWS / name).read_text(encoding="utf-8")
+    # **扫全部 workflow。** 原来只扫 release.yml 与 lab-ci.yml，而那两处的
+    # 步骤已经搬进 `_lab-qualification.yml`——只扫老地方的话，这条判据会在
+    # 搬家那天悄悄变成「什么都没扫」。名单要跟着结构走，不能写死。
+    for wf in sorted(WORKFLOWS.glob("*.yml")):
+        name = wf.name
+        src = wf.read_text(encoding="utf-8")
         # 以 `      - name:` 切步骤（本仓库两个 workflow 的缩进是一致的）
         steps = re.split(r"\n(?=      - name:)", src)
-        assert len(steps) > 10, f"{name}: 只切出 {len(steps)} 段，切分判据失效了"
+        # 切分自检**按文件给下限**：codeql.yml 这类小文件本来就只有两三步，
+        # 一刀切 `> 10` 会在扫描范围扩大到全部 workflow 时把它判红——
+        # 而那说明的不是切分失效，是我把「资格验证那种大文件」的常识
+        # 套到了所有文件上。判据的主语要说清楚：这里问的是
+        # 「这个文件里以 `- name:` 起头的步骤有没有被切出来」。
+        if "      - name:" in src:
+            assert len(steps) > 1, f"{name}: 有步骤却一段都没切出来，切分判据失效了"
         for step in steps:
             # **只判会在前序失败后照跑的那些。** 普通顺序步骤引用它是正当的
             # ——venv 没建起来时它们根本不会执行。第一版没区分，把十几处正当
@@ -1030,73 +1064,34 @@ def test_every_report_writer_stamps_its_identity():
     # 「调了但没放进这份 payload」。够用，但别当成更强的保证。
 
 
-def test_desktop_outwaits_the_release_qualification_gate():
-    """桌面链等 Release 的上限，必须盖得住 release.yml 的发行资格验证。
+def test_the_desktop_leg_no_longer_waits_for_anything():
+    """**这条用例的前身消失了，理由值得记下来。**
 
-    tag 推送时两条链**并行**启动：桌面构建约 20 分钟就出产物，而 Release 要
-    等 `lab_release_gate` 跑完（slow + 升级验收 + 视觉回归 + CompatBench +
-    soak + 性能，实测 30~60 分钟）才建得出来。桌面那边等不到就失败。
+    从前它叫 `test_desktop_outwaits_the_release_qualification_gate`，
+    钉的是「桌面链等 Release 的上限 ≥ 发行资格验证的 job 超时」——因为
+    2026-08-22 v0.9.1 发版时两条腿**全程构建成功**（含 macOS 的签名与公证），
+    只栽在等待那一步：上限是 10 分钟，而那个数字是 `lab_release_gate` 存在
+    **之前**定的。
 
-    2026-08-22 v0.9.1 发版实测：两条腿**全程构建成功**（含 macOS 的签名与
-    公证），只栽在这一步——原来的上限是 30×20s = 10 分钟，而那个数字是
-    `lab_release_gate` 存在**之前**定的，那时 release.yml 两三分钟就建出
-    Release。加了门禁之后没人改它，于是桌面链在 tag 推送时**基本不可能成功**，
-    而且失败得极不划算：产物全签好了，只差挂不上去，重跑一次二十分钟、
-    macOS 还要重新公证一遍。
+    那条判据是对的，但它守的是一个**不该存在的机制**。#62 把上限调到
+    190 分钟，注释里自己写着「没有任何固定上限是够的」——因为 lab gate 的
+    **排队**时间本身没有上界。
 
-    判据钉的是**两个数之间的关系**，不是某个具体值——门禁的超时哪天调大，
-    这条会提醒把等待也调大。
+    现在整段轮询删掉了：桌面链只把产物传成 artifact，挂 Release 归
+    release.yml 的 publish job 统一做。**「等多久才够」这个问题不再存在**，
+    所以钉那个不等式的用例也不再存在。取而代之的是更强的一条：
+    这条链里不许有任何等待。
+
+    结构性的那半（没有轮询、没有自挂 Release、tag 只有一个入口）由
+    `tests/test_release_workflow_contract.py` 看护；这里留一条最小的哨兵，
+    免得有人在 desktop-tauri.yml 里把它加回来而两个文件的用例都没红。
     """
-    import re
-    rel = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
-    gate = rel.split("lab_release_gate:", 1)[1].split("\n  github_release:", 1)[0]
-    m = re.search(r"timeout-minutes:\s*(\d+)", gate)
-    assert m, "lab_release_gate 没有 timeout-minutes 了——这条判据的另一半没了"
-    gate_minutes = int(m.group(1))
-
-    dt = (WORKFLOWS / "desktop-tauri.yml").read_text(encoding="utf-8")
-    wait = dt.split("等 Release 存在", 1)[1].split("\n      - name:", 1)[0]
-    tries = int(re.search(r"seq 1 (\d+)", wait).group(1))
-    sleep_s = int(re.search(r"sleep (\d+)", wait).group(1))
-    wait_minutes = tries * sleep_s / 60
-
-    assert wait_minutes >= gate_minutes, (
-        f"桌面链最多等 {wait_minutes:.0f} 分钟，而发行资格验证的上限是 "
-        f"{gate_minutes} 分钟——门禁跑满时，已经签名公证好的桌面产物会挂不上去")
-
-    # **超时消息里不许出现写死的分钟数。** 上一版循环从 10 分钟改成 190 分钟，
-    # 而失败消息还写着「等了 10 分钟」——发布操作者会照着那个数去查一个不存在
-    # 的问题。诊断指错方向比不诊断更坏（Codex 在 #62 上指出）。
-    tail = wait.split("done", 1)[1]
-    # 注释先剥掉：解释「上一版写死了 10 分钟」的那句里必然含这四个字，
-    # 连它一起判会让「写清楚为什么」反而变红。今天这个坑踩到第四次了，
-    # 而它恰恰是我刚写进 CLAUDE.md 的那条纪律。
-    code = "\n".join(ln for ln in tail.splitlines()
+    src = (WORKFLOWS / "desktop-tauri.yml").read_text(encoding="utf-8")
+    code = "\n".join(ln for ln in src.splitlines()
                      if not ln.lstrip().startswith("#"))
-    assert "waited=" in code, "失败消息要报**实际**等了多久，不是写死的数"
-    for stale in ("10 分钟", "10 minutes"):
-        assert stale not in code, f"失败消息里还留着写死的「{stale}」"
-    # 等不到时产物不能丢：上传要排在等待**之前**
-    dt_src = (WORKFLOWS / "desktop-tauri.yml").read_text(encoding="utf-8")
-    assert dt_src.index("上传最终桌面产物") < dt_src.index("等 Release 存在"), \
-        "产物上传必须排在「等 Release」之前，否则等超时会把签名公证好的东西一起丢掉"
-
-    # **最后一次 sleep 之后必须再探一次。** Release 恰好在那 30 秒里建出来时，
-    # 循环直接落到失败分支——明明已经好了却报超时，而且发生在最贵的那一刻。
-    code = "\n".join(ln for ln in tail.splitlines()
-                     if not ln.lstrip().startswith("#"))
-    assert "gh release view" in code, \
-        "循环结束后没有再探一次——最后一轮 sleep 里建出来的 Release 会被漏掉"
-
-
-# ============================================================ 遗留进程自愈
-#
-# 2026-08-22 实测：一个手工探测留下的进程
-# （`/srv/tavotto-ci/tmp/venv-manual-probe/… -m tavotto`）从 05:55 起把
-# **每一次** lab run 挡在门外——25 次 run 里 0 次成功。体检本身是对的
-# （残留进程确实会污染 soak 与 benchmark），坏的是**没有自愈**：
-# `cleanup.py`（会 kill）排在体检之后，体检失败它就永远轮不到。
-
+    assert "seq 1" not in code, "桌面链里又出现了轮询循环"
+    assert "gh release view" not in code, "桌面链又在等 Release 出现"
+    assert "action-gh-release" not in code, "桌面链又在自己挂 Release"
 def test_the_ownership_predicate_has_exactly_one_implementation():
     """「这个进程是不是本 CI 漏下的」只能有一份判据。
 
@@ -1219,10 +1214,14 @@ def test_ownership_predicate_never_matches_a_maintainers_own_instance():
 
 def test_the_lab_workflows_actually_pass_reap_stale():
     """自愈写好了却没接上去，等于没写。"""
-    for name in ("lab-ci.yml", "release.yml"):
-        src = (WORKFLOWS / name).read_text(encoding="utf-8")
-        line = [ln for ln in src.splitlines()
-                if "lab_preflight.py" in ln and not ln.lstrip().startswith("#")]
-        assert line, f"{name}: 找不到调用 lab_preflight.py 的那一行"
-        for ln in line:
-            assert "--reap-stale" in ln, f"{name}: 体检没有开自愈：{ln.strip()}"
+    # 体检现在只有一处调用点（资格验证收敛成 `_lab-qualification.yml`），
+    # 但判据仍按「凡是调它的地方」扫——写死一个文件名，会在下次搬家时
+    # 悄悄变成空判据。
+    found = 0
+    for wf in sorted(WORKFLOWS.glob("*.yml")):
+        for ln in wf.read_text(encoding="utf-8").splitlines():
+            if "lab_preflight.py" not in ln or ln.lstrip().startswith("#"):
+                continue
+            found += 1
+            assert "--reap-stale" in ln, f"{wf.name}: 体检没有开自愈：{ln.strip()}"
+    assert found, "一处调用 lab_preflight.py 的地方都没有——这条判据空转了"

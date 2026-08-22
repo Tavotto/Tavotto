@@ -26,23 +26,67 @@ name: Desktop apps (Tauri)
 #    还会不会跑，只有真跑一次才知道；
 # 4. Windows 对 Tauri 真 .exe 做启动-探活-退出探针（壳 → sidecar → 收尾）。
 on:
-  # 打 tag 即自动构建并挂到 Release（与 release.yml 并行，省一半墙钟时间；
-  # 「挂到 Release」步骤会先等 release.yml 把 Release 建出来）
-  push:
-    tags: ["v*"]
+  # **不再由 tag 直接触发。** 从前 release.yml 与本工作流由同一个 tag 各自
+  # 启动，本工作流构建完就轮询 `gh release view` 等对方把 Release 建出来
+  # （最长 190 分钟）。那个拓扑有两个不可修的毛病：
+  #   · 等待没有上界——lab gate 的**排队**时间本身没有上界；
+  #   · 两条腿各自 checkout tag，而 tag 是可移动的引用，
+  #     「同一个 tag」证明不了「同一个 commit」。
+  # 现在 release.yml 是 tag 的唯一入口，它用 workflow_call 调本工作流，
+  # 并把已经验过、已经解析好的**精确 SHA** 传进来。轮询整段删掉了。
+  workflow_call:
+    inputs:
+      sha:
+        description: "已经由调用方验过可达 main 的精确 commit SHA"
+        required: true
+        type: string
+      version:
+        description: "版本号（不带 v），用于产物命名与清单核对"
+        required: true
+        type: string
+      publish:
+        description: "是否为正式发布构建（true 才做 provenance 与更新包要求）"
+        required: false
+        default: false
+        type: boolean
+    # **每一个 secret 都显式声明。** `secrets: inherit` 只能写在**调用方**
+    # （`jobs.<id>.secrets: inherit`），写在被调用方是语法错误——actionlint
+    # 当场逮到了。显式列一遍还有第二个好处：这份清单就是「桌面发布链需要
+    # 哪些凭据」的唯一出处，少配一个时症状不再是「构建出来但没签名」。
+    # 全部 `required: false`：没配签名密钥时构建照跑，只是产物不签名
+    # （build_desktop.py 会就地关掉 createUpdaterArtifacts 并打 warning）。
+    secrets:
+      MACOS_CERTIFICATE:
+        required: false
+      MACOS_CERTIFICATE_PASSWORD:
+        required: false
+      MACOS_SIGN_IDENTITY:
+        required: false
+      APPLE_ID:
+        required: false
+      APPLE_APP_PASSWORD:
+        required: false
+      APPLE_TEAM_ID:
+        required: false
+      TAURI_SIGNING_PRIVATE_KEY:
+        required: false
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD:
+        required: false
+      SIGNPATH_API_TOKEN:
+        required: false
+
+  # 单独跑桌面构建（排查用）。**不挂 Release**——挂 Release 只有一条路，
+  # 就是 release.yml 的 publish job。
   workflow_dispatch:
     inputs:
       tag:
         description: "基于哪个 tag 构建（如 v0.2.0）"
         required: true
-      attach:
-        description: "构建完挂到该 tag 的 Release 上"
-        type: boolean
-        default: true
 
-# 默认只读（1.0 审计 P1-04：secret-bearing 工作流最小权限）。
-# 真要写 Release 的两个 job（build 的「挂到 Release」、updater-manifest）
-# 各自在 job 级声明 contents: write；workerd 静态门禁全程只读。
+# **全程只读**（1.0 审计 P1-04：secret-bearing 工作流最小权限）。
+# 从前 build 与 updater-manifest 各要了一次 `contents: write`，因为它们
+# 各自往 Release 上挂东西。现在挂 Release 只有一条路——release.yml 的
+# publish job——这条链一个字节都不写。
 permissions:
   contents: read
   actions: read
@@ -72,9 +116,28 @@ jobs:
           fetch-depth: 0
       - id: resolve
         env:
-          TAG: ${{ inputs.tag || github.ref_name }}
+          # **被调用时用调用方传进来的 SHA，不自己再解析一次 tag。**
+          # 自己解析等于给同一个问题留两个答案：release.yml 的 trust 与这里
+          # 各 checkout 一次 tag，中间 tag 被指向别处的话，wheel 与桌面产物
+          # 就来自两个 commit，而没有任何一步会报错。
+          GIVEN_SHA: ${{ inputs.sha }}
+          TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
+          if [ -n "${GIVEN_SHA:-}" ]; then
+            # 信任但仍要核实：调用方给的必须是本仓库里一个真实、可达 main 的 commit
+            if ! git cat-file -e "${GIVEN_SHA}^{commit}" 2>/dev/null; then
+              echo "::error::调用方给的 $GIVEN_SHA 不是本仓库里的 commit"
+              exit 1
+            fi
+            if ! git merge-base --is-ancestor "$GIVEN_SHA" origin/main; then
+              echo "::error::$GIVEN_SHA 不可达于 origin/main——发布只接受已经合并进受保护 main 的提交"
+              exit 1
+            fi
+            echo "sha=$GIVEN_SHA" >> "$GITHUB_OUTPUT"
+            echo "✅ 调用方传入 $GIVEN_SHA（可达 origin/main）"
+            exit 0
+          fi
           if ! SHA="$(git rev-parse --verify "refs/tags/${TAG}^{commit}" 2>/dev/null)"; then
             echo "::error::$TAG 不是本仓库里的一个 tag——拒绝进入桌面发布链"
             exit 1
@@ -123,19 +186,22 @@ jobs:
           - { os: windows-latest, bundles: nsis, artifact: nsis }
     runs-on: ${{ matrix.os }}
     permissions:
-      contents: write   # 「挂到 Release」需要；其余步骤只读
+      # **不再需要 contents: write**：这条腿只把产物传成 workflow artifact，
+      # 挂 Release 归 release.yml 的 publish job。留着一个用不上的写权限，
+      # 等于把发行凭据放在一个不需要它的地方。
+      contents: read
       actions: read
       # 桌面安装包/更新包的 build provenance（审计 P1-04）
       id-token: write
       attestations: write
     env:
       # tag 触发时 inputs 为空，一律经这个变量取目标 tag
-      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      RELEASE_TAG: ${{ inputs.tag || format('v{0}', inputs.version) }}
       # 发行构建 = 产物会挂上 Release。签名门禁按它分岔：发行构建缺任一
       # 签名/公证凭据必须**失败**而不是 warning（1.0 审计 P1-07）；
       # 非发行的 dispatch 构建（attach=false）保留降级路径，便于试构建。
       # **Windows 的 Authenticode 是这条纪律里唯一的例外**，理由见下面门禁那一步。
-      IS_RELEASE_BUILD: ${{ (github.event_name == 'push' || inputs.attach) && '1' || '0' }}
+      IS_RELEASE_BUILD: ${{ inputs.publish && '1' || '0' }}
       MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
       MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
       MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
@@ -621,74 +687,57 @@ jobs:
       - name: 桌面产物 provenance（发行构建）
         # 用户可用 `gh attestation verify <安装包> -R Tavotto/Tavotto` 验证
         # 「这份安装包出自本仓库这次受信 SHA 的构建」（审计 P1-04 / Gate B）
-        if: ${{ github.event_name == 'push' || inputs.attach }}
+        if: ${{ inputs.publish }}
         uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
         with:
           subject-path: out/*
 
-      - name: 等 Release 存在（tag 触发时与 release.yml 并行，先到要等）
-        # 不等就挂 = softprops 会替我们「创建」一个没有 notes 的 Release，
-        # 与 release.yml 手写 notes 的那份撞车。等不到按失败处理，绝不静默。
-        #
-        # **等多久由 release.yml 的关键路径决定，不由「感觉差不多」决定。**
-        # 原来是 30×20s = 10 分钟。那个数字是 `lab_release_gate` 存在之前定的
-        # ——那时 release.yml 只有 build → github_release，两三分钟就建出来。
-        # 现在 Release 前面横着一整条发行资格验证（slow + 升级验收 + 视觉回归 +
-        # CompatBench + soak + 性能，实测 30~60 分钟），而桌面构建本身只要
-        # ~20 分钟。于是**桌面链在 tag 推送时基本不可能成功**：产物全都签好了，
-        # 只差挂不上去。2026-08-22 v0.9.1 发版时两条腿同时栽在这里。
-        #
-        # 上限取 lab_release_gate 的 job 超时（180 分钟）再留一点余量。
-        #
-        # **但要说清楚：没有任何固定上限是「够」的。** `timeout-minutes` 从 job
-        # 真正开始那一刻才计时，而它前面还有**排队**——等 `lab-qualification`
-        # 这个并发槽、或者等一台带 tavotto-lab 标签的 self-hosted runner。
-        # 排队时间没有上界：2026-08-22 之前那个标签整整几天没有任何 runner
-        # 领得走，Lab Qualification 全部卡在 queued。所以这里选的是一个
-        # **务实的上限**，不是一个可以证明的上限。
-        #
-        # 之所以敢这么选：**等不到不会丢东西**。最终产物在上一步（「上传最终
-        # 桌面产物」）就已经作为 workflow artifact 传好了，签名与公证都在里面。
-        # 等超时只是没挂到 Release 上，操作者按下面的提示手动 dispatch 一次
-        # 即可，或者直接从这次 run 的 artifact 里取。
-        if: ${{ github.event_name == 'push' || inputs.attach }}
+      # **这里从前有一段轮询**：`for i in $(seq 1 380); … sleep 30`，
+      # 最长等 190 分钟，等 release.yml 把 Release 建出来，然后 attach。
+      # 整段删掉了，理由不是「等得太久」，是**这个拓扑本身是错的**：
+      #   · 等待没有上界——lab gate 的排队时间本身没有上界（#62 的注释自己
+      #     承认「没有任何固定上限是够的」）；
+      #   · 两条腿各自 checkout tag，「同一个 tag」证明不了「同一个 commit」。
+      # 现在桌面产物只做一件事：**传成 workflow artifact**。
+      # 挂 Release 由 release.yml 的 publish job 统一做，一次挂全部。
+
+      - name: 这条腿的产物清单
+        # 下游（checksums / SBOM / provenance / updater / Release 附件）
+        # **只读清单**，不再各自猜文件名——#63 的根因就是七处各猜一次。
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ needs.trust.outputs.sha }}
+          LEG: ${{ matrix.artifact }}
         run: |
-          for i in $(seq 1 380); do
-            if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-              echo "✅ Release $RELEASE_TAG 已存在（等了 $(( (i - 1) * 30 / 60 )) 分钟）"
-              exit 0
-            fi
-            if [ $(( i % 10 )) -eq 1 ]; then
-              echo "· Release $RELEASE_TAG 还没建好（release.yml 的发行资格验证通常要 30~60 分钟），已等 $(( (i - 1) * 30 / 60 )) 分钟（$i/380）"
-            fi
-            sleep 30
-          done
-          # **最后一次 sleep 之后再探一次。** 否则 Release 恰好在那 30 秒里
-          # 建出来时，循环直接落到失败分支——明明已经好了却报超时，而且是
-          # 在最贵的那一刻（产物签好公证好，只差挂上去）。#62 的 review 逮到。
-          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "✅ Release $RELEASE_TAG 在最后一轮等待中出现了"
-            exit 0
+          set -euo pipefail
+          VER="$RELEASE_TAG"; VER="${VER#v}"
+          ARGS=()
+          while IFS= read -r f; do
+            base="$(basename "$f")"
+            case "$base" in
+              *-Windows-Setup.exe)  role=windows-installer; plat=windows-x86_64 ;;
+              *.dmg)                role=macos-installer;   plat=darwin-aarch64 ;;
+              *-setup.nsis.zip)     role=windows-updater;   plat=windows-x86_64 ;;
+              *.app.tar.gz)         role=macos-updater;     plat=darwin-aarch64 ;;
+              *) continue ;;          # .sig 等随包文件不单独登记角色
+            esac
+            ARGS+=(--add "${role}:${f}:${plat}")
+          done < <(find out -maxdepth 1 -type f | sort)
+          if [ "${#ARGS[@]}" -eq 0 ]; then
+            echo "::error::out/ 里没有任何可登记的桌面产物"
+            ls -la out || true
+            exit 1
           fi
-          # **报实际等了多久，别报一个写死的数。** 上一版这里写着「10 分钟」，
-          # 而循环早已改成 190 分钟——发布操作者会照着那个数去查一个不存在的
-          # 问题。诊断指错方向比不诊断更坏。
-          waited=$(( 380 * 30 / 60 ))
-          echo "::error::等了 ${waited} 分钟仍没有 $RELEASE_TAG 的 Release。"
-          echo "::error::常见原因：release.yml 的 lab_release_gate 失败了，或者它还在排队（等并发槽 / 等 tavotto-lab runner，排队时间没有上界）。"
-          echo "::error::**本次的桌面产物没有丢**：已作为 workflow artifact 上传（含签名与公证）。Release 建好之后手动重跑一次即可挂上去："
-          echo "::error::  gh workflow run desktop-tauri.yml --ref main -f tag=$RELEASE_TAG -f attach=true"
-          exit 1
+          python3 scripts/ci/artifact_manifest.py build \
+            --version "$VER" --source-sha "$SOURCE_SHA" \
+            --out "out/artifact-manifest-${LEG}.json" "${ARGS[@]}"
 
-      - name: 挂到 Release
-        if: ${{ github.event_name == 'push' || inputs.attach }}
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+      - name: 上传这条腿的产物清单
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          tag_name: ${{ inputs.tag || github.ref_name }}
-          files: out/*
+          name: artifact-manifest-${{ matrix.artifact }}
+          path: out/artifact-manifest-${{ matrix.artifact }}.json
+          if-no-files-found: error
 
   # ---------------------------------------------------------------------------
   # 更新清单：两条腿都跑完才拼得出来（每条腿只知道自己那一半）
@@ -698,12 +747,12 @@ jobs:
   # **没有这一份，壳永远查不到新版本**，前一版的用户就停在原地了。
   updater-manifest:
     needs: [trust, build]
-    if: ${{ github.event_name == 'push' || inputs.attach }}
+    if: ${{ inputs.publish }}
     runs-on: ubuntu-latest
     permissions:
-      contents: write   # latest.json 要挂上 Release
+      contents: read    # 只产出 latest.json 这个 artifact，挂 Release 归 publish job
     env:
-      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      RELEASE_TAG: ${{ inputs.tag || format('v{0}', inputs.version) }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -733,13 +782,16 @@ jobs:
       - name: 合成 latest.json
         if: steps.probe.outputs.have == '1'
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # 更新说明取 Release 正文（release.yml 手写的那份），拿不到就留空
-          NOTES=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
-                    --json body -q .body 2>/dev/null || true)
+          # **更新说明取仓库里的 release notes 文件，不再回头查 Release。**
+          # 从前它 `gh release view` 读 release.yml 刚写好的正文——那是另一条
+          # 「等对方先做完」的隐式依赖，而现在这个 job 跑在 Release 存在之前。
+          # 文件拿不到就留空（更新链照常，只是壳里那段说明是空的）。
+          NOTES=""
+          if [ -f "docs/release-notes/${RELEASE_TAG}.md" ]; then
+            NOTES="$(cat "docs/release-notes/${RELEASE_TAG}.md")"
+          fi
           # 少一个平台 = 那个平台的用户永远收不到更新，而且全绿。硬要求两个都在。
           python scripts/make_updater_manifest.py \
             --artifacts artifacts --tag "$RELEASE_TAG" \
@@ -747,9 +799,12 @@ jobs:
             --notes "$NOTES" --out out/latest.json
           cat out/latest.json
 
-      - name: 挂到 Release
+      # **不再自己挂 Release。** 挂 Release 只有一条路：release.yml 的
+      # publish job，一次挂全部。这个 job 现在只产出 latest.json 这个产物。
+      - name: 上传 latest.json
         if: steps.probe.outputs.have == '1'
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          tag_name: ${{ inputs.tag || github.ref_name }}
-          files: out/latest.json
+          name: updater-manifest
+          path: out/latest.json
+          if-no-files-found: error
