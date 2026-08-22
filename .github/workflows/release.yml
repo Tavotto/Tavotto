@@ -266,7 +266,16 @@ jobs:
     with:
       sha: ${{ needs.trust.outputs.sha }}
       version: ${{ needs.trust.outputs.version }}
-      publish: ${{ needs.trust.outputs.publish == 'true' }}
+      # **恒为 true，不跟着 publish 走。**
+      # 从前这里传的是 `publish`，于是 `publish=false` 的演练把桌面侧的
+      # 签名凭据门禁、provenance 与整个 `updater-manifest` job 一起关掉了
+      # ——演练于是验不到发布链上**最容易悄悄坏掉的那两段**：签名/公证，
+      # 和 latest.json（少了它，桌面用户永远查不到新版本，而且全绿）。
+      #
+      # 「是不是发行构建」与「挂不挂 Release」是两件事。本工作流根本不挂
+      # Release（那归下面的 github_release job），所以它不需要知道 publish。
+      # 演练的定义是**产物一个不少、门禁一条不落，只是不发布**。
+      release_build: true
     secrets: inherit
     permissions:
       contents: read
@@ -338,8 +347,12 @@ jobs:
         with:
           path: manifests
           pattern: artifact-manifest-*
+      # **不再 continue-on-error。** 桌面链现在恒以 release_build=true 运行，
+      # `updater-manifest` job 因此总会产出 latest.json（产不出来它自己就红了，
+      # 那是 P1-07 有意的硬失败）。允许这一步失败，等于把一次 artifact 传输
+      # 或改名故障变成「发了一个没有 latest.json 的 Release」——而那意味着
+      # 桌面用户永远查不到新版本，且整条链全绿。v0.7.0 就是这么发出去的。
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        continue-on-error: true       # 没配 minisign 私钥时这个 artifact 不存在
         with: { name: updater-manifest, path: out }
 
       - name: 把桌面产物摊平到 dist/
@@ -552,6 +565,13 @@ jobs:
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ needs.trust.outputs.tag }}
+          # **tag 不存在时，action 会替我们建一个 —— 必须钉在受信 SHA 上。**
+          # 不给 target_commitish 的话它用 `GITHUB_SHA`，也就是 dispatch 时
+          # 的 ref（例如 `main` 的当前 HEAD），而不是 trust 解析并验证过的
+          # 那个 SHA。两者在「dispatch 之后、publish 之前 main 又前进了」时
+          # 就是两个 commit —— 而这发生在整条链**最不可逆的那一步**：
+          # tag ruleset 是 immutable，建错了改不动也删不掉。
+          target_commitish: ${{ needs.trust.outputs.sha }}
           draft: false
           body_path: ${{ needs.validate_artifacts.outputs.has_body == '1' && 'assets/out/release-body.md' || '' }}
           generate_release_notes: ${{ needs.validate_artifacts.outputs.has_body != '1' }}

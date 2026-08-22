@@ -44,8 +44,11 @@ on:
         description: "版本号（不带 v），用于产物命名与清单核对"
         required: true
         type: string
-      publish:
-        description: "是否为正式发布构建（true 才做 provenance 与更新包要求）"
+      release_build:
+        description: >-
+          这是不是一次**发行构建**：要签名、要公证、要 provenance、要更新包。
+          **与「挂不挂 Release」是两件事** —— 本工作流根本不挂 Release
+          （那归 release.yml 的 publish job），所以它不需要知道 publish。
         required: false
         default: false
         type: boolean
@@ -201,7 +204,7 @@ jobs:
       # 签名/公证凭据必须**失败**而不是 warning（1.0 审计 P1-07）；
       # 非发行的 dispatch 构建（attach=false）保留降级路径，便于试构建。
       # **Windows 的 Authenticode 是这条纪律里唯一的例外**，理由见下面门禁那一步。
-      IS_RELEASE_BUILD: ${{ inputs.publish && '1' || '0' }}
+      IS_RELEASE_BUILD: ${{ inputs.release_build && '1' || '0' }}
       MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
       MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
       MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
@@ -687,7 +690,7 @@ jobs:
       - name: 桌面产物 provenance（发行构建）
         # 用户可用 `gh attestation verify <安装包> -R Tavotto/Tavotto` 验证
         # 「这份安装包出自本仓库这次受信 SHA 的构建」（审计 P1-04 / Gate B）
-        if: ${{ inputs.publish }}
+        if: ${{ inputs.release_build }}
         uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
         with:
           subject-path: out/*
@@ -747,7 +750,7 @@ jobs:
   # **没有这一份，壳永远查不到新版本**，前一版的用户就停在原地了。
   updater-manifest:
     needs: [trust, build]
-    if: ${{ inputs.publish }}
+    if: ${{ inputs.release_build }}
     runs-on: ubuntu-latest
     permissions:
       contents: read    # 只产出 latest.json 这个 artifact，挂 Release 归 publish job

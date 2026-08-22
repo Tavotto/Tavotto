@@ -243,8 +243,15 @@ jobs:
             *)
               ARGS="--all --fidelity --browser --gate nightly" ;;
           esac
+          # **`--python` 要显式给。** 不给的话 `compat_matrix._worker_python(None)`
+          # 会走 pool 的解释器优先级链——而这台 runner 是**持久**的：
+          # `TAVOTTO_WORKER_PYTHON` 或用户设置里存下来的解释器一旦存在，
+          # CompatBench 就会拿它去跑，而不是拿这一轮刚建好、按 runtime-lock
+          # 钉过版本的那个 venv。那时像素基线比的是另一套 matplotlib，
+          # 而报告不会说 —— 与「借一个解释器」把冒烟变成空转是同一个形状。
           # shellcheck disable=SC2086
           ${{ steps.venv.outputs.python }} scripts/ci/compat_matrix.py $ARGS \
+            --python ${{ steps.venv.outputs.python }} \
             --out "$RUNNER_TEMP/compat" \
             --json "$TAVOTTO_CI_STATE_ROOT/reports/compat.json"
 
