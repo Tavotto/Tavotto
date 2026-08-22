@@ -666,6 +666,13 @@ jobs:
             fi
             sleep 30
           done
+          # **最后一次 sleep 之后再探一次。** 否则 Release 恰好在那 30 秒里
+          # 建出来时，循环直接落到失败分支——明明已经好了却报超时，而且是
+          # 在最贵的那一刻（产物签好公证好，只差挂上去）。#62 的 review 逮到。
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "✅ Release $RELEASE_TAG 在最后一轮等待中出现了"
+            exit 0
+          fi
           # **报实际等了多久，别报一个写死的数。** 上一版这里写着「10 分钟」，
           # 而循环早已改成 190 分钟——发布操作者会照着那个数去查一个不存在的
           # 问题。诊断指错方向比不诊断更坏。
