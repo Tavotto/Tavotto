@@ -363,3 +363,28 @@ def test_the_job_scan_looks_inside_runs_that_are_still_going():
     body = ast.unparse(fn)
     assert "in_progress" in body, (
         "job 扫描跳过了 in_progress 的 run —— 卡在 queued 的 job 就在那里面")
+
+
+def test_reusable_workflow_jobs_are_scanned_through_their_callers():
+    """**reusable workflow 里声明的 job 也要能被发现「从没执行过」。**
+
+    `desktop-tauri.yml` / `_lab-qualification.yml` 没有自己的 run，
+    而 caller 文件里声明的只是 `desktop` / `lab_release_gate` 这样的
+    **调用点**，不是被调那侧的 `build` / `workerd` / `updater-manifest` /
+    `qualify`。
+
+    结果：`updater-manifest` 这种 job 哪天被永久跳过，扫描一个字都不会说
+    —— 而它正是「声明了却从没执行过」最典型的一类。
+
+    上一版把 desktop 移进 `REUSABLE_ONLY` 时，注释里写的是「『有没有执行』
+    由 job 扫描在 caller 的 job 列表里查」，**而扫描当时根本没扫那些文件**。
+    又一次「宣称指不出兑现它的代码」——而这次那句话是我自己写的。
+    """
+    import ast
+    src = (ROOT / "scripts" / "ci" / "check_release_health.py").read_text(encoding="utf-8")
+    fn = next(n for n in ast.walk(ast.parse(src))
+              if isinstance(n, ast.FunctionDef) and n.name == "find_jobs_never_seen")
+    body = ast.unparse(fn)
+    assert "REUSABLE_ONLY" in body, (
+        "job 扫描没有覆盖 reusable workflow 里声明的 job —— "
+        "它们不在 caller 文件的 job 列表里")

@@ -265,6 +265,61 @@ def find_jobs_never_seen(repo: str, results: list[dict],
                 missing.append({
                     "workflow": wf, "job": job,
                     "note": "声明了，但最近 12 次 run 里一次都没产出过结论"})
+
+    # ── reusable workflow 里声明的 job ────────────────────────────────
+    # **它们不在上面那个循环的覆盖范围里。** `desktop-tauri.yml` /
+    # `_lab-qualification.yml` 没有自己的 run，上面按 `--workflow <file>`
+    # 查它们只会查到空；而 caller 文件里声明的只是 `desktop` /
+    # `lab_release_gate` 这样的**调用点**，不是被调那侧的 `build` /
+    # `workerd` / `updater-manifest` / `qualify`。
+    #
+    # 结果就是：`updater-manifest` 这种 job 哪天被永久跳过，这个扫描
+    # 一个字都不会说 —— 而它正是「声明了却从没执行过」最典型的一类。
+    #
+    # 上一版把 desktop 移进 `REUSABLE_ONLY` 时，注释里写的是「『有没有执行』
+    # 由 job 扫描在 caller 的 job 列表里查」——**而扫描当时根本没扫那些文件**。
+    # 又一次「宣称指不出兑现它的代码」。（Codex 在 #67 第四轮上指出。）
+    #
+    # 被调侧的 job 在 caller run 里显示成 `<调用点> / <被调 job>`，
+    # 例如 `desktop / build (macos-latest, dmg)`，所以按 job id 子串仍然认得出。
+    caller_seen: set[str] = set()
+    for wf in workflows:
+        try:
+            runs = _gh_json(["run", "list", "--repo", repo, "--workflow", wf,
+                             "--limit", "12", "--json", "databaseId,status"])
+        except HealthError:
+            continue
+        for r in runs[:12]:
+            if r.get("status") not in ("completed", "in_progress"):
+                continue
+            try:
+                jobs = _gh_json(["run", "view", str(r["databaseId"]), "--repo", repo,
+                                 "--json", "jobs"])
+            except HealthError:
+                continue
+            for j in (jobs or {}).get("jobs", []):
+                if j.get("conclusion") in CONCLUSIVE or j.get("conclusion") == "skipped":
+                    caller_seen.add(j.get("name", ""))
+
+    if caller_seen:
+        for wf in REUSABLE_ONLY:
+            path = wf_dir / wf
+            if not path.is_file():
+                continue
+            text = path.read_text(encoding="utf-8")
+            m = re.search(r"^jobs:\s*$", text, re.M)
+            if not m:
+                continue
+            body = text[m.end():]
+            nxt = re.search(r"^\S", body, re.M)
+            if nxt:
+                body = body[:nxt.start()]
+            for job in re.findall(r"^  ([A-Za-z_][\w-]*):\s*$", body, re.M):
+                if not any(job in name for name in caller_seen):
+                    missing.append({
+                        "workflow": wf, "job": job,
+                        "note": "reusable workflow 里声明的 job，"
+                                "在调用方最近 12 次 run 里一次都没产出过结论"})
     return missing
 
 
