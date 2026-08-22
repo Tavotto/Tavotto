@@ -121,7 +121,11 @@ def kill_stale_processes(root: Path, dry_run: bool = False) -> list[dict]:
     """
     killed: list[dict] = []
     marker = str(Path(root).resolve())
-    for pid, cmd in find_ci_owned_tavotto():
+    # **显式 root 要作为额外 marker 传进去**，否则它下面的进程在
+    # `find_ci_owned_tavotto()` 里就已经被默认 marker 筛掉了 —— 后面这句
+    # `marker not in cmd` 永远看不到它们，`--kill-stale --root X` 于是
+    # 一个都不收，而且不报错。
+    for pid, cmd in find_ci_owned_tavotto(extra_markers=[marker]):
         # 调用方显式指了另一个根时，只收那个根下的（人工排查会这么用）
         if marker not in cmd and marker != str(state_root().resolve()):
             continue

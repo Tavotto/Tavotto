@@ -211,30 +211,46 @@ def reap_stale_processes(stale: list[tuple[int, str]],
     # 强制终止，退化成它是正确的语义。
     _SIGKILL = getattr(_sig, "SIGKILL", _sig.SIGTERM)
 
-    targets = {pid for pid, _ in stale}
-    for pid in targets:
+    # **判据是「机器上现在还有没有」，不是「原来那批死了没」。**
+    # 只盯最初那组 pid 会漏掉**替补**：宽限期里 supervisor 完全可能重启一个
+    # worker，新进程同样归属本 CI、同样会污染 soak 的泄漏判定与 benchmark，
+    # 而它不在 `targets` 里 —— 于是复检说「清干净了」，机器上却还有。
+    # 体检跑在本轮 CI 开跑**之前**，那一刻机器上不该有任何归属本 CI 的
+    # Tavotto 进程，所以「还有没有」既是更严的判据，也是更对的那个。
+    # （Codex 在 #65 的第一轮上指出。）
+    killed: set[int] = set()
+
+    def _still_there() -> list[tuple[int, str]]:
+        return find_ci_owned_tavotto()
+
+    for pid, _ in stale:
         try:
             os.kill(pid, _sig.SIGTERM)
+            killed.add(pid)
         except OSError:
             pass                       # 已经没了，正常
 
     deadline = time.monotonic() + grace_s
     while time.monotonic() < deadline:
-        if not [p for p, _ in find_ci_owned_tavotto() if p in targets]:
+        if not _still_there():
             break
         sleep(0.25)
 
-    for pid, _ in find_ci_owned_tavotto():
-        if pid in targets:
-            try:
-                os.kill(pid, _SIGKILL)
-            except OSError:
-                pass
+    # 还剩下的一律 SIGKILL —— **包括宽限期里新冒出来的那些**
+    for pid, _ in _still_there():
+        try:
+            os.kill(pid, _SIGKILL)
+            killed.add(pid)
+        except OSError:
+            pass
     sleep(0.5)
 
-    survivors = [(p, c) for p, c in find_ci_owned_tavotto() if p in targets]
-    dead = {p for p, _ in survivors}
-    reaped = [(p, c) for p, c in stale if p not in dead]
+    survivors = _still_there()
+    alive = {p for p, _ in survivors}
+    reaped = [(p, c) for p, c in stale if p not in alive]
+    # 替补进程也要如实计入「清掉了几个」，否则日志与实际不符
+    reaped += [(p, "(宽限期内出现的替补)") for p in sorted(killed)
+               if p not in alive and p not in {q for q, _ in stale}]
     return reaped, survivors
 
 

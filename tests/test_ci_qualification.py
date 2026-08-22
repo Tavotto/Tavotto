@@ -1143,7 +1143,7 @@ def test_kill_stale_actually_reaches_a_runner_workspace_process(monkeypatch):
     monkeypatch.setenv("RUNNER_WORKSPACE", work)
     monkeypatch.setattr(
         "cleanup.find_ci_owned_tavotto",
-        lambda: [(4242, f"{work}/dist/tavotto --figures x")])
+        lambda extra_markers=None: [(4242, f"{work}/dist/tavotto --figures x")])
     got = CU.kill_stale_processes(Path("/srv/tavotto-ci"), dry_run=True)
     assert [r["pid"] for r in got] == [4242], (
         "runner 工作目录下的遗留进程没被收——体检会判它遗留，而自愈收不到它")
@@ -1225,3 +1225,90 @@ def test_the_lab_workflows_actually_pass_reap_stale():
             found += 1
             assert "--reap-stale" in ln, f"{wf.name}: 体检没有开自愈：{ln.strip()}"
     assert found, "一处调用 lab_preflight.py 的地方都没有——这条判据空转了"
+
+
+def test_a_replacement_process_cannot_slip_through_the_grace_period(monkeypatch):
+    """**判据是「机器上现在还有没有」，不是「原来那批死了没」。**
+
+    只盯最初那组 pid 会漏掉**替补**：宽限期里 supervisor 完全可能重启一个
+    worker，新进程同样归属本 CI、同样会污染 soak 的泄漏判定与 benchmark，
+    而它不在 `targets` 里 —— 于是复检说「清干净了」，机器上却还有。
+
+    体检跑在本轮 CI 开跑**之前**，那一刻不该有任何归属本 CI 的 Tavotto
+    进程，所以「还有没有」既是更严的判据，也是更对的那个。
+    """
+    import lab_preflight as PF
+    alive = {4242}
+    seq = iter([1])          # 第一次 kill 之后冒出一个替补
+
+    def _find():
+        return [(p, f"/srv/x/venv/bin/python -m tavotto --port {p}")
+                for p in sorted(alive)]
+
+    def _kill(pid, sig):
+        alive.discard(pid)
+        if next(seq, None):          # 只在第一次 kill 后放一个替补进来
+            alive.add(5353)
+
+    monkeypatch.setattr("lab_preflight.find_ci_owned_tavotto", _find)
+    monkeypatch.setattr(PF.os, "kill", _kill)
+    (check,) = PF.check_stale_processes(reap=True)
+    assert check.ok, f"替补被漏掉了吗：{check.detail}"
+    assert not alive, f"机器上还剩 {alive}，而体检说通过了"
+
+
+def test_an_explicit_root_is_actually_searched(monkeypatch):
+    """`--kill-stale --root X` 要真的收 X 下面的进程。
+
+    候选集由 `find_ci_owned_tavotto()` 按**默认** marker（持久化根 +
+    runner 工作目录）筛出来，显式 root 下的进程在进入 `marker not in cmd`
+    这句之前就已经被丢掉了 —— 于是它一个都不收，而且不报错。
+    """
+    import cleanup as CU
+    other = "/mnt/other-ci-root"
+    monkeypatch.setenv("TAVOTTO_CI_STATE_ROOT", "/srv/tavotto-ci")
+    monkeypatch.delenv("RUNNER_WORKSPACE", raising=False)
+    monkeypatch.delenv("GITHUB_WORKSPACE", raising=False)
+    monkeypatch.setattr(
+        "cleanup.proc_cmdlines",
+        lambda: [(7070, f"{other}/venv/bin/python -m tavotto --port 7070")],
+        raising=False)
+    # 真的走 _common 的筛选，只是把 /proc 换掉
+    monkeypatch.setattr(_common, "proc_cmdlines",
+                        lambda: [(7070, f"{other}/venv/bin/python -m tavotto --port 7070")])
+    got = CU.kill_stale_processes(Path(other), dry_run=True)
+    assert [r["pid"] for r in got] == [7070], (
+        f"显式 root 下的进程没被收到：{got} —— extra_markers 没传下去")
+
+
+def test_a_replacement_that_survives_sigkill_is_reported(monkeypatch):
+    """**复检那一维单独钉一次。**
+
+    上一条（`…cannot_slip_through_the_grace_period`）实际覆盖的是 **SIGKILL
+    扫全量**那一步：把 `survivors` 改回「只看原来那组 pid」，替补早已被
+    SIGKILL 收掉，用例照样绿 —— 一处改动被另一处的行为掩盖了。
+
+    这一条构造一个**连 SIGKILL 都打不死**的替补（D 状态，卡在内核里），
+    于是只有「复检问的是机器上现在还有没有」这一维能把它报出来。
+    """
+    import lab_preflight as PF
+    alive = {4242}
+    spawned = iter([1])
+
+    def _find():
+        return [(p, f"/srv/x/venv/bin/python -m tavotto --port {p}")
+                for p in sorted(alive)]
+
+    def _kill(pid, sig):
+        if pid == 5353:
+            return                      # 替补打不死
+        alive.discard(pid)
+        if next(spawned, None):
+            alive.add(5353)
+
+    monkeypatch.setattr("lab_preflight.find_ci_owned_tavotto", _find)
+    monkeypatch.setattr(PF.os, "kill", _kill)
+    monkeypatch.setattr(PF.time, "monotonic", iter([0.0] + [999.0] * 8).__next__)
+    (check,) = PF.check_stale_processes(reap=True)
+    assert not check.ok, "打不死的替补被当成清干净了"
+    assert "5353" in check.detail, f"没报出是哪个进程：{check.detail}"
