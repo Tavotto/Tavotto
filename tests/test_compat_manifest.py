@@ -413,16 +413,34 @@ class TestCiWiring:
         wf = self._wf("ci.yml")
         assert "runtime_pins.py" in wf
 
-    def test_lab_ci_runs_compat_at_every_depth(self):
-        wf = self._wf("lab-ci.yml")
+    def test_qualification_runs_compat_at_every_depth(self):
+        """三个档位的 gate 都要接上。
+
+        **判据搬家了**：资格验证已经收敛成 `_lab-qualification.yml` 一份
+        （从前 lab-ci.yml 与 release.yml 各抄一遍）。原来这条查的是
+        lab-ci.yml，那个文件现在只剩一句 `uses:`——不搬的话它会安静地
+        什么都查不到，而那正是这个类的 docstring 说的
+        「没接上的门禁与空转的门禁一样坏，而且更安静」。
+        """
+        wf = self._wf("_lab-qualification.yml")
         assert "compat_matrix.py" in wf
         for gate in ("--gate main", "--gate release", "--gate nightly"):
             assert gate in wf, gate
 
     def test_release_gate_uses_the_strictest_setting(self):
-        """发行档是唯一连基线里已知的 product_bug 都不放过的一档。"""
-        wf = self._wf("release.yml")
+        """发行档是唯一连基线里已知的 product_bug 都不放过的一档。
+
+        两半都要成立：**资格验证里有 release 这一档**，
+        **且发布链真的按 release 档调它**。只查前者的话，
+        release.yml 哪天把 `mode` 改成 nightly 也不会红。
+        """
+        wf = self._wf("_lab-qualification.yml")
         assert "compat_matrix.py" in wf and "--gate release" in wf
+        rel = self._wf("release.yml")
+        import re
+        gate = rel.split("lab_release_gate:", 1)[1].split("\n  validate_artifacts:", 1)[0]
+        assert re.search(r"mode:\s*release", gate), \
+            "release.yml 没有按 release 档调用资格验证"
 
     def test_nightly_runs_the_version_matrix(self):
         wf = self._wf("nightly.yml")
@@ -436,8 +454,10 @@ class TestCiWiring:
         runner 自己还有一道 `CI=true` 硬拒，但那是第二道闸——第一道是
         这些文件里根本不该有这个参数。
         """
-        for name in ("ci.yml", "lab-ci.yml", "nightly.yml", "release.yml"):
-            assert "--update-baseline" not in self._wf(name), name
+        # 扫**全部** workflow，不写死名单：步骤会搬家（资格验证就刚搬过），
+        # 而写死的名单会在搬家那天悄悄少查一个文件。
+        for wf in sorted((CC.REPO / ".github" / "workflows").glob("*.yml")):
+            assert "--update-baseline" not in wf.read_text(encoding="utf-8"), wf.name
 
 
 class TestReasonsAreReviewable:
