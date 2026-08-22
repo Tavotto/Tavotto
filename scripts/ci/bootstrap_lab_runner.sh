@@ -83,12 +83,32 @@ APT_PACKAGES=(
 # （command -v flock，永远存在），所以检查一路绿灯、安装当场就死。
 # 检查那张表里保留 flock 是对的——要确认的本来就是「这台机器上有没有这个命令」。
 
-check_cmd() {
-    local cmd="$1" why="$2"
-    if command -v "$cmd" >/dev/null 2>&1; then
-        printf '  \033[32m✓\033[0m %-12s %s\n' "$cmd" "$($cmd --version 2>&1 | head -1 | cut -c1-56)"
+# **以 runner 用户的身份查，不是以 root。** 这个脚本要 root 才能装包建目录，
+# 但 job 是以 $RUNNER_USER 跑的，而它俩的 PATH 不是一回事——最典型的就是
+# cargo：脚本自己给的装法是 `sudo -u $RUNNER_USER ... rustup`，装进
+# ~$RUNNER_USER/.cargo/bin，root 的 PATH 里根本没有它。以 root 查的后果是
+# 一台**配置正确**的机器被判成「1 项未就绪」，而提示写着「去掉 --check 重跑
+# 以安装」——重跑也不会装，cargo 那一支只是 warn。于是这台机器永远报没配好。
+# 与下面 FD 那段同一个形状的错：量错了对象。
+as_runner() {
+    if [ "$(id -u)" -eq 0 ] && id "$RUNNER_USER" >/dev/null 2>&1; then
+        # -i 走 login shell：rustup 装完把 ~/.cargo/bin 写进 ~/.profile，
+        # 不走 login shell 就又看不见它了。
+        sudo -u "$RUNNER_USER" -i sh -lc "$1" 2>/dev/null
     else
-        printf '  \033[31m✗\033[0m %-12s 缺失 — %s\n' "$cmd" "$why"
+        sh -lc "$1" 2>/dev/null
+    fi
+}
+
+check_cmd() {
+    local cmd="$1" why="$2" path
+    path="$(as_runner "command -v $cmd" || true)"
+    if [ -n "$path" ]; then
+        printf '  \033[32m✓\033[0m %-12s %s\n' "$cmd" \
+            "$(as_runner "$cmd --version" | head -1 | cut -c1-56)"
+    else
+        printf '  \033[31m✗\033[0m %-12s 缺失 — %s（按 %s 的 PATH 查）\n' \
+            "$cmd" "$why" "$RUNNER_USER"
         return 1
     fi
 }
@@ -162,8 +182,8 @@ else
 fi
 
 say "Rust"
-if command -v cargo >/dev/null 2>&1; then
-    echo "  $(cargo --version) 已装"
+if [ -n "$(as_runner 'command -v cargo' || true)" ]; then
+    echo "  $(as_runner 'cargo --version') 已装（$RUNNER_USER 的 PATH）"
 else
     warn "cargo 缺失。用 runner 用户装：
     sudo -u $RUNNER_USER sh -c 'curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --component clippy,rustfmt'

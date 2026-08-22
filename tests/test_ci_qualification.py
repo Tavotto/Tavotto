@@ -500,3 +500,28 @@ def test_bootstrap_and_preflight_agree_on_the_fd_threshold():
     assert boot.group(1) == pre.group(1), (
         f"阈值分叉：bootstrap={boot.group(1)} preflight={pre.group(1)}——"
         "bootstrap 会说配好了，而 preflight 当场拦下整个 lab job")
+
+
+def test_tools_are_probed_as_the_runner_user_not_as_root():
+    """脚本要 root 才能装包，但 job 以 $RUNNER_USER 跑，两者 PATH 不是一回事。
+
+    最典型的是 cargo：脚本**自己**给的装法是 `sudo -u $RUNNER_USER ... rustup`，
+    装进 `~$RUNNER_USER/.cargo/bin`，root 的 PATH 里根本没有。以 root 查的后果
+    是一台**配置正确**的机器被判成「1 项未就绪」，而提示写着「去掉 --check
+    重跑以安装」——重跑也不会装（cargo 那一支只是 warn）。这台机器于是永远
+    报没配好，而运维照着提示做永远也修不好它。2026-08-22 在真机上实测到。
+
+    与 FD 那条是同一个形状的错：量错了对象。
+    """
+    src = _bootstrap()
+    code = "\n".join(ln for ln in src.splitlines()
+                     if not ln.lstrip().startswith("#"))
+    assert "as_runner" in code, "工具探测要经 as_runner 走 $RUNNER_USER 的 PATH"
+    assert 'sudo -u "$RUNNER_USER" -i' in code, \
+        "要走 login shell——rustup 把 ~/.cargo/bin 写在 ~/.profile 里"
+    # check_cmd 与 Rust 那一段都不许再直接 `command -v`（那查的是 root）
+    body = code.split("check_cmd() {", 1)[1].split("\n}", 1)[0]
+    assert "as_runner" in body and "command -v $cmd" not in body.replace(
+        'as_runner "command -v $cmd"', ""), "check_cmd 又直接按当前用户查了"
+    rust = code.split('say "Rust"', 1)[1].split('say "', 1)[0]
+    assert "as_runner" in rust, "Rust 那一段也要按 runner 用户查"
