@@ -102,3 +102,60 @@ def test_no_venv_or_self_referential_symlink_is_tracked() -> None:
         + "\n  ".join(offenders)
     )
 
+
+
+def test_no_launcher_leaves_a_child_pipe_undrained():
+    """开了 `stdout=PIPE` 就必须读它，否则应用会在 64 KiB 之后整个卡死。
+
+    2026-08-22 实测（soak 第一次真正跑起来时发现）：`soak.py` 用
+    `stdout=PIPE` 起应用却一次都不读，日志写满管道缓冲之后，应用**下一次
+    写日志永久阻塞**——而 `logging` 的 handler 锁在它手里，于是每个请求线程
+    都堵在 `acquire` 上，`/api/version` 都不再应答。
+
+    症状极具误导性：看上去像**产品死锁**（8 个线程 futex_wait + 1 个
+    pipe_write），我一度就是这么判断的。py-spy 的栈才指到 `logging.emit`。
+    两次独立运行都确定性地停在第 160 轮——正是日志量填满缓冲的那一刻。
+
+    判据要求二选一：**要么不开 PIPE**（落文件或 DEVNULL），**要么真的读**。
+    这四个脚本的诊断本来就走数据目录里的 `app.log`，所以一律落文件——比
+    DEVNULL 还多留一份启动期 traceback（那些进不了 app.log）。
+    """
+    import ast
+    offenders = []
+    for path in sorted((ROOT / "scripts").rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        src = path.read_text(encoding="utf-8")
+        try:
+            tree = ast.parse(src)
+        except SyntaxError:
+            continue
+        # **不再接受「文件里某处读过 proc.stdout」当作排空。** Codex 在 #58 上
+        # 指出：`smoke_app.py` 读它是在 `proc.wait()` **之后**，而那正是同一个
+        # 死锁——应用写满缓冲 → 阻塞在写日志 → `/api/shutdown` 不应答 →
+        # `wait()` 超时 → terminate/kill → 冒烟报「强制停止」，症状指向
+        # 「关不干净」，与真实原因毫不相干。
+        #
+        # 「排空是不是与子进程并发」静态证不了，所以判据换成更简单也更硬的一条：
+        # 这些启动器**根本不需要**流式读子进程输出（诊断走 app.log 与落盘的
+        # server-stdout.log），那就不许开这个管道。
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call)
+                    and getattr(node.func, "attr", "") == "Popen"):
+                continue
+            kws = {k.arg: ast.unparse(k.value) for k in node.keywords if k.arg}
+            # **两个流都要看。** 子进程有 stdout 和 stderr 两条出路，任一条是
+            # 没人读的 PIPE 都会以同样的方式把它堵死——`stdout=<文件>,
+            # stderr=PIPE` 照样死锁。上一版只检查 stdout，Codex 在 #58 上指出
+            # 的正是这个：判据只钉了一条腿。
+            # `stderr=STDOUT` 是合并进 stdout，不额外开管道，所以不算。
+            for stream in ("stdout", "stderr"):
+                val = kws.get(stream, "")
+                if "PIPE" not in val:
+                    continue      # 落文件 / DEVNULL / STDOUT / 继承，都不会填满缓冲
+                offenders.append(
+                    f"{path.relative_to(ROOT)}:{node.lineno} {stream}=PIPE"
+                    "——启动器一律落文件或 DEVNULL；「稍后再读」不算排空")
+    assert not offenders, (
+        "这些子进程的输出管道开了却没人读，写满 64 KiB 之后应用会卡死在写日志上：\n  "
+        + "\n  ".join(offenders))

@@ -29,9 +29,36 @@ Tavotto-authored source and are not independently signed with this subscription.
 4. Each release is manually approved by the project approver before the signed
    installer is attached to the corresponding GitHub Release.
 
-The workflow is fail-closed when SignPath signing is enabled. Until the project
-subscription and repository variables are configured, an unsigned build may be
-produced for testing only and must not be described as a signed release.
+The workflow is fail-closed when SignPath signing is enabled: a release build
+that has the variables set but cannot obtain a valid signature fails rather
+than attaching an unsigned file.
+
+Until the project subscription and repository variables are configured, a
+release still attaches an **unsigned** Windows installer. That is a deliberate
+choice made on 2026-08-22, when the release signing gate first fired for real:
+refusing to build without SignPath does not withhold an unsigned installer, it
+withholds the entire Windows desktop application — and, because the updater
+manifest requires both platforms to be present, it also leaves macOS users with
+no in-app update at all. Shipping unsigned is the lesser harm, and it is the
+same form every release through 0.8.0 took.
+
+The exception is narrow and it is never silent:
+
+* it covers **Authenticode only**. The minisign key that signs update packages
+  and the Apple Developer ID certificate remain hard requirements — a release
+  build missing either still fails;
+* the run page carries a warning annotation and a job summary section saying
+  the installer is unsigned, what users will see (a SmartScreen prompt), and
+  that the update chain is still trustworthy because it rests on minisign
+  rather than on Authenticode;
+* the installer still carries a build provenance attestation, so its origin is
+  verifiable with `gh attestation verify` even though it is not code-signed.
+
+An unsigned installer must never be described as a signed release. Once the
+subscription is in place, restore the hard failure by moving the SignPath check
+back into the gate's `missing` list; `tests/test_runtime_build.py` guards both
+the remaining hard requirements and the fact that the exception announces
+itself.
 
 ## macOS artifacts (out of scope for this subscription)
 

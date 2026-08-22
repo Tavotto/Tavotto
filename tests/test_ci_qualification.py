@@ -1216,3 +1216,321 @@ def test_the_posix_bash_guard_rejects_a_wsl_style_stub(tmp_path, monkeypatch):
     good.chmod(0o755)
     ok, detail = _probe_posix_bash()
     assert ok, f"正常的 shell 被判成不可用：{detail!r}"
+# ---------------- 升级验收与会话认证 -------------------------------------------
+
+def test_upgrade_acceptance_carries_session_credentials():
+    """0.9.0 起浏览器模式也要认证（ADR 0008），这个脚本当时没跟上。
+
+    症状极具迷惑性：`_wait_ready` 打的 `/api/version` 是**公共端点**，所以
+    「就绪」永远成立，随后每一个 API 调用 401。v0.9.0 发版时阶段一（0.8.0，
+    无认证）一路绿、阶段二（候选）当场 401——而这个脚本在会话认证合并之后
+    一次都没跑过，因为那时没有 runner 领得走实验室这条通道。
+
+    **实现不在这里**：装载凭据的判据只有 `smoke_app.adopt_session_credentials`
+    一处（`visual_regression` / `soak` 是同一批受害者，见
+    `test_every_app_launcher_adopts_credentials`）。这条只钉两件事：起完实例
+    真的调了它，以及「取不到凭据」是**继续裸走**而不是失败——`--baseline`
+    可以指定任意历史版本，其中大多数早于这道边界。
+    """
+    src = (CI_DIR / "upgrade_acceptance.py").read_text(encoding="utf-8")
+    # 盯**调用点**而不是「文件里出现过这个名字」：把方法改名成
+    # `_unused_adopt_credentials` 之类，子串匹配照样成立，而实例起来之后
+    # 一次都不会被调用——那正是这条用例要挡的失效形态。
+    assert "self._adopt_credentials(port)" in src, \
+        "起完实例必须真的调用它，光定义在那儿不算"
+    assert "SA.adopt_session_credentials(" in src, \
+        "必须走唯一实现，别在这里再写一份"
+    body = src.split("def _adopt_credentials", 1)[1].split("\n    def ", 1)[0]
+    code = "\n".join(ln for ln in body.splitlines()
+                     if not ln.lstrip().startswith("#"))
+    assert "else:" in code and "裸走" in code, \
+        "取不到凭据要继续裸走（N-1 基线可能早于 ADR 0008），不是失败"
+
+
+def test_no_app_request_anywhere_skips_auth():
+    """**任何**起实例的脚本里，打到应用的请求都必须带上会话凭据。
+
+    这条用例是本轮反复的教训本身。它被 Codex 连着破了三次：
+
+    1. 范围只覆盖 `upgrade_acceptance.py` 一个文件 → `visual_regression`
+       的 `_post_png` 漏掉的 `SA._AUTH` 它一点都挡不住；
+    2. 判据是裸子串 → 注释里提一句函数名就能满足它；
+    3. 目标识别靠 URL 字面量 → `smoke_app._get/_post` 传的是变量 `url`，
+       从中心助手里摘掉 `_AUTH` 它照样绿，而下游三个脚本全部 401。
+
+    三次都是同一个病根：**拿文本启发式去判源码结构**。所以改成 AST：
+    找出真实的 `urllib.request.Request(...)` 调用，按目标分类，并且**中心
+    助手单独钉死**——它们是所有调用方共用的那一层，破了下游全塌。
+    """
+    import ast
+    offenders = []
+    for name, src in _app_launchers().items():
+        tree = ast.parse(src)
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and _is_urllib_request(node.func)):
+                continue
+            text = ast.unparse(node)
+            # **按目标表达式引用了谁分类，不按 URL 里有没有某个子串。**
+            # 「URL 含 api.github.com」这种判据 CodeQL 会告（子串可以出现在
+            # 任意位置），而且本来就脆——真正要问的是「这个请求打的是本机
+            # 实例还是 GitHub」，那是源码结构问题：本机实例的 URL 一律由
+            # `base` / `s.base` / `self.base` 拼出来。
+            if not _references_local_base(node):
+                continue
+            if "_AUTH" not in text:
+                offenders.append(f"{name}: {text[:150]}")
+    assert not offenders, (
+        "这些打到应用的请求没带会话凭据，401 的症状会出现在很远的地方：\n"
+        + "\n".join(offenders))
+
+
+def test_the_central_request_helpers_carry_auth():
+    """`smoke_app._get` / `_post` 是所有调用方共用的那一层。
+
+    它们把 URL 当变量收，所以按 URL 文本分类的扫描**看不见**它们——从这里
+    摘掉 `_AUTH`，上面那条用例照样绿，而 `visual_regression` / `soak` /
+    `upgrade_acceptance` 三个脚本会全部 401。Codex 在 #56 上第三次破防打的
+    就是这个点，实测确认属实。
+
+    共用层塌了下游全塌，所以单独钉死，不靠通用启发式覆盖。
+    """
+    import ast
+    src = (SCRIPTS / "smoke_app.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    checked = set()
+    for fn in ast.walk(tree):
+        if not (isinstance(fn, ast.FunctionDef) and fn.name in ("_get", "_post", "_req")):
+            continue
+        body = ast.unparse(fn)
+        assert "_AUTH" in body, \
+            f"smoke_app.{fn.name} 不再带会话凭据——所有调用方会一起 401"
+        checked.add(fn.name)
+    assert {"_get", "_post"} <= checked, \
+        f"没找到中心助手（只找到 {sorted(checked)}）——这条用例本身失效了"
+
+
+SCRIPTS = CI_DIR.parent
+
+
+def _app_launchers() -> dict[str, str]:
+    """会自己起一个 Tavotto 实例的脚本 = 源码里给子进程塞了 TAVOTTO_DATA_DIR。
+
+    按**行为**枚举而不是写死一张名单：名单会在下一个脚本加进来时悄悄漏掉它，
+    而漏掉的表现正是本轮那种——发行链跑到那一步才 401。
+
+    **枚举本身也不能靠一种拼写。** 上一版判据是 `'"TAVOTTO_DATA_DIR"' in src`，
+    只认 dict 字面量的字符串键；`recover_frac_positions.py` 用的是
+    `dict(os.environ, TAVOTTO_DATA_DIR=...)` 关键字形式，于是整个文件都没进
+    枚举——两条认证扫描对它一路绿，而它在 0.9.0 上会空转 120 次然后报
+    「隔离实例没起来」。Codex 在 #56 上第四次破这条用例打的就是这个点。
+    """
+    found = {}
+    for path in sorted(SCRIPTS.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        src = path.read_text(encoding="utf-8")
+        if _sets_env(src, "TAVOTTO_DATA_DIR") and "subprocess.Popen" in src:
+            found[path.name] = src
+    return found
+
+
+def test_every_app_launcher_adopts_credentials():
+    """ADR 0008 之后，**每一个**起实例的脚本都要处理认证，三选一。
+
+    v0.9.0 的教训：`upgrade_acceptance` / `visual_regression` / `soak` 三个脚本
+    在会话认证合并之后全都还在裸调 API，而它们**一个都没跑过**。发行链第一次
+    真跑时，三步各 401 一次——我修了第一个却没扫另外两个，于是同一个 401 在
+    两轮 CI 里又出现了两次（`fix-the-predicate-sweep-the-consumers`）。
+
+    所以判据放在这里，按行为枚举调用方，而不是逐个脚本各写一条用例。
+    """
+    launchers = _app_launchers()
+    assert len(launchers) >= 4, \
+        f"只枚举到 {sorted(launchers)}——枚举判据失效了，这条用例挡不住任何东西"
+    for name, src in launchers.items():
+        # **用 AST 找真实的调用，不再做子串启发式。** 这条判据被 Codex 连破
+        # 三次，每次都是同一类漏洞：注释满足它、函数**定义**满足它、目标写成
+        # 变量就匹配不到。子串补丁打三次还漏，说明方法本身不对——源码结构的
+        # 问题要用解析源码结构来判。
+        adopts = _launch_reaches(src, "adopt_session_credentials")
+        bypass = _sets_env(src, "TAVOTTO_INSECURE_NO_AUTH")
+        desktop = "/api/desktop/bootstrap" in src or "TAVOTTO_DESKTOP_HANDSHAKE" in src
+        assert adopts or bypass or desktop, (
+            f"{name} 起了实例却既不取凭据、也没显式旁路、也不是桌面握手——"
+            "ADR 0008 之后它的每个 API 调用都会 401，而症状会出现在很远的地方")
+
+
+def test_session_credential_logic_has_a_single_implementation():
+    """凭据装载只能有一处，否则修一个漏一个——本轮已经付过这笔学费。"""
+    hits = [n for n, src in _app_launchers().items()
+            if 'session" / f"port-' in src or "['secret']" in src
+            or '["secret"]' in src]
+    assert hits == ["smoke_app.py"], \
+        f"除 smoke_app 外还有人自己解析凭据文件：{hits}"
+
+
+def test_ci_credential_path_matches_session_client():
+    """CI 侧的路径公式必须与产品那份逐字一致。
+
+    产品那份（`engine/session_client.session_file_path`）从**当前进程**的
+    `config.data_dir()` 推路径，而 CI 是把 `TAVOTTO_DATA_DIR` 塞进**子进程**
+    env 的，父进程用不了它——所以这里必然是第二份表达。两份就要对拍
+    （与 patchspec ↔ Rust、preflight 双求值器同一套纪律）。
+    """
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "_smoke_app_probe", SCRIPTS / "smoke_app.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    from tavotto.engine import session_client
+
+    root = Path("/tmp/whatever-data-dir")
+    monkey = os.environ.get("TAVOTTO_DATA_DIR")
+    os.environ["TAVOTTO_DATA_DIR"] = str(root)
+    try:
+        from tavotto.engine import config
+        config.data_dir.cache_clear() if hasattr(config.data_dir, "cache_clear") else None
+        product = Path(session_client.session_file_path(5089))
+    finally:
+        if monkey is None:
+            os.environ.pop("TAVOTTO_DATA_DIR", None)
+        else:
+            os.environ["TAVOTTO_DATA_DIR"] = monkey
+    ours = mod.session_credential_path(root, 5089)
+    assert ours == product, f"路径公式分叉：CI={ours} 产品={product}"
+
+
+def _is_urllib_request(func) -> bool:
+    """`urllib.request.Request` / `Request` 的调用目标。"""
+    import ast
+    if isinstance(func, ast.Attribute) and func.attr == "Request":
+        return True
+    return isinstance(func, ast.Name) and func.id == "Request"
+
+
+def _calls_named(src: str, name: str) -> list:
+    """源码里对 `name` 的**真实调用**（不含函数定义、不含注释、不含字符串）。
+
+    这三样正是子串判据接连失守的地方：`def adopt_session_credentials(...)`
+    这行定义、以及任何一句提到它的注释，都能满足 `name in src`。
+    """
+    import ast
+    out = []
+    for node in ast.walk(ast.parse(src)):
+        if not isinstance(node, ast.Call):
+            continue
+        f = node.func
+        hit = (isinstance(f, ast.Name) and f.id == name) or \
+              (isinstance(f, ast.Attribute) and f.attr == name)
+        if hit:
+            out.append(ast.unparse(node))
+    return out
+
+
+def _sets_env(src: str, key: str) -> bool:
+    """`key` 真的被设成了环境变量——**两种拼法都要认**。
+
+        env = {"TAVOTTO_DATA_DIR": ...}          # dict 字面量的字符串键
+        env = dict(os.environ, TAVOTTO_DATA_DIR=...)   # 关键字实参
+
+    只认前一种的代价是真实的：`recover_frac_positions.py` 用的是后一种，
+    于是它整个躲开了认证扫描（#56 的第四条 review）。注释里提一句不算。
+    """
+    import ast
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, ast.Dict):
+            for k in node.keys:
+                if isinstance(k, ast.Constant) and k.value == key:
+                    return True
+        elif isinstance(node, ast.Call):
+            for kw in node.keywords:
+                if kw.arg == key:
+                    return True
+    return False
+
+
+def _references_local_base(call) -> bool:
+    """这个 Request 打的是本机实例吗——看它的目标表达式引用了谁。
+
+    本机实例的 URL 一律从 `base` / `s.base` / `self.base` 拼出来；GitHub API
+    那几处引用的是模块级的 `API` / `REPO_SLUG`。按**引用的名字**判，而不是按
+    URL 文本里有没有某个域名子串（后者 CodeQL 会告，且子串可以出现在任意位置）。
+    """
+    import ast
+    if not call.args:
+        return False
+    for node in ast.walk(call.args[0]):
+        if isinstance(node, ast.Name) and node.id == "base":
+            return True
+        if isinstance(node, ast.Attribute) and node.attr == "base":
+            return True
+    return False
+
+
+def _launch_reaches(src: str, target: str) -> bool:
+    """「起实例」这条路上真的会走到 `target` 吗——一层可达性。
+
+    只问「文件里有没有对 target 的调用」是不够的：把调用包进一个**没人调**的
+    helper（`def _adopt(...): return _SA.adopt_session_credentials(...)`）照样
+    满足它，而实例起来之后一次都不会执行。本轮反证时亲手撞到过，它和
+    「函数定义满足子串」是同一类洞的不同深度。
+
+    所以从**含 `subprocess.Popen` 的那个函数**出发，把它自己 + 它直接调用的
+    函数体合起来找 target，并剪掉静态就走不到的分支（`if False:` 这种调试
+    开关忘了删的情形）。一层足够覆盖真实写法（直接调、或经一个薄包装），
+    再深就该用真正的调用图了——那时更该问的是「为什么这条路这么绕」。
+
+    **边界写在明处：这条判据查的是意外，不是防蓄意。** 静态分析永远绕得过
+    （`if some_always_false_flag:`、藏进一个永不为真的条件……），追下去是
+    赢不了的军备竞赛——这个仓库对 playground 完整性校验早就下过同样的裁决。
+    行为上的真保证是 **lab gate 本身**：`visual_regression` 一旦掉了凭据，
+    发行链当场红（v0.9.0 就是这么暴露的）。这条静态判据的职责只是**更早、
+    更便宜**地发现同一件事，不是取代它。
+    """
+    import ast
+    tree = ast.parse(src)
+    funcs = {n.name: n for n in ast.walk(tree)
+             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+
+    def dead(node) -> bool:
+        """静态就走不到的分支：`if False:` / `if 0:` / `while False:`。
+
+        现实里这不是蓄意伪装，是**调试开关忘了删**——把一行临时关掉、验完
+        忘了打开。真会发生，也真的会让门禁安静地报绿，所以剪掉。
+        """
+        test = getattr(node, "test", None)
+        return isinstance(test, ast.Constant) and not test.value
+
+    def calls_in(node) -> set:
+        out = set()
+        stack = [node]
+        while stack:
+            cur = stack.pop()
+            for child in ast.iter_child_nodes(cur):
+                if isinstance(child, (ast.If, ast.While)) and dead(child):
+                    # 只剪 body；orelse 照走（`if False: A else: B` 走的是 B）
+                    stack.extend(child.orelse)
+                    continue
+                stack.append(child)
+            if isinstance(cur, ast.Call):
+                f = cur.func
+                if isinstance(f, ast.Name):
+                    out.add(f.id)
+                elif isinstance(f, ast.Attribute):
+                    out.add(f.attr)
+        return out
+
+    launchers = [fn for fn in funcs.values()
+                 if "Popen" in calls_in(fn)]
+    if not launchers:                      # 模块级 Popen：退回全文件
+        launchers = [tree]
+    for fn in launchers:
+        reachable = calls_in(fn)
+        if target in reachable:
+            return True
+        for name in list(reachable):
+            inner = funcs.get(name)
+            if inner is not None and target in calls_in(inner):
+                return True
+    return False

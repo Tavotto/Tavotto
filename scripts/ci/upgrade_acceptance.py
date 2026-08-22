@@ -187,10 +187,11 @@ class Session:
         self.config_dir = user_root / "config"
         self.proc: subprocess.Popen | None = None
         self.base = ""
+        self.port = 0
         self.log: list[str] = []
 
     def __enter__(self) -> "Session":
-        port = SA._free_port()
+        port = self.port = SA._free_port()
         self.base = f"http://127.0.0.1:{port}"
         for d in (self.data_dir, self.config_dir, self.user_root / "home"):
             d.mkdir(parents=True, exist_ok=True)
@@ -206,11 +207,35 @@ class Session:
         cmd = [str(self.py), "-m", "tavotto", "--port", str(port),
                "--no-browser", "--figures", str(self.project)]
         print(f"  [{self.label}] $ {' '.join(cmd[-5:])}", flush=True)
-        self.proc = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE,
-                                     stderr=subprocess.STDOUT, text=True,
-                                     encoding="utf-8", errors="replace")
+        self._child_log = (self.user_root / f"server-{port}.log").open(
+            "w", encoding="utf-8")
+        # **绝不用 PIPE**：这四个脚本一次都不读子进程的 stdout（诊断走
+        # 数据目录里的 app.log）。开了不读的管道，64 KiB 缓冲写满之后
+        # 应用**下一次写日志就永久阻塞**——而它握着 logging 的全局 handler
+        # 锁，于是每个请求线程都堵在 acquire 上，整个 HTTP 服务停摆。
+        # 2026-08-22 实测：soak 两次独立运行都确定性地死在第 160 轮
+        # （日志量正好填满缓冲），py-spy 的栈是 emit→pipe_write +
+        # 八个线程 acquire。改成落文件：既没有这个失败模式，又比 DEVNULL
+        # 多留一份启动期 traceback（那些进不了 app.log）。
+        self.proc = subprocess.Popen(cmd, env=env, stdout=self._child_log,
+                                     stderr=subprocess.STDOUT)
         SA._wait_ready(self.base, self.proc, SA.BOOT_TIMEOUT_S)
+        self._adopt_credentials(port)
         return self
+
+    def _adopt_credentials(self, port: int) -> None:
+        """带上本机会话凭据（ADR 0008）。判据是**凭据文件在不在**，不是版本号
+        ——`--baseline` 可以指定任意历史版本，其中大多数早于这道边界。
+
+        实现只有一处（`smoke_app.adopt_session_credentials`）：v0.9.0 时我在这里
+        写了一份，却没扫 `visual_regression` / `soak` 两个同样的调用方，于是
+        发行链又在后面两步各撞一次同样的 401。
+        """
+        if SA.adopt_session_credentials(self.data_dir, port):
+            print(f"  [{self.label}] 已取得会话凭据", flush=True)
+        else:
+            print(f"  [{self.label}] 无会话凭据文件（这一版早于 ADR 0008），裸走",
+                  flush=True)
 
     def __exit__(self, *exc) -> None:
         try:
@@ -278,7 +303,12 @@ def write_state_with_old(py: Path, user_root: Path, project: Path) -> dict:
             req = urllib.request.Request(
                 f"{s.base}/api/autosave/upgrade-doc",
                 data=json.dumps({"doc": doc, "updatedAt": int(time.time() * 1000)}).encode(),
-                headers={"Content-Type": "application/json"}, method="PUT")
+                # **SA._AUTH 不能漏**：这里是全文件唯一一处不经 SA._post 的
+                # 应用请求（PUT，SA 没有对应助手），而它外面裹着 try/except，
+                # 漏了的话表现是 autosave_saved=False 静静记进报告，
+                # 升级验收照旧「通过」——一条本该验的东西被验没了。
+                headers={"Content-Type": "application/json", **SA._AUTH},
+                method="PUT")
             urllib.request.urlopen(req, timeout=60).read()
             facts["autosave_saved"] = True
         except Exception as exc:                              # noqa: BLE001
