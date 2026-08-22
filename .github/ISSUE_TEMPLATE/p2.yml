@@ -1,0 +1,203 @@
+name: P2 缺陷（triage 用）
+description: 记录一条 P2，并当场决定它的下一步。判据见 docs/engineering/review-severity-policy.md
+title: "[P2] "
+labels: ["severity:P2"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        这份表单的目的**不是收集缺陷，是给缺陷一个出口**。
+
+        「已记录」不是关闭理由。一条 open 的 P2 必须同时有
+        **disposition + milestone + acceptance test + next action**——
+        少任何一项它就是档案，不是待办
+        （`docs/engineering/p2-lifecycle.md` §1）。
+
+        分级判据：`docs/engineering/review-severity-policy.md`。
+        **P2 不自动等于「可以放行」**：命中 §2 九条判据任意一条就要升成
+        `release:blocker`。
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: 复现步骤
+      description: 一步一步。别人照着做要能看到同样的结果。
+      placeholder: |
+        1. 打开 examples/figures
+        2. 双击 Fig1_kinetics.pdf 进入图内编辑
+        3. 选中色条，把方向切成横向
+    validations:
+      required: true
+
+  - type: textarea
+    id: minimal
+    attributes:
+      label: 最小复现输入
+      description: |
+        能触发它的**最小**脚本 / 文档 / 命令。请勿附未发表的研究数据，
+        编出来的数字完全够用。
+      render: python
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际结果
+      description: 界面上、文件里、日志里分别发生了什么。有数字给数字。
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望结果
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: 受影响的支持范围
+      description: 勾**实测过**的。没测过的别勾——「大概也有问题」会让后面的人白查一遍。
+      options:
+        - label: Windows x64
+        - label: macOS arm64
+        - label: Linux browser beta
+        - label: bundled runtime（安装包自带的渲染环境）
+        - label: minimum matplotlib（最低支持版本）
+        - label: browser runtime（Pyodide / playground）
+        - label: Codex MCP（插件与内嵌画布）
+
+  - type: dropdown
+    id: silent
+    attributes:
+      label: 它会不会静默给出错误结果？
+      description: |
+        **这是本表单里最重要的一问。**
+        「用户会不会拿着一个错的结果继续往下走，而中间没有任何提示？」
+        会 → 它是 `release:blocker`，不管 severity 标的是几。
+      options:
+        - "会：界面看起来正常，结果是错的"
+        - "不会：失败可见（报错 / 明显不对 / 有提示）"
+        - "还不知道（**请先测出来再提交**）"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: damage
+    attributes:
+      label: 它会不会写坏源文件、导出文件或用户状态？
+      options:
+        - "会，或有可能"
+        - "不会：只影响屏幕上这一份，磁盘上的没动"
+        - "还不知道（**请先测出来再提交**）"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: introduced
+    attributes:
+      label: 是不是由当前正在做的 PR 引入的？
+      description: 当前 PR 引入的缺陷**一律**是 release blocker，不论 severity。
+      options:
+        - "不是：既有行为"
+        - "是：本轮引入"
+        - "不确定（请给出上一个正常的版本或 commit）"
+    validations:
+      required: true
+
+  - type: textarea
+    id: guard
+    attributes:
+      label: 有没有安全的临时 guard？
+      description: |
+        深层问题的标准处理顺序是
+        **detect → guard/hide → unsupported reason → issue → v1.1 修**
+        （`review-severity-policy.md` §3）。
+
+        这里写：能不能检测出「这次命中了」？能不能把那个能力先藏起来 /
+        降级成 unsupported？有没有稳定的 reason 字符串给 manifest？
+      placeholder: |
+        能。colorbar_hosts() 数得出宿主个数；多宿主时不登记 orientation 能力，
+        manifest 给 reason=multi_host_colorbar。用户看到的是「这条不可编辑」，
+        而不是「点了以后布局错了」。
+    validations:
+      required: true
+
+  - type: input
+    id: family
+    attributes:
+      label: 归属的不变式或根因家族
+      description: |
+        `docs/engineering/p2-fix-train.md` §2 的九个家族之一，
+        或 `docs/1.0-release-readiness.md` §1.2 的五条不变式之一。
+        归不进去 → 要么是新家族（那就往那张表里加），要么还没理解透。
+      placeholder: "axes-traversal / capability-truthfulness / 能力真实 / …"
+    validations:
+      required: true
+
+  - type: input
+    id: acceptance
+    attributes:
+      label: 验收测试
+      description: |
+        文件名 + 用例名。**还没写就写「待写：<打算写在哪>」**——
+        但关闭这条 issue 之前它必须存在，而且必须见红过。
+      placeholder: "tests/test_colorbar_orientation.py::test_multi_host_colorbar_does_not_offer_orientation"
+    validations:
+      required: true
+
+  - type: textarea
+    id: regression_proof
+    attributes:
+      label: Regression proof
+      description: |
+        把修复（或 guard）拿掉，那条测试**真的变红**了吗？贴上输出。
+
+        本仓库真撞到过一次「加了一道过滤、拿掉却没有任何用例变红」——
+        那道过滤被删掉了：**读的人会以为它在挡什么，而它什么都没挡，
+        比没有更坏**。
+      placeholder: |
+        $ git stash && .venv/bin/python -m pytest tests/test_colorbar_orientation.py -k multi_host
+        FAILED … - AssertionError: 多宿主色条仍然给出了 orientation
+        $ git stash pop && .venv/bin/python -m pytest …
+        1 passed
+
+  - type: dropdown
+    id: milestone
+    attributes:
+      label: Milestone
+      options:
+        - "1.0-blocker（v1.0 之前必须解决）"
+        - "v1.0.1 / v1.0.2（patch train）"
+        - "v1.1（架构型）"
+        - "无（仅当 disposition 是 accepted-limitation 或 false-positive）"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: disposition
+    attributes:
+      label: Disposition
+      description: |
+        选完请把对应的 `disposition:*` 标签也打上
+        （标签定义在 `.github/labels.yml`）。
+      options:
+        - "fix-now：本轮修"
+        - "guard：本轮加护栏，长期修另立 issue（**请在下面填那个 issue 号**）"
+        - "patch-train：v1.0.1 / v1.0.2"
+        - "minor-release：v1.1，架构型"
+        - "accepted-limitation：不修（**前提：UI / 支持矩阵 / 文档三处都已如实表达**）"
+        - "false-positive：不成立（**前提：附实测证据**）"
+    validations:
+      required: true
+
+  - type: input
+    id: next_action
+    attributes:
+      label: Next action
+      description: 具体到「谁、下一步做什么」。「以后再说」不算。
+      placeholder: "长期修复 issue #NNN；本轮先在 engine/overrides.py 的 _cb_reorient 前加多宿主检测"
+    validations:
+      required: true

@@ -1,0 +1,52 @@
+name: Codex Review Gate
+
+# 这道门禁**不评审代码**，它只看 Codex 已经留下的 review thread 有没有被处置。
+#
+# 判据全文 docs/engineering/codex-review-policy.md §2，一句话版本：
+#   unresolved P0/P1 → 红；unresolved P2 → 黄；轮次 > 2 → 黄；
+#   Codex 没跑（usage limit / App 掉线 / 纯文档 PR）→ **不红**。
+#
+# 最后一条是设计的核心：一道会因为外部服务不在线而永久卡住 PR 的门禁，
+# 第一次卡住就会被人摘掉，摘掉之后就再也没人跑了。
+#
+# **它不会自动请求 review**，也不 resolve 任何 thread——那两件事都会重新
+# 造出它要消灭的循环（每 push 一次触发一轮，188 条发现里 80% 是 P2）。
+
+on:
+  pull_request:
+    # 只在这四个时刻跑：开、转 Ready、改标题/正文（可能补了 disposition）、
+    # 重开。**刻意不含 `synchronize`**——每次 push 都跑一遍这道门禁，
+    # 会让「轮次超了」的告警在你正在收敛的过程中反复刷屏。
+    types: [opened, ready_for_review, edited, reopened]
+  # 收敛完想再确认一次：在 PR 页面手动跑，或者本地
+  # `python3 scripts/ci/codex_review_gate.py --pr <n>`。
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "PR 号"
+        required: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: codex-review-gate-${{ github.event.pull_request.number || inputs.pr }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: { fetch-depth: 1 }
+
+      - name: 检查 review thread 的处置情况
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number || inputs.pr }}
+        # **用 runner 自带的 python3，不建 venv。** 这个脚本是纯标准库的，
+        # 而一道诊断门禁最不该做的事就是把自己的成败押在一次 pip install 上
+        # （#61 的教训：汇总步骤恰恰在有失败要汇总时自己挂掉）。
+        run: python3 scripts/ci/codex_review_gate.py --pr "$PR"
