@@ -1,0 +1,145 @@
+name: Release Health
+
+# **发布链的健康监控。**
+#
+# 2026-08-22 的审计发现的事（docs/audit/2026-08-22-v1-release-process-audit.md §5）：
+#   · Lab Qualification 25 次 run 里 0 次成功——**从来没有跑完过**；
+#   · release.yml 最近一次成功是 v0.8.0，v0.9.0 与 v0.9.1 都失败；
+#   · nightly 的 schedule 腿连续四晚失败。
+# 而这些**没有任何人被通知到**。仓库看起来是绿的，因为 PR 快线一直健康，
+# 而发布链只在打 tag 的那一天才被人看一眼——那天正是最不该发现问题的一天。
+#
+# 两件事：
+#   1. **freshness 检查**（每天）：谁最近一次真正跑到了结论。
+#      `queued` 与 `cancelled` 不算——一条卡在队列里三天的 workflow，
+#      在「最近有没有跑过」这个问题上的答案是**没有**。
+#   2. **canary 演练**（每周）：在 main 的当前 SHA 上跑一次 `publish=false`
+#      的完整发布链。**不等到发版那天才第一次执行它。**
+#
+# 跑在 GitHub 托管机上，**不依赖实验室 runner**——监控实验室健康的东西
+# 自己不能挂在实验室上（canary 那条会用到，但它是另一个 job，
+# freshness 挂了不影响）。
+
+on:
+  schedule:
+    # 每天 09:00 UTC 查一次新鲜度；周一那次顺带发起 canary 演练。
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+    inputs:
+      canary:
+        description: "顺便发起一次 publish=false 的完整发布链演练"
+        type: boolean
+        default: false
+      max_age_days:
+        description: "覆盖新鲜度阈值（排查用，留空按各自的默认）"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: release-health
+  cancel-in-progress: false
+
+env:
+  TAVOTTO_NO_TELEMETRY: "1"
+
+jobs:
+  freshness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: { fetch-depth: 1 }
+
+      - name: 检查发布链各条通道的新鲜度
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MAX_AGE: ${{ inputs.max_age_days }}
+        # **用 runner 自带的 python3，不建 venv、不装任何东西。**
+        # 一个监控别人是否健康的东西，自己的成败不该押在一次 pip install 上
+        # ——那正是 #61 的形状（汇总步骤恰恰在有失败要汇总时自己挂掉）。
+        run: |
+          set -euo pipefail
+          ARGS=(--out release-health.json)
+          [ -z "${MAX_AGE:-}" ] || ARGS+=(--max-age-days "$MAX_AGE")
+          python3 scripts/ci/check_release_health.py "${ARGS[@]}"
+
+      - name: 上传报告
+        # `always()`：报告在**失败时**最有用，而失败正是这一步会被跳过的时候
+        # ——除非显式写上。
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-health-${{ github.run_id }}
+          path: release-health.json
+          if-no-files-found: warn
+          retention-days: 90
+
+  # ────────────────────────────────────────────────────────────────
+  # 每周一次的 publish=false 演练。
+  #
+  # **不等到发版那天才第一次执行发布链。** v0.9.0 与 v0.9.1 两个正式 tag
+  # 都是在这条链上第一次被执行时炸掉的，而 tag ruleset 是 immutable——
+  # 它们至今改不动也删不掉。
+  #
+  # 这个 job 只**发起**演练，不等它跑完（那要 30~60 分钟，而且要占实验室
+  # 并发槽）。跑完之后的结论由下一次 freshness 检查读到：release.yml 的
+  # 新鲜度阈值是 8 天，正好给每周一次的 canary 留余量。
+  # **刻意不轮询等它结束**——那正是这一轮删掉的那个反模式。
+  # ────────────────────────────────────────────────────────────────
+  canary:
+    needs: freshness
+    if: >-
+      always() && (
+        inputs.canary ||
+        (github.event_name == 'schedule' && contains(github.event.schedule, '0 9'))
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: write        # 发起 workflow_dispatch
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: { fetch-depth: 1 }
+
+      - name: 只在周一发起（schedule 触发时）
+        id: gate
+        env:
+          EVENT: ${{ github.event_name }}
+          FORCED: ${{ inputs.canary }}
+        run: |
+          set -euo pipefail
+          # cron 表达式里没法只写「每周一 09:00」又同时保留每日 freshness，
+          # 所以按日期判。**手动触发一律放行**。
+          if [ "$FORCED" = "true" ] || [ "$EVENT" != "schedule" ]; then
+            echo "go=1" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [ "$(date -u +%u)" = "1" ]; then
+            echo "go=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "go=0" >> "$GITHUB_OUTPUT"
+            echo "今天不是周一，跳过 canary 演练" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: 发起 publish=false 的完整发布链演练
+        if: steps.gate.outputs.go == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          SHA="$(git rev-parse HEAD)"
+          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" \
+             --ref main -f ref="$SHA" -f publish=false -f pypi=none
+          {
+            echo "## Canary：已发起 publish=false 演练"
+            echo ""
+            echo "- SHA：\`$SHA\`"
+            echo "- **不等它跑完**（30~60 分钟，且要占实验室并发槽）。"
+            echo "  结论由下一次 freshness 检查读到——release.yml 的新鲜度阈值"
+            echo "  是 8 天，正好给每周一次的 canary 留余量。"
+            echo "- 刻意不轮询：跨 workflow 轮询正是这一轮删掉的那个反模式。"
+          } >> "$GITHUB_STEP_SUMMARY"
