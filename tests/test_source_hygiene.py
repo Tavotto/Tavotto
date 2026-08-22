@@ -144,12 +144,18 @@ def test_no_launcher_leaves_a_child_pipe_undrained():
                     and getattr(node.func, "attr", "") == "Popen"):
                 continue
             kws = {k.arg: ast.unparse(k.value) for k in node.keywords if k.arg}
-            out = kws.get("stdout", "")
-            if "PIPE" not in out:
-                continue          # 落文件 / DEVNULL / 继承，都不会填满缓冲
-            offenders.append(
-                f"{path.relative_to(ROOT)}:{node.lineno} stdout=PIPE"
-                "——启动器一律落文件或 DEVNULL；「稍后再读」不算排空")
+            # **两个流都要看。** 子进程有 stdout 和 stderr 两条出路，任一条是
+            # 没人读的 PIPE 都会以同样的方式把它堵死——`stdout=<文件>,
+            # stderr=PIPE` 照样死锁。上一版只检查 stdout，Codex 在 #58 上指出
+            # 的正是这个：判据只钉了一条腿。
+            # `stderr=STDOUT` 是合并进 stdout，不额外开管道，所以不算。
+            for stream in ("stdout", "stderr"):
+                val = kws.get(stream, "")
+                if "PIPE" not in val:
+                    continue      # 落文件 / DEVNULL / STDOUT / 继承，都不会填满缓冲
+                offenders.append(
+                    f"{path.relative_to(ROOT)}:{node.lineno} {stream}=PIPE"
+                    "——启动器一律落文件或 DEVNULL；「稍后再读」不算排空")
     assert not offenders, (
         "这些子进程的输出管道开了却没人读，写满 64 KiB 之后应用会卡死在写日志上：\n  "
         + "\n  ".join(offenders))
