@@ -755,19 +755,44 @@ def _launch_reaches(src: str, target: str) -> bool:
     「函数定义满足子串」是同一类洞的不同深度。
 
     所以从**含 `subprocess.Popen` 的那个函数**出发，把它自己 + 它直接调用的
-    函数体合起来找 target。一层足够覆盖真实写法（直接调、或经一个薄包装），
+    函数体合起来找 target，并剪掉静态就走不到的分支（`if False:` 这种调试
+    开关忘了删的情形）。一层足够覆盖真实写法（直接调、或经一个薄包装），
     再深就该用真正的调用图了——那时更该问的是「为什么这条路这么绕」。
+
+    **边界写在明处：这条判据查的是意外，不是防蓄意。** 静态分析永远绕得过
+    （`if some_always_false_flag:`、藏进一个永不为真的条件……），追下去是
+    赢不了的军备竞赛——这个仓库对 playground 完整性校验早就下过同样的裁决。
+    行为上的真保证是 **lab gate 本身**：`visual_regression` 一旦掉了凭据，
+    发行链当场红（v0.9.0 就是这么暴露的）。这条静态判据的职责只是**更早、
+    更便宜**地发现同一件事，不是取代它。
     """
     import ast
     tree = ast.parse(src)
     funcs = {n.name: n for n in ast.walk(tree)
              if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
 
+    def dead(node) -> bool:
+        """静态就走不到的分支：`if False:` / `if 0:` / `while False:`。
+
+        现实里这不是蓄意伪装，是**调试开关忘了删**——把一行临时关掉、验完
+        忘了打开。真会发生，也真的会让门禁安静地报绿，所以剪掉。
+        """
+        test = getattr(node, "test", None)
+        return isinstance(test, ast.Constant) and not test.value
+
     def calls_in(node) -> set:
         out = set()
-        for x in ast.walk(node):
-            if isinstance(x, ast.Call):
-                f = x.func
+        stack = [node]
+        while stack:
+            cur = stack.pop()
+            for child in ast.iter_child_nodes(cur):
+                if isinstance(child, (ast.If, ast.While)) and dead(child):
+                    # 只剪 body；orelse 照走（`if False: A else: B` 走的是 B）
+                    stack.extend(child.orelse)
+                    continue
+                stack.append(child)
+            if isinstance(cur, ast.Call):
+                f = cur.func
                 if isinstance(f, ast.Name):
                     out.add(f.id)
                 elif isinstance(f, ast.Attribute):
