@@ -1251,3 +1251,62 @@ def test_artist_census_prints_chinese_under_a_legacy_code_page(tmp_path):
         "普查工具在非 UTF-8 控制台上崩了——stdout 必须钉成 UTF-8"
         f"\n{proc.stdout}\n{proc.stderr}")
     assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+# ---------------- 子进程输出的解码（本地代码页 ≠ UTF-8）------------------------
+
+def test_child_output_survives_a_legacy_codepage():
+    """真复现：子进程打中文，用**旧代码页**解码就会丢掉整段诊断。
+
+    Windows 上 `text=True` 不给 encoding 时按系统默认（cp1252 / 中文机器
+    cp936）解码。我们的 CLI 与脚本大量输出中文，于是读线程当场
+    `UnicodeDecodeError` 并死掉——而 `returncode` 不经解码、照样拿得到，
+    **用例继续绿**，只是 `stdout` / `stderr` 变成空的。
+
+    **后果不是「没解码成功」，是「诊断在最需要它的时候是空的」**：
+    `assert out.returncode == 0, f"...：{out.stderr}"` 这类断言一旦真的失败，
+    报错信息也是空的。
+
+    这条**平台无关**：不假装在 Windows 上跑，而是显式指定那个失败的编码，
+    直接测那段逻辑本身——与本文件其余用例同一策略。
+    """
+    # **子进程必须是确定性的 UTF-8 字节生产者。** 写成 `sys.stdout.write(中文)`
+    # 是不行的：Windows 旧代码页下子进程的 stdout（管道）按那个代码页编码，
+    # 写中文当场 `UnicodeEncodeError`，`returncode != 0`——用例会在它本该保护
+    # 的那个平台上直接失败，而且失败原因与被测的「父进程解码」毫无关系。
+    # 走 `stdout.buffer.write` 绕开文本层，产出的字节与 locale 无关。
+    # （Codex 在 #57 上指出的正是这个：上一版只控制了父进程的解码器。）
+    child = ("import sys; "
+             "sys.stdout.buffer.write('渲染环境不可用：缺少 matplotlib'"
+             ".encode('utf-8'))")
+
+    # ① 按旧代码页解码：诊断没了（丢字节或整段变成替换字符）
+    legacy = subprocess.run(  # 复现用：这里就是要那个会丢字节的旧代码页
+        [sys.executable, "-c", child], capture_output=True,
+        text=True, encoding="cp1252", errors="replace", timeout=60)
+    assert legacy.returncode == 0, "子进程本身应当成功——失败的只是解码"
+    assert "渲染环境不可用" not in legacy.stdout, (
+        "这条用例的前提失效了：cp1252 竟然解出了中文，说明构造的复现不成立")
+
+    # ② 按 utf-8 解码：诊断完整
+    ok = subprocess.run([sys.executable, "-c", child], capture_output=True,
+                        text=True, encoding="utf-8", errors="replace", timeout=60)
+    assert ok.returncode == 0
+    assert "渲染环境不可用：缺少 matplotlib" in ok.stdout, \
+        "显式 utf-8 之后诊断必须完整——否则这条修复没有意义"
+
+
+def test_the_repo_scripts_really_round_trip_chinese_help():
+    """端到端：真跑 `lab_preflight.py --help`（帮助文本是中文）并读回来。
+
+    上面那条验的是「解码规则」，这条验的是**我们真正会跑的那条命令**在当前
+    写法下拿不拿得到中文——静态判据（有没有 encoding 关键字）证明不了这件事，
+    Codex 在 #57 上指出的正是这个缺口。
+    """
+    script = Path(__file__).resolve().parents[1] / "scripts" / "ci" / "lab_preflight.py"
+    out = subprocess.run([sys.executable, str(script), "--help"],
+                         capture_output=True, text=True,
+                         encoding="utf-8", errors="replace", timeout=120)
+    assert out.returncode == 0, f"--help 都跑不了：{out.stderr}"
+    assert any("一" <= ch <= "鿿" for ch in out.stdout), \
+        "帮助文本里一个中文都没读到——要么脚本变了，要么解码又丢了"
