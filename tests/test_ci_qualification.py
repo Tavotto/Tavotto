@@ -408,9 +408,14 @@ class TestUpgradeRenameBoundary:
         """
         import summarize as SM
         _common.ensure_layout(tmp_path)
+        # **报告要盖上本轮身份**，否则汇总会先把它按「上一轮的陈旧报告」拒掉，
+        # 根本走不到「跳过怎么渲染」这一支——而这条用例验的正是后者。
+        monkeypatch.setenv("GITHUB_RUN_ID", "777")
+        monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
         _common.write_report("upgrade.json",
                              {"ok": True, "skipped": True, "reason": "rename_boundary",
-                              "detail": "跨越了产品改名边界"}, tmp_path)
+                              "detail": "跨越了产品改名边界",
+                              "metadata": {"run_id": "777", "run_attempt": "1"}}, tmp_path)
         monkeypatch.setenv("TAVOTTO_CI_STATE_ROOT", str(tmp_path))
         monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
         text = _detail_for(SM, "upgrade.json", tmp_path)
@@ -812,3 +817,181 @@ def _launch_reaches(src: str, target: str) -> bool:
             if inner is not None and target in calls_in(inner):
                 return True
     return False
+
+
+def test_always_steps_do_not_depend_on_a_step_that_may_not_have_run():
+    """`always()` 的收尾步骤不能依赖某个**可能没跑过**的步骤的输出。
+
+    2026-08-22（v0.9.1 发版）实测：`lab_release_gate` 的「汇总」写的是
+    `${{ steps.venv.outputs.python }} scripts/ci/summarize.py`，而
+    `steps.venv` 来自「建验证环境」——体检先失败时它根本没跑，变量是空串，
+    命令退化成**直接执行**那个脚本；它是 100644（没有执行位），于是
+    `Permission denied` / 退出码 126。
+
+    后果是这一步最不该有的那一种：**它「总是要跑」，却恰恰在真的有失败要汇总
+    时自己挂掉**——体检报出了遗留进程，而读的人在 job summary 里只看到 126。
+    与本轮反复出现的「诊断在最需要它时失灵」是同一个形状。
+
+    判据只盯**这一处已知的依赖**（`steps.venv.outputs.python`）：泛化成
+    「扫所有 always() 步骤里的所有 steps.* 引用」会把大量正当写法也判红
+    （很多 always() 步骤本来就只在前序跑过时才有意义），那种噪音门禁活不过
+    两周。要扩就等下一次真出事，按真实案例扩。
+    """
+    # **不用 PyYAML。** 它不在 `.venv` 里（Flask 那侧刻意只有 flask+pymupdf），
+    # 而 `importorskip` 会让这条在本地开发环境静默跳过——那正是空门禁。
+    # 这里只需要「按步骤切开、看它的 if 与 run」，标准库够用。
+    import re
+    offenders = []
+    for name in ("release.yml", "lab-ci.yml"):
+        src = (WORKFLOWS / name).read_text(encoding="utf-8")
+        # 以 `      - name:` 切步骤（本仓库两个 workflow 的缩进是一致的）
+        steps = re.split(r"\n(?=      - name:)", src)
+        assert len(steps) > 10, f"{name}: 只切出 {len(steps)} 段，切分判据失效了"
+        for step in steps:
+            # **只判会在前序失败后照跑的那些。** 普通顺序步骤引用它是正当的
+            # ——venv 没建起来时它们根本不会执行。第一版没区分，把十几处正当
+            # 写法一起判红了：判据的主语又窄了一圈（该问「这一步会不会在 venv
+            # 没跑时执行」，我问的是「有没有引用这个变量」）。
+            if not re.search(r"^\s+if:.*(always\(\)|failure\(\))", step, re.M):
+                continue
+            for m in re.finditer(r"steps\.venv\.outputs\.python(.*?)\}\}", step, re.S):
+                if "||" not in m.group(1):
+                    label = re.search(r"- name: (.*)", step)
+                    offenders.append(
+                        f"{name}: 步骤「{label.group(1).strip() if label else '?'}」")
+    assert not offenders, (
+        "这些步骤在前序失败时照跑，却依赖「建验证环境」的输出——那时它是空串，"
+        "命令退化成直接执行脚本（100644 → Permission denied）：\n  "
+        + "\n  ".join(offenders))
+
+
+def test_summary_refuses_reports_from_another_run(tmp_path, monkeypatch):
+    """汇总只认本轮的报告，否则它会把没跑过的阶段标成 PASS。
+
+    `reports/` 在**持久**状态根里、保留 30 天，而 `cleanup.py` 排在体检
+    **之后**——体检早早失败时，上一轮的 `soak.json` / `visual.json` 还原样
+    躺在那儿。不核对 `metadata.run_id` 的话，汇总会报告那些阶段通过，而它们
+    这一轮根本没跑过。
+
+    **这是最坏的一种诊断失效：不是缺席，是说谎。** 而且它偏偏发生在体检失败、
+    最需要看清「究竟跑到哪一步」的时候。2026-08-22 v0.9.1 发版时，
+    汇总因为另一个 bug 直接崩了（#61），反而没来得及说这个谎——修好解释器
+    却不修这一条，等于把「崩掉」换成「说谎」。
+    """
+    import importlib.util, json as _json
+    (tmp_path / "reports").mkdir()
+    (tmp_path / "reports" / "soak.json").write_text(_json.dumps(
+        {"ok": True, "metadata": {"run_id": "1111"}}), encoding="utf-8")
+    monkeypatch.setenv("TAVOTTO_CI_STATE_ROOT", str(tmp_path))
+    monkeypatch.setenv("GITHUB_RUN_ID", "2222")          # 本轮 ≠ 报告那轮
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+
+    spec = importlib.util.spec_from_file_location("_sm", CI_DIR / "summarize.py")
+    mod = importlib.util.module_from_spec(spec)
+    import sys as _sys
+    _sys.path.insert(0, str(CI_DIR))
+    spec.loader.exec_module(mod)
+
+    import io as _io, contextlib
+    buf = _io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        mod.main(["--mode", "release"])
+    out = buf.getvalue()
+    soak_line = [ln for ln in out.splitlines() if "soak" in ln.lower()]
+    assert soak_line, f"输出里找不到 soak 那一行：\n{out[:600]}"
+    assert "PASS" not in soak_line[0], (
+        f"上一轮的报告被当成本轮的结果了：{soak_line[0]}")
+    assert "未运行" in soak_line[0], f"该标成未运行：{soak_line[0]}"
+
+
+def test_summary_keeps_this_runs_report_even_across_a_rerun(tmp_path, monkeypatch):
+    """身份要带 attempt，而且**每个写报告的脚本都得真的写 metadata**。
+
+    两条都是 #61 的 review 逮到的，方向相反、后果一样坏：
+
+    * `GITHUB_RUN_ID` 在「Re-run jobs」时**复用**，只有 `GITHUB_RUN_ATTEMPT`
+      递增——只比 run_id 的话，上一次尝试留下的报告会被当成本次的（说谎）。
+    * `compat_matrix` 当时**根本没写 metadata**，于是本轮真跑出来的
+      CompatBench 报告会被一律拒收（误报未运行）。**我修「说谎」的时候造出了
+      「误报」**，两头都是诊断失真。
+    """
+    import importlib.util, json as _json, io as _io, contextlib, sys as _sys
+    (tmp_path / "reports").mkdir()
+    # 本轮 attempt=2；报告来自 attempt=1（同一个 run_id）
+    (tmp_path / "reports" / "soak.json").write_text(_json.dumps(
+        {"ok": True, "metadata": {"run_id": "42", "run_attempt": "1"}}), encoding="utf-8")
+    # 本轮自己的 CompatBench 报告，必须留下
+    (tmp_path / "reports" / "compat.json").write_text(_json.dumps(
+        {"ok": True, "metadata": {"run_id": "42", "run_attempt": "2"}}), encoding="utf-8")
+    monkeypatch.setenv("TAVOTTO_CI_STATE_ROOT", str(tmp_path))
+    monkeypatch.setenv("GITHUB_RUN_ID", "42")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+
+    spec = importlib.util.spec_from_file_location("_sm2", CI_DIR / "summarize.py")
+    mod = importlib.util.module_from_spec(spec)
+    _sys.path.insert(0, str(CI_DIR))
+    spec.loader.exec_module(mod)
+    buf = _io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        mod.main(["--mode", "release"])
+    out = buf.getvalue()
+
+    soak = [ln for ln in out.splitlines() if "soak" in ln.lower()][0]
+    assert "PASS" not in soak, f"上一次 attempt 的报告被当成本次的了：{soak}"
+    compat = [ln for ln in out.splitlines()
+              if "兼容" in ln or "compat" in ln.lower()][0]
+    assert "未运行" not in compat, f"本轮自己的报告被误判成未运行了：{compat}"
+
+
+def test_every_report_writer_stamps_its_identity():
+    """写报告的脚本都要 `run_metadata()`，否则汇总认不出它是本轮的。
+
+    `compat_matrix` 当时就漏了——而漏掉的表现不是报错，是那一行永远显示
+    「未运行」。判据按**调用点**扫，别只看文件里出现过这个名字。
+    """
+    # **主语第三次才对。** 依次错过：只扫 `write_report()` 的调用点
+    # （compat_matrix 自己 json.dump，不走那个助手）、按「源码里出现哪个报告名」
+    # 扫（compat.json 这个名字压根不在它源码里，是 workflow 用 `--json` 传进去的）。
+    # 正确的问法是：**workflow 里哪个脚本产出 SECTIONS 里的那份报告。**
+    import ast, re
+    spec_src = (CI_DIR / "summarize.py").read_text(encoding="utf-8")
+    wanted = set(re.findall(r'"(\w+\.json)"', spec_src.split("SECTIONS", 1)[1][:800]))
+    assert len(wanted) >= 4, f"只解析出 {wanted}——SECTIONS 的形状变了，判据失效"
+
+    # 报告有两种产出方式，都要认：
+    #   ① 脚本自己 `write_report("x.json", ...)`（多数）
+    #   ② workflow 用 `--json .../x.json` 把路径传进去（compat_matrix 是这种，
+    #      所以它源码里根本没有 "compat.json" 这个字面量）
+    producers: dict[str, str] = {}
+    for path in sorted(CI_DIR.glob("*.py")):
+        src = path.read_text(encoding="utf-8")
+        for rep in wanted:
+            if f'"{rep}"' in src:
+                producers[rep] = path.name
+    wf = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
+    for step in re.split(r"\n(?=      - name:)", wf):
+        m = re.search(r"scripts/ci/(\w+)\.py", step)
+        if not m:
+            continue
+        for rep in wanted:
+            if rep in step:
+                producers[rep] = m.group(1) + ".py"
+    assert len(producers) >= 5, f"只对上 {producers}——产出关系解析失效了"
+
+    missing = []
+    for rep, script in sorted(producers.items()):
+        src = (CI_DIR / script).read_text(encoding="utf-8")
+        calls = {getattr(n.func, "attr", getattr(n.func, "id", ""))
+                 for n in ast.walk(ast.parse(src)) if isinstance(n, ast.Call)}
+        if "run_metadata" not in calls:
+            missing.append(f"{script}（产出 {rep}）")
+    assert not missing, (
+        f"这些脚本产出了汇总要读的报告，却一次都没调 run_metadata()——"
+        f"汇总会把它们当成上一轮的、标成「未运行」：{missing}")
+
+    # **精度写在明处**：判的是「这个脚本调没调过 run_metadata()」，不是
+    # 「写这份报告时盖上了没有」。后者要跟着数据流走，静态做不可靠。
+    # 所以它逮得住「整个脚本都忘了盖」（compat_matrix 当时就是），逮不住
+    # 「调了但没放进这份 payload」。够用，但别当成更强的保证。
+
