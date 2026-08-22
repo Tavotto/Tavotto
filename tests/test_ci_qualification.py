@@ -1001,3 +1001,74 @@ def test_preflight_also_accepts_an_unlimited_descriptor_limit(monkeypatch):
     monkeypatch.setattr(pf.resource, "getrlimit", lambda _what: (1024, 4096))
     fd = [c for c in pf.check_environment() if c.name == "文件描述符上限"]
     assert not fd[0].ok, "1024 应当判成不够"
+
+
+def test_the_dropin_never_clobbers_a_file_it_did_not_write(tmp_path):
+    """脚本开头写着「不删任何未知文件」——`cat > limits.conf` 违背了它。
+
+    `limits.conf` 正是管理员给 drop-in 起名时最顺手的那个词（限额之外的加固、
+    环境变量都常放在里面）。截断掉的后果要等下次重启才发作，那时谁也想不到是
+    bootstrap 干的。所以：文件名带自己的名字，且只覆盖确认是自己写的那一份。
+    """
+    funcs = _bootstrap_funcs("write_nofile_dropin")
+    src = _bootstrap()
+    marker = src.split('NOFILE_DROPIN_MARKER="', 1)[1].split('"', 1)[0]
+    name = src.split('NOFILE_DROPIN_NAME="', 1)[1].split('"', 1)[0]
+    assert name != "limits.conf", "又用回那个管理员最可能占用的名字了"
+    base = (f'NOFILE_DROPIN_MARKER="{marker}"\nNOFILE_DROPIN_NAME="{name}"\n'
+            'NOFILE_MIN=4096\nwarn() { printf "WARN:%s\\n" "$*"; }\n'
+            + funcs + '\nwrite_nofile_dropin "$1"; echo "rc=$?"\n')
+
+    # ① 管理员自己的 limits.conf 必须一个字节不动
+    d = tmp_path / "a.d"
+    d.mkdir()
+    admin = d / "limits.conf"
+    admin.write_text("[Service]\nEnvironment=FOO=bar\n", encoding="utf-8")
+    r = _run_sh(base, str(d))
+    assert "rc=0" in r.stdout, r.stdout + r.stderr
+    assert admin.read_text(encoding="utf-8") == "[Service]\nEnvironment=FOO=bar\n", \
+        "管理员的 limits.conf 被截断了"
+    assert (d / name).exists(), "自己那份 drop-in 没写出来"
+    assert "LimitNOFILE=65536" in (d / name).read_text(encoding="utf-8")
+
+    # ② 同名文件已存在但不是我们写的 → 拒绝覆盖，并且报失败
+    d2 = tmp_path / "b.d"
+    d2.mkdir()
+    theirs = d2 / name
+    theirs.write_text("[Service]\nLimitNOFILE=1000000\n", encoding="utf-8")
+    r = _run_sh(base, str(d2))
+    assert "rc=1" in r.stdout, f"覆盖了别人的同名文件：{r.stdout!r}"
+    assert theirs.read_text(encoding="utf-8") == "[Service]\nLimitNOFILE=1000000\n"
+    assert "WARN:" in r.stdout, "拒绝覆盖却没说一声"
+
+    # ③ 自己上一次写的那份可以照旧覆盖（否则升级脚本后永远改不动它）
+    d3 = tmp_path / "c.d"
+    d3.mkdir()
+    mine = d3 / name
+    mine.write_text(f"# {marker}\n[Service]\nLimitNOFILE=8192\n", encoding="utf-8")
+    r = _run_sh(base, str(d3))
+    assert "rc=0" in r.stdout, r.stdout
+    assert "LimitNOFILE=65536" in mine.read_text(encoding="utf-8"), "自己写的那份没更新"
+
+
+def test_no_bare_variable_is_glued_to_a_cjk_character():
+    """`$VAR中文` 必须写成 `${VAR}中文`——否则在别人的机器上会吞掉一个字节。
+
+    bash 用 `isalnum()` 逐**字节**扫变量名。UTF-8 locale 下高位字节不算字母，
+    到此为止；但在 C/Latin-1 一类的 locale 里 0xEF 就是字母 `ï`，于是
+    `$NOFILE_MIN，` 被当成变量 `NOFILE_MIN\\xef`——未定义、展开成空，还顺手
+    把那个中文字的第一个字节吃掉，输出从此不是合法 UTF-8。
+
+    发现方式很典型：本机 pytest 跑得好好的，换个 locale 的子进程里就
+    `UnicodeDecodeError`。**这正是「只在别人电脑上发生」的那一类**，与
+    tests/test_windows_regressions.py 是同一条纪律，所以钉成结构性判据。
+    """
+    import re
+    src = _bootstrap()
+    bad = []
+    for i, line in enumerate(src.splitlines(), 1):
+        if line.lstrip().startswith("#"):      # 注释不展开，不判
+            continue
+        for m in re.finditer(r"\$[A-Za-z_][A-Za-z0-9_]*(?=[^\x00-\x7f])", line):
+            bad.append(f"L{i}: {m.group(0)} 紧跟非 ASCII 字符")
+    assert not bad, "变量名与中文粘在一起，换个 locale 就会吞字节：\n" + "\n".join(bad)

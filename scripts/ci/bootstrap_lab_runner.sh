@@ -503,6 +503,36 @@ nofile_of_service() {
     [ -n "${pid:-}" ] && [ "$pid" != "0" ] || return 1
     awk '/open files/ {print $4}' "/proc/$pid/limits" 2>/dev/null
 }
+
+# 这个脚本开头就写着「不删任何未知文件」。原先它 `cat > "$dropin/limits.conf"`
+# ——而 `limits.conf` 正是管理员给 drop-in 起名时最顺手的那个词（限额之外的
+# 加固、环境变量都常放在里面）。截断掉的后果要等下次重启才发作，那时谁也想不到
+# 是 bootstrap 干的。改成：文件名带自己的名字（systemd 按字典序加载 .d 下所有
+# *.conf，多一个文件不冲突），并且**只覆盖确认是自己写的那一份**。
+NOFILE_DROPIN_MARKER="由 scripts/ci/bootstrap_lab_runner.sh 写入"
+NOFILE_DROPIN_NAME="90-tavotto-nofile.conf"
+write_nofile_dropin() {
+    local dropin="$1" conf="$1/$NOFILE_DROPIN_NAME"
+    install -d -m 0755 "$dropin" || return 1
+    if [ -e "$conf" ] && ! grep -qF "$NOFILE_DROPIN_MARKER" "$conf" 2>/dev/null; then
+        warn "$conf 已存在，但不是本脚本写的——**不覆盖**。
+    请自己确认它里面的 LimitNOFILE ≥ ${NOFILE_MIN}，或者把它挪开后重跑。"
+        return 1
+    fi
+    cat > "$conf" <<CONF
+# $NOFILE_DROPIN_MARKER
+# soak 会同时开多个 worker 与 HTTP 连接；systemd 默认的 soft=1024 撞上限时
+# 表现是随机的 "Too many open files"，与真实的句柄泄漏几乎分不开。
+[Service]
+LimitNOFILE=65536
+CONF
+    # 旧版本写的是 limits.conf。**不动它**（可能已被管理员接管），只提一句。
+    if [ -e "$dropin/limits.conf" ] \
+       && grep -qF "$NOFILE_DROPIN_MARKER" "$dropin/limits.conf" 2>/dev/null; then
+        echo "      （$dropin/limits.conf 是本脚本旧版本写的，已被 $NOFILE_DROPIN_NAME 取代，可自行删除）"
+    fi
+    return 0
+}
 # 发现走 discover_runner_units（唯一出处，工具探测那边解析服务 PATH 用的
 # 是同一张 unit 表）——两处各写一份的话，会出现「工具按 A 实例的配置查、
 # FD 按 B 实例的进程量」。
@@ -527,17 +557,12 @@ else
             printf '  \033[32m✓\033[0m %-52s soft=%s\n' "$unit" "$cur"
             continue
         fi
-        dropin="/etc/systemd/system/${unit}.d"
-        install -d -m 0755 "$dropin"
-        cat > "$dropin/limits.conf" <<CONF
-# 由 scripts/ci/bootstrap_lab_runner.sh 写入。
-# soak 会同时开多个 worker 与 HTTP 连接；systemd 默认的 soft=1024 撞上限时
-# 表现是随机的 "Too many open files"，与真实的句柄泄漏几乎分不开。
-[Service]
-LimitNOFILE=65536
-CONF
-        printf '  \033[33m→\033[0m %-52s soft=%s，已写 drop-in\n' "$unit" "${cur:-未知}"
-        NOFILE_FIXED=$((NOFILE_FIXED + 1))
+        if write_nofile_dropin "/etc/systemd/system/${unit}.d"; then
+            printf '  \033[33m→\033[0m %-52s soft=%s，已写 drop-in\n' "$unit" "${cur:-未知}"
+            NOFILE_FIXED=$((NOFILE_FIXED + 1))
+        else
+            printf '  \033[31m✗\033[0m %-52s soft=%s，drop-in 没写\n' "$unit" "${cur:-未知}"
+        fi
     done
     if [ "$NOFILE_FIXED" -gt 0 ]; then
         warn "$NOFILE_FIXED 个 runner 服务写了 LimitNOFILE drop-in，**需要重启才生效**。
