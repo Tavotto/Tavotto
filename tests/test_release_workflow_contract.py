@@ -486,29 +486,39 @@ def test_every_caller_gates_the_sha_through_a_trust_job():
             f"{path.name}: sha 来自 {m.group(1)}，但那个 job 里没有 ancestry 判断")
 
 
-def test_the_exclusive_lab_slot_is_claimed_in_exactly_one_place():
-    """**同一个独占槽不许有第二个申请者——尤其不许是同一个 run 里的两级。**
+def test_the_release_gate_cannot_be_evicted_by_a_routine_lab_run():
+    """**发布门禁与日常 lab run 不许共用一个并发槽。**
 
-    `qualify` job 持有 `lab-qualification` 这个组，让两条调用链共用一台机器。
-    从前 `lab-ci.yml` 顶层**也**声明了同名组：workflow 级的槽由 run 持有，
-    然后 run 自己调用的 job 又去申请同一个槽——**它在等自己**。
+    GitHub 每个 group 只保留**一个运行中 + 一个待定**，第三个排进来会
+    *取代*那个待定的——`cancel-in-progress: false` 只保护正在跑的，
+    保护不了在排队的。两条链共用一个槽时：发布门禁正等在一次长 lab run
+    后面，这时一次 push to main 或定时任务进来，**日常 run 把待定的发布
+    门禁挤掉，发版当场中止**，而且看起来像「被取消了」，没有原因。
 
-    表现极难查：8 秒内失败、`runner_name` 是 null、一个步骤都没有、
-    日志里什么都没有。看起来像「没有匹配的 runner」，而 runner 全都在线空闲。
-    2026-08-23 #66 合并后第一次真跑就撞上了。
+    另一侧同样要守：`lab-ci.yml` 顶层**不许**再声明同名的固定组。
+    workflow 级与它自己调用的 job 级申请同一个槽 = run 在等自己，
+    表现是 8 秒失败、runner_name 为 null、零步骤、日志空白（#66 撞过）。
 
-    判据是「这个组名在 workflows 目录里出现的次数」——一次，且在那份
-    可复用定义里。
+    机器独占不由这个槽负责：带 `tavotto-lab` 标签的 runner 只有一台，
+    runner 端另有 flock。槽只负责同一条链内部去重。
     """
-    hits = [(p.name, i + 1)
-            for p in sorted(WF.glob("*.yml"))
-            for i, ln in enumerate(p.read_text(encoding="utf-8").splitlines())
-            if ln.strip() == "group: lab-qualification"]
-    assert len(hits) == 1, (
-        f"独占槽 lab-qualification 被申请了 {len(hits)} 次：{hits}\n"
-        "—— 同一个 run 里两级同名会让 job 永远调度不出去（等自己）")
-    assert hits[0][0] == "_lab-qualification.yml", (
-        f"槽应该由那份唯一的资格定义持有，实际在 {hits[0][0]}")
+    qual = REUSABLE.read_text(encoding="utf-8")
+    m = re.search(r"^\s*group:\s*(.+)$", qual, re.M)
+    assert m, "可复用资格定义里读不出 concurrency group"
+    group = m.group(1).strip()
+    assert "github.workflow" in group, (
+        f"槽名 {group!r} 不区分调用方——发布门禁会和日常 lab run 抢同一个槽，"
+        "排队中的那个会被后来的挤掉")
+
+    # 调用方顶层不许再有固定的同名组（那会让 run 等自己）
+    for path in (LAB, RELEASE):
+        text = path.read_text(encoding="utf-8")
+        top = re.search(r"^concurrency:\s*\n(?:\s+#.*\n)*\s+group:\s*(.+)$",
+                        text, re.M)
+        if top:
+            assert "lab-qualification" not in top.group(1), (
+                f"{path.name} 顶层又声明了 lab-qualification 组——"
+                "workflow 级与它调用的 job 级同名，job 会等一个自己已经持有的槽")
 
 
 def test_qualification_is_defined_exactly_once():

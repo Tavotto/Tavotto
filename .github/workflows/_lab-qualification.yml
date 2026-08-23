@@ -57,8 +57,21 @@ jobs:
     runs-on: [self-hosted, linux, x64, tavotto-lab]
     timeout-minutes: 180
     concurrency:
-      # benchmark 与 soak 都要求独占机器，所以两条调用链共用同一个槽。
-      group: lab-qualification
+      # **每条调用链一个槽，两条链绝不共用。**
+      # `github.workflow` 在可复用 workflow 里取的是**调用方**的名字，
+      # 所以 release.yml 与 lab-ci.yml 各排各的队。
+      #
+      # 为什么不能共用一个槽：GitHub 每组只保留**一个运行中 + 一个待定**，
+      # 第三个排进来会**取代那个待定的**——`cancel-in-progress: false`
+      # 只保护正在跑的，保护不了在排队的。共用一个槽时，发布门禁正等在
+      # 一次长 lab run 后面，这时一次 push to main 或定时任务进来，
+      # **日常 run 会把待定的发布门禁挤掉，发版当场中止**。
+      #
+      # 机器独占不靠这个槽：带 `tavotto-lab` 标签的 runner 只有一台，
+      # 两条链天然排队；runner 端另有 flock 作第二道保险
+      # （见 scripts/ci/bootstrap_lab_runner.sh）。槽在这里只负责
+      # **同一条链内部去重**——同一条链上新的一次本来就该取代旧的待定。
+      group: lab-qualification-${{ github.workflow }}
       cancel-in-progress: false
     env:
       LAB_MODE: ${{ inputs.mode }}
