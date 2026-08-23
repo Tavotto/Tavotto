@@ -535,6 +535,26 @@ def test_diff_notices_a_ruleset_that_vanished_from_the_remote():
     assert "-X POST" in recreate, "重建走的不是 POST —— PUT 一个不存在的 id 会 404"
 
 
+def test_backup_never_truncates_the_snapshot_it_is_creating():
+    """**`--backup` 失败时，原来那份存档必须原样还在。**
+
+    `> "$STORE/ruleset-$id.json"` 在跑管道**之前**就把目标截成 0 字节。
+    抓取失败 / JSON 畸形 / 网络断，任何一样都会让 `pipefail` 退出——
+    而那份唯一的回滚材料已经变成空文件。
+
+    这个脚本的全部意义是「改保护之前先把能还原的东西存下来」。
+    它自己把存档毁掉，是所有失败模式里最坏的一种：你以为有退路。
+
+    判据是「存档路径不出现在裸重定向的右边」，不是「文件里有没有 mv」——
+    后者被脚本里任何一处 mv 满足。
+    """
+    t = (ADMIN_DIR / "apply_rulesets.sh").read_text(encoding="utf-8")
+    bad = re.findall(r'>\s*"\$STORE/(?!\.)[^"]*"', t)
+    assert not bad, (
+        f"存档被裸重定向直接截断：{bad}\n"
+        "—— 抓取失败时回滚材料会变成 0 字节。写临时文件再 mv。")
+
+
 def test_recreate_replaces_the_stale_snapshot():
     """`--recreate` 之后旧 id 的存档要一并清掉。
 

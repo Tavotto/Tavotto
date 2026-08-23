@@ -61,18 +61,34 @@ print()'
 
 case "$MODE" in
 backup)
+  # **一律临时文件 + mv，绝不直接 `> 存档`。**
+  # `>` 在跑管道**之前**就把目标截成 0 字节：抓取失败、JSON 畸形、网络断，
+  # 哪一样都会让 `pipefail` 退出——而那份唯一的回滚材料已经没了。
+  # 这个脚本的全部意义就是「改保护之前先把能还原的东西存下来」，
+  # 它自己把存档毁掉是最坏的一种失败。（与渲染缓存同一条纪律：
+  # 写入临时文件 + 原子替换，见 CLAUDE.md「/api/render 的磁盘缓存键」。）
   for id in $(ids); do
-    gh api "repos/$REPO/rulesets/$id" | python3 -c '
+    tmp="$STORE/.ruleset-$id.json.tmp"
+    if gh api "repos/$REPO/rulesets/$id" | python3 -c '
 import json,sys
 json.dump(json.load(sys.stdin),sys.stdout,indent=2,ensure_ascii=False,sort_keys=True)' \
-      > "$STORE/ruleset-$id.json"
-    echo "存档 ruleset $id → docs/admin/rulesets/ruleset-$id.json"
+         > "$tmp"; then
+      mv -f "$tmp" "$STORE/ruleset-$id.json"
+      echo "存档 ruleset $id → docs/admin/rulesets/ruleset-$id.json"
+    else
+      rm -f "$tmp"
+      echo "::error::抓取 ruleset $id 失败——已保留原存档不动" >&2
+      exit 1
+    fi
   done
   # legacy branch protection 也存一份。**注意它只能证明「删之前是什么样」**，
   # 不能一条命令还原：GET 的响应不是 PUT 的请求体格式。
-  if gh api "repos/$REPO/branches/main/protection" \
-       > "$STORE/legacy-branch-protection-$(date +%F).json" 2>/dev/null; then
+  ltmp="$STORE/.legacy.json.tmp"
+  if gh api "repos/$REPO/branches/main/protection" > "$ltmp" 2>/dev/null; then
+    mv -f "$ltmp" "$STORE/legacy-branch-protection-$(date +%F).json"
     echo "存档 legacy branch protection（**仅供查阅，不可直接 PUT 还原**）"
+  else
+    rm -f "$ltmp"
   fi
   ;;
 
