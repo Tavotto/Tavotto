@@ -14,8 +14,11 @@ NUL」。一个字面 NUL 混进 .ts 里，编译器与测试全都照常绿灯�
 
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -241,3 +244,50 @@ def test_windows_bound_subprocesses_pin_their_decoding():
     assert not offenders, (
         "这些 subprocess 在 Windows 上会用系统默认编码解码子进程输出，"
         "中文一出现就静默丢掉 stdout/stderr：\n  " + "\n  ".join(offenders))
+
+
+# ── 版本号：七处必须一致 ────────────────────────────────────────────
+
+# `__version__` 是唯一权威，其余六处跟着它。列在这里的每一条都是**发布
+# 产物会把版本号印出去的地方**：wheel 报一个版本、桌面壳的关于窗口报另一个，
+# 用户拿不到任何提示，而排障时两边日志都「正确」。
+#
+# 为什么要单独一条：0.9.2 之前只有插件清单被比对过（test_codex_plugin），
+# tauri.conf.json 与两个 Cargo.toml/lock 一个都没人看着。漏掉一处的表现是
+# 「装完显示的版本和发布页对不上」——没有任何一步会失败。
+#
+# **锚点必须带包名**：`src-tauri/Cargo.lock` 里 `memoffset` 恰好也是 0.9.1，
+# 按裸 `version = "..."` 找会同时命中一个第三方依赖。
+_VERSION_SITES = [
+    ("workerd/Cargo.toml", r'^version = "([^"]+)"'),
+    ("src-tauri/Cargo.toml", r'^version = "([^"]+)"'),
+    ("src-tauri/tauri.conf.json", r'"version":\s*"([^"]+)"'),
+    ("codex-plugin/.codex-plugin/plugin.json", r'"version":\s*"([^"]+)"'),
+    ("workerd/Cargo.lock", r'name = "tavotto-workerd"\nversion = "([^"]+)"'),
+    ("src-tauri/Cargo.lock", r'name = "tavotto-desktop"\nversion = "([^"]+)"'),
+]
+
+
+def _product_version() -> str:
+    m = re.search(r'__version__\s*=\s*"([^"]+)"',
+                  (ROOT / "src" / "tavotto" / "__init__.py").read_text(encoding="utf-8"))
+    assert m, "读不出 src/tavotto/__init__.py 的 __version__"
+    return m.group(1)
+
+
+@pytest.mark.parametrize("rel,pattern", _VERSION_SITES,
+                         ids=[r for r, _ in _VERSION_SITES])
+def test_every_shipped_version_string_matches_the_product(rel, pattern):
+    """**每一处会被发布产物印出来的版本号都要等于 `__version__`。**
+
+    判据是「那个文件里那条版本号的值」，不是「文件里出现过这个字符串」。
+    """
+    want = _product_version()
+    f = ROOT / rel
+    assert f.is_file(), f"{rel} 不存在"
+    m = re.search(pattern, f.read_text(encoding="utf-8"), re.M)
+    assert m, f"{rel}: 按 {pattern!r} 读不出版本号——锚点过时了"
+    assert m.group(1) == want, (
+        f"{rel} 是 {m.group(1)}，而 __version__ 是 {want}。\n"
+        "发版时漏改一处的表现是「装完显示的版本和发布页对不上」，"
+        "没有任何一步会失败。")

@@ -486,6 +486,41 @@ def test_every_caller_gates_the_sha_through_a_trust_job():
             f"{path.name}: sha 来自 {m.group(1)}，但那个 job 里没有 ancestry 判断")
 
 
+def test_the_release_gate_cannot_be_evicted_by_a_routine_lab_run():
+    """**发布门禁与日常 lab run 不许共用一个并发槽。**
+
+    GitHub 每个 group 只保留**一个运行中 + 一个待定**，第三个排进来会
+    *取代*那个待定的——`cancel-in-progress: false` 只保护正在跑的，
+    保护不了在排队的。两条链共用一个槽时：发布门禁正等在一次长 lab run
+    后面，这时一次 push to main 或定时任务进来，**日常 run 把待定的发布
+    门禁挤掉，发版当场中止**，而且看起来像「被取消了」，没有原因。
+
+    另一侧同样要守：`lab-ci.yml` 顶层**不许**再声明同名的固定组。
+    workflow 级与它自己调用的 job 级申请同一个槽 = run 在等自己，
+    表现是 8 秒失败、runner_name 为 null、零步骤、日志空白（#66 撞过）。
+
+    机器独占不由这个槽负责：带 `tavotto-lab` 标签的 runner 只有一台，
+    runner 端另有 flock。槽只负责同一条链内部去重。
+    """
+    qual = REUSABLE.read_text(encoding="utf-8")
+    m = re.search(r"^\s*group:\s*(.+)$", qual, re.M)
+    assert m, "可复用资格定义里读不出 concurrency group"
+    group = m.group(1).strip()
+    assert "github.workflow" in group, (
+        f"槽名 {group!r} 不区分调用方——发布门禁会和日常 lab run 抢同一个槽，"
+        "排队中的那个会被后来的挤掉")
+
+    # 调用方顶层不许再有固定的同名组（那会让 run 等自己）
+    for path in (LAB, RELEASE):
+        text = path.read_text(encoding="utf-8")
+        top = re.search(r"^concurrency:\s*\n(?:\s+#.*\n)*\s+group:\s*(.+)$",
+                        text, re.M)
+        if top:
+            assert "lab-qualification" not in top.group(1), (
+                f"{path.name} 顶层又声明了 lab-qualification 组——"
+                "workflow 级与它调用的 job 级同名，job 会等一个自己已经持有的槽")
+
+
 def test_qualification_is_defined_exactly_once():
     """`lab-ci.yml` 与 `release.yml` 调的是**同一个**可复用 workflow。
 
