@@ -2,7 +2,7 @@
 # 架构与安全模型见 docs/adr/0002-tauri-desktop-shell.md。
 [package]
 name = "tavotto-desktop"
-version = "0.9.1"
+version = "0.9.2"
 description = "Tavotto 桌面应用外壳"
 edition = "2021"
 license = "AGPL-3.0-only"
