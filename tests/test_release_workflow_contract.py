@@ -432,6 +432,26 @@ def test_the_published_artifacts_are_re_verified_before_attaching():
 
 # ── 资格验证只有一份定义 ──────────────────────────────────────────────────
 
+def test_a_repo_variable_cannot_weaken_the_release_gate():
+    """**仓库级开关不许把发布门禁一起放倒。**
+
+    `LAB_VISUAL_GATE=false` 的本意是让日常 lab run 在基线漂移期间不被
+    视觉回归挡住。合并两份资格定义**之前**，release 那份的 Golden 步骤
+    永远是阻断的；合并之后同一个仓库变量就顺手管到了发布链——而设它的人
+    多半只是想让 nightly 别再刷红，根本不知道自己放行了一次带视觉回归的发版。
+
+    判据是 `continue-on-error` 的表达式里**必须含 mode 判断**，不是
+    「文件里提没提 release」——后者被同文件任何一处 release 满足。
+    """
+    t = REUSABLE.read_text(encoding="utf-8")
+    m = re.search(r"id:\s*visual\b.*?continue-on-error:\s*(.+)", t, re.S)
+    assert m, "读不出 Golden 视觉回归那步的 continue-on-error"
+    expr = m.group(1).splitlines()[0]
+    assert "inputs.mode" in expr and "release" in expr, (
+        f"视觉门禁的 continue-on-error 没有按 mode 收窄：{expr!r}\n"
+        "—— 仓库变量 LAB_VISUAL_GATE=false 会连发布门禁一起放倒")
+
+
 def test_qualification_is_defined_exactly_once():
     """`lab-ci.yml` 与 `release.yml` 调的是**同一个**可复用 workflow。
 

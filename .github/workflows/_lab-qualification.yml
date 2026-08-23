@@ -216,7 +216,13 @@ jobs:
       # ── golden / 视觉 ─────────────────────────────────────────
       - name: Golden 视觉回归
         id: visual
-        continue-on-error: ${{ vars.LAB_VISUAL_GATE == 'false' }}
+        # **`LAB_VISUAL_GATE` 只对非 release 档生效。**
+        # 它是仓库级变量，本意是让日常 lab run 在基线漂移期间不被视觉回归
+        # 挡住。合并两份资格定义之前，release 门禁的 Golden 步骤**永远是
+        # 阻断的**——合并之后这个仓库级开关就能顺手把发布门禁一起放倒，
+        # 而放倒它的人多半只是想让 nightly 别再刷红。
+        # 一个仓库设置不该有能力削弱发布门禁：mode == 'release' 时它无效。
+        continue-on-error: ${{ inputs.mode != 'release' && vars.LAB_VISUAL_GATE == 'false' }}
         run: |
           ${{ steps.venv.outputs.python }} scripts/ci/visual_regression.py \
             --python ${{ steps.venv.outputs.python }} \
