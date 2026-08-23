@@ -1,23 +1,97 @@
 # 发版
 
-一条流水线 `release.yml`，推 `v*` tag 触发，五个 job：
+**一条流水线 `release.yml` 是唯一入口**，推 `v*` tag 或手动 dispatch 触发，
+七个 job：
 
 | job | 做什么 |
 |---|---|
-| `trust` | tag → 精确 SHA，并验证它**可达于 origin/main**——发布只接受已合并进受保护 main 的提交；之后所有 job 只认这个 SHA |
-| `build` | 构建前端 → 打 wheel + sdist → 核对版本 → `twine check` → 干净环境装一遍冒烟 |
-| `lab_release_gate` | 实验室 runner 上的 exact-artifact 发行资格验证：全量 + slow 用例、N-1 升级验收、Golden 视觉回归、soak/泄漏、性能对照——**这一关不过，Release 与 PyPI 都不发** |
-| `github_release` | 建 GitHub Release，挂上产物 |
-| `pypi` | 发到 PyPI（需开闸，见下） |
+| `trust` | ref → 精确 SHA，验证它**可达于 origin/main**（发布只接受已合并进受保护 main 的提交），从源码读出版本号并与 tag 核对；之后所有 job 只认它输出的 SHA |
+| `build` | 构建前端 → 打 wheel + sdist → 核对版本 → `twine check` → 干净环境装一遍冒烟 → **产出这条腿的产物清单** |
+| `desktop` | `workflow_call` 调 `desktop-tauri.yml`：Windows NSIS + macOS 签名公证 dmg，各自**产出自己那条腿的产物清单** |
+| `lab_release_gate` | `workflow_call` 调 `_lab-qualification.yml`（`mode: release`）：实验室 runner 上的 exact-artifact 发行资格验证——**这一关不过，什么都不发** |
+| `validate_artifacts` | 合并三条腿的清单并**逐条核对 sha256 与 source_sha** → provenance → SBOM → SHA256SUMS → Codex 插件清单 → release notes。**演练也跑这一整段** |
+| `github_release` | 建 GitHub Release，**一次挂全部**（只在 `publish=true`） |
+| `pypi` | 发到 PyPI（只在 `publish=true`，且需开闸，见下） |
 
-发布 job 用的是 `build` 上传的**同一份** artifact——GitHub Release 上的 wheel
-与 PyPI 上的必须字节一致，否则「检查更新」装到的和 `pip install` 装到的会是两个
-不同的东西。`lab_release_gate` 验的也是这同一份 wheel，不重新构建。
+```
+tag push / workflow_dispatch
+        │
+      trust ──┬──► build ────────────────┐
+              ├──► desktop（workflow_call）┤
+              └──► lab_release_gate ──────┴──► validate_artifacts
+                   （workflow_call）                  │
+                                          publish=true 才继续
+                                                 ├─ github_release
+                                                 └─ pypi
+```
 
-桌面链（`desktop-tauri.yml`）有同构的 `trust` job 与**发行签名门禁**：
-发行构建（push tag / attach=true）缺任一签名、公证或 updater 私钥直接失败，
-不再是 warning 后继续；第三方 Actions 在两条 secret-bearing 工作流里一律
-钉死到 commit SHA。
+## `publish=false`：正式 tag 不该承担「第一次测这条链」
+
+**推荐流程：**
+
+```bash
+# 1. main 上定好版本，拿到精确 SHA
+git rev-parse origin/main
+
+# 2. 在那个 SHA 上跑一次完整演练（默认就是 publish=false）
+gh workflow run release.yml --ref main -f ref=<那个 SHA>
+
+# 3. 演练全绿之后，在**同一个 SHA** 上打正式 tag
+git tag -a v1.0.0 <那个 SHA> -m "v1.0.0" && git push origin v1.0.0
+```
+
+演练会在指定 SHA 上走完整条链——wheel/sdist、Windows 与 macOS 最终产物
+（含签名与公证）、发行资格验证、SBOM、checksum、provenance、updater 清单、
+产物清单校验——**唯独不建 Release、不发 PyPI、不打 tag**。
+
+**为什么非要有这一档**：v0.9.0 与 v0.9.1 两个正式 tag 都是在发布链上第一次
+被执行时炸掉的（一个是 SBOM 把 glob 当文件名，一个是汇总步骤自己挂掉），
+而 tag ruleset 是 immutable——它们至今改不动也删不掉，仓库里躺着两个没有
+Release 的 tag。完整经过见
+`docs/audit/2026-08-22-v1-release-process-audit.md` §5–6。
+
+## 产物清单是下游唯一的文件名出处
+
+三条构建腿各产出一份 `artifact-manifest-*.json`（role / path / sha256 /
+platform），`validate_artifacts` 合并成一份并校验：
+
+- 每个必须角色**恰好一个**（两个 wheel 谁都不会报错，而用户装到的和我们
+  验过的不是同一个）；
+- **`source_sha` 必须全都一样**——「同一个 tag」证明不了「同一个 commit」，
+  这是唯一能挡住两条腿分叉的地方；
+- 清单里**不许出现通配符**（`artifact_manifest.build` 直接拒绝）。
+
+SBOM、SHA256SUMS、provenance、updater 清单、Release 附件、PyPI 校验一律
+读这份清单，不再各自猜文件名——#63 那个 bug（`dist/*.whl` 喂给只认单个
+路径的 syft）就是七处各猜一次里的一处。
+
+发布 job 用的是 `build` 上传的**同一份** artifact，且在挂上去之前**再校验
+一次哈希**：下载 artifact 再上传是一次真实的搬运，而「Release 上挂的与
+发行资格验证过的不是同一个东西」是这条链上最不能接受的失败。
+
+## 发行资格验证只有一份定义
+
+`_lab-qualification.yml` 是唯一定义，`lab-ci.yml`（push/schedule）与
+`release.yml`（发布链）都 `uses:` 它，`mode` 只决定阈值、基线和跑哪几档。
+
+从前它在两个文件里各有一份手抄的 shell，两处的差别实测只有
+「`$LAB_MODE` vs 字面量 release」和一处换行——修一个 bug（#61）必须同时
+改两处，而抄两遍的代价不是多打字，是**总有一天只改了一处**。
+
+## 桌面链不再由 tag 触发，也不再等待任何东西
+
+`desktop-tauri.yml` 现在**只能被 `workflow_call` 调用**（或手动 dispatch
+单独构建，那时不挂 Release）。它拿的是 `trust` 已经验过的精确 SHA，
+构建完只把产物传成 workflow artifact；挂 Release 归 `github_release` 一家。
+
+从前它由同一个 tag 并行触发，构建完轮询 `gh release view` 最长 190 分钟
+等 release.yml 建出 Release。那不是「等太久」的问题：lab gate 的**排队**
+时间本身没有上界，而两条腿各自 checkout tag 意味着 wheel 与桌面产物**没有
+任何机制保证来自同一个 commit**。
+
+桌面链保留**发行签名门禁**：`publish=true` 的构建缺任一签名、公证或
+updater 私钥直接失败，不再是 warning 后继续；第三方 Actions 在所有
+secret-bearing 工作流里一律钉死到 commit SHA。
 
 > **为什么 PyPI 发布不是单独一个工作流**：Release 是本工作流用 `GITHUB_TOKEN`
 > 建的，而 GitHub 明确规定 `GITHUB_TOKEN` 触发的事件**不会**再触发新的工作流运行

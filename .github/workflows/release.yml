@@ -1,5 +1,32 @@
 name: Release
 
+# **这是发布的唯一编排入口。** 桌面构建经 `workflow_call` 在这里被调用，
+# 不再由 tag 自己触发、也不再轮询等 Release 出现（那段 190 分钟的
+# `seq 1 380 … sleep 30` 已经删掉）。
+#
+#   trust → build ─┬─► lab_release_gate ─┐
+#                  ├─► desktop（workflow_call）─┤
+#                  └────────────────────────────┴─► validate_artifacts
+#                                                        │
+#                                                   publish（只在 publish=true）
+#                                                        ├─ github_release
+#                                                        └─ pypi
+#
+# **publish=false 是默认。** 一次 workflow_dispatch 演练会在指定的精确 SHA 上
+# 走完整条链——wheel/sdist、Windows 与 macOS 最终产物（含签名公证）、
+# 发行资格验证、SBOM、checksum、provenance、updater 清单、产物清单校验
+# ——**唯独不建 Release、不发 PyPI、不打 tag**。
+#
+# 为什么非要有这一档：v0.9.0 与 v0.9.1 两个正式 tag 都是在发布链上第一次
+# 被执行时炸掉的，而 tag ruleset 是 immutable——它们至今改不动也删不掉，
+# 仓库里躺着两个没有 Release 的 tag。**正式 tag 不该承担「第一次测试这条链」
+# 的职责。** 推荐流程：
+#
+#   main 上定好版本
+#     → workflow_dispatch(ref=<精确 SHA>, publish=false)   ← 完整演练
+#     → 演练全绿之后，在**同一个 SHA** 上打正式 tag
+#     → tag 触发同一套编排并 publish
+#
 # 打 tag 即发布：v0.1.0 → 构建一次 → 建 GitHub Release → 发 PyPI。
 #
 # 三个 job 共用 build 产出的**同一份**产物：GitHub Release 上的 wheel 与 PyPI 上的
@@ -13,11 +40,19 @@ on:
     tags: ["v*"]
   workflow_dispatch:
     inputs:
-      tag:
-        description: "要发布的 tag（如 v0.1.0）"
+      ref:
+        description: "在哪个 commit 上跑（精确 SHA，或一个 tag / 分支名）"
         required: true
+        default: main
+      publish:
+        description: >-
+          建 Release / 发 PyPI。**默认关**——不打勾就是一次完整演练：
+          该造的产物一个不少、该跑的门禁一条不落，就是什么都不发布。
+        required: false
+        default: false
+        type: boolean
       pypi:
-        description: "发到哪里（演练选 testpypi）"
+        description: "publish 打勾时发到哪里"
         required: true
         default: none
         type: choice
@@ -49,25 +84,107 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
+      version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.resolve.outputs.tag }}
+      publish: ${{ steps.resolve.outputs.publish }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
       - id: resolve
         env:
-          TAG: ${{ inputs.tag || github.ref_name }}
+          EVENT: ${{ github.event_name }}
+          TAG: ${{ github.ref_name }}
+          REF_IN: ${{ inputs.ref }}
+          PUBLISH_IN: ${{ inputs.publish }}
         run: |
           set -euo pipefail
-          if ! SHA="$(git rev-parse --verify "refs/tags/${TAG}^{commit}" 2>/dev/null)"; then
-            echo "::error::$TAG 不是本仓库里的一个 tag——拒绝进入发布链"
-            exit 1
+
+          if [ "$EVENT" = "push" ]; then
+            # tag 触发：tag → 精确 SHA。**永远 publish**。
+            if ! SHA="$(git rev-parse --verify "refs/tags/${TAG}^{commit}" 2>/dev/null)"; then
+              echo "::error::$TAG 不是本仓库里的一个 tag——拒绝进入发布链"
+              exit 1
+            fi
+            REL_TAG="$TAG"
+            PUBLISH=true
+          else
+            # 手动触发：可以是精确 SHA、tag 名或分支名。
+            if ! SHA="$(git rev-parse --verify "${REF_IN}^{commit}" 2>/dev/null)"; then
+              echo "::error::解析不了 ref=$REF_IN"
+              exit 1
+            fi
+            REL_TAG=""
+            PUBLISH="${PUBLISH_IN:-false}"
           fi
+
+          # **可达性对两条路都要验。** 这条门禁站在 PyPI OIDC 与 Release 写
+          # 权限前面：一个指向未经评审 commit 的 ref 绝不能进入任何
+          # secret-bearing 路径（审计 P1-04）。演练也不放行——演练用的 runner、
+          # secret 与正式发布是同一批。
           if ! git merge-base --is-ancestor "$SHA" origin/main; then
-            echo "::error::$TAG → $SHA 不可达于 origin/main——发布只接受已经合并进受保护 main 的提交"
+            echo "::error::$SHA 不可达于 origin/main——发布链只接受已经合并进受保护 main 的提交"
             exit 1
           fi
-          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
-          echo "✅ $TAG → $SHA（可达 origin/main）"
+
+          # **版本号从源码读，不从 tag 名推。** tag 名是人手打的，
+          # 源码里那个才是 wheel 真正会带的版本；两者不一致必须当场发现，
+          # 而不是等 PyPI 拒收（PyPI 上同名文件永远不能重传）。
+          VER="$(git show "$SHA:src/tavotto/__init__.py" \
+                 | sed -n 's/^__version__ = "\(.*\)"$/\1/p')"
+          if [ -z "$VER" ]; then
+            echo "::error::读不出 $SHA 上的 __version__"
+            exit 1
+          fi
+          if [ -n "$REL_TAG" ] && [ "$REL_TAG" != "v$VER" ]; then
+            echo "::error::tag $REL_TAG 与源码版本 $VER 对不上"
+            exit 1
+          fi
+          [ -n "$REL_TAG" ] || REL_TAG="v$VER"
+
+          # **tag 已经存在时，它必须指向同一个 commit。**
+          # `action-gh-release` 的 `target_commitish` 只在 tag **不存在**时
+          # 起作用；tag 已存在的话它直接复用现有那个，而现有 tag 完全可能
+          # 指向别处 —— 那时 Release 挂的 tag 与产物来自两个 commit，
+          # 而没有任何一步会报错。
+          #
+          # 这不是假想：仓库里此刻就躺着 v0.9.0 与 v0.9.1 两个指向旧 commit、
+          # 且因为 immutable ruleset 改不动也删不掉的 tag。一次
+          # 「补发 v0.9.1」的手工 dispatch 正好会踩中。
+          # （Codex 在第二轮上指出。）
+          if EXISTING="$(git rev-parse --verify "refs/tags/${REL_TAG}^{commit}" 2>/dev/null)"; then
+            if [ "$EXISTING" != "$SHA" ]; then
+              echo "::error::tag $REL_TAG 已经存在，且指向 $EXISTING —— 而本次要发布的是 $SHA。"
+              echo "::error::tag ruleset 是 immutable，它移不动。要发这个 SHA 请换一个版本号。"
+              exit 1
+            fi
+            echo "· tag $REL_TAG 已存在且指向同一个 commit，复用它"
+          fi
+
+          {
+            echo "sha=$SHA"
+            echo "version=$VER"
+            echo "tag=$REL_TAG"
+            echo "publish=$PUBLISH"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "✅ $SHA（可达 origin/main）· 版本 $VER · tag $REL_TAG · publish=$PUBLISH"
+          {
+            echo "### 发布编排"
+            echo ""
+            echo "| 项 | 值 |"
+            echo "|---|---|"
+            echo "| 触发 | \`$EVENT\` |"
+            echo "| SHA | \`$SHA\` |"
+            echo "| 版本 | \`$VER\` |"
+            echo "| tag | \`$REL_TAG\` |"
+            echo "| **publish** | **$PUBLISH** |"
+            if [ "$PUBLISH" != "true" ]; then
+              echo ""
+              echo "> **演练（publish=false）**：产物照造、门禁照跑，"
+              echo "> 但**不建 Release、不发 PyPI**。"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
   build:
     needs: trust
@@ -95,14 +212,13 @@ jobs:
           python -m pip install --upgrade pip build twine
           python -m build
 
-      - name: 核对 tag 与包版本一致
+      - name: 核对包版本与 trust 解析出的一致
         env:
-          TAG: ${{ inputs.tag || github.ref_name }}
+          VER: ${{ needs.trust.outputs.version }}
         run: |
           set -euo pipefail
-          VER="${TAG#v}"
           test -f "dist/tavotto-${VER}-py3-none-any.whl" || {
-            echo "::error::tag $TAG 与 __init__.py 里的版本对不上；dist/ 实际内容："
+            echo "::error::造出来的 wheel 不是版本 $VER；dist/ 实际内容："
             ls dist/
             exit 1
           }
@@ -123,11 +239,68 @@ jobs:
           print('ok', tavotto.__version__)
           "
 
+      - name: 这条腿的产物清单
+        # **下游唯一的文件名出处。** 从前 SBOM、SHA256SUMS、provenance、
+        # Release 附件、PyPI 校验、exact artifact 冒烟七处各自猜一次
+        # ——#63 就是其中一处猜错了（把 `dist/*.whl` 喂给只认单个路径的 syft，
+        # 而那句 glob 被原样当成文件名）。
+        env:
+          VER: ${{ needs.trust.outputs.version }}
+          SOURCE_SHA: ${{ needs.trust.outputs.sha }}
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/artifact_manifest.py build \
+            --version "$VER" --source-sha "$SOURCE_SHA" \
+            --out dist/artifact-manifest-python.json \
+            --add "wheel:dist/tavotto-${VER}-py3-none-any.whl:python" \
+            --add "sdist:dist/tavotto-${VER}.tar.gz:python"
+
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: dist
           path: dist/
           if-no-files-found: error
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: artifact-manifest-python
+          path: dist/artifact-manifest-python.json
+          if-no-files-found: error
+
+  # ────────────────────────────────────────────────────────────────
+  # 桌面产物（Windows + macOS）。**由这里调用，不再由 tag 自己触发。**
+  #
+  # 从前它是一条独立 workflow，由同一个 tag 并行启动，构建完轮询
+  # `gh release view` 等 Release 出现（最长 190 分钟）。那个拓扑的毛病不是
+  # 「等太久」：
+  #   · 等待没有上界——lab gate 的**排队**时间本身没有上界；
+  #   · 两条腿各自 checkout tag，而 tag 是可移动的引用，
+  #     **「同一个 tag」证明不了「同一个 commit」**。
+  # 现在它拿的是 trust 已经验过、已经解析好的精确 SHA，产物清单里
+  # 带着同一个 source_sha，validate_artifacts 会逐条核对。
+  # ────────────────────────────────────────────────────────────────
+  desktop:
+    needs: trust
+    uses: ./.github/workflows/desktop-tauri.yml
+    with:
+      sha: ${{ needs.trust.outputs.sha }}
+      version: ${{ needs.trust.outputs.version }}
+      # **恒为 true，不跟着 publish 走。**
+      # 从前这里传的是 `publish`，于是 `publish=false` 的演练把桌面侧的
+      # 签名凭据门禁、provenance 与整个 `updater-manifest` job 一起关掉了
+      # ——演练于是验不到发布链上**最容易悄悄坏掉的那两段**：签名/公证，
+      # 和 latest.json（少了它，桌面用户永远查不到新版本，而且全绿）。
+      #
+      # 「是不是发行构建」与「挂不挂 Release」是两件事。本工作流根本不挂
+      # Release（那归下面的 github_release job），所以它不需要知道 publish。
+      # 演练的定义是**产物一个不少、门禁一条不落，只是不发布**。
+      release_build: true
+    secrets: inherit
+    permissions:
+      contents: read
+      actions: read
+      id-token: write        # 桌面产物 provenance
+      attestations: write
 
   # ────────────────────────────────────────────────────────────────
   # 发行资格验证（实验室 Linux runner）
@@ -146,218 +319,129 @@ jobs:
   # ────────────────────────────────────────────────────────────────
   lab_release_gate:
     needs: [build, trust]
-    runs-on: [self-hosted, linux, x64, tavotto-lab]
-    timeout-minutes: 180
-    concurrency:
-      # 与 lab-ci.yml 共用同一个槽：benchmark 与 soak 都要求独占机器。
-      group: lab-qualification
-      cancel-in-progress: false
-    env:
-      LAB_MODE: release
-      TAVOTTO_CI_STATE_ROOT: ${{ vars.LAB_CI_STATE_ROOT || '/srv/tavotto-ci' }}
-      LAB_PERF_GATE: ${{ vars.LAB_PERF_GATE || 'false' }}
-      GITHUB_TOKEN: ${{ github.token }}
-      TZ: UTC
-      LANG: C.UTF-8
-      LC_ALL: C.UTF-8
-      PYTHONHASHSEED: "0"
-      MPLBACKEND: Agg
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          ref: ${{ needs.trust.outputs.sha }}
-          clean: true
+    # **步骤定义在 `_lab-qualification.yml`——与 lab-ci.yml 用的是同一份。**
+    # `use_prebuilt_dist: true` 让它验 build job 产出的**那一份** wheel，
+    # 不是「同一个 commit 重新造一个差不多的东西」。
+    #
+    # 这条门禁刻意**没有 fallback**：「runner 离线 → 跳过 gate → 照发」
+    # 等于它在最需要的时候自动消失。runner 不可用时这个 job 会排队或失败，
+    # 那正是期望行为。
+    uses: ./.github/workflows/_lab-qualification.yml
+    with:
+      mode: release
+      sha: ${{ needs.trust.outputs.sha }}
+      use_prebuilt_dist: true
+    secrets: inherit
 
-      # **同一份产物**：不重新 build。这是整条门禁的立足点。
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with: { name: dist, path: dist }
-
-      - name: 开跑前体检
-        # `--reap-stale`：发现归属本 CI 的遗留 Tavotto 进程就自己清掉，
-        # **并复检确认真的清干净了**（清不掉照旧阻断）。
-        # 从前没有这一档，于是 2026-08-22 05:55 起**每一次** lab run 都被同一个
-        # 手工探测留下的进程挡在门外——而唯一的解法是有人 SSH 上去手动清。
-        # `cleanup.py`（会 kill）排在体检**之后**，体检失败它就永远轮不到：
-        # **自愈动作排在检测它的那道门之后，等于没有自愈。**
-        run: python3 scripts/ci/lab_preflight.py --mode release --reap-stale
-
-      - name: 清理上一轮残留
-        run: python3 scripts/ci/cleanup.py
-
-      - name: 候选包验收（exact artifact）
-        run: python3 scripts/ci/lab_acceptance.py --dist dist
-
-      - name: 建验证环境
-        id: venv
-        run: |
-          set -euo pipefail
-          VENV="$TAVOTTO_CI_STATE_ROOT/tmp/venv-rel-${GITHUB_RUN_ID}"
-          rm -rf "$VENV"
-          python3 -m venv "$VENV"
-          "$VENV/bin/pip" install -q --disable-pip-version-check --upgrade pip
-          "$VENV/bin/pip" install -q -e ".[dev,ci]"
-          # **科学栈版本取自 packaging/runtime-lock.json**，不用 `pip install matplotlib`。
-          # 视觉基线是像素级的：matplotlib 换个小版本就可能改掉抗锯齿或字体度量，
-          # 让整片 corpus 在一次与产品无关的依赖升级里同时变红。用锁文件还有第二个
-          # 好处——CI 的渲染环境与桌面版用户拿到的内置 runtime 逐字一致，
-          # 基线因此真正代表「用户会看到的那张图」。
-          # shellcheck disable=SC2046
-          "$VENV/bin/pip" install -q $(python3 scripts/ci/runtime_pins.py --include-corpus)
-          echo "python=$VENV/bin/python" >> "$GITHUB_OUTPUT"
-
-      - name: slow / 集成用例
-        run: |
-          set -euo pipefail
-          # 判据是 pytest 的**退出码**，不是它打给人看的那段文字。
-          # 原来数的是 `--collect-only -q` 里有几行含 "::"，而 pytest 9 把这段
-          # 输出改成了按文件汇总（`tests/test_bootstrap.py: 1`，一个 "::" 都
-          # 没有）——于是 dependabot 那次 8.4.2 → 9.0.3 的升级**静默打断了这道
-          # 门禁**，症状还与真实原因毫不相干（报「标记被删」，而标记好好的）。
-          # 没人发现，是因为这条实验室通道当时根本没有 runner 领得走。
-          # 5 = EXIT_NOTESTSCOLLECTED，4 = 收集出错，都是 pytest 的稳定常量。
-          set +e
-          ${{ steps.venv.outputs.python }} -m pytest -m slow --collect-only -q \
-              > slow-collect.log 2>&1
-          rc=$?
-          set -e
-          case "$rc" in
-            0) echo "'-m slow' 选中了用例" ;;
-            5) echo "::error::'-m slow' 一条都没选中。要么标记被删/改名，要么 pytest.ini 的 markers 变了。"
-               echo "::error::空转的门禁比没有门禁更坏——它还在报平安。"
-               tail -20 slow-collect.log
-               exit 1 ;;
-            *) echo "::error::收集 '-m slow' 时出错（exit $rc）——原来这里 2>/dev/null 把它整个吞掉了"
-               tail -40 slow-collect.log
-               exit 1 ;;
-          esac
-          ${{ steps.venv.outputs.python }} -m pytest -q
-          ${{ steps.venv.outputs.python }} -m pytest -m slow -q
-
-      - name: 升级验收 N-1 → 候选
-        run: |
-          set -euo pipefail
-          # 用 glob 而不是 ls|grep：文件名里出现空格或非 ASCII 时 ls 的输出
-          # 没法安全地按行切。dist/ 里有且只有一个 wheel（lab_acceptance.py
-          # 会在上一步就为「多于一个」失败），所以这里直接展开。
-          shopt -s nullglob
-          WHEELS=(dist/*.whl)
-          if [ "${#WHEELS[@]}" -ne 1 ]; then
-            echo "::error::dist/ 里应有且仅有一个 wheel，实际 ${#WHEELS[@]} 个"
-            exit 1
-          fi
-          ${{ steps.venv.outputs.python }} scripts/ci/upgrade_acceptance.py \
-            --candidate "${WHEELS[0]}"
-
-      - name: Golden 视觉回归
-        run: |
-          ${{ steps.venv.outputs.python }} scripts/ci/visual_regression.py \
-            --python ${{ steps.venv.outputs.python }} --out "$RUNNER_TEMP/visual"
-
-      # 发行档的兼容性资格：`--gate release` 是唯一**连基线里已知的
-      # product_bug 都不放过**的档位——1.0 的 exit rule 是 P0 = 0。
-      # 详见 docs/ci/matplotlib-compatibility.md。
-      - name: Matplotlib 兼容性资格（发行档）
-        run: |
-          ${{ steps.venv.outputs.python }} scripts/ci/compat_matrix.py \
-            --all --fidelity --browser --gate release \
-            --python ${{ steps.venv.outputs.python }} \
-            --out "$RUNNER_TEMP/compat" \
-            --json "$TAVOTTO_CI_STATE_ROOT/reports/compat.json"
-
-      - name: 发行档 soak 与泄漏检测
-        run: |
-          ${{ steps.venv.outputs.python }} scripts/ci/soak.py \
-            --python ${{ steps.venv.outputs.python }} \
-            --iterations 800 --json "$RUNNER_TEMP/soak-metrics.json"
-
-      - name: 性能回归（候选版**不写基线**）
-        run: |
-          ${{ steps.venv.outputs.python }} scripts/ci/benchmark.py \
-            --python ${{ steps.venv.outputs.python }} --mode release --no-update
-
-      - name: 汇总
-        if: always()
-        # **解释器要有兜底。** 这一步是 `always()`，可它取的
-        # `steps.venv.outputs.python` 来自「建验证环境」——体检先失败时那一步
-        # 根本没跑，变量是空的，命令退化成直接执行脚本，而它是 100644（没有
-        # 执行位）→ `Permission denied`，退出码 126。
-        # 于是**这个「总是要跑」的汇总，恰恰在真的有失败要汇总时自己挂掉**
-        # ——2026-08-22 v0.9.1 发版时实测：体检报出遗留进程，而汇总没能把这条
-        # 结论写进 job summary，读的人只看到一个 126。
-        run: ${{ steps.venv.outputs.python || 'python3' }} scripts/ci/summarize.py --mode release
-
-      - name: 失败诊断包
-        if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: lab-release-gate-diagnostics-${{ github.run_id }}
-          path: |
-            ${{ env.TAVOTTO_CI_STATE_ROOT }}/reports/*.json
-            ${{ runner.temp }}/visual/**
-            ${{ runner.temp }}/compat/**
-            ${{ runner.temp }}/soak-metrics.json
-          retention-days: 14
-          if-no-files-found: warn
-
-      - name: 回收一次性环境
-        if: always()
-        run: rm -rf "$TAVOTTO_CI_STATE_ROOT/tmp/venv-rel-${GITHUB_RUN_ID}"
-
-  github_release:
-    # lab gate 不过就不建 Release。**刻意不给 fallback**：
-    # 「runner 离线 → 跳过 gate → 照发」等于这条门禁在最需要它的时候自动消失。
-    # runner 不可用时这个 job 会排队或失败，那正是期望行为。
-    needs: [build, trust, lab_release_gate]
+  # ────────────────────────────────────────────────────────────────
+  # 产物汇总与校验。**演练也跑这一整段** —— 这是 publish=false 有意义的
+  # 关键：SBOM、checksum、provenance、updater 清单、插件清单全都真的产出、
+  # 真的校验，只是最后不发布。从前这些步骤全在建 Release 那个 job 里，
+  # 而那个 job 自 v0.8.0 起**一次都没成功执行过**，于是 #63 那个 bug
+  # （SBOM 拿到一串 glob）在仓库里躺了好几周，没有任何信号。
+  # ────────────────────────────────────────────────────────────────
+  validate_artifacts:
+    needs: [trust, build, desktop, lab_release_gate]
     runs-on: ubuntu-latest
+    outputs:
+      has_body: ${{ steps.notes.outputs.has_body }}
     permissions:
-      contents: write
-      # 供应链证明（审计 P1-04）：为 wheel/sdist 签发 build provenance
-      id-token: write
+      contents: read
+      id-token: write          # provenance 签发
       attestations: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ needs.trust.outputs.sha }}
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with: { name: dist, path: dist }
-      # 插件清单那步要跑 Python（这个 job 原本只用 bash，没装过）
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with: { python-version: "3.13" }
 
-      # 供应链证明与 SBOM（审计 P1-04 / Gate B）：
-      # - provenance：把「这份 wheel 出自本仓库这个 workflow 的这次运行」签成
-      #   可验证的 attestation（用户 `gh attestation verify dist/*.whl -R Tavotto/Tavotto`）
-      # - SBOM：wheel 的依赖清单（SPDX），随 Release 附上
-      # - SHA-256：发布页正文之外再给一份校验文件
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with: { name: dist, path: dist }
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: desktop
+          pattern: desktop-tauri-*
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: manifests
+          pattern: artifact-manifest-*
+      # **不再 continue-on-error。** 桌面链现在恒以 release_build=true 运行，
+      # `updater-manifest` job 因此总会产出 latest.json（产不出来它自己就红了，
+      # 那是 P1-07 有意的硬失败）。允许这一步失败，等于把一次 artifact 传输
+      # 或改名故障变成「发了一个没有 latest.json 的 Release」——而那意味着
+      # 桌面用户永远查不到新版本，且整条链全绿。v0.7.0 就是这么发出去的。
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with: { name: updater-manifest, path: out }
+
+      - name: 把桌面产物摊平到 dist/
+        # 各条腿的清单记的路径相对各自的 out/；合并之后要能在同一个目录里
+        # 逐个核对哈希，所以先摊平，再把清单里的路径也改成同一套。
+        shell: bash
+        run: |
+          set -euo pipefail
+          find desktop -mindepth 2 -type f -print0 | xargs -0 -I{} mv -n {} dist/
+          ls -la dist/
+
+      - name: 合并并校验产物清单
+        # **这一步是「同一个 SHA」真正被证明的地方。**
+        # 「同一个 tag」证明不了它——tag 是可移动的引用，两条腿各自 checkout
+        # 时它可能已经指向别处，而没有任何一步会报错。
+        env:
+          VER: ${{ needs.trust.outputs.version }}
+          SOURCE_SHA: ${{ needs.trust.outputs.sha }}
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/normalise_manifest_paths.py manifests --into dist
+          python3 scripts/ci/artifact_manifest.py merge \
+            manifests/*/artifact-manifest-*.json --out artifact-manifest.json
+          python3 scripts/ci/artifact_manifest.py verify artifact-manifest.json \
+            --require wheel,sdist,windows-installer,macos-installer \
+            --version "$VER" --source-sha "$SOURCE_SHA"
+
+      - name: 从清单里取出具体路径（单值输入只能收这个）
+        id: paths
+        run: |
+          set -euo pipefail
+          # **`out/` 要在这里就建好。** 2026-08-22 实测（run 32578844828，
+          # `github_release` 这个 job **有史以来第一次真正执行**）：#63 的修复
+          # 生效了，syft 拿到具体路径并成功扫完——然后 sbom-action 写输出时
+          # 报 `ENOENT: no such file or directory, open 'out/…'`，因为
+          # `mkdir -p out` 在**下一步**（SHA-256 那步）才做。
+          #
+          # 这正是这条链的固有形状：每一步都是第一次执行，于是一步一步地
+          # 依次失败。`publish=false` 演练就是为了让这种失败发生在演练里，
+          # 而不是发生在一个改不动也删不掉的正式 tag 上。
+          #
+          # **不靠上面那个 download-artifact 顺带建出 out/**：它带着
+          # `continue-on-error`（没配 minisign 私钥时那个 artifact 不存在），
+          # 于是 out/ 存不存在取决于有没有配签名密钥——一个下游步骤的成败
+          # 取决于一件与它完全无关的事，那种耦合迟早出事。
+          mkdir -p out
+          W="$(python3 scripts/ci/artifact_manifest.py path artifact-manifest.json --role wheel)"
+          echo "wheel=$W" >> "$GITHUB_OUTPUT"
+          echo "SBOM 输入: $W"
+
       - name: 构建产物 provenance
+        # 用户可用 `gh attestation verify <文件> -R Tavotto/Tavotto` 验证
+        # 「这份产物出自本仓库这次受信 SHA 的构建」（审计 P1-04 / Gate B）。
+        # subject-path **明确支持多值 glob**，与只收单个路径的 syft 不同。
         uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
         with:
           subject-path: |
             dist/*.whl
             dist/*.tar.gz
-
-      # syft 的 `file:` 收的是**一个具体路径**，不是 glob——`dist/*.whl` 会被
-      # 原样当成文件名，报 `no source providers were able to resolve the input`。
-      # 这一步是 #45 加的，而 `github_release` 这个 job 在那之后**从来没成功
-      # 跑到过**（v0.9.0 的几轮全卡在 lab gate 之前），所以没人发现。
-      # 2026-08-22 v0.9.1 发版时第一次真正执行，当场失败。
-      - name: 解析 wheel 的真实路径（syft 不认 glob）
-        id: wheelpath
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          WHEELS=(dist/*.whl)
-          if [ "${#WHEELS[@]}" -ne 1 ]; then
-            echo "::error::dist/ 里应有且仅有一个 wheel，实际 ${#WHEELS[@]} 个"
-            exit 1
-          fi
-          echo "path=${WHEELS[0]}" >> "$GITHUB_OUTPUT"
-          echo "SBOM 输入: ${WHEELS[0]}"
+            dist/*.exe
+            dist/*.dmg
 
       - name: 生成 SBOM（SPDX）
+        # syft 的 `file:` 收的是**一个具体路径**，不是 glob——`dist/*.whl`
+        # 会被原样当成文件名，报 `no source providers were able to resolve
+        # the input`（#63）。现在这个路径由产物清单解出来，**结构上不可能是
+        # glob**：`artifact_manifest.build` 直接拒绝含通配符的条目。
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
-          file: ${{ steps.wheelpath.outputs.path }}
+          file: ${{ steps.paths.outputs.wheel }}
           format: spdx-json
           output-file: out/tavotto-sbom.spdx.json
           upload-artifact: false
@@ -367,25 +451,44 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out
+          # 清单自己也进 checksum：它是下游七个消费者的输入，
+          # 被换掉的话所有人一起读到错的东西。
+          cp artifact-manifest.json dist/
           (cd dist && shasum -a 256 -- *) > out/SHA256SUMS.txt
           cat out/SHA256SUMS.txt
+
+      - name: 生成 Codex 插件清单与安装包
+        # 插件的更新通道：装了插件的用户下次调用时就是靠这份清单看到新版本。
+        # **刻意留在这条链上而不是 desktop 那边的 updater-manifest**——
+        # 那个 job 依赖 minisign 私钥，没配就整个跳过；挂在那儿等于
+        # 「哪天没配签名密钥，插件的更新通道就悄悄停了」，而且全绿。
+        env:
+          TAG: ${{ needs.trust.outputs.tag }}
+        run: |
+          set -euo pipefail
+          python scripts/make_plugin_manifest.py --tag "$TAG" \
+            --out out/codex-plugin.json \
+            --zip "out/codex-plugin-${TAG#v}.zip" \
+            --published-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          cat out/codex-plugin.json
 
       - name: 找手写的 release notes
         id: notes
         env:
-          TAG: ${{ inputs.tag || github.ref_name }}
+          TAG: ${{ needs.trust.outputs.tag }}
           SIGNPATH_ENABLED: ${{ vars.SIGNPATH_ENABLED }}
         run: |
           set -euo pipefail
           # 自动生成的 notes 只是一串提交标题，用户看不出该不该升级。
           # docs/release-notes/<tag>.md 存在就用它，缺失则退回自动生成。
           F="docs/release-notes/${TAG}.md"
+          mkdir -p out
           if [ -f "$F" ]; then
             # SignPath Foundation 的条件要求「Code signing policy」这个词组同时
             # 出现在项目主页**与下载/发布页**上。README 那半已经有了，这里补发布页。
             # 措辞按 SIGNPATH_ENABLED 分岔：没开时如实说这一版没签名——把未签名的
             # 包描述成已签名，正是 policy 里明令禁止的那件事。
-            B="$RUNNER_TEMP/release-body.md"
+            B="out/release-body.md"
             cp "$F" "$B"
             {
               printf '\n\n---\n\n### Code signing policy\n\n'
@@ -397,53 +500,126 @@ jobs:
               printf 'See the full [code signing policy](https://github.com/%s/blob/%s/docs/code-signing-policy.md) and [privacy policy](https://github.com/%s/blob/%s/docs/privacy.md).\n' \
                      "$GITHUB_REPOSITORY" "$TAG" "$GITHUB_REPOSITORY" "$TAG"
             } >> "$B"
-            echo "path=$B" >> "$GITHUB_OUTPUT"
+            echo "has_body=1" >> "$GITHUB_OUTPUT"
           else
             echo "::warning::没有 $F，本次用自动生成的 notes（一串提交标题）"
-            echo "path=" >> "$GITHUB_OUTPUT"
+            echo "has_body=0" >> "$GITHUB_OUTPUT"
           fi
 
-      # Codex 插件的更新通道：装了插件的用户下次调用时就是靠这份清单看到新版本。
-      # **刻意放在这里而不是 desktop-tauri.yml 的 updater-manifest**——那个 job
-      # 依赖桌面构建产物与 minisign 私钥，没配私钥时整个跳过；挂在那儿等于
-      # 「哪天没配签名密钥，插件的更新通道就悄悄停了」，而且全绿。
-      - name: 生成 Codex 插件清单与安装包
+      - name: 汇总这次的产物
+        if: always()
         env:
-          TAG: ${{ inputs.tag || github.ref_name }}
+          PUBLISH: ${{ needs.trust.outputs.publish }}
+          SHA: ${{ needs.trust.outputs.sha }}
         run: |
           set -euo pipefail
-          python scripts/make_plugin_manifest.py --tag "$TAG" \
-            --out out/codex-plugin.json \
-            --zip "out/codex-plugin-${TAG#v}.zip" \
-            --published-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          cat out/codex-plugin.json
+          if [ -f artifact-manifest.json ]; then
+            python3 -c "
+          import json
+          m = json.load(open('artifact-manifest.json'))
+          print(f\"### 本次产物 · {m['version']} · \`{m['source_sha'][:12]}\`\")
+          print()
+          print('| role | 文件 | 平台 | sha256 |')
+          print('|---|---|---|---|')
+          for a in m['artifacts']:
+              print(f\"| \`{a['role']}\` | \`{a['path'].split('/')[-1]}\` | {a['platform']} | \`{a['sha256'][:16]}…\` |\")
+          " >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### 本次产物" >> "$GITHUB_STEP_SUMMARY"
+            echo "（产物清单没造出来——上游步骤失败了）" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ "$PUBLISH" != "true" ]; then
+            {
+              echo ""
+              echo "> **演练（publish=false）到此为止**：以上产物全部真实存在并已校验，"
+              echo "> 但**不会**建 Release、不会发 PyPI。"
+              echo "> 要发布：在同一个 SHA \`$SHA\` 上打 tag。"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: 上传全部发行资产
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-assets
+          path: |
+            dist/*
+            out/*
+          if-no-files-found: error
+
+  # ────────────────────────────────────────────────────────────────
+  # 建 Release。**只在 publish=true 时执行**，而且**一次挂全部**——
+  # 从前 wheel/SBOM 由这里挂、桌面产物由 desktop-tauri.yml 自己挂、
+  # latest.json 由第三个 job 挂，三方各写一次同一个 Release，还要互相等。
+  # ────────────────────────────────────────────────────────────────
+  github_release:
+    needs: [trust, validate_artifacts]
+    if: needs.trust.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.trust.outputs.sha }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with: { python-version: "3.13" }
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with: { name: release-assets, path: assets }
+
+      - name: 校验要挂上去的就是验过的那一份
+        # 下载再上传是一次真实的搬运，中间任何一环出错都可能改内容。
+        # 校验一次几乎不要钱，而「Release 上挂的与发行资格验证过的不是同一个
+        # 东西」是这条链上最不能接受的失败。
+        env:
+          VER: ${{ needs.trust.outputs.version }}
+          SOURCE_SHA: ${{ needs.trust.outputs.sha }}
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/artifact_manifest.py verify \
+            assets/dist/artifact-manifest.json \
+            --base assets \
+            --require wheel,sdist,windows-installer,macos-installer \
+            --version "$VER" --source-sha "$SOURCE_SHA"
 
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
-          tag_name: ${{ inputs.tag || github.ref_name }}
+          tag_name: ${{ needs.trust.outputs.tag }}
+          # **tag 不存在时，action 会替我们建一个 —— 必须钉在受信 SHA 上。**
+          # 不给 target_commitish 的话它用 `GITHUB_SHA`，也就是 dispatch 时
+          # 的 ref（例如 `main` 的当前 HEAD），而不是 trust 解析并验证过的
+          # 那个 SHA。两者在「dispatch 之后、publish 之前 main 又前进了」时
+          # 就是两个 commit —— 而这发生在整条链**最不可逆的那一步**：
+          # tag ruleset 是 immutable，建错了改不动也删不掉。
+          target_commitish: ${{ needs.trust.outputs.sha }}
           draft: false
-          body_path: ${{ steps.notes.outputs.path }}
-          generate_release_notes: ${{ steps.notes.outputs.path == '' }}
+          body_path: ${{ needs.validate_artifacts.outputs.has_body == '1' && 'assets/out/release-body.md' || '' }}
+          generate_release_notes: ${{ needs.validate_artifacts.outputs.has_body != '1' }}
           # codex-plugin.json 的**文件名不能改**：插件拉的是
           # releases/latest/download/codex-plugin.json（见 update_check.DEFAULT_URL）
+          # `files` 明确支持多行 glob——与只收单个路径的 syft 不同。
           files: |
-            dist/*.whl
-            dist/*.tar.gz
-            out/SHA256SUMS.txt
-            out/tavotto-sbom.spdx.json
-            out/codex-plugin.json
-            out/codex-plugin-*.zip
+            assets/dist/*
+            assets/out/SHA256SUMS.txt
+            assets/out/tavotto-sbom.spdx.json
+            assets/out/codex-plugin.json
+            assets/out/codex-plugin-*.zip
+            assets/out/latest.json
 
   pypi:
     # 同上：lab gate 不过就不发 PyPI。PyPI 上的同名文件永远不能重传，
     # 所以这里比 Release 更没有「先发了再说」的余地。
-    needs: [build, lab_release_gate]
-    # PyPI 侧的 trusted publisher 配好之前，自动发布只会红一次给人添堵——
-    # 用仓库变量 PYPI_PUBLISH_ENABLED=true 开闸（Settings → Variables）。
-    # 手动 dispatch 时按 inputs.pypi 走，none 则整个跳过。
+    needs: [trust, validate_artifacts]
+    # **publish=false 时一律不发。** 这是演练与发布之间唯一的开关，
+    # 而 PyPI 比 Release 更没有「先发了再说」的余地：同名文件永远不能重传。
+    #
+    # PyPI 侧的 trusted publisher 配好之前，tag 触发的自动发布只会红一次
+    # 给人添堵——用仓库变量 PYPI_PUBLISH_ENABLED=true 开闸
+    # （Settings → Variables）。手动触发时按 inputs.pypi 走，none 则跳过。
     if: >-
-      (github.event_name == 'push' && vars.PYPI_PUBLISH_ENABLED == 'true') ||
-      (github.event_name == 'workflow_dispatch' && inputs.pypi != 'none')
+      needs.trust.outputs.publish == 'true' && (
+        (github.event_name == 'push' && vars.PYPI_PUBLISH_ENABLED == 'true') ||
+        (github.event_name == 'workflow_dispatch' && inputs.pypi != 'none')
+      )
     runs-on: ubuntu-latest
     # PyPI 上的项目名一旦被占用就再也拿不回来，同名文件也永远不能重传。
     # environment 让正式发布可以卡一道人工确认（给它加 required reviewers 即可）。
@@ -453,8 +629,42 @@ jobs:
     permissions:
       id-token: write     # OIDC 签发，Trusted Publishing 的必需权限
     steps:
+      # 要跑 `artifact_manifest.py`，所以这个 job 也得有仓库
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.trust.outputs.sha }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with: { python-version: "3.13" }
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with: { name: dist, path: dist }
+        with: { name: release-assets, path: assets }
+
+      - name: 只把 wheel 与 sdist 交给 PyPI
+        # `release-assets` 里还有安装包、SBOM、清单——PyPI 只收 wheel/sdist，
+        # 多喂一个它会整批拒收，而那时**前面的文件可能已经传上去了**
+        # （同名文件永远不能重传，等于这个版本号作废）。
+        #
+        # **路径从清单取，不 glob。** 上一版写的是
+        # `cp assets/dist/*.whl assets/dist/*.tar.gz dist/`——而摊平之后
+        # `dist/` 里的 `*.tar.gz` **同时匹配 Python sdist 与 macOS 的
+        # `Tavotto.app.tar.gz`**（那是桌面更新包）。于是这一步会把一个
+        # 桌面更新包交给 PyPI。
+        #
+        # 这正是「七个下游步骤各自猜文件名」（#63）的复发，而且发生在
+        # **刚刚引入产物清单的这条 PR 里** —— 清单就是为了让这种猜测不可能。
+        # （Codex 在第二轮上指出。）
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          M=assets/dist/artifact-manifest.json
+          for role in wheel sdist; do
+            src="assets/$(python3 scripts/ci/artifact_manifest.py path "$M" --role "$role")"
+            echo "PyPI ← $role: $src"
+            cp "$src" dist/
+          done
+          ls -la dist/
+          # 二次确认：交给 PyPI 的必须**恰好两个**文件
+          n=$(find dist -maxdepth 1 -type f | wc -l | tr -d ' ')
+          [ "$n" = "2" ] || { echo "::error::dist/ 里有 $n 个文件，PyPI 只该收 2 个"; exit 1; }
 
       - name: 发布到 TestPyPI
         if: inputs.pypi == 'testpypi'
