@@ -486,6 +486,31 @@ def test_every_caller_gates_the_sha_through_a_trust_job():
             f"{path.name}: sha 来自 {m.group(1)}，但那个 job 里没有 ancestry 判断")
 
 
+def test_the_exclusive_lab_slot_is_claimed_in_exactly_one_place():
+    """**同一个独占槽不许有第二个申请者——尤其不许是同一个 run 里的两级。**
+
+    `qualify` job 持有 `lab-qualification` 这个组，让两条调用链共用一台机器。
+    从前 `lab-ci.yml` 顶层**也**声明了同名组：workflow 级的槽由 run 持有，
+    然后 run 自己调用的 job 又去申请同一个槽——**它在等自己**。
+
+    表现极难查：8 秒内失败、`runner_name` 是 null、一个步骤都没有、
+    日志里什么都没有。看起来像「没有匹配的 runner」，而 runner 全都在线空闲。
+    2026-08-23 #66 合并后第一次真跑就撞上了。
+
+    判据是「这个组名在 workflows 目录里出现的次数」——一次，且在那份
+    可复用定义里。
+    """
+    hits = [(p.name, i + 1)
+            for p in sorted(WF.glob("*.yml"))
+            for i, ln in enumerate(p.read_text(encoding="utf-8").splitlines())
+            if ln.strip() == "group: lab-qualification"]
+    assert len(hits) == 1, (
+        f"独占槽 lab-qualification 被申请了 {len(hits)} 次：{hits}\n"
+        "—— 同一个 run 里两级同名会让 job 永远调度不出去（等自己）")
+    assert hits[0][0] == "_lab-qualification.yml", (
+        f"槽应该由那份唯一的资格定义持有，实际在 {hits[0][0]}")
+
+
 def test_qualification_is_defined_exactly_once():
     """`lab-ci.yml` 与 `release.yml` 调的是**同一个**可复用 workflow。
 

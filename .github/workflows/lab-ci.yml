@@ -65,12 +65,15 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  # 全仓库共用一个槽。benchmark 要稳定、soak 不该与 mutation 抢 CPU、
-  # 持久化状态不该并发写、golden baseline 不该被两个 job 同时读写。
-  # runner 端另有 flock 作为第二道保险（见 scripts/ci/bootstrap_lab_runner.sh）。
-  group: lab-qualification
-  cancel-in-progress: false
+# **这里刻意没有 workflow 级 concurrency。**
+# 独占槽由 `_lab-qualification.yml` 的 `qualify` job 自己持有——那是资格
+# 验证的唯一定义，两条调用链（本文件与 release.yml）因此自动共用同一个槽。
+#
+# 从前这里也有一个同名的 `lab-qualification` 组。资格验证抽成可复用
+# workflow 之后，**同一个 run 里 workflow 级与 job 级申请了同一个组**：
+# run 在等一个自己已经持有的槽，job 永远调度不出去——表现是 8 秒内失败、
+# 没有 runner、一个步骤都没有，而日志里什么都没有。
+# （2026-08-23 #66 合并后第一次真跑就撞上了。）
 
 env:
   # 顶层统一确定性环境。刻意**不**在这里固定中文 locale——
