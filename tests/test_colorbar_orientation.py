@@ -511,3 +511,213 @@ def test_flipping_back_returns_a_left_colorbar_to_the_left(library):
             f"翻回来之后 bbox.{axis} 变了：色条被搬了家"
     # 刻度也要回到左边（右边不该有）
     assert _tick_gids(back, CBAX, "y"), "竖色条的刻度应当在 y 轴上"
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 多宿主色条：1.0 的 guard（issue #69）
+#
+# `fig.colorbar(im, ax=[a1, a2])` 的色条视觉上横跨两个子图，而我们记的宿主
+# 只有一个——`_cb_target_rect()` 拿到的是 `cb.mappable.axes`，也就是第一个。
+# 翻转方向之后色条被缩到一图宽。实测（3.10.8 / 3.11.1 一致）：
+#
+#     a1 的 x 跨度  (0.125, 0.407)
+#     a2 的 x 跨度  (0.463, 0.745)
+#     翻转后        x0=0.125  宽 0.282     ← 只跨 a1
+#     应当          x0=0.125  宽 0.620
+#
+# 1.0 不修落位模型（那要把宿主从一个 axes 改成一组，`_cb_place` /
+# `_cb_target_rect` / `axes_follow` 三处按并集算）。这一轮做的是 guard：
+# **不宣称这条能力**，并给出稳定的 reason。
+#
+# 顺序是 detect → guard/hide → unsupported reason → issue → v1.1 fix
+# （docs/engineering/review-severity-policy.md §3）。
+# ═══════════════════════════════════════════════════════════════════════
+
+MULTI_SCRIPT = "fig_multi_cbar.py"
+MULTI_STEM = "CbarMulti"
+SINGLE_STEM = "CbarSingleForContrast"
+
+MULTI_LIBRARY = '''\
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+def main():
+    # 多宿主：一条色条横跨两个子图
+    fig, (a1, a2) = plt.subplots(1, 2, figsize=(6.0, 3.0))
+    im = a1.imshow(np.arange(64).reshape(8, 8), cmap="viridis")
+    a2.imshow(np.arange(64).reshape(8, 8), cmap="viridis")
+    fig.colorbar(im, ax=[a1, a2])
+    fig.savefig("CbarMulti.pdf")
+
+    # 同一张脚本里的**单宿主对照**：guard 只该收走多宿主那条，
+    # 不该顺手把常规色条的方向能力也藏了。
+    fig2, ax = plt.subplots(figsize=(4.0, 3.0))
+    im2 = ax.imshow(np.arange(64).reshape(8, 8), cmap="viridis")
+    fig2.colorbar(im2, ax=ax)
+    fig2.savefig("CbarSingleForContrast.pdf")
+'''
+
+
+@pytest.fixture(scope="module")
+def multi_library(tmp_path_factory):
+    figs = tmp_path_factory.mktemp("multi-cbar-figures")
+    (figs / MULTI_SCRIPT).write_text(MULTI_LIBRARY, encoding="utf-8")
+    return figs
+
+
+def _multi_render(figs, stem, patches=()):
+    w = pool.one_shot(MULTI_SCRIPT, str(figs), "main")
+    try:
+        w.ensure_built()
+        return w.override(stem, list(patches))
+    finally:
+        pool.discard(w)
+
+
+def _colorbar_el(man):
+    els = [e for e in man["elements"] if e.get("role") == "colorbar"
+           or e["gid"].endswith(".colorbar")]
+    assert els, f"这张图里没有色条元素：{[e['gid'] for e in man['elements']]}"
+    return els[0]
+
+
+def test_the_multi_host_predicate_matches_matplotlib(multi_library):
+    """判据本身先量一遍：`parents` 的长度就是宿主个数。
+
+    **不照抄注释里的结论，自己量。** 六种建法在开发机上逐个量过
+    （3.10.8）：`ax=ax` → 1，`ax=[a1,a2]` → 2，`ax=[a,b,c]` → 3，
+    `cax=` → 没有 `_colorbar_info`（按 1 算），独立 mappable 两种 → 1 / 2。
+    这里在 worker 的解释器里复量一次，免得两边的 matplotlib 版本不同。
+    """
+    probe = '''
+import json, numpy as np, matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib.cm import ScalarMappable
+
+def hosts(cb):
+    info = getattr(cb.ax, "_colorbar_info", None)
+    parents = info.get("parents") if isinstance(info, dict) else None
+    return len(parents) if parents else 1
+
+out = {}
+fig, ax = plt.subplots(); im = ax.imshow(np.arange(9).reshape(3,3))
+out["single"] = hosts(fig.colorbar(im, ax=ax)); plt.close(fig)
+
+fig, (a,b) = plt.subplots(1,2); im = a.imshow(np.arange(9).reshape(3,3))
+out["two"] = hosts(fig.colorbar(im, ax=[a,b])); plt.close(fig)
+
+fig, axs = plt.subplots(1,3); im = axs[0].imshow(np.arange(9).reshape(3,3))
+out["three"] = hosts(fig.colorbar(im, ax=list(axs))); plt.close(fig)
+
+fig, ax = plt.subplots(); im = ax.imshow(np.arange(9).reshape(3,3))
+cax = fig.add_axes([0.9,0.1,0.03,0.8])
+out["explicit_cax"] = hosts(fig.colorbar(im, cax=cax)); plt.close(fig)
+
+fig, (a,b) = plt.subplots(1,2)
+sm = ScalarMappable(cmap="viridis"); sm.set_array([])
+out["standalone_two"] = hosts(fig.colorbar(sm, ax=[a,b])); plt.close(fig)
+
+print(json.dumps(out))
+'''
+    import json
+    import subprocess
+    # **显式钉 utf-8**：不给的话 Windows 按系统代码页解码，探针里那些中文
+    # 一出现就把 stdout/stderr 静默丢掉（#57）。这条是仓库既有的硬门禁
+    # （`test_source_hygiene.py::test_windows_bound_subprocesses_pin_their_decoding`）
+    # ——本轮它当场逮到了这一处。
+    r = subprocess.run([WORKER_PY, "-c", probe], capture_output=True,
+                       text=True, encoding="utf-8", errors="replace",
+                       timeout=180)
+    assert r.returncode == 0, r.stderr[-800:]
+    got = json.loads(r.stdout.strip().splitlines()[-1])
+    assert got == {"single": 1, "two": 2, "three": 3,
+                   "explicit_cax": 1, "standalone_two": 2}, got
+
+
+def test_multi_host_colorbar_does_not_offer_orientation(multi_library):
+    """**能力表不许宣称一个会把排版弄坏的开关。**
+
+    一个「点了就把图排版弄坏」的控件，比一个不存在的控件糟糕得多——
+    用户没有理由预料到它会那样。
+    """
+    man = _multi_render(multi_library, MULTI_STEM)["manifest"]
+    el = _colorbar_el(man)
+    props = {f["prop"] for f in el["editable"]}
+    assert "orientation" not in props, (
+        "多宿主色条仍然宣称 orientation——那条改了会把色条缩到一图宽")
+    # 其余能力一条都不许受牵连：guard 收的是**一条 prop**，不是整个元素
+    for keep in ("label", "extend", "tick_fontsize", "visible"):
+        assert keep in props, f"guard 顺手把 {keep} 也收走了"
+
+
+def test_the_manifest_says_why_the_capability_is_missing(multi_library):
+    """少一个控件而不给理由，用户只会以为是漏了或者是坏了。
+
+    reason 是**稳定 code**（`multi_host_colorbar`），不是一句中文文案——
+    界面按 code 翻译，文案随时可改。
+    """
+    man = _multi_render(multi_library, MULTI_STEM)["manifest"]
+    el = _colorbar_el(man)
+    rows = el.get("unsupported_props")
+    assert rows, "多宿主色条没有说明为什么没有 orientation"
+    row = next(r for r in rows if r["prop"] == "orientation")
+    assert row["reason"] == "multi_host_colorbar"
+    assert row["detail"]["hosts"] == 2
+
+
+def test_a_single_host_colorbar_still_offers_orientation(multi_library):
+    """**对照组。** guard 只该收走多宿主那条。
+
+    没有这条的话，「把 orientation 整个删掉」也能让上面两条绿——
+    而那是把一个真能力藏起来，正是 `Arc` 那次的教训。
+    """
+    man = _multi_render(multi_library, SINGLE_STEM)["manifest"]
+    el = _colorbar_el(man)
+    props = {f["prop"] for f in el["editable"]}
+    assert "orientation" in props, "单宿主色条的方向能力被误伤了"
+    assert not el.get("unsupported_props"), \
+        f"单宿主色条不该有 unsupported_props：{el.get('unsupported_props')}"
+
+
+def test_an_old_document_cannot_sneak_the_patch_through(multi_library):
+    """**第二个消费点。**
+
+    manifest 不宣称挡不住一份旧文档：用户在 1.0 之前存过一条 orientation
+    override，重开时它照样会被发过来。只修一处等于没修。
+
+    这里要的是 **warning**（→ 写回阻断），不是静默忽略——
+    「写回成功了，但图和屏幕上不一样」是这条链上最不能接受的失败。
+    """
+    resp = _multi_render(multi_library, MULTI_STEM,
+                         [{"gid": _colorbar_el(
+                             _multi_render(multi_library, MULTI_STEM)["manifest"]
+                         )["gid"], "prop": "orientation", "value": "horizontal"}])
+    warns = resp.get("warnings") or []
+    assert warns, "旧文档里的 orientation 补丁被静默吃掉了"
+    assert any("multi_host_colorbar" in str(w) for w in warns), warns
+
+
+def test_the_host_count_predicate_has_one_implementation():
+    """判据只能有一处。两处必然漂开，而漂开的表现是
+    「manifest 不宣称，setter 却照改」——用户点不到，旧文档却能改坏。
+    """
+    import ast
+    from pathlib import Path
+    src = Path(__file__).resolve().parents[1] / "src" / "tavotto" / "engine"
+    tree = ast.parse((src / "overrides.py").read_text(encoding="utf-8"))
+    defs = [n for n in ast.walk(tree)
+            if isinstance(n, ast.FunctionDef) and n.name == "colorbar_host_count"]
+    assert len(defs) == 1, "colorbar_host_count 有多份定义"
+
+    # 两个消费方都必须调它，而不是各自去读 `_colorbar_info`
+    for fname, func in (("overrides.py", "_set_cb_orientation"),
+                        ("manifest.py", "_colorbar_fields")):
+        t = ast.parse((src / fname).read_text(encoding="utf-8"))
+        fn = next(n for n in ast.walk(t)
+                  if isinstance(n, ast.FunctionDef) and n.name == func)
+        called = {n.func.id for n in ast.walk(fn)
+                  if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
+        assert "colorbar_host_count" in called, \
+            f"{fname}::{func} 没有走那份唯一判据"
