@@ -1357,3 +1357,43 @@ def test_no_ci_script_hard_codes_a_posix_only_signal():
         "这些地方直接取了 POSIX 专属信号，Windows 上会 AttributeError：\n  "
         + "\n  ".join(offenders)
         + "\n用 getattr(signal, \"SIGKILL\", signal.SIGTERM) 代替")
+
+
+def test_artifact_manifest_summary_survives_a_windows_codepage(tmp_path):
+    """**产物清单的中文摘要不能因为终端编码而炸掉整条构建腿。**
+
+    GitHub 的 windows runner 上 Python 的 stdout 默认编码是 cp1252
+    （中文 Windows 上是 cp936），而这个脚本的摘要是中文的。修复之前
+    `print(render_summary(m))` 直接抛
+    `UnicodeEncodeError: 'charmap' codec can't encode characters in
+    position 4-9`——**产物已经造好了，倒在打印摘要这一步上**。
+    2026-08-23 v0.9.2 的 publish=false 演练实测到（run 32617869026），
+    desktop / build (windows-latest, nsis) 因此失败。
+
+    判据是**真的用那个编码跑一遍子进程**，不是「源码里有没有 reconfigure」：
+    后者换个写法就漏，而且证明不了输出真的写得出去。`PYTHONIOENCODING`
+    正是 CPython 用来设定 stdout 编码的那个开关，与 runner 上的默认行为同源。
+    """
+    import subprocess
+
+    repo = Path(__file__).resolve().parents[1]
+    script = repo / "scripts" / "ci" / "artifact_manifest.py"
+    wheel = tmp_path / "tavotto-0.9.2-py3-none-any.whl"
+    wheel.write_bytes(b"not a real wheel, only needs to exist and hash")
+    out = tmp_path / "artifact-manifest.json"
+
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "cp1252"      # 复现 runner 上的默认编码
+    env.pop("GITHUB_STEP_SUMMARY", None)    # 不往真的 step summary 里写
+
+    r = subprocess.run(
+        [sys.executable, str(script), "build",
+         "--version", "0.9.2", "--source-sha", "a" * 40,
+         "--add", f"wheel:{wheel.name}:any",
+         "--base", str(tmp_path), "--out", str(out)],
+        capture_output=True, text=True, encoding="utf-8", env=env)
+
+    assert r.returncode == 0, (
+        f"cp1252 下 build 挂了（returncode={r.returncode}）：\n{r.stderr}")
+    assert "UnicodeEncodeError" not in r.stderr, r.stderr
+    assert out.is_file(), "清单没写出来"
