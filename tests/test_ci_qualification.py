@@ -1258,7 +1258,7 @@ def test_a_replacement_process_cannot_slip_through_the_grace_period(monkeypatch)
     assert not alive, f"机器上还剩 {alive}，而体检说通过了"
 
 
-def test_an_explicit_root_is_actually_searched(monkeypatch):
+def test_an_explicit_root_is_actually_searched(monkeypatch, tmp_path):
     """`--kill-stale --root X` 要真的收 X 下面的进程。
 
     候选集由 `find_ci_owned_tavotto()` 按**默认** marker（持久化根 +
@@ -1266,17 +1266,20 @@ def test_an_explicit_root_is_actually_searched(monkeypatch):
     这句之前就已经被丢掉了 —— 于是它一个都不收，而且不报错。
     """
     import cleanup as CU
-    other = "/mnt/other-ci-root"
-    monkeypatch.setenv("TAVOTTO_CI_STATE_ROOT", "/srv/tavotto-ci")
+    # **命令行要按 `resolve()` 之后的 root 拼**：判据比的是
+    # `str(Path(root).resolve())`，写死 POSIX 字面量的话 Windows 上
+    # `/mnt/x` 会被解析成 `D:\\mnt\\x`，与命令行里的字面量对不上——
+    # 于是这条用例量的不再是「extra_markers 有没有传下去」，而是
+    # 「它跑在哪个平台上」。CI 的 windows 腿逮到过一次。
+    other = str((tmp_path / "other-ci-root").resolve())
+    cmd = f"{other}/venv/bin/python -m tavotto --port 7070"
+    monkeypatch.setenv("TAVOTTO_CI_STATE_ROOT", str((tmp_path / "state").resolve()))
     monkeypatch.delenv("RUNNER_WORKSPACE", raising=False)
     monkeypatch.delenv("GITHUB_WORKSPACE", raising=False)
-    monkeypatch.setattr(
-        "cleanup.proc_cmdlines",
-        lambda: [(7070, f"{other}/venv/bin/python -m tavotto --port 7070")],
-        raising=False)
+    monkeypatch.setattr("cleanup.proc_cmdlines", lambda: [(7070, cmd)],
+                        raising=False)
     # 真的走 _common 的筛选，只是把 /proc 换掉
-    monkeypatch.setattr(_common, "proc_cmdlines",
-                        lambda: [(7070, f"{other}/venv/bin/python -m tavotto --port 7070")])
+    monkeypatch.setattr(_common, "proc_cmdlines", lambda: [(7070, cmd)])
     got = CU.kill_stale_processes(Path(other), dry_run=True)
     assert [r["pid"] for r in got] == [7070], (
         f"显式 root 下的进程没被收到：{got} —— extra_markers 没传下去")
