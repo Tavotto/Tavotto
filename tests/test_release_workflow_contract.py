@@ -452,6 +452,40 @@ def test_a_repo_variable_cannot_weaken_the_release_gate():
         "—— 仓库变量 LAB_VISUAL_GATE=false 会连发布门禁一起放倒")
 
 
+def test_every_caller_gates_the_sha_through_a_trust_job():
+    """**可复用资格 workflow 的安全性由调用方兜底——那就必须有东西看着调用方。**
+
+    `_lab-qualification.yml` 把 `inputs.sha` 直接 checkout 到常驻的
+    self-hosted runner 上。单看这个文件，那个 sha 是任意的——CodeQL 的
+    「cache poisoning via execution of untrusted code」正是这么读的，
+    而它读得没错：**保证不在这个文件里**。
+
+    保证在调用方：两个 caller 都先跑一个 trust job，拒绝既不是 `origin/main`
+    祖先、又没有 tag 指向的 commit。问题是从前没有任何东西要求**下一个**
+    caller 也这么做——加一个直接传 `inputs.ref` 的调用方，长期 runner 就
+    开始执行未经 review 的代码，而且没有一条用例会红。
+
+    这条用例把那份口头约定变成结构约束：**每个** caller 的 `sha:` 必须来自
+    某个 job 的输出，且那个 job 里真的有 ancestry 判断。
+    """
+    callers = [p for p in WF.glob("*.yml")
+               if "_lab-qualification.yml" in p.read_text(encoding="utf-8")
+               and p.name != "_lab-qualification.yml"]
+    assert callers, "没找到任何调用方——这条用例本身失效了"
+    for path in callers:
+        wf = _wf(path)
+        job = next((n for n, b in wf.jobs.items()
+                    if "_lab-qualification.yml" in b), None)
+        assert job, f"{path.name}: 找不到调用 job"
+        m = re.search(r"^\s*sha:\s*\$\{\{\s*needs\.([\w-]+)\.outputs\.sha",
+                      wf.jobs[job], re.M)
+        assert m, (f"{path.name}::{job} 的 sha 不是来自某个 job 的输出——"
+                   "常驻 runner 会执行一个没人验过的 commit")
+        trust = wf.jobs.get(m.group(1))
+        assert trust and "--is-ancestor" in trust, (
+            f"{path.name}: sha 来自 {m.group(1)}，但那个 job 里没有 ancestry 判断")
+
+
 def test_qualification_is_defined_exactly_once():
     """`lab-ci.yml` 与 `release.yml` 调的是**同一个**可复用 workflow。
 
