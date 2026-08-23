@@ -296,17 +296,30 @@ def test_the_bot_login_is_pinned():
     assert "chatgpt-codex-connector[bot]" in CG.CODEX_LOGINS
 
 
-def test_gate_workflow_does_not_rerun_on_every_push():
-    """`synchronize` 不在触发列表里。
+def test_the_gate_can_actually_go_green_again():
+    """**处置完一条阻断发现之后，必须有东西能把这道门禁重新跑一遍。**
 
-    每次 push 都跑一遍这道门禁，会让「轮次超了」的告警在你正在收敛的过程中
-    反复刷屏——而收敛正是我们希望发生的事。
+    修一条 P0/P1 的正常流程是「push 修复 → 回复 thread → resolve」。
+    第一版三件事一件都不触发本工作流：`synchronize` 被刻意排除、回复发的是
+    `pull_request_review_comment`（没配）、**resolve 一条 thread GitHub
+    根本不发任何事件**。于是 Codex 提交 review 那一刻产生的那次失败会永远
+    挂在 PR 上，哪怕每条 P0/P1 都处置完了——把 `gate` 登记成必需检查那天，
+    每条 PR 当场死锁。
+
+    这条用例守的是**「绿得回来」这个能力**，不是某一个事件名：判据是
+    「push 与回复各自都能触发」，两条里少任何一条都红。
+
+    残留限制（工作流注释里也写了）：只 resolve 不 push 不回复时仍然要
+    手动 Re-run —— GitHub 没有这个事件，判不出来的东西不假装判。
     """
-    t = GATE_WF.read_text(encoding="utf-8")
-    types = re.search(r"pull_request:\s*\n(?:\s*#.*\n)*\s*types:\s*\[([^\]]*)\]", t)
-    assert types, "读不出 pull_request 的 types"
-    assert "synchronize" not in types.group(1)
-    assert "ready_for_review" in types.group(1)
+    t = _strip_yaml_comments(GATE_WF.read_text(encoding="utf-8"))
+    m = re.search(r"^\s*pull_request:\s*\n\s*types:\s*\[([^\]]*)\]", t, re.M)
+    assert m, "读不出 pull_request 的 types"
+    assert "synchronize" in m.group(1), (
+        "push 修复不触发门禁 —— 处置完之后那次失败会永远挂着")
+    assert "ready_for_review" in m.group(1)
+    assert re.search(r"^\s*pull_request_review_comment:", t, re.M), (
+        "回复 thread（写 disposition）不触发门禁")
 
 
 def test_gate_workflow_uses_the_runner_python_not_a_venv():

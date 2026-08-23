@@ -22,11 +22,30 @@ on:
   #   自己栽在「跑得比被检查的东西还早」上。）
   pull_request_review:
     types: [submitted, dismissed]
+  # **回复一条 thread 也要重跑**：写 disposition 是收敛动作，
+  # 而收敛之后正是最需要重新判一次的时刻。
+  pull_request_review_comment:
+    types: [created, edited]
   pull_request:
-    # 开、转 Ready、改标题/正文（可能补了 disposition）、重开。
-    # **刻意不含 `synchronize`**——每次 push 都跑一遍，会让「轮次超了」
-    # 的告警在你正在收敛的过程中反复刷屏。
-    types: [opened, ready_for_review, edited, reopened]
+    # 开、转 Ready、改标题/正文（可能补了 disposition）、重开、push。
+    #
+    # **`synchronize` 从「刻意排除」改成必须有**（Codex 在 #64 第 5 轮
+    # 指出来的，是对的）：修一条阻断发现的正常流程是「push 修复 → 回复
+    # thread → resolve」，而这三件事从前一件都不触发本工作流——
+    # `synchronize` 被排除、回复发的是 `pull_request_review_comment`、
+    # **resolve 一条 thread GitHub 根本不发任何事件**。于是 Codex 提交
+    # review 那一刻产生的那次失败会**永远挂在 PR 上**，哪怕每条 P0/P1
+    # 都已经处置完毕。一旦把 `gate` 登记成必需检查，那就是死锁。
+    #
+    # 排除它原本是为了少刷几条「轮次超了」的告警——那是**告警不是失败**，
+    # 拿一道永远绿不了的门禁去换它，这笔账反过来了。
+    types: [opened, ready_for_review, edited, reopened, synchronize]
+  # **残留限制，如实记在这里**：GitHub 不为「resolve 一条 thread」发送
+  # 任何事件。所以「最后一步只 resolve、既不 push 也不回复」时，这道门禁
+  # 的结论会停在上一次。补救有两条，都不需要改配置：
+  #   ① Checks 页点 Re-run —— 门禁按**运行时**现查 API，不读事件载荷，
+  #      所以重跑一次拿到的就是最新状态；
+  #   ② 把 resolve 放在最后一次 push / 回复**之前**。
   # 收敛完想再确认一次：在 PR 页面手动跑，或者本地
   # `python3 scripts/ci/codex_review_gate.py --pr <n>`。
   workflow_dispatch:
