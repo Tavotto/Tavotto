@@ -227,6 +227,28 @@ def _load(p: Path) -> dict:
         raise ManifestError(f"读不了 {p}：{e}") from e
 
 
+def _utf8_stdout() -> None:
+    """把 stdout / stderr 钉成 UTF-8。
+
+    **这是 Windows 上的硬需求，不是洁癖。** GitHub 的 windows runner 上
+    Python 的 stdout 默认编码是 cp1252（中文 Windows 上是 cp936），而本脚本
+    的摘要是中文的：`print(render_summary(m))` 直接抛
+    `UnicodeEncodeError: 'charmap' codec can't encode characters`，整条
+    桌面构建腿当场失败——**产物已经造好了，倒在打印摘要这一步上**。
+    2026-08-23 v0.9.2 的 publish=false 演练实测（run 32617869026）。
+
+    `errors="replace"` 是兜底：真遇到编不出的字符，宁可打出问号，
+    也不要让一条已经成功的构建因为一句日志而失败。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError, OSError):
+            # 被重定向成非 TextIOWrapper 时没有 reconfigure；那种情况下
+            # 调用方自己决定编码，不该由这里改写。
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -257,6 +279,7 @@ def main(argv: list[str] | None = None) -> int:
     m_.add_argument("--out", type=Path, required=True)
 
     a = ap.parse_args(argv)
+    _utf8_stdout()
     try:
         if a.cmd == "build":
             entries = []
