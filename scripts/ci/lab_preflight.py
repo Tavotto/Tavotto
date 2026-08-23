@@ -31,8 +31,8 @@ except ImportError:                     # pragma: no cover - 只在 Windows 走�
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _common import (  # noqa: E402
-    CiError, ensure_layout, run_metadata, state_root, summary, summary_table,
-    write_report,
+    CiError, ensure_layout, find_ci_owned_tavotto, run_metadata, state_root,
+    summary, summary_table, write_report,
 )
 
 # 门槛按「够不够跑得出可信数字」定，不是按「机器好不好」。
@@ -144,50 +144,114 @@ def check_environment() -> list[Check]:
     return checks
 
 
-def _proc_cmdlines() -> list[tuple[int, str]]:
-    """扫 /proc 拿 (pid, cmdline)。只在 Linux 上有意义，别的平台返回空表。"""
-    out: list[tuple[int, str]] = []
-    proc = Path("/proc")
-    if not proc.is_dir():
-        return out
-    for entry in proc.iterdir():
-        if not entry.name.isdigit():
-            continue
-        try:
-            raw = (entry / "cmdline").read_bytes()
-        except OSError:
-            continue  # 进程刚退出，正常
-        if raw:
-            out.append((int(entry.name), raw.replace(b"\0", b" ").decode("utf-8", "replace").strip()))
-    return out
-
-
-def check_stale_processes() -> list[Check]:
+def check_stale_processes(reap: bool = False) -> list[Check]:
     """上一轮 CI 漏下的 Tavotto 进程。
 
-    **判归属靠的是 CI 持久化根与 runner 工作目录，不是进程名**。直接
-    `pgrep tavotto` 会误伤同一台机器上维护者自己开着的实例——本仓库
-    smoke_app.py 里那条注释说得很清楚：假报一次，下次真出问题时这条提示
-    就已经被学会无视了。
+    **判归属靠的是 CI 持久化根与 runner 工作目录，不是进程名**（唯一实现
+    `_common.is_ci_owned_tavotto`）。直接 `pgrep tavotto` 会误伤同一台机器上
+    维护者自己开着的实例——假报一次，下次真出问题时这条提示就已经被学会无视了。
+
+    **`reap=True` 时自愈。** 这条检查从 2026-08-22 05:55 起把**每一次** lab run
+    挡在门外：一个手工探测留下的进程
+    （`/srv/tavotto-ci/tmp/venv-manual-probe/… -m tavotto`）躺在那儿，而唯一的
+    解法是有人 SSH 上去手动清。`cleanup.py`（会 kill）排在体检**之后**，
+    体检失败它就永远轮不到——**自愈动作排在检测它的那道门之后，等于没有自愈**。
+
+    自愈之后**必须真的复检**，不能「发了信号就当它死了」：SIGTERM 对一个卡在
+    C 扩展里的 worker 可能毫无作用，而「报告已清理、其实还在」会让 soak 的
+    泄漏判定与 benchmark 拿着被污染的机器继续跑——那比直接失败糟糕得多。
     """
-    root = str(state_root().resolve())
-    work = os.environ.get("RUNNER_WORKSPACE") or os.environ.get("GITHUB_WORKSPACE") or ""
-    markers = [m for m in (root, work) if m]
+    stale = find_ci_owned_tavotto()
+    if not stale:
+        return [Check("上一轮遗留的 Tavotto 进程", True, "无")]
 
-    stale: list[str] = []
-    for pid, cmd in _proc_cmdlines():
-        if pid == os.getpid():
-            continue
-        looks_tavotto = ("tavotto" in cmd and
-                         ("engine/worker.py" in cmd or "tavotto-workerd" in cmd
-                          or "-m tavotto" in cmd or "/tavotto " in cmd))
-        if looks_tavotto and any(m in cmd for m in markers):
-            stale.append(f"pid={pid} {cmd[:120]}")
+    if not reap:
+        return [Check("上一轮遗留的 Tavotto 进程", False,
+                      f"{len(stale)} 个：" + "; ".join(f"pid={p} {c[:100]}"
+                                                      for p, c in stale[:3]),
+                      remedy="这些进程会污染本轮的泄漏判定与 benchmark；"
+                             "确认无人正在用后 kill 掉，跑 "
+                             "scripts/ci/cleanup.py --kill-stale，"
+                             "或给体检加 --reap-stale 让它自己清")]
 
-    return [Check("上一轮遗留的 Tavotto 进程", not stale,
-                  "无" if not stale else f"{len(stale)} 个：" + "; ".join(stale[:3]),
-                  remedy="这些进程会污染本轮的泄漏判定与 benchmark；"
-                         "确认无人正在用后 kill 掉，或跑 scripts/ci/cleanup.py --kill-stale")]
+    reaped, survivors = reap_stale_processes(stale)
+    if survivors:
+        return [Check("上一轮遗留的 Tavotto 进程", False,
+                      f"清掉 {len(reaped)} 个，仍有 {len(survivors)} 个没死："
+                      + "; ".join(f"pid={p} {c[:80]}" for p, c in survivors[:3]),
+                      remedy="SIGKILL 之后仍在（多半是 D 状态，卡在内核里）。"
+                             "这台机器需要人上去看一眼，别让它继续跑门禁")]
+    return [Check("上一轮遗留的 Tavotto 进程", True,
+                  f"发现 {len(reaped)} 个并已清理（--reap-stale）："
+                  + "; ".join(f"pid={p}" for p, _ in reaped[:5]),
+                  warn=True,   # 通过，但**必须在 summary 里看得见**
+                  remedy="上一轮没退干净。偶发可以接受，反复出现要查 worker 的退出路径")]
+
+
+# SIGTERM 之后给多久，再上 SIGKILL。worker 收到 TERM 会走正常关闭
+# （落盘、通知父进程），太短会把正常关闭截断成半个状态。
+_REAP_GRACE_S = 10.0
+
+
+def reap_stale_processes(stale: list[tuple[int, str]],
+                         grace_s: float = _REAP_GRACE_S,
+                         sleep=time.sleep) -> tuple[list, list]:
+    """SIGTERM → 等 → SIGKILL → **重新按判据扫一遍**。
+
+    回 `(清掉的, 还活着的)`。最后一步是重扫而不是「记账说杀过了」：
+    判断依据必须是**这一刻机器上真实的进程表**，不是我们的意图。
+    """
+    import signal as _sig
+
+    # **`SIGKILL` 在 Windows 上不存在**（AttributeError: module 'signal' has no
+    # attribute 'SIGKILL'）。这段只在实验室的 Linux runner 上真跑
+    # （`find_ci_owned_tavotto` 没有 /proc 就回空），但**模块要在所有平台上
+    # import 得动、用例要在所有平台上跑得了**——CI 的 windows 腿当场逮到了。
+    # Windows 上 `os.kill(pid, SIGTERM)` 走的是 TerminateProcess，本来就是
+    # 强制终止，退化成它是正确的语义。
+    _SIGKILL = getattr(_sig, "SIGKILL", _sig.SIGTERM)
+
+    # **判据是「机器上现在还有没有」，不是「原来那批死了没」。**
+    # 只盯最初那组 pid 会漏掉**替补**：宽限期里 supervisor 完全可能重启一个
+    # worker，新进程同样归属本 CI、同样会污染 soak 的泄漏判定与 benchmark，
+    # 而它不在 `targets` 里 —— 于是复检说「清干净了」，机器上却还有。
+    # 体检跑在本轮 CI 开跑**之前**，那一刻机器上不该有任何归属本 CI 的
+    # Tavotto 进程，所以「还有没有」既是更严的判据，也是更对的那个。
+    # （Codex 在 #65 的第一轮上指出。）
+    killed: set[int] = set()
+
+    def _still_there() -> list[tuple[int, str]]:
+        return find_ci_owned_tavotto()
+
+    for pid, _ in stale:
+        try:
+            os.kill(pid, _sig.SIGTERM)
+            killed.add(pid)
+        except OSError:
+            pass                       # 已经没了，正常
+
+    deadline = time.monotonic() + grace_s
+    while time.monotonic() < deadline:
+        if not _still_there():
+            break
+        sleep(0.25)
+
+    # 还剩下的一律 SIGKILL —— **包括宽限期里新冒出来的那些**
+    for pid, _ in _still_there():
+        try:
+            os.kill(pid, _SIGKILL)
+            killed.add(pid)
+        except OSError:
+            pass
+    sleep(0.5)
+
+    survivors = _still_there()
+    alive = {p for p, _ in survivors}
+    reaped = [(p, c) for p, c in stale if p not in alive]
+    # 替补进程也要如实计入「清掉了几个」，否则日志与实际不符
+    reaped += [(p, "(宽限期内出现的替补)") for p in sorted(killed)
+               if p not in alive and p not in {q for q, _ in stale}]
+    return reaped, survivors
 
 
 def check_stale_locks() -> list[Check]:
@@ -238,13 +302,13 @@ def check_workspace() -> list[Check]:
 
 
 # --------------------------------------------------------------------------
-def run_all(mode: str) -> list[Check]:
+def run_all(mode: str, reap: bool = False) -> list[Check]:
     checks: list[Check] = []
     checks += check_hardware()
     checks += check_state_root(mode)
     checks += check_toolchain(mode)
     checks += check_environment()
-    checks += check_stale_processes()
+    checks += check_stale_processes(reap=reap)
     checks += check_stale_locks()
     checks += check_workspace()
     return checks
@@ -257,9 +321,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--json", action="store_true", help="把结果打到 stdout")
     ap.add_argument("--no-report", action="store_true",
                     help="不写报告文件（持久化目录还没建好时用）")
+    ap.add_argument("--reap-stale", action="store_true",
+                    help="发现归属本 CI 的遗留 Tavotto 进程时自己清掉，"
+                         "**并复检确认真的清干净了**。CI 用；人工排查时别开，"
+                         "那时你多半想先看看它们是谁")
     args = ap.parse_args(argv)
 
-    checks = run_all(args.mode)
+    checks = run_all(args.mode, reap=args.reap_stale)
     blocking = [c for c in checks if not c.ok and not c.warn]
     warnings = [c for c in checks if c.warn and not c.ok] + [c for c in checks if c.warn and c.detail not in ("无",)]
 

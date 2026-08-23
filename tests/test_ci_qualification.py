@@ -408,9 +408,14 @@ class TestUpgradeRenameBoundary:
         """
         import summarize as SM
         _common.ensure_layout(tmp_path)
+        # **报告要盖上本轮身份**，否则汇总会先把它按「上一轮的陈旧报告」拒掉，
+        # 根本走不到「跳过怎么渲染」这一支——而这条用例验的正是后者。
+        monkeypatch.setenv("GITHUB_RUN_ID", "777")
+        monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
         _common.write_report("upgrade.json",
                              {"ok": True, "skipped": True, "reason": "rename_boundary",
-                              "detail": "跨越了产品改名边界"}, tmp_path)
+                              "detail": "跨越了产品改名边界",
+                              "metadata": {"run_id": "777", "run_attempt": "1"}}, tmp_path)
         monkeypatch.setenv("TAVOTTO_CI_STATE_ROOT", str(tmp_path))
         monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
         text = _detail_for(SM, "upgrade.json", tmp_path)
@@ -847,3 +852,467 @@ def test_single_path_action_inputs_are_not_globs():
                 offenders.append(f"{wf.name}:{i} {m.group(1)}: {val}")
     assert not offenders, (
         "这些输入只收一个路径，喂 glob 会被原样当成文件名：\n  " + "\n  ".join(offenders))
+
+def test_always_steps_do_not_depend_on_a_step_that_may_not_have_run():
+    """`always()` 的收尾步骤不能依赖某个**可能没跑过**的步骤的输出。
+
+    2026-08-22（v0.9.1 发版）实测：`lab_release_gate` 的「汇总」写的是
+    `${{ steps.venv.outputs.python }} scripts/ci/summarize.py`，而
+    `steps.venv` 来自「建验证环境」——体检先失败时它根本没跑，变量是空串，
+    命令退化成**直接执行**那个脚本；它是 100644（没有执行位），于是
+    `Permission denied` / 退出码 126。
+
+    后果是这一步最不该有的那一种：**它「总是要跑」，却恰恰在真的有失败要汇总
+    时自己挂掉**——体检报出了遗留进程，而读的人在 job summary 里只看到 126。
+    与本轮反复出现的「诊断在最需要它时失灵」是同一个形状。
+
+    判据只盯**这一处已知的依赖**（`steps.venv.outputs.python`）：泛化成
+    「扫所有 always() 步骤里的所有 steps.* 引用」会把大量正当写法也判红
+    （很多 always() 步骤本来就只在前序跑过时才有意义），那种噪音门禁活不过
+    两周。要扩就等下一次真出事，按真实案例扩。
+    """
+    # **不用 PyYAML。** 它不在 `.venv` 里（Flask 那侧刻意只有 flask+pymupdf），
+    # 而 `importorskip` 会让这条在本地开发环境静默跳过——那正是空门禁。
+    # 这里只需要「按步骤切开、看它的 if 与 run」，标准库够用。
+    import re
+    offenders = []
+    for name in ("release.yml", "lab-ci.yml"):
+        src = (WORKFLOWS / name).read_text(encoding="utf-8")
+        # 以 `      - name:` 切步骤（本仓库两个 workflow 的缩进是一致的）
+        steps = re.split(r"\n(?=      - name:)", src)
+        assert len(steps) > 10, f"{name}: 只切出 {len(steps)} 段，切分判据失效了"
+        for step in steps:
+            # **只判会在前序失败后照跑的那些。** 普通顺序步骤引用它是正当的
+            # ——venv 没建起来时它们根本不会执行。第一版没区分，把十几处正当
+            # 写法一起判红了：判据的主语又窄了一圈（该问「这一步会不会在 venv
+            # 没跑时执行」，我问的是「有没有引用这个变量」）。
+            if not re.search(r"^\s+if:.*(always\(\)|failure\(\))", step, re.M):
+                continue
+            for m in re.finditer(r"steps\.venv\.outputs\.python(.*?)\}\}", step, re.S):
+                if "||" not in m.group(1):
+                    label = re.search(r"- name: (.*)", step)
+                    offenders.append(
+                        f"{name}: 步骤「{label.group(1).strip() if label else '?'}」")
+    assert not offenders, (
+        "这些步骤在前序失败时照跑，却依赖「建验证环境」的输出——那时它是空串，"
+        "命令退化成直接执行脚本（100644 → Permission denied）：\n  "
+        + "\n  ".join(offenders))
+
+
+def test_summary_refuses_reports_from_another_run(tmp_path, monkeypatch):
+    """汇总只认本轮的报告，否则它会把没跑过的阶段标成 PASS。
+
+    `reports/` 在**持久**状态根里、保留 30 天，而 `cleanup.py` 排在体检
+    **之后**——体检早早失败时，上一轮的 `soak.json` / `visual.json` 还原样
+    躺在那儿。不核对 `metadata.run_id` 的话，汇总会报告那些阶段通过，而它们
+    这一轮根本没跑过。
+
+    **这是最坏的一种诊断失效：不是缺席，是说谎。** 而且它偏偏发生在体检失败、
+    最需要看清「究竟跑到哪一步」的时候。2026-08-22 v0.9.1 发版时，
+    汇总因为另一个 bug 直接崩了（#61），反而没来得及说这个谎——修好解释器
+    却不修这一条，等于把「崩掉」换成「说谎」。
+    """
+    import importlib.util, json as _json
+    (tmp_path / "reports").mkdir()
+    (tmp_path / "reports" / "soak.json").write_text(_json.dumps(
+        {"ok": True, "metadata": {"run_id": "1111"}}), encoding="utf-8")
+    monkeypatch.setenv("TAVOTTO_CI_STATE_ROOT", str(tmp_path))
+    monkeypatch.setenv("GITHUB_RUN_ID", "2222")          # 本轮 ≠ 报告那轮
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+
+    spec = importlib.util.spec_from_file_location("_sm", CI_DIR / "summarize.py")
+    mod = importlib.util.module_from_spec(spec)
+    import sys as _sys
+    _sys.path.insert(0, str(CI_DIR))
+    spec.loader.exec_module(mod)
+
+    import io as _io, contextlib
+    buf = _io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        mod.main(["--mode", "release"])
+    out = buf.getvalue()
+    soak_line = [ln for ln in out.splitlines() if "soak" in ln.lower()]
+    assert soak_line, f"输出里找不到 soak 那一行：\n{out[:600]}"
+    assert "PASS" not in soak_line[0], (
+        f"上一轮的报告被当成本轮的结果了：{soak_line[0]}")
+    assert "未运行" in soak_line[0], f"该标成未运行：{soak_line[0]}"
+
+
+def test_summary_keeps_this_runs_report_even_across_a_rerun(tmp_path, monkeypatch):
+    """身份要带 attempt，而且**每个写报告的脚本都得真的写 metadata**。
+
+    两条都是 #61 的 review 逮到的，方向相反、后果一样坏：
+
+    * `GITHUB_RUN_ID` 在「Re-run jobs」时**复用**，只有 `GITHUB_RUN_ATTEMPT`
+      递增——只比 run_id 的话，上一次尝试留下的报告会被当成本次的（说谎）。
+    * `compat_matrix` 当时**根本没写 metadata**，于是本轮真跑出来的
+      CompatBench 报告会被一律拒收（误报未运行）。**我修「说谎」的时候造出了
+      「误报」**，两头都是诊断失真。
+    """
+    import importlib.util, json as _json, io as _io, contextlib, sys as _sys
+    (tmp_path / "reports").mkdir()
+    # 本轮 attempt=2；报告来自 attempt=1（同一个 run_id）
+    (tmp_path / "reports" / "soak.json").write_text(_json.dumps(
+        {"ok": True, "metadata": {"run_id": "42", "run_attempt": "1"}}), encoding="utf-8")
+    # 本轮自己的 CompatBench 报告，必须留下
+    (tmp_path / "reports" / "compat.json").write_text(_json.dumps(
+        {"ok": True, "metadata": {"run_id": "42", "run_attempt": "2"}}), encoding="utf-8")
+    monkeypatch.setenv("TAVOTTO_CI_STATE_ROOT", str(tmp_path))
+    monkeypatch.setenv("GITHUB_RUN_ID", "42")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+
+    spec = importlib.util.spec_from_file_location("_sm2", CI_DIR / "summarize.py")
+    mod = importlib.util.module_from_spec(spec)
+    _sys.path.insert(0, str(CI_DIR))
+    spec.loader.exec_module(mod)
+    buf = _io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        mod.main(["--mode", "release"])
+    out = buf.getvalue()
+
+    soak = [ln for ln in out.splitlines() if "soak" in ln.lower()][0]
+    assert "PASS" not in soak, f"上一次 attempt 的报告被当成本次的了：{soak}"
+    compat = [ln for ln in out.splitlines()
+              if "兼容" in ln or "compat" in ln.lower()][0]
+    assert "未运行" not in compat, f"本轮自己的报告被误判成未运行了：{compat}"
+
+
+def test_every_report_writer_stamps_its_identity():
+    """写报告的脚本都要 `run_metadata()`，否则汇总认不出它是本轮的。
+
+    `compat_matrix` 当时就漏了——而漏掉的表现不是报错，是那一行永远显示
+    「未运行」。判据按**调用点**扫，别只看文件里出现过这个名字。
+    """
+    # **主语第三次才对。** 依次错过：只扫 `write_report()` 的调用点
+    # （compat_matrix 自己 json.dump，不走那个助手）、按「源码里出现哪个报告名」
+    # 扫（compat.json 这个名字压根不在它源码里，是 workflow 用 `--json` 传进去的）。
+    # 正确的问法是：**workflow 里哪个脚本产出 SECTIONS 里的那份报告。**
+    import ast, re
+    spec_src = (CI_DIR / "summarize.py").read_text(encoding="utf-8")
+    wanted = set(re.findall(r'"(\w+\.json)"', spec_src.split("SECTIONS", 1)[1][:800]))
+    assert len(wanted) >= 4, f"只解析出 {wanted}——SECTIONS 的形状变了，判据失效"
+
+    # 报告有两种产出方式，都要认：
+    #   ① 脚本自己 `write_report("x.json", ...)`（多数）
+    #   ② workflow 用 `--json .../x.json` 把路径传进去（compat_matrix 是这种，
+    #      所以它源码里根本没有 "compat.json" 这个字面量）
+    producers: dict[str, str] = {}
+    for path in sorted(CI_DIR.glob("*.py")):
+        src = path.read_text(encoding="utf-8")
+        for rep in wanted:
+            if f'"{rep}"' in src:
+                producers[rep] = path.name
+    wf = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
+    for step in re.split(r"\n(?=      - name:)", wf):
+        m = re.search(r"scripts/ci/(\w+)\.py", step)
+        if not m:
+            continue
+        for rep in wanted:
+            if rep in step:
+                producers[rep] = m.group(1) + ".py"
+    assert len(producers) >= 5, f"只对上 {producers}——产出关系解析失效了"
+
+    missing = []
+    for rep, script in sorted(producers.items()):
+        src = (CI_DIR / script).read_text(encoding="utf-8")
+        calls = {getattr(n.func, "attr", getattr(n.func, "id", ""))
+                 for n in ast.walk(ast.parse(src)) if isinstance(n, ast.Call)}
+        if "run_metadata" not in calls:
+            missing.append(f"{script}（产出 {rep}）")
+    assert not missing, (
+        f"这些脚本产出了汇总要读的报告，却一次都没调 run_metadata()——"
+        f"汇总会把它们当成上一轮的、标成「未运行」：{missing}")
+
+    # **精度写在明处**：判的是「这个脚本调没调过 run_metadata()」，不是
+    # 「写这份报告时盖上了没有」。后者要跟着数据流走，静态做不可靠。
+    # 所以它逮得住「整个脚本都忘了盖」（compat_matrix 当时就是），逮不住
+    # 「调了但没放进这份 payload」。够用，但别当成更强的保证。
+
+
+def test_desktop_outwaits_the_release_qualification_gate():
+    """桌面链等 Release 的上限，必须盖得住 release.yml 的发行资格验证。
+
+    tag 推送时两条链**并行**启动：桌面构建约 20 分钟就出产物，而 Release 要
+    等 `lab_release_gate` 跑完（slow + 升级验收 + 视觉回归 + CompatBench +
+    soak + 性能，实测 30~60 分钟）才建得出来。桌面那边等不到就失败。
+
+    2026-08-22 v0.9.1 发版实测：两条腿**全程构建成功**（含 macOS 的签名与
+    公证），只栽在这一步——原来的上限是 30×20s = 10 分钟，而那个数字是
+    `lab_release_gate` 存在**之前**定的，那时 release.yml 两三分钟就建出
+    Release。加了门禁之后没人改它，于是桌面链在 tag 推送时**基本不可能成功**，
+    而且失败得极不划算：产物全签好了，只差挂不上去，重跑一次二十分钟、
+    macOS 还要重新公证一遍。
+
+    判据钉的是**两个数之间的关系**，不是某个具体值——门禁的超时哪天调大，
+    这条会提醒把等待也调大。
+    """
+    import re
+    rel = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
+    gate = rel.split("lab_release_gate:", 1)[1].split("\n  github_release:", 1)[0]
+    m = re.search(r"timeout-minutes:\s*(\d+)", gate)
+    assert m, "lab_release_gate 没有 timeout-minutes 了——这条判据的另一半没了"
+    gate_minutes = int(m.group(1))
+
+    dt = (WORKFLOWS / "desktop-tauri.yml").read_text(encoding="utf-8")
+    wait = dt.split("等 Release 存在", 1)[1].split("\n      - name:", 1)[0]
+    tries = int(re.search(r"seq 1 (\d+)", wait).group(1))
+    sleep_s = int(re.search(r"sleep (\d+)", wait).group(1))
+    wait_minutes = tries * sleep_s / 60
+
+    assert wait_minutes >= gate_minutes, (
+        f"桌面链最多等 {wait_minutes:.0f} 分钟，而发行资格验证的上限是 "
+        f"{gate_minutes} 分钟——门禁跑满时，已经签名公证好的桌面产物会挂不上去")
+
+    # **超时消息里不许出现写死的分钟数。** 上一版循环从 10 分钟改成 190 分钟，
+    # 而失败消息还写着「等了 10 分钟」——发布操作者会照着那个数去查一个不存在
+    # 的问题。诊断指错方向比不诊断更坏（Codex 在 #62 上指出）。
+    tail = wait.split("done", 1)[1]
+    # 注释先剥掉：解释「上一版写死了 10 分钟」的那句里必然含这四个字，
+    # 连它一起判会让「写清楚为什么」反而变红。今天这个坑踩到第四次了，
+    # 而它恰恰是我刚写进 CLAUDE.md 的那条纪律。
+    code = "\n".join(ln for ln in tail.splitlines()
+                     if not ln.lstrip().startswith("#"))
+    assert "waited=" in code, "失败消息要报**实际**等了多久，不是写死的数"
+    for stale in ("10 分钟", "10 minutes"):
+        assert stale not in code, f"失败消息里还留着写死的「{stale}」"
+    # 等不到时产物不能丢：上传要排在等待**之前**
+    dt_src = (WORKFLOWS / "desktop-tauri.yml").read_text(encoding="utf-8")
+    assert dt_src.index("上传最终桌面产物") < dt_src.index("等 Release 存在"), \
+        "产物上传必须排在「等 Release」之前，否则等超时会把签名公证好的东西一起丢掉"
+
+    # **最后一次 sleep 之后必须再探一次。** Release 恰好在那 30 秒里建出来时，
+    # 循环直接落到失败分支——明明已经好了却报超时，而且发生在最贵的那一刻。
+    code = "\n".join(ln for ln in tail.splitlines()
+                     if not ln.lstrip().startswith("#"))
+    assert "gh release view" in code, \
+        "循环结束后没有再探一次——最后一轮 sleep 里建出来的 Release 会被漏掉"
+
+
+# ============================================================ 遗留进程自愈
+#
+# 2026-08-22 实测：一个手工探测留下的进程
+# （`/srv/tavotto-ci/tmp/venv-manual-probe/… -m tavotto`）从 05:55 起把
+# **每一次** lab run 挡在门外——25 次 run 里 0 次成功。体检本身是对的
+# （残留进程确实会污染 soak 与 benchmark），坏的是**没有自愈**：
+# `cleanup.py`（会 kill）排在体检之后，体检失败它就永远轮不到。
+
+def test_the_ownership_predicate_has_exactly_one_implementation():
+    """「这个进程是不是本 CI 漏下的」只能有一份判据。
+
+    从前有两份：体检认「argv 像 Tavotto 且命令行里有 CI 根**或 runner 工作
+    目录**」，`cleanup.kill_stale_processes` 认「有 tavotto 且有 CI 根」。
+    不一致的后果不是多杀少杀，是**自愈报告成功却什么都没做**——体检判成
+    遗留、kill 那份不认、复检照旧失败。「共享判据修一处不算修完」。
+    """
+    import ast
+    import cleanup as CU
+    import lab_preflight as PF
+
+    assert PF.find_ci_owned_tavotto is _common.find_ci_owned_tavotto
+    assert CU.find_ci_owned_tavotto is _common.find_ci_owned_tavotto
+
+    # **import 了不等于用了。** 第一版只比这两个绑定，于是把 cleanup 里那句
+    # 调用换成空列表，用例照样绿——判据少了一维（问「有没有 import」，
+    # 该问「kill 那条路径走不走它」）。所以再按**调用点**判一次。
+    for mod_path, func in ((CI_DIR / "cleanup.py", "kill_stale_processes"),
+                           (CI_DIR / "lab_preflight.py", "check_stale_processes")):
+        tree = ast.parse(mod_path.read_text(encoding="utf-8"))
+        fn = next((n for n in ast.walk(tree)
+                   if isinstance(n, ast.FunctionDef) and n.name == func), None)
+        assert fn is not None, f"{mod_path.name} 里没有 {func}"
+        called = {n.func.id for n in ast.walk(fn)
+                  if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
+        assert "find_ci_owned_tavotto" in called, (
+            f"{mod_path.name}::{func} 没有调 find_ci_owned_tavotto——"
+            f"判据又分叉了，而分叉的表现是「自愈报告成功却什么都没做」")
+
+    # 两个消费方都不许再自己扫 /proc
+    for mod_path in (CI_DIR / "lab_preflight.py", CI_DIR / "cleanup.py"):
+        tree = ast.parse(mod_path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and node.value == "/proc":
+                raise AssertionError(
+                    f"{mod_path.name} 又自己扫 /proc 了——判据必须只留 _common 一份")
+
+
+def test_kill_stale_actually_reaches_a_runner_workspace_process(monkeypatch):
+    """行为级：runner 工作目录下的进程，`kill_stale_processes` 也要收。
+
+    这正是从前两份判据分叉的那一格——体检认 runner 工作目录，kill 不认。
+    静态判据（上一条）能挡住「不调共享函数」，挡不住「调了但过滤掉了」，
+    所以这一条按**真的返回了哪些 pid** 判。
+    """
+    import cleanup as CU
+    work = "/home/runner/actions-runner/_work/Tavotto"
+    monkeypatch.setenv("RUNNER_WORKSPACE", work)
+    monkeypatch.setattr(
+        "cleanup.find_ci_owned_tavotto",
+        lambda extra_markers=None: [(4242, f"{work}/dist/tavotto --figures x")])
+    got = CU.kill_stale_processes(Path("/srv/tavotto-ci"), dry_run=True)
+    assert [r["pid"] for r in got] == [4242], (
+        "runner 工作目录下的遗留进程没被收——体检会判它遗留，而自愈收不到它")
+
+
+def test_preflight_reports_stale_processes_when_not_reaping(monkeypatch):
+    fake = [(4242, "/srv/x/venv/bin/python -m tavotto --port 1 --figures /srv/x/f")]
+    monkeypatch.setattr("lab_preflight.find_ci_owned_tavotto", lambda: fake)
+    import lab_preflight as PF
+    (check,) = PF.check_stale_processes(reap=False)
+    assert not check.ok and not check.warn, "不自愈时必须阻断"
+    assert "4242" in check.detail
+
+
+def test_preflight_self_heals_stale_processes(monkeypatch):
+    """`--reap-stale` 真的把它们清掉，并**复检**确认。"""
+    import lab_preflight as PF
+    alive = {4242, 4243}
+    fake = [(p, f"/srv/x/venv/bin/python -m tavotto --port {p}") for p in sorted(alive)]
+
+    def _find():
+        return [(p, c) for p, c in fake if p in alive]
+
+    def _kill(pid, sig):
+        alive.discard(pid)
+
+    monkeypatch.setattr("lab_preflight.find_ci_owned_tavotto", _find)
+    monkeypatch.setattr(PF.os, "kill", _kill)
+    (check,) = PF.check_stale_processes(reap=True)
+    assert check.ok, f"清干净了却没通过：{check.detail}"
+    assert check.warn, "通过了也必须在 summary 里看得见——静默自愈会掩盖真实的退出路径缺陷"
+    assert "2" in check.detail
+
+
+def test_self_heal_still_blocks_when_a_process_survives(monkeypatch):
+    """**清不掉就照旧阻断。**
+
+    「发了信号就当它死了」是最坏的写法：SIGTERM 对卡在 C 扩展里的 worker
+    可能毫无作用，而「报告已清理、其实还在」会让 soak 的泄漏判定与 benchmark
+    拿着被污染的机器继续跑——比直接失败糟糕得多。
+    """
+    import lab_preflight as PF
+    fake = [(4242, "/srv/x/venv/bin/python -m tavotto --port 4242")]
+    monkeypatch.setattr("lab_preflight.find_ci_owned_tavotto", lambda: fake)
+    monkeypatch.setattr(PF.os, "kill", lambda pid, sig: None)   # 杀不动
+    monkeypatch.setattr(PF.time, "monotonic",
+                        iter([0.0, 999.0, 999.0, 999.0]).__next__)
+    (check,) = PF.check_stale_processes(reap=True)
+    assert not check.ok and not check.warn
+    assert "没死" in check.detail
+
+
+def test_ownership_predicate_never_matches_a_maintainers_own_instance():
+    """维护者自己开的实例不归 CI 管——误杀一次就再没人敢开自愈。"""
+    markers = ["/srv/tavotto-ci", "/home/runner/actions-runner/_work/Tavotto"]
+    assert not _common.is_ci_owned_tavotto(
+        "/home/alice/.venv/bin/python -m tavotto --figures /home/alice/figs", markers)
+    assert not _common.is_ci_owned_tavotto("/usr/bin/python3 -m http.server", markers)
+    # 名字里带 tavotto 但不是启动形态的也不算
+    assert not _common.is_ci_owned_tavotto("less /srv/tavotto-ci/reports/x.json", markers)
+    # 真正归属 CI 的四种形态
+    for cmd in ("/srv/tavotto-ci/tmp/v/bin/python -m tavotto --port 1",
+                "/srv/tavotto-ci/tmp/v/bin/python /x/engine/worker.py --script a",
+                "/srv/tavotto-ci/rt/tavotto-workerd --spec x",
+                "/home/runner/actions-runner/_work/Tavotto/dist/tavotto --figures x"):
+        assert _common.is_ci_owned_tavotto(cmd, markers), cmd
+
+
+def test_the_lab_workflows_actually_pass_reap_stale():
+    """自愈写好了却没接上去，等于没写。"""
+    for name in ("lab-ci.yml", "release.yml"):
+        src = (WORKFLOWS / name).read_text(encoding="utf-8")
+        line = [ln for ln in src.splitlines()
+                if "lab_preflight.py" in ln and not ln.lstrip().startswith("#")]
+        assert line, f"{name}: 找不到调用 lab_preflight.py 的那一行"
+        for ln in line:
+            assert "--reap-stale" in ln, f"{name}: 体检没有开自愈：{ln.strip()}"
+
+
+def test_a_replacement_process_cannot_slip_through_the_grace_period(monkeypatch):
+    """**判据是「机器上现在还有没有」，不是「原来那批死了没」。**
+
+    只盯最初那组 pid 会漏掉**替补**：宽限期里 supervisor 完全可能重启一个
+    worker，新进程同样归属本 CI、同样会污染 soak 的泄漏判定与 benchmark，
+    而它不在 `targets` 里 —— 于是复检说「清干净了」，机器上却还有。
+
+    体检跑在本轮 CI 开跑**之前**，那一刻不该有任何归属本 CI 的 Tavotto
+    进程，所以「还有没有」既是更严的判据，也是更对的那个。
+    """
+    import lab_preflight as PF
+    alive = {4242}
+    seq = iter([1])          # 第一次 kill 之后冒出一个替补
+
+    def _find():
+        return [(p, f"/srv/x/venv/bin/python -m tavotto --port {p}")
+                for p in sorted(alive)]
+
+    def _kill(pid, sig):
+        alive.discard(pid)
+        if next(seq, None):          # 只在第一次 kill 后放一个替补进来
+            alive.add(5353)
+
+    monkeypatch.setattr("lab_preflight.find_ci_owned_tavotto", _find)
+    monkeypatch.setattr(PF.os, "kill", _kill)
+    (check,) = PF.check_stale_processes(reap=True)
+    assert check.ok, f"替补被漏掉了吗：{check.detail}"
+    assert not alive, f"机器上还剩 {alive}，而体检说通过了"
+
+
+def test_an_explicit_root_is_actually_searched(monkeypatch, tmp_path):
+    """`--kill-stale --root X` 要真的收 X 下面的进程。
+
+    候选集由 `find_ci_owned_tavotto()` 按**默认** marker（持久化根 +
+    runner 工作目录）筛出来，显式 root 下的进程在进入 `marker not in cmd`
+    这句之前就已经被丢掉了 —— 于是它一个都不收，而且不报错。
+    """
+    import cleanup as CU
+    # **命令行要按 `resolve()` 之后的 root 拼**：判据比的是
+    # `str(Path(root).resolve())`，写死 POSIX 字面量的话 Windows 上
+    # `/mnt/x` 会被解析成 `D:\\mnt\\x`，与命令行里的字面量对不上——
+    # 于是这条用例量的不再是「extra_markers 有没有传下去」，而是
+    # 「它跑在哪个平台上」。CI 的 windows 腿逮到过一次。
+    other = str((tmp_path / "other-ci-root").resolve())
+    cmd = f"{other}/venv/bin/python -m tavotto --port 7070"
+    monkeypatch.setenv("TAVOTTO_CI_STATE_ROOT", str((tmp_path / "state").resolve()))
+    monkeypatch.delenv("RUNNER_WORKSPACE", raising=False)
+    monkeypatch.delenv("GITHUB_WORKSPACE", raising=False)
+    monkeypatch.setattr("cleanup.proc_cmdlines", lambda: [(7070, cmd)],
+                        raising=False)
+    # 真的走 _common 的筛选，只是把 /proc 换掉
+    monkeypatch.setattr(_common, "proc_cmdlines", lambda: [(7070, cmd)])
+    got = CU.kill_stale_processes(Path(other), dry_run=True)
+    assert [r["pid"] for r in got] == [7070], (
+        f"显式 root 下的进程没被收到：{got} —— extra_markers 没传下去")
+
+
+def test_a_replacement_that_survives_sigkill_is_reported(monkeypatch):
+    """**复检那一维单独钉一次。**
+
+    上一条（`…cannot_slip_through_the_grace_period`）实际覆盖的是 **SIGKILL
+    扫全量**那一步：把 `survivors` 改回「只看原来那组 pid」，替补早已被
+    SIGKILL 收掉，用例照样绿 —— 一处改动被另一处的行为掩盖了。
+
+    这一条构造一个**连 SIGKILL 都打不死**的替补（D 状态，卡在内核里），
+    于是只有「复检问的是机器上现在还有没有」这一维能把它报出来。
+    """
+    import lab_preflight as PF
+    alive = {4242}
+    spawned = iter([1])
+
+    def _find():
+        return [(p, f"/srv/x/venv/bin/python -m tavotto --port {p}")
+                for p in sorted(alive)]
+
+    def _kill(pid, sig):
+        if pid == 5353:
+            return                      # 替补打不死
+        alive.discard(pid)
+        if next(spawned, None):
+            alive.add(5353)
+
+    monkeypatch.setattr("lab_preflight.find_ci_owned_tavotto", _find)
+    monkeypatch.setattr(PF.os, "kill", _kill)
+    monkeypatch.setattr(PF.time, "monotonic", iter([0.0] + [999.0] * 8).__next__)
+    (check,) = PF.check_stale_processes(reap=True)
+    assert not check.ok, "打不死的替补被当成清干净了"
+    assert "5353" in check.detail, f"没报出是哪个进程：{check.detail}"

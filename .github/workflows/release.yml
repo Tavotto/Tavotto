@@ -173,7 +173,13 @@ jobs:
         with: { name: dist, path: dist }
 
       - name: 开跑前体检
-        run: python3 scripts/ci/lab_preflight.py --mode release
+        # `--reap-stale`：发现归属本 CI 的遗留 Tavotto 进程就自己清掉，
+        # **并复检确认真的清干净了**（清不掉照旧阻断）。
+        # 从前没有这一档，于是 2026-08-22 05:55 起**每一次** lab run 都被同一个
+        # 手工探测留下的进程挡在门外——而唯一的解法是有人 SSH 上去手动清。
+        # `cleanup.py`（会 kill）排在体检**之后**，体检失败它就永远轮不到：
+        # **自愈动作排在检测它的那道门之后，等于没有自愈。**
+        run: python3 scripts/ci/lab_preflight.py --mode release --reap-stale
 
       - name: 清理上一轮残留
         run: python3 scripts/ci/cleanup.py
@@ -271,7 +277,14 @@ jobs:
 
       - name: 汇总
         if: always()
-        run: ${{ steps.venv.outputs.python }} scripts/ci/summarize.py --mode release
+        # **解释器要有兜底。** 这一步是 `always()`，可它取的
+        # `steps.venv.outputs.python` 来自「建验证环境」——体检先失败时那一步
+        # 根本没跑，变量是空的，命令退化成直接执行脚本，而它是 100644（没有
+        # 执行位）→ `Permission denied`，退出码 126。
+        # 于是**这个「总是要跑」的汇总，恰恰在真的有失败要汇总时自己挂掉**
+        # ——2026-08-22 v0.9.1 发版时实测：体检报出遗留进程，而汇总没能把这条
+        # 结论写进 job summary，读的人只看到一个 126。
+        run: ${{ steps.venv.outputs.python || 'python3' }} scripts/ci/summarize.py --mode release
 
       - name: 失败诊断包
         if: failure()

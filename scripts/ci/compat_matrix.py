@@ -60,7 +60,7 @@ import pixelcompare                                               # noqa: E402
 # 中文 help / 中文进度行在 Windows 的 cp1252 stdout 上会把进程打死。
 # `_common` 里那一份是唯一实现，这里显式调一次——本脚本用不到 `_common`
 # 的其它东西，靠「import 了就自动生效」是隐式耦合。
-from _common import use_utf8_streams                              # noqa: E402
+from _common import run_metadata, use_utf8_streams               # noqa: E402
 
 use_utf8_streams()
 
@@ -908,6 +908,9 @@ def build_report(cases: list[dict], results: dict, target: dict,
     return {
         "schema": 1,
         # 时间戳只进**报告**，绝不进 committed 基线。
+        # 报告身份：汇总按它判「这份是不是本轮的」。缺了的话本轮真跑出来的
+        # CompatBench 会被当成上一轮的陈旧报告拒收（#61 的 review 逮到）。
+        "metadata": run_metadata(),
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "mode": mode,
         "target": target_name,
