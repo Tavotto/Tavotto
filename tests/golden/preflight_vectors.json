@@ -5519,6 +5519,11 @@
            "prop": "fontfamily",
            "type": "number",
            "value": "Times New Roman"
+          },
+          {
+           "prop": "weight",
+           "type": "enum",
+           "value": "normal"
           }
          ]
         },
@@ -5658,7 +5663,7 @@
           {
            "prop": "weight",
            "type": "enum",
-           "value": "normal"
+           "value": "bold"
           }
          ]
         }
@@ -5696,10 +5701,11 @@
       "p1"
      ],
      "gids": [
+      "axes_0.xlabel",
       "axes_0.xticklabels_0"
      ],
      "detail": {
-      "role": "ticklabel",
+      "role": "axis_label",
       "want": "bold",
       "got": "normal"
      }

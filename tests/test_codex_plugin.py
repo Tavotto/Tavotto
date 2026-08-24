@@ -92,6 +92,70 @@ def test_skill_states_the_script_must_sit_next_to_the_figure():
     assert "python -c" in text          # 明确禁掉临时出图的写法
 
 
+def test_skill_asks_the_three_setup_questions():
+    """开工三问是产品行为：宽度两档、字体含两个标准选项、图例加框与否。
+
+    偏好记录过的下次不问（prefs.py），问的时候走宿主的提问工具而不是
+    自由文本追问——这两条也是承诺的一部分。
+    """
+    text = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+    assert "8 cm" in text and "15 cm" in text
+    assert "Times New Roman" in text and "Arial" in text
+    assert "图例加不加框" in text
+    assert "prefs.py" in text
+    assert "提问工具" in text
+    # `width=ask` 是哨兵不是答案（PR #93 P2）：撞见它必须照问，
+    # 不许按「记录过的不再问」跳过
+    assert "宽度每次都问」，撞见它宽度照问" in text
+
+
+def test_skill_forbids_uninvited_decoration():
+    """约定 7：背景色块 / 箭头 / 说明文字，用户没要就不加；想加先问。"""
+    text = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+    assert "一个都不擅自加" in text
+    for banned in ("背景色块", "箭头指向", "说明性文字"):
+        assert banned in text, f"SKILL.md 没把「{banned}」列进禁加清单"
+
+
+def test_skill_keeps_multi_panel_inside_matplotlib():
+    """约定 8：多子图在一个 Figure 里拼成 150mm 主图，绝不用别的软件拼。
+
+    组图版式的默认值也在这条约定里：每个子图的 x/y 轴各自标全（轴标题 +
+    刻度，不共享、不许只给最左那个留）、不用 sharex/sharey、子图标题
+    矩阵式各归各位（不挤左上角）、轴标题默认加粗。
+    """
+    text = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+    assert "GridSpec" in text
+    assert "150 mm" in text
+    assert "绝不用别的软件拼" in text
+    assert "每个子图的 x 轴与 y 轴都各自标全" in text
+    assert "不共享坐标轴" in text
+    assert "矩阵式各归各位" in text
+    assert "axes.labelweight" in text          # 轴标题默认加粗写进了模板与默认值
+
+
+def test_skill_syncs_plugin_once_per_session():
+    """会话第一次触发时对齐插件版本；每会话一次，同步失败不许阻塞出图。
+
+    频率是评审裁过的（PR #93 P1）：同一会话里工具不重载，反复重装只有
+    网络开销；update_check 的只提醒通道另在，两者互不代替。
+    """
+    text = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+    assert ("codex plugin marketplace add Tavotto/Tavotto && "
+            "codex plugin add tavotto@tavotto") in text
+    assert "每个会话只跑一次" in text
+    assert "绝不为此阻塞出图" in text
+
+
+def test_skill_files_issues_only_with_consent():
+    """撞上 Tavotto 的缺陷时写复现 issue，但外发必须经用户明确允许。"""
+    text = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+    assert "github.com/Tavotto/Tavotto/issues" in text
+    assert "用户明确允许" in text
+    assert "复现步骤" in text
+    assert "脱敏" in text
+
+
 #: 技能自带脚本允许 import 的标准库。加新名字前先想清楚：这些脚本跑在**用户
 #: 机器上**、跑在 Codex 的沙盒里，第三方依赖装不上就是整个技能不可用。
 _ALLOWED_STDLIB = {
@@ -905,3 +969,83 @@ def test_widget_artifact_is_committed_next_to_the_server():
     text = canvas.read_text(encoding="utf-8")
     assert text.startswith("<!-- tavotto-mcp-widget ")
     assert "<div id=\"root\">" in text
+
+
+# ------------------------- prefs.py 的行为契约 ----------------------------
+# 开工三问的答案落在用户配置目录。这几条盯的是「偏好文件坏了/写不进去时
+# 技能仍然能工作（大不了重新问）」与「键是闭集，杂物进不来」。
+
+def _load_prefs_module():
+    spec = importlib.util.spec_from_file_location(
+        "_prefs", SKILL_DIR / "scripts" / "prefs.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_prefs_roundtrip_and_key_closure(tmp_path):
+    """写进去的读得回来；不认识的键与不合法的值在读取时被丢弃。"""
+    mod = _load_prefs_module()
+    path = str(tmp_path / "prefs.json")
+    assert mod.write_prefs({"width": "double", "font": "Arial",
+                            "legend_frame": "off"}, path)
+    assert mod.read_prefs(path) == {"width": "double", "font": "Arial",
+                                    "legend_frame": "off"}
+    # 手工塞进垃圾键/垃圾值：读取端按闭集过滤，不报错也不透传
+    (tmp_path / "prefs.json").write_text(json.dumps({
+        "schema": mod.SCHEMA,
+        "prefs": {"width": "wide", "font": "", "legend_frame": "off",
+                  "favorite_color": "blue"}}), encoding="utf-8")
+    assert mod.read_prefs(path) == {"legend_frame": "off"}
+
+
+def test_prefs_read_never_raises_on_garbage(tmp_path):
+    """文件缺失 / 是垃圾 / schema 对不上，一律当「什么都没记」。"""
+    mod = _load_prefs_module()
+    assert mod.read_prefs(str(tmp_path / "missing.json")) == {}
+    bad = tmp_path / "bad.json"
+    bad.write_text("not json at all", encoding="utf-8")
+    assert mod.read_prefs(str(bad)) == {}
+    bad.write_text(json.dumps({"schema": 999, "prefs": {"font": "Arial"}}),
+                   encoding="utf-8")
+    assert mod.read_prefs(str(bad)) == {}
+
+
+def test_prefs_cli_writes_only_into_the_config_dir(tmp_path):
+    """端到端：--set 落在 TAVOTTO_CONFIG_DIR，绝不写插件目录。"""
+    env = {**os.environ, "TAVOTTO_CONFIG_DIR": str(tmp_path / "cfg")}
+    script = SKILL_DIR / "scripts" / "prefs.py"
+    before = {p for p in SKILL_DIR.rglob("*") if p.is_file()
+              and "__pycache__" not in p.parts}
+    out = subprocess.run(
+        [sys.executable, str(script), "--set", "font=Times New Roman",
+         "--set", "width=single", "--json"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", env=env, check=True)
+    data = json.loads(out.stdout.strip().splitlines()[-1])
+    assert data["saved"] is True
+    assert data["prefs"] == {"font": "Times New Roman", "width": "single"}
+    assert (tmp_path / "cfg" / "codex-plugin-figure-prefs.json").is_file()
+    after = {p for p in SKILL_DIR.rglob("*") if p.is_file()
+             and "__pycache__" not in p.parts}
+    assert after == before, "prefs.py 往插件目录里写了东西"
+    # 再跑一次读 + unset：记录过的读得回来，退回后消失
+    out = subprocess.run(
+        [sys.executable, str(script), "--unset", "width", "--json"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", env=env, check=True)
+    data = json.loads(out.stdout.strip().splitlines()[-1])
+    assert data["prefs"] == {"font": "Times New Roman"}
+
+
+def test_prefs_cli_rejects_unknown_keys(tmp_path):
+    """键是闭集：不认识的键当场拒绝，退出码非零，偏好文件不落地。"""
+    env = {**os.environ, "TAVOTTO_CONFIG_DIR": str(tmp_path / "cfg")}
+    script = SKILL_DIR / "scripts" / "prefs.py"
+    out = subprocess.run(
+        [sys.executable, str(script), "--set", "favorite_color=blue", "--json"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", env=env)
+    assert out.returncode != 0
+    assert not (tmp_path / "cfg" / "codex-plugin-figure-prefs.json").exists()
+    out = subprocess.run(
+        [sys.executable, str(script), "--set", "width=huge", "--json"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", env=env)
+    assert out.returncode != 0

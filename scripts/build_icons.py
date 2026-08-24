@@ -37,6 +37,12 @@ TAURI_PNGS = [
     (ROOT / "src-tauri" / "icons" / "icon.png", 512),
 ]
 
+# 直接可用的方形 PNG（社交账号头像、GitHub org 头像这类「上传一张图」的场合
+# 用不了 .icns/.ico）。与其余产物出自同一份 SVG，改了 icon.svg 一起重出。
+AVATAR_PNGS = [
+    (ROOT / "assets" / "icon" / f"icon-{s}.png", s) for s in (256, 512, 1024)
+]
+
 
 def need(tool: str) -> str:
     p = shutil.which(tool)
@@ -51,11 +57,19 @@ def render(rsvg: str, size: int, out: Path) -> None:
                    check=True)
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    avatars_only = "--avatars-only" in (sys.argv[1:] if argv is None else argv)
     if not SVG.is_file():
         print(f"缺少 {SVG}", file=sys.stderr)
         return 1
     rsvg = need("rsvg-convert")
+
+    # ---- 头像 PNG（不依赖 magick/iconutil，任何平台都能出）----
+    for out, size in AVATAR_PNGS:
+        render(rsvg, size, out)
+        print(f"✓ {out.relative_to(ROOT)}  {out.stat().st_size:,} bytes")
+    if avatars_only:
+        return 0
 
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)

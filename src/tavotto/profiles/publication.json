@@ -79,12 +79,12 @@
         "auto_recolor": false
       },
       "text_weight_policy": {
-        "comment": "原文示例里数值标签与图例内字体加粗；按角色处理，绝不整图一刀切加粗。全部只作建议。",
+        "comment": "只有轴标题加粗（2026-08-24 定版），其余角色一律常规字重；按角色处理，绝不整图一刀切加粗。全部只作建议。",
         "figure": "normal",
         "title": "normal",
-        "axis_label": "normal",
-        "ticklabel": "bold",
-        "legend_text": "bold",
+        "axis_label": "bold",
+        "ticklabel": "normal",
+        "legend_text": "normal",
         "annotation": "normal"
       },
       "severity": {
