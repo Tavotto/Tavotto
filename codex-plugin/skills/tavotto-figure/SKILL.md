@@ -9,7 +9,59 @@ description: 画 matplotlib 论文级图表，并用 Tavotto 继续微调（拖�
 
 你只负责把图做成「Tavotto 能接手」的形状。图例位置、字号、线宽、刻度朝向这些，
 用 Tavotto 的 MCP 工具改（在 Codex 里就能改完）——**不要在对话里追问这类参数，
-更不要为这种改动重跑脚本**。
+更不要为这种改动重跑脚本**。唯一的例外是下面「开工」一节的三个问题
+（画幅宽度 / 字体 / 图例加不加框）：那三件事决定整张图的骨架，动手前先问清。
+
+## 开工：先同步插件，再问三件事
+
+### 同步插件（每个会话一次）
+
+会话里**第一次** @Tavotto（或隐式触发本技能）开始画图前，先跟用户说一句
+在同步 Tavotto 插件，然后跑：
+
+```
+codex plugin marketplace add Tavotto/Tavotto && codex plugin add tavotto@tavotto
+```
+
+这一步把插件对齐到最新版。**每个会话只跑一次**：装到新版后这个会话里的
+工具反正不会自动更新（要新开会话才生效，顺口提一句即可），同一会话里
+反复重装只有网络开销没有收益。**它是尽力而为的**：离线、命令失败、
+marketplace 不可达都不算事故——报一句就继续画图，绝不为此阻塞出图，也
+绝不重试纠缠。`handoff.py` 交接路径上另有 24 小时节流、只提醒不安装的
+update_check 通道，两者互不代替。
+
+### 三个开工问题（用提问工具，不用自由文本追问）
+
+先读已记录的偏好（脚本路径相对本技能目录）：
+
+```
+python3 scripts/prefs.py --json
+```
+
+三个键里**记录过的直接用，不再问**——唯一例外是 `width` 记的是 `ask`：
+那个哨兵值的含义就是「宽度每次都问」，撞见它宽度照问（另外两个键照常）。
+没记录的用宿主的**向用户提问工具**
+（ask user question / request_user_input，一次问卷问齐，别拆成三轮对话）问：
+
+1. **画幅宽度**——选项：单栏 **8 cm**、双栏 **15 cm**。用户不清楚就按这次
+   任务自己推荐并说明理由：单张简单曲线/单组对比 → 单栏 8 cm；曲线多、
+   面板多、横向信息密 → 双栏 15 cm。推荐项放在第一位。
+2. **字体**——选项**必须包括 Times New Roman 与 Arial**（默认推荐
+   Times New Roman）；用户点名其它字体就用其它字体。
+3. **图例加不加框**——加框 / 无框（默认推荐无框）。用户选了加框，之后调
+   `tavotto_preflight` / `tavotto_export` 时带
+   `{"journal": {"legend_policy": {"frame": true}}}`——那是用户自己点的头，
+   别让预检把它当违规每次都报一条 warning。
+
+用户在回答里表示「以后都这样 / 记住」时才写偏好（`width` 记 `single` /
+`double`；用户明确说「宽度每次都问」记 `ask`）：
+
+```
+python3 scripts/prefs.py --set font="Times New Roman" --set legend_frame=off --json
+```
+
+用户改主意时用 `--set` 覆盖或 `--unset` 退回「下次再问」。偏好写不进去
+（`saved: false`）不算错误——下次重新问就是了。
 
 本插件同时带一套 **MCP 工具**（`tavotto_open_figure` / `tavotto_apply_overrides` /
 `tavotto_preflight` / `tavotto_export` / `tavotto_verify_replay` /
@@ -75,13 +127,17 @@ fig.savefig(OUT / "Fig1_removal_rate.pdf")
 
 ### 6. 投稿默认值（就是 `lab-publication-v1` 规范）
 
-* 宽度：单栏 **80 mm**、双栏 **150 mm**；比例取 16:9 / 4:3 / 1:1
+* 宽度：单栏 **80 mm（8 cm）**、双栏 **150 mm（15 cm）**——按开工问题的答案选，
+  **不出这两档之外的宽度**；比例取 16:9 / 4:3 / 1:1
 * 字号：正文 **9 pt**；**最终有效字号必须大于 8 pt**，规范下限 8.5 pt
   （图例与刻度别再用 8 pt——预检会当阻断项拦下）
 * 线宽：**0.5 / 0.75 / 1.0 / 1.5 pt** 四档里选
-* 坐标轴：封闭（四条边都留）、刻度朝内、只留主刻度；轴标题写成 `Title (unit)`
-* 图例：无边框
-* 字体：Times New Roman；有中文就显式加中文字体（否则导出 PDF 里是方框）
+* 坐标轴：封闭（四条边都留）、**刻度朝内、只留主刻度线，次刻度线不画**；
+  轴标题写成 `Title (unit)` 且**默认加粗**（`axes.labelweight: bold`，
+  用户特殊要求才改回常规字重）
+* 图例：按开工问题的答案加框或无框（默认无框）
+* 字体：按开工问题的答案（默认 Times New Roman，另一个标准选项是 Arial）；
+  有中文就显式加中文字体（否则导出 PDF 里是方框）
 * 位图（`imshow` 等）≥ 300 dpi；交付物存矢量 PDF
 * 色系：用 Scientific colour maps（batlow / vik / roma…），按 sequential /
   diverging / categorical 语义选；**不要用 jet / rainbow**
@@ -89,6 +145,42 @@ fig.savefig(OUT / "Fig1_removal_rate.pdf")
 
 用户另有期刊要求就按用户的，并在调工具时带 `journal` 覆盖。
 画完跑一次 `tavotto_preflight` 确认，别凭记忆打包票。
+
+### 7. 克制：数据之外的效果，一个都不擅自加
+
+图上只画用户要的数据。**下面这些没有用户明确要求就一律不加**：
+
+* 用背景色块/色带标注「某段数据好或差」；
+* 在图里画箭头指向某个数据点或区域；
+* 「peak here」「注意这里」这类说明性文字标注；
+* 高亮、阴影、星号显著性标记等一切装饰性效果。
+
+你觉得某个效果确实能帮读者理解时，**用向用户提问工具先问**（说明加什么、
+为什么），用户点头才画；用户没点头就保持素图。「先加上再让用户删」不是
+省事，是把用户的图改成了你的图。
+
+### 8. 多子图：在 matplotlib 里拼，不假手他人
+
+任务涉及多个子图组成一张主图时：
+
+* **主图宽度 150 mm（15 cm）**，在**一个脚本、一个 Figure** 里用
+  `plt.subplots` / `GridSpec` 排版，一次 `savefig` 出整张主图；
+* **绝不用别的软件拼**——不用 PIL/ImageMagick 拼贴位图、不用 LaTeX
+  subfigure、不导出散件让用户自己拼。matplotlib 之外拼出来的不是矢量整图，
+  Tavotto 也接不住；
+* **每个子图的 x 轴与 y 轴都各自标全**：轴标题、刻度线、刻度标签一样不少
+  ——同一行的子图哪怕 y 轴标题一字不差，也逐个 `set_ylabel` /
+  `set_xlabel`，**不许只给最左（最下）那个留、其余留白**；
+* **不共享坐标轴**：不用 `plt.subplots(..., sharex=…, sharey=…)`——它会把
+  里侧子图的刻度标签藏掉。要让各子图坐标范围一致，就逐个
+  `set_xlim` / `set_ylim` 对齐，刻度与轴标题仍然每个子图自己标；
+* 子图各自的标题用 `ax.set_title(...)`（默认居中），**矩阵式各归各位**：
+  每个标题落在自己那个子图的正上方，不挤在整图左上角，也不用
+  `loc="left"`（用户点名要左对齐才用）；
+* 子图另需单独交付时，每张也按 8 cm / 15 cm 两档出，同样一图一 stem；
+* 子图编号 (a)(b)(c) 用户要了才加（这也算约定 7 里的标注）。
+
+以上是默认值，用户特殊要求（比如「里侧子图不要重复轴标题」）就按用户的。
 
 ## 模板
 
@@ -104,14 +196,19 @@ OUT = Path(__file__).resolve().parent
 COL_1, COL_2 = 8 / 2.54, 15 / 2.54          # 单栏 / 双栏（英寸）
 
 mpl.rcParams.update({
+    # 字体按开工问题的答案；Arial 用 "font.family": "sans-serif" + "font.sans-serif"
     "font.family": "serif",
     # 有中文就把中文字体也加进来，否则导出 PDF 里是方框
     "font.serif": ["Times New Roman", "DejaVu Serif"],
     # 全部 ≥ 8.5pt：8pt 的图例/刻度会被预检当阻断项拦下
     "font.size": 9, "axes.labelsize": 9, "axes.titlesize": 9,
     "legend.fontsize": 9, "xtick.labelsize": 9, "ytick.labelsize": 9,
-    # 外框 0.75pt（规范档位之一），刻度朝内，图例无框
+    # 轴标题默认加粗（用户特殊要求才改）
+    "axes.labelweight": "bold",
+    # 外框 0.75pt（规范档位之一），刻度朝内、只留主刻度
     "axes.linewidth": 0.75, "xtick.direction": "in", "ytick.direction": "in",
+    "xtick.minor.visible": False, "ytick.minor.visible": False,
+    # 图例加不加框按开工问题的答案（默认无框）
     "legend.frameon": False,
 })
 
@@ -241,6 +338,25 @@ python3 scripts/handoff.py <脚本路径>
   Releases 更新 Tavotto（**跟插件是两码事，别混着说**）。
 
 完整的错误码清单与排障步骤在 `../../../docs/handoff-protocol.md`。
+
+## Tavotto 出了问题：帮用户提 issue
+
+用户撞上 Tavotto 的报错、渲染结果不及预期、画布/预览显示不出来时，除了按
+上面的错误码引导恢复，还要**把问题记录成一份能复现的 issue 草稿**：
+
+* **标题**：一句话说清「做什么时出了什么」；
+* **环境**：`tavotto_health` 的输出（引擎版本/来源）、插件版本
+  （`python3 scripts/update_check.py --json` 里的 `current_version`）、
+  操作系统；
+* **复现步骤**：最小化的脚本（或指出无法脱敏时用形状等价的替身数据）、
+  依次执行的命令/工具调用、期望看到什么、实际看到什么；
+* **原始证据**：结构化错误的 `code` 与消息原文、相关日志（`log_path` 指到的
+  那份）——**先脱敏**：用户名、绝对路径、密钥一律抹掉。
+
+草稿先给用户看。**用户明确允许之后**才提交到
+<https://github.com/Tavotto/Tavotto/issues>（有 `gh` 就
+`gh issue create --repo Tavotto/Tavotto`，没有就把草稿给用户让他自己贴）。
+用户不允许就把草稿留在对话里，到此为止——**绝不擅自外发**。
 
 ## 画完之后就收手
 
