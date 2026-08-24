@@ -13,6 +13,7 @@ MCP Roots 从协议版本 2026-07-28 起已弃用；Tavotto 仍在 2025-era stdi
 """
 from __future__ import annotations
 
+import ntpath
 import os
 import threading
 from dataclasses import dataclass
@@ -27,9 +28,73 @@ WORKSPACE_ENVS = ("TAVOTTO_MCP_WORKSPACE", "CODEX_WORKSPACE_ROOT",
 
 def _within(path: str, root: str) -> bool:
     try:
-        return os.path.commonpath([path, root]) == root
+        common = os.path.commonpath([path, root])
+        return os.path.normcase(common) == os.path.normcase(root)
     except ValueError:  # Windows 上跨盘符 commonpath 会抛
         return False
+
+
+def _windows_absolute_realpath(path: str, resolver) -> str:
+    """不用进程 cwd 解析一个 Windows 绝对路径。
+
+    CPython 的 ``ntpath.realpath`` 会在判断路径是否绝对之前无条件读取 cwd；
+    插件更新替换掉旧 cwd 后，这会让一个完全合法的绝对 workspace path 也抛
+    ``FileNotFoundError``。Windows 自己的 ``_getfinalpathname`` 不需要 cwd，
+    所以这里直接解析最长的现存祖先，再接回尚未创建的尾部。权限等非
+    ``not found`` 错误仍然原样抛出，不能用词法路径降级绕过 symlink/junction。
+    """
+    normalized = ntpath.normpath(path)
+    prefix = "\\\\?\\"
+    unc_prefix = "\\\\?\\UNC\\"
+    had_prefix = ntpath.normcase(normalized).startswith(ntpath.normcase(prefix))
+    probe = normalized
+    tail: list[str] = []
+    while True:
+        try:
+            resolved = resolver(probe)
+            break
+        except OSError as exc:
+            if (not isinstance(exc, FileNotFoundError)
+                    and getattr(exc, "winerror", None) not in {2, 3}):
+                raise
+            parent, name = ntpath.split(probe)
+            if not name or parent == probe:
+                raise
+            tail.append(name)
+            probe = parent
+    for name in reversed(tail):
+        resolved = ntpath.join(resolved, name)
+    resolved = ntpath.normpath(resolved)
+    if not had_prefix:
+        folded = ntpath.normcase(resolved)
+        if folded.startswith(ntpath.normcase(unc_prefix)):
+            resolved = "\\\\" + resolved[len(unc_prefix):]
+        elif folded.startswith(ntpath.normcase(prefix)):
+            resolved = resolved[len(prefix):]
+    return resolved
+
+
+def canonical_path(path: str) -> str:
+    """等价于 ``realpath``，但 Windows 绝对路径不依赖一个仍存在的 cwd。"""
+    raw = os.path.expanduser(str(path))
+    try:
+        return os.path.realpath(raw)
+    except FileNotFoundError:
+        if os.name != "nt" or not ntpath.isabs(raw):
+            raise
+        resolver = getattr(os.path, "_getfinalpathname", None)
+        if not callable(resolver):
+            raise
+        return _windows_absolute_realpath(raw, resolver)
+
+
+def is_filesystem_root(path: str) -> bool:
+    """判断 POSIX 根、盘符根或 UNC share 根，不读取当前工作目录。"""
+    normalized = os.path.normpath(path)
+    if not os.path.isabs(normalized):
+        return False
+    return (os.path.normcase(os.path.dirname(normalized))
+            == os.path.normcase(normalized))
 
 
 @dataclass(frozen=True)
@@ -54,7 +119,7 @@ class RootAuthority:
     """选择可信根，并记录宿主 workspace capabilities 的真实运行时状态。"""
 
     def __init__(self, plugin_dir: str) -> None:
-        self.plugin_dir = os.path.realpath(plugin_dir)
+        self.plugin_dir = canonical_path(plugin_dir)
         self._lock = threading.RLock()
         self.reset()
 
@@ -140,13 +205,12 @@ class RootAuthority:
         if (os.environ.get(ROOTS_ENV) or "").strip():
             return None
         try:
-            real = os.path.realpath(raw)
+            real = canonical_path(raw)
             if not os.path.exists(real):
                 return None
             candidate = real if os.path.isdir(real) else os.path.dirname(real)
             candidate = self._normalise_dir(candidate)
-            fs_root = os.path.realpath(os.path.abspath(os.sep))
-            if candidate == fs_root or _within(candidate, self.plugin_dir):
+            if is_filesystem_root(candidate) or _within(candidate, self.plugin_dir):
                 return None
         except (OSError, ValueError):
             return None
@@ -159,8 +223,7 @@ class RootAuthority:
         """在 host 回报用户明确同意后，绑定本连接内的一个精确目录。"""
         try:
             real = self._normalise_dir(candidate)
-            fs_root = os.path.realpath(os.path.abspath(os.sep))
-            if real == fs_root:
+            if is_filesystem_root(real):
                 raise ValueError("不接受文件系统根目录")
             if _within(real, self.plugin_dir):
                 raise ValueError("指向插件缓存目录，不是用户工作区")
@@ -199,7 +262,7 @@ class RootAuthority:
             try:
                 path = self._path_from_file_uri(item["uri"])
                 real = self._normalise_dir(path)
-                if real == os.path.realpath(os.path.abspath(os.sep)):
+                if is_filesystem_root(real):
                     raise ValueError("不接受文件系统根目录")
                 if _within(real, self.plugin_dir):
                     raise ValueError("指向插件缓存目录，不是用户工作区")
@@ -294,7 +357,7 @@ class RootAuthority:
             return (), "none", (f"cwd 不可用：{exc}",)
         if _within(cwd, self.plugin_dir):
             return (), "none", ("进程 cwd 是插件目录，不作为用户工作区",)
-        if cwd == os.path.realpath(os.path.abspath(os.sep)):
+        if is_filesystem_root(cwd):
             return (), "none", ("进程 cwd 是文件系统根目录，不作为工作区",)
         return (cwd,), "cwd", ()
 
@@ -302,13 +365,12 @@ class RootAuthority:
                            reject_fs_root: bool) -> tuple[tuple[str, ...], tuple[str, ...]]:
         accepted: list[str] = []
         warnings: list[str] = []
-        fs_root = os.path.realpath(os.path.abspath(os.sep))
         for item in (part.strip() for part in raw.split(os.pathsep)):
             if not item:
                 continue
             try:
                 real = self._normalise_dir(item)
-                if reject_fs_root and real == fs_root:
+                if reject_fs_root and is_filesystem_root(real):
                     raise ValueError("不接受文件系统根目录")
                 if reject_plugin and _within(real, self.plugin_dir):
                     raise ValueError("指向插件目录")
@@ -321,7 +383,7 @@ class RootAuthority:
 
     @staticmethod
     def _normalise_dir(path: str) -> str:
-        real = os.path.realpath(os.path.expanduser(str(path)))
+        real = canonical_path(path)
         if not os.path.isdir(real):
             raise ValueError("目录不存在或不是目录")
         return real

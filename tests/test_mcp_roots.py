@@ -1,4 +1,5 @@
 """可信 workspace-root 权威的独立安全矩阵。"""
+import ntpath
 import os
 import sys
 from pathlib import Path
@@ -8,7 +9,12 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "codex-plugin" / "mcp"))
 
-from tavotto_mcp.roots import ROOTS_ENV, WORKSPACE_ENVS, RootAuthority  # noqa: E402
+from tavotto_mcp.roots import (  # noqa: E402
+    ROOTS_ENV,
+    WORKSPACE_ENVS,
+    RootAuthority,
+    _windows_absolute_realpath,
+)
 
 
 @pytest.fixture
@@ -37,6 +43,59 @@ def test_explicit_configuration_wins_over_protocol_roots(
     assert snap.source == "explicit_env"
     assert snap.roots == (str(explicit.resolve()),)
     assert authority.protocol_request_needed() is False
+
+
+def test_windows_absolute_realpath_resolves_without_reading_cwd():
+    calls = []
+
+    def resolver(path):
+        calls.append(path)
+        if ntpath.normcase(path) == ntpath.normcase(r"C:\workspace"):
+            return r"\\?\C:\Workspace"
+        raise FileNotFoundError(2, "missing")
+
+    result = _windows_absolute_realpath(
+        r"C:\workspace\new\figure.svg", resolver)
+    assert result == r"C:\Workspace\new\figure.svg"
+    assert calls == [
+        r"C:\workspace\new\figure.svg",
+        r"C:\workspace\new",
+        r"C:\workspace",
+    ]
+
+
+def test_windows_absolute_realpath_normalises_unc_prefix():
+    def resolver(_path):
+        return r"\\?\UNC\server\share\Workspace"
+
+    assert _windows_absolute_realpath(
+        r"\\server\share\workspace", resolver,
+    ) == r"\\server\share\Workspace"
+
+
+def test_windows_absolute_realpath_never_downgrades_permission_errors():
+    def resolver(_path):
+        raise PermissionError(13, "denied")
+
+    with pytest.raises(PermissionError):
+        _windows_absolute_realpath(r"C:\workspace\secret", resolver)
+
+
+def test_explicit_absolute_root_survives_a_deleted_cwd(
+        authority, tmp_path, monkeypatch):
+    configured = tmp_path / "configured"
+    configured.mkdir()
+    resolved = str(configured.resolve())
+    monkeypatch.setenv(ROOTS_ENV, str(configured))
+
+    def deleted_cwd():
+        raise FileNotFoundError(2, "No such file or directory")
+
+    monkeypatch.setattr(os, "getcwd", deleted_cwd)
+    snap = authority.snapshot()
+    assert snap.source == "explicit_env"
+    assert snap.roots == (resolved,)
+    assert snap.warnings == ()
 
 
 def test_even_explicit_configuration_rejects_fs_root_and_plugin_cache(

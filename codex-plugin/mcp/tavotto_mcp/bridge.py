@@ -40,7 +40,7 @@ from tavotto.engine import (
     telemetry as engine_telemetry,
 )
 
-from .roots import ROOTS_ENV, WORKSPACE_ENVS, RootAuthority
+from .roots import ROOTS_ENV, WORKSPACE_ENVS, RootAuthority, canonical_path
 
 #: 工作区提示：装好的插件里 `.mcp.json` 的 `cwd` 指向**插件自己的目录**
 #: （`./mcp/server.py` 要靠它解析），于是「不给就用进程 cwd」在真实安装下
@@ -51,7 +51,7 @@ from .roots import ROOTS_ENV, WORKSPACE_ENVS, RootAuthority
 #: 挑一个目录顶上。
 #: 插件包自己所在的目录（`codex-plugin/`）——cwd 落在它里面就说明这是
 #: Codex 用来定位 `./mcp/server.py` 的那个 cwd，不是用户的工作区。
-_PLUGIN_DIR = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", ".."))
+_PLUGIN_DIR = canonical_path(os.path.join(os.path.dirname(__file__), "..", ".."))
 _ROOT_AUTHORITY = RootAuthority(_PLUGIN_DIR)
 #: 会话上限：一个 Codex 会话同时端着几十张图没有意义，而每个 worker 都是一个
 #: 常驻 Python 进程（几百 MB）。超了按最久未用淘汰。
@@ -156,7 +156,8 @@ def _no_roots_error() -> "BridgeError":
 
 def _within(path: str, root: str) -> bool:
     try:
-        return os.path.commonpath([path, root]) == root
+        common = os.path.commonpath([path, root])
+        return os.path.normcase(common) == os.path.normcase(root)
     except ValueError:      # Windows 上跨盘符 commonpath 直接抛
         return False
 
@@ -180,7 +181,7 @@ def check_scope(path: str) -> str:
                 "相对路径需要恰好一个可信工作区根；当前有多个根，请传绝对路径。",
                 code="ambiguous_workspace_root", roots=roots, path=target)
         target = os.path.join(roots[0], target)
-    real = os.path.realpath(target)
+    real = canonical_path(target)
     if any(_within(real, r) for r in roots):
         return real
     raise BridgeError(
