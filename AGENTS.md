@@ -838,7 +838,8 @@ Python，首次渲染也不联网：
 
 ## Codex MCP server 与内嵌画布（2026-08-18）
 
-完整版在 `docs/adr/0006-codex-mcp-app-and-publication-profile.md`，改动前先读。
+完整版在 `docs/adr/0006-codex-mcp-app-and-publication-profile.md`；工作区授权在
+`docs/adr/0009-codex-workspace-root-authority.md`。改动前先读。
 ADR 0005 的「skills-only / 不做 MCP server」这一条**已被它推翻**（交接那条路不变）。
 
 - 插件清单加 `"mcpServers": "./.mcp.json"`；`.mcp.json` 是**本地 stdio**
@@ -852,10 +853,15 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被它推翻**（
 - **stdout 归协议独占**：`rpc.hijack_stdout()` 把 `sys.stdout` 改道到 stderr，**必须先
   存下真正的 stdout 句柄**（`_REAL_STDOUT`）。顺序反了协议帧全写到 stderr 上，症状是
   「initialize 永远等不到响应」且零报错（开发期真撞到过）。
-- **路径范围**：`TAVOTTO_MCP_ROOTS` → 宿主的工作区变量（`TAVOTTO_MCP_WORKSPACE` /
-  `CODEX_*`）→ 进程 cwd**且它不在插件包里**（装好的插件 cwd 正是插件目录，
-  拿它当边界会把用户每张图判成越界）。一个都没有时报 `no_workspace_root`
-  并说清要设什么。越界一律拒，**绝不「就近找一个能用的」**。**没装 Tavotto 时降级而不是退出**（降级 server 握手正常、每个工具说人话）
+- **路径范围只有一个权威 `RootAuthority`**：显式 `TAVOTTO_MCP_ROOTS` → host 明确
+  声明后的 `roots/list`（Roots 已弃用，只作兼容）→ 用户经 `elicitation/create`
+  批准、只活在本连接内的精确 realpath → 宿主工作区变量 → 安全 cwd。模型传来的
+  `project_path` 只是候选，不能自证权限；相对路径只有恰好一个可信根时才解析。
+  确认框默认 false，拒绝/取消/超时一律 fail-closed，重新 initialize 清掉授权；
+  root 改变后旧 session 必须回 `workspace_root_changed`。server→client 请求只能在
+  活跃 `tools/call` 内发，reader pump 必须保序且有界等待。越界一律拒，**绝不
+  「就近找一个能用的」**。看护 `tests/test_mcp_roots.py`、双向协议用例与
+  `tests/test_mcp_stdio.py`。**没装 Tavotto 时降级而不是退出**（降级 server 握手正常、每个工具说人话）
   ——静默退出在 Codex 里表现为「插件没有工具」。
 - **启动器 `mcp/server.py` 是运行时解析器（2026-08-20 重做）**：候选链
   当前解释器 → `TAVOTTO_MCP_PYTHON`（显式，失败要指名道姓报
@@ -893,8 +899,10 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被它推翻**（
 - 画布产物 `codex-plugin/mcp/widget/canvas.html` 是**受管构建物**（进 git）：
   `python scripts/build_mcp_widget.py`，`--check` 在 CI 的 frontend job 与 pytest 里各看一道。
   **改了 `web/src` 就得重跑**，否则用户装到的是上一版画布（功能全在、只是旧、零报错）。
-- **Codex Desktop 里的 iframe 渲染尚未实测**——协议层与画布逻辑都有自动化看护，
-  但「真桌面应用把这块 HTML 跑起来」这一步没验过，README 里如实写着。
+- **协议绿灯不能冒充 Codex Desktop iframe 证据**。真实验收必须按
+  `docs/acceptance/codex-desktop-canvas.md`：新任务、真实 capability JSON、先取消
+  证明 fail-closed、再人工批准精确路径、同一任务里出现并实际交互画布，且保留截图与
+  工具 metadata；缺一项就继续写“未验证”。
 
 ## 浏览器 playground（网站 /try，2026-08-21）
 

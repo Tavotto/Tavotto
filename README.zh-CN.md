@@ -128,6 +128,9 @@ codex plugin marketplace add Tavotto/Tavotto && codex plugin add tavotto@tavotto
 没有第二套实现。详见 [`codex-plugin/README.md`](codex-plugin/README.md)，
 其中也写清了哪些部分**还没有在真实的 Codex Desktop 里验证过**。
 
+模型建议的路径永远不等于权限。零配置第一次打开时，支持这项能力的 Codex 会把
+规范化后的本地目录展示给你确认；批准只在当前 Tavotto MCP 连接内有效。
+
 ## 全部在本机运行
 
 渲染、合成、导出都是本地进程。Tavotto 不会把你的图、脚本、项目文件或数据上传到任何地方，

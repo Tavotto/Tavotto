@@ -153,7 +153,7 @@ window.addEventListener('message', (ev) => {
     window.__READY__ = true
     // host 把「带出这块画布的那次工具调用」的结果推过来（MCP Apps 标准路径）
     post({ jsonrpc: '2.0', method: 'ui/notifications/tool-result', params: {
-      result: { structuredContent: window.__OPEN__, content: [] },
+      structuredContent: window.__OPEN__, content: [],
     }})
     return
   }
