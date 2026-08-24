@@ -83,7 +83,15 @@ def allowed_roots() -> list[str]:
         hint = (os.environ.get(name) or "").strip()
         if hint:
             return [os.path.realpath(os.path.expanduser(hint))]
-    cwd = os.path.realpath(os.getcwd())
+    # Codex can replace the plugin cache in place during an update while the
+    # existing MCP process is still alive.  On POSIX that process keeps the
+    # deleted directory as its cwd, and ``getcwd()`` raises ENOENT.  Treat that
+    # exactly like any other missing workspace hint: fail closed below instead
+    # of leaking a raw OSError as JSON-RPC ``Internal error``.
+    try:
+        cwd = os.path.realpath(os.getcwd())
+    except OSError:
+        return []
     if not _within(cwd, _PLUGIN_DIR):
         return [cwd]
     return []
@@ -97,7 +105,8 @@ def _no_roots_error() -> "BridgeError":
     """
     return BridgeError(
         f"没有可用的项目根：{ROOTS_ENV} 没设，宿主也没给工作区目录"
-        f"（找过 {', '.join(WORKSPACE_ENVS)}），而进程 cwd 是插件自己的目录。"
+        f"（找过 {', '.join(WORKSPACE_ENVS)}），而进程 cwd 不是可用工作区"
+        "（可能是插件目录，或已在插件更新时被替换）。"
         f"把 {ROOTS_ENV} 设成你的工作目录（{os.pathsep} 分隔多个）再试。",
         code="no_workspace_root", roots=[])
 
@@ -115,10 +124,13 @@ def check_scope(path: str) -> str:
     **越界一律拒绝，绝不「就近找一个能用的」**：Codex 传来的路径可能来自模型
     的推断，静默换一个目录打开等于在用户没看见的地方改文件。
     """
-    real = os.path.realpath(os.path.expanduser(str(path)))
     roots = allowed_roots()
     if not roots:
         raise _no_roots_error()
+    # Resolve the untrusted target only after a usable boundary exists.
+    # Windows' ``ntpath.realpath`` may consult cwd even for an absolute path;
+    # doing this first would turn the same deleted-cwd case back into ENOENT.
+    real = os.path.realpath(os.path.expanduser(str(path)))
     if any(_within(real, r) for r in roots):
         return real
     raise BridgeError(
