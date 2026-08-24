@@ -91,7 +91,8 @@ def _ci_metrics(a: Path, b: Path) -> dict | None:
         if not exe:
             continue
         proc = subprocess.run([exe, "-c", code, str(CI_DIR), str(a), str(b)],
-                              capture_output=True, text=True, timeout=120)
+                              capture_output=True, encoding="utf-8",
+                              errors="replace", timeout=120)
         if proc.returncode == 0:
             return json.loads(proc.stdout.strip().splitlines()[-1])
     return None
