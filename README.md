@@ -148,6 +148,10 @@ snapping and undo have no second implementation. See
 [`codex-plugin/README.md`](codex-plugin/README.md), including which parts are **not
 yet verified inside a real Codex Desktop**.
 
+A path suggested by the model is never treated as permission. On a zero-config first
+open, a capable Codex host shows the canonical local directory for you to approve;
+that approval lasts only for the current Tavotto MCP connection.
+
 ## Everything runs on your machine
 
 Rendering, composition and export are local processes. Tavotto does not upload your

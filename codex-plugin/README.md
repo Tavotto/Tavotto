@@ -123,6 +123,10 @@ python3 <插件目录>/mcp/server.py --health
 解释器用不了（`engine_unavailable`）、一切就绪但**当前会话还没重载工具**
 （health 是绿的，那就新开会话）。
 
+新会话里再调用 MCP 工具 `tavotto_health`，它会额外报告真实 initialize 握手：
+client/version/protocol、宿主实际声明的 capability 名称、可信根来源、generation、
+Roots 兼容状态与连接内工作区确认状态。这里不按 Codex 版本号猜能力。
+
 「只有桌面版」这一格**绝不会被说成「没装 Tavotto」**——你明明装了，缺的只是
 一个 Python 环境，两者可以共存。启动器找不到可用解释器时不会静默退出，而是起
 一个**降级 server**：握手正常（`serverInfo.version` 固定为 `0`，这是「引擎
@@ -144,6 +148,22 @@ python3 <插件目录>/mcp/server.py --health
   handoff）。它有自己的就绪判据与失败上报（见
   [`../docs/handoff-protocol.md`](../docs/handoff-protocol.md)），
   桌面进程崩溃时你会拿到 `launch_failed` + 信号/日志路径，不会拿到假成功。
+
+### 工作区为什么会弹一次确认
+
+`project_path` 是模型给的候选，不是权限。Tavotto 的 `RootAuthority` 按固定顺序取
+可信边界：显式 `TAVOTTO_MCP_ROOTS` → host 声明的 MCP Roots（旧协议兼容）→
+Codex 原生确认框里由用户批准的精确目录 → host workspace 环境变量 → 安全 cwd。
+
+当前 host 若声明 `elicitation` 而没有声明 Roots，第一次打开请传**绝对、已存在**的
+项目路径。确认框会显示 realpath，默认不批准；只有用户明确接受后，这一个目录才在
+当前 MCP 连接内生效。取消/拒绝/超时都会 fail-closed，代理也会收到“不要自动循环
+重试”的机器可读错误。重新 initialize/重启 server 自动清掉授权。文件系统根、插件
+缓存目录、远程 URI 与不存在的路径永远不能通过这条路。
+
+MCP Roots 自协议版本 2026-07-28 起已弃用，所以它保留为 compatibility path，
+不是长期唯一入口。完整不变式见
+[ADR 0009](../docs/adr/0009-codex-workspace-root-authority.md)。
 
 ## 插件自己的更新
 
@@ -175,6 +195,10 @@ python3 skills/tavotto-figure/scripts/update_check.py --json --force
 ```
 用 Tavotto 打开 figures/Fig1_kinetics.pdf
 ```
+
+如果 health 里还没有可信根，第一次请让 Codex 传绝对路径并核对原生确认框；确认后
+同一连接里的相对路径才有稳定基准。非交互 `codex exec` 会取消确认，这是安全行为，
+不是 Desktop 正向验收。
 
 支持 UI 的 host 会开出一块全屏画布（复杂编辑放不进 inline 卡片）；不支持的 host
 （Codex CLI 等）则拿到同一份结构化数据，接着用工具改图。
@@ -318,8 +342,9 @@ python scripts/build_mcp_widget.py --check
 # MCP server 自检（不连 host 也能看到它是活的）
 python codex-plugin/mcp/server.py --self-check
 
-# 协议 + 真链路
-.venv/bin/python -m pytest tests/test_mcp_server.py tests/test_mcp_roundtrip.py
+# 根权威 + 双向协议 + 真 stdio + 真渲染链路
+.venv/bin/python -m pytest tests/test_mcp_roots.py tests/test_mcp_server.py \
+  tests/test_mcp_stdio.py tests/test_mcp_roundtrip.py
 ```
 
 环境变量：
@@ -332,12 +357,14 @@ python codex-plugin/mcp/server.py --self-check
 | `TAVOTTO_MCP_WIDGET` | 指向另一份画布 HTML（边改边试） |
 | `TAVOTTO_PROFILES_FILE` | 指向另一份出版规范 JSON |
 
-**允许打开的目录怎么定**（按顺序，第一个命中就用它）：`TAVOTTO_MCP_ROOTS` →
-宿主传过来的工作区变量（`TAVOTTO_MCP_WORKSPACE` / `CODEX_WORKSPACE_ROOT` /
-`CODEX_PROJECT_ROOT` / `CODEX_WORKSPACE_DIR`）→ 进程 cwd，**且它不在插件包
-自己的目录里**。装好的插件跑起来时 cwd 正是插件目录（`./mcp/server.py` 要靠
-它解析），拿它当边界的话用户工作区里的每张图都会被判成越界。一个都拿不到时
-报 `no_workspace_root` 并直说要设哪个变量——不静默放行，也不静默拒绝。
+**允许打开的目录怎么定**（按顺序，第一个权威来源命中就用它）：
+`TAVOTTO_MCP_ROOTS` → host 明确声明后由 `roots/list` 返回的本地目录 →
+用户经 MCP elicitation 批准、只活在本连接内的精确目录 → 宿主传过来的工作区变量
+（`TAVOTTO_MCP_WORKSPACE` / `CODEX_WORKSPACE_ROOT` / `CODEX_PROJECT_ROOT` /
+`CODEX_WORKSPACE_DIR`）→ 进程 cwd，**且它不在插件包自己的目录里**。装好的插件
+cwd 正是插件目录，拿它当边界会把每张用户图判成越界。一个都拿不到时按能力返回
+`workspace_confirmation_required` 或 `no_workspace_root`——不静默放行，也不把
+模型参数当权限。
 
 ## 已知限制
 
@@ -367,6 +394,8 @@ Codex 官方插件装出来的那份，里面没有按平台分支的写法，�
 `canvas_ui` 说明画布为什么没出现）——那正是 fallback 的设计目的。
 
 技术细节与取舍见 [ADR 0006](../docs/adr/0006-codex-mcp-app-and-publication-profile.md)。
+工作区授权见 [ADR 0009](../docs/adr/0009-codex-workspace-root-authority.md)，真实桌面
+验收步骤见 [codex-desktop-canvas.md](../docs/acceptance/codex-desktop-canvas.md)。
 交接那条路（`tavotto open`）见 [ADR 0005](../docs/adr/0005-external-handoff-and-codex-plugin.md)。
 发进官方插件目录的路线与缺口清单在
 [`../docs/codex-plugin-distribution.md`](../docs/codex-plugin-distribution.md)。
