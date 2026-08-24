@@ -1802,6 +1802,23 @@ REPLAY_SIZE_TOL = 0.01
 POST_CHECK_SIZE_TOL = 0.5
 #: 分歧清单最多回多少条（够定位问题，又不至于把响应撑成一页 JSON）。
 REPLAY_DIFF_LIMIT = 20
+#: 像素门探针的目标像素宽（热态与重放各出一张，逐 RGBA 通道比差异）。
+#: 3×2 英寸的图在这一档约 66 万像素——线型 / 字形级的差异足够显影，
+#: 两张探针图合计也只要几十毫秒，相对整个写回（重跑一遍脚本）可以忽略。
+REPLAY_PIXEL_WIDTH = 1000
+#: 像素门阈值（三指标任一越界即分歧，语义见 scripts/ci/pixelcompare.py）。
+#: 通过态的基线是**逐字节相同**——热态与重放出自同一台机器、同一个解释器、
+#: 同一版 matplotlib，同一 dpi 的两次 savefig 本就该逐位一致（不变式套件
+#: 每天在拿字节相等断言 preview_png）。这里的余量只为万一的解码 / 抗锯齿
+#: 抖动兜底，并刻意远低于最小的真实信号（虚线化一条曲线 ≈ 0.2% 变化像素，
+#: 改色 / 改透明度更大）。比 CompatBench 的跨版本保真阈值（0.004 / 1.2 /
+#: 140）严一个量级是有意的：那边比的是两个 matplotlib 世界，这边比的是
+#: 同一个世界里的同一张图。
+REPLAY_PIXEL_TOL = {
+    "changed_pixel_ratio": 0.001,
+    "mean_abs_diff": 0.5,
+    "max_abs_diff": 64,
+}
 
 
 def _f(value) -> float | None:
@@ -1840,8 +1857,10 @@ def _compare_manifests(hot: dict, fresh: dict) -> tuple[list[dict], int]:
     """热态 manifest vs 干净重放 manifest → (分歧清单, 逐项比过的元素数)。
 
     比 gid 集合、每个元素的 bbox/anchor、以及 figure 的 size_mm。只比几何：
-    文本内容之类的属性差异会被 worker 自己的 warning 抓到，而**位置**恰恰是
-    热会话增量应用与全量重放最容易分岔的地方（FigS3 事故就是这条）。
+    **位置**是热会话增量应用与全量重放最容易分岔的地方（FigS3 事故就是这条）。
+    颜色 / 线型 / 字体样式 / 透明度这类几何不变的纯属性差异这把尺子量不到
+    （PR #49 的 bar_series.facecolor 就逃过它了）——那一层归
+    `_replay_pixel_diff` 的像素门（issue #81），两道一起才是完整的 verify。
     """
     diffs: list[dict] = []
     hot_size, fresh_size = _vec(hot.get("size_mm"), 2), _vec(fresh.get("size_mm"), 2)
@@ -1875,6 +1894,55 @@ def _compare_manifests(hot: dict, fresh: dict) -> tuple[list[dict], int]:
             elif any(abs(x - y) > REPLAY_GEOM_TOL for x, y in zip(va, vb)):
                 diffs.append({"gid": gid, "field": field, "hot": va, "fresh": vb})
     return diffs, len(common)
+
+
+def _replay_pixel_diff(worker, fresh, stem: str) -> dict | None:
+    """写回像素门：热态当前的样子 vs 干净重放，逐像素比对（issue #81）。
+
+    `_compare_manifests` 只量几何——颜色 / 线型 / 字体样式 / 透明度 / hatch /
+    marker 这类**几何不变的纯属性差异**它一项都量不到，而它们同样会把「用户
+    看到的」与「写进原件的」变成两张图（PR #49 的 facecolor 恢复顺序 bug 报了
+    0 处分歧）。像素是这些属性最终兑现的地方，也是唯一不用逐属性枚举、连
+    manifest 没暴露的属性都逃不掉的一把尺。
+
+    两侧都用协议既有的 `render_png`（画热会话 / 重放会话**当前**的 live
+    figure，不重新 apply）：热侧渲染的正是「用户此刻所见」，重放侧在
+    `fresh.override(stem, patches)` 之后就是「重开项目后重放出来的」。同一台
+    机器、同一个解释器、同一版 matplotlib、同一 dpi——通过态本就该逐字节
+    相同，字节相同直接放行；不同才解码按 `REPLAY_PIXEL_TOL` 三指标裁决，
+    底噪与容差只为解码 / 抗锯齿抖动兜底，不给真实属性差异留活口。
+
+    只在 `_hot_manifest` 判定「热态最后应用的正是这组 patches」之后调用——
+    与 manifest 比对同一条前提：热态压根不是这组 patches 时（历史恢复、跨面板
+    同步），比出来的差异全是假的，那时如实回 `fresh_only`，不装比过。
+    探针渲染失败一律**让异常冒出去**（写回失败、原件零改动）：查不了 ≠ 查过，
+    静默降级会把这道门慢慢变成空转的门禁。
+
+    返回 (分歧项 | None, 状态)：状态回填进 `verification["pixels"]`——
+    `"ok"` = 比过且一致；`"hot_rebuilt"` = 热会话在探针中途被 workerd 透明
+    重开（`unknown_session` → `_open()` → 重试），它此刻画的是脚本原样、
+    不再是「用户所见」的热态基准，本次像素比对**作废但如实报告**。误报一次
+    分歧，用户学到的就是「这个提示可以无视」。
+    """
+    hot_png = Path(worker.render_png(stem, REPLAY_PIXEL_WIDTH))
+    if not getattr(worker, "built", True):
+        # 透明重开把 built 置回了 False（且不重放 patches）：探针画的是原样
+        LOG.warning("写回像素门：热会话在探针中途被重开，本次像素比对作废: %s",
+                    stem)
+        return None, "hot_rebuilt"
+    fresh_png = Path(fresh.render_png(stem, REPLAY_PIXEL_WIDTH))
+    if hot_png.read_bytes() == fresh_png.read_bytes():
+        return None, "ok"
+    metrics = pdfbackend.compare_png(hot_png, fresh_png)
+    exceeded = {k: metrics.get(k) for k, tol in REPLAY_PIXEL_TOL.items()
+                if _f(metrics.get(k)) is not None and _f(metrics.get(k)) > tol}
+    if metrics.get("ok", False) and not exceeded:
+        return None, "ok"                # 抖动在底噪 / 容差之内：不算分歧
+    LOG.warning("写回像素门发现分歧: %s %s（阈值 %s）", stem, metrics,
+                REPLAY_PIXEL_TOL)
+    return ({"gid": "", "field": "pixels", "hot": "热态渲染", "fresh": "全量重放",
+             "metrics": metrics, "exceeded": exceeded,
+             "tolerance": dict(REPLAY_PIXEL_TOL)}, "diverged")
 
 
 def _write_back_prepare(src: Path, worker, expected_mtime) -> None:
@@ -1984,10 +2052,17 @@ def _write_source_files(src: Path, patches: list, worker,
                 warnings.append(str(w))
         man_fresh = json.loads(
             (Path(fresh.out_dir) / f"{stem}.json").read_text(encoding="utf-8"))
+        pixel_state = None
         if man_hot is None:
             diffs, compared = [], 0
         else:
             diffs, compared = _compare_manifests(man_hot, man_fresh)
+            if not diffs:
+                # 几何这把尺子过了，再过像素门：颜色 / 线型 / 字体 / 透明度
+                # 这类几何不变的纯属性分歧只有像素量得到（issue #81）
+                pixel_diff, pixel_state = _replay_pixel_diff(worker, fresh, stem)
+                if pixel_diff is not None:
+                    diffs.append(pixel_diff)
 
         for target in targets:
             tmp = target.with_name(f".{target.name}.updating")
@@ -2041,6 +2116,10 @@ def _write_source_files(src: Path, patches: list, worker,
     if man_hot is None:
         # 没比 ≠ 没验：staging 本来就出自干净重放，只是没有可对照的热态基准
         verification["reason"] = "hot_state_differs"
+    elif pixel_state is not None:
+        # 能走到这儿 = 几何与像素两道门都过了（任一分歧早已抛出）；
+        # "hot_rebuilt" = 像素门没比成（热会话中途被重开），如实报告
+        verification["pixels"] = pixel_state
     return {
         "updated": updated,
         "backup_dir": backup_dir,

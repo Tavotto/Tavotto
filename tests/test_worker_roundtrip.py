@@ -1677,6 +1677,8 @@ def test_write_back_verifies_a_clean_replay_and_keeps_vector_text(write_back):
 
     assert body["verification"]["replay"] == "ok", body["verification"]
     assert body["verification"]["elements"] > 0
+    # 纯几何修改（挪子图 / 拖文字）不许被像素门误伤——热态与重放本来就一致
+    assert body["verification"]["pixels"] == "ok", body["verification"]
     assert body["updated"] == ["TestFig_a.pdf"]       # 图库里只有 PDF 这一份
     assert body["warnings"] == []
     assert "post_check" not in body, "落盘后的页面尺寸该与重放 manifest 一致"
@@ -1714,6 +1716,82 @@ def test_write_back_blocks_when_the_script_changed_mid_session(write_back):
     assert resp.get_json()["code"] == "script_changed"
     assert (figs / "TestFig_a.pdf").read_bytes() == before
     assert not list(figs.glob(".*updating"))
+
+
+# ---------------- 写回的像素门（issue #81，真链路） ----------------
+
+def _series_line_gid(client) -> str:
+    """TestFig_a 里那条 series-a 曲线的 gid（color / linestyle / alpha 都可改）。"""
+    resp = client.post("/api/engine/render",
+                       json={"id": "TestFig_a.pdf", "patches": []})
+    assert resp.status_code == 200, resp.get_json()
+    return next(el["gid"] for el in resp.get_json()["manifest"]["elements"]
+                if {"color", "linestyle", "alpha"}
+                <= {f["prop"] for f in el.get("editable", [])})
+
+
+@pytest.mark.parametrize("prop,value", [
+    ("color", "#ff2222"),      # 颜色：几何一个字节不动
+    ("linestyle", "--"),       # 线型：bbox 仍由数据范围决定，不变
+    ("alpha", 0.25),           # 透明度：同上
+])
+def test_write_back_blocks_attribute_only_divergence(write_back, prop, value):
+    """几何完全一致、只有纯属性不同的热态 → 写回必须 409（issue #81 的封口）。
+
+    模拟的是 FigS3 / PR #49 那一类热态漂移：一条**绕过 pool 记账**的 override
+    直接落在 worker 上（增量应用 / 还原的 bug 留下的残留状态，账本还以为热态
+    就是这组 patches）。bbox / anchor 一项都没动，旧的 `_compare_manifests`
+    报 0 处分歧——把它放行就是把错误颜色静默烙进用户原件。像素门必须接住。
+    """
+    _m, client, figs = write_back
+    gid = _series_line_gid(client)
+    before = (figs / "TestFig_a.pdf").read_bytes()
+
+    worker = pool.get("fig_test.py", str(figs), "main")
+    resp = worker.request({"cmd": "override", "stem": "TestFig_a",
+                           "patches": [{"gid": gid, "prop": prop, "value": value}]})
+    assert resp.get("ok"), resp
+    assert not resp.get("warnings"), resp
+
+    r = client.post("/api/engine/update_source",
+                    json={"id": "TestFig_a.pdf", "patches": []})
+    assert r.status_code == 409, (prop, r.get_json())
+    body = r.get_json()
+    assert body["code"] == "replay_divergence"
+    pixel = next((d for d in body["diffs"] if d["field"] == "pixels"), None)
+    assert pixel is not None, body["diffs"]
+    assert pixel["metrics"]["total_pixels"] > 0
+
+    # 原件零改动，图库无半成品，一次性会话不泄漏
+    assert (figs / "TestFig_a.pdf").read_bytes() == before
+    assert not list(figs.glob(".*updating"))
+    assert not list(pool.ENGINE_CACHE.glob("_replay-*"))
+
+
+def test_write_back_without_overrides_passes_the_pixel_gate(write_back):
+    """无 override 的正常写回照常通过，且响应里如实报告像素门跑过了。"""
+    _m, client, figs = write_back
+    client.post("/api/engine/render", json={"id": "TestFig_a.pdf", "patches": []})
+    resp = client.post("/api/engine/update_source",
+                       json={"id": "TestFig_a.pdf", "patches": []})
+    assert resp.status_code == 200, resp.get_json()
+    body = resp.get_json()
+    assert body["verification"]["replay"] == "ok"
+    assert body["verification"]["pixels"] == "ok"
+
+
+def test_write_back_with_attribute_patches_passes_the_pixel_gate(write_back):
+    """走正门的属性修改（颜色）热态 == 重放，像素门不许误伤。"""
+    _m, client, figs = write_back
+    gid = _series_line_gid(client)
+    patches = [{"gid": gid, "prop": "color", "value": "#ff2222"}]
+    r = client.post("/api/engine/render",
+                    json={"id": "TestFig_a.pdf", "patches": patches})
+    assert r.status_code == 200, r.get_json()
+    resp = client.post("/api/engine/update_source",
+                       json={"id": "TestFig_a.pdf", "patches": patches})
+    assert resp.status_code == 200, resp.get_json()
+    assert resp.get_json()["verification"]["pixels"] == "ok"
 
 
 @needs_workerd
