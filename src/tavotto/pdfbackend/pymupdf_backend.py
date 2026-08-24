@@ -114,6 +114,72 @@ def render_preview_png(path: Path, width_px: int, out: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# 像素比较（写回的像素门用）
+# ---------------------------------------------------------------------------
+#: 噪声底噪：抗锯齿与 PNG 量化会让**完全相同的图形**出现 ±1~2 的逐像素抖动，
+#: 不先扣掉它 changed_ratio 恒非零。取值与 `scripts/ci/pixelcompare.py` 相同。
+PNG_NOISE_FLOOR = 3
+
+
+def _gray_pixels(path: Path) -> tuple[bytes, tuple[int, int]]:
+    """PNG → (灰度字节序列, (宽, 高))。alpha 通道忽略（比的是画出来的墨迹）。"""
+    pix = pymupdf.Pixmap(str(path))
+    if pix.colorspace is None or pix.colorspace.n != 1:
+        pix = pymupdf.Pixmap(pymupdf.csGRAY, pix)
+    # samples 按像素交错（灰度 1 字节 + 可选 alpha），按步长抽出灰度那一列
+    return pix.samples[:: pix.n], (pix.width, pix.height)
+
+
+def compare_png(baseline: Path, candidate: Path) -> dict:
+    """两张 PNG 的差异指标；尺寸不同直接判为最大差异。
+
+    判据与指标名与 `scripts/ci/pixelcompare.py` **同语义**（灰度比较、底噪 3、
+    changed_pixel_ratio / mean_abs_diff / max_abs_diff 三指标）。为什么允许
+    第二份实现：那一份跑在 CI（numpy + Pillow），而这里跑在 Flask 父进程——
+    它的依赖边界是 flask + pymupdf，wheel 不带科学栈，也 import 不到 scripts/。
+    两份靠 `tests/test_pixel_compare.py` 的对拍用例钉在一起（与 patchspec ↔
+    Rust、telemetry 客户端 ↔ 代理同一套纪律）。
+
+    阈值不在这里——这里只出指标，判定归调用方（app.py 的写回像素门）。
+    """
+    a, size_a = _gray_pixels(baseline)
+    b, size_b = _gray_pixels(candidate)
+    if size_a != size_b:
+        return {"ok": False, "reason": "size_mismatch",
+                "baseline_size": list(size_a), "candidate_size": list(size_b),
+                "changed_pixel_ratio": 1.0, "mean_abs_diff": 255.0,
+                "max_abs_diff": 255}
+    total = len(a)
+    if a == b or not total:                       # 快路径：逐字节相同
+        return {"ok": True, "changed_pixel_ratio": 0.0, "mean_abs_diff": 0.0,
+                "max_abs_diff": 0, "changed_pixels": 0, "total_pixels": total,
+                "raw_mean_abs_diff": 0.0}
+    changed = 0
+    signal_sum = 0
+    raw_sum = 0
+    max_d = 0
+    for x, y in zip(a, b):
+        d = x - y if x >= y else y - x
+        if d:
+            raw_sum += d
+            if d > max_d:
+                max_d = d
+            if d > PNG_NOISE_FLOOR:
+                changed += 1
+                signal_sum += d
+    return {
+        "ok": True,
+        "changed_pixel_ratio": round(changed / total, 6),
+        "mean_abs_diff": round(signal_sum / total, 4),
+        "max_abs_diff": max_d,
+        "changed_pixels": changed,
+        "total_pixels": total,
+        # 原始均值只作记录，不参与判定——排查时能看出「是不是整体偏了一点」
+        "raw_mean_abs_diff": round(raw_sum / total, 4),
+    }
+
+
+# ---------------------------------------------------------------------------
 # 几何辅助
 # ---------------------------------------------------------------------------
 def _obj_rect(o: dict) -> pymupdf.Rect:

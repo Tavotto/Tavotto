@@ -1183,9 +1183,16 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被它推翻**（
     同一次写回只 build 一次（override + PDF + PNG 共用）。
     热会话最后应用的正是这组 patches 时（`worker.last_patch_hash`），把两份
     manifest 逐元素比 bbox/anchor（容差 0.5% figure 分数）与 size_mm（0.01mm），
-    有分歧回 409 `replay_divergence` + 分歧清单。**热态不是这组 patches 就
-    不比**（历史恢复、跨面板同步都是），响应据实回 `replay: "fresh_only"`
-    ——假报一次，用户学到的就是「这个提示可以无视」。manifest 经 JSON 落盘，
+    有分歧回 409 `replay_divergence` + 分歧清单。几何过了还要过**像素门**
+    （ADR 0009，issue #81）：两侧各出一张 `render_png` 探针图逐像素比——
+    颜色 / 线型 / 字体 / 透明度这类几何不变的纯属性分歧只有像素量得到
+    （PR #49 的 facecolor 恢复顺序 bug 报了 0 处分歧）。比较器是
+    `pdfbackend.compare_png`（与 `scripts/ci/pixelcompare.py` 同语义，
+    对拍用例钉住，Flask 边界内不许 import 科学栈），阈值
+    `app.REPLAY_PIXEL_TOL`；分歧作为 `field: "pixels"` 进同一份清单。
+    **热态不是这组 patches 就不比**（历史恢复、跨面板同步都是），响应据实回
+    `replay: "fresh_only"`——假报一次，用户学到的就是「这个提示可以无视」；
+    比过且过了才在 `verification` 里报 `pixels: "ok"`。manifest 经 JSON 落盘，
     numpy 标量可能被 `default=` 写成字符串，比之前一律 `float()` 化。
     worker 的 warnings（元素不存在 / 属性不支持 / 应用失败 / 还原失败）
     **一条即阻断**，回 409 `code=write_back_warnings` + warnings 列表。
