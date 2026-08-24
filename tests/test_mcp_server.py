@@ -838,6 +838,52 @@ def test_open_session_is_revoked_when_host_switches_workspace(
     assert sid not in bridge.sessions()
 
 
+def test_open_session_is_revoked_when_project_retargets_outside_workspace(
+        project, fake_pool, tmp_path, tmp_path_factory):
+    """会话不能在项目目录被换成越界 symlink 后继续复用旧的词法路径。"""
+    opened = _body(_call("tavotto_open_figure", {"project_path": str(project)}))
+    sid = opened["session_id"]
+    worker_calls = len(fake_pool.calls)
+
+    original = tmp_path / "figures-before-retarget"
+    project.rename(original)
+    outside = tmp_path_factory.mktemp("outside-workspace")
+    try:
+        project.symlink_to(outside, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"当前平台不能创建目录 symlink: {exc}")
+
+    result = _call("tavotto_apply_overrides", {"session_id": sid, "patches": []})
+    assert result["isError"] is True
+    assert _body(result)["code"] == "workspace_root_changed"
+    assert sid not in bridge.sessions()
+    assert len(fake_pool.calls) == worker_calls
+
+
+def test_session_project_is_recanonicalized_before_worker_access(
+        project, fake_pool, monkeypatch, tmp_path_factory):
+    """Windows 无 symlink 权限时也要确定会话检查真的重新解析当前目标。"""
+    opened = _body(_call("tavotto_open_figure", {"project_path": str(project)}))
+    sid = opened["session_id"]
+    worker_calls = len(fake_pool.calls)
+    stored_project = os.path.normcase(os.path.normpath(opened["project"]))
+    outside = str(tmp_path_factory.mktemp("simulated-retarget").resolve())
+    original_canonical_path = bridge.canonical_path
+
+    def retargeted(path):
+        if os.path.normcase(os.path.normpath(str(path))) == stored_project:
+            return outside
+        return original_canonical_path(path)
+
+    monkeypatch.setattr(bridge, "canonical_path", retargeted)
+    result = _call("tavotto_apply_overrides", {"session_id": sid, "patches": []})
+    assert result["isError"] is True
+    assert _body(result)["code"] == "workspace_root_changed"
+    assert _body(result)["resolved_project"] == outside
+    assert sid not in bridge.sessions()
+    assert len(fake_pool.calls) == worker_calls
+
+
 def test_registry_outside_the_root_is_never_written(tmp_path, monkeypatch, fake_pool):
     """**范围校验要在 `ensure_registered` 之前**——后者是写操作。
 

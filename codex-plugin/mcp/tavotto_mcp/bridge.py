@@ -242,11 +242,24 @@ def get_session(session_id: str) -> Session:
             f"没有这个会话: {session_id}。先调用 tavotto_open_figure。已打开: {known}",
             code="unknown_session")
     roots = allowed_roots()
-    if not roots or not any(_within(s.project, root) for root in roots):
+    current_project: str | None = None
+    resolution_error: str | None = None
+    if roots:
+        try:
+            # ``s.project`` was canonical when the session opened, but the path can
+            # later be replaced by a symlink/junction. Re-resolve it before every
+            # operation so the stored lexical path cannot outlive its authority.
+            current_project = canonical_path(s.project)
+        except (OSError, ValueError) as exc:
+            resolution_error = str(exc)
+    if (not roots or current_project is None
+            or not os.path.isdir(current_project)
+            or not any(_within(current_project, root) for root in roots)):
         _SESSIONS.pop(session_id, None)
         raise BridgeError(
             f"会话 {session_id} 的项目已不在当前工作区根内，请重新打开。",
-            code="workspace_root_changed", roots=roots, project=s.project)
+            code="workspace_root_changed", roots=roots, project=s.project,
+            resolved_project=current_project, resolution_error=resolution_error)
     s.last_used = time.time()
     return s
 

@@ -53,8 +53,10 @@
 `workspace_confirmation_*` code。错误明确要求代理不要自动循环重试。显式
 `TAVOTTO_MCP_ROOTS` 或已声明的 Roots 边界不能被 elicitation 扩宽。
 
-已有 session 每次使用前重新检查当前根；host 换根或连接重新授权后，旧项目不再
-在范围内就删除该 session，并回 `workspace_root_changed`。
+已有 session 每次使用前重新规范化项目路径并检查当前根；host 换根、连接重新授权，
+或项目目录被替换成指向范围外的 symlink/junction 后，旧项目不再在范围内就删除该
+session，并回 `workspace_root_changed`。重新规范化失败或项目已不再是目录也按越界
+fail-closed，不能让保存下来的词法路径继续授权 worker 重启。
 
 ### 3. server→client 请求必须留在原始请求窗口里
 
