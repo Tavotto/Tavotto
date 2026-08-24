@@ -237,19 +237,24 @@ def cases() -> list[dict]:
                                       stale=True, render_error="boom",
                                       unapplied_overrides=3, bitmap_embed=True)])})
 
-    # 13b. 字重策略与轴标题格式：ticklabel 该加粗、轴标题该是「Title (unit)」。
-    #      两条都只是建议——但**必须真的会响**：manifest 里的角色名是 ticklabel
-    #      而不是 tick_label，键写错的话它永远沉默，看起来像一直通过。
+    # 13b. 字重策略与轴标题格式：轴标题该加粗（2026-08-24 定版，其余角色一律
+    #      常规字重）、轴标题该是「Title (unit)」。两条都只是建议——但**必须
+    #      真的会响**，而且两个方向都要有：axis_label 是「该粗没粗」，
+    #      ticklabel 是「不该粗却粗了」——只测一个方向的话，比较逻辑写反
+    #      （want/got 颠倒）时向量照样全绿。另外 manifest 里的角色名是
+    #      ticklabel 而不是 tick_label，键写错的话它永远沉默，看起来像一直通过。
     m = _clean_manifest()
     m["elements"][3]["editable"][0]["value"] = "Temperature"      # 缺单位括号
+    m["elements"][3]["editable"].append(
+        {"prop": "weight", "type": "enum", "value": "normal"})    # 该粗没粗
     m["elements"].append({"gid": "axes_0.xticklabels_0", "role": "ticklabel",
                           "label": "刻度", "draggable": True,
                           "bbox": [0.1, 0.9, 0.05, 0.03],
                           "editable": [
                               {"prop": "text", "type": "text", "value": "100"},
                               {"prop": "fontsize", "type": "number", "value": 9.0},
-                              {"prop": "weight", "type": "enum", "value": "normal"},
-                          ]})
+                              {"prop": "weight", "type": "enum", "value": "bold"},
+                          ]})                                     # 不该粗却粗了
     out.append({"name": "weight-and-label-format", "profile_id": "lab-publication-v1",
                 "spec": _spec([_panel("p1", manifest=m)])})
 
