@@ -168,6 +168,23 @@ python3 skills/tavotto-figure/scripts/update_check.py --json --force
 
 ## 怎么用
 
+### 画图前：开工三问与偏好
+
+让 Codex 画图（@Tavotto / 隐式触发技能）时，它会先把插件对齐到最新版
+（`codex plugin marketplace add Tavotto/Tavotto && codex plugin add
+tavotto@tavotto`，失败不阻塞出图），然后用提问工具确认三件事：**画幅宽度**
+（单栏 8 cm / 双栏 15 cm，拿不准时按任务推荐）、**字体**（选项含
+Times New Roman 与 Arial）、**图例加不加框**。回答里说「记住」，答案会写进
+用户配置目录的 `codex-plugin-figure-prefs.json`，下次不再问；反悔时说一声
+或用 `python3 skills/tavotto-figure/scripts/prefs.py --unset <键>` 退回。
+
+出图纪律（`lab-publication-v1` 之外的几条硬默认）：宽度只出 8 cm / 15 cm
+两档、最终有效字号大于 8 pt、刻度朝内且只留主刻度、轴标题加粗、多子图在
+matplotlib 里拼成 15 cm 主图且每个子图都带自己的轴标题；背景色块、指数据的
+箭头、说明文字这类效果**用户点头才加**。Tavotto 报错或表现不及预期时，
+Codex 会整理一份可复现的 issue 草稿，经你允许后提交到
+<https://github.com/Tavotto/Tavotto/issues>。
+
 ### 打开画布
 
 让 Codex 调 `tavotto_open_figure`，给它一个图库目录、脚本或产物路径：
