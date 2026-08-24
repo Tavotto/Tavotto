@@ -222,6 +222,11 @@ const NEUTRAL: Record<string, unknown> = {
   rotation: 0,
   grid_x: false,
   grid_y: false,
+  // 刻度线四边开关：matplotlib 默认下/左有、上/右无（issue #92）
+  ticks_bottom: true,
+  ticks_top: false,
+  ticks_left: true,
+  ticks_right: false,
   frameon: false,
   transparent: false,
   invert_x: false,
