@@ -877,6 +877,8 @@ export interface AiEndpointPreset {
 
 export interface AiCapabilities {
   providers: Record<'codex' | 'claude', AiProviderCaps>
+  /** 已存的自定义 CLI 路径（设置界面回显用；null = 未设置） */
+  settings: { codex_path: string | null; claude_path: string | null }
   endpoints: AiEndpoint[]
   presets: AiEndpointPreset[]
   active: Record<'codex' | 'claude', string | null>
@@ -925,7 +927,7 @@ export const fetchAiInstallStatus = (agent: 'codex' | 'claude') =>
   jsonFetch<AiInstallState>(`/api/ai/install/status?agent=${agent}`)
 
 export const patchAiSettings = (patch: { codex_path?: string; claude_path?: string }) =>
-  jsonFetch<AiCapabilities & { settings: Record<string, string> }>('/api/ai/settings', {
+  jsonFetch<AiCapabilities>('/api/ai/settings', {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(patch),

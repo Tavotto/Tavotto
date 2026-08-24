@@ -98,3 +98,48 @@ def test_spawn_env_does_not_duplicate_existing_dirs(tmp_path, monkeypatch):
     monkeypatch.setenv("PATH", str(cli_dir))
     env = ai_bridge._spawn_env(str(cli_dir / "codex"))
     assert env["PATH"].split(os.pathsep).count(str(cli_dir)) == 1
+
+
+def test_macos_searches_chatgpt_bundled_codex(monkeypatch):
+    """macOS 的 ChatGPT 桌面应用自带 codex CLI（issue #89）：探测候选要包含
+    它的 Resources 目录——不在 PATH 上，只装了 ChatGPT 的用户以前会被判成
+    「未安装」。只在 darwin、只对 codex 给；Linux 没有这套布局。"""
+    import sys
+
+    monkeypatch.setattr(os, "name", "posix")
+    monkeypatch.setattr(sys, "platform", "darwin")
+    dirs = ai_bridge._search_dirs("codex")
+    assert "/Applications/ChatGPT.app/Contents/Resources" in dirs
+    home = os.path.expanduser("~")
+    assert home + "/Applications/ChatGPT.app/Contents/Resources" in dirs
+    # 常规安装位置优先：单独装的 codex 通常比 ChatGPT 内置的新
+    assert dirs.index("/opt/homebrew/bin") < dirs.index(
+        "/Applications/ChatGPT.app/Contents/Resources")
+    assert all("ChatGPT" not in d for d in ai_bridge._search_dirs("claude"))
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    assert all("ChatGPT" not in d for d in ai_bridge._search_dirs("codex"))
+
+
+def test_capabilities_expose_saved_cli_paths_and_nothing_else(monkeypatch):
+    """设置界面要回显已存的自定义路径（不回显 = 空输入框失焦一次就把它
+    删掉，issue #89）。settings 是白名单：cfg["ai"] 里还有第三方接口的
+    记录，绝不能整份透出。"""
+    from tavotto.engine import config
+
+    config.set_ai_settings({"codex_path": "/somewhere/codex"})
+    caps = ai_bridge.capabilities(refresh=True)
+    assert caps["settings"] == {"codex_path": "/somewhere/codex",
+                                "claude_path": None}
+
+
+def test_refresh_really_reprobes_the_resolver(monkeypatch):
+    """refresh=True 必须连 _RESOLVE_CACHE 一起作废：改完 codex_path 或点
+    「重新探测」时，旧结论不清掉的话新路径根本没被 --version 验过，
+    界面一直说「未检测到」。"""
+    ai_bridge._RESOLVE_CACHE["codex"] = {
+        "argv": None, "version": None, "broken_path": None}
+    caps = ai_bridge.capabilities(refresh=True)
+    # 候选与探测都被 _fake_cli 钉成可用：重新探测后必须翻案成「已安装」
+    assert caps["providers"]["codex"]["installed"] is True
+    assert ai_bridge._RESOLVE_CACHE["codex"]["argv"] == ["/usr/bin/codex"]

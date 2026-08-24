@@ -15,6 +15,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -86,7 +87,7 @@ def _search_dirs(name: str) -> list[str]:
             home + r"\.claude\bin",
             home + rf"\.{name}\bin",
         ]
-    return [
+    dirs = [
         "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin",
         f"{home}/.local/bin",
         f"{home}/.bun/bin",
@@ -95,6 +96,17 @@ def _search_dirs(name: str) -> list[str]:
         f"{home}/.{name}/bin",
         "/opt/homebrew/opt/node/bin",
     ]
+    if name == "codex" and sys.platform == "darwin":
+        # macOS 的 ChatGPT 桌面应用自带一份能用的 codex CLI（issue #89）——
+        # 它不在 PATH 上，装了 ChatGPT 却没单独装 codex 的用户以前会被判成
+        # 「未安装」。排在常规安装位置之后：单独装的 codex 通常更新。
+        # 候选与其它落点一样要过 _resolve_cli 的 --version 启动验证才算数。
+        # 只对 darwin 给：Linux 上没有 /Applications 这套布局。
+        dirs += [
+            "/Applications/ChatGPT.app/Contents/Resources",
+            home + "/Applications/ChatGPT.app/Contents/Resources",
+        ]
+    return dirs
 
 
 def _resolve_shim(path: str) -> list[str] | None:
@@ -319,7 +331,12 @@ def capabilities(refresh: bool = False) -> dict:
     接了第三方接口时改用该接口自己填的模型清单（网关认的模型名与官方无关）。
     """
     global _CAPS_CACHE
-    if _CAPS_CACHE and not refresh:
+    if refresh:
+        # refresh = 真的重新探测。_RESOLVE_CACHE 不清的话，改完 codex_path
+        # 或点「重新探测」拿到的仍是上一次的结论——新路径根本没被 --version
+        # 验过，界面于是一直说「未检测到」（issue #89 的另一半）。
+        _RESOLVE_CACHE.clear()
+    elif _CAPS_CACHE:
         return _CAPS_CACHE
     providers: dict[str, dict] = {}
     for name in ("codex", "claude"):
@@ -364,7 +381,14 @@ def capabilities(refresh: bool = False) -> dict:
                                "available": _npm_argv() is not None,
                                **install_status(name)}
         providers[name] = info
+    saved = config.ai_settings()
     _CAPS_CACHE = {"providers": providers,
+                   # 已存的自定义 CLI 路径：设置界面要回显它。不回显的话
+                   # 输入框永远从空白开始，失焦一次就把用户存好的路径以
+                   # 「改成了空」的名义清掉（issue #89）。只给这两个键——
+                   # cfg["ai"] 里还躺着第三方接口的记录，不能整份透出。
+                   "settings": {"codex_path": saved.get("codex_path"),
+                                "claude_path": saved.get("claude_path")},
                    "endpoints": [ai_providers.public(p)
                                  for p in ai_providers.list_providers()],
                    "presets": ai_providers.PRESETS,

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type Dispatch, type SetStateAction } from 'react'
 import { useTranslation } from 'react-i18next'
 import { CheckCircle2, XCircle } from 'lucide-react'
 import { apiUrl, withProject } from '@/lib/session'
@@ -323,11 +323,20 @@ function SidebarsSection() {
 function AiSection() {
   useTranslation('dialogs')
   const caps = useAiStore((s) => s.caps)
-  const [codexPath, setCodexPath] = useState('')
-  const [claudePath, setClaudePath] = useState('')
+  // 已存路径以后端为准（caps.settings，PATCH 后随 loadCaps 一起刷新）；本地
+  // state 只承载「正在编辑的值」，null = 未编辑（输入框直接显示后端那份）。
+  // 以前这里 useState('') 且 onBlur 无条件 PATCH——打开设置再移走一次焦点，
+  // 空字符串就把用户存好的路径删掉了（issue #89）。
+  const [codexPath, setCodexPath] = useState<string | null>(null)
+  const [claudePath, setClaudePath] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [editing, setEditing] = useState<null | { id?: string; agent: 'codex' | 'claude' }>(null)
   const [error, setError] = useState<string | null>(null)
+
+  const savedPaths = {
+    codex_path: caps?.settings?.codex_path ?? '',
+    claude_path: caps?.settings?.claude_path ?? '',
+  }
 
   const apply = async (patch: { codex_path?: string; claude_path?: string }) => {
     setBusy(true)
@@ -336,6 +345,29 @@ function AiSection() {
       await useAiStore.getState().loadCaps(true)
     } finally {
       setBusy(false)
+    }
+  }
+
+  /** 失焦提交：没编辑过或值没变就一个请求都不发（清空 = 显式删除，照发）。 */
+  const commitPath = async (
+    key: 'codex_path' | 'claude_path',
+    edited: string | null,
+    setPath: Dispatch<SetStateAction<string | null>>,
+  ) => {
+    if (edited === null) return
+    const value = edited.trim()
+    // 归位只在草稿仍是这次提交的值时发生：PATCH + 重探测要跑上几秒，期间
+    // 用户可能已经重新聚焦继续编辑，无条件 reset(null) 会把更新的草稿顶掉
+    const settle = () => setPath((cur) => (cur === edited ? null : cur))
+    if (value === savedPaths[key]) {
+      settle()
+      return
+    }
+    try {
+      await apply({ [key]: value })
+      settle()
+    } catch (e) {
+      setError(backendErrorText(e))   // 提交失败：保留正在编辑的值
     }
   }
 
@@ -467,9 +499,9 @@ function AiSection() {
       {cli('claude', 'Claude')}
       <Row label={st('ai.codexPath')}>
         <TextInput
-          value={codexPath}
+          value={codexPath ?? savedPaths.codex_path}
           onChange={(e) => setCodexPath(e.target.value)}
-          onBlur={() => void apply({ codex_path: codexPath })}
+          onBlur={() => void commitPath('codex_path', codexPath, setCodexPath)}
           placeholder={st('ai.pathPlaceholder')}
           className="flex-1 font-mono"
           spellCheck={false}
@@ -477,9 +509,9 @@ function AiSection() {
       </Row>
       <Row label={st('ai.claudePath')}>
         <TextInput
-          value={claudePath}
+          value={claudePath ?? savedPaths.claude_path}
           onChange={(e) => setClaudePath(e.target.value)}
-          onBlur={() => void apply({ claude_path: claudePath })}
+          onBlur={() => void commitPath('claude_path', claudePath, setClaudePath)}
           placeholder={st('ai.pathPlaceholder')}
           className="flex-1 font-mono"
           spellCheck={false}
