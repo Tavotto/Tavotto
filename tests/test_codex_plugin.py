@@ -1020,7 +1020,7 @@ def test_prefs_cli_writes_only_into_the_config_dir(tmp_path):
     out = subprocess.run(
         [sys.executable, str(script), "--set", "font=Times New Roman",
          "--set", "width=single", "--json"],
-        capture_output=True, text=True, env=env, check=True)
+        capture_output=True, text=True, encoding="utf-8", errors="replace", env=env, check=True)
     data = json.loads(out.stdout.strip().splitlines()[-1])
     assert data["saved"] is True
     assert data["prefs"] == {"font": "Times New Roman", "width": "single"}
@@ -1031,7 +1031,7 @@ def test_prefs_cli_writes_only_into_the_config_dir(tmp_path):
     # 再跑一次读 + unset：记录过的读得回来，退回后消失
     out = subprocess.run(
         [sys.executable, str(script), "--unset", "width", "--json"],
-        capture_output=True, text=True, env=env, check=True)
+        capture_output=True, text=True, encoding="utf-8", errors="replace", env=env, check=True)
     data = json.loads(out.stdout.strip().splitlines()[-1])
     assert data["prefs"] == {"font": "Times New Roman"}
 
@@ -1042,10 +1042,10 @@ def test_prefs_cli_rejects_unknown_keys(tmp_path):
     script = SKILL_DIR / "scripts" / "prefs.py"
     out = subprocess.run(
         [sys.executable, str(script), "--set", "favorite_color=blue", "--json"],
-        capture_output=True, text=True, env=env)
+        capture_output=True, text=True, encoding="utf-8", errors="replace", env=env)
     assert out.returncode != 0
     assert not (tmp_path / "cfg" / "codex-plugin-figure-prefs.json").exists()
     out = subprocess.run(
         [sys.executable, str(script), "--set", "width=huge", "--json"],
-        capture_output=True, text=True, env=env)
+        capture_output=True, text=True, encoding="utf-8", errors="replace", env=env)
     assert out.returncode != 0
