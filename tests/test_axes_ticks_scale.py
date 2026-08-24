@@ -360,7 +360,8 @@ ax.xaxis.reset_ticks()          # 换 scale / set_ticks 冻结共同的底层一
 fig.canvas.draw()
 assert all(t.tick2line.get_visible() for t in ax.xaxis.get_major_ticks()), (
     "reset_ticks 之后顶边刻度线丢了：开关写在了现有 Tick 上，不在轴上")
-assert get(ax) is True
+# getter 回 (主, 次) 二元组（issue #96）；which="both" 开过之后两档都该是 True
+assert get(ax) == (True, True), get(ax)
 print("OK")
 '''
 
@@ -379,6 +380,110 @@ def test_tick_side_setter_marks_the_axis_not_the_current_ticks():
                          encoding="utf-8", errors="replace")
     assert out.returncode == 0, out.stderr
     assert out.stdout.strip() == "OK"
+
+
+# ---------------------------------------------------------------------------
+# 刻度线边开关的还原保真（issue #96）
+# ---------------------------------------------------------------------------
+SPLIT_SCRIPT = "fig_split_ticks.py"
+SPLIT_STEM = "SplitTicks"
+NOMAJOR_SCRIPT = "fig_no_major_ticks.py"
+NOMAJOR_STEM = "NoMajorTicks"
+
+SIDES_LIBRARY = {
+    # 主开、次关：同一侧两档不同态，一个 bool 装不下这份原样
+    SPLIT_SCRIPT: '''\
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+def main():
+    fig, ax = plt.subplots(figsize=(4.0, 3.0))
+    x = np.linspace(0.05, 0.95, 40)
+    ax.plot(x, x * 8.0 + 0.5)
+    ax.minorticks_on()
+    ax.tick_params(which="minor", bottom=False)
+    fig.savefig("SplitTicks.pdf")
+''',
+    # 轴上没有主刻度对象（set_xticks([])），真值只在 _major_tick_kw 里；
+    # 上边真画着的是次刻度的线。次刻度定位必须用不依赖主刻度间距的
+    # MultipleLocator——AutoMinorLocator 在主刻度为空时自己也算不出位置
+    NOMAJOR_SCRIPT: '''\
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+
+
+def main():
+    fig, ax = plt.subplots(figsize=(4.0, 3.0))
+    x = np.linspace(0.05, 0.95, 40)
+    ax.plot(x, x * 8.0 + 0.5)
+    ax.tick_params(which="both", top=True)
+    ax.set_xticks([])
+    ax.xaxis.set_minor_locator(mticker.MultipleLocator(0.1))
+    fig.savefig("NoMajorTicks.pdf")
+''',
+}
+
+
+@pytest.fixture(scope="module")
+def sides_library(tmp_path_factory):
+    figs = tmp_path_factory.mktemp("tick-sides-figures")
+    for name, src in SIDES_LIBRARY.items():
+        (figs / name).write_text(src, encoding="utf-8")
+    return figs
+
+
+def test_split_major_minor_state_survives_toggle_and_undo(sides_library):
+    """主开次关的轴：开关过这条边再撤销，次刻度必须还是关着的。
+
+    原样是 (主, 次) 二元组——按主刻度的 bool 用 which="both" 还原会把次
+    刻度静默盖成 True，多出一排脚本里没有的短刻度线。preview 状态中立与
+    撤销逐字还原都用像素说话（issue #96 复现 1；手工反证：还原退回
+    which="both" 单 bool 时 neutral/undone 两条断言都红）。"""
+    w = pool.one_shot(SPLIT_SCRIPT, str(sides_library), ENTRY)
+    try:
+        w.ensure_built()
+        base = w.preview_png(SPLIT_STEM, [], 380, "split-base").read_bytes()
+        off = w.preview_png(SPLIT_STEM, [
+            {"gid": "axes_0", "prop": "ticks_bottom", "value": False}],
+            380, "split-off").read_bytes()
+        neutral = w.preview_png(SPLIT_STEM, [], 380, "split-neutral").read_bytes()
+        # 热会话真应用 + 撤销这条路也要走一遍——override 的 restore 与
+        # preview 的状态还原共用 originals 表，但入口不同
+        resp = w.override(SPLIT_STEM, [
+            {"gid": "axes_0", "prop": "ticks_bottom", "value": False}])
+        assert not resp["warnings"], resp["warnings"]
+        back = w.override(SPLIT_STEM, [])
+        assert not back["warnings"], back["warnings"]
+        undone = w.preview_png(SPLIT_STEM, [], 380, "split-undone").read_bytes()
+    finally:
+        pool.discard(w)
+    assert off != base       # 开关真的动了画面
+    assert neutral == base   # preview 状态中立：次刻度没被盖成主刻度的值
+    assert undone == base    # 撤销逐字还原
+
+
+def test_no_major_ticks_getter_reads_the_axis_config(sides_library):
+    """`set_xticks([])` 之后没有主刻度对象：getter 必须读 `_major_tick_kw`
+    里脚本配过的 `top=True`，不是写死的「上边 False」（issue #96 复现 2；
+    手工反证：空刻度退回 `line == 1` 时 manifest 断言与 neutral 都红）。"""
+    w = pool.one_shot(NOMAJOR_SCRIPT, str(sides_library), ENTRY)
+    try:
+        w.ensure_built()
+        man = w.override(NOMAJOR_STEM, [])["manifest"]
+        assert _field(man, "axes_0", "ticks_top") is True     # 脚本配的真值
+        assert _field(man, "axes_0", "ticks_bottom") is True  # 没动的照旧
+        # undo 的 original 同样要真：关掉再还原，上边的次刻度线必须回来
+        base = w.preview_png(NOMAJOR_STEM, [], 380, "nomajor-base").read_bytes()
+        off = w.preview_png(NOMAJOR_STEM, [
+            {"gid": "axes_0", "prop": "ticks_top", "value": False}],
+            380, "nomajor-off").read_bytes()
+        neutral = w.preview_png(NOMAJOR_STEM, [], 380, "nomajor-neutral").read_bytes()
+    finally:
+        pool.discard(w)
+    assert off != base       # 上边真画着刻度线（次刻度的），关掉像素必须变
+    assert neutral == base   # 还原写回的是「上边开」，不是写死默认的「关」
 
 
 # ---------------------------------------------------------------------------
