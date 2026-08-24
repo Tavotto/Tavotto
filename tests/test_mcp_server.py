@@ -807,15 +807,16 @@ def test_protocol_root_survives_a_deleted_plugin_cwd(monkeypatch, tmp_path):
     monkeypatch.delenv(bridge.ROOTS_ENV, raising=False)
     for name in bridge.WORKSPACE_ENVS:
         monkeypatch.delenv(name, raising=False)
+    resolved_tmp_path = str(tmp_path.resolve())
     bridge.observe_mcp_client("2025-11-25", {"roots": {}}, {})
-    bridge.accept_protocol_roots({"roots": [{"uri": tmp_path.resolve().as_uri()}]})
+    bridge.accept_protocol_roots({"roots": [{"uri": tmp_path.as_uri()}]})
 
     def deleted_cwd():
         raise FileNotFoundError(2, "No such file or directory")
 
     monkeypatch.setattr(bridge.os, "getcwd", deleted_cwd)
-    assert bridge.allowed_roots() == [str(tmp_path.resolve())]
-    assert bridge.check_scope(str(tmp_path)) == str(tmp_path.resolve())
+    assert bridge.allowed_roots() == [resolved_tmp_path]
+    assert bridge.check_scope(str(tmp_path)) == resolved_tmp_path
 
 
 def test_open_session_is_revoked_when_host_switches_workspace(
