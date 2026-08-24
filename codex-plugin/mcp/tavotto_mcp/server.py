@@ -13,9 +13,13 @@ manifest / SVG 这类大字段只进 `structuredContent`，不进 `content` 文�
 """
 from __future__ import annotations
 
+from collections import deque
 import json
 import os
+import queue
 import sys
+import threading
+import time
 import traceback
 
 from . import bridge, widget
@@ -34,6 +38,12 @@ SERVER_NAME = "tavotto"
 #: 不在就回我们最新的那个——版本协商本来就是这么定的，猜一个客户端没提过的
 #: 版本只会让握手在别的地方失败。
 SUPPORTED_PROTOCOL_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
+
+# 只有 client 在 initialize 里明确声明 roots capability 才会走这条兼容请求。
+# 用 reader pump 做有界等待：host 声明了却不响应，也不能把整个 MCP server 锁死。
+ROOTS_REQUEST_TIMEOUT_S = 2.0
+# 工作区授权需要真人看清路径再点选，不能沿用 roots 探针的 2 秒预算。
+ELICITATION_REQUEST_TIMEOUT_S = 300.0
 
 
 def _version() -> str:
@@ -76,6 +86,8 @@ def _tools() -> list[dict]:
                 "hash 与出版规范。之后用 tavotto_apply_overrides 改图、tavotto_preflight "
                 "体检、tavotto_export 出图。"
                 "路径给产物（.pdf/.png）、脚本（.py）或图库目录都行。"
+                "若宿主支持 MCP elicitation 且没有传工作区根，第一次请传绝对路径；"
+                "Tavotto 会让宿主显示精确目录并请用户确认，本次连接内有效。"
             ),
             "inputSchema": {
                 "type": "object",
@@ -325,6 +337,7 @@ def _call_health(args: dict) -> dict:
     """能力自检：引擎 / 画布 / 项目根，一次说清。**先体检再出图**（便宜）。"""
     import time as _time
     t0 = _time.monotonic()
+    root_info = bridge.root_diagnostics()
     out: dict = {
         "ok": True,
         "mode": "engine",
@@ -332,7 +345,8 @@ def _call_health(args: dict) -> dict:
         "canvas": {"available": widget.available(),
                    "resource_uri": widget.RESOURCE_URI,
                    "path": str(widget.widget_path())},
-        "roots": bridge.allowed_roots(),
+        "roots": root_info["roots"],
+        "root_authority": root_info,
         "sessions": sorted(bridge.sessions()),
     }
     if not widget.available():
@@ -348,7 +362,8 @@ def _call_health(args: dict) -> dict:
     lines = [f"引擎就绪（tavotto {out['engine']['version']}）",
              "画布资源就绪" if out["canvas"]["available"]
              else "! 画布资源缺失：" + out["canvas"].get("reason", ""),
-             "允许的项目根: " + (os.pathsep.join(out["roots"]) or "（未配置）")]
+             "允许的项目根: " + (os.pathsep.join(out["roots"]) or "（未配置）"),
+             "根来源: " + root_info["source"]]
     return {"content": _text(*lines), "structuredContent": out}
 
 
@@ -408,21 +423,161 @@ class Server:
     def __init__(self, conn: StdioConnection | None = None) -> None:
         self.conn = conn if conn is not None else StdioConnection()
         self.initialized = False
+        self.client_ready = False
+        self._inbox: queue.Queue | None = None
+        self._deferred: deque[dict] = deque()
+        self._request_seq = {"roots": 0, "elicitation": 0}
+        self._input_closed = False
 
     def handle(self, msg: dict) -> None:
         method = msg.get("method")
         rid = msg.get("id")
-        if method is None:              # 响应（我们不发请求，所以只可能是噪音）
+        if method is None:
+            self._handle_response(msg)
             return
         if rid is None:                 # 通知：不回，永远不回
+            self._handle_notification(method)
             return
         try:
-            self.conn.result(rid, self.dispatch(method, msg.get("params") or {}))
+            raw_params = msg.get("params")
+            if raw_params is not None and not isinstance(raw_params, dict):
+                raise RpcError(INVALID_PARAMS, "params 必须是对象")
+            params = raw_params or {}
+            # SEP-2260 要求 server→client 请求与一个活着的 client request 关联。
+            # 因而不在 initialize 后偷发 roots/list，而是在真实 tools/call 的
+            # 处理窗口里嵌套请求。显式 TAVOTTO_MCP_ROOTS 则完全绕过这一步。
+            if method == "tools/call" and params.get("name") != "tavotto_close_session":
+                self._refresh_protocol_roots()
+            if method == "tools/call" and params.get("name") == "tavotto_open_figure":
+                arguments = params.get("arguments")
+                if isinstance(arguments, dict):
+                    self._confirm_workspace_for_open(arguments)
+            self.conn.result(rid, self.dispatch(method, params))
         except RpcError as exc:
             self.conn.error(rid, exc)
         except Exception as exc:        # noqa: BLE001 — 任何异常都不许打死连接
             print("tavotto-mcp: 未处理异常\n" + traceback.format_exc(), file=sys.stderr)
             self.conn.error(rid, RpcError(INTERNAL_ERROR, f"内部错误: {exc}"))
+
+    def _handle_notification(self, method: str) -> None:
+        if method == "notifications/initialized":
+            self.client_ready = True
+        elif method == "notifications/roots/list_changed":
+            # 不在通知处理里立即发请求（那会变成无 originating request 的野请求）。
+            # 下一次 tools/call 再原子刷新。
+            bridge.mark_protocol_roots_stale()
+
+    def _handle_response(self, msg: dict) -> None:
+        # 正常的 server→client response 都由 `_client_request` 在对应的活跃
+        # client request 内消费。掉到主循环里的 response 已经过期或 id 不匹配，
+        # 不能拿它改变授权状态。
+        return
+
+    @staticmethod
+    def _response_error(msg: dict) -> str | None:
+        if "error" not in msg:
+            return None
+        error = msg.get("error") or {}
+        if isinstance(error, dict):
+            return f"{error.get('code', 'error')}: {error.get('message', error)}"
+        return str(error)
+
+    def _client_request(self, label: str, method: str,
+                        params: dict | None, timeout: float
+                        ) -> tuple[dict | None, str | None]:
+        """在当前 tools/call 内发一个关联的 server→client 请求并有界等待。"""
+        if self._input_closed:
+            return None, "宿主输入已经关闭"
+        if self._inbox is None:
+            return None, "当前传输没有可等待的 client response"
+        self._request_seq[label] += 1
+        request_id = f"tavotto-{label}-{self._request_seq[label]}"
+        self.conn.request(request_id, method, params)
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None, f"{method} 在 {timeout:g}s 内没有响应"
+            try:
+                event = self._inbox.get(timeout=remaining)
+            except queue.Empty:
+                return None, f"{method} 在 {timeout:g}s 内没有响应"
+            if isinstance(event, RpcError):
+                self.conn.error(None, event)
+                continue
+            if event is None:
+                self._input_closed = True
+                return None, f"等待 {method} 时宿主断开连接"
+            if event.get("method") is None and event.get("id") == request_id:
+                return event, None
+            # 读取线程可能已经拿到后续通知/请求。先缓存，当前 tool call 回完后
+            # 仍按原顺序处理，不能吞掉或重排。
+            self._deferred.append(event)
+
+    def _refresh_protocol_roots(self) -> None:
+        if not bridge.protocol_roots_needed():
+            return
+        response, transport_error = self._client_request(
+            "roots", "roots/list", None, ROOTS_REQUEST_TIMEOUT_S)
+        if transport_error:
+            bridge.fail_protocol_roots(transport_error)
+            return
+        assert response is not None
+        protocol_error = self._response_error(response)
+        if protocol_error:
+            bridge.fail_protocol_roots(f"roots/list 被宿主拒绝：{protocol_error}")
+            return
+        bridge.accept_protocol_roots(response.get("result"))
+
+    def _confirm_workspace_for_open(self, arguments: dict) -> None:
+        target = arguments.get("project_path") or arguments.get("script_path")
+        candidate = bridge.user_binding_candidate(target)
+        if candidate is None:
+            return
+        message = (
+            "Tavotto 请求读取并编辑下面这个本地目录中的图表文件：\n\n"
+            f"{candidate}\n\n"
+            "仅当它是本次任务要使用的工作区时批准。授权只在当前 Tavotto "
+            "MCP 连接内有效；拒绝不会修改任何文件。"
+        )
+        response, transport_error = self._client_request(
+            "elicitation", "elicitation/create", {
+                "message": message,
+                "requestedSchema": {
+                    "type": "object",
+                    "properties": {
+                        "approve": {
+                            "type": "boolean",
+                            "title": "允许 Tavotto 访问这个目录",
+                            "description": "请核对上方完整路径；不确定时保持关闭。",
+                            "default": False,
+                        },
+                    },
+                    "required": ["approve"],
+                },
+            }, ELICITATION_REQUEST_TIMEOUT_S)
+        if transport_error:
+            bridge.fail_user_binding(transport_error)
+            return
+        assert response is not None
+        protocol_error = self._response_error(response)
+        if protocol_error:
+            bridge.fail_user_binding(f"elicitation/create 被宿主拒绝：{protocol_error}")
+            return
+        result = response.get("result")
+        if not isinstance(result, dict):
+            bridge.fail_user_binding("elicitation/create 响应不是对象")
+            return
+        action = result.get("action")
+        if action != "accept":
+            state = "declined" if action == "decline" else "cancelled"
+            bridge.fail_user_binding(f"用户选择 {action or 'cancel'}", state=state)
+            return
+        content = result.get("content")
+        if not isinstance(content, dict) or content.get("approve") is not True:
+            bridge.fail_user_binding("用户没有勾选目录授权", state="declined")
+            return
+        bridge.accept_user_binding(candidate)
 
     def dispatch(self, method: str, params: dict) -> dict:
         if method == "initialize":
@@ -459,6 +614,8 @@ class Server:
         version = want if want in SUPPORTED_PROTOCOL_VERSIONS \
             else SUPPORTED_PROTOCOL_VERSIONS[0]
         self.initialized = True
+        bridge.observe_mcp_client(version, params.get("capabilities"),
+                                  params.get("clientInfo"))
         caps: dict = {"tools": {"listChanged": False}}
         if widget.available():
             caps["resources"] = {"listChanged": False, "subscribe": False}
@@ -477,18 +634,36 @@ class Server:
         }
 
     def serve_forever(self) -> int:
+        inbox: queue.Queue = queue.Queue()
+        self._inbox = inbox
+
+        def read_loop() -> None:
+            while True:
+                try:
+                    msg = self.conn.read()
+                except RpcError as exc:
+                    inbox.put(exc)
+                    continue
+                except (OSError, ValueError) as exc:
+                    inbox.put(RpcError(PARSE_ERROR, str(exc)))
+                    inbox.put(None)
+                    return
+                inbox.put(msg)
+                if msg is None:
+                    return
+
+        threading.Thread(target=read_loop, daemon=True,
+                         name="tavotto-mcp-stdio-reader").start()
         while True:
-            try:
-                msg = self.conn.read()
-            except RpcError as exc:
-                self.conn.error(None, exc)
+            event = self._deferred.popleft() if self._deferred else inbox.get()
+            if isinstance(event, RpcError):
+                self.conn.error(None, event)
                 continue
-            except (OSError, ValueError) as exc:
-                self.conn.error(None, RpcError(PARSE_ERROR, str(exc)))
-                continue
-            if msg is None:             # stdin EOF = host 走了，收摊
+            if event is None:           # stdin EOF = host 走了，收摊
                 return 0
-            self.handle(msg)
+            self.handle(event)
+            if self._input_closed and not self._deferred:
+                return 0
 
 
 def main(argv: list[str] | None = None) -> int:

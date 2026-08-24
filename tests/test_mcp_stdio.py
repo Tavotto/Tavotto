@@ -30,26 +30,32 @@ WIDGET_URI = "ui://tavotto/canvas/v1.html"
 
 
 class Client:
-    def __init__(self, argv_python: str, env: dict):
+    def __init__(self, argv_python: str, env: dict, cwd: str | None = None):
         self.proc = subprocess.Popen(
             [argv_python, str(SERVER)],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE, env=env, cwd=str(ROOT))
+            stderr=subprocess.PIPE, env=env, cwd=cwd or str(ROOT))
         self.n = 0
 
-    def call(self, method: str, params=None) -> dict:
-        self.n += 1
-        msg = {"jsonrpc": "2.0", "id": self.n, "method": method}
-        if params is not None:
-            msg["params"] = params
+    def write(self, msg: dict) -> None:
         self.proc.stdin.write((json.dumps(msg) + "\n").encode())
         self.proc.stdin.flush()
+
+    def read(self) -> dict:
         line = self.proc.stdout.readline()
         if not line:
             raise AssertionError(
                 "server 挂了:\n"
                 + self.proc.stderr.read().decode("utf-8", "replace")[-4000:])
         return json.loads(line.decode("utf-8"))
+
+    def call(self, method: str, params=None) -> dict:
+        self.n += 1
+        msg = {"jsonrpc": "2.0", "id": self.n, "method": method}
+        if params is not None:
+            msg["params"] = params
+        self.write(msg)
+        return self.read()
 
     def close(self):
         try:
@@ -64,6 +70,19 @@ def engine_client(tmp_path):
     env = {**os.environ, "TAVOTTO_MCP_ROOTS": str(tmp_path),
            "TAVOTTO_DATA_DIR": str(tmp_path / "data")}
     c = Client(sys.executable, env)
+    yield c
+    c.close()
+
+
+@pytest.fixture()
+def rootless_engine_client(tmp_path):
+    """模拟真实安装：cwd 在插件包内，且没有任何手工根环境变量。"""
+    env = {**os.environ, "TAVOTTO_DATA_DIR": str(tmp_path / "data")}
+    for name in ("TAVOTTO_MCP_ROOTS", "TAVOTTO_MCP_WORKSPACE",
+                 "CODEX_WORKSPACE_ROOT", "CODEX_PROJECT_ROOT",
+                 "CODEX_WORKSPACE_DIR"):
+        env.pop(name, None)
+    c = Client(sys.executable, env, cwd=str(ROOT / "codex-plugin"))
     yield c
     c.close()
 
@@ -135,6 +154,67 @@ def test_engine_mode_health_tool_says_ready(engine_client, tmp_path):
     assert body["ok"] is True and body["engine"]["available"] is True
     assert body["canvas"]["available"] is True
     assert str(tmp_path) in body["roots"]
+
+
+def test_real_stdio_client_supplies_workspace_through_roots(
+        rootless_engine_client, tmp_path):
+    """真子进程验证双向 JSON-RPC：不是直接调用 RootAuthority 的假绿。"""
+    c = rootless_engine_client
+    c.write({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+        "protocolVersion": "2025-11-25",
+        "capabilities": {"roots": {"listChanged": True}},
+        "clientInfo": {"name": "fake-codex", "version": "1"},
+    }})
+    assert c.read()["result"]["protocolVersion"] == "2025-11-25"
+    c.write({"jsonrpc": "2.0", "method": "notifications/initialized"})
+    c.write({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
+        "name": "tavotto_health", "arguments": {},
+    }})
+    request = c.read()
+    assert request["method"] == "roots/list"
+    c.write({"jsonrpc": "2.0", "id": request["id"],
+             "result": {"roots": [{"uri": tmp_path.resolve().as_uri()}]}})
+    response = c.read()["result"]["structuredContent"]
+    assert response["roots"] == [str(tmp_path.resolve())]
+    assert response["root_authority"]["source"] == "mcp_roots"
+    assert response["root_authority"]["client"]["name"] == "fake-codex"
+
+
+def test_real_stdio_client_confirms_workspace_through_elicitation(
+        rootless_engine_client, tmp_path):
+    """真子进程双向握手：模型给候选，host 代表用户确认后才成为根。"""
+    c = rootless_engine_client
+    init = c.call("initialize", {
+        "protocolVersion": "2025-06-18",
+        "capabilities": {"elicitation": {}},
+        "clientInfo": {"name": "codex-mcp-client", "version": "test"},
+    })
+    assert init["result"]["protocolVersion"] == "2025-06-18"
+    c.write({"jsonrpc": "2.0", "method": "notifications/initialized"})
+    c.n += 1
+    c.write({"jsonrpc": "2.0", "id": c.n, "method": "tools/call", "params": {
+        "name": "tavotto_open_figure",
+        "arguments": {"project_path": str(tmp_path.resolve())},
+    }})
+    request = c.read()
+    assert request["method"] == "elicitation/create"
+    assert str(tmp_path.resolve()) in request["params"]["message"]
+    assert request["params"]["requestedSchema"]["required"] == ["approve"]
+    c.write({"jsonrpc": "2.0", "id": request["id"], "result": {
+        "action": "accept", "content": {"approve": True},
+    }})
+    # 目录为空，所以业务层应诚实报 no_registry/no_figure；关键是授权已完成，
+    # 不是 no_workspace_root，也不是传输死锁。
+    opened = c.read()["result"]
+    assert opened["isError"] is True
+    assert opened["structuredContent"]["code"] in ("no_registry", "no_figure")
+
+    health = c.call("tools/call", {
+        "name": "tavotto_health", "arguments": {},
+    })["result"]["structuredContent"]
+    assert health["roots"] == [str(tmp_path.resolve())]
+    assert health["root_authority"]["source"] == "user_elicitation"
+    assert health["root_authority"]["workspace_confirmation"]["state"] == "accepted"
 
 
 def test_engine_mode_never_reaches_for_a_browser():

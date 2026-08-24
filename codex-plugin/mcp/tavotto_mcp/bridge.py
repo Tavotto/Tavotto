@@ -40,8 +40,8 @@ from tavotto.engine import (
     telemetry as engine_telemetry,
 )
 
-#: 允许打开的项目根（os.pathsep 分隔）。
-ROOTS_ENV = "TAVOTTO_MCP_ROOTS"
+from .roots import ROOTS_ENV, WORKSPACE_ENVS, RootAuthority
+
 #: 工作区提示：装好的插件里 `.mcp.json` 的 `cwd` 指向**插件自己的目录**
 #: （`./mcp/server.py` 要靠它解析），于是「不给就用进程 cwd」在真实安装下
 #: 等于把用户工作区里的每一张图都判成 `path_out_of_scope`——默认流程根本
@@ -49,11 +49,10 @@ ROOTS_ENV = "TAVOTTO_MCP_ROOTS"
 #: `python codex-plugin/mcp/server.py` 的开发态就是这一格），否则退回宿主
 #: 传过来的工作区变量。一个都拿不到时**报错说清楚要设什么**，绝不就近
 #: 挑一个目录顶上。
-WORKSPACE_ENVS = ("TAVOTTO_MCP_WORKSPACE", "CODEX_WORKSPACE_ROOT",
-                  "CODEX_PROJECT_ROOT", "CODEX_WORKSPACE_DIR")
 #: 插件包自己所在的目录（`codex-plugin/`）——cwd 落在它里面就说明这是
 #: Codex 用来定位 `./mcp/server.py` 的那个 cwd，不是用户的工作区。
 _PLUGIN_DIR = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", ".."))
+_ROOT_AUTHORITY = RootAuthority(_PLUGIN_DIR)
 #: 会话上限：一个 Codex 会话同时端着几十张图没有意义，而每个 worker 都是一个
 #: 常驻 Python 进程（几百 MB）。超了按最久未用淘汰。
 MAX_SESSIONS = 8
@@ -75,26 +74,48 @@ class BridgeError(RuntimeError):
 
 # ----------------------------- 路径范围校验 ---------------------------------
 def allowed_roots() -> list[str]:
-    raw = (os.environ.get(ROOTS_ENV) or "").strip()
-    if raw:
-        return [os.path.realpath(os.path.expanduser(p))
-                for p in raw.split(os.pathsep) if p.strip()]
-    for name in WORKSPACE_ENVS:
-        hint = (os.environ.get(name) or "").strip()
-        if hint:
-            return [os.path.realpath(os.path.expanduser(hint))]
-    # Codex can replace the plugin cache in place during an update while the
-    # existing MCP process is still alive.  On POSIX that process keeps the
-    # deleted directory as its cwd, and ``getcwd()`` raises ENOENT.  Treat that
-    # exactly like any other missing workspace hint: fail closed below instead
-    # of leaking a raw OSError as JSON-RPC ``Internal error``.
-    try:
-        cwd = os.path.realpath(os.getcwd())
-    except OSError:
-        return []
-    if not _within(cwd, _PLUGIN_DIR):
-        return [cwd]
-    return []
+    return list(_ROOT_AUTHORITY.snapshot().roots)
+
+
+def root_diagnostics() -> dict:
+    return _ROOT_AUTHORITY.diagnostics()
+
+
+def observe_mcp_client(protocol_version: str | None,
+                       capabilities, client_info) -> None:
+    _ROOT_AUTHORITY.observe_client(protocol_version, capabilities, client_info)
+
+
+def protocol_roots_needed() -> bool:
+    return _ROOT_AUTHORITY.protocol_request_needed()
+
+
+def user_binding_candidate(target) -> str | None:
+    return _ROOT_AUTHORITY.user_binding_candidate(target)
+
+
+def accept_user_binding(candidate: str) -> bool:
+    return _ROOT_AUTHORITY.accept_user_binding(candidate)
+
+
+def fail_user_binding(message: str, *, state: str = "error") -> None:
+    _ROOT_AUTHORITY.fail_user_binding(message, state=state)
+
+
+def accept_protocol_roots(result) -> None:
+    _ROOT_AUTHORITY.accept_protocol_result(result)
+
+
+def fail_protocol_roots(message: str) -> None:
+    _ROOT_AUTHORITY.fail_protocol(message)
+
+
+def mark_protocol_roots_stale() -> None:
+    _ROOT_AUTHORITY.mark_protocol_stale()
+
+
+def reset_root_authority() -> None:
+    _ROOT_AUTHORITY.reset()
 
 
 def _no_roots_error() -> "BridgeError":
@@ -103,12 +124,34 @@ def _no_roots_error() -> "BridgeError":
     静默放行等于没有边界，静默拒绝等于「装了插件但什么都打不开」且毫无线索
     ——两种都不行，所以这里把**要设哪个变量**直接写出来。
     """
+    diagnostics = root_diagnostics()
+    confirmation = diagnostics.get("workspace_confirmation") or {}
+    state = confirmation.get("state")
+    code = "no_workspace_root"
+    confirmation_note = ""
+    recovery = f"把 {ROOTS_ENV} 设成工作目录后重试。"
+    if diagnostics.get("source") not in {"explicit_env", "mcp_roots",
+                                          "mcp_roots_pending", "mcp_roots_error"}:
+        if state == "available":
+            code = "workspace_confirmation_required"
+            confirmation_note = (
+                " 宿主支持工作区确认；请用一个绝对、已存在的项目路径重新调用 "
+                "tavotto_open_figure，Tavotto 会显示精确目录请用户批准。")
+            recovery = "改传绝对项目路径，让用户核对并批准确认框；不要猜测授权结果。"
+        elif state in {"declined", "cancelled", "error"}:
+            code = f"workspace_confirmation_{state}"
+            confirmation_note = (
+                f" 工作区确认状态: {state}"
+                f"（{confirmation.get('error') or '没有批准目录'}）。"
+                "不要自动循环重试；等用户主动重新发起，或改用显式服务器配置。")
+            recovery = "等待用户在可交互 Codex 界面重新发起并批准，或显式配置根。"
     return BridgeError(
         f"没有可用的项目根：{ROOTS_ENV} 没设，宿主也没给工作区目录"
         f"（找过 {', '.join(WORKSPACE_ENVS)}），而进程 cwd 不是可用工作区"
-        "（可能是插件目录，或已在插件更新时被替换）。"
+        "（可能是插件目录，或已在插件更新时被替换）。" + confirmation_note +
         f"把 {ROOTS_ENV} 设成你的工作目录（{os.pathsep} 分隔多个）再试。",
-        code="no_workspace_root", roots=[])
+        code=code, roots=[], workspace_confirmation=confirmation,
+        recovery=recovery)
 
 
 def _within(path: str, root: str) -> bool:
@@ -130,7 +173,14 @@ def check_scope(path: str) -> str:
     # Resolve the untrusted target only after a usable boundary exists.
     # Windows' ``ntpath.realpath`` may consult cwd even for an absolute path;
     # doing this first would turn the same deleted-cwd case back into ENOENT.
-    real = os.path.realpath(os.path.expanduser(str(path)))
+    target = os.path.expanduser(str(path))
+    if not os.path.isabs(target):
+        if len(roots) != 1:
+            raise BridgeError(
+                "相对路径需要恰好一个可信工作区根；当前有多个根，请传绝对路径。",
+                code="ambiguous_workspace_root", roots=roots, path=target)
+        target = os.path.join(roots[0], target)
+    real = os.path.realpath(target)
     if any(_within(real, r) for r in roots):
         return real
     raise BridgeError(
@@ -190,6 +240,12 @@ def get_session(session_id: str) -> Session:
         raise BridgeError(
             f"没有这个会话: {session_id}。先调用 tavotto_open_figure。已打开: {known}",
             code="unknown_session")
+    roots = allowed_roots()
+    if not roots or not any(_within(s.project, root) for root in roots):
+        _SESSIONS.pop(session_id, None)
+        raise BridgeError(
+            f"会话 {session_id} 的项目已不在当前工作区根内，请重新打开。",
+            code="workspace_root_changed", roots=roots, project=s.project)
     s.last_used = time.time()
     return s
 
