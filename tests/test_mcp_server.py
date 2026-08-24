@@ -501,6 +501,11 @@ def test_deleted_plugin_cwd_is_a_structured_missing_root(monkeypatch, tmp_path):
 
     monkeypatch.setattr(bridge.os, "getcwd", deleted_cwd)
 
+    def must_not_resolve_without_a_root(_path):
+        raise AssertionError("没有安全边界时不应规范化目标路径")
+
+    monkeypatch.setattr(bridge.os.path, "realpath", must_not_resolve_without_a_root)
+
     health = _call("tavotto_health", {})
     assert not health.get("isError")
     assert _body(health)["roots"] == []

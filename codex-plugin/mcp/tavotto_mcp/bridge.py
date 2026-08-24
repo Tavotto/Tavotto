@@ -124,10 +124,13 @@ def check_scope(path: str) -> str:
     **越界一律拒绝，绝不「就近找一个能用的」**：Codex 传来的路径可能来自模型
     的推断，静默换一个目录打开等于在用户没看见的地方改文件。
     """
-    real = os.path.realpath(os.path.expanduser(str(path)))
     roots = allowed_roots()
     if not roots:
         raise _no_roots_error()
+    # Resolve the untrusted target only after a usable boundary exists.
+    # Windows' ``ntpath.realpath`` may consult cwd even for an absolute path;
+    # doing this first would turn the same deleted-cwd case back into ENOENT.
+    real = os.path.realpath(os.path.expanduser(str(path)))
     if any(_within(real, r) for r in roots):
         return real
     raise BridgeError(
