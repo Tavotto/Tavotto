@@ -180,7 +180,8 @@ Times New Roman 与 Arial）、**图例加不加框**。回答里说「记住」
 
 出图纪律（`lab-publication-v1` 之外的几条硬默认）：宽度只出 8 cm / 15 cm
 两档、最终有效字号大于 8 pt、刻度朝内且只留主刻度、轴标题加粗、多子图在
-matplotlib 里拼成 15 cm 主图且每个子图都带自己的轴标题；背景色块、指数据的
+matplotlib 里拼成 15 cm 主图且每个子图的 x/y 轴各自标全（轴标题 + 刻度，
+不用 sharex/sharey 共享）；背景色块、指数据的
 箭头、说明文字这类效果**用户点头才加**。Tavotto 报错或表现不及预期时，
 Codex 会整理一份可复现的 issue 草稿，经你允许后提交到
 <https://github.com/Tavotto/Tavotto/issues>。

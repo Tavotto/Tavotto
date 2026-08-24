@@ -117,14 +117,16 @@ def test_skill_forbids_uninvited_decoration():
 def test_skill_keeps_multi_panel_inside_matplotlib():
     """约定 8：多子图在一个 Figure 里拼成 150mm 主图，绝不用别的软件拼。
 
-    组图版式的三条默认值也在这条约定里：每个子图带自己的轴标题（不许只给
-    最左那个留）、子图标题矩阵式各归各位（不挤左上角）、轴标题默认加粗。
+    组图版式的默认值也在这条约定里：每个子图的 x/y 轴各自标全（轴标题 +
+    刻度，不共享、不许只给最左那个留）、不用 sharex/sharey、子图标题
+    矩阵式各归各位（不挤左上角）、轴标题默认加粗。
     """
     text = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
     assert "GridSpec" in text
     assert "150 mm" in text
     assert "绝不用别的软件拼" in text
-    assert "每个子图都带自己的轴标题" in text
+    assert "每个子图的 x 轴与 y 轴都各自标全" in text
+    assert "不共享坐标轴" in text
     assert "矩阵式各归各位" in text
     assert "axes.labelweight" in text          # 轴标题默认加粗写进了模板与默认值
 
