@@ -156,6 +156,10 @@ class _Analyzer:
         self.sites: set[tuple[int, int]] = set()   # 走到过的存图调用位置
         self.module_env: dict[str, str] = {}
         self.seqs: dict[str, list[str]] = {}
+        # 三元表达式另一分支的收集器：只在存图实参求值期间是个列表（_save_arg
+        # 开、用完即关），其余时刻是 None——value() 在别的语境里也会被调用
+        # （每条赋值、每次实参绑定），那些语境下的另一分支不是产物。
+        self._alt_sink: list[str] | None = None
 
     # ---------------- 表达式 ----------------
     def value(self, node: ast.expr, env: dict[str, str]) -> str | None:
@@ -184,11 +188,16 @@ class _Analyzer:
         if isinstance(node, ast.Call):
             return self._call_value(node, env)
         if isinstance(node, ast.IfExp):
-            # 两个分支都可能发生：能求出的那个先用，两个都能求就都记下
+            # 两个分支都可能发生：能求出的那个先用。另一分支**只在存图实参的
+            # 求值里**才算产物（经 _alt_sink 交给 _save_arg 登记）——这里曾经
+            # 无条件 _record_pattern(b)，而 value() 被每条赋值语句调用，于是
+            # 任何与存图无关的三元字符串（numpy 的 dtype = "<f4" if … else
+            # "<f8"、label、格式串）都会把 else 分支污染进注册表（issue #88）。
             a = self.value(node.body, env)
             b = self.value(node.orelse, env)
-            if a is not None and b is not None and a != b:
-                self._record_pattern(b)      # 另一分支也是真实产物
+            if (self._alt_sink is not None and a is not None and b is not None
+                    and a != b):
+                self._alt_sink.append(b)
             return a if a is not None else b
         return None
 
@@ -348,10 +357,24 @@ class _Analyzer:
     def _save_call(self, node: ast.Call, env: dict[str, str]) -> None:
         self.sites.add((node.lineno, node.col_offset))
         for arg in node.args:
-            self._record_pattern(self.value(arg, env))
+            self._record_pattern(self._save_arg(arg, env))
         for kw in node.keywords:
             if kw.arg in SAVE_KWARGS:
-                self._record_pattern(self.value(kw.value, env))
+                self._record_pattern(self._save_arg(kw.value, env))
+
+    def _save_arg(self, node: ast.expr, env: dict[str, str]) -> str | None:
+        """存图实参的求值：`savefig("a.pdf" if final else "b.pdf")` 两个分支
+        都是真实产物，else 分支也一并登记。收集范围只有这一个语境——先赋给
+        变量再传进来的三元只登记取值分支（另一分支交给试运行探测），换来的
+        是赋值语句里的三元字符串绝不污染注册表。"""
+        prev, self._alt_sink = self._alt_sink, []
+        try:
+            val = self.value(node, env)
+            for alt in self._alt_sink:
+                self._record_pattern(alt)
+        finally:
+            self._alt_sink = prev
+        return val
 
     def _visit_call(self, node: ast.Call, env: dict[str, str],
                     depth: int, stack: tuple[str, ...]) -> None:

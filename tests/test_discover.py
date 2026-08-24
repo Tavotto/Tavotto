@@ -67,6 +67,32 @@ def test_unresolved_fstring_reported_not_guessed(figs):
     assert info["unresolved"] == ["FigD_*"]
 
 
+def test_unrelated_ternary_string_is_not_a_stem(figs):
+    """issue #88：与存图无关的三元字符串（numpy dtype、label……）的 else
+    分支曾被无条件登记成 stem，`"<f8"` 就这么进了用户的注册表。"""
+    _script(figs, "fig_dtype.py", '''\
+wide = True
+
+def main():
+    dtype = "<f4" if wide else "<f8"
+    data = load(path, dtype)
+    fig.savefig("real_output.pdf")
+''')
+    info = discover.discover(figs)["scripts"]["fig_dtype.py"]
+    assert info["stems"] == ["real_output"]
+    assert info["unresolved"] == []
+
+
+def test_ternary_directly_in_savefig_registers_both_branches(figs):
+    """三元表达式**作为存图实参**时两个分支都是真实产物，照旧都登记。"""
+    _script(figs, "fig_tern.py", '''\
+def main():
+    fig.savefig("FigT_final.pdf" if final else "FigT_draft.pdf")
+''')
+    info = discover.discover(figs)["scripts"]["fig_tern.py"]
+    assert info["stems"] == ["FigT_draft", "FigT_final"]
+
+
 def test_paper_style_and_helpers_skipped(figs):
     _script(figs, "paper_style.py", 'def save(fig, stem):\n    fig.savefig(stem)\n')
     _script(figs, "paper_style 2.py",  # macOS 复制产生的副本也不是产图脚本
