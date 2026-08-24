@@ -484,6 +484,32 @@ def test_plugin_cwd_is_not_a_workspace(monkeypatch):
     assert bridge.ROOTS_ENV in str(exc.value)
 
 
+def test_deleted_plugin_cwd_is_a_structured_missing_root(monkeypatch, tmp_path):
+    """插件热更新会替换缓存目录，旧 MCP 进程的 cwd 随后可能已被删除。
+
+    ``resources/list`` 不读 cwd，所以画布资源仍能被发现；旧实现直到
+    ``tools/call`` 才在 ``os.getcwd()`` 抛 ``ENOENT``，host 最终只看见
+    ``-32603 Internal error``。体检必须继续可用，而任何文件操作都应保持
+    fail-closed，返回可恢复的 ``no_workspace_root``。
+    """
+    monkeypatch.delenv(bridge.ROOTS_ENV, raising=False)
+    for name in bridge.WORKSPACE_ENVS:
+        monkeypatch.delenv(name, raising=False)
+
+    def deleted_cwd():
+        raise FileNotFoundError(2, "No such file or directory")
+
+    monkeypatch.setattr(bridge.os, "getcwd", deleted_cwd)
+
+    health = _call("tavotto_health", {})
+    assert not health.get("isError")
+    assert _body(health)["roots"] == []
+
+    opened = _call("tavotto_open_figure", {"project_path": str(tmp_path)})
+    assert opened["isError"] is True
+    assert _body(opened)["code"] == "no_workspace_root"
+
+
 @pytest.mark.parametrize("name", bridge.WORKSPACE_ENVS)
 def test_host_workspace_env_supplies_the_default_root(monkeypatch, tmp_path, name):
     monkeypatch.delenv(bridge.ROOTS_ENV, raising=False)
