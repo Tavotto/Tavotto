@@ -39,7 +39,8 @@ from overrides import (BBOX_DEFAULTS, ColorbarProxy, FigState, HANDLERS, HATCHES
                        spine_side_color, spine_side_width, tick_cfg,
                        tick_format_name, tick_major_mode, tick_major_step,
                        tick_major_values, tick_minor_format, tick_minor_mode,
-                       tick_minor_step, tick_minor_visible, to_hex,
+                       tick_minor_step, tick_minor_visible, tick_side_visible,
+                       to_hex,
                        remember_axis_directions,
                        colorbar_mapping_is_live)
 
@@ -1354,6 +1355,18 @@ def _axes_fields(ax, el: dict | None = None) -> list[dict]:
          "value": aspect if isinstance(aspect, str) else str(round(float(aspect), 3)),
          "group": "数据范围"},
         ]),
+
+        # 刻度线的四边开关（issue #92）：论文规范常要四边镜像刻度或全部关掉，
+        # 而上/右两边没有刻度数字、在画布上点不到——入口放在子图元素上。
+        # 方向（in/out/inout）在刻度组元素上，这里不重复（单一权威）。
+        {"prop": "ticks_bottom", "type": "bool",
+         "value": tick_side_visible(ax, "x", 1), "group": "刻度线"},
+        {"prop": "ticks_top", "type": "bool",
+         "value": tick_side_visible(ax, "x", 2), "group": "刻度线"},
+        {"prop": "ticks_left", "type": "bool",
+         "value": tick_side_visible(ax, "y", 1), "group": "刻度线"},
+        {"prop": "ticks_right", "type": "bool",
+         "value": tick_side_visible(ax, "y", 2), "group": "刻度线"},
 
         {"prop": "grid_x", "type": "bool", "value": _grid_visible(ax, "x"),
          "group": "网格与边框"},
