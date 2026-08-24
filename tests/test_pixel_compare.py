@@ -3,8 +3,14 @@
 这是仓库里像素差异算法的**第二份实现**，存在的理由是环境边界而不是口味：
 `scripts/ci/pixelcompare.py` 跑在 CI（numpy + Pillow），而写回像素门跑在
 Flask 父进程——它的依赖边界是 flask + pymupdf，wheel 不带科学栈，也 import
-不到 scripts/。两份不许悄悄漂开：本文件末尾的对拍用例在同一组图上逐指标
-比对两份实现的输出（与 patchspec ↔ Rust、telemetry 客户端 ↔ 代理同一套纪律）。
+不到 scripts/。
+
+两份有一处**记录在案的刻意差异**（PR #95 评审的 P1）：CI 那份转灰度比（跨
+进程渲染的整图回归，灰度足够且阈值好定），写回门这份逐 RGBA 通道比、每像素
+取通道最大差——等亮度换色在灰度上逐字节相同，透明度差异只活在 alpha 通道
+里，写回门必须看得见这两类。其余判据（底噪、三指标名与算法结构）不许悄悄
+漂开：对拍用例在**灰度等值图**（r==g==b、全不透明，两份实现的语义交集）上
+逐指标比对输出（与 patchspec ↔ Rust、telemetry 客户端 ↔ 代理同一套纪律）。
 """
 import json
 import subprocess
@@ -64,6 +70,49 @@ def test_a_real_change_is_measured(tmp_path):
     assert got["max_abs_diff"] == 160
     assert got["changed_pixels"] == 16 * 32
     assert got["mean_abs_diff"] == pytest.approx(160 * 0.5)
+
+
+def _solid(path: Path, rgb: tuple[int, int, int], alpha: int | None = None,
+           n: int = 8) -> Path:
+    """n×n 的纯色图；alpha 非 None 时带 alpha 通道。"""
+    if alpha is None:
+        pix = pymupdf.Pixmap(pymupdf.csRGB, n, n, bytes(rgb) * (n * n), False)
+    else:
+        pix = pymupdf.Pixmap(pymupdf.csRGB, n, n,
+                             bytes([*rgb, alpha]) * (n * n), True)
+    pix.save(str(path))
+    return path
+
+
+def test_isoluminant_color_change_is_caught(tmp_path):
+    """等亮度换色必须显影（PR #95 评审的 P1：灰度转换会把它折叠成 0 差异）。
+
+    (100,0,0) 与 (0,51,0) 的 ITU-R 601 luma 都 ≈ 29.9——灰度差落在底噪之内，
+    可画面是从红变绿。逐 RGBA 通道比之后，每个像素的通道最大差是 100。
+    """
+    a = _solid(tmp_path / "a.png", (100, 0, 0))
+    b = _solid(tmp_path / "b.png", (0, 51, 0))
+    got = pdfbackend.compare_png(a, b)
+    assert got["changed_pixel_ratio"] == 1.0
+    assert got["max_abs_diff"] == 100
+
+
+def test_alpha_only_change_is_caught(tmp_path):
+    """纯 alpha 差异必须显影（同一条 P1 的另一半：丢掉 alpha 就永远比不到）。"""
+    a = _solid(tmp_path / "a.png", (60, 60, 60), alpha=255)
+    b = _solid(tmp_path / "b.png", (60, 60, 60), alpha=128)
+    got = pdfbackend.compare_png(a, b)
+    assert got["changed_pixel_ratio"] == 1.0
+    assert got["max_abs_diff"] == 127
+
+
+def test_alpha_channel_presence_alone_is_not_a_difference(tmp_path):
+    """一侧带全不透明 alpha、一侧不带：像素相同就不算分歧（补齐后逐位一致）。"""
+    a = _solid(tmp_path / "a.png", (60, 60, 60))
+    b = _solid(tmp_path / "b.png", (60, 60, 60), alpha=255)
+    got = pdfbackend.compare_png(a, b)
+    assert got["changed_pixel_ratio"] == 0.0
+    assert got["max_abs_diff"] == 0
 
 
 def test_size_mismatch_is_the_maximum_difference(tmp_path):

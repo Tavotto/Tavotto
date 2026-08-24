@@ -1187,8 +1187,9 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被它推翻**（
     （ADR 0009，issue #81）：两侧各出一张 `render_png` 探针图逐像素比——
     颜色 / 线型 / 字体 / 透明度这类几何不变的纯属性分歧只有像素量得到
     （PR #49 的 facecolor 恢复顺序 bug 报了 0 处分歧）。比较器是
-    `pdfbackend.compare_png`（与 `scripts/ci/pixelcompare.py` 同语义，
-    对拍用例钉住，Flask 边界内不许 import 科学栈），阈值
+    `pdfbackend.compare_png`（判据结构与 `scripts/ci/pixelcompare.py` 同构但
+    **逐 RGBA 通道比**——等亮度换色与纯 alpha 差异灰度量不到；灰度等值图上
+    两份一致，对拍用例钉住，Flask 边界内不许 import 科学栈），阈值
     `app.REPLAY_PIXEL_TOL`；分歧作为 `field: "pixels"` 进同一份清单。
     **热态不是这组 patches 就不比**（历史恢复、跨面板同步都是），响应据实回
     `replay: "fresh_only"`——假报一次，用户学到的就是「这个提示可以无视」；

@@ -26,9 +26,14 @@ data-loss，1.0 的阻断项。
    出来的」）。协议命令既有，两条控制面（Python 池 / workerd）同语义，
    协议不升版。
 3. 逐字节相同（期望的通过态）直接放行；不同则经
-   `pdfbackend.compare_png` 解码成灰度、扣底噪 3 后算三指标
-   （`changed_pixel_ratio` / `mean_abs_diff` / `max_abs_diff`，语义与
-   `scripts/ci/pixelcompare.py` 逐条相同），任一越过 `app.REPLAY_PIXEL_TOL`
+   `pdfbackend.compare_png` **逐 RGBA 通道**比（每像素取通道最大差）、扣
+   底噪 3 后算三指标（`changed_pixel_ratio` / `mean_abs_diff` /
+   `max_abs_diff`，判据结构与 `scripts/ci/pixelcompare.py` 同构）。不转灰度
+   也不丢 alpha 是有意的：等亮度换色在灰度上逐字节相同，透明度差异只活在
+   alpha 通道里，折叠掉等于给这两类分歧留一扇永远开着的门（PR #95 评审的
+   P1）。CI 那份继续用灰度——它比的是跨进程渲染的整图回归，取舍不同；两份在
+   灰度等值图上逐指标一致，对拍用例钉住这个交集。任一指标越过
+   `app.REPLAY_PIXEL_TOL`
    即分歧：追加一条 `{gid: "", field: "pixels", metrics, exceeded,
    tolerance}` 进分歧清单，走既有的 409 `replay_divergence`（code 前端已
    双语翻译；metrics/exceeded/tolerance 是可成文的 params）。

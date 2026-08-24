@@ -121,35 +121,46 @@ def render_preview_png(path: Path, width_px: int, out: Path) -> None:
 PNG_NOISE_FLOOR = 3
 
 
-def _gray_pixels(path: Path) -> tuple[bytes, tuple[int, int]]:
-    """PNG → (灰度字节序列, (宽, 高))。alpha 通道忽略（比的是画出来的墨迹）。"""
+def _rgba_pixels(path: Path) -> tuple[bytes, tuple[int, int]]:
+    """PNG → (RGBA 交错字节序列, (宽, 高))。
+
+    **不转灰度、不丢 alpha**：等亮度的两种颜色（红 ↔ 同 luma 的绿）在灰度上
+    逐字节相同，透明度差异更是只活在 alpha 通道里——写回像素门要接住的恰恰
+    是「画面确实不同」的一切形态，把色度与 alpha 折叠掉等于给这两类分歧留了
+    一扇永远开着的门（PR #95 评审的 P1）。
+    """
     pix = pymupdf.Pixmap(str(path))
-    if pix.colorspace is None or pix.colorspace.n != 1:
-        pix = pymupdf.Pixmap(pymupdf.csGRAY, pix)
-    # samples 按像素交错（灰度 1 字节 + 可选 alpha），按步长抽出灰度那一列
-    return pix.samples[:: pix.n], (pix.width, pix.height)
+    if pix.colorspace is None or pix.colorspace.n != 3:
+        pix = pymupdf.Pixmap(pymupdf.csRGB, pix)   # 灰度/CMYK → RGB，alpha 保留
+    if not pix.alpha:
+        pix = pymupdf.Pixmap(pix, 1)               # 补一条全不透明的 alpha
+    return pix.samples, (pix.width, pix.height)
 
 
 def compare_png(baseline: Path, candidate: Path) -> dict:
     """两张 PNG 的差异指标；尺寸不同直接判为最大差异。
 
-    判据与指标名与 `scripts/ci/pixelcompare.py` **同语义**（灰度比较、底噪 3、
-    changed_pixel_ratio / mean_abs_diff / max_abs_diff 三指标）。为什么允许
-    第二份实现：那一份跑在 CI（numpy + Pillow），而这里跑在 Flask 父进程——
-    它的依赖边界是 flask + pymupdf，wheel 不带科学栈，也 import 不到 scripts/。
-    两份靠 `tests/test_pixel_compare.py` 的对拍用例钉在一起（与 patchspec ↔
-    Rust、telemetry 客户端 ↔ 代理同一套纪律）。
+    判据结构与指标名与 `scripts/ci/pixelcompare.py` 同构（底噪 3，
+    changed_pixel_ratio / mean_abs_diff / max_abs_diff 三指标），但**这里逐
+    RGBA 通道比、每像素取通道最大差**，刻意比 CI 那份的灰度比较更严：CI 比的
+    是跨进程渲染的整图回归，灰度足够且阈值好定；写回门比的是同环境下的同一张
+    图，等亮度换色与纯 alpha 差异也必须被看见。两份实现在灰度等值图（r==g==b、
+    全不透明）上逐指标一致，`tests/test_pixel_compare.py` 的对拍用例钉住这个
+    交集（与 patchspec ↔ Rust、telemetry 客户端 ↔ 代理同一套纪律）。为什么
+    允许第二份实现：那一份跑在 CI（numpy + Pillow），而这里跑在 Flask 父进程
+    ——它的依赖边界是 flask + pymupdf，wheel 不带科学栈，也 import 不到
+    scripts/。
 
     阈值不在这里——这里只出指标，判定归调用方（app.py 的写回像素门）。
     """
-    a, size_a = _gray_pixels(baseline)
-    b, size_b = _gray_pixels(candidate)
+    a, size_a = _rgba_pixels(baseline)
+    b, size_b = _rgba_pixels(candidate)
     if size_a != size_b:
         return {"ok": False, "reason": "size_mismatch",
                 "baseline_size": list(size_a), "candidate_size": list(size_b),
                 "changed_pixel_ratio": 1.0, "mean_abs_diff": 255.0,
                 "max_abs_diff": 255}
-    total = len(a)
+    total = size_a[0] * size_a[1]
     if a == b or not total:                       # 快路径：逐字节相同
         return {"ok": True, "changed_pixel_ratio": 0.0, "mean_abs_diff": 0.0,
                 "max_abs_diff": 0, "changed_pixels": 0, "total_pixels": total,
@@ -158,8 +169,14 @@ def compare_png(baseline: Path, candidate: Path) -> dict:
     signal_sum = 0
     raw_sum = 0
     max_d = 0
-    for x, y in zip(a, b):
-        d = x - y if x >= y else y - x
+    va, vb = memoryview(a), memoryview(b)
+    for off in range(0, total * 4, 4):
+        d = 0
+        for c in range(4):                        # 每像素取 RGBA 四通道最大差
+            x, y = va[off + c], vb[off + c]
+            dc = x - y if x >= y else y - x
+            if dc > d:
+                d = dc
         if d:
             raw_sum += d
             if d > max_d:
