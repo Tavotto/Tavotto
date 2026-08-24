@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { AppsBridge, hostFallback } from './appsBridge'
 import { McpApp } from './McpApp'
+import { McpProviders } from './McpProviders'
 import { installMcpTransport, seedSession, type OpenFigureResult } from './session'
 import '@/index.css'
 
@@ -69,8 +70,16 @@ function Boot() {
 
     // MCP Apps 标准路径：host 把工具结果推过来
     const off = bridge.on('ui/notifications/tool-result', (params) => {
-      const result = (params as { result?: { structuredContent?: unknown; _meta?: Record<string, unknown> } })
-        ?.result
+      // MCP Apps 2026-01-26 sends CallToolResult directly as notification params.
+      // Keep the older { result: CallToolResult } wrapper as a compatibility path;
+      // treating it as the standard shape made Codex complete ui/initialize yet leave
+      // the canvas forever on "waiting for tavotto_open_figure".
+      const envelope = params as {
+        structuredContent?: unknown
+        _meta?: Record<string, unknown>
+        result?: { structuredContent?: unknown; _meta?: Record<string, unknown> }
+      }
+      const result = envelope?.result ?? envelope
       accept(result?.structuredContent ?? (result?._meta?.widgetData as unknown))
     })
 
@@ -117,7 +126,10 @@ function Splash({ state }: { state: 'connecting' | 'waiting' | 'nohost' }) {
 createRoot(rootEl).render(
   <StrictMode>
     <ErrorBoundary>
-      <Boot />
+      {/* 与桌面 / playground 入口一致：属性检查器会渲染 Radix Tooltip。 */}
+      <McpProviders>
+        <Boot />
+      </McpProviders>
     </ErrorBoundary>
   </StrictMode>,
 )

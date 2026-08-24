@@ -112,6 +112,13 @@ class StdioConnection:
     def error(self, rid: Any, exc: RpcError) -> None:
         self.write({"jsonrpc": "2.0", "id": rid, "error": exc.payload()})
 
+    def request(self, rid: Any, method: str, params: dict | None = None) -> None:
+        """向 client 发请求；只在关联的原始 tool call 存活期间使用。"""
+        msg: dict = {"jsonrpc": "2.0", "id": rid, "method": method}
+        if params is not None:
+            msg["params"] = params
+        self.write(msg)
+
     def notify(self, method: str, params: dict | None = None) -> None:
         msg: dict = {"jsonrpc": "2.0", "method": method}
         if params is not None:

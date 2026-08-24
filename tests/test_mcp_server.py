@@ -78,9 +78,11 @@ class FakeWorker:
 
 @pytest.fixture(autouse=True)
 def _clean_sessions():
+    bridge.reset_root_authority()
     bridge.sessions().clear()
     yield
     bridge.sessions().clear()
+    bridge.reset_root_authority()
 
 
 @pytest.fixture
@@ -166,6 +168,247 @@ def test_notifications_are_never_answered():
     assert out.getvalue() == b""
 
 
+def test_real_protocol_roundtrip_acquires_host_roots_and_opens_canvas(
+        project, fake_pool, monkeypatch):
+    """假 Codex host 走完整双向协议，不靠 TAVOTTO_MCP_ROOTS 偷渡答案。
+
+    roots/list 必须嵌在真实 tools/call 处理窗口里；拿到根后 health 能说明来源，
+    随后的 open 返回真正的 MCP App metadata，而不是只证明某个 Python 函数能调。
+    """
+    monkeypatch.delenv(bridge.ROOTS_ENV, raising=False)
+    for name in bridge.WORKSPACE_ENVS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.chdir(PLUGIN / "mcp")
+    root_uri = project.parent.resolve().as_uri()
+    incoming = [
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+            "protocolVersion": "2025-11-25",
+            "capabilities": {"roots": {"listChanged": True}},
+            "clientInfo": {"name": "codex-test", "version": "1"},
+        }},
+        {"jsonrpc": "2.0", "method": "notifications/initialized"},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
+            "name": "tavotto_health", "arguments": {},
+        }},
+        {"jsonrpc": "2.0", "id": "tavotto-roots-1",
+         "result": {"roots": [{"uri": root_uri, "name": "fixture"}]}},
+        {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
+            "name": "tavotto_open_figure",
+            "arguments": {"project_path": "figures"},
+        }},
+    ]
+    wire = b"".join((json.dumps(msg) + "\n").encode() for msg in incoming)
+    out = io.BytesIO()
+    s = server.Server(rpc.StdioConnection(io.BytesIO(wire), out))
+    assert s.serve_forever() == 0
+    frames = [json.loads(line) for line in out.getvalue().splitlines()]
+
+    assert frames[1]["method"] == "roots/list"
+    health = frames[2]["result"]["structuredContent"]
+    assert health["roots"] == [str(project.parent.resolve())]
+    assert health["root_authority"]["source"] == "mcp_roots"
+    assert health["root_authority"]["mcp_roots"] == {
+        "advertised": True,
+        "list_changed": True,
+        "state": "ready",
+        "error": None,
+        "compatibility_only": True,
+        "deprecated_since": "2026-07-28",
+    }
+    opened = frames[3]["result"]
+    assert not opened.get("isError"), opened.get("structuredContent")
+    assert opened["structuredContent"]["stem"] == "Fig1"
+    if widget.available():
+        assert opened["_meta"]["ui"]["resourceUri"] == widget.RESOURCE_URI
+        assert opened["_meta"]["openai/outputTemplate"] == widget.RESOURCE_URI
+
+
+def test_roots_change_notification_refreshes_only_inside_the_next_tool_call(
+        tmp_path, monkeypatch):
+    monkeypatch.delenv(bridge.ROOTS_ENV, raising=False)
+    for name in bridge.WORKSPACE_ENVS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.chdir(PLUGIN / "mcp")
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    incoming = [
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+            "protocolVersion": "2025-11-25",
+            "capabilities": {"roots": {"listChanged": True}},
+        }},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
+            "name": "tavotto_health", "arguments": {},
+        }},
+        {"jsonrpc": "2.0", "id": "tavotto-roots-1", "result": {
+            "roots": [{"uri": first.resolve().as_uri()}],
+        }},
+        {"jsonrpc": "2.0", "method": "notifications/roots/list_changed"},
+        {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
+            "name": "tavotto_health", "arguments": {},
+        }},
+        {"jsonrpc": "2.0", "id": "tavotto-roots-2", "result": {
+            "roots": [{"uri": second.resolve().as_uri()}],
+        }},
+    ]
+    wire = b"".join((json.dumps(msg) + "\n").encode() for msg in incoming)
+    out = io.BytesIO()
+    assert server.Server(rpc.StdioConnection(io.BytesIO(wire), out)).serve_forever() == 0
+    frames = [json.loads(line) for line in out.getvalue().splitlines()]
+    assert [frame.get("method") for frame in frames] == [
+        None, "roots/list", None, "roots/list", None,
+    ]
+    assert frames[2]["result"]["structuredContent"]["roots"] == [str(first.resolve())]
+    refreshed = frames[4]["result"]["structuredContent"]["root_authority"]
+    assert refreshed["roots"] == [str(second.resolve())]
+    assert refreshed["mcp_roots"]["state"] == "ready"
+
+
+def test_real_protocol_roundtrip_elicits_one_connection_scoped_root_and_opens_canvas(
+        project, fake_pool, monkeypatch):
+    """当前 Codex 不声明 roots，但声明 elicitation：用户确认必须成为授权边界。"""
+    monkeypatch.delenv(bridge.ROOTS_ENV, raising=False)
+    for name in bridge.WORKSPACE_ENVS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.chdir(PLUGIN / "mcp")
+    candidate = str(project.resolve())
+    incoming = [
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {"elicitation": {}},
+            "clientInfo": {"name": "codex-mcp-client", "version": "0.149.1"},
+        }},
+        {"jsonrpc": "2.0", "method": "notifications/initialized"},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
+            "name": "tavotto_open_figure",
+            "arguments": {"project_path": candidate},
+        }},
+        {"jsonrpc": "2.0", "id": "tavotto-elicitation-1", "result": {
+            "action": "accept", "content": {"approve": True},
+        }},
+        {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
+            "name": "tavotto_health", "arguments": {},
+        }},
+    ]
+    wire = b"".join((json.dumps(msg) + "\n").encode() for msg in incoming)
+    out = io.BytesIO()
+    s = server.Server(rpc.StdioConnection(io.BytesIO(wire), out))
+    assert s.serve_forever() == 0
+    frames = [json.loads(line) for line in out.getvalue().splitlines()]
+
+    prompt = frames[1]
+    assert prompt["method"] == "elicitation/create"
+    assert candidate in prompt["params"]["message"]
+    assert prompt["params"]["requestedSchema"]["properties"]["approve"] == {
+        "type": "boolean",
+        "title": "允许 Tavotto 访问这个目录",
+        "description": "请核对上方完整路径；不确定时保持关闭。",
+        "default": False,
+    }
+    opened = frames[2]["result"]
+    assert not opened.get("isError"), opened.get("structuredContent")
+    assert opened["structuredContent"]["stem"] == "Fig1"
+    if widget.available():
+        assert opened["_meta"]["ui"]["resourceUri"] == widget.RESOURCE_URI
+        assert opened["_meta"]["openai/outputTemplate"] == widget.RESOURCE_URI
+    authority = frames[3]["result"]["structuredContent"]["root_authority"]
+    assert authority["source"] == "user_elicitation"
+    assert authority["roots"] == [candidate]
+    assert authority["workspace_confirmation"]["lifetime"] == "mcp_connection"
+
+
+@pytest.mark.parametrize("action,state", [
+    ("decline", "declined"),
+    ("cancel", "cancelled"),
+])
+def test_workspace_elicitation_refusal_fails_closed(
+        project, monkeypatch, action, state):
+    monkeypatch.delenv(bridge.ROOTS_ENV, raising=False)
+    for name in bridge.WORKSPACE_ENVS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.chdir(PLUGIN / "mcp")
+    incoming = [
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {"elicitation": {}},
+        }},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
+            "name": "tavotto_open_figure",
+            "arguments": {"project_path": str(project.resolve())},
+        }},
+        {"jsonrpc": "2.0", "id": "tavotto-elicitation-1", "result": {
+            "action": action,
+        }},
+    ]
+    wire = b"".join((json.dumps(msg) + "\n").encode() for msg in incoming)
+    out = io.BytesIO()
+    assert server.Server(rpc.StdioConnection(io.BytesIO(wire), out)).serve_forever() == 0
+    frames = [json.loads(line) for line in out.getvalue().splitlines()]
+    opened = frames[2]["result"]
+    assert opened["isError"] is True
+    assert opened["structuredContent"]["code"] == f"workspace_confirmation_{state}"
+    assert state in opened["structuredContent"]["error"]
+    assert "不要自动循环重试" in opened["structuredContent"]["error"]
+    assert bridge.sessions() == {}
+
+
+def test_rootless_elicitation_requires_an_absolute_existing_candidate(
+        monkeypatch):
+    monkeypatch.delenv(bridge.ROOTS_ENV, raising=False)
+    for name in bridge.WORKSPACE_ENVS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.chdir(PLUGIN / "mcp")
+    incoming = [
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {"elicitation": {}},
+        }},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
+            "name": "tavotto_open_figure",
+            "arguments": {"project_path": "figures"},
+        }},
+    ]
+    wire = b"".join((json.dumps(msg) + "\n").encode() for msg in incoming)
+    out = io.BytesIO()
+    assert server.Server(rpc.StdioConnection(io.BytesIO(wire), out)).serve_forever() == 0
+    frames = [json.loads(line) for line in out.getvalue().splitlines()]
+    assert len(frames) == 2, "没有稳定基准时不应向用户展示一个猜出来的路径"
+    payload = frames[1]["result"]["structuredContent"]
+    assert payload["code"] == "workspace_confirmation_required"
+    assert "绝对" in payload["recovery"]
+
+
+def test_roots_client_that_disconnects_fails_closed_without_internal_error(
+        tmp_path, monkeypatch):
+    """声明 capability 却不回答的 host 不得锁死，也不得退回插件 cwd。"""
+    monkeypatch.delenv(bridge.ROOTS_ENV, raising=False)
+    for name in bridge.WORKSPACE_ENVS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.chdir(PLUGIN / "mcp")
+    incoming = [
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+            "protocolVersion": "2025-11-25",
+            "capabilities": {"roots": {"listChanged": False}},
+        }},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
+            "name": "tavotto_open_figure",
+            "arguments": {"project_path": str(tmp_path)},
+        }},
+    ]
+    wire = b"".join((json.dumps(msg) + "\n").encode() for msg in incoming)
+    out = io.BytesIO()
+    s = server.Server(rpc.StdioConnection(io.BytesIO(wire), out))
+    assert s.serve_forever() == 0
+    frames = [json.loads(line) for line in out.getvalue().splitlines()]
+    assert frames[1]["method"] == "roots/list"
+    opened = frames[2]["result"]
+    assert opened["isError"] is True
+    assert opened["structuredContent"]["code"] == "no_workspace_root"
+    assert all(frame.get("error", {}).get("code") != rpc.INTERNAL_ERROR
+               for frame in frames)
+
+
 def test_handler_exceptions_do_not_kill_the_connection(monkeypatch):
     out = io.BytesIO()
     s = server.Server(rpc.StdioConnection(io.BytesIO(), out))
@@ -234,6 +477,41 @@ def test_allowed_roots_default_to_cwd(monkeypatch, tmp_path):
     monkeypatch.delenv(bridge.ROOTS_ENV, raising=False)
     monkeypatch.chdir(tmp_path)
     assert bridge.allowed_roots() == [str(Path(tmp_path).resolve())]
+
+
+def test_relative_paths_resolve_from_one_trusted_root(monkeypatch, tmp_path):
+    figures = tmp_path / "figures"
+    figures.mkdir()
+    monkeypatch.setenv(bridge.ROOTS_ENV, str(tmp_path))
+    monkeypatch.chdir(PLUGIN / "mcp")
+    assert bridge.check_scope("figures") == os.path.realpath(str(figures))
+
+
+def test_relative_paths_are_not_guessed_across_multiple_roots(monkeypatch, tmp_path):
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    monkeypatch.setenv(bridge.ROOTS_ENV, os.pathsep.join((str(first), str(second))))
+    with pytest.raises(bridge.BridgeError) as exc:
+        bridge.check_scope("figures")
+    assert exc.value.code == "ambiguous_workspace_root"
+
+
+def test_symlink_cannot_escape_a_trusted_root(monkeypatch, tmp_path):
+    inside = tmp_path / "inside"
+    outside = tmp_path / "outside"
+    inside.mkdir()
+    outside.mkdir()
+    link = inside / "escape"
+    try:
+        link.symlink_to(outside, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"当前平台不能创建目录 symlink: {exc}")
+    monkeypatch.setenv(bridge.ROOTS_ENV, str(inside))
+    with pytest.raises(bridge.BridgeError) as caught:
+        bridge.check_scope(str(link))
+    assert caught.value.code == "path_out_of_scope"
 
 
 def test_open_refuses_out_of_scope(project, fake_pool):
@@ -523,6 +801,87 @@ def test_host_workspace_env_supplies_the_default_root(monkeypatch, tmp_path, nam
     monkeypatch.chdir(PLUGIN / "mcp")
     monkeypatch.setenv(name, str(tmp_path))
     assert bridge.allowed_roots() == [os.path.realpath(str(tmp_path))]
+
+
+def test_protocol_root_survives_a_deleted_plugin_cwd(monkeypatch, tmp_path):
+    monkeypatch.delenv(bridge.ROOTS_ENV, raising=False)
+    for name in bridge.WORKSPACE_ENVS:
+        monkeypatch.delenv(name, raising=False)
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    resolved_tmp_path = str(tmp_path.resolve())
+    resolved_nested = str(nested.resolve())
+    bridge.observe_mcp_client("2025-11-25", {"roots": {}}, {})
+    bridge.accept_protocol_roots({"roots": [{"uri": tmp_path.as_uri()}]})
+
+    def deleted_cwd():
+        raise FileNotFoundError(2, "No such file or directory")
+
+    monkeypatch.setattr(bridge.os, "getcwd", deleted_cwd)
+    assert bridge.allowed_roots() == [resolved_tmp_path]
+    assert bridge.check_scope(str(nested)) == resolved_nested
+
+
+def test_open_session_is_revoked_when_host_switches_workspace(
+        project, fake_pool, monkeypatch, tmp_path):
+    opened = _body(_call("tavotto_open_figure", {"project_path": str(project)}))
+    sid = opened["session_id"]
+    other = tmp_path / "other-workspace"
+    other.mkdir()
+
+    monkeypatch.delenv(bridge.ROOTS_ENV, raising=False)
+    bridge.observe_mcp_client("2025-11-25", {"roots": {"listChanged": True}}, {})
+    bridge.accept_protocol_roots({"roots": [{"uri": other.resolve().as_uri()}]})
+    result = _call("tavotto_apply_overrides", {"session_id": sid, "patches": []})
+    assert result["isError"] is True
+    assert _body(result)["code"] == "workspace_root_changed"
+    assert sid not in bridge.sessions()
+
+
+def test_open_session_is_revoked_when_project_retargets_outside_workspace(
+        project, fake_pool, tmp_path, tmp_path_factory):
+    """会话不能在项目目录被换成越界 symlink 后继续复用旧的词法路径。"""
+    opened = _body(_call("tavotto_open_figure", {"project_path": str(project)}))
+    sid = opened["session_id"]
+    worker_calls = len(fake_pool.calls)
+
+    original = tmp_path / "figures-before-retarget"
+    project.rename(original)
+    outside = tmp_path_factory.mktemp("outside-workspace")
+    try:
+        project.symlink_to(outside, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"当前平台不能创建目录 symlink: {exc}")
+
+    result = _call("tavotto_apply_overrides", {"session_id": sid, "patches": []})
+    assert result["isError"] is True
+    assert _body(result)["code"] == "workspace_root_changed"
+    assert sid not in bridge.sessions()
+    assert len(fake_pool.calls) == worker_calls
+
+
+def test_session_project_is_recanonicalized_before_worker_access(
+        project, fake_pool, monkeypatch, tmp_path_factory):
+    """Windows 无 symlink 权限时也要确定会话检查真的重新解析当前目标。"""
+    opened = _body(_call("tavotto_open_figure", {"project_path": str(project)}))
+    sid = opened["session_id"]
+    worker_calls = len(fake_pool.calls)
+    stored_project = os.path.normcase(os.path.normpath(opened["project"]))
+    outside = str(tmp_path_factory.mktemp("simulated-retarget").resolve())
+    original_canonical_path = bridge.canonical_path
+
+    def retargeted(path):
+        if os.path.normcase(os.path.normpath(str(path))) == stored_project:
+            return outside
+        return original_canonical_path(path)
+
+    monkeypatch.setattr(bridge, "canonical_path", retargeted)
+    result = _call("tavotto_apply_overrides", {"session_id": sid, "patches": []})
+    assert result["isError"] is True
+    assert _body(result)["code"] == "workspace_root_changed"
+    assert _body(result)["resolved_project"] == outside
+    assert sid not in bridge.sessions()
+    assert len(fake_pool.calls) == worker_calls
 
 
 def test_registry_outside_the_root_is_never_written(tmp_path, monkeypatch, fake_pool):
