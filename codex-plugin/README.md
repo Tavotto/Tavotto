@@ -170,9 +170,9 @@ python3 skills/tavotto-figure/scripts/update_check.py --json --force
 
 ### 画图前：开工三问与偏好
 
-让 Codex 画图（@Tavotto / 隐式触发技能）时，它会先把插件对齐到最新版
-（`codex plugin marketplace add Tavotto/Tavotto && codex plugin add
-tavotto@tavotto`，失败不阻塞出图），然后用提问工具确认三件事：**画幅宽度**
+会话里第一次让 Codex 画图（@Tavotto / 隐式触发技能）时，它会先把插件对齐
+到最新版（`codex plugin marketplace add Tavotto/Tavotto && codex plugin add
+tavotto@tavotto`，每个会话一次、失败不阻塞出图），然后用提问工具确认三件事：**画幅宽度**
 （单栏 8 cm / 双栏 15 cm，拿不准时按任务推荐）、**字体**（选项含
 Times New Roman 与 Arial）、**图例加不加框**。回答里说「记住」，答案会写进
 用户配置目录的 `codex-plugin-figure-prefs.json`，下次不再问；反悔时说一声

@@ -104,6 +104,9 @@ def test_skill_asks_the_three_setup_questions():
     assert "图例加不加框" in text
     assert "prefs.py" in text
     assert "提问工具" in text
+    # `width=ask` 是哨兵不是答案（PR #93 P2）：撞见它必须照问，
+    # 不许按「记录过的不再问」跳过
+    assert "宽度每次都问」，撞见它宽度照问" in text
 
 
 def test_skill_forbids_uninvited_decoration():
@@ -131,11 +134,16 @@ def test_skill_keeps_multi_panel_inside_matplotlib():
     assert "axes.labelweight" in text          # 轴标题默认加粗写进了模板与默认值
 
 
-def test_skill_syncs_plugin_on_each_invocation():
-    """每次触发先对齐插件版本；同步失败不许阻塞出图。"""
+def test_skill_syncs_plugin_once_per_session():
+    """会话第一次触发时对齐插件版本；每会话一次，同步失败不许阻塞出图。
+
+    频率是评审裁过的（PR #93 P1）：同一会话里工具不重载，反复重装只有
+    网络开销；update_check 的只提醒通道另在，两者互不代替。
+    """
     text = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
     assert ("codex plugin marketplace add Tavotto/Tavotto && "
             "codex plugin add tavotto@tavotto") in text
+    assert "每个会话只跑一次" in text
     assert "绝不为此阻塞出图" in text
 
 
