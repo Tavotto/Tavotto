@@ -1013,29 +1013,83 @@ def _tick0(ts: "TickSet"):
     return ticks[0] if ticks else None
 
 
-def tick_side_visible(ax, which: str, line: int) -> bool:
-    """某条轴某一侧的刻度线可见性（line 1 = 下/左，line 2 = 上/右）。
+#: (轴, line) → 边名。line 1 = 下/左（tick1line），line 2 = 上/右（tick2line）
+_TICK_SIDES = {("x", 1): "bottom", ("x", 2): "top",
+               ("y", 1): "left", ("y", 2): "right"}
 
-    真值源是 Tick 对象自己（`tick1line` / `tick2line`）——rcParams 只决定
-    初值，脚本自己 `tick_params(top=True)` 之后就不作数了。`tick_params`
-    写进 `_major_tick_kw`，换 scale / `set_ticks` 冻结后新建的刻度都会继承
-    （matplotlib 3.10.8 实测），所以读第一个主刻度就是整条轴的状态。
-    manifest 的 `_axes_fields` 与 handler 的 getter 共用这一份（issue #92）。
+
+def _tick_side_state(axis, which: str, line: int, minor: bool) -> bool:
+    """一档（主或次）刻度在某一侧的可见性，三级真值链（issue #96）。
+
+    首选仍是 Tick 对象自己（`tick1line` / `tick2line`）——rcParams 只决定
+    初值，脚本自己 `tick_params(top=True)` 之后就不作数了。没有 Tick 对象时
+    （`set_xticks([])` 的 NullLocator、没开次刻度的轴）读轴的
+    `_major/_minor_tick_kw`：`tick_params` 写的就是它、新建刻度从它继承，
+    而且 `Axes.__init__` 会用 rcParams 把两档的 side 键都种进去
+    （matplotlib 3.10.8 的 axes/_base.py 实测），所以普通 2D 轴上这一级永远
+    有答案——写死「下/左 True」的旧退路会把脚本配过的 `tick_params(top=True)`
+    直接无视掉。kw 里也没有（自定义 Axis）才按 matplotlib 种初值的同一条
+    公式落回 rcParams，写死默认只剩最后的兜底。
+    """
+    ticks = axis.get_minor_ticks() if minor else axis.get_major_ticks()
+    if ticks:
+        return bool(getattr(ticks[0], f"tick{line}line").get_visible())
+    kw = axis._minor_tick_kw if minor else axis._major_tick_kw  # noqa: SLF001
+    v = kw.get(f"tick{line}On")
+    if v is not None:
+        return bool(v)
+    side = _TICK_SIDES[(which, line)]
+    try:
+        grp = "minor" if minor else "major"
+        return bool(mpl.rcParams[f"{which}tick.{side}"]
+                    and mpl.rcParams[f"{which}tick.{grp}.{side}"])
+    except KeyError:
+        return line == 1        # 最后的兜底：matplotlib 默认下/左有、上/右无
+
+
+def tick_side_visible(ax, which: str, line: int) -> bool:
+    """某条轴某一侧**主刻度**的刻度线可见性（line 1 = 下/左，line 2 = 上/右）。
+
+    manifest 的 `_axes_fields` 显示用（issue #92）：界面上是一个开关，显示
+    口径取主刻度。handler 的 getter **不再**共用这一份——它要的是 (主, 次)
+    二元组那种可还原的原样，见 `_mk_tick_side`（issue #96）。
     """
     axis = getattr(ax, f"{which}axis", None)
-    ticks = axis.get_major_ticks() if axis is not None else []
-    if not ticks:
-        return line == 1        # 空轴按 matplotlib 默认：下/左有、上/右无
-    return bool(getattr(ticks[0], f"tick{line}line").get_visible())
+    if axis is None:
+        return line == 1
+    return _tick_side_state(axis, which, line, minor=False)
 
 
 def _mk_tick_side(which: str, side: str, line: int):
     """axes 的刻度线四边开关：`ticks_top` 落在 x 轴的 tick2、`ticks_left`
     落在 y 轴的 tick1……开关是**边**的语义（与 spine_top 同构），方向
-    （in/out）仍在刻度组元素上——两个旋钮写同一状态会互相盖写，不重复。"""
-    return (lambda a: tick_side_visible(a, which, line),
-            lambda a, v: a.tick_params(axis=which, which="both",
-                                       **{side: bool(v)}))
+    （in/out）仍在刻度组元素上——两个旋钮写同一状态会互相盖写，不重复。
+
+    getter 回 `(主, 次)` 二元组，不是一个 bool：脚本可以把同一侧配成主开
+    次关（`tick_params(which="minor", bottom=False)`），一个 bool 装不下
+    这份原样——按主刻度的值用 which="both" 还原，次刻度会被静默盖成一致
+    （issue #96）。setter 因此双形态：bool 是界面的开关（which="both" 两档
+    一起写），二元组是还原（两档分别写回）——restore 走的正是
+    `setter(artist, originals[key])`，与 legend.fontsize 同一条纪律。
+    manifest 显示仍是一个 bool（`tick_side_visible`），显示与回灌本来就该
+    是两个口径。
+    """
+    def get(a):
+        axis = getattr(a, f"{which}axis", None)
+        if axis is None:
+            return (line == 1, line == 1)
+        return (_tick_side_state(axis, which, line, minor=False),
+                _tick_side_state(axis, which, line, minor=True))
+
+    def put(a, v):
+        if isinstance(v, (tuple, list)):
+            major, minor = v
+            a.tick_params(axis=which, which="major", **{side: bool(major)})
+            a.tick_params(axis=which, which="minor", **{side: bool(minor)})
+        else:
+            a.tick_params(axis=which, which="both", **{side: bool(v)})
+
+    return get, put
 
 
 def _set_tick_width(ts: "TickSet", v) -> None:
