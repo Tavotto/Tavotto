@@ -42,8 +42,10 @@ MCP App 资源渲染成任务内的交互画布。** pytest 的协议测试、�
 
 1. 工具结果成功，含非空 `session_id`、`stem == "c01_line"` 与
    `canvas_ui.available == true`；
-2. 工具结果 `_meta.ui.resourceUri` 和 `_meta["openai/outputTemplate"]` 都等于
-   `ui://tavotto/canvas/v1.html`；
+2. 原始 MCP `tools/list` 描述符的 `_meta.ui.resourceUri` 和
+   `_meta["openai/outputTemplate"]` 都等于 `ui://tavotto/canvas/v1.html`；若宿主把
+   `CallToolResult._meta` 隐藏在模型工具包装层之外，以协议录制为准，不能据包装层
+   缺字段误判 server 没有发送；
 3. Codex 任务内实际出现 iframe 画布，能看到标题 **Basic line**、两条曲线与图例；
 4. 画布不是浏览器 tab，也不是 Tavotto 外部窗口；
 5. 再调 health，`root_authority.source == "user_elicitation"`，根恰好是 corpus
@@ -72,3 +74,29 @@ PR 至少附：
 `codex exec --ephemeral --json` 会真实声明 `elicitation`，但没有真人 UI 时会返回
 `action: "cancel"`。Tavotto 必须据此拒绝访问。这条对照证明没有自动批准后门；它不是
 Desktop 正向证据。
+
+## 2026-08-24 参考验收记录
+
+- 环境：macOS 26.6.1 (25G76)，Codex Desktop 26.818.41509 (6962)，
+  `codex-cli 0.149.1`，Tavotto engine/plugin 0.9.2。
+- 真实 client 握手：`codex-mcp-client/0.149.1`，MCP `2025-06-18`；advertised
+  capability 只有 `elicitation`，没有 `roots`，因此正向路径由 exact-realpath
+  elicitation 授权，生命周期为当前 MCP connection。
+- 负向对照：无 UI 的真实 `codex exec --ephemeral --json` 对 elicitation 返回
+  cancel；server 返回 `workspace_confirmation_cancelled`，没有建立 session。
+- 正向 Desktop：用户在原生确认框批准测试图库 realpath 后，
+  `tavotto_open_figure` 返回 `CodexCanvasSmoke`、28 个可编辑元素、
+  `152.4 × 96.52 mm` 和非空 SVG；Codex 任务内出现画布、属性页、预检与导出控件。
+- 交互：画布内选择/拖动后，Desktop 日志连续记录
+  `mcpServer/tool/call`，界面显示“已同步”并把预检标为过期；关闭该临时 session 后
+  重新 open，patch hash 回到空列表 canonical hash，尺寸回到脚本原值，证明没有改源码。
+
+这次真实验收同时抓到并修复了两条自动化原先漏掉的错误：
+
+1. MCP Apps `ui/notifications/tool-result` 的 `params` 本身就是标准
+   `CallToolResult`；旧 fake host 错包成 `{ result: CallToolResult }`，导致 Codex
+   是否能靠兼容全局兜底变成竞态。e2e 现在发送标准直出形状，并保留旧包装兼容。
+2. MCP 独立入口漏了桌面版与 playground 都有的 `TooltipProvider`；完整 28 元素
+   manifest 一进入属性检查器就会崩。独立 provider 单测保证以后不能再删掉。
+
+![Codex Desktop 内嵌 Tavotto 画布](./codex-desktop-tavotto-2026-08-24.png)
