@@ -1013,6 +1013,31 @@ def _tick0(ts: "TickSet"):
     return ticks[0] if ticks else None
 
 
+def tick_side_visible(ax, which: str, line: int) -> bool:
+    """某条轴某一侧的刻度线可见性（line 1 = 下/左，line 2 = 上/右）。
+
+    真值源是 Tick 对象自己（`tick1line` / `tick2line`）——rcParams 只决定
+    初值，脚本自己 `tick_params(top=True)` 之后就不作数了。`tick_params`
+    写进 `_major_tick_kw`，换 scale / `set_ticks` 冻结后新建的刻度都会继承
+    （matplotlib 3.10.8 实测），所以读第一个主刻度就是整条轴的状态。
+    manifest 的 `_axes_fields` 与 handler 的 getter 共用这一份（issue #92）。
+    """
+    axis = getattr(ax, f"{which}axis", None)
+    ticks = axis.get_major_ticks() if axis is not None else []
+    if not ticks:
+        return line == 1        # 空轴按 matplotlib 默认：下/左有、上/右无
+    return bool(getattr(ticks[0], f"tick{line}line").get_visible())
+
+
+def _mk_tick_side(which: str, side: str, line: int):
+    """axes 的刻度线四边开关：`ticks_top` 落在 x 轴的 tick2、`ticks_left`
+    落在 y 轴的 tick1……开关是**边**的语义（与 spine_top 同构），方向
+    （in/out）仍在刻度组元素上——两个旋钮写同一状态会互相盖写，不重复。"""
+    return (lambda a: tick_side_visible(a, which, line),
+            lambda a, v: a.tick_params(axis=which, which="both",
+                                       **{side: bool(v)}))
+
+
 def _set_tick_width(ts: "TickSet", v) -> None:
     ts.tick_params(width=float(v))
     # mplot3d 的 axis3d.draw 每次都会用 _axinfo 覆盖刻度线宽，
@@ -3016,6 +3041,12 @@ HANDLERS: dict[tuple[str, str], tuple] = {
         _grid_prop(lambda g: g.get_alpha(), None),
         lambda a, v: a.tick_params(axis="both", which="both",
                                    grid_alpha=(None if v is None else float(v)))),
+    # ---- axes: 刻度线四边开关（issue #92）----
+    ("axes", "ticks_bottom"): _mk_tick_side("x", "bottom", 1),
+    ("axes", "ticks_top"):    _mk_tick_side("x", "top", 2),
+    ("axes", "ticks_left"):   _mk_tick_side("y", "left", 1),
+    ("axes", "ticks_right"):  _mk_tick_side("y", "right", 2),
+
     ("axes", "spine_top"): (_mk_spine_get("top"), _mk_spine_set("top")),
     ("axes", "spine_right"): (_mk_spine_get("right"), _mk_spine_set("right")),
     ("axes", "spine_bottom"): (_mk_spine_get("bottom"), _mk_spine_set("bottom")),

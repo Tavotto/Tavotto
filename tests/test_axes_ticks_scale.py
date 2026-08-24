@@ -277,6 +277,111 @@ def test_invert_and_spines(library):
 
 
 # ---------------------------------------------------------------------------
+# 刻度线四边开关（issue #92）
+# ---------------------------------------------------------------------------
+def test_tick_sides_default_and_toggle(library):
+    """入口在子图元素上：上/右两边没有刻度数字、画布上点不到，只能从这儿开。"""
+    man = _render(library)
+    assert _field(man, "axes_0", "ticks_bottom") is True
+    assert _field(man, "axes_0", "ticks_top") is False
+    assert _field(man, "axes_0", "ticks_left") is True
+    assert _field(man, "axes_0", "ticks_right") is False
+
+    man = _render(library, [
+        {"gid": "axes_0", "prop": "ticks_top", "value": True},
+        {"gid": "axes_0", "prop": "ticks_right", "value": True},
+        {"gid": "axes_0", "prop": "ticks_bottom", "value": False},
+    ])
+    assert _field(man, "axes_0", "ticks_top") is True
+    assert _field(man, "axes_0", "ticks_right") is True
+    assert _field(man, "axes_0", "ticks_bottom") is False
+    assert _field(man, "axes_0", "ticks_left") is True   # 没动的不受牵连
+
+
+def test_tick_sides_really_change_pixels_and_restore(library):
+    """能力真实用像素说话：开上边刻度线必须真的画出来，撤销必须逐字节回去。
+    axes 角色被不变式套件的自动扫描跳过（各有专用用例），这条就是那份专用用例。"""
+    w = _worker(library)
+    try:
+        base = w.preview_png(STEM, [], 380, "ticks-base").read_bytes()
+        on = w.preview_png(STEM, [{"gid": "axes_0", "prop": "ticks_top", "value": True}],
+                           380, "ticks-on").read_bytes()
+        back = w.preview_png(STEM, [], 380, "ticks-back").read_bytes()
+    finally:
+        pool.discard(w)
+    assert on != base       # 画面真的变了
+    assert back == base     # preview 状态中立 + 逐字还原
+
+
+def test_tick_sides_undo_returns_to_the_script(library):
+    base = _render(library)
+    w = _worker(library)
+    try:
+        w.override(STEM, [{"gid": "axes_0", "prop": "ticks_top", "value": True},
+                          {"gid": "axes_0", "prop": "ticks_bottom", "value": False}])
+        back = w.override(STEM, [])
+        assert not back["warnings"], back["warnings"]
+    finally:
+        pool.discard(w)
+    for prop in ("ticks_bottom", "ticks_top", "ticks_left", "ticks_right"):
+        assert _field(back["manifest"], "axes_0", prop) == _field(base, "axes_0", prop), prop
+
+
+def test_tick_sides_survive_a_scale_change(library):
+    """开关与换 scale 组合仍成立（两种列表序）。注意：这条只看护端到端
+    组合——规范化应用顺序里 scale 永远先于其余档，所以它**判别不了**
+    「写在轴上还是逐个改现有 Tick」；那条机制主张由下面的 reset_ticks
+    用例看护（手工变异确认过：天真实现在这条上是绿的、在那条上是红的）。"""
+    for patches in (
+        [{"gid": "axes_0", "prop": "ticks_top", "value": True},
+         {"gid": "axes_0", "prop": "xscale", "value": "log"}],
+        [{"gid": "axes_0", "prop": "xscale", "value": "log"},
+         {"gid": "axes_0", "prop": "ticks_top", "value": True}],
+    ):
+        man = _render(library, patches)
+        assert _field(man, "axes_0", "ticks_top") is True
+        assert _field(man, "axes_0", "xscale") == "log"
+
+
+_TICK_SIDE_MECHANISM_DRIVER = '''
+import sys
+sys.path.insert(0, sys.argv[1])
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import overrides
+
+fig, ax = plt.subplots()
+ax.plot([0, 1], [0, 1])
+fig.canvas.draw()
+get, set_ = overrides.HANDLERS[("axes", "ticks_top")]
+set_(ax, True)
+ax.xaxis.reset_ticks()          # 换 scale / set_ticks 冻结共同的底层一步
+fig.canvas.draw()
+assert all(t.tick2line.get_visible() for t in ax.xaxis.get_major_ticks()), (
+    "reset_ticks 之后顶边刻度线丢了：开关写在了现有 Tick 上，不在轴上")
+assert get(ax) is True
+print("OK")
+'''
+
+
+def test_tick_side_setter_marks_the_axis_not_the_current_ticks():
+    """机制级看护：开关必须经 tick_params 写进轴的 `_major_tick_kw`，让之后
+    **新建**的刻度也继承。逐个改现有 Tick 的实现，在 matplotlib 重建刻度
+    （`reset_ticks`——换 scale、`set_ticks` 冻结都会走到）之后就全丢了，
+    而上面那条端到端用例恰好被规范化顺序掩护、抓不到它。"""
+    import subprocess
+    from pathlib import Path
+
+    engine_dir = Path(__file__).resolve().parent.parent / "src" / "tavotto" / "engine"
+    out = subprocess.run([WORKER_PY, "-c", _TICK_SIDE_MECHANISM_DRIVER,
+                          str(engine_dir)], capture_output=True, text=True,
+                         encoding="utf-8", errors="replace")
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == "OK"
+
+
+# ---------------------------------------------------------------------------
 # 刻度定位模型
 # ---------------------------------------------------------------------------
 def test_major_step_produces_evenly_spaced_ticks(library):
