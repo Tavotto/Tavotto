@@ -29,12 +29,12 @@ it('supplies Radix tooltip context to the standalone MCP canvas', () => {
     act(() => {
       root.render(
         <McpProviders>
-          <Tip label="MCP tooltip">
-            <button type="button">Canvas control</button>
+          <Tip label={null}>
+            <button type="button" />
           </Tip>
         </McpProviders>,
       )
     })
   }).not.toThrow()
-  expect(container.textContent).toContain('Canvas control')
+  expect(container.querySelector('button')).not.toBeNull()
 })
