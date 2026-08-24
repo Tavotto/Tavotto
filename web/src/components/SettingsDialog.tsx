@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type Dispatch, type SetStateAction } from 'react'
 import { useTranslation } from 'react-i18next'
 import { CheckCircle2, XCircle } from 'lucide-react'
 import { apiUrl, withProject } from '@/lib/session'
@@ -352,17 +352,20 @@ function AiSection() {
   const commitPath = async (
     key: 'codex_path' | 'claude_path',
     edited: string | null,
-    reset: (v: string | null) => void,
+    setPath: Dispatch<SetStateAction<string | null>>,
   ) => {
     if (edited === null) return
     const value = edited.trim()
+    // 归位只在草稿仍是这次提交的值时发生：PATCH + 重探测要跑上几秒，期间
+    // 用户可能已经重新聚焦继续编辑，无条件 reset(null) 会把更新的草稿顶掉
+    const settle = () => setPath((cur) => (cur === edited ? null : cur))
     if (value === savedPaths[key]) {
-      reset(null)
+      settle()
       return
     }
     try {
       await apply({ [key]: value })
-      reset(null)
+      settle()
     } catch (e) {
       setError(backendErrorText(e))   // 提交失败：保留正在编辑的值
     }

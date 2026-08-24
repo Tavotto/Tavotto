@@ -141,6 +141,34 @@ describe('AI 设置的自定义 CLI 路径', () => {
     expect(pathInputs()[0].value).toBe('/new/codex')
   })
 
+  it('提交在途时的新编辑不被完成回调顶掉', async () => {
+    await open()
+    const [codex] = pathInputs()
+    let resolvePatch!: (v: AiCapabilities) => void
+    patchMock.mockImplementation(
+      () => new Promise<AiCapabilities>((r) => (resolvePatch = r)),
+    )
+    await act(async () => {
+      codex.focus()
+      setValue(codex, '/new/codex')
+    })
+    await act(async () => {
+      codex.blur() // PATCH + 重探测在途（可达数秒）
+    })
+    await act(async () => {
+      codex.focus()
+      setValue(codex, '/newer/codex') // 在途期间继续编辑
+    })
+    const updated = caps({
+      settings: { codex_path: '/new/codex', claude_path: null },
+    })
+    fetchMock.mockResolvedValue(updated)
+    await act(async () => {
+      resolvePatch(updated)
+    })
+    expect(pathInputs()[0].value).toBe('/newer/codex') // 新草稿仍在
+  })
+
   it('清空后失焦 = 显式删除，照样提交', async () => {
     await open()
     const [codex] = pathInputs()
