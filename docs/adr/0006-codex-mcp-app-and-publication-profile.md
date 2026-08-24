@@ -119,13 +119,12 @@ Python 有 `python.exe`，`python3.exe` 只是 Microsoft Store 的执行别名�
 遇到「插件装上了但一个工具都没有」，把 `.mcp.json` 的 `command` 改成自己那个
 解释器的绝对路径即可。等确认了官方清单的平台分支写法再收掉这一条。
 
-**② 允许的项目根不能只看进程 cwd。** 装好的插件里 `.mcp.json` 的 `cwd` 指向
-**插件自己的目录**（`./mcp/server.py` 要靠它解析），「不给 `TAVOTTO_MCP_ROOTS`
-就用 cwd」于是把用户工作区里的每一张图都判成 `path_out_of_scope`——默认流程
-根本跑不起来。现在的顺序是：`TAVOTTO_MCP_ROOTS` → 宿主传过来的工作区变量
-（`TAVOTTO_MCP_WORKSPACE` / `CODEX_*`，都已进 `env_vars` 白名单）→ 进程 cwd
-**且它不在插件包里**。一个都拿不到时报 `no_workspace_root` 并直说要设什么：
-静默放行等于没有边界，静默拒绝等于「装了插件但什么都打不开」且毫无线索。
+**② 允许的项目根不能只看进程 cwd，也不能相信模型参数。** 装好的插件 cwd 是
+插件自己的目录，而 `project_path` 来自模型；两者都不是用户工作区授权。2026-08-24
+引入单一 `RootAuthority`：显式配置 → host Roots 兼容层 → 用户在 MCP elicitation
+确认框批准的连接内精确目录 → workspace 环境变量 → 安全 cwd。完整信任顺序、
+连接生命周期、server→client 请求关联与真实 Codex capability 证据见
+[ADR 0009](0009-codex-workspace-root-authority.md)。
 
 **这一层只翻译，不实现**：会话、manifest、override、patch 规范化、导出全部落回
 `tavotto.engine.{pool,registry,handoff,patchspec,profiles,preflight}`。发给 worker 的
@@ -140,8 +139,9 @@ patches 与 Flask `/api/engine/render` 走的是同一条路径，所以 ADR 000
 
 三条边界：
 
-* **路径范围校验**（`TAVOTTO_MCP_ROOTS`，缺省进程 cwd）：Codex 传来的路径可能是模型
-  推断的，越界一律拒，**绝不「就近找一个能用的」**；
+* **路径范围校验**（唯一入口是 `RootAuthority`）：Codex 传来的路径可能是模型
+  推断的，只有 host Roots、用户原生确认或显式服务器配置等独立权威能授予边界；
+  越界一律拒，**绝不「就近找一个能用的」**；
 * **stdout 归协议独占**：`hijack_stdout()` 把 `sys.stdout` 改道到 stderr 并**先存下真正
   的 stdout 句柄**。存的顺序反了，协议帧全写到 stderr 上，症状是「initialize 永远等不到
   响应」且没有任何报错（开发期真撞到过，`test_protocol_owns_the_real_stdout` 看着）；

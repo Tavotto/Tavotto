@@ -155,10 +155,17 @@ Tavotto 引擎——**先按它给的 `recovery` 步骤引导用户**（一条
 * 插件 enabled ≠ 工具可用：装完插件/引擎必须**新开会话**才能拿到工具；
 * 工具回了结构化错误就把 `code` + 恢复步骤转达给用户，绝不自己编一个成功。
 
+再看 `root_authority`。如果 `roots` 为空、client 声明了 `elicitation`：第一次
+`tavotto_open_figure` 必须传**绝对、已存在**的项目路径，让 Codex 显示规范路径请
+用户确认。模型给的路径只是候选，不能自证权限。遇到
+`workspace_confirmation_declined` / `workspace_confirmation_cancelled` /
+`workspace_confirmation_error` 后**不要自动重试**，等用户主动重新发起；也不要改用
+shell 绕过。如果 health 已经给出恰好一个可信根，才可以用相对路径。
+
 体检通过后：
 
 ```
-tavotto_open_figure { "project_path": "figures", "stem": "Fig1_removal_rate" }
+tavotto_open_figure { "project_path": "/absolute/path/to/figures", "stem": "Fig1_removal_rate" }
 ```
 
 回来的是 `session_id` + `manifest`（哪些元素可改、每个元素有哪些属性）+ 预览 SVG +
