@@ -2524,10 +2524,10 @@ def api_ai_settings():
         if key in body:
             val = str(body[key] or "").strip()
             patch[key] = val or None
-    merged = engine_config.set_ai_settings(patch)
-    return jsonify({"settings": {k: v for k, v in merged.items()
-                                 if k not in ("providers",)},
-                    **engine_ai.capabilities(refresh=True)})
+    engine_config.set_ai_settings(patch)
+    # capabilities 自带回显用的 settings（白名单只有两个路径键），
+    # 这里不再手拼一份——两份的键还会互相盖写。
+    return jsonify(engine_ai.capabilities(refresh=True))
 
 
 @app.put("/api/ai/endpoints")
