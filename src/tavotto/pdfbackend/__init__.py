@@ -10,6 +10,7 @@ AGPL-3.0-only。把「读页面尺寸 / 栅格化 / 按布局合成」这三件�
   probe_asset(path, kind)           → 素材原始尺寸，供图库列表换算物理尺寸
   render_preview_png(path, w, out)  → 画布显示用的位图预览（带磁盘缓存）
   text_width(s, size_pt, ...)       → 中英混排字符串宽度（pt）
+  compare_png(a, b)                 → 两张 PNG 的像素差异指标（写回像素门）
   compose(page_w_mm, page_h_mm)     → 合成画布；place() 逐个落对象，save_*() 出图
   annotate_asset(pdf, png, objs)    → 把画布标注画进单图文件（写回原图带标注）
   BACKEND_NAME / BACKEND_VERSION    → 后端身份（进渲染缓存键：换实现/换版本
@@ -22,6 +23,7 @@ from .pymupdf_backend import (  # noqa: F401
     BACKEND_NAME,
     BACKEND_VERSION,
     annotate_asset,
+    compare_png,
     compose,
     hex2rgb,
     mm2pt,
@@ -34,6 +36,7 @@ __all__ = [
     "BACKEND_NAME",
     "BACKEND_VERSION",
     "annotate_asset",
+    "compare_png",
     "compose",
     "hex2rgb",
     "mm2pt",

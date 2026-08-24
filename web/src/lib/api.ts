@@ -789,6 +789,12 @@ export interface WriteBackResponse {
     /** 逐项比对过的元素数 */
     elements: number
     reason?: string
+    /**
+     * 像素门（ADR 0009）：ok = 热态与重放的探针图比过且一致；
+     * hot_rebuilt = 热会话在探针中途被重开，本次像素比对作废（如实报告）。
+     * replay 为 fresh_only 时该键不出现。
+     */
+    pixels?: 'ok' | 'hot_rebuilt'
   }
   /** 落盘后页面尺寸与 manifest 对不上（文件已替换，备份仍在） */
   post_check?: 'size_mismatch'
@@ -800,6 +806,10 @@ export interface WriteBackDiff {
   field: string
   hot: unknown
   fresh: unknown
+  /** field === 'pixels'（像素门，ADR 0009）时的指标 / 越界项 / 阈值 */
+  metrics?: Record<string, number | string | boolean>
+  exceeded?: Record<string, number>
+  tolerance?: Record<string, number>
 }
 
 /** 用当前 overrides 全质量重出该 stem 的 PDF+PNG，原子替换 figures 里的原文件。

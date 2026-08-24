@@ -9,7 +9,9 @@
   * **verify**：staging 一律由**全新的一次性 worker** 全量重放产出，再与热态
     manifest 逐元素比几何。热会话是增量的，它「现在的样子」未必等于「重开项目
     按这组 patches 重放一次的样子」（FigS3 事故就是这个差）——对不上就 409
-    `replay_divergence`，并把分歧清单交出来。
+    `replay_divergence`，并把分歧清单交出来。几何过了还要过**像素门**
+    （issue #81）：颜色 / 线型 / 字体 / 透明度这类几何不变的纯属性分歧只有
+    像素量得到，两侧各出一张 `render_png` 探针图逐像素比。
     worker 报了任何 warning（元素不存在 / 属性不支持 / 应用失败）同样**阻断**
     ——半对的图比报错糟糕得多：画布上有这条修改、写进 PDF 的没有，而原文件
     已经被换掉了，事后根本对不出来。
@@ -87,7 +89,7 @@ class _FakeWorker:
     """
 
     def __init__(self, figs: Path, out_dir: Path, *, warnings=(), fail_on=None,
-                 manifest=None, applied=()):
+                 manifest=None, applied=(), pixels=(30, 30, 30)):
         self.script_name = "fig1.py"
         self.figures_dir = str(figs)
         self.entry = "main"
@@ -98,6 +100,8 @@ class _FakeWorker:
         self.warnings = list(warnings)
         self.fail_on = fail_on      # 这个后缀的导出直接抛 WorkerError
         self.manifest = manifest if manifest is not None else _manifest()
+        # render_png 出的探针图是这个颜色的纯色块：热与重放给不同颜色 = 像素分歧
+        self.pixels = tuple(int(v) for v in pixels)
         self.calls: list[str] = []
         self.built = True
         self.shutdowns = 0
@@ -121,6 +125,14 @@ class _FakeWorker:
         if self.fail_on == fmt:
             raise engine_pool.WorkerError("导出炸了", "traceback…")
         return {"ok": True, "path": path, "warnings": list(self.warnings)}
+
+    def render_png(self, stem, width_px):
+        """像素门的探针：出一张 16×16 的纯色 PNG（真 worker 画的是 live figure）。"""
+        self.calls.append("render_png")
+        path = self.out_dir / f"{stem}_w{int(width_px)}.png"
+        pix = pymupdf.Pixmap(pymupdf.csRGB, 16, 16, bytes(self.pixels) * 256, False)
+        pix.save(str(path))
+        return path
 
     def shutdown(self):
         self.shutdowns += 1
@@ -222,8 +234,11 @@ def test_staging_comes_from_a_fresh_worker_not_the_hot_session(client, tmp_path,
     resp = client.post("/api/engine/update_source",
                        json={"id": "Fig1.pdf", "patches": []})
     assert resp.status_code == 200, resp.get_json()
-    assert hot.calls == [], "热会话被拿去出 staging 了"
-    assert fresh.calls == ["override", "pdf", "png"], "重放只该 build/导出各一次"
+    # 热会话只被像素门拿去出过一张探针图（render_png 不改状态），staging
+    # （override / 导出）一次都不该落在它头上
+    assert hot.calls == ["render_png"], "热会话被拿去出 staging 了"
+    assert fresh.calls == ["override", "render_png", "pdf", "png"], \
+        "重放只该 build/探针/导出各一次"
     assert discarded == [fresh] and fresh.shutdowns == 1
 
 
@@ -273,7 +288,110 @@ def test_replay_comparison_tolerates_float_noise_and_stringified_numbers(
     resp = client.post("/api/engine/update_source",
                        json={"id": "Fig1.pdf", "patches": []})
     assert resp.status_code == 200, resp.get_json()
-    assert resp.get_json()["verification"] == {"replay": "ok", "elements": 2}
+    assert resp.get_json()["verification"] == {
+        "replay": "ok", "elements": 2, "pixels": "ok"}
+
+
+# ------------------------------ verify：像素门 --------------------------------
+def test_write_back_blocked_by_pixel_divergence(client, tmp_path, monkeypatch):
+    """几何完全一致、只有像素不同（颜色级差异）→ 阻断，原件零改动（issue #81）。
+
+    两个假 worker 的 manifest 逐字节相同（几何那把尺子量出 0 处分歧），探针图
+    却是两种颜色——PR #49 那类「facecolor 恢复顺序错了」的形状。旧比较器对它
+    报 0 处分歧直接放行，像素门必须接住。
+    """
+    figs = _figs(tmp_path)
+    before_pdf = (figs / "Fig1.pdf").read_bytes()
+    before_png = (figs / "Fig1.png").read_bytes()
+    hot = _FakeWorker(figs, tmp_path / "_hot", pixels=(200, 30, 30))
+    fresh = _FakeWorker(figs, tmp_path / "_fresh")            # 默认 (30, 30, 30)
+    discarded = _use(monkeypatch, hot, fresh)
+
+    resp = client.post("/api/engine/update_source",
+                       json={"id": "Fig1.pdf", "patches": []})
+    assert resp.status_code == 409
+    body = resp.get_json()
+    assert body["code"] == "replay_divergence"
+    assert [(d["gid"], d["field"]) for d in body["diffs"]] == [("", "pixels")]
+    d = body["diffs"][0]
+    # 结构化 params：指标 + 越界项 + 阈值，中英文界面都能按它成文
+    assert d["metrics"]["changed_pixel_ratio"] == 1.0
+    assert d["metrics"]["max_abs_diff"] > m.REPLAY_PIXEL_TOL["max_abs_diff"]
+    assert "changed_pixel_ratio" in d["exceeded"]
+    assert d["tolerance"] == m.REPLAY_PIXEL_TOL
+    assert "报告给开发者" in body["error"]
+
+    assert (figs / "Fig1.pdf").read_bytes() == before_pdf
+    assert (figs / "Fig1.png").read_bytes() == before_png
+    assert _leftovers(figs) == []
+    assert discarded == [fresh]
+    assert m.load_baked(m.PROJECTS[m._project_id(figs.resolve())]) == {}
+
+
+def test_pixel_gate_tolerates_sub_noise_jitter(client, tmp_path, monkeypatch):
+    """底噪之内的逐像素抖动（±2，抗锯齿 / PNG 量化级）不算分歧。
+
+    真通过态是逐字节相同；这条余量只为万一的解码抖动兜底，不给真实属性差异
+    留活口——把它设没了的话，一条真防线会变成天天误报的噪音。
+    """
+    figs = _figs(tmp_path)
+    hot = _FakeWorker(figs, tmp_path / "_hot", pixels=(32, 32, 32))
+    fresh = _FakeWorker(figs, tmp_path / "_fresh", pixels=(30, 30, 30))
+    _use(monkeypatch, hot, fresh)
+
+    resp = client.post("/api/engine/update_source",
+                       json={"id": "Fig1.pdf", "patches": []})
+    assert resp.status_code == 200, resp.get_json()
+    assert resp.get_json()["verification"]["pixels"] == "ok"
+
+
+def test_pixel_gate_degrades_when_the_hot_session_is_rebuilt_mid_probe(
+        client, tmp_path, monkeypatch):
+    """workerd 在探针中途透明重开热会话（`unknown_session` → `_open()` → 重试）：
+    重开后的会话画的是**脚本原样**、不再是「用户所见」，拿它比出来的分歧全是
+    假的。必须如实降级（`pixels: "hot_rebuilt"`），不许误报 409——误报一次，
+    用户学到的就是「这个提示可以无视」。
+    """
+    figs = _figs(tmp_path)
+    hot = _FakeWorker(figs, tmp_path / "_hot", pixels=(200, 30, 30))
+    fresh = _FakeWorker(figs, tmp_path / "_fresh")
+
+    orig = hot.render_png
+
+    def rebuilt_mid_probe(stem, width_px):
+        path = orig(stem, width_px)
+        hot.built = False        # 透明重开的可观测痕迹（_open 置 False 且不清账本）
+        return path
+
+    hot.render_png = rebuilt_mid_probe
+    _use(monkeypatch, hot, fresh)
+
+    resp = client.post("/api/engine/update_source",
+                       json={"id": "Fig1.pdf", "patches": []})
+    assert resp.status_code == 200, resp.get_json()
+    v = resp.get_json()["verification"]
+    assert v["replay"] == "ok"                # 几何那道比过了（manifest 在磁盘上）
+    assert v["pixels"] == "hot_rebuilt"       # 像素这道没比成，如实报告
+    assert "render_png" not in fresh.calls, "基准已作废就不该再让重放出探针图"
+
+
+def test_pixel_gate_runs_only_with_a_matching_hot_state(client, tmp_path,
+                                                        monkeypatch):
+    """热态不是这组 patches 时像素门与 manifest 比对一样**不许装比过**。"""
+    figs = _figs(tmp_path)
+    hot = _FakeWorker(figs, tmp_path / "_hot", pixels=(200, 30, 30),
+                      applied=[{"gid": "axes_0.title", "prop": "text",
+                                "value": "热态"}])
+    fresh = _FakeWorker(figs, tmp_path / "_fresh")
+    _use(monkeypatch, hot, fresh)
+
+    resp = client.post("/api/engine/update_source",
+                       json={"id": "Fig1.pdf", "patches": []})
+    assert resp.status_code == 200, resp.get_json()
+    v = resp.get_json()["verification"]
+    assert v["replay"] == "fresh_only"
+    assert "pixels" not in v, "没比就不许说比过"
+    assert "render_png" not in hot.calls and "render_png" not in fresh.calls
 
 
 def test_a_hot_session_holding_other_patches_is_not_compared(client, tmp_path,
@@ -370,7 +488,7 @@ def test_write_back_success_carries_the_full_transaction_receipt(client, tmp_pat
     assert body["manifest_hash"] == m._manifest_hash(fresh.manifest)
     assert set(body["source_sha1"]) == {"Fig1.pdf", "Fig1.png"}
     assert body["source_sha1"]["Fig1.pdf"] == m._sha1_of(figs / "Fig1.pdf")
-    assert body["verification"] == {"replay": "ok", "elements": 2}
+    assert body["verification"] == {"replay": "ok", "elements": 2, "pixels": "ok"}
     assert "post_check" not in body        # 尺寸对得上就不该出现这个字段
 
     assert (figs / "Fig1.pdf").read_bytes() == b"NEW-pdf"
