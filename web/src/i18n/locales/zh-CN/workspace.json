@@ -91,6 +91,10 @@
     "replaceAssetConfirm": "替换并清空修改",
     "replaceAssetTitle": "替换为「{{name}}」？"
   },
+  "contextBar": {
+    "aria": "快速编辑",
+    "openInspector": "全部属性"
+  },
   "crash": {
     "blank": "打开空白文档",
     "body": "文档已自动保存在本机，刷新后可从最后一次快照继续。如果一刷新就再次出错，改用「打开空白文档」——文档不会被删除，仍可从顶栏「最近文档」取回。",

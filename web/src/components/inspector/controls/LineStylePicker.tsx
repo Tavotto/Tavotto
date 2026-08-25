@@ -17,6 +17,10 @@ const DASH: Record<string, string | undefined> = {
   ':': '1.5 2.5',
   '-.': '6 2.5 1.5 2.5',
   none: '0 100',
+  // 画布标注（Arrow/Shape）的线型代码：同一个选择器、同一种视觉语言（§16）
+  solid: undefined,
+  dashed: '6 3',
+  dotted: '1.5 2.5',
 }
 
 function LinePreview({ style }: { style: string }) {
@@ -42,20 +46,27 @@ export function LineStylePicker({
   options,
   onChange,
   ariaLabel,
+  labelOf,
 }: {
   value: string
   options: string[]
   onChange: (v: string) => void
   ariaLabel: string
+  /** 选项显示名；缺省按 matplotlib linestyle 的 enum 表查 */
+  labelOf?: (v: string) => string
 }) {
+  const nameOf = (o: string): string => {
+    if (labelOf) return labelOf(o)
+    const known = optionLabel('linestyle', o)
+    return o in DASH || known !== o
+      ? known
+      : translate('control.customLineStyle', { ns: 'inspector', value: o })
+  }
   // 当前值不在选项里（自定义 dash）也要能看到、能保持
   const all = options.includes(value) ? options : [value, ...options]
   const grid: GridOption[] = all.map((o) => ({
     value: o,
-    label:
-      o in DASH || optionLabel('linestyle', o) !== o
-        ? optionLabel('linestyle', o)
-        : translate('control.customLineStyle', { ns: 'inspector', value: o }),
+    label: nameOf(o),
     preview: <LinePreview style={o} />,
     code: o,
   }))

@@ -97,6 +97,10 @@
     "replaceAssetConfirm": "Replace and clear edits",
     "replaceAssetTitle": "Replace with \"{{name}}\"?"
   },
+  "contextBar": {
+    "aria": "Quick edit",
+    "openInspector": "All properties"
+  },
   "crash": {
     "blank": "Open a blank document",
     "body": "Your document was saved locally; reloading resumes from the last snapshot. If it crashes again right after reloading, use \"Open a blank document\" instead — nothing is deleted, and you can get the document back from \"Recent documents\" in the top bar.",
