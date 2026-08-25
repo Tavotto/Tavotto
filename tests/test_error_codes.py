@@ -51,7 +51,10 @@ USER_VISIBLE_CODES = {
     "package_invalid": {"reason"},
     "package_schema_unsupported": set(),
     "scan_failed": {"reason"},
-    "script_not_in_project": set(),
+    # --- Compatibility Bridge Session 3：试运行路径校验的三种拒绝 ---
+    "script_not_found": {"script"},
+    "script_path_outside_project": {"script"},
+    "unsupported_script_type": {"script"},
     "script_name_missing": set(),
     "invalid_entry": {"entry"},
     "registry_update_failed": {"reason"},

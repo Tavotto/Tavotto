@@ -1427,7 +1427,12 @@ def api_registry():
                            "registered": script in reg})
     return jsonify({"source": ctx.registry.source(), "scripts": reg,
                     "candidates": candidates,
-                    "conflicts": rep["conflicts"]})
+                    "conflicts": rep["conflicts"],
+                    # 项目内**全部**合理 .py（含 show-only 与基础设施脚本，
+                    # 各带稳定 reason code）：普通脚本不因静态分析解不出
+                    # 产物就从产品里消失，任意一条都可试运行。
+                    "all_scripts": engine_probe.script_inventory(
+                        ctx.path, registered=set(reg))})
 
 
 @app.post("/api/registry/scan")
@@ -1456,13 +1461,37 @@ def api_registry_probe():
     """
     ctx = current_ctx()
     body = request.get_json(force=True)
-    script = str(body.get("script") or "").strip()
-    target = (ctx.path / script).resolve() if script else ctx.path
-    # 只允许跑图库目录内的 .py：这个端点会真的执行代码，越权必须挡死
-    if (not script or target.suffix != ".py" or not target.is_file()
-            or not target.is_relative_to(ctx.path.resolve())):
-        return jsonify({"error": "脚本不存在或不在项目目录内",
-                        "code": "script_not_in_project"}), 404
+    raw = str(body.get("script") or "").strip()
+    # 只允许跑项目目录内的 .py：这个端点会真的执行代码，越权必须挡死。
+    # 三种拒绝各有稳定 code（前端按码换文案）；判据一律在 **realpath 之后**
+    # ——`..` 回溯、symlink/junction 指到项目外、项目外绝对路径都在 resolve
+    # 那一步现出原形，逐条模式匹配防不完。
+    if not raw:
+        return jsonify({"error": f"脚本不存在: {raw}",
+                        "code": "script_not_found",
+                        "params": {"script": raw}}), 404
+    root = ctx.path.resolve()
+    try:
+        target = (Path(raw) if Path(raw).is_absolute()
+                  else ctx.path / raw).resolve()
+    except OSError:
+        return jsonify({"error": f"脚本不存在: {raw}",
+                        "code": "script_not_found",
+                        "params": {"script": raw}}), 404
+    if not target.is_relative_to(root):
+        return jsonify({"error": f"脚本路径在项目目录之外: {raw}",
+                        "code": "script_path_outside_project",
+                        "params": {"script": raw}}), 400
+    if target.suffix.lower() != ".py" or target.is_dir():
+        return jsonify({"error": f"不是可试运行的 .py 脚本: {raw}",
+                        "code": "unsupported_script_type",
+                        "params": {"script": raw}}), 400
+    if not target.is_file():
+        return jsonify({"error": f"脚本不存在: {raw}",
+                        "code": "script_not_found",
+                        "params": {"script": raw}}), 404
+    # 注册表键 = 项目相对路径（POSIX）——与清单 / 静态起草同一种写法
+    script = target.relative_to(root).as_posix()
     result = engine_probe.probe_and_register(
         ctx.path, script, cost=str(body.get("cost") or "medium"))
     if result.get("registered"):

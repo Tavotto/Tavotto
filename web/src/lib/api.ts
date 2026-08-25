@@ -64,16 +64,29 @@ export function backendErrorText(e: unknown): string {
 export function backendErrorMsg(e: unknown): UiMessage {
   if (e instanceof ApiError) {
     const code = typeof e.body?.code === 'string' ? e.body.code : ''
-    // 用 exists 而不是 defaultValue 判「有没有这条」：i18n 那边的
-    // parseMissingKeyHandler 会把缺失的 key 原样吐回来（界面上看得见是哪条），
-    // 那样 defaultValue 永远轮不到，缺文案时用户看到的就是 `backend.xxx`。
-    if (code && i18n.exists(`backend.${code}`, { ns: 'errors' })) {
-      const params = (e.body?.params ?? {}) as Record<string, unknown>
-      return msg(`backend.${code}`, params, 'errors')
-    }
+    return backendCodeMsg(code, (e.body?.params ?? {}) as Record<string, unknown>, e.message)
   }
   // 后端没给 code（或本地还没有这条文案）：原文照抄，不翻
   return literal(e instanceof Error ? e.message : String(e))
+}
+
+/**
+ * 「code + params → 当前语言的一句话」的内核，给不经 ApiError 走的结构化
+ * 错误用（试运行探测的 result.error 是 200 响应里的**结果**，不是 HTTP
+ * 错误）。规则与 `backendErrorMsg` 完全一致：先查 code，查不到用后端原文。
+ */
+export function backendCodeMsg(
+  code: string | undefined,
+  params: Record<string, unknown> | undefined,
+  fallback: string,
+): UiMessage {
+  // 用 exists 而不是 defaultValue 判「有没有这条」：i18n 那边的
+  // parseMissingKeyHandler 会把缺失的 key 原样吐回来（界面上看得见是哪条），
+  // 那样 defaultValue 永远轮不到，缺文案时用户看到的就是 `backend.xxx`。
+  if (code && i18n.exists(`backend.${code}`, { ns: 'errors' })) {
+    return msg(`backend.${code}`, params ?? {}, 'errors')
+  }
+  return literal(fallback)
 }
 
 /* --------------------- 项目失效（409 no_project）的统一出口 ------------------- */
@@ -1362,11 +1375,35 @@ export interface RegistryCandidate {
   registered: boolean
 }
 
+/** 脚本清单条目的稳定 reason code（`engine/probe.py` 的 REASON_* 表） */
+export type ScriptReason =
+  | 'registered'
+  | 'static_candidate'
+  | 'dynamic_stems'
+  | 'no_static_output'
+  | 'infrastructure'
+  | 'unparseable'
+
+/**
+ * 项目内一个 .py 的清单条目：普通脚本不因静态分析解不出产物就从产品里消失。
+ * `reason` 解释它此刻的状态；`can_probe` 为 true 的都可以「试运行」。
+ */
+export interface ScriptInventoryEntry {
+  script: string
+  registered: boolean
+  static_stems: string[]
+  entry_candidates: string[]
+  reason: ScriptReason
+  can_probe: boolean
+}
+
 export interface RegistryView {
   source: string
   scripts: Record<string, RegistryEntry>
   candidates: RegistryCandidate[]
   conflicts: Record<string, string[]>
+  /** 项目内全部合理 .py（含 show-only 与基础设施脚本；被 prune 的目录不列） */
+  all_scripts: ScriptInventoryEntry[]
 }
 
 export const fetchRegistry = () => jsonFetch<RegistryView>('/api/registry')
@@ -1378,13 +1415,43 @@ export const scanRegistry = () =>
     scripts: Record<string, RegistryEntry>
   }>('/api/registry/scan', { method: 'POST' })
 
+/** 一张捕获 Figure 的结构化描述（`engine/figcapture.py` 的唯一实现，原样透传） */
+export interface CapturedFigureDescriptor {
+  asset_id: string
+  script: string
+  entry: string
+  stem: string
+  capture_source: 'savefig' | 'pyplot'
+  execution_profile: 'safe' | 'native'
+  original_artifact: string | null
+  size_mm: [number, number]
+  source_fingerprint: string
+  can_writeback_artifact: boolean
+  can_writeback_source: boolean
+}
+
+/** 试运行失败的结构化错误：稳定 code + params；traceback 只是诊断详情 */
+export interface ProbeError {
+  code: string
+  /** 后端中文原文（回退）；界面先按 code 查 `errors:backend.*` */
+  message: string
+  params?: Record<string, unknown>
+  traceback?: string
+}
+
 export interface ProbeResult {
   script: string
   entry: string | null
   stems: string[]
-  error: string | null
+  descriptors: CapturedFigureDescriptor[]
+  error: ProbeError | null
   tried: string[]
   registered?: boolean
+  timings?: Record<string, number>
+  /** pyplot 兜底超过上限被丢掉的张数（0 = 没丢） */
+  dropped_figures?: number
+  /** multiple_stem_conflict 时：stem → 现登记的归属脚本 */
+  stem_conflicts?: Record<string, string>
 }
 
 /** 试运行：真的跑一遍脚本，按它**实际产出**的文件名登记（冷启动可能要几分钟） */

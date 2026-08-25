@@ -532,12 +532,18 @@ def test_registry_manual_write_resolves_conflict(client, tmp_path):
 
 
 def test_registry_probe_rejects_paths_outside_project(client, tmp_path):
-    """这个端点会真的执行代码，越权路径必须挡死。"""
+    """这个端点会真的执行代码，越权路径必须挡死（各拒绝有稳定 code）。"""
     figs = _make_figs(tmp_path)
     (tmp_path / "outside.py").write_text("def main():\n    pass\n", encoding="utf-8")
     client.post("/api/projects/open", json={"path": str(figs)})
-    for bad in ("../outside.py", "nope.py", "tavotto_registry.json"):
-        assert client.post("/api/registry/probe", json={"script": bad}).status_code == 404
+    cases = [("../outside.py", 400, "script_path_outside_project"),
+             (str(tmp_path / "outside.py"), 400, "script_path_outside_project"),
+             ("nope.py", 404, "script_not_found"),
+             ("tavotto_registry.json", 400, "unsupported_script_type")]
+    for bad, status, code in cases:
+        resp = client.post("/api/registry/probe", json={"script": bad})
+        assert resp.status_code == status, (bad, resp.status_code)
+        assert resp.get_json()["code"] == code, (bad, resp.get_json())
 
 
 # --------------------- 路径身份：按卷判，不按 os.name --------------------------
