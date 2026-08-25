@@ -277,3 +277,44 @@ def test_golden_vector_file_covers_the_severity_ladder():
     data = json.loads(GOLDEN.read_text(encoding="utf-8"))
     seen = {i["severity"] for c in data["cases"] for i in c["expected"]}
     assert seen == {"error", "warn", "not_verifiable", "suggestion"}
+
+
+# --------------------- 可翻译描述符（issue #30） -----------------------------
+def test_every_issue_carries_a_translatable_message():
+    """每条 issue 必须带 message = {key, params}——MCP 画布按 locale 渲染靠它。
+
+    `_Sink.add` 的 message 是必填参数，这里再从数据层守一遍：向量覆盖的每条
+    issue 都真的带着形状合法的描述符（漏写的调用点在 collection 阶段就会
+    TypeError，这条防的是将来有人把参数改回可选）。
+    """
+    data = json.loads(GOLDEN.read_text(encoding="utf-8"))
+    seen = 0
+    for case in data["cases"]:
+        for issue in case["expected"]:
+            msg = issue.get("message")
+            assert isinstance(msg, dict) and isinstance(msg.get("key"), str) \
+                and msg["key"] and isinstance(msg.get("params"), dict), issue["id"]
+            seen += 1
+    assert seen > 20
+
+
+def test_every_message_key_is_registered_in_both_locales():
+    """Python 发出的每个 message key 都必须在前端双语文案表里登记。
+
+    渲染发生在 widget（errors:preflight.<key>）：Python 发明了新 key 而前端
+    没登记时，widget 会静默回退 Python 的中文成文——英文界面重新漏出中文，
+    正是 issue #30 要堵的洞。所以在这儿跨边界对拍，缺一边就红。
+    """
+    keys = set()
+    data = json.loads(GOLDEN.read_text(encoding="utf-8"))
+    for case in data["cases"]:
+        for issue in case["expected"]:
+            keys.add(issue["message"]["key"])
+    # bridge 的导出 dpi 检查不经引擎求值器，key 单独登记
+    keys.add("exportRasterDpi")
+    for locale in ("zh-CN", "en-US"):
+        table = json.loads(
+            (ROOT / "web" / "src" / "i18n" / "locales" / locale / "errors.json")
+            .read_text(encoding="utf-8"))["preflight"]
+        missing = keys - set(table)
+        assert not missing, f"{locale} 缺 preflight 文案 key：{sorted(missing)}"

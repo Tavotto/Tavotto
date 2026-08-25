@@ -1397,3 +1397,66 @@ def test_artifact_manifest_summary_survives_a_windows_codepage(tmp_path):
         f"cp1252 下 build 挂了（returncode={r.returncode}）：\n{r.stderr}")
     assert "UnicodeEncodeError" not in r.stderr, r.stderr
     assert out.is_file(), "清单没写出来"
+
+
+# ---------------- 注册表把 .js 关联成 text/plain（issue #115） ----------------
+# Windows 上 mimetypes 从 HKCR 读文件关联，某些机器上 .js 的 Content Type 被
+# 第三方软件改成 text/plain。send_from_directory 照猜发出去，而入口脚本是
+# <script type="module">——WebView2 按严格 MIME 检查拒绝执行，React 不挂载，
+# 桌面版整窗白屏、零报错。资产的 Content-Type 必须与机器级关联无关。
+
+def _broken_registry_guess(_name, strict=True):
+    """模拟被改坏的 Windows 注册表：所有扩展名都猜成 text/plain。"""
+    return ("text/plain", None)
+
+
+def test_js_assets_ignore_broken_windows_mime_registry(client, tmp_path, monkeypatch):
+    import mimetypes
+
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    (assets / "index-abc123.js").write_text("export {}\n", encoding="utf-8")
+    (assets / "index-abc123.css").write_text("body{}\n", encoding="utf-8")
+    (assets / "logo.svg").write_text("<svg/>\n", encoding="utf-8")
+    monkeypatch.setattr(m, "WEB_DIST", tmp_path)
+    # werkzeug 的 send_file 在响应那一刻才调 mimetypes.guess_type，
+    # 换掉这个函数 == 在一台注册表被改坏的 Windows 上跑
+    monkeypatch.setattr(mimetypes, "guess_type", _broken_registry_guess)
+
+    for name, want in [("index-abc123.js", "text/javascript"),
+                       ("index-abc123.css", "text/css"),
+                       ("logo.svg", "image/svg+xml")]:
+        r = client.get(f"/assets/{name}")
+        assert r.status_code == 200
+        assert r.mimetype == want, (
+            f"{name} 发成了 {r.mimetype}——严格 MIME 检查下浏览器会拒载")
+        # 缓存策略不因强制 MIME 而丢
+        assert "immutable" in r.headers.get("Cache-Control", "")
+
+
+def test_unlisted_asset_extensions_still_use_guessing(client, tmp_path, monkeypatch):
+    """白名单之外的类型照旧交给 mimetypes 猜——只接管浏览器严格校验的那几类。"""
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    (assets / "photo.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    monkeypatch.setattr(m, "WEB_DIST", tmp_path)
+
+    r = client.get("/assets/photo.png")
+    assert r.status_code == 200
+    assert r.mimetype == "image/png"
+
+
+def test_index_busts_the_poisoned_asset_cache(client, tmp_path, monkeypatch):
+    """0.10.x 在注册表改坏的机器上，text/plain 的 .js 已按
+    max-age=31536000, immutable 缓存进浏览器；bundle 内容哈希不变时升级后
+    浏览器根本不再发资产请求——强制 MIME 的新逻辑够不着老缓存。`/` 是
+    no-cache 必回源的，Clear-Site-Data: "cache" 挂在它上面才能把中毒条目
+    清掉（值必须带双引号，这是该头的语法不是风格）。"""
+    (tmp_path / "index.html").write_text("<!doctype html>", encoding="utf-8")
+    monkeypatch.setattr(m, "WEB_DIST", tmp_path)
+
+    r = client.get("/")
+    assert r.status_code == 200
+    assert r.headers.get("Clear-Site-Data") == '"cache"', (
+        "没有这个头，0.10.x 缓存过错误 MIME 的浏览器升级后仍旧白屏")
+    assert r.headers.get("Cache-Control") == "no-cache"

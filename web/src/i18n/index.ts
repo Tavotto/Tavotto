@@ -114,6 +114,16 @@ export async function setLocale(next: Locale): Promise<void> {
   await i18n.changeLanguage(next)
 }
 
+/**
+ * 切语言但**不写偏好**：给宿主驱动的场景用（MCP 画布跟随 Codex host 的
+ * locale，issue #30）。那不是用户在 Tavotto 里做的选择，落到 iframe 的
+ * localStorage 里只会在宿主换语言后顶住不放。
+ */
+export async function applyLocale(next: Locale): Promise<void> {
+  document.documentElement.lang = next
+  await i18n.changeLanguage(next)
+}
+
 /** 当前语言（永远是受支持的两档之一）。 */
 export function currentLocale(): Locale {
   return normalizeLocale(i18n.language) ?? DEFAULT_LOCALE

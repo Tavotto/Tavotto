@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
-import { literal, msg, type UiMessage } from '@/i18n'
+import { msg, type UiMessage } from '@/i18n'
 import { create } from 'zustand'
-import { EngineError, engineRender, type Manifest } from '@/lib/api'
+import { EngineError, engineErrorMsg, engineRender, type Manifest } from '@/lib/api'
 import { engineTransport } from '@/lib/engineTransport'
 import { useAssetStore } from '@/store/assetStore'
 import type { PanelObject } from '@/types/document'
@@ -273,7 +273,9 @@ export const useRenderStore = create<RenderState>((set, get) => ({
             error: timedOut
               ? msg('render.timeout',
                     { minutes: Math.round(timeoutMs / 60_000) }, 'errors')
-              : literal(err instanceof Error ? err.message : String(err)),
+              // code 有文案时按当前语言包装（worker 的 error 原文是中文，
+              // 英文界面直接透出 = 泄漏系统文案，issue #30 实测撞见）
+              : engineErrorMsg(err),
             traceback: err instanceof EngineError ? err.traceback : '',
           })
           return

@@ -1,0 +1,77 @@
+{
+  "comment": "Codex 首次使用体验的行为场景。每个场景把「给定状态 → 期望/禁止的行为」绑定到具体文档锚点：文档是 Codex 的行为来源，锚点消失 = 该行为失去出处。这是结构性绑定，不是真实 agent eval（见 test_codex_plugin.py 的说明）。路径相对仓库根。",
+  "scenarios": [
+    {
+      "id": "healthy-zero-install",
+      "given": "插件已安装，tavotto_health 回 ok: true",
+      "expect": "只调一次 health，然后直接干活；本会话零安装、零联网",
+      "anchors": [
+        {"doc": "codex-plugin/skills/tavotto-figure/SKILL.md", "must": ["优先调用 `tavotto_health`，只调用一次", "绝不执行插件安装、升级、pip/pipx", "一次联网安装都不该发生"]}
+      ]
+    },
+    {
+      "id": "plugin-not-loaded",
+      "given": "当前会话的工具列表里没有 tavotto_health",
+      "expect": "给出两条安装命令（分开、带双 sparse），要求新开会话，然后停止",
+      "anchors": [
+        {"doc": "codex-plugin/skills/tavotto-figure/SKILL.md", "must": ["没有 `tavotto_health` 这个工具", "新开会话", "不要在旧会话里继续假装工具可用"]},
+        {"doc": "codex-plugin/skills/tavotto-figure/references/first-run-and-recovery.md", "must": ["codex plugin marketplace add Tavotto/Tavotto --sparse .agents/plugins --sparse codex-plugin", "codex plugin add tavotto@tavotto", "停止当前任务"]}
+      ]
+    },
+    {
+      "id": "desktop-only",
+      "given": "tavotto_health 回 desktop_only（只装了桌面版）",
+      "expect": "桌面交接照常可用；不说「没装 Tavotto」；只有用户要内嵌工具才 provision",
+      "anchors": [
+        {"doc": "codex-plugin/skills/tavotto-figure/SKILL.md", "must": ["不要说「没有安装 Tavotto」", "只有用户需要 Codex 内嵌画布/MCP 工具时"]},
+        {"doc": "codex-plugin/skills/tavotto-figure/references/first-run-and-recovery.md", "must": ["桌面交接（`scripts/handoff.py`）此刻就能用", "--provision"]}
+      ]
+    },
+    {
+      "id": "engine-missing",
+      "given": "插件已加载，Python 引擎缺失或不可用",
+      "expect": "只修引擎（provision 或 pipx），不重装插件、不 marketplace add/upgrade",
+      "anchors": [
+        {"doc": "codex-plugin/skills/tavotto-figure/SKILL.md", "must": ["缺引擎只修引擎", "绝不顺手重装插件"]},
+        {"doc": "codex-plugin/skills/tavotto-figure/references/first-run-and-recovery.md", "must": ["引擎缺失只修引擎", "绝不因为引擎不可用而重装插件"]}
+      ]
+    },
+    {
+      "id": "plugin-update-available",
+      "given": "update.status == available（插件有新版本）",
+      "expect": "当前任务照常完成，收尾提醒一次 marketplace upgrade，不自动升级、不反复提醒",
+      "anchors": [
+        {"doc": "codex-plugin/skills/tavotto-figure/SKILL.md", "must": ["当前任务照常完成", "收尾提醒一次", "codex plugin marketplace upgrade tavotto", "不自动升级、不反复提醒"]}
+      ]
+    },
+    {
+      "id": "offline",
+      "given": "安装 / 升级 / 健康恢复因网络失败",
+      "expect": "报告后继续或停止；不循环重试，不退回 clone 源码构建",
+      "anchors": [
+        {"doc": "codex-plugin/skills/tavotto-figure/SKILL.md", "must": ["不循环重试", "不退回源码构建"]},
+        {"doc": "codex-plugin/skills/tavotto-figure/references/first-run-and-recovery.md", "must": ["不循环重试，不退回 clone 源码或本地构建"]}
+      ]
+    },
+    {
+      "id": "user-wants-install-only",
+      "given": "用户说「帮我安装 Tavotto」，没有要求修改源码",
+      "expect": "按 README 首用章节走普通安装；不 clone、不 pnpm/npm/cargo/Tauri/测试/editable install",
+      "anchors": [
+        {"doc": "README.zh-CN.md", "must": ["普通用户不要克隆或构建这个仓库", "在 Codex 中第一次使用 Tavotto"]},
+        {"doc": "README.md", "must": ["do not clone or build this repository", "Using Tavotto with Codex for the first time"]},
+        {"doc": "AGENTS.md", "must": ["用户安装任务", "不得构建仓库、安装开发依赖或运行完整测试"]}
+      ]
+    },
+    {
+      "id": "user-wants-to-contribute",
+      "given": "用户明确说要贡献 / 开发 Tavotto 本身",
+      "expect": "这时才进入源码开发路径",
+      "anchors": [
+        {"doc": "README.zh-CN.md", "must": ["贡献者：从源码开发"]},
+        {"doc": "README.md", "must": ["Contributors: developing from source"]},
+        {"doc": "AGENTS.md", "must": ["我要贡献/开发 Tavotto"]}
+      ]
+    }
+  ]
+}

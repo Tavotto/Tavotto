@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   Check,
   Download,
@@ -372,6 +373,16 @@ const SEVERITY_ICON = {
   suggestion: Lightbulb,
 } as const
 
+/** 预检条目的显示文案：有描述符按本地 locale 渲染，否则回退 Python 成文 */
+const issueDisplayText = (it: PreflightIssuePayload): string =>
+  it.message?.key
+    ? translate(`preflight.${it.message.key}`, {
+        ns: 'errors',
+        defaultValue: it.text,
+        ...(it.message.params ?? {}),
+      })
+    : it.text
+
 function IssueList({
   issues,
   stale,
@@ -381,6 +392,9 @@ function IssueList({
   stale: boolean
   panel: PanelObject
 }) {
+  // 订阅语言变化：宿主中途切 locale（host-context-changed）时，
+  // 预检条目要跟着重译，不能停在挂载那一刻的语言上
+  useTranslation('errors')
   const setSelectedGids = useUiStore((s) => s.setSelectedGids)
   const manifest = usePanelRender(panel)?.manifest
   if (!issues.length) return null
@@ -409,10 +423,11 @@ function IssueList({
                     it.severity === 'error' ? 'text-danger' : 'text-ink-3',
                   )}
                 />
-                {/* 文案来自 **Python 侧的求值器**（MCP server 的 tavotto_preflight），
-                    原样显示：那一侧不知道这个 webview 用的是哪门语言，而 id / gids /
-                    detail 才是机器可读的部分。见 docs/i18n.md 的「MCP 画布」一节。 */}
-                <span className="min-w-0 flex-1">{it.text}</span>
+                {/* issue #30：Python 求值器随 issue 发可翻译描述符（message =
+                    key + params，golden vectors 与前端求值器逐字对齐），这里按
+                    webview 自己的 locale 渲染；老引擎没有 message、或 key 尚未
+                    登记（引擎比界面新）时回退 Python 的成文 text。 */}
+                <span className="min-w-0 flex-1">{issueDisplayText(it)}</span>
               </button>
             </li>
           )
