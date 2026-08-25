@@ -210,11 +210,14 @@ test('AI CLI 不可用：设置里英文说明找过哪些位置', async ({ app,
   )
   test.skip(installed, '本机在惯例位置装有 AI CLI，「都没找到」状态触发不了')
 
-  // 选中一个可参数化面板后打开助手 → 英文说明「两个 CLI 都没找到」+ 设置入口
+  // 选中一个可参数化面板后打开助手 → 英文说明「两个 CLI 都没找到」+ 设置入口。
+  // noCli 提示渲染在「Scope and agent」弹层里（AiPanel 的 agent 分区），
+  // 不点开弹层它不在 DOM 里——issue #122 记录了「面板顶层无提示」的 UX 疑点。
   await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
   await page.getByRole('button', { name: /Assistant/i }).click()
   const panel = page.getByLabel('Right panel', { exact: true })
   await expect(panel).toBeVisible()
+  await panel.getByRole('button', { name: /Scope and agent/i }).click()
   await expect(
     panel.getByText(/Neither the Codex nor the Claude CLI was found/i).first(),
   ).toBeVisible({ timeout: 30_000 })
