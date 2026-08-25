@@ -524,8 +524,13 @@ jobs:
             # 包描述成已签名，正是 policy 里明令禁止的那件事。
             B="out/release-body.md"
             cp "$F" "$B"
+            # 「下载与支持平台」段从唯一权威 docs/support-matrix.json 生成
+            # （issue #34）：每版手写的平台清单必然与矩阵漂移，所以这段
+            # 不进 docs/release-notes/<tag>.md，由脚本渲染追加。
+            printf '\n\n---\n\n' >> "$B"
+            python scripts/make_release_support_section.py >> "$B"
             {
-              printf '\n\n---\n\n### Code signing policy\n\n'
+              printf '\n### Code signing policy\n\n'
               if [ "$SIGNPATH_ENABLED" = "true" ]; then
                 printf 'The Windows installer in this release is code signed. Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org).\n\n'
               else
