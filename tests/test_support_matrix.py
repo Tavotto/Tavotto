@@ -7,12 +7,24 @@ macOS Intel 的不支持状态对 runtime-lock 的 shipped 标记、README 的�
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 MATRIX = ROOT / "docs" / "support-matrix.json"
+
+
+def _release_section():
+    """按路径加载渲染脚本（scripts/ 不是包，也不该为了测试变成包）。"""
+    path = ROOT / "scripts" / "make_release_support_section.py"
+    spec = importlib.util.spec_from_file_location("make_release_support_section", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def _matrix() -> dict:
@@ -62,9 +74,10 @@ def test_supported_targets_are_exactly_the_shipping_desktops():
 
 
 def test_readme_references_the_matrix():
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "support-matrix" in readme, (
-        "README 必须引用 docs/support-matrix.json——不引用它就会自己另写一份")
+    for name in ("README.md", "README.zh-CN.md"):
+        readme = (ROOT / name).read_text(encoding="utf-8")
+        assert "support-matrix" in readme, (
+            f"{name} 必须引用 docs/support-matrix.json——不引用它就会自己另写一份")
 
 
 def test_every_target_has_the_required_fields():
@@ -74,3 +87,56 @@ def test_every_target_has_the_required_fields():
         if t["status"] != "supported":
             assert t.get("note") or t.get("channel"), (
                 f"{tid}：非 supported 档要么给出路（channel）要么说明为什么")
+
+
+# ---------------------------------------------------------------------------
+# 发布页的下载与支持段从矩阵生成（issue #34）：手写副本必然漂移，所以
+# Release body 的那段英文由 scripts/make_release_support_section.py 渲染，
+# 这里守住「每个目标都出现、状态词只从 status 派生、release.yml 真的在用」。
+# ---------------------------------------------------------------------------
+
+
+def test_every_target_carries_release_page_english():
+    for tid, t in _targets().items():
+        assert t.get("label_en") and t.get("en"), (
+            f"{tid}：发布页从矩阵渲染，label_en / en 英文成文必须写在矩阵里")
+
+
+def test_release_section_renders_every_target_with_derived_status():
+    mod = _release_section()
+    out = mod.render(_matrix())
+    for t in _matrix()["targets"]:
+        assert t["label_en"] in out, t["id"]
+        assert f"**{t['label_en']}** — {mod.STATUS_EN[t['status']]}." in out, (
+            f"{t['id']}：状态词必须由 status 派生，不能在 en 成文里另写一份")
+    # Python 范围来自矩阵，不是脚本里写死的
+    tested = _matrix()["python"]["tested"]
+    assert f"Python {tested[0]}–{tested[-1]}" in out
+    assert "support-matrix.json" in out
+
+
+def test_release_section_refuses_unknown_status_and_missing_english():
+    mod = _release_section()
+    bad_status = json.loads(MATRIX.read_text(encoding="utf-8"))
+    bad_status["targets"][0]["status"] = "experimental"
+    with pytest.raises(SystemExit, match="unknown status"):
+        mod.render(bad_status)
+    missing_en = json.loads(MATRIX.read_text(encoding="utf-8"))
+    del missing_en["targets"][0]["en"]
+    with pytest.raises(SystemExit, match="label_en/en"):
+        mod.render(missing_en)
+
+
+def test_release_workflow_appends_the_generated_section():
+    workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(
+        encoding="utf-8")
+    assert "make_release_support_section.py" in workflow, (
+        "release.yml 不再追加生成的支持段——发布页的平台清单会退回手写漂移")
+
+
+def test_readme_explains_smartscreen():
+    """#34 明令禁止「Windows 未签名时仍不解释 SmartScreen 状态」。"""
+    for name in ("README.md", "README.zh-CN.md"):
+        readme = (ROOT / name).read_text(encoding="utf-8")
+        assert "SmartScreen" in readme, (
+            f"{name} 必须解释未签名安装包会触发 SmartScreen 及用户该怎么办")
