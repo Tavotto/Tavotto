@@ -69,6 +69,8 @@ interface NumberFieldProps {
   /** 拖动改数时把连续修改合并成一条撤销记录 */
   onScrubStart?: () => void
   onScrubEnd?: () => void
+  /** 中性的稳定定位属性（data-inspector-prop）——测试与引导用，不进业务逻辑 */
+  dataProp?: string
 }
 
 /**
@@ -91,6 +93,7 @@ export function NumberField({
   ariaLabel,
   onScrubStart,
   onScrubEnd,
+  dataProp,
 }: NumberFieldProps) {
   const derivedLabel =
     ariaLabel ??
@@ -177,6 +180,7 @@ export function NumberField({
         ref={inputRef}
         type="text"
         inputMode="decimal"
+        data-inspector-prop={dataProp}
         aria-label={derivedLabel}
         disabled={disabled}
         value={text}

@@ -4,12 +4,10 @@ import {
   Download,
   FileCode2,
   Loader2,
-  Play,
   RotateCcw,
   RotateCw,
   ShieldAlert,
   TriangleAlert,
-  Upload,
   X,
 } from 'lucide-react'
 import { CanvasStage } from '@/canvas/CanvasStage'
@@ -23,7 +21,12 @@ import { cn } from '@/lib/utils'
 import { useDocumentStore } from '@/store/documentStore'
 import { usePanelRender } from '@/store/renderStore'
 import type { PanelObject } from '@/types/document'
-import { PRIMARY_EXAMPLE, SECONDARY_EXAMPLES } from './examples'
+import { exampleById, type PlaygroundExample } from './examples'
+import { GuidedTask } from './components/GuidedTask'
+import { PlaygroundFailureActions } from './components/PlaygroundFailureActions'
+import { PlaygroundLanding } from './components/PlaygroundLanding'
+import { PlaygroundLoading } from './components/PlaygroundLoading'
+import { pg } from './pgText'
 import {
   openFigure,
   startSession,
@@ -32,20 +35,31 @@ import {
   type ActiveSession,
 } from './playgroundSession'
 import { discardWarmClient, onIdle, prewarm } from './prewarm'
-import { PlaygroundError } from './pyodideClient'
+import { PlaygroundError, type PlaygroundClient } from './pyodideClient'
 import type { FigureChoice, PlaygroundFailure, PlaygroundPhase } from './protocol'
-import { MAX_SOURCE_BYTES, PYODIDE_VERSION, RUNTIME_PACKAGES } from './runtime'
+import { MAX_SOURCE_BYTES } from './runtime'
 import { shortHash, type SourceIntegrity } from './sourceIntegrity'
 
-/** playground 这一屏的文案都在 `dialogs:playground.*` 下 */
-const pg = (key: string, values?: Record<string, unknown>) =>
-  translate(`playground.${key}`, { ns: 'dialogs', ...(values ?? {}) })
-
-/** 拖放区里的文件名示意——语言中立的字面量，不进翻译 */
-const SAMPLE_FILENAME = 'figure.py'
-
-/** 摘要算法名同理：它是技术标识，不是文案，翻译它只会让人对不上号 */
+/** 摘要算法名是技术标识，不是文案，翻译它只会让人对不上号 */
 const HASH_ALGO = 'SHA-256'
+
+/**
+ * 会话来源：内置案例还是用户上传。loading / pick / nofigure / edit / failed
+ * 全程携带——加载页据此写案例名、编辑器据此给「换一个案例」还是
+ * 「换一个脚本」、失败页据此推荐出口、首次引导只对内置案例出现。
+ */
+export type PlaygroundOrigin =
+  | { kind: 'example'; exampleId: string }
+  | { kind: 'upload' }
+
+/** 来源的人类可读名：案例用 i18n 过的案例名，上传用文件名原文。 */
+const originTitle = (origin: PlaygroundOrigin, filename: string): string => {
+  if (origin.kind === 'example') {
+    const ex = exampleById(origin.exampleId)
+    if (ex) return pg(ex.titleKey)
+  }
+  return filename
+}
 
 /**
  * 回站首页的地址，**跟着当前界面语言走**：中文会话回中文首页。
@@ -70,23 +84,29 @@ function BrandLink() {
 
 type Stage =
   | { kind: 'idle' }
-  | { kind: 'loading'; phase: PlaygroundPhase | 'start'; filename: string }
-  | { kind: 'pick'; figures: FigureChoice[]; log: string; truncated: number }
-  | { kind: 'nofigure'; log: string }
-  | { kind: 'edit'; panelId: string; fileId: string; stem: string }
-  | { kind: 'failed'; failure: PlaygroundFailure; filename: string }
+  | { kind: 'loading'; phase: PlaygroundPhase | 'start'; filename: string; origin: PlaygroundOrigin }
+  | { kind: 'pick'; figures: FigureChoice[]; log: string; truncated: number; origin: PlaygroundOrigin }
+  | { kind: 'nofigure'; log: string; origin: PlaygroundOrigin }
+  | { kind: 'edit'; panelId: string; fileId: string; stem: string; origin: PlaygroundOrigin }
+  | { kind: 'failed'; failure: PlaygroundFailure; filename: string; origin: PlaygroundOrigin }
 
 /**
- * 浏览器 playground：把一个普通的 Matplotlib `.py` 在本机 Pyodide 里跑起来，
- * 然后用 Tavotto **同一份**画布 / 属性页 / stores 做语义编辑（ADR 0007）。
+ * 浏览器 playground：以真实科研图案例为核心的交互式体验空间（V2，
+ * docs/ux/PLAYGROUND_V2.md）。案例经真 Pyodide 真实执行——封面只是卡片
+ * 展示，启动永远走 `openSource(example.filename, example.source)`。
  *
  * 这个组件不做任何图形编辑逻辑——拖拽、命中、吸附、undo 全部是既有代码。
- * 它管的只有：上传与示例入口、加载阶段的真话进度、错误分诊、
- * 「源文件未被修改」的证明、以及去桌面版的诚实出口。
+ * 它管的只有：顶层状态机（含会话来源）、session 生命周期、案例/上传入口、
+ * 加载阶段的真话进度、错误分诊、「源文件未被修改」的证明、以及去桌面版的
+ * 诚实出口。展示组件都在 `./components/`，不碰 Worker。
  */
 export function PlaygroundApp() {
   const [stage, setStage] = useState<Stage>({ kind: 'idle' })
   const sessionRef = useRef<ActiveSession | null>(null)
+  // 启动序号：取消/换案例后，旧启动的迟到结果一律作废（不许两个 Worker）
+  const launchSeq = useRef(0)
+  // 正在加载的那次会话的 client——取消时要能 dispose 它
+  const loadingClientRef = useRef<PlaygroundClient | null>(null)
   // 语言切换要触发重渲染（本组件大量用 pg() 而不是 useTranslation）
   const [, setLocaleTick] = useState(0)
 
@@ -103,40 +123,52 @@ export function PlaygroundApp() {
    *
    * 三条纪律：① 只发生在 `/try` 这个应用页面上——营销首页是另一个仓库里的
    * 静态页，与本模块毫无连接，一个字节的 Pyodide 都不会加载；② 首帧不等它，
-   * 排在 idle 回调里（本组件的壳早就渲染完了）；③ **只到核心为止**，科学栈
-   * 仍然要等 import 分类说了话才下载。
-   *
-   * 离开空状态时 cleanup 取消尚未触发的那次；已经在暖的那个由
-   * `takeWarmClient()` 直接接手——绝不会变成两个 Worker。
+   * 排在 idle 回调里（案例卡片早就渲染完了）；③ **只到核心为止**，科学栈
+   * 仍然要等 import 分类说了话才下载。saveData / 慢网下整个跳过。
    */
   useEffect(() => {
     if (stage.kind !== 'idle') return
     return onIdle(() => prewarm())
   }, [stage.kind])
 
-  const fail = useCallback((failure: PlaygroundFailure, filename: string) => {
+  const fail = useCallback((failure: PlaygroundFailure, filename: string, origin: PlaygroundOrigin) => {
     teardownSession(sessionRef.current)
     sessionRef.current = null
-    setStage({ kind: 'failed', failure, filename })
+    setStage({ kind: 'failed', failure, filename, origin })
   }, [])
 
   const openSource = useCallback(
-    async (filename: string, source: string) => {
+    async (filename: string, source: string, origin: PlaygroundOrigin) => {
+      const seq = ++launchSeq.current
       teardownSession(sessionRef.current)
       sessionRef.current = null
-      setStage({ kind: 'loading', phase: 'start', filename })
+      setStage({ kind: 'loading', phase: 'start', filename, origin })
       try {
-        const { session, load } = await startSession(filename, source, (phase) =>
-          setStage((s) => (s.kind === 'loading' ? { ...s, phase } : s)),
+        const { session, load } = await startSession(
+          filename,
+          source,
+          (phase) => {
+            if (seq !== launchSeq.current) return
+            setStage((s) => (s.kind === 'loading' ? { ...s, phase } : s))
+          },
+          (client) => {
+            loadingClientRef.current = client
+          },
         )
+        loadingClientRef.current = null
+        if (seq !== launchSeq.current) {
+          // 这次启动已被取消/顶掉：收掉刚起来的会话，不许留第二个 Worker
+          teardownSession(session)
+          return
+        }
         sessionRef.current = session
         if (!load.figures.length) {
-          setStage({ kind: 'nofigure', log: load.log })
+          setStage({ kind: 'nofigure', log: load.log, origin })
           return
         }
         if (load.figures.length === 1) {
           const { panelId, fileId } = await openFigure(session, load.figures[0].stem)
-          setStage({ kind: 'edit', panelId, fileId, stem: load.figures[0].stem })
+          setStage({ kind: 'edit', panelId, fileId, stem: load.figures[0].stem, origin })
           return
         }
         setStage({
@@ -144,26 +176,38 @@ export function PlaygroundApp() {
           figures: load.figures,
           log: load.log,
           truncated: load.truncated_figures,
+          origin,
         })
       } catch (err) {
+        loadingClientRef.current = null
+        if (seq !== launchSeq.current) return // 被取消的那次，错误也作废
         fail(
           err instanceof PlaygroundError
             ? err.failure
             : { code: 'runtime_failure', message: err instanceof Error ? err.message : String(err) },
           filename,
+          origin,
         )
       }
     },
     [fail],
   )
 
+  const openExample = useCallback(
+    (ex: PlaygroundExample) =>
+      void openSource(ex.filename, ex.source, { kind: 'example', exampleId: ex.id }),
+    [openSource],
+  )
+
   const openFile = useCallback(
     async (file: File) => {
+      const origin: PlaygroundOrigin = { kind: 'upload' }
       if (!file.name.toLowerCase().endsWith('.py')) {
         setStage({
           kind: 'failed',
           failure: { code: 'wrong_extension', message: file.name },
           filename: file.name,
+          origin,
         })
         return
       }
@@ -172,6 +216,7 @@ export function PlaygroundApp() {
           kind: 'failed',
           failure: { code: 'source_too_large', message: file.name },
           filename: file.name,
+          origin,
         })
         return
       }
@@ -183,34 +228,48 @@ export function PlaygroundApp() {
           kind: 'failed',
           failure: { code: 'decode_error', message: file.name },
           filename: file.name,
+          origin,
         })
         return
       }
-      await openSource(file.name, source)
+      await openSource(file.name, source, origin)
     },
     [openSource],
   )
 
   const pickFigure = useCallback(
-    async (stem: string) => {
+    async (stem: string, origin: PlaygroundOrigin) => {
       const session = sessionRef.current
       if (!session) return
       try {
         const { panelId, fileId } = await openFigure(session, stem)
-        setStage({ kind: 'edit', panelId, fileId, stem })
+        setStage({ kind: 'edit', panelId, fileId, stem, origin })
       } catch (err) {
         fail(
           err instanceof PlaygroundError
             ? err.failure
             : { code: 'render_error', message: err instanceof Error ? err.message : String(err) },
           session.filename,
+          origin,
         )
       }
     },
     [fail],
   )
 
+  /** 回案例库：teardown 会话、清 Worker、清文档态。预热账本不动，可复用。 */
   const reset = useCallback(() => {
+    launchSeq.current++
+    teardownSession(sessionRef.current)
+    sessionRef.current = null
+    setStage({ kind: 'idle' })
+  }, [])
+
+  /** 取消加载：真正 dispose 在途 Worker（不是把加载藏起来），回案例库。 */
+  const cancelLoading = useCallback(() => {
+    launchSeq.current++
+    loadingClientRef.current?.dispose()
+    loadingClientRef.current = null
     teardownSession(sessionRef.current)
     sessionRef.current = null
     setStage({ kind: 'idle' })
@@ -248,24 +307,43 @@ export function PlaygroundApp() {
 
   switch (stage.kind) {
     case 'idle':
-      return chrome(
-        <IdleView onFile={(f) => void openFile(f)} onExample={(f, s) => void openSource(f, s)} />,
-      )
+      return chrome(<PlaygroundLanding onLaunch={openExample} onFile={(f) => void openFile(f)} />)
     case 'loading':
-      return chrome(<LoadingView phase={stage.phase} filename={stage.filename} />)
+      return chrome(
+        <PlaygroundLoading
+          phase={stage.phase}
+          filename={stage.filename}
+          title={originTitle(stage.origin, stage.filename)}
+          onCancel={cancelLoading}
+        />,
+      )
     case 'pick':
       return chrome(
-        <PickView figures={stage.figures} truncated={stage.truncated} onPick={(s) => void pickFigure(s)} onBack={reset} />,
+        <PickView
+          figures={stage.figures}
+          truncated={stage.truncated}
+          origin={stage.origin}
+          onPick={(s) => void pickFigure(s, stage.origin)}
+          onBack={reset}
+        />,
       )
     case 'nofigure':
-      return chrome(<NoFigureView log={stage.log} onBack={reset} />)
+      return chrome(<NoFigureView log={stage.log} origin={stage.origin} onBack={reset} />)
     case 'failed':
-      return chrome(<FailureView failure={stage.failure} filename={stage.filename} onBack={reset} />)
+      return chrome(
+        <FailureView
+          failure={stage.failure}
+          filename={stage.filename}
+          onBack={reset}
+          onLaunchExample={openExample}
+        />,
+      )
     case 'edit':
       return (
         <EditorView
           panelId={stage.panelId}
           session={sessionRef.current!}
+          origin={stage.origin}
           onLoadAnother={reset}
           onSwitchLocale={() => void switchLocale()}
         />
@@ -273,177 +351,22 @@ export function PlaygroundApp() {
   }
 }
 
-// ---------------------------------------------------------------- 空状态
-
-function IdleView({
-  onFile,
-  onExample,
-}: {
-  onFile: (f: File) => void
-  onExample: (filename: string, source: string) => void
-}) {
-  const [over, setOver] = useState(false)
-  const inputRef = useRef<HTMLInputElement>(null)
-  return (
-    <div className="flex min-h-0 flex-1 items-start justify-center overflow-y-auto p-6">
-      <div className="w-full max-w-[560px] pt-[6vh]">
-        <div
-          role="button"
-          tabIndex={0}
-          aria-label={pg('chooseFile')}
-          onClick={() => inputRef.current?.click()}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault()
-              inputRef.current?.click()
-            }
-          }}
-          onDragOver={(e) => {
-            e.preventDefault()
-            setOver(true)
-          }}
-          onDragLeave={() => setOver(false)}
-          onDrop={(e) => {
-            e.preventDefault()
-            setOver(false)
-            const f = e.dataTransfer.files?.[0]
-            if (f) onFile(f)
-          }}
-          className={cn(
-            'flex cursor-pointer flex-col items-center gap-3 rounded-[10px] border border-dashed bg-surface px-8 py-12 text-center transition-colors',
-            over ? 'border-sel bg-sel/5' : 'border-border hover:border-ink-faint',
-          )}
-        >
-          <FileCode2 size={26} className="text-ink-3" aria-hidden />
-          <div>
-            <p className="text-[15px] font-medium">{pg('dropTitle')}</p>
-            <p className="mt-1 font-mono text-xs text-ink-3">{SAMPLE_FILENAME}</p>
-          </div>
-          <span className="flex h-7 items-center gap-1.5 rounded-sm border border-border bg-bg px-2.5 text-xs text-ink-2">
-            <Upload size={12} aria-hidden />
-            {pg('chooseFile')}
-          </span>
-        </div>
-        <input
-          ref={inputRef}
-          type="file"
-          accept=".py"
-          className="sr-only"
-          onChange={(e) => {
-            const f = e.target.files?.[0]
-            e.target.value = ''
-            if (f) onFile(f)
-          }}
-        />
-
-        {/* 两条路等价，不是「上传」加一个脚注：没有现成脚本的访客同样
-            应该在一次点击之内看到真东西。跑的是真示例源码经真 Pyodide，
-            **绝不是预烤的 manifest**——那演示的就不是这个产品了。 */}
-        <div className="my-5 flex items-center gap-3" aria-hidden>
-          <span className="h-px flex-1 bg-border" />
-          <span className="text-xs text-ink-3">{pg('orDivider')}</span>
-          <span className="h-px flex-1 bg-border" />
-        </div>
-
-        <div className="flex flex-col items-center">
-          <button
-            onClick={() => onExample(PRIMARY_EXAMPLE.filename, PRIMARY_EXAMPLE.source)}
-            className="flex h-9 items-center gap-2 rounded-[6px] bg-ink px-4 text-[13px] font-medium text-white transition-opacity hover:opacity-90"
-          >
-            <Play size={13} aria-hidden />
-            {pg('runSample')}
-            <span className="font-mono text-[11px] text-white/60">{PRIMARY_EXAMPLE.filename}</span>
-          </button>
-          <p className="mt-2 text-xs text-ink-3">{pg('runSampleNote')}</p>
-
-          <div className="mt-4 flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5">
-            <span className="text-xs text-ink-3">{pg('otherExamples')}</span>
-            {SECONDARY_EXAMPLES.map((ex) => (
-              <button
-                key={ex.id}
-                onClick={() => onExample(ex.filename, ex.source)}
-                className="text-xs text-ink-2 underline-offset-2 hover:text-ink hover:underline"
-              >
-                {pg(ex.labelKey)}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="mt-8 border-t border-border pt-4 text-center">
-          <p className="text-xs leading-relaxed text-ink-2">{pg('privacyNote')}</p>
-          <p className="mt-2 text-xs leading-relaxed text-ink-3">{pg('scopeNote')}</p>
-          <p className="mt-3 font-mono text-[11px] text-ink-3">
-            {Object.entries(RUNTIME_PACKAGES)
-              .map(([n, v]) => `${n} ${v}`)
-              .join(' · ')}
-          </p>
-          <p className="mt-1 font-mono text-[11px] text-ink-faint">
-            {pg('cdnNote', { version: PYODIDE_VERSION })}
-          </p>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------- 加载
-
-const PHASE_ORDER: (PlaygroundPhase | 'start')[] = [
-  'start',
-  'runtime',
-  'engine',
-  'packages',
-  'script',
-  'figures',
-]
-
-function LoadingView({ phase, filename }: { phase: PlaygroundPhase | 'start'; filename: string }) {
-  const at = PHASE_ORDER.indexOf(phase)
-  const steps: { key: string; values?: Record<string, unknown> }[] = [
-    { key: 'phaseRuntime' },
-    { key: 'phaseEngine' },
-    { key: 'phasePackages' },
-    { key: 'phaseScript', values: { filename } },
-    { key: 'phaseFigures' },
-  ]
-  return (
-    <div className="flex min-h-0 flex-1 items-center justify-center p-6">
-      {/* 真话进度：确切阶段逐个点亮，没有假造的百分比 */}
-      <ol className="flex flex-col gap-2.5" aria-live="polite">
-        {steps.map((s, i) => {
-          const stepAt = i + 1 // PHASE_ORDER 里 'start' 占 0 位
-          const state = at > stepAt ? 'done' : at === stepAt ? 'active' : 'todo'
-          return (
-            <li key={s.key} className="flex items-center gap-2.5 text-[13px]">
-              {state === 'done' ? (
-                <Check size={14} className="shrink-0 text-ink-3" aria-hidden />
-              ) : state === 'active' ? (
-                <Loader2 size={14} className="shrink-0 animate-spin text-sel" aria-hidden />
-              ) : (
-                <span className="h-3.5 w-3.5 shrink-0 rounded-full border border-border" aria-hidden />
-              )}
-              <span className={state === 'todo' ? 'text-ink-faint' : 'text-ink-2'}>
-                {pg(s.key, s.values)}
-              </span>
-            </li>
-          )
-        })}
-      </ol>
-    </div>
-  )
-}
+/** 来源决定返回按钮的自然文案：案例说「换一个案例」，上传说「换一个脚本」。 */
+const backLabel = (origin: PlaygroundOrigin) =>
+  origin.kind === 'example' ? pg('switchExample') : pg('loadAnother')
 
 // ---------------------------------------------------------------- 图选择
 
 function PickView({
   figures,
   truncated,
+  origin,
   onPick,
   onBack,
 }: {
   figures: FigureChoice[]
   truncated: number
+  origin: PlaygroundOrigin
   onPick: (stem: string) => void
   onBack: () => void
 }) {
@@ -482,7 +405,7 @@ function PickView({
         ))}
       </div>
       <button onClick={onBack} className="mt-6 text-xs text-ink-3 underline-offset-2 hover:underline">
-        {pg('loadAnother')}
+        {backLabel(origin)}
       </button>
     </div>
   )
@@ -490,14 +413,22 @@ function PickView({
 
 // ---------------------------------------------------------------- 无图 / 失败
 
-function NoFigureView({ log, onBack }: { log: string; onBack: () => void }) {
+function NoFigureView({
+  log,
+  origin,
+  onBack,
+}: {
+  log: string
+  origin: PlaygroundOrigin
+  onBack: () => void
+}) {
   return (
     <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6">
       <p className="text-[14px] font-medium">{pg('noFigureTitle')}</p>
       <p className="max-w-md text-center text-xs leading-relaxed text-ink-2">{pg('noFigureBody')}</p>
       {log && <LogDisclosure label={pg('showLog')} text={log} open />}
       <button onClick={onBack} className="btn-back mt-2 h-7 rounded-sm border border-border px-3 text-xs text-ink-2 hover:text-ink">
-        {pg('loadAnother')}
+        {backLabel(origin)}
       </button>
     </div>
   )
@@ -546,10 +477,12 @@ function FailureView({
   failure,
   filename,
   onBack,
+  onLaunchExample,
 }: {
   failure: PlaygroundFailure
   filename: string
   onBack: () => void
+  onLaunchExample: (ex: PlaygroundExample) => void
 }) {
   const { title, body } = failureText(failure, filename)
   return (
@@ -561,21 +494,8 @@ function FailureView({
       {body && <p className="max-w-lg text-center text-xs leading-relaxed text-ink-2">{body}</p>}
       {failure.log && <LogDisclosure label={pg('showLog')} text={failure.log} />}
       {failure.traceback && <LogDisclosure label={pg('showTraceback')} text={failure.traceback} open />}
-      <div className="mt-2 flex items-center gap-2">
-        <button
-          onClick={onBack}
-          className="h-7 rounded-sm border border-border px-3 text-xs text-ink-2 hover:text-ink"
-        >
-          {pg('loadAnother')}
-        </button>
-        <a
-          href={RELEASES_LATEST_URL}
-          className="flex h-7 items-center gap-1.5 rounded-sm bg-ink px-3 text-xs text-white"
-        >
-          <Download size={12} aria-hidden />
-          {pg('downloadDesktop')}
-        </a>
-      </div>
+      {/* 三个明确出口：回案例库 / 试内置案例（30 秒成功路径）/ 桌面版 */}
+      <PlaygroundFailureActions onBack={onBack} onLaunch={onLaunchExample} />
     </div>
   )
 }
@@ -596,11 +516,13 @@ function LogDisclosure({ label, text, open }: { label: string; text: string; ope
 function EditorView({
   panelId,
   session,
+  origin,
   onLoadAnother,
   onSwitchLocale,
 }: {
   panelId: string
   session: ActiveSession
+  origin: PlaygroundOrigin
   onLoadAnother: () => void
   onSwitchLocale: () => void
 }) {
@@ -620,12 +542,16 @@ function EditorView({
   const [showSource, setShowSource] = useState(false)
   const [showPatches, setShowPatches] = useState(false)
   const [cueDismissed, setCueDismissed] = useState(false)
+  // 首次引导（只对内置案例）：跳过/关闭记在会话态里，同一会话不再出现
+  const [taskDismissed, setTaskDismissed] = useState(false)
   // 会话起来时那次核对的结论；下面在有意义的时刻重新核对
   const [integrity, setIntegrity] = useState<SourceIntegrity>(session.integrity)
   // 从 1 起：**进编辑态本身就要复核一次**。load 时那次摘要是在 `open` 之前
   // 采的，而 `open` 会再画一遍——脚本注册的 `draw_event` 回调正是在那一刻
   // 才有机会改写自己的源文件。只信 load 那次，等于漏掉了两者之间的窗口。
   const [recheckSeq, setRecheckSeq] = useState(1)
+
+  const example = origin.kind === 'example' ? exampleById(origin.exampleId) : undefined
 
   // ⌘Z / ⌘⇧Z：与工作台同一条 runUndoRedo 通道（带 undoRedoBlocked 守卫）
   useEffect(() => {
@@ -683,6 +609,8 @@ function EditorView({
     setRecheckSeq((n) => n + 1)
   }
 
+  const requestRecheck = useCallback(() => setRecheckSeq((n) => n + 1), [])
+
   const resetEdits = () => {
     if (!panel || panel.overrides.length === 0) return
     useDocumentStore.getState().commit(msg('history.playgroundResetEdits', undefined, 'workspace'), (d) => {
@@ -736,7 +664,7 @@ function EditorView({
         <span className="flex-1" />
         <RenderState rendering={rendering} pending={pending} error={renderError} />
         <button onClick={onLoadAnother} className="h-7 rounded-sm px-2 text-xs text-ink-2 hover:bg-surface-2">
-          {pg('loadAnother')}
+          {backLabel(origin)}
         </button>
         <button
           onClick={onSwitchLocale}
@@ -785,9 +713,24 @@ function EditorView({
         <aside className="hidden w-[224px] shrink-0 flex-col overflow-y-auto border-r border-border bg-surface lg:flex">
           <ElementTree />
         </aside>
-        {/* CanvasStage 的根是 flex-1：外面必须是 flex 容器（见 McpApp 的注） */}
-        <div className="flex min-h-0 min-w-0 flex-1">
+        {/* CanvasStage 的根是 flex-1：外面必须是 flex 容器（见 McpApp 的注）。
+            relative 是给首次引导那张小卡定位用的——它浮在画布左下角，
+            不遮树、不遮属性页、无全屏遮罩 */}
+        <div className="relative flex min-h-0 min-w-0 flex-1">
           <CanvasStage />
+          {example?.guidedTask && !taskDismissed && (
+            <GuidedTask
+              task={example.guidedTask}
+              scriptName={session.scriptName}
+              panel={panel}
+              integrity={integrity}
+              renderBusy={busy}
+              renderFailed={renderError != null}
+              onRequestIntegrityRecheck={requestRecheck}
+              onViewSource={openSourceDialog}
+              onDismiss={() => setTaskDismissed(true)}
+            />
+          )}
         </div>
         <aside className="hidden w-[304px] shrink-0 flex-col overflow-y-auto border-l border-border bg-surface md:flex">
           <ElementInspector panel={panel} />

@@ -43,8 +43,15 @@ export async function startSession(
   filename: string,
   source: string,
   onProgress: (phase: PlaygroundPhase) => void,
+  /**
+   * 同步交出这次会话用的 client——调用方要「取消加载」时才能 dispose 它。
+   * 没有这条通道的话，取消只能等 startSession 自己结束，期间再启动一个
+   * 案例就是两个并行 Worker（ADR 0007 明令禁止）。
+   */
+  onClient?: (client: PlaygroundClient) => void,
 ): Promise<{ session: ActiveSession; load: LoadResult; prewarmed: boolean }> {
   const { client, wasWarm } = takeWarmClient()
+  onClient?.(client)
   client.onProgress = onProgress
   // 传输先装后种：stores 一挂载就可能发渲染请求，那一刻拿到默认的 HTTP
   // 传输会打到一个不存在的 /api（静态页面后面没有 Tavotto 服务）
