@@ -217,11 +217,11 @@ test('纯键盘走完核心闭环：开项目 → 编辑元素 → undo/redo →
 
   // ── 5. undo / redo（快捷键）──────────────────────────────────────────
   // 撤销/重做会触发一次权威重渲染；NumberField 聚焦期间不刷新显示值，
-  // 所以先等 render 响应落地，再走键盘去核对
+  // 所以先等 render 响应落地，再走键盘去核对。**超时就红**：撤销只改了本地
+  // store 而没有请求权威渲染的话，后面的输入框断言照样能从本地状态过——
+  // 吞掉超时等于把「画面还停在旧图」放行
   const nextRender = () =>
-    page
-      .waitForResponse((r) => r.url().includes('/api/engine/render'), { timeout: 60_000 })
-      .catch(() => null)
+    page.waitForResponse((r) => r.url().includes('/api/engine/render'), { timeout: 60_000 })
   // 先把焦点从输入框挪走（Tab 一步落在下一个控件上）：输入框里的 ⌘Z 归
   // 文本编辑管；不用 Esc 失焦——programmatic blur 之后 WebKit 的顺序导航
   // 会失去起点，键盘用户会被困在 body 上
@@ -247,7 +247,10 @@ test('纯键盘走完核心闭环：开项目 → 编辑元素 → undo/redo →
   expect(await focusedValue(page)).toBe(sizeAfter)
 
   // ── 6+7. 导出：⌘E 打开对话框，键盘操作到「导出」──────────────────────
-  await page.keyboard.press('Escape') // 收起输入框焦点，快捷键面向画布
+  // 焦点从输入框 Tab 到下一个控件再按 ⌘E（输入框里的快捷键归文本编辑管）。
+  // 不用 Esc 失焦：焦点停在 body 上的话，对话框关闭时 Radix 没有可恢复的
+  // 目标，第 8 步的「焦点回到可见控件」也就无从谈起
+  await page.keyboard.press(tabKey())
   await page.keyboard.press('ControlOrMeta+e')
   const dialog = page.getByRole('dialog')
   await expect(dialog).toBeVisible()
@@ -275,6 +278,9 @@ test('纯键盘走完核心闭环：开项目 → 编辑元素 → undo/redo →
   await page.keyboard.press('Escape')
   await expect(dialog).toHaveCount(0)
   const back = await focusInfo(page, 'css=*')
+  // hit=true 意味着焦点真的落在页面里的某个元素上（body 不算命中）——
+  // 只查 lost 的话「焦点没恢复、掉在 body 上」也会静默通过
+  expect(back.hit, `对话框关闭后焦点没有回到可见控件（在 ${back.desc}）`).toBe(true)
   expect(back.lost, `对话框关闭后焦点落在 ${back.desc}`).toBe(false)
 })
 
