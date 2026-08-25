@@ -110,50 +110,148 @@ def test_skill_asks_the_three_setup_questions():
 
 
 def test_skill_forbids_uninvited_decoration():
-    """约定 7：背景色块 / 箭头 / 说明文字，用户没要就不加；想加先问。"""
-    text = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+    """克制原则：背景色块 / 箭头 / 说明文字，用户没要就不加；想加先问。
+
+    2026-08-25 起细则拆进 references/publication-style.md（SKILL.md 声明
+    画图前必读它），约定本身一条没少。
+    """
+    text = (SKILL_DIR / "references" / "publication-style.md").read_text(encoding="utf-8")
     assert "一个都不擅自加" in text
     for banned in ("背景色块", "箭头指向", "说明性文字"):
-        assert banned in text, f"SKILL.md 没把「{banned}」列进禁加清单"
+        assert banned in text, f"publication-style.md 没把「{banned}」列进禁加清单"
 
 
 def test_skill_keeps_multi_panel_inside_matplotlib():
-    """约定 8：多子图在一个 Figure 里拼成 150mm 主图，绝不用别的软件拼。
+    """组图约定：多子图在一个 Figure 里拼成 150mm 主图，绝不用别的软件拼。
 
     组图版式的默认值也在这条约定里：每个子图的 x/y 轴各自标全（轴标题 +
     刻度，不共享、不许只给最左那个留）、不用 sharex/sharey、子图标题
     矩阵式各归各位（不挤左上角）、轴标题默认加粗。
     """
-    text = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+    text = (SKILL_DIR / "references" / "publication-style.md").read_text(encoding="utf-8")
+    template = (SKILL_DIR / "references" / "figure-contract.md").read_text(encoding="utf-8")
     assert "GridSpec" in text
     assert "150 mm" in text
     assert "绝不用别的软件拼" in text
     assert "每个子图的 x 轴与 y 轴都各自标全" in text
     assert "不共享坐标轴" in text
     assert "矩阵式各归各位" in text
-    assert "axes.labelweight" in text          # 轴标题默认加粗写进了模板与默认值
+    # 轴标题默认加粗写进了默认值与模板两处
+    assert "axes.labelweight" in text and "axes.labelweight" in template
 
 
-def test_skill_syncs_plugin_once_per_session():
-    """会话第一次触发时对齐插件版本；每会话一次，同步失败不许阻塞出图。
+# ---------------------- 会话入口：先检查，不安装 ---------------------------
+# 2026-08-25 反转：旧契约「每个会话第一次触发时 marketplace add + plugin add」
+# 已删除——同一会话里工具不重载，健康会话里那条命令只有网络与解析成本。
+# 新契约是状态机：健康 = 零安装；缺什么修什么；工具缺失 = 新会话 + 停止。
 
-    频率是评审裁过的（PR #93 P1）：同一会话里工具不重载，反复重装只有
-    网络开销；update_check 的只提醒通道另在，两者互不代替。
+def _skill_text() -> str:
+    return (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+
+
+def _all_skill_docs() -> str:
+    parts = [_skill_text()]
+    for ref in sorted((SKILL_DIR / "references").glob("*.md")):
+        parts.append(ref.read_text(encoding="utf-8"))
+    return "\n".join(parts)
+
+
+def test_skill_no_longer_reinstalls_the_plugin_every_session():
+    """`marketplace add && plugin add` 的会话内自动同步契约必须消失。
+
+    分开写的两条安装命令仍然在（恢复路径要用），但「每个会话第一次触发时
+    跑一遍」的行为一个字都不许留。
     """
-    text = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+    everything = _all_skill_docs()
     assert ("codex plugin marketplace add Tavotto/Tavotto && "
-            "codex plugin add tavotto@tavotto") in text
-    assert "每个会话只跑一次" in text
-    assert "绝不为此阻塞出图" in text
+            "codex plugin add tavotto@tavotto") not in everything
+    assert "每个会话只跑一次" not in everything
+    assert "先同步插件" not in everything
+
+
+def test_skill_entry_checks_health_first_and_never_installs_when_healthy():
+    text = _skill_text()
+    assert "会话入口：先检查，不安装" in text
+    assert "优先调用 `tavotto_health`，只调用一次" in text
+    # ok: true = 本会话零安装
+    assert "`ok: true`" in text
+    assert "绝不执行插件安装、升级、pip/pipx" in text
+    assert "provision" in text
+    # 缺什么修什么：缺引擎只修引擎
+    assert "缺引擎只修引擎" in text
+    assert "绝不顺手重装插件" in text
+
+
+def test_skill_entry_requires_a_new_session_when_tools_are_missing():
+    """工具缺失 = 插件没在本会话加载：给安装命令、要求新会话、然后停止。"""
+    text = _skill_text()
+    assert "没有 `tavotto_health` 这个工具" in text
+    assert "新开会话" in text
+    assert "停止" in text
+    assert "不要在旧会话里继续假装工具可用" in text
+    # 两条安装命令分开写、sparse 双路径，在恢复 reference 里
+    recovery = (SKILL_DIR / "references" / "first-run-and-recovery.md").read_text(encoding="utf-8")
+    assert ("codex plugin marketplace add Tavotto/Tavotto "
+            "--sparse .agents/plugins --sparse codex-plugin") in recovery
+    assert "codex plugin add tavotto@tavotto" in recovery
+    assert "&&" not in recovery.split("```sh")[1].split("```")[0], \
+        "安装命令要分开跑，不用 && 串联"
+
+
+def test_skill_entry_desktop_only_is_not_described_as_missing():
+    """desktop_only ≠ 没装 Tavotto——用户明明装了桌面版。"""
+    text = _skill_text()
+    assert "`desktop_only`" in text
+    assert "不要说「没有安装 Tavotto」" in text
+    recovery = (SKILL_DIR / "references" / "first-run-and-recovery.md").read_text(encoding="utf-8")
+    assert "desktop_only" in recovery
+    assert "桌面交接" in recovery
+    assert 'pipx install "tavotto[worker]"' in recovery
+
+
+def test_skill_entry_update_reminder_never_blocks_the_task():
+    text = _skill_text()
+    assert "当前任务照常完成" in text
+    assert "收尾提醒一次" in text
+    assert "codex plugin marketplace upgrade tavotto" in text
+    assert "不自动升级、不反复提醒" in text
+
+
+def test_skill_entry_failures_never_retry_or_fall_back_to_source():
+    text = _skill_text()
+    assert "不循环重试" in text
+    assert "不退回源码构建" in text
+    recovery = (SKILL_DIR / "references" / "first-run-and-recovery.md").read_text(encoding="utf-8")
+    assert "不循环重试" in recovery
+    assert "clone" in recovery       # 明确写出「不退回 clone 源码」
+
+
+def test_skill_routes_each_reference_explicitly():
+    """SKILL.md 必须写清什么情况读哪份 reference，且每份都真实存在。
+
+    普通画图不许把故障文档全载入——路由表就是这条纪律的落点。
+    """
+    text = _skill_text()
+    assert "什么情况下读哪份 reference" in text
+    for ref in ("first-run-and-recovery.md", "figure-contract.md",
+                "publication-style.md", "desktop-handoff.md",
+                "issue-reporting.md", "compatibility.md"):
+        assert ref in text, f"SKILL.md 没写什么时候读 {ref}"
+        assert (SKILL_DIR / "references" / ref).is_file(), f"references/{ref} 不存在"
+    assert "用到才读" in text
 
 
 def test_skill_files_issues_only_with_consent():
-    """撞上 Tavotto 的缺陷时写复现 issue，但外发必须经用户明确允许。"""
-    text = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+    """撞上 Tavotto 的缺陷时写复现 issue，但外发必须经用户明确允许。
+
+    细则在 references/issue-reporting.md；SKILL.md 的完成判据一节指向它。
+    """
+    text = (SKILL_DIR / "references" / "issue-reporting.md").read_text(encoding="utf-8")
     assert "github.com/Tavotto/Tavotto/issues" in text
     assert "用户明确允许" in text
     assert "复现步骤" in text
     assert "脱敏" in text
+    assert "issue-reporting.md" in _skill_text()
 
 
 #: 技能自带脚本允许 import 的标准库。加新名字前先想清楚：这些脚本跑在**用户
@@ -658,9 +756,9 @@ def test_skill_documents_every_error_code_it_can_emit():
     registry_write_failed 就换个可写目录」，而实现把它压成了 open_failed，
     于是那段指引永远走不到，两边各看各的都很合理。
     """
-    skill = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+    skill = (SKILL_DIR / "references" / "desktop-handoff.md").read_text(encoding="utf-8")
     documented = set(re.findall(r'"error_code": "(\w+)"', skill))
-    assert documented, "SKILL.md 里一个 error_code 都没写"
+    assert documented, "references/desktop-handoff.md 里一个 error_code 都没写"
     src = HANDOFF.read_text(encoding="utf-8")
     for code in documented:
         if code in {"tavotto_missing", "desktop_found_cli_missing"}:
@@ -813,6 +911,14 @@ def test_plugin_zip_contains_the_skill(tmp_path):
     names = zipfile.ZipFile(target).namelist()
     for needed in ("codex-plugin/.codex-plugin/plugin.json",
                    "codex-plugin/skills/tavotto-figure/SKILL.md",
+                   "codex-plugin/skills/tavotto-figure/agents/openai.yaml",
+                   # SKILL.md 按需引用的细则必须随包走，缺一份 = 状态机断链
+                   "codex-plugin/skills/tavotto-figure/references/first-run-and-recovery.md",
+                   "codex-plugin/skills/tavotto-figure/references/figure-contract.md",
+                   "codex-plugin/skills/tavotto-figure/references/publication-style.md",
+                   "codex-plugin/skills/tavotto-figure/references/desktop-handoff.md",
+                   "codex-plugin/skills/tavotto-figure/references/issue-reporting.md",
+                   "codex-plugin/skills/tavotto-figure/references/compatibility.md",
                    "codex-plugin/skills/tavotto-figure/scripts/handoff.py",
                    "codex-plugin/skills/tavotto-figure/scripts/update_check.py"):
         assert needed in names, f"插件包里缺 {needed}"
@@ -1049,3 +1155,184 @@ def test_prefs_cli_rejects_unknown_keys(tmp_path):
         [sys.executable, str(script), "--set", "width=huge", "--json"],
         capture_output=True, text=True, encoding="utf-8", errors="replace", env=env)
     assert out.returncode != 0
+
+
+# ==================== 首次使用体验（2026-08-25 反转） =====================
+# README 是普通用户的唯一安装入口；SKILL.md 的会话入口是「先检查，不安装」。
+# 这一段盯的是：入口文案、sparse 双路径、openai.yaml 的 MCP 依赖声明，
+# 以及行为场景与文档锚点的绑定。
+
+READMES = {
+    "zh": ROOT / "README.zh-CN.md",
+    "en": ROOT / "README.md",
+}
+SPARSE_CMD = ("codex plugin marketplace add Tavotto/Tavotto "
+              "--sparse .agents/plugins --sparse codex-plugin")
+
+
+def test_readme_first_use_entry_says_no_clone_no_build():
+    """首次安装用户看到的第一条说明就是「不 clone、不构建源码」，中英一致。"""
+    zh = READMES["zh"].read_text(encoding="utf-8")
+    en = READMES["en"].read_text(encoding="utf-8")
+    assert "在 Codex 中第一次使用 Tavotto" in zh
+    assert "普通用户不要克隆或构建这个仓库" in zh
+    assert "Using Tavotto with Codex for the first time" in en
+    assert "do not clone or build this repository" in en
+    # 源码开发是贡献者的路，不是普通用户的 fallback
+    assert "贡献者：从源码开发" in zh
+    assert "Contributors: developing from source" in en
+
+
+def test_readme_install_is_two_codex_commands_plus_engine_plus_new_session():
+    """安装步骤 = 两条 Codex 命令（分开、双 sparse）+ 一条引擎命令 + 新开会话。"""
+    for lang, path in READMES.items():
+        text = path.read_text(encoding="utf-8")
+        assert SPARSE_CMD in text, f"{path.name} 缺 sparse 双路径安装命令"
+        assert "codex plugin add tavotto@tavotto" in text
+        assert 'pipx install "tavotto[worker]"' in text
+        # 两条 codex 命令不许再用 && 串成一条
+        assert "Tavotto/Tavotto && codex plugin add" not in text
+    zh = READMES["zh"].read_text(encoding="utf-8")
+    en = READMES["en"].read_text(encoding="utf-8")
+    assert "新开一个会话" in zh
+    assert "start a new one" in en
+
+
+def test_readme_names_the_surfaces_that_do_not_load_local_plugins():
+    """不加载本机插件的宿主界面要明确说出来，别让用户在那儿反复排障。"""
+    zh = READMES["zh"].read_text(encoding="utf-8")
+    en = READMES["en"].read_text(encoding="utf-8")
+    assert "不读取本机插件的界面" in zh
+    assert "does not load local plugins" in en
+
+
+def test_plugin_readme_uses_the_same_install_shape():
+    """codex-plugin/README.md 与根 README 同一套安装形状（sparse、分开跑）。"""
+    text = (PLUGIN / "README.md").read_text(encoding="utf-8")
+    assert SPARSE_CMD in text
+    assert "Tavotto/Tavotto && codex plugin add" not in text
+
+
+def test_openai_yaml_declares_the_mcp_dependency():
+    """agents/openai.yaml 用 `dependencies.tools` 声明本插件的 MCP server。
+
+    schema 依据是 codex-rs 的 SkillToolDependency（type/value/description/
+    transport/command/url；loader 在 codex-rs/ext/skills/src/loader/metadata.rs）：
+    `value` 必须与 .mcp.json 的 server key 一致，stdio 依赖按 `command`
+    做规范键匹配（canonical_mcp_dependency_key），所以 `command` 也必须与
+    .mcp.json 的一致——对上了，插件自带的 server 就满足依赖，Codex 不会再弹
+    安装提示。测试不引第三方 yaml 库（.venv 纯净），按受控文件形状做行级断言。
+    """
+    yaml_text = (SKILL_DIR / "agents" / "openai.yaml").read_text(encoding="utf-8")
+    mcp = json.loads((PLUGIN / ".mcp.json").read_text(encoding="utf-8"))
+    (server_key,) = mcp["mcpServers"].keys()
+    command = mcp["mcpServers"][server_key]["command"]
+
+    m = re.search(r"^dependencies:\n(.*?)(?=^\w|\Z)", yaml_text, re.M | re.S)
+    assert m, "openai.yaml 没有顶层 dependencies 块"
+    block = m.group(1)
+    assert re.search(r"^\s*tools:\s*$", block, re.M), "dependencies 下缺 tools 列表"
+    assert re.search(r"^\s*-\s*type:\s*mcp\s*$", block, re.M)
+    assert re.search(rf"^\s*value:\s*{re.escape(server_key)}\s*$", block, re.M), \
+        f"依赖的 value 必须等于 .mcp.json 的 server key（{server_key}）"
+    assert re.search(r"^\s*transport:\s*stdio\s*$", block, re.M)
+    assert re.search(rf"^\s*command:\s*{re.escape(command)}\s*$", block, re.M), \
+        f"stdio 依赖按 command 匹配，必须等于 .mcp.json 的 command（{command}）"
+    # interface 与 policy 原样保留——加依赖不能把显示名与隐式触发挤掉
+    assert re.search(r"^interface:", yaml_text, re.M)
+    assert re.search(r"^\s*allow_implicit_invocation:\s*true\s*$", yaml_text, re.M)
+
+
+def _squash(text: str) -> str:
+    """空白不敏感匹配：文档会重新折行，锚点不该因此失效。"""
+    return re.sub(r"\s+", "", text)
+
+
+def test_first_use_scenarios_are_anchored_in_the_docs():
+    """八个行为场景逐一绑定到文档锚点。
+
+    这是**结构性绑定**：文档是 Codex 的行为来源，锚点消失 = 该行为失去出处。
+    它验证的是「文档承诺了这个行为」，不是「真实 agent 在该场景下真的这么做」
+    ——后者需要真 Codex 会话，见下面的真实 CLI 冒烟与 PR 里的验证清单。
+    """
+    data = json.loads(
+        (ROOT / "tests" / "fixtures" / "codex_first_use_scenarios.json")
+        .read_text(encoding="utf-8"))
+    scenarios = data["scenarios"]
+    assert len(scenarios) >= 8, "八个基本场景一个都不能少"
+    ids = [s["id"] for s in scenarios]
+    assert len(ids) == len(set(ids))
+    for scenario in scenarios:
+        for anchor in scenario["anchors"]:
+            doc_path = ROOT / anchor["doc"]
+            assert doc_path.is_file(), f"{scenario['id']}: 文档不存在 {anchor['doc']}"
+            doc = _squash(doc_path.read_text(encoding="utf-8"))
+            for needle in anchor["must"]:
+                assert _squash(needle) in doc, (
+                    f"场景 {scenario['id']} 的锚点在 {anchor['doc']} 里找不到：{needle!r}")
+            for needle in anchor.get("must_not", []):
+                assert _squash(needle) not in doc, (
+                    f"场景 {scenario['id']} 禁止的内容出现在 {anchor['doc']}：{needle!r}")
+
+
+# -------------------- 真实 Codex CLI 安装冒烟（有 CLI 才跑） ---------------
+# 用真的 `codex plugin` 命令 + 全新 CODEX_HOME 装本仓库工作副本：
+# 验证市场清单、插件形状与 openai.yaml 真的能被当前 Codex CLI 接受。
+# CI 的 runner 没有 codex CLI 时自动跳过（保留给本机与 self-hosted nightly）；
+# 走 GitHub 源 + --sparse 的联网变体由 TAVOTTO_CODEX_NET_SMOKE=1 显式开启。
+
+codex_cli = shutil.which("codex")
+needs_codex_cli = pytest.mark.skipif(
+    codex_cli is None, reason="PATH 里没有 codex CLI")
+
+
+def _codex(args, codex_home, cwd=None, timeout=120):
+    env = {**os.environ, "CODEX_HOME": str(codex_home)}
+    return subprocess.run([codex_cli, *args], capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", env=env,
+                          cwd=cwd, timeout=timeout)
+
+
+@needs_codex_cli
+def test_real_codex_installs_the_plugin_from_a_local_marketplace(tmp_path):
+    """fresh CODEX_HOME：marketplace add（本地路径）→ plugin add → plugin list。
+
+    校验 checkout/缓存里确实有市场清单认识的插件（plugin.json + SKILL.md +
+    .mcp.json + openai.yaml），而不是只看命令退出码。
+    """
+    home = tmp_path / "codex-home"
+    home.mkdir()
+    proc = _codex(["plugin", "marketplace", "add", str(ROOT)], home)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    proc = _codex(["plugin", "add", "tavotto@tavotto"], home)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    proc = _codex(["plugin", "list"], home)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "tavotto" in proc.stdout
+
+    # CODEX_HOME 里能找到插件本体的关键文件（缓存布局是实现细节，按内容找）
+    found = {name: False for name in
+             ("plugin.json", "SKILL.md", ".mcp.json", "openai.yaml")}
+    for path in home.rglob("*"):
+        if path.name in found:
+            found[path.name] = True
+    missing = [name for name, ok in found.items() if not ok]
+    assert not missing, f"CODEX_HOME 的插件 checkout 里缺 {missing}"
+
+
+@needs_codex_cli
+@pytest.mark.skipif(os.environ.get("TAVOTTO_CODEX_NET_SMOKE") != "1",
+                    reason="联网冒烟需 TAVOTTO_CODEX_NET_SMOKE=1（nightly/手动）")
+def test_real_codex_sparse_install_from_github(tmp_path):
+    """README 教用户的那条 sparse 命令，对着真 GitHub 仓库跑一遍。"""
+    home = tmp_path / "codex-home"
+    home.mkdir()
+    proc = _codex(["plugin", "marketplace", "add", "Tavotto/Tavotto",
+                   "--sparse", ".agents/plugins", "--sparse", "codex-plugin"],
+                  home, timeout=300)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    proc = _codex(["plugin", "add", "tavotto@tavotto"], home, timeout=300)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    proc = _codex(["plugin", "list"], home)
+    assert proc.returncode == 0 and "tavotto" in proc.stdout, \
+        proc.stdout + proc.stderr
