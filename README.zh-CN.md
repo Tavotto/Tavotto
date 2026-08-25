@@ -1,6 +1,6 @@
 <p align="center">
   <img src="https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/hero.svg" width="100%"
-       alt="Tavotto —— matplotlib 与 AI 生成科研图的可视化编辑器。直接改图，代码还在。">
+       alt="Tavotto —— matplotlib 与 AI 生成科研图的可视化编辑器。直接编辑图表，不必放弃代码。">
 </p>
 
 <p align="center">
