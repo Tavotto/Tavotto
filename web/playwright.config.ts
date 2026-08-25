@@ -43,7 +43,7 @@ export default defineConfig({
     {
       name: 'webkit',
       use: { ...devices['Desktop Safari'] },
-      testMatch: ['golden-paths.spec.ts', 'a11y.spec.ts'],
+      testMatch: ['golden-paths.spec.ts', 'a11y.spec.ts', 'keyboard-golden-path.spec.ts'],
     },
     // 英文 locale（审计 P1-02/P1-03）：a11y spec 是语言无关写法；
     // 英文的完整流程覆盖在 i18n.spec.ts（两种语言各走一遍）。

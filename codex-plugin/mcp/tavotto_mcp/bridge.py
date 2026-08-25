@@ -532,6 +532,11 @@ def export_raster_issues(profile: dict, formats: list[str] | None,
         "id": "raster-dpi",
         "severity": engine_profiles.severity_of(profile, "raster-dpi"),
         "text": f"导出 {'/'.join(hit)} 用的 {got:g}dpi 低于规范的 {min_dpi:g}dpi",
+        # issue #30：widget 按自己的 locale 渲染，key 登记在前端
+        # errors:preflight.exportRasterDpi（i18n:check 看护双语齐全）
+        "message": {"key": "exportRasterDpi",
+                    "params": {"formats": "/".join(hit),
+                               "dpi": f"{got:g}", "min": f"{min_dpi:g}"}},
         "object_ids": [], "gids": [],
         "detail": {"dpi": got, "min_dpi": min_dpi, "formats": hit},
     }]

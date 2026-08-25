@@ -101,6 +101,7 @@
     "bitmapEmbed": "Flipped or semi-transparent panels are embedded in the PDF as bitmaps at export DPI; vector text is not preserved",
     "cjkFallbackMissing": "Text containing CJK characters uses {{family}} with no CJK fallback declared — it will come out as boxes in the exported PDF",
     "discouragedColormap": "The colormap {{cmap}} is not perceptually uniform; the profile recommends {{recommended}}",
+    "exportRasterDpi": "Exporting {{formats}} at {{dpi}} dpi is below the profile's {{min}} dpi",
     "fitWithoutCi": "There is a fitted curve but no confidence band — submissions usually require the uncertainty of the fit",
     "fontBelowFloor": "Figure text at an effective {{effective}}pt is not above the absolute floor of {{floor}}pt",
     "fontFamilySubstituted": "Figure text uses {{family}}; the profile requires {{want}}",

@@ -1,6 +1,8 @@
 import { StrictMode, useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
+import { applyLocale } from '@/i18n'
+import { normalizeLocale } from '@/i18n/locale'
 import { AppsBridge, hostFallback } from './appsBridge'
 import { McpApp } from './McpApp'
 import { McpProviders } from './McpProviders'
@@ -68,6 +70,25 @@ function Boot() {
       setState('ready')
     }
 
+    // 画布跟随 **Codex host** 的界面语言（issue #30）：iframe 自己探测到的
+    // navigator/localStorage 语言属于这台浏览器，不属于用户正对着的宿主界面。
+    // 认不出的 locale 保持现状（探测链的结果），不硬扳。
+    const applyHostLocale = (ctx: unknown) => {
+      const tag =
+        ctx && typeof ctx === 'object' && typeof (ctx as { locale?: unknown }).locale === 'string'
+          ? ((ctx as { locale: string }).locale)
+          : null
+      const loc = normalizeLocale(tag)
+      if (loc) void applyLocale(loc)
+    }
+    // host 中途切语言：hostContext 可能平铺在 params 里，也可能包一层
+    const offLocale = bridge.on('ui/notifications/host-context-changed', (params) => {
+      const p = params as { hostContext?: Record<string, unknown> } | null
+      const ctx = (p?.hostContext ?? p ?? {}) as Record<string, unknown>
+      bridge.hostContext = { ...(bridge.hostContext ?? {}), ...ctx }
+      applyHostLocale(ctx)
+    })
+
     // MCP Apps 标准路径：host 把工具结果推过来
     const off = bridge.on('ui/notifications/tool-result', (params) => {
       // MCP Apps 2026-01-26 sends CallToolResult directly as notification params.
@@ -88,6 +109,8 @@ function Boot() {
         setState('nohost')
         return
       }
+      // 握手响应里带的 hostContext：先于一切界面渲染把语言对齐到宿主
+      applyHostLocale(bridge.hostContext)
       // 复杂编辑画布：inline 那点高度放不下图 + 属性页
       bridge.requestFullscreen()
       setState((s) => (s === 'ready' ? s : 'waiting'))
@@ -98,6 +121,7 @@ function Boot() {
 
     return () => {
       off()
+      offLocale()
     }
   }, [])
 
