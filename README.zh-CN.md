@@ -163,7 +163,12 @@ codex plugin marketplace add Tavotto/Tavotto && codex plugin add tavotto@tavotto
 装完约半个 GB**。只付一次，而且完全离线。
 
 > macOS 版**只发 Apple Silicon（arm64）**。Intel Mac 没有构建、也没有验证过，
-> 请走下面的 PyPI 安装。没有 Linux 安装包；Linux 走 PyPI。
+> 请走下面的 PyPI 安装。没有 Linux 安装包；Linux 走 PyPI（浏览器模式，beta）。
+> Windows 安装包是否经过代码签名，以各版 Release 页的说明为准；未签名的安装包
+> 首次运行会弹 **SmartScreen** 提示（点「更多信息 → 仍要运行」，或先对照
+> Release 页的 `SHA256SUMS.txt` 核验下载）。支持 / beta / 不支持的唯一权威
+> 清单是 [`docs/support-matrix.json`](docs/support-matrix.json)——发行页、
+> 官网与应用内文案都以它为准（可机器核对的部分有测试看护）。
 
 ### PyPI
 
