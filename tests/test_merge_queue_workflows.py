@@ -204,10 +204,14 @@ class TestGates:
 
     def test_heavy_jobs_run_on_merge_group(self):
         """PR 1 的关键兼容性：旧 required contexts（package / smoke）在
-        merge_group 上也要产出结论，否则 enable-queue 之后队列全部超时。"""
+        merge_group 上也要产出结论，否则 enable-queue 之后队列全部超时。
+
+        折叠块的行模式写成 ` {6,}\\S.*`（缩进全部交给 ` {6,}`、正文以 \\S
+        起头）：`(?:\\s+.+\\n)+` 那种 `\\s` 与 `.` 重叠的嵌套量词是 CodeQL
+        py/redos 实打实报过的（#119），恶意构造的输入能让它指数回溯。"""
         for job_id in ("package", "windows-exe-smoke", "macos-app-smoke"):
             block = _code(_job(CI, job_id))
-            m = re.search(r"(?m)^\s+if: >-\n((?:\s+.+\n)+?)\s+needs:", block)
+            m = re.search(r"(?m)^    if: >-\n((?: {6,}\S.*\n)+)", block)
             assert m, f"{job_id} 的 if 条件解析不出来"
             cond = m.group(1)
             assert "github.event_name == 'merge_group'" in cond, \
