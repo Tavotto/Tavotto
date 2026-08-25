@@ -560,7 +560,6 @@ FunctionEnd
   LangString finishText        ${LANG_ENGLISH} "Tavotto has been installed on this computer."
   LangString openTavotto       ${LANG_ENGLISH} "Open Tavotto"
   LangString registeringTavotto ${LANG_ENGLISH} "Registering the Tavotto command line"
-  LangString removingMagplot   ${LANG_ENGLISH} "Removing the old Magplot version"
 !endif
 !ifdef LANG_SIMPCHINESE
   LangString preparingTavotto  ${LANG_SIMPCHINESE} "正在准备 Tavotto"
@@ -569,7 +568,6 @@ FunctionEnd
   LangString finishText        ${LANG_SIMPCHINESE} "Tavotto 已经装到这台电脑上。"
   LangString openTavotto       ${LANG_SIMPCHINESE} "打开 Tavotto"
   LangString registeringTavotto ${LANG_SIMPCHINESE} "正在登记 Tavotto 命令行入口"
-  LangString removingMagplot   ${LANG_SIMPCHINESE} "正在移除旧版 Magplot"
 !endif
 
 Function .onInit
@@ -736,63 +734,7 @@ Section WebView2
   ${EndIf}
 SectionEnd
 
-; TAVOTTO PATCH: Magplot 0.7 迁移 ---------------------------------------
-; 2026-08-20 改名前的桌面版装在另一个身份下（ProductName "Magplot"、
-; com.erwanjun.magplot、装在 $LOCALAPPDATA\Magplot），本安装器的升级检测
-; （PageReinstall 只认 ${UNINSTKEY} = Uninstall\Tavotto）看不见它——
-; 不管是双击安装还是旧版应用内更新走的 /P /UPDATE 静默路径，装完都会
-; 出现两个并存的应用：旧 Magplot 还在、还在提示「有新版本」，用户以为
-; 更新失败，只能去 Releases 手动折腾。这里在装 Tavotto 之前把旧身份
-; 静默卸载掉（旧模板的 CheckIfAppIsRunning 在静默模式下会顺手结束仍在
-; 跑的 Magplot 进程）：
-;   * /S            —— 静默，不弹旧卸载器的界面；
-;   * _?=<旧目录>   —— 让卸载器就地同步运行（拿得到退出码），代价是它
-;                      删不掉自己的 uninstall.exe，末尾补删；
-;   * 数据目录不动  —— 旧卸载器静默模式不删用户数据，与改名时「干净
-;                      断裂」的决定一致（旧数据本来就不迁移）。
-; 卸载失败**不阻断安装**：新 Tavotto 照装，最坏回到今天的现状（两个
-; 应用并存），比装到一半 Abort 好。0.7.0 只发过 currentUser 安装
-; （HKCU），HKLM 一并查只是兜底。
-Function MigrateMagplot
-  StrCpy $R9 "HKCU"
-  ReadRegStr $R8 HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Magplot" "UninstallString"
-  ${If} $R8 == ""
-    StrCpy $R9 "HKLM"
-    ReadRegStr $R8 HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Magplot" "UninstallString"
-  ${EndIf}
-  ${If} $R8 == ""
-    Return
-  ${EndIf}
-
-  ; UninstallString 形如 "C:\...\Magplot\uninstall.exe"（旧模板写入时带引号），
-  ; 去引号后取所在目录作 _?= 参数
-  StrCpy $R7 $R8
-  StrCpy $R6 $R7 1
-  ${If} $R6 == "$\""
-    StrCpy $R7 $R7 "" 1
-    StrCpy $R7 $R7 -1
-  ${EndIf}
-  ${IfNot} ${FileExists} "$R7"
-    Return ; 注册表残留但卸载器已不在：没有可执行的迁移，装新版即可
-  ${EndIf}
-  ${GetParent} $R7 $R5
-
-  DetailPrint "$(removingMagplot)"
-  ClearErrors
-  ExecWait '$R8 /S _?=$R5' $R4
-  ${IfNot} ${Errors}
-  ${AndIf} $R4 = 0
-    ; _?= 模式下卸载器删不掉自己；目录里只剩它时一并收走
-    Delete "$R7"
-    RMDir "$R5"
-  ${EndIf}
-FunctionEnd
-; TAVOTTO PATCH END ------------------------------------------------------
-
 Section Install
-  ; TAVOTTO PATCH: Magplot 0.7 迁移（函数在上面，理由也在那儿）
-  Call MigrateMagplot
-
   ; TAVOTTO PATCH: 进度条上方那行只说人话。
   ; 展开文件时 NSIS 默认把每个文件名刷上去（Extract: python313.dll…），
   ; 内置渲染 runtime 有几千个文件，那一行会疯狂闪。listonly 让这些只进

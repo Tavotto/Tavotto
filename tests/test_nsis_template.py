@@ -44,7 +44,6 @@ BRAND_STRINGS = (
     "finishText",
     "openTavotto",
     "registeringTavotto",
-    "removingMagplot",
 )
 
 
@@ -245,33 +244,18 @@ def test_exception_flows_still_have_their_pages():
     assert "!insertmacro MUI_UNPAGE_INSTFILES" in TEXT
 
 
-def test_magplot_migration_runs_before_install():
-    """Magplot 0.7 装在另一个身份下（Uninstall\\Magplot），本安装器的升级
-    检测（只认 ${UNINSTKEY}）看不见它——不迁移的话双击安装与旧版应用内
-    更新（/P /UPDATE）都会装出两个并存的应用，旧的还在提示更新。
+def test_no_magplot_migration_in_the_installer():
+    """安装器**不许**识别 Magplot 0.7 的旧身份（PR #101 review 裁决）。
 
-    要点：迁移先于文件复制；旧卸载器静默（/S）且就地同步（_?=，拿得到
-    退出码）；失败**不 Abort**——装不上新版比两个应用并存糟糕得多。
+    曾试过在 Section Install 前静默卸载 `Uninstall\\Magplot`（让 0.7.0 的
+    应用内更新一步换成 Tavotto），被 review 按 AGENTS.md 的「干净断裂」
+    否掉：那段的语境正是**不认上一代的名字**，唯二例外都是「用户磁盘上
+    我们改不到的东西」的读取端回退，安装器新添一处对旧身份的识别不在
+    其列。0.7.0 的既定路径是发版说明写明「先卸载旧版」（issue #99），
+    `docs/migration-magplot.md` 桌面一节照此描述。
     """
-    assert "Function MigrateMagplot" in CODE
-    section = TEXT.split("Section Install\n")[1].split("SectionEnd")[0]
-    assert "Call MigrateMagplot" in section
-    assert section.index("Call MigrateMagplot") < section.index(
-        "CheckIfAppIsRunning"
-    ), "迁移必须在复制文件与运行检测之前"
-    fn = TEXT.split("Function MigrateMagplot")[1].split("FunctionEnd")[0]
-    fn_code = "\n".join(
-        ln for ln in fn.splitlines() if not ln.lstrip().startswith(";")
-    )
-    for hive in ("HKCU", "HKLM"):
-        needle = (
-            f'ReadRegStr $R8 {hive} '
-            '"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Magplot" '
-            '"UninstallString"'
-        )
-        assert needle in fn_code, f"迁移必须查 {hive} 的 Magplot 卸载键"
-    assert "/S _?=" in fn_code, "旧卸载器必须静默 + 就地同步运行"
-    assert "Abort" not in fn_code, "迁移失败不许阻断安装"
+    assert "MigrateMagplot" not in CODE
+    assert "Uninstall\\Magplot" not in CODE
 
 
 def test_payload_and_registration_survive():
