@@ -185,4 +185,109 @@ matplotlib，不联网）、`LegendPositionPicker`（3×3 网格 + best）、
 
 ## 三、修改后验收
 
-（实施完成后回填：after/ 截图、量化验收清单逐条对照、测试结果。）
+### 3.1 修改后截图（after/，与 before/ 同一套状态矩阵）
+
+| 截图 | 验收点 |
+|---|---|
+| `zh-1440-title-selected` | 标题首屏：内容 / **字体**（衬线，Aa 预览）/ **字号** + B/I / 颜色 / 对齐——全部带可见标签，零折叠可达 |
+| `zh-1440-line-selected` | 曲线首屏：名称 / 颜色 / 线宽 / **线型（真实线段预览）** / **标记（图形选择器）** / 标记大小 |
+| `zh-1440-legend-selected` | 图例首屏：**3×3 位置网格 + 自动档** / 字号 / 边框开关 / 描边色 / 背景色 |
+| `zh-1440-axes-selected` | 子图首屏：X/Y 范围 / 轴缩放 / **可点击的刻度与边框状态图** / X/Y 网格；裸 rect 移入「源文件与高级」 |
+| `zh-1440-ticks-selected` | 刻度组首屏：主刻度方式 / 字号 / 颜色 / 四边状态图（写宿主子图的真实字段） |
+| `zh-1440-panel-selected` | 面板三层：图内编辑 + 几何 + 裁剪/适配常驻；旋转/翻转/透明度/替换进「更多」；写回/历史/诊断进「源文件与高级」 |
+| `zh-1366x768-title-selected` | **左树 + 画布 + 属性栏三者共存**，画布 >650px |
+| `en-1440-title-selected` | 英文 Font / Size / Color / Align 可见标签，无溢出 |
+| 各分辨率 `*-title-selected` | 1024（互斥停靠）/ 1280 / 1366 / 1440 / 1920 无溢出、无截断 |
+
+上下文工具条（Quick Edit 的可发现入口）在 line/legend/title/panel 各 after 截图中
+均可见：贴着选择框、给 3–5 个高频动作 + 「全部属性」出口，且被约束在画布区
+（不盖侧栏）。
+
+### 3.2 量化验收清单（§22 逐条）
+
+- ✅ 选中文字：字体/字号/字形/颜色 无需展开折叠组（after: title 截图 + e2e 流程 A）
+- ✅ 选中曲线：颜色/线宽/线型/marker 无需展开折叠组（after: line 截图 + e2e 流程 B）
+- ✅ 线型不读 `--`/`-.` 编码：LineStylePicker 真实线段预览（pickers.test）
+- ✅ marker 不记字符：MarkerPicker 图形网格（pickers.test）
+- ✅ 图例位置不开文字 Select：3×3 网格（e2e 流程 C）
+- ✅ 1366×768 左树与属性栏共存（uiStore.test + e2e 布局用例 + after 截图）
+- ✅ 右栏默认 360px（320–480 可调），标签可见（uiStore.test 迁移用例）
+- ✅ 字体/字号不存在「只有 aria-label」的控件（textStyleBar.test：可见文字断言）
+- ✅ 高频操作最多一层交互（primary 平铺；popover 仅限 marker/hatch/colormap 长列表）
+- ✅ 高级与写回默认折叠（inspectorFolding.test：源文件与高级默认关闭）
+- ✅ 未知 manifest 字段仍可访问（presentation/registry.test：未知字段进「更多」不丢失）
+- ✅ preview / render / undo / redo / replay / reset / write-back validation 全部不变：
+  写入仍走 setOverride/updateObjects/useElementWriter（elementStylePreview.test 16 例
+  原样通过：局部预览零后端、一轮一条历史、granular 语义），引擎与写回代码零改动
+- ✅ 中英文无溢出无裸 key（pnpm i18n:check + e2e/i18n.spec 17 例）
+- ✅ 现有测试全部通过（vitest 74 文件 871 例；受影响 e2e 5 个 spec 全绿）
+- ✅ 无新增 P0/P1 数据安全风险（文档 schema、引擎协议、写回三段事务零改动）
+
+### 3.3 测试命令与结果（2026-08-25）
+
+```
+cd web && pnpm test                       # 74 files, 871 tests, 全绿
+cd web && pnpm build                      # tsc -b + vite，零错误
+cd web && pnpm i18n:check                 # 类型 / 对齐 / 硬编码 / 复数，全绿
+cd web && pnpm exec playwright test \
+  e2e/inspector-redesign.spec.ts \        # 流程 A+E / B+C / 1366 共存，3/3
+  e2e/fake-realtime.spec.ts \             # 假实时不回归
+  e2e/element-path-selection.spec.ts \    # 路径选中不回归
+  e2e/i18n.spec.ts e2e/a11y.spec.ts       # 17 例全绿
+python scripts/build_mcp_widget.py --check   # 画布产物已重建、指纹一致
+.venv/bin/python -m pytest tests/test_codex_plugin.py   # 全绿
+```
+
+### 3.4 未解决 / 明确取舍
+
+- **1024–1279 维持互斥停靠**：双停靠会把画布压破 600px。此档从树里选元素
+  仍不会自动唤出右栏（焦点在抽屉里不抢），需点画布或收起树——记录在案。
+- **Assistant 未拆成独立 Dock**：以「独立入口 + 选中即回属性 + 运行状态点」
+  达成本轮目标；Dock 化的代价与理由见 ADR 0010 §3。
+- **单选面板的「层级」工具带（ArrangeSection）排在「源文件与高级」之后**：
+  两者分属不同组件树（类型专属段 vs 通用排列段），本轮不动组件边界。
+- **TickAndSpineDiagram 的关侧提示较淡**（虚线 + 30% 透明度）：有 tooltip 与
+  焦点态兜底；如需更强提示，可在 post-1.0 调整对比度。
+- **browser playground / 网站产物未同步**：`web/src` 变更后 playground 与
+  MCP 画布两个产物都要重建——MCP 画布已重建进本分支；playground 的
+  网站同步（Tavotto_website `pnpm sync-playground`）属发布流程，随下次发版走。
+
+### 3.5 改动范围声明
+
+- **引擎协议 / manifest / overrides / 写回验证 / 重放 / 文档 schema：零改动**
+  （`src/tavotto/` 下唯一变化是无——本分支不含任何 Python 改动）。
+- 新增持久化仅两处 localStorage 键：`tavotto.ui`（版本 2 迁移）与
+  `tavotto.inspector`（「更多」按角色展开偏好）。
+- `codex-plugin/mcp/widget/canvas.html` 为受管构建物随源码重建。
+
+### 3.6 新增 / 修改文件清单
+
+新增：`web/src/components/inspector/presentation/{types,roleProfiles,registry}.ts(+test)`、
+`web/src/components/inspector/controls/{OptionGrid,LineStylePicker,MarkerPicker,HatchPicker,ColormapPicker,LegendPositionPicker,ArrowPickers,TickAndSpineDiagram,textRows}.tsx`、
+`controls/{colormapStops,fontStack}.ts`、`controls/pickers.test.tsx`、
+`web/src/store/inspectorPrefs.ts`、`web/src/canvas/ContextBar.tsx(+test)`、
+`web/src/components/inspector/inspectorFolding.test.tsx`、
+`web/e2e/inspector-redesign.spec.ts`、`docs/adr/0010-inspector-presentation-layer.md`、本文档与前后截图。
+
+修改：`uiStore.ts`（宽度/断点/迁移/autoShowProperties）、`Inspector.tsx`（tab 收敛、
+助手入口、身份头计数）、`ElementInspector.tsx`（三层结构、控件分派、行内恢复）、
+`TextStyleBar.tsx`（重写为带标签行）、`TextSection.tsx`（共享行 + 更多）、
+`PanelSection.tsx`（三层）、`StrokeSection.tsx`（视觉选择器）、`QuickEdit.tsx`
+（图例位置网格）、`CanvasStage.tsx`（挂 ContextBar）、i18n 两语言资源、
+`elementStylePreview.test.tsx`/`textStyleBar.test.tsx`/`TextSection.test.tsx`/
+`uiStore.test.ts`（契约更新）、`e2e/{fake-realtime,element-path-selection}.spec.ts`
+（选择器去歧义）。
+
+### 3.7 手动验证步骤（关键交互）
+
+1. `./run.sh --no-browser` → 打开 examples/figures → 双击 Fig1_kinetics.pdf。
+2. 选中面板：确认三层（图内编辑/几何/图片 → 更多 → 源文件与高级）；
+   上下文工具条出现，点「编辑图内元素」。
+3. 左轨道点「图内元素」开树：1366×768 窗口下确认树、画布、属性栏同屏。
+4. 点标题：右栏可见「字体/字号/颜色/对齐」；改字号 → 画布即时变化 →
+   头部出现「1 项已修改」→ 行尾恢复按钮点掉 → 归零。
+5. 点曲线：线型四格预览选虚线；标记选择器换方块；⌘Z/⇧⌘Z 逐步回退重做。
+6. 点图例：3×3 网格换位置；画布上拖动图例 → 位置显示「自定义（拖动过）」。
+7. 点子图：状态图上点上边框（关）→ 图上边框消失；再点它下方出现的
+   「已修改」chip → 恢复。
+8. 「源文件与高级」内：写回原始文件按钮仍在且默认折叠；gid 在此层可见。

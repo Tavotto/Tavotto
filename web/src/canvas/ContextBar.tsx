@@ -63,6 +63,11 @@ export function ContextBar() {
   const zoom = useViewportStore((s) => s.zoom)
   const panX = useViewportStore((s) => s.panX)
   const panY = useViewportStore((s) => s.panY)
+  const rightOpen = useUiStore((s) => s.rightOpen)
+  const rightWidth = useUiStore((s) => s.rightWidth)
+  const leftOpen = useUiStore((s) => s.leftOpen)
+  const leftWidth = useUiStore((s) => s.leftWidth)
+  const layout = useUiStore((s) => s.layout)
 
   const [dragging, setDragging] = useState(false)
   const [dismissed, setDismissed] = useState(false)
@@ -76,9 +81,21 @@ export function ContextBar() {
   const gid = panel && gids.length === 1 ? gids[0] : null
   const obj: CanvasObject | null =
     !panel && ids.length === 1 ? (objects.find((o) => o.id === ids[0]) ?? null) : null
+  // 只有真给得出高频动作才出现——一个孤零零的「全部属性」按钮不值得盖住画布
+  const manifest = usePanelManifest(panel)
+  const element = gid ? (manifest?.elements.find((e) => e.gid === gid) ?? null) : null
+  const hasActions = panel
+    ? !!element && !!element.editable.length && elementHasQuick(element)
+    : !!obj
   const targetKey = panel ? `el:${panel.id}:${gid ?? ''}` : obj ? `obj:${obj.id}` : ''
   const active =
-    !!targetKey && !editingText && !cropTarget && !quickOpen && tool === 'select' && !dismissed
+    !!targetKey &&
+    hasActions &&
+    !editingText &&
+    !cropTarget &&
+    !quickOpen &&
+    tool === 'select' &&
+    !dismissed
 
   // Esc 关闭只作用于**这一次选择**；选择一变就重新出现
   useEffect(() => {
@@ -139,11 +156,15 @@ export function ContextBar() {
     const r = (anchor as Element).getBoundingClientRect()
     const w = ref.current?.offsetWidth ?? 220
     const h = ref.current?.offsetHeight ?? 36
-    const x = Math.max(MARGIN, Math.min(r.left + r.width / 2 - w / 2, window.innerWidth - w - MARGIN))
+    // 不盖到侧栏上：右栏里正显示着同一批属性，盖住标签比不出现更糟
+    const docked = layout !== 'narrow'
+    const minX = (docked && leftOpen ? 44 + leftWidth : 0) + MARGIN
+    const maxX = window.innerWidth - (docked && rightOpen ? rightWidth : 0) - w - MARGIN
+    const x = Math.max(minX, Math.min(r.left + r.width / 2 - w / 2, maxX))
     let y = r.top - h - MARGIN
     if (y < TOP_SAFE) y = Math.min(r.bottom + MARGIN, window.innerHeight - h - MARGIN)
     setPos({ x, y })
-  }, [active, dragging, panel, gid, obj, objects, zoom, panX, panY])
+  }, [active, dragging, panel, gid, obj, objects, zoom, panX, panY, layout, leftOpen, leftWidth, rightOpen, rightWidth])
 
   if (!active) return null
 
@@ -306,6 +327,11 @@ function MarkObjectActions({ obj }: { obj: ArrowObject | ShapeObject }) {
 }
 
 /* ------------------------------- 图内元素 --------------------------------- */
+
+/** 这些角色有专属快捷动作；其余元素不出工具条（右栏与右键仍可达一切） */
+const ELEMENT_QUICK_ROLES = new Set(['line', 'linecoll', 'legend'])
+const elementHasQuick = (el: ManifestElement) =>
+  hasTextStyleBar(el) || ELEMENT_QUICK_ROLES.has(el.role)
 
 function ElementQuickActions({ panel, gid }: { panel: PanelObject; gid: string }) {
   const manifest = usePanelManifest(panel)
