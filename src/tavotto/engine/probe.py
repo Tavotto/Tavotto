@@ -42,16 +42,22 @@ def entry_candidates(figures_dir: str | Path, script: str) -> list[str]:
 
 def probe(figures_dir: str | Path, script: str,
           entries: list[str] | None = None) -> dict:
-    """跑一次脚本，返回它真实产出的 stem。
+    """跑一次脚本，返回它真实产出的 stem 与每张图的结构化描述。
 
-    返回 {"script", "entry", "stems", "error", "tried"}；每个候选 entry 都
-    失败时 error 是**第一个**候选的报错（静态推断的那个，对用户最有解释力），
-    而不是最后一个兜底候选的。
+    返回 {"script", "entry", "stems", "descriptors", "error", "tried"}；每个
+    候选 entry 都失败时 error 是**第一个**候选的报错（静态推断的那个，对
+    用户最有解释力），而不是最后一个兜底候选的。
+
+    `descriptors` 是 worker build 响应里那份 `CapturedFigureDescriptor`
+    payload 列表（figcapture 唯一实现），按捕获顺序：调用方从这里就拿得到
+    每张图的捕获来源（savefig / pyplot）、尺寸与写回能力，不必再猜；而且
+    **成功路径不 invalidate**——build 好的热会话留在池里，拿着 (script,
+    entry, stem) 直接渲染即可复用，不用重跑脚本。
     """
     figures_dir = str(Path(figures_dir))
     script_path = Path(figures_dir) / script
     if not script_path.is_file():
-        return {"script": script, "entry": None, "stems": [],
+        return {"script": script, "entry": None, "stems": [], "descriptors": [],
                 "error": f"脚本不存在: {script}", "tried": []}
 
     tried: list[str] = []
@@ -74,13 +80,14 @@ def probe(figures_dir: str | Path, script: str,
         if stems:
             LOG.info("探测成功 %s [entry=%s] → %s", script, entry, stems)
             return {"script": script, "entry": entry, "stems": stems,
+                    "descriptors": list(resp.get("descriptors") or []),
                     "error": None, "tried": tried}
         # 跑通了但一张图都没产出：这个 entry 大概率不是出图入口，换下一个
         if first_error is None:
             first_error = "脚本跑通了，但没有捕获到任何 Figure（入口可能不出图）"
         pool.invalidate(script, figures_dir)
 
-    return {"script": script, "entry": None, "stems": [],
+    return {"script": script, "entry": None, "stems": [], "descriptors": [],
             "error": first_error or "无法确定入口", "tried": tried}
 
 

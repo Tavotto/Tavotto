@@ -169,6 +169,11 @@ class Worker:
         #: pyplot 兜底因上限丢掉的张数（0 = 一张没丢）。build 响应带出去。
         self.dropped_figures = 0
         self._manifest_cache: dict[str, dict] = {}
+        #: 每张捕获 Figure 的结构化描述（figcapture.CapturedFigureDescriptor
+        #: 的 payload，捕获顺序）。**build 那一刻算好钉死**：fingerprint 里的
+        #: 脚本内容哈希必须是「实际被执行的那份」，之后脚本再被改，本会话
+        #: 跑的还是旧代码（watcher 会作废会话，这里不追新）。
+        self._descriptor_cache: list[dict] = []
         # 见过的 request_id（v1 的 cancel 用来分辨「那条已经跑完了」和
         # 「根本没见过这个 id」）。worker 串行读 stdin，能读到 cancel 就说明
         # 目标请求早已结束——只留最近一小段，不做无上限的账本。
@@ -289,11 +294,48 @@ class Worker:
             manifest_mod.instrument(state)
             STATES[stem] = state
             self._render(stem)
+        self._descriptor_cache = self._build_descriptors()
         self.built = True
         if timings is not None:
             timings["script_exec_ms"] = script_ms
             timings["script_build_ms"] = _ms(t_build)
         return self._stems_summary()
+
+    def _build_descriptors(self) -> list[dict]:
+        """每张捕获 Figure 的统一描述——**语义全在 figcapture，这里只是装配**。
+
+        与浏览器 playground 的 load 响应共用同一份工厂（对拍用例在
+        `test_compat_capture_parity.py`）。原始产物只对 savefig 来源的 stem
+        查（pyplot 捕获的图从没存过盘，磁盘上碰巧同名的文件不是它的原件，
+        工厂对「pyplot + 产物」直接抛）。
+        """
+        try:
+            rel = self.script.relative_to(self.figures_dir).as_posix()
+        except ValueError:                       # 脚本不在图库下（防御，不该发生）
+            rel = self.script.name
+        try:
+            script_bytes = self.script.read_bytes()
+        except OSError:
+            script_bytes = b""
+        fingerprint = figcapture.source_fingerprint(
+            script_bytes, script=rel, entry=self.entry,
+            profile=figcapture.PROFILE_SAFE, target_kind="script", argv=(),
+            passthrough_savefig=False,
+            matplotlib_version=matplotlib.__version__)
+        out = []
+        for stem in STATES:                      # 捕获顺序（dict 保序）
+            source = CAPTURE_SOURCE.get(stem, figcapture.SOURCE_SAVEFIG)
+            artifact = None
+            if source == figcapture.SOURCE_SAVEFIG:
+                artifact = figcapture.find_original_artifact(
+                    str(self.figures_dir), stem)
+            out.append(figcapture.build_descriptor(
+                script=rel, entry=self.entry, stem=stem, capture_source=source,
+                execution_profile=figcapture.PROFILE_SAFE,
+                size_mm=figcapture.size_mm_of(STATES[stem].fig),
+                source_fingerprint=fingerprint,
+                original_artifact=artifact).to_payload())
+        return out
 
     def _stems_summary(self) -> dict:
         # `source` 是加字段，不升协议版本（ADR 0003 §1：两侧容忍未知字段）。
@@ -531,7 +573,10 @@ class Worker:
         timings: dict[str, float] = {}
         self._ensure_built(timings)
         if cmd == "build":
-            return {**self._stems_summary(), "timings": timings}
+            # `descriptors` 是加字段，不升协议版本（ADR 0003 §1）；**只在 v1
+            # 出现**，legacy 信封的形状一字不改（与 `timings` 同一条纪律）。
+            return {**self._stems_summary(),
+                    "descriptors": self._descriptor_cache, "timings": timings}
 
         result: dict = {}
         stem = req.get("stem")

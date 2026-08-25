@@ -95,6 +95,9 @@ def _patched_savefig(self, fname, *args, **kwargs):
     stem = figcapture.savefig_stem(fname)
     if stem:
         _session_capture().setdefault(stem, self)
+        # 来源记账与 worker.CAPTURE_SOURCE 同语义：savefig 认领的 stem
+        # **可能**有原始产物（在桌面上；这里的虚拟 FS 里永远没有）。
+        _session_sources().setdefault(stem, figcapture.SOURCE_SAVEFIG)
     return None
 
 
@@ -173,6 +176,7 @@ class BrowserSession:
     def __init__(self, workspace: str = "/workspace"):
         self.workspace = workspace
         self.capture: dict[str, object] = {}     # stem → Figure（脚本产出顺序）
+        self.capture_source: dict[str, str] = {}  # stem → figcapture.SOURCE_*
         self.states: dict[str, overrides_mod.FigState] = {}
         self.revision = 0
         self.script_name = ""
@@ -248,13 +252,16 @@ class BrowserSession:
         # 实现——两边各写一份的话，同一个脚本会在两个入口产出不同的 stem，
         # 而前端按 stem 索引一切。
         base = os.path.splitext(safe_name)[0]
-        _, dropped = figcapture.collect_pyplot_figures(
+        fallback, dropped = figcapture.collect_pyplot_figures(
             self.capture, base, plt, limit=MAX_FIGURES)
+        for stem in fallback:
+            self.capture_source[stem] = figcapture.SOURCE_PYPLOT
 
         truncated = dropped + max(0, len(self.capture) - MAX_FIGURES)
         if len(self.capture) > MAX_FIGURES:
             for stem in list(self.capture)[MAX_FIGURES:]:
                 del self.capture[stem]
+                self.capture_source.pop(stem, None)
 
         figures = []
         for stem, fig in self.capture.items():
@@ -268,10 +275,33 @@ class BrowserSession:
         # 完整性哈希在**脚本跑完之后**采：要证明的是「实际被执行的那个文件
         # 此刻仍与你给的一模一样」，写进去就立刻算等于只验了一次 write。
         status = self.source_status()
+        # `descriptors` 是加字段（旧前端原样忽略）：与桌面 worker 的 build
+        # 响应共用 figcapture 那一份描述符语义（对拍用例钉住）。playground
+        # 的**记录在案差异**如实体现在字段值上：entry 恒 "__main__"（按
+        # `python figure.py` 语义跑）、original_artifact 恒 None（虚拟 FS
+        # 里没有用户原件，写回本来就不存在于这个入口）。
         return {"ok": True, "figures": figures, "log": log.text(),
+                "descriptors": self._descriptors(source.encode("utf-8")),
                 "truncated_figures": truncated, "script": self.script_name,
                 "source_sha256": status.get("sha256", ""),
                 "source_bytes": status.get("bytes", 0)}
+
+    def _descriptors(self, script_bytes: bytes) -> list[dict]:
+        """捕获描述符（figcapture 唯一实现的装配，语义见 load 里的注释）。"""
+        fingerprint = figcapture.source_fingerprint(
+            script_bytes, script=self.script_name, entry="__main__",
+            profile=figcapture.PROFILE_SAFE, target_kind="script", argv=(),
+            passthrough_savefig=False,
+            matplotlib_version=matplotlib.__version__)
+        return [figcapture.build_descriptor(
+                    script=self.script_name, entry="__main__", stem=stem,
+                    capture_source=self.capture_source.get(
+                        stem, figcapture.SOURCE_SAVEFIG),
+                    execution_profile=figcapture.PROFILE_SAFE,
+                    size_mm=figcapture.size_mm_of(fig),
+                    source_fingerprint=fingerprint,
+                    original_artifact=None).to_payload()
+                for stem, fig in self.capture.items()]
 
     # ---------------- 源文件完整性 ----------------
     def source_status(self) -> dict:
@@ -407,6 +437,10 @@ _ACTIVE: BrowserSession | None = None
 
 def _session_capture() -> dict:
     return _ACTIVE.capture if _ACTIVE is not None else {}
+
+
+def _session_sources() -> dict:
+    return _ACTIVE.capture_source if _ACTIVE is not None else {}
 
 
 def _err(code: str, message: str, **extra) -> dict:

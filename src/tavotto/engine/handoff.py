@@ -46,6 +46,7 @@ from typing import NamedTuple
 from urllib.parse import quote
 
 from . import discover as engine_discover
+from . import figcapture as engine_figcapture
 from . import locate as engine_locate
 from . import registry as engine_registry
 from . import session_client
@@ -119,11 +120,15 @@ def _script_stems(script: str, project: str) -> list[str]:
 
 
 def _first_on_disk(stems: list[str], project: str, *, isfile=os.path.isfile) -> str | None:
-    """一脚本多产物时优先取磁盘上真的存在的那个（刚跑完的那张图）。"""
+    """一脚本多产物时优先取磁盘上真的存在的那个（刚跑完的那张图）。
+
+    「stem 的原始产物在磁盘哪里」的判据只有 `figcapture.find_original_artifact`
+    一份（捕获描述符判「有没有原件」用的也是它）——这里只是按 stem 顺序问。
+    """
     for stem in stems:
-        for ext in OUT_EXTS:
-            if isfile(os.path.join(project, stem + ext)):
-                return stem
+        if engine_figcapture.find_original_artifact(project, stem,
+                                                    isfile=isfile) is not None:
+            return stem
     return stems[0] if stems else None
 
 

@@ -19,7 +19,18 @@ cwd、argv、env、module invocation 每一项都与 safe worker 不同，逐条
 
 ## 决策（草案）
 
-### 0. 统一 ExecutionSpec（Session 2 落地，safe 先行）
+### 0. 统一 ExecutionSpec（Session 2 已落地，safe 先行）
+
+> **落地记录（2026-08-25，Session 2）**：实现为 `engine/execspec.py`。
+> `safe_spec()` 是 safe 档默认值的唯一权威构造函数；worker argv 唯一出处
+> `worker_argv()`，`EngineWorker.__init__` 与 `_spawn_spec()` 两条 spawn
+> 路径都改为它的消费者（行为逐字节不变，`test_workerd_pool.py` 对拍 +
+> `test_execspec.py` golden argv 看护）。`env` 字段只存**增量**（bundled
+> runtime 的 `child_env(base={})` 注入项），绝不序列化整份父进程环境；
+> 两条控制面怎么把增量落成子进程环境仍是 pool 的机制细节（EngineWorker
+> 全量 `child_env()`、workerd 只传增量——与落地前的行为一致）。
+> `stable_payload()` 是跨机器稳定字段的子集（fingerprint / 未来持久化
+> 只准用这一档）。native 仍未实现，`worker_argv` 对 native 显式拒绝。
 
 所有"跑一个脚本"的入口统一经过一个不可变描述（字段名可按仓库风格调整）：
 

@@ -122,6 +122,23 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
     `missing_file` 才是对的。桌面的 `entry` 机制同样是超集（浏览器按
     `python figure.py` 跑，只有 `def main():` 而没人调用的脚本在原生 Python
     下也不画图）——这两条差异是**记录在案的**，不是疏漏。
+- **统一执行描述与捕获描述符（2026-08-25，ADR 0013/0014）**：
+  * 「跑一个脚本」的语义收在 `engine/execspec.py`：safe 档默认值唯一出处
+    `safe_spec()`，worker 子进程 argv 唯一出处 `worker_argv()`——
+    `EngineWorker.__init__` 与 `_spawn_spec()` 都是它的消费者
+    （`test_workerd_pool.py` 对拍 + `test_execspec.py` golden 看护）。
+    新入口不得再手拼 entry/cwd/argv。`spec.env` 只存**注入增量**，
+    序列化绝不携带整份父进程环境。
+  * 每张捕获 Figure 的结构化描述（`CapturedFigureDescriptor`）唯一实现在
+    `figcapture`：asset id `runtime:<script>#<stem>`（不透明标识，entry
+    刻意不进 id）、`source_fingerprint`（只是 stale hint，别声称覆盖数据
+    依赖）、writeback 能力**只能派生不能指定**（pyplot 捕获结构上拿不到
+    原件）。worker v1 build 响应与 browser load 响应各带一份 `descriptors`
+    （加字段不升版；legacy 信封零改动），probe 原样透传——worker/browser
+    的逐字段对拍在 `test_compat_capture_parity.py`。
+  * 「什么算一份图产物」唯一出处 `figcapture.ARTIFACT_EXTS`
+    （`discover.OUT_EXTS` / `handoff.OUT_EXTS` 是镜像别名）；「stem 的原始
+    产物在哪」唯一判据 `figcapture.find_original_artifact`。
 - **worker 协议 v1（2026-08-18）**：请求带 `protocol_version/request_id/
   worker_generation/render_revision/canonical_patch_hash` 信封，命令
   ping/build/render/render_png/preview_png/export/cancel/shutdown，

@@ -103,10 +103,17 @@ pyproject 的 `requires-python` 下界正是 3.10，所以这不是理论问题�
 ——覆盖它们要维护一张平台相关的语义表，收益却只是极少数直接玩 fd 的脚本。
 覆盖不到的那些由 CompatBench 如实记账，不靠猜。
 
-这两个之外不再扩大：pandas 的 `get_handle`、`numpy.load`、`PIL.Image.open`、
-`json.load(open(...))` 全部经过它们。`os.open` / `os.stat` 这类底层调用不管
-——覆盖它们要维护一张平台相关的语义表，收益却只是极少数直接玩 fd 的脚本。
-覆盖不到的那些由 CompatBench 如实记账，不靠猜。
+## CapturedFigureDescriptor（2026-08-25，Compatibility Bridge Session 2）
+
+每张捕获 Figure 的结构化描述也收在这里——它就是捕获语义的一部分：
+「这张图叫什么、从哪来、有没有原始产物、能不能写回」由捕获那一刻决定，
+worker 与 browser 各自造一份的话，两个入口又会给出两个答案。唯一出处：
+
+* `runtime_asset_id()` —— 稳定身份 `runtime:<script>#<stem>`（ADR 0013 §2）；
+* `source_fingerprint()` —— stale hint（见函数 docstring 的诚实边界）；
+* `build_descriptor()` —— 工厂：writeback 能力**只能派生，不能指定**；
+* `find_original_artifact()` —— 「stem 的原始产物在磁盘哪里」的唯一判据
+  （handoff 的 `_first_on_disk` 是它的消费者）。
 
 纯标准库（`matplotlib.pyplot` 由调用方传进来）：worker 与 browser 都在
 engine 目录平铺 import 它，Flask 父进程也 import 得动。
@@ -114,13 +121,20 @@ engine 目录平铺 import 它，Flask 父进程也 import 得动。
 from __future__ import annotations
 
 import builtins
+import dataclasses
+import hashlib
 import io
+import json
 import os
 import pathlib
 
 __all__ = ["savefig_stem", "collect_pyplot_figures", "fallback_stems",
            "install_relative_read_fallback", "MAX_PYPLOT_FALLBACK",
-           "SOURCE_SAVEFIG", "SOURCE_PYPLOT"]
+           "SOURCE_SAVEFIG", "SOURCE_PYPLOT",
+           "PROFILE_SAFE", "PROFILE_NATIVE", "ARTIFACT_EXTS",
+           "DESCRIPTOR_VERSION", "CapturedFigureDescriptor",
+           "build_descriptor", "descriptor_from_payload", "runtime_asset_id",
+           "source_fingerprint", "size_mm_of", "find_original_artifact"]
 
 #: 兜底最多补多少张。`for i in range(200): plt.figure()` 是真会出现的写法
 #: （扫参数、逐条画），每一张都要 instrument + 出一次预览 SVG——不设上限的
@@ -135,6 +149,213 @@ SOURCE_SAVEFIG = "savefig"
 #: 捕获来源：脚本跑完还活在 pyplot 里、从未存过盘的 Figure。
 #: 它**没有原始产物**——渲染 / 编辑 / 导出都成立，写回无从谈起。
 SOURCE_PYPLOT = "pyplot"
+
+#: 执行 profile（ADR 0014）。常量放在这里而不是 execspec：worker 与 browser
+#: 平铺 import 本模块（execspec 是包内模块，它们够不着），而描述符必须说清
+#: 「这次是按哪档语义跑的」。execspec 从这里 re-export，两边同一份。
+PROFILE_SAFE = "safe"
+PROFILE_NATIVE = "native"
+_PROFILES = (PROFILE_SAFE, PROFILE_NATIVE)
+_SOURCES = (SOURCE_SAVEFIG, SOURCE_PYPLOT)
+
+#: 已知的图产物扩展名——「什么算一份原始产物」的唯一出处（顺序即优先级）。
+#: `discover.OUT_EXTS` 与 `handoff.OUT_EXTS` 是它的镜像别名：静态扫描认产物、
+#: 交接找产物、描述符判「有没有原件」必须是同一张表，否则三处各认一套，
+#: 表现是「discover 说这是图、写回说没有原件」。
+ARTIFACT_EXTS = (".pdf", ".png", ".svg", ".jpg", ".jpeg", ".eps", ".tif", ".tiff")
+
+#: 捕获描述符的 schema 版本。**捕获语义改变时才升**（stem 取法、去重、
+#: fingerprint 构成……）；它参与 fingerprint，所以升版 = 所有旧 fingerprint
+#: 自然失配 = 「按旧语义捕的图可能已过时」这句 stale hint 如实成立。
+DESCRIPTOR_VERSION = 1
+
+
+def size_mm_of(fig) -> tuple[float, float]:
+    """Figure 的物理尺寸（mm，两位小数）。
+
+    与 manifest 的 `size_mm` 同一个公式（inches × 25.4，round 2）。描述符在
+    build 阶段就要报尺寸，而 browser 侧那时还没建 manifest——两边都从 Figure
+    直接算，公式只有这一份，worker/browser 的描述符才比得齐。
+    """
+    w_in, h_in = (float(v) for v in fig.get_size_inches())
+    return (round(w_in * 25.4, 2), round(h_in * 25.4, 2))
+
+
+def normalize_relative_script(script: str) -> str:
+    """脚本路径规范：项目相对、POSIX 分隔。绝对路径直接拒绝。
+
+    asset id 与 fingerprint 都吃它——混进绝对路径，同一个项目换台机器（或
+    换个挂载点）id 就变了，保存重开后 override 挂错身份（FigS3 一族事故）。
+    """
+    if not isinstance(script, str) or not script.strip():
+        raise ValueError("script 必须是非空字符串")
+    normalized = script.replace("\\", "/")
+    if normalized.startswith("/") or (len(normalized) > 1 and normalized[1] == ":"):
+        raise ValueError(f"script 必须是项目相对路径，不能是绝对路径: {script!r}")
+    return normalized
+
+
+def runtime_asset_id(script: str, stem: str) -> str:
+    """捕获 Figure 的稳定身份：`runtime:<script 相对路径>#<stem>`（ADR 0013 §2）。
+
+    只由 (脚本相对路径, stem) 决定——项目那一维由「id 存在哪个项目的文档里」
+    承担。**刻意不含** PID、临时目录、绝对路径、会话 id、时间戳、entry：
+
+    * 前五者会让重跑 / 重开 / 换机器后 override 挂错身份；
+    * entry 不进 id 是 ADR 0013 决策 2：注册表里一个脚本只有一个 entry，
+      (script, stem) 已唯一；把 entry 编进去，用户改脚本换入口重新探测后，
+      同一张图会变成一个新身份，历史 override 全部变成孤儿。
+
+    id 是**不透明标识**：消费方不得从中反解 script/stem（脚本名里可以有
+    `#`），要用就取描述符里那两个独立字段——这就是 stem 冲突的显式处理。
+    """
+    script = normalize_relative_script(script)
+    if not isinstance(stem, str) or not stem:
+        raise ValueError("stem 必须是非空字符串")
+    return f"runtime:{script}#{stem}"
+
+
+def source_fingerprint(script_bytes: bytes, *, script: str, entry: str,
+                       profile: str, target_kind: str = "script",
+                       argv: tuple = (), passthrough_savefig: bool = False,
+                       matplotlib_version: str = "") -> str:
+    """捕获那一刻的来源指纹——**只是 stale hint，不是完备性证明**。
+
+    构成：脚本内容 sha256 + ExecutionSpec 的稳定字段（script/entry/profile/
+    target_kind/argv/passthrough_savefig）+ matplotlib 版本 + 描述符 schema
+    版本。指纹不同 = 图**可能**过时；指纹相同**不保证**没过时：脚本读的
+    CSV / 本地 import 的模块 / 环境变量 / 数据库都不在指纹里——覆盖它们
+    要追踪脚本的全部 IO，那是另一个量级的工程，诚实地不声称。
+    """
+    if profile not in _PROFILES:
+        raise ValueError(f"profile 非法: {profile!r}（可选 {_PROFILES}）")
+    payload = {
+        "descriptor_version": DESCRIPTOR_VERSION,
+        "script": normalize_relative_script(script),
+        "script_sha256": hashlib.sha256(script_bytes).hexdigest(),
+        "entry": entry,
+        "profile": profile,
+        "target_kind": target_kind,
+        "argv": list(argv),
+        "passthrough_savefig": bool(passthrough_savefig),
+        "matplotlib_version": matplotlib_version,
+    }
+    canon = json.dumps(payload, ensure_ascii=False, sort_keys=True,
+                       separators=(",", ":"))
+    return "sha256:" + hashlib.sha256(canon.encode("utf-8")).hexdigest()
+
+
+def find_original_artifact(project_root: str, stem: str, *,
+                           isfile=os.path.isfile) -> str | None:
+    """项目根下 stem 的原始产物（相对路径，POSIX）；没有回 None。
+
+    判据与 handoff 交接找产物是同一份（它现在就调这里）：只看项目根一层、
+    按 `ARTIFACT_EXTS` 的顺序取第一个存在的。`isfile` 可注入是给测试与
+    handoff 的 dry 场景用的。
+    """
+    for ext in ARTIFACT_EXTS:
+        if isfile(os.path.join(project_root, stem + ext)):
+            return stem + ext
+    return None
+
+
+@dataclasses.dataclass(frozen=True)
+class CapturedFigureDescriptor:
+    """一张捕获 Figure 的结构化描述（worker / browser / probe 共用的语义）。
+
+    字段随协议走 JSON（`to_payload` / `descriptor_from_payload`）。前端与
+    调用方**不得**从路径是否为空之类的旁证猜语义——来源、有没有原件、
+    能不能写回，全部是显式字段。
+    """
+
+    asset_id: str
+    script: str                    # 项目相对路径，POSIX 分隔
+    entry: str
+    stem: str
+    capture_source: str            # SOURCE_SAVEFIG | SOURCE_PYPLOT
+    execution_profile: str         # PROFILE_SAFE | PROFILE_NATIVE
+    original_artifact: str | None  # 项目相对路径；pyplot 捕获恒 None
+    size_mm: tuple[float, float]
+    source_fingerprint: str
+    can_writeback_artifact: bool   # 只能由工厂派生（见 build_descriptor）
+    can_writeback_source: bool     # v1 恒 False（不改写用户脚本，ADR 0013 §7）
+
+    def to_payload(self) -> dict:
+        out = dataclasses.asdict(self)
+        out["size_mm"] = [float(v) for v in self.size_mm]
+        return out
+
+
+def build_descriptor(*, script: str, entry: str, stem: str, capture_source: str,
+                     execution_profile: str, size_mm, source_fingerprint: str,
+                     original_artifact: str | None = None) -> CapturedFigureDescriptor:
+    """描述符工厂——**writeback 能力只能派生，不能指定**。
+
+    * `capture_source == "pyplot"` 的图从没存过盘：`original_artifact` 必须是
+      None（给了就抛，不是悄悄清掉——上游把来源标错时要当场炸出来，而不是
+      让一个「看起来能写回」的描述符流出去）；
+    * `can_writeback_artifact` = savefig 来源 **且** 原件真实在磁盘上。
+      磁盘上碰巧躺着同名文件而来源是 pyplot 时它必须是 False——那份文件
+      不是这张图写的，往上写回就是覆盖一个不相干的文件；
+    * `can_writeback_source`（改写用户脚本）v1 一律 False。
+    """
+    script = normalize_relative_script(script)
+    if not isinstance(entry, str) or not entry:
+        raise ValueError(f"entry 必须是非空字符串: {entry!r}")
+    if not isinstance(stem, str) or not stem:
+        raise ValueError(f"stem 必须是非空字符串: {stem!r}")
+    if not isinstance(source_fingerprint, str) or not source_fingerprint:
+        raise ValueError("source_fingerprint 必须是非空字符串")
+    try:
+        w, h = size_mm
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"size_mm 必须是 (宽, 高) 两元组: {size_mm!r}") from exc
+    if capture_source not in _SOURCES:
+        raise ValueError(f"capture_source 非法: {capture_source!r}（可选 {_SOURCES}）")
+    if execution_profile not in _PROFILES:
+        raise ValueError(f"execution_profile 非法: {execution_profile!r}"
+                         f"（可选 {_PROFILES}）")
+    if capture_source == SOURCE_PYPLOT and original_artifact is not None:
+        raise ValueError("pyplot 捕获的 Figure 没有原始产物，"
+                         f"original_artifact 必须是 None: {original_artifact!r}")
+    if original_artifact is not None:
+        original_artifact = original_artifact.replace("\\", "/")
+    return CapturedFigureDescriptor(
+        asset_id=runtime_asset_id(script, stem),
+        script=script,
+        entry=entry,
+        stem=stem,
+        capture_source=capture_source,
+        execution_profile=execution_profile,
+        original_artifact=original_artifact,
+        size_mm=(float(w), float(h)),
+        source_fingerprint=source_fingerprint,
+        can_writeback_artifact=(capture_source == SOURCE_SAVEFIG
+                                and original_artifact is not None),
+        can_writeback_source=False,
+    )
+
+
+def descriptor_from_payload(data: dict) -> CapturedFigureDescriptor:
+    """协议 payload → 描述符（校验后重建，writeback 能力照样只认派生值）。
+
+    经工厂重建而不是逐字段照抄：payload 里写着 `can_writeback_artifact: true`
+    而来源是 pyplot 的话，这里会直接抛——坏数据在边界上死，不进语义层。
+    """
+    if not isinstance(data, dict):
+        raise ValueError("描述符必须是对象")
+    desc = build_descriptor(
+        script=data.get("script"), entry=data.get("entry"),
+        stem=data.get("stem"), capture_source=data.get("capture_source"),
+        execution_profile=data.get("execution_profile"),
+        size_mm=tuple(data.get("size_mm") or ()),
+        source_fingerprint=data.get("source_fingerprint"),
+        original_artifact=data.get("original_artifact"))
+    for key in ("asset_id", "can_writeback_artifact", "can_writeback_source"):
+        if key in data and data[key] != getattr(desc, key):
+            raise ValueError(f"描述符字段 {key} 与派生值不一致: "
+                             f"{data[key]!r} != {getattr(desc, key)!r}")
+    return desc
 
 
 def savefig_stem(fname) -> str:

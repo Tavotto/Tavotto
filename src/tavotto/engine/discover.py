@@ -32,9 +32,11 @@ import re
 import tempfile
 from pathlib import Path, PurePosixPath
 
-from . import registry
+from . import figcapture, registry
 
-OUT_EXTS = (".pdf", ".png", ".svg", ".jpg", ".jpeg", ".eps", ".tif", ".tiff")
+#: 「什么算一份图产物」的唯一出处在 `figcapture.ARTIFACT_EXTS`（捕获描述符
+#: 判原件、handoff 找产物、这里的静态扫描必须是同一张表）；旧名保留作镜像。
+OUT_EXTS = figcapture.ARTIFACT_EXTS
 # 样式模块及其副本（"paper_style 2.py"）、私有助手、测试与打包脚本
 SKIP_PREFIXES = ("paper_style", "_", "test_", "conftest", "setup")
 SKIP_SUFFIXES = ("_test.py",)

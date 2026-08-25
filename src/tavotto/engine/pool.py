@@ -19,7 +19,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import config, patchspec, runtime
+from . import config, execspec, patchspec, runtime
 
 LOG = logging.getLogger("tavotto.engine")
 
@@ -557,15 +557,20 @@ class EngineWorker:
         # `-B`：内置 runtime 装在安装目录里（可能是 Program Files），
         # 一个 .pyc 都不往那儿写。.pyc 已在构建期编好随包发出，`-B` 只禁写不禁读。
         args = runtime.child_args() if bundled else []
+        # 执行语义收进唯一模型（ADR 0014 §0）：argv 由 `execspec.worker_argv`
+        # 独家产出，workerd 的 spawn 规格吃的是同一份（同源看护在
+        # `test_workerd_pool.py`）。`spec.env` 只存**增量**（序列化形态）；
+        # Python 池的 Popen 仍用全量 `child_env()`（含摘除敌意变量），
+        # 那是本控制面的机制细节，不属于执行语义。
+        self.spec = execspec.safe_spec(
+            script_name, str(figures_dir), entry, interpreter=python,
+            sandbox=str(self.sandbox),
+            env=runtime.child_env(base={}) if bundled else None)
         LOG.info("worker 启动: %s（entry=%s，解释器来源=%s）",
                  script_name, entry, self.python_source)
         self.proc = subprocess.Popen(
-            [python, *args, str(WORKER_PY),
-             "--script", str(Path(figures_dir) / script_name),
-             "--figures-dir", figures_dir,
-             "--out-dir", str(self.out_dir),
-             "--sandbox", str(self.sandbox),
-             "--entry", entry],
+            execspec.worker_argv(self.spec, worker_py=WORKER_PY,
+                                 out_dir=self.out_dir, runtime_args=args),
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self._log,
             env=env,
             text=True, bufsize=1,
@@ -875,25 +880,26 @@ def _spawn_spec(script_name: str, figures_dir: str, entry: str, out_dir: Path,
                 extra_env: dict | None = None) -> dict:
     """交给 workerd 的**完整** spawn 规格。
 
-    与 `EngineWorker.__init__` 里那串 Popen 参数严格同源。刻意不去重构成共享
-    helper：Python 池那条路径这次一行都不动是前提，多这几行远比让两条路径共享
-    一个会被同时改到的函数安全。
+    与 `EngineWorker.__init__` 严格同源：两条路径的 argv 都由
+    `execspec.worker_argv` 独家产出（ADR 0014 §0——2026-08-25 之前这里是
+    第二份手拼的命令行，同源只靠人肉），`test_workerd_pool.py` 的对拍用例
+    继续钉着「交给 workerd 的 argv == Python 池自己 Popen 的」。
     """
     bundled = source == SOURCE_BUNDLED
     args = runtime.child_args() if bundled else []
+    spec = execspec.safe_spec(
+        script_name, str(figures_dir), entry, interpreter=python,
+        sandbox=str(sandbox),
+        env=runtime.child_env(base={}) if bundled else None)
     # 只给**增量**：workerd 继承的本来就是 Flask 自己的环境，整份传过去没有意义
-    env = runtime.child_env(base={}) if bundled else {}
+    env = dict(spec.env or {})
     if extra_env:
         # env 参与 workerd 的 spec 哈希（`SpawnSpec::hash`），所以一个一次性
         # 的 salt 就足以拿到一条**必然独立**的会话，绕开「同规格复用 + 引用计数」。
         env = {**env, **extra_env}
     return {
-        "argv": [python, *args, str(WORKER_PY),
-                 "--script", str(Path(figures_dir) / script_name),
-                 "--figures-dir", figures_dir,
-                 "--out-dir", str(out_dir),
-                 "--sandbox", str(sandbox),
-                 "--entry", entry],
+        "argv": execspec.worker_argv(spec, worker_py=WORKER_PY,
+                                     out_dir=out_dir, runtime_args=args),
         "env": env,
         "log_path": str(log_path),
         "handshake_timeout_ms": int(HANDSHAKE_TIMEOUT * 1000),
@@ -970,6 +976,14 @@ class WorkerdWorker:
             raise WorkerdUnavailable("workerd 不可用")
         python, self.python_source = select_worker_python()
         self.python = python
+        # 与 EngineWorker 同形：两条控制面都持一份 ExecutionSpec（唯一权威
+        # 构造函数 `execspec.safe_spec`；argv 由 `_spec()` → `_spawn_spec`
+        # 按同一份 spec 语义产出）。
+        self.spec = execspec.safe_spec(
+            script_name, str(figures_dir), entry, interpreter=python,
+            sandbox=str(self.sandbox),
+            env=(runtime.child_env(base={})
+                 if self.python_source == SOURCE_BUNDLED else None))
         self._session_id = ""
         self._open()
 

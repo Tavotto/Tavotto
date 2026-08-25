@@ -45,6 +45,11 @@ runtime:<script 相对路径（POSIX 分隔）>#<stem>
 - 前缀 `runtime:` 与现有 fileId（图库相对路径）在字面上不可能冲突
   （相对路径不含 `:`，Windows 盘符不会出现在**相对**路径里；`safe_resolve`
   对它 404 也是这个前缀挡住的）。
+- **落地记录（Session 2）**：id 生成实现为 `figcapture.runtime_asset_id()`
+  （worker/browser/probe 共用），并已作为 `CapturedFigureDescriptor.asset_id`
+  随 build/probe 响应带出。id 是**不透明标识**——脚本名里可以有 `#`，
+  消费方不得从 id 反解 script/stem，要用就取描述符的独立字段。entry 刻意
+  不进 id（本决策的理由照旧；entry 的差异由描述符字段与 fingerprint 承担）。
 
 ### 3. 文档 schema 表达
 
@@ -77,8 +82,14 @@ runtime:<script 相对路径（POSIX 分隔）>#<stem>
 
 ### 5. stale 判定
 
-- `fingerprint` = 捕获那一刻的脚本内容 sha1（复用 `pool.script_sha1` 的
-  口径）。文档打开 / mtime watcher 触发时与当前脚本比：不一致 → 面板标
+- `fingerprint` 的实现（Session 2 落地，`figcapture.source_fingerprint`）比
+  本节草案更宽一档：脚本内容 sha256 + ExecutionSpec 稳定字段（script/entry/
+  profile/target_kind/argv/passthrough_savefig）+ matplotlib 版本 + 描述符
+  schema 版本。**它只是 stale hint**：脚本读的 CSV、本地 import 的模块、
+  环境变量、数据库都不在指纹里，文档与 UI 文案不得声称它覆盖一切。
+  Session 4 定稿本节时以已落地的口径为准（比对逻辑仍可另用
+  `pool.script_sha1` 做写回防线，两者目的不同：一个是提示，一个是阻断）。
+- 文档打开 / mtime watcher 触发时与当前脚本比：不一致 → 面板标
   stale（"脚本已变，图可能过时"），**overrides 原样保留**，用户显式
   "重新运行"后按新捕获结果对齐（stem 消失时走现有"元素不存在 → warning"
   路径，绝不静默丢 override）。
