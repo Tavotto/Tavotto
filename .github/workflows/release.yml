@@ -644,6 +644,37 @@ jobs:
             assets/out/codex-plugin-*.zip
             assets/out/latest.json
 
+      # 官网的下载按钮直连安装包：版本、大小、校验和都在构建时从这次 Release 的
+      # artifact-manifest.json 里读出来（Tavotto_website 的 scripts/sync-release.mjs）。
+      # 所以 Release 发出去之后要让站点重建一次，否则按钮还指着上一版。
+      #
+      # 用 Deploy Hook 而不是 PAT 或 Vercel CLI：它只是一个 URL，含义是「用 main
+      # 重建这个项目」，拿到它也做不了别的；不需要 token 轮换，也不需要在官网仓库
+      # 里再放一个接收用的 workflow。另外两种方案还都得先在官网仓库里造出一个
+      # commit，而一次产品发布并不会改官网的任何一行。
+      #
+      # 这一步永远不让发布失败。Release 已经在上一步发出去了，站点晚几分钟更新是
+      # 可以补的（在 Vercel 上 Redeploy 一次），而在这里失败会把一次成功的发布标
+      # 成红的——那是会教人忽略这条工作流状态的失败。
+      - name: 通知官网重新构建
+        if: success()
+        continue-on-error: true
+        env:
+          HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK }}
+        run: |
+          set -uo pipefail
+          if [ -z "${HOOK:-}" ]; then
+            echo "::warning::没有配置 VERCEL_DEPLOY_HOOK，官网不会自动重建。"
+            echo "配好之前，发完 Release 请手动在 Vercel 上 Redeploy 一次 tavotto-website。"
+            exit 0
+          fi
+          code=$(curl -sS -X POST -o /dev/null -w '%{http_code}' --max-time 30 "$HOOK" || echo 000)
+          if [ "$code" = "200" ] || [ "$code" = "201" ]; then
+            echo "已通知官网重建（HTTP $code）"
+          else
+            echo "::warning::官网重建没触发成功（HTTP $code）。请手动 Redeploy tavotto-website。"
+          fi
+
   # ────────────────────────────────────────────────────────────────
   # 真实 N-1 应用内更新验证（Windows）—— issue #35 的退出条件。
   #
