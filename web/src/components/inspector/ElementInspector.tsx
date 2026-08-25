@@ -86,8 +86,21 @@ import { Select } from '../ui/Select'
 import { Toggle } from '../ui/Toggle'
 import { Tip } from '../ui/Tooltip'
 import { useFieldGesture } from './elementWrite'
-import { presentFields } from './presentation/registry'
+import { controlKindOf, presentFields } from './presentation/registry'
 import type { PresentedField } from './presentation/types'
+import { ArrowStylePicker } from './controls/ArrowPickers'
+import { ColormapPicker } from './controls/ColormapPicker'
+import { HatchPicker } from './controls/HatchPicker'
+import { LegendPositionPicker } from './controls/LegendPositionPicker'
+import { LineStylePicker } from './controls/LineStylePicker'
+import { MarkerPicker } from './controls/MarkerPicker'
+import {
+  TICK_SPINE_PROPS,
+  TickAndSpineDiagram,
+  type TickSpineAdapter,
+} from './controls/TickAndSpineDiagram'
+import { useElementWriter } from './elementWrite'
+import { fontStackOf } from './controls/fontStack'
 import { useInspectorPrefs } from '@/store/inspectorPrefs'
 import { TextActionRow } from './TextActions'
 import { hasTextStyleBar, TextStyleBar, TEXT_BAR_PROPS } from './TextStyleBar'
@@ -140,13 +153,19 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
   const batch =
     selected.length > 1 && selected.every((e) => e.role === selected[0].role) ? selected : null
 
-  // 展示分桶：文字工具条覆盖的属性让出来（同一属性不出两套控件）
+  // 展示分桶：文字工具条覆盖的属性、四边状态图吃掉的开关都让出来
+  // （同一属性不出两套控件）
+  const consumedBySideDiagram = new Set<string>(
+    element?.role === 'axes' ? TICK_SPINE_PROPS : [],
+  )
   const buckets =
     element && element.editable.length
       ? presentFields(
           element.role,
           element.editable.filter(
-            (f) => !hasTextStyleBar(element) || !TEXT_BAR_PROPS.has(f.prop),
+            (f) =>
+              (!hasTextStyleBar(element) || !TEXT_BAR_PROPS.has(f.prop)) &&
+              !consumedBySideDiagram.has(f.prop),
           ),
           {
             isOverridden: (prop) =>
@@ -158,6 +177,19 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
           },
         )
       : null
+
+  // 四边状态图的宿主：axes 是自己；ticks 挂在宿主子图上（字段在那边）
+  const sideHost =
+    manifest && element
+      ? element.role === 'axes'
+        ? element
+        : element.role === 'ticks'
+          ? (() => {
+              const m = element.gid.match(/^(.*)\.[xyz]ticks$/)
+              return m ? manifest.elements.find((e) => e.gid === m[1]) : undefined
+            })()
+          : undefined
+      : undefined
 
   return (
     <>
@@ -211,6 +243,9 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
             element={element}
             warnings={render?.warnings ?? []}
             buckets={buckets}
+            primaryExtra={
+              sideHost ? <AxesSideControl panel={panel} host={sideHost} /> : null
+            }
           />
         )}
         {element && <UnsupportedNote role={element.role} />}
@@ -425,11 +460,14 @@ function FieldList({
   element,
   warnings,
   buckets,
+  primaryExtra,
 }: {
   panel: PanelObject
   element: ManifestElement
   warnings: string[]
   buckets: { primary: PresentedField[]; more: PresentedField[] }
+  /** 首屏里的复合控件（四边状态图等），排在 primary 行之后、「更多」之前 */
+  primaryExtra?: ReactNode
 }) {
   // 文字元素的字号/加粗/字形/颜色/背景/描边/排版全部收进工具条，
   // 平铺列表要把它们让出来——同一个属性出两套控件是最坏的那种冗余
@@ -474,6 +512,7 @@ function FieldList({
         </div>
       )}
       {rows(buckets.primary)}
+      {primaryExtra && <div className="mt-2">{primaryExtra}</div>}
       {buckets.more.length > 0 && (
         <div className="mt-1.5 border-t border-border pt-1.5">
           <button
@@ -512,6 +551,25 @@ function FieldList({
       )}
     </>
   )
+}
+
+/**
+ * 四边刻度/边框状态图的写入接线：axes 页与刻度组页共用。
+ * 字段全部真实存在于宿主 axes 的 manifest 上；写入走 useElementWriter
+ * （一次点击 = 一条历史 + 一次渲染），单项恢复走 clearOverride。
+ */
+function AxesSideControl({ panel, host }: { panel: PanelObject; host: ManifestElement }) {
+  useTranslation('inspector')
+  const w = useElementWriter(panel, host)
+  const adapter: TickSpineAdapter = {
+    has: (p) => w.has(p),
+    read: (p) => w.read(p),
+    toggle: (p, next) => w.writeOnce(p, next),
+    labelOf: (p) => propLabel(p, host.role),
+    isOverridden: (p) => panel.overrides.some((o) => o.gid === host.gid && o.prop === p),
+    reset: (p) => clearOverride(panel.id, host.gid, p),
+  }
+  return <TickAndSpineDiagram adapter={adapter} />
 }
 
 /* -------------------------------------------------------------------------- */
@@ -828,6 +886,83 @@ function FieldRow({
     </Row>
   )
 
+
+  // enum 的视觉控件按展示注册表分派；剩下的按字段类型走
+  const kind = controlKindOf(element.role, field)
+  const enumValue = String(value ?? '')
+  const enumOptions = field.options ?? []
+  switch (kind) {
+    case 'line-style':
+      return wrap(
+        <LineStylePicker
+          value={enumValue}
+          options={enumOptions}
+          onChange={writeOnce}
+          ariaLabel={label}
+        />,
+      )
+    case 'marker':
+      return wrap(
+        <MarkerPicker
+          value={enumValue}
+          options={enumOptions}
+          onChange={writeOnce}
+          ariaLabel={label}
+        />,
+      )
+    case 'hatch':
+      return wrap(
+        <HatchPicker
+          value={enumValue}
+          options={enumOptions}
+          onChange={writeOnce}
+          ariaLabel={label}
+        />,
+      )
+    case 'colormap':
+      return wrap(
+        <ColormapPicker
+          value={enumValue}
+          options={enumOptions}
+          onChange={writeOnce}
+          ariaLabel={label}
+        />,
+      )
+    case 'legend-position':
+      return wrap(
+        <LegendPositionPicker
+          value={enumValue}
+          options={enumOptions}
+          onChange={writeOnce}
+          ariaLabel={label}
+        />,
+      )
+    case 'arrow-style':
+      return wrap(
+        <ArrowStylePicker
+          value={enumValue}
+          options={enumOptions}
+          onChange={writeOnce}
+          ariaLabel={label}
+        />,
+      )
+    case 'font':
+      return wrap(
+        <Select
+          value={enumValue}
+          onChange={(v) => writeOnce(v)}
+          options={enumOptions.map((o) => ({
+            value: o,
+            label: (
+              <span style={{ fontFamily: fontStackOf(o) }}>{optionLabel('fontfamily', o)}</span>
+            ),
+          }))}
+          ariaLabel={label}
+        />,
+      )
+    default:
+      break
+  }
 
   switch (field.type) {
     case 'text': {

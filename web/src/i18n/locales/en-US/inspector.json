@@ -137,6 +137,17 @@
     "viewAids": "View aids"
   },
   "closePanel": "Close right panel",
+  "control": {
+    "customColormap": "Custom colormap ({{value}})",
+    "customLineStyle": "Custom line style ({{value}})",
+    "hatchNone": "No hatch",
+    "hatchPattern": "Hatch {{value}}",
+    "legendCustomHint": "The legend was dragged to a custom spot; pick any preset to snap back.",
+    "resetSide": "Reset {{label}} to script",
+    "switchOff": "{{label}}: off (click to turn on)",
+    "switchOn": "{{label}}: on (click to turn off)",
+    "tickSpineDiagram": "Tick & frame diagram"
+  },
   "element": {
     "advanced": "Advanced",
     "alignBaseline": "Reference",

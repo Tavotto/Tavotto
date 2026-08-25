@@ -135,6 +135,17 @@
     "viewAids": "查看辅助"
   },
   "closePanel": "关闭右侧面板",
+  "control": {
+    "customColormap": "自定义色图（{{value}}）",
+    "customLineStyle": "自定义线型（{{value}}）",
+    "hatchNone": "无花纹",
+    "hatchPattern": "花纹 {{value}}",
+    "legendCustomHint": "图例被拖到过自定义位置；点任一预设即可回到自动定位。",
+    "resetSide": "恢复{{label}}到脚本",
+    "switchOff": "{{label}}：关（点击开启）",
+    "switchOn": "{{label}}：开（点击关闭）",
+    "tickSpineDiagram": "刻度与边框状态图"
+  },
   "element": {
     "advanced": "高级",
     "alignBaseline": "基准",
