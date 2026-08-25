@@ -378,7 +378,8 @@ jobs:
     needs: [trust, build, desktop, lab_release_gate]
     runs-on: ubuntu-latest
     outputs:
-      has_body: ${{ steps.notes.outputs.has_body }}
+      # has_notes = 有没有手写正文；release body（支持段 + 签名披露）两种情况都有
+      has_notes: ${{ steps.notes.outputs.has_notes }}
     permissions:
       contents: read
       id-token: write          # provenance 签发
@@ -506,39 +507,46 @@ jobs:
             --published-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           cat out/codex-plugin.json
 
-      - name: 找手写的 release notes
+      - name: 拼 release body（手写正文可缺，支持段与签名披露不可缺）
         id: notes
         env:
           TAG: ${{ needs.trust.outputs.tag }}
           SIGNPATH_ENABLED: ${{ vars.SIGNPATH_ENABLED }}
         run: |
           set -euo pipefail
-          # 自动生成的 notes 只是一串提交标题，用户看不出该不该升级。
-          # docs/release-notes/<tag>.md 存在就用它，缺失则退回自动生成。
+          # 手写正文（docs/release-notes/<tag>.md）有就用、没有就让 GitHub 把
+          # 自动生成的提交清单**接在 body 之后**（softprops 对 body +
+          # generate_release_notes 的语义是把 body 前置）。但下面两段在
+          # **两个分支里都必须出现**——只挂在手写分支上的话，没写 notes 的
+          # 版本会顺便丢掉必须的披露（Codex 评审在 #107 上指出）：
+          #  · 「下载与支持平台」段：从唯一权威 docs/support-matrix.json 生成
+          #    （issue #34），每版手写的平台清单必然与矩阵漂移；
+          #  · Code signing policy 段：SignPath Foundation 的条件要求这个词组
+          #    出现在下载/发布页；措辞按 SIGNPATH_ENABLED 分岔——把未签名的
+          #    包描述成已签名，正是 policy 里明令禁止的那件事。
           F="docs/release-notes/${TAG}.md"
+          B="out/release-body.md"
           mkdir -p out
           if [ -f "$F" ]; then
-            # SignPath Foundation 的条件要求「Code signing policy」这个词组同时
-            # 出现在项目主页**与下载/发布页**上。README 那半已经有了，这里补发布页。
-            # 措辞按 SIGNPATH_ENABLED 分岔：没开时如实说这一版没签名——把未签名的
-            # 包描述成已签名，正是 policy 里明令禁止的那件事。
-            B="out/release-body.md"
             cp "$F" "$B"
-            {
-              printf '\n\n---\n\n### Code signing policy\n\n'
-              if [ "$SIGNPATH_ENABLED" = "true" ]; then
-                printf 'The Windows installer in this release is code signed. Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org).\n\n'
-              else
-                printf '**The Windows installer in this release is not code signed**, so Windows will show a SmartScreen warning on first run. Verify it against this workflow run if you want to check what you downloaded.\n\n'
-              fi
-              printf 'See the full [code signing policy](https://github.com/%s/blob/%s/docs/code-signing-policy.md) and [privacy policy](https://github.com/%s/blob/%s/docs/privacy.md).\n' \
-                     "$GITHUB_REPOSITORY" "$TAG" "$GITHUB_REPOSITORY" "$TAG"
-            } >> "$B"
-            echo "has_body=1" >> "$GITHUB_OUTPUT"
+            printf '\n\n---\n\n' >> "$B"
+            echo "has_notes=1" >> "$GITHUB_OUTPUT"
           else
-            echo "::warning::没有 $F，本次用自动生成的 notes（一串提交标题）"
-            echo "has_body=0" >> "$GITHUB_OUTPUT"
+            : > "$B"
+            echo "::warning::没有 $F，正文用自动生成的提交清单"
+            echo "has_notes=0" >> "$GITHUB_OUTPUT"
           fi
+          python scripts/make_release_support_section.py >> "$B"
+          {
+            printf '\n### Code signing policy\n\n'
+            if [ "$SIGNPATH_ENABLED" = "true" ]; then
+              printf 'The Windows installer in this release is code signed. Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org).\n\n'
+            else
+              printf '**The Windows installer in this release is not code signed**, so Windows will show a SmartScreen warning on first run. Verify it against this workflow run if you want to check what you downloaded.\n\n'
+            fi
+            printf 'See the full [code signing policy](https://github.com/%s/blob/%s/docs/code-signing-policy.md) and [privacy policy](https://github.com/%s/blob/%s/docs/privacy.md).\n' \
+                   "$GITHUB_REPOSITORY" "$TAG" "$GITHUB_REPOSITORY" "$TAG"
+          } >> "$B"
 
       - name: 汇总这次的产物
         if: always()
@@ -626,8 +634,10 @@ jobs:
           # tag ruleset 是 immutable，建错了改不动也删不掉。
           target_commitish: ${{ needs.trust.outputs.sha }}
           draft: false
-          body_path: ${{ needs.validate_artifacts.outputs.has_body == '1' && 'assets/out/release-body.md' || '' }}
-          generate_release_notes: ${{ needs.validate_artifacts.outputs.has_body != '1' }}
+          # body 永远存在（支持矩阵段 + 签名披露在两个分支都生成）；
+          # 没有手写正文时让 GitHub 把自动提交清单接在 body 之后
+          body_path: assets/out/release-body.md
+          generate_release_notes: ${{ needs.validate_artifacts.outputs.has_notes != '1' }}
           # codex-plugin.json 的**文件名不能改**：插件拉的是
           # releases/latest/download/codex-plugin.json（见 update_check.DEFAULT_URL）
           # `files` 明确支持多行 glob——与只收单个路径的 syft 不同。
@@ -638,6 +648,37 @@ jobs:
             assets/out/codex-plugin.json
             assets/out/codex-plugin-*.zip
             assets/out/latest.json
+
+      # 官网的下载按钮直连安装包：版本、大小、校验和都在构建时从这次 Release 的
+      # artifact-manifest.json 里读出来（Tavotto_website 的 scripts/sync-release.mjs）。
+      # 所以 Release 发出去之后要让站点重建一次，否则按钮还指着上一版。
+      #
+      # 用 Deploy Hook 而不是 PAT 或 Vercel CLI：它只是一个 URL，含义是「用 main
+      # 重建这个项目」，拿到它也做不了别的；不需要 token 轮换，也不需要在官网仓库
+      # 里再放一个接收用的 workflow。另外两种方案还都得先在官网仓库里造出一个
+      # commit，而一次产品发布并不会改官网的任何一行。
+      #
+      # 这一步永远不让发布失败。Release 已经在上一步发出去了，站点晚几分钟更新是
+      # 可以补的（在 Vercel 上 Redeploy 一次），而在这里失败会把一次成功的发布标
+      # 成红的——那是会教人忽略这条工作流状态的失败。
+      - name: 通知官网重新构建
+        if: success()
+        continue-on-error: true
+        env:
+          HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK }}
+        run: |
+          set -uo pipefail
+          if [ -z "${HOOK:-}" ]; then
+            echo "::warning::没有配置 VERCEL_DEPLOY_HOOK，官网不会自动重建。"
+            echo "配好之前，发完 Release 请手动在 Vercel 上 Redeploy 一次 tavotto-website。"
+            exit 0
+          fi
+          code=$(curl -sS -X POST -o /dev/null -w '%{http_code}' --max-time 30 "$HOOK" || echo 000)
+          if [ "$code" = "200" ] || [ "$code" = "201" ]; then
+            echo "已通知官网重建（HTTP $code）"
+          else
+            echo "::warning::官网重建没触发成功（HTTP $code）。请手动 Redeploy tavotto-website。"
+          fi
 
   # ────────────────────────────────────────────────────────────────
   # 真实 N-1 应用内更新验证（Windows）—— issue #35 的退出条件。
