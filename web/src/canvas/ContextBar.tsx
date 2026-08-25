@@ -88,12 +88,16 @@ export function ContextBar() {
     ? !!element && !!element.editable.length && elementHasQuick(element)
     : !!obj
   const targetKey = panel ? `el:${panel.id}:${gid ?? ''}` : obj ? `obj:${obj.id}` : ''
+  // narrow 断点下侧栏是盖在画布上的覆盖式抽屉（z-30），portal 出来的工具条
+  // （z-40）会压住并拦截抽屉里的控件；抽屉本来就把属性带到了眼前，此时让位
+  const overlayDrawerOpen = layout === 'narrow' && (leftOpen || rightOpen)
   const active =
     !!targetKey &&
     hasActions &&
     !editingText &&
     !cropTarget &&
     !quickOpen &&
+    !overlayDrawerOpen &&
     tool === 'select' &&
     !dismissed
 
