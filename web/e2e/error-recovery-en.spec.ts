@@ -8,8 +8,10 @@
  *   3. 给出用户可执行的下一步（按钮 / 设置入口 / 重试路径）；
  *   4. 不丢失当前项目与未保存编辑（出错后画布还在、还能继续操作）。
  *
- * Windows 文件占用（file_locked）只在 win32 上真实可触发，非 Windows 跳过
- * ——后端行为由 tests/test_windows_regressions.py 看护，这里补的是英文界面。
+ * 本 spec 只挂在 chromium-en project 下（playwright.config 的基础 chromium
+ * project 显式 testIgnore 它——spec 自带 en-US locale，两个 project 都跑等于
+ * 同一份内容跑两遍）。Windows 文件占用（file_locked）刻意没有用例，见文件
+ * 末尾的说明。
  */
 import { copyFileSync, chmodSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
@@ -247,8 +249,9 @@ test('updater 离线：检查更新失败给英文报错，界面可继续', asy
   await expectNoCjk(err, '更新检查失败')
 })
 
-test('Windows 文件占用：写回撞独占锁给英文 file_locked 提示', async () => {
-  test.skip(process.platform !== 'win32', '独占锁只在 Windows 上真实存在')
-  // 真实触发在 CI 的 Windows 腿上执行：打开 PDF 句柄（不带共享删除）后写回。
-  // 后端行为已有 tests/test_windows_regressions.py 看护；此处只在 win32 跑。
-})
+// 有意没有「Windows 文件占用（file_locked）」的用例：独占锁只在 Windows 上
+// 真实存在，而 e2e workflow 目前只有 Ubuntu 腿——一个永远进不去 win32 分支
+// 的空壳测试是假绿（空转的门禁比没有门禁更坏）。file_locked 的后端行为由
+// tests/test_windows_regressions.py 看护，file_locked 的中英文案由
+// tests/test_error_codes.py 对拍；英文**界面**验证挂在 issue #30 的
+// 真机验收清单上，等 e2e 有 Windows 腿再把用例真实落地。

@@ -73,7 +73,15 @@ export function backendErrorText(e: unknown): string {
 export function engineErrorMsg(err: unknown): UiMessage {
   if (err instanceof EngineError && err.code && i18n.exists(`backend.${err.code}`, { ns: 'errors' })) {
     const detail = err.traceback.trim().split('\n').at(-1)?.trim() ?? ''
-    return msg(`backend.${err.code}`, { error: detail }, 'errors')
+    // 文案要 {{error}} 却拿不到 traceback（老 server / 精简错误体）时退回
+    // 原文透出——「The script failed: 」后面空着比中文原文更没用；
+    // 不吃占位符的文案（worker_timeout 这类）照常本地化
+    const template = String(
+      i18n.getResource(i18n.language, 'errors', `backend.${err.code}`) ?? '',
+    )
+    if (detail || !template.includes('{{error}}')) {
+      return msg(`backend.${err.code}`, { error: detail }, 'errors')
+    }
   }
   return literal(err instanceof Error ? err.message : String(err))
 }

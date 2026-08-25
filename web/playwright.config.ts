@@ -30,7 +30,13 @@ export default defineConfig({
     locale: 'zh-CN',
   },
   projects: [
-    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    {
+      name: 'chromium',
+      use: { ...devices['Desktop Chrome'] },
+      // error-recovery-en 自带 en-US locale、由 chromium-en 跑：
+      // 基础 project 再跑一遍就是同一份内容双倍的串行启动与渲染等待
+      testIgnore: ['error-recovery-en.spec.ts'],
+    },
     // WebKit 是 macOS 桌面壳（WKWebView）与 Safari 用户的引擎（审计 P1-03）：
     // 只跑黄金路径与可访问性——全量跑三遍只是把门禁拉长三倍，而剩下那些
     // spec 测的是与引擎无关的后端行为。zh-CN：spec 里的可达名是中文。
