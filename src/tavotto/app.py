@@ -573,6 +573,12 @@ def index():
                 "<code>pipx install tavotto</code>。</p>"), 503
     resp = send_from_directory(WEB_DIST, "index.html")
     resp.headers["Cache-Control"] = "no-cache"
+    # 已中毒的资产缓存只有这条路够得着（issue #115 评审）：0.10.x 在注册表
+    # 改坏的机器上把 text/plain 的 .js 按 immutable 缓存了一年，bundle 内容
+    # 哈希不变时升级后浏览器根本不再发请求，服务端改什么都到不了。"cache"
+    # 只清本 origin 的 HTTP 缓存（sessionStorage 的 pj、localStorage 的
+    # autosave 兜底都不碰）；127.0.0.1 是 trustworthy origin，无 HTTPS 也生效。
+    resp.headers["Clear-Site-Data"] = '"cache"'
     return resp
 
 

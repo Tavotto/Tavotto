@@ -1444,3 +1444,19 @@ def test_unlisted_asset_extensions_still_use_guessing(client, tmp_path, monkeypa
     r = client.get("/assets/photo.png")
     assert r.status_code == 200
     assert r.mimetype == "image/png"
+
+
+def test_index_busts_the_poisoned_asset_cache(client, tmp_path, monkeypatch):
+    """0.10.x 在注册表改坏的机器上，text/plain 的 .js 已按
+    max-age=31536000, immutable 缓存进浏览器；bundle 内容哈希不变时升级后
+    浏览器根本不再发资产请求——强制 MIME 的新逻辑够不着老缓存。`/` 是
+    no-cache 必回源的，Clear-Site-Data: "cache" 挂在它上面才能把中毒条目
+    清掉（值必须带双引号，这是该头的语法不是风格）。"""
+    (tmp_path / "index.html").write_text("<!doctype html>", encoding="utf-8")
+    monkeypatch.setattr(m, "WEB_DIST", tmp_path)
+
+    r = client.get("/")
+    assert r.status_code == 200
+    assert r.headers.get("Clear-Site-Data") == '"cache"', (
+        "没有这个头，0.10.x 缓存过错误 MIME 的浏览器升级后仍旧白屏")
+    assert r.headers.get("Cache-Control") == "no-cache"
