@@ -1102,6 +1102,7 @@ export default interface Resources {
       "zUp": "上移一层",
       "zorderLabel": "层级"
     },
+    "assistantRunningTip": "助手正在运行",
     "autoHideAria": "右栏自动收起中，点击改为常驻",
     "autoHideTip": "自动收起中：清空选择后右栏让位给画布。点击改为常驻",
     "canvas": {

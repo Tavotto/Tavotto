@@ -10,6 +10,7 @@ import {
   MousePointerClick,
   MoveUpRight,
   Pin,
+  Sparkles,
   Square,
   Trash2,
   Type as TypeIcon,
@@ -47,8 +48,11 @@ import { TextSection } from './TextSection'
 import { TransformSection } from './TransformSection'
 import { useSelectedObjects } from './common'
 
-/** 三个模式的标签文案：助手那条来自 ai 命名空间，另外两条在 inspector 里 */
-const TABS: RightTab[] = ['properties', 'assistant', 'canvas']
+/**
+ * tab 行只放「对象上下文」的两页：属性（当前选中对象）与画布（当前文档）。
+ * 助手是独立工作流，不与它们同级——入口在右侧，带运行状态点（§ADR 0010）。
+ */
+const TABS: RightTab[] = ['properties', 'canvas']
 
 const tabLabel = (id: RightTab): string =>
   id === 'assistant' ? assistantTabLabel() : translate(`tab.${id}`, { ns: 'inspector' })
@@ -106,22 +110,34 @@ export function Inspector({
               )}
             >
               {tabLabel(id)}
-              {id === 'assistant' && runningAi && (
-                <span
-                  className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-accent"
-                  aria-label={t('aiRunning')}
-                />
-              )}
             </button>
           ))}
         </div>
         <span className="flex-1" />
+        <Tip label={runningAi ? t('assistantRunningTip') : assistantTabLabel()} side="bottom">
+          <Button
+            size="sm"
+            active={tab === 'assistant'}
+            aria-pressed={tab === 'assistant'}
+            aria-label={assistantTabLabel() + (runningAi ? ` · ${t('aiRunning')}` : '')}
+            className="relative gap-1 px-1.5 text-xs"
+            onClick={() => setTab(tab === 'assistant' ? 'properties' : 'assistant')}
+          >
+            <Sparkles size={12} className={tab === 'assistant' ? undefined : 'text-ink-3'} />
+            {assistantTabLabel()}
+            {runningAi && (
+              <span
+                aria-hidden
+                className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-accent"
+              />
+            )}
+          </Button>
+        </Tip>
         {layout !== 'narrow' ? (
-          /* 只留图钉，不写「常驻 / 自动收起」：这一行宽度是 296–320px 定死的，
-             三个标签页 + 一个带词的开关 + 关闭按钮在英文下要 321px，超出 17px
-             把关闭按钮顶到面板外面（e2e/i18n.spec.ts 量的就是它）。状态本身
-             由填色（active）+ aria-pressed 表达，说明留在 tooltip 与无障碍名里，
-             那两处不占版面。 */
+          /* 只留图钉，不写「常驻 / 自动收起」：即便右栏最窄 320px，两个标签页 +
+             助手入口 + 带词的开关 + 关闭按钮在英文下也排不下（e2e/i18n.spec.ts
+             量横向溢出）。状态本身由填色（active）+ aria-pressed 表达，说明留在
+             tooltip 与无障碍名里，那两处不占版面。 */
           <Tip label={t(pinned ? 'pinnedTip' : 'autoHideTip')} side="bottom">
             <Button
               size="icon-sm"

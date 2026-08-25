@@ -73,6 +73,7 @@
     "zUp": "Bring forward",
     "zorderLabel": "Stacking order"
   },
+  "assistantRunningTip": "Assistant is running",
   "autoHideAria": "Right panel auto-hides; click to pin it",
   "autoHideTip": "Auto-hiding: collapses when the selection is cleared. Click to pin it open.",
   "canvas": {
