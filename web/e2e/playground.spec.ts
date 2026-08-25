@@ -110,15 +110,20 @@ async function gidBox(page: Page, gid: string) {
   }, gid)
 }
 
-test('黄金路径：示例脚本 → 真 Pyodide → 语义拖动标题 → 重渲染 → 撤销还原', async ({ page }) => {
+test('黄金路径：案例库 → 查看代码 → 启动 → 真 Pyodide → 亲手改标题字号 → 完整性证明 → 撤销 → 换一个案例', async ({ page }) => {
   const requests = recordRequests(page)
   await page.goto(`${origin}/?lang=zh`)
 
-  // 空状态两条路平级：拖放区 + **一按就跑的示例** + 隐私说明
-  await expect(page.getByText('拖入一个 Matplotlib 脚本')).toBeVisible()
+  // 首屏主角是案例库：主标题 + 三张真实 Figure 封面卡；上传退成次级入口，
+  // 单文件边界在上传前就写明；隐私说明照旧
+  await expect(page.getByText('挑一张图，亲手改一次。')).toBeVisible()
+  await expect(page.locator('[data-example-card]')).toHaveCount(3)
   await expect(page.getByText(/不会把它上传到服务器/)).toBeVisible()
-  const sampleCta = page.getByRole('button', { name: /直接试一个示例/ })
-  await expect(sampleCta).toBeVisible()
+  await expect(page.getByText('已有一个独立脚本？')).toBeVisible()
+  await expect(page.getByText(/仅适合不依赖本地数据/)).toBeVisible()
+  const kineticsCard = page.locator('[data-example-card="kinetics"]')
+  const startCta = kineticsCard.getByRole('button', { name: '开始体验' })
+  await expect(startCta).toBeVisible()
 
   // 预热：壳渲染完之后空闲时把 Pyodide 核心拉下来，**科学栈一个 wheel 都不拉**
   await expect
@@ -129,57 +134,84 @@ test('黄金路径：示例脚本 → 真 Pyodide → 语义拖动标题 → 重
     '预热只到核心为止：科学栈要等 import 分类说了话才下载',
   ).toEqual([])
 
-  // 一次点击 → 真 Python 源码经真 Pyodide 执行（不是预烤的 manifest）
-  await sampleCta.click()
-  // 真话进度：阶段列表出现（不是一个空转的 spinner）
+  // 查看代码：Code Sheet 显示完整源码（含引导任务钉死的 fontsize=9）与行号；
+  // **打开代码不触发任何科学栈下载**；Esc 关闭回到案例库
+  await kineticsCard.getByRole('button', { name: '查看代码' }).click()
+  const sheet = page.getByRole('dialog')
+  await expect(sheet.getByText('kinetics.py').first()).toBeVisible()
+  await expect(sheet.getByText(/fontsize=9/)).toBeVisible()
+  await expect(sheet.getByText('import matplotlib.pyplot as plt')).toBeVisible()
+  expect(cdnHits(requests).filter((u) => /\.whl$/.test(u)), '查看代码不触发 Pyodide 包下载').toEqual([])
+  await page.keyboard.press('Escape')
+  await expect(sheet).toBeHidden()
+
+  // 一次点击启动 → 真话进度：案例名 + 逐个点亮的真实阶段（没有假百分比）
+  await startCta.click()
+  await expect(page.getByText('正在准备「反应动力学」')).toBeVisible()
   await expect(page.getByText('加载 Python 运行时')).toBeVisible()
 
   await waitForEditor(page)
 
   // 源码证明：文件名 + 未改动。这句话不是口号——它等于「主线程用 Web Crypto
-  // 算的原文 sha256」==「Worker 里 Python 从虚拟 FS 读回来算的 sha256」
+  // 算的原文 sha256」==「Worker 里从虚拟 FS 读回来算的 sha256」
   const sourceChip = page.getByRole('button', { name: /kinetics\.py · 未改动/ })
   await expect(sourceChip).toBeVisible()
   await expect(page.getByRole('button', { name: /0 条修改/ })).toBeVisible()
 
-  // 语义元素真的在：标题 gid 落在权威 SVG 里
+  // 首次引导在场且非阻塞：第一步提示点击标题——**不代用户选中**
+  const task = page.locator('[data-guided-task]')
+  await expect(task).toHaveAttribute('data-guided-task', 'step-1')
+  await expect(task.getByText(/点击图中的/)).toBeVisible()
+
+  // 第一步：亲手点击图里的标题（语义命中层，真 manifest gid）
   const before = await gidBox(page, 'axes_0.title')
   expect(before, '权威 SVG 里应有 axes_0.title').not.toBeNull()
+  await page.mouse.click(before!.x + before!.w / 2, before!.y + before!.h / 2)
+  await expect(task).toHaveAttribute('data-guided-task', 'step-2')
+  await expect(task.getByText(/9 pt/)).toBeVisible()
 
-  // 用鼠标把标题拖走：语义选中 + 真 override（pos_frac）
-  const cx = before!.x + before!.w / 2
-  const cy = before!.y + before!.h / 2
-  await page.mouse.move(cx, cy)
-  await page.mouse.down()
-  for (let i = 1; i <= 12; i++) await page.mouse.move(cx + i * 3, cy + i * 2)
-  await page.mouse.up()
+  // 第二步：在属性页把字号改到 12（data-inspector-prop 稳定定位，不靠翻译文字）
+  const sizeInput = page.locator('[data-inspector-prop="fontsize"]').first()
+  await expect(sizeInput).toBeVisible()
+  await sizeInput.fill('12')
+  await sizeInput.press('Enter')
 
-  // override 进了账本，Pyodide 重渲染回来的 SVG 里标题真的挪了
+  // override 进账本，Pyodide 真重渲染：标题真的变大了（9pt → 12pt）
   await expect(page.getByRole('button', { name: /1 条修改/ })).toBeVisible({ timeout: 60_000 })
   await expect
-    .poll(async () => (await gidBox(page, 'axes_0.title'))?.x ?? 0, { timeout: 60_000 })
-    .toBeGreaterThan(before!.x + 10)
+    .poll(async () => (await gidBox(page, 'axes_0.title'))?.h ?? 0, { timeout: 60_000 })
+    .toBeGreaterThan(before!.h * 1.15)
 
   // 技术视图展开的是**真实的 patch 表示**
   await page.getByRole('button', { name: /1 条修改/ }).click()
-  await expect(page.getByText(/"prop":\s*"pos_frac"/)).toBeVisible()
+  await expect(page.getByText(/"prop":\s*"fontsize"/)).toBeVisible()
+  await page.getByRole('button', { name: /1 条修改/ }).click()
 
-  // 撤销 = 空 patch 列表全量重放 = 回到原样
-  await page.getByRole('button', { name: '撤销' }).click()
+  // 完成提示：图变了 + 源文件一个字也没动——后半句必须来自真核对
+  // （verifySourceIntegrity 跑完且 unchanged 才显示；核对中只说「正在核对」）
+  await expect(task).toHaveAttribute('data-guided-task', 'done', { timeout: 60_000 })
+  await expect(task.getByText(/kinetics\.py 一个字也没动/)).toBeVisible({ timeout: 60_000 })
+
+  // 撤销 = 空 patch 列表全量重放 = 标题回到 9pt；源码仍未改动
+  await page.getByRole('button', { name: '撤销' }).first().click()
   await expect(page.getByRole('button', { name: /0 条修改/ })).toBeVisible()
   await expect
-    .poll(async () => (await gidBox(page, 'axes_0.title'))?.x ?? 0, { timeout: 60_000 })
-    .toBeLessThan(before!.x + 5)
-
-  // 源码仍然未改动；只读源码面板能打开
+    .poll(async () => (await gidBox(page, 'axes_0.title'))?.h ?? 0, { timeout: 60_000 })
+    .toBeLessThan(before!.h * 1.15)
   await expect(sourceChip).toBeVisible()
+
+  // 只读源码面板：完整性明细里是**真哈希**——与在 node 里对同一份 .py
+  // 算出来的逐位相同（单一真源保证 bundle 里的源码就是这份）
   await sourceChip.click()
   const dialog = page.getByRole('dialog')
-  await expect(dialog.getByText('Reaction kinetics')).toBeVisible()
-  // 完整性明细里是**真哈希**：与在 node 里对同一份源码算出来的逐位相同
   await dialog.getByText('完整性', { exact: true }).click()
   await expect(dialog.getByText(`SHA-256 ${shortSha(KINETICS_SOURCE)}`)).toBeVisible()
   await page.keyboard.press('Escape')
+
+  // 换一个案例：session 正确 teardown，回到案例库，不留旧 override/选中
+  await page.getByRole('button', { name: '换一个案例' }).click()
+  await expect(page.getByText('挑一张图，亲手改一次。')).toBeVisible()
+  await expect(page.locator('[data-example-card]')).toHaveCount(3)
 
   // 整个流程只碰了两类地址：本页静态资源 + 钉死的 Pyodide CDN
   const outside = requests.filter(
@@ -198,12 +230,15 @@ test('省流量模式：一个字节的 Pyodide 都不预热', async ({ page }) 
   })
   const requests = recordRequests(page)
   await page.goto(`${origin}/?lang=zh`)
-  await expect(page.getByRole('button', { name: /直接试一个示例/ })).toBeVisible()
+  const startCta = page
+    .locator('[data-example-card="kinetics"]')
+    .getByRole('button', { name: '开始体验' })
+  await expect(startCta).toBeVisible()
   // 给足空闲窗口（requestIdleCallback 的 timeout 是 3s），确认它**没有**发生
   await page.waitForTimeout(8_000)
   expect(cdnHits(requests), 'saveData 下不许在背景里替用户花流量').toEqual([])
   // 预热不是正确性依赖：照样能开会话（这里只验按下去有反应，不等整轮下载）
-  await page.getByRole('button', { name: /直接试一个示例/ }).click()
+  await startCta.click()
   await expect(page.getByText('加载 Python 运行时')).toBeVisible()
 })
 
@@ -418,7 +453,10 @@ test('没有 Web Crypto 时降级成「未核对」，而不是把整个会话�
     })
   })
   await page.goto(`${origin}/?lang=zh`)
-  await page.getByRole('button', { name: /直接试一个示例/ }).click()
+  await page
+    .locator('[data-example-card="kinetics"]')
+    .getByRole('button', { name: '开始体验' })
+    .click()
 
   // 编辑器照常起来——这是这条用例的重点
   await waitForEditor(page)
@@ -491,5 +529,7 @@ test('死循环：脚本阶段硬超时，Worker 被杀，错误诚实', async (
   await expect(page.getByText(/超过了浏览器 playground 的时限/)).toBeVisible({
     timeout: 400_000,
   })
-  await expect(page.getByRole('button', { name: '换一个脚本' })).toBeVisible()
+  // 失败页三出口：返回案例库 / 试试主推案例 / 下载桌面版
+  await expect(page.getByRole('button', { name: '返回案例库' })).toBeVisible()
+  await expect(page.getByRole('button', { name: /试试「反应动力学」/ })).toBeVisible()
 })

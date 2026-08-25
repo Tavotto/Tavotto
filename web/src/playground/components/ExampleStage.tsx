@@ -50,7 +50,12 @@ export function ExampleStage({
         }}
       />
       {active ? (
-        <p className="relative text-[14px] font-medium text-sel" aria-live="polite">
+        // 顶部而不是居中：被拖的卡片正悬在台面中央，居中的话这句话会被
+        // 它自己盖住——说给用户听的话必须躲开用户手里的东西
+        <p
+          className="absolute left-1/2 top-6 -translate-x-1/2 whitespace-nowrap rounded-[6px] bg-sel px-3 py-1.5 text-[14px] font-medium text-white"
+          aria-live="polite"
+        >
           {pg('stageActive', { name: pg(drag!.example.titleKey) })}
         </p>
       ) : (
