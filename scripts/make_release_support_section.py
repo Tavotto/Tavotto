@@ -20,9 +20,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "src"))
+
+# 仓库地址的唯一出处是 brand 常量（AGENTS.md：别处不得手写）——仓库改名 /
+# 转移 / fork 上跑发布链时，硬编码副本会继续指向老地址
+from tavotto.engine import brand  # noqa: E402
+
 DEFAULT_MATRIX = ROOT / "docs" / "support-matrix.json"
 
 STATUS_EN = {
@@ -57,7 +64,7 @@ def render(matrix: dict) -> str:
         "",
         "The single source of truth for what is supported, beta, and"
         " unsupported is"
-        " [`docs/support-matrix.json`](https://github.com/Tavotto/Tavotto/blob/main/docs/support-matrix.json).",
+        f" [`docs/support-matrix.json`]({brand.REPO_URL}/blob/main/docs/support-matrix.json).",
     ]
     return "\n".join(lines) + "\n"
 
