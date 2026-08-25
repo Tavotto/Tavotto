@@ -352,11 +352,21 @@ def cmd_apply(api, repo: str, name: str, phase: str, plan_file: Path,
     if problems:
         raise MigrationError("前置条件不满足，拒绝写入：\n  - " + "\n  - ".join(problems))
 
-    updated = plan["updated"]
-    if updated.get("bypass_actors") != current.get("bypass_actors"):
-        raise MigrationError("plan 试图改动 bypass_actors——这个脚本不许碰它")
+    # **plan 文件不是权威，只是确认物。** 发给 GitHub 的 body 一律从**线上
+    # 现状**重算（同一套 build_* 变换，_assert_untouched 在里面守着），
+    # plan["updated"] 必须与重算结果逐字节相等——否则说明 plan 被手改过、
+    # 或生成它的脚本版本与现在不同。只抽查 bypass_actors 那种点名单是
+    # 挡不住的：被编辑的 plan 可以抹掉 pull_request rule、换掉 conditions
+    # 或 contexts，哈希核对的是 current、根本量不到它（#119 评审 P1）。
+    build = {"enable-queue": build_enable_queue,
+             "switch-to-gates": build_switch_to_gates}[phase]
+    updated = build(current)
+    if plan["updated"] != updated:
+        raise MigrationError(
+            "plan 的 updated 与从线上现状重算出的变换不一致——plan 文件被"
+            "编辑过，或生成它的脚本版本与当前不同。重新跑 plan 并人工读 diff")
     if updated.get("target") != "branch":
-        raise MigrationError("plan 的 target 不是 branch——绝不写 tag ruleset")
+        raise MigrationError("变换结果的 target 不是 branch——绝不写 tag ruleset")
 
     _describe_diff(current, updated)
     if not yes:

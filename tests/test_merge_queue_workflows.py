@@ -155,6 +155,22 @@ class TestGates:
             assert re.search(r"(?m)^\s+if:.*always\(\)", block), \
                 f"{job_id} 不是 always()——上游失败时它不会跑，required check 没结论"
 
+    def test_gates_run_the_trusted_copy_of_the_verdict(self):
+        """switch-to-gates 之后 Gate 是唯一的 required check，判定逻辑必须
+        来自**默认分支**而不是被判定的那个 revision（#119 评审 P1：PR 里塞
+        一个 scripts/ci/json.py，`import json` 时 SystemExit(0)，全红的
+        needs 就被判成绿）。`python3 -I` 是第二道：不挂脚本目录进 sys.path、
+        无视 PYTHONPATH。bootstrap 回退只许在默认分支缺这份脚本时走。"""
+        for job_id, text in (("ci-fast-gate", CI), ("ci-integration-gate", CI),
+                             ("codeql-gate", CODEQL)):
+            block = _code(_job(text, job_id))
+            assert "?ref=${{ github.event.repository.default_branch }}" in block, \
+                f"{job_id} 不再从默认分支取判定器"
+            assert 'python3 -I "$RUNNER_TEMP/trusted-gate/aggregate_gate.py"' in block, \
+                f"{job_id} 没有用 -I 执行可信副本"
+            assert "python3 scripts/ci/aggregate_gate.py" not in block, \
+                f"{job_id} 还在执行 checkout 里（PR 可改写）的判定器"
+
     def test_fast_gate_needs_matches_required_closed_set(self):
         block = _job(CI, "ci-fast-gate")
         assert _needs_of(block) == _required_of(block), \

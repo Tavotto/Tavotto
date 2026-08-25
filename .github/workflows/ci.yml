@@ -737,11 +737,36 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      # **判定器必须来自默认分支，不是本次 checkout**（#119 评审 P1）：
+      # switch-to-gates 之后 Gate 是唯一的 required check，而 checkout 的是
+      # PR / 队列候选的 revision——从它执行判定逻辑，恶意改动（比如塞一个
+      # scripts/ci/json.py 让 `import json` 时 SystemExit(0)）能把全红的
+      # needs 判成绿。默认分支上还没有这份脚本时（bootstrap 空窗，只存在于
+      # 引入它的 PR 合并之前）退回本地副本并 notice。边界如实写明：needs
+      # 的**输入**仍由本 revision 的 job 产出，工作流文件本身也可被 PR 改写
+      # ——那一层靠人审 + thread resolution 挡，与旧 required contexts 相同；
+      # 这里关掉的是「不碰 workflow、只藏一个影子模块」的静默向量。
+      - name: 取默认分支上的可信判定器
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/trusted-gate"
+          DEST="$RUNNER_TEMP/trusted-gate/aggregate_gate.py"
+          if gh api "repos/${{ github.repository }}/contents/scripts/ci/aggregate_gate.py?ref=${{ github.event.repository.default_branch }}" \
+               --jq .content 2>/dev/null | base64 -d > "$DEST" && [ -s "$DEST" ]; then
+            echo "判定器取自默认分支"
+          else
+            echo "::notice::默认分支上还没有 aggregate_gate.py（bootstrap 空窗）——退回本仓库副本"
+            cp scripts/ci/aggregate_gate.py "$DEST"
+          fi
       - name: 聚合判定
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
+        # -I（隔离模式）：不把脚本目录挂进 sys.path、无视 PYTHONPATH——
+        # 双保险挡住 stdlib 遮蔽注入
         run: |
-          python3 scripts/ci/aggregate_gate.py \
+          python3 -I "$RUNNER_TEMP/trusted-gate/aggregate_gate.py" \
             --mode fast \
             --event "${{ github.event_name }}" \
             --required invariants,backend-fast,frontend,workerd,compat-smoke \
@@ -755,6 +780,21 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      # 与 fast gate 同一条纪律：判定器取默认分支（理由见上面那段注释）
+      - name: 取默认分支上的可信判定器
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/trusted-gate"
+          DEST="$RUNNER_TEMP/trusted-gate/aggregate_gate.py"
+          if gh api "repos/${{ github.repository }}/contents/scripts/ci/aggregate_gate.py?ref=${{ github.event.repository.default_branch }}" \
+               --jq .content 2>/dev/null | base64 -d > "$DEST" && [ -s "$DEST" ]; then
+            echo "判定器取自默认分支"
+          else
+            echo "::notice::默认分支上还没有 aggregate_gate.py（bootstrap 空窗）——退回本仓库副本"
+            cp scripts/ci/aggregate_gate.py "$DEST"
+          fi
       - name: 聚合判定
         # 普通 PR 允许 deferred（重型 job 整体 skipped → Gate 绿，但 summary
         # 与 JSON 明确写出「完整资格推迟到 merge_group」）；merge_group /
@@ -773,7 +813,7 @@ jobs:
             FLAGS="--require-heavy --full-ci"
           fi
           # shellcheck disable=SC2086
-          python3 scripts/ci/aggregate_gate.py \
+          python3 -I "$RUNNER_TEMP/trusted-gate/aggregate_gate.py" \
             --mode integration \
             --event "$GATE_EVENT" \
             $FLAGS \
