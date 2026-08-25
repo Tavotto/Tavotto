@@ -901,6 +901,12 @@
     "weightBold": "bold",
     "weightNormal": "regular"
   },
+  "textControls": {
+    "align": "Align",
+    "color": "Color",
+    "font": "Font",
+    "size": "Size"
+  },
   "transform": {
     "rotation": "Rotation",
     "textHeightAuto": "Text height is determined by the content",

@@ -1913,6 +1913,12 @@ export default interface Resources {
       "weightBold": "加粗",
       "weightNormal": "常规"
     },
+    "textControls": {
+      "align": "对齐",
+      "color": "颜色",
+      "font": "字体",
+      "size": "字号"
+    },
     "transform": {
       "rotation": "旋转",
       "textHeightAuto": "文字高度由内容自动决定",

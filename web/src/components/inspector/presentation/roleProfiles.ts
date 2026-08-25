@@ -1,5 +1,20 @@
 import type { RoleProfile } from './types'
 
+/** title / text / axis_label / legend_text 共用的模板 */
+const TEXT_PROFILE: RoleProfile = {
+  // 字体/字号/字形/颜色/对齐通常被 TextStyleBar 承接（进 presentFields 之前
+  // 就被滤掉）；点名在这里是给**没凑齐工具条判据**的文字元素兜底——
+  // 它们的字号/颜色也必须在首屏，不能因为少一个 weight 字段就掉进「更多」
+  primary: ['text', 'fontfamily', 'fontsize', 'weight', 'style', 'color', 'ha'],
+  more: [
+    'va', 'rotation', 'linespacing', 'alpha',
+    'bbox_visible', 'bbox_facecolor', 'bbox_alpha', 'bbox_edgecolor',
+    'bbox_linewidth', 'bbox_pad', 'bbox_rounded',
+    'stroke_enabled', 'stroke_color', 'stroke_width',
+    'labelpad', 'visible',
+  ],
+}
+
 /**
  * 角色 → 首屏模板。
  *
@@ -13,6 +28,12 @@ import type { RoleProfile } from './types'
  * 的高频属性由共享文字控件（TextControls）承接，不在这张表里。
  */
 export const ROLE_PROFILES: Record<string, RoleProfile> = {
+  // 文字类：内容 + 字体/字号/字形/颜色/对齐（TextControls 行）是首屏；
+  // 垂直对齐 / 旋转 / 行距 / 透明度 / 背景 / 描边进「更多」
+  title: TEXT_PROFILE,
+  text: TEXT_PROFILE,
+  axis_label: TEXT_PROFILE,
+  legend_text: TEXT_PROFILE,
   line: {
     primary: ['label', 'color', 'linewidth', 'linestyle', 'marker', 'markersize'],
     more: ['alpha', 'markerfacecolor', 'markeredgecolor', 'visible'],

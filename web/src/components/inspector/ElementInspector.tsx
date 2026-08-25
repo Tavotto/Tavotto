@@ -506,12 +506,12 @@ function FieldList({
 
   return (
     <>
+      {rows(buckets.primary)}
       {bar && (
-        <div className="mb-2 border-b border-border pb-2">
+        <div className={cn(buckets.primary.length > 0 && 'mt-1.5')}>
           <TextStyleBar panel={panel} element={element} />
         </div>
       )}
-      {rows(buckets.primary)}
       {primaryExtra && <div className="mt-2">{primaryExtra}</div>}
       {buckets.more.length > 0 && (
         <div className="mt-1.5 border-t border-border pt-1.5">

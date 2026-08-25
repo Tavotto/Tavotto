@@ -6,9 +6,6 @@ import {
   Italic,
   Subscript,
   Superscript,
-  TextAlignCenter,
-  TextAlignEnd,
-  TextAlignStart,
   Underline,
 } from 'lucide-react'
 import { toggleScript, transformCase, type CaseMode } from '@/lib/richText'
@@ -19,22 +16,18 @@ import { updateObjects } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { useUiStore } from '@/store/uiStore'
 import { panelFullSize, type PanelObject, type TextObject } from '@/types/document'
+import { useInspectorPrefs } from '@/store/inspectorPrefs'
 import { Button } from '../ui/Button'
 import { Row, Section } from '../ui/Field'
 import { ColorField, NumberField } from '../ui/Input'
 import { Segmented } from '../ui/Segmented'
+import { AlignmentRow, FontSizeRow, TextColorRow } from './controls/textRows'
 import { shared } from './common'
 
 /** 本组文案 inspector:text.*，历史标签 inspector:history.* */
 const tx = (key: string, values?: Record<string, unknown>) =>
   translate(`text.${key}`, { ns: 'inspector', ...(values ?? {}) })
 const hist = (key: string): UiMessage => msg(`history.${key}`, undefined, 'inspector')
-
-const alignItems = () => [
-  { value: 'left' as const, icon: <TextAlignStart size={13} />, tip: tx('alignLeft') },
-  { value: 'center' as const, icon: <TextAlignCenter size={13} />, tip: tx('alignCenter') },
-  { value: 'right' as const, icon: <TextAlignEnd size={13} />, tip: tx('alignRight') },
-]
 
 /**
  * 上下标快捷键：Mod+↑ = 上标、Mod+↓ = 下标（Mod = ⌘ / Ctrl，两边都认）。
@@ -132,6 +125,13 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
     })
   }
 
+  const moreOpen = useInspectorPrefs((st) => st.moreOpen['text-object'] ?? false)
+  const setMoreOpen = useInspectorPrefs((st) => st.setMoreOpen)
+  const moreSummary = [
+    bg ? tx('background') : null,
+    borderColor ? tx('border') : null,
+  ].filter(Boolean).join(' · ')
+
   return (
     <Section title={tx('title')}>
       {one && (
@@ -170,16 +170,17 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
       )}
 
       <div className="flex flex-col gap-1.5">
-        <Row label={tx('fontSize')}>
-          <NumberField
-            value={sizePt ?? 10}
-            mixed={sizePt === undefined}
-            step={0.5}
-            min={3}
-            max={96}
-            suffix="pt"
-            onChange={(v) => patch(hist('setFontSize'), (o) => (o.sizePt = v))}
-          />
+        {/* 与图内文字同一套行组件：可见的「字号」「颜色」「对齐」标签。
+            画布文字没有字体族（统一走文档字体），所以没有「字体」行——
+            不摆假控件。 */}
+        <FontSizeRow
+          value={sizePt ?? 10}
+          mixed={sizePt === undefined}
+          step={0.5}
+          min={3}
+          max={96}
+          onChange={(v) => patch(hist('setFontSize'), (o) => (o.sizePt = v))}
+        >
           <Button
             size="icon"
             active={bold === true}
@@ -227,134 +228,149 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
           >
             <Subscript size={13} />
           </Button>
-        </Row>
-        <Row label={tx('case')}>
-          <Segmented
-            value={null}
-            onChange={(v) => applyCase(v)}
-            items={caseItems()}
-            className="w-full"
-          />
-        </Row>
+        </FontSizeRow>
+        <TextColorRow
+          value={color ?? '#000000'}
+          onChange={(v) => patch(hist('setTextColor'), (o) => (o.color = v))}
+        />
+        <AlignmentRow
+          value={align ?? null}
+          onChange={(v) => patch(hist('setAlign'), (o) => (o.align = v))}
+          labels={{ left: tx('alignLeft'), center: tx('alignCenter'), right: tx('alignRight') }}
+        />
         {one && (
           <MatchFigureSize
             text={one}
             onMatch={(v) => patch(hist('matchFigureSize'), (o) => (o.sizePt = v))}
           />
         )}
-        <Row label={tx('align')}>
-          <Segmented
-            value={align ?? null}
-            onChange={(v) => patch(hist('setAlign'), (o) => (o.align = v))}
-            items={alignItems()}
-            className="w-full"
-          />
-        </Row>
-        <Row label={tx('color')}>
-          <ColorField
-            value={color ?? '#000000'}
-            onChange={(v) => patch(hist('setTextColor'), (o) => (o.color = v))}
-          />
-        </Row>
-        <Row label={tx('lineHeight')}>
-          <NumberField
-            value={shared(objs, (o) => (o as TextObject).lineHeight ?? 1.25) ?? 1.25}
-            step={0.05}
-            min={0.8}
-            max={3}
-            precision={2}
-            onChange={(v) =>
-              patch(hist('setLineHeight'), (o) => {
-                if (Math.abs(v - 1.25) < 0.001) delete o.lineHeight
-                else o.lineHeight = v
-              })
-            }
-          />
-        </Row>
-        <Row label={tx('background')}>
-          {bg ? (
-            <>
-              <ColorField
-                value={bg}
-                onChange={(v) => patch(hist('setTextBg'), (o) => (o.bg = v))}
-              />
-              <Button
-                size="icon"
-                onClick={() => patch(hist('clearTextBg'), (o) => delete o.bg)}
-                aria-label={tx('clearBackground')}
-              >
-                <span className="text-xs text-ink-3">{tx('none')}</span>
-              </Button>
-            </>
-          ) : (
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full"
-              onClick={() =>
-                patch(hist('addTextBg'), (o) => {
-                  o.bg = '#FFFFFF'
-                  if (o.padding == null) o.padding = 1
-                })
-              }
-            >
-              {tx('addBackground')}
-            </Button>
+      </div>
+
+      {/* 与图内元素同一个「更多」模型：按角色记忆，折叠给现状摘要 */}
+      <div className="mt-1.5 border-t border-border pt-1.5">
+        <button
+          onClick={() => setMoreOpen('text-object', !moreOpen)}
+          aria-expanded={moreOpen}
+          className="flex h-6 w-full items-center gap-1 rounded-sm text-left text-xs text-ink-2 outline-none hover:text-ink focus-visible:focus-ring"
+        >
+          <span className="font-medium">{translate('element.more', { ns: 'inspector' })}</span>
+          {!moreOpen && moreSummary && (
+            <span className="ml-auto min-w-0 truncate text-right text-xs text-ink-3">
+              {moreSummary}
+            </span>
           )}
-        </Row>
-        <Row label={tx('border')}>
-          {borderColor ? (
-            <>
-              <ColorField
-                value={borderColor}
-                onChange={(v) => patch(hist('setTextBorder'), (o) => (o.borderColor = v))}
+        </button>
+        {moreOpen && (
+          <div className="mt-1.5 flex flex-col gap-1.5">
+            <Row label={tx('case')}>
+              <Segmented
+                value={null}
+                onChange={(v) => applyCase(v)}
+                items={caseItems()}
+                className="w-full"
               />
-              <Button
-                size="icon"
-                onClick={() =>
-                  patch(hist('clearTextBorder'), (o) => {
-                    delete o.borderColor
-                    delete o.borderPt
+            </Row>
+            <Row label={tx('lineHeight')}>
+              <NumberField
+                value={shared(objs, (o) => (o as TextObject).lineHeight ?? 1.25) ?? 1.25}
+                step={0.05}
+                min={0.8}
+                max={3}
+                precision={2}
+                onChange={(v) =>
+                  patch(hist('setLineHeight'), (o) => {
+                    if (Math.abs(v - 1.25) < 0.001) delete o.lineHeight
+                    else o.lineHeight = v
                   })
                 }
-                aria-label={tx('clearBorder')}
-              >
-                <span className="text-xs text-ink-3">{tx('none')}</span>
-              </Button>
-            </>
-          ) : (
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full"
-              onClick={() =>
-                patch(hist('addTextBorder'), (o) => {
-                  o.borderColor = '#1B1B18'
-                  if (o.padding == null) o.padding = 1
-                })
-              }
-            >
-              {tx('addBorder')}
-            </Button>
-          )}
-        </Row>
-        {(bg || borderColor) && (
-          <Row label={tx('padding')}>
-            <NumberField
-              value={shared(objs, (o) => (o as TextObject).padding ?? 0) ?? 0}
-              step={0.5}
-              min={0}
-              max={10}
-              precision={1}
-              suffix="mm"
-              onChange={(v) =>
-                patch(hist('setPadding'), (o) => {
-                  if (v > 0) o.padding = v
-                  else delete o.padding
-                })
-              }
-            />
-          </Row>
+              />
+            </Row>
+            <Row label={tx('background')}>
+              {bg ? (
+                <>
+                  <ColorField
+                    value={bg}
+                    onChange={(v) => patch(hist('setTextBg'), (o) => (o.bg = v))}
+                  />
+                  <Button
+                    size="icon"
+                    onClick={() => patch(hist('clearTextBg'), (o) => delete o.bg)}
+                    aria-label={tx('clearBackground')}
+                  >
+                    <span className="text-xs text-ink-3">{tx('none')}</span>
+                  </Button>
+                </>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full"
+                  onClick={() =>
+                    patch(hist('addTextBg'), (o) => {
+                      o.bg = '#FFFFFF'
+                      if (o.padding == null) o.padding = 1
+                    })
+                  }
+                >
+                  {tx('addBackground')}
+                </Button>
+              )}
+            </Row>
+            <Row label={tx('border')}>
+              {borderColor ? (
+                <>
+                  <ColorField
+                    value={borderColor}
+                    onChange={(v) => patch(hist('setTextBorder'), (o) => (o.borderColor = v))}
+                  />
+                  <Button
+                    size="icon"
+                    onClick={() =>
+                      patch(hist('clearTextBorder'), (o) => {
+                        delete o.borderColor
+                        delete o.borderPt
+                      })
+                    }
+                    aria-label={tx('clearBorder')}
+                  >
+                    <span className="text-xs text-ink-3">{tx('none')}</span>
+                  </Button>
+                </>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full"
+                  onClick={() =>
+                    patch(hist('addTextBorder'), (o) => {
+                      o.borderColor = '#1B1B18'
+                      if (o.padding == null) o.padding = 1
+                    })
+                  }
+                >
+                  {tx('addBorder')}
+                </Button>
+              )}
+            </Row>
+            {(bg || borderColor) && (
+              <Row label={tx('padding')}>
+                <NumberField
+                  value={shared(objs, (o) => (o as TextObject).padding ?? 0) ?? 0}
+                  step={0.5}
+                  min={0}
+                  max={10}
+                  precision={1}
+                  suffix="mm"
+                  onChange={(v) =>
+                    patch(hist('setPadding'), (o) => {
+                      if (v > 0) o.padding = v
+                      else delete o.padding
+                    })
+                  }
+                />
+              </Row>
+            )}
+          </div>
         )}
       </div>
     </Section>
