@@ -63,13 +63,17 @@ def source_fingerprint() -> str:
     """playground 行为的源码指纹。
 
     集合 = 前端源码（web/src 全部 ts/tsx/css——画布、stores、inspector 都在
-    bundle 里，任何一处都可能改变 playground 行为）+ playground 入口与构建
-    配置 + 进 engine.zip 的每个 Python 模块 + 运行时锁 + 规范文件。
+    bundle 里，任何一处都可能改变 playground 行为）+ 案例源码与封面
+    （examples/*.py 经 ?raw 进 bundle，generated/ 的封面与 manifest 是
+    卡片资产——两者任何一个变了都是另一个 playground）+ playground 入口
+    与构建配置 + 进 engine.zip 的每个 Python 模块 + 运行时锁 + 规范文件。
     """
     files: list[Path] = []
     for p in (WEB / "src").rglob("*"):
         if p.is_file() and p.suffix in (".ts", ".tsx", ".css") and ".test." not in p.name:
             files.append(p)
+    files += sorted((WEB / "src" / "playground" / "examples").glob("*.py"))
+    files += sorted((WEB / "src" / "playground" / "generated").glob("*"))
     files += [
         WEB / "playground.html",
         WEB / "vite.playground.config.ts",

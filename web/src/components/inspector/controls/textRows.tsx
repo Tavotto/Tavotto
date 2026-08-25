@@ -119,6 +119,7 @@ export function FontSizeRow({
     <Row label={labeledWithState(label, overridden)} labelWidth={labelWidth}>
       <NumberField
         className="w-[74px] shrink-0"
+        dataProp="fontsize"
         ariaLabel={label}
         value={value}
         mixed={mixed}

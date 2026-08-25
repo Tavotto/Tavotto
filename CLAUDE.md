@@ -964,11 +964,25 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被它推翻**（
   闲着时发**（无阶段请求超时 30s，排在慢渲染后面到点 = 整个会话被
   terminate）。UI 四态：没验完不许说「未改动」，算不出哈希是「查不了」
   不是「没改」，不相等按不变式失效常驻报警。
-- **示例是一等入口，不是脚注**（2026-08-21）：空状态两条平级的路——拖放区 +
-  一个填色主 CTA「直接试一个示例」。`EXAMPLES` 里**有且只有一个** `primary`
-  （examples.test.ts 看护）。点下去仍是真执行，**不许用预烤 SVG/manifest 提速**。
-  三个示例都在 savefig 前 `tight_layout()`：默认边距在这个 figsize 下会把
-  x/y 轴标签整条裁掉，而轴标签正是访客第一件想点的东西。
+- **案例优先，上传是次级入口**（2026-08-25，ADR 0011）：idle 首屏的主角是
+  案例库（三张构建期真实执行生成的 Figure 封面卡 + 中央试验台），上传降级
+  为底部「已有一个独立脚本？」，单文件边界在上传前写明。案例源码唯一真源
+  是 `web/src/playground/examples/*.py`（examples.ts 走 vite `?raw`，
+  **别在 TS 里抄第二份 Python**）；封面由
+  `scripts/generate_playground_examples.py` 在钉死的 matplotlib 版本下真实
+  执行生成，manifest 记源码 sha256——改了 .py 不重新生成封面，`--check` /
+  examples.test.ts / 构建指纹三道闸都是红。**封面只用于卡片展示**：五条
+  启动路径（拖入试验台 / 开始体验 / Enter / Code Sheet / 触屏点击）全部走
+  `openSource()` 真执行，**不许用预烤 SVG/manifest 提速**。`EXAMPLES` 里
+  **有且只有一个** `featured/starter`（examples.test.ts 看护）。拖拽只认
+  鼠标指针（Pointer Events 自实现，不引框架），触屏和键盘走点击/Enter，
+  reduced-motion 下不位移不缩放、只靠边框与文字表达。会话来源
+  （example/upload）进状态机；首次引导只对内置案例出现且**只观察不代劳**
+  ——完成语「一个字也没动」必须来自 verifySourceIntegrity 的真结论。
+  加载可取消：`startSession` 的 `onClient` 交出在途 client，取消 = 真
+  dispose，绝不并行两个 Worker。三个案例都在 savefig 前 `tight_layout()`：
+  默认边距在这个 figsize 下会把 x/y 轴标签整条裁掉，而轴标签正是访客
+  第一件想点的东西。
 - **`/try` 空闲时预热 Pyodide 核心**（`web/src/playground/prewarm.ts`）：
   **只到核心 + engine.zip 为止**，科学栈仍等 import 分类说了话才下载
   （e2e 断言预热窗口里 wheel 零条）；`saveData` 或 `slow-2g/2g` 不预热，
