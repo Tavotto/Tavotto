@@ -1336,3 +1336,32 @@ def test_real_codex_sparse_install_from_github(tmp_path):
     proc = _codex(["plugin", "list"], home)
     assert proc.returncode == 0 and "tavotto" in proc.stdout, \
         proc.stdout + proc.stderr
+
+
+def test_readme_desktop_only_route_never_advertises_a_bare_tavotto_command():
+    """P1（PR #118 评审）：桌面安装刻意不动 PATH，机器上没有叫 `tavotto` 的命令。
+
+    桌面收尾那条路必须走插件的 handoff.py 定位器，并明说裸 `tavotto open`
+    只在 PyPI 安装之后才存在。
+    """
+    zh = READMES["zh"].read_text(encoding="utf-8")
+    en = READMES["en"].read_text(encoding="utf-8")
+    assert "scripts/handoff.py" in zh and "scripts/handoff.py" in en
+    assert "刻意不改你的 PATH" in zh
+    assert "deliberately leave your `PATH` untouched" in en
+    # 桌面收尾小节里不许再教用户跑裸命令
+    zh_section = zh.split("### 只交给桌面版收尾")[1].split("###")[0]
+    en_section = en.split("### Handing off to the desktop app only")[1].split("###")[0]
+    for section in (zh_section, en_section):
+        assert "tavotto open path/to/figure.py" not in section
+
+
+def test_shipped_skill_docs_never_reference_repo_relative_docs():
+    """P2（PR #118 评审）：sparse 安装与插件发行包里没有仓库的 docs/。
+
+    随包分发的技能文档引用仓库文档一律用 GitHub URL，不用相对路径。
+    """
+    for path in [SKILL_DIR / "SKILL.md", *sorted((SKILL_DIR / "references").glob("*.md"))]:
+        text = path.read_text(encoding="utf-8")
+        assert "../../../docs/" not in text and "../../docs/" not in text, \
+            f"{path.name} 引用了包外的仓库 docs/ 相对路径"

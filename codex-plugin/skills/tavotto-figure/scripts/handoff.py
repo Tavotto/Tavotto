@@ -25,7 +25,9 @@ Tavotto 里双击进不去——多半是脚本没跟产物放在同一个目录
 `desktop_found_cli_missing` / `path_not_found` / `script_failed` /
 `not_parameterizable`。来自 `tavotto open` 的**原样透传**（`registry_write_failed`
 / `cli_exec_failed` / `unsupported_file` …），CLI 没给 code 才回落到
-`open_failed`。完整清单见 docs/handoff-protocol.md。
+`open_failed`。完整清单见
+https://github.com/Tavotto/Tavotto/blob/main/docs/handoff-protocol.md
+（插件包里没有仓库的 docs/，别写相对路径）。
 
 真正干活的是 Tavotto 自己的 `tavotto open`（`src/tavotto/engine/handoff.py`）：
 路径解析、注册表合并、唤起桌面 App 还是浏览器，全部在那边裁决。**本脚本不做

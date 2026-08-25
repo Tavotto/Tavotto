@@ -43,7 +43,10 @@ python3 scripts/handoff.py <脚本路径>
   `references/first-run-and-recovery.md` 的「插件有新版本」一节处理：收尾提醒
   一次，不阻塞、不自动升级。
 
-完整的错误码清单与排障步骤在 `../../../docs/handoff-protocol.md`。
+完整的错误码清单与排障步骤在
+<https://github.com/Tavotto/Tavotto/blob/main/docs/handoff-protocol.md>
+（sparse 安装与插件发行包里只有 `codex-plugin/`，仓库的 `docs/` 不随包分发，
+所以这里用仓库 URL 而不是相对路径）。
 
 交接后改了代码：重开一次会话（`tavotto_close_session` 再 `tavotto_open_figure`），
 或者再交接一次给桌面窗口——Tavotto 会重扫产物并定位到这张图，用户已经排好的版和

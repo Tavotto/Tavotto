@@ -42,7 +42,7 @@ Pick what you need first:
 
 | What you want to do | What to install |
 | --- | --- |
-| Codex draws the figure; you keep dragging and tweaking it in the Tavotto desktop window | The Tavotto desktop app |
+| Codex draws the figure; you keep dragging and tweaking it in the Tavotto desktop window | The Tavotto desktop app + the Codex plugin (no Python engine needed) |
 | Use Tavotto's canvas, preflight, editing and export tools directly inside Codex | The Codex plugin + the Tavotto Python engine |
 | Change Tavotto itself | See "Contributors: developing from source" below |
 
@@ -77,14 +77,20 @@ Tavotto tools; verify in a terminal `codex` session first instead of debugging t
 
 ### Handing off to the desktop app only
 
-With the Tavotto desktop app installed, the only thing Codex ever needs to run is:
+Install the desktop app plus the plugin (the two `codex plugin` commands above — the
+`pipx` line is not needed on this route). When you ask Codex to "open it in Tavotto",
+the plugin's skill hands the figure over with its own handoff script, which locates
+the CLI bundled inside the desktop app by itself:
 
 ```sh
-tavotto open path/to/figure.py
+python3 <plugin-dir>/skills/tavotto-figure/scripts/handoff.py path/to/figure.py
 ```
 
-This path does not require the MCP canvas inside Codex. Keep the script and its
-output in the same directory, and prefer vector PDF for the output.
+Do not tell Codex to run a bare `tavotto open` on this route: the desktop installers
+deliberately leave your `PATH` untouched, so that command only exists after a PyPI
+install. This path does not require the MCP canvas or the Python engine inside
+Codex. Keep the script and its output in the same directory, and prefer vector PDF
+for the output.
 
 ### Let Codex do the install
 

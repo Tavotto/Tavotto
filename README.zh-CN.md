@@ -40,7 +40,7 @@
 
 | 你要做什么 | 需要安装什么 |
 | --- | --- |
-| Codex 画完图后，在 Tavotto 桌面窗口里继续拖拽修改 | Tavotto 桌面版 |
+| Codex 画完图后，在 Tavotto 桌面窗口里继续拖拽修改 | Tavotto 桌面版 + Codex 插件（不需要 Python 引擎） |
 | 在 Codex 里直接使用 Tavotto 画布、预检、修改与导出工具 | Codex 插件 + Tavotto Python 引擎 |
 | 修改 Tavotto 本身 | 见下方「贡献者：从源码开发」 |
 
@@ -72,14 +72,17 @@ pipx install "tavotto[worker]"
 
 ### 只交给桌面版收尾
 
-安装 Tavotto 桌面版后，Codex 只需运行：
+装桌面版 + 插件（上面的两条 `codex plugin` 命令；这条路**不需要** `pipx` 那行）。
+让 Codex「在 Tavotto 里打开」时，插件的 skill 会用自带的交接脚本完成交接——它会
+自己找到桌面版内置的命令行：
 
 ```sh
-tavotto open path/to/figure.py
+python3 <插件目录>/skills/tavotto-figure/scripts/handoff.py path/to/figure.py
 ```
 
-这条路径不要求在 Codex 内使用 MCP 画布。脚本与产物应放在同一目录，产物优先
-保存为矢量 PDF。
+别让 Codex 直接跑裸的 `tavotto open`：桌面安装包**刻意不改你的 PATH**，那条命令
+只在 PyPI 安装之后才存在。这条路径不要求 Codex 内嵌画布，也不需要 Python 引擎。
+脚本与产物应放在同一目录，产物优先保存为矢量 PDF。
 
 ### 让 Codex 代你安装
 
