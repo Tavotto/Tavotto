@@ -4,7 +4,6 @@ import { createServer, type Server } from 'node:http'
 import { existsSync, readFileSync } from 'node:fs'
 import type { AddressInfo } from 'node:net'
 import path from 'node:path'
-import { PRIMARY_EXAMPLE } from '../src/playground/examples'
 
 /**
  * 浏览器 playground 的端到端证明（ADR 0007 的 Definition of Done）：
@@ -30,6 +29,13 @@ import { PRIMARY_EXAMPLE } from '../src/playground/examples'
  */
 
 const DIST = path.resolve(import.meta.dirname, '..', 'dist-playground')
+
+// 案例源码直接读 .py 文件（examples.ts 是 vite 的 ?raw import，Playwright 的
+// 加载器不认）；e2e 断言的哈希必须与 bundle 里那份逐字节相同——单一真源保证
+const KINETICS_SOURCE = readFileSync(
+  path.resolve(import.meta.dirname, '..', 'src', 'playground', 'examples', 'kinetics.py'),
+  'utf-8',
+)
 
 //: 冷缓存 + CDN 下载 + WASM 实例化，给足；见 §69——只放宽这一个 spec
 test.describe.configure({ mode: 'serial' })
@@ -172,7 +178,7 @@ test('黄金路径：示例脚本 → 真 Pyodide → 语义拖动标题 → 重
   await expect(dialog.getByText('Reaction kinetics')).toBeVisible()
   // 完整性明细里是**真哈希**：与在 node 里对同一份源码算出来的逐位相同
   await dialog.getByText('完整性', { exact: true }).click()
-  await expect(dialog.getByText(`SHA-256 ${shortSha(PRIMARY_EXAMPLE.source)}`)).toBeVisible()
+  await expect(dialog.getByText(`SHA-256 ${shortSha(KINETICS_SOURCE)}`)).toBeVisible()
   await page.keyboard.press('Escape')
 
   // 整个流程只碰了两类地址：本页静态资源 + 钉死的 Pyodide CDN

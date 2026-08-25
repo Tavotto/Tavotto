@@ -1,109 +1,126 @@
 /**
- * playground 内置示例。三条纪律（ADR 0007）：
- *   * 就是普通的科研 matplotlib 脚本——不 import pyodide / js / 任何
+ * playground 内置案例的元数据。**源码的唯一真源是 `examples/*.py`**——
+ * 这里经 vite 的 `?raw` import 读同一份文件，封面由
+ * `scripts/generate_playground_examples.py` 对同一份文件真实执行后生成
+ * （`generated/examples-manifest.json` 记着源码哈希，改了 .py 不重新生成
+ * 封面在 CI 是红灯）。TypeScript 里不再抄第二份 Python。
+ *
+ * 三条纪律（ADR 0007）：
+ *   * 案例就是普通的科研 matplotlib 脚本——不 import pyodide / js / 任何
  *     Tavotto 专有 API，Tavotto 接的是用户**本来就在写**的图；
  *   * 小到能读完；
- *   * 真的经过 Pyodide 执行——不是预烤的 manifest（那是在演示假东西）。
+ *   * 封面只用于卡片首屏展示。**启动案例仍然把源码交给 Pyodide 真实执行**，
+ *     不是预烤的 manifest（那是在演示假东西）。
  *
  * 三张都在 savefig 前 `tight_layout()`：matplotlib 的默认边距在这个尺寸下
- * 会把 x/y 轴标签裁掉（实测三张全中）。轴标签恰恰是访客第一件想点的东西，
- * 裁掉了就既难看又点不着——示例是第一印象，不是一个待修的 bug 展台。
+ * 会把 x/y 轴标签裁掉（实测三张全中）。轴标签恰恰是访客第一件想点的东西。
  */
-export interface Example {
-  id: string
-  /** i18n key 的尾段（dialogs:playground.example*） */
-  labelKey: string
-  filename: string
-  source: string
-  /**
-   * 空状态里那个一按就跑的主 CTA 用的示例。**有且只有一个**
-   * （`examples.test.ts` 看护）：主路径要是能指到两个地方，它就不是主路径了。
-   */
-  primary?: true
+import kineticsSource from './examples/kinetics.py?raw'
+import calibrationSource from './examples/calibration.py?raw'
+import spectrumSource from './examples/spectrum.py?raw'
+import kineticsThumb from './generated/kinetics.webp'
+import calibrationThumb from './generated/calibration.webp'
+import spectrumThumb from './generated/spectrum.webp'
+import coversManifest from './generated/examples-manifest.json'
+
+/**
+ * 进编辑器后的首次引导：一个**用户亲手完成**的两步小任务。
+ * 完成判据全部是真实状态（选中 gid / override 值 / 渲染成功 / 完整性核对），
+ * 绝不代用户点击或伪造完成态——GuidedTask.tsx 只观察，不代劳。
+ */
+export interface GuidedTaskSpec {
+  /** 第一步要选中的元素 gid */
+  targetGid: string
+  /** 第二步要修改的属性 */
+  prop: string
+  /** 达到这个值即算完成 */
+  targetValue: unknown
+  /** 第一步文案的 i18n key 尾段（dialogs:playground.*） */
+  selectKey: string
+  /** 第二步文案的 i18n key 尾段 */
+  editKey: string
 }
 
-export const EXAMPLES: Example[] = [
+export interface PlaygroundExample {
+  id: string
+  /** 虚拟工作区里的脚本名（用户可见，保留原文，不翻译） */
+  filename: string
+  /** Python 源码——`examples/<id>.py` 的原样字节 */
+  source: string
+  /** 案例名称的 i18n key 尾段（dialogs:playground.*） */
+  titleKey: string
+  /** 一句说明的 i18n key 尾段 */
+  descriptionKey: string
+  /** 可编辑对象提示行的 i18n key 尾段（如「标题 · 曲线 · 图例」） */
+  editableKey: string
+  /** 构建期从真实执行生成的封面（webp url） */
+  thumbnail: string
+  /** 封面固有尺寸（防 layout shift；与 generated manifest 同源） */
+  thumbWidth: number
+  thumbHeight: number
+  /** starter = 新手推荐（首页主推，有且只有一个）；explore = 其余 */
+  difficulty: 'starter' | 'explore'
+  /** 首页主推案例。**有且只有一个**（examples.test.ts 看护） */
+  featured?: true
+  guidedTask?: GuidedTaskSpec
+}
+
+const cover = (id: keyof typeof coversManifest) => coversManifest[id]
+
+export const EXAMPLES: PlaygroundExample[] = [
   {
     id: 'kinetics',
-    labelKey: 'exampleKinetics',
     filename: 'kinetics.py',
-    // 主 CTA 就是它：标题 / 轴标签 / 图例 / 两条曲线，点开就有东西可选可拖，
+    source: kineticsSource,
+    titleKey: 'exampleKinetics',
+    descriptionKey: 'exampleKineticsDesc',
+    editableKey: 'exampleKineticsEditable',
+    thumbnail: kineticsThumb,
+    thumbWidth: cover('kinetics').width,
+    thumbHeight: cover('kinetics').height,
+    difficulty: 'starter',
+    // 主推案例：标题 / 轴标签 / 图例 / 两条曲线，点开就有东西可选可拖，
     // 又不至于复杂到第一眼看不懂。别为了「功能多」换成更花的那张。
-    primary: true,
-    // 标题 / 轴标签 / 图例 / 两条 Line2D 全齐——语义选择一眼可见
-    source: `import numpy as np
-import matplotlib.pyplot as plt
-
-t = np.linspace(0, 60, 200)
-fast = 1 - np.exp(-t / 8)
-slow = 1 - np.exp(-t / 24)
-
-fig, ax = plt.subplots(figsize=(3.4, 2.5))
-ax.plot(t, fast, lw=1.4, label="Catalyst A")
-ax.plot(t, slow, lw=1.4, ls="--", label="Blank")
-ax.set_xlabel("Reaction time (min)")
-ax.set_ylabel("Conversion")
-ax.set_title("Reaction kinetics")
-ax.set_xlim(0, 60)
-ax.set_ylim(0, 1.05)
-ax.legend(loc="lower right")
-fig.tight_layout()
-fig.savefig("kinetics.pdf")
-`,
+    featured: true,
+    // 源码里明确写了 fontsize=9——任务「9 pt 调到 12 pt」的起点是钉死的，
+    // 不依赖 matplotlib 版本的默认标题字号
+    guidedTask: {
+      targetGid: 'axes_0.title',
+      prop: 'fontsize',
+      targetValue: 12,
+      selectKey: 'taskSelectTitle',
+      editKey: 'taskEditFontsize',
+    },
   },
   {
-    id: 'scatter-fit',
-    labelKey: 'exampleScatter',
+    id: 'calibration',
     filename: 'calibration.py',
-    source: `import numpy as np
-import matplotlib.pyplot as plt
-
-rng = np.random.default_rng(42)
-x = np.linspace(0, 10, 36)
-y = 2.1 * x + 1.3 + rng.normal(0, 1.2, x.size)
-k, b = np.polyfit(x, y, 1)
-
-fig, ax = plt.subplots(figsize=(3.4, 2.6))
-ax.scatter(x, y, s=14, alpha=0.75, label="Measured")
-ax.plot(x, k * x + b, lw=1.2, color="#b03a2e",
-        label=f"Fit: y = {k:.2f}x + {b:.2f}")
-ax.set_xlabel("Concentration (mM)")
-ax.set_ylabel("Signal (a.u.)")
-ax.set_title("Calibration curve")
-ax.legend(loc="upper left")
-fig.tight_layout()
-fig.savefig("calibration.pdf")
-`,
+    source: calibrationSource,
+    titleKey: 'exampleCalibration',
+    descriptionKey: 'exampleCalibrationDesc',
+    editableKey: 'exampleCalibrationEditable',
+    thumbnail: calibrationThumb,
+    thumbWidth: cover('calibration').width,
+    thumbHeight: cover('calibration').height,
+    difficulty: 'explore',
   },
   {
-    id: 'annotated',
-    labelKey: 'exampleAnnotated',
+    id: 'spectrum',
     filename: 'spectrum.py',
-    source: `import numpy as np
-import matplotlib.pyplot as plt
-
-w = np.linspace(400, 800, 400)
-peak = lambda c, s, a: a * np.exp(-((w - c) / s) ** 2)
-signal = peak(520, 18, 1.0) + peak(645, 30, 0.55) + 0.04
-
-fig, ax = plt.subplots(figsize=(3.6, 2.5))
-ax.plot(w, signal, lw=1.3)
-ax.fill_between(w, 0, signal, alpha=0.18)
-ax.annotate("Q-band", xy=(645, 0.6), xytext=(700, 0.85),
-            arrowprops=dict(arrowstyle="->", lw=0.9), fontsize=9)
-ax.set_xlabel("Wavelength (nm)")
-ax.set_ylabel("Absorbance")
-ax.set_title("Absorption spectrum")
-ax.set_xticks([400, 500, 600, 700, 800])
-ax.set_ylim(0, 1.1)
-fig.tight_layout()
-fig.savefig("spectrum.pdf")
-`,
+    source: spectrumSource,
+    titleKey: 'exampleSpectrum',
+    descriptionKey: 'exampleSpectrumDesc',
+    editableKey: 'exampleSpectrumEditable',
+    thumbnail: spectrumThumb,
+    thumbWidth: cover('spectrum').width,
+    thumbHeight: cover('spectrum').height,
+    difficulty: 'explore',
   },
 ]
 
-/** 空状态主 CTA 跑的那个（`primary`）。 */
-export const PRIMARY_EXAMPLE: Example = EXAMPLES.find((e) => e.primary) ?? EXAMPLES[0]
+/** 首页主推的那个案例（`featured`，有且只有一个）。 */
+export const FEATURED_EXAMPLE: PlaygroundExample =
+  EXAMPLES.find((e) => e.featured) ?? EXAMPLES[0]
 
-/** 其余示例——次级入口，不与主 CTA 重复。 */
-export const SECONDARY_EXAMPLES: Example[] = EXAMPLES.filter((e) => e !== PRIMARY_EXAMPLE)
+export const exampleById = (id: string): PlaygroundExample | undefined =>
+  EXAMPLES.find((e) => e.id === id)

@@ -23,7 +23,7 @@ import { cn } from '@/lib/utils'
 import { useDocumentStore } from '@/store/documentStore'
 import { usePanelRender } from '@/store/renderStore'
 import type { PanelObject } from '@/types/document'
-import { PRIMARY_EXAMPLE, SECONDARY_EXAMPLES } from './examples'
+import { EXAMPLES, FEATURED_EXAMPLE } from './examples'
 import {
   openFigure,
   startSession,
@@ -347,24 +347,24 @@ function IdleView({
 
         <div className="flex flex-col items-center">
           <button
-            onClick={() => onExample(PRIMARY_EXAMPLE.filename, PRIMARY_EXAMPLE.source)}
+            onClick={() => onExample(FEATURED_EXAMPLE.filename, FEATURED_EXAMPLE.source)}
             className="flex h-9 items-center gap-2 rounded-[6px] bg-ink px-4 text-[13px] font-medium text-white transition-opacity hover:opacity-90"
           >
             <Play size={13} aria-hidden />
             {pg('runSample')}
-            <span className="font-mono text-[11px] text-white/60">{PRIMARY_EXAMPLE.filename}</span>
+            <span className="font-mono text-[11px] text-white/60">{FEATURED_EXAMPLE.filename}</span>
           </button>
           <p className="mt-2 text-xs text-ink-3">{pg('runSampleNote')}</p>
 
           <div className="mt-4 flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5">
             <span className="text-xs text-ink-3">{pg('otherExamples')}</span>
-            {SECONDARY_EXAMPLES.map((ex) => (
+            {EXAMPLES.filter((ex) => !ex.featured).map((ex) => (
               <button
                 key={ex.id}
                 onClick={() => onExample(ex.filename, ex.source)}
                 className="text-xs text-ink-2 underline-offset-2 hover:text-ink hover:underline"
               >
-                {pg(ex.labelKey)}
+                {pg(ex.titleKey)}
               </button>
             ))}
           </div>
