@@ -44,6 +44,7 @@ BRAND_STRINGS = (
     "finishText",
     "openTavotto",
     "registeringTavotto",
+    "removingMagplot",
 )
 
 
@@ -244,6 +245,35 @@ def test_exception_flows_still_have_their_pages():
     assert "!insertmacro MUI_UNPAGE_INSTFILES" in TEXT
 
 
+def test_magplot_migration_runs_before_install():
+    """Magplot 0.7 装在另一个身份下（Uninstall\\Magplot），本安装器的升级
+    检测（只认 ${UNINSTKEY}）看不见它——不迁移的话双击安装与旧版应用内
+    更新（/P /UPDATE）都会装出两个并存的应用，旧的还在提示更新。
+
+    要点：迁移先于文件复制；旧卸载器静默（/S）且就地同步（_?=，拿得到
+    退出码）；失败**不 Abort**——装不上新版比两个应用并存糟糕得多。
+    """
+    assert "Function MigrateMagplot" in CODE
+    section = TEXT.split("Section Install\n")[1].split("SectionEnd")[0]
+    assert "Call MigrateMagplot" in section
+    assert section.index("Call MigrateMagplot") < section.index(
+        "CheckIfAppIsRunning"
+    ), "迁移必须在复制文件与运行检测之前"
+    fn = TEXT.split("Function MigrateMagplot")[1].split("FunctionEnd")[0]
+    fn_code = "\n".join(
+        ln for ln in fn.splitlines() if not ln.lstrip().startswith(";")
+    )
+    for hive in ("HKCU", "HKLM"):
+        needle = (
+            f'ReadRegStr $R8 {hive} '
+            '"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Magplot" '
+            '"UninstallString"'
+        )
+        assert needle in fn_code, f"迁移必须查 {hive} 的 Magplot 卸载键"
+    assert "/S _?=" in fn_code, "旧卸载器必须静默 + 就地同步运行"
+    assert "Abort" not in fn_code, "迁移失败不许阻断安装"
+
+
 def test_payload_and_registration_survive():
     section = TEXT.split("Section Install\n")[1].split("SectionEnd")[0]
     assert "{{#each binaries}}" in section          # sidecar / workerd / 内置 runtime
@@ -288,6 +318,57 @@ def test_template_exists_with_patch_markers():
 def test_cli_version_pinned_and_in_sync():
     vers = _pinned_versions()
     assert len(set(vers.values())) == 1, f"CLI 版本不同源: {vers}"
+
+
+def test_installer_bitmaps_match_the_generator():
+    """提交在仓库里的安装器位图必须与生成脚本的当前输出一致。
+
+    这两张 BMP 是受管构建物（与 canvas.html 同一条纪律）：改名 Magplot →
+    Tavotto 时脚本改了、产物没重新生成，0.8.0 起发出去的每一个 Windows
+    安装包侧栏都还写着 "Magplot"（2026-08-25 用户报告）。逐字节比对会被
+    渲染器（PyMuPDF）版本的抗锯齿差异误伤，所以按**强差异像素占比**判：
+    字标换字是大面积高强度差（实测 0.76%–3.1%），抗锯齿漂移是低强度差。
+    红了的正确动作永远是重跑 `scripts/build_installer_assets.py` 并提交。
+    """
+    pytest.importorskip("pymupdf")
+    import importlib.util
+    import struct
+    import sys
+
+    spec = importlib.util.spec_from_file_location(
+        "build_installer_assets", ROOT / "scripts" / "build_installer_assets.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules.setdefault("build_installer_assets", mod)
+    spec.loader.exec_module(mod)
+
+    import tempfile
+
+    def decode(data: bytes) -> tuple[int, int, bytes]:
+        off = struct.unpack_from("<I", data, 10)[0]
+        w, h = struct.unpack_from("<ii", data, 18)
+        stride = (w * 3 + 3) // 4 * 4
+        rows = [data[off + y * stride: off + y * stride + w * 3] for y in range(abs(h))]
+        return w, abs(h), b"".join(rows)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        mod.ROOT = tmp_path
+        mod.BRAND = tmp_path
+        mod.header()
+        mod.sidebar()
+        for name in ("installer-header.bmp", "installer-sidebar.bmp"):
+            committed = (ROOT / "assets" / "brand" / name).read_bytes()
+            fresh = (tmp_path / name).read_bytes()
+            cw, ch, cpx = decode(committed)
+            fw, fh, fpx = decode(fresh)
+            assert (cw, ch) == (fw, fh), f"{name} 尺寸变了：提交 {cw}x{ch} vs 生成 {fw}x{fh}"
+            strong = sum(1 for a, b in zip(cpx, fpx) if abs(a - b) > 64)
+            ratio = strong / len(cpx)
+            assert ratio < 0.002, (
+                f"{name} 与生成脚本的输出差 {ratio:.2%} 强差异像素——产物过期了，"
+                "重跑 scripts/build_installer_assets.py 并提交"
+            )
 
 
 def test_nsis_config_paths_resolve():

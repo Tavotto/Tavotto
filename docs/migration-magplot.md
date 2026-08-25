@@ -83,6 +83,15 @@ Tavotto 里检视，不需要转换。新导出的包一律是 `.tavotto`。
 
 ## 桌面应用
 
-0.7.0 桌面版**不会**原地升级到 Tavotto（应用标识符换了）：请先卸载旧版、
-安装 Tavotto，然后跑上面的迁移命令。旧版应用的卸载不影响用户数据——
-数据在用户目录里，不在应用包里。
+0.7.0 桌面版的应用标识符与 Tavotto 不同（`com.erwanjun.magplot` →
+`com.tavotto.tavotto`），Tauri 的升级检测互相看不见对方。
+
+- **Windows**：Tavotto 的 NSIS 安装器会自动检测并**静默卸载**旧版
+  Magplot（`installer.nsi` 的 `MigrateMagplot`，2026-08-25 起）——不管是
+  双击新安装包，还是在旧版 Magplot 里点「检查更新」走的静默升级路径，
+  装完只剩 Tavotto 一个。在此之前的安装包不带这段：装完会出现两个并存的
+  应用，旧 Magplot 还在提示「有新版本」，表现是「应用内更新点了没用」。
+  旧版的卸载不影响用户数据——数据在用户目录里，不在应用目录里。
+- **macOS**：请先删除旧的 Magplot.app，再安装 Tavotto。
+
+装好后跑上面的迁移命令接回旧数据。
