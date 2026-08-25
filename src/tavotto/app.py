@@ -573,13 +573,34 @@ def index():
                 "<code>pipx install tavotto</code>。</p>"), 503
     resp = send_from_directory(WEB_DIST, "index.html")
     resp.headers["Cache-Control"] = "no-cache"
+    # 已中毒的资产缓存只有这条路够得着（issue #115 评审）：0.10.x 在注册表
+    # 改坏的机器上把 text/plain 的 .js 按 immutable 缓存了一年，bundle 内容
+    # 哈希不变时升级后浏览器根本不再发请求，服务端改什么都到不了。"cache"
+    # 只清本 origin 的 HTTP 缓存（sessionStorage 的 pj、localStorage 的
+    # autosave 兜底都不碰）；127.0.0.1 是 trustworthy origin，无 HTTPS 也生效。
+    resp.headers["Clear-Site-Data"] = '"cache"'
     return resp
+
+
+# 打包资产的 Content-Type 不许由机器级文件关联决定（issue #115）：Windows 上
+# mimetypes 读注册表，HKCR\.js 被改成 text/plain 时 send_from_directory 会照猜，
+# 而 <script type="module"> 受严格 MIME 检查——WebView2 拒绝执行，整窗白屏。
+# 这里只列浏览器做严格校验、猜错即拒载的几类；图片等可嗅探类型照旧交给猜测。
+ASSET_MIME = {
+    ".js": "text/javascript",
+    ".mjs": "text/javascript",
+    ".css": "text/css",
+    ".svg": "image/svg+xml",
+}
 
 
 @app.get("/assets/<path:name>")
 def web_assets(name):
     """vite 输出的 hash 资源，index.html 里是绝对路径 /assets/…"""
     resp = send_from_directory(WEB_DIST / "assets", name)
+    forced = ASSET_MIME.get(os.path.splitext(name)[1].lower())
+    if forced:
+        resp.mimetype = forced
     resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
     return resp
 

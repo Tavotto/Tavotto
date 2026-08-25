@@ -33,6 +33,75 @@ curve — and change it, right there.
 
 <p align="center"><sub>The title of panel (a) is selected. Its font and size are on the right — and so is the script that drew it, <code>fig1_kinetics.py</code>, still untouched.</sub></p>
 
+## Using Tavotto with Codex for the first time
+
+> **Regular users: do not clone or build this repository.** Installing from source is
+> only for people working on Tavotto itself.
+
+Pick what you need first:
+
+| What you want to do | What to install |
+| --- | --- |
+| Codex draws the figure; you keep dragging and tweaking it in the Tavotto desktop window | The Tavotto desktop app + the Codex plugin (no Python engine needed) |
+| Use Tavotto's canvas, preflight, editing and export tools directly inside Codex | The Codex plugin + the Tavotto Python engine |
+| Change Tavotto itself | See "Contributors: developing from source" below |
+
+### The full Codex integration
+
+Run these in a terminal, one at a time:
+
+```sh
+codex plugin marketplace add Tavotto/Tavotto --sparse .agents/plugins --sparse codex-plugin
+codex plugin add tavotto@tavotto
+pipx install "tavotto[worker]"
+```
+
+Then **close your current Codex session and start a new one.** The plugin's skill and
+MCP tools do not hot-reload into a session that is already open.
+
+In the new session you can say:
+
+> Draw this figure with Tavotto. Run the Tavotto health check first; only draw once it
+> is healthy, and open the result in Tavotto at the end. Do not install or upgrade any
+> component that is already working.
+
+The first time a project-directory approval appears, what you are confirming is the
+local figure directory Tavotto may access. Figures, scripts and data are still
+processed on your machine.
+
+The plugin installs into your local `~/.codex` configuration, so it loads only in
+Codex surfaces that read local plugins — the Codex CLI in a terminal and the Codex
+desktop app. A surface that does not load local plugins (a purely cloud-hosted
+session, an IDE integration that ignores `~/.codex/plugins`) will never show the
+Tavotto tools; verify in a terminal `codex` session first instead of debugging there.
+
+### Handing off to the desktop app only
+
+Install the desktop app plus the plugin (the two `codex plugin` commands above — the
+`pipx` line is not needed on this route). When you ask Codex to "open it in Tavotto",
+the plugin's skill hands the figure over with its own handoff script, which locates
+the CLI bundled inside the desktop app by itself:
+
+```sh
+python3 <plugin-dir>/skills/tavotto-figure/scripts/handoff.py path/to/figure.py
+```
+
+Do not tell Codex to run a bare `tavotto open` on this route: the desktop installers
+deliberately leave your `PATH` untouched, so that command only exists after a PyPI
+install. This path does not require the MCP canvas or the Python engine inside
+Codex. Keep the script and its output in the same directory, and prefer vector PDF
+for the output.
+
+### Let Codex do the install
+
+Send Codex this message, in full:
+
+> Follow the "Using Tavotto with Codex for the first time" section of the README
+> exactly, as a regular-user install. Do not clone or build the source; do not run
+> pnpm, npm, cargo, Tauri, tests, or an editable install. Install only the Codex
+> plugin and the Tavotto engine it needs, then run the health check; when a new
+> session is required, tell me so explicitly and stop.
+
 ## Stop re-running a script to move a legend
 
 The last stretch before submission usually goes: change a line, re-run, look, change
@@ -134,11 +203,10 @@ Without the desktop app it falls back to browser mode.
 
 **Codex users** can install the plugin, which teaches Codex the shape a
 Tavotto-editable figure has to have (script beside its output, vector PDF, an output
-name that resolves statically) and puts the editor inside Codex itself:
-
-```sh
-codex plugin marketplace add Tavotto/Tavotto && codex plugin add tavotto@tavotto
-```
+name that resolves statically) and puts the editor inside Codex itself — the install
+commands and what to say in the first session are in
+[Using Tavotto with Codex for the first time](#using-tavotto-with-codex-for-the-first-time)
+above.
 
 It ships a skill, a local MCP server with six tools — open a figure, apply overrides,
 run the preflight, export true-vector PDF/SVG or PNG at an explicit DPI, verify a
@@ -191,7 +259,11 @@ That runtime is also why the installers are large: **195 MB to download on macOS
 
 > macOS builds are **Apple Silicon (arm64) only**. Intel Macs are neither built nor
 > tested — use the PyPI install below. There is no Linux installer; Linux runs from
-> PyPI (browser mode, beta). The single source of truth for what is supported,
+> PyPI (browser mode, beta). On Windows, each release page states whether its
+> installer is code signed; an unsigned installer makes Windows show a
+> **SmartScreen** prompt on first run (choose *More info → Run anyway*, or verify
+> the download against `SHA256SUMS.txt` on the release page first).
+> The single source of truth for what is supported,
 > beta, and unsupported — per platform and per Python version — is
 > [`docs/support-matrix.json`](docs/support-matrix.json); release pages, the
 > website and in-app copy must match it (a test enforces the facts it can check).
@@ -234,7 +306,9 @@ tavotto
 
 **Reuse the environment your figures were made in.** Drop the `[worker]` extra and
 point Tavotto at your own interpreter, so figures render against exactly the
-dependencies they were written for:
+dependencies they were written for. (This installs the lightweight CLI only: without
+`[worker]` there is no bundled rendering stack, so rendering — including the Codex
+MCP integration — depends entirely on the interpreter you point it at.)
 
 ```sh
 pipx install tavotto
@@ -242,7 +316,9 @@ export TAVOTTO_WORKER_PYTHON=/path/to/your/env/bin/python   # Windows: setx TAVO
 tavotto
 ```
 
-**From source** (needs node + pnpm to build the interface):
+**Contributors: developing from source.** This path is for changing Tavotto itself,
+never a fallback for a failed regular install (needs node + pnpm to build the
+interface):
 
 ```sh
 git clone https://github.com/Tavotto/Tavotto.git && cd Tavotto

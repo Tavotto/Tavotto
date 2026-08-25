@@ -1,0 +1,17 @@
+{
+  "calibration": {
+    "height": 572,
+    "sourceSha256": "25b7b783740fa3582250335a644088837d6b9c442cfd2b4b38d999d832bd8730",
+    "width": 748
+  },
+  "kinetics": {
+    "height": 550,
+    "sourceSha256": "e9e2d4ab86b8df642f7fa805a6da110d1b14753246d3f8deba685b09cdae9a21",
+    "width": 748
+  },
+  "spectrum": {
+    "height": 550,
+    "sourceSha256": "61cf19587e6356a0a48edd3f47c11f112bad66a6879cbc204fdf17d7bfd848eb",
+    "width": 792
+  }
+}
