@@ -911,6 +911,7 @@ export default interface Resources {
       "replay_divergence": "写回被阻止：热会话与全量重放不一致。这属于引擎级问题，请把此信息报告给开发者",
       "scan_failed": "扫描失败：{{reason}}",
       "script_changed": "写回被阻止：脚本在会话期间被修改过，请重新渲染后再试",
+      "script_error": "脚本执行失败: {{error}}",
       "script_name_missing": "缺少脚本名",
       "script_not_in_project": "脚本不存在或不在项目目录内",
       "session_auth_required": "会话未建立或已失效：请重新启动 Tavotto，从它打开的链接进入。",
@@ -919,6 +920,7 @@ export default interface Resources {
       "stale_write": "自动保存冲突：磁盘上已有更新的版本",
       "sync_different_scripts": "两张图不属于同一个脚本，无法同步",
       "unknown_agent": "未知 agent：{{agent}}",
+      "worker_timeout": "渲染超时，工作进程已重启——请重试；反复超时说明脚本本身跑不完",
       "write_back_disabled": "该项目已设为只读：不允许写回原始文件（可在项目设置中恢复可写）",
       "write_back_warnings": "写回被阻止：引擎在重放时报告了警告"
     },

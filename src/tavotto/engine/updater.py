@@ -164,8 +164,12 @@ def check(force: bool = False) -> dict:
     try:
         release = _fetch_latest_release()
     except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
-        # 离线是常态而不是错误：如实回报，不打断任何操作
-        return {**base, "error": f"检查失败: {exc}", "update_available": False,
+        # 离线是常态而不是错误：如实回报，不打断任何操作。
+        # code + params 让前端按界面语言渲染（issue #30：英文界面不得漏出
+        # 「检查失败:」这半句中文）；error 原文照旧留作回退。
+        return {**base, "error": f"检查失败: {exc}",
+                "code": "update_check_failed", "params": {"error": str(exc)},
+                "update_available": False,
                 "cached": False, "checked_at_ms": int(time.time() * 1000)}
 
     latest = str(release.get("tag_name") or "").lstrip("v")

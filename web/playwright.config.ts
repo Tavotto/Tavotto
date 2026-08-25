@@ -44,7 +44,7 @@ export default defineConfig({
     {
       name: 'chromium-en',
       use: { ...devices['Desktop Chrome'], locale: 'en-US' },
-      testMatch: ['a11y.spec.ts'],
+      testMatch: ['a11y.spec.ts', 'error-recovery-en.spec.ts'],
     },
   ],
 })
