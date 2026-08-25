@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   Check,
   Download,
@@ -391,6 +392,9 @@ function IssueList({
   stale: boolean
   panel: PanelObject
 }) {
+  // 订阅语言变化：宿主中途切 locale（host-context-changed）时，
+  // 预检条目要跟着重译，不能停在挂载那一刻的语言上
+  useTranslation('errors')
   const setSelectedGids = useUiStore((s) => s.setSelectedGids)
   const manifest = usePanelRender(panel)?.manifest
   if (!issues.length) return null
