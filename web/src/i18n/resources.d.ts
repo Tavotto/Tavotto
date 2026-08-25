@@ -1102,6 +1102,7 @@ export default interface Resources {
       "zUp": "上移一层",
       "zorderLabel": "层级"
     },
+    "assistantRunningTip": "助手正在运行",
     "autoHideAria": "右栏自动收起中，点击改为常驻",
     "autoHideTip": "自动收起中：清空选择后右栏让位给画布。点击改为常驻",
     "canvas": {
@@ -1164,6 +1165,17 @@ export default interface Resources {
       "viewAids": "查看辅助"
     },
     "closePanel": "关闭右侧面板",
+    "control": {
+      "customColormap": "自定义色图（{{value}}）",
+      "customLineStyle": "自定义线型（{{value}}）",
+      "hatchNone": "无花纹",
+      "hatchPattern": "花纹 {{value}}",
+      "legendCustomHint": "图例被拖到过自定义位置；点任一预设即可回到自动定位。",
+      "resetSide": "恢复{{label}}到脚本",
+      "switchOff": "{{label}}：关（点击开启）",
+      "switchOn": "{{label}}：开（点击关闭）",
+      "tickSpineDiagram": "刻度与边框状态图"
+    },
     "element": {
       "advanced": "高级",
       "alignBaseline": "基准",
@@ -1205,6 +1217,9 @@ export default interface Resources {
       "imageHint": "位置和大小属于宿主子图；颜色与显示属于当前图像。",
       "keptPrevious": "已保留上一版图像",
       "mixedValues": "多个值",
+      "modified": "已修改",
+      "modifiedCount_other": "{{count}} 项已修改",
+      "more": "更多",
       "moveDown": "下移",
       "moveUp": "上移",
       "numberList": {
@@ -1219,6 +1234,8 @@ export default interface Resources {
       "relatedLegend": "所属图例",
       "relatedSeries": "所属系列",
       "relatedWithHint": "{{hint}}：{{label}}",
+      "resetElement": "恢复此元素到脚本",
+      "resetElementCount_other": "恢复此元素到脚本（{{count}} 项）",
       "resetHint": {
         "default": "回到脚本值",
         "size_mm": "恢复脚本原始尺寸",
@@ -1238,6 +1255,7 @@ export default interface Resources {
       "scaleTitle": "绕中心缩放，组内相对布局不变",
       "setAxesHeight": "修改子图高度",
       "setAxesWidth": "修改子图宽度",
+      "sourceAdvanced": "源文件与高级",
       "traceback": "traceback",
       "useAssistant": "用改图助手完成",
       "waiting": "等待引擎渲染…"
@@ -1574,6 +1592,7 @@ export default interface Resources {
       "scaleTitle": "相对原始大小的绝对百分比：100% = 原始大小。裁剪不改变缩放基准",
       "searchAssets": "搜索文件名…",
       "source": "源文件",
+      "sourceAdvanced": "源文件与高级",
       "sourceHint": "写回会用当前图内修改覆盖 figures 里的原始 PDF/PNG（自动备份，可从历史恢复）。",
       "staleScript": "脚本已更新，进入编辑会自动重建",
       "unknown": "未知"
@@ -1894,6 +1913,12 @@ export default interface Resources {
       "weightBold": "加粗",
       "weightNormal": "常规"
     },
+    "textControls": {
+      "align": "对齐",
+      "color": "颜色",
+      "font": "字体",
+      "size": "字号"
+    },
     "transform": {
       "rotation": "旋转",
       "textHeightAuto": "文字高度由内容自动决定",
@@ -2157,6 +2182,10 @@ export default interface Resources {
       "replaceAssetBody_other": "当前面板有 {{count}} 项图内修改。这些修改绑定在原脚本的元素上，换素材后无法保留，将被清空（可撤销）。位置、尺寸、裁剪与层级都会保留。",
       "replaceAssetConfirm": "替换并清空修改",
       "replaceAssetTitle": "替换为「{{name}}」？"
+    },
+    "contextBar": {
+      "aria": "快速编辑",
+      "openInspector": "全部属性"
     },
     "crash": {
       "blank": "打开空白文档",

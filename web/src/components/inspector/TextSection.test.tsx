@@ -224,3 +224,26 @@ describe('Mod+↑ / Mod+↓ 在文字框里', () => {
     expect(currentText()).toBe('H2O')
   })
 })
+
+describe('与图内文字一致的界面结构（ADR 0010）', () => {
+  it('「字号」「颜色」「对齐」是可见标签，与图内文字同一组行组件', () => {
+    const text = container.textContent ?? ''
+    for (const label of ['字号', '颜色', '对齐']) expect(text, label).toContain(label)
+    // 画布文字没有字体族能力（统一走文档字体）——不摆假「字体」控件
+    expect(text).not.toContain('字体')
+  })
+
+  it('大小写 / 行距 / 背景住进「更多」，默认收起', () => {
+    const text = container.textContent ?? ''
+    expect(text).toContain('更多')
+    expect(text).not.toContain('行距')
+    expect(text).not.toContain('大小写')
+    const more = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent?.trim() === '更多',
+    )!
+    act(() => more.click())
+    const after = container.textContent ?? ''
+    expect(after).toContain('行距')
+    expect(after).toContain('背景')
+  })
+})

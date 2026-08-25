@@ -31,7 +31,8 @@ test('图内曲线：沿真实路径选中，bbox 空白角不误命中', async 
   await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
   await expect(page.getByText('画布是空的')).toHaveCount(0)
 
-  await page.getByRole('button', { name: '编辑图内元素' }).click()
+  // 右栏与上下文工具条各有一个入口，取右栏那个
+  await page.getByRole('button', { name: '编辑图内元素' }).first().click()
   const svgWrap = page.locator('[data-element-svg]').first()
   await expect(svgWrap.locator('svg')).toBeVisible({ timeout: 60_000 })
   await page.waitForTimeout(1500)

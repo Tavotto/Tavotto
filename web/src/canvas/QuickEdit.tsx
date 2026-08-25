@@ -25,13 +25,13 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import type { CanvasObject, PanelObject } from '@/types/document'
 import { objectLabel } from '@/types/document'
-import { optionLabel, propLabel } from '@/components/inspector/roles/registry'
+import { propLabel } from '@/components/inspector/roles/registry'
 import { useQuickEdit } from './quickEditStore'
 import { TextActionRow } from '@/components/inspector/TextActions'
 import { hasTextStyleBar, TextStyleBar } from '@/components/inspector/TextStyleBar'
 import { Button } from '@/components/ui/Button'
 import { NumberField, TextArea } from '@/components/ui/Input'
-import { Select } from '@/components/ui/Select'
+import { LegendPositionPicker } from '@/components/inspector/controls/LegendPositionPicker'
 
 /**
  * 右键快捷编辑：光标处的小弹层。
@@ -398,12 +398,12 @@ function LegendControls({
     <>
       {!!loc?.options?.length && (
         <Line label={propLabel('loc')}>
-          <Select
-            className="min-w-0 flex-1"
-            ariaLabel={propLabel('loc')}
-            value={loc.options.includes(cur) ? cur : loc.options[0]}
+          {/* 与属性页同一个 3×3 位置网格（§16：同一概念同一控件） */}
+          <LegendPositionPicker
+            value={cur}
+            options={loc.options}
             onChange={(v) => write('loc', v)}
-            options={loc.options.map((o) => ({ value: o, label: optionLabel('loc', o) }))}
+            ariaLabel={propLabel('loc')}
           />
         </Line>
       )}

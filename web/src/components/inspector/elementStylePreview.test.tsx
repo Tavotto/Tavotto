@@ -214,6 +214,18 @@ const textInput = (label: string): HTMLInputElement =>
 const toggle = (label: string): HTMLElement =>
   rowByLabel(label)!.querySelector('button[role="switch"]')!
 
+/** 展开「更多」折叠区（显隐等中频属性住在里面；IA 见 ADR 0010） */
+async function openMore() {
+  const btn = Array.from(host.querySelectorAll('button')).find(
+    (b) => b.textContent?.trim() === '更多',
+  )
+  if (btn && btn.getAttribute('aria-expanded') !== 'true') {
+    await act(async () => {
+      btn.click()
+    })
+  }
+}
+
 /**
  * React 19 给受控 input 挂了 value tracker：直接 `el.value = x` 之后再发
  * input 事件，React 会认为值没变而**跳过 onChange**。必须经原生 setter 写值。
@@ -315,6 +327,7 @@ describe('线条颜色：改的那一刻 SVG 就变，后端等到手势结束',
     await act(async () => {
       input.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
     })
+    await openMore()
     await act(async () => {
       toggle('显示').click()
     })
@@ -327,6 +340,7 @@ describe('线条颜色：改的那一刻 SVG 就变，后端等到手势结束',
 describe('显隐开关：一次动作 = 一条历史 + 一次渲染，画面立刻消失', () => {
   it('点一下就 display:none，且只发一次后端', async () => {
     await mount('axes_0.lines_0')
+    await openMore()
     await act(async () => {
       toggle('显示').click()
     })
