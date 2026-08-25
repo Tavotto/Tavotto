@@ -76,7 +76,7 @@ class TestMergeGroupTrigger:
         merge_group 只会把深度验证和发布链拖进每一次排队。"""
         for name in ("nightly.yml", "release.yml", "lab-ci.yml",
                      "desktop-tauri.yml", "telemetry-metrics.yml",
-                     "_lab-qualification.yml"):
+                     "_lab-qualification.yml", "pr-conflict-domains.yml"):
             text = _code((WF / name).read_text(encoding="utf-8"))
             assert "merge_group" not in text, f"{name} 不该监听 merge_group"
 
@@ -202,15 +202,82 @@ class TestGates:
         assert re.search(r"types: \[[^\]]*labeled", CI), \
             "pull_request types 里掉了 labeled——加标签不会触发新 run"
 
+    HEAVY = ("backend-platforms", "package", "windows-exe-smoke",
+             "macos-app-smoke")
+
+    def _heavy_cond(self, job_id: str) -> str:
+        block = _code(_job(CI, job_id))
+        m = re.search(r"(?m)^\s+if: >-\n((?:\s+.+\n)+?)\s+(?:needs|strategy|runs-on):",
+                      block)
+        assert m, f"{job_id} 的 if 条件解析不出来"
+        return m.group(1)
+
     def test_heavy_jobs_run_on_merge_group(self):
-        """PR 1 的关键兼容性：旧 required contexts（package / smoke）在
-        merge_group 上也要产出结论，否则 enable-queue 之后队列全部超时。"""
-        for job_id in ("package", "windows-exe-smoke", "macos-app-smoke"):
-            block = _code(_job(CI, job_id))
-            m = re.search(r"(?m)^\s+if: >-\n((?:\s+.+\n)+?)\s+needs:", block)
-            assert m, f"{job_id} 的 if 条件解析不出来"
-            cond = m.group(1)
+        """重型资格在 merge_group 上必须产出结论，否则队列候选白等超时。"""
+        for job_id in self.HEAVY:
+            cond = self._heavy_cond(job_id)
             assert "github.event_name == 'merge_group'" in cond, \
                 f"{job_id} 在 merge_group 上不跑——队列候选会白等超时"
             assert "github.event_name != 'pull_request'" not in cond, \
                 f"{job_id} 用了过宽的否定条件——未来事件会误入重型路径"
+
+    def test_heavy_jobs_do_not_run_on_plain_prs_or_push(self):
+        """PR 2 定版：重型资格只在 merge_group 或 full-ci PR 上跑——
+        普通 PR 不再等它，push main 不再重复它。"""
+        for job_id in self.HEAVY:
+            cond = self._heavy_cond(job_id)
+            assert "'full-ci'" in cond, f"{job_id} 掉了 full-ci 提前跑的入口"
+            assert "== 'push'" not in cond, \
+                f"{job_id} 还在 push main 上重复制造同一批产物"
+            assert "draft" not in cond, \
+                f"{job_id} 还在按草稿与否分层——那套信号已被 merge_group 取代"
+
+    def test_fast_jobs_cover_pr_and_merge_group_but_not_push(self):
+        """快线在 PR 与 merge_group 上都要跑（PR 先绿才能进队列，组合提交
+        还要再验一遍）；push main 只留 landing audit。"""
+        for job_id in ("invariants", "backend-fast", "frontend", "workerd",
+                       "compat-smoke"):
+            block = _code(_job(CI, job_id))
+            m = re.search(r"(?m)^\s+if: (.+)$", block)
+            assert m, f"{job_id} 没有事件条件"
+            cond = m.group(1)
+            assert "github.event_name == 'pull_request'" in cond and \
+                "github.event_name == 'merge_group'" in cond, \
+                f"{job_id} 的事件条件不对：{cond}"
+
+    def test_backend_split_keeps_all_four_tiers(self):
+        """backend-fast + backend-platforms 合起来必须与从前的四腿矩阵逐档
+        相同：Linux 3.10 / Linux 3.13 / macOS 3.13 / Windows 3.13。
+        merge_group 上四档全跑（fast 与 platforms 都在），一档都不许少。"""
+        fast = _job(CI, "backend-fast")
+        platforms = _job(CI, "backend-platforms")
+        tiers = set(re.findall(r"\{ os: ([\w-]+),\s*python: \"([\d.]+)\" \}",
+                               fast + platforms))
+        assert tiers == {("ubuntu-latest", "3.10"), ("ubuntu-latest", "3.13"),
+                         ("macos-latest", "3.13"), ("windows-latest", "3.13")}, \
+            f"backend 覆盖漂了：{sorted(tiers)}"
+        assert "python -m pytest" in _code(fast) and \
+            "python -m pytest" in _code(platforms)
+
+    def test_integration_gate_includes_backend_platforms(self):
+        assert "backend-platforms" in _needs_of(_job(CI, "ci-integration-gate"))
+
+    def test_main_push_runs_only_the_landing_audit(self):
+        """push main 的落地审计存在、只在 push 上跑、且真的轻——不装科学栈、
+        不打包、不跑冒烟。"""
+        block = _code(_job(CI, "main-landing-audit"))
+        assert re.search(r"(?m)^\s+if: github\.event_name == 'push'$", block)
+        assert "build_mcp_widget.py --check" in block, "受管生成物一致性掉了"
+        assert "pytest" in block, "结构契约那一步掉了"
+        for heavy_marker in ("pyinstaller", "smoke_app.py", "python -m build",
+                             "matplotlib"):
+            assert heavy_marker not in block, \
+                f"landing audit 里混进了重活：{heavy_marker}"
+
+    def test_landing_audit_structural_tests_exist(self):
+        """audit 里点名的测试文件必须真实存在——点一个不存在的文件，pytest
+        当场红，main 每次落地都红。"""
+        block = _code(_job(CI, "main-landing-audit"))
+        root = WF.parents[1]
+        for rel in re.findall(r"tests/[\w/]+\.py", block):
+            assert (root / rel).is_file(), f"landing audit 引用的 {rel} 不存在"

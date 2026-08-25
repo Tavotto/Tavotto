@@ -9,6 +9,12 @@ name: CodeQL
 # python / rust，category 仍是 `/language:<lang>`），既有 alert 才认得出是同一份分析、
 # 不会整批作废重来。threat model 保持默认的 remote，也与原配置一致。
 on:
+  # **push main 刻意保留**（2026-08-25 Merge Queue 定版时复议过）：它不是
+  # merge_group 扫描的重复。CodeQL 的默认分支告警状态（Security → Code
+  # scanning 的 open/fixed 账本）只由**默认分支上的分析**推进——PR 与
+  # merge_group 的分析挂在临时 ref 上，只产 diff 结论，不落账。去掉这条，
+  # 告警账本只剩每周一次的 schedule 在推，「合进来的修复把告警关掉」要等
+  # 最多七天才反映出来。买到的独立价值：告警账本按 commit 粒度保持新鲜。
   push:
     branches: [main]
   pull_request:

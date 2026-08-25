@@ -1,36 +1,32 @@
 name: CI
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 三层反馈（2026-08-21）。**分层是为了让第一层早回来，不是为了少跑测试**——
-# 最终门禁一条没减，required checks 的名字一个没动。
+# 验证按**发生时机**分工（2026-08-25，Merge Queue 定版）。
+# **覆盖面一条没减，改的是每类验证在哪个提交上执行**：
 #
-#   第 1 层  PR 快线（每次 push 都跑，目标是「这个 commit 还值不值得继续」）
-#            invariants / backend / frontend / workerd / compat-smoke / CodeQL
+#   PR（含草稿）    快速反馈：invariants / backend-fast（Linux 3.10+3.13）/
+#                   frontend / workerd / compat-smoke / CodeQL。
+#                   重型资格**不在 PR 上跑**——CI integration gate 显式回
+#                   deferred（summary 与 JSON 都写明），PR 靠三个 Gate 进队列。
+#   full-ci PR      打上 `full-ci` 标签 = 在 PR 自己的 SHA 上提前跑全套重型
+#                   资格（backend-platforms / package ×3 / 两个真产物冒烟），
+#                   此时 integration gate 真实聚合、不许 deferred。
+#   merge_group     完整合并资格的**唯一常规执行点**。Merge Queue 为
+#                   「最新 main + 队列前序 PR + 当前 PR」造出组合提交，
+#                   全部快线 + 全部重型资格在它上面真实跑一遍，
+#                   三个 Gate 全绿才允许合入 main。
+#   push main       轻量落地审计（main-landing-audit）：结构契约 + 受管生成物
+#                   一致性 + 落地信息。**不重复打包、不重复真产物冒烟**——
+#                   合进来的树就是 merge_group 上刚验过的那棵（squash 由队列
+#                   执行，无 bypass actor，没有第二条进 main 的路）。
+#   nightly / lab   深度持续验证（nightly.yml + lab-ci.yml）：全量 CompatBench
+#                   × 多运行时、视觉回归、真实安装链路、soak 与 mutation。
+#   release         发布产物资格（release.yml），一条没动。
 #
-#   第 2 层  合并资格（PR 从草稿变成 Ready for review 之后才跑）
-#            package ×3 / windows-exe-smoke / macos-app-smoke
-#            —— 三个平台的打包、装 wheel 冒烟、真 .exe / 真 .app、内置 runtime、
-#            workerd 自动发现。单条 60 分钟上限，是这套 CI 里最贵的部分。
-#
-#   第 3 层  nightly / lab（nightly.yml + lab-ci.yml）
-#            全量 CompatBench × 多运行时、最小运行时、浏览器运行时、保真度、
-#            视觉回归、安装链路（真装真卸）、soak 与 mutation。
-#
-# **为什么用「草稿与否」而不是别的信号**：required status checks 一共 16 个
-# context，第 2 层占了 5 个。任何让它们在某些 push 上不产出结论的做法，都要
-# 面对「skipped 的必需检查算不算通过」这个随 GitHub 行为变化的问题。而草稿 PR
-# **本来就不能合并**——那 5 个检查在草稿期没有结论完全无害，作者点下
-# 「Ready for review」的那一刻它们就照常跑、照常报。ruleset 一个字节都不用改，
-# 也就不会出现「先登记必需检查、再合产出它的 job」那种把仓库锁死的顺序错误。
-#
-# 想在草稿期就跑全套：给 PR 打 `full-ci` 标签。
-#
-# **Merge Queue 兼容层（2026-08-25，PR 1 / 2）**：本工作流同时监听
-# `merge_group.checks_requested`——Merge Queue 为「最新 main + 队列前序 PR +
-# 当前 PR」造出的临时组合提交也要走同一套验证。末尾的两个聚合 Gate
-# （`CI fast gate` / `CI integration gate`）是 ruleset 未来唯一依赖的
-# required contexts；迁移顺序与前置条件见 docs/ci/merge-queue-rollout.md，
-# **在 switch-to-gates 完成之前，旧的 17 个 required contexts 一个都不许动**。
+# ruleset 的 required contexts = 三个稳定 Gate（CI fast gate / CI integration
+# gate / codeql.yml 的 CodeQL gate），判定逻辑只在 scripts/ci/aggregate_gate.py。
+# 迁移顺序与前置条件见 docs/ci/merge-queue-rollout.md——本文件的重型 job 收敛
+# 到 merge_group / full-ci，**只有在 ruleset 已经 switch-to-gates 之后才成立**。
 # ═══════════════════════════════════════════════════════════════════════════
 
 on:
@@ -83,22 +79,19 @@ jobs:
   # + 与它同一族的 artist family / patchspec / preflight 契约）。
   #
   # 它跑的是 backend 的**子集**，所以不是新增门禁，是把最会红的那几条提前
-  # 到两三分钟内回来——backend 是 4 条腿的全量矩阵，等它跑完再发现「撤销回
-  # 不到原样」太晚了。真正的 pass/fail 仍然由 backend 负责（那 4 个 context
-  # 是 required checks），这一格红了 backend 必然也红。
-  #
-  # **已登记成必需检查**（2026-08-22，第 17 条）。顺序是硬的：必需检查只能
-  # 登记 main 上**已经产出过结论**的 job，反过来会把整个仓库锁死（先登记、
-  # 再合并产出它的 workflow = 所有 PR 永远等一个永远不会出现的 context）。
-  # 实际落地顺序：PR #48 合进 main → main 上 `3d637a4` 的 CI 13/13 全绿、
-  # 这一格在其中 → 才加进 ruleset。**改名或删掉这个 job 之前先把 ruleset 里
-  # 那一条摘掉**，否则同样锁死。
+  # 到两三分钟内回来——等 backend 矩阵跑完再发现「撤销回不到原样」太晚了。
+  # 真正的 pass/fail 仍由 backend-fast / backend-platforms 负责，这一格红了
+  # 它们必然也红。它经 `CI fast gate` 参与合并资格（ruleset 只认三个 Gate；
+  # 改名或从 Gate 的 needs 里摘掉之前，先看 aggregate_gate 的闭集规则）。
   #
   # 不做 paths 过滤：不变式验的是引擎语义与它的对外契约，而「哪些文件会影响
   # 引擎语义」本身就是一个会漏配的判断——漏一条换来的是「改了契约却没人跑
   # 不变式」，静默不跑的门禁与空转的门禁一样坏。
   # ────────────────────────────────────────────────────────────────
   invariants:
+    # 快线只在 PR 与 merge_group 上跑：push main 的树就是 merge_group 上
+    # 刚验过的那棵，main 侧只留 main-landing-audit（见文件抬头的分工表）。
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -130,18 +123,21 @@ jobs:
         if: always()
         run: python tests/support/engine_invariant_probe.py --pretty
 
-  backend:
-    # 跨平台是产品承诺，就得跨平台跑。Linux 上多铺几个 Python 版本盯住
-    # requires-python 的下界，mac / Windows 各跑一档确认平台相关代码
-    # （数据目录、worker 解释器探测、路径分隔符）没写死成 POSIX。
+  # 跨平台是产品承诺，就得跨平台跑——但**在哪个提交上跑**分了工：
+  # backend-fast 守 Python 下界与主开发版本，每个 PR push 都回来；
+  # backend-platforms 守 mac / Windows 的平台相关代码（数据目录、worker
+  # 解释器探测、路径分隔符），在 merge_group 的最终组合提交（或 full-ci PR）
+  # 上跑。两个 job 合起来与从前的四腿矩阵**逐档相同**：
+  # Linux 3.10 / Linux 3.13 / macOS 3.13 / Windows 3.13，一档没少
+  # （tests/test_merge_queue_workflows.py 对拍这四档）。
+  backend-fast:
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     strategy:
       fail-fast: false
       matrix:
         include:
           - { os: ubuntu-latest,  python: "3.10" }
           - { os: ubuntu-latest,  python: "3.13" }
-          - { os: macos-latest,   python: "3.13" }
-          - { os: windows-latest, python: "3.13" }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -150,6 +146,34 @@ jobs:
           python-version: ${{ matrix.python }}
       # matplotlib 单独装：pyproject 的主依赖刻意不含科学栈（Flask 父进程的
       # 依赖边界），CI 里装上让 worker round-trip 用例真正执行而非跳过
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install matplotlib
+      - name: pytest
+        run: python -m pytest
+
+  # backend 的最终平台线：macOS / Windows 各一档 3.13。只在 merge_group 的
+  # 组合提交（或带 full-ci 标签的 PR）上跑——普通 PR 不再等两台最慢的
+  # runner，而最终进 main 的每一棵树仍然四档全跑过。
+  backend-platforms:
+    if: >-
+      github.event_name == 'merge_group'
+      || (github.event_name == 'pull_request'
+          && contains(github.event.pull_request.labels.*.name, 'full-ci'))
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-latest,   python: "3.13" }
+          - { os: windows-latest, python: "3.13" }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
       - name: 安装依赖
         run: |
           python -m pip install --upgrade pip
@@ -171,6 +195,7 @@ jobs:
   # 单跑一台 Linux：兼容性是引擎语义，没有平台分支；跨平台由 backend 矩阵盖。
   # ────────────────────────────────────────────────────────────────
   compat-smoke:
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -202,6 +227,7 @@ jobs:
           if-no-files-found: warn
 
   frontend:
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -255,6 +281,7 @@ jobs:
   #
   # 只在 Linux 上跑一份：纯标准库 + serde 的 stdio 进程，没有平台分支。
   workerd:
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -276,18 +303,17 @@ jobs:
   package:
     # 装出来的 wheel 必须自带界面并且能真的起起来——这条流水线专门盯
     # 「本地能跑但打包后 404」这类只在发布时才暴露的问题。
-    # 第 2 层（合并资格）：草稿 PR 上跳过——草稿本来就不能合并，而这一档是
-    # 这套 CI 里最贵的部分。点「Ready for review」或打 `full-ci` 标签即照常跑。
-    # 显式按事件分支，不写 `!= 'pull_request'` 这种过宽条件：merge_group /
-    # push / 未来新增的任何事件都会掉进否定式的兜里，而 PR 字段只在
+    # 合并资格档：只在 merge_group 的组合提交（或带 `full-ci` 标签的 PR）上
+    # 跑——这一档是这套 CI 里最贵的部分，而它真正要回答的问题是「这个最终
+    # 组合能不能进 main」，那个问题只在 merge_group 上问得准确。
+    # 显式按事件分支，不写 `!= 'pull_request'` 这种过宽条件：那种否定式会把
+    # push / schedule / 未来新增的任何事件全兜进重型路径，而 PR 字段只在
     # pull_request 事件里存在——merge_group payload 里没有 draft / labels。
     if: >-
-      github.event_name == 'push'
-      || github.event_name == 'merge_group'
+      github.event_name == 'merge_group'
       || (github.event_name == 'pull_request'
-          && (github.event.pull_request.draft == false
-              || contains(github.event.pull_request.labels.*.name, 'full-ci')))
-    needs: [backend, frontend]
+          && contains(github.event.pull_request.labels.*.name, 'full-ci'))
+    needs: [backend-fast, frontend]
     strategy:
       fail-fast: false
       matrix:
@@ -352,18 +378,17 @@ jobs:
     #
     # 走的是 scripts/smoke_app.py（与 nightly 共用同一条路径），失败时把
     # app.log / worker.log / runtime 清单一起传上来。
-    # 第 2 层（合并资格）：草稿 PR 上跳过——草稿本来就不能合并，而这一档是
-    # 这套 CI 里最贵的部分。点「Ready for review」或打 `full-ci` 标签即照常跑。
-    # 显式按事件分支，不写 `!= 'pull_request'` 这种过宽条件：merge_group /
-    # push / 未来新增的任何事件都会掉进否定式的兜里，而 PR 字段只在
+    # 合并资格档：只在 merge_group 的组合提交（或带 `full-ci` 标签的 PR）上
+    # 跑——这一档是这套 CI 里最贵的部分，而它真正要回答的问题是「这个最终
+    # 组合能不能进 main」，那个问题只在 merge_group 上问得准确。
+    # 显式按事件分支，不写 `!= 'pull_request'` 这种过宽条件：那种否定式会把
+    # push / schedule / 未来新增的任何事件全兜进重型路径，而 PR 字段只在
     # pull_request 事件里存在——merge_group payload 里没有 draft / labels。
     if: >-
-      github.event_name == 'push'
-      || github.event_name == 'merge_group'
+      github.event_name == 'merge_group'
       || (github.event_name == 'pull_request'
-          && (github.event.pull_request.draft == false
-              || contains(github.event.pull_request.labels.*.name, 'full-ci')))
-    needs: [backend, frontend]
+          && contains(github.event.pull_request.labels.*.name, 'full-ci'))
+    needs: [backend-fast, frontend]
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
@@ -550,18 +575,17 @@ jobs:
     # worker-env 撑着的，等于什么都没验。
     #
     # e2e 不在这里跑（Windows 那条已经覆盖真实界面），避免把 PR 门禁再拉长一倍。
-    # 第 2 层（合并资格）：草稿 PR 上跳过——草稿本来就不能合并，而这一档是
-    # 这套 CI 里最贵的部分。点「Ready for review」或打 `full-ci` 标签即照常跑。
-    # 显式按事件分支，不写 `!= 'pull_request'` 这种过宽条件：merge_group /
-    # push / 未来新增的任何事件都会掉进否定式的兜里，而 PR 字段只在
+    # 合并资格档：只在 merge_group 的组合提交（或带 `full-ci` 标签的 PR）上
+    # 跑——这一档是这套 CI 里最贵的部分，而它真正要回答的问题是「这个最终
+    # 组合能不能进 main」，那个问题只在 merge_group 上问得准确。
+    # 显式按事件分支，不写 `!= 'pull_request'` 这种过宽条件：那种否定式会把
+    # push / schedule / 未来新增的任何事件全兜进重型路径，而 PR 字段只在
     # pull_request 事件里存在——merge_group payload 里没有 draft / labels。
     if: >-
-      github.event_name == 'push'
-      || github.event_name == 'merge_group'
+      github.event_name == 'merge_group'
       || (github.event_name == 'pull_request'
-          && (github.event.pull_request.draft == false
-              || contains(github.event.pull_request.labels.*.name, 'full-ci')))
-    needs: [backend, frontend]
+          && contains(github.event.pull_request.labels.*.name, 'full-ci'))
+    needs: [backend-fast, frontend]
     runs-on: macos-latest        # 目前只有 Apple Silicon 一档；Intel 未构建未验证
     timeout-minutes: 60
     steps:
@@ -705,8 +729,10 @@ jobs:
   # ────────────────────────────────────────────────────────────────
   ci-fast-gate:
     name: CI fast gate
-    if: always()
-    needs: [invariants, backend, frontend, workerd, compat-smoke]
+    # always() 让它在上游失败后照跑并且红；事件条件与快线一致——push main
+    # 上快线不跑，Gate 也不跑（required contexts 只在 PR / merge_group 上有意义）。
+    if: ${{ always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
+    needs: [invariants, backend-fast, frontend, workerd, compat-smoke]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -718,13 +744,13 @@ jobs:
           python3 scripts/ci/aggregate_gate.py \
             --mode fast \
             --event "${{ github.event_name }}" \
-            --required invariants,backend,frontend,workerd,compat-smoke \
+            --required invariants,backend-fast,frontend,workerd,compat-smoke \
             --needs-json "$NEEDS_JSON"
 
   ci-integration-gate:
     name: CI integration gate
-    if: always()
-    needs: [package, windows-exe-smoke, macos-app-smoke]
+    if: ${{ always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
+    needs: [backend-platforms, package, windows-exe-smoke, macos-app-smoke]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -751,5 +777,66 @@ jobs:
             --mode integration \
             --event "$GATE_EVENT" \
             $FLAGS \
-            --required package,windows-exe-smoke,macos-app-smoke \
+            --required backend-platforms,package,windows-exe-smoke,macos-app-smoke \
             --needs-json "$NEEDS_JSON"
+
+  # ────────────────────────────────────────────────────────────────
+  # main 落地审计——push main 上跑的唯一一个 job。
+  #
+  # 它**不是**合并资格的复跑：合进来的树就是 merge_group 上刚验过的那棵
+  # （Merge Queue 强制、无 bypass actor，没有第二条进 main 的路），在 main 上
+  # 重造三个 wheel、重打两个桌面产物只是把同一批产物再造一遍。这里只审
+  # 「落地这件事本身」：落了哪个 SHA / 哪棵树、结构契约还成立、受管生成物
+  # 没有漂——几分钟内回来。深度验证归 nightly / lab（当晚就会跑到这个 SHA）。
+  # ────────────────────────────────────────────────────────────────
+  main-landing-audit:
+    name: main landing audit
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: 落地信息（写进 summary，作为这个 commit 的审计记录）
+        run: |
+          set -euo pipefail
+          {
+            echo "## main landing audit"
+            echo
+            echo "| 项 | 值 |"
+            echo "|---|---|"
+            echo "| commit | \`$(git rev-parse HEAD)\` |"
+            echo "| tree | \`$(git rev-parse 'HEAD^{tree}')\` |"
+            echo "| parents | \`$(git rev-list --parents -n 1 HEAD | cut -d' ' -f2-)\` |"
+            echo "| subject | $(git log -1 --pretty=%s | head -c 200) |"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: workflow YAML 可解析
+        run: |
+          python -m pip install --quiet pyyaml
+          python - <<'PY'
+          import pathlib, sys, yaml
+          bad = []
+          for p in sorted(pathlib.Path(".github/workflows").glob("*.yml")):
+              try:
+                  yaml.safe_load(p.read_text(encoding="utf-8"))
+              except yaml.YAMLError as exc:
+                  bad.append(f"{p.name}: {exc}")
+          if bad:
+              sys.exit("\n".join(bad))
+          print("workflow YAML 全部可解析")
+          PY
+      - name: 受管生成物一致性（MCP 画布指纹，纯 Python，不需要 Node）
+        run: python3 scripts/build_mcp_widget.py --check
+      - name: CI 结构契约（不依赖科学栈的那部分）
+        # 这些测试只读文件与脚本、纯标准库：Gate 闭集、merge_group 触发、
+        # 并发不取消队列、发布编排契约、Ruleset 迁移工具、冲突域检查。
+        run: |
+          python -m pip install --quiet pytest
+          python -m pytest -q \
+            tests/test_merge_queue_workflows.py \
+            tests/test_aggregate_gate.py \
+            tests/test_merge_queue_ruleset.py \
+            tests/test_pr_conflict_domains.py \
+            tests/test_release_workflow_contract.py

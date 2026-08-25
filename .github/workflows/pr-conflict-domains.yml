@@ -1,0 +1,45 @@
+name: PR conflict domains
+
+# 冲突域导航（咨询性，**不是 required check**）：在 PR 上把「哪些 open PR
+# 与你落在同一个冲突域 / 会撞同一个受管生成物」提前摆出来。Merge Queue
+# 验的是组合还绿不绿，验不了真正的 Git 冲突——canvas.html 这类生成物冲突
+# 要在进队列**之前**被看见。判定与文案在 scripts/ci/pr_conflict_domains.py，
+# 域声明在 .github/conflict-domains.json，协作形态见 docs/ci/parallel-prs.md。
+#
+# 它失败**不阻断**任何产品 CI：脚本对 API 打不通 / 配置读不出一律
+# ::warning:: + 退出码 0。也别把它登记成 required——咨询性检查一旦 required，
+# 下一次 GitHub API 抖动就会拦住所有人。
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+# 只读。这个 workflow 不写仓库、不评论、不动任何 PR。
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: conflict-domains-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  conflict-domains:
+    name: conflict domains (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # **checkout 的是默认分支，不是 PR 的 head**：这个 job 会拿着
+      # GITHUB_TOKEN 调 API，跑的必须是 main 上那份可信脚本——fork PR
+      # 改过的 pr_conflict_domains.py 不在这里执行。PR 改了什么文件由
+      # API 回答，不需要检出 PR 的代码。
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - name: 冲突域检查
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 scripts/ci/pr_conflict_domains.py \
+            --repo "${{ github.repository }}" \
+            --pr "${{ github.event.pull_request.number }}"
