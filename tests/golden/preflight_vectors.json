@@ -1,5 +1,5 @@
 {
- "comment": "预检向量：pytest（engine/preflight.py）与 vitest（web/src/lib/preflight.ts）各跑一遍同一份输入。只比 id/severity/object_ids/gids/detail —— 中文措辞归界面。重新生成：python scripts/gen_preflight_vectors.py --write",
+ "comment": "预检向量：pytest（engine/preflight.py）与 vitest（web/src/lib/preflight.ts）各跑一遍同一份输入。比 id/severity/message(key+params)/object_ids/gids/detail —— 成文措辞归界面。重新生成：python scripts/gen_preflight_vectors.py --write",
  "cases": [
   {
    "name": "clean-single-column",
@@ -569,6 +569,13 @@
     {
      "id": "font-too-small",
      "severity": "error",
+     "message": {
+      "key": "fontTooSmall",
+      "params": {
+       "effective": "8.20",
+       "min": "8.5"
+      }
+     },
      "object_ids": [
       "p1"
      ],
@@ -583,6 +590,13 @@
     {
      "id": "font-below-absolute-floor",
      "severity": "error",
+     "message": {
+      "key": "fontBelowFloor",
+      "params": {
+       "effective": "8.00",
+       "floor": "8"
+      }
+     },
      "object_ids": [
       "p1"
      ],
@@ -881,6 +895,13 @@
     {
      "id": "font-below-absolute-floor",
      "severity": "error",
+     "message": {
+      "key": "fontBelowFloor",
+      "params": {
+       "effective": "7.20",
+       "floor": "8"
+      }
+     },
      "object_ids": [
       "p1"
      ],
@@ -899,6 +920,13 @@
     {
      "id": "line-width-off-preset",
      "severity": "warn",
+     "message": {
+      "key": "frameWidthOffPreset",
+      "params": {
+       "effective": "0.60",
+       "presets": "0.75/1"
+      }
+     },
      "object_ids": [
       "p1"
      ],
@@ -912,6 +940,14 @@
     {
      "id": "legend-font-size",
      "severity": "warn",
+     "message": {
+      "key": "legendFontSize",
+      "params": {
+       "effective": "7.20",
+       "min": "8.5",
+       "max": "9"
+      }
+     },
      "object_ids": [
       "p1"
      ],
@@ -974,6 +1010,13 @@
     {
      "id": "raster-dpi",
      "severity": "error",
+     "message": {
+      "key": "rasterDpi",
+      "params": {
+       "dpi": "191",
+       "min": "300"
+      }
+     },
      "object_ids": [
       "p1"
      ],
@@ -986,6 +1029,10 @@
     {
      "id": "raster-text-not-verifiable",
      "severity": "not_verifiable",
+     "message": {
+      "key": "rasterTextNotVerifiable",
+      "params": {}
+     },
      "object_ids": [
       "p1"
      ],
@@ -1044,6 +1091,10 @@
     {
      "id": "panel-text-not-verifiable",
      "severity": "not_verifiable",
+     "message": {
+      "key": "panelTextNotVerifiable",
+      "params": {}
+     },
      "object_ids": [
       "p1"
      ],
@@ -1337,6 +1388,13 @@
     {
      "id": "font-below-absolute-floor",
      "severity": "error",
+     "message": {
+      "key": "fontBelowFloor",
+      "params": {
+       "effective": "8.00",
+       "floor": "8"
+      }
+     },
      "object_ids": [
       "p1"
      ],
@@ -1351,6 +1409,12 @@
     {
      "id": "spines-not-enclosed",
      "severity": "warn",
+     "message": {
+      "key": "spinesNotEnclosed",
+      "params": {
+       "sides": "right"
+      }
+     },
      "object_ids": [
       "p1"
      ],
@@ -1366,6 +1430,13 @@
     {
      "id": "tick-direction",
      "severity": "warn",
+     "message": {
+      "key": "tickDirection",
+      "params": {
+       "got": "out",
+       "want": "in"
+      }
+     },
      "object_ids": [
       "p1"
      ],
@@ -1380,6 +1451,10 @@
     {
      "id": "legend-frame",
      "severity": "warn",
+     "message": {
+      "key": "legendFrame",
+      "params": {}
+     },
      "object_ids": [
       "p1"
      ],
@@ -1391,6 +1466,14 @@
     {
      "id": "legend-font-size",
      "severity": "warn",
+     "message": {
+      "key": "legendFontSize",
+      "params": {
+       "effective": "8.00",
+       "min": "8.5",
+       "max": "9"
+      }
+     },
      "object_ids": [
       "p1"
      ],
@@ -1404,6 +1487,13 @@
     {
      "id": "line-width-off-preset",
      "severity": "warn",
+     "message": {
+      "key": "lineWidthOffPreset",
+      "params": {
+       "effective": "1.20",
+       "presets": "0.5/0.75/1/1.5"
+      }
+     },
      "object_ids": [
       "p1"
      ],
@@ -2282,6 +2372,13 @@
     {
      "id": "font-below-absolute-floor",
      "severity": "error",
+     "message": {
+      "key": "fontBelowFloor",
+      "params": {
+       "effective": "6.75",
+       "floor": "8"
+      }
+     },
      "object_ids": [
       "p1",
       "p2",
@@ -2303,6 +2400,13 @@
     {
      "id": "line-width-off-preset",
      "severity": "warn",
+     "message": {
+      "key": "frameWidthOffPreset",
+      "params": {
+       "effective": "0.56",
+       "presets": "0.75/1"
+      }
+     },
      "object_ids": [
       "p1",
       "p2"
@@ -2317,6 +2421,14 @@
     {
      "id": "legend-font-size",
      "severity": "warn",
+     "message": {
+      "key": "legendFontSize",
+      "params": {
+       "effective": "6.75",
+       "min": "8.5",
+       "max": "9"
+      }
+     },
      "object_ids": [
       "p1",
       "p2"
@@ -2331,6 +2443,10 @@
     {
      "id": "out-of-page",
      "severity": "error",
+     "message": {
+      "key": "outOfPage",
+      "params": {}
+     },
      "object_ids": [
       "p2"
      ],
@@ -2340,6 +2456,12 @@
     {
      "id": "outside-margin",
      "severity": "warn",
+     "message": {
+      "key": "outsideMargin",
+      "params": {
+       "margin": "3"
+      }
+     },
      "object_ids": [
       "p1",
       "t-small",
@@ -2351,6 +2473,10 @@
     {
      "id": "overlap",
      "severity": "warn",
+     "message": {
+      "key": "overlap",
+      "params": {}
+     },
      "object_ids": [
       "p1",
       "p2"
@@ -2361,6 +2487,10 @@
     {
      "id": "hidden",
      "severity": "warn",
+     "message": {
+      "key": "hidden",
+      "params": {}
+     },
      "object_ids": [
       "p3"
      ],
@@ -2654,6 +2784,15 @@
     {
      "id": "page-aspect",
      "severity": "warn",
+     "message": {
+      "key": "pageAspect",
+      "params": {
+       "ratio": "2.500",
+       "w": "150",
+       "h": "60",
+       "allowed": "16:9、4:3、1:1"
+      }
+     },
      "object_ids": [],
      "gids": [],
      "detail": {
@@ -3236,6 +3375,13 @@
     {
      "id": "page-width",
      "severity": "error",
+     "message": {
+      "key": "pageWidth",
+      "params": {
+       "actual": "178",
+       "want": "80/150"
+      }
+     },
      "object_ids": [],
      "gids": [],
      "detail": {
@@ -3537,6 +3683,13 @@
     {
      "id": "page-width",
      "severity": "error",
+     "message": {
+      "key": "pageWidth",
+      "params": {
+       "actual": "80.3",
+       "want": "80/150"
+      }
+     },
      "object_ids": [],
      "gids": [],
      "detail": {
@@ -4119,6 +4272,13 @@
     {
      "id": "font-too-small",
      "severity": "error",
+     "message": {
+      "key": "fontTooSmall",
+      "params": {
+       "effective": "4.00",
+       "min": "8.5"
+      }
+     },
      "object_ids": [
       "p1"
      ],
@@ -4417,6 +4577,13 @@
     {
      "id": "page-width",
      "severity": "suggestion",
+     "message": {
+      "key": "pageWidth",
+      "params": {
+       "actual": "123",
+       "want": "80/150"
+      }
+     },
      "object_ids": [],
      "gids": [],
      "detail": {
@@ -4429,6 +4596,13 @@
     {
      "id": "font-below-absolute-floor",
      "severity": "warn",
+     "message": {
+      "key": "fontBelowFloor",
+      "params": {
+       "effective": "4.00",
+       "floor": "5"
+      }
+     },
      "object_ids": [
       "p1"
      ],
@@ -4727,6 +4901,13 @@
     {
      "id": "font-family-substituted",
      "severity": "warn",
+     "message": {
+      "key": "fontFamilySubstitutedKnown",
+      "params": {
+       "family": "DejaVu Sans",
+       "want": "Times New Roman"
+      }
+     },
      "object_ids": [
       "p1"
      ],
@@ -4740,6 +4921,12 @@
     {
      "id": "cjk-fallback-missing",
      "severity": "warn",
+     "message": {
+      "key": "cjkFallbackMissing",
+      "params": {
+       "family": "DejaVu Sans"
+      }
+     },
      "object_ids": [
       "p1"
      ],
@@ -4998,6 +5185,13 @@
     {
      "id": "discouraged-colormap",
      "severity": "suggestion",
+     "message": {
+      "key": "discouragedColormap",
+      "params": {
+       "cmap": "jet",
+       "recommended": "Scientific colour maps (Crameri)"
+      }
+     },
      "object_ids": [
       "p1"
      ],
@@ -5011,6 +5205,10 @@
     {
      "id": "bar-without-errorbar",
      "severity": "suggestion",
+     "message": {
+      "key": "barWithoutErrorbar",
+      "params": {}
+     },
      "object_ids": [
       "p1"
      ],
@@ -5022,6 +5220,10 @@
     {
      "id": "fit-without-ci",
      "severity": "suggestion",
+     "message": {
+      "key": "fitWithoutCi",
+      "params": {}
+     },
      "object_ids": [
       "p1"
      ],
@@ -5033,6 +5235,12 @@
     {
      "id": "palette-line-markers",
      "severity": "suggestion",
+     "message": {
+      "key": "paletteLineMarkers",
+      "params": {
+       "count": 2
+      }
+     },
      "object_ids": [
       "p1"
      ],
@@ -5330,6 +5538,10 @@
     {
      "id": "missing-asset",
      "severity": "error",
+     "message": {
+      "key": "missingAsset",
+      "params": {}
+     },
      "object_ids": [
       "p1"
      ],
@@ -5339,6 +5551,10 @@
     {
      "id": "render-error",
      "severity": "error",
+     "message": {
+      "key": "renderError",
+      "params": {}
+     },
      "object_ids": [
       "p1"
      ],
@@ -5350,6 +5566,10 @@
     {
      "id": "stale-render",
      "severity": "warn",
+     "message": {
+      "key": "staleRender",
+      "params": {}
+     },
      "object_ids": [
       "p1"
      ],
@@ -5359,6 +5579,12 @@
     {
      "id": "unapplied-override",
      "severity": "error",
+     "message": {
+      "key": "unappliedOverride",
+      "params": {
+       "count": 3
+      }
+     },
      "object_ids": [
       "p1"
      ],
@@ -5370,6 +5596,10 @@
     {
      "id": "bitmap-embed",
      "severity": "warn",
+     "message": {
+      "key": "bitmapEmbed",
+      "params": {}
+     },
      "object_ids": [
       "p1"
      ],
@@ -5697,6 +5927,14 @@
     {
      "id": "text-weight-policy",
      "severity": "suggestion",
+     "message": {
+      "key": "textWeightPolicy",
+      "params": {
+       "role": "axis_label",
+       "want": "bold",
+       "got": "normal"
+      }
+     },
      "object_ids": [
       "p1"
      ],
@@ -5713,6 +5951,13 @@
     {
      "id": "axis-label-format",
      "severity": "suggestion",
+     "message": {
+      "key": "axisLabelFormat",
+      "params": {
+       "label": "Temperature",
+       "want": "Title (unit)"
+      }
+     },
      "object_ids": [
       "p1"
      ],
@@ -6041,6 +6286,10 @@
     {
      "id": "cjk-fallback-missing",
      "severity": "warn",
+     "message": {
+      "key": "textCjkFallbackMissing",
+      "params": {}
+     },
      "object_ids": [
       "t-cn"
      ],
@@ -6358,6 +6607,13 @@
     {
      "id": "font-too-large",
      "severity": "warn",
+     "message": {
+      "key": "fontTooLarge",
+      "params": {
+       "effective": "24.00",
+       "max": "12"
+      }
+     },
      "object_ids": [
       "p1"
      ],
@@ -6884,6 +7140,14 @@
     {
      "id": "tick-label-count",
      "severity": "suggestion",
+     "message": {
+      "key": "tickLabelCount",
+      "params": {
+       "axis": "axes_0.xticklabels",
+       "count": 12,
+       "max": 10
+      }
+     },
      "object_ids": [
       "p1"
      ],

@@ -36,7 +36,14 @@ export interface OpenFigureResult {
 export interface PreflightIssuePayload {
   id: string
   severity: 'error' | 'warn' | 'not_verifiable' | 'suggestion'
+  /** Python 侧渲染好的成文——只作没有 message（旧引擎）时的回退 */
   text: string
+  /**
+   * 可翻译描述符（issue #30）：宿主 webview 按自己的 locale 用
+   * `errors:preflight.<key>` 渲染。key/params 与前端求值器逐字对齐
+   * （golden vectors 看护）。
+   */
+  message?: { key: string; params: Record<string, unknown> }
   object_ids: string[]
   gids: string[]
   detail?: Record<string, unknown>

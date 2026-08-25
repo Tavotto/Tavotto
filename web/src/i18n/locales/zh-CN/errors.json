@@ -99,6 +99,7 @@
     "bitmapEmbed": "翻转或半透明的面板在 PDF 里按导出 DPI 位图嵌入，矢量文字不保留",
     "cjkFallbackMissing": "含中日韩字符的文字用的是 {{family}}，没有声明中文 fallback，导出 PDF 里会是方框",
     "discouragedColormap": "色谱 {{cmap}} 不是感知均匀的，规范推荐 {{recommended}}",
+    "exportRasterDpi": "导出 {{formats}} 用的 {{dpi}}dpi 低于规范的 {{min}}dpi",
     "fitWithoutCi": "有拟合曲线但没有置信区间填充带——投稿时通常要求给出拟合的不确定度",
     "fontBelowFloor": "图内文字的最终有效字号 {{effective}}pt 不大于绝对下限 {{floor}}pt",
     "fontFamilySubstituted": "图内文字用的是 {{family}}，规范要求 {{want}}",
