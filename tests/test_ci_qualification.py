@@ -26,6 +26,7 @@ sys.path.insert(0, str(CI_DIR.parent))
 
 import _common  # noqa: E402
 import benchmark as BM  # noqa: E402
+import release_blockers as RB  # noqa: E402
 import soak as SK  # noqa: E402
 import upgrade_acceptance as UA  # noqa: E402
 import visual_regression as VR  # noqa: E402
@@ -1315,3 +1316,100 @@ def test_a_replacement_that_survives_sigkill_is_reported(monkeypatch):
     (check,) = PF.check_stale_processes(reap=True)
     assert not check.ok, "打不死的替补被当成清干净了"
     assert "5353" in check.detail, f"没报出是哪个进程：{check.detail}"
+
+
+# ============================================================ Release-blocker 门禁
+#
+# issue #35 把「真实 N-1 更新」列为退出条件后，带着这个已知未验证的洞又发了
+# 多个 0.x 版本——没有任何机制在发版时把它摆到眼前。与 #78（「声明了却从未
+# 执行的 job」）同族：洞活在 issue 里而不是 YAML 里。判定逻辑集中在
+# scripts/ci/release_blockers.py，这里逐条钉「坏掉之后会怎样」。
+
+def _issue(num: int, title: str = "x", state: str = "open", pr: bool = False) -> dict:
+    d = {"number": num, "title": title, "state": state}
+    if pr:
+        d["pull_request"] = {"url": "…"}
+    return d
+
+
+def test_no_open_blockers_and_no_ack_passes():
+    ok, _ = RB.check([], "", "workflow_dispatch")
+    assert ok
+
+
+def test_a_stale_ack_with_no_open_blockers_is_refused():
+    """残留的 ack 是上一次发版复制来的陈词。
+
+    放行它的话，下一个 blocker 出现时那串旧编号可能正好把它「签」掉——
+    一次 ack 永久生效，门禁名存实亡。
+    """
+    ok, lines = RB.check([], "35", "workflow_dispatch")
+    assert not ok
+    assert any("陈旧" in ln for ln in lines)
+
+
+def test_an_unacked_blocker_blocks_and_is_listed():
+    ok, lines = RB.check([_issue(35, "N-1 真更新"), _issue(83)], "", "workflow_dispatch")
+    assert not ok
+    text = "\n".join(lines)
+    assert "#35" in text and "N-1 真更新" in text, "清单必须摆到发版人眼前，不是光说有"
+
+
+def test_an_exact_ack_passes_and_names_the_responsibility():
+    ok, lines = RB.check([_issue(35), _issue(83)], "35,83", "workflow_dispatch")
+    assert ok
+    assert any("明知" in ln for ln in lines), "放行时要写明签字的含义"
+
+
+def test_a_partial_ack_is_refused():
+    """两个 blocker 只签一个 = 没签。"""
+    ok, lines = RB.check([_issue(35), _issue(83)], "35", "workflow_dispatch")
+    assert not ok
+    assert any("#83" in ln for ln in lines)
+
+
+def test_an_ack_naming_a_closed_issue_is_refused():
+    """签了不在 open 清单里的编号（已关闭 / 写错）也不放行。
+
+    「逐条对得上」是双向的——单向包含会让「多签几个万能编号」永久生效。
+    """
+    ok, lines = RB.check([_issue(35)], "35,999", "workflow_dispatch")
+    assert not ok
+    assert any("#999" in ln for ln in lines)
+
+
+def test_prs_are_not_blockers():
+    """GitHub 的 issues 端点会把 PR 混进来——PR 不是「已知未修的洞」。"""
+    ok, _ = RB.check([_issue(41, pr=True)], "", "workflow_dispatch")
+    assert ok
+
+
+def test_tag_push_gets_told_how_to_proceed():
+    """tag 触发带不了输入：红灯必须告诉人两条出路，而不是只说不行。"""
+    ok, lines = RB.check([_issue(35)], "", "push")
+    assert not ok
+    text = "\n".join(lines)
+    assert "workflow_dispatch" in text and "ack_open_blockers" in text
+
+
+def test_ack_parsing_tolerates_human_input():
+    assert RB.parse_ack(" #35 ，83, ") == {35, 83}
+    assert RB.parse_ack("") == set()
+    with pytest.raises(SystemExit):
+        RB.parse_ack("35,abc")
+
+
+def test_release_yml_wires_the_blocker_gate():
+    """脚本写好了却没接上去，等于没写（gate-never-executed-rots）。"""
+    src = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
+    assert "ack_open_blockers:" in src.split("\njobs:")[0], \
+        "workflow_dispatch 少了 ack_open_blockers 输入"
+    trust = src.split("\n  trust:", 1)[1].split("\n  build:", 1)[0]
+    assert "release_blockers.py" in trust, "trust 里没有 blocker 门禁那一步"
+    assert "labels=release:blocker" in trust, "查询的不是 release:blocker 这个 label"
+    assert "state=open" in trust
+    assert "issues: read" in trust, "trust 没有 issues: read——gh api 查不了 label"
+    # 门禁必须在 dispatch 与 tag push 两条路上都跑：不许挂 if 只在一条路执行
+    step = trust.split("Release-blocker", 1)[1].split("- id: resolve", 1)[0]
+    assert "\n        if:" not in step, \
+        "blocker 门禁被 if 限定到了某一条触发路径——tag push 会无声绕过它"

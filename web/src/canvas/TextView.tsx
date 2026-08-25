@@ -41,7 +41,8 @@ export function TextView({ obj }: { obj: TextObject }) {
     const ro = new ResizeObserver(measure)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [obj.id])
+    // editing 在依赖里：div 带着 key 随编辑态重建（见下），必须重新 observe 新节点
+  }, [obj.id, editing])
 
   // 进入编辑态时 React 已把子节点清空，这里接管 DOM 内容避免打字被重渲染覆盖
   useEffect(() => {
@@ -74,6 +75,11 @@ export function TextView({ obj }: { obj: TextObject }) {
 
   return (
     <div
+      // key 随编辑态变：编辑期 contentEditable 往 DOM 里写的文本节点不归
+      // React 管，退出编辑时 React 只会把 <RenderedText> 插进去、不会清掉
+      // 那些野节点——正文就显示两遍（键入「（a）」显示「（a）（a）」）。
+      // 换 key 强制重建 div，两个方向的切换都从空 DOM 开始。
+      key={editing ? 'editing' : 'static'}
       ref={ref}
       // plaintext-only：Enter 语义可控、粘贴不带富文本、DOM 里只有文本节点
       contentEditable={editing ? 'plaintext-only' : false}

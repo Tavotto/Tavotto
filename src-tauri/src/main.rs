@@ -362,6 +362,63 @@ fn show_error(win: &tauri::WebviewWindow, msg: &str, log_path: &str, locale: i18
     let _ = win.eval(format!("window.location.replace({})", js_string(&q)));
 }
 
+/// 仅测试用的 headless 更新触发口：`TAVOTTO_E2E_RUN_UPDATE=1`（只认字面
+/// `"1"`，生产路径不认其它取值）时启动即执行一次 check → download →
+/// install——CI 在 Windows runner 上装好 N-1 官方安装包后用它驱动**真实的**
+/// 应用内更新（release.yml 的 `n1_update_windows`），不必去自动化 WebView2
+/// 里的更新按钮。与 `--insecure-no-auth` 同一套纪律：默认关死、触发时打
+/// 警告、有专门用例看护。
+///
+/// **endpoint / 公钥 / 插件一个字节不改**：走的就是用户按按钮那条链路
+/// （`tauri.conf.json` 的 `plugins.updater`），所以它验的是真链路，不是
+/// 一条为测试另开的旁门。Windows 上 NSIS passive 装完由插件重启应用，
+/// 旧进程 `std::process::exit(0)` 不走 `RunEvent::Exit`（sidecar 靠
+/// stdin EOF 自杀链收摊）——验收方要等**新进程出现**，别等旧进程优雅退出。
+///
+/// 退出码（CI 按它分诊）：40 = updater 不可用；41 = check 失败；
+/// 42 = 下载/安装失败。「已是最新」不退出——更新装完重启回来的那个新进程
+/// 会再走一次这里，查到没有更新、照常跑下去，正是期望的收敛态。
+fn spawn_e2e_update_if_requested(handle: tauri::AppHandle) {
+    if std::env::var("TAVOTTO_E2E_RUN_UPDATE").as_deref() != Ok("1") {
+        return;
+    }
+    eprintln!("[e2e-update] ⚠ TAVOTTO_E2E_RUN_UPDATE=1：启动即执行应用内更新（仅测试用，勿在生产设置）");
+    tauri::async_runtime::spawn(async move {
+        use tauri_plugin_updater::UpdaterExt;
+        let updater = match handle.updater() {
+            Ok(u) => u,
+            Err(e) => {
+                eprintln!("[e2e-update] updater 不可用: {e}");
+                std::process::exit(40);
+            }
+        };
+        match updater.check().await {
+            Ok(Some(update)) => {
+                eprintln!("[e2e-update] 发现新版本 {}，开始下载安装", update.version);
+                match update.download_and_install(|_, _| {}, || {}).await {
+                    Ok(()) => {
+                        // Windows 上装到这里进程通常已被插件替换/退出；
+                        // 其余平台显式重启到新版本。
+                        eprintln!("[e2e-update] 安装完成，重启到新版本");
+                        handle.restart();
+                    }
+                    Err(e) => {
+                        eprintln!("[e2e-update] 下载/安装失败: {e}");
+                        std::process::exit(42);
+                    }
+                }
+            }
+            Ok(None) => {
+                eprintln!("[e2e-update] 已是最新版本，照常启动");
+            }
+            Err(e) => {
+                eprintln!("[e2e-update] 检查更新失败: {e}");
+                std::process::exit(41);
+            }
+        }
+    });
+}
+
 fn main() {
     let state = AppState {
         sidecar: Mutex::new(None),
@@ -448,6 +505,7 @@ fn main() {
             })
             .build()?;
             let _ = win.set_focus();
+            spawn_e2e_update_if_requested(handle.clone());
             spawn_sidecar_and_navigate(handle);
             Ok(())
         })

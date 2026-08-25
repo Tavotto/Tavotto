@@ -57,6 +57,13 @@ on:
         default: none
         type: choice
         options: [none, testpypi, pypi]
+      ack_open_blockers:
+        description: >-
+          对 open 的 release:blocker issue 的显式签字（逗号分隔编号，如
+          "35,83"）。必须与当前 open 清单逐条对得上；留空 = 声明当前没有
+          open blocker。有 blocker 而不签字，发布链在 trust 就停下。
+        required: false
+        default: ""
 
 # 默认只读。真正要写的两个 job（github_release 建 Release、pypi 走 OIDC）
 # 已各自在 job 级声明了自己那份权限——build 只是造产物，不该继承仓库默认的
@@ -82,6 +89,11 @@ jobs:
   # ────────────────────────────────────────────────────────────────
   trust:
     runs-on: ubuntu-latest
+    # 顶层是 contents: read；这里加 issues: read 是给 release-blocker 门禁
+    # 查 label 用的。job 级 permissions 会整个替换默认，contents 要重申。
+    permissions:
+      contents: read
+      issues: read
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
       version: ${{ steps.resolve.outputs.version }}
@@ -91,6 +103,28 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+
+      # ── Release-blocker 门禁：未执行的 release-blocker 验证不许无声跨版本 ──
+      # issue #35 把「真实 N-1 更新」列为退出条件后，带着这个已知未验证的洞
+      # 又发了多个 0.x 版本——没有任何机制在发版时把它摆到眼前。这与 #78
+      # （「声明了却从未执行的 job」）同族，只是洞活在 issue 里不在 YAML 里。
+      # 规则与判定全在 scripts/ci/release_blockers.py（可单测、可反证）：
+      # 有 open 的 release:blocker 就必须在 dispatch 输入里**逐条**签字，
+      # 不是禁止发（0.x 需要灵活），是把「明知有洞还发」变成显式决定。
+      # 演练（publish=false）也过这道门：演练的意义就是提前撞上发布日会撞的墙。
+      - name: Release-blocker 门禁（明知有洞不许无声发布）
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACK: ${{ inputs.ack_open_blockers }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/issues?labels=release:blocker&state=open&per_page=100" \
+            > "$RUNNER_TEMP/open-blockers.json"
+          python3 scripts/ci/release_blockers.py \
+            --issues-json "$RUNNER_TEMP/open-blockers.json" \
+            --ack "${ACK:-}" --event "$EVENT"
+
       - id: resolve
         env:
           EVENT: ${{ github.event_name }}
@@ -635,6 +669,208 @@ jobs:
           else
             echo "::warning::官网重建没触发成功（HTTP $code）。请手动 Redeploy tavotto-website。"
           fi
+
+  # ────────────────────────────────────────────────────────────────
+  # 真实 N-1 应用内更新验证（Windows）—— issue #35 的退出条件。
+  #
+  # 只能在**发布之后**测真链路：已发布应用的 endpoint 烤死指向
+  # releases/latest，github_release 跑完的这一刻 latest.json 已指向本次
+  # 版本——现在装一个 N-1 官方安装包，它查到的就是我们刚发的这一版。
+  # 「发布前测不了 N-1 真链路」是结构性的，不是偷懒：发布前 latest 还指着
+  # 上一版，任何「本地喂清单」的彩排测的都是 N→N 机制而非真实 N-1 二进制。
+  #
+  # 驱动方式：`TAVOTTO_E2E_RUN_UPDATE=1`（src-tauri/src/main.rs 的仅测试
+  # 触发口，默认关死）让 N-1 的壳启动即执行 check → download → install，
+  # 走的就是用户按按钮那条链路。**N-1 二进制没有这个触发口时**（0.10.0 及
+  # 更早）自动化驱动不了 UI——那一轮按 docs/ci/release-qualification.md 的
+  # 手动 checklist 执行并把证据记进 issue #35；有没有触发口按**装出来的
+  # 二进制里有没有这个字面量**探测，不写死版本号（下一版号码此刻没人知道）。
+  #
+  # 失败不回滚 Release（发都发了、tag 也 immutable），但必须**红**：
+  # 它意味着刚发出去的更新链对存量用户不工作，是下一步动作前的 P0 信号。
+  # ────────────────────────────────────────────────────────────────
+  n1_update_windows:
+    needs: [trust, github_release]
+    if: needs.trust.outputs.publish == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      NEW_VERSION: ${{ needs.trust.outputs.version }}
+      NEW_TAG: ${{ needs.trust.outputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.trust.outputs.sha }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with: { python-version: "3.13" }
+
+      - name: 找上一个正式版本（N-1）并下载官方安装包
+        id: prev
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $rels = gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=30" | ConvertFrom-Json
+          $prev = $rels |
+            Where-Object { -not $_.draft -and -not $_.prerelease -and $_.tag_name -match '^v\d+\.\d+\.\d+$' } |
+            Where-Object { [version]($_.tag_name.TrimStart('v')) -lt [version]$env:NEW_VERSION } |
+            Sort-Object { [version]($_.tag_name.TrimStart('v')) } -Descending |
+            Select-Object -First 1
+          if (-not $prev) { throw "找不到比 $env:NEW_VERSION 更早的正式 Release（首个版本没有 N-1，可手动跳过）" }
+          $pv = $prev.tag_name.TrimStart('v')
+          Write-Host "N-1 = $($prev.tag_name)"
+          $asset = $prev.assets | Where-Object { $_.name -eq "Tavotto-$pv-Windows-Setup.exe" }
+          if (-not $asset) { throw "N-1 Release 上没有 Tavotto-$pv-Windows-Setup.exe（资产：$($prev.assets.name -join ', ')）" }
+          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile "$env:RUNNER_TEMP\n1-setup.exe"
+          "prev_version=$pv" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+
+      - name: 静默安装 N-1 并探测 headless 触发口
+        id: probe
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Start-Process -Wait "$env:RUNNER_TEMP\n1-setup.exe" -ArgumentList "/S"
+          $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Tavotto"
+          if (-not (Test-Path $key)) { throw "N-1 安装后没有卸载注册表项" }
+          $inst = (Get-ItemProperty $key).InstallLocation -replace '^"|"$', ''
+          $shell = Join-Path $inst "Tavotto.exe"
+          if (-not (Test-Path $shell)) { throw "N-1 装完找不到壳: $shell" }
+          $dv = (Get-ItemProperty $key).DisplayVersion
+          Write-Host "已安装 N-1：$dv → $inst"
+          "install_dir=$inst" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+          # 能力探测：触发口是环境变量名的字面量，编进了壳二进制。
+          # 按二进制内容判而不是版本号——「哪一版加的」在加它的那次发布之前
+          # 没人知道号码，写死一个版本常量迟早说谎。
+          $bytes = [System.IO.File]::ReadAllBytes($shell)
+          $hay = [System.Text.Encoding]::ASCII.GetString($bytes)
+          $supported = $hay.Contains("TAVOTTO_E2E_RUN_UPDATE")
+          "supported=$($supported.ToString().ToLower())" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+          if (-not $supported) {
+            Write-Host "N-1（$dv）没有 headless 触发口——本次转手动验证"
+          }
+
+      - name: N-1 无触发口：转手动验证（不算通过，也不红）
+        if: steps.probe.outputs.supported == 'false'
+        shell: pwsh
+        # 不红的理由要写在明处：0.10.0 及更早的二进制没有任何测试钩子，
+        # WebView2 的 UI 自动化不在首轮范围。这不是「验过了」——手动 checklist
+        # 在 docs/ci/release-qualification.md，证据必须记进 issue #35，
+        # 「已写进文档」不等于关闭（p2-needs-an-exit）。
+        run: |
+          Write-Host "::warning::N-1（${{ steps.prev.outputs.prev_version }}）无 headless 触发口，本次 N-1 更新验证需按 docs/ci/release-qualification.md 的手动 checklist 执行，证据记入 issue #35"
+          @(
+            '### ⚠️ N-1 应用内更新：本次需手动验证'
+            ''
+            'N-1（${{ steps.prev.outputs.prev_version }}）的二进制没有 TAVOTTO_E2E_RUN_UPDATE 触发口，自动化驱动不了它的更新 UI。'
+            '按 docs/ci/release-qualification.md 的「真实 N-1 应用内更新」checklist 手动执行一遍，证据（版本断言 + 日志/录屏）记入 issue #35。'
+            '从下一个版本起（N-1 已带触发口）本 job 全自动。'
+          ) | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+
+      - name: 驱动真实应用内更新并断言换到了新版本
+        if: steps.probe.outputs.supported == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $inst  = "${{ steps.probe.outputs.install_dir }}"
+          $shell = Join-Path $inst "Tavotto.exe"
+          $key   = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Tavotto"
+          $env:TAVOTTO_E2E_RUN_UPDATE = "1"
+          # 隔离数据/配置目录：别把 runner 的用户目录当垃圾场。
+          # （job 级 env 用不了 runner 上下文，所以放在这里。）
+          $env:TAVOTTO_DATA_DIR   = "$env:RUNNER_TEMP\n1-data"
+          $env:TAVOTTO_CONFIG_DIR = "$env:RUNNER_TEMP\n1-config"
+          # 壳是 windows 子系统进程，stderr 没句柄时诊断会整个消失（nightly
+          # 的教训）——接到文件里
+          $out = Join-Path $env:RUNNER_TEMP "n1-shell-out.log"
+          $err = Join-Path $env:RUNNER_TEMP "n1-shell-err.log"
+          $p = Start-Process -FilePath $shell -PassThru `
+               -RedirectStandardOutput $out -RedirectStandardError $err
+          Write-Host "N-1 壳已启动（pid $($p.Id)），等待应用内更新……"
+
+          # 判据一：注册表 DisplayVersion 变成新版本（NSIS /UPDATE 装完才写）。
+          # 上限 20 分钟：下载 ~100MB + passive 安装。
+          $updated = $false
+          foreach ($i in 1..1200) {
+            Start-Sleep 1
+            $dv = (Get-ItemProperty $key -ErrorAction SilentlyContinue).DisplayVersion
+            if ($dv -eq $env:NEW_VERSION) { $updated = $true; break }
+          }
+          if (-not $updated) {
+            foreach ($f in @($out, $err)) {
+              if (Test-Path $f) { Write-Host "---- $f ----"; Get-Content $f -Tail 80 }
+            }
+            Get-Process Tavotto -ErrorAction SilentlyContinue |
+              ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
+            throw "20 分钟内 DisplayVersion 没变成 $env:NEW_VERSION（仍是 $dv）——应用内更新没走完"
+          }
+          Write-Host "✓ DisplayVersion → $env:NEW_VERSION"
+
+          # 判据二：**等新进程出现，不等旧进程优雅退出**——更新装完 NSIS 以
+          # /R 重启应用，旧进程 std::process::exit(0) 不走 RunEvent::Exit。
+          $fresh = $null
+          foreach ($i in 1..120) {
+            Start-Sleep 1
+            $fresh = @(Get-Process Tavotto -ErrorAction SilentlyContinue) |
+                     Where-Object { $_.Id -ne $p.Id } | Select-Object -First 1
+            if ($fresh) { break }
+          }
+          if (-not $fresh) { throw "更新装完后没有新 Tavotto 进程出现（/R 重启失败？）" }
+          $pv = $fresh.MainModule.FileVersionInfo.ProductVersion
+          Write-Host "✓ 新进程 pid $($fresh.Id)，ProductVersion=$pv"
+          if (-not $pv.StartsWith($env:NEW_VERSION)) {
+            throw "重启后跑的不是新版本：ProductVersion=$pv，期望 $env:NEW_VERSION"
+          }
+          # 收掉窗口进程，下一步对 sidecar 冒烟
+          Get-Process Tavotto -ErrorAction SilentlyContinue |
+            ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
+          Start-Sleep 3
+
+      - name: 更新后的产物冒烟（复用 smoke_app 的既有断言）
+        if: steps.probe.outputs.supported == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $inst = "${{ steps.probe.outputs.install_dir }}"
+          $shell = Join-Path $inst "Tavotto.exe"
+          $side = Get-ChildItem $inst -Recurse -Filter Tavotto.exe |
+                  Where-Object { $_.FullName -ne $shell } | Select-Object -First 1
+          if (-not $side) { throw "更新后的安装目录里没有 sidecar" }
+          $env:TAVOTTO_WORKER_PYTHON = $null
+          python scripts\smoke_app.py --exe "$($side.FullName)" `
+            --figures examples\runtime_check --expect-source bundled `
+            --expect-runtime --expect-control-plane workerd
+          if ($LASTEXITCODE -ne 0) { throw "更新后的 sidecar 冒烟失败（退出码 $LASTEXITCODE）" }
+          @(
+            "### ✅ 真实 N-1 应用内更新通过（Windows）"
+            ""
+            "${{ steps.prev.outputs.prev_version }} → $env:NEW_VERSION：官方安装包安装 → 应用内更新器下载/验签/解包/安装 → 重启为新版本 → 冒烟渲染通过。"
+          ) | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+
+      - name: 清理（卸载）
+        if: always()
+        shell: pwsh
+        run: |
+          Get-Process Tavotto -ErrorAction SilentlyContinue |
+            ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
+          $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Tavotto"
+          if (Test-Path $key) {
+            $inst = (Get-ItemProperty $key).InstallLocation -replace '^"|"$', ''
+            $un = Join-Path $inst "uninstall.exe"
+            if (Test-Path $un) { Start-Process -Wait $un -ArgumentList "/S" }
+          }
+
+      - name: 失败时收集日志
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: n1-update-windows-logs
+          path: |
+            ${{ runner.temp }}/n1-shell-*.log
+            ${{ runner.temp }}/n1-data/**/app.log
+          if-no-files-found: warn
+          retention-days: 14
 
   pypi:
     # 同上：lab gate 不过就不发 PyPI。PyPI 上的同名文件永远不能重传，

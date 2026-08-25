@@ -1,0 +1,24 @@
+[package]
+name = "updater-extract-probe"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+publish = false
+description = "以 tauri-plugin-updater 的能力面解 Windows 更新包（CI 消费者保真检查专用）"
+
+[dependencies]
+# **这不是普通解压，是在模拟 tauri-plugin-updater 的能力面。**
+# 上游 Cargo.toml 对 Windows 的 zip 依赖是 `default-features = false`
+# （tauri-plugin-updater 2.10.1 的
+# `[target.'cfg(target_os = "windows")'.dependencies.zip]`），deflate 解压
+# feature 被关掉，插件**只解得开 STORED（方法 0）的条目**。这里必须逐字
+# 复刻那个形态：加任何 feature（哪怕只是 "deflate"）都会让探针解得开插件
+# 解不开的包——门禁当场变成假绿，v0.7.0–v0.10.0 的坏更新包正是这么漏出去的。
+#
+# 版本钉成与 `src-tauri/Cargo.lock` 里 zip 的同一个精确版本；主版本对齐由
+# `tests/test_update_chain_gates.py` 看护——壳升级换了 zip 主版本时，这里
+# 必须跟着换，否则探针量的又不是插件的能力面了。
+zip = { version = "=4.6.1", default-features = false }
+
+[profile.release]
+strip = true
