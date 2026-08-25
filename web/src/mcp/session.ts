@@ -76,7 +76,15 @@ export function unwrap(res: ToolCallResult): Record<string, unknown> {
       (typeof body.error === 'string' && body.error) ||
       res.content?.map((c) => c.text).join('\n') ||
       '工具调用失败'
-    throw new EngineError(message, '', code, '')
+    // traceback / module 要穿透：BridgeError.payload 带着它们，丢掉的话
+    // 内嵌画布上 script_error 的本地化包装拿不到诊断末行、ErrorBlock 也
+    // 没有可展开的 traceback（HTTP 那条路一直有）
+    throw new EngineError(
+      message,
+      typeof body.traceback === 'string' ? body.traceback : '',
+      code,
+      typeof body.module === 'string' ? body.module : '',
+    )
   }
   return body
 }
