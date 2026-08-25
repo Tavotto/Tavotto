@@ -176,6 +176,9 @@
     "imageHint": "位置和大小属于宿主子图；颜色与显示属于当前图像。",
     "keptPrevious": "已保留上一版图像",
     "mixedValues": "多个值",
+    "modified": "已修改",
+    "modifiedCount_other": "{{count}} 项已修改",
+    "more": "更多",
     "moveDown": "下移",
     "moveUp": "上移",
     "numberList": {
@@ -190,6 +193,8 @@
     "relatedLegend": "所属图例",
     "relatedSeries": "所属系列",
     "relatedWithHint": "{{hint}}：{{label}}",
+    "resetElement": "恢复此元素到脚本",
+    "resetElementCount_other": "恢复此元素到脚本（{{count}} 项）",
     "resetHint": {
       "default": "回到脚本值",
       "size_mm": "恢复脚本原始尺寸",
@@ -209,6 +214,7 @@
     "scaleTitle": "绕中心缩放，组内相对布局不变",
     "setAxesHeight": "修改子图高度",
     "setAxesWidth": "修改子图宽度",
+    "sourceAdvanced": "源文件与高级",
     "traceback": "traceback",
     "useAssistant": "用改图助手完成",
     "waiting": "等待引擎渲染…"
@@ -545,6 +551,7 @@
     "scaleTitle": "相对原始大小的绝对百分比：100% = 原始大小。裁剪不改变缩放基准",
     "searchAssets": "搜索文件名…",
     "source": "源文件",
+    "sourceAdvanced": "源文件与高级",
     "sourceHint": "写回会用当前图内修改覆盖 figures 里的原始 PDF/PNG（自动备份，可从历史恢复）。",
     "staleScript": "脚本已更新，进入编辑会自动重建",
     "unknown": "未知"

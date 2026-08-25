@@ -184,6 +184,10 @@
     "imageHint": "Position and size belong to the host axes; colour and visibility belong to this image.",
     "keptPrevious": "The previous image is still shown",
     "mixedValues": "Mixed",
+    "modified": "Modified",
+    "modifiedCount_one": "{{count}} modified",
+    "modifiedCount_other": "{{count}} modified",
+    "more": "More",
     "moveDown": "Move down",
     "moveUp": "Move up",
     "numberList": {
@@ -199,6 +203,9 @@
     "relatedLegend": "Parent legend",
     "relatedSeries": "Parent series",
     "relatedWithHint": "{{hint}}: {{label}}",
+    "resetElement": "Reset this element to script",
+    "resetElementCount_one": "Reset this element to script ({{count}})",
+    "resetElementCount_other": "Reset this element to script ({{count}})",
     "resetHint": {
       "default": "Back to the script value",
       "size_mm": "Restore the script's original size",
@@ -218,6 +225,7 @@
     "scaleTitle": "Scales about the centre; relative layout inside the group is preserved",
     "setAxesHeight": "Change axes height",
     "setAxesWidth": "Change axes width",
+    "sourceAdvanced": "Source & advanced",
     "traceback": "traceback",
     "useAssistant": "Do it with the assistant",
     "waiting": "Waiting for the engine to render…"
@@ -558,6 +566,7 @@
     "scaleTitle": "Absolute percentage of the original size: 100% = original. Cropping does not change the reference.",
     "searchAssets": "Search file names…",
     "source": "Source file",
+    "sourceAdvanced": "Source & advanced",
     "sourceHint": "Writing back overwrites the original PDF/PNG in figures with your current figure edits (backed up automatically, restorable from history).",
     "staleScript": "The script changed — entering edit mode rebuilds it automatically",
     "unknown": "Unknown"

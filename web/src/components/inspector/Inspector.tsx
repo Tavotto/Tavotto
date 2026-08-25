@@ -307,6 +307,11 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
     )
     const hideable =
       el && el.gid !== 'figure' && el.editable.some((f) => f.prop === 'visible')
+    // 来源状态：选中元素时报它自己被改了几项，没选（整张图）时报面板总数。
+    // 「多少项被 Tavotto 修改、怎么恢复」是右栏头部要直接回答的问题。
+    const modified = el
+      ? panel.overrides.filter((o) => o.gid === el.gid).length
+      : panel.overrides.length
 
     return (
       <header className="shrink-0 px-3 pb-2">
@@ -342,9 +347,18 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
             </Tip>
           </span>
         </div>
-        {crumbs.length > 1 && (
-          <p className="mt-0.5 truncate text-xs text-ink-3" title={crumbs.join(' / ')}>
-            {crumbs.slice(0, -1).join(' / ')}
+        {(crumbs.length > 1 || modified > 0) && (
+          <p className="mt-0.5 flex items-center gap-1.5 text-xs text-ink-3">
+            {crumbs.length > 1 && (
+              <span className="min-w-0 truncate" title={crumbs.join(' / ')}>
+                {crumbs.slice(0, -1).join(' / ')}
+              </span>
+            )}
+            {modified > 0 && (
+              <span className="shrink-0 rounded-sm bg-accent-subtle px-1 py-px text-accent">
+                {t('element.modifiedCount', { count: modified })}
+              </span>
+            )}
           </p>
         )}
       </header>
