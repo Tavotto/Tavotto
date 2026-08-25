@@ -29,14 +29,18 @@ tavotto open: 交给 Tavotto 桌面窗口接着排
 本仓库同时是一个 Codex 插件市场（仓库根的 `.agents/plugins/marketplace.json`）：
 
 ```bash
-# 从 GitHub 装（一行）
-codex plugin marketplace add Tavotto/Tavotto && codex plugin add tavotto@tavotto
+# 从 GitHub 装（两条分开跑，别用 &&——好判断是哪一步失败；
+# --sparse 必须同时带 .agents/plugins 与 codex-plugin：市场清单引用的是
+# 仓库内的本地插件目录，少一个 checkout 里就没有插件本体）
+codex plugin marketplace add Tavotto/Tavotto --sparse .agents/plugins --sparse codex-plugin
+codex plugin add tavotto@tavotto
 
 # 更新
 codex plugin marketplace upgrade tavotto
 
-# 本地开发时指向工作副本
-codex plugin marketplace add /path/to/tavotto && codex plugin add tavotto@tavotto
+# 本地开发时指向工作副本（本地路径不需要 --sparse）
+codex plugin marketplace add /path/to/tavotto
+codex plugin add tavotto@tavotto
 ```
 
 装完（以及每次升级插件、装好引擎之后）**必须新开一个 Codex 会话/线程**：
@@ -49,7 +53,8 @@ MCP 工具由 Codex 按需调用（也可以直接说「用 Tavotto 打开这张
 还需要机器上有 Tavotto 本体：
 
 * 桌面版（推荐）：<https://github.com/Tavotto/Tavotto/releases>
-* 命令行版：`pipx install tavotto`
+* 命令行版：`pipx install "tavotto[worker]"`（`[worker]` 带渲染栈；不带它就是
+  轻量 CLI，渲染与 MCP 集成要靠你自己指定的解释器）
 
 **只装桌面版就够了**——不需要另外装 Python/Conda，也不需要配任何环境变量。
 插件会按下面的顺序找到 Tavotto 的命令行入口，前面的赢：
@@ -78,7 +83,7 @@ server 是一个 Python 模块——它要 `import tavotto.engine.*` 在进程�
 
 | 你装的 | 交接（`tavotto open`） | MCP 工具与内嵌画布 |
 | --- | --- | --- |
-| `pipx install tavotto` | ✅ | ✅ |
+| `pipx install "tavotto[worker]"` | ✅ | ✅ |
 | 桌面版 + pipx | ✅ | ✅ |
 | **只有桌面版** | ✅ | ❌ 报 `desktop_only`——一条命令补上（见下） |
 | 都没装 | ❌ | ❌ 报 `tavotto_missing` |
@@ -190,9 +195,9 @@ python3 skills/tavotto-figure/scripts/update_check.py --json --force
 
 ### 画图前：开工三问与偏好
 
-会话里第一次让 Codex 画图（@Tavotto / 隐式触发技能）时，它会先把插件对齐
-到最新版（`codex plugin marketplace add Tavotto/Tavotto && codex plugin add
-tavotto@tavotto`，每个会话一次、失败不阻塞出图），然后用提问工具确认三件事：**画幅宽度**
+会话里第一次让 Codex 画图（@Tavotto / 隐式触发技能）时，它会先跑一次
+`tavotto_health` 体检（健康就直接干活，**不做任何安装或升级**；工具缺失 /
+引擎不可用时按技能里的恢复路径引导），然后用提问工具确认三件事：**画幅宽度**
 （单栏 8 cm / 双栏 15 cm，拿不准时按任务推荐）、**字体**（选项含
 Times New Roman 与 Arial）、**图例加不加框**。回答里说「记住」，答案会写进
 用户配置目录的 `codex-plugin-figure-prefs.json`，下次不再问；反悔时说一声
@@ -334,9 +339,15 @@ codex-plugin/
 │   │   └── widget.py                  #   ui:// 资源
 │   └── widget/canvas.html             # 内嵌画布（构建产物，见下）
 └── skills/tavotto-figure/
-    ├── SKILL.md                       # 约定 + 模板 + 交接
-    ├── agents/openai.yaml             # 显示名与默认提示
-    ├── references/compatibility.md    # 能鼠标改什么 / 必须回代码改什么
+    ├── SKILL.md                       # 会话入口状态机 + 核心契约 + 工具顺序
+    ├── agents/openai.yaml             # 显示名 / 默认提示 / MCP 依赖声明
+    ├── references/                    # 按需读取的细则（SKILL.md 里写明何时读哪份）
+    │   ├── first-run-and-recovery.md  #   安装 / provision / 错误码 / 新会话规则
+    │   ├── figure-contract.md         #   同目录 / 静态产物名 / main() / 模板
+    │   ├── publication-style.md       #   尺寸字号 / 克制 / 组图
+    │   ├── desktop-handoff.md         #   交接与退出码分诊
+    │   ├── issue-reporting.md         #   脱敏 issue 草稿 + 用户同意
+    │   └── compatibility.md           #   能鼠标改什么 / 必须回代码改什么
     └── scripts/handoff.py             # 登记 →（必要时）跑脚本 → 唤起 Tavotto
 ```
 
