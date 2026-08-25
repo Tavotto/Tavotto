@@ -305,6 +305,56 @@ class TestApply:
         assert [r for r in body["rules"] if r["type"] == "merge_queue"], \
             "gates-only 的 ruleset 里必须仍有强制 merge_queue"
 
+    def test_the_put_body_is_recomputed_from_live_state_not_the_plan(self, plan_dir,
+                                                                     capsys):
+        """plan 文件只是确认物：PUT 的 body 必须等于对线上现状重算的变换。
+
+        只抽查 bypass_actors 那种点名单挡不住被编辑的 plan（#119 评审 P1）
+        ——这里按「写出去的就是重算出来的」整体钉死。"""
+        api = FakeApi([_ruleset()])
+        rc = _plan_and_apply(api, "enable-queue", plan_dir)
+        assert rc == 0
+        body = api.writes[0][1]
+        expected = MQ.build_enable_queue(_ruleset())
+        assert body["rules"] == expected["rules"]
+        assert body["conditions"] == expected["conditions"]
+
+    def test_a_tampered_plan_that_drops_the_pull_request_rule_is_refused(
+            self, plan_dir, capsys):
+        """手改 plan 抹掉 pull_request rule：base 哈希核对的是 current，
+        量不到 plan 本身——必须靠「与重算结果逐字节相等」逮住。"""
+        api = FakeApi([_ruleset()])
+        plan_file = plan_dir / "p.json"
+        with _patched(api):
+            assert MQ.main(["plan", "--phase", "enable-queue",
+                            "--plan-file", str(plan_file)]) == 0
+        plan = json.loads(plan_file.read_text(encoding="utf-8"))
+        plan["updated"]["rules"] = [r for r in plan["updated"]["rules"]
+                                    if r["type"] != "pull_request"]
+        plan_file.write_text(json.dumps(plan), encoding="utf-8")
+        with _patched(api):
+            rc = MQ.main(["apply", "--phase", "enable-queue",
+                          "--plan-file", str(plan_file), "--yes"])
+        assert rc == 1 and api.writes == []
+        assert "重算" in capsys.readouterr().err
+
+    def test_a_tampered_plan_that_swaps_required_contexts_is_refused(
+            self, plan_dir, capsys):
+        api = FakeApi([_ruleset(strict=False, merge_queue=True)])
+        plan_file = plan_dir / "p.json"
+        with _patched(api):
+            assert MQ.main(["plan", "--phase", "switch-to-gates",
+                            "--plan-file", str(plan_file)]) == 0
+        plan = json.loads(plan_file.read_text(encoding="utf-8"))
+        rsc = [r for r in plan["updated"]["rules"]
+               if r["type"] == "required_status_checks"][0]
+        rsc["parameters"]["required_status_checks"] = [{"context": "totally fake"}]
+        plan_file.write_text(json.dumps(plan), encoding="utf-8")
+        with _patched(api):
+            rc = MQ.main(["apply", "--phase", "switch-to-gates",
+                          "--plan-file", str(plan_file), "--yes"])
+        assert rc == 1 and api.writes == []
+
     def test_a_plan_that_injects_a_bypass_actor_is_refused(self, plan_dir, capsys):
         """手改 plan 文件塞 bypass actor：apply 要在写之前逮住。"""
         api = FakeApi([_ruleset()])

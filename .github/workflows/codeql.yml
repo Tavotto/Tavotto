@@ -77,11 +77,28 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      # 判定器取默认分支 + python -I：与 ci.yml 两个 Gate 同一条纪律
+      # （switch-to-gates 之后 Gate 是唯一 required check，判定逻辑不能来自
+      # 被判定的那个 revision；-I 挡 stdlib 遮蔽与 PYTHONPATH 注入）
+      - name: 取默认分支上的可信判定器
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/trusted-gate"
+          DEST="$RUNNER_TEMP/trusted-gate/aggregate_gate.py"
+          if gh api "repos/${{ github.repository }}/contents/scripts/ci/aggregate_gate.py?ref=${{ github.event.repository.default_branch }}" \
+               --jq .content 2>/dev/null | base64 -d > "$DEST" && [ -s "$DEST" ]; then
+            echo "判定器取自默认分支"
+          else
+            echo "::notice::默认分支上还没有 aggregate_gate.py（bootstrap 空窗）——退回本仓库副本"
+            cp scripts/ci/aggregate_gate.py "$DEST"
+          fi
       - name: 聚合判定
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
         run: |
-          python3 scripts/ci/aggregate_gate.py \
+          python3 -I "$RUNNER_TEMP/trusted-gate/aggregate_gate.py" \
             --mode codeql \
             --event "${{ github.event_name }}" \
             --required analyze \
