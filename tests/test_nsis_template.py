@@ -244,6 +244,20 @@ def test_exception_flows_still_have_their_pages():
     assert "!insertmacro MUI_UNPAGE_INSTFILES" in TEXT
 
 
+def test_no_magplot_migration_in_the_installer():
+    """安装器**不许**识别 Magplot 0.7 的旧身份（PR #101 review 裁决）。
+
+    曾试过在 Section Install 前静默卸载 `Uninstall\\Magplot`（让 0.7.0 的
+    应用内更新一步换成 Tavotto），被 review 按 AGENTS.md 的「干净断裂」
+    否掉：那段的语境正是**不认上一代的名字**，唯二例外都是「用户磁盘上
+    我们改不到的东西」的读取端回退，安装器新添一处对旧身份的识别不在
+    其列。0.7.0 的既定路径是发版说明写明「先卸载旧版」（issue #99），
+    `docs/migration-magplot.md` 桌面一节照此描述。
+    """
+    assert "MigrateMagplot" not in CODE
+    assert "Uninstall\\Magplot" not in CODE
+
+
 def test_payload_and_registration_survive():
     section = TEXT.split("Section Install\n")[1].split("SectionEnd")[0]
     assert "{{#each binaries}}" in section          # sidecar / workerd / 内置 runtime
@@ -288,6 +302,57 @@ def test_template_exists_with_patch_markers():
 def test_cli_version_pinned_and_in_sync():
     vers = _pinned_versions()
     assert len(set(vers.values())) == 1, f"CLI 版本不同源: {vers}"
+
+
+def test_installer_bitmaps_match_the_generator():
+    """提交在仓库里的安装器位图必须与生成脚本的当前输出一致。
+
+    这两张 BMP 是受管构建物（与 canvas.html 同一条纪律）：改名 Magplot →
+    Tavotto 时脚本改了、产物没重新生成，0.8.0 起发出去的每一个 Windows
+    安装包侧栏都还写着 "Magplot"（2026-08-25 用户报告）。逐字节比对会被
+    渲染器（PyMuPDF）版本的抗锯齿差异误伤，所以按**强差异像素占比**判：
+    字标换字是大面积高强度差（实测 0.76%–3.1%），抗锯齿漂移是低强度差。
+    红了的正确动作永远是重跑 `scripts/build_installer_assets.py` 并提交。
+    """
+    pytest.importorskip("pymupdf")
+    import importlib.util
+    import struct
+    import sys
+
+    spec = importlib.util.spec_from_file_location(
+        "build_installer_assets", ROOT / "scripts" / "build_installer_assets.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules.setdefault("build_installer_assets", mod)
+    spec.loader.exec_module(mod)
+
+    import tempfile
+
+    def decode(data: bytes) -> tuple[int, int, bytes]:
+        off = struct.unpack_from("<I", data, 10)[0]
+        w, h = struct.unpack_from("<ii", data, 18)
+        stride = (w * 3 + 3) // 4 * 4
+        rows = [data[off + y * stride: off + y * stride + w * 3] for y in range(abs(h))]
+        return w, abs(h), b"".join(rows)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        mod.ROOT = tmp_path
+        mod.BRAND = tmp_path
+        mod.header()
+        mod.sidebar()
+        for name in ("installer-header.bmp", "installer-sidebar.bmp"):
+            committed = (ROOT / "assets" / "brand" / name).read_bytes()
+            fresh = (tmp_path / name).read_bytes()
+            cw, ch, cpx = decode(committed)
+            fw, fh, fpx = decode(fresh)
+            assert (cw, ch) == (fw, fh), f"{name} 尺寸变了：提交 {cw}x{ch} vs 生成 {fw}x{fh}"
+            strong = sum(1 for a, b in zip(cpx, fpx) if abs(a - b) > 64)
+            ratio = strong / len(cpx)
+            assert ratio < 0.002, (
+                f"{name} 与生成脚本的输出差 {ratio:.2%} 强差异像素——产物过期了，"
+                "重跑 scripts/build_installer_assets.py 并提交"
+            )
 
 
 def test_nsis_config_paths_resolve():

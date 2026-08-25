@@ -84,10 +84,13 @@ artifacts = ["src/tavotto/web/**"]
 # 给每个 pip 用户塞一份用不到的服务端代码，还会让「Tavotto 里有没有 PostHog
 # 相关代码」这个问题变得需要解释。sdist 的 include 里那条 `tests` 是 gitignore
 # 风格的模式，将来给代理加 tests/ 就会撞上，所以这里也显式挡掉。
+# CI 工具 crate（tools/，如 updater-extract-probe）同理：它们是发布链自检的
+# 二进制源码，不属于 pip 包——同样要防住 sdist include 那条 `tests` 模式。
 exclude = ["runtime", "runtime/**", "build/runtime-cache/**",
            "workerd", "workerd/**",
            "codex-plugin", "codex-plugin/**", ".agents", ".agents/**",
-           "services", "services/**"]
+           "services", "services/**",
+           "tools", "tools/**"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tavotto"]

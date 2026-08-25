@@ -663,6 +663,13 @@ jobs:
         #
         # zip 里放什么名字不影响更新器：它解开后找第一个 .exe 执行。但 **zip 自己
         # 的文件名要能被 make_updater_manifest.py 认出来**（*-setup.nsis.zip）。
+        #
+        # 重打**必须走 make_updater_zip.py（STORED，不压缩）**，不能用
+        # Compress-Archive：更新器插件对 Windows 的 zip 依赖关掉了 deflate
+        # 解压 feature，只解得开 STORED 条目。Compress-Archive 默认 deflate，
+        # 装出去的每一次应用内更新都会在下载完成后报「无法安装更新」——
+        # v0.7.0 到 v0.10.0 的 Windows 更新包全是这么坏的，而整条链全绿。
+        # 判据与复现记录见 make_updater_zip.py 抬头与 tests/test_updater_zip.py。
         if: runner.os == 'Windows' && env.TAURI_SIGNING_PRIVATE_KEY != ''
         shell: pwsh
         run: |
@@ -670,7 +677,7 @@ jobs:
           $exe = "out\Tavotto-$env:APP_VERSION-Windows-Setup.exe"
           if (!(Test-Path $exe)) { throw "找不到最终安装包: $exe" }
           $zip = "out\Tavotto_${env:APP_VERSION}_x64-setup.nsis.zip"
-          Compress-Archive -Path $exe -DestinationPath $zip -Force
+          python scripts/make_updater_zip.py --exe $exe --out $zip
           pnpm dlx @tauri-apps/cli@2.11.4 signer sign $zip
           if (!(Test-Path "$zip.sig")) { throw "更新包签名没生成" }
           Get-ChildItem out | Format-Table Name, Length

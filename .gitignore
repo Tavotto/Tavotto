@@ -46,6 +46,9 @@ src-tauri/gen/
 # Rust supervisor tavotto-workerd（workerd/ 源码进仓库；构建产物不进）
 workerd/target/
 
+# CI 工具 crate（tools/*，源码进仓库；构建产物不进）
+tools/*/target/
+
 # 工具与系统
 .gstack/
 .DS_Store
