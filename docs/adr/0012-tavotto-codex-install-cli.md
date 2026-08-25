@@ -67,6 +67,6 @@ tavotto codex uninstall   # 移除插件与 marketplace 项（不碰引擎）
 
 ## 关联
 
-- 追踪 issue：见 PR 描述（实现排期到 v1.0 前评估）。
+- 追踪 issue：<https://github.com/Tavotto/Tavotto/issues/117>（实现排期到 v1.0 前评估）。
 - 前置：README「在 Codex 中第一次使用 Tavotto」、SKILL 会话入口状态机
   （本 PR）；`docs/adr/0005`（交接与发现链）、`docs/adr/0006`（MCP server）。
