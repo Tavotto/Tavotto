@@ -576,10 +576,25 @@ def index():
     return resp
 
 
+# 打包资产的 Content-Type 不许由机器级文件关联决定（issue #115）：Windows 上
+# mimetypes 读注册表，HKCR\.js 被改成 text/plain 时 send_from_directory 会照猜，
+# 而 <script type="module"> 受严格 MIME 检查——WebView2 拒绝执行，整窗白屏。
+# 这里只列浏览器做严格校验、猜错即拒载的几类；图片等可嗅探类型照旧交给猜测。
+ASSET_MIME = {
+    ".js": "text/javascript",
+    ".mjs": "text/javascript",
+    ".css": "text/css",
+    ".svg": "image/svg+xml",
+}
+
+
 @app.get("/assets/<path:name>")
 def web_assets(name):
     """vite 输出的 hash 资源，index.html 里是绝对路径 /assets/…"""
     resp = send_from_directory(WEB_DIST / "assets", name)
+    forced = ASSET_MIME.get(os.path.splitext(name)[1].lower())
+    if forced:
+        resp.mimetype = forced
     resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
     return resp
 
