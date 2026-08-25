@@ -3,8 +3,11 @@ import {
   canvasToDoc,
   docToCanvas,
   emptyProject,
+  isRuntimePanel,
   migrateToProject,
+  panelKind,
   type FigureDocument,
+  type PanelObject,
 } from './document'
 
 const legacyDoc = (): FigureDocument => ({
@@ -68,5 +71,47 @@ describe('schema 2 → 3 迁移', () => {
     expect(back.objects).toEqual(legacy.objects)
     expect(back.layoutGroups).toEqual(legacy.layoutGroups)
     expect(docToCanvas(back, 'c_test')).toEqual(canvas)
+  })
+})
+
+describe('AssetSource 双形态（ADR 0013）', () => {
+  const runtimePanel = (): PanelObject => ({
+    id: 'r1', type: 'panel',
+    fileId: 'runtime:panels/myplot.py#myplot', fileKind: 'runtime',
+    nativeW: 120, nativeH: 90, x: 0, y: 0, w: 120, h: 90,
+    source: {
+      script: 'panels/myplot.py', entry: '__main__', stem: 'myplot',
+      captureSource: 'pyplot', fingerprint: 'sha256:x', sizeMm: [120, 90],
+    },
+    overrides: [{ gid: 'axes_0.title', prop: 'text', value: 'T' }],
+  })
+
+  it('panelKind 判别三种已知形态，未知取值 fail closed', () => {
+    expect(panelKind({ fileKind: 'pdf' })).toBe('pdf')
+    expect(panelKind({ fileKind: 'raster' })).toBe('raster')
+    expect(panelKind({ fileKind: 'runtime' })).toBe('runtime')
+    // 更新版本文档里的新形态：绝不猜成文件——消费方按缺失素材处理
+    expect(panelKind({ fileKind: 'holo' as PanelObject['fileKind'] })).toBe('unknown')
+    expect(isRuntimePanel({ fileKind: 'runtime' })).toBe(true)
+    expect(isRuntimePanel({ fileKind: 'pdf' })).toBe(false)
+  })
+
+  it('含 runtime 面板的文档经迁移与画布换算逐字段保真（schema 不升版）', () => {
+    const doc: FigureDocument = {
+      ...legacyDoc(),
+      objects: [runtimePanel()] as FigureDocument['objects'],
+    }
+    const pd = migrateToProject(doc)!
+    const [o] = pd.canvases[0].objects
+    expect(o).toEqual(runtimePanel())     // fileId / source / overrides 原样
+    const back = canvasToDoc(pd.canvases[0])
+    expect(back.objects).toEqual([runtimePanel()])
+  })
+
+  it('老文档（纯 FileAsset）不受新字段影响', () => {
+    const pd = migrateToProject(legacyDoc())!
+    const [o] = pd.canvases[0].objects
+    expect(o.type === 'panel' && panelKind(o)).toBe('pdf')
+    expect((o as PanelObject).source).toBeUndefined()
   })
 })

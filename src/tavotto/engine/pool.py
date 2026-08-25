@@ -545,6 +545,10 @@ class EngineWorker:
         self.last_patch_hash_by_stem: dict[str, str] = {}
         self.lock = threading.Lock()
         self.built = False
+        #: 最近一次 build 响应里的 CapturedFigureDescriptor payload 列表。
+        #: RuntimeFigureAsset 的 cache 物化从这里取（app 层复制预览文件 +
+        #: 描述符即可），**不必为拿描述符再跑一次脚本**。
+        self.last_build_descriptors: list = []
         self.last_used = time.time()
         self._log = open(self.log_path, "ab", buffering=0)
         python, self.python_source = select_worker_python()
@@ -782,6 +786,7 @@ class EngineWorker:
         # build 要跑用户整个脚本（heavy 的分钟级），给最宽的一档
         resp = self.request({"cmd": "build"}, BUILD_TIMEOUT)
         self.built = True
+        self.last_build_descriptors = list(resp.get("descriptors") or [])
         self.last_patch_hash = _EMPTY_PATCH_HASH
         self.last_patch_hash_by_stem.clear()      # 每个 stem 都回到脚本原样
         return resp
@@ -969,6 +974,7 @@ class WorkerdWorker:
         # 「一个慢请求占死整条会话」重新绑回来。
         self.lock = threading.Lock()
         self.built = False
+        self.last_build_descriptors: list = []
         self.last_used = time.time()
         self._dead = False
         self._client = client or workerd_client.client()
@@ -1020,6 +1026,7 @@ class WorkerdWorker:
             raise self._to_worker_error(exc) from exc
         self._session_id = resp.get("session_id", "")
         self.built = False
+        self.last_build_descriptors = []
 
     def _log_tail(self, n: int = 30) -> str:
         try:
@@ -1095,6 +1102,7 @@ class WorkerdWorker:
     def ensure_built(self) -> dict:
         resp = self._call("build", BUILD_TIMEOUT)
         self.built = True
+        self.last_build_descriptors = list(resp.get("descriptors") or [])
         self.last_patch_hash = _EMPTY_PATCH_HASH
         self.last_patch_hash_by_stem.clear()      # 每个 stem 都回到脚本原样
         return resp

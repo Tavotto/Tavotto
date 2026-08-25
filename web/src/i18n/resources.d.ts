@@ -542,6 +542,8 @@ export default interface Resources {
       "title": "科研预设"
     },
     "registry": {
+      "addToCanvas": "把 {{stem}} 添加到画布",
+      "addedToCanvas": "已把 {{stem}} 作为运行时面板添加到画布",
       "allScriptsHint": "项目里的每个 .py 都在这里，包括静态识别不出产物的（show-only、动态命名、工具脚本）。任选一个「试运行」即可按真实产出登记。",
       "allScriptsTitle": "全部脚本（{{count}}）",
       "canRegister": "可登记：",
@@ -964,6 +966,10 @@ export default interface Resources {
       "read_failed": "无法读取：{{reason}}",
       "registry_update_failed": "注册表更新失败：{{reason}}",
       "replay_divergence": "写回被阻止：热会话与全量重放不一致。这属于引擎级问题，请把此信息报告给开发者",
+      "runtime_asset_has_no_original_artifact": "运行时素材没有原始图文件，无法写回（磁盘上有同名产物时请从素材库的那一份写回）",
+      "runtime_asset_unknown": "运行时素材未登记：{{id}}（脚本注册表里找不到它，重新运行脚本即可重新登记）",
+      "runtime_cache_missing": "该运行时素材尚未生成预览（重新运行脚本后自动生成）",
+      "runtime_source_writeback_unsupported": "暂不支持把修改写回脚本源码（运行时素材的编辑只保存在文档里）",
       "scan_failed": "扫描失败：{{reason}}",
       "script_changed": "写回被阻止：脚本在会话期间被修改过，请重新渲染后再试",
       "script_name_missing": "缺少脚本名",
@@ -2399,6 +2405,11 @@ export default interface Resources {
       "error": "渲染失败",
       "firstBuild": "首次构建中…",
       "rendering": "渲染中…",
+      "runtimeMissingEnvironment": "找不到可用的渲染环境",
+      "runtimeMissingSource": "脚本已不在磁盘上",
+      "runtimeNeedsRerun": "尚未在本机运行，进入编辑即重新生成",
+      "runtimePossiblyStale": "脚本或执行环境可能已变化，建议重新运行",
+      "runtimeRerunFailed": "重新运行失败",
       "stale": "脚本已更新"
     },
     "quickEdit": {
@@ -2430,6 +2441,10 @@ export default interface Resources {
       "layers": "结构",
       "navLabel": "工作区侧栏",
       "settings": "设置"
+    },
+    "runtimePanel": {
+      "placeholder": "由脚本生成的图",
+      "placeholderHint": "双击进入编辑即运行 {{script}} 重新生成"
     },
     "scrim": {
       "collapse": "收起侧栏"

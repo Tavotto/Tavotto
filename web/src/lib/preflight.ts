@@ -764,12 +764,16 @@ export function buildSpec(
       return {
         id: o.id,
         name: o.name ?? o.fileId,
-        kind: o.fileKind,
+        // 预检的 kind 只区分「矢量 / 位图」：runtime 面板由引擎出矢量 SVG，
+        // 按 pdf 档判（golden vectors 的枚举不为它扩张——语义上就是矢量）
+        kind: o.fileKind === 'raster' ? ('raster' as const) : ('pdf' as const),
         rect_mm: rect(o),
         scale: panelScale(o),
         manifest: r?.manifest ?? null,
         px_w: o.pxW ?? null,
-        missing: !assets[o.fileId],
+        // runtime 素材不在磁盘素材表里，这不是「缺失」——它的可用性由
+        // stale/rerun 那套状态表达
+        missing: o.fileKind === 'runtime' ? false : !assets[o.fileId],
         stale: !!r?.stale,
         render_error: o.overrides.length > 0 && r?.status === 'error'
           ? (formatMessage(r.error) || 'error')

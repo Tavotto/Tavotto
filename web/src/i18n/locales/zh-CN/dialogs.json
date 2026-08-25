@@ -390,6 +390,8 @@
     "noCandidates": "没有发现未登记的脚本。",
     "none": "—",
     "nothingNew": "扫描完成，没有发现新的可登记脚本",
+    "addToCanvas": "把 {{stem}} 添加到画布",
+    "addedToCanvas": "已把 {{stem}} 作为运行时面板添加到画布",
     "probeAndRegister": "试运行并登记",
     "probeDropped_other": "另有 {{count}} 张图超过捕获上限未显示",
     "probeFailed": "{{script}} 试运行失败：{{error}}",

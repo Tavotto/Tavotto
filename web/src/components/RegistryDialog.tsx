@@ -8,6 +8,7 @@ import {
   probeScript,
   scanRegistry,
   writeRegistryEntry,
+  type CapturedFigureDescriptor,
   type RegistryCandidate,
   type RegistryView,
   type ScriptInventoryEntry,
@@ -15,6 +16,7 @@ import {
 import { cn } from '@/lib/utils'
 import { formatMessage, msg, t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
+import { addRuntimePanel } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
 import { useUiStore } from '@/store/uiStore'
 import { Button } from './ui/Button'
@@ -54,6 +56,8 @@ export function RegistryDialog() {
 interface ProbeNote {
   text: string
   traceback?: string
+  /** 成功时：本次捕获的描述符（「添加到画布」把它们放成 runtime 面板） */
+  descriptors?: CapturedFigureDescriptor[]
 }
 
 function RegistryBody() {
@@ -116,7 +120,10 @@ function RegistryBody() {
       }
       const parts = [rg('probeRegistered', { stems: listJoin(res.stems) })]
       if (res.dropped_figures) parts.push(rg('probeDropped', { count: res.dropped_figures }))
-      setProbed((p) => ({ ...p, [script]: { text: parts.join(' ') } }))
+      setProbed((p) => ({
+        ...p,
+        [script]: { text: parts.join(' '), descriptors: res.descriptors },
+      }))
     })
 
   const registered = Object.entries(view?.scripts ?? {})
@@ -304,10 +311,33 @@ function AllScriptsSection({
 /** 试运行结果的一致展示：主文案一行，traceback 收在「诊断详情」里 */
 function ProbeNoteView({ note }: { note?: ProbeNote }) {
   useTranslation('dialogs')
+  const setStatus = useUiStore((s) => s.setStatus)
+  const setOpen = useUiStore((s) => s.setRegistryOpen)
   if (!note) return null
   return (
     <div className="mt-1 text-xs text-ink-3">
       <p className="whitespace-pre-wrap">{note.text}</p>
+      {/* 捕获成功的每张图可以直接作为 runtime 面板放上画布（开发/高级验证
+          入口，与「全部脚本」折叠段同一档；普通素材库入口是下一轮的事）。
+          没有磁盘产物的 show-only 图从这里第一次真正进入产品。 */}
+      {note.descriptors && note.descriptors.length > 0 && (
+        <div className="mt-1 flex flex-wrap gap-1.5">
+          {note.descriptors.map((d) => (
+            <Button
+              key={d.asset_id}
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                addRuntimePanel(d)
+                setStatus(msg('registry.addedToCanvas', { stem: d.stem }, 'dialogs'))
+                setOpen(false)
+              }}
+            >
+              {rg('addToCanvas', { stem: d.stem })}
+            </Button>
+          ))}
+        </div>
+      )}
       {note.traceback && (
         <details className="mt-0.5">
           <summary className="cursor-pointer select-none">{rg('probeTraceback')}</summary>

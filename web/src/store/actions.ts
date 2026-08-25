@@ -7,7 +7,7 @@ import { applyAlign, boundsOf, readingOrder, type AlignMode } from '@/lib/geomet
 import { clamp } from '@/lib/units'
 import { modKey } from '@/lib/utils'
 import { captureTelemetry } from '@/lib/telemetry'
-import type { PanelInfo } from '@/lib/api'
+import type { CapturedFigureDescriptor, PanelInfo } from '@/lib/api'
 import type { StylePlan, StylePreset } from '@/lib/stylePresets'
 import { reflowPatches, sizeSignature } from '@/lib/layoutGroups'
 import type {
@@ -97,6 +97,45 @@ export function addPanel(info: PanelInfo, atX?: number, atY?: number) {
   })
   select([obj.id])
   useAssetStore.getState().markUsed(info.id)
+  return obj
+}
+
+/**
+ * 把一张试运行捕获的 Figure 作为 RuntimeFigureAsset 面板放上画布
+ * （ADR 0013）。fileId 是描述符里的稳定 asset id（不透明标识）；描述块
+ * 持久化进文档，重开 / 项目搬移后据此恢复。overrides 从空开始——它没有
+ * 「写回基线」可继承（没有原件就没有写回）。
+ */
+export function addRuntimePanel(desc: CapturedFigureDescriptor, atX?: number, atY?: number) {
+  const page = doc().page
+  const [w, h] = desc.size_mm
+  const obj: PanelObject = {
+    id: newId('p'),
+    type: 'panel',
+    fileId: desc.asset_id,
+    fileKind: 'runtime',
+    nativeW: w,
+    nativeH: h,
+    script: desc.script,
+    source: {
+      script: desc.script,
+      entry: desc.entry,
+      stem: desc.stem,
+      captureSource: desc.capture_source,
+      fingerprint: desc.source_fingerprint,
+      sizeMm: [w, h],
+    },
+    overrides: [],
+    name: desc.stem,
+    x: clamp(atX != null ? atX - w / 2 : (page.w - w) / 2, -w * 0.9, page.w - w * 0.1),
+    y: clamp(atY != null ? atY - h / 2 : (page.h - h) / 2, -h * 0.9, page.h - h * 0.1),
+    w,
+    h,
+  }
+  commit(hist('addPanel', { name: desc.stem }), (d) => {
+    d.objects.push(obj)
+  })
+  select([obj.id])
   return obj
 }
 

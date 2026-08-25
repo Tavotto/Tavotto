@@ -392,6 +392,8 @@
     "noCandidates": "No unregistered script found.",
     "none": "—",
     "nothingNew": "Scan finished; no new registrable script was found",
+    "addToCanvas": "Add {{stem}} to the canvas",
+    "addedToCanvas": "Added {{stem}} to the canvas as a runtime panel",
     "probeAndRegister": "Trial run and register",
     "probeDropped_one": "{{count}} more figure exceeded the capture limit and is not shown",
     "probeDropped_other": "{{count}} more figures exceeded the capture limit and are not shown",

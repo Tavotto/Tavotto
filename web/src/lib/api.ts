@@ -262,14 +262,25 @@ export const renderUrl = (id: string, bucket: number, mtime?: number) =>
 export const fileUrl = (id: string, mtime?: number) =>
   apiUrl(`/api/file?id=${encodeURIComponent(id)}${stamp(mtime)}`)
 
-/** 位图走原文件、矢量走分档渲染 —— 与后端缓存策略一致 */
+/** materialized cache 里的预览 SVG（runtime 面板重开时的首帧占位） */
+export const runtimePreviewUrl = (id: string) =>
+  apiUrl(`/api/runtime/preview?id=${encodeURIComponent(id)}`)
+
+/**
+ * 位图走原文件、矢量走分档渲染、runtime 走 materialized cache 预览，
+ * 未知形态**不给地址**（fail closed：绝不把不认识的 id 猜成文件路径）。
+ */
 export const panelSrc = (
   id: string,
-  kind: 'pdf' | 'raster',
+  kind: string,
   bucket: number,
   mtime?: number,
-) =>
-  kind === 'raster' ? fileUrl(id, mtime) : renderUrl(id, bucket, mtime)
+): string | null => {
+  if (kind === 'raster') return fileUrl(id, mtime)
+  if (kind === 'pdf') return renderUrl(id, bucket, mtime)
+  if (kind === 'runtime') return runtimePreviewUrl(id)
+  return null
+}
 
 /* ----------------------------- 布局存取 ----------------------------------- */
 
@@ -1473,4 +1484,45 @@ export const writeRegistryEntry = (payload: {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
+  })
+
+/* --------------------- Runtime Figure 素材（ADR 0013） --------------------- */
+
+/**
+ * stale 状态（稳定枚举，与后端 runtimeasset.STALE_* 同字面量）。
+ * `rerun_failed` 的 producer 在前端：runtime 面板的一次重跑渲染失败时
+ * 由 runtimeAssetStore 置上，后端不产它。
+ */
+export type RuntimeStaleStatus =
+  | 'fresh'
+  | 'possibly_stale'
+  | 'missing_source'
+  | 'missing_environment'
+  | 'needs_rerun'
+  | 'rerun_failed'
+
+export interface RuntimeStatus {
+  id: string
+  status: RuntimeStaleStatus
+  script: string | null
+  stem: string | null
+  entry: string | null
+  /** 脚本注册表里是否还有它（false = 靠文档描述块兜底，重跑前需重新登记） */
+  registered: boolean
+  /** materialized cache 是否可用（true = runtimePreviewUrl 取得到首帧占位） */
+  cached: boolean
+}
+
+/**
+ * 查询 runtime 素材的 stale 状态。**只读**：后端绝不因此执行脚本。
+ * `source` 是文档里持久化的描述块，注册表条目丢失时作恢复线索。
+ */
+export const fetchRuntimeStatus = (
+  id: string,
+  source?: { script: string; stem: string },
+) =>
+  jsonFetch<RuntimeStatus>('/api/runtime/status', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, source }),
   })

@@ -1,6 +1,7 @@
 # ADR 0013：Runtime Figure Assets（运行时 Figure 成为正式素材类型）
 
-状态：**Proposed**（Session 1 草案，2026-08-25；预定 Session 4 实施时定稿）
+状态：**Accepted**（Session 1 草案 2026-08-25；Session 4 实施并定稿
+2026-08-26——三个待定稿事项的裁决见文末「定稿裁决」）
 相关：[Compatibility Bridge 总纲](../compatibility/COMPATIBILITY_BRIDGE_MASTER_PLAN.md)、
 [事实审计](../compatibility/compatibility-bridge-audit.md)、
 [0014 Safe/Native Execution Profiles](0014-safe-native-execution-profiles.md)、
@@ -130,10 +131,45 @@ runtime:<script 相对路径（POSIX 分隔）>#<stem>
 - 不把 runtime cache 写进用户图库或冒充原件；
 - 不在项目打开时静默执行任何脚本。
 
-## 待定稿事项（Session 4 前必须裁决）
+## 定稿裁决（Session 4，2026-08-26）
 
-1. §6 lazy build 与"stale 必须显式重跑"的取舍；
-2. runtime 面板在 `renderStore` 的键形态（沿用 `fileId + overrides`，但
-   `safe_resolve` 一族消费点的 sweep 清单——审计风险 #2）；
-3. 项目包（package/open）对 runtime 面板的携带策略（带 materialized 副本
-   还是只带描述符）。
+1. **§6 取 lazy build 案**：重开文档先显示 materialized cache 预览（没有
+   就显示占位），进入对象级编辑 / 显式刷新 / 导出那一刻才 build 并重放
+   overrides——与磁盘面板首次渲染同语义。**本会话已经跑过的** runtime
+   面板（`renderStore.latest` 里有它）之后与文件面板同一待遇（撤销/重做、
+   AI 改脚本后的热重建照常）；"打开文档绝不自动执行"只约束重开那一刻
+   （总纲原则 5），门在 `useEngineSync.renderTargets` 的 runtime 分支，
+   前端用例 + 后端 status/preview 零执行用例双面看护。stale 时**不**强制
+   先点重跑：角标如实提示"可能已变化"，重跑发生在下一次编辑/刷新。
+2. **renderStore 键形态沿用 `fileId + overrides`**，fileId 即
+   `runtime:` asset id。后端解析**正向重算**（`runtimeasset.resolve` 拿
+   注册表里每对 (script, stem) 重算 id 比对，绝不反解）；"素材=磁盘文件"
+   消费点的 sweep 结果：`_engine_worker`（runtime 分支）、
+   `_resolve_panel_source`（导出走 live worker）、`update_source` 与
+   `history/restore`（硬拒绝）、`/api/package`（描述符 + 脚本）、
+   `scan_panels` 与素材库（**刻意不动**——普通素材库入口是 Session 5）、
+   前端 `panelSrc` / `PanelView` / `useWriteBackTargets` / `preflight` /
+   `useServerEvents`（描述块认领 stale，不解析 id）。
+3. **项目包只带描述符 + 源脚本，不带 materialized 副本**：cache 是本机
+   派生物不是原件，接收方跑一次脚本即可重建；`package_manifest.json` 新增
+   `runtime_assets` 键（旧读取端原样忽略），`package/open` 不把 runtime
+   id 记为缺失。
+
+## 落地记录（Session 4）
+
+- 引擎侧唯一实现 `engine/runtimeasset.py`：`resolve` / `materialize` /
+  `load_metadata` / `preview_path` / `stale_status` / `prune_cache` /
+  `writeback_rejection`。cache 落
+  `data_dir()/cache/runtime/<slug>/`（preview.svg + metadata.json，
+  **metadata 永远最后写**，坏 metadata 当没有；`generated_by: "Tavotto"`）。
+- stale 枚举：`fresh / possibly_stale / missing_source /
+  missing_environment / needs_rerun / rerun_failed`（最后一个的 producer
+  在前端 runtimeAssetStore）。判据 = 脚本 sha256 + 注册表 entry，只是
+  提示——UI 文案说"脚本或执行环境可能已变化"，不说"数据未变化"。
+- 稳定错误码：`runtime_asset_unknown` / `runtime_asset_has_no_original_artifact`
+  / `runtime_cache_missing`（app 层字面量，进 USER_VISIBLE_CODES）；
+  `runtime_source_writeback_unsupported`（v1 无 producer 端点，码表 +
+  双语文案先行，对拍在 `tests/test_runtime_asset.py`）。
+- 看护：`tests/test_runtime_asset.py`（30 项）+ 前端
+  `useEngineSync.test.ts` lazy 门 / `runtimeAssetStore.test.ts` /
+  `document.test.ts` AssetSource 段。

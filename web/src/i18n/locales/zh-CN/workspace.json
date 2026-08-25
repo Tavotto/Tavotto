@@ -248,7 +248,16 @@
     "error": "渲染失败",
     "firstBuild": "首次构建中…",
     "rendering": "渲染中…",
-    "stale": "脚本已更新"
+    "stale": "脚本已更新",
+    "runtimePossiblyStale": "脚本或执行环境可能已变化，建议重新运行",
+    "runtimeMissingSource": "脚本已不在磁盘上",
+    "runtimeMissingEnvironment": "找不到可用的渲染环境",
+    "runtimeNeedsRerun": "尚未在本机运行，进入编辑即重新生成",
+    "runtimeRerunFailed": "重新运行失败"
+  },
+  "runtimePanel": {
+    "placeholder": "由脚本生成的图",
+    "placeholderHint": "双击进入编辑即运行 {{script}} 重新生成"
   },
   "quickEdit": {
     "aria": "快捷编辑",
