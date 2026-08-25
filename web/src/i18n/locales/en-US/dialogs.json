@@ -323,7 +323,7 @@
     "title": "Browser playground",
     "unchanged": "unchanged",
     "uploadButton": "Upload a standalone script",
-    "uploadDesktop": "For full projects, use desktop Tavotto.",
+    "uploadDesktop": "For full projects, use desktop {{product}}.",
     "uploadHeading": "Already have a standalone script?",
     "uploadNote": "For single-file scripts only — nothing that relies on local data, sibling modules or other local resources.",
     "uploadScope": "What runs here?",

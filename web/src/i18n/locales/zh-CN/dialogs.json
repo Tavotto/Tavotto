@@ -321,7 +321,7 @@
     "title": "浏览器 playground",
     "unchanged": "未改动",
     "uploadButton": "上传独立脚本",
-    "uploadDesktop": "完整项目请使用桌面版 Tavotto。",
+    "uploadDesktop": "完整项目请使用桌面版 {{product}}。",
     "uploadHeading": "已有一个独立脚本？",
     "uploadNote": "仅适合不依赖本地数据、同目录模块或本地资源的单文件脚本。",
     "uploadScope": "查看支持范围",

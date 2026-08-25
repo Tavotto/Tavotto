@@ -11,6 +11,7 @@
  */
 import { useRef, useState } from 'react'
 import { Upload } from 'lucide-react'
+import { PRODUCT_NAME } from '@/lib/brand'
 import { cn } from '@/lib/utils'
 import { pg } from '../pgText'
 
@@ -57,7 +58,8 @@ export function IndependentScriptUpload({ onFile }: { onFile: (f: File) => void 
           <div className="mt-1.5 flex flex-col gap-1 leading-relaxed">
             <p>{pg('uploadScopeGood')}</p>
             <p>{pg('uploadScopeBad')}</p>
-            <p className="text-ink-2">{pg('uploadDesktop')}</p>
+            {/* 产品名走 brand.ts 常量，不在译文里手写（品牌唯一出处纪律） */}
+            <p className="text-ink-2">{pg('uploadDesktop', { product: PRODUCT_NAME })}</p>
           </div>
         </details>
       </div>
