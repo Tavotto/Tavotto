@@ -19,6 +19,7 @@ import type { EditableField, EngineRenderOptions, Manifest, ManifestElement } fr
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useDocumentStore } from '@/store/documentStore'
 import { renderKeyOf, useRenderStore } from '@/store/renderStore'
+import { useInspectorPrefs } from '@/store/inspectorPrefs'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { flushPreviewFrame, resetPreview, setHistoryMode } from '@/store/svgPreviewStore'
@@ -167,21 +168,10 @@ async function clickBar(label: string) {
   })
 }
 
-/** 打开某个图标弹层，返回它的内容节点（Radix 挂在 portal 里） */
-async function openPopover(label: string) {
-  await act(async () => {
-    byLabel(label)!.click()
-  })
-  return document.querySelector('[data-radix-popper-content-wrapper]') as HTMLElement
-}
-
-const rowIn = (scope: HTMLElement, label: string): HTMLElement | null => {
-  for (const el of Array.from(scope.querySelectorAll('span'))) {
-    if (el.textContent?.trim() === label) return el.parentElement!.parentElement
-  }
-  return null
-}
-
+/**
+ * React 19 给受控 input 挂了 value tracker：直接 `el.value = x` 之后再发
+ * input 事件，React 会认为值没变而**跳过 onChange**。必须经原生 setter 写值。
+ */
 function typeInto(el: HTMLInputElement, value: string) {
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
   setter.call(el, value)
@@ -202,6 +192,7 @@ beforeEach(async () => {
   resetPreview()
   setHistoryMode('gesture')
   localStorage.clear()
+  useInspectorPrefs.setState({ moreOpen: {}, advancedOpen: {} })
   document.body.innerHTML = ''
   useSelectionStore.getState().clear()
   useRenderStore.getState().clear()
@@ -240,26 +231,33 @@ describe('判据：fontsize + color + weight 三条都有才是文字元素', ()
 
 /* ================================ 版面 ==================================== */
 
-describe('工具条把高频样式收成图标', () => {
-  it('加粗 / 字形 / 颜色 / 背景 / 描边 / 排版都在，且平铺列表不再重复它们', async () => {
+describe('高频样式是带可见标签的行', () => {
+  it('「字体」「字号」「颜色」「对齐」是可见文字，不只是 aria-label', async () => {
     await mount('axes_0.title')
-    for (const label of ['加粗', '斜体', '文字颜色', '背景', '描边', '排版与层级']) {
-      expect(byLabel(label), label).not.toBeNull()
-    }
-    // 字号、字体在工具条第一行；正文里不该再出现「旋转」「行距」这些行
     const text = host.textContent ?? ''
+    for (const label of ['字体', '字号', '颜色', '对齐']) {
+      expect(text, label).toContain(label)
+    }
+    // 加粗 / 斜体图标按钮仍带 aria-label
+    expect(byLabel('加粗')).not.toBeNull()
+    expect(byLabel('斜体')).not.toBeNull()
+    // 中频样式不再挤成弹层：行距 / 堆叠层级住进「更多」，默认收起
     expect(text).not.toContain('行距')
     expect(text).not.toContain('堆叠层级')
-    // 文字内容与显隐仍留在列表里（工具条不管它们）
+    // 文字内容仍在列表里（工具条不管它）
     expect(text).toContain('内容')
-    expect(text).toContain('显示')
+  })
+
+  it('同一属性不出两套控件：颜色行只有一个取色器', async () => {
+    await mount('axes_0.title')
+    expect(host.querySelectorAll('input[type="color"]')).toHaveLength(1)
   })
 
   it('manifest 没给的字段不画控件', async () => {
     const slim: ManifestElement = {
       ...titleEl,
       editable: titleEl.editable.filter(
-        (x) => !['style', 'bbox_visible', 'bbox_facecolor'].includes(x.prop),
+        (x) => !['style', 'fontfamily'].includes(x.prop),
       ),
     }
     useRenderStore.getState().patch(renderKeyOf(livePanel()), {
@@ -268,7 +266,21 @@ describe('工具条把高频样式收成图标', () => {
     await mount('axes_0.title')
     expect(byLabel('加粗')).not.toBeNull()
     expect(byLabel('斜体')).toBeNull()
-    expect(byLabel('背景')).toBeNull()
+    expect(host.textContent).not.toContain('字体')
+  })
+
+  it('背景 / 描边 / 行距经「更多」可达（展示注册表接管，不再是齿轮弹层）', async () => {
+    await mount('axes_0.title')
+    const more = Array.from(host.querySelectorAll('button')).find(
+      (b) => b.textContent?.trim() === '更多',
+    )!
+    await act(async () => {
+      more.click()
+    })
+    const text = host.textContent ?? ''
+    for (const label of ['行距', '垂直对齐', '旋转']) {
+      expect(text, label).toContain(label)
+    }
   })
 })
 
@@ -295,13 +307,12 @@ describe('加粗 / 字形：一次点击 = 一条历史 + 一次渲染', () => {
   })
 })
 
-/* ============================== 弹层里的写入 =============================== */
+/* ============================ 行里的写入路径 =============================== */
 
-describe('弹层里的控件与属性页同一条写入路径', () => {
+describe('行里的控件与属性页同一条写入路径', () => {
   it('文字颜色照旧局部预览：整轮不发后端', async () => {
     await mount('axes_0.title')
-    const pop = await openPopover('文字颜色')
-    const input = pop.querySelector('input[type="color"]') as HTMLInputElement
+    const input = host.querySelector('input[type="color"]') as HTMLInputElement
     await act(async () => {
       typeInto(input, '#ff0000')
     })
@@ -312,21 +323,20 @@ describe('弹层里的控件与属性页同一条写入路径', () => {
     expect(overrideOf('axes_0.title', 'color')).toBe('#ff0000')
   })
 
-  it('背景开关在弹层里，打开后写 bbox_visible', async () => {
+  it('改过字号后：状态点 + 行尾恢复按钮，点恢复清掉 override', async () => {
     await mount('axes_0.title')
-    const pop = await openPopover('背景')
-    const sw = rowIn(pop, '显示')!.querySelector('button[role="switch"]') as HTMLElement
-    await act(async () => {
-      sw.click()
+    useDocumentStore.getState().commit(literal('预置 override'), (d) => {
+      const pl = d.objects.find((o) => o.id === 'p1')
+      if (pl?.type === 'panel') {
+        pl.overrides.push({ gid: 'axes_0.title', prop: 'fontsize', value: 14 })
+      }
     })
-    expect(overrideOf('axes_0.title', 'bbox_visible')).toBe(true)
-  })
-
-  it('排版弹层里有水平对齐 / 垂直对齐 / 旋转 / 行距 / 层级', async () => {
-    await mount('axes_0.title')
-    const pop = await openPopover('排版与层级')
-    for (const label of ['水平对齐', '垂直对齐', '旋转', '行距', '堆叠层级']) {
-      expect(rowIn(pop, label), label).not.toBeNull()
-    }
+    await act(async () => {})
+    const reset = document.querySelector('[aria-label="恢复字号"]') as HTMLElement
+    expect(reset).not.toBeNull()
+    await act(async () => {
+      reset.click()
+    })
+    expect(overrideOf('axes_0.title', 'fontsize')).toBeUndefined()
   })
 })

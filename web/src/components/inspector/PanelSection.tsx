@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useInspectorPrefs } from '@/store/inspectorPrefs'
 import { useTranslation } from 'react-i18next'
 import {
   Crop,
@@ -70,13 +71,14 @@ export function PanelSection({ objs }: { objs: PanelObject[] }) {
 
   return (
     <>
-      {/* 图内编辑是参数化面板的核心动作，放在最上面 */}
+      {/* 第一层：图内编辑（参数化面板的核心动作）、几何、裁剪与适配 */}
       {one?.script && <ScriptSection panel={one} />}
       <GeometrySection objs={objs} />
-      <AppearanceSection objs={objs} />
-      <ImageSection objs={objs} />
-      <DiagnosticsSection objs={objs} />
-      {one?.script && <SourceSection panel={one} />}
+      <ImageOpsSection objs={objs} />
+      {/* 第二层：唯一的「更多」——旋转 / 翻转 / 不透明度 / 替换素材 */}
+      <PanelMoreSection objs={objs} />
+      {/* 第三层：源文件与高级——写回 / 历史 / 质量诊断，默认折叠 */}
+      <SourceSection panel={one ?? undefined} objs={objs} />
     </>
   )
 }
@@ -222,9 +224,12 @@ function GeometrySection({ objs }: { objs: PanelObject[] }) {
 /*  外观（折叠）：旋转 / 翻转 / 不透明度                                          */
 /* -------------------------------------------------------------------------- */
 
-function AppearanceSection({ objs }: { objs: PanelObject[] }) {
+function PanelMoreSection({ objs }: { objs: PanelObject[] }) {
   useTranslation('inspector')
-  const [open, setOpen] = useState(false)
+  const open = useInspectorPrefs((s) => s.moreOpen['panel'] ?? false)
+  const setOpen = useInspectorPrefs((s) => s.setMoreOpen)
+  const one = objs.length === 1 ? objs[0] : null
+  const [replacing, setReplacing] = useState(false)
   const ids = objs.map((o) => o.id)
   const rot = sharedPanel(objs, panelRotation)
   const opacity = sharedPanel(objs, (o) => Math.round((o.opacity ?? 1) * 100))
@@ -244,9 +249,9 @@ function AppearanceSection({ objs }: { objs: PanelObject[] }) {
 
   return (
     <Disclosure
-      title={pn('appearance')}
+      title={translate('element.more', { ns: 'inspector' })}
       open={open}
-      onToggle={() => setOpen((v) => !v)}
+      onToggle={() => setOpen('panel', !open)}
       summary={summaryBits.length ? summaryBits.join(' · ') : undefined}
     >
       <div className="flex flex-col gap-1.5">
@@ -331,6 +336,22 @@ function AppearanceSection({ objs }: { objs: PanelObject[] }) {
             {pn(flipped && translucent ? 'bitmapBoth' : flipped ? 'bitmapFlip' : 'bitmapOpacity')}
           </p>
         )}
+
+        <Tip label={pn('replaceTip')}>
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-full"
+            disabled={!one}
+            onClick={() => setReplacing(true)}
+          >
+            <Replace size={13} />
+            {pn('replace')}
+          </Button>
+        </Tip>
+        {one && (
+          <ReplaceAssetDialog panel={one} open={replacing} onOpenChange={setReplacing} />
+        )}
       </div>
     </Disclosure>
   )
@@ -340,26 +361,16 @@ function AppearanceSection({ objs }: { objs: PanelObject[] }) {
 /*  图片（折叠）：裁剪 / 适配 / 替换素材                                          */
 /* -------------------------------------------------------------------------- */
 
-function ImageSection({ objs }: { objs: PanelObject[] }) {
+function ImageOpsSection({ objs }: { objs: PanelObject[] }) {
   useTranslation('inspector')
-  const [open, setOpen] = useState(false)
   const ids = objs.map((o) => o.id)
   const cropTargetId = useUiStore((s) => s.cropTargetId)
   const one = objs.length === 1 ? objs[0] : null
-  const [replacing, setReplacing] = useState(false)
   const cropped = objs.some((o) => o.crop)
   const cropping = !!one && cropTargetId === one.id
 
-  // 正在裁剪时展开，让「完成裁剪」有处可点
-  const effectiveOpen = open || cropping
-
   return (
-    <Disclosure
-      title={pn('image')}
-      open={effectiveOpen}
-      onToggle={() => setOpen((v) => !v)}
-      summary={cropped ? pn('cropped') : undefined}
-    >
+    <Section title={pn('image')}>
       <div className="flex gap-1.5">
         <Tip label={pn('cropTip')}>
           <Button
@@ -426,24 +437,7 @@ function ImageSection({ objs }: { objs: PanelObject[] }) {
           </Button>
         </Tip>
       </Grid2>
-
-      <Tip label={pn('replaceTip')}>
-        <Button
-          variant="outline"
-          size="sm"
-          className="mt-1.5 w-full"
-          disabled={!one}
-          onClick={() => setReplacing(true)}
-        >
-          <Replace size={13} />
-          {pn('replace')}
-        </Button>
-      </Tip>
-
-      {one && (
-        <ReplaceAssetDialog panel={one} open={replacing} onOpenChange={setReplacing} />
-      )}
-    </Disclosure>
+    </Section>
   )
 }
 
@@ -486,24 +480,16 @@ function qualityOf(o: PanelObject): Quality {
   }
 }
 
-function DiagnosticsSection({ objs }: { objs: PanelObject[] }) {
+function PanelQuality({ objs }: { objs: PanelObject[] }) {
   useTranslation('inspector')
-  const [open, setOpen] = useState(false)
   const items = objs.slice(0, 4).map(qualityOf)
-  const worst = items.find((q) => q.bad) ?? items[0]
-  if (!worst) return null
+  if (!items.length) return null
 
   return (
-    <Disclosure
-      title={pn('diagnostics')}
-      open={open}
-      onToggle={() => setOpen((v) => !v)}
-      summary={
-        <span className={worst.bad ? 'text-danger' : undefined}>
-          {worst.label} {worst.value}
-        </span>
-      }
-    >
+    <div className="mt-2 border-t border-border pt-2">
+      <p className="mb-1 text-xs uppercase tracking-[.06em] text-ink-3">
+        {pn('diagnostics')}
+      </p>
       <div className="flex flex-col gap-1">
         {items.map((q) => (
           <Tip key={q.id} label={q.hint} side="left">
@@ -522,7 +508,7 @@ function DiagnosticsSection({ objs }: { objs: PanelObject[] }) {
           <p className="text-xs text-ink-3">{pn('morePanels', { count: objs.length - 4 })}</p>
         )}
       </div>
-    </Disclosure>
+    </div>
   )
 }
 
@@ -677,21 +663,40 @@ function ScriptSection({ panel }: { panel: PanelObject }) {
  * 源文件组：唯一会触碰磁盘上原始文件的入口。
  * 写回不要求正处于图内编辑：退出编辑后选中面板，同样能把修改同步回原图。
  */
-export function SourceSection({ panel }: { panel: PanelObject }) {
+export function SourceSection({
+  panel,
+  objs,
+}: {
+  panel?: PanelObject
+  objs: PanelObject[]
+}) {
   useTranslation('inspector')
-  const [open, setOpen] = useState(false)
+  const open = useInspectorPrefs((s) => s.advancedOpen['panel'] ?? false)
+  const setOpen = useInspectorPrefs((s) => s.setAdvancedOpen)
+  const overrides = panel?.overrides.length ?? 0
+  if (!panel?.script && !objs.length) return null
   return (
     <Disclosure
-      title={pn('source')}
+      title={pn('sourceAdvanced')}
       open={open}
-      onToggle={() => setOpen((v) => !v)}
-      summary={panel.script?.split('/').pop()}
+      onToggle={() => setOpen('panel', !open)}
+      summary={panel?.script?.split('/').pop()}
     >
-      <div className="flex gap-1.5">
-        <UpdateSourceButton panel={panel} />
-        <HistoryPanel panel={panel} />
-      </div>
-      <p className="mt-1.5 text-xs leading-relaxed text-ink-3">{pn('sourceHint')}</p>
+      {panel?.script && (
+        <>
+          <div className="flex gap-1.5">
+            <UpdateSourceButton panel={panel} />
+            <HistoryPanel panel={panel} />
+          </div>
+          {overrides > 0 && (
+            <p className="mt-1.5 text-xs text-ink-3">
+              {pn('overrideCount', { count: overrides })}
+            </p>
+          )}
+          <p className="mt-1.5 text-xs leading-relaxed text-ink-3">{pn('sourceHint')}</p>
+        </>
+      )}
+      <PanelQuality objs={objs} />
     </Disclosure>
   )
 }

@@ -24,7 +24,8 @@ test('拖图内元素：预览跟手、拖动期间零后端、松手一次定�
   await expect(page.getByText('画布是空的')).toHaveCount(0)
 
   // 进图内编辑态 → 画布上换成内联 SVG
-  await page.getByRole('button', { name: '编辑图内元素' }).click()
+  // 右栏与上下文工具条各有一个入口，取右栏那个
+  await page.getByRole('button', { name: '编辑图内元素' }).first().click()
   const svgWrap = page.locator('[data-element-svg]').first()
   await expect(svgWrap.locator('svg')).toBeVisible({ timeout: 60_000 })
 

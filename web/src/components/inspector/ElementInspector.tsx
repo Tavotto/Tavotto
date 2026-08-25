@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   AlignCenterHorizontal,
@@ -71,7 +71,6 @@ import {
 import type { PanelObject } from '@/types/document'
 import {
   engineLabel,
-  groupHasContent,
   groupLabel,
   groupRank,
   optionLabel,
@@ -80,16 +79,33 @@ import {
   unsupportedOf,
 } from './roles/registry'
 import { Button } from '../ui/Button'
-import { Grid2, Row, Section } from '../ui/Field'
+import { Disclosure, Grid2, Row, Section } from '../ui/Field'
 import { ColorField, NumberField, TextArea, TextInput } from '../ui/Input'
 import { Popover } from '../ui/Popover'
 import { Select } from '../ui/Select'
 import { Toggle } from '../ui/Toggle'
 import { Tip } from '../ui/Tooltip'
 import { useFieldGesture } from './elementWrite'
+import { controlKindOf, presentFields } from './presentation/registry'
+import type { PresentedField } from './presentation/types'
+import { ArrowStylePicker } from './controls/ArrowPickers'
+import { ColormapPicker } from './controls/ColormapPicker'
+import { HatchPicker } from './controls/HatchPicker'
+import { LegendPositionPicker } from './controls/LegendPositionPicker'
+import { LineStylePicker } from './controls/LineStylePicker'
+import { MarkerPicker } from './controls/MarkerPicker'
+import {
+  TICK_SPINE_PROPS,
+  TickAndSpineDiagram,
+  type TickSpineAdapter,
+} from './controls/TickAndSpineDiagram'
+import { useElementWriter } from './elementWrite'
+import { fontStackOf } from './controls/fontStack'
+import { useInspectorPrefs } from '@/store/inspectorPrefs'
 import { TextActionRow } from './TextActions'
 import { hasTextStyleBar, TextStyleBar, TEXT_BAR_PROPS } from './TextStyleBar'
-import { SourceSection } from './PanelSection'
+import { HistoryPanel } from './HistoryPanel'
+import { UpdateSourceButton } from './UpdateSourceButton'
 import { SyncOverridesButton } from './SyncOverridesButton'
 
 /** 本文件的文案都在 inspector:element.* 下 */
@@ -98,13 +114,15 @@ const el = (key: string, values?: Record<string, unknown>) =>
 const elMsg = (key: string, values?: Record<string, unknown>) =>
   msg(`element.${key}`, values, 'inspector')
 
-/** 图内元素编辑器：表单结构完全由 manifest.editable 决定 */
+/**
+ * 图内元素编辑器。**能力**完全由 manifest.editable 决定；**版面**由展示注册表
+ * 决定（presentation/registry）：primary 永远展开，「更多」是唯一的中频折叠区
+ * （展开状态按角色持久化），「源文件与高级」收纳写回/历史/诊断与低频字段。
+ */
 export function ElementInspector({ panel }: { panel: PanelObject }) {
   useTranslation('inspector')
   const render = usePanelRender(panel)
   const selectedGids = useUiStore((s) => s.selectedGids)
-  // 折叠状态挂在面板级组件上：同一面板内换元素不重置，换面板才归零
-  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({})
   const manifest = render?.manifest
   const selected = manifest
     ? selectedGids
@@ -134,6 +152,44 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
   // 多选同一种角色 → 批量改公共属性（文字全部调字号、曲线全部换色…）
   const batch =
     selected.length > 1 && selected.every((e) => e.role === selected[0].role) ? selected : null
+
+  // 展示分桶：文字工具条覆盖的属性、四边状态图吃掉的开关都让出来
+  // （同一属性不出两套控件）
+  const consumedBySideDiagram = new Set<string>(
+    element?.role === 'axes' ? TICK_SPINE_PROPS : [],
+  )
+  const buckets =
+    element && element.editable.length
+      ? presentFields(
+          element.role,
+          element.editable.filter(
+            (f) =>
+              (!hasTextStyleBar(element) || !TEXT_BAR_PROPS.has(f.prop)) &&
+              !consumedBySideDiagram.has(f.prop),
+          ),
+          {
+            isOverridden: (prop) =>
+              panel.overrides.some((o) => o.gid === element.gid && o.prop === prop),
+            read: (prop) => {
+              const f = element.editable.find((x) => x.prop === prop)
+              return f ? currentValue(panel, element.gid, f) : undefined
+            },
+          },
+        )
+      : null
+
+  // 四边状态图的宿主：axes 是自己；ticks 挂在宿主子图上（字段在那边）
+  const sideHost =
+    manifest && element
+      ? element.role === 'axes'
+        ? element
+        : element.role === 'ticks'
+          ? (() => {
+              const m = element.gid.match(/^(.*)\.[xyz]ticks$/)
+              return m ? manifest.elements.find((e) => e.gid === m[1]) : undefined
+            })()
+          : undefined
+      : undefined
 
   return (
     <>
@@ -179,16 +235,16 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
           <p className="text-xs text-ink-3">
             {el(render?.status === 'rendering' ? 'building' : 'waiting')}
           </p>
-        ) : !element?.editable.length ? (
+        ) : !element?.editable.length || !buckets ? (
           <p className="text-xs text-ink-3">{el('clickToEdit')}</p>
         ) : (
           <FieldList
             panel={panel}
             element={element}
             warnings={render?.warnings ?? []}
-            openGroups={openGroups}
-            onToggleGroup={(name) =>
-              setOpenGroups((s) => ({ ...s, [name]: !s[name] }))
+            buckets={buckets}
+            primaryExtra={
+              sideHost ? <AxesSideControl panel={panel} host={sideHost} /> : null
             }
           />
         )}
@@ -210,9 +266,11 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
 
       <HiddenElements panel={panel} manifest={manifest} />
 
-      <SourceSection panel={panel} />
-
-      <AdvancedSection panel={panel} gid={element?.gid} />
+      <SourceAdvancedSection
+        panel={panel}
+        element={alignGroup || batch ? null : element}
+        advanced={alignGroup || batch ? [] : (buckets?.advanced ?? [])}
+      />
     </>
   )
 }
@@ -367,93 +425,151 @@ const RESET_HINT_PROPS = new Set(['vmin', 'vmax', 'size_mm'])
 const resetHint = (prop: string) =>
   el(`resetHint.${RESET_HINT_PROPS.has(prop) ? prop : 'default'}`)
 
+/** 字段行 + 贴在它下面的引擎警告（单条 patch 失败时） */
+function FieldBlock({
+  panel,
+  element,
+  field,
+  warnings,
+}: {
+  panel: PanelObject
+  element: ManifestElement
+  field: EditableField
+  warnings: string[]
+}) {
+  // 用词边界匹配：gid 里的 "texts_0" 不该被认成 text 字段的报错
+  const propRe = new RegExp(`(^|[^A-Za-z_])${field.prop}([^A-Za-z_0-9]|$)`)
+  const warning = warnings.find((w) => propRe.test(w))
+  return (
+    <div>
+      <FieldRow panel={panel} element={element} field={field} />
+      {warning && (
+        <p className="mt-0.5 pl-20 text-xs leading-relaxed text-danger">{warning}</p>
+      )}
+    </div>
+  )
+}
+
+/**
+ * 单元素表单：primary 永远展开；「更多」是唯一的中频折叠区，展开状态按角色
+ * 持久化（换面板不重置），折叠时标题右侧显示里面有几项被改过——
+ * override 不因折叠而不可发现。
+ */
 function FieldList({
   panel,
   element,
   warnings,
-  openGroups,
-  onToggleGroup,
+  buckets,
+  primaryExtra,
 }: {
   panel: PanelObject
   element: ManifestElement
   warnings: string[]
-  openGroups: Record<string, boolean>
-  onToggleGroup: (name: string) => void
+  buckets: { primary: PresentedField[]; more: PresentedField[] }
+  /** 首屏里的复合控件（四边状态图等），排在 primary 行之后、「更多」之前 */
+  primaryExtra?: ReactNode
 }) {
   // 文字元素的字号/加粗/字形/颜色/背景/描边/排版全部收进工具条，
-  // 平铺列表与分组要把它们让出来——同一个属性出两套控件是最坏的那种冗余
+  // 平铺列表要把它们让出来——同一个属性出两套控件是最坏的那种冗余
   const bar = hasTextStyleBar(element)
-  const shown = element.editable.filter((f) => !bar || !TEXT_BAR_PROPS.has(f.prop))
-  const flat = shown.filter((f) => !f.group)
-  const groups = new Map<string, EditableField[]>()
-  for (const f of shown) {
-    if (!f.group) continue
-    groups.set(f.group, [...(groups.get(f.group) ?? []), f])
-  }
-  // manifest 里 group 的出现次序取决于引擎实现，按注册表排才能跨角色版面一致
-  const ordered = [...groups].sort((a, b) => groupRank(a[0]) - groupRank(b[0]))
+  const role = element.role
+  const moreOpen = useInspectorPrefs((s) => s.moreOpen[role] ?? false)
+  const setMoreOpen = useInspectorPrefs((s) => s.setMoreOpen)
 
-  const rows = (fields: EditableField[]) => (
+  const rows = (fields: PresentedField[]) => (
     <div className="flex flex-col gap-1.5">
-      {fields.map((field) => {
-        // 单条 patch 失败会进 warnings（如 log 轴遇非正数据），贴到出问题的字段下面。
-        // 用词边界匹配：gid 里的 "texts_0" 不该被认成 text 字段的报错
-        const propRe = new RegExp(`(^|[^A-Za-z_])${field.prop}([^A-Za-z_0-9]|$)`)
-        const warning = warnings.find((w) => propRe.test(w))
-        return (
-          <div key={field.prop}>
-            <FieldRow panel={panel} element={element} field={field} />
-            {panel.overrides.some((o) => o.gid === element.gid && o.prop === field.prop) && (
-              <button
-                onClick={() => clearOverride(panel.id, element.gid, field.prop)}
-                className="mt-0.5 pl-20 text-xs text-ink-3 hover:text-accent"
-              >
-                {resetHint(field.prop)}
-              </button>
-            )}
-            {warning && (
-              <p className="mt-0.5 pl-20 text-xs leading-relaxed text-danger">{warning}</p>
-            )}
-          </div>
-        )
-      })}
+      {fields.map(({ field }) => (
+        <FieldBlock
+          key={field.prop}
+          panel={panel}
+          element={element}
+          field={field}
+          warnings={warnings}
+        />
+      ))}
     </div>
   )
 
+  // 「更多」内部不再有第二层折叠；兜底进来的字段按引擎分组给一行小标题
+  const named = buckets.more.filter((pf) => pf.order < 1000)
+  const rest = buckets.more.filter((pf) => pf.order >= 1000)
+  const restGroups: [string | undefined, PresentedField[]][] = []
+  for (const pf of rest) {
+    const last = restGroups.at(-1)
+    if (last && last[0] === pf.field.group) last[1].push(pf)
+    else restGroups.push([pf.field.group, [pf]])
+  }
+
+  const modifiedInMore = buckets.more.filter((pf) =>
+    panel.overrides.some((o) => o.gid === element.gid && o.prop === pf.field.prop),
+  ).length
+
   return (
     <>
+      {rows(buckets.primary)}
       {bar && (
-        <div className="mb-2 border-b border-border pb-2">
+        <div className={cn(buckets.primary.length > 0 && 'mt-1.5')}>
           <TextStyleBar panel={panel} element={element} />
         </div>
       )}
-      {rows(flat)}
-      {ordered.map(([name, fields]) => {
-        // 组里已经有非默认值（如 Ra 标签自带的黑底）就默认展开——
-        // 折叠着会让用户以为这些属性根本不能改
-        const auto = groupHasContent(fields, (prop) =>
-          panel.overrides.some((o) => o.gid === element.gid && o.prop === prop),
-        )
-        const open = openGroups[name] ?? auto
-        return (
-          <div key={name} className="mt-1.5 border-t border-border pt-1.5">
-            <button
-              onClick={() => onToggleGroup(name)}
-              aria-expanded={open}
-              className="flex w-full items-center gap-1 text-left text-xs text-ink-2 hover:text-ink"
-            >
-              <ChevronRight
-                size={11}
-                className={cn('shrink-0 transition-transform', open && 'rotate-90')}
-              />
-              {groupLabel(name)}
-            </button>
-            {open && <div className="mt-1.5">{rows(fields)}</div>}
-          </div>
-        )
-      })}
+      {primaryExtra && <div className="mt-2">{primaryExtra}</div>}
+      {buckets.more.length > 0 && (
+        <div className="mt-1.5 border-t border-border pt-1.5">
+          <button
+            onClick={() => setMoreOpen(role, !moreOpen)}
+            aria-expanded={moreOpen}
+            className="flex h-6 w-full items-center gap-1 rounded-sm text-left text-xs text-ink-2 outline-none hover:text-ink focus-visible:focus-ring"
+          >
+            <ChevronRight
+              size={11}
+              aria-hidden
+              className={cn('shrink-0 transition-transform', moreOpen && 'rotate-90')}
+            />
+            <span className="font-medium">{el('more')}</span>
+            {!moreOpen && modifiedInMore > 0 && (
+              <span className="ml-auto shrink-0 text-xs text-ink-3">
+                {el('modifiedCount', { count: modifiedInMore })}
+              </span>
+            )}
+          </button>
+          {moreOpen && (
+            <div className="mt-1.5 flex flex-col gap-1.5">
+              {rows(named)}
+              {restGroups.map(([group, fields], i) => (
+                <div key={group ?? `flat-${i}`}>
+                  {group && (
+                    <p className="mb-1 mt-1 text-xs uppercase tracking-[.06em] text-ink-3">
+                      {groupLabel(group)}
+                    </p>
+                  )}
+                  {rows(fields)}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </>
   )
+}
+
+/**
+ * 四边刻度/边框状态图的写入接线：axes 页与刻度组页共用。
+ * 字段全部真实存在于宿主 axes 的 manifest 上；写入走 useElementWriter
+ * （一次点击 = 一条历史 + 一次渲染），单项恢复走 clearOverride。
+ */
+function AxesSideControl({ panel, host }: { panel: PanelObject; host: ManifestElement }) {
+  useTranslation('inspector')
+  const w = useElementWriter(panel, host)
+  const adapter: TickSpineAdapter = {
+    has: (p) => w.has(p),
+    read: (p) => w.read(p),
+    toggle: (p, next) => w.writeOnce(p, next),
+    labelOf: (p) => propLabel(p, host.role),
+    isOverridden: (p) => panel.overrides.some((o) => o.gid === host.gid && o.prop === p),
+    reset: (p) => clearOverride(panel.id, host.gid, p),
+  }
+  return <TickAndSpineDiagram adapter={adapter} />
 }
 
 /* -------------------------------------------------------------------------- */
@@ -701,10 +817,22 @@ function FieldRow({
     [element.gid],
   )
   const label = propLabel(field.prop, element.role)
-  // 标签列定宽 + 自身截断：中文标签长短不一，控件列不能被挤或被压
+  const overridden = panel.overrides.some(
+    (o) => o.gid === element.gid && o.prop === field.prop,
+  )
+  // 标签列定宽 + 自身截断：中文标签长短不一，控件列不能被挤或被压。
+  // 已修改的属性带一个状态点（形状而非仅颜色）+ sr-only 文案 + 行尾的恢复按钮，
+  // 三重表达「这个值来自你的修改，不是脚本」。
   const labelNode = (
-    <span className="block truncate" title={label}>
-      {label}
+    <span
+      className="flex min-w-0 items-center gap-1"
+      title={overridden ? `${label} · ${el('modified')}` : label}
+    >
+      {overridden && (
+        <span aria-hidden className="h-1 w-1 shrink-0 rounded-full bg-accent" />
+      )}
+      <span className="min-w-0 truncate">{label}</span>
+      {overridden && <span className="sr-only">{el('modified')}</span>}
     </span>
   )
   const gesture = useFieldGesture(panel, el('editProp', { label }))
@@ -739,12 +867,108 @@ function FieldRow({
   // 并保证最终那张不是拖动期的降质预览（见 flushRender）
   const endTxn = gesture.end
 
+  /** 每种控件都套同一个壳：标签列 + 控件 + （已修改时）恢复到脚本 */
+  const wrap = (children: ReactNode) => (
+    <Row label={labelNode} labelWidth={LABEL_W}>
+      {children}
+      {overridden && (
+        <Tip label={resetHint(field.prop)} side="left">
+          <Button
+            size="icon-sm"
+            className="shrink-0 self-start"
+            aria-label={el('resetProp', { label })}
+            onClick={() => clearOverride(panel.id, element.gid, field.prop)}
+          >
+            <RotateCcw size={11} className="text-ink-3" />
+          </Button>
+        </Tip>
+      )}
+    </Row>
+  )
+
+
+  // enum 的视觉控件按展示注册表分派；剩下的按字段类型走
+  const kind = controlKindOf(element.role, field)
+  const enumValue = String(value ?? '')
+  const enumOptions = field.options ?? []
+  switch (kind) {
+    case 'line-style':
+      return wrap(
+        <LineStylePicker
+          value={enumValue}
+          options={enumOptions}
+          onChange={writeOnce}
+          ariaLabel={label}
+        />,
+      )
+    case 'marker':
+      return wrap(
+        <MarkerPicker
+          value={enumValue}
+          options={enumOptions}
+          onChange={writeOnce}
+          ariaLabel={label}
+        />,
+      )
+    case 'hatch':
+      return wrap(
+        <HatchPicker
+          value={enumValue}
+          options={enumOptions}
+          onChange={writeOnce}
+          ariaLabel={label}
+        />,
+      )
+    case 'colormap':
+      return wrap(
+        <ColormapPicker
+          value={enumValue}
+          options={enumOptions}
+          onChange={writeOnce}
+          ariaLabel={label}
+        />,
+      )
+    case 'legend-position':
+      return wrap(
+        <LegendPositionPicker
+          value={enumValue}
+          options={enumOptions}
+          onChange={writeOnce}
+          ariaLabel={label}
+        />,
+      )
+    case 'arrow-style':
+      return wrap(
+        <ArrowStylePicker
+          value={enumValue}
+          options={enumOptions}
+          onChange={writeOnce}
+          ariaLabel={label}
+        />,
+      )
+    case 'font':
+      return wrap(
+        <Select
+          value={enumValue}
+          onChange={(v) => writeOnce(v)}
+          options={enumOptions.map((o) => ({
+            value: o,
+            label: (
+              <span style={{ fontFamily: fontStackOf(o) }}>{optionLabel('fontfamily', o)}</span>
+            ),
+          }))}
+          ariaLabel={label}
+        />,
+      )
+    default:
+      break
+  }
 
   switch (field.type) {
     case 'text': {
       const text = String(value ?? '')
-      return (
-        <Row label={labelNode} labelWidth={LABEL_W}>
+      return wrap(
+        <>
           {/* 输入框占满整行，四个动作横排在下方——竖排会把这一行拉得比输入框还高 */}
           <div className="flex w-full min-w-0 flex-col gap-1">
             <TextArea
@@ -784,13 +1008,13 @@ function FieldRow({
               onChange={(next, immediate) => write(next, immediate)}
             />
           </div>
-        </Row>
+        </>
       )
     }
 
     case 'number':
-      return (
-        <Row label={labelNode} labelWidth={LABEL_W}>
+      return wrap(
+        <>
           <NumberField
             value={Number(value ?? 0)}
             min={field.min}
@@ -802,12 +1026,12 @@ function FieldRow({
             onScrubStart={beginTxn}
             onScrubEnd={endTxn}
           />
-        </Row>
+        </>
       )
 
     case 'color':
-      return (
-        <Row label={labelNode} labelWidth={LABEL_W}>
+      return wrap(
+        <>
           {/* 取色是**连续**动作：系统取色盘拖着走会发一串 change。开一轮事务，
               每次变化只贴 SVG，blur 或安静一会儿才定稿——否则拖一次颜色就是
               十几条撤销 + 十几次 matplotlib 渲染 */}
@@ -816,19 +1040,19 @@ function FieldRow({
             onChange={(v) => write(v, true)}
             onGestureEnd={gesture.end}
           />
-        </Row>
+        </>
       )
 
     case 'bool':
-      return (
-        <Row label={labelNode} labelWidth={LABEL_W}>
+      return wrap(
+        <>
           <Toggle checked={!!value} onChange={writeOnce} />
-        </Row>
+        </>
       )
 
     case 'enum':
-      return (
-        <Row label={labelNode} labelWidth={LABEL_W}>
+      return wrap(
+        <>
           <Select
             value={String(value ?? '')}
             onChange={(v) => write(v, true)}
@@ -838,7 +1062,7 @@ function FieldRow({
             }))}
             ariaLabel={label}
           />
-        </Row>
+        </>
       )
 
     case 'order': {
@@ -854,8 +1078,8 @@ function FieldRow({
         ;[next[i], next[j]] = [next[j], next[i]]
         write(next, true)
       }
-      return (
-        <Row label={labelNode} labelWidth={LABEL_W}>
+      return wrap(
+        <>
           <ul className="min-w-0 flex-1 rounded-sm border border-border">
             {perm.map((origIdx, i) => (
               <li
@@ -889,7 +1113,7 @@ function FieldRow({
               </li>
             ))}
           </ul>
-        </Row>
+        </>
       )
     }
 
@@ -898,8 +1122,8 @@ function FieldRow({
       // 就是用户要改的东西，固定成 N 个格子等于不让他增删。分隔符逗号、空格、
       // 中文逗号都收——用户多半是从别处粘一串数进来的。
       const arr = Array.isArray(value) ? (value as number[]) : []
-      return (
-        <Row label={labelNode} labelWidth={LABEL_W}>
+      return wrap(
+        <>
           <div className="flex w-full min-w-0 flex-col gap-1">
             <TextInput
               defaultValue={formatNumberList(arr)}
@@ -942,7 +1166,7 @@ function FieldRow({
                 : el('numberList.empty')}
             </span>
           </div>
-        </Row>
+        </>
       )
     }
 
@@ -950,8 +1174,8 @@ function FieldRow({
     case 'rect': {
       const arr = Array.isArray(value) ? (value as number[]) : []
       const step = field.type === 'rect' ? 0.01 : 1
-      return (
-        <Row label={labelNode} labelWidth={LABEL_W}>
+      return wrap(
+        <>
           <div className={cn('grid flex-1 gap-1', field.type === 'rect' ? 'grid-cols-4' : 'grid-cols-2')}>
             {arr.map((v, i) => (
               <NumberField
@@ -970,7 +1194,7 @@ function FieldRow({
             ))}
           </div>
           {field.unit && <span className="shrink-0 text-xs text-ink-3">{field.unit}</span>}
-        </Row>
+        </>
       )
     }
 
@@ -1257,46 +1481,91 @@ function AxesSizeMm({
 }
 
 /**
- * 高级层：改的是磁盘上的文件或跨图搬运，都是低频且不可轻率的动作，
- * 默认折叠，别和日常调样式的字段挤在一起。
+ * 第三层「源文件与高级」：一切触碰磁盘原始文件的动作（写回 / 历史）、
+ * 恢复入口（当前元素 / 整个面板）、低频字段（层级、裸坐标）与 gid 诊断。
+ * 默认折叠、会话内按角色记忆——高风险低频动作不和日常调样式挤在一起。
  */
-function AdvancedSection({ panel, gid }: { panel: PanelObject; gid?: string }) {
-  const [open, setOpen] = useState(false)
+function SourceAdvancedSection({
+  panel,
+  element,
+  advanced,
+}: {
+  panel: PanelObject
+  element?: ManifestElement | null
+  advanced: PresentedField[]
+}) {
+  useTranslation('inspector')
+  const role = element?.role ?? 'panel'
+  const open = useInspectorPrefs((s) => s.advancedOpen[role] ?? false)
+  const setOpen = useInspectorPrefs((s) => s.setAdvancedOpen)
+  const gid = element?.gid
+  const elementCount = gid
+    ? panel.overrides.filter((o) => o.gid === gid).length
+    : 0
+
   return (
-    <Section>
-      <button
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        className="flex w-full items-center gap-1 text-left text-xs text-ink-2 hover:text-ink"
-      >
-        <ChevronRight size={11} className={cn('shrink-0 transition-transform', open && 'rotate-90')} />
-        {el('advanced')}
-      </button>
-      {open && (
-        <div className="mt-1.5 flex flex-col gap-1.5">
+    <Disclosure
+      title={el('sourceAdvanced')}
+      open={open}
+      onToggle={() => setOpen(role, !open)}
+      summary={panel.script?.split('/').pop()}
+    >
+      <div className="flex flex-col gap-1.5">
+        {advanced.length > 0 && (
+          <div className="flex flex-col gap-1.5 border-b border-border pb-2">
+            {element &&
+              advanced.map(({ field }) => (
+                <FieldRow key={field.prop} panel={panel} element={element} field={field} />
+              ))}
+          </div>
+        )}
+        {gid && elementCount > 0 && (
           <Button
             variant="outline"
             size="sm"
             className="w-full"
-            disabled={!panel.overrides.length}
-            title={el('resetTitle')}
-            onClick={() => resetOverrides(panel.id)}
+            onClick={() =>
+              clearOverrides(
+                panel.id,
+                elMsg('resetElement'),
+                panel.overrides
+                  .filter((o) => o.gid === gid)
+                  .map((o) => ({ gid: o.gid, prop: o.prop })),
+              )
+            }
           >
             <RotateCcw size={13} />
-            {panel.overrides.length
-              ? el('resetToScriptCount', { count: panel.overrides.length })
-              : el('resetToScript')}
+            {el('resetElementCount', { count: elementCount })}
           </Button>
-          <SyncOverridesButton panel={panel} />
-          <HowItWorks />
-          {gid && (
-            <p className="truncate font-mono text-xs text-ink-3" title={gid}>
-              {gid}
-            </p>
-          )}
-        </div>
-      )}
-    </Section>
+        )}
+        <Button
+          variant="outline"
+          size="sm"
+          className="w-full"
+          disabled={!panel.overrides.length}
+          title={el('resetTitle')}
+          onClick={() => resetOverrides(panel.id)}
+        >
+          <RotateCcw size={13} />
+          {panel.overrides.length
+            ? el('resetToScriptCount', { count: panel.overrides.length })
+            : el('resetToScript')}
+        </Button>
+        {panel.script && (
+          <div className="flex gap-1.5">
+            <UpdateSourceButton panel={panel} />
+            <HistoryPanel panel={panel} />
+          </div>
+        )}
+        <SyncOverridesButton panel={panel} />
+        <HowItWorks />
+        {gid && (
+          <p className="truncate font-mono text-xs text-ink-3" title={gid}>
+            {gid}
+          </p>
+        )}
+      </div>
+    </Disclosure>
   )
 }
 
