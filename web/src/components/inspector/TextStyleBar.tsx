@@ -1,52 +1,39 @@
-import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
-import {
-  Baseline,
-  Bold,
-  Italic,
-  PaintBucket,
-  PenLine,
-  Settings2,
-  TextAlignCenter,
-  TextAlignEnd,
-  TextAlignStart,
-} from 'lucide-react'
-import type { EditableField, ManifestElement } from '@/lib/api'
+import { Bold, Italic } from 'lucide-react'
+import type { ManifestElement } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { clearOverride } from '@/store/actions'
 import type { PanelObject } from '@/types/document'
 import { Button } from '../ui/Button'
-import { ColorField, NumberField } from '../ui/Input'
-import { Popover } from '../ui/Popover'
-import { Segmented } from '../ui/Segmented'
-import { Select } from '../ui/Select'
-import { Toggle } from '../ui/Toggle'
 import { Tip } from '../ui/Tooltip'
-import { useElementWriter, type ElementWriter } from './elementWrite'
-import { optionLabel, propLabel } from './roles/registry'
+import {
+  AlignmentRow,
+  FontFamilyRow,
+  FontSizeRow,
+  TextColorRow,
+} from './controls/textRows'
+import { useElementWriter } from './elementWrite'
+import { optionLabel } from './roles/registry'
 
 /**
- * 图内文字的样式工具条。
+ * 图内文字的高频样式：**带可见标签的行**（字体 / 字号 / 颜色 / 对齐），
+ * 不再是一排无标签控件 + 多层弹层（审计 P2 / 嵌套弹层）。
  *
- * 加粗 / 字形 / 颜色 / 背景 / 描边 / 排版收敛成图标——一行认得出、点得到，
- * 不用在十几条「标签 + 控件」里找。属性页与右键弹层**共用这一份**，两边
- * 不会各写一套然后慢慢飘。
+ * 行距 / 旋转 / 垂直对齐 / 背景 / 描边 / 层级不再压进齿轮弹层——它们经
+ * 展示注册表落进「更多」，与所有别的元素同一套折叠模型。
  *
- * 控件严格按 manifest 里真有的字段出：这里不维护属性清单，引擎说有才画。
+ * 属性页与右键快捷编辑共用这一份；控件严格按 manifest 里真有的字段出。
+ * 画布标注文字（TextSection）用同一组行组件——两种「文字」一个操作语言。
  */
 
-/** 工具条覆盖掉的属性——属性页的平铺列表与分组要把它们让出来，避免出现两套控件 */
+/** 工具条覆盖掉的属性——平铺列表与分组要把它们让出来，避免出现两套控件 */
 export const TEXT_BAR_PROPS = new Set([
-  'fontfamily', 'fontsize', 'weight', 'style', 'color', 'alpha',
-  'ha', 'va', 'rotation', 'linespacing', 'zorder',
-  'bbox_visible', 'bbox_facecolor', 'bbox_alpha', 'bbox_edgecolor',
-  'bbox_linewidth', 'bbox_pad', 'bbox_rounded',
-  'stroke_enabled', 'stroke_color', 'stroke_width',
+  'fontfamily', 'fontsize', 'weight', 'style', 'color', 'ha',
 ])
 
 /**
- * 该不该给这个元素画工具条。判据是「它是不是一个 matplotlib Text」：
+ * 该不该给这个元素画文字样式行。判据是「它是不是一个 matplotlib Text」：
  * 三条都有才算——图例只有 fontsize、刻度标签只有 text，都不该套进来。
  */
 export const hasTextStyleBar = (el: ManifestElement) =>
@@ -56,147 +43,99 @@ export const hasTextStyleBar = (el: ManifestElement) =>
 const tb = (key: string, values?: Record<string, unknown>) =>
   translate(`textBar.${key}`, { ns: 'inspector', ...(values ?? {}) })
 
-const haItems = () => [
-  { value: 'left', icon: <TextAlignStart size={12} />, tip: tb('alignLeft') },
-  { value: 'center', icon: <TextAlignCenter size={12} />, tip: tb('alignCenter') },
-  { value: 'right', icon: <TextAlignEnd size={12} />, tip: tb('alignRight') },
-]
-
-/**
- * 弹层里的行标签改写。注册表给的是全局通名（bbox_visible = 「背景」），
- * 落在标题已经写着「背景」的弹层里就成了重复；这里只改称呼，不改属性。
- */
-const ROW_LABEL_PROPS = new Set([
-  'bbox_visible',
-  'bbox_facecolor',
-  'bbox_alpha',
-  'bbox_edgecolor',
-  'bbox_linewidth',
-  'stroke_enabled',
-  'stroke_color',
-  'stroke_width',
-  'alpha',
-  'color',
-])
-
-/** 弹层里的行标签；没有改写的属性回落到注册表的通名 */
-const rowLabel = (prop: string): string | undefined =>
-  ROW_LABEL_PROPS.has(prop) ? tb(`prop.${prop}`) : undefined
-
 export function TextStyleBar({
   panel,
   element,
   className,
+  labelWidth = 72,
 }: {
   panel: PanelObject
   element: ManifestElement
   className?: string
+  /** 标签列宽：属性页 72（与 FieldRow 对齐），快捷编辑弹层可传 44 */
+  labelWidth?: number
 }) {
   useTranslation('inspector')
   const w = useElementWriter(panel, element)
   const family = w.fieldOf('fontfamily')
   const size = w.fieldOf('fontsize')
+  const gid = element.gid
 
   const bold = w.read('weight') === 'bold'
   const italic = w.read('style') === 'italic'
+  const overridden = (prop: string) =>
+    panel.overrides.some((o) => o.gid === gid && o.prop === prop)
+  const reset = (prop: string) => () => clearOverride(panel.id, gid, prop)
 
   return (
-    <div className={cn('flex flex-col gap-1', className)}>
-      {(family || size) && (
-        <div className="flex items-center gap-1">
-          {family && (
-            <Select
-              className="min-w-0 flex-1"
-              ariaLabel={propLabel('fontfamily', element.role)}
-              value={String(w.read('fontfamily') ?? '')}
-              onChange={(v) => w.writeOnce('fontfamily', v)}
-              options={(family.options ?? []).map((o) => ({
-                value: o,
-                label: optionLabel('fontfamily', o),
-              }))}
-            />
-          )}
-          {size && (
-            <NumberField
-              className="w-[74px] shrink-0"
-              value={Number(w.read('fontsize') ?? 9)}
-              min={size.min}
-              max={size.max}
-              step={size.step ?? 0.5}
-              precision={1}
-              suffix={size.unit}
-              onChange={(v) => w.write('fontsize', v)}
-              onScrubStart={w.beginGesture}
-              onScrubEnd={w.endGesture}
-            />
-          )}
-        </div>
+    <div className={cn('flex flex-col gap-1.5', className)}>
+      {family && (
+        <FontFamilyRow
+          labelWidth={labelWidth}
+          value={String(w.read('fontfamily') ?? '')}
+          options={family.options ?? []}
+          onChange={(v) => w.writeOnce('fontfamily', v)}
+          optionLabelOf={(o) => optionLabel('fontfamily', o)}
+          overridden={overridden('fontfamily')}
+          onReset={reset('fontfamily')}
+        />
       )}
-
-      <div className="flex flex-wrap items-center gap-1">
-        {w.has('weight') && (
-          <IconToggle
-            on={bold}
-            label={tb('bold')}
-            hint={tb('boldWeight', { value: tb(bold ? 'weightBold' : 'weightNormal') })}
-            onClick={() => w.writeOnce('weight', bold ? 'normal' : 'bold')}
-          >
-            <Bold size={12} />
-          </IconToggle>
-        )}
-        {w.has('style') && (
-          <IconToggle
-            on={italic}
-            label={tb('italic')}
-            hint={tb('italicStyle', { value: tb(italic ? 'styleItalic' : 'styleNormal') })}
-            onClick={() => w.writeOnce('style', italic ? 'normal' : 'italic')}
-          >
-            <Italic size={12} />
-          </IconToggle>
-        )}
-
-        <SwatchPopover
-          panel={panel}
-          element={element}
-          w={w}
-          label={tb('color')}
-          icon={<Baseline size={12} />}
-          swatch={String(w.read('color') ?? '#000000')}
-          props={['color', 'alpha']}
+      {size && (
+        <FontSizeRow
+          labelWidth={labelWidth}
+          value={Number(w.read('fontsize') ?? 9)}
+          min={size.min}
+          max={size.max}
+          step={size.step ?? 0.5}
+          suffix={size.unit}
+          onChange={(v) => w.write('fontsize', v)}
+          onScrubStart={w.beginGesture}
+          onScrubEnd={w.endGesture}
+          overridden={overridden('fontsize')}
+          onReset={reset('fontsize')}
+        >
+          {w.has('weight') && (
+            <IconToggle
+              on={bold}
+              label={tb('bold')}
+              hint={tb('boldWeight', { value: tb(bold ? 'weightBold' : 'weightNormal') })}
+              onClick={() => w.writeOnce('weight', bold ? 'normal' : 'bold')}
+            >
+              <Bold size={12} />
+            </IconToggle>
+          )}
+          {w.has('style') && (
+            <IconToggle
+              on={italic}
+              label={tb('italic')}
+              hint={tb('italicStyle', { value: tb(italic ? 'styleItalic' : 'styleNormal') })}
+              onClick={() => w.writeOnce('style', italic ? 'normal' : 'italic')}
+            >
+              <Italic size={12} />
+            </IconToggle>
+          )}
+        </FontSizeRow>
+      )}
+      {w.has('color') && (
+        <TextColorRow
+          labelWidth={labelWidth}
+          value={String(w.read('color') ?? '#000000')}
+          onChange={(v) => w.write('color', v, true)}
+          onGestureEnd={w.endGesture}
+          overridden={overridden('color')}
+          onReset={reset('color')}
         />
-        <SwatchPopover
-          panel={panel}
-          element={element}
-          w={w}
-          label={tb('background')}
-          icon={<PaintBucket size={12} />}
-          swatch={w.read('bbox_visible') === true ? String(w.read('bbox_facecolor') ?? '#ffffff') : null}
-          props={[
-            'bbox_visible', 'bbox_facecolor', 'bbox_alpha',
-            'bbox_edgecolor', 'bbox_linewidth', 'bbox_pad', 'bbox_rounded',
-          ]}
+      )}
+      {w.has('ha') && (
+        <AlignmentRow
+          labelWidth={labelWidth}
+          value={(String(w.read('ha') ?? 'center') as 'left' | 'center' | 'right') ?? null}
+          onChange={(v) => w.writeOnce('ha', v)}
+          labels={{ left: tb('alignLeft'), center: tb('alignCenter'), right: tb('alignRight') }}
+          overridden={overridden('ha')}
+          onReset={reset('ha')}
         />
-        <SwatchPopover
-          panel={panel}
-          element={element}
-          w={w}
-          label={tb('stroke')}
-          icon={<PenLine size={12} />}
-          swatch={w.read('stroke_enabled') === true ? String(w.read('stroke_color') ?? '#ffffff') : null}
-          props={['stroke_enabled', 'stroke_color', 'stroke_width']}
-        />
-        {/* 对齐进弹层而不是摆在主行：matplotlib 的 ha/va 说的是「锚点落在
-            文字的哪一侧」，跟段落对齐不是一回事，和旋转/行距/层级放一起才
-            讲得通。腾出来的位置也让主行在 296px 的属性栏里排得下一行 */}
-        <SwatchPopover
-          panel={panel}
-          element={element}
-          w={w}
-          label={tb('layout')}
-          icon={<Settings2 size={12} />}
-          props={['ha', 'va', 'rotation', 'linespacing', 'zorder']}
-        />
-      </div>
+      )}
     </div>
   )
 }
@@ -214,7 +153,7 @@ function IconToggle({
   /** 悬停时补一句当前值——图标按下与否在小尺寸下不总是一眼可辨 */
   hint?: string
   onClick: () => void
-  children: ReactNode
+  children: React.ReactNode
 }) {
   return (
     <Tip label={hint ?? label}>
@@ -222,175 +161,5 @@ function IconToggle({
         {children}
       </Button>
     </Tip>
-  )
-}
-
-/**
- * 一个图标按钮 + 一层弹出的细项。按钮下沿那条色带就是当前值——
- * 「颜色是什么」不用点开就知道。关掉的功能（没开背景 / 没开描边）色带留白、
- * 图标压暗：状态不只靠颜色区分。
- */
-function SwatchPopover({
-  panel,
-  element,
-  w,
-  label,
-  icon,
-  swatch,
-  props,
-}: {
-  panel: PanelObject
-  element: ManifestElement
-  w: ElementWriter
-  label: string
-  icon: ReactNode
-  /** undefined = 这层跟颜色无关，不画色带；null = 有颜色但功能当前关着 */
-  swatch?: string | null
-  props: string[]
-}) {
-  const fields = props
-    .map((p) => w.fieldOf(p))
-    .filter((f): f is EditableField => !!f)
-  if (!fields.length) return null
-
-  return (
-    <Popover
-      align="start"
-      width={214}
-      // 弹层关掉 = 这一轮调完了：原生取色盘不保证发 blur，安静计时之外再兜一次
-      onOpenChange={(open) => !open && w.endGesture()}
-      trigger={
-        <Button
-          size="icon-sm"
-          aria-label={label}
-          title={label}
-          // 关着的功能连图标一起压暗：色带空着已经说明问题，但只靠一条
-          // 细线的有无区分状态，扫一眼是看不见的
-          className={cn(swatch === null && 'text-ink-3')}
-        >
-          <span className="flex flex-col items-center gap-[2px] leading-none">
-            {icon}
-            {swatch !== undefined && (
-              <span
-                aria-hidden
-                className={cn(
-                  // 关着时留一条透明占位：有没有色带都占同样高度，切换时
-                  // 图标不会上下跳。3px 的虚线在这个尺寸下只会糊成一排点，
-                  // 「关着」交给图标压暗去说
-                  'block h-[3px] w-3.5 rounded-[1px] border',
-                  swatch ? 'border-border-strong' : 'border-transparent',
-                )}
-                style={swatch ? { background: swatch } : undefined}
-              />
-            )}
-          </span>
-        </Button>
-      }
-    >
-      <div className="mb-1.5 text-xs text-ink-3">{label}</div>
-      <div className="flex flex-col gap-1.5">
-        {fields.map((f) => (
-          <CompactRow key={f.prop} panel={panel} element={element} w={w} field={f} />
-        ))}
-      </div>
-    </Popover>
-  )
-}
-
-/** 弹层里的一行：标签窄一号，控件与属性页同一批（写入也走同一条 writer） */
-function CompactRow({
-  panel,
-  element,
-  w,
-  field,
-}: {
-  panel: PanelObject
-  element: ManifestElement
-  w: ElementWriter
-  field: EditableField
-}) {
-  const label = rowLabel(field.prop) ?? propLabel(field.prop, element.role)
-  const value = w.read(field.prop)
-  const overridden = panel.overrides.some(
-    (o) => o.gid === element.gid && o.prop === field.prop,
-  )
-
-  let control: ReactNode = null
-  switch (field.type) {
-    case 'bool':
-      control = <Toggle checked={!!value} onChange={(v) => w.writeOnce(field.prop, v)} />
-      break
-    case 'color':
-      control = (
-        <ColorField
-          className="min-w-0 flex-1"
-          value={String(value ?? '#000000')}
-          onChange={(v) => w.write(field.prop, v, true)}
-          onGestureEnd={w.endGesture}
-        />
-      )
-      break
-    case 'number':
-      control = (
-        <NumberField
-          className="min-w-0 flex-1"
-          value={Number(value ?? 0)}
-          min={field.min}
-          max={field.max}
-          step={field.step ?? 1}
-          precision={2}
-          suffix={field.unit}
-          onChange={(v) => w.write(field.prop, v)}
-          onScrubStart={w.beginGesture}
-          onScrubEnd={w.endGesture}
-        />
-      )
-      break
-    case 'enum':
-      if (field.prop === 'ha') {
-        control = (
-          <Segmented
-            tone="quiet"
-            value={String(value ?? 'center')}
-            onChange={(v) => w.writeOnce('ha', v)}
-            items={haItems()}
-          />
-        )
-        break
-      }
-      control = (
-        <Select
-          className="min-w-0 flex-1"
-          ariaLabel={label}
-          value={String(value ?? '')}
-          onChange={(v) => w.writeOnce(field.prop, v)}
-          options={(field.options ?? []).map((o) => ({
-            value: o,
-            label: optionLabel(field.prop, o),
-          }))}
-        />
-      )
-      break
-    default:
-      return null
-  }
-
-  return (
-    <div>
-      <label className="flex min-h-7 items-center gap-1.5">
-        <span className="w-[62px] shrink-0 truncate text-xs text-ink-2" title={label}>
-          {label}
-        </span>
-        {control}
-      </label>
-      {overridden && (
-        <button
-          onClick={() => clearOverride(panel.id, element.gid, field.prop)}
-          className="pl-[68px] text-xs text-ink-3 hover:text-accent"
-        >
-          {tb('backToScript')}
-        </button>
-      )}
-    </div>
   )
 }

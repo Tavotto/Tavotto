@@ -12,21 +12,29 @@ const LS_KEY = 'tavotto.ui'
 
 export const LEFT_MIN = 280
 export const LEFT_MAX = 360
-export const RIGHT_MIN = 296
-export const RIGHT_MAX = 320
+/**
+ * 右栏 320–480px（默认 360）。296–320 的旧宽度装不下「可见标签 + 控件」的
+ * 检查器排版——字体/字号只能挤成无标签的一行（见 docs/ux/INSPECTOR_REDESIGN.md
+ * 的 P2/P3），所以下限抬到 320、上限放到 480，默认 360。
+ */
+export const RIGHT_MIN = 320
+export const RIGHT_MAX = 480
+export const RIGHT_DEFAULT = 360
 /** 常驻图标轨道宽度 */
 export const RAIL_W = 44
 
 /**
  * 工作区断点。画布是主角，窄下来时先让侧栏让路，而不是压缩画布：
- * - ≥1440 左右可同时钉住；
- * - 1024–1439 左右互斥，同时只留一侧（1280×720 下画布仍 ≥760px）；
+ * - ≥1280 左右可同时钉住（1366×768 是最常见的笔记本档位，左树 + 画布 +
+ *   属性栏必须共存——否则「左边找对象、右边改属性」变成来回开关侧栏）；
+ * - 1024–1279 左右互斥，同时只留一侧：两栏 + 轨道至少 644px，双停靠会把
+ *   画布压破 600px；
  * - <1024 侧栏改成盖在画布上的抽屉，画布宽度完全不受影响。
  *
  * 放在 store 里而不是 useWorkspaceLayout：初始 persisted 状态就要按当前窗口
  * 宽度裁一次（见 readPersisted），hook 反过来 import store，搁那边会成环。
  */
-export const WIDE = 1440
+export const WIDE = 1280
 export const MEDIUM = 1024
 
 export const layoutFor = (w: number): WorkspaceLayout =>
@@ -69,14 +77,14 @@ interface Persisted {
   showGrid: boolean
 }
 
-export const PREFS_VERSION = 1
+export const PREFS_VERSION = 2
 
 const DEFAULTS: Persisted = {
   prefsVersion: PREFS_VERSION,
   // 素材抽屉 + 右栏都开着：属性栏是编辑过程持续要看的，让它常驻
   leftOpen: true,
   leftWidth: 300,
-  rightWidth: 304,
+  rightWidth: RIGHT_DEFAULT,
   leftPinned: false,
   rightPinned: true,
   gridSize: 10,
@@ -109,7 +117,24 @@ function readPersisted(): Persisted {
   // 判据取 saved 而不是合并后的 state：DEFAULTS 里的 prefsVersion 会把
   // 「老 blob 没有这个键」这件事补没了，那样迁移永远不触发。
   if (saved && (saved.prefsVersion ?? 0) < PREFS_VERSION) {
-    state = { ...state, prefsVersion: PREFS_VERSION, rightOpen: true, rightPinned: true }
+    const from = saved.prefsVersion ?? 0
+    // v0 → v1 那一档只对真正的 v0 用户跑：v1 用户自己关掉的右栏是主动偏好，
+    // v2 迁移不得再把它掰回来。
+    if (from < 1) state = { ...state, rightOpen: true, rightPinned: true }
+    // v1 → v2：右栏可用范围从 296–320 放宽到 320–480，默认 360。旧 blob 里
+    // 的宽度必然 ≤320（老上限），全部迁到新默认——那是旧约束的产物，不是
+    // 用户的主动偏好；迁完盖版本号，用户此后拖出的宽度原样保留。
+    if (from < 2 && (state.rightWidth ?? 0) <= 320) {
+      state = { ...state, rightWidth: RIGHT_DEFAULT }
+    }
+    state = { ...state, prefsVersion: PREFS_VERSION }
+  }
+  // 版本号相同也要收进合法区间：手工改过 localStorage / 未来回滚都不该让
+  // 界面拿到一个画不出来的宽度
+  state = {
+    ...state,
+    rightWidth: Math.min(RIGHT_MAX, Math.max(RIGHT_MIN, state.rightWidth)),
+    leftWidth: Math.min(LEFT_MAX, Math.max(LEFT_MIN, state.leftWidth)),
   }
   // 窄屏下右栏是盖在画布上的覆盖层，开机就铺满等于把画布藏了；常驻标记留着，
   // 拉宽窗口自然生效。
@@ -291,9 +316,11 @@ export const useUiStore = create<UiState>((set, get) => ({
   },
   autoShowProperties: () => {
     set((s) => {
-      // 停留在助手：只换作用目标，不抢走当前模式
-      const rightTab = s.rightOpen && s.rightTab === 'assistant' ? 'assistant' : 'properties'
-      const patch: Partial<UiState> = { rightOpen: true, rightTab }
+      // 选中对象时一律回到属性页：属性属于「当前选中的对象」，助手属于独立
+      // 工作流——用户点了一个对象却对着助手页，是上下文错位（重构前的
+      // 「停在助手时不抢」正是这么表现的）。助手会话状态在 aiStore 里，
+      // 切走不丢，运行中在助手入口上有状态点。
+      const patch: Partial<UiState> = { rightOpen: true, rightTab: 'properties' }
       // 素材抽屉是「进去挑一次」的模式；未钉住就让位给属性
       if (s.leftOpen && s.leftTab === 'assets' && !(s.leftPinned && s.layout === 'wide')) {
         patch.leftOpen = false

@@ -1,0 +1,151 @@
+/**
+ * 上下文工具条（Quick Edit 的可发现入口）：
+ *   单选出现 / 拖动隐藏 / Esc 关闭本次 / 写入走既有 actions（进撤销）。
+ */
+import { literal } from '@/i18n'
+import { act } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { TooltipProvider } from '@/components/ui/Tooltip'
+import { useDocumentStore } from '@/store/documentStore'
+import { useSelectionStore } from '@/store/selectionStore'
+import { useUiStore } from '@/store/uiStore'
+import { emptyProject, type TextObject } from '@/types/document'
+import { ContextBar } from './ContextBar'
+
+declare global {
+  // eslint-disable-next-line no-var
+  var IS_REACT_ACT_ENVIRONMENT: boolean
+}
+globalThis.IS_REACT_ACT_ENVIRONMENT = true
+
+const textObj = (): TextObject =>
+  ({
+    id: 't1',
+    type: 'text',
+    text: 'hello',
+    sizePt: 10,
+    bold: false,
+    color: '#000000',
+    align: 'left',
+    x: 10,
+    y: 20,
+    w: 30,
+    h: 8,
+  }) as TextObject
+
+let root: Root
+
+beforeEach(async () => {
+  localStorage.clear()
+  document.body.innerHTML = ''
+  useUiStore.setState({
+    elementPanelId: null,
+    selectedGids: [],
+    editingTextId: null,
+    cropTargetId: null,
+    tool: 'select',
+  })
+  await useDocumentStore.getState().switchDocument(emptyProject(), 'd_ctxbar')
+  useDocumentStore.getState().commit(literal('放对象'), (d) => {
+    d.objects.push(textObj())
+  })
+  useDocumentStore.setState({ past: [], future: [] })
+  // 画布上的锚点节点（真实应用里由 ObjectView 渲染）
+  const anchor = document.createElement('div')
+  anchor.setAttribute('data-object-id', 't1')
+  document.body.appendChild(anchor)
+  const mountEl = document.createElement('div')
+  document.body.appendChild(mountEl)
+  root = createRoot(mountEl)
+  await act(async () => {
+    root.render(
+      <TooltipProvider>
+        <ContextBar />
+      </TooltipProvider>,
+    )
+  })
+})
+
+afterEach(async () => {
+  await act(async () => {
+    root.unmount()
+  })
+  useSelectionStore.getState().clear()
+  document.body.innerHTML = ''
+})
+
+const bar = () => document.querySelector('[data-context-bar]')
+
+async function selectText() {
+  await act(async () => {
+    useSelectionStore.getState().set(['t1'])
+  })
+}
+
+describe('ContextBar', () => {
+  it('单选文字对象出现：字号 / 加粗 / 颜色 / 全部属性', async () => {
+    expect(bar()).toBeNull()
+    await selectText()
+    const el = bar()!
+    expect(el).not.toBeNull()
+    expect(el.getAttribute('role')).toBe('toolbar')
+    expect(el.querySelector('input')).toBeTruthy()
+    expect(el.querySelector('[aria-label="加粗"]')).toBeTruthy()
+    expect(el.querySelector('[aria-label="全部属性"]')).toBeTruthy()
+  })
+
+  it('写入走既有 actions：点加粗进撤销栈', async () => {
+    await selectText()
+    await act(async () => {
+      ;(bar()!.querySelector('[aria-label="加粗"]') as HTMLElement).click()
+    })
+    const t = useDocumentStore.getState().doc.objects[0] as TextObject
+    expect(t.bold).toBe(true)
+    expect(useDocumentStore.getState().past).toHaveLength(1)
+  })
+
+  it('拖动期间隐藏，松手再现', async () => {
+    await selectText()
+    expect(bar()).not.toBeNull()
+    await act(async () => {
+      window.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    })
+    // pointerdown 后仍挂着（active），但位置被清空 → 不可见
+    await act(async () => {
+      window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+    })
+    expect(bar()).not.toBeNull()
+  })
+
+  it('Esc 关闭本次；换一次选择重新出现', async () => {
+    await selectText()
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    })
+    expect(bar()).toBeNull()
+    await act(async () => {
+      useSelectionStore.getState().clear()
+    })
+    await selectText()
+    expect(bar()).not.toBeNull()
+  })
+
+  it('双击进入文字编辑时让位（editingTextId 挂起就不显示）', async () => {
+    await selectText()
+    await act(async () => {
+      useUiStore.setState({ editingTextId: 't1' })
+    })
+    expect(bar()).toBeNull()
+  })
+
+  it('多选不出现（多选归对齐工具条管）', async () => {
+    useDocumentStore.getState().commit(literal('再放一个'), (d) => {
+      d.objects.push({ ...textObj(), id: 't2' })
+    })
+    await act(async () => {
+      useSelectionStore.getState().set(['t1', 't2'])
+    })
+    expect(bar()).toBeNull()
+  })
+})

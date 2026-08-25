@@ -1,23 +1,41 @@
 import { useTranslation } from 'react-i18next'
 import { msg, t as translate, type UiMessage } from '@/i18n'
 import { updateObjects } from '@/store/actions'
-import type { ArrowHeadType, ArrowObject, DashStyle, ShapeObject } from '@/types/document'
+import type { ArrowObject, DashStyle, ShapeObject } from '@/types/document'
 import { arrowHeads } from '@/types/document'
 import { Button } from '../ui/Button'
 import { Row, Section } from '../ui/Field'
 import { ColorField, NumberField } from '../ui/Input'
-import { Segmented } from '../ui/Segmented'
+import { ArrowHeadPicker } from './controls/ArrowPickers'
+import { LineStylePicker } from './controls/LineStylePicker'
 import { shared } from './common'
 
 /** 本组文案 inspector:stroke.*，历史标签 inspector:history.* */
 const sk = (key: string) => translate(`stroke.${key}`, { ns: 'inspector' })
 const hist = (key: string): UiMessage => msg(`history.${key}`, undefined, 'inspector')
 
-const HEAD_VALUES: ArrowHeadType[] = ['none', 'triangle', 'open', 'bar']
 const DASH_VALUES: DashStyle[] = ['solid', 'dashed', 'dotted']
 
-const headItems = () => HEAD_VALUES.map((value) => ({ value, label: sk(`head.${value}`) }))
-const dashItems = () => DASH_VALUES.map((value) => ({ value, label: sk(`dashStyle.${value}`) }))
+/** 与图内元素同一个线型选择器：真实线段预览 + 画布自己的显示名（§16） */
+function DashRow({
+  value,
+  onChange,
+}: {
+  value: DashStyle | null
+  onChange: (v: DashStyle) => void
+}) {
+  return (
+    <Row label={sk('dash')}>
+      <LineStylePicker
+        value={value ?? 'solid'}
+        options={DASH_VALUES}
+        onChange={(v) => onChange(v as DashStyle)}
+        ariaLabel={sk('dash')}
+        labelOf={(v) => sk(`dashStyle.${v}`)}
+      />
+    </Row>
+  )
+}
 
 /** 写新端型时同步维护旧 head 字段（旧版本读档 / 旧后端导出仍有合理行为） */
 function syncLegacyHead(o: ArrowObject): void {
@@ -55,8 +73,9 @@ export function ArrowSection({ objs }: { objs: ArrowObject[] }) {
           />
         </Row>
         <Row label={sk('end')}>
-          <Segmented
+          <ArrowHeadPicker
             value={shared(objs, (o) => arrowHeads(o as ArrowObject).end) ?? null}
+            at="end"
             onChange={(v) =>
               patch(hist('setHeadEnd'), (o) => {
                 const prev = arrowHeads(o) // 先取旧值：设了新字段后旧 head 不再参与推导
@@ -65,13 +84,13 @@ export function ArrowSection({ objs }: { objs: ArrowObject[] }) {
                 syncLegacyHead(o)
               })
             }
-            items={headItems()}
-            className="w-full"
+            ariaLabel={sk('end')}
           />
         </Row>
         <Row label={sk('start')}>
-          <Segmented
+          <ArrowHeadPicker
             value={shared(objs, (o) => arrowHeads(o as ArrowObject).start) ?? null}
+            at="start"
             onChange={(v) =>
               patch(hist('setHeadStart'), (o) => {
                 const prev = arrowHeads(o)
@@ -80,18 +99,13 @@ export function ArrowSection({ objs }: { objs: ArrowObject[] }) {
                 syncLegacyHead(o)
               })
             }
-            items={headItems()}
-            className="w-full"
+            ariaLabel={sk('start')}
           />
         </Row>
-        <Row label={sk('dash')}>
-          <Segmented
-            value={shared(objs, (o) => (o as ArrowObject).dash ?? 'solid') ?? null}
-            onChange={(v) => patch(hist('setDash'), (o) => (o.dash = v === 'solid' ? undefined : v))}
-            items={dashItems()}
-            className="w-full"
-          />
-        </Row>
+        <DashRow
+          value={shared(objs, (o) => (o as ArrowObject).dash ?? 'solid') ?? null}
+          onChange={(v) => patch(hist('setDash'), (o) => (o.dash = v === 'solid' ? undefined : v))}
+        />
         <Row label="">
           <Button
             variant="outline"
@@ -147,14 +161,10 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
             onChange={(v) => patch(hist('setStrokeColor'), (o) => (o.color = v))}
           />
         </Row>
-        <Row label={sk('dash')}>
-          <Segmented
-            value={shared(objs, (o) => (o as ShapeObject).dash ?? 'solid') ?? null}
-            onChange={(v) => patch(hist('setDash'), (o) => (o.dash = v === 'solid' ? undefined : v))}
-            items={dashItems()}
-            className="w-full"
-          />
-        </Row>
+        <DashRow
+          value={shared(objs, (o) => (o as ShapeObject).dash ?? 'solid') ?? null}
+          onChange={(v) => patch(hist('setDash'), (o) => (o.dash = v === 'solid' ? undefined : v))}
+        />
         {allRect && (
           <Row label={sk('cornerRadius')}>
             <NumberField
