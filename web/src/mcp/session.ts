@@ -36,7 +36,14 @@ export interface OpenFigureResult {
 export interface PreflightIssuePayload {
   id: string
   severity: 'error' | 'warn' | 'not_verifiable' | 'suggestion'
+  /** Python 侧渲染好的成文——只作没有 message（旧引擎）时的回退 */
   text: string
+  /**
+   * 可翻译描述符（issue #30）：宿主 webview 按自己的 locale 用
+   * `errors:preflight.<key>` 渲染。key/params 与前端求值器逐字对齐
+   * （golden vectors 看护）。
+   */
+  message?: { key: string; params: Record<string, unknown> }
   object_ids: string[]
   gids: string[]
   detail?: Record<string, unknown>
@@ -69,7 +76,15 @@ export function unwrap(res: ToolCallResult): Record<string, unknown> {
       (typeof body.error === 'string' && body.error) ||
       res.content?.map((c) => c.text).join('\n') ||
       '工具调用失败'
-    throw new EngineError(message, '', code, '')
+    // traceback / module 要穿透：BridgeError.payload 带着它们，丢掉的话
+    // 内嵌画布上 script_error 的本地化包装拿不到诊断末行、ErrorBlock 也
+    // 没有可展开的 traceback（HTTP 那条路一直有）
+    throw new EngineError(
+      message,
+      typeof body.traceback === 'string' ? body.traceback : '',
+      code,
+      typeof body.module === 'string' ? body.module : '',
+    )
   }
   return body
 }

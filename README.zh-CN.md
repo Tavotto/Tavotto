@@ -32,6 +32,67 @@
 
 <p align="center"><sub>选中的是面板 (a) 的标题。右边是它的字体与字号——也是画出它的脚本 <code>fig1_kinetics.py</code>，一个字节没动。</sub></p>
 
+## 在 Codex 中第一次使用 Tavotto
+
+> **普通用户不要克隆或构建这个仓库。** 源码安装只用于参与 Tavotto 开发。
+
+先选你需要的方式：
+
+| 你要做什么 | 需要安装什么 |
+| --- | --- |
+| Codex 画完图后，在 Tavotto 桌面窗口里继续拖拽修改 | Tavotto 桌面版 + Codex 插件（不需要 Python 引擎） |
+| 在 Codex 里直接使用 Tavotto 画布、预检、修改与导出工具 | Codex 插件 + Tavotto Python 引擎 |
+| 修改 Tavotto 本身 | 见下方「贡献者：从源码开发」 |
+
+### 完整的 Codex 集成
+
+在终端依次运行：
+
+```sh
+codex plugin marketplace add Tavotto/Tavotto --sparse .agents/plugins --sparse codex-plugin
+codex plugin add tavotto@tavotto
+pipx install "tavotto[worker]"
+```
+
+然后**关闭当前 Codex 会话并新开一个会话**。插件的 skill 与 MCP 工具不会在已经
+打开的会话里热重载。
+
+新会话里可以直接说：
+
+> 用 Tavotto 画这张图。先运行 Tavotto 健康检查；健康后再画，最后在 Tavotto 里
+> 打开。不要安装或升级任何已经可用的组件。
+
+第一次出现项目目录授权时，确认的是 Tavotto 可以访问的本地图库目录。图、脚本和
+数据仍在本机处理。
+
+插件装在你本机的 `~/.codex` 配置里，因此只有会读取本机插件的 Codex 界面才能
+加载它——终端里的 Codex CLI 与 Codex 桌面应用。不读取本机插件的界面（纯云端
+会话、不认 `~/.codex/plugins` 的 IDE 集成）永远不会出现 Tavotto 工具——先在
+终端的 `codex` 会话里验证，不要在那些界面里反复排障。
+
+### 只交给桌面版收尾
+
+装桌面版 + 插件（上面的两条 `codex plugin` 命令；这条路**不需要** `pipx` 那行）。
+让 Codex「在 Tavotto 里打开」时，插件的 skill 会用自带的交接脚本完成交接——它会
+自己找到桌面版内置的命令行：
+
+```sh
+python3 <插件目录>/skills/tavotto-figure/scripts/handoff.py path/to/figure.py
+```
+
+别让 Codex 直接跑裸的 `tavotto open`：桌面安装包**刻意不改你的 PATH**，那条命令
+只在 PyPI 安装之后才存在。这条路径不要求 Codex 内嵌画布，也不需要 Python 引擎。
+脚本与产物应放在同一目录，产物优先保存为矢量 PDF。
+
+### 让 Codex 代你安装
+
+把下面一句完整发给 Codex：
+
+> 请严格按照 README 的「在 Codex 中第一次使用 Tavotto」执行普通用户安装。
+> 不要 clone 或构建源码，不要运行 pnpm、npm、cargo、Tauri、测试或 editable
+> install。只安装 Codex 插件和所需的 Tavotto 引擎，运行健康检查；需要新会话时
+> 明确告诉我并停止。
+
 ## 别再为了挪一次图例重跑脚本
 
 投稿前的最后一段路通常是这样：改一行、重跑、看一眼、再改。来回二十遍，
@@ -116,11 +177,9 @@ tavotto open figures/                    # 或者整个图库
 已经开着窗口就直接送进那一个，不会另起一套。没装桌面版则退回浏览器模式。
 
 **用 Codex 的话**可以装插件。它让 Codex 知道「Tavotto 能接手的图」该长什么样
-（脚本与产物同目录、矢量 PDF、产出名可静态解析），并把编辑器搬进 Codex 里：
-
-```sh
-codex plugin marketplace add Tavotto/Tavotto && codex plugin add tavotto@tavotto
-```
+（脚本与产物同目录、矢量 PDF、产出名可静态解析），并把编辑器搬进 Codex 里——
+安装命令与第一个会话该说什么，见上面的
+[在 Codex 中第一次使用 Tavotto](#在-codex-中第一次使用-tavotto)。
 
 插件带一个 skill、一个本地 MCP server（六个工具：打开图、应用 override、跑预检、
 按指定 DPI 导出真矢量 PDF/SVG 或 PNG、校验重放、关闭会话——在完全没有界面的宿主里
@@ -205,7 +264,8 @@ tavotto
 ```
 
 **复用画图时用的那套环境**：去掉 `[worker]` 只装本体，再指定你自己的解释器——
-这样渲染用的就是脚本当初依赖的那一套：
+这样渲染用的就是脚本当初依赖的那一套。（这是轻量 CLI 形态：没有 `[worker]` 就
+没有随装的渲染栈，渲染——包括 Codex 的 MCP 集成——完全依赖你指定的那个解释器）：
 
 ```sh
 pipx install tavotto
@@ -213,7 +273,8 @@ export TAVOTTO_WORKER_PYTHON=/path/to/your/env/bin/python   # Windows: setx TAVO
 tavotto
 ```
 
-**从源码跑**（需要 node + pnpm 构建界面）：
+**贡献者：从源码开发。** 这条路只用于修改 Tavotto 本身，绝不是普通安装失败后的
+退路（需要 node + pnpm 构建界面）：
 
 ```sh
 git clone https://github.com/Tavotto/Tavotto.git && cd Tavotto

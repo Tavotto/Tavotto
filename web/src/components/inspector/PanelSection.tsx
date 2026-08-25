@@ -629,9 +629,19 @@ function ScriptSection({ panel }: { panel: PanelObject }) {
           size="sm"
           className="min-w-0 flex-1"
           active={editing}
-          onClick={() =>
-            editing ? useUiStore.getState().setElementPanel(null) : enterElementEdit(panel.id)
-          }
+          onClick={() => {
+            if (editing) {
+              useUiStore.getState().setElementPanel(null)
+              return
+            }
+            enterElementEdit(panel.id)
+            // 这颗按钮随属性页切换整个被卸载，焦点会摔到 body——键盘用户
+            // 失去落点（WebKit 里顺序导航就此失灵，issue #37 实测）。把焦点
+            // 交给编辑态里语义对应的「退出图内编辑」按钮。
+            requestAnimationFrame(() => {
+              document.querySelector<HTMLElement>('[data-exit-element-edit]')?.focus()
+            })
+          }}
         >
           <Pencil size={13} />
           {pn(editing ? 'exitElementEdit' : 'editElements')}

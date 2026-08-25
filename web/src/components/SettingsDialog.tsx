@@ -896,7 +896,17 @@ function UpdateSection() {
         <span className="text-xs text-ink-3">{st('update.lastChecked', { time: checkedAt })}</span>
       </div>
 
-      {status?.error && <p className="text-xs text-danger">{status.error}</p>}
+      {status?.error && (
+        <p role="alert" className="text-xs text-danger">
+          {/* code 有本地文案时按界面语言渲染；error 中文原文只作回退（issue #30） */}
+          {status.code === 'update_check_failed'
+            ? translate('update.checkFailed', {
+                ns: 'errors',
+                error: String(status.params?.error ?? ''),
+              })
+            : status.error}
+        </p>
+      )}
       {checkError && <p className="text-xs text-danger">{checkError}</p>}
 
       {status?.update_available ? (

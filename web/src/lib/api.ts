@@ -61,6 +61,31 @@ export function backendErrorText(e: unknown): string {
  * 切语言时 `StatusToasts` 会重渲染，可里面那句话早已被 `literal()` 冻成上
  * 一门语言，**再也换不回来**（code 与 params 都被拼进字符串了）。
  */
+/**
+ * 引擎（worker）错误的描述符版本（issue #30）。
+ *
+ * worker 的 `error` 原文是中文（`脚本执行失败: …`），英文界面直接显示等于
+ * 泄漏中文系统文案。code 在 `errors:backend.*` 里有文案时按当前语言渲染，
+ * `{{error}}` 用 **traceback 的最后一行**（`RuntimeError: …`——那是诊断
+ * 原文，按 i18n 纪律不翻，也不依赖后端消息的中文前缀格式）；没有文案的
+ * code 照旧原文透出。两条控制面（Python 池 / workerd）走的都是同一形状。
+ */
+export function engineErrorMsg(err: unknown): UiMessage {
+  if (err instanceof EngineError && err.code && i18n.exists(`backend.${err.code}`, { ns: 'errors' })) {
+    const detail = err.traceback.trim().split('\n').at(-1)?.trim() ?? ''
+    // 文案要 {{error}} 却拿不到 traceback（老 server / 精简错误体）时退回
+    // 原文透出——「The script failed: 」后面空着比中文原文更没用；
+    // 不吃占位符的文案（worker_timeout 这类）照常本地化
+    const template = String(
+      i18n.getResource(i18n.language, 'errors', `backend.${err.code}`) ?? '',
+    )
+    if (detail || !template.includes('{{error}}')) {
+      return msg(`backend.${err.code}`, { error: detail }, 'errors')
+    }
+  }
+  return literal(err instanceof Error ? err.message : String(err))
+}
+
 export function backendErrorMsg(e: unknown): UiMessage {
   if (e instanceof ApiError) {
     const code = typeof e.body?.code === 'string' ? e.body.code : ''
@@ -1197,6 +1222,9 @@ export interface UpdateStatus {
   repo_url: string
   releases_url: string
   error?: string
+  /** 稳定 code + params（issue #30）：前端据此按界面语言渲染，error 是回退 */
+  code?: string
+  params?: Record<string, unknown>
 }
 
 export interface UpdateApplyResult {

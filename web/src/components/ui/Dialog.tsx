@@ -67,6 +67,21 @@ export function Dialog({
             if (el?.isConnected) {
               e.preventDefault()
               el.focus()
+              return
+            }
+            // 记下的节点在对话框开着期间被 React 重渲染换掉了（issue #37 的
+            // 纯键盘 E2E 在 WebKit 上实测撞见）：先找 aria-label 相同的重生
+            // 节点——那就是「同一个控件的新实例」；再不行退回顶栏第一个按钮。
+            // 无论如何不把焦点摔到 body：键盘用户会当场失去位置。
+            const label = el?.getAttribute('aria-label')
+            const twin = label
+              ? document.querySelector<HTMLElement>(`[aria-label="${CSS.escape(label)}"]`)
+              : null
+            const fallback =
+              twin ?? document.querySelector<HTMLElement>('header button, [role="toolbar"] button')
+            if (fallback) {
+              e.preventDefault()
+              fallback.focus()
             }
           }}
           onEscapeKeyDown={(e) => locked && e.preventDefault()}
