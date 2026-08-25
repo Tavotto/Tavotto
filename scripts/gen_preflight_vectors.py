@@ -284,8 +284,10 @@ def cases() -> list[dict]:
 def evaluate(case: dict) -> list[dict]:
     profile = profiles.load(case.get("profile_id"), case.get("journal"))
     issues = preflight.run(case["spec"], profile)
-    # 只比**判据**，不比中文措辞：措辞是界面的事，两侧的数字格式化不必逐字相同
+    # 比**判据**与**可翻译描述符**（message = key + params，issue #30：MCP 画布
+    # 按 locale 渲染靠它），不比成文措辞：措辞是界面的事，两侧措辞各自演进。
     return [{"id": i["id"], "severity": i["severity"],
+             "message": i["message"],
              "object_ids": i["object_ids"], "gids": i["gids"],
              "detail": i["detail"]} for i in issues]
 
@@ -294,7 +296,8 @@ def build() -> dict:
     return {
         "comment": "预检向量：pytest（engine/preflight.py）与 vitest"
                    "（web/src/lib/preflight.ts）各跑一遍同一份输入。"
-                   "只比 id/severity/object_ids/gids/detail —— 中文措辞归界面。"
+                   "比 id/severity/message(key+params)/object_ids/gids/detail"
+                   " —— 成文措辞归界面。"
                    "重新生成：python scripts/gen_preflight_vectors.py --write",
         "cases": [{**c, "expected": evaluate(c)} for c in cases()],
     }

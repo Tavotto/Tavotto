@@ -1072,9 +1072,12 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被它推翻**（
   （`tests/golden/preflight_vectors.json`）与 proof report 认的都是 id，
   `preflight.golden.test.ts` 明确**只比判据不比措辞**，所以两侧求值器的中英文
   措辞可以各自演进。proof report 里写的是**当前语言的成文**（人要读）+ id。
-- **MCP 画布里的预检条目是例外**：那份 payload 来自 Python 求值器
-  （`tavotto_preflight` 工具），`it.text` 原样显示——Codex 那一侧不知道这个
-  webview 用的是哪门语言。widget 自己的按钮/状态/标题照常翻。
+- **MCP 画布里的预检条目按 widget 的 locale 渲染**（issue #30）：Python 求值器
+  随每条 issue 发可翻译描述符 `message: {key, params}`，widget 用
+  `errors:preflight.<key>` 渲染，`it.text`（Python 中文成文）只作老引擎/未登记
+  key 的回退。key+params 与前端求值器逐字对齐（golden vectors 连它们一起比），
+  新 key 没在双语文案表登记时 `test_every_message_key_is_registered_in_both_locales`
+  先红。widget 自己的按钮/状态/标题照常翻。
 - **桌面壳自带一份文案**（`src-tauri/src/i18n.rs`）：原生菜单在 webview
   起来之前就要建。改菜单文案要**改两处**；切语言只换显示文案，菜单项 id 与
   加速键一个字节不动。splash/error 页在 `tauri://` 源下，两份文案内联、
