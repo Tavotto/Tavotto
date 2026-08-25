@@ -218,14 +218,17 @@ test('AI CLI 不可用：设置里英文说明找过哪些位置', async ({ app,
   const panel = page.getByLabel('Right panel', { exact: true })
   await expect(panel).toBeVisible()
   await panel.getByRole('button', { name: /Scope and agent/i }).click()
+  // 弹层 portal 到文档根部的 dialog，不在 Right panel 子树里
+  const scopeDialog = page.getByRole('dialog')
   await expect(
-    panel.getByText(/Neither the Codex nor the Claude CLI was found/i).first(),
+    scopeDialog.getByText(/Neither the Codex nor the Claude CLI was found/i).first(),
   ).toBeVisible({ timeout: 30_000 })
   // 可执行的下一步：打开 AI 工具设置
   await expect(
-    panel.getByRole('button', { name: /Open AI tool settings/i }).first(),
+    scopeDialog.getByRole('button', { name: /Open AI tool settings/i }).first(),
   ).toBeVisible()
   await expectNoCjk(panel, 'AI 面板')
+  await expectNoCjk(scopeDialog, 'Scope and agent 弹层')
 })
 
 test('updater 离线：检查更新失败给英文报错，界面可继续', async ({ app, page }) => {
