@@ -40,6 +40,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # bootstrap 空窗：脚本以默认分支上的版本为准（信任边界），而在
+          # 引入它的那个 PR 合并之前，默认分支上根本没有这份脚本——那时
+          # 必须优雅跳过而不是红（#120 第一轮就是这么红的：python3 对着
+          # 不存在的文件退出码 2，恰好违反「咨询检查绝不阻断」的自我承诺）。
+          if [ ! -f scripts/ci/pr_conflict_domains.py ]; then
+            echo "::notice::默认分支上还没有 scripts/ci/pr_conflict_domains.py（bootstrap 空窗）——本次跳过"
+            exit 0
+          fi
           python3 scripts/ci/pr_conflict_domains.py \
             --repo "${{ github.repository }}" \
             --pr "${{ github.event.pull_request.number }}"

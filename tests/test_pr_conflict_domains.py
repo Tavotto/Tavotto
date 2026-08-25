@@ -234,3 +234,16 @@ class TestWorkflowContract:
     def test_it_is_not_a_required_context_in_the_migration_tool(self):
         import merge_queue_ruleset as MQ
         assert "conflict domains (advisory)" not in MQ.GATE_CONTEXTS
+
+    def test_bootstrap_window_is_a_skip_not_a_failure(self):
+        """脚本还没落到默认分支时必须优雅跳过。
+
+        「跑默认分支上的可信脚本」与「脚本还在 PR 里」在 bootstrap 期是
+        冲突的——#120 第一轮就红在这：checkout 了 main，脚本不存在，
+        python3 退出码 2。同样的形状在未来仍会出现（fork 的默认分支落后、
+        脚本被移动改名的过渡 PR），所以守卫要留着，不是一次性补丁。"""
+        code = self._code()
+        assert "if [ ! -f scripts/ci/pr_conflict_domains.py ]" in code, \
+            "bootstrap 守卫没了——脚本缺席时这个咨询检查会红，阻断的正是产品 PR"
+        guard = code.split("if [ ! -f scripts/ci/pr_conflict_domains.py ]", 1)[1]
+        assert "exit 0" in guard.split("fi", 1)[0], "守卫必须以 exit 0 收尾"
