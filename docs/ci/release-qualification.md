@@ -343,6 +343,51 @@ lab_release_gate（self-hosted）
 gate 只有 `contents: read`。PyPI 的 OIDC 发布模型与 `environment` 保护一个字
 未动。
 
+### Release-blocker 显式签字（trust 阶段）
+
+发布编排在 trust 里查 open 且带 `release:blocker` label 的 issue
+（`scripts/ci/release_blockers.py`）。清单非空时必须在 `workflow_dispatch`
+的 `ack_open_blockers` 输入里**逐条**签字（编号必须与当前 open 清单双向
+对得上——防止一次 ack 永久生效），tag 触发带不了输入，有 blocker 时直接红，
+提示改用 dispatch 签字后发布。不是禁止发（0.x 需要灵活），是把「明知有洞
+还发」从默认无声变成显式决定——issue #35 带着未验证的 N-1 更新连发四个
+版本，就是没有这道门的代价。
+
+---
+
+## 真实 N-1 应用内更新（Windows）
+
+**问的问题**：上一版的用户点「更新」，真的能更到这一版吗？这条链
+（下载 → minisign 验签 → 解包 → NSIS 安装 → 重启）从 v0.7.0 起坏了四个
+版本而全链绿灯——每条绿灯量的都是生产者侧的替身指标，没有一步以真实消费者
+（更新器插件）的身份消费过产物。两层修补：
+
+- **nightly 的 `updater-consumer-fidelity`**：对**线上已发布**的
+  latest.json 与全部平台更新包做验签 + 插件同形态解包
+  （`tools/updater-extract-probe`，zip crate `default-features = false`）。
+- **release.yml 的 `n1_update_windows`**（发布后自动跑）：Windows runner 装
+  N-1 官方安装包，用 `TAVOTTO_E2E_RUN_UPDATE=1`（壳的仅测试触发口，默认
+  关死）驱动真实应用内更新，断言注册表 DisplayVersion 与重启后新进程的
+  ProductVersion 都换成了新版本，再对更新后的 sidecar 跑
+  `smoke_app --expect-source bundled --expect-runtime`。
+
+**只能发布后测**：已发布应用的 endpoint 烤死指向 `releases/latest`，发布前
+它还指着上一版。**N-1 二进制没有触发口的那一轮**（N-1 ≤ 0.10.0）自动化
+驱动不了它的 UI，job 会转成手动提示——按下面的 checklist 手工执行一遍，
+证据记进 issue #35（「已写进文档」不等于关闭）：
+
+1. 干净的 Windows 10/11（或 runner）上安装 N-1 的官方
+   `Tavotto-<N-1>-Windows-Setup.exe`；
+2. 启动，建一个项目、渲染一张图、存一次布局（升级后要核对它们还在）；
+3. 打开设置 → 检查更新 → 应该看到新版本 → 点更新，观察：进度条走满 →
+   passive 安装界面 → 应用自动重启；
+4. 重启后核对：关于页/`/api/version` 是新版本号，注册表
+   `HKCU\...\Uninstall\Tavotto` 的 `DisplayVersion` 是新版本；
+5. 项目、布局、设置还在；再渲染 + 导出一次；
+6. 证据（截图/录屏 + 版本断言输出）贴进 issue #35。
+
+macOS 的同等验证（`.app.tar.gz` 通道）尚未自动化——后做，见 issue #35。
+
 ---
 
 ## 排障
