@@ -134,6 +134,32 @@ class TestOverlaps:
         assert "生成物重叠" in out
         assert json.loads(out.strip().splitlines()[-1])["overlapping_prs"] == [2]
 
+    def test_two_source_edits_in_a_generated_domain_are_a_generated_overlap(
+            self, capsys, tmp_path, monkeypatch):
+        """两个 PR 各改 web/src 的**不同**文件、谁都没带 canvas.html——
+        合并时各自重建的仍是同一个 bundle。判定按域声明走（#120 评审 P2）：
+        声明了 generated 的域里 sources×sources 就是生成物重叠，建议 train。"""
+        summary = tmp_path / "s.md"
+        monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+        rc, _ = self._run(1, {1: ["web/src/canvas/ContextBar.tsx"],
+                              2: ["web/src/store/renderStore.ts"]})
+        out = capsys.readouterr().out
+        assert "生成物重叠" in out, "warning 一档就要说出是生成物撞点"
+        assert "train" in summary.read_text(encoding="utf-8"), \
+            "建议里必须指向 train 工作流"
+
+    def test_domains_without_generated_do_not_invent_an_overlap(
+            self, capsys, tmp_path, monkeypatch):
+        """没有 generated 声明的域（如 root-agent-contract）不许把同域
+        误报成生成物重叠——那会让 serialize 域的建议文案错位。"""
+        summary = tmp_path / "s.md"
+        monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+        rc, _ = self._run(1, {1: ["AGENTS.md"], 2: ["CLAUDE.md"]})
+        out = capsys.readouterr().out
+        assert "::warning::" in out and "生成物重叠" not in out
+        text = summary.read_text(encoding="utf-8")
+        assert "串行" in text, "serialize 域的建议必须是排队，不是 train"
+
     def test_unrelated_prs_do_not_warn(self, capsys):
         rc, _ = self._run(1, {1: ["src/tavotto/app.py"],
                               2: ["docs/i18n.md"]})

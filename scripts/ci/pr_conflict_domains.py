@@ -163,10 +163,15 @@ def overlaps(mine: dict, theirs: dict, domains: dict) -> list[dict]:
     for name in sorted(set(mine) & set(theirs)):
         a, b = mine[name], theirs[name]
         direct = sorted(_flat(a) & _flat(b))
-        cross_generated = bool(
-            (a.get("sources") and b.get("generated"))
-            or (a.get("generated") and b.get("sources"))
-            or (a.get("generated") and b.get("generated")))
+        # 「会撞同一个生成物」的判定按**域声明**走，不按 diff 里有没有出现
+        # generated 路径：两个 PR 各改 web/src 的不同文件、谁都没带
+        # canvas.html，合并时各自重建的仍是同一个 bundle——sources×sources
+        # 在声明了 generated 的域里就是生成物重叠（#120 评审 P2；
+        # browser-playground 的产物在别的仓库提交，更是只有这条判据够得到）。
+        declares_generated = bool(domains[name].get("generated"))
+        a_touch = a.get("sources") or a.get("generated")
+        b_touch = b.get("sources") or b.get("generated")
+        cross_generated = bool(declares_generated and a_touch and b_touch)
         out.append({
             "domain": name,
             "policy": domains[name]["policy"],
