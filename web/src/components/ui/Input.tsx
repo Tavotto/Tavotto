@@ -69,6 +69,8 @@ interface NumberFieldProps {
   /** 拖动改数时把连续修改合并成一条撤销记录 */
   onScrubStart?: () => void
   onScrubEnd?: () => void
+  /** 中性的稳定定位属性（data-inspector-prop）——测试与引导用，不进业务逻辑 */
+  dataProp?: string
 }
 
 /**
@@ -91,6 +93,7 @@ export function NumberField({
   ariaLabel,
   onScrubStart,
   onScrubEnd,
+  dataProp,
 }: NumberFieldProps) {
   const derivedLabel =
     ariaLabel ??
@@ -122,6 +125,10 @@ export function NumberField({
   )
 
   const submit = (raw: string) => {
+    // 原文没动过就不提交：键盘用户 Tab 路过一个输入框（聚焦→失焦）不该
+    // 产生 onChange——上层会把它记成一条“修改”历史，撤销时表现为
+    // 「按了没反应」（issue #37 的纯键盘闭环实测撞见）。
+    if (raw === display) return
     const parsed = Number(raw)
     if (raw.trim() !== '' && Number.isFinite(parsed)) onChange(clampVal(parsed))
     else setText(display)
@@ -177,6 +184,7 @@ export function NumberField({
         ref={inputRef}
         type="text"
         inputMode="decimal"
+        data-inspector-prop={dataProp}
         aria-label={derivedLabel}
         disabled={disabled}
         value={text}

@@ -201,6 +201,11 @@ export function useKeyboard() {
         return
       }
       if (e.key === 'Enter') {
+        // 组件自己消费过的 Enter 不再叠加画布捷径（issue #37 实测撞见：
+        // 素材卡上按 Enter「加入画布」，加入即选中，同一个事件冒泡到这里
+        // 又触发「进入图内编辑」——键盘用户一步被瞬移进编辑态）。
+        // 处理过 Enter 的 widget（素材卡/图层树/元素树）都 preventDefault。
+        if (e.defaultPrevented) return
         // 焦点在按钮/链接/菜单项上时 Enter 的意思是「激活它」，不是画布捷径。
         // 抢走（preventDefault）的话浏览器不再合成 click——键盘用户选中一个
         // 面板后，顶栏的每一颗按钮都按不动了（审计 P1-09 实测撞见：焦点在

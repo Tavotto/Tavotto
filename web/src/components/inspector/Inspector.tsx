@@ -339,6 +339,7 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
               <Button
                 size="icon-sm"
                 className="-mr-1"
+                data-exit-element-edit
                 onClick={() => useUiStore.getState().setElementPanel(null)}
                 aria-label={t('exitElementEdit')}
               >

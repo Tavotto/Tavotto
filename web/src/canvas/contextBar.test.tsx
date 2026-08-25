@@ -45,6 +45,9 @@ beforeEach(async () => {
     editingTextId: null,
     cropTargetId: null,
     tool: 'select',
+    layout: 'wide',
+    leftOpen: false,
+    rightOpen: false,
   })
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_ctxbar')
   useDocumentStore.getState().commit(literal('放对象'), (d) => {
@@ -137,6 +140,32 @@ describe('ContextBar', () => {
       useUiStore.setState({ editingTextId: 't1' })
     })
     expect(bar()).toBeNull()
+  })
+
+  it('narrow 覆盖式抽屉开着时不出现（issue #105：z-40 会压住 z-30 的抽屉）', async () => {
+    await act(async () => {
+      useUiStore.setState({ layout: 'narrow', rightOpen: true, leftOpen: false })
+    })
+    await selectText()
+    expect(bar()).toBeNull()
+    // 抽屉一关就回来——工具条只在会造成遮挡时让位
+    await act(async () => {
+      useUiStore.setState({ rightOpen: false })
+    })
+    expect(bar()).not.toBeNull()
+    // 左抽屉同理（narrow 下左右都是覆盖层）
+    await act(async () => {
+      useUiStore.setState({ leftOpen: true })
+    })
+    expect(bar()).toBeNull()
+  })
+
+  it('停靠布局下侧栏开着照常出现（贴边计算已让位，不属于 #105）', async () => {
+    await act(async () => {
+      useUiStore.setState({ layout: 'wide', rightOpen: true, leftOpen: true })
+    })
+    await selectText()
+    expect(bar()).not.toBeNull()
   })
 
   it('多选不出现（多选归对齐工具条管）', async () => {

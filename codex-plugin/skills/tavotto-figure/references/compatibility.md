@@ -104,4 +104,4 @@ Codex 内嵌画布、Tavotto 桌面窗口——背后是同一个引擎、同一
 | `stem_not_parameterizable` | 这张图没有对应脚本 | 把 `.py` 放到产物同目录，产物名写成字面量 |
 | `preflight_blocked` | 预检有阻断项 | **先修**；用户明确要求才带 `explicit_confirm: true` |
 | `missing_dependency` | 渲染解释器缺包 | 告诉用户装哪个包，或换一个带科学栈的解释器 |
-| `tavotto_missing` | 机器上没装 Tavotto | `pipx install tavotto` 或装桌面版，然后重开会话 |
+| `tavotto_missing` | 机器上没装 Tavotto | `pipx install "tavotto[worker]"` 或装桌面版，然后重开会话 |
