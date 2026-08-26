@@ -585,6 +585,24 @@ export function usePanelDisplayManifest(panel: PanelObject | null | undefined): 
   return usePanelRender(panel)?.manifest ?? null
 }
 
+/**
+ * `panelDisplayView` 的 hook 版。画布用它把「此刻挂的是哪一版、是不是精确的」
+ * 落进 DOM（`data-display` / `data-display-key`）——这既是诊断线索，也是 e2e
+ * 唯一能诚实断言「撤销之后画面真的换了」的观测点：撤销命中缓存时**根本不会
+ * 发渲染请求**，拿 HTTP 往返当代理会把正确行为判成红。
+ */
+export function usePanelDisplayView(panel: PanelObject | null | undefined): PanelDisplayView | null {
+  const byKey = useRenderStore((s) => s.byKey)
+  const latest = useRenderStore((s) => s.latest)
+  const variant = panel ? JSON.stringify(panel.overrides) : ''
+  return useMemo(
+    () => (panel ? panelDisplayView({ byKey, latest }, panel) : null),
+    // variant 表达 overrides 的内容变化（panel 每次 commit 都是新引用）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [byKey, latest, panel?.id, panel?.fileId, variant],
+  )
+}
+
 /** 几何权威的渲染态；null = 现在不许做几何写操作 */
 export function useExactPanelRender(panel: PanelObject | null | undefined): PanelRender | null {
   const own = useRenderStore((s) => (panel ? s.byKey[renderKeyOf(panel)] : undefined))

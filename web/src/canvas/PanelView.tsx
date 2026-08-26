@@ -7,12 +7,14 @@ import { DURATION, prefersReducedMotion, usePresence } from '@/lib/motion'
 import { geomHitsRect } from '@/lib/pathGeom'
 import { pickBucket } from '@/lib/units'
 import { cn } from '@/lib/utils'
+import { shortHash } from '@/lib/authorityTrace'
 import { isJustBakedBaseline } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
 import { useInteractionStore } from '@/store/interactionStore'
 import {
   renderKeyOf,
   useExactPanelManifest,
+  usePanelDisplayView,
   usePanelRender,
   useRenderStore,
 } from '@/store/renderStore'
@@ -58,6 +60,7 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   const editing = useUiStore((s) => s.elementPanelId === obj.id)
   // 自己那份变体的渲染态（同文件的另一个副本有它自己的一份，互不相干）
   const render = usePanelRender(obj)
+  const displayView = usePanelDisplayView(obj)
   const bucketRef = useRef(0)
 
   const crop = obj.crop
@@ -157,7 +160,14 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   const showSvg = inlineSvg != null
 
   return (
-    <div className="absolute inset-0 overflow-hidden">
+    <div
+      className="absolute inset-0 overflow-hidden"
+      // 此刻画布挂的是哪一版、是不是这一版自己的精确图。
+      // exact = 图与文档同源；fallback = 暂时挂着上一张（几何交互已停摆）。
+      // key 过短 hash：变体键里带文件名与 overrides 原文，不落进 DOM。
+      data-display={displayView?.kind ?? 'empty'}
+      data-display-key={shortHash(displayView?.sourceKey ?? null)}
+    >
       <div
         className="absolute overflow-hidden"
         style={{
