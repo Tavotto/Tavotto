@@ -45,10 +45,10 @@ fileId，写**文件级** `building` 表，绝不盖任何变体条目（盖了�
 副本会永远转圈）。看护：`web/src/store/renderStore.test.ts`、
 `web/src/hooks/useEngineSync.test.ts`、`tests/test_engine_variants.py`。
 
-## 显示回退 ≠ 几何权威（2026-08-26，issue #131；ADR 0013）
+## 显示回退 ≠ 几何权威（2026-08-26，issue #131；ADR 0017）
 
 **旧 SVG 可以继续显示；旧 manifest 不得作为几何写操作的权威输入。**
-细则与理由在 `docs/adr/0013-display-fallback-vs-geometry-authority.md`，
+细则与理由在 `docs/adr/0017-display-fallback-vs-geometry-authority.md`，
 动手前先读。要点：
 
 * 两套 API，职责写在名字里。显示：`panelRender` / `usePanelRender` /
