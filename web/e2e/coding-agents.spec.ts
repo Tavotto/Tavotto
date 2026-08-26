@@ -19,11 +19,99 @@ async function openAgentSettings(page: Page, baseURL: string) {
   return dialog
 }
 
-/** 这一片有没有横向溢出（真布局才量得出来） */
-async function overflows(page: Page, selector: string): Promise<boolean> {
-  return page.locator(selector).first().evaluate(
-    (el) => el.scrollWidth > el.clientWidth + 1,
-  )
+/**
+ * 对话框里**每一个**把布局撑破的元素（真布局才量得出来）。
+ *
+ * 只量 body 与 dialog 两层是不够的：中间任何一个可滚/裁切的容器都会把里面的
+ * 溢出吸收掉，外面两层永远是干净的——往行里塞一个 900px 不收缩的元素，那种写法
+ * 照样绿（变异验过）。所以这里逐个元素扫，只认 `overflow-x: visible` 的那些：
+ * 裁切（`truncate` 就是 hidden + 省略号）与有意可滚的容器本来就不该算撑破。
+ */
+async function horizontalOffenders(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const dlg = document.querySelector('[role="dialog"]')
+    if (!dlg) return ['NO DIALOG']
+    const out: string[] = []
+    for (const el of [document.body, dlg, ...Array.from(dlg.querySelectorAll('*'))]) {
+      const e = el as HTMLElement
+      if (getComputedStyle(e).overflowX !== 'visible') continue
+      if (e.scrollWidth > e.clientWidth + 1) {
+        out.push(`${e.tagName}.${String(e.className).slice(0, 60)} sw=${e.scrollWidth} cw=${e.clientWidth}`)
+      }
+    }
+    return out
+  })
+}
+
+/**
+ * 自己算文字对比度，返回不达标的元素。
+ *
+ * **为什么不能只靠 axe**：行是「整行可点」的写法——一个 `absolute inset-0` 的
+ * 按钮盖在文字上。axe 判不出被覆盖元素的背景色，于是把这一片全部丢进
+ * `incomplete`（实测 8 个节点，含 `.text-warn`），而 `violations` 是空的。
+ * 也就是说「axe 无 serious 违规」这条恰恰**看不到**本次新加的状态色——
+ * 把 `--color-warn` 改成低对比度照样绿（变异验过）。
+ *
+ * 背景色这里是确定的：向上找第一个不透明祖先即可，不必猜覆盖层。
+ */
+async function lowContrastNodes(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const parse = (s: string): number[] | null => {
+      const m = s.match(/rgba?\(([^)]+)\)/)
+      if (!m) return null
+      const p = m[1].split(/[\s,/]+/).filter(Boolean).map(Number)
+      if (p.length < 3 || p.some((v, i) => i < 3 && Number.isNaN(v))) return null
+      return [p[0], p[1], p[2], p.length > 3 ? p[3] : 1]
+    }
+    const lum = (c: number[]) => {
+      const f = c.slice(0, 3).map((v) => {
+        const s = v / 255
+        return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+      })
+      return 0.2126 * f[0] + 0.7152 * f[1] + 0.0722 * f[2]
+    }
+    const opaqueBg = (el: HTMLElement): number[] => {
+      let n: HTMLElement | null = el
+      while (n) {
+        const c = parse(getComputedStyle(n).backgroundColor)
+        if (c && c[3] === 1) return c
+        n = n.parentElement
+      }
+      return [255, 255, 255, 1]
+    }
+    const dlg = document.querySelector('[role="dialog"]')
+    if (!dlg) return ['NO DIALOG']
+    const out: string[] = []
+    for (const el of Array.from(dlg.querySelectorAll('*'))) {
+      const e = el as HTMLElement
+      // 只看自己直接持有文字的元素，避免把容器算成它子孙的颜色
+      const text = Array.from(e.childNodes)
+        .filter((n) => n.nodeType === 3)
+        .map((n) => n.textContent ?? '')
+        .join('')
+        .trim()
+      if (!text) continue
+      const cs = getComputedStyle(e)
+      if (cs.visibility === 'hidden' || cs.display === 'none') continue
+      if (!e.getClientRects().length) continue
+      const fgRaw = parse(cs.color)
+      if (!fgRaw) continue
+      const bg = opaqueBg(e)
+      // 半透明前景先与背景合成，否则算出来的比值偏乐观
+      const a = fgRaw[3]
+      const fg = [0, 1, 2].map((i) => fgRaw[i] * a + bg[i] * (1 - a))
+      const size = parseFloat(cs.fontSize)
+      const large = size >= 24 || (size >= 18.66 && Number(cs.fontWeight) >= 700)
+      const need = large ? 3 : 4.5
+      const l1 = lum(fg)
+      const l2 = lum(bg)
+      const ratio = (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05)
+      if (ratio < need) {
+        out.push(`${e.tagName}.${String(e.className).slice(0, 40)} "${text.slice(0, 16)}" ${ratio.toFixed(2)}:1 < ${need}`)
+      }
+    }
+    return out
+  })
 }
 
 test('编码 Agent：列表 → 详情 → 返回，状态与滚动都还在', async ({ app, page }) => {
@@ -46,9 +134,17 @@ test('编码 Agent：列表 → 详情 → 返回，状态与滚动都还在', a
   await row.click()
   await expect(dialog.getByText('概览')).toBeVisible()
   await expect(dialog.getByText('检测来源')).toBeVisible()
-  // 高级设置默认折叠：折叠块的标题在，输入框不在
+  // 高级设置默认折叠。**直接量 `<details>` 的 open**，不拿「输入框不在」当代理：
+  // 那个输入框要点过「使用自定义可执行文件」才渲染，折叠与否它都不在——用它当
+  // 判据，把 details 强行改成默认展开也照样绿（变异验过，就是这么漏的）。
   await expect(dialog.locator('summary', { hasText: '自定义可执行文件' })).toBeVisible()
-  await expect(dialog.locator('input[placeholder="可执行文件的完整路径"]')).toHaveCount(0)
+  const folds = dialog.locator('details')
+  expect(await folds.count()).toBeGreaterThan(0)
+  for (const fold of await folds.all()) {
+    expect(await fold.evaluate((el) => (el as HTMLDetailsElement).open)).toBe(false)
+  }
+  // 折叠着 → 里面的东西量得到「不可见」，这条才是「默认不制造噪音」的兑现
+  await expect(dialog.getByRole('button', { name: '使用自定义可执行文件' })).toBeHidden()
 
   // 返回：列表还在
   await dialog.getByRole('button', { name: '返回编码 Agent 列表' }).click()
@@ -96,14 +192,12 @@ test('编码 Agent：1024×768 窄窗口不横向溢出', async ({ app, page }) 
   const dialog = await openAgentSettings(page, a.baseURL)
 
   await expect(dialog.getByText('在 Tavotto 中使用编码 Agent')).toBeVisible()
-  expect(await overflows(page, 'body')).toBe(false)
-  expect(await overflows(page, '[role="dialog"]')).toBe(false)
+  expect(await horizontalOffenders(page)).toEqual([])
 
   // 详情页同样：长路径靠省略，不把面板撑开
   await dialog.getByRole('button', { name: /的详情/ }).first().click()
   await expect(dialog.getByText('概览')).toBeVisible()
-  expect(await overflows(page, 'body')).toBe(false)
-  expect(await overflows(page, '[role="dialog"]')).toBe(false)
+  expect(await horizontalOffenders(page)).toEqual([])
 })
 
 test('编码 Agent：axe 无 critical/serious 违规（列表与详情各一次）', async ({ app, page }) => {
@@ -118,8 +212,10 @@ test('编码 Agent：axe 无 critical/serious 违规（列表与详情各一次�
       .filter((v) => v.impact === 'critical' || v.impact === 'serious')
       .map((v) => ({ id: v.id, nodes: v.nodes.slice(0, 3).map((n) => n.target.join(' ')) }))
 
-  // 一级列表：新加的状态色（含 --color-warn）、开关与行按钮的可访问名
+  // 一级列表：开关与行按钮的可访问名、结构类规则交给 axe
   expect(await serious()).toEqual([])
+  // 新加的状态色（含 --color-warn）交给自算——axe 在这一片只报 incomplete
+  expect(await lowContrastNodes(page)).toEqual([])
 
   // 详情页：概览、模型服务单选、两个折叠区
   await dialog.getByRole('button', { name: /的详情/ }).first().click()
@@ -128,4 +224,5 @@ test('编码 Agent：axe 无 critical/serious 违规（列表与详情各一次�
     await d.locator('summary').click()
   }
   expect(await serious()).toEqual([])
+  expect(await lowContrastNodes(page)).toEqual([])
 })
