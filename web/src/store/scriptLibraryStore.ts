@@ -17,6 +17,9 @@ interface ScriptLibraryStore {
 }
 
 let inflight: Promise<void> | null = null
+/** 项目代际：`clear()`（切项目）加一——A 项目的 /api/registry 响应在途时
+ *  切到 B，落地必须作废（与 runtimeAssetStore / scriptRunStore 同一条纪律）。 */
+let epoch = 0
 
 export const useScriptLibraryStore = create<ScriptLibraryStore>((set) => ({
   view: null,
@@ -26,16 +29,28 @@ export const useScriptLibraryStore = create<ScriptLibraryStore>((set) => ({
 
   load: () => {
     if (inflight) return inflight
+    const started = epoch
     set({ loading: true })
     inflight = fetchRegistry()
-      .then((view) => set({ view, error: null, loaded: true }))
-      .catch((e) => set({ error: e instanceof Error ? e.message : String(e) }))
+      .then((view) => {
+        if (epoch !== started) return // 切过项目：旧清单作废
+        set({ view, error: null, loaded: true })
+      })
+      .catch((e) => {
+        if (epoch !== started) return
+        set({ error: e instanceof Error ? e.message : String(e) })
+      })
       .finally(() => {
+        if (epoch !== started) return // 新项目自己的 inflight 不归旧响应管
         inflight = null
         set({ loading: false })
       })
     return inflight
   },
 
-  clear: () => set({ view: null, loading: false, loaded: false, error: null }),
+  clear: () => {
+    epoch += 1
+    inflight = null
+    set({ view: null, loading: false, loaded: false, error: null })
+  },
 }))

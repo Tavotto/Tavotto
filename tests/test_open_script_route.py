@@ -147,6 +147,35 @@ def test_no_probe_with_nothing_registered_says_script_no_figure(tmp_path):
     assert ei.value.code == "script_no_figure"
 
 
+def test_stale_same_stem_file_does_not_hijack_a_pyplot_capture(tmp_path):
+    """Codex 评审 P1（PR #127）：pyplot 捕获从来没有原件——磁盘上同名旧文件
+    不得把交接路由抢过去（否则 `tavotto open` 打开的是陈旧文件）。"""
+    from tavotto.engine import figcapture, runtimeasset
+    figs = _project(tmp_path, {"show.py": SHOW_ONLY})
+    _register(figs, "show.py", ["show"], entry="__main__")
+    desc = figcapture.build_descriptor(
+        script="show.py", entry="__main__", stem="show",
+        capture_source=figcapture.SOURCE_PYPLOT,
+        execution_profile=figcapture.PROFILE_SAFE,
+        size_mm=(120.0, 90.0),
+        source_fingerprint="sha256:deadbeef").to_payload()
+    svg = tmp_path / "preview.svg"
+    svg.write_text("<svg/>", encoding="utf-8")
+    assert runtimeasset.materialize(str(figs), desc, svg) is not None
+    (figs / "show.pdf").write_bytes(b"%PDF-1.4\n%%EOF\n")  # 旧样本
+
+    target, info = handoff.resolve_script_route(
+        str(figs), "show.py",
+        probe_remote=lambda *a, **k: pytest.fail("cache 就绪不该重探"),
+        probe_local=lambda *a, **k: pytest.fail("cache 就绪不该重探"))
+    assert target.stem == "show"
+    fig = info["figures"][0]
+    # 路由指向 runtime 素材（asset id + cache），不是那份旧 PDF
+    assert fig["artifact"] is None
+    assert fig["asset_id"] == "runtime:show.py#show"
+    assert fig["cached"] is True
+
+
 # ------------------------------ 错误映射 ---------------------------------
 @pytest.mark.parametrize("probe_code,cli_code", [
     ("script_no_figure", "script_no_figure"),

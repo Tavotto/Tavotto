@@ -141,15 +141,17 @@ export async function applyOpenRequest(req: OpenRequest): Promise<OpenOutcome> {
   }
 
   const info = findByStem(useAssetStore.getState().panels, stem)
-  if (!info) {
+  // runtime 清单永远查一次（只读端点，不触发执行）：pyplot 捕获的图
+  // **从来没有原件**，磁盘上同名文件只是旧样本——那种碰撞下 runtime
+  // 素材优先，否则交接打开的是陈旧文件（Codex 评审 P1）。
+  await useRuntimeAssetStore.getState().loadAssets()
+  const asset: RuntimeAssetInfo | undefined = (
+    useRuntimeAssetStore.getState().assets ?? []
+  ).find((a) => a.stem === stem)
+  const preferRuntime = asset != null && asset.descriptor?.capture_source === 'pyplot'
+  if (!info || preferRuntime) {
     // 磁盘上没有这张图 ≠ 没有这张图：`tavotto open script.py` 探测出的
-    // show-only Figure 是 RuntimeFigureAsset（没有原件），按 stem 在
-    // runtime 清单里找（只读端点，不触发执行）。
-    const rt = useRuntimeAssetStore.getState()
-    await rt.loadAssets()
-    const asset: RuntimeAssetInfo | undefined = (rt.assets ?? []).find(
-      (a) => a.stem === stem,
-    )
+    // show-only Figure 是 RuntimeFigureAsset（没有原件）。
     if (!asset) {
       ui.setStatus(msg('handoff.panelMissing', { stem }, 'project'), 'error')
       return 'missing'

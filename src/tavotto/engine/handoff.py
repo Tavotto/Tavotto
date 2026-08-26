@@ -293,11 +293,14 @@ def _http_json_status(url: str, payload: dict | None = None,
 def _script_figures(project: str, script: str) -> list[dict]:
     """脚本当前登记的每张图 → 交接视角的路由描述。
 
-    每条：{stem, artifact, asset_id, cached}。`artifact` 是磁盘原件
-    （FileAsset 路由）；没有原件的是 RuntimeFigureAsset——`cached` 表示
-    materialized cache 就绪（交接过去能直接显示与加画布，零执行）。
-    判据各自只有一份权威：`figcapture.find_original_artifact` /
-    `runtimeasset.load_metadata`。
+    每条：{stem, artifact, asset_id, cached}。`artifact` 是**这张图自己的**
+    磁盘原件（FileAsset 路由）；没有原件的是 RuntimeFigureAsset——`cached`
+    表示 materialized cache 就绪（交接过去能直接显示与加画布，零执行）。
+    「是不是它自己的产物」按捕获来源判，不按文件名巧合：物化描述符说
+    pyplot 捕获的（结构上没有原件），同名磁盘文件是旧样本——把交接路由
+    指过去，用户打开的就是陈旧文件（Codex 评审 P1）。判据各自只有一份
+    权威：`figcapture.find_original_artifact` / `runtimeasset.load_metadata`
+    / `runtimeasset.is_pyplot_capture`。
     """
     from . import runtimeasset as engine_runtimeasset
     try:
@@ -309,18 +312,20 @@ def _script_figures(project: str, script: str) -> list[dict]:
         return []
     out: list[dict] = []
     for stem in info.get("stems", ()):
+        try:
+            asset_id = engine_figcapture.runtime_asset_id(script, stem)
+        except ValueError:
+            continue                  # 注册表坏条目不该炸掉整次交接
+        meta = engine_runtimeasset.load_metadata(project, asset_id)
+        desc = (meta or {}).get("descriptor") or None
         artifact = engine_figcapture.find_original_artifact(project, stem)
-        row = {"stem": stem, "artifact": artifact, "asset_id": None,
-               "cached": False}
-        if artifact is None:
-            try:
-                asset_id = engine_figcapture.runtime_asset_id(script, stem)
-            except ValueError:
-                continue              # 注册表坏条目不该炸掉整次交接
-            row["asset_id"] = asset_id
-            row["cached"] = engine_runtimeasset.load_metadata(
-                project, asset_id) is not None
-        out.append(row)
+        if artifact is not None \
+                and not engine_runtimeasset.is_pyplot_capture(desc):
+            out.append({"stem": stem, "artifact": artifact,
+                        "asset_id": None, "cached": False})
+        else:
+            out.append({"stem": stem, "artifact": None,
+                        "asset_id": asset_id, "cached": meta is not None})
     return out
 
 

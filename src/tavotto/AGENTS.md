@@ -428,7 +428,12 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
     是「图 → RuntimeFigureAsset」条目的唯一实现——注册表里**磁盘无原件**
     的 (script, stem) 各成一条（有原件的归 FileAsset/scan_panels，同一张
     图绝不双列）；`GET /api/runtime/assets` 只读绝不执行（零执行用例看护
-    `tests/test_asset_library.py`）。六档 stale 阶梯抽成
+    `tests/test_asset_library.py`）。**「有没有原件」按捕获来源判，不按
+    文件名巧合**（Session 6 评审修复）：物化描述符说 pyplot 捕获的
+    （结构上从没有过原件，figcapture 工厂钉死），同名磁盘文件是旧样本，
+    不得把 runtime 素材顶掉——判据唯一出处
+    `runtimeasset.is_pyplot_capture`，消费点 `list_assets` /
+    `handoff._script_figures` / 前端 `applyOpenRequest` 三处同步。六档 stale 阶梯抽成
     `_status_ladder`（`stale_status` 与 `list_assets` 共用，列表场景只探
     一次解释器）。条目带物化 cache 里的描述符（前端「添加到画布」的数据
     源）；没跑过的条目没有尺寸没有描述符——不给假值。

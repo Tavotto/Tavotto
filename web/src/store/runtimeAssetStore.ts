@@ -51,6 +51,10 @@ interface RuntimeAssetStore {
 
 const inflight = new Set<string>()
 let assetsInflight: Promise<void> | null = null
+/** 项目代际：`clear()`（切项目）加一。模块级的 in-flight 请求活得比一次
+ *  Zustand reset 长——A 项目的响应落进 B 项目的清单就是靠这个挡的
+ *  （与 scriptRunStore 的 epoch 同一条纪律）。 */
+let epoch = 0
 
 export const useRuntimeAssetStore = create<RuntimeAssetStore>((set, get) => ({
   byId: {},
@@ -61,14 +65,20 @@ export const useRuntimeAssetStore = create<RuntimeAssetStore>((set, get) => ({
 
   loadAssets: () => {
     if (assetsInflight) return assetsInflight
+    const started = epoch
     set({ assetsLoading: true })
     assetsInflight = fetchRuntimeAssets()
-      .then((r) => set({ assets: r.assets, assetsError: null }))
-      .catch((e) =>
+      .then((r) => {
+        if (epoch !== started) return // 切过项目：旧项目的清单作废
+        set({ assets: r.assets, assetsError: null })
+      })
+      .catch((e) => {
+        if (epoch !== started) return
         // 清单取不到（旧后端 404 / 网络）：给空清单 + 错误，不留 null 骨架
-        set({ assets: [], assetsError: e instanceof Error ? e.message : String(e) }),
-      )
+        set({ assets: [], assetsError: e instanceof Error ? e.message : String(e) })
+      })
       .finally(() => {
+        if (epoch !== started) return // 新项目自己的 inflight 不归旧响应管
         assetsInflight = null
         set({ assetsLoading: false })
       })
@@ -87,11 +97,13 @@ export const useRuntimeAssetStore = create<RuntimeAssetStore>((set, get) => ({
     const id = panel.fileId
     if (get().byId[id]?.checked || inflight.has(id)) return
     inflight.add(id)
+    const started = epoch
     const source = panel.source
       ? { script: panel.source.script, stem: panel.source.stem }
       : undefined
     void fetchRuntimeStatus(id, source)
-      .then((st) =>
+      .then((st) => {
+        if (epoch !== started) return // 切过项目：旧项目的判定作废
         set((s) => ({
           byId: {
             ...s.byId,
@@ -102,9 +114,10 @@ export const useRuntimeAssetStore = create<RuntimeAssetStore>((set, get) => ({
               checked: true,
             },
           },
-        })),
-      )
+        }))
+      })
       .catch(() => {
+        if (epoch !== started) return
         // 查询失败（未登记 404 / 网络）：按「需要重跑、没有缓存」处理——
         // 面板显示占位与提示，绝不猜成新鲜
         set((s) => ({
@@ -150,6 +163,11 @@ export const useRuntimeAssetStore = create<RuntimeAssetStore>((set, get) => ({
       return changed ? { byId } : {}
     }),
 
-  clear: () =>
-    set({ byId: {}, assets: null, assetsLoading: false, assetsError: null, previewNonce: {} }),
+  clear: () => {
+    // 换代：在途请求（清单 / 逐面板 status）从此落不进新项目
+    epoch += 1
+    assetsInflight = null
+    inflight.clear()
+    set({ byId: {}, assets: null, assetsLoading: false, assetsError: null, previewNonce: {} })
+  },
 }))

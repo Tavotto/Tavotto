@@ -226,6 +226,60 @@ class TestRuntimeAssetListing:
         assert a["status"] == runtimeasset.STALE_NEEDS_RERUN
         assert "path" not in a and "file" not in a
 
+    def test_pyplot_capture_is_not_shadowed_by_a_stale_same_stem_file(
+            self, tmp_path):
+        """Codex 评审 P1（PR #127）：pyplot 捕获**从来没有原件**（figcapture
+        工厂钉死的语义），磁盘上同名文件只是旧样本——按文件名巧合把
+        runtime 素材让位给它，用户编辑的就是陈旧文件。归属按**捕获来源**
+        判（`is_pyplot_capture`），savefig 来源的照旧归 FileAsset 不双列。"""
+        from tavotto.engine import figcapture
+        figs = _make_project(tmp_path)
+        write(figs, "show_only.py", SHOW_ONLY)
+        write_registry(figs, {"show_only.py": {"entry": "__main__",
+                                               "stems": ["show_only"]}})
+        desc = figcapture.build_descriptor(
+            script="show_only.py", entry="__main__", stem="show_only",
+            capture_source=figcapture.SOURCE_PYPLOT,
+            execution_profile=figcapture.PROFILE_SAFE,
+            size_mm=(120.0, 90.0),
+            source_fingerprint="sha256:deadbeef").to_payload()
+        svg = tmp_path / "preview.svg"
+        svg.write_text("<svg>preview</svg>", encoding="utf-8")
+        assert runtimeasset.materialize(figs, desc, svg) is not None
+        # 旧样本：同名 PDF 躺在磁盘上（不是这张图写的）
+        doc = pymupdf.open()
+        doc.new_page(width=100, height=50)
+        doc.save(figs / "show_only.pdf")
+        doc.close()
+
+        reg = engine_registry.Registry()
+        reg.load(figs)
+        (a,) = runtimeasset.list_assets(figs, reg, worker_python="python")
+        assert a["id"] == "runtime:show_only.py#show_only"
+        assert a["capture_source"] == "pyplot"
+        assert a["descriptor"] is not None
+
+        # 对照：savefig 来源 + 磁盘原件 → 归 FileAsset（不双列）
+        write(figs, "saved.py", "def main():\n    pass\n")
+        write_registry(figs, {
+            "show_only.py": {"entry": "__main__", "stems": ["show_only"]},
+            "saved.py": {"entry": "main", "stems": ["saved"]}})
+        doc = pymupdf.open()
+        doc.new_page(width=100, height=50)
+        doc.save(figs / "saved.pdf")
+        doc.close()
+        desc2 = figcapture.build_descriptor(
+            script="saved.py", entry="main", stem="saved",
+            capture_source=figcapture.SOURCE_SAVEFIG,
+            execution_profile=figcapture.PROFILE_SAFE,
+            size_mm=(80.0, 60.0), source_fingerprint="sha256:beef",
+            original_artifact="saved.pdf").to_payload()
+        assert runtimeasset.materialize(figs, desc2, svg) is not None
+        reg.load(figs)
+        stems = [x["stem"] for x in runtimeasset.list_assets(
+            figs, reg, worker_python="python")]
+        assert stems == ["show_only"]
+
     def test_bad_registry_pairs_do_not_break_the_listing(self, tmp_path):
         reg = engine_registry.Registry()
         reg.load_data({"scripts": {}})

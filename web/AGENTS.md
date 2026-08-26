@@ -180,6 +180,9 @@ previewStyle`（只改 DOM）→ `pointerup → setOverride(…) + commitElement
   幂等去重）、`runtimeAssetStore.assets`（`GET /api/runtime/assets`，只读
   清单 + `previewNonce` 预览换代）、`scriptRunStore`（运行状态机）。
   三者都在 `registry.changed` SSE 时重取**已经取过的**，项目切换全清。
+  **三个 store 都有项目代际（epoch）**：模块级 in-flight 请求活得比一次
+  Zustand reset 长，`clear()` 必须换代 + 清 inflight，A 项目的响应绝不
+  落进 B（Session 6 评审修复；vitest 各有作废用例看护）。
 - **`scriptRunStore` 的四条纪律**（vitest 看护）：同脚本防并发（busy 即
   no-op，后端另有 409）；cancel 走后端取消端点（置标志 + 硬杀 worker），
   行内状态等**原请求**以 `execution_cancelled` 落地——绝不「界面装停了、

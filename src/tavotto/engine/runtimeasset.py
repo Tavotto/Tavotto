@@ -328,12 +328,27 @@ def stale_status(project_root: str | Path, asset_id: str, registry,
 # ---------------------------------------------------------------------------
 # 素材库清单（Session 5：普通入口的「图 → RuntimeFigureAsset」数据源）
 # ---------------------------------------------------------------------------
+def is_pyplot_capture(descriptor: object) -> bool:
+    """这份（物化 cache 里的）描述符是不是 pyplot 兜底捕获。
+
+    pyplot 捕获**从来没有过原始产物**（`capture_source` 与
+    `original_artifact: None` 是 figcapture 派生的显式事实）：磁盘上同名的
+    文件只可能是旧样本或无关文件，**不是**这张图的原件——按文件名巧合把
+    runtime 素材让位给它，用户编辑的就是陈旧文件（Codex 评审 P1）。
+    """
+    return isinstance(descriptor, dict) and \
+        descriptor.get("capture_source") == "pyplot"
+
+
 def list_assets(project_root: str | Path, registry,
                 *, worker_python: object = None) -> list[dict]:
     """当前项目全部 RuntimeFigureAsset 的清单——**只读，绝不执行脚本**。
 
-    条目 = 注册表里每对 (script, stem) 中**磁盘上没有原始产物**的那些：
-    有产物的那些是 FileAsset（scan_panels 列出），同一张图绝不双列。
+    条目 = 注册表里每对 (script, stem) 中**磁盘上没有这张图自己的原始
+    产物**的那些：有产物的归 FileAsset（scan_panels 列出），同一张图绝不
+    双列。「是不是它自己的产物」按**捕获来源**判，不按文件名巧合：物化
+    描述符说 `capture_source: "pyplot"` 的（结构上没有原件），同名磁盘
+    文件是旧样本，不得把 runtime 素材顶掉（`is_pyplot_capture`）。
     注册表是归属的唯一权威（决策 1，Session 4）：cache 里有、注册表里没有
     的目录**不列**——解析不到就渲染不了，列出来只是一个点不动的幽灵。
 
@@ -348,14 +363,15 @@ def list_assets(project_root: str | Path, registry,
     for script, info in sorted(registry.entries().items()):
         entry = info.get("entry", "main")
         for stem in info.get("stems", ()):
-            if figcapture.find_original_artifact(root, stem) is not None:
-                continue                        # 磁盘有原件 → FileAsset 的地盘
             try:
                 asset_id = figcapture.runtime_asset_id(script, stem)
             except ValueError:
                 continue                        # 坏条目不该炸掉整张清单
             meta = load_metadata(project_root, asset_id)
             desc = (meta or {}).get("descriptor") or None
+            if figcapture.find_original_artifact(root, stem) is not None \
+                    and not is_pyplot_capture(desc):
+                continue                        # 磁盘有原件 → FileAsset 的地盘
             size = desc.get("size_mm") if isinstance(desc, dict) else None
             out.append({
                 "id": asset_id, "script": script, "stem": stem,

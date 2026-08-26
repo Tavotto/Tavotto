@@ -191,6 +191,20 @@ describe('applyOpenRequest', () => {
     expect(obj.fileKind).toBe('runtime')
   })
 
+  it('同名旧文件在磁盘上：pyplot 捕获的 runtime 素材优先（不打开陈旧文件）', async () => {
+    // Codex 评审 P1：pyplot 捕获从来没有原件，同 stem 的磁盘文件只是旧样本
+    useAssetStore.setState({
+      load: vi.fn(async () => setPanels([panel('show.pdf', { script: 'show.py' })])),
+    } as never)
+    setRuntimeAssets([runtimeAsset('show.py', 'show')])
+
+    const out = await applyOpenRequest({ stem: 'show' })
+
+    expect(out).toBe('placed')
+    const obj = useDocumentStore.getState().doc.objects[0] as { fileId: string }
+    expect(obj.fileId).toBe('runtime:show.py#show')
+  })
+
   it('runtime 素材已登记但没有描述符：如实引导，不造假面板', async () => {
     useAssetStore.setState({ load: vi.fn(async () => setPanels([])) } as never)
     setRuntimeAssets([runtimeAsset('show.py', 'show', false)])

@@ -106,6 +106,38 @@ native profile、generic Artist fallback、source hints、Copy as Python、
   codex-plugin `references/desktop-handoff.md`（新码的分诊话术）。
   ADR 0013 仍 Accepted、0014 仍 Proposed（native 属 PR 2）。
 
+## PR #127 评审轮 1（Codex，2026-08-26）
+
+三条全部核实成立并已修复（各带看护测试 + 手工反证一次红）：
+
+- **P1 归属按捕获来源判，不按文件名巧合**：pyplot 捕获从来没有原件
+  （figcapture 工厂本来就钉死了这个语义——消费点漏了这一维）。新判据
+  `runtimeasset.is_pyplot_capture`，三个消费点同步修：`list_assets`
+  （旧同名文件不再把 runtime 素材顶掉）、`handoff._script_figures`
+  （交接路由不再指向陈旧文件）、前端 `applyOpenRequest`（stem 碰撞时
+  pyplot 捕获优先）。savefig 来源 + 磁盘原件照旧归 FileAsset 不双列。
+- **P1 runtimeAssetStore 项目代际**：模块级 in-flight（清单 + 逐面板
+  status）活得比 Zustand reset 长——`clear()` 现在换 epoch + 清 inflight，
+  A 项目的响应绝不落进 B（与 scriptRunStore 同一条纪律）。
+- **P2 scriptLibraryStore 同一条代际纪律**（顺手修掉，不转 issue）。
+
+CodeQL 报 9 条新告警（1 critical + 8 high）：逐条核实全部有结构性防线，
+必需的「CodeQL gate」本来就是绿的（红的是非必需的原生 annotation
+check）。#95（pool.py 命令行，critical）已带理由 dismiss（won't fix：
+执行用户脚本是产品语义，argv 列表无 shell + safe 沙盒）；**#96–103 待
+用户在 Security 页 dismiss**（会话权限拦截了批量操作），理由如下：
+
+- #96–98（app.py probe 端点，py/path-injection）→ false positive：
+  判据在 realpath 之后（resolve + is_relative_to(项目根)），回溯/
+  symlink/项目外/非 .py 各有稳定 code + 用例（test_script_probe 路径
+  边界组）；CodeQL 不识别 is_relative_to 这个 sanitizer。
+- #99（discover.py probe_entry_candidates 读脚本）→ false positive：
+  path 来自项目内 walk 或已过 probe 端点校验。
+- #100–103（runtimeasset.py cache 读写）→ false positive：cache 目录名
+  是 sha256(项目|asset_id) 的 hex slug（结构上无路径分隔符）；
+  script_sha256 只读取比对、script 来自注册表且 stale_status 兜底路径
+  有 fail-closed 的 id 重算校验。
+
 ## 未完成 / 待用户拍板
 
 - [ ] **真机最终产物证据（§六）**：Windows WebView2 与 macOS WKWebView

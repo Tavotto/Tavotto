@@ -1,13 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PanelObject } from '@/types/document'
-import { fetchRuntimeStatus } from '@/lib/api'
+import { fetchRuntimeAssets, fetchRuntimeStatus } from '@/lib/api'
 import { useRuntimeAssetStore } from './runtimeAssetStore'
 
 vi.mock('@/lib/api', () => ({
   fetchRuntimeStatus: vi.fn(),
+  fetchRuntimeAssets: vi.fn(),
 }))
 
 const mockFetch = vi.mocked(fetchRuntimeStatus)
+const mockAssets = vi.mocked(fetchRuntimeAssets)
 
 const runtimePanel = (fileId = 'runtime:fig.py#fig'): PanelObject =>
   ({
@@ -103,5 +105,46 @@ describe('runtimeAssetStore', () => {
     useRuntimeAssetStore.getState().ensure(runtimePanel())
     await flush()
     expect(mockFetch).toHaveBeenCalledTimes(2)
+  })
+
+  it('切项目：pending 的清单响应作废，绝不落进新项目（Codex 评审 P1）', async () => {
+    // A 项目的请求还在途
+    let resolveA!: (v: { assets: never[] }) => void
+    mockAssets.mockImplementationOnce(
+      () => new Promise((r) => (resolveA = r as never)),
+    )
+    const st = useRuntimeAssetStore.getState()
+    void st.loadAssets()
+
+    // 切到 B：clear 换代
+    st.clear()
+    resolveA({
+      assets: [{ id: 'runtime:a.py#a' }],
+    } as never)
+    await flush()
+    // A 的清单没有落地；loading 状态也不归旧响应管
+    expect(useRuntimeAssetStore.getState().assets).toBeNull()
+
+    // B 自己的请求照常新发、照常落地
+    mockAssets.mockResolvedValueOnce({ assets: [] } as never)
+    await useRuntimeAssetStore.getState().loadAssets()
+    expect(useRuntimeAssetStore.getState().assets).toEqual([])
+    expect(mockAssets).toHaveBeenCalledTimes(2)
+  })
+
+  it('切项目：pending 的 status 判定作废（ensure 同一条代际纪律）', async () => {
+    let resolveA!: (v: unknown) => void
+    mockFetch.mockImplementationOnce(
+      () => new Promise((r) => (resolveA = r as never)),
+    )
+    const st = useRuntimeAssetStore.getState()
+    st.ensure(runtimePanel())
+    st.clear()
+    resolveA({
+      id: 'runtime:fig.py#fig', status: 'fresh', script: 'fig.py',
+      stem: 'fig', entry: '__main__', registered: true, cached: true,
+    })
+    await flush()
+    expect(useRuntimeAssetStore.getState().byId).toEqual({})
   })
 })
