@@ -20,6 +20,8 @@ import { loadProfile, type JournalOverride } from './profile'
 interface GoldenIssue {
   id: string
   severity: string
+  /** 可翻译描述符（issue #30）：MCP 画布按 locale 渲染靠它，两侧必须逐字一致 */
+  message: { key: string; params: Record<string, unknown> }
   object_ids: string[]
   gids: string[]
   detail: Record<string, unknown>
@@ -46,6 +48,11 @@ describe('preflight golden vectors（与 engine/preflight.py 逐条对齐）', (
       const got = runSpec(c.spec as PreflightSpec, profile).map((i) => ({
         id: i.id,
         severity: i.severity,
+        // UiMessage 的 key 带 `preflight.` 前缀与 ns；向量里存的是裸 key + params
+        message: {
+          key: i.message.key.replace(/^preflight\./, ''),
+          params: i.message.values ?? {},
+        },
         object_ids: i.objectIds,
         gids: i.gids,
         detail: i.detail,

@@ -125,6 +125,10 @@ export function NumberField({
   )
 
   const submit = (raw: string) => {
+    // 原文没动过就不提交：键盘用户 Tab 路过一个输入框（聚焦→失焦）不该
+    // 产生 onChange——上层会把它记成一条“修改”历史，撤销时表现为
+    // 「按了没反应」（issue #37 的纯键盘闭环实测撞见）。
+    if (raw === display) return
     const parsed = Number(raw)
     if (raw.trim() !== '' && Number.isFinite(parsed)) onChange(clampVal(parsed))
     else setText(display)

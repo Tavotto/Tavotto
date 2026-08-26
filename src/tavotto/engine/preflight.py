@@ -111,9 +111,16 @@ class _Sink:
         #: check_id → 目前见过的最糟排名（见 `add` 的说明）
         self._worst: dict[str, float] = {}
 
-    def add(self, check_id: str, text: str, *, object_ids=(), gids=(),
+    def add(self, check_id: str, text: str, *, message: tuple[str, dict],
+            object_ids=(), gids=(),
             detail: dict | None = None, worse: float | None = None) -> None:
         """一条检查项一个条目，命中的对象累积进 object_ids/gids。
+
+        `message` 是这条问题的**可翻译描述符** `(key, params)`（issue #30）：
+        宿主界面（MCP 画布 / Codex webview）按自己的 locale 用
+        `errors:preflight.<key>` 渲染，`text` 只是没有那份文案表时的回退。
+        key 与 params 必须与 `web/src/lib/preflight.ts` 同名调用**逐字对齐**
+        ——golden vectors 连它们一起比（两个求值器只允许有一种说法）。
 
         **文案与 detail 必须来自同一次命中**（与 `web/src/lib/preflight.ts`
         的 `Sink` 逐条同源）：旧实现保留第一条文案却让 detail 被最后一条无
@@ -130,7 +137,9 @@ class _Sink:
         if item is None:
             item = {"id": check_id,
                     "severity": profiles_mod.severity_of(self.profile, check_id),
-                    "text": text, "object_ids": [], "gids": [], "detail": {}}
+                    "text": text,
+                    "message": {"key": message[0], "params": message[1]},
+                    "object_ids": [], "gids": [], "detail": {}}
             self._items[check_id] = item
             self._order.append(check_id)
         for oid in object_ids:
@@ -147,6 +156,7 @@ class _Sink:
         if not (fresh or better):
             return
         item["text"] = text
+        item["message"] = {"key": message[0], "params": message[1]}
         if detail:
             item["detail"] = {**item["detail"], **detail}
 
@@ -171,6 +181,7 @@ def _check_page(spec: dict, profile: dict, sink: _Sink) -> None:
         want = "/".join(f"{v:g}" for v in (single, double) if v is not None)
         sink.add("page-width",
                  f"页面宽 {w:g}mm 不是规范里的单栏/双栏宽度（{want}mm）",
+                 message=("pageWidth", {"actual": f"{w:g}", "want": want}),
                  detail={"page_w_mm": _r2(w), "single_mm": single,
                          "double_mm": double, "column": None})
 
@@ -194,6 +205,9 @@ def _check_page(spec: dict, profile: dict, sink: _Sink) -> None:
             allowed = "、".join(str(r.get("id")) for r in ratios)
             sink.add("page-aspect",
                      f"页面比例 {actual:.3f}（{w:g}×{h:g}mm）不在规范允许的 {allowed} 之内",
+                     message=("pageAspect", {"ratio": f"{actual:.3f}",
+                                             "w": f"{w:g}", "h": f"{h:g}",
+                                             "allowed": allowed}),
                      detail={"aspect": _r2(actual), "closest": best[0]})
 
 
@@ -201,22 +215,24 @@ def _check_panel_state(panel: dict, sink: _Sink) -> None:
     pid = panel.get("id", "")
     if panel.get("missing"):
         sink.add("missing-asset", "面板引用的素材文件不在当前图库中，导出会失败或出空白",
-                 object_ids=[pid])
+                 message=("missingAsset", {}), object_ids=[pid])
     if panel.get("render_error"):
         sink.add("render-error", "面板最近一次渲染失败，导出前请先修复",
+                 message=("renderError", {}),
                  object_ids=[pid], detail={"error": str(panel["render_error"])[:200]})
     if panel.get("stale"):
         sink.add("stale-render", "面板的脚本已更新但尚未重建，导出的会是旧图",
-                 object_ids=[pid])
+                 message=("staleRender", {}), object_ids=[pid])
     n = int(panel.get("unapplied_overrides") or 0)
     if n > 0:
         sink.add("unapplied-override",
                  f"面板有 {n} 条图内修改尚未应用到渲染上，成图会与画布不一致",
+                 message=("unappliedOverride", {"count": n}),
                  object_ids=[pid], detail={"count": n}, worse=n)
     if panel.get("bitmap_embed"):
         sink.add("bitmap-embed",
                  "翻转或半透明的面板在 PDF 里按导出 DPI 位图嵌入，矢量文字不保留",
-                 object_ids=[pid])
+                 message=("bitmapEmbed", {}), object_ids=[pid])
 
 
 def _check_panel_raster(panel: dict, profile: dict, sink: _Sink) -> None:
@@ -230,12 +246,18 @@ def _check_panel_raster(panel: dict, profile: dict, sink: _Sink) -> None:
         if dpi < min_dpi:
             sink.add("raster-dpi",
                      f"位图面板的等效分辨率 {dpi:.0f}dpi 低于规范的 {min_dpi:g}dpi",
+                     # JS 的 toFixed(0) 半数进位，Python 的 :.0f 半数取偶：
+                     # 190.5dpi 会一边说 191、一边说 190。params 必须逐字对齐，
+                     # 显示格式跟 JS 走（+0.5 截断 = 正数的半数进位）。
+                     message=("rasterDpi", {"dpi": str(int(dpi + 0.5)),
+                                            "min": f"{min_dpi:g}"}),
                      object_ids=[pid], detail={"dpi": _r2(dpi), "min_dpi": min_dpi},
                      worse=-dpi)
     # 外部位图内部的文字字号无法可靠判定：如实报 not_verifiable，绝不假装通过
     sink.add("raster-text-not-verifiable",
              "位图面板内部的文字字号无法自动核验（没有矢量文字层），"
              "请人工确认其最终字号大于规范下限",
+             message=("rasterTextNotVerifiable", {}),
              object_ids=[pid])
 
 
@@ -277,18 +299,24 @@ def _check_panel_fonts(panel: dict, profile: dict, sink: _Sink) -> None:
         if eff <= floor:
             sink.add("font-below-absolute-floor",
                      f"图内文字的最终有效字号 {eff:.2f}pt 不大于绝对下限 {floor:g}pt",
+                     message=("fontBelowFloor", {"effective": f"{eff:.2f}",
+                                                 "floor": f"{floor:g}"}),
                      object_ids=[pid], gids=[gid],
                      detail={"effective_pt": _r2(eff), "floor_pt": floor},
                      worse=-eff)
         elif eff < strict:
             sink.add("font-too-small",
                      f"图内文字的最终有效字号 {eff:.2f}pt 低于规范下限 {strict:g}pt",
+                     message=("fontTooSmall", {"effective": f"{eff:.2f}",
+                                               "min": f"{strict:g}"}),
                      object_ids=[pid], gids=[gid],
                      detail={"effective_pt": _r2(eff), "min_pt": strict},
                      worse=-eff)
         if eff > biggest:
             sink.add("font-too-large",
                      f"图内文字的最终有效字号 {eff:.2f}pt 超过 {biggest:g}pt，通常大于正文字号",
+                     message=("fontTooLarge", {"effective": f"{eff:.2f}",
+                                               "max": f"{biggest:g}"}),
                      object_ids=[pid], gids=[gid],
                      detail={"effective_pt": _r2(eff), "max_pt": biggest},
                      worse=eff)
@@ -305,11 +333,15 @@ def _check_panel_fonts(panel: dict, profile: dict, sink: _Sink) -> None:
                          f"{fam.get('latin', 'Times New Roman')}"
                          + ("（该字体是常见的替代品，说明目标字体没装上）"
                             if low in flagged else ""),
+                         message=(("fontFamilySubstitutedKnown" if low in flagged
+                                   else "fontFamilySubstituted"),
+                                  {"family": family, "want": fam.get("latin")}),
                          object_ids=[pid], gids=[gid], detail={"family": family})
             if has_cjk(text) and cjk.get("required") and low not in cjk_ok:
                 sink.add("cjk-fallback-missing",
                          f"含中日韩字符的文字用的是 {family}，没有声明中文 fallback，"
                          "导出 PDF 里会是方框",
+                         message=("cjkFallbackMissing", {"family": family}),
                          object_ids=[pid], gids=[gid], detail={"family": family})
         role = el.get("role", "")
         want = weights.get(role)
@@ -318,6 +350,8 @@ def _check_panel_fonts(panel: dict, profile: dict, sink: _Sink) -> None:
             if isinstance(got, str) and got and got != want:
                 sink.add("text-weight-policy",
                          f"规范建议 {role} 的字重为 {want}（当前 {got}）",
+                         message=("textWeightPolicy",
+                                  {"role": role, "want": want, "got": got}),
                          object_ids=[pid], gids=[gid],
                          detail={"role": role, "want": want, "got": got})
 
@@ -354,6 +388,7 @@ def _check_panel_axes(panel: dict, profile: dict, sink: _Sink) -> None:
         if role == "legend":
             if legend.get("frame") is False and _field(el, "frameon") is True:
                 sink.add("legend-frame", "图例带边框，规范要求图例无框",
+                         message=("legendFrame", {}),
                          object_ids=[pid], gids=[gid])
             size = _num(_field(el, "fontsize"))
             lo, hi = _num(legend.get("min_font_size_pt")), _num(legend.get("max_font_size_pt"))
@@ -362,6 +397,9 @@ def _check_panel_axes(panel: dict, profile: dict, sink: _Sink) -> None:
                 if eff < lo - 1e-9 or eff > hi + 1e-9:
                     sink.add("legend-font-size",
                              f"图例字号最终有效值 {eff:.2f}pt 不在规范的 {lo:g}–{hi:g}pt 之间",
+                             message=("legendFontSize", {"effective": f"{eff:.2f}",
+                                                         "min": f"{lo:g}",
+                                                         "max": f"{hi:g}"}),
                              object_ids=[pid], gids=[gid],
                              detail={"effective_pt": _r2(eff)},
                              # 越出区间越远越糟（两边都可能出界）
@@ -372,6 +410,7 @@ def _check_panel_axes(panel: dict, profile: dict, sink: _Sink) -> None:
             if want_dir and isinstance(got, str) and got != want_dir:
                 sink.add("tick-direction",
                          f"刻度朝向为 {got}，规范要求 {want_dir}",
+                         message=("tickDirection", {"got": got, "want": want_dir}),
                          object_ids=[pid], gids=[gid],
                          detail={"direction": got, "want": want_dir})
 
@@ -385,6 +424,7 @@ def _check_panel_axes(panel: dict, profile: dict, sink: _Sink) -> None:
                 if off:
                     sink.add("spines-not-enclosed",
                              f"坐标轴未封闭（缺 {', '.join(off)} 边），规范要求封闭坐标轴",
+                             message=("spinesNotEnclosed", {"sides": ", ".join(off)}),
                              object_ids=[pid], gids=[gid], detail={"missing": off})
             lw = _num(_field(el, "spine_linewidth"))
             frame_lw = [float(v) for v in (axis.get("frame_linewidth_pt") or [])]
@@ -394,6 +434,9 @@ def _check_panel_axes(panel: dict, profile: dict, sink: _Sink) -> None:
                     sink.add("line-width-off-preset",
                              f"外框线宽最终有效值 {eff:.2f}pt 不在规范档位 "
                              f"{'/'.join(f'{v:g}' for v in frame_lw)}pt 上",
+                             message=("frameWidthOffPreset",
+                                      {"effective": f"{eff:.2f}",
+                                       "presets": "/".join(f"{v:g}" for v in frame_lw)}),
                              object_ids=[pid], gids=[gid],
                              detail={"effective_pt": _r2(eff)},
                              worse=min(abs(eff - v) for v in frame_lw))
@@ -404,6 +447,9 @@ def _check_panel_axes(panel: dict, profile: dict, sink: _Sink) -> None:
                 sink.add("axis-label-format",
                          f"坐标轴标题「{text.strip()[:30]}」不是规范的"
                          f"「{axis.get('label_format')}」形式",
+                         message=("axisLabelFormat",
+                                  {"label": text.strip()[:30],
+                                   "want": axis.get("label_format")}),
                          object_ids=[pid], gids=[gid], detail={"text": text.strip()[:60]})
 
         if role in ("line", "scatter", "fill", "bar_series", "bar", "errorbar", "arrow_patch"):
@@ -414,6 +460,9 @@ def _check_panel_axes(panel: dict, profile: dict, sink: _Sink) -> None:
                     sink.add("line-width-off-preset",
                              f"线宽最终有效值 {eff:.2f}pt 不在规范档位 "
                              f"{'/'.join(f'{v:g}' for v in presets)}pt 上",
+                             message=("lineWidthOffPreset",
+                                      {"effective": f"{eff:.2f}",
+                                       "presets": "/".join(f"{v:g}" for v in presets)}),
                              object_ids=[pid], gids=[gid],
                              detail={"effective_pt": _r2(eff)},
                              worse=min(abs(eff - v) for v in presets))
@@ -428,17 +477,24 @@ def _check_panel_axes(panel: dict, profile: dict, sink: _Sink) -> None:
                     sink.add("discouraged-colormap",
                              f"色谱 {cmap} 不是感知均匀的，规范推荐 "
                              f"{palette.get('recommended', 'Scientific colour maps')}",
+                             message=("discouragedColormap",
+                                      {"cmap": cmap,
+                                       "recommended": palette.get("recommended")}),
                              object_ids=[pid], gids=[gid], detail={"cmap": cmap})
                 elif good_cmaps and low not in good_cmaps:
                     sink.add("palette-semantic",
                              f"色谱 {cmap} 不在推荐的科学色系里（按 sequential / "
                              f"diverging / categorical 语义选：{palette.get('url', '')}）",
+                             message=("paletteSemantic",
+                                      {"cmap": cmap, "url": palette.get("url")}),
                              object_ids=[pid], gids=[gid], detail={"cmap": cmap})
 
     for prefix, count in sorted(tick_labels.items()):
         if max_labels and count > max_labels:
             sink.add("tick-label-count",
                      f"{prefix} 有 {count} 个刻度标签，规范建议控制在 {max_labels} 个以内",
+                     message=("tickLabelCount", {"axis": prefix, "count": count,
+                                                 "max": max_labels}),
                      object_ids=[pid], gids=[prefix], detail={"count": count},
                      worse=count)
 
@@ -447,12 +503,14 @@ def _check_panel_axes(panel: dict, profile: dict, sink: _Sink) -> None:
         if "bar_series" in roles and "errorbar" not in roles:
             sink.add("bar-without-errorbar",
                      "柱状图没有误差棒——如果这些柱子是多次测量的均值，规范期望标出误差",
+                     message=("barWithoutErrorbar", {}),
                      object_ids=[pid], gids=[ax])
         lines = lines_by_axes.get(ax) or []
         if any(_FIT_WORDS.search(str(_field(l, "label") or "")) for l in lines) \
                 and "fill" not in roles:
             sink.add("fit-without-ci",
                      "有拟合曲线但没有置信区间填充带——投稿时通常要求给出拟合的不确定度",
+                     message=("fitWithoutCi", {}),
                      object_ids=[pid], gids=[ax])
         if len(lines) >= 2 and all(
                 str(_field(l, "marker") or "None") in ("None", "none", "")
@@ -460,6 +518,7 @@ def _check_panel_axes(panel: dict, profile: dict, sink: _Sink) -> None:
             sink.add("palette-line-markers",
                      f"{len(lines)} 条曲线全部没有 marker，黑白打印或色觉障碍读者难以区分，"
                      "可考虑点线图或不同线型",
+                     message=("paletteLineMarkers", {"count": len(lines)}),
                      object_ids=[pid], gids=[ax], detail={"lines": len(lines)},
                      worse=len(lines))
 
@@ -485,7 +544,7 @@ def _check_geometry(spec: dict, sink: _Sink) -> None:
            or r[0] + r[2] > pw + EPS_MM or r[1] + r[3] > ph + EPS_MM]
     if out:
         sink.add("out-of-page", "对象超出页面范围，超出部分不会出现在成图里",
-                 object_ids=out)
+                 message=("outOfPage", {}), object_ids=out)
     if margin > 0:
         inside = [i for i, r, _t in visible if i not in set(out)]
         near = [i for i, r, _t in visible
@@ -495,6 +554,7 @@ def _check_geometry(spec: dict, sink: _Sink) -> None:
                      or r[1] + r[3] > ph - margin + EPS_MM)]
         if near:
             sink.add("outside-margin", f"对象越过了 {margin:g}mm 安全区页边距",
+                     message=("outsideMargin", {"margin": f"{margin:g}"}),
                      object_ids=near)
 
     panels = [(i, r) for i, r, t in visible if t == "panel"]
@@ -509,11 +569,13 @@ def _check_geometry(spec: dict, sink: _Sink) -> None:
                     if i not in hit:
                         hit.append(i)
     if hit:
-        sink.add("overlap", "面板互相重叠，确认是有意的压盖再导出", object_ids=hit)
+        sink.add("overlap", "面板互相重叠，确认是有意的压盖再导出",
+                 message=("overlap", {}), object_ids=hit)
 
     hidden = [i for i, _r, is_hidden, _t in items if is_hidden]
     if hidden:
-        sink.add("hidden", "隐藏的对象不会出现在导出中", object_ids=hidden)
+        sink.add("hidden", "隐藏的对象不会出现在导出中",
+                 message=("hidden", {}), object_ids=hidden)
 
 
 def _check_texts(spec: dict, profile: dict, sink: _Sink) -> None:
@@ -529,22 +591,28 @@ def _check_texts(spec: dict, profile: dict, sink: _Sink) -> None:
         if size <= floor:
             sink.add("font-below-absolute-floor",
                      f"画布文字 {size:g}pt 不大于绝对下限 {floor:g}pt",
+                     message=("textBelowFloor", {"size": f"{size:g}",
+                                                 "floor": f"{floor:g}"}),
                      object_ids=[tid], detail={"effective_pt": _r2(size), "floor_pt": floor},
                      worse=-size)
         elif size < strict:
             sink.add("font-too-small",
                      f"画布文字 {size:g}pt 低于规范下限 {strict:g}pt",
+                     message=("textTooSmall", {"size": f"{size:g}",
+                                               "min": f"{strict:g}"}),
                      object_ids=[tid], detail={"effective_pt": _r2(size), "min_pt": strict},
                      worse=-size)
         if has_cjk(t.get("text")) and cjk.get("required") and not cjk.get("accepted"):
             sink.add("cjk-fallback-missing",
-                     "画布中文文字没有可用的中文字体 fallback", object_ids=[tid])
+                     "画布中文文字没有可用的中文字体 fallback",
+                     message=("textCjkFallbackMissing", {}), object_ids=[tid])
 
 
 def _check_missing_manifest(panel: dict, sink: _Sink) -> None:
     sink.add("panel-text-not-verifiable",
              "矢量面板还没有引擎 manifest（未渲染 / 非脚本产物），"
              "图内文字字号与字体无法自动核验",
+             message=("panelTextNotVerifiable", {}),
              object_ids=[panel.get("id", "")])
 
 
