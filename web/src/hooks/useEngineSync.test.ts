@@ -75,6 +75,35 @@ describe('renderTargets：按变体去重，不再裁一个赢家', () => {
   })
 })
 
+describe('runtime 面板的 lazy rehydrate 门（ADR 0013）', () => {
+  const runtimePanel = (id: string, overrides = 1): PanelObject =>
+    ({
+      ...panel(id, 'runtime:fig.py#fig', overrides),
+      fileKind: 'runtime',
+    }) as PanelObject
+
+  it('重开文档：带 overrides 的 runtime 面板**不**自动执行脚本（负向反证 #4 的前端面）', () => {
+    // 文件面板带未写回 overrides 会自动重建；runtime 面板绝不能——
+    // 「打开文档」不是执行脚本的授权（总纲原则 5）
+    expect(renderTargets([runtimePanel('a', 3)], null, {}, {})).toEqual([])
+  })
+
+  it('脚本变更（tracked）也不构成 runtime 自动重跑的理由', () => {
+    expect(
+      renderTargets([runtimePanel('a', 1)], null, { 'runtime:fig.py#fig': true }, {}),
+    ).toEqual([])
+  })
+
+  it('进入图内编辑即入队（lazy build 的触发点）', () => {
+    expect(renderTargets([runtimePanel('a', 0)], 'a', {}, {})).toHaveLength(1)
+  })
+
+  it('本会话已经跑过（latest 有它）之后与文件面板同一待遇', () => {
+    const latest = { 'runtime:fig.py#fig': 'runtime:fig.py#fig []' }
+    expect(renderTargets([runtimePanel('a', 2)], null, {}, latest)).toHaveLength(1)
+  })
+})
+
 describe('两个同文件不同 overrides 的面板不再互顶（React #185 回归）', () => {
   it('各自排期、各自渲染，第二轮同步是不动点', () => {
     const a = panel('a', 'Fig1.pdf', 2)

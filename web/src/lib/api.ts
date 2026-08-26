@@ -89,16 +89,29 @@ export function engineErrorMsg(err: unknown): UiMessage {
 export function backendErrorMsg(e: unknown): UiMessage {
   if (e instanceof ApiError) {
     const code = typeof e.body?.code === 'string' ? e.body.code : ''
-    // 用 exists 而不是 defaultValue 判「有没有这条」：i18n 那边的
-    // parseMissingKeyHandler 会把缺失的 key 原样吐回来（界面上看得见是哪条），
-    // 那样 defaultValue 永远轮不到，缺文案时用户看到的就是 `backend.xxx`。
-    if (code && i18n.exists(`backend.${code}`, { ns: 'errors' })) {
-      const params = (e.body?.params ?? {}) as Record<string, unknown>
-      return msg(`backend.${code}`, params, 'errors')
-    }
+    return backendCodeMsg(code, (e.body?.params ?? {}) as Record<string, unknown>, e.message)
   }
   // 后端没给 code（或本地还没有这条文案）：原文照抄，不翻
   return literal(e instanceof Error ? e.message : String(e))
+}
+
+/**
+ * 「code + params → 当前语言的一句话」的内核，给不经 ApiError 走的结构化
+ * 错误用（试运行探测的 result.error 是 200 响应里的**结果**，不是 HTTP
+ * 错误）。规则与 `backendErrorMsg` 完全一致：先查 code，查不到用后端原文。
+ */
+export function backendCodeMsg(
+  code: string | undefined,
+  params: Record<string, unknown> | undefined,
+  fallback: string,
+): UiMessage {
+  // 用 exists 而不是 defaultValue 判「有没有这条」：i18n 那边的
+  // parseMissingKeyHandler 会把缺失的 key 原样吐回来（界面上看得见是哪条），
+  // 那样 defaultValue 永远轮不到，缺文案时用户看到的就是 `backend.xxx`。
+  if (code && i18n.exists(`backend.${code}`, { ns: 'errors' })) {
+    return msg(`backend.${code}`, params ?? {}, 'errors')
+  }
+  return literal(fallback)
 }
 
 /* --------------------- 项目失效（409 no_project）的统一出口 ------------------- */
@@ -274,14 +287,29 @@ export const renderUrl = (id: string, bucket: number, mtime?: number) =>
 export const fileUrl = (id: string, mtime?: number) =>
   apiUrl(`/api/file?id=${encodeURIComponent(id)}${stamp(mtime)}`)
 
-/** 位图走原文件、矢量走分档渲染 —— 与后端缓存策略一致 */
+/** materialized cache 里的预览 SVG（runtime 面板重开时的首帧占位）。
+ * `nonce` 是重跑后的换代计数（runtimeAssetStore.previewNonce）：同一 URL
+ * 的 <img> 不会自己重取，重新运行刷新了 cache 之后靠它换 src。 */
+export const runtimePreviewUrl = (id: string, nonce?: number) =>
+  apiUrl(`/api/runtime/preview?id=${encodeURIComponent(id)}${nonce ? `&t=${nonce}` : ''}`)
+
+/**
+ * 位图走原文件、矢量走分档渲染、runtime 走 materialized cache 预览，
+ * 未知形态**不给地址**（fail closed：绝不把不认识的 id 猜成文件路径）。
+ * runtime 分支的 `mtime` 参数承载的是预览换代计数（重跑后换 src 用），
+ * 不是文件 mtime——runtime 素材没有文件。
+ */
 export const panelSrc = (
   id: string,
-  kind: 'pdf' | 'raster',
+  kind: string,
   bucket: number,
   mtime?: number,
-) =>
-  kind === 'raster' ? fileUrl(id, mtime) : renderUrl(id, bucket, mtime)
+): string | null => {
+  if (kind === 'raster') return fileUrl(id, mtime)
+  if (kind === 'pdf') return renderUrl(id, bucket, mtime)
+  if (kind === 'runtime') return runtimePreviewUrl(id, mtime)
+  return null
+}
 
 /* ----------------------------- 布局存取 ----------------------------------- */
 
@@ -1061,6 +1089,7 @@ export type ServerEvent =
   | ({ kind: 'render.failed'; id: string; error?: string } & ProjectScoped)
   | ({ kind: 'panel.file_changed'; scripts?: string[]; stems?: string[] } & ProjectScoped)
   | ({ kind: 'registry.changed'; script: string; stems: string[] } & ProjectScoped)
+  | ({ kind: 'probe.started'; script: string } & ProjectScoped)
   | { kind: 'engine.bootstrap'; state: string; log: string; error: string | null }
   | { kind: 'ai.delta'; session: string; text: string; kindOf?: AiDeltaKind }
   | ({
@@ -1079,6 +1108,7 @@ const EVENT_KINDS = [
   'render.failed',
   'panel.file_changed',
   'registry.changed',
+  'probe.started',
   'engine.bootstrap',
   'ai.delta',
   'ai.done',
@@ -1390,11 +1420,35 @@ export interface RegistryCandidate {
   registered: boolean
 }
 
+/** 脚本清单条目的稳定 reason code（`engine/probe.py` 的 REASON_* 表） */
+export type ScriptReason =
+  | 'registered'
+  | 'static_candidate'
+  | 'dynamic_stems'
+  | 'no_static_output'
+  | 'infrastructure'
+  | 'unparseable'
+
+/**
+ * 项目内一个 .py 的清单条目：普通脚本不因静态分析解不出产物就从产品里消失。
+ * `reason` 解释它此刻的状态；`can_probe` 为 true 的都可以「试运行」。
+ */
+export interface ScriptInventoryEntry {
+  script: string
+  registered: boolean
+  static_stems: string[]
+  entry_candidates: string[]
+  reason: ScriptReason
+  can_probe: boolean
+}
+
 export interface RegistryView {
   source: string
   scripts: Record<string, RegistryEntry>
   candidates: RegistryCandidate[]
   conflicts: Record<string, string[]>
+  /** 项目内全部合理 .py（含 show-only 与基础设施脚本；被 prune 的目录不列） */
+  all_scripts: ScriptInventoryEntry[]
 }
 
 export const fetchRegistry = () => jsonFetch<RegistryView>('/api/registry')
@@ -1406,13 +1460,43 @@ export const scanRegistry = () =>
     scripts: Record<string, RegistryEntry>
   }>('/api/registry/scan', { method: 'POST' })
 
+/** 一张捕获 Figure 的结构化描述（`engine/figcapture.py` 的唯一实现，原样透传） */
+export interface CapturedFigureDescriptor {
+  asset_id: string
+  script: string
+  entry: string
+  stem: string
+  capture_source: 'savefig' | 'pyplot'
+  execution_profile: 'safe' | 'native'
+  original_artifact: string | null
+  size_mm: [number, number]
+  source_fingerprint: string
+  can_writeback_artifact: boolean
+  can_writeback_source: boolean
+}
+
+/** 试运行失败的结构化错误：稳定 code + params；traceback 只是诊断详情 */
+export interface ProbeError {
+  code: string
+  /** 后端中文原文（回退）；界面先按 code 查 `errors:backend.*` */
+  message: string
+  params?: Record<string, unknown>
+  traceback?: string
+}
+
 export interface ProbeResult {
   script: string
   entry: string | null
   stems: string[]
-  error: string | null
+  descriptors: CapturedFigureDescriptor[]
+  error: ProbeError | null
   tried: string[]
   registered?: boolean
+  timings?: Record<string, number>
+  /** pyplot 兜底超过上限被丢掉的张数（0 = 没丢） */
+  dropped_figures?: number
+  /** multiple_stem_conflict 时：stem → 现登记的归属脚本 */
+  stem_conflicts?: Record<string, string>
 }
 
 /** 试运行：真的跑一遍脚本，按它**实际产出**的文件名登记（冷启动可能要几分钟） */
@@ -1421,6 +1505,18 @@ export const probeScript = (script: string, cost?: string) =>
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ script, cost }),
+  })
+
+/**
+ * 取消一个在跑的试运行。后端置取消标志并**硬杀**该脚本的 worker 会话——
+ * 阻塞中的 probe 请求随即以 `execution_cancelled` 返回。幂等：没有在跑的
+ * 返回 `{cancelling: false}`（取消与跑完天然赛跑，输了不是错误）。
+ */
+export const cancelProbe = (script: string) =>
+  jsonFetch<{ cancelling: boolean }>('/api/registry/probe/cancel', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ script }),
   })
 
 export const writeRegistryEntry = (payload: {
@@ -1435,3 +1531,65 @@ export const writeRegistryEntry = (payload: {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
+
+/* --------------------- Runtime Figure 素材（ADR 0013） --------------------- */
+
+/**
+ * stale 状态（稳定枚举，与后端 runtimeasset.STALE_* 同字面量）。
+ * `rerun_failed` 的 producer 在前端：runtime 面板的一次重跑渲染失败时
+ * 由 runtimeAssetStore 置上，后端不产它。
+ */
+export type RuntimeStaleStatus =
+  | 'fresh'
+  | 'possibly_stale'
+  | 'missing_source'
+  | 'missing_environment'
+  | 'needs_rerun'
+  | 'rerun_failed'
+
+export interface RuntimeStatus {
+  id: string
+  status: RuntimeStaleStatus
+  script: string | null
+  stem: string | null
+  entry: string | null
+  /** 脚本注册表里是否还有它（false = 靠文档描述块兜底，重跑前需重新登记） */
+  registered: boolean
+  /** materialized cache 是否可用（true = runtimePreviewUrl 取得到首帧占位） */
+  cached: boolean
+}
+
+/**
+ * 查询 runtime 素材的 stale 状态。**只读**：后端绝不因此执行脚本。
+ * `source` 是文档里持久化的描述块，注册表条目丢失时作恢复线索。
+ */
+export const fetchRuntimeStatus = (
+  id: string,
+  source?: { script: string; stem: string },
+) =>
+  jsonFetch<RuntimeStatus>('/api/runtime/status', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, source }),
+  })
+
+/**
+ * 素材库「图」区的一条 RuntimeFigureAsset（`runtimeasset.list_assets` 原样）。
+ * `descriptor` 只有物化过 cache 才有——「添加到画布」的数据源；没有它的
+ * 条目要先「运行并发现图」（尺寸与捕获来源都只有运行后才知道）。
+ */
+export interface RuntimeAssetInfo {
+  id: string
+  script: string
+  stem: string
+  entry: string
+  status: RuntimeStaleStatus
+  cached: boolean
+  size_mm: [number, number] | null
+  capture_source: 'savefig' | 'pyplot' | null
+  descriptor: CapturedFigureDescriptor | null
+}
+
+/** runtime 素材清单。**只读**：后端绝不因此执行脚本。 */
+export const fetchRuntimeAssets = () =>
+  jsonFetch<{ assets: RuntimeAssetInfo[] }>('/api/runtime/assets')

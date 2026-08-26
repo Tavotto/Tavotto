@@ -224,6 +224,34 @@ Pillow 只是撞上来的那一个：任何在 open 之前 realpath/abspath 一�
 
 ---
 
+## 6b. 产品路由（product_routes，2026-08-26）
+
+「worker 能直接调用」不等于「真实用户能使用」——show-only 家族曾经引擎九级
+全绿、却在产品里无路可走，被记了两个月 partial。case 可以在清单里声明
+`product_routes`（闭集：`desktop_project` / `cli_open` / `safe_probe` /
+`browser_playground` / `native_run`；取值 `true` /
+`"not_implemented"` / `"not_applicable"`），runner 逐条走**真实产品面**：
+
+* `safe_probe` —— `POST /api/registry/probe`（素材库「运行并发现图」按的
+  就是它；副作用与产品一致：注册表落盘 + runtime cache 物化）；
+* `desktop_project` —— `GET /api/registry`（脚本可见）+
+  `GET /api/runtime/assets`（图区条目带物化描述符，零执行）；
+* `cli_open` —— 真 spawn `python -m tavotto open <脚本> --json --no-launch
+  --port 0`（`--port 0` 钉死本地探测，绝不把执行委托给机器上碰巧开着的
+  实例）。多图脚本验完整契约：裸调必须 `multiple_figures_found` 显式拒绝
+  （不静默选第一张），`--stem` 必须选中指定那张；
+* `browser_playground` —— 复用第 7 节对拍的结论（没开 `--browser` 记
+  `not_run`，非 browser_eligible 记 `not_applicable`）；
+* `native_run` —— PR 2 之前只能声明 `not_implemented`，**清单校验拒绝
+  `true`**——不许伪装 pass。
+
+声明为 `true` 的路由失败与引擎阶段失败同罪：classification 直接落
+`product_bug`（stage 记 `route:<名字>`），失败条目带 code / reason /
+follow_up 进报告的 `product_routes.failures`。**绝不允许 runner 直接调
+`engine_probe` 代表产品路由成功**——guard 在
+`tests/test_compat_product_routes.py`：app 端点必然物化 runtime cache、
+CLI 输出必然带 `protocol` 字段，改回内部调用两条当场红。
+
 ## 7. Browser / Desktop 语义对拍
 
 只比语义，不比像素：字体栈、matplotlib 版本、WASM 后端都会造成合理的像素

@@ -24,7 +24,7 @@ function launchCommand(): { cmd: string; args: string[] } {
   return { cmd: py, args: ['-m', 'tavotto'] }
 }
 
-async function freePort(): Promise<number> {
+export async function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const srv = net.createServer()
     srv.once('error', reject)
@@ -203,3 +203,19 @@ export const test = base.extend<{ app: (o?: AppOptions) => Promise<RunningApp> }
 })
 
 export { expect }
+
+/**
+ * 幂等地打开左栏「图内元素」。rail 按钮是 **toggle**（对已激活 tab 再点
+ * 一次 = 收起），而 `enterElementEdit` 在 wide 布局下会自动把左栏切到
+ * 元素树——盲点击会在时序上把刚自动打开的面板关掉：树在收起动画
+ * （~150ms）里仍可被 resolve，click 一开始元素就 detach，随后面板永久
+ * 关闭（CI #453 的 900s 挂死，两轮同形状）。按 `aria-expanded` 判态，
+ * 不在才点，点完等状态坐实。
+ */
+export async function openElementsTab(page: import('@playwright/test').Page): Promise<void> {
+  const nav = page
+    .getByRole('navigation')
+    .getByRole('button', { name: '图内元素' })
+  if ((await nav.getAttribute('aria-expanded')) !== 'true') await nav.click()
+  await expect(nav).toHaveAttribute('aria-expanded', 'true')
+}

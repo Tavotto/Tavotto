@@ -35,6 +35,7 @@ import {
 } from '@/store/actions'
 import { folderLabel, useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
+import { isBusyPhase, useScriptRunStore } from '@/store/scriptRunStore'
 import { useUiStore } from '@/store/uiStore'
 import type { PanelObject, PanelRotation } from '@/types/document'
 import {
@@ -684,6 +685,7 @@ export function SourceSection({
   const open = useInspectorPrefs((s) => s.advancedOpen['panel'] ?? false)
   const setOpen = useInspectorPrefs((s) => s.setAdvancedOpen)
   const overrides = panel?.overrides.length ?? 0
+  const runtime = panel?.fileKind === 'runtime'
   if (!panel?.script && !objs.length) return null
   return (
     <Disclosure
@@ -692,7 +694,8 @@ export function SourceSection({
       onToggle={() => setOpen('panel', !open)}
       summary={panel?.script?.split('/').pop()}
     >
-      {panel?.script && (
+      {panel?.script && runtime && <RuntimeSourceArea panel={panel} />}
+      {panel?.script && !runtime && (
         <>
           <div className="flex gap-1.5">
             <UpdateSourceButton panel={panel} />
@@ -708,5 +711,41 @@ export function SourceSection({
       )}
       <PanelQuality objs={objs} />
     </Disclosure>
+  )
+}
+
+/**
+ * runtime 面板（ADR 0013）的「源文件」区：**不是隐藏写回按钮就完事**——
+ * 用户来这里就是找写回的，必须解释为什么没有（没有原始图文件），并给出
+ * 它真正支持的动作（重新运行）。写回的硬拒绝在后端
+ * （runtime_asset_has_no_original_artifact），这里的缺席只是礼貌；
+ * 「写回成功」在这条路径上结构性不可能出现。
+ */
+function RuntimeSourceArea({ panel }: { panel: PanelObject }) {
+  useTranslation('inspector')
+  const script = panel.source?.script ?? panel.script ?? ''
+  const run = useScriptRunStore((s) => (script ? s.byScript[script] : undefined))
+  const busy = !!run && isBusyPhase(run.phase)
+  return (
+    <div className="flex flex-col gap-1.5">
+      <p className="rounded-sm border border-border bg-surface-2 p-2 text-xs leading-relaxed text-ink-2">
+        {translate('assets.runtimeNoFile', { ns: 'workspace' })}
+      </p>
+      <div className="flex items-center gap-1.5">
+        <span className="min-w-0 flex-1 truncate font-mono text-xs text-ink-3" title={script}>
+          {script}
+        </span>
+        <Button
+          variant="outline"
+          size="sm"
+          className="shrink-0"
+          disabled={!script || busy}
+          onClick={() => void useScriptRunStore.getState().run(script)}
+        >
+          <RotateCcw size={12} className={cn(busy && 'animate-spin')} />
+          {translate(`scripts.${busy ? 'running' : 'rerun'}`, { ns: 'workspace' })}
+        </Button>
+      </div>
+    </div>
   )
 }

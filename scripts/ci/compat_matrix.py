@@ -478,18 +478,273 @@ def _jsonable(v):
 
 
 # --------------------------------------------------------------------------
+# 产品路由（Session 6）：真实端点 / 真实 CLI，不许内部旁路
+# --------------------------------------------------------------------------
+# 「worker 能直接调用」不等于「真实用户能使用」——上面九级漏斗验的是引擎，
+# 这里验的是**产品入口**。三条硬纪律：
+#
+# * safe_probe / desktop_project 走 Flask 的真实端点（素材库按钮按的就是
+#   `POST /api/registry/probe`，「图」区读的就是 `GET /api/runtime/assets`）；
+# * cli_open 真的 spawn `python -m tavotto open --json`（子进程、真 argv、
+#   真 JSON 契约）；
+# * **绝不直接调 engine_probe 代表产品路由成功**——那正是
+#   shape_pyplot_show_only 家族被记成 partial 的原因（基准替产品打掩护）。
+#   看护 tests/test_compat_product_routes.py：把这里改回内部 probe，
+#   guard 当场红（app 端点会物化 runtime cache、CLI 会带 protocol 字段，
+#   内部调用两样都没有）。
+def route_probe_via_app(project: Path, script_rel: str) -> dict:
+    """safe_probe 路由：产品的试运行端点（素材库「运行并发现图」按的它）。
+
+    成功判据：HTTP 200 + registered。副作用与产品一致：注册表落盘、
+    runtime cache 物化、SSE 事件——guard 测试钉的就是这些副作用。
+    """
+    from tavotto import app as tavotto_app
+
+    client = tavotto_app.app.test_client()
+    r = client.post("/api/projects/open", json={"path": str(project)})
+    if r.status_code != 200:
+        return {"ok": False, "code": "project_open_failed",
+                "detail": {"status": r.status_code}}
+    pj = r.get_json()["id"]
+    # 项目留给 desktop_project 路由复用，由调用方（stage_product_routes）关闭
+    r = client.post(f"/api/registry/probe?pj={pj}",
+                    json={"script": script_rel})
+    body = r.get_json() or {}
+    ok = r.status_code == 200 and bool(body.get("registered"))
+    code = None
+    if not ok:
+        err = body.get("error")
+        if isinstance(err, dict) and err.get("code"):
+            code = err["code"]
+        elif body.get("code"):
+            code = body["code"]
+        else:
+            code = f"http_{r.status_code}"
+    return {"ok": ok, "code": code,
+            "via": "POST /api/registry/probe",
+            "detail": {"stems": body.get("stems"),
+                       "error": body.get("error")},
+            "pj": pj}
+
+
+def route_desktop_project(project: Path, script_rel: str, pj: str,
+                          stems: list[str]) -> dict:
+    """desktop_project 路由：素材库两区读的端点（脚本可见 + 图区有条目）。
+
+    前提：safe_probe 路由刚在同一项目上跑过（素材库的真实顺序也是
+    「看到脚本 → 点运行 → 图出现在图区」）。这里**零执行**：两个端点都
+    是只读的，runtime 条目必须已带物化描述符（交接/加画布的数据源）。
+    """
+    from tavotto import app as tavotto_app
+
+    client = tavotto_app.app.test_client()
+    r = client.get(f"/api/registry?pj={pj}")
+    if r.status_code != 200:
+        return {"ok": False, "code": "registry_view_failed",
+                "detail": {"status": r.status_code}}
+    view = r.get_json() or {}
+    listed = {e.get("script") for e in view.get("all_scripts") or []}
+    if script_rel not in listed:
+        return {"ok": False, "code": "script_not_listed",
+                "via": "GET /api/registry",
+                "detail": {"all_scripts": sorted(listed)[:20]}}
+    r = client.get(f"/api/runtime/assets?pj={pj}")
+    assets = {a["stem"]: a for a in (r.get_json() or {}).get("assets") or []}
+    missing = [s for s in stems if s not in assets]
+    uncached = [s for s in stems
+                if s in assets and not assets[s].get("descriptor")]
+    ok = r.status_code == 200 and not missing and not uncached
+    return {"ok": ok,
+            "code": None if ok else "runtime_asset_missing",
+            "via": "GET /api/registry + GET /api/runtime/assets",
+            "detail": {"missing": missing, "uncached": uncached,
+                       "listed": sorted(assets)}}
+
+
+def route_cli_open(project: Path, script_rel: str, *,
+                   stem: str | None = None, timeout: int = 900) -> dict:
+    """cli_open 路由：真的跑 `python -m tavotto open <脚本> --json --no-launch`。
+
+    `--port 0` 钉死本地探测——机器上碰巧开着的 Tavotto 实例绝不能被这台
+    benchmark 委托执行（那会把探测跑进用户的真实会话里）。
+    """
+    argv = [sys.executable, "-m", "tavotto", "open",
+            str(project / script_rel), "--json", "--no-launch", "--port", "0"]
+    if stem is not None:
+        argv += ["--stem", stem]
+    env = {**os.environ,
+           "PYTHONPATH": os.pathsep.join(
+               [str(REPO / "src"), os.environ.get("PYTHONPATH", "")]).rstrip(
+                   os.pathsep),
+           "TAVOTTO_NO_TELEMETRY": "1"}
+    try:
+        out = subprocess.run(argv, capture_output=True, text=True,
+                             encoding="utf-8", errors="replace",
+                             timeout=timeout, stdin=subprocess.DEVNULL, env=env)
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "code": "cli_timeout", "argv": argv, "detail": {}}
+    lines = [ln for ln in (out.stdout or "").strip().splitlines() if ln.strip()]
+    try:
+        payload = json.loads(lines[-1]) if lines else {}
+    except ValueError:
+        payload = {}
+    if not payload:
+        return {"ok": False, "code": "cli_no_json", "argv": argv,
+                "detail": {"stdout": (out.stdout or "")[-500:],
+                           "stderr": (out.stderr or "")[-500:]}}
+    return {"ok": bool(payload.get("ok")), "code": payload.get("code"),
+            "argv": argv, "via": "python -m tavotto open --json",
+            "payload": payload}
+
+
+def stage_product_routes(group: list[dict], root: Path, results: dict) -> None:
+    """按 case 声明的 product_routes 逐条验证，结果记进 results[cid]["routes"]。
+
+    执行预算（每组）：app 端点 probe 一次 + CLI 裸调一次 +（多图组）CLI
+    `--stem` 一次——路由验证不该把 corpus 耗时翻倍。
+    """
+    from tavotto import app as tavotto_app
+
+    wants = [ca for ca in group if ca.get("product_routes")]
+    if not wants:
+        return
+    stems = [ca["stem"] for ca in group]
+    workdir = Path(tempfile.mkdtemp(prefix="compat-routes-", dir=str(root)))
+    try:
+        # ── app 侧（safe_probe + desktop_project）：一个全新项目 ──
+        app_project, script_rel, _entry = materialize(group, workdir / "app")
+        probe_res = route_probe_via_app(app_project, script_rel)
+        desktop_res = None
+        pj = probe_res.pop("pj", None)
+        try:
+            if probe_res["ok"] and pj:
+                desktop_res = route_desktop_project(
+                    app_project, script_rel, pj, stems)
+        finally:
+            if pj:
+                tavotto_app.close_project(pj)
+
+        # ── CLI 侧：另一个全新项目（CLI 自己 probe，子进程） ──
+        cli_project, cli_script, _ = materialize(group, workdir / "cli")
+        cli_bare = route_cli_open(cli_project, cli_script)
+        cli_selected = None
+        # 「多 Figure」看的是**脚本产出几张图**，不是组里有几个 case：
+        # shape_loop_figures 一个 case 循环存三张，同样走多图契约
+        multi = len(group) > 1 or int(group[0].get("expected_figures") or 1) > 1
+        if multi:
+            # 多 Figure：裸调必须显式拒绝（不静默选第一张），--stem 必须选中
+            cli_selected = route_cli_open(cli_project, cli_script,
+                                          stem=group[-1]["stem"])
+
+        for ca in group:
+            declared = ca.get("product_routes") or {}
+            routes: dict = {}
+            for name, want in declared.items():
+                if want == "not_implemented":
+                    routes[name] = {"status": "not_implemented"}
+                    continue
+                if want == "not_applicable":
+                    routes[name] = {"status": "not_applicable"}
+                    continue
+                if name == "safe_probe":
+                    routes[name] = _route_entry(probe_res, ca)
+                elif name == "desktop_project":
+                    # 覆盖组内每个 stem（route_desktop_project 逐 stem 判
+                    # missing/uncached——该 case 的 stem 不串条目）
+                    res = desktop_res or {"ok": False,
+                                          "code": "probe_route_failed",
+                                          "detail": {"probe": probe_res}}
+                    routes[name] = _route_entry(res, ca)
+                elif name == "cli_open":
+                    routes[name] = _route_cli_verdict(
+                        ca, group, cli_bare, cli_selected)
+                elif name == "browser_playground":
+                    br = results[ca["id"]].get("browser")
+                    if br is None:
+                        routes[name] = {"status": "not_run",
+                                        "detail": "本次运行没有开 --browser 对拍"}
+                    else:
+                        routes[name] = _route_entry(
+                            {"ok": bool(br.get("ok")),
+                             "code": None if br.get("ok") else "browser_parity",
+                             "detail": {"reason": br.get("reason")}}, ca)
+            results[ca["id"]]["routes"] = routes
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+
+
+def _route_entry(res: dict, case: dict) -> dict:
+    """路由结果 → 报告条目。失败必须带 stage/code/classification/reason。"""
+    if res.get("ok"):
+        return {"status": "pass", "via": res.get("via"),
+                "detail": res.get("detail")}
+    return {"status": "fail", "via": res.get("via"),
+            "code": res.get("code") or "route_failed",
+            "classification": "product_bug",
+            "reason": f"产品路由未走通（case {case['id']}）",
+            "follow_up": str(case.get("follow_up", "")).strip()
+            or "读 routes 里的 detail，修产品入口而不是改声明",
+            "detail": res.get("detail") or res}
+
+
+def _route_cli_verdict(case: dict, group: list[dict], bare: dict,
+                       selected: dict | None) -> dict:
+    """cli_open 的判定：单图裸调直达；多图裸调必须显式拒绝 + --stem 可选中。
+
+    多图 = **脚本产出多张**（组里多个 case，或单 case 的 expected_figures>1）。
+    """
+    multi = len(group) > 1 or int(group[0].get("expected_figures") or 1) > 1
+    if not multi:
+        payload = bare.get("payload") or {}
+        ok = bare.get("ok") and payload.get("stem") == case["stem"]
+        return _route_entry({"ok": ok,
+                             "code": None if ok else (bare.get("code")
+                                                     or "wrong_stem"),
+                             "via": bare.get("via"),
+                             "detail": {"payload_stem": payload.get("stem"),
+                                        "code": bare.get("code")}}, case)
+    # 多 Figure：机器调用（--no-launch）不许静默选第一张
+    payload = bare.get("payload") or {}
+    figures = [f.get("stem") for f in payload.get("figures") or []]
+    refused = (not bare.get("ok")
+               and bare.get("code") == "multiple_figures_found"
+               and case["stem"] in figures)
+    picked = bool(selected and selected.get("ok")
+                  and (selected.get("payload") or {}).get(
+                      "stem") == group[-1]["stem"])
+    ok = refused and picked
+    return _route_entry(
+        {"ok": ok,
+         "code": None if ok else "multi_figure_contract",
+         "via": bare.get("via"),
+         "detail": {"bare_code": bare.get("code"), "figures": figures,
+                    "selected_ok": picked}}, case)
+
+
+# --------------------------------------------------------------------------
 # 分类：把阶段结果折成六选一
 # --------------------------------------------------------------------------
-def classify(case: dict, stages: dict, skipped: dict) -> tuple[str, str, str]:
+def classify(case: dict, stages: dict, skipped: dict,
+             routes: dict | None = None) -> tuple[str, str, str]:
     """→ (classification, reason, detail)。
 
     **只有清单显式声明过的边界才允许落到非 product_bug 上。**
     否则「我们的 bug」会被悄悄记成「产品边界」，而这正是这套 benchmark
     要消灭的那种自欺。
+
+    产品路由（`product_routes` 声明为 true 的）失败与引擎阶段失败同罪：
+    「引擎全绿、用户够不着」正是 show-only 家族被记 partial 两个月的原因，
+    路由失败不落 product_bug 的话这套声明就只是装饰。
     """
     declared = case.get("classification", "full_support")
     declared_reason = str(case.get("reason", "")).strip()
     expected = case.get("expected", {})
+
+    failed_routes = [n for n, e in (routes or {}).items()
+                     if isinstance(e, dict) and e.get("status") == "fail"]
+    if failed_routes:
+        return ("product_bug", declared_reason or "",
+                f"产品路由未通过：{failed_routes}")
 
     failed = [s for s in CC.STAGES
               if s in stages and not stages[s] and expected.get(s, True)]
@@ -702,6 +957,10 @@ def run_group(group: list[dict], *, python: str, root: Path, out_dir: Path,
                 if data:
                     results[ca["id"]]["census"] = data
 
+        # ── 产品路由（Session 6）：真实端点 / 真实 CLI ───────────
+        # 放在浏览器对拍之前也可以，但 browser_playground 路由要读对拍
+        # 结果，所以排在最后（见下）。这里先占位说明；调用在函数末尾。
+
         # ── 浏览器语义对拍 ──────────────────────────────────────
         if want_browser:
             eligible = [ca for ca in group if ca.get("browser_eligible")]
@@ -718,6 +977,22 @@ def run_group(group: list[dict], *, python: str, root: Path, out_dir: Path,
                 for ca in eligible:
                     results[ca["id"]]["browser"] = _browser_verdict(
                         ca, br, results[ca["id"]])
+
+        # ── 产品路由（Session 6）：真实端点 / 真实 CLI ───────────
+        try:
+            stage_product_routes(group, root, results)
+        except Exception:                               # noqa: BLE001
+            # 路由验证自己崩了也要如实记账（与 runner 崩溃同一条纪律）
+            tb = traceback.format_exc()
+            for ca in group:
+                if ca.get("product_routes"):
+                    results[ca["id"]]["routes"] = {
+                        "runner_error": {"status": "fail",
+                                         "code": "route_runner_crashed",
+                                         "classification": "product_bug",
+                                         "reason": "路由 runner 崩溃",
+                                         "follow_up": "读 detail 里的 traceback",
+                                         "detail": tb[-2000:]}}
     finally:
         for w in (hot, fresh):
             if w is not None:
@@ -827,8 +1102,8 @@ def _browser_verdict(case: dict, br: dict, desktop: dict) -> dict:
 def _blank(case: dict) -> dict:
     return {"id": case["id"], "category": case["category"], "tier": case["tier"],
             "stages": {}, "detail": {}, "skipped": {}, "census": {},
-            "browser": None, "classification": "", "reason": "", "follow_up": "",
-            "duration_ms": 0}
+            "browser": None, "routes": {}, "classification": "", "reason": "",
+            "follow_up": "", "duration_ms": 0}
 
 
 def _finish(results: dict, group: list[dict], t0: float) -> dict:
@@ -836,12 +1111,19 @@ def _finish(results: dict, group: list[dict], t0: float) -> dict:
     for case in group:
         r = results[case["id"]]
         r["duration_ms"] = ms
-        cls, reason, detail = classify(case, r["stages"], r["skipped"])
+        cls, reason, detail = classify(case, r["stages"], r["skipped"],
+                                       r.get("routes"))
         r["classification"] = cls
         r["reason"] = reason
         r["detail_note"] = detail
         if cls == "product_bug":
-            r["stage"] = product_bug_stage(r["stages"], case.get("expected", {}))
+            stage = product_bug_stage(r["stages"], case.get("expected", {}))
+            if not stage:
+                bad_routes = [n for n, e in (r.get("routes") or {}).items()
+                              if isinstance(e, dict)
+                              and e.get("status") == "fail"]
+                stage = f"route:{bad_routes[0]}" if bad_routes else ""
+            r["stage"] = stage
             r["follow_up"] = str(case.get("follow_up", "")).strip()
     return results
 
@@ -905,6 +1187,20 @@ def build_report(cases: list[dict], results: dict, target: dict,
     parity = [{"id": cid, **(results[cid]["browser"] or {})}
               for cid in sorted(results)
               if results[cid].get("browser") is not None]
+    route_rows: dict[str, dict[str, int]] = {}
+    route_failures: list[dict] = []
+    for cid in sorted(results):
+        for name, entry in (results[cid].get("routes") or {}).items():
+            if not isinstance(entry, dict):
+                continue
+            st = entry.get("status", "fail")
+            route_rows.setdefault(name, {})[st] = \
+                route_rows.setdefault(name, {}).get(st, 0) + 1
+            if st == "fail":
+                route_failures.append({"id": cid, "route": name,
+                                       "code": entry.get("code"),
+                                       "reason": entry.get("reason"),
+                                       "follow_up": entry.get("follow_up")})
     return {
         "schema": 1,
         # 时间戳只进**报告**，绝不进 committed 基线。
@@ -940,6 +1236,10 @@ def build_report(cases: list[dict], results: dict, target: dict,
                         key=lambda c: (-results[c].get("duration_ms", 0), c))[:10]],
         "artist_census": artist_census(results),
         "browser_parity": parity,
+        # 产品路由（Session 6）：路由 × 状态计数 + 失败明细
+        "product_routes": {"summary": {k: dict(sorted(v.items()))
+                                       for k, v in sorted(route_rows.items())},
+                           "failures": route_failures},
         # 报告必须可 diff：case 一律按 id 排序。
         "cases": [results[cid] for cid in sorted(results)],
     }
@@ -972,6 +1272,19 @@ def render_summary(report: dict) -> str:
         for row in census:
             out.append(f"| {row['artist']} | {row['unrecognized']} | "
                        f"{row['instances']} | {row['cases']} |")
+    pr = report.get("product_routes") or {}
+    if pr.get("summary"):
+        out.append("\n### Product routes\n")
+        out.append("| Route | Pass | Fail | Other |")
+        out.append("|---|---:|---:|---|")
+        for name, counts in pr["summary"].items():
+            other = {k: v for k, v in counts.items()
+                     if k not in ("pass", "fail")}
+            out.append(f"| {name} | {counts.get('pass', 0)} | "
+                       f"{counts.get('fail', 0)} | "
+                       f"{', '.join(f'{k}={v}' for k, v in other.items()) or '—'} |")
+        for f in (pr.get("failures") or [])[:10]:
+            out.append(f"- ❌ `{f['id']}` × {f['route']} — {f.get('code')}")
     bad_parity = [p for p in report["browser_parity"] if not p.get("ok")]
     if bad_parity:
         out.append("\n### Browser / Desktop semantic divergence\n")
@@ -1269,6 +1582,12 @@ def main(argv: list[str] | None = None) -> int:
         tempfile.mkdtemp(prefix="compat-report-"))
     out_dir.mkdir(parents=True, exist_ok=True)
     scratch = Path(tempfile.mkdtemp(prefix="compat-run-"))
+    # 运行时可写数据隔离进本轮 scratch：产品路由会经真实端点物化 runtime
+    # cache、写注册表事件——benchmark 的临时项目绝不该在用户的数据目录里
+    # 留下派生物（显式指定过的除外）。
+    os.environ.setdefault("TAVOTTO_DATA_DIR", str(scratch / "data"))
+    os.environ.setdefault("TAVOTTO_CONFIG_DIR", str(scratch / "config"))
+    os.environ.setdefault("TAVOTTO_NO_TELEMETRY", "1")
 
     print(f"CompatBench · {mode} · target={args.target} "
           f"({', '.join(_target_env(target)) or '当前环境'})")

@@ -16,11 +16,18 @@ import {
   usePanelRender,
   useRenderStore,
 } from '@/store/renderStore'
+import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { reattachPreview, settleFailedAuthority } from '@/store/svgPreviewStore'
 import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import type { PanelObject, PanelRotation } from '@/types/document'
-import { panelFullSize, panelRotation, rotationSwaps, unrotateVec } from '@/types/document'
+import {
+  panelFullSize,
+  panelKind,
+  panelRotation,
+  rotationSwaps,
+  unrotateVec,
+} from '@/types/document'
 import {
   isElementHidden,
   pickElement,
@@ -105,16 +112,41 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   }, [renderStatus, panelId])
   // 有图内修改、或脚本已领先磁盘文件时，显示都必须走引擎产物。
   // 只带基线的面板除外——磁盘文件已经是那个样子，继续用 /api/render 更省。
+  // runtime 面板（ADR 0013）没有磁盘文件：本会话跑过（rev>0）就走引擎产物。
+  const kind = panelKind(obj)
+  const runtime = kind === 'runtime'
   const tracked = useRenderStore((s) => !!s.tracked[obj.fileId])
-  const needsEngine = (obj.overrides.length > 0 && !isJustBakedBaseline(obj)) || tracked
+  const needsEngine =
+    (obj.overrides.length > 0 && !isJustBakedBaseline(obj)) || tracked || runtime
   const useEnginePng = !editing && needsEngine && (render?.rev ?? 0) > 0
   const enginePng = useEnginePngBlob(obj, bucket, useEnginePng, render?.rev ?? 0)
+  // runtime 面板的 stale / cache 状态（只查询，绝不触发脚本执行）
+  const runtimeState = useRuntimeAssetStore((s) => (runtime ? s.byId[obj.fileId] : undefined))
+  useEffect(() => {
+    if (runtime) useRuntimeAssetStore.getState().ensure(obj)
+    // ensure 幂等且只认 fileId/source；obj 每次 commit 都是新引用，不能进依赖
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runtime, obj.fileId])
+  // 权威渲染的结果反哺 stale 判定：画成功 = 此刻它就是当前脚本的样子；
+  // 失败（本会话跑过又失败）= rerun_failed（该状态的唯一 producer）
+  useEffect(() => {
+    if (!runtime) return
+    const st = useRuntimeAssetStore.getState()
+    if (renderStatus === 'ready') st.markFresh(obj.fileId)
+    else if (renderStatus === 'error') st.markRerunFailed(obj.fileId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runtime, renderStatus, obj.fileId])
   // 替代传输给不出可寻址地址时（Codex 内嵌画布里没有 HTTP 服务）退回空串，
-  // 此时显示走 SVG——绝不留一个连不上的 URL 让画布挂一个碎图标
+  // 此时显示走 SVG——绝不留一个连不上的 URL 让画布挂一个碎图标。
+  // runtime 面板只有 cache 里确有预览才给 URL（404 的碎图标比占位符糟）；
+  // 未知形态（更新版本文档里的新 fileKind）fail closed：不发任何请求。
   const transport = engineTransport()
-  const fileSrc = transport
-    ? transport.panelSrc(obj.fileId, obj.fileKind, bucket, mtime)
-    : panelSrc(obj.fileId, obj.fileKind, bucket, mtime)
+  const fileSrc =
+    kind === 'unknown' || (runtime && !runtimeState?.cached)
+      ? null
+      : transport
+        ? transport.panelSrc(obj.fileId, kind, bucket, mtime)
+        : panelSrc(obj.fileId, kind, bucket, mtime)
   const src = (useEnginePng && enginePng) || fileSrc || ''
   // 一个可寻址地址都拿不到时**退回这一版的权威 SVG**，绝不留一个空 src。
   // Codex 内嵌画布退出图内编辑后正好落在这一格：会话把文件标成 tracked
@@ -153,13 +185,17 @@ export function PanelView({ obj }: { obj: PanelObject }) {
             style={{ ...layout, maxWidth: 'none' }}
             dangerouslySetInnerHTML={{ __html: inlineSvg }}
           />
-        ) : (
+        ) : src ? (
           <CrossfadeImage
             src={src}
             alt={obj.name ?? obj.fileId}
             className="absolute select-none"
             style={{ ...layout, maxWidth: 'none' }}
           />
+        ) : (
+          // runtime 面板还没有可显示的产物（cache 未物化 / 已清理），或
+          // 未知素材形态：诚实的占位，而不是碎图标或另一个面板的图
+          <RuntimePlaceholder obj={obj} layout={layout} />
         )}
 
         {editing && <ElementHitLayer obj={obj} layout={layout} rot={rot} />}
@@ -310,6 +346,31 @@ function CrossfadeImage({
 }
 
 type Layout = { width: number; height: number; left: number; top: number }
+
+/**
+ * runtime 面板还没有任何可显示产物时的占位（重开后 cache 被清 / 从未物化 /
+ * 未知素材形态）。一块中性的虚线框 + 脚本名——诚实说明「这张图由脚本生成、
+ * 还没在本机跑」，双击进入编辑即触发 lazy build（现有交互，不另设按钮）。
+ */
+function RuntimePlaceholder({ obj, layout }: { obj: PanelObject; layout: Layout }) {
+  const script = obj.source?.script ?? obj.script ?? ''
+  const rp = (key: string, values?: Record<string, unknown>) =>
+    translate(`runtimePanel.${key}`, { ns: 'workspace', ...(values ?? {}) })
+  return (
+    <div
+      className="absolute flex flex-col items-center justify-center gap-1 rounded-sm border border-dashed border-ink/25 bg-ink/[0.03] p-2 text-center"
+      style={{ ...layout, maxWidth: 'none' }}
+    >
+      <span className="text-xs text-ink-3">{rp('placeholder')}</span>
+      {script && (
+        <span className="max-w-full truncate font-mono text-[10px] text-ink/40" title={script}>
+          {script}
+        </span>
+      )}
+      <span className="text-[10px] text-ink/40">{rp('placeholderHint', { script })}</span>
+    </div>
+  )
+}
 
 /**
  * 编辑态的透明命中层：用 manifest bbox 做命中测试（面积小者优先、
@@ -498,17 +559,30 @@ function ElementHitLayer({
 }
 
 /** 渲染中 / 冷启动 / 失败 / 过期 的角标 */
+/** runtime stale 状态 → 角标文案键与色调（fresh 不出角标） */
+const RUNTIME_BADGE: Record<string, { key: string; tone: 'error' | 'stale' }> = {
+  possibly_stale: { key: 'runtimePossiblyStale', tone: 'stale' },
+  missing_source: { key: 'runtimeMissingSource', tone: 'error' },
+  missing_environment: { key: 'runtimeMissingEnvironment', tone: 'error' },
+  needs_rerun: { key: 'runtimeNeedsRerun', tone: 'stale' },
+  rerun_failed: { key: 'runtimeRerunFailed', tone: 'error' },
+}
+
 function RenderStatusBadge({ obj }: { obj: PanelObject }) {
   const render = usePanelRender(obj)
   // 冷启动/构建中是**文件级**的事实（一个 stem 一份 live figure），由 SSE 写；
   // 「这一份变体正在渲染」才是变体级的
   const building = useRenderStore((s) => s.building[obj.fileId])
   const editing = useUiStore((s) => s.elementPanelId === obj.id)
+  const runtimeStatus = useRuntimeAssetStore((s) =>
+    panelKind(obj) === 'runtime' ? s.byId[obj.fileId]?.status : undefined,
+  )
   const zoom = useViewportStore((s) => s.zoom)
 
   // 角标画在世界层里，反向缩放保持屏幕上恒定大小
   const scale = 1 / zoom
-  const relevant = editing || obj.overrides.length > 0 || render?.stale
+  const runtimeBadge = runtimeStatus ? RUNTIME_BADGE[runtimeStatus] : undefined
+  const relevant = editing || obj.overrides.length > 0 || render?.stale || !!runtimeBadge
   const info = useMemo(() => {
     if (!relevant) return null
     if (render?.status === 'rendering' || building) {
@@ -528,8 +602,12 @@ function RenderStatusBadge({ obj }: { obj: PanelObject }) {
       return { tone: 'error' as const, cold: false, text: badge('error') }
     }
     if (render?.stale) return { tone: 'stale' as const, cold: false, text: badge('stale') }
+    // runtime 的 stale 语义（诚实文案：说「可能已变化」，不说「数据未变」）
+    if (runtimeBadge) {
+      return { tone: runtimeBadge.tone, cold: false, text: badge(runtimeBadge.key) }
+    }
     return null
-  }, [render, relevant, building])
+  }, [render, relevant, building, runtimeBadge])
 
   // 退场那 90ms 里 info 已经是 null 了，留住最后一版才播得完
   const last = useRef(info)

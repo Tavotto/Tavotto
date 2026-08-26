@@ -76,6 +76,8 @@ export async function onDesktopMenu(
 export interface DesktopOpenPayload {
   project: string
   stem?: string | null
+  /** 多 Figure 交接的选择信息（脚本相对路径）——Figure 选择器在前端 */
+  pick?: string | null
 }
 
 /**

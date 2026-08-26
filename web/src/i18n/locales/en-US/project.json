@@ -13,13 +13,24 @@
     "titleCreate": "New project",
     "titleOpen": "Open project folder"
   },
+  "figurePicker": {
+    "addToCanvas": "Add to canvas",
+    "description_one": "The script produced {{count}} figure — pick the one to open",
+    "description_other": "The script produced {{count}} figures — pick the one to open",
+    "empty": "No figures are registered for this script yet. Run it from the Scripts section of the asset library.",
+    "listAria": "Figures produced by this script",
+    "needsRun": "Run to discover first",
+    "runtimeBadge": "Runtime figure",
+    "title": "Choose a figure — {{script}}"
+  },
   "handoff": {
     "added": "Added {{name}}",
     "located": "Jumped to {{name}}",
     "noProject": "No project is open, so the panel cannot be located",
     "openFailed": "Could not open the project: {{error}}",
     "panelMissing": "Panel {{stem}} not found — the script may not have produced it yet, or it belongs to another figure library",
-    "projectOpened": "Opened project {{name}}"
+    "projectOpened": "Opened project {{name}}",
+    "runtimeNeedsRun": "{{stem}} is registered as a runtime figure but has no preview yet — run it once from the Scripts section of the asset library"
   },
   "picker": {
     "backToCurrent": "Back to current project",

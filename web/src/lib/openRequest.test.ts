@@ -3,10 +3,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { applyOpenRequest, readOpenRequestFromUrl, stemOf } from '@/lib/openRequest'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
+import { useFigurePickerStore } from '@/store/figurePickerStore'
 import { useProjectStore } from '@/store/projectStore'
+import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
-import type { PanelInfo } from '@/lib/api'
+import type { CapturedFigureDescriptor, PanelInfo, RuntimeAssetInfo } from '@/lib/api'
 
 function panel(id: string, extra: Partial<PanelInfo> = {}): PanelInfo {
   return {
@@ -30,8 +32,47 @@ function setPanels(panels: PanelInfo[]) {
   })
 }
 
+function descriptor(script: string, stem: string): CapturedFigureDescriptor {
+  return {
+    asset_id: `runtime:${script}#${stem}`,
+    script,
+    entry: '__main__',
+    stem,
+    capture_source: 'pyplot',
+    execution_profile: 'safe',
+    original_artifact: null,
+    size_mm: [80, 60],
+    source_fingerprint: 'sha256:x',
+    can_writeback_artifact: false,
+    can_writeback_source: false,
+  }
+}
+
+function runtimeAsset(script: string, stem: string, cached = true): RuntimeAssetInfo {
+  return {
+    id: `runtime:${script}#${stem}`,
+    script,
+    stem,
+    entry: '__main__',
+    status: cached ? 'fresh' : 'needs_rerun',
+    cached,
+    size_mm: cached ? [80, 60] : null,
+    capture_source: cached ? 'pyplot' : null,
+    descriptor: cached ? descriptor(script, stem) : null,
+  }
+}
+
+function setRuntimeAssets(assets: RuntimeAssetInfo[]) {
+  useRuntimeAssetStore.setState({
+    assets,
+    loadAssets: vi.fn(async () => {}),
+  } as never)
+}
+
 beforeEach(() => {
   useAssetStore.setState({ panels: [], byId: {}, loaded: false })
+  useRuntimeAssetStore.setState({ assets: [], loadAssets: vi.fn(async () => {}) } as never)
+  useFigurePickerStore.setState({ script: null })
   useSelectionStore.getState().set([])
   useProjectStore.setState({
     phase: 'open',
@@ -62,6 +103,16 @@ describe('readOpenRequestFromUrl', () => {
 
   it('没有参数就是 null', () => {
     expect(readOpenRequestFromUrl()).toBeNull()
+  })
+
+  it('认下 ?pick=（多 Figure 选择器）并抹掉；stem 在时以 stem 为准', () => {
+    window.history.replaceState(null, '', '/?pick=sub%2Fplot.py')
+    expect(readOpenRequestFromUrl()).toEqual({ pick: 'sub/plot.py' })
+    expect(window.location.search).toBe('')
+
+    window.history.replaceState(null, '', '/?open=Fig1&pick=plot.py')
+    expect(readOpenRequestFromUrl()).toEqual({ stem: 'Fig1' })
+    expect(window.location.search).toBe('')
   })
 })
 
@@ -123,6 +174,57 @@ describe('applyOpenRequest', () => {
 
     expect(open).toHaveBeenCalledWith('/other/figures')
     expect(out).toBe('placed')
+  })
+
+  it('磁盘上没有的 stem 落到 runtime 素材：按描述符加运行时面板', async () => {
+    useAssetStore.setState({ load: vi.fn(async () => setPanels([])) } as never)
+    setRuntimeAssets([runtimeAsset('show.py', 'show')])
+
+    const out = await applyOpenRequest({ stem: 'show' })
+
+    expect(out).toBe('placed')
+    const obj = useDocumentStore.getState().doc.objects[0] as {
+      fileId: string
+      fileKind: string
+    }
+    expect(obj.fileId).toBe('runtime:show.py#show')
+    expect(obj.fileKind).toBe('runtime')
+  })
+
+  it('同名旧文件在磁盘上：pyplot 捕获的 runtime 素材优先（不打开陈旧文件）', async () => {
+    // Codex 评审 P1：pyplot 捕获从来没有原件，同 stem 的磁盘文件只是旧样本
+    useAssetStore.setState({
+      load: vi.fn(async () => setPanels([panel('show.pdf', { script: 'show.py' })])),
+    } as never)
+    setRuntimeAssets([runtimeAsset('show.py', 'show')])
+
+    const out = await applyOpenRequest({ stem: 'show' })
+
+    expect(out).toBe('placed')
+    const obj = useDocumentStore.getState().doc.objects[0] as { fileId: string }
+    expect(obj.fileId).toBe('runtime:show.py#show')
+  })
+
+  it('runtime 素材已登记但没有描述符：如实引导，不造假面板', async () => {
+    useAssetStore.setState({ load: vi.fn(async () => setPanels([])) } as never)
+    setRuntimeAssets([runtimeAsset('show.py', 'show', false)])
+
+    const out = await applyOpenRequest({ stem: 'show' })
+
+    expect(out).toBe('runtime-uncached')
+    expect(useDocumentStore.getState().doc.objects).toHaveLength(0)
+    expect(useUiStore.getState().statusTone).toBe('error')
+  })
+
+  it('多 Figure（pick）：打开 Figure 选择器，绝不静默选第一张', async () => {
+    useAssetStore.setState({ load: vi.fn(async () => setPanels([])) } as never)
+    setRuntimeAssets([runtimeAsset('multi.py', 'FigA'), runtimeAsset('multi.py', 'FigB')])
+
+    const out = await applyOpenRequest({ pick: 'multi.py' })
+
+    expect(out).toBe('picker')
+    expect(useFigurePickerStore.getState().script).toBe('multi.py')
+    expect(useDocumentStore.getState().doc.objects).toHaveLength(0)
   })
 
   it('找不到 stem 就说找不到，绝不退而求其次选别的面板', async () => {

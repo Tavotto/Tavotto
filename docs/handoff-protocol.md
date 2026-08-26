@@ -11,12 +11,41 @@ Agent，以及用户自己在终端里敲的那一行。协议版本 **v1**（`p
 
 ```
 tavotto open <产物|脚本|目录> [--json] [--no-launch] [--desktop|--browser] [--port N]
+                              [--no-probe] [--stem <名字>]
 tavotto doctor [--json] [--write-manifest|--remove-manifest]
 ```
 
-* `--no-launch` —— 只做**解析目标 + 登记注册表**，不唤起任何界面（浏览器也不开）。
+* `--no-launch` —— 只做**解析目标 + 登记注册表 +（脚本按需）safe probe**，
+  不唤起任何界面（浏览器也不开）。
 * 不带 `--no-launch` —— 登记完唤起界面：**装了桌面版就开原生窗口**，没装才退回浏览器。
 * `--json` —— 输出一行机器可读 JSON。**成功和失败都有**，失败那行带稳定的 `code`。
+* `--no-probe` —— `.py` 目标静态解不出产出时**不**试运行（只按现有登记打开）。
+* `--stem <名字>` —— 脚本产出多张图时显式选哪张（只对 `.py` 目标有效）。
+
+### `.py` 目标的 safe probe（2026-08-26，Compatibility Bridge PR 1）
+
+用户显式给出 `.py` 就是运行意图。行为顺序：
+
+```
+解析项目 → 静态发现/现有注册表
+  → 每张图都已有有效路由（磁盘原件 或 runtime cache）→ 直接复用
+  → 否则安全试运行一次（safe 档：沙盒 cwd、savefig 拦截捕获、相对路径
+    只读回退），捕获的 Figure 登记成 RuntimeFigureAsset 并物化预览 cache
+```
+
+* 本机已有 Tavotto 实例在 `--port` 上跑时，试运行**委托给它**（同一个
+  并发闸：同脚本并行第二次拿 `probe_in_progress`；热会话与 cache 留在
+  实例手里，随后的交接零重跑）。没有实例才在 CLI 进程内跑，返回前
+  worker 一律关净（不留 orphan），交接过去的进程读注册表 + cache，
+  **绝不重复执行脚本**。
+* 单张图：直接定位打开（成功 payload 的 `stem`）。
+* 多张图：**不静默选第一张**。`--stem` 显式选；带界面的调用把选择信息
+  交给界面的 Figure 选择器（payload 的 `pick` = 脚本相对路径，`figures`
+  列出每张：`{stem, asset_id, artifact, cached}`）；`--no-launch` 的机器
+  调用必须显式选，否则失败 `multiple_figures_found`（`figures` 在 extra
+  里，按它重调一次 `--stem` 即可）。
+* 成功 payload 另带 `probe`：`{performed, via: "remote"|"local"|null,
+  entry, dropped_figures}`。
 
 参数一律以**数组**形式传给进程，不要拼 shell 字符串：项目路径里的空格、中文、
 `&` `%` `^` `<` `>` `|` 经 shell 中转会被吃掉或改写。
@@ -96,6 +125,15 @@ CLI、唤起却静默退回浏览器模式——用户明明装了桌面版却�
 | `launch_timeout` | 唤起后进程在限期内没有出现 | 让用户看 `log_path`；`retryable: true`，可重试一次 |
 | `remote_open_failed` | 已在运行的实例打不开这个项目 | 把 `error` 转达给用户 |
 | `bad_launch_mode` | `--desktop` 与 `--browser` 同时给了 | 修调用 |
+| `script_no_figure` | 脚本跑通了但没捕获到任何 Figure（或 `--no-probe` 下静态解不出） | 确认脚本真的创建 matplotlib Figure；或去掉 `--no-probe` |
+| `script_probe_failed` | 试运行失败（脚本自身报错等；`traceback` 在 extra） | 把报错转达给用户；素材库脚本区有诊断详情 |
+| `execution_timeout` / `execution_cancelled` | 试运行超时 / 被取消 | 转达；超时先查死循环 |
+| `multiple_figures_found` | 多张图 + `--no-launch`（没有界面接选择器） | 按 extra 的 `figures` 重调一次 `--stem` |
+| `invalid_stem` | `--stem` 不在该脚本的产出里（或对非 `.py` 目标给了 `--stem`） | 按 extra 的 `stems` 修调用 |
+| `runtime_asset_failed` | 捕获到了图却没能登记成可打开的素材 | 报给用户（罕见；带 `stems`） |
+| `multiple_stem_conflict` | 产出的图名已被别的脚本登记 | 让用户在注册表里手工裁决归属 |
+| `native_run_required` | 缺依赖（extra 带 `module` 与原始 `probe_code`）——safe 档修不了「项目要自己的环境」 | 引导换渲染环境；native 运行（`tavotto run`）是后续版本 |
+| `probe_in_progress` | 同一脚本已有一次试运行在进行中（素材库/另一个调用方） | `retryable: true`，稍后重试 |
 
 ### `tavotto doctor --json`
 

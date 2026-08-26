@@ -51,7 +51,19 @@ USER_VISIBLE_CODES = {
     "package_invalid": {"reason"},
     "package_schema_unsupported": set(),
     "scan_failed": {"reason"},
-    "script_not_in_project": set(),
+    # --- Compatibility Bridge Session 3：试运行路径校验的三种拒绝 ---
+    "script_not_found": {"script"},
+    "script_path_outside_project": {"script"},
+    "unsupported_script_type": {"script"},
+    # --- Compatibility Bridge Session 4：RuntimeFigureAsset（ADR 0013）。
+    # runtime_source_writeback_unsupported 刻意不在这里：v1 没有任何改写脚本
+    # 源码的端点（裁决出处 runtimeasset.writeback_rejection），码表 + 双语
+    # 文案先行、producer 后补的对拍在 tests/test_runtime_asset.py ---
+    "runtime_asset_unknown": {"id"},
+    "runtime_asset_has_no_original_artifact": set(),
+    "runtime_cache_missing": set(),
+    # --- Compatibility Bridge Session 5：素材库普通入口 ---
+    "probe_in_progress": {"script"},
     "script_name_missing": set(),
     "invalid_entry": {"entry"},
     "registry_update_failed": {"reason"},

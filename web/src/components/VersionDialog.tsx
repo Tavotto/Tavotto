@@ -497,7 +497,7 @@ export function LayoutSnapshot({
             return (
               <img
                 key={o.id}
-                src={panelSrc(o.fileId, o.fileKind, 200, info?.mtime)}
+                src={panelSrc(o.fileId, o.fileKind, 200, info?.mtime) ?? undefined}
                 alt=""
                 className="absolute object-fill"
                 style={{

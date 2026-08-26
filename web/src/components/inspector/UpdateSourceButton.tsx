@@ -359,6 +359,10 @@ export function UpdateSourceButton({ panel }: { panel: PanelObject }) {
   const [open, setOpen] = useState(false)
   // 项目级只读：按钮保留但禁用，原因写在 title 里
   const readOnly = useProjectStore((s) => s.project?.settings?.allow_write_back === false)
+  // runtime 素材没有原始图文件：入口**不渲染**（不是禁用——「写回」对它
+  // 无从谈起，ADR 0013 §7），后端另有 runtime_asset_has_no_original_artifact
+  // 硬拒绝兜底
+  if (panel.fileKind === 'runtime') return null
 
   return (
     <>
@@ -401,7 +405,11 @@ export function useWriteBackTargets(): PanelObject[] {
     void assets
     const candidates = objects.filter(
       (o): o is PanelObject =>
-        o.type === 'panel' && o.overrides.length > 0 && !isJustBakedBaseline(o),
+        o.type === 'panel' &&
+        // runtime 素材没有原件，写回入口整个不出现（后端另有硬拒绝兜底）
+        o.fileKind !== 'runtime' &&
+        o.overrides.length > 0 &&
+        !isJustBakedBaseline(o),
     )
     const pick = (list: PanelObject[]) => {
       const seen = new Set<string>()

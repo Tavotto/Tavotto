@@ -32,10 +32,16 @@ import re
 import tempfile
 from pathlib import Path, PurePosixPath
 
-from . import registry
+from . import figcapture, registry
 
-OUT_EXTS = (".pdf", ".png", ".svg", ".jpg", ".jpeg", ".eps", ".tif", ".tiff")
-# 样式模块及其副本（"paper_style 2.py"）、私有助手、测试与打包脚本
+#: 「什么算一份图产物」的唯一出处在 `figcapture.ARTIFACT_EXTS`（捕获描述符
+#: 判原件、handoff 找产物、这里的静态扫描必须是同一张表）；旧名保留作镜像。
+OUT_EXTS = figcapture.ARTIFACT_EXTS
+# 样式模块及其副本（"paper_style 2.py"）、私有助手、测试与打包脚本。
+# 这两张表只把脚本挡在**自动静态起草**之外（打开项目时的注册表草稿不该混进
+# 测试与工具脚本）；「列给用户挑」的清单（probe.script_inventory）仍然列出
+# 它们，只是标注 reason=infrastructure——用户主动试运行任何项目内 .py 都是
+# 允许的，判据见 is_infrastructure_name()。
 SKIP_PREFIXES = ("paper_style", "_", "test_", "conftest", "setup")
 SKIP_SUFFIXES = ("_test.py",)
 # 存图调用名。paper_style.save(fig, stem) 这类图库方言与 matplotlib 原生
@@ -45,6 +51,22 @@ SAVE_FUNCS = {"save", "savefig", "imsave", "write_image", "save_fig",
 # 存图调用里可能承载文件名的关键字实参
 SAVE_KWARGS = ("fname", "filename", "file", "path", "out", "outfile",
                "output", "stem", "name", "basename", "target")
+# 试运行探测认「能到达绘图」的调用名——比 SAVE_FUNCS 宽：创建 Figure 的工厂
+# 与常见 pyplot 顶层绘图函数都算（`plt.plot()` 经 gca 隐式建图）。宽一点没
+# 关系：候选是拿去**真跑**验证的，误报的代价是多试一个 entry，漏报的代价是
+# 整个 show-only 脚本探测不出图。这张表只喂 probe 的 entry 候选，
+# **不参与**静态起草（起草口径仍然只认 SAVE_FUNCS）。
+PLOT_FUNCS = SAVE_FUNCS | {
+    "figure", "subplots", "subplot", "subplot_mosaic", "add_subplot",
+    "add_axes", "show", "plot", "scatter", "imshow", "hist", "hist2d", "bar",
+    "barh", "pcolormesh", "pcolor", "contour", "contourf", "errorbar",
+    "boxplot", "violinplot", "stem", "step", "fill_between", "hexbin", "pie",
+    "loglog", "semilogx", "semilogy", "matshow", "specgram", "quiver",
+    "streamplot", "tricontourf", "eventplot",
+}
+# 试运行的自定义 entry 候选上限：每试一个 entry 都要冷启动一次 worker，
+# 一个模块里十几个零参绘图函数时全试一遍是分钟级的代价。
+MAX_PROBE_CUSTOM_ENTRIES = 4
 
 # 扫描时整棵剪掉的目录（噪音 + 性能：图库旁边常年躺着工具产物与虚拟环境）
 PRUNE_DIRS = {"__pycache__", "node_modules", ".venv", "venv", "env", ".git",
@@ -519,9 +541,10 @@ def _target_names(node: ast.expr) -> list[str]:
 # --------------------------------------------------------------------------
 # 入口方言识别
 # --------------------------------------------------------------------------
-def _reaches_save(fn: ast.FunctionDef, funcs: dict[str, ast.FunctionDef],
-                  seen: frozenset[str] = frozenset()) -> bool:
-    """函数体（含它调用的本模块函数）里是否存在存图调用。"""
+def _reaches_calls(fn: ast.FunctionDef, funcs: dict[str, ast.FunctionDef],
+                   call_names: set[str],
+                   seen: frozenset[str] = frozenset()) -> bool:
+    """函数体（含它调用的本模块函数）里是否存在 `call_names` 里的调用。"""
     if fn.name in seen or len(seen) > MAX_CALL_DEPTH:
         return False
     seen = seen | {fn.name}
@@ -529,12 +552,21 @@ def _reaches_save(fn: ast.FunctionDef, funcs: dict[str, ast.FunctionDef],
         if not isinstance(node, ast.Call):
             continue
         name = _func_name(node.func)
-        if name in SAVE_FUNCS:
+        if name in call_names:
             return True
         sub = funcs.get(name)
-        if sub is not None and _reaches_save(sub, funcs, seen):
+        if sub is not None and _reaches_calls(sub, funcs, call_names, seen):
             return True
     return False
+
+
+def _reaches_save(fn: ast.FunctionDef, funcs: dict[str, ast.FunctionDef]) -> bool:
+    """函数体（含它调用的本模块函数）里是否存在存图调用。
+
+    静态起草的口径（`_entry_of` 第三档）只认它——PLOT_FUNCS 那张宽表只属于
+    试运行候选，别把两个判据混起来。
+    """
+    return _reaches_calls(fn, funcs, SAVE_FUNCS)
 
 
 def _has_inline_main(tree: ast.Module) -> bool:
@@ -554,6 +586,12 @@ def _callable_without_args(fn: ast.FunctionDef) -> bool:
     return positional <= 0 and kwonly_required == 0
 
 
+# 常见入口名先来，其余按定义顺序（越靠后越可能是「总装」函数）。
+# `_entry_of` 第三档与 `probe_entry_candidates` 的自定义候选共用这一张表。
+_ENTRY_RANK = {"plot": 0, "build": 1, "make": 2, "draw": 3, "run": 4,
+               "figure": 5, "generate": 6, "all": 7}
+
+
 def _entry_of(tree: ast.Module) -> str | None:
     """入口优先级：main > render > 其它无参且能走到存图的顶层函数 > __main__。
 
@@ -570,22 +608,93 @@ def _entry_of(tree: ast.Module) -> str | None:
     candidates = [n for name, n in funcs.items()
                   if _callable_without_args(n) and _reaches_save(n, funcs)]
     if candidates:
-        # 常见入口名先来，其余按定义顺序（越靠后越可能是「总装」函数）
-        rank = {"plot": 0, "build": 1, "make": 2, "draw": 3, "run": 4,
-                "figure": 5, "generate": 6, "all": 7}
-        candidates.sort(key=lambda n: (rank.get(n.name, 99), n.lineno))
+        candidates.sort(key=lambda n: (_ENTRY_RANK.get(n.name, 99), n.lineno))
         return candidates[0].name
     return "__main__" if inline else None
+
+
+def _toplevel_reaches_plot(tree: ast.Module,
+                           funcs: dict[str, ast.FunctionDef]) -> bool:
+    """模块**顶层**代码（不含函数/类定义体）是否够得着绘图调用。
+
+    `runpy.run_path` 语义下「顶层直接执行」值不值得一试就看这个：裸写的
+    show-only 脚本（`plt.plot(...); plt.show()`）在这里是 True，只有一堆
+    def 的库模块是 False——对后者试 `__main__` 只会「跑通但没有 Figure」，
+    白付一次 worker 冷启动。"""
+    for st in tree.body:
+        if isinstance(st, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        for node in ast.walk(st):
+            if not isinstance(node, ast.Call):
+                continue
+            name = _func_name(node.func)
+            if name in PLOT_FUNCS:
+                return True
+            sub = funcs.get(name)
+            if sub is not None and _reaches_calls(sub, funcs, PLOT_FUNCS):
+                return True
+    return False
+
+
+def probe_entry_candidates(path: Path) -> list[str] | None:
+    """试运行探测的**静态** entry 候选（不要求脚本有存图调用）。
+
+    静态起草（`_entry_of`）只认走得到存图调用的入口——show-only 脚本因此
+    在草稿里隐形，这是刻意的（起草进的是注册表）。但试运行是用户主动点的，
+    候选宽一点只是多试几次，所以这里按 PLOT_FUNCS 的宽口径推断，顺序：
+
+        main / render（零参可调才算——worker 是 `getattr(module, entry)()`
+        直接调的，必填参数版本调了必炸，试它纯属浪费一次冷启动；本 Session
+        刻意不做「自动构造必填参数」）
+        → `__main__`（有 `if __name__` 守卫，或顶层代码够得着绘图时）
+        → 自定义零参绘图函数（按 _ENTRY_RANK + 定义顺序，上限
+          MAX_PROBE_CUSTOM_ENTRIES）
+        → `__main__` 兜底（import 期出图这类非常规写法，保证至少一个候选）
+
+    解析不了（语法错误 / 读不动）返回 None——调用方据此分类 unparseable，
+    并退回盲试列表（运行期会给出真正的报错）。
+    """
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, SyntaxError):
+        return None
+    funcs = {n.name: n for n in tree.body
+             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    out: list[str] = []
+    for preferred in ("main", "render"):
+        fn = funcs.get(preferred)
+        if fn is not None and _callable_without_args(fn):
+            out.append(preferred)
+    if _has_inline_main(tree) or _toplevel_reaches_plot(tree, funcs):
+        out.append("__main__")
+    custom = [n for name, n in funcs.items()
+              if name not in out and _callable_without_args(n)
+              and _reaches_calls(n, funcs, PLOT_FUNCS)]
+    custom.sort(key=lambda n: (_ENTRY_RANK.get(n.name, 99), n.lineno))
+    out.extend(n.name for n in custom[:MAX_PROBE_CUSTOM_ENTRIES])
+    if "__main__" not in out:
+        out.append("__main__")
+    return out
+
+
+def is_infrastructure_name(name: str) -> bool:
+    """按文件名判「基础设施脚本」（测试/工具/样式模块）——SKIP 两张表的
+    唯一消费口。静态起草直接跳过它们；脚本清单列出但标注 infrastructure。"""
+    return name.startswith(SKIP_PREFIXES) or name.endswith(SKIP_SUFFIXES)
 
 
 # --------------------------------------------------------------------------
 # 扫描
 # --------------------------------------------------------------------------
-def iter_scripts(figures_dir: Path) -> list[Path]:
-    """图库里的候选脚本：递归但剪枝（隐藏目录、虚拟环境、缓存一律不下探）。
+def _iter_py(figures_dir: Path, *, include_infrastructure: bool) -> list[Path]:
+    """图库里的 .py：递归但剪枝（隐藏目录、虚拟环境、缓存一律不下探）。
 
     只扫顶层曾经是个隐性假设——把面板脚本放 panels/ 子目录的图库（论文的
     supporting_information 就是）会被整目录漏掉。
+
+    walk 规则（PRUNE_DIRS / MAX_DEPTH / 隐藏项跳过）只有这一个实现，
+    静态起草与「列给用户挑」的清单是它的两个视图——差别只在要不要把
+    基础设施脚本（`is_infrastructure_name`）也列进来。
     """
     out: list[Path] = []
     root = Path(figures_dir)
@@ -604,7 +713,7 @@ def iter_scripts(figures_dir: Path) -> list[Path]:
                 continue
             if child.suffix != ".py":
                 continue
-            if child.name.startswith(SKIP_PREFIXES) or child.name.endswith(SKIP_SUFFIXES):
+            if not include_infrastructure and is_infrastructure_name(child.name):
                 continue
             out.append(child)
 
@@ -612,12 +721,32 @@ def iter_scripts(figures_dir: Path) -> list[Path]:
     return out
 
 
-def _rel_key(path: Path, root: Path) -> str:
-    """注册表里的脚本键：图库相对路径，统一 POSIX 分隔符（跨平台一致）。"""
+def iter_scripts(figures_dir: Path) -> list[Path]:
+    """自动静态起草的候选脚本（不含基础设施脚本）——起草口径的唯一出处。"""
+    return _iter_py(Path(figures_dir), include_infrastructure=False)
+
+
+def iter_all_scripts(figures_dir: Path) -> list[Path]:
+    """项目内**全部**合理 .py（含基础设施脚本；被 prune 的目录仍然不列）。
+
+    供「列给用户挑」的清单（probe.script_inventory）用：普通 .py 不该因为
+    静态分析解不出产物就从产品里消失。"""
+    return _iter_py(Path(figures_dir), include_infrastructure=True)
+
+
+def rel_key(path: Path, root: Path) -> str:
+    """注册表里的脚本键：图库相对路径，统一 POSIX 分隔符（跨平台一致）。
+
+    「项目相对路径怎么写」的唯一出处——脚本清单（probe.script_inventory）
+    与注册表键必须是同一种写法，否则同一个脚本两处两个名字。
+    """
     try:
         return PurePosixPath(path.relative_to(root).as_posix()).as_posix()
     except ValueError:
         return path.name
+
+
+_rel_key = rel_key   # 旧名（模块内与既有调用方）
 
 
 def _resolve(patterns: set[str], figures_dir: Path) -> tuple[set[str], list[str]]:

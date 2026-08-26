@@ -539,16 +539,17 @@ def test_child_axes_cases_assert_on_the_child_itself(manifest):
 
 
 def test_fallback_only_cases_are_not_claimed_as_full_support(manifest):
-    """**没有磁盘产物的 stem 不许报「完全支持」。**
+    """**没有磁盘产物的 stem，只有产品路由被真实验证时才许报「完全支持」。**
 
-    `plt.show()` 出来的图在桌面界面上够不着：面板列表按文件扫、
-    `analyze_script()` 对没有存图调用的脚本回 None、注册表对话框只给候选与
-    已登记的脚本「试运行」按钮，没有「任选一个脚本」的入口。而 CompatBench
-    走的是 `probe_and_register()` + worker——**它绕过了那条产品入口**。
-
-    据此报「完全支持」就是拿基准替产品打掩护，而这个基准存在的全部意义是
-    让 Tavotto 说真话。这一条是结构性的：判据不是某个 case 的名字，而是
-    「这个脚本有没有存图调用」——将来加同类 case 时它自动生效。
+    `plt.show()` 出来的图曾经在桌面界面上够不着（面板列表按文件扫、
+    `analyze_script()` 对没有存图调用的脚本回 None），而 CompatBench 直接调
+    `probe_and_register()`——绕过产品入口报「完全支持」就是拿基准替产品打
+    掩护。2026-08-26（Compatibility Bridge PR 1）素材库普通入口与
+    `tavotto open script.py` safe probe 落地，这类 case **可以**是
+    full_support，但升级的门票是 `product_routes`：desktop_project /
+    cli_open / safe_probe 三条都声明为 true（runner 走真实端点 / 真实 CLI
+    验证，失败即 product_bug）。没有声明的 no-savefig case 仍然不许
+    full_support——将来加同类 case 时这条自动生效，不许悄悄搭便车。
 
     引擎阶段照常验（它们是真的），只有 `classification` 受这条约束。
     """
@@ -562,8 +563,14 @@ def test_fallback_only_cases_are_not_claimed_as_full_support(manifest):
                  and getattr(n.func, "attr", "") in ("savefig", "save")]
         if saves:
             continue                       # 有存图调用 → 磁盘上会有产物
-        if c.get("classification", "full_support") == "full_support":
+        if c.get("classification", "full_support") != "full_support":
+            continue                       # 已如实降级的不受此条约束
+        routes = c.get("product_routes") or {}
+        verified = all(routes.get(r) is True
+                       for r in ("desktop_project", "cli_open", "safe_probe"))
+        if not verified:
             offenders.append(c["id"])
     assert not offenders, (
-        "这些 case 的脚本一次都不存盘，桌面界面上打不开它们，却被记成"
+        "这些 case 的脚本一次都不存盘，却在没有声明（并被 runner 验证）"
+        "desktop_project/cli_open/safe_probe 产品路由的情况下被记成"
         f"「完全支持」：{offenders}")

@@ -29,16 +29,21 @@ struct AppState {
     open: Option<OpenRequest>,
 }
 
-/// 交接契约：`Tavotto --open <项目目录> [--stem <stem>]`。
+/// 交接契约：`Tavotto --open <项目目录> [--stem <stem> | --pick-script <脚本>]`。
 ///
 /// **与 `src/tavotto/engine/handoff.py` 的 `desktop_argv()` 严格同源**——
 /// 那边是唯一的生产者，这边是唯一的消费者，改一边必须同步另一边
 /// （Python 侧看护 `tests/test_handoff.py::test_desktop_argv_contract`，
 /// Rust 侧看护本文件末尾的单测）。
+///
+/// `pick`（`--pick-script`）是多 Figure 交接的选择信息（脚本的项目相对
+/// 路径）：壳不做任何选择，只把它送进落地 URL 的 `?pick=` / `tavotto:open`
+/// 事件，Figure 选择器在前端（不静默选第一张，Session 6 契约）。
 #[derive(Clone, serde::Serialize)]
 struct OpenRequest {
     project: String,
     stem: Option<String>,
+    pick: Option<String>,
 }
 
 /// 认不出的参数一律忽略：macOS 从 Finder / Dock 启动会塞 `-psn_0_12345`，
@@ -46,11 +51,13 @@ struct OpenRequest {
 fn parse_open_args(args: &[String]) -> Option<OpenRequest> {
     let mut project: Option<String> = None;
     let mut stem: Option<String> = None;
+    let mut pick: Option<String> = None;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--open" => project = it.next().cloned(),
             "--stem" => stem = it.next().cloned(),
+            "--pick-script" => pick = it.next().cloned(),
             _ => {}
         }
     }
@@ -58,9 +65,13 @@ fn parse_open_args(args: &[String]) -> Option<OpenRequest> {
     if project.trim().is_empty() {
         return None;
     }
+    let stem = stem.filter(|s| !s.trim().is_empty());
+    // stem 定得下来一张就不需要选择器（生产侧本来就互斥，这里兜底同语义）
+    let pick = pick.filter(|s| !s.trim().is_empty()).filter(|_| stem.is_none());
     Some(OpenRequest {
         project,
-        stem: stem.filter(|s| !s.trim().is_empty()),
+        stem,
+        pick,
     })
 }
 
@@ -315,6 +326,13 @@ fn spawn_sidecar_and_navigate(app: tauri::AppHandle) {
                         "open={}",
                         utf8_percent_encode(stem, NON_ALPHANUMERIC)
                     ));
+                } else if let Some(pick) = open.as_ref().and_then(|o| o.pick.as_deref()) {
+                    // 多 Figure 交接：把脚本交给前端的 Figure 选择器
+                    // （与 handoff.browser_url 的 `?pick=` 同一份语义）
+                    params.push(format!(
+                        "pick={}",
+                        utf8_percent_encode(pick, NON_ALPHANUMERIC)
+                    ));
                 }
                 if chosen_locale.is_some() {
                     params.push(format!("lang={}", menu_locale.tag()));
@@ -561,6 +579,33 @@ mod tests {
         let req = parse_open_args(&args(&["--open", "/p/figures", "--stem", "Fig1"])).unwrap();
         assert_eq!(req.project, "/p/figures");
         assert_eq!(req.stem.as_deref(), Some("Fig1"));
+        assert_eq!(req.pick, None);
+    }
+
+    #[test]
+    fn parses_the_multi_figure_pick() {
+        // 多 Figure 交接：`--pick-script` 原样透传给前端选择器
+        let req =
+            parse_open_args(&args(&["--open", "/p/figures", "--pick-script", "sub/plot.py"]))
+                .unwrap();
+        assert_eq!(req.stem, None);
+        assert_eq!(req.pick.as_deref(), Some("sub/plot.py"));
+    }
+
+    #[test]
+    fn stem_wins_over_pick() {
+        // 生产侧互斥；两个都来了以 stem 为准（定得下来一张就不需要选择器）
+        let req = parse_open_args(&args(&[
+            "--open",
+            "/p",
+            "--stem",
+            "Fig1",
+            "--pick-script",
+            "plot.py",
+        ]))
+        .unwrap();
+        assert_eq!(req.stem.as_deref(), Some("Fig1"));
+        assert_eq!(req.pick, None);
     }
 
     #[test]

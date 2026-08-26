@@ -127,18 +127,26 @@ export function renderTargets(
   objects: readonly CanvasObject[],
   editingId: string | null,
   tracked: Record<string, boolean | undefined>,
+  latest: Record<string, string | undefined> = {},
 ): PanelObject[] {
   const seen = new Set<string>()
   const targets: PanelObject[] = []
   for (const o of objects) {
     if (o.type !== 'panel' || !o.script) continue
-    // 编辑中 / 有图内修改 / 脚本已领先磁盘文件（AI 改过）。
-    // 「只带基线、还没动过」的面板不渲染：磁盘文件本身就是那个样子，
-    // 白跑一次引擎（heavy 脚本要几分钟）没有意义。
+    // runtime 面板（ADR 0013 lazy rehydrate）：**重开文档绝不自动执行脚本**。
+    // 只有「正在编辑」或「本会话已经跑过一次（latest 里有它）」才进同步——
+    // 带着 overrides 重开的文档先显示 cache 占位，进入编辑 / 显式重跑那一刻
+    // 才 build 并重放。tracked（脚本变更）对 runtime 只表达 stale 提示，
+    // 不构成自动重跑的理由。
     const wants =
-      o.id === editingId ||
-      !!tracked[o.fileId] ||
-      (o.overrides.length > 0 && !isJustBakedBaseline(o))
+      o.fileKind === 'runtime'
+        ? o.id === editingId || latest[o.fileId] != null
+        : // 编辑中 / 有图内修改 / 脚本已领先磁盘文件（AI 改过）。
+          // 「只带基线、还没动过」的面板不渲染：磁盘文件本身就是那个样子，
+          // 白跑一次引擎（heavy 脚本要几分钟）没有意义。
+          o.id === editingId ||
+          !!tracked[o.fileId] ||
+          (o.overrides.length > 0 && !isJustBakedBaseline(o))
     if (!wants) continue
     const key = renderKeyOf(o)
     if (seen.has(key)) continue
@@ -167,7 +175,7 @@ function liveRenderKeys(objects: readonly CanvasObject[]): Set<string> {
  */
 export function syncEngine(objects: readonly CanvasObject[], editingId: string | null): void {
   const store = useRenderStore.getState()
-  for (const panel of renderTargets(objects, editingId, store.tracked)) {
+  for (const panel of renderTargets(objects, editingId, store.tracked, store.latest)) {
     const want = JSON.stringify(panel.overrides)
     const state = store.byKey[renderKeyOf(panel)]
     if (state && (state.lastPatches === want || state.wantPatches === want)) continue

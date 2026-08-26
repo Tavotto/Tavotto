@@ -53,6 +53,7 @@ from .engine import probe as engine_probe
 from .engine import ai_providers as engine_ai_providers
 from .engine import registry as engine_registry
 from .engine import runtime as engine_runtime
+from .engine import runtimeasset as engine_runtimeasset
 from .engine import session_client as engine_session_client
 from .engine import telemetry as engine_telemetry
 from .engine import updater as engine_updater
@@ -687,7 +688,27 @@ def _resolve_panel_source(o: dict, dpi: int, sink: list | None = None) -> Path:
     `sink` 收集 worker 的 warnings（哪些 override 没写进去）。导出**不因此
     中断**——用户要的成图已经出来了，但不能像以前那样把它们直接扔掉：
     「导出的图和画布上不一样」必须有个说法。
+
+    runtime 面板（ADR 0013）**永远由当次权威 worker 渲染**：没有磁盘原件可
+    嵌，也**绝不拿 materialized cache 的旧文件冒充最新结果**——worker 起不
+    来就让错误如实抛出（先重新运行，而不是拿旧图交差）。
     """
+    rel_id = str(o.get("id", ""))
+    if engine_runtimeasset.is_runtime_id(rel_id):
+        info = engine_runtimeasset.resolve(rel_id, current_registry())
+        if info is None:
+            abort(_runtime_asset_unknown(rel_id))
+        worker = engine_pool.get(info["script"], str(require_project()),
+                                 info["entry"])
+        stem = info["stem"]
+        tmp = worker.export_dir / f"{stem}.pdf"
+        resp = worker.export(stem, o.get("overrides") or [], str(tmp), "pdf", dpi)
+        if sink is not None:
+            for w in (resp.get("warnings") or []):
+                msg = f"{rel_id}: {w}"
+                if msg not in sink:
+                    sink.append(msg)
+        return tmp
     path = safe_resolve(o["id"])
     overrides = o.get("overrides") or []
     if overrides:
@@ -834,8 +855,19 @@ def api_package():
 
     panel_ids = sorted({o.get("fileId") for o in _doc_objects(doc)
                         if o.get("type") == "panel" and o.get("fileId")})
-    assets, missing_now, scripts = [], [], {}
+    assets, missing_now, scripts, runtime_assets = [], [], {}, []
     for rel_id in panel_ids:
+        # runtime 素材（ADR 0013）：包里带**描述符 + 源脚本**，不带 cache
+        # 副本——cache 是本机派生物不是原件，接收方跑一次脚本即可重建。
+        # 它没有磁盘文件这件事是设计而非缺失，绝不进 missing 清单。
+        if engine_runtimeasset.is_runtime_id(rel_id):
+            info = engine_runtimeasset.resolve(rel_id, current_registry())
+            entry = {"id": rel_id, "kind": "runtime"}
+            if info is not None:
+                entry.update(script=info["script"], stem=info["stem"])
+                scripts[info["script"]] = root / info["script"]
+            runtime_assets.append(entry)
+            continue
         p = (root / rel_id).resolve()
         entry = {"id": rel_id}
         if p.is_relative_to(root.resolve()) and p.is_file():
@@ -859,6 +891,8 @@ def api_package():
         "assets": assets,
         "missing_at_pack_time": missing_now,
         "scripts": sorted(scripts),
+        # 旧读取端不认识这个键会原样忽略（package/open 本来就不校验 kind）
+        "runtime_assets": runtime_assets,
     }
 
     out_dir = project_export_dir()
@@ -910,6 +944,10 @@ def api_package_open():
     missing, drifted = [], []
     for entry in manifest.get("assets", []):
         rel_id = entry.get("id", "")
+        # 老包里不会有 runtime 条目；防的是手改包/未来版本混入——runtime
+        # 素材没有磁盘文件是设计，不按缺失报
+        if engine_runtimeasset.is_runtime_id(rel_id):
+            continue
         p = (root / rel_id).resolve()
         if not (p.is_relative_to(root.resolve()) and p.is_file()):
             missing.append(rel_id)
@@ -1427,7 +1465,12 @@ def api_registry():
                            "registered": script in reg})
     return jsonify({"source": ctx.registry.source(), "scripts": reg,
                     "candidates": candidates,
-                    "conflicts": rep["conflicts"]})
+                    "conflicts": rep["conflicts"],
+                    # 项目内**全部**合理 .py（含 show-only 与基础设施脚本，
+                    # 各带稳定 reason code）：普通脚本不因静态分析解不出
+                    # 产物就从产品里消失，任意一条都可试运行。
+                    "all_scripts": engine_probe.script_inventory(
+                        ctx.path, registered=set(reg))})
 
 
 @app.post("/api/registry/scan")
@@ -1446,30 +1489,167 @@ def api_registry_scan():
                     "scripts": ctx.registry.entries()})
 
 
+# 在跑的试运行：同一 (项目, 脚本) 同时只允许一个（素材库与 RegistryDialog
+# 双入口并发点同一脚本时后端兜底）。value 是取消 Event——cancel 端点置位并
+# 硬杀 worker，probe 循环据此把失败归类为 execution_cancelled 且不再试下一个
+# entry。key 用 ctx.id（项目身份），与 SSE 的 pj 同一口径。
+_PROBES: dict[tuple[str, str], threading.Event] = {}
+_PROBES_LOCK = threading.Lock()
+
+
 @app.post("/api/registry/probe")
 def api_registry_probe():
     """试运行一个脚本，按**真实产出**的文件名登记 stem。
 
     静态解不出文件名的脚本（stem 来自数据目录 / 命令行）只有这条路。
     脚本跑得起来 = 能参数化，不用再让用户手改 JSON 猜自己该写什么。
-    同步阻塞：冷启动秒级到分钟级，前端逐个脚本调用即可看到进度。
+    同步阻塞：冷启动秒级到分钟级；取消走 POST /api/registry/probe/cancel
+    （置取消标志 + 硬杀该脚本的 worker 会话，本请求随即以
+    execution_cancelled 返回）。SSE `probe.started` 在执行真正开始前发出
+    （前端状态机的 starting_runtime → running 边界）。
+    """
+    ctx = current_ctx()
+    body = request.get_json(force=True)
+    raw = str(body.get("script") or "").strip()
+    # 只允许跑项目目录内的 .py：这个端点会真的执行代码，越权必须挡死。
+    # 三种拒绝各有稳定 code（前端按码换文案）；判据一律在 **realpath 之后**
+    # ——`..` 回溯、symlink/junction 指到项目外、项目外绝对路径都在 resolve
+    # 那一步现出原形，逐条模式匹配防不完。
+    if not raw:
+        return jsonify({"error": f"脚本不存在: {raw}",
+                        "code": "script_not_found",
+                        "params": {"script": raw}}), 404
+    root = ctx.path.resolve()
+    try:
+        target = (Path(raw) if Path(raw).is_absolute()
+                  else ctx.path / raw).resolve()
+    except OSError:
+        return jsonify({"error": f"脚本不存在: {raw}",
+                        "code": "script_not_found",
+                        "params": {"script": raw}}), 404
+    if not target.is_relative_to(root):
+        return jsonify({"error": f"脚本路径在项目目录之外: {raw}",
+                        "code": "script_path_outside_project",
+                        "params": {"script": raw}}), 400
+    if target.suffix.lower() != ".py" or target.is_dir():
+        return jsonify({"error": f"不是可试运行的 .py 脚本: {raw}",
+                        "code": "unsupported_script_type",
+                        "params": {"script": raw}}), 400
+    if not target.is_file():
+        return jsonify({"error": f"脚本不存在: {raw}",
+                        "code": "script_not_found",
+                        "params": {"script": raw}}), 404
+    # 注册表键 = 项目相对路径（POSIX）——与清单 / 静态起草同一种写法
+    script = target.relative_to(root).as_posix()
+    key = (ctx.id, script)
+    cancel_ev = threading.Event()
+    with _PROBES_LOCK:
+        if key in _PROBES:
+            return jsonify({"error": f"该脚本已有一次试运行在进行中: {script}",
+                            "code": "probe_in_progress",
+                            "params": {"script": script}}), 409
+        _PROBES[key] = cancel_ev
+    sse_publish("probe.started", {"pj": ctx.id, "script": script})
+    try:
+        result = engine_probe.probe_and_register(
+            ctx.path, script, cost=str(body.get("cost") or "medium"),
+            should_cancel=cancel_ev.is_set)
+    finally:
+        with _PROBES_LOCK:
+            _PROBES.pop(key, None)
+    if result.get("registered"):
+        reload_registry(ctx)
+        # 每张捕获图当场物化进 runtime cache（复制热 worker 已写好的预览
+        # SVG + 描述符——不触发第二次执行）。重开文档时的首帧占位靠它。
+        _materialize_runtime(script, result.get("entry") or "",
+                             result.get("descriptors") or [])
+        sse_publish("registry.changed", {"pj": ctx.id, "script": script,
+                                         "stems": result["stems"]})
+    return jsonify(result)
+
+
+@app.post("/api/registry/probe/cancel")
+def api_registry_probe_cancel():
+    """取消一个在跑的试运行：置取消标志并**当场硬杀**该脚本的 worker 会话。
+
+    「取消」必须真正终止工作（Session 5 反证 #3）：只置标志的话，阻塞在
+    build 里的慢脚本会一直跑到超时。`pool.force_cancel` 直接 kill 子进程，
+    阻塞中的 probe 请求随即拿到 EOF → execution_cancelled。幂等：没有在跑
+    的返回 `{cancelling: false}`——「取消」与「跑完」天然赛跑，输了不是错误
+    （跑完的照常登记，probe_and_register 的注释写明了这条语义）。
     """
     ctx = current_ctx()
     body = request.get_json(force=True)
     script = str(body.get("script") or "").strip()
-    target = (ctx.path / script).resolve() if script else ctx.path
-    # 只允许跑图库目录内的 .py：这个端点会真的执行代码，越权必须挡死
-    if (not script or target.suffix != ".py" or not target.is_file()
-            or not target.is_relative_to(ctx.path.resolve())):
-        return jsonify({"error": "脚本不存在或不在项目目录内",
-                        "code": "script_not_in_project"}), 404
-    result = engine_probe.probe_and_register(
-        ctx.path, script, cost=str(body.get("cost") or "medium"))
-    if result.get("registered"):
-        reload_registry(ctx)
-        sse_publish("registry.changed", {"pj": ctx.id, "script": script,
-                                         "stems": result["stems"]})
-    return jsonify(result)
+    with _PROBES_LOCK:
+        ev = _PROBES.get((ctx.id, script))
+    if ev is None:
+        return jsonify({"cancelling": False})
+    ev.set()                       # 先置标志再杀：probe 醒来时答案已经在了
+    engine_pool.force_cancel(script, str(ctx.path))
+    return jsonify({"cancelling": True})
+
+
+# ------------------------- Runtime Figure 素材（ADR 0013） -------------------
+@app.get("/api/runtime/assets")
+def api_runtime_assets():
+    """素材库「图」区的 RuntimeFigureAsset 清单（**只读，绝不执行脚本**）。
+
+    清单语义在 `runtimeasset.list_assets`（唯一实现）：注册表里磁盘无原件
+    的 (script, stem) 各成一条；有原件的是 FileAsset，归 /api/panels。
+    """
+    ctx = current_ctx()
+    return jsonify({"assets": engine_runtimeasset.list_assets(
+        ctx.path, ctx.registry,
+        worker_python=engine_pool.find_worker_python)})
+
+
+@app.post("/api/runtime/status")
+def api_runtime_status():
+    """一个 runtime 素材的 stale 状态与 cache 可用性。
+
+    请求体：`{id, source?}`。`source` 是文档里持久化的描述块（{script, stem,
+    …}），注册表条目已被删除时用它兜底——但 fail closed：重算出的 asset id
+    必须与请求的一致，对不上按未知处理（绝不把 override 套到猜出来的脚本）。
+    **这个端点只读磁盘与注册表，绝不执行脚本**（lazy 生命周期的看护点）。
+    """
+    ctx = current_ctx()
+    body = request.get_json(force=True)
+    rel_id = str(body.get("id") or "")
+    if not engine_runtimeasset.is_runtime_id(rel_id):
+        return jsonify({"error": f"不是 runtime 素材 id: {rel_id}",
+                        "code": "runtime_asset_unknown",
+                        "params": {"id": rel_id}}), 400
+    source = body.get("source") if isinstance(body.get("source"), dict) else None
+    status = engine_runtimeasset.stale_status(
+        ctx.path, rel_id, ctx.registry, source=source,
+        worker_python=engine_pool.find_worker_python)
+    if status["status"] is None:
+        return _runtime_asset_unknown(rel_id)
+    return jsonify({"id": rel_id, **status})
+
+
+@app.get("/api/runtime/preview")
+def api_runtime_preview():
+    """materialized cache 里的预览 SVG（重开文档的首帧占位）。
+
+    cache 是可删除可重建的派生物：404 只表示「还没物化 / 已被清理」，
+    前端据此显示占位并等 lazy build——不是错误路径，别当错误弹出来。
+    """
+    ctx = current_ctx()
+    rel_id = request.args.get("id", "")
+    if not engine_runtimeasset.is_runtime_id(rel_id):
+        return jsonify({"error": f"不是 runtime 素材 id: {rel_id}",
+                        "code": "runtime_asset_unknown",
+                        "params": {"id": rel_id}}), 400
+    path = engine_runtimeasset.preview_path(ctx.path, rel_id)
+    if path is None:
+        return jsonify({"error": "该运行时素材尚未物化预览（重新运行后生成）",
+                        "code": "runtime_cache_missing",
+                        "params": {"id": rel_id}}), 404
+    resp = send_file(path, mimetype="image/svg+xml")
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 @app.put("/api/registry")
@@ -1530,8 +1710,51 @@ def api_project_settings():
 
 
 # ------------------------- 参数化渲染引擎 ----------------------------------
+def _runtime_asset_unknown(rel_id: str):
+    """runtime fileId 在注册表里解析不到时的统一 404 响应体。"""
+    resp = jsonify({"error": f"运行时素材未登记（脚本注册表里找不到它）: {rel_id}",
+                    "code": "runtime_asset_unknown",
+                    "params": {"id": rel_id}})
+    resp.status_code = 404
+    return resp
+
+
+def _materialize_runtime(script: str, entry: str, descriptors: list) -> None:
+    """把一次成功 build 捕获的每张图物化进 runtime cache（失败只记日志）。
+
+    SVG 从热 worker 的 out 目录拿——build 阶段本来就写好了，这里只是复制，
+    **绝不触发第二次执行**（probe 的 execution-count 纪律，Session 3 约束）。
+    """
+    if not script or not entry:
+        return
+    try:
+        worker = engine_pool.get(script, str(require_project()), entry)
+    except engine_pool.WorkerError:
+        return
+    root = require_project()
+    for desc in descriptors or []:
+        if not isinstance(desc, dict):
+            continue
+        stem = desc.get("stem")
+        if not stem:
+            continue
+        engine_runtimeasset.materialize(root, desc, worker.svg_path(stem))
+
+
 def _engine_worker(rel_id: str):
-    """面板 id → (worker, stem)；非脚本面板 404。"""
+    """面板 id → (worker, stem)；非脚本面板 404。
+
+    runtime 素材（`runtime:` 前缀，ADR 0013）不经 safe_resolve——它没有磁盘
+    原件。解析走注册表正向重算（`runtimeasset.resolve`，不反解 id），解析
+    不到回 404 + 稳定 code。冷启动的 build 由后续的 override/export 惰性
+    触发（与磁盘面板同一 lazy 语义），这里不主动 build。
+    """
+    if engine_runtimeasset.is_runtime_id(rel_id):
+        info = engine_runtimeasset.resolve(rel_id, current_registry())
+        if info is None:
+            abort(_runtime_asset_unknown(rel_id))
+        return (engine_pool.get(info["script"], str(require_project()),
+                                info["entry"]), info["stem"])
     path = safe_resolve(rel_id)
     info = current_registry().for_stem(path.stem)
     if info is None:
@@ -1602,6 +1825,11 @@ def api_engine_render():
              "（冷启动）" if cold else "",
              json.dumps(timings, sort_keys=True))
     sse_publish("render.done", {"pj": pj, "id": rel_id, "rev": worker.rev})
+    if engine_runtimeasset.is_runtime_id(rel_id):
+        # 重开文档时的首帧占位从这里来：刷新 materialized cache 的预览与
+        # metadata（描述符取自本会话 build 响应，只复制文件、不二次执行）。
+        _materialize_runtime(info.get("script", ""), info.get("entry", ""),
+                             worker.last_build_descriptors)
     out = {
         "rev": worker.rev,
         "manifest": resp["manifest"],
@@ -1687,6 +1915,15 @@ def api_engine_update_source():
     annotations = [a for a in (body.get("annotations") or [])
                    if isinstance(a, dict)
                    and a.get("type") in ("text", "arrow", "shape")]
+    if engine_runtimeasset.is_runtime_id(rel_id):
+        # runtime 素材没有可写回的原件——后端**硬拒绝**，不是藏按钮
+        # （ADR 0013 §7；code 与 runtimeasset.writeback_rejection 对拍看护）。
+        # savefig 来源且磁盘上确有产物的那些，写回走它的 FileAsset 身份，
+        # 那条路的事务防线一条不少。
+        return jsonify({"error": "运行时素材没有原始图文件，无法写回"
+                                 "（磁盘上有同名产物时请从素材库的那一份写回）",
+                        "code": "runtime_asset_has_no_original_artifact",
+                        "params": {"id": rel_id}}), 400
     src = safe_resolve(rel_id)
     if annotations and not src.with_suffix(".pdf").exists():
         return jsonify({"error": "该素材只有位图、没有矢量 PDF，"
@@ -2384,6 +2621,11 @@ def api_engine_history_restore():
     if err := _write_back_forbidden():
         return err
     body = request.get_json(force=True)
+    if engine_runtimeasset.is_runtime_id(str(body.get("id", ""))):
+        # 版本恢复写的是磁盘原件——runtime 素材没有原件，同一条硬拒绝
+        return jsonify({"error": "运行时素材没有原始图文件，无法恢复写回",
+                        "code": "runtime_asset_has_no_original_artifact",
+                        "params": {"id": body.get("id", "")}}), 400
     worker, stem = _engine_worker(body.get("id", ""))
     n = int(body.get("n", -1))
     versions = load_baked().get(stem, {}).get("versions") or []
@@ -3174,6 +3416,9 @@ def main():
     ap.add_argument("--no-browser", action="store_true")
     ap.add_argument("--open-stem", default=None,
                     help="启动后在界面里定位这个面板（stem）；由 `tavotto open` 传入")
+    ap.add_argument("--open-pick", default=None,
+                    help="启动后打开这个脚本的 Figure 选择器（多图交接）；"
+                         "由 `tavotto open` 传入")
     ap.add_argument("--desktop-sidecar", action="store_true",
                     help="作为 Tavotto 桌面应用的后端运行：127.0.0.1 动态端口 + "
                          "桌面认证 + 父进程跟随退出（由桌面壳启动，不建议手动使用）")
@@ -3194,6 +3439,9 @@ def main():
     # 引擎会话缓存同理：get() 里的触发点只在新建会话时走，长开不新建的实例靠这次
     threading.Thread(target=engine_pool.prune_engine_cache, daemon=True,
                      name="mm-engine-cache-prune").start()
+    # runtime 素材的 materialized cache（可删除可重建的派生物）同一治理
+    threading.Thread(target=engine_runtimeasset.prune_cache, daemon=True,
+                     name="mm-runtime-cache-prune").start()
     # 上个进程留下的 running AI 会话一律标为已中断（绝不显示为空/unknown）
     n = engine_ai_history.mark_interrupted_running()
     if n:
@@ -3235,7 +3483,8 @@ def main():
     # 落地地址的形状（含 `?open=<stem>`）只有 handoff.browser_url 一个出处：
     # 前端 lib/openRequest.ts 认的就是它，两边别各写一份。
     def landing(p: int) -> str:
-        return engine_handoff.browser_url(p, engine_handoff.Target("", args.open_stem))
+        return engine_handoff.browser_url(
+            p, engine_handoff.Target("", args.open_stem, args.open_pick))
 
     insecure = (args.insecure_no_auth
                 or os.environ.get("TAVOTTO_INSECURE_NO_AUTH") == "1")

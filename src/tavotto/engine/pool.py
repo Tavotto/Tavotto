@@ -19,7 +19,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import config, patchspec, runtime
+from . import config, execspec, patchspec, runtime
 
 LOG = logging.getLogger("tavotto.engine")
 
@@ -556,6 +556,10 @@ class EngineWorker:
         self.last_patch_hash_by_stem: dict[str, str] = {}
         self.lock = threading.Lock()
         self.built = False
+        #: 最近一次 build 响应里的 CapturedFigureDescriptor payload 列表。
+        #: RuntimeFigureAsset 的 cache 物化从这里取（app 层复制预览文件 +
+        #: 描述符即可），**不必为拿描述符再跑一次脚本**。
+        self.last_build_descriptors: list = []
         self.last_used = time.time()
         self._log = open(self.log_path, "ab", buffering=0)
         python, self.python_source = select_worker_python()
@@ -568,15 +572,20 @@ class EngineWorker:
         # `-B`：内置 runtime 装在安装目录里（可能是 Program Files），
         # 一个 .pyc 都不往那儿写。.pyc 已在构建期编好随包发出，`-B` 只禁写不禁读。
         args = runtime.child_args() if bundled else []
+        # 执行语义收进唯一模型（ADR 0014 §0）：argv 由 `execspec.worker_argv`
+        # 独家产出，workerd 的 spawn 规格吃的是同一份（同源看护在
+        # `test_workerd_pool.py`）。`spec.env` 只存**增量**（序列化形态）；
+        # Python 池的 Popen 仍用全量 `child_env()`（含摘除敌意变量），
+        # 那是本控制面的机制细节，不属于执行语义。
+        self.spec = execspec.safe_spec(
+            script_name, str(figures_dir), entry, interpreter=python,
+            sandbox=str(self.sandbox),
+            env=runtime.child_env(base={}) if bundled else None)
         LOG.info("worker 启动: %s（entry=%s，解释器来源=%s）",
                  script_name, entry, self.python_source)
         self.proc = subprocess.Popen(
-            [python, *args, str(WORKER_PY),
-             "--script", str(Path(figures_dir) / script_name),
-             "--figures-dir", figures_dir,
-             "--out-dir", str(self.out_dir),
-             "--sandbox", str(self.sandbox),
-             "--entry", entry],
+            execspec.worker_argv(self.spec, worker_py=WORKER_PY,
+                                 out_dir=self.out_dir, runtime_args=args),
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self._log,
             env=env,
             text=True, bufsize=1,
@@ -795,6 +804,7 @@ class EngineWorker:
         # build 要跑用户整个脚本（heavy 的分钟级），给最宽的一档
         resp = self.request({"cmd": "build"}, BUILD_TIMEOUT)
         self.built = True
+        self.last_build_descriptors = list(resp.get("descriptors") or [])
         self.last_patch_hash = _EMPTY_PATCH_HASH
         self.last_patch_hash_by_stem.clear()      # 每个 stem 都回到脚本原样
         return resp
@@ -966,25 +976,26 @@ def _spawn_spec(script_name: str, figures_dir: str, entry: str, out_dir: Path,
                 extra_env: dict | None = None) -> dict:
     """交给 workerd 的**完整** spawn 规格。
 
-    与 `EngineWorker.__init__` 里那串 Popen 参数严格同源。刻意不去重构成共享
-    helper：Python 池那条路径这次一行都不动是前提，多这几行远比让两条路径共享
-    一个会被同时改到的函数安全。
+    与 `EngineWorker.__init__` 严格同源：两条路径的 argv 都由
+    `execspec.worker_argv` 独家产出（ADR 0014 §0——2026-08-25 之前这里是
+    第二份手拼的命令行，同源只靠人肉），`test_workerd_pool.py` 的对拍用例
+    继续钉着「交给 workerd 的 argv == Python 池自己 Popen 的」。
     """
     bundled = source == SOURCE_BUNDLED
     args = runtime.child_args() if bundled else []
+    spec = execspec.safe_spec(
+        script_name, str(figures_dir), entry, interpreter=python,
+        sandbox=str(sandbox),
+        env=runtime.child_env(base={}) if bundled else None)
     # 只给**增量**：workerd 继承的本来就是 Flask 自己的环境，整份传过去没有意义
-    env = runtime.child_env(base={}) if bundled else {}
+    env = dict(spec.env or {})
     if extra_env:
         # env 参与 workerd 的 spec 哈希（`SpawnSpec::hash`），所以一个一次性
         # 的 salt 就足以拿到一条**必然独立**的会话，绕开「同规格复用 + 引用计数」。
         env = {**env, **extra_env}
     return {
-        "argv": [python, *args, str(WORKER_PY),
-                 "--script", str(Path(figures_dir) / script_name),
-                 "--figures-dir", figures_dir,
-                 "--out-dir", str(out_dir),
-                 "--sandbox", str(sandbox),
-                 "--entry", entry],
+        "argv": execspec.worker_argv(spec, worker_py=WORKER_PY,
+                                     out_dir=out_dir, runtime_args=args),
         "env": env,
         "log_path": str(log_path),
         "handshake_timeout_ms": int(HANDSHAKE_TIMEOUT * 1000),
@@ -1054,6 +1065,7 @@ class WorkerdWorker:
         # 「一个慢请求占死整条会话」重新绑回来。
         self.lock = threading.Lock()
         self.built = False
+        self.last_build_descriptors: list = []
         self.last_used = time.time()
         self._dead = False
         self._client = client or workerd_client.client()
@@ -1061,6 +1073,14 @@ class WorkerdWorker:
             raise WorkerdUnavailable("workerd 不可用")
         python, self.python_source = select_worker_python()
         self.python = python
+        # 与 EngineWorker 同形：两条控制面都持一份 ExecutionSpec（唯一权威
+        # 构造函数 `execspec.safe_spec`；argv 由 `_spec()` → `_spawn_spec`
+        # 按同一份 spec 语义产出）。
+        self.spec = execspec.safe_spec(
+            script_name, str(figures_dir), entry, interpreter=python,
+            sandbox=str(self.sandbox),
+            env=(runtime.child_env(base={})
+                 if self.python_source == SOURCE_BUNDLED else None))
         self._session_id = ""
         self._open()
 
@@ -1097,6 +1117,7 @@ class WorkerdWorker:
             raise self._to_worker_error(exc) from exc
         self._session_id = resp.get("session_id", "")
         self.built = False
+        self.last_build_descriptors = []
 
     def _log_tail(self, n: int = 30) -> str:
         try:
@@ -1172,6 +1193,7 @@ class WorkerdWorker:
     def ensure_built(self) -> dict:
         resp = self._call("build", BUILD_TIMEOUT)
         self.built = True
+        self.last_build_descriptors = list(resp.get("descriptors") or [])
         self.last_patch_hash = _EMPTY_PATCH_HASH
         self.last_patch_hash_by_stem.clear()      # 每个 stem 都回到脚本原样
         return resp
@@ -1516,6 +1538,26 @@ def invalidate(script_name: str, figures_dir: str | None = None) -> None:
         victims = [_workers.pop(k) for k in keys]
     for w in victims:
         threading.Thread(target=w.shutdown, daemon=True).start()
+
+
+def force_cancel(script_name: str, figures_dir: str) -> bool:
+    """当场硬杀该脚本的在跑会话（探测取消的机制面）；返回是否真的杀了。
+
+    与 `invalidate` 的差别：invalidate 的 shutdown 是优雅关停，要抢
+    `w.lock`——被一个正在 build 的慢脚本占着时要等到超时才走到 kill，
+    「取消」等于没取消。这里直接 `force_kill()`（两条控制面都有：Python
+    池是 `proc.kill()`，workerd 是当场关会话），被阻塞在 `request()` 里的
+    调用方立刻收到 EOF → WorkerError；worker 先从表里摘掉，别的线程不会
+    再复用一个正在死的会话。
+    """
+    key = (_norm_dir(figures_dir), script_name)
+    with _lock:
+        w = _workers.pop(key, None)
+    if w is None:
+        return False
+    LOG.info("强制取消 worker 会话: %s", script_name)
+    w.force_kill()
+    return True
 
 
 def shutdown_all(figures_dir: str | None = None, wait: bool = False) -> None:

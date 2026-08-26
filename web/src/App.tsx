@@ -7,6 +7,7 @@ import { ExportDialog } from '@/components/ExportDialog'
 import { Inspector } from '@/components/inspector/Inspector'
 import { LayoutDialog } from '@/components/LayoutDialog'
 import { CommandPalette } from '@/components/CommandPalette'
+import { FigurePickerDialog } from '@/components/FigurePickerDialog'
 import { RegistryDialog } from '@/components/RegistryDialog'
 import { RelinkDialog } from '@/components/RelinkDialog'
 import { SettingsDialog } from '@/components/SettingsDialog'
@@ -170,6 +171,7 @@ function Workspace() {
         <LayoutDialog />
         <StyleDialog />
         <RegistryDialog />
+        <FigurePickerDialog />
       <RelinkDialog />
         <TelemetryConsentDialog />
         <CommandPalette />
@@ -206,7 +208,7 @@ function useHandoff() {
     let unlisten: (() => void) | undefined
     let disposed = false
     void onDesktopOpen((p) => {
-      void applyOpenRequest({ project: p.project, stem: p.stem })
+      void applyOpenRequest({ project: p.project, stem: p.stem, pick: p.pick })
     }).then((u) => {
       if (disposed) u()
       else unlisten = u

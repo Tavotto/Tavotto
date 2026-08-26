@@ -7,6 +7,9 @@ import { useDocumentStore } from '@/store/documentStore'
 import { useEnvStore } from '@/store/envStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useRenderStore } from '@/store/renderStore'
+import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
+import { useScriptLibraryStore } from '@/store/scriptLibraryStore'
+import { useScriptRunStore } from '@/store/scriptRunStore'
 import { useUiStore } from '@/store/uiStore'
 
 const short = (id: string) => id.split('/').pop()?.replace(/\.[^.]+$/, '') ?? id
@@ -70,18 +73,45 @@ function handleEvent(ev: ServerEvent) {
 
     case 'panel.file_changed': {
       const stems = new Set(ev.stems ?? [])
-      // stems 是脚本产出的面板名，映射回文档里用到的文件 id
+      // stems 是脚本产出的面板名，映射回文档里用到的文件 id。
+      // runtime 面板按持久化描述块的 stem 认领（id 是不透明标识，不反解）
       const affected = useDocumentStore
         .getState()
-        .doc.objects.filter((o) => o.type === 'panel' && stems.has(stemOf(o.fileId)))
+        .doc.objects.filter(
+          (o) =>
+            o.type === 'panel' &&
+            (o.fileKind === 'runtime'
+              ? o.source != null && stems.has(o.source.stem)
+              : stems.has(stemOf(o.fileId))),
+        )
         .map((o) => (o as { fileId: string }).fileId)
       // 转入引擎跟踪 → useEngineSync 立刻按当前 overrides 冷重建，
-      // 用户不需要再进编辑态就能在画布上看到新脚本的效果
+      // 用户不需要再进编辑态就能在画布上看到新脚本的效果。
+      // runtime 面板：本会话跑过的与文件面板同一待遇（热重建）；只在
+      // 重开文档、还没跑过的那些上 lazy 纪律才生效（renderTargets 的门）。
+      // stale 判定一并作废，下次查询按新脚本重新判
       render.markStale([...new Set(affected)])
+      useRuntimeAssetStore.getState().invalidate([...new Set(affected)])
       useAssetStore.getState().load()
       if (affected.length) {
         setStatus(msg('status.scriptChanged', { count: affected.length }, 'workspace'))
       }
+      break
+    }
+
+    case 'probe.started':
+      // 「运行并发现图」的执行确认：starting_runtime → running
+      useScriptRunStore.getState().markRunning(ev.script)
+      break
+
+    case 'registry.changed': {
+      // 注册表变了（本标签页 probe 成功 / 另一标签页登记 / 手工裁决）：
+      // 脚本清单与 runtime 素材清单都要重取——但只重取**已经取过的**，
+      // 没打开过素材面板的标签页不必为别人的登记发请求
+      const lib = useScriptLibraryStore.getState()
+      if (lib.loaded) void lib.load()
+      const runtime = useRuntimeAssetStore.getState()
+      if (runtime.assets !== null) void runtime.loadAssets()
       break
     }
 

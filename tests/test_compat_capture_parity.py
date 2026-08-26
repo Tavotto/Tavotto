@@ -433,6 +433,176 @@ def main():
         assert desktop == browser == ["entry_only"]
 
 
+class TestDescriptorParity:
+    """CapturedFigureDescriptor：worker 与 browser 必须给出**同一份描述**。
+
+    描述符（asset id / 捕获来源 / 尺寸 / fingerprint / 写回能力）是 Session 2
+    引入的统一捕获语义（figcapture 唯一实现）。两边各自装配，装配的语义分叉
+    就是「同一个脚本、两个入口、两份答案」在元数据层的重演——所以逐字段对拍，
+    不是只比 stem。
+    """
+
+    def test_show_only_descriptors_are_identical_on_both_sides(self, tmp_path):
+        figs = tmp_path / "figs"
+        write(figs, "show_only.py", SHOW_ONLY)
+        desktop = desktop_build(figs, "show_only.py")["descriptors"]
+        browser = browser_load(SHOW_ONLY, "show_only.py",
+                               tmp_path / "ws")["descriptors"]
+        assert desktop == browser
+        assert len(desktop) == 1
+        d = desktop[0]
+        assert d["asset_id"] == "runtime:show_only.py#show_only"
+        assert d["capture_source"] == "pyplot"
+        assert d["execution_profile"] == "safe"
+        assert d["original_artifact"] is None
+        assert d["can_writeback_artifact"] is False
+        assert d["source_fingerprint"].startswith("sha256:")
+
+    def test_multi_figure_descriptor_order_is_stable_and_identical(self, tmp_path):
+        """多 Figure 的描述符按**捕获顺序**排列，两侧一致且跨次稳定。"""
+        figs = tmp_path / "figs"
+        write(figs, "multi.py", MULTI_NO_SAVEFIG)
+        desktop = desktop_build(figs, "multi.py")["descriptors"]
+        again = desktop_build(figs, "multi.py")["descriptors"]
+        browser = browser_load(MULTI_NO_SAVEFIG, "multi.py",
+                               tmp_path / "ws")["descriptors"]
+        assert [d["stem"] for d in desktop] == ["multi", "multi-2", "multi-3"]
+        assert desktop == again == browser
+
+    def test_crlf_checkout_matches_the_editor_source(self, tmp_path):
+        """磁盘 CRLF（Windows 检出）vs 编辑器 LF：同一份逻辑源码 = 同一份描述符。
+
+        worker 侧 `read_bytes` 拿 CRLF，browser 侧拿 `str`（LF）——CI #444 的
+        Windows 腿在这里分叉过。这条在任何平台都显式写 CRLF 字节复现它，
+        不再依赖 Windows 文本模式检出才触发。"""
+        figs = tmp_path / "figs"
+        figs.mkdir(parents=True, exist_ok=True)
+        crlf = SHOW_ONLY.replace("\n", "\r\n").encode("utf-8")
+        assert b"\r\n" in crlf
+        (figs / "show_only.py").write_bytes(crlf)
+        desktop = desktop_build(figs, "show_only.py")["descriptors"]
+        browser = browser_load(SHOW_ONLY, "show_only.py",
+                               tmp_path / "ws")["descriptors"]
+        assert desktop == browser
+
+    def test_savefig_descriptor_without_an_artifact_on_disk(self, tmp_path):
+        figs = tmp_path / "figs"
+        write(figs, "only_one.py", OO_NO_PYPLOT)
+        (d,) = desktop_build(figs, "only_one.py")["descriptors"]
+        assert d["capture_source"] == "savefig"
+        assert d["original_artifact"] is None
+        assert d["can_writeback_artifact"] is False
+
+    def test_savefig_descriptor_with_the_artifact_on_disk(self, tmp_path):
+        """用户自己跑过脚本、磁盘上有原件时，写回能力如实为 True。"""
+        figs = tmp_path / "figs"
+        write(figs, "only_one.py", OO_NO_PYPLOT)
+        (figs / "only_one.pdf").write_bytes(b"%PDF-1.4 fake")
+        (d,) = desktop_build(figs, "only_one.py")["descriptors"]
+        assert d["capture_source"] == "savefig"
+        assert d["original_artifact"] == "only_one.pdf"
+        assert d["can_writeback_artifact"] is True
+
+    def test_a_coincidental_file_does_not_make_a_pyplot_figure_writable(
+            self, tmp_path):
+        """**writeback 能力不由前端猜，也不由磁盘巧合决定。**
+
+        show-only 脚本从没存过盘；磁盘上碰巧躺着同 stem 的 PDF 时，那份文件
+        不是这张图写的——把它当写回目标就是覆盖一个不相干的文件。把 pyplot
+        来源错标成 savefig，这条必须当场红（负向反证 #3 的看护对象）。
+        """
+        figs = tmp_path / "figs"
+        write(figs, "show_only.py", SHOW_ONLY)
+        (figs / "show_only.pdf").write_bytes(b"%PDF-1.4 unrelated")
+        (d,) = desktop_build(figs, "show_only.py")["descriptors"]
+        assert d["capture_source"] == "pyplot"
+        assert d["original_artifact"] is None
+        assert d["can_writeback_artifact"] is False
+
+    def test_asset_id_and_fingerprint_are_stable_across_project_paths(
+            self, tmp_path):
+        """同一份脚本放在两个不同的绝对路径下，描述符必须逐字节相同。
+
+        asset id / fingerprint 一旦混入项目绝对路径，换台机器（或换个挂载点）
+        重开项目，override 就挂错身份（负向反证 #1 的看护对象）。
+        """
+        a = tmp_path / "somewhere" / "figs"
+        b = tmp_path / "elsewhere" / "deeper" / "figs"
+        write(a, "show_only.py", SHOW_ONLY)
+        write(b, "show_only.py", SHOW_ONLY)
+        assert desktop_build(a, "show_only.py")["descriptors"] == \
+            desktop_build(b, "show_only.py")["descriptors"]
+
+    def test_the_legacy_envelope_is_untouched(self, tmp_path):
+        """legacy 信封（无 protocol_version）的 build 响应**一字不改**：
+        没有 descriptors，也没有别的新键——手工调试与旧调用方靠这个形状。"""
+        figs = tmp_path / "figs"
+        write(figs, "show_only.py", SHOW_ONLY)
+        out = tmp_path / "out"
+        proc = subprocess.run(
+            [WORKER_PY, str(ENGINE_DIR / "worker.py"),
+             "--script", str(figs / "show_only.py"),
+             "--figures-dir", str(figs),
+             "--out-dir", str(out), "--sandbox", str(tmp_path / "box"),
+             "--entry", "__main__"],
+            input='{"cmd": "build"}\n', capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=300)
+        assert proc.returncode == 0, proc.stderr[-2000:]
+        resp = json.loads(proc.stdout.strip().splitlines()[-1])
+        assert resp["ok"] is True
+        assert set(resp) == {"ok", "stems"}, resp
+        assert "descriptors" not in resp
+
+
+class TestProbeReturnsDescriptors:
+    """probe 成功后调用方就该拿到完整的捕获描述，并能直接复用热会话。"""
+
+    def test_probe_carries_capture_source_and_size(self, tmp_path):
+        from tavotto.engine import pool as engine_pool
+        from tavotto.engine import probe as engine_probe
+
+        figs = tmp_path / "figs"
+        write(figs, "show_only.py", SHOW_ONLY)
+        try:
+            result = engine_probe.probe(figs, "show_only.py")
+            assert result["error"] is None, result
+            assert result["stems"] == ["show_only"]
+            (d,) = result["descriptors"]
+            # 不会丢 capture source / size：调用方从这里就知道这张图没有
+            # 原件、不必再猜 stem 和来源。
+            assert d["capture_source"] == "pyplot"
+            assert len(d["size_mm"]) == 2 and all(v > 0 for v in d["size_mm"])
+            assert d["asset_id"] == "runtime:show_only.py#show_only"
+            assert d["entry"] == result["entry"]
+            # 成功路径不 invalidate：build 好的热会话留在池里直接复用。
+            w = engine_pool.get("show_only.py", str(figs), result["entry"])
+            assert w.built is True
+        finally:
+            engine_pool.shutdown_all(str(figs), wait=True)
+
+    def test_probe_and_register_passes_descriptors_through(self, tmp_path):
+        from tavotto.engine import pool as engine_pool
+        from tavotto.engine import probe as engine_probe
+
+        figs = tmp_path / "figs"
+        write(figs, "show_only.py", SHOW_ONLY)
+        try:
+            result = engine_probe.probe_and_register(figs, "show_only.py")
+            assert result["registered"] is True
+            assert [d["stem"] for d in result["descriptors"]] == ["show_only"]
+        finally:
+            engine_pool.shutdown_all(str(figs), wait=True)
+
+    def test_probe_failure_keeps_the_shape(self, tmp_path):
+        from tavotto.engine import probe as engine_probe
+
+        figs = tmp_path / "figs"
+        figs.mkdir(parents=True)
+        result = engine_probe.probe(figs, "missing.py")
+        assert result["stems"] == [] and result["descriptors"] == []
+        assert result["error"]
+
+
 class TestAbsolutizedRelativeRead:
     """**把相对路径解成绝对再 open 的库，同样要救得回来。**
 

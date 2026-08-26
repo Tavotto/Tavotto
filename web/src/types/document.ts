@@ -70,15 +70,42 @@ export interface CropRect {
 /** 面板旋转只做 90° 步进：PyMuPDF 合成时非 90 倍数不填满目标矩形，语义对不上。 */
 export type PanelRotation = 0 | 90 | 180 | 270
 
+/**
+ * 面板素材的形态（AssetSource，ADR 0013）：
+ *   pdf / raster —— FileAsset：磁盘文件（矢量 / 位图）
+ *   runtime      —— RuntimeFigureAsset：一次受控执行捕获的 Figure，
+ *                   fileId 是 `runtime:` 前缀的不透明稳定 id，磁盘上
+ *                   **没有**（或不依赖）原始产物
+ * 未来新增的取值对旧构建是未知形态：消费方一律经 panelKind() 判别并对
+ * unknown fail closed（当缺失素材显示，绝不猜成文件路径）。
+ */
+export type PanelFileKind = 'pdf' | 'raster' | 'runtime'
+
+/**
+ * RuntimeFigureAsset 的持久化描述块（CapturedFigureDescriptor 的子集，
+ * ADR 0013 §3）。它是**恢复线索**而不是权威：渲染时后端仍以注册表为准，
+ * 注册表条目丢失时才用它兜底（且 fail closed：重算 id 必须与 fileId 一致）。
+ */
+export interface RuntimePanelSource {
+  script: string
+  entry: string
+  stem: string
+  captureSource: 'savefig' | 'pyplot'
+  fingerprint: string
+  sizeMm: [number, number]
+}
+
 export interface PanelObject extends ObjectBase {
   type: 'panel'
   fileId: string
-  fileKind: 'pdf' | 'raster'
+  fileKind: PanelFileKind
   nativeW: number
   nativeH: number
   pxW?: number
   script?: string | null
   cost?: string
+  /** 仅 fileKind === 'runtime'：捕获来源的持久化描述（见 RuntimePanelSource） */
+  source?: RuntimePanelSource
   overrides: PanelOverride[]
   /**
    * 锁定的图内元素 gid：画布命中测试跳过它们，避免误选误拖。
@@ -177,6 +204,21 @@ export interface ShapeObject extends ObjectBase {
   fillOpacity?: number
   dash?: DashStyle
 }
+
+/**
+ * 面板素材形态的唯一判别器。未知取值（更新的文档 schema 里的新形态）回
+ * 'unknown'——消费方必须 fail closed：按缺失素材显示 / 跳过文件请求，
+ * **绝不**把它当成相对路径去猜文件（那会显示出另一个面板的图）。
+ */
+export function panelKind(o: Pick<PanelObject, 'fileKind'>): PanelFileKind | 'unknown' {
+  return o.fileKind === 'pdf' || o.fileKind === 'raster' || o.fileKind === 'runtime'
+    ? o.fileKind
+    : 'unknown'
+}
+
+/** RuntimeFigureAsset 面板（磁盘上没有原件；写回入口整个不出现） */
+export const isRuntimePanel = (o: Pick<PanelObject, 'fileKind'>): boolean =>
+  o.fileKind === 'runtime'
 
 /** 新旧箭头端型统一读取：旧 head 字段映射为三角头 */
 export function arrowHeads(o: ArrowObject): { start: ArrowHeadType; end: ArrowHeadType } {

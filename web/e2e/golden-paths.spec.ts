@@ -101,10 +101,13 @@ test('注册表为空时，界面给得出「扫描 / 试运行」而不是让�
   await page.getByRole('button', { name: /当前项目/ }).click()
   await page.getByRole('menuitem', { name: '脚本注册表…' }).click()
 
-  await expect(page.getByRole('dialog', { name: '脚本注册表' })).toBeVisible()
-  await expect(page.getByText('render_map.py')).toBeVisible()
+  // 断言收在对话框里：素材库脚本区现在也合法列出 render_map.py（Session 5），
+  // 全页 getByText 会歧义（strict mode 三处命中）——这里测的对象是注册表。
+  const registry = page.getByRole('dialog', { name: '脚本注册表' })
+  await expect(registry).toBeVisible()
+  await expect(registry.getByText('render_map.py').first()).toBeVisible()
   // 静态解不出文件名的脚本，必须提供「试运行并登记」这条路
-  await expect(page.getByRole('button', { name: /试运行并登记/ })).toBeVisible()
+  await expect(registry.getByRole('button', { name: /试运行并登记/ })).toBeVisible()
 })
 
 test('没装 Python 时给出引导，而不是闪退', async ({ app, page }) => {

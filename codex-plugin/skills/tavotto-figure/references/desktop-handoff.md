@@ -39,6 +39,14 @@ python3 scripts/handoff.py <脚本路径>
   `retryable: true`，可以重试一次；再超时就把 `log_path` 给用户。
 * 顺便留意 `conflicts`（两个脚本抢同一个 stem）和 `dynamic_names`（某些脚本的产出名
   静态解不出）——只报告不自动裁决，需要时告诉用户。
+* **`.py` 目标会按需安全试运行**（2026-08-26 起）：静态解不出产出的脚本，
+  Tavotto 会在隔离沙盒里跑一次并把捕获的图登记成运行时素材（写入隔离、
+  只在这一次显式命令下运行）。多张图时成功输出带 `figures`（全部列出）
+  与 `pick`（界面会弹 Figure 选择器）；`--no-launch` 下想指定哪张用
+  `--stem <名字>`，`multiple_figures_found` 的 extra 里有可选列表。
+  `"error_code": "native_run_required"` = 项目依赖它自己的 Python 环境
+  （extra 带缺的 `module`）——引导用户在 Tavotto 设置里选择装了依赖的
+  渲染环境，别自己反复重试。
 * `"update"` —— 插件自己有新版本时才出现（每 24 小时最多查一次）。按
   `references/first-run-and-recovery.md` 的「插件有新版本」一节处理：收尾提醒
   一次，不阻塞、不自动升级。

@@ -122,6 +122,23 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
     `missing_file` 才是对的。桌面的 `entry` 机制同样是超集（浏览器按
     `python figure.py` 跑，只有 `def main():` 而没人调用的脚本在原生 Python
     下也不画图）——这两条差异是**记录在案的**，不是疏漏。
+- **统一执行描述与捕获描述符（2026-08-25，ADR 0013/0014）**：
+  * 「跑一个脚本」的语义收在 `engine/execspec.py`：safe 档默认值唯一出处
+    `safe_spec()`，worker 子进程 argv 唯一出处 `worker_argv()`——
+    `EngineWorker.__init__` 与 `_spawn_spec()` 都是它的消费者
+    （`test_workerd_pool.py` 对拍 + `test_execspec.py` golden 看护）。
+    新入口不得再手拼 entry/cwd/argv。`spec.env` 只存**注入增量**，
+    序列化绝不携带整份父进程环境。
+  * 每张捕获 Figure 的结构化描述（`CapturedFigureDescriptor`）唯一实现在
+    `figcapture`：asset id `runtime:<script>#<stem>`（不透明标识，entry
+    刻意不进 id）、`source_fingerprint`（只是 stale hint，别声称覆盖数据
+    依赖）、writeback 能力**只能派生不能指定**（pyplot 捕获结构上拿不到
+    原件）。worker v1 build 响应与 browser load 响应各带一份 `descriptors`
+    （加字段不升版；legacy 信封零改动），probe 原样透传——worker/browser
+    的逐字段对拍在 `test_compat_capture_parity.py`。
+  * 「什么算一份图产物」唯一出处 `figcapture.ARTIFACT_EXTS`
+    （`discover.OUT_EXTS` / `handoff.OUT_EXTS` 是镜像别名）；「stem 的原始
+    产物在哪」唯一判据 `figcapture.find_original_artifact`。
 - **worker 协议 v1（2026-08-18）**：请求带 `protocol_version/request_id/
   worker_generation/render_revision/canonical_patch_hash` 信封，命令
   ping/build/render/render_png/preview_png/export/cancel/shutdown，
@@ -352,6 +369,90 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   静态仍解不出的报 `dynamic_names`，交给这条路；**绝不猜，也绝不静默跳过**
   （静默跳过 = 用户拿到空注册表却不知道为什么）。
   界面入口：顶栏项目菜单 / 设置 →「脚本注册表」（扫描 / 试运行 / 手工裁决）。
+  * **任意项目内 `.py` 都可主动 probe（2026-08-26，Compatibility Bridge
+    Session 3）**：`probe.script_inventory()` 是「项目里有哪些 .py、各自
+    什么状态」的唯一清单（稳定 reason code：registered / static_candidate /
+    dynamic_stems / no_static_output / infrastructure / unparseable），
+    walk 规则复用 `discover._iter_py`（同一个实现的两个视图）——**发现维
+    放宽只影响「列给用户挑」，自动静态起草的候选口径（`iter_scripts` +
+    SAVE_FUNCS）一字不变**。`/api/registry/probe` 的路径校验一律在 realpath
+    之后（`..` 回溯 / symlink 逃逸 / 项目外绝对路径 / 目录 / 非 .py 各有
+    稳定 code），解释器仍走 pool 的 runtime selection，前端指定不了。
+  * **probe 错误是结构化的**（`probe.ERROR_*` 稳定码表：script_not_found /
+    script_path_outside_project / unsupported_script_type /
+    script_probe_failed / script_no_figure / missing_dependency /
+    execution_timeout / execution_cancelled / invalid_entry /
+    multiple_stem_conflict）：主文案按 code 由前端换语言，traceback 只进
+    诊断详情。**失败不写注册表**；产出 stem 已被另一份**仍在磁盘上的**脚本
+    登记时报 `multiple_stem_conflict` 而不是静默抢走（裁决走 PUT
+    /api/registry 的手工路——那才是用户显式指认；归属脚本已不存在的死条目
+    照旧顺畅重登记）。
+  * **probe 可取消、同脚本互斥（2026-08-26，Session 5）**：app 层
+    `_PROBES` 按 (项目 id, script) 登记在跑的试运行（第二个请求 409
+    `probe_in_progress`）；`POST /api/registry/probe/cancel` 置取消
+    Event 并 `pool.force_cancel`（**当场 kill**，不走优雅关停——shutdown
+    要抢被 build 占着的 `w.lock`，等到超时的取消不叫取消）。
+    `probe(should_cancel=...)` 一旦判取消**不再尝试下一个 entry**，被杀
+    worker 的失败如实归类 `execution_cancelled`（不报「脚本坏了」）；
+    取消输给成功——脚本在取消前跑完就照常登记。SSE `probe.started` 在
+    执行开始前发出（前端状态机 starting_runtime → running 的边界）。
+    看护 `tests/test_asset_library.py`（cancel sentinel：30s 内返回 +
+    会话从池里消失 + 注册表零改动）。
+  * **entry 候选静态化**（`discover.probe_entry_candidates`，绘图宽口径
+    `PLOT_FUNCS` 只喂它，不进起草）：main/render 零参可调才试、裸顶层绘图
+    直接 `__main__`、自定义零参绘图函数上限 4 个——盲试不存在的 entry 也要
+    把顶层跑一遍，纯属浪费冷启动。**成功路径只执行一次**：热会话留池复用，
+    失败 entry 各自新建 worker（看护 `tests/test_script_probe.py` 的
+    execution-count 用例）。
+- **RuntimeFigureAsset（2026-08-26，Compatibility Bridge Session 4，ADR 0013
+  定稿）**：没有磁盘产物的捕获 Figure 是正式素材类型，面板 fileId 是
+  `runtime:<script>#<stem>`（**不透明标识**）。引擎侧唯一实现
+  `engine/runtimeasset.py`（纯标准库，Flask import）：
+  * **解析正向重算**：`resolve()` 拿注册表里每对 (script, stem) 重算
+    `figcapture.runtime_asset_id` 与目标比对——任何消费方**不得反解 id**
+    （脚本名里可以有 `#`）。app 层 runtime 判别只看前缀
+    （`is_runtime_id`），`_engine_worker` / 导出 / 写回拒绝都从这里走。
+  * **materialized cache 是派生物不是原件**：落
+    `data_dir()/cache/runtime/<slug>/`（preview.svg + metadata.json，
+    metadata 标 `generated_by: "Tavotto"`）；**metadata 永远最后写**（两个
+    文件都 tmp + os.replace），预览写一半失败磁盘上就没有 metadata，整个
+    cache 按不存在处理；坏/错版 metadata 一律当没有。cache 可删除可重建
+    （probe 成功与 runtime 渲染成功时物化/刷新，描述符取
+    `worker.last_build_descriptors`，**绝不为物化二次执行**），清理走
+    `prune_cache`（app 启动线程，与引擎会话缓存同一治理）。
+  * **lazy rehydrate（总纲原则 5）**：重开文档先显示 cache 预览/占位，
+    `/api/runtime/status`、`/api/runtime/preview` **只读绝不执行**；进入
+    对象级编辑 / 显式刷新 / 导出才 build 并重放 overrides。前端的门在
+    `useEngineSync.renderTargets` 的 runtime 分支（editing 或本会话
+    latest 才入队；tracked 不构成 runtime 自动重跑理由）。
+  * **stale 只是提示**：`stale_status` 比脚本 sha256 + 注册表 entry（六档
+    `fresh/possibly_stale/missing_source/missing_environment/needs_rerun/
+    rerun_failed`，最后一档 producer 在前端）；数据依赖不追踪，文案说
+    「可能已变化」。注册表条目丢了用文档描述块兜底，但 **fail closed**：
+    重算 id 对不上就是未知，绝不套到猜出来的脚本上。
+  * **写回硬拒绝**：runtime id 的 update_source / history/restore 一律
+    400 `runtime_asset_has_no_original_artifact`（裁决唯一出处
+    `writeback_rejection`；savefig 来源且磁盘有产物的走它的 FileAsset
+    身份写回）；source writeback（改脚本）v1 整个不存在，码
+    `runtime_source_writeback_unsupported` 先落表。**导出必须当次 live
+    worker 渲染**（`_resolve_panel_source` runtime 分支），worker 起不来
+    就报错，绝不拿 cache 旧文件冒充。项目包只带描述符 + 脚本。
+  * **素材库清单（2026-08-26，Session 5）**：`runtimeasset.list_assets`
+    是「图 → RuntimeFigureAsset」条目的唯一实现——注册表里**磁盘无原件**
+    的 (script, stem) 各成一条（有原件的归 FileAsset/scan_panels，同一张
+    图绝不双列）；`GET /api/runtime/assets` 只读绝不执行（零执行用例看护
+    `tests/test_asset_library.py`）。**「有没有原件」按捕获来源判，不按
+    文件名巧合**（Session 6 评审修复）：物化描述符说 pyplot 捕获的
+    （结构上从没有过原件，figcapture 工厂钉死），同名磁盘文件是旧样本，
+    不得把 runtime 素材顶掉——判据唯一出处
+    `runtimeasset.is_pyplot_capture`，消费点 `list_assets` /
+    `handoff._script_figures` / 前端 `applyOpenRequest` 三处同步。六档 stale 阶梯抽成
+    `_status_ladder`（`stale_status` 与 `list_assets` 共用，列表场景只探
+    一次解释器）。条目带物化 cache 里的描述符（前端「添加到画布」的数据
+    源）；没跑过的条目没有尺寸没有描述符——不给假值。
+  * 看护 `tests/test_runtime_asset.py`；`tavotto open` 的自动 probe 仍
+    刻意未动（Session 6）。素材库普通入口已落地（Session 5，前端规则见
+    `web/AGENTS.md`）。
 - worker 里 **`sys.argv` 必须换成脚本自己的**。不换的话按参数命名输出的脚本
   会拿到 worker 的 `--script/--out-dir/--entry`，存出一堆叫 `--entry` 的图
   （试运行探测时当场撞见过，`test_script_sees_its_own_argv_not_the_workers` 看护）。
@@ -683,12 +784,30 @@ smoke_app 的「未认证必须 401」硬断言——**别再让任何新端点�
   项目 = 含 `tavotto_registry.json` 的那一层（向上找 ≤3 层，**有上限**：静默把上层目录
   当图库会把一整棵源码树当素材扫）。注册表合并复用 `discover.merge`，
   **不另写裁决**；读不懂就报错，绝不重写用户手写的注册表。
-- **桌面契约是 argv `--open <目录> [--stem <stem>]`**：生产者唯一
-  `handoff.desktop_argv()`，消费者唯一 `src-tauri/src/main.rs::parse_open_args()`，
-  两侧各有单测，改一边必须同步另一边。
-  首启：项目 → sidecar 的 `--figures`，stem → 落地 URL 的 `?open=`；
+- **桌面契约是 argv `--open <目录> [--stem <stem> | --pick-script <脚本>]`**：
+  生产者唯一 `handoff.desktop_argv()`，消费者唯一
+  `src-tauri/src/main.rs::parse_open_args()`，两侧各有单测，改一边必须同步
+  另一边；macOS 的 `open -na … --args` 之后**复用 desktop_argv 的切片**，
+  不再手拼第二份。`--pick-script` 是多 Figure 交接的选择信息（脚本相对
+  路径，与 `--stem` 互斥）——壳只透传，Figure 选择器在前端。
+  首启：项目 → sidecar 的 `--figures`，stem → 落地 URL 的 `?open=`、
+  pick → `?pick=`（browser-new 由 `--open-pick` 带给 `app.main`）；
   已开着窗口：单实例转发 argv → emit `tavotto:open`。两条路汇进前端同一个
-  `lib/openRequest.ts`（浏览器模式共用 `?open=`，定位逻辑只有一份）。
+  `lib/openRequest.ts`（浏览器模式共用同一套查询参数，定位逻辑只有一份）。
+- **`tavotto open script.py` 自动 safe probe（2026-08-26，Session 6）**：
+  显式给出 `.py` = 运行意图（总纲原则 5）。`handoff.resolve_script_route`
+  的顺序：现有注册表/静态发现的每张图都已有路由（磁盘原件或 runtime
+  cache，判据各自唯一：`figcapture.find_original_artifact` /
+  `runtimeasset.load_metadata`）→ 复用；否则 probe——本机实例在跑就
+  **委托**（`POST /api/registry/probe`，同一个 `_PROBES` 并发闸，409 →
+  `probe_in_progress`），否则本进程 `probe_and_register` + 物化 cache
+  （只复制热 worker 的预览，绝不二次执行），返回前 `pool.invalidate`
+  关净 worker（**不留 orphan**；交接目标进程读注册表 + cache，零重跑，
+  看护 `tests/test_open_script_route.py` 的 execution-count 用例）。
+  单图直达 stem；多图 `--stem` 显式选或把 `pick` 交给界面选择器，
+  `--no-launch` 下必须显式选（`multiple_figures_found`）。稳定 code 表
+  在 `docs/handoff-protocol.md`（missing_dependency 映射成
+  `native_run_required`，原始 code 在 extra）。`--no-probe` 关掉探测。
 - **macOS 唤起走 `open -na <bundle> --args …`，不再直接 exec 包内二进制**
   （2026-08-20 实测修复）：GUI 进程会继承调用方的执行上下文，从受限环境
   （沙箱 shell、无 Aqua 会话）直接 exec 会在 AppKit `RegisterApplication`
