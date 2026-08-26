@@ -1552,6 +1552,43 @@ def write_back(tmp_path, monkeypatch):
         pool.stop_watcher()
 
 
+@pytest.fixture
+def replay_bases(monkeypatch):
+    """记下**本次用例**经 `pool.one_shot()` 建出来的每一个 replay 目录。
+
+    以前这些用例断言的是 `not list(pool.ENGINE_CACHE.glob("_replay-*"))`——
+    「整个 pytest 进程史上从未留下过任何 replay 目录」。ENGINE_CACHE 由
+    conftest 的 session 级 `TAVOTTO_DATA_DIR` 决定，**全进程共用一个**：
+    按文件名排在前面的 `test_colorbar_orientation.py` 泄漏一个，账就记到这里
+    （run 32937999297 的 `_replay-…-fig_cbar.py` 正是如此——目录名里的脚本名
+    就是它的出身证明）。测试隔离只能让归因准确，不能替代产品清理，所以这里
+    只收窄**归属**：本次写回自己建的目录，一个都不许剩。
+    """
+    real = pool.one_shot
+    created: list[Path] = []
+
+    def spy(*args, **kwargs):
+        w = real(*args, **kwargs)
+        created.append(Path(w.base))
+        return w
+
+    monkeypatch.setattr(pool, "one_shot", spy)
+    return created
+
+
+def _assert_this_write_back_leaked_nothing(created: list[Path]) -> None:
+    """本次写回创建的一次性目录全部消失，且都已从 `_oneshot_bases` 注销。
+
+    `created` 非空这一条不是凑数：写回哪天不再起干净重放了（或选路走偏），
+    「泄漏清单为空」会恒真——那就是一道空门禁，比没有门禁更坏。
+    """
+    assert created, "这次写回本该经 one_shot() 起过至少一条干净重放会话"
+    leaked = [p for p in created if p.exists()]
+    assert not leaked, f"本次写回创建的一次性 worker 目录泄漏了: {leaked}"
+    still_busy = [p for p in created if str(p) in pool._oneshot_bases]
+    assert not still_busy, f"删干净了却还占着 prune 豁免名额: {still_busy}"
+
+
 # ---------------- 同一 stem 的多个变体（Phase F，真渲染） ----------------
 
 def _http_title_gid(client) -> str:
@@ -1670,7 +1707,8 @@ def _run_write_back(client, figs):
     return body, patches
 
 
-def test_write_back_verifies_a_clean_replay_and_keeps_vector_text(write_back):
+def test_write_back_verifies_a_clean_replay_and_keeps_vector_text(write_back,
+                                                                 replay_bases):
     """真链路：热态拖过文字、挪过子图 → 写回通过干净重放校验，产物仍是矢量。"""
     m, client, figs = write_back
     body, patches = _run_write_back(client, figs)
@@ -1690,9 +1728,9 @@ def test_write_back_verifies_a_clean_replay_and_keeps_vector_text(write_back):
     assert "Vector Title" in text and "series-a" in text
     assert "x label" in text
 
-    # 事务收尾：图库无半成品，缓存里没留下一次性会话目录
+    # 事务收尾：图库无半成品，**本次写回**建的一次性会话目录已经删干净
     assert not list(figs.glob(".*updating"))
-    assert not list(pool.ENGINE_CACHE.glob("_replay-*")), "一次性 worker 的目录泄漏了"
+    _assert_this_write_back_leaked_nothing(replay_bases)
 
     # 版本历史带上权威 patch_hash，热会话照常可用（重放没有动它）
     ctx = m.PROJECTS[m._project_id(figs.resolve())]
@@ -1735,7 +1773,8 @@ def _series_line_gid(client) -> str:
     ("linestyle", "--"),       # 线型：bbox 仍由数据范围决定，不变
     ("alpha", 0.25),           # 透明度：同上
 ])
-def test_write_back_blocks_attribute_only_divergence(write_back, prop, value):
+def test_write_back_blocks_attribute_only_divergence(write_back, replay_bases,
+                                                    prop, value):
     """几何完全一致、只有纯属性不同的热态 → 写回必须 409（issue #81 的封口）。
 
     模拟的是 FigS3 / PR #49 那一类热态漂移：一条**绕过 pool 记账**的 override
@@ -1762,10 +1801,10 @@ def test_write_back_blocks_attribute_only_divergence(write_back, prop, value):
     assert pixel is not None, body["diffs"]
     assert pixel["metrics"]["total_pixels"] > 0
 
-    # 原件零改动，图库无半成品，一次性会话不泄漏
+    # 原件零改动，图库无半成品，**本次**写回的一次性会话不泄漏
     assert (figs / "TestFig_a.pdf").read_bytes() == before
     assert not list(figs.glob(".*updating"))
-    assert not list(pool.ENGINE_CACHE.glob("_replay-*"))
+    _assert_this_write_back_leaked_nothing(replay_bases)
 
 
 def test_write_back_without_overrides_passes_the_pixel_gate(write_back):
@@ -1795,7 +1834,8 @@ def test_write_back_with_attribute_patches_passes_the_pixel_gate(write_back):
 
 
 @needs_workerd
-def test_workerd_write_back_replays_without_leaking_a_session(tmp_path, monkeypatch):
+def test_workerd_write_back_replays_without_leaking_a_session(tmp_path, monkeypatch,
+                                                              replay_bases):
     """workerd 路径同语义，且**一次性会话不泄漏**。
 
     workerd 按 spawn 规格哈希复用会话（引用计数，ADR 0004）：重放会话靠独立的
@@ -1819,7 +1859,7 @@ def test_workerd_write_back_replays_without_leaking_a_session(tmp_path, monkeypa
 
         sessions = workerd_client.client().call("sessions", timeout=10.0)["sessions"]
         assert len(sessions) == 1, f"重放会话没被回收: {sessions}"
-        assert not list(pool.ENGINE_CACHE.glob("_replay-*"))
+        _assert_this_write_back_leaked_nothing(replay_bases)
     finally:
         m.reset_projects()
         pool.shutdown_all(figures_dir=str(figs), wait=True)
@@ -2622,3 +2662,69 @@ def _numbers(v):
             yield from _numbers(item)
     elif isinstance(v, (int, float)) and not isinstance(v, bool):
         yield float(v)
+
+
+# ---------------- 一次性 worker 的关停闭环（run 32937999297 的产品面）--------
+
+REPLAY_LIFECYCLE_SCRIPT = """\
+import matplotlib.pyplot as plt
+
+
+def main():
+    fig, ax = plt.subplots(figsize=(2, 1.5))
+    ax.plot([0, 1, 2], [2, 0, 1])
+    ax.set_title("Lifecycle")
+    fig.savefig("Lifecycle.pdf")
+"""
+
+
+def test_discarding_a_real_one_shot_worker_reaps_it_and_removes_its_exact_base(
+        tmp_path, monkeypatch):
+    """真 worker：`discard()` 返回的**那一刻**，进程已退出、exact base 已消失。
+
+    与 `tests/test_windows_regressions.py` 里那条确定性用例互补：那条用假
+    Popen 把 Windows 的锁窗口钉死，这条用真子进程（真 matplotlib、真 out/、
+    真 worker.log）证明关停闭环在真实时序下也成立。
+
+    **只问 Python 控制面**：开发机上 `cargo build` 过之后 workerd 就在那儿，
+    不强制选路的话这条用例会在不知不觉间换一条控制面跑，而 `proc` 这个断言
+    对象只有 EngineWorker 才有。
+
+    跑 3 轮：一次通过可能是运气，Windows 上那个窗口本来就是偶发的。
+    """
+    from tavotto.engine import workerd_client
+
+    monkeypatch.setenv("TAVOTTO_WORKERD", "0")
+    workerd_client.reset_client()
+    monkeypatch.setattr(pool, "ENGINE_CACHE", tmp_path / "cache" / "engine")
+
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    (figs / "fig_lifecycle.py").write_text(REPLAY_LIFECYCLE_SCRIPT, encoding="utf-8")
+
+    for round_no in range(3):
+        w = pool.one_shot("fig_lifecycle.py", str(figs), "main")
+        assert isinstance(w, pool.EngineWorker), (
+            f"第 {round_no} 轮走到了 workerd 控制面，这条用例问的是 Python 池")
+        try:
+            w.ensure_built()            # 子进程真的起来了、真的打开了输出与日志
+        except BaseException:
+            pool.discard(w)
+            raise
+        base, proc = w.base, w.proc
+        assert base.is_dir(), base
+        assert (base / "worker.log").is_file(), "日志句柄都没开，这一轮没测到东西"
+        assert proc.poll() is None, "worker 还没关就已经退出了？"
+        assert str(base) in pool._oneshot_bases
+
+        pool.discard(w)
+
+        assert proc.poll() is not None, (
+            f"第 {round_no} 轮：discard() 返回了，子进程还没被 wait 回收")
+        assert not base.exists(), (
+            f"第 {round_no} 轮：exact base 没删掉：{base}")
+        assert str(base) not in pool._oneshot_bases, (
+            f"第 {round_no} 轮：base 删了却还占着 prune 豁免名额")
+
+    assert not list(pool.ENGINE_CACHE.glob("_replay-*")), (
+        "本用例自己建的 replay 目录一个都不该剩下")

@@ -44,6 +44,17 @@ _last_prune = 0.0
 #: 提成常量是为了让测试能改短——真等 10 秒的用例没人愿意跑。
 _SHUTDOWN_JOIN_TIMEOUT = 10.0
 
+#: `kill()` 之后等进程**真正消失**（被 wait/reap）的上限（秒）。
+#: `Popen.kill()` 在两个平台上都只是「发出」请求：POSIX 是 SIGKILL，Windows 是
+#: TerminateProcess，调用返回都不代表进程没了，更不代表它打开的文件句柄已经
+#: 还给系统。Windows 上句柄还在，那棵 `_replay-…` 目录就删不掉。
+_REAP_TIMEOUT = 5.0
+
+#: 一次性目录删除的有限退让（秒，累计 0.35s 封顶）。进程已经 reap 过了，还删
+#: 不掉只可能是杀毒软件 / 索引器 / 资源管理器这类第三方扫描的瞬时占用——
+#: 毫秒级就过去。**不许无限重试**，更不许拿它替代 `proc.wait()`。
+_RMTREE_BACKOFF = (0.0, 0.05, 0.1, 0.2)
+
 # ---- 单次请求的超时上限（秒） ----------------------------------------------
 #: 无超时的 `readline()` 是会话级死锁的源头：脚本写了死循环（或某个 C 扩展
 #: 卡住），发出请求的线程就持着 `w.lock` 永远等下去，这个会话从此谁也用不了，
@@ -749,6 +760,13 @@ class EngineWorker:
                 # `poll()` 完全可能还回 None。两条合起来，那条已经判死的 worker
                 # 会被当成可用的复用掉，下一次请求写进死管道、等满整个超时——
                 # 正是这一支本该消除的竞态。
+                #
+                # 这里**故意只 kill 不 wait**：现在还持着 `self.lock`，等一个
+                # 不肯死的子进程就是把整条会话冻在锁里。收尸交给关停路径
+                # （`_terminate_and_reap()`）——`shutdown()` / `force_kill()`
+                # 都会走到它，那里才是「等到进程真的没了」的地方。
+                # 别照着这一句去写别处的 kill：除了这个持锁窗口，
+                # **kill 之后必须 wait**。
                 self._dead = True
                 try:
                     self.proc.kill()
@@ -823,23 +841,96 @@ class EngineWorker:
                             REQUEST_TIMEOUT)
         return Path(resp["path"])
 
-    def shutdown(self) -> None:
+    def _wait_until_exited(self, timeout: float) -> bool:
+        """有界地等子进程真正退出（被 reap）；返回它现在是否已经退出。
+
+        `poll()` 与 `kill()` 都答不了这个问题：前者只是问一次，后者只是发出
+        终止请求。**只有 `wait()` 回来了，进程才真的没了、它的文件句柄才真的
+        还给了系统**——Windows 上这正是 `_replay-…` 目录删得掉与删不掉的分界。
+
+        上限是硬的：退出流程不许被一个不肯死的子进程无限挂住。
+        """
         try:
-            if self.alive():
+            self.proc.wait(timeout=timeout)
+            return True
+        except subprocess.TimeoutExpired:
+            return False
+        except (OSError, ValueError):
+            # 进程对象已经不可用（多半是被别的线程收过了）——当它已经退出
+            return True
+
+    def _close_handles(self) -> None:
+        """关掉**父进程**手里的 stdin / stdout / log 句柄（幂等，绝不抛）。
+
+        必须排在 reap 之后：子进程那份句柄要等它真的退出才由内核还回来
+        （worker 的 stderr 就直接绑在 `self._log` 上，它继承了 worker.log）。
+        少关任何一个，Windows 上那棵目录都删不掉。
+        """
+        for fh in (getattr(self.proc, "stdin", None),
+                   getattr(self.proc, "stdout", None),
+                   getattr(self.proc, "stderr", None),
+                   self._log):
+            if fh is None:
+                continue
+            try:
+                fh.close()
+            except (OSError, ValueError):     # 已经关过 / 管道早断了
+                pass
+
+    def _terminate_and_reap(self, *, graceful: bool) -> None:
+        """把这条会话关到底，并**确认进程已经消失**，最后关掉父进程的句柄。
+
+        无论从哪条路径进来，结局都一样：
+
+            发 shutdown（可选）→ 等自然退出 → 超时就 kill → **再等一次**
+            → 关 stdin/stdout/log
+
+        幂等且绝不抛：进程早退了、管道早断了、已经收过一次，都照常走完。
+        全程**不碰模块级 `_lock`**——等子进程退出时把全局锁攥在手里，
+        等于让一个卡住的脚本冻结整个池。
+        """
+        if graceful and self.alive():
+            try:
                 self.request({"cmd": "shutdown"}, SHUTDOWN_TIMEOUT)
-        except (WorkerError, OSError):
-            pass
-        finally:
-            if self.alive():
+            except (WorkerError, OSError, ValueError):
+                # worker 收到 shutdown 就 `raise SystemExit(0)`，协议上**不回**
+                # 普通成功信封：父进程在这里读到 EOF 是预期现象，不是故障。
+                # （`request()` 的 EOF 分支只 kill 不 wait，收尸由下面这段负责。）
+                pass
+        # 判死排在等待之前：关停中的会话绝不许被 `get()` 捡回去复用。
+        self._dead = True
+        if not self._wait_until_exited(SHUTDOWN_TIMEOUT if graceful else 0.0):
+            try:
                 self.proc.kill()
-            self._log.close()
+            except (OSError, ValueError):
+                pass
+            if not self._wait_until_exited(_REAP_TIMEOUT):
+                # 到这一步只剩「内核也收不掉」这一种可能（Windows 上多半是
+                # 挂在某个不可中断的内核调用里）。不许静默：这条日志是后面
+                # 目录删不掉时唯一能对上号的线索。
+                LOG.warning("worker 进程 kill 后 %.0fs 内仍未退出（pid=%s）: %s",
+                            _REAP_TIMEOUT, getattr(self.proc, "pid", "?"),
+                            self.script_name)
+        self._close_handles()
+
+    def shutdown(self) -> None:
+        """优雅关停，并**确认进程已被回收、句柄已经关掉**（幂等，绝不抛）。
+
+        老写法只做到 `kill()` 就返回。`kill()` ≠「进程已经退出并释放了文件」：
+        正常路径上连 `kill()` 都走不到——shutdown 命令导致的 EOF 让
+        `request()` 先把 `_dead` 置上，`finally` 里的 `if self.alive()` 于是
+        恒假。整条路径一次 `proc.wait()` 都没有，Windows 上后脚的
+        `rmtree` 必然撞 sharing violation（run 32937999297）。
+        """
+        self._terminate_and_reap(graceful=True)
 
     def force_kill(self) -> None:
-        """兜底硬杀（`shutdown_all(wait=True)` 在优雅关停超时后调）。"""
-        try:
-            self.proc.kill()
-        except OSError:
-            pass
+        """兜底硬杀（`shutdown_all(wait=True)` 在优雅关停超时后调）——**同样等到收尸**。
+
+        只发 kill 不 reap 会让 `wait=True` 名不副实：函数返回了，用户机器上
+        python.exe 还在，Popen 没回收，句柄还占着目录。
+        """
+        self._terminate_and_reap(graceful=False)
 
 
 # ============================================================================
@@ -1233,21 +1324,72 @@ def one_shot(script_name: str, figures_dir: str, entry: str):
                 LOG.warning("workerd 一次性会话建立失败，回退到 Python 渲染池: %s", exc)
         return EngineWorker(script_name, figures_dir, entry, base_dir=base)
     except BaseException:
+        # 构造失败与正常 discard 走**同一套**删除：两条路径各有一套 Windows
+        # 行为的话，只有一条会被用例覆盖到，另一条迟早悄悄回到 ignore_errors。
+        _remove_oneshot_tree(base, script_name=script_name)
         with _lock:
             _oneshot_bases.discard(str(base))
-        shutil.rmtree(base, ignore_errors=True)
         raise
 
 
+def _remove_oneshot_tree(path: Path, *, script_name: str = "") -> bool:
+    """删掉一次性 worker 的目录；返回**是否真的删掉了**。
+
+    **不用 `ignore_errors=True`**：那个参数把 Windows 上的 sharing violation
+    变成静默的空操作——调用方以为删干净了，ENGINE_CACHE 里却留着一棵谁也不
+    认领的 `_replay-…`，然后在**别的**用例的全局断言里炸出来
+    （run 32937999297 的 `_replay-…-fig_cbar.py` 就是这么来的）。
+
+    正常情况只删一次。撞上 PermissionError / OSError 才做很短的有限退让
+    （`_RMTREE_BACKOFF`，累计 0.35 秒封顶）：调用方已经 reap 过子进程，
+    剩下的只可能是第三方扫描的瞬时占用。最终仍失败就**如实记日志**
+    （exact path + 异常 + 尝试次数 + 脚本名）并返回 False——此时重放产物早已
+    落盘，缓存收尾不值得让写回失败。
+    """
+    last: OSError | None = None
+    for delay in _RMTREE_BACKOFF:
+        if delay:
+            time.sleep(delay)
+        try:
+            shutil.rmtree(path)
+            return True
+        except FileNotFoundError:
+            return True                  # 已经不在了 = 目标达成
+        except OSError as exc:           # PermissionError 是它的子类
+            last = exc
+    LOG.warning("一次性 worker 目录删除失败（%d 次尝试后放弃）: path=%s "
+                "script=%s error=%r", len(_RMTREE_BACKOFF), path,
+                script_name or "?", last)
+    return False
+
+
 def discard(worker) -> None:
-    """关掉一次性 worker 并删掉它的目录。**绝不抛**——写回的成败与它无关。"""
+    """关掉一次性 worker 并删掉它的目录。**绝不抛**——写回的成败与它无关。
+
+    返回时的不变量（Windows 上尤其要紧）：
+
+      1. 这条一次性 worker 已经不再运行；
+      2. 子进程已经被 `wait()` 回收（不是「kill 发出去了」）；
+      3. 父进程手里的 stdin / stdout / log 句柄已经关掉；
+      4. `worker.base` 已被删除；
+      5. 该 base 已从 `_oneshot_bases` 注销；
+      6. 若最终仍删不掉，日志里有 exact path + 异常（绝不静默）。
+
+    注销**排在删除之后**：退让重试期间目录仍算 active，免得后台
+    `prune_engine_cache()` 与这里同时动同一棵树。最终删不掉也照样注销——
+    留在集合里等于给那棵孤儿目录发了永久豁免，再没人回收得了它。
+    """
+    base = Path(worker.base)
+    script_name = getattr(worker, "script_name", "")
     try:
         worker.shutdown()
     except Exception:            # noqa: BLE001 — 收尾动作不许连累主流程
-        LOG.warning("一次性 worker 关停失败: %s", worker.script_name, exc_info=True)
-    with _lock:
-        _oneshot_bases.discard(str(worker.base))
-    shutil.rmtree(worker.base, ignore_errors=True)
+        LOG.warning("一次性 worker 关停失败: %s", script_name, exc_info=True)
+    try:
+        _remove_oneshot_tree(base, script_name=script_name)
+    finally:
+        with _lock:
+            _oneshot_bases.discard(str(base))
 
 
 def _dir_size(path: Path) -> int:
