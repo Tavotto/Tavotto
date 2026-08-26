@@ -7,6 +7,7 @@ JSON 序列化可逆且坏数据在边界上死、asset id / fingerprint 不含�
 `test_compat_capture_parity.py`。
 """
 import dataclasses
+from pathlib import Path
 
 import pytest
 
@@ -120,12 +121,16 @@ class TestWorkerArgv:
     def test_the_argv_shape_is_frozen(self):
         """golden：与 2026-08-25 之前 `EngineWorker.__init__` / `_spawn_spec`
         两处手拼的命令行**逐字节一致**——这次是重构不是改语义。
-        （两条控制面的互相对拍在 `test_workerd_pool.py`。）"""
+        （两条控制面的互相对拍在 `test_workerd_pool.py`。）
+
+        `--script` 的期望用 `Path` 拼：旧代码就是 `str(Path(figures_dir) /
+        script_name)`，Windows 上产出反斜杠**是被冻结的旧语义**，不是漂移；
+        其余元素全部逐字面透传。"""
         s = _spec()
         argv = execspec.worker_argv(s, worker_py="/eng/worker.py",
                                     out_dir="/cache/out", runtime_args=["-B"])
         assert argv == ["/usr/bin/python3", "-B", "/eng/worker.py",
-                        "--script", "/proj/fig.py",
+                        "--script", str(Path("/proj") / "fig.py"),
                         "--figures-dir", "/proj",
                         "--out-dir", "/cache/out",
                         "--sandbox", "/proj/.box",
@@ -299,6 +304,18 @@ class TestSourceFingerprint:
         assert base != self._fp(entry="__main__")
         assert base != self._fp(matplotlib_version="3.10.8")
         assert base != self._fp(argv=("--fast",))
+
+    def test_line_endings_do_not_split_the_fingerprint(self):
+        """CRLF/CR/LF 的同一份源码 = 同一个指纹。
+
+        worker 从磁盘 `read_bytes`（Windows 检出是 CRLF），browser 拿编辑器
+        `str`（LF）——行尾不改变 Python 语义，却曾让描述符对拍在 Windows 腿
+        上分叉（CI #444）。归一在 `source_fingerprint` 唯一出处内做。"""
+        lf = self._fp(script_bytes=b"import x\nprint('hi')\n")
+        assert lf == self._fp(script_bytes=b"import x\r\nprint('hi')\r\n")
+        assert lf == self._fp(script_bytes=b"import x\rprint('hi')\r")
+        # 归一不是钝化：真实内容差异照样分开
+        assert lf != self._fp(script_bytes=b"import x\nprint('bye')\n")
 
     def test_does_not_depend_on_any_absolute_path(self):
         """指纹的输入签名里没有项目根/解释器/cwd——跨机器稳定性的另一半。"""

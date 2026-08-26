@@ -469,6 +469,22 @@ class TestDescriptorParity:
         assert [d["stem"] for d in desktop] == ["multi", "multi-2", "multi-3"]
         assert desktop == again == browser
 
+    def test_crlf_checkout_matches_the_editor_source(self, tmp_path):
+        """磁盘 CRLF（Windows 检出）vs 编辑器 LF：同一份逻辑源码 = 同一份描述符。
+
+        worker 侧 `read_bytes` 拿 CRLF，browser 侧拿 `str`（LF）——CI #444 的
+        Windows 腿在这里分叉过。这条在任何平台都显式写 CRLF 字节复现它，
+        不再依赖 Windows 文本模式检出才触发。"""
+        figs = tmp_path / "figs"
+        figs.mkdir(parents=True, exist_ok=True)
+        crlf = SHOW_ONLY.replace("\n", "\r\n").encode("utf-8")
+        assert b"\r\n" in crlf
+        (figs / "show_only.py").write_bytes(crlf)
+        desktop = desktop_build(figs, "show_only.py")["descriptors"]
+        browser = browser_load(SHOW_ONLY, "show_only.py",
+                               tmp_path / "ws")["descriptors"]
+        assert desktop == browser
+
     def test_savefig_descriptor_without_an_artifact_on_disk(self, tmp_path):
         figs = tmp_path / "figs"
         write(figs, "only_one.py", OO_NO_PYPLOT)

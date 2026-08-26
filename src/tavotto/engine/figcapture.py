@@ -226,13 +226,19 @@ def source_fingerprint(script_bytes: bytes, *, script: str, entry: str,
     版本。指纹不同 = 图**可能**过时；指纹相同**不保证**没过时：脚本读的
     CSV / 本地 import 的模块 / 环境变量 / 数据库都不在指纹里——覆盖它们
     要追踪脚本的全部 IO，那是另一个量级的工程，诚实地不声称。
+
+    脚本内容先做换行归一（CRLF/CR → LF）再哈希：worker 从磁盘 `read_bytes`
+    （Windows 检出多为 CRLF），browser 拿到的是编辑器里的 `str`（LF）——
+    同一份逻辑源码必须同一个指纹，否则描述符对拍在 Windows 上必然分叉。
+    行尾不改变 Python 语义，归一不损失 stale hint 的分辨力。
     """
     if profile not in _PROFILES:
         raise ValueError(f"profile 非法: {profile!r}（可选 {_PROFILES}）")
+    canon_bytes = script_bytes.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
     payload = {
         "descriptor_version": DESCRIPTOR_VERSION,
         "script": normalize_relative_script(script),
-        "script_sha256": hashlib.sha256(script_bytes).hexdigest(),
+        "script_sha256": hashlib.sha256(canon_bytes).hexdigest(),
         "entry": entry,
         "profile": profile,
         "target_kind": target_kind,

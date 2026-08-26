@@ -18,7 +18,8 @@
   合并态重建受管产物）；**PR 1 = #127**（分支
   `compat/bridge-session06-open-routes`，含 Session 1–6 全部提交）。
   合并排期：按合并队列监督（tavotto-0a）裁定，排在 v0.11.0 发版 tag
-  之后第一个合；tag 落地后需再 merge main 一次（受管产物合并态重建）。
+  之后第一个合；tag 已落地（2026-08-26），main 已 merge 进本分支，
+  队列轮 1（CI #444）的两条 Windows 红已修（见下节），待重新入队。
 
 ## 本轮唯一目标
 
@@ -120,6 +121,36 @@ native profile、generic Artist fallback、source hints、Copy as Python、
   status）活得比 Zustand reset 长——`clear()` 现在换 epoch + 清 inflight，
   A 项目的响应绝不落进 B（与 scriptRunStore 同一条纪律）。
 - **P2 scriptLibraryStore 同一条代际纪律**（顺手修掉，不转 issue）。
+
+## PR #127 合并队列轮 1（CI #444，2026-08-26）
+
+v0.11.0 tag 落地后（用户经 tavotto-0a 入队）queue run #444 的 Windows 腿
+（backend-platforms windows-latest 3.13）红了两条——`backend-platforms`
+在 PR 分支 CI 上是 SKIPPED（#120 分层，完整跨平台只在队列跑），所以
+Session 2 的这两处 Windows 事实第一次被执行到：
+
+- **`test_execspec` argv golden 把 POSIX 拼接写死**：`worker_argv` 在
+  Windows 上出 `\proj\fig.py` 与重构前 pool.py 的
+  `str(Path(figures_dir) / script_name)` 逐字节一致（查过
+  session01-audit 的旧代码），**产品语义没漂移，是 golden 自己平台相关**。
+  修测试：`--script` 期望改为 `str(Path("/proj") / "fig.py")`，注释钉明
+  Windows 反斜杠是被冻结的旧语义。macOS 上无法反证（POSIX 拼接恒同），
+  红证据即 CI #444 本身。
+- **`source_fingerprint` 行尾分叉**：worker 从磁盘 `read_bytes`（Windows
+  文本模式检出 = CRLF），browser 拿编辑器 `str`（LF）——同一份逻辑源码
+  两个指纹，描述符对拍红。修在唯一出处：`figcapture.source_fingerprint`
+  内 CRLF/CR→LF 归一后再哈希（LF 输入指纹不变，POSIX 零漂移；消费面全是
+  不透明比对）。新增平台无关回归：`test_line_endings_do_not_split_the_
+  fingerprint` + parity 的 `test_crlf_checkout_matches_the_editor_source`
+  （显式 `write_bytes` CRLF，任何平台可红）；负向反证：抽掉归一化两条
+  当场红，还原后绿。
+- 同轮 merge origin/main（v0.11.0 bump + #125 旧名注册表看护，无冲突；
+  合并态 test_handoff 56 项预演过）。playground 产物因 figcapture 变更
+  重建（指纹 `97cfbe416d563733`）；canvas.html 不受影响
+  （`2e3df71339c204d3`）。
+- **真机取证口径（重要）**：v0.11.0 正式产物**不含** #127 代码，不能用它
+  取桥接功能的真机证据；有效证据只能来自 PR 分支（或合并后 main）构建的
+  候选产物。
 
 CodeQL 报 9 条新告警（1 critical + 8 high）：逐条核实全部有结构性防线，
 必需的「CodeQL gate」本来就是绿的（红的是非必需的原生 annotation
