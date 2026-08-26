@@ -12,6 +12,7 @@ import {
 import { cn } from '@/lib/utils'
 import { updateObject } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
+import { finishActiveGesture } from '@/store/gestureCoordinator'
 import { useRenderStore } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
@@ -170,6 +171,9 @@ function RestoreDialog({
 
   const run = async () => {
     if (!version) return
+    // 写回历史恢复同样是离散动作：先收掉还开着的连续编辑，否则整份
+    // overrides 替换会被并进上一条历史（issue #131 的同一条毛病）
+    finishActiveGesture()
     setBusy(true)
     setError(null)
     try {

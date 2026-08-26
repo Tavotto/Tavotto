@@ -160,7 +160,7 @@ interface RenderState {
 /** 每个变体一份在途状态：busy 时只记最后一次待办，避免连发把 worker 淹没 */
 const inflight = new Map<
   string,
-  { busy: boolean; queued: { patches: unknown[]; previewDpi?: number } | null }
+  { busy: boolean; queued: { patches: unknown[]; previewDpi?: number; seq: number } | null }
 >()
 
 /**
@@ -223,12 +223,16 @@ export const useRenderStore = create<RenderState>((set, get) => ({
 
   render: async (fileId, patches, previewDpi) => {
     const key = renderKey(fileId, patches)
+    // 序号在**请求进来的那一刻**取，不是发出的那一刻：忙时排队的那次要带着
+    // 自己的序号走完全程，否则一个早就该被覆盖的旧变体会因为「重试发得晚」
+    // 而显得最新，把 latest 拽回去（撤销之后画面弹回对齐后的样子）。
+    let seq = ++requestSeq
     const slot = inflight.get(key) ?? { busy: false, queued: null }
     inflight.set(key, slot)
     if (slot.busy) {
       // 同一变体的重复请求：只有 dpi 可能不同（patches 相同才是同一个键），
       // 排在后面的那次说了算——松手后的定稿渲染必须盖住拖动中的低清那次
-      slot.queued = { patches, previewDpi }
+      slot.queued = { patches, previewDpi, seq }
       return
     }
     slot.busy = true
@@ -261,9 +265,6 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           // 这里以下的逻辑一行都不分叉
           const opts = { signal: ctrl.signal, previewDpi: dpi }
           const transport = engineTransport()
-          // 请求序号在**发出的那一刻**取，不是回来的那一刻：乱序返回时
-          // 靠它认出「这是旧那次的响应」
-          const seq = ++requestSeq
           const res = transport
             ? await transport.render(fileId, current, opts)
             : await engineRender(fileId, current, opts)
@@ -305,6 +306,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           if (slot.queued != null) {
             current = slot.queued.patches
             dpi = slot.queued.previewDpi
+            seq = slot.queued.seq
             slot.queued = null
             continue
           }
@@ -329,6 +331,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
         if (slot.queued == null) break
         current = slot.queued.patches
         dpi = slot.queued.previewDpi
+        seq = slot.queued.seq
         slot.queued = null
       }
     } finally {

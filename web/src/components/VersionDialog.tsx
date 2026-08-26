@@ -19,8 +19,10 @@ import { msg, t as translate } from '@/i18n'
 import { formatTime } from '@/i18n/format'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
+import { finishActiveGesture } from '@/store/gestureCoordinator'
+import { useVariantPng } from '@/hooks/useVariantPng'
 import { askConfirm, useUiStore } from '@/store/uiStore'
-import type { FigureDocument } from '@/types/document'
+import type { FigureDocument, PanelObject } from '@/types/document'
 import { objectLabel } from '@/types/document'
 import { Button } from './ui/Button'
 import { EmptyState } from './ui/EmptyState'
@@ -254,10 +256,13 @@ function VersionDetail({
   const [compareOpen, setCompareOpen] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const [draft, setDraft] = useState(meta.name)
+  /** 有面板的图内修改渲染不出来 → 详情下方明确标「近似预览」 */
+  const [approximate, setApproximate] = useState(false)
 
   useEffect(() => {
     setDraft(meta.name)
     setRenaming(false)
+    setApproximate(false)
   }, [meta.id, meta.name])
 
   const diff = useMemo(
@@ -267,6 +272,11 @@ function VersionDetail({
 
   const restore = async () => {
     if (!versionDoc) return
+    // 恢复是离散动作：先收掉还开着的连续编辑（否则这次 commit 会被并进
+    // 上一条历史，一次撤销同时吐出「刚才那笔编辑」和「整份恢复」）。
+    // 收尾也保证了自动存档存下去的是**真正的当前状态**，而不是一个
+    // 事务开着、值还没落定的中间态（issue #131）。
+    finishActiveGesture()
     setBusy(true)
     try {
       // 先把当前状态自动存档：恢复默认产生新版本，绝不覆盖当前工作
@@ -400,7 +410,14 @@ function VersionDetail({
             </Tip>
           </div>
 
-          <LayoutSnapshot doc={view === 'version' ? versionDoc : currentDoc} />
+          <LayoutSnapshot
+            doc={view === 'version' ? versionDoc : currentDoc}
+            renderOverrides
+            onApproximate={setApproximate}
+          />
+          {approximate && (
+            <p className="text-xs leading-relaxed text-ink-3">{vd('previewApproximate')}</p>
+          )}
 
           <Button variant="primary" size="sm" className="w-full" onClick={restore}>
             <RotateCcw size={12} />
@@ -437,8 +454,9 @@ function VersionDetail({
             description={vd('compareDescription')}
             size="lg"
           >
+            {/* 对比叠加：底图按**版本自己的** overrides 出，上层是当前布局的轮廓 */}
             <div className="relative mx-auto" style={{ maxWidth: 480 }}>
-              <LayoutSnapshot doc={versionDoc} />
+              <LayoutSnapshot doc={versionDoc} renderOverrides />
               <div className="absolute inset-0 opacity-55">
                 <LayoutSnapshot doc={currentDoc} outline />
               </div>
@@ -459,9 +477,19 @@ function VersionDetail({
 export function LayoutSnapshot({
   doc,
   outline = false,
+  renderOverrides = false,
+  onApproximate,
 }: {
   doc: FigureDocument
   outline?: boolean
+  /**
+   * 按面板自己的 overrides 出图（而不是磁盘素材）。**只给用户当前展开的那一份
+   * 版本详情用**：版本列表里每一条都渲染的话，一次展开就是几十次 matplotlib
+   * 往返（heavy 脚本上是分钟级）。
+   */
+  renderOverrides?: boolean
+  /** 有面板的图内修改渲染不出来 —— 调用方据此标注「近似预览」 */
+  onApproximate?: (approximate: boolean) => void
 }) {
   const assets = useAssetStore((s) => s.byId)
   const { w: pw, h: ph } = doc.page
@@ -493,18 +521,14 @@ export function LayoutSnapshot({
             )
           }
           if (o.type === 'panel') {
-            const info = assets[o.fileId]
             return (
-              <img
+              <SnapshotPanel
                 key={o.id}
-                src={panelSrc(o.fileId, o.fileKind, 200, info?.mtime) ?? undefined}
-                alt=""
-                className="absolute object-fill"
-                style={{
-                  ...style,
-                  transform: o.rotation ? `rotate(${o.rotation}deg)` : undefined,
-                  opacity: o.opacity,
-                }}
+                panel={o}
+                style={style}
+                mtime={assets[o.fileId]?.mtime}
+                renderOverrides={renderOverrides}
+                onApproximate={onApproximate}
               />
             )
           }
@@ -525,6 +549,55 @@ export function LayoutSnapshot({
   )
 }
 
+/**
+ * 缩略图里的一个面板。
+ *
+ * `renderOverrides` 打开时按这一版**自己的 overrides** 出图——这正是布局版本
+ * 时间线以前缺的东西：只画磁盘素材的话，两个图内布局完全不同的版本长得一模
+ * 一样（issue #131）。出不来就退回磁盘图并把 `approximate` 报上去，由外面
+ * 明确标注，绝不无提示地拿原图冒充版本视觉状态。
+ */
+function SnapshotPanel({
+  panel,
+  style,
+  mtime,
+  renderOverrides,
+  onApproximate,
+}: {
+  panel: PanelObject
+  style: React.CSSProperties
+  mtime?: number
+  renderOverrides: boolean
+  onApproximate?: (approximate: boolean) => void
+}) {
+  const variant = useVariantPng(
+    panel.fileId,
+    panel.overrides,
+    200,
+    renderOverrides && panel.overrides.length > 0,
+  )
+  useEffect(() => {
+    if (renderOverrides) onApproximate?.(variant.approximate)
+  }, [variant.approximate, renderOverrides, onApproximate])
+
+  // panelSrc 可能给不出地址（替代传输里没有 HTTP 服务）：一个都拿不到就不画
+  // <img>，绝不留一个空 src 让缩略图挂一个碎图标
+  const src = variant.url || panelSrc(panel.fileId, panel.fileKind, 200, mtime)
+  if (!src) return null
+  return (
+    <img
+      src={src}
+      alt=""
+      className="absolute object-fill"
+      style={{
+        ...style,
+        transform: panel.rotation ? `rotate(${panel.rotation}deg)` : undefined,
+        opacity: panel.opacity,
+      }}
+    />
+  )
+}
+
 /* -------------------------------- 差异计算 -------------------------------- */
 
 interface DiffLine {
@@ -537,6 +610,58 @@ const near = (a: number, b: number, eps = 0.05) => Math.abs(a - b) <= eps
 /** 差异描述文案；对象名是用户内容，作为插值原样带过去 */
 const df = (key: string, values?: Record<string, unknown>) =>
   translate(`versions.diff.${key}`, { ns: 'dialogs', ...(values ?? {}) })
+
+/**
+ * 图内修改的差异摘要。
+ *
+ * 「override 从 8 条变成 8 条」等于什么都没说（issue #131：用户就是靠时间线
+ * 判断恢复有没有生效的）。这里按**类别**数：位置、文字、axes 布局、其他，
+ * 外加受影响的元素个数与一份 gid/prop 样本。
+ *
+ * **只出技术标识，绝不出值**：override 的 value 里可能是用户写的图内文字，
+ * 版本对比面板不该把它显示出来。
+ */
+const POS_PROPS = new Set(['pos_frac', 'loc_frac', 'endpoints_frac', 'position'])
+const TEXT_PROPS = new Set([
+  'text', 'fontsize', 'fontfamily', 'fontweight', 'fontstyle',
+  'ha', 'va', 'rotation', 'linespacing',
+])
+const AXES_PROPS = new Set(['position', 'size_mm', 'aspect', 'figsize'])
+
+function summarizeOverrideDiff(
+  a: readonly { gid: string; prop: string; value: unknown }[],
+  b: readonly { gid: string; prop: string; value: unknown }[],
+) {
+  const key = (o: { gid: string; prop: string }) => `${o.gid}\u0000${o.prop}`
+  const mapA = new Map(a.map((o) => [key(o), JSON.stringify(o.value)]))
+  const mapB = new Map(b.map((o) => [key(o), JSON.stringify(o.value)]))
+  const touched: { gid: string; prop: string }[] = []
+  for (const k of new Set([...mapA.keys(), ...mapB.keys()])) {
+    if (mapA.get(k) === mapB.get(k)) continue
+    const [gid, prop] = k.split('\u0000')
+    touched.push({ gid, prop })
+  }
+  let pos = 0
+  let text = 0
+  let axes = 0
+  let other = 0
+  for (const { gid, prop } of touched) {
+    // position 同时是 axes 布局与位置类：axes 元素上算 axes 布局
+    if (prop === 'position' || AXES_PROPS.has(prop)) axes += 1
+    else if (POS_PROPS.has(prop)) pos += 1
+    else if (TEXT_PROPS.has(prop)) text += 1
+    else other += 1
+    void gid
+  }
+  return {
+    elements: new Set(touched.map((o) => o.gid)).size,
+    pos,
+    text,
+    axes,
+    other,
+    sample: touched.slice(0, 6).map((o) => `${o.gid}.${o.prop}`),
+  }
+}
 
 /** 对象级差异（a = 版本快照，b = 当前文档），文案面向用户 */
 export function diffDocs(a: FigureDocument, b: FigureDocument): DiffLine[] {
@@ -598,14 +723,23 @@ export function diffDocs(a: FigureDocument, b: FigureDocument): DiffLine[] {
       const ca = JSON.stringify(oa.overrides)
       const cb = JSON.stringify(ob.overrides)
       if (ca !== cb) {
+        const sum = summarizeOverrideDiff(oa.overrides, ob.overrides)
         out.push({
           kind: 'overrides',
-          text: df('overrides', {
+          text: df('overridesDetail', {
             name,
-            from: oa.overrides.length,
-            to: ob.overrides.length,
+            elements: sum.elements,
+            pos: sum.pos,
+            text: sum.text,
+            axes: sum.axes,
+            other: sum.other,
           }),
         })
+        // 具体改了哪几个 gid 的哪几条属性——**只列技术标识，不列值**，
+        // 用户图内文字的正文一个字都不进这里
+        if (sum.sample.length) {
+          out.push({ kind: 'overrides', text: df('overridesSample', { list: sum.sample.join('、') }) })
+        }
       }
       if (oa.fileId !== ob.fileId) out.push({ kind: 'other', text: df('assetReplaced', { name }) })
       if (JSON.stringify(oa.crop ?? null) !== JSON.stringify(ob.crop ?? null)) {
