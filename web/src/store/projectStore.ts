@@ -16,6 +16,8 @@ import { flushAutosave, useDocumentStore } from '@/store/documentStore'
 import { useAssetStore } from '@/store/assetStore'
 import { useRenderStore } from '@/store/renderStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
+import { useScriptLibraryStore } from '@/store/scriptLibraryStore'
+import { useScriptRunStore } from '@/store/scriptRunStore'
 import { resetPreview } from '@/store/svgPreviewStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
@@ -55,6 +57,9 @@ async function resetForNewProject() {
   ui.setCropTarget(null)
   useRenderStore.getState().clear()
   useRuntimeAssetStore.getState().clear()
+  // 脚本运行状态机换代（在途 probe 响应作废，绝不落进新项目）+ 脚本清单清空
+  useScriptRunStore.getState().clear()
+  useScriptLibraryStore.getState().clear()
   // 预览平面挂在「面板 + 那一版 SVG」上，旧项目的面板整批消失后那些账本
   // 指向的都是野节点，跟着一起清（DOM 由 React 自己收）
   resetPreview()

@@ -118,7 +118,8 @@ def entry_candidates(figures_dir: str | Path, script: str) -> list[str]:
 
 
 def probe(figures_dir: str | Path, script: str,
-          entries: list[str] | None = None) -> dict:
+          entries: list[str] | None = None,
+          should_cancel=None) -> dict:
     """跑一次脚本，返回它真实产出的 stem 与每张图的结构化描述。
 
     返回 dict：
@@ -140,10 +141,19 @@ def probe(figures_dir: str | Path, script: str,
     **成功路径只执行一次**：build 好的热会话留在池里不 invalidate，随后的
     预览 / 渲染 / 登记拿着 (script, entry) 直接复用，不再重跑脚本。失败的
     entry 各自新建 worker（错误入口的进程绝不复用），互不污染。
+
+    `should_cancel` 是协作取消的判据（app 层的 cancel 端点置 Event 并
+    `pool.force_cancel` 硬杀在跑的 worker）：一旦为真，**不再尝试下一个
+    entry**，并把本轮的失败（多半是被杀 worker 的「进程崩溃」）如实归类为
+    `execution_cancelled`——被用户取消的 probe 报「脚本坏了」是撒谎。
     """
     figures_dir = str(Path(figures_dir))
+    cancelled = (lambda: bool(should_cancel())) if callable(should_cancel) \
+        else (lambda: False)
     empty = {"script": script, "entry": None, "stems": [], "descriptors": [],
              "tried": [], "error": None, "timings": {}, "dropped_figures": 0}
+    _cancel_err = lambda: _err(  # noqa: E731 —— 两个出口共用同一句
+        ERROR_CANCELLED, "试运行已取消")
     script_path = Path(figures_dir) / script
     if not script_path.is_file():
         return {**empty,
@@ -160,6 +170,8 @@ def probe(figures_dir: str | Path, script: str,
     tried: list[str] = []
     first_error: dict | None = None
     for entry in (entries or entry_candidates(figures_dir, script)):
+        if cancelled():
+            return {**empty, "tried": tried, "error": _cancel_err()}
         tried.append(entry)
         # 每次换 entry 都要换掉旧会话：worker 的 entry 是启动参数，
         # 复用旧进程等于一直用错的入口重试。
@@ -168,10 +180,15 @@ def probe(figures_dir: str | Path, script: str,
             worker = pool.get(script, figures_dir, entry)
             resp = worker.ensure_built()
         except pool.WorkerError as exc:
+            pool.invalidate(script, figures_dir)
+            if cancelled():
+                # worker 是被 cancel 硬杀的：报「进程崩溃」是把用户的取消
+                # 说成脚本的错。不再试下一个 entry——取消就是取消。
+                LOG.info("探测被取消 %s [entry=%s]", script, entry)
+                return {**empty, "tried": tried, "error": _cancel_err()}
             LOG.info("探测失败 %s [entry=%s]: %s", script, entry, exc)
             if first_error is None:
                 first_error = _error_from_worker(exc, entry)
-            pool.invalidate(script, figures_dir)
             continue
         stems = sorted(resp.get("stems") or {})
         if stems:
@@ -229,7 +246,7 @@ def _live_stem_conflicts(figures_dir: str | Path, script: str,
 
 
 def probe_and_register(figures_dir: str | Path, script: str,
-                       cost: str = "medium") -> dict:
+                       cost: str = "medium", should_cancel=None) -> dict:
     """探测成功就写进 tavotto_registry.json 并重载注册表。
 
     失败原样返回（`registered: False`），**注册表零改动**——不留半写文件、
@@ -237,8 +254,11 @@ def probe_and_register(figures_dir: str | Path, script: str,
     （`multiple_stem_conflict`）：静默把 stem 抢过来会让原脚本的登记凭空
     消失，裁决走「手工填写」（PUT /api/registry——那条路是用户显式指认的
     归属，覆盖才是语义）。归属脚本已不在磁盘上的死条目不算冲突。
+
+    取消（`should_cancel`）输给成功：脚本在取消到达前跑完了就是跑完了，
+    照常登记——「已经发生的执行」不因迟到的取消而假装没发生。
     """
-    result = probe(figures_dir, script)
+    result = probe(figures_dir, script, should_cancel=should_cancel)
     if not result["stems"]:
         return {**result, "registered": False}
     conflicts = _live_stem_conflicts(figures_dir, script, result["stems"])

@@ -1398,6 +1398,26 @@ def invalidate(script_name: str, figures_dir: str | None = None) -> None:
         threading.Thread(target=w.shutdown, daemon=True).start()
 
 
+def force_cancel(script_name: str, figures_dir: str) -> bool:
+    """当场硬杀该脚本的在跑会话（探测取消的机制面）；返回是否真的杀了。
+
+    与 `invalidate` 的差别：invalidate 的 shutdown 是优雅关停，要抢
+    `w.lock`——被一个正在 build 的慢脚本占着时要等到超时才走到 kill，
+    「取消」等于没取消。这里直接 `force_kill()`（两条控制面都有：Python
+    池是 `proc.kill()`，workerd 是当场关会话），被阻塞在 `request()` 里的
+    调用方立刻收到 EOF → WorkerError；worker 先从表里摘掉，别的线程不会
+    再复用一个正在死的会话。
+    """
+    key = (_norm_dir(figures_dir), script_name)
+    with _lock:
+        w = _workers.pop(key, None)
+    if w is None:
+        return False
+    LOG.info("强制取消 worker 会话: %s", script_name)
+    w.force_kill()
+    return True
+
+
 def shutdown_all(figures_dir: str | None = None, wait: bool = False) -> None:
     """关闭 worker（进程退出前；给 figures_dir 则只收某个项目的）。
     异步优雅关停 + 兜底 kill。

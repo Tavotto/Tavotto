@@ -1489,13 +1489,24 @@ def api_registry_scan():
                     "scripts": ctx.registry.entries()})
 
 
+# 在跑的试运行：同一 (项目, 脚本) 同时只允许一个（素材库与 RegistryDialog
+# 双入口并发点同一脚本时后端兜底）。value 是取消 Event——cancel 端点置位并
+# 硬杀 worker，probe 循环据此把失败归类为 execution_cancelled 且不再试下一个
+# entry。key 用 ctx.id（项目身份），与 SSE 的 pj 同一口径。
+_PROBES: dict[tuple[str, str], threading.Event] = {}
+_PROBES_LOCK = threading.Lock()
+
+
 @app.post("/api/registry/probe")
 def api_registry_probe():
     """试运行一个脚本，按**真实产出**的文件名登记 stem。
 
     静态解不出文件名的脚本（stem 来自数据目录 / 命令行）只有这条路。
     脚本跑得起来 = 能参数化，不用再让用户手改 JSON 猜自己该写什么。
-    同步阻塞：冷启动秒级到分钟级，前端逐个脚本调用即可看到进度。
+    同步阻塞：冷启动秒级到分钟级；取消走 POST /api/registry/probe/cancel
+    （置取消标志 + 硬杀该脚本的 worker 会话，本请求随即以
+    execution_cancelled 返回）。SSE `probe.started` 在执行真正开始前发出
+    （前端状态机的 starting_runtime → running 边界）。
     """
     ctx = current_ctx()
     body = request.get_json(force=True)
@@ -1530,8 +1541,22 @@ def api_registry_probe():
                         "params": {"script": raw}}), 404
     # 注册表键 = 项目相对路径（POSIX）——与清单 / 静态起草同一种写法
     script = target.relative_to(root).as_posix()
-    result = engine_probe.probe_and_register(
-        ctx.path, script, cost=str(body.get("cost") or "medium"))
+    key = (ctx.id, script)
+    cancel_ev = threading.Event()
+    with _PROBES_LOCK:
+        if key in _PROBES:
+            return jsonify({"error": f"该脚本已有一次试运行在进行中: {script}",
+                            "code": "probe_in_progress",
+                            "params": {"script": script}}), 409
+        _PROBES[key] = cancel_ev
+    sse_publish("probe.started", {"pj": ctx.id, "script": script})
+    try:
+        result = engine_probe.probe_and_register(
+            ctx.path, script, cost=str(body.get("cost") or "medium"),
+            should_cancel=cancel_ev.is_set)
+    finally:
+        with _PROBES_LOCK:
+            _PROBES.pop(key, None)
     if result.get("registered"):
         reload_registry(ctx)
         # 每张捕获图当场物化进 runtime cache（复制热 worker 已写好的预览
@@ -1543,7 +1568,42 @@ def api_registry_probe():
     return jsonify(result)
 
 
+@app.post("/api/registry/probe/cancel")
+def api_registry_probe_cancel():
+    """取消一个在跑的试运行：置取消标志并**当场硬杀**该脚本的 worker 会话。
+
+    「取消」必须真正终止工作（Session 5 反证 #3）：只置标志的话，阻塞在
+    build 里的慢脚本会一直跑到超时。`pool.force_cancel` 直接 kill 子进程，
+    阻塞中的 probe 请求随即拿到 EOF → execution_cancelled。幂等：没有在跑
+    的返回 `{cancelling: false}`——「取消」与「跑完」天然赛跑，输了不是错误
+    （跑完的照常登记，probe_and_register 的注释写明了这条语义）。
+    """
+    ctx = current_ctx()
+    body = request.get_json(force=True)
+    script = str(body.get("script") or "").strip()
+    with _PROBES_LOCK:
+        ev = _PROBES.get((ctx.id, script))
+    if ev is None:
+        return jsonify({"cancelling": False})
+    ev.set()                       # 先置标志再杀：probe 醒来时答案已经在了
+    engine_pool.force_cancel(script, str(ctx.path))
+    return jsonify({"cancelling": True})
+
+
 # ------------------------- Runtime Figure 素材（ADR 0013） -------------------
+@app.get("/api/runtime/assets")
+def api_runtime_assets():
+    """素材库「图」区的 RuntimeFigureAsset 清单（**只读，绝不执行脚本**）。
+
+    清单语义在 `runtimeasset.list_assets`（唯一实现）：注册表里磁盘无原件
+    的 (script, stem) 各成一条；有原件的是 FileAsset，归 /api/panels。
+    """
+    ctx = current_ctx()
+    return jsonify({"assets": engine_runtimeasset.list_assets(
+        ctx.path, ctx.registry,
+        worker_python=engine_pool.find_worker_python)})
+
+
 @app.post("/api/runtime/status")
 def api_runtime_status():
     """一个 runtime 素材的 stale 状态与 cache 可用性。

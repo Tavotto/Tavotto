@@ -8,6 +8,8 @@ import { useEnvStore } from '@/store/envStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useRenderStore } from '@/store/renderStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
+import { useScriptLibraryStore } from '@/store/scriptLibraryStore'
+import { useScriptRunStore } from '@/store/scriptRunStore'
 import { useUiStore } from '@/store/uiStore'
 
 const short = (id: string) => id.split('/').pop()?.replace(/\.[^.]+$/, '') ?? id
@@ -94,6 +96,22 @@ function handleEvent(ev: ServerEvent) {
       if (affected.length) {
         setStatus(msg('status.scriptChanged', { count: affected.length }, 'workspace'))
       }
+      break
+    }
+
+    case 'probe.started':
+      // 「运行并发现图」的执行确认：starting_runtime → running
+      useScriptRunStore.getState().markRunning(ev.script)
+      break
+
+    case 'registry.changed': {
+      // 注册表变了（本标签页 probe 成功 / 另一标签页登记 / 手工裁决）：
+      // 脚本清单与 runtime 素材清单都要重取——但只重取**已经取过的**，
+      // 没打开过素材面板的标签页不必为别人的登记发请求
+      const lib = useScriptLibraryStore.getState()
+      if (lib.loaded) void lib.load()
+      const runtime = useRuntimeAssetStore.getState()
+      if (runtime.assets !== null) void runtime.loadAssets()
       break
     }
 

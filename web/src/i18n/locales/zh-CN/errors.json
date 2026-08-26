@@ -33,6 +33,7 @@
     "package_invalid": "不是有效的项目包：{{reason}}",
     "package_schema_unsupported": "项目包里的布局既不是 schema 2 也不是 schema 3",
     "permission_denied": "无权限读取：{{path}}",
+    "probe_in_progress": "这个脚本已有一次运行在进行中：{{script}}",
     "python_missing": "这台机器上没找到可用的 Python，请先安装 Python 3.10 以上再重试",
     "read_failed": "无法读取：{{reason}}",
     "registry_update_failed": "注册表更新失败：{{reason}}",

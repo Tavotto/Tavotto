@@ -262,13 +262,17 @@ export const renderUrl = (id: string, bucket: number, mtime?: number) =>
 export const fileUrl = (id: string, mtime?: number) =>
   apiUrl(`/api/file?id=${encodeURIComponent(id)}${stamp(mtime)}`)
 
-/** materialized cache 里的预览 SVG（runtime 面板重开时的首帧占位） */
-export const runtimePreviewUrl = (id: string) =>
-  apiUrl(`/api/runtime/preview?id=${encodeURIComponent(id)}`)
+/** materialized cache 里的预览 SVG（runtime 面板重开时的首帧占位）。
+ * `nonce` 是重跑后的换代计数（runtimeAssetStore.previewNonce）：同一 URL
+ * 的 <img> 不会自己重取，重新运行刷新了 cache 之后靠它换 src。 */
+export const runtimePreviewUrl = (id: string, nonce?: number) =>
+  apiUrl(`/api/runtime/preview?id=${encodeURIComponent(id)}${nonce ? `&t=${nonce}` : ''}`)
 
 /**
  * 位图走原文件、矢量走分档渲染、runtime 走 materialized cache 预览，
  * 未知形态**不给地址**（fail closed：绝不把不认识的 id 猜成文件路径）。
+ * runtime 分支的 `mtime` 参数承载的是预览换代计数（重跑后换 src 用），
+ * 不是文件 mtime——runtime 素材没有文件。
  */
 export const panelSrc = (
   id: string,
@@ -278,7 +282,7 @@ export const panelSrc = (
 ): string | null => {
   if (kind === 'raster') return fileUrl(id, mtime)
   if (kind === 'pdf') return renderUrl(id, bucket, mtime)
-  if (kind === 'runtime') return runtimePreviewUrl(id)
+  if (kind === 'runtime') return runtimePreviewUrl(id, mtime)
   return null
 }
 
@@ -1060,6 +1064,7 @@ export type ServerEvent =
   | ({ kind: 'render.failed'; id: string; error?: string } & ProjectScoped)
   | ({ kind: 'panel.file_changed'; scripts?: string[]; stems?: string[] } & ProjectScoped)
   | ({ kind: 'registry.changed'; script: string; stems: string[] } & ProjectScoped)
+  | ({ kind: 'probe.started'; script: string } & ProjectScoped)
   | { kind: 'engine.bootstrap'; state: string; log: string; error: string | null }
   | { kind: 'ai.delta'; session: string; text: string; kindOf?: AiDeltaKind }
   | ({
@@ -1078,6 +1083,7 @@ const EVENT_KINDS = [
   'render.failed',
   'panel.file_changed',
   'registry.changed',
+  'probe.started',
   'engine.bootstrap',
   'ai.delta',
   'ai.done',
@@ -1473,6 +1479,18 @@ export const probeScript = (script: string, cost?: string) =>
     body: JSON.stringify({ script, cost }),
   })
 
+/**
+ * 取消一个在跑的试运行。后端置取消标志并**硬杀**该脚本的 worker 会话——
+ * 阻塞中的 probe 请求随即以 `execution_cancelled` 返回。幂等：没有在跑的
+ * 返回 `{cancelling: false}`（取消与跑完天然赛跑，输了不是错误）。
+ */
+export const cancelProbe = (script: string) =>
+  jsonFetch<{ cancelling: boolean }>('/api/registry/probe/cancel', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ script }),
+  })
+
 export const writeRegistryEntry = (payload: {
   script: string
   entry: string
@@ -1526,3 +1544,24 @@ export const fetchRuntimeStatus = (
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id, source }),
   })
+
+/**
+ * 素材库「图」区的一条 RuntimeFigureAsset（`runtimeasset.list_assets` 原样）。
+ * `descriptor` 只有物化过 cache 才有——「添加到画布」的数据源；没有它的
+ * 条目要先「运行并发现图」（尺寸与捕获来源都只有运行后才知道）。
+ */
+export interface RuntimeAssetInfo {
+  id: string
+  script: string
+  stem: string
+  entry: string
+  status: RuntimeStaleStatus
+  cached: boolean
+  size_mm: [number, number] | null
+  capture_source: 'savefig' | 'pyplot' | null
+  descriptor: CapturedFigureDescriptor | null
+}
+
+/** runtime 素材清单。**只读**：后端绝不因此执行脚本。 */
+export const fetchRuntimeAssets = () =>
+  jsonFetch<{ assets: RuntimeAssetInfo[] }>('/api/runtime/assets')

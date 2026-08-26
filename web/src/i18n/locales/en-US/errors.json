@@ -33,6 +33,7 @@
     "package_invalid": "Not a valid project package: {{reason}}",
     "package_schema_unsupported": "The layout in this package is neither schema 2 nor schema 3",
     "permission_denied": "No permission to read: {{path}}",
+    "probe_in_progress": "A run of this script is already in progress: {{script}}",
     "python_missing": "No usable Python found on this machine. Install Python 3.10 or newer and retry.",
     "read_failed": "Cannot read: {{reason}}",
     "registry_update_failed": "Could not update the registry: {{reason}}",

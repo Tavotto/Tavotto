@@ -374,6 +374,17 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
     登记时报 `multiple_stem_conflict` 而不是静默抢走（裁决走 PUT
     /api/registry 的手工路——那才是用户显式指认；归属脚本已不存在的死条目
     照旧顺畅重登记）。
+  * **probe 可取消、同脚本互斥（2026-08-26，Session 5）**：app 层
+    `_PROBES` 按 (项目 id, script) 登记在跑的试运行（第二个请求 409
+    `probe_in_progress`）；`POST /api/registry/probe/cancel` 置取消
+    Event 并 `pool.force_cancel`（**当场 kill**，不走优雅关停——shutdown
+    要抢被 build 占着的 `w.lock`，等到超时的取消不叫取消）。
+    `probe(should_cancel=...)` 一旦判取消**不再尝试下一个 entry**，被杀
+    worker 的失败如实归类 `execution_cancelled`（不报「脚本坏了」）；
+    取消输给成功——脚本在取消前跑完就照常登记。SSE `probe.started` 在
+    执行开始前发出（前端状态机 starting_runtime → running 的边界）。
+    看护 `tests/test_asset_library.py`（cancel sentinel：30s 内返回 +
+    会话从池里消失 + 注册表零改动）。
   * **entry 候选静态化**（`discover.probe_entry_candidates`，绘图宽口径
     `PLOT_FUNCS` 只喂它，不进起草）：main/render 零参可调才试、裸顶层绘图
     直接 `__main__`、自定义零参绘图函数上限 4 个——盲试不存在的 entry 也要
@@ -413,8 +424,17 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
     `runtime_source_writeback_unsupported` 先落表。**导出必须当次 live
     worker 渲染**（`_resolve_panel_source` runtime 分支），worker 起不来
     就报错，绝不拿 cache 旧文件冒充。项目包只带描述符 + 脚本。
-  * 看护 `tests/test_runtime_asset.py`；素材库/`tavotto open` 的普通入口
-    刻意未动（Session 5/6）。
+  * **素材库清单（2026-08-26，Session 5）**：`runtimeasset.list_assets`
+    是「图 → RuntimeFigureAsset」条目的唯一实现——注册表里**磁盘无原件**
+    的 (script, stem) 各成一条（有原件的归 FileAsset/scan_panels，同一张
+    图绝不双列）；`GET /api/runtime/assets` 只读绝不执行（零执行用例看护
+    `tests/test_asset_library.py`）。六档 stale 阶梯抽成
+    `_status_ladder`（`stale_status` 与 `list_assets` 共用，列表场景只探
+    一次解释器）。条目带物化 cache 里的描述符（前端「添加到画布」的数据
+    源）；没跑过的条目没有尺寸没有描述符——不给假值。
+  * 看护 `tests/test_runtime_asset.py`；`tavotto open` 的自动 probe 仍
+    刻意未动（Session 6）。素材库普通入口已落地（Session 5，前端规则见
+    `web/AGENTS.md`）。
 - worker 里 **`sys.argv` 必须换成脚本自己的**。不换的话按参数命名输出的脚本
   会拿到 worker 的 `--script/--out-dir/--entry`，存出一堆叫 `--entry` 的图
   （试运行探测时当场撞见过，`test_script_sees_its_own_argv_not_the_workers` 看护）。

@@ -1,5 +1,10 @@
 import { create } from 'zustand'
-import { fetchRuntimeStatus, type RuntimeStaleStatus } from '@/lib/api'
+import {
+  fetchRuntimeAssets,
+  fetchRuntimeStatus,
+  type RuntimeAssetInfo,
+  type RuntimeStaleStatus,
+} from '@/lib/api'
 import type { PanelObject } from '@/types/document'
 import { isRuntimePanel } from '@/types/document'
 
@@ -25,6 +30,16 @@ export interface RuntimeAssetState {
 
 interface RuntimeAssetStore {
   byId: Record<string, RuntimeAssetState>
+  /* ------ 素材库「图」区的 RuntimeFigureAsset 清单（Session 5） ------ */
+  /** null = 还没取过；取过之后是清单本体（可能为空数组） */
+  assets: RuntimeAssetInfo[] | null
+  assetsLoading: boolean
+  assetsError: string | null
+  /** cache 预览的换代计数：重跑刷新了 cache 后 +1，<img> 据此换 src */
+  previewNonce: Record<string, number>
+  /** 重取清单（只读端点，绝不触发脚本执行）；幂等去重 */
+  loadAssets: () => Promise<void>
+  bumpPreview: (ids: string[]) => void
   /** 查询一次该面板的状态（幂等；非 runtime 面板与在途请求直接跳过） */
   ensure: (panel: PanelObject) => void
   markFresh: (fileId: string) => void
@@ -35,9 +50,37 @@ interface RuntimeAssetStore {
 }
 
 const inflight = new Set<string>()
+let assetsInflight: Promise<void> | null = null
 
 export const useRuntimeAssetStore = create<RuntimeAssetStore>((set, get) => ({
   byId: {},
+  assets: null,
+  assetsLoading: false,
+  assetsError: null,
+  previewNonce: {},
+
+  loadAssets: () => {
+    if (assetsInflight) return assetsInflight
+    set({ assetsLoading: true })
+    assetsInflight = fetchRuntimeAssets()
+      .then((r) => set({ assets: r.assets, assetsError: null }))
+      .catch((e) =>
+        // 清单取不到（旧后端 404 / 网络）：给空清单 + 错误，不留 null 骨架
+        set({ assets: [], assetsError: e instanceof Error ? e.message : String(e) }),
+      )
+      .finally(() => {
+        assetsInflight = null
+        set({ assetsLoading: false })
+      })
+    return assetsInflight
+  },
+
+  bumpPreview: (ids) =>
+    set((s) => {
+      const previewNonce = { ...s.previewNonce }
+      for (const id of ids) previewNonce[id] = (previewNonce[id] ?? 0) + 1
+      return { previewNonce }
+    }),
 
   ensure: (panel) => {
     if (!isRuntimePanel(panel)) return
@@ -107,5 +150,6 @@ export const useRuntimeAssetStore = create<RuntimeAssetStore>((set, get) => ({
       return changed ? { byId } : {}
     }),
 
-  clear: () => set({ byId: {} }),
+  clear: () =>
+    set({ byId: {}, assets: null, assetsLoading: false, assetsError: null, previewNonce: {} }),
 }))
