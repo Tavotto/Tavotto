@@ -220,3 +220,46 @@ describe('评审 #139 的 P2：切项目要清空诊断环', () => {
     expect(next.seq).toBeGreaterThan(1)
   })
 })
+
+
+describe('评审 #139 的两条 P2', () => {
+  it('anchor_from_document 反映的是「文档里真有这条 override」，不是恒真', () => {
+    // `anchorOf` / `positionOf` 在没有 override 时会退回 manifest 的值，
+    // 所以旧写法 `anchorOf(...) != null` 恒真——这个字段本来要诊断的区别
+    // （基准取自文档 还是 取自可能过期的 manifest）被它自己藏了起来
+    const withOverride = panelWith([{ gid: 'axes_0', prop: 'position', value: [0, 0, 1, 1] }])
+    const without = panelWith([])
+    const has = (panel: PanelObject, gid: string, prop: string) =>
+      panel.overrides.some((o) => o.gid === gid && o.prop === prop)
+
+    expect(has(withOverride, 'axes_0', 'position')).toBe(true)
+    expect(has(without, 'axes_0', 'position')).toBe(false)
+  })
+
+  it('切项目会清空诊断环：新项目的包不该带上一个项目的操作序列', async () => {
+    setup([], [])
+    recordDiagnosticEvent({
+      type: 'document.commit',
+      label_key: 'setProp',
+      patch_count: 1,
+      past_count: 0,
+      future_count: 0,
+      txn_open: false,
+      document_hash_before: 'doc:aaaaaaaaaaaa',
+      document_hash_after: 'doc:bbbbbbbbbbbb',
+    })
+    expect(readDiagnosticTrace().length).toBeGreaterThan(0)
+
+    clearDiagnosticTrace()
+    expect(readDiagnosticTrace()).toHaveLength(0)
+
+    // seq **不重置**：编号缺口是「这里被清过」的唯一线索
+    const next = recordDiagnosticEvent({
+      type: 'undo.request',
+      past_count: 0,
+      future_count: 0,
+      txn_open: false,
+    })!
+    expect(next.seq).toBeGreaterThan(1)
+  })
+})

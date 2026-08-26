@@ -997,6 +997,18 @@ export function pickElement(
  * `anchorFromDocument` 单独记一笔：基准锚点取自文档已有 override（安全）
  * 还是取自 manifest（几何过期时就是错的基准）。
  */
+/**
+ * 文档里**真的**写着这条 override 吗。
+ *
+ * 不能用 `anchorOf(...) != null` / `positionOf(...) != null` 代替：那两个函数
+ * 在没有 override 时会退回 manifest 的值（`el.anchor` / editable 的 position），
+ * 于是判据恒真——`anchor_from_document` 会永远报 true，把它本来要诊断的那个
+ * 区别（基准取自文档 还是 取自可能过期的 manifest）恰好藏了起来。
+ */
+function hasOverride(panel: PanelObject, gid: string, prop: string): boolean {
+  return panel.overrides.some((o) => o.gid === gid && o.prop === prop)
+}
+
 function noteDragBegin(
   type: 'element.drag.begin' | 'axes.drag.begin' | 'resize.begin',
   panel: PanelObject,
@@ -1054,7 +1066,13 @@ export function startElementDrag(
 
   interaction().begin('element')
   beginElementPreview(panel)
-  noteDragBegin('element.drag.begin', panel, element.gid, dragProp, anchorOf(panel, element) != null)
+  noteDragBegin(
+    'element.drag.begin',
+    panel,
+    element.gid,
+    dragProp,
+    hasOverride(panel, element.gid, dragProp),
+  )
   // 面板可能被旋转过：屏幕位移要先转回内容坐标系，图内的分数坐标才对得上
   const toContent = contentDelta(panel, layout)
   // 松手写 onMove 最后一次的位移：shift 锁向只作用于 onMove，若重读松手坐标，
@@ -1235,7 +1253,7 @@ export function startAxesDrag(
     panel,
     element.gid,
     'position',
-    positionOf(panel, element) != null,
+    hasOverride(panel, element.gid, 'position'),
   )
   const toContent = contentDelta(panel, layout)
 
