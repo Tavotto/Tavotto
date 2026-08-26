@@ -19,6 +19,7 @@ import pytest
 from tavotto import app as m
 from tavotto.engine import diagnostics as engine_diagnostics
 from tavotto.engine import diagnostics_frontend as dfe
+from support import frontend_schema
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -206,6 +207,47 @@ def test_too_many_events_are_truncated_to_the_most_recent(client):
     assert json.loads(lines[0])["seq"] == 1000 - dfe.MAX_EVENTS + 1
 
 
+def test_chunked_body_without_content_length_still_respects_the_limit(client):
+    """评审 #139 的 P2：chunked transfer encoding 不带 Content-Length，
+    按 0 处理就等于把 512 KB 的硬上限让开了。上限必须卡在读取本身。"""
+    big = json.dumps({"frontend_state": snapshot(),
+                      "interaction_trace": [event(i, mode="a" * 8)
+                                            for i in range(60_000)]}).encode()
+    assert len(big) > dfe.MAX_REQUEST_BYTES
+    # wsgi.input_terminated + 无 CONTENT_LENGTH = 服务器眼里的 chunked 请求：
+    # 流是可读的，但没人告诉你它有多长
+    res = client.post("/api/diagnostics/bundle", data=BytesIO(big),
+                      content_type="application/json",
+                      environ_overrides={"wsgi.input_terminated": True,
+                                         "CONTENT_LENGTH": None})
+    assert res.status_code == 200
+    manifest = json.loads(open_bundle(res.data).read("manifest.json"))
+    assert manifest["contains_interaction_trace"] is False
+    assert manifest["trace_truncated"] is True
+
+
+def test_chunked_body_under_the_limit_is_accepted_in_full(client):
+    """上一条的**判别性**在这里：只断言「超大的被拒」是抓不住 bug 的——
+    把上限错挂回 content_length（chunked 时是 None）会只读 1 个字节，
+    结果同样是「没有 trace + truncated」，那条用例照样绿。
+
+    真正能分辨两种实现的是**合法的 chunked 请求必须被完整收下**：
+    错误实现读不到东西，正确实现读得到全部 3 条。
+    """
+    body = json.dumps({"frontend_state": snapshot(),
+                       "interaction_trace": [event(1), event(2), event(3)]}).encode()
+    assert len(body) < dfe.MAX_REQUEST_BYTES
+    res = client.post("/api/diagnostics/bundle", data=BytesIO(body),
+                      content_type="application/json",
+                      environ_overrides={"wsgi.input_terminated": True,
+                                         "CONTENT_LENGTH": None})
+    assert res.status_code == 200
+    manifest = json.loads(open_bundle(res.data).read("manifest.json"))
+    assert manifest["contains_interaction_trace"] is True
+    assert manifest["trace_event_count"] == 3
+    assert manifest["trace_truncated"] is False
+
+
 def test_oversize_request_is_dropped_but_the_bundle_still_comes_out(client):
     big = "a" * 8
     payload = {"frontend_state": snapshot(),
@@ -239,6 +281,43 @@ def test_api_key_shaped_value_is_rejected_by_the_redactor():
     assert ev is None
 
 
+def test_a_field_legal_on_one_event_is_illegal_on_another():
+    """评审 #139 的 P1：`code` 是 render.error 的合法字段，扁平的名字集合于是
+    允许 `{"type": "diagnostics.export", "code": "SUPER_SECRET_…"}` 溜过去。
+
+    逐事件的表把它挡在外面。"""
+    leaked = dfe.sanitize_event({
+        "seq": 1, "ts": 1_756_000_000_000, "t_ms": 5,
+        "type": "diagnostics.export", "code": SECRET_TITLE,
+    }, _redact)
+    assert leaked is None
+    # 同一个字段在它自己的事件上照常通过
+    ok = dfe.sanitize_event({
+        "seq": 1, "ts": 1_756_000_000_000, "t_ms": 5, "type": "render.error",
+        "code": "missing_dependency", "file": "file:aaaaaaaaaaaa",
+        "variant": "var:bbbbbbbbbbbb", "duration_ms": 12,
+    }, _redact)
+    assert ok["code"] == "missing_dependency"
+
+
+@pytest.mark.parametrize("field,bad", [
+    ("selection_kind", SECRET_TITLE),
+    ("history_mode", SECRET_TITLE),
+    ("render_status", SECRET_TITLE),
+    ("kind", SECRET_TITLE),
+])
+def test_closed_set_fields_reject_content_shaped_tokens(field, bad):
+    """评审 #139 的 P1 之二：闭集字段以前走的是通用 token 判据，
+    `selection_kind: "SUPER_SECRET_PAPER_TITLE_12345"` 字符集完全合法。"""
+    snap = snapshot()
+    snap["selection"]["selection_kind"] = bad if field == "selection_kind" else "element"
+    snap["preview"]["history_mode"] = bad if field == "history_mode" else "gesture"
+    snap["panels"][0]["render_status"] = bad if field == "render_status" else "ready"
+    snap["panels"][0]["kind"] = bad if field == "kind" else "matplotlib"
+    out = dfe.sanitize_snapshot(snap, _redact)
+    assert SECRET_TITLE not in json.dumps(out, ensure_ascii=False)
+
+
 def test_unknown_event_type_is_dropped():
     assert dfe.sanitize_event(event(1, type="totally.made.up"), _redact) is None
 
@@ -257,10 +336,19 @@ def test_patch_and_geometry_shapes_survive():
     assert ev["patches"] == [{"gid": "axes_0.title", "prop": "pos_frac"},
                              {"domain": "panel_override", "prop": "fontsize"}]
 
-    ev = dfe.sanitize_event(event(1, input_geometry=[
-        {"gid": "axes_0.title", "bbox": [0.31, 0.12, 0.18, 0.04],
-         "anchor": [0.40, 0.15]}]), _redact)
+    # input_geometry 只属于 align.request / align.commit——**逐事件的表**说了算，
+    # 放在 align.blocked 上会被整条丢掉（这正是它该有的行为）
+    ev = dfe.sanitize_event({
+        "seq": 1, "ts": 1_756_000_000_000, "t_ms": 5, "type": "align.request",
+        "mode": "left", "panel": "panel:aaaaaaaaaaaa", "selected_count": 2,
+        "document_variant": "var:111111111111", "display_variant": None,
+        "authority_variant": None, "exact_authority": False,
+        "input_geometry": [{"gid": "axes_0.title",
+                            "bbox": [0.31, 0.12, 0.18, 0.04],
+                            "anchor": [0.40, 0.15]}],
+    }, _redact)
     assert ev["input_geometry"][0]["bbox"] == [0.31, 0.12, 0.18, 0.04]
+    assert dfe.sanitize_event(event(1, input_geometry=[{"gid": "axes_0"}]), _redact) is None
 
 
 def test_patch_value_is_rejected_outright():
@@ -299,39 +387,24 @@ def test_snapshot_of_a_non_dict_is_none():
 # ---------------------------------------------------------------------------
 # 严格同源对：后端认识的事件类型 == 前端可辨识联合里的那些
 # ---------------------------------------------------------------------------
-def test_event_types_match_frontend_union():
-    """两边加事件时漏了一边，这条先红（根 AGENTS.md 的严格同源对纪律）。
+def test_event_fields_match_frontend_schema():
+    """**逐事件**比对：后端每种事件允许的字段名 == 前端 EVENT_SCHEMA 里那些。
 
-    读的是前端 sanitize.ts 的 `EVENT_SCHEMA` 键——**那张表才是前端的判据**，
-    types.ts 的联合只是它的类型影子。
+    这是根 AGENTS.md 的严格同源对。后端确实复制了一份逐事件的表——评审指出
+    扁平的名字集合不够（`code` 是 render.error 的合法字段，扁平表于是允许
+    `{"type": "diagnostics.export", "code": "SUPER_SECRET_…"}`），而
+    「后端是独立的结构性隐私边界」这句话必须有代码兑现。复制的代价用这条
+    用例对冲：两边任何一个事件少一个字段，它先红。
+
+    读 TS 用的是**大括号配对**而不是正则：正则会把相邻条目串到一起
+    （实测 36 个事件只认出 20 个，还互相串味），那种解析出来的「一致」
+    是假的。
     """
-    src = (REPO_ROOT / "web/src/diagnostics/sanitize.ts").read_text(encoding="utf-8")
-    body = src.split("export const EVENT_SCHEMA", 1)[1]
-    # 只取表内的键：形如 `'align.blocked': {`
-    found = set(re.findall(r"^  '([a-z_]+(?:\.[a-z_]+)+)':", body, re.M))
-    assert found, "没能从 sanitize.ts 里解析出事件表——解析式该跟着那边的写法更新"
-    assert found == set(dfe.EVENT_TYPES)
-
-
-def test_event_field_names_match_frontend_schema():
-    """后端的扁平字段名集合 == 前端逐事件字段表里出现过的所有字段名。
-
-    后端那一层比前端粗（不管哪个事件，只问「这个名字在不在册」），但两边
-    **认识的名字必须是同一批**：前端加了字段而后端没登记，那个字段会在服务端
-    被整条丢掉——诊断里静静地少一块，没有任何报错。
-    """
-    src = (REPO_ROOT / "web/src/diagnostics/sanitize.ts").read_text(encoding="utf-8")
-    body = src.split("export const EVENT_SCHEMA", 1)[1].split(
-        "/* ------------------------------", 1)[0]
-    names = set(re.findall(r"[{,]\s*([a-z][a-zA-Z0-9_]*)\s*:", body))
-    names |= set(re.findall(r"^\s+([a-z][a-zA-Z0-9_]*):", body, re.M))
-    names -= {"k", "max", "values"}          # FieldKind 自己的结构键
-    # 展开的公共块（HISTORY_COUNTS / VARIANT_TRIPLE）在 TS 里是 spread，
-    # 正则看不见，显式补上
-    names |= {"past_count", "future_count",
-              "document_variant", "display_variant", "authority_variant"}
-    assert names, "没能从 sanitize.ts 解析出字段名——解析式该跟着那边的写法更新"
-    assert names == set(dfe.ALLOWED_FIELDS)
+    table = frontend_schema.extract(str(REPO_ROOT / "web/src/diagnostics/sanitize.ts"))
+    assert len(table) >= 30, f"只解析出 {len(table)} 个事件，解析器该跟着 TS 的写法更新"
+    assert set(table) == set(dfe.EVENT_FIELDS), "事件类型集合两边不一致"
+    for name, fields in sorted(table.items()):
+        assert set(fields) == set(dfe.EVENT_FIELDS[name]), name
 
 
 # ---------------------------------------------------------------------------

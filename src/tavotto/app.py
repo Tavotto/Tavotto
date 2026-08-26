@@ -1273,19 +1273,32 @@ def api_diagnostics_bundle_post():
 
 
 def _read_frontend_payload() -> tuple[dict | None, bool]:
-    """请求体 → (载荷, 是不是被整份丢掉了)。**不抛异常**。"""
-    length = request.content_length or 0
-    if engine_diagnostics_frontend.payload_too_large(length):
+    """请求体 → (载荷, 是不是被整份丢掉了)。**不抛异常**。
+
+    **上限卡在读取本身，不卡 `Content-Length`**：chunked transfer encoding 的
+    请求根本没有那个头，`request.content_length` 是 None，按 0 处理就等于把
+    512 KB 的硬上限让开了——`get_json()` 会把任意大的 body 先缓冲再解析。
+    所以这里自己按上限 +1 读流：多出来的那一个字节就是「超了」的判据，
+    而且无论有没有 Content-Length 都成立。
+    """
+    limit = engine_diagnostics_frontend.MAX_REQUEST_BYTES
+    try:
+        raw = request.stream.read(limit + 1)
+    except Exception:                          # noqa: BLE001 — 读流失败不该 500
+        return None, False
+    if not raw:
+        return None, False
+    if len(raw) > limit:
         # 超限时**不解析**：前端环最多 240 条，走到这儿说明载荷不是我们发的，
         # 或者出了别的问题——不该为了它把整个请求的内存吃满
-        app.logger.warning("诊断载荷超出上限（%d 字节），本次只出环境诊断包", length)
+        app.logger.warning("诊断载荷超出上限（>%d 字节），本次只出环境诊断包", limit)
         return None, True
     try:
-        body = request.get_json(force=True, silent=True)
-    except Exception:                          # noqa: BLE001 — 解析失败不该 500
-        body = None
+        body = json.loads(raw.decode("utf-8", errors="replace"))
+    except ValueError:                         # 畸形 JSON：退化，不是 400
+        return None, True
     if not isinstance(body, dict):
-        return None, bool(length)
+        return None, True
     return body, False
 
 

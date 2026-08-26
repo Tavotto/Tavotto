@@ -23,54 +23,142 @@ from __future__ import annotations
 import json
 import re
 
-#: 与 `web/src/diagnostics/types.ts` 的可辨识联合逐条对应。
-#: `tests/test_diagnostics_bundle.py::test_event_types_match_frontend_union`
-#: 直接读 TS 源码比对——两边加事件时漏了一边，那条用例先红。
-EVENT_TYPES: frozenset[str] = frozenset({
-    "document.commit",
-    "transaction.begin", "transaction.end", "transaction.cancel",
-    "undo.request", "undo.complete",
-    "redo.request", "redo.complete",
-    "selection.changed",
-    "render.request", "render.success", "render.error", "render.stale",
-    "display.source_changed",
-    "authority.ready", "authority.unavailable",
-    "element.drag.begin", "element.drag.commit", "element.drag.cancel",
-    "axes.drag.begin", "axes.drag.commit",
-    "resize.begin", "resize.commit",
-    "align.request", "align.blocked", "align.commit", "align.noop",
-    "preview.begin", "preview.commit", "preview.cancel", "preview.retire",
-    "layout_version.save",
-    "layout_version.restore.request", "layout_version.restore.complete",
-    "invariant.violation",
-    "diagnostics.export",
-})
 
-#: **字段名 allowlist**：所有事件允许出现的字段名之并集。
+#: **逐事件的字段名 allowlist**：每种事件只允许自己的那些字段。
 #:
-#: 后端刻意**不复制一份前端那种「逐事件」的字段表**（那份表迟早与前端分叉，
-#: 而分叉的表现是诊断里悄悄少了几个字段）。但「值的形状」这一条挡不住
-#: 「未登记的字段名 + 恰好形状合法的值」——`secret_unexpected_field:
-#: "SUPER_SECRET_API_KEY_67890"` 就是这样溜过去的。所以这里加一层**扁平的
-#: 名字集合**：粒度比前端粗（不管哪个事件，只问「这个名字在不在册」），
-#: 但足以把未登记字段整个挡在外面，而且只有一处要维护。
+#: 一开始这里是一张**扁平**的名字集合（不管哪个事件，只问「这个名字在不在册」），
+#: 理由是「不复制前端那种逐事件的表，免得两边分叉」。评审指出那样不够：
+#: `code` 是 render.error 的合法字段，扁平表于是允许
+#: `{"type": "diagnostics.export", "code": "SUPER_SECRET_PAPER_TITLE_12345"}`
+#: ——字段名在册、值是 token 形状，两道判据都过得了。而 AGENTS.md 里写着
+#: 「后端是独立的结构性隐私边界」，那句话就必须有代码兑现它。
 #:
-#: 与前端的一致性由 `test_event_field_names_match_frontend_schema` 看护。
-ALLOWED_FIELDS: frozenset[str] = frozenset({
-    "anchor_from_document", "authority_variant", "auto",
-    "auto_backup_created", "await_variant", "cancelled", "code",
-    "display_variant", "document_hash", "document_hash_after",
-    "document_hash_before", "document_variant", "duration_ms",
-    "element_count", "exact", "exact_authority", "file", "future_count",
-    "gid", "history_mode", "input_geometry", "kind", "label_key",
-    "mode", "move_count", "object_count", "ok", "operation",
-    "output_geometry", "panel", "panel_count", "past_count",
-    "patch_count", "patches", "policy", "preview_dpi", "prop", "reason",
-    "render_status", "render_variant", "replaced_open_txn", "rev",
-    "selected_count", "selected_gids", "selection_kind", "session",
-    "size_mm", "stale", "trace_count", "txn_open", "variant",
-    "variant_count", "version", "warning_count"
-})
+#: 分叉风险不是靠「不写这张表」解决的，是靠
+#: `test_event_fields_match_frontend_schema` 逐事件比对解决的：它用大括号配对
+#: 直接读 sanitize.ts，两边少一个字段就红。
+EVENT_FIELDS: dict[str, frozenset[str]] = {
+    "align.blocked": frozenset({
+        "authority_variant", "display_variant", "document_variant", "mode", "panel",
+        "reason"
+    }),
+    "align.commit": frozenset({
+        "authority_variant", "display_variant", "document_variant",
+        "exact_authority", "input_geometry", "mode", "move_count", "output_geometry",
+        "panel", "patch_count", "selected_count"
+    }),
+    "align.noop": frozenset({"mode", "panel", "reason"}),
+    "align.request": frozenset({
+        "authority_variant", "display_variant", "document_variant",
+        "exact_authority", "input_geometry", "mode", "panel", "selected_count"
+    }),
+    "authority.ready": frozenset({"authority_variant", "document_variant", "panel"}),
+    "authority.unavailable": frozenset({
+        "authority_variant", "document_variant", "panel"
+    }),
+    "axes.drag.begin": frozenset({
+        "anchor_from_document", "authority_variant", "display_variant",
+        "document_variant", "exact_authority", "gid", "panel", "prop"
+    }),
+    "axes.drag.commit": frozenset({
+        "authority_variant", "document_variant", "exact_authority", "gid", "panel",
+        "patch_count", "prop"
+    }),
+    "diagnostics.export": frozenset({"panel_count", "trace_count"}),
+    "display.source_changed": frozenset({
+        "authority_variant", "display_variant", "document_variant", "exact", "file",
+        "panel", "render_status", "stale"
+    }),
+    "document.commit": frozenset({
+        "document_hash_after", "document_hash_before", "future_count", "label_key",
+        "past_count", "patch_count", "patches", "txn_open"
+    }),
+    "element.drag.begin": frozenset({
+        "anchor_from_document", "authority_variant", "display_variant",
+        "document_variant", "exact_authority", "gid", "panel", "prop"
+    }),
+    "element.drag.cancel": frozenset({"cancelled", "gid", "panel"}),
+    "element.drag.commit": frozenset({
+        "authority_variant", "document_variant", "exact_authority", "gid", "panel",
+        "patch_count", "prop"
+    }),
+    "invariant.violation": frozenset({
+        "authority_variant", "display_variant", "document_variant", "kind",
+        "operation", "panel"
+    }),
+    "layout_version.restore.complete": frozenset({
+        "auto_backup_created", "document_hash_after", "document_hash_before",
+        "future_count", "past_count", "version"
+    }),
+    "layout_version.restore.request": frozenset({
+        "document_hash", "future_count", "past_count", "version"
+    }),
+    "layout_version.save": frozenset({"auto", "document_hash", "version"}),
+    "preview.begin": frozenset({"history_mode", "panel", "render_variant", "session"}),
+    "preview.cancel": frozenset({"duration_ms", "panel", "reason", "session"}),
+    "preview.commit": frozenset({
+        "await_variant", "panel", "patch_count", "render_variant", "session"
+    }),
+    "preview.retire": frozenset({"duration_ms", "panel", "reason", "session"}),
+    "redo.complete": frozenset({
+        "document_hash_after", "document_hash_before", "future_count", "label_key",
+        "ok", "past_count"
+    }),
+    "redo.request": frozenset({"future_count", "past_count", "txn_open"}),
+    "render.error": frozenset({"code", "duration_ms", "file", "variant"}),
+    "render.request": frozenset({"file", "policy", "preview_dpi", "variant"}),
+    "render.stale": frozenset({"file", "variant_count"}),
+    "render.success": frozenset({
+        "duration_ms", "element_count", "file", "rev", "size_mm", "variant",
+        "warning_count"
+    }),
+    "resize.begin": frozenset({
+        "anchor_from_document", "authority_variant", "display_variant",
+        "document_variant", "exact_authority", "gid", "panel", "prop"
+    }),
+    "resize.commit": frozenset({
+        "authority_variant", "document_variant", "exact_authority", "gid", "panel",
+        "patch_count", "prop"
+    }),
+    "selection.changed": frozenset({
+        "object_count", "panel", "selected_count", "selected_gids", "selection_kind"
+    }),
+    "transaction.begin": frozenset({"label_key", "replaced_open_txn"}),
+    "transaction.cancel": frozenset({"label_key", "patch_count"}),
+    "transaction.end": frozenset({
+        "document_hash_after", "label_key", "past_count", "patch_count"
+    }),
+    "undo.complete": frozenset({
+        "document_hash_after", "document_hash_before", "future_count", "label_key",
+        "ok", "past_count"
+    }),
+    "undo.request": frozenset({"future_count", "past_count", "txn_open"}),
+}
+
+#: 事件类型集合就是上表的键——**不再单独维护第二份**
+EVENT_TYPES: frozenset[str] = frozenset(EVENT_FIELDS)
+
+#: 取值是闭集的字段。开集的标识（label_key / prop / code / operation / mode）
+#: 靠形状规则 + 上面那张逐事件表约束「哪个事件允许放什么」。
+_ENUM_FIELDS: dict[str, frozenset[str]] = {
+    "policy": frozenset({"immediate", "defer", "none", "sync"}),
+    "render_status": frozenset({"idle", "rendering", "ready", "error"}),
+    "selection_kind": frozenset({"none", "element", "object", "mixed"}),
+    "history_mode": frozenset({"gesture", "granular"}),
+    # `kind` 在事件里是不变式种类，在快照里是面板载体类型
+    "kind": frozenset({
+        "geometry_authority_mismatch", "selected_gid_missing_from_exact_manifest",
+        "standalone_action_inside_unrelated_transaction",
+        "document_display_variant_diverged", "undo_complete_but_authority_stale",
+        "preview_session_survived_commit",
+        "matplotlib", "image", "runtime", "unknown",
+    }),
+    # 对齐被拒 / 对齐空操作 / preview 收尾，三处的原因合起来
+    "reason": frozenset({
+        "authority_unavailable", "authority_stale", "no_manifest", "panel_missing",
+        "empty_selection", "no_geometry_change", "nothing_to_write",
+        "pointer_cancel", "committed", "authority_swapped", "authority_failed", "reset",
+    }),
+}
 
 #: 硬上限。超出一律**截断而不是失败**——用户点导出是为了拿到一个包，
 #: 因为 trace 太长而两手空空是最糟的结果。截断的事实记进 manifest。
@@ -208,7 +296,8 @@ def sanitize_event(raw, redact) -> dict | None:
     if not isinstance(raw, dict):
         return None
     kind = raw.get("type")
-    if kind not in EVENT_TYPES:
+    allowed = EVENT_FIELDS.get(kind) if isinstance(kind, str) else None
+    if allowed is None:
         return None
     try:
         seq = raw.get("seq")
@@ -226,13 +315,19 @@ def sanitize_event(raw, redact) -> dict | None:
             fields += 1
             if fields > MAX_FIELDS or not _FIELD_RE.match(str(key)):
                 return None
-            if str(key) not in ALLOWED_FIELDS:
-                # 未登记的字段名：**整条事件丢弃**。留下「除了这个字段之外」的
-                # 半条会让读包的人以为那就是全部
+            if str(key) not in allowed:
+                # 这个事件不认识这个字段名：**整条事件丢弃**。留下「除了这个
+                # 字段之外」的半条会让读包的人以为那就是全部
                 return None
             name = str(key)
             if _is_hash_field(name):
                 out[key] = _hash_or_none(value)
+            elif name in _ENUM_FIELDS:
+                # 闭集字段：不在表里就整条丢。这是 `selection_kind:
+                # "SUPER_SECRET_…"` 那一类唯一挡得住的地方
+                if value not in _ENUM_FIELDS[name]:
+                    raise _Reject("enum")
+                out[key] = value
             elif name in _LOWER_FIELDS:
                 # `mode` / `operation` 是我们自己写死的操作键，实际取值全是小写
                 # （left / centerh / align.left / scale.group）。要求小写就足以
@@ -292,7 +387,7 @@ _SNAPSHOT_SHAPE = {
     },
     "selection": {
         "active_panel": "hash",
-        "selection_kind": "scalar",
+        "selection_kind": "enum",
         "element_count": "int",
         "element_gids": "gids",
         "object_count": "int",
@@ -300,17 +395,17 @@ _SNAPSHOT_SHAPE = {
     "preview": {
         "active_sessions": "int",
         "settled": "scalar",
-        "history_mode": "scalar",
+        "history_mode": "enum",
     },
 }
 
 _PANEL_SHAPE = {
-    "panel": "hash", "file": "hash", "kind": "scalar",
+    "panel": "hash", "file": "hash", "kind": "enum",
     "override_count": "int",
     "document_variant": "hash", "display_variant": "hash",
     "authority_variant": "hash",
     "display_exact": "scalar", "exact_manifest_available": "scalar",
-    "render_status": "scalar", "stale": "scalar", "element_count": "int",
+    "render_status": "enum", "stale": "scalar", "element_count": "int",
 }
 
 
@@ -328,6 +423,10 @@ def _pull(src, shape, redact):
                 out[key] = value if isinstance(value, int) and not isinstance(value, bool) else 0
             elif spec == "hash":
                 out[key] = _hash_or_none(raw)
+            elif spec == "enum":
+                if raw not in _ENUM_FIELDS.get(key, frozenset()):
+                    raise _Reject("enum")
+                out[key] = raw
             elif spec == "key":
                 if raw is None:
                     out[key] = None
