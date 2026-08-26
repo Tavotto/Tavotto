@@ -394,6 +394,7 @@
     "elementLocked": "Locked \"{{label}}\" — canvas clicks will skip it",
     "elementsHidden_one": "Hid {{count}} element — restore them from \"Hidden elements\"",
     "elementsHidden_other": "Hid {{count}} elements — restore them from \"Hidden elements\"",
+    "geometrySyncing": "Syncing figure geometry — try again in a moment",
     "grouped_one": "Grouped {{count}} object; clicking any member selects the whole group",
     "grouped_other": "Grouped {{count}} objects; clicking any member selects the whole group",
     "inserted": "Inserted {{name}} ({{undo}} to undo)",

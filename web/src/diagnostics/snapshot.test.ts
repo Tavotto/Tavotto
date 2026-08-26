@@ -115,8 +115,9 @@ describe('frontend state snapshot', () => {
     expect(p.override_count).toBe(1)
     expect(p.document_variant).toBe(variantHash(renderKeyOf(panel)))
     expect(p.display_variant).toBe(variantHash(renderedKey))
-    expect(p.authority_variant).toBe(variantHash(renderedKey))
-    // **关键一行**：几何权威不是文档这一版，此刻做几何写入是危险的
+    // **关键一行**：权威要么就是文档这一版，要么根本没有——「来自别的变体的
+    // 权威」这个概念本身就不该存在（ADR 0017 的 exactPanelRender）
+    expect(p.authority_variant).toBeNull()
     expect(p.display_exact).toBe(false)
     expect(p.exact_manifest_available).toBe(false)
     expect(p.element_count).toBe(3)
@@ -197,7 +198,10 @@ describe('undo 竞态：align → 渲染在途 → undo → 迟到的渲染成�
     // 此刻的快照如实说：文档是 A，而画布/权威已经被那次迟到的渲染换成了 B
     const p = buildFrontendDiagnosticSnapshot().panels[0]
     expect(p.document_variant).toBe(variantHash(keyA))
-    expect(p.authority_variant).toBe(variantHash(keyB))
+    // 画布上挂的是那份迟到的 B，但**权威是空的**：文档在 A，而 A 这一版
+    // 手上没有对得上的 manifest。此刻任何几何写入都会被拒绝，这正是想要的
+    expect(p.display_variant).toBe(variantHash(keyB))
+    expect(p.authority_variant).toBeNull()
     expect(p.exact_manifest_available).toBe(false)
   })
 

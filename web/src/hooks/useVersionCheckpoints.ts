@@ -1,5 +1,6 @@
 import { createVersion } from '@/lib/api'
 import { useDocumentStore } from '@/store/documentStore'
+import { documentDigest, recordDiagnosticEvent, versionHash } from '@/diagnostics'
 
 /**
  * 布局版本的自动检查点：编辑停顿后落一个服务器快照。
@@ -24,9 +25,20 @@ export function startVersionCheckpoints(): () => void {
     const { doc, documentId } = useDocumentStore.getState()
     if (!doc.objects.length) return
     lastSaved = Date.now()
-    void createVersion(documentId, { auto: true, doc }).catch(() => {
-      /* 检查点失败不打扰编辑；下一轮改动会再试 */
-    })
+    void createVersion(documentId, { auto: true, doc })
+      .then((res) => {
+        // 服务器与最近一版相同会跳过（skipped）——那不是一次新版本，不记
+        if (res.skipped || !res.version) return
+        recordDiagnosticEvent({
+          type: 'layout_version.save',
+          version: versionHash(res.version.id),
+          document_hash: documentDigest(doc),
+          auto: true,
+        })
+      })
+      .catch(() => {
+        /* 检查点失败不打扰编辑；下一轮改动会再试 */
+      })
   }
 
   const unsub = useDocumentStore.subscribe((state, prev) => {

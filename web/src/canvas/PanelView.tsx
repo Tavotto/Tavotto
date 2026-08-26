@@ -7,7 +7,7 @@ import { DURATION, prefersReducedMotion, usePresence } from '@/lib/motion'
 import { geomHitsRect } from '@/lib/pathGeom'
 import { pickBucket } from '@/lib/units'
 import { cn } from '@/lib/utils'
-import { shortHash } from '@/lib/authorityTrace'
+import { diagnosticHash } from '@/diagnostics'
 import { isJustBakedBaseline } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
 import { useInteractionStore } from '@/store/interactionStore'
@@ -166,7 +166,7 @@ export function PanelView({ obj }: { obj: PanelObject }) {
       // exact = 图与文档同源；fallback = 暂时挂着上一张（几何交互已停摆）。
       // key 过短 hash：变体键里带文件名与 overrides 原文，不落进 DOM。
       data-display={displayView?.kind ?? 'empty'}
-      data-display-key={shortHash(displayView?.sourceKey ?? null)}
+      data-display-key={diagnosticHash(displayView?.sourceKey ?? null)}
     >
       <div
         className="absolute overflow-hidden"

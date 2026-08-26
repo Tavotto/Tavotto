@@ -38,6 +38,8 @@ import { restoreSession, startAutosave, useDocumentStore } from '@/store/documen
 import { useViewportStore } from '@/store/viewportStore'
 import { startLayoutAutoReflow } from '@/store/actions'
 import { startVersionCheckpoints } from '@/hooks/useVersionCheckpoints'
+import { installDiagnosticsWiring } from '@/diagnostics/wiring'
+import { installDiagnosticsDevHook } from '@/diagnostics'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { onDesktopMenu, onDesktopOpen } from '@/lib/desktop'
@@ -107,6 +109,10 @@ function Workspace() {
     const stopPrune = subscribePruneSelection()
     const stopCheckpoints = startVersionCheckpoints()
     const stopReflow = startLayoutAutoReflow()
+    // 诊断（ADR 0016）：只读订阅 + 开发态调试入口。**纯内存、不落盘、不上传**，
+    // 只有用户点「导出诊断包」时这些事件才会进一个 zip
+    const stopDiagnostics = installDiagnosticsWiring()
+    installDiagnosticsDevHook()
     const onAutosaveError = (ev: Event) => {
       // stale = 另一个窗口已经存过更新的版本，后端挡下了这次覆盖（见 documentStore）
       const stale = (ev as CustomEvent<{ reason?: string }>).detail?.reason === 'stale'
@@ -132,6 +138,7 @@ function Workspace() {
       stopPrune()
       stopCheckpoints()
       stopReflow()
+      stopDiagnostics()
       window.removeEventListener('tavotto:autosave-error', onAutosaveError)
       window.removeEventListener('tavotto:doc-conflict', onDocConflict)
     }

@@ -16,7 +16,7 @@
  * 所以这里不只记一笔，它**当场拒绝这次写入**。诊断告诉我们「为什么错」，
  * 护栏让这一类根本不再伤到用户。
  */
-import { manifestSourceKey, renderKeyOf, useRenderStore, activeRenderKey } from '@/store/renderStore'
+import { exactPanelRender, panelDisplayView, renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useDocumentStore } from '@/store/documentStore'
 import type { PanelObject } from '@/types/document'
 import { fileHash, panelHash, variantHash, variantHashOrNull } from './hash'
@@ -33,18 +33,27 @@ export interface AuthorityView {
   exact: boolean
 }
 
-/** 现读一个面板的三个身份。纯读，不触发渲染 */
+/**
+ * 现读一个面板的三个身份。纯读，不触发渲染。
+ *
+ * **权威判据委托给 `exactPanelRender`（ADR 0017）**，这里不另立一份。它比
+ * 「manifest 来自哪个键」更严：还要求 `lastPatches` 与当前 overrides 逐字相等、
+ * 且没被 `markStale` 标记过——脚本变了的时候，键相同但旧墨迹框已经不作数。
+ * 诊断报的必须就是**护栏实际用的那个判据**，否则诊断会说「权威就绪」而写路径
+ * 当场拒绝，两边各说各话。
+ */
 export function readAuthority(panel: PanelObject): AuthorityView {
   const rs = useRenderStore.getState()
   const documentVariant = renderKeyOf(panel)
-  const authorityVariant = manifestSourceKey(rs, panel)
-  const hasSvg = !!rs.byKey[documentVariant]?.svg || !!rs.latest[panel.fileId]
+  const view = panelDisplayView(rs, panel)
+  const exact = exactPanelRender(rs, panel)
   return {
     panelId: panel.id,
     documentVariant,
-    displayVariant: hasSvg ? activeRenderKey(rs, panel) : null,
-    authorityVariant,
-    exact: authorityVariant === documentVariant,
+    displayVariant: view.sourceKey,
+    // 权威要么就是当前这一版，要么根本没有——没有「来自别的变体的权威」
+    authorityVariant: exact ? documentVariant : null,
+    exact: !!exact,
   }
 }
 

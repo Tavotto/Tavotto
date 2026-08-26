@@ -21,6 +21,11 @@ import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { finishActiveGesture } from '@/store/gestureCoordinator'
 import { useVariantPng } from '@/hooks/useVariantPng'
+import {
+  documentDigest,
+  recordDiagnosticEvent,
+  versionHash,
+} from '@/diagnostics'
 import { askConfirm, useUiStore } from '@/store/uiStore'
 import type { FigureDocument, PanelObject } from '@/types/document'
 import { objectLabel } from '@/types/document'
@@ -104,9 +109,16 @@ export function VersionDrawer() {
   const saveNow = async () => {
     setBusy(true)
     try {
-      await createVersion(docId, {
+      const created = await createVersion(docId, {
         name: saveName.trim() || undefined,
         doc: useDocumentStore.getState().doc,
+      })
+      recordDiagnosticEvent({
+        type: 'layout_version.save',
+        // **只有 id 的 hash**：saveName 是用户自己敲的版本名，一个字都不取
+        version: created.version ? versionHash(created.version.id) : null,
+        document_hash: documentDigest(useDocumentStore.getState().doc),
+        auto: false,
       })
       setSaveName('')
       await reload()
@@ -285,6 +297,15 @@ function VersionDetail({
     // 事务开着、值还没落定的中间态（issue #131）。
     finishActiveGesture()
     setBusy(true)
+    const hashBefore = documentDigest(useDocumentStore.getState().doc)
+    recordDiagnosticEvent({
+      type: 'layout_version.restore.request',
+      version: versionHash(meta.id),
+      document_hash: hashBefore,
+      past_count: useDocumentStore.getState().past.length,
+      future_count: useDocumentStore.getState().future.length,
+    })
+    let backupCreated = false
     try {
       // 先把当前状态自动存档：恢复默认产生新版本，绝不覆盖当前工作
       await createVersion(docId, {
@@ -292,6 +313,7 @@ function VersionDetail({
         auto: true,
         doc: useDocumentStore.getState().doc,
       })
+      backupCreated = true
       useDocumentStore
         .getState()
         .commit(msg('versions.restoreHistory', { name: meta.name }, 'dialogs'), (d) => {
@@ -300,6 +322,15 @@ function VersionDetail({
           d.objects = structuredClone(versionDoc.objects)
           d.guides = structuredClone(versionDoc.guides)
         })
+      recordDiagnosticEvent({
+        type: 'layout_version.restore.complete',
+        version: versionHash(meta.id),
+        document_hash_before: hashBefore,
+        document_hash_after: documentDigest(useDocumentStore.getState().doc),
+        auto_backup_created: backupCreated,
+        past_count: useDocumentStore.getState().past.length,
+        future_count: useDocumentStore.getState().future.length,
+      })
       await onChanged()
       useUiStore
         .getState()

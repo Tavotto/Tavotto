@@ -55,6 +55,12 @@ import {
   commitElementPreview,
 } from './elementPreview'
 import {
+  authorityFields,
+  panelHash,
+  readAuthority,
+  recordDiagnosticEvent,
+} from '@/diagnostics'
+import {
   isLinear,
   lineEndpoints,
   objectRotation,
@@ -981,6 +987,59 @@ export function pickElement(
  * 拖动图内可拖元素：先直接平移 SVG 里对应的 <g> 做乐观预览，
  * 松手才把新锚点写成 override 触发真渲染。
  */
+/**
+ * 拖动类操作的诊断记录（ADR 0016 §6 的表：**只记录，不阻断**）。
+ *
+ * 拖动的输入是用户对着**看得见的像素**拖指针，操作与所见自洽；中途弹一个
+ * 拒绝反而是伤害。所以这里不拦，只把三个变体身份留在 trace 里——真出了
+ * 「拖完位置不对」的 issue，`exact_authority: false` 就是第一条线索。
+ *
+ * `anchorFromDocument` 单独记一笔：基准锚点取自文档已有 override（安全）
+ * 还是取自 manifest（几何过期时就是错的基准）。
+ */
+function noteDragBegin(
+  type: 'element.drag.begin' | 'axes.drag.begin' | 'resize.begin',
+  panel: PanelObject,
+  gid: string,
+  prop: string,
+  anchorFromDocument: boolean,
+): void {
+  const view = readAuthority(panel)
+  recordDiagnosticEvent({
+    type,
+    panel: panelHash(panel.id),
+    gid,
+    prop,
+    ...authorityFields(view),
+    exact_authority: view.exact,
+    anchor_from_document: anchorFromDocument,
+  })
+}
+
+function noteDragCommit(
+  type: 'element.drag.commit' | 'axes.drag.commit' | 'resize.commit',
+  panelId: string,
+  gid: string,
+  prop: string,
+  patchCount: number,
+): void {
+  // 收尾时**从文档现取**：闭包里那份 panel 可能已经是上一帧的了
+  const panel = useDocumentStore.getState().doc.objects.find((o) => o.id === panelId)
+  if (panel?.type !== 'panel') return
+  const view = readAuthority(panel)
+  const fields = authorityFields(view)
+  recordDiagnosticEvent({
+    type,
+    panel: panelHash(panelId),
+    gid,
+    prop,
+    patch_count: patchCount,
+    document_variant: fields.document_variant,
+    authority_variant: fields.authority_variant,
+    exact_authority: view.exact,
+  })
+}
+
 export function startElementDrag(
   e: ReactPointerEvent,
   panel: PanelObject,
@@ -995,6 +1054,7 @@ export function startElementDrag(
 
   interaction().begin('element')
   beginElementPreview(panel)
+  noteDragBegin('element.drag.begin', panel, element.gid, dragProp, anchorOf(panel, element) != null)
   // 面板可能被旋转过：屏幕位移要先转回内容坐标系，图内的分数坐标才对得上
   const toContent = contentDelta(panel, layout)
   // 松手写 onMove 最后一次的位移：shift 锁向只作用于 onMove，若重读松手坐标，
@@ -1013,11 +1073,18 @@ export function startElementDrag(
       interaction().end()
       if (!moved || end.cancelled) {
         cancelElementPreview()
+        recordDiagnosticEvent({
+          type: 'element.drag.cancel',
+          panel: panelHash(panel.id),
+          gid: element.gid,
+          cancelled: end.cancelled,
+        })
         return
       }
       const [dfx, dfy] = last
       setOverride(panel.id, element.gid, dragProp, [anchor[0] + dfx, anchor[1] + dfy], true)
       commitElementPreview(panel.id)
+      noteDragCommit('element.drag.commit', panel.id, element.gid, dragProp, 1)
     },
   })
 }
@@ -1162,6 +1229,14 @@ export function startAxesDrag(
       : []
   interaction().begin('element')
   beginElementPreview(panel)
+  // 基准是 positionOf(panel, element)——它优先取文档里已写下的 position override
+  noteDragBegin(
+    mode === 'move' ? 'axes.drag.begin' : 'resize.begin',
+    panel,
+    element.gid,
+    'position',
+    positionOf(panel, element) != null,
+  )
   const toContent = contentDelta(panel, layout)
 
   const compute = (dxPx: number, dyPx: number, shift = false) => {
@@ -1234,6 +1309,13 @@ export function startAxesDrag(
         setOverrides(panel.id, hist('moveElement', { label: element.label }), patches, true)
       else setOverride(panel.id, element.gid, 'position', rect.map(round4), true)
       commitElementPreview(panel.id)
+      noteDragCommit(
+        mode === 'move' ? 'axes.drag.commit' : 'resize.commit',
+        panel.id,
+        element.gid,
+        'position',
+        patches.length,
+      )
     },
   })
 }
@@ -1311,6 +1393,9 @@ export function startGroupResize(
   e.stopPropagation()
   interaction().begin('element')
   beginElementPreview(panel)
+  // 成组缩放的基准 group.box 是从 manifest 量出来的包围框——几何过期时它就是
+  // 错的基准。**不阻断**（用户拖的是看得见的线框），但 trace 里留下这一笔
+  noteDragBegin('resize.begin', panel, group.entries[0]?.key ?? 'group', 'position', false)
 
   const toContent = contentDelta(panel, layout)
   const nextGroup = (dxPx: number, dyPx: number) => {
@@ -1339,8 +1424,16 @@ export function startGroupResize(
         return
       }
       const box = last ?? nextGroup(ev.clientX - e.clientX, ev.clientY - e.clientY)
-      setOverrides(panel.id, hist('resizeAxes', { count: group.entries.length }), groupPatches(group, box))
+      const patches = groupPatches(group, box)
+      setOverrides(panel.id, hist('resizeAxes', { count: group.entries.length }), patches)
       commitElementPreview(panel.id)
+      noteDragCommit(
+        'resize.commit',
+        panel.id,
+        group.entries[0]?.key ?? 'group',
+        'position',
+        patches.length,
+      )
     },
   })
 }

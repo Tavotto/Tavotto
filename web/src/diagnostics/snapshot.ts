@@ -11,8 +11,13 @@
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
-import { resolvePanelRender, renderKeyOf, useRenderStore } from '@/store/renderStore'
-import { activeRenderKey } from '@/store/renderStore'
+import {
+  exactPanelRender,
+  panelDisplayView,
+  panelRender,
+  renderKeyOf,
+  useRenderStore,
+} from '@/store/renderStore'
 import { getHistoryMode, previewSession } from '@/store/svgPreviewStore'
 import type { CanvasObject, PanelObject } from '@/types/document'
 import { documentDigest } from './digest'
@@ -44,9 +49,13 @@ function selectionKindOf(gidCount: number, objectCount: number): SelectionKind {
 /** 单个面板的三个变体身份 + 渲染态。几何写入安不安全全看这一行 */
 export function panelSnapshot(panel: PanelObject): PanelSnapshot {
   const rs = useRenderStore.getState()
-  const { render, manifestKey } = resolvePanelRender(rs, panel)
+  const render = panelRender(rs, panel)
   const documentVariant = renderKeyOf(panel)
-  const displayVariant = render?.svg ? activeRenderKey(rs, panel) : null
+  const view = panelDisplayView(rs, panel)
+  const displayVariant = view.sourceKey
+  // **权威判据委托给 exactPanelRender**（ADR 0017），诊断不另立一份：
+  // 报的必须就是护栏实际用的那个判据
+  const exact = exactPanelRender(rs, panel)
   return {
     panel: panelHash(panel.id),
     file: fileHash(panel.fileId),
@@ -54,11 +63,11 @@ export function panelSnapshot(panel: PanelObject): PanelSnapshot {
     override_count: panel.overrides.length,
     document_variant: variantHash(documentVariant),
     display_variant: variantHashOrNull(displayVariant),
-    authority_variant: variantHashOrNull(manifestKey),
+    authority_variant: exact ? variantHash(documentVariant) : null,
     // 画布上挂的那版就是文档这一版
     display_exact: displayVariant === documentVariant,
     // **几何权威是否精确**：量 bbox 的那份 manifest 就是文档这一版
-    exact_manifest_available: manifestKey === documentVariant,
+    exact_manifest_available: !!exact,
     render_status: rs.byKey[documentVariant]?.status ?? 'idle',
     stale: !!rs.byKey[documentVariant]?.stale,
     element_count: render?.manifest?.elements.length ?? 0,

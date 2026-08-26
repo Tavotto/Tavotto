@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { isJustBakedBaseline } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { panelRender, renderKeyOf, useRenderStore } from '@/store/renderStore'
+import { sampleDisplayState } from '@/diagnostics'
 import { useUiStore } from '@/store/uiStore'
 import {
   panelRotation,
@@ -75,7 +76,7 @@ export function requestRender(panel: PanelObject, immediate: boolean | RenderPol
   const fileId = panel.fileId
   const fire = () => {
     timers.delete(panel.id)
-    void store.render(fileId, patches, dpi)
+    void store.render(fileId, patches, dpi, policy)
   }
   window.clearTimeout(timers.get(panel.id))
   timers.delete(panel.id)
@@ -107,11 +108,13 @@ export function flushRender(panelId: string) {
   // 松手时就会一声不响地什么都不做——占位的 wantPatches 还挡着同步器，
   // 结果是用户改完之后**永远等不到那张定稿图**。
   if (state.lastPatches !== want) {
-    void store.render(panel.fileId, panel.overrides)
+    void store.render(panel.fileId, panel.overrides, undefined, 'sync')
     return
   }
   // 已经是这一版了：只有「现在这张是拖动期的低清」才需要补一张定稿
-  if (state.previewDpi != null) void store.render(panel.fileId, panel.overrides)
+  if (state.previewDpi != null) {
+    void store.render(panel.fileId, panel.overrides, undefined, 'sync')
+  }
 }
 
 /**
@@ -184,6 +187,10 @@ export function syncEngine(objects: readonly CanvasObject[], editingId: string |
   }
   // 编辑期每改一个值就多一条变体（各带一份 SVG）：没人再引用的当场清掉
   useRenderStore.getState().prune(liveRenderKeys(objects))
+  // 诊断：三个变体身份的采样点就挂在这里——同步这一轮**本来就只在真状态
+  // 变化时跑**，而 sampleDisplayState 载荷没变就不记，于是稳态下它一条都不写。
+  // 不挂在 React render 里：那会在每一帧算一遍 JSON（ADR 0016 §15）
+  for (const o of objects) if (o.type === 'panel') sampleDisplayState(o)
 }
 
 /**
