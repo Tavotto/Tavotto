@@ -1349,6 +1349,7 @@ export default interface Resources {
       "backToScript": "回到脚本值",
       "backToScriptPartial_other": "回到脚本值（{{count}} 个改过）",
       "batchEdit": "批量修改{{label}}",
+      "batchEditGeneric": "批量修改",
       "batchHint_other": "改动会同时写到选中的 {{count}} 个元素",
       "batchNoCommon": "这些元素没有可一起改的属性",
       "batchTitle_other": "已选 {{count}} 个{{role}}",
@@ -1413,6 +1414,8 @@ export default interface Resources {
       "setAxesHeight": "修改子图高度",
       "setAxesWidth": "修改子图宽度",
       "sourceAdvanced": "源文件与高级",
+      "textBatchHintMixed_other": "这些元素类型不同，只列出它们都支持的文字样式；改动会同时写到 {{count}} 个元素。",
+      "textBatchTitle_other": "{{count}} 个文字元素的公共样式",
       "traceback": "traceback",
       "useAssistant": "用改图助手完成",
       "waiting": "等待引擎渲染…"

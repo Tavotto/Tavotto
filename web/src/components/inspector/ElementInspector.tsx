@@ -98,6 +98,9 @@ import {
   type TickSpineAdapter,
 } from './controls/TickAndSpineDiagram'
 import { useElementWriter } from './elementWrite'
+import { TextStyleControls } from './controls/TextStyleControls'
+import { useTextStyleAdapter } from './textStyleAdapter'
+import { isTextLikeSelection, TEXT_STYLE_PROPS } from './textStyleModel'
 import { fontStackOf } from './controls/fontStack'
 import { alignSelectedPanelElements } from '@/store/alignAction'
 import { useInspectorPrefs } from '@/store/inspectorPrefs'
@@ -174,6 +177,18 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
   // 多选同一种角色 → 批量改公共属性（文字全部调字号、曲线全部换色…）
   const batch =
     selected.length > 1 && selected.every((e) => e.role === selected[0].role) ? selected : null
+  /**
+   * 跨角色的**文字样式**批量。与 `batch`（同角色公共字段）和 `alignGroup`
+   * （几何对齐）是三个独立概念，可以同时成立：
+   *
+   *   * 图标题 + X/Y 轴标题 → styleBatch 有、batch 没有（角色不同）；
+   *   * 两个轴标题          → 两个都有（样式行在上，其余公共字段在下）；
+   *   * 两条曲线            → 只有 batch。
+   *
+   * 「已经进入对齐模式」**不再是**「不能改公共样式」的理由——旧代码里
+   * alignGroup 一出现就把整个属性区换掉，多选三条文字后连字号都改不了。
+   */
+  const styleBatch = isTextLikeSelection(selected) ? selected : null
 
   // 展示分桶：文字工具条覆盖的属性、四边状态图吃掉的开关都让出来
   // （同一属性不出两套控件）
@@ -250,12 +265,17 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
         </Section>
       )}
 
-      {/* 四层顺序：先公共属性（高频），再对齐与排列 */}
-      {batch && <BatchSection panel={panel} elements={batch} />}
+      {/* 三层顺序：公共文字样式 → 其余公共属性 → 对齐与排列。
+          三者互相独立，谁在谁不在只看选择本身，不再互斥。
+          `syncing`（#137：几何同步在途）与 `alignGroup` 同档——它只决定对齐区
+          在不在、以及单元素表单让不让位，**不影响样式批量**：等一次几何写回
+          落地的时候，用户照样该能改字号。 */}
+      {styleBatch && <TextStyleBatchSection panel={panel} elements={styleBatch} />}
+      {batch && <BatchSection panel={panel} elements={batch} skip={styleBatch ? TEXT_BAR_PROPS : undefined} />}
       {(alignGroup || syncing) && (
         <AlignSection panel={panel} items={alignGroup ?? []} syncing={syncing} />
       )}
-      {alignGroup || syncing || batch ? null : (
+      {alignGroup || syncing || batch || styleBatch ? null : (
       <Section>
         {manifest && element && <RelatedRow manifest={manifest} element={element} />}
         {!manifest ? (
@@ -299,8 +319,10 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
 
       <SourceAdvancedSection
         panel={panel}
-        element={alignGroup || syncing || batch ? null : element}
-        advanced={alignGroup || syncing || batch ? [] : (buckets?.advanced ?? [])}
+        element={alignGroup || syncing || batch || styleBatch ? null : element}
+        advanced={
+          alignGroup || syncing || batch || styleBatch ? [] : (buckets?.advanced ?? [])
+        }
       />
     </>
   )
@@ -631,9 +653,54 @@ function commonFields(els: ManifestElement[]): EditableField[] {
   })
 }
 
-function BatchSection({ panel, elements }: { panel: PanelObject; elements: ManifestElement[] }) {
+/**
+ * 跨角色的公共文字样式。控件与单选**完全相同**（`TextStyleControls`）：
+ * 字体是带 Aa 预览的下拉、字号是数字框、B/I 是三态图标按钮、颜色是色块，
+ * 不会因为选中了第二个对象就退化成 `常规 / 加粗` 的通用枚举列表。
+ *
+ * 只显示 manifest 交集里真有的属性；内容（`text`）刻意不给——批量改内容
+ * 等于把三个标题写成同一句话。
+ */
+function TextStyleBatchSection({
+  panel,
+  elements,
+}: {
+  panel: PanelObject
+  elements: ManifestElement[]
+}) {
+  const adapter = useTextStyleAdapter(panel, elements)
+  const roles = [...new Set(elements.map((e) => e.role))]
+  const hasAny = TEXT_STYLE_PROPS.some((p) => adapter.fieldOf(p))
+  return (
+    <Section plainTitle title={el('textBatchTitle', { count: elements.length })}>
+      {!hasAny ? (
+        <p className="text-xs text-ink-3">{el('batchNoCommon')}</p>
+      ) : (
+        <>
+          <p className="mb-1.5 text-xs text-ink-3">
+            {roles.length > 1
+              ? el('textBatchHintMixed', { count: elements.length })
+              : el('batchHint', { count: elements.length })}
+          </p>
+          <TextStyleControls adapter={adapter} labelWidth={LABEL_W} />
+        </>
+      )}
+    </Section>
+  )
+}
+
+function BatchSection({
+  panel,
+  elements,
+  skip,
+}: {
+  panel: PanelObject
+  elements: ManifestElement[]
+  /** 已被上面的共享控件承接的属性——同一属性不出两套控件 */
+  skip?: ReadonlySet<string>
+}) {
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({})
-  const fields = commonFields(elements)
+  const fields = commonFields(elements).filter((f) => !skip?.has(f.prop))
   const flat = fields.filter((f) => !f.group)
   const groups = new Map<string, EditableField[]>()
   for (const f of fields) {
@@ -641,6 +708,10 @@ function BatchSection({ panel, elements }: { panel: PanelObject; elements: Manif
     groups.set(f.group, [...(groups.get(f.group) ?? []), f])
   }
   const ordered = [...groups].sort((a, b) => groupRank(a[0]) - groupRank(b[0]))
+
+  // 公共样式已由上面的 TextStyleBatchSection 承接、这里一条不剩时整段不画：
+  // 紧挨着可用的样式控件再来一句「没有公共属性」是自相矛盾的
+  if (skip && !fields.length) return null
 
   const rows = (list: EditableField[]) => (
     <div className="flex flex-col gap-1.5">
