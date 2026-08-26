@@ -106,3 +106,10 @@ REST API 的 merge_queue rule 参数名与上表逐字对应；GitHub 网页把
 context 仍在每个 PR 上产出——PR 1/PR 2 没有删它们的产出，只有 PR 2 改了
 package/smoke 的触发条件，所以 **PR 2 合并之后不能再整体回滚到旧 contexts**，
 只能修 Gate 本身）。这也是 PR 2 必须最后合的另一个理由。
+
+## 执行记录
+
+- 2026-08-26：`apply --phase enable-queue` 已执行（ruleset 21121430）——
+  strict 关闭、merge_queue rule 生效、17 个 required contexts 原样。三个
+  Gate 在 main 的首次真实结论（ff891b3c）：全部 success。本文档所在的 PR
+  即 Merge Queue canary。
