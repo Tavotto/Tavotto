@@ -37,7 +37,7 @@ import {
 import { clamp } from '@/lib/units'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
-import { panelRender, useRenderStore } from '@/store/renderStore'
+import { exactPanelManifest, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore, type Tool } from '@/store/uiStore'
 import {
@@ -172,7 +172,9 @@ const candidatesFor = (exclude: Set<string>) => {
     const rs = useRenderStore.getState()
     for (const o of doc().objects) {
       if (o.type !== 'panel' || o.hidden || exclude.has(o.id)) continue
-      const manifest = panelRender(rs, o)?.manifest
+      // 吸附到图内元素的中心线：拿的是墨迹框，必须是权威那一份，
+      // 否则会吸到元素上一版的位置上（看起来就是「对不齐」）
+      const manifest = exactPanelManifest(rs, o)
       if (!manifest) continue
       const extra = elementSnapCandidates(o, manifest)
       cands.xs.push(...extra.xs)
@@ -1151,7 +1153,9 @@ export function startAxesDrag(
   e.stopPropagation()
 
   const MIN = 0.05
-  const manifest = panelRender(useRenderStore.getState(), panel)?.manifest
+  // 随行元素的落点由 manifest 的 follow_gids 与 override 共同决定 —— 几何写操作，
+  // 只认权威那一份
+  const manifest = exactPanelManifest(useRenderStore.getState(), panel)
   const companions =
     mode === 'move' && manifest && useUiStore.getState().dragAxesWithCompanions
       ? axesCompanions(panel, manifest, element.gid)
