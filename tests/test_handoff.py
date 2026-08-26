@@ -129,6 +129,76 @@ def test_registered_stem_leaves_registry_untouched(figures):
     assert path.read_bytes() == before      # 已经登记过就一个字节都别动
 
 
+def test_shipped_example_galleries_use_the_current_registry_name():
+    """仓库自带的图库一律用新名——旧名是给**用户磁盘**的回退，不是给我们自己的。
+
+    这条看的是刚刚发生过的那件事：改名 commit 把 nightly 的断言换成了新名，
+    却漏了 `examples/runtime_check` 里的 fixture。读取端回退认旧名、stem 已登记
+    → 交接按契约不写盘 → 新名文件永不出现 → 那条腿连红七晚（08-19…08-25），
+    而它后面的卸载断言从此一次都没执行过。
+    """
+    root = pathlib.Path(__file__).resolve().parent.parent / "examples"
+    stale = sorted(p.relative_to(root).as_posix()
+                   for p in root.rglob(engine_registry.LEGACY_REGISTRY_NAME))
+    assert stale == [], (
+        f"examples/ 里还有旧名注册表 {stale}——它会让「必须出现 "
+        f"{engine_registry.REGISTRY_NAME}」那类验收永远红")
+
+
+def test_legacy_named_registry_is_honoured_without_drafting_a_new_one(figures):
+    """老图库还叫 `mm_registry.json` 时：认它、报它、**不**另起一份新名的。
+
+    这是读取端唯一的兼容点（`registry.LEGACY_REGISTRY_NAME`：注册表躺在用户
+    自己的图库里、多半被手工裁决过，我们改不到）。认不出它的后果不是报错而是
+    更坏的那种——判成「首次起草」按新名再写一份，从此两份各走各的。
+
+    在此之前这条路径全仓库只有 `examples/runtime_check` 那份 fixture 在走；
+    fixture 改名之后没有第二处了，这条用例就是它唯一的看护。
+    """
+    legacy = figures / engine_registry.LEGACY_REGISTRY_NAME
+    legacy.write_text(json.dumps({"version": 1, "scripts": {
+        "fig1_demo.py": {"entry": "main", "cost": "heavy",
+                         "notes": "手工裁决", "stems": ["Fig1_demo"]}}}),
+        encoding="utf-8")
+    before = legacy.read_bytes()
+
+    # 1. 定位：旧名那一层就是项目层，不会在它的上一层另起炉灶
+    t = handoff.resolve_target(str(figures / "Fig1_demo.pdf"))
+    assert t == handoff.Target(str(figures), "Fig1_demo")
+
+    # 2. 登记：stem 已在旧名那份里 → 什么都不写
+    info = handoff.ensure_registered(str(figures), "Fig1_demo")
+    assert info["status"] == "already"
+    assert info["created"] is False
+    assert info["parameterizable"] is True
+
+    # 3. 报的是**磁盘上真正在用的那一份**：拿它去告诉用户「改哪个文件」，
+    #    指到一个不存在的新名路径等于没说
+    assert info["registry"] == str(legacy)
+    assert not engine_registry.registry_path(figures).exists()
+    assert legacy.read_bytes() == before
+
+
+def test_merging_into_a_legacy_gallery_writes_the_new_name_once(figures):
+    """合并一次即完成搬迁：读认两个名，**写只认新名**（旧名只读不写）。"""
+    legacy = figures / engine_registry.LEGACY_REGISTRY_NAME
+    legacy.write_text(json.dumps({"version": 1, "scripts": {
+        "fig1_demo.py": {"entry": "main", "cost": "heavy",
+                         "stems": ["Fig1_demo"]}}}), encoding="utf-8")
+    before = legacy.read_bytes()
+    (figures / "fig2_new.py").write_text(
+        SCRIPT.replace("Fig1_demo", "Fig2_new"), encoding="utf-8")
+
+    info = handoff.ensure_registered(str(figures), "Fig2_new")
+
+    assert info["status"] == "merged"
+    assert info["registry"] == str(engine_registry.registry_path(figures))
+    cfg = json.loads(engine_registry.registry_path(figures).read_text(encoding="utf-8"))
+    # 旧名里手工裁决过的条目一并搬过来，且原件留在原地不动
+    assert cfg["scripts"]["fig1_demo.py"]["cost"] == "heavy"
+    assert legacy.read_bytes() == before
+
+
 def test_new_script_merges_without_touching_existing_entries(figures):
     """用户手工裁决过的条目永远优先——合并只追加，绝不改写。"""
     path = engine_registry.registry_path(figures)
