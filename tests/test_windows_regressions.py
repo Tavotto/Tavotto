@@ -1491,7 +1491,7 @@ class _LingeringPopen:
         self.kill_called = False
         self.wait_called = False
         self.reaped = False
-        _LingeringPopen.instances.append(self)
+        type(self).instances.append(self)   # 子类各记各的（见 _StubbornPopen）
 
     class _Pipe:
         def __init__(self, eof: bool = False):
@@ -1624,3 +1624,54 @@ def test_discard_logs_the_exact_path_when_the_tree_survives(tmp_path, monkeypatc
     assert "fig_stuck.py" in text and "PermissionError" in text
     assert str(base) not in pool._oneshot_bases, (
         "删不掉更要注销，否则这棵孤儿目录被永久豁免、prune 再也收不走")
+
+
+class _StubbornPopen(_LingeringPopen):
+    """收到 shutdown 也不退的 worker（死循环脚本）：只有 kill 之后才会消失。
+
+    `shutdown_all(wait=True)` 的兜底分支走的正是这条路——`force_kill()` 必须
+    在这里也等到收尸，否则「wait=True」只是个名字：函数返回了，用户机器上
+    python.exe 还在，Popen 没回收，句柄还占着目录。
+    """
+
+    def wait(self, timeout=None):
+        self.wait_called = True
+        if not self.kill_called:
+            raise subprocess.TimeoutExpired("worker", timeout or 0.0)
+        self.reaped = True
+        return -9
+
+
+def test_force_kill_waits_until_the_process_is_actually_gone(tmp_path, monkeypatch):
+    """`force_kill()` 返回时进程已经被 reap，目录随即删得掉。
+
+    这条用例专门盯住 kill **之后**的那次 wait：优雅关停走得通时那次 wait 根本
+    到不了（进程自然退出就被收了），少了这条覆盖，post-kill 的 reap 会是一道
+    没人执行过的门禁。
+    """
+    _StubbornPopen.instances = []
+    calls: list[Path] = []
+    monkeypatch.setattr(pool, "ENGINE_CACHE", tmp_path / "engine")
+    monkeypatch.setattr(pool.subprocess, "Popen", _StubbornPopen)
+    monkeypatch.setattr(pool, "select_worker_python",
+                        lambda: ("py-fake", pool.SOURCE_SYSTEM))
+    monkeypatch.setattr(workerd_client, "find_workerd", lambda: None)
+    monkeypatch.setattr(pool, "_REAP_TIMEOUT", 1.0)
+
+    figs = _figs(tmp_path)
+    (figs / "fig_loop.py").write_text("def main():\n    pass\n", encoding="utf-8")
+    w = pool.one_shot("fig_loop.py", str(figs), "main")
+    fake = _StubbornPopen.instances[-1]
+    base = w.base
+    monkeypatch.setattr(pool.shutil, "rmtree", _windows_locked_rmtree(fake, calls))
+
+    w.force_kill()
+
+    assert fake.kill_called, "硬杀路径连 kill 都没发"
+    assert fake.reaped, "kill 之后没有再 wait 一次：进程还没消失就返回了"
+    assert not w.alive(), "被硬杀的会话必须判死，绝不许被 get() 捡回去复用"
+    assert fake.stdin.closed and fake.stdout.closed and w._log.closed
+
+    pool.discard(w)                        # 幂等：第二次关停不许抛
+    assert not base.exists(), f"exact base 没删掉：{base}（rmtree 调用={calls}）"
+    assert str(base) not in pool._oneshot_bases
