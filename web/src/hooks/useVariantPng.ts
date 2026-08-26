@@ -18,6 +18,7 @@
 import { useEffect, useState } from 'react'
 import { enginePreviewPng } from '@/lib/api'
 import { engineTransport } from '@/lib/engineTransport'
+import { currentProjectId } from '@/lib/session'
 
 /** 缓存上限：一次对话框里用户来回比对的版本数远小于它 */
 const CACHE_MAX = 24
@@ -25,8 +26,16 @@ const CACHE_MAX = 24
 /** 变体键 → blob URL。Map 的插入序天然就是 LRU 需要的顺序 */
 const cache = new Map<string, string>()
 
-const keyOf = (fileId: string, overrides: unknown[], bucket: number) =>
-  `${bucket} ${fileId} ${JSON.stringify(overrides)}`
+/**
+ * 缓存键**必须带项目与素材版本**。
+ *
+ * `fileId` 是项目内的相对路径：两个项目里同名同 overrides 的图完全可能是两张
+ * 不同的图，只按 (fileId, overrides, bucket) 缓存的话，在项目 A 看过某个版本
+ * 之后切到项目 B，会直接命中 A 的 blob 并把**别人的图**当成这一版的预览显示
+ * 出来，而且一次请求都不发。素材本身被改过（mtime 变了）同理。
+ */
+const keyOf = (fileId: string, overrides: unknown[], bucket: number, rev: number) =>
+  `${currentProjectId() ?? '-'} ${rev} ${bucket} ${fileId} ${JSON.stringify(overrides)}`
 
 function remember(key: string, url: string) {
   cache.set(key, url)
@@ -65,8 +74,10 @@ export function useVariantPng(
   overrides: unknown[],
   bucket: number,
   enabled: boolean,
+  /** 素材版本（mtime）：磁盘上那份被改过时旧缩略图必须作废 */
+  rev = 0,
 ): VariantPng {
-  const key = keyOf(fileId, overrides, bucket)
+  const key = keyOf(fileId, overrides, bucket, rev)
   const [state, setState] = useState<VariantPng>(() => ({
     url: cache.get(key) ?? null,
     loading: false,

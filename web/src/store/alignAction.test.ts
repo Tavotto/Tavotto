@@ -346,3 +346,22 @@ describe('一次多选对齐要么整批成立，要么一条都不写', () => {
     expect(livePanel().overrides).toEqual([])
   })
 })
+
+/* ========== F. 单选几何元素：权威缺席时控件整个收掉（#137 评审 P1） ========== */
+
+describe('GEOMETRY_WRITE_PROPS：几何字段的初值来自 manifest，权威缺席就不许出控件', () => {
+  it('把「哪些 prop 算几何写」收在一处，position / size_mm 都在表里', async () => {
+    const { GEOMETRY_WRITE_PROPS } = await import('@/lib/elementGeom')
+    // 判据：这个 prop 在没有 override 时要从 manifest 读初值。
+    // 少一个，属性页就会在权威缺席时把上一版的数字当成这一版的可编辑初值。
+    expect(GEOMETRY_WRITE_PROPS.has('position')).toBe(true)
+    expect(GEOMETRY_WRITE_PROPS.has('size_mm')).toBe(true)
+    expect(GEOMETRY_WRITE_PROPS.has('pos_frac')).toBe(true)
+    expect(GEOMETRY_WRITE_PROPS.has('loc_frac')).toBe(true)
+    expect(GEOMETRY_WRITE_PROPS.has('endpoints_frac')).toBe(true)
+    // 纯样式不在表里：它们不依赖 bbox，连续调整期间照旧走局部 SVG 预览
+    for (const p of ['color', 'linewidth', 'linestyle', 'alpha', 'visible', 'fontsize']) {
+      expect(GEOMETRY_WRITE_PROPS.has(p)).toBe(false)
+    }
+  })
+})

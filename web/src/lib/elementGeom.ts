@@ -257,6 +257,20 @@ export function alignEntries(
  */
 const FRAC_ANCHORED_PROPS = new Set(['pos_frac', 'loc_frac', 'endpoints_frac'])
 
+/**
+ * **写下去会改变元素几何落点**的属性，唯一出处。
+ *
+ * 判据只有一条：这个 prop 的当前值在没有 override 时要从 manifest 里读
+ * （`positionOf` / `anchorOf` / `size_mm` 都是），因此拿一份退回来的 manifest
+ * 当初值就会把上一版的几何写成这一版的（issue #131）。属性页在几何权威缺席时
+ * 必须把这些字段整个收掉，而不只是收掉对齐工具条。
+ */
+export const GEOMETRY_WRITE_PROPS: ReadonlySet<string> = new Set([
+  'position',
+  'size_mm',
+  ...FRAC_ANCHORED_PROPS,
+])
+
 /** 拖动子图时跟着走的一条随行改动 */
 export interface AxesCompanion {
   gid: string

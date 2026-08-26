@@ -258,11 +258,18 @@ function VersionDetail({
   const [draft, setDraft] = useState(meta.name)
   /** 有面板的图内修改渲染不出来 → 详情下方明确标「近似预览」 */
   const [approximate, setApproximate] = useState(false)
+  /**
+   * 对比对话框有**自己的**一份标记：它是 modal，盖住了详情里那句说明。
+   * 不单独标的话，用户会拿一张磁盘原图当成这一版的样子去和当前布局对比
+   * ——那正是这次要修掉的「无提示地冒充版本视觉状态」。
+   */
+  const [compareApproximate, setCompareApproximate] = useState(false)
 
   useEffect(() => {
     setDraft(meta.name)
     setRenaming(false)
     setApproximate(false)
+    setCompareApproximate(false)
   }, [meta.id, meta.name])
 
   const diff = useMemo(
@@ -456,11 +463,20 @@ function VersionDetail({
           >
             {/* 对比叠加：底图按**版本自己的** overrides 出，上层是当前布局的轮廓 */}
             <div className="relative mx-auto" style={{ maxWidth: 480 }}>
-              <LayoutSnapshot doc={versionDoc} renderOverrides />
+              <LayoutSnapshot
+                doc={versionDoc}
+                renderOverrides
+                onApproximate={setCompareApproximate}
+              />
               <div className="absolute inset-0 opacity-55">
                 <LayoutSnapshot doc={currentDoc} outline />
               </div>
             </div>
+            {compareApproximate && (
+              <p className="mt-2 text-xs leading-relaxed text-ink-3">
+                {vd('previewApproximate')}
+              </p>
+            )}
           </Dialog>
         </>
       )}
@@ -575,6 +591,7 @@ function SnapshotPanel({
     panel.overrides,
     200,
     renderOverrides && panel.overrides.length > 0,
+    mtime ?? 0,
   )
   useEffect(() => {
     if (renderOverrides) onApproximate?.(variant.approximate)

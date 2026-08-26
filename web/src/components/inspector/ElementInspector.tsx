@@ -38,6 +38,7 @@ import {
 import {
   alignEntries,
   annotationAlignEntries,
+  GEOMETRY_WRITE_PROPS,
   geomTarget,
   groupOf,
   groupPatches,
@@ -154,6 +155,13 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
    */
   const syncing =
     !exactManifest && (selected.length > 1 || (selected.length >= 1 && annEntries.length >= 1))
+  /**
+   * 单选一个**有几何可改**的元素（子图 / 位图代理）时，权威缺席同样不能放行：
+   * `AxesSizeMm` 与 editable 里的 `position` 都会拿 manifest 的初值起算，
+   * 那份要是上一版的，改尺寸/居中/填数就是把旧几何写成新的。
+   * 这条与多选那条分开写：多选走对齐工具条，单选走普通表单，两边的收法不同。
+   */
+  const singleGeomSyncing = !exactManifest && !!picked?.resizable
   // 多选 → 出对齐工具条，替代单元素表单。位图会归并到宿主子图，
   // 归并后只剩一个几何目标时就没什么可对齐的，仍走单元素表单。
   // 画布标注加进来后与元素同框排版（元素写 override，标注改画布位置）。
@@ -179,7 +187,10 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
           element.editable.filter(
             (f) =>
               (!hasTextStyleBar(element) || !TEXT_BAR_PROPS.has(f.prop)) &&
-              !consumedBySideDiagram.has(f.prop),
+              !consumedBySideDiagram.has(f.prop) &&
+              // 几何字段的初值来自 manifest：权威缺席时连控件都不给，否则
+              // 用户看到的是上一版的数字，填一下就把旧几何写成这一版的
+              (!!exactManifest || !GEOMETRY_WRITE_PROPS.has(f.prop)),
           ),
           {
             isOverridden: (prop) =>
@@ -268,14 +279,18 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
         {element?.role === 'image' && (
           <p className="mt-2 text-xs leading-relaxed text-ink-3">{el('imageHint')}</p>
         )}
-        {element?.resizable && manifest && (
+        {/* 改尺寸 / 居中是几何写操作：只认权威那一份（issue #131） */}
+        {element?.resizable && exactManifest && (
           <AxesSizeMm
             panel={panel}
-            element={geomTarget(manifest, element)}
-            sizeMm={manifest.size_mm}
+            element={geomTarget(exactManifest, element)}
+            sizeMm={exactManifest.size_mm}
             proxied={!!element.geom_gid}
-            group={groupOf(alignEntries(panel, manifest, [element.gid]), 1)}
+            group={groupOf(alignEntries(panel, exactManifest, [element.gid]), 1)}
           />
+        )}
+        {singleGeomSyncing && (
+          <p className="mt-2 text-xs leading-relaxed text-ink-3">{el('alignSyncing')}</p>
         )}
       </Section>
       )}
