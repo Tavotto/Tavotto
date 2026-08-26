@@ -174,6 +174,25 @@ backend-platforms 全绿（轮 1 两条修复生效）。windows-exe-smoke 红 3
 本机验证：`asset-library + golden-paths` chromium 12 passed；golden-paths
 webkit 1 passed（worktree 首跑需 `pnpm exec playwright install`）。
 
+## PR #127 合并队列轮 3（CI #453，2026-08-26）
+
+轮 2 的三条修成两条；剩「完整链」换了形状：重开后 `nav 图内元素` 点击处
+900s 挂死（树项 resolve 后 141ms detach、之后 860s 再未出现；终态截图
+左栏收起、右栏「2 项已修改」——重放本身是好的）。根因（本机反证复现）：
+
+- rail 按钮是 **toggle**（`uiStore.setLeftTab`：对已激活 tab 再点一次 =
+  收起）；`enterElementEdit` 在 wide 布局会自动切左栏到元素树；e2e 随后的
+  盲点击在「已自动切过去」的时序下把面板关掉，`usePresence` 的 ~150ms
+  收起动画让树在窗口里仍可 resolve——click 一开始就 detach，面板永久
+  关闭。CI/本机差异只是「点击时 leftTab 是否已是 elements」的时序差。
+- 产品 toggle 行为正常，测试盲点击是缺陷。修法：`fixtures.openElementsTab`
+  幂等 helper（按 nav 按钮 `aria-expanded` 判态，不在才点，点完等坐实），
+  替换全部 4 处盲点击（asset-library ×3 + inspector-redesign ×1）。
+- 反证：临时 spec 证明「已激活时盲点击 → treeitem count 0」成立、helper
+  能救回（跑过即删）。本机三 spec chromium 15 passed。
+- 下轮入队前先打 **full-ci 标签**在 PR SHA 上跑 windows-exe-smoke 取证，
+  不再拿整轮队列资格试错。
+
 CodeQL 报 9 条新告警（1 critical + 8 high）：逐条核实全部有结构性防线，
 必需的「CodeQL gate」本来就是绿的（红的是非必需的原生 annotation
 check）。#95（pool.py 命令行，critical）已带理由 dismiss（won't fix：

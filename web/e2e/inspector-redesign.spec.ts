@@ -1,4 +1,4 @@
-import { expect, test, type RunningApp } from './fixtures'
+import { expect, openElementsTab, test, type RunningApp } from './fixtures'
 import type { Page } from '@playwright/test'
 
 /**
@@ -23,7 +23,7 @@ async function openFigure(page: Page, a: RunningApp) {
 
 /** 打开左侧元素树并展开全部分组 */
 async function openTree(page: Page) {
-  await page.getByRole('navigation').getByRole('button', { name: '图内元素' }).click()
+  await openElementsTab(page)
   await page.locator('[role="treeitem"]').first().waitFor({ timeout: 30_000 })
   for (let i = 0; i < 8; i++) {
     const g = page.locator('[role="treeitem"][aria-expanded="false"]').first()

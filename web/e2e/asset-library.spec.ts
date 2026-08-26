@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { expect, test, type RunningApp } from './fixtures'
+import { expect, openElementsTab, test, type RunningApp } from './fixtures'
 import type { Page } from '@playwright/test'
 
 /**
@@ -93,7 +93,7 @@ test('show-only 项目：素材库普通入口 → Runtime Figure → 画布 →
   await expect(page.locator('[data-element-svg] svg').first()).toBeVisible({ timeout: 120_000 })
 
   // 左侧元素树 → 标题 → 改字号
-  await page.getByRole('navigation').getByRole('button', { name: '图内元素' }).click()
+  await openElementsTab(page)
   await page.locator('[role="treeitem"]').first().waitFor({ timeout: 30_000 })
   for (let i = 0; i < 8; i++) {
     const g = page.locator('[role="treeitem"][aria-expanded="false"]').first()
@@ -167,7 +167,7 @@ test('完整链：保存 → 关闭 → 重开 → 重放 → 预检 → 导出 
   // 对象级编辑：标题字号 + 曲线线宽（与黄金路径同一套控件）
   await page.getByRole('button', { name: '编辑图内元素' }).first().click()
   await expect(page.locator('[data-element-svg] svg').first()).toBeVisible({ timeout: 120_000 })
-  await page.getByRole('navigation').getByRole('button', { name: '图内元素' }).click()
+  await openElementsTab(page)
   const panel = page.getByLabel('右侧面板', { exact: true })
   await (await expandTreeUntil(page, /^标题/)).click()
   const size = panel.getByRole('textbox', { name: '字号' })
@@ -232,7 +232,7 @@ test('完整链：保存 → 关闭 → 重开 → 重放 → 预检 → 导出 
   await obj.click()
   await page.getByRole('button', { name: '编辑图内元素' }).first().click()
   await expect(page.locator('[data-element-svg] svg').first()).toBeVisible({ timeout: 120_000 })
-  await page.getByRole('navigation').getByRole('button', { name: '图内元素' }).click()
+  await openElementsTab(page)
   await (await expandTreeUntil(page, /^标题/)).click()
   const panel2 = page.getByLabel('右侧面板', { exact: true })
   await expect(panel2.getByText('1 项已修改')).toBeVisible({ timeout: 30_000 })
