@@ -5,6 +5,7 @@ import { EngineError, engineErrorMsg, engineRender, type Manifest } from '@/lib/
 import { engineTransport } from '@/lib/engineTransport'
 import { useAssetStore } from '@/store/assetStore'
 import type { PanelObject } from '@/types/document'
+import { fileHash, recordDiagnosticEvent, variantHash } from '@/diagnostics'
 
 export type RenderStatus = 'idle' | 'rendering' | 'ready' | 'error'
 
@@ -99,6 +100,9 @@ function prepareSvg(text: string): string {
   })
 }
 
+/** 诊断用：这次渲染是怎么被触发的。**与渲染行为无关**，只进 trace */
+export type RenderRequestPolicy = 'immediate' | 'defer' | 'none' | 'sync'
+
 interface RenderState {
   /** 键见 renderKey()：一个面板变体一条 */
   byKey: Record<string, PanelRender>
@@ -139,8 +143,15 @@ interface RenderState {
    */
   building: Record<string, { cold: boolean; cost: string }>
   noteBuilding: (fileId: string, info: { cold: boolean; cost: string } | null) => void
-  /** 渲染并取回 SVG（与 manifest 同一响应）；同键渲染中重复调用只保留最后一次待办 */
-  render: (fileId: string, patches: unknown[], previewDpi?: number) => Promise<void>
+  /** 渲染并取回 SVG（与 manifest 同一响应）；同键渲染中重复调用只保留最后一次待办。
+   *  `policy` 只进诊断事件，**不影响任何渲染行为**——它是「这次是定稿还是防抖」
+   *  的说明，缺省按 immediate 记。 */
+  render: (
+    fileId: string,
+    patches: unknown[],
+    previewDpi?: number,
+    policy?: RenderRequestPolicy,
+  ) => Promise<void>
   /** 脚本变更：转入引擎跟踪并清掉该文件**全部变体**的 lastPatches */
   markStale: (fileIds: string[]) => void
   /** 丢掉某个文件的全部变体 */
@@ -221,7 +232,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
       return { building: { ...s.building, [fileId]: info } }
     }),
 
-  render: async (fileId, patches, previewDpi) => {
+  render: async (fileId, patches, previewDpi, policy) => {
     const key = renderKey(fileId, patches)
     // 序号在**请求进来的那一刻**取，不是发出的那一刻：忙时排队的那次要带着
     // 自己的序号走完全程，否则一个早就该被覆盖的旧变体会因为「重试发得晚」
@@ -249,6 +260,16 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           traceback: '',
           code: '',
           module: '',
+        })
+        // 诊断：**每一次真正发出去的尝试**各记一条。重试循环里也记——
+        // 「同一个变体连发了三次」正是竞态类问题最直接的证据
+        const startedAt = Date.now()
+        recordDiagnosticEvent({
+          type: 'render.request',
+          file: fileHash(fileId),
+          variant: variantHash(renderKey(fileId, current)),
+          policy: policy ?? 'immediate',
+          preview_dpi: dpi ?? null,
         })
         const ctrl = new AbortController()
         const timeoutMs = watchdogMs(fileId)
@@ -300,7 +321,30 @@ export const useRenderStore = create<RenderState>((set, get) => ({
               recent: { ...s.recent, [fileId]: recent },
             }
           })
+          recordDiagnosticEvent({
+            type: 'render.success',
+            file: fileHash(fileId),
+            variant: variantHash(renderKey(fileId, current)),
+            duration_ms: Date.now() - startedAt,
+            // manifest 摘要**只有计数与图幅**：元素的 label 是图内文字
+            element_count: res.manifest?.elements.length ?? 0,
+            size_mm: res.manifest?.size_mm,
+            warning_count: res.warnings?.length ?? 0,
+            rev: res.rev,
+          })
         } catch (err) {
+          // 诊断先记，**再**分「被新请求顶掉」还是「终态失败」——被顶掉的那次
+          // 同样是一次真实的失败尝试，不记的话 trace 里就是一条有去无回的
+          // render.request，读起来像卡死
+          recordDiagnosticEvent({
+            type: 'render.error',
+            file: fileHash(fileId),
+            variant: variantHash(renderKey(fileId, current)),
+            duration_ms: Date.now() - startedAt,
+            // **机器可读的 code**，不是 traceback、不是报错原文——
+            // 那两样里装着用户的脚本与路径
+            code: timedOut ? 'timeout' : err instanceof EngineError ? err.code : 'unknown',
+          })
           // 在途期间又排了新请求：直接跑最新那次，别停在旧请求的错误上
           // （否则 wantPatches 已等于新改动，同步器会永远跳过它）
           if (slot.queued != null) {
@@ -352,10 +396,17 @@ export const useRenderStore = create<RenderState>((set, get) => ({
         // 该文件可能一个变体都还没渲染过：跟踪位记在文件级，
         // 否则同步器根本看不到「这个面板需要按新脚本重建」
         tracked[id] = true
+        let touched = 0
         for (const [k, v] of Object.entries(byKey)) {
           if (v.fileId !== id) continue
           byKey[k] = { ...v, stale: true, lastPatches: null, wantPatches: null }
+          touched++
         }
+        recordDiagnosticEvent({
+          type: 'render.stale',
+          file: fileHash(id),
+          variant_count: touched,
+        })
       }
       return { byKey, tracked, recent }
     }),

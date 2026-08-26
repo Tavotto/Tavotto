@@ -373,6 +373,7 @@
     "elementHidden": "已隐藏「{{label}}」，可在「已隐藏元素」里恢复",
     "elementLocked": "已锁定「{{label}}」，画布点击将跳过它",
     "elementsHidden_other": "已隐藏 {{count}} 个元素，可在「已隐藏元素」里恢复",
+    "geometrySyncing": "正在同步图形几何，请稍候再试",
     "grouped_other": "已成组 {{count}} 个对象，之后点其中之一会整组选中",
     "inserted": "已插入{{name}}（{{undo}} 可撤销）",
     "layoutAutoReflowed": "布局组已自动重排（{{undo}} 可撤销）",

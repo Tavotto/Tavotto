@@ -1,0 +1,153 @@
+/**
+ * immer 补丁 → **结构身份**（ADR 0016 §9）。
+ *
+ * 一条 immer `Patch` 长这样：
+ *
+ *   { op: 'replace', path: ['objects', 3, 'overrides', 2, 'value'], value: '实验结果对比' }
+ *                                                                          ^^^^^^^^^^^^
+ *                                                                          用户的论文内容
+ *
+ * 诊断要的是左边那条路径的**语义**（「第 3 个对象的某条 override 的值被改了，
+ * 改的是 axes_0.title 的 fontsize」），**永远不要右边的 value**。所以这个模块
+ * 只读 path，并顺着 path 回文档里把 gid / prop 查出来——`value` 一个字节都不碰。
+ *
+ * `PatchRef` 类型里压根没有 `value` 字段，sanitize 的 `patches` kind 也不认它：
+ * 就算这里哪天写错了，也走不出去。
+ */
+import type { Patch } from 'immer'
+import type { FigureDocument, PanelObject } from '@/types/document'
+import type { PatchRef } from './types'
+
+/** 一次 commit 最多记这么多条结构身份；再多也说明不了更多问题 */
+const MAX_REFS = 24
+
+/** 路径段是否是「文档顶层的哪个域」 */
+function domainOf(path: readonly (string | number)[]): string {
+  const head = path[0]
+  if (typeof head !== 'string') return 'document'
+  if (head === 'objects') return 'canvas_object'
+  if (head === 'page') return 'page'
+  if (head === 'guides') return 'guide'
+  if (head === 'layoutGroups') return 'layout_group'
+  if (head === 'profile') return 'profile'
+  return head
+}
+
+/**
+ * 一条补丁 → 一个结构身份。
+ *
+ * `objects[i].overrides[j].*` 是最有价值的那类：回文档里查出 gid 与 prop，
+ * 于是诊断包里能读到「改的是 axes_0.title 的 fontsize」，而不是一个下标。
+ * 查不到（补丁描述的是刚被删掉的条目）就退回域 + 字段名。
+ */
+function refOf(doc: FigureDocument, patch: Patch): PatchRef | null {
+  const path = patch.path
+  if (!path.length) return null
+  const last = path[path.length - 1]
+  const prop = typeof last === 'string' ? last : String(last)
+
+  if (path[0] === 'objects' && typeof path[1] === 'number' && path[2] === 'overrides') {
+    const obj = doc.objects[path[1]]
+    if (obj?.type === 'panel') {
+      const panel = obj as PanelObject
+      const idx = path[3]
+      const entry = typeof idx === 'number' ? panel.overrides[idx] : undefined
+      if (entry) return { gid: entry.gid, prop: entry.prop }
+    }
+    return { domain: 'panel_override', prop: typeof last === 'number' ? 'overrides' : prop }
+  }
+
+  return { domain: domainOf(path), prop: typeof last === 'number' ? 'index' : prop }
+}
+
+/**
+ * `overrides` 被**整个数组重新赋值**时，patch 的 path 停在 `overrides` 上，
+ * 单看它只能说出「这个面板的某条 override 变了」。
+ *
+ * 这不够。诊断真正要回答的是「改的是 axes_0.title 的哪个属性」——而写 override
+ * 的标准写法（`o.overrides = o.overrides.filter(...)` 再 push）**必然**产生
+ * 整数组替换，也就是说不处理这一支，几乎所有图内编辑都会退化成一条
+ * `{domain: panel_override, prop: overrides}`，等于什么都没说。
+ *
+ * 所以这里按 (gid, prop) 把前后两份数组对一遍。值只参与比较、**不参与输出**。
+ */
+function overrideDiff(
+  prev: FigureDocument,
+  next: FigureDocument,
+  index: number,
+): PatchRef[] {
+  const before = prev.objects[index]
+  const after = next.objects[index]
+  if (before?.type !== 'panel' || after?.type !== 'panel') return []
+  const key = (o: { gid: string; prop: string }) => `${o.gid}\u0000${o.prop}`
+  const snap = (list: readonly { gid: string; prop: string; value: unknown }[]) => {
+    const m = new Map<string, string>()
+    for (const o of list) {
+      // JSON.stringify 只用来比较是否相等；结果立刻被丢掉，不进任何输出
+      try {
+        m.set(key(o), JSON.stringify(o.value) ?? '')
+      } catch {
+        m.set(key(o), '')
+      }
+    }
+    return m
+  }
+  const a = snap((before as PanelObject).overrides)
+  const b = snap((after as PanelObject).overrides)
+  const out: PatchRef[] = []
+  for (const [k, v] of b) {
+    if (a.get(k) !== v) out.push(refFromKey(k))
+  }
+  for (const k of a.keys()) {
+    if (!b.has(k)) out.push(refFromKey(k)) // 被清掉的那条同样是一次改动
+  }
+  return out
+}
+
+function refFromKey(k: string): PatchRef {
+  const [gid, prop] = k.split('\u0000')
+  return { gid, prop }
+}
+
+/**
+ * 一批补丁 → 结构身份列表（去重、截断）。
+ *
+ * 两份文档都要：`next` 用来把 override 的下标翻成 gid/prop（新增一条时旧文档里
+ * 那个下标还不存在），`prev` 用来在整数组被替换时对出到底哪几条变了。
+ */
+export function patchRefs(
+  prev: FigureDocument,
+  next: FigureDocument,
+  patches: readonly Patch[],
+): PatchRef[] {
+  const out: PatchRef[] = []
+  const seen = new Set<string>()
+  const push = (ref: PatchRef | null) => {
+    if (!ref || out.length >= MAX_REFS) return
+    const key = `${ref.gid ?? ''}|${ref.domain ?? ''}|${ref.prop}`
+    if (seen.has(key)) return
+    seen.add(key)
+    out.push(ref)
+  }
+
+  for (const p of patches) {
+    if (out.length >= MAX_REFS) break
+    try {
+      const path = p.path
+      // `objects[i].overrides` 被整个替换：对一遍前后两份数组
+      if (
+        path[0] === 'objects' &&
+        typeof path[1] === 'number' &&
+        path[2] === 'overrides' &&
+        path.length === 3
+      ) {
+        for (const ref of overrideDiff(prev, next, path[1])) push(ref)
+        continue
+      }
+      push(refOf(next, p))
+    } catch {
+      // 补丁形状意外时跳过这一条，绝不让诊断把 commit 带崩
+    }
+  }
+  return out
+}

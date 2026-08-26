@@ -35,7 +35,14 @@ import { finishActiveGesture } from '@/store/gestureCoordinator'
 import { exactPanelRender, renderKey, renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
-import { assertGeometryAuthority, traceGeometry } from '@/lib/authorityTrace'
+import {
+  authorityFields,
+  panelHash,
+  readAuthority,
+  recordDiagnosticEvent,
+  recordInvariantViolation,
+} from '@/diagnostics'
+import type { AuthorityView } from '@/diagnostics'
 import type { PanelObject } from '@/types/document'
 
 /** 拒绝的原因；调用方据此决定提示什么（都不写文档、不进历史、不渲染） */
@@ -77,20 +84,39 @@ export function alignSelectedPanelElements(panelId: string, mode: AlignMode): Al
   if (panel?.type !== 'panel') return blocked(panelId, mode, 'no-panel')
 
   // 3. 几何权威。拿不到就到此为止——这一步是 issue #131 的闸门本身
-  traceGeometry('align.request', { panelId, mode })
+  const view = readAuthority(panel)
+  recordDiagnosticEvent({
+    type: 'align.request',
+    mode,
+    panel: panelHash(panelId),
+    selected_count: useUiStore.getState().selectedGids.length,
+    ...authorityFields(view),
+    exact_authority: view.exact,
+  })
   const exact = exactPanelRender(useRenderStore.getState(), panel)
   if (!exact?.manifest) {
-    traceGeometry('authority.unavailable', { panelId, currentKey: renderKeyOf(panel) })
-    return blocked(panelId, mode, 'syncing')
+    recordDiagnosticEvent({
+      type: 'authority.unavailable',
+      panel: panelHash(panelId),
+      document_variant: authorityFields(view).document_variant,
+      authority_variant: null,
+    })
+    return blocked(panelId, mode, 'syncing', view)
   }
   const manifest = exact.manifest
   // 开发态不变式：动手那一刻的权威键必须**就是**当前面板的变体键。
   // `exactPanelRender` 已经保证了这件事，这里是第二道——将来有人给它加一条
   // 「找不到就退回上一版」的好心分支时，红的是这里而不是用户的图。
-  if (!assertGeometryAuthority(renderKeyOf(panel), exactKeyOf(panel, exact.lastPatches), 'align')) {
-    return blocked(panelId, mode, 'syncing')
+  if (exactKeyOf(panel, exact.lastPatches) !== renderKeyOf(panel)) {
+    recordInvariantViolation('geometry_authority_mismatch', `align.${mode}`, view)
+    return blocked(panelId, mode, 'syncing', view)
   }
-  traceGeometry('authority.ready', { panelId, currentKey: renderKeyOf(panel) })
+  recordDiagnosticEvent({
+    type: 'authority.ready',
+    panel: panelHash(panelId),
+    document_variant: authorityFields(view).document_variant,
+    authority_variant: authorityFields(view).authority_variant,
+  })
 
   // 4. 选区现取（组件那一轮之后用户完全可能又加选/减选过）
   const gids = useUiStore.getState().selectedGids
@@ -154,12 +180,25 @@ export function alignSelectedPanelElements(panelId: string, mode: AlignMode): Al
   })
   if (!fresh.length && !moves.length) return blocked(panelId, mode, 'noop')
 
-  traceGeometry('align.commit', {
-    panelId,
+  recordDiagnosticEvent({
+    type: 'align.commit',
     mode,
-    authorityKey: exact.lastPatches,
-    patches: fresh.map((p) => `${p.gid}:${p.prop}`),
-    moves: moves.length,
+    panel: panelHash(panelId),
+    selected_count: items.length,
+    ...authorityFields(view),
+    exact_authority: view.exact,
+    // **只有数字与技术 gid**：条目的 label 里有用户的文字与文件名
+    input_geometry: items
+      .filter((it) => !isAnnotationEntry(it))
+      .map((it) => ({ gid: it.key, bbox: it.box })),
+    output_geometry: items
+      .filter((it) => !isAnnotationEntry(it))
+      .flatMap((it) => {
+        const next = boxes.get(it.key)
+        return next ? [{ gid: it.key, bbox: next }] : []
+      }),
+    patch_count: fresh.length,
+    move_count: moves.length,
   })
   applyMixedAlign(panelId, msg(`alignMode.${mode}`, undefined, 'inspector'), fresh, moves)
   return { ok: true, patches: fresh.length, moves: moves.length }
@@ -172,8 +211,42 @@ export function alignSelectedPanelElements(panelId: string, mode: AlignMode): Al
 const exactKeyOf = (panel: PanelObject, lastPatches: string | null): string | null =>
   lastPatches == null ? null : renderKey(panel.fileId, JSON.parse(lastPatches))
 
-function blocked(panelId: string, mode: AlignMode, reason: AlignBlocked): AlignResult {
-  traceGeometry('align.blocked', { panelId, mode, reason })
+/** 拒绝的原因 → 诊断事件里的闭集取值。两张表分开，是因为 UI 的分类
+ *  （提示什么）与诊断的分类（为什么不安全）本来就不是同一个问题。 */
+const BLOCK_REASON = {
+  'no-panel': 'panel_missing',
+  syncing: 'authority_stale',
+  'too-few': 'empty_selection',
+  invalid: 'no_geometry_change',
+  noop: 'nothing_to_write',
+} as const
+
+function blocked(
+  panelId: string,
+  mode: AlignMode,
+  reason: AlignBlocked,
+  view: AuthorityView | null = null,
+): AlignResult {
+  const mapped = BLOCK_REASON[reason]
+  if (mapped === 'empty_selection' || mapped === 'no_geometry_change' ||
+      mapped === 'nothing_to_write') {
+    recordDiagnosticEvent({
+      type: 'align.noop',
+      mode,
+      panel: panelHash(panelId),
+      reason: mapped,
+    })
+  } else {
+    recordDiagnosticEvent({
+      type: 'align.blocked',
+      mode,
+      panel: panelHash(panelId),
+      reason: mapped,
+      ...(view
+        ? authorityFields(view)
+        : { document_variant: null, display_variant: null, authority_variant: null }),
+    })
+  }
   return { ok: false, reason }
 }
 

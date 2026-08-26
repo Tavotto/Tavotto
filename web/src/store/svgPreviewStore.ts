@@ -39,6 +39,7 @@ import {
   traceFrame,
   type PreviewTiming,
 } from '@/lib/previewTrace'
+import { panelHash, previewHash, recordDiagnosticEvent, variantHash, variantHashOrNull } from '@/diagnostics'
 
 /**
  * 历史粒度。
@@ -172,6 +173,13 @@ export function beginPreview(opts: BeginOptions): number {
     settled: false,
     timing: newTiming(opts.panelId),
   }
+  recordDiagnosticEvent({
+    type: 'preview.begin',
+    session: previewHash(session.id),
+    panel: panelHash(session.panelId),
+    render_variant: variantHash(session.baseRenderKey),
+    history_mode: session.historyMode,
+  })
   return session.id
 }
 
@@ -200,6 +208,14 @@ function panelStateFor(
 /** 交班：session 收尾但 DOM 上的预览留着（等权威渲染来换） */
 function retire(s: PreviewSession): void {
   s.settled = true
+  recordDiagnosticEvent({
+    type: 'preview.retire',
+    session: previewHash(s.id),
+    panel: panelHash(s.panelId),
+    // 提交过 = 正常交班；没提交就被顶掉 = 拖到一半又去拖别的
+    reason: s.pendingCommit == null ? 'authority_swapped' : 'committed',
+    duration_ms: Math.max(0, Math.round((performance?.now?.() ?? Date.now()) - s.startedAt)),
+  })
   if (s.pendingCommit == null) {
     // 没提交就被顶掉的（拖到一半又去拖别的）：那份预览没有正式值撑腰，
     // 留在画布上就是「看得见但撤销不了」，必须还原
@@ -215,6 +231,13 @@ export function cancelPreview(): void {
   if (!session) return
   session.cancelled = true
   session.settled = true
+  recordDiagnosticEvent({
+    type: 'preview.cancel',
+    session: previewHash(session.id),
+    panel: panelHash(session.panelId),
+    reason: 'pointer_cancel',
+    duration_ms: Math.max(0, Math.round((performance?.now?.() ?? Date.now()) - session.startedAt)),
+  })
   restorePanel(session.panelId)
   session = null
 }
@@ -229,6 +252,14 @@ export function commitPreview(patches: PreviewPatch[], awaitKey: string | null):
   session.awaitKey = awaitKey
   session.commitStartedAt = performance?.now?.() ?? Date.now()
   traceCommit(session.timing)
+  recordDiagnosticEvent({
+    type: 'preview.commit',
+    session: previewHash(session.id),
+    panel: panelHash(session.panelId),
+    render_variant: variantHash(session.baseRenderKey),
+    await_variant: variantHashOrNull(awaitKey),
+    patch_count: patches.length,
+  })
 }
 
 /** 当前 session（只读，测试与调试用） */
@@ -412,6 +443,14 @@ export function reattachPreview(panelId: string, renderKey: string): void {
 
   if (s?.awaitKey && renderKey === s.awaitKey) {
     traceAuthority(s.timing)
+    recordDiagnosticEvent({
+      type: 'preview.retire',
+      session: previewHash(s.id),
+      panel: panelHash(panelId),
+      // 等到了自己那一版权威渲染：这是 preview 会话**唯一**的正常终点
+      reason: 'committed',
+      duration_ms: Math.max(0, Math.round((performance?.now?.() ?? Date.now()) - s.startedAt)),
+    })
     panels.delete(panelId)
     session = null
     return
@@ -459,6 +498,16 @@ function domIntact(p: PanelPreview, svg: SVGSVGElement): boolean {
  */
 export function settleFailedAuthority(panelId: string): void {
   if (session?.panelId === panelId) {
+    recordDiagnosticEvent({
+      type: 'preview.retire',
+      session: previewHash(session.id),
+      panel: panelHash(panelId),
+      reason: 'authority_failed',
+      duration_ms: Math.max(
+        0,
+        Math.round((performance?.now?.() ?? Date.now()) - session.startedAt),
+      ),
+    })
     session.settled = true
     session = null
   }

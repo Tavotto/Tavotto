@@ -16,6 +16,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
 
 import { fetchTelemetrySettings, patchTelemetryConsent } from '@/lib/api'
 import { SettingsDialog } from '@/components/SettingsDialog'
+import { TooltipProvider } from '@/components/ui/Tooltip'
 import { t } from '@/i18n'
 import { setTelemetryEnabled } from '@/lib/telemetry'
 import { useTelemetryStore } from '@/store/telemetryStore'
@@ -54,7 +55,13 @@ async function open(initial = settings()) {
   document.body.appendChild(host)
   root = createRoot(host)
   await act(async () => {
-    root.render(<SettingsDialog />)
+    // 真实挂载点在 App 的 TooltipProvider 里（诊断那一段用 Tip 收纳隐私细则），
+    // 测试harness 照做——与 canvas/contextBar.test.tsx 同一写法
+    root.render(
+      <TooltipProvider>
+        <SettingsDialog />
+      </TooltipProvider>,
+    )
   })
   await act(async () => {})
 }

@@ -21,6 +21,7 @@ import { useFigurePickerStore } from '@/store/figurePickerStore'
 import { useScriptLibraryStore } from '@/store/scriptLibraryStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
 import { resetPreview } from '@/store/svgPreviewStore'
+import { clearDiagnosticTrace } from '@/diagnostics'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 
@@ -70,6 +71,12 @@ async function resetForNewProject() {
   // 预览平面挂在「面板 + 那一版 SVG」上，旧项目的面板整批消失后那些账本
   // 指向的都是野节点，跟着一起清（DOM 由 React 自己收）
   resetPreview()
+  // 诊断轨迹同样属于旧项目：不清的话，在新项目里导出的诊断包会带着上一个
+  // 项目的匿名操作序列，让这份 trace 同时描述两份互不相干的文档——既误导
+  // 排障，也把「用户以为只导出了当前这份工作」这句话变成假的。
+  // seq 刻意**不重置**（见 diagnostics/store.ts）：编号缺口是「这里被清过」
+  // 的唯一线索。
+  clearDiagnosticTrace()
   // 3. 换成空白文档（旧文档属于旧项目；素材引用跨项目不可靠）
   await useDocumentStore.getState().switchDocument(
     { schema: 2, name: 'fig_layout', page: { w: 150, h: 100 }, objects: [], guides: [] },

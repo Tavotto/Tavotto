@@ -5,6 +5,8 @@ import { announceDocOpen } from '@/lib/docPresence'
 import { msg, t, type UiMessage } from '@/i18n'
 import { newId } from '@/lib/id'
 import { boundedCount, captureTelemetry, classifyEditKind } from '@/lib/telemetry'
+import { documentDigest, recordDiagnosticEvent } from '@/diagnostics'
+import { patchRefs } from '@/diagnostics/patches'
 import type { CanvasData, FigureDocument, ProjectDocument } from '@/types/document'
 import {
   canvasToDoc,
@@ -174,6 +176,56 @@ function pushHistory(state: DocumentState, entry: HistoryEntry): Partial<Documen
   return { past, future: [] }
 }
 
+/* -------------------------------------------------------------------------- */
+/*  诊断（ADR 0016）：历史平面的三个状态边界都从这里出事件                        */
+/*                                                                            */
+/*  挂在 store 里而不是各个调用点上，理由与上面那条埋点一致：commit / endTxn /   */
+/*  undo / redo 是**唯一**能改历史的四个入口，挂在这里就不存在「新增了一个动作、 */
+/*  忘了记诊断」。记的全是结构与计数——补丁的 value、历史标签的插值参数         */
+/*  （里面是用户的文件名与属性值）一个字都不进去。                               */
+/* -------------------------------------------------------------------------- */
+
+/** 一次 commit 的诊断记录。`next` 是**应用补丁之后**的文档：override 的
+ *  gid/prop 要在新文档里才查得到（新增一条时旧文档里那个下标还不存在）。 */
+function noteCommit(
+  label: UiMessage,
+  before: DocumentState,
+  next: FigureDocument,
+  patches: Patch[],
+  intoTxn: boolean,
+): void {
+  recordDiagnosticEvent({
+    type: 'document.commit',
+    label_key: label.key,
+    patch_count: patches.length,
+    past_count: before.past.length,
+    future_count: before.future.length,
+    txn_open: intoTxn,
+    document_hash_before: documentDigest(before.doc),
+    document_hash_after: documentDigest(next),
+    patches: patchRefs(before.doc, next, patches),
+  })
+}
+
+/** undo / redo 的收尾。`ok=false` 覆盖两种情况：栈空，以及补丁应用失败被丢弃 */
+function noteUndoRedo(
+  type: 'undo.complete' | 'redo.complete',
+  ok: boolean,
+  label: UiMessage | null,
+  hashBefore: string,
+  after: DocumentState,
+): void {
+  recordDiagnosticEvent({
+    type,
+    ok,
+    label_key: label?.key ?? '',
+    past_count: after.past.length,
+    future_count: after.future.length,
+    document_hash_before: hashBefore,
+    document_hash_after: documentDigest(after.doc),
+  })
+}
+
 const INITIAL = emptyProject()
 
 export const useDocumentStore = create<DocumentState>((set, get) => ({
@@ -210,14 +262,24 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
           inverse: [...inverse, ...state.txn.inverse],
         },
       })
+      noteCommit(label, state, next, patches, true)
       return
     }
     set({ doc: next, ...pushHistory(state, { label, patches, inverse }) })
+    noteCommit(label, state, next, patches, false)
   },
 
   beginTxn: (label) => {
-    if (get().txn) get().endTxn()
+    // 上一个事务还开着 = 手势与离散操作混在了一起。诊断要看得见这件事：
+    // 它正是「撤销一次回退了两件事」那一类现象的成因
+    const replaced = get().txn != null
+    if (replaced) get().endTxn()
     set({ txn: { label, patches: [], inverse: [] } })
+    recordDiagnosticEvent({
+      type: 'transaction.begin',
+      label_key: label.key,
+      replaced_open_txn: replaced,
+    })
   },
 
   txnUpdate: (recipe) => {
@@ -253,17 +315,39 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         doc: txn.inverse.length ? applyPatches(state.doc, txn.inverse) : state.doc,
         txn: null,
       })
+      recordDiagnosticEvent({
+        type: 'transaction.cancel',
+        label_key: txn.label.key,
+        patch_count: txn.patches.length,
+      })
       return
     }
     const [patches, inverse] = compress(txn.patches, txn.inverse)
     set({ txn: null, ...pushHistory(state, { label: txn.label, patches, inverse }) })
+    recordDiagnosticEvent({
+      type: 'transaction.end',
+      label_key: txn.label.key,
+      patch_count: patches.length,
+      past_count: get().past.length,
+      document_hash_after: documentDigest(get().doc),
+    })
   },
 
   undo: () => {
     const state = get()
+    recordDiagnosticEvent({
+      type: 'undo.request',
+      past_count: state.past.length,
+      future_count: state.future.length,
+      txn_open: state.txn != null,
+    })
     if (state.txn) state.endTxn()
+    const before = documentDigest(get().doc)
     const entry = get().past.at(-1)
-    if (!entry) return null
+    if (!entry) {
+      noteUndoRedo('undo.complete', false, null, before, get())
+      return null
+    }
     // 补丁按路径应用：万一与当前文档对不上（历史损坏），扔掉这一条并保持
     // 文档不动，绝不能让栈和文档进入半应用的错位状态
     let next: FigureDocument
@@ -272,6 +356,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     } catch (err) {
       console.error('撤销补丁应用失败，该条历史已丢弃', err)
       set({ past: get().past.slice(0, -1) })
+      noteUndoRedo('undo.complete', false, entry.label, before, get())
       return null
     }
     set({
@@ -279,19 +364,31 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       past: get().past.slice(0, -1),
       future: [entry, ...get().future],
     })
+    noteUndoRedo('undo.complete', true, entry.label, before, get())
     return entry.label
   },
 
   redo: () => {
     const state = get()
+    recordDiagnosticEvent({
+      type: 'redo.request',
+      past_count: state.past.length,
+      future_count: state.future.length,
+      txn_open: state.txn != null,
+    })
+    const before = documentDigest(state.doc)
     const entry = state.future[0]
-    if (!entry) return null
+    if (!entry) {
+      noteUndoRedo('redo.complete', false, null, before, get())
+      return null
+    }
     let next: FigureDocument
     try {
       next = applyPatches(state.doc, entry.patches)
     } catch (err) {
       console.error('重做补丁应用失败，该条历史已丢弃', err)
       set({ future: state.future.slice(1) })
+      noteUndoRedo('redo.complete', false, entry.label, before, get())
       return null
     }
     set({
@@ -299,6 +396,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       past: [...state.past, entry],
       future: state.future.slice(1),
     })
+    noteUndoRedo('redo.complete', true, entry.label, before, get())
     return entry.label
   },
 

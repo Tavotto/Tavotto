@@ -143,6 +143,35 @@ previewStyle`（只改 DOM）→ `pointerup → setOverride(…) + commitElement
   `components/inspector/elementStylePreview.test.tsx`、
   `e2e/fake-realtime.spec.ts`（真浏览器，顺带产出 perf-baseline 的 Phase G 数字）。
 
+## 前端诊断：状态快照与交互轨迹（2026-08-27，ADR 0016）
+
+完整版在 `docs/adr/0016-diagnostics-v2-frontend-state-tracing.md`，改动前先读。
+模块是 `web/src/diagnostics/`，业务代码**只 import `@/diagnostics`**。
+
+- **权威判据不在这里**：诊断报的 `authority_variant` 一律委托上一节的
+  `exactPanelRender`（ADR 0017）。诊断**绝不另立一份判据**——否则会出现
+  「诊断说权威就绪、写路径当场拒绝」，两边各说各话。因此权威只有两种取值：
+  **就是当前这一版，或者根本没有**；「来自别的变体的权威」这个概念不存在。
+  ADR 0017 的追踪环（`lib/authorityTrace.ts`）已并入本模块，别再建第二个环。
+- **只观察，不当真源**：诊断不参与任何业务判断，快照是**读**业务 store 得来的，
+  不维护影子状态（影子状态会漂移，漂移的诊断比没有诊断更坏）。
+  `recordDiagnosticEvent` 整体吞异常——诊断把一次编辑弄挂比没有诊断糟得多。
+- **隐私是两道判据不同的防线**：`types.ts` 的可辨识联合挡编译期手滑（事件里写
+  `text: element.label` 直接 TS 报错），`sanitize.ts` 的**逐事件字段表**挡运行期。
+  序列化**遍历 schema 而不是输入的键**——多出来的字段是「根本没被读过」，
+  不是「读了再丢掉」。**写入即脱敏**：环里物理上不存在未脱敏的数据。
+- **`data-display-key` 是对外暴露面**：它落在 DOM 上（e2e 读它、用户也看得到），
+  用的是 `diagnosticHash`。`diagnostics/privacy.test.ts` 是它不泄漏文件名与
+  override 原文的唯一看护，别删。
+- **定长 240 条、纯内存**：不写磁盘、不自动上传、不进 telemetry；只有用户点
+  「导出诊断包」才 POST 给本机后端。**切项目要 `clearDiagnosticTrace()`**
+  （已接进 `resetForNewProject`）——否则新项目的包会带着上一个项目的操作序列。
+  `seq` 刻意不重置：编号缺口是「这里被清过 / 被环挤掉」的唯一线索。
+- **不记 mousemove、不记每一帧预览**；document 摘要只在真状态边界算，
+  且靠 immer 的结构共享 + WeakMap 缓存（`digest.ts`），改一个对象只 hash 一个。
+- 看护：`web/src/diagnostics/*.test.ts` + `tests/test_diagnostics_bundle.py`
+  （服务端第二道校验、ZIP、端到端隐私回归）。
+
 ## 命中与选择几何
 
 - 图内元素的命中 / 框选 / 描边全在 `web/src/lib/pathGeom.ts`（距离一律换到 mm

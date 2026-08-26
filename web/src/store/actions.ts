@@ -729,6 +729,10 @@ export function setOverrides(
 /**
  * 混排对齐（图内元素 + 画布标注）：元素落 override、标注改画布位置，
  * 全部进**同一次 commit**——一条撤销、一次渲染。
+ *
+ * **几何权威由调用方把关**：图内多选对齐走 `alignSelectedPanelElements`
+ * （点击那一刻现取几何 + `exactPanelRender`），这里只负责把一批已经算好的
+ * patch 与位移落进同一次 commit。
  */
 export function applyMixedAlign(
   panelId: string,
