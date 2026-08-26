@@ -264,6 +264,22 @@ value 装的就是用户的内容。
   项目里，导出后对 zip 全文搜索，断言 0 次出现）。
 * 读诊断包的人要知道：**未知字段一律忽略**。三个 schema 版本号都会独立演进。
 
+## 与 ADR 0017 的关系（2026-08-27 收编）
+
+ADR 0017（issue #131 的战术修复）先落地，它带了一个 100 条的小追踪环
+`lib/authorityTrace.ts` 与 `assertGeometryAuthority`。两份守卫并存违反单一
+权威原则，因此本轮**收编**：
+
+* `authorityTrace.ts` 删除，`shortHash` → `diagnosticHash`（`PanelView` 的
+  `data-display-key` 跟着换），它的隐私用例迁进 `diagnostics/privacy.test.ts`；
+* `alignAction.ts` 的 `traceGeometry` 换成本模块的结构化事件（多了三个变体
+  身份、选中数、输入/输出几何、patch 数）；
+* **权威判据以 ADR 0017 的 `exactPanelRender` 为准**，本 ADR 原先设想的
+  「捕获 manifestSourceKey 再传参」整套作废——`exactPanelRender` 更严
+  （还要求 `lastPatches` 逐字相等且未被 markStale），而且判据留在写路径上比
+  在调用方之间传递更难出错。于是 `authority_variant` 只有两种取值：
+  **当前这一版，或 null**。
+
 ## 不做什么
 
 云端上传、自动崩溃回传、完整 session replay、把 trace 落盘做 crash recovery、
