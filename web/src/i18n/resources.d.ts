@@ -28,6 +28,14 @@ export default interface Resources {
       "zoomAria": "放大查看",
       "zoomTip": "放大查看完整 diff"
     },
+    "effortLabel": {
+      "high": "高",
+      "low": "低",
+      "max": "最高",
+      "medium": "中",
+      "minimal": "最低",
+      "xhigh": "极高"
+    },
     "history": {
       "allStatuses": "全部状态",
       "changedSuffix": " · 有改动",
@@ -63,7 +71,9 @@ export default interface Resources {
       "agentNote": "直接改脚本文件；每次运行前自动快照，可回滚。",
       "agentTitle": "执行改动的命令行工具",
       "cli": "CLI：{{version}}",
+      "cliPath": "路径：{{path}}",
       "effort": "推理强度",
+      "effortRaw": "强度原始值：{{value}}",
       "emptyHint": "助手会修改这张图的脚本；改完可查看差异、一键回滚。",
       "emptyTitle": "描述想要的改动",
       "generating": "正在生成回答",
