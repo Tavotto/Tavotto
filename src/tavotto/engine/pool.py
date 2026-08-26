@@ -1339,7 +1339,7 @@ def _remove_oneshot_tree(path: Path, *, script_name: str = "") -> bool:
     （exact path + 异常 + 尝试次数 + 脚本名）并返回 False——此时重放产物早已
     落盘，缓存收尾不值得让写回失败。
     """
-    last: BaseException | None = None
+    last: OSError | None = None
     for delay in _RMTREE_BACKOFF:
         if delay:
             time.sleep(delay)

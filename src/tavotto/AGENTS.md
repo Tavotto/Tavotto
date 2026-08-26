@@ -162,6 +162,19 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   join」而不是 select（Windows 的 select 不接管道）。无超时的 readline 会让一个
   死循环脚本持着 `w.lock` 把整个会话占死，连 shutdown 都抢不到锁
   （test_request_timeout_kills_and_rebuilds_worker 看护）。
+- **关停必须闭环：`kill()` ≠「进程已经退出并释放了文件」**。`Popen.kill()`
+  两个平台上都只是发出请求（POSIX 是 SIGKILL，Windows 是 TerminateProcess），
+  调用返回时进程可能还在，它打开的句柄一定还在。`EngineWorker.shutdown()` /
+  `force_kill()` 统一走 `_terminate_and_reap()`：**发 shutdown → 等自然退出 →
+  超时 kill → 再 `wait()` 一次 → 关 stdin/stdout/log**，每一步有界、幂等、
+  不碰模块级 `_lock`。worker 收到 shutdown 就 `raise SystemExit(0)`，**协议上
+  不回普通成功信封**——父进程读到 EOF 是预期现象，不是故障，但 EOF 之后仍然
+  必须 reap。少了这一步，Windows 上后脚的 `rmtree` 撞 sharing violation
+  （merge_group run 32937999297：`_replay-…` 目录残留污染了后面的测试文件）。
+  一次性目录的删除走 `_remove_oneshot_tree()`：**不许 `ignore_errors=True`**
+  （它把失败变成静默的空操作），撞锁做 0.35 秒封顶的有限退让，最终失败要记
+  exact path + 异常 + 尝试次数 + 脚本名。看护：`test_windows_regressions.py`
+  的假 Popen 锁窗口三条 + `test_worker_roundtrip.py` 的真 worker exact-base 用例。
 - **应用顺序规范化 + figure 锚定 prop 的重放（2026-08-17，数据损坏级）**：
   `overrides.apply` 按**七档规范顺序**应用（`_apply_rank` 是唯一出处）：
   图幅 size_mm → 色条方向 → 色条 extend → 子图 position → 刻度类型
@@ -582,7 +595,13 @@ smoke_app 的「未认证必须 401」硬断言——**别再让任何新端点�
     「从零按这组 patches 重放一次的样子」（FigS3 事故就是这个差）。一次性
     worker 不进 `_workers`，目录独立（`cache/engine/_replay-…`，登记进
     `_oneshot_bases` 免得被 prune 删掉），workerd 那边靠独立 out_dir +
-    `TAVOTTO_REPLAY_NONCE` salt env 绕开 spec 哈希复用，用完 `discard()`。
+    `TAVOTTO_REPLAY_NONCE` salt env 绕开 spec 哈希复用，用完 `discard()`——
+    它返回时**进程已被 wait 回收、句柄已关、exact base 已删、`_oneshot_bases`
+    已注销**（注销排在删除之后：重试期间目录仍算 active）；删不掉也注销并留日志，
+    好让 `prune_engine_cache()` 还有机会回收。写回的泄漏用例只对**本次
+    `one_shot()` 建出来的 base** 负责，不许再用 `ENGINE_CACHE.glob("_replay-*")`
+    断言全局为空——ENGINE_CACHE 全进程共用，那样会把别的测试文件的残留算到
+    自己头上（run 32937999297 就是这么误报的）。
     同一次写回只 build 一次（override + PDF + PNG 共用）。
     热会话最后应用的正是这组 patches 时（`worker.last_patch_hash`），把两份
     manifest 逐元素比 bbox/anchor（容差 0.5% figure 分数）与 size_mm（0.01mm），
