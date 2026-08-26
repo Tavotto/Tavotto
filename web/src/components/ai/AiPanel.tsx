@@ -13,11 +13,15 @@ import {
   X,
 } from 'lucide-react'
 import {
+  agentById,
+  agentDisplayName,
   backendErrorText,
   aiRevert,
   deleteAiHistory,
+  effectiveAgent,
   fetchAiHistory,
   pinAiHistory,
+  usableAgents,
   type AiHistoryEntry,
   type ManifestElement,
 } from '@/lib/api'
@@ -28,6 +32,7 @@ import { engineLabel } from '@/components/inspector/roles/registry'
 import {
   isSessionOf,
   scriptName,
+  sessionAgentLabel,
   useAiStore,
   type AiEntry,
   type AiScope,
@@ -152,6 +157,7 @@ export function AssistantPanel() {
   const sessions = useAiStore((s) => s.sessions)
   const storedScope = useAiStore((s) => s.scope)
   const { panel, element, axes } = useAssistantTarget()
+  const caps = useAiStore((s) => s.caps)
   const [prompt, setPrompt] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
@@ -170,6 +176,9 @@ export function AssistantPanel() {
   const mine = panel ? sessions.filter((s) => isSessionOf(s, panel)) : []
   // 只有「同一个脚本正在被改」才该挡住发送——别的面板在跑与这里无关
   const runningHere = mine.some((s) => s.status === 'running')
+  // 一个可用的编码 Agent 都没有：**探测出结果之后**才这么说
+  // （caps 还是 null 时是「正在检测」，那时不该把输入区锁上）
+  const noAgent = caps !== null && usableAgents(caps).length === 0
 
   useEffect(() => {
     const el = scrollRef.current
@@ -183,7 +192,7 @@ export function AssistantPanel() {
 
   const send = async () => {
     const text = prompt.trim()
-    if (!text || !panel || sending || runningHere) return
+    if (!text || !panel || noAgent || sending || runningHere) return
     setSending(true)
     setError(null)
     // 作用范围直接决定发给后端的元素上下文：整张图不带 gid，
@@ -279,17 +288,31 @@ export function AssistantPanel() {
           </div>
         )}
         {error && <p className="mb-1.5 text-xs text-danger">{error}</p>}
+        {noAgent && (
+          // 「没装 CLI」不是错误，用中性语气 + 一个可执行的下一步。
+          // 以前这句话只藏在「作用范围与执行器」弹层里，不点开根本看不到
+          <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
+            <p className="text-xs leading-relaxed text-ink-3">{ai('panel.noCli')}</p>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => useUiStore.getState().setSettingsOpen(true, 'ai')}
+            >
+              {ai('panel.openAiSettings')}
+            </Button>
+          </div>
+        )}
         <div
           className={cn(
             'rounded-md border border-border bg-surface transition-colors focus-within:border-accent',
-            !panel && 'opacity-60',
+            (!panel || noAgent) && 'opacity-60',
           )}
         >
           <textarea
             ref={inputRef}
             value={prompt}
             rows={2}
-            disabled={!panel}
+            disabled={!panel || noAgent}
             placeholder={ai(panel ? 'panel.placeholder' : 'panel.placeholderNoPanel')}
             onChange={(e) => {
               setPrompt(e.target.value)
@@ -327,7 +350,7 @@ export function AssistantPanel() {
               <Button
                 variant="primary"
                 size="icon-sm"
-                disabled={!panel || !prompt.trim() || runningHere}
+                disabled={!panel || noAgent || !prompt.trim() || runningHere}
                 loading={sending || runningHere}
                 onClick={send}
                 aria-label={ai('panel.sendAria')}
@@ -402,7 +425,11 @@ function ScopeAgentButton({
   scopes: AiScope[]
 }) {
   useTranslation('ai')
-  const agent = useAiStore((s) => s.agent)
+  const caps = useAiStore((s) => s.caps)
+  const preferred = useAiStore((s) => s.agent)
+  // 按钮上写的是**这一刻真的会派给谁**，不是用户存着的首选值——
+  // 首选那个被关掉时，按钮说 Codex、任务却交给 Claude Code 是最难查的一类错。
+  const active = effectiveAgent(preferred, caps)
   return (
     <Popover
       width={232}
@@ -416,7 +443,8 @@ function ScopeAgentButton({
         >
           <Settings2 size={12} />
           <span className="text-xs">
-            {scopeLabel(scope)} · {agent === 'codex' ? 'Codex' : 'Claude'}
+            {scopeLabel(scope)}
+            {active ? ` · ${agentDisplayName(caps, active)}` : ''}
           </span>
         </Button>
       }
@@ -448,13 +476,14 @@ function ScopeAgentContent({
   const efforts = useAiStore((s) => s.efforts)
   const [detailsOpen, setDetailsOpen] = useState(false)
 
-  // 只展示实际安装的 provider；模型 / 强度选项完全由 capability 探测结果决定
-  const installed = (['codex', 'claude'] as const).filter(
-    (a) => caps?.providers[a]?.installed,
-  )
-  const cur = caps?.providers[agent]
-  const model = models[agent] ?? cur?.default_model ?? ''
-  const effort = efforts[agent] ?? cur?.default_effort ?? ''
+  // 只展示**可用**的 Agent（装了、没被关掉、也没在等登录）；顺序沿用后端注册表。
+  // 模型 / 强度选项完全由该 Agent 自己声明的能力决定，不在前端列第二份名单。
+  const usable = usableAgents(caps)
+  // 首选那个暂时不可用时用第一个可用的，**但不改用户存着的首选值**
+  const active = effectiveAgent(agent, caps)
+  const cur = agentById(caps, active)
+  const model = (active && models[active]) ?? cur?.default_model ?? ''
+  const effort = (active && efforts[active]) ?? cur?.default_effort ?? ''
 
   return (
     <div className="flex flex-col gap-2">
@@ -476,7 +505,7 @@ function ScopeAgentContent({
         <p className="mb-1 text-xs text-ink-2">{ai('panel.agentTitle')}</p>
         {caps == null ? (
           <p className="text-xs text-ink-3">{ai('panel.probing')}</p>
-        ) : installed.length === 0 ? (
+        ) : usable.length === 0 ? (
           <div className="flex flex-col gap-1">
             <p className="text-xs leading-relaxed text-ink-3">{ai('panel.noCli')}</p>
             <div>
@@ -494,23 +523,20 @@ function ScopeAgentContent({
             <Segmented
               tone="quiet"
               className="w-full"
-              value={agent}
+              value={active ?? ''}
               onChange={(v) => useAiStore.getState().setAgent(v)}
-              items={installed.map((a) => ({
-                value: a,
-                label: a === 'codex' ? 'Codex' : 'Claude',
-              }))}
+              items={usable.map((a) => ({ value: a.id, label: a.display_name }))}
             />
             {cur && cur.models.length > 0 && (
               <label className="mt-1.5 flex items-center gap-2 text-xs text-ink-2">
                 {ai('panel.model')}
                 <select
                   value={model}
-                  onChange={(e) => useAiStore.getState().setModel(agent, e.target.value)}
+                  onChange={(e) => active && useAiStore.getState().setModel(active, e.target.value)}
                   aria-label={ai('panel.model')}
                   className="h-6 flex-1 rounded-sm border border-border bg-surface px-1 text-xs text-ink outline-none focus-visible:focus-ring"
                 >
-                  {cur.models.map((m) => (
+                  {cur.models.map((m: string) => (
                     <option key={m} value={m}>
                       {m}
                     </option>
@@ -525,8 +551,8 @@ function ScopeAgentContent({
                   tone="quiet"
                   className="w-full"
                   value={effort}
-                  onChange={(v) => useAiStore.getState().setEffort(agent, v)}
-                  items={cur.efforts.map((e) => ({ value: e, label: e }))}
+                  onChange={(v) => active && useAiStore.getState().setEffort(active, v)}
+                  items={cur.efforts.map((e: string) => ({ value: e, label: e }))}
                 />
               </div>
             )}
@@ -554,7 +580,7 @@ function ScopeAgentContent({
             })}
           </p>
           {cur?.version && (
-            <p className="truncate font-mono text-xs text-ink-3" title={cur.path ?? ''}>
+            <p className="truncate font-mono text-xs text-ink-3" title={cur.executable_path ?? ''}>
               {ai('panel.cli', { version: cur.version })}
             </p>
           )}
@@ -724,6 +750,7 @@ function TaskHistory({ onClose }: { onClose: () => void }) {
 
 function HistoryRow({ entry, onChanged }: { entry: AiHistoryEntry; onChanged: () => void }) {
   useTranslation('ai')
+  const caps = useAiStore((s) => s.caps)
   const [detailsOpen, setDetailsOpen] = useState(false)
   const failed = entry.status === 'failed' || entry.status === 'timeout' || entry.status === 'interrupted'
 
@@ -731,7 +758,9 @@ function HistoryRow({ entry, onChanged }: { entry: AiHistoryEntry; onChanged: ()
     <div className="border-b border-border pb-2 last:border-b-0">
       <p className="line-clamp-2 text-xs leading-relaxed text-ink-2">{entry.prompt}</p>
       <p className="mt-0.5 truncate text-xs text-ink-3">
-        {entry.target || ai('scope.figure')} · {entry.provider === 'codex' ? 'Codex' : 'Claude'}
+        {/* 历史里的 provider 是**当时**用的那个 Agent id：显示名从当前
+            capabilities 查，查不到就原样显示 id（不写死两个名字，也不留空） */}
+        {entry.target || ai('scope.figure')} · {agentDisplayName(caps, entry.provider)}
         {entry.model ? ` · ${entry.model}` : ''} · {timeOf(entry.started_ms)}
       </p>
       <div className="mt-1 flex items-center gap-1.5">
@@ -848,6 +877,7 @@ function groupEntries(entries: AiEntry[]): Group[] {
 
 function SessionBlock({ session }: { session: AiSession }) {
   useTranslation('ai')
+  const caps = useAiStore((s) => s.caps)
   const running = session.status === 'running'
   const groups = groupEntries(session.entries)
   // 有文字正在流入就撤掉 loader——同时出现会互相抢注意力
@@ -860,7 +890,7 @@ function SessionBlock({ session }: { session: AiSession }) {
       <div className="rounded-sm border border-border bg-surface-2 px-2 py-1.5">
         <p className="text-sm leading-[1.6] break-words text-ink-2">{session.prompt}</p>
         <p className="mt-0.5 truncate font-mono text-xs text-ink-3">
-          {session.agent} · {session.target} · {timeOf(session.startedAt)}
+          {sessionAgentLabel(caps, session)} · {session.target} · {timeOf(session.startedAt)}
         </p>
       </div>
 

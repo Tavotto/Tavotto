@@ -50,6 +50,7 @@ from .engine import locate as engine_locate
 from .engine import patchspec as engine_patchspec
 from .engine import pool as engine_pool
 from .engine import probe as engine_probe
+from .engine import ai_agents as engine_ai_agents
 from .engine import ai_providers as engine_ai_providers
 from .engine import registry as engine_registry
 from .engine import runtime as engine_runtime
@@ -1203,11 +1204,10 @@ def api_diagnostics():
         })
 
     caps = engine_ai.capabilities()
-    for name in ("codex", "claude"):
-        p = caps["providers"][name]
-        checks.append({"id": f"cli_{name}", "ok": p["installed"],
-                       "label": f"{name.capitalize()} CLI",
-                       "detail": p["version"] or "未安装（改图助手对应选项不可用）"})
+    for entry in caps["agents"]:
+        checks.append({"id": f"cli_{entry['id']}", "ok": entry["installed"],
+                       "label": f"{entry['display_name']} CLI",
+                       "detail": entry["version"] or "未安装（改图助手对应选项不可用）"})
 
     ctx = _request_ctx()
     if ctx is not None:
@@ -2660,35 +2660,68 @@ def api_engine_svg():
     return resp
 
 
-# ------------------------- AI 桥 -------------------------------------------
+# ------------------------- 编码 Agent 桥 -----------------------------------
+#
+# 端点一律按 **agent id** 收敛（`/api/ai/agents/<agent_id>/…`）：id 必须命中
+# `engine/ai_agents.py` 的注册表，否则当场 400。加第三个 Agent 不需要新增
+# 任何一条路由分支。全部端点照旧走 ADR 0008 的会话认证，没有旁路。
+def _agent_error(exc: "engine_ai.AgentError"):
+    """AgentError → 稳定 code 的 JSON。未知 id 是「请求畸形」，其余是状态冲突。"""
+    status = 400 if exc.code in ("ai_agent_unknown", "ai_agent_install_unsupported") else 409
+    return jsonify({"error": str(exc), "code": exc.code, "params": exc.params}), status
+
+
 @app.get("/api/ai/capabilities")
 def api_ai_capabilities():
-    """实测本机 codex / claude 的安装、版本、可用参数，以及已配置的第三方接口。"""
+    """实测本机每个已注册编码 Agent（安装/版本/就绪/模型/推理强度）+ 第三方接口。"""
     refresh = request.args.get("refresh") in ("1", "true", "yes")
     resp = jsonify(engine_ai.capabilities(refresh=refresh))
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
 
-@app.post("/api/ai/install")
-def api_ai_install():
-    """一键 `npm install -g` 装 CLI（后台线程）；agent 只认 codex/claude。"""
-    agent = str((request.get_json(silent=True) or {}).get("agent") or "")
-    if agent not in engine_ai.NPM_PACKAGES:
-        return jsonify({"error": f"未知 agent: {agent}",
-                        "code": "unknown_agent",
-                        "params": {"agent": agent}}), 400
-    return jsonify(engine_ai.start_install(agent))
+@app.patch("/api/ai/agents/<agent_id>")
+def api_ai_agent_settings(agent_id):
+    """通用 Agent 设置：`enabled` 与 `path_override`（两个字段都可选）。
+
+    `path_override` 为空 = 显式恢复自动检测；非空值要过与自动探测同一套
+    验证，验不过就报错、**不覆盖用户原来有效的设置**。
+    """
+    # 畸形请求体按「一个字段都没给」处理：返回当前能力，不新造一个通用错误码
+    body = request.get_json(force=True, silent=True)
+    body = body if isinstance(body, dict) else {}
+    try:
+        caps = engine_ai.capabilities()
+        if "path_override" in body:
+            value = body["path_override"]
+            caps = engine_ai.set_agent_path_override(
+                agent_id, None if value is None else str(value))
+        if "enabled" in body:
+            caps = engine_ai.set_agent_enabled(agent_id, bool(body["enabled"]))
+    except engine_ai.AgentError as exc:
+        return _agent_error(exc)
+    return jsonify(caps)
 
 
-@app.get("/api/ai/install/status")
-def api_ai_install_status():
-    agent = str(request.args.get("agent") or "")
-    if agent not in engine_ai.NPM_PACKAGES:
-        return jsonify({"error": f"未知 agent: {agent}",
-                        "code": "unknown_agent",
-                        "params": {"agent": agent}}), 400
-    resp = jsonify(engine_ai.install_status(agent))
+@app.post("/api/ai/agents/<agent_id>/install")
+def api_ai_agent_install(agent_id):
+    """一键 `npm install -g <适配器写死的包名>`（后台线程）。
+
+    包名**只从注册表取**，请求体里没有、也不接受任何包名字段。
+    """
+    try:
+        return jsonify(engine_ai.start_install(agent_id))
+    except engine_ai.AgentError as exc:
+        return _agent_error(exc)
+
+
+@app.get("/api/ai/agents/<agent_id>/install")
+def api_ai_agent_install_status(agent_id):
+    try:
+        engine_ai.require_agent(agent_id)
+    except engine_ai.AgentError as exc:
+        return _agent_error(exc)
+    resp = jsonify(engine_ai.install_status(agent_id))
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
@@ -2857,21 +2890,6 @@ def api_telemetry_event():
     return jsonify({"accepted": accepted})
 
 
-@app.patch("/api/ai/settings")
-def api_ai_settings():
-    """AI CLI 的用户级设置（自定义可执行路径）；改完立即重探测。"""
-    body = request.get_json(force=True)
-    patch = {}
-    for key in ("codex_path", "claude_path"):
-        if key in body:
-            val = str(body[key] or "").strip()
-            patch[key] = val or None
-    engine_config.set_ai_settings(patch)
-    # capabilities 自带回显用的 settings（白名单只有两个路径键），
-    # 这里不再手拼一份——两份的键还会互相盖写。
-    return jsonify(engine_ai.capabilities(refresh=True))
-
-
 @app.put("/api/ai/endpoints")
 def api_ai_endpoint_save():
     """新增/更新一个第三方接口。api_key 留空 = 保留原值（界面不回显密钥）。"""
@@ -2930,6 +2948,11 @@ def api_ai_run():
                             model=body.get("model") or None,
                             effort=body.get("effort") or None,
                             endpoint_id=body.get("endpoint"))
+    except engine_ai.AgentError as exc:
+        # 未知 / 未安装 / 被用户在 Tavotto 里关掉——前端本该已经过滤掉，
+        # 但这个端点可以被直接调，判据只有一份、在后端
+        LOG.warning("AI 任务被拒: %s (%s)", agent, exc.code)
+        return _agent_error(exc)
     except RuntimeError as exc:
         LOG.error("AI 任务启动失败: %s %s: %s", agent, info["script"], exc)
         return jsonify({"error": str(exc),
@@ -2940,7 +2963,7 @@ def api_ai_run():
     # 提示词、脚本、stem、gid、label、target、画布名、会话 id ——一个都不发；
     # agent 走枚举白名单，用户自定义的名字落成 "other" 而不是原样透出。
     engine_telemetry.capture("ai_assistant_invoked", {
-        "agent": agent if agent in ("codex", "claude") else "other"})
+        "agent": agent if agent in engine_ai_agents.agent_ids() else "other"})
     return jsonify({"session": sid, "script": info["script"]})
 
 

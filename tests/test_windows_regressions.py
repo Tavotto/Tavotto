@@ -32,7 +32,7 @@ import pymupdf
 import pytest
 
 from tavotto import app as m
-from tavotto.engine import ai_bridge, pool, workerd_client
+from tavotto.engine import ai_agents, ai_bridge, pool, workerd_client
 
 
 @pytest.fixture
@@ -459,12 +459,16 @@ def test_cli_search_dirs_cover_windows_install_locations(monkeypatch):
     """Windows 上 PATH 最不可靠：npm 全局目录要重开终端才进 PATH，从桌面
     快捷方式启动的进程拿到的又是启动那一刻的旧环境块。"""
     monkeypatch.setattr(os, "name", "nt", raising=False)
-    dirs = " | ".join(ai_bridge._search_dirs("codex")).lower()
+    locs = ai_agents.search_locations("codex")
+    dirs = " | ".join(loc.path for loc in locs).lower()
     assert "npm" in dirs
     # 微软商店版 codex 的真身在受 ACL 保护的 WindowsApps 包体里，
     # 能用的入口是这个执行别名目录——少了它，商店版就是「系统找不到」
     assert "microsoft\\windowsapps" in dirs
     assert "winget" in dirs and "scoop" in dirs
+    # 来源标签要如实分辨这几类落点（详情页的诊断区按来源解释「从哪找到的」）
+    by_source = {loc.source for loc in locs}
+    assert {"npm_global", "windows_alias", "common_location"} <= by_source
 
 
 def test_npm_cmd_shim_resolves_to_real_executable(tmp_path, monkeypatch):
@@ -480,26 +484,28 @@ def test_npm_cmd_shim_resolves_to_real_executable(tmp_path, monkeypatch):
         '@ECHO off\r\n'
         '"%dp0%\\node_modules\\@openai\\codex\\bin\\codex.exe" %*\r\n',
         encoding="utf-8")
-    assert ai_bridge._resolve_shim(str(shim)) == [str(exe.resolve())]
+    assert ai_agents.resolve_shim(str(shim)) == [str(exe.resolve())]
 
 
 def test_plain_executable_is_not_treated_as_shim(tmp_path):
     """真正的可执行文件不该被当成外壳去解析。"""
     exe = tmp_path / "codex.exe"
     exe.write_bytes(b"MZ")
-    assert ai_bridge._resolve_shim(str(exe)) is None
+    assert ai_agents.resolve_shim(str(exe)) is None
 
 
 def test_capabilities_tells_where_it_looked_when_missing(monkeypatch):
     """没找到 CLI 时要说清「找过哪些地方」。干甩一句「未安装」的结果是
     用户明明装了却无从下手（朋友的商店版 codex 就是这样）。"""
-    monkeypatch.setattr(ai_bridge, "_cli_candidates", lambda name: [])
+    monkeypatch.setattr(ai_agents, "candidates", lambda agent, override=None: [])
+    monkeypatch.setattr(ai_agents, "_run_probe", lambda argv, timeout=10: None)
     ai_bridge.invalidate_capabilities()
     caps = ai_bridge.capabilities(refresh=True)
-    for name in ("codex", "claude"):
-        info = caps["providers"][name]
+    assert [a["id"] for a in caps["agents"]] == ["codex", "claude"]
+    for info in caps["agents"]:
         assert info["installed"] is False
-        assert info["searched"], "必须报出找过的目录"
+        assert info["state"] == "not_installed"      # 没装不是「坏了」
+        assert info["diagnostics"]["searched"], "必须报出找过的目录"
     ai_bridge.invalidate_capabilities()
 
 

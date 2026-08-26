@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -279,8 +280,86 @@ def set_worker_python(path: str | None) -> None:
 
 
 def ai_settings() -> dict:
-    """AI CLI 的用户级设置（自定义可执行路径等）。"""
+    """AI 的用户级设置整份（第三方接口记录、每 Agent 设置……）。
+
+    **只有 `engine/ai_providers.py` 与本模块的 Agent 助手该直接用它**：
+    这份里躺着密钥，任何面向前端的形状都得自己挑字段。
+    """
     return load()["ai"]
+
+
+#: 旧版按 CLI 名分开存的自定义路径键（`codex_path` / `claude_path`）。
+#: 迁移规则写成正则而不是列举两个名字：新增第四个 Agent 时这里不用再改，
+#: 而漏改的表现是「用户存好的路径在升级后凭空消失」。
+_AI_LEGACY_PATH_RE = re.compile(r"^([a-z0-9][a-z0-9_-]*)_path$")
+
+
+def _migrate_ai_agents() -> None:
+    """一次性把 `ai.<agent>_path` 迁进 `ai.agents.<agent>.path_override`。
+
+    迁完**立刻删掉旧键**：两份权威并存的话，一边改路径另一边不知道，
+    下次探测用哪份全看读取顺序。写入走既有的原子落盘（临时文件 + replace）。
+    """
+    with _LOCK:
+        cfg = load()
+        ai = dict(cfg.get("ai") or {})
+        legacy = [k for k in ai if _AI_LEGACY_PATH_RE.match(k)]
+        if not legacy:
+            return
+        raw = ai.get("agents")
+        agents = {k: dict(v) for k, v in raw.items()
+                  if isinstance(v, dict)} if isinstance(raw, dict) else {}
+        for key in legacy:
+            agent_id = _AI_LEGACY_PATH_RE.match(key).group(1)
+            value = ai.pop(key)
+            # 新结构已经有这个 Agent 时，旧键只是残留——丢掉，不覆盖新的
+            if agent_id in agents:
+                continue
+            rec: dict = {}
+            if isinstance(value, str) and value.strip():
+                rec["path_override"] = value.strip()
+            agents[agent_id] = rec
+        ai["agents"] = agents
+        cfg["ai"] = ai
+        save(cfg)
+
+
+def ai_agent_settings() -> dict:
+    """每个编码 Agent 的用户级设置：`{agent_id: {path_override?, enabled?}}`。
+
+    `enabled` 缺席 = 用户从没表过态（语义见 `ai_bridge.capabilities`）；
+    不认识的 agent_id 原样留着——插件化以后降级回旧版不该丢用户的设置。
+    """
+    raw = load().get("ai") or {}
+    if any(_AI_LEGACY_PATH_RE.match(k) for k in raw):
+        _migrate_ai_agents()
+        raw = load().get("ai") or {}
+    agents = raw.get("agents")
+    if not isinstance(agents, dict):
+        return {}
+    return {str(k): dict(v) for k, v in agents.items() if isinstance(v, dict)}
+
+
+def set_ai_agent_settings(agent_id: str, patch: dict) -> dict:
+    """写一个 Agent 的设置；值为 None = 清除该键（回到默认语义）。"""
+    ai_agent_settings()          # 先把旧键迁完，免得两份并存
+    with _LOCK:
+        cfg = load()
+        ai = dict(cfg.get("ai") or {})
+        raw = ai.get("agents")
+        agents = {k: dict(v) for k, v in raw.items()
+                  if isinstance(v, dict)} if isinstance(raw, dict) else {}
+        rec = dict(agents.get(agent_id) or {})
+        for key, value in patch.items():
+            if value is None:
+                rec.pop(key, None)
+            else:
+                rec[key] = value
+        agents[agent_id] = rec
+        ai["agents"] = agents
+        cfg["ai"] = ai
+        save(cfg)
+        return rec
 
 
 def set_ai_settings(patch: dict) -> dict:

@@ -24,7 +24,7 @@ import os
 import re
 from pathlib import Path
 
-from . import config
+from . import ai_agents, config
 
 # codex 侧临时覆盖用的 provider id 与密钥环境变量名。用 tavotto 前缀是为了
 # 不和用户自己 config.toml 里的 provider 撞名（`-c` 只在本次进程生效，但
@@ -33,7 +33,24 @@ CODEX_PROVIDER_ID = "tavotto"
 CODEX_KEY_ENV = "TAVOTTO_CODEX_API_KEY"
 
 WIRE_APIS = ("responses", "chat")
-AGENTS = ("claude", "codex")
+
+#: 协议族 → 该族的注入方式。**不再自己列一份 agent 名单**：谁支持接第三方
+#: 接口由 `ai_agents.AGENT_REGISTRY` 的 `endpoint_family` 说了算，这里只认族。
+#: 分叉过一次的教训就在眼前——注册表加了 Agent、这份忘了加，界面上那家的
+#: 接口区块永远是空的，而没有任何一条用例会红。
+FAMILY_ANTHROPIC = "anthropic"
+FAMILY_OPENAI = "openai"
+
+
+def agents() -> tuple[str, ...]:
+    """支持接第三方接口的 agent id（唯一权威在 ai_agents 的注册表）。"""
+    return ai_agents.endpoint_agents()
+
+
+def _family(agent: str) -> str | None:
+    rec = ai_agents.get_agent(agent)
+    return rec.endpoint_family if rec else None
+
 
 # 内置预设只提供「接口地址 + 协议 + 常见模型名」，绝不含任何密钥。
 # 模型名会过时，所以在界面上可自由编辑——预设只是省去查文档。
@@ -74,7 +91,9 @@ def _slug(text: str) -> str:
 
 def _clean(rec: dict, existing_ids: set[str] = frozenset()) -> dict:
     """规范化一条供应商配置；非法值就地纠正，绝不写进配置一个坏形状。"""
-    agent = rec.get("agent") if rec.get("agent") in AGENTS else "claude"
+    known = agents()
+    fallback = known[0] if known else ""
+    agent = rec.get("agent") if rec.get("agent") in known else fallback
     pid = _slug(str(rec.get("id") or rec.get("label") or agent))
     while pid in existing_ids:
         pid = f"{pid}-2"
@@ -170,7 +189,7 @@ def active_id(agent: str) -> str | None:
 
 
 def set_active(agent: str, pid: str | None) -> dict:
-    if agent not in AGENTS:
+    if agent not in agents():
         raise ValueError(f"未知 agent: {agent}")
     if pid and get(pid) is None:
         raise ValueError(f"供应商不存在: {pid}")
@@ -208,7 +227,9 @@ def spawn_overrides(agent: str, rec: dict | None,
     base_url = str(rec.get("base_url") or "").strip()
     api_key = str(rec.get("api_key") or "").strip()
 
-    if agent == "claude":
+    family = _family(agent)
+
+    if family == FAMILY_ANTHROPIC:
         env: dict[str, str] = {}
         if base_url:
             env["ANTHROPIC_BASE_URL"] = base_url
@@ -226,7 +247,7 @@ def spawn_overrides(agent: str, rec: dict | None,
                 env[key] = chosen
         return [], env
 
-    if agent == "codex":
+    if family == FAMILY_OPENAI:
         if not base_url:
             return [], {}
         pid = CODEX_PROVIDER_ID

@@ -95,7 +95,8 @@ function Workspace() {
 
   useEffect(() => {
     useAssetStore.getState().load()
-    void useAiStore.getState().loadCaps()
+    // 启动那次静默：探测失败不该在用户还没进设置页时弹东西
+    void useAiStore.getState().loadCaps().catch(() => {})
     // 磁盘恢复是异步的：恢复到文档后重新适配视口
     void restoreSession().then((restored) => {
       if (!restored) return

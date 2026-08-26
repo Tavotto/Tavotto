@@ -1,5 +1,11 @@
 {
   "backend": {
+    "ai_agent_disabled": "{{agent}} is turned off in settings. Turn it back on under Coding Agents.",
+    "ai_agent_executable_invalid": "That file will not start: {{path}}. Your previous setting was kept.",
+    "ai_agent_install_unsupported": "{{agent}} has no one-click install; follow its own docs to install it.",
+    "ai_agent_not_installed": "No usable {{agent}} was found on this computer.",
+    "ai_agent_probe_timeout": "Checking {{path}} timed out. You can try again; your previous setting was kept.",
+    "ai_agent_unknown": "Unknown coding agent: {{agent}}.",
     "ai_revert_failed": "Could not revert the AI changes: {{reason}}",
     "ai_start_failed": "Could not start the AI task: {{reason}}",
     "annotations_need_pdf": "This asset only has a bitmap, no vector PDF — annotations cannot be written back to the original yet",
@@ -55,7 +61,6 @@
     "source_changed": "Write-back blocked: the original file changed in the meantime. Refresh the assets and try again.",
     "stale_write": "Autosave conflict: a newer version already exists on disk",
     "sync_different_scripts": "These two figures belong to different scripts and cannot be synced",
-    "unknown_agent": "Unknown agent: {{agent}}",
     "unsupported_script_type": "Not a probe-able .py script: {{script}}",
     "worker_timeout": "The render timed out and the worker was restarted — try again. Repeated timeouts mean the script itself never finishes.",
     "write_back_disabled": "This project is read-only: writing back to original files is disabled (re-enable it in project settings)",

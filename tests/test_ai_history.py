@@ -1,6 +1,7 @@
 """AI 历史（SQLite）与 capabilities 探测、CLI 命令构造。"""
 import pytest
 
+from tavotto.engine import ai_agents
 from tavotto.engine import ai_bridge
 from tavotto.engine import ai_history
 
@@ -75,56 +76,96 @@ def _clean_caps_cache():
     ai_bridge.invalidate_capabilities()
 
 
+def _fake_candidates(paths_by_agent, source="path"):
+    """把 `ai_agents.candidates` 钉成给定路径（带来源标签）。"""
+    def fake(agent, override=None):
+        return [ai_agents.CliCandidate(p, source)
+                for p in paths_by_agent(agent.id)]
+    return fake
+
+
+def _no_readiness(monkeypatch):
+    """就绪检查会真去 spawn 子进程：用例里一律钉成「查不了」。
+
+    这样断言的就是「探测 + 状态机」本身，而不是跑测试这台机器上恰好装了
+    什么。真实探测另有用例（tests/test_ai_agents.py）。
+    """
+    monkeypatch.setattr(ai_agents, "_run_probe", lambda argv, timeout=10: None)
+
+
+def _agent(caps, agent_id):
+    return next(a for a in caps["agents"] if a["id"] == agent_id)
+
+
 def test_capabilities_reports_uninstalled(monkeypatch):
-    monkeypatch.setattr(ai_bridge, "_cli_candidates", lambda name: [])
-    monkeypatch.setattr(ai_bridge, "_RESOLVE_CACHE", {})
+    _no_readiness(monkeypatch)
+    monkeypatch.setattr(ai_agents, "candidates", lambda agent, override=None: [])
+    ai_agents.clear_cache()
     caps = ai_bridge.capabilities(refresh=True)
+    assert [a["id"] for a in caps["agents"]] == ["codex", "claude"]
     for name in ("codex", "claude"):
-        p = caps["providers"][name]
+        p = _agent(caps, name)
         assert p["installed"] is False and p["models"] == []
+        assert p["state"] == "not_installed"        # 没装 ≠ 坏了
+        assert p["usable"] is False
         # 未安装时给出一键安装的可行性信息（npm 在不在由测试机决定，不断言）
         assert p["install"]["method"] == "npm" and p["install"]["package"]
+        assert p["diagnostics"]["searched"], "必须报出找过的目录"
 
 
-def test_capabilities_provider_specific(monkeypatch):
-    monkeypatch.setattr(ai_bridge, "_cli_candidates", lambda name: [f"/fake/{name}"])
-    monkeypatch.setattr(ai_bridge, "_probe_version", lambda p: "v1.0")
-    monkeypatch.setattr(ai_bridge, "_RESOLVE_CACHE", {})
+def test_capabilities_agent_specific(monkeypatch):
+    _no_readiness(monkeypatch)
+    monkeypatch.setattr(ai_agents, "candidates",
+                        _fake_candidates(lambda i: [f"/fake/{i}"]))
+    monkeypatch.setattr(ai_agents, "probe_version", lambda argv: "v1.0")
+    ai_agents.clear_cache()
     caps = ai_bridge.capabilities(refresh=True)
-    codex, claude = caps["providers"]["codex"], caps["providers"]["claude"]
+    codex, claude = _agent(caps, "codex"), _agent(caps, "claude")
     assert codex["efforts"]  # codex 有推理强度
     assert claude["efforts"] == []  # claude CLI 不暴露，不假装有
+    assert codex["features"]["effort_selection"] is True
+    assert claude["features"]["effort_selection"] is False
     assert codex["models"] != claude["models"]
+    assert codex["detection_source"] == "path"
+    # 就绪查不出来 = 「已安装」，不是「可用」；但仍允许试着用
+    assert codex["state"] == "installed" and codex["usable"] is True
     # 缓存后不再探测
-    monkeypatch.setattr(ai_bridge, "_probe_version", lambda p: "v2.0")
-    assert ai_bridge.capabilities()["providers"]["codex"]["version"] == "v1.0"
+    monkeypatch.setattr(ai_agents, "probe_version", lambda argv: "v2.0")
+    assert _agent(ai_bridge.capabilities(), "codex")["version"] == "v1.0"
     ai_bridge.capabilities(refresh=True)
 
 
 def test_broken_candidate_falls_through(monkeypatch):
     """第一个候选启动不了（WindowsApps 执行别名的典型故障）要落到下一个；
     全都启动不了时必须报未安装 + broken_path，绝不能拿着坏路径宣布已安装。"""
-    monkeypatch.setattr(ai_bridge, "_RESOLVE_CACHE", {})
-    monkeypatch.setattr(
-        ai_bridge, "_cli_candidates",
-        lambda name: [rf"C:\Users\x\AppData\Local\Microsoft\WindowsApps\{name}.exe",
-                      rf"C:\Users\x\AppData\Roaming\npm\{name}.cmd"])
-    monkeypatch.setattr(ai_bridge, "_resolve_shim", lambda p: None)
-    monkeypatch.setattr(
-        ai_bridge, "_probe_version",
-        lambda argv: "v9.9" if "npm" in argv[0] else None)
-    caps = ai_bridge.capabilities(refresh=True)
-    codex = caps["providers"]["codex"]
-    assert codex["installed"] is True
-    assert "npm" in codex["path"] and codex["version"] == "v9.9"
+    _no_readiness(monkeypatch)
+    ai_agents.clear_cache()
 
-    # 全部候选都启动不了：未安装 + 指出坏在哪
+    def cands(agent, override=None):
+        return [
+            ai_agents.CliCandidate(
+                rf"C:\Users\x\AppData\Local\Microsoft\WindowsApps\{agent.id}.exe",
+                "windows_alias"),
+            ai_agents.CliCandidate(
+                rf"C:\Users\x\AppData\Roaming\npm\{agent.id}.cmd", "npm_global"),
+        ]
+
+    monkeypatch.setattr(ai_agents, "candidates", cands)
+    monkeypatch.setattr(ai_agents, "resolve_shim", lambda p: None)
+    monkeypatch.setattr(ai_agents, "probe_version",
+                        lambda argv: "v9.9" if "npm" in argv[0] else None)
+    codex = _agent(ai_bridge.capabilities(refresh=True), "codex")
+    assert codex["installed"] is True
+    assert "npm" in codex["executable_path"] and codex["version"] == "v9.9"
+    assert codex["detection_source"] == "npm_global"   # 来源如实记账
+
+    # 全部候选都启动不了：**broken**（不是 not_installed）+ 指出坏在哪
     ai_bridge.invalidate_capabilities()
-    monkeypatch.setattr(ai_bridge, "_probe_version", lambda argv: None)
-    caps = ai_bridge.capabilities(refresh=True)
-    codex = caps["providers"]["codex"]
+    monkeypatch.setattr(ai_agents, "probe_version", lambda argv: None)
+    codex = _agent(ai_bridge.capabilities(refresh=True), "codex")
     assert codex["installed"] is False
-    assert "WindowsApps" in codex["broken_path"]
+    assert codex["state"] == "broken"
+    assert "WindowsApps" in codex["diagnostics"]["broken_path"]
 
 
 def test_start_install_reports_missing_npm(monkeypatch):
@@ -133,12 +174,22 @@ def test_start_install_reports_missing_npm(monkeypatch):
     monkeypatch.setattr(ai_bridge, "_INSTALLS", {})
     st = ai_bridge.start_install("codex")
     assert st["status"] == "error" and st["code"] == "npm_missing"
-    with pytest.raises(ValueError):
+    with pytest.raises(ai_bridge.AgentError) as exc:
         ai_bridge.start_install("not-a-cli")
+    assert exc.value.code == "ai_agent_unknown"
+
+
+def _install_registry(monkeypatch):
+    """让 `_cmd` 能拿到一个「已解析」的 CLI，而不用真去探测。"""
+    def fake_resolve(agent, probe_readiness=True):
+        return ai_agents.Resolution(argv=[f"/fake/{agent.id}"],
+                                    path=f"/fake/{agent.id}", version="v1",
+                                    source="path")
+    monkeypatch.setattr(ai_agents, "resolve", fake_resolve)
 
 
 def test_cmd_passes_model_and_effort(monkeypatch):
-    monkeypatch.setattr(ai_bridge, "_find_cli", lambda name: [f"/fake/{name}"])
+    _install_registry(monkeypatch)
     cmd, env = ai_bridge._cmd("codex", "p", "/cwd", model="gpt-5", effort="high")
     assert "-m" in cmd and "gpt-5" in cmd
     assert "-c" in cmd and "model_reasoning_effort=high" in cmd
@@ -151,10 +202,29 @@ def test_cmd_passes_model_and_effort(monkeypatch):
     assert "-m" not in cmd
 
 
+def test_cmd_is_equivalent_to_the_pre_registry_shape(monkeypatch):
+    """重构前后**逐字**等价的看护。
+
+    Adapter 化最容易悄悄改掉的就是这串固定参数（少一个
+    `--skip-git-repo-check`，任务在非 git 目录里就直接失败）。这里把两家的
+    完整命令行写死，改动必须是有意的。
+    """
+    _install_registry(monkeypatch)
+    cmd, _ = ai_bridge._cmd("codex", "PROMPT", "/figs")
+    assert cmd == ["/fake/codex", "exec", "-C", "/figs", "--json",
+                   "--sandbox", "workspace-write", "--skip-git-repo-check",
+                   "PROMPT"]
+    cmd, _ = ai_bridge._cmd("claude", "PROMPT", "/figs")
+    assert cmd == ["/fake/claude", "-p", "PROMPT",
+                   "--permission-mode", "acceptEdits",
+                   "--output-format", "stream-json", "--include-partial-messages",
+                   "--verbose"]
+
+
 def test_cmd_injects_third_party_endpoint(monkeypatch):
     """第三方接口只经环境变量 / `-c` 临时覆盖注入——绝不改写用户
     自己的 ~/.claude/settings.json 或 ~/.codex/config.toml。"""
-    monkeypatch.setattr(ai_bridge, "_find_cli", lambda name: [f"/fake/{name}"])
+    _install_registry(monkeypatch)
     claude_ep = {"agent": "claude", "label": "Kimi", "api_key": "sk-k",
                  "base_url": "https://api.moonshot.cn/anthropic"}
     cmd, env = ai_bridge._cmd("claude", "p", "/cwd", model="kimi-k2",
@@ -186,7 +256,7 @@ def test_no_private_paths_in_cli_lookup():
     import inspect
     import re
 
-    src = inspect.getsource(ai_bridge)
+    src = inspect.getsource(ai_bridge) + inspect.getsource(ai_agents)
     hits = re.findall(r'["\'](/(?:Users|home)/[^"\'/\s]+[^"\']*)["\']', src)
     assert not hits, f"发现写死的用户主目录: {hits}"
 
