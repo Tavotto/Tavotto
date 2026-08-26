@@ -384,13 +384,16 @@ execute:false，属于环境倒退不是产品事实。）
 - macOS（arm64，开发机）：e2e 真实链路 4 条（真 Flask + 真 matplotlib
   worker + 真浏览器），含关闭重开与导出双格式。CLI 面真执行（pytest）。
 - **Windows WebView2 / macOS WKWebView 最终候选产物证据未产出**（本机
-  产不了签名候选产物；lab runner 待用户启动）。合并前必须补齐（§六）。
+  产不了签名候选产物；lab runner 待用户启动）。原计划合并前补齐（§六）；
+  经用户拍板改为**合并后跟进**（见「未完成」首条）：用 ≥`6aeca9e` 的
+  main 构建候选产物取证。CI 侧已有部分替代证据（queue 轮 4 + full-ci 的
+  windows-exe-smoke / macos-app-smoke 全绿），壳内交互仍需真机。
 
 ## 已知失败与限制
 
 | 问题 | Stage/Route | 严重度 | 是否本轮 | 后续 |
 |---|---|---|---|---|
-| 真机最终产物证据缺失 | 全路由 × desktop | **合并阻断** | 是 | lab runner / 用户真机 |
+| 真机最终产物证据缺失 | 全路由 × desktop | 高（**合并后跟进**，经用户拍板由合并阻断改期；发版声明前补齐） | 是 | lab runner / 用户真机（main ≥`6aeca9e` 构建候选产物） |
 | 桌面 sidecar 动态端口 → CLI 探测委托够不着在跑的桌面实例（本地 probe 兜底，registry+cache 仍共享） | cli_open × desktop | 低（记录在案） | 是 | 不修（单实例转发语义不变） |
 | probe 仍同步阻塞（CLI 无进度输出，只等结果） | cli_open | 低 | 是 | SSE 进度流条目沿用 |
 | `browser_playground` 路由平时 not_run（只有 --browser 腿跑） | compatbench | 低（如实记账） | 是 | nightly browser 腿覆盖 |
@@ -422,6 +425,12 @@ execute:false，属于环境倒退不是产品事实。）
 > 只设计 native execution 契约与安全边界，写 ADR（0014 定稿）和
 > contract tests，**不直接实现全部 `tavotto run`**。
 
+**入场券（先于一切）**：真实用户复测清单（见「未完成」第二条）已产出
+脱敏最小 fixture——Session 7 prompt 的前置条件原文是「PR 1 已合并 +
+真实用户重测后仍有项目因环境/cwd/argv/env/本地模块/matplotlibrc/safe
+隔离失败」。**没有这些证据不开工**（2026-08-26 已因此叫停过一次，
+用户拍板顺序：先合并链，后复测，再 Session 7）。
+
 ## 下一 Session 首先阅读
 
 ```text
@@ -435,9 +444,9 @@ src/tavotto/engine/execspec.py（profile 字段已预留 safe|native）
 scripts/ci/compat_matrix.py（native_run 路由从 not_implemented 升级的位置）
 ```
 
-注意：PR 1 合并后先更新本文件（merge SHA、已升级 CompatBench cases、
-真实用户待复测清单）再开 Session 7；`native_run_required` 已是对外错误
-码，ADR 0014 的契约必须与它的文案承诺一致（「按项目原方式运行」）。
+注意：merge SHA 与复测清单已登记（本 PR）；开工判据只剩**真实用户复测
+证据**（上节入场券）。`native_run_required` 已是对外错误码，ADR 0014
+的契约必须与它的文案承诺一致（「按项目原方式运行」）。
 
 ## 建议启动命令
 
