@@ -103,6 +103,8 @@ USER_VISIBLE_CODES = {
     "ai_agent_unknown": {"agent"},
     "ai_agent_disabled": {"agent"},
     "ai_agent_not_installed": {"agent"},
+    "ai_agent_needs_auth": {"agent"},
+    "ai_agent_not_usable": {"agent"},
     "ai_agent_install_unsupported": {"agent"},
     "ai_agent_executable_invalid": {"path"},
     "ai_agent_probe_timeout": {"path"},

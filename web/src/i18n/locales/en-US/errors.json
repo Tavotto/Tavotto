@@ -1,9 +1,11 @@
 {
   "backend": {
     "ai_agent_disabled": "{{agent}} is turned off in settings. Turn it back on under Coding Agents.",
-    "ai_agent_executable_invalid": "That file will not start: {{path}}. Your previous setting was kept.",
+    "ai_agent_executable_invalid": "That file cannot be used as this agent's executable: {{path}}. Your previous setting was kept.",
     "ai_agent_install_unsupported": "{{agent}} has no one-click install; follow its own docs to install it.",
+    "ai_agent_needs_auth": "{{agent}} is not signed in. Sign in from its own command line, or point it at a custom model service in settings.",
     "ai_agent_not_installed": "No usable {{agent}} was found on this computer.",
+    "ai_agent_not_usable": "{{agent}} is not usable right now. Check its status under Coding Agents.",
     "ai_agent_probe_timeout": "Checking {{path}} timed out. You can try again; your previous setting was kept.",
     "ai_agent_unknown": "Unknown coding agent: {{agent}}.",
     "ai_revert_failed": "Could not revert the AI changes: {{reason}}",

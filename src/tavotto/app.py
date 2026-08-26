@@ -50,7 +50,6 @@ from .engine import locate as engine_locate
 from .engine import patchspec as engine_patchspec
 from .engine import pool as engine_pool
 from .engine import probe as engine_probe
-from .engine import ai_agents as engine_ai_agents
 from .engine import ai_providers as engine_ai_providers
 from .engine import registry as engine_registry
 from .engine import runtime as engine_runtime
@@ -2962,8 +2961,13 @@ def api_ai_run():
     # **只在会话真的起来之后**记一条，且只记用了哪个 agent。
     # 提示词、脚本、stem、gid、label、target、画布名、会话 id ——一个都不发；
     # agent 走枚举白名单，用户自定义的名字落成 "other" 而不是原样透出。
+    # **白名单取自遥测自己的 EVENTS 表**，不是注册表：注册表一加第三个
+    # Agent，「在注册表里」就恒真，那个 id 会被原样透出，而 capture() 只收
+    # 表里那几个值——结果是那个 Agent 的调用被静默丢弃，「加个适配器就完事」
+    # 当场破功。取表里的枚举，不认识的一律落成 "other"。
+    allowed = engine_telemetry.EVENTS["ai_assistant_invoked"]["agent"]["values"]
     engine_telemetry.capture("ai_assistant_invoked", {
-        "agent": agent if agent in engine_ai_agents.agent_ids() else "other"})
+        "agent": agent if agent in allowed else "other"})
     return jsonify({"session": sid, "script": info["script"]})
 
 

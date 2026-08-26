@@ -569,8 +569,21 @@ smoke_app 的「未认证必须 401」硬断言——**别再让任何新端点�
 - **状态模型六档**（ready / installed / needs_auth / broken / not_installed /
   disabled）+ 前端本地的 `detecting`。`usable = enabled && 能启动 && state ∉
   {broken, not_installed, needs_auth}`。`enabled` 是三态：没表过态跟着「装没装」
-  走，**明确关过就一直关着**。禁用的判据在后端（`require_usable`），
-  `/api/ai/run` 自己判一次——只靠前端隐藏不够，那个端点可以被直接调。
+  走，**明确关过就一直关着**。判据在后端（`require_usable`），`/api/ai/run`
+  自己判一次——只靠前端隐藏不够，那个端点可以被直接调；**它的兜底判据就是
+  `usable` 那一个字段**，在那里重列一遍条件就是第二份定义，分叉的表现是
+  「界面把它藏了、API 还放它进来」。
+- **接了第三方接口时，CLI 自己的登录态不参与判定**：注入凭据的全部意义就是让
+  CLI 不必用官方登录跑起来，拿它的登录态回答「能不能派活」是**把判据的主语搞错**
+  ——表现是「配好 DeepSeek 的用户发现 Codex 从选择器里整个消失」。判据取
+  `ai_providers.spawn_overrides()` 是否**真的**产出了参数/环境变量，不是「配置里
+  有没有一条记录」（codex 侧 base_url 为空时它什么都不注入，那时登录态仍算数）。
+- **`path_override` 来自请求体、最终会被 spawn**：非空且无 NUL → `realpath`
+  归一化（`..` 与符号链接在判断**之前**解掉）→ 存在的普通文件且可执行 →
+  **文件名必须指向该 Agent**。最后一条挡的是「把 Tavotto 指向 /bin/sh」那一整类。
+- **遥测的 agent 白名单取自 `telemetry.EVENTS` 的枚举，不是注册表**：拿「在不在
+  注册表里」当白名单，加第三个 Agent 之后恒真，而 capture() 只收表里那几个值
+  ——那个 Agent 的调用会被静默丢弃。
 - **第三方 API 接入（`engine/ai_providers.py`）**：按**协议族**分支（anthropic 走
   `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` 环境变量，openai 走
   `-c model_provider=tavotto` + `[model_providers.tavotto]` 临时覆盖 +

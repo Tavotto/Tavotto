@@ -88,6 +88,7 @@ def test_invalid_path_override_is_refused_and_nothing_is_written(client, monkeyp
 def test_clearing_path_override_is_an_explicit_action(client, tmp_path, monkeypatch):
     exe = tmp_path / "codex"
     exe.write_text("", encoding="utf-8")
+    exe.chmod(0o755)                     # 校验要求可执行位，fixture 得是真的
     monkeypatch.setattr(ai_agents, "probe_version_detailed", lambda argv: ("v1", None))
     monkeypatch.setattr(ai_agents, "probe_version", lambda argv: "v1")
     monkeypatch.setattr(
@@ -114,6 +115,26 @@ def test_run_refuses_a_disabled_agent(client, tmp_path, monkeypatch):
     with pytest.raises(ai_bridge.AgentError) as exc:
         ai_bridge.run("codex", "fig.py", "prompt", str(tmp_path))
     assert exc.value.code == "ai_agent_disabled"
+
+
+def test_telemetry_agent_falls_back_to_the_enum_not_the_registry(client, monkeypatch):
+    """遥测白名单取自 EVENTS 表，不是注册表。
+
+    注册表一加第三个 Agent，「在注册表里」就恒真，那个 id 会被原样透出，
+    而 capture() 只收表里那几个值 → 该 Agent 的调用被静默丢弃。
+    （PR #128 评审 P2）
+    """
+    from tavotto.engine import telemetry
+    allowed = telemetry.EVENTS["ai_assistant_invoked"]["agent"]["values"]
+    assert set(allowed) == {"codex", "claude", "other"}
+
+    import inspect
+
+    from tavotto import app as m
+    src = inspect.getsource(m.api_ai_run)
+    # 判据必须来自 EVENTS 表；拿注册表当白名单是被这条用例挡住的写法
+    assert 'EVENTS["ai_assistant_invoked"]["agent"]["values"]' in src
+    assert "agent_ids()" not in src
 
 
 def test_install_endpoints_never_take_a_package_name(client, monkeypatch):

@@ -87,12 +87,20 @@ _CAPS_CACHE: dict = {}
 STATES = ("ready", "installed", "needs_auth", "broken", "not_installed", "disabled")
 
 
-def _state(installed: bool, enabled: bool, res: ai_agents.Resolution) -> str:
+def _state(installed: bool, enabled: bool, res: ai_agents.Resolution,
+           endpoint_backed: bool = False) -> str:
     """把探测结论收敛成界面状态。
 
     「没装」不是错误，「装了但起不来」才是——两者必须分开说：前者的下一步是
     去装，后者的下一步是修（或改用另一个候选）。登录状态查不准时一律说
     「已安装」，**绝不为了让那一行变绿而偷偷发一个真实 Prompt**。
+
+    `endpoint_backed` = 第三方接口**真的接管了这次调用**（`spawn_overrides`
+    确实产出了参数或环境变量）。这时 CLI 自己的登录态**与能不能派活无关**
+    ——注入那套凭据的全部意义就是让 CLI 不必用官方登录跑起来。判据的主语
+    是「这次运行会不会成」，不是「这个 CLI 登没登录过」；把后者当成前者，
+    表现是「配好了 DeepSeek 的用户发现 Codex 从选择器里整个消失了」。
+    就绪检查的原始结论仍然照实记在 diagnostics 里，只是不再当闸。
     """
     if not installed:
         return "broken" if res.broken_path else "not_installed"
@@ -100,7 +108,7 @@ def _state(installed: bool, enabled: bool, res: ai_agents.Resolution) -> str:
         return "disabled"
     if res.readiness.state == "ready":
         return "ready"
-    if res.readiness.state == "needs_auth":
+    if res.readiness.state == "needs_auth" and not endpoint_backed:
         return "needs_auth"
     return "installed"
 
@@ -120,13 +128,13 @@ def _agent_caps(agent: ai_agents.AgentDefinition, saved: dict,
     res = ai_agents.resolve(agent)
     installed = res.argv is not None
     enabled = _effective_enabled(saved, installed)
-    state = _state(installed, enabled, res)
 
     caps = agent.model_capabilities() if installed else ai_agents.ModelCapabilities()
     models = list(caps.models)
     default_model = caps.default_model
 
     endpoint = None
+    endpoint_backed = False
     if installed and agent.endpoint_family:
         endpoint = ai_providers.resolve(agent.id)
         if endpoint and endpoint.get("models"):
@@ -134,6 +142,14 @@ def _agent_caps(agent: ai_agents.AgentDefinition, saved: dict,
             # 官方无关）
             models = list(endpoint["models"])
             default_model = endpoint.get("default_model") or models[0]
+        # 「算不算真的接管了」**问注入方自己**，不在这里另写一份判据：
+        # codex 侧 base_url 为空时 spawn_overrides 其实一个字节都不注入，
+        # 那种情况 CLI 自己的登录态仍然算数。两份规则迟早分叉，而分叉的
+        # 表现是「界面说可用、一跑就报未登录」。
+        args, env = ai_providers.spawn_overrides(agent.id, endpoint)
+        endpoint_backed = bool(args or env)
+
+    state = _state(installed, enabled, res, endpoint_backed)
 
     info: dict = {
         "id": agent.id,
@@ -228,9 +244,13 @@ def agent_caps(agent_id: str) -> dict | None:
 
 
 def require_usable(agent_id: str) -> dict:
-    """派活之前的最后一道闸：注册表认得、装着、且用户没在 Tavotto 里关掉。
+    """派活之前的最后一道闸。**判据就是 `usable` 那一个字段**。
 
-    **不能只靠前端隐藏**——禁用的 Agent 仍可以被直接调 API 唤起。
+    不能只靠前端隐藏——这些状态的 Agent 仍可以被直接调 API 唤起。
+    也不能在这里重列一遍「installed and enabled and …」：那是 `usable` 的
+    第二份定义，而两份定义分叉的表现是「界面把它藏了、API 还放它进来」。
+    先分别判 installed / enabled / needs_auth 只为**给出对得上的 code**，
+    最后那道 `usable` 才是兜底——将来 usable 多一个成因，这里自动跟上。
     """
     require_agent(agent_id)
     info = agent_caps(agent_id)
@@ -240,6 +260,12 @@ def require_usable(agent_id: str) -> dict:
         raise AgentError("ai_agent_not_installed", {"agent": agent_id})
     if not info["enabled"]:
         raise AgentError("ai_agent_disabled", {"agent": agent_id})
+    if info["state"] == "needs_auth":
+        # 注意这条排在 endpoint 判定**之后**（见 `_state`）：接了第三方接口
+        # 的用户本来就不需要 CLI 的官方登录，不该被这道闸挡住。
+        raise AgentError("ai_agent_needs_auth", {"agent": agent_id})
+    if not info["usable"]:
+        raise AgentError("ai_agent_not_usable", {"agent": agent_id})
     return info
 
 

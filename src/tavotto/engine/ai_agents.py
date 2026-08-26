@@ -744,19 +744,51 @@ def resolve(agent: AgentDefinition, probe_readiness: bool = True) -> Resolution:
     return res
 
 
+def names_this_agent(agent: AgentDefinition, filename: str) -> bool:
+    """这个文件名看起来是不是**这个 Agent** 的可执行文件。
+
+    用户在设置里做的事情是「告诉 Tavotto 我的 codex 在哪儿」，所以那个文件
+    的名字里总该有 `codex`。判据放得很松（只要求包含，`codex.exe`、
+    `codex.cmd`、`codex-cli`、`run-codex.sh` 全过），但它挡掉的是
+    「把 Tavotto 指向 /bin/sh」这一整类——那不是「指错了路径」，
+    那是把一个任意可执行文件喂给会被 spawn 的位置。
+    """
+    stem = os.path.basename(filename).lower()
+    return any(name.lower() in stem for name in agent.command_names)
+
+
 def validate_executable(agent: AgentDefinition, path: str) -> Resolution:
     """校验用户指定的可执行文件：与自动探测**同一套** shim 解析 + 启动验证。
 
     只接受一个文件路径，不接受任意 shell 命令串（不 split、不 `shell=True`）。
     验证不过就不返回可用 argv——调用方据此拒绝保存，不覆盖原来有效的设置。
+
+    **这个路径来自 HTTP 请求体，最终会被 spawn**，所以「是个文件」远远不够
+    （CodeQL py/path-injection 报的正是这一点）。四道闸依次是：
+      ① 不含 NUL、不为空；
+      ② `realpath` 归一化——`..` 与符号链接在这里解掉，之后所有判断都打在
+        真身上，而不是打在一个还能再跳一次的字符串上；
+      ③ 必须是**存在的普通文件**且当前用户可执行；
+      ④ 文件名必须指向这个 Agent（见 `names_this_agent`）。
+    过了这四道才轮到 shim 解析与 `--version`。
     """
-    p = Path(path).expanduser()
+    raw = (path or "").strip()
+    if not raw or "\x00" in raw:
+        return Resolution(broken_path=raw, error="not_a_file")
+    # expanduser 在前、realpath 在后：`~` 要先变成真目录，`..` 与符号链接
+    # 才有得解。之后一律用 resolved，不再碰用户给的原串。
+    resolved = os.path.realpath(os.path.expanduser(raw))
+    p = Path(resolved)
     if not p.is_file():
-        return Resolution(broken_path=str(p), error="not_a_file")
-    argv = resolve_shim(str(p)) or [str(p)]
+        return Resolution(broken_path=resolved, error="not_a_file")
+    if not os.access(resolved, os.X_OK):
+        return Resolution(broken_path=resolved, error="not_executable")
+    if not names_this_agent(agent, resolved):
+        return Resolution(broken_path=resolved, error="not_this_agent")
+    argv = resolve_shim(resolved) or [resolved]
     version, failure = probe_version_detailed(argv)
     if version is None:
-        return Resolution(broken_path=str(p), error=failure or "launch_failed")
+        return Resolution(broken_path=resolved, error=failure or "launch_failed")
     readiness = agent.readiness(argv) if agent.supports_readiness_probe else ReadinessResult()
     return Resolution(argv=argv, path=argv[-1], version=version,
                       source="custom", readiness=readiness)

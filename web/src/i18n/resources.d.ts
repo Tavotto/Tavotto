@@ -990,9 +990,11 @@ export default interface Resources {
   "errors": {
     "backend": {
       "ai_agent_disabled": "{{agent}} 已在设置中关闭。到「编码 Agent」里打开它再试。",
-      "ai_agent_executable_invalid": "这个文件启动不了：{{path}}。原来的设置保持不变。",
+      "ai_agent_executable_invalid": "无法把它用作该 Agent 的可执行文件：{{path}}。原来的设置保持不变。",
       "ai_agent_install_unsupported": "{{agent}} 不支持一键安装，请按官方文档手动安装。",
+      "ai_agent_needs_auth": "{{agent}} 还没有登录。在它自己的命令行里登录一次，或在设置里改用自定义模型服务。",
       "ai_agent_not_installed": "本机没有检测到可用的 {{agent}}。",
+      "ai_agent_not_usable": "{{agent}} 现在不可用。到「编码 Agent」里看它的状态。",
       "ai_agent_probe_timeout": "验证 {{path}} 超时。可以再试一次；原来的设置保持不变。",
       "ai_agent_unknown": "不认识的编码 Agent：{{agent}}。",
       "ai_revert_failed": "撤销 AI 修改失败：{{reason}}",

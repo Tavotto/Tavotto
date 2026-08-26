@@ -131,6 +131,7 @@ def test_a_third_agent_needs_no_new_branch(monkeypatch):
 def test_custom_path_wins_over_everything(tmp_path, monkeypatch):
     exe = tmp_path / "mycodex"
     exe.write_text("#!/bin/sh\n", encoding="utf-8")
+    exe.chmod(0o755)
     monkeypatch.setattr(ai_agents.shutil, "which",
                         lambda name, path=None: "/usr/bin/codex")
     cands = ai_agents.candidates(ai_agents.get_agent("codex"), override=str(exe))
@@ -337,11 +338,67 @@ def test_disabled_agent_is_refused_at_run_time(monkeypatch):
     assert exc.value.code == "ai_agent_disabled"
 
 
+# ---------------- 接了第三方接口时，CLI 自己的登录态不算数 ----------------
+
+def test_endpoint_backed_agent_stays_usable_without_cli_login(monkeypatch):
+    """配了第三方接口的用户不该因为「没登录官方账号」被踢出选择器。
+
+    注入那套凭据的全部意义就是让 CLI 不必用官方登录跑起来；拿 CLI 的登录态
+    去回答「现在能不能派活」是把判据的主语搞错了。（PR #128 评审 P1）
+    """
+    _installed(monkeypatch)
+    _probe(monkeypatch, 1, "Not logged in")          # CLI 自己没登录
+    ai_bridge.invalidate_capabilities()
+    # 先确认「没接接口时」它确实是 needs_auth——否则这条用例什么也没证明
+    assert _codex(ai_bridge.capabilities(refresh=True))["state"] == "needs_auth"
+
+    ai_providers.save({"id": "deepseek-oai", "label": "DeepSeek", "agent": "codex",
+                       "base_url": "https://api.deepseek.com/v1",
+                       "api_key": "sk-x", "wire_api": "chat"})
+    ai_providers.set_active("codex", "deepseek-oai")
+    ai_bridge.invalidate_capabilities()
+    entry = _codex(ai_bridge.capabilities(refresh=True))
+    assert entry["state"] == "installed"             # 不再是 needs_auth
+    assert entry["usable"] is True                   # 选择器里留得住
+    # 原始结论照实记在诊断里，只是不再当闸
+    assert entry["diagnostics"]["readiness"] == "needs_auth"
+    ai_bridge.require_usable("codex")                # 运行这条闸也放行
+
+
+def test_an_endpoint_that_injects_nothing_does_not_excuse_the_login(monkeypatch):
+    """判据是「spawn_overrides 真的注入了东西」，不是「配置里有一条记录」。
+
+    codex 侧 base_url 为空时 spawn_overrides 一个字节都不注入——那种情况
+    CLI 自己的登录态仍然算数。两份规则分叉的表现是「界面说可用、一跑就报
+    未登录」。
+    """
+    _installed(monkeypatch)
+    _probe(monkeypatch, 1, "Not logged in")
+    ai_providers.save({"id": "official", "label": "OpenAI 官方", "agent": "codex",
+                       "base_url": "", "wire_api": "responses"})
+    ai_providers.set_active("codex", "official")
+    ai_bridge.invalidate_capabilities()
+    entry = _codex(ai_bridge.capabilities(refresh=True))
+    assert entry["state"] == "needs_auth" and entry["usable"] is False
+
+
+def test_run_refuses_an_agent_that_needs_auth(monkeypatch):
+    """`require_usable` 的判据必须与 capabilities 的 usable 一致——
+    前端把它藏了、API 还放它进来，是最难查的一类不一致。"""
+    _installed(monkeypatch)
+    _probe(monkeypatch, 1, "Not logged in")
+    ai_bridge.invalidate_capabilities()
+    with pytest.raises(ai_bridge.AgentError) as exc:
+        ai_bridge.require_usable("codex")
+    assert exc.value.code == "ai_agent_needs_auth"
+
+
 # ---------------- 自定义可执行文件 --------------------------------------------
 
 def test_custom_path_is_validated_the_same_way_as_autodetection(tmp_path, monkeypatch):
     exe = tmp_path / "codex"
     exe.write_text("", encoding="utf-8")
+    exe.chmod(0o755)                     # 校验要求可执行位，fixture 得是真的
     monkeypatch.setattr(ai_agents, "probe_version_detailed",
                         lambda argv: ("codex-cli 9.9", None))
     monkeypatch.setattr(ai_agents, "candidates", _honour_override([]))
@@ -356,14 +413,18 @@ def test_invalid_custom_path_does_not_clobber_the_saved_one(tmp_path, monkeypatc
     """验证不过就一个字节都不写——用户原来那份有效设置绝不能被手滑清掉。"""
     good = tmp_path / "codex"
     good.write_text("", encoding="utf-8")
+    good.chmod(0o755)
     monkeypatch.setattr(ai_agents, "probe_version_detailed",
                         lambda argv: ("codex-cli 9.9", None))
     monkeypatch.setattr(ai_agents, "candidates", _honour_override([]))
     monkeypatch.setattr(ai_agents, "probe_version", lambda argv: "codex-cli 9.9")
     ai_bridge.set_agent_path_override("codex", str(good))
 
-    bad = tmp_path / "not-a-cli"
+    # 名字带 codex → 过得了「是不是这个 Agent」那道闸，这样这条用例守的
+    # 才是「--version 起不来」，而不是被前一道闸挡下
+    bad = tmp_path / "codex-broken"
     bad.write_text("", encoding="utf-8")
+    bad.chmod(0o755)
     monkeypatch.setattr(ai_agents, "probe_version_detailed",
                         lambda argv: (None, "launch_failed"))
     with pytest.raises(ai_bridge.AgentError) as exc:
@@ -385,9 +446,77 @@ def test_invalid_custom_path_does_not_clobber_the_saved_one(tmp_path, monkeypatc
     assert config.ai_agent_settings()["codex"]["path_override"] == str(good)
 
 
+def test_custom_path_refuses_an_arbitrary_executable(tmp_path, monkeypatch):
+    """**这条是安全看护**（CodeQL py/path-injection，PR #128 上报出的那条）。
+
+    `path_override` 来自 HTTP 请求体，最终会被 spawn。「是个文件」远远不够：
+    把 Tavotto 指向 /bin/sh 不是「路径填错了」，那是拿一个任意可执行文件
+    换掉将要被启动的程序。判据是文件名必须指向这个 Agent。
+    """
+    codex = ai_agents.get_agent("codex")
+    monkeypatch.setattr(ai_agents, "probe_version_detailed",
+                        lambda argv: ("codex-cli 9.9", None))
+
+    evil = tmp_path / "sh"
+    evil.write_text("#!/bin/sh\n", encoding="utf-8")
+    evil.chmod(0o755)
+    res = ai_agents.validate_executable(codex, str(evil))
+    assert res.argv is None and res.error == "not_this_agent"
+    with pytest.raises(ai_bridge.AgentError) as exc:
+        ai_bridge.set_agent_path_override("codex", str(evil))
+    assert exc.value.code == "ai_agent_executable_invalid"
+    assert "path_override" not in config.ai_agent_settings().get("codex", {})
+
+    # 叫得出名字的都放行：codex / codex.exe / codex-cli / run-codex.sh
+    for name in ("codex", "codex.exe", "codex-cli", "run-codex.sh"):
+        assert ai_agents.names_this_agent(codex, f"/somewhere/{name}")
+    # 别家的、以及通用解释器，一律不认
+    for name in ("sh", "bash", "python3", "claude", "rm"):
+        assert not ai_agents.names_this_agent(codex, f"/somewhere/{name}")
+
+
+def test_custom_path_normalises_before_judging(tmp_path, monkeypatch):
+    """`..` 与符号链接在判断**之前**解掉——否则判据打在一个还能再跳一次的
+    字符串上，`/safe/../bin/sh` 这种会带着一个看起来合规的前缀溜过去。"""
+    codex = ai_agents.get_agent("codex")
+    monkeypatch.setattr(ai_agents, "probe_version_detailed", lambda argv: ("v1", None))
+    real = tmp_path / "sh"
+    real.write_text("", encoding="utf-8")
+    real.chmod(0o755)
+    # 名字合规的符号链接指向一个不合规的真身：认真身，不认链接名
+    link = tmp_path / "codex"
+    link.symlink_to(real)
+    res = ai_agents.validate_executable(codex, str(link))
+    assert res.argv is None and res.error == "not_this_agent"
+    # 绕路写法同样落到真身上
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    res = ai_agents.validate_executable(codex, str(sub / ".." / "sh"))
+    assert res.argv is None and res.error == "not_this_agent"
+
+
+def test_custom_path_requires_an_executable_bit(tmp_path, monkeypatch):
+    codex = ai_agents.get_agent("codex")
+    monkeypatch.setattr(ai_agents, "probe_version_detailed", lambda argv: ("v1", None))
+    plain = tmp_path / "codex"
+    plain.write_text("", encoding="utf-8")
+    plain.chmod(0o644)
+    res = ai_agents.validate_executable(codex, str(plain))
+    assert res.argv is None and res.error == "not_executable"
+    plain.chmod(0o755)
+    assert ai_agents.validate_executable(codex, str(plain)).argv is not None
+
+
+def test_custom_path_refuses_empty_and_nul(tmp_path):
+    codex = ai_agents.get_agent("codex")
+    for bad in ("", "   ", "/tmp/co\x00dex"):
+        assert ai_agents.validate_executable(codex, bad).argv is None
+
+
 def test_clearing_the_override_returns_to_autodetection(tmp_path, monkeypatch):
     exe = tmp_path / "codex"
     exe.write_text("", encoding="utf-8")
+    exe.chmod(0o755)
     monkeypatch.setattr(ai_agents, "probe_version_detailed",
                         lambda argv: ("v1", None))
     monkeypatch.setattr(ai_agents, "candidates",

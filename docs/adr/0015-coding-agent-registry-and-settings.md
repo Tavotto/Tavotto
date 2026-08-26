@@ -108,11 +108,24 @@ codex）→ npm 包内的原生二进制，用户自定义路径最优先；`.cm
 usable = enabled && 可执行文件能启动 && state ∉ {broken, not_installed, needs_auth}
 ```
 
+**接了第三方接口时，CLI 自己的登录态不参与判定**（评审 P1 修正）：注入那套
+凭据的全部意义就是让 CLI 不必用官方登录跑起来，拿它的登录态去回答「现在能不能
+派活」是把判据的主语搞错了——表现是「配好了 DeepSeek 的用户发现 Codex 从选择器
+里整个消失」。判据取 **`ai_providers.spawn_overrides()` 是否真的产出了参数或
+环境变量**，而不是「配置里有没有一条记录」：codex 侧 `base_url` 为空时它一个
+字节都不注入，那种情况 CLI 的登录态仍然算数。就绪检查的原始结论照实记在
+`diagnostics.readiness` 里，只是不再当闸。
+
 `enabled` 是**三态**：用户从没表过态时跟着「装没装」走——装上了就能用，
 不该逼他先去设置里开一次；**明确关过就一直关着**，下次探测成功也不自动翻
 回来。禁用只影响 Tavotto 用不用它：不卸载 CLI、不动 CLI 自己的配置。
 判据在后端（`require_usable`），`/api/ai/run` 自己判一次——只靠前端把它从
-选择器里藏掉是不够的，那个端点可以被直接调。
+选择器里藏掉是不够的，那个端点可以被直接调。**`require_usable` 的兜底判据就是
+`usable` 那一个字段**（评审 P2 修正）：在那里重列一遍
+「installed and enabled and …」是 `usable` 的第二份定义，而两份定义分叉的表现
+正是「界面把它藏了、API 还放它进来」。前面几个分支只为给出对得上的稳定 code
+（`ai_agent_not_installed` / `ai_agent_disabled` / `ai_agent_needs_auth`），
+最后那道 `ai_agent_not_usable` 是兜底——将来 `usable` 多一个成因，它自动跟上。
 
 `state == 'installed'`（登录状态查不准）的 Agent **允许试着用**，但界面必须
 诚实显示「已安装」，不能伪装成「可用」。
@@ -130,6 +143,11 @@ usable = enabled && 可执行文件能启动 && state ∉ {broken, not_installed
 形状写代码的入口。
 
 `argv` **不再公开**：前端没有消费者，那就不公开（用例断言它不在响应里）。
+
+**遥测的 agent 白名单取自 `telemetry.EVENTS` 自己的枚举，不是注册表**
+（评审 P2 修正）：拿「在不在注册表里」当白名单，在注册表只有两个 Agent 时
+恰好等价，加第三个之后就恒真——那个 id 被原样透出，而 `capture()` 只收表里
+那几个值，于是该 Agent 的调用被静默丢弃，「加个适配器就完事」这句话当场破功。
 `checked_at_ms` 用毫秒 + `_ms` 后缀，与 `AiHistoryEntry.started_ms` 同一约定。
 
 新增端点，全部按 agent id 收敛，照旧走 ADR 0008 的会话认证、没有旁路：
@@ -193,6 +211,12 @@ JSON，文案在前端 i18n。`tests/test_error_codes.py` 的扫描范围因此�
 * 加第三个 Agent = 往 `AGENT_REGISTRY` 里放一个适配器 + 一个图标键，
   前后端都不需要改分支；`tests/test_ai_agents.py` 的 Fake Adapter 用例反证
   了这一点。
+* `path_override` 来自 HTTP 请求体、最终会被 spawn，所以「是个文件」远远不够
+  （CodeQL `py/path-injection`）。四道闸：非空且不含 NUL → `realpath` 归一化
+  （`..` 与符号链接在**判断之前**解掉）→ 存在的普通文件且可执行 → **文件名必须
+  指向该 Agent**。最后那条挡的是「把 Tavotto 指向 `/bin/sh`」那一整类：那不是
+  「路径填错了」，那是拿一个任意可执行文件换掉将要被启动的程序。判据放得很松
+  （只要求包含，`codex.exe` / `codex-cli` / `run-codex.sh` 都过）。
 * 就绪检查依赖两家 CLI 的本地状态子命令。它们改名或去掉的话，探测会落到
   `unknown` → 界面显示「已安装」——**降级是安全的**（不谎报可用、不谎报
   需要登录），只是少了一档信息。
