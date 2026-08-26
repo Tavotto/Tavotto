@@ -32,10 +32,10 @@ import { msg } from '@/i18n'
 import { applyMixedAlign } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { finishActiveGesture } from '@/store/gestureCoordinator'
-import { exactPanelRender, useRenderStore } from '@/store/renderStore'
+import { exactPanelRender, renderKey, renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
-import { traceGeometry } from '@/lib/authorityTrace'
+import { assertGeometryAuthority, traceGeometry } from '@/lib/authorityTrace'
 import type { PanelObject } from '@/types/document'
 
 /** 拒绝的原因；调用方据此决定提示什么（都不写文档、不进历史、不渲染） */
@@ -77,9 +77,20 @@ export function alignSelectedPanelElements(panelId: string, mode: AlignMode): Al
   if (panel?.type !== 'panel') return blocked(panelId, mode, 'no-panel')
 
   // 3. 几何权威。拿不到就到此为止——这一步是 issue #131 的闸门本身
+  traceGeometry('align.request', { panelId, mode })
   const exact = exactPanelRender(useRenderStore.getState(), panel)
-  if (!exact?.manifest) return blocked(panelId, mode, 'syncing')
+  if (!exact?.manifest) {
+    traceGeometry('authority.unavailable', { panelId, currentKey: renderKeyOf(panel) })
+    return blocked(panelId, mode, 'syncing')
+  }
   const manifest = exact.manifest
+  // 开发态不变式：动手那一刻的权威键必须**就是**当前面板的变体键。
+  // `exactPanelRender` 已经保证了这件事，这里是第二道——将来有人给它加一条
+  // 「找不到就退回上一版」的好心分支时，红的是这里而不是用户的图。
+  if (!assertGeometryAuthority(renderKeyOf(panel), exactKeyOf(panel, exact.lastPatches), 'align')) {
+    return blocked(panelId, mode, 'syncing')
+  }
+  traceGeometry('authority.ready', { panelId, currentKey: renderKeyOf(panel) })
 
   // 4. 选区现取（组件那一轮之后用户完全可能又加选/减选过）
   const gids = useUiStore.getState().selectedGids
@@ -153,6 +164,13 @@ export function alignSelectedPanelElements(panelId: string, mode: AlignMode): Al
   applyMixedAlign(panelId, msg(`alignMode.${mode}`, undefined, 'inspector'), fresh, moves)
   return { ok: true, patches: fresh.length, moves: moves.length }
 }
+
+/**
+ * 权威条目声称自己画的是哪一版 → 还原成变体键。
+ * `lastPatches` 存的是 `JSON.stringify(overrides)`，与 `renderKey` 的后半段同源。
+ */
+const exactKeyOf = (panel: PanelObject, lastPatches: string | null): string | null =>
+  lastPatches == null ? null : renderKey(panel.fileId, JSON.parse(lastPatches))
 
 function blocked(panelId: string, mode: AlignMode, reason: AlignBlocked): AlignResult {
   traceGeometry('align.blocked', { panelId, mode, reason })
