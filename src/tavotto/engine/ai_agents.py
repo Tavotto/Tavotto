@@ -771,6 +771,12 @@ def validate_executable(agent: AgentDefinition, path: str) -> Resolution:
       ③ 必须是**存在的普通文件**且当前用户可执行；
       ④ 文件名必须指向这个 Agent（见 `names_this_agent`）。
     过了这四道才轮到 shim 解析与 `--version`。
+
+    **③ 里的可执行位在 Windows 上等于没有**：那个平台没有可执行位语义，
+    `os.access(X_OK)` 对任何存在的文件都为真。这不是缺陷，是那里没东西可查
+    ——两个平台上真正兜底的都是最后那次 `--version` 启动验证。别把这道闸
+    当成安全边界，它只是 POSIX 上一条便宜的早退。
+    （看护：`test_windows_regressions.py::test_executable_bit_gate_is_a_noop_on_windows`）
     """
     raw = (path or "").strip()
     if not raw or "\x00" in raw:

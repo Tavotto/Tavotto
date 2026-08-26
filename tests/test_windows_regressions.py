@@ -494,6 +494,42 @@ def test_plain_executable_is_not_treated_as_shim(tmp_path):
     assert ai_agents.resolve_shim(str(exe)) is None
 
 
+def test_executable_bit_gate_is_a_noop_on_windows(tmp_path, monkeypatch):
+    """Windows 没有可执行位语义：`os.access(X_OK)` 对任何存在的文件都为真。
+
+    自定义可执行文件的校验里那道「可执行位」闸因此在 Windows 上**等于没有**
+    ——这不是缺陷，是那个平台上没东西可查。真正兜底的是「拿它跑一次
+    `--version`」，两个平台上都是它说了算。
+
+    这条用例是 PR #128 在 merge queue 的 windows-latest 腿上红出来的：
+    原来的断言（无可执行位 → 拒）写的是 POSIX 语义，在 Windows 上必红。
+    修法不是把断言删掉，而是把**两边各自的真实行为**都钉住。
+    """
+    from tavotto.engine import ai_agents as agents
+
+    codex = agents.get_agent("codex")
+    plain = tmp_path / "codex"
+    plain.write_text("不是可执行文件", encoding="utf-8")
+    try:
+        plain.chmod(0o644)          # POSIX 上摘掉可执行位；Windows 上无效
+    except OSError:
+        pass
+
+    # 模拟 Windows：X_OK 恒真
+    monkeypatch.setattr(agents.os, "access", lambda *a, **k: True)
+    monkeypatch.setattr(agents, "probe_version_detailed",
+                        lambda argv: (None, "launch_failed"))
+    res = agents.validate_executable(codex, str(plain))
+    # 那道闸放行了，但结论一样是「拒」——由启动验证兜住
+    assert res.argv is None and res.error == "launch_failed"
+
+    # 反过来：真能起来的就该过（否则这条用例用「恒拒」也能假绿）
+    monkeypatch.setattr(agents, "probe_version_detailed",
+                        lambda argv: ("codex-cli 1.0", None))
+    ok = agents.validate_executable(codex, str(plain))
+    assert ok.argv is not None and ok.version == "codex-cli 1.0"
+
+
 def test_capabilities_tells_where_it_looked_when_missing(monkeypatch):
     """没找到 CLI 时要说清「找过哪些地方」。干甩一句「未安装」的结果是
     用户明明装了却无从下手（朋友的商店版 codex 就是这样）。"""

@@ -495,7 +495,12 @@ def test_custom_path_normalises_before_judging(tmp_path, monkeypatch):
     assert res.argv is None and res.error == "not_this_agent"
 
 
+@pytest.mark.skipif(os.name == "nt",
+                    reason="Windows 没有可执行位语义：os.access(X_OK) 对任何存在的"
+                           "文件都为真。那一侧由 test_windows_regressions.py 的"
+                           "「起不来的文件仍然被拒」看护")
 def test_custom_path_requires_an_executable_bit(tmp_path, monkeypatch):
+    """POSIX：没有可执行位的文件当场拒，不必等到 spawn 才失败。"""
     codex = ai_agents.get_agent("codex")
     monkeypatch.setattr(ai_agents, "probe_version_detailed", lambda argv: ("v1", None))
     plain = tmp_path / "codex"
@@ -505,6 +510,23 @@ def test_custom_path_requires_an_executable_bit(tmp_path, monkeypatch):
     assert res.argv is None and res.error == "not_executable"
     plain.chmod(0o755)
     assert ai_agents.validate_executable(codex, str(plain)).argv is not None
+
+
+def test_a_file_that_cannot_run_is_refused_on_every_platform(tmp_path, monkeypatch):
+    """**平台无关的那条不变式**：真的起不来的文件一律拒。
+
+    可执行位那道闸只是 POSIX 上一条便宜的早退；Windows 上它恒真、等于没有。
+    真正把关的是「拿它跑一次 `--version`」——两个平台上都是它兜底。
+    这里把 `os.access` 钉成恒真（就是 Windows 的语义），断言结论不变。
+    """
+    codex = ai_agents.get_agent("codex")
+    monkeypatch.setattr(ai_agents.os, "access", lambda *a, **k: True)
+    monkeypatch.setattr(ai_agents, "probe_version_detailed",
+                        lambda argv: (None, "launch_failed"))
+    plain = tmp_path / "codex"
+    plain.write_text("这不是可执行文件", encoding="utf-8")
+    res = ai_agents.validate_executable(codex, str(plain))
+    assert res.argv is None and res.error == "launch_failed"
 
 
 def test_custom_path_refuses_empty_and_nul(tmp_path):
