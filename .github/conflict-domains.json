@@ -1,0 +1,46 @@
+{
+  "_comment": [
+    "PR 冲突域声明——Merge Queue 解决的是「组合验证」，解决不了真正的 Git 冲突。",
+    "这里声明的是本仓库已知的高冲突热点；scripts/ci/pr_conflict_domains.py 在每个",
+    "PR 上把「哪些 open PR 与你同域」提前摆出来（只 warning，不阻断、不 required）。",
+    "policy 的含义见 docs/ci/parallel-prs.md：",
+    "  stack-or-train  相关改动用 Stacked PR；不相关但共享生成物的用 Train Branch，",
+    "                  生成物在最终源码状态上只重建一次；",
+    "  serialize       一次只开一个动它的 PR，按队列先后串行合。",
+    "sources/generated 成对声明的域还能查出「不同源码、同一生成物」的间接重叠",
+    "——canvas.html 冲突的多数形态正是它。glob 语法：** 跨路径段，* 段内。",
+    "格式是 JSON 不是 YAML：检查脚本与它的测试都要纯标准库（.venv 无 PyYAML）。"
+  ],
+  "domains": {
+    "mcp-widget": {
+      "sources": ["web/src/**", "scripts/build_mcp_widget.py"],
+      "generated": ["codex-plugin/mcp/widget/canvas.html"],
+      "policy": "stack-or-train"
+    },
+    "browser-playground": {
+      "sources": ["web/src/**", "src/tavotto/engine/browser.py", "scripts/build_browser_playground.py"],
+      "generated": ["web/dist-playground/**"],
+      "policy": "stack-or-train"
+    },
+    "root-agent-contract": {
+      "files": ["AGENTS.md", "CLAUDE.md"],
+      "policy": "serialize"
+    },
+    "ci-control-plane": {
+      "files": [".github/workflows/**", ".github/conflict-domains.json", "scripts/ci/**", "tests/test_ci_qualification.py"],
+      "policy": "serialize"
+    },
+    "release-control-plane": {
+      "files": [".github/workflows/release.yml", "docs/RELEASING.md", "docs/release-notes/**"],
+      "policy": "serialize"
+    },
+    "golden-vectors": {
+      "files": ["tests/golden/**"],
+      "policy": "serialize"
+    },
+    "lockfiles": {
+      "files": ["web/pnpm-lock.yaml", "workerd/Cargo.lock", "src-tauri/Cargo.lock", "packaging/runtime-lock.json"],
+      "policy": "serialize"
+    }
+  }
+}

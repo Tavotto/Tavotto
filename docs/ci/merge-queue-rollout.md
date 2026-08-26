@@ -111,5 +111,5 @@ package/smoke 的触发条件，所以 **PR 2 合并之后不能再整体回滚�
 
 - 2026-08-26：`apply --phase enable-queue` 已执行（ruleset 21121430）——
   strict 关闭、merge_queue rule 生效、17 个 required contexts 原样。三个
-  Gate 在 main 的首次真实结论（ff891b3c）：全部 success。本文档所在的 PR
-  即 Merge Queue canary。
+  Gate 在 main 的首次真实结论（ff891b3c）：全部 success。canary =
+  PR #123（merge_group 上 23 项检查全 success，由队列合入）。

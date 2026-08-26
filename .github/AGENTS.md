@@ -4,12 +4,21 @@
 
 ## CI 分层（1.0 稳定化，2026-08-21 起）
 
-CI 分三层（`.github/workflows/ci.yml` 抬头有全图）：PR 快线 / 合并资格
-（草稿 PR 上跳过，点 Ready for review 才跑）/ nightly 与 lab。**最终门禁一条
-没减，required checks 的名字一个没动**——分层用的是「草稿与否」，因为草稿
-本来就不能合并，那 5 个必需检查在草稿期没有结论完全无害，ruleset 一个字节
-不用改。ci.yml 与 codeql.yml 的 `cancel-in-progress` **只对 PR 开**：main 上
-每次 run 是那个 commit 的唯一验证记录，tag / release 链路不在分组里。
+CI 按**发生时机**分工（`.github/workflows/ci.yml` 抬头有全图，2026-08-25
+Merge Queue 定版）：PR = 快速反馈（invariants / backend-fast / frontend /
+workerd / compat-smoke / CodeQL）；merge_group = 完整合并资格的唯一常规执行
+点（backend-platforms / package ×3 / 两个真产物冒烟，Merge Queue 对「最新
+main + 前序 PR + 当前 PR」的组合提交验证）；`full-ci` 标签 = 在 PR 自己的
+SHA 上提前跑全套；push main = 轻量落地审计（main-landing-audit，不重复打
+包）；nightly / lab / release 照旧。**覆盖面一条没减，改的是时机**。ruleset
+的 required checks 只有三个稳定 Gate（CI fast gate / CI integration gate /
+CodeQL gate），判定收敛在 `scripts/ci/aggregate_gate.py`——普通 PR 上
+integration gate 显式 deferred，merge_group 与 full-ci 永远不许 deferred。
+迁移顺序与 Ruleset 工具见 `docs/ci/merge-queue-rollout.md`；受管生成物
+（canvas.html 等）的冲突域治理与 stack / train 协作见
+`docs/ci/parallel-prs.md` + `.github/conflict-domains.json`。ci.yml 与
+codeql.yml 的 `cancel-in-progress` **只对 PR 开**：merge_group 候选与 main
+的唯一验证记录都不许被取消，tag / release 链路不在分组里。
 
 四条 workflow 的顶层 env 钉 `TAVOTTO_NO_TELEMETRY=1`——**CI 绝不产生真实的
 产品事件**（细节见 `src/tavotto/AGENTS.md` 的遥测一节）。
