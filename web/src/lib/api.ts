@@ -377,6 +377,25 @@ export interface LayoutVersionMeta {
   page?: { w: number; h: number }
 }
 
+/**
+ * 诊断包（ADR 0016）。**POST 而不是点一个链接**：前端状态与交互轨迹只活在
+ * 浏览器内存里，得随请求现交上去；老的 GET 端点保留，出的包没有那两个文件。
+ *
+ * 回的是 zip 字节流，不是 JSON——所以不走 jsonFetch。
+ */
+export async function postDiagnosticsBundle(payload: unknown): Promise<Blob> {
+  const res = await fetch(
+    apiUrl('/api/diagnostics/bundle'),
+    withProject({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+  )
+  if (!res.ok) throw new ApiError(`diagnostics_bundle_${res.status}`, res.status, {})
+  return res.blob()
+}
+
 export const fetchVersions = (docId: string) =>
   jsonFetch<{ versions: LayoutVersionMeta[] }>(
     `/api/versions/${encodeURIComponent(docId)}`,

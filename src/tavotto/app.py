@@ -44,6 +44,7 @@ from .engine import brand as engine_brand
 from .engine import cli as engine_cli
 from .engine import config as engine_config
 from .engine import diagnostics as engine_diagnostics
+from .engine import diagnostics_frontend as engine_diagnostics_frontend
 from .engine import discover as engine_discover
 from .engine import handoff as engine_handoff
 from .engine import locate as engine_locate
@@ -1242,10 +1243,58 @@ def api_diagnostics_bundle():
 
     剩下那些没法提前覆盖的 bug，来回问十次才能定位一次；有了这个包，
     用户点一下发过来就够了。
+
+    **GET 保持原样**（ADR 0016 §8 的兼容承诺）：出的包 schema 是 2，但
+    `contains_frontend_state: false`——它拿不到前端状态，前端状态只活在
+    浏览器内存里，得由前端在 POST 里现交上来。
     """
+    return _diagnostics_bundle_response()
+
+
+@app.post("/api/diagnostics/bundle")
+def api_diagnostics_bundle_post():
+    """带前端状态与交互轨迹的诊断包（ADR 0016）。
+
+    请求体 `{frontend_state, interaction_trace}` 是前端在用户点「导出诊断包」
+    那一刻现采的，**只存在于内存里**——Tavotto 不把交互轨迹写磁盘、不自动
+    上传，它只在这一刻、因为用户按了那个按钮，才进一个 zip。
+
+    前端已经按字段 allowlist 脱敏过一遍，这里**再校验一遍**
+    （`engine/diagnostics_frontend`）。理由与 `/api/telemetry/event` 一致：
+    这个端点接受的是请求体，而「结构性防线」的意思就是「就算调用方把整条
+    路径塞进来也走不出这一步」。
+
+    **任何形式的坏载荷都不该让用户拿不到诊断包**：超限、畸形 JSON、类型不对
+    一律退化成「不带前端那两个文件的包」，并在 manifest 里记 truncated。
+    用户是来排障的，不是来看 400 的。
+    """
+    frontend, dropped = _read_frontend_payload()
+    return _diagnostics_bundle_response(frontend=frontend, frontend_dropped=dropped)
+
+
+def _read_frontend_payload() -> tuple[dict | None, bool]:
+    """请求体 → (载荷, 是不是被整份丢掉了)。**不抛异常**。"""
+    length = request.content_length or 0
+    if engine_diagnostics_frontend.payload_too_large(length):
+        # 超限时**不解析**：前端环最多 240 条，走到这儿说明载荷不是我们发的，
+        # 或者出了别的问题——不该为了它把整个请求的内存吃满
+        app.logger.warning("诊断载荷超出上限（%d 字节），本次只出环境诊断包", length)
+        return None, True
+    try:
+        body = request.get_json(force=True, silent=True)
+    except Exception:                          # noqa: BLE001 — 解析失败不该 500
+        body = None
+    if not isinstance(body, dict):
+        return None, bool(length)
+    return body, False
+
+
+def _diagnostics_bundle_response(frontend: dict | None = None,
+                                 frontend_dropped: bool = False):
     ctx = _request_ctx()
     data = engine_diagnostics.build_bundle(
-        project=project_status(ctx), port=request.host.rsplit(":", 1)[-1])
+        project=project_status(ctx), port=request.host.rsplit(":", 1)[-1],
+        frontend=frontend, frontend_dropped=frontend_dropped)
     name = f"tavotto-diagnostics-{time.strftime('%Y%m%d-%H%M%S')}.zip"
     return Response(data, mimetype="application/zip", headers={
         "Content-Disposition": f'attachment; filename="{name}"',

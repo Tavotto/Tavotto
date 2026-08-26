@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import { apiUrl, withProject } from '@/lib/session'
+import { postDiagnosticsBundle } from '@/lib/api'
+import { buildDiagnosticPayload } from '@/diagnostics'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { useEnvStore } from '@/store/envStore'
 import { useTelemetryStore } from '@/store/telemetryStore'
@@ -203,9 +205,7 @@ function EnvironmentBlock() {
                 {st('about.diagnosticsHintAfter')}
               </p>
             </HelpTip>
-            <Button variant="outline" size="sm" onClick={downloadDiagnostics}>
-              {st('about.exportBundle')}
-            </Button>
+            <DiagnosticsExportButton />
           </span>
         }
       >
@@ -239,10 +239,67 @@ function EnvironmentBlock() {
   )
 }
 
-/** 诊断包：交给浏览器直接下载，不经前端内存（zip 可能不小） */
-function downloadDiagnostics() {
-  const a = document.createElement('a')
-  a.href = apiUrl('/api/diagnostics/bundle')
-  a.download = ''
-  a.click()
+/**
+ * 诊断包（ADR 0016）。
+ *
+ * 以前是「给浏览器一个链接让它自己下」，现在必须走 POST：前端状态与交互轨迹
+ * 只活在浏览器内存里，得随请求现交上去。代价是 zip 要过一遍前端内存——
+ * 它只有几十到几百 KB，可以接受。
+ *
+ * **载荷是现采的**：点这个按钮之前，什么都没有被序列化过。
+ */
+async function downloadDiagnostics(): Promise<void> {
+  const blob = await postDiagnosticsBundle(buildDiagnosticPayload())
+  const url = URL.createObjectURL(blob)
+  try {
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `tavotto-diagnostics-${stampForFilename()}.zip`
+    a.click()
+  } finally {
+    // 不撤销就是一条挂到刷新为止的引用，而 zip 全在内存里
+    URL.revokeObjectURL(url)
+  }
+}
+
+/** 本地时间的 YYYYMMDD-HHMMSS，与后端给的 Content-Disposition 同一形状 */
+function stampForFilename(): string {
+  const d = new Date()
+  const p = (n: number) => String(n).padStart(2, '0')
+  return (
+    `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}` +
+    `-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
+  )
+}
+
+/**
+ * 导出按钮。**点了要有反馈**——以前点完没有任何动静，用户不知道成没成；
+ * 现在还多了一次真实的网络往返（要把前端状态交上去），沉默更难接受。
+ * 失败给的是人话，不是 `POST /diagnostics 500`。
+ */
+function DiagnosticsExportButton() {
+  const [phase, setPhase] = useState<'idle' | 'busy' | 'done' | 'error'>('idle')
+  const run = () => {
+    setPhase('busy')
+    void downloadDiagnostics()
+      .then(() => setPhase('done'))
+      .catch(() => setPhase('error'))
+  }
+  return (
+    <>
+      <Button variant="outline" size="sm" onClick={run} disabled={phase === 'busy'}>
+        {phase === 'busy' ? st('about.exporting') : st('about.exportBundle')}
+      </Button>
+      {phase === 'done' && (
+        <span className="text-xs text-ink-2" role="status">
+          {st('about.exported')}
+        </span>
+      )}
+      {phase === 'error' && (
+        <span className="text-xs text-danger" role="alert">
+          {st('about.exportFailed')}
+        </span>
+      )}
+    </>
+  )
 }

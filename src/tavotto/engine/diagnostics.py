@@ -28,9 +28,18 @@ import zipfile
 from pathlib import Path
 
 from . import ai_bridge, bootstrap, config, pool, runtime, telemetry, updater
+from . import diagnostics_frontend
 
 LOG_TAIL_LINES = 400
 ERROR_TAIL = 30          # 报告里单列的最近错误条数
+
+#: 诊断包整体格式的版本。**读包的人不该靠 Tavotto 版本号去猜 schema**
+#: ——manifest.json 自报这个数。1 = 只有 report/app.log/config 的那一版；
+#: 2 = 增加了 frontend-state.json / interaction-trace.jsonl / manifest.json。
+BUNDLE_SCHEMA_VERSION = 2
+#: 两个子 schema 各自独立演进（ADR 0016 §20）。读取方**忽略不认识的字段**。
+FRONTEND_SNAPSHOT_SCHEMA = 1
+TRACE_SCHEMA = 1
 
 # 形如 sk-…、ghp_…、长十六进制串等，宁可多抹一点
 _SECRET_VALUE = re.compile(
@@ -42,6 +51,11 @@ _SECRET_KEYS = ("api_key", "token", "secret", "password", "auth")
 #: 「这条 issue 的作者」和后台那串匿名行为对上号，而排障一次都用不到它。
 #: 开关本身（enabled / consent）不脱敏：知道遥测开没开对排障是有用的。
 _PSEUDONYM_KEYS = ("install_id", "anonymous_id", "distinct_id")
+
+#: 用户自己的「东西清单」：项目名 + 路径逐条列着，对排障零帮助，
+#: 对隐私却是实打实的暴露面（用户在往 issue 上贴自己所有课题的名字）。
+#: 只留条数。当前打开的那个项目仍在 report.json 的 project 段里。
+_USER_INVENTORY_KEYS = ("recent_projects", "projects")
 
 
 def _install_id() -> str:
@@ -80,6 +94,11 @@ def _redact_obj(obj):
             key = str(k).lower()
             if any(s in key for s in _SECRET_KEYS) or key in _PSEUDONYM_KEYS:
                 out[k] = "***" if v else v
+            elif key in _USER_INVENTORY_KEYS:
+                # 「用户还有哪些项目」是一份**目录清单**：每条都带项目名与路径，
+                # 而排障一次都用不到它——要看的是**当前**这个项目（report.json
+                # 的 project 段已经有了）。只留条数，清单本身不出门。
+                out[k] = {"count": len(v)} if isinstance(v, (list, dict)) else v
             else:
                 out[k] = _redact_obj(v)
         return out
@@ -223,8 +242,15 @@ def build_report(project: dict | None = None, port: int | None = None) -> dict:
     return _redact_obj(report)
 
 
-def build_bundle(project: dict | None = None, port: int | None = None) -> bytes:
-    """诊断包 zip 的字节流（全部内容已脱敏）。"""
+def build_bundle(project: dict | None = None, port: int | None = None,
+                 frontend: dict | None = None,
+                 frontend_dropped: bool = False) -> bytes:
+    """诊断包 zip 的字节流（全部内容已脱敏）。
+
+    `frontend` 是前端在用户点「导出诊断包」那一刻现采的载荷
+    （`{frontend_state, interaction_trace}`，见 ADR 0016）。**它是可选的**：
+    老的 GET 端点不带，出的包就是 schema 2 但只有老三件 + manifest。
+    """
     report = build_report(project, port)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
@@ -237,9 +263,110 @@ def build_bundle(project: dict | None = None, port: int | None = None) -> bytes:
                        json.dumps(_redact_obj(cfg), ensure_ascii=False, indent=1))
         except (OSError, ValueError):
             pass
-        z.writestr("README.txt",
-                   "Tavotto 诊断包\n\n"
-                   "内容：report.json（环境与探测结果）、app.log（最近日志）、\n"
-                   "config.json（用户配置）。密钥与用户主目录已自动抹掉，\n"
-                   "但发出去之前仍建议自己扫一眼。\n")
+
+        # ---- 前端状态与交互轨迹（ADR 0016）。没带就干脆不放这两个文件 ----
+        snapshot, trace, truncated = _frontend_sections(frontend)
+        # 请求体超限被整份丢掉时：包照出（用户要的是一个包，不是一个错误），
+        # 但 manifest 必须如实说「这份 trace 不完整」
+        truncated = truncated or frontend_dropped
+        if snapshot is not None:
+            z.writestr("frontend-state.json",
+                       json.dumps(snapshot, ensure_ascii=False, indent=1))
+        if trace:
+            z.writestr("interaction-trace.jsonl",
+                       diagnostics_frontend.trace_to_jsonl(trace))
+
+        z.writestr("manifest.json", json.dumps({
+            "schema_version": BUNDLE_SCHEMA_VERSION,
+            "created_at": _now_iso(),
+            "tavotto_version": report.get("tavotto", {}).get("version"),
+            "contains_frontend_state": snapshot is not None,
+            "contains_interaction_trace": bool(trace),
+            "privacy_mode": "safe-default",
+            "trace_event_count": len(trace),
+            "trace_truncated": truncated,
+            "frontend_snapshot_schema": FRONTEND_SNAPSHOT_SCHEMA,
+            "trace_schema": TRACE_SCHEMA,
+        }, ensure_ascii=False, indent=1))
+        z.writestr("README.txt", _readme(snapshot is not None, bool(trace)))
     return buf.getvalue()
+
+
+def _now_iso() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+
+
+def _frontend_sections(frontend: dict | None) -> tuple[dict | None, list[dict], bool]:
+    """前端载荷 → (快照, 事件列表, 有没有被截断)。**服务端的第二道校验在这里**。
+
+    `frontend` 为 None（老的 GET 端点、或者前端没给）时三个都空，包里就没有
+    那两个文件——**不放一个空壳**：空的 frontend-state.json 读起来像
+    「前端当时什么状态都没有」，而真相是「这次根本没采集」。
+    """
+    if not isinstance(frontend, dict):
+        return None, [], False
+    snapshot = diagnostics_frontend.sanitize_snapshot(
+        frontend.get("frontend_state"), _redact_text)
+    trace, truncated = diagnostics_frontend.sanitize_trace(
+        frontend.get("interaction_trace"), _redact_text)
+    return snapshot, trace, truncated
+
+
+def _readme(has_state: bool, has_trace: bool) -> str:
+    """包里有什么、**没有什么**。双语——用户得看得懂自己在往 issue 上贴什么。
+
+    「不含」那一段是承诺，不是免责声明：它对应的是代码里的字段 allowlist
+    与服务端校验（ADR 0016 §4 / §8），不是「我们尽量不放」。
+    """
+    extra_zh, extra_en = "", ""
+    if has_state:
+        extra_zh += "- frontend-state.json：导出那一刻的前端状态摘要（匿名）\n"
+        extra_en += "- frontend-state.json: anonymized snapshot of the app state\n"
+    if has_trace:
+        extra_zh += "- interaction-trace.jsonl：最近的编辑操作记录（匿名，一行一条）\n"
+        extra_en += "- interaction-trace.jsonl: recent anonymized interaction events\n"
+    return (
+        "Tavotto 诊断包 / Tavotto diagnostic package\n"
+        "\n"
+        "包含 / This package contains:\n"
+        "- report.json：系统、运行环境与探测结果\n"
+        "- app.log：最近的应用日志\n"
+        "- config.json：用户配置（密钥已抹掉）\n"
+        + extra_zh +
+        "- manifest.json：本诊断包自身的格式说明\n"
+        "\n"
+        "- report.json: system and runtime information\n"
+        "- app.log: recent Tavotto application logs\n"
+        "- config.json: user configuration (secrets removed)\n"
+        + extra_en +
+        "- manifest.json: describes this package's own format\n"
+        "\n"
+        "不包含 / It does NOT intentionally contain:\n"
+        "- 图中文字（标题、坐标轴标签、图例、标注）\n"
+        "- Python 脚本与源代码\n"
+        "- 科研数据、数据数组\n"
+        "- SVG / PDF / PNG 图像内容\n"
+        "- API 密钥、令牌\n"
+        "- 完整的本地文件路径、用户名、主目录\n"
+        "\n"
+        "- text drawn inside your figures (titles, axis labels, legends, annotations)\n"
+        "- Python source code or scripts\n"
+        "- raw datasets or data arrays\n"
+        "- SVG / PDF / PNG image content\n"
+        "- API keys or tokens\n"
+        "- full local file paths, usernames, or home directories\n"
+        "\n"
+        "仍会包含 / Still included: 当前打开的项目**文件夹名**（report.json 的\n"
+        "project 段，排障需要它判断目录权限与注册表冲突）。其余项目的清单不出门。\n"
+        "The folder name of the currently open project is included; the list of\n"
+        "your other projects is not.\n"
+        "\n"
+        "文件名、路径与图内文字在诊断包里一律换成不可逆的短哈希（doc:… / "
+        "panel:… / file:… / var:…），\n"
+        "只用来判断「两个状态是不是同一个」，反推不回原值。\n"
+        "Identifiers are replaced with irreversible short hashes; they only tell\n"
+        "whether two states are the same, and cannot be reversed.\n"
+        "\n"
+        "发出去之前仍建议自己扫一眼。/ You may still want to skim it before sharing.\n"
+    )
