@@ -22,6 +22,7 @@ import ast
 import io
 import json
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -1460,3 +1461,166 @@ def test_index_busts_the_poisoned_asset_cache(client, tmp_path, monkeypatch):
     assert r.headers.get("Clear-Site-Data") == '"cache"', (
         "没有这个头，0.10.x 缓存过错误 MIME 的浏览器升级后仍旧白屏")
     assert r.headers.get("Cache-Control") == "no-cache"
+
+
+# ---------------- 一次性 replay worker：kill 之后没 reap，目录就删不掉 --------
+# run 32937999297（merge_group / windows-latest / 3.13）：Windows 全量 pytest
+# 里四条写回用例集体炸在 `_replay-…-fig_cbar.py` 上——那是**上一个测试文件**
+# （test_colorbar_orientation.py）留下的残留。链路是
+#   discard → shutdown → request(shutdown) → EOF → kill（不 wait）
+#   → rmtree(ignore_errors=True) 撞 sharing violation → 静默留下整棵树。
+# 下面这条用例把那个窗口在任何平台上确定性地复现出来：进程没被 reap 之前，
+# 删除就抛 Windows 风格的 PermissionError。
+
+class _LingeringPopen:
+    """Windows 关进程的真实时序：kill 只是「发出请求」，wait 才是「它没了」。
+
+    * `poll()` 在被 reap 之前**永远**回 None（进程对象看着还活着）；
+    * shutdown 请求立刻读到 EOF（worker 收到就 `raise SystemExit(0)`，
+      协议上本来就不回普通信封）；
+    * `kill()` 只置一个「信号发出去了」的标记，**不代表进程已经消失**；
+    * `wait()` 才把它标成真的退出——文件句柄也是这一刻才还给系统。
+    """
+
+    instances: list = []
+
+    def __init__(self, *_a, **_kw):
+        self.pid = 9100 + len(self.instances)
+        self.stdout = _LingeringPopen._Pipe(eof=True)
+        self.stdin = _LingeringPopen._Pipe()
+        self.kill_called = False
+        self.wait_called = False
+        self.reaped = False
+        _LingeringPopen.instances.append(self)
+
+    class _Pipe:
+        def __init__(self, eof: bool = False):
+            self.eof = eof
+            self.closed = False
+
+        def write(self, _line):
+            if self.closed:
+                raise ValueError("I/O operation on closed file")
+
+        def flush(self):
+            pass
+
+        def readline(self):
+            return ""                     # ← shutdown 之后的 EOF
+
+        def close(self):
+            self.closed = True
+
+    def poll(self):
+        return 0 if self.reaped else None
+
+    def kill(self):
+        self.kill_called = True           # ← 只发信号，进程还在，句柄还占着
+
+    def wait(self, timeout=None):
+        self.wait_called = True
+        self.reaped = True                # ← 到这一刻它才真的没了
+        return 0
+
+
+def _windows_locked_rmtree(fake: _LingeringPopen, calls: list):
+    """未 reap 前删除就是 sharing violation；`ignore_errors=True` 静默留下整棵树。
+
+    第二段是真 `shutil.rmtree` 的语义，不是简化——正因为它静默，旧实现才能
+    「删除失败」却让 `discard()` 看起来一切正常。
+    """
+    real = shutil.rmtree
+
+    def rmtree(path, ignore_errors=False, **kw):
+        calls.append(Path(path))
+        if not fake.reaped:
+            exc = PermissionError(
+                13, "The process cannot access the file because it is being "
+                    "used by another process")
+            exc.winerror = 32
+            if ignore_errors:
+                return None               # ← 真 shutil 就是这么把失败吞掉的
+            raise exc
+        return real(path, ignore_errors=ignore_errors, **kw)
+
+    return rmtree
+
+
+def test_discard_reaps_the_process_before_deleting_the_replay_dir(tmp_path,
+                                                                  monkeypatch):
+    """`discard()` 返回时：进程已被 wait 回收、句柄已关、exact base 已消失。
+
+    旧实现在这里必然红：整条关停路径一次 `proc.wait()` 都没有（shutdown 命令
+    导致的 EOF 让 `request()` 先把 `_dead` 置上，`finally` 里的
+    `if self.alive()` 于是恒假，连那句 `kill()` 都走不到），于是 rmtree 撞在
+    还没释放的句柄上，被 `ignore_errors=True` 静默吞掉。
+    """
+    _LingeringPopen.instances = []
+    calls: list[Path] = []
+    fake_cls = _LingeringPopen
+
+    monkeypatch.setattr(pool, "ENGINE_CACHE", tmp_path / "engine")
+    monkeypatch.setattr(pool.subprocess, "Popen", fake_cls)
+    monkeypatch.setattr(pool, "select_worker_python",
+                        lambda: ("py-fake", pool.SOURCE_SYSTEM))
+    monkeypatch.setattr(workerd_client, "find_workerd", lambda: None)
+
+    figs = _figs(tmp_path)
+    (figs / "fig_lock.py").write_text("def main():\n    pass\n", encoding="utf-8")
+
+    w = pool.one_shot("fig_lock.py", str(figs), "main")
+    assert isinstance(w, pool.EngineWorker), "这条用例只问 Python 控制面"
+    fake = fake_cls.instances[-1]
+    base = w.base
+    assert base.is_dir() and (base / "worker.log").is_file()
+    assert str(base) in pool._oneshot_bases, "一次性目录必须先受 prune 豁免"
+    # 删除的锁窗口由「有没有 reap」决定——注册在拿到 fake 之后
+    monkeypatch.setattr(pool.shutil, "rmtree", _windows_locked_rmtree(fake, calls))
+
+    pool.discard(w)
+
+    assert fake.wait_called, "kill 之后必须 wait：只发信号不等于进程已经退出"
+    assert fake.poll() is not None, "discard() 返回时进程还没被回收"
+    assert fake.stdin.closed and fake.stdout.closed, "父进程的管道句柄没关"
+    assert w._log.closed, "worker.log 的句柄没关"
+    assert not base.exists(), f"exact base 没删掉：{base}（rmtree 调用={calls}）"
+    assert str(base) not in pool._oneshot_bases, "删干净了还占着 prune 豁免名额"
+
+
+def test_discard_logs_the_exact_path_when_the_tree_survives(tmp_path, monkeypatch,
+                                                            caplog):
+    """删到底还是删不掉时：不静默、不抛、注销豁免让 prune 还有机会回收。"""
+    _LingeringPopen.instances = []
+    monkeypatch.setattr(pool, "ENGINE_CACHE", tmp_path / "engine")
+    monkeypatch.setattr(pool.subprocess, "Popen", _LingeringPopen)
+    monkeypatch.setattr(pool, "select_worker_python",
+                        lambda: ("py-fake", pool.SOURCE_SYSTEM))
+    monkeypatch.setattr(workerd_client, "find_workerd", lambda: None)
+
+    figs = _figs(tmp_path)
+    (figs / "fig_stuck.py").write_text("def main():\n    pass\n", encoding="utf-8")
+    w = pool.one_shot("fig_stuck.py", str(figs), "main")
+    base = w.base
+
+    attempts: list = []
+
+    def never_deletable(path, ignore_errors=False, **_kw):
+        attempts.append(path)
+        exc = PermissionError(13, "used by another process")
+        exc.winerror = 32
+        if ignore_errors:
+            return None
+        raise exc
+
+    monkeypatch.setattr(pool.shutil, "rmtree", never_deletable)
+    monkeypatch.setattr(pool, "_RMTREE_BACKOFF", (0.0, 0.0, 0.0))
+
+    with caplog.at_level("WARNING", logger="tavotto.engine"):
+        pool.discard(w)                    # 绝不抛：写回的成败与收尾无关
+
+    assert len(attempts) == 3, "有限退让：既不是只试一次，也不是无限重试"
+    text = "\n".join(r.getMessage() for r in caplog.records)
+    assert str(base) in text, "日志里没有 exact path，线上根本对不上号"
+    assert "fig_stuck.py" in text and "PermissionError" in text
+    assert str(base) not in pool._oneshot_bases, (
+        "删不掉更要注销，否则这棵孤儿目录被永久豁免、prune 再也收不走")
