@@ -14,7 +14,11 @@
 - 目标 PR：**PR 1 收口**（本 Session 交付 `tavotto open script.py` 自动
   safe probe、单/多 Figure 产品交接、CompatBench 产品路由、完整
   保存/重开/重放/预检/导出 E2E）
-- 当前工作树状态：本 Session 一个提交；**PR 1 待 push → PR → merge**
+- 当前工作树状态：本 Session 一个提交 + merge origin/main（解 i18n 冲突、
+  合并态重建受管产物）；**PR 1 = #127**（分支
+  `compat/bridge-session06-open-routes`，含 Session 1–6 全部提交）。
+  合并排期：按合并队列监督（tavotto-0a）裁定，排在 v0.11.0 发版 tag
+  之后第一个合；tag 落地后需再 merge main 一次（受管产物合并态重建）。
 
 ## 本轮唯一目标
 
@@ -108,8 +112,9 @@ native profile、generic Artist fallback、source hints、Copy as Python、
   最终候选产物的安装→运行发现→编辑→保存重开→导出证据**本机无法产出**
   （需要构建签名候选产物 + 真机/实验室 runner）。PR 1 合并前按 prompt
   要求补齐——建议走 lab runner（见下「下一步」）。
-- [ ] PR 1 push → PR → merge（五支 stacked 分支合成一个 PR；merge 后
-  re-sync 网站 playground、更新本文件的 merge SHA）。
+- [ ] PR #127 merge（v0.11.0 tag 之后：再 merge main → 受管产物合并态
+  重建 → 检查绿后 `gh pr merge --auto` 入队；merge 后 re-sync 网站
+  playground、更新本文件的 merge SHA）。
 
 ## 本轮关键决策
 
