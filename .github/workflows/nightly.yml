@@ -553,10 +553,15 @@ jobs:
           if ($j.tavotto.source -notin @("manifest", "install")) {
             throw "CLI 不是从桌面安装里发现的（source=$($j.tavotto.source)）"
           }
+          # 注册表已随 fixture 就位（新名）：交接的正确行为是读到它、报 status、
+          # **不**另写一份（stem 已登记 → status=already，见 handoff.ensure_registered）。
+          # 旧断言「必须生成 tavotto_registry.json」在 fixture 还叫 mm_registry.json
+          # 的那几晚永远红：读取端回退认旧名、无需写盘，新名文件自然不出现。
+          if (-not $j.registry_status) { throw "交接没有报注册表状态: $out" }
           if (-not (Test-Path "$proj\tavotto_registry.json")) {
-            throw "没有生成 tavotto_registry.json: $proj"
+            throw "项目里没有 tavotto_registry.json: $proj"
           }
-          Write-Host "✓ 插件发现 Tavotto（source=$($j.tavotto.source)）并生成了注册表"
+          Write-Host "✓ 插件发现 Tavotto（source=$($j.tavotto.source)），注册表状态 $($j.registry_status)"
 
           # 清单被删掉（企业策略、用户清理）也要能走通——不许把任何单一
           # 机制当成唯一依据。这次只能靠已知安装位置。
