@@ -458,3 +458,78 @@ describe('单选与多选同一套控件', () => {
     expect(textOf()).toContain('对齐')
   })
 })
+
+/* --------------------- 视觉选择器在多选下不退化（审计项 1/2） --------------------- */
+
+describe('批量里的视觉选择器', () => {
+  const lineA: ManifestElement = {
+    gid: 'axes_0.lines_10',
+    role: 'line',
+    label: '曲线 A',
+    bbox: [0.1, 0.1, 0.8, 0.8],
+    draggable: false,
+    editable: [
+      f('color', 'color', '#1f77b4'),
+      f('linewidth', 'number', 1.5, { min: 0.1, max: 8, step: 0.1 }),
+      f('linestyle', 'enum', '-', { options: ['-', '--', ':', '-.'] }),
+      f('marker', 'enum', 'o', { options: ['none', 'o', 's', 'D'] }),
+    ],
+  }
+  const lineB: ManifestElement = { ...lineA, gid: 'axes_0.lines_11', label: '曲线 B' }
+  const lineC: ManifestElement = {
+    ...lineA,
+    gid: 'axes_0.lines_12',
+    label: '曲线 C',
+    editable: [
+      f('color', 'color', '#d62728'),
+      f('linewidth', 'number', 1.5, { min: 0.1, max: 8, step: 0.1 }),
+      f('linestyle', 'enum', '--', { options: ['-', '--', ':', '-.'] }),
+      f('marker', 'enum', 's', { options: ['none', 'o', 's', 'D'] }),
+    ],
+  }
+
+  const mountLines = async (els: ManifestElement[]) => {
+    const m = { ...manifest, elements: [...manifest.elements, ...els] } as Manifest
+    useRenderStore.getState().patch(renderKeyOf(panelOf()), {
+      fileId: 'Fig1.pdf', manifest: m, svg: MATPLOTLIB_SVG, rev: 1, status: 'ready', lastPatches: '[]',
+    })
+    await mount(els.map((e) => e.gid))
+  }
+
+  it('多选两条曲线：线型仍是真实线段预览的 radiogroup，不是文字下拉', async () => {
+    await mountLines([lineA, lineB])
+    const group = host.querySelector('[role="radiogroup"][aria-label="线型"]')
+    expect(group).toBeTruthy()
+    expect(host.querySelector('[role="combobox"][aria-label="线型"]')).toBeNull()
+    // 值一致 → 该档被标成选中
+    const solid = [...host.querySelectorAll('[role="radio"]')].find(
+      (r) => r.getAttribute('aria-label') === '实线',
+    )!
+    expect(solid.getAttribute('aria-checked')).toBe('true')
+  })
+
+  it('线型不一致时一个格子都不标选中，且不把空值塞进选项表', async () => {
+    await mountLines([lineA, lineC])
+    const radios = [...host.querySelectorAll('[role="radiogroup"][aria-label="线型"] [role="radio"]')]
+    expect(radios.length).toBe(4) // 四档，没有多出来的空项
+    expect(radios.every((r) => r.getAttribute('aria-checked') === 'false')).toBe(true)
+  })
+
+  it('点一档写到全部目标', async () => {
+    await mountLines([lineA, lineC])
+    const dashed = [...host.querySelectorAll('[role="radio"]')].find(
+      (r) => r.getAttribute('aria-label') === '虚线',
+    ) as HTMLElement
+    await act(async () => {
+      dashed.click()
+    })
+    expect(overrideOf('axes_0.lines_10', 'linestyle')).toBe('--')
+    expect(overrideOf('axes_0.lines_12', 'linestyle')).toBe('--')
+  })
+
+  it('marker 仍是图形选择器：触发按钮在，mixed 时说「多个值」', async () => {
+    await mountLines([lineA, lineC])
+    expect(textOf()).toContain('多个值')
+    expect(host.querySelector('[role="combobox"][aria-label="标记"]')).toBeNull()
+  })
+})

@@ -194,10 +194,7 @@ describe('小问号四种触发方式', () => {
   it('键盘聚焦即展开', async () => {
     await open('general')
     const b = helpBtn()
-    await act(async () => {
-      b.focus()
-      b.dispatchEvent(new FocusEvent('focus'))
-    })
+    await focusIt(b)
     expect(b.getAttribute('aria-expanded')).toBe('true')
   })
 
@@ -208,10 +205,79 @@ describe('小问号四种触发方式', () => {
       b.click()
     })
     expect(b.getAttribute('aria-expanded')).toBe('true')
+    // 浮层内容真的挂上来了才算「开着」；Radix 的 dismissable layer 是在
+    // 内容挂载后的一个微任务里才注册 Escape 监听——不等它就是在赛跑，
+    // 表现为这条用例偶发红（实测三轮里红一轮）
+    expect(allText()).toContain(st('general.languageHint'))
+    await act(async () => {
+      await Promise.resolve()
+    })
     await act(async () => {
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     })
     expect(b.getAttribute('aria-expanded')).toBe('false')
+  })
+
+  // React 的 onFocus/onBlur 走的是**冒泡的 focusin/focusout**；直接派一个
+  // 不冒泡的 FocusEvent('focus') 谁也收不到。用 focus()/blur() 让 jsdom 自己发。
+  const focusIt = async (b: HTMLElement) => {
+    await act(async () => {
+      b.focus()
+    })
+  }
+  const blurIt = async (b: HTMLElement) => {
+    await act(async () => {
+      b.blur()
+    })
+  }
+
+  /**
+   * **点开**（焦点不在按钮上）→ Esc → Radix 把焦点还给按钮。
+   *
+   * 这一步是一次**真实的 focus 事件**（焦点从 body 移到按钮），而「聚焦即展开」
+   * 会立刻把气泡又打开——用户按 Esc 像没反应。
+   *
+   * 用例必须自己把这次 focus 派出来：Radix 的焦点归还是异步的，等它自己发
+   * 就会落在断言窗口之外，那样即使缺陷还在也照样绿（本用例第一版就是这样，
+   * 三轮里红一轮——那不是「偶发」，是断言与缺陷在赛跑）。
+   */
+  it('Esc 之后不会被「焦点还回来」重新打开', async () => {
+    await open('general')
+    const b = helpBtn()
+    // 点开：焦点留在 body 上，与真实鼠标操作一致
+    await act(async () => {
+      b.click()
+    })
+    expect(b.getAttribute('aria-expanded')).toBe('true')
+    expect(document.activeElement).not.toBe(b)
+    await act(async () => {
+      await Promise.resolve()
+    })
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    expect(b.getAttribute('aria-expanded')).toBe('false')
+    // Radix 把焦点还给触发按钮
+    await focusIt(b)
+    expect(b.getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('焦点真的离开过之后，再 Tab 回来仍然展开（闸只吃那一次）', async () => {
+    await open('general')
+    const b = helpBtn()
+    await focusIt(b)
+    await act(async () => {
+      await Promise.resolve()
+    })
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    await focusIt(b)
+    expect(b.getAttribute('aria-expanded')).toBe('false')
+
+    await blurIt(b) // 焦点真的离开
+    await focusIt(b) // 再 Tab 回来
+    expect(b.getAttribute('aria-expanded')).toBe('true')
   })
 
   it('问号有明确的可达名，不是一个无名图标', async () => {
@@ -224,10 +290,7 @@ describe('小问号四种触发方式', () => {
   it('展开时焦点留在问号上，不被搬进浮层（Tab 顺序不乱）', async () => {
     await open('general')
     const b = helpBtn()
-    await act(async () => {
-      b.focus()
-      b.dispatchEvent(new FocusEvent('focus'))
-    })
+    await focusIt(b)
     expect(document.activeElement).toBe(b)
   })
 })

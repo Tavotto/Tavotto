@@ -5,6 +5,10 @@ import { cn } from '@/lib/utils'
 import { Popover } from '../../ui/Popover'
 import { OptionGrid, type GridOption } from './OptionGrid'
 
+/** 多选取值不一致时触发按钮上的占位文案（函数：常量会把语言定死在模块求值那一刻） */
+const MIXED_TEXT = () => translate('element.mixedValues', { ns: 'inspector' })
+
+
 /**
  * Hatch（花纹）选择器：真实纹理缩略图。写入值仍是 Matplotlib 原始 hatch
  * 串（"/"、"xx"、"++" …），"" = 不用花纹。认不出的花纹显示原始串，
@@ -81,13 +85,17 @@ export function HatchPicker({
   onChange,
   ariaLabel,
 }: {
-  value: string
+  /**
+   * 当前值。**多选取值不一致时传 null**——那时一个格子都不该被标成选中，
+   * 也不该把「空」当成一个自定义值塞进选项表。
+   */
+  value: string | null
   options: string[]
   onChange: (v: string) => void
   ariaLabel: string
 }) {
   const [open, setOpen] = useState(false)
-  const all = options.includes(value) ? options : [value, ...options]
+  const all = value && !options.includes(value) ? [value, ...options] : options
   const grid: GridOption[] = all.map((o) => ({
     value: o,
     label: hatchLabel(o),
@@ -112,8 +120,10 @@ export function HatchPicker({
             open && 'border-accent',
           )}
         >
-          <HatchPreview code={value} />
-          <span className="min-w-0 flex-1 truncate text-left">{hatchLabel(value)}</span>
+          {value !== null && <HatchPreview code={value} />}
+          <span className="min-w-0 flex-1 truncate text-left">
+            {value === null ? MIXED_TEXT() : hatchLabel(value)}
+          </span>
           <ChevronDown size={12} className="shrink-0 text-ink-3" />
         </button>
       }

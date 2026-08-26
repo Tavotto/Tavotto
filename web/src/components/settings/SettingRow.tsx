@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { CircleQuestionMark, TriangleAlert } from 'lucide-react'
 import { t as translate } from '@/i18n'
 import { cn } from '@/lib/utils'
@@ -111,10 +111,24 @@ export function HelpTip({
 }) {
   const [open, setOpen] = useState(false)
   const closeTimer = useRef<number | undefined>(undefined)
+  /**
+   * 关掉之后要不要无视紧接着的那次 focus。
+   *
+   * Esc 关闭时 Radix 会把焦点**还给触发按钮**，那是一次真实的 focus 事件——
+   * 而「聚焦即展开」会立刻把它又打开，用户按 Esc 像没反应。这不是测试的
+   * 问题，是产品缺陷（键盘用户必然撞上；鼠标点开时因为焦点本来就不在按钮上，
+   * 表现为偶发，我的用例里三轮红一轮）。
+   *
+   * 用一个「等到焦点真的离开过再恢复」的闸，不用计时器——计时器只是把
+   * 这场赛跑挪到另一个刻度上。
+   */
+  const ignoreNextFocus = useRef(false)
   const cancelClose = () => {
     window.clearTimeout(closeTimer.current)
     closeTimer.current = undefined
   }
+  // 卸载时收掉悬着的计时器：切分区 / 关对话框都会在延迟关闭的 220ms 之内发生
+  useEffect(() => () => window.clearTimeout(closeTimer.current), [])
   // 指针离开后留一点时间：鼠标从问号移到气泡上的路径不该把它关掉
   const scheduleClose = () => {
     cancelClose()
@@ -123,7 +137,10 @@ export function HelpTip({
   return (
     <Popover
       open={open}
-      onOpenChange={setOpen}
+      onOpenChange={(v) => {
+        if (!v) ignoreNextFocus.current = true
+        setOpen(v)
+      }}
       width={width}
       side="top"
       align="start"
@@ -146,10 +163,19 @@ export function HelpTip({
             scheduleClose()
           }}
           onFocus={() => {
+            // 刚被 Esc / 点外面关掉，这次 focus 是 Radix 把焦点还回来，不是用户 Tab 过来
+            if (ignoreNextFocus.current) {
+              ignoreNextFocus.current = false
+              return
+            }
             cancelClose()
             setOpen(true)
           }}
-          onBlur={scheduleClose}
+          onBlur={() => {
+            // 焦点真的离开过 → 下次 Tab 回来该正常展开
+            ignoreNextFocus.current = false
+            scheduleClose()
+          }}
           className={cn(
             'flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-ink-3',
             'outline-none transition-colors hover:text-ink-2 focus-visible:focus-ring',

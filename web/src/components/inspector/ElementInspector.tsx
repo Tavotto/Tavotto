@@ -901,19 +901,67 @@ function BatchFieldRow({
             {mixed && <span className="shrink-0 text-xs text-ink-3">{el('mixedValues')}</span>}
           </>
         )
-      case 'enum':
+      case 'enum': {
+        // **视觉选择器不因为多选而退化**：线型仍是真实线段预览、marker 仍是
+        // 图形网格、图例位置仍是 3×3 网格。同一个属性在单选与多选下是同一种
+        // 视觉语言——这是本轮的核心纪律（docs/ux/UX_CONSISTENCY_PASS.md）。
+        // 取值不一致时传 null：一个格子都不标选中，也不把「空」当自定义值。
+        const v = mixed ? null : String(first ?? '')
+        const opts = field.options ?? []
+        const kind = controlKindOf(elements[0].role, field)
+        const picker = () => {
+          switch (kind) {
+            case 'line-style':
+              return <LineStylePicker value={v} options={opts} onChange={writeOnce} ariaLabel={label} />
+            case 'marker':
+              return <MarkerPicker value={v} options={opts} onChange={writeOnce} ariaLabel={label} />
+            case 'hatch':
+              return <HatchPicker value={v} options={opts} onChange={writeOnce} ariaLabel={label} />
+            case 'colormap':
+              return <ColormapPicker value={v} options={opts} onChange={writeOnce} ariaLabel={label} />
+            case 'legend-position':
+              return <LegendPositionPicker value={v} options={opts} onChange={writeOnce} ariaLabel={label} />
+            case 'arrow-style':
+              return <ArrowStylePicker value={v} options={opts} onChange={writeOnce} ariaLabel={label} />
+            case 'font':
+              return (
+                <Select
+                  className="min-w-0 flex-1"
+                  value={mixed ? '' : String(first ?? '')}
+                  placeholder={el('mixedValues')}
+                  onChange={(x) => writeOnce(x)}
+                  options={opts.map((o) => ({
+                    value: o,
+                    label: (
+                      <span style={{ fontFamily: fontStackOf(o) }}>
+                        {optionLabel('fontfamily', o)}
+                      </span>
+                    ),
+                  }))}
+                  ariaLabel={label}
+                />
+              )
+            default:
+              return (
+                <Select
+                  value={mixed ? '' : String(first ?? '')}
+                  placeholder={el('mixedValues')}
+                  onChange={(x) => writeOnce(x)}
+                  options={opts.map((o) => ({ value: o, label: optionLabel(field.prop, o) }))}
+                  ariaLabel={label}
+                />
+              )
+          }
+        }
         return (
-          <Select
-            value={mixed ? '' : String(first ?? '')}
-            placeholder={el('mixedValues')}
-            onChange={(v) => writeOnce(v)}
-            options={(field.options ?? []).map((o) => ({
-              value: o,
-              label: optionLabel(field.prop, o),
-            }))}
-            ariaLabel={label}
-          />
+          <>
+            {picker()}
+            {mixed && kind !== 'marker' && kind !== 'hatch' && kind !== 'colormap' && (
+              <span className="shrink-0 text-xs text-ink-3">{el('mixedValues')}</span>
+            )}
+          </>
         )
+      }
       default:
         return null
     }

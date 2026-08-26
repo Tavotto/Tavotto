@@ -10,6 +10,7 @@ import { LineStylePicker } from '@/components/inspector/controls/LineStylePicker
 import { LegendPositionPicker } from '@/components/inspector/controls/LegendPositionPicker'
 import { useElementWriter } from '@/components/inspector/elementWrite'
 import { hasTextStyleBar } from '@/components/inspector/TextStyleBar'
+import { StyleToggle } from '@/components/inspector/controls/textRows'
 import { optionLabel, propLabel } from '@/components/inspector/roles/registry'
 import { Button } from '@/components/ui/Button'
 import { ColorField, NumberField } from '@/components/ui/Input'
@@ -374,16 +375,17 @@ function ElementQuickInner({
             onScrubEnd={w.endGesture}
           />
         )}
+        {/* 与属性页、批量样式**同一个**三态图标按钮：这里曾经是一份自己写的
+            <Button active={bold}>，长得一样但是第二份实现——同形的两份实现
+            迟早分叉，本轮那些「多选就退化」的缺陷正是这么来的 */}
         {w.has('weight') && (
-          <Button
-            size="icon-sm"
-            active={bold}
-            aria-pressed={bold}
-            aria-label={translate('textBar.bold', { ns: 'inspector' })}
+          <StyleToggle
+            state={bold ? 'on' : 'off'}
+            label={translate('textBar.bold', { ns: 'inspector' })}
             onClick={() => w.writeOnce('weight', bold ? 'normal' : 'bold')}
           >
             <Bold size={12} />
-          </Button>
+          </StyleToggle>
         )}
         {w.has('color') && (
           <ColorField

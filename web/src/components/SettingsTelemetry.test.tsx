@@ -135,6 +135,10 @@ describe('设置里的开关', () => {
     expect(help.getAttribute('aria-expanded')).toBe('true')
     expect(document.body.textContent).toContain(st('about.telemetry.never'))
 
+    // Radix 的 dismissable layer 在内容挂载后的一个微任务里才注册 Escape 监听
+    await act(async () => {
+      await Promise.resolve()
+    })
     await act(async () => {
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     })

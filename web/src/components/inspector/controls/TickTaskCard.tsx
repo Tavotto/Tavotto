@@ -194,22 +194,30 @@ function NumberRow({
  * 而这件事本来就是图形化的。选中态由 Segmented 统一给（底色 + 字重）。
  */
 function DirectionGlyph({ axis, direction }: { axis: 'x' | 'y'; direction: TickDirection }) {
-  // X 轴画一条横线（下边框），刻度上下伸；Y 轴画一条竖线（左边框），刻度左右伸
+  // X 轴画一条横线（下边框），刻度上下伸；Y 轴画一条竖线（左边框），刻度左右伸。
+  // 「内」= 朝坐标框里，对下边框就是往上；轴线本身要够实，否则三档只差
+  // 「短线在线的哪一侧」，在 18px 里根本分不出来（实测截图上确实分不出）。
   const horizontal = axis === 'x'
-  const [t0, t1] = direction === 'in' ? [0, -4] : direction === 'inout' ? [-4, 4] : [0, 4]
-  const marks = [4, 8, 12].map((p) =>
-    horizontal ? `M${p} ${8 + t0} L${p} ${8 + t1}` : `M${8 - t0} ${p} L${8 - t1} ${p}`,
+  const L = 5
+  const [t0, t1] = direction === 'in' ? [0, -L] : direction === 'inout' ? [-L, L] : [0, L]
+  const marks = [5, 9, 13].map((p) =>
+    horizontal ? `M${p} ${9 + t0} L${p} ${9 + t1}` : `M${9 - t0} ${p} L${9 - t1} ${p}`,
   )
   return (
-    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden className="shrink-0">
+    <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden className="shrink-0">
       <path
-        d={horizontal ? 'M1 8 H15' : 'M8 1 V15'}
+        d={horizontal ? 'M2 9 H16' : 'M9 2 V16'}
         stroke="currentColor"
-        strokeWidth="1"
-        strokeOpacity="0.5"
+        strokeWidth="1.3"
         fill="none"
       />
-      <path d={marks.join(' ')} stroke="currentColor" strokeWidth="1.2" fill="none" />
+      <path
+        d={marks.join(' ')}
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeOpacity="0.75"
+        fill="none"
+      />
     </svg>
   )
 }
