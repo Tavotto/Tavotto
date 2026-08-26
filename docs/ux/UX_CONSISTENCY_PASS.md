@@ -291,6 +291,19 @@ tooltip，屏幕阅读器读到的是无名 radio）。新增 `item.ariaLabel` �
 3. 写 `HelpTip` 悬停用例时第一版是绿的，但什么都没测：React 的 `onPointerEnter`
    是用冒泡的 `pointerover` 委托实现的，直接派 `pointerenter` 谁也收不到。
 
+### 评审修复（#142）
+
+| 级别 | 问题 | 处置 |
+| --- | --- | --- |
+| P1 | 3D 图的 `axes_*.zticks` 被选中时，`selfAxis === 'z'` 落进 else 分支退回 `all`，刻度卡摆出一组**写到 `xticks` / `yticks`** 的控件；同时 `TICK_CARD_PROPS` 又把 Z 自己的 `length` / `width` / `minor_visible` 从通用列表里拿掉——改错对象 + 真控件消失 | 卡严格只给选中的那个轴（Z 没有适配器 → 一个都不给）；consumed 规则改成「卡真的接管了这个元素才让出字段」。3 条用例，两半各有反证 |
+| P2 | 两个图内文字选中后 Shift 加选画布标注：`selected` 仍是两个 manifest 元素，`styleBatch` 照样成立，但它的写入器只写 override——点一次加粗只改到 3 个里的 2 个，而对齐区写着「已选 3 个对象」 | `mixedWithAnnotations` 闸同时管住 `batch` 与 `styleBatch`（**同一形状的两个消费点，只修一个等于没修**）；对齐不受影响。4 条用例，两个消费点各有反证 |
+
+P2 顺带**证伪了本文档先前的一句话**：原文写「`isTextLikeSelection` 只认 manifest
+元素，标注混进来时样式区不出现，不会产生改了一半的状态」——错的。
+`isTextLikeSelection(selected)` 只看 `selected`，标注在另一个数组里，所以样式区
+照样出现。上面 §8 的第 1 条已按事实改写。**审计文档里的断言也要指得出兑现它的
+那行代码**，这一条当时没有。
+
 ### E2E（Playwright，真浏览器 + 真引擎）
 
 `e2e/ux-consistency.spec.ts` 四条，全绿：
@@ -326,7 +339,7 @@ tooltip，屏幕阅读器读到的是无名 radio）。新增 `item.ariaLabel` �
 
 | # | 事项 | 为什么延后 | 风险 | 建议后续 issue 范围 |
 | --- | --- | --- | --- | --- |
-| 1 | **图内文字 + 画布标注的跨 writer 批量样式** | 图内元素写 `override`（走引擎重放），画布标注写文档对象（走 `updateObjects`）。两条通道的事务、撤销标签、渲染时机都不同，合成一次 commit 要动 `applyMixedAlign` 那一层。本轮不做，也**没有做一半**——`isTextLikeSelection` 只认 manifest 元素，标注混进来时样式区不出现，不会产生「改了一半」的状态 | 低（现状是能力缺失，不是错误行为） | 参照 `applyMixedAlign` 的做法做一个 `applyMixedTextStyle`，一次 commit 两边 |
+| 1 | **图内文字 + 画布标注的跨 writer 批量样式** | 图内元素写 `override`（走引擎重放），画布标注写文档对象（走 `updateObjects`）。两条通道的事务、撤销标签、渲染时机都不同，合成一次 commit 要动 `applyMixedAlign` 那一层。本轮不做，**并且显式关掉了这种选择下的批量入口**（`mixedWithAnnotations`）：标注混进选区时 `batch` 与 `styleBatch` 都不给，对齐照旧可用 | 低（现状是能力缺失，不是错误行为） | 参照 `applyMixedAlign` 的做法做一个 `applyMixedTextStyle`，一次 commit 两边 |
 | 2 | **快捷键分区迁到 Help** | 会动设置导航结构与 `settingsSection` 的取值集合（AiPanel 按 `'ai'` 跳转依赖它），超出本轮范围 | 无 | 迁移时同步 `SectionId` 与所有 `setSettingsOpen(true, …)` 调用点 |
 | 3 | **AI 任务历史抽屉的状态筛选仍是原生 `<select>`** | 那是 #128 新加的面（`AiPanel.tsx:737`），本轮不进它的实现 | 低（P3，视觉不一致） | 与 `settings/EndpointDialog`、`AgentDetailView`、`CodingAgentsSection` 里的三个原生 `<select>` 一起换成 `ui/Select` |
 | 4 | **About 首屏没有 Python 版本行** | 任务书建议的结构里有「Python 3.13.x」，但 `/api/engine/environment` 与 `/api/diagnostics` 都不单独发 Python 版本（`worker_python` 那条 detail 是「路径（来源）」）。加一个字段就是为界面方便扩展协议，违反本轮约束 | 无 | 若确有需要，在 `engine/environment` 里补 `python_version`，与诊断包同源 |

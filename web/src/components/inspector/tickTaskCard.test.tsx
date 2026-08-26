@@ -469,6 +469,88 @@ describe('刻度组元素页', () => {
   })
 })
 
+/* ------------------------- 3D 的 Z 刻度（#142 评审 P1） -------------------- */
+
+describe('3D 图的 Z 刻度', () => {
+  /**
+   * 3D axes 会发 `axes_i.zticks`（manifest.py 的 `tick_axes` 在 is3d 时多一条），
+   * 而刻度卡只有 X / Y 两个适配器。旧代码里 `selfAxis === 'z'` 落进 else 分支
+   * 退回 `all`，于是：**控件写到 xticks / yticks，而 Z 自己的字段又被 consumed
+   * 规则从通用列表里拿掉了**——用户改的是 Z、动的是 X，Z 的真控件同时消失。
+   *
+   * 引擎给 3D 摘掉了 direction 与 visible，length / width / minor_* 仍在。
+   */
+  const z3dFields = () =>
+    ticksFields().filter((x) => x.prop !== 'direction' && x.prop !== 'visible')
+
+  const zTicksEl: ManifestElement = {
+    gid: 'axes_0.zticks',
+    role: 'ticks',
+    label: 'Z 刻度文字',
+    bbox: [0.05, 0.11, 0.06, 0.77],
+    draggable: false,
+    editable: z3dFields(),
+  } as unknown as ManifestElement
+
+  const mount3d = async () => {
+    manifest = {
+      rev: 1,
+      size_mm: [101.6, 76.2],
+      elements: [
+        { ...axesEl, role: 'axes3d' },
+        { ...xTicksEl, editable: z3dFields() },
+        { ...yTicksEl, editable: z3dFields() },
+        zTicksEl,
+      ],
+    } as unknown as Manifest
+    useRenderStore.getState().patch(renderKeyOf(panelOf()), {
+      fileId: 'Fig1.pdf', manifest, svg: MATPLOTLIB_SVG, rev: 1, status: 'ready', lastPatches: '[]',
+    })
+    await mount('axes_0.zticks')
+  }
+
+  it('不摆出写到 X / Y 的刻度卡', async () => {
+    await mount3d()
+    // 没有 X/Y 切换，也没有方向 radiogroup——那些控件写的都是别的元素
+    expect(radios().some((b) => b.textContent?.includes('X 刻度'))).toBe(false)
+    expect(radios().some((b) => b.textContent?.includes('Y 刻度'))).toBe(false)
+    expect(host.querySelectorAll('[role="switch"][aria-label="X 轴的次刻度"]')).toHaveLength(0)
+  })
+
+  it('Z 自己的长度 / 宽度 / 次刻度仍然可达（不被 consumed 规则吃掉）', async () => {
+    await mount3d()
+    await openMore()
+    const text = textOf()
+    // 通用列表用的是完整属性名（卡里那套「长度 / 宽度」是任务卡内部的短标签）
+    expect(text).toContain('刻度长度')
+    expect(text).toContain('刻度粗细')
+    expect(text).toContain('次刻度')
+  })
+
+  it('改 Z 的长度写到 zticks，不碰 xticks / yticks', async () => {
+    await mount3d()
+    await openMore()
+    // 通用 FieldRow 的可见标签就是可达名的来源，输入框自己没有 aria-label：
+    // 从标签所在的行往上找，再取行里的输入框
+    const label = Array.from(host.querySelectorAll('span')).find(
+      (x) => x.textContent?.trim() === '刻度长度' && x.children.length === 0,
+    )!
+    expect(label).toBeTruthy()
+    const row = label.closest('div')!.parentElement!
+    const len = row.querySelector('input') as HTMLInputElement
+    expect(len).toBeTruthy()
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+      setter.call(len, '7')
+      len.dispatchEvent(new Event('input', { bubbles: true }))
+      len.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+    expect(overrideOf('axes_0.zticks', 'length')).toBe(7)
+    expect(overrideOf('axes_0.xticks', 'length')).toBeUndefined()
+    expect(overrideOf('axes_0.yticks', 'length')).toBeUndefined()
+  })
+})
+
 /* --------------------------------- 键盘 ---------------------------------- */
 
 describe('键盘可达', () => {

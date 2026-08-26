@@ -176,9 +176,28 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
       : []
   const mixed: MixedEntry[] = [...entries, ...annEntries]
   const alignGroup = mixed.length > 1 ? mixed : null
+  /**
+   * 混排选区里有画布标注时，**两种批量样式都不给**。
+   *
+   * 两个批量写入器都只写 manifest override（`setOverrides`），标注是文档对象、
+   * 走 `updateObjects`——混排时点一次加粗只会改到选中的一部分，而对齐区
+   * 明明写着「已选 3 个元素」。这种「改了一半、还不说」正是 web/AGENTS.md
+   * 混排对齐那条要求「同一次 commit」的理由（#142 评审 P2）。
+   *
+   * 跨 writer 的原子写入是延后项（见 docs/ux/UX_CONSISTENCY_PASS.md §8），
+   * 在它做出来之前，**宁可不给这个入口**：对齐照旧可用，样式回到单选去改。
+   *
+   * 判据放在两处的共同上游：`batch`（同角色公共字段）与 `styleBatch`
+   * （跨角色文字样式）是同一个形状的两个消费点，只修一个等于没修。
+   */
+  const mixedWithAnnotations = annotations.length > 0
   // 多选同一种角色 → 批量改公共属性（文字全部调字号、曲线全部换色…）
   const batch =
-    selected.length > 1 && selected.every((e) => e.role === selected[0].role) ? selected : null
+    !mixedWithAnnotations &&
+    selected.length > 1 &&
+    selected.every((e) => e.role === selected[0].role)
+      ? selected
+      : null
   /**
    * 跨角色的**文字样式**批量。与 `batch`（同角色公共字段）和 `alignGroup`
    * （几何对齐）是三个独立概念，可以同时成立：
@@ -190,16 +209,22 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
    * 「已经进入对齐模式」**不再是**「不能改公共样式」的理由——旧代码里
    * alignGroup 一出现就把整个属性区换掉，多选三条文字后连字号都改不了。
    */
-  const styleBatch = isTextLikeSelection(selected) ? selected : null
+  const styleBatch =
+    !mixedWithAnnotations && isTextLikeSelection(selected) ? selected : null
 
   // 展示分桶：文字工具条覆盖的属性、刻度任务卡吃掉的字段都让出来
   // （同一属性不出两套控件）。刻度组页上被卡承接的是方向 / 次刻度 / 长宽——
   // 主刻度模式、间距、格式、次刻度定位仍留在通用列表与「更多」里，
   // 逐字段「恢复到脚本」一条都没少（卡里的每一行自己带 ResetChip）。
+  // 刻度组页只有在卡**真的接管了这个元素**时才让出字段。Z 刻度（3D）没有
+  // 对应的卡，字段必须原样留在通用列表里——否则能力凭空消失（#142 评审 P1）
+  const tickAxisOfSelf =
+    element?.role === 'ticks' ? (tickHostOf(element.gid)?.axis ?? null) : null
+  const tickCardCoversSelf = tickAxisOfSelf === 'x' || tickAxisOfSelf === 'y'
   const consumedBySideDiagram = new Set<string>(
     element?.role === 'axes'
       ? TICK_SPINE_PROPS
-      : element?.role === 'ticks'
+      : tickCardCoversSelf
         ? TICK_CARD_PROPS
         : [],
   )
@@ -659,10 +684,18 @@ function TickControl({
   const xAdapter = useTickAxisAdapter(panel, xEl, 'x')
   const yAdapter = useTickAxisAdapter(panel, yEl, 'y')
 
-  const selfAxis = element.role === 'ticks' ? tickHostOf(element.gid)?.axis : null
+  const selfAxis = element.role === 'ticks' ? (tickHostOf(element.gid)?.axis ?? null) : null
   const all = [xAdapter, yAdapter].filter((a): a is NonNullable<typeof a> => !!a)
-  const axes =
-    selfAxis === 'x' || selfAxis === 'y' ? all.filter((a) => a.axis === selfAxis) : all
+  /**
+   * 刻度组页只给**它自己那个轴**。
+   *
+   * 3D 图会发 `axes_i.zticks`（`tick_axes` 里 is3d 那一支），而这张卡只有
+   * X / Y 两个适配器——选中 Z 刻度时**一个都不给**，绝不退回 `all`：
+   * 那会摆出一组写到 `xticks` / `yticks` 的控件，用户改的是 Z、动的是 X，
+   * 而 Z 自己的长度 / 宽度 / 次刻度还被 consumed 规则从通用列表里拿掉了
+   * ——改错对象 + 真控件消失，两头都错（#142 评审 P1）。
+   */
+  const axes = selfAxis ? all.filter((a) => a.axis === selfAxis) : all
 
   const adapter: TickSpineAdapter = {
     has: (p) => w.has(p),

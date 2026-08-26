@@ -434,6 +434,64 @@ describe('公共样式与几何对齐并存', () => {
   })
 })
 
+/* ------------------ 混排选区里有画布标注（#142 评审 P2） ------------------- */
+
+describe('混排选区（图内文字 + 画布标注）', () => {
+  /**
+   * 两个批量写入器都只写 manifest override，标注是文档对象走 updateObjects。
+   * 混排时给出批量入口 = 点一次加粗只改到选中的一部分，而对齐区明明写着
+   * 「已选 3 个元素」——「改了一半、还不说」。跨 writer 的原子写入没做出来
+   * 之前，宁可不给这个入口。
+   */
+  const addAnnotation = () => {
+    useDocumentStore.getState().commit(literal('加标注'), (d) => {
+      d.objects.push({
+        id: 'ann1',
+        type: 'text',
+        x: 10,
+        y: 10,
+        w: 30,
+        h: 8,
+        text: '一条画布标注',
+        sizePt: 9,
+        bold: false,
+        color: '#000000',
+        align: 'left',
+      } as never)
+    })
+    useSelectionStore.setState({ ids: ['ann1'] })
+  }
+
+  it('标注混进来时不给跨角色文字样式入口', async () => {
+    addAnnotation()
+    await mount(['axes_0.title', 'axes_0.xaxis.label'])
+    expect(textOf()).not.toContain('个文字元素的公共样式')
+    expect(boldBtn()).toBeFalsy()
+  })
+
+  it('标注混进来时同角色的公共字段批量也不给（同一形状的第二个消费点）', async () => {
+    addAnnotation()
+    await mount(['axes_0.xaxis.label', 'axes_0.yaxis.label'])
+    expect(textOf()).not.toContain('个文字元素的公共样式')
+    // 「批量修改 N 个…」那段也不该出现
+    expect(textOf()).not.toContain('改动会同时写到')
+  })
+
+  it('但对齐照旧可用——去掉的是会写半截的入口，不是能力', async () => {
+    addAnnotation()
+    await mount(['axes_0.title', 'axes_0.xaxis.label'])
+    // 混排时对齐区说的是「对象」（元素 + 标注），两条 writer 由
+    // applyMixedAlign 收在同一次 commit 里——那条路本来就是原子的
+    expect(textOf()).toContain('已选 3 个对象')
+    expect(textOf()).toContain('一条画布标注')
+  })
+
+  it('标注移出选区后，批量入口回来', async () => {
+    await mount(['axes_0.title', 'axes_0.xaxis.label'])
+    expect(textOf()).toContain('个文字元素的公共样式')
+  })
+})
+
 /* ------------------------------- 单选一致性 ------------------------------- */
 
 describe('单选与多选同一套控件', () => {
