@@ -97,6 +97,8 @@ import {
   TickAndSpineDiagram,
   type TickSpineAdapter,
 } from './controls/TickAndSpineDiagram'
+import { TICK_CARD_PROPS, TickTaskCard } from './controls/TickTaskCard'
+import { axisTickState, tickElementOf, tickHostOf, useTickAxisAdapter } from './tickAdapter'
 import { useElementWriter } from './elementWrite'
 import { TextStyleControls } from './controls/TextStyleControls'
 import { useTextStyleAdapter } from './textStyleAdapter'
@@ -190,10 +192,16 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
    */
   const styleBatch = isTextLikeSelection(selected) ? selected : null
 
-  // 展示分桶：文字工具条覆盖的属性、四边状态图吃掉的开关都让出来
-  // （同一属性不出两套控件）
+  // 展示分桶：文字工具条覆盖的属性、刻度任务卡吃掉的字段都让出来
+  // （同一属性不出两套控件）。刻度组页上被卡承接的是方向 / 次刻度 / 长宽——
+  // 主刻度模式、间距、格式、次刻度定位仍留在通用列表与「更多」里，
+  // 逐字段「恢复到脚本」一条都没少（卡里的每一行自己带 ResetChip）。
   const consumedBySideDiagram = new Set<string>(
-    element?.role === 'axes' ? TICK_SPINE_PROPS : [],
+    element?.role === 'axes'
+      ? TICK_SPINE_PROPS
+      : element?.role === 'ticks'
+        ? TICK_CARD_PROPS
+        : [],
   )
   const buckets =
     element && element.editable.length
@@ -291,7 +299,14 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
             warnings={render?.warnings ?? []}
             buckets={buckets}
             primaryExtra={
-              sideHost ? <AxesSideControl panel={panel} host={sideHost} /> : null
+              sideHost && element ? (
+                <TickControl
+                  panel={panel}
+                  manifest={manifest}
+                  host={sideHost}
+                  element={element}
+                />
+              ) : null
             }
           />
         )}
@@ -611,9 +626,44 @@ function FieldList({
  * 字段全部真实存在于宿主 axes 的 manifest 上；写入走 useElementWriter
  * （一次点击 = 一条历史 + 一次渲染），单项恢复走 clearOverride。
  */
-function AxesSideControl({ panel, host }: { panel: PanelObject; host: ManifestElement }) {
+/**
+ * 刻度与边框的完整任务入口：**状态图 + X/Y 刻度配置在同一处**。
+ *
+ * 四边点按（刻度线 / 边框）与网格开关照旧写宿主子图的字段；方向 / 次刻度 /
+ * 长度 / 宽度写对应轴的刻度元素（`axes_0.xticks` / `.yticks`）。两组字段
+ * 分属两个 manifest 元素，界面把它们并到一张卡上——用户不需要理解
+ * axes / xticks / yticks 的对象关系才能改一件事。
+ *
+ * 从子图页进来给两个轴（顶部出 X/Y 切换）；从刻度组页进来只给它自己那个轴
+ * （切过去会写到另一个元素，而用户选的是这一个）——**同一个组件、同一套
+ * 视觉语言，不是两套控件**。
+ */
+function TickControl({
+  panel,
+  manifest,
+  host,
+  element,
+}: {
+  panel: PanelObject
+  manifest: Manifest | null | undefined
+  /** 四边开关与网格的宿主（永远是子图） */
+  host: ManifestElement
+  /** 当前选中的元素：子图或某一个刻度组 */
+  element: ManifestElement
+}) {
   useTranslation('inspector')
   const w = useElementWriter(panel, host)
+  const xEl = tickElementOf(manifest, host.gid, 'x')
+  const yEl = tickElementOf(manifest, host.gid, 'y')
+  // hook 数量固定：两个轴各调一次，元素不在时 adapter 回 null
+  const xAdapter = useTickAxisAdapter(panel, xEl, 'x')
+  const yAdapter = useTickAxisAdapter(panel, yEl, 'y')
+
+  const selfAxis = element.role === 'ticks' ? tickHostOf(element.gid)?.axis : null
+  const all = [xAdapter, yAdapter].filter((a): a is NonNullable<typeof a> => !!a)
+  const axes =
+    selfAxis === 'x' || selfAxis === 'y' ? all.filter((a) => a.axis === selfAxis) : all
+
   const adapter: TickSpineAdapter = {
     has: (p) => w.has(p),
     read: (p) => w.read(p),
@@ -621,8 +671,14 @@ function AxesSideControl({ panel, host }: { panel: PanelObject; host: ManifestEl
     labelOf: (p) => propLabel(p, host.role),
     isOverridden: (p) => panel.overrides.some((o) => o.gid === host.gid && o.prop === p),
     reset: (p) => clearOverride(panel.id, host.gid, p),
+    axisState: (a) => axisTickState(a === 'x' ? xAdapter : yAdapter),
   }
-  return <TickAndSpineDiagram adapter={adapter} />
+  return (
+    <div className="flex flex-col gap-2">
+      <TickAndSpineDiagram adapter={adapter} />
+      {axes.length > 0 && <TickTaskCard axes={axes} labelWidth={LABEL_W} />}
+    </div>
+  )
 }
 
 /* -------------------------------------------------------------------------- */

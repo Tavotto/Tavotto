@@ -2079,6 +2079,25 @@ export default interface Resources {
       "font": "字体",
       "size": "字号"
     },
+    "tick": {
+      "axisSwitch": "选择要配置的轴",
+      "axisX": "X 轴",
+      "axisY": "Y 轴",
+      "dir": {
+        "in": "朝内",
+        "inout": "内外",
+        "out": "朝外"
+      },
+      "direction": "方向",
+      "length": "长度",
+      "minor": "次刻度",
+      "minorAria": "{{axis}}的次刻度",
+      "minorOff": "只要主刻度",
+      "minorOn": "主刻度 + 次刻度",
+      "width": "宽度",
+      "xTicks": "X 刻度",
+      "yTicks": "Y 刻度"
+    },
     "transform": {
       "rotation": "旋转",
       "textHeightAuto": "文字高度由内容自动决定",

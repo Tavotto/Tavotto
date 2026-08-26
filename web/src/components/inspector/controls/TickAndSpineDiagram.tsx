@@ -16,6 +16,14 @@ import { Tip } from '../../ui/Tooltip'
  * ElementWriter）决定；manifest 没有的部分整块不画。
  */
 
+/** 一个轴当前的刻度形态。字段缺席时由调用方给缺省（out / 无次刻度） */
+export interface AxisTickState {
+  direction: TickDirection
+  minor: boolean
+}
+
+export type TickDirection = 'in' | 'out' | 'inout'
+
 export interface TickSpineAdapter {
   has: (prop: string) => boolean
   read: (prop: string) => unknown
@@ -25,6 +33,12 @@ export interface TickSpineAdapter {
   isOverridden: (prop: string) => boolean
   /** 单独恢复一条到脚本值（clearOverride） */
   reset: (prop: string) => void
+  /**
+   * 该轴刻度的真实朝向与次刻度状态。**不给就按 out / 无次刻度画**——
+   * 旧实现把刻度写死在框外侧，用户把 direction 改成 in 之后示意图纹丝不动，
+   * 于是这张图说的和画布上发生的是两回事。上下边读 x、左右边读 y。
+   */
+  axisState?: (axis: 'x' | 'y') => AxisTickState
 }
 
 export const TICK_SPINE_PROPS = [
@@ -49,19 +63,62 @@ const spinePath = (side: Side): string => {
   }
 }
 
-/** 三根刻度短线，画在边框外侧 */
-const tickMarks = (side: Side): string => {
+/** 边所属的轴：上下是 X，左右是 Y（与 matplotlib 的 tick_params(axis=) 一致） */
+export const axisOfSide = (side: Side): 'x' | 'y' =>
+  side === 'top' || side === 'bottom' ? 'x' : 'y'
+
+const MAJOR_LEN = 6
+/** 次刻度明显更短——两者长度必须一眼可辨，否则「开了次刻度」看不出来 */
+const MINOR_LEN = 3
+
+/**
+ * 一根刻度短线。`direction` 决定它往哪边伸：
+ *   out   —— 框外（matplotlib 默认）
+ *   in    —— 框内
+ *   inout —— 两侧各伸一半长度
+ *
+ * 返回的是相对边框的一段路径，坐标已换算到 viewBox。
+ */
+const tickAt = (side: Side, at: number, len: number, direction: TickDirection): string => {
   const { x, y, w, h } = BOX
-  const L = 6
-  const xs = [x + w * 0.25, x + w * 0.5, x + w * 0.75]
-  const ys = [y + h * 0.25, y + h * 0.5, y + h * 0.75]
-  switch (side) {
-    case 'top': return xs.map((v) => `M${v} ${y} v${-L}`).join(' ')
-    case 'bottom': return xs.map((v) => `M${v} ${y + h} v${L}`).join(' ')
-    case 'left': return ys.map((v) => `M${x} ${v} h${-L}`).join(' ')
-    case 'right': return ys.map((v) => `M${x + w} ${v} h${L}`).join(' ')
-  }
+  // 「外」的方向：上边朝上、下边朝下、左边朝左、右边朝右
+  const outward = side === 'top' || side === 'left' ? -1 : 1
+  const [t0, t1] =
+    direction === 'in' ? [0, -len] : direction === 'inout' ? [-len, len] : [0, len]
+  const edge = side === 'top' ? y : side === 'bottom' ? y + h : side === 'left' ? x : x + w
+  const a = edge + outward * t0
+  const b = edge + outward * t1
+  return side === 'top' || side === 'bottom'
+    ? `M${at} ${a} L${at} ${b}`
+    : `M${a} ${at} L${b} ${at}`
 }
+
+/** 主刻度：三根，落在 25% / 50% / 75% */
+const majorPositions = (side: Side): number[] => {
+  const { x, y, w, h } = BOX
+  return side === 'top' || side === 'bottom'
+    ? [x + w * 0.25, x + w * 0.5, x + w * 0.75]
+    : [y + h * 0.25, y + h * 0.5, y + h * 0.75]
+}
+
+/** 次刻度：落在主刻度之间（12.5% / 37.5% / 62.5% / 87.5%） */
+const minorPositions = (side: Side): number[] => {
+  const { x, y, w, h } = BOX
+  const fr = [0.125, 0.375, 0.625, 0.875]
+  return side === 'top' || side === 'bottom'
+    ? fr.map((f) => x + w * f)
+    : fr.map((f) => y + h * f)
+}
+
+const tickMarks = (side: Side, direction: TickDirection): string =>
+  majorPositions(side)
+    .map((p) => tickAt(side, p, MAJOR_LEN, direction))
+    .join(' ')
+
+const minorTickMarks = (side: Side, direction: TickDirection): string =>
+  minorPositions(side)
+    .map((p) => tickAt(side, p, MINOR_LEN, direction))
+    .join(' ')
 
 /** 命中区：比图形宽出一圈，好点 */
 const hitRect = (side: Side, kind: 'spine' | 'ticks') => {
@@ -135,6 +192,9 @@ export function TickAndSpineDiagram({ adapter }: { adapter: TickSpineAdapter }) 
   const on = (p: string) => adapter.read(p) === true
   const gridX = adapter.has('grid_x') && on('grid_x')
   const gridY = adapter.has('grid_y') && on('grid_y')
+  // 引擎没给 direction / minor_visible（3D 轴、老引擎）时按 matplotlib 默认画
+  const stateOf = (side: Side): AxisTickState =>
+    adapter.axisState?.(axisOfSide(side)) ?? { direction: 'out', minor: false }
   const modified = TICK_SPINE_PROPS.filter((p) => adapter.has(p) && adapter.isOverridden(p))
 
   return (
@@ -184,14 +244,29 @@ export function TickAndSpineDiagram({ adapter }: { adapter: TickSpineAdapter }) 
                 adapter={adapter}
                 hit={hitRect(side, 'ticks')}
               >
+                {/* 主刻度与次刻度都在同一个开关里：这条边一关，两者一起变成
+                    关闭样式——「关了但次刻度还亮着」是自相矛盾的状态 */}
                 <path
-                  d={tickMarks(side)}
+                  d={tickMarks(side, stateOf(side).direction)}
                   fill="none"
                   stroke="currentColor"
                   strokeWidth={on(`ticks_${side}`) ? 1.6 : 1}
                   strokeOpacity={on(`ticks_${side}`) ? 1 : 0.3}
                   strokeDasharray={on(`ticks_${side}`) ? undefined : '1.5 1.5'}
+                  data-tick-major={side}
+                  data-tick-direction={stateOf(side).direction}
                 />
+                {stateOf(side).minor && (
+                  <path
+                    d={minorTickMarks(side, stateOf(side).direction)}
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={on(`ticks_${side}`) ? 1.1 : 0.9}
+                    strokeOpacity={on(`ticks_${side}`) ? 0.85 : 0.3}
+                    strokeDasharray={on(`ticks_${side}`) ? undefined : '1.5 1.5'}
+                    data-tick-minor={side}
+                  />
+                )}
               </SvgSwitch>
             )}
           </g>

@@ -919,6 +919,25 @@
     "font": "Font",
     "size": "Size"
   },
+  "tick": {
+    "axisSwitch": "Axis to configure",
+    "axisX": "X axis",
+    "axisY": "Y axis",
+    "dir": {
+      "in": "Inward",
+      "inout": "Both",
+      "out": "Outward"
+    },
+    "direction": "Direction",
+    "length": "Length",
+    "minor": "Minor ticks",
+    "minorAria": "Minor ticks on the {{axis}}",
+    "minorOff": "Major only",
+    "minorOn": "Major + minor",
+    "width": "Width",
+    "xTicks": "X ticks",
+    "yTicks": "Y ticks"
+  },
   "transform": {
     "rotation": "Rotation",
     "textHeightAuto": "Text height is determined by the content",
