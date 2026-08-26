@@ -557,7 +557,21 @@ jobs:
           # **不**另写一份（stem 已登记 → status=already，见 handoff.ensure_registered）。
           # 旧断言「必须生成 tavotto_registry.json」在 fixture 还叫 mm_registry.json
           # 的那几晚永远红：读取端回退认旧名、无需写盘，新名文件自然不出现。
-          if (-not $j.registry_status) { throw "交接没有报注册表状态: $out" }
+          # `already` 是这里唯一正确的取值：fixture 自带注册表、stem 已登记，
+          # 交接该读到它并原样放过（handoff.ensure_registered 的四态之一）。
+          # 判成别的态就是真出事了——`created` 意味着它没认出这个图库、又按新名
+          # 写了第二份；`merged` 意味着 fixture 漂移了。**不能只判「字段非空」**：
+          # 那四个值都非空，等于没判。
+          if ($j.registry_status -ne "already") {
+            throw "注册表状态应为 already，实际 $($j.registry_status): $out"
+          }
+          # 项目层必须正好是这个图库。少了这条，上面那条 Test-Path 光靠
+          # Copy-Item 就能满足——交接一个字节都没干也照样绿。
+          $want = [IO.Path]::GetFullPath($proj).TrimEnd('\')
+          $got  = [IO.Path]::GetFullPath($j.project).TrimEnd('\')
+          if ($got -ne $want) {
+            throw "项目层解析错了（向上找注册表越界？）：期望 $want，实际 $got"
+          }
           if (-not (Test-Path "$proj\tavotto_registry.json")) {
             throw "项目里没有 tavotto_registry.json: $proj"
           }
