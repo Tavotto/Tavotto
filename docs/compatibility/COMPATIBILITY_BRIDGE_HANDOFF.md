@@ -14,12 +14,15 @@
 - 目标 PR：**PR 1 收口**（本 Session 交付 `tavotto open script.py` 自动
   safe probe、单/多 Figure 产品交接、CompatBench 产品路由、完整
   保存/重开/重放/预检/导出 E2E）
-- 当前工作树状态：本 Session 一个提交 + merge origin/main（解 i18n 冲突、
-  合并态重建受管产物）；**PR 1 = #127**（分支
-  `compat/bridge-session06-open-routes`，含 Session 1–6 全部提交）。
-  合并排期：按合并队列监督（tavotto-0a）裁定，排在 v0.11.0 发版 tag
-  之后第一个合；tag 已落地（2026-08-26），main 已 merge 进本分支，
-  队列轮 1（CI #444）的两条 Windows 红已修（见下节），待重新入队。
+- **PR 1（#127）已合入 main：2026-08-26 15:16Z，squash `6aeca9e`**
+  （排在 v0.11.0 tag 与 #129 之后）。合并队列走了 4 轮（各轮定性见下方
+  「合并队列轮 1–3」小节；轮 4 = 修复 nav toggle 盲点击后，先打
+  `full-ci` 标签在 PR SHA 上取得 windows-exe-smoke / macos-app-smoke
+  全绿证据再入队，一次通过）。16 条 CompatBench case 已升 full_support
+  随 PR 落库。
+- **合并后教训（进入约束节）**：merge_group-only 套件（windows-exe-smoke
+  的 Playwright E2E、backend-platforms）在 PR CI 上不跑——大改动入队前
+  用 `full-ci` 标签在 PR SHA 上先跑一轮，别拿整轮队列资格试错。
 
 ## 本轮唯一目标
 
@@ -212,13 +215,22 @@ check）。#95（pool.py 命令行，critical）已带理由 dismiss（won't fix
 
 ## 未完成 / 待用户拍板
 
-- [ ] **真机最终产物证据（§六）**：Windows WebView2 与 macOS WKWebView
-  最终候选产物的安装→运行发现→编辑→保存重开→导出证据**本机无法产出**
-  （需要构建签名候选产物 + 真机/实验室 runner）。PR 1 合并前按 prompt
-  要求补齐——建议走 lab runner（见下「下一步」）。
-- [ ] PR #127 merge（v0.11.0 tag 之后：再 merge main → 受管产物合并态
-  重建 → 检查绿后 `gh pr merge --auto` 入队；merge 后 re-sync 网站
-  playground、更新本文件的 merge SHA）。
+- [ ] **真机最终产物证据（§六，顺序已调整）**：合并前未能产出（本机产不了
+  签名候选产物）；经用户拍板改为**合并后**用新 main（≥`6aeca9e`）构建
+  签名候选产物在真机/lab runner 补齐。注意：v0.11.0 正式产物**不含**
+  #127 代码，不能用于桥接功能取证。CI 侧的部分替代证据：queue 轮 4 +
+  full-ci 的 windows-exe-smoke（Playwright × 打包 EXE 服务面）与
+  macos-app-smoke 全绿——但 WebView2/WKWebView 壳内交互仍需真机。
+- [ ] **真实用户复测清单（Session 7 前置）**：PR 1 合并后请真实用户
+  （issue #83 的外部科研用户等）重测此前失败的项目。仍失败且归因于
+  原 Python/Conda 环境、cwd、argv、env、本地模块、matplotlibrc/style/
+  font、safe 写入隔离的，每个做脱敏最小 fixture——这是 Session 7
+  （native execution 设计）的入场券；没有这些证据不开工。
+- [x] PR #127 merge（2026-08-26 squash `6aeca9e`，队列轮 4）。
+- [ ] 网站 playground re-sync（在合并后 main 上
+  `python scripts/build_browser_playground.py` → 网站仓库
+  `pnpm sync-playground`；指纹 `97cfbe416d563733`，含 figcapture
+  行尾归一）。
 
 ## 本轮关键决策
 
