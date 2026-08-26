@@ -760,6 +760,13 @@ class EngineWorker:
                 # `poll()` 完全可能还回 None。两条合起来，那条已经判死的 worker
                 # 会被当成可用的复用掉，下一次请求写进死管道、等满整个超时——
                 # 正是这一支本该消除的竞态。
+                #
+                # 这里**故意只 kill 不 wait**：现在还持着 `self.lock`，等一个
+                # 不肯死的子进程就是把整条会话冻在锁里。收尸交给关停路径
+                # （`_terminate_and_reap()`）——`shutdown()` / `force_kill()`
+                # 都会走到它，那里才是「等到进程真的没了」的地方。
+                # 别照着这一句去写别处的 kill：除了这个持锁窗口，
+                # **kill 之后必须 wait**。
                 self._dead = True
                 try:
                     self.proc.kill()
