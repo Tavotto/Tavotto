@@ -152,6 +152,28 @@ Session 2 的这两处 Windows 事实第一次被执行到：
   取桥接功能的真机证据；有效证据只能来自 PR 分支（或合并后 main）构建的
   候选产物。
 
+## PR #127 合并队列轮 2（CI #447，2026-08-26）
+
+backend-platforms 全绿（轮 1 两条修复生效）。windows-exe-smoke 红 3 条，
+全部是**测试缺陷**，产品行为均正确；这套 Playwright E2E 只在 merge_group
+跑（issue #30 的覆盖缺口），PR 分支 CI 从未执行过它们：
+
+- **asset-library 两条（merge 交互缺陷，平台无关）**：#109（8-25 进 main）
+  给 NumberField 加了同值提交 no-op 拦截（Tab 路过不产生假历史，产品行为
+  正确）；而 e2e 把标题字号「编辑」成 12——恰好等于初值（axes.titlesize=
+  large = 12.0pt，本机 manifest 实测），fill+Enter 从 `d78e5ea` merge 起
+  变成静默 no-op，「1 项已修改」永不出现。**macOS 本机红证复现**（同一行
+  110 同形状失败），修为 fill('13')（重放断言联动 12→13）后 chromium
+  全绿。Session 6 跑绿是在 merge 之前——**merge main 之后必须重跑 e2e**，
+  这条教训记进下面的约束。
+- **golden-paths 一条（选择器歧义）**：素材库脚本区（Session 5）让
+  `render_map.py` 全页三处合法出现；断言收窄到注册表对话框 +
+  `.first()`（对话框内候选区/列表区两处也都合法）。webkit + chromium
+  本机验证过。
+
+本机验证：`asset-library + golden-paths` chromium 12 passed；golden-paths
+webkit 1 passed（worktree 首跑需 `pnpm exec playwright install`）。
+
 CodeQL 报 9 条新告警（1 critical + 8 high）：逐条核实全部有结构性防线，
 必需的「CodeQL gate」本来就是绿的（红的是非必需的原生 annotation
 check）。#95（pool.py 命令行，critical）已带理由 dismiss（won't fix：
@@ -359,6 +381,10 @@ execute:false，属于环境倒退不是产品事实。）
   端点、cli_open 真 spawn + `--port 0`；no-savefig case 升 full_support
   的门票是三条路由声明 + 验证（结构性守卫看护）。
 - **基线只在 target bundled 的钉版环境上重生成**，并逐条读 diff。
+- **merge main 之后必须重跑 e2e**（asset-library / golden-paths 至少各一
+  遍）：windows-exe-smoke 的 Playwright 套件只在 merge_group 跑，PR CI 绿
+  不代表它绿；队列轮 2 的三条红全是 merge 交互/选择器歧义这类「两侧各自
+  正确、合起来才红」的形状。
 
 ## 下一 Session 唯一目标
 

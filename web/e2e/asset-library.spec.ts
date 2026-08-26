@@ -105,7 +105,9 @@ test('show-only 项目：素材库普通入口 → Runtime Figure → 画布 →
 
   await page.getByRole('treeitem', { name: /^标题/ }).click()
   const size = panel.getByRole('textbox', { name: '字号' })
-  await size.fill('12')
+  // 13 而不是 12：标题初值就是 12.0pt（axes.titlesize=large），同值提交被
+  // NumberField 的 no-op 拦截（#109）如实吞掉——编辑必须真的改值。
+  await size.fill('13')
   await size.press('Enter')
   await expect(panel.getByText('1 项已修改')).toBeVisible({ timeout: 30_000 })
 
@@ -169,7 +171,8 @@ test('完整链：保存 → 关闭 → 重开 → 重放 → 预检 → 导出 
   const panel = page.getByLabel('右侧面板', { exact: true })
   await (await expandTreeUntil(page, /^标题/)).click()
   const size = panel.getByRole('textbox', { name: '字号' })
-  await size.fill('12')
+  // 13：初值 12.0，同值提交是 no-op（见上一条用例的注释）
+  await size.fill('13')
   await size.press('Enter')
   await expect(panel.getByText('1 项已修改')).toBeVisible({ timeout: 30_000 })
   await (await expandTreeUntil(page, /^曲线/)).click()
@@ -225,7 +228,7 @@ test('完整链：保存 → 关闭 → 重开 → 重放 → 预检 → 导出 
   const obj = page.locator('[data-object-id]').first()
   await expect(obj).toBeVisible()
 
-  // lazy rehydrate → 重新运行 → override 恢复（字号 12 还在）
+  // lazy rehydrate → 重新运行 → override 恢复（字号 13 还在）
   await obj.click()
   await page.getByRole('button', { name: '编辑图内元素' }).first().click()
   await expect(page.locator('[data-element-svg] svg').first()).toBeVisible({ timeout: 120_000 })
@@ -233,7 +236,7 @@ test('完整链：保存 → 关闭 → 重开 → 重放 → 预检 → 导出 
   await (await expandTreeUntil(page, /^标题/)).click()
   const panel2 = page.getByLabel('右侧面板', { exact: true })
   await expect(panel2.getByText('1 项已修改')).toBeVisible({ timeout: 30_000 })
-  await expect(panel2.getByRole('textbox', { name: '字号' })).toHaveValue('12')
+  await expect(panel2.getByRole('textbox', { name: '字号' })).toHaveValue('13')
 
   // 出版预检（导出对话框内嵌预检结果）
   await page.getByRole('button', { name: '导出' }).first().click()
