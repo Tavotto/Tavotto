@@ -65,12 +65,16 @@ export function ArrowStylePicker({
   onChange,
   ariaLabel,
 }: {
-  value: string
+  /**
+   * 当前值。**多选取值不一致时传 null**——那时一个格子都不该被标成选中，
+   * 也不该把「空」当成一个自定义值塞进选项表。
+   */
+  value: string | null
   options: string[]
   onChange: (v: string) => void
   ariaLabel: string
 }) {
-  const all = options.includes(value) ? options : [value, ...options]
+  const all = value && !options.includes(value) ? [value, ...options] : options
   const grid: GridOption[] = all.map((o) => {
     const shape = ARROWSTYLE_SHAPE[o]
     return {

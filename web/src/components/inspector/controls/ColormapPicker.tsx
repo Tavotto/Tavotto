@@ -5,6 +5,10 @@ import { cn } from '@/lib/utils'
 import { Popover } from '../../ui/Popover'
 import { colormapGradient } from './colormapStops'
 
+/** 多选取值不一致时触发按钮上的占位文案（函数：常量会把语言定死在模块求值那一刻） */
+const MIXED_TEXT = () => translate('element.mixedValues', { ns: 'inspector' })
+
+
 /**
  * Colormap 选择器：真实渐变条（stops 离线采样自 matplotlib），
  * 名称保留原文——viridis / RdBu_r 是 Matplotlib 标识符，翻译反而对不上文档。
@@ -41,13 +45,17 @@ export function ColormapPicker({
   onChange,
   ariaLabel,
 }: {
-  value: string
+  /**
+   * 当前值。**多选取值不一致时传 null**——那时一个格子都不该被标成选中，
+   * 也不该把「空」当成一个自定义值塞进选项表。
+   */
+  value: string | null
   options: string[]
   onChange: (v: string) => void
   ariaLabel: string
 }) {
   const [open, setOpen] = useState(false)
-  const all = options.includes(value) ? options : [value, ...options]
+  const all = value && !options.includes(value) ? [value, ...options] : options
 
   return (
     <Popover
@@ -66,8 +74,10 @@ export function ColormapPicker({
             open && 'border-accent',
           )}
         >
-          <GradientBar name={value} className="w-12 shrink-0" />
-          <span className="min-w-0 flex-1 truncate text-left font-mono">{value}</span>
+          {value !== null && <GradientBar name={value} className="w-12 shrink-0" />}
+          <span className="min-w-0 flex-1 truncate text-left font-mono">
+            {value === null ? MIXED_TEXT() : value}
+          </span>
           <ChevronDown size={12} className="shrink-0 text-ink-3" />
         </button>
       }

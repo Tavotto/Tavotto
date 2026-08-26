@@ -373,6 +373,8 @@
     "title": "科研预设"
   },
   "registry": {
+    "addToCanvas": "把 {{stem}} 添加到画布",
+    "addedToCanvas": "已把 {{stem}} 作为运行时面板添加到画布",
     "allScriptsHint": "项目里的每个 .py 都在这里，包括静态识别不出产物的（show-only、动态命名、工具脚本）。任选一个「试运行」即可按真实产出登记。",
     "allScriptsTitle": "全部脚本（{{count}}）",
     "canRegister": "可登记：",
@@ -390,8 +392,6 @@
     "noCandidates": "没有发现未登记的脚本。",
     "none": "—",
     "nothingNew": "扫描完成，没有发现新的可登记脚本",
-    "addToCanvas": "把 {{stem}} 添加到画布",
-    "addedToCanvas": "已把 {{stem}} 作为运行时面板添加到画布",
     "probeAndRegister": "试运行并登记",
     "probeDropped_other": "另有 {{count}} 张图超过捕获上限未显示",
     "probeFailed": "{{script}} 试运行失败：{{error}}",
@@ -445,25 +445,37 @@
         "registry_conflicts": "注册表 stem 归属",
         "worker_python": "渲染引擎 Python"
       },
+      "checkFail": "异常",
+      "checkOk": "正常",
       "detecting": "正在检测…",
+      "diagnosticsHelpAria": "关于诊断包",
       "diagnosticsHintAfter": "。",
       "diagnosticsHintBefore": "遇到问题时导出一个 zip 发给我们：里面是版本、系统、渲染解释器、AI CLI 探测结果与最近日志。",
       "diagnosticsHintStrong": "密钥与你的主目录已自动抹掉",
       "diagnosticsTitle": "环境诊断",
+      "engineOk": "正常",
+      "engineStatus": "解释器来源",
+      "engineStatusHint": "渲染你脚本的那个 Python 从哪来。内置环境随安装包附带，装完即用、不联网。",
+      "environmentTitle": "渲染环境",
       "exportBundle": "导出诊断包",
       "licenseAfter": "。",
       "licenseBefore": "自由软件，以 AGPL-3.0-only 发布 ——",
       "privacy": "所有数据与渲染都在本机完成，不上传任何内容；改图助手调用的是你本机的 Codex / Claude 命令行工具。对外请求只有两条：检查更新（可在「检查更新」里关闭），以及下面这份默认关闭、需要你显式同意的匿名用量统计。",
+      "privacyTitle": "隐私与数据",
       "source": "获取源代码",
       "tagline": "论文图排版与参数化图表编辑",
       "telemetry": {
         "hardDisabled": "本机已由 TAVOTTO_NO_TELEMETRY=1 关闭，这里的开关不生效。",
+        "helpAria": "关于匿名用量统计",
         "never": "图、脚本、文件名、路径、科研数据、图内文字、改图助手的提示词。",
         "neverLabel": "绝不发送：",
+        "off": "已关闭",
+        "on": "已开启",
         "policy": "隐私政策",
         "sendsAfter": "（否则算不出「一周后还在不在用」），与任何账号无关，也不含硬件序列号、MAC 地址这类能唯一指认某台设备的标识。",
         "sendsBefore": "会发送：版本号、操作系统与架构、用到了哪几类功能、预检与导出是否成功。标识是本机随机生成的一串 UUID，",
         "sendsPersist": "多次启动之间保持不变",
+        "summary": "仅在你明确开启后发送匿名功能使用情况，不发送图、脚本、文件名、路径、科研数据或提示词。",
         "title": "匿名用量统计",
         "toggle": "分享匿名用量统计"
       }
@@ -595,39 +607,52 @@
       "dragCompanionsAria": "拖动子图时带上关联元素",
       "dragCompanionsHint": "关联元素跟着子图一起走",
       "elsewhere": "网格、吸附、标尺与安全区域的开关在右栏「画布」页，与画布放在一起改。",
+      "more": "其他画布设置",
       "openCanvasSettings": "打开画布设置"
     },
     "export": {
       "defaultDpi": "默认 DPI",
       "defaultFormats": "默认格式",
+      "dpiHint": "只影响位图（PNG）的分辨率；PDF 是矢量的，DPI 对它没有意义。",
+      "formatsHint": "PDF 保留矢量，投稿一般要它；PNG 用于预览与不接受矢量的平台。",
       "hint": "这里是导出对话框的初始值；单次导出仍可临时改。",
       "proof": "Proof 留档",
       "proofAria": "默认随导出生成 proof report",
+      "proofHelp": "Proof report 是一份 JSON 留档：记下这次导出用的尺寸、字号、线宽与出版规范检查结果，投稿返修时用来证明图没变过。",
       "proofHint": "随成图生成 proof report（JSON 留档）"
     },
     "general": {
+      "autosave": "自动保存",
       "autosaveHint": "改动自动保存：编辑停顿 1 秒后写入本机磁盘（layouts/_autosave/），无须手动保存；命名版本走「保存为画布文件」。",
+      "autosaveState": "编辑停顿后自动写入本机",
       "language": "界面语言",
       "languageHint": "只影响界面文字；项目名、画布名、脚本与图内文字都不会被翻译。",
+      "layout": "界面布局",
       "layoutReset": "界面布局已重置，刷新页面后生效",
       "resetLayout": "恢复界面默认布局",
       "resetLayoutHint": "侧栏宽度、吸附开关等界面偏好回到出厂值。"
     },
+    "helpAbout": "关于{{label}}",
     "navLabel": "设置分区",
     "project": {
       "backupDir": "备份目录",
+      "backupDirHint": "写回原始文件前，原件先复制到这里。目录留空 = 使用默认位置；设置按项目分别保存。",
       "current": "当前项目",
+      "currentHint": "当前打开的图库目录。切换项目不会移动或复制任何文件。",
       "defaultPlaceholder": "默认 {{path}}",
       "dirHint": "目录留空 = 使用默认位置。设置按项目分别保存。",
       "exportDir": "导出目录",
       "noScriptsSuffix": "（面板不会进入图内编辑）",
       "readOnly": "项目只读",
       "readOnlyAria": "项目只读（禁止写回原始文件）",
+      "readOnlyHelp": "开启后「写回原始文件」整条路径被禁用，源图与脚本不会被覆盖。其余编辑（画布、导出）不受影响。",
       "readOnlyHint": "开启后禁止「写回原始文件」，源图不会被覆盖",
       "registry": "脚本注册表…",
       "scriptCount_other": "{{count}} 个脚本已登记",
       "scripts": "可参数化脚本",
-      "switch": "切换项目…"
+      "scriptsHint": "已登记的可参数化脚本：只有登记过的脚本，其产出的面板才能进入图内编辑。",
+      "switch": "切换项目…",
+      "writeBackAllowed": "允许写回原始文件"
     },
     "section": {
       "about": "隐私、诊断与 About",
@@ -642,6 +667,7 @@
     },
     "shortcuts": {
       "hint": "全部快捷键见速查表（按 ? 随时打开）。",
+      "label": "快捷键速查表",
       "open": "打开快捷键速查表"
     },
     "sidebars": {
@@ -651,12 +677,15 @@
       "rightPinned": "右栏常驻",
       "rightPinnedHint": "清空选择后属性栏保持展开"
     },
+    "techDetails": "技术详情",
     "title": "设置",
     "update": {
       "autoCheck": "自动检查",
       "autoCheckAria": "每天自动检查更新",
       "autoCheckHint": "每天一次，关掉后不会有任何联网请求",
       "available": "有新版本",
+      "channelNote": "只查 GitHub Releases 的最新正式版；关掉自动检查后不会有任何联网请求。",
+      "check": "检查更新",
       "checkNow": "立即检查",
       "checking": "检查中…",
       "currentIs": "当前 {{version}}",

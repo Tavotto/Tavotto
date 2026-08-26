@@ -174,6 +174,7 @@
     "backToScriptPartial_one": "Back to the script value ({{count}} changed)",
     "backToScriptPartial_other": "Back to the script value ({{count}} changed)",
     "batchEdit": "Change {{label}} in bulk",
+    "batchEditGeneric": "Batch edit",
     "batchHint_one": "Changes apply to the {{count}} selected element",
     "batchHint_other": "Changes apply to all {{count}} selected elements",
     "batchNoCommon": "These elements have no properties that can be changed together",
@@ -244,6 +245,10 @@
     "setAxesHeight": "Change axes height",
     "setAxesWidth": "Change axes width",
     "sourceAdvanced": "Source & advanced",
+    "textBatchHintMixed_one": "These elements differ in kind, so only the text styles they all support are listed; edits apply to {{count}} element.",
+    "textBatchHintMixed_other": "These elements differ in kind, so only the text styles they all support are listed; edits apply to all {{count}}.",
+    "textBatchTitle_one": "Shared style of {{count}} text element",
+    "textBatchTitle_other": "Shared style of {{count}} text elements",
     "traceback": "traceback",
     "useAssistant": "Do it with the assistant",
     "waiting": "Waiting for the engine to render…"
@@ -913,6 +918,25 @@
     "color": "Color",
     "font": "Font",
     "size": "Size"
+  },
+  "tick": {
+    "axisSwitch": "Axis to configure",
+    "axisX": "X axis",
+    "axisY": "Y axis",
+    "dir": {
+      "in": "Inward",
+      "inout": "Both",
+      "out": "Outward"
+    },
+    "direction": "Direction",
+    "length": "Length",
+    "minor": "Minor ticks",
+    "minorAria": "Minor ticks on the {{axis}}",
+    "minorOff": "Major only",
+    "minorOn": "Major + minor",
+    "width": "Width",
+    "xTicks": "X ticks",
+    "yTicks": "Y ticks"
   },
   "transform": {
     "rotation": "Rotation",

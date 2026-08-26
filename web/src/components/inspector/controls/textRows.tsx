@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { RotateCcw, TextAlignCenter, TextAlignEnd, TextAlignStart } from 'lucide-react'
 import { t as translate } from '@/i18n'
+import { cn } from '@/lib/utils'
 import { Button } from '../../ui/Button'
 import { Row } from '../../ui/Field'
 import { ColorField, NumberField } from '../../ui/Input'
@@ -48,6 +49,59 @@ export function ResetChip({ label, onReset }: { label: string; onReset: () => vo
   )
 }
 
+/**
+ * 字形三态图标按钮（加粗 / 斜体）。
+ *
+ * **单选与多选是同一个控件**：多选后退化成 `normal / bold` 文字下拉是本轮
+ * 要修掉的分叉。三态用 `aria-pressed="mixed"`（ARIA 认这个值），并且
+ * **不只靠颜色**——mixed 时图标下多一条短横，屏幕阅读器名字里也带
+ * 「多个值」。
+ *
+ * 点击语义：mixed → 全开；全开 → 全关；全关 → 全开。没有「点回 mixed」，
+ * mixed 是当前事实的描述，不是用户能选的目标状态。
+ */
+export function StyleToggle({
+  state,
+  label,
+  hint,
+  onClick,
+  children,
+}: {
+  state: 'on' | 'off' | 'mixed'
+  /** 按钮说的是它干什么（加粗），不是属性叫什么（字重） */
+  label: string
+  /** 悬停时补一句当前值——图标按下与否在小尺寸下不总是一眼可辨 */
+  hint?: string
+  onClick: () => void
+  children: ReactNode
+}) {
+  const mixedText = translate('element.mixedValues', { ns: 'inspector' })
+  const name = state === 'mixed' ? `${label} · ${mixedText}` : label
+  return (
+    <Tip label={hint ?? name}>
+      <Button
+        size="icon-sm"
+        active={state === 'on'}
+        aria-pressed={state === 'mixed' ? 'mixed' : state === 'on'}
+        aria-label={name}
+        onClick={onClick}
+        // 宽度不随状态变：mixed 的提示画在按钮内部，不挤走后面的控件
+        className="relative"
+      >
+        {children}
+        {state === 'mixed' && (
+          <span
+            aria-hidden
+            className={cn(
+              'pointer-events-none absolute inset-x-1 bottom-[3px] h-[2px] rounded-full bg-ink-2',
+            )}
+          />
+        )}
+      </Button>
+    </Tip>
+  )
+}
+
 export function FontFamilyRow({
   value,
   options,
@@ -56,6 +110,7 @@ export function FontFamilyRow({
   overridden,
   onReset,
   optionLabelOf,
+  mixed,
 }: {
   value: string
   options: string[]
@@ -64,6 +119,8 @@ export function FontFamilyRow({
   overridden?: boolean
   onReset?: () => void
   optionLabelOf: (v: string) => string
+  /** 多选且字体不一致：显示「多个值」占位，绝不谎报其中某一个的字体 */
+  mixed?: boolean
 }) {
   const label = tc('font')
   return (
@@ -71,7 +128,9 @@ export function FontFamilyRow({
       <Select
         className="min-w-0 flex-1"
         ariaLabel={label}
-        value={value}
+        // Radix 的 value 必须是选项之一才会显示；mixed 传空串走 placeholder
+        value={mixed ? '' : value}
+        placeholder={mixed ? translate('element.mixedValues', { ns: 'inspector' }) : undefined}
         onChange={onChange}
         options={options.map((o) => ({
           value: o,
@@ -145,6 +204,7 @@ export function TextColorRow({
   labelWidth,
   overridden,
   onReset,
+  mixed,
 }: {
   value: string
   onChange: (v: string) => void
@@ -152,11 +212,15 @@ export function TextColorRow({
   labelWidth?: number
   overridden?: boolean
   onReset?: () => void
+  /** 多选且颜色不一致：色块旁明说「多个值」，不把其中一个当成公共色 */
+  mixed?: boolean
 }) {
   const label = tc('color')
+  const mixedText = translate('element.mixedValues', { ns: 'inspector' })
   return (
     <Row label={labeledWithState(label, overridden)} labelWidth={labelWidth}>
       <ColorField value={value} onChange={onChange} onGestureEnd={onGestureEnd} />
+      {mixed && <span className="shrink-0 text-xs text-ink-3">{mixedText}</span>}
       {overridden && onReset && <ResetChip label={label} onReset={onReset} />}
     </Row>
   )

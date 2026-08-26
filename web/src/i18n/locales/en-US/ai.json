@@ -26,6 +26,14 @@
     "zoomAria": "Open the full diff",
     "zoomTip": "Open the full diff"
   },
+  "effortLabel": {
+    "high": "High",
+    "low": "Low",
+    "max": "Max",
+    "medium": "Medium",
+    "minimal": "Minimal",
+    "xhigh": "Extra high"
+  },
   "history": {
     "allStatuses": "All statuses",
     "changedSuffix": " · changed",
@@ -62,7 +70,9 @@
     "agentNote": "Edits the script file directly; every run is snapshotted first, so it can be reverted.",
     "agentTitle": "Command-line tool that makes the change",
     "cli": "CLI: {{version}}",
+    "cliPath": "Path: {{path}}",
     "effort": "Reasoning effort",
+    "effortRaw": "Raw effort: {{value}}",
     "emptyHint": "The assistant edits this figure's script; afterwards you can view the diff and revert in one click.",
     "emptyTitle": "Describe the change you want",
     "generating": "Writing a reply",

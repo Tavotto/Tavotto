@@ -82,20 +82,67 @@ afterEach(() => {
 })
 
 describe('设置里的开关', () => {
-  it('说清楚发什么、不发什么，并给出隐私政策链接', async () => {
+  /**
+   * 隐私授权的**最短摘要常驻**：用户判断「这东西会不会上传我的图」靠的是它，
+   * 不许折叠。完整的「会发送什么 / 绝不发送什么」两份清单读一次就够，
+   * 进小问号——但**必须真的打得开**，否则就是把承诺藏了起来。
+   */
+  it('最短隐私摘要与政策链接常驻，不需要任何交互', async () => {
     await open()
     const text = document.body.textContent ?? ''
     expect(text).toContain(st('about.telemetry.title'))
-    expect(text).toContain(st('about.telemetry.sendsBefore'))
-    // 跨会话稳定这一句必须真的出现，而且**不能带字面 Markdown 星号**
-    expect(text).toContain(st('about.telemetry.sendsPersist'))
-    expect(text).toContain(st('about.telemetry.sendsAfter'))
+    expect(text).toContain(st('about.telemetry.summary'))
     expect(text).not.toContain('**')
-    expect(text).toContain(st('about.telemetry.never'))
     const link = [...document.querySelectorAll('a')].find(
       (a) => a.textContent?.trim() === st('about.telemetry.policy'),
     )
     expect(link?.getAttribute('href')).toContain('privacy.md')
+  })
+
+  it('「会发送什么 / 绝不发送什么」在小问号里，点开就有', async () => {
+    await open()
+    const before = document.body.textContent ?? ''
+    // 折叠状态下确实看不到——否则下面那段断言证明不了任何事
+    expect(before).not.toContain(st('about.telemetry.sendsBefore'))
+
+    const help = [...document.querySelectorAll('button')].find(
+      (b) => b.getAttribute('aria-label') === st('about.telemetry.helpAria'),
+    ) as HTMLButtonElement
+    expect(help).toBeTruthy()
+    await act(async () => {
+      help.click()
+    })
+
+    const text = document.body.textContent ?? ''
+    expect(text).toContain(st('about.telemetry.sendsBefore'))
+    // 跨会话稳定这一句必须真的出现，而且**不能带字面 Markdown 星号**
+    expect(text).toContain(st('about.telemetry.sendsPersist'))
+    expect(text).toContain(st('about.telemetry.sendsAfter'))
+    expect(text).toContain(st('about.telemetry.never'))
+    expect(text).not.toContain('**')
+  })
+
+  it('小问号键盘可达：聚焦即展开，Esc 收回', async () => {
+    await open()
+    const help = [...document.querySelectorAll('button')].find(
+      (b) => b.getAttribute('aria-label') === st('about.telemetry.helpAria'),
+    ) as HTMLButtonElement
+    expect(help.getAttribute('aria-expanded')).toBe('false')
+    await act(async () => {
+      help.focus()
+      help.dispatchEvent(new FocusEvent('focus', { bubbles: false }))
+    })
+    expect(help.getAttribute('aria-expanded')).toBe('true')
+    expect(document.body.textContent).toContain(st('about.telemetry.never'))
+
+    // Radix 的 dismissable layer 在内容挂载后的一个微任务里才注册 Escape 监听
+    await act(async () => {
+      await Promise.resolve()
+    })
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    expect(help.getAttribute('aria-expanded')).toBe('false')
   })
 
   it('关掉时写 disabled 并立刻停止发送', async () => {

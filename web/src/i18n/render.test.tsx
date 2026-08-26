@@ -18,7 +18,7 @@ import { ProjectPicker } from '@/components/ProjectPicker'
 import { SettingsDialog } from '@/components/SettingsDialog'
 import { TopBar } from '@/components/TopBar'
 import { TooltipProvider } from '@/components/ui/Tooltip'
-import { DEFAULT_LOCALE, i18n, setLocale, type Locale } from '@/i18n'
+import { DEFAULT_LOCALE, i18n, setLocale, t, type Locale } from '@/i18n'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
 import { useDocumentStore } from '@/store/documentStore'
@@ -32,6 +32,16 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
 /** 这批组件都会去问后端要点什么；返回空对象就够，不抛即可 */
 globalThis.fetch = (async () => new Response('{}', { status: 200 })) as typeof fetch
+
+// Radix 的 Select 在 jsdom 里要这几个原生能力才打得开（jsdom 都没实现）
+Element.prototype.scrollIntoView ??= function scrollIntoView() {}
+Element.prototype.hasPointerCapture ??= () => false
+Element.prototype.releasePointerCapture ??= () => {}
+globalThis.ResizeObserver ??= class {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+} as never
 
 let container: HTMLDivElement
 let root: Root
@@ -140,25 +150,33 @@ describe('SettingsDialog', () => {
     expect(text).toContain('界面语言')
   })
 
+  /** 打开语言下拉（ui/Select 是 Radix，选项在 portal 里，要先点开） */
+  const openLanguageSelect = async () => {
+    const trigger = [...document.body.querySelectorAll('[aria-label]')].find(
+      (el) =>
+        el.getAttribute('aria-label') === t('settings.general.language', { ns: 'dialogs' }) &&
+        el.getAttribute('role') === 'combobox',
+    ) as HTMLElement
+    await act(async () => {
+      trigger.click()
+    })
+    return [...document.body.querySelectorAll('[role="option"]')] as HTMLElement[]
+  }
+
   it('语言下拉里两档都用**目标语言自己的名字**写，不跟着界面语言翻译', async () => {
     mount(<SettingsDialog />)
-    const options = () =>
-      [...document.body.querySelectorAll('option')].map((o) => o.textContent?.trim())
-    expect(options()).toEqual(expect.arrayContaining(['简体中文', 'English']))
+    const names = async () => (await openLanguageSelect()).map((o) => o.textContent?.trim())
+    expect(await names()).toEqual(expect.arrayContaining(['简体中文', 'English']))
 
     await switchTo('en-US')
-    expect(options()).toEqual(expect.arrayContaining(['简体中文', 'English']))
+    expect(await names()).toEqual(expect.arrayContaining(['简体中文', 'English']))
   })
 
   it('在设置里选英文：偏好落盘 + 界面当场变，不用刷新', async () => {
     mount(<SettingsDialog />)
-    const select = [...document.body.querySelectorAll('select')].find((s) =>
-      [...s.options].some((o) => o.value === 'en-US'),
-    )!
-
+    const english = (await openLanguageSelect()).find((o) => o.textContent?.trim() === 'English')!
     await act(async () => {
-      select.value = 'en-US'
-      select.dispatchEvent(new Event('change', { bubbles: true }))
+      english.click()
     })
 
     expect(localStorage.getItem('tavotto.locale')).toBe('en-US')

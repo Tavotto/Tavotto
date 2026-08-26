@@ -8,6 +8,11 @@ export interface SegmentedItem<T extends string> {
   icon?: ReactNode
   label?: ReactNode
   tip?: string
+  /**
+   * 只有图标的分段项的**可达名**。tooltip 不是可达名——屏幕阅读器读到的是
+   * 一个没有名字的 radio。缺省时退回 `tip`，两者都没有才真的无名。
+   */
+  ariaLabel?: string
 }
 
 interface SegmentedProps<T extends string> {
@@ -18,6 +23,8 @@ interface SegmentedProps<T extends string> {
   size?: 'sm' | 'md'
   /** quiet：选中态不用 accent，融进低对比的界面 */
   tone?: 'accent' | 'quiet'
+  /** 整组的可达名（「方向」「作用范围」…）——无名的 radiogroup 说不清在选什么 */
+  ariaLabel?: string
 }
 
 /**
@@ -32,10 +39,12 @@ export function Segmented<T extends string>({
   className,
   size = 'sm',
   tone = 'accent',
+  ariaLabel,
 }: SegmentedProps<T>) {
   return (
     <div
       role="radiogroup"
+      aria-label={ariaLabel}
       className={cn(
         'inline-flex items-stretch overflow-hidden rounded-sm border border-border bg-surface',
         className,
@@ -50,6 +59,7 @@ export function Segmented<T extends string>({
             onClick={() => onChange(item.value)}
             role="radio"
             aria-checked={active}
+            aria-label={item.label == null ? (item.ariaLabel ?? item.tip) : undefined}
             className={cn(
               'flex flex-1 items-center justify-center gap-1 whitespace-nowrap outline-none transition-colors',
               'focus-visible:focus-ring',

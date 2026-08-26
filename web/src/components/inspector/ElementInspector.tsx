@@ -97,7 +97,12 @@ import {
   TickAndSpineDiagram,
   type TickSpineAdapter,
 } from './controls/TickAndSpineDiagram'
+import { TICK_CARD_PROPS, TickTaskCard } from './controls/TickTaskCard'
+import { axisTickState, tickElementOf, tickHostOf, useTickAxisAdapter } from './tickAdapter'
 import { useElementWriter } from './elementWrite'
+import { TextStyleControls } from './controls/TextStyleControls'
+import { useTextStyleAdapter } from './textStyleAdapter'
+import { isTextLikeSelection, TEXT_STYLE_PROPS } from './textStyleModel'
 import { fontStackOf } from './controls/fontStack'
 import { alignSelectedPanelElements } from '@/store/alignAction'
 import { useInspectorPrefs } from '@/store/inspectorPrefs'
@@ -171,14 +176,57 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
       : []
   const mixed: MixedEntry[] = [...entries, ...annEntries]
   const alignGroup = mixed.length > 1 ? mixed : null
+  /**
+   * 混排选区里有画布标注时，**两种批量样式都不给**。
+   *
+   * 两个批量写入器都只写 manifest override（`setOverrides`），标注是文档对象、
+   * 走 `updateObjects`——混排时点一次加粗只会改到选中的一部分，而对齐区
+   * 明明写着「已选 3 个元素」。这种「改了一半、还不说」正是 web/AGENTS.md
+   * 混排对齐那条要求「同一次 commit」的理由（#142 评审 P2）。
+   *
+   * 跨 writer 的原子写入是延后项（见 docs/ux/UX_CONSISTENCY_PASS.md §8），
+   * 在它做出来之前，**宁可不给这个入口**：对齐照旧可用，样式回到单选去改。
+   *
+   * 判据放在两处的共同上游：`batch`（同角色公共字段）与 `styleBatch`
+   * （跨角色文字样式）是同一个形状的两个消费点，只修一个等于没修。
+   */
+  const mixedWithAnnotations = annotations.length > 0
   // 多选同一种角色 → 批量改公共属性（文字全部调字号、曲线全部换色…）
   const batch =
-    selected.length > 1 && selected.every((e) => e.role === selected[0].role) ? selected : null
+    !mixedWithAnnotations &&
+    selected.length > 1 &&
+    selected.every((e) => e.role === selected[0].role)
+      ? selected
+      : null
+  /**
+   * 跨角色的**文字样式**批量。与 `batch`（同角色公共字段）和 `alignGroup`
+   * （几何对齐）是三个独立概念，可以同时成立：
+   *
+   *   * 图标题 + X/Y 轴标题 → styleBatch 有、batch 没有（角色不同）；
+   *   * 两个轴标题          → 两个都有（样式行在上，其余公共字段在下）；
+   *   * 两条曲线            → 只有 batch。
+   *
+   * 「已经进入对齐模式」**不再是**「不能改公共样式」的理由——旧代码里
+   * alignGroup 一出现就把整个属性区换掉，多选三条文字后连字号都改不了。
+   */
+  const styleBatch =
+    !mixedWithAnnotations && isTextLikeSelection(selected) ? selected : null
 
-  // 展示分桶：文字工具条覆盖的属性、四边状态图吃掉的开关都让出来
-  // （同一属性不出两套控件）
+  // 展示分桶：文字工具条覆盖的属性、刻度任务卡吃掉的字段都让出来
+  // （同一属性不出两套控件）。刻度组页上被卡承接的是方向 / 次刻度 / 长宽——
+  // 主刻度模式、间距、格式、次刻度定位仍留在通用列表与「更多」里，
+  // 逐字段「恢复到脚本」一条都没少（卡里的每一行自己带 ResetChip）。
+  // 刻度组页只有在卡**真的接管了这个元素**时才让出字段。Z 刻度（3D）没有
+  // 对应的卡，字段必须原样留在通用列表里——否则能力凭空消失（#142 评审 P1）
+  const tickAxisOfSelf =
+    element?.role === 'ticks' ? (tickHostOf(element.gid)?.axis ?? null) : null
+  const tickCardCoversSelf = tickAxisOfSelf === 'x' || tickAxisOfSelf === 'y'
   const consumedBySideDiagram = new Set<string>(
-    element?.role === 'axes' ? TICK_SPINE_PROPS : [],
+    element?.role === 'axes'
+      ? TICK_SPINE_PROPS
+      : tickCardCoversSelf
+        ? TICK_CARD_PROPS
+        : [],
   )
   const buckets =
     element && element.editable.length
@@ -250,12 +298,17 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
         </Section>
       )}
 
-      {/* 四层顺序：先公共属性（高频），再对齐与排列 */}
-      {batch && <BatchSection panel={panel} elements={batch} />}
+      {/* 三层顺序：公共文字样式 → 其余公共属性 → 对齐与排列。
+          三者互相独立，谁在谁不在只看选择本身，不再互斥。
+          `syncing`（#137：几何同步在途）与 `alignGroup` 同档——它只决定对齐区
+          在不在、以及单元素表单让不让位，**不影响样式批量**：等一次几何写回
+          落地的时候，用户照样该能改字号。 */}
+      {styleBatch && <TextStyleBatchSection panel={panel} elements={styleBatch} />}
+      {batch && <BatchSection panel={panel} elements={batch} skip={styleBatch ? TEXT_BAR_PROPS : undefined} />}
       {(alignGroup || syncing) && (
         <AlignSection panel={panel} items={alignGroup ?? []} syncing={syncing} />
       )}
-      {alignGroup || syncing || batch ? null : (
+      {alignGroup || syncing || batch || styleBatch ? null : (
       <Section>
         {manifest && element && <RelatedRow manifest={manifest} element={element} />}
         {!manifest ? (
@@ -271,7 +324,14 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
             warnings={render?.warnings ?? []}
             buckets={buckets}
             primaryExtra={
-              sideHost ? <AxesSideControl panel={panel} host={sideHost} /> : null
+              sideHost && element ? (
+                <TickControl
+                  panel={panel}
+                  manifest={manifest}
+                  host={sideHost}
+                  element={element}
+                />
+              ) : null
             }
           />
         )}
@@ -299,8 +359,10 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
 
       <SourceAdvancedSection
         panel={panel}
-        element={alignGroup || syncing || batch ? null : element}
-        advanced={alignGroup || syncing || batch ? [] : (buckets?.advanced ?? [])}
+        element={alignGroup || syncing || batch || styleBatch ? null : element}
+        advanced={
+          alignGroup || syncing || batch || styleBatch ? [] : (buckets?.advanced ?? [])
+        }
       />
     </>
   )
@@ -589,9 +651,52 @@ function FieldList({
  * 字段全部真实存在于宿主 axes 的 manifest 上；写入走 useElementWriter
  * （一次点击 = 一条历史 + 一次渲染），单项恢复走 clearOverride。
  */
-function AxesSideControl({ panel, host }: { panel: PanelObject; host: ManifestElement }) {
+/**
+ * 刻度与边框的完整任务入口：**状态图 + X/Y 刻度配置在同一处**。
+ *
+ * 四边点按（刻度线 / 边框）与网格开关照旧写宿主子图的字段；方向 / 次刻度 /
+ * 长度 / 宽度写对应轴的刻度元素（`axes_0.xticks` / `.yticks`）。两组字段
+ * 分属两个 manifest 元素，界面把它们并到一张卡上——用户不需要理解
+ * axes / xticks / yticks 的对象关系才能改一件事。
+ *
+ * 从子图页进来给两个轴（顶部出 X/Y 切换）；从刻度组页进来只给它自己那个轴
+ * （切过去会写到另一个元素，而用户选的是这一个）——**同一个组件、同一套
+ * 视觉语言，不是两套控件**。
+ */
+function TickControl({
+  panel,
+  manifest,
+  host,
+  element,
+}: {
+  panel: PanelObject
+  manifest: Manifest | null | undefined
+  /** 四边开关与网格的宿主（永远是子图） */
+  host: ManifestElement
+  /** 当前选中的元素：子图或某一个刻度组 */
+  element: ManifestElement
+}) {
   useTranslation('inspector')
   const w = useElementWriter(panel, host)
+  const xEl = tickElementOf(manifest, host.gid, 'x')
+  const yEl = tickElementOf(manifest, host.gid, 'y')
+  // hook 数量固定：两个轴各调一次，元素不在时 adapter 回 null
+  const xAdapter = useTickAxisAdapter(panel, xEl, 'x')
+  const yAdapter = useTickAxisAdapter(panel, yEl, 'y')
+
+  const selfAxis = element.role === 'ticks' ? (tickHostOf(element.gid)?.axis ?? null) : null
+  const all = [xAdapter, yAdapter].filter((a): a is NonNullable<typeof a> => !!a)
+  /**
+   * 刻度组页只给**它自己那个轴**。
+   *
+   * 3D 图会发 `axes_i.zticks`（`tick_axes` 里 is3d 那一支），而这张卡只有
+   * X / Y 两个适配器——选中 Z 刻度时**一个都不给**，绝不退回 `all`：
+   * 那会摆出一组写到 `xticks` / `yticks` 的控件，用户改的是 Z、动的是 X，
+   * 而 Z 自己的长度 / 宽度 / 次刻度还被 consumed 规则从通用列表里拿掉了
+   * ——改错对象 + 真控件消失，两头都错（#142 评审 P1）。
+   */
+  const axes = selfAxis ? all.filter((a) => a.axis === selfAxis) : all
+
   const adapter: TickSpineAdapter = {
     has: (p) => w.has(p),
     read: (p) => w.read(p),
@@ -599,8 +704,14 @@ function AxesSideControl({ panel, host }: { panel: PanelObject; host: ManifestEl
     labelOf: (p) => propLabel(p, host.role),
     isOverridden: (p) => panel.overrides.some((o) => o.gid === host.gid && o.prop === p),
     reset: (p) => clearOverride(panel.id, host.gid, p),
+    axisState: (a) => axisTickState(a === 'x' ? xAdapter : yAdapter),
   }
-  return <TickAndSpineDiagram adapter={adapter} />
+  return (
+    <div className="flex flex-col gap-2">
+      <TickAndSpineDiagram adapter={adapter} />
+      {axes.length > 0 && <TickTaskCard axes={axes} labelWidth={LABEL_W} />}
+    </div>
+  )
 }
 
 /* -------------------------------------------------------------------------- */
@@ -631,9 +742,54 @@ function commonFields(els: ManifestElement[]): EditableField[] {
   })
 }
 
-function BatchSection({ panel, elements }: { panel: PanelObject; elements: ManifestElement[] }) {
+/**
+ * 跨角色的公共文字样式。控件与单选**完全相同**（`TextStyleControls`）：
+ * 字体是带 Aa 预览的下拉、字号是数字框、B/I 是三态图标按钮、颜色是色块，
+ * 不会因为选中了第二个对象就退化成 `常规 / 加粗` 的通用枚举列表。
+ *
+ * 只显示 manifest 交集里真有的属性；内容（`text`）刻意不给——批量改内容
+ * 等于把三个标题写成同一句话。
+ */
+function TextStyleBatchSection({
+  panel,
+  elements,
+}: {
+  panel: PanelObject
+  elements: ManifestElement[]
+}) {
+  const adapter = useTextStyleAdapter(panel, elements)
+  const roles = [...new Set(elements.map((e) => e.role))]
+  const hasAny = TEXT_STYLE_PROPS.some((p) => adapter.fieldOf(p))
+  return (
+    <Section plainTitle title={el('textBatchTitle', { count: elements.length })}>
+      {!hasAny ? (
+        <p className="text-xs text-ink-3">{el('batchNoCommon')}</p>
+      ) : (
+        <>
+          <p className="mb-1.5 text-xs text-ink-3">
+            {roles.length > 1
+              ? el('textBatchHintMixed', { count: elements.length })
+              : el('batchHint', { count: elements.length })}
+          </p>
+          <TextStyleControls adapter={adapter} labelWidth={LABEL_W} />
+        </>
+      )}
+    </Section>
+  )
+}
+
+function BatchSection({
+  panel,
+  elements,
+  skip,
+}: {
+  panel: PanelObject
+  elements: ManifestElement[]
+  /** 已被上面的共享控件承接的属性——同一属性不出两套控件 */
+  skip?: ReadonlySet<string>
+}) {
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({})
-  const fields = commonFields(elements)
+  const fields = commonFields(elements).filter((f) => !skip?.has(f.prop))
   const flat = fields.filter((f) => !f.group)
   const groups = new Map<string, EditableField[]>()
   for (const f of fields) {
@@ -641,6 +797,10 @@ function BatchSection({ panel, elements }: { panel: PanelObject; elements: Manif
     groups.set(f.group, [...(groups.get(f.group) ?? []), f])
   }
   const ordered = [...groups].sort((a, b) => groupRank(a[0]) - groupRank(b[0]))
+
+  // 公共样式已由上面的 TextStyleBatchSection 承接、这里一条不剩时整段不画：
+  // 紧挨着可用的样式控件再来一句「没有公共属性」是自相矛盾的
+  if (skip && !fields.length) return null
 
   const rows = (list: EditableField[]) => (
     <div className="flex flex-col gap-1.5">
@@ -774,19 +934,67 @@ function BatchFieldRow({
             {mixed && <span className="shrink-0 text-xs text-ink-3">{el('mixedValues')}</span>}
           </>
         )
-      case 'enum':
+      case 'enum': {
+        // **视觉选择器不因为多选而退化**：线型仍是真实线段预览、marker 仍是
+        // 图形网格、图例位置仍是 3×3 网格。同一个属性在单选与多选下是同一种
+        // 视觉语言——这是本轮的核心纪律（docs/ux/UX_CONSISTENCY_PASS.md）。
+        // 取值不一致时传 null：一个格子都不标选中，也不把「空」当自定义值。
+        const v = mixed ? null : String(first ?? '')
+        const opts = field.options ?? []
+        const kind = controlKindOf(elements[0].role, field)
+        const picker = () => {
+          switch (kind) {
+            case 'line-style':
+              return <LineStylePicker value={v} options={opts} onChange={writeOnce} ariaLabel={label} />
+            case 'marker':
+              return <MarkerPicker value={v} options={opts} onChange={writeOnce} ariaLabel={label} />
+            case 'hatch':
+              return <HatchPicker value={v} options={opts} onChange={writeOnce} ariaLabel={label} />
+            case 'colormap':
+              return <ColormapPicker value={v} options={opts} onChange={writeOnce} ariaLabel={label} />
+            case 'legend-position':
+              return <LegendPositionPicker value={v} options={opts} onChange={writeOnce} ariaLabel={label} />
+            case 'arrow-style':
+              return <ArrowStylePicker value={v} options={opts} onChange={writeOnce} ariaLabel={label} />
+            case 'font':
+              return (
+                <Select
+                  className="min-w-0 flex-1"
+                  value={mixed ? '' : String(first ?? '')}
+                  placeholder={el('mixedValues')}
+                  onChange={(x) => writeOnce(x)}
+                  options={opts.map((o) => ({
+                    value: o,
+                    label: (
+                      <span style={{ fontFamily: fontStackOf(o) }}>
+                        {optionLabel('fontfamily', o)}
+                      </span>
+                    ),
+                  }))}
+                  ariaLabel={label}
+                />
+              )
+            default:
+              return (
+                <Select
+                  value={mixed ? '' : String(first ?? '')}
+                  placeholder={el('mixedValues')}
+                  onChange={(x) => writeOnce(x)}
+                  options={opts.map((o) => ({ value: o, label: optionLabel(field.prop, o) }))}
+                  ariaLabel={label}
+                />
+              )
+          }
+        }
         return (
-          <Select
-            value={mixed ? '' : String(first ?? '')}
-            placeholder={el('mixedValues')}
-            onChange={(v) => writeOnce(v)}
-            options={(field.options ?? []).map((o) => ({
-              value: o,
-              label: optionLabel(field.prop, o),
-            }))}
-            ariaLabel={label}
-          />
+          <>
+            {picker()}
+            {mixed && kind !== 'marker' && kind !== 'hatch' && kind !== 'colormap' && (
+              <span className="shrink-0 text-xs text-ink-3">{el('mixedValues')}</span>
+            )}
+          </>
         )
+      }
       default:
         return null
     }

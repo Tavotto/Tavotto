@@ -47,6 +47,8 @@ import { Button } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
 import { Popover } from '../ui/Popover'
 import { Segmented } from '../ui/Segmented'
+import { Select } from '../ui/Select'
+import { StepSlider } from '../ui/StepSlider'
 import { Tip } from '../ui/Tooltip'
 import { InlineLoader, TextLoader } from 'generative-loaders'
 import { DiffView } from './DiffView'
@@ -389,7 +391,7 @@ function TargetChip({
         : (panel.name ?? panel.fileId)
   return (
     <Popover
-      width={232}
+      width={288}
       align="start"
       trigger={
         <button
@@ -432,7 +434,7 @@ function ScopeAgentButton({
   const active = effectiveAgent(preferred, caps)
   return (
     <Popover
-      width={232}
+      width={288}
       align="start"
       trigger={
         <Button
@@ -456,7 +458,7 @@ function ScopeAgentButton({
   )
 }
 
-function ScopeAgentContent({
+export function ScopeAgentContent({
   panel,
   element,
   axes,
@@ -484,6 +486,10 @@ function ScopeAgentContent({
   const cur = agentById(caps, active)
   const model = (active && models[active]) ?? cur?.default_model ?? ''
   const effort = (active && efforts[active]) ?? cur?.default_effort ?? ''
+  // 档位下标由**真实能力数组**算出来；记忆里那个已经不在清单里时回落到 0，
+  // 绝不凭字符串造一个数组里没有的档位
+  const effortList: string[] = cur?.efforts ?? []
+  const effortIndex = Math.max(0, effortList.indexOf(effort))
 
   return (
     <div className="flex flex-col gap-2">
@@ -492,6 +498,7 @@ function ScopeAgentContent({
         <Segmented
           tone="quiet"
           className="w-full"
+          ariaLabel={ai('panel.scopeTitle')}
           value={scope}
           onChange={(v) => useAiStore.getState().setScope(v)}
           items={scopeItems().filter((i) => scopes.includes(i.value))}
@@ -501,66 +508,74 @@ function ScopeAgentContent({
         </div>
       </div>
       <div className="h-px bg-border" />
-      <div>
-        <p className="mb-1 text-xs text-ink-2">{ai('panel.agentTitle')}</p>
-        {caps == null ? (
-          <p className="text-xs text-ink-3">{ai('panel.probing')}</p>
-        ) : usable.length === 0 ? (
-          <div className="flex flex-col gap-1">
-            <p className="text-xs leading-relaxed text-ink-3">{ai('panel.noCli')}</p>
-            <div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => useUiStore.getState().setSettingsOpen(true, 'ai')}
-              >
-                {ai('panel.openAiSettings')}
-              </Button>
-            </div>
+      {caps == null ? (
+        <p className="text-xs text-ink-3">{ai('panel.probing')}</p>
+      ) : usable.length === 0 ? (
+        /* 缺件是**错误恢复路径**，不能因为「减负」被折叠掉 */
+        <div className="flex flex-col gap-1">
+          <p className="text-xs leading-relaxed text-ink-3">{ai('panel.noCli')}</p>
+          <div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => useUiStore.getState().setSettingsOpen(true, 'ai')}
+            >
+              {ai('panel.openAiSettings')}
+            </Button>
           </div>
-        ) : (
-          <>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {/* 只装了一个 Agent 时不摆一个只有一项的「双选」——那个控件没有第二个
+              选项可选，纯粹占地方。它是谁在弹层触发按钮上已经写着了 */}
+          {usable.length > 1 && (
             <Segmented
               tone="quiet"
               className="w-full"
+              ariaLabel={ai('panel.agentTitle')}
               value={active ?? ''}
               onChange={(v) => useAiStore.getState().setAgent(v)}
               items={usable.map((a) => ({ value: a.id, label: a.display_name }))}
             />
-            {cur && cur.models.length > 0 && (
-              <label className="mt-1.5 flex items-center gap-2 text-xs text-ink-2">
-                {ai('panel.model')}
-                <select
-                  value={model}
-                  onChange={(e) => active && useAiStore.getState().setModel(active, e.target.value)}
-                  aria-label={ai('panel.model')}
-                  className="h-6 flex-1 rounded-sm border border-border bg-surface px-1 text-xs text-ink outline-none focus-visible:focus-ring"
-                >
-                  {cur.models.map((m: string) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-            {cur && cur.efforts.length > 0 && (
-              <div className="mt-1.5">
-                <p className="mb-1 text-xs text-ink-2">{ai('panel.effort')}</p>
-                <Segmented
-                  tone="quiet"
-                  className="w-full"
-                  value={effort}
-                  onChange={(v) => active && useAiStore.getState().setEffort(active, v)}
-                  items={cur.efforts.map((e: string) => ({ value: e, label: e }))}
-                />
+          )}
+          {/* 模型清单为空 = 跟随 CLI 默认，不伪造一个模型名 */}
+          {cur && cur.models.length > 0 && (
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="shrink-0 text-xs text-ink-2">{ai('panel.model')}</span>
+              <Select
+                className="min-w-0 flex-1"
+                ariaLabel={ai('panel.model')}
+                value={model}
+                onChange={(v) => active && useAiStore.getState().setModel(active, v)}
+                options={cur.models.map((m: string) => ({ value: m, label: m }))}
+              />
+            </div>
+          )}
+          {/* 推理强度：档位来自 caps 的真实数组，一格一个值。
+              只有一档时给一个不可调的静态显示（不是一个假装能拖的滑杆）；
+              一档都没有时整块不出现 */}
+          {effortList.length > 0 && (
+            <div className="flex min-w-0 flex-col gap-0.5">
+              <div className="flex min-w-0 items-baseline justify-between gap-2">
+                <span className="shrink-0 text-xs text-ink-2">{ai('panel.effort')}</span>
+                <span className="min-w-0 truncate text-xs font-medium text-ink" title={effortLabel(effortList[effortIndex])}>
+                  {effortLabel(effortList[effortIndex])}
+                </span>
               </div>
-            )}
-          </>
-        )}
-        <p className="mt-1 text-xs leading-relaxed text-ink-3">{ai('panel.agentNote')}</p>
-      </div>
-      {/* 文件名 / 路径等技术信息默认不展示 */}
+              <StepSlider
+                value={effortIndex}
+                count={effortList.length}
+                disabled={effortList.length === 1}
+                ariaLabel={ai('panel.effort')}
+                valueText={effortLabel(effortList[effortIndex])}
+                onChange={(i) => active && useAiStore.getState().setEffort(active, effortList[i])}
+              />
+            </div>
+          )}
+        </div>
+      )}
+      {/* CLI 版本 / 路径 / 快照说明等实现细节默认不展示——正常选个模型
+          不需要每次读一遍它们 */}
       <button
         onClick={() => setDetailsOpen((v) => !v)}
         aria-expanded={detailsOpen}
@@ -574,6 +589,7 @@ function ScopeAgentContent({
       </button>
       {detailsOpen && (
         <div className="flex flex-col gap-0.5 border-l border-border pl-2">
+          <p className="text-xs leading-relaxed text-ink-3">{ai('panel.agentNote')}</p>
           <p className="truncate font-mono text-xs text-ink-3" title={panel.script ?? ''}>
             {ai('panel.script', {
               name: panel.script ? scriptName(panel.script) : ai('panel.none'),
@@ -584,10 +600,39 @@ function ScopeAgentContent({
               {ai('panel.cli', { version: cur.version })}
             </p>
           )}
+          {cur?.executable_path && (
+            <p className="truncate font-mono text-xs text-ink-3" title={cur.executable_path}>
+              {ai('panel.cliPath', { path: cur.executable_path })}
+            </p>
+          )}
+          {effortList.length > 0 && (
+            <p className="truncate font-mono text-xs text-ink-3">
+              {ai('panel.effortRaw', { value: effortList[effortIndex] })}
+            </p>
+          )}
+          <div className="pt-0.5">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => useUiStore.getState().setSettingsOpen(true, 'ai')}
+            >
+              {ai('panel.openAiSettings')}
+            </Button>
+          </div>
         </div>
       )}
     </div>
   )
+}
+
+/**
+ * 推理强度的显示名。**这是开集**——档位由本机 CLI 声明，后端会把用户配置里
+ * 的自定义档位原样带上来（实测 codex 的 xhigh 就是这么来的）。查不到就回退
+ * 原文，绝不因为「表里没有」而把一个真实存在的档位显示成空白。
+ */
+function effortLabel(value: string | undefined): string {
+  if (!value) return ''
+  return translate(`effortLabel.${value}`, { ns: 'ai', defaultValue: value })
 }
 
 /** 旧名保留：右栏 tab 仍按 AiPanel 引用这个面板 */

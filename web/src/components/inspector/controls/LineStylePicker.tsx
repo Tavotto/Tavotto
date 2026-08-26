@@ -48,7 +48,11 @@ export function LineStylePicker({
   ariaLabel,
   labelOf,
 }: {
-  value: string
+  /**
+   * 当前值。**多选取值不一致时传 null**——那时一个格子都不该被标成选中，
+   * 也不该把「空」当成一个自定义值塞进选项表。
+   */
+  value: string | null
   options: string[]
   onChange: (v: string) => void
   ariaLabel: string
@@ -63,7 +67,7 @@ export function LineStylePicker({
       : translate('control.customLineStyle', { ns: 'inspector', value: o })
   }
   // 当前值不在选项里（自定义 dash）也要能看到、能保持
-  const all = options.includes(value) ? options : [value, ...options]
+  const all = value && !options.includes(value) ? [value, ...options] : options
   const grid: GridOption[] = all.map((o) => ({
     value: o,
     label: nameOf(o),

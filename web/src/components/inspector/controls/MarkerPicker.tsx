@@ -1,9 +1,14 @@
 import { ChevronDown } from 'lucide-react'
 import { useState } from 'react'
+import { t as translate } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { optionLabel } from '../roles/registry'
 import { Popover } from '../../ui/Popover'
 import { OptionGrid, type GridOption } from './OptionGrid'
+
+/** 多选取值不一致时触发按钮上的占位文案（函数：常量会把语言定死在模块求值那一刻） */
+const MIXED_TEXT = () => translate('element.mixedValues', { ns: 'inspector' })
+
 
 /**
  * Marker 选择器：图形网格，不再要求用户记住 "D" 是菱形、"^" 是上三角。
@@ -74,13 +79,17 @@ export function MarkerPicker({
   onChange,
   ariaLabel,
 }: {
-  value: string
+  /**
+   * 当前值。**多选取值不一致时传 null**——那时一个格子都不该被标成选中，
+   * 也不该把「空」当成一个自定义值塞进选项表。
+   */
+  value: string | null
   options: string[]
   onChange: (v: string) => void
   ariaLabel: string
 }) {
   const [open, setOpen] = useState(false)
-  const all = options.includes(value) ? options : [value, ...options]
+  const all = value && !options.includes(value) ? [value, ...options] : options
   const grid: GridOption[] = all.map((o) => ({
     value: o,
     label: optionLabel('marker', o),
@@ -105,8 +114,11 @@ export function MarkerPicker({
             open && 'border-accent',
           )}
         >
-          <MarkerPreview code={value} />
-          <span className="min-w-0 flex-1 truncate text-left">{optionLabel('marker', value)}</span>
+          {/* 多选取值不一致：触发按钮说「多个值」，不谎报其中某一个的图形 */}
+          {value !== null && <MarkerPreview code={value} />}
+          <span className="min-w-0 flex-1 truncate text-left">
+            {value === null ? MIXED_TEXT() : optionLabel('marker', value)}
+          </span>
           <ChevronDown size={12} className="shrink-0 text-ink-3" />
         </button>
       }
