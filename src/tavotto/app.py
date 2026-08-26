@@ -3416,6 +3416,9 @@ def main():
     ap.add_argument("--no-browser", action="store_true")
     ap.add_argument("--open-stem", default=None,
                     help="启动后在界面里定位这个面板（stem）；由 `tavotto open` 传入")
+    ap.add_argument("--open-pick", default=None,
+                    help="启动后打开这个脚本的 Figure 选择器（多图交接）；"
+                         "由 `tavotto open` 传入")
     ap.add_argument("--desktop-sidecar", action="store_true",
                     help="作为 Tavotto 桌面应用的后端运行：127.0.0.1 动态端口 + "
                          "桌面认证 + 父进程跟随退出（由桌面壳启动，不建议手动使用）")
@@ -3480,7 +3483,8 @@ def main():
     # 落地地址的形状（含 `?open=<stem>`）只有 handoff.browser_url 一个出处：
     # 前端 lib/openRequest.ts 认的就是它，两边别各写一份。
     def landing(p: int) -> str:
-        return engine_handoff.browser_url(p, engine_handoff.Target("", args.open_stem))
+        return engine_handoff.browser_url(
+            p, engine_handoff.Target("", args.open_stem, args.open_pick))
 
     insecure = (args.insecure_no_auth
                 or os.environ.get("TAVOTTO_INSECURE_NO_AUTH") == "1")

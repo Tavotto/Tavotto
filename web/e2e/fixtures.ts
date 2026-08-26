@@ -24,7 +24,7 @@ function launchCommand(): { cmd: string; args: string[] } {
   return { cmd: py, args: ['-m', 'tavotto'] }
 }
 
-async function freePort(): Promise<number> {
+export async function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const srv = net.createServer()
     srv.once('error', reject)

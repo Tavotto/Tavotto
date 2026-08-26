@@ -8,316 +8,317 @@
 - 当前 branch：`compat/bridge-session05-asset-library`（worktree
   `.claude/worktrees/compat-bridge-session01`，stacked 在
   `compat/bridge-session04-runtime-asset` → `…session03-script-probe` →
-  `…session02-execution-spec` → `…session01-audit` 之上；五支均未推送——
-  按审计 §七，Session 2–6 合成一个 PR 1 再走 push → PR → merge）
-- 基于 commit：Session 4 落库提交 `191e6c1`
-- 本 Session Prompt：`06_SESSION_05_ASSET_LIBRARY_UI.md`（外部实施包）
-- 目标 PR：PR 1（本 Session 交付素材库普通入口：图/脚本两区、
-  「运行并发现图」、取消真终止、runtime 卡片与写回区文案）
-- 当前工作树状态：干净（本 Session 一个提交）
+  `…session02-execution-spec` → `…session01-audit` 之上）
+- 基于 commit：Session 5 落库提交 `f3b09ab`
+- 本 Session Prompt：`07_SESSION_06_TAVOTTO_OPEN_AND_PRODUCT_ROUTES.md`
+- 目标 PR：**PR 1 收口**（本 Session 交付 `tavotto open script.py` 自动
+  safe probe、单/多 Figure 产品交接、CompatBench 产品路由、完整
+  保存/重开/重放/预检/导出 E2E）
+- 当前工作树状态：本 Session 一个提交；**PR 1 待 push → PR → merge**
 
 ## 本轮唯一目标
 
-把兼容能力从高级注册表工具带到普通用户素材库：用户打开旧项目后，能在
-素材面板看到脚本并点击「运行并发现图」；Runtime Figure 出现在「图」区、
-可加画布可编辑；状态机、取消、并发与项目切换正确；safe 说明与失败恢复
-路径就位。**不做** native backend（只有文案与「复制诊断」，无假按钮）、
-不改 RegistryDialog 的高级职能、不动 `tavotto open`（Session 6）。
+`tavotto open script.py` 在静态发现失败时安全 probe；单/多 Figure 正确
+交接到桌面或浏览器；CompatBench 真正测产品路由（不再直接调内部 probe）；
+保存/重开/重放/预检/导出 E2E 完整；收口 PR 1。**不做** `tavotto run`、
+native profile、generic Artist fallback、source hints、Copy as Python、
+新 Artist family、无关 UI 重构。
 
 ## 已完成
 
-- [x] **后端取消与并发闸**：`probe(should_cancel=...)` 协作取消（判取消
-  即停，**不再试下一个 entry**；被 cancel 硬杀的 WorkerError 如实归类
-  `execution_cancelled`，绝不报成「脚本坏了」；取消输给成功——跑完照常
-  登记）；`pool.force_cancel`（当场 kill，绕开要抢 `w.lock` 的优雅关停）；
-  app 层 `_PROBES` 按 (项目 id, script) 互斥（第二个请求 409
-  `probe_in_progress`，新码 + 双语文案 + USER_VISIBLE_CODES）；
-  `POST /api/registry/probe/cancel`（幂等；没有在跑回 `cancelling:false`）；
-  SSE `probe.started`（starting_runtime → running 的边界）。
-- [x] **runtime 素材清单**：`runtimeasset.list_assets` 唯一实现——注册表
-  里**磁盘无原件**的 (script, stem) 各成一条（有原件的归
-  FileAsset/scan_panels，绝不双列）；带物化 cache 的描述符与六档 status
-  （阶梯抽成 `_status_ladder` 与 stale_status 共用，列表只探一次解释器）；
-  `GET /api/runtime/assets` 只读零执行。
-- [x] **前端状态机 `scriptRunStore`**（四条纪律，vitest 12 项看护）：
-  同脚本防并发（busy no-op + 后端 409 兜底）；cancel 打后端端点、行内
-  状态等**原请求**以 execution_cancelled 落地；每次 run 换代（gen），
-  迟到响应丢弃；`clear()` 升 epoch，切项目在途响应作废。错误存原始
-  code+params，显示时才翻。相位含
-  idle/starting_runtime/running/captured_one/captured_many/no_figure/
-  missing_dependency/timeout/cancelled/failed；`needsNative()` 是
-  「可能需要原环境」的分组判据（missing_dependency/timeout/failed）；
-  possibly_stale/missing_source/missing_environment 属素材侧
-  （RuntimeStaleStatus），missing_environment ≈ prompt 的 needs_native。
-- [x] **素材库两区**（AssetBrowser 重构 + 新 `ScriptLibrary`）：
-  * 「图」= FileAsset 卡 + RuntimeFigureAsset 卡同一个 listbox（方向键/
-    Enter/Space 全通）。runtime 卡：「运行时图」badge、cache 预览
-    （`previewNonce` 重跑换 src）、stale 角标（复用 panelBadge.runtime*）
-    + 行内重跑、尺寸只在跑过后显示；**没跑过的没有假尺寸假路径**，主
-    动作是「运行并发现图」；大图弹层带「没有原始图文件」的如实说明；
-    「加入画布」只走描述符 `addRuntimePanel`。类型筛选新增「运行时图」。
-  * 「脚本」= `script_inventory` 全量，四组：已关联（含已关联张数）/
-    尚未运行 / 静态解不出输出 / 可能需要原环境（+ 折叠的工具脚本组）。
-    每行：路径、状态一行话（aria-live=polite，只随相位变化）、运行/取消
-    **同一个按钮**（焦点天然不搬家）、错误按 code 翻译、高级详情折叠
-    （entry 候选/静态 stems/reason 码——内部术语只住在这里）。
-  * safe 首次说明（隔离写入 + 点击才运行；localStorage 关闭）；失败恢复
-    块：解释可能依赖原环境 + 「选择渲染环境」（设置 about 段）+
-    「复制诊断」+ traceback 折叠；**无任何可点的 native 假按钮**。
-  * 多 Figure：结果 Dialog（focus trap）逐张列出 + 各自添加 +
-    dropped_figures 如实显示。
-- [x] **数据层**：`scriptLibraryStore`（/api/registry 视图缓存）、
-  `runtimeAssetStore.assets/loadAssets/previewNonce/bumpPreview`；
-  `useServerEvents`：probe.started → markRunning、registry.changed →
-  重取**已经取过的**两份清单；projectStore 切项目清 scriptRunStore
-  （epoch）+ scriptLibraryStore。
-- [x] **runtime 面板写回区**（PanelSection.RuntimeSourceArea）：不是藏
-  按钮——显示原因（「这张图来自脚本运行，没有对应的原始图文件。你仍然
-  可以编辑、组图和导出；导出会创建新文件。」）+ 来源脚本 + 重新运行；
-  文件面板的写回按钮与历史照旧。「写回成功」在 runtime 路径上结构性
-  不可能出现（后端 400 硬拒绝未动）。
-- [x] **i18n**：全部新文案 zh-CN/en-US（workspace 的 assets.*/scripts.*、
-  errors 的 probe_in_progress）；复数按语言分形态；`pnpm i18n:check` 绿；
-  英文主路径无中文（vitest 看护）。
-- [x] **测试**：后端 `tests/test_asset_library.py` 7 项（cancel
-  sentinel、取消先于执行零 spawn、被杀错误不误报、并发 409、清单零执行、
-  不双列、probe→清单带描述符）；前端 vitest +27（scriptRunStore 12、
-  ScriptLibrary 8、AssetBrowser.runtime 3、runtimeSourceSection 2 +
-  既有全绿）；e2e `asset-library.spec.ts` 2 条（show-only 真实后端
-  黄金路径：脚本区→运行→runtime 卡→画布→图内编辑→改字号/线宽→
-  undo/redo；窄视口按钮可见）。六条负向反证完成（见下）。
+- [x] **`tavotto open script.py` 自动 safe probe**
+  （`handoff.resolve_script_route`）：显式给出 `.py` = 运行意图（总纲原则
+  5）。顺序：静态发现/注册表的每张图都已有路由（磁盘原件或 runtime
+  cache）→ 复用零执行；否则 probe——本机实例在 `--port` 上跑就**委托**
+  （`POST /api/registry/probe`，同一个 `_PROBES` 并发闸，409 →
+  `probe_in_progress`），否则本进程 `probe_and_register` + 物化 cache
+  （只复制热 worker 的预览 SVG，绝不二次执行），返回前 `pool.invalidate`
+  关净 worker（不留 orphan）。交接目标进程读注册表 + cache，零重跑。
+- [x] **CLI 参数**：`--no-probe`（关掉探测）、`--stem <名字>`（多图显式
+  选，只对 `.py` 有效）；`--json` 单行 UTF-8、成功失败都机器可读、
+  stdout/stderr 纪律与既有 open/doctor 一致。稳定错误码（全表在
+  `docs/handoff-protocol.md`）：`script_no_figure` / `script_probe_failed` /
+  `multiple_figures_found`（`--no-launch` 的机器调用必须显式选；extra 带
+  `figures`）/ `invalid_stem`（extra 带 `stems`）/ `runtime_asset_failed` /
+  `native_run_required`（missing_dependency 的映射，extra 带 `module` +
+  原始 `probe_code`）/ `probe_in_progress`（retryable）；其余 probe 码
+  原样透传。成功 payload 带 `probe{performed,via,entry,dropped_figures}` /
+  `figures[{stem,asset_id,artifact,cached}]` / `pick`。
+- [x] **单/多 Figure 交接**：单图直达 stem（frontend `applyOpenRequest`
+  找不到磁盘面板时按 stem 查 runtime 清单，有描述符 `addRuntimePanel`，
+  没有描述符如实引导不造假面板）。多图**不静默选第一张**：桌面契约扩展
+  `--open <目录> [--stem <s> | --pick-script <脚本>]`（`desktop_argv` ↔
+  `parse_open_args` 双侧单测同步；macOS `open -na … --args` 复用
+  desktop_argv 切片不再手拼），浏览器 `?pick=`、browser-new `--open-pick`，
+  三条路汇进前端 `FigurePickerDialog`（每张可见、各自可加、磁盘图走
+  addPanel、runtime 走描述符、没预览的不渲染假按钮）。
+- [x] **CompatBench 产品路由**：manifest case 可声明 `product_routes`
+  （闭集 desktop_project / cli_open / safe_probe / browser_playground /
+  native_run；`native_run=true` 被 schema 拒绝——第一阶段只许
+  not_implemented，不伪装 pass）。runner 走真实产品面：safe_probe =
+  `POST /api/registry/probe`；desktop_project = `GET /api/registry` +
+  `GET /api/runtime/assets`（条目带物化描述符，零执行）；cli_open = 真
+  spawn `python -m tavotto open --json --no-launch --port 0`（多图脚本验
+  完整契约：裸调必须 `multiple_figures_found` 显式拒绝 + `--stem` 选中；
+  「多图」判据是 expected_figures，不是组内 case 数）。声明为 true 的路由
+  失败 = product_bug（stage `route:<名>`，报告带 code/reason/follow_up）。
+  guard `tests/test_compat_product_routes.py`：改回内部 probe 当场红
+  （app 端点必物化 cache、CLI 输出必带 protocol 字段）。
+- [x] **16 条「入口不可达」case 升级 full_support**（show-only 家族 12 条
+  + 静态发现缺口家族 4 条；art_contour/contourf 的 partial 是 artist
+  识别问题，不动）。基线在 **target bundled**（3.13 venv + mpl 3.11.1 全
+  钉版）上重生成并逐条读过 diff：恰好这 16 条 partial→full，其余零变化，
+  `generated_for` 指纹不变。全量：full 134 / partial 2 / by_design 7 /
+  env 6 / **product_bug 0**；路由 16/16 全通。
+  `test_compat_manifest.py` 的结构性守卫同步升级：no-savefig case 只有
+  声明并验证三条产品路由才许 full_support（新 case 不许搭便车）。
+- [x] **完整 E2E**（`web/e2e/asset-library.spec.ts`，共 4 条全绿）：
+  * 黄金路径 + 窄视口（Session 5 原有 2 条）；
+  * **完整链**：show-only 项目 → 素材库运行发现 → 加画布 → 编辑标题字号
+    + 曲线线宽 → undo/redo → 磁盘自动保存（读 autosave JSON 验 override
+    落盘）→ **关闭 App** → 重开（同数据目录；localStorage 恢复索引经
+    addInitScript 带过去，等价真实浏览器重启）→ lazy rehydrate（cache
+    占位零执行）→ 进入编辑重放（字号 12 恢复）→ 出版预检（导出对话框）
+    → `/api/export` PDF+PNG（同一次合成；runtime 面板由当次 live worker
+    按 override 渲染）；
+  * **多 Figure**：真实 probe 两张 → `?pick=` 选择器两张全可见 → 选第二
+    张 → autosave 里面板 fileId = 第二张的 asset id（stem/id 不串）。
+  * **CLI E2E**（pytest `tests/test_open_script_route.py`，真 worker）：
+    open_target 本地 probe 一次 → 项目目录零写入（safe 隔离）→ CLI 池
+    清零（无 orphan）→ Flask app 打开项目列清单/取预览全程只读、cache
+    mtime 不变（execution-count 纪律，反证 #6 的看护）。
+- [x] **测试**：后端新增 `tests/test_open_script_route.py` 23 项（fake
+  probe 单元 + 契约 + 真执行）、`tests/test_compat_product_routes.py` 2 项
+  guard；`tests/test_handoff.py` / `test_desktop_launch.py` 原样全绿；
+  src-tauri `cargo test` 14 项（含 `--pick-script` 契约 3 项新增）；前端
+  vitest 88 文件 957 项（openRequest +5、FigurePickerDialog +3）；
+  `pnpm build` / `pnpm i18n:check` 绿；全量 pytest 绿；smoke_app 绿。
 - [x] 两个受管产物重建且 `--check` 一致：canvas.html 指纹
-  `9ad3e162ab2476e9`、playground 指纹 `5a5adb8f6abf942f`。
+  `dad5cb6bc0df93a5`、playground 指纹 `95afb3e65de4ebe6`。
   PR 1 合并后 re-sync 网站仓库。
+- [x] 文档：`docs/handoff-protocol.md`（safe probe 小节 + 新码表）、
+  `docs/adr/0005` 增补（契约扩展）、`docs/ci/matplotlib-compatibility.md`
+  §6b（产品路由）、`src/tavotto/AGENTS.md` / `web/AGENTS.md`、
+  codex-plugin `references/desktop-handoff.md`（新码的分诊话术）。
+  ADR 0013 仍 Accepted、0014 仍 Proposed（native 属 PR 2）。
 
-## 未完成
+## 未完成 / 待用户拍板
 
-- [ ]（无——本轮范围内全部完成）
+- [ ] **真机最终产物证据（§六）**：Windows WebView2 与 macOS WKWebView
+  最终候选产物的安装→运行发现→编辑→保存重开→导出证据**本机无法产出**
+  （需要构建签名候选产物 + 真机/实验室 runner）。PR 1 合并前按 prompt
+  要求补齐——建议走 lab runner（见下「下一步」）。
+- [ ] PR 1 push → PR → merge（五支 stacked 分支合成一个 PR；merge 后
+  re-sync 网站 playground、更新本文件的 merge SHA）。
 
 ## 本轮关键决策
 
-### 决策 1：取消 = 后端硬杀，UI 只等原请求落地
+### 决策 1：probe 委托优先，本地兜底
 
-- 同步阻塞的 probe 里「取消」必须真正终止（反证 #3）：cancel 端点置
-  Event + `pool.force_cancel`（直接 `proc.kill()`——invalidate 的优雅
-  关停要抢被 build 占着的锁，等到超时的取消不叫取消）。阻塞中的请求
-  拿到 EOF → probe 判取消 → `execution_cancelled`。前端绝不先行改状态
-  ——「界面装停了、脚本还在跑」是撒谎；cancelRequested 只是按钮态。
-- 取消输给成功：脚本在取消前跑完就照常登记（已发生的执行不装作没发生）。
-  SSE 化（进度流）留给 Session 6+，本轮码表已经就绪可复用。
+- 实例在跑（浏览器模式端口可达）→ 试运行**委托给它**：同一个 `_PROBES`
+  并发闸真实生效（素材库与 CLI 并发同脚本 = 409）、热会话与 cache 留在
+  实例手里、交接零重跑。桌面 sidecar 绑动态端口够不着——那时本地 probe，
+  注册表 + materialized cache 落盘即共享状态（「复用同一登记表」）。
+- 老版本实例的响应形状不归我们管：`_probe_error` 对非 dict error 防御性
+  包装（实测本机 5089 上挂着一个 magplot 时代实例，错误是一句字符串）。
 
-### 决策 2：starting_runtime → running 由 SSE probe.started 驱动
+### 决策 2：多 Figure 的选择信息走契约扩展（`--pick-script` / `?pick=`）
 
-- 同步请求本身分不出「在启动」与「在执行」；后端在真正开始执行前发
-  `probe.started`（带 pj + script）。SSE 丢了也无害（停在 starting 文案，
-  结果照常落地）。这是加事件不是加协议：worker/browser 协议零改动。
+- stem 与 pick 在 Target 上互斥；壳只透传不选择，Figure 选择器唯一实现
+  在前端（`FigurePickerDialog`，条目从 assetStore + runtimeAssetStore
+  现算——快照存 store 会陈旧）。`--no-launch` 没有界面接选择器，机器
+  调用必须 `--stem`，否则 `multiple_figures_found` + figures 列表。
+- macOS `open -na … --args` 之后的 argv 改为**复用 `desktop_argv()[1:]`**
+  ——同一契约两处手拼迟早漂移。
 
-### 决策 3：runtime 素材清单 = 注册表减磁盘原件，注册表仍是唯一权威
+### 决策 3：产品路由失败与引擎阶段失败同罪
 
-- 「图」区的 RuntimeFigureAsset 条目来自 `list_assets`：注册表每对
-  (script, stem) 中 `find_original_artifact` 找不到原件的那些。cache 里
-  有、注册表里没有的**不列**（解析不到就渲染不了，列出来是幽灵——与
-  Session 4 决策 1 同一条权威链）。描述符只从物化 cache 取；没跑过的
-  条目没有尺寸没有描述符，「添加到画布」不开放——不给假值。
-- 已登记但从未产出原件的静态条目也会作为 runtime 素材出现
-  （needs_rerun）：这是语义正确的——它们的图只存在于运行时。
+- `product_routes` 声明 true 的路由失败直接 product_bug（stage
+  `route:<名>`）。「引擎全绿、用户够不着」正是 show-only 被记两个月
+  partial 的原因；路由失败不红，这套声明就只是装饰。
+- runner 绝不直接调 `engine_probe` 代表产品成功；guard 钉**只有产品面才
+  有的副作用**（cache 物化 / protocol 字段），改回内部调用当场红。
+- 升级 full_support 的门票就是路由声明 + 验证（`test_compat_manifest` 的
+  结构性守卫从「一律不许」升级成「验过才许」——守卫的精神保留，判据换
+  成新的现实）。
 
-### 决策 4：needs_native 是判据不是新相位
+### 决策 4：CompatBench 运行时数据隔离
 
-- prompt 状态机里的 needs_native 落地为两半：脚本侧
-  `scriptRunStore.needsNative()`（missing_dependency/timeout/failed →
-  「可能需要原环境」组 + 恢复文案）；素材侧 RuntimeStaleStatus 的
-  `missing_environment`。不新造第二套枚举。PR 2 落地后这两处升级为
-  实际 native 入口，本轮只有文案 + 「选择渲染环境」+「复制诊断」
-  （不渲染可点但无功能的按钮，vitest 断言看护）。
-
-### 决策 5：RegistryDialog 原样保留，素材库不复用它的组件
-
-- RegistryDialog 继续做冲突裁决 / 手工 stem / 高级诊断 / 批量重扫；
-  素材库脚本区是独立组件但**同一数据源与同一 probe 端点**（并发闸对
-  两个入口同时生效——同一脚本在对话框与素材库各点一次，后端 409）。
-  没有第二套 probe 语义。
+- bench 进程 `TAVOTTO_DATA_DIR`/`CONFIG_DIR` setdefault 进本轮 scratch：
+  产品路由会经真实端点物化 cache、写事件，benchmark 的临时项目不该在
+  用户数据目录留派生物。cli_open 一律 `--port 0`：机器上碰巧开着的
+  Tavotto 实例绝不能被 benchmark 委托执行。
 
 ## 架构与数据契约
 
 ### 新增/修改接口
 
 ```text
-engine/probe.py
-  probe(figures_dir, script, entries=None, should_cancel=None)
-  probe_and_register(..., should_cancel=None)
-engine/pool.py
-  force_cancel(script_name, figures_dir) -> bool   # 当场 kill
-engine/runtimeasset.py
-  _status_ladder(...)（stale_status / list_assets 共用）
-  list_assets(project_root, registry, worker_python=None) -> list[dict]
+engine/handoff.py
+  Target(project, stem, pick=None)            # pick 与 stem 互斥
+  resolve_script_route(project, script, *, stem_arg, no_probe, port, …)
+  _remote_probe / _local_probe / _probe_error / _script_figures
+  desktop_argv(): … [--stem s | --pick-script script]
+  browser_url(): ?open= | ?pick=
+  open_target(raw, *, stem=None, no_probe=False, …)
+  cli(): + --no-probe / --stem
+src/tavotto/app.py
+  main(): + --open-pick（browser-new 的 pick 通道，landing 复用 browser_url）
+src-tauri/src/main.rs
+  OpenRequest{project, stem, pick} + parse_open_args(--pick-script)
+  landing URL: ?pick=；tavotto:open 事件带 pick
 
-web/src/store/scriptRunStore.ts（新）  run/cancel/markRunning/reset/clear
-web/src/store/scriptLibraryStore.ts（新）  /api/registry 视图缓存
-web/src/store/runtimeAssetStore.ts  assets/loadAssets/previewNonce/bumpPreview
-web/src/components/left/ScriptLibrary.tsx（新）
-web/src/components/left/AssetBrowser.tsx  图/脚本两区 + RuntimeAssetCard
-web/src/components/inspector/PanelSection.tsx  RuntimeSourceArea
-web/src/lib/api.ts  cancelProbe / fetchRuntimeAssets / RuntimeAssetInfo
-                    / runtimePreviewUrl(id, nonce) / SSE probe.started
+web/src/lib/openRequest.ts   OpenRequest.pick；?pick= 读取；runtime 素材
+                             按 stem 兜底定位（loadAssets 只读）
+web/src/store/figurePickerStore.ts（新）
+web/src/components/FigurePickerDialog.tsx（新）
+web/src/lib/desktop.ts       DesktopOpenPayload.pick
+
+scripts/ci/compat_corpus.py  PRODUCT_ROUTES / ROUTE_EXPECTATIONS + 校验
+scripts/ci/compat_matrix.py  route_probe_via_app / route_desktop_project /
+                             route_cli_open / stage_product_routes；
+                             classify 吃路由失败；报告 product_routes 节
 ```
 
-### API/协议形状
-
-```jsonc
-// POST /api/registry/probe —— 形状不变；新增并发闸：
-//   409 {code: "probe_in_progress", params: {script}}
-// POST /api/registry/probe/cancel  {script} → {cancelling: bool}（幂等）
-// GET  /api/runtime/assets → {assets: [{id, script, stem, entry, status,
-//   cached, size_mm|null, capture_source|null, descriptor|null}]}
-// SSE probe.started {pj, script}
-```
-
-worker/browser 协议**零改动**；文档 schema 零改动；注册表格式零改动。
-
-### 稳定错误码（本轮新增）
+### 稳定错误码（本轮新增，全表在 docs/handoff-protocol.md）
 
 ```text
-probe_in_progress   app（409；同一脚本已有 probe 在跑）
+script_no_figure / script_probe_failed / multiple_figures_found /
+invalid_stem / runtime_asset_failed / native_run_required /
+probe_in_progress（CLI 面；probe 其余码原样透传）
 ```
+
+worker/browser 协议**零改动**；文档 schema 零改动；注册表格式零改动；
+`/api/*` 只加了 `--open-pick` 启动参数，端点零新增。
 
 ## 修改文件
 
 | 文件 | 修改原因 | 是否有测试 |
 |---|---|---|
-| src/tavotto/engine/probe.py | should_cancel 协作取消 | test_asset_library |
-| src/tavotto/engine/pool.py | force_cancel | test_asset_library（sentinel） |
-| src/tavotto/engine/runtimeasset.py | list_assets + 阶梯共用 | test_asset_library + test_runtime_asset 原样绿 |
-| src/tavotto/app.py | _PROBES/取消端点/清单端点/probe.started | test_asset_library |
-| tests/test_error_codes.py | +probe_in_progress | — |
-| tests/test_asset_library.py（新） | Session 5 后端面 | 7 项 |
-| web/src/store/scriptRunStore.ts(+test)（新） | 运行状态机 | vitest 12 |
-| web/src/store/scriptLibraryStore.ts（新） | 脚本区数据源 | vitest（间接） |
-| web/src/store/runtimeAssetStore.ts | assets 清单 + previewNonce | 既有 5 项绿 + 间接 |
-| web/src/components/left/ScriptLibrary.tsx(+test)（新） | 脚本区 | vitest 8 |
-| web/src/components/left/AssetBrowser.tsx(+AssetBrowser.runtime.test) | 图/脚本两区 + runtime 卡 | vitest 3 + e2e |
-| web/src/components/inspector/PanelSection.tsx(+runtimeSourceSection.test) | runtime 写回区 | vitest 2 |
-| web/src/hooks/useServerEvents.ts | probe.started / registry.changed | 间接 |
-| web/src/store/projectStore.ts | 切项目清两个新 store | scriptRunStore epoch 测试 |
-| web/src/lib/api.ts | 新端点/类型/预览 nonce | 各消费测试 |
-| web/src/i18n/locales/*/{workspace,errors}.json + resources.d.ts | 双语文案 | i18n:check |
-| web/e2e/asset-library.spec.ts（新） | 普通入口黄金路径 | e2e 2 条 |
-| codex-plugin/mcp/widget/canvas.html | 受管产物 | --check |
-| src/tavotto/AGENTS.md / web/AGENTS.md | 规则记录 | 文档 |
-| docs/compatibility/COMPATIBILITY_BRIDGE_HANDOFF.md | 本文件 | — |
+| src/tavotto/engine/handoff.py | 脚本路由 + pick 契约 + probe 委托 | test_open_script_route 23 项 + test_handoff 原样绿 |
+| src/tavotto/app.py | --open-pick | smoke_app + landing 复用 browser_url |
+| src-tauri/src/main.rs | --pick-script 契约 + ?pick= | cargo test 14（+3） |
+| scripts/ci/compat_corpus.py | product_routes schema | load_manifest 全量校验 + test_compat_manifest |
+| scripts/ci/compat_matrix.py | 产品路由 runner + 分类 + 报告 + 数据隔离 | test_compat_product_routes + --all 全绿 |
+| tests/compat/manifest.json | 16 条声明路由并升级 full_support | schema 校验 + 守卫 |
+| tests/compat/baseline.json | bundled target 重生成（逐条读过） | 门禁 diff |
+| tests/test_compat_manifest.py | 守卫判据升级（验过路由才许 full） | 自身 |
+| tests/test_open_script_route.py（新） | Session 6 CLI 面 | 23 项 |
+| tests/test_compat_product_routes.py（新） | 反证 #2 的 guard | 2 项 |
+| web/src/lib/openRequest.ts(+test) | pick + runtime 兜底 | vitest +5 |
+| web/src/store/figurePickerStore.ts（新） | 选择器状态 | 经 Dialog 测试 |
+| web/src/components/FigurePickerDialog.tsx(+test)（新） | Figure 选择器 | vitest 3 |
+| web/src/App.tsx / lib/desktop.ts | pick 贯通 | 间接 |
+| web/src/i18n/locales/*/project.json | figurePicker/runtimeNeedsRun 双语 | i18n:check |
+| web/e2e/asset-library.spec.ts | 完整链 + 多 Figure e2e | e2e 4 条 |
+| web/e2e/fixtures.ts | freePort 导出 | — |
+| docs/handoff-protocol.md 等五份文档 | 契约与路由记录 | 文档 |
+| codex-plugin/…/desktop-handoff.md | 新码分诊话术 | 文档 |
 
 ## 实际运行的测试
 
 ```bash
-# worktree 内、PYTHONPATH=src、主仓 .venv 解释器（worktree 无 .venv）
-PYTHONPATH=src /Volumes/Projects/Tavotto/.venv/bin/python -m pytest \
-    tests/test_asset_library.py                       # 7 passed
-PYTHONPATH=src …/python -m pytest tests/test_runtime_asset.py \
-    tests/test_script_probe.py tests/test_error_codes.py   # 128 passed
-PYTHONPATH=src …/python -m pytest -q                  # 全量 exit 0
-    #（首轮红两条：canvas.html 指纹过期连锁 test_mcp_server 与
-    #  test_windows_regressions 的 --check——重建受管产物后全绿）
-PYTHONPATH=src /Volumes/Projects/Tavotto/.venv/bin/python \
-    scripts/ci/compat_matrix.py --smoke               # 通过（门禁 nightly）
-cd web && pnpm test        # 87 文件 950 项
+# worktree 内、PYTHONPATH=src、主仓 .venv 解释器
+PYTHONPATH=src …/python -m pytest tests/test_open_script_route.py \
+    tests/test_handoff.py tests/test_desktop_launch.py     # 91 passed
+PYTHONPATH=src …/python -m pytest tests/test_compat_product_routes.py  # 2 passed
+PYTHONPATH=src …/python -m pytest -q                       # 全量绿
+cd src-tauri && cargo test                                 # 14 passed（需 dist/Tavotto 占位目录）
+cd web && pnpm test                                        # 88 文件 957 项
 cd web && pnpm build && pnpm i18n:check
-python scripts/build_mcp_widget.py && … --check       # 9ad3e162ab2476e9
-python scripts/build_browser_playground.py && … --check  # 5a5adb8f6abf942f
-# e2e（先 python scripts/build_frontend.py；worktree 跑法：）
-cd web && TAVOTTO_PYTHON=/Volumes/Projects/Tavotto/.venv/bin/python \
-    PYTHONPATH=<worktree>/src pnpm playwright test e2e/asset-library.spec.ts
-    # 2 passed（show-only 黄金路径 + 窄视口）
+python scripts/build_mcp_widget.py && … --check            # dad5cb6bc0df93a5
+python scripts/build_browser_playground.py && … --check    # 95afb3e65de4ebe6
+python scripts/smoke_app.py --python .venv/bin/python      # 通过
+# CompatBench：bundled target 基线重生成（3.13 venv 按 runtime-lock 钉版）
+python scripts/ci/compat_matrix.py --all --update-baseline \
+    --target bundled --python <钉版 venv>/bin/python       # 134 full / 0 bug / 路由 16/16
+python scripts/ci/compat_matrix.py --smoke --gate pr       # 通过
+# e2e（先 python scripts/build_frontend.py；worktree 跑法同 Session 5）
+cd web && TAVOTTO_PYTHON=… PYTHONPATH=<worktree>/src \
+    pnpm playwright test e2e/asset-library.spec.ts         # 4 passed
+    pnpm playwright test e2e/playground.spec.ts e2e/mcp-canvas.spec.ts
 ```
 
-（坑复述：① 直接 `pnpm vitest run` 没有 package.json 里 test 脚本的
-`NODE_OPTIONS=--no-experimental-webstorage`，jsdom 的 localStorage 被
-node 内建遮蔽成 undefined——单跑文件要手动带上；② e2e 在 worktree 里
-必须 `PYTHONPATH=<worktree>/src`，否则 `python -m tavotto` 跑的是主仓
-editable install 的代码；③ 属性栏的 NumberField 可见标签是同级文本、
-不入 accessible name，e2e 取「线宽」输入框要用快速编辑工具条里那个。）
+（坑复述：① 本机 5089 上可能挂着旧实例——涉及 `_remote_probe` 的测试
+必须 monkeypatch 掉委托，CompatBench 的 cli_open 一律 `--port 0`；
+② e2e 里「关闭再重开」不要钉同一端口（TIME_WAIT 会让 resolve_port 换
+端口），恢复索引用 addInitScript 跨 origin 带过去；③ `#` 在 URL 查询里
+是 fragment，runtime asset id 进 URL 必须编码；④ 基线必须在 target
+bundled 的钉版环境上重生成——在 current 上重生成会把 seaborn 六条写成
+execute:false，属于环境倒退不是产品事实。）
 
 ## 负向反证（本轮六条，全部先红后还原）
 
 | # | 变异 | 判据测试 | 结果 |
 |---|---|---|---|
-| 1 | ScriptLibrary 只列 registered/static_candidate | `ScriptLibrary.test::所有合理脚本可见`（连锁多条红） | **红**（还原后绿） |
-| 2 | RuntimeAssetCard 加画布前要求 `descriptor.original_artifact` | `AssetBrowser.runtime.test::加入画布用描述符` | **红**（还原后绿） |
-| 3 | cancel 端点只回 200、不置标志不杀 worker | `test_asset_library::test_cancel_kills_the_running_probe`（30s sentinel） | **红**（还原后绿） |
-| 4 | scriptRunStore 只保留 descriptors[0] | `scriptRunStore.test::captured_many` + `ScriptLibrary.test::结果弹层` | **红**（还原后绿） |
-| 5 | SourceSection 当普通面板 + UpdateSourceButton 去掉 runtime guard | `runtimeSourceSection.test::写回入口不出现` | **红**（还原后绿） |
-| 6 | `stale()` 恒 false（作废检查拆除） | `scriptRunStore.test::切项目作废` + `::迟到响应` | **红**（还原后绿） |
+| 1 | resolve_script_route 不再自动 probe（探测分支钉 False） | `test_open_script_route`（14 条连锁红，含 CLI show-only E2E） | **红**（还原后绿） |
+| 2 | CompatBench safe_probe 路由改回内部 `probe_and_register` | `test_compat_product_routes::test_safe_probe_route…`（cache 未物化） | **红**（还原后绿） |
+| 3 | 多 Figure 静默选第一张（pick 分支改 stems[0]） | `test_open_script_route` 的 multi/picker 三条 | **红**（还原后绿） |
+| 4 | useEngineSync runtime 分支恒 false（重开只显示旧 cache 不重放） | vitest `useEngineSync.test.ts` runtime 门 2 条 | **红**（还原后绿） |
+| 5 | `_resolve_panel_source` runtime 分支改拿 cache 文件交差 | `test_runtime_asset::test_export_uses_the_live_worker_not_the_cache` | **红**（还原后绿） |
+| 6 | `GET /api/runtime/assets` 触发 build（交接重新执行脚本） | `test_open_script_route::…executes_once…` | 首轮**没红**——「池清零」被 close_project 洗掉；哨兵改成项目外执行计数文件后**红**（还原后绿）。检测洞已修进测试 |
 
 ## 真机/产品证据
 
-- OS：macOS（arm64，本机开发环境）。e2e 真实链路（真 Flask + 真
-  matplotlib worker + 真浏览器）：show-only 项目从素材库脚本区一路走到
-  图内编辑与 undo/redo，全程无 RegistryDialog。窄视口（960px）按钮在
-  可视区内。workerd 腿本机 skip（未 cargo build）：force_cancel 的
-  workerd 侧 `force_kill` 为同一调用面（代码级同构），未真机验证。
+- macOS（arm64，开发机）：e2e 真实链路 4 条（真 Flask + 真 matplotlib
+  worker + 真浏览器），含关闭重开与导出双格式。CLI 面真执行（pytest）。
+- **Windows WebView2 / macOS WKWebView 最终候选产物证据未产出**（本机
+  产不了签名候选产物；lab runner 待用户启动）。合并前必须补齐（§六）。
 
 ## 已知失败与限制
 
 | 问题 | Stage/Route | 严重度 | 是否本轮 | 后续 |
 |---|---|---|---|---|
-| `tavotto open script.py` 仍不自动 probe | product_entry × cli | 高 | 否 | Session 6 |
-| probe 仍同步阻塞：无进度百分比/分钟级脚本只有「正在运行」一句话 | product_entry × desktop | 中 | 部分缓解（可取消、双相位文案） | SSE 进度流另立条目（码表可复用） |
-| starting→running 依赖 SSE：事件丢失时停留在「正在启动」文案（结果不受影响） | product_entry × desktop | 低 | 是（记录在案） | 不修 |
-| MCP 内嵌画布无素材库/脚本区（widget 只打包画布） | product_entry × mcp | 低 | 是（记录在案） | Session 5+ 视需要 |
-| 「可能需要原环境」只有文案与复制诊断，无 native 入口 | product_entry | 按设计 | 是 | PR 2 升级为实际入口 |
-| runtime 卡片在「来源」筛选生效时整体隐藏（它们没有 folder） | asset_model | 低 | 是（记录在案） | 不修（清筛选即回） |
+| 真机最终产物证据缺失 | 全路由 × desktop | **合并阻断** | 是 | lab runner / 用户真机 |
+| 桌面 sidecar 动态端口 → CLI 探测委托够不着在跑的桌面实例（本地 probe 兜底，registry+cache 仍共享） | cli_open × desktop | 低（记录在案） | 是 | 不修（单实例转发语义不变） |
+| probe 仍同步阻塞（CLI 无进度输出，只等结果） | cli_open | 低 | 是 | SSE 进度流条目沿用 |
+| `browser_playground` 路由平时 not_run（只有 --browser 腿跑） | compatbench | 低（如实记账） | 是 | nightly browser 腿覆盖 |
+| runtime 卡片在「来源」筛选生效时整体隐藏 | asset_model | 低 | 否（S5 记录） | 不修 |
 
 ## 不得被下一 Session 破坏的约束
 
-- Session 2/3/4 的全部约束仍然有效（尤其：runtime id 不透明不反解、
-  打开项目/文档绝不执行脚本、cache 是派生物、writeback 拒绝在后端、
-  lazy 门、probe 物化不二次执行、受管产物重建）。
-- **取消语义是端到端的**：`/api/registry/probe/cancel` 必须继续
-  置标志 + `pool.force_cancel` 硬杀（sentinel 用例看护）；probe 判取消
-  后**不再试下一个 entry**；前端绝不先行把状态改成 cancelled。
-- **并发闸在后端**（`_PROBES` + 409 probe_in_progress）：前端的 busy
-  no-op 只是礼貌，任何新入口（Session 6 的 `tavotto open` 自动 probe）
-  同一脚本并发时都要吃这个 409 或复用同一登记表。
-- **`GET /api/runtime/assets` 只读零执行**（用例看护）；清单唯一实现
-  `runtimeasset.list_assets`，新消费点不得自己拼「注册表减原件」。
-- **`scriptRunStore` 的代际纪律**：run 换代 + clear 升 epoch 是
-  「迟到响应不落进新项目」的唯一闸门，改状态机必须保住那 12 条 vitest。
-- **不渲染可点但无功能的 native 入口**：PR 2 合并前，「按项目原方式
-  运行」只允许出现在文案里（vitest 断言看护）。
-- **素材库两区是普通路径的唯一入口**：RegistryDialog 保留但不得成为
-  show-only 用户的必经之路（e2e 黄金路径看护）。
+- Session 2–5 的全部约束仍然有效（runtime id 不透明、打开绝不执行、
+  cache 是派生物、writeback 拒绝在后端、lazy 门、取消端到端、`_PROBES`
+  并发闸、`GET /api/runtime/assets` 零执行、scriptRunStore 代际纪律、
+  不渲染假 native 入口、素材库两区是普通路径唯一入口）。
+- **`tavotto open script.py` 的执行次数纪律**：probe 一次；交接目标进程
+  零重跑；CLI 退出前池清零（execution-count 用例看护）。
+- **多 Figure 绝不静默选第一张**：CLI（multiple_figures_found /
+  --stem）、pick 契约、FigurePickerDialog 三层都有用例看护。
+- **契约同源对新增一对**：`desktop_argv()` ↔ `parse_open_args()` 现在含
+  `--pick-script`；macOS open -na 复用 desktop_argv 切片——别再手拼。
+- **CompatBench 产品路由不得旁路**：safe_probe/desktop_project 走真实
+  端点、cli_open 真 spawn + `--port 0`；no-savefig case 升 full_support
+  的门票是三条路由声明 + 验证（结构性守卫看护）。
+- **基线只在 target bundled 的钉版环境上重生成**，并逐条读 diff。
 
 ## 下一 Session 唯一目标
 
-> 让 `tavotto open script.py` 在静态发现失败时自动 safe probe，完成
-> 单/多 Figure 打开；扩展 CompatBench 产品路由与完整保存/重开/export
-> E2E，并收口 PR 1。
+> 只设计 native execution 契约与安全边界，写 ADR（0014 定稿）和
+> contract tests，**不直接实现全部 `tavotto run`**。
 
 ## 下一 Session 首先阅读
 
 ```text
-AGENTS.md / CLAUDE.md（src/tavotto/AGENTS.md 的 probe 取消一节 +
-  web/AGENTS.md 的素材库普通入口一节）
+AGENTS.md / CLAUDE.md（src/tavotto/AGENTS.md 的「tavotto open 自动 safe
+  probe」一节 + 外部交接一节）
 docs/compatibility/COMPATIBILITY_BRIDGE_MASTER_PLAN.md
 docs/compatibility/COMPATIBILITY_BRIDGE_HANDOFF.md（本文件）
-src/tavotto/engine/handoff.py + engine/cli.py（tavotto open 的现路径）
-src/tavotto/engine/probe.py（probe_and_register + should_cancel）
-scripts/ci/compat_matrix.py（产品路由的登记方式；smoke 当前
-  24 cases：21 full / 3 partial）
-web/e2e/asset-library.spec.ts（保存/重开/export E2E 的扩展基座）
+docs/adr/0014-safe-native-execution-profiles.md（Proposed 草案，本轮定稿）
+docs/handoff-protocol.md（native_run_required 的对外承诺口径）
+src/tavotto/engine/execspec.py（profile 字段已预留 safe|native）
+scripts/ci/compat_matrix.py（native_run 路由从 not_implemented 升级的位置）
 ```
 
-注意：`tavotto open` 的自动 probe 是「用户执行了命令」——它就是显式
-动作（总纲原则 5 允许），但要与素材库同用 `_PROBES` 并发闸；CompatBench
-的 product route 至少要把 `safe_probe` 与 `desktop_project` 走真实端点
-（不许绕过 UI 层已有语义再造第二套）。收口 PR 1 时记得：五支 stacked
-分支合并、`docs/adr/0014` 仍是 Proposed（native 属 PR 2）、网站仓库
-re-sync playground。
+注意：PR 1 合并后先更新本文件（merge SHA、已升级 CompatBench cases、
+真实用户待复测清单）再开 Session 7；`native_run_required` 已是对外错误
+码，ADR 0014 的契约必须与它的文案承诺一致（「按项目原方式运行」）。
 
 ## 建议启动命令
 
 ```bash
 git status --short && git log -8 --oneline
 PYTHONPATH=src /Volumes/Projects/Tavotto/.venv/bin/python -m pytest -q \
-    tests/test_asset_library.py tests/test_script_probe.py tests/test_runtime_asset.py
+    tests/test_open_script_route.py tests/test_compat_product_routes.py
 /Volumes/Projects/Tavotto/.venv/bin/python scripts/ci/compat_matrix.py --smoke
 ```

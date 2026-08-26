@@ -17,14 +17,16 @@
  *  3. **找不到就说找不到**：绝不退而求其次选中别的面板——用户要的是那一张。
  */
 import { msg } from '@/i18n'
-import { addPanel } from '@/store/actions'
+import { addPanel, addRuntimePanel } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
+import { useFigurePickerStore } from '@/store/figurePickerStore'
 import { useProjectStore } from '@/store/projectStore'
+import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { backendErrorText } from '@/lib/api'
-import type { PanelInfo } from '@/lib/api'
+import type { PanelInfo, RuntimeAssetInfo } from '@/lib/api'
 
 export interface OpenRequest {
   /** 图库目录绝对路径；桌面事件才有，URL 形态下项目由后端认领 */
@@ -32,14 +34,19 @@ export interface OpenRequest {
   /** 产物文件名主干（Fig1_kinetics）——注册表与引擎认的就是它。
    *  可以没有：`tavotto open <目录>` 是「把这个图库打开」，不指定面板。 */
   stem?: string | null
+  /** 多 Figure 交接：脚本的项目相对路径（`tavotto open` 的 `?pick=` /
+   *  `--pick-script`）。不静默选第一张——打开 Figure 选择器让用户挑。 */
+  pick?: string | null
 }
 
 export type OpenOutcome =
-  | 'placed'        // 面板已加入画布并选中
-  | 'selected'      // 画布上本来就有，只是选中
-  | 'project-only'  // 只交接了项目，没指定面板
-  | 'missing'       // 项目里找不到这个 stem
-  | 'no-project'    // 没有项目可落
+  | 'placed'           // 面板已加入画布并选中
+  | 'selected'         // 画布上本来就有，只是选中
+  | 'picker'           // 多 Figure：已打开 Figure 选择器
+  | 'runtime-uncached' // 运行时图已登记但还没有预览，引导去素材库运行
+  | 'project-only'     // 只交接了项目，没指定面板
+  | 'missing'          // 项目里找不到这个 stem
+  | 'no-project'       // 没有项目可落
   | 'failed'
 
 /** 素材 id 是图库相对路径（可能带子目录）；stem = 去目录去扩展名。 */
@@ -65,21 +72,36 @@ const norm = (p: string) => p.replace(/[/\\]+$/, '')
  */
 export function readOpenRequestFromUrl(): OpenRequest | null {
   try {
-    const stem = new URLSearchParams(window.location.search).get('open')
-    if (!stem) return null
+    const params = new URLSearchParams(window.location.search)
+    const stem = params.get('open')
+    const pick = params.get('pick')
+    if (!stem && !pick) return null
     const url = new URL(window.location.href)
     url.searchParams.delete('open')
+    url.searchParams.delete('pick')
     window.history.replaceState(null, '', url.pathname + url.search + url.hash)
-    return { stem }
+    // stem 定得下来一张就不需要选择器（后端生产侧本来就互斥，这里同语义）
+    return stem ? { stem } : { pick }
   } catch {
     return null
   }
 }
 
+/** 画布上已有这个 fileId 的面板就只选中它（重复交接不叠面板）。 */
+function selectExisting(fileId: string): boolean {
+  const existing = useDocumentStore
+    .getState()
+    .doc.objects.find((o) => o.type === 'panel' && o.fileId === fileId)
+  if (!existing) return false
+  useSelectionStore.getState().set([existing.id])
+  return true
+}
+
 /** 执行一次交接。返回值给测试与调用方看，用户看到的是选中的面板或一条 toast。 */
 export async function applyOpenRequest(req: OpenRequest): Promise<OpenOutcome> {
   const stem = (req.stem ?? '').trim()
-  if (!stem && !req.project) return 'failed'
+  const pick = (req.pick ?? '').trim()
+  if (!stem && !pick && !req.project) return 'failed'
   const ui = useUiStore.getState()
 
   try {
@@ -102,6 +124,14 @@ export async function applyOpenRequest(req: OpenRequest): Promise<OpenOutcome> {
     return 'failed'
   }
 
+  // 多 Figure（`tavotto open script.py` 产出不止一张）：打开 Figure 选择器，
+  // **绝不静默选第一张**——选择信息（脚本）由 CLI 带进来，挑哪张归用户。
+  if (pick) {
+    await useRuntimeAssetStore.getState().loadAssets()
+    useFigurePickerStore.getState().open(pick)
+    return 'picker'
+  }
+
   // `tavotto open <目录>`：只把图库换过来，不指定面板
   if (!stem) {
     ui.setStatus(
@@ -112,17 +142,36 @@ export async function applyOpenRequest(req: OpenRequest): Promise<OpenOutcome> {
 
   const info = findByStem(useAssetStore.getState().panels, stem)
   if (!info) {
-    ui.setStatus(msg('handoff.panelMissing', { stem }, 'project'), 'error')
-    return 'missing'
+    // 磁盘上没有这张图 ≠ 没有这张图：`tavotto open script.py` 探测出的
+    // show-only Figure 是 RuntimeFigureAsset（没有原件），按 stem 在
+    // runtime 清单里找（只读端点，不触发执行）。
+    const rt = useRuntimeAssetStore.getState()
+    await rt.loadAssets()
+    const asset: RuntimeAssetInfo | undefined = (rt.assets ?? []).find(
+      (a) => a.stem === stem,
+    )
+    if (!asset) {
+      ui.setStatus(msg('handoff.panelMissing', { stem }, 'project'), 'error')
+      return 'missing'
+    }
+    if (selectExisting(asset.id)) {
+      ui.setStatus(msg('handoff.located', { name: asset.stem }, 'project'))
+      return 'selected'
+    }
+    if (!asset.descriptor) {
+      // 已登记但从没跑出过预览（cache 物化失败/被清理）：不造假值，
+      // 引导去素材库跑一次
+      ui.setStatus(msg('handoff.runtimeNeedsRun', { stem }, 'project'), 'error')
+      return 'runtime-uncached'
+    }
+    addRuntimePanel(asset.descriptor)
+    ui.setStatus(msg('handoff.added', { name: asset.stem }, 'project'))
+    return 'placed'
   }
 
   // 画布上已经有这张图了就只选中它，不再叠一份（重复交接同一张是常态：
   // 用户在 Codex 里改一版就交一次，每次都新增会堆出一摞同名面板）
-  const existing = useDocumentStore
-    .getState()
-    .doc.objects.find((o) => o.type === 'panel' && o.fileId === info.id)
-  if (existing) {
-    useSelectionStore.getState().set([existing.id])
+  if (selectExisting(info.id)) {
     ui.setStatus(msg('handoff.located', { name: info.name }, 'project'))
     return 'selected'
   }

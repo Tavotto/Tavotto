@@ -54,6 +54,14 @@ Windows 注册表），换来的能力与「直接 exec 桌面二进制」完全
 
 浏览器模式与桌面首启共用 `?open=`，所以**只有一份定位逻辑**。
 
+> **2026-08-26 增补（Compatibility Bridge PR 1）**：契约扩展为
+> `--open <目录> [--stem <stem> | --pick-script <脚本>]`。`--pick-script`
+> 是多 Figure 交接的选择信息（脚本项目相对路径，与 `--stem` 互斥）：
+> `tavotto open script.py` 的 safe probe 捕获到多张图时**不静默选第一张**，
+> 壳把它透传成落地 URL 的 `?pick=` / `tavotto:open` 事件的 `pick`，
+> Figure 选择器在前端（`FigurePickerDialog`）。`.py` 目标的自动 safe
+> probe 行为见 `docs/handoff-protocol.md` 的对应小节。
+
 macOS 上刻意**直接 exec 包内二进制**而不是 `open -a Tavotto --args`：App 已经在跑时
 `open -a` 的 `--args` 根本不会送达，交接会静默失败。
 

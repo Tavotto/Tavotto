@@ -199,9 +199,18 @@ previewStyle`（只改 DOM）→ `pointerup → setOverride(…) + commitElement
   绝不解析 id、绝不指望磁盘路径。运行时图的写回区
   （`PanelSection.RuntimeSourceArea`）**显示原因**（没有原始图文件，
   导出会创建新文件）而不是无声隐藏；按钮缺席只是礼貌，硬拒绝在后端。
+- **交接定位认 runtime 素材（Session 6）**：`applyOpenRequest` 找不到磁盘
+  面板时按 stem 查 `GET /api/runtime/assets`（只读），有描述符就
+  `addRuntimePanel`；没有描述符**不造假面板**，引导去脚本区运行。多
+  Figure 交接（`?pick=<脚本>` / `tavotto:open` 事件的 `pick`）打开
+  `FigurePickerDialog`——每张可见、各自可加、**绝不静默选第一张**；条目
+  从 assetStore + runtimeAssetStore 现算（磁盘图走 addPanel、runtime 走
+  描述符），没跑出预览的条目不渲染假按钮。看护
+  `openRequest.test.ts` / `FigurePickerDialog.test.tsx`。
 - 看护：`scriptRunStore.test.ts` / `ScriptLibrary.test.tsx` /
   `AssetBrowser.runtime.test.tsx` / `runtimeSourceSection.test.tsx` +
-  `e2e/asset-library.spec.ts`（show-only 项目真实后端黄金路径 + 窄视口）。
+  `e2e/asset-library.spec.ts`（show-only 项目真实后端黄金路径 + 窄视口 +
+  保存/关闭/重开/重放/预检/导出完整链 + 多 Figure 选择器）。
 
 ## 桌面感知与更新
 

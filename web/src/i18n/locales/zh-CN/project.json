@@ -13,13 +13,23 @@
     "titleCreate": "新建项目",
     "titleOpen": "打开项目目录"
   },
+  "figurePicker": {
+    "addToCanvas": "添加到画布",
+    "description_other": "这个脚本产出 {{count}} 张图，选择要打开的那张",
+    "empty": "这个脚本还没有登记任何图。到素材库的「脚本」区运行它试试。",
+    "listAria": "这个脚本产出的图",
+    "needsRun": "先运行发现",
+    "runtimeBadge": "运行时图",
+    "title": "选择一张图——{{script}}"
+  },
   "handoff": {
     "added": "已加入 {{name}}",
     "located": "已定位到 {{name}}",
     "noProject": "还没有打开的项目，无法定位面板",
     "openFailed": "打不开项目：{{error}}",
     "panelMissing": "没找到面板 {{stem}}——脚本可能还没跑出产物，或它在别的图库里",
-    "projectOpened": "已打开项目 {{name}}"
+    "projectOpened": "已打开项目 {{name}}",
+    "runtimeNeedsRun": "{{stem}} 已登记为运行时图，但还没有预览——到素材库的「脚本」区运行一次即可"
   },
   "picker": {
     "backToCurrent": "返回当前项目",

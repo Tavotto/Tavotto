@@ -85,10 +85,17 @@ class HandoffError(RuntimeError):
 
 
 class Target(NamedTuple):
-    """交接目标：项目目录 + 要定位的 stem（目录级交接时 stem 为 None）。"""
+    """交接目标：项目目录 + 要定位的 stem（目录级交接时 stem 为 None）。
+
+    `pick` 是多 Figure 交接的选择信息（脚本的项目相对路径）：一个脚本产出
+    多张图、调用方又没有 `--stem` 显式指定时，**绝不静默选第一张**——把
+    「选哪张」交给界面的 Figure 选择器（前端 lib/openRequest.ts 消费）。
+    stem 与 pick 互斥：定得下来一张就不需要选择器。
+    """
 
     project: str
     stem: str | None
+    pick: str | None = None
 
 
 # --------------------------- 1. 解析目标 ---------------------------------
@@ -238,6 +245,245 @@ def ensure_registered(project: str, stem: str | None) -> dict:
     return info
 
 
+# ------------------- 2b. 脚本目标：safe probe 产品路由 --------------------
+# `tavotto open script.py` 是用户的显式运行意图（总纲原则 5）：静态发现
+# 解不出图时，安全地把脚本试运行一遍（safe 档：沙盒 cwd、savefig 吞掉捕获、
+# 相对路径只读回退），把捕获的 Figure 登记成 RuntimeFigureAsset 再交接。
+# `--no-probe` 关掉这一步；`--stem` 在多图时显式选一张。
+
+#: 试运行委托给已运行实例时的 HTTP 超时（秒）。脚本冷启动分钟级，
+#: 宁可等也不半途而废——取消语义归界面（那边有取消按钮），CLI 只等结果。
+PROBE_HTTP_TIMEOUT = 1800.0
+
+#: probe 稳定错误码 → 交接稳定错误码。缺依赖归 `native_run_required`：
+#: safe 档修不了「项目要它自己的环境」，出口是换渲染环境或（PR 2 的）
+#: native 运行——code 直接说出口，调用方不用再去翻 params。其余 code
+#: 原样透传（probe.ERROR_* 本来就是稳定契约）。
+_PROBE_CODE_MAP = {"missing_dependency": "native_run_required"}
+
+
+def _http_json_status(url: str, payload: dict | None = None,
+                      timeout: float = 10.0) -> tuple[int | None, dict | None]:
+    """同 `_http_json`，但把 HTTP 状态码与**错误响应体**也交出来。
+
+    probe 端点的 409（probe_in_progress）与 4xx 带着稳定 code——
+    `_http_json` 会把它们吞成 None，调用方就只能瞎猜。连不上回 (None, None)。
+    """
+    headers: dict = {"Content-Type": "application/json"} if payload is not None else {}
+    try:
+        port = urllib.parse.urlsplit(url).port
+        if port:
+            headers.update(session_client.auth_headers(port))
+    except ValueError:
+        pass
+    data = None if payload is None else json.dumps(payload).encode()
+    req = urllib.request.Request(url, data=data, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status, json.loads(resp.read().decode("utf-8", "replace"))
+    except urllib.error.HTTPError as exc:
+        try:
+            return exc.code, json.loads(exc.read().decode("utf-8", "replace"))
+        except (OSError, ValueError):
+            return exc.code, None
+    except (urllib.error.URLError, OSError, ValueError):
+        return None, None
+
+
+def _script_figures(project: str, script: str) -> list[dict]:
+    """脚本当前登记的每张图 → 交接视角的路由描述。
+
+    每条：{stem, artifact, asset_id, cached}。`artifact` 是磁盘原件
+    （FileAsset 路由）；没有原件的是 RuntimeFigureAsset——`cached` 表示
+    materialized cache 就绪（交接过去能直接显示与加画布，零执行）。
+    判据各自只有一份权威：`figcapture.find_original_artifact` /
+    `runtimeasset.load_metadata`。
+    """
+    from . import runtimeasset as engine_runtimeasset
+    try:
+        reg = engine_registry.open_registry(project)
+    except (FileNotFoundError, RuntimeError):
+        return []
+    info = reg.entries().get(script)
+    if not info:
+        return []
+    out: list[dict] = []
+    for stem in info.get("stems", ()):
+        artifact = engine_figcapture.find_original_artifact(project, stem)
+        row = {"stem": stem, "artifact": artifact, "asset_id": None,
+               "cached": False}
+        if artifact is None:
+            try:
+                asset_id = engine_figcapture.runtime_asset_id(script, stem)
+            except ValueError:
+                continue              # 注册表坏条目不该炸掉整次交接
+            row["asset_id"] = asset_id
+            row["cached"] = engine_runtimeasset.load_metadata(
+                project, asset_id) is not None
+        out.append(row)
+    return out
+
+
+def _probe_error(err) -> HandoffError:
+    """probe 的结构化错误 → 稳定 code 的 HandoffError（映射见 _PROBE_CODE_MAP）。
+
+    委托给已运行实例时响应形状不归我们管（老版本的 error 是一句字符串）：
+    不是 dict 的一律按 script_probe_failed 包起来，绝不让交接自己炸掉。
+    """
+    if not isinstance(err, dict):
+        err = {"code": "script_probe_failed", "message": str(err)}
+    code = str(err.get("code") or "script_probe_failed")
+    mapped = _PROBE_CODE_MAP.get(code, code)
+    extra: dict = {}
+    if mapped != code:
+        extra["probe_code"] = code
+    params = err.get("params") or {}
+    if params.get("module"):
+        extra["module"] = params["module"]
+    tb = err.get("traceback")
+    if tb:
+        extra["traceback"] = str(tb)[-2000:]
+    message = str(err.get("message") or "试运行失败")
+    if mapped == "native_run_required":
+        message += ("；这个项目可能依赖它自己的 Python 环境。"
+                    "先在 Tavotto 设置里选择一个装了所需依赖的渲染环境，"
+                    "或等待后续版本按项目原方式运行")
+    return HandoffError(message, mapped, **extra)
+
+
+def _remote_probe(port: int, project: str, script: str, *,
+                  http_status=None) -> dict | None:
+    """本机已有实例在跑时，把试运行**委托给它**。没有实例回 None。
+
+    委托的意义：同一个 `_PROBES` 并发闸（同脚本并发吃 409）、同一次执行、
+    热会话与 materialized cache 都留在那个实例手里——随后的交接零重跑。
+    """
+    http_status = _http_json_status if http_status is None else http_status
+    st, _ = http_status(f"http://127.0.0.1:{port}/api/version", timeout=0.6)
+    if st is None:
+        return None
+    st, opened = http_status(f"http://127.0.0.1:{port}/api/projects/open",
+                             {"path": project}, timeout=10.0)
+    pj = (opened or {}).get("id")
+    if st != 200 or not pj:
+        raise HandoffError(
+            f"已在运行的 Tavotto 打不开这个项目: "
+            f"{(opened or {}).get('error') or f'HTTP {st}'}",
+            "remote_open_failed")
+    st, resp = http_status(
+        f"http://127.0.0.1:{port}/api/registry/probe?pj={quote(pj, safe='')}",
+        {"script": script}, timeout=PROBE_HTTP_TIMEOUT)
+    if st == 409 and (resp or {}).get("code") == "probe_in_progress":
+        # 素材库/另一个调用方已经在跑同一个脚本：如实报，别再起第二次执行
+        raise HandoffError(f"该脚本已有一次试运行在进行中: {script}",
+                           "probe_in_progress", retryable=True)
+    if resp is None or st != 200:
+        raise _probe_error(resp if resp and resp.get("code") else
+                           {"code": "script_probe_failed",
+                            "message": (resp or {}).get("error")
+                            or f"试运行请求失败（HTTP {st}）"})
+    return resp
+
+
+def _local_probe(project: str, script: str) -> dict:
+    """没有在跑的实例时在本进程里试运行（safe 档，解释器走 pool 探测链）。
+
+    两条纪律：① 物化 cache 只**复制**热 worker 已写好的预览 SVG，绝不为
+    物化二次执行；② 无论成败，返回前关掉本进程的 worker 会话——CLI 马上
+    就要退出/唤起界面，orphan worker 一个都不许留（交接后的渲染由目标进程
+    自己按 lazy 语义重建，registry + cache 都在磁盘上）。
+    """
+    from . import pool as engine_pool
+    from . import probe as engine_probe
+    from . import runtimeasset as engine_runtimeasset
+    try:
+        result = engine_probe.probe_and_register(project, script)
+        if result.get("registered"):
+            try:
+                worker = engine_pool.get(script, project,
+                                         result.get("entry") or "main")
+                for desc in result.get("descriptors") or []:
+                    if isinstance(desc, dict) and desc.get("stem"):
+                        engine_runtimeasset.materialize(
+                            project, desc, worker.svg_path(desc["stem"]))
+            except engine_pool.WorkerError:
+                pass              # cache 是派生物：物化不了只影响首帧占位
+        return result
+    finally:
+        engine_pool.invalidate(script, project)
+
+
+def resolve_script_route(project: str, script: str, *,
+                         stem_arg: str | None = None, no_probe: bool = False,
+                         port: int = DEFAULT_PORT,
+                         probe_remote=None, probe_local=None) -> tuple[Target, dict]:
+    """`.py` 目标的产品路由：复用已有 Figure 路由，否则 safe probe。
+
+    行为顺序（Session 6 契约）：现有注册表/静态发现的每张图都已有有效路由
+    （磁盘原件或 materialized runtime cache）就直接复用；否则试运行一次并
+    登记 RuntimeFigureAsset。单图直接定位；多图不静默选第一张——`--stem`
+    显式选，或把选择信息（`pick`）交给界面的 Figure 选择器。
+
+    返回 (Target, probe_info)。probe_info 进 `--json`：
+    {performed, via: remote|local|None, entry, dropped_figures, figures}。
+    """
+    probe_remote = _remote_probe if probe_remote is None else probe_remote
+    probe_local = _local_probe if probe_local is None else probe_local
+
+    figures = _script_figures(project, script)
+    routed = bool(figures) and all(f["artifact"] or f["cached"] for f in figures)
+    info: dict = {"performed": False, "via": None, "entry": None,
+                  "dropped_figures": 0}
+
+    if not routed and not no_probe:
+        result = probe_remote(port, project, script)
+        via = "remote"
+        if result is None:
+            result = probe_local(project, script)
+            via = "local"
+        err = result.get("error")
+        if err and not result.get("stems"):
+            raise _probe_error(err)
+        if result.get("stems") and not result.get("registered"):
+            # stem 归属冲突有自己的码（裁决走手工路）；其余「跑出了图却
+            # 登记不进去」= 产品拿不到这张图，报成功就是假成功。
+            if err and err.get("code") == "multiple_stem_conflict":
+                raise _probe_error(err)
+            raise HandoffError(
+                f"试运行捕获到了图，但没能登记成可打开的素材: {script}",
+                "runtime_asset_failed", stems=list(result.get("stems") or []))
+        info = {"performed": True, "via": via, "entry": result.get("entry"),
+                "dropped_figures": int(result.get("dropped_figures") or 0)}
+        figures = _script_figures(project, script)
+
+    if not figures:
+        if no_probe:
+            raise HandoffError(
+                f"静态分析解不出这个脚本会产出哪张图: {script}"
+                "（去掉 --no-probe 让 Tavotto 安全地试运行一次，"
+                "或在素材库的「脚本」区点「运行并发现图」）",
+                "script_no_figure")
+        raise HandoffError(
+            f"脚本跑通了，但没有捕获到任何 Figure: {script}"
+            "（确认它真的创建 matplotlib Figure；出图入口不叫 main 的话，"
+            "在素材库的脚本详情里能看到试过哪些入口）",
+            "script_no_figure")
+
+    info["figures"] = [dict(f) for f in figures]
+    stems = [f["stem"] for f in figures]
+    if stem_arg is not None:
+        if stem_arg not in stems:
+            raise HandoffError(
+                f"这个脚本没有产出名为 {stem_arg} 的图"
+                f"（有：{', '.join(stems)}）",
+                "invalid_stem", stems=stems)
+        return Target(project, stem_arg), info
+    if len(stems) == 1:
+        return Target(project, stems[0]), info
+    # 多 Figure：选择权交给界面（不静默选第一张）
+    return Target(project, None, pick=script), info
+
+
 # --------------------------- 3. 唤起界面 ---------------------------------
 def desktop_app_candidates(*, system: str | None = None,
                            environ: dict | None = None,
@@ -288,10 +534,17 @@ def find_desktop_app(*, system: str | None = None, environ: dict | None = None,
 
 
 def desktop_argv(app: str, target: Target) -> list[str]:
-    """桌面壳的交接契约。**与 src-tauri/src/main.rs 的 parse_open_args 严格同源。**"""
+    """桌面壳的交接契约。**与 src-tauri/src/main.rs 的 parse_open_args 严格同源。**
+
+    `--pick-script <脚本相对路径>`：多 Figure 交接的选择信息（Session 6）。
+    壳只负责把它原样送进落地 URL 的 `?pick=` / `tavotto:open` 事件，
+    选择器在前端。与 `--stem` 互斥（生产侧 Target 已保证）。
+    """
     argv = [app, "--open", target.project]
     if target.stem:
         argv += ["--stem", target.stem]
+    elif target.pick:
+        argv += ["--pick-script", target.pick]
     return argv
 
 
@@ -438,9 +691,9 @@ def _launch_desktop_via_open(app: str, bundle: str, target: Target, *,
 
     pre = pids_of(app)
     already = bool(pre)
-    argv = ["open", "-na", bundle, "--args", "--open", target.project]
-    if target.stem:
-        argv += ["--stem", target.stem]
+    # `--args` 之后的参数形状与 desktop_argv 严格同一份（唯一生产者），
+    # 在这里手拼第二份迟早漂移——多 Figure 的 --pick-script 就只需改那一处。
+    argv = ["open", "-na", bundle, "--args", *desktop_argv(app, target)[1:]]
     try:
         proc = run(argv, capture_output=True, text=True, timeout=30)
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -562,12 +815,15 @@ def _http_json(url: str, payload: dict | None = None, timeout: float = 1.0) -> d
 
 
 def browser_url(port: int, target: Target, pj: str | None = None) -> str:
-    """浏览器模式的落地地址：`?open=<stem>` 由前端 lib/openRequest.ts 消费。"""
+    """浏览器模式的落地地址：`?open=<stem>` / `?pick=<脚本>` 由前端
+    lib/openRequest.ts 消费（多 Figure 的选择器走 pick，绝不静默选第一张）。"""
     qs = []
     if pj:
         qs.append("pj=" + quote(pj, safe=""))
     if target.stem:
         qs.append("open=" + quote(target.stem, safe=""))
+    elif target.pick:
+        qs.append("pick=" + quote(target.pick, safe=""))
     return f"http://127.0.0.1:{port}/" + ("?" + "&".join(qs) if qs else "")
 
 
@@ -627,6 +883,8 @@ def launch(target: Target, *, prefer: str = "auto", port: int = DEFAULT_PORT,
     argv = [*launcher, "--figures", target.project, "--port", str(port)]
     if target.stem:
         argv += ["--open-stem", target.stem]
+    elif target.pick:
+        argv += ["--open-pick", target.pick]
     try:
         _spawn_detached(argv, spawn=subprocess.Popen if spawn is None else spawn)
     except OSError as exc:
@@ -635,12 +893,45 @@ def launch(target: Target, *, prefer: str = "auto", port: int = DEFAULT_PORT,
 
 
 # ------------------------------ 编排与 CLI --------------------------------
+def _is_script_target(raw: str) -> bool:
+    if not raw or not raw.strip():
+        return False
+    path = os.path.abspath(os.path.expanduser(raw.strip()))
+    return os.path.isfile(path) and os.path.splitext(path)[1].lower() == ".py"
+
+
 def open_target(raw: str, *, prefer: str = "auto", port: int = DEFAULT_PORT,
-                launch_ui: bool = True, **kw) -> dict:
-    """解析 → 登记 → 唤起。返回一份可直接 json.dumps 的结果。"""
+                launch_ui: bool = True, stem: str | None = None,
+                no_probe: bool = False, **kw) -> dict:
+    """解析 → 登记 →（脚本目标按需 safe probe）→ 唤起。
+
+    返回一份可直接 json.dumps 的结果。`.py` 目标带 `probe` / `figures` /
+    `pick` 三个附加键（路由细节见 resolve_script_route）。
+    """
     from .. import __version__                    # 版本号唯一出处，别在这儿写死
     target = resolve_target(raw)
-    registry_info = ensure_registered(target.project, target.stem)
+    probe_info: dict | None = None
+    if _is_script_target(raw):
+        path = os.path.abspath(os.path.expanduser(raw.strip()))
+        script_rel = os.path.relpath(path, target.project).replace(os.sep, "/")
+        # 静态发现先走一遍（草稿/合并注册表——探测路由要读它的现状）
+        registry_info = ensure_registered(target.project, None)
+        target, probe_info = resolve_script_route(
+            target.project, script_rel, stem_arg=stem, no_probe=no_probe,
+            port=port)
+        if target.pick and not launch_ui:
+            # 没有界面接选择器（--no-launch 的机器调用）：必须显式选
+            raise HandoffError(
+                "这个脚本产出多张图，机器调用必须用 --stem 显式选一张（有："
+                f"{', '.join(f['stem'] for f in probe_info['figures'])}）",
+                "multiple_figures_found", figures=probe_info["figures"])
+        if target.stem is not None:
+            registry_info["parameterizable"] = _registered(target.project,
+                                                           target.stem)
+    else:
+        if stem is not None:
+            raise HandoffError("--stem 只能与 .py 脚本目标连用", "invalid_stem")
+        registry_info = ensure_registered(target.project, target.stem)
     # `version` 是**这次真正干活的那个 Tavotto** 的版本。调用方（Codex 插件）
     # 要拿它比 min_tavotto_version——插件自己的版本与它各有各的升级节奏，
     # 混为一谈会提示用户去升级一个根本没问题的东西。
@@ -648,6 +939,10 @@ def open_target(raw: str, *, prefer: str = "auto", port: int = DEFAULT_PORT,
               "version": __version__,
               "project": target.project, "stem": target.stem,
               "registry": registry_info, "launch": None}
+    if probe_info is not None:
+        result["figures"] = probe_info.get("figures") or []
+        result["probe"] = {k: v for k, v in probe_info.items() if k != "figures"}
+        result["pick"] = target.pick
     if launch_ui:
         result["launch"] = launch(target, prefer=prefer, port=port, **kw)
     return result
@@ -659,6 +954,15 @@ def _report(result: dict) -> None:
     reg = result["registry"]
     if result["stem"]:
         print(f"* 面板: {result['stem']}")
+    probe_info = result.get("probe")
+    if probe_info and probe_info.get("performed"):
+        n = len(result.get("figures") or [])
+        print(f"* 已安全试运行脚本并发现 {n} 张图"
+              + (f"（超上限丢弃 {probe_info['dropped_figures']} 张）"
+                 if probe_info.get("dropped_figures") else ""))
+    if result.get("pick"):
+        stems = ", ".join(f["stem"] for f in result.get("figures") or [])
+        print(f"* 这个脚本产出多张图（{stems}），已交给界面的选择器")
     if reg["created"]:
         print(f"* 已生成脚本注册表 {reg['registry']}（cost 默认 medium，可按需修正）")
     elif reg["added_scripts"] or reg["added_stems"]:
@@ -701,6 +1005,10 @@ def cli(argv: list[str]) -> int:
     ap.add_argument("--browser", action="store_true", help="强制浏览器模式")
     ap.add_argument("--no-launch", action="store_true",
                     help="只解析与登记，不唤起界面（自检用）")
+    ap.add_argument("--no-probe", action="store_true",
+                    help="脚本静态解不出产出时也不试运行（只按现有登记打开）")
+    ap.add_argument("--stem", default=None,
+                    help="脚本产出多张图时显式选哪张（只对 .py 目标有效）")
     ap.add_argument("--port", type=int, default=DEFAULT_PORT, help="浏览器模式端口")
     ap.add_argument("--json", action="store_true", help="输出机器可读结果")
     args = ap.parse_args(argv)
@@ -723,7 +1031,8 @@ def cli(argv: list[str]) -> int:
 
     try:
         result = open_target(args.path, prefer=prefer, port=args.port,
-                             launch_ui=not args.no_launch)
+                             launch_ui=not args.no_launch,
+                             stem=args.stem, no_probe=args.no_probe)
     except HandoffError as exc:
         # 失败也必须是**机器可解析的一行 JSON**：调用方按 `code` 分诊，
         # 拿不到 JSON 就只能去猜 stderr 里那句中文是什么意思。

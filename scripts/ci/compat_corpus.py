@@ -89,6 +89,17 @@ DISCOVERY_MODES = ("discoverable", "requires_probe", "manual_registry")
 #: 出现在报告里，不能记成 `expected.execute=false` 让门禁静悄悄地放行。
 NON_NEGOTIABLE_STAGES = ("execute", "capture", "open")
 
+#: 产品路由（Session 6）。「worker 能直接调」不等于「真实用户能使用」——
+#: case 可以在 `product_routes` 里声明哪些**产品入口**必须走得通，runner
+#: 走真实端点/真实 CLI 验证（绝不直接调内部 probe 代表产品成功）。闭集。
+PRODUCT_ROUTES = ("desktop_project", "cli_open", "safe_probe",
+                  "browser_playground", "native_run")
+
+#: 路由声明的合法取值。`true` = 必须通过；两个字符串档是**如实记账**：
+#: not_implemented（产品还没有这条路，如 native_run）/ not_applicable
+#: （这条路对该 case 无意义，如非 browser_eligible 的 playground）。
+ROUTE_EXPECTATIONS = (True, "not_implemented", "not_applicable")
+
 
 class CorpusError(RuntimeError):
     """语料层的结构性错误。带稳定 code，调用方按它分诊。"""
@@ -213,6 +224,29 @@ def _validate_case(case: dict, root: Path) -> None:
             "Tier 1 不允许存在 product_bug——那一档是标准 matplotlib 的高频"
             "路径，有 bug 就是发不了版。要么修，要么把它降级并写清楚为什么"
             "它不再是高频路径")
+
+    routes = case.get("product_routes") or {}
+    unknown_routes = set(routes) - set(PRODUCT_ROUTES)
+    if unknown_routes:
+        bad("unknown_route",
+            f"product_routes 里有未知路由 {sorted(unknown_routes)}"
+            f"（可选 {list(PRODUCT_ROUTES)}）")
+    for route, want in routes.items():
+        if want not in ROUTE_EXPECTATIONS:
+            bad("route_expectation_invalid",
+                f"product_routes.{route} 非法 {want!r}"
+                f"（可选 true / 'not_implemented' / 'not_applicable'）")
+        if route == "native_run" and want is True:
+            # native 执行是 PR 2：现在声明「必须通过」只能靠伪装 pass 兑现，
+            # 而这份 benchmark 的第一条纪律就是不许假兼容。
+            bad("native_run_not_implemented",
+                "native_run 尚未实现——第一阶段只能声明 not_implemented / "
+                "not_applicable，不要伪装 pass")
+        if route == "browser_playground" and want is True \
+                and not case.get("browser_eligible"):
+            bad("route_not_browser_eligible",
+                "browser_playground=true 但 case 不是 browser_eligible——"
+                "对拍腿根本不会跑它，这条声明永远验不了")
 
     sem = case.get("semantic_expectations") or {}
     for gid_prop in sem.get("editable") or []:

@@ -760,12 +760,30 @@ smoke_app 的「未认证必须 401」硬断言——**别再让任何新端点�
   项目 = 含 `tavotto_registry.json` 的那一层（向上找 ≤3 层，**有上限**：静默把上层目录
   当图库会把一整棵源码树当素材扫）。注册表合并复用 `discover.merge`，
   **不另写裁决**；读不懂就报错，绝不重写用户手写的注册表。
-- **桌面契约是 argv `--open <目录> [--stem <stem>]`**：生产者唯一
-  `handoff.desktop_argv()`，消费者唯一 `src-tauri/src/main.rs::parse_open_args()`，
-  两侧各有单测，改一边必须同步另一边。
-  首启：项目 → sidecar 的 `--figures`，stem → 落地 URL 的 `?open=`；
+- **桌面契约是 argv `--open <目录> [--stem <stem> | --pick-script <脚本>]`**：
+  生产者唯一 `handoff.desktop_argv()`，消费者唯一
+  `src-tauri/src/main.rs::parse_open_args()`，两侧各有单测，改一边必须同步
+  另一边；macOS 的 `open -na … --args` 之后**复用 desktop_argv 的切片**，
+  不再手拼第二份。`--pick-script` 是多 Figure 交接的选择信息（脚本相对
+  路径，与 `--stem` 互斥）——壳只透传，Figure 选择器在前端。
+  首启：项目 → sidecar 的 `--figures`，stem → 落地 URL 的 `?open=`、
+  pick → `?pick=`（browser-new 由 `--open-pick` 带给 `app.main`）；
   已开着窗口：单实例转发 argv → emit `tavotto:open`。两条路汇进前端同一个
-  `lib/openRequest.ts`（浏览器模式共用 `?open=`，定位逻辑只有一份）。
+  `lib/openRequest.ts`（浏览器模式共用同一套查询参数，定位逻辑只有一份）。
+- **`tavotto open script.py` 自动 safe probe（2026-08-26，Session 6）**：
+  显式给出 `.py` = 运行意图（总纲原则 5）。`handoff.resolve_script_route`
+  的顺序：现有注册表/静态发现的每张图都已有路由（磁盘原件或 runtime
+  cache，判据各自唯一：`figcapture.find_original_artifact` /
+  `runtimeasset.load_metadata`）→ 复用；否则 probe——本机实例在跑就
+  **委托**（`POST /api/registry/probe`，同一个 `_PROBES` 并发闸，409 →
+  `probe_in_progress`），否则本进程 `probe_and_register` + 物化 cache
+  （只复制热 worker 的预览，绝不二次执行），返回前 `pool.invalidate`
+  关净 worker（**不留 orphan**；交接目标进程读注册表 + cache，零重跑，
+  看护 `tests/test_open_script_route.py` 的 execution-count 用例）。
+  单图直达 stem；多图 `--stem` 显式选或把 `pick` 交给界面选择器，
+  `--no-launch` 下必须显式选（`multiple_figures_found`）。稳定 code 表
+  在 `docs/handoff-protocol.md`（missing_dependency 映射成
+  `native_run_required`，原始 code 在 extra）。`--no-probe` 关掉探测。
 - **macOS 唤起走 `open -na <bundle> --args …`，不再直接 exec 包内二进制**
   （2026-08-20 实测修复）：GUI 进程会继承调用方的执行上下文，从受限环境
   （沙箱 shell、无 Aqua 会话）直接 exec 会在 AppKit `RegisterApplication`
