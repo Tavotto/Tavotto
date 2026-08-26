@@ -30,7 +30,6 @@ import { cn } from '@/lib/utils'
 import {
   centerInFigure,
   fracToMm,
-  layoutBoxes,
   mmToFrac,
   round4,
   scaleGroupAbout,
@@ -45,12 +44,10 @@ import {
   type Group,
   isAnnotationEntry,
   type MixedEntry,
-  panelFullRect,
   positionOf,
   type AlignEntry,
 } from '@/lib/elementGeom'
 import {
-  applyMixedAlign,
   clearOverride,
   clearOverrides,
   resetOverrides,
@@ -62,7 +59,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import { previewStyle } from '@/store/svgPreviewStore'
 import { canPreviewStyle } from '@/lib/svgStyle'
 import { useSelectionStore } from '@/store/selectionStore'
-import { usePanelRender } from '@/store/renderStore'
+import { useExactPanelManifest, usePanelRender } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
 import {
   EngineEnvironmentCard,
@@ -101,6 +98,7 @@ import {
 } from './controls/TickAndSpineDiagram'
 import { useElementWriter } from './elementWrite'
 import { fontStackOf } from './controls/fontStack'
+import { alignSelectedPanelElements } from '@/store/alignAction'
 import { useInspectorPrefs } from '@/store/inspectorPrefs'
 import { TextActionRow } from './TextActions'
 import { hasTextStyleBar, TextStyleBar, TEXT_BAR_PROPS } from './TextStyleBar'
@@ -123,7 +121,14 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
   useTranslation('inspector')
   const render = usePanelRender(panel)
   const selectedGids = useUiStore((s) => s.selectedGids)
+  // 显示用：列元素、认 role、画角标。可能来自上一版（画布也正显示那一版）
   const manifest = render?.manifest
+  /**
+   * 几何权威：只有它能喂给对齐、成组缩放、孤儿判定这些**写几何**的地方。
+   * null = 这一版还没画出来（改完字号的那 600ms、脚本刚变过），此时那些
+   * 入口一律置灰并说明原因，绝不拿上一版的墨迹框硬算（issue #131）。
+   */
+  const exactManifest = useExactPanelManifest(panel)
   const selected = manifest
     ? selectedGids
         .map((g) => manifest.elements.find((e) => e.gid === g))
@@ -142,11 +147,20 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
     (o) => selIds.includes(o.id) && (o.type === 'text' || o.type === 'arrow' || o.type === 'shape'),
   )
   const annEntries = annotationAlignEntries(panel, annotations)
+  /**
+   * 权威没就位时选区还在（selectedGids 不清空），但算不出条目。工具条仍要
+   * 出现——凭空消失会让用户以为「多选对齐这个功能没了」——只是整排置灰并
+   * 说明正在同步。条数按选中的可对齐元素数估，只用于标题文案。
+   */
+  const syncing =
+    !exactManifest && (selected.length > 1 || (selected.length >= 1 && annEntries.length >= 1))
   // 多选 → 出对齐工具条，替代单元素表单。位图会归并到宿主子图，
   // 归并后只剩一个几何目标时就没什么可对齐的，仍走单元素表单。
   // 画布标注加进来后与元素同框排版（元素写 override，标注改画布位置）。
   const entries =
-    manifest && selected.length ? alignEntries(panel, manifest, selectedGids) : []
+    exactManifest && selected.length
+      ? alignEntries(panel, exactManifest, selectedGids)
+      : []
   const mixed: MixedEntry[] = [...entries, ...annEntries]
   const alignGroup = mixed.length > 1 ? mixed : null
   // 多选同一种角色 → 批量改公共属性（文字全部调字号、曲线全部换色…）
@@ -221,14 +235,16 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
               </li>
             ))}
           </ul>
-          <OrphanOverrides panel={panel} manifest={manifest} />
+          <OrphanOverrides panel={panel} manifest={exactManifest} />
         </Section>
       )}
 
       {/* 四层顺序：先公共属性（高频），再对齐与排列 */}
       {batch && <BatchSection panel={panel} elements={batch} />}
-      {alignGroup && <AlignSection panel={panel} items={alignGroup} />}
-      {alignGroup || batch ? null : (
+      {(alignGroup || syncing) && (
+        <AlignSection panel={panel} items={alignGroup ?? []} syncing={syncing} />
+      )}
+      {alignGroup || syncing || batch ? null : (
       <Section>
         {manifest && element && <RelatedRow manifest={manifest} element={element} />}
         {!manifest ? (
@@ -268,8 +284,8 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
 
       <SourceAdvancedSection
         panel={panel}
-        element={alignGroup || batch ? null : element}
-        advanced={alignGroup || batch ? [] : (buckets?.advanced ?? [])}
+        element={alignGroup || syncing || batch ? null : element}
+        advanced={alignGroup || syncing || batch ? [] : (buckets?.advanced ?? [])}
       />
     </>
   )
@@ -1311,36 +1327,47 @@ function ScaleField({ panel, group }: { panel: PanelObject; group: Group }) {
 }
 
 /**
+ * 位置类对齐的基准是**选区边界**（left 取 minL、right 取 maxR……），
+ * 只有等宽 / 等高拿末位元素当参照。UI 上的「基准」角标必须跟着这条走
+ * ——issue #131 之前它无条件挂在最后一项上，读起来就是「左对齐到最后选中
+ * 的那个」，而算法根本不是那么做的。
+ */
+const REF_IS_LAST_SELECTED = (mode: AlignMode) => mode === 'samew' || mode === 'sameh'
+
+/**
  * 多选时的对齐工具条：几何全部在面板内容的 top-origin 分数框里算，
  * 子图落成 position、文字/图例落成新锚点，画布标注（shift 加选进来的）
  * 改画布位置——override 与位移进同一次 commit，一条撤销、一次渲染。
+ *
+ * 按钮**只发意图**：真正的几何在 `alignSelectedPanelElements` 里、于点击那一刻
+ * 从 store 现取（issue #131）。这里的 `items` 只用来决定禁用态与列表文案，
+ * 绝不参与写入——React 上一轮 render 捕获的 bbox/anchor 闭包到点击时可能
+ * 已经过期几百毫秒。
  */
-function AlignSection({ panel, items }: { panel: PanelObject; items: MixedEntry[] }) {
+function AlignSection({
+  panel,
+  items,
+  syncing = false,
+}: {
+  panel: PanelObject
+  items: MixedEntry[]
+  /** 几何权威还没就位：整排置灰并说明原因，选区照旧留着 */
+  syncing?: boolean
+}) {
   // 只有子图（含位图代理）能改尺寸，文字/图例/标注进选区就得禁掉等宽等高与成组缩放
-  const allResizable = items.every((i) => i.resizable)
+  const allResizable = items.length > 0 && items.every((i) => i.resizable)
   const elementItems = items.filter((i): i is AlignEntry => !isAnnotationEntry(i))
   const hasAnnotations = elementItems.length !== items.length
-  const group = hasAnnotations ? null : groupOf(elementItems)
+  const group = hasAnnotations || syncing ? null : groupOf(elementItems)
+  const setStatus = useUiStore((s) => s.setStatus)
 
   const apply = (mode: AlignMode) => {
-    const boxes = layoutBoxes(items, mode)
-    const full = panelFullRect(panel)
-    const patches: { gid: string; prop: string; value: unknown }[] = []
-    const moves: { id: string; x: number; y: number }[] = []
-    for (const it of items) {
-      const next = boxes.get(it.key)
-      if (!next) continue
-      if (isAnnotationEntry(it)) {
-        moves.push({
-          id: it.objectId,
-          x: full.x + next[0] * full.w,
-          y: full.y + next[1] * full.h,
-        })
-      } else {
-        patches.push(it.write(next))
-      }
-    }
-    applyMixedAlign(panel.id, msg(`alignMode.${mode}`, undefined, 'inspector'), patches, moves)
+    const res = alignSelectedPanelElements(panel.id, mode)
+    if (res.ok) return
+    // 拒绝必须说得出原因：什么都不发生而界面一声不吭，用户只会再点几下
+    if (res.reason === 'syncing') setStatus(elMsg('alignSyncing'))
+    else if (res.reason === 'noop') setStatus(elMsg('alignNoop'))
+    else if (res.reason === 'invalid') setStatus(elMsg('alignInvalid'), 'error')
   }
 
   return (
@@ -1353,10 +1380,16 @@ function AlignSection({ panel, items }: { panel: PanelObject; items: MixedEntry[
       <div className="grid grid-cols-6 gap-0.5">
         {ALIGN_BUTTONS.map(({ mode, icon: Icon, tipKey, min }) => {
           const sizeOnly = mode === 'samew' || mode === 'sameh'
-          const disabled = items.length < min || (sizeOnly && !allResizable)
-          const tip = tipKey
+          const disabled = syncing || items.length < min || (sizeOnly && !allResizable)
+          const base = tipKey
             ? el(tipKey)
             : translate(`alignMode.${mode}`, { ns: 'inspector' })
+          // 提示里说清基准是「选区边界」还是「最后选中」——两者的结果差得很远
+          const tip = syncing
+            ? el('alignSyncingTip', { tip: base })
+            : el(REF_IS_LAST_SELECTED(mode) ? 'alignRefLastTip' : 'alignRefBoundsTip', {
+                tip: base,
+              })
           return (
             <Tip
               key={mode}
@@ -1368,7 +1401,7 @@ function AlignSection({ panel, items }: { panel: PanelObject; items: MixedEntry[
                 className="w-full"
                 disabled={disabled}
                 onClick={() => apply(mode)}
-                aria-label={tip}
+                aria-label={base}
               >
                 <Icon size={14} />
               </Button>
@@ -1378,17 +1411,27 @@ function AlignSection({ panel, items }: { panel: PanelObject; items: MixedEntry[
       </div>
       {group && <ScaleField panel={panel} group={group} />}
       <p className="mt-2 text-xs leading-relaxed text-ink-3">
-        {el('alignHint')}
-        {hasAnnotations && el('alignHintAnnotations')}
-        {group && el('alignHintGroup')}
+        {syncing ? (
+          el('alignSyncing')
+        ) : (
+          <>
+            {el('alignHint')}
+            {hasAnnotations && el('alignHintAnnotations')}
+            {group && el('alignHintGroup')}
+          </>
+        )}
       </p>
       <ul className="mt-2 flex flex-col gap-0.5">
         {items.map((it, i) => (
           <li key={it.key} className="flex items-center gap-1.5 text-xs text-ink-2">
             <span className="truncate">{engineLabel(it.label)}</span>
-            {i === items.length - 1 && (
+            {/*
+              「基准」只在它**真的是基准**时出现：等宽/等高拿末位当参照，
+              位置类对齐用的是选区边界，末位元素并不特殊。
+            */}
+            {i === items.length - 1 && allResizable && (
               <span className="ml-auto shrink-0 font-mono text-xs text-accent/70">
-                {el('alignBaseline')}
+                {el('alignBaselineSize')}
               </span>
             )}
           </li>
