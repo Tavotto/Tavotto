@@ -1,3 +1,14 @@
+## 并行开发
+
+<!-- 与其他 open PR 无关时整段删掉。冲突域与两种协作形态见 docs/ci/parallel-prs.md。 -->
+
+- Depends on: <!-- 阻塞本 PR 的 PR/issue 编号 -->
+- Stack parent: <!-- stacked PR 的下层分支；没有就删 -->
+- Conflict domain: <!-- 「PR conflict domains」检查报出的域名，如 mcp-widget -->
+- 是否修改受管生成物（canvas.html / playground 产物）：
+- 生成物是否已在**最终源码状态**上重新生成（train 只重建一次）：
+- 是否需要 train branch：
+
 ## What this changes
 
 <!-- What a user would notice, or what boundary this moves. One or two sentences. -->

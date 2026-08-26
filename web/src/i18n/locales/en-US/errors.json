@@ -44,6 +44,7 @@
     "runtime_source_writeback_unsupported": "Writing edits back into the script source is not supported (edits on runtime figures live in the document only)",
     "scan_failed": "Scan failed: {{reason}}",
     "script_changed": "Write-back blocked: the script changed during this session. Re-render and try again.",
+    "script_error": "The script failed while building the figure: {{error}}",
     "script_name_missing": "A script name is required",
     "script_no_figure": "The script ran, but no figure was captured (entry {{entry}} may not plot)",
     "script_not_found": "Script not found: {{script}}",
@@ -56,6 +57,7 @@
     "sync_different_scripts": "These two figures belong to different scripts and cannot be synced",
     "unknown_agent": "Unknown agent: {{agent}}",
     "unsupported_script_type": "Not a probe-able .py script: {{script}}",
+    "worker_timeout": "The render timed out and the worker was restarted — try again. Repeated timeouts mean the script itself never finishes.",
     "write_back_disabled": "This project is read-only: writing back to original files is disabled (re-enable it in project settings)",
     "write_back_warnings": "Write-back blocked: the engine reported warnings during replay"
   },
@@ -112,6 +114,7 @@
     "bitmapEmbed": "Flipped or semi-transparent panels are embedded in the PDF as bitmaps at export DPI; vector text is not preserved",
     "cjkFallbackMissing": "Text containing CJK characters uses {{family}} with no CJK fallback declared — it will come out as boxes in the exported PDF",
     "discouragedColormap": "The colormap {{cmap}} is not perceptually uniform; the profile recommends {{recommended}}",
+    "exportRasterDpi": "Exporting {{formats}} at {{dpi}} dpi is below the profile's {{min}} dpi",
     "fitWithoutCi": "There is a fitted curve but no confidence band — submissions usually require the uncertainty of the fit",
     "fontBelowFloor": "Figure text at an effective {{effective}}pt is not above the absolute floor of {{floor}}pt",
     "fontFamilySubstituted": "Figure text uses {{family}}; the profile requires {{want}}",

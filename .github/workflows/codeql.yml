@@ -9,19 +9,32 @@ name: CodeQL
 # python / rust，category 仍是 `/language:<lang>`），既有 alert 才认得出是同一份分析、
 # 不会整批作废重来。threat model 保持默认的 remote，也与原配置一致。
 on:
+  # **push main 刻意保留**（2026-08-25 Merge Queue 定版时复议过）：它不是
+  # merge_group 扫描的重复。CodeQL 的默认分支告警状态（Security → Code
+  # scanning 的 open/fixed 账本）只由**默认分支上的分析**推进——PR 与
+  # merge_group 的分析挂在临时 ref 上，只产 diff 结论，不落账。去掉这条，
+  # 告警账本只剩每周一次的 schedule 在推，「合进来的修复把告警关掉」要等
+  # 最多七天才反映出来。买到的独立价值：告警账本按 commit 粒度保持新鲜。
   push:
     branches: [main]
   pull_request:
+  # Merge Queue 的资格验证事件（见 docs/ci/merge-queue-rollout.md）：
+  # 「CodeQL gate」是 ruleset 收敛后的三个 required contexts 之一，
+  # 队列候选的组合提交上它也必须产出结论。
+  merge_group:
+    types: [checks_requested]
   schedule:
     # 与原 default setup 的 weekly 对齐。定时跑不是摆设：query 包本身在更新，
     # 一行没改的代码明天可能就有新结论。
     - cron: "23 4 * * 1"
 
 # 与 ci.yml 同一条纪律：同一个 PR 上新 push 之后取消旧 SHA 的扫描。
-# group 里带 `github.workflow`，所以它与 CI 各占各的槽、不会互相取消；
-# main 上的 push 不取消（那是那个 commit 的唯一一次扫描记录）。
+# group 里带 `github.workflow`（与 CI 各占各的槽）+ `github.event_name`
+# （PR / merge_group / push / schedule 绝不同组，谁也取消不了谁）；
+# cancel-in-progress 只对 pull_request 开——merge_group run 被取消 = 队列
+# 候选白等超时，main / schedule 的 run 是唯一扫描记录。
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.merge_group.head_sha || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -56,3 +69,43 @@ jobs:
         uses: github/codeql-action/analyze@v3
         with:
           category: "/language:${{ matrix.language }}"
+
+  # 稳定 Gate：矩阵四条语言收敛成一个固定名字的结论（判定逻辑与 ci.yml 的
+  # 两个 Gate 同一份脚本）。矩阵任一语言 failure / cancelled，`needs.analyze`
+  # 的整体结论就不是 success，Gate 红；语言从矩阵里被删掉的那一维由
+  # tests/test_merge_queue_workflows.py 静态钉住（needs 在运行时看不见
+  # 「本该有第五种语言」）。`if: always()`：上游失败时 Gate 必须跑起来并且红。
+  codeql-gate:
+    name: CodeQL gate
+    if: always()
+    needs: [analyze]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      # 判定器取默认分支 + python -I：与 ci.yml 两个 Gate 同一条纪律
+      # （switch-to-gates 之后 Gate 是唯一 required check，判定逻辑不能来自
+      # 被判定的那个 revision；-I 挡 stdlib 遮蔽与 PYTHONPATH 注入）
+      - name: 取默认分支上的可信判定器
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/trusted-gate"
+          DEST="$RUNNER_TEMP/trusted-gate/aggregate_gate.py"
+          if gh api "repos/${{ github.repository }}/contents/scripts/ci/aggregate_gate.py?ref=${{ github.event.repository.default_branch }}" \
+               --jq .content 2>/dev/null | base64 -d > "$DEST" && [ -s "$DEST" ]; then
+            echo "判定器取自默认分支"
+          else
+            echo "::notice::默认分支上还没有 aggregate_gate.py（bootstrap 空窗）——退回本仓库副本"
+            cp scripts/ci/aggregate_gate.py "$DEST"
+          fi
+      - name: 聚合判定
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          python3 -I "$RUNNER_TEMP/trusted-gate/aggregate_gate.py" \
+            --mode codeql \
+            --event "${{ github.event_name }}" \
+            --required analyze \
+            --needs-json "$NEEDS_JSON"

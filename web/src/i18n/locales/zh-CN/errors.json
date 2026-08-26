@@ -44,6 +44,7 @@
     "runtime_source_writeback_unsupported": "暂不支持把修改写回脚本源码（运行时素材的编辑只保存在文档里）",
     "scan_failed": "扫描失败：{{reason}}",
     "script_changed": "写回被阻止：脚本在会话期间被修改过，请重新渲染后再试",
+    "script_error": "脚本执行失败: {{error}}",
     "script_name_missing": "缺少脚本名",
     "script_no_figure": "脚本跑通了，但没有捕获到任何 Figure（入口 {{entry}} 可能不出图）",
     "script_not_found": "脚本不存在：{{script}}",
@@ -56,6 +57,7 @@
     "sync_different_scripts": "两张图不属于同一个脚本，无法同步",
     "unknown_agent": "未知 agent：{{agent}}",
     "unsupported_script_type": "不是可试运行的 .py 脚本：{{script}}",
+    "worker_timeout": "渲染超时，工作进程已重启——请重试；反复超时说明脚本本身跑不完",
     "write_back_disabled": "该项目已设为只读：不允许写回原始文件（可在项目设置中恢复可写）",
     "write_back_warnings": "写回被阻止：引擎在重放时报告了警告"
   },
@@ -112,6 +114,7 @@
     "bitmapEmbed": "翻转或半透明的面板在 PDF 里按导出 DPI 位图嵌入，矢量文字不保留",
     "cjkFallbackMissing": "含中日韩字符的文字用的是 {{family}}，没有声明中文 fallback，导出 PDF 里会是方框",
     "discouragedColormap": "色谱 {{cmap}} 不是感知均匀的，规范推荐 {{recommended}}",
+    "exportRasterDpi": "导出 {{formats}} 用的 {{dpi}}dpi 低于规范的 {{min}}dpi",
     "fitWithoutCi": "有拟合曲线但没有置信区间填充带——投稿时通常要求给出拟合的不确定度",
     "fontBelowFloor": "图内文字的最终有效字号 {{effective}}pt 不大于绝对下限 {{floor}}pt",
     "fontFamilySubstituted": "图内文字用的是 {{family}}，规范要求 {{want}}",

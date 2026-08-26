@@ -252,9 +252,14 @@ previewStyle`（只改 DOM）→ `pointerup → setOverride(…) + commitElement
   （`tests/golden/preflight_vectors.json`）与 proof report 认的都是 id，
   `preflight.golden.test.ts` 明确**只比判据不比措辞**，所以两侧求值器的中英文
   措辞可以各自演进。proof report 里写的是**当前语言的成文**（人要读）+ id。
-- **MCP 画布里的预检条目是例外**：那份 payload 来自 Python 求值器
-  （`tavotto_preflight` 工具），`it.text` 原样显示——Codex 那一侧不知道这个
-  webview 用的是哪门语言。widget 自己的按钮/状态/标题照常翻。
+- **MCP 画布里的预检条目按 widget 的 locale 渲染**（issue #30）：Python 求值器
+  随每条 issue 发可翻译描述符 `message: {key, params}`，widget 用
+  `errors:preflight.<key>` 渲染，`it.text`（Python 中文成文）只作老引擎/未登记
+  key 的回退。widget 的语言跟随 **Codex host**（握手的 hostContext.locale +
+  `host-context-changed` 通知），不落 iframe 的 localStorage。key+params 与
+  前端求值器逐字对齐（golden vectors 连它们一起比），新 key 没在双语文案表
+  登记时 `test_every_message_key_is_registered_in_both_locales` 先红。
+  widget 自己的按钮/状态/标题照常翻。
 - **维护**：`cd web && pnpm i18n:check`（= `types --ci` + 自建检查脚本 +
   `lint`），查 key 对齐 / 漏翻多余 / 空翻译 / 插值一致 / 复数形态 / 无用 key /
   硬编码文案 / 类型过期。**CI 里是硬门禁，缺翻译直接红**：接在 ci.yml 的

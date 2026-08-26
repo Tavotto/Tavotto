@@ -811,6 +811,11 @@ function FieldRow({
       gidRef.current = element.gid
       // 双击弹出的快捷编辑正开着：焦点属于弹层里的内容框，这里不抢
       if (useQuickEdit.getState().target) return
+      // 键盘用户正在元素树里漫游（焦点在树行上，漫游即选中）：抢过来会把
+      // 方向键导航当场掐断——走到任何文字元素树就再也走不下去（issue #37）。
+      // 鼠标从画布点选时焦点不在树里，仍保留「选中即可打字」的便利。
+      const ae = document.activeElement
+      if (ae instanceof HTMLElement && ae.closest('[role="tree"]')) return
       el.focus()
       el.select()
     },
