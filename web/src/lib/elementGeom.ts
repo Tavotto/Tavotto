@@ -160,7 +160,7 @@ export function segIntersectsRect(
  * 可拖动文字 / 图例的当前锚点（top-origin，**优先尚未渲染回来的 override**）。
  *
  * 拖动起手时的基准必须走这里，不能直接读 `el.anchor`：后者来自
- * `usePanelManifest`，而自己那份变体还没画出来时 `panelRender` 会退回
+ * `usePanelDisplayManifest`，而自己那份变体还没画出来时 `panelRender` 会退回
  * `latest[fileId]`——也就是**上一次提交之前**的 manifest。于是「拖一下、
  * 不等画完再拖一下」的第二次手势以旧锚点起算，而 `setOverride` 是整条替换
  * 语义，第一次在另一个方向上的位移被整个覆盖丢弃：不报错、界面上也看不出来，
@@ -256,6 +256,20 @@ export function alignEntries(
  * 与后端 overrides.py 的 `_FRAC_ANCHORED` 同一批；改一边要同步另一边。
  */
 const FRAC_ANCHORED_PROPS = new Set(['pos_frac', 'loc_frac', 'endpoints_frac'])
+
+/**
+ * **写下去会改变元素几何落点**的属性，唯一出处。
+ *
+ * 判据只有一条：这个 prop 的当前值在没有 override 时要从 manifest 里读
+ * （`positionOf` / `anchorOf` / `size_mm` 都是），因此拿一份退回来的 manifest
+ * 当初值就会把上一版的几何写成这一版的（issue #131）。属性页在几何权威缺席时
+ * 必须把这些字段整个收掉，而不只是收掉对齐工具条。
+ */
+export const GEOMETRY_WRITE_PROPS: ReadonlySet<string> = new Set([
+  'position',
+  'size_mm',
+  ...FRAC_ANCHORED_PROPS,
+])
 
 /** 拖动子图时跟着走的一条随行改动 */
 export interface AxesCompanion {

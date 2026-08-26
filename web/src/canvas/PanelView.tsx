@@ -7,12 +7,14 @@ import { DURATION, prefersReducedMotion, usePresence } from '@/lib/motion'
 import { geomHitsRect } from '@/lib/pathGeom'
 import { pickBucket } from '@/lib/units'
 import { cn } from '@/lib/utils'
+import { shortHash } from '@/lib/authorityTrace'
 import { isJustBakedBaseline } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
 import { useInteractionStore } from '@/store/interactionStore'
 import {
   renderKeyOf,
-  usePanelManifest,
+  useExactPanelManifest,
+  usePanelDisplayView,
   usePanelRender,
   useRenderStore,
 } from '@/store/renderStore'
@@ -58,6 +60,7 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   const editing = useUiStore((s) => s.elementPanelId === obj.id)
   // 自己那份变体的渲染态（同文件的另一个副本有它自己的一份，互不相干）
   const render = usePanelRender(obj)
+  const displayView = usePanelDisplayView(obj)
   const bucketRef = useRef(0)
 
   const crop = obj.crop
@@ -157,7 +160,14 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   const showSvg = inlineSvg != null
 
   return (
-    <div className="absolute inset-0 overflow-hidden">
+    <div
+      className="absolute inset-0 overflow-hidden"
+      // 此刻画布挂的是哪一版、是不是这一版自己的精确图。
+      // exact = 图与文档同源；fallback = 暂时挂着上一张（几何交互已停摆）。
+      // key 过短 hash：变体键里带文件名与 overrides 原文，不落进 DOM。
+      data-display={displayView?.kind ?? 'empty'}
+      data-display-key={shortHash(displayView?.sourceKey ?? null)}
+    >
       <div
         className="absolute overflow-hidden"
         style={{
@@ -375,6 +385,12 @@ function RuntimePlaceholder({ obj, layout }: { obj: PanelObject; layout: Layout 
 /**
  * 编辑态的透明命中层：用 manifest bbox 做命中测试（面积小者优先、
  * axes 降权），不依赖 SVG 内部结构。
+ *
+ * **命中必须打在几何权威上**（issue #131）。命中不是只读的：命中完就是拖动、
+ * 就是整组平移、就是框选出一个待对齐的选区——全都以那份 bbox 起算。退回来的
+ * 上一版 manifest 会让「点到的」和「看到的」是两个元素，拖出来的位移也以旧
+ * 锚点起算。权威没就位时这一层整个停摆（不 hover、不命中、不框选），画布
+ * 照常显示上一张图，属性页给出「正在同步」的说明。
  */
 function ElementHitLayer({
   obj,
@@ -385,7 +401,7 @@ function ElementHitLayer({
   layout: Layout
   rot: PanelRotation
 }) {
-  const manifest = usePanelManifest(obj)
+  const manifest = useExactPanelManifest(obj)
   const setHoverGid = useInteractionStore((s) => s.setHoverGid)
   const zoom = useViewportStore((s) => s.zoom)
   const ref = useRef<HTMLDivElement>(null)
@@ -465,11 +481,24 @@ function ElementHitLayer({
     })
   }
 
+  // 权威没就位：留着这一层占位（布局不跳），但不接任何指针事件。
+  // 选区不动——等精确 manifest 回来，框会自己回到正确位置。
+  if (!manifest) {
+    return (
+      <div
+        className="pointer-events-none absolute"
+        style={{ ...layout, cursor: 'progress' }}
+        data-authority="syncing"
+      />
+    )
+  }
+
   return (
     <div
       ref={ref}
       className="absolute"
       style={{ ...layout, cursor: 'crosshair' }}
+      data-authority="ready"
       onPointerMove={(e) => {
         if (useInteractionStore.getState().kind !== 'none') return
         const { fx, fy } = frac(e)

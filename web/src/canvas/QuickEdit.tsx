@@ -6,7 +6,7 @@ import { createPortal } from 'react-dom'
 import { ExternalLink, Eye, EyeOff, Minus, Plus } from 'lucide-react'
 import { round4, scaleGroupAbout } from '@/lib/axesLayout'
 import { geomTarget, positionOf } from '@/lib/elementGeom'
-import type { EditableField, Manifest, ManifestElement } from '@/lib/api'
+import type { EditableField, ManifestElement } from '@/lib/api'
 import { cn, MOD } from '@/lib/utils'
 import {
   changeZOrder,
@@ -20,7 +20,7 @@ import {
   unhideElement,
 } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
-import { usePanelManifest } from '@/store/renderStore'
+import { useExactPanelManifest, usePanelDisplayManifest } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import type { CanvasObject, PanelObject } from '@/types/document'
@@ -209,7 +209,7 @@ function ElementQuick({
   const panel = useDocumentStore((s) =>
     s.doc.objects.find((o) => o.id === target.panelId && o.type === 'panel'),
   ) as PanelObject | undefined
-  const manifest = usePanelManifest(panel)
+  const manifest = usePanelDisplayManifest(panel)
   const el = manifest?.elements.find((e) => e.gid === target.gid)
 
   useEffect(() => {
@@ -251,7 +251,7 @@ function ElementQuick({
           <TextStyleBar panel={panel} element={el} />
         </div>
       )}
-      {isGeometric(el) && <GeomControls panel={panel} el={el} manifest={manifest} />}
+      {isGeometric(el) && <GeomControls panel={panel} el={el} />}
       {el.role === 'legend' && <LegendControls read={read} field={field} write={write} />}
 
       {field('visible') && (
@@ -334,20 +334,24 @@ function TextContentRow({
 /**
  * 子图与位图：绕中心缩放 + 占宽读数。
  * 位图自己没有几何属性，缩放落到它的宿主子图上（与画布上拖它一致）。
+ *
+ * 这是一条**几何写路径**（写 position override），所以 manifest 不吃调用方
+ * 传下来的显示那份，自己取权威——`positionOf` 在没有 override 时会退回
+ * manifest 里的 position 初值，那份要是上一版的，缩放就以别人的占位起算。
+ * 权威没就位时整块不出现（issue #131）。
  */
 function GeomControls({
   panel,
   el,
-  manifest,
 }: {
   panel: PanelObject
   el: ManifestElement
-  manifest: Manifest
 }) {
   useTranslation('workspace')
-  const host = geomTarget(manifest, el)
-  const pos = positionOf(panel, host)
-  if (!pos) return null
+  const manifest = useExactPanelManifest(panel)
+  const host = manifest ? geomTarget(manifest, el) : null
+  const pos = host ? positionOf(panel, host) : null
+  if (!manifest || !host || !pos) return null
 
   const scale = (k: number) =>
     setOverride(

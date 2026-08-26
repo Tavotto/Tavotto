@@ -6,6 +6,7 @@ import { canPreviewStyle } from '@/lib/svgStyle'
 import { msg, t, type UiMessage } from '@/i18n'
 import { setOverride } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
+import { registerGesture } from '@/store/gestureCoordinator'
 import { getHistoryMode, previewStyle } from '@/store/svgPreviewStore'
 import type { PanelObject } from '@/types/document'
 import { propLabel } from './roles/registry'
@@ -36,6 +37,8 @@ const GESTURE_QUIET_MS = 450
 export function useFieldGesture(panel: PanelObject, defaultLabel: UiMessage | string) {
   const open = useRef(false)
   const timer = useRef<number | undefined>(undefined)
+  /** gestureCoordinator 的注销函数——收尾时必须一起解掉，否则登记表挂着野引用 */
+  const unregister = useRef<(() => void) | null>(null)
   const panelId = panel.id
   const labelRef = useRef(defaultLabel)
   labelRef.current = defaultLabel
@@ -43,6 +46,8 @@ export function useFieldGesture(panel: PanelObject, defaultLabel: UiMessage | st
   const end = useCallback(() => {
     window.clearTimeout(timer.current)
     timer.current = undefined
+    unregister.current?.()
+    unregister.current = null
     if (!open.current) return
     open.current = false
     if (getHistoryMode() === 'gesture') useDocumentStore.getState().endTxn()
@@ -64,9 +69,13 @@ export function useFieldGesture(panel: PanelObject, defaultLabel: UiMessage | st
       const title: UiMessage = typeof raw === 'string' ? { key: 'literal', ns: 'common', values: { text: raw } } : raw
       // granular：不开事务，每个变化各成一条历史；渲染照样推迟到 end()
       if (getHistoryMode() === 'gesture') useDocumentStore.getState().beginTxn(title)
+      // 登记给 gestureCoordinator：别处的离散动作（对齐、撤销、版本恢复）
+      // 点下去时会先喊一声 finishActiveGesture()，走的正是这里的 end()
+      // ——事务、安静计时器、预览会话、定稿渲染一次收干净
+      unregister.current = registerGesture(end)
       beginElementPreview(p)
     },
-    [panelId],
+    [panelId, end],
   )
 
   /** 心跳：每次值变化都续一次「安静计时」，超时就当这一轮结束 */

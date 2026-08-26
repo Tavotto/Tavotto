@@ -24,7 +24,8 @@ import { geomHitsRect } from '@/lib/pathGeom'
 import { literal } from '@/i18n'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
-import { renderKeyOf, useRenderStore } from '@/store/renderStore'
+import { useRenderStore } from '@/store/renderStore'
+import { seedExactRender } from '@/test/renderFixtures'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
@@ -245,9 +246,7 @@ describe('OverlaySvg：路径式选中描示', () => {
     useDocumentStore.getState().commit(literal('加面板'), (d) => {
       d.objects.push(panel())
     })
-    useRenderStore.getState().patch(renderKeyOf(panel()), {
-      fileId: 'f1', manifest, status: 'ready',
-    })
+    seedExactRender(panel(), manifest)
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
@@ -344,10 +343,7 @@ describe('OverlaySvg：路径式选中描示', () => {
       const p = d.objects[0]
       if (p.type === 'panel') p.rotation = 90
     })
-    useRenderStore.getState().patch(
-      renderKeyOf(useDocumentStore.getState().doc.objects[0] as PanelObject),
-      { fileId: 'f1', manifest, status: 'ready' },
-    )
+    seedExactRender(useDocumentStore.getState().doc.objects[0] as PanelObject, manifest)
     show(['axes_0.lines_0'])
     const g = [...container.querySelectorAll('g')].find((el) =>
       el.getAttribute('transform')?.startsWith('rotate(90'),

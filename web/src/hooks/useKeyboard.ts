@@ -12,6 +12,7 @@ import {
   selectAll,
 } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
+import { finishActiveGesture } from '@/store/gestureCoordinator'
 import { useInteractionStore } from '@/store/interactionStore'
 import { panelRender, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -73,6 +74,11 @@ export function undoRedoBlocked() {
 /** ⌘Z / ⌘⇧Z 的实际动作；拖动中直接放弃（见 undoRedoBlocked） */
 export function runUndoRedo(redo: boolean) {
   if (undoRedoBlocked()) return
+  // 撤销/重做是离散动作：先把还开着的那一轮连续编辑整个收干净
+  // （事务、安静计时器、预览会话、挂起的定稿渲染）。只靠 `undo()` 开头那句
+  // `if (state.txn) state.endTxn()` 是不够的——hook 侧的 open 标记与计时器
+  // 不知情，会一直悬着（issue #131）。
+  finishActiveGesture()
   const doc = useDocumentStore.getState()
   const label = redo ? doc.redo() : doc.undo()
   const ui = useUiStore.getState()

@@ -22,6 +22,7 @@ import type {
 import { emptyProject, objectLabel, type ProjectDocument } from '@/types/document'
 import { useAssetStore } from './assetStore'
 import { readAutosaveDoc, useDocumentStore } from './documentStore'
+import { finishActiveGesture } from './gestureCoordinator'
 import { useInteractionStore } from './interactionStore'
 import { useSelectionStore } from './selectionStore'
 import { askConfirm, useUiStore } from './uiStore'
@@ -657,6 +658,9 @@ export function clearOverrides(
   label: UiMessage,
   targets: { gid: string; prop: string }[],
 ) {
+  // 「清理孤儿 override」「批量回到脚本值」都是点一下完成的结构性操作：
+  // 不先收掉开着的手势，它们会被并进上一条历史（issue #131）
+  finishActiveGesture()
   const panel = findObject(panelId)
   if (panel?.type !== 'panel') return
   const hit = targets.filter((t) =>
@@ -673,6 +677,7 @@ export function clearOverrides(
 }
 
 export function resetOverrides(panelId: string) {
+  finishActiveGesture()
   const panel = findObject(panelId)
   if (panel?.type !== 'panel' || !panel.overrides.length) return
   updateObject<PanelObject>(panelId, hist('resetOverrides'), (o) => {
@@ -682,6 +687,25 @@ export function resetOverrides(panelId: string) {
   const cleared = findObject(panelId)
   if (cleared?.type === 'panel') requestRender(cleared, true)
   status(note('overridesCleared'))
+}
+
+/**
+ * 批量 upsert：**已经存在的那条原地改值，新的才追加**。
+ *
+ * 旧写法是 `filter(...)` 再 `push(...)`，等于把命中的那条挪到数组末尾。
+ * override 数组的 JSON 就是变体键（`renderKeyOf`），顺序一变键就变，于是
+ * 「改回同一个值」也会触发一次完全没必要的重渲染，撤销栈里还多一条看不出
+ * 差别的历史。issue #131 里对齐一次能挪好几条，键churn 尤其明显。
+ */
+function upsertOverrides(
+  panel: PanelObject,
+  patches: { gid: string; prop: string; value: unknown }[],
+) {
+  for (const p of patches) {
+    const i = panel.overrides.findIndex((x) => x.gid === p.gid && x.prop === p.prop)
+    if (i >= 0) panel.overrides[i] = { ...panel.overrides[i], ...p }
+    else panel.overrides.push(p)
+  }
 }
 
 /**
@@ -696,10 +720,7 @@ export function setOverrides(
 ) {
   if (!patches.length) return
   updateObject<PanelObject>(panelId, label, (o) => {
-    for (const p of patches) {
-      o.overrides = o.overrides.filter((x) => !(x.gid === p.gid && x.prop === p.prop))
-      o.overrides.push(p)
-    }
+    upsertOverrides(o, patches)
   })
   const panel = findObject(panelId)
   if (panel?.type === 'panel') requestRender(panel, render)
@@ -718,14 +739,7 @@ export function applyMixedAlign(
   if (!patches.length && !moves.length) return
   useDocumentStore.getState().commit(label, (d) => {
     const p = d.objects.find((o) => o.id === panelId)
-    if (p?.type === 'panel') {
-      for (const patch of patches) {
-        p.overrides = p.overrides.filter(
-          (x) => !(x.gid === patch.gid && x.prop === patch.prop),
-        )
-        p.overrides.push(patch)
-      }
-    }
+    if (p?.type === 'panel') upsertOverrides(p, patches)
     for (const mv of moves) {
       const o = d.objects.find((x) => x.id === mv.id)
       if (o && !o.locked) {

@@ -14,6 +14,7 @@ import {
 import { currentProjectId, setCurrentProjectId } from '@/lib/session'
 import { flushAutosave, useDocumentStore } from '@/store/documentStore'
 import { useAssetStore } from '@/store/assetStore'
+import { clearVariantPngCache } from '@/hooks/useVariantPng'
 import { useRenderStore } from '@/store/renderStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useFigurePickerStore } from '@/store/figurePickerStore'
@@ -58,6 +59,9 @@ async function resetForNewProject() {
   ui.setCropTarget(null)
   useRenderStore.getState().clear()
   useRuntimeAssetStore.getState().clear()
+  // 版本缩略图按 (项目, 素材版本, 变体) 缓存 blob：换项目时整表释放，
+  // 既是回收 blob，也是防止旧项目的图被当成新项目某个版本的预览
+  clearVariantPngCache()
   // 脚本运行状态机换代（在途 probe 响应作废，绝不落进新项目）+ 脚本清单清空
   useScriptRunStore.getState().clear()
   useScriptLibraryStore.getState().clear()

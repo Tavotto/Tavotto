@@ -25,7 +25,7 @@ import {
   unhideElement,
 } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
-import { usePanelManifest, usePanelRender } from '@/store/renderStore'
+import { usePanelDisplayManifest, usePanelRender } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
@@ -211,7 +211,7 @@ export function ElementTree() {
     return byId(elementPanelId) ?? byId(selectedIds.at(-1) ?? null)
   }, [objects, elementPanelId, selectedIds])
 
-  const manifest = usePanelManifest(panel)
+  const manifest = usePanelDisplayManifest(panel)
   const rendering = usePanelRender(panel)?.status === 'rendering'
 
   if (!panel) {

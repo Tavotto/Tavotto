@@ -18,7 +18,7 @@ import {
   useViewportStore,
   type ViewTransform,
 } from '@/store/viewportStore'
-import { usePanelManifest } from '@/store/renderStore'
+import { useExactPanelManifest } from '@/store/renderStore'
 import type { CanvasObject, LinearObject, PanelObject } from '@/types/document'
 import { isLinear, lineEndpoints, objectRotation, panelRotation } from '@/types/document'
 import {
@@ -601,9 +601,16 @@ function GeometryOutline({
   )
 }
 
-/** 图内元素的 hover / 选中框；拖动时跟随乐观位移 */
+/**
+ * 图内元素的 hover / 选中框；拖动时跟随乐观位移。
+ *
+ * **只画在几何权威上**（issue #131）：退回来的那份 manifest 是上一版（甚至
+ * 同文件另一个副本）的墨迹框，照它画出来的选择框会停在元素早就不在的地方
+ * ——用户看到的是「框和图对不上、框还能拖」。权威没就位就一个框都不画，
+ * selectedGids 照旧留着，等精确 manifest 回来框自己复位。
+ */
 function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
-  const manifest = usePanelManifest(panel)
+  const manifest = useExactPanelManifest(panel)
   const hoverGid = useInteractionStore((s) => s.hoverGid)
   const gidDrag = useInteractionStore((s) => s.gidDrag)
   const preview = useInteractionStore((s) => s.elementPreview)

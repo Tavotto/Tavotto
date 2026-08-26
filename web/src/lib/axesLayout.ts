@@ -22,8 +22,26 @@ const T = (r: Rect4) => r[1]
 const B = (r: Rect4) => r[1] + r[3]
 
 /**
- * 对一组元素做对齐 / 分布，返回需要改动的新框（top-origin 分数坐标）。
+ * round4 之后逐位相等 = 这次对齐对它**没有可表示的位移**。
+ *
+ * 阈值不是拍脑袋取的：写出去的 override 本来就要过 `round4`（figure 分数保留
+ * 四位），比它更小的位移落到文件里是同一个数。200mm 宽的图上 1e-4 ≈ 0.02mm，
+ * 远在任何印刷分辨率之下。
+ */
+const sameBox = (a: Rect4, b: Rect4): boolean =>
+  a.every((v, i) => round4(v) === round4(b[i]))
+
+/**
+ * 对一组元素做对齐 / 分布，返回**真正需要改动**的新框（top-origin 分数坐标）。
  * 基准（等宽/等高）取 items 末位——与画布对象层「最后选中的为基准」保持一致。
+ *
+ * 位置类模式（left/right/center/top/bottom/分布）的基准是**选区边界**，不是
+ * 末位元素；末位只对 samew/sameh 有意义。UI 上的「基准」角标必须跟着这条走。
+ *
+ * **已经在目标位置的元素不进结果**（issue #131）：它们本来可能压根没有位置
+ * override——标题、轴标签、图例默认是 matplotlib 自动布局的，为「没动」也写
+ * 一条等于当前值的绝对坐标，等于把它钉死在 figure 上：此后再改字号、改图幅，
+ * 它就不会自己让位了，而用户只是点了一下左对齐。
  */
 export function layoutBoxes(items: AlignItem[], mode: AlignMode): Map<string, Rect4> {
   const out = new Map<string, Rect4>()
@@ -35,7 +53,11 @@ export function layoutBoxes(items: AlignItem[], mode: AlignMode): Map<string, Re
   const maxB = Math.max(...items.map((i) => B(i.box)))
   const ref = items[items.length - 1]
 
-  const put = (key: string, box: Rect4) => out.set(key, box.map(round4) as Rect4)
+  const put = (it: AlignItem, box: Rect4) => {
+    const next = box.map(round4) as Rect4
+    if (sameBox(next, it.box)) return
+    out.set(it.key, next)
+  }
 
   if (mode === 'hdist' || mode === 'vdist') {
     if (items.length < 3) return out
@@ -49,7 +71,7 @@ export function layoutBoxes(items: AlignItem[], mode: AlignMode): Map<string, Re
     let cur = horizontal ? minL : minT
     for (const it of sorted) {
       const [x, y, w, h] = it.box
-      put(it.key, horizontal ? [cur, y, w, h] : [x, cur, w, h])
+      put(it, horizontal ? [cur, y, w, h] : [x, cur, w, h])
       cur += (horizontal ? w : h) + gap
     }
     return out
@@ -59,29 +81,29 @@ export function layoutBoxes(items: AlignItem[], mode: AlignMode): Map<string, Re
     const [x, y, w, h] = it.box
     switch (mode) {
       case 'left':
-        put(it.key, [minL, y, w, h])
+        put(it, [minL, y, w, h])
         break
       case 'right':
-        put(it.key, [maxR - w, y, w, h])
+        put(it, [maxR - w, y, w, h])
         break
       case 'hcenter':
-        put(it.key, [(minL + maxR) / 2 - w / 2, y, w, h])
+        put(it, [(minL + maxR) / 2 - w / 2, y, w, h])
         break
       case 'top':
-        put(it.key, [x, minT, w, h])
+        put(it, [x, minT, w, h])
         break
       case 'bottom':
-        put(it.key, [x, maxB - h, w, h])
+        put(it, [x, maxB - h, w, h])
         break
       case 'vcenter':
-        put(it.key, [x, (minT + maxB) / 2 - h / 2, w, h])
+        put(it, [x, (minT + maxB) / 2 - h / 2, w, h])
         break
       case 'samew':
-        if (it !== ref) put(it.key, [x, y, ref.box[2], h])
+        if (it !== ref) put(it, [x, y, ref.box[2], h])
         break
       case 'sameh':
         // 等高保持顶边不动，视觉上更符合预期
-        if (it !== ref) put(it.key, [x, y, w, ref.box[3]])
+        if (it !== ref) put(it, [x, y, w, ref.box[3]])
         break
     }
   }

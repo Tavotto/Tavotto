@@ -3,7 +3,7 @@ import { Pin } from 'lucide-react'
 import { drawerMotion, type PresenceState } from '@/lib/motion'
 import { cn } from '@/lib/utils'
 import { useDocumentStore } from '@/store/documentStore'
-import { usePanelManifest } from '@/store/renderStore'
+import { usePanelDisplayManifest } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { LEFT_MAX, LEFT_MIN, RAIL_W, useUiStore } from '@/store/uiStore'
 import { Button } from '../ui/Button'
@@ -95,7 +95,7 @@ function ElementCount() {
     return o?.type === 'panel' && o.script ? o : null
   }
   const panel = byId(elementPanelId) ?? byId(selectedIds.at(-1) ?? null)
-  const n = usePanelManifest(panel)?.elements.length ?? 0
+  const n = usePanelDisplayManifest(panel)?.elements.length ?? 0
   if (!n) return null
   return <span className="font-mono text-xs text-ink-3">{n - 1}</span>
 }

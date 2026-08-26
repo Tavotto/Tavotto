@@ -22,7 +22,7 @@ import { listJoin } from '@/i18n/format'
 import { cn, MOD } from '@/lib/utils'
 import { deleteSelected, duplicateSelected, hideElement, updateObjects } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
-import { usePanelManifest } from '@/store/renderStore'
+import { usePanelDisplayManifest } from '@/store/renderStore'
 import { RIGHT_MAX, RIGHT_MIN, useUiStore, type RightTab } from '@/store/uiStore'
 import {
   objectLabel,
@@ -291,7 +291,7 @@ function PropertiesPage() {
 function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: PanelObject }) {
   const { t } = useTranslation('inspector')
   const selectedGids = useUiStore((s) => s.selectedGids)
-  const manifest = usePanelManifest(panel)
+  const manifest = usePanelDisplayManifest(panel)
 
   if (panel) {
     const gid = selectedGids.at(-1)

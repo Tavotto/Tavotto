@@ -216,31 +216,45 @@ test('纯键盘走完核心闭环：开项目 → 编辑元素 → undo/redo →
   expect(await focusedValue(page)).toBe(widthAfter)
 
   // ── 5. undo / redo（快捷键）──────────────────────────────────────────
-  // 撤销/重做会触发一次权威重渲染；NumberField 聚焦期间不刷新显示值，
-  // 所以先等 render 响应落地，再走键盘去核对。**超时就红**：撤销只改了本地
-  // store 而没有请求权威渲染的话，后面的输入框断言照样能从本地状态过——
-  // 吞掉超时等于把「画面还停在旧图」放行
-  const nextRender = () =>
-    page.waitForResponse((r) => r.url().includes('/api/engine/render'), { timeout: 60_000 })
+  // 撤销/重做之后**画布必须换成新文档那一版的精确图**；NumberField 聚焦期间
+  // 不刷新显示值，所以先等画面换定，再走键盘去核对。不等的话后面的输入框断言
+  // 照样能从本地状态过——那等于把「画面还停在旧图」放行。
+  //
+  // 判据盯的是**结果**不是手段：以前这里等的是一次 `/api/engine/render` 往返，
+  // 但撤销回到最近几版时引擎根本不需要再跑一次（渲染态缓存里就有那一版的精确
+  // 图，画面当场就换过去了，比等一次往返还快、还准）。拿 HTTP 往返当代理会把
+  // 这个正确行为判成红，而且它连「换过去的是不是对的那一版」都没验。
+  //
+  // 画布把「此刻挂的是哪一版」落在 `data-display-key` 上（变体键的短 hash），
+  // 是不是这一版自己的精确图落在 `data-display` 上。所以判据是两条：
+  // **键真的变了** + **换成的是 exact 而不是还挂着上一张**。
+  const displayKey = () =>
+    page.locator('[data-display-key]').first().getAttribute('data-display-key')
+  const settleAfter = async (act: () => Promise<void>) => {
+    const before = await displayKey()
+    await act()
+    await expect
+      .poll(async () => {
+        const el = page.locator('[data-display-key]').first()
+        const k = await el.getAttribute('data-display-key')
+        const kind = await el.getAttribute('data-display')
+        return k !== before && kind === 'exact' ? 'switched' : `${kind}:${k}`
+      }, { timeout: 60_000, message: '撤销/重做之后画布没有换成新文档那一版的精确图' })
+      .toBe('switched')
+  }
   // 先把焦点从输入框挪走（Tab 一步落在下一个控件上）：输入框里的 ⌘Z 归
   // 文本编辑管；不用 Esc 失焦——programmatic blur 之后 WebKit 的顺序导航
   // 会失去起点，键盘用户会被困在 body 上
   await page.keyboard.press(tabKey())
-  let rendered = nextRender()
-  await page.keyboard.press('ControlOrMeta+z') // 撤销线宽
-  await rendered
-  rendered = nextRender()
-  await page.keyboard.press('ControlOrMeta+z') // 撤销字号
-  await rendered
+  await settleAfter(() => page.keyboard.press('ControlOrMeta+z')) // 撤销线宽
+  await settleAfter(() => page.keyboard.press('ControlOrMeta+z')) // 撤销字号
   // 字号回到原值：重新走到标题的字号框核对
   await tabTo(page, 'css=[role="treeitem"]', 160)
   await arrowToTreeitem(page, /标题/)
   await tabTo(page, 'css=input[aria-label="字号"]')
   expect(await focusedValue(page)).toBe(sizeBefore)
   await page.keyboard.press(tabKey())
-  rendered = nextRender()
-  await page.keyboard.press('Shift+ControlOrMeta+z')
-  await rendered
+  await settleAfter(() => page.keyboard.press('Shift+ControlOrMeta+z')) // 重做字号
   await tabTo(page, 'css=[role="treeitem"]', 160)
   await arrowToTreeitem(page, /标题/)
   await tabTo(page, 'css=input[aria-label="字号"]')

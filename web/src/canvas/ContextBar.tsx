@@ -17,7 +17,7 @@ import { Popover } from '@/components/ui/Popover'
 import { Tip } from '@/components/ui/Tooltip'
 import { enterElementEdit, fitPanels, updateObjects } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
-import { usePanelManifest } from '@/store/renderStore'
+import { usePanelDisplayManifest } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { useViewportStore } from '@/store/viewportStore'
@@ -82,7 +82,7 @@ export function ContextBar() {
   const obj: CanvasObject | null =
     !panel && ids.length === 1 ? (objects.find((o) => o.id === ids[0]) ?? null) : null
   // 只有真给得出高频动作才出现——一个孤零零的「全部属性」按钮不值得盖住画布
-  const manifest = usePanelManifest(panel)
+  const manifest = usePanelDisplayManifest(panel)
   const element = gid ? (manifest?.elements.find((e) => e.gid === gid) ?? null) : null
   const hasActions = panel
     ? !!element && !!element.editable.length && elementHasQuick(element)
@@ -338,7 +338,7 @@ const elementHasQuick = (el: ManifestElement) =>
   hasTextStyleBar(el) || ELEMENT_QUICK_ROLES.has(el.role)
 
 function ElementQuickActions({ panel, gid }: { panel: PanelObject; gid: string }) {
-  const manifest = usePanelManifest(panel)
+  const manifest = usePanelDisplayManifest(panel)
   const el = manifest?.elements.find((e) => e.gid === gid)
   if (!el || !el.editable.length) return null
   return <ElementQuickInner panel={panel} element={el} />
