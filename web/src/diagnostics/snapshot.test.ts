@@ -228,6 +228,94 @@ describe('导出载荷', () => {
   })
 })
 
+describe('生产方守约：前端真的发得出后端收得下的形状', () => {
+  /*
+   * 后端 `engine/diagnostics_frontend.py` 的判据是独立写的，两边只靠**形状**
+   * 对上。所以光测「后端会拒绝坏载荷」还不够——还得测「前端真发出来的那份
+   * 过得了那些判据」。少了这一半，两边可以各自绿着，而诊断包里一条事件都没有。
+   *
+   * 这不是假想：epoch 毫秒一度超出后端的整数上界，环里看着好好的，
+   * 一到导出全部被丢——正是这一类断言把它逼出来的。
+   */
+  const HASH_RE = /^[a-z_]+:[0-9a-f]{8,16}$/
+  const GID_RE = /^[a-z][a-z0-9_.:-]{0,63}$/
+  const FIELD_RE = /^[a-z][a-z0-9_]{0,31}$/
+  const TOKEN_RE = /^[A-Za-z0-9_.:-]{1,64}$/
+  const MAX_TIMESTAMP = 4_000_000_000_000
+  const isIdentity = (k: string) =>
+    k.endsWith('_hash') ||
+    k.endsWith('_variant') ||
+    ['panel', 'file', 'session', 'version', 'active_panel', 'variant'].includes(k)
+
+  const checkValue = (key: string, value: unknown, where: string) => {
+    if (value === null || typeof value === 'boolean' || typeof value === 'number') return
+    if (Array.isArray(value)) {
+      for (const v of value) checkValue(key, v, where)
+      return
+    }
+    if (typeof value === 'object') {
+      for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+        if (k === 'gid') expect(String(v), `${where}.gid`).toMatch(GID_RE)
+        else checkValue(k, v, `${where}.${k}`)
+      }
+      return
+    }
+    const text = String(value)
+    if (isIdentity(key)) expect(text, `${where} 应是 hash`).toMatch(HASH_RE)
+    else expect(text, `${where} 应是短技术标识`).toMatch(TOKEN_RE)
+  }
+
+  it('每条事件的字段名与取值都过得了后端那三条判据', () => {
+    // 走一遍真实路径，让各类事件都进环
+    const panel = panelWith([])
+    useDocumentStore.setState({ doc: { ...useDocumentStore.getState().doc, objects: [panel] } })
+    const key = renderKeyOf(panel)
+    useRenderStore.setState({ byKey: { [key]: ready([]) }, latest: { 'Fig1.pdf': key } })
+    useUiStore.setState({ elementPanelId: 'p1', selectedGids: ['axes_0.title'] })
+    useDocumentStore.getState().commit(msg('setProp', undefined, 'inspector'), (d) => {
+      ;(d.objects[0] as PanelObject).overrides = [
+        { gid: 'axes_0.title', prop: 'fontsize', value: 12 },
+      ]
+    })
+    useDocumentStore.getState().undo()
+    useDocumentStore.getState().redo()
+
+    const payload = buildDiagnosticPayload()
+    expect(payload.interaction_trace.length).toBeGreaterThan(3)
+
+    for (const ev of payload.interaction_trace) {
+      expect(Number.isInteger(ev.seq)).toBe(true)
+      expect(ev.ts).toBeLessThanOrEqual(MAX_TIMESTAMP)
+      expect(ev.t_ms).toBeLessThanOrEqual(1_000_000_000)
+      for (const [k, v] of Object.entries(ev)) {
+        if (['seq', 'ts', 't_ms', 'type'].includes(k)) continue
+        expect(k, `字段名 ${k}`).toMatch(FIELD_RE)
+        checkValue(k, v, `${String(ev.type)}.${k}`)
+      }
+    }
+  })
+
+  it('快照里的身份字段也都是 hash，gid 都是小写形状', () => {
+    const panel = panelWith([])
+    useDocumentStore.setState({ doc: { ...useDocumentStore.getState().doc, objects: [panel] } })
+    const key = renderKeyOf(panel)
+    useRenderStore.setState({ byKey: { [key]: ready([]) }, latest: { 'Fig1.pdf': key } })
+    useUiStore.setState({ elementPanelId: 'p1', selectedGids: ['axes_0.title'] })
+
+    const snap = buildDiagnosticPayload().frontend_state
+    expect(snap.document.document_hash).toMatch(HASH_RE)
+    expect(snap.selection.active_panel!).toMatch(HASH_RE)
+    for (const g of snap.selection.element_gids) expect(g).toMatch(GID_RE)
+    for (const p of snap.panels) {
+      expect(p.panel).toMatch(HASH_RE)
+      expect(p.file).toMatch(HASH_RE)
+      expect(p.document_variant).toMatch(HASH_RE)
+      if (p.display_variant) expect(p.display_variant).toMatch(HASH_RE)
+      if (p.authority_variant) expect(p.authority_variant).toMatch(HASH_RE)
+    }
+  })
+})
+
 describe('性能预算（ADR 0016 §15）', () => {
   it('连续 1000 条事件的总写入耗时远低于一帧预算，且内存有界', () => {
     const t0 = performance.now()
