@@ -1,8 +1,14 @@
-"""AI 桥：让 codex / claude CLI 非交互地深度修改 fig 脚本。
+"""AI 桥：让本机的编码 Agent CLI 非交互地深度修改 fig 脚本。
 
 流程：快照脚本 → spawn CLI（cwd=figures 目录）→ stdout 逐行流式回调（SSE）→
 进程结束后对比快照生成 unified diff。CLI 直接改动脚本文件；文件 watcher
 随即作废渲染会话，前端重渲染即可看到效果——用户不满意可 revert 恢复快照。
+
+**这里只管会话编排**（快照 / SSE / diff / revert / cancel / history）。
+「支持哪些 Agent、怎么找到它、怎么拼命令行、输出怎么分类、装哪个 npm 包」
+一律在 `engine/ai_agents.py` 的注册表里，本模块遍历它，不写
+`if agent == "codex"` 这种分支。第三方接口的存取与注入在
+`engine/ai_providers.py`；注入结果由本模块算好后交给适配器拼装。
 
 纯标准库，Flask 父进程 import。
 """
@@ -12,16 +18,15 @@ import difflib
 import json
 import logging
 import os
-import re
 import shutil
 import subprocess
-import sys
 import threading
 import time
 import uuid
 from pathlib import Path
 
-from . import ai_history, ai_providers, config
+from . import ai_agents, ai_history, ai_providers, config
+from .ai_agents import spawn_env as _spawn_env  # noqa: F401 — run() 与旧调用方仍认这个名字
 from .runtime import CREATE_NO_WINDOW  # noqa: F401 — 重导出，历史调用方仍认这个名字
 
 LOG = logging.getLogger("tavotto.ai")
@@ -49,365 +54,269 @@ def _prune_snapshots(keep: int = SNAP_KEEP) -> int:
     return removed
 
 
-def _search_dirs(name: str) -> list[str]:
-    """按平台列出该 CLI 的常见落点（PATH 之外的兜底）。
+# ---------------------------------------------------------------------------
+# 稳定错误码（app 层原样转成 JSON；前端按 code 出人话，后端不猜用户语言）
+# ---------------------------------------------------------------------------
+class AgentError(RuntimeError):
+    """带稳定 code 的 Agent 操作失败。code 一旦发布不能改名。"""
 
-    Windows 上以前一个候选都没有——`shutil.which` 找不到就直接判定「未安装」。
-    可 PATH 恰恰是 Windows 最不可靠的地方：npm 全局目录要重开终端才进 PATH，
-    从桌面快捷方式启动的进程拿的又是启动那一刻的旧环境块。所以这里把
-    npm / winget / scoop / bun / volta / 官方安装器的落点全部直接翻一遍。
+    def __init__(self, code: str, params: dict | None = None, message: str = ""):
+        super().__init__(message or code)
+        self.code = code
+        self.params = params or {}
+
+
+def require_agent(agent_id: str) -> ai_agents.AgentDefinition:
+    """按 id 取适配器；**未知 id 一律当场拒绝**，绝不继续往下传。
+
+    这是「不把请求体里的字符串拼进命令行」的那道闸：安装包名、可执行文件、
+    第三方接口全部只从适配器上取，请求体只提供一个必须命中注册表的 id。
     """
-    # 一律用字符串拼路径（与 pool._candidate_pythons 同一条约定）：
-    # pathlib.Path 会按 os.name 分派 Posix/Windows 实现，在非目标平台上构造
-    # 另一半会直接抛 UnsupportedOperation——连跨平台测这段分支都做不到。
-    home = os.path.expanduser("~")
-    if os.name == "nt":
-        appdata = os.environ.get("APPDATA") or home + r"\AppData\Roaming"
-        local = os.environ.get("LOCALAPPDATA") or home + r"\AppData\Local"
-        programs = os.environ.get("ProgramFiles") or r"C:\Program Files"
-        return [
-            appdata + r"\npm",                       # npm 全局（最常见）
-            local + r"\npm",
-            # 微软商店 / MSIX 安装（OpenAI.Codex 就是这么发的）。真身在
-            # C:\Program Files\WindowsApps\OpenAI.Codex_…\app，那个目录受 ACL
-            # 保护、普通进程连列都列不了——**能用的入口是这里的执行别名**
-            # （0 字节 reparse point，只能执行不能读）。少了这一条，商店版
-            # codex 在系统里就是「找不到」。
-            local + r"\Microsoft\WindowsApps",
-            home + r"\.local\bin",                   # 官方安装脚本
-            home + r"\.bun\bin",
-            local + r"\Volta\bin",
-            home + r"\scoop\shims",
-            local + r"\Microsoft\WinGet\Links",
-            r"C:\ProgramData\chocolatey\bin",
-            local + rf"\Programs\{name}",
-            local + rf"\Programs\{name}\bin",
-            programs + r"\nodejs",
-            home + r"\.codex\bin",
-            home + r"\.claude\bin",
-            home + rf"\.{name}\bin",
-        ]
-    dirs = [
-        "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin",
-        f"{home}/.local/bin",
-        f"{home}/.bun/bin",
-        f"{home}/.volta/bin",
-        f"{home}/.npm-global/bin",
-        f"{home}/.{name}/bin",
-        "/opt/homebrew/opt/node/bin",
-    ]
-    if name == "codex" and sys.platform == "darwin":
-        # macOS 的 ChatGPT 桌面应用自带一份能用的 codex CLI（issue #89）——
-        # 它不在 PATH 上，装了 ChatGPT 却没单独装 codex 的用户以前会被判成
-        # 「未安装」。排在常规安装位置之后：单独装的 codex 通常更新。
-        # 候选与其它落点一样要过 _resolve_cli 的 --version 启动验证才算数。
-        # 只对 darwin 给：Linux 上没有 /Applications 这套布局。
-        dirs += [
-            "/Applications/ChatGPT.app/Contents/Resources",
-            home + "/Applications/ChatGPT.app/Contents/Resources",
-        ]
-    return dirs
+    agent = ai_agents.get_agent(agent_id)
+    if agent is None:
+        raise AgentError("ai_agent_unknown", {"agent": agent_id})
+    return agent
 
 
-def _resolve_shim(path: str) -> list[str] | None:
-    """npm 的 `.cmd`/`.ps1` 外壳 → 真正的可执行文件（Windows）。
-
-    npm 全局安装留下的是 `codex.cmd` 这类批处理外壳，经 cmd.exe 中转会带来
-    参数再解析问题：提示词里的 `%`、`&`、`^`、`<`、`>`、`|` 会被 cmd 吃掉或
-    截断——中文提示里写个「透明度调到 50%」就足以让任务跑错。外壳内部指向的
-    平台原生 `.exe`（或 `xxx.js` + node）拿出来直接跑，就完全绕开了 cmd.exe。
-    """
-    p = Path(path)
-    if p.suffix.lower() not in (".cmd", ".bat", ".ps1"):
-        return None
-    try:
-        text = p.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return None
-    base = p.parent
-    for m in re.finditer(r'["\']?%~?dp0%?[\\/]?([^"\'\s]+\.(?:exe|js))', text, re.I):
-        target = (base / m.group(1).replace("\\", "/")).resolve()
-        if not target.is_file():
-            continue
-        if target.suffix.lower() == ".exe":
-            return [str(target)]
-        node = shutil.which("node")
-        if node:
-            return [node, str(target)]
-    return None
-
-
-def _cli_candidates(name: str) -> list[str]:
-    """该 CLI 的候选路径（按优先级、去重）：用户设置 → PATH → 常见安装位置。
-
-    刻意返回**全部**候选而不是第一个：Windows 上 `%LOCALAPPDATA%\\Microsoft\\
-    WindowsApps` 里的执行别名可能存在却根本启动不了（商店应用没装全 / 别名被
-    禁用 / 残留的 0 字节 reparse point）——第一候选坏了必须能落到下一个
-    （比如 npm 全局目录里那个真的能跑的）。不含任何私人硬编码路径。"""
-    out: list[str] = []
-
-    def add(p: str | None) -> None:
-        if p and p not in out:
-            out.append(p)
-
-    custom = str(config.ai_settings().get(f"{name}_path") or "")
-    if custom:
-        p = Path(custom).expanduser()
-        if p.is_file():
-            add(str(p))
-    add(shutil.which(name))
-    # PATH 里没有：把常见安装目录当成 PATH 再 which（Windows 上 PATHEXT 的
-    # .cmd/.exe 匹配也交给 which 处理，不手写扩展名组合）。逐目录 which，
-    # 保住「一个目录里的候选坏了还有下一个目录」的语义。
-    dirs = [d for d in _search_dirs(name) if Path(d).is_dir()]
-    for d in dirs:
-        add(shutil.which(name, path=d))
-    # npm 包内部的平台原生二进制（外层 .cmd 外壳缺失时的最后一手）
-    for d in dirs:
-        for sub in Path(d).glob(f"node_modules/**/bin/{name}*"):
-            if sub.is_file() and sub.suffix.lower() in ("", ".exe"):
-                add(str(sub))
-    if os.name == "nt":
-        # MSIX 包体本身。正常情况下走执行别名就够了（见 _search_dirs），
-        # 这里只是别名被用户关掉时的兜底；目录读不了就当没有，绝不报错。
-        for root in (os.environ.get("ProgramFiles") or r"C:\Program Files",):
-            try:
-                for sub in Path(root, "WindowsApps").glob(f"*{name}*/app/{name}.exe"):
-                    if sub.is_file():
-                        add(str(sub))
-            except OSError:
-                pass
-    return out
-
-
-# name -> {"argv": list|None, "version": str|None, "broken_path": str|None}
-_RESOLVE_CACHE: dict[str, dict] = {}
-
-
-def _resolve_cli(name: str) -> dict:
-    """逐个候选做启动验证（`--version`），第一个真能跑起来的才算数。
-
-    以前拿到第一个候选就宣布「已安装」，用户在别人电脑上撞到的正是这一步：
-    WindowsApps 的执行别名存在但无法被子进程启动，探测说装了、运行必失败。
-    现在候选启动不了就换下一个；全都不行时把第一个坏候选记在 broken_path，
-    界面据此提示「检测到不可用的安装」而不是干说「未安装」。"""
-    cached = _RESOLVE_CACHE.get(name)
-    if cached is not None:
-        return cached
-    broken: str | None = None
-    result = {"argv": None, "version": None, "broken_path": None}
-    for path in _cli_candidates(name):
-        argv = _resolve_shim(path) or [path]
-        version = _probe_version(argv)
-        if version is not None:
-            result = {"argv": argv, "version": version, "broken_path": None}
-            break
-        if broken is None:
-            broken = path
-    else:
-        result["broken_path"] = broken
-    _RESOLVE_CACHE[name] = result
-    return result
-
-
-def _cli_argv(name: str) -> list[str] | None:
-    """CLI 的启动 argv（可能是 [exe] 或 [node, script.js]）；找不到回 None。"""
-    return _resolve_cli(name)["argv"]
-
-
-def _cli_path(name: str) -> str | None:
-    """CLI 可执行路径（已通过启动验证的那一个）；探测/诊断用。"""
-    argv = _cli_argv(name)
-    return argv[-1] if argv else None
-
-
-def _find_cli(name: str) -> list[str]:
-    argv = _cli_argv(name)
-    if argv is None:
-        raise RuntimeError(f"找不到 {name} CLI（可在设置中指定其路径）")
-    return argv
-
-
-def _spawn_env(cli_path: str | None, extra: dict | None = None) -> dict:
-    """CLI 子进程的环境：把常见安装目录并进 PATH（不改排序、只补缺）。
-
-    桌面壳从 Finder / 开始菜单启动时继承的是 GUI 的最小 PATH，里面没有
-    /opt/homebrew/bin 这类目录：npm shim 的 `#!/usr/bin/env node` 在子进程里
-    解析不到 node，报 `env: node: No such file or directory`——CLI 明明装着、
-    路径也找到了，一启动就死。把 CLI 自己所在目录 + 各常见安装目录接到
-    PATH 末尾，`env node` 就能像在用户终端里一样解析。"""
-    env = dict(os.environ)
-    parts = [p for p in env.get("PATH", "").split(os.pathsep) if p]
-    home = os.path.expanduser("~")
-    candidates = []
-    if cli_path:
-        candidates.append(os.path.dirname(cli_path))
-    candidates += _search_dirs("node")
-    if os.name != "nt":
-        # nvm 没有稳定的 current 目录：把装过的版本目录挑最新的补上
-        import glob as _glob
-        vers = sorted(_glob.glob(home + "/.nvm/versions/node/*/bin"))
-        if vers:
-            candidates.append(vers[-1])
-    for d in candidates:
-        if d and d not in parts and os.path.isdir(d):
-            parts.append(d)
-    env["PATH"] = os.pathsep.join(parts)
-    if extra:
-        env.update(extra)
-    return env
-
-
-def _probe_version(argv: list[str]) -> str | None:
-    try:
-        out = subprocess.run([*argv, "--version"], capture_output=True,
-                             text=True, timeout=10, encoding="utf-8",
-                             errors="replace", stdin=subprocess.DEVNULL,
-                             env=_spawn_env(argv[-1]),
-                             creationflags=CREATE_NO_WINDOW)
-        line = (out.stdout or out.stderr).strip().splitlines()
-        return line[0][:80] if line else None
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-
-
+# ---------------------------------------------------------------------------
+# 能力探测
+# ---------------------------------------------------------------------------
 _CAPS_CACHE: dict = {}
 
-# codex 的推理强度档位。模型名故意不写死——OpenAI 换代时旧名会被服务端直接
-# 拒绝（"The 'gpt-5' model is not supported when using Codex with a ChatGPT
-# account."），本机 config.toml 里用户自己选定的才是可用的。
-CODEX_EFFORTS = ["minimal", "low", "medium", "high", "max"]
-CLAUDE_MODELS = ["sonnet", "opus", "haiku"]
+#: 界面状态机的六个值。语义见 docs/adr/0015。
+STATES = ("ready", "installed", "needs_auth", "broken", "not_installed", "disabled")
 
 
-def _codex_home() -> Path:
-    """codex 自己的配置目录（CODEX_HOME 是其官方覆盖变量，测试也用它重定向）。"""
-    return Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex"))
+def _state(installed: bool, enabled: bool, res: ai_agents.Resolution,
+           endpoint_backed: bool = False) -> str:
+    """把探测结论收敛成界面状态。
 
+    「没装」不是错误，「装了但起不来」才是——两者必须分开说：前者的下一步是
+    去装，后者的下一步是修（或改用另一个候选）。登录状态查不准时一律说
+    「已安装」，**绝不为了让那一行变绿而偷偷发一个真实 Prompt**。
 
-def _codex_config() -> dict:
-    """从 codex 的 config.toml 读模型与默认推理强度。
-
-    返回 {"models": [...], "default_model": str|None, "default_effort": str|None}。
-    顶层 model 是用户当前在用的，profiles 里的作为备选一并列出。读不到就返回
-    空——前端只显示「跟随 CLI 默认」，绝不给一个我们猜的模型名。
+    `endpoint_backed` = 第三方接口**真的接管了这次调用**（`spawn_overrides`
+    确实产出了参数或环境变量）。这时 CLI 自己的登录态**与能不能派活无关**
+    ——注入那套凭据的全部意义就是让 CLI 不必用官方登录跑起来。判据的主语
+    是「这次运行会不会成」，不是「这个 CLI 登没登录过」；把后者当成前者，
+    表现是「配好了 DeepSeek 的用户发现 Codex 从选择器里整个消失了」。
+    就绪检查的原始结论仍然照实记在 diagnostics 里，只是不再当闸。
     """
-    out: dict = {"models": [], "default_model": None, "default_effort": None}
-    try:
-        text = (_codex_home() / "config.toml").read_text(encoding="utf-8")
-    except OSError:
-        return out
-    try:
-        import tomllib  # 3.11+
-        data = tomllib.loads(text)
-        out["default_model"] = data.get("model") or None
-        out["default_effort"] = data.get("model_reasoning_effort") or None
-        names = [data.get("model")]
-        profiles = data.get("profiles")
-        if isinstance(profiles, dict):
-            names += [p.get("model") for p in profiles.values()
-                      if isinstance(p, dict)]
-    except (ImportError, ValueError):
-        # tomllib 缺席（3.10）或 TOML 有语法问题：退化成逐行取值，
-        # 首个 model 视为默认。宁可少给，也不要报错让整个面板不可用。
-        names = re.findall(r'^\s*model\s*=\s*["\']([^"\']+)["\']', text, re.M)
-        efforts = re.findall(
-            r'^\s*model_reasoning_effort\s*=\s*["\']([^"\']+)["\']', text, re.M)
-        out["default_model"] = names[0] if names else None
-        out["default_effort"] = efforts[0] if efforts else None
-    seen: list[str] = []
-    for n in names:
-        if isinstance(n, str) and n and n not in seen:
-            seen.append(n)
-    out["models"] = seen
-    return out
+    if not installed:
+        return "broken" if res.broken_path else "not_installed"
+    if not enabled:
+        return "disabled"
+    if res.readiness.state == "ready":
+        return "ready"
+    if res.readiness.state == "needs_auth" and not endpoint_backed:
+        return "needs_auth"
+    return "installed"
+
+
+def _effective_enabled(saved: dict, installed: bool) -> bool:
+    """`enabled` 是三态：没表过态 = 跟着「装没装」走。
+
+    用户从没动过开关时，装上了就该能用（不该逼他先去设置里打开一次）；
+    **明确关过就一直关着**，下次探测成功也不自动翻回来。
+    """
+    stored = saved.get("enabled")
+    return bool(stored) if isinstance(stored, bool) else installed
+
+
+def _agent_caps(agent: ai_agents.AgentDefinition, saved: dict,
+                npm_available: bool) -> dict:
+    res = ai_agents.resolve(agent)
+    installed = res.argv is not None
+    enabled = _effective_enabled(saved, installed)
+
+    caps = agent.model_capabilities() if installed else ai_agents.ModelCapabilities()
+    models = list(caps.models)
+    default_model = caps.default_model
+
+    endpoint = None
+    endpoint_backed = False
+    if installed and agent.endpoint_family:
+        endpoint = ai_providers.resolve(agent.id)
+        if endpoint and endpoint.get("models"):
+            # 接了第三方接口时改用该接口自己填的模型清单（网关认的模型名与
+            # 官方无关）
+            models = list(endpoint["models"])
+            default_model = endpoint.get("default_model") or models[0]
+        # 「算不算真的接管了」**问注入方自己**，不在这里另写一份判据：
+        # codex 侧 base_url 为空时 spawn_overrides 其实一个字节都不注入，
+        # 那种情况 CLI 自己的登录态仍然算数。两份规则迟早分叉，而分叉的
+        # 表现是「界面说可用、一跑就报未登录」。
+        args, env = ai_providers.spawn_overrides(agent.id, endpoint)
+        endpoint_backed = bool(args or env)
+
+    state = _state(installed, enabled, res, endpoint_backed)
+
+    info: dict = {
+        "id": agent.id,
+        "display_name": agent.display_name,
+        "icon_key": agent.icon_key,
+
+        "state": state,
+        "installed": installed,
+        "enabled": enabled,
+        # 「能不能真的派活给它」——界面据此过滤选择器，后端 run 也照这条判。
+        "usable": enabled and installed and state in ("ready", "installed"),
+
+        "version": res.version,
+        "executable_path": res.path,
+        "path_override": str(saved["path_override"]) if saved.get("path_override") else None,
+        "detection_source": res.source,
+
+        "models": models,
+        "default_model": default_model,
+        "efforts": list(caps.efforts) if agent.supports_effort_selection else [],
+        "default_effort": caps.default_effort if agent.supports_effort_selection else None,
+
+        "endpoint": ai_providers.public(endpoint) if endpoint else None,
+        "active_endpoint_id": (ai_providers.active_id(agent.id)
+                               if agent.endpoint_family else None),
+
+        "features": {
+            "third_party_endpoints": bool(agent.endpoint_family),
+            "model_selection": agent.supports_model_selection,
+            "effort_selection": agent.supports_effort_selection,
+            "wire_api_selection": agent.supports_wire_api,
+            "readiness_probe": agent.supports_readiness_probe,
+        },
+
+        # 诊断（详情页的折叠区）：找过哪儿、第一个坏候选、就绪检查的结论。
+        # **`argv` 不在这里**——前端没有消费者，那就不公开。
+        "diagnostics": {
+            "searched": list(res.searched),
+            "broken_path": res.broken_path,
+            "readiness": res.readiness.state,
+            "readiness_detail": res.readiness.detail,
+        },
+    }
+    if agent.install_spec:
+        info["install"] = {"method": agent.install_spec.method,
+                           "package": agent.install_spec.package,
+                           "available": npm_available,
+                           **install_status(agent.id)}
+    return info
 
 
 def capabilities(refresh: bool = False) -> dict:
-    """实际探测本机 codex / claude：安装与版本；模型与推理强度按 provider
-    各自给出（两家能力不同构——claude CLI 不暴露推理强度选项）。
+    """实测本机每个已注册 Agent：安装 / 版本 / 就绪 / 模型 / 推理强度。
 
-    codex 的模型清单来自它自己的 config.toml，随用户升级 CLI 自动跟上；
-    接了第三方接口时改用该接口自己填的模型清单（网关认的模型名与官方无关）。
+    遍历 `ai_agents.AGENT_REGISTRY`，一条硬编码分支都没有——加第四个 Agent
+    只需要往注册表里放一个适配器。模型与推理强度由适配器各自声明（两家能力
+    不同构：claude CLI 不暴露推理强度开关，就不给这一档）。
     """
     global _CAPS_CACHE
     if refresh:
-        # refresh = 真的重新探测。_RESOLVE_CACHE 不清的话，改完 codex_path
-        # 或点「重新探测」拿到的仍是上一次的结论——新路径根本没被 --version
+        # refresh = 真的重新探测。解析缓存不清的话，改完自定义路径或点
+        # 「重新检测」拿到的仍是上一次的结论——新路径根本没被 --version
         # 验过，界面于是一直说「未检测到」（issue #89 的另一半）。
-        _RESOLVE_CACHE.clear()
+        ai_agents.clear_cache()
     elif _CAPS_CACHE:
         return _CAPS_CACHE
-    providers: dict[str, dict] = {}
-    for name in ("codex", "claude"):
-        resolved = _resolve_cli(name)
-        argv = resolved["argv"]
-        path = argv[-1] if argv else None
-        info: dict = {"installed": argv is not None, "path": path,
-                      "argv": argv,
-                      "version": resolved["version"],
-                      "models": [], "default_model": None,
-                      "efforts": [], "default_effort": None,
-                      "endpoint": None}
-        if argv:
-            if name == "codex":
-                cfg = _codex_config()
-                efforts = list(CODEX_EFFORTS)
-                if cfg["default_effort"] and cfg["default_effort"] not in efforts:
-                    efforts.append(cfg["default_effort"])
-                info.update(models=cfg["models"],
-                            default_model=cfg["default_model"],
-                            efforts=efforts,
-                            default_effort=cfg["default_effort"] or "medium")
-            else:
-                # claude CLI 支持模型别名；推理强度无 CLI 开关，不假装有
-                info.update(models=list(CLAUDE_MODELS), default_model="sonnet")
-            endpoint = ai_providers.resolve(name)
-            if endpoint:
-                info["endpoint"] = ai_providers.public(endpoint)
-                if endpoint.get("models"):
-                    info["models"] = list(endpoint["models"])
-                    info["default_model"] = (endpoint.get("default_model")
-                                             or endpoint["models"][0])
-        else:
-            # 没装：把找过哪些目录告诉用户，比干甩一句「未安装」有用得多；
-            # 找到了却启动不了的候选（商店版执行别名的典型故障）单独指出来
-            info["searched"] = _search_dirs(name)
-            if resolved["broken_path"]:
-                info["broken_path"] = resolved["broken_path"]
-            # 一键安装的可行性：npm 在不在 + 装哪个包 + 当前安装状态
-            info["install"] = {"method": "npm",
-                               "package": NPM_PACKAGES.get(name),
-                               "available": _npm_argv() is not None,
-                               **install_status(name)}
-        providers[name] = info
-    saved = config.ai_settings()
-    _CAPS_CACHE = {"providers": providers,
-                   # 已存的自定义 CLI 路径：设置界面要回显它。不回显的话
-                   # 输入框永远从空白开始，失焦一次就把用户存好的路径以
-                   # 「改成了空」的名义清掉（issue #89）。只给这两个键——
-                   # cfg["ai"] 里还躺着第三方接口的记录，不能整份透出。
-                   "settings": {"codex_path": saved.get("codex_path"),
-                                "claude_path": saved.get("claude_path")},
-                   "endpoints": [ai_providers.public(p)
-                                 for p in ai_providers.list_providers()],
-                   "presets": ai_providers.PRESETS,
-                   "active": {a: ai_providers.active_id(a)
-                              for a in ai_providers.AGENTS}}
+    saved = config.ai_agent_settings()
+    npm_available = _npm_argv() is not None
+    _CAPS_CACHE = {
+        "agents": [_agent_caps(a, saved.get(a.id) or {}, npm_available)
+                   for a in ai_agents.agents()],
+        "endpoints": [ai_providers.public(p) for p in ai_providers.list_providers()],
+        "presets": ai_providers.PRESETS,
+        "checked_at_ms": int(time.time() * 1000),
+    }
     return _CAPS_CACHE
 
 
 def invalidate_capabilities() -> None:
-    """改过 CLI 路径 / 第三方接口后必须清缓存，否则界面一直是旧探测结果。"""
+    """改过路径 / 开关 / 第三方接口后必须清缓存，否则界面一直是旧探测结果。"""
     global _CAPS_CACHE
     _CAPS_CACHE = {}
-    _RESOLVE_CACHE.clear()
+    ai_agents.clear_cache()
+
+
+def agent_caps(agent_id: str) -> dict | None:
+    """某个 Agent 的当前能力条目（不重新探测）。"""
+    for info in capabilities().get("agents", []):
+        if info["id"] == agent_id:
+            return info
+    return None
+
+
+def require_usable(agent_id: str) -> dict:
+    """派活之前的最后一道闸。**判据就是 `usable` 那一个字段**。
+
+    不能只靠前端隐藏——这些状态的 Agent 仍可以被直接调 API 唤起。
+    也不能在这里重列一遍「installed and enabled and …」：那是 `usable` 的
+    第二份定义，而两份定义分叉的表现是「界面把它藏了、API 还放它进来」。
+    先分别判 installed / enabled / needs_auth 只为**给出对得上的 code**，
+    最后那道 `usable` 才是兜底——将来 usable 多一个成因，这里自动跟上。
+    """
+    require_agent(agent_id)
+    info = agent_caps(agent_id)
+    if info is None:                                    # 理论上到不了
+        raise AgentError("ai_agent_unknown", {"agent": agent_id})
+    if not info["installed"]:
+        raise AgentError("ai_agent_not_installed", {"agent": agent_id})
+    if not info["enabled"]:
+        raise AgentError("ai_agent_disabled", {"agent": agent_id})
+    if info["state"] == "needs_auth":
+        # 注意这条排在 endpoint 判定**之后**（见 `_state`）：接了第三方接口
+        # 的用户本来就不需要 CLI 的官方登录，不该被这道闸挡住。
+        raise AgentError("ai_agent_needs_auth", {"agent": agent_id})
+    if not info["usable"]:
+        raise AgentError("ai_agent_not_usable", {"agent": agent_id})
+    return info
+
+
+# ---------------------------------------------------------------------------
+# 通用 Agent 设置（启用开关 / 自定义可执行文件）
+# ---------------------------------------------------------------------------
+def set_agent_enabled(agent_id: str, enabled: bool) -> dict:
+    """开关某个 Agent 在 Tavotto 里的使用。
+
+    只影响 Tavotto 用不用它：**不卸载 CLI、不改 CLI 自己的任何配置**。
+    完全没装、也没有有效自定义路径的 Agent 不允许打开——那只会造出一个
+    「开着但一用就报错」的状态。
+    """
+    require_agent(agent_id)
+    info = agent_caps(agent_id)
+    if enabled and not (info and info["installed"]):
+        raise AgentError("ai_agent_not_installed", {"agent": agent_id})
+    config.set_ai_agent_settings(agent_id, {"enabled": bool(enabled)})
+    invalidate_capabilities()
+    return capabilities(refresh=True)
+
+
+def set_agent_path_override(agent_id: str, path: str | None) -> dict:
+    """指定 / 清除自定义可执行文件。
+
+    非空值走**与自动探测同一套** shim 解析 + `--version` 启动验证：验不过
+    就抛错、一个字节都不写——用户原来那份有效设置绝不能被一次手滑清掉。
+    只接受一个文件路径，不接受任意 shell 命令串。
+    """
+    agent = require_agent(agent_id)
+    value = (path or "").strip()
+    if not value:
+        # 显式恢复自动检测
+        config.set_ai_agent_settings(agent_id, {"path_override": None})
+        invalidate_capabilities()
+        return capabilities(refresh=True)
+    res = ai_agents.validate_executable(agent, value)
+    if res.argv is None:
+        # 两个 code 分开抛（而不是三元表达式选一个）：门禁按字面量扫源码，
+        # 拼出来的 code 它看不见，而看不见的 code 不会被要求配双语文案。
+        if res.error == "timeout":
+            raise AgentError("ai_agent_probe_timeout", {"path": value})
+        raise AgentError("ai_agent_executable_invalid", {"path": value})
+    config.set_ai_agent_settings(agent_id, {"path_override": value})
+    invalidate_capabilities()
+    return capabilities(refresh=True)
 
 
 # ---------------------------------------------------------------------------
 # 一键安装（npm 用户级全局包；给「根本没装过 CLI」的用户一条不出软件的路）
 # ---------------------------------------------------------------------------
-NPM_PACKAGES = {"codex": "@openai/codex", "claude": "@anthropic-ai/claude-code"}
 INSTALL_TIMEOUT_S = 600
 _INSTALLS: dict[str, dict] = {}   # agent -> {"status", "code", "log", "started"}
 _INSTALL_LOCK = threading.Lock()
@@ -415,48 +324,49 @@ _INSTALL_LOCK = threading.Lock()
 
 def _npm_argv() -> list[str] | None:
     """npm 可执行路径。npm.cmd 直接跑没有元字符问题——install 的参数全是
-    我们写死的常量，不含用户输入，无须经 _resolve_shim 绕开 cmd.exe。"""
+    适配器里写死的常量，不含用户输入，无须经 resolve_shim 绕开 cmd.exe。"""
     p = shutil.which("npm")
     if not p:
-        dirs = [d for d in _search_dirs("npm") if Path(d).is_dir()]
+        dirs = [d for d in ai_agents.search_dirs("npm") if Path(d).is_dir()]
         if dirs:
             p = shutil.which("npm", path=os.pathsep.join(dirs))
     return [p] if p else None
 
 
-def install_status(agent: str) -> dict:
-    st = _INSTALLS.get(agent)
+def install_status(agent_id: str) -> dict:
+    st = _INSTALLS.get(agent_id)
     if not st:
         return {"status": "idle"}
     return {k: st[k] for k in ("status", "code", "log") if k in st}
 
 
-def start_install(agent: str) -> dict:
-    """后台 `npm install -g <包>`；结束后重探测 capabilities 定成败。
+def start_install(agent_id: str) -> dict:
+    """后台 `npm install -g <包>`；结束后**重新真探测**才定成败。
 
-    只装 NPM_PACKAGES 里认识的两个包名，绝不把请求体里的字符串拼进命令行。
+    包名只从适配器的固定 install spec 上取，绝不把请求体里的字符串拼进
+    命令行；不用 `shell=True`，参数一律数组。
     """
-    if agent not in NPM_PACKAGES:
-        raise ValueError(f"未知 agent: {agent}")
+    agent = require_agent(agent_id)
+    spec = agent.install_spec
+    if spec is None:
+        raise AgentError("ai_agent_install_unsupported", {"agent": agent_id})
     with _INSTALL_LOCK:
-        st = _INSTALLS.get(agent)
+        st = _INSTALLS.get(agent_id)
         if st and st.get("status") == "running":
-            return install_status(agent)
+            return install_status(agent_id)
         npm = _npm_argv()
         if npm is None:
             # 现场没有 npm：结构化告知，让界面引导用户先装 Node.js LTS——
             # 绝不静默下载 Node 安装器（那是另一个量级的越权）
-            _INSTALLS[agent] = {"status": "error", "code": "npm_missing",
-                                "log": "找不到 npm。请先安装 Node.js LTS"
-                                       "（https://nodejs.org），再回来点一次安装。"}
-            return install_status(agent)
+            _INSTALLS[agent_id] = {"status": "error", "code": "npm_missing"}
+            return install_status(agent_id)
         state: dict = {"status": "running", "started": time.time()}
-        _INSTALLS[agent] = state
+        _INSTALLS[agent_id] = state
 
     def work() -> None:
         try:
             out = subprocess.run(
-                [*npm, "install", "-g", NPM_PACKAGES[agent]],
+                [*npm, "install", "-g", spec.package],
                 capture_output=True, text=True, timeout=INSTALL_TIMEOUT_S,
                 encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL,
                 creationflags=CREATE_NO_WINDOW)
@@ -466,123 +376,54 @@ def start_install(agent: str) -> dict:
                 return
             # npm 说成了不算数：重新探测，CLI 真能 --version 才算装上
             invalidate_capabilities()
-            caps = capabilities(refresh=True)
-            if caps["providers"][agent]["installed"]:
+            info = None
+            for entry in capabilities(refresh=True).get("agents", []):
+                if entry["id"] == agent_id:
+                    info = entry
+                    break
+            if info and info["installed"]:
                 state.update(status="done")
             else:
                 state.update(status="error", code="installed_but_not_found")
         except subprocess.TimeoutExpired:
             state.update(status="error", code="timeout",
-                         log=f"npm install 超过 {INSTALL_TIMEOUT_S}s 未完成")
+                         log=f"npm install timed out after {INSTALL_TIMEOUT_S}s")
         except OSError as exc:
             state.update(status="error", code="spawn_failed", log=str(exc))
         finally:
-            LOG.info("npm install %s -> %s", agent, state.get("status"))
+            LOG.info("npm install %s -> %s", agent_id, state.get("status"))
 
-    threading.Thread(target=work, daemon=True, name=f"ai-install-{agent}").start()
-    return install_status(agent)
+    threading.Thread(target=work, daemon=True, name=f"ai-install-{agent_id}").start()
+    return install_status(agent_id)
 
 
-def _cmd(agent: str, prompt: str, cwd: str,
+# ---------------------------------------------------------------------------
+# 命令构造与输出分类（全部委托给适配器）
+# ---------------------------------------------------------------------------
+def _cmd(agent_id: str, prompt: str, cwd: str,
          model: str | None = None, effort: str | None = None,
          endpoint: dict | None = None) -> tuple[list[str], dict[str, str]]:
     """→ (命令行, 需要追加到环境的变量)。第三方接口全部走这两样注入，
     绝不改写用户自己的 ~/.claude 或 ~/.codex 配置。"""
-    extra_args, extra_env = ai_providers.spawn_overrides(agent, endpoint, model)
-    if agent == "codex":
-        cmd = [*_find_cli("codex"), "exec", "-C", cwd, "--json",
-               "--sandbox", "workspace-write", "--skip-git-repo-check"]
-        cmd += extra_args
-        if model:
-            cmd += ["-m", model]
-        if effort:
-            cmd += ["-c", f"model_reasoning_effort={effort}"]
-        return cmd + [prompt], extra_env
-    if agent == "claude":
-        # stream-json + partial messages → 逐 token 流式（kind="delta"）
-        cmd = [*_find_cli("claude"), "-p", prompt,
-               "--permission-mode", "acceptEdits",
-               "--output-format", "stream-json", "--include-partial-messages",
-               "--verbose"]
-        cmd += extra_args
-        if model:
-            cmd += ["--model", model]
-        return cmd, extra_env
-    raise RuntimeError(f"未知 agent: {agent}")
+    agent = require_agent(agent_id)
+    res = ai_agents.resolve(agent)
+    if res.argv is None:
+        raise AgentError("ai_agent_not_installed", {"agent": agent_id})
+    extra_args, extra_env = ai_providers.spawn_overrides(agent_id, endpoint, model)
+    spec = agent.build_command(ai_agents.RunContext(
+        argv=list(res.argv), prompt=prompt, cwd=cwd, model=model, effort=effort,
+        endpoint_args=list(extra_args), endpoint_env=dict(extra_env)))
+    return list(spec.argv), dict(spec.env)
 
 
-def _classify(agent: str, line: str, st: dict) -> list[tuple[str, str]]:
+def _classify(agent_id: str, line: str, st: dict) -> list[tuple[str, str]]:
     """把 CLI 原始输出分类为事件列表。kind：
       delta    — 当前回答的流式增量（只走 SSE，不进 transcript）
       message  — 一段完整回答（终结当前流式气泡）
       thinking / action — 过程（前端默认折叠）
     st 是每会话的解析状态（codex 增量去重用）。"""
-    try:
-        ev = json.loads(line)
-    except ValueError:
-        return []  # 横幅等非 JSON 噪音
-
-    if agent == "codex":
-        etype = str(ev.get("type", ""))
-        item = ev.get("item") or {}
-        itype = item.get("type") or item.get("item_type") or ""
-        if itype == "agent_message":
-            text = str(item.get("text") or "")
-            if etype == "item.completed":
-                st.pop("msg_buf", None)
-                return [("message", text)] if text else []
-            # item.updated 若携带累计文本 → 发增量
-            prev = st.get("msg_buf", "")
-            if text.startswith(prev) and len(text) > len(prev):
-                st["msg_buf"] = text
-                return [("delta", text[len(prev):])]
-            return []
-        if itype == "reasoning":
-            if etype != "item.completed":
-                return []
-            return [("thinking", str(item.get("text") or item.get("summary") or "思考中…"))]
-        if itype in ("command_execution", "local_shell_call"):
-            if etype != "item.completed":
-                return []
-            return [("action", "$ " + str(item.get("command") or ""))]
-        if itype in ("file_change", "patch_apply"):
-            return [("action", "✎ 修改文件")]
-        if etype in ("error", "turn.failed"):
-            return [("message", str(ev.get("error") or ev.get("message") or "出错"))]
-        return []
-
-    # claude stream-json
-    t = str(ev.get("type", ""))
-    if t == "stream_event":
-        inner = ev.get("event") or {}
-        if inner.get("type") == "content_block_delta":
-            delta = inner.get("delta") or {}
-            if delta.get("type") == "text_delta" and delta.get("text"):
-                return [("delta", str(delta["text"]))]
-        return []
-    if t == "assistant":
-        out: list[tuple[str, str]] = []
-        for block in ((ev.get("message") or {}).get("content") or []):
-            btype = block.get("type")
-            if btype == "text" and block.get("text"):
-                out.append(("message", str(block["text"])))  # 终结流式气泡
-            elif btype == "tool_use":
-                name = str(block.get("name") or "工具")
-                target = ""
-                inp = block.get("input") or {}
-                for key in ("file_path", "path", "command", "pattern"):
-                    if inp.get(key):
-                        target = str(inp[key])
-                        break
-                if len(target) > 60:
-                    target = "…" + target[-57:]
-                out.append(("action", f"✎ {name} {target}".rstrip()))
-            elif btype == "thinking" and block.get("thinking"):
-                out.append(("thinking", str(block["thinking"])))
-        return out
-    if t == "result" and ev.get("is_error"):
-        return [("message", str(ev.get("result") or "出错"))]
-    return []  # system / rate_limit 等噪音
+    agent = ai_agents.get_agent(agent_id)
+    return agent.classify_event(line, st) if agent else []
 
 
 def _build_prompt(script: str, user_prompt: str, context: dict | None,
@@ -633,7 +474,12 @@ def run(agent: str, script: str, user_prompt: str, figures_dir: str,
         context: dict | None = None, on_event=None,
         model: str | None = None, effort: str | None = None,
         endpoint_id: str | None = None) -> str:
-    """启动一次 AI 修改任务，返回 session id。事件经 on_event(name, data) 回调。"""
+    """启动一次 AI 修改任务，返回 session id。事件经 on_event(name, data) 回调。
+
+    **先过 `require_usable`**：未知 / 未安装 / 被用户关掉的 Agent 在这里就被
+    拒绝。只靠前端隐藏是不够的——这个端点可以被直接调。
+    """
+    require_usable(agent)
     script_path = Path(figures_dir) / script
     if not script_path.is_file():
         raise RuntimeError(f"脚本不存在: {script}")
@@ -655,8 +501,11 @@ def run(agent: str, script: str, user_prompt: str, figures_dir: str,
     endpoint = ai_providers.resolve(agent, endpoint_id)
     cmd, extra_env = _cmd(agent, prompt, figures_dir, model=model,
                           effort=effort, endpoint=endpoint)
+    # 提示词按**值**从日志里摘掉（它在命令行里的位置各家不同：codex 在末尾、
+    # claude 在 `-p` 后面）。按 agent 写死下标那种做法，加第三个 Agent 时
+    # 会静默把用户的提示词整条写进日志。
     LOG.info("AI 任务命令: %s（接口: %s）",
-             " ".join(cmd[:-1] if agent == "codex" else cmd[:5]),
+             " ".join("<prompt>" if part == prompt else part for part in cmd),
              endpoint["label"] if endpoint else "CLI 默认")
     # cmd[0] 是 CLI 可执行（或 node），末尾是提示词——PATH 增强按 cmd[0] 算
     env = _spawn_env(cmd[0], extra_env)

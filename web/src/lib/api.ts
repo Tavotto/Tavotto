@@ -888,23 +888,83 @@ export const updateSourceFiles = (
 
 /* -------------------------------- AI 桥 ----------------------------------- */
 
-export interface AiProviderCaps {
+/**
+ * 编码 Agent 的 id。**故意是 string 而不是联合类型**：注册表在后端
+ * （`engine/ai_agents.py`），前端加一个 `'codex' | 'claude'` 就等于第二份
+ * 权威——后端加了第三个 Agent，前端的类型系统会把它判成非法值。
+ * 所有 id 一律拿后端返回的 `agents[]` 校验，见 `agentById` / `usableAgents`。
+ */
+export type AiAgentId = string
+
+/**
+ * Agent 的界面状态。语义（以及为什么不是一个 `installed: boolean`）见
+ * `docs/adr/0015-coding-agent-registry-and-settings.md`。
+ * `detecting` 是**前端本地**的加载态，后端不会返回它。
+ */
+export type AiAgentState =
+  | 'ready'
+  | 'installed'
+  | 'needs_auth'
+  | 'broken'
+  | 'not_installed'
+  | 'disabled'
+
+export type AiAgentUiState = AiAgentState | 'detecting'
+
+/** 详情页折叠区里的诊断材料；一级列表不显示它们 */
+export interface AiAgentDiagnostics {
+  /** 后端找过哪些目录（比干甩一句「未安装」有用得多） */
+  searched: string[]
+  /** 找到了却启动不了的候选（典型：WindowsApps 里坏掉的商店版执行别名） */
+  broken_path: string | null
+  /** 无副作用就绪检查的结论 */
+  readiness: 'ready' | 'needs_auth' | 'unknown'
+  /** 稳定诊断串（不含任何账号信息） */
+  readiness_detail: string | null
+}
+
+export interface AiAgentCaps {
+  id: AiAgentId
+  display_name: string
+  /** 稳定图标键（不是路径、不是远程地址）；前端 AgentIcon 按它画本地 SVG */
+  icon_key: string
+
+  state: AiAgentState
   installed: boolean
-  path: string | null
-  /** 实际启动命令（npm 的 .cmd 外壳会被解析成真正的 exe / node 脚本） */
-  argv: string[] | null
+  /** 用户是否允许 Tavotto 使用它（没表过态时跟着「装没装」走） */
+  enabled: boolean
+  /** 现在能不能真的派活给它 = enabled && installed && 状态不是坏/未装/需登录 */
+  usable: boolean
+
   version: string | null
+  /** 实际生效的可执行文件（自动探测或自定义路径解析后的那一个） */
+  executable_path: string | null
+  /** 用户设过的自定义可执行文件；null = 自动检测 */
+  path_override: string | null
+  /** 从哪儿找到的：path / homebrew / npm_global / chatgpt_bundle … */
+  detection_source: string | null
+
   models: string[]
   default_model: string | null
   efforts: string[]
   default_effort: string | null
+
   /** 当前接管这家 CLI 的第三方接口；null = 用 CLI 自己的登录态 */
   endpoint: AiEndpoint | null
-  /** 未安装时：后端找过哪些目录（比干甩一句「未安装」有用得多） */
-  searched?: string[]
-  /** 找到了却启动不了的候选（典型：WindowsApps 里坏掉的商店版执行别名） */
-  broken_path?: string
-  /** 未安装时的一键安装可行性与当前进度 */
+  active_endpoint_id: string | null
+
+  features: {
+    third_party_endpoints: boolean
+    model_selection: boolean
+    effort_selection: boolean
+    /** 第三方接口要不要选 wire api（OpenAI 兼容那一族才有 responses/chat） */
+    wire_api_selection: boolean
+    readiness_probe: boolean
+  }
+
+  diagnostics: AiAgentDiagnostics
+
+  /** 有一键安装规格时才有；没有就不显示安装入口 */
   install?: AiInstallState & { method: 'npm'; package: string | null; available: boolean }
 }
 
@@ -919,7 +979,7 @@ export interface AiInstallState {
 export interface AiEndpoint {
   id: string
   label: string
-  agent: 'codex' | 'claude'
+  agent: AiAgentId
   base_url: string
   models: string[]
   default_model: string | null
@@ -931,7 +991,7 @@ export interface AiEndpoint {
 export interface AiEndpointPreset {
   id: string
   label: string
-  agent: 'codex' | 'claude'
+  agent: AiAgentId
   base_url: string
   models: string[]
   wire_api?: 'responses' | 'chat'
@@ -939,19 +999,57 @@ export interface AiEndpointPreset {
 }
 
 export interface AiCapabilities {
-  providers: Record<'codex' | 'claude', AiProviderCaps>
-  /** 已存的自定义 CLI 路径（设置界面回显用；null = 未设置） */
-  settings: { codex_path: string | null; claude_path: string | null }
+  /** 顺序即界面顺序，由后端注册表决定 */
+  agents: AiAgentCaps[]
   endpoints: AiEndpoint[]
   presets: AiEndpointPreset[]
-  active: Record<'codex' | 'claude', string | null>
+  /** 上次探测完成的时刻（毫秒；与 AiHistoryEntry 的 *_ms 同一约定） */
+  checked_at_ms: number
+}
+
+/* --- capabilities 的读取助手（前端只认后端返回的 Agent，不自己列名单）--- */
+
+export const agentById = (
+  caps: AiCapabilities | null,
+  id: AiAgentId | null | undefined,
+): AiAgentCaps | null => (id ? (caps?.agents.find((a) => a.id === id) ?? null) : null)
+
+/** 可以派活的 Agent，顺序沿用后端 */
+export const usableAgents = (caps: AiCapabilities | null): AiAgentCaps[] =>
+  caps?.agents.filter((a) => a.usable) ?? []
+
+/**
+ * 显示名。回退顺序：当前 capabilities → 调用方给的快照 → id。
+ *
+ * **空串按「没有」处理**：`?? ` 会把 `''` 当成有效值，而这里防的正是
+ * 「标签变成一片空白」——旧会话没存过 agentLabel 时它就是空串。
+ */
+export const agentDisplayName = (
+  caps: AiCapabilities | null,
+  id: AiAgentId | null | undefined,
+  fallback?: string | null,
+): string => agentById(caps, id)?.display_name || fallback || id || ''
+
+/**
+ * 这一刻实际该用哪个 Agent：首选仍可用就用它，否则落到第一个可用的。
+ *
+ * **不改用户的首选值**——首选那个只是暂时不可用（没登录 / 关掉了 / CLI 正在
+ * 升级），恢复以后它还该是默认项。返回 null = 一个可用的都没有。
+ */
+export const effectiveAgent = (
+  preferred: AiAgentId | null | undefined,
+  caps: AiCapabilities | null,
+): AiAgentId | null => {
+  const list = usableAgents(caps)
+  if (preferred && list.some((a) => a.id === preferred)) return preferred
+  return list[0]?.id ?? null
 }
 
 /** 新增/更新一个第三方接口；api_key 留空 = 保留原值 */
 export const saveAiEndpoint = (rec: {
   id?: string
   label: string
-  agent: 'codex' | 'claude'
+  agent: AiAgentId
   base_url: string
   api_key?: string
   models?: string[]
@@ -967,8 +1065,8 @@ export const saveAiEndpoint = (rec: {
 export const deleteAiEndpoint = (id: string) =>
   jsonFetch<AiCapabilities>(`/api/ai/endpoints/${encodeURIComponent(id)}`, { method: 'DELETE' })
 
-/** 选中某家 CLI 当前使用的接口；id 传 '' = 回到 CLI 自带登录态 */
-export const setAiEndpointActive = (agent: 'codex' | 'claude', id: string) =>
+/** 选中某个 Agent 当前使用的接口；id 传 '' = 回到 CLI 自带登录态 */
+export const setAiEndpointActive = (agent: AiAgentId, id: string) =>
   jsonFetch<AiCapabilities>('/api/ai/endpoints/active', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -978,27 +1076,34 @@ export const setAiEndpointActive = (agent: 'codex' | 'claude', id: string) =>
 export const fetchAiCapabilities = (refresh = false) =>
   jsonFetch<AiCapabilities>(`/api/ai/capabilities${refresh ? '?refresh=1' : ''}`)
 
-/** 一键安装 CLI（后台 `npm install -g`）；进度用 fetchAiInstallStatus 轮询 */
-export const startAiInstall = (agent: 'codex' | 'claude') =>
-  jsonFetch<AiInstallState>('/api/ai/install', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ agent }),
-  })
-
-export const fetchAiInstallStatus = (agent: 'codex' | 'claude') =>
-  jsonFetch<AiInstallState>(`/api/ai/install/status?agent=${agent}`)
-
-export const patchAiSettings = (patch: { codex_path?: string; claude_path?: string }) =>
-  jsonFetch<AiCapabilities>('/api/ai/settings', {
+/**
+ * 通用 Agent 设置。两个字段都可选：
+ *   * `enabled` —— Tavotto 用不用它（不卸载 CLI、不动 CLI 自己的配置）；
+ *   * `path_override` —— 自定义可执行文件，`''` 表示恢复自动检测。
+ * 后端验证不过时抛错，**原来的设置不会被覆盖**。
+ */
+export const patchAiAgent = (
+  agent: AiAgentId,
+  patch: { enabled?: boolean; path_override?: string },
+) =>
+  jsonFetch<AiCapabilities>(`/api/ai/agents/${encodeURIComponent(agent)}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(patch),
   })
 
+/** 一键安装 CLI（后台 `npm install -g`）；包名由后端注册表决定，这里不传 */
+export const startAiInstall = (agent: AiAgentId) =>
+  jsonFetch<AiInstallState>(`/api/ai/agents/${encodeURIComponent(agent)}/install`, {
+    method: 'POST',
+  })
+
+export const fetchAiInstallStatus = (agent: AiAgentId) =>
+  jsonFetch<AiInstallState>(`/api/ai/agents/${encodeURIComponent(agent)}/install`)
+
 export interface AiHistoryEntry {
   id: string
-  provider: 'codex' | 'claude'
+  provider: AiAgentId
   model: string | null
   effort: string | null
   scope: string | null
@@ -1047,7 +1152,7 @@ export const pinAiHistory = (sid: string, pinned: boolean) =>
   })
 
 export interface AiRunRequest {
-  agent: 'codex' | 'claude'
+  agent: AiAgentId
   id: string
   prompt: string
   gid?: string | null

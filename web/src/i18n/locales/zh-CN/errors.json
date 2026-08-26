@@ -1,5 +1,13 @@
 {
   "backend": {
+    "ai_agent_disabled": "{{agent}} 已在设置中关闭。到「编码 Agent」里打开它再试。",
+    "ai_agent_executable_invalid": "无法把它用作该 Agent 的可执行文件：{{path}}。原来的设置保持不变。",
+    "ai_agent_install_unsupported": "{{agent}} 不支持一键安装，请按官方文档手动安装。",
+    "ai_agent_needs_auth": "{{agent}} 还没有登录。在它自己的命令行里登录一次，或在设置里改用自定义模型服务。",
+    "ai_agent_not_installed": "本机没有检测到可用的 {{agent}}。",
+    "ai_agent_not_usable": "{{agent}} 现在不可用。到「编码 Agent」里看它的状态。",
+    "ai_agent_probe_timeout": "验证 {{path}} 超时。可以再试一次；原来的设置保持不变。",
+    "ai_agent_unknown": "不认识的编码 Agent：{{agent}}。",
     "ai_revert_failed": "撤销 AI 修改失败：{{reason}}",
     "ai_start_failed": "AI 任务启动失败：{{reason}}",
     "annotations_need_pdf": "该素材只有位图、没有矢量 PDF，暂不支持把标注写回原图",
@@ -55,7 +63,6 @@
     "source_changed": "写回被阻止：原始文件在此期间被修改过，请刷新素材后再试",
     "stale_write": "自动保存冲突：磁盘上已有更新的版本",
     "sync_different_scripts": "两张图不属于同一个脚本，无法同步",
-    "unknown_agent": "未知 agent：{{agent}}",
     "unsupported_script_type": "不是可试运行的 .py 脚本：{{script}}",
     "worker_timeout": "渲染超时，工作进程已重启——请重试；反复超时说明脚本本身跑不完",
     "write_back_disabled": "该项目已设为只读：不允许写回原始文件（可在项目设置中恢复可写）",

@@ -205,10 +205,8 @@ test('AI CLI 不可用：设置里英文说明找过哪些位置', async ({ app,
   // 这台机器上真装了 codex/claude 的话「都没找到」状态触发不了——如实跳过
   // （CI runner 上没有这两个 CLI，这条在那儿真实运行）
   const caps = await (await fetch(`${a.baseURL}/api/ai/capabilities?refresh=1`)).json()
-  const installed = Object.values(caps.providers ?? {}).some(
-    (p) => (p as { installed?: boolean }).installed,
-  )
-  test.skip(installed, '本机在惯例位置装有 AI CLI，「都没找到」状态触发不了')
+  const usable = (caps.agents ?? []).some((x: { usable?: boolean }) => x.usable)
+  test.skip(usable, '本机在惯例位置装有编码 Agent，「一个都没有」状态触发不了')
 
   // 选中一个可参数化面板后打开助手 → 英文说明「两个 CLI 都没找到」+ 设置入口。
   // noCli 提示渲染在「Scope and agent」弹层里（AiPanel 的 agent 分区），
@@ -221,11 +219,11 @@ test('AI CLI 不可用：设置里英文说明找过哪些位置', async ({ app,
   // 弹层 portal 到文档根部的 dialog，不在 Right panel 子树里
   const scopeDialog = page.getByRole('dialog')
   await expect(
-    scopeDialog.getByText(/Neither the Codex nor the Claude CLI was found/i).first(),
+    scopeDialog.getByText(/No usable coding agent was detected/i).first(),
   ).toBeVisible({ timeout: 30_000 })
-  // 可执行的下一步：打开 AI 工具设置
+  // 可执行的下一步：打开编码 Agent 设置
   await expect(
-    scopeDialog.getByRole('button', { name: /Open AI tool settings/i }).first(),
+    scopeDialog.getByRole('button', { name: /Open Coding Agent settings/i }).first(),
   ).toBeVisible()
   await expectNoCjk(panel, 'AI 面板')
   await expectNoCjk(scopeDialog, 'Scope and agent 弹层')

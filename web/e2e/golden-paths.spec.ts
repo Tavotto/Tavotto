@@ -137,11 +137,13 @@ test('AI CLI 不存在时，设置里说清「找过哪些位置」', async ({ a
   await page.goto(a.baseURL)
 
   const caps = await (await page.request.get(`${a.baseURL}/api/ai/capabilities?refresh=1`)).json()
-  for (const name of ['codex', 'claude']) {
-    const p = caps.providers[name]
-    if (p.installed) continue // 系统装在 PATH 之外的常见位置，这条就跳过
-    expect(Array.isArray(p.searched)).toBe(true)
-    expect(p.searched.length).toBeGreaterThan(0)
+  // 注册表决定有哪些 Agent，用例不再自己列名单
+  expect(caps.agents.length).toBeGreaterThan(0)
+  for (const agent of caps.agents) {
+    if (agent.installed) continue // 系统装在 PATH 之外的常见位置，这条就跳过
+    expect(agent.state).toBe('not_installed')   // 没装 ≠ 坏了
+    expect(Array.isArray(agent.diagnostics.searched)).toBe(true)
+    expect(agent.diagnostics.searched.length).toBeGreaterThan(0)
   }
 })
 

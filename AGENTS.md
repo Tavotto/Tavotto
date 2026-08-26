@@ -71,7 +71,7 @@ python scripts/smoke_app.py --python .venv/bin/python   # 端到端冒烟
 
 | 目录 | 规则文件 | 覆盖 |
 | --- | --- | --- |
-| `src/tavotto/`（含 `engine/`） | `src/tavotto/AGENTS.md` | Flask、渲染引擎、worker 协议、PDF 后端、写回、AI 桥、遥测、预检、外部交接 |
+| `src/tavotto/`（含 `engine/`） | `src/tavotto/AGENTS.md` | Flask、渲染引擎、worker 协议、PDF 后端、写回、编码 Agent 桥、遥测、预检、外部交接 |
 | `web/` | `web/AGENTS.md` | 前端、渲染态、预览平面、命中几何、i18n、playground、UI 视觉纪律 |
 | `src-tauri/` | `src-tauri/AGENTS.md` | 桌面壳、ACL、更新通道、安装界面、壳内 i18n |
 | `workerd/` | `workerd/AGENTS.md` | Rust supervisor |

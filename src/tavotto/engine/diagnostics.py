@@ -194,9 +194,16 @@ def build_report(project: dict | None = None, port: int | None = None) -> dict:
             # 时 manifest 照样完好。
             "bundled_runtime": _runtime_section(),
         },
+        # 每个已注册编码 Agent 的探测结论。**不含就绪检查的账号细节**——
+        # 那条只回 ready/needs_auth/unknown，邮箱与组织名一个字都不出现。
         "ai": {
-            name: {k: info.get(k) for k in ("installed", "path", "version")}
-            for name, info in caps.get("providers", {}).items()
+            entry["id"]: {"installed": entry["installed"],
+                          "enabled": entry["enabled"],
+                          "state": entry["state"],
+                          "path": entry["executable_path"],
+                          "source": entry["detection_source"],
+                          "version": entry["version"]}
+            for entry in caps.get("agents", [])
         },
         "ai_endpoints": [
             {"id": e["id"], "label": e["label"], "agent": e["agent"],

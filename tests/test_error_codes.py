@@ -24,12 +24,28 @@ APP = ROOT / "src" / "tavotto" / "app.py"
 LOCALES = ROOT / "web" / "src" / "i18n" / "locales"
 
 
+#: 会返回用户可见 JSON 错误的模块。`engine/ai_bridge.py` 在列，是因为编码
+#: Agent 的失败以 `AgentError("<code>")` 抛出、由 app.py 的一个漏斗转成 JSON
+#: ——只扫 app.py 的话这批 code 一个都看不见，而看不见的门禁 = 没有门禁。
+_SOURCE_FILES = ("app.py", "security.py", "desktop.py", "engine/ai_bridge.py")
+
+
 def _all_error_sources() -> str:
-    """会发用户可见错误的全部模块源码（app.py + #24 起的 security.py 等）。"""
     root = ROOT / "src" / "tavotto"
     return "\n".join((root / n).read_text(encoding="utf-8")
-                     for n in ("app.py", "security.py", "desktop.py")
+                     for n in _SOURCE_FILES
                      if (root / n).is_file())
+
+
+#: 源码里「声明了一个 code」的两种写法：字面量响应，或带 code 的异常。
+_CODE_PATTERNS = (r'"code":\s*"([a-z0-9_]+)"', r'AgentError\(\s*"([a-z0-9_]+)"')
+
+
+def _declared_codes(text: str) -> set[str]:
+    out: set[str] = set()
+    for pat in _CODE_PATTERNS:
+        out.update(re.findall(pat, text))
+    return out
 
 # code → 后端会塞进 params 的键（2026-08-21 起覆盖 app.py 的**全部**字面量
 # code——审计 P1-02：错误尾部不许泄漏中文，所以每个 code 都要有两种语言的
@@ -73,7 +89,6 @@ USER_VISIBLE_CODES = {
     "invalid_width": {"value"},
     "not_parameterizable": set(),
     "sync_different_scripts": set(),
-    "unknown_agent": {"agent"},
     "python_missing": set(),
     "interpreter_not_found": {"path"},
     "interpreter_no_matplotlib": {"path"},
@@ -83,6 +98,16 @@ USER_VISIBLE_CODES = {
     "endpoint_invalid": {"reason"},
     "ai_start_failed": {"reason"},
     "ai_revert_failed": {"reason"},
+    # --- 编码 Agent 注册表（ADR 0013）：全部经 AgentError 抛出、
+    #     由 app.py 的 _agent_error 一个漏斗转成 JSON ---
+    "ai_agent_unknown": {"agent"},
+    "ai_agent_disabled": {"agent"},
+    "ai_agent_not_installed": {"agent"},
+    "ai_agent_needs_auth": {"agent"},
+    "ai_agent_not_usable": {"agent"},
+    "ai_agent_install_unsupported": {"agent"},
+    "ai_agent_executable_invalid": {"path"},
+    "ai_agent_probe_timeout": {"path"},
     # --- #24（ADR 0008 会话认证）带来的用户可见 code ---
     "session_auth_required": set(),
     # --- 早已有 code、这次补上文案的存量 ---
@@ -109,8 +134,7 @@ def _errors(locale: str) -> dict:
 
 @pytest.mark.parametrize("code", sorted(USER_VISIBLE_CODES))
 def test_backend_emits_the_code(code: str):
-    src = _all_error_sources()
-    assert f'"code": "{code}"' in src, f"后端源码里没有发出 {code}"
+    assert code in _declared_codes(_all_error_sources()), f"后端源码里没有发出 {code}"
 
 
 @pytest.mark.parametrize("locale", ["zh-CN", "en-US"])
@@ -142,10 +166,27 @@ def test_error_field_is_still_there_as_the_fallback():
     """
     src = _all_error_sources()
     for code in USER_VISIBLE_CODES:
-        idx = src.index(f'"code": "{code}"')
+        needle = f'"code": "{code}"'
+        if needle not in src:
+            # 经 AgentError 抛出的那批：原文由 app.py 的唯一漏斗补上，
+            # 这里直接看那个漏斗（漏斗少了 error 原文，整批一起红）
+            assert f'AgentError("{code}"' in src, f"{code} 既没有响应也没有异常"
+            continue
+        idx = src.index(needle)
         # code 与 error 在同一个 jsonify 里：往前找最近的 jsonify( 起点
         start = src.rindex("jsonify({", 0, idx)
         assert '"error"' in src[start:idx], f"{code} 所在的响应里没有 error 原文"
+
+
+def test_the_agent_error_funnel_still_carries_the_original_text():
+    """`AgentError` 那批的 `error` 原文全靠 app.py 里那一个漏斗。
+
+    漏斗只有一处，所以单独钉死它——上面那条对它们只能确认「异常存在」。"""
+    app = APP.read_text(encoding="utf-8")
+    start = app.index("def _agent_error(")
+    block = app[start:start + 600]
+    assert '"error"' in block and '"code": exc.code' in block
+    assert '"params": exc.params' in block
 
 
 # ---------------------------------------------------------------------------
@@ -160,15 +201,19 @@ NO_CODE_ALLOWLIST: set[str] = {"desktop.py:98"}
 #: 会返回用户可见 JSON 错误的模块（不存在的跳过：security.py 随 ADR 0008
 #: 的分支进来，两个分支各自独立绿、合并后自动都在扫描范围内）
 SRC_DIR = ROOT / "src" / "tavotto"
-SCANNED = [n for n in ("app.py", "security.py", "desktop.py")
-           if (SRC_DIR / n).is_file()]
+SCANNED = [n for n in _SOURCE_FILES if (SRC_DIR / n).is_file()]
 
 #: 刻意没有文案的 code：不是用户可见的失败（前端把这类调用整个吞掉或只做
 #: 分诊）。会话 guard 那几个的拒绝对象是攻击页面/畸形请求，正常界面路径由
 #: main.tsx 的专用启动页兜住；401 的 session_auth_required 另有 backend 文案。
 NON_UI_CODES = {"telemetry_rejected", "invalid_telemetry_event",
                 "bad_nonce", "bad_host", "bad_origin", "bad_secret",
-                "no_session_mode", "desktop_auth_required"}
+                "no_session_mode", "desktop_auth_required",
+                # 一键安装的**进度**状态码，不是错误响应：它们的文案在
+                # dialogs:settings.agents.install.error.*（由 pnpm i18n:check
+                # 守双语齐全），不该也不能进 errors.backend 那张表。
+                "npm_missing", "npm_failed", "installed_but_not_found",
+                "spawn_failed"}
 
 
 def _error_blocks(text: str):
@@ -200,7 +245,6 @@ def test_visible_codes_table_covers_every_literal_code():
     新增 code 忘了登记的话，「两种语言都有文案」那条就守不到它。"""
     declared: set[str] = set()
     for name in SCANNED:
-        text = (SRC_DIR / name).read_text(encoding="utf-8")
-        declared.update(re.findall(r'"code":\s*"([a-z0-9_]+)"', text))
+        declared |= _declared_codes((SRC_DIR / name).read_text(encoding="utf-8"))
     unlisted = sorted(declared - set(USER_VISIBLE_CODES) - NON_UI_CODES)
     assert not unlisted, f"这些 code 没进 USER_VISIBLE_CODES 表：{unlisted}"

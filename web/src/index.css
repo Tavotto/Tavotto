@@ -29,6 +29,11 @@
   --color-accent-subtle: #e9f0f9;
   --color-danger: #c4442a;
   --color-danger-subtle: #fbeeeb;
+  /* 警示（「需要处理，但还没坏」）：编码 Agent 的「需要登录」用它。
+     与 danger 分工明确——没登录不是故障，装坏了才是。
+     5.9:1（白）/ 5.3:1（暖灰底），两处都过普通文字的 4.5:1。 */
+  --color-warn: #8a5a00;
+  --color-warn-subtle: #f7efe0;
   --color-sel: #2f6fed;
 
   --radius-sm: 6px;
