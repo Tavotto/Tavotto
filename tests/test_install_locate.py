@@ -521,13 +521,13 @@ def test_every_doctor_json_failure_has_a_code():
 
 
 def test_open_and_doctor_are_dispatched_before_argparse():
-    """两条子命令都必须在主入口的 argparse 之前拦下来。
+    """子命令都必须在主入口的 argparse 之前拦下来。
 
     主入口是纯 flag 形态（`tavotto --figures …`），改成 subparsers 会把既有
     命令行整个换掉；而 argparse 见到位置参数 `doctor` 只会报 unrecognized。
     """
     from tavotto.engine import cli as engine_cli
-    assert set(engine_cli.COMMANDS) == {"open", "doctor"}
+    assert set(engine_cli.COMMANDS) == {"open", "doctor", "codex"}
     assert engine_cli.dispatch([]) is None
     assert engine_cli.dispatch(["--figures", "/tmp"]) is None
     app_src = (ROOT / "src" / "tavotto" / "app.py").read_text(encoding="utf-8")

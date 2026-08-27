@@ -59,6 +59,19 @@ pipx install "tavotto[worker]"
 Then **close your current Codex session and start a new one.** The plugin's skill and
 MCP tools do not hot-reload into a session that is already open.
 
+Already have the Tavotto engine (`pipx install "tavotto[worker]"` or the desktop app)?
+Then one command does the two `codex plugin` steps for you, and tells you what it
+skipped:
+
+```sh
+tavotto codex install     # idempotent: fixes only what is missing
+tavotto codex doctor      # diagnose only, changes nothing
+```
+
+It never installs or upgrades the Codex CLI itself, and it never reinstalls a
+component that is already healthy. `tavotto codex uninstall` removes the plugin and
+the marketplace entry (it leaves the engine alone).
+
 In the new session you can say:
 
 > Draw this figure with Tavotto. Run the Tavotto health check first; only draw once it

@@ -23,6 +23,18 @@ REPO_URL = f"https://github.com/{REPO_OWNER}/{REPO_NAME}"
 RELEASES_API = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/latest"
 RELEASES_URL = f"{REPO_URL}/releases"
 
+#: Codex 集成的安装参数。**唯一出处**——README 首用章节、`tavotto codex install`
+#: 与 `docs/codex-plugin-distribution.md` 都从这里派生；两处手写就会漂，而漂了
+#: 之后的症状是「照文档做装不上」，用户没法自己发现是哪一边错。
+#: 看护：`tests/test_codex_install_cli.py::test_readme_and_cli_use_the_same_command`
+CODEX_MARKETPLACE = f"{REPO_OWNER}/{REPO_NAME}"
+#: 稀疏检出：只取插件本体与它的注册目录，不把整个仓库拉到用户机器上
+CODEX_SPARSE_PATHS = (".agents/plugins", "codex-plugin")
+#: `codex plugin add` 的目标（插件名@marketplace 名）
+CODEX_PLUGIN_REF = "tavotto@tavotto"
+#: 插件在 Codex 那边的名字（`codex plugin list` 里的那一列）
+CODEX_PLUGIN_NAME = "tavotto"
+
 # 桌面壳的 bundle 标识，与 src-tauri/tauri.conf.json 的 identifier 严格同源。
 # 桌面日志目录（tauri 的 app_log_dir）按它推导：macOS 是
 # ~/Library/Logs/<id>/，Windows 是 %LOCALAPPDATA%\<id>\logs\。
