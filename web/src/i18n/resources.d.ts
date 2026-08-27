@@ -1060,6 +1060,7 @@ export default interface Resources {
       "dir_missing": "目录不存在：{{path}}",
       "endpoint_invalid": "接口配置无效：{{reason}}",
       "endpoint_save_failed": "接口保存失败：{{reason}}",
+      "environment_mutating": "这个 Python 环境正在安装依赖，请稍候再试。",
       "execution_cancelled": "试运行被中断（会话在执行期间被终止）",
       "execution_timeout": "脚本执行超时（入口 {{entry}}）",
       "export_render_failed": "{{id}} 重渲染失败：{{reason}}",

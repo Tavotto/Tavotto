@@ -15,6 +15,7 @@
     "dir_missing": "Folder does not exist: {{path}}",
     "endpoint_invalid": "Invalid endpoint configuration: {{reason}}",
     "endpoint_save_failed": "Could not save the endpoint: {{reason}}",
+    "environment_mutating": "That Python environment is installing dependencies. Try again shortly.",
     "execution_cancelled": "The trial run was interrupted (the session was terminated while running)",
     "execution_timeout": "Script execution timed out (entry {{entry}})",
     "export_render_failed": "Re-rendering {{id}} failed: {{reason}}",
