@@ -181,100 +181,6 @@ jobs:
           echo "校验通过：$n 条"
 
   # ────────────────────────────────────────────────────────────────
-  # CLA 资格：这个 PR 里出现的每一个人，是不是都已经签过、或被显式豁免。
-  # 判定逻辑在 scripts/ci/cla_gate.py，政策与豁免在 .github/cla-policy.json。
-  #
-  # **签署事实的唯一权威是签名服务商（provider），仓库不保存 signer 名单。**
-  # 早期版本曾带一份手工维护的 docs/legal/cla-signatures.json，那会和服务商的
-  # 数据库变成两个法律权威，分叉之后没有机制说得清哪份算数，已经删掉。
-  # provider 尚未配置时，判定器对任何非豁免的人类贡献者一律阻断并给出指引
-  # ——**绝不因为「服务还没接上」就把外部贡献者当成签过**。
-  #
-  # 三条形状上的要求，坏掉都不会有别的测试红，所以
-  # tests/test_legal_contribution_policy.py 逐条钉住：
-  #
-  # 1. **merge_group 上必须跑并且成功，不能 skipped。** fast gate
-  #    （aggregate_gate.py --mode fast）把 skipped 一律当失败，这一格在队列
-  #    候选上被跳过 = 整个 `CI fast gate` 永远红，谁也合不进去。脚本在
-  #    merge_group 上判 not_applicable 并退出 0——资格在 PR 阶段已经验过。
-  # 2. **不 checkout PR 的代码，一行都不执行。** 这个 job 读的是权利判定的
-  #    输入，被 PR 改写的树不能参与判定自己。判定器、政策、签署记录、协议正文
-  #    **全部取自默认分支**（与两个 Gate 取 aggregate_gate.py 同一条纪律），
-  #    PR 侧只经 GitHub API 读元数据。因此这里**没有 actions/checkout**。
-  # 3. **权限最小。** contents: read 读默认分支的文件，pull-requests: read 读
-  #    PR 的 commit 列表。不写 comment、不写 status——签署 UX 归签名服务商，
-  #    这一格只负责判定。没有任何 secret。启用 provider 时才需要再加
-  #    `checks: read`（读它那条 check 的结论），届时同步改 tests 里的权限断言。
-  #
-  # 用 pull_request 而**不是** pull_request_target：后者会让这个 job 拿到写
-  # 权限与 secret，然后所有防护都变成「别执行 PR 的代码」这一条人为纪律。
-  # 这里根本不需要那些权限，于是也就没有那类风险面。
-  # ────────────────────────────────────────────────────────────────
-  cla-check:
-    name: Contributor licence (CLA)
-    # 与其它快线一致；**merge_group 必须在内**（见上面第 1 条）。
-    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-      pull-requests: read
-    steps:
-      # 判定的全部输入取自默认分支——**不 checkout 本次 revision**。
-      # 与两个 Gate 取判定器同一个理由：被审的树不能参与判定自己。
-      - name: 取默认分支上的可信判定输入
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          REF: ${{ github.event.repository.default_branch }}
-        run: |
-          set -euo pipefail
-          TRUSTED="$RUNNER_TEMP/trusted-cla"
-          mkdir -p "$TRUSTED/scripts/ci" "$TRUSTED/.github" "$TRUSTED/docs/legal"
-          fetch() {   # $1 = 仓库内路径
-            gh api "repos/$REPO/contents/$1?ref=$REF" --jq .content \
-              | base64 -d > "$TRUSTED/$1"
-            [ -s "$TRUSTED/$1" ] || { echo "::error::默认分支上取不到 $1"; exit 1; }
-          }
-          fetch scripts/ci/cla_gate.py
-          fetch .github/cla-policy.json
-          fetch docs/legal/CLA_INDIVIDUAL.md
-          fetch docs/legal/CLA_CORPORATE.md
-          echo "TRUSTED=$TRUSTED" >> "$GITHUB_ENV"
-
-      # PR 侧只读元数据：作者 + 每个 commit 的 author + Co-authored-by。
-      # 只看 PR 发起人是不够的——commit 作者和 co-author 同样在投稿。
-      - name: 收集这个 PR 的贡献者（只读元数据）
-        if: github.event_name == 'pull_request'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          PR: ${{ github.event.pull_request.number }}
-        run: |
-          set -euo pipefail
-          gh api --paginate "repos/$REPO/pulls/$PR/commits" \
-            > "$RUNNER_TEMP/pr-commits.json"
-          test -s "$RUNNER_TEMP/pr-commits.json"
-
-      # -I（隔离模式）：不把脚本目录挂进 sys.path、无视 PYTHONPATH——
-      # 与两个 Gate 同一双保险。
-      - name: 判定
-        env:
-          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
-        run: |
-          set -euo pipefail
-          # provider.configured=true 之后这里还要多传 --provider-checks-json，
-          # 并给 job 加 `checks: read`——步骤见 docs/legal/CLA_AUTOMATION_SETUP.md。
-          ARGS=(--event "${{ github.event_name }}"
-                --policy "$TRUSTED/.github/cla-policy.json"
-                --repo-root "$TRUSTED")
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            ARGS+=(--pr-author "$PR_AUTHOR"
-                   --commits-json "$RUNNER_TEMP/pr-commits.json")
-          fi
-          python3 -I "$TRUSTED/scripts/ci/cla_gate.py" "${ARGS[@]}"
-
-  # ────────────────────────────────────────────────────────────────
   # 第 1 层最靠前的一格：引擎的**结构性不变式**（tests/test_invariants_engine.py
   # + 与它同一族的 artist family / patchspec / preflight 契约）。
   #
@@ -932,7 +838,7 @@ jobs:
     # always() 让它在上游失败后照跑并且红；事件条件与快线一致——push main
     # 上快线不跑，Gate 也不跑（required contexts 只在 PR / merge_group 上有意义）。
     if: ${{ always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
-    needs: [python-lint, cla-check, invariants, backend-fast, frontend, workerd, compat-smoke]
+    needs: [python-lint, invariants, backend-fast, frontend, workerd, compat-smoke]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -969,7 +875,7 @@ jobs:
           python3 -I "$RUNNER_TEMP/trusted-gate/aggregate_gate.py" \
             --mode fast \
             --event "${{ github.event_name }}" \
-            --required python-lint,cla-check,invariants,backend-fast,frontend,workerd,compat-smoke \
+            --required python-lint,invariants,backend-fast,frontend,workerd,compat-smoke \
             --needs-json "$NEEDS_JSON"
 
   ci-integration-gate:

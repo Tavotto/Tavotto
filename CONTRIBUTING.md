@@ -216,9 +216,17 @@ question, and a CI check that tried to guess would be both unreliable and a
 constant source of argument. One rule is easier to follow than a boundary
 nobody can locate.
 
-The `Contributor licence (CLA)` check runs on every pull request and reports
-through `CI fast gate`. It qualifies **everyone in the PR** — the author, every
-commit author, and every `Co-authored-by` trailer — not just whoever opened it.
+A `Contributor licence (CLA)` check enforces this in CI. It qualifies
+**everyone in the PR** — the author, every commit author, and every
+`Co-authored-by` trailer — not just whoever opened it, and it reports through the
+existing `CI fast gate` rather than adding a new required check.
+
+**The CI job lands in a follow-up pull request, not this one.** The check reads
+its policy and agreement texts from the default branch on purpose — a pull
+request must not be able to supply the rules that judge it — so those files have
+to exist on `main` before the job can run at all. Wiring it up in the same change
+that introduces them would deadlock: the job would fetch from `main`, find
+nothing, and fail forever.
 
 ### If your employer owns the work
 
