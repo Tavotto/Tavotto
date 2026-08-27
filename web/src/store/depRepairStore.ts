@@ -8,6 +8,7 @@ import {
   type DependencyRepairPlan,
 } from '@/lib/api'
 import { useEnvStore } from '@/store/envStore'
+import { useRenderStore } from '@/store/renderStore'
 
 /**
  * 受控依赖修复的界面状态（ADR 0019）。
@@ -111,6 +112,13 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
     if (p.state === 'done' || p.state === 'failed' || p.state === 'cancelled') {
       // 环境那半边变了（换了解释器 / 建了受管环境），刷一次环境状态
       void useEnvStore.getState().refresh()
+      if (p.state === 'done') {
+        // **装完必须把那次失败的渲染重新排上**，否则这条主路走不完：
+        // 失败那次的 wantPatches 仍等于当前 overrides，同步器会跳过它，
+        // 卡片就一直停在「缺 X」上，图要等到用户改点别的或刷新才出来
+        // （Codex 评审 P1）。后端那半边已经作废了 worker，这里补前端这半边。
+        useRenderStore.getState().retryEnvironmentFailures()
+      }
       if (p.state !== 'done') set({ errorCode: p.code || '', errorText: p.error || '' })
       // 计划是一次性的：成功也好失败也好，都不该留着一个已经被消费掉的
       // plan_id 让用户再点一次「安装」。

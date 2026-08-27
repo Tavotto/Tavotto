@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { msg, type UiMessage } from '@/i18n'
 import { create } from 'zustand'
 import {
+  ENVIRONMENT_CODES,
   EngineError,
   engineErrorMsg,
   engineRender,
@@ -176,6 +177,19 @@ interface RenderState {
   ) => Promise<void>
   /** 脚本变更：转入引擎跟踪并清掉该文件**全部变体**的 lastPatches */
   markStale: (fileIds: string[]) => void
+  /**
+   * 环境变了（装完缺的那个包、换了解释器）：把**所有因缺件失败**的面板
+   * 重新排队。
+   *
+   * 少了这一步，「点一次「安装并继续」→ 图出来」这条主路根本走不完：
+   * 失败那次的 `wantPatches` 仍等于当前 overrides，`useEngineSync` 会
+   * 认为「这一版已经排过了」直接跳过，于是卡片停在原地，用户要么改点
+   * 别的、要么刷新页面才看得到图（Codex 评审 P1）。
+   *
+   * 按**错误码**收面板而不是按脚本名：同一个环境上因缺包失败的可能不止
+   * 一个面板，而装上那个包对它们是同一件好事。
+   */
+  retryEnvironmentFailures: () => void
   /** 丢掉某个文件的全部变体 */
   reset: (fileId: string) => void
   /**
@@ -418,6 +432,19 @@ export const useRenderStore = create<RenderState>((set, get) => ({
     } finally {
       slot.busy = false
     }
+  },
+
+  retryEnvironmentFailures: () => {
+    const ids = new Set<string>()
+    for (const v of Object.values(get().byKey)) {
+      if (v.status === 'error' && (ENVIRONMENT_CODES as readonly string[]).includes(v.code)) {
+        ids.add(v.fileId)
+      }
+    }
+    // `markStale` 已经做了要做的三件事：清 lastPatches/wantPatches（否则
+    // 同步器跳过）、置 stale、把文件级跟踪位打开（该文件可能一个变体都还
+    // 没成功渲染过——冷启动就缺包的面板正是这种）。
+    if (ids.size) get().markStale([...ids])
   },
 
   markStale: (fileIds) =>

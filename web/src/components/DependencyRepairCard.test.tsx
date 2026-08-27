@@ -34,6 +34,7 @@ import {
 import { DependencyRepairCard } from '@/components/DependencyRepairCard'
 import { i18n, t } from '@/i18n'
 import { useDepRepairStore } from '@/store/depRepairStore'
+import { useRenderStore } from '@/store/renderStore'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -344,6 +345,28 @@ describe('安装进度', () => {
     expect(text()).toContain(en('repairCancelledProjectEnv'))
     // 受管环境那句是另一种处置，不能混用
     expect(text()).not.toContain(en('repairCancelledManaged'))
+  })
+
+  it('装完之后把那次失败的渲染重新排上 —— 否则图永远不会自己出来', async () => {
+    // Codex 评审 P1：失败那次的 wantPatches 仍等于当前 overrides，同步器
+    // 会跳过它。少了这一步，「点一次 → 图出来」这条主路走不完，用户要
+    // 改点别的或刷新页面才看得到图。
+    useRenderStore.setState({
+      byKey: {
+        k: {
+          ...(useRenderStore.getState().byKey.k ?? ({} as never)),
+          fileId: 'Fig1.pdf', status: 'error', code: 'missing_dependency',
+          module: 'lmfit', lastPatches: '[]', wantPatches: '[]', stale: false,
+        } as never,
+      },
+      tracked: {},
+    })
+    await render()
+    await progress('done', { result: { version: '1.3.2' } })
+    const after = useRenderStore.getState()
+    expect(after.byKey.k.stale, '没标过期').toBe(true)
+    expect(after.byKey.k.wantPatches, '没清 wantPatches，同步器会跳过它').toBeNull()
+    expect(after.tracked['Fig1.pdf'], '文件级跟踪位没打开').toBe(true)
   })
 
   it('失败时按稳定 code 给出可执行的下一步', async () => {

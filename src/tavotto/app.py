@@ -3549,25 +3549,14 @@ def api_managed_environment_rebuild():
     lockfile 级复现**：某个版本从 index 上消失时如实报错。
     """
     root = str(require_project())
-    if engine_pool.is_mutating(str(engine_managedenv.venv_python(root))):
-        return jsonify(
-            {"error": "这个环境正在安装依赖，请稍候。", "code": engine_deprepair.ERROR_BUSY}
-        ), 409
-    # 记住的解释器如果正是这个环境，先撤掉决策再删——否则删完那一瞬间
-    # `resolve_worker_python()` 会指向一条已经不存在的路径。
-    if engine_pool.same_python(
-        engine_projectenv.remembered(root), str(engine_managedenv.venv_python(root))
-    ):
-        engine_projectenv.forget(root)
-    engine_pool.shutdown_all(root)
-    requirements = engine_managedenv.installed_requirements(root)
-    engine_managedenv.remove(root)
-    engine_pool.reset_worker_python()
+    # **端点自己不删任何东西**（Codex 评审 P1）：拆旧与重建必须在同一把环境
+    # 锁之内。以前是这里先查一下 `is_mutating()`、再在锁外把 venv 删掉、
+    # 然后异步去重建——那个窗口里一个已经形成的 plan 可以开始往这个解释器
+    # 里 pip install，而它的 venv 正在被删；而且两边拿的还是不同的 key
+    # （install 用解释器路径，重建当时用合成 key），根本不互斥。
     engine_deprepair.reset_state(root)
-    engine_deprepair.rebuild_managed_async(
-        root, requirements, lambda p: sse_publish("engine.dependency", p)
-    )
-    return jsonify({"started": True, "requirements": requirements})
+    engine_deprepair.rebuild_managed_async(root, lambda p: sse_publish("engine.dependency", p))
+    return jsonify({"started": True})
 
 
 # ------------------------- 检查更新 -----------------------------------------

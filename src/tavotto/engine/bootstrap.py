@@ -67,7 +67,7 @@ def matplotlib_version(python: str) -> str | None:
     return _probe(python, "import matplotlib;print(matplotlib.__version__)")
 
 
-def find_base_python() -> str | None:
+def find_base_python(accept=None) -> str | None:
     """找一个能用来建 venv 的解释器——**不要求**它有 matplotlib。
 
     复用 pool 的候选清单（已含 conda / python.org / PATH 的常见落点），
@@ -75,6 +75,10 @@ def find_base_python() -> str | None:
 
     内置 runtime 明确排除：官方 embeddable 发行版不带 `ensurepip`，
     `python -m venv` 建到一半就失败，白白给用户一段看不懂的报错。
+
+    `accept(路径, 版本串)` 是**额外**判据（受管环境要求版本在支持区间内，
+    见 `managedenv.base_python`）。做成回调而不是让调用方自己再遍历一遍：
+    候选清单与「跳过 bundled」这两条只该有一份实现。不给就是老行为。
     """
     from . import pool
 
@@ -85,8 +89,12 @@ def find_base_python() -> str | None:
         if cand in seen or not Path(cand).exists():
             continue
         seen.add(cand)
-        if _probe(cand, "import venv,sys;print(sys.version_info[:2])"):
-            return cand
+        version = _probe(cand, "import venv,sys;print('%d.%d' % sys.version_info[:2])")
+        if not version:
+            continue
+        if accept is not None and not accept(cand, version):
+            continue
+        return cand
     return None
 
 

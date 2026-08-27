@@ -474,6 +474,40 @@ def test_a_new_session_is_refused_while_the_environment_is_mutating(project, mon
         assert err.value.code == engine_pool.ENVIRONMENT_MUTATING
 
 
+def test_rebuild_and_install_are_mutually_exclusive(tmp_path, monkeypatch):
+    """**负向反证**：重建与安装拿的必须是**同一把**环境锁。
+
+    Codex 评审 P1 指出的形状：重建当时拿 `tavotto_managed:<项目指纹>` 这个
+    合成 key，而 install 拿的是**解释器路径** key——两把锁互不相干，于是
+    「一个已形成的 plan 往正被删除的 venv 里 pip install」这条竞态是敞开的。
+    把 `mutating_environment(key, existing)` 的第二个参数去掉，这条就红。
+    """
+    project = tmp_path / "paper"
+    project.mkdir()
+    managedenv.write_manifest(project, managedenv.new_manifest(project, "/x/py"))
+    python = managedenv.venv_python(project)
+    python.parent.mkdir(parents=True, exist_ok=True)
+    python.write_text("", encoding="utf-8")
+    managedenv.mark_ready(project)
+
+    # 重建拿锁期间，install 那条路（按解释器路径判）必须被挡住
+    monkeypatch.setattr(
+        deprepair, "_create_managed", lambda root, ev: pytest.fail("这条用例不该真的建环境")
+    )
+    seen: list[bool] = []
+
+    def _spy(root, ev):
+        seen.append(engine_pool.is_mutating(str(python)))
+        raise deprepair.RepairError(deprepair.ERROR_MANAGED_CREATE_FAILED, "stop")
+
+    monkeypatch.setattr(deprepair, "_create_managed", _spy)
+    with pytest.raises(deprepair.RepairError):
+        deprepair.rebuild_managed(project)
+    assert seen == [True], "重建期间那条解释器路径必须处于「正在改动」状态"
+    # 出来之后锁要干净地放掉（按归属清，不是按进入时那几个 key）
+    assert not engine_pool.is_mutating(str(python))
+
+
 def test_two_installs_on_one_environment_do_not_overlap():
     """同一个环境上不允许并发 pip；**不同**环境互不阻塞。"""
     key_a = engine_pool.env_key_of("/env/a/bin/python")
@@ -670,6 +704,65 @@ def test_an_environment_without_pip_is_reported_not_silently_fixed(project, monk
     assert err.value.code == deprepair.ERROR_PIP_UNAVAILABLE
     assert seen == [[plan.python, "-m", "pip", "--version"]]
     assert not [a for a in seen if "ensurepip" in " ".join(a)]
+
+
+def test_reset_state_really_forgets_attempted_repairs(project, monkeypatch):
+    """**负向反证（Codex 评审 P2）**：`reset_state(project)` 说「丢弃已试过」，
+    就必须真的丢。
+
+    只按环境 key 记的话它清不掉：受管环境重建之后解释器路径一模一样，
+    `create_plan` 会一直以「这一轮已经试过了」拒绝那个依赖，直到整个应用
+    重启——而重建正是用户为了摆脱失败才点的。
+    """
+    real_venv(project)
+    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
+    plan = deprepair.create_plan(
+        str(project), "figure.py", FIXTURE_IMPORT, target_kind=deprepair.TARGET_PROJECT_VENV
+    )
+    # 手动登记一次「试过了」（`install()` 真跑时做的就是这件事）
+    with deprepair._lock:
+        deprepair._attempted.add(
+            (
+                plan.project_id,
+                deprepair._env_key(plan.target_kind, plan.python, str(project)),
+                plan.requirement.requirement(),
+            )
+        )
+    with pytest.raises(deprepair.RepairError) as err:
+        deprepair.create_plan(
+            str(project), "figure.py", FIXTURE_IMPORT, target_kind=deprepair.TARGET_PROJECT_VENV
+        )
+    assert err.value.code == deprepair.ERROR_NOT_ALLOWED
+
+    deprepair.reset_state(project)  # 用户重建环境时走的就是这条
+    again = deprepair.create_plan(
+        str(project), "figure.py", FIXTURE_IMPORT, target_kind=deprepair.TARGET_PROJECT_VENV
+    )
+    assert again.plan_id, "重置之后必须能重新形成计划"
+
+
+def test_managed_base_python_must_be_in_the_support_range(project, monkeypatch):
+    """**负向反证（Codex 评审 P2）**：只有 3.14 的机器上不许提供受管修复。
+
+    判据只问「`import venv` 行不行」的话，用户会走完「建 venv → 下载装
+    matplotlib 与那个包」，**最后**才在体检那一步被告知版本不支持——白等
+    一场下载。判据要提到选解释器那一刻。
+    """
+    from tavotto.engine import bootstrap
+
+    captured = {}
+
+    def _fake(accept=None):
+        captured["accept"] = accept
+        # 模拟「机器上只有 3.14」：候选唯一，版本超出支持区间
+        return "/fake/python3.14" if accept is None or accept("/fake/python3.14", "3.14") else None
+
+    monkeypatch.setattr(bootstrap, "find_base_python", _fake)
+    deprepair.reset_state()
+    assert managedenv.base_python() is None, "3.14 不该被当成可用的基础解释器"
+    assert captured["accept"] is not None, "版本判据没被传下去"
+    # 区间内的照常接受
+    assert captured["accept"]("/fake/python3.12", "3.12") is True
 
 
 def test_managed_environment_is_not_offered_without_a_base_python(project, monkeypatch):

@@ -316,11 +316,24 @@ def base_python() -> str | None:
     直接复用 `bootstrap.find_base_python()`——它已经排除了内置 runtime
     （官方 embeddable 不带 `ensurepip`，`python -m venv` 建到一半就失败）
     并覆盖了 conda / python.org / PATH 的常见落点。**这里绝不新造一条探测链**。
+
+    **但要多一条判据：版本得在支持区间内**（Codex 评审 P2）。`bootstrap` 那边
+    只问「`import venv` 行不行」，于是一台只有 Python 3.14 的机器会一路通过：
+    界面提供受管修复 → 建 venv → 下载装 matplotlib 与那个包 → **最后**才在
+    体检那一步报「这个 Python 不在支持范围内」。用户白等一场下载。
+    把判据提到选解释器那一刻，代价从「几十 MB + 几分钟」降到一次版本探测。
     """
-    from . import bootstrap
+    from . import bootstrap, projectenv
+
+    def _supported(_path: str, version: str) -> bool:
+        try:
+            parts = tuple(int(x) for x in version.strip().split(".")[:2])
+        except ValueError:
+            return False
+        return bool(parts) and projectenv.PYTHON_MIN <= parts < projectenv.PYTHON_MAX_EXCLUSIVE
 
     try:
-        return bootstrap.find_base_python()
+        return bootstrap.find_base_python(accept=_supported)
     except (OSError, ValueError) as exc:  # 探测本身不该让请求 500
         LOG.warning("基础解释器探测失败: %s", exc)
         return None

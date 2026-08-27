@@ -106,8 +106,14 @@ _progress: dict[str, dict] = {}
 _cancels: dict[str, threading.Event] = {}
 #: (项目指纹, 脚本) → 已经修过几轮。
 _rounds: dict[tuple[str, str], int] = {}
-#: (环境 key, 需求串) → 这一轮已经试过。同一个环境 + 同一个需求一轮只试一次。
-_attempted: set[tuple[str, str]] = set()
+#: (项目指纹, 环境 key, 需求串) → 这一轮已经试过。同一个环境 + 同一个需求
+#: 一轮只试一次。
+#:
+#: **key 里必须带项目指纹**（Codex 评审 P2）：`reset_state(project)` 承诺
+#: 「丢弃计划 / 轮次 / 已试过」，而只按环境 key 存的话它清不掉这一项——
+#: 受管环境重建之后解释器路径一模一样，`create_plan` 会一直以「这一轮已经
+#: 试过了」拒绝那个依赖，直到整个应用重启。
+_attempted: set[tuple[str, str, str]] = set()
 #: 基础解释器探测结果的进程内缓存（`None` = 还没探过）。探一次要起好几个
 #: 子进程，而问它的地方在**渲染出错**那条路上。
 _base_python: str | None = None
@@ -238,6 +244,8 @@ def reset_state(project: str | Path | None = None) -> None:
             _plans.pop(key, None)
         for key in [k for k in _rounds if k[0] == pid]:
             _rounds.pop(key, None)
+        for key in [k for k in _attempted if k[0] == pid]:
+            _attempted.discard(key)
 
 
 def _prune_plans() -> None:
@@ -405,7 +413,7 @@ def create_plan(
 
     key = _env_key(target_kind, python, root)
     with _lock:
-        if (key, requirement.requirement()) in _attempted:
+        if (managedenv.project_fingerprint(root), key, requirement.requirement()) in _attempted:
             raise RepairError(ERROR_NOT_ALLOWED, "同一个环境上的同一个需求这一轮已经试过了")
     now = time.time()
     plan = RepairPlan(
@@ -549,7 +557,9 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
     # ---- 安装 -------------------------------------------------------------
     _emit(plan.plan_id, STATE_INSTALLING, on_event, plan=plan)
     with _lock:
-        _attempted.add((_env_key(plan.target_kind, python, project), req.requirement()))
+        _attempted.add(
+            (plan.project_id, _env_key(plan.target_kind, python, project), req.requirement())
+        )
     code, out = _pip_install(
         python, req.requirement(), cancel_ev, lambda text: _append_log(plan.plan_id, text, on_event)
     )
@@ -642,17 +652,17 @@ def _create_managed(project: str, cancel_ev: threading.Event) -> str:
 REBUILD_PROGRESS_ID = "managed-rebuild"
 
 
-def rebuild_managed_async(project: str | Path, requirements: list[str], on_event=None) -> None:
+def rebuild_managed_async(project: str | Path, on_event=None) -> None:
     threading.Thread(
-        target=lambda: _rebuild_guarded(project, requirements, on_event),
+        target=lambda: _rebuild_guarded(project, on_event),
         daemon=True,
         name="tavotto-managed-rebuild",
     ).start()
 
 
-def _rebuild_guarded(project, requirements, on_event) -> dict:
+def _rebuild_guarded(project, on_event) -> dict:
     try:
-        return rebuild_managed(project, requirements, on_event)
+        return rebuild_managed(project, on_event)
     except RepairError as exc:
         return _emit(REBUILD_PROGRESS_ID, STATE_FAILED, on_event, code=exc.code, error=str(exc))
     except Exception as exc:  # noqa: BLE001
@@ -666,8 +676,20 @@ def _rebuild_guarded(project, requirements, on_event) -> dict:
         )
 
 
-def rebuild_managed(project: str | Path, requirements: list[str], on_event=None) -> dict:
+def rebuild_managed(project: str | Path, on_event=None) -> dict:
     """删掉重建受管环境，并把我们记过的那些装回去。
+
+    **删除、读账、重建必须在同一把环境锁之内**（Codex 评审 P1）。曾经是
+    端点先 `is_mutating()` 查一下、然后在锁外把 venv 删掉、再异步去重建：
+    那个窗口里一个已经形成的 plan 完全可以开始往这个解释器里 pip install，
+    而它的 venv 正在被删。更糟的是两边**根本不互斥**——install 拿的是
+    解释器路径 key，而重建当时拿的是 `tavotto_managed:<项目指纹>` 这个
+    合成 key（`_env_key` 在 python 为空时的分支）。
+
+    所以这里传**当前就存在的**解释器路径进锁：`mutating_environment` 会把
+    路径 key 与合成 key 一起登记，install 那条路才真的被挡在外面。
+    读 `installed_requirements()` 也搬进来了——在锁外读，读到的可能是另一次
+    安装刚写进去的账。
 
     **不声称 lockfile 级复现**：`environment.json` 里记的是安装当时解析出来的
     版本，重建时那个版本可能已经从 index 上撤了。真撤了就如实报错，不悄悄
@@ -675,11 +697,23 @@ def rebuild_managed(project: str | Path, requirements: list[str], on_event=None)
     """
     root = str(Path(project))
     key = _env_key(TARGET_MANAGED, "", root)
+    # 锁要盖住**现在这个**解释器：环境还在时它就是 install 会用的那条路径。
+    existing = managedenv.python_of(root) or str(managedenv.venv_python(root))
     cancel_ev = threading.Event()
     with _lock:
         _cancels[REBUILD_PROGRESS_ID] = cancel_ev
     try:
-        with pool.mutating_environment(key):
+        with pool.mutating_environment(key, existing):
+            # ---- 拆旧：全部在锁内 ----
+            _emit(REBUILD_PROGRESS_ID, STATE_PREPARING, on_event)
+            requirements = managedenv.installed_requirements(root)
+            if pool.same_python(projectenv.remembered(root), existing):
+                # 记住的解释器正是它：先撤决策再删，否则删完那一瞬间
+                # `resolve_worker_python()` 会指向一条已经不存在的路径。
+                projectenv.forget(root)
+            managedenv.remove(root)
+            pool.reset_worker_python()
+            # ---- 重建 ----
             _emit(REBUILD_PROGRESS_ID, STATE_CREATING_ENV, on_event)
             python = _create_managed(root, cancel_ev)
             pool.note_mutating_python(key, python)
