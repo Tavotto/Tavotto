@@ -286,9 +286,11 @@ distribution. Redistributed CPython is in the same position.
 It is deliberately **not fixed here.** This change is scoped to contributor
 governance and licensing documentation; packaging is a different root cause with
 a different verification surface, and a notices file should be *generated* from
-the dependency closure rather than hand-maintained. It is tracked separately —
-see the follow-up issue referenced from
-[COMMERCIAL_EDITION_RIGHTS_POLICY.md](COMMERCIAL_EDITION_RIGHTS_POLICY.md).
+the dependency closure rather than hand-maintained.
+
+Tracked as **[issue #182](https://github.com/Tavotto/Tavotto/issues/182)** —
+"Distribution licensing: desktop/plugin artifacts must ship project licence and
+generated third-party notices".
 
 The CLA must **not** be shipped in any product artefact. It is contributor
 governance, not a runtime licence.
