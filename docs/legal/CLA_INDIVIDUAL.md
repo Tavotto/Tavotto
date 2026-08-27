@@ -42,7 +42,7 @@ with the template's own choices resolved. The record of those choices:
 | Section 3(c) | The **(Individual)** form. |
 | `[AND BY US TO YOU]` / `[OR US]` | **Retained** in Sections 4 and 5, making the disclaimer and damages waiver mutual. |
 | `[PROJECT_NAME]` | `Tavotto` |
-| `[SUBMISSION_INSTRUCTIONS]` | See [How to sign](#how-to-sign). |
+| `[SUBMISSION_INSTRUCTIONS]` | See [How to sign](#how-to-sign); delivery to <support@tavotto.com>. |
 | `[NONOWNER_INSTRUCTIONS]` | See [If you do not own the whole contribution](#if-you-do-not-own-the-whole-contribution). |
 | `[JURISDICTION]` | Hong Kong SAR, China. |
 
@@ -64,6 +64,9 @@ signed CLAs do **not** travel automatically — Section 6.3 requires an assignee
 agree in writing to abide by this agreement. See
 [CLA_VERSIONING.md](CLA_VERSIONING.md#rights-transfer-if-the-holder-ever-changes).
 
+**Contact.** <support@tavotto.com> — a project address, which is what the agreement's
+delivery instructions point at.
+
 **Postal address.** Deliberately not published here. Publishing a natural
 person's home address in a public repository is a privacy exposure with no
 corresponding benefit; the address is completed on the executed copy of the
@@ -77,8 +80,8 @@ nothing for one to collect. Until one is configured, the CI check qualifies only
 the rights holder and two named bots, and blocks everyone else **with an
 explanation** — it never treats an unsigned contributor as signed.
 
-If you want to contribute now, **open an issue first** and it will be arranged
-directly. See [CLA_AUTOMATION_SETUP.md](CLA_AUTOMATION_SETUP.md) for how a
+If you want to contribute now, **open an issue first**, or write to
+<support@tavotto.com>, and it will be arranged directly. See [CLA_AUTOMATION_SETUP.md](CLA_AUTOMATION_SETUP.md) for how a
 provider gets wired in, and [CLA_VERSIONING.md](CLA_VERSIONING.md) for how a
 signature is bound to a specific version of this text.
 

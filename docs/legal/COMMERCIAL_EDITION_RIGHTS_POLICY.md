@@ -26,12 +26,12 @@ ready, and one item on it is a genuine blocker.
 
 ### Why not `NOT_READY`
 
-- **The rights baseline is clean, and stayed clean.** 418 of the 419 commits
-  reachable from baseline `ff732ea` come from a single rights holder; one is a
+- **The rights baseline is clean, and stayed clean.** 422 of the 423 commits
+  reachable from baseline `7952ceb` come from a single rights holder; one is a
   Dependabot version bump; there is no external human contributor, no
   third-party source copied into the tree, no vendored code and no bundled
-  fonts. The 19 commits added since the previous audit introduced no external
-  contribution, no new dependency and no third-party material.
+  fonts. Two incremental audits covering the 23 commits since the initial one
+  found no external contribution, no new dependency and no third-party material.
 - **No relicensing-blocked contribution has been merged.** There is nothing to
   claw back, rewrite or exclude — the usual reason projects cannot dual-license
   simply does not apply here.

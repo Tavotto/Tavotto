@@ -48,7 +48,7 @@ terms, with attribution given above.
 | Section 3(c) | The **(Entity)** form. |
 | `[AND BY US TO YOU]` / `[OR US]` | **Retained** in Sections 4 and 5. |
 | `[PROJECT_NAME]` | `Tavotto` |
-| `[SUBMISSION_INSTRUCTIONS]` | See [How to sign](#how-to-sign). |
+| `[SUBMISSION_INSTRUCTIONS]` | See [How to sign](#how-to-sign); delivery to <support@tavotto.com>. |
 | `[NONOWNER_INSTRUCTIONS]` | See [Schedule A](#schedule-a--authorised-contributors). |
 | `[JURISDICTION]` | Hong Kong SAR, China. |
 
@@ -64,8 +64,8 @@ points of contact for the agreement, and Section 2 is unchanged by it.
 
 Identical to the Individual CLA: **"We"/"Us" is Jiaqi Wan**, a natural person,
 and the governing law is that of the Hong Kong Special Administrative Region
-(Section 6.1). The postal address is completed on the executed copy rather than
-published here. See
+(Section 6.1). Contact: <support@tavotto.com>. The postal address is completed on the
+executed copy rather than published here. See
 [CLA_INDIVIDUAL.md](CLA_INDIVIDUAL.md#the-counterparty).
 
 ## How to sign
@@ -84,9 +84,9 @@ The intended flow, once the rights holder is configured:
 
 1. The company's authorised signatory completes this agreement, including
    Schedule A.
-2. It is sent to the rights holder for review by a human — **open an issue to
-   start this** and the delivery details will be exchanged privately, so that no
-   personal address needs to be published in the repository.
+2. It is sent to <support@tavotto.com> for review by a human. Postal delivery details, if
+   needed, are exchanged from there — so that no personal address has to be
+   published in the repository.
 3. On acceptance, the covered accounts from Schedule A are registered with the
    signature provider, against the agreement version that was signed.
 4. From that point the provider's check recognises those accounts, and the
@@ -301,12 +301,14 @@ Date:      ________________________
 *Administrative annex. Not part of the operative agreement above; it records
 scope and contacts and grants no rights of its own.*
 
-**Point of contact**
+**Point of contact at the Entity** — who We contact about this agreement:
 
 ```
 Name:   ________________________
 Email:  ________________________
 ```
+
+Send the completed agreement to <support@tavotto.com>.
 
 **Accounts covered by this agreement.** List every GitHub account authorised to
 Submit Contributions on behalf of the Entity. Contributions from accounts not

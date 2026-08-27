@@ -25,11 +25,15 @@ Retained so the chain of review is traceable.
 
 | | |
 |---|---|
-| Commit | `ff732eaa8b58df9eeccf32ec5e0cbf5efb928851` |
+| Commit | `7952ceb7e13b7518bd53308b945e61c2811dde96` |
 | Branch | `main` (`origin/main` at the time of the audit) |
-| Audit date | 2026-08-27 |
-| Commits reachable from this baseline | **419** |
-| Merged pull requests | **104** |
+| Audit date | 2026-08-28 |
+| Commits reachable from this baseline | **423** |
+| Merged pull requests | **108** |
+
+Previously audited at `ff732ea` (419 commits, 2026-08-27). The baseline was moved
+forward because the four intervening commits were audited and found clean — not
+re-stamped. See [the second incremental audit](#second-incremental-audit-ff732ea--7952ceb).
 
 **This is a "last audited rights baseline", not a claim about `HEAD`.** `main`
 moves; this marker is not re-stamped on every commit, and no test requires it to
@@ -45,12 +49,13 @@ distributed product is what is **reachable from `main`**:
 
 | Measure | Count |
 |---|---|
-| Reachable from the current baseline (`git rev-list --count ff732ea`) | **419** |
-| All local refs (`git rev-list --count --all`) | 756 |
+| Reachable from the current baseline (`git rev-list --count 7952ceb`) | **423** |
+| All local refs (`git rev-list --count --all`) | 756+ (varies by clone) |
 
-The 419 figure is used throughout this document. The conclusion is unchanged in
-either denominator — the composition of authors is the same — but the earlier
-number overstated the size of the audited history and is corrected here.
+The reachable-from-`main` figure is the one used throughout this document. The
+conclusion is unchanged in either denominator — the composition of authors is the
+same — but the earlier number overstated the size of the audited history and is
+corrected here.
 
 ## Method
 
@@ -70,13 +75,13 @@ Four distinct author identities appear in the entire history.
 | Identity | Commits | Note |
 |---|---|---|
 | `erwanjun <1259959884@qq.com>` | 305 | |
-| `erwanjun <88193520+erwanjun@users.noreply.github.com>` | 107 | GitHub web/API identity for account `erwanjun` |
+| `erwanjun <88193520+erwanjun@users.noreply.github.com>` | 111 | GitHub web/API identity for account `erwanjun` |
 | `erwanjun <malajiaqi@gmail.com>` | 6 | |
 
-**418 of the 419 commits reachable from the baseline.** These are three email
+**422 of the 423 commits reachable from the baseline.** These are three email
 addresses of one person: the GitHub noreply address encodes account id
-`88193520` / login `erwanjun`, which is also the account that authored 103 of the
-104 merged pull requests. The repository records that person as the project
+`88193520` / login `erwanjun`, which is also the account that authored 107 of the
+108 merged pull requests. The repository records that person as the project
 author (`pyproject.toml` `authors = [{ name = "erwanjun" }]`).
 
 Committer identities add only `GitHub <noreply@github.com>` — the web-flow
@@ -99,7 +104,7 @@ the history's only `Signed-off-by` trailer
 convention; **the repository has never operated a DCO**, and this single trailer
 must not be read as one.
 
-### Incremental audit: `aaa065f` → `ff732ea`
+### First incremental audit: `aaa065f` → `ff732ea`
 
 The 19 commits added between the two baselines were audited separately, because
 "the PR opener is the maintainer" is not by itself evidence that the *content*
@@ -126,6 +131,26 @@ no third-party material. The functional work in this range is the 13 new files
 listed above plus edits to existing Tavotto code.
 
 **No external human contribution entered the tree in this range.**
+
+### Second incremental audit: `ff732ea` → `7952ceb`
+
+The four commits added between the second and third baselines, audited the same
+way.
+
+| Check | Result |
+|---|---|
+| Commits | 4 |
+| Authors | **4/4** `erwanjun <88193520+erwanjun@users.noreply.github.com>` |
+| Committers | 4/4 `GitHub <noreply@github.com>` (squash-merge web flow) |
+| `Co-authored-by` / `Signed-off-by` trailers | **0 / 0** |
+| New files added | 6 — `.git-blame-ignore-revs`, `metrics-freshness.yml`, `check_metrics_freshness.py`, and three test modules. All Tavotto-authored. |
+| New binary or asset files | **0** |
+| Third-party markers introduced | **0** |
+| Dependency manifests changed | `pyproject.toml` only, and the entire non-comment delta is the single line `-ignore = ["E701", "E702"]` — the Ruff formatter going live. **No runtime dependency changed.** |
+| Lockfiles changed | none |
+
+**No external human contribution entered the tree in this range**, and the
+dependency audit is unaffected.
 
 ### External human contributors
 
@@ -306,10 +331,11 @@ governance, not a runtime licence.
 
 ## Conclusion
 
-Subject to open questions 1–3, the repository is a **single-rights-holder
-baseline**: 744 of 745 commits from one person, one dependency-bump commit from
-Dependabot, no external human contributor, and no third-party source code copied
-into the tree.
+Subject to the open questions above, the repository is a **single-rights-holder
+baseline**: 422 of the 423 commits reachable from `7952ceb` come from one person,
+one is a Dependabot version bump, there is no external human contributor, and no
+third-party source code has been copied into the tree. Two incremental audits
+covering the 23 commits added since the initial one change none of this.
 
 That is a strong starting position for dual licensing — and it is precisely why
 the CLA matters *now*: the baseline is clean today, and the cost of keeping it

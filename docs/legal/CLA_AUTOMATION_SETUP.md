@@ -22,7 +22,7 @@ reason.
 | Repository-side qualification check | Written and tested; **the CI job lands in a follow-up PR** — see [Why the CI job ships separately](#why-the-ci-job-ships-separately) |
 | Security model of that check | Complete; no secrets, no PR code executed |
 | Signature source of truth | **Defined: the provider.** The repository stores no signer data. |
-| Rights holder | **Resolved — Jiaqi Wan (natural person), Hong Kong SAR law** |
+| Rights holder | **Resolved — Jiaqi Wan (natural person), Hong Kong SAR law, <support@tavotto.com>** |
 | Agreement version | **`1.0` — signable** |
 | Signature provider | Not configured (`provider.configured: false`) — deliberate, see below |
 
@@ -257,10 +257,11 @@ name, or an entity formed or nominated for the purpose. Both are ordinary; the
 choice has tax, liability and jurisdiction consequences that belong with
 counsel, and the repository must not make it for the owner.
 
-**The postal address was deliberately not published.** Publishing a natural
-person's home address in a public repository is a privacy exposure with no
-corresponding benefit; corporate signing is initiated by opening an issue and
-the delivery details are exchanged privately.
+**A project address is published; the personal postal address is not.**
+Correspondence goes to <support@tavotto.com>. Publishing a natural person's home address in a
+public repository would be a privacy exposure with no corresponding benefit, so
+postal details — if a paper signature is ever needed — are exchanged from that
+address instead.
 
 What was filled in:
 
@@ -325,7 +326,7 @@ provider so its check reflects them. See
 ```sh
 # Rights holder → exempt, exit 0
 python3 scripts/ci/cla_gate.py --event pull_request --pr-author erwanjun \
-  --commits-json <(echo '[{"sha":"a","commit":{"author":{"name":"e","email":"1259959884@qq.com"},"message":"x"},"author":{"login":"erwanjun"}}]')
+  --commits-json <(echo '[{"sha":"a","commit":{"author":{"name":"e","email":"e@example.com"},"message":"x"},"author":{"login":"erwanjun"}}]')
 
 # Merge queue → not_applicable, exit 0 (must never be skipped)
 python3 scripts/ci/cla_gate.py --event merge_group

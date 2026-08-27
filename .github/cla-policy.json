@@ -26,12 +26,12 @@
     "individual": {
       "path": "docs/legal/CLA_INDIVIDUAL.md",
       "version": "1.0",
-      "sha256": "b56e64beefa7252800014b8cd7a2af2c9d8a5a8d7efc4483b983122be02338ea"
+      "sha256": "6ceecfcf4bd49d2ffcfeab0f64ce0742565c6be303d410e5c8c54b07d7547cb9"
     },
     "corporate": {
       "path": "docs/legal/CLA_CORPORATE.md",
       "version": "1.0",
-      "sha256": "01f01742b239fc45c722eca72ec0ac3be6b80863bb7e016c8c144d54f9fcb2b4"
+      "sha256": "312e66508021f3141578b6dee8c2141cebb73c8c4163a683e3d5ee0c85a88842"
     }
   },
   "provider": {
@@ -44,7 +44,7 @@
     {
       "login": "erwanjun",
       "kind": "rights_holder",
-      "reason": "本仓库的著作权人 Jiaqi Wan 本人（GitHub 账号 erwanjun）。main 可达的 419 个 commit 中 418 个出自这个身份（三个邮箱，同一人；审计见 docs/legal/IP_PROVENANCE.md）。著作权人不需要向自己授权。若权利将来转移给某个实体，这一条要改成那个实体与本人的关系。"
+      "reason": "本仓库的著作权人 Jiaqi Wan 本人（GitHub 账号 erwanjun）。main 可达的 423 个 commit 中 422 个出自这个身份（三个邮箱，同一人；审计见 docs/legal/IP_PROVENANCE.md）。著作权人不需要向自己授权。若权利将来转移给某个实体，这一条要改成那个实体与本人的关系。"
     },
     {
       "login": "dependabot[bot]",

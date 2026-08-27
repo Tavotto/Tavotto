@@ -20,15 +20,16 @@ by its own terms.
 
 ## Audited baseline
 
-Commit **`ff732eaa8b58df9eeccf32ec5e0cbf5efb928851`** (`main`), re-measured
-2026-08-27. The previous run of this audit was at `aaa065f`.
+Commit **`7952ceb7e13b7518bd53308b945e61c2811dde96`** (`main`), re-measured
+2026-08-28. Previous runs: `aaa065f`, then `ff732ea`.
 
-**Delta since `aaa065f`: none.** The 19 intervening commits changed exactly one
+**Delta since `aaa065f`: none**, across both intervening ranges. The 19 intervening commits changed exactly one
 dependency manifest — `pyproject.toml` — and that diff is entirely Ruff
-configuration (adding the `I` rule and the `src` roots). No new runtime,
-frontend or Rust dependency was introduced; `web/pnpm-lock.yaml`, both
+configuration — first adding the `I` rule and the `src` roots, then removing the
+`E701`/`E702` ignores when the formatter went live. No new runtime, frontend or
+Rust dependency was introduced in either range; `web/pnpm-lock.yaml`, both
 `Cargo.lock` files, `packaging/runtime-lock.json` and
-`packaging/playground-runtime.json` are untouched. Every count below was
+`packaging/playground-runtime.json` are untouched throughout. Every count below was
 nonetheless **re-measured rather than carried over**.
 
 Sources, all read from the manifests and the artefacts' own metadata rather than

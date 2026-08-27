@@ -90,8 +90,9 @@ for what would be involved in changing that.
 
 The Tavotto marks are held by **Jiaqi Wan**, a natural person. No company is
 involved. Requests to use the marks beyond what this document already permits
-should be raised as an issue.
+can be raised as an issue or sent to <support@tavotto.com>.
 
 ## Questions
 
-If a use isn't covered here, open an issue and ask. The answer is usually yes.
+If a use isn't covered here, open an issue or write to <support@tavotto.com> and ask. The
+answer is usually yes.

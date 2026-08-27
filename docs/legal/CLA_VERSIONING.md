@@ -132,7 +132,7 @@ existence is not forgotten during such a transaction.
 | Version | Status | Date | Notes |
 |---|---|---|---|
 | `1.0-draft` | Superseded by `1.0` | 2026-08-27 | Initial text. Harmony 1.0, CLA form, Option Five. Held at draft while `RIGHTS_HOLDER_CONFIGURATION_REQUIRED` was unresolved. **No signature was ever collected against it**, so nothing had to migrate. |
-| **`1.0`** | **Current — signable** | 2026-08-28 | `RIGHTS_HOLDER_CONFIGURATION_REQUIRED` resolved: counterparty is **Jiaqi Wan**, a natural person; governing law is the **Hong Kong SAR**. Both are material fields, so this is a new version rather than an edit to the draft. Operative text otherwise byte-identical to `1.0-draft`. |
+| **`1.0`** | **Current — signable** | 2026-08-28 | `RIGHTS_HOLDER_CONFIGURATION_REQUIRED` resolved: counterparty is **Jiaqi Wan**, a natural person; governing law is the **Hong Kong SAR**; correspondence to `support@tavotto.com`. Counterparty and governing law are material fields, so this is a new version rather than an edit to the draft. Operative text otherwise byte-identical to `1.0-draft`. **This is the first published version** — `1.0-draft` never left the branch it was written on, and no signature was ever collected against it. |
 
 A provider may now be marked as configured (the structural bar on draft versions
 no longer applies), but none is configured yet — see
