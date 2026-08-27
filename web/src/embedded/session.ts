@@ -106,6 +106,7 @@ export function seedEmbeddedSession(
         code: '',
         module: '',
       projectEnv: null,
+      dependencyRepair: null,
         traceback: '',
         warnings: fig.warnings ?? [],
         timings: {},

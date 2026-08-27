@@ -297,6 +297,9 @@ def offer(project: str | Path, script: str, module: str,
     requirement = depresolve.resolve(root, module, script)
     out: dict = {
         "import_name": module,
+        # 哪个脚本缺的：创建计划时要按 (项目, 脚本) 记轮次，而前端手里只有
+        # 这份 offer。项目相对路径，与注册表同一种写法。
+        "script": script,
         "requirement": requirement.to_payload() if requirement else None,
         "rounds_remaining": rounds_remaining(root, script),
         "targets": [],

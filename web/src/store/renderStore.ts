@@ -5,6 +5,7 @@ import {
   EngineError,
   engineErrorMsg,
   engineRender,
+  type DependencyRepairOffer,
   type Manifest,
   type ProjectEnvFailure,
 } from '@/lib/api'
@@ -46,6 +47,11 @@ export interface PanelRender {
    * Python 版本不支持。界面据此给四种不同的恢复引导。
    */
   projectEnv: ProjectEnvFailure | null
+  /**
+   * `missing_dependency` 时「这个包能怎么修」（ADR 0019）：解析出来的包名、
+   * 可选的安装目标、还剩几轮。null = 后端没给（老服务端 / 没打开项目）。
+   */
+  dependencyRepair: DependencyRepairOffer | null
   traceback: string
   warnings: string[]
   /** 最近一次成功渲染的阶段计时（毫秒，键见 api.ts）；暂不做 UI */
@@ -74,6 +80,7 @@ const EMPTY: PanelRender = {
   code: '',
   module: '',
   projectEnv: null,
+  dependencyRepair: null,
   traceback: '',
   warnings: [],
   timings: {},
@@ -321,6 +328,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
             status: 'ready',
             error: null,
             projectEnv: null,
+            dependencyRepair: null,
             traceback: '',
             warnings: res.warnings ?? [],
             timings: res.timings ?? {},
@@ -387,6 +395,8 @@ export const useRenderStore = create<RenderState>((set, get) => ({
             code: err instanceof EngineError ? err.code : '',
             module: err instanceof EngineError ? err.module : '',
             projectEnv: err instanceof EngineError ? (err.projectEnv ?? null) : null,
+            dependencyRepair:
+              err instanceof EngineError ? (err.dependencyRepair ?? null) : null,
             error: timedOut
               ? msg('render.timeout',
                     { minutes: Math.round(timeoutMs / 60_000) }, 'errors')

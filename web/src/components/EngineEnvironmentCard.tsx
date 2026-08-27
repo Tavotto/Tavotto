@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { useEnvStore } from '@/store/envStore'
 import { t as translate } from '@/i18n'
 import type { EngineSource, ProjectEnvFailure } from '@/lib/api'
+import { ManagedEnvironmentRow } from './DependencyRepairCard'
 import { Button } from './ui/Button'
 import { TextInput } from './ui/Input'
 
@@ -200,6 +201,9 @@ function ProjectEnvironmentLine({ compact }: { compact?: boolean }) {
   const { env, setProjectPython } = useEnvStore()
   const project = env?.project
   if (compact || !project?.open) return null
+  // Tavotto 替这个项目建的环境是另一种局面：它归我们管，所以那一行还带
+  // 「装了什么」与「重建」（ADR 0019），由 ManagedEnvironmentRow 单独渲染。
+  if (project.source === 'managed_project_env') return <ManagedEnvironmentRow />
   if (project.source !== 'project_venv') return null
   return (
     <div className="mt-1.5 flex flex-col gap-0.5 border-t border-border pt-1.5">

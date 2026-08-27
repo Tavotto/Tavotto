@@ -3,6 +3,7 @@ import { msg, t } from '@/i18n'
 import { subscribeEvents, type ServerEvent } from '@/lib/api'
 import { useAiStore } from '@/store/aiStore'
 import { useAssetStore } from '@/store/assetStore'
+import { useDepRepairStore } from '@/store/depRepairStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useEnvStore } from '@/store/envStore'
 import { useProjectStore } from '@/store/projectStore'
@@ -36,6 +37,12 @@ function handleEvent(ev: ServerEvent) {
     case 'engine.bootstrap':
       // 渲染环境安装进度（建 venv + 装 matplotlib）
       useEnvStore.getState().onProgress(ev)
+      break
+
+    case 'engine.dependency':
+      // 受控依赖修复的进度（ADR 0019）。**不带 pj**：它是按 plan_id 走的，
+      // 而 plan 本身绑定了项目——多开标签页时各自只认自己那条计划。
+      useDepRepairStore.getState().onProgress(ev)
       break
 
     case 'render.started': {

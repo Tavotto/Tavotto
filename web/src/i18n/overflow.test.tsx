@@ -70,6 +70,16 @@ const BUDGETS: Budget[] = [
   // 画布标签条：一排标签，每个都可关闭
   ['workspace', 'tabs.newCanvas', 18, '画布标签条上的新建'],
   ['workspace', 'tabs.allCanvases', 18, '画布标签条上的总览'],
+  // 缺依赖修复卡片的动作按钮（ADR 0019）。它们落在右栏里，容器约 272px；
+  // Button 是 whitespace-nowrap + shrink-0 的，超出预算就直接把整栏撑破
+  // ——所以这几条的预算是硬边界，不是审美偏好。
+  ['errors', 'engine.repairUseProjectEnv', 32, '缺依赖卡片：装进项目环境'],
+  ['errors', 'engine.repairCreateManaged', 32, '缺依赖卡片：建一个 Tavotto 环境'],
+  ['errors', 'engine.repairUseManaged', 32, '缺依赖卡片：装进 Tavotto 环境'],
+  ['errors', 'engine.repairInstallToProject', 32, '缺依赖卡片：确认装进项目环境'],
+  ['errors', 'engine.repairPrepareAndContinue', 32, '缺依赖卡片：确认建环境并继续'],
+  ['errors', 'engine.repairCancel', 12, '安装进度里的取消'],
+  ['errors', 'engine.repairClose', 12, '安装结束后的关闭'],
 ]
 
 describe('紧位置的英文文案有字数上限', () => {

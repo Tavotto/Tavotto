@@ -787,18 +787,25 @@ export class EngineError extends Error {
    * 也没有这个包」分开引导。
    */
   projectEnv?: ProjectEnvFailure
+  /**
+   * `missing_dependency` 时「这个包能怎么修」（ADR 0019）。解析不出可信包名
+   * 时 `requirement` 为 null，界面据此**不给**一键安装。
+   */
+  dependencyRepair?: DependencyRepairOffer
   constructor(
     message: string,
     traceback = '',
     code = '',
     module = '',
     projectEnv?: ProjectEnvFailure,
+    dependencyRepair?: DependencyRepairOffer,
   ) {
     super(message)
     this.traceback = traceback
     this.code = code
     this.module = module
     this.projectEnv = projectEnv
+    this.dependencyRepair = dependencyRepair
   }
 }
 
@@ -846,6 +853,7 @@ export async function engineRender(
       (body.code as string) || '',
       (body.module as string) || '',
       body.project_env as ProjectEnvFailure | undefined,
+      body.dependency_repair as DependencyRepairOffer | undefined,
     )
   }
   return body as EngineRenderResponse
@@ -880,6 +888,7 @@ export async function enginePreviewPng(
       (body.code as string) || '',
       (body.module as string) || '',
       body.project_env as ProjectEnvFailure | undefined,
+      body.dependency_repair as DependencyRepairOffer | undefined,
     )
   }
   return res.blob()
@@ -1263,6 +1272,7 @@ export type ServerEvent =
   | ({ kind: 'registry.changed'; script: string; stems: string[] } & ProjectScoped)
   | ({ kind: 'probe.started'; script: string } & ProjectScoped)
   | { kind: 'engine.bootstrap'; state: string; log: string; error: string | null }
+  | ({ kind: 'engine.dependency' } & DependencyProgress)
   | { kind: 'ai.delta'; session: string; text: string; kindOf?: AiDeltaKind }
   | ({
       kind: 'ai.done'
@@ -1282,6 +1292,7 @@ const EVENT_KINDS = [
   'registry.changed',
   'probe.started',
   'engine.bootstrap',
+  'engine.dependency',
   'ai.delta',
   'ai.done',
 ] as const
@@ -1510,6 +1521,7 @@ export type EngineSource =
   | 'current_process' // Tavotto 自身的解释器（pip install tavotto[worker]）
   | 'system'          // 探测到的系统 Python / Conda
   | 'project_venv'    // 项目自带的 .venv（内置缺依赖时自动接手，ADR 0018）
+  | 'managed_project_env' // Tavotto 替这个项目建的隔离环境（ADR 0019）
   | ''
 
 /** 内置渲染环境（Windows 桌面版随包附带）的现状 */
@@ -1544,6 +1556,21 @@ export interface ProjectEnvironment {
   module?: string
   /** 在这个项目里发现到的候选虚拟环境（项目相对路径），可能是空表 */
   can_use_project_venv?: string[]
+  /** Tavotto 替这个项目建过的隔离环境（ADR 0019）；没建过 exists=false */
+  managed?: ManagedEnvironment
+}
+
+/**
+ * Tavotto 管理的项目环境。它相对「改用户 .venv」的唯一优势就是**可删可重建**，
+ * 所以界面要能显示「装了什么」并给出重建入口。
+ */
+export interface ManagedEnvironment {
+  exists: boolean
+  state: string
+  python_version: string
+  created_at: number
+  last_used?: number
+  installed: { distribution: string; resolved_version: string }[]
 }
 
 /**
@@ -1618,6 +1645,113 @@ export const setProjectEnvironment = (python: string | null) =>
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ scope: 'project', python }),
   })
+
+// ---------------------------------------------------------------------------
+// 受控依赖修复（ADR 0019）
+//
+// 两步，刻意分开：先 plan（说清楚装什么、装到哪、会不会改你的环境），用户点
+// 确认之后才 install。**install 的请求体里只有 plan_id**——装什么不由那次请求
+// 说了算，否则一个构造出来的请求就能把「装 lmfit 到项目环境」换成别的事。
+// ---------------------------------------------------------------------------
+/** 一个可安装的需求（后端解析出来的，前端不自己拼包名） */
+export interface DependencyRequirementInfo {
+  import_name: string
+  distribution: string
+  specifier: string
+  requirement: string
+  /** project_declared / curated / user_specified —— 没有「猜的」这一档 */
+  resolution_source: 'project_declared' | 'curated' | 'user_specified' | ''
+  confidence: string
+  installable: boolean
+}
+
+/** 一个可选的安装目标 */
+export interface DependencyTarget {
+  kind: 'project_venv' | 'tavotto_managed'
+  /** 项目相对路径（项目 venv 才有） */
+  venv: string
+  python: string
+  /** true = 会修改用户自己的环境，界面必须说清楚 */
+  modifies_user_environment: boolean
+  creates_environment: boolean
+  /** null = 还不知道（后端正在探基础解释器），界面照常列出来 */
+  available: boolean | null
+  reason: string
+}
+
+/**
+ * 「这个缺的包能怎么修」。`requirement` 为 null = 解析不出可信包名，
+ * 那时**不给一键安装**，只给「指定安装包…」与「选择其他 Python」。
+ */
+export interface DependencyRepairOffer {
+  import_name: string
+  /** 哪个脚本缺的（项目相对路径）——创建计划时要把它交回去 */
+  script: string
+  requirement: DependencyRequirementInfo | null
+  targets: DependencyTarget[]
+  rounds_remaining: number
+  managed?: ManagedEnvironment
+  /** dependency_unresolved / dependency_repair_rounds_exhausted */
+  code?: string
+}
+
+/** 后端发出来的安装计划。`plan_id` 是这次授权的凭据，不可猜、有有效期。 */
+export interface DependencyRepairPlan extends DependencyRequirementInfo {
+  plan_id: string
+  target_kind: 'project_venv' | 'tavotto_managed'
+  python: string
+  creates_environment: boolean
+  modifies_user_environment: boolean
+  network_required: boolean
+  expires_at: number
+}
+
+/** 安装进度。前端**按 state 换文案，不解析日志**。 */
+export interface DependencyProgress {
+  plan_id: string
+  state: 'idle' | 'preparing' | 'creating_env' | 'installing' | 'verifying' | 'done' | 'failed' | 'cancelled'
+  log: string
+  error: string | null
+  code: string
+  import_name?: string
+  distribution?: string
+  target_kind?: string
+  script?: string
+  result?: { python?: string; version?: string; distribution?: string } | null
+}
+
+export const createDependencyPlan = (body: {
+  module: string
+  script: string
+  target: 'project_venv' | 'tavotto_managed'
+  distribution?: string
+}) =>
+  jsonFetch<{ plan: DependencyRepairPlan }>('/api/engine/dependency/plan', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+
+export const installDependencyPlan = (planId: string) =>
+  jsonFetch<{ started: boolean } & DependencyProgress>('/api/engine/dependency/install', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ plan_id: planId }),
+  })
+
+export const cancelDependencyPlan = (planId: string) =>
+  jsonFetch<{ cancelling: boolean }>('/api/engine/dependency/cancel', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ plan_id: planId }),
+  })
+
+/** 删掉并重建当前项目的 Tavotto 隔离环境（用户自己的 .venv 没有这个操作） */
+export const rebuildManagedEnvironment = () =>
+  jsonFetch<{ started: boolean; requirements: string[] }>(
+    '/api/engine/environment/managed/rebuild',
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
+  )
 
 /* --------------------------- 脚本注册表（stem ↔ 脚本） ----------------------- */
 /**
