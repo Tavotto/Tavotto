@@ -557,8 +557,7 @@ class TestProbeReturnsDescriptors:
     """probe 成功后调用方就该拿到完整的捕获描述，并能直接复用热会话。"""
 
     def test_probe_carries_capture_source_and_size(self, tmp_path):
-        from tavotto.engine import pool as engine_pool
-        from tavotto.engine import probe as engine_probe
+        from tavotto.engine import pool as engine_pool, probe as engine_probe
 
         figs = tmp_path / "figs"
         write(figs, "show_only.py", SHOW_ONLY)
@@ -580,8 +579,7 @@ class TestProbeReturnsDescriptors:
             engine_pool.shutdown_all(str(figs), wait=True)
 
     def test_probe_and_register_passes_descriptors_through(self, tmp_path):
-        from tavotto.engine import pool as engine_pool
-        from tavotto.engine import probe as engine_probe
+        from tavotto.engine import pool as engine_pool, probe as engine_probe
 
         figs = tmp_path / "figs"
         write(figs, "show_only.py", SHOW_ONLY)

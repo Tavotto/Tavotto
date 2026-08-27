@@ -27,8 +27,7 @@ import sys
 import zipfile
 from pathlib import Path
 
-from . import ai_bridge, bootstrap, config, pool, runtime, telemetry, updater
-from . import diagnostics_frontend
+from . import ai_bridge, bootstrap, config, diagnostics_frontend, pool, runtime, telemetry, updater
 
 LOG_TAIL_LINES = 400
 ERROR_TAIL = 30          # 报告里单列的最近错误条数

@@ -28,6 +28,7 @@ import sys
 import time
 from pathlib import Path
 
+
 def use_utf8_streams() -> None:
     """把 stdout/stderr 钉成 UTF-8。
 

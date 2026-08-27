@@ -25,14 +25,20 @@ import time
 from pathlib import Path
 
 try:                                    # Windows 上没有 resource 模块
-    import resource                     # noqa: PLC0415
+    import resource  # noqa: PLC0415
 except ImportError:                     # pragma: no cover - 只在 Windows 走到
     resource = None                     # type: ignore[assignment]
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _common import (  # noqa: E402
-    CiError, ensure_layout, find_ci_owned_tavotto, run_metadata, state_root,
-    summary, summary_table, write_report,
+    CiError,
+    ensure_layout,
+    find_ci_owned_tavotto,
+    run_metadata,
+    state_root,
+    summary,
+    summary_table,
+    write_report,
 )
 
 # 门槛按「够不够跑得出可信数字」定，不是按「机器好不好」。

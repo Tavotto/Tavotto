@@ -24,10 +24,12 @@ import pymupdf
 import pytest
 
 from tavotto import app as m
-from tavotto.engine import pool as engine_pool
-from tavotto.engine import probe as engine_probe
-from tavotto.engine import registry as engine_registry
-from tavotto.engine import runtimeasset
+from tavotto.engine import (
+    pool as engine_pool,
+    probe as engine_probe,
+    registry as engine_registry,
+    runtimeasset,
+)
 
 try:
     WORKER_PY = engine_pool.find_worker_python()

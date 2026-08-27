@@ -40,13 +40,19 @@ _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))
 sys.path.insert(0, str(_HERE.parent))          # scripts/ ——复用既有冒烟与基线工具
 
-from _common import (  # noqa: E402
-    CiError, ensure_layout, run_metadata, summary, summary_table, write_report,
-)
+import bench_render as BR  # noqa: E402
+
 # 这两个模块是本仓库既有的真实用户路径实现。复用它们而不是重写，是为了让
 # soak 跑的就是用户跑的那条路——CLAUDE.md 里「别再造第二个权威」的同一条纪律。
 import smoke_app as SA  # noqa: E402
-import bench_render as BR  # noqa: E402
+from _common import (  # noqa: E402
+    CiError,
+    ensure_layout,
+    run_metadata,
+    summary,
+    summary_table,
+    write_report,
+)
 
 REPO = _HERE.parents[1]
 DEFAULT_FIGURES = REPO / "examples" / "figures"

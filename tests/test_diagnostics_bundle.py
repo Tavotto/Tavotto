@@ -16,10 +16,9 @@ from pathlib import Path
 
 import pytest
 
-from tavotto import app as m
-from tavotto.engine import diagnostics as engine_diagnostics
-from tavotto.engine import diagnostics_frontend as dfe
 from support import frontend_schema
+from tavotto import app as m
+from tavotto.engine import diagnostics as engine_diagnostics, diagnostics_frontend as dfe
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 

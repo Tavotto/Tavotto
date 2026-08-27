@@ -18,8 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from tavotto.engine import pool as engine_pool
-from tavotto.engine import runtimeasset
+from tavotto.engine import pool as engine_pool, runtimeasset
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts" / "ci"))
 import compat_matrix  # noqa: E402

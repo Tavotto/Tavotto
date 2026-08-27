@@ -36,8 +36,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _common import (  # noqa: E402
-    CiError, ensure_layout, find_ci_owned_tavotto, safe_rmtree,
-    state_root, summary,
+    CiError,
+    ensure_layout,
+    find_ci_owned_tavotto,
+    safe_rmtree,
+    state_root,
+    summary,
 )
 
 # 保留期。tmp 短是因为它本来就只服务当次 run；reports 长一点是为了让人能

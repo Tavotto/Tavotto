@@ -10,9 +10,8 @@
   corpus 要验的是 Tavotto 对**任意** matplotlib 脚本的处理能力，
   而不是对某一份样式模块的处理能力。savefig 由 worker 拦截。
 """
-import numpy as np
-
 import matplotlib.pyplot as plt
+import numpy as np
 
 
 def _lin(n, lo, hi):

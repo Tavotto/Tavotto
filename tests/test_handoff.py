@@ -15,7 +15,6 @@ import pytest
 
 from tavotto.engine import handoff, registry as engine_registry
 
-
 SCRIPT = '''\
 import matplotlib.pyplot as plt
 
@@ -447,8 +446,8 @@ def _run_cli(argv, monkeypatch):
                         lambda app, target, **kw: fake_launch(app, target))
     monkeypatch.setattr(handoff, "find_desktop_app",
                         lambda **kw: "/Applications/Tavotto.app/Contents/MacOS/Tavotto")
-    import io
     import contextlib
+    import io
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         rc = handoff.cli(argv)
@@ -556,8 +555,8 @@ def test_launch_failure_has_a_stable_code(figures, monkeypatch):
         raise OSError(13, "Permission denied")
 
     monkeypatch.setattr(handoff, "_spawn_detached", boom)
-    import io
     import contextlib
+    import io
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         rc = handoff.cli([str(figures / "Fig1_demo.pdf"), "--json"])

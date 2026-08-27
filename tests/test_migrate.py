@@ -11,8 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from tavotto.engine import cli as engine_cli
-from tavotto.engine import migrate
+from tavotto.engine import cli as engine_cli, migrate
 
 
 @pytest.fixture

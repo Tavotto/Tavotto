@@ -19,8 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from tavotto.engine import config as engine_config
-from tavotto.engine import locate
+from tavotto.engine import config as engine_config, locate
 
 ROOT = Path(__file__).resolve().parent.parent
 PLUGIN_HANDOFF = (ROOT / "codex-plugin" / "skills" / "tavotto-figure" /
@@ -417,7 +416,7 @@ def test_frozen_entry_dispatches_subcommands_before_importing_flask():
 # 装完之后的**无 GUI 健康检查**，安装器跑的就是它。这几条起真进程、读真 JSON
 # ——不是对源码的断言。
 
-import subprocess                                                     # noqa: E402
+import subprocess  # noqa: E402
 
 
 def _doctor(tmp_path, *args, env=None):

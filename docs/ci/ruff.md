@@ -33,8 +33,8 @@ ruff check path/to/x.py   # 只看一个文件
 配置全在 `pyproject.toml` 的 `[tool.ruff]`，**命令行上不再写第二份**
 （写了，本地跑的就不是 CI 跑的那一套）。
 
-`select = ["E4", "E7", "E9", "F"]`，逐族的理由写在 pyproject 的注释里。两件
-容易踩空的事：
+`select = ["E4", "E7", "E9", "F", "I"]`，逐族的理由写在 pyproject 的注释里。
+两件容易踩空的事：
 
 * **`select` 必须显式钉住。** ruff 的默认规则集会随版本变宽——接入时实测
   0.16.4 的默认集在本仓库报出 1000+ 条诊断（RUF100/PLW1510/UP037/FURB167…），
@@ -44,6 +44,57 @@ ruff check path/to/x.py   # 只看一个文件
 
 `ignore` 只有 `E701` / `E702` 两条，都是**排版**规则（`if x: y` 一行、分号连写），
 属于 formatter 的管辖范围。见下。
+
+## import 排序（`I`）：first-party 靠**目录**判，不靠名字清单
+
+接入那轮推迟 `I`，真正的原因不是它改的文件多，而是**它判错了归属**：
+`pathgeom` / `overrides` / `manifest` 这些是 worker 里 `sys.path.insert(0, HERE)`
+之后平铺 import 的兄弟模块，ruff 默认当第三方，于是 `import pathgeom` 被排进
+matplotlib 中间——而那条空行分隔的正是「外面的世界」与「我们自己的模块」。
+
+解法**不是** `known-first-party` 名字清单。实测那条路要列 39 个名字
+（`_common`、`manifest`、`overrides`、`pixelcompare`、`aggregate_gate`、
+`compat_corpus`、`tavotto_mcp`……），而且每新增一个平铺模块都得记得回来补一行
+——一张一定会漂的清单。改用 `src`：
+
+```toml
+[tool.ruff]
+src = [".", "src", "src/tavotto/engine", "scripts", "scripts/ci", "tests",
+       "codex-plugin/mcp", "codex-plugin/skills/tavotto-figure/scripts",
+       "services/telemetry_proxy"]
+```
+
+这几个目录**就是运行时真的被注入 sys.path 的那几个**，ruff 按路径解析，新增
+模块自动被认出来。判据与现实是同一个东西，不是它的一份拷贝。
+
+### `combine-as-imports = true` 是必须的
+
+ruff 的 isort 默认 `false`，会把带 `as` 别名的成员**拆成一条条独立语句**：
+
+```python
+from tavotto.engine import (config as engine_config, handoff as engine_handoff,
+                            patchspec, pool as engine_pool, ...)
+```
+
+会变成七条各自带括号的 `from tavotto.engine import (...)`，比原样难读得多。
+`codex-plugin/mcp/tavotto_mcp/bridge.py` 是实测出这条的地方——**先看 diff 再
+提交**，`--fix` 全绿不等于结果可读。
+
+### 合并 import 会让挂在成员行上的 `# noqa` 失效
+
+`src/tavotto/app.py` 里两条 `from . import x  # noqa: E402` 被合并之后，诊断落在
+`from . import (` 这一**语句首行**上，而 noqa 还留在成员行——E402 当场复活。
+正确形态是把 noqa 挂到语句首行：
+
+```python
+from . import (  # noqa: E402 —— 必须在 app 实例创建之后
+    desktop as desktop_mode,
+    security,          # 需要 app 实例存在后立即挂钩
+)
+```
+
+接入时用「noqa 规则码逐个计数、比对前后」核过一遍：除了这一处 90 → 89
+（两条合成一条）之外，其余 8 个规则码的数量一个没变。
 
 ## formatter：本轮**有意推迟**
 
@@ -58,12 +109,7 @@ ruff format --check .   →  293 files would be reformatted, 87 already formatte
 把它塞进一个开发工具 PR 会得到几千行与 Ruff 配置本身无关的改动：review 淹掉、
 合并冲突暴涨、真正该被看的那几十行配置反而没人看。1.0 收敛阶段更不该这么干。
 
-同样理由推迟的还有 **`I`（import 排序）**：实测会改 53 个文件、约 470 行，
-而且它会把多行 import 的括号风格一并重排。更要紧的是它**判错了归属**——
-`pathgeom` / `overrides` / `manifest` 这些是 worker 里 `sys.path.insert` 之后
-平铺 import 的兄弟模块，ruff 默认把它们当第三方，会把 `import pathgeom` 挪到
-matplotlib 那一组里去。真要开 `I`，得先把 `known-first-party` 配对，那是一次
-需要单独判断的改动。
+`I`（import 排序）当时同样被推迟，**2026-08-27 已补开**，见下一节。
 
 `line-length = 100` 已经按实测写进配置（全仓超过 100 列的只有 33 行，0.04%），
 所以**将来做 formatter 迁移时不必再重新测一遍行宽**；当前没有任何被选中的规则
@@ -73,7 +119,8 @@ matplotlib 那一组里去。真要开 `I`，得先把 `known-first-party` 配�
 
 按「先证明有价值，再开」的顺序，不要打包一次做完：
 
-1. `I`（import 排序）+ `known-first-party` 配对 —— 上面那个归属问题得先解决。
+1. ~~`I`（import 排序）~~ —— **2026-08-27 已完成**（用 `src` 而不是
+   `known-first-party`，理由见上）。
 2. `ruff format` 全仓迁移 —— 一次性格式化 + `ruff format --check .` 进门禁，
    落地后 `ignore` 里的 `E701` / `E702` 就该删掉（那两条本来就是它的活）。
 3. `B` / `UP` / `SIM` / `RUF` —— 每族先单独跑一遍看噪声比，值得再开。

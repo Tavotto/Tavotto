@@ -444,7 +444,7 @@ def test_generated_script_has_the_same_two_pages():
 # 修法是安装包里另带一个 console 版 tavotto-cli，并在装完时由它写一份
 # 安装清单。下面几条盯的是「安装器有没有真的把这一步做掉」。
 
-from tavotto.engine import locate                                    # noqa: E402
+from tavotto.engine import locate  # noqa: E402
 
 SECTION_INSTALL = TEXT.split("Section Install\n")[1].split("SectionEnd")[0]
 SECTION_UNINSTALL = TEXT.split("Section Uninstall\n")[1].split("SectionEnd")[0]

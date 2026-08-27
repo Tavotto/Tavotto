@@ -6,8 +6,7 @@ import pymupdf
 import pytest
 
 from tavotto import app as m
-from tavotto.engine import config as engine_config
-from tavotto.engine import pool as engine_pool
+from tavotto.engine import config as engine_config, pool as engine_pool
 
 
 @pytest.fixture

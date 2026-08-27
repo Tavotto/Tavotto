@@ -13,8 +13,7 @@ import pymupdf
 import pytest
 
 from tavotto import app as m
-from tavotto.engine import patchspec
-from tavotto.engine import pool as engine_pool
+from tavotto.engine import patchspec, pool as engine_pool
 
 
 @pytest.fixture

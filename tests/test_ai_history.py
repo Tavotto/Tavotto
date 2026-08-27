@@ -1,9 +1,7 @@
 """AI 历史（SQLite）与 capabilities 探测、CLI 命令构造。"""
 import pytest
 
-from tavotto.engine import ai_agents
-from tavotto.engine import ai_bridge
-from tavotto.engine import ai_history
+from tavotto.engine import ai_agents, ai_bridge, ai_history
 
 
 @pytest.fixture

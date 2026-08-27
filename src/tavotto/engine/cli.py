@@ -157,8 +157,8 @@ def doctor(argv: list[str]) -> int:
                     help="按上次迁移报告删除迁移时创建的文件（旧数据无关）")
     args = ap.parse_args(argv)
 
-    from . import locate
     from .. import __version__
+    from . import locate
 
     if args.write_manifest and args.remove_manifest:
         # `--json` 一旦给了，**失败也必须是一行 JSON**（与 `tavotto open` 同一条

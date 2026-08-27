@@ -31,7 +31,6 @@ sys.path.insert(0, str(CI_DIR))
 
 import updater_consumer_check as UCC  # noqa: E402
 
-
 # ============================================================ 探针 = 插件能力面
 
 def _zip_dep_line() -> str:

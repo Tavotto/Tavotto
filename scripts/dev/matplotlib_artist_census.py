@@ -38,18 +38,18 @@ ENGINE = os.environ.get("TAVOTTO_CENSUS_ENGINE") or os.path.normpath(
     os.path.join(HERE, "..", "..", "src", "tavotto", "engine"))
 sys.path.insert(0, ENGINE)
 
-import matplotlib                                        # noqa: E402
+import matplotlib  # noqa: E402
+
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt                          # noqa: E402
-from matplotlib.axes import Axes                         # noqa: E402
-from matplotlib.axis import Axis                         # noqa: E402
-from matplotlib.figure import Figure                     # noqa: E402
-from matplotlib.text import Text                         # noqa: E402
+import matplotlib.pyplot as plt  # noqa: E402
+from matplotlib.axes import Axes  # noqa: E402
+from matplotlib.axis import Axis  # noqa: E402
+from matplotlib.figure import Figure  # noqa: E402
+from matplotlib.text import Text  # noqa: E402
 
-import manifest as manifest_mod                          # noqa: E402
-import overrides as overrides_mod                        # noqa: E402
-from overrides import SeriesGroup, _cls_key              # noqa: E402
-
+import manifest as manifest_mod  # noqa: E402
+import overrides as overrides_mod  # noqa: E402
+from overrides import SeriesGroup, _cls_key  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # 分类：漏掉 ≠ 「不是用户的东西」

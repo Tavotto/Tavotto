@@ -55,12 +55,13 @@ from pathlib import Path
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))
 sys.path.insert(0, str(_HERE.parents[1] / "src"))
-import compat_corpus as CC                                        # noqa: E402
-import pixelcompare                                               # noqa: E402
+import compat_corpus as CC  # noqa: E402
+import pixelcompare  # noqa: E402
+
 # 中文 help / 中文进度行在 Windows 的 cp1252 stdout 上会把进程打死。
 # `_common` 里那一份是唯一实现，这里显式调一次——本脚本用不到 `_common`
 # 的其它东西，靠「import 了就自动生效」是隐式耦合。
-from _common import run_metadata, use_utf8_streams               # noqa: E402
+from _common import run_metadata, use_utf8_streams  # noqa: E402
 
 use_utf8_streams()
 
@@ -132,9 +133,11 @@ def stage_discover(project: Path, script_rel: str, case: dict) -> dict:
     用户的真实体验不是手写注册表。一个「本该能自动发现」的 case 只有靠清单
     硬告诉 runner 才跑得起来，那是 bug 而不是 pass——这里就是那条判据。
     """
-    from tavotto.engine import discover as engine_discover
-    from tavotto.engine import probe as engine_probe
-    from tavotto.engine import registry as engine_registry
+    from tavotto.engine import (
+        discover as engine_discover,
+        probe as engine_probe,
+        registry as engine_registry,
+    )
 
     want_mode = case["discovery"]
     detail: dict = {"declared": want_mode}

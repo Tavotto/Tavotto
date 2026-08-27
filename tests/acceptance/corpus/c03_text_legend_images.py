@@ -10,9 +10,8 @@
 中文那个 case 在 manifest 里标了 `visual: false`——理由写在 manifest 的
 `visual_skip_reason` 字段里，不在这里重复。
 """
-import numpy as np
-
 import matplotlib.pyplot as plt
+import numpy as np
 
 
 def legend_variants():

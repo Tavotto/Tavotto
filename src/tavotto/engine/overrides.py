@@ -11,26 +11,24 @@ from __future__ import annotations
 
 import re
 
-import numpy as np
-
 import matplotlib as mpl
 import matplotlib.colors as mcolors
 import matplotlib.patheffects as mpatheffects
+import matplotlib.ticker as mticker
+import numpy as np
 from matplotlib.artist import Artist
 from matplotlib.axes import Axes
 from matplotlib.axes._base import _AxesBase
-from matplotlib.collections import (Collection, LineCollection, PathCollection,
-                                    QuadMesh, TriMesh)
+from matplotlib.collections import Collection, LineCollection, PathCollection, QuadMesh, TriMesh
 from matplotlib.figure import Figure
+from matplotlib.image import AxesImage
 from matplotlib.legend import Legend
 from matplotlib.lines import Line2D
 from matplotlib.markers import MarkerStyle
 from matplotlib.patches import BoxStyle, FancyArrowPatch, Patch, Rectangle
-from mpl_toolkits.mplot3d import proj3d
 from matplotlib.text import Text
-import matplotlib.ticker as mticker
 from matplotlib.ticker import FormatStrFormatter, ScalarFormatter
-from matplotlib.image import AxesImage
+from mpl_toolkits.mplot3d import proj3d
 
 #: 刻度标签的 gid 形状（`FigState.resolve` 按需现解时用）
 _TICKLABEL_GID = re.compile(r"^axes_(\d+)\.([xyz])ticklabels_(\d+)$")
@@ -90,7 +88,7 @@ class FigState:
         # 这条只在索引里还没有它时才走到（CLAUDE.md 记的「先改刻度定位、再改
         # 新出现的那条刻度」在全量重放里的情形），但那正是写回那条路。
         # late import：manifest 在模块层 import 本模块，反过来会成环。
-        from manifest import _ordered_axes          # noqa: PLC0415
+        from manifest import _ordered_axes  # noqa: PLC0415
         axes = _ordered_axes(self.fig)[0]
         if not 0 <= i < len(axes):
             return None
@@ -2219,7 +2217,7 @@ def _refresh_axes_follow(state: "FigState") -> None:
         # 与 `instrument` 同一条遍历（插图里的宿主不在 `fig.axes` 里）。
         # 这里靠 late import 拿 `_ordered_axes`：manifest 在模块层 import
         # overrides，反过来在模块层 import 会成环。
-        from manifest import _ordered_axes          # noqa: PLC0415
+        from manifest import _ordered_axes  # noqa: PLC0415
         _ordered = _ordered_axes(state.fig)[0]
         cbar_of_ax, host_of_cbax = colorbar_maps(state.fig, _ordered)
         state.colorbar_axes = set(cbar_of_ax)

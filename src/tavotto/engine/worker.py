@@ -51,17 +51,18 @@ import matplotlib  # noqa: E402 —— 必须在 sys.path 注入之后
 matplotlib.use("Agg")
 import matplotlib.figure as mfigure  # noqa: E402
 
+# Figure 捕获策略（savefig stem 怎么取、跑完之后还活着的 pyplot Figure 怎么
+# 补进来、相对路径只读回退）与浏览器 playground **共用同一份实现**。抄一份
+# 进来的话，同一个脚本会在两个入口里产出不同的 stem——前端按 stem 索引一切。
+import figcapture  # noqa: E402
 import manifest as manifest_mod  # noqa: E402
 import overrides as overrides_mod  # noqa: E402
+
 # 规范化与哈希**只有这一份实现**（父进程走 tavotto.engine.patchspec，
 # 这里因为 engine 目录已在 sys.path 里而平铺 import 同一个文件）。
 # 在这里复制一份「一样的算法」= 两边迟早分叉，而分叉的表现是哈希对不上、
 # 缓存永远不命中，没人会立刻联想到序列化细节。
 import patchspec  # noqa: E402
-# Figure 捕获策略（savefig stem 怎么取、跑完之后还活着的 pyplot Figure 怎么
-# 补进来、相对路径只读回退）与浏览器 playground **共用同一份实现**。抄一份
-# 进来的话，同一个脚本会在两个入口里产出不同的 stem——前端按 stem 索引一切。
-import figcapture  # noqa: E402
 
 CAPTURE: dict[str, object] = {}   # stem -> Figure（脚本产出顺序）
 #: 每个 stem 的捕获来源（figcapture.SOURCE_*）。`pyplot` 的那些从没存过盘，

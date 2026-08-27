@@ -424,8 +424,8 @@ class TestUpgradeRenameBoundary:
 
         # 更要紧的是**结果列**：扫读的人先看那一列，一个 ✅ PASS 会让他
         # 以为这项验过了，而实际上一次都没跑。
-        import io
         import contextlib
+        import io
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             SM.main(["--mode", "release"])
@@ -963,8 +963,8 @@ def test_summary_refuses_reports_from_another_run(tmp_path, monkeypatch):
     _sys.path.insert(0, str(CI_DIR))
     spec.loader.exec_module(mod)
 
-    import io as _io
     import contextlib
+    import io as _io
     buf = _io.StringIO()
     with contextlib.redirect_stdout(buf):
         mod.main(["--mode", "release"])
@@ -987,10 +987,10 @@ def test_summary_keeps_this_runs_report_even_across_a_rerun(tmp_path, monkeypatc
       CompatBench 报告会被一律拒收（误报未运行）。**我修「说谎」的时候造出了
       「误报」**，两头都是诊断失真。
     """
-    import importlib.util
-    import json as _json
-    import io as _io
     import contextlib
+    import importlib.util
+    import io as _io
+    import json as _json
     import sys as _sys
     (tmp_path / "reports").mkdir()
     # 本轮 attempt=2；报告来自 attempt=1（同一个 run_id）
@@ -1110,6 +1110,7 @@ def test_the_ownership_predicate_has_exactly_one_implementation():
     遗留、kill 那份不认、复检照旧失败。「共享判据修一处不算修完」。
     """
     import ast
+
     import cleanup as CU
     import lab_preflight as PF
 
