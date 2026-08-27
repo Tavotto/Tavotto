@@ -7,13 +7,14 @@
 - 日期：2026-08-27
 - 当前 branch：`compat/bridge-session07-project-env`（worktree
   `.claude/worktrees/compat-bridge-session01`），已 rebase 到 `origin/main`
-  的 `8e5a67f` 并推送 → **PR #177**
+  的 `e025612` 并推送 → **PR #177**，**三个 required gate 全绿**
+  （`CI fast gate` / `CI integration gate` / `CodeQL gate`）
 - 本 branch 上现在有**两个 Session 的工作**：Session 7（项目 Python 环境
   自动发现与无感切换，ADR 0018）与 **Session 7B（受控依赖修复，ADR 0019）**。
   7B 建在 7 上面，**没有改动 7 的任何行为**（见下方「Session 7 一个字节没改」）。
 - 前一轮：PR 1（#127）Session 1–6 已合入 main（squash `6aeca9e`，2026-08-26），
   交接收尾 `9f48357`（#135）
-- 受管产物 `canvas.html` 指纹 **`2c5f737bd8d7903c`**（在 `8e5a67f` 上重建，
+- 受管产物 `canvas.html` 指纹 **`5ede3212c4d0db9e`**（在 `e025612` 上重建，
   `--check` 通过）。**它会再次过期**：`tavotto-a7` 手上六条 PR
   （#157/#160/#161/#164/#168/#171）都重建这份产物且排在前面，入队前要按
   合并态再重建一次。rebase 时它撞了 3 次，每次都是重跑 `build_mcp_widget.py`
@@ -203,9 +204,28 @@ python scripts/build_mcp_widget.py --check                 # 一致
 
 ## 合并前必做
 
-- [x] `git rebase origin/main`（到 `8e5a67f`），rebase 后**本地重跑**整套：
-      ruff 全绿 / pytest 2449 passed / web 1208 passed / CompatBench smoke 通过 /
-      `build_mcp_widget.py --check` 一致。
+- [x] `git rebase origin/main`（到 `e025612`），rebase 后**本地重跑**整套：
+      ruff 全绿 / pytest 2454 passed / web 1215 passed / CompatBench smoke 通过 /
+      `build_mcp_widget.py --check` 一致。CI 上三个 required gate 也全绿。
+
+### CI 红过两轮，两次都是「本地复现不出来」——记法比结论有用
+
+两轮红的**都不是功能**，是环境漂移，而且两次本地都是绿的：
+
+| 轮次 | 红在哪 | 根因 | 本地为什么看不见 |
+|---|---|---|---|
+| 1 | `test_project_venv_starts_the_worker_without_installing_tavotto` | 夹具 venv 用 `--system-site-packages`，继承的是**基础解释器**的 site-packages，而 CI 的 backend-fast 正是 `pip install -e ".[dev]"` 装进那里的 → 「项目 venv 里没有 Tavotto」这个**前提**当场失效 | 本地 pytest 跑在 `.venv` 里，**从 venv 建 venv 继承的是基础解释器、不是父 venv** |
+| 2 | `test_i18n_dead_keys.py` | `EngineSource` 加了 `managed_project_env` 却没给 `engine.sourceLabel.*` 文案——界面上会显示成键名 | 那条反向门禁是 main 上 #158 **刚落地**的，我的 base 里没有；CI 测的是 merge ref |
+
+两条都按同一条纪律收尾：**把「只有 CI 能发现」变成「本地就能发现」**。
+第 1 条现在先断言遮蔽文件在（拆掉遮蔽本地当场红，已反证）；第 2 条靠
+rebase 到最新 main 把门禁拿进来。
+
+**下一轮直接用的两条**：
+- 夹具 venv 的「前提」要**造出来**，不能指望宿主碰巧没装（`--system-site-packages`
+  会把基础解释器的东西带进来）。
+- 本地全绿 ≠ CI 会绿：**main 上新落地的门禁不在你的 base 里**。开 PR 前先
+  `git fetch && git rebase origin/main` 再跑一遍，比看 CI 红了再查便宜。
 - [ ] **入队前再重建一次 `canvas.html`**：a7 那六条排在前面，先到先得，
       每次被顶掉都按「合并态重建 + `--check`」处理，**不手工解冲突**。
 - [ ] 打 `full-ci` 标签在 PR SHA 上取证（大改动入队规矩）。
