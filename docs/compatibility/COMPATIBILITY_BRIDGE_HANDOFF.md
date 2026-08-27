@@ -586,8 +586,12 @@ src/tavotto/engine/pool.py 的 resolve_worker_python / build /
 
 ```bash
 git status --short && git log -10 --oneline
-ruff check .
-ruff format --check .          # #176 起也是门禁；ruff check 挡不住格式问题
+
+# 全部走 venv 的绝对路径，别用裸命令——本机 PATH 里没有 ruff（直接报错），
+# 而 pytest **有**：`/opt/homebrew/bin/pytest`，那是另一个解释器的。
+# 前者立刻失败反而安全，后者会跑起来并给出主语错误的结果。
+/Volumes/Projects/Tavotto/.venv/bin/ruff check .
+/Volumes/Projects/Tavotto/.venv/bin/ruff format --check .   # #176 起也是门禁
 PYTHONPATH=src /Volumes/Projects/Tavotto/.venv/bin/python -m pytest -q \
     tests/test_project_env.py tests/test_dependency_repair.py
 PYTHONPATH=src /Volumes/Projects/Tavotto/.venv/bin/python -m pytest -q \
