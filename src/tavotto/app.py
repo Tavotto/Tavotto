@@ -16,7 +16,11 @@ import hashlib
 import json
 import logging
 import os
+import queue
 import re
+import shutil
+import socket
+import sys
 import threading
 import time
 import urllib.error
@@ -25,37 +29,42 @@ import webbrowser
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-import queue
-import shutil
-import socket
-import sys
-
-from flask import (Flask, Response, abort, has_request_context, jsonify,
-                   request, send_file, send_from_directory)
+from flask import (
+    Flask,
+    Response,
+    abort,
+    has_request_context,
+    jsonify,
+    request,
+    send_file,
+    send_from_directory,
+)
 from werkzeug.exceptions import HTTPException
 
 from . import pdfbackend
-from .engine import ai_bridge as engine_ai
-from .engine import bootstrap as engine_bootstrap
-from .engine import ai_history as engine_ai_history
-from .engine import brand as engine_brand
-from .engine import cli as engine_cli
-from .engine import config as engine_config
-from .engine import diagnostics as engine_diagnostics
-from .engine import diagnostics_frontend as engine_diagnostics_frontend
-from .engine import discover as engine_discover
-from .engine import handoff as engine_handoff
-from .engine import locate as engine_locate
-from .engine import patchspec as engine_patchspec
-from .engine import pool as engine_pool
-from .engine import probe as engine_probe
-from .engine import ai_providers as engine_ai_providers
-from .engine import registry as engine_registry
-from .engine import runtime as engine_runtime
-from .engine import runtimeasset as engine_runtimeasset
-from .engine import session_client as engine_session_client
-from .engine import telemetry as engine_telemetry
-from .engine import updater as engine_updater
+from .engine import (
+    ai_bridge as engine_ai,
+    ai_history as engine_ai_history,
+    ai_providers as engine_ai_providers,
+    bootstrap as engine_bootstrap,
+    brand as engine_brand,
+    cli as engine_cli,
+    config as engine_config,
+    diagnostics as engine_diagnostics,
+    diagnostics_frontend as engine_diagnostics_frontend,
+    discover as engine_discover,
+    handoff as engine_handoff,
+    locate as engine_locate,
+    patchspec as engine_patchspec,
+    pool as engine_pool,
+    probe as engine_probe,
+    registry as engine_registry,
+    runtime as engine_runtime,
+    runtimeasset as engine_runtimeasset,
+    session_client as engine_session_client,
+    telemetry as engine_telemetry,
+    updater as engine_updater,
+)
 
 PKG_ROOT = Path(__file__).resolve().parent   # 只读：包自带资源（前端构建产物）
 DATA_ROOT = engine_config.data_dir()         # 可写：运行时产物（装成包后 site-packages 不可写）
@@ -74,8 +83,10 @@ app = Flask(__name__, static_folder=None)
 
 # 会话认证钩子（浏览器与桌面模式共用，见 security.py / ADR 0008）必须在
 # 首个请求前注册；测试的 test_client 与 --insecure-no-auth 下全部旁路
-from . import security  # noqa: E402 — 需要 app 实例存在后立即挂钩
-from . import desktop as desktop_mode  # noqa: E402
+from . import (  # noqa: E402 —— 必须在 app 实例创建之后
+    desktop as desktop_mode,
+    security,  # 需要 app 实例存在后立即挂钩
+)
 
 security.install(app)
 

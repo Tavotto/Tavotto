@@ -157,6 +157,29 @@ pytest_add_cli_args = ["-q", "-p", "no:cacheprovider"]
 # 看不见（ruff 会从 requires-python 推出同样的 py310，这里显式写死是为了
 # 让它不随元数据的措辞变化而漂）。
 target-version = "py310"
+# **first-party 的判据是目录，不是一张名字清单。**
+# 本仓库有大量「平铺 import 的兄弟模块」：worker.py / browser.py 先
+# `sys.path.insert(0, HERE)` 再 `import manifest` / `import overrides` /
+# `import pathgeom`；scripts/ci/* 先注入自己再 `from _common import ...`；
+# 测试注入 scripts/ci 之后 `import aggregate_gate`。ruff 认不出这些是自家代码，
+# 会把它们排进第三方组——于是 `import pathgeom` 被挪到 matplotlib 中间，而那条
+# 空行分隔的正是「外面的世界」与「我们自己的模块」，抹掉它就少了一个语义。
+#
+# `src` 让 ruff 按**路径**解析：下面这几个目录正是运行时真的被注入 sys.path 的
+# 那几个。好处是新增模块自动被认出来，不必回来维护一张会漂的名字清单——
+# 实测清单形态需要 39 条，且每加一个平铺模块都得记得回来补一行。
+src = [
+    ".",                                     # 仓库根（scripts/、tests/ 等按包路径解析）
+    "src",                                   # `tavotto`（pytest.ini 的 pythonpath 也是它）
+    "src/tavotto/engine",                    # worker.py / browser.py 注入：manifest、overrides、
+                                             # pathgeom、patchspec、figcapture、browser_imports
+    "scripts",                               # smoke_app、bench_render、build_* 系列
+    "scripts/ci",                            # _common、compat_corpus、pixelcompare、aggregate_gate…
+    "tests",                                 # support.frontend_schema / support.engine_invariant_probe
+    "codex-plugin/mcp",                      # tavotto_mcp
+    "codex-plugin/skills/tavotto-figure/scripts",   # handoff、update_check
+    "services/telemetry_proxy",              # tavotto_telemetry_proxy
+]
 # 实测出来的数字，不是抄模板：全仓 85762 行 Python 里超过 100 列的只有 33 行
 # （0.04%），超过 88 列的有 474 行（0.55%）——这个代码库事实上写到 100。
 # **当前没有任何被选中的规则消费它**（E501 在 E5，没选）；它只作用于
@@ -184,7 +207,11 @@ line-length = 100
 #   F   Pyflakes：未定义名字（F821）、未使用导入（F401）、未使用变量（F841）、
 #       重复定义。这一族才是本次接入真正的目标——它挡的正是「AI 改完代码，
 #       十分钟后 CI 告诉你有个名字拼错了」那类循环。
-select = ["E4", "E7", "E9", "F"]
+#   I   import 排序（isort）。**2026-08-27 补开**：接入 Ruff 那轮把它推迟了，
+#       因为当时 ruff 会把平铺 import 的兄弟模块判成第三方（见上面的 `src`）。
+#       归属问题解决之后它才有意义——排序本身是机械的，真正的价值是
+#       「谁是自家代码」这条线不再靠人肉维持。
+select = ["E4", "E7", "E9", "F", "I"]
 
 # 只有两条，且都是**排版**规则，不是语义规则：
 #   E701 `if x: y` 写在一行
@@ -203,7 +230,35 @@ ignore = ["E701", "E702"]
 # 里逐字显示，并且参与产物指纹。`peak = lambda c, s, a: ...` 是科研绘图里
 # 常见的紧凑写法，改成 def 既动了指纹又让示例变啰嗦——为 lint 重写展示给用户的
 # 示例代码是本末倒置。
-"web/src/playground/examples/*.py" = ["E731"]
+"web/src/playground/examples/*.py" = ["E731", "I001"]
+
+# 下面三处豁免 I001 的是**同一条理由**：这些 .py 的 import 段落是**内容**，
+# 不是风格。
+#
+# * examples/**            随产品分发、用户会在应用里打开的示例图库
+#                          （`tavotto --figures examples/figures`）。
+# * web/src/playground/**  网站 /try 编辑器里逐字显示给用户的示例，而且参与
+#                          产物指纹：动它就要重建 playground 并重新同步网站
+#                          仓库，为 import 排序付这个代价不值。
+# * tests/compat/cases/**  CompatBench 语料，**存在的意义就是模拟外部
+#                          matplotlib 世界的真实写法**。`script_shapes/` 里几个
+#                          case 问的正是「用户脚本的 import 长什么样」（含
+#                          import 本地 helper、import 不在顶部），按我们的规矩
+#                          排一遍等于把题目改了。
+#
+# F / E9（未定义名字、语法错误）在这些目录里照常生效：那是示例或语料自己写坏
+# 了，必须红。这里只关掉「排版」这一维。
+"examples/**/*.py" = ["I001"]
+"tests/compat/cases/**/*.py" = ["I001"]
+
+[tool.ruff.lint.isort]
+# **必须开**。默认 `false` 时 ruff 会把带 as 别名的成员拆成一条条独立语句：
+#     from tavotto.engine import (config as engine_config,
+#                                 handoff as engine_handoff, patchspec, ...)
+# 会变成七条各自带括号的 `from tavotto.engine import (...)`——比原样难读得多，
+# 而且每加一个别名成员就多一条语句。开了它，一次 import 就还是一条 import。
+# （codex-plugin/mcp/tavotto_mcp/bridge.py 是实测出这条的地方。）
+combine-as-imports = true
 
 # 注意 tests/compat/cases/** 与 examples/** 目前一条豁免都不需要，这不是遗漏。
 # 前者是 CompatBench 语料，**存在的意义就是模拟外部 matplotlib 世界的各种真实

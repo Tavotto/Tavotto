@@ -18,8 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from tavotto import app as appmod
-from tavotto import desktop
+from tavotto import app as appmod, desktop
 
 NONCE = "test-nonce-0123456789abcdef"
 

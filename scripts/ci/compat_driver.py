@@ -35,7 +35,7 @@ import traceback
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # 同 compat_matrix：中文输出在 Windows 的 cp1252 stdout 上会打死进程。
 # 这里尤其要紧——**stdout 是协议通道**，末行那份 JSON 带 ensure_ascii=False。
-from _common import use_utf8_streams                              # noqa: E402
+from _common import use_utf8_streams  # noqa: E402
 
 use_utf8_streams()
 
@@ -75,7 +75,7 @@ def run_native(req: dict) -> int:
     sys.path.insert(0, os.path.dirname(req["script"]))
     sys.path.insert(0, req["project"])
     sys.path.insert(0, req["engine_dir"])
-    import figcapture                                   # noqa: PLC0415
+    import figcapture  # noqa: PLC0415
 
     real_savefig = mfigure.Figure.savefig
     captured: dict[str, object] = {}
@@ -98,7 +98,7 @@ def run_native(req: dict) -> int:
             if req.get("entry", "__main__") == "__main__":
                 runpy.run_path(req["script"], run_name="__main__")
             else:
-                import importlib                        # noqa: PLC0415
+                import importlib  # noqa: PLC0415
                 mod = importlib.import_module(
                     os.path.splitext(os.path.basename(req["script"]))[0])
                 getattr(mod, req["entry"])()
@@ -172,9 +172,9 @@ def run_census(req: dict) -> int:
     sys.path.insert(0, req["engine_dir"])
     sys.path.insert(0, os.path.dirname(req["script"]))
     sys.path.insert(0, req["project"])
-    import figcapture                                   # noqa: PLC0415
-    import manifest as manifest_mod                     # noqa: PLC0415
-    import overrides as overrides_mod                   # noqa: PLC0415
+    import figcapture  # noqa: PLC0415
+    import manifest as manifest_mod  # noqa: PLC0415
+    import overrides as overrides_mod  # noqa: PLC0415
 
     real_savefig = mfigure.Figure.savefig
     captured: dict[str, object] = {}
@@ -198,7 +198,7 @@ def run_census(req: dict) -> int:
             if req.get("entry", "__main__") == "__main__":
                 runpy.run_path(req["script"], run_name="__main__")
             else:
-                import importlib                        # noqa: PLC0415
+                import importlib  # noqa: PLC0415
                 mod = importlib.import_module(
                     os.path.splitext(os.path.basename(req["script"]))[0])
                 getattr(mod, req["entry"])()
@@ -315,7 +315,7 @@ def run_browser(req: dict) -> int:
     差异；语义随入口改变才是事故。
     """
     sys.path.insert(0, req["engine_dir"])
-    import browser                                      # noqa: PLC0415
+    import browser  # noqa: PLC0415
 
     def call(payload: dict) -> dict:
         return json.loads(browser.handle(json.dumps(payload)))

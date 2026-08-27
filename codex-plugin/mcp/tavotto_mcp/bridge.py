@@ -722,7 +722,7 @@ def _write_proof(out_dir: Path, base: str, session: Session, checks: dict,
     与画布导出的 proof 同一个 kind/version（`web/src/lib/preflight.ts` 的
     `buildProofPayload`）——两条入口出的留档得能放在一起看。
     """
-    from tavotto.engine.brand import PROOF_KIND       # 品牌常量唯一出处
+    from tavotto.engine.brand import PROOF_KIND  # 品牌常量唯一出处
     payload = {
         "kind": PROOF_KIND,
         "version": 2,

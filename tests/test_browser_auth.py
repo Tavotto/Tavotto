@@ -19,8 +19,7 @@ import urllib.request
 import pytest
 from werkzeug.serving import make_server
 
-from tavotto import app as appmod
-from tavotto import security
+from tavotto import app as appmod, security
 from tavotto.engine import session_client
 
 NONCE_BYTES = 32

@@ -22,20 +22,21 @@ import sys
 _REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(_REPO, "src", "tavotto", "engine"))
 
-import matplotlib                                      # noqa: E402
-matplotlib.use("Agg")
-import numpy as np                                     # noqa: E402
-import matplotlib.pyplot as plt                        # noqa: E402
-from matplotlib.artist import Artist                   # noqa: E402
-from matplotlib.axes import Axes                       # noqa: E402
-from matplotlib.axis import Axis                       # noqa: E402
-from matplotlib.collections import LineCollection      # noqa: E402
-from matplotlib.lines import Line2D                    # noqa: E402
-from matplotlib.patches import Arc, Circle, Rectangle  # noqa: E402
-from matplotlib.text import Text                       # noqa: E402
+import matplotlib  # noqa: E402
 
-import manifest as M                                   # noqa: E402
-import overrides as O                                  # noqa: E402
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
+from matplotlib.artist import Artist  # noqa: E402
+from matplotlib.axes import Axes  # noqa: E402
+from matplotlib.axis import Axis  # noqa: E402
+from matplotlib.collections import LineCollection  # noqa: E402
+from matplotlib.lines import Line2D  # noqa: E402
+from matplotlib.patches import Arc, Circle, Rectangle  # noqa: E402
+from matplotlib.text import Text  # noqa: E402
+
+import manifest as M  # noqa: E402
+import overrides as O  # noqa: E402
 
 
 class GhostArtist(Artist):

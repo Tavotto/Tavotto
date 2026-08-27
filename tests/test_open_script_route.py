@@ -21,9 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from tavotto.engine import handoff
-from tavotto.engine import discover as engine_discover
-from tavotto.engine import pool as engine_pool
+from tavotto.engine import discover as engine_discover, handoff, pool as engine_pool
 
 try:
     WORKER_PY = engine_pool.find_worker_python()

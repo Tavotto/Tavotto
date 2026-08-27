@@ -12,8 +12,7 @@ import uuid
 
 import pytest
 
-from tavotto.engine import config as engine_config
-from tavotto.engine import diagnostics, telemetry
+from tavotto.engine import config as engine_config, diagnostics, telemetry
 
 
 @pytest.fixture

@@ -33,7 +33,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _common import (  # noqa: E402
-    CiError, ensure_layout, run_metadata, summary, summary_table,
+    CiError,
+    ensure_layout,
+    run_metadata,
+    summary,
+    summary_table,
     write_report,
 )
 

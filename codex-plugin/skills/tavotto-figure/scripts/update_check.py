@@ -136,7 +136,7 @@ def is_newer(candidate: object, baseline: object) -> bool | None:
 
 # -------------------------------- 缓存 -----------------------------------
 def cache_path(environ: dict | None = None) -> str:
-    from handoff import config_dir                   # 目录规则只有一份
+    from handoff import config_dir  # 目录规则只有一份
     return os.path.join(config_dir(environ=environ), CACHE_NAME)
 
 

@@ -116,7 +116,7 @@ def _plugin_locator():
                                            "tavotto-figure", "scripts"))
     if scripts not in sys.path:
         sys.path.insert(0, scripts)
-    import handoff                                    # noqa: PLC0415
+    import handoff  # noqa: PLC0415
     return handoff
 
 

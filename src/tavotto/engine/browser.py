@@ -47,9 +47,9 @@ import runpy
 import sys
 import traceback
 
-from browser_imports import classify_imports  # noqa: F401 - 经 handle 的 classify 代理
-
 import matplotlib
+
+from browser_imports import classify_imports  # noqa: F401 - 经 handle 的 classify 代理
 
 matplotlib.use("Agg")
 import matplotlib.figure as mfigure  # noqa: E402

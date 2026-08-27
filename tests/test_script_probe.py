@@ -24,9 +24,7 @@ import pymupdf
 import pytest
 
 from tavotto import app as m
-from tavotto.engine import discover, figcapture
-from tavotto.engine import pool as engine_pool
-from tavotto.engine import probe as engine_probe
+from tavotto.engine import discover, figcapture, pool as engine_pool, probe as engine_probe
 
 try:
     WORKER_PY = engine_pool.find_worker_python()

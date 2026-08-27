@@ -13,35 +13,69 @@ import math
 import sys
 
 from matplotlib.axes import Axes
-from matplotlib.collections import (Collection, PathCollection,
-                                    PolyCollection)
 from matplotlib.axis import Axis
-from matplotlib.container import (BarContainer, ErrorbarContainer,
-                                  StemContainer)
+from matplotlib.collections import Collection, PathCollection, PolyCollection
+from matplotlib.container import BarContainer, ErrorbarContainer, StemContainer
 from matplotlib.patches import FancyArrowPatch, Patch
 from matplotlib.text import Text
 
 import pathgeom
-from overrides import (BBOX_DEFAULTS, ColorbarProxy, FigState, HATCHES, SeriesGroup,
-                       TickLabel, TickSet, _ARROWSTYLES, _CB_EXTENDS, _LEGEND_LOCS,
-                       _TICK_FORMATS, _TICK_MINOR_FORMATS,
-                       collection_caps, colorbar_host_count,
-                       is_linecoll_family,
-                       _arrow_style, _arrowstyle_name, _axis_arrows_on,
-                       _linestyle_name, _linecoll_linestyle_name,
-                       _boxstyle_info, _cb_axis, _cb_tick_color,
-                       _cb_tick_fontsize, _cls_key, _grid_prop, _grid_visible,
-                       _legend_entry_order, _legend_loc_name,
-                       _stroke_state, _tick0, colorbar_maps, follow_map,
-                       gradient_base_hex, scale_options, text_linespacing,
-                       spine_all_color, spine_all_width, spine_cfg,
-                       spine_side_color, spine_side_width, tick_cfg,
-                       tick_format_name, tick_major_mode, tick_major_step,
-                       tick_major_values, tick_minor_format, tick_minor_mode,
-                       tick_minor_step, tick_minor_visible, tick_side_visible,
-                       to_hex,
-                       remember_axis_directions,
-                       colorbar_mapping_is_live)
+from overrides import (
+    _ARROWSTYLES,
+    _CB_EXTENDS,
+    _LEGEND_LOCS,
+    _TICK_FORMATS,
+    _TICK_MINOR_FORMATS,
+    BBOX_DEFAULTS,
+    HATCHES,
+    ColorbarProxy,
+    FigState,
+    SeriesGroup,
+    TickLabel,
+    TickSet,
+    _arrow_style,
+    _arrowstyle_name,
+    _axis_arrows_on,
+    _boxstyle_info,
+    _cb_axis,
+    _cb_tick_color,
+    _cb_tick_fontsize,
+    _cls_key,
+    _grid_prop,
+    _grid_visible,
+    _legend_entry_order,
+    _legend_loc_name,
+    _linecoll_linestyle_name,
+    _linestyle_name,
+    _stroke_state,
+    _tick0,
+    collection_caps,
+    colorbar_host_count,
+    colorbar_mapping_is_live,
+    colorbar_maps,
+    follow_map,
+    gradient_base_hex,
+    is_linecoll_family,
+    remember_axis_directions,
+    scale_options,
+    spine_all_color,
+    spine_all_width,
+    spine_cfg,
+    spine_side_color,
+    spine_side_width,
+    text_linespacing,
+    tick_cfg,
+    tick_format_name,
+    tick_major_mode,
+    tick_major_step,
+    tick_major_values,
+    tick_minor_format,
+    tick_minor_mode,
+    tick_minor_step,
+    tick_minor_visible,
+    tick_side_visible,
+    to_hex,
+)
 
 CMAPS = ["viridis", "plasma", "inferno", "magma", "cividis", "Greys", "gray",
          "hot", "afmhot", "coolwarm", "RdBu_r", "seismic", "jet", "turbo"]
@@ -1094,7 +1128,7 @@ def _interpolation_options(current: str) -> list[str]:
     多一个不存在的档位是一个点了就报错、还把写回堵死的界面。
     """
     try:
-        from matplotlib.image import _interpd_       # noqa: PLC0415, SLF001
+        from matplotlib.image import _interpd_  # noqa: PLC0415, SLF001
         valid = set(_interpd_)
     except Exception:                                # noqa: BLE001
         valid = set()

@@ -310,7 +310,7 @@ def describe_self(*, executable: str | None = None, frozen: bool | None = None,
     executable = sys.executable if executable is None else executable
     prefix = sys.prefix if prefix is None else prefix
     if version is None:
-        from .. import __version__ as version                    # 唯一版本出处
+        from .. import __version__ as version  # 唯一版本出处
 
     out = {"version": version, "cli": None, "desktop": None,
            "install_dir": None, "source": "module", "frozen": bool(frozen)}

@@ -683,8 +683,7 @@ def test_bundled_worker_writes_no_cache_into_the_install_directory(monkeypatch):
     """安装目录常在 `C:\\Program Files\\Tavotto`（普通用户没写权限），
     而 Python 默认会往 site-packages 旁边写 __pycache__、matplotlib 会往
     `~/.matplotlib` 写字体缓存。前者会报权限错，后者卸载后留垃圾。"""
-    from tavotto.engine import config as cfg
-    from tavotto.engine import runtime as rt
+    from tavotto.engine import config as cfg, runtime as rt
 
     # 真正的保证是命令行的 -B：embeddable 靠 ._pth 定路径，而 CPython 找到
     # ._pth 就 use_environment = 0，PYTHON* 那条路在这里不可靠

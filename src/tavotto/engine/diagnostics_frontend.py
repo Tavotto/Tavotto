@@ -23,7 +23,6 @@ from __future__ import annotations
 import json
 import re
 
-
 #: **逐事件的字段名 allowlist**：每种事件只允许自己的那些字段。
 #:
 #: 一开始这里是一张**扁平**的名字集合（不管哪个事件，只问「这个名字在不在册」），

@@ -49,11 +49,16 @@ from pathlib import Path
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))
 sys.path.insert(0, str(_HERE.parent))
-from _common import (  # noqa: E402
-    CiError, ensure_layout, materialize_corpus, run_metadata, summary,
-    summary_table, write_report,
-)
 import smoke_app as SA  # noqa: E402
+from _common import (  # noqa: E402
+    CiError,
+    ensure_layout,
+    materialize_corpus,
+    run_metadata,
+    summary,
+    summary_table,
+    write_report,
+)
 
 REPO = _HERE.parents[1]
 CORPUS = REPO / "tests" / "acceptance" / "corpus"
@@ -277,7 +282,7 @@ def write_state_with_old(py: Path, user_root: Path, project: Path) -> dict:
         manifest = first.get("manifest") or {}
         facts["element_count"] = len(manifest.get("elements", []))
 
-        import bench_render as BR                             # 复用靶子挑选
+        import bench_render as BR  # 复用靶子挑选
         patch = BR._pick_patch(manifest)
         patches = BR._variant(patch, 1) if patch else []
         SA._post(f"{s.base}/api/engine/render",

@@ -38,11 +38,17 @@ from pathlib import Path
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))
 sys.path.insert(0, str(_HERE.parent))
-from _common import (  # noqa: E402
-    CiError, ensure_layout, materialize_corpus, run_metadata, summary, summary_table, write_report,
-)
 import pixelcompare  # noqa: E402
 import smoke_app as SA  # noqa: E402
+from _common import (  # noqa: E402
+    CiError,
+    ensure_layout,
+    materialize_corpus,
+    run_metadata,
+    summary,
+    summary_table,
+    write_report,
+)
 
 REPO = _HERE.parents[1]
 CORPUS = REPO / "tests" / "acceptance" / "corpus"

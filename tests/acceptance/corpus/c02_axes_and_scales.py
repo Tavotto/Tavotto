@@ -11,9 +11,8 @@
 对数轴与 twinx 正是这两条的现场，放进 corpus 是为了让「热态所见 == 全量重放」
 在真实图形上被持续验证，而不只是在单元测试的合成 figure 上。
 """
-import numpy as np
-
 import matplotlib.pyplot as plt
+import numpy as np
 
 
 def subplots_grid():

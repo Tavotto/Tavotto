@@ -20,8 +20,7 @@ import re
 import uuid
 
 from . import posthog
-from .contract import (AUTO_PROPS, EVENTS, METRICS_DISTINCT_ID, METRICS_EVENTS,
-                       SCHEMA_VERSION)
+from .contract import AUTO_PROPS, EVENTS, METRICS_DISTINCT_ID, METRICS_EVENTS, SCHEMA_VERSION
 
 #: 公开端点的请求体上限。一条合法事件不到 1 KiB，8 KiB 已经很宽松。
 MAX_EVENT_BODY = 8 * 1024

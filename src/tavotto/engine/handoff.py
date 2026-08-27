@@ -45,11 +45,13 @@ from pathlib import Path
 from typing import NamedTuple
 from urllib.parse import quote
 
-from . import discover as engine_discover
-from . import figcapture as engine_figcapture
-from . import locate as engine_locate
-from . import registry as engine_registry
-from . import session_client
+from . import (
+    discover as engine_discover,
+    figcapture as engine_figcapture,
+    locate as engine_locate,
+    registry as engine_registry,
+    session_client,
+)
 
 #: 认得的产物后缀，与静态扫描同源
 OUT_EXTS = engine_discover.OUT_EXTS
@@ -398,9 +400,7 @@ def _local_probe(project: str, script: str) -> dict:
     就要退出/唤起界面，orphan worker 一个都不许留（交接后的渲染由目标进程
     自己按 lazy 语义重建，registry + cache 都在磁盘上）。
     """
-    from . import pool as engine_pool
-    from . import probe as engine_probe
-    from . import runtimeasset as engine_runtimeasset
+    from . import pool as engine_pool, probe as engine_probe, runtimeasset as engine_runtimeasset
     try:
         result = engine_probe.probe_and_register(project, script)
         if result.get("registered"):
@@ -913,7 +913,7 @@ def open_target(raw: str, *, prefer: str = "auto", port: int = DEFAULT_PORT,
     返回一份可直接 json.dumps 的结果。`.py` 目标带 `probe` / `figures` /
     `pick` 三个附加键（路由细节见 resolve_script_route）。
     """
-    from .. import __version__                    # 版本号唯一出处，别在这儿写死
+    from .. import __version__  # 版本号唯一出处，别在这儿写死
     target = resolve_target(raw)
     probe_info: dict | None = None
     if _is_script_target(raw):

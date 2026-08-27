@@ -23,8 +23,11 @@ if not PROXY_ROOT.is_dir():
                 allow_module_level=True)
 sys.path.insert(0, str(PROXY_ROOT))
 
-from tavotto_telemetry_proxy import contract as proxy_contract   # noqa: E402
-from tavotto_telemetry_proxy import core, posthog                # noqa: E402
+from tavotto_telemetry_proxy import (  # noqa: E402
+    contract as proxy_contract,  # noqa: E402
+    core,
+    posthog,
+)
 
 TOKEN = "s3cret-metrics-token-0123456789"
 JSON_HEADERS = {"content-type": "application/json"}
@@ -551,8 +554,7 @@ def test_self_hosted_server_never_logs_remote_addresses(upstream, capfd):
     import threading
     from wsgiref.simple_server import make_server
 
-    from tavotto_telemetry_proxy.wsgi import (_QuietHandler, _ThreadingWSGIServer,
-                                              application)
+    from tavotto_telemetry_proxy.wsgi import _QuietHandler, _ThreadingWSGIServer, application
 
     srv = make_server("127.0.0.1", 0, application,
                       server_class=_ThreadingWSGIServer,

@@ -64,8 +64,8 @@ python scripts/smoke_app.py --python .venv/bin/python   # 端到端冒烟
   全仓 20~30 ms 回来，挡的是拼错的名字、没用的 import、没用的局部变量那一类
   ——它们不值得先花十分钟跑完整套。能自动修的用 `ruff check . --fix`（只应用
   安全修复；`--unsafe-fixes` 会动语义，要逐条看过再用）。规则集在
-  `pyproject.toml` 的 `[tool.ruff]`，细节与后续（formatter / import 排序仍待
-  迁移）见 `docs/ci/ruff.md`。**Ruff 不替代任何语义门禁**，它只是最便宜的第一层。
+  `pyproject.toml` 的 `[tool.ruff]`，细节与后续（formatter 仍待迁移）见
+  `docs/ci/ruff.md`。**Ruff 不替代任何语义门禁**，它只是最便宜的第一层。
 - 改了 `web/src` 或引擎四模块（manifest/overrides/pathgeom/patchspec）：
   **两个受管产物都要重建**——`python scripts/build_mcp_widget.py` 与
   `python scripts/build_browser_playground.py`（各有 `--check`）。

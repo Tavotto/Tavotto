@@ -41,8 +41,7 @@ from pathlib import Path
 from werkzeug.serving import make_server
 
 from . import security
-from .engine import ai_bridge as engine_ai
-from .engine import pool as engine_pool
+from .engine import ai_bridge as engine_ai, pool as engine_pool
 
 LOG = logging.getLogger("tavotto.desktop")
 

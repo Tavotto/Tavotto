@@ -13,7 +13,6 @@ manifest / SVG 这类大字段只进 `structuredContent`，不进 `content` 文�
 """
 from __future__ import annotations
 
-from collections import deque
 import json
 import os
 import queue
@@ -21,6 +20,7 @@ import sys
 import threading
 import time
 import traceback
+from collections import deque
 
 from . import bridge, widget
 from .rpc import (
