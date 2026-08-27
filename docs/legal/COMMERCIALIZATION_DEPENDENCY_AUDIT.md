@@ -232,7 +232,8 @@ Two obligations apply **today**, to the AGPL product, independent of any
 commercial plan:
 
 1. The MIT/BSD/PSF/Apache components require their notices to travel with binary
-   distributions, and the desktop app currently ships none. See
+   distributions, and the desktop app currently ships none. Tracked as
+   [#182](https://github.com/Tavotto/Tavotto/issues/182); see
    [IP_PROVENANCE.md](IP_PROVENANCE.md#notices-in-distributed-artefacts).
 2. The 5 MPL-2.0 Rust crates are statically linked into the shipped desktop
    binary; MPL-2.0 §3.2 requires recipients to be told how to obtain their
