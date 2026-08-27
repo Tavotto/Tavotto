@@ -70,7 +70,9 @@ def _err(code: str, message: str, params: dict | None = None, traceback_text: st
     return out
 
 
-def _error_from_worker(exc: pool.WorkerError, entry: str) -> dict:
+def _error_from_worker(
+    exc: pool.WorkerError, entry: str, *, figures_dir: str = "", script: str = ""
+) -> dict:
     """WorkerError → 稳定探测错误码。
 
     映射是收敛的：缺包与超时各有可执行出口（换环境 / 检查死循环），单独
@@ -87,12 +89,20 @@ def _error_from_worker(exc: pool.WorkerError, entry: str) -> dict:
         detail = getattr(exc, "project_env", None)
         if isinstance(detail, dict) and detail.get("code"):
             params["project_env"] = detail.get("code", "")
-        return _err(
+        out = _err(
             ERROR_MISSING_DEPENDENCY,
             f"缺少依赖包：{exc.module}（当前渲染环境里没有它）",
             params=params,
             traceback_text=exc.traceback_text,
         )
+        # 「能不能一键装上」（ADR 0019）。**素材库这条路必须也带上它**：
+        # 用户打开旧项目走的就是这里，只在渲染端点上给恢复引导的话，
+        # 「素材库里打不开、面板里能修」又是一次两个入口两个答案。
+        if figures_dir:
+            from . import deprepair
+
+            out["dependency_repair"] = deprepair.offer(figures_dir, script, exc.module, detail)
+        return out
     if exc.code == "worker_timeout":
         return _err(
             ERROR_TIMEOUT,
@@ -223,7 +233,7 @@ def probe(
                 return {**empty, "tried": tried, "error": _cancel_err()}
             LOG.info("探测失败 %s [entry=%s]: %s", script, entry, exc)
             if first_error is None:
-                first_error = _error_from_worker(exc, entry)
+                first_error = _error_from_worker(exc, entry, figures_dir=figures_dir, script=script)
             continue
         stems = sorted(resp.get("stems") or {})
         if stems:

@@ -86,6 +86,16 @@ def _redact_text(text: str) -> str:
     return text
 
 
+def redact_text(text: str) -> str:
+    """文本脱敏的**对外名字**（`engine/deprepair.py` 的安装日志走它）。
+
+    刻意不让别的模块各写一份「抹掉主目录名」：那种规则一旦有两份，其中一份
+    迟早漏掉某一条（Windows 的两种分隔符写法就是这么漏过的）。安装日志里
+    pip 特有的那条（index 地址可能带凭据）归 deprepair，其余都在这里。
+    """
+    return _redact_text(text)
+
+
 def _redact_obj(obj):
     """结构化数据脱敏：按键名判定的敏感字段整体换掉，其余走文本规则。"""
     if isinstance(obj, dict):

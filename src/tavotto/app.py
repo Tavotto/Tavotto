@@ -52,11 +52,13 @@ from .engine import (
     brand as engine_brand,
     cli as engine_cli,
     config as engine_config,
+    deprepair as engine_deprepair,
     diagnostics as engine_diagnostics,
     diagnostics_frontend as engine_diagnostics_frontend,
     discover as engine_discover,
     handoff as engine_handoff,
     locate as engine_locate,
+    managedenv as engine_managedenv,
     patchspec as engine_patchspec,
     pool as engine_pool,
     probe as engine_probe,
@@ -596,7 +598,34 @@ def _worker_error_payload(exc) -> dict:
             "candidates": [_project_relative(c) for c in (detail.get("candidates") or [])],
             "python_version": (detail.get("health") or {}).get("python_version", ""),
         }
+    if exc.code == "missing_dependency" and getattr(exc, "module", ""):
+        repair = _dependency_repair_offer(exc, detail)
+        if repair is not None:
+            body["dependency_repair"] = repair
     return body
+
+
+def _dependency_repair_offer(exc, project_env: dict | None) -> dict | None:
+    """「这个缺的包能不能一键装上」——挂在 missing_dependency 的错误响应里。
+
+    **只读判断**（ADR 0019 §UX）：解析 import 名 → distribution、看项目里那个
+    `.venv` 是不是「除了这个包之外都健康」、看能不能建受管环境。一个子进程都
+    不起，也**绝不**在这里安装任何东西——安装要用户先看到「装什么、装到哪、
+    会不会改你的环境」再点一次。
+
+    没有打开项目（CLI 单文件、素材库之外的路径）时回 None：修复的作用域是
+    项目，没有项目就没有可信的依赖声明，也没有地方记账。
+    """
+    try:
+        root = str(require_project())
+    except NoProjectError:
+        return None
+    script = getattr(exc, "script_name", "") or ""
+    try:
+        return engine_deprepair.offer(root, script, exc.module, project_env)
+    except (OSError, ValueError) as err:  # 修复建议失败不该盖掉原始错误
+        LOG.warning("依赖修复建议生成失败: %s", err)
+        return None
 
 
 def _project_relative(path: str) -> str:
@@ -1502,6 +1531,10 @@ def _diagnostics_bundle_response(frontend: dict | None = None, frontend_dropped:
             # 进诊断包，而相对路径已经足够定位问题。
             "executable": st.get("python_relative", ""),
         }
+        # 受控依赖修复的账（ADR 0019 §诊断）：修过几轮、受管环境里装了什么。
+        # **不含** index 地址、pip 配置、绝对路径——那三样是这一族功能里
+        # 最容易顺手泄漏凭据的地方。
+        status["dependency_repair"] = engine_deprepair.diagnostics_state(str(ctx.path))
     data = engine_diagnostics.build_bundle(
         project=status,
         port=request.host.rsplit(":", 1)[-1],
@@ -3286,6 +3319,10 @@ def _project_environment_state() -> dict:
         "trigger": state.get("trigger", ""),
         "module": state.get("module", ""),
         "can_use_project_venv": [_project_relative(v) for v in engine_projectenv.discover(root)],
+        # Tavotto 替这个项目建过的隔离环境（ADR 0019）。**不做任何体检**，
+        # 只把 `environment.json` 里记的事实交出去：界面据此显示「Tavotto
+        # 环境 · 装了什么」与「重建」入口。
+        "managed": engine_managedenv.state(root),
     }
     return out
 
@@ -3407,6 +3444,130 @@ def _project_env_message(health: dict) -> str:
     if code == engine_projectenv.ERROR_MODULE_MISSING:
         return f"这个环境里也没有 {health.get('requested_module', '')}"
     return f"这个 Python 起不来：{health.get('detail', '')}"
+
+
+# ------------------------- 受控依赖修复（ADR 0019）--------------------------
+#
+# 三个端点，职责刻意分开：
+#
+#   POST /api/engine/dependency/plan     「装什么、装到哪」定下来，发一个短期
+#                                        计划 id。**这一步不装任何东西。**
+#   POST /api/engine/dependency/install   执行**那个计划**。请求体里只有
+#                                        plan_id——装什么不由这次请求说了算
+#                                        （防 TOCTOU）。
+#   POST /api/engine/dependency/cancel    取消。
+#
+# 「没有确认就不许改用户环境」是**后端的**能力边界，不是「按钮理论上不会调
+# 这个接口」：没有计划 id 一律 `dependency_install_not_allowed`。
+def _repair_error(exc: "engine_deprepair.RepairError", status: int = 400):
+    body = {"error": str(exc), "code": exc.code}
+    health = (exc.extra or {}).get("health")
+    if isinstance(health, dict):
+        body["params"] = {"python_version": health.get("python_version", "")}
+    return jsonify(body), status
+
+
+@app.post("/api/engine/dependency/plan")
+def api_dependency_plan():
+    """为「缺 X」形成一个安装计划（不安装）。
+
+    `target` = `project_venv`（改用户环境，需要用户在界面上明确确认）或
+    `tavotto_managed`（Tavotto 自己的隔离环境，改的是我们的东西）。
+    `distribution` 只在解析不出来时由用户给，仍要过严格语法校验。
+    """
+    root = str(require_project())
+    body = request.get_json(force=True)
+    module = str(body.get("module") or "").strip()
+    script = str(body.get("script") or "").strip()
+    target = str(body.get("target") or "").strip()
+    # 空 module / 不合形状的 module 一律交给 `create_plan`：「什么样的模块名
+    # 能拿去 import」只有 `projectenv.valid_module_name` 一份判据，端点这里
+    # 再写一遍迟早与它分叉。
+    try:
+        plan = engine_deprepair.create_plan(
+            root,
+            script,
+            module,
+            target_kind=target,
+            user_distribution=str(body.get("distribution") or "").strip(),
+        )
+    except engine_deprepair.RepairError as exc:
+        return _repair_error(exc)
+    return jsonify({"plan": plan.to_payload()})
+
+
+@app.post("/api/engine/dependency/install")
+def api_dependency_install():
+    """执行一个已经形成的计划。进度经 SSE `engine.dependency` 推送。
+
+    **请求体里只有 plan_id**：解释器、包名、版本、目标环境全部来自计划本身。
+    用户看到的是「把 lmfit 装进 项目 .venv」，点下去执行的就必须是那一件事。
+    """
+    require_project()
+    body = request.get_json(force=True)
+    plan_id = str(body.get("plan_id") or "")
+    plan = engine_deprepair.get_plan(plan_id)
+    if plan is None:
+        return jsonify(
+            {
+                "error": "没有这个修复计划（或已过期），请重新开始。",
+                "code": engine_deprepair.ERROR_NOT_ALLOWED,
+            }
+        ), 409
+    if plan.project != str(require_project()):
+        # 计划绑定项目：A 项目的计划不能拿到 B 项目来执行
+        return jsonify(
+            {"error": "这个修复计划不属于当前项目。", "code": engine_deprepair.ERROR_NOT_ALLOWED}
+        ), 409
+    engine_deprepair.install_async(plan_id, lambda p: sse_publish("engine.dependency", p))
+    return jsonify({"started": True, **engine_deprepair.progress(plan_id)})
+
+
+@app.post("/api/engine/dependency/cancel")
+def api_dependency_cancel():
+    """取消安装。**不承诺完整 rollback**（用户环境上做不到，见 ADR 0019）。"""
+    require_project()
+    body = request.get_json(force=True)
+    ok = engine_deprepair.cancel(str(body.get("plan_id") or ""))
+    return jsonify({"cancelling": bool(ok)})
+
+
+@app.get("/api/engine/dependency/state")
+def api_dependency_state():
+    """某个计划的当前进度（SSE 断了之后的补拉）。"""
+    resp = jsonify(engine_deprepair.progress(request.args.get("plan_id", "")))
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/engine/environment/managed/rebuild")
+def api_managed_environment_rebuild():
+    """删掉并重建当前项目的 Tavotto 受管环境。
+
+    这是受管环境相对「改用户 `.venv`」的**唯一优势**：坏了可以整个扔掉重来。
+    重建会按 `environment.json` 里记的把我们装过的包装回去——但**不声称
+    lockfile 级复现**：某个版本从 index 上消失时如实报错。
+    """
+    root = str(require_project())
+    if engine_pool.is_mutating(str(engine_managedenv.venv_python(root))):
+        return jsonify(
+            {"error": "这个环境正在安装依赖，请稍候。", "code": engine_deprepair.ERROR_BUSY}
+        ), 409
+    # 记住的解释器如果正是这个环境，先撤掉决策再删——否则删完那一瞬间
+    # `resolve_worker_python()` 会指向一条已经不存在的路径。
+    if engine_pool.same_python(
+        engine_projectenv.remembered(root), str(engine_managedenv.venv_python(root))
+    ):
+        engine_projectenv.forget(root)
+    engine_pool.shutdown_all(root)
+    requirements = engine_managedenv.installed_requirements(root)
+    engine_managedenv.remove(root)
+    engine_pool.reset_worker_python()
+    engine_deprepair.reset_state(root)
+    engine_deprepair.rebuild_managed_async(
+        root, requirements, lambda p: sse_publish("engine.dependency", p)
+    )
+    return jsonify({"started": True, "requirements": requirements})
 
 
 # ------------------------- 检查更新 -----------------------------------------
