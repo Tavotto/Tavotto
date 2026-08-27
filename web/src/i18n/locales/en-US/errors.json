@@ -179,6 +179,7 @@
       "configured": "The environment you chose",
       "current_process": "Tavotto's own interpreter",
       "env_override": "Environment variable TAVOTTO_WORKER_PYTHON",
+      "managed_project_env": "Tavotto environment for this project",
       "managed_venv": "An environment Tavotto created",
       "project_venv": "The project's own virtual environment",
       "system": "System Python / Conda",
