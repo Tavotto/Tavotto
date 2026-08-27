@@ -15,6 +15,7 @@
 与 tests/test_merge_queue_workflows.py 同一条纪律：不用 PyYAML，用只认本
 仓库形状的字符串判据，解析不出预期形状时当场抛。
 """
+
 from __future__ import annotations
 
 import re
@@ -31,10 +32,12 @@ FIXTURE = ROOT / "examples" / "runtime_check"
 
 #: ensure_registered 的四态，唯一出处是它自己的 docstring。
 ALL_STATES = {"already", "created", "merged", "unchanged"}
-DRIFT = ("import matplotlib.pyplot as plt\n"
-         "def main():\n"
-         "    fig, ax = plt.subplots()\n"
-         "    fig.savefig('Fig_extra.pdf')\n")
+DRIFT = (
+    "import matplotlib.pyplot as plt\n"
+    "def main():\n"
+    "    fig, ax = plt.subplots()\n"
+    "    fig.savefig('Fig_extra.pdf')\n"
+)
 
 
 def _accepted_by_nightly() -> set[str]:
@@ -43,12 +46,12 @@ def _accepted_by_nightly() -> set[str]:
     m = re.search(r'\$j\.registry_status\s+-ne\s+"([^"]+)"', text)
     if m:
         return {m.group(1)}
-    m = re.search(r'\$j\.registry_status\s+-notin\s+@\(([^)]*)\)', text)
+    m = re.search(r"\$j\.registry_status\s+-notin\s+@\(([^)]*)\)", text)
     if m:
         return set(re.findall(r'"([^"]+)"', m.group(1)))
     raise AssertionError(
-        "nightly.yml 里找不到 registry_status 的判据——形状变了，"
-        "这条用例已经失效，先修用例再说")
+        "nightly.yml 里找不到 registry_status 的判据——形状变了，这条用例已经失效，先修用例再说"
+    )
 
 
 def _status_via_open_target(project: Path) -> str:
@@ -95,8 +98,8 @@ def test_open_target_status_is_actually_accepted_by_nightly(tmp_path):
     status = _status_via_open_target(_copy(tmp_path))
     assert status in ALL_STATES
     assert status in _accepted_by_nightly(), (
-        f"open_target 产出 {status}，但 nightly 只接受 "
-        f"{sorted(_accepted_by_nightly())}——夜跑会连红")
+        f"open_target 产出 {status}，但 nightly 只接受 {sorted(_accepted_by_nightly())}——夜跑会连红"
+    )
 
 
 def test_scan_actually_runs_so_fixture_drift_is_detectable(tmp_path):
@@ -110,7 +113,8 @@ def test_scan_actually_runs_so_fixture_drift_is_detectable(tmp_path):
     (proj / "fig_extra.py").write_text(DRIFT, encoding="utf-8")
     assert _status_via_open_target(proj) == "merged", (
         "漂移过的图库没报 merged——全量扫描没跑，八成是 open_target "
-        "把 stem 传进 ensure_registered 短路了")
+        "把 stem 传进 ensure_registered 短路了"
+    )
 
 
 def test_created_is_reachable_through_the_real_path(tmp_path):
@@ -123,8 +127,7 @@ def test_created_is_reachable_through_the_real_path(tmp_path):
 # ---------------------------------------------------------------------------
 # 根因本身
 # ---------------------------------------------------------------------------
-@pytest.mark.parametrize("stem,expect", [(None, "unchanged"),
-                                         ("Fig_runtime_stack", "already")])
+@pytest.mark.parametrize("stem,expect", [(None, "unchanged"), ("Fig_runtime_stack", "already")])
 def test_already_requires_a_stem(tmp_path, stem, expect):
     """钉住根因：不给 stem 拿不到 `already`，给了才拿得到。
 
