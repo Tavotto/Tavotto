@@ -75,7 +75,7 @@ def _install(client, plan_id: str) -> dict:
 
 def _in_venv(python: str, expr: str) -> str:
     out = subprocess.run([python, "-c", expr], capture_output=True, text=True,
-                         timeout=120)
+                         encoding="utf-8", errors="replace", timeout=120)
     assert out.returncode == 0, out.stderr
     return out.stdout.strip()
 
@@ -266,7 +266,7 @@ def offline_managed_env(monkeypatch):
         root.parent.mkdir(parents=True, exist_ok=True)
         out = subprocess.run([base, "-m", "venv", "--system-site-packages",
                               str(root)], capture_output=True, text=True,
-                             timeout=300)
+                             encoding="utf-8", errors="replace", timeout=300)
         return target.is_file(), out.stderr
 
     assert original is managedenv.create_venv      # 换的是同一个出处
