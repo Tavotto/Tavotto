@@ -220,9 +220,22 @@ python scripts/build_mcp_widget.py --check                 # 一致
   而那正是 #175 存在的理由。实测本分支改过的 16 个 `.py` **全部**会被重排。
   #175 落地后本分支按全仓 `ruff format .` + rebase 收敛；#176 落地后提交前
   跑 `ruff check . && ruff format --check .`（与 CI 逐字相同）。
-- **CodeQL 门禁红着，需要维护者出手**（`CodeQL gate` 是 required check，
-  见 ruleset 21121430）。`CodeQL` 报 1 critical + 7 high，逐条定性写在
-  PR #177 的 issuecomment-5438197651。
+- **CodeQL 有一条红，但它不挡合并**。`CodeQL` 报 1 critical + 7 high，
+  逐条定性写在 PR #177 的 issuecomment-5438197651。
+
+  **两个名字很像的检查别合成一个**（我第一轮就是这么看错的）：
+
+  ```text
+  CodeQL        GitHub 生成的告警汇总 check，报「新增几条告警」——不是 required
+  CodeQL gate   required 的是这个。codeql.yml 里 needs: [analyze]，走
+                aggregate_gate.py --mode codeql --required analyze，
+                聚合的是四个 analyze job 的**结论**，不看告警条数
+  ```
+
+  必需上下文只有三个（ruleset 21121430）：`CI fast gate` / `CI integration
+  gate` / `CodeQL gate`。现成的对照：#175 的 `CodeQL` 同样 fail（20 条新
+  告警），`CodeQL gate` 照样 pass。**所以那 8 条不是队列前置条件**，是留给
+  维护者按自己节奏拍板的事。
 
   **我开 PR 时的预判是错的，值得记下来**：我以为红灯来自「本 PR 改写了
   `pool.py::EngineWorker.__init__` 里的一行，把那条 critical dismissal 的
