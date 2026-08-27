@@ -104,8 +104,13 @@
 
 ## 未完成 / 进 Session 9 的入场券
 
-- [ ] **Windows 真机执行**：`tests/bridge/` 全部平台无关，但**从没在 Windows
-  上跑过**——「从没跑过的门禁不会保持正确」。入队前用 `full-ci` 标签取证。
+- [ ] **Windows 真机执行**：`tests/bridge/` 走默认 pytest，所以
+  `backend-platforms`（merge_group / `full-ci`）本来就会在 mac + Windows 上
+  各跑一遍——缺的只是**看见那一遍的结果**。入队前用 `full-ci` 标签在 PR SHA
+  上取证，别拿整轮队列资格试错（Session 6 的教训）。
+  本轮已经被仓库既有的 Windows 门禁抓到过一次真缺陷（9 处
+  `subprocess.run(text=True)` 没钉 `encoding`），说明「平台无关」不能只靠
+  眼睛看。
 - [ ] **native 会话是否进池复用**（ADR 0014 §7 第 4 问）。
 - [ ] **产品面**：`tavotto run` 的稳定 CLI 契约与错误码表、桌面交接、UI 一次性
   确认（必须写明解释器路径 / cwd / 「拥有你当前用户的全部权限」）、每项目

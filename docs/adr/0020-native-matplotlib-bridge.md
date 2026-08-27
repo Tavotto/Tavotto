@@ -192,8 +192,12 @@ safe worker 的平铺形态下前缀为空，行为一个字节没变。
   None:` 是相对 import 兜底的常见写法，`os.path.dirname(__file__)` 到处都是。
   所以按 CPython 自己的做法组装 `__main__`。
 - **module 形态用 `runpy.run_module(..., run_name="__main__", alter_sys=True)`**，
-  它在五项上实测就对（3.9 / 3.11 / 3.13 各验过）；唯一要补的是
-  `sys.path[0] = cwd`（真实 `-m` 放的是它，runpy 不动 sys.path）。
+  它在 `__name__` / `__package__` / `__spec__` / `__file__` / `argv[0]` 五项上
+  开箱就对；唯一要补的是 `sys.path[0] = cwd`（真实 `-m` 放的是它，runpy 不动
+  sys.path）。**对拍用例是版本无关的**——它拿同一个解释器跑两遍再比，所以
+  CI 的 3.10 与 3.13 两条腿各自证明各自那一版。（顺带实测过：直跑
+  `python` 时 `sys.path[0]` 绝对化、`__package__ is None` 这两条规则在
+  3.9.6 / 3.11.14 / 3.13.11 上完全一致。）
 - **argv[0] 用 `ExecutionSpec.raw_target`**（用户敲的那一串），不是规范化
   后的 `target`（项目相对 POSIX 路径，那是**身份**）。拿身份当 argv[0] 会让
   脚本里的 `os.path.dirname(sys.argv[0])` 指到别处。
@@ -404,7 +408,9 @@ bridgeboot.py      ← 私有命名空间装载器 + import 钩子
 换了个位置。
 
 `bridge_runner.py` 与 `bridgeboot.py` 是**纯标准库**且必须在 3.10 上跑得起来
-（用户环境的版本我们说了不算）。
+（用户环境的版本我们说了不算）。本机验到 **3.11**（3.13 是主验证版本，3.11
+上单独跑过一次无图路径）；**3.10 由 CI 的 `backend-fast` 那一格执行**——
+`tests/bridge/` 走的是默认 pytest，所以那条腿每个 PR 都会跑。
 
 ---
 
@@ -454,10 +460,17 @@ spike 入口（`python -m tavotto.engine.bridge_spike`）**不是产品**：没�
 | | 做法 | 状态 |
 |---|---|---|
 | macOS | 见上；开发机（arm64）上跑通全部用例 | ✅ 已验证 |
-| Windows | 同一条路径：loopback socket 跨平台一致（不用 fd 继承、不用 Unix socket、不用命名管道）；spawn 不经 shell（argv 列表）；`sys.path[0]` 与 `__file__` 的规则三个版本实测一致；`creationflags=CREATE_NO_WINDOW` 复用 `runtime` 那份 | ⚠️ **设计与用例就绪，真机未跑**（见 §13） |
+| Windows | 同一条路径：loopback socket 跨平台一致（不用 fd 继承、不用 Unix socket、不用命名管道）；spawn 不经 shell（argv 列表）；控制通道两侧钉 UTF-8，而用户的 stdio 一个字节不碰；`creationflags=CREATE_NO_WINDOW` 复用 `runtime` 那份；跨盘符的 `relpath` 显式报错不裸抛 | ⚠️ **设计与用例就绪，真机未跑**（见 §13） |
 
-用例本身是平台无关的（没有一条依赖 POSIX 语义）；缺的是**在 Windows 上执行
-过一次**——"从没跑过的门禁不会保持正确"。
+用例本身是平台无关的（没有一条依赖 POSIX 语义），而且走默认 pytest——
+所以 `backend-platforms`（merge_group / `full-ci`）会在 macOS 与 Windows 上
+各执行一遍。缺的只是**看见那一遍的结果**："从没跑过的门禁不会保持正确"。
+
+本轮已经被仓库既有的 Windows 门禁抓到过一次真缺陷：
+`test_source_hygiene.py::test_windows_bound_subprocesses_pin_their_decoding`
+发现新用例里 9 处 `subprocess.run(text=True)` 没钉 `encoding`——Windows 上
+会用系统默认编码（cp936/cp1252）解码子进程输出，而这些用例里恰恰有靠
+stderr 内容分诊的判据。这条说明"平台无关"不能只靠眼睛看。
 
 ---
 
