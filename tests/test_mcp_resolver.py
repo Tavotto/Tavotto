@@ -196,7 +196,7 @@ def _degraded_roundtrip(*requests, code="desktop_only"):
     launcher._degraded_server(code, launcher.DESKTOP_ONLY_HINT,
                               {"python": None, "source": None, "tried": []},
                               stdin=io.StringIO(lines), stdout=out)
-    return [json.loads(l) for l in out.getvalue().strip().splitlines()]
+    return [json.loads(ln) for ln in out.getvalue().strip().splitlines()]
 
 
 def test_degraded_initialize_is_version_zero():

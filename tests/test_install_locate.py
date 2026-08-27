@@ -612,8 +612,8 @@ def test_nightly_shell_probe_dumps_the_log_before_it_cleans_up():
     text = (ROOT / ".github" / "workflows" / "nightly.yml").read_text(encoding="utf-8")
     # 只看代码那一半：注释里提到 Stop-Process 是在解释这条纪律本身
     def code_only(block: str) -> str:
-        return "\n".join(l for l in block.splitlines()
-                          if not l.strip().startswith("#"))
+        return "\n".join(ln for ln in block.splitlines()
+                          if not ln.strip().startswith("#"))
 
     branch = code_only(
         text[text.index("if (-not $child) {"):text.index('throw "装好的壳没有拉起 sidecar')])

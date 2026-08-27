@@ -6,7 +6,6 @@
 import pymupdf
 import pytest
 
-from tavotto import app as m
 from tavotto.pdfbackend import pymupdf_backend as pb
 
 SW = 2.0  # stroke_pt

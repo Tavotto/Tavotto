@@ -329,7 +329,6 @@ def main(argv: list[str] | None = None) -> int:
 
     checks = run_all(args.mode, reap=args.reap_stale)
     blocking = [c for c in checks if not c.ok and not c.warn]
-    warnings = [c for c in checks if c.warn and not c.ok] + [c for c in checks if c.warn and c.detail not in ("无",)]
 
     payload = {
         "ok": not blocking,

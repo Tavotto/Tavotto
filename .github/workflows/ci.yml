@@ -4,8 +4,9 @@ name: CI
 # 验证按**发生时机**分工（2026-08-25，Merge Queue 定版）。
 # **覆盖面一条没减，改的是每类验证在哪个提交上执行**：
 #
-#   PR（含草稿）    快速反馈：invariants / backend-fast（Linux 3.10+3.13）/
-#                   frontend / workerd / compat-smoke / CodeQL。
+#   PR（含草稿）    快速反馈：python-lint（Ruff）/ invariants /
+#                   backend-fast（Linux 3.10+3.13）/ frontend / workerd /
+#                   compat-smoke / CodeQL。
 #                   重型资格**不在 PR 上跑**——CI integration gate 显式回
 #                   deferred（summary 与 JSON 都写明），PR 靠三个 Gate 进队列。
 #   full-ci PR      打上 `full-ci` 标签 = 在 PR 自己的 SHA 上提前跑全套重型
@@ -74,6 +75,64 @@ env:
   TAVOTTO_NO_TELEMETRY: "1"
 
 jobs:
+  # ────────────────────────────────────────────────────────────────
+  # 快线里最便宜的一格：Ruff。**十几秒回来**，只装一个 wheel，不碰科学栈、
+  # 不建前端、不编 Rust。
+  #
+  # 它挡的是「一个拼错的名字 / 一个删了引用却忘了删的 import，让人等十分钟的
+  # 矩阵跑完才知道」那类循环——F821、F401、F841 这些在编辑器里一秒可判的东西，
+  # 不该消耗一整轮 CI。放在快线最前面，红了立刻能看见。
+  #
+  # **它不是别的门禁的替代品**：不变式、等价性矩阵、CompatBench 问的都是
+  # 语义问题，Ruff 一条都答不了。这一格只回答「这份 Python 在语法与名字层面
+  # 立得住吗」。
+  #
+  # 不做 paths 过滤，理由与 invariants / workerd 那两格相同：判断「哪些文件
+  # 会影响 Python 静态检查」本身就是会漏配的判断，而这一格便宜到不值得为它
+  # 冒「静默不跑」的风险。
+  # ────────────────────────────────────────────────────────────────
+  python-lint:
+    name: Python lint (Ruff)
+    # 与其它快线一致：PR 与 merge_group 都跑（PR 先绿才能进队列，队列的组合
+    # 提交还要再验一遍——组合出来的树没有任何单个 PR 检查过）。push main 不跑，
+    # 那棵树就是 merge_group 上刚验过的。
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # 版本**从 pyproject 的 dev extra 里读**，不在这里抄一份字面量。
+      # 本地与 CI 跑的 ruff 版本一旦漂开，「本地绿、CI 红」就会变成常态，
+      # 而那是让人不再信任 lint 门禁最快的方式。恰好一条约束，多了少了都当场抛
+      # ——安静地取到 None 再 `pip install ` 会装上最新版，正好是要防的事。
+      #
+      # 刻意**不装本项目**（`pip install -e .` 会拖进 flask + pymupdf）：
+      # ruff 是纯静态分析，一个 import 都不需要执行。
+      - name: 安装 Ruff（版本取自 pyproject 的 dev extra，单一出处）
+        run: |
+          set -euo pipefail
+          SPEC=$(python -c "
+          import pathlib, tomllib
+          d = tomllib.loads(pathlib.Path('pyproject.toml').read_text(encoding='utf-8'))
+          got = [s for s in d['project']['optional-dependencies']['dev']
+                 if s.replace('_', '-').lower().startswith('ruff')]
+          if len(got) != 1:
+              raise SystemExit(f'dev extra 里应当恰好有一条 ruff 约束，实际：{got}')
+          print(got[0])
+          ")
+          echo "ruff spec（来自 pyproject）：$SPEC"
+          python -m pip install "$SPEC"
+          ruff --version
+      # `--output-format github` 让每条诊断变成 PR「Files changed」里那一行上的
+      # 行内批注——从红灯到定位是一次点击，而不是翻日志找行号。
+      # 规则集与豁免全在 pyproject 的 [tool.ruff]，这里**不加任何 --select /
+      # --ignore**：命令行上再写一份，本地跑的就不是 CI 跑的那一套了。
+      - name: Ruff
+        run: ruff check --output-format github .
+
   # ────────────────────────────────────────────────────────────────
   # 第 1 层最靠前的一格：引擎的**结构性不变式**（tests/test_invariants_engine.py
   # + 与它同一族的 artist family / patchspec / preflight 契约）。
@@ -732,7 +791,7 @@ jobs:
     # always() 让它在上游失败后照跑并且红；事件条件与快线一致——push main
     # 上快线不跑，Gate 也不跑（required contexts 只在 PR / merge_group 上有意义）。
     if: ${{ always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
-    needs: [invariants, backend-fast, frontend, workerd, compat-smoke]
+    needs: [python-lint, invariants, backend-fast, frontend, workerd, compat-smoke]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -769,7 +828,7 @@ jobs:
           python3 -I "$RUNNER_TEMP/trusted-gate/aggregate_gate.py" \
             --mode fast \
             --event "${{ github.event_name }}" \
-            --required invariants,backend-fast,frontend,workerd,compat-smoke \
+            --required python-lint,invariants,backend-fast,frontend,workerd,compat-smoke \
             --needs-json "$NEEDS_JSON"
 
   ci-integration-gate:

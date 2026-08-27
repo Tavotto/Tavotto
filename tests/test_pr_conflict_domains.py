@@ -224,7 +224,7 @@ class TestApiBehaviour:
 
         def down(url, token):
             raise CD.ApiUnavailable(f"GitHub API 请求失败（{url.split('?')[0]}）：URLError")
-        rc = CD.run(REPO, 1, CONFIG, token=secret, fetch=down)
+        CD.run(REPO, 1, CONFIG, token=secret, fetch=down)
         captured = capsys.readouterr()
         assert secret not in captured.out + captured.err
 

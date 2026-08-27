@@ -29,7 +29,6 @@ import pytest
 from tavotto import app as m
 from tavotto.engine import discover, figcapture
 from tavotto.engine import pool as engine_pool
-from tavotto.engine import probe as engine_probe
 from tavotto.engine import registry as engine_registry
 from tavotto.engine import runtimeasset
 

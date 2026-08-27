@@ -12,7 +12,6 @@ import json
 import os
 import socket
 import threading
-import time
 import urllib.error
 import urllib.request
 from pathlib import Path

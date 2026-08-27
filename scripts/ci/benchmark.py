@@ -28,18 +28,16 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))
 from _common import (  # noqa: E402
-    CiError, ensure_layout, run_metadata, state_root, summary, summary_table,
+    CiError, ensure_layout, run_metadata, summary, summary_table,
     write_report,
 )
 

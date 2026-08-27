@@ -36,7 +36,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _common import (  # noqa: E402
-    CiError, assert_within, ensure_layout, find_ci_owned_tavotto, safe_rmtree,
+    CiError, ensure_layout, find_ci_owned_tavotto, safe_rmtree,
     state_root, summary,
 )
 

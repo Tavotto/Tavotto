@@ -29,7 +29,6 @@ import argparse
 import hashlib
 import json
 import os
-import shutil
 import subprocess
 import sys
 import zipfile
@@ -175,7 +174,7 @@ def main(argv: list[str] | None = None) -> int:
     total = sum((DIST / f).stat().st_size for f in manifest["files"])
     print(f"已写入 {DIST}（{len(manifest['files'])} 个文件，"
           f"{total / 1024:.0f} KiB，指纹 {manifest['fingerprint']}）")
-    print(f"下一步：cd ../Tavotto_website && pnpm sync-playground")
+    print("下一步：cd ../Tavotto_website && pnpm sync-playground")
     return 0
 
 

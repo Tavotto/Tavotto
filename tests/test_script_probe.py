@@ -18,7 +18,6 @@ import matplotlib，桌面侧经 pool 起真 worker。
 """
 import json
 import os
-import sys
 from pathlib import Path
 
 import pymupdf

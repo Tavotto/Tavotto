@@ -46,7 +46,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-import matplotlib
+import matplotlib  # noqa: E402 —— 必须在 sys.path 注入之后
 
 matplotlib.use("Agg")
 import matplotlib.figure as mfigure  # noqa: E402

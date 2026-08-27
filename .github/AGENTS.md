@@ -5,8 +5,8 @@
 ## CI 分层（1.0 稳定化，2026-08-21 起）
 
 CI 按**发生时机**分工（`.github/workflows/ci.yml` 抬头有全图，2026-08-25
-Merge Queue 定版）：PR = 快速反馈（invariants / backend-fast / frontend /
-workerd / compat-smoke / CodeQL）；merge_group = 完整合并资格的唯一常规执行
+Merge Queue 定版）：PR = 快速反馈（python-lint / invariants / backend-fast /
+frontend / workerd / compat-smoke / CodeQL）；merge_group = 完整合并资格的唯一常规执行
 点（backend-platforms / package ×3 / 两个真产物冒烟，Merge Queue 对「最新
 main + 前序 PR + 当前 PR」的组合提交验证）；`full-ci` 标签 = 在 PR 自己的
 SHA 上提前跑全套；push main = 轻量落地审计（main-landing-audit，不重复打
@@ -32,6 +32,13 @@ codeql.yml 的 `cancel-in-progress` **只对 PR 开**：merge_group 候选与 ma
 - **空转的门禁比没有门禁更坏**：nightly 曾对早已退役删除的 `packaging/tavotto.iss`
   报平安；macOS 冒烟曾借 worker-env 让「runtime 没打进去」全绿。判「最近
   跑过没有」要数**有结论的 run**。
+- **Ruff（`python-lint`）是快线里最便宜的一格，不是别的门禁的替代品**：
+  它只回答「这份 Python 在语法与名字层面立得住吗」（F821/F401/F841 那一类），
+  语义问题仍归不变式 / 等价性矩阵 / CompatBench。它经 `CI fast gate` 参与合并
+  资格（`needs` 与 `--required` 闭集里都有它，红了或 skipped 都会让 Gate 红），
+  **没有新增 required context**。规则集与豁免的唯一出处是 `pyproject.toml` 的
+  `[tool.ruff]`——workflow 命令行上不许再写一份，CI 也不许 `--fix`。
+  formatter 与 import 排序（`I`）本轮**有意推迟**，理由与后续见 `docs/ci/ruff.md`。
 - 每个「只在别人电脑上发生」的 bug 先变成 `tests/test_windows_regressions.py`
   的用例再谈修（cp936 编码、文件占用、盘符/反斜杠/中文路径、端口占用、
   CLI 只有 .cmd、解释器探测）。

@@ -13,7 +13,6 @@ import os
 import subprocess
 import threading
 import time
-import sys
 from pathlib import Path
 
 import pymupdf

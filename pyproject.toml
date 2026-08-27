@@ -45,7 +45,11 @@ dependencies = [
 # numpy 2.x 上验证，matplotlib 的 minor 升版历史上多次破坏私有接口
 # （axis3d 几何助手、colorbar 落位），未验证的下一档 minor 不该被顺手装上。
 worker = ["matplotlib>=3.8,<3.12", "numpy>=1.24,<3"]
-dev = ["pytest>=8", "build>=1.2", "twine>=5"]
+# Ruff 的上界跟着实测走，与上面 worker 那条同一个理由：ruff 在 1.0 之前会在
+# minor 里把 preview 规则转正，于是**同一份代码、同一份配置**在升一个 minor 之后
+# 可能突然多出几十条诊断——那种红与本次改动无关，只会让人学会忽略 lint 门禁。
+# 换 minor 是一次要有人负责的决定（跑一遍全仓、看新规则值不值得开）。
+dev = ["pytest>=8", "build>=1.2", "twine>=5", "ruff>=0.16,<0.17"]
 # 实验室 CI（scripts/ci/）专用。**刻意不进 dev**：普通开发与 PR 上的
 # `pip install -e ".[dev]"` 不该被迫拖进图像库，而 Flask 父进程的依赖边界
 # （只有 flask + pymupdf，没有科学栈）更是一个字都不能松。
@@ -133,3 +137,78 @@ only_mutate = [
     "src/tavotto/engine/profiles.py",
 ]
 pytest_add_cli_args = ["-q", "-p", "no:cacheprovider"]
+
+# ---------------------------------------------------------------------------
+# Ruff（`ruff check .`，PR 上的 python-lint job）
+#
+# 定位是**开发闭环里最便宜的第一层**：改完 Python 先秒级拿到「引用了不存在的
+# 名字」「导入了不用的模块」这类回答，而不是等十分钟的 CI 矩阵告诉你一个 F821。
+# 它不参与渲染路径，也不替代 pytest / CompatBench / 等价性矩阵——那几层问的
+# 是完全不同的问题。
+#
+# **select 必须显式写死**。ruff 的默认规则集本身会随版本变宽：本仓库接入时
+# 实测 0.16.4 的默认集会报出 RUF100/PLW1510/UP037/FURB167 等上千条诊断，
+# 而 0.16 之前的默认只有 E4/E7/E9/F。不钉住 select，一次例行升版就能让门禁
+# 一夜之间红成一片——那正是让人开始忽略 lint 的方式。
+[tool.ruff]
+# 元数据承诺的是 3.10–3.13，静态分析就必须按**下界**做。
+# 开发机跑 3.13，若让 ruff 也按 3.13 分析，它会认为 `X | None`、match 语句、
+# 新式泛型处处可用，于是「在 3.10 上根本 import 不了」这类问题静态层面永远
+# 看不见（ruff 会从 requires-python 推出同样的 py310，这里显式写死是为了
+# 让它不随元数据的措辞变化而漂）。
+target-version = "py310"
+# 实测出来的数字，不是抄模板：全仓 85762 行 Python 里超过 100 列的只有 33 行
+# （0.04%），超过 88 列的有 474 行（0.55%）——这个代码库事实上写到 100。
+# **当前没有任何被选中的规则消费它**（E501 在 E5，没选）；它只作用于
+# `ruff format`，而 formatter 还没成为门禁（理由见下）。写在这里是为了让
+# 谁临时跑一次 `ruff format` 时不会按默认的 88 去和既有风格打架。
+line-length = 100
+
+# exclude 刻意为空：ruff 默认 `respect-gitignore = true`，而本仓库所有生成物
+# 与外来物（/runtime/、/dist/、/build/、/cache/、web/node_modules/、
+# web/dist*/、src/tavotto/web/、__pycache__/）本来就在 .gitignore 里。
+# 再抄一份 exclude 只会变成第二处需要同步的清单——少一条不同步，就有一片
+# 目录在没人注意的时候退出检查。
+
+[tool.ruff.lint]
+# 第一阶段刻意保守。这是个成熟代码库，接入 lint 的成功标准不是「开的规则多」，
+# 而是「长期保持绿、没人想把它关掉」。逐族的理由：
+#
+#   E4  导入形状（E401 一行多个导入 / E402 导入不在文件顶部）。本仓库已经在
+#       用 `# noqa: E402` 标注那 89 处**有意为之**的延后导入（sys.path 注入之后
+#       才能 import 的兄弟模块），这一族等于把既有约定变成可执行的。
+#   E7  语句级错误形状——E711/E712（`== None` / `== True`）、E713/E714
+#       （`not x in` / `not x is`）、E722（裸 except）、E741。这些是真错，
+#       而且全仓当前一条 E711/E712/E722 都没有：开着它是防回归，不是补债。
+#   E9  语法 / IO 级错误。永远该开。
+#   F   Pyflakes：未定义名字（F821）、未使用导入（F401）、未使用变量（F841）、
+#       重复定义。这一族才是本次接入真正的目标——它挡的正是「AI 改完代码，
+#       十分钟后 CI 告诉你有个名字拼错了」那类循环。
+select = ["E4", "E7", "E9", "F"]
+
+# 只有两条，且都是**排版**规则，不是语义规则：
+#   E701 `if x: y` 写在一行
+#   E702 `a = 1; b = 2` 分号连写
+# 本仓库有意用紧凑写法表达「这两行是一对」（manifest.py 的 bbox 四角取
+# min/max、recover_frac_positions.py 逐像素扫描里的四路 min/max 跟踪）。
+# 它们属于 formatter 的管辖范围——`ruff format` 落地那天会把这两种形状机械地、
+# 一致地拆开，那才是处理排版的正确位置。在 formatter 还没接入之前手工拆，
+# 等于用手做一遍将来工具会做的事，还要在 review 里逐行解释。
+# **formatter 迁移见 docs/ci/ruff.md 的「后续」一节；那件事做完这两条就该删掉。**
+ignore = ["E701", "E702"]
+
+[tool.ruff.lint.per-file-ignores]
+# 浏览器 playground 的示例脚本是**给用户看的成品**：它们经 `?raw` 原样打进
+# playground bundle（scripts/build_browser_playground.py），在网站 /try 的编辑器
+# 里逐字显示，并且参与产物指纹。`peak = lambda c, s, a: ...` 是科研绘图里
+# 常见的紧凑写法，改成 def 既动了指纹又让示例变啰嗦——为 lint 重写展示给用户的
+# 示例代码是本末倒置。
+"web/src/playground/examples/*.py" = ["E731"]
+
+# 注意 tests/compat/cases/** 与 examples/** 目前一条豁免都不需要，这不是遗漏。
+# 前者是 CompatBench 语料，**存在的意义就是模拟外部 matplotlib 世界的各种真实
+# 写法**（含刻意的旧式写法）；后者是随产品分发、用户会打开的示例图库。
+# 将来 ruff 若与某条语料的意图冲突，正确做法是在这张表里加一条**精确到规则**
+# 的豁免并写明理由，**不是**为了让 lint 高兴去「现代化」语料——那会悄悄改掉
+# 这条门禁在问的问题。F / E9（未定义名字、语法错误）在这些目录里照常生效：
+# 那是语料自身写坏了，必须红。
