@@ -32,7 +32,7 @@ pytestmark = pytest.mark.usefixtures("clean_env")
 
 ENGINE_DIR = bridge.RUNNER_PY.parent
 
-_HOOKS = '''\
+_HOOKS = """\
 import importlib.util, json, os, sys
 _ENGINE = os.environ["TAVOTTO_SC_ENGINE"]
 _spec = importlib.util.spec_from_file_location("tvt_boot", os.path.join(_ENGINE, "bridgeboot.py"))
@@ -72,7 +72,7 @@ def _report():
         with open(dest, "w", encoding="utf-8") as f:
             json.dump({"figures": sorted(_CAPTURE),
                        "sys_path_has_inject": any(os.path.abspath(p) == mine for p in sys.path)}, f)
-'''
+"""
 
 #: B 的直白实现——照定义写，什么补丁都没打。
 _SITECUSTOMIZE_NAIVE = _HOOKS
@@ -82,7 +82,7 @@ _SITECUSTOMIZE_NAIVE = _HOOKS
 #: 逻辑，而重新实现的东西迟早与真品有出入。
 _SITECUSTOMIZE_CHAINED = (
     _HOOKS
-    + '''
+    + """
 # ---- 接力：把被我们顶掉的那份 sitecustomize 找出来跑掉 ----
 _mine = os.path.abspath(os.environ["TAVOTTO_SC_DIR"])
 for _p in sys.path:
@@ -97,7 +97,7 @@ for _p in sys.path:
             break
     except OSError:
         continue
-'''
+"""
 )
 
 SHOW_ONLY = (
@@ -294,13 +294,13 @@ def test_sitecustomize_silently_does_nothing_under_E(user_python, tmp_path, sc_c
     """
     proj = tmp_path / "proj"
     write(proj / "fig.py", SHOW_ONLY)
-    r, data = _run_b(user_python, sc_chained, proj / "fig.py", tmp_path, flags=["-E"], cwd=str(proj))
+    r, data = _run_b(
+        user_python, sc_chained, proj / "fig.py", tmp_path, flags=["-E"], cwd=str(proj)
+    )
     assert r.returncode == 0, r.stderr
     assert data is None, "-E 下 B 的钩子根本没装上"
     assert "tavotto" not in r.stderr.lower(), f"没有任何来自 Tavotto 的提示: {r.stderr}"
-    assert "non-interactive" in r.stderr, (
-        "用例前提：show 没被接管，走的是 matplotlib 原样行为"
-    )
+    assert "non-interactive" in r.stderr, "用例前提：show 没被接管，走的是 matplotlib 原样行为"
 
 
 def test_sitecustomize_does_nothing_under_S(user_python, tmp_path, sc_chained):
@@ -311,7 +311,9 @@ def test_sitecustomize_does_nothing_under_S(user_python, tmp_path, sc_chained):
     """
     proj = tmp_path / "proj"
     write(proj / "fig.py", "print('ran under -S')\n")  # 不碰 matplotlib
-    r, data = _run_b(user_python, sc_chained, proj / "fig.py", tmp_path, flags=["-S"], cwd=str(proj))
+    r, data = _run_b(
+        user_python, sc_chained, proj / "fig.py", tmp_path, flags=["-S"], cwd=str(proj)
+    )
     assert r.returncode == 0, r.stderr
     assert "ran under -S" in r.stdout
     assert data is None, "-S 下 B 的钩子根本没装上"
@@ -409,8 +411,6 @@ def test_sitecustomize_cannot_express_the_target_itself(user_python, tmp_path, s
     proj = tmp_path / "proj"
     write(proj / "paper" / "__init__.py", "")
     write(proj / "paper" / "figure.py", SHOW_ONLY)
-    r, data = _run_b(
-        user_python, sc_chained, "paper.figure", tmp_path, flags=["-m"], cwd=str(proj)
-    )
+    r, data = _run_b(user_python, sc_chained, "paper.figure", tmp_path, flags=["-m"], cwd=str(proj))
     assert r.returncode == 0, r.stderr
     assert data["figures"] == ["fig"], "B 的 -m 形态确实能捕获（语义由 CPython 自己给）"

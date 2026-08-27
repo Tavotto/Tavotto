@@ -405,6 +405,7 @@ class BridgeRun:
     # ---- build 响应 ----
     def build_result(self) -> dict:
         self._ensure_session()
+        _resolve_module_source(self.args)
         out = self.session.stems_summary(_DROPPED)
         out["descriptors"] = self.session.descriptors(
             script=self.args.rel_target,
@@ -572,10 +573,7 @@ def main(argv: list | None = None) -> int:
     finally:
         hook.uninstall()
 
-    if args.target_kind == "module":
-        main_mod = sys.modules.get("__main__")
-        args.source_path = getattr(main_mod, "__file__", "") or ""
-        _derive_target_facts_module_fixup(args)
+    _resolve_module_source(args)
 
     plt = sys.modules.get("matplotlib.pyplot")
     if plt is not None:
@@ -595,8 +593,23 @@ def main(argv: list | None = None) -> int:
     return exit_code
 
 
-def _derive_target_facts_module_fixup(args) -> None:
-    """module 目标跑完之后，用真实的 `__main__.__file__` 修正相对路径。"""
+def _resolve_module_source(args) -> None:
+    """module 目标的源文件路径要等 import 之后才知道——**在第一次要用它之前**修正。
+
+    `python -m paper.figure` 的源文件是 `runpy` 解析出来的，bridge 在跑之前
+    只能猜一个（`figure.py`）。而描述符里的 `script` / `asset_id` 必须是
+    `paper/figure.py`——asset id 是 override 挂靠的身份，猜错等于用户的编辑
+    在重开之后挂在一个不存在的东西上。
+
+    修正点**必须在 `build_result()` 里也调一次**：`plt.show()` 的屏障发生在
+    脚本执行**中间**，那时 `main()` 还没走到收尾的修正（第一版就是这样，
+    描述符里留着 `figure.py`）。`__main__` 在 runpy 启动的那一刻就已经设好，
+    所以屏障处读得到。
+    """
+    if args.target_kind != "module":
+        return
+    main_mod = sys.modules.get("__main__")
+    args.source_path = getattr(main_mod, "__file__", "") or args.source_path
     if not args.source_path:
         return
     root = args.project_root or os.getcwd()
@@ -630,9 +643,7 @@ def _write_report(run, args, exit_code: int) -> None:
         "target_kind": args.target_kind,
         "target": args.target,
         "rel_target": args.rel_target,
-        "figures": [
-            {"stem": s, "capture_source": _CAPTURE_SOURCE[s]} for s in _CAPTURE
-        ],
+        "figures": [{"stem": s, "capture_source": _CAPTURE_SOURCE[s]} for s in _CAPTURE],
         "dropped_figures": _DROPPED,
         "script_error": run.script_error,
         "engine_dir_was_on_sys_path": _ENGINE_DIR_WAS_ON_PATH,

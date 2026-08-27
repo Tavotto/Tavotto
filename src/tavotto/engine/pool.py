@@ -111,6 +111,7 @@ def build_envelope(obj: dict, *, generation: int = 0, revision: int = 0) -> dict
         env["canonical_patch_hash"] = patchspec.patch_hash(payload["patches"])
     return env
 
+
 #: (项目, 脚本) → 已经起过第几代 worker。supervisor 靠 generation 分辨
 #: 「这条响应属于哪一代」：会话被超时 kill 后重建，晚到的旧响应必须能被认出来
 #: 丢弃，否则新会话会被上一代的 manifest 污染。

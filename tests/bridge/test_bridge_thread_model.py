@@ -43,7 +43,7 @@ SHOW_ONLY = (
 
 #: 在**用户的解释器里**跑一次线程越界：本进程（.venv）没有 matplotlib，
 #: 而 `LiveFigureSession` 的断言要真造一个会话才验得到。
-THREAD_PROBE = '''\
+THREAD_PROBE = """\
 import importlib.util, os, sys, threading
 ENGINE = sys.argv[1]
 spec = importlib.util.spec_from_file_location("boot", os.path.join(ENGINE, "bridgeboot.py"))
@@ -66,7 +66,7 @@ def other():
         box.append("NO_ERROR")
 t = threading.Thread(target=other); t.start(); t.join()
 print("RESULT", box[0])
-'''
+"""
 
 
 # ===========================================================================

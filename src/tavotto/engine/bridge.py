@@ -174,8 +174,7 @@ class BridgeSession:
             except socket.timeout:
                 if self.proc is not None and self.proc.poll() is not None:
                     raise BridgeError(
-                        f"用户的 Python 还没连上控制通道就退出了"
-                        f"（退出码 {self.proc.returncode}）",
+                        f"用户的 Python 还没连上控制通道就退出了（退出码 {self.proc.returncode}）",
                         code="bridge_child_exited",
                     ) from None
                 continue

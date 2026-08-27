@@ -209,10 +209,8 @@ class Worker(wireproto.V1Handler):
             # 与 `_patched_savefig` 同一条来源记账：paper_style.save 是显式
             # 「保存这张图」，来源就是 savefig（以前这里不记来源，靠读取端
             # `.get(stem, SOURCE_SAVEFIG)` 兜底——结果一样，现在是显式的）。
-            paper_style.save = (
-                lambda fig, stem, outdir="figures": SESSION.add_figure(
-                    stem, fig, figcapture.SOURCE_SAVEFIG
-                )
+            paper_style.save = lambda fig, stem, outdir="figures": SESSION.add_figure(
+                stem, fig, figcapture.SOURCE_SAVEFIG
             )
 
         # 脚本看到的 argv 必须是它自己的，不是 worker 的。不换的话
@@ -424,9 +422,7 @@ def main() -> None:
         except ValueError as exc:
             # 连信封都解析不出来，无从判断对方说的是哪套协议：按 v1 的错误
             # 形状回（request_id 只能是 null），至少 code 是可读的。
-            resp = wireproto.v1_error(
-                {}, ProtocolError("bad_request", f"JSON 解析失败: {exc}")
-            )
+            resp = wireproto.v1_error({}, ProtocolError("bad_request", f"JSON 解析失败: {exc}"))
             sys.stdout.write(json.dumps(resp, ensure_ascii=False) + "\n")
             sys.stdout.flush()
             continue

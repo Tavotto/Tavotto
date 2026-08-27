@@ -180,6 +180,39 @@ def test_the_envelope_comes_from_the_same_function_as_the_pipe_control_plane():
     assert env["canonical_patch_hash"], "带 patches 的命令要带 canonical hash"
 
 
+def test_a_noisy_script_never_desyncs_the_control_channel(user_python, tmp_path, bridge_session):
+    """用户在 stdout 上打印**合法协议 JSON** 时，控制通道毫发无伤。
+
+    这是「协议不能偷 stdout」那条判断的直接判据：脚本连打 200 行看起来像
+    请求/响应的东西，会话照样 build / render / 拿到配对的 SVG。
+
+    反证：把控制通道改回 stdin/stdout，本条与 E2E 一起当场红。
+    """
+    proj = tmp_path / "proj"
+    noise = "\n".join(
+        f'print(\'{{"protocol_version":1,"request_id":"r-{i}","ok":true}}\')' for i in range(200)
+    )
+    write(
+        proj / "fig.py",
+        "import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\n"
+        + noise
+        + '\nprint(\'{"protocol_version":1,"cmd":"shutdown","request_id":"x"}\')\n'
+        "plt.plot([1,2],[3,4])\nplt.show()\n"
+        "print('SURVIVED', flush=True)\n",
+    )
+    with bridge_session(proj / "fig.py", cwd=str(proj)) as sess:
+        ev = sess.wait_event("barrier")
+        assert ev["stems"] == ["fig"]
+        build = sess.ensure_built()
+        stem = next(iter(build["stems"]))
+        resp = sess.override(stem, [], inline_svg=True)
+        assert resp["svg"].lstrip().startswith("<?xml")
+        sess.resume()
+        sess.wait_event("barrier")
+        sess.resume()
+        sess.wait_event("exit")
+
+
 def test_disconnecting_never_leaves_the_user_script_hanging(user_python, tmp_path):
     """父进程走掉时，屏障必须放开——用户的脚本不是我们的人质。
 

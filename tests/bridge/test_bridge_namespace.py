@@ -227,5 +227,5 @@ def test_no_bare_sibling_import_survives_in_overrides():
     bad = re.findall(r"^\s*(?:from\s+manifest\s+import|import\s+manifest)\b", src, re.M)
     assert not bad, (
         f"overrides.py 里有 {len(bad)} 处裸的兄弟模块 import——native bridge 里"
-        f"它们会命中用户项目自己的 manifest.py。用 `_sibling(\"manifest\")`。"
+        f'它们会命中用户项目自己的 manifest.py。用 `_sibling("manifest")`。'
     )

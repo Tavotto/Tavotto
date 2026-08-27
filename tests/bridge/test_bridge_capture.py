@@ -94,10 +94,7 @@ def test_multiple_figures_are_all_captured_in_order(user_python, tmp_path):
     r, data = _run(
         user_python,
         tmp_path,
-        "for i in range(3):\n"
-        "    plt.figure()\n"
-        "    plt.plot([1,2],[i,i+1])\n"
-        "plt.show()\n",
+        "for i in range(3):\n    plt.figure()\n    plt.plot([1,2],[i,i+1])\nplt.show()\n",
     )
     assert r.returncode == 0, r.stderr
     assert _stems(data) == ["fig", "fig-2", "fig-3"]
@@ -174,8 +171,8 @@ def test_figure_number_gaps_never_leak_into_the_stem(user_python, tmp_path):
         user_python,
         tmp_path,
         "f1 = plt.figure(); f2 = plt.figure(); f3 = plt.figure()\n"
-        "plt.close(f2)\n"           # 号变成 1, 3
-        "f4 = plt.figure()\n"       # 号 4
+        "plt.close(f2)\n"  # 号变成 1, 3
+        "f4 = plt.figure()\n"  # 号 4
         "for f in (f1, f3, f4):\n"
         "    f.add_subplot(111).plot([1,2],[1,2])\n"
         "plt.show()\n"
@@ -247,7 +244,7 @@ def test_user_stdout_is_never_mistaken_for_protocol(user_python, tmp_path, capfd
     noisy = (
         "import sys\n"
         "print('hello stdout')\n"
-        "print('{\"protocol_version\":1,\"cmd\":\"shutdown\",\"request_id\":\"x\"}')\n"
+        'print(\'{"protocol_version":1,"cmd":"shutdown","request_id":"x"}\')\n'
         "print('hello stderr', file=sys.stderr)\n"
         "plt.plot([1,2],[3,4])\nplt.show()\n"
     )

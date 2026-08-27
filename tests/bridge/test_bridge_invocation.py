@@ -27,7 +27,7 @@ from support.bridgekit import child_env, run_runner, write
 from tavotto.engine import bridge
 
 #: 脚本真的会读到的那些"我是谁、我在哪、我是怎么被叫起来的"。
-PROBE = '''\
+PROBE = """\
 import json, os, sys
 out = {
     "executable": sys.executable,
@@ -46,7 +46,7 @@ out = {
 }
 with open(os.environ["PROBE_OUT"], "w", encoding="utf-8") as f:
     json.dump(out, f)
-'''
+"""
 
 
 @pytest.fixture

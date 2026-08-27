@@ -128,16 +128,28 @@ def load_engine_modules(engine_dir: str, names) -> types.ModuleType:
     saved_top = {n: sys.modules.get(n) for n in _TOPLEVEL_TO_RESTORE}
     saved_present = {n: (n in sys.modules) for n in _TOPLEVEL_TO_RESTORE}
     sys.path.insert(0, engine_dir)
-    # **把上一批已经装好的模块按平铺名重新摆回去**（装载窗口内）。
-    # 分两阶段装是有意的（第一阶段不许碰 matplotlib），代价是第一阶段结束时
-    # 顶层名字已经被收回了——第二阶段的 `figsession` 里那句 `import figcapture`
-    # 于是会**再装一份**。两份 figcapture 不会当场报错（常量字符串相等），
-    # 它会在别处以「捕获表对不上」的形状出现，而那时没人会想到模块身份。
-    # 看护：test_bridge_namespace.py::test_two_phase_load_never_duplicates_a_module
-    for name in ENGINE_SIBLINGS:
+    # 装载窗口内，把每个平铺名摆成**我们要的那一份**：
+    #
+    # * 已经装过的（上一阶段）→ 摆回去。分两阶段装是有意的（第一阶段不许碰
+    #   matplotlib），代价是第一阶段结束时顶层名字已经被收回了——第二阶段的
+    #   `figsession` 里那句 `import figcapture` 于是会**再装一份**。两份
+    #   figcapture 不会当场报错（常量字符串相等），它会在别处以「捕获表对不上」
+    #   的形状出现，而那时没人会想到模块身份。
+    # * **用户已经 import 过的同名模块 → 挪开**。用户项目里就可能有一个
+    #   `figsession.py`，他 `import figsession` 之后 `sys.modules` 里坐着的是
+    #   他那份；我们再 `importlib.import_module("figsession")` 拿到的**也是
+    #   他那份**（import 系统先查 sys.modules，根本不会走 sys.path）。表现是
+    #   `AttributeError: module 'tavotto_bridge_runtime.figsession' has no
+    #   attribute 'LiveFigureSession'`——指向完全错误的方向。窗口结束时逐个
+    #   还原，用户那份一个字节没动。
+    #
+    # 看护：test_bridge_namespace.py 的 two_phase / user_modules_win 两条。
+    for name in _TOPLEVEL_TO_RESTORE:
         already = getattr(pkg, name, None)
         if already is not None:
             sys.modules[name] = already
+        else:
+            sys.modules.pop(name, None)
     try:
         # 平铺 import：引擎模块之间就是这么互相引用的（`manifest` 里
         # `import pathgeom`、`from overrides import …`）。装载期让它们照旧

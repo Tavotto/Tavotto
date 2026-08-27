@@ -59,9 +59,7 @@ def cmd_probe(args) -> int:
     spec = _make_spec(args.invocation, args.python)
     out_dir = args.out_dir or tempfile.mkdtemp(prefix="tavotto-bridge-")
     report = args.report or os.path.join(out_dir, "report.json")
-    argv = execspec.bridge_argv(
-        spec, runner_py=bridge.RUNNER_PY, out_dir=out_dir, report=report
-    )
+    argv = execspec.bridge_argv(spec, runner_py=bridge.RUNNER_PY, out_dir=out_dir, report=report)
     import subprocess  # noqa: PLC0415 — 只有这条分支要
 
     code = subprocess.call(argv, cwd=spec.cwd)
@@ -74,7 +72,9 @@ def cmd_run(args) -> int:
     out_dir = args.out_dir or tempfile.mkdtemp(prefix="tavotto-bridge-")
     print(f"[spike] 解释器 {spec.interpreter}", file=sys.stderr)
     print(f"[spike] cwd {spec.cwd}", file=sys.stderr)
-    print(f"[spike] 目标 {spec.target_kind} {spec.raw_target} argv={list(spec.argv)}", file=sys.stderr)
+    print(
+        f"[spike] 目标 {spec.target_kind} {spec.raw_target} argv={list(spec.argv)}", file=sys.stderr
+    )
     with bridge.BridgeSession(spec, out_dir=out_dir) as sess:
         # **每个屏障都要被应答**。一次运行里屏障可能出现多次：脚本中间每个
         # `plt.show()` 一次，脚本跑完再一次（那一次才是 show-only 之外的脚本
@@ -82,9 +82,7 @@ def cmd_run(args) -> int:
         # ——第一版就是这样挂死的，本机复现过。
         while True:
             ev = sess.wait_event("barrier")
-            print(
-                f"[spike] 屏障（{ev.get('reason')}）：stems={ev.get('stems')}", file=sys.stderr
-            )
+            print(f"[spike] 屏障（{ev.get('reason')}）：stems={ev.get('stems')}", file=sys.stderr)
             build = sess.ensure_built()
             for stem, info in build.get("stems", {}).items():
                 print(
