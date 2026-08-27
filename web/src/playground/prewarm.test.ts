@@ -213,3 +213,87 @@ describe('暖机账本', () => {
     expect(warmState()).toBe('cold')
   })
 })
+
+describe('schedulePrewarm：「取消」之后不许立刻又下载起来', () => {
+  // 每条用例都必须收掉自己的订阅——不收的话 window 上的监听器会活到下一条
+  // 用例里，被它的 dispatchEvent 再触发一次（第一版就是这么多出一个 Worker
+  // 的）。这同时是组件侧的纪律：effect 的 cleanup 必须摘掉这两个监听。
+  let stop: (() => void) | null = null
+  const schedule = (m: typeof import('./prewarm'), afterCancel = false) => {
+    stop = m.schedulePrewarm({ afterCancel })
+  }
+  afterEach(() => {
+    stop?.()
+    stop = null
+  })
+
+  it('正常回到空状态：照常排一次空闲预热', async () => {
+    const m = await freshModule()
+    vi.useFakeTimers()
+    schedule(m)
+    vi.advanceTimersByTime(500)
+    expect(FakeWorker.instances).toHaveLength(1)
+  })
+
+  it('取消之后：空闲回调过去了也不起 Worker', async () => {
+    const m = await freshModule()
+    vi.useFakeTimers()
+    schedule(m, true)
+    vi.advanceTimersByTime(5_000)
+    expect(FakeWorker.instances).toHaveLength(0)
+    expect(m.warmState()).toBe('cold')
+  })
+
+  it('取消之后，用户再次表达意图（指针按下）才重新排', async () => {
+    const m = await freshModule()
+    vi.useFakeTimers()
+    schedule(m, true)
+    vi.advanceTimersByTime(5_000)
+    expect(FakeWorker.instances).toHaveLength(0)
+
+    globalThis.dispatchEvent(new Event('pointerdown'))
+    vi.advanceTimersByTime(500)
+    expect(FakeWorker.instances).toHaveLength(1)
+  })
+
+  it('按键同样算意图（键盘用户不该被落下）', async () => {
+    const m = await freshModule()
+    vi.useFakeTimers()
+    schedule(m, true)
+    globalThis.dispatchEvent(new Event('keydown'))
+    vi.advanceTimersByTime(500)
+    expect(FakeWorker.instances).toHaveLength(1)
+  })
+
+  it('意图只算一次：连按不会排出第二个 Worker', async () => {
+    const m = await freshModule()
+    vi.useFakeTimers()
+    schedule(m, true)
+    globalThis.dispatchEvent(new Event('pointerdown'))
+    globalThis.dispatchEvent(new Event('keydown'))
+    globalThis.dispatchEvent(new Event('pointerdown'))
+    vi.advanceTimersByTime(5_000)
+    expect(FakeWorker.instances).toHaveLength(1)
+  })
+
+  it('离开空状态时取消订阅：之后的意图不再唤起预热', async () => {
+    const m = await freshModule()
+    vi.useFakeTimers()
+    schedule(m, true)
+    stop?.()
+    stop = null
+    globalThis.dispatchEvent(new Event('pointerdown'))
+    vi.advanceTimersByTime(5_000)
+    expect(FakeWorker.instances).toHaveLength(0)
+  })
+
+  it('saveData 下，连意图也不会让它起 Worker（既有边界没被绕开）', async () => {
+    setConnection({ saveData: true })
+    const m = await freshModule()
+    vi.useFakeTimers()
+    schedule(m, true)
+    globalThis.dispatchEvent(new Event('keydown'))
+    vi.advanceTimersByTime(5_000)
+    expect(FakeWorker.instances).toHaveLength(0)
+  })
+})
