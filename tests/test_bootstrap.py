@@ -4,6 +4,7 @@
 且默认跳过（-m slow 才跑）。其余全部打桩——重点是验证**边界**：
 永远不往用户已有的环境里装东西。
 """
+
 import subprocess
 
 import pytest
@@ -27,12 +28,13 @@ def test_status_ok_when_interpreter_found(monkeypatch):
     monkeypatch.setattr(bootstrap, "matplotlib_version", lambda p: "3.11.1")
     st = bootstrap.status()
     assert st["ok"] is True and st["matplotlib"] == "3.11.1"
-    assert st["managed"] is False        # 用的是用户自己的环境
+    assert st["managed"] is False  # 用的是用户自己的环境
 
 
 def test_status_offers_install_when_base_python_exists(monkeypatch):
     def boom():
         raise pool.WorkerError("no", code="no_worker_python")
+
     monkeypatch.setattr(pool, "find_worker_python", boom)
     monkeypatch.setattr(bootstrap, "find_base_python", lambda: "/usr/bin/python3")
     st = bootstrap.status()
@@ -41,8 +43,10 @@ def test_status_offers_install_when_base_python_exists(monkeypatch):
 
 def test_status_admits_it_cannot_help_without_any_python(monkeypatch):
     """一个 Python 都没有时不能假装能修——venv 得由某个真解释器创建。"""
+
     def boom():
         raise pool.WorkerError("no", code="no_worker_python")
+
     monkeypatch.setattr(pool, "find_worker_python", boom)
     monkeypatch.setattr(bootstrap, "find_base_python", lambda: None)
     st = bootstrap.status()
@@ -64,7 +68,7 @@ def test_install_never_touches_the_users_own_environment(monkeypatch, tmp_path):
 
     def fake_run(cmd):
         calls.append(cmd)
-        if "venv" in cmd:                       # 假装 venv 建好了
+        if "venv" in cmd:  # 假装 venv 建好了
             bootstrap.venv_python().parent.mkdir(parents=True, exist_ok=True)
             bootstrap.venv_python().write_text("#!/bin/sh\n")
         return 0, "ok\n"
@@ -141,14 +145,17 @@ def test_real_install_end_to_end(monkeypatch):
         pytest.skip("这台机器上没有可用来建 venv 的 Python")
     out = bootstrap.install()
     assert out["ok"] is True, out
-    assert subprocess.run([out["python"], "-c", "import matplotlib"],
-                          capture_output=True).returncode == 0
+    assert (
+        subprocess.run([out["python"], "-c", "import matplotlib"], capture_output=True).returncode
+        == 0
+    )
 
 
 # ---------------- HTTP 端点 ---------------------------------------------------
 @pytest.fixture
 def client():
     from tavotto import app as m
+
     m.app.config["TESTING"] = True
     return m.app.test_client()
 
@@ -163,6 +170,7 @@ def test_environment_endpoint_reports_status(client, monkeypatch):
 def test_install_endpoint_refuses_without_any_python(client, monkeypatch):
     def boom():
         raise pool.WorkerError("no", code="no_worker_python")
+
     monkeypatch.setattr(pool, "find_worker_python", boom)
     monkeypatch.setattr(bootstrap, "find_base_python", lambda: None)
     resp = client.post("/api/engine/environment/install")
@@ -206,12 +214,14 @@ def test_render_failure_carries_machine_readable_code(client, monkeypatch, tmp_p
     (figs / "p1.pdf").write_bytes(b"%PDF-1.4\n")
     m.open_project(str(figs))
     monkeypatch.setattr(
-        m.engine_registry.Registry, "for_stem",
-        lambda self, s: {"script": "x.py", "entry": "main", "cost": "light"})
+        m.engine_registry.Registry,
+        "for_stem",
+        lambda self, s: {"script": "x.py", "entry": "main", "cost": "light"},
+    )
 
     def boom(*a, **kw):
-        raise pool.WorkerError("找不到装有 matplotlib 的 Python",
-                               code="no_worker_python")
+        raise pool.WorkerError("找不到装有 matplotlib 的 Python", code="no_worker_python")
+
     monkeypatch.setattr(m.engine_pool, "get", boom)
 
     resp = client.post("/api/engine/render", json={"id": "p1.pdf", "patches": []})

@@ -17,6 +17,7 @@
 
 纯标准库，Flask 父进程 import。
 """
+
 from __future__ import annotations
 
 import json
@@ -54,31 +55,75 @@ def _family(agent: str) -> str | None:
 # 内置预设只提供「接口地址 + 协议 + 常见模型名」，绝不含任何密钥。
 # 模型名会过时，所以在界面上可自由编辑——预设只是省去查文档。
 PRESETS: list[dict] = [
-    {"id": "anthropic", "label": "Anthropic 官方", "agent": "claude",
-     "base_url": "", "models": ["sonnet", "opus", "haiku"],
-     "note": "留空 = 用 claude CLI 自己的登录态"},
-    {"id": "deepseek", "label": "DeepSeek", "agent": "claude",
-     "base_url": "https://api.deepseek.com/anthropic",
-     "models": ["deepseek-chat", "deepseek-reasoner"]},
-    {"id": "moonshot", "label": "Kimi（月之暗面）", "agent": "claude",
-     "base_url": "https://api.moonshot.cn/anthropic",
-     "models": ["kimi-k2-turbo-preview", "kimi-k2-0905-preview"]},
-    {"id": "zhipu", "label": "智谱 GLM", "agent": "claude",
-     "base_url": "https://open.bigmodel.cn/api/anthropic",
-     "models": ["glm-4.6", "glm-4.5-air"]},
-    {"id": "openai", "label": "OpenAI 官方", "agent": "codex",
-     "base_url": "", "wire_api": "responses", "models": [],
-     "note": "留空 = 用 codex CLI 自己的登录态"},
-    {"id": "dashscope", "label": "阿里云百炼（通义）", "agent": "codex",
-     "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-     "wire_api": "chat", "models": ["qwen3-coder-plus", "qwen-max"]},
-    {"id": "deepseek-oai", "label": "DeepSeek（OpenAI 兼容）", "agent": "codex",
-     "base_url": "https://api.deepseek.com/v1", "wire_api": "chat",
-     "models": ["deepseek-chat", "deepseek-reasoner"]},
-    {"id": "custom-claude", "label": "自定义（Anthropic 兼容）", "agent": "claude",
-     "base_url": "", "models": []},
-    {"id": "custom-codex", "label": "自定义（OpenAI 兼容）", "agent": "codex",
-     "base_url": "", "wire_api": "chat", "models": []},
+    {
+        "id": "anthropic",
+        "label": "Anthropic 官方",
+        "agent": "claude",
+        "base_url": "",
+        "models": ["sonnet", "opus", "haiku"],
+        "note": "留空 = 用 claude CLI 自己的登录态",
+    },
+    {
+        "id": "deepseek",
+        "label": "DeepSeek",
+        "agent": "claude",
+        "base_url": "https://api.deepseek.com/anthropic",
+        "models": ["deepseek-chat", "deepseek-reasoner"],
+    },
+    {
+        "id": "moonshot",
+        "label": "Kimi（月之暗面）",
+        "agent": "claude",
+        "base_url": "https://api.moonshot.cn/anthropic",
+        "models": ["kimi-k2-turbo-preview", "kimi-k2-0905-preview"],
+    },
+    {
+        "id": "zhipu",
+        "label": "智谱 GLM",
+        "agent": "claude",
+        "base_url": "https://open.bigmodel.cn/api/anthropic",
+        "models": ["glm-4.6", "glm-4.5-air"],
+    },
+    {
+        "id": "openai",
+        "label": "OpenAI 官方",
+        "agent": "codex",
+        "base_url": "",
+        "wire_api": "responses",
+        "models": [],
+        "note": "留空 = 用 codex CLI 自己的登录态",
+    },
+    {
+        "id": "dashscope",
+        "label": "阿里云百炼（通义）",
+        "agent": "codex",
+        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "wire_api": "chat",
+        "models": ["qwen3-coder-plus", "qwen-max"],
+    },
+    {
+        "id": "deepseek-oai",
+        "label": "DeepSeek（OpenAI 兼容）",
+        "agent": "codex",
+        "base_url": "https://api.deepseek.com/v1",
+        "wire_api": "chat",
+        "models": ["deepseek-chat", "deepseek-reasoner"],
+    },
+    {
+        "id": "custom-claude",
+        "label": "自定义（Anthropic 兼容）",
+        "agent": "claude",
+        "base_url": "",
+        "models": [],
+    },
+    {
+        "id": "custom-codex",
+        "label": "自定义（OpenAI 兼容）",
+        "agent": "codex",
+        "base_url": "",
+        "wire_api": "chat",
+        "models": [],
+    },
 ]
 
 _ID_RE = re.compile(r"[^a-zA-Z0-9_-]+")
@@ -134,9 +179,11 @@ def get(pid: str | None) -> dict | None:
 def public(rec: dict) -> dict:
     """给界面看的形状：密钥只留「有没有」和尾四位，绝不整串回传。"""
     key = str(rec.get("api_key") or "")
-    return {**{k: v for k, v in rec.items() if k != "api_key"},
-            "has_key": bool(key),
-            "key_hint": f"…{key[-4:]}" if len(key) >= 4 else ""}
+    return {
+        **{k: v for k, v in rec.items() if k != "api_key"},
+        "has_key": bool(key),
+        "key_hint": f"…{key[-4:]}" if len(key) >= 4 else "",
+    }
 
 
 def save(rec: dict) -> list[dict]:
@@ -218,8 +265,9 @@ def _toml(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
-def spawn_overrides(agent: str, rec: dict | None,
-                    model: str | None = None) -> tuple[list[str], dict[str, str]]:
+def spawn_overrides(
+    agent: str, rec: dict | None, model: str | None = None
+) -> tuple[list[str], dict[str, str]]:
     """→ (追加到命令行的参数, 追加到环境的变量)。rec 为 None 时两者都空。"""
     if rec is None:
         return [], {}
@@ -240,9 +288,12 @@ def spawn_overrides(agent: str, rec: dict | None,
         if chosen:
             # 第三方网关基本不认 sonnet/opus 这些别名，把三档默认模型一起
             # 钉死，`--model` 之外的内部调用（小模型任务）才不会打到不存在的模型上
-            for key in ("ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL",
-                        "ANTHROPIC_DEFAULT_OPUS_MODEL",
-                        "ANTHROPIC_DEFAULT_HAIKU_MODEL"):
+            for key in (
+                "ANTHROPIC_MODEL",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            ):
                 env[key] = chosen
         return [], env
 
@@ -251,12 +302,16 @@ def spawn_overrides(agent: str, rec: dict | None,
             return [], {}
         pid = CODEX_PROVIDER_ID
         args = [
-            "-c", f"model_provider={_toml(pid)}",
-            "-c", f"model_providers.{pid}.name={_toml(rec.get('label') or pid)}",
-            "-c", f"model_providers.{pid}.base_url={_toml(base_url)}",
-            "-c", f"model_providers.{pid}.wire_api="
-                  f"{_toml(rec.get('wire_api') or 'chat')}",
-            "-c", f"model_providers.{pid}.env_key={_toml(CODEX_KEY_ENV)}",
+            "-c",
+            f"model_provider={_toml(pid)}",
+            "-c",
+            f"model_providers.{pid}.name={_toml(rec.get('label') or pid)}",
+            "-c",
+            f"model_providers.{pid}.base_url={_toml(base_url)}",
+            "-c",
+            f"model_providers.{pid}.wire_api={_toml(rec.get('wire_api') or 'chat')}",
+            "-c",
+            f"model_providers.{pid}.env_key={_toml(CODEX_KEY_ENV)}",
         ]
         env = {CODEX_KEY_ENV: api_key} if api_key else {}
         return args, env

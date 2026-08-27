@@ -6,6 +6,7 @@
 
 所以这里的用例大多在钉「猜错会怎样」，而不是「正常路径能跑通」。
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -37,10 +38,13 @@ def _m(dist, *entries, version="0.9.1", sha=SHA):
 
 # ── 造清单 ────────────────────────────────────────────────────────────────
 
+
 def test_build_records_role_path_hash_and_platform(dist):
-    m = _m(dist,
-           ("wheel", "dist/tavotto-0.9.1-py3-none-any.whl", "python"),
-           ("sdist", "dist/tavotto-0.9.1.tar.gz", "python"))
+    m = _m(
+        dist,
+        ("wheel", "dist/tavotto-0.9.1-py3-none-any.whl", "python"),
+        ("sdist", "dist/tavotto-0.9.1.tar.gz", "python"),
+    )
     assert m["schema"] == AM.SCHEMA and m["version"] == "0.9.1"
     assert m["source_sha"] == SHA
     wheel = next(a for a in m["artifacts"] if a["role"] == "wheel")
@@ -74,18 +78,20 @@ def test_a_duplicate_unique_role_is_refused(dist):
     """两个 wheel 谁都不会报错，而用户装到的和我们验过的不是同一个。"""
     (dist / "dist" / "tavotto-0.9.1-py3-none-any2.whl").write_bytes(b"other")
     with pytest.raises(AM.ManifestError, match="恰好一个"):
-        _m(dist,
-           ("wheel", "dist/tavotto-0.9.1-py3-none-any.whl", "python"),
-           ("wheel", "dist/tavotto-0.9.1-py3-none-any2.whl", "python"))
+        _m(
+            dist,
+            ("wheel", "dist/tavotto-0.9.1-py3-none-any.whl", "python"),
+            ("wheel", "dist/tavotto-0.9.1-py3-none-any2.whl", "python"),
+        )
 
 
 def test_source_sha_must_look_like_a_sha(dist):
     with pytest.raises(AM.ManifestError, match="40 位"):
-        _m(dist, ("wheel", "dist/tavotto-0.9.1-py3-none-any.whl", "python"),
-           sha="v0.9.1")
+        _m(dist, ("wheel", "dist/tavotto-0.9.1-py3-none-any.whl", "python"), sha="v0.9.1")
 
 
 # ── 校验 ──────────────────────────────────────────────────────────────────
+
 
 def test_verify_passes_on_a_fresh_manifest(dist):
     m = _m(dist, ("wheel", "dist/tavotto-0.9.1-py3-none-any.whl", "python"))
@@ -113,8 +119,7 @@ def test_verify_catches_a_missing_required_role(dist):
 def test_verify_catches_a_version_or_sha_mismatch(dist):
     m = _m(dist, ("wheel", "dist/tavotto-0.9.1-py3-none-any.whl", "python"))
     assert any("版本对不上" in p for p in AM.verify(m, [], dist, version="0.9.2"))
-    assert any("source SHA 对不上" in p
-               for p in AM.verify(m, [], dist, source_sha="b" * 40))
+    assert any("source SHA 对不上" in p for p in AM.verify(m, [], dist, source_sha="b" * 40))
 
 
 def test_verify_catches_a_deleted_file(dist):
@@ -124,6 +129,7 @@ def test_verify_catches_a_deleted_file(dist):
 
 
 # ── 合并（这是「同一个 SHA」真正被证明的地方）──────────────────────────────
+
 
 def test_merge_refuses_two_legs_from_different_commits(dist):
     """**「同一个 tag」证明不了「同一个 commit」。**
@@ -162,6 +168,7 @@ def test_merge_keeps_every_artifact(dist):
 
 # ── 取路径（单值 action 输入唯一的合法来源）──────────────────────────────
 
+
 def test_path_returns_one_concrete_file(dist):
     m = _m(dist, ("wheel", "dist/tavotto-0.9.1-py3-none-any.whl", "python"))
     p = AM.path_of(m, "wheel")
@@ -170,9 +177,15 @@ def test_path_returns_one_concrete_file(dist):
 
 
 def test_path_refuses_when_the_role_is_ambiguous(dist):
-    m = {"schema": 1, "version": "0.9.1", "source_sha": SHA, "artifacts": [
-        {"role": "sbom", "path": "a.json", "sha256": "0" * 64, "platform": "python"},
-        {"role": "sbom", "path": "b.json", "sha256": "1" * 64, "platform": "python"}]}
+    m = {
+        "schema": 1,
+        "version": "0.9.1",
+        "source_sha": SHA,
+        "artifacts": [
+            {"role": "sbom", "path": "a.json", "sha256": "0" * 64, "platform": "python"},
+            {"role": "sbom", "path": "b.json", "sha256": "1" * 64, "platform": "python"},
+        ],
+    }
     with pytest.raises(AM.ManifestError, match="取不出"):
         AM.path_of(m, "sbom")
 
@@ -185,17 +198,45 @@ def test_path_refuses_a_missing_role(dist):
 
 # ── CLI ───────────────────────────────────────────────────────────────────
 
+
 def test_cli_build_then_verify_then_path(dist, tmp_path, capsys):
     out = tmp_path / "artifact-manifest.json"
-    rc = AM.main(["build", "--version", "0.9.1", "--source-sha", SHA,
-                  "--base", str(dist), "--out", str(out),
-                  "--add", "wheel:dist/tavotto-0.9.1-py3-none-any.whl:python",
-                  "--add", "sdist:dist/tavotto-0.9.1.tar.gz:python"])
+    rc = AM.main(
+        [
+            "build",
+            "--version",
+            "0.9.1",
+            "--source-sha",
+            SHA,
+            "--base",
+            str(dist),
+            "--out",
+            str(out),
+            "--add",
+            "wheel:dist/tavotto-0.9.1-py3-none-any.whl:python",
+            "--add",
+            "sdist:dist/tavotto-0.9.1.tar.gz:python",
+        ]
+    )
     assert rc == 0 and out.is_file()
 
-    assert AM.main(["verify", str(out), "--require", "wheel,sdist",
-                    "--base", str(dist), "--version", "0.9.1",
-                    "--source-sha", SHA]) == 0
+    assert (
+        AM.main(
+            [
+                "verify",
+                str(out),
+                "--require",
+                "wheel,sdist",
+                "--base",
+                str(dist),
+                "--version",
+                "0.9.1",
+                "--source-sha",
+                SHA,
+            ]
+        )
+        == 0
+    )
 
     capsys.readouterr()
     assert AM.main(["path", str(out), "--role", "wheel"]) == 0
@@ -204,18 +245,45 @@ def test_cli_build_then_verify_then_path(dist, tmp_path, capsys):
 
 def test_cli_verify_exits_nonzero_and_says_why(dist, tmp_path, capsys):
     out = tmp_path / "m.json"
-    AM.main(["build", "--version", "0.9.1", "--source-sha", SHA,
-             "--base", str(dist), "--out", str(out),
-             "--add", "wheel:dist/tavotto-0.9.1-py3-none-any.whl:python"])
+    AM.main(
+        [
+            "build",
+            "--version",
+            "0.9.1",
+            "--source-sha",
+            SHA,
+            "--base",
+            str(dist),
+            "--out",
+            str(out),
+            "--add",
+            "wheel:dist/tavotto-0.9.1-py3-none-any.whl:python",
+        ]
+    )
     (dist / "dist" / "tavotto-0.9.1-py3-none-any.whl").write_bytes(b"tampered")
     assert AM.main(["verify", str(out), "--base", str(dist)]) == 1
     assert "::error::" in capsys.readouterr().out
 
 
 def test_cli_reports_a_bad_add_spec_instead_of_guessing(dist, tmp_path):
-    assert AM.main(["build", "--version", "0.9.1", "--source-sha", SHA,
-                    "--base", str(dist), "--out", str(tmp_path / "m.json"),
-                    "--add", "wheel:dist/tavotto-0.9.1-py3-none-any.whl"]) == 1
+    assert (
+        AM.main(
+            [
+                "build",
+                "--version",
+                "0.9.1",
+                "--source-sha",
+                SHA,
+                "--base",
+                str(dist),
+                "--out",
+                str(tmp_path / "m.json"),
+                "--add",
+                "wheel:dist/tavotto-0.9.1-py3-none-any.whl",
+            ]
+        )
+        == 1
+    )
 
 
 def test_manifest_is_stable_across_runs(dist, tmp_path):
@@ -227,8 +295,21 @@ def test_manifest_is_stable_across_runs(dist, tmp_path):
     a = tmp_path / "a.json"
     b = tmp_path / "b.json"
     for out in (a, b):
-        AM.main(["build", "--version", "0.9.1", "--source-sha", SHA,
-                 "--base", str(dist), "--out", str(out),
-                 "--add", "sdist:dist/tavotto-0.9.1.tar.gz:python",
-                 "--add", "wheel:dist/tavotto-0.9.1-py3-none-any.whl:python"])
+        AM.main(
+            [
+                "build",
+                "--version",
+                "0.9.1",
+                "--source-sha",
+                SHA,
+                "--base",
+                str(dist),
+                "--out",
+                str(out),
+                "--add",
+                "sdist:dist/tavotto-0.9.1.tar.gz:python",
+                "--add",
+                "wheel:dist/tavotto-0.9.1-py3-none-any.whl:python",
+            ]
+        )
     assert a.read_bytes() == b.read_bytes()

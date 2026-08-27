@@ -7,6 +7,7 @@
 生成真 zip，对包里**每一个文件**全文搜索，断言 0 次出现。这一条不是锦上添花
 ——它是「allowlist 真的成立」的唯一可验证判据。
 """
+
 import json
 import os
 import re
@@ -49,12 +50,18 @@ def _redact(text):
 
 
 def event(seq=1, **extra):
-    ev = {"seq": seq, "ts": 1_756_000_000_000 + seq, "t_ms": seq * 10,
-          "type": "align.blocked", "mode": "left",
-          "panel": "panel:aaaaaaaaaaaa", "reason": "authority_stale",
-          "document_variant": "var:111111111111",
-          "display_variant": "var:222222222222",
-          "authority_variant": "var:222222222222"}
+    ev = {
+        "seq": seq,
+        "ts": 1_756_000_000_000 + seq,
+        "t_ms": seq * 10,
+        "type": "align.blocked",
+        "mode": "left",
+        "panel": "panel:aaaaaaaaaaaa",
+        "reason": "authority_stale",
+        "document_variant": "var:111111111111",
+        "display_variant": "var:222222222222",
+        "authority_variant": "var:222222222222",
+    }
     ev.update(extra)
     return ev
 
@@ -63,23 +70,37 @@ def snapshot(**extra):
     snap = {
         "schema_version": 1,
         "session_ms": 12345,
-        "document": {"document_hash": "doc:aaaaaaaaaaaa", "object_count": 6,
-                     "panel_count": 3, "canvas_count": 1,
-                     "history": {"past": 17, "future": 0, "txn_open": False,
-                                 "txn_label_key": None}},
-        "selection": {"active_panel": "panel:aaaaaaaaaaaa",
-                      "selection_kind": "element", "element_count": 2,
-                      "element_gids": ["axes_0.title", "axes_0.xaxis.label"],
-                      "object_count": 0},
+        "document": {
+            "document_hash": "doc:aaaaaaaaaaaa",
+            "object_count": 6,
+            "panel_count": 3,
+            "canvas_count": 1,
+            "history": {"past": 17, "future": 0, "txn_open": False, "txn_label_key": None},
+        },
+        "selection": {
+            "active_panel": "panel:aaaaaaaaaaaa",
+            "selection_kind": "element",
+            "element_count": 2,
+            "element_gids": ["axes_0.title", "axes_0.xaxis.label"],
+            "object_count": 0,
+        },
         "preview": {"active_sessions": 0, "settled": None, "history_mode": "gesture"},
-        "panels": [{"panel": "panel:aaaaaaaaaaaa", "file": "file:bbbbbbbbbbbb",
-                    "kind": "matplotlib", "override_count": 7,
-                    "document_variant": "var:111111111111",
-                    "display_variant": "var:222222222222",
-                    "authority_variant": None,
-                    "display_exact": False, "exact_manifest_available": False,
-                    "render_status": "rendering", "stale": False,
-                    "element_count": 12}],
+        "panels": [
+            {
+                "panel": "panel:aaaaaaaaaaaa",
+                "file": "file:bbbbbbbbbbbb",
+                "kind": "matplotlib",
+                "override_count": 7,
+                "document_variant": "var:111111111111",
+                "display_variant": "var:222222222222",
+                "authority_variant": None,
+                "display_exact": False,
+                "exact_manifest_available": False,
+                "render_status": "rendering",
+                "stale": False,
+                "element_count": 12,
+            }
+        ],
     }
     snap.update(extra)
     return snap
@@ -116,16 +137,17 @@ def test_manifest_declares_its_own_schema(client):
     assert manifest["trace_schema"] == 1
     assert manifest["privacy_mode"] == "safe-default"
     # created_at 是带时区的 ISO 串——读包的人要能判断这是什么时候的
-    assert re.match(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d$",
-                    manifest["created_at"])
+    assert re.match(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d$", manifest["created_at"])
 
 
 def test_report_and_config_still_redact_home_and_secrets(client, tmp_path, monkeypatch):
     from tavotto.engine import config as engine_config
+
     cfg = tmp_path / "config.json"
-    cfg.write_text(json.dumps({"api_key": SECRET_KEY,
-                               "backup_dir": os.path.join(REAL_HOME, "backups")}),
-                   encoding="utf-8")
+    cfg.write_text(
+        json.dumps({"api_key": SECRET_KEY, "backup_dir": os.path.join(REAL_HOME, "backups")}),
+        encoding="utf-8",
+    )
     monkeypatch.setattr(engine_config, "config_path", lambda: cfg)
     z = open_bundle(client.get("/api/diagnostics/bundle").data)
     body = z.read("config.json").decode()
@@ -140,15 +162,19 @@ def test_report_and_config_still_redact_home_and_secrets(client, tmp_path, monke
 # POST：带上前端状态与交互轨迹
 # ---------------------------------------------------------------------------
 def test_post_bundle_includes_frontend_state_and_trace(client):
-    payload = {"frontend_state": snapshot(),
-               "interaction_trace": [event(1), event(2), event(3)]}
+    payload = {"frontend_state": snapshot(), "interaction_trace": [event(1), event(2), event(3)]}
     res = client.post("/api/diagnostics/bundle", json=payload)
     assert res.status_code == 200
     z = open_bundle(res.data)
     names = set(z.namelist())
-    assert {"report.json", "app.log", "README.txt",
-            "frontend-state.json", "interaction-trace.jsonl",
-            "manifest.json"} <= names
+    assert {
+        "report.json",
+        "app.log",
+        "README.txt",
+        "frontend-state.json",
+        "interaction-trace.jsonl",
+        "manifest.json",
+    } <= names
 
     manifest = json.loads(z.read("manifest.json"))
     assert manifest["contains_frontend_state"] is True
@@ -163,8 +189,7 @@ def test_post_bundle_includes_frontend_state_and_trace(client):
 
 
 def test_trace_is_jsonl_one_valid_json_per_line(client):
-    payload = {"frontend_state": snapshot(),
-               "interaction_trace": [event(i) for i in range(1, 6)]}
+    payload = {"frontend_state": snapshot(), "interaction_trace": [event(i) for i in range(1, 6)]}
     z = open_bundle(client.post("/api/diagnostics/bundle", json=payload).data)
     text = z.read("interaction-trace.jsonl").decode()
     lines = text.strip().split("\n")
@@ -185,8 +210,9 @@ def test_empty_frontend_payload_still_produces_a_bundle(client):
 
 def test_invalid_json_body_degrades_instead_of_failing(client):
     # 用户是来排障的，不该因为载荷畸形而两手空空
-    res = client.post("/api/diagnostics/bundle", data="}{ not json",
-                      content_type="application/json")
+    res = client.post(
+        "/api/diagnostics/bundle", data="}{ not json", content_type="application/json"
+    )
     assert res.status_code == 200
     z = open_bundle(res.data)
     assert "report.json" in z.namelist()
@@ -194,8 +220,10 @@ def test_invalid_json_body_degrades_instead_of_failing(client):
 
 
 def test_too_many_events_are_truncated_to_the_most_recent(client):
-    payload = {"frontend_state": snapshot(),
-               "interaction_trace": [event(i) for i in range(1, 1001)]}
+    payload = {
+        "frontend_state": snapshot(),
+        "interaction_trace": [event(i) for i in range(1, 1001)],
+    }
     z = open_bundle(client.post("/api/diagnostics/bundle", json=payload).data)
     manifest = json.loads(z.read("manifest.json"))
     assert manifest["trace_event_count"] == dfe.MAX_EVENTS
@@ -209,16 +237,21 @@ def test_too_many_events_are_truncated_to_the_most_recent(client):
 def test_chunked_body_without_content_length_still_respects_the_limit(client):
     """评审 #139 的 P2：chunked transfer encoding 不带 Content-Length，
     按 0 处理就等于把 512 KB 的硬上限让开了。上限必须卡在读取本身。"""
-    big = json.dumps({"frontend_state": snapshot(),
-                      "interaction_trace": [event(i, mode="a" * 8)
-                                            for i in range(60_000)]}).encode()
+    big = json.dumps(
+        {
+            "frontend_state": snapshot(),
+            "interaction_trace": [event(i, mode="a" * 8) for i in range(60_000)],
+        }
+    ).encode()
     assert len(big) > dfe.MAX_REQUEST_BYTES
     # wsgi.input_terminated + 无 CONTENT_LENGTH = 服务器眼里的 chunked 请求：
     # 流是可读的，但没人告诉你它有多长
-    res = client.post("/api/diagnostics/bundle", data=BytesIO(big),
-                      content_type="application/json",
-                      environ_overrides={"wsgi.input_terminated": True,
-                                         "CONTENT_LENGTH": None})
+    res = client.post(
+        "/api/diagnostics/bundle",
+        data=BytesIO(big),
+        content_type="application/json",
+        environ_overrides={"wsgi.input_terminated": True, "CONTENT_LENGTH": None},
+    )
     assert res.status_code == 200
     manifest = json.loads(open_bundle(res.data).read("manifest.json"))
     assert manifest["contains_interaction_trace"] is False
@@ -233,13 +266,16 @@ def test_chunked_body_under_the_limit_is_accepted_in_full(client):
     真正能分辨两种实现的是**合法的 chunked 请求必须被完整收下**：
     错误实现读不到东西，正确实现读得到全部 3 条。
     """
-    body = json.dumps({"frontend_state": snapshot(),
-                       "interaction_trace": [event(1), event(2), event(3)]}).encode()
+    body = json.dumps(
+        {"frontend_state": snapshot(), "interaction_trace": [event(1), event(2), event(3)]}
+    ).encode()
     assert len(body) < dfe.MAX_REQUEST_BYTES
-    res = client.post("/api/diagnostics/bundle", data=BytesIO(body),
-                      content_type="application/json",
-                      environ_overrides={"wsgi.input_terminated": True,
-                                         "CONTENT_LENGTH": None})
+    res = client.post(
+        "/api/diagnostics/bundle",
+        data=BytesIO(body),
+        content_type="application/json",
+        environ_overrides={"wsgi.input_terminated": True, "CONTENT_LENGTH": None},
+    )
     assert res.status_code == 200
     manifest = json.loads(open_bundle(res.data).read("manifest.json"))
     assert manifest["contains_interaction_trace"] is True
@@ -249,8 +285,10 @@ def test_chunked_body_under_the_limit_is_accepted_in_full(client):
 
 def test_oversize_request_is_dropped_but_the_bundle_still_comes_out(client):
     big = "a" * 8
-    payload = {"frontend_state": snapshot(),
-               "interaction_trace": [event(i, mode=big) for i in range(60_000)]}
+    payload = {
+        "frontend_state": snapshot(),
+        "interaction_trace": [event(i, mode=big) for i in range(60_000)],
+    }
     res = client.post("/api/diagnostics/bundle", json=payload)
     assert res.status_code == 200
     z = open_bundle(res.data)
@@ -262,12 +300,15 @@ def test_oversize_request_is_dropped_but_the_bundle_still_comes_out(client):
 # ---------------------------------------------------------------------------
 # 服务端第二道校验：值的形状
 # ---------------------------------------------------------------------------
-@pytest.mark.parametrize("bad", [
-    "Experimental results for Fig. 3",      # 有空格的自由文本
-    "/Users/private-user-name/paper.py",    # 绝对路径
-    "实验结果对比",                           # 非 ASCII 的图内文字
-    "a" * 200,                              # 超长串
-])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "Experimental results for Fig. 3",  # 有空格的自由文本
+        "/Users/private-user-name/paper.py",  # 绝对路径
+        "实验结果对比",  # 非 ASCII 的图内文字
+        "a" * 200,  # 超长串
+    ],
+)
 def test_free_text_never_survives_the_server_side_check(bad):
     ev = dfe.sanitize_event(event(1, mode=bad), _redact)
     # 整条丢弃，不做部分保留
@@ -285,26 +326,43 @@ def test_a_field_legal_on_one_event_is_illegal_on_another():
     允许 `{"type": "diagnostics.export", "code": "SUPER_SECRET_…"}` 溜过去。
 
     逐事件的表把它挡在外面。"""
-    leaked = dfe.sanitize_event({
-        "seq": 1, "ts": 1_756_000_000_000, "t_ms": 5,
-        "type": "diagnostics.export", "code": SECRET_TITLE,
-    }, _redact)
+    leaked = dfe.sanitize_event(
+        {
+            "seq": 1,
+            "ts": 1_756_000_000_000,
+            "t_ms": 5,
+            "type": "diagnostics.export",
+            "code": SECRET_TITLE,
+        },
+        _redact,
+    )
     assert leaked is None
     # 同一个字段在它自己的事件上照常通过
-    ok = dfe.sanitize_event({
-        "seq": 1, "ts": 1_756_000_000_000, "t_ms": 5, "type": "render.error",
-        "code": "missing_dependency", "file": "file:aaaaaaaaaaaa",
-        "variant": "var:bbbbbbbbbbbb", "duration_ms": 12,
-    }, _redact)
+    ok = dfe.sanitize_event(
+        {
+            "seq": 1,
+            "ts": 1_756_000_000_000,
+            "t_ms": 5,
+            "type": "render.error",
+            "code": "missing_dependency",
+            "file": "file:aaaaaaaaaaaa",
+            "variant": "var:bbbbbbbbbbbb",
+            "duration_ms": 12,
+        },
+        _redact,
+    )
     assert ok["code"] == "missing_dependency"
 
 
-@pytest.mark.parametrize("field,bad", [
-    ("selection_kind", SECRET_TITLE),
-    ("history_mode", SECRET_TITLE),
-    ("render_status", SECRET_TITLE),
-    ("kind", SECRET_TITLE),
-])
+@pytest.mark.parametrize(
+    "field,bad",
+    [
+        ("selection_kind", SECRET_TITLE),
+        ("history_mode", SECRET_TITLE),
+        ("render_status", SECRET_TITLE),
+        ("kind", SECRET_TITLE),
+    ],
+)
 def test_closed_set_fields_reject_content_shaped_tokens(field, bad):
     """评审 #139 的 P1 之二：闭集字段以前走的是通用 token 判据，
     `selection_kind: "SUPER_SECRET_PAPER_TITLE_12345"` 字符集完全合法。"""
@@ -327,39 +385,61 @@ def test_unknown_container_shapes_are_dropped():
 
 
 def test_patch_and_geometry_shapes_survive():
-    ev = dfe.sanitize_event({
-        "seq": 1, "ts": 1_756_000_000_000, "t_ms": 5, "type": "document.commit",
-        "patches": [{"gid": "axes_0.title", "prop": "pos_frac"},
-                    {"domain": "panel_override", "prop": "fontsize"}],
-    }, _redact)
-    assert ev["patches"] == [{"gid": "axes_0.title", "prop": "pos_frac"},
-                             {"domain": "panel_override", "prop": "fontsize"}]
+    ev = dfe.sanitize_event(
+        {
+            "seq": 1,
+            "ts": 1_756_000_000_000,
+            "t_ms": 5,
+            "type": "document.commit",
+            "patches": [
+                {"gid": "axes_0.title", "prop": "pos_frac"},
+                {"domain": "panel_override", "prop": "fontsize"},
+            ],
+        },
+        _redact,
+    )
+    assert ev["patches"] == [
+        {"gid": "axes_0.title", "prop": "pos_frac"},
+        {"domain": "panel_override", "prop": "fontsize"},
+    ]
 
     # input_geometry 只属于 align.request / align.commit——**逐事件的表**说了算，
     # 放在 align.blocked 上会被整条丢掉（这正是它该有的行为）
-    ev = dfe.sanitize_event({
-        "seq": 1, "ts": 1_756_000_000_000, "t_ms": 5, "type": "align.request",
-        "mode": "left", "panel": "panel:aaaaaaaaaaaa", "selected_count": 2,
-        "document_variant": "var:111111111111", "display_variant": None,
-        "authority_variant": None, "exact_authority": False,
-        "input_geometry": [{"gid": "axes_0.title",
-                            "bbox": [0.31, 0.12, 0.18, 0.04],
-                            "anchor": [0.40, 0.15]}],
-    }, _redact)
+    ev = dfe.sanitize_event(
+        {
+            "seq": 1,
+            "ts": 1_756_000_000_000,
+            "t_ms": 5,
+            "type": "align.request",
+            "mode": "left",
+            "panel": "panel:aaaaaaaaaaaa",
+            "selected_count": 2,
+            "document_variant": "var:111111111111",
+            "display_variant": None,
+            "authority_variant": None,
+            "exact_authority": False,
+            "input_geometry": [
+                {"gid": "axes_0.title", "bbox": [0.31, 0.12, 0.18, 0.04], "anchor": [0.40, 0.15]}
+            ],
+        },
+        _redact,
+    )
     assert ev["input_geometry"][0]["bbox"] == [0.31, 0.12, 0.18, 0.04]
     assert dfe.sanitize_event(event(1, input_geometry=[{"gid": "axes_0"}]), _redact) is None
 
 
 def test_patch_value_is_rejected_outright():
     # `value` 不在 _PATCH_KEYS 里——就算前端哪天写错了，这里也不放行
-    ev = dfe.sanitize_event(event(1, patches=[
-        {"gid": "axes_0.title", "prop": "text", "value": SECRET_TITLE}]), _redact)
+    ev = dfe.sanitize_event(
+        event(1, patches=[{"gid": "axes_0.title", "prop": "text", "value": SECRET_TITLE}]), _redact
+    )
     assert ev is None
 
 
 def test_nan_and_inf_geometry_are_rejected():
-    ev = dfe.sanitize_event(event(1, input_geometry=[
-        {"gid": "axes_0", "bbox": [float("nan"), 0.1, 0.2, 0.3]}]), _redact)
+    ev = dfe.sanitize_event(
+        event(1, input_geometry=[{"gid": "axes_0", "bbox": [float("nan"), 0.1, 0.2, 0.3]}]), _redact
+    )
     assert ev is None
 
 
@@ -417,14 +497,25 @@ def test_no_secret_string_appears_anywhere_in_the_bundle(client, tmp_path, monke
     任何一处漏出去都抓不到。
     """
     from tavotto.engine import config as engine_config
+
     cfg = tmp_path / "config.json"
-    cfg.write_text(json.dumps({
-        "api_key": SECRET_KEY,
-        "backup_dir": os.path.join(REAL_HOME, "backups"),
-        # 用户的项目清单：每条都带项目名与路径
-        "recent_projects": [{"path": os.path.join(REAL_HOME, SECRET_TITLE),
-                             "name": SECRET_TITLE, "last_opened": 1}],
-    }), encoding="utf-8")
+    cfg.write_text(
+        json.dumps(
+            {
+                "api_key": SECRET_KEY,
+                "backup_dir": os.path.join(REAL_HOME, "backups"),
+                # 用户的项目清单：每条都带项目名与路径
+                "recent_projects": [
+                    {
+                        "path": os.path.join(REAL_HOME, SECRET_TITLE),
+                        "name": SECRET_TITLE,
+                        "last_opened": 1,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
     monkeypatch.setattr(engine_config, "config_path", lambda: cfg)
 
     hostile_events = [
@@ -433,8 +524,13 @@ def test_no_secret_string_appears_anywhere_in_the_bundle(client, tmp_path, monke
         # ② 嵌套进几何目标
         event(2, input_geometry=[{"gid": SECRET_TITLE, "bbox": [0.1, 0.2, 0.3, 0.4]}]),
         # ③ 嵌套进 patch 身份，连 value 一起
-        {"seq": 3, "ts": 1_756_000_000_003, "t_ms": 30, "type": "document.commit",
-         "patches": [{"gid": "axes_0.title", "prop": "text", "value": SECRET_TITLE}]},
+        {
+            "seq": 3,
+            "ts": 1_756_000_000_003,
+            "t_ms": 30,
+            "type": "document.commit",
+            "patches": [{"gid": "axes_0.title", "prop": "text", "value": SECRET_TITLE}],
+        },
         # ④ 未登记的字段名
         event(4, secret_unexpected_field=SECRET_KEY),
         # ⑤ 路径
@@ -448,10 +544,13 @@ def test_no_secret_string_appears_anywhere_in_the_bundle(client, tmp_path, monke
     hostile_state["panels"][0]["file"] = FAKE_HOME + "Fig1.pdf"
     hostile_state["extra_unknown_block"] = {"paper": SECRET_TITLE}
 
-    res = client.post("/api/diagnostics/bundle", json={
-        "frontend_state": hostile_state,
-        "interaction_trace": hostile_events,
-    })
+    res = client.post(
+        "/api/diagnostics/bundle",
+        json={
+            "frontend_state": hostile_state,
+            "interaction_trace": hostile_events,
+        },
+    )
     assert res.status_code == 200
 
     z = open_bundle(res.data)
@@ -464,7 +563,7 @@ def test_no_secret_string_appears_anywhere_in_the_bundle(client, tmp_path, monke
     manifest = json.loads(z.read("manifest.json"))
     assert manifest["contains_interaction_trace"] is True
     assert manifest["trace_event_count"] >= 1
-    assert manifest["trace_truncated"] is True      # 恶意条目被丢掉了，如实上报
+    assert manifest["trace_truncated"] is True  # 恶意条目被丢掉了，如实上报
 
 
 def test_readme_says_what_is_and_is_not_included(client):
@@ -495,13 +594,27 @@ def test_recent_project_inventory_is_reduced_to_a_count(client, tmp_path, monkey
     project 段里。清单本身留在用户机器上。
     """
     from tavotto.engine import config as engine_config
+
     cfg = tmp_path / "config.json"
-    cfg.write_text(json.dumps({"recent_projects": [
-        {"path": os.path.join(REAL_HOME, "paper-a"), "name": SECRET_TITLE,
-         "last_opened": 1},
-        {"path": os.path.join(REAL_HOME, "paper-b"), "name": "另一个课题",
-         "last_opened": 2},
-    ]}), encoding="utf-8")
+    cfg.write_text(
+        json.dumps(
+            {
+                "recent_projects": [
+                    {
+                        "path": os.path.join(REAL_HOME, "paper-a"),
+                        "name": SECRET_TITLE,
+                        "last_opened": 1,
+                    },
+                    {
+                        "path": os.path.join(REAL_HOME, "paper-b"),
+                        "name": "另一个课题",
+                        "last_opened": 2,
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
     monkeypatch.setattr(engine_config, "config_path", lambda: cfg)
 
     z = open_bundle(client.get("/api/diagnostics/bundle").data)

@@ -24,6 +24,7 @@
     python scripts/ci/soak.py --iterations 100 --python .venv/bin/python
     python scripts/ci/soak.py --iterations 500 --json soak-metrics.json
 """
+
 from __future__ import annotations
 
 import argparse
@@ -38,7 +39,7 @@ from pathlib import Path
 
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))
-sys.path.insert(0, str(_HERE.parent))          # scripts/ ——复用既有冒烟与基线工具
+sys.path.insert(0, str(_HERE.parent))  # scripts/ ——复用既有冒烟与基线工具
 
 import bench_render as BR  # noqa: E402
 
@@ -153,23 +154,30 @@ def analyse(samples: list[dict], warmup: int) -> dict:
     """
     usable = samples[warmup:]
     if len(usable) < 3:
-        return {"verdict": "inconclusive", "reason": f"warmup 之后只剩 {len(usable)} 个样本，不足以判趋势"}
+        return {
+            "verdict": "inconclusive",
+            "reason": f"warmup 之后只剩 {len(usable)} 个样本，不足以判趋势",
+        }
 
     xs = [float(s["iteration"]) for s in usable]
     fd_slope = _slope(xs, [float(s["fds"]) for s in usable])
     rss_slope = _slope(xs, [float(s["rss_kib"]) for s in usable])
     span = xs[-1] - xs[0] or 1.0
 
-    fd_growth = fd_slope * span          # 整段区间里 FD 净增多少
+    fd_growth = fd_slope * span  # 整段区间里 FD 净增多少
     rss_growth_mib = rss_slope * span / 1024
 
     findings: list[str] = []
     # 阈值刻意宽松：第一阶段的目标是抓住「明显泄漏」，不是抓抖动。
     # 每轮稳定多占 1 个 FD，100 轮就是 +100——那是真泄漏；+5 是噪声。
     if fd_growth > 40:
-        findings.append(f"FD 在 {int(span)} 轮里净增约 {fd_growth:.0f} 个（斜率 {fd_slope:.3f}/轮）")
+        findings.append(
+            f"FD 在 {int(span)} 轮里净增约 {fd_growth:.0f} 个（斜率 {fd_slope:.3f}/轮）"
+        )
     if rss_growth_mib > 300:
-        findings.append(f"RSS 在 {int(span)} 轮里净增约 {rss_growth_mib:.0f} MiB（斜率 {rss_slope / 1024:.2f} MiB/轮）")
+        findings.append(
+            f"RSS 在 {int(span)} 轮里净增约 {rss_growth_mib:.0f} MiB（斜率 {rss_slope / 1024:.2f} MiB/轮）"
+        )
 
     proc_counts = [s["processes"] for s in usable]
     if proc_counts and max(proc_counts) - min(proc_counts) > 8:
@@ -188,8 +196,9 @@ def analyse(samples: list[dict], warmup: int) -> dict:
 
 
 # ---------------------------------------------------------------- 主流程
-def run_soak(launch: list[str], figures: Path, workdir: Path, iterations: int,
-             sample_every: int, warmup: int) -> dict:
+def run_soak(
+    launch: list[str], figures: Path, workdir: Path, iterations: int, sample_every: int, warmup: int
+) -> dict:
     port = SA._free_port()
     base = f"http://127.0.0.1:{port}"
     data_dir = workdir / "data"
@@ -222,8 +231,7 @@ def run_soak(launch: list[str], figures: Path, workdir: Path, iterations: int,
     # （日志量正好填满缓冲），py-spy 的栈是 emit→pipe_write +
     # 八个线程 acquire。改成落文件：既没有这个失败模式，又比 DEVNULL
     # 多留一份启动期 traceback（那些进不了 app.log）。
-    proc = subprocess.Popen(cmd, env=env, stdout=_child_log,
-                            stderr=subprocess.STDOUT)
+    proc = subprocess.Popen(cmd, env=env, stdout=_child_log, stderr=subprocess.STDOUT)
 
     samples: list[dict] = []
     errors: list[dict] = []
@@ -237,12 +245,16 @@ def run_soak(launch: list[str], figures: Path, workdir: Path, iterations: int,
         panels = SA._get(f"{base}/api/panels")["panels"]
         scripted = [p for p in panels if p.get("script")]
         if not scripted:
-            raise CiError("no_scripted_panel",
-                          "示例项目里没有可参数化面板，soak 无从施力（注册表为空？）")
+            raise CiError(
+                "no_scripted_panel", "示例项目里没有可参数化面板，soak 无从施力（注册表为空？）"
+            )
 
         # 先渲一次拿 manifest，才知道该拿哪个属性当 patch 靶子
-        first = SA._post(f"{base}/api/engine/render",
-                         {"id": scripted[0]["id"], "patches": []}, timeout=RENDER_TIMEOUT)
+        first = SA._post(
+            f"{base}/api/engine/render",
+            {"id": scripted[0]["id"], "patches": []},
+            timeout=RENDER_TIMEOUT,
+        )
         patch = BR._pick_patch(first.get("manifest") or {})
         ops += 1
         print(f"靶子属性: {patch['prop'] if patch else '(无，走空 patch 列表)'}")
@@ -252,9 +264,11 @@ def run_soak(launch: list[str], figures: Path, workdir: Path, iterations: int,
             t0 = time.time()
             try:
                 # 1) 改参数渲染——这是用户拖滑块时真正发生的事
-                res = SA._post(f"{base}/api/engine/render",
-                               {"id": target["id"], "patches": BR._variant(patch, i)},
-                               timeout=RENDER_TIMEOUT)
+                res = SA._post(
+                    f"{base}/api/engine/render",
+                    {"id": target["id"], "patches": BR._variant(patch, i)},
+                    timeout=RENDER_TIMEOUT,
+                )
                 if not res.get("manifest"):
                     raise CiError("render_no_manifest", f"第 {i} 轮渲染没回 manifest")
                 ops += 1
@@ -263,33 +277,52 @@ def run_soak(launch: list[str], figures: Path, workdir: Path, iterations: int,
                 #    是最容易留下临时文件与句柄的一条路径。
                 if i % 5 == 0:
                     spec = {
-                        "page_w_mm": 80, "page_h_mm": 40, "formats": ["pdf"],
+                        "page_w_mm": 80,
+                        "page_h_mm": 40,
+                        "formats": ["pdf"],
                         "stem": f"soak-{i}",
-                        "objects": [{"type": "panel", "id": target["id"],
-                                     "x_mm": 5, "y_mm": 5, "w_mm": 60, "h_mm": 30}],
+                        "objects": [
+                            {
+                                "type": "panel",
+                                "id": target["id"],
+                                "x_mm": 5,
+                                "y_mm": 5,
+                                "w_mm": 60,
+                                "h_mm": 30,
+                            }
+                        ],
                     }
                     SA._post(f"{base}/api/export", spec, timeout=RENDER_TIMEOUT)
                     ops += 1
-            except Exception as exc:                      # noqa: BLE001 - 逐轮记录不中断
+            except Exception as exc:  # noqa: BLE001 - 逐轮记录不中断
                 errors.append({"iteration": i, "error": str(exc)[:300]})
                 if len(errors) > max(5, iterations // 10):
-                    raise CiError("too_many_errors",
-                                  f"soak 第 {i} 轮：错误累计 {len(errors)} 次，提前中止") from exc
+                    raise CiError(
+                        "too_many_errors", f"soak 第 {i} 轮：错误累计 {len(errors)} 次，提前中止"
+                    ) from exc
 
             if i % sample_every == 0 or i == iterations - 1:
                 snap = sample(proc.pid)
-                snap.update({"iteration": i, "latency_s": round(time.time() - t0, 3),
-                             "elapsed_s": round(time.time() - started, 1)})
+                snap.update(
+                    {
+                        "iteration": i,
+                        "latency_s": round(time.time() - t0, 3),
+                        "elapsed_s": round(time.time() - started, 1),
+                    }
+                )
                 samples.append(snap)
                 if i % (sample_every * 10) == 0:
-                    print(f"  [{i:4d}/{iterations}] rss={snap['rss_kib'] // 1024}MiB "
-                          f"fd={snap['fds']} proc={snap['processes']} "
-                          f"{snap['latency_s']:.2f}s", flush=True)
+                    print(
+                        f"  [{i:4d}/{iterations}] rss={snap['rss_kib'] // 1024}MiB "
+                        f"fd={snap['fds']} proc={snap['processes']} "
+                        f"{snap['latency_s']:.2f}s",
+                        flush=True,
+                    )
 
         # 干净退出：验的是关得掉，不是杀得死
         try:
             SA._post(f"{base}/api/shutdown", {}, timeout=60)
-        except Exception:                                  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             pass
         try:
             proc.wait(timeout=120)
@@ -305,12 +338,18 @@ def run_soak(launch: list[str], figures: Path, workdir: Path, iterations: int,
     time.sleep(2)
     orphans = SA._leftover_workers(data_dir)
 
-    analysis = analyse(samples, warmup) if _supported() else {
-        "verdict": "unsupported",
-        "reason": "本平台没有 /proc，只跑了功能不判资源趋势",
-    }
+    analysis = (
+        analyse(samples, warmup)
+        if _supported()
+        else {
+            "verdict": "unsupported",
+            "reason": "本平台没有 /proc，只跑了功能不判资源趋势",
+        }
+    )
     return {
-        "ok": not orphans and not errors and analysis["verdict"] in ("ok", "unsupported", "inconclusive"),
+        "ok": not orphans
+        and not errors
+        and analysis["verdict"] in ("ok", "unsupported", "inconclusive"),
         "iterations": iterations,
         "operations": ops,
         "errors": errors,
@@ -329,8 +368,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--figures", default=str(DEFAULT_FIGURES))
     ap.add_argument("--iterations", type=int, default=100)
     ap.add_argument("--sample-every", type=int, default=1)
-    ap.add_argument("--warmup", type=int, default=5,
-                    help="前 N 个样本不参与趋势判定（科学栈 import 的高水位不是泄漏）")
+    ap.add_argument(
+        "--warmup",
+        type=int,
+        default=5,
+        help="前 N 个样本不参与趋势判定（科学栈 import 的高水位不是泄漏）",
+    )
     ap.add_argument("--json", default=None, help="把 metrics 写到这个文件")
     ap.add_argument("--keep", action="store_true")
     args = ap.parse_args(argv)
@@ -340,8 +383,9 @@ def main(argv: list[str] | None = None) -> int:
     launch = [args.exe] if args.exe else [args.python, "-m", "tavotto"]
 
     try:
-        result = run_soak(launch, Path(args.figures), workdir, args.iterations,
-                          args.sample_every, args.warmup)
+        result = run_soak(
+            launch, Path(args.figures), workdir, args.iterations, args.sample_every, args.warmup
+        )
     except CiError as exc:
         print(f"::error::{exc.message}", file=sys.stderr)
         summary(f"\n> **soak 失败** `{exc.code}` — {exc.message}\n")
@@ -353,29 +397,51 @@ def main(argv: list[str] | None = None) -> int:
     result["metadata"] = run_metadata()
     write_report("soak.json", result, root)
     if args.json:
-        Path(args.json).write_text(json.dumps(result, ensure_ascii=False, indent=2),
-                                   encoding="utf-8")
+        Path(args.json).write_text(
+            json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
     a = result["analysis"]
     rows = [
-        ("操作数", "✅" if not result["errors"] else "❌",
-         f"{result['operations']} 次 / {result['iterations']} 轮，错误 {len(result['errors'])}"),
-        ("孤儿进程", "✅" if not result["orphans"] else "❌",
-         "0" if not result["orphans"] else f"{len(result['orphans'])} 个：{result['orphans'][:2]}"),
-        ("FD 趋势", "✅" if a["verdict"] != "leak" else "❌",
-         f"{a.get('fd_growth_over_span', '—')} 个 / 全程" if "fd_growth_over_span" in a else a.get("reason", "")),
-        ("RSS 趋势", "✅" if a["verdict"] != "leak" else "❌",
-         f"{a.get('rss_growth_mib_over_span', '—')} MiB / 全程" if "rss_growth_mib_over_span" in a else ""),
+        (
+            "操作数",
+            "✅" if not result["errors"] else "❌",
+            f"{result['operations']} 次 / {result['iterations']} 轮，错误 {len(result['errors'])}",
+        ),
+        (
+            "孤儿进程",
+            "✅" if not result["orphans"] else "❌",
+            "0"
+            if not result["orphans"]
+            else f"{len(result['orphans'])} 个：{result['orphans'][:2]}",
+        ),
+        (
+            "FD 趋势",
+            "✅" if a["verdict"] != "leak" else "❌",
+            f"{a.get('fd_growth_over_span', '—')} 个 / 全程"
+            if "fd_growth_over_span" in a
+            else a.get("reason", ""),
+        ),
+        (
+            "RSS 趋势",
+            "✅" if a["verdict"] != "leak" else "❌",
+            f"{a.get('rss_growth_mib_over_span', '—')} MiB / 全程"
+            if "rss_growth_mib_over_span" in a
+            else "",
+        ),
     ]
-    summary(f"\n### Soak · {result['iterations']} 轮 / {result['elapsed_s']}s\n\n"
-            + summary_table(rows))
+    summary(
+        f"\n### Soak · {result['iterations']} 轮 / {result['elapsed_s']}s\n\n" + summary_table(rows)
+    )
     for line in a.get("findings", []):
         print(f"::warning::泄漏疑似 — {line}")
     for e in result["errors"][:10]:
         print(f"::error::soak 第 {e['iteration']} 轮：{e['error']}", file=sys.stderr)
 
-    print(f"\nsoak: {'通过' if result['ok'] else '失败'} "
-          f"（{result['operations']} 次操作，{result['elapsed_s']}s）")
+    print(
+        f"\nsoak: {'通过' if result['ok'] else '失败'} "
+        f"（{result['operations']} 次操作，{result['elapsed_s']}s）"
+    )
     return 0 if result["ok"] else 1
 
 

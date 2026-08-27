@@ -12,6 +12,7 @@
 
 本进程不 import matplotlib：worker 经 `pool.one_shot()` 起在科学栈解释器里。
 """
+
 import pytest
 
 from tavotto.engine import pool
@@ -22,13 +23,14 @@ except pool.WorkerError:
     WORKER_PY = None
 
 pytestmark = pytest.mark.skipif(
-    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）")
+    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）"
+)
 
 SCRIPT_NAME = "fig_geometry.py"
 ENTRY = "main"
 STEM = "GeomFig"
 
-LIBRARY = '''\
+LIBRARY = """\
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import FancyArrowPatch, PathPatch
@@ -70,7 +72,7 @@ def main():
     ax.set_ylim(-0.2, 1.1)
     ax.legend()
     fig.savefig("GeomFig.pdf")
-'''
+"""
 
 
 @pytest.fixture(scope="module")
@@ -157,7 +159,13 @@ def test_polygon_patch_is_registered_and_closed(library):
     el = _el(man, "axes_0.patches_0")
     assert el["role"] == "patch"
     assert {f["prop"] for f in el["editable"]} >= {
-        "facecolor", "edgecolor", "linewidth", "alpha", "visible", "fill"}
+        "facecolor",
+        "edgecolor",
+        "linewidth",
+        "alpha",
+        "visible",
+        "fill",
+    }
     geom = el["geometry"]
     assert geom["kind"] == "path" and len(geom["paths"]) == 1
     assert geom["paths"][0]["closed"] is True
@@ -208,10 +216,14 @@ def test_geometry_carries_the_axes_clip_box(library):
 _RESHAPING = [
     ("xlim", [{"gid": "axes_0", "prop": "xlim", "value": [2.0, 8.0]}]),
     ("ylim", [{"gid": "axes_0", "prop": "ylim", "value": [0.0, 0.8]}]),
-    ("xscale-log", [{"gid": "axes_0", "prop": "xlim", "value": [0.5, 10.0]},
-                    {"gid": "axes_0", "prop": "xscale", "value": "log"}]),
-    ("position", [{"gid": "axes_0", "prop": "position",
-                   "value": [0.2, 0.25, 0.6, 0.5]}]),
+    (
+        "xscale-log",
+        [
+            {"gid": "axes_0", "prop": "xlim", "value": [0.5, 10.0]},
+            {"gid": "axes_0", "prop": "xscale", "value": "log"},
+        ],
+    ),
+    ("position", [{"gid": "axes_0", "prop": "position", "value": [0.2, 0.25, 0.6, 0.5]}]),
     ("aspect", [{"gid": "axes_0", "prop": "aspect", "value": "equal"}]),
 ]
 _FIGSIZE = ("figsize", [{"gid": "figure", "prop": "size_mm", "value": [160.0, 60.0]}])
@@ -221,12 +233,14 @@ _FIGSIZE = ("figsize", [{"gid": "figure", "prop": "size_mm", "value": [160.0, 60
 def test_geometry_is_regenerated_by_anything_that_reflows(library, name, patches):
     base = _el(_manifest(library), "axes_0.lines_0")["geometry"]
     after = _el(_manifest(library, patches), "axes_0.lines_0")["geometry"]
-    assert after["paths"][0]["points"] != base["paths"][0]["points"], \
+    assert after["paths"][0]["points"] != base["paths"][0]["points"], (
         f"{name} 之后 geometry 没跟着重算"
+    )
 
 
-@pytest.mark.parametrize("name,patches", [*_RESHAPING, _FIGSIZE],
-                         ids=[c[0] for c in [*_RESHAPING, _FIGSIZE]])
+@pytest.mark.parametrize(
+    "name,patches", [*_RESHAPING, _FIGSIZE], ids=[c[0] for c in [*_RESHAPING, _FIGSIZE]]
+)
 def test_hot_geometry_matches_a_fresh_worker_replay(library, name, patches):
     """热会话一步步改出来的 geometry 与全新 worker 一次性重放**逐位相同**。
 
@@ -242,8 +256,13 @@ def test_hot_geometry_matches_a_fresh_worker_replay(library, name, patches):
         pool.discard(hot)
     man_fresh = _manifest(library, patches)
 
-    for gid in ("axes_0.lines_0", "axes_0.lines_1", "axes_0.fill_0",
-                "axes_0.patches_0", "axes_0.patches_1"):
+    for gid in (
+        "axes_0.lines_0",
+        "axes_0.lines_1",
+        "axes_0.fill_0",
+        "axes_0.patches_0",
+        "axes_0.patches_1",
+    ):
         a = _el(man_hot, gid).get("geometry")
         b = _el(man_fresh, gid).get("geometry")
         assert a == b, f"{gid} 的 geometry 在热路与全新 worker 之间分岔（{name}）"

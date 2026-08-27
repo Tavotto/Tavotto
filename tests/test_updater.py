@@ -2,6 +2,7 @@
 
 全部离线跑——_fetch_latest_release 一律 monkeypatch，测试进程不联网。
 """
+
 import time
 
 import pytest
@@ -10,32 +11,40 @@ from tavotto.engine import brand, updater
 
 
 # ---------------- 版本比较 ---------------------------------------------------
-@pytest.mark.parametrize("latest,current,expected", [
-    ("0.2.0", "0.1.0", True),
-    ("0.1.1", "0.1.0", True),
-    ("1.0.0", "0.9.9", True),
-    ("0.1.0", "0.1.0", False),
-    ("0.1.0", "0.2.0", False),
-    ("0.10.0", "0.9.0", True),      # 数字比较，不是字典序
-    ("1.0.0", "1.0.0rc1", True),    # 正式版 > 同号预发布
-    ("1.0.0rc1", "1.0.0", False),
-    ("v0.2.0", "0.1.0", True),      # tag 带 v 前缀
-    ("garbage", "0.1.0", False),    # 畸形 tag 绝不催更新
-    ("", "0.1.0", False),
-])
+@pytest.mark.parametrize(
+    "latest,current,expected",
+    [
+        ("0.2.0", "0.1.0", True),
+        ("0.1.1", "0.1.0", True),
+        ("1.0.0", "0.9.9", True),
+        ("0.1.0", "0.1.0", False),
+        ("0.1.0", "0.2.0", False),
+        ("0.10.0", "0.9.0", True),  # 数字比较，不是字典序
+        ("1.0.0", "1.0.0rc1", True),  # 正式版 > 同号预发布
+        ("1.0.0rc1", "1.0.0", False),
+        ("v0.2.0", "0.1.0", True),  # tag 带 v 前缀
+        ("garbage", "0.1.0", False),  # 畸形 tag 绝不催更新
+        ("", "0.1.0", False),
+    ],
+)
 def test_is_newer(latest, current, expected):
     assert updater.is_newer(latest, current) is expected
 
 
 def test_current_version_matches_package():
     import tavotto
+
     assert updater.current_version() == tavotto.__version__
 
 
 # ---------------- 升级命令 ---------------------------------------------------
 def _release(assets=()):
-    return {"tag_name": "v9.9.9", "body": "note", "html_url": "https://example/r",
-            "assets": [{"name": n, "browser_download_url": u} for n, u in assets]}
+    return {
+        "tag_name": "v9.9.9",
+        "body": "note",
+        "html_url": "https://example/r",
+        "assets": [{"name": n, "browser_download_url": u} for n, u in assets],
+    }
 
 
 def test_upgrade_command_pip_prefers_release_wheel(monkeypatch):
@@ -84,6 +93,7 @@ def test_check_reports_update(monkeypatch):
 def test_check_offline_is_not_fatal(monkeypatch):
     def boom():
         raise OSError("no network")
+
     monkeypatch.setattr(updater, "_fetch_latest_release", boom)
     out = updater.check(force=True)
     assert out["update_available"] is False and "检查失败" in out["error"]
@@ -91,23 +101,24 @@ def test_check_offline_is_not_fatal(monkeypatch):
 
 def test_auto_check_off_means_no_network(monkeypatch):
     calls = []
-    monkeypatch.setattr(updater, "_fetch_latest_release",
-                        lambda: calls.append(1) or _release())
+    monkeypatch.setattr(updater, "_fetch_latest_release", lambda: calls.append(1) or _release())
     updater.set_settings({"auto_check": False})
     updater.check(force=False)
-    assert calls == []                      # 关掉后后台检查一个包都不发
+    assert calls == []  # 关掉后后台检查一个包都不发
     updater.check(force=True)
-    assert calls == [1]                     # 手动「立即检查」仍然可用
+    assert calls == [1]  # 手动「立即检查」仍然可用
 
 
 def test_check_is_throttled(monkeypatch):
     calls = []
-    monkeypatch.setattr(updater, "_fetch_latest_release",
-                        lambda: calls.append(1) or _release())
-    updater.set_settings({"auto_check": True,
-                          "last_check_ms": int(time.time() * 1000),
-                          "last_result": {"latest": "9.9.9",
-                                          "update_available": True}})
+    monkeypatch.setattr(updater, "_fetch_latest_release", lambda: calls.append(1) or _release())
+    updater.set_settings(
+        {
+            "auto_check": True,
+            "last_check_ms": int(time.time() * 1000),
+            "last_result": {"latest": "9.9.9", "update_available": True},
+        }
+    )
     out = updater.check(force=False)
     assert calls == [] and out["cached"] is True and out["latest"] == "9.9.9"
 
@@ -117,17 +128,19 @@ def test_cached_result_recomputes_against_running_version(monkeypatch):
 
     升级并重启后，缓存里还是按旧版本比出来的 True——原样回放会出现
     「有新版本 X（当前 X）」，纠缠用户直到 24h 节流过期。"""
-    updater.set_settings({"auto_check": True,
-                          "last_check_ms": int(time.time() * 1000),
-                          "last_result": {"latest": updater.current_version(),
-                                          "update_available": True}})
+    updater.set_settings(
+        {
+            "auto_check": True,
+            "last_check_ms": int(time.time() * 1000),
+            "last_result": {"latest": updater.current_version(), "update_available": True},
+        }
+    )
     out = updater.check(force=False)
     assert out["cached"] is True
     assert out["update_available"] is False  # latest == 正在跑的版本
 
     # 缓存里的 latest 确实更新时照常提示
-    updater.set_settings({"last_result": {"latest": "9.9.9",
-                                          "update_available": False}})
+    updater.set_settings({"last_result": {"latest": "9.9.9", "update_available": False}})
     out = updater.check(force=False)
     assert out["update_available"] is True
 

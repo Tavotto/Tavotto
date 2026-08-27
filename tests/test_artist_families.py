@@ -17,6 +17,7 @@ family 建模」之后，这里钉的是那套模型必须成立的几件事：
 
 本进程不 import matplotlib：worker 经 `pool.one_shot()` 起在科学栈解释器里。
 """
+
 import pytest
 
 from tavotto.engine import pool
@@ -27,7 +28,8 @@ except pool.WorkerError:
     WORKER_PY = None
 
 pytestmark = pytest.mark.skipif(
-    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）")
+    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）"
+)
 
 SCRIPT_NAME = "fig_families.py"
 ENTRY = "main"
@@ -263,8 +265,9 @@ def test_mapped_line_collections_leave_the_linecoll_family(hot):
     """
     man = _man(hot, "FamColl")
     gids = _gids(man)
-    assert "axes_0.collections_6" in gids, \
+    assert "axes_0.collections_6" in gids, (
         f"映射的线组没进通用 collection：{sorted(g for g in gids if 'coll' in g)}"
+    )
     assert "axes_0.linecoll_6" not in gids, "映射的线组被当成线组登记了"
 
     props = set(_fields(man, "axes_0.collections_6"))
@@ -272,8 +275,9 @@ def test_mapped_line_collections_leave_the_linecoll_family(hot):
     assert "color" not in props, "映射的线组给了线组那套单值 color"
 
     # dispatch 真的落在通用族上：改一条通用族的 prop 必须无 warning 且生效
-    resp = hot.override("FamColl", [{"gid": "axes_0.collections_6",
-                                     "prop": "cmap", "value": "plasma"}])
+    resp = hot.override(
+        "FamColl", [{"gid": "axes_0.collections_6", "prop": "cmap", "value": "plasma"}]
+    )
     assert not (resp.get("warnings") or []), resp["warnings"]
     got = _fields(resp["manifest"], "axes_0.collections_6")["cmap"]["value"]
     assert got == "plasma", got
@@ -300,21 +304,27 @@ def test_colorbar_and_its_mappable_are_one_alias_group(hot):
     orig = _fields(base, img)["cmap"]["value"]
 
     # 两条都设：图元自己那条说了算（组内次序由 _rank 定死）
-    man = _man(hot, "FamCbar", [
-        {"gid": img, "prop": "cmap", "value": "plasma"},
-        {"gid": cbar, "prop": "cmap", "value": "cividis"},
-    ])
+    man = _man(
+        hot,
+        "FamCbar",
+        [
+            {"gid": img, "prop": "cmap", "value": "plasma"},
+            {"gid": cbar, "prop": "cmap", "value": "cividis"},
+        ],
+    )
     assert _fields(man, img)["cmap"]["value"] == "plasma"
 
     # 只撤掉图元那条：色条那条必须重放，不能退回脚本原样
     man = _man(hot, "FamCbar", [{"gid": cbar, "prop": "cmap", "value": "cividis"}])
-    assert _fields(man, img)["cmap"]["value"] == "cividis", \
+    assert _fields(man, img)["cmap"]["value"] == "cividis", (
         "撤掉图元那条把共享的 mappable 写回原样了，而色条那条被跳过没重放"
+    )
 
     # 全撤：必须逐字回到脚本原样，不是中间态
     man = _man(hot, "FamCbar")
-    assert _fields(man, img)["cmap"]["value"] == orig, \
+    assert _fields(man, img)["cmap"]["value"] == orig, (
         "撤销停在中间态——广播端没有在动手之前采下组员的脚本原样"
+    )
 
 
 def test_marker_replacement_stays_a_scatter_only_contract(hot):
@@ -448,9 +458,10 @@ def test_arc_is_a_normal_patch_fill_included(hot):
     assert arc["fill"]["value"] is False, "Arc 的构造式把 fill 钉成 False，显示值要如实"
 
     # 开关真的推得动，而且撤销逐字回去
-    after = _fields(_man(hot, "FamPatch",
-                         [{"gid": "axes_0.patches_5", "prop": "fill", "value": True}]),
-                    "axes_0.patches_5")
+    after = _fields(
+        _man(hot, "FamPatch", [{"gid": "axes_0.patches_5", "prop": "fill", "value": True}]),
+        "axes_0.patches_5",
+    )
     assert after["fill"]["value"] is True
     assert _fields(_man(hot, "FamPatch"), "axes_0.patches_5")["fill"]["value"] is False
 
@@ -477,8 +488,9 @@ def test_census_reports_what_is_not_in_the_element_table(hot):
     """
     man = _man(hot, "FamCont")
     missing = {row["cls"] for row in man.get("unsupported", [])}
-    assert not any("LineCollection" in c for c in missing), \
+    assert not any("LineCollection" in c for c in missing), (
         f"茎与误差棒横杠已由容器代表，不该报成漏掉：{missing}"
+    )
 
 
 def test_colorbar_axes_expose_only_the_colorbar(hot):
@@ -493,14 +505,17 @@ def test_colorbar_axes_expose_only_the_colorbar(hot):
     cbar_axes = {e["gid"] for e in man["elements"] if e.get("is_colorbar")}
     assert cbar_axes, "这张图上没有色条轴？"
     for ax_gid in cbar_axes:
-        extra = {g for g in _gids(man)
-                 if g.startswith(f"{ax_gid}.")
-                 and not g.startswith((f"{ax_gid}.colorbar", f"{ax_gid}.x",
-                                       f"{ax_gid}.y"))}
+        extra = {
+            g
+            for g in _gids(man)
+            if g.startswith(f"{ax_gid}.")
+            and not g.startswith((f"{ax_gid}.colorbar", f"{ax_gid}.x", f"{ax_gid}.y"))
+        }
         assert not extra, f"色条轴上漏出了内部件：{sorted(extra)}"
     # 也不该被普查报成「漏掉了」——普查一旦开始喊狼来了，真缺口就没人看了
-    assert not [r for r in man.get("unsupported", []) if r["where"] in cbar_axes], \
-        man.get("unsupported")
+    assert not [r for r in man.get("unsupported", []) if r["where"] in cbar_axes], man.get(
+        "unsupported"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -529,7 +544,7 @@ def _sample_value(field):
         if lo is not None and v < float(lo):
             return None
         return round(v, 4)
-    return None      # pair / rect / order / number_list：各有各的契约，不在本表
+    return None  # pair / rect / order / number_list：各有各的契约，不在本表
 
 
 #: 族里通用的那些属性——能力层新开放的与原本就有的一起过一遍。
@@ -538,10 +553,26 @@ def _sample_value(field):
 #: 吃 Legend 自己那套重建路径，撤销那一刻才炸——与本分支修的 linestyle 是
 #: 同一类 bug（getter 回的形状 ≠ setter 吃的形状）。放进通用还原用例，
 #: 那条一次性修复就变成常设看护。
-_FAMILY_PROPS = ("facecolor", "edgecolor", "linewidth", "linestyle", "hatch",
-                 "fill", "alpha", "visible", "zorder", "size", "marker",
-                 "markersize", "color", "cmap", "vmin", "vmax", "label",
-                 "fontsize")
+_FAMILY_PROPS = (
+    "facecolor",
+    "edgecolor",
+    "linewidth",
+    "linestyle",
+    "hatch",
+    "fill",
+    "alpha",
+    "visible",
+    "zorder",
+    "size",
+    "marker",
+    "markersize",
+    "color",
+    "cmap",
+    "vmin",
+    "vmax",
+    "label",
+    "fontsize",
+)
 
 
 def _roundtrip_targets(man):
@@ -553,8 +584,9 @@ def _roundtrip_targets(man):
                 yield el["gid"], f
 
 
-@pytest.mark.parametrize("stem", ["FamColl", "FamPatch", "FamStairs",
-                                  "FamCont", "FamCbar", "FamCustom"])
+@pytest.mark.parametrize(
+    "stem", ["FamColl", "FamPatch", "FamStairs", "FamCont", "FamCbar", "FamCustom"]
+)
 def test_every_family_prop_restores_exactly(hot, stem):
     """改一条 → 撤销 → **逐字**回到原值。
 
@@ -571,27 +603,31 @@ def test_every_family_prop_restores_exactly(hot, stem):
             continue
         before = field["value"]
         _man(hot, stem, [{"gid": gid, "prop": field["prop"], "value": value}])
-        after = _man(hot, stem)          # 空列表 = 全部撤销
+        after = _man(hot, stem)  # 空列表 = 全部撤销
         now = _fields(after, gid)[field["prop"]]["value"]
         assert now == before, f"{stem} {gid}.{field['prop']}：{before!r} → 撤销后 {now!r}"
         checked += 1
     assert checked >= 5, f"{stem} 上只测到 {checked} 条属性，覆盖太薄"
 
 
-@pytest.mark.parametrize("stem,gid,prop,value", [
-    # 新开放的族属性里挑几条**必须看得见**变化的，防止「还原测试全绿但其实
-    # 什么都没改」——两条断言合起来才叫可编辑
-    ("FamPatch", "axes_0.patches_0", "facecolor", "#123456"),   # pie 的扇形
-    ("FamPatch", "axes_0.patches_3", "hatch", "//"),            # Circle 的花纹
-    ("FamColl", "axes_0.collections_3", "edgecolor", "#123456"),  # pcolormesh 网格线
-    ("FamColl", "axes_0.collections_4", "cmap", "plasma"),      # contour 的色图
-    ("FamColl", "axes_0.linecoll_5", "linewidth", 3.0),         # eventplot 线宽
-    ("FamCont", "axes_0.stemseries_0", "color", "#123456"),     # 茎叶系列整体
-])
+@pytest.mark.parametrize(
+    "stem,gid,prop,value",
+    [
+        # 新开放的族属性里挑几条**必须看得见**变化的，防止「还原测试全绿但其实
+        # 什么都没改」——两条断言合起来才叫可编辑
+        ("FamPatch", "axes_0.patches_0", "facecolor", "#123456"),  # pie 的扇形
+        ("FamPatch", "axes_0.patches_3", "hatch", "//"),  # Circle 的花纹
+        ("FamColl", "axes_0.collections_3", "edgecolor", "#123456"),  # pcolormesh 网格线
+        ("FamColl", "axes_0.collections_4", "cmap", "plasma"),  # contour 的色图
+        ("FamColl", "axes_0.linecoll_5", "linewidth", 3.0),  # eventplot 线宽
+        ("FamCont", "axes_0.stemseries_0", "color", "#123456"),  # 茎叶系列整体
+    ],
+)
 def test_representative_family_edits_actually_change_the_manifest(hot, stem, gid, prop, value):
     before = _fields(_man(hot, stem), gid)[prop]["value"]
-    after = _fields(_man(hot, stem, [{"gid": gid, "prop": prop, "value": value}]),
-                    gid)[prop]["value"]
+    after = _fields(_man(hot, stem, [{"gid": gid, "prop": prop, "value": value}]), gid)[prop][
+        "value"
+    ]
     assert after != before, f"{gid}.{prop} 改了却没反映到 manifest"
     back = _fields(_man(hot, stem), gid)[prop]["value"]
     assert back == before
@@ -604,8 +640,7 @@ def test_consumed_markerline_keeps_its_old_gid_as_an_alias(hot):
     """markerline 从前是 `axes_0.lines_0`，现在归 stem 容器。历史文档里针对它
     的 override 必须还落在同一个 artist 上——别名只进 index、不进元素表，
     所以界面上不会多出条目，旧文档也不会变成孤儿。"""
-    resp = hot.override("FamCont", [{"gid": "axes_0.lines_0", "prop": "color",
-                                     "value": "#123456"}])
+    resp = hot.override("FamCont", [{"gid": "axes_0.lines_0", "prop": "color", "value": "#123456"}])
     assert not resp.get("warnings"), resp["warnings"]
     hot.override("FamCont", [])
 
@@ -624,19 +659,28 @@ def test_removing_a_legacy_alias_override_replays_the_series(hot):
     `apply` 的反查表覆盖 index-only 别名），与柱形系列 / 图例字号同一套机制。
     """
     # 两条都在：窄的（别名）排在广播的（系列）之后 → marker 归别名那条管
-    man = _man(hot, "FamCont", [
-        {"gid": "axes_0.lines_0", "prop": "color", "value": "#ff0000"},
-        {"gid": "axes_0.stemseries_0", "prop": "color", "value": "#0000ff"},
-    ])
+    man = _man(
+        hot,
+        "FamCont",
+        [
+            {"gid": "axes_0.lines_0", "prop": "color", "value": "#ff0000"},
+            {"gid": "axes_0.stemseries_0", "prop": "color", "value": "#0000ff"},
+        ],
+    )
     # 系列的 color 字段读的正是 markerline（见 manifest._stem_fields 的 probe）
     assert _fields(man, "axes_0.stemseries_0")["color"]["value"].lower() == "#ff0000"
 
     # 只撤掉历史那条，系列那条一个字节没变
-    man = _man(hot, "FamCont", [
-        {"gid": "axes_0.stemseries_0", "prop": "color", "value": "#0000ff"},
-    ])
-    assert _fields(man, "axes_0.stemseries_0")["color"]["value"].lower() == "#0000ff", \
+    man = _man(
+        hot,
+        "FamCont",
+        [
+            {"gid": "axes_0.stemseries_0", "prop": "color", "value": "#0000ff"},
+        ],
+    )
+    assert _fields(man, "axes_0.stemseries_0")["color"]["value"].lower() == "#0000ff", (
         "marker 退回了脚本原色——别名的还原把系列的值盖掉了，而系列被跳过没重放"
+    )
 
     # 全撤：回脚本原样
     hot.override("FamCont", [])
@@ -658,11 +702,14 @@ def test_consumed_stemlines_keeps_its_old_collection_gid(hot):
     规则：`_alias_consumed_member` 认两条列表，旧 gid 的前缀由
     `_collection_gid_prefix`（登记循环用的同一个函数）算出来。
     """
-    for legacy, prop, value in (("axes_0.lines_0", "color", "#ff0000"),
-                                ("axes_0.linecoll_0", "linewidth", 4.0)):
+    for legacy, prop, value in (
+        ("axes_0.lines_0", "color", "#ff0000"),
+        ("axes_0.linecoll_0", "linewidth", 4.0),
+    ):
         resp = hot.override("FamCont", [{"gid": legacy, "prop": prop, "value": value}])
-        assert not (resp.get("warnings") or []), \
+        assert not (resp.get("warnings") or []), (
             f"历史 gid {legacy} 解析不出来了：{resp.get('warnings')}"
+        )
         hot.override("FamCont", [])
 
 
@@ -678,16 +725,21 @@ def test_removing_the_stemlines_alias_replays_the_series_linewidth(hot):
     base = _fields(_man(hot, "FamCont"), gid)["linewidth"]["value"]
 
     # 两条都在：窄的（别名）排在广播的（系列）之后 → 别名说了算
-    man = _man(hot, "FamCont", [
-        {"gid": "axes_0.linecoll_0", "prop": "linewidth", "value": 5.0},
-        {"gid": gid, "prop": "linewidth", "value": 3.0},
-    ])
+    man = _man(
+        hot,
+        "FamCont",
+        [
+            {"gid": "axes_0.linecoll_0", "prop": "linewidth", "value": 5.0},
+            {"gid": gid, "prop": "linewidth", "value": 3.0},
+        ],
+    )
     assert _fields(man, gid)["linewidth"]["value"] == 5.0
 
     # 只撤掉别名那条：系列那条必须重放，不能退回脚本原样
     man = _man(hot, "FamCont", [{"gid": gid, "prop": "linewidth", "value": 3.0}])
-    assert _fields(man, gid)["linewidth"]["value"] == 3.0, \
+    assert _fields(man, gid)["linewidth"]["value"] == 3.0, (
         "撤掉别名那条把茎写回脚本原样了，而系列那条被跳过没重放"
+    )
 
     assert _fields(_man(hot, "FamCont"), gid)["linewidth"]["value"] == base
 
@@ -705,10 +757,15 @@ def test_stem_props_stay_warning_free_now_that_the_stems_have_a_gid(hot):
     `tests/test_invariants_engine.py` 在 worker 解释器里静态核对：本进程没有
     matplotlib，import 不动 `overrides`。
     """
-    for prop, value in (("marker", "s"), ("markersize", 9.0),
-                        ("linewidth", 3.0), ("linestyle", ":")):
-        resp = hot.override("FamCont", [
-            {"gid": "axes_0.stemseries_0", "prop": prop, "value": value}])
+    for prop, value in (
+        ("marker", "s"),
+        ("markersize", 9.0),
+        ("linewidth", 3.0),
+        ("linestyle", ":"),
+    ):
+        resp = hot.override(
+            "FamCont", [{"gid": "axes_0.stemseries_0", "prop": prop, "value": value}]
+        )
         assert not (resp.get("warnings") or []), (prop, resp["warnings"])
         resp = hot.override("FamCont", [])
         assert not (resp.get("warnings") or []), (prop, resp["warnings"])
@@ -730,12 +787,17 @@ def test_sparse_collections_do_not_claim_the_whole_subplot(hot):
     man = _man(hot, "FamColl")
     ax_box = _el(man, "axes_0")["bbox"]
     ax_area = ax_box[2] * ax_box[3]
-    for gid in ("axes_0.linecoll_5", "axes_0.collections_4", "axes_0.scatter_0",
-                "axes_0.collections_6"):
+    for gid in (
+        "axes_0.linecoll_5",
+        "axes_0.collections_4",
+        "axes_0.scatter_0",
+        "axes_0.collections_6",
+    ):
         bb = _el(man, gid)["bbox"]
         # 每一条都必须明显小于整块子图；等于子图就是退回裁剪框了
-        assert bb[2] * bb[3] < ax_area * 0.9, \
+        assert bb[2] * bb[3] < ax_area * 0.9, (
             f"{gid} 的命中框几乎就是整块子图：{bb} vs axes {ax_box}"
+        )
         # 而且要落在子图里（数据范围换算对了的话必然如此）
         assert bb[0] >= ax_box[0] - 1e-6 and bb[1] >= ax_box[1] - 1e-6, (gid, bb, ax_box)
 

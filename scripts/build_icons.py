@@ -9,6 +9,7 @@
 依赖：rsvg-convert（brew install librsvg）、iconutil（macOS 自带）、
 magick（brew install imagemagick，只用来打 .ico）。
 """
+
 from __future__ import annotations
 
 import shutil
@@ -39,9 +40,7 @@ TAURI_PNGS = [
 
 # 直接可用的方形 PNG（社交账号头像、GitHub org 头像这类「上传一张图」的场合
 # 用不了 .icns/.ico）。与其余产物出自同一份 SVG，改了 icon.svg 一起重出。
-AVATAR_PNGS = [
-    (ROOT / "assets" / "icon" / f"icon-{s}.png", s) for s in (256, 512, 1024)
-]
+AVATAR_PNGS = [(ROOT / "assets" / "icon" / f"icon-{s}.png", s) for s in (256, 512, 1024)]
 
 
 def need(tool: str) -> str:
@@ -53,8 +52,7 @@ def need(tool: str) -> str:
 
 
 def render(rsvg: str, size: int, out: Path) -> None:
-    subprocess.run([rsvg, "-w", str(size), "-h", str(size), str(SVG), "-o", str(out)],
-                   check=True)
+    subprocess.run([rsvg, "-w", str(size), "-h", str(size), str(SVG), "-o", str(out)], check=True)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -80,10 +78,11 @@ def main(argv: list[str] | None = None) -> int:
             iconset.mkdir()
             for s in ICNS_SIZES:
                 render(rsvg, s, iconset / f"icon_{s}x{s}.png")
-                if s * 2 <= 1024:          # @2x：iconutil 靠文件名识别
+                if s * 2 <= 1024:  # @2x：iconutil 靠文件名识别
                     render(rsvg, s * 2, iconset / f"icon_{s}x{s}@2x.png")
-            subprocess.run([need("iconutil"), "-c", "icns", str(iconset),
-                            "-o", str(ICNS)], check=True)
+            subprocess.run(
+                [need("iconutil"), "-c", "icns", str(iconset), "-o", str(ICNS)], check=True
+            )
             print(f"✓ {ICNS.relative_to(ROOT)}  {ICNS.stat().st_size:,} bytes")
         else:
             print("跳过 .icns（只能在 macOS 上用 iconutil 生成）")

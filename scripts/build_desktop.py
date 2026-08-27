@@ -27,6 +27,7 @@
 签名/公证不在本脚本内：本地无证书时产物是未签名测试包（macOS 上 Tauri 会
 落 adhoc 签名），发行签名走 CI（.github/workflows/desktop-tauri.yml）。
 """
+
 from __future__ import annotations
 
 import argparse
@@ -66,13 +67,13 @@ def sync_version(version: str) -> None:
     conf = json.loads(conf_path.read_text(encoding="utf-8"))
     if conf.get("version") != version:
         conf["version"] = version
-        conf_path.write_text(json.dumps(conf, ensure_ascii=False, indent=2) + "\n",
-                             encoding="utf-8")
+        conf_path.write_text(
+            json.dumps(conf, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
         print(f"* tauri.conf.json 版本 → {version}")
     cargo_path = ROOT / "src-tauri" / "Cargo.toml"
     cargo = cargo_path.read_text(encoding="utf-8")
-    new = re.sub(r'^version = "[^"]+"', f'version = "{version}"', cargo,
-                 count=1, flags=re.M)
+    new = re.sub(r'^version = "[^"]+"', f'version = "{version}"', cargo, count=1, flags=re.M)
     if new != cargo:
         cargo_path.write_text(new, encoding="utf-8")
         print(f"* Cargo.toml 版本 → {version}")
@@ -102,9 +103,9 @@ def build_workerd() -> Path:
             "  · 装一次 Rust 工具链：https://rustup.rs\n"
             "  · 或者在别处构建好，用 TAVOTTO_WORKERD_BIN=<路径> 指过来\n"
             "桌面产物必须自带 workerd——缺了它渲染静默回退到 Python 池，"
-            "队列合并/超时强杀/取消全部失效，而界面上一点异常都看不出来。")
-    run(["cargo", "build", "--release",
-         "--manifest-path", str(ROOT / "workerd" / "Cargo.toml")])
+            "队列合并/超时强杀/取消全部失效，而界面上一点异常都看不出来。"
+        )
+    run(["cargo", "build", "--release", "--manifest-path", str(ROOT / "workerd" / "Cargo.toml")])
     exe = ROOT / "workerd" / "target" / "release" / WORKERD_NAME
     if not exe.is_file():
         raise SystemExit(f"cargo 跑完了，但产物不在预期位置: {exe}")
@@ -151,31 +152,39 @@ def build_runtime(skip: bool, force: bool) -> None:
     `TAVOTTO_REQUIRE_RUNTIME=1`，spec 会当场把没有 runtime 的包拦下来。
     """
     if skip:
-        print("* --skip-runtime：不构建内置 runtime"
-              "（产物将依赖机器上已有的 Python，**不可发行**）")
+        print("* --skip-runtime：不构建内置 runtime（产物将依赖机器上已有的 Python，**不可发行**）")
         return
     if not force:
         why = _runtime_is_current()
         if not why:
             info = json.loads(RUNTIME_MANIFEST.read_text(encoding="utf-8"))
-            print(f"* 内置 runtime（复用现成的）: {info['platform']['os']}/"
-                  f"{info['platform']['arch']}  Python {info['python']['version']}")
+            print(
+                f"* 内置 runtime（复用现成的）: {info['platform']['os']}/"
+                f"{info['platform']['arch']}  Python {info['python']['version']}"
+            )
             return
         print(f"* 内置 runtime 需要重建：{why}")
-    run([sys.executable, str(ROOT / "scripts" / "build_worker_runtime.py"),
-         "--clean"])
+    run([sys.executable, str(ROOT / "scripts" / "build_worker_runtime.py"), "--clean"])
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--skip-tauri", action="store_true",
-                    help="只构建前端与 sidecar，不打 Tauri 壳")
-    ap.add_argument("--skip-runtime", action="store_true",
-                    help="不构建内置渲染 runtime（开发态省时；产物不可发行）")
-    ap.add_argument("--rebuild-runtime", action="store_true",
-                    help="强制重建内置 runtime，即使现成的看起来是对的")
-    ap.add_argument("--bundles", default="app,dmg" if sys.platform == "darwin"
-                    else "nsis", help="Tauri bundler 目标（默认按平台）")
+    ap.add_argument("--skip-tauri", action="store_true", help="只构建前端与 sidecar，不打 Tauri 壳")
+    ap.add_argument(
+        "--skip-runtime",
+        action="store_true",
+        help="不构建内置渲染 runtime（开发态省时；产物不可发行）",
+    )
+    ap.add_argument(
+        "--rebuild-runtime",
+        action="store_true",
+        help="强制重建内置 runtime，即使现成的看起来是对的",
+    )
+    ap.add_argument(
+        "--bundles",
+        default="app,dmg" if sys.platform == "darwin" else "nsis",
+        help="Tauri bundler 目标（默认按平台）",
+    )
     args = ap.parse_args()
 
     version = read_version()
@@ -185,11 +194,17 @@ def main() -> None:
     run([sys.executable, str(ROOT / "scripts" / "build_frontend.py")])
     build_workerd()
     build_runtime(args.skip_runtime, args.rebuild_runtime)
-    run([sys.executable, "-m", "PyInstaller",
-         str(ROOT / "packaging" / "tavotto.spec"), "--noconfirm"])
+    run(
+        [
+            sys.executable,
+            "-m",
+            "PyInstaller",
+            str(ROOT / "packaging" / "tavotto.spec"),
+            "--noconfirm",
+        ]
+    )
 
-    sidecar = ROOT / "dist" / "Tavotto" / \
-        ("Tavotto.exe" if sys.platform == "win32" else "Tavotto")
+    sidecar = ROOT / "dist" / "Tavotto" / ("Tavotto.exe" if sys.platform == "win32" else "Tavotto")
     if not sidecar.is_file():
         raise SystemExit(f"sidecar 产物缺失: {sidecar}")
     # spec 里那条 binaries 真的落到 _internal/ 了没有——这一步只花一次 stat，
@@ -199,21 +214,27 @@ def main() -> None:
         raise SystemExit(
             f"sidecar 里没有 workerd: {packed}\n"
             "  packaging/tavotto.spec 的 binaries 落点与 "
-            "engine/workerd_client.find_workerd() 对不上了。")
+            "engine/workerd_client.find_workerd() 对不上了。"
+        )
 
     # console 版 CLI 同理**缺了就中止**：少了它，装完的桌面版功能一样不缺，
     # 只有「Codex 插件找不到 Tavotto」这一种表现，而那要等用户装完才发现。
-    cli = sidecar.parent / ("tavotto-cli.exe" if sys.platform == "win32"
-                            else "tavotto-cli")
+    cli = sidecar.parent / ("tavotto-cli.exe" if sys.platform == "win32" else "tavotto-cli")
     if not cli.is_file():
         raise SystemExit(
             f"sidecar 目录里没有 console 版 CLI: {cli}\n"
             "  packaging/tavotto.spec 的第二个 EXE 落点与 "
-            "engine/locate.CLI_NAME 对不上了。")
+            "engine/locate.CLI_NAME 对不上了。"
+        )
     # 装完的机器上安装器跑的就是这一条；在这儿先跑一次，把「打出来的 CLI 起不来」
     # 挡在发布之前（真产物、真 argv、真 JSON，不是对源码的断言）。
-    probe = subprocess.run([str(cli), "doctor", "--json"], capture_output=True,
-                           text=True, encoding="utf-8", errors="replace")
+    probe = subprocess.run(
+        [str(cli), "doctor", "--json"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
     tail = (probe.stdout or probe.stderr or "").strip().splitlines()
     try:
         report = json.loads(tail[-1]) if tail else {}
@@ -223,7 +244,8 @@ def main() -> None:
         raise SystemExit(
             f"tavotto-cli 自检没过（退出码 {probe.returncode}）:\n"
             f"  stdout: {(probe.stdout or '').strip()[:400]}\n"
-            f"  stderr: {(probe.stderr or '').strip()[:400]}")
+            f"  stderr: {(probe.stderr or '').strip()[:400]}"
+        )
     print(f"* tavotto-cli: {cli}（doctor 自检通过，协议 v{report.get('protocol')}）")
 
     if args.skip_tauri:
@@ -232,8 +254,7 @@ def main() -> None:
 
     # CLI 版本钉死：src-tauri/windows/installer.nsi 是按这个版本的上游模板
     # 打的品牌补丁，模板与打包器必须同源（升级时两处一起动，见模板头注释）
-    cmd = ["pnpm", "dlx", "@tauri-apps/cli@2.11.4", "build",
-           "--bundles", args.bundles]
+    cmd = ["pnpm", "dlx", "@tauri-apps/cli@2.11.4", "build", "--bundles", args.bundles]
     # tauri.conf.json 里 createUpdaterArtifacts 常开（发行链要它），但打包器
     # 一开它就要用 minisign 私钥签名——本机开发通常没有那把钥匙。没有就地关掉，
     # 而不是让每个开发者为了跑一次构建去配发行密钥。

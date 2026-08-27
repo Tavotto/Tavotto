@@ -34,6 +34,7 @@ zip 那步），构建机上的中间产物检查（`tests/test_updater_zip.py`�
     2  网络失败：GitHub 抓不下来（DNS / 超时 / 5xx）—— infra 波动
     3  自检失败：门禁自身坏了
 """
+
 from __future__ import annotations
 
 import argparse
@@ -82,7 +83,8 @@ def load_updater_config(conf_path: Path = TAURI_CONF) -> tuple[str, bytes]:
     pubkey = base64.b64decode(updater["pubkey"])
     if b"minisign public key" not in pubkey.splitlines()[0]:
         raise AssertionFailure(
-            f"tauri.conf.json 的 pubkey 解出来不是 minisign 公钥文件：{pubkey[:60]!r}")
+            f"tauri.conf.json 的 pubkey 解出来不是 minisign 公钥文件：{pubkey[:60]!r}"
+        )
     return endpoint, pubkey
 
 
@@ -105,14 +107,14 @@ def fetch(url: str, *, retries: int = 3, timeout: int = 120) -> bytes:
                 raise AssertionFailure(f"HTTP {e.code} for {url}") from e
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             last = e
-        time.sleep(2 ** attempt * 5)
+        time.sleep(2**attempt * 5)
     raise NetworkFailure(f"抓不下来 {url}: {last}")
 
 
 def run_probe(probe: Path, zip_path: Path, out_dir: Path) -> tuple[int, str]:
     proc = subprocess.run(
-        [str(probe), str(zip_path), str(out_dir)],
-        capture_output=True, text=True, timeout=600)
+        [str(probe), str(zip_path), str(out_dir)], capture_output=True, text=True, timeout=600
+    )
     return proc.returncode, (proc.stdout + proc.stderr).strip()
 
 
@@ -141,7 +143,8 @@ def selftest(probe: Path, workdir: Path) -> None:
     if rc == 0:
         raise SelftestFailure(
             "探针把 deflate 包也放行了——它的 zip 依赖形态已经不再等于插件的"
-            "（检查 tools/updater-extract-probe/Cargo.toml 是不是被加了 feature）")
+            "（检查 tools/updater-extract-probe/Cargo.toml 是不是被加了 feature）"
+        )
     print("✓ 自检：STORED 过、deflate 红（探针与插件能力面同形）")
 
 
@@ -149,8 +152,9 @@ class SelftestFailure(Exception):
     pass
 
 
-def verify_minisign(minisign: str, pubkey: bytes, payload: Path, sig_b64: str,
-                    workdir: Path) -> None:
+def verify_minisign(
+    minisign: str, pubkey: bytes, payload: Path, sig_b64: str, workdir: Path
+) -> None:
     """latest.json 的 signature 字段是 minisig 文件内容的 base64。"""
     try:
         sig = base64.b64decode(sig_b64)
@@ -162,10 +166,14 @@ def verify_minisign(minisign: str, pubkey: bytes, payload: Path, sig_b64: str,
     sig_file.write_bytes(sig)
     proc = subprocess.run(
         [minisign, "-Vm", str(payload), "-x", str(sig_file), "-p", str(pub_file)],
-        capture_output=True, text=True, timeout=300)
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
     if proc.returncode != 0:
         raise AssertionFailure(
-            f"{payload.name} minisign 验签失败：{(proc.stdout + proc.stderr).strip()}")
+            f"{payload.name} minisign 验签失败：{(proc.stdout + proc.stderr).strip()}"
+        )
     print(f"✓ 验签：{payload.name}")
 
 
@@ -175,7 +183,8 @@ def check_windows_package(probe: Path, pkg: Path, workdir: Path) -> None:
         raise AssertionFailure(
             f"更新器插件消费不了 {pkg.name}（探针 rc={rc}）：{out}\n"
             "这正是 v0.7.0–v0.10.0 的形态：下载完成、验签通过、解包失败，"
-            "用户看到「无法安装更新」。")
+            "用户看到「无法安装更新」。"
+        )
     print(f"✓ Windows 包：插件同形态解包成功，顶层恰好一个 exe（{out}）")
 
 
@@ -188,13 +197,11 @@ def check_macos_package(pkg: Path, workdir: Path) -> None:
     except (tarfile.TarError, OSError, EOFError) as e:
         raise AssertionFailure(f"macOS 更新包解不开（tar.gz）：{pkg.name}: {e}") from e
     if not any(n == "Tavotto.app" or n.startswith("Tavotto.app/") for n in names):
-        raise AssertionFailure(
-            f"macOS 更新包里没有 Tavotto.app/（前几个条目：{names[:5]}）")
+        raise AssertionFailure(f"macOS 更新包里没有 Tavotto.app/（前几个条目：{names[:5]}）")
     print(f"✓ macOS 包：tar.gz 可解，含 Tavotto.app/（{len(names)} 个条目）")
 
 
-def check_live(endpoint: str, pubkey: bytes, probe: Path, minisign: str,
-               workdir: Path) -> str:
+def check_live(endpoint: str, pubkey: bytes, probe: Path, minisign: str, workdir: Path) -> str:
     raw = fetch(endpoint)
     try:
         manifest = json.loads(raw)
@@ -206,7 +213,8 @@ def check_live(endpoint: str, pubkey: bytes, probe: Path, minisign: str,
     if missing:
         raise AssertionFailure(
             f"latest.json（version={version}）缺平台 {missing}——"
-            f"那个平台的用户永远收不到更新（只有 {sorted(platforms)}）")
+            f"那个平台的用户永远收不到更新（只有 {sorted(platforms)}）"
+        )
     print(f"· 线上清单 version={version}，平台 {sorted(platforms)}")
 
     for key in REQUIRED_PLATFORMS:
@@ -234,12 +242,14 @@ def _summary(text: str) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--probe", required=True, type=Path,
-                    help="tools/updater-extract-probe 的 release 二进制")
+    ap.add_argument(
+        "--probe", required=True, type=Path, help="tools/updater-extract-probe 的 release 二进制"
+    )
     ap.add_argument("--minisign", default="minisign", help="minisign 可执行文件")
     ap.add_argument("--workdir", type=Path, default=Path("build/updater-consumer-check"))
-    ap.add_argument("--selftest-only", action="store_true",
-                    help="只跑反证自检，不打线上（pytest / 本地调试用）")
+    ap.add_argument(
+        "--selftest-only", action="store_true", help="只跑反证自检，不打线上（pytest / 本地调试用）"
+    )
     args = ap.parse_args(argv)
 
     if not args.probe.is_file():

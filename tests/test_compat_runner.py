@@ -8,6 +8,7 @@
 * CI 能自己改基线 → 红了就改期望；
 * 报告顺序不确定 → 每次 diff 都是噪音，没人再读。
 """
+
 from __future__ import annotations
 
 import json
@@ -27,10 +28,17 @@ import compat_matrix as CM  # noqa: E402
 
 
 def case(cid="c", tier="expected", expected=None, cls=None, **extra) -> dict:
-    out = {"id": cid, "category": "core_artists", "tier": tier,
-           "expected": expected or {}, "stem": "s", "expected_figures": 1,
-           "script": "cases/core_artists/ca_basic_series.py",
-           "discovery": "discoverable", **extra}
+    out = {
+        "id": cid,
+        "category": "core_artists",
+        "tier": tier,
+        "expected": expected or {},
+        "stem": "s",
+        "expected_figures": 1,
+        "script": "cases/core_artists/ca_basic_series.py",
+        "discovery": "discoverable",
+        **extra,
+    }
     if cls:
         out["classification"] = cls
     return out
@@ -52,8 +60,7 @@ class TestClassification:
         否则「我们的 bug」会被悄悄记成「产品边界」，而那正是这套 benchmark
         要消灭的自欺。
         """
-        cls, _r, detail = CM.classify(
-            case(), stages(execute=True, capture=True, edit=False), {})
+        cls, _r, detail = CM.classify(case(), stages(execute=True, capture=True, edit=False), {})
         assert cls == "product_bug"
         assert "edit" in detail
 
@@ -70,9 +77,12 @@ class TestClassification:
         assert "edit" in detail
 
     def test_a_boundary_declared_down_to_the_stage_is_honoured(self):
-        c = case(cls="unsupported_by_design", reason="3D 数据属于代码，不在编辑器里改",
-                 expected={"edit": False},
-                 expected_false_reasons={"edit": "Line3D 刻意不出可编辑字段"})
+        c = case(
+            cls="unsupported_by_design",
+            reason="3D 数据属于代码，不在编辑器里改",
+            expected={"edit": False},
+            expected_false_reasons={"edit": "Line3D 刻意不出可编辑字段"},
+        )
         cls, reason, _d = CM.classify(c, stages(execute=True, edit=False), {})
         assert cls == "unsupported_by_design"
         assert reason
@@ -88,8 +98,7 @@ class TestClassification:
         """
         assert "partial_support" in CC.CLASSIFICATIONS
         assert "unsupported_by_design" in CC.CLASSIFICATIONS
-        assert CC.NEEDS_REASON == tuple(
-            c for c in CC.CLASSIFICATIONS if c != "full_support")
+        assert CC.NEEDS_REASON == tuple(c for c in CC.CLASSIFICATIONS if c != "full_support")
 
     def test_declared_environment_dependency_absorbs_real_failures(self):
         c = case(cls="environment_dependency", reason="缺 seaborn")
@@ -125,8 +134,14 @@ class TestGate:
 
     def test_tier1_failure_fails_every_gate(self):
         cases = [case("t1", tier="must")]
-        results = {"t1": {"id": "t1", "tier": "must", "classification": "product_bug",
-                          "stages": stages(execute=False)}}
+        results = {
+            "t1": {
+                "id": "t1",
+                "tier": "must",
+                "classification": "product_bug",
+                "stages": stages(execute=False),
+            }
+        }
         for gate in CM.GATES:
             ok, fails = self._run(gate, cases, results, {"cases": {}})
             assert not ok, gate
@@ -134,19 +149,38 @@ class TestGate:
 
     def test_a_new_product_bug_always_fails(self):
         cases = [case("x")]
-        results = {"x": {"id": "x", "tier": "expected",
-                         "classification": "product_bug", "stages": stages(edit=False)}}
+        results = {
+            "x": {
+                "id": "x",
+                "tier": "expected",
+                "classification": "product_bug",
+                "stages": stages(edit=False),
+            }
+        }
         ok, fails = self._run("pr", cases, results, {"cases": {}})
         assert not ok and any("新出现的 product_bug" in f for f in fails)
 
     def test_a_baseline_known_bug_passes_pr_but_not_release(self):
         """已知缺陷在基线里属于「看住」，但 1.0 的 exit rule 是 P0 = 0。"""
         cases = [case("x")]
-        results = {"x": {"id": "x", "tier": "expected",
-                         "classification": "product_bug", "stages": stages(edit=False)}}
-        baseline = {"cases": {"x": {"classification": "product_bug",
-                                    "reason": "撤销回不去",
-                                    "follow_up": "别名组", "stages": {}}}}
+        results = {
+            "x": {
+                "id": "x",
+                "tier": "expected",
+                "classification": "product_bug",
+                "stages": stages(edit=False),
+            }
+        }
+        baseline = {
+            "cases": {
+                "x": {
+                    "classification": "product_bug",
+                    "reason": "撤销回不去",
+                    "follow_up": "别名组",
+                    "stages": {},
+                }
+            }
+        }
         assert self._run("pr", cases, results, baseline)[0]
         ok, fails = self._run("release", cases, results, baseline)
         assert not ok and any("release" in f for f in fails)
@@ -155,19 +189,28 @@ class TestGate:
         """把 case 从 full_support 改成 unsupported_by_design 让 CI 变绿，
         是这里唯一真正想拦的作弊。"""
         cases = [case("x")]
-        results = {"x": {"id": "x", "tier": "expected",
-                         "classification": "unsupported_by_design",
-                         "stages": stages(edit=False)}}
+        results = {
+            "x": {
+                "id": "x",
+                "tier": "expected",
+                "classification": "unsupported_by_design",
+                "stages": stages(edit=False),
+            }
+        }
         baseline = {"cases": {"x": {"classification": "full_support", "stages": {}}}}
         ok, fails = self._run("nightly", cases, results, baseline)
         assert not ok and any("退步" in f for f in fails)
 
     def test_improving_against_the_baseline_passes(self):
         cases = [case("x")]
-        results = {"x": {"id": "x", "tier": "expected",
-                         "classification": "full_support", "stages": {}}}
-        baseline = {"cases": {"x": {"classification": "partial_support",
-                                    "reason": "曾经只认一半", "stages": {}}}}
+        results = {
+            "x": {"id": "x", "tier": "expected", "classification": "full_support", "stages": {}}
+        }
+        baseline = {
+            "cases": {
+                "x": {"classification": "partial_support", "reason": "曾经只认一半", "stages": {}}
+            }
+        }
         assert self._run("nightly", cases, results, baseline)[0]
 
     def test_gates_get_progressively_stricter(self):
@@ -185,17 +228,33 @@ class TestReport:
     def _fixture(self):
         cases = [case("b", tier="must"), case("a")]
         results = {
-            "a": {"id": "a", "category": "core_artists", "tier": "expected",
-                  "classification": "partial_support", "stages":
-                      stages(discover=True, execute=True, capture=True, open=True,
-                             semantic=False),
-                  "detail": {}, "skipped": {}, "census": {}, "browser": None,
-                  "reason": "只认一半"},
-            "b": {"id": "b", "category": "core_artists", "tier": "must",
-                  "classification": "full_support", "stages":
-                      stages(discover=True, execute=True, capture=True, open=True,
-                             semantic=True),
-                  "detail": {}, "skipped": {}, "census": {}, "browser": None},
+            "a": {
+                "id": "a",
+                "category": "core_artists",
+                "tier": "expected",
+                "classification": "partial_support",
+                "stages": stages(
+                    discover=True, execute=True, capture=True, open=True, semantic=False
+                ),
+                "detail": {},
+                "skipped": {},
+                "census": {},
+                "browser": None,
+                "reason": "只认一半",
+            },
+            "b": {
+                "id": "b",
+                "category": "core_artists",
+                "tier": "must",
+                "classification": "full_support",
+                "stages": stages(
+                    discover=True, execute=True, capture=True, open=True, semantic=True
+                ),
+                "detail": {},
+                "skipped": {},
+                "census": {},
+                "browser": None,
+            },
         }
         return cases, results
 
@@ -207,9 +266,9 @@ class TestReport:
     def test_report_json_is_deterministic(self):
         cases, results = self._fixture()
         a = CM.build_report(cases, results, {}, "current", "all")
-        b = CM.build_report(list(reversed(cases)),
-                            dict(reversed(list(results.items()))), {},
-                            "current", "all")
+        b = CM.build_report(
+            list(reversed(cases)), dict(reversed(list(results.items()))), {}, "current", "all"
+        )
         # generated_at 与 metadata 都是**随这一次运行变化**的身份字段，
         # 本来就不该参与「同样的输入是否产出同样的报告」。metadata 是本 PR
         # 加的：汇总要靠它认出「这份是本轮的」。
@@ -223,12 +282,26 @@ class TestReport:
         看报告的人分不清「没跑」和「跑了没过」。"""
         cases = [case("a"), case("b")]
         results = {
-            "a": {"id": "a", "tier": "expected", "classification": "product_bug",
-                  "stages": {"discover": True, "execute": False},
-                  "detail": {}, "skipped": {}, "census": {}, "browser": None},
-            "b": {"id": "b", "tier": "expected", "classification": "full_support",
-                  "stages": {"discover": True, "execute": True, "export": True},
-                  "detail": {}, "skipped": {}, "census": {}, "browser": None},
+            "a": {
+                "id": "a",
+                "tier": "expected",
+                "classification": "product_bug",
+                "stages": {"discover": True, "execute": False},
+                "detail": {},
+                "skipped": {},
+                "census": {},
+                "browser": None,
+            },
+            "b": {
+                "id": "b",
+                "tier": "expected",
+                "classification": "full_support",
+                "stages": {"discover": True, "execute": True, "export": True},
+                "detail": {},
+                "skipped": {},
+                "census": {},
+                "browser": None,
+            },
         }
         rows = {r["stage"]: r for r in CM.funnel(cases, results)}
         assert rows["export"]["total"] == 1 and rows["export"]["passed"] == 1
@@ -242,19 +315,27 @@ class TestReport:
 
     def test_summary_calls_out_product_bugs_loudly(self):
         cases = [case("x")]
-        results = {"x": {"id": "x", "tier": "expected", "classification": "product_bug",
-                         "stage": "edit", "stages": stages(edit=False), "detail": {},
-                         "skipped": {}, "census": {}, "browser": None,
-                         "detail_note": "未通过：['edit']"}}
+        results = {
+            "x": {
+                "id": "x",
+                "tier": "expected",
+                "classification": "product_bug",
+                "stage": "edit",
+                "stages": stages(edit=False),
+                "detail": {},
+                "skipped": {},
+                "census": {},
+                "browser": None,
+                "detail_note": "未通过：['edit']",
+            }
+        }
         text = CM.render_summary(CM.build_report(cases, results, {}, "current", "all"))
         assert "Product bugs" in text and "`x`" in text
 
     def test_artist_census_ranks_the_biggest_gaps_first(self):
         results = {
-            "a": {"census": {"total": {"QuadMesh": 1, "Line2D": 5},
-                             "recognized": {"Line2D": 5}}},
-            "b": {"census": {"total": {"QuadMesh": 3, "LineCollection": 9},
-                             "recognized": {}}},
+            "a": {"census": {"total": {"QuadMesh": 1, "Line2D": 5}, "recognized": {"Line2D": 5}}},
+            "b": {"census": {"total": {"QuadMesh": 3, "LineCollection": 9}, "recognized": {}}},
         }
         rows = CM.artist_census(results)
         assert [r["artist"] for r in rows] == ["LineCollection", "QuadMesh"]
@@ -264,12 +345,16 @@ class TestReport:
     def test_fidelity_tolerance_is_a_reviewable_constant(self):
         """阈值必须是一张能被 review 的表，不许散在判定逻辑里。"""
         assert set(CM.FIDELITY_TOLERANCE) == {
-            "changed_pixel_ratio", "mean_abs_diff", "max_abs_diff"}
+            "changed_pixel_ratio",
+            "mean_abs_diff",
+            "max_abs_diff",
+        }
         for v in CM.FIDELITY_TOLERANCE.values():
             assert isinstance(v, (int, float)) and v > 0
         # 保真度比 golden 视觉回归松一档是**有理由的**（两个进程各自编码），
         # 但不许松到失去意义。
         import pixelcompare  # noqa: PLC0415
+
         assert CM.FIDELITY_TOLERANCE["changed_pixel_ratio"] < 0.02
         assert pixelcompare.NOISE_FLOOR == 3
 
@@ -281,14 +366,18 @@ class TestReport:
         """
         import pixelcompare
         import visual_regression as VR
+
         src = (CI_DIR / "visual_regression.py").read_text(encoding="utf-8")
         assert "def compare(" in src and "pixelcompare.compare" in src, (
-            "visual_regression 又自己实现了一份 compare")
-        assert VR.verdict({"ok": True, "changed_pixel_ratio": 1.0,
-                           "mean_abs_diff": 9.0, "max_abs_diff": 200},
-                          CM.FIDELITY_TOLERANCE) == pixelcompare.verdict(
-            {"ok": True, "changed_pixel_ratio": 1.0, "mean_abs_diff": 9.0,
-             "max_abs_diff": 200}, CM.FIDELITY_TOLERANCE)
+            "visual_regression 又自己实现了一份 compare"
+        )
+        assert VR.verdict(
+            {"ok": True, "changed_pixel_ratio": 1.0, "mean_abs_diff": 9.0, "max_abs_diff": 200},
+            CM.FIDELITY_TOLERANCE,
+        ) == pixelcompare.verdict(
+            {"ok": True, "changed_pixel_ratio": 1.0, "mean_abs_diff": 9.0, "max_abs_diff": 200},
+            CM.FIDELITY_TOLERANCE,
+        )
 
 
 # ============================================================ CLI
@@ -303,10 +392,15 @@ class TestCli:
 
     def _run(self, args, env=None):
         import os
+
         return subprocess.run(
             [sys.executable, str(CI_DIR / "compat_matrix.py"), *args],
-            capture_output=True, text=True, timeout=180, **self._DECODE,
-            env={**os.environ, **(env or {})})
+            capture_output=True,
+            text=True,
+            timeout=180,
+            **self._DECODE,
+            env={**os.environ, **(env or {})},
+        )
 
     def test_help_works(self):
         out = self._run(["--help"])
@@ -337,7 +431,11 @@ class TestCli:
     def test_driver_help_works(self):
         out = subprocess.run(
             [sys.executable, str(CI_DIR / "compat_driver.py"), "--help"],
-            capture_output=True, text=True, timeout=120, **self._DECODE)
+            capture_output=True,
+            text=True,
+            timeout=120,
+            **self._DECODE,
+        )
         assert out.returncode == 0
         for mode in ("native", "census", "browser"):
             assert mode in out.stdout
@@ -349,12 +447,13 @@ def test_compat_corpus_is_separate_from_the_acceptance_corpus():
     「外部 matplotlib 世界我们兼容多少」。两者共享工具，语义必须分开——
     合并之后就再也分不清「我们退步了」和「我们本来就不支持」。"""
     acceptance = json.loads(
-        (CC.REPO / "tests" / "acceptance" / "manifest.json").read_text(encoding="utf-8"))
+        (CC.REPO / "tests" / "acceptance" / "manifest.json").read_text(encoding="utf-8")
+    )
     compat_stems = {c["stem"] for c in CC.load_manifest()["cases"]}
     assert not (set(acceptance["cases"]) & compat_stems), (
-        "两套 corpus 的 stem 撞上了——它们各自回答不同的问题，别混")
-    assert not list((CC.CASES_DIR).glob("**/c0[123]_*.py")), \
-        "验收 corpus 的脚本被复制进 compat 了"
+        "两套 corpus 的 stem 撞上了——它们各自回答不同的问题，别混"
+    )
+    assert not list((CC.CASES_DIR).glob("**/c0[123]_*.py")), "验收 corpus 的脚本被复制进 compat 了"
 
 
 # ============================================================ 汇总集成
@@ -365,21 +464,30 @@ def test_summarize_surfaces_compat_and_never_hides_product_bugs():
     缺陷」——那正是这套 benchmark 最不能被稀释掉的那个数。
     """
     import summarize as SUM
+
     assert any(f == "compat.json" for f, _l, _k in SUM.SECTIONS)
     assert dict((f, k) for f, _l, k in SUM.SECTIONS)["compat.json"] == "correctness"
-    detail = SUM._detail("compat.json", {
-        "target": "bundled",
-        "summary": {"cases": 149,
-                    "funnel": [{"stage": "capture", "passed": 143, "total": 143}],
-                    "classification": {"full_support": 120},
-                    "product_bugs": [{"id": "art_legend_overlapping_fontsize",
-                                      "stage": "edit"}]}})
+    detail = SUM._detail(
+        "compat.json",
+        {
+            "target": "bundled",
+            "summary": {
+                "cases": 149,
+                "funnel": [{"stage": "capture", "passed": 143, "total": 143}],
+                "classification": {"full_support": 120},
+                "product_bugs": [{"id": "art_legend_overlapping_fontsize", "stage": "edit"}],
+            },
+        },
+    )
     assert "art_legend_overlapping_fontsize:edit" in detail
     assert "bundled" in detail
-    clean = SUM._detail("compat.json", {
-        "target": "bundled",
-        "summary": {"cases": 1, "funnel": [], "classification": {},
-                    "product_bugs": []}})
+    clean = SUM._detail(
+        "compat.json",
+        {
+            "target": "bundled",
+            "summary": {"cases": 1, "funnel": [], "classification": {}, "product_bugs": []},
+        },
+    )
     assert "产品缺陷 0" in clean
 
 
@@ -387,11 +495,10 @@ def test_target_version_mismatch_refuses_to_produce_a_report():
     """一份标着 `target: bundled` 却跑在别的 matplotlib 上的报告，比没有报告
     更坏——它会被当成「内置 runtime 上验过了」。"""
     target = {"matplotlib": "3.11.1", "numpy": "2.5.2"}
-    assert CM.check_target_versions(target, {"matplotlib": "3.11.1",
-                                             "numpy": "2.5.2"}) == []
-    bad = CM.check_target_versions(target, {"matplotlib": "3.10.8",
-                                            "numpy": "2.5.2"})
+    assert CM.check_target_versions(target, {"matplotlib": "3.11.1", "numpy": "2.5.2"}) == []
+    bad = CM.check_target_versions(target, {"matplotlib": "3.10.8", "numpy": "2.5.2"})
     assert len(bad) == 1 and "3.10.8" in bad[0]
+
 
 def test_missing_optional_package_is_not_a_version_mismatch():
     """缺包不算版本不符——那由 case 的 environment_dependency 分类如实记账，
@@ -408,6 +515,7 @@ def test_worker_python_override_is_actually_applied(monkeypatch):
     矢量、不同版本的字体度量），撞过一次。
     """
     from tavotto.engine import pool
+
     monkeypatch.delenv("TAVOTTO_WORKER_PYTHON", raising=False)
     try:
         real = pool.find_worker_python()
@@ -423,8 +531,8 @@ def test_worker_python_override_is_actually_applied(monkeypatch):
 def test_worker_python_override_refuses_when_the_pool_disagrees(monkeypatch):
     """池没采纳指定的解释器时必须**报错**，不许悄悄用别的跑完。"""
     from tavotto.engine import pool
-    monkeypatch.setattr(pool, "select_worker_python",
-                        lambda: ("/somewhere/else/python", "system"))
+
+    monkeypatch.setattr(pool, "select_worker_python", lambda: ("/somewhere/else/python", "system"))
     monkeypatch.setattr(pool, "reset_worker_python", lambda: None)
     with pytest.raises(RuntimeError, match="没有采纳"):
         CM._worker_python("/tmp/wanted/python")
@@ -451,8 +559,7 @@ def test_environment_dependency_only_absorbs_a_missing_dependency():
     cls, _r, note = CM.classify(c, stages(execute=False), {})
     assert cls == "environment_dependency" and "依赖缺失" in note
     # 依赖在、跑起来了，replay 却分歧 → 真失败
-    cls2, _r2, _n2 = CM.classify(
-        c, stages(execute=True, capture=True, replay=False), {})
+    cls2, _r2, _n2 = CM.classify(c, stages(execute=True, capture=True, replay=False), {})
     assert cls2 == "product_bug"
 
 
@@ -475,7 +582,8 @@ def test_both_clis_pin_utf8_streams():
         # 上一版把字面写法钉死，于是 compat_matrix 多导一个符号就红了，
         # 而「用的是不是唯一那份实现」完全没变。
         assert re.search(r"from _common import [^\n]*\buse_utf8_streams\b", src), (
-            f"{name} 自己抄了一份，而不是用 _common 里那唯一的实现")
+            f"{name} 自己抄了一份，而不是用 _common 里那唯一的实现"
+        )
 
 
 def test_replay_stage_also_compares_property_values():
@@ -489,10 +597,12 @@ def test_replay_stage_also_compares_property_values():
     一个自称在验等价性、却看不见颜色的基准，比没有基准更坏——它会给出
     「四路一致」的结论，而四路里有一路的颜色是错的。
     """
-    same = {"elements": [{"gid": "axes_0.lines_0",
-                          "editable": [{"prop": "color", "value": "#123456"}]}]}
-    other = {"elements": [{"gid": "axes_0.lines_0",
-                           "editable": [{"prop": "color", "value": "#654321"}]}]}
+    same = {
+        "elements": [{"gid": "axes_0.lines_0", "editable": [{"prop": "color", "value": "#123456"}]}]
+    }
+    other = {
+        "elements": [{"gid": "axes_0.lines_0", "editable": [{"prop": "color", "value": "#654321"}]}]
+    }
     assert CM._prop_diffs(same, same) == []
     got = CM._prop_diffs(same, other)
     assert len(got) == 1 and "axes_0.lines_0.color" in got[0]
@@ -533,6 +643,7 @@ def test_minimum_target_pins_the_python_the_package_claims():
     宣称与验证之间就有一段没人走过的路——上面那个 pathlib 缺口正好落在那段里。
     """
     import re
+
     spec = CC.resolve_target(CC.load_matrix(), "minimum")
     pyproject = (CC.REPO / "pyproject.toml").read_text(encoding="utf-8")
     # 只比**下界**，不比整串：上界（`,<3.14`）会随支持范围变，把它写死会让
@@ -541,7 +652,8 @@ def test_minimum_target_pins_the_python_the_package_claims():
     assert m, "读不出 pyproject 的 requires-python 下界"
     assert str(spec["python"]).startswith(m.group(1)), (
         f"pyproject 宣称的下界是 {m.group(1)}，而 matrix.json 的 minimum 档"
-        f"钉的是 {spec['python']}——宣称与验证之间会留下一段没人走过的路")
+        f"钉的是 {spec['python']}——宣称与验证之间会留下一段没人走过的路"
+    )
 
 
 class TestParityGate:
@@ -556,9 +668,15 @@ class TestParityGate:
 
     def _case_and_result(self, parity_ok):
         c = case("x", tier="expected")
-        r = {"x": {"id": "x", "tier": "expected", "classification": "full_support",
-                   "stages": {s: True for s in CC.STAGES},
-                   "browser": {"ok": parity_ok, "reason": "角色不一致：['line']"}}}
+        r = {
+            "x": {
+                "id": "x",
+                "tier": "expected",
+                "classification": "full_support",
+                "stages": {s: True for s in CC.STAGES},
+                "browser": {"ok": parity_ok, "reason": "角色不一致：['line']"},
+            }
+        }
         return [c], r
 
     @pytest.mark.parametrize("gate", sorted(CM.GATES))
@@ -576,8 +694,15 @@ class TestParityGate:
         """没跑对拍的 case（不是 browser_eligible，或本次没开 --browser）
         不该被这条当成分叉。"""
         c = case("x")
-        r = {"x": {"id": "x", "tier": "expected", "classification": "full_support",
-                   "stages": {s: True for s in CC.STAGES}, "browser": None}}
+        r = {
+            "x": {
+                "id": "x",
+                "tier": "expected",
+                "classification": "full_support",
+                "stages": {s: True for s in CC.STAGES},
+                "browser": None,
+            }
+        }
         assert CM.evaluate_gate("release", [c], r, {"cases": {}})[0]
 
 
@@ -589,16 +714,31 @@ def test_browser_verdict_compares_editable_sets():
     """
     c = case("x")
     c["mutations"] = []
-    desktop = {"detail": {"semantic": {"roles": ["axes", "line"],
-                                       "editable_all": ["axes_0.lines_0.color",
-                                                        "axes_0.lines_0.linewidth"]}}}
-    same = {"ok": True, "figures": ["s"], "semantics": {"s": {
-        "roles": ["axes", "line"],
-        "editable": ["axes_0.lines_0.color", "axes_0.lines_0.linewidth"]}}}
+    desktop = {
+        "detail": {
+            "semantic": {
+                "roles": ["axes", "line"],
+                "editable_all": ["axes_0.lines_0.color", "axes_0.lines_0.linewidth"],
+            }
+        }
+    }
+    same = {
+        "ok": True,
+        "figures": ["s"],
+        "semantics": {
+            "s": {
+                "roles": ["axes", "line"],
+                "editable": ["axes_0.lines_0.color", "axes_0.lines_0.linewidth"],
+            }
+        },
+    }
     assert CM._browser_verdict(c, same, desktop)["ok"]
 
-    fewer = {"ok": True, "figures": ["s"], "semantics": {"s": {
-        "roles": ["axes", "line"], "editable": ["axes_0.lines_0.color"]}}}
+    fewer = {
+        "ok": True,
+        "figures": ["s"],
+        "semantics": {"s": {"roles": ["axes", "line"], "editable": ["axes_0.lines_0.color"]}},
+    }
     v = CM._browser_verdict(c, fewer, desktop)
     assert not v["ok"] and "可编辑属性不一致" in v["reason"]
     assert v["editable_only_desktop"] == ["axes_0.lines_0.linewidth"]
@@ -618,19 +758,29 @@ def test_browser_verdict_compares_capture_counts():
     c = case("x", expected_figures=9)
     c["mutations"] = []
     sem = {"roles": ["axes", "line"], "editable": ["axes_0.lines_0.color"]}
-    desktop = {"detail": {
-        "semantic": {"roles": ["axes", "line"],
-                     "editable_all": ["axes_0.lines_0.color"]},
-        "capture": {"stems": [f"s{i}" for i in range(9)], "got_figures": 9}}}
+    desktop = {
+        "detail": {
+            "semantic": {"roles": ["axes", "line"], "editable_all": ["axes_0.lines_0.color"]},
+            "capture": {"stems": [f"s{i}" for i in range(9)], "got_figures": 9},
+        }
+    }
 
     # 两侧都是 9 张 → 通过。
-    ok = {"ok": True, "figures": [f"s{i}" for i in range(9)],
-          "truncated": 0, "semantics": {"s": sem}}
+    ok = {
+        "ok": True,
+        "figures": [f"s{i}" for i in range(9)],
+        "truncated": 0,
+        "semantics": {"s": sem},
+    }
     assert CM._browser_verdict(c, ok, desktop)["ok"]
 
     # 浏览器只剩 8 张、并如实报了截断 → 必须红，且两条理由分开说。
-    short = {"ok": True, "figures": [f"s{i}" for i in range(8)],
-             "truncated": 1, "semantics": {"s": sem}}
+    short = {
+        "ok": True,
+        "figures": [f"s{i}" for i in range(8)],
+        "truncated": 1,
+        "semantics": {"s": sem},
+    }
     v = CM._browser_verdict(c, short, desktop)
     assert not v["ok"], "少捕获一张却报成功——这正是要挡的"
     assert "捕获张数不一致" in v["reason"]
@@ -643,10 +793,13 @@ def test_browser_verdict_flags_extra_figures_too():
     c = case("x", expected_figures=1)
     c["mutations"] = []
     sem = {"roles": ["axes"], "editable": []}
-    desktop = {"detail": {"semantic": {"roles": ["axes"], "editable_all": []},
-                          "capture": {"stems": ["s"], "got_figures": 1}}}
-    more = {"ok": True, "figures": ["s", "s-2"], "truncated": 0,
-            "semantics": {"s": sem}}
+    desktop = {
+        "detail": {
+            "semantic": {"roles": ["axes"], "editable_all": []},
+            "capture": {"stems": ["s"], "got_figures": 1},
+        }
+    }
+    more = {"ok": True, "figures": ["s", "s-2"], "truncated": 0, "semantics": {"s": sem}}
     v = CM._browser_verdict(c, more, desktop)
     assert not v["ok"] and "捕获张数不一致" in v["reason"]
 
@@ -656,6 +809,10 @@ def test_browser_verdict_without_desktop_capture_detail_is_not_penalised():
     c = case("x", expected_figures=1)
     c["mutations"] = []
     desktop = {"detail": {"semantic": {"roles": ["axes"], "editable_all": []}}}
-    ok = {"ok": True, "figures": ["s"], "truncated": 0,
-          "semantics": {"s": {"roles": ["axes"], "editable": []}}}
+    ok = {
+        "ok": True,
+        "figures": ["s"],
+        "truncated": 0,
+        "semantics": {"s": {"roles": ["axes"], "editable": []}},
+    }
     assert CM._browser_verdict(c, ok, desktop)["ok"]

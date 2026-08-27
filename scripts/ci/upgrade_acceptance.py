@@ -31,6 +31,7 @@
     python scripts/ci/upgrade_acceptance.py --candidate dist/tavotto-0.8.0-py3-none-any.whl
     python scripts/ci/upgrade_acceptance.py --candidate dist/*.whl --baseline-tag v0.7.0
 """
+
 from __future__ import annotations
 
 import argparse
@@ -95,16 +96,21 @@ def resolve_baseline(candidate_version: str, explicit: str | None) -> str:
     try:
         releases = _api_json(f"{API}/repos/{REPO_SLUG}/releases?per_page=30")
     except (urllib.error.URLError, OSError, ValueError) as exc:
-        raise CiError("baseline_lookup_failed",
-                      f"取不到 release 列表：{exc}。可用 --baseline-tag 显式指定") from exc
+        raise CiError(
+            "baseline_lookup_failed", f"取不到 release 列表：{exc}。可用 --baseline-tag 显式指定"
+        ) from exc
     cand = _version_key(candidate_version)
-    tags = [r["tag_name"] for r in releases
-            if not r.get("prerelease") and not r.get("draft")
-            and _version_key(r["tag_name"]) < cand]
+    tags = [
+        r["tag_name"]
+        for r in releases
+        if not r.get("prerelease") and not r.get("draft") and _version_key(r["tag_name"]) < cand
+    ]
     if not tags:
-        raise CiError("no_baseline_release",
-                      f"找不到早于 {candidate_version} 的正式 release。"
-                      "首个版本无从做升级测试；用 --baseline-tag 指定，或在 workflow 里跳过这一项")
+        raise CiError(
+            "no_baseline_release",
+            f"找不到早于 {candidate_version} 的正式 release。"
+            "首个版本无从做升级测试；用 --baseline-tag 指定，或在 workflow 里跳过这一项",
+        )
     return max(tags, key=_version_key)
 
 
@@ -123,15 +129,19 @@ def download_wheel(tag: str, dest_dir: Path) -> Path:
         raise CiError("baseline_wheel_missing", f"{tag} 的 release 里没有 wheel 资产")
     asset = assets[0]
     dest = dest_dir / asset["name"]
-    req = urllib.request.Request(f"{API}/repos/{REPO_SLUG}/releases/assets/{asset['id']}",
-                                 headers={"Accept": "application/octet-stream"})
+    req = urllib.request.Request(
+        f"{API}/repos/{REPO_SLUG}/releases/assets/{asset['id']}",
+        headers={"Accept": "application/octet-stream"},
+    )
     if os.environ.get("GITHUB_TOKEN"):
         req.add_header("Authorization", f"Bearer {os.environ['GITHUB_TOKEN']}")
     with urllib.request.urlopen(req, timeout=600) as resp, dest.open("wb") as fh:
         shutil.copyfileobj(resp, fh)
     if dest.stat().st_size != asset["size"]:
-        raise CiError("baseline_wheel_truncated",
-                      f"{asset['name']} 下载不完整：{dest.stat().st_size} != {asset['size']}")
+        raise CiError(
+            "baseline_wheel_truncated",
+            f"{asset['name']} 下载不完整：{dest.stat().st_size} != {asset['size']}",
+        )
     return dest
 
 
@@ -161,24 +171,35 @@ def crosses_rename_boundary(old_wheel: Path, new_wheel: Path) -> tuple[bool, str
     old, new = wheel_dist_name(old_wheel), wheel_dist_name(new_wheel)
     if old == new:
         return False, ""
-    return True, (f"N-1 的分发包是 `{old}`，候选是 `{new}`——跨越了产品改名边界。"
-                  f"改名时选的是干净断裂（见 src/tavotto/engine/brand.py）：包名、"
-                  f"数据目录、配置目录、格式标识全部更换且不做兼容读取，"
-                  f"因此这两版之间不存在「升级」这条路径。等出现同代的上一版之后"
-                  f"（{new} 的前一个 release），这项验收会自动恢复。")
+    return True, (
+        f"N-1 的分发包是 `{old}`，候选是 `{new}`——跨越了产品改名边界。"
+        f"改名时选的是干净断裂（见 src/tavotto/engine/brand.py）：包名、"
+        f"数据目录、配置目录、格式标识全部更换且不做兼容读取，"
+        f"因此这两版之间不存在「升级」这条路径。等出现同代的上一版之后"
+        f"（{new} 的前一个 release），这项验收会自动恢复。"
+    )
 
 
 def make_venv(where: Path, wheel: Path) -> Path:
-    subprocess.run([sys.executable, "-m", "venv", str(where)], check=True,
-                   capture_output=True, timeout=300)
-    py = where / ("Scripts" if os.name == "nt" else "bin") / ("python.exe" if os.name == "nt" else "python")
+    subprocess.run(
+        [sys.executable, "-m", "venv", str(where)], check=True, capture_output=True, timeout=300
+    )
+    py = (
+        where
+        / ("Scripts" if os.name == "nt" else "bin")
+        / ("python.exe" if os.name == "nt" else "python")
+    )
     for args in ([str(wheel)], ["matplotlib"]):
-        out = subprocess.run([str(py), "-m", "pip", "install", "-q",
-                              "--disable-pip-version-check", *args],
-                             capture_output=True, text=True, timeout=1800)
+        out = subprocess.run(
+            [str(py), "-m", "pip", "install", "-q", "--disable-pip-version-check", *args],
+            capture_output=True,
+            text=True,
+            timeout=1800,
+        )
         if out.returncode != 0:
-            raise CiError("pip_install_failed",
-                          f"装 {args} 失败：{out.stdout[-1500:]}{out.stderr[-1500:]}")
+            raise CiError(
+                "pip_install_failed", f"装 {args} 失败：{out.stdout[-1500:]}{out.stderr[-1500:]}"
+            )
     return py
 
 
@@ -209,11 +230,18 @@ class Session:
             "TAVOTTO_NO_UPDATE_CHECK": "1",
             "TAVOTTO_ALLOW_SHUTDOWN": "1",
         }
-        cmd = [str(self.py), "-m", "tavotto", "--port", str(port),
-               "--no-browser", "--figures", str(self.project)]
+        cmd = [
+            str(self.py),
+            "-m",
+            "tavotto",
+            "--port",
+            str(port),
+            "--no-browser",
+            "--figures",
+            str(self.project),
+        ]
         print(f"  [{self.label}] $ {' '.join(cmd[-5:])}", flush=True)
-        self._child_log = (self.user_root / f"server-{port}.log").open(
-            "w", encoding="utf-8")
+        self._child_log = (self.user_root / f"server-{port}.log").open("w", encoding="utf-8")
         # **绝不用 PIPE**：这四个脚本一次都不读子进程的 stdout（诊断走
         # 数据目录里的 app.log）。开了不读的管道，64 KiB 缓冲写满之后
         # 应用**下一次写日志就永久阻塞**——而它握着 logging 的全局 handler
@@ -222,8 +250,7 @@ class Session:
         # （日志量正好填满缓冲），py-spy 的栈是 emit→pipe_write +
         # 八个线程 acquire。改成落文件：既没有这个失败模式，又比 DEVNULL
         # 多留一份启动期 traceback（那些进不了 app.log）。
-        self.proc = subprocess.Popen(cmd, env=env, stdout=self._child_log,
-                                     stderr=subprocess.STDOUT)
+        self.proc = subprocess.Popen(cmd, env=env, stdout=self._child_log, stderr=subprocess.STDOUT)
         SA._wait_ready(self.base, self.proc, SA.BOOT_TIMEOUT_S)
         self._adopt_credentials(port)
         return self
@@ -239,13 +266,12 @@ class Session:
         if SA.adopt_session_credentials(self.data_dir, port):
             print(f"  [{self.label}] 已取得会话凭据", flush=True)
         else:
-            print(f"  [{self.label}] 无会话凭据文件（这一版早于 ADR 0008），裸走",
-                  flush=True)
+            print(f"  [{self.label}] 无会话凭据文件（这一版早于 ADR 0008），裸走", flush=True)
 
     def __exit__(self, *exc) -> None:
         try:
             SA._post(f"{self.base}/api/shutdown", {}, timeout=60)
-        except Exception:                                   # noqa: BLE001
+        except Exception:  # noqa: BLE001
             pass
         if self.proc:
             try:
@@ -260,9 +286,12 @@ class Session:
 
 def _tracebacks(text: str) -> list[str]:
     """从 app.log 里挑 traceback。升级路径上出现 traceback 一律算失败。"""
-    return [ln for ln in text.splitlines()
-            if "Traceback (most recent call last)" in ln
-            or re.search(r"\b(TypeError|ValueError|KeyError|AttributeError|JSONDecodeError)\b", ln)]
+    return [
+        ln
+        for ln in text.splitlines()
+        if "Traceback (most recent call last)" in ln
+        or re.search(r"\b(TypeError|ValueError|KeyError|AttributeError|JSONDecodeError)\b", ln)
+    ]
 
 
 # ---------------------------------------------------------------- 两个阶段
@@ -277,29 +306,44 @@ def write_state_with_old(py: Path, user_root: Path, project: Path) -> dict:
         target = scripted[0]
 
         # 渲染 → 改参数再渲染：产生 baked/override 侧的真实状态
-        first = SA._post(f"{s.base}/api/engine/render",
-                         {"id": target["id"], "patches": []}, timeout=600)
+        first = SA._post(
+            f"{s.base}/api/engine/render", {"id": target["id"], "patches": []}, timeout=600
+        )
         manifest = first.get("manifest") or {}
         facts["element_count"] = len(manifest.get("elements", []))
 
         import bench_render as BR  # 复用靶子挑选
+
         patch = BR._pick_patch(manifest)
         patches = BR._variant(patch, 1) if patch else []
-        SA._post(f"{s.base}/api/engine/render",
-                 {"id": target["id"], "patches": patches}, timeout=600)
+        SA._post(
+            f"{s.base}/api/engine/render", {"id": target["id"], "patches": patches}, timeout=600
+        )
         facts["patches"] = patches
 
         # 存一份命名画布布局（落项目内 tavottofile/）
         doc = {
-            "schema": 2, "id": "upgrade-doc", "name": "升级用例",
-            "pageWmm": 90, "pageHmm": 60,
-            "objects": [{"type": "panel", "id": target["id"], "x_mm": 5, "y_mm": 5,
-                         "w_mm": 60, "h_mm": 40, "overrides": patches}],
+            "schema": 2,
+            "id": "upgrade-doc",
+            "name": "升级用例",
+            "pageWmm": 90,
+            "pageHmm": 60,
+            "objects": [
+                {
+                    "type": "panel",
+                    "id": target["id"],
+                    "x_mm": 5,
+                    "y_mm": 5,
+                    "w_mm": 60,
+                    "h_mm": 40,
+                    "overrides": patches,
+                }
+            ],
         }
         try:
             SA._post(f"{s.base}/api/layouts/升级布局", {"doc": doc}, timeout=120)
             facts["layout_saved"] = True
-        except Exception as exc:                              # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             facts["layout_saved"] = False
             facts["layout_error"] = str(exc)[:200]
 
@@ -313,17 +357,24 @@ def write_state_with_old(py: Path, user_root: Path, project: Path) -> dict:
                 # 漏了的话表现是 autosave_saved=False 静静记进报告，
                 # 升级验收照旧「通过」——一条本该验的东西被验没了。
                 headers={"Content-Type": "application/json", **SA._AUTH},
-                method="PUT")
+                method="PUT",
+            )
             urllib.request.urlopen(req, timeout=60).read()
             facts["autosave_saved"] = True
-        except Exception as exc:                              # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             facts["autosave_saved"] = False
             facts["autosave_error"] = str(exc)[:200]
 
         # 导出一次
-        spec = {"page_w_mm": 80, "page_h_mm": 40, "formats": ["pdf"], "stem": "升级导出",
-                "objects": [{"type": "panel", "id": target["id"], "x_mm": 5, "y_mm": 5,
-                             "w_mm": 60, "h_mm": 30}]}
+        spec = {
+            "page_w_mm": 80,
+            "page_h_mm": 40,
+            "formats": ["pdf"],
+            "stem": "升级导出",
+            "objects": [
+                {"type": "panel", "id": target["id"], "x_mm": 5, "y_mm": 5, "w_mm": 60, "h_mm": 30}
+            ],
+        }
         out = SA._post(f"{s.base}/api/export", spec, timeout=600)
         facts["export_name"] = out["files"][0]["name"]
 
@@ -338,17 +389,22 @@ def write_state_with_old(py: Path, user_root: Path, project: Path) -> dict:
         cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
         facts["config_recent_count"] = len(cfg.get("recent_projects", []))
         facts["config_keys"] = sorted(cfg.keys())
-    facts["autosave_files"] = sorted(
-        p.name for p in (user_root / "data" / "layouts" / "_autosave").glob("*")) \
-        if (user_root / "data" / "layouts" / "_autosave").is_dir() else []
-    facts["baked_files"] = sorted(
-        p.name for p in (user_root / "data" / "baked_overrides").glob("*.json")) \
-        if (user_root / "data" / "baked_overrides").is_dir() else []
+    facts["autosave_files"] = (
+        sorted(p.name for p in (user_root / "data" / "layouts" / "_autosave").glob("*"))
+        if (user_root / "data" / "layouts" / "_autosave").is_dir()
+        else []
+    )
+    facts["baked_files"] = (
+        sorted(p.name for p in (user_root / "data" / "baked_overrides").glob("*.json"))
+        if (user_root / "data" / "baked_overrides").is_dir()
+        else []
+    )
     return facts
 
 
-def verify_with_new(py: Path, user_root: Path, project: Path,
-                    facts: dict, round_no: int) -> list[tuple[str, bool, str]]:
+def verify_with_new(
+    py: Path, user_root: Path, project: Path, facts: dict, round_no: int
+) -> list[tuple[str, bool, str]]:
     """用候选版打开同一份状态并逐条核对。"""
     checks: list[tuple[str, bool, str]] = []
     with Session(py, user_root, project, f"N#{round_no}") as s:
@@ -357,23 +413,39 @@ def verify_with_new(py: Path, user_root: Path, project: Path,
 
         # 1) 老项目还打得开
         proj = SA._get(f"{s.base}/api/project")
-        checks.append(("老项目可打开", bool(proj.get("figures_dir")),
-                       proj.get("figures_dir", "(空)")))
+        checks.append(
+            ("老项目可打开", bool(proj.get("figures_dir")), proj.get("figures_dir", "(空)"))
+        )
 
         # 2) 面板还在，数量一致
         panels = SA._get(f"{s.base}/api/panels")["panels"]
         ids = {p["id"] for p in panels}
-        checks.append(("老面板仍在", facts["panel_id"] in ids,
-                       facts["panel_id"] if facts["panel_id"] in ids else f"不见了；现有 {sorted(ids)[:3]}"))
+        checks.append(
+            (
+                "老面板仍在",
+                facts["panel_id"] in ids,
+                facts["panel_id"]
+                if facts["panel_id"] in ids
+                else f"不见了；现有 {sorted(ids)[:3]}",
+            )
+        )
 
         # 3) 还能按老 patches 渲染，且元素数量没变
-        res = SA._post(f"{s.base}/api/engine/render",
-                       {"id": facts["panel_id"], "patches": facts["patches"]}, timeout=600)
+        res = SA._post(
+            f"{s.base}/api/engine/render",
+            {"id": facts["panel_id"], "patches": facts["patches"]},
+            timeout=600,
+        )
         m = res.get("manifest") or {}
         n = len(m.get("elements", []))
         checks.append(("老 patches 仍可渲染", bool(m), f"{n} 个元素"))
-        checks.append(("元素数量与升级前一致", n == facts["element_count"],
-                       f"{n} vs {facts['element_count']}"))
+        checks.append(
+            (
+                "元素数量与升级前一致",
+                n == facts["element_count"],
+                f"{n} vs {facts['element_count']}",
+            )
+        )
         warn = res.get("warnings") or []
         checks.append(("渲染无 warning", not warn, "无" if not warn else str(warn[:2])))
 
@@ -381,33 +453,64 @@ def verify_with_new(py: Path, user_root: Path, project: Path,
         if facts.get("layout_saved"):
             try:
                 lay = SA._get(f"{s.base}/api/layouts")
-                names = [x.get("name") for x in (lay.get("layouts") or lay if isinstance(lay, list) else lay.get("layouts", []))]
+                names = [
+                    x.get("name")
+                    for x in (
+                        lay.get("layouts") or lay
+                        if isinstance(lay, list)
+                        else lay.get("layouts", [])
+                    )
+                ]
                 checks.append(("老布局可列出", "升级布局" in names, str(names[:4])))
-            except Exception as exc:                        # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
                 checks.append(("老布局可列出", False, str(exc)[:150]))
 
         # 5) 自动保存读得回来
         if facts.get("autosave_saved"):
             try:
                 got = SA._get(f"{s.base}/api/autosave/upgrade-doc")
-                checks.append(("老自动保存可解析", bool(got and got.get("doc")),
-                               "读回且含 doc" if got.get("doc") else str(got)[:120]))
-            except Exception as exc:                        # noqa: BLE001
+                checks.append(
+                    (
+                        "老自动保存可解析",
+                        bool(got and got.get("doc")),
+                        "读回且含 doc" if got.get("doc") else str(got)[:120],
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001
                 checks.append(("老自动保存可解析", False, str(exc)[:150]))
 
         # 6) 还能导出
-        spec = {"page_w_mm": 80, "page_h_mm": 40, "formats": ["pdf"], "stem": "升级后导出",
-                "objects": [{"type": "panel", "id": facts["panel_id"], "x_mm": 5, "y_mm": 5,
-                             "w_mm": 60, "h_mm": 30}]}
+        spec = {
+            "page_w_mm": 80,
+            "page_h_mm": 40,
+            "formats": ["pdf"],
+            "stem": "升级后导出",
+            "objects": [
+                {
+                    "type": "panel",
+                    "id": facts["panel_id"],
+                    "x_mm": 5,
+                    "y_mm": 5,
+                    "w_mm": 60,
+                    "h_mm": 30,
+                }
+            ],
+        }
         out = SA._post(f"{s.base}/api/export", spec, timeout=600)
         f = Path(out["export_dir"]) / out["files"][0]["name"]
-        checks.append(("升级后仍可导出", f.is_file() and f.stat().st_size > 500,
-                       f"{f.name} {f.stat().st_size if f.is_file() else 0} 字节"))
+        checks.append(
+            (
+                "升级后仍可导出",
+                f.is_file() and f.stat().st_size > 500,
+                f"{f.name} {f.stat().st_size if f.is_file() else 0} 字节",
+            )
+        )
 
         # 7) app.log 里不能出现 traceback
         tb = _tracebacks(s.app_log())
-        checks.append(("app.log 无 traceback", not tb,
-                       "无" if not tb else f"{len(tb)} 条：{tb[0][:110]}"))
+        checks.append(
+            ("app.log 无 traceback", not tb, "无" if not tb else f"{len(tb)} 条：{tb[0][:110]}")
+        )
 
     # 8) 配置没有被静默重置——比崩溃更难发现，所以单独一条
     cfg_path = user_root / "config" / "config.json"
@@ -415,16 +518,20 @@ def verify_with_new(py: Path, user_root: Path, project: Path,
         if cfg_path.is_file():
             cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
             kept = len(cfg.get("recent_projects", [])) >= facts["config_recent_count"]
-            checks.append(("用户配置未被静默重置", kept,
-                           f"recent_projects {facts['config_recent_count']} → {len(cfg.get('recent_projects', []))}"))
+            checks.append(
+                (
+                    "用户配置未被静默重置",
+                    kept,
+                    f"recent_projects {facts['config_recent_count']} → {len(cfg.get('recent_projects', []))}",
+                )
+            )
         else:
             checks.append(("用户配置未被静默重置", False, "config.json 升级后不见了"))
 
     # 9) 没有孤儿 worker
     time.sleep(2)
     orphans = SA._leftover_workers(user_root / "data")
-    checks.append(("无孤儿 worker", not orphans,
-                   "0" if not orphans else f"{len(orphans)} 个"))
+    checks.append(("无孤儿 worker", not orphans, "0" if not orphans else f"{len(orphans)} 个"))
     return checks
 
 
@@ -465,18 +572,27 @@ def main(argv: list[str] | None = None) -> int:
             # 也不算失败——失败会让人去修一个产品刻意不支持的路径。
             print(f"::notice::升级验收跳过：{why}")
             summary(f"\n### 升级验收 · 跳过\n\n> {why}\n")
-            write_report("upgrade.json",
-                         {"ok": True, "skipped": True, "reason": "rename_boundary",
-                          "detail": why, "baseline_tag": baseline_tag,
-                          "baseline_wheel": old_wheel.name, "candidate_wheel": cand.name,
-                          "metadata": run_metadata()}, root)
+            write_report(
+                "upgrade.json",
+                {
+                    "ok": True,
+                    "skipped": True,
+                    "reason": "rename_boundary",
+                    "detail": why,
+                    "baseline_tag": baseline_tag,
+                    "baseline_wheel": old_wheel.name,
+                    "candidate_wheel": cand.name,
+                    "metadata": run_metadata(),
+                },
+                root,
+            )
             return 0
 
         # 项目目录：带中文与空格，且**位于持久化用户根之外**——用户的图库
         # 本来就不在数据目录里，把它塞进去会掩盖路径解析上的问题。
         project = work / PROJECT_DIRNAME
         shutil.copytree(CORPUS, project)
-        user_root = work / "user root 用户"        # 用户根同样带空格与中文
+        user_root = work / "user root 用户"  # 用户根同样带空格与中文
         user_root.mkdir(parents=True, exist_ok=True)
 
         py_old = make_venv(work / "venv-old", old_wheel)
@@ -490,10 +606,15 @@ def main(argv: list[str] | None = None) -> int:
 
         print("\n=== 阶段一：用 N-1 写出用户状态 ===")
         facts = write_state_with_old(py_old, user_root, project)
-        rows.append(("N-1 写出状态", "✅",
-                     f"{baseline_tag} · {facts['element_count']} 元素 · "
-                     f"布局 {'✓' if facts.get('layout_saved') else '✗'} · "
-                     f"自动保存 {'✓' if facts.get('autosave_saved') else '✗'}"))
+        rows.append(
+            (
+                "N-1 写出状态",
+                "✅",
+                f"{baseline_tag} · {facts['element_count']} 元素 · "
+                f"布局 {'✓' if facts.get('layout_saved') else '✗'} · "
+                f"自动保存 {'✓' if facts.get('autosave_saved') else '✗'}",
+            )
+        )
         if facts["old_log_tracebacks"]:
             rows.append(("N-1 自身日志", "⚠️", f"{len(facts['old_log_tracebacks'])} 条 traceback"))
 
@@ -511,7 +632,7 @@ def main(argv: list[str] | None = None) -> int:
         ok = False
         rows.append((exc.code, "❌", exc.message))
         print(f"::error::{exc.message}", file=sys.stderr)
-    except Exception as exc:                                # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
         ok = False
         rows.append(("未预期异常", "❌", f"{type(exc).__name__}: {exc}"))
         print(f"::error::升级验收异常：{type(exc).__name__}: {exc}", file=sys.stderr)
@@ -519,9 +640,12 @@ def main(argv: list[str] | None = None) -> int:
         if not args.keep:
             shutil.rmtree(work, ignore_errors=True)
 
-    payload = {"ok": ok, "baseline_tag": baseline_tag,
-               "checks": [{"name": n, "ok": g, "detail": d} for n, g, d in all_checks],
-               "metadata": run_metadata()}
+    payload = {
+        "ok": ok,
+        "baseline_tag": baseline_tag,
+        "checks": [{"name": n, "ok": g, "detail": d} for n, g, d in all_checks],
+        "metadata": run_metadata(),
+    }
     write_report("upgrade.json", payload, root)
     summary(f"\n### 升级验收 · {baseline_tag or '?'} → 候选\n\n" + summary_table(rows))
     print(f"\n升级验收：{'通过' if ok else '失败'}")

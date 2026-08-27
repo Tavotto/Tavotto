@@ -16,6 +16,7 @@
 
 真执行的用例与 test_script_probe 同一条纪律：本进程不 import matplotlib。
 """
+
 import json
 from pathlib import Path
 
@@ -29,16 +30,17 @@ except engine_pool.WorkerError:
     WORKER_PY = None
 
 needs_worker = pytest.mark.skipif(
-    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）")
+    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）"
+)
 
 
-SHOW_ONLY = '''\
+SHOW_ONLY = """\
 import matplotlib.pyplot as plt
 
 plt.plot([1, 2, 3], [4, 5, 6])
 plt.title("AI generated")
 plt.show()
-'''
+"""
 
 
 def _project(tmp_path, scripts: dict[str, str]) -> Path:
@@ -48,8 +50,7 @@ def _project(tmp_path, scripts: dict[str, str]) -> Path:
         p = figs / name
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(src, encoding="utf-8")
-    (figs / "tavotto_registry.json").write_text(
-        json.dumps({"scripts": {}}), encoding="utf-8")
+    (figs / "tavotto_registry.json").write_text(json.dumps({"scripts": {}}), encoding="utf-8")
     return figs
 
 
@@ -57,21 +58,29 @@ def _register(figs: Path, script: str, stems: list[str], entry="main"):
     engine_discover.register(figs, script, stems, entry=entry)
 
 
-NO_REMOTE = lambda *a, **k: None                                  # noqa: E731
+NO_REMOTE = lambda *a, **k: None  # noqa: E731
 
 
-def _fake_local(figs: Path, stems: list[str], *, register=True, error=None,
-                calls=None):
+def _fake_local(figs: Path, stems: list[str], *, register=True, error=None, calls=None):
     """一个假的本地 probe：按需登记 stems，记录调用次数。"""
+
     def run(project, script):
         if calls is not None:
             calls.append(script)
         if register and stems:
             _register(Path(project), script, stems, entry="__main__")
-        return {"script": script, "entry": "__main__" if stems else None,
-                "stems": list(stems), "descriptors": [], "tried": ["__main__"],
-                "error": error, "timings": {}, "dropped_figures": 0,
-                "registered": bool(register and stems)}
+        return {
+            "script": script,
+            "entry": "__main__" if stems else None,
+            "stems": list(stems),
+            "descriptors": [],
+            "tried": ["__main__"],
+            "error": error,
+            "timings": {},
+            "dropped_figures": 0,
+            "registered": bool(register and stems),
+        }
+
     return run
 
 
@@ -82,9 +91,11 @@ def test_existing_artifact_route_skips_probe(tmp_path):
     _register(figs, "plot.py", ["Fig1"])
     (figs / "Fig1.pdf").write_bytes(b"%PDF-1.4\n%%EOF\n")
     target, info = handoff.resolve_script_route(
-        str(figs), "plot.py",
+        str(figs),
+        "plot.py",
         probe_remote=lambda *a, **k: pytest.fail("不该探测"),
-        probe_local=lambda *a, **k: pytest.fail("不该探测"))
+        probe_local=lambda *a, **k: pytest.fail("不该探测"),
+    )
     assert target == handoff.Target(str(figs), "Fig1")
     assert info["performed"] is False
     assert info["figures"][0]["artifact"] == "Fig1.pdf"
@@ -94,8 +105,11 @@ def test_show_only_script_probes_and_lands_on_runtime_asset(tmp_path):
     calls: list = []
     figs = _project(tmp_path, {"show.py": SHOW_ONLY})
     target, info = handoff.resolve_script_route(
-        str(figs), "show.py", probe_remote=NO_REMOTE,
-        probe_local=_fake_local(figs, ["show"], calls=calls))
+        str(figs),
+        "show.py",
+        probe_remote=NO_REMOTE,
+        probe_local=_fake_local(figs, ["show"], calls=calls),
+    )
     assert calls == ["show.py"]
     assert target.stem == "show"
     assert info["performed"] is True and info["via"] == "local"
@@ -108,8 +122,11 @@ def test_multi_figure_hands_pick_to_ui_not_first_stem(tmp_path):
     """多 Figure：不静默选第一张——stem=None + pick=脚本，交给选择器。"""
     figs = _project(tmp_path, {"multi.py": "pass"})
     target, info = handoff.resolve_script_route(
-        str(figs), "multi.py", probe_remote=NO_REMOTE,
-        probe_local=_fake_local(figs, ["FigA", "FigB"]))
+        str(figs),
+        "multi.py",
+        probe_remote=NO_REMOTE,
+        probe_local=_fake_local(figs, ["FigA", "FigB"]),
+    )
     assert target.stem is None
     assert target.pick == "multi.py"
     assert [f["stem"] for f in info["figures"]] == ["FigA", "FigB"]
@@ -118,8 +135,12 @@ def test_multi_figure_hands_pick_to_ui_not_first_stem(tmp_path):
 def test_stem_flag_selects_explicitly(tmp_path):
     figs = _project(tmp_path, {"multi.py": "pass"})
     target, _ = handoff.resolve_script_route(
-        str(figs), "multi.py", stem_arg="FigB", probe_remote=NO_REMOTE,
-        probe_local=_fake_local(figs, ["FigA", "FigB"]))
+        str(figs),
+        "multi.py",
+        stem_arg="FigB",
+        probe_remote=NO_REMOTE,
+        probe_local=_fake_local(figs, ["FigA", "FigB"]),
+    )
     assert target.stem == "FigB" and target.pick is None
 
 
@@ -127,8 +148,12 @@ def test_unknown_stem_is_invalid_stem(tmp_path):
     figs = _project(tmp_path, {"multi.py": "pass"})
     with pytest.raises(handoff.HandoffError) as ei:
         handoff.resolve_script_route(
-            str(figs), "multi.py", stem_arg="Nope", probe_remote=NO_REMOTE,
-            probe_local=_fake_local(figs, ["FigA", "FigB"]))
+            str(figs),
+            "multi.py",
+            stem_arg="Nope",
+            probe_remote=NO_REMOTE,
+            probe_local=_fake_local(figs, ["FigA", "FigB"]),
+        )
     assert ei.value.code == "invalid_stem"
     assert ei.value.extra["stems"] == ["FigA", "FigB"]
 
@@ -137,9 +162,12 @@ def test_no_probe_with_nothing_registered_says_script_no_figure(tmp_path):
     figs = _project(tmp_path, {"show.py": SHOW_ONLY})
     with pytest.raises(handoff.HandoffError) as ei:
         handoff.resolve_script_route(
-            str(figs), "show.py", no_probe=True,
+            str(figs),
+            "show.py",
+            no_probe=True,
             probe_remote=lambda *a, **k: pytest.fail("--no-probe 下不许探测"),
-            probe_local=lambda *a, **k: pytest.fail("--no-probe 下不许探测"))
+            probe_local=lambda *a, **k: pytest.fail("--no-probe 下不许探测"),
+        )
     assert ei.value.code == "script_no_figure"
 
 
@@ -147,23 +175,29 @@ def test_stale_same_stem_file_does_not_hijack_a_pyplot_capture(tmp_path):
     """Codex 评审 P1（PR #127）：pyplot 捕获从来没有原件——磁盘上同名旧文件
     不得把交接路由抢过去（否则 `tavotto open` 打开的是陈旧文件）。"""
     from tavotto.engine import figcapture, runtimeasset
+
     figs = _project(tmp_path, {"show.py": SHOW_ONLY})
     _register(figs, "show.py", ["show"], entry="__main__")
     desc = figcapture.build_descriptor(
-        script="show.py", entry="__main__", stem="show",
+        script="show.py",
+        entry="__main__",
+        stem="show",
         capture_source=figcapture.SOURCE_PYPLOT,
         execution_profile=figcapture.PROFILE_SAFE,
         size_mm=(120.0, 90.0),
-        source_fingerprint="sha256:deadbeef").to_payload()
+        source_fingerprint="sha256:deadbeef",
+    ).to_payload()
     svg = tmp_path / "preview.svg"
     svg.write_text("<svg/>", encoding="utf-8")
     assert runtimeasset.materialize(str(figs), desc, svg) is not None
     (figs / "show.pdf").write_bytes(b"%PDF-1.4\n%%EOF\n")  # 旧样本
 
     target, info = handoff.resolve_script_route(
-        str(figs), "show.py",
+        str(figs),
+        "show.py",
         probe_remote=lambda *a, **k: pytest.fail("cache 就绪不该重探"),
-        probe_local=lambda *a, **k: pytest.fail("cache 就绪不该重探"))
+        probe_local=lambda *a, **k: pytest.fail("cache 就绪不该重探"),
+    )
     assert target.stem == "show"
     fig = info["figures"][0]
     # 路由指向 runtime 素材（asset id + cache），不是那份旧 PDF
@@ -173,21 +207,29 @@ def test_stale_same_stem_file_does_not_hijack_a_pyplot_capture(tmp_path):
 
 
 # ------------------------------ 错误映射 ---------------------------------
-@pytest.mark.parametrize("probe_code,cli_code", [
-    ("script_no_figure", "script_no_figure"),
-    ("script_probe_failed", "script_probe_failed"),
-    ("execution_timeout", "execution_timeout"),
-    ("missing_dependency", "native_run_required"),
-])
+@pytest.mark.parametrize(
+    "probe_code,cli_code",
+    [
+        ("script_no_figure", "script_no_figure"),
+        ("script_probe_failed", "script_probe_failed"),
+        ("execution_timeout", "execution_timeout"),
+        ("missing_dependency", "native_run_required"),
+    ],
+)
 def test_probe_failures_map_to_stable_codes(tmp_path, probe_code, cli_code):
     figs = _project(tmp_path, {"bad.py": "raise SystemExit(1)"})
-    err = {"code": probe_code, "message": "boom",
-           "params": {"module": "scipy"} if probe_code == "missing_dependency"
-           else {}}
+    err = {
+        "code": probe_code,
+        "message": "boom",
+        "params": {"module": "scipy"} if probe_code == "missing_dependency" else {},
+    }
     with pytest.raises(handoff.HandoffError) as ei:
         handoff.resolve_script_route(
-            str(figs), "bad.py", probe_remote=NO_REMOTE,
-            probe_local=_fake_local(figs, [], error=err))
+            str(figs),
+            "bad.py",
+            probe_remote=NO_REMOTE,
+            probe_local=_fake_local(figs, [], error=err),
+        )
     assert ei.value.code == cli_code
     if cli_code == "native_run_required":
         # 原始 code 与缺的包保留在 extra——调用方分诊要用
@@ -199,8 +241,11 @@ def test_captured_but_unregistered_is_runtime_asset_failed(tmp_path):
     figs = _project(tmp_path, {"s.py": "pass"})
     with pytest.raises(handoff.HandoffError) as ei:
         handoff.resolve_script_route(
-            str(figs), "s.py", probe_remote=NO_REMOTE,
-            probe_local=_fake_local(figs, ["Fig1"], register=False))
+            str(figs),
+            "s.py",
+            probe_remote=NO_REMOTE,
+            probe_local=_fake_local(figs, ["Fig1"], register=False),
+        )
     assert ei.value.code == "runtime_asset_failed"
 
 
@@ -209,18 +254,26 @@ def test_stem_conflict_keeps_its_own_code(tmp_path):
     err = {"code": "multiple_stem_conflict", "message": "冲突", "params": {}}
 
     def local(project, script):
-        return {"script": script, "entry": "__main__", "stems": ["Fig1"],
-                "descriptors": [], "tried": ["__main__"], "error": err,
-                "timings": {}, "dropped_figures": 0, "registered": False}
+        return {
+            "script": script,
+            "entry": "__main__",
+            "stems": ["Fig1"],
+            "descriptors": [],
+            "tried": ["__main__"],
+            "error": err,
+            "timings": {},
+            "dropped_figures": 0,
+            "registered": False,
+        }
 
     with pytest.raises(handoff.HandoffError) as ei:
-        handoff.resolve_script_route(str(figs), "s.py",
-                                     probe_remote=NO_REMOTE, probe_local=local)
+        handoff.resolve_script_route(str(figs), "s.py", probe_remote=NO_REMOTE, probe_local=local)
     assert ei.value.code == "multiple_stem_conflict"
 
 
 def test_remote_409_maps_to_probe_in_progress():
     """素材库已经在跑同一个脚本：如实报 409，绝不再起第二次执行。"""
+
     def http_status(url, payload=None, timeout=1.0):
         if url.endswith("/api/version"):
             return 200, {"version": "1.0"}
@@ -235,26 +288,24 @@ def test_remote_409_maps_to_probe_in_progress():
 
 
 def test_remote_probe_returns_none_without_instance():
-    assert handoff._remote_probe(
-        5089, "/p", "s.py", http_status=lambda *a, **k: (None, None)) is None
+    assert (
+        handoff._remote_probe(5089, "/p", "s.py", http_status=lambda *a, **k: (None, None)) is None
+    )
 
 
 # --------------------------- 交接契约（pick） -----------------------------
 def test_desktop_argv_carries_pick_for_multi_figure():
     """与 src-tauri/src/main.rs 的 parse_open_args 同源（--pick-script）。"""
-    argv = handoff.desktop_argv(
-        "/A/Tavotto", handoff.Target("/p", None, pick="sub/plot.py"))
+    argv = handoff.desktop_argv("/A/Tavotto", handoff.Target("/p", None, pick="sub/plot.py"))
     assert argv == ["/A/Tavotto", "--open", "/p", "--pick-script", "sub/plot.py"]
     # stem 定了就没有选择器（互斥）
-    argv = handoff.desktop_argv(
-        "/A/Tavotto", handoff.Target("/p", "Fig1", pick="plot.py"))
+    argv = handoff.desktop_argv("/A/Tavotto", handoff.Target("/p", "Fig1", pick="plot.py"))
     assert "--pick-script" not in argv
 
 
 def test_browser_url_carries_pick():
     url = handoff.browser_url(5089, handoff.Target("/p", None, pick="子目录/图.py"))
-    assert url == ("http://127.0.0.1:5089/?pick="
-                   "%E5%AD%90%E7%9B%AE%E5%BD%95%2F%E5%9B%BE.py")
+    assert url == ("http://127.0.0.1:5089/?pick=%E5%AD%90%E7%9B%AE%E5%BD%95%2F%E5%9B%BE.py")
 
 
 def test_macos_open_argv_reuses_the_contract(monkeypatch):
@@ -267,13 +318,18 @@ def test_macos_open_argv_reuses_the_contract(monkeypatch):
         class R:
             returncode = 0
             stdout = stderr = ""
+
         return R()
 
     out = handoff._launch_desktop_via_open(
-        "/A/Tavotto.app/Contents/MacOS/Tavotto", "/A/Tavotto.app",
+        "/A/Tavotto.app/Contents/MacOS/Tavotto",
+        "/A/Tavotto.app",
         handoff.Target("/p", None, pick="plot.py"),
-        run=run, pids_of=lambda exe: None, clock=lambda: 0.0,
-        sleep=lambda s: None)
+        run=run,
+        pids_of=lambda exe: None,
+        clock=lambda: 0.0,
+        sleep=lambda s: None,
+    )
     assert seen["argv"][:4] == ["open", "-na", "/A/Tavotto.app", "--args"]
     assert seen["argv"][4:] == ["--open", "/p", "--pick-script", "plot.py"]
     assert out["ready"] == "unverified"
@@ -283,8 +339,7 @@ def test_macos_open_argv_reuses_the_contract(monkeypatch):
 def test_open_target_multi_without_ui_requires_explicit_choice(tmp_path, monkeypatch):
     figs = _project(tmp_path, {"multi.py": "pass"})
     monkeypatch.setattr(handoff, "_remote_probe", NO_REMOTE)
-    monkeypatch.setattr(handoff, "_local_probe",
-                        _fake_local(figs, ["FigA", "FigB"]))
+    monkeypatch.setattr(handoff, "_local_probe", _fake_local(figs, ["FigA", "FigB"]))
     with pytest.raises(handoff.HandoffError) as ei:
         handoff.open_target(str(figs / "multi.py"), launch_ui=False)
     assert ei.value.code == "multiple_figures_found"
@@ -294,13 +349,15 @@ def test_open_target_multi_without_ui_requires_explicit_choice(tmp_path, monkeyp
 def test_open_target_multi_launches_the_picker(tmp_path, monkeypatch):
     figs = _project(tmp_path, {"multi.py": "pass"})
     monkeypatch.setattr(handoff, "_remote_probe", NO_REMOTE)
-    monkeypatch.setattr(handoff, "_local_probe",
-                        _fake_local(figs, ["FigA", "FigB"]))
+    monkeypatch.setattr(handoff, "_local_probe", _fake_local(figs, ["FigA", "FigB"]))
     seen = []
     result = handoff.open_target(
-        str(figs / "multi.py"), prefer="browser",
-        http=lambda *a, **k: None, spawn=lambda argv, **kw: seen.append(argv),
-        browse=lambda url: pytest.fail("新进程自己开浏览器"))
+        str(figs / "multi.py"),
+        prefer="browser",
+        http=lambda *a, **k: None,
+        spawn=lambda argv, **kw: seen.append(argv),
+        browse=lambda url: pytest.fail("新进程自己开浏览器"),
+    )
     assert result["ok"] is True
     assert result["pick"] == "multi.py"
     assert result["stem"] is None
@@ -339,10 +396,8 @@ def test_cli_passes_probe_flags(tmp_path, monkeypatch, capsys):
     assert data["probe"]["via"] == "local"
 
     # --no-probe：同一个脚本、没有登记 → 稳定错误一行 JSON
-    (figs / "tavotto_registry.json").write_text(
-        json.dumps({"scripts": {}}), encoding="utf-8")
-    code = handoff.cli([str(figs / "show.py"), "--json", "--no-launch",
-                        "--no-probe"])
+    (figs / "tavotto_registry.json").write_text(json.dumps({"scripts": {}}), encoding="utf-8")
+    code = handoff.cli([str(figs / "show.py"), "--json", "--no-launch", "--no-probe"])
     assert code == 2
     data = json.loads(capsys.readouterr().out)
     assert data["ok"] is False and data["code"] == "script_no_figure"
@@ -353,7 +408,7 @@ def test_cli_passes_probe_flags(tmp_path, monkeypatch, capsys):
 # 的是项目写入与相对路径，项目外的记录文件如实落盘）。数这份文件的行数 =
 # 数真实执行次数——比「池里有没有 worker」强：close_project 会把变异产生
 # 的 worker 收走，行数收不走。
-COUNTED = '''\
+COUNTED = """\
 import pathlib
 import matplotlib.pyplot as plt
 
@@ -361,7 +416,7 @@ pathlib.Path(r"{log}").open("a").write("run\\n")
 plt.plot([1, 2, 3], [4, 5, 6])
 plt.title("counted")
 plt.show()
-'''
+"""
 
 
 @needs_worker
@@ -373,8 +428,7 @@ def test_cli_probe_executes_once_and_handoff_never_reruns(tmp_path, monkeypatch)
     materialized cache 的 mtime 在只读浏览后不变、CLI 侧池清零。
     """
     run_log = tmp_path / "exec-count.log"
-    figs = _project(tmp_path,
-                    {"counted.py": COUNTED.format(log=run_log)})
+    figs = _project(tmp_path, {"counted.py": COUNTED.format(log=run_log)})
 
     # 本机可能有别的 Tavotto 实例在 5089 端口上跑：测试必须走本地 probe，
     # 绝不把探测委托给测试环境之外的进程
@@ -393,11 +447,13 @@ def test_cli_probe_executes_once_and_handoff_never_reruns(tmp_path, monkeypatch)
     assert fig["cached"] is True, "probe 成功必须物化 cache（交接零重跑的前提）"
 
     from tavotto.engine import runtimeasset
+
     cache_dir = runtimeasset.cache_dir(str(figs), fig["asset_id"])
     meta_before = (cache_dir / "metadata.json").stat().st_mtime_ns
 
     # 目标进程视角：打开项目 → 列 runtime 素材 → 取预览，全程只读
     from tavotto import app as m
+
     client = m.app.test_client()
     r = client.post("/api/projects/open", json={"path": str(figs)})
     assert r.status_code == 200
@@ -410,6 +466,7 @@ def test_cli_probe_executes_once_and_handoff_never_reruns(tmp_path, monkeypatch)
         assert assets[0]["cached"] is True
         assert assets[0]["descriptor"] is not None
         from urllib.parse import quote
+
         r = client.get(f"/api/runtime/preview?pj={pj}&id={quote(fig['asset_id'], safe='')}")
         assert r.status_code == 200 and b"svg" in r.data[:300]
     finally:

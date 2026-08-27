@@ -7,6 +7,7 @@ matplotlib 那十几 MB」**之前**跑：脚本要 rdkit 的话，包一个字�
 
 `browser.handle` 的 `classify` 命令代理到这里——实现只有这一份。
 """
+
 from __future__ import annotations
 
 import ast
@@ -31,11 +32,11 @@ def classify_imports(source: str, supported_roots: dict[str, str]) -> dict:
     for node in ast.walk(tree):
         if not isinstance(node, ast.Try):
             continue
-        catches_import = any(
-            _handler_catches_import_error(h) for h in node.handlers)
+        catches_import = any(_handler_catches_import_error(h) for h in node.handlers)
         if catches_import and node.body:
             optional_spans.append(
-                (node.body[0].lineno, max(n.end_lineno or n.lineno for n in node.body)))
+                (node.body[0].lineno, max(n.end_lineno or n.lineno for n in node.body))
+            )
 
     def _optional(lineno: int) -> bool:
         return any(a <= lineno <= b for a, b in optional_spans)
@@ -70,8 +71,7 @@ def classify_imports(source: str, supported_roots: dict[str, str]) -> dict:
 
 def _handler_catches_import_error(handler: ast.ExceptHandler) -> bool:
     def _is(t) -> bool:
-        name = t.id if isinstance(t, ast.Name) else (
-            t.attr if isinstance(t, ast.Attribute) else "")
+        name = t.id if isinstance(t, ast.Name) else (t.attr if isinstance(t, ast.Attribute) else "")
         return name in ("ImportError", "ModuleNotFoundError", "Exception", "BaseException")
 
     t = handler.type
@@ -86,11 +86,14 @@ def classify_json(request_json: str) -> str:
     """JS Worker 的出入口：JSON 字符串进出，与 `browser.handle` 同一纪律。"""
     try:
         req = json.loads(request_json)
-        out = {"ok": True,
-               **classify_imports(req["source"], req["supported_roots"])}
+        out = {"ok": True, **classify_imports(req["source"], req["supported_roots"])}
     except SyntaxError as exc:
-        out = {"ok": False, "code": "syntax_error",
-               "message": f"{exc.msg} (line {exc.lineno})", "line": exc.lineno}
+        out = {
+            "ok": False,
+            "code": "syntax_error",
+            "message": f"{exc.msg} (line {exc.lineno})",
+            "line": exc.lineno,
+        }
     except Exception as exc:  # noqa: BLE001 - 边界函数，绝不向 JS 抛
         out = {"ok": False, "code": "internal_error", "message": str(exc)}
     return json.dumps(out, ensure_ascii=False)

@@ -18,6 +18,7 @@
 
 纯标准库，Flask 父进程 import（边界同 diagnostics.py）。
 """
+
 from __future__ import annotations
 
 import json
@@ -36,100 +37,190 @@ import re
 #: `test_event_fields_match_frontend_schema` 逐事件比对解决的：它用大括号配对
 #: 直接读 sanitize.ts，两边少一个字段就红。
 EVENT_FIELDS: dict[str, frozenset[str]] = {
-    "align.blocked": frozenset({
-        "authority_variant", "display_variant", "document_variant", "mode", "panel",
-        "reason"
-    }),
-    "align.commit": frozenset({
-        "authority_variant", "display_variant", "document_variant",
-        "exact_authority", "input_geometry", "mode", "move_count", "output_geometry",
-        "panel", "patch_count", "selected_count"
-    }),
+    "align.blocked": frozenset(
+        {"authority_variant", "display_variant", "document_variant", "mode", "panel", "reason"}
+    ),
+    "align.commit": frozenset(
+        {
+            "authority_variant",
+            "display_variant",
+            "document_variant",
+            "exact_authority",
+            "input_geometry",
+            "mode",
+            "move_count",
+            "output_geometry",
+            "panel",
+            "patch_count",
+            "selected_count",
+        }
+    ),
     "align.noop": frozenset({"mode", "panel", "reason"}),
-    "align.request": frozenset({
-        "authority_variant", "display_variant", "document_variant",
-        "exact_authority", "input_geometry", "mode", "panel", "selected_count"
-    }),
+    "align.request": frozenset(
+        {
+            "authority_variant",
+            "display_variant",
+            "document_variant",
+            "exact_authority",
+            "input_geometry",
+            "mode",
+            "panel",
+            "selected_count",
+        }
+    ),
     "authority.ready": frozenset({"authority_variant", "document_variant", "panel"}),
-    "authority.unavailable": frozenset({
-        "authority_variant", "document_variant", "panel"
-    }),
-    "axes.drag.begin": frozenset({
-        "anchor_from_document", "authority_variant", "display_variant",
-        "document_variant", "exact_authority", "gid", "panel", "prop"
-    }),
-    "axes.drag.commit": frozenset({
-        "authority_variant", "document_variant", "exact_authority", "gid", "panel",
-        "patch_count", "prop"
-    }),
+    "authority.unavailable": frozenset({"authority_variant", "document_variant", "panel"}),
+    "axes.drag.begin": frozenset(
+        {
+            "anchor_from_document",
+            "authority_variant",
+            "display_variant",
+            "document_variant",
+            "exact_authority",
+            "gid",
+            "panel",
+            "prop",
+        }
+    ),
+    "axes.drag.commit": frozenset(
+        {
+            "authority_variant",
+            "document_variant",
+            "exact_authority",
+            "gid",
+            "panel",
+            "patch_count",
+            "prop",
+        }
+    ),
     "diagnostics.export": frozenset({"panel_count", "trace_count"}),
-    "display.source_changed": frozenset({
-        "authority_variant", "display_variant", "document_variant", "exact", "file",
-        "panel", "render_status", "stale"
-    }),
-    "document.commit": frozenset({
-        "document_hash_after", "document_hash_before", "future_count", "label_key",
-        "past_count", "patch_count", "patches", "txn_open"
-    }),
-    "element.drag.begin": frozenset({
-        "anchor_from_document", "authority_variant", "display_variant",
-        "document_variant", "exact_authority", "gid", "panel", "prop"
-    }),
+    "display.source_changed": frozenset(
+        {
+            "authority_variant",
+            "display_variant",
+            "document_variant",
+            "exact",
+            "file",
+            "panel",
+            "render_status",
+            "stale",
+        }
+    ),
+    "document.commit": frozenset(
+        {
+            "document_hash_after",
+            "document_hash_before",
+            "future_count",
+            "label_key",
+            "past_count",
+            "patch_count",
+            "patches",
+            "txn_open",
+        }
+    ),
+    "element.drag.begin": frozenset(
+        {
+            "anchor_from_document",
+            "authority_variant",
+            "display_variant",
+            "document_variant",
+            "exact_authority",
+            "gid",
+            "panel",
+            "prop",
+        }
+    ),
     "element.drag.cancel": frozenset({"cancelled", "gid", "panel"}),
-    "element.drag.commit": frozenset({
-        "authority_variant", "document_variant", "exact_authority", "gid", "panel",
-        "patch_count", "prop"
-    }),
-    "invariant.violation": frozenset({
-        "authority_variant", "display_variant", "document_variant", "kind",
-        "operation", "panel"
-    }),
-    "layout_version.restore.complete": frozenset({
-        "auto_backup_created", "document_hash_after", "document_hash_before",
-        "future_count", "past_count", "version"
-    }),
-    "layout_version.restore.request": frozenset({
-        "document_hash", "future_count", "past_count", "version"
-    }),
+    "element.drag.commit": frozenset(
+        {
+            "authority_variant",
+            "document_variant",
+            "exact_authority",
+            "gid",
+            "panel",
+            "patch_count",
+            "prop",
+        }
+    ),
+    "invariant.violation": frozenset(
+        {"authority_variant", "display_variant", "document_variant", "kind", "operation", "panel"}
+    ),
+    "layout_version.restore.complete": frozenset(
+        {
+            "auto_backup_created",
+            "document_hash_after",
+            "document_hash_before",
+            "future_count",
+            "past_count",
+            "version",
+        }
+    ),
+    "layout_version.restore.request": frozenset(
+        {"document_hash", "future_count", "past_count", "version"}
+    ),
     "layout_version.save": frozenset({"auto", "document_hash", "version"}),
     "preview.begin": frozenset({"history_mode", "panel", "render_variant", "session"}),
     "preview.cancel": frozenset({"duration_ms", "panel", "reason", "session"}),
-    "preview.commit": frozenset({
-        "await_variant", "panel", "patch_count", "render_variant", "session"
-    }),
+    "preview.commit": frozenset(
+        {"await_variant", "panel", "patch_count", "render_variant", "session"}
+    ),
     "preview.retire": frozenset({"duration_ms", "panel", "reason", "session"}),
-    "redo.complete": frozenset({
-        "document_hash_after", "document_hash_before", "future_count", "label_key",
-        "ok", "past_count"
-    }),
+    "redo.complete": frozenset(
+        {
+            "document_hash_after",
+            "document_hash_before",
+            "future_count",
+            "label_key",
+            "ok",
+            "past_count",
+        }
+    ),
     "redo.request": frozenset({"future_count", "past_count", "txn_open"}),
     "render.error": frozenset({"code", "duration_ms", "file", "variant"}),
     "render.request": frozenset({"file", "policy", "preview_dpi", "variant"}),
     "render.stale": frozenset({"file", "variant_count"}),
-    "render.success": frozenset({
-        "duration_ms", "element_count", "file", "rev", "size_mm", "variant",
-        "warning_count"
-    }),
-    "resize.begin": frozenset({
-        "anchor_from_document", "authority_variant", "display_variant",
-        "document_variant", "exact_authority", "gid", "panel", "prop"
-    }),
-    "resize.commit": frozenset({
-        "authority_variant", "document_variant", "exact_authority", "gid", "panel",
-        "patch_count", "prop"
-    }),
-    "selection.changed": frozenset({
-        "object_count", "panel", "selected_count", "selected_gids", "selection_kind"
-    }),
+    "render.success": frozenset(
+        {"duration_ms", "element_count", "file", "rev", "size_mm", "variant", "warning_count"}
+    ),
+    "resize.begin": frozenset(
+        {
+            "anchor_from_document",
+            "authority_variant",
+            "display_variant",
+            "document_variant",
+            "exact_authority",
+            "gid",
+            "panel",
+            "prop",
+        }
+    ),
+    "resize.commit": frozenset(
+        {
+            "authority_variant",
+            "document_variant",
+            "exact_authority",
+            "gid",
+            "panel",
+            "patch_count",
+            "prop",
+        }
+    ),
+    "selection.changed": frozenset(
+        {"object_count", "panel", "selected_count", "selected_gids", "selection_kind"}
+    ),
     "transaction.begin": frozenset({"label_key", "replaced_open_txn"}),
     "transaction.cancel": frozenset({"label_key", "patch_count"}),
-    "transaction.end": frozenset({
-        "document_hash_after", "label_key", "past_count", "patch_count"
-    }),
-    "undo.complete": frozenset({
-        "document_hash_after", "document_hash_before", "future_count", "label_key",
-        "ok", "past_count"
-    }),
+    "transaction.end": frozenset({"document_hash_after", "label_key", "past_count", "patch_count"}),
+    "undo.complete": frozenset(
+        {
+            "document_hash_after",
+            "document_hash_before",
+            "future_count",
+            "label_key",
+            "ok",
+            "past_count",
+        }
+    ),
     "undo.request": frozenset({"future_count", "past_count", "txn_open"}),
 }
 
@@ -144,19 +235,37 @@ _ENUM_FIELDS: dict[str, frozenset[str]] = {
     "selection_kind": frozenset({"none", "element", "object", "mixed"}),
     "history_mode": frozenset({"gesture", "granular"}),
     # `kind` 在事件里是不变式种类，在快照里是面板载体类型
-    "kind": frozenset({
-        "geometry_authority_mismatch", "selected_gid_missing_from_exact_manifest",
-        "standalone_action_inside_unrelated_transaction",
-        "document_display_variant_diverged", "undo_complete_but_authority_stale",
-        "preview_session_survived_commit",
-        "matplotlib", "image", "runtime", "unknown",
-    }),
+    "kind": frozenset(
+        {
+            "geometry_authority_mismatch",
+            "selected_gid_missing_from_exact_manifest",
+            "standalone_action_inside_unrelated_transaction",
+            "document_display_variant_diverged",
+            "undo_complete_but_authority_stale",
+            "preview_session_survived_commit",
+            "matplotlib",
+            "image",
+            "runtime",
+            "unknown",
+        }
+    ),
     # 对齐被拒 / 对齐空操作 / preview 收尾，三处的原因合起来
-    "reason": frozenset({
-        "authority_unavailable", "authority_stale", "no_manifest", "panel_missing",
-        "empty_selection", "no_geometry_change", "nothing_to_write",
-        "pointer_cancel", "committed", "authority_swapped", "authority_failed", "reset",
-    }),
+    "reason": frozenset(
+        {
+            "authority_unavailable",
+            "authority_stale",
+            "no_manifest",
+            "panel_missing",
+            "empty_selection",
+            "no_geometry_change",
+            "nothing_to_write",
+            "pointer_cancel",
+            "committed",
+            "authority_swapped",
+            "authority_failed",
+            "reset",
+        }
+    ),
 }
 
 #: 硬上限。超出一律**截断而不是失败**——用户点导出是为了拿到一个包，
@@ -194,16 +303,21 @@ _GID_RE = re.compile(r"^[a-z][a-z0-9_.:-]{0,63}$")
 #: 必须全小写的字段（操作键）。形状规则，不是名单
 _LOWER_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,47}$")
 _LOWER_FIELDS = frozenset({"mode", "operation"})
-_HASH_FIELD_EXACT = frozenset({
-    "panel", "file", "session", "version", "active_panel",
-    "document_hash", "variant",
-})
+_HASH_FIELD_EXACT = frozenset(
+    {
+        "panel",
+        "file",
+        "session",
+        "version",
+        "active_panel",
+        "document_hash",
+        "variant",
+    }
+)
 
 
 def _is_hash_field(name: str) -> bool:
-    return (name in _HASH_FIELD_EXACT
-            or name.endswith("_hash")
-            or name.endswith("_variant"))
+    return name in _HASH_FIELD_EXACT or name.endswith("_hash") or name.endswith("_variant")
 
 
 def _hash_or_none(value):
@@ -214,6 +328,8 @@ def _hash_or_none(value):
     if isinstance(value, str) and _HASH_VALUE_RE.match(value):
         return value
     raise _Reject("hash shape")
+
+
 #: 复合值（patch 身份 / 几何目标）允许的键
 _PATCH_KEYS = frozenset({"gid", "prop", "domain"})
 _GEOM_KEYS = frozenset({"gid", "bbox", "anchor"})
@@ -335,8 +451,11 @@ def sanitize_event(raw, redact) -> dict | None:
                 # `label_key` / `prop` / `code` 不在此列：它们是驼峰的开集标识
                 # （setProp / moveElement / fontsize），只能靠前端那张逐事件的
                 # 字段表约束「哪个字段允许放什么」。
-                if (not isinstance(value, str) or not _LOWER_RE.match(value)
-                        or redact(value) != value):
+                if (
+                    not isinstance(value, str)
+                    or not _LOWER_RE.match(value)
+                    or redact(value) != value
+                ):
                     raise _Reject("lower field")
                 out[key] = value
             else:
@@ -399,12 +518,18 @@ _SNAPSHOT_SHAPE = {
 }
 
 _PANEL_SHAPE = {
-    "panel": "hash", "file": "hash", "kind": "enum",
+    "panel": "hash",
+    "file": "hash",
+    "kind": "enum",
     "override_count": "int",
-    "document_variant": "hash", "display_variant": "hash",
+    "document_variant": "hash",
+    "display_variant": "hash",
     "authority_variant": "hash",
-    "display_exact": "scalar", "exact_manifest_available": "scalar",
-    "render_status": "enum", "stale": "scalar", "element_count": "int",
+    "display_exact": "scalar",
+    "exact_manifest_available": "scalar",
+    "render_status": "enum",
+    "stale": "scalar",
+    "element_count": "int",
 }
 
 
@@ -435,9 +560,9 @@ def _pull(src, shape, redact):
                     raise _Reject("key shape")
             elif spec == "gids":
                 rows = raw[:MAX_LIST] if isinstance(raw, list) else []
-                out[key] = [g for g in rows
-                            if isinstance(g, str) and _GID_RE.match(g)
-                            and redact(g) == g]
+                out[key] = [
+                    g for g in rows if isinstance(g, str) and _GID_RE.match(g) and redact(g) == g
+                ]
             elif spec == "list":
                 out[key] = _value(raw, redact) if isinstance(raw, list) else []
             else:

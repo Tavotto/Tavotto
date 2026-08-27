@@ -17,6 +17,7 @@
 `find_worker_python()` 直接就选中它——不弹「请先安装 Python」、不联网装包。
 这条自建 venv 的路留给源码 / pip 安装模式，那是它本来的用途。
 """
+
 from __future__ import annotations
 
 import os
@@ -28,7 +29,7 @@ from pathlib import Path
 from . import config, runtime
 
 VENV_DIR_NAME = "worker-env"
-INSTALL_TIMEOUT_S = 900          # 首次装 matplotlib 要下几十 MB，网络慢时给足
+INSTALL_TIMEOUT_S = 900  # 首次装 matplotlib 要下几十 MB，网络慢时给足
 PROBE_TIMEOUT_S = 30
 
 _lock = threading.Lock()
@@ -47,11 +48,16 @@ def venv_python(root: Path | None = None) -> Path:
 def _probe(python: str, expr: str) -> str | None:
     """在指定解释器里求值，失败回 None。"""
     try:
-        out = subprocess.run([python, "-c", expr], capture_output=True,
-                             text=True, encoding="utf-8", errors="replace",
-                             timeout=PROBE_TIMEOUT_S,
-                             stdin=subprocess.DEVNULL,
-                             creationflags=runtime.CREATE_NO_WINDOW)
+        out = subprocess.run(
+            [python, "-c", expr],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=PROBE_TIMEOUT_S,
+            stdin=subprocess.DEVNULL,
+            creationflags=runtime.CREATE_NO_WINDOW,
+        )
     except (OSError, subprocess.SubprocessError):
         return None
     return out.stdout.strip() if out.returncode == 0 else None
@@ -71,6 +77,7 @@ def find_base_python() -> str | None:
     `python -m venv` 建到一半就失败，白白给用户一段看不懂的报错。
     """
     from . import pool
+
     seen: set[str] = set()
     for cand, source in pool._prioritized_candidates():
         if source == pool.SOURCE_BUNDLED:
@@ -106,20 +113,25 @@ def status() -> dict:
     界面显示「Tavotto 内置环境」并且**不出现任何安装引导**——那时什么都不缺。
     """
     from . import pool
+
     rt = _runtime_block()
     try:
         python = pool.find_worker_python()
         source = pool.source_of(python)
-        return {"ok": True, "python": python, "source": source,
-                "matplotlib": matplotlib_version(python),
-                "managed": Path(python) == venv_python(),
-                "bundled": source == pool.SOURCE_BUNDLED,
-                "runtime": rt,
-                # 谁在管 worker 的生命周期（Rust supervisor / Python 池）。
-                # 冒烟脚本靠它断言「产物里真带了 workerd 且渲染真走了它」——
-                # 回退是静默的，不报出来就只能靠「怎么有点慢」去猜。
-                "control_plane": pool.control_plane(),
-                "state": _progress["state"]}
+        return {
+            "ok": True,
+            "python": python,
+            "source": source,
+            "matplotlib": matplotlib_version(python),
+            "managed": Path(python) == venv_python(),
+            "bundled": source == pool.SOURCE_BUNDLED,
+            "runtime": rt,
+            # 谁在管 worker 的生命周期（Rust supervisor / Python 池）。
+            # 冒烟脚本靠它断言「产物里真带了 workerd 且渲染真走了它」——
+            # 回退是静默的，不报出来就只能靠「怎么有点慢」去猜。
+            "control_plane": pool.control_plane(),
+            "state": _progress["state"],
+        }
     except pool.WorkerError as exc:
         code = exc.code
     base = find_base_python()
@@ -172,8 +184,11 @@ def install(on_event=None) -> dict:
 
         base = find_base_python()
         if base is None:
-            return _fail("这台机器上没找到可用的 Python。请先安装 Python 3.10 以上"
-                         "（python.org 或 Anaconda），再回来重试。", on_event)
+            return _fail(
+                "这台机器上没找到可用的 Python。请先安装 Python 3.10 以上"
+                "（python.org 或 Anaconda），再回来重试。",
+                on_event,
+            )
 
         target = venv_python()
         root = target.parent.parent
@@ -192,8 +207,17 @@ def install(on_event=None) -> dict:
 
         _append("\n正在安装 matplotlib（首次需要下载几十 MB）…\n")
         _emit(on_event)
-        rc, out = _run([str(target), "-m", "pip", "install", "--upgrade",
-                        "--disable-pip-version-check", "matplotlib"])
+        rc, out = _run(
+            [
+                str(target),
+                "-m",
+                "pip",
+                "install",
+                "--upgrade",
+                "--disable-pip-version-check",
+                "matplotlib",
+            ]
+        )
         _append(out)
         if rc != 0:
             return _fail("安装 matplotlib 失败，日志见下方。", on_event)
@@ -205,6 +229,7 @@ def install(on_event=None) -> dict:
         # 记到用户配置里：下次启动直接用，不必重新探测
         config.set_worker_python(str(target))
         from . import pool
+
         pool.reset_worker_python()
 
         _progress.update(state="done", error=None)
@@ -217,11 +242,16 @@ def install(on_event=None) -> dict:
 
 def _run(cmd: list[str]) -> tuple[int, str]:
     try:
-        p = subprocess.run(cmd, capture_output=True, text=True,
-                           encoding="utf-8", errors="replace",
-                           timeout=INSTALL_TIMEOUT_S,
-                           stdin=subprocess.DEVNULL,
-                           creationflags=runtime.CREATE_NO_WINDOW)
+        p = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=INSTALL_TIMEOUT_S,
+            stdin=subprocess.DEVNULL,
+            creationflags=runtime.CREATE_NO_WINDOW,
+        )
     except subprocess.TimeoutExpired:
         return 1, f"\n超时（{INSTALL_TIMEOUT_S}s）：{' '.join(cmd)}\n"
     except OSError as exc:
@@ -241,5 +271,4 @@ def _emit(on_event) -> None:
 
 
 def install_async(on_event=None) -> None:
-    threading.Thread(target=lambda: install(on_event), daemon=True,
-                     name="mm-bootstrap").start()
+    threading.Thread(target=lambda: install(on_event), daemon=True, name="mm-bootstrap").start()

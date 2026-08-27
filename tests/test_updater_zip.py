@@ -15,6 +15,7 @@ CompressionMethod::Stored（tauri-cli-v2.11.4 updater_bundle.rs）——我们
 顶层 read_dir 找 .exe）；坏输入报错而不是安静产出坏包；workflow 真的在用
 这个脚本而不是 Compress-Archive。
 """
+
 import importlib.util
 import zipfile
 from pathlib import Path
@@ -75,8 +76,6 @@ def test_workflow_uses_the_script_not_compress_archive():
     """
     wf = (ROOT / ".github" / "workflows" / "desktop-tauri.yml").read_text(encoding="utf-8")
     # 注释里正写着「为什么不能用 Compress-Archive」，剥掉再断言，别被说明骗过去
-    code = "\n".join(
-        ln for ln in wf.splitlines() if not ln.lstrip().startswith("#")
-    )
+    code = "\n".join(ln for ln in wf.splitlines() if not ln.lstrip().startswith("#"))
     assert "make_updater_zip.py" in code, "workflow 没在用 make_updater_zip.py 打更新包"
     assert "Compress-Archive" not in code, "更新包不许用 Compress-Archive（deflate）打"

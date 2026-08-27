@@ -12,6 +12,7 @@
 
 真执行脚本（与 test_script_probe 同一条纪律：本进程不 import matplotlib）。
 """
+
 import json
 import sys
 from pathlib import Path
@@ -29,23 +30,23 @@ except engine_pool.WorkerError:
     WORKER_PY = None
 
 needs_worker = pytest.mark.skipif(
-    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）")
+    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）"
+)
 
-SHOW_ONLY = '''\
+SHOW_ONLY = """\
 import matplotlib.pyplot as plt
 
 plt.plot([1, 2, 3], [4, 5, 6])
 plt.title("route guard")
 plt.show()
-'''
+"""
 
 
 def _project(tmp_path) -> Path:
     figs = tmp_path / "figs"
     figs.mkdir()
     (figs / "show.py").write_text(SHOW_ONLY, encoding="utf-8")
-    (figs / "tavotto_registry.json").write_text(
-        json.dumps({"scripts": {}}), encoding="utf-8")
+    (figs / "tavotto_registry.json").write_text(json.dumps({"scripts": {}}), encoding="utf-8")
     return figs
 
 
@@ -63,9 +64,11 @@ def test_safe_probe_route_goes_through_the_product_endpoint(tmp_path):
         # 唯一由 app 层产出的副作用：runtime cache 物化（交接零重跑的前提）。
         # 把路由改回 engine_probe.probe_and_register()，这里没有 cache，红。
         from tavotto.engine import figcapture
+
         asset_id = figcapture.runtime_asset_id("show.py", "show")
-        assert runtimeasset.load_metadata(figs, asset_id) is not None, \
+        assert runtimeasset.load_metadata(figs, asset_id) is not None, (
             "safe_probe 路由没有产生 materialized cache——它绕过了产品端点？"
+        )
     finally:
         if pj:
             m.close_project(pj)

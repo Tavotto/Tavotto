@@ -14,11 +14,13 @@
 分派放在 argparse **之前**：主入口是纯 flag 形态（`tavotto --figures …`），
 改成 subparsers 会把既有命令行整个换掉。
 """
+
 import sys
 
 
 def main() -> None:
     from .engine import cli as engine_cli
+
     # 输出里全是中文，而 Windows 上 stdout 不是真控制台时会退回系统区域编码
     # ——**在任何一句 print 之前**先把流钉成 UTF-8（实现只有一份，见那边）。
     engine_cli.use_utf8_streams()
@@ -26,6 +28,7 @@ def main() -> None:
     if rc is not None:
         sys.exit(rc)
     from .app import main as app_main
+
     app_main()
 
 

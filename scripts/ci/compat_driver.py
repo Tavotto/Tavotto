@@ -20,6 +20,7 @@ import，只能被 spawn。
 
 用户脚本的 print 一律改道 stderr——与 worker 同一条纪律，协议通道必须干净。
 """
+
 from __future__ import annotations
 
 import argparse
@@ -43,15 +44,19 @@ _REQ: dict = {}
 
 
 def _fail(code: str, message: str, **extra) -> int:
-    sys.stdout.write("\n" + json.dumps(
-        {"ok": False, "code": code, "message": message, **extra},
-        ensure_ascii=False, default=str))
-    return 0                       # 失败也要 0 退出：父进程读 JSON，不读退出码
+    sys.stdout.write(
+        "\n"
+        + json.dumps(
+            {"ok": False, "code": code, "message": message, **extra},
+            ensure_ascii=False,
+            default=str,
+        )
+    )
+    return 0  # 失败也要 0 退出：父进程读 JSON，不读退出码
 
 
 def _ok(**payload) -> int:
-    sys.stdout.write("\n" + json.dumps({"ok": True, **payload},
-                                       ensure_ascii=False, default=str))
+    sys.stdout.write("\n" + json.dumps({"ok": True, **payload}, ensure_ascii=False, default=str))
     return 0
 
 
@@ -68,6 +73,7 @@ def run_native(req: dict) -> int:
     就不再是「没有 Tavotto 时会发生什么」，而是「Tavotto 的另一个实现」。
     """
     import matplotlib
+
     matplotlib.use("Agg")
     import matplotlib.figure as mfigure
     import matplotlib.pyplot as plt
@@ -84,7 +90,7 @@ def run_native(req: dict) -> int:
         stem = figcapture.savefig_stem(fname)
         if stem:
             captured.setdefault(stem, self)
-        return real_savefig(self, fname, *args, **kwargs)   # ← 照常写出去
+        return real_savefig(self, fname, *args, **kwargs)  # ← 照常写出去
 
     mfigure.Figure.savefig = recording_savefig
     plt.show = lambda *a, **k: None
@@ -99,18 +105,22 @@ def run_native(req: dict) -> int:
                 runpy.run_path(req["script"], run_name="__main__")
             else:
                 import importlib  # noqa: PLC0415
-                mod = importlib.import_module(
-                    os.path.splitext(os.path.basename(req["script"]))[0])
+
+                mod = importlib.import_module(os.path.splitext(os.path.basename(req["script"]))[0])
                 getattr(mod, req["entry"])()
-    except BaseException:                               # noqa: BLE001 - 用户代码
-        return _fail("native_script_error", "原生执行失败",
-                     traceback=_tail(traceback.format_exc()),
-                     log=_tail(log.getvalue()))
+    except BaseException:  # noqa: BLE001 - 用户代码
+        return _fail(
+            "native_script_error",
+            "原生执行失败",
+            traceback=_tail(traceback.format_exc()),
+            log=_tail(log.getvalue()),
+        )
     finally:
         mfigure.Figure.savefig = real_savefig
 
     fallback, _dropped = figcapture.collect_pyplot_figures(
-        captured, os.path.splitext(os.path.basename(req["script"]))[0], plt)
+        captured, os.path.splitext(os.path.basename(req["script"]))[0], plt
+    )
 
     out_dir = req["out_dir"]
     os.makedirs(out_dir, exist_ok=True)
@@ -121,12 +131,17 @@ def run_native(req: dict) -> int:
         path = os.path.join(out_dir, f"{stem}.png")
         try:
             real_savefig(fig, path, format="png", dpi=max(50, width / w_in))
-        except Exception as exc:                        # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             return _fail("native_render_failed", f"{stem}: {exc}")
         shots[stem] = path
         sizes[stem] = [round(float(v) * 25.4, 2) for v in fig.get_size_inches()]
-    return _ok(stems=sorted(captured), shots=shots, size_mm=sizes,
-               fallback_stems=sorted(fallback), log=_tail(log.getvalue()))
+    return _ok(
+        stems=sorted(captured),
+        shots=shots,
+        size_mm=sizes,
+        fallback_stems=sorted(fallback),
+        log=_tail(log.getvalue()),
+    )
 
 
 # ---------------------------------------------------------------- artist 普查
@@ -137,18 +152,34 @@ def run_native(req: dict) -> int:
 #: 缺口（LineCollection、QuadMesh、Wedge…）整个挤出了视野。坐标轴零件由
 #: Tavotto 的刻度模型统一处理（`TickSet`/`TickLabel` 伪元素），它们**本来就
 #: 不该**逐个拿 gid，算进去只会制造一个恒定的大数字。
-_CENSUS_PRUNE = {"XAxis", "YAxis", "ZAxis", "ThetaAxis", "RadialAxis",
-                 "Spine", "_ColorbarSpine",
-                 "XTick", "YTick", "ZTick", "Tick", "ThetaTick", "RadialTick",
-                 "Legend",
-                 # offsetbox 一族是图例/标注的内部排版盒，不是用户的 artist
-                 "TextArea", "HPacker", "VPacker", "DrawingArea",
-                 "AnchoredOffsetbox", "OffsetBox", "AuxTransformBox",
-                 "PaddedBox"}
+_CENSUS_PRUNE = {
+    "XAxis",
+    "YAxis",
+    "ZAxis",
+    "ThetaAxis",
+    "RadialAxis",
+    "Spine",
+    "_ColorbarSpine",
+    "XTick",
+    "YTick",
+    "ZTick",
+    "Tick",
+    "ThetaTick",
+    "RadialTick",
+    "Legend",
+    # offsetbox 一族是图例/标注的内部排版盒，不是用户的 artist
+    "TextArea",
+    "HPacker",
+    "VPacker",
+    "DrawingArea",
+    "AnchoredOffsetbox",
+    "OffsetBox",
+    "AuxTransformBox",
+    "PaddedBox",
+}
 
 #: 只递归、不计数的容器（它们是宿主，不是「一个 artist 缺口」）。
-_CENSUS_CONTAINERS = {"Figure", "SubFigure", "Axes", "Axes3D", "PolarAxes",
-                      "AxesSubplot"}
+_CENSUS_CONTAINERS = {"Figure", "SubFigure", "Axes", "Axes3D", "PolarAxes", "AxesSubplot"}
 
 #: 计一次、**不下探**的类。`SecondaryAxis` 是 `secondary_[xy]axis` 建出来的
 #: 子 Axes：它整个不被 Tavotto 认识（`instrument` 只遍历 `fig.axes`，
@@ -165,6 +196,7 @@ def run_census(req: dict) -> int:
     门禁，那会变成「我们自己写的尺子量自己」。
     """
     import matplotlib
+
     matplotlib.use("Agg")
     import matplotlib.figure as mfigure
     import matplotlib.pyplot as plt
@@ -189,8 +221,7 @@ def run_census(req: dict) -> int:
     plt.show = lambda *a, **k: None
     os.makedirs(req["sandbox"], exist_ok=True)
     os.chdir(req["sandbox"])
-    figcapture.install_relative_read_fallback(
-        os.path.dirname(req["script"]), req["project"])
+    figcapture.install_relative_read_fallback(os.path.dirname(req["script"]), req["project"])
     sys.argv = [req["script"]]
 
     try:
@@ -199,24 +230,24 @@ def run_census(req: dict) -> int:
                 runpy.run_path(req["script"], run_name="__main__")
             else:
                 import importlib  # noqa: PLC0415
-                mod = importlib.import_module(
-                    os.path.splitext(os.path.basename(req["script"]))[0])
+
+                mod = importlib.import_module(os.path.splitext(os.path.basename(req["script"]))[0])
                 getattr(mod, req["entry"])()
-    except BaseException:                               # noqa: BLE001
-        return _fail("census_script_error", "普查执行失败",
-                     traceback=_tail(traceback.format_exc()))
+    except BaseException:  # noqa: BLE001
+        return _fail("census_script_error", "普查执行失败", traceback=_tail(traceback.format_exc()))
     finally:
         mfigure.Figure.savefig = real_savefig
 
     figcapture.collect_pyplot_figures(
-        captured, os.path.splitext(os.path.basename(req["script"]))[0], plt)
+        captured, os.path.splitext(os.path.basename(req["script"]))[0], plt
+    )
 
     per_stem = {}
     for stem, fig in captured.items():
         try:
             state = overrides_mod.FigState(fig)
             manifest_mod.instrument(state)
-        except Exception:                               # noqa: BLE001
+        except Exception:  # noqa: BLE001
             per_stem[stem] = {"error": _tail(traceback.format_exc(), 1200)}
             continue
         known = {id(a) for a in state.index.values()}
@@ -228,16 +259,18 @@ def run_census(req: dict) -> int:
                 got = getattr(a, attr, None)
                 try:
                     items = got() if callable(got) else got
-                except Exception:                       # noqa: BLE001
+                except Exception:  # noqa: BLE001
                     continue
                 if isinstance(items, dict):
-                    items = [v for vs in items.values()
-                             for v in (vs if isinstance(vs, list) else [vs])]
+                    items = [
+                        v for vs in items.values() for v in (vs if isinstance(vs, list) else [vs])
+                    ]
                 for m in items or []:
                     known.add(id(m))
 
         total: collections.Counter = collections.Counter()
         recognized: collections.Counter = collections.Counter()
+
         # `fig.patch` / `ax.patch` 是画布底色，不是用户画的形状。
         # **子 axes 的底色也要收**：`inset_axes` / `secondary_[xy]axis` 建出来的
         # 挂在 `ax.child_axes` 上、不在 `fig.axes` 里，漏掉的话插图的背景会被
@@ -256,8 +289,7 @@ def run_census(req: dict) -> int:
                 layer = nxt
             return out
 
-        backgrounds = {id(fig.patch)} | {id(getattr(ax, "patch", None))
-                                         for ax in _every_axes(fig)}
+        backgrounds = {id(fig.patch)} | {id(getattr(ax, "patch", None)) for ax in _every_axes(fig)}
         # **色条轴的内部不下探**：色带是 QuadMesh、outline 是 _ColorbarSpine、
         # extend 三角是 PathPatch，全部由 matplotlib 每次 `_draw_all()` 删掉
         # 重建，Tavotto 刻意不登记它们（见 CLAUDE.md 色条一节）。算进去的话
@@ -273,8 +305,9 @@ def run_census(req: dict) -> int:
             # 空文字不算缺口：每个 Axes 天生带三个 title Text（居中/左/右），
             # 脚本没写字的那些永远拿不到 gid，把它们算进「未识别」会在
             # Top-N 顶上挂一个恒定的大数字，把真正的缺口挤下去。
-            empty_text = cls == "Text" and not str(
-                getattr(artist, "get_text", lambda: "")()).strip()
+            empty_text = (
+                cls == "Text" and not str(getattr(artist, "get_text", lambda: "")()).strip()
+            )
             if not container and not empty_text and id(artist) not in backgrounds:
                 total[cls] += 1
                 if id(artist) in known:
@@ -282,13 +315,13 @@ def run_census(req: dict) -> int:
             if id(artist) in cbar_axes:
                 return
             if cls in _CENSUS_LEAF:
-                return                                  # 计一次，不下探
+                return  # 计一次，不下探
             children = getattr(artist, "get_children", None)
             if children is None:
                 return
             try:
                 kids = list(children())
-            except Exception:                           # noqa: BLE001
+            except Exception:  # noqa: BLE001
                 return
             # 已经被认出来的复合 artist（散点系列、误差棒组、色条）不再下探：
             # 它整体就是一个可编辑元素，把它的零件算成「未识别」是误报。
@@ -322,8 +355,14 @@ def run_browser(req: dict) -> int:
 
     with open(req["script"], encoding="utf-8") as fh:
         source = fh.read()
-    loaded = call({"cmd": "load", "filename": os.path.basename(req["script"]),
-                   "source": source, "workspace": req["workspace"]})
+    loaded = call(
+        {
+            "cmd": "load",
+            "filename": os.path.basename(req["script"]),
+            "source": source,
+            "workspace": req["workspace"],
+        }
+    )
     if not loaded.get("ok"):
         return _ok(load=loaded, figures=[], semantics={})
 
@@ -339,8 +378,8 @@ def run_browser(req: dict) -> int:
         entry = {
             "roles": sorted({el["role"] for el in man["elements"]}),
             "editable": sorted(
-                f"{el['gid']}.{f['prop']}"
-                for el in man["elements"] for f in el.get("editable", [])),
+                f"{el['gid']}.{f['prop']}" for el in man["elements"] for f in el.get("editable", [])
+            ),
             "gids": [el["gid"] for el in man["elements"]],
             "size_mm": man.get("size_mm"),
             "patch_hash": opened.get("patch_hash", ""),
@@ -356,17 +395,19 @@ def run_browser(req: dict) -> int:
             # 还原回零 patch，别把状态留给下一个 stem（全量列表语义）
             call({"cmd": "render", "stem": stem, "patches": []})
         semantics[stem] = entry
-    return _ok(load={k: v for k, v in loaded.items() if k != "figures"},
-               figures=figures, semantics=semantics,
-               truncated=loaded.get("truncated_figures", 0))
+    return _ok(
+        load={k: v for k, v in loaded.items() if k != "figures"},
+        figures=figures,
+        semantics=semantics,
+        truncated=loaded.get("truncated_figures", 0),
+    )
 
 
 MODES = {"native": run_native, "census": run_census, "browser": run_browser}
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(
-        description="CompatBench 旁路驱动（跑在科学栈解释器里）")
+    ap = argparse.ArgumentParser(description="CompatBench 旁路驱动（跑在科学栈解释器里）")
     ap.add_argument("--mode", choices=sorted(MODES), required=True)
     ap.add_argument("--request", required=True, help="请求 JSON 文件路径")
     args = ap.parse_args(argv)
@@ -374,9 +415,10 @@ def main(argv: list[str] | None = None) -> int:
         req = json.load(fh)
     try:
         return MODES[args.mode](req)
-    except BaseException:                               # noqa: BLE001
-        return _fail("driver_crashed", f"{args.mode} 驱动自身崩溃",
-                     traceback=_tail(traceback.format_exc()))
+    except BaseException:  # noqa: BLE001
+        return _fail(
+            "driver_crashed", f"{args.mode} 驱动自身崩溃", traceback=_tail(traceback.format_exc())
+        )
 
 
 if __name__ == "__main__":

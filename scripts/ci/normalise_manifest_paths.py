@@ -28,15 +28,15 @@ def normalise(manifest_dir: Path, into: str) -> list[Path]:
         m = json.loads(f.read_text(encoding="utf-8"))
         for a in m.get("artifacts", []):
             a["path"] = f"{into}/{os.path.basename(a['path'])}"
-        f.write_text(json.dumps(m, indent=2, ensure_ascii=False) + "\n",
-                     encoding="utf-8")
+        f.write_text(json.dumps(m, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         touched.append(f)
     return touched
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("manifest_dir", type=Path)
     ap.add_argument("--into", default="dist")
     a = ap.parse_args(argv)
@@ -45,8 +45,11 @@ def main(argv: list[str] | None = None) -> int:
     if not touched:
         # **一条都没找到必须报错。** 静默成功会让下一步的 merge 拿到空集合，
         # 而 merge 对空集合的抱怨（「没有可合并的清单」）指向的是另一个问题。
-        print(f"::error::{a.manifest_dir} 下一个 artifact-manifest-*.json 都没有——"
-              f"上游的清单步骤没跑，或者 artifact 名字变了", file=sys.stderr)
+        print(
+            f"::error::{a.manifest_dir} 下一个 artifact-manifest-*.json 都没有——"
+            f"上游的清单步骤没跑，或者 artifact 名字变了",
+            file=sys.stderr,
+        )
         return 1
     for f in touched:
         print(f"normalised {f}")

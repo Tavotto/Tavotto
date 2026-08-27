@@ -1,4 +1,5 @@
 """项目系统：用户配置、无项目守卫、打开/切换/最近列表/目录浏览/项目设置。"""
+
 import json
 from pathlib import Path
 
@@ -12,7 +13,7 @@ from tavotto.engine import config as engine_config, pool as engine_pool
 @pytest.fixture
 def client(monkeypatch):
     m.app.config["TESTING"] = True
-    m.reset_projects()          # 测试间互不污染：进来就是「一个项目都没开」
+    m.reset_projects()  # 测试间互不污染：进来就是「一个项目都没开」
     yield m.app.test_client()
     m.reset_projects()
     engine_pool.stop_watcher()
@@ -30,10 +31,16 @@ def _make_figs(tmp_path, name="figs"):
 
 # ---------------- engine/config.py ------------------------------------------
 
+
 def test_config_defaults_when_missing():
-    assert engine_config.load() == {"recent_projects": [], "projects": {},
-                                    "ai": {}, "updates": {}, "worker": {},
-                                    "telemetry": {}}
+    assert engine_config.load() == {
+        "recent_projects": [],
+        "projects": {},
+        "ai": {},
+        "updates": {},
+        "worker": {},
+        "telemetry": {},
+    }
 
 
 def test_config_corrupted_file_falls_back():
@@ -66,6 +73,7 @@ def test_project_settings_roundtrip(tmp_path):
 
 # ---------------- 无项目守卫 -------------------------------------------------
 
+
 def test_endpoints_409_without_project(client, monkeypatch):
     m.reset_projects()
     for path in ("/api/panels", "/api/render?id=x.pdf&w=200"):
@@ -76,6 +84,7 @@ def test_endpoints_409_without_project(client, monkeypatch):
 
 
 # ---------------- 打开 / 切换 / 最近 ------------------------------------------
+
 
 def test_open_project_and_recent(client, tmp_path, monkeypatch):
     figs = _make_figs(tmp_path)
@@ -104,8 +113,7 @@ def test_open_missing_dir_keeps_current(client, tmp_path, monkeypatch):
 
 def test_create_project(client, tmp_path):
     target = tmp_path / "new_proj"
-    resp = client.post("/api/projects/open",
-                       json={"path": str(target), "create": True})
+    resp = client.post("/api/projects/open", json={"path": str(target), "create": True})
     assert resp.status_code == 200
     assert target.is_dir()
     assert resp.get_json()["open"] is True
@@ -122,6 +130,7 @@ def test_remove_recent_keeps_disk(client, tmp_path):
 
 # ---------------- 切换清理协议 -----------------------------------------------
 
+
 def test_watcher_replacement_stops_old(tmp_path):
     """同一目录重开 watcher 换掉旧的；**不同目录的 watcher 各自独立**——
     多标签页各开各的项目时，两个图库都得继续被盯着。"""
@@ -132,11 +141,11 @@ def test_watcher_replacement_stops_old(tmp_path):
     assert not first.is_set()
 
     engine_pool.start_watcher(str(other), [], lambda c: None, interval=0.05)
-    assert not first.is_set()          # 另一个项目的 watcher 不受影响
+    assert not first.is_set()  # 另一个项目的 watcher 不受影响
     assert len(engine_pool.watched_dirs()) == 2
 
     engine_pool.start_watcher(str(figs), [], lambda c: None, interval=0.05)
-    assert first.is_set()              # 同目录的旧 watcher 已被叫停
+    assert first.is_set()  # 同目录的旧 watcher 已被叫停
 
     engine_pool.stop_watcher(str(figs))
     assert engine_pool.watched_dirs() == [engine_pool._norm_dir(str(other))]
@@ -181,6 +190,7 @@ def test_switch_between_two_projects(client, tmp_path):
 
 # ---------------- 目录浏览 ---------------------------------------------------
 
+
 def test_browse_lists_dirs_only(client, tmp_path):
     (tmp_path / "sub").mkdir()
     (tmp_path / ".hidden").mkdir()
@@ -197,16 +207,15 @@ def test_browse_missing_dir(client, tmp_path):
 
 # ---------------- 项目只读（写回权限） ----------------------------------------
 
+
 def test_write_back_forbidden_when_read_only(client, tmp_path, monkeypatch):
     figs = _make_figs(tmp_path)
     m.open_project(str(figs))
     engine_config.set_project_settings(str(figs), {"allow_write_back": False})
-    resp = client.post("/api/engine/update_source",
-                       json={"id": "p1.pdf", "patches": []})
+    resp = client.post("/api/engine/update_source", json={"id": "p1.pdf", "patches": []})
     assert resp.status_code == 403
     assert resp.get_json()["code"] == "write_back_disabled"
-    resp = client.post("/api/engine/history/restore",
-                       json={"id": "p1.pdf", "n": -1})
+    resp = client.post("/api/engine/history/restore", json={"id": "p1.pdf", "n": -1})
     assert resp.status_code == 403
     # 原文件未被改动
     assert (figs / "p1.pdf").exists()
@@ -214,18 +223,19 @@ def test_write_back_forbidden_when_read_only(client, tmp_path, monkeypatch):
 
 # ---------------- 项目设置（导出/备份目录） -----------------------------------
 
+
 def test_settings_export_dir_used_by_export(client, tmp_path, monkeypatch):
     figs = _make_figs(tmp_path)
     m.open_project(str(figs))
     custom = tmp_path / "my_exports"
-    resp = client.patch("/api/project/settings",
-                        json={"export_dir": str(custom)})
+    resp = client.patch("/api/project/settings", json={"export_dir": str(custom)})
     assert resp.status_code == 200
     assert resp.get_json()["export_dir"] == str(custom)
 
-    resp = client.post("/api/export", json={
-        "page_w_mm": 50, "page_h_mm": 30, "formats": ["pdf"],
-        "stem": "s", "objects": []})
+    resp = client.post(
+        "/api/export",
+        json={"page_w_mm": 50, "page_h_mm": 30, "formats": ["pdf"], "stem": "s", "objects": []},
+    )
     body = resp.get_json()
     assert body["export_dir"] == str(custom)
     assert (custom / body["files"][0]["name"]).exists()
@@ -236,6 +246,7 @@ def test_settings_export_dir_used_by_export(client, tmp_path, monkeypatch):
 
 
 # ---------------- 诊断 --------------------------------------------------------
+
 
 def test_diagnostics_reports_checks(client, tmp_path, monkeypatch):
     figs = _make_figs(tmp_path)
@@ -277,6 +288,7 @@ def test_hidden_dirs_and_files_are_not_assets(client, tmp_path):
 
 # ---------------- 端口占用（双击启动的应用不能无声退出） ----------------------
 
+
 def test_resolve_port_uses_preferred_when_free(monkeypatch):
     monkeypatch.setattr(m, "port_is_free", lambda p: True)
     assert m.resolve_port(5089) == 5089
@@ -299,10 +311,11 @@ def test_resolve_port_steps_aside_for_other_programs(monkeypatch):
 def test_resolve_port_gives_up_gracefully(monkeypatch):
     monkeypatch.setattr(m, "tavotto_is_serving", lambda p: False)
     monkeypatch.setattr(m, "port_is_free", lambda p: False)
-    assert m.resolve_port(5089, tries=3) == 5089   # 交给 app.run 报错，有日志可查
+    assert m.resolve_port(5089, tries=3) == 5089  # 交给 app.run 报错，有日志可查
 
 
 # ---------------- 多项目并存（不同标签页开不同图库） --------------------------
+
 
 def test_two_projects_open_at_once_and_pj_routes_requests(client, tmp_path):
     """一个进程同时端着两个图库；请求靠 pj 认领，互不串。
@@ -316,8 +329,9 @@ def test_two_projects_open_at_once_and_pj_routes_requests(client, tmp_path):
 
     ida = client.post("/api/projects/open", json={"path": str(a)}).get_json()["id"]
     # default=false：只给本标签页用，不改新标签页的默认落点
-    idb = client.post("/api/projects/open",
-                      json={"path": str(b), "default": False}).get_json()["id"]
+    idb = client.post("/api/projects/open", json={"path": str(b), "default": False}).get_json()[
+        "id"
+    ]
     assert ida != idb
     assert m.default_project_path() == a
 
@@ -382,15 +396,18 @@ def sse_spy(monkeypatch):
     """记下 sse_publish 实际发出的 (事件, payload)。"""
     events: list[tuple[str, dict]] = []
     real = m.sse_publish
-    monkeypatch.setattr(m, "sse_publish", lambda ev, data: (
-        events.append((ev, data)), real(ev, data))[1])
+    monkeypatch.setattr(
+        m, "sse_publish", lambda ev, data: (events.append((ev, data)), real(ev, data))[1]
+    )
     return events
 
 
 def _stub_engine(monkeypatch, worker):
     monkeypatch.setattr(
-        m.engine_registry.Registry, "for_stem",
-        lambda self, s: {"script": "x.py", "entry": "main", "cost": "light"})
+        m.engine_registry.Registry,
+        "for_stem",
+        lambda self, s: {"script": "x.py", "entry": "main", "cost": "light"},
+    )
     monkeypatch.setattr(m.engine_pool, "get", lambda *a, **kw: worker)
 
 
@@ -403,12 +420,16 @@ def test_render_events_carry_pj(client, tmp_path, monkeypatch, sse_spy):
     """
     a, b = _make_figs(tmp_path, "sse_a"), _make_figs(tmp_path, "sse_b")
     ida = client.post("/api/projects/open", json={"path": str(a)}).get_json()["id"]
-    idb = client.post("/api/projects/open",
-                      json={"path": str(b), "default": False}).get_json()["id"]
+    idb = client.post("/api/projects/open", json={"path": str(b), "default": False}).get_json()[
+        "id"
+    ]
     _stub_engine(monkeypatch, _FakeWorker())
 
-    resp = client.post("/api/engine/render", json={"id": "p1.pdf", "patches": []},
-                       headers={"X-Tavotto-Project": idb})
+    resp = client.post(
+        "/api/engine/render",
+        json={"id": "p1.pdf", "patches": []},
+        headers={"X-Tavotto-Project": idb},
+    )
     assert resp.status_code == 200
     sent = dict(sse_spy)
     assert sent["render.started"]["pj"] == idb
@@ -428,8 +449,7 @@ def test_render_response_carries_timings(client, tmp_path, monkeypatch, sse_spy)
     client.post("/api/projects/open", json={"path": str(figs)})
     _stub_engine(monkeypatch, _FakeWorker())
 
-    body = client.post("/api/engine/render",
-                       json={"id": "p1.pdf", "patches": []}).get_json()
+    body = client.post("/api/engine/render", json={"id": "p1.pdf", "patches": []}).get_json()
     assert isinstance(body["timings"], dict)
     assert isinstance(body["timings"]["worker_get_ms"], (int, float))
 
@@ -441,20 +461,23 @@ def test_render_rejects_a_bogus_preview_dpi(client, tmp_path, monkeypatch, sse_s
     _stub_engine(monkeypatch, _FakeWorker())
 
     for bad in ("很高", 0, -5):
-        resp = client.post("/api/engine/render",
-                           json={"id": "p1.pdf", "patches": [], "preview_dpi": bad})
+        resp = client.post(
+            "/api/engine/render", json={"id": "p1.pdf", "patches": [], "preview_dpi": bad}
+        )
         assert resp.status_code == 400, (bad, resp.get_json())
-    assert client.post("/api/engine/render",
-                       json={"id": "p1.pdf", "patches": [],
-                             "preview_dpi": 96}).status_code == 200
+    assert (
+        client.post(
+            "/api/engine/render", json={"id": "p1.pdf", "patches": [], "preview_dpi": 96}
+        ).status_code
+        == 200
+    )
 
 
 def test_render_failed_event_carries_pj(client, tmp_path, monkeypatch, sse_spy):
     """失败路径同理：不带 pj 的话别的标签页会永远卡在一条不属于它的错误上。"""
     figs = _make_figs(tmp_path, "sse_fail")
     pid = client.post("/api/projects/open", json={"path": str(figs)}).get_json()["id"]
-    _stub_engine(monkeypatch, _FakeWorker(
-        engine_pool.WorkerError("脚本报错", code="script_error")))
+    _stub_engine(monkeypatch, _FakeWorker(engine_pool.WorkerError("脚本报错", code="script_error")))
 
     resp = client.post("/api/engine/render", json={"id": "p1.pdf", "patches": []})
     assert resp.status_code == 500
@@ -465,6 +488,7 @@ def test_render_failed_event_carries_pj(client, tmp_path, monkeypatch, sse_spy):
 
 
 # ---------------- 目录浏览：跨盘符与手输路径 ----------------------------------
+
 
 def test_browse_exposes_roots_and_shortcuts(client, tmp_path):
     """驱动器一层必须给出来。
@@ -491,16 +515,18 @@ def test_browse_missing_path_reports_nearest_existing(client, tmp_path):
 
 # ---------------- 脚本注册表的界面入口 ----------------------------------------
 
+
 def test_registry_lists_unregistered_candidates(client, tmp_path):
     """空注册表 + 在存图的脚本 = 必须被报成候选，不能让用户对着空列表猜。"""
     figs = _make_figs(tmp_path)
     (figs / "tavotto_registry.json").write_text('{"version":1,"scripts":{}}', encoding="utf-8")
     (figs / "plot_it.py").write_text(
-        'from pathlib import Path\n'
-        'OUT = Path(__file__).parent\n'
-        'def main():\n'
+        "from pathlib import Path\n"
+        "OUT = Path(__file__).parent\n"
+        "def main():\n"
         '    fig.savefig((OUT / "Fig_new").with_suffix(".pdf"))\n',
-        encoding="utf-8")
+        encoding="utf-8",
+    )
     client.post("/api/projects/open", json={"path": str(figs)})
 
     body = client.get("/api/registry").get_json()
@@ -518,16 +544,30 @@ def test_registry_manual_write_resolves_conflict(client, tmp_path):
     """手工裁决：把 stem 判给某个脚本，其它脚本对它的认领一并摘掉。
     否则 registry.load 会因 stem 重复直接报错，整个项目打不开。"""
     figs = _make_figs(tmp_path)
-    (figs / "tavotto_registry.json").write_text(json.dumps({"version": 1, "scripts": {
-        "one.py": {"entry": "main", "cost": "light", "notes": "", "stems": ["Shared", "Own"]},
-    }}), encoding="utf-8")
+    (figs / "tavotto_registry.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "scripts": {
+                    "one.py": {
+                        "entry": "main",
+                        "cost": "light",
+                        "notes": "",
+                        "stems": ["Shared", "Own"],
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     client.post("/api/projects/open", json={"path": str(figs)})
 
-    resp = client.put("/api/registry", json={"script": "two.py", "entry": "render",
-                                             "stems": ["Shared"]})
+    resp = client.put(
+        "/api/registry", json={"script": "two.py", "entry": "render", "stems": ["Shared"]}
+    )
     scripts = resp.get_json()["scripts"]
     assert scripts["two.py"]["stems"] == ["Shared"]
-    assert scripts["one.py"]["stems"] == ["Own"]      # 冲突的那个被摘掉了
+    assert scripts["one.py"]["stems"] == ["Own"]  # 冲突的那个被摘掉了
 
 
 def test_registry_probe_rejects_paths_outside_project(client, tmp_path):
@@ -535,10 +575,12 @@ def test_registry_probe_rejects_paths_outside_project(client, tmp_path):
     figs = _make_figs(tmp_path)
     (tmp_path / "outside.py").write_text("def main():\n    pass\n", encoding="utf-8")
     client.post("/api/projects/open", json={"path": str(figs)})
-    cases = [("../outside.py", 400, "script_path_outside_project"),
-             (str(tmp_path / "outside.py"), 400, "script_path_outside_project"),
-             ("nope.py", 404, "script_not_found"),
-             ("tavotto_registry.json", 400, "unsupported_script_type")]
+    cases = [
+        ("../outside.py", 400, "script_path_outside_project"),
+        (str(tmp_path / "outside.py"), 400, "script_path_outside_project"),
+        ("nope.py", 404, "script_not_found"),
+        ("tavotto_registry.json", 400, "unsupported_script_type"),
+    ]
     for bad, status, code in cases:
         resp = client.post("/api/registry/probe", json={"script": bad})
         assert resp.status_code == status, (bad, resp.status_code)
@@ -590,8 +632,8 @@ def test_case_probe_walks_up_past_uncaseable_components(tmp_path):
     会共用一个项目 id、一个 worker 池、一份写回基线，可它们是两个目录。
     往上找一个有字母的祖先来探，同一个卷答案是一样的。
     """
-    parent = tmp_path / "Probe"          # 这一层有字母，探得动
-    leaf = parent / "123"                # 这一层没有
+    parent = tmp_path / "Probe"  # 这一层有字母，探得动
+    leaf = parent / "123"  # 这一层没有
     leaf.mkdir(parents=True)
     reality = (tmp_path / "pROBE").exists()
 

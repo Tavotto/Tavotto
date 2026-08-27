@@ -15,6 +15,7 @@
 产物缺席时（源码检出但没跑过构建）：**不声明资源、也不给工具挂 `_meta.ui`**，
 五个工具照常可用。假装有 UI 只会让用户对着一个白框等。
 """
+
 from __future__ import annotations
 
 import os
@@ -50,10 +51,12 @@ def missing_reason() -> str:
     path = widget_path()
     override = (os.environ.get(WIDGET_ENV) or "").strip()
     where = f"{WIDGET_ENV} 指向的 {path}" if override else str(path)
-    return (f"画布产物不存在或为空：{where}。源码态跑一次 "
-            "`python scripts/build_mcp_widget.py`；装好的插件里缺这个文件"
-            "说明安装不完整，重装插件即可。工具本身照常可用（改图走 "
-            "tavotto_apply_overrides，产出 manifest 与 SVG）。")
+    return (
+        f"画布产物不存在或为空：{where}。源码态跑一次 "
+        "`python scripts/build_mcp_widget.py`；装好的插件里缺这个文件"
+        "说明安装不完整，重装插件即可。工具本身照常可用（改图走 "
+        "tavotto_apply_overrides，产出 manifest 与 SVG）。"
+    )
 
 
 def html() -> str:
@@ -74,8 +77,7 @@ def resource_meta() -> dict:
         },
         RESOURCE_URI_META_KEY: RESOURCE_URI,
         OPENAI_TEMPLATE_KEY: RESOURCE_URI,
-        "openai/widgetDescription":
-            "Tavotto 交互画布：拖图例与图内文字、改字号线宽刻度、跑出版规范预检、导出矢量 PDF。",
+        "openai/widgetDescription": "Tavotto 交互画布：拖图例与图内文字、改字号线宽刻度、跑出版规范预检、导出矢量 PDF。",
         "openai/widgetPrefersBorder": False,
         "openai/widgetCSP": {"connect_domains": [], "resource_domains": []},
     }

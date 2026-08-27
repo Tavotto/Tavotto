@@ -22,6 +22,7 @@ SKILL.md 的约定：三个键里**记录过的就不再问**，没记录的用�
 
 纯标准库，Python 3.8+。
 """
+
 from __future__ import annotations
 
 import argparse
@@ -45,6 +46,7 @@ KEYS = ("width", "font", "legend_frame")
 
 def prefs_path(environ: dict | None = None) -> str:
     from handoff import config_dir  # 目录规则只有一份
+
     return os.path.join(config_dir(environ=environ), PREFS_NAME)
 
 
@@ -53,7 +55,7 @@ def read_prefs(path: str | None = None) -> dict:
     if path is None:
         try:
             path = prefs_path()
-        except Exception:                            # config_dir 本身炸了也一样
+        except Exception:  # config_dir 本身炸了也一样
             return {}
     try:
         with open(path, "r", encoding="utf-8") as fh:
@@ -65,15 +67,14 @@ def read_prefs(path: str | None = None) -> dict:
     prefs = data.get("prefs")
     if not isinstance(prefs, dict):
         return {}
-    return {k: v for k, v in prefs.items()
-            if k in KEYS and isinstance(v, str) and _valid(k, v)}
+    return {k: v for k, v in prefs.items() if k in KEYS and isinstance(v, str) and _valid(k, v)}
 
 
 def _valid(key: str, value: str) -> bool:
     allowed = _ENUMS.get(key)
     if allowed is not None:
         return value in allowed
-    return bool(value.strip())                       # font：非空字符串即可
+    return bool(value.strip())  # font：非空字符串即可
 
 
 def write_prefs(prefs: dict, path: str | None = None) -> bool:
@@ -114,11 +115,18 @@ def main(argv: list[str] | None = None) -> int:
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(
-        description="读写出图偏好（画幅宽度/字体/图例加框），落在 Tavotto 用户配置目录")
-    ap.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
-                    help=f"记录一条偏好（键: {', '.join(KEYS)}）")
-    ap.add_argument("--unset", action="append", default=[], metavar="KEY",
-                    help="删除一条偏好（下次重新问）")
+        description="读写出图偏好（画幅宽度/字体/图例加框），落在 Tavotto 用户配置目录"
+    )
+    ap.add_argument(
+        "--set",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help=f"记录一条偏好（键: {', '.join(KEYS)}）",
+    )
+    ap.add_argument(
+        "--unset", action="append", default=[], metavar="KEY", help="删除一条偏好（下次重新问）"
+    )
     ap.add_argument("--json", action="store_true", help="输出机器可读结果")
     args = ap.parse_args(argv)
 

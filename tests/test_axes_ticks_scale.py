@@ -13,6 +13,7 @@
 
 本进程不 import matplotlib：worker 经 `pool.one_shot()` 起在科学栈解释器里。
 """
+
 import pytest
 
 from tavotto.engine import pool
@@ -23,13 +24,14 @@ except pool.WorkerError:
     WORKER_PY = None
 
 pytestmark = pytest.mark.skipif(
-    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）")
+    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）"
+)
 
 SCRIPT_NAME = "fig_axes.py"
 ENTRY = "main"
 STEM = "AxesFig"
 
-LIBRARY = '''\
+LIBRARY = """\
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -42,7 +44,7 @@ def main():
     ax.set_ylabel("y")
     ax.legend()
     fig.savefig("AxesFig.pdf")
-'''
+"""
 
 
 @pytest.fixture(scope="module")
@@ -81,8 +83,11 @@ def _options(man, gid, prop):
 
 
 def _tick_texts(man, which="x"):
-    return [e["label"] for e in man["elements"]
-            if e["role"] == "ticklabel" and f".{which}ticklabels_" in e["gid"]]
+    return [
+        e["label"]
+        for e in man["elements"]
+        if e["role"] == "ticklabel" and f".{which}ticklabels_" in e["gid"]
+    ]
 
 
 def _pdf_text(figs, patches, out) -> str:
@@ -93,6 +98,7 @@ def _pdf_text(figs, patches, out) -> str:
     里文字仍是矢量，`get_text()` 拿到的就是画在纸上的那些字。
     """
     import pymupdf
+
     w = _worker(figs)
     try:
         w.export(STEM, list(patches), str(out), "pdf", 200)
@@ -106,8 +112,13 @@ def _pdf_text(figs, patches, out) -> str:
 # 范围、缩放类型、spine
 # ---------------------------------------------------------------------------
 def test_xlim_and_ylim_roundtrip(library):
-    man = _render(library, [{"gid": "axes_0", "prop": "xlim", "value": [0.1, 0.9]},
-                            {"gid": "axes_0", "prop": "ylim", "value": [1.0, 7.0]}])
+    man = _render(
+        library,
+        [
+            {"gid": "axes_0", "prop": "xlim", "value": [0.1, 0.9]},
+            {"gid": "axes_0", "prop": "ylim", "value": [1.0, 7.0]},
+        ],
+    )
     assert _field(man, "axes_0", "xlim") == pytest.approx([0.1, 0.9])
     assert _field(man, "axes_0", "ylim") == pytest.approx([1.0, 7.0])
 
@@ -163,8 +174,7 @@ def test_minor_format_really_labels_the_minor_ticks(library, tmp_path):
     assert _field(base, "axes_0.xticks", "minor_format") == "none"
     assert "0.15" not in _pdf_text(library, _MINOR_ONLY, tmp_path / "off.pdf")
 
-    on = [*_MINOR_ONLY,
-          {"gid": "axes_0.xticks", "prop": "minor_format", "value": "%.2f"}]
+    on = [*_MINOR_ONLY, {"gid": "axes_0.xticks", "prop": "minor_format", "value": "%.2f"}]
     text = _pdf_text(library, on, tmp_path / "on.pdf")
     assert "0.15" in text, text[:300]
     man = _render(library, on)
@@ -176,8 +186,9 @@ def test_minor_format_really_labels_the_minor_ticks(library, tmp_path):
 def test_minor_format_undo_goes_back_to_unlabelled(library, tmp_path):
     w = _worker(library)
     try:
-        w.override(STEM, [*_MINOR_ONLY,
-                          {"gid": "axes_0.xticks", "prop": "minor_format", "value": "%.2f"}])
+        w.override(
+            STEM, [*_MINOR_ONLY, {"gid": "axes_0.xticks", "prop": "minor_format", "value": "%.2f"}]
+        )
         back = w.override(STEM, _MINOR_ONLY)
         assert not back["warnings"], back["warnings"]
     finally:
@@ -190,8 +201,9 @@ def test_minor_labels_count_into_the_tick_group_box(library):
     """次刻度标出数字之后，「X 刻度文字」这一组的包围盒必须把它们圈进去
     ——不然那一排点不中，对齐也对不准。"""
     off = _render(library, _MINOR_ONLY)
-    on = _render(library, [*_MINOR_ONLY,
-                           {"gid": "axes_0.xticks", "prop": "minor_format", "value": "%.2f"}])
+    on = _render(
+        library, [*_MINOR_ONLY, {"gid": "axes_0.xticks", "prop": "minor_format", "value": "%.2f"}]
+    )
     assert _el(on, "axes_0.xticks")["bbox"][3] > _el(off, "axes_0.xticks")["bbox"][3]
 
 
@@ -203,18 +215,22 @@ _SIDES = ("top", "right", "bottom", "left")
 
 def test_each_spine_can_be_styled_on_its_own(library):
     """「只把左边和下边加粗」是论文图的常见做法——四条边必须能各改各的。"""
-    man = _render(library, [
-        {"gid": "axes_0", "prop": "spine_left_linewidth", "value": 1.8},
-        {"gid": "axes_0", "prop": "spine_bottom_linewidth", "value": 1.8},
-        {"gid": "axes_0", "prop": "spine_top_color", "value": "#B34700"},
-    ])
+    man = _render(
+        library,
+        [
+            {"gid": "axes_0", "prop": "spine_left_linewidth", "value": 1.8},
+            {"gid": "axes_0", "prop": "spine_bottom_linewidth", "value": 1.8},
+            {"gid": "axes_0", "prop": "spine_top_color", "value": "#B34700"},
+        ],
+    )
     assert _field(man, "axes_0", "spine_left_linewidth") == pytest.approx(1.8)
     assert _field(man, "axes_0", "spine_bottom_linewidth") == pytest.approx(1.8)
     assert _field(man, "axes_0", "spine_top_color").lower() == "#b34700"
     # 没点名的那些原样不动
     assert _field(man, "axes_0", "spine_right_linewidth") == pytest.approx(0.8, abs=0.01)
     assert _field(man, "axes_0", "spine_left_color") == _field(
-        _render(library), "axes_0", "spine_left_color")
+        _render(library), "axes_0", "spine_left_color"
+    )
 
 
 def test_per_spine_wins_over_all_regardless_of_order(library):
@@ -223,8 +239,10 @@ def test_per_spine_wins_over_all_regardless_of_order(library):
     两条会互相盖写的 setter 是最容易在热会话与全量重放之间分岔的形状——
     模型化（写 cfg 再整体重建）就是为了让顺序不再有意义。
     """
-    a = [{"gid": "axes_0", "prop": "spine_color", "value": "#888888"},
-         {"gid": "axes_0", "prop": "spine_top_color", "value": "#B34700"}]
+    a = [
+        {"gid": "axes_0", "prop": "spine_color", "value": "#888888"},
+        {"gid": "axes_0", "prop": "spine_top_color", "value": "#B34700"},
+    ]
     man_a = _render(library, a)
     man_b = _render(library, list(reversed(a)))
     for prop in ("spine_top_color", "spine_left_color", "spine_color"):
@@ -237,8 +255,13 @@ def test_undo_one_spine_falls_back_to_the_all_setting(library):
     """撤销「上边红色」= 退回未表态，于是落到「全部」那一档，不是钉死成红色。"""
     w = _worker(library)
     try:
-        w.override(STEM, [{"gid": "axes_0", "prop": "spine_color", "value": "#888888"},
-                          {"gid": "axes_0", "prop": "spine_top_color", "value": "#B34700"}])
+        w.override(
+            STEM,
+            [
+                {"gid": "axes_0", "prop": "spine_color", "value": "#888888"},
+                {"gid": "axes_0", "prop": "spine_top_color", "value": "#B34700"},
+            ],
+        )
         back = w.override(STEM, [{"gid": "axes_0", "prop": "spine_color", "value": "#888888"}])
         assert not back["warnings"], back["warnings"]
     finally:
@@ -250,8 +273,13 @@ def test_undo_all_spine_settings_returns_to_the_script(library):
     base = _render(library)
     w = _worker(library)
     try:
-        w.override(STEM, [{"gid": "axes_0", "prop": "spine_color", "value": "#888888"},
-                          {"gid": "axes_0", "prop": "spine_left_linewidth", "value": 2.5}])
+        w.override(
+            STEM,
+            [
+                {"gid": "axes_0", "prop": "spine_color", "value": "#888888"},
+                {"gid": "axes_0", "prop": "spine_left_linewidth", "value": 2.5},
+            ],
+        )
         back = w.override(STEM, [])
         assert not back["warnings"], back["warnings"]
     finally:
@@ -262,13 +290,16 @@ def test_undo_all_spine_settings_returns_to_the_script(library):
 
 
 def test_invert_and_spines(library):
-    man = _render(library, [
-        {"gid": "axes_0", "prop": "invert_y", "value": True},
-        {"gid": "axes_0", "prop": "spine_top", "value": False},
-        {"gid": "axes_0", "prop": "spine_right", "value": False},
-        {"gid": "axes_0", "prop": "spine_color", "value": "#B34700"},
-        {"gid": "axes_0", "prop": "spine_linewidth", "value": 1.6},
-    ])
+    man = _render(
+        library,
+        [
+            {"gid": "axes_0", "prop": "invert_y", "value": True},
+            {"gid": "axes_0", "prop": "spine_top", "value": False},
+            {"gid": "axes_0", "prop": "spine_right", "value": False},
+            {"gid": "axes_0", "prop": "spine_color", "value": "#B34700"},
+            {"gid": "axes_0", "prop": "spine_linewidth", "value": 1.6},
+        ],
+    )
     assert _field(man, "axes_0", "invert_y") is True
     assert _field(man, "axes_0", "spine_top") is False
     assert _field(man, "axes_0", "spine_right") is False
@@ -287,15 +318,18 @@ def test_tick_sides_default_and_toggle(library):
     assert _field(man, "axes_0", "ticks_left") is True
     assert _field(man, "axes_0", "ticks_right") is False
 
-    man = _render(library, [
-        {"gid": "axes_0", "prop": "ticks_top", "value": True},
-        {"gid": "axes_0", "prop": "ticks_right", "value": True},
-        {"gid": "axes_0", "prop": "ticks_bottom", "value": False},
-    ])
+    man = _render(
+        library,
+        [
+            {"gid": "axes_0", "prop": "ticks_top", "value": True},
+            {"gid": "axes_0", "prop": "ticks_right", "value": True},
+            {"gid": "axes_0", "prop": "ticks_bottom", "value": False},
+        ],
+    )
     assert _field(man, "axes_0", "ticks_top") is True
     assert _field(man, "axes_0", "ticks_right") is True
     assert _field(man, "axes_0", "ticks_bottom") is False
-    assert _field(man, "axes_0", "ticks_left") is True   # 没动的不受牵连
+    assert _field(man, "axes_0", "ticks_left") is True  # 没动的不受牵连
 
 
 def test_tick_sides_really_change_pixels_and_restore(library):
@@ -304,21 +338,27 @@ def test_tick_sides_really_change_pixels_and_restore(library):
     w = _worker(library)
     try:
         base = w.preview_png(STEM, [], 380, "ticks-base").read_bytes()
-        on = w.preview_png(STEM, [{"gid": "axes_0", "prop": "ticks_top", "value": True}],
-                           380, "ticks-on").read_bytes()
+        on = w.preview_png(
+            STEM, [{"gid": "axes_0", "prop": "ticks_top", "value": True}], 380, "ticks-on"
+        ).read_bytes()
         back = w.preview_png(STEM, [], 380, "ticks-back").read_bytes()
     finally:
         pool.discard(w)
-    assert on != base       # 画面真的变了
-    assert back == base     # preview 状态中立 + 逐字还原
+    assert on != base  # 画面真的变了
+    assert back == base  # preview 状态中立 + 逐字还原
 
 
 def test_tick_sides_undo_returns_to_the_script(library):
     base = _render(library)
     w = _worker(library)
     try:
-        w.override(STEM, [{"gid": "axes_0", "prop": "ticks_top", "value": True},
-                          {"gid": "axes_0", "prop": "ticks_bottom", "value": False}])
+        w.override(
+            STEM,
+            [
+                {"gid": "axes_0", "prop": "ticks_top", "value": True},
+                {"gid": "axes_0", "prop": "ticks_bottom", "value": False},
+            ],
+        )
         back = w.override(STEM, [])
         assert not back["warnings"], back["warnings"]
     finally:
@@ -333,17 +373,21 @@ def test_tick_sides_survive_a_scale_change(library):
     「写在轴上还是逐个改现有 Tick」；那条机制主张由下面的 reset_ticks
     用例看护（手工变异确认过：天真实现在这条上是绿的、在那条上是红的）。"""
     for patches in (
-        [{"gid": "axes_0", "prop": "ticks_top", "value": True},
-         {"gid": "axes_0", "prop": "xscale", "value": "log"}],
-        [{"gid": "axes_0", "prop": "xscale", "value": "log"},
-         {"gid": "axes_0", "prop": "ticks_top", "value": True}],
+        [
+            {"gid": "axes_0", "prop": "ticks_top", "value": True},
+            {"gid": "axes_0", "prop": "xscale", "value": "log"},
+        ],
+        [
+            {"gid": "axes_0", "prop": "xscale", "value": "log"},
+            {"gid": "axes_0", "prop": "ticks_top", "value": True},
+        ],
     ):
         man = _render(library, patches)
         assert _field(man, "axes_0", "ticks_top") is True
         assert _field(man, "axes_0", "xscale") == "log"
 
 
-_TICK_SIDE_MECHANISM_DRIVER = '''
+_TICK_SIDE_MECHANISM_DRIVER = """
 import sys
 sys.path.insert(0, sys.argv[1])
 import matplotlib
@@ -363,7 +407,7 @@ assert all(t.tick2line.get_visible() for t in ax.xaxis.get_major_ticks()), (
 # getter 回 (主, 次) 二元组（issue #96）；which="both" 开过之后两档都该是 True
 assert get(ax) == (True, True), get(ax)
 print("OK")
-'''
+"""
 
 
 def test_tick_side_setter_marks_the_axis_not_the_current_ticks():
@@ -375,9 +419,13 @@ def test_tick_side_setter_marks_the_axis_not_the_current_ticks():
     from pathlib import Path
 
     engine_dir = Path(__file__).resolve().parent.parent / "src" / "tavotto" / "engine"
-    out = subprocess.run([WORKER_PY, "-c", _TICK_SIDE_MECHANISM_DRIVER,
-                          str(engine_dir)], capture_output=True, text=True,
-                         encoding="utf-8", errors="replace")
+    out = subprocess.run(
+        [WORKER_PY, "-c", _TICK_SIDE_MECHANISM_DRIVER, str(engine_dir)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
     assert out.returncode == 0, out.stderr
     assert out.stdout.strip() == "OK"
 
@@ -392,7 +440,7 @@ NOMAJOR_STEM = "NoMajorTicks"
 
 SIDES_LIBRARY = {
     # 主开、次关：同一侧两档不同态，一个 bool 装不下这份原样
-    SPLIT_SCRIPT: '''\
+    SPLIT_SCRIPT: """\
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -404,11 +452,11 @@ def main():
     ax.minorticks_on()
     ax.tick_params(which="minor", bottom=False)
     fig.savefig("SplitTicks.pdf")
-''',
+""",
     # 轴上没有主刻度对象（set_xticks([])），真值只在 _major_tick_kw 里；
     # 上边真画着的是次刻度的线。次刻度定位必须用不依赖主刻度间距的
     # MultipleLocator——AutoMinorLocator 在主刻度为空时自己也算不出位置
-    NOMAJOR_SCRIPT: '''\
+    NOMAJOR_SCRIPT: """\
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
@@ -422,7 +470,7 @@ def main():
     ax.set_xticks([])
     ax.xaxis.set_minor_locator(mticker.MultipleLocator(0.1))
     fig.savefig("NoMajorTicks.pdf")
-''',
+""",
 }
 
 
@@ -445,23 +493,25 @@ def test_split_major_minor_state_survives_toggle_and_undo(sides_library):
     try:
         w.ensure_built()
         base = w.preview_png(SPLIT_STEM, [], 380, "split-base").read_bytes()
-        off = w.preview_png(SPLIT_STEM, [
-            {"gid": "axes_0", "prop": "ticks_bottom", "value": False}],
-            380, "split-off").read_bytes()
+        off = w.preview_png(
+            SPLIT_STEM,
+            [{"gid": "axes_0", "prop": "ticks_bottom", "value": False}],
+            380,
+            "split-off",
+        ).read_bytes()
         neutral = w.preview_png(SPLIT_STEM, [], 380, "split-neutral").read_bytes()
         # 热会话真应用 + 撤销这条路也要走一遍——override 的 restore 与
         # preview 的状态还原共用 originals 表，但入口不同
-        resp = w.override(SPLIT_STEM, [
-            {"gid": "axes_0", "prop": "ticks_bottom", "value": False}])
+        resp = w.override(SPLIT_STEM, [{"gid": "axes_0", "prop": "ticks_bottom", "value": False}])
         assert not resp["warnings"], resp["warnings"]
         back = w.override(SPLIT_STEM, [])
         assert not back["warnings"], back["warnings"]
         undone = w.preview_png(SPLIT_STEM, [], 380, "split-undone").read_bytes()
     finally:
         pool.discard(w)
-    assert off != base       # 开关真的动了画面
-    assert neutral == base   # preview 状态中立：次刻度没被盖成主刻度的值
-    assert undone == base    # 撤销逐字还原
+    assert off != base  # 开关真的动了画面
+    assert neutral == base  # preview 状态中立：次刻度没被盖成主刻度的值
+    assert undone == base  # 撤销逐字还原
 
 
 def test_no_major_ticks_getter_reads_the_axis_config(sides_library):
@@ -472,29 +522,35 @@ def test_no_major_ticks_getter_reads_the_axis_config(sides_library):
     try:
         w.ensure_built()
         man = w.override(NOMAJOR_STEM, [])["manifest"]
-        assert _field(man, "axes_0", "ticks_top") is True     # 脚本配的真值
+        assert _field(man, "axes_0", "ticks_top") is True  # 脚本配的真值
         assert _field(man, "axes_0", "ticks_bottom") is True  # 没动的照旧
         # undo 的 original 同样要真：关掉再还原，上边的次刻度线必须回来
         base = w.preview_png(NOMAJOR_STEM, [], 380, "nomajor-base").read_bytes()
-        off = w.preview_png(NOMAJOR_STEM, [
-            {"gid": "axes_0", "prop": "ticks_top", "value": False}],
-            380, "nomajor-off").read_bytes()
+        off = w.preview_png(
+            NOMAJOR_STEM,
+            [{"gid": "axes_0", "prop": "ticks_top", "value": False}],
+            380,
+            "nomajor-off",
+        ).read_bytes()
         neutral = w.preview_png(NOMAJOR_STEM, [], 380, "nomajor-neutral").read_bytes()
     finally:
         pool.discard(w)
-    assert off != base       # 上边真画着刻度线（次刻度的），关掉像素必须变
-    assert neutral == base   # 还原写回的是「上边开」，不是写死默认的「关」
+    assert off != base  # 上边真画着刻度线（次刻度的），关掉像素必须变
+    assert neutral == base  # 还原写回的是「上边开」，不是写死默认的「关」
 
 
 # ---------------------------------------------------------------------------
 # 刻度定位模型
 # ---------------------------------------------------------------------------
 def test_major_step_produces_evenly_spaced_ticks(library):
-    man = _render(library, [
-        {"gid": "axes_0", "prop": "xlim", "value": [0.0, 1.0]},
-        {"gid": "axes_0.xticks", "prop": "major_mode", "value": "step"},
-        {"gid": "axes_0.xticks", "prop": "major_step", "value": 0.25},
-    ])
+    man = _render(
+        library,
+        [
+            {"gid": "axes_0", "prop": "xlim", "value": [0.0, 1.0]},
+            {"gid": "axes_0.xticks", "prop": "major_mode", "value": "step"},
+            {"gid": "axes_0.xticks", "prop": "major_step", "value": 0.25},
+        ],
+    )
     assert _field(man, "axes_0.xticks", "major_mode") == "step"
     vals = _field(man, "axes_0.xticks", "major_values")
     steps = {round(b - a, 6) for a, b in zip(vals, vals[1:])}
@@ -502,11 +558,14 @@ def test_major_step_produces_evenly_spaced_ticks(library):
 
 
 def test_fixed_values_place_exactly_those_ticks(library):
-    man = _render(library, [
-        {"gid": "axes_0", "prop": "xlim", "value": [0.0, 1.0]},
-        {"gid": "axes_0.xticks", "prop": "major_mode", "value": "fixed"},
-        {"gid": "axes_0.xticks", "prop": "major_values", "value": [0.0, 0.33, 0.9]},
-    ])
+    man = _render(
+        library,
+        [
+            {"gid": "axes_0", "prop": "xlim", "value": [0.0, 1.0]},
+            {"gid": "axes_0.xticks", "prop": "major_mode", "value": "fixed"},
+            {"gid": "axes_0.xticks", "prop": "major_values", "value": [0.0, 0.33, 0.9]},
+        ],
+    )
     assert _field(man, "axes_0.xticks", "major_mode") == "fixed"
     assert _field(man, "axes_0.xticks", "major_values") == pytest.approx([0.0, 0.33, 0.9])
     assert len(_tick_texts(man)) == 3
@@ -528,35 +587,45 @@ def test_clearing_fixed_values_replays_the_same_as_a_fresh_worker(library):
     ]
     hot = _worker(library)
     try:
-        first = hot.override(STEM, final[:2] + [
-            {"gid": "axes_0.xticks", "prop": "major_values", "value": [0.2, 0.5, 0.8]}])
-        assert _field(first["manifest"], "axes_0.xticks", "major_values") \
-            == pytest.approx([0.2, 0.5, 0.8])
-        hot_man = hot.override(STEM, final)["manifest"]      # 清空（仍是全量列表）
+        first = hot.override(
+            STEM,
+            final[:2]
+            + [{"gid": "axes_0.xticks", "prop": "major_values", "value": [0.2, 0.5, 0.8]}],
+        )
+        assert _field(first["manifest"], "axes_0.xticks", "major_values") == pytest.approx(
+            [0.2, 0.5, 0.8]
+        )
+        hot_man = hot.override(STEM, final)["manifest"]  # 清空（仍是全量列表）
     finally:
         pool.discard(hot)
 
-    replay_man = _render(library, final)                     # 全新 worker 一次性重放
+    replay_man = _render(library, final)  # 全新 worker 一次性重放
     assert _field(hot_man, "axes_0.xticks", "major_values") == pytest.approx(
-        _field(replay_man, "axes_0.xticks", "major_values"))
+        _field(replay_man, "axes_0.xticks", "major_values")
+    )
     assert _tick_texts(hot_man) == _tick_texts(replay_man)
 
 
 def test_format_changes_the_major_formatter(library):
     man = _render(library, [{"gid": "axes_0.xticks", "prop": "format", "value": "%.3f"}])
     assert _field(man, "axes_0.xticks", "format") == "%.3f"
-    assert all(lbl.count(".") == 1 and lbl.rstrip("”").split(".")[-1].rstrip("”")
-               for lbl in _tick_texts(man))
+    assert all(
+        lbl.count(".") == 1 and lbl.rstrip("”").split(".")[-1].rstrip("”")
+        for lbl in _tick_texts(man)
+    )
 
 
 def test_minor_ticks_can_be_turned_on_and_stepped(library):
     on = _render(library, [{"gid": "axes_0.xticks", "prop": "minor_visible", "value": True}])
     assert _field(on, "axes_0.xticks", "minor_visible") is True
-    stepped = _render(library, [
-        {"gid": "axes_0.xticks", "prop": "minor_visible", "value": True},
-        {"gid": "axes_0.xticks", "prop": "minor_mode", "value": "step"},
-        {"gid": "axes_0.xticks", "prop": "minor_step", "value": 0.05},
-    ])
+    stepped = _render(
+        library,
+        [
+            {"gid": "axes_0.xticks", "prop": "minor_visible", "value": True},
+            {"gid": "axes_0.xticks", "prop": "minor_mode", "value": "step"},
+            {"gid": "axes_0.xticks", "prop": "minor_step", "value": 0.05},
+        ],
+    )
     assert _field(stepped, "axes_0.xticks", "minor_mode") == "step"
     assert _field(stepped, "axes_0.xticks", "minor_step") == pytest.approx(0.05)
 
@@ -567,11 +636,14 @@ def test_tick_model_survives_a_later_xlim_change(library):
     只改「已经生成出来的 Text」的实现在这一步会被静默打回原样——用户看到的是
     「设的间隔自己没了」。走 Locator 才留得住。
     """
-    man = _render(library, [
-        {"gid": "axes_0.xticks", "prop": "major_mode", "value": "step"},
-        {"gid": "axes_0.xticks", "prop": "major_step", "value": 0.2},
-        {"gid": "axes_0", "prop": "xlim", "value": [0.0, 2.0]},
-    ])
+    man = _render(
+        library,
+        [
+            {"gid": "axes_0.xticks", "prop": "major_mode", "value": "step"},
+            {"gid": "axes_0.xticks", "prop": "major_step", "value": 0.2},
+            {"gid": "axes_0", "prop": "xlim", "value": [0.0, 2.0]},
+        ],
+    )
     vals = _field(man, "axes_0.xticks", "major_values")
     assert {round(b - a, 6) for a, b in zip(vals, vals[1:])} == {0.2}
     assert max(vals) > 1.0, "范围扩大之后应当多出刻度"
@@ -582,8 +654,13 @@ def test_tick_model_undo_returns_to_the_script_original(library):
     base = _render(library)
     w = _worker(library)
     try:
-        w.override(STEM, [{"gid": "axes_0.xticks", "prop": "major_mode", "value": "step"},
-                          {"gid": "axes_0.xticks", "prop": "major_step", "value": 0.07}])
+        w.override(
+            STEM,
+            [
+                {"gid": "axes_0.xticks", "prop": "major_mode", "value": "step"},
+                {"gid": "axes_0.xticks", "prop": "major_step", "value": 0.07},
+            ],
+        )
         back = w.override(STEM, [])
         assert not back["warnings"], back["warnings"]
         assert _field(back["manifest"], "axes_0.xticks", "major_mode") == "auto"
@@ -598,10 +675,13 @@ def test_scale_change_does_not_leave_the_linear_locator_behind(library):
     刻度模型缓存的「脚本原样」是在**换 scale 那一刻重新采集**的；不重采的话
     「自动」会把线性轴的 AutoLocator 按到对数轴上，一个刻度都出不来。
     """
-    man = _render(library, [
-        {"gid": "axes_0", "prop": "xscale", "value": "log"},
-        {"gid": "axes_0.xticks", "prop": "major_mode", "value": "auto"},
-    ])
+    man = _render(
+        library,
+        [
+            {"gid": "axes_0", "prop": "xscale", "value": "log"},
+            {"gid": "axes_0.xticks", "prop": "major_mode", "value": "auto"},
+        ],
+    )
     assert _field(man, "axes_0", "xscale") == "log"
     assert _tick_texts(man), "对数轴上一个刻度都没有 = locator 用错了"
 
@@ -610,8 +690,11 @@ def test_scale_change_does_not_leave_the_linear_locator_behind(library):
 # 单条刻度文字
 # ---------------------------------------------------------------------------
 def _xtick_gids(man):
-    return [e["gid"] for e in man["elements"]
-            if e["role"] == "ticklabel" and ".xticklabels_" in e["gid"]]
+    return [
+        e["gid"]
+        for e in man["elements"]
+        if e["role"] == "ticklabel" and ".xticklabels_" in e["gid"]
+    ]
 
 
 def test_single_tick_label_edit_and_undo(library):
@@ -633,8 +716,13 @@ def test_single_tick_label_edit_and_undo(library):
 def test_two_tick_labels_on_one_axis_do_not_clobber_each_other(library):
     """冻结是整条轴的动作：只冻自己那一条的话，第二条会把第一条顶掉。"""
     gids = _xtick_gids(_render(library))
-    man = _render(library, [{"gid": gids[1], "prop": "text", "value": "AA"},
-                            {"gid": gids[2], "prop": "text", "value": "BB"}])
+    man = _render(
+        library,
+        [
+            {"gid": gids[1], "prop": "text", "value": "AA"},
+            {"gid": gids[2], "prop": "text", "value": "BB"},
+        ],
+    )
     assert "AA" in _el(man, gids[1])["label"]
     assert "BB" in _el(man, gids[2])["label"]
 
@@ -642,12 +730,19 @@ def test_two_tick_labels_on_one_axis_do_not_clobber_each_other(library):
 def test_tick_label_edit_survives_a_formatter_change(library):
     """改数值格式之后，手动改过的那一条仍然是手动的内容（其余跟着格式走）。"""
     gids = _xtick_gids(_render(library))
-    man = _render(library, [{"gid": gids[1], "prop": "text", "value": "★"},
-                            {"gid": "axes_0.xticks", "prop": "format", "value": "%.2f"}])
+    man = _render(
+        library,
+        [
+            {"gid": gids[1], "prop": "text", "value": "★"},
+            {"gid": "axes_0.xticks", "prop": "format", "value": "%.2f"},
+        ],
+    )
     assert "★" in _el(man, gids[1])["label"]
-    others = [e["label"] for e in man["elements"]
-              if e["role"] == "ticklabel" and ".xticklabels_" in e["gid"]
-              and e["gid"] != gids[1]]
+    others = [
+        e["label"]
+        for e in man["elements"]
+        if e["role"] == "ticklabel" and ".xticklabels_" in e["gid"] and e["gid"] != gids[1]
+    ]
     assert any("." in lbl for lbl in others), others
 
 
@@ -657,11 +752,14 @@ def test_tick_label_pointing_at_a_vanished_tick_reports_it(library):
     gids = _xtick_gids(_render(library))
     w = _worker(library)
     try:
-        resp = w.override(STEM, [
-            {"gid": gids[-1], "prop": "text", "value": "尾"},
-            {"gid": "axes_0.xticks", "prop": "major_mode", "value": "fixed"},
-            {"gid": "axes_0.xticks", "prop": "major_values", "value": [0.2, 0.6]},
-        ])
+        resp = w.override(
+            STEM,
+            [
+                {"gid": gids[-1], "prop": "text", "value": "尾"},
+                {"gid": "axes_0.xticks", "prop": "major_mode", "value": "fixed"},
+                {"gid": "axes_0.xticks", "prop": "major_values", "value": [0.2, 0.6]},
+            ],
+        )
         assert resp["warnings"], "落空的刻度文字编辑必须报 warning"
         assert gids[-1] in " ".join(resp["warnings"])
         # 而且它已经从 manifest 里消失 → 前端把它列成可清理的孤儿
@@ -674,18 +772,24 @@ def test_new_ticks_become_editable_after_the_locator_changes(library):
     """刻度变多之后，**新出现**的那些也要能选中能改——刻度伪元素每次渲染
     按当前状态重登记，不是 build 那一刻定死的。"""
     before = len(_xtick_gids(_render(library)))
-    man = _render(library, [
-        {"gid": "axes_0", "prop": "xlim", "value": [0.0, 1.0]},
-        {"gid": "axes_0.xticks", "prop": "major_mode", "value": "step"},
-        {"gid": "axes_0.xticks", "prop": "major_step", "value": 0.05},
-    ])
+    man = _render(
+        library,
+        [
+            {"gid": "axes_0", "prop": "xlim", "value": [0.0, 1.0]},
+            {"gid": "axes_0.xticks", "prop": "major_mode", "value": "step"},
+            {"gid": "axes_0.xticks", "prop": "major_step", "value": 0.05},
+        ],
+    )
     after = _xtick_gids(man)
     assert len(after) > before, (before, len(after))
     # 新出现的最后一条能改
-    man2 = _render(library, [
-        {"gid": "axes_0", "prop": "xlim", "value": [0.0, 1.0]},
-        {"gid": "axes_0.xticks", "prop": "major_mode", "value": "step"},
-        {"gid": "axes_0.xticks", "prop": "major_step", "value": 0.05},
-        {"gid": after[-1], "prop": "text", "value": "末"},
-    ])
+    man2 = _render(
+        library,
+        [
+            {"gid": "axes_0", "prop": "xlim", "value": [0.0, 1.0]},
+            {"gid": "axes_0.xticks", "prop": "major_mode", "value": "step"},
+            {"gid": "axes_0.xticks", "prop": "major_step", "value": 0.05},
+            {"gid": after[-1], "prop": "text", "value": "末"},
+        ],
+    )
     assert "末" in _el(man2, after[-1])["label"]

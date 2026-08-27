@@ -3,6 +3,7 @@
 前端 ArrowView 逐点复刻同一几何；这里从 PDF 矢量指令（get_drawings）提取
 实际坐标钉死后端行为。
 """
+
 import pymupdf
 import pytest
 
@@ -29,8 +30,14 @@ def _points(drawing) -> set[tuple[float, float]]:
     return pts
 
 
-HORIZ = {"x_mm": 10, "y_mm": 10, "w_mm": 40, "h_mm": 0,
-         "start": {"rx": 0, "ry": 0}, "end": {"rx": 1, "ry": 0}}
+HORIZ = {
+    "x_mm": 10,
+    "y_mm": 10,
+    "w_mm": 40,
+    "h_mm": 0,
+    "start": {"rx": 0, "ry": 0},
+    "end": {"rx": 1, "ry": 0},
+}
 AX, AY = pb.mm2pt(10), pb.mm2pt(10)
 BX = pb.mm2pt(50)
 HEAD_LEN, HEAD_HALF, TRIM = SW * 4.0, SW * 1.7, SW * 4.0 * 0.75
@@ -45,9 +52,11 @@ def test_head_end_geometry():
     assert (round(BX - TRIM, 2), round(AY, 2)) in line_pts
     assert strokes[0]["width"] == pytest.approx(SW)
     # 箭头帽：tip 在终点，底边 ±1.7×线宽
-    expected = {(round(BX, 2), round(AY, 2)),
-                (round(BX - HEAD_LEN, 2), round(AY + HEAD_HALF, 2)),
-                (round(BX - HEAD_LEN, 2), round(AY - HEAD_HALF, 2))}
+    expected = {
+        (round(BX, 2), round(AY, 2)),
+        (round(BX - HEAD_LEN, 2), round(AY + HEAD_HALF, 2)),
+        (round(BX - HEAD_LEN, 2), round(AY - HEAD_HALF, 2)),
+    }
     assert expected <= _points(fills[0])
 
 
@@ -69,14 +78,23 @@ def test_head_both_trims_both_ends():
 
 def test_diagonal_head_on_unit_vector():
     """斜箭头：帽底点沿单位向量回退，法向偏移 1.7×线宽。"""
-    o = {"x_mm": 0, "y_mm": 0, "w_mm": 30, "h_mm": 40,
-         "start": {"rx": 0, "ry": 0}, "end": {"rx": 1, "ry": 1}, "head": "end"}
+    o = {
+        "x_mm": 0,
+        "y_mm": 0,
+        "w_mm": 30,
+        "h_mm": 40,
+        "start": {"rx": 0, "ry": 0},
+        "end": {"rx": 1, "ry": 1},
+        "head": "end",
+    }
     _, fills = _draw(o)
     bx, by = pb.mm2pt(30), pb.mm2pt(40)
     ux, uy = 0.6, 0.8  # (30,40) 的单位向量
     nx, ny = -uy, ux
     base = (bx - ux * HEAD_LEN, by - uy * HEAD_LEN)
-    expected = {(round(bx, 2), round(by, 2)),
-                (round(base[0] + nx * HEAD_HALF, 2), round(base[1] + ny * HEAD_HALF, 2)),
-                (round(base[0] - nx * HEAD_HALF, 2), round(base[1] - ny * HEAD_HALF, 2))}
+    expected = {
+        (round(bx, 2), round(by, 2)),
+        (round(base[0] + nx * HEAD_HALF, 2), round(base[1] + ny * HEAD_HALF, 2)),
+        (round(base[0] - nx * HEAD_HALF, 2), round(base[1] - ny * HEAD_HALF, 2)),
+    }
     assert expected <= _points(fills[0])

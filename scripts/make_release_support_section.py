@@ -16,6 +16,7 @@ release body 时追加，改支持范围只改矩阵一处。
 用法：python scripts/make_release_support_section.py [--matrix PATH]
 输出写到 stdout（release.yml 直接 `>> release-body.md`）。
 """
+
 from __future__ import annotations
 
 import argparse

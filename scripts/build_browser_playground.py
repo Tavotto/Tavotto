@@ -23,6 +23,7 @@ engine.zip 是**确定性**产物：条目按名排序、时间戳钉死、权�
 指纹逻辑直接 import `build_mcp_widget.digest`（路径/换行/顺序的规范化
 只有一份实现）。纯标准库。
 """
+
 from __future__ import annotations
 
 import argparse
@@ -97,18 +98,23 @@ def build_engine_zip(out: Path) -> None:
 
 def _git_commit() -> str:
     try:
-        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True,
-                              capture_output=True, check=True).stdout.strip()
-        dirty = subprocess.run(["git", "status", "--porcelain"], cwd=ROOT, text=True,
-                               capture_output=True, check=True).stdout.strip()
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True, capture_output=True, check=True
+        ).stdout.strip()
+        dirty = subprocess.run(
+            ["git", "status", "--porcelain"], cwd=ROOT, text=True, capture_output=True, check=True
+        ).stdout.strip()
         return head + ("-dirty" if dirty else "")
     except (OSError, subprocess.CalledProcessError):
         return "unknown"
 
 
 def build() -> dict:
-    cmd = [*_pnpm(), "exec", "vite", "build", "--config", "vite.playground.config.ts"] \
-        if _pnpm()[0].endswith("pnpm") else [*_pnpm(), "build", "--config", "vite.playground.config.ts"]
+    cmd = (
+        [*_pnpm(), "exec", "vite", "build", "--config", "vite.playground.config.ts"]
+        if _pnpm()[0].endswith("pnpm")
+        else [*_pnpm(), "build", "--config", "vite.playground.config.ts"]
+    )
     proc = subprocess.run(cmd, cwd=WEB, text=True, encoding="utf-8", errors="replace")
     if proc.returncode != 0:
         raise SystemExit(f"vite build 失败（退出码 {proc.returncode}）")
@@ -121,8 +127,7 @@ def build() -> dict:
     entries = {}
     for p in sorted(DIST.rglob("*")):
         if p.is_file() and p.name != MANIFEST_NAME:
-            entries[p.relative_to(DIST).as_posix()] = \
-                hashlib.sha256(p.read_bytes()).hexdigest()
+            entries[p.relative_to(DIST).as_posix()] = hashlib.sha256(p.read_bytes()).hexdigest()
 
     manifest = {
         "schema": 1,
@@ -135,8 +140,8 @@ def build() -> dict:
         "files": entries,
     }
     (DIST / MANIFEST_NAME).write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8")
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     return manifest
 
 
@@ -144,13 +149,18 @@ def check() -> int:
     path = DIST / MANIFEST_NAME
     want = source_fingerprint()
     if not path.is_file():
-        print(f"没有产物（{path} 不存在）。先跑 python scripts/build_browser_playground.py",
-              file=sys.stderr)
+        print(
+            f"没有产物（{path} 不存在）。先跑 python scripts/build_browser_playground.py",
+            file=sys.stderr,
+        )
         return 1
     have = json.loads(path.read_text(encoding="utf-8")).get("fingerprint")
     if have != want:
-        print(f"playground 产物过期：源码指纹 {want}，产物里是 {have}。"
-              f"重跑 python scripts/build_browser_playground.py", file=sys.stderr)
+        print(
+            f"playground 产物过期：源码指纹 {want}，产物里是 {have}。"
+            f"重跑 python scripts/build_browser_playground.py",
+            file=sys.stderr,
+        )
         return 1
     print(f"playground 产物与源码一致（{want}）")
     return 0
@@ -158,10 +168,14 @@ def check() -> int:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--fingerprint", action="store_true",
-                    help="只打印源码指纹（网站仓库的 check-playground 调它比对）")
-    ap.add_argument("--check", action="store_true",
-                    help="校验 dist-playground 是否与源码同步，不构建")
+    ap.add_argument(
+        "--fingerprint",
+        action="store_true",
+        help="只打印源码指纹（网站仓库的 check-playground 调它比对）",
+    )
+    ap.add_argument(
+        "--check", action="store_true", help="校验 dist-playground 是否与源码同步，不构建"
+    )
     args = ap.parse_args(argv)
 
     if args.fingerprint:
@@ -172,8 +186,10 @@ def main(argv: list[str] | None = None) -> int:
 
     manifest = build()
     total = sum((DIST / f).stat().st_size for f in manifest["files"])
-    print(f"已写入 {DIST}（{len(manifest['files'])} 个文件，"
-          f"{total / 1024:.0f} KiB，指纹 {manifest['fingerprint']}）")
+    print(
+        f"已写入 {DIST}（{len(manifest['files'])} 个文件，"
+        f"{total / 1024:.0f} KiB，指纹 {manifest['fingerprint']}）"
+    )
     print("下一步：cd ../Tavotto_website && pnpm sync-playground")
     return 0
 

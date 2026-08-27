@@ -3,6 +3,7 @@
 会话认证（ADR 0008）由 `tests/test_browser_auth.py` 统一看护；这里盯的是
 「未知 id 一律拒」「禁用的 Agent 派不了活」「验证不过不落盘」这几条。
 """
+
 import json
 
 import pytest
@@ -13,6 +14,7 @@ from tavotto.engine import ai_agents, ai_bridge, config
 @pytest.fixture
 def client(monkeypatch):
     from tavotto import app as m
+
     m.app.config["TESTING"] = True
     ai_bridge.invalidate_capabilities()
     monkeypatch.setattr(ai_agents, "_run_probe", lambda argv, timeout=10: None)
@@ -22,9 +24,10 @@ def client(monkeypatch):
 
 def _installed(monkeypatch):
     monkeypatch.setattr(
-        ai_agents, "candidates",
-        lambda agent, override=None: [
-            ai_agents.CliCandidate(f"/x/{agent.id}", "path")])
+        ai_agents,
+        "candidates",
+        lambda agent, override=None: [ai_agents.CliCandidate(f"/x/{agent.id}", "path")],
+    )
     monkeypatch.setattr(ai_agents, "probe_version", lambda argv: "v1")
     ai_bridge.invalidate_capabilities()
 
@@ -39,11 +42,27 @@ def test_capabilities_shape(client, monkeypatch):
     assert set(body) == {"agents", "endpoints", "presets", "checked_at_ms"}
     assert isinstance(body["checked_at_ms"], int) and body["checked_at_ms"] > 0
     codex = _agent(body, "codex")
-    for key in ("id", "display_name", "icon_key", "state", "installed",
-                "enabled", "usable", "version", "executable_path",
-                "path_override", "detection_source", "models", "default_model",
-                "efforts", "default_effort", "endpoint", "active_endpoint_id",
-                "features", "diagnostics"):
+    for key in (
+        "id",
+        "display_name",
+        "icon_key",
+        "state",
+        "installed",
+        "enabled",
+        "usable",
+        "version",
+        "executable_path",
+        "path_override",
+        "detection_source",
+        "models",
+        "default_model",
+        "efforts",
+        "default_effort",
+        "endpoint",
+        "active_endpoint_id",
+        "features",
+        "diagnostics",
+    ):
         assert key in codex, key
     # 旧形状不再出现——不许悄悄留一份第二权威
     assert "providers" not in body and "settings" not in body
@@ -51,9 +70,11 @@ def test_capabilities_shape(client, monkeypatch):
 
 
 def test_unknown_agent_id_is_rejected_by_every_endpoint(client):
-    for resp in (client.patch("/api/ai/agents/opencode", json={"enabled": True}),
-                 client.post("/api/ai/agents/opencode/install"),
-                 client.get("/api/ai/agents/opencode/install")):
+    for resp in (
+        client.patch("/api/ai/agents/opencode", json={"enabled": True}),
+        client.post("/api/ai/agents/opencode/install"),
+        client.get("/api/ai/agents/opencode/install"),
+    ):
         assert resp.status_code == 400
         assert resp.get_json()["code"] == "ai_agent_unknown"
 
@@ -78,8 +99,7 @@ def test_enabling_an_uninstalled_agent_is_refused(client, monkeypatch):
 
 def test_invalid_path_override_is_refused_and_nothing_is_written(client, monkeypatch):
     _installed(monkeypatch)
-    resp = client.patch("/api/ai/agents/codex",
-                        json={"path_override": "/definitely/not/here"})
+    resp = client.patch("/api/ai/agents/codex", json={"path_override": "/definitely/not/here"})
     assert resp.status_code == 409
     assert resp.get_json()["code"] == "ai_agent_executable_invalid"
     assert "path_override" not in config.ai_agent_settings().get("codex", {})
@@ -88,21 +108,23 @@ def test_invalid_path_override_is_refused_and_nothing_is_written(client, monkeyp
 def test_clearing_path_override_is_an_explicit_action(client, tmp_path, monkeypatch):
     exe = tmp_path / "codex"
     exe.write_text("", encoding="utf-8")
-    exe.chmod(0o755)                     # 校验要求可执行位，fixture 得是真的
+    exe.chmod(0o755)  # 校验要求可执行位，fixture 得是真的
     monkeypatch.setattr(ai_agents, "probe_version_detailed", lambda argv: ("v1", None))
     monkeypatch.setattr(ai_agents, "probe_version", lambda argv: "v1")
     monkeypatch.setattr(
-        ai_agents, "candidates",
+        ai_agents,
+        "candidates",
         lambda agent, override=None: [
             ai_agents.CliCandidate(
-                (override if override is not None
-                 else ai_agents.path_override(agent.id)) or f"/x/{agent.id}",
-                "custom" if (override or ai_agents.path_override(agent.id)) else "path")])
-    body = client.patch("/api/ai/agents/codex",
-                        json={"path_override": str(exe)}).get_json()
+                (override if override is not None else ai_agents.path_override(agent.id))
+                or f"/x/{agent.id}",
+                "custom" if (override or ai_agents.path_override(agent.id)) else "path",
+            )
+        ],
+    )
+    body = client.patch("/api/ai/agents/codex", json={"path_override": str(exe)}).get_json()
     assert _agent(body, "codex")["path_override"] == str(exe)
-    body = client.patch("/api/ai/agents/codex",
-                        json={"path_override": ""}).get_json()
+    body = client.patch("/api/ai/agents/codex", json={"path_override": ""}).get_json()
     assert _agent(body, "codex")["path_override"] is None
 
 
@@ -125,12 +147,14 @@ def test_telemetry_agent_falls_back_to_the_enum_not_the_registry(client, monkeyp
     （PR #128 评审 P2）
     """
     from tavotto.engine import telemetry
+
     allowed = telemetry.EVENTS["ai_assistant_invoked"]["agent"]["values"]
     assert set(allowed) == {"codex", "claude", "other"}
 
     import inspect
 
     from tavotto import app as m
+
     src = inspect.getsource(m.api_ai_run)
     # 判据必须来自 EVENTS 表；拿注册表当白名单是被这条用例挡住的写法
     assert 'EVENTS["ai_assistant_invoked"]["agent"]["values"]' in src
@@ -140,10 +164,14 @@ def test_telemetry_agent_falls_back_to_the_enum_not_the_registry(client, monkeyp
 def test_install_endpoints_never_take_a_package_name(client, monkeypatch):
     """请求体里塞包名不该有任何效果——包名只从适配器取。"""
     started: list[str] = []
-    monkeypatch.setattr(ai_bridge, "start_install",
-                        lambda agent_id: started.append(agent_id) or {"status": "running"})
-    resp = client.post("/api/ai/agents/codex/install",
-                       json={"package": "evil-package", "agent": "claude"})
+    monkeypatch.setattr(
+        ai_bridge,
+        "start_install",
+        lambda agent_id: started.append(agent_id) or {"status": "running"},
+    )
+    resp = client.post(
+        "/api/ai/agents/codex/install", json={"package": "evil-package", "agent": "claude"}
+    )
     assert resp.status_code == 200 and started == ["codex"]
 
 
@@ -165,7 +193,7 @@ def test_diagnostics_check_ids_follow_the_registry(client, monkeypatch):
     ids = {c["id"] for c in checks}
     assert {"cli_codex", "cli_claude"} <= ids
     label = next(c["label"] for c in checks if c["id"] == "cli_claude")
-    assert label == "Claude Code CLI"     # 显示名来自注册表，不再靠 capitalize()
+    assert label == "Claude Code CLI"  # 显示名来自注册表，不再靠 capitalize()
 
 
 def test_readiness_details_never_leak_account_info(client, monkeypatch):
@@ -173,10 +201,15 @@ def test_readiness_details_never_leak_account_info(client, monkeypatch):
     capabilities 里——那是 API 响应，会进诊断包、会被贴进 issue。"""
     _installed(monkeypatch)
     monkeypatch.setattr(
-        ai_agents, "_run_probe",
-        lambda argv, timeout=10: (0, json.dumps(
-            {"loggedIn": True, "email": "someone@example.com",
-             "orgName": "Someone's Org"})))
+        ai_agents,
+        "_run_probe",
+        lambda argv, timeout=10: (
+            0,
+            json.dumps(
+                {"loggedIn": True, "email": "someone@example.com", "orgName": "Someone's Org"}
+            ),
+        ),
+    )
     ai_bridge.invalidate_capabilities()
     blob = client.get("/api/ai/capabilities?refresh=1").get_data(as_text=True)
     assert "example.com" not in blob and "Someone" not in blob

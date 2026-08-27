@@ -4,6 +4,7 @@
 代理不进 wheel/sdist，也不属于 Tavotto 的运行时依赖；它在这里被测，是因为
 「客户端发的事件代理认不认识」是一条跨侧契约，跨侧契约必须有硬门禁。
 """
+
 from __future__ import annotations
 
 import json
@@ -19,8 +20,9 @@ PROXY_ROOT = Path(__file__).resolve().parent.parent / "services" / "telemetry_pr
 if not PROXY_ROOT.is_dir():
     # 代理不进 wheel/sdist（它是独立部署的服务）。从源码树以外跑 pytest 时
     # 整个模块跳过，而不是在 import 阶段炸掉收集。
-    pytest.skip("没有 services/telemetry_proxy（wheel/sdist 里不含代理服务）",
-                allow_module_level=True)
+    pytest.skip(
+        "没有 services/telemetry_proxy（wheel/sdist 里不含代理服务）", allow_module_level=True
+    )
 sys.path.insert(0, str(PROXY_ROOT))
 
 from tavotto_telemetry_proxy import (  # noqa: E402
@@ -55,10 +57,16 @@ def _event(**over) -> dict:
         "schema_version": 1,
         "distinct_id": str(uuid.uuid4()),
         "event": "export_completed",
-        "properties": {"app_version": "0.8.0", "platform": "macos",
-                       "arch": "arm64", "distribution": "desktop",
-                       "pdf": True, "png": False, "with_proof": False,
-                       "panel_count": 4},
+        "properties": {
+            "app_version": "0.8.0",
+            "platform": "macos",
+            "arch": "arm64",
+            "distribution": "desktop",
+            "pdf": True,
+            "png": False,
+            "with_proof": False,
+            "panel_count": 4,
+        },
         **over,
     }
 
@@ -80,8 +88,7 @@ def test_events_is_post_only(upstream):
 
 
 def test_non_json_content_type_rejected(upstream):
-    status, body = _post("/v1/events", _event(),
-                         headers={"content-type": "text/plain"})
+    status, body = _post("/v1/events", _event(), headers={"content-type": "text/plain"})
     assert status == 415 and body["code"] == "bad_content_type"
 
 
@@ -112,15 +119,18 @@ def test_unknown_property_rejected(upstream):
     assert upstream == []
 
 
-@pytest.mark.parametrize("key,value", [
-    ("stem", "Fig1_kinetics"),
-    ("filename", "论文数据.pdf"),
-    ("path", "/Users/me/figures"),
-    ("script", "fig1.py"),
-    ("prompt", "把第三条曲线改成红色"),
-    ("source_code", "import numpy as np"),
-    ("axis_label", "Wavenumber / cm-1"),
-])
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("stem", "Fig1_kinetics"),
+        ("filename", "论文数据.pdf"),
+        ("path", "/Users/me/figures"),
+        ("script", "fig1.py"),
+        ("prompt", "把第三条曲线改成红色"),
+        ("source_code", "import numpy as np"),
+        ("axis_label", "Wavenumber / cm-1"),
+    ],
+)
 def test_content_bearing_properties_are_structurally_impossible(upstream, key, value):
     """文件名 / 路径 / 源码 / 提示词 / 图内文字：在 schema 层就进不来。"""
     ev = _event()
@@ -132,11 +142,14 @@ def test_content_bearing_properties_are_structurally_impossible(upstream, key, v
     assert upstream == []
 
 
-@pytest.mark.parametrize("value", [
-    {"nested": "object"},
-    ["a", "list"],
-    {"a": {"b": {"c": 1}}},
-])
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"nested": "object"},
+        ["a", "list"],
+        {"a": {"b": {"c": 1}}},
+    ],
+)
 def test_nested_containers_rejected(upstream, value):
     ev = _event()
     ev["properties"]["panel_count"] = value
@@ -144,15 +157,18 @@ def test_nested_containers_rejected(upstream, value):
     assert upstream == []
 
 
-@pytest.mark.parametrize("distinct_id", [
-    "not-a-uuid",
-    "me@example.com",
-    "MacBook-Pro.local",
-    "00000000-0000-0000-0000-000000000000",     # 不是 v4
-    "550e8400-e29b-11d4-a716-446655440000",     # v1（含 MAC/时间戳）
-    "",
-    12345,
-])
+@pytest.mark.parametrize(
+    "distinct_id",
+    [
+        "not-a-uuid",
+        "me@example.com",
+        "MacBook-Pro.local",
+        "00000000-0000-0000-0000-000000000000",  # 不是 v4
+        "550e8400-e29b-11d4-a716-446655440000",  # v1（含 MAC/时间戳）
+        "",
+        12345,
+    ],
+)
 def test_invalid_distinct_id_rejected(upstream, distinct_id):
     status, body = _post("/v1/events", _event(distinct_id=distinct_id))
     assert status == 400 and body["code"] == "bad_distinct_id"
@@ -189,16 +205,26 @@ def test_geoip_is_disabled_on_every_forwarded_event(upstream):
 
 def test_client_ip_and_headers_are_never_forwarded(upstream):
     """代理收到的请求头一个都不能变成事件属性。"""
-    status, _ = _post("/v1/events", _event(), headers={
-        "x-forwarded-for": "203.0.113.7",
-        "user-agent": "Tavotto/0.8.0 (macOS 15.3; MacBook-Pro.local)",
-        "cookie": "session=abc123",
-        "referer": "https://example.com/secret",
-    })
+    status, _ = _post(
+        "/v1/events",
+        _event(),
+        headers={
+            "x-forwarded-for": "203.0.113.7",
+            "user-agent": "Tavotto/0.8.0 (macOS 15.3; MacBook-Pro.local)",
+            "cookie": "session=abc123",
+            "referer": "https://example.com/secret",
+        },
+    )
     assert status == 200
     blob = json.dumps(upstream[0], ensure_ascii=False)
-    for leaked in ("203.0.113.7", "MacBook-Pro.local", "session=abc123",
-                   "example.com", "x-forwarded-for", "user-agent"):
+    for leaked in (
+        "203.0.113.7",
+        "MacBook-Pro.local",
+        "session=abc123",
+        "example.com",
+        "x-forwarded-for",
+        "user-agent",
+    ):
         assert leaked not in blob
 
 
@@ -213,8 +239,7 @@ def test_dollar_properties_from_the_client_are_rejected(upstream):
     assert upstream == []
 
 
-def test_person_profile_mode_is_configurable_and_defaults_to_identified(
-        upstream, monkeypatch):
+def test_person_profile_mode_is_configurable_and_defaults_to_identified(upstream, monkeypatch):
     _post("/v1/events", _event())
     assert "$process_person_profile" not in upstream[0][0]["properties"]
     upstream.clear()
@@ -232,6 +257,7 @@ def test_upstream_outage_returns_502_without_leaking_secrets(monkeypatch):
 
     def down(_batch):
         raise posthog.UpstreamError("analytics backend unreachable")
+
     monkeypatch.setattr(posthog, "send", down)
     status, body = _post("/v1/events", _event())
     assert status == 502 and body["code"] == "upstream_error"
@@ -248,6 +274,7 @@ def test_missing_project_key_fails_loudly(monkeypatch):
 
 def test_upstream_http_error_does_not_echo_the_response_body(monkeypatch):
     import urllib.error
+
     monkeypatch.setenv("POSTHOG_PROJECT_KEY", "phc_test_key")
 
     class FakeResp:
@@ -264,8 +291,10 @@ def test_upstream_http_error_does_not_echo_the_response_body(monkeypatch):
             """
 
     def raise_http(*_a, **_kw):
-        raise urllib.error.HTTPError("https://us.i.posthog.com/batch/", 401,
-                                     "Unauthorized", {}, FakeResp())
+        raise urllib.error.HTTPError(
+            "https://us.i.posthog.com/batch/", 401, "Unauthorized", {}, FakeResp()
+        )
+
     monkeypatch.setattr(posthog.urllib.request, "urlopen", raise_http)
     with pytest.raises(posthog.UpstreamError) as exc:
         posthog.send([{"event": "app_started"}])
@@ -280,9 +309,13 @@ def _snapshot(**over) -> dict:
     return {
         "event": "github_release_asset_snapshot",
         "properties": {
-            "release_id": 111, "release_tag": "v0.8.0", "asset_id": 222,
-            "asset_role": "installer", "platform": "macos",
-            "download_count_total": 42, "observed_date": "2026-08-20",
+            "release_id": 111,
+            "release_tag": "v0.8.0",
+            "asset_id": 222,
+            "asset_role": "installer",
+            "platform": "macos",
+            "download_count_total": 42,
+            "observed_date": "2026-08-20",
             "snapshot_key": "gh-asset:222:2026-08-20",
             **over.pop("properties", {}),
         },
@@ -296,15 +329,13 @@ def _metrics(body, token: str | None = TOKEN):
 
 
 def test_metrics_requires_a_bearer_token(upstream):
-    status, body = _metrics({"schema_version": 1, "events": [_snapshot()]},
-                            token=None)
+    status, body = _metrics({"schema_version": 1, "events": [_snapshot()]}, token=None)
     assert status == 401 and body["code"] == "unauthorized"
     assert upstream == []
 
 
 def test_metrics_rejects_a_wrong_token(upstream):
-    status, body = _metrics({"schema_version": 1, "events": [_snapshot()]},
-                            token="not-the-token")
+    status, body = _metrics({"schema_version": 1, "events": [_snapshot()]}, token="not-the-token")
     assert status == 401
     assert upstream == []
 
@@ -320,8 +351,7 @@ def test_metrics_accepts_the_right_token(upstream):
 
 def test_metrics_token_never_appears_in_any_response(upstream):
     for token in (None, "wrong", TOKEN):
-        _status, body = _metrics({"schema_version": 1, "events": [_snapshot()]},
-                                 token=token)
+        _status, body = _metrics({"schema_version": 1, "events": [_snapshot()]}, token=token)
         assert TOKEN not in json.dumps(body)
 
 
@@ -332,11 +362,16 @@ def test_metrics_endpoint_is_closed_when_no_token_is_configured(monkeypatch):
 
 
 def test_metrics_rejects_product_events_and_vice_versa(upstream):
-    assert _metrics({"schema_version": 1,
-                     "events": [{"event": "export_completed",
-                                 "properties": {}}]})[1]["code"] == "unknown_event"
-    assert _post("/v1/events", _event(
-        event="github_release_asset_snapshot"))[1]["code"] == "unknown_event"
+    assert (
+        _metrics(
+            {"schema_version": 1, "events": [{"event": "export_completed", "properties": {}}]}
+        )[1]["code"]
+        == "unknown_event"
+    )
+    assert (
+        _post("/v1/events", _event(event="github_release_asset_snapshot"))[1]["code"]
+        == "unknown_event"
+    )
     assert upstream == []
 
 
@@ -350,8 +385,7 @@ def test_metrics_snapshot_uuid_is_deterministic(upstream):
 
 
 def test_metrics_batch_is_bounded(upstream):
-    body = {"schema_version": 1,
-            "events": [_snapshot() for _ in range(core.MAX_METRICS_BATCH + 1)]}
+    body = {"schema_version": 1, "events": [_snapshot() for _ in range(core.MAX_METRICS_BATCH + 1)]}
     assert _metrics(body)[0] == 413
     assert upstream == []
 
@@ -371,10 +405,13 @@ def test_client_and_proxy_contracts_match():
     assert set(client.EVENTS) == set(proxy_contract.EVENTS)
 
     def shape(table: dict) -> dict:
-        return {name: {prop: (spec["kind"], tuple(spec.get("values", ())),
-                              spec.get("max"))
-                       for prop, spec in props.items()}
-                for name, props in table.items()}
+        return {
+            name: {
+                prop: (spec["kind"], tuple(spec.get("values", ())), spec.get("max"))
+                for prop, spec in props.items()
+            }
+            for name, props in table.items()
+        }
 
     assert shape(client.EVENTS) == shape(proxy_contract.EVENTS)
     assert shape({"auto": client.AUTO_PROPS}) == shape({"auto": proxy_contract.AUTO_PROPS})
@@ -392,19 +429,21 @@ def test_every_client_event_is_accepted_end_to_end(upstream):
         "figure_opened": {"asset_kind": "pdf", "editable": True},
         "figure_edit_completed": {"edit_kind": "layout", "patch_count": 2},
         "canvas_created": {"creation_kind": "blank"},
-        "preflight_completed": {"errors": 0, "warnings": 1, "not_verifiable": 2,
-                                "suggestions": 3, "passed": True},
-        "export_completed": {"pdf": True, "png": True, "with_proof": False,
-                             "panel_count": 6},
+        "preflight_completed": {
+            "errors": 0,
+            "warnings": 1,
+            "not_verifiable": 2,
+            "suggestions": 3,
+            "passed": True,
+        },
+        "export_completed": {"pdf": True, "png": True, "with_proof": False, "panel_count": 6},
         "ai_assistant_invoked": {"agent": "claude"},
         "update_completed": {"update_kind": "pipx", "target_version": "0.9.0"},
     }
     assert set(samples) == set(client.EVENTS), "新增事件要在这里补一条样例"
-    auto = {"app_version": "0.8.0", "platform": "linux", "arch": "x86_64",
-            "distribution": "pip"}
+    auto = {"app_version": "0.8.0", "platform": "linux", "arch": "x86_64", "distribution": "pip"}
     for name, props in samples.items():
-        status, body = _post("/v1/events", _event(event=name,
-                                                  properties={**auto, **props}))
+        status, body = _post("/v1/events", _event(event=name, properties={**auto, **props}))
         assert status == 200, (name, body)
 
 
@@ -502,8 +541,7 @@ def test_wsgi_rejects_content_bearing_properties_end_to_end(upstream):
     """夹带文件名的事件，走完整入口也必须被拒。"""
     ev = _event()
     ev["properties"]["stem"] = "Fig1_保密数据"
-    status, _h, body = _wsgi("POST", "/v1/events",
-                             json.dumps(ev).encode("utf-8"))
+    status, _h, body = _wsgi("POST", "/v1/events", json.dumps(ev).encode("utf-8"))
     assert status.startswith("400")
     assert json.loads(body)["code"] == "unknown_property"
     assert "保密数据" not in body.decode("utf-8")
@@ -511,8 +549,9 @@ def test_wsgi_rejects_content_bearing_properties_end_to_end(upstream):
 
 
 def test_wsgi_metrics_still_needs_the_token(upstream):
-    status, _h, body = _wsgi("POST", "/v1/metrics",
-                             json.dumps({"schema_version": 1, "events": []}).encode())
+    status, _h, body = _wsgi(
+        "POST", "/v1/metrics", json.dumps({"schema_version": 1, "events": []}).encode()
+    )
     assert status.startswith("401")
 
 
@@ -534,11 +573,9 @@ def test_vercel_entrypoint_points_at_the_wsgi_app():
 def test_no_second_entrypoint_layer_creeps_back():
     """对外只能有一个入口。`api/` 文件路由那条路会重新引入
     「本地全绿、部署 404」的失败模式——别加回来。"""
-    assert not (PROXY_ROOT / "api").exists(), \
-        "services/telemetry_proxy/api/ 又出现了：见本节开头"
+    assert not (PROXY_ROOT / "api").exists(), "services/telemetry_proxy/api/ 又出现了：见本节开头"
     conf = json.loads((PROXY_ROOT / "vercel.json").read_text(encoding="utf-8"))
-    assert "rewrites" not in conf, \
-        "rewrites 会用重写后的 destination 路由，正是当初那个 bug"
+    assert "rewrites" not in conf, "rewrites 会用重写后的 destination 路由，正是当初那个 bug"
 
 
 def test_self_hosted_server_never_logs_remote_addresses(upstream, capfd):
@@ -556,9 +593,9 @@ def test_self_hosted_server_never_logs_remote_addresses(upstream, capfd):
 
     from tavotto_telemetry_proxy.wsgi import _QuietHandler, _ThreadingWSGIServer, application
 
-    srv = make_server("127.0.0.1", 0, application,
-                      server_class=_ThreadingWSGIServer,
-                      handler_class=_QuietHandler)
+    srv = make_server(
+        "127.0.0.1", 0, application, server_class=_ThreadingWSGIServer, handler_class=_QuietHandler
+    )
     port = srv.server_address[1]
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     try:
@@ -593,7 +630,12 @@ def test_scf_bootstrap_is_executable_and_binds_the_required_port():
     rel = boot.relative_to(PROXY_ROOT.parent.parent).as_posix()
     entry = subprocess.run(
         ["git", "ls-files", "-s", "--", rel],
-        cwd=PROXY_ROOT.parent.parent, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
+        cwd=PROXY_ROOT.parent.parent,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=True,
     ).stdout.split()
     assert entry and entry[0] == "100755", (
         f"git 里 {rel} 的 mode 是 {entry[0] if entry else '(未追踪)'}，不是 100755"
@@ -609,4 +651,3 @@ def test_public_listen_requires_an_explicit_opt_in():
     暴露到局域网里。"""
     src = (PROXY_ROOT / "tavotto_telemetry_proxy" / "wsgi.py").read_text(encoding="utf-8")
     assert 'os.environ.get("HOST") or "127.0.0.1"' in src
-

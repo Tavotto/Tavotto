@@ -13,6 +13,7 @@
 `exit_code` / `signal` / `log_path` / `retryable`。全部轮询跑在假时间里，
 测试零真实等待——**没有一个 sleep 是真的**。
 """
+
 import contextlib
 import io
 import json
@@ -26,8 +27,7 @@ from tavotto.engine import handoff
 def figures(tmp_path):
     d = tmp_path / "figures"
     d.mkdir()
-    (d / "fig1_demo.py").write_text(
-        "def main():\n    pass\n", encoding="utf-8")
+    (d / "fig1_demo.py").write_text("def main():\n    pass\n", encoding="utf-8")
     (d / "Fig1_demo.pdf").write_bytes(b"%PDF-1.4\n%%EOF\n")
     return d
 
@@ -59,12 +59,12 @@ class _FakeProc:
 
 
 def test_bundle_root_shapes():
-    assert handoff._bundle_root(
-        "/Applications/Tavotto.app/Contents/MacOS/Tavotto") == \
-        "/Applications/Tavotto.app"
-    assert handoff._bundle_root("/A/Tavotto") is None           # 裸二进制
-    assert handoff._bundle_root(
-        "/x/Foo/Contents/MacOS/Tavotto") is None                # 不是 .app
+    assert (
+        handoff._bundle_root("/Applications/Tavotto.app/Contents/MacOS/Tavotto")
+        == "/Applications/Tavotto.app"
+    )
+    assert handoff._bundle_root("/A/Tavotto") is None  # 裸二进制
+    assert handoff._bundle_root("/x/Foo/Contents/MacOS/Tavotto") is None  # 不是 .app
 
 
 # ------------------------------ spawn 那条 --------------------------------
@@ -72,8 +72,12 @@ def test_spawn_launch_stays_alive_is_ready():
     fake = _FakeClock()
     proc = _FakeProc([None])
     out = handoff._launch_desktop_via_spawn(
-        "/A/Tavotto", handoff.Target("/p", "Fig1"),
-        spawn=lambda argv, **kw: proc, clock=fake.clock, sleep=fake.sleep)
+        "/A/Tavotto",
+        handoff.Target("/p", "Fig1"),
+        spawn=lambda argv, **kw: proc,
+        clock=fake.clock,
+        sleep=fake.sleep,
+    )
     assert out["mode"] == "desktop" and out["ready"] == "process_alive"
     assert out["pid"] == 4242 and out["ready_ms"] >= 0
 
@@ -84,8 +88,12 @@ def test_spawn_launch_immediate_sigabrt_is_launch_failed():
     proc = _FakeProc([None, -6])
     with pytest.raises(handoff.HandoffError) as exc:
         handoff._launch_desktop_via_spawn(
-            "/A/Tavotto", handoff.Target("/p", None),
-            spawn=lambda argv, **kw: proc, clock=fake.clock, sleep=fake.sleep)
+            "/A/Tavotto",
+            handoff.Target("/p", None),
+            spawn=lambda argv, **kw: proc,
+            clock=fake.clock,
+            sleep=fake.sleep,
+        )
     err = exc.value
     assert err.code == "launch_failed"
     assert err.extra["signal"] == "SIGABRT" and err.extra["exit_code"] == 134
@@ -98,8 +106,12 @@ def test_spawn_launch_nonzero_exit_is_launch_failed():
     proc = _FakeProc([3, 3])
     with pytest.raises(handoff.HandoffError) as exc:
         handoff._launch_desktop_via_spawn(
-            "/A/Tavotto", handoff.Target("/p", None),
-            spawn=lambda argv, **kw: proc, clock=fake.clock, sleep=fake.sleep)
+            "/A/Tavotto",
+            handoff.Target("/p", None),
+            spawn=lambda argv, **kw: proc,
+            clock=fake.clock,
+            sleep=fake.sleep,
+        )
     assert exc.value.code == "launch_failed"
     assert exc.value.extra["exit_code"] == 3 and exc.value.extra["signal"] is None
 
@@ -109,8 +121,12 @@ def test_spawn_launch_clean_exit_means_forwarded():
     fake = _FakeClock()
     proc = _FakeProc([None, 0])
     out = handoff._launch_desktop_via_spawn(
-        "/A/Tavotto", handoff.Target("/p", None),
-        spawn=lambda argv, **kw: proc, clock=fake.clock, sleep=fake.sleep)
+        "/A/Tavotto",
+        handoff.Target("/p", None),
+        spawn=lambda argv, **kw: proc,
+        clock=fake.clock,
+        sleep=fake.sleep,
+    )
     assert out["handoff"] == "forwarded" and out["ready"] == "forwarder_exited"
 
 
@@ -119,6 +135,7 @@ def _open_ok(argv, **kw):
     class R:
         returncode = 0
         stdout = stderr = ""
+
     return R()
 
 
@@ -130,7 +147,7 @@ def test_open_launch_waits_for_the_process():
 
     def pids_of(exe):
         appearances["n"] += 1
-        return [777] if appearances["n"] > 2 else []   # 第三次轮询才出现
+        return [777] if appearances["n"] > 2 else []  # 第三次轮询才出现
 
     def run(argv, **kw):
         ran.append(argv)
@@ -138,8 +155,14 @@ def test_open_launch_waits_for_the_process():
 
     app = "/Applications/Tavotto.app/Contents/MacOS/Tavotto"
     out = handoff._launch_desktop_via_open(
-        app, "/Applications/Tavotto.app", handoff.Target("/p", "图 1"),
-        run=run, pids_of=pids_of, clock=fake.clock, sleep=fake.sleep)
+        app,
+        "/Applications/Tavotto.app",
+        handoff.Target("/p", "图 1"),
+        run=run,
+        pids_of=pids_of,
+        clock=fake.clock,
+        sleep=fake.sleep,
+    )
     assert ran[0][:4] == ["open", "-na", "/Applications/Tavotto.app", "--args"]
     assert ran[0][4:] == ["--open", "/p", "--stem", "图 1"]
     assert out["via"] == "launchservices" and out["handoff"] == "launched"
@@ -151,9 +174,13 @@ def test_open_launch_forwarding_to_running_instance():
     fake = _FakeClock()
     out = handoff._launch_desktop_via_open(
         "/Applications/Tavotto.app/Contents/MacOS/Tavotto",
-        "/Applications/Tavotto.app", handoff.Target("/p", None),
-        run=_open_ok, pids_of=lambda exe: [55],
-        clock=fake.clock, sleep=fake.sleep)
+        "/Applications/Tavotto.app",
+        handoff.Target("/p", None),
+        run=_open_ok,
+        pids_of=lambda exe: [55],
+        clock=fake.clock,
+        sleep=fake.sleep,
+    )
     assert out["handoff"] == "forwarded" and out["pid"] == 55
 
 
@@ -171,8 +198,13 @@ def test_open_launch_crash_after_appearing_is_launch_failed():
     with pytest.raises(handoff.HandoffError) as exc:
         handoff._launch_desktop_via_open(
             "/Applications/Tavotto.app/Contents/MacOS/Tavotto",
-            "/Applications/Tavotto.app", handoff.Target("/p", None),
-            run=_open_ok, pids_of=pids_of, clock=fake.clock, sleep=fake.sleep)
+            "/Applications/Tavotto.app",
+            handoff.Target("/p", None),
+            run=_open_ok,
+            pids_of=pids_of,
+            clock=fake.clock,
+            sleep=fake.sleep,
+        )
     assert exc.value.code == "launch_failed"
     assert "log_path" in exc.value.extra
 
@@ -182,9 +214,13 @@ def test_open_launch_never_appearing_is_a_timeout():
     with pytest.raises(handoff.HandoffError) as exc:
         handoff._launch_desktop_via_open(
             "/Applications/Tavotto.app/Contents/MacOS/Tavotto",
-            "/Applications/Tavotto.app", handoff.Target("/p", None),
-            run=_open_ok, pids_of=lambda exe: [],
-            clock=fake.clock, sleep=fake.sleep)
+            "/Applications/Tavotto.app",
+            handoff.Target("/p", None),
+            run=_open_ok,
+            pids_of=lambda exe: [],
+            clock=fake.clock,
+            sleep=fake.sleep,
+        )
     assert exc.value.code == "launch_timeout"
     assert exc.value.extra["retryable"] is True
 
@@ -198,13 +234,19 @@ def test_open_launch_rejected_by_launchservices():
             returncode = 1
             stdout = ""
             stderr = "kLSNoExecutableErr"
+
         return R()
 
     with pytest.raises(handoff.HandoffError) as exc:
         handoff._launch_desktop_via_open(
             "/Applications/Tavotto.app/Contents/MacOS/Tavotto",
-            "/Applications/Tavotto.app", handoff.Target("/p", None),
-            run=run, pids_of=lambda exe: [], clock=fake.clock, sleep=fake.sleep)
+            "/Applications/Tavotto.app",
+            handoff.Target("/p", None),
+            run=run,
+            pids_of=lambda exe: [],
+            clock=fake.clock,
+            sleep=fake.sleep,
+        )
     assert exc.value.code == "launch_failed"
     assert "kLSNoExecutableErr" in str(exc.value)
 
@@ -214,9 +256,13 @@ def test_open_launch_without_process_table_is_honest():
     fake = _FakeClock()
     out = handoff._launch_desktop_via_open(
         "/Applications/Tavotto.app/Contents/MacOS/Tavotto",
-        "/Applications/Tavotto.app", handoff.Target("/p", None),
-        run=_open_ok, pids_of=lambda exe: None,
-        clock=fake.clock, sleep=fake.sleep)
+        "/Applications/Tavotto.app",
+        handoff.Target("/p", None),
+        run=_open_ok,
+        pids_of=lambda exe: None,
+        clock=fake.clock,
+        sleep=fake.sleep,
+    )
     assert out["ready"] == "unverified"
 
 
@@ -224,28 +270,43 @@ def test_open_launch_without_process_table_is_honest():
 def test_launch_routes_macos_bundle_to_launchservices(monkeypatch):
     """launch() 的分派：darwin + bundle 形状 → LaunchServices 那条。"""
     called = {}
-    monkeypatch.setattr(handoff, "_launch_desktop_via_open",
-                        lambda app, bundle, target, **kw:
-                        called.setdefault("open", (app, bundle)) or
-                        {"mode": "desktop"})
-    monkeypatch.setattr(handoff, "_launch_desktop_via_spawn",
-                        lambda app, target, **kw: pytest.fail("不该走 spawn"))
+    monkeypatch.setattr(
+        handoff,
+        "_launch_desktop_via_open",
+        lambda app, bundle, target, **kw: (
+            called.setdefault("open", (app, bundle)) or {"mode": "desktop"}
+        ),
+    )
+    monkeypatch.setattr(
+        handoff, "_launch_desktop_via_spawn", lambda app, target, **kw: pytest.fail("不该走 spawn")
+    )
     app = "/Applications/Tavotto.app/Contents/MacOS/Tavotto"
-    handoff.launch(handoff.Target("/p", None), system="darwin",
-                   environ={handoff.APP_ENV: app}, isfile=lambda p: p == app)
+    handoff.launch(
+        handoff.Target("/p", None),
+        system="darwin",
+        environ={handoff.APP_ENV: app},
+        isfile=lambda p: p == app,
+    )
     assert called["open"] == (app, "/Applications/Tavotto.app")
 
 
 def test_launch_routes_windows_to_spawn(monkeypatch):
-    monkeypatch.setattr(handoff, "_launch_desktop_via_open",
-                        lambda *a, **kw: pytest.fail("win32 不该走 open"))
+    monkeypatch.setattr(
+        handoff, "_launch_desktop_via_open", lambda *a, **kw: pytest.fail("win32 不该走 open")
+    )
     seen = {}
-    monkeypatch.setattr(handoff, "_launch_desktop_via_spawn",
-                        lambda app, target, **kw:
-                        seen.setdefault("app", app) or {"mode": "desktop"})
+    monkeypatch.setattr(
+        handoff,
+        "_launch_desktop_via_spawn",
+        lambda app, target, **kw: seen.setdefault("app", app) or {"mode": "desktop"},
+    )
     app = "C:\\Tools\\Tavotto\\Tavotto.exe"
-    handoff.launch(handoff.Target("/p", None), system="win32",
-                   environ={handoff.APP_ENV: app}, isfile=lambda p: p == app)
+    handoff.launch(
+        handoff.Target("/p", None),
+        system="win32",
+        environ={handoff.APP_ENV: app},
+        isfile=lambda p: p == app,
+    )
     assert seen["app"] == app
 
 
@@ -255,9 +316,14 @@ def test_launch_failure_json_carries_the_details(figures, monkeypatch):
 
     def boom(app, target, **kw):
         raise handoff.HandoffError(
-            "桌面进程在就绪前退出", "launch_failed", app=app,
-            exit_code=134, signal="SIGABRT", log_path="/logs/sidecar.log",
-            retryable=False)
+            "桌面进程在就绪前退出",
+            "launch_failed",
+            app=app,
+            exit_code=134,
+            signal="SIGABRT",
+            log_path="/logs/sidecar.log",
+            retryable=False,
+        )
 
     monkeypatch.setattr(handoff, "_launch_desktop_via_spawn", boom)
     buf = io.StringIO()
@@ -270,11 +336,10 @@ def test_launch_failure_json_carries_the_details(figures, monkeypatch):
 
 
 def test_sidecar_log_path_per_platform():
-    darwin = handoff.sidecar_log_path(system="darwin",
-                                      environ={"HOME": "/Users/x"})
+    darwin = handoff.sidecar_log_path(system="darwin", environ={"HOME": "/Users/x"})
     assert darwin == "/Users/x/Library/Logs/com.tavotto.tavotto/sidecar.log"
     win = handoff.sidecar_log_path(
-        system="win32", environ={"LOCALAPPDATA": "C:\\Users\\x\\AppData\\Local"})
-    assert win == ("C:\\Users\\x\\AppData\\Local\\com.tavotto.tavotto"
-                   "\\logs\\sidecar.log")
+        system="win32", environ={"LOCALAPPDATA": "C:\\Users\\x\\AppData\\Local"}
+    )
+    assert win == ("C:\\Users\\x\\AppData\\Local\\com.tavotto.tavotto\\logs\\sidecar.log")
     assert handoff.sidecar_log_path(system="linux", environ={}) is None

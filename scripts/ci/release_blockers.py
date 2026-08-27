@@ -24,6 +24,7 @@
 原样 JSON——注意 GitHub 的 issues 端点会把 PR 也混进来（带 `pull_request`
 键），这里要滤掉：PR 不是「已知未修的洞」。
 """
+
 from __future__ import annotations
 
 import argparse
@@ -70,7 +71,8 @@ def check(issues: list[dict], ack_raw: str, event: str) -> tuple[bool, list[str]
         if ack:
             lines.append(
                 f"当前没有 open 的 `{LABEL}`，但 ack_open_blockers 填了 {sorted(ack)}——"
-                "陈旧的 ack 会在下一个 blocker 出现时被误当成签字，请清空后重跑。")
+                "陈旧的 ack 会在下一个 blocker 出现时被误当成签字，请清空后重跑。"
+            )
             return False, lines
         lines.append(f"✅ 没有 open 的 `{LABEL}` issue。")
         return True, lines
@@ -91,24 +93,31 @@ def check(issues: list[dict], ack_raw: str, event: str) -> tuple[bool, list[str]
     if stale:
         lines.append(
             f"❌ 签了但不在当前 open 清单里的：{['#%d' % n for n in stale]}"
-            "（已关闭或编号写错——ack 必须与当前清单逐条对得上，防止一次 ack 永久生效）")
+            "（已关闭或编号写错——ack 必须与当前清单逐条对得上，防止一次 ack 永久生效）"
+        )
     if event == "push":
         lines.append(
             "tag 触发带不了输入。两条路：① 先处理掉上面的 blocker 再发；"
             "② 用 workflow_dispatch(ref=<本 tag>, publish=true, "
-            "ack_open_blockers=\"<逐条编号>\") 显式签字后发布——tag 已经存在时"
-            "trust 会核对它指向同一个 commit，发布结果与 tag 触发完全一致。")
+            'ack_open_blockers="<逐条编号>") 显式签字后发布——tag 已经存在时'
+            "trust 会核对它指向同一个 commit，发布结果与 tag 触发完全一致。"
+        )
     else:
         lines.append(
             "在 workflow_dispatch 的 ack_open_blockers 里逐条填上当前 open 的编号"
-            "（如 \"35,83\"）表示明知有洞仍要发布，或先把 blocker 处理掉。")
+            '（如 "35,83"）表示明知有洞仍要发布，或先把 blocker 处理掉。'
+        )
     return False, lines
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--issues-json", required=True, type=Path,
-                    help="gh api …/issues?labels=release:blocker&state=open 的输出")
+    ap.add_argument(
+        "--issues-json",
+        required=True,
+        type=Path,
+        help="gh api …/issues?labels=release:blocker&state=open 的输出",
+    )
     ap.add_argument("--ack", default="", help="workflow_dispatch 的 ack_open_blockers 输入")
     ap.add_argument("--event", default="workflow_dispatch", help="github.event_name")
     args = ap.parse_args(argv)

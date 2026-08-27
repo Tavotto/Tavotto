@@ -1,4 +1,5 @@
 """文档自动保存（磁盘原子写）：PUT/GET 往返、非法载荷、删除、跨标签页乐观并发。"""
+
 import json
 
 import pytest
@@ -14,10 +15,16 @@ def client(tmp_path, monkeypatch):
     return m.app.test_client()
 
 
-PD = {"schema": 3, "project": {"id": "p", "name": "n"},
-      "canvases": [{"id": "c1", "name": "Fig 1", "page": {"w": 10, "h": 10},
-                    "objects": [], "guides": []}],
-      "activeCanvasId": "c1", "createdAt": 0, "updatedAt": 1}
+PD = {
+    "schema": 3,
+    "project": {"id": "p", "name": "n"},
+    "canvases": [
+        {"id": "c1", "name": "Fig 1", "page": {"w": 10, "h": 10}, "objects": [], "guides": []}
+    ],
+    "activeCanvasId": "c1",
+    "createdAt": 0,
+    "updatedAt": 1,
+}
 
 
 def test_put_get_roundtrip(client, tmp_path):

@@ -4,6 +4,7 @@
 收集器。conftest 把 `TAVOTTO_NO_TELEMETRY` 钉成 1，需要真的走投递路径的
 用例自己在 fixture 里摘掉它。
 """
+
 from __future__ import annotations
 
 import json
@@ -64,9 +65,12 @@ def test_disabled_sends_nothing(sent):
 
 def test_enabled_queues_and_sends(sent):
     _enable()
-    assert telemetry.capture("export_completed",
-                             {"pdf": True, "png": False, "with_proof": False,
-                              "panel_count": 3}) is True
+    assert (
+        telemetry.capture(
+            "export_completed", {"pdf": True, "png": False, "with_proof": False, "panel_count": 3}
+        )
+        is True
+    )
     _flush()
     events = [p["event"] for p in sent]
     assert "telemetry_enabled" in events
@@ -142,8 +146,9 @@ def test_reenabling_does_not_mint_a_second_new_user(sent):
     telemetry.set_consent(telemetry.CONSENT_ENABLED)
     _flush()
     assert telemetry.install_id() == ident, "重新打开不该换标识"
-    assert [p["event"] for p in sent if p["event"] == "telemetry_enabled"] == [], \
+    assert [p["event"] for p in sent if p["event"] == "telemetry_enabled"] == [], (
         "关掉再打开不是一个新用户，不该再发一条 telemetry_enabled"
+    )
 
 
 def test_distinct_id_is_the_install_id(sent):
@@ -243,19 +248,21 @@ def test_unknown_event_is_dropped(sent):
 def test_unknown_property_is_dropped(sent):
     _enable()
     sent.clear()
-    assert telemetry.capture("export_completed",
-                             {"pdf": True, "stem": "Fig1_kinetics"}) is False
+    assert telemetry.capture("export_completed", {"pdf": True, "stem": "Fig1_kinetics"}) is False
     _flush()
     assert sent == []
 
 
-@pytest.mark.parametrize("props", [
-    {"panel_count": "3"},                       # 类型不符
-    {"panel_count": -1},                        # 越界
-    {"panel_count": 10 ** 9},                   # 越界
-    {"panel_count": True},                      # bool 不是 int
-    {"pdf": "yes"},                             # 字符串不是 bool
-])
+@pytest.mark.parametrize(
+    "props",
+    [
+        {"panel_count": "3"},  # 类型不符
+        {"panel_count": -1},  # 越界
+        {"panel_count": 10**9},  # 越界
+        {"panel_count": True},  # bool 不是 int
+        {"pdf": "yes"},  # 字符串不是 bool
+    ],
+)
 def test_bad_property_values_are_rejected(props):
     with pytest.raises(Exception):
         telemetry.validate("export_completed", props)
@@ -264,8 +271,7 @@ def test_bad_property_values_are_rejected(props):
 def test_enum_properties_reject_free_text():
     with pytest.raises(Exception):
         telemetry.validate("ai_assistant_invoked", {"agent": "把透明度调到 50%"})
-    assert telemetry.validate("ai_assistant_invoked", {"agent": "codex"}) == {
-        "agent": "codex"}
+    assert telemetry.validate("ai_assistant_invoked", {"agent": "codex"}) == {"agent": "codex"}
 
 
 def test_every_event_carries_the_controlled_auto_properties(sent):
@@ -286,12 +292,17 @@ def test_no_fingerprinting_surface_in_the_payload(sent):
     import platform
     import socket
     import sys
+
     _enable()
     telemetry.capture("app_started", {"app_mode": "browser"})
     _flush()
     blob = json.dumps(sent, ensure_ascii=False)
-    for forbidden in (socket.gethostname(), platform.platform(), sys.executable,
-                      os.path.expanduser("~")):
+    for forbidden in (
+        socket.gethostname(),
+        platform.platform(),
+        sys.executable,
+        os.path.expanduser("~"),
+    ):
         if forbidden and len(forbidden) > 3:
             assert forbidden not in blob
 
@@ -315,11 +326,14 @@ def test_queue_is_bounded_and_never_blocks(monkeypatch):
     monkeypatch.delenv("TAVOTTO_NO_TELEMETRY", raising=False)
     telemetry.reset_for_tests()
     import threading
+
     hold = threading.Event()
     monkeypatch.setattr(telemetry, "_post", lambda payload: hold.wait(30))
     telemetry.set_consent(telemetry.CONSENT_ENABLED)
-    accepted = sum(telemetry.capture("canvas_created", {"creation_kind": "blank"})
-                   for _ in range(telemetry.QUEUE_MAX * 3))
+    accepted = sum(
+        telemetry.capture("canvas_created", {"creation_kind": "blank"})
+        for _ in range(telemetry.QUEUE_MAX * 3)
+    )
     hold.set()
     # 队列上限 + 正在被发送的那条；无论如何不能全收
     assert accepted <= telemetry.QUEUE_MAX + 2
@@ -332,10 +346,11 @@ def test_transport_failure_never_propagates(monkeypatch):
 
     def boom(_payload):
         raise OSError("代理挂了")
+
     monkeypatch.setattr(telemetry, "_post", boom)
     telemetry.set_consent(telemetry.CONSENT_ENABLED)
     assert telemetry.capture("export_completed", {"pdf": True}) is True
-    assert telemetry.flush(5.0)                 # 发送线程没被异常带走
+    assert telemetry.flush(5.0)  # 发送线程没被异常带走
     assert telemetry.capture("export_completed", {"png": True}) is True
     telemetry.reset_for_tests()
 
@@ -343,11 +358,13 @@ def test_transport_failure_never_propagates(monkeypatch):
 def test_real_post_swallows_network_errors(monkeypatch):
     """`_post` 自己也不许抛：它跑在发送线程里，抛出去就没人接。"""
     import urllib.request
+
     monkeypatch.delenv("TAVOTTO_NO_TELEMETRY", raising=False)
     monkeypatch.setenv("TAVOTTO_TELEMETRY_ENDPOINT", "http://127.0.0.1:1/v1/events")
 
     def refuse(*_a, **_kw):
         raise OSError("connection refused")
+
     monkeypatch.setattr(urllib.request, "urlopen", refuse)
     telemetry._post({"event": "app_started", "properties": {}})
 
@@ -360,6 +377,7 @@ def test_import_alone_sends_nothing(sent):
     _enable()
     sent.clear()
     import importlib
+
     importlib.import_module("tavotto.app")
     _flush()
     assert [p for p in sent if p["event"] == "app_started"] == []
@@ -402,6 +420,7 @@ def test_unknown_app_mode_is_ignored(sent):
 # ---------------------------------------------------------------------------
 def test_install_id_is_never_logged(sent, caplog):
     import logging
+
     caplog.set_level(logging.DEBUG)
     _enable()
     telemetry.capture("export_completed", {"pdf": True})
@@ -424,13 +443,13 @@ def test_diagnostics_report_redacts_the_install_id(sent):
 def test_diagnostics_bundle_redacts_the_install_id(sent, tmp_path):
     import io
     import zipfile
+
     _enable()
     ident = telemetry.install_id()
     # 日志里塞一条含标识的行，验证按**值**的那道脱敏也在
     log = engine_config.data_dir() / "cache" / "app.log"
     log.parent.mkdir(parents=True, exist_ok=True)
-    log.write_text(f"2026-08-20 INFO 假装有人把 {ident} 写进了日志\n",
-                   encoding="utf-8")
+    log.write_text(f"2026-08-20 INFO 假装有人把 {ident} 写进了日志\n", encoding="utf-8")
     data = diagnostics.build_bundle()
     with zipfile.ZipFile(io.BytesIO(data)) as z:
         for name in z.namelist():
@@ -444,8 +463,7 @@ def test_diagnostics_bundle_redacts_the_install_id(sent, tmp_path):
 # ---------------------------------------------------------------------------
 def test_payload_shape_has_no_free_form_containers(sent):
     _enable()
-    telemetry.capture("figure_edit_completed",
-                      {"edit_kind": "layout", "patch_count": 4})
+    telemetry.capture("figure_edit_completed", {"edit_kind": "layout", "patch_count": 4})
     _flush()
     payload = sent[-1]
     assert set(payload) == {"schema_version", "distinct_id", "event", "properties"}
@@ -471,6 +489,7 @@ def test_no_posthog_key_or_direct_host_anywhere_in_the_client():
     （文档与注释里出现 PostHog 这个词是正常的，这里查的是密钥与主机名。）
     """
     from pathlib import Path
+
     src = Path(telemetry.__file__).resolve().parent.parent
     for path in src.rglob("*.py"):
         text = path.read_text(encoding="utf-8", errors="replace")

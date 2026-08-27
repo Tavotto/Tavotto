@@ -35,6 +35,7 @@ plt.show()` 这类从不 savefig 的脚本也要能用）。
 （写进去的就是收到的、脚本跑完还是那份），跑在 Pyodide 之外、没有那个威胁
 模型。两者要的东西不同，别把其中一个删掉当重复。
 """
+
 from __future__ import annotations
 
 import base64
@@ -145,7 +146,7 @@ class _TailBuffer(io.TextIOBase):
             self._size -= len(dropped)
             self._truncated = True
         if self._size > self._limit:  # 单条就超限
-            keep = self._chunks[0][-self._limit:]
+            keep = self._chunks[0][-self._limit :]
             self._size = len(keep)
             self._chunks[0] = keep
             self._truncated = True
@@ -165,6 +166,7 @@ def _tail(text: str, limit: int) -> str:
 
 # ---------------------------------------------------------------- 会话
 
+
 class BrowserSession:
     """一次 playground 会话：一个源文件、一批捕获的 Figure、若干编辑状态。
 
@@ -175,7 +177,7 @@ class BrowserSession:
 
     def __init__(self, workspace: str = "/workspace"):
         self.workspace = workspace
-        self.capture: dict[str, object] = {}     # stem → Figure（脚本产出顺序）
+        self.capture: dict[str, object] = {}  # stem → Figure（脚本产出顺序）
         self.capture_source: dict[str, str] = {}  # stem → figcapture.SOURCE_*
         self.states: dict[str, overrides_mod.FigState] = {}
         self.revision = 0
@@ -188,18 +190,19 @@ class BrowserSession:
             # 一个会话只跑一个文件（见类注释）。这里报错而不是悄悄重置。
             return _err("bad_request", "会话已加载过脚本；换文件要换一个新会话")
         if len(source.encode("utf-8")) > MAX_SOURCE_BYTES:
-            return _err("source_too_large",
-                        f"源文件超过 {MAX_SOURCE_BYTES // 1024} KiB 上限")
+            return _err("source_too_large", f"源文件超过 {MAX_SOURCE_BYTES // 1024} KiB 上限")
 
         safe_name = _safe_script_name(filename)
         path = os.path.join(self.workspace, safe_name)
         try:
             compile(source, path, "exec")
         except SyntaxError as exc:
-            return _err("syntax_error", f"{exc.msg} (line {exc.lineno})",
-                        line=exc.lineno, traceback=_tail(
-                            "".join(traceback.format_exception_only(exc)),
-                            MAX_TRACEBACK_BYTES))
+            return _err(
+                "syntax_error",
+                f"{exc.msg} (line {exc.lineno})",
+                line=exc.lineno,
+                traceback=_tail("".join(traceback.format_exception_only(exc)), MAX_TRACEBACK_BYTES),
+            )
 
         os.makedirs(self.workspace, exist_ok=True)
         # **二进制写**：文本模式在 Windows 上把 `\n` 翻成 `\r\n`，磁盘上的字节
@@ -227,25 +230,33 @@ class BrowserSession:
             with contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):
                 runpy.run_path(path, run_name="__main__")
         except SyntaxError as exc:  # exec 期的（比如脚本自己 exec 别的串）
-            return _err("syntax_error", f"{exc.msg} (line {exc.lineno})",
-                        log=log.text(), traceback=self._trim_tb())
+            return _err(
+                "syntax_error",
+                f"{exc.msg} (line {exc.lineno})",
+                log=log.text(),
+                traceback=self._trim_tb(),
+            )
         except ModuleNotFoundError as exc:
             # 动态 import 静态分类抓不到；名字给出去让前端分诊
-            return _err("unsupported_import",
-                        f"脚本 import 了浏览器环境里没有的模块: {exc.name}",
-                        modules=[exc.name or ""], log=log.text(),
-                        traceback=self._trim_tb())
+            return _err(
+                "unsupported_import",
+                f"脚本 import 了浏览器环境里没有的模块: {exc.name}",
+                modules=[exc.name or ""],
+                log=log.text(),
+                traceback=self._trim_tb(),
+            )
         except FileNotFoundError as exc:
-            return _err("missing_file",
-                        f"脚本要读的文件不存在: {exc.filename or exc}",
-                        filename=str(exc.filename or ""), log=log.text(),
-                        traceback=self._trim_tb())
+            return _err(
+                "missing_file",
+                f"脚本要读的文件不存在: {exc.filename or exc}",
+                filename=str(exc.filename or ""),
+                log=log.text(),
+                traceback=self._trim_tb(),
+            )
         except MemoryError:
-            return _err("out_of_memory", "脚本耗尽了浏览器可用内存",
-                        log=log.text())
+            return _err("out_of_memory", "脚本耗尽了浏览器可用内存", log=log.text())
         except BaseException:  # noqa: BLE001 - 用户代码，什么都可能抛
-            return _err("script_error", "脚本执行失败",
-                        log=log.text(), traceback=self._trim_tb())
+            return _err("script_error", "脚本执行失败", log=log.text(), traceback=self._trim_tb())
 
         # pyplot 兜底：从不 savefig 的脚本（plt.plot + plt.show）也要能用。
         # 策略（去重、命名、上限）在 `figcapture` 里，与桌面 worker 共用同一份
@@ -253,7 +264,8 @@ class BrowserSession:
         # 而前端按 stem 索引一切。
         base = os.path.splitext(safe_name)[0]
         fallback, dropped = figcapture.collect_pyplot_figures(
-            self.capture, base, plt, limit=MAX_FIGURES)
+            self.capture, base, plt, limit=MAX_FIGURES
+        )
         for stem in fallback:
             self.capture_source[stem] = figcapture.SOURCE_PYPLOT
 
@@ -266,11 +278,13 @@ class BrowserSession:
         figures = []
         for stem, fig in self.capture.items():
             w_in, h_in = (float(v) for v in fig.get_size_inches())
-            figures.append({
-                "stem": stem,
-                "size_mm": [round(w_in * 25.4, 2), round(h_in * 25.4, 2)],
-                "preview": self._thumb(fig),
-            })
+            figures.append(
+                {
+                    "stem": stem,
+                    "size_mm": [round(w_in * 25.4, 2), round(h_in * 25.4, 2)],
+                    "preview": self._thumb(fig),
+                }
+            )
         self.loaded = True
         # 完整性哈希在**脚本跑完之后**采：要证明的是「实际被执行的那个文件
         # 此刻仍与你给的一模一样」，写进去就立刻算等于只验了一次 write。
@@ -280,28 +294,42 @@ class BrowserSession:
         # 的**记录在案差异**如实体现在字段值上：entry 恒 "__main__"（按
         # `python figure.py` 语义跑）、original_artifact 恒 None（虚拟 FS
         # 里没有用户原件，写回本来就不存在于这个入口）。
-        return {"ok": True, "figures": figures, "log": log.text(),
-                "descriptors": self._descriptors(source.encode("utf-8")),
-                "truncated_figures": truncated, "script": self.script_name,
-                "source_sha256": status.get("sha256", ""),
-                "source_bytes": status.get("bytes", 0)}
+        return {
+            "ok": True,
+            "figures": figures,
+            "log": log.text(),
+            "descriptors": self._descriptors(source.encode("utf-8")),
+            "truncated_figures": truncated,
+            "script": self.script_name,
+            "source_sha256": status.get("sha256", ""),
+            "source_bytes": status.get("bytes", 0),
+        }
 
     def _descriptors(self, script_bytes: bytes) -> list[dict]:
         """捕获描述符（figcapture 唯一实现的装配，语义见 load 里的注释）。"""
         fingerprint = figcapture.source_fingerprint(
-            script_bytes, script=self.script_name, entry="__main__",
-            profile=figcapture.PROFILE_SAFE, target_kind="script", argv=(),
+            script_bytes,
+            script=self.script_name,
+            entry="__main__",
+            profile=figcapture.PROFILE_SAFE,
+            target_kind="script",
+            argv=(),
             passthrough_savefig=False,
-            matplotlib_version=matplotlib.__version__)
-        return [figcapture.build_descriptor(
-                    script=self.script_name, entry="__main__", stem=stem,
-                    capture_source=self.capture_source.get(
-                        stem, figcapture.SOURCE_SAVEFIG),
-                    execution_profile=figcapture.PROFILE_SAFE,
-                    size_mm=figcapture.size_mm_of(fig),
-                    source_fingerprint=fingerprint,
-                    original_artifact=None).to_payload()
-                for stem, fig in self.capture.items()]
+            matplotlib_version=matplotlib.__version__,
+        )
+        return [
+            figcapture.build_descriptor(
+                script=self.script_name,
+                entry="__main__",
+                stem=stem,
+                capture_source=self.capture_source.get(stem, figcapture.SOURCE_SAVEFIG),
+                execution_profile=figcapture.PROFILE_SAFE,
+                size_mm=figcapture.size_mm_of(fig),
+                source_fingerprint=fingerprint,
+                original_artifact=None,
+            ).to_payload()
+            for stem, fig in self.capture.items()
+        ]
 
     # ---------------- 源文件完整性 ----------------
     def source_status(self) -> dict:
@@ -322,8 +350,12 @@ class BrowserSession:
                 data = f.read()
         except OSError as exc:
             return _err("source_unreadable", f"读不到工作区里的源文件: {exc}")
-        return {"ok": True, "script": self.script_name, "bytes": len(data),
-                "sha256": hashlib.sha256(data).hexdigest()}
+        return {
+            "ok": True,
+            "script": self.script_name,
+            "bytes": len(data),
+            "sha256": hashlib.sha256(data).hexdigest(),
+        }
 
     def _trim_tb(self) -> str:
         """用户脚本的 traceback：去掉 runpy/browser 这几层内部帧再截尾。"""
@@ -334,8 +366,9 @@ class BrowserSession:
             if self.workspace in ln:
                 start = i
                 break
-        return _tail("Traceback (most recent call last):\n" + "".join(lines[start:]),
-                     MAX_TRACEBACK_BYTES)
+        return _tail(
+            "Traceback (most recent call last):\n" + "".join(lines[start:]), MAX_TRACEBACK_BYTES
+        )
 
     def _thumb(self, fig) -> str:
         """图选择器用的小 PNG（base64）。失败给空串，选择器退回文字条目。"""
@@ -367,10 +400,16 @@ class BrowserSession:
         except Exception:  # noqa: BLE001 - instrument/manifest/savefig 都可能栽
             return _err("render_error", "渲染失败", traceback=self._trim_tb())
         self.revision += 1
-        return {"ok": True, "stem": stem, "script": self.script_name,
-                "manifest": man, "svg": svg,
-                "patch_hash": patchspec.patch_hash([]),
-                "render_revision": self.revision, "warnings": []}
+        return {
+            "ok": True,
+            "stem": stem,
+            "script": self.script_name,
+            "manifest": man,
+            "svg": svg,
+            "patch_hash": patchspec.patch_hash([]),
+            "render_revision": self.revision,
+            "warnings": [],
+        }
 
     def render(self, stem: str, patches: list, preview_dpi: int | None = None) -> dict:
         try:
@@ -387,12 +426,16 @@ class BrowserSession:
             warnings = overrides_mod.apply(state, patches)
             man, svg = self._render(state, stem, preview_dpi)
         except Exception:  # noqa: BLE001
-            return _err("render_error", "应用修改后渲染失败",
-                        traceback=self._trim_tb())
+            return _err("render_error", "应用修改后渲染失败", traceback=self._trim_tb())
         self.revision += 1
-        return {"ok": True, "manifest": man, "svg": svg,
-                "warnings": warnings, "patch_hash": patch_hash,
-                "render_revision": self.revision}
+        return {
+            "ok": True,
+            "manifest": man,
+            "svg": svg,
+            "warnings": warnings,
+            "patch_hash": patch_hash,
+            "render_revision": self.revision,
+        }
 
     def preview_png(self, stem: str, patches: list, width: int) -> dict:
         """按 patches 出高清位图——**状态中立**，与 worker._do_preview_png 同纪律。"""
@@ -402,29 +445,25 @@ class BrowserSession:
             return _err("bad_request", f"没有这个 figure: {stem}")
         except Exception:  # noqa: BLE001 - 首次 instrument 也可能栽
             return _err("render_error", "渲染失败", traceback=self._trim_tb())
-        prev = [{"gid": g, "prop": p, "value": v}
-                for (g, p), v in state.applied.items()]
+        prev = [{"gid": g, "prop": p, "value": v} for (g, p), v in state.applied.items()]
         try:
             overrides_mod.apply(state, patches)
             w_in = float(state.fig.get_size_inches()[0]) or 1.0
             buf = io.BytesIO()
             with _real_output():
-                _REAL_SAVEFIG(state.fig, buf, format="png",
-                              dpi=max(50, int(width) / w_in))
+                _REAL_SAVEFIG(state.fig, buf, format="png", dpi=max(50, int(width) / w_in))
         except Exception:  # noqa: BLE001
             return _err("render_error", "位图预览失败", traceback=self._trim_tb())
         finally:
             with contextlib.suppress(Exception):
                 overrides_mod.apply(state, prev)
-        return {"ok": True,
-                "png": base64.b64encode(buf.getvalue()).decode("ascii")}
+        return {"ok": True, "png": base64.b64encode(buf.getvalue()).decode("ascii")}
 
     def _render(self, state, stem: str, preview_dpi: int | None = None):
         man = manifest_mod.build_manifest(state, stem)
         buf = io.BytesIO()
         with _real_output():
-            _REAL_SAVEFIG(state.fig, buf, format="svg",
-                          dpi=preview_dpi or PREVIEW_DPI)
+            _REAL_SAVEFIG(state.fig, buf, format="svg", dpi=preview_dpi or PREVIEW_DPI)
         # manifest 走一遍 JSON 序列化再解回来：worker 是「落盘再读」，这里
         # 等价地把 numpy 标量在**这一层**就规约成纯 JSON 值——交给 JS 的
         # 结构里绝不能混着 numpy 类型
@@ -449,6 +488,7 @@ def _err(code: str, message: str, **extra) -> dict:
 
 # ---------------------------------------------------------------- JSON 出入口
 
+
 def _safe_script_name(filename: str) -> str:
     """用户文件名 → 虚拟 FS 里的脚本名。
 
@@ -457,8 +497,12 @@ def _safe_script_name(filename: str) -> str:
     """
     base = os.path.basename(filename or "")
     stem, ext = os.path.splitext(base)
-    ok = ext == ".py" and stem and all(
-        c.isalnum() or c in "._- " for c in stem) and not stem.startswith(".")
+    ok = (
+        ext == ".py"
+        and stem
+        and all(c.isalnum() or c in "._- " for c in stem)
+        and not stem.startswith(".")
+    )
     return base if ok else "figure.py"
 
 
@@ -474,8 +518,7 @@ def handle(request_json: str) -> str:
         req = json.loads(request_json)
         cmd = req.get("cmd")
         if cmd == "classify":
-            out = {"ok": True,
-                   **classify_imports(req["source"], req["supported_roots"])}
+            out = {"ok": True, **classify_imports(req["source"], req["supported_roots"])}
         elif cmd == "safe_name":
             # **无状态、且必须在跑用户脚本之前调**：Worker 拿它把工作区里的
             # 脚本路径钉死在 JS 那一侧。路径要是等 `load` 跑完再从回应里取，
@@ -495,11 +538,11 @@ def handle(request_json: str) -> str:
             elif cmd == "open":
                 out = _ACTIVE.open_figure(req["stem"])
             elif cmd == "render":
-                out = _ACTIVE.render(req["stem"], req.get("patches", []),
-                                     req.get("preview_dpi"))
+                out = _ACTIVE.render(req["stem"], req.get("patches", []), req.get("preview_dpi"))
             else:
-                out = _ACTIVE.preview_png(req["stem"], req.get("patches", []),
-                                          int(req.get("width", 800)))
+                out = _ACTIVE.preview_png(
+                    req["stem"], req.get("patches", []), int(req.get("width", 800))
+                )
         elif cmd == "reset":
             _ACTIVE = None
             plt.close("all")
@@ -509,6 +552,9 @@ def handle(request_json: str) -> str:
     except SyntaxError as exc:  # classify 的 ast.parse
         out = _err("syntax_error", f"{exc.msg} (line {exc.lineno})", line=exc.lineno)
     except Exception:  # noqa: BLE001 - 边界函数，绝不向 JS 抛
-        out = _err("internal_error", "playground 引擎内部错误",
-                   traceback=_tail(traceback.format_exc(), MAX_TRACEBACK_BYTES))
+        out = _err(
+            "internal_error",
+            "playground 引擎内部错误",
+            traceback=_tail(traceback.format_exc(), MAX_TRACEBACK_BYTES),
+        )
     return json.dumps(out, ensure_ascii=False, default=_json_default)

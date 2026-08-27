@@ -3,15 +3,31 @@
 正则会把相邻条目的字段串到一起（实测 35 个事件只认出 20 个，还互相串味）。
 配对扫描是这里唯一可靠的读法。
 """
+
 import json
 import re
 import sys
 
 HELPERS = {
-    "dragBegin": ["panel", "gid", "prop", "document_variant", "display_variant",
-                  "authority_variant", "exact_authority", "anchor_from_document"],
-    "dragCommit": ["panel", "gid", "prop", "patch_count", "document_variant",
-                   "authority_variant", "exact_authority"],
+    "dragBegin": [
+        "panel",
+        "gid",
+        "prop",
+        "document_variant",
+        "display_variant",
+        "authority_variant",
+        "exact_authority",
+        "anchor_from_document",
+    ],
+    "dragCommit": [
+        "panel",
+        "gid",
+        "prop",
+        "patch_count",
+        "document_variant",
+        "authority_variant",
+        "exact_authority",
+    ],
     "previewEnd": ["session", "panel", "reason", "duration_ms"],
 }
 SPREADS = {
@@ -68,7 +84,7 @@ def extract(path):
     table = {}
     for m in re.finditer(r"^  '([a-z_]+(?:\.[a-z_]+)+)':\s*", body, re.M):
         name = m.group(1)
-        rest = body[m.end():]
+        rest = body[m.end() :]
         helper = re.match(r"(dragBegin|dragCommit|previewEnd)\(\)", rest)
         if helper:
             table[name] = sorted(HELPERS[helper.group(1)])

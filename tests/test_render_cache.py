@@ -10,6 +10,7 @@
   请求时，后到的 `send_file` 出去的可能是只写了一半的 PNG。
 * 零字节文件（上一次写到一半就被杀）必须当场重建，不能当缓存交出去。
 """
+
 import hashlib
 import os
 import threading
@@ -60,8 +61,9 @@ def _settle(path, *, age: float) -> None:
 
 def _cached_files(tmp_path):
     """落成的缓存文件（写到一半的 `.part.png` 不算）。"""
-    return sorted(p.name for p in (tmp_path / "cache").glob("*.png")
-                  if not p.name.endswith(".part.png"))
+    return sorted(
+        p.name for p in (tmp_path / "cache").glob("*.png") if not p.name.endswith(".part.png")
+    )
 
 
 def test_mtime_change_without_content_change_still_hits(client, tmp_path):
@@ -79,8 +81,9 @@ def test_mtime_change_without_content_change_still_hits(client, tmp_path):
 
     st = src.stat()
     import os
+
     os.utime(src, (st.st_atime + 1000, st.st_mtime + 1000))
-    m._SOURCE_SHA1.clear()      # 模拟进程重启：memo 里没有旧值可赖
+    m._SOURCE_SHA1.clear()  # 模拟进程重启：memo 里没有旧值可赖
 
     assert client.get("/api/render?id=p1.pdf&w=200").status_code == 200
     assert _cached_files(tmp_path) == first, "内容没变就不该多出一个缓存文件"
@@ -93,7 +96,7 @@ def test_content_change_invalidates(client, tmp_path):
     assert client.get("/api/render?id=p1.pdf&w=200").status_code == 200
     before = _cached_files(tmp_path)
 
-    _write_pdf(figs / "p1.pdf", "B")        # 内容真的变了
+    _write_pdf(figs / "p1.pdf", "B")  # 内容真的变了
     assert client.get("/api/render?id=p1.pdf&w=200").status_code == 200
     after = _cached_files(tmp_path)
     assert len(after) == 2 and before[0] in after, "内容变了必须换一个键"
@@ -125,7 +128,7 @@ def test_source_sha1_memo_avoids_rehashing(client, tmp_path, monkeypatch):
     assert a == b and len(calls) == 1, "安定文件的第二次调用应当走 memo"
 
     _write_pdf(src, "B")
-    _settle(src, age=30)        # 显式推进 mtime：真正走到 memo 失效那条路
+    _settle(src, age=30)  # 显式推进 mtime：真正走到 memo 失效那条路
     c = m.source_sha1(src)
     assert len(calls) == 2 and c != a
 
@@ -145,14 +148,16 @@ def test_same_tick_same_size_rewrite_never_returns_the_old_digest(client, tmp_pa
 
     assert m.source_sha1(src) == hashlib.sha1(b"A" * 780).hexdigest()
 
-    src.write_bytes(b"B" * 780)             # 同尺寸改写
-    os.utime(src, ns=stamp)                 # 同 tick：签名一个比特没动
+    src.write_bytes(b"B" * 780)  # 同尺寸改写
+    os.utime(src, ns=stamp)  # 同 tick：签名一个比特没动
     now = src.stat()
-    assert (now.st_mtime_ns, now.st_size) == (stamp[1], st.st_size), \
+    assert (now.st_mtime_ns, now.st_size) == (stamp[1], st.st_size), (
         "现场没构造出来：mtime 或 size 变了，本用例就不再是它自称的那个"
+    )
 
-    assert m.source_sha1(src) == hashlib.sha1(b"B" * 780).hexdigest(), \
+    assert m.source_sha1(src) == hashlib.sha1(b"B" * 780).hexdigest(), (
         "同 tick 同尺寸改写拿到了旧摘要——渲染缓存会挂着上一版的图"
+    )
 
 
 def test_a_young_signature_evicts_the_stale_memo_entry(client, tmp_path):
@@ -167,15 +172,16 @@ def test_a_young_signature_evicts_the_stale_memo_entry(client, tmp_path):
     src.write_bytes(b"A" * 640)
     _settle(src, age=60)
     old_stamp = src.stat().st_mtime_ns
-    first = m.source_sha1(src)                    # 安定文件：这条进了 memo
+    first = m.source_sha1(src)  # 安定文件：这条进了 memo
     assert m._SOURCE_SHA1.get(str(src), (0, 0, ""))[2] == first
 
-    src.write_bytes(b"B" * 640)                   # 同尺寸，mtime 是「刚刚」
+    src.write_bytes(b"B" * 640)  # 同尺寸，mtime 是「刚刚」
     assert m.source_sha1(src) == hashlib.sha1(b"B" * 640).hexdigest()
 
-    os.utime(src, ns=(old_stamp, old_stamp))      # 把当初那个 mtime 还原回来
-    assert m.source_sha1(src) == hashlib.sha1(b"B" * 640).hexdigest(), \
+    os.utime(src, ns=(old_stamp, old_stamp))  # 把当初那个 mtime 还原回来
+    assert m.source_sha1(src) == hashlib.sha1(b"B" * 640).hexdigest(), (
         "旧 memo 条目复活了：mtime 被还原之后它又匹配上，交出了上上版的摘要"
+    )
 
 
 def test_concurrent_requests_never_serve_a_torn_png(client, tmp_path, monkeypatch):
@@ -197,6 +203,7 @@ def test_concurrent_requests_never_serve_a_torn_png(client, tmp_path, monkeypatc
         会看到一个**非零但残缺**的文件并当成缓存交出去。
         """
         import time
+
         real(path, w, out)
         data = out.read_bytes()
         out.write_bytes(data[: len(data) // 3])
@@ -212,7 +219,7 @@ def test_concurrent_requests_never_serve_a_torn_png(client, tmp_path, monkeypatc
         try:
             r = client.get("/api/render?id=p1.pdf&w=400")
             results.append((r.status_code, r.get_data()))
-        except Exception as exc:            # noqa: BLE001 — 线程里的异常要带回来
+        except Exception as exc:  # noqa: BLE001 — 线程里的异常要带回来
             errors.append(exc)
 
     threads = [threading.Thread(target=hit) for _ in range(16)]
@@ -267,7 +274,7 @@ def test_same_key_renders_once_under_concurrency(client, tmp_path, monkeypatch):
     def counted(path, w, out):
         with counter_lock:
             calls.append(w)
-        time.sleep(0.05)          # 给别的线程足够时间挤进来
+        time.sleep(0.05)  # 给别的线程足够时间挤进来
         real(path, w, out)
 
     monkeypatch.setattr(m.pdfbackend, "render_preview_png", counted)
@@ -279,7 +286,7 @@ def test_same_key_renders_once_under_concurrency(client, tmp_path, monkeypatch):
         try:
             r = client.get("/api/render?id=p1.pdf&w=400")
             results.append((r.status_code, r.get_data()))
-        except Exception as exc:            # noqa: BLE001 — 线程里的异常要带回来
+        except Exception as exc:  # noqa: BLE001 — 线程里的异常要带回来
             errors.append(exc)
 
     threads = [threading.Thread(target=hit) for _ in range(16)]

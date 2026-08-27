@@ -16,6 +16,7 @@
 UAC、中文路径这些只有 Windows 上跑真产物才算数，走
 `.github/workflows/nightly.yml` 的「装一遍再冒烟」那条链路。
 """
+
 import json
 import os
 import re
@@ -154,7 +155,7 @@ def test_user_facing_text_is_localized_for_every_language():
         assert f"$({key})" in TEXT, f"{key} 定义了却没人用"
         for lang in langs:
             # 模板里为了对齐用了多个空格，比对前先把空白压平
-            needle = "LangString %s ${LANG_%s} \"" % (key, lang.upper())
+            needle = 'LangString %s ${LANG_%s} "' % (key, lang.upper())
             assert needle in FLAT, f"{lang} 缺少 LangString {key}"
 
 
@@ -181,7 +182,7 @@ def test_status_text_is_honest():
     # 展开文件时的 `Extract: xxx.dll` 只进日志，不刷状态行；复制完还原
     assert "SetDetailsPrint listonly" in TEXT
     assert "SetDetailsPrint both" in TEXT
-    for fake in ("78%", "Progress:", "IntFmt $0 \"%d%%\""):
+    for fake in ("78%", "Progress:", 'IntFmt $0 "%d%%"'):
         assert fake not in TEXT
 
 
@@ -213,8 +214,11 @@ def test_shortcut_helpers_and_policy():
     # 改成 Section Install 里无条件创建，与静默/被动安装同一条路径
     section = TEXT.split("Section Install\n")[1].split("SectionEnd")[0]
     assert re.search(r"^\s*Call CreateOrUpdateDesktopShortcut\s*$", section, re.M)
-    assert not re.search(r"\$\{If\} \$PassiveMode = 1\s*\n\s*\$\{OrIf\} \$\{Silent\}\s*\n"
-                         r"\s*Call CreateOrUpdateDesktopShortcut", section)
+    assert not re.search(
+        r"\$\{If\} \$PassiveMode = 1\s*\n\s*\$\{OrIf\} \$\{Silent\}\s*\n"
+        r"\s*Call CreateOrUpdateDesktopShortcut",
+        section,
+    )
     # /NS 与 /UPDATE 的豁免仍在函数内部
     for fn in ("CreateOrUpdateStartMenuShortcut", "CreateOrUpdateDesktopShortcut"):
         body = TEXT.split(f"Function {fn}\n")[1].split("FunctionEnd")[0]
@@ -234,13 +238,13 @@ def test_command_line_switches_survive():
 def test_exception_flows_still_have_their_pages():
     """异常流程该弹的还得弹——精简的是首次安装，不是安全判断。"""
     assert "Page custom PageReinstall PageLeaveReinstall" in TEXT
-    assert "$(alreadyInstalledLong)" in TEXT          # 同版本
-    assert "$(newerVersionInstalled)" in TEXT         # 降级
+    assert "$(alreadyInstalledLong)" in TEXT  # 同版本
+    assert "$(newerVersionInstalled)" in TEXT  # 降级
     assert '!if "${ALLOWDOWNGRADES}" == "false"' in TEXT
-    assert "StrCpy $WixMode 1" in TEXT                # 旧 WiX 安装迁移
+    assert "StrCpy $WixMode 1" in TEXT  # 旧 WiX 安装迁移
     assert "!insertmacro CheckIfAppIsRunning" in TEXT  # 应用仍在运行
-    assert 'Abort "$(webview2AbortError)"' in TEXT     # WebView2 装不上
-    assert "!insertmacro MUI_UNPAGE_CONFIRM" in TEXT   # 卸载确认
+    assert 'Abort "$(webview2AbortError)"' in TEXT  # WebView2 装不上
+    assert "!insertmacro MUI_UNPAGE_CONFIRM" in TEXT  # 卸载确认
     assert "!insertmacro MUI_UNPAGE_INSTFILES" in TEXT
 
 
@@ -260,7 +264,7 @@ def test_no_magplot_migration_in_the_installer():
 
 def test_payload_and_registration_survive():
     section = TEXT.split("Section Install\n")[1].split("SectionEnd")[0]
-    assert "{{#each binaries}}" in section          # sidecar / workerd / 内置 runtime
+    assert "{{#each binaries}}" in section  # sidecar / workerd / 内置 runtime
     assert "{{#each resources}}" in section
     assert "{{#each file_associations" in section
     assert "{{#each deep_link_protocols" in section
@@ -332,7 +336,7 @@ def test_installer_bitmaps_match_the_generator():
         off = struct.unpack_from("<I", data, 10)[0]
         w, h = struct.unpack_from("<ii", data, 18)
         stride = (w * 3 + 3) // 4 * 4
-        rows = [data[off + y * stride: off + y * stride + w * 3] for y in range(abs(h))]
+        rows = [data[off + y * stride : off + y * stride + w * 3] for y in range(abs(h))]
         return w, abs(h), b"".join(rows)
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -413,9 +417,9 @@ def test_generated_script_has_the_same_two_pages():
     assert _pre_function_for("MUI_PAGE_STARTMENU", lines) == "Skip"
 
     # 这三条决定了另外三页存不存在，且只有打包器说了算
-    assert '!define INSTALLMODE "currentUser"' in code      # 没有安装模式页，不要管理员
-    assert '!define LICENSE ""' in code                     # 没有许可证页
-    assert '!define STARTMENUFOLDER ""' in code             # 快捷方式直接落 $SMPROGRAMS
+    assert '!define INSTALLMODE "currentUser"' in code  # 没有安装模式页，不要管理员
+    assert '!define LICENSE ""' in code  # 没有许可证页
+    assert '!define STARTMENUFOLDER ""' in code  # 快捷方式直接落 $SMPROGRAMS
 
     # 完成页的形态
     assert "MUI_FINISHPAGE_SHOWREADME" not in code
@@ -424,13 +428,15 @@ def test_generated_script_has_the_same_two_pages():
 
     # 语言表与品牌文案对得上（打包器决定插哪几种语言）
     langs = re.findall(r'!insertmacro MUI_LANGUAGE "(\w+)"', code)
-    assert sorted(langs) == sorted(NSIS_CONF["languages"]), \
+    assert sorted(langs) == sorted(NSIS_CONF["languages"]), (
         f"中间脚本的语言表 {langs} 与 tauri.conf.json 不一致"
+    )
     flat = re.sub(r"[ \t]+", " ", code)
     for key in BRAND_STRINGS:
         for lang in langs:
-            assert 'LangString %s ${LANG_%s} "' % (key, lang.upper()) in flat, \
+            assert 'LangString %s ${LANG_%s} "' % (key, lang.upper()) in flat, (
                 f"中间脚本缺 {lang} 的 {key}"
+            )
 
     # 精简没有把要装的东西弄丢：sidecar / workerd / 内置 runtime 都在
     assert '!define MAINBINARYNAME "Tavotto"' in code
@@ -466,8 +472,7 @@ def test_sidecar_layout_has_a_single_source_of_truth():
     Rust 壳（src-tauri/src/sidecar.rs）、Python 定位器、NSIS 安装段三处都按
     这个布局找 sidecar 目录；映射一改，三处必须同时改。
     """
-    assert CONFIG["bundle"]["resources"]["../dist/Tavotto"] == \
-        "/".join(locate.SIDECAR_REL)
+    assert CONFIG["bundle"]["resources"]["../dist/Tavotto"] == "/".join(locate.SIDECAR_REL)
     rust = (ROOT / "src-tauri" / "src" / "sidecar.rs").read_text(encoding="utf-8")
     for part in locate.SIDECAR_REL:
         assert f'join("{part}")' in rust, f"sidecar.rs 里找不到 {part}"
@@ -482,8 +487,8 @@ def test_install_registers_the_cli_through_the_bundled_binary():
     """
     assert _bundled_cli_path() in SECTION_INSTALL
     assert "doctor --json --write-manifest" in SECTION_INSTALL
-    assert "nsExec::" in SECTION_INSTALL          # 不弹窗、不闪黑框
-    assert "/TIMEOUT=" in SECTION_INSTALL         # 冷启动异常时不许挂住安装器
+    assert "nsExec::" in SECTION_INSTALL  # 不弹窗、不闪黑框
+    assert "/TIMEOUT=" in SECTION_INSTALL  # 冷启动异常时不许挂住安装器
 
 
 def test_registration_failure_never_aborts_the_install():
@@ -495,7 +500,7 @@ def test_registration_failure_never_aborts_the_install():
     block = SECTION_INSTALL.split("$(registeringTavotto)")[1]
     block = block.split("TAVOTTO PATCH END")[0]
     assert "Abort" not in block
-    assert "DetailPrint" in block                 # 但要留下痕迹，别静默
+    assert "DetailPrint" in block  # 但要留下痕迹，别静默
 
 
 def test_uninstall_removes_the_manifest_before_deleting_files():
@@ -505,8 +510,9 @@ def test_uninstall_removes_the_manifest_before_deleting_files():
     报出来的是「执行不了」，而用户需要看到的是「没装」。
     """
     assert "doctor --json --remove-manifest" in SECTION_UNINSTALL
-    assert SECTION_UNINSTALL.index("--remove-manifest") < \
-        SECTION_UNINSTALL.index('Delete "$INSTDIR\\${MAINBINARYNAME}.exe"')
+    assert SECTION_UNINSTALL.index("--remove-manifest") < SECTION_UNINSTALL.index(
+        'Delete "$INSTDIR\\${MAINBINARYNAME}.exe"'
+    )
 
 
 def test_registration_does_not_need_admin():
@@ -539,12 +545,12 @@ def test_nightly_packaging_does_not_need_a_signing_key():
     nightly 的安装腿就一直红着，而 scripts/build_desktop.py 早有同样的处理
     （那条链路走它，所以没暴露）。
     """
-    assert CONFIG["bundle"]["createUpdaterArtifacts"] is True, \
-        "配置变了的话这条看护要重新想一遍"
+    assert CONFIG["bundle"]["createUpdaterArtifacts"] is True, "配置变了的话这条看护要重新想一遍"
     nightly = (ROOT / ".github" / "workflows" / "nightly.yml").read_text(encoding="utf-8")
     build = nightly.split("Tauri 打包")[1].split("- name:")[0]
-    assert "createUpdaterArtifacts" in build and "false" in build, \
+    assert "createUpdaterArtifacts" in build and "false" in build, (
         "nightly 的 tauri build 没关掉更新包产出——没有私钥时它会直接失败"
+    )
     # build_desktop.py 那条链路同样得有（它是本地/发行走的那条）
     desktop = (ROOT / "scripts" / "build_desktop.py").read_text(encoding="utf-8")
     assert "TAURI_SIGNING_PRIVATE_KEY" in desktop

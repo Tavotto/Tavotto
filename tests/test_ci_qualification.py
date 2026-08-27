@@ -11,6 +11,7 @@
 需要 numpy/Pillow 的用例在缺依赖时**跳过并注明理由**（它们在 `[ci]` extras 里，
 普通开发环境不装）；不需要的那些一律平台无关。
 """
+
 from __future__ import annotations
 
 import json
@@ -34,12 +35,14 @@ import visual_regression as VR  # noqa: E402
 try:
     import numpy  # noqa: F401
     from PIL import Image  # noqa: F401
+
     HAS_IMAGING = True
 except ImportError:
     HAS_IMAGING = False
 
 needs_imaging = pytest.mark.skipif(
-    not HAS_IMAGING, reason="视觉回归需要 numpy 与 Pillow（pip install -e '.[ci]'）")
+    not HAS_IMAGING, reason="视觉回归需要 numpy 与 Pillow（pip install -e '.[ci]'）"
+)
 
 
 # ============================================================ 视觉回归
@@ -62,7 +65,8 @@ class TestVisualManifest:
         reg_stems = {s for spec in reg["scripts"].values() for s in spec["stems"]}
         manifest_stems = set(VR.load_manifest()["cases"])
         assert reg_stems == manifest_stems, (
-            f"注册表独有 {reg_stems - manifest_stems}；清单独有 {manifest_stems - reg_stems}")
+            f"注册表独有 {reg_stems - manifest_stems}；清单独有 {manifest_stems - reg_stems}"
+        )
 
     def test_every_visual_exception_states_a_reason(self):
         """任何放宽或跳过都必须写明理由。
@@ -82,7 +86,7 @@ class TestVisualManifest:
         否则服务端会向上取整到另一档，基线与候选在不同分辨率下比较，
         每次都是 size_mismatch，而原因完全看不出来。
         """
-        buckets = [200, 400, 800, 1600, 3200]     # 与 app.RENDER_BUCKETS 同源
+        buckets = [200, 400, 800, 1600, 3200]  # 与 app.RENDER_BUCKETS 同源
         assert VR.RENDER_WIDTH in buckets
 
     def test_tolerance_merge_keeps_case_override(self):
@@ -98,12 +102,14 @@ class TestVisualComparison:
     def _png(self, tmp_path, arr, name):
         import numpy as np
         from PIL import Image
+
         p = tmp_path / name
         Image.fromarray(np.clip(arr, 0, 255).astype("uint8"), mode="L").save(p)
         return p
 
     def _base(self):
         import numpy as np
+
         a = np.full((160, 240), 240, dtype="uint8")
         a[40:120, 50:190] = 30
         return a
@@ -120,6 +126,7 @@ class TestVisualComparison:
         就足以顶穿阈值，而画面一模一样。
         """
         import numpy as np
+
         b = self._base()
         noisy = b.astype("int16") + np.tile([0, 2, -2, 1, -1], (160, 48))
         m = VR.compare(self._png(tmp_path, b, "a.png"), self._png(tmp_path, noisy, "n.png"), None)
@@ -130,6 +137,7 @@ class TestVisualComparison:
     def test_moved_element_is_caught(self, tmp_path):
         """元素挪了几个像素必须变红——这正是要抓的那类回归。"""
         import numpy as np
+
         b = self._base()
         moved = np.full((160, 240), 240, dtype="uint8")
         moved[46:126, 50:190] = 30
@@ -140,13 +148,17 @@ class TestVisualComparison:
     def test_colour_shift_is_caught(self, tmp_path):
         """整体亮度偏移（改了配色）也必须抓到。"""
         b = self._base()
-        m = VR.compare(self._png(tmp_path, b, "a.png"),
-                       self._png(tmp_path, b.astype("int16") + 10, "c.png"), None)
+        m = VR.compare(
+            self._png(tmp_path, b, "a.png"),
+            self._png(tmp_path, b.astype("int16") + 10, "c.png"),
+            None,
+        )
         ok, _ = VR.verdict(m, VR.case_tolerance(VR.load_manifest(), "c01_line"))
         assert not ok
 
     def test_size_mismatch_is_a_regression_not_a_crash(self, tmp_path):
         import numpy as np
+
         b = self._base()
         small = np.full((140, 240), 240, dtype="uint8")
         m = VR.compare(self._png(tmp_path, b, "a.png"), self._png(tmp_path, small, "s.png"), None)
@@ -156,6 +168,7 @@ class TestVisualComparison:
     def test_diff_image_is_written_on_change(self, tmp_path):
         """失败时必须给出 diff 图——只报一个数字，开发者只会重跑一次了事。"""
         import numpy as np
+
         b = self._base()
         moved = np.full((160, 240), 240, dtype="uint8")
         moved[46:126, 50:190] = 30
@@ -192,14 +205,16 @@ class TestBenchmarkGate:
 
     def test_regression_beyond_threshold_is_flagged(self):
         base = self._baseline({"p::hot_total_ms": 100.0})
-        ok, findings = BM.compare({"p::hot_total_ms": 100.0 * (1 + (BM.REGRESSION_PCT + 10) / 100)}, base)
+        ok, findings = BM.compare(
+            {"p::hot_total_ms": 100.0 * (1 + (BM.REGRESSION_PCT + 10) / 100)}, base
+        )
         assert not ok
         assert findings[0]["verdict"] == "regression"
 
     def test_noise_below_threshold_passes(self):
         """阈值以内的波动不能报红，否则这条门禁很快就会被忽略。"""
         base = self._baseline({"p::hot_total_ms": 100.0})
-        ok, findings = BM.compare({"p::hot_total_ms": 110.0}, base)   # +10%，低于 25%
+        ok, findings = BM.compare({"p::hot_total_ms": 110.0}, base)  # +10%，低于 25%
         assert ok and findings[0]["verdict"] == "ok"
 
     def test_improvement_is_reported_not_punished(self):
@@ -222,15 +237,18 @@ class TestBenchmarkGate:
         BM.save_baseline(tmp_path, {"metrics": {"a": 1.0}, "metadata": {"sha": "v1"}})
         BM.save_baseline(tmp_path, {"metrics": {"a": 2.0}, "metadata": {"sha": "v2"}})
         cur = json.loads(BM.baseline_path(tmp_path).read_text(encoding="utf-8"))
-        prev = json.loads(BM.baseline_path(tmp_path).with_suffix(".previous.json").read_text(encoding="utf-8"))
+        prev = json.loads(
+            BM.baseline_path(tmp_path).with_suffix(".previous.json").read_text(encoding="utf-8")
+        )
         assert cur["metrics"]["a"] == 2.0 and prev["metrics"]["a"] == 1.0
         assert not list((tmp_path / "baselines" / "perf").glob("*.tmp"))
 
     def test_baseline_records_metadata_that_makes_it_comparable(self, tmp_path):
         """没有 SHA / CPU / Python 的历史数字没有长期价值。"""
         _common.ensure_layout(tmp_path)
-        BM.save_baseline(tmp_path, {"metrics": {"a": 1.0},
-                                    "metadata": _common.run_metadata("main")})
+        BM.save_baseline(
+            tmp_path, {"metrics": {"a": 1.0}, "metadata": _common.run_metadata("main")}
+        )
         meta = json.loads(BM.baseline_path(tmp_path).read_text(encoding="utf-8"))["metadata"]
         for key in ("sha", "python", "cpu_count", "timestamp", "os"):
             assert key in meta
@@ -256,12 +274,26 @@ class TestBenchmarkGate:
 
         把它当冷启动记进基线，会让基线里混进两个数量级不同的数字。
         """
-        raw = {"rows": [
-            {"id": "a.pdf", "really_cold": True, "cold": {"total_ms": 9000},
-             "hot": {"total_ms": 25}, "export_wall_ms": 300, "export_ok": True},
-            {"id": "b.pdf", "really_cold": False, "cold": {"total_ms": 30},
-             "hot": {"total_ms": 22}, "export_wall_ms": 280, "export_ok": False},
-        ]}
+        raw = {
+            "rows": [
+                {
+                    "id": "a.pdf",
+                    "really_cold": True,
+                    "cold": {"total_ms": 9000},
+                    "hot": {"total_ms": 25},
+                    "export_wall_ms": 300,
+                    "export_ok": True,
+                },
+                {
+                    "id": "b.pdf",
+                    "really_cold": False,
+                    "cold": {"total_ms": 30},
+                    "hot": {"total_ms": 22},
+                    "export_wall_ms": 280,
+                    "export_ok": False,
+                },
+            ]
+        }
         m = BM.extract_metrics(raw)
         assert "a.pdf::cold_total_ms" in m
         assert "b.pdf::cold_total_ms" not in m, "把热态当成冷启动记进了基线"
@@ -271,8 +303,10 @@ class TestBenchmarkGate:
 # ============================================================ soak 泄漏判定
 class TestSoakLeakDetection:
     def _series(self, n=50, fd=lambda i: 100, rss=lambda i: 500_000, proc=lambda i: 4):
-        return [{"iteration": i, "fds": fd(i), "rss_kib": rss(i), "processes": proc(i)}
-                for i in range(n)]
+        return [
+            {"iteration": i, "fds": fd(i), "rss_kib": rss(i), "processes": proc(i)}
+            for i in range(n)
+        ]
 
     def test_stable_run_is_clean(self):
         assert SK.analyse(self._series(fd=lambda i: 100 + i % 3), 5)["verdict"] == "ok"
@@ -314,17 +348,25 @@ class TestUpgradeAcceptance:
 
     def test_prereleases_are_never_chosen_as_baseline(self, monkeypatch):
         """用户不会从一个 rc 升上来，拿它当基线是在验没人走过的路径。"""
-        monkeypatch.setattr(UA, "_api_json", lambda url, timeout=60: [
-            {"tag_name": "v0.9.0-rc1", "prerelease": True, "draft": False},
-            {"tag_name": "v0.7.0", "prerelease": False, "draft": False},
-            {"tag_name": "v0.6.0", "prerelease": False, "draft": False},
-        ])
+        monkeypatch.setattr(
+            UA,
+            "_api_json",
+            lambda url, timeout=60: [
+                {"tag_name": "v0.9.0-rc1", "prerelease": True, "draft": False},
+                {"tag_name": "v0.7.0", "prerelease": False, "draft": False},
+                {"tag_name": "v0.6.0", "prerelease": False, "draft": False},
+            ],
+        )
         assert UA.resolve_baseline("0.8.0", None) == "v0.7.0"
 
     def test_baseline_must_be_older_than_candidate(self, monkeypatch):
-        monkeypatch.setattr(UA, "_api_json", lambda url, timeout=60: [
-            {"tag_name": "v0.9.0", "prerelease": False, "draft": False},
-        ])
+        monkeypatch.setattr(
+            UA,
+            "_api_json",
+            lambda url, timeout=60: [
+                {"tag_name": "v0.9.0", "prerelease": False, "draft": False},
+            ],
+        )
         with pytest.raises(_common.CiError) as exc:
             UA.resolve_baseline("0.8.0", None)
         assert exc.value.code == "no_baseline_release"
@@ -339,10 +381,12 @@ class TestUpgradeAcceptance:
         assert any("一" <= ch <= "鿿" for ch in UA.PROJECT_DIRNAME)
 
     def test_traceback_detection_catches_real_shapes(self):
-        log = ("INFO 启动完成\n"
-               "Traceback (most recent call last):\n"
-               '  File "x.py", line 1\n'
-               "KeyError: 'schema'\n")
+        log = (
+            "INFO 启动完成\n"
+            "Traceback (most recent call last):\n"
+            '  File "x.py", line 1\n'
+            "KeyError: 'schema'\n"
+        )
         found = UA._tracebacks(log)
         assert len(found) >= 2
 
@@ -352,11 +396,18 @@ class TestUpgradeAcceptance:
 
 
 # ============================================================ 冒烟
-@pytest.mark.parametrize("script", [
-    "lab_acceptance.py", "soak.py", "visual_regression.py",
-    "benchmark.py", "upgrade_acceptance.py",
-    "compat_matrix.py", "compat_driver.py",
-])
+@pytest.mark.parametrize(
+    "script",
+    [
+        "lab_acceptance.py",
+        "soak.py",
+        "visual_regression.py",
+        "benchmark.py",
+        "upgrade_acceptance.py",
+        "compat_matrix.py",
+        "compat_driver.py",
+    ],
+)
 def test_every_lab_script_has_a_working_cli(script):
     """每个脚本都要能 `--help`。
 
@@ -364,13 +415,19 @@ def test_every_lab_script_has_a_working_cli(script):
     要白等一整轮排队。
     """
     import subprocess
+
     # 读取侧钉 UTF-8：这些脚本的 help 是中文，而 `text=True` 让父进程按本地
     # 区域解码——Windows 的 cp1252 里 0x81/0x8D/0x8F/0x9D 没有定义，撞上就
     # 把「--help 能不能跑」变成一个解码错误。写的一侧钉了、读的一侧没钉，
     # 等于没钉。
-    out = subprocess.run([sys.executable, str(CI_DIR / script), "--help"],
-                         capture_output=True, text=True, timeout=120,
-                         encoding="utf-8", errors="replace")
+    out = subprocess.run(
+        [sys.executable, str(CI_DIR / script), "--help"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        encoding="utf-8",
+        errors="replace",
+    )
     assert out.returncode == 0, f"{script} --help 失败：{out.stderr[-500:]}"
 
 
@@ -408,15 +465,23 @@ class TestUpgradeRenameBoundary:
         渲染成 PASS 会让人以为升级路径验过了，而实际上一次都没跑。
         """
         import summarize as SM
+
         _common.ensure_layout(tmp_path)
         # **报告要盖上本轮身份**，否则汇总会先把它按「上一轮的陈旧报告」拒掉，
         # 根本走不到「跳过怎么渲染」这一支——而这条用例验的正是后者。
         monkeypatch.setenv("GITHUB_RUN_ID", "777")
         monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
-        _common.write_report("upgrade.json",
-                             {"ok": True, "skipped": True, "reason": "rename_boundary",
-                              "detail": "跨越了产品改名边界",
-                              "metadata": {"run_id": "777", "run_attempt": "1"}}, tmp_path)
+        _common.write_report(
+            "upgrade.json",
+            {
+                "ok": True,
+                "skipped": True,
+                "reason": "rename_boundary",
+                "detail": "跨越了产品改名边界",
+                "metadata": {"run_id": "777", "run_attempt": "1"},
+            },
+            tmp_path,
+        )
         monkeypatch.setenv("TAVOTTO_CI_STATE_ROOT", str(tmp_path))
         monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
         text = _detail_for(SM, "upgrade.json", tmp_path)
@@ -426,6 +491,7 @@ class TestUpgradeRenameBoundary:
         # 以为这项验过了，而实际上一次都没跑。
         import contextlib
         import io
+
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             SM.main(["--mode", "release"])
@@ -436,6 +502,7 @@ class TestUpgradeRenameBoundary:
 
 def _detail_for(SM, name, root):
     import json as _json
+
     data = _json.loads((root / "reports" / name).read_text(encoding="utf-8"))
     return SM._detail(name, data)
 
@@ -483,16 +550,18 @@ def test_slow_gate_reads_pytest_exit_code_not_its_human_output():
     # 只剩一份定义了（见 test_there_is_only_one_copy_of_the_slow_gate）。
     for wf in ("_lab-qualification.yml",):
         step = _slow_step(wf)
-        assert 'grep -c "::"' not in step, \
+        assert 'grep -c "::"' not in step, (
             f"{wf}：又回去数 `::` 了——那是 pytest 打给人看的格式，会随版本变"
+        )
         assert "--collect-only" in step, f"{wf}：还是要先确认真的选得中"
         assert "rc=$?" in step, f"{wf}：要按退出码分诊"
         assert "5)" in step, f"{wf}：EXIT_NOTESTSCOLLECTED 那一支不见了"
         # 正面判据：收集的输出要**留下来**。写成「不许出现 2>/dev/null」的
         # 否定形式会被自己的报错文案咬到（那句话里就有这个字面量），而按
         # 「留没留日志」判既准确又不受措辞影响。
-        assert "> slow-collect.log 2>&1" in step, \
+        assert "> slow-collect.log 2>&1" in step, (
             f"{wf}：收集的输出没留下来——出错原因会像这次一样整个消失"
+        )
 
 
 def test_there_is_only_one_copy_of_the_slow_gate():
@@ -522,10 +591,12 @@ def test_there_is_only_one_copy_of_the_slow_gate():
     assert not others, (
         f"这些文件里又出现了一份 slow 门禁：{others}。"
         f"资格验证只能有一份定义——两份必然漂开，而漂开的代价是"
-        f"发行链上跑的判据与 nightly 上验过的不是同一个")
+        f"发行链上跑的判据与 nightly 上验过的不是同一个"
+    )
 
 
 # ---------------- 升级验收与会话认证 -------------------------------------------
+
 
 def test_upgrade_acceptance_carries_session_credentials():
     """0.9.0 起浏览器模式也要认证（ADR 0008），这个脚本当时没跟上。
@@ -545,15 +616,13 @@ def test_upgrade_acceptance_carries_session_credentials():
     # 盯**调用点**而不是「文件里出现过这个名字」：把方法改名成
     # `_unused_adopt_credentials` 之类，子串匹配照样成立，而实例起来之后
     # 一次都不会被调用——那正是这条用例要挡的失效形态。
-    assert "self._adopt_credentials(port)" in src, \
-        "起完实例必须真的调用它，光定义在那儿不算"
-    assert "SA.adopt_session_credentials(" in src, \
-        "必须走唯一实现，别在这里再写一份"
+    assert "self._adopt_credentials(port)" in src, "起完实例必须真的调用它，光定义在那儿不算"
+    assert "SA.adopt_session_credentials(" in src, "必须走唯一实现，别在这里再写一份"
     body = src.split("def _adopt_credentials", 1)[1].split("\n    def ", 1)[0]
-    code = "\n".join(ln for ln in body.splitlines()
-                     if not ln.lstrip().startswith("#"))
-    assert "else:" in code and "裸走" in code, \
+    code = "\n".join(ln for ln in body.splitlines() if not ln.lstrip().startswith("#"))
+    assert "else:" in code and "裸走" in code, (
         "取不到凭据要继续裸走（N-1 基线可能早于 ADR 0008），不是失败"
+    )
 
 
 def test_no_app_request_anywhere_skips_auth():
@@ -572,6 +641,7 @@ def test_no_app_request_anywhere_skips_auth():
     助手单独钉死**——它们是所有调用方共用的那一层，破了下游全塌。
     """
     import ast
+
     offenders = []
     for name, src in _app_launchers().items():
         tree = ast.parse(src)
@@ -589,8 +659,8 @@ def test_no_app_request_anywhere_skips_auth():
             if "_AUTH" not in text:
                 offenders.append(f"{name}: {text[:150]}")
     assert not offenders, (
-        "这些打到应用的请求没带会话凭据，401 的症状会出现在很远的地方：\n"
-        + "\n".join(offenders))
+        "这些打到应用的请求没带会话凭据，401 的症状会出现在很远的地方：\n" + "\n".join(offenders)
+    )
 
 
 def test_the_central_request_helpers_carry_auth():
@@ -604,6 +674,7 @@ def test_the_central_request_helpers_carry_auth():
     共用层塌了下游全塌，所以单独钉死，不靠通用启发式覆盖。
     """
     import ast
+
     src = (SCRIPTS / "smoke_app.py").read_text(encoding="utf-8")
     tree = ast.parse(src)
     checked = set()
@@ -611,11 +682,11 @@ def test_the_central_request_helpers_carry_auth():
         if not (isinstance(fn, ast.FunctionDef) and fn.name in ("_get", "_post", "_req")):
             continue
         body = ast.unparse(fn)
-        assert "_AUTH" in body, \
-            f"smoke_app.{fn.name} 不再带会话凭据——所有调用方会一起 401"
+        assert "_AUTH" in body, f"smoke_app.{fn.name} 不再带会话凭据——所有调用方会一起 401"
         checked.add(fn.name)
-    assert {"_get", "_post"} <= checked, \
+    assert {"_get", "_post"} <= checked, (
         f"没找到中心助手（只找到 {sorted(checked)}）——这条用例本身失效了"
+    )
 
 
 SCRIPTS = CI_DIR.parent
@@ -654,8 +725,9 @@ def test_every_app_launcher_adopts_credentials():
     所以判据放在这里，按行为枚举调用方，而不是逐个脚本各写一条用例。
     """
     launchers = _app_launchers()
-    assert len(launchers) >= 4, \
+    assert len(launchers) >= 4, (
         f"只枚举到 {sorted(launchers)}——枚举判据失效了，这条用例挡不住任何东西"
+    )
     for name, src in launchers.items():
         # **用 AST 找真实的调用，不再做子串启发式。** 这条判据被 Codex 连破
         # 三次，每次都是同一类漏洞：注释满足它、函数**定义**满足它、目标写成
@@ -666,16 +738,18 @@ def test_every_app_launcher_adopts_credentials():
         desktop = "/api/desktop/bootstrap" in src or "TAVOTTO_DESKTOP_HANDSHAKE" in src
         assert adopts or bypass or desktop, (
             f"{name} 起了实例却既不取凭据、也没显式旁路、也不是桌面握手——"
-            "ADR 0008 之后它的每个 API 调用都会 401，而症状会出现在很远的地方")
+            "ADR 0008 之后它的每个 API 调用都会 401，而症状会出现在很远的地方"
+        )
 
 
 def test_session_credential_logic_has_a_single_implementation():
     """凭据装载只能有一处，否则修一个漏一个——本轮已经付过这笔学费。"""
-    hits = [n for n, src in _app_launchers().items()
-            if 'session" / f"port-' in src or "['secret']" in src
-            or '["secret"]' in src]
-    assert hits == ["smoke_app.py"], \
-        f"除 smoke_app 外还有人自己解析凭据文件：{hits}"
+    hits = [
+        n
+        for n, src in _app_launchers().items()
+        if 'session" / f"port-' in src or "['secret']" in src or '["secret"]' in src
+    ]
+    assert hits == ["smoke_app.py"], f"除 smoke_app 外还有人自己解析凭据文件：{hits}"
 
 
 def test_ci_credential_path_matches_session_client():
@@ -687,8 +761,8 @@ def test_ci_credential_path_matches_session_client():
     （与 patchspec ↔ Rust、preflight 双求值器同一套纪律）。
     """
     import importlib.util
-    spec = importlib.util.spec_from_file_location(
-        "_smoke_app_probe", SCRIPTS / "smoke_app.py")
+
+    spec = importlib.util.spec_from_file_location("_smoke_app_probe", SCRIPTS / "smoke_app.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
 
@@ -699,6 +773,7 @@ def test_ci_credential_path_matches_session_client():
     os.environ["TAVOTTO_DATA_DIR"] = str(root)
     try:
         from tavotto.engine import config
+
         config.data_dir.cache_clear() if hasattr(config.data_dir, "cache_clear") else None
         product = Path(session_client.session_file_path(5089))
     finally:
@@ -713,6 +788,7 @@ def test_ci_credential_path_matches_session_client():
 def _is_urllib_request(func) -> bool:
     """`urllib.request.Request` / `Request` 的调用目标。"""
     import ast
+
     if isinstance(func, ast.Attribute) and func.attr == "Request":
         return True
     return isinstance(func, ast.Name) and func.id == "Request"
@@ -725,13 +801,15 @@ def _calls_named(src: str, name: str) -> list:
     这行定义、以及任何一句提到它的注释，都能满足 `name in src`。
     """
     import ast
+
     out = []
     for node in ast.walk(ast.parse(src)):
         if not isinstance(node, ast.Call):
             continue
         f = node.func
-        hit = (isinstance(f, ast.Name) and f.id == name) or \
-              (isinstance(f, ast.Attribute) and f.attr == name)
+        hit = (isinstance(f, ast.Name) and f.id == name) or (
+            isinstance(f, ast.Attribute) and f.attr == name
+        )
         if hit:
             out.append(ast.unparse(node))
     return out
@@ -747,6 +825,7 @@ def _sets_env(src: str, key: str) -> bool:
     于是它整个躲开了认证扫描（#56 的第四条 review）。注释里提一句不算。
     """
     import ast
+
     for node in ast.walk(ast.parse(src)):
         if isinstance(node, ast.Dict):
             for k in node.keys:
@@ -767,6 +846,7 @@ def _references_local_base(call) -> bool:
     URL 文本里有没有某个域名子串（后者 CodeQL 会告，且子串可以出现在任意位置）。
     """
     import ast
+
     if not call.args:
         return False
     for node in ast.walk(call.args[0]):
@@ -798,9 +878,11 @@ def _launch_reaches(src: str, target: str) -> bool:
     更便宜**地发现同一件事，不是取代它。
     """
     import ast
+
     tree = ast.parse(src)
-    funcs = {n.name: n for n in ast.walk(tree)
-             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    funcs = {
+        n.name: n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
 
     def dead(node) -> bool:
         """静态就走不到的分支：`if False:` / `if 0:` / `while False:`。
@@ -830,9 +912,8 @@ def _launch_reaches(src: str, target: str) -> bool:
                     out.add(f.attr)
         return out
 
-    launchers = [fn for fn in funcs.values()
-                 if "Popen" in calls_in(fn)]
-    if not launchers:                      # 模块级 Popen：退回全文件
+    launchers = [fn for fn in funcs.values() if "Popen" in calls_in(fn)]
+    if not launchers:  # 模块级 Popen：退回全文件
         launchers = [tree]
     for fn in launchers:
         reachable = calls_in(fn)
@@ -859,6 +940,7 @@ def test_single_path_action_inputs_are_not_globs():
     多行 glob 收，写 glob 是对的。判据只盯单值输入，别把正当写法也判红。
     """
     import re
+
     SINGLE_VALUE = ("file", "image", "artifact-name", "output-file")
     offenders = []
     for wf in sorted(WORKFLOWS.glob("*.yml")):
@@ -872,12 +954,14 @@ def test_single_path_action_inputs_are_not_globs():
             # `*` 会原样交给 syft——和裸 glob 一样坏。所以剥掉表达式之后再看，
             # 别按开头是不是 `${{` 一刀放行（#63 的 review 逮到）。
             bare = re.sub(r"\$\{\{[^}]*\}\}", "", val)
-            if not bare.strip():          # 整个值就是一个表达式：由前一步解析出的具体路径
+            if not bare.strip():  # 整个值就是一个表达式：由前一步解析出的具体路径
                 continue
             if "*" in bare or "?" in bare:
                 offenders.append(f"{wf.name}:{i} {m.group(1)}: {val}")
-    assert not offenders, (
-        "这些输入只收一个路径，喂 glob 会被原样当成文件名：\n  " + "\n  ".join(offenders))
+    assert not offenders, "这些输入只收一个路径，喂 glob 会被原样当成文件名：\n  " + "\n  ".join(
+        offenders
+    )
+
 
 def test_always_steps_do_not_depend_on_a_step_that_may_not_have_run():
     """`always()` 的收尾步骤不能依赖某个**可能没跑过**的步骤的输出。
@@ -901,6 +985,7 @@ def test_always_steps_do_not_depend_on_a_step_that_may_not_have_run():
     # 而 `importorskip` 会让这条在本地开发环境静默跳过——那正是空门禁。
     # 这里只需要「按步骤切开、看它的 if 与 run」，标准库够用。
     import re
+
     offenders = []
     # **扫全部 workflow。** 原来只扫 release.yml 与 lab-ci.yml，而那两处的
     # 步骤已经搬进 `_lab-qualification.yml`——只扫老地方的话，这条判据会在
@@ -927,12 +1012,11 @@ def test_always_steps_do_not_depend_on_a_step_that_may_not_have_run():
             for m in re.finditer(r"steps\.venv\.outputs\.python(.*?)\}\}", step, re.S):
                 if "||" not in m.group(1):
                     label = re.search(r"- name: (.*)", step)
-                    offenders.append(
-                        f"{name}: 步骤「{label.group(1).strip() if label else '?'}」")
+                    offenders.append(f"{name}: 步骤「{label.group(1).strip() if label else '?'}」")
     assert not offenders, (
         "这些步骤在前序失败时照跑，却依赖「建验证环境」的输出——那时它是空串，"
-        "命令退化成直接执行脚本（100644 → Permission denied）：\n  "
-        + "\n  ".join(offenders))
+        "命令退化成直接执行脚本（100644 → Permission denied）：\n  " + "\n  ".join(offenders)
+    )
 
 
 def test_summary_refuses_reports_from_another_run(tmp_path, monkeypatch):
@@ -950,29 +1034,32 @@ def test_summary_refuses_reports_from_another_run(tmp_path, monkeypatch):
     """
     import importlib.util
     import json as _json
+
     (tmp_path / "reports").mkdir()
-    (tmp_path / "reports" / "soak.json").write_text(_json.dumps(
-        {"ok": True, "metadata": {"run_id": "1111"}}), encoding="utf-8")
+    (tmp_path / "reports" / "soak.json").write_text(
+        _json.dumps({"ok": True, "metadata": {"run_id": "1111"}}), encoding="utf-8"
+    )
     monkeypatch.setenv("TAVOTTO_CI_STATE_ROOT", str(tmp_path))
-    monkeypatch.setenv("GITHUB_RUN_ID", "2222")          # 本轮 ≠ 报告那轮
+    monkeypatch.setenv("GITHUB_RUN_ID", "2222")  # 本轮 ≠ 报告那轮
     monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
 
     spec = importlib.util.spec_from_file_location("_sm", CI_DIR / "summarize.py")
     mod = importlib.util.module_from_spec(spec)
     import sys as _sys
+
     _sys.path.insert(0, str(CI_DIR))
     spec.loader.exec_module(mod)
 
     import contextlib
     import io as _io
+
     buf = _io.StringIO()
     with contextlib.redirect_stdout(buf):
         mod.main(["--mode", "release"])
     out = buf.getvalue()
     soak_line = [ln for ln in out.splitlines() if "soak" in ln.lower()]
     assert soak_line, f"输出里找不到 soak 那一行：\n{out[:600]}"
-    assert "PASS" not in soak_line[0], (
-        f"上一轮的报告被当成本轮的结果了：{soak_line[0]}")
+    assert "PASS" not in soak_line[0], f"上一轮的报告被当成本轮的结果了：{soak_line[0]}"
     assert "未运行" in soak_line[0], f"该标成未运行：{soak_line[0]}"
 
 
@@ -992,13 +1079,18 @@ def test_summary_keeps_this_runs_report_even_across_a_rerun(tmp_path, monkeypatc
     import io as _io
     import json as _json
     import sys as _sys
+
     (tmp_path / "reports").mkdir()
     # 本轮 attempt=2；报告来自 attempt=1（同一个 run_id）
-    (tmp_path / "reports" / "soak.json").write_text(_json.dumps(
-        {"ok": True, "metadata": {"run_id": "42", "run_attempt": "1"}}), encoding="utf-8")
+    (tmp_path / "reports" / "soak.json").write_text(
+        _json.dumps({"ok": True, "metadata": {"run_id": "42", "run_attempt": "1"}}),
+        encoding="utf-8",
+    )
     # 本轮自己的 CompatBench 报告，必须留下
-    (tmp_path / "reports" / "compat.json").write_text(_json.dumps(
-        {"ok": True, "metadata": {"run_id": "42", "run_attempt": "2"}}), encoding="utf-8")
+    (tmp_path / "reports" / "compat.json").write_text(
+        _json.dumps({"ok": True, "metadata": {"run_id": "42", "run_attempt": "2"}}),
+        encoding="utf-8",
+    )
     monkeypatch.setenv("TAVOTTO_CI_STATE_ROOT", str(tmp_path))
     monkeypatch.setenv("GITHUB_RUN_ID", "42")
     monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
@@ -1015,8 +1107,7 @@ def test_summary_keeps_this_runs_report_even_across_a_rerun(tmp_path, monkeypatc
 
     soak = [ln for ln in out.splitlines() if "soak" in ln.lower()][0]
     assert "PASS" not in soak, f"上一次 attempt 的报告被当成本次的了：{soak}"
-    compat = [ln for ln in out.splitlines()
-              if "兼容" in ln or "compat" in ln.lower()][0]
+    compat = [ln for ln in out.splitlines() if "兼容" in ln or "compat" in ln.lower()][0]
     assert "未运行" not in compat, f"本轮自己的报告被误判成未运行了：{compat}"
 
 
@@ -1032,6 +1123,7 @@ def test_every_report_writer_stamps_its_identity():
     # 正确的问法是：**workflow 里哪个脚本产出 SECTIONS 里的那份报告。**
     import ast
     import re
+
     spec_src = (CI_DIR / "summarize.py").read_text(encoding="utf-8")
     wanted = set(re.findall(r'"(\w+\.json)"', spec_src.split("SECTIONS", 1)[1][:800]))
     assert len(wanted) >= 4, f"只解析出 {wanted}——SECTIONS 的形状变了，判据失效"
@@ -1059,13 +1151,17 @@ def test_every_report_writer_stamps_its_identity():
     missing = []
     for rep, script in sorted(producers.items()):
         src = (CI_DIR / script).read_text(encoding="utf-8")
-        calls = {getattr(n.func, "attr", getattr(n.func, "id", ""))
-                 for n in ast.walk(ast.parse(src)) if isinstance(n, ast.Call)}
+        calls = {
+            getattr(n.func, "attr", getattr(n.func, "id", ""))
+            for n in ast.walk(ast.parse(src))
+            if isinstance(n, ast.Call)
+        }
         if "run_metadata" not in calls:
             missing.append(f"{script}（产出 {rep}）")
     assert not missing, (
         f"这些脚本产出了汇总要读的报告，却一次都没调 run_metadata()——"
-        f"汇总会把它们当成上一轮的、标成「未运行」：{missing}")
+        f"汇总会把它们当成上一轮的、标成「未运行」：{missing}"
+    )
 
     # **精度写在明处**：判的是「这个脚本调没调过 run_metadata()」，不是
     # 「写这份报告时盖上了没有」。后者要跟着数据流走，静态做不可靠。
@@ -1096,11 +1192,12 @@ def test_the_desktop_leg_no_longer_waits_for_anything():
     免得有人在 desktop-tauri.yml 里把它加回来而两个文件的用例都没红。
     """
     src = (WORKFLOWS / "desktop-tauri.yml").read_text(encoding="utf-8")
-    code = "\n".join(ln for ln in src.splitlines()
-                     if not ln.lstrip().startswith("#"))
+    code = "\n".join(ln for ln in src.splitlines() if not ln.lstrip().startswith("#"))
     assert "seq 1" not in code, "桌面链里又出现了轮询循环"
     assert "gh release view" not in code, "桌面链又在等 Release 出现"
     assert "action-gh-release" not in code, "桌面链又在自己挂 Release"
+
+
 def test_the_ownership_predicate_has_exactly_one_implementation():
     """「这个进程是不是本 CI 漏下的」只能有一份判据。
 
@@ -1120,17 +1217,24 @@ def test_the_ownership_predicate_has_exactly_one_implementation():
     # **import 了不等于用了。** 第一版只比这两个绑定，于是把 cleanup 里那句
     # 调用换成空列表，用例照样绿——判据少了一维（问「有没有 import」，
     # 该问「kill 那条路径走不走它」）。所以再按**调用点**判一次。
-    for mod_path, func in ((CI_DIR / "cleanup.py", "kill_stale_processes"),
-                           (CI_DIR / "lab_preflight.py", "check_stale_processes")):
+    for mod_path, func in (
+        (CI_DIR / "cleanup.py", "kill_stale_processes"),
+        (CI_DIR / "lab_preflight.py", "check_stale_processes"),
+    ):
         tree = ast.parse(mod_path.read_text(encoding="utf-8"))
-        fn = next((n for n in ast.walk(tree)
-                   if isinstance(n, ast.FunctionDef) and n.name == func), None)
+        fn = next(
+            (n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == func), None
+        )
         assert fn is not None, f"{mod_path.name} 里没有 {func}"
-        called = {n.func.id for n in ast.walk(fn)
-                  if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
+        called = {
+            n.func.id
+            for n in ast.walk(fn)
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+        }
         assert "find_ci_owned_tavotto" in called, (
             f"{mod_path.name}::{func} 没有调 find_ci_owned_tavotto——"
-            f"判据又分叉了，而分叉的表现是「自愈报告成功却什么都没做」")
+            f"判据又分叉了，而分叉的表现是「自愈报告成功却什么都没做」"
+        )
 
     # 两个消费方都不许再自己扫 /proc
     for mod_path in (CI_DIR / "lab_preflight.py", CI_DIR / "cleanup.py"):
@@ -1138,7 +1242,8 @@ def test_the_ownership_predicate_has_exactly_one_implementation():
         for node in ast.walk(tree):
             if isinstance(node, ast.Constant) and node.value == "/proc":
                 raise AssertionError(
-                    f"{mod_path.name} 又自己扫 /proc 了——判据必须只留 _common 一份")
+                    f"{mod_path.name} 又自己扫 /proc 了——判据必须只留 _common 一份"
+                )
 
 
 def test_kill_stale_actually_reaches_a_runner_workspace_process(monkeypatch):
@@ -1149,20 +1254,24 @@ def test_kill_stale_actually_reaches_a_runner_workspace_process(monkeypatch):
     所以这一条按**真的返回了哪些 pid** 判。
     """
     import cleanup as CU
+
     work = "/home/runner/actions-runner/_work/Tavotto"
     monkeypatch.setenv("RUNNER_WORKSPACE", work)
     monkeypatch.setattr(
         "cleanup.find_ci_owned_tavotto",
-        lambda extra_markers=None: [(4242, f"{work}/dist/tavotto --figures x")])
+        lambda extra_markers=None: [(4242, f"{work}/dist/tavotto --figures x")],
+    )
     got = CU.kill_stale_processes(Path("/srv/tavotto-ci"), dry_run=True)
     assert [r["pid"] for r in got] == [4242], (
-        "runner 工作目录下的遗留进程没被收——体检会判它遗留，而自愈收不到它")
+        "runner 工作目录下的遗留进程没被收——体检会判它遗留，而自愈收不到它"
+    )
 
 
 def test_preflight_reports_stale_processes_when_not_reaping(monkeypatch):
     fake = [(4242, "/srv/x/venv/bin/python -m tavotto --port 1 --figures /srv/x/f")]
     monkeypatch.setattr("lab_preflight.find_ci_owned_tavotto", lambda: fake)
     import lab_preflight as PF
+
     (check,) = PF.check_stale_processes(reap=False)
     assert not check.ok and not check.warn, "不自愈时必须阻断"
     assert "4242" in check.detail
@@ -1171,6 +1280,7 @@ def test_preflight_reports_stale_processes_when_not_reaping(monkeypatch):
 def test_preflight_self_heals_stale_processes(monkeypatch):
     """`--reap-stale` 真的把它们清掉，并**复检**确认。"""
     import lab_preflight as PF
+
     alive = {4242, 4243}
     fake = [(p, f"/srv/x/venv/bin/python -m tavotto --port {p}") for p in sorted(alive)]
 
@@ -1196,11 +1306,11 @@ def test_self_heal_still_blocks_when_a_process_survives(monkeypatch):
     拿着被污染的机器继续跑——比直接失败糟糕得多。
     """
     import lab_preflight as PF
+
     fake = [(4242, "/srv/x/venv/bin/python -m tavotto --port 4242")]
     monkeypatch.setattr("lab_preflight.find_ci_owned_tavotto", lambda: fake)
-    monkeypatch.setattr(PF.os, "kill", lambda pid, sig: None)   # 杀不动
-    monkeypatch.setattr(PF.time, "monotonic",
-                        iter([0.0, 999.0, 999.0, 999.0]).__next__)
+    monkeypatch.setattr(PF.os, "kill", lambda pid, sig: None)  # 杀不动
+    monkeypatch.setattr(PF.time, "monotonic", iter([0.0, 999.0, 999.0, 999.0]).__next__)
     (check,) = PF.check_stale_processes(reap=True)
     assert not check.ok and not check.warn
     assert "没死" in check.detail
@@ -1210,15 +1320,18 @@ def test_ownership_predicate_never_matches_a_maintainers_own_instance():
     """维护者自己开的实例不归 CI 管——误杀一次就再没人敢开自愈。"""
     markers = ["/srv/tavotto-ci", "/home/runner/actions-runner/_work/Tavotto"]
     assert not _common.is_ci_owned_tavotto(
-        "/home/alice/.venv/bin/python -m tavotto --figures /home/alice/figs", markers)
+        "/home/alice/.venv/bin/python -m tavotto --figures /home/alice/figs", markers
+    )
     assert not _common.is_ci_owned_tavotto("/usr/bin/python3 -m http.server", markers)
     # 名字里带 tavotto 但不是启动形态的也不算
     assert not _common.is_ci_owned_tavotto("less /srv/tavotto-ci/reports/x.json", markers)
     # 真正归属 CI 的四种形态
-    for cmd in ("/srv/tavotto-ci/tmp/v/bin/python -m tavotto --port 1",
-                "/srv/tavotto-ci/tmp/v/bin/python /x/engine/worker.py --script a",
-                "/srv/tavotto-ci/rt/tavotto-workerd --spec x",
-                "/home/runner/actions-runner/_work/Tavotto/dist/tavotto --figures x"):
+    for cmd in (
+        "/srv/tavotto-ci/tmp/v/bin/python -m tavotto --port 1",
+        "/srv/tavotto-ci/tmp/v/bin/python /x/engine/worker.py --script a",
+        "/srv/tavotto-ci/rt/tavotto-workerd --spec x",
+        "/home/runner/actions-runner/_work/Tavotto/dist/tavotto --figures x",
+    ):
         assert _common.is_ci_owned_tavotto(cmd, markers), cmd
 
 
@@ -1248,16 +1361,16 @@ def test_a_replacement_process_cannot_slip_through_the_grace_period(monkeypatch)
     进程，所以「还有没有」既是更严的判据，也是更对的那个。
     """
     import lab_preflight as PF
+
     alive = {4242}
-    seq = iter([1])          # 第一次 kill 之后冒出一个替补
+    seq = iter([1])  # 第一次 kill 之后冒出一个替补
 
     def _find():
-        return [(p, f"/srv/x/venv/bin/python -m tavotto --port {p}")
-                for p in sorted(alive)]
+        return [(p, f"/srv/x/venv/bin/python -m tavotto --port {p}") for p in sorted(alive)]
 
     def _kill(pid, sig):
         alive.discard(pid)
-        if next(seq, None):          # 只在第一次 kill 后放一个替补进来
+        if next(seq, None):  # 只在第一次 kill 后放一个替补进来
             alive.add(5353)
 
     monkeypatch.setattr("lab_preflight.find_ci_owned_tavotto", _find)
@@ -1275,6 +1388,7 @@ def test_an_explicit_root_is_actually_searched(monkeypatch, tmp_path):
     这句之前就已经被丢掉了 —— 于是它一个都不收，而且不报错。
     """
     import cleanup as CU
+
     # **命令行要按 `resolve()` 之后的 root 拼**：判据比的是
     # `str(Path(root).resolve())`，写死 POSIX 字面量的话 Windows 上
     # `/mnt/x` 会被解析成 `D:\\mnt\\x`，与命令行里的字面量对不上——
@@ -1285,13 +1399,13 @@ def test_an_explicit_root_is_actually_searched(monkeypatch, tmp_path):
     monkeypatch.setenv("TAVOTTO_CI_STATE_ROOT", str((tmp_path / "state").resolve()))
     monkeypatch.delenv("RUNNER_WORKSPACE", raising=False)
     monkeypatch.delenv("GITHUB_WORKSPACE", raising=False)
-    monkeypatch.setattr("cleanup.proc_cmdlines", lambda: [(7070, cmd)],
-                        raising=False)
+    monkeypatch.setattr("cleanup.proc_cmdlines", lambda: [(7070, cmd)], raising=False)
     # 真的走 _common 的筛选，只是把 /proc 换掉
     monkeypatch.setattr(_common, "proc_cmdlines", lambda: [(7070, cmd)])
     got = CU.kill_stale_processes(Path(other), dry_run=True)
     assert [r["pid"] for r in got] == [7070], (
-        f"显式 root 下的进程没被收到：{got} —— extra_markers 没传下去")
+        f"显式 root 下的进程没被收到：{got} —— extra_markers 没传下去"
+    )
 
 
 def test_a_replacement_that_survives_sigkill_is_reported(monkeypatch):
@@ -1305,16 +1419,16 @@ def test_a_replacement_that_survives_sigkill_is_reported(monkeypatch):
     于是只有「复检问的是机器上现在还有没有」这一维能把它报出来。
     """
     import lab_preflight as PF
+
     alive = {4242}
     spawned = iter([1])
 
     def _find():
-        return [(p, f"/srv/x/venv/bin/python -m tavotto --port {p}")
-                for p in sorted(alive)]
+        return [(p, f"/srv/x/venv/bin/python -m tavotto --port {p}") for p in sorted(alive)]
 
     def _kill(pid, sig):
         if pid == 5353:
-            return                      # 替补打不死
+            return  # 替补打不死
         alive.discard(pid)
         if next(spawned, None):
             alive.add(5353)
@@ -1333,6 +1447,7 @@ def test_a_replacement_that_survives_sigkill_is_reported(monkeypatch):
 # 多个 0.x 版本——没有任何机制在发版时把它摆到眼前。与 #78（「声明了却从未
 # 执行的 job」）同族：洞活在 issue 里而不是 YAML 里。判定逻辑集中在
 # scripts/ci/release_blockers.py，这里逐条钉「坏掉之后会怎样」。
+
 
 def _issue(num: int, title: str = "x", state: str = "open", pr: bool = False) -> dict:
     d = {"number": num, "title": title, "state": state}
@@ -1411,8 +1526,9 @@ def test_ack_parsing_tolerates_human_input():
 def test_release_yml_wires_the_blocker_gate():
     """脚本写好了却没接上去，等于没写（gate-never-executed-rots）。"""
     src = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
-    assert "ack_open_blockers:" in src.split("\njobs:")[0], \
+    assert "ack_open_blockers:" in src.split("\njobs:")[0], (
         "workflow_dispatch 少了 ack_open_blockers 输入"
+    )
     trust = src.split("\n  trust:", 1)[1].split("\n  build:", 1)[0]
     assert "release_blockers.py" in trust, "trust 里没有 blocker 门禁那一步"
     assert "labels=release:blocker" in trust, "查询的不是 release:blocker 这个 label"
@@ -1420,5 +1536,6 @@ def test_release_yml_wires_the_blocker_gate():
     assert "issues: read" in trust, "trust 没有 issues: read——gh api 查不了 label"
     # 门禁必须在 dispatch 与 tag push 两条路上都跑：不许挂 if 只在一条路执行
     step = trust.split("Release-blocker", 1)[1].split("- id: resolve", 1)[0]
-    assert "\n        if:" not in step, \
+    assert "\n        if:" not in step, (
         "blocker 门禁被 if 限定到了某一条触发路径——tag push 会无声绕过它"
+    )

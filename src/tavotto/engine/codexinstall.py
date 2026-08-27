@@ -18,6 +18,7 @@ Codex 集成」按钮——**如果按钮另写一套安装器，它就会与 RE
 安装参数（marketplace 源、sparse 路径、插件引用）全部从 `brand.py` 派生——README
 与这条命令共用同一份，看护在 `tests/test_codex_install_cli.py`。
 """
+
 from __future__ import annotations
 
 import argparse
@@ -84,9 +85,15 @@ def find_codex() -> tuple[str | None, list[str]]:
 def _run(argv: list[str], timeout: int = _TIMEOUT) -> tuple[int, str]:
     """跑一条命令，回 (退出码, 合并输出)。绝不抛——失败也是一种结论。"""
     try:
-        p = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8",
-                           errors="replace", timeout=timeout,
-                           creationflags=CREATE_NO_WINDOW)
+        p = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            creationflags=CREATE_NO_WINDOW,
+        )
     except FileNotFoundError:
         return 127, f"找不到可执行文件：{argv[0]}"
     except subprocess.TimeoutExpired:
@@ -147,8 +154,7 @@ def engine_importable() -> bool:
 
 
 # ------------------------------ 步骤 ------------------------------
-def _step(name: str, *, ok: bool, skipped: bool = False, detail: str = "",
-          code: str = "") -> dict:
+def _step(name: str, *, ok: bool, skipped: bool = False, detail: str = "", code: str = "") -> dict:
     out = {"step": name, "ok": ok, "skipped": skipped}
     if detail:
         out["detail"] = detail
@@ -189,7 +195,7 @@ def _plugin_installed(codex: str) -> bool:
         parts = line.split()
         if not parts or parts[0] != brand.CODEX_PLUGIN_REF:
             continue
-        status = line[len(parts[0]):].strip().lower()
+        status = line[len(parts[0]) :].strip().lower()
         return status.startswith("installed")
     return False
 
@@ -223,19 +229,21 @@ def _plugin_step(codex: str, *, apply: bool) -> dict:
 
 def _engine_step(plugin_dir: Path | None, py: str | None, *, apply: bool) -> dict:
     if py is None:
-        return _step("engine", ok=False, code=ERR_PROVISION,
-                     detail="PATH 上找不到真的 python3/python。桌面版的 tavotto-cli 是"
-                            "冻结产物，不能当解释器用；装一个 Python 或用 "
-                            "TAVOTTO_MCP_PYTHON 指一个。")
+        return _step(
+            "engine",
+            ok=False,
+            code=ERR_PROVISION,
+            detail="PATH 上找不到真的 python3/python。桌面版的 tavotto-cli 是"
+            "冻结产物，不能当解释器用；装一个 Python 或用 "
+            "TAVOTTO_MCP_PYTHON 指一个。",
+        )
     # **冻结形态下 `engine_importable()` 答的是错的问题**：冻结包自己当然 import 得到
     # 引擎，但插件的 MCP server 用的是另一个解释器。那时候该问的是插件自己的
     # `--health`——只有它知道 server 会挑哪个环境（Codex 在 PR #169 上指出）。
     if not getattr(sys, "frozen", False) and engine_importable():
-        return _step("engine", ok=True, skipped=True,
-                     detail="当前解释器已能 import tavotto.engine")
+        return _step("engine", ok=True, skipped=True, detail="当前解释器已能 import tavotto.engine")
     if plugin_dir is None:
-        return _step("engine", ok=False, detail="插件还没装好，无从 provision",
-                     code=ERR_PROVISION)
+        return _step("engine", ok=False, detail="插件还没装好，无从 provision", code=ERR_PROVISION)
     server = plugin_dir / "mcp" / "server.py"
     if not server.is_file():
         return _step("engine", ok=False, detail=f"插件里没有 {server}", code=ERR_PROVISION)
@@ -255,8 +263,12 @@ def _health_step(plugin_dir: Path | None, py: str | None) -> dict:
     if plugin_dir is None:
         return _step("health", ok=False, detail="找不到已装的插件", code=ERR_HEALTH)
     if py is None:
-        return _step("health", ok=False, code=ERR_HEALTH,
-                     detail="PATH 上找不到真的 python3/python，跑不了插件的体检")
+        return _step(
+            "health",
+            ok=False,
+            code=ERR_HEALTH,
+            detail="PATH 上找不到真的 python3/python，跑不了插件的体检",
+        )
     server = plugin_dir / "mcp" / "server.py"
     rc, out = _run([py, str(server), "--health"], timeout=90)
     if rc != 0:
@@ -268,10 +280,16 @@ def _health_step(plugin_dir: Path | None, py: str | None) -> dict:
 def _codex_or_fail(steps: list[dict]) -> str | None:
     codex, searched = find_codex()
     if codex is None:
-        steps.append(_step(
-            "codex_cli", ok=False, code=ERR_CODEX_MISSING,
-            detail="找不到 codex 命令。找过：" + "、".join(searched)
-            + "。请先安装 Codex CLI（本命令不代装），装好后重跑。"))
+        steps.append(
+            _step(
+                "codex_cli",
+                ok=False,
+                code=ERR_CODEX_MISSING,
+                detail="找不到 codex 命令。找过："
+                + "、".join(searched)
+                + "。请先安装 Codex CLI（本命令不代装），装好后重跑。",
+            )
+        )
         return None
     steps.append(_step("codex_cli", ok=True, detail=codex))
     return codex
@@ -305,17 +323,28 @@ def uninstall_steps() -> tuple[bool, list[dict]]:
         return False, steps
     if _plugin_installed(codex):
         rc, out = _run([codex, "plugin", "remove", brand.CODEX_PLUGIN_REF])
-        steps.append(_step("plugin", ok=rc == 0, detail=out[-400:] or "已移除",
-                           code="" if rc == 0 else ERR_UNINSTALL))
+        steps.append(
+            _step(
+                "plugin",
+                ok=rc == 0,
+                detail=out[-400:] or "已移除",
+                code="" if rc == 0 else ERR_UNINSTALL,
+            )
+        )
     else:
         steps.append(_step("plugin", ok=True, skipped=True, detail="本来就没装"))
     if _marketplace_configured(codex):
         # **收的是配置后的 marketplace 名，不是源。** 给 `Tavotto/Tavotto` 会被
         # 直接拒（`/` 不是合法名字），于是插件删掉了、marketplace 却永远留着。
-        rc, out = _run([codex, "plugin", "marketplace", "remove",
-                        brand.CODEX_MARKETPLACE_NAME])
-        steps.append(_step("marketplace", ok=rc == 0, detail=out[-400:] or "已移除",
-                           code="" if rc == 0 else ERR_UNINSTALL))
+        rc, out = _run([codex, "plugin", "marketplace", "remove", brand.CODEX_MARKETPLACE_NAME])
+        steps.append(
+            _step(
+                "marketplace",
+                ok=rc == 0,
+                detail=out[-400:] or "已移除",
+                code="" if rc == 0 else ERR_UNINSTALL,
+            )
+        )
     else:
         steps.append(_step("marketplace", ok=True, skipped=True, detail="本来就没登记"))
     return all(s["ok"] for s in steps), steps
@@ -344,8 +373,8 @@ def _emit(ok: bool, action: str, steps: list[dict], *, as_json: bool) -> int:
 
 def cli(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(
-        prog="tavotto codex",
-        description="安装 / 诊断 / 移除 Tavotto 的 Codex 集成（ADR 0012）")
+        prog="tavotto codex", description="安装 / 诊断 / 移除 Tavotto 的 Codex 集成（ADR 0012）"
+    )
     ap.add_argument("action", choices=("install", "doctor", "uninstall"))
     ap.add_argument("--json", action="store_true", help="输出机器可读结果")
     args = ap.parse_args(argv)

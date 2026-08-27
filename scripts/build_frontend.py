@@ -6,6 +6,7 @@ CI 的发布流水线和本地 `python -m build` 之前都走同一条命令：
 
     python scripts/build_frontend.py
 """
+
 from __future__ import annotations
 
 import shutil
@@ -59,7 +60,7 @@ def main() -> int:
             shutil.rmtree(leftover)
     shutil.copytree(DIST, staging)
     if TARGET.exists():
-        TARGET.rename(old)          # 同一文件系统内的 rename 是原子的
+        TARGET.rename(old)  # 同一文件系统内的 rename 是原子的
     staging.rename(TARGET)
     if old.exists():
         shutil.rmtree(old, ignore_errors=True)

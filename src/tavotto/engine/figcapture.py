@@ -118,6 +118,7 @@ worker 与 browser 各自造一份的话，两个入口又会给出两个答案�
 纯标准库（`matplotlib.pyplot` 由调用方传进来）：worker 与 browser 都在
 engine 目录平铺 import 它，Flask 父进程也 import 得动。
 """
+
 from __future__ import annotations
 
 import builtins
@@ -128,13 +129,26 @@ import json
 import os
 import pathlib
 
-__all__ = ["savefig_stem", "collect_pyplot_figures", "fallback_stems",
-           "install_relative_read_fallback", "MAX_PYPLOT_FALLBACK",
-           "SOURCE_SAVEFIG", "SOURCE_PYPLOT",
-           "PROFILE_SAFE", "PROFILE_NATIVE", "ARTIFACT_EXTS",
-           "DESCRIPTOR_VERSION", "CapturedFigureDescriptor",
-           "build_descriptor", "descriptor_from_payload", "runtime_asset_id",
-           "source_fingerprint", "size_mm_of", "find_original_artifact"]
+__all__ = [
+    "savefig_stem",
+    "collect_pyplot_figures",
+    "fallback_stems",
+    "install_relative_read_fallback",
+    "MAX_PYPLOT_FALLBACK",
+    "SOURCE_SAVEFIG",
+    "SOURCE_PYPLOT",
+    "PROFILE_SAFE",
+    "PROFILE_NATIVE",
+    "ARTIFACT_EXTS",
+    "DESCRIPTOR_VERSION",
+    "CapturedFigureDescriptor",
+    "build_descriptor",
+    "descriptor_from_payload",
+    "runtime_asset_id",
+    "source_fingerprint",
+    "size_mm_of",
+    "find_original_artifact",
+]
 
 #: 兜底最多补多少张。`for i in range(200): plt.figure()` 是真会出现的写法
 #: （扫参数、逐条画），每一张都要 instrument + 出一次预览 SVG——不设上限的
@@ -215,10 +229,17 @@ def runtime_asset_id(script: str, stem: str) -> str:
     return f"runtime:{script}#{stem}"
 
 
-def source_fingerprint(script_bytes: bytes, *, script: str, entry: str,
-                       profile: str, target_kind: str = "script",
-                       argv: tuple = (), passthrough_savefig: bool = False,
-                       matplotlib_version: str = "") -> str:
+def source_fingerprint(
+    script_bytes: bytes,
+    *,
+    script: str,
+    entry: str,
+    profile: str,
+    target_kind: str = "script",
+    argv: tuple = (),
+    passthrough_savefig: bool = False,
+    matplotlib_version: str = "",
+) -> str:
     """捕获那一刻的来源指纹——**只是 stale hint，不是完备性证明**。
 
     构成：脚本内容 sha256 + ExecutionSpec 的稳定字段（script/entry/profile/
@@ -246,13 +267,11 @@ def source_fingerprint(script_bytes: bytes, *, script: str, entry: str,
         "passthrough_savefig": bool(passthrough_savefig),
         "matplotlib_version": matplotlib_version,
     }
-    canon = json.dumps(payload, ensure_ascii=False, sort_keys=True,
-                       separators=(",", ":"))
+    canon = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return "sha256:" + hashlib.sha256(canon.encode("utf-8")).hexdigest()
 
 
-def find_original_artifact(project_root: str, stem: str, *,
-                           isfile=os.path.isfile) -> str | None:
+def find_original_artifact(project_root: str, stem: str, *, isfile=os.path.isfile) -> str | None:
     """项目根下 stem 的原始产物（相对路径，POSIX）；没有回 None。
 
     判据与 handoff 交接找产物是同一份（它现在就调这里）：只看项目根一层、
@@ -275,16 +294,16 @@ class CapturedFigureDescriptor:
     """
 
     asset_id: str
-    script: str                    # 项目相对路径，POSIX 分隔
+    script: str  # 项目相对路径，POSIX 分隔
     entry: str
     stem: str
-    capture_source: str            # SOURCE_SAVEFIG | SOURCE_PYPLOT
-    execution_profile: str         # PROFILE_SAFE | PROFILE_NATIVE
+    capture_source: str  # SOURCE_SAVEFIG | SOURCE_PYPLOT
+    execution_profile: str  # PROFILE_SAFE | PROFILE_NATIVE
     original_artifact: str | None  # 项目相对路径；pyplot 捕获恒 None
     size_mm: tuple[float, float]
     source_fingerprint: str
-    can_writeback_artifact: bool   # 只能由工厂派生（见 build_descriptor）
-    can_writeback_source: bool     # v1 恒 False（不改写用户脚本，ADR 0013 §7）
+    can_writeback_artifact: bool  # 只能由工厂派生（见 build_descriptor）
+    can_writeback_source: bool  # v1 恒 False（不改写用户脚本，ADR 0013 §7）
 
     def to_payload(self) -> dict:
         out = dataclasses.asdict(self)
@@ -292,9 +311,17 @@ class CapturedFigureDescriptor:
         return out
 
 
-def build_descriptor(*, script: str, entry: str, stem: str, capture_source: str,
-                     execution_profile: str, size_mm, source_fingerprint: str,
-                     original_artifact: str | None = None) -> CapturedFigureDescriptor:
+def build_descriptor(
+    *,
+    script: str,
+    entry: str,
+    stem: str,
+    capture_source: str,
+    execution_profile: str,
+    size_mm,
+    source_fingerprint: str,
+    original_artifact: str | None = None,
+) -> CapturedFigureDescriptor:
     """描述符工厂——**writeback 能力只能派生，不能指定**。
 
     * `capture_source == "pyplot"` 的图从没存过盘：`original_artifact` 必须是
@@ -319,11 +346,12 @@ def build_descriptor(*, script: str, entry: str, stem: str, capture_source: str,
     if capture_source not in _SOURCES:
         raise ValueError(f"capture_source 非法: {capture_source!r}（可选 {_SOURCES}）")
     if execution_profile not in _PROFILES:
-        raise ValueError(f"execution_profile 非法: {execution_profile!r}"
-                         f"（可选 {_PROFILES}）")
+        raise ValueError(f"execution_profile 非法: {execution_profile!r}（可选 {_PROFILES}）")
     if capture_source == SOURCE_PYPLOT and original_artifact is not None:
-        raise ValueError("pyplot 捕获的 Figure 没有原始产物，"
-                         f"original_artifact 必须是 None: {original_artifact!r}")
+        raise ValueError(
+            "pyplot 捕获的 Figure 没有原始产物，"
+            f"original_artifact 必须是 None: {original_artifact!r}"
+        )
     if original_artifact is not None:
         original_artifact = original_artifact.replace("\\", "/")
     return CapturedFigureDescriptor(
@@ -336,8 +364,7 @@ def build_descriptor(*, script: str, entry: str, stem: str, capture_source: str,
         original_artifact=original_artifact,
         size_mm=(float(w), float(h)),
         source_fingerprint=source_fingerprint,
-        can_writeback_artifact=(capture_source == SOURCE_SAVEFIG
-                                and original_artifact is not None),
+        can_writeback_artifact=(capture_source == SOURCE_SAVEFIG and original_artifact is not None),
         can_writeback_source=False,
     )
 
@@ -351,16 +378,20 @@ def descriptor_from_payload(data: dict) -> CapturedFigureDescriptor:
     if not isinstance(data, dict):
         raise ValueError("描述符必须是对象")
     desc = build_descriptor(
-        script=data.get("script"), entry=data.get("entry"),
-        stem=data.get("stem"), capture_source=data.get("capture_source"),
+        script=data.get("script"),
+        entry=data.get("entry"),
+        stem=data.get("stem"),
+        capture_source=data.get("capture_source"),
         execution_profile=data.get("execution_profile"),
         size_mm=tuple(data.get("size_mm") or ()),
         source_fingerprint=data.get("source_fingerprint"),
-        original_artifact=data.get("original_artifact"))
+        original_artifact=data.get("original_artifact"),
+    )
     for key in ("asset_id", "can_writeback_artifact", "can_writeback_source"):
         if key in data and data[key] != getattr(desc, key):
-            raise ValueError(f"描述符字段 {key} 与派生值不一致: "
-                             f"{data[key]!r} != {getattr(desc, key)!r}")
+            raise ValueError(
+                f"描述符字段 {key} 与派生值不一致: {data[key]!r} != {getattr(desc, key)!r}"
+            )
     return desc
 
 
@@ -373,7 +404,7 @@ def savefig_stem(fname) -> str:
     任何东西看着它。
     """
     if not isinstance(fname, (str, os.PathLike)):
-        return ""                      # BytesIO / 文件对象：不是一份产物
+        return ""  # BytesIO / 文件对象：不是一份产物
     return os.path.splitext(os.path.basename(os.fspath(fname)))[0]
 
 
@@ -398,8 +429,9 @@ def fallback_stems(taken, script_stem: str, count: int) -> list[str]:
     return out
 
 
-def collect_pyplot_figures(capture: dict, script_stem: str, plt,
-                           limit: int = MAX_PYPLOT_FALLBACK) -> tuple[list[str], int]:
+def collect_pyplot_figures(
+    capture: dict, script_stem: str, plt, limit: int = MAX_PYPLOT_FALLBACK
+) -> tuple[list[str], int]:
     """把脚本跑完仍活着、且没被 savefig 认领的 pyplot Figure 补进 `capture`。
 
     就地修改 `capture`（stem → Figure，保持产出顺序），返回
@@ -423,15 +455,16 @@ def collect_pyplot_figures(capture: dict, script_stem: str, plt,
         pending.append(fig)
     dropped = max(0, len(pending) - max(0, int(limit)))
     if dropped:
-        pending = pending[:max(0, int(limit))]
+        pending = pending[: max(0, int(limit))]
     stems = fallback_stems(capture.keys(), script_stem, len(pending))
     for stem, fig in zip(stems, pending):
         capture[stem] = fig
     return stems, dropped
 
 
-def install_relative_read_fallback(script_dir: str, project_root: str,
-                                   sandbox_dir: str | None = None):
+def install_relative_read_fallback(
+    script_dir: str, project_root: str, sandbox_dir: str | None = None
+):
     """装上「相对路径只读回退」。返回一个卸载函数（测试与嵌入场景用）。
 
     语义见模块头。四条硬约束在这里逐条落地，任何一条不成立就原样交给
@@ -446,8 +479,7 @@ def install_relative_read_fallback(script_dir: str, project_root: str,
     real_path_open = pathlib.Path.open
     script_dir = os.path.abspath(script_dir)
     project_root = os.path.abspath(project_root)
-    sandbox_dir = os.path.abspath(sandbox_dir if sandbox_dir is not None
-                                  else os.getcwd())
+    sandbox_dir = os.path.abspath(sandbox_dir if sandbox_dir is not None else os.getcwd())
 
     def _within_sandbox(name: str) -> str | None:
         """绝对路径 → 它相对沙盒的那一段；不在沙盒里就 None。"""
@@ -467,7 +499,7 @@ def install_relative_read_fallback(script_dir: str, project_root: str,
 
     def _fallback_path(file) -> str | None:
         if not isinstance(file, (str, os.PathLike)):
-            return None                      # 已经是 fd / 文件对象
+            return None  # 已经是 fd / 文件对象
         name = os.fspath(file)
         if not isinstance(name, str) or not name:
             return None
@@ -488,7 +520,7 @@ def install_relative_read_fallback(script_dir: str, project_root: str,
         # 可能 `os.chdir()` 进了子目录），绝对的就用它自己。拿沙盒根去拼的话，
         # chdir 之后脚本自己写出来的那份会被无视、读到项目里的原件。
         if os.path.exists(name):
-            return None                      # 已经有了——脚本自己写出来的那份优先
+            return None  # 已经有了——脚本自己写出来的那份优先
         cand = os.path.abspath(os.path.join(script_dir, rel))
         try:
             real = os.path.realpath(cand)
@@ -519,6 +551,7 @@ def install_relative_read_fallback(script_dir: str, project_root: str,
                 if alt is not None:
                     return original(alt, mode, *args, **kwargs)
             return original(file, mode, *args, **kwargs)
+
         return guarded_open
 
     def guarded_path_open(self, mode="r", *args, **kwargs):

@@ -14,6 +14,7 @@
 每条用例都钉「坏掉之后会怎样」：探针的依赖形态漂了 → 假绿；触发口默认
 不再关死 → 生产风险；workflow 掉了某条断言 → 门禁空转。
 """
+
 from __future__ import annotations
 
 import re
@@ -33,6 +34,7 @@ import updater_consumer_check as UCC  # noqa: E402
 
 # ============================================================ 探针 = 插件能力面
 
+
 def _zip_dep_line() -> str:
     src = (PROBE_DIR / "Cargo.toml").read_text(encoding="utf-8")
     lines = [ln for ln in src.splitlines() if re.match(r"\s*zip\s*=", ln)]
@@ -49,10 +51,12 @@ def test_probe_zip_dependency_mirrors_the_plugin():
     包——门禁当场变成假绿，v0.7.0–v0.10.0 的坏更新包正是这么漏出去的。
     """
     line = _zip_dep_line()
-    assert "default-features = false" in line, \
+    assert "default-features = false" in line, (
         "探针的 zip 依赖不再是 default-features = false——量的已经不是插件的能力面"
-    assert re.search(r"(?<![\w-])features\s*=", line) is None, \
+    )
+    assert re.search(r"(?<![\w-])features\s*=", line) is None, (
         f"探针的 zip 依赖被加了 feature：{line.strip()}——插件没有的能力探针也不许有"
+    )
 
 
 def test_probe_zip_version_matches_the_shells_lockfile():
@@ -72,7 +76,8 @@ def test_probe_zip_version_matches_the_shells_lockfile():
     assert lm, "src-tauri/Cargo.lock 里找不到 zip——插件的依赖形状变了，探针要重新对齐"
     assert probe_ver == lm.group(1), (
         f"探针钉的 zip {probe_ver} ≠ 壳锁定的 {lm.group(1)}——"
-        "升级壳依赖时必须同步 tools/updater-extract-probe/Cargo.toml")
+        "升级壳依赖时必须同步 tools/updater-extract-probe/Cargo.toml"
+    )
 
 
 def test_probe_asserts_exactly_one_toplevel_exe():
@@ -88,6 +93,7 @@ def test_probe_asserts_exactly_one_toplevel_exe():
 
 # ============================================================ 消费者检查脚本
 
+
 def _probe_binary() -> Path | None:
     for profile in ("release", "debug"):
         p = PROBE_DIR / "target" / profile / "updater-extract-probe"
@@ -99,8 +105,10 @@ def _probe_binary() -> Path | None:
     return None
 
 
-@pytest.mark.skipif(_probe_binary() is None,
-                    reason="探针二进制未构建（cargo build --manifest-path tools/updater-extract-probe/Cargo.toml）")
+@pytest.mark.skipif(
+    _probe_binary() is None,
+    reason="探针二进制未构建（cargo build --manifest-path tools/updater-extract-probe/Cargo.toml）",
+)
 def test_selftest_passes_against_the_real_probe(tmp_path):
     """真探针上跑一遍反证自检：STORED 过、deflate 红。"""
     UCC.selftest(_probe_binary(), tmp_path)
@@ -143,8 +151,13 @@ def test_bad_signature_base64_is_an_assertion_failure(tmp_path):
     payload = tmp_path / "pkg.zip"
     payload.write_bytes(b"x")
     with pytest.raises(UCC.AssertionFailure):
-        UCC.verify_minisign("minisign", b"untrusted comment: minisign public key\nKEY\n",
-                            payload, "!!!not-base64!!!", tmp_path)
+        UCC.verify_minisign(
+            "minisign",
+            b"untrusted comment: minisign public key\nKEY\n",
+            payload,
+            "!!!not-base64!!!",
+            tmp_path,
+        )
 
 
 def test_config_comes_from_the_apps_own_tauri_conf():
@@ -156,8 +169,9 @@ def test_config_comes_from_the_apps_own_tauri_conf():
     assert endpoint.endswith("/releases/latest/download/latest.json"), endpoint
     assert b"minisign public key" in pubkey.splitlines()[0]
     src = Path(UCC.__file__).read_text(encoding="utf-8")
-    assert "releases/latest" not in src, \
+    assert "releases/latest" not in src, (
         "脚本里不该写死 endpoint 字面量——唯一出处是 tauri.conf.json"
+    )
 
 
 def test_required_platforms_match_the_updater_manifest_requirement():
@@ -170,7 +184,8 @@ def test_required_platforms_match_the_updater_manifest_requirement():
     assert m, "desktop-tauri.yml 里找不到 make_updater_manifest 的 --require"
     assert set(UCC.REQUIRED_PLATFORMS) == set(m.group(1).split(",")), (
         f"消费者检查的平台 {sorted(UCC.REQUIRED_PLATFORMS)} 与 latest.json 的"
-        f"硬要求 {m.group(1)} 不一致")
+        f"硬要求 {m.group(1)} 不一致"
+    )
 
 
 def test_network_and_assertion_failures_have_distinct_exit_codes():
@@ -205,6 +220,7 @@ def test_tools_crates_stay_out_of_the_wheel():
 
 # ============================================================ N-1 真实更新验证
 
+
 def test_shell_e2e_update_trigger_is_default_off():
     """壳的 headless 更新触发口默认关死，只认字面 "1"。
 
@@ -213,13 +229,16 @@ def test_shell_e2e_update_trigger_is_default_off():
     """
     src = (ROOT / "src-tauri" / "src" / "main.rs").read_text(encoding="utf-8")
     assert 'std::env::var("TAVOTTO_E2E_RUN_UPDATE").as_deref() != Ok("1")' in src, (
-        "触发口的判据不再是「只认字面 \"1\"」——任何真值都触发的话，"
-        "用户 shell 里一个手滑的环境变量就会让应用启动即自我更新")
-    assert "spawn_e2e_update_if_requested(handle.clone());" in src, \
+        '触发口的判据不再是「只认字面 "1"」——任何真值都触发的话，'
+        "用户 shell 里一个手滑的环境变量就会让应用启动即自我更新"
+    )
+    assert "spawn_e2e_update_if_requested(handle.clone());" in src, (
         "触发口定义了却没在 setup 里接上——等于没有"
+    )
     gate_body = src.split("fn spawn_e2e_update_if_requested", 1)[1]
-    assert "仅测试用" in gate_body.split("tauri::async_runtime::spawn", 1)[0], \
+    assert "仅测试用" in gate_body.split("tauri::async_runtime::spawn", 1)[0], (
         "触发时的警告不见了——静默的测试开关迟早被误用"
+    )
 
 
 def test_release_runs_the_n1_update_verification():
@@ -228,18 +247,22 @@ def test_release_runs_the_n1_update_verification():
     assert "n1_update_windows:" in src, "release.yml 里没有 N-1 更新验证 job"
     job = src.split("n1_update_windows:", 1)[1].split("\n  pypi:", 1)[0]
     # 只能在 Release 建出来之后测：endpoint 烤死指向 releases/latest
-    assert "github_release" in job.split("steps:", 1)[0], \
+    assert "github_release" in job.split("steps:", 1)[0], (
         "N-1 验证必须 needs github_release——发布前 latest 还指着上一版"
-    assert "needs.trust.outputs.publish == 'true'" in job, \
+    )
+    assert "needs.trust.outputs.publish == 'true'" in job, (
         "演练（publish=false）没有建 Release，N-1 验证无从谈起"
+    )
     assert "TAVOTTO_E2E_RUN_UPDATE" in job, "不再用壳的 headless 触发口驱动了"
     # 冒烟复用既有断言，不另写一套
-    assert "smoke_app.py" in job and "--expect-source bundled" in job \
-        and "--expect-runtime" in job, "更新后的冒烟不再复用 smoke_app 的既有断言"
+    assert (
+        "smoke_app.py" in job and "--expect-source bundled" in job and "--expect-runtime" in job
+    ), "更新后的冒烟不再复用 smoke_app 的既有断言"
     # 能力探测按二进制里的字面量判，不写死版本号：
     # 「哪一版加的触发口」在那次发布之前没人知道号码，版本常量迟早说谎
-    assert 'Contains("TAVOTTO_E2E_RUN_UPDATE")' in job, \
+    assert 'Contains("TAVOTTO_E2E_RUN_UPDATE")' in job, (
         "N-1 有没有触发口必须按装出来的二进制探测，不许写死版本阈值"
+    )
     # 等新进程出现，不等旧进程优雅退出（NSIS /R 重启、旧进程 exit(0) 不走 RunEvent::Exit）
     assert "ProductVersion" in job, "「重启后跑的是新版本」的断言不见了"
 

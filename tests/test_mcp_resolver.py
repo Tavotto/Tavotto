@@ -10,6 +10,7 @@
   真的能用的 `tavotto_health`），更不许返回「画布已打开」；
 * `--health` / `--provision` 是可执行的诊断与自建入口，输出结构化 JSON。
 """
+
 import importlib
 import io
 import json
@@ -39,8 +40,7 @@ def no_path_pythons(tmp_path, monkeypatch):
     empty = tmp_path / "empty-bin"
     empty.mkdir(exist_ok=True)
     monkeypatch.setenv("PATH", str(empty))
-    for name in ("TAVOTTO_MCP_PYTHON", "TAVOTTO_WORKER_PYTHON",
-                 "MM_WORKER_PYTHON"):
+    for name in ("TAVOTTO_MCP_PYTHON", "TAVOTTO_WORKER_PYTHON", "MM_WORKER_PYTHON"):
         monkeypatch.delenv(name, raising=False)
     return empty
 
@@ -56,7 +56,8 @@ def test_candidate_priority_order(tmp_path, monkeypatch, no_path_pythons):
     cfg_dir = Path(os.environ["TAVOTTO_CONFIG_DIR"])
     cfg_dir.mkdir(parents=True, exist_ok=True)
     (cfg_dir / "config.json").write_text(
-        json.dumps({"worker": {"python": cfg_py}}), encoding="utf-8")
+        json.dumps({"worker": {"python": cfg_py}}), encoding="utf-8"
+    )
 
     shim = tmp_path / "bin" / "tavotto"
     shim.parent.mkdir(parents=True, exist_ok=True)
@@ -75,7 +76,8 @@ def test_candidate_priority_order(tmp_path, monkeypatch, no_path_pythons):
 
 
 def test_resolve_takes_the_first_candidate_that_actually_imports(
-        tmp_path, monkeypatch, no_path_pythons):
+    tmp_path, monkeypatch, no_path_pythons
+):
     """存在但 import 不了的候选要被**验证淘汰**，不是「找到文件就算数」。"""
     bad = _touch_exe(tmp_path / "bad" / "python3")
     good = _touch_exe(tmp_path / "good" / "python3")
@@ -90,8 +92,7 @@ def test_resolve_takes_the_first_candidate_that_actually_imports(
     assert tried["worker_env"]["importable"] is True
 
 
-def test_frozen_cli_is_never_offered_as_an_interpreter(
-        tmp_path, monkeypatch, no_path_pythons):
+def test_frozen_cli_is_never_offered_as_an_interpreter(tmp_path, monkeypatch, no_path_pythons):
     """桌面版的 frozen CLI（ELF/PE 头、无 shebang、旁边无 python）出不了候选。"""
     frozen = tmp_path / "sidecar" / "tavotto-cli"
     frozen.parent.mkdir(parents=True)
@@ -100,15 +101,16 @@ def test_frozen_cli_is_never_offered_as_an_interpreter(
 
     cands = launcher.resolver_candidates({"cmd": [str(frozen)]})
     assert str(frozen) not in [p for p, _ in cands]
-    monkeypatch.setattr(launcher, "_importable",
-                        lambda p, **kw: pytest.fail("不存在的候选不该被探测")
-                        if not os.path.isfile(p) else False)
+    monkeypatch.setattr(
+        launcher,
+        "_importable",
+        lambda p, **kw: pytest.fail("不存在的候选不该被探测") if not os.path.isfile(p) else False,
+    )
     out = launcher.resolve({"cmd": [str(frozen)]})
     assert out["python"] is None
 
 
-def test_managed_runtime_wins_over_discovered(tmp_path, monkeypatch,
-                                              no_path_pythons):
+def test_managed_runtime_wins_over_discovered(tmp_path, monkeypatch, no_path_pythons):
     """`--provision` 建出来的自管 venv 排在「从 CLI 反推 / PATH」之前。"""
     managed = Path(launcher.managed_python())
     _touch_exe(managed)
@@ -122,14 +124,15 @@ def test_managed_runtime_wins_over_discovered(tmp_path, monkeypatch,
 
 
 def test_a_venv_symlink_to_the_current_interpreter_is_still_probed(
-        tmp_path, monkeypatch, no_path_pythons):
+    tmp_path, monkeypatch, no_path_pythons
+):
     """**2026-08-20 实测回归**：venv 的 `bin/python3` 是指向基础解释器的符号
     链接。按 realpath 判「就是当前解释器」会把刚 provision 好的自管环境
     跳过不探测——provision 刚报成功，server 转头就降级。身份必须按调用
     路径算：链接到同一个二进制的 venv 是另一个解释器。"""
     managed = Path(launcher.managed_python())
     managed.parent.mkdir(parents=True, exist_ok=True)
-    managed.symlink_to(sys.executable)          # 与真实 venv 一模一样的形状
+    managed.symlink_to(sys.executable)  # 与真实 venv 一模一样的形状
     probed = []
 
     def fake_importable(p, **kw):
@@ -146,11 +149,14 @@ def test_explicit_override_that_fails_is_engine_unavailable(tmp_path):
     """用户显式指的解释器用不了 → `engine_unavailable`，指名道姓，
     绝不静默落回「桌面版 / 没装」那两格。"""
     bad = _touch_exe(tmp_path / "bad" / "python3")
-    resolution = {"python": None, "source": None,
-                  "tried": [{"python": bad, "source": "mcp_env",
-                             "exists": True, "importable": False, "ms": 1}]}
-    code, hint = launcher.diagnose_resolved({"cmd": None, "desktop": None},
-                                            resolution)
+    resolution = {
+        "python": None,
+        "source": None,
+        "tried": [
+            {"python": bad, "source": "mcp_env", "exists": True, "importable": False, "ms": 1}
+        ],
+    }
+    code, hint = launcher.diagnose_resolved({"cmd": None, "desktop": None}, resolution)
     assert code == "engine_unavailable"
     assert "TAVOTTO_MCP_PYTHON" in hint and bad in hint
 
@@ -158,13 +164,12 @@ def test_explicit_override_that_fails_is_engine_unavailable(tmp_path):
 def test_diagnose_without_override_keeps_the_three_states():
     resolution = {"python": None, "source": None, "tried": []}
     code, _ = launcher.diagnose_resolved(
-        {"cmd": ["/x/tavotto-cli"], "desktop": "/x/Tavotto"}, resolution)
+        {"cmd": ["/x/tavotto-cli"], "desktop": "/x/Tavotto"}, resolution
+    )
     assert code == "desktop_only"
-    code, _ = launcher.diagnose_resolved({"cmd": None, "desktop": "/x"},
-                                         resolution)
+    code, _ = launcher.diagnose_resolved({"cmd": None, "desktop": "/x"}, resolution)
     assert code == "desktop_found_cli_missing"
-    code, _ = launcher.diagnose_resolved({"cmd": None, "desktop": None},
-                                         resolution)
+    code, _ = launcher.diagnose_resolved({"cmd": None, "desktop": None}, resolution)
     assert code == "tavotto_missing"
 
 
@@ -174,6 +179,7 @@ def test_bridge_import_probe_matches_the_bridge():
     server 当场崩死。探测语句必须覆盖 bridge 真正 import 的整组模块，
     两侧对拍，改 bridge 的 import 必须同步 `_BRIDGE_IMPORT`。"""
     import ast
+
     src = (PLUGIN / "mcp" / "tavotto_mcp" / "bridge.py").read_text(encoding="utf-8")
     bridge_imports = set()
     for node in ast.walk(ast.parse(src)):
@@ -181,46 +187,58 @@ def test_bridge_import_probe_matches_the_bridge():
             bridge_imports |= {a.name for a in node.names}
     probe = launcher._BRIDGE_IMPORT
     assert probe.startswith("from tavotto.engine import ")
-    probed = {n.strip() for n in
-              probe.removeprefix("from tavotto.engine import ").split(",")}
+    probed = {n.strip() for n in probe.removeprefix("from tavotto.engine import ").split(",")}
     assert bridge_imports, "bridge.py 里没找到 tavotto.engine 的 import？"
     assert bridge_imports <= probed, (
         f"bridge 需要但探测没验的模块: {sorted(bridge_imports - probed)}"
-        "——放过它们的下场是交棒后崩死")
+        "——放过它们的下场是交棒后崩死"
+    )
 
 
 # ------------------------------ 降级 server --------------------------------
 def _degraded_roundtrip(*requests, code="desktop_only"):
     lines = "".join(json.dumps(r) + "\n" for r in requests)
     out = io.StringIO()
-    launcher._degraded_server(code, launcher.DESKTOP_ONLY_HINT,
-                              {"python": None, "source": None, "tried": []},
-                              stdin=io.StringIO(lines), stdout=out)
+    launcher._degraded_server(
+        code,
+        launcher.DESKTOP_ONLY_HINT,
+        {"python": None, "source": None, "tried": []},
+        stdin=io.StringIO(lines),
+        stdout=out,
+    )
     return [json.loads(ln) for ln in out.getvalue().strip().splitlines()]
 
 
 def test_degraded_initialize_is_version_zero():
     (res,) = _degraded_roundtrip(
-        {"jsonrpc": "2.0", "id": 1, "method": "initialize",
-         "params": {"protocolVersion": "2025-06-18"}})
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {"protocolVersion": "2025-06-18"},
+        }
+    )
     info = res["result"]["serverInfo"]
-    assert info["version"] == "0"          # 健康的 server 报 tavotto 版本号
+    assert info["version"] == "0"  # 健康的 server 报 tavotto 版本号
     assert "desktop_only" in res["result"]["instructions"]
 
 
 def test_degraded_tools_list_only_offers_the_health_tool():
     """**不把不可用的工具伪装成可用**：六个正常工具不进 tools/list。"""
-    (res,) = _degraded_roundtrip(
-        {"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+    (res,) = _degraded_roundtrip({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
     names = [t["name"] for t in res["result"]["tools"]]
     assert names == ["tavotto_health"]
 
 
 def test_degraded_normal_tool_calls_are_structured_errors():
     (res,) = _degraded_roundtrip(
-        {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-         "params": {"name": "tavotto_open_figure",
-                    "arguments": {"script_path": "/x/fig.py"}}})
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "tavotto_open_figure", "arguments": {"script_path": "/x/fig.py"}},
+        }
+    )
     result = res["result"]
     assert result["isError"] is True
     body = result["structuredContent"]
@@ -233,10 +251,15 @@ def test_degraded_normal_tool_calls_are_structured_errors():
 
 def test_degraded_health_tool_reports_the_gap_without_pretending():
     (res,) = _degraded_roundtrip(
-        {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-         "params": {"name": "tavotto_health", "arguments": {}}})
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "tavotto_health", "arguments": {}},
+        }
+    )
     result = res["result"]
-    assert not result.get("isError")       # 体检本身成功，体检结论是不健康
+    assert not result.get("isError")  # 体检本身成功，体检结论是不健康
     body = result["structuredContent"]
     assert body["engine"]["available"] is False
     assert body["canvas"]["available"] is False
@@ -245,8 +268,7 @@ def test_degraded_health_tool_reports_the_gap_without_pretending():
 
 def test_degraded_server_declares_no_resources():
     """没有引擎就没有画布：声明资源 = 给 host 一个白框。"""
-    (res,) = _degraded_roundtrip(
-        {"jsonrpc": "2.0", "id": 1, "method": "resources/list"})
+    (res,) = _degraded_roundtrip({"jsonrpc": "2.0", "id": 1, "method": "resources/list"})
     assert res["result"]["resources"] == []
 
 
@@ -262,8 +284,7 @@ def test_health_in_an_engine_environment(capsys):
 
 
 def test_plugin_version_is_read_from_the_manifest():
-    manifest = json.loads((PLUGIN / ".codex-plugin" / "plugin.json")
-                          .read_text(encoding="utf-8"))
+    manifest = json.loads((PLUGIN / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
     assert launcher._plugin_version() == manifest["version"]
 
 
@@ -275,13 +296,13 @@ def test_provision_pins_the_plugin_version_and_verifies(tmp_path, monkeypatch):
     def fake_run(argv, **kw):
         ran.append(list(argv))
         if argv[1:3] == ["-m", "venv"]:
-            Path(launcher.managed_python()).parent.mkdir(parents=True,
-                                                         exist_ok=True)
+            Path(launcher.managed_python()).parent.mkdir(parents=True, exist_ok=True)
             Path(launcher.managed_python()).write_text("", encoding="utf-8")
 
         class R:
             returncode = 0
             stdout = stderr = ""
+
         return R()
 
     monkeypatch.setattr(launcher.subprocess, "run", fake_run)
@@ -301,6 +322,7 @@ def test_provision_failure_is_structured(tmp_path, monkeypatch):
             returncode = 1
             stdout = ""
             stderr = "no network"
+
         return R()
 
     monkeypatch.setattr(launcher.subprocess, "run", fake_run)
@@ -311,15 +333,16 @@ def test_provision_failure_is_structured(tmp_path, monkeypatch):
 
 def test_provision_half_built_env_is_not_reported_as_success(monkeypatch):
     """pip 说成了、import 却失败（半成品环境）——不许报 ok。"""
+
     def fake_run(argv, **kw):
         if argv[1:3] == ["-m", "venv"]:
-            Path(launcher.managed_python()).parent.mkdir(parents=True,
-                                                         exist_ok=True)
+            Path(launcher.managed_python()).parent.mkdir(parents=True, exist_ok=True)
             Path(launcher.managed_python()).write_text("", encoding="utf-8")
 
         class R:
             returncode = 0
             stdout = stderr = ""
+
         return R()
 
     monkeypatch.setattr(launcher.subprocess, "run", fake_run)

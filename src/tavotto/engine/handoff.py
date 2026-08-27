@@ -30,6 +30,7 @@ mac/CI 上单测 Windows 的安装路径（同 `engine/runtime.py`；看护用�
 `tests/test_handoff.py` 与 `tests/test_install_locate.py`）。本模块仅在静态扫描
 脚本时用 `pathlib.Path`（`analyze_script` 需要）。
 """
+
 from __future__ import annotations
 
 import argparse
@@ -135,8 +136,7 @@ def _first_on_disk(stems: list[str], project: str, *, isfile=os.path.isfile) -> 
     一份（捕获描述符判「有没有原件」用的也是它）——这里只是按 stem 顺序问。
     """
     for stem in stems:
-        if engine_figcapture.find_original_artifact(project, stem,
-                                                    isfile=isfile) is not None:
+        if engine_figcapture.find_original_artifact(project, stem, isfile=isfile) is not None:
             return stem
     return stems[0] if stems else None
 
@@ -165,7 +165,9 @@ def resolve_target(raw: str, *, isdir=os.path.isdir, isfile=os.path.isfile) -> T
     raise HandoffError(
         f"不认识的文件类型: {name}"
         f"（要一张图 {'/'.join(e.lstrip('.') for e in OUT_EXTS[:3])}…、"
-        f"一个 .py 脚本，或一个目录）", "unsupported_file")
+        f"一个 .py 脚本，或一个目录）",
+        "unsupported_file",
+    )
 
 
 # --------------------------- 2. 登记 stem --------------------------------
@@ -174,9 +176,8 @@ def _registered(project: str, stem: str) -> bool:
         reg = engine_registry.open_registry(project)
     except FileNotFoundError:
         return False
-    except RuntimeError as exc:                      # 注册表损坏 / 重复 stem
-        raise HandoffError(f"注册表无法加载，请先修好它: {exc}",
-                           "registry_invalid") from exc
+    except RuntimeError as exc:  # 注册表损坏 / 重复 stem
+        raise HandoffError(f"注册表无法加载，请先修好它: {exc}", "registry_invalid") from exc
     return reg.for_stem(stem) is not None
 
 
@@ -196,10 +197,16 @@ def ensure_registered(project: str, stem: str | None) -> dict:
     # 报的是**磁盘上真正在用的那一份**：老图库还叫 mm_registry.json 时报新名，
     # 调用方就拿到一个不存在的路径，而这个字段正是用来告诉用户「去改哪个文件」的。
     on_disk = engine_registry.existing_registry_path(project)
-    info: dict = {"registry": str(on_disk or engine_registry.registry_path(project)),
-                  "status": "already",
-                  "created": False, "added_scripts": [], "added_stems": {},
-                  "conflicts": [], "dynamic_names": [], "parameterizable": None}
+    info: dict = {
+        "registry": str(on_disk or engine_registry.registry_path(project)),
+        "status": "already",
+        "created": False,
+        "added_scripts": [],
+        "added_stems": {},
+        "conflicts": [],
+        "dynamic_names": [],
+        "parameterizable": None,
+    }
     if stem is not None and _registered(project, stem):
         info["parameterizable"] = True
         return info
@@ -209,14 +216,12 @@ def ensure_registered(project: str, stem: str | None) -> dict:
     existed = on_disk is not None
     try:
         cfg, rep, changes = engine_discover.merge(project)
-    except ValueError as exc:                        # 用户手写的注册表坏了
+    except ValueError as exc:  # 用户手写的注册表坏了
         # 语法坏（不是合法 JSON）与结构坏（scripts 不是对象、stems 不是字符串
         # 列表、stem 重复登记…）都走这条：code 稳定不变，文案覆盖两种。
-        raise HandoffError(f"注册表读不懂，未做任何改动: {exc}",
-                           "registry_invalid") from exc
+        raise HandoffError(f"注册表读不懂，未做任何改动: {exc}", "registry_invalid") from exc
     except OSError as exc:
-        raise HandoffError(f"无法读取图库目录 {project}: {exc}",
-                           "project_unreadable") from exc
+        raise HandoffError(f"无法读取图库目录 {project}: {exc}", "project_unreadable") from exc
 
     should_write = (not existed) or changes["added_scripts"] or changes["added_stems"]
     if should_write:
@@ -229,7 +234,8 @@ def ensure_registered(project: str, stem: str | None) -> dict:
             raise HandoffError(
                 f"注册表写不进去 {info['registry']}: {exc}"
                 "（图库目录需要可写；换一个目录，或修好它的权限后重试）",
-                "registry_write_failed") from exc
+                "registry_write_failed",
+            ) from exc
     info["created"] = not existed
     if not existed:
         info["status"] = "created"
@@ -240,8 +246,7 @@ def ensure_registered(project: str, stem: str | None) -> dict:
     info["added_scripts"] = list(changes["added_scripts"])
     info["added_stems"] = {k: list(v) for k, v in changes["added_stems"].items()}
     info["conflicts"] = sorted(rep["conflicts"])
-    info["dynamic_names"] = sorted(s for s, i in rep["scripts"].items()
-                                   if i.get("dynamic_names"))
+    info["dynamic_names"] = sorted(s for s, i in rep["scripts"].items() if i.get("dynamic_names"))
     if stem is not None:
         info["parameterizable"] = _registered(project, stem)
     return info
@@ -264,8 +269,9 @@ PROBE_HTTP_TIMEOUT = 1800.0
 _PROBE_CODE_MAP = {"missing_dependency": "native_run_required"}
 
 
-def _http_json_status(url: str, payload: dict | None = None,
-                      timeout: float = 10.0) -> tuple[int | None, dict | None]:
+def _http_json_status(
+    url: str, payload: dict | None = None, timeout: float = 10.0
+) -> tuple[int | None, dict | None]:
     """同 `_http_json`，但把 HTTP 状态码与**错误响应体**也交出来。
 
     probe 端点的 409（probe_in_progress）与 4xx 带着稳定 code——
@@ -305,6 +311,7 @@ def _script_figures(project: str, script: str) -> list[dict]:
     / `runtimeasset.is_pyplot_capture`。
     """
     from . import runtimeasset as engine_runtimeasset
+
     try:
         reg = engine_registry.open_registry(project)
     except (FileNotFoundError, RuntimeError):
@@ -317,17 +324,16 @@ def _script_figures(project: str, script: str) -> list[dict]:
         try:
             asset_id = engine_figcapture.runtime_asset_id(script, stem)
         except ValueError:
-            continue                  # 注册表坏条目不该炸掉整次交接
+            continue  # 注册表坏条目不该炸掉整次交接
         meta = engine_runtimeasset.load_metadata(project, asset_id)
         desc = (meta or {}).get("descriptor") or None
         artifact = engine_figcapture.find_original_artifact(project, stem)
-        if artifact is not None \
-                and not engine_runtimeasset.is_pyplot_capture(desc):
-            out.append({"stem": stem, "artifact": artifact,
-                        "asset_id": None, "cached": False})
+        if artifact is not None and not engine_runtimeasset.is_pyplot_capture(desc):
+            out.append({"stem": stem, "artifact": artifact, "asset_id": None, "cached": False})
         else:
-            out.append({"stem": stem, "artifact": None,
-                        "asset_id": asset_id, "cached": meta is not None})
+            out.append(
+                {"stem": stem, "artifact": None, "asset_id": asset_id, "cached": meta is not None}
+            )
     return out
 
 
@@ -352,14 +358,15 @@ def _probe_error(err) -> HandoffError:
         extra["traceback"] = str(tb)[-2000:]
     message = str(err.get("message") or "试运行失败")
     if mapped == "native_run_required":
-        message += ("；这个项目可能依赖它自己的 Python 环境。"
-                    "先在 Tavotto 设置里选择一个装了所需依赖的渲染环境，"
-                    "或等待后续版本按项目原方式运行")
+        message += (
+            "；这个项目可能依赖它自己的 Python 环境。"
+            "先在 Tavotto 设置里选择一个装了所需依赖的渲染环境，"
+            "或等待后续版本按项目原方式运行"
+        )
     return HandoffError(message, mapped, **extra)
 
 
-def _remote_probe(port: int, project: str, script: str, *,
-                  http_status=None) -> dict | None:
+def _remote_probe(port: int, project: str, script: str, *, http_status=None) -> dict | None:
     """本机已有实例在跑时，把试运行**委托给它**。没有实例回 None。
 
     委托的意义：同一个 `_PROBES` 并发闸（同脚本并发吃 409）、同一次执行、
@@ -369,26 +376,34 @@ def _remote_probe(port: int, project: str, script: str, *,
     st, _ = http_status(f"http://127.0.0.1:{port}/api/version", timeout=0.6)
     if st is None:
         return None
-    st, opened = http_status(f"http://127.0.0.1:{port}/api/projects/open",
-                             {"path": project}, timeout=10.0)
+    st, opened = http_status(
+        f"http://127.0.0.1:{port}/api/projects/open", {"path": project}, timeout=10.0
+    )
     pj = (opened or {}).get("id")
     if st != 200 or not pj:
         raise HandoffError(
-            f"已在运行的 Tavotto 打不开这个项目: "
-            f"{(opened or {}).get('error') or f'HTTP {st}'}",
-            "remote_open_failed")
+            f"已在运行的 Tavotto 打不开这个项目: {(opened or {}).get('error') or f'HTTP {st}'}",
+            "remote_open_failed",
+        )
     st, resp = http_status(
         f"http://127.0.0.1:{port}/api/registry/probe?pj={quote(pj, safe='')}",
-        {"script": script}, timeout=PROBE_HTTP_TIMEOUT)
+        {"script": script},
+        timeout=PROBE_HTTP_TIMEOUT,
+    )
     if st == 409 and (resp or {}).get("code") == "probe_in_progress":
         # 素材库/另一个调用方已经在跑同一个脚本：如实报，别再起第二次执行
-        raise HandoffError(f"该脚本已有一次试运行在进行中: {script}",
-                           "probe_in_progress", retryable=True)
+        raise HandoffError(
+            f"该脚本已有一次试运行在进行中: {script}", "probe_in_progress", retryable=True
+        )
     if resp is None or st != 200:
-        raise _probe_error(resp if resp and resp.get("code") else
-                           {"code": "script_probe_failed",
-                            "message": (resp or {}).get("error")
-                            or f"试运行请求失败（HTTP {st}）"})
+        raise _probe_error(
+            resp
+            if resp and resp.get("code")
+            else {
+                "code": "script_probe_failed",
+                "message": (resp or {}).get("error") or f"试运行请求失败（HTTP {st}）",
+            }
+        )
     return resp
 
 
@@ -401,27 +416,34 @@ def _local_probe(project: str, script: str) -> dict:
     自己按 lazy 语义重建，registry + cache 都在磁盘上）。
     """
     from . import pool as engine_pool, probe as engine_probe, runtimeasset as engine_runtimeasset
+
     try:
         result = engine_probe.probe_and_register(project, script)
         if result.get("registered"):
             try:
-                worker = engine_pool.get(script, project,
-                                         result.get("entry") or "main")
+                worker = engine_pool.get(script, project, result.get("entry") or "main")
                 for desc in result.get("descriptors") or []:
                     if isinstance(desc, dict) and desc.get("stem"):
                         engine_runtimeasset.materialize(
-                            project, desc, worker.svg_path(desc["stem"]))
+                            project, desc, worker.svg_path(desc["stem"])
+                        )
             except engine_pool.WorkerError:
-                pass              # cache 是派生物：物化不了只影响首帧占位
+                pass  # cache 是派生物：物化不了只影响首帧占位
         return result
     finally:
         engine_pool.invalidate(script, project)
 
 
-def resolve_script_route(project: str, script: str, *,
-                         stem_arg: str | None = None, no_probe: bool = False,
-                         port: int = DEFAULT_PORT,
-                         probe_remote=None, probe_local=None) -> tuple[Target, dict]:
+def resolve_script_route(
+    project: str,
+    script: str,
+    *,
+    stem_arg: str | None = None,
+    no_probe: bool = False,
+    port: int = DEFAULT_PORT,
+    probe_remote=None,
+    probe_local=None,
+) -> tuple[Target, dict]:
     """`.py` 目标的产品路由：复用已有 Figure 路由，否则 safe probe。
 
     行为顺序（Session 6 契约）：现有注册表/静态发现的每张图都已有有效路由
@@ -437,8 +459,7 @@ def resolve_script_route(project: str, script: str, *,
 
     figures = _script_figures(project, script)
     routed = bool(figures) and all(f["artifact"] or f["cached"] for f in figures)
-    info: dict = {"performed": False, "via": None, "entry": None,
-                  "dropped_figures": 0}
+    info: dict = {"performed": False, "via": None, "entry": None, "dropped_figures": 0}
 
     if not routed and not no_probe:
         result = probe_remote(port, project, script)
@@ -456,9 +477,15 @@ def resolve_script_route(project: str, script: str, *,
                 raise _probe_error(err)
             raise HandoffError(
                 f"试运行捕获到了图，但没能登记成可打开的素材: {script}",
-                "runtime_asset_failed", stems=list(result.get("stems") or []))
-        info = {"performed": True, "via": via, "entry": result.get("entry"),
-                "dropped_figures": int(result.get("dropped_figures") or 0)}
+                "runtime_asset_failed",
+                stems=list(result.get("stems") or []),
+            )
+        info = {
+            "performed": True,
+            "via": via,
+            "entry": result.get("entry"),
+            "dropped_figures": int(result.get("dropped_figures") or 0),
+        }
         figures = _script_figures(project, script)
 
     if not figures:
@@ -467,21 +494,24 @@ def resolve_script_route(project: str, script: str, *,
                 f"静态分析解不出这个脚本会产出哪张图: {script}"
                 "（去掉 --no-probe 让 Tavotto 安全地试运行一次，"
                 "或在素材库的「脚本」区点「运行并发现图」）",
-                "script_no_figure")
+                "script_no_figure",
+            )
         raise HandoffError(
             f"脚本跑通了，但没有捕获到任何 Figure: {script}"
             "（确认它真的创建 matplotlib Figure；出图入口不叫 main 的话，"
             "在素材库的脚本详情里能看到试过哪些入口）",
-            "script_no_figure")
+            "script_no_figure",
+        )
 
     info["figures"] = [dict(f) for f in figures]
     stems = [f["stem"] for f in figures]
     if stem_arg is not None:
         if stem_arg not in stems:
             raise HandoffError(
-                f"这个脚本没有产出名为 {stem_arg} 的图"
-                f"（有：{', '.join(stems)}）",
-                "invalid_stem", stems=stems)
+                f"这个脚本没有产出名为 {stem_arg} 的图（有：{', '.join(stems)}）",
+                "invalid_stem",
+                stems=stems,
+            )
         return Target(project, stem_arg), info
     if len(stems) == 1:
         return Target(project, stems[0]), info
@@ -490,9 +520,9 @@ def resolve_script_route(project: str, script: str, *,
 
 
 # --------------------------- 3. 唤起界面 ---------------------------------
-def desktop_app_candidates(*, system: str | None = None,
-                           environ: dict | None = None,
-                           isfile=os.path.isfile) -> list[str]:
+def desktop_app_candidates(
+    *, system: str | None = None, environ: dict | None = None, isfile=os.path.isfile
+) -> list[str]:
     """桌面 App 可执行文件的候选路径（按优先级）。
 
     安装位置的**唯一出处是 `engine/locate.install_roots()`**——同一份清单还要
@@ -512,7 +542,7 @@ def desktop_app_candidates(*, system: str | None = None,
     out: list[str] = []
     override = (env.get(APP_ENV) or "").strip()
     if override:
-        out.append(override)                          # 用户显式指定的永远第一
+        out.append(override)  # 用户显式指定的永远第一
     if getattr(sys, "frozen", False):
         # **只在冻结产物里问这一条。** 那时壳与 sidecar/CLI 的相对位置是打包
         # 时固定下来的，比任何惯例位置都准。非冻结时 describe_self 的 desktop
@@ -525,13 +555,16 @@ def desktop_app_candidates(*, system: str | None = None,
     if manifest and manifest.get("desktop"):
         out.append(manifest["desktop"])
     # Linux 没有桌面发行形态（desktop-tauri.yml 只发 macOS/Windows）：回空表 → 浏览器
-    out += [engine_locate.desktop_exe_for(root, system=system)
-            for root in engine_locate.install_roots(system=system, environ=env)]
-    return list(dict.fromkeys(out))                   # 去重，保序
+    out += [
+        engine_locate.desktop_exe_for(root, system=system)
+        for root in engine_locate.install_roots(system=system, environ=env)
+    ]
+    return list(dict.fromkeys(out))  # 去重，保序
 
 
-def find_desktop_app(*, system: str | None = None, environ: dict | None = None,
-                     isfile=os.path.isfile) -> str | None:
+def find_desktop_app(
+    *, system: str | None = None, environ: dict | None = None, isfile=os.path.isfile
+) -> str | None:
     for cand in desktop_app_candidates(system=system, environ=environ, isfile=isfile):
         if cand and isfile(cand):
             return cand
@@ -571,9 +604,11 @@ def _spawn_detached(argv: list[str], *, spawn=subprocess.Popen):
     返回 spawn 的进程对象（要靠它 `poll()` 出「起来就死」——以前丢掉返回值、
     起了就报成功，SIGABRT 的桌面进程照样拿到 `ok: true`）。
     """
-    kwargs: dict = {"stdin": subprocess.DEVNULL,
-                    "stdout": subprocess.DEVNULL,
-                    "stderr": subprocess.DEVNULL}
+    kwargs: dict = {
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+    }
     if os.name == "posix":
         kwargs["start_new_session"] = True
     else:
@@ -588,8 +623,12 @@ def _bundle_root(app_exe: str) -> str | None:
     唤起要交给 LaunchServices（`open`）的是 **bundle**，不是裸二进制。
     """
     parts = app_exe.split("/")
-    if len(parts) >= 4 and parts[-2] == "MacOS" and parts[-3] == "Contents" \
-            and parts[-4].endswith(".app"):
+    if (
+        len(parts) >= 4
+        and parts[-2] == "MacOS"
+        and parts[-3] == "Contents"
+        and parts[-4].endswith(".app")
+    ):
         return "/".join(parts[:-3]).rstrip("/")
     return None
 
@@ -602,6 +641,7 @@ def sidecar_log_path(*, system: str | None = None, environ: dict | None = None) 
     Windows `%LOCALAPPDATA%\\<bundle id>\\logs\\sidecar.log`。拿不到就 None。
     """
     from .brand import DESKTOP_BUNDLE_ID
+
     system = sys.platform if system is None else system
     env = os.environ if environ is None else environ
     if system == "darwin":
@@ -624,8 +664,7 @@ def _pids_of(exe: str, *, run=subprocess.run) -> "list[int] | None":
     if os.name != "posix":
         return None
     try:
-        proc = run(["ps", "-axo", "pid=,comm="], capture_output=True, text=True,
-                   timeout=5)
+        proc = run(["ps", "-axo", "pid=,comm="], capture_output=True, text=True, timeout=5)
     except (OSError, subprocess.TimeoutExpired):
         return None
     if proc.returncode != 0:
@@ -647,9 +686,20 @@ def _pids_of(exe: str, *, run=subprocess.run) -> "list[int] | None":
 # 负 returncode 的编号是 POSIX 语义，解码表就该按 POSIX 编号写死——
 # 不能用宿主的 signal 模块：Windows 上 SIGABRT 是 22，Signals(6) 要么解不出
 # 要么解成别的名字，同一段代码在两个平台上给出两个答案（CI 实测）。
-_POSIX_SIGNALS = {1: "SIGHUP", 2: "SIGINT", 3: "SIGQUIT", 4: "SIGILL",
-                  6: "SIGABRT", 8: "SIGFPE", 9: "SIGKILL", 10: "SIGBUS",
-                  11: "SIGSEGV", 13: "SIGPIPE", 14: "SIGALRM", 15: "SIGTERM"}
+_POSIX_SIGNALS = {
+    1: "SIGHUP",
+    2: "SIGINT",
+    3: "SIGQUIT",
+    4: "SIGILL",
+    6: "SIGABRT",
+    8: "SIGFPE",
+    9: "SIGKILL",
+    10: "SIGBUS",
+    11: "SIGSEGV",
+    13: "SIGPIPE",
+    14: "SIGALRM",
+    15: "SIGTERM",
+}
 
 
 def _exit_details(returncode: int) -> dict:
@@ -663,16 +713,16 @@ def _exit_details(returncode: int) -> dict:
     return {"exit_code": returncode, "signal": None}
 
 
-def _launch_failed(message: str, app: str, *, code: str = "launch_failed",
-                   retryable: bool = False, **extra) -> HandoffError:
+def _launch_failed(
+    message: str, app: str, *, code: str = "launch_failed", retryable: bool = False, **extra
+) -> HandoffError:
     log = sidecar_log_path()
-    return HandoffError(message, code, app=app, log_path=log,
-                        retryable=retryable, **extra)
+    return HandoffError(message, code, app=app, log_path=log, retryable=retryable, **extra)
 
 
-def _launch_desktop_via_open(app: str, bundle: str, target: Target, *,
-                             run=None, pids_of=None,
-                             clock=None, sleep=None) -> dict:
+def _launch_desktop_via_open(
+    app: str, bundle: str, target: Target, *, run=None, pids_of=None, clock=None, sleep=None
+) -> dict:
     """macOS：经 LaunchServices（`open -na <bundle> --args …`）唤起。
 
     为什么不再直接 exec 包内二进制：GUI 进程会继承调用方的执行上下文——从
@@ -689,6 +739,7 @@ def _launch_desktop_via_open(app: str, bundle: str, target: Target, *,
     就活着，天然满足；启动即崩的场景下进程出现又消失，如实报 launch_failed。
     """
     import time as _time
+
     run = subprocess.run if run is None else run
     pids_of = _pids_of if pids_of is None else pids_of
     clock = _time.monotonic if clock is None else clock
@@ -702,13 +753,14 @@ def _launch_desktop_via_open(app: str, bundle: str, target: Target, *,
     try:
         proc = run(argv, capture_output=True, text=True, timeout=30)
     except (OSError, subprocess.TimeoutExpired) as exc:
-        raise _launch_failed(f"经 LaunchServices 启动失败: {exc}", app,
-                             retryable=True) from exc
+        raise _launch_failed(f"经 LaunchServices 启动失败: {exc}", app, retryable=True) from exc
     if proc.returncode != 0:
         err = (proc.stderr or proc.stdout or "").strip()[:300]
         raise _launch_failed(
             f"LaunchServices 拒绝启动 {bundle}: {err or f'open 退出码 {proc.returncode}'}",
-            app, exit_code=proc.returncode)
+            app,
+            exit_code=proc.returncode,
+        )
 
     start = clock()
     deadline = start + LAUNCH_READY_TIMEOUT
@@ -718,21 +770,32 @@ def _launch_desktop_via_open(app: str, bundle: str, target: Target, *,
         pids = pids_of(app)
         if pids is None:
             # 查不了进程表：只能相信 open 的成功退出码，如实说清就绪没核实
-            return {"mode": "desktop", "app": app, "argv": argv, "via": "launchservices",
-                    "handoff": "forwarded" if already else "launched",
-                    "pid": None, "ready": "unverified",
-                    "ready_ms": int((clock() - start) * 1000)}
+            return {
+                "mode": "desktop",
+                "app": app,
+                "argv": argv,
+                "via": "launchservices",
+                "handoff": "forwarded" if already else "launched",
+                "pid": None,
+                "ready": "unverified",
+                "ready_ms": int((clock() - start) * 1000),
+            }
         if pids:
             saw_pid = True
             now = clock()
             if seen_at is None:
                 seen_at = now
             if now - seen_at >= LAUNCH_SETTLE:
-                return {"mode": "desktop", "app": app, "argv": argv,
-                        "via": "launchservices",
-                        "handoff": "forwarded" if already else "launched",
-                        "pid": pids[0], "ready": "process_alive",
-                        "ready_ms": int((now - start) * 1000)}
+                return {
+                    "mode": "desktop",
+                    "app": app,
+                    "argv": argv,
+                    "via": "launchservices",
+                    "handoff": "forwarded" if already else "launched",
+                    "pid": pids[0],
+                    "ready": "process_alive",
+                    "ready_ms": int((now - start) * 1000),
+                }
         else:
             seen_at = None
         sleep(LAUNCH_POLL)
@@ -740,14 +803,21 @@ def _launch_desktop_via_open(app: str, bundle: str, target: Target, *,
         raise _launch_failed(
             "Tavotto 桌面进程启动后立即退出（多半是崩溃）。"
             "崩溃报告在 ~/Library/Logs/DiagnosticReports/，sidecar 日志见 log_path。",
-            app, signal=None, exit_code=None)
+            app,
+            signal=None,
+            exit_code=None,
+        )
     raise _launch_failed(
         f"Tavotto 桌面进程在 {LAUNCH_READY_TIMEOUT:g}s 内没有出现",
-        app, code="launch_timeout", retryable=True)
+        app,
+        code="launch_timeout",
+        retryable=True,
+    )
 
 
-def _launch_desktop_via_spawn(app: str, target: Target, *,
-                              spawn=None, clock=None, sleep=None) -> dict:
+def _launch_desktop_via_spawn(
+    app: str, target: Target, *, spawn=None, clock=None, sleep=None
+) -> dict:
     """Windows（以及指到裸二进制、拼不出 bundle 的 macOS 覆盖）：直接 spawn。
 
     就绪判据（带限期的轮询，不是 sleep）：
@@ -756,6 +826,7 @@ def _launch_desktop_via_spawn(app: str, target: Target, *,
       * 进程活过观察窗口 → 算起来了（process_alive）
     """
     import time as _time
+
     spawn = subprocess.Popen if spawn is None else spawn
     clock = _time.monotonic if clock is None else clock
     sleep = _time.sleep if sleep is None else sleep
@@ -769,9 +840,16 @@ def _launch_desktop_via_spawn(app: str, target: Target, *,
         raise _launch_failed(f"Tavotto 桌面应用启动失败 {app}: {exc}", app) from exc
     if proc is None or not hasattr(proc, "poll"):
         # 注入的 spawn 没给进程对象（老测试桩）：保持旧行为，如实说没核实
-        return {"mode": "desktop", "app": app, "argv": argv, "via": "spawn",
-                "handoff": "launched", "pid": None, "ready": "unverified",
-                "ready_ms": 0}
+        return {
+            "mode": "desktop",
+            "app": app,
+            "argv": argv,
+            "via": "spawn",
+            "handoff": "launched",
+            "pid": None,
+            "ready": "unverified",
+            "ready_ms": 0,
+        }
 
     start = clock()
     while clock() - start < LAUNCH_CRASH_WINDOW:
@@ -780,20 +858,37 @@ def _launch_desktop_via_spawn(app: str, target: Target, *,
             sleep(LAUNCH_POLL)
             continue
         if rc == 0:
-            return {"mode": "desktop", "app": app, "argv": argv, "via": "spawn",
-                    "handoff": "forwarded", "pid": getattr(proc, "pid", None),
-                    "ready": "forwarder_exited",
-                    "ready_ms": int((clock() - start) * 1000)}
+            return {
+                "mode": "desktop",
+                "app": app,
+                "argv": argv,
+                "via": "spawn",
+                "handoff": "forwarded",
+                "pid": getattr(proc, "pid", None),
+                "ready": "forwarder_exited",
+                "ready_ms": int((clock() - start) * 1000),
+            }
         details = _exit_details(rc)
         raise _launch_failed(
             "Tavotto 桌面进程在就绪前退出"
-            + (f"（信号 {details['signal']}）" if details["signal"]
-               else f"（退出码 {details['exit_code']}）"),
-            app, **details)
-    return {"mode": "desktop", "app": app, "argv": argv, "via": "spawn",
-            "handoff": "launched", "pid": getattr(proc, "pid", None),
-            "ready": "process_alive",
-            "ready_ms": int((clock() - start) * 1000)}
+            + (
+                f"（信号 {details['signal']}）"
+                if details["signal"]
+                else f"（退出码 {details['exit_code']}）"
+            ),
+            app,
+            **details,
+        )
+    return {
+        "mode": "desktop",
+        "app": app,
+        "argv": argv,
+        "via": "spawn",
+        "handoff": "launched",
+        "pid": getattr(proc, "pid", None),
+        "ready": "process_alive",
+        "ready_ms": int((clock() - start) * 1000),
+    }
 
 
 def _http_json(url: str, payload: dict | None = None, timeout: float = 1.0) -> dict | None:
@@ -832,12 +927,22 @@ def browser_url(port: int, target: Target, pj: str | None = None) -> str:
     return f"http://127.0.0.1:{port}/" + ("?" + "&".join(qs) if qs else "")
 
 
-def launch(target: Target, *, prefer: str = "auto", port: int = DEFAULT_PORT,
-           system: str | None = None, environ: dict | None = None,
-           isfile=os.path.isfile, spawn=None,
-           http=_http_json, browse=webbrowser.open,
-           run=None, pids_of=None,
-           clock=None, sleep=None) -> dict:
+def launch(
+    target: Target,
+    *,
+    prefer: str = "auto",
+    port: int = DEFAULT_PORT,
+    system: str | None = None,
+    environ: dict | None = None,
+    isfile=os.path.isfile,
+    spawn=None,
+    http=_http_json,
+    browse=webbrowser.open,
+    run=None,
+    pids_of=None,
+    clock=None,
+    sleep=None,
+) -> dict:
     """唤起界面。返回 {"mode": ..., ...}；mode 是给插件看的机器可读值。
 
     桌面路径**必须等到就绪或失败才返回**：起了就报成功的话，SIGABRT 的桌面
@@ -852,25 +957,31 @@ def launch(target: Target, *, prefer: str = "auto", port: int = DEFAULT_PORT,
             sysname = sys.platform if system is None else system
             bundle = _bundle_root(app) if sysname == "darwin" else None
             if bundle:
-                return _launch_desktop_via_open(app, bundle, target, run=run,
-                                                pids_of=pids_of, clock=clock,
-                                                sleep=sleep)
-            return _launch_desktop_via_spawn(app, target, spawn=spawn,
-                                             clock=clock, sleep=sleep)
+                return _launch_desktop_via_open(
+                    app, bundle, target, run=run, pids_of=pids_of, clock=clock, sleep=sleep
+                )
+            return _launch_desktop_via_spawn(app, target, spawn=spawn, clock=clock, sleep=sleep)
         if prefer == "desktop":
             raise HandoffError(
                 "没找到 Tavotto 桌面应用。装一个（GitHub Releases），"
                 f"或用 {APP_ENV} 指到它的可执行文件，"
-                "或去掉 --desktop 走浏览器模式。", "desktop_missing")
+                "或去掉 --desktop 走浏览器模式。",
+                "desktop_missing",
+            )
 
     # 浏览器模式：先问问本机有没有已经在跑的实例——有就让它开这个项目，
     # 绝不再起第二个进程去抢同一个端口（抢不到的那个只会把用户送回旧项目）。
     if http(f"http://127.0.0.1:{port}/api/version", timeout=0.6):
-        st = http(f"http://127.0.0.1:{port}/api/projects/open",
-                  {"path": target.project}, timeout=10.0) or {}
+        st = (
+            http(
+                f"http://127.0.0.1:{port}/api/projects/open", {"path": target.project}, timeout=10.0
+            )
+            or {}
+        )
         if st.get("error"):
-            raise HandoffError(f"已在运行的 Tavotto 打不开这个项目: {st['error']}",
-                               "remote_open_failed")
+            raise HandoffError(
+                f"已在运行的 Tavotto 打不开这个项目: {st['error']}", "remote_open_failed"
+            )
         url = browser_url(port, target, st.get("id"))
         # 安全的 token 交接（ADR 0008）：凭本机凭据换一枚一次性 nonce 拼进
         # fragment，新开的标签页才过得了会话认证。换不到（老实例 /
@@ -883,8 +994,9 @@ def launch(target: Target, *, prefer: str = "auto", port: int = DEFAULT_PORT,
     # Tavotto 自己（tavotto-cli.exe / Tavotto.exe），拼成
     # `tavotto-cli -m tavotto --figures …` 会在 argparse 里报 unrecognized
     # arguments 当场退出——用户看到的是「点了没反应」。直接给主入口的 flag。
-    launcher = ([sys.executable] if getattr(sys, "frozen", False)
-                else [sys.executable, "-m", "tavotto"])
+    launcher = (
+        [sys.executable] if getattr(sys, "frozen", False) else [sys.executable, "-m", "tavotto"]
+    )
     argv = [*launcher, "--figures", target.project, "--port", str(port)]
     if target.stem:
         argv += ["--open-stem", target.stem]
@@ -905,15 +1017,23 @@ def _is_script_target(raw: str) -> bool:
     return os.path.isfile(path) and os.path.splitext(path)[1].lower() == ".py"
 
 
-def open_target(raw: str, *, prefer: str = "auto", port: int = DEFAULT_PORT,
-                launch_ui: bool = True, stem: str | None = None,
-                no_probe: bool = False, **kw) -> dict:
+def open_target(
+    raw: str,
+    *,
+    prefer: str = "auto",
+    port: int = DEFAULT_PORT,
+    launch_ui: bool = True,
+    stem: str | None = None,
+    no_probe: bool = False,
+    **kw,
+) -> dict:
     """解析 → 登记 →（脚本目标按需 safe probe）→ 唤起。
 
     返回一份可直接 json.dumps 的结果。`.py` 目标带 `probe` / `figures` /
     `pick` 三个附加键（路由细节见 resolve_script_route）。
     """
     from .. import __version__  # 版本号唯一出处，别在这儿写死
+
     target = resolve_target(raw)
     probe_info: dict | None = None
     if _is_script_target(raw):
@@ -922,17 +1042,18 @@ def open_target(raw: str, *, prefer: str = "auto", port: int = DEFAULT_PORT,
         # 静态发现先走一遍（草稿/合并注册表——探测路由要读它的现状）
         registry_info = ensure_registered(target.project, None)
         target, probe_info = resolve_script_route(
-            target.project, script_rel, stem_arg=stem, no_probe=no_probe,
-            port=port)
+            target.project, script_rel, stem_arg=stem, no_probe=no_probe, port=port
+        )
         if target.pick and not launch_ui:
             # 没有界面接选择器（--no-launch 的机器调用）：必须显式选
             raise HandoffError(
                 "这个脚本产出多张图，机器调用必须用 --stem 显式选一张（有："
                 f"{', '.join(f['stem'] for f in probe_info['figures'])}）",
-                "multiple_figures_found", figures=probe_info["figures"])
+                "multiple_figures_found",
+                figures=probe_info["figures"],
+            )
         if target.stem is not None:
-            registry_info["parameterizable"] = _registered(target.project,
-                                                           target.stem)
+            registry_info["parameterizable"] = _registered(target.project, target.stem)
     else:
         if stem is not None:
             raise HandoffError("--stem 只能与 .py 脚本目标连用", "invalid_stem")
@@ -940,10 +1061,15 @@ def open_target(raw: str, *, prefer: str = "auto", port: int = DEFAULT_PORT,
     # `version` 是**这次真正干活的那个 Tavotto** 的版本。调用方（Codex 插件）
     # 要拿它比 min_tavotto_version——插件自己的版本与它各有各的升级节奏，
     # 混为一谈会提示用户去升级一个根本没问题的东西。
-    result = {"ok": True, "protocol": engine_locate.PROTOCOL_VERSION,
-              "version": __version__,
-              "project": target.project, "stem": target.stem,
-              "registry": registry_info, "launch": None}
+    result = {
+        "ok": True,
+        "protocol": engine_locate.PROTOCOL_VERSION,
+        "version": __version__,
+        "project": target.project,
+        "stem": target.stem,
+        "registry": registry_info,
+        "launch": None,
+    }
     if probe_info is not None:
         result["figures"] = probe_info.get("figures") or []
         result["probe"] = {k: v for k, v in probe_info.items() if k != "figures"}
@@ -962,9 +1088,14 @@ def _report(result: dict) -> None:
     probe_info = result.get("probe")
     if probe_info and probe_info.get("performed"):
         n = len(result.get("figures") or [])
-        print(f"* 已安全试运行脚本并发现 {n} 张图"
-              + (f"（超上限丢弃 {probe_info['dropped_figures']} 张）"
-                 if probe_info.get("dropped_figures") else ""))
+        print(
+            f"* 已安全试运行脚本并发现 {n} 张图"
+            + (
+                f"（超上限丢弃 {probe_info['dropped_figures']} 张）"
+                if probe_info.get("dropped_figures")
+                else ""
+            )
+        )
     if result.get("pick"):
         stems = ", ".join(f["stem"] for f in result.get("figures") or [])
         print(f"* 这个脚本产出多张图（{stems}），已交给界面的选择器")
@@ -974,15 +1105,18 @@ def _report(result: dict) -> None:
         added = ", ".join(reg["added_scripts"]) or ", ".join(reg["added_stems"])
         print(f"* 注册表已合并新条目: {added}（现有条目未改动）")
     if reg["parameterizable"] is False:
-        print("! 这张图没有对应脚本，打开后只能当素材排版，双击进不去图内编辑。"
-              "\n  静态扫描解不出它的产出名时，"
-              "用「设置 → 脚本注册表 → 试运行探测」登记。")
+        print(
+            "! 这张图没有对应脚本，打开后只能当素材排版，双击进不去图内编辑。"
+            "\n  静态扫描解不出它的产出名时，"
+            "用「设置 → 脚本注册表 → 试运行探测」登记。"
+        )
     for script in reg["dynamic_names"]:
-        print(f"  ? {script} 的输出名来自运行期数据，"
-              "静态定位不到 stem（可用试运行探测）")
+        print(f"  ? {script} 的输出名来自运行期数据，静态定位不到 stem（可用试运行探测）")
     if reg["conflicts"]:
-        print(f"  ⚠ stem 归属冲突未裁决: {', '.join(reg['conflicts'])}"
-              f"\n    请在 {reg['registry']} 里手工指定归属")
+        print(
+            f"  ⚠ stem 归属冲突未裁决: {', '.join(reg['conflicts'])}"
+            f"\n    请在 {reg['registry']} 里手工指定归属"
+        )
     launch_info = result.get("launch")
     if not launch_info:
         return
@@ -991,8 +1125,7 @@ def _report(result: dict) -> None:
         if launch_info.get("handoff") == "forwarded":
             print("* 已转发给正在运行的 Tavotto 桌面应用")
         else:
-            print(f"* Tavotto 桌面应用已启动"
-                  f"（{launch_info.get('ready_ms', 0)}ms 就绪）")
+            print(f"* Tavotto 桌面应用已启动（{launch_info.get('ready_ms', 0)}ms 就绪）")
     elif mode == "browser-existing":
         print(f"* 已交给正在运行的 Tavotto: {launch_info['url']}")
     else:
@@ -1002,18 +1135,16 @@ def _report(result: dict) -> None:
 def cli(argv: list[str]) -> int:
     """`tavotto open` 的入口。返回退出码。"""
     ap = argparse.ArgumentParser(
-        prog="tavotto open",
-        description="把一张图 / 一个脚本 / 一个图库目录交给 Tavotto 打开")
+        prog="tavotto open", description="把一张图 / 一个脚本 / 一个图库目录交给 Tavotto 打开"
+    )
     ap.add_argument("path", help="产物（.pdf/.png…）、脚本（.py）或图库目录")
-    ap.add_argument("--desktop", action="store_true",
-                    help="必须用桌面应用，找不到就失败")
+    ap.add_argument("--desktop", action="store_true", help="必须用桌面应用，找不到就失败")
     ap.add_argument("--browser", action="store_true", help="强制浏览器模式")
-    ap.add_argument("--no-launch", action="store_true",
-                    help="只解析与登记，不唤起界面（自检用）")
-    ap.add_argument("--no-probe", action="store_true",
-                    help="脚本静态解不出产出时也不试运行（只按现有登记打开）")
-    ap.add_argument("--stem", default=None,
-                    help="脚本产出多张图时显式选哪张（只对 .py 目标有效）")
+    ap.add_argument("--no-launch", action="store_true", help="只解析与登记，不唤起界面（自检用）")
+    ap.add_argument(
+        "--no-probe", action="store_true", help="脚本静态解不出产出时也不试运行（只按现有登记打开）"
+    )
+    ap.add_argument("--stem", default=None, help="脚本产出多张图时显式选哪张（只对 .py 目标有效）")
     ap.add_argument("--port", type=int, default=DEFAULT_PORT, help="浏览器模式端口")
     ap.add_argument("--json", action="store_true", help="输出机器可读结果")
     args = ap.parse_args(argv)
@@ -1026,27 +1157,43 @@ def cli(argv: list[str]) -> int:
     if args.desktop and args.browser:
         msg = "--desktop 与 --browser 不能同时给"
         if args.json:
-            print(json.dumps({"ok": False, "protocol": engine_locate.PROTOCOL_VERSION,
-                              "code": "bad_launch_mode", "error": msg},
-                             ensure_ascii=False))
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "protocol": engine_locate.PROTOCOL_VERSION,
+                        "code": "bad_launch_mode",
+                        "error": msg,
+                    },
+                    ensure_ascii=False,
+                )
+            )
         else:
             print(msg, file=sys.stderr)
         return 2
     prefer = "desktop" if args.desktop else "browser" if args.browser else "auto"
 
     try:
-        result = open_target(args.path, prefer=prefer, port=args.port,
-                             launch_ui=not args.no_launch,
-                             stem=args.stem, no_probe=args.no_probe)
+        result = open_target(
+            args.path,
+            prefer=prefer,
+            port=args.port,
+            launch_ui=not args.no_launch,
+            stem=args.stem,
+            no_probe=args.no_probe,
+        )
     except HandoffError as exc:
         # 失败也必须是**机器可解析的一行 JSON**：调用方按 `code` 分诊，
         # 拿不到 JSON 就只能去猜 stderr 里那句中文是什么意思。
         # 桌面启动失败随附 `app` / `exit_code` / `signal` / `log_path` /
         # `retryable`（HandoffError.extra），逐键并入这一行。
         if args.json:
-            print(json.dumps({"protocol": engine_locate.PROTOCOL_VERSION,
-                              **exc.payload()},
-                             ensure_ascii=False))
+            print(
+                json.dumps(
+                    {"protocol": engine_locate.PROTOCOL_VERSION, **exc.payload()},
+                    ensure_ascii=False,
+                )
+            )
         else:
             print(f"打不开: {exc}", file=sys.stderr)
             log = exc.extra.get("log_path")

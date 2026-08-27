@@ -12,6 +12,7 @@
 
 纯标准库，Flask 父进程 import。
 """
+
 from __future__ import annotations
 
 import difflib
@@ -32,8 +33,8 @@ from .runtime import CREATE_NO_WINDOW  # noqa: F401 — 重导出，历史调用
 LOG = logging.getLogger("tavotto.ai")
 
 SNAP_DIR = config.data_dir() / "cache" / "ai_snapshots"
-TIMEOUT_S = 900          # 单次 AI 任务上限
-SNAP_KEEP = 20           # 快照保留的最近会话数（超龄的 revert 入口早已不可见）
+TIMEOUT_S = 900  # 单次 AI 任务上限
+SNAP_KEEP = 20  # 快照保留的最近会话数（超龄的 revert 入口早已不可见）
 SESSIONS: dict[str, dict] = {}
 
 
@@ -87,8 +88,9 @@ _CAPS_CACHE: dict = {}
 STATES = ("ready", "installed", "needs_auth", "broken", "not_installed", "disabled")
 
 
-def _state(installed: bool, enabled: bool, res: ai_agents.Resolution,
-           endpoint_backed: bool = False) -> str:
+def _state(
+    installed: bool, enabled: bool, res: ai_agents.Resolution, endpoint_backed: bool = False
+) -> str:
     """把探测结论收敛成界面状态。
 
     「没装」不是错误，「装了但起不来」才是——两者必须分开说：前者的下一步是
@@ -123,8 +125,7 @@ def _effective_enabled(saved: dict, installed: bool) -> bool:
     return bool(stored) if isinstance(stored, bool) else installed
 
 
-def _agent_caps(agent: ai_agents.AgentDefinition, saved: dict,
-                npm_available: bool) -> dict:
+def _agent_caps(agent: ai_agents.AgentDefinition, saved: dict, npm_available: bool) -> dict:
     res = ai_agents.resolve(agent)
     installed = res.argv is not None
     enabled = _effective_enabled(saved, installed)
@@ -155,27 +156,21 @@ def _agent_caps(agent: ai_agents.AgentDefinition, saved: dict,
         "id": agent.id,
         "display_name": agent.display_name,
         "icon_key": agent.icon_key,
-
         "state": state,
         "installed": installed,
         "enabled": enabled,
         # 「能不能真的派活给它」——界面据此过滤选择器，后端 run 也照这条判。
         "usable": enabled and installed and state in ("ready", "installed"),
-
         "version": res.version,
         "executable_path": res.path,
         "path_override": str(saved["path_override"]) if saved.get("path_override") else None,
         "detection_source": res.source,
-
         "models": models,
         "default_model": default_model,
         "efforts": list(caps.efforts) if agent.supports_effort_selection else [],
         "default_effort": caps.default_effort if agent.supports_effort_selection else None,
-
         "endpoint": ai_providers.public(endpoint) if endpoint else None,
-        "active_endpoint_id": (ai_providers.active_id(agent.id)
-                               if agent.endpoint_family else None),
-
+        "active_endpoint_id": (ai_providers.active_id(agent.id) if agent.endpoint_family else None),
         "features": {
             "third_party_endpoints": bool(agent.endpoint_family),
             "model_selection": agent.supports_model_selection,
@@ -183,7 +178,6 @@ def _agent_caps(agent: ai_agents.AgentDefinition, saved: dict,
             "wire_api_selection": agent.supports_wire_api,
             "readiness_probe": agent.supports_readiness_probe,
         },
-
         # 诊断（详情页的折叠区）：找过哪儿、第一个坏候选、就绪检查的结论。
         # **`argv` 不在这里**——前端没有消费者，那就不公开。
         "diagnostics": {
@@ -194,10 +188,12 @@ def _agent_caps(agent: ai_agents.AgentDefinition, saved: dict,
         },
     }
     if agent.install_spec:
-        info["install"] = {"method": agent.install_spec.method,
-                           "package": agent.install_spec.package,
-                           "available": npm_available,
-                           **install_status(agent.id)}
+        info["install"] = {
+            "method": agent.install_spec.method,
+            "package": agent.install_spec.package,
+            "available": npm_available,
+            **install_status(agent.id),
+        }
     return info
 
 
@@ -219,8 +215,9 @@ def capabilities(refresh: bool = False) -> dict:
     saved = config.ai_agent_settings()
     npm_available = _npm_argv() is not None
     _CAPS_CACHE = {
-        "agents": [_agent_caps(a, saved.get(a.id) or {}, npm_available)
-                   for a in ai_agents.agents()],
+        "agents": [
+            _agent_caps(a, saved.get(a.id) or {}, npm_available) for a in ai_agents.agents()
+        ],
         "endpoints": [ai_providers.public(p) for p in ai_providers.list_providers()],
         "presets": ai_providers.PRESETS,
         "checked_at_ms": int(time.time() * 1000),
@@ -254,7 +251,7 @@ def require_usable(agent_id: str) -> dict:
     """
     require_agent(agent_id)
     info = agent_caps(agent_id)
-    if info is None:                                    # 理论上到不了
+    if info is None:  # 理论上到不了
         raise AgentError("ai_agent_unknown", {"agent": agent_id})
     if not info["installed"]:
         raise AgentError("ai_agent_not_installed", {"agent": agent_id})
@@ -318,7 +315,7 @@ def set_agent_path_override(agent_id: str, path: str | None) -> dict:
 # 一键安装（npm 用户级全局包；给「根本没装过 CLI」的用户一条不出软件的路）
 # ---------------------------------------------------------------------------
 INSTALL_TIMEOUT_S = 600
-_INSTALLS: dict[str, dict] = {}   # agent -> {"status", "code", "log", "started"}
+_INSTALLS: dict[str, dict] = {}  # agent -> {"status", "code", "log", "started"}
 _INSTALL_LOCK = threading.Lock()
 
 
@@ -367,9 +364,14 @@ def start_install(agent_id: str) -> dict:
         try:
             out = subprocess.run(
                 [*npm, "install", "-g", spec.package],
-                capture_output=True, text=True, timeout=INSTALL_TIMEOUT_S,
-                encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL,
-                creationflags=CREATE_NO_WINDOW)
+                capture_output=True,
+                text=True,
+                timeout=INSTALL_TIMEOUT_S,
+                encoding="utf-8",
+                errors="replace",
+                stdin=subprocess.DEVNULL,
+                creationflags=CREATE_NO_WINDOW,
+            )
             state["log"] = ((out.stdout or "") + "\n" + (out.stderr or "")).strip()[-4000:]
             if out.returncode != 0:
                 state.update(status="error", code="npm_failed")
@@ -386,8 +388,11 @@ def start_install(agent_id: str) -> dict:
             else:
                 state.update(status="error", code="installed_but_not_found")
         except subprocess.TimeoutExpired:
-            state.update(status="error", code="timeout",
-                         log=f"npm install timed out after {INSTALL_TIMEOUT_S}s")
+            state.update(
+                status="error",
+                code="timeout",
+                log=f"npm install timed out after {INSTALL_TIMEOUT_S}s",
+            )
         except OSError as exc:
             state.update(status="error", code="spawn_failed", log=str(exc))
         finally:
@@ -400,9 +405,14 @@ def start_install(agent_id: str) -> dict:
 # ---------------------------------------------------------------------------
 # 命令构造与输出分类（全部委托给适配器）
 # ---------------------------------------------------------------------------
-def _cmd(agent_id: str, prompt: str, cwd: str,
-         model: str | None = None, effort: str | None = None,
-         endpoint: dict | None = None) -> tuple[list[str], dict[str, str]]:
+def _cmd(
+    agent_id: str,
+    prompt: str,
+    cwd: str,
+    model: str | None = None,
+    effort: str | None = None,
+    endpoint: dict | None = None,
+) -> tuple[list[str], dict[str, str]]:
     """→ (命令行, 需要追加到环境的变量)。第三方接口全部走这两样注入，
     绝不改写用户自己的 ~/.claude 或 ~/.codex 配置。"""
     agent = require_agent(agent_id)
@@ -410,9 +420,17 @@ def _cmd(agent_id: str, prompt: str, cwd: str,
     if res.argv is None:
         raise AgentError("ai_agent_not_installed", {"agent": agent_id})
     extra_args, extra_env = ai_providers.spawn_overrides(agent_id, endpoint, model)
-    spec = agent.build_command(ai_agents.RunContext(
-        argv=list(res.argv), prompt=prompt, cwd=cwd, model=model, effort=effort,
-        endpoint_args=list(extra_args), endpoint_env=dict(extra_env)))
+    spec = agent.build_command(
+        ai_agents.RunContext(
+            argv=list(res.argv),
+            prompt=prompt,
+            cwd=cwd,
+            model=model,
+            effort=effort,
+            endpoint_args=list(extra_args),
+            endpoint_env=dict(extra_env),
+        )
+    )
     return list(spec.argv), dict(spec.env)
 
 
@@ -426,8 +444,9 @@ def _classify(agent_id: str, line: str, st: dict) -> list[tuple[str, str]]:
     return agent.classify_event(line, st) if agent else []
 
 
-def _build_prompt(script: str, user_prompt: str, context: dict | None,
-                  figures_dir: str | None = None) -> str:
+def _build_prompt(
+    script: str, user_prompt: str, context: dict | None, figures_dir: str | None = None
+) -> str:
     """给编程助手的规范化提示词。
 
     硬性约束单独成段、编号列出：Tavotto 的参数化编辑靠拦截 matplotlib 的
@@ -446,12 +465,13 @@ def _build_prompt(script: str, user_prompt: str, context: dict | None,
         "手写 SVG/PDF、subprocess 调外部绘图工具等方式出图——外部系统靠拦截 "
         "matplotlib 的 savefig 实现参数化编辑，其他方式生成的图完全无法再编辑。",
         "2. 保持既有输出文件名（stem）与出图数量不变。",
-        "3. 只修改目标脚本；不要运行脚本（渲染由外部系统负责）；"
-        "不要修改其他脚本或数据文件。",
+        "3. 只修改目标脚本；不要运行脚本（渲染由外部系统负责）；不要修改其他脚本或数据文件。",
     ]
     if figures_dir and (Path(figures_dir) / "paper_style.py").is_file():
-        lines.append("4. 图库有共享样式 paper_style.py：沿用它既有的字体/字号/配色/"
-                     "版面规范，不要修改 paper_style.py 本身。")
+        lines.append(
+            "4. 图库有共享样式 paper_style.py：沿用它既有的字体/字号/配色/"
+            "版面规范，不要修改 paper_style.py 本身。"
+        )
     ctx = context or {}
     ctx_lines = []
     if ctx.get("stem"):
@@ -459,8 +479,10 @@ def _build_prompt(script: str, user_prompt: str, context: dict | None,
     if ctx.get("gid"):
         ctx_lines.append(f"用户在界面上选中的元素：{ctx['gid']}（{ctx.get('label', '')}）。")
     if ctx.get("overrides"):
-        ctx_lines.append("用户已在界面上做了这些非破坏性修改（渲染时叠加的 override，"
-                         f"代表期望状态，供参考）：{ctx['overrides']}")
+        ctx_lines.append(
+            "用户已在界面上做了这些非破坏性修改（渲染时叠加的 override，"
+            f"代表期望状态，供参考）：{ctx['overrides']}"
+        )
     if ctx_lines:
         lines += ["", *ctx_lines]
     lines += [
@@ -470,10 +492,17 @@ def _build_prompt(script: str, user_prompt: str, context: dict | None,
     return "\n".join(lines)
 
 
-def run(agent: str, script: str, user_prompt: str, figures_dir: str,
-        context: dict | None = None, on_event=None,
-        model: str | None = None, effort: str | None = None,
-        endpoint_id: str | None = None) -> str:
+def run(
+    agent: str,
+    script: str,
+    user_prompt: str,
+    figures_dir: str,
+    context: dict | None = None,
+    on_event=None,
+    model: str | None = None,
+    effort: str | None = None,
+    endpoint_id: str | None = None,
+) -> str:
     """启动一次 AI 修改任务，返回 session id。事件经 on_event(name, data) 回调。
 
     **先过 `require_usable`**：未知 / 未安装 / 被用户关掉的 Agent 在这里就被
@@ -489,52 +518,88 @@ def run(agent: str, script: str, user_prompt: str, figures_dir: str,
     snap = SNAP_DIR / f"{sid}__{script}"
     shutil.copy2(script_path, snap)
     # sidecar：进程重启后 revert 仍可从磁盘找回（SESSIONS 只在内存）
-    (SNAP_DIR / f"{sid}.json").write_text(json.dumps({
-        "id": sid, "agent": agent, "script": script,
-        "script_path": str(script_path), "snapshot": str(snap),
-        "prompt": user_prompt, "started": time.time(),
-        "model": model, "effort": effort,
-    }, ensure_ascii=False), encoding="utf-8")
+    (SNAP_DIR / f"{sid}.json").write_text(
+        json.dumps(
+            {
+                "id": sid,
+                "agent": agent,
+                "script": script,
+                "script_path": str(script_path),
+                "snapshot": str(snap),
+                "prompt": user_prompt,
+                "started": time.time(),
+                "model": model,
+                "effort": effort,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
 
     prompt = _build_prompt(script, user_prompt, context, figures_dir)
     stderr_log = open(SNAP_DIR / f"{sid}.stderr.log", "wb", buffering=0)
     endpoint = ai_providers.resolve(agent, endpoint_id)
-    cmd, extra_env = _cmd(agent, prompt, figures_dir, model=model,
-                          effort=effort, endpoint=endpoint)
+    cmd, extra_env = _cmd(agent, prompt, figures_dir, model=model, effort=effort, endpoint=endpoint)
     # 提示词按**值**从日志里摘掉（它在命令行里的位置各家不同：codex 在末尾、
     # claude 在 `-p` 后面）。按 agent 写死下标那种做法，加第三个 Agent 时
     # 会静默把用户的提示词整条写进日志。
-    LOG.info("AI 任务命令: %s（接口: %s）",
-             " ".join("<prompt>" if part == prompt else part for part in cmd),
-             endpoint["label"] if endpoint else "CLI 默认")
+    LOG.info(
+        "AI 任务命令: %s（接口: %s）",
+        " ".join("<prompt>" if part == prompt else part for part in cmd),
+        endpoint["label"] if endpoint else "CLI 默认",
+    )
     # cmd[0] 是 CLI 可执行（或 node），末尾是提示词——PATH 增强按 cmd[0] 算
     env = _spawn_env(cmd[0], extra_env)
     proc = subprocess.Popen(
-        cmd, cwd=figures_dir, env=env,
+        cmd,
+        cwd=figures_dir,
+        env=env,
         stdin=subprocess.DEVNULL,  # 桌面 sidecar 的 stdin 是父进程死亡信号管道，不外传
-        stdout=subprocess.PIPE, stderr=stderr_log,  # CLI 的 hook/统计噪音不进对话
-        text=True, bufsize=1,
+        stdout=subprocess.PIPE,
+        stderr=stderr_log,  # CLI 的 hook/统计噪音不进对话
+        text=True,
+        bufsize=1,
         # 显式 UTF-8：Windows 上 text=True 跟随系统区域编码（cp936），
         # CLI 回来的中文/JSON 一解码就炸，表现为「任务刚起就结束」
-        encoding="utf-8", errors="replace",
+        encoding="utf-8",
+        errors="replace",
         creationflags=CREATE_NO_WINDOW,
     )
     sess = {
-        "id": sid, "agent": agent, "script": script, "prompt": user_prompt,
-        "script_path": str(script_path), "status": "running", "transcript": [],
-        "diff": "", "changed": False, "model": model, "effort": effort,
-        "snapshot": str(snap), "proc": proc, "started": time.time(),
+        "id": sid,
+        "agent": agent,
+        "script": script,
+        "prompt": user_prompt,
+        "script_path": str(script_path),
+        "status": "running",
+        "transcript": [],
+        "diff": "",
+        "changed": False,
+        "model": model,
+        "effort": effort,
+        "snapshot": str(snap),
+        "proc": proc,
+        "started": time.time(),
     }
     SESSIONS[sid] = sess
     ctx = context or {}
-    ai_history.record_start({
-        "id": sid, "project": str(Path(figures_dir).resolve()),
-        "canvas": ctx.get("canvas"), "panel": ctx.get("stem"),
-        "element": ctx.get("gid"), "provider": agent,
-        "model": model, "effort": effort,
-        "scope": ctx.get("scope"), "target": ctx.get("target"),
-        "script": script, "prompt": user_prompt, "snapshot_path": str(snap),
-    })
+    ai_history.record_start(
+        {
+            "id": sid,
+            "project": str(Path(figures_dir).resolve()),
+            "canvas": ctx.get("canvas"),
+            "panel": ctx.get("stem"),
+            "element": ctx.get("gid"),
+            "provider": agent,
+            "model": model,
+            "effort": effort,
+            "scope": ctx.get("scope"),
+            "target": ctx.get("target"),
+            "script": script,
+            "prompt": user_prompt,
+            "snapshot_path": str(snap),
+        }
+    )
     emit = on_event or (lambda *_: None)
 
     def _pump():
@@ -558,26 +623,57 @@ def run(agent: str, script: str, user_prompt: str, figures_dir: str,
             new_text = script_path.read_text(encoding="utf-8", errors="replace")
             old_text = snap.read_text(encoding="utf-8", errors="replace")
             sess["changed"] = new_text != old_text
-            sess["diff"] = "".join(difflib.unified_diff(
-                old_text.splitlines(keepends=True), new_text.splitlines(keepends=True),
-                fromfile=f"{script} (修改前)", tofile=f"{script} (修改后)", n=3))
+            sess["diff"] = "".join(
+                difflib.unified_diff(
+                    old_text.splitlines(keepends=True),
+                    new_text.splitlines(keepends=True),
+                    fromfile=f"{script} (修改前)",
+                    tofile=f"{script} (修改后)",
+                    n=3,
+                )
+            )
             if sess["status"] == "running":
                 sess["status"] = "done" if proc.returncode == 0 else "failed"
-            LOG.info("AI 会话结束: %s %s status=%s changed=%s",
-                     agent, script, sess["status"], sess["changed"])
-            ai_history.record_end(sid, sess["status"], diff=sess["diff"],
-                                  changed=sess["changed"],
-                                  transcript=sess["transcript"])
-            emit("ai.done", {"session": sid, "status": sess["status"],
-                             "changed": sess["changed"], "diff": sess["diff"],
-                             "script": script})
+            LOG.info(
+                "AI 会话结束: %s %s status=%s changed=%s",
+                agent,
+                script,
+                sess["status"],
+                sess["changed"],
+            )
+            ai_history.record_end(
+                sid,
+                sess["status"],
+                diff=sess["diff"],
+                changed=sess["changed"],
+                transcript=sess["transcript"],
+            )
+            emit(
+                "ai.done",
+                {
+                    "session": sid,
+                    "status": sess["status"],
+                    "changed": sess["changed"],
+                    "diff": sess["diff"],
+                    "script": script,
+                },
+            )
         except Exception as exc:  # noqa: BLE001
             sess["status"] = "failed"
-            ai_history.record_end(sid, "failed", error=str(exc),
-                                  transcript=sess.get("transcript") or [])
-            emit("ai.done", {"session": sid, "status": "failed",
-                             "changed": False, "diff": "", "error": str(exc),
-                             "script": script})
+            ai_history.record_end(
+                sid, "failed", error=str(exc), transcript=sess.get("transcript") or []
+            )
+            emit(
+                "ai.done",
+                {
+                    "session": sid,
+                    "status": "failed",
+                    "changed": False,
+                    "diff": "",
+                    "error": str(exc),
+                    "script": script,
+                },
+            )
 
     threading.Thread(target=_pump, daemon=True, name=f"ai-{sid}").start()
     return sid
@@ -620,11 +716,22 @@ def get(sid: str) -> dict | None:
     # 后端已重启：以 SQLite 历史为准（启动时 running 已被标为 interrupted）
     hist = ai_history.get(sid)
     if hist is not None:
-        return {**side, "status": hist["status"], "transcript": hist["transcript"],
-                "diff": hist["diff"], "changed": hist["changed"],
-                "note": "后端已重启，记录来自历史库"}
-    return {**side, "status": "interrupted", "transcript": [], "diff": "",
-            "changed": None, "note": "后端已重启，仅可回滚"}
+        return {
+            **side,
+            "status": hist["status"],
+            "transcript": hist["transcript"],
+            "diff": hist["diff"],
+            "changed": hist["changed"],
+            "note": "后端已重启，记录来自历史库",
+        }
+    return {
+        **side,
+        "status": "interrupted",
+        "transcript": [],
+        "diff": "",
+        "changed": None,
+        "note": "后端已重启，仅可回滚",
+    }
 
 
 def cancel(sid: str) -> bool:

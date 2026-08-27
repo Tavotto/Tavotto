@@ -4,6 +4,7 @@
 `posthog.py`，对外只有 `wsgi.py` 一个入口——本地、测试、Vercel 跑的是同一个
 `application`，没有第二条路径可以悄悄坏掉。
 """
+
 from .core import handle
 
 __all__ = ["handle"]

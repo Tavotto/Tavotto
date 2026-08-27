@@ -12,6 +12,7 @@
      都**不设 TAVOTTO_WORKERD**，靠 `--expect-control-plane workerd` 断言
      产物自带的那份真的被找到并用上了。
 """
+
 import re
 import sys
 from pathlib import Path
@@ -26,8 +27,7 @@ sys.path.insert(0, str(REPO / "scripts"))
 import build_desktop as bd  # noqa: E402
 
 SPEC = (REPO / "packaging" / "tavotto.spec").read_text(encoding="utf-8")
-DESKTOP_WF = (REPO / ".github" / "workflows"
-              / "desktop-tauri.yml").read_text(encoding="utf-8")
+DESKTOP_WF = (REPO / ".github" / "workflows" / "desktop-tauri.yml").read_text(encoding="utf-8")
 CI_WF = (REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 
 
@@ -38,8 +38,9 @@ def test_the_spec_ships_workerd_as_a_binary_not_a_data_file():
     而 workerd 起不来又是静默回退的。
     """
     assert "binaries=binaries" in SPEC, "Analysis 得真的用上这份 binaries"
-    assert 'binaries = [(str(WORKERD), ".")]' in SPEC, \
+    assert 'binaries = [(str(WORKERD), ".")]' in SPEC, (
         'workerd 要落在收集根目录（"."），也就是冻结后的 sys._MEIPASS'
+    )
 
 
 def test_the_spec_takes_workerd_from_cargos_own_output_dir():
@@ -91,10 +92,12 @@ def test_build_desktop_builds_workerd_before_pyinstaller_and_checks_the_result()
     assert call, "build_desktop.py 里找不到 build_workerd() 的调用（不是定义）"
     assert call.start() < pyinstaller.start(), (
         "build_workerd() 的调用跑到 PyInstaller 之后了——顺序即依赖："
-        "spec 从 cargo 的产物位置取二进制，先打包就什么都取不到")
-    assert '"_internal" / WORKERD_NAME' in src, \
+        "spec 从 cargo 的产物位置取二进制，先打包就什么都取不到"
+    )
+    assert '"_internal" / WORKERD_NAME' in src, (
         "打完要确认 _internal/ 里真有它——打包器换版本改落点是无声的"
-    assert "shutil.which(\"cargo\")" in src, "没有 cargo 要给可读的错误并中止"
+    )
+    assert 'shutil.which("cargo")' in src, "没有 cargo 要给可读的错误并中止"
 
 
 def test_the_release_workflow_gates_the_rust_crate():
@@ -102,8 +105,9 @@ def test_the_release_workflow_gates_the_rust_crate():
     assert "cargo fmt --check" in DESKTOP_WF
     assert "cargo clippy --all-targets -- -D warnings" in DESKTOP_WF
     assert "cargo test" in DESKTOP_WF
-    assert "workspaces: |" in DESKTOP_WF and "workerd" in DESKTOP_WF, \
+    assert "workspaces: |" in DESKTOP_WF and "workerd" in DESKTOP_WF, (
         "两个 crate 都要进 rust-cache，否则每次发布都从零编"
+    )
 
 
 @pytest.mark.parametrize("name", ["desktop-tauri.yml", "ci.yml"])
@@ -121,17 +125,18 @@ def test_the_smoke_legs_assert_the_control_plane_without_forcing_it(name):
     wf = {"desktop-tauri.yml": DESKTOP_WF, "ci.yml": CI_WF}[name]
     assert "--expect-control-plane workerd" in wf, f"{name} 少了控制面断言"
     # 注释里提它是好事（写清楚为什么不设），要挡的是真把它设进环境
-    steps = "\n".join(ln for ln in wf.splitlines()
-                      if not ln.lstrip().startswith("#"))
-    assert "TAVOTTO_WORKERD" not in steps, \
+    steps = "\n".join(ln for ln in wf.splitlines() if not ln.lstrip().startswith("#"))
+    assert "TAVOTTO_WORKERD" not in steps, (
         f"{name} 里不该真的设 TAVOTTO_WORKERD——自动发现才是要验的东西"
+    )
 
 
 def test_ci_builds_and_asserts_the_binary_in_the_windows_artifact():
     """windows-exe-smoke 直接调 PyInstaller，所以它自己要先 cargo build。"""
     assert "cargo build --release --manifest-path workerd/Cargo.toml" in CI_WF
-    assert "_internal\\tavotto-workerd.exe" in CI_WF, \
+    assert "_internal\\tavotto-workerd.exe" in CI_WF, (
         "产物里有没有它，先用一次 Test-Path 确认，再谈冒烟"
+    )
 
 
 def test_the_release_profile_stays_small_and_stripped():

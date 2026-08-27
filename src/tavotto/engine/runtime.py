@@ -19,6 +19,7 @@ frozen 与源码模式的差异就会各写一遍，迟早对不上。这里是�
 runtime 从哪来：`scripts/build_worker_runtime.py` 按 `packaging/runtime-lock.json`
 构建（锁定版本 + SHA-256 + 完整传递闭包），产物不进 Git。
 """
+
 from __future__ import annotations
 
 import json
@@ -87,8 +88,11 @@ def ships_bundled_runtime() -> bool:
 #: 三边用词都不一样（amd64 / x86_64 / AMD64、arm64 / aarch64），不归一就等着
 #: 「明明是对的却报架构不符」。
 _ARCH_ALIASES = {
-    "amd64": "x86_64", "x86_64": "x86_64", "x64": "x86_64",
-    "arm64": "arm64", "aarch64": "arm64",
+    "amd64": "x86_64",
+    "x86_64": "x86_64",
+    "x64": "x86_64",
+    "arm64": "arm64",
+    "aarch64": "arm64",
 }
 
 
@@ -127,7 +131,7 @@ def host_arch() -> str:
         return normalize_arch(override)
     try:
         return normalize_arch(platform.machine())
-    except Exception:      # noqa: BLE001 — 取不到架构不该把启动流程带崩
+    except Exception:  # noqa: BLE001 — 取不到架构不该把启动流程带崩
         return ""
 
 
@@ -175,9 +179,9 @@ def _candidate_roots() -> list[str]:
     else:
         # 源码树：scripts/build_worker_runtime.py 默认产出到仓库根的 runtime/
         # __file__ = <root>/src/tavotto/engine/runtime.py
-        here = os.path.dirname(os.path.abspath(__file__))          # engine/
-        pkg = os.path.dirname(here)                                # tavotto/
-        src = os.path.dirname(pkg)                                 # src/
+        here = os.path.dirname(os.path.abspath(__file__))  # engine/
+        pkg = os.path.dirname(here)  # tavotto/
+        src = os.path.dirname(pkg)  # src/
         add(os.path.join(os.path.dirname(src), RUNTIME_DIR_NAME))  # <root>/runtime
         # 包同级（少见的手工布局；wheel 里**不会**有，见 pyproject 的 exclude）
         add(os.path.join(src, RUNTIME_DIR_NAME))
@@ -201,8 +205,8 @@ def runtime_python(root: str) -> str:
 #: Linux 上交叉产出 Windows 的 runtime，冒烟脚本也会在 macOS 上检视一份
 #: Windows 产物；只认本平台那一种的话，那些场景一律报「不完整」。
 _INTERPRETER_RELPATHS = (
-    ("python.exe",),          # windows-embeddable
-    ("bin", "python3"),       # POSIX 的惯例名
+    ("python.exe",),  # windows-embeddable
+    ("bin", "python3"),  # POSIX 的惯例名
 )
 
 #: 版本化实体名（`bin/python3.13`）。python-build-standalone 里 `bin/python`
@@ -225,8 +229,9 @@ def _interpreter_candidates(root: str) -> list[str]:
     try:
         # `python3.13-config` 是个 shell 脚本，不是解释器——按后缀排掉，
         # 否则「找到了但一跑就报语法错」，比没找到还难查。
-        cands += sorted(p for p in _g.glob(os.path.join(root, *_INTERPRETER_GLOB))
-                        if not p.endswith("-config"))
+        cands += sorted(
+            p for p in _g.glob(os.path.join(root, *_INTERPRETER_GLOB)) if not p.endswith("-config")
+        )
     except OSError:
         pass
     return cands
@@ -347,33 +352,59 @@ def status() -> dict:
     if root is not None:
         info = read_manifest(root)
         if info is None:
-            return {"present": True, "valid": False, "root": root,
-                    "python": None, "manifest": None,
-                    "code": CODE_INVALID,
-                    "error": f"内置渲染环境的清单文件无法识别：{manifest_path(root)}"}
+            return {
+                "present": True,
+                "valid": False,
+                "root": root,
+                "python": None,
+                "manifest": None,
+                "code": CODE_INVALID,
+                "error": f"内置渲染环境的清单文件无法识别：{manifest_path(root)}",
+            }
         bad = platform_mismatch(info)
         if bad:
             # manifest 照样交出去：诊断包与冒烟要能说清楚「拿到的是哪一份」，
             # 只回一句「损坏」的话，排障的人还得自己去翻文件。
-            return {"present": True, "valid": False, "root": root,
-                    "python": None, "manifest": info,
-                    "code": CODE_INVALID,
-                    "error": f"{bad}（{manifest_path(root)}）"}
-        return {"present": True, "valid": True, "root": root,
-                "python": resolve_python(root), "manifest": info,
-                "code": "", "error": None}
+            return {
+                "present": True,
+                "valid": False,
+                "root": root,
+                "python": None,
+                "manifest": info,
+                "code": CODE_INVALID,
+                "error": f"{bad}（{manifest_path(root)}）",
+            }
+        return {
+            "present": True,
+            "valid": True,
+            "root": root,
+            "python": resolve_python(root),
+            "manifest": info,
+            "code": "",
+            "error": None,
+        }
 
     stray = _any_root()
     expected = ships_bundled_runtime()
     if stray is not None:
-        return {"present": True, "valid": False, "root": stray,
-                "python": None, "manifest": None,
-                "code": CODE_INVALID if expected else "",
-                "error": f"内置渲染环境不完整：{stray}"}
-    return {"present": False, "valid": False, "root": None,
-            "python": None, "manifest": None,
-            "code": CODE_MISSING if expected else "",
-            "error": ("安装包里的内置渲染环境不见了" if expected else None)}
+        return {
+            "present": True,
+            "valid": False,
+            "root": stray,
+            "python": None,
+            "manifest": None,
+            "code": CODE_INVALID if expected else "",
+            "error": f"内置渲染环境不完整：{stray}",
+        }
+    return {
+        "present": False,
+        "valid": False,
+        "root": None,
+        "python": None,
+        "manifest": None,
+        "code": CODE_MISSING if expected else "",
+        "error": ("安装包里的内置渲染环境不见了" if expected else None),
+    }
 
 
 def bundled_python() -> str | None:
@@ -384,9 +415,11 @@ def bundled_python() -> str | None:
 
 def repair_hint() -> str:
     """内置 runtime 出问题时给用户的一句话——说清楚该做什么，不要甩路径。"""
-    return ("Tavotto 的安装文件不完整（内置渲染环境缺失或损坏）。"
-            "请重新安装 Tavotto；如果是杀毒软件误删，安装后把安装目录加入白名单。"
-            "也可以在设置里改用你自己的 Python 环境。")
+    return (
+        "Tavotto 的安装文件不完整（内置渲染环境缺失或损坏）。"
+        "请重新安装 Tavotto；如果是杀毒软件误删，安装后把安装目录加入白名单。"
+        "也可以在设置里改用你自己的 Python 环境。"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -414,11 +447,16 @@ def probe_packages(python: str, names: list[str] | None = None) -> dict[str, str
         "sys.stdout.write(json.dumps(out))\n"
     )
     try:
-        proc = subprocess.run([python, "-c", expr], capture_output=True,
-                              text=True, encoding="utf-8", errors="replace",
-                              timeout=PROBE_TIMEOUT_S,
-                              stdin=subprocess.DEVNULL,
-                              creationflags=CREATE_NO_WINDOW)
+        proc = subprocess.run(
+            [python, "-c", expr],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=PROBE_TIMEOUT_S,
+            stdin=subprocess.DEVNULL,
+            creationflags=CREATE_NO_WINDOW,
+        )
     except (OSError, subprocess.SubprocessError):
         return {n: None for n in names}
     if proc.returncode != 0:
@@ -431,8 +469,12 @@ def probe_packages(python: str, names: list[str] | None = None) -> dict[str, str
 
 
 #: 分发包名 → import 名（只有对不上的才列在这儿）
-_IMPORT_NAMES = {"pillow": "PIL", "python-dateutil": "dateutil",
-                 "opencv-python": "cv2", "scikit-learn": "sklearn"}
+_IMPORT_NAMES = {
+    "pillow": "PIL",
+    "python-dateutil": "dateutil",
+    "opencv-python": "cv2",
+    "scikit-learn": "sklearn",
+}
 
 
 def default_packages() -> list[str]:
@@ -474,8 +516,14 @@ def child_args() -> list[str]:
 #: 与 `PYTHONPATH` 会原样传给内置解释器——轻则 import 到别的 numpy，
 #: 重则解释器根本起不来（PYTHONHOME 指向另一个前缀）。这类故障还只在
 #: 「从终端启动」时复现，从 Finder 双击一切正常，最难查。
-_HOSTILE_ENV = ("PYTHONHOME", "PYTHONPATH", "PYTHONSTARTUP", "PYTHONUSERBASE",
-                "PYTHONEXECUTABLE", "PYTHONPLATLIBDIR")
+_HOSTILE_ENV = (
+    "PYTHONHOME",
+    "PYTHONPATH",
+    "PYTHONSTARTUP",
+    "PYTHONUSERBASE",
+    "PYTHONEXECUTABLE",
+    "PYTHONPLATLIBDIR",
+)
 
 
 def child_env(base: dict[str, str] | None = None) -> dict[str, str]:
@@ -500,11 +548,12 @@ def child_env(base: dict[str, str] | None = None) -> dict[str, str]:
     「不往安装目录写东西」这条纪律由 `-B` 保证，不需要它。
     """
     from . import config
+
     env = dict(base if base is not None else os.environ)
     for key in _HOSTILE_ENV:
         env.pop(key, None)
     cache = os.path.join(str(config.data_dir()), "cache")
-    env.pop("PYTHONPYCACHEPREFIX", None)   # 见 docstring：它会把**读**也改道
+    env.pop("PYTHONPYCACHEPREFIX", None)  # 见 docstring：它会把**读**也改道
     env["MPLCONFIGDIR"] = os.path.join(cache, "mpl")
     env["PYTHONNOUSERSITE"] = "1"
     try:

@@ -4,6 +4,7 @@
 离线样本。分类规则是从真实发布工作流推出来的，样本里因此覆盖了
 release.yml 与 desktop-tauri.yml 会挂上去的每一类资产。
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -17,8 +18,7 @@ FIXTURES = ROOT / "tests" / "fixtures"
 
 if not (ROOT / "scripts" / "collect_distribution_metrics.py").is_file():
     # scripts/ 不进 wheel/sdist；源码树以外跑 pytest 时整个模块跳过
-    pytest.skip("没有 scripts/（wheel/sdist 里不含构建与采集脚本）",
-                allow_module_level=True)
+    pytest.skip("没有 scripts/（wheel/sdist 里不含构建与采集脚本）", allow_module_level=True)
 
 
 def _load_collector():
@@ -37,9 +37,12 @@ PYPI_FIXTURE = FIXTURES / "pypistats_overall.json"
 
 @pytest.fixture
 def events():
-    return collector.collect("2026-08-20", github_token=None,
-                             github_json=str(GITHUB_FIXTURE),
-                             pypi_json=str(PYPI_FIXTURE))
+    return collector.collect(
+        "2026-08-20",
+        github_token=None,
+        github_json=str(GITHUB_FIXTURE),
+        pypi_json=str(PYPI_FIXTURE),
+    )
 
 
 def _gh(events):
@@ -51,43 +54,46 @@ def _by_name(name: str, events):
     for release in data["releases"]:
         for asset in release["assets"]:
             if asset["name"] == name:
-                return next(e for e in _gh(events)
-                            if e["properties"]["asset_id"] == asset["id"])
+                return next(e for e in _gh(events) if e["properties"]["asset_id"] == asset["id"])
     raise AssertionError(f"fixture 里没有 {name}")
 
 
 # ---------------------------------------------------------------------------
 # 资产分类：这一条决定「有多少人装过」是不是真话
 # ---------------------------------------------------------------------------
-@pytest.mark.parametrize("name,role,platform", [
-    ("Tavotto-0.8.0-macOS.dmg", "installer", "macos"),
-    ("Tavotto-0.8.0-Windows-Setup.exe", "installer", "windows"),
-    ("Tavotto.app.tar.gz", "updater", "macos"),
-    ("Tavotto.app.tar.gz.sig", "checksum", "macos"),
-    ("Tavotto_0.8.0_x64-setup.nsis.zip", "updater", "windows"),
-    ("Tavotto_0.8.0_x64-setup.nsis.zip.sig", "checksum", "windows"),
-    ("latest.json", "updater", "any"),
-    ("tavotto-0.8.0-py3-none-any.whl", "wheel", "any"),
-    ("tavotto-0.8.0.tar.gz", "sdist", "any"),
-    ("codex-plugin.json", "plugin", "any"),
-    ("codex-plugin-0.8.0.zip", "plugin", "any"),
-    ("some-unlabelled-artifact.bin", "other", "other"),
-])
+@pytest.mark.parametrize(
+    "name,role,platform",
+    [
+        ("Tavotto-0.8.0-macOS.dmg", "installer", "macos"),
+        ("Tavotto-0.8.0-Windows-Setup.exe", "installer", "windows"),
+        ("Tavotto.app.tar.gz", "updater", "macos"),
+        ("Tavotto.app.tar.gz.sig", "checksum", "macos"),
+        ("Tavotto_0.8.0_x64-setup.nsis.zip", "updater", "windows"),
+        ("Tavotto_0.8.0_x64-setup.nsis.zip.sig", "checksum", "windows"),
+        ("latest.json", "updater", "any"),
+        ("tavotto-0.8.0-py3-none-any.whl", "wheel", "any"),
+        ("tavotto-0.8.0.tar.gz", "sdist", "any"),
+        ("codex-plugin.json", "plugin", "any"),
+        ("codex-plugin-0.8.0.zip", "plugin", "any"),
+        ("some-unlabelled-artifact.bin", "other", "other"),
+    ],
+)
 def test_asset_classification(name, role, platform):
     assert collector.classify_asset(name) == (role, platform)
 
 
 def test_updater_payloads_are_never_counted_as_installers(events):
     """自动更新包与签名文件绝不能进安装量——那会让这个数随老用户升级膨胀。"""
-    installers = [e for e in _gh(events)
-                  if e["properties"]["asset_role"] == "installer"]
+    installers = [e for e in _gh(events) if e["properties"]["asset_role"] == "installer"]
     total = sum(e["properties"]["download_count_total"] for e in installers)
     assert total == 137 + 402 + 512 + 908
     # latest.json 被更新器每天拉一次，量最大且完全不是「装过的人」
     assert _by_name("latest.json", events)["properties"]["asset_role"] == "updater"
-    assert all(e["properties"]["asset_role"] != "installer"
-               for e in _gh(events)
-               if e["properties"]["asset_id"] in (5003, 5004, 5005, 5006, 5007))
+    assert all(
+        e["properties"]["asset_role"] != "installer"
+        for e in _gh(events)
+        if e["properties"]["asset_id"] in (5003, 5004, 5005, 5006, 5007)
+    )
 
 
 def test_sdist_and_macos_updater_share_a_suffix_but_not_a_role(events):
@@ -109,7 +115,7 @@ def test_unknown_assets_fall_back_to_other_not_installer():
 def test_download_counts_are_sent_as_cumulative_snapshots(events):
     ev = _by_name("Tavotto-0.8.0-macOS.dmg", events)
     props = ev["properties"]
-    assert props["download_count_total"] == 137        # 累计值，原样上报
+    assert props["download_count_total"] == 137  # 累计值，原样上报
     assert props["observed_date"] == "2026-08-20"
     assert "downloads_today" not in props and "delta" not in props
 
@@ -123,22 +129,32 @@ def test_asset_id_is_the_identity_not_the_filename(events):
 
 
 def test_snapshot_keys_are_deterministic_per_asset_and_day():
-    first = collector.collect("2026-08-20", github_token=None,
-                              github_json=str(GITHUB_FIXTURE),
-                              pypi_json=str(PYPI_FIXTURE))
-    again = collector.collect("2026-08-20", github_token=None,
-                              github_json=str(GITHUB_FIXTURE),
-                              pypi_json=str(PYPI_FIXTURE))
+    first = collector.collect(
+        "2026-08-20",
+        github_token=None,
+        github_json=str(GITHUB_FIXTURE),
+        pypi_json=str(PYPI_FIXTURE),
+    )
+    again = collector.collect(
+        "2026-08-20",
+        github_token=None,
+        github_json=str(GITHUB_FIXTURE),
+        pypi_json=str(PYPI_FIXTURE),
+    )
     keys = [e["properties"]["snapshot_key"] for e in first]
     assert keys == [e["properties"]["snapshot_key"] for e in again]
     assert len(set(keys)) == len(keys), "同一次运行内 snapshot_key 必须唯一"
     # 换一天就是另一批快照
-    other = collector.collect("2026-08-21", github_token=None,
-                              github_json=str(GITHUB_FIXTURE),
-                              pypi_json=str(PYPI_FIXTURE))
-    assert not (set(keys) & {e["properties"]["snapshot_key"]
-                             for e in other
-                             if e["event"] != "pypi_daily_downloads"})
+    other = collector.collect(
+        "2026-08-21",
+        github_token=None,
+        github_json=str(GITHUB_FIXTURE),
+        pypi_json=str(PYPI_FIXTURE),
+    )
+    assert not (
+        set(keys)
+        & {e["properties"]["snapshot_key"] for e in other if e["event"] != "pypi_daily_downloads"}
+    )
 
 
 def test_repo_snapshot_is_collected(events):
@@ -153,8 +169,7 @@ def test_repo_snapshot_is_collected(events):
 # ---------------------------------------------------------------------------
 def test_only_without_mirrors_is_used(events):
     pypi = [e for e in events if e["event"] == "pypi_daily_downloads"]
-    assert pypi and all(e["properties"]["category"] == "without_mirrors"
-                        for e in pypi)
+    assert pypi and all(e["properties"]["category"] == "without_mirrors" for e in pypi)
     # with_mirrors 的数字（940/1012/998）一个都不能出现
     downloads = {e["properties"]["downloads"] for e in pypi}
     assert downloads == {121, 143, 156}
@@ -192,18 +207,22 @@ def test_reruns_produce_identical_pypi_snapshot_keys():
 # 直到有人去看。「大声失败」这条纪律对真故障成立，对「这个数据源还没开始
 # 存在」不成立。
 # ---------------------------------------------------------------------------
-@pytest.mark.parametrize("status,expect", [
-    (404, "统计数据"),          # 最容易被误读成「包还没发布」的那个
-    (429, "限流"),
-    (500, "HTTP 500"),
-    (None, "取不到"),
-])
+@pytest.mark.parametrize(
+    "status,expect",
+    [
+        (404, "统计数据"),  # 最容易被误读成「包还没发布」的那个
+        (429, "限流"),
+        (500, "HTTP 500"),
+        (None, "取不到"),
+    ],
+)
 def test_pypi_failures_are_skipped_not_fatal(monkeypatch, capsys, status, expect):
     """取不到 PyPI → 跳过、GitHub 照常，且**说清楚为什么**。
 
     整段是「尽力而为」，因为有 14 天自愈窗口：漏掉的日期下次会补回来。
     为一次限流就让 workflow 红、顺带丢掉 GitHub 那半边，代价不成比例。
     """
+
     def failing(url, token=None):
         if "pypistats" in url:
             raise collector.CollectError("上游拒绝", status=status)
@@ -223,6 +242,7 @@ def test_404_is_not_described_as_unpublished(monkeypatch, capsys):
     把它写成「还没发布」的代价是：看到 notice 的人跑去查发布链路，
     而发布链路好着呢——这是 2026-08-20 真实发生过的一次误导。
     """
+
     def not_found(url, token=None):
         raise collector.CollectError("HTTP 404", status=404)
 
@@ -239,7 +259,7 @@ def test_missing_pypi_package_still_collects_github(capsys):
     import json as _json
 
     fixture = _json.loads(GITHUB_FIXTURE.read_text(encoding="utf-8"))
-    expected = sum(len(r["assets"]) for r in fixture["releases"]) + 1   # +1 = repo 快照
+    expected = sum(len(r["assets"]) for r in fixture["releases"]) + 1  # +1 = repo 快照
 
     def only_pypi_404(url, token=None):
         if "pypistats" in url:
@@ -247,9 +267,9 @@ def test_missing_pypi_package_still_collects_github(capsys):
         raise AssertionError("本用例用 fixture 喂 GitHub")
 
     import unittest.mock as mock
+
     with mock.patch.object(collector, "_get_json", only_pypi_404):
-        events = collector.collect("2026-08-20", github_token=None,
-                                   github_json=str(GITHUB_FIXTURE))
+        events = collector.collect("2026-08-20", github_token=None, github_json=str(GITHUB_FIXTURE))
     assert len(events) == expected
     assert not [e for e in events if e["event"] == "pypi_daily_downloads"]
     assert collector.summarize(events)["pypi_note"]
@@ -261,6 +281,7 @@ def test_github_failures_are_still_loud(monkeypatch):
     它是快照式的、没有自愈窗口，漏一天就是看板上一个真实的、再也补不回来的
     缺口。所以那边任何失败都必须让 workflow 红。
     """
+
     def boom(url, token=None):
         raise collector.CollectError("GitHub 挂了", status=503)
 
@@ -275,6 +296,7 @@ def test_github_failures_are_still_loud(monkeypatch):
 def test_every_collected_event_passes_the_proxy_schema(events, monkeypatch):
     """采集器发的每一条都必须被代理原样收下——否则看板会安静地缺一整类。"""
     import sys
+
     sys.path.insert(0, str(ROOT / "services" / "telemetry_proxy"))
     from tavotto_telemetry_proxy import core, posthog
 
@@ -283,9 +305,11 @@ def test_every_collected_event_passes_the_proxy_schema(events, monkeypatch):
     sent: list[list[dict]] = []
     monkeypatch.setattr(posthog, "send", sent.append)
     status, body = core.handle(
-        "POST", "/v1/metrics",
+        "POST",
+        "/v1/metrics",
         {"content-type": "application/json", "authorization": "Bearer t0ken"},
-        json.dumps({"schema_version": 1, "events": events}).encode("utf-8"))
+        json.dumps({"schema_version": 1, "events": events}).encode("utf-8"),
+    )
     assert status == 200, body
     assert body["accepted"] == len(events)
 
@@ -293,10 +317,19 @@ def test_every_collected_event_passes_the_proxy_schema(events, monkeypatch):
 def test_dry_run_transmits_nothing(capsys, monkeypatch):
     def explode(*_a, **_kw):
         raise AssertionError("--dry-run 不许上报")
+
     monkeypatch.setattr(collector, "transmit", explode)
-    rc = collector.main(["--dry-run", "--date", "2026-08-20",
-                         "--github-json", str(GITHUB_FIXTURE),
-                         "--pypi-json", str(PYPI_FIXTURE)])
+    rc = collector.main(
+        [
+            "--dry-run",
+            "--date",
+            "2026-08-20",
+            "--github-json",
+            str(GITHUB_FIXTURE),
+            "--pypi-json",
+            str(PYPI_FIXTURE),
+        ]
+    )
     assert rc == 0
     out = capsys.readouterr()
     assert "downloads != users" in out.out
@@ -305,21 +338,37 @@ def test_dry_run_transmits_nothing(capsys, monkeypatch):
 def test_missing_token_fails_loudly_instead_of_silently_skipping(monkeypatch, capsys):
     """采集器和桌面遥测相反：丢数据必须有人看见。"""
     monkeypatch.delenv("TAVOTTO_METRICS_TOKEN", raising=False)
-    rc = collector.main(["--date", "2026-08-20",
-                         "--github-json", str(GITHUB_FIXTURE),
-                         "--pypi-json", str(PYPI_FIXTURE)])
+    rc = collector.main(
+        [
+            "--date",
+            "2026-08-20",
+            "--github-json",
+            str(GITHUB_FIXTURE),
+            "--pypi-json",
+            str(PYPI_FIXTURE),
+        ]
+    )
     assert rc == 2
     assert "TAVOTTO_METRICS_TOKEN" in capsys.readouterr().err
 
 
 def test_upstream_failure_is_a_nonzero_exit(monkeypatch, capsys):
     monkeypatch.setenv("TAVOTTO_METRICS_TOKEN", "t0ken-abcdef")
-    monkeypatch.setattr(collector, "transmit",
-                        lambda *_a: (_ for _ in ()).throw(
-                            collector.CollectError("上报失败: HTTP 502")))
-    rc = collector.main(["--date", "2026-08-20",
-                         "--github-json", str(GITHUB_FIXTURE),
-                         "--pypi-json", str(PYPI_FIXTURE)])
+    monkeypatch.setattr(
+        collector,
+        "transmit",
+        lambda *_a: (_ for _ in ()).throw(collector.CollectError("上报失败: HTTP 502")),
+    )
+    rc = collector.main(
+        [
+            "--date",
+            "2026-08-20",
+            "--github-json",
+            str(GITHUB_FIXTURE),
+            "--pypi-json",
+            str(PYPI_FIXTURE),
+        ]
+    )
     assert rc == 1
     err = capsys.readouterr().err
     assert "上报失败" in err

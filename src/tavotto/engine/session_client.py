@@ -20,6 +20,7 @@
 **不写**这份文件——它的动态端口与 nonce 由 Tauri 壳经 stdin 管道交接，
 不需要（也不应有）磁盘上的凭据。
 """
+
 from __future__ import annotations
 
 import json
@@ -56,10 +57,8 @@ def publish_secret(port: int, secret: str) -> str:
     _prune_stale(d)
     path = session_file_path(port)
     tmp = path + ".tmp"
-    payload = {"port": int(port), "pid": os.getpid(),
-               "secret": secret, "created": time.time()}
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
-                 stat.S_IRUSR | stat.S_IWUSR)
+    payload = {"port": int(port), "pid": os.getpid(), "secret": secret, "created": time.time()}
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, stat.S_IRUSR | stat.S_IWUSR)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(payload, f)
@@ -107,7 +106,8 @@ def relaunch_nonce(port: int, timeout: float = 3.0) -> str | None:
     req = urllib.request.Request(
         f"http://127.0.0.1:{port}{RELAUNCH_PATH}",
         data=json.dumps({"secret": secret}).encode("utf-8"),
-        headers={"Content-Type": "application/json"})
+        headers={"Content-Type": "application/json"},
+    )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read().decode("utf-8", "replace"))

@@ -23,9 +23,16 @@ def client(tmp_path, monkeypatch):
 
 
 def _export(client, tmp_path, objects):
-    resp = client.post("/api/export", json={
-        "page_w_mm": 100, "page_h_mm": 100, "formats": ["pdf"],
-        "stem": "ann", "objects": objects})
+    resp = client.post(
+        "/api/export",
+        json={
+            "page_w_mm": 100,
+            "page_h_mm": 100,
+            "formats": ["pdf"],
+            "stem": "ann",
+            "objects": objects,
+        },
+    )
     assert resp.status_code == 200, resp.get_json()
     name = resp.get_json()["files"][0]["name"]
     # 从内存开：Windows 上进程持着 PDF 的文件句柄时，下一次导出想覆盖同名
@@ -35,23 +42,38 @@ def _export(client, tmp_path, objects):
 
 def _drawings(page):
     """过滤掉整页白底矩形，只留标注本体的矢量路径。"""
-    return [d for d in page.get_drawings()
-            if not (d["rect"].width >= page.rect.width - 1
-                    and d["rect"].height >= page.rect.height - 1)]
+    return [
+        d
+        for d in page.get_drawings()
+        if not (d["rect"].width >= page.rect.width - 1 and d["rect"].height >= page.rect.height - 1)
+    ]
 
 
 def _shape(kind, **kw):
-    return {"type": "shape", "shape": kind, "x_mm": 10, "y_mm": 10,
-            "w_mm": 40, "h_mm": 30, "stroke_pt": 1, "color": "#000000",
-            "fill": None, **kw}
+    return {
+        "type": "shape",
+        "shape": kind,
+        "x_mm": 10,
+        "y_mm": 10,
+        "w_mm": 40,
+        "h_mm": 30,
+        "stroke_pt": 1,
+        "color": "#000000",
+        "fill": None,
+        **kw,
+    }
 
 
 def test_triangle_diamond_polygon_are_vector_paths(client, tmp_path):
-    doc = _export(client, tmp_path, [
-        _shape("triangle"),
-        _shape("diamond", x_mm=55),
-        _shape("polygon", y_mm=55, sides=6),
-    ])
+    doc = _export(
+        client,
+        tmp_path,
+        [
+            _shape("triangle"),
+            _shape("diamond", x_mm=55),
+            _shape("polygon", y_mm=55, sides=6),
+        ],
+    )
     drawings = _drawings(doc[0])
     assert len(drawings) == 3
     # 三角形 3 条线、菱形 4 条、六边形 6 条（closePath 的折线）
@@ -67,9 +89,13 @@ def test_brace_has_curves(client, tmp_path):
 
 
 def test_rounded_rect_and_fill_opacity(client, tmp_path):
-    doc = _export(client, tmp_path, [
-        _shape("rect", corner_radius_mm=3, fill="#ff0000", fill_opacity=0.5),
-    ])
+    doc = _export(
+        client,
+        tmp_path,
+        [
+            _shape("rect", corner_radius_mm=3, fill="#ff0000", fill_opacity=0.5),
+        ],
+    )
     d = _drawings(doc[0])[0]
     assert d["fill"] == (1.0, 0.0, 0.0)
     assert abs(d["fill_opacity"] - 0.5) < 0.01
@@ -110,9 +136,13 @@ def test_line_draws_between_endpoints(client, tmp_path):
 
     包围盒 (10,10)+40×30mm，start(0,0)→end(1,1) 即左上到右下的对角线。
     """
-    doc = _export(client, tmp_path, [
-        _shape("line", start={"rx": 0, "ry": 0}, end={"rx": 1, "ry": 1}),
-    ])
+    doc = _export(
+        client,
+        tmp_path,
+        [
+            _shape("line", start={"rx": 0, "ry": 0}, end={"rx": 1, "ry": 1}),
+        ],
+    )
     a, b = _line_points(doc[0])
     assert abs(a - pymupdf.Point(10 * MM, 10 * MM)) < 0.01
     assert abs(b - pymupdf.Point(50 * MM, 40 * MM)) < 0.01
@@ -120,9 +150,13 @@ def test_line_draws_between_endpoints(client, tmp_path):
 
 def test_line_endpoints_follow_drag_direction(client, tmp_path):
     """从右下往左上拖出来的线：端点顺序不同，线段本身是同一条对角线。"""
-    doc = _export(client, tmp_path, [
-        _shape("line", start={"rx": 1, "ry": 1}, end={"rx": 0, "ry": 0}),
-    ])
+    doc = _export(
+        client,
+        tmp_path,
+        [
+            _shape("line", start={"rx": 1, "ry": 1}, end={"rx": 0, "ry": 0}),
+        ],
+    )
     a, b = _line_points(doc[0])
     assert abs(a - pymupdf.Point(50 * MM, 40 * MM)) < 0.01
     assert abs(b - pymupdf.Point(10 * MM, 10 * MM)) < 0.01
@@ -138,9 +172,19 @@ def test_line_without_endpoints_is_bbox_midline(client, tmp_path):
 
 
 def _arrow(**kw):
-    return {"type": "arrow", "x_mm": 10, "y_mm": 10, "w_mm": 50, "h_mm": 10,
-            "start": {"rx": 0, "ry": 0.5}, "end": {"rx": 1, "ry": 0.5},
-            "stroke_pt": 1, "color": "#000000", "head": "end", **kw}
+    return {
+        "type": "arrow",
+        "x_mm": 10,
+        "y_mm": 10,
+        "w_mm": 50,
+        "h_mm": 10,
+        "start": {"rx": 0, "ry": 0.5},
+        "end": {"rx": 1, "ry": 0.5},
+        "stroke_pt": 1,
+        "color": "#000000",
+        "head": "end",
+        **kw,
+    }
 
 
 def test_arrow_head_types(client, tmp_path):
@@ -151,9 +195,9 @@ def test_arrow_head_types(client, tmp_path):
     # open 端：两段折线经过尖端点 (60mm, 15mm)
     tip = pymupdf.Point(60 * MM, 15 * MM)
     found_tip = any(
-        any(it[0] == "l" and (abs(it[1] - tip) < 1 or abs(it[2] - tip) < 1)
-            for it in d["items"])
-        for d in drawings)
+        any(it[0] == "l" and (abs(it[1] - tip) < 1 or abs(it[2] - tip) < 1) for it in d["items"])
+        for d in drawings
+    )
     assert found_tip
 
 
@@ -164,22 +208,35 @@ def test_arrow_legacy_head_still_triangle(client, tmp_path):
 
 
 def _text(**kw):
-    return {"type": "text", "text": "Underline", "x_mm": 10, "y_mm": 10,
-            "w_mm": 60, "h_mm": 10, "size_pt": 12, "bold": False,
-            "italic": False, "color": "#000000", "align": "left", **kw}
+    return {
+        "type": "text",
+        "text": "Underline",
+        "x_mm": 10,
+        "y_mm": 10,
+        "w_mm": 60,
+        "h_mm": 10,
+        "size_pt": 12,
+        "bold": False,
+        "italic": False,
+        "color": "#000000",
+        "align": "left",
+        **kw,
+    }
 
 
 def test_text_underline_and_bg(client, tmp_path):
-    doc = _export(client, tmp_path, [
-        _text(underline=True, bg="#ffee00", border_color="#000000",
-              border_pt=1, padding_mm=2),
-    ])
+    doc = _export(
+        client,
+        tmp_path,
+        [
+            _text(underline=True, bg="#ffee00", border_color="#000000", border_pt=1, padding_mm=2),
+        ],
+    )
     page = doc[0]
     assert "Underline" in page.get_text()  # 文字仍可选择（真矢量）
     drawings = _drawings(page)
     # 背景矩形（带填充）+ 下划线（线段）
-    assert any(d["fill"] == (1.0, 232 / 255, 0.0) or d["fill"] is not None
-               for d in drawings)
+    assert any(d["fill"] == (1.0, 232 / 255, 0.0) or d["fill"] is not None for d in drawings)
     assert any(any(it[0] == "l" for it in d["items"]) for d in drawings)
 
 
@@ -188,8 +245,12 @@ def test_text_line_height(client, tmp_path):
     docs = {}
     for lh in (1.25, 2.0):
         doc = _export(client, tmp_path, [_text(text="A\nB", line_height=lh)])
-        spans = [s for b in doc[0].get_text("dict")["blocks"]
-                 for ln in b.get("lines", []) for s in ln.get("spans", [])]
+        spans = [
+            s
+            for b in doc[0].get_text("dict")["blocks"]
+            for ln in b.get("lines", [])
+            for s in ln.get("spans", [])
+        ]
         ys = sorted(s["origin"][1] for s in spans)
         docs[lh] = ys[1] - ys[0]
     assert abs(docs[2.0] - 24) < 0.5  # 12pt × 2.0

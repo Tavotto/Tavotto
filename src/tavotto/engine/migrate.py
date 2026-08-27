@@ -30,6 +30,7 @@ Magplot 时代的键与路径，brand 模块里也没有 LEGACY_ 常量。但「
 兼容（`registry.existing_registry_path()`），写出时自动落新名——那是唯二
 运行时回退之一，语义不变。
 """
+
 from __future__ import annotations
 
 import json
@@ -44,13 +45,17 @@ from . import config
 REPORT_REL = os.path.join("migration", "from-magplot.json")
 
 #: 数据目录里值得带走的条目（相对路径）。cache/session 刻意不在。
-_DATA_ITEMS = ("layouts", "baked_overrides", "baked_overrides.json",
-               "ai_history.sqlite3", "ai_snapshots")
+_DATA_ITEMS = (
+    "layouts",
+    "baked_overrides",
+    "baked_overrides.json",
+    "ai_history.sqlite3",
+    "ai_snapshots",
+)
 
 
 # ------------------------------ 旧目录定位 ---------------------------------
-def legacy_config_dir(platform: str | None = None,
-                      environ: dict | None = None) -> Path:
+def legacy_config_dir(platform: str | None = None, environ: dict | None = None) -> Path:
     """Magplot 0.7 的用户配置目录（形状与 config.config_dir 逐条对应）。"""
     env = os.environ if environ is None else environ
     override = env.get("TAVOTTO_MIGRATE_LEGACY_CONFIG_DIR")
@@ -65,8 +70,7 @@ def legacy_config_dir(platform: str | None = None,
     return Path(base) / "magplot"
 
 
-def legacy_data_dir(platform: str | None = None,
-                    environ: dict | None = None) -> Path:
+def legacy_data_dir(platform: str | None = None, environ: dict | None = None) -> Path:
     env = os.environ if environ is None else environ
     override = env.get("TAVOTTO_MIGRATE_LEGACY_DATA_DIR")
     if override:
@@ -96,7 +100,7 @@ def _walk_files(root: Path) -> list[Path]:
     for base, dirs, files in os.walk(root):
         dirs[:] = [d for d in dirs if not d.startswith(".")]
         for name in files:
-            if name.startswith("."):    # .DS_Store 之流不值得带走
+            if name.startswith("."):  # .DS_Store 之流不值得带走
                 continue
             out.append(Path(base) / name)
     return sorted(out)
@@ -113,12 +117,17 @@ def _same_bytes(a: Path, b: Path) -> bool:
 
 def build_plan() -> dict:
     """迁移计划：copy / skip（原因逐条给）。只读，不写任何东西。"""
-    plan: dict = {"legacy_config_dir": str(legacy_config_dir()),
-                  "legacy_data_dir": str(legacy_data_dir()),
-                  "target_config_dir": str(config.config_dir()),
-                  "target_data_dir": str(config.data_dir()),
-                  "copies": [], "conflicts": [], "identical": [],
-                  "config_merge": None, "nothing_to_migrate": False}
+    plan: dict = {
+        "legacy_config_dir": str(legacy_config_dir()),
+        "legacy_data_dir": str(legacy_data_dir()),
+        "target_config_dir": str(config.config_dir()),
+        "target_data_dir": str(config.data_dir()),
+        "copies": [],
+        "conflicts": [],
+        "identical": [],
+        "config_merge": None,
+        "nothing_to_migrate": False,
+    }
 
     lcfg = legacy_config_dir() / "config.json"
     if lcfg.is_file():
@@ -145,8 +154,12 @@ def build_plan() -> dict:
             else:
                 plan["copies"].append(rel)
 
-    if (plan["config_merge"] is None and not plan["copies"]
-            and not plan["conflicts"] and not plan["identical"]):
+    if (
+        plan["config_merge"] is None
+        and not plan["copies"]
+        and not plan["conflicts"]
+        and not plan["identical"]
+    ):
         plan["nothing_to_migrate"] = True
     return plan
 
@@ -169,8 +182,7 @@ def _merge_config(legacy_path: Path, report: dict) -> None:
             current = json.loads(target_path.read_text(encoding="utf-8")) or {}
         except (OSError, ValueError):
             # Tavotto 自己的配置坏了不归迁移管，也绝不敢覆盖它
-            report["config"] = {"merged": False,
-                                "reason": "Tavotto 配置存在但读不出来，跳过合并"}
+            report["config"] = {"merged": False, "reason": "Tavotto 配置存在但读不出来，跳过合并"}
             return
 
     added: dict = {"recent_projects": 0, "projects": 0, "top_level_keys": []}
@@ -199,20 +211,22 @@ def _merge_config(legacy_path: Path, report: dict) -> None:
     if merged != current:
         target_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = target_path.with_name(target_path.name + ".tmp")
-        tmp.write_text(json.dumps(merged, ensure_ascii=False, indent=2),
-                       encoding="utf-8")
+        tmp.write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(target_path)
         report["created_config_backup"] = None  # 只补缺，没有被覆盖的内容
-    report["config"] = {"merged": True, "added": added,
-                        "changed": merged != current}
+    report["config"] = {"merged": True, "added": added, "changed": merged != current}
 
 
 def execute(dry_run: bool = False) -> dict:
     """按计划执行；返回报告（dry_run 时只带计划）。"""
     plan = build_plan()
-    report: dict = {"when": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                    "dry_run": dry_run, "plan": plan,
-                    "created": [], "config": None}
+    report: dict = {
+        "when": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "dry_run": dry_run,
+        "plan": plan,
+        "created": [],
+        "config": None,
+    }
     if plan["nothing_to_migrate"] or dry_run:
         return report
 
@@ -222,7 +236,7 @@ def execute(dry_run: bool = False) -> dict:
         src = ldata / rel
         dst = tdata / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
-        if dst.exists():        # 计划与执行之间冒出来的，绝不覆盖
+        if dst.exists():  # 计划与执行之间冒出来的，绝不覆盖
             plan["conflicts"].append(rel)
             continue
         shutil.copy2(src, dst)
@@ -238,8 +252,7 @@ def execute(dry_run: bool = False) -> dict:
         rp = report_path()
         rp.parent.mkdir(parents=True, exist_ok=True)
         tmp = rp.with_name(rp.name + ".tmp")
-        tmp.write_text(json.dumps(report, ensure_ascii=False, indent=2),
-                       encoding="utf-8")
+        tmp.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(rp)
     return report
 

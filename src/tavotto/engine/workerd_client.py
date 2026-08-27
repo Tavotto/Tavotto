@@ -15,6 +15,7 @@ supervisor 协议是一条 stdio JSON 行协议，与 worker 协议 v1（ADR 000
 策略仍全在 Python：解释器探测、内置 runtime 的 env/args、超时档位、会话上限，
 都由 `pool.py` 算好装进 spawn 规格交过去。workerd 只负责生命周期与可靠性。
 """
+
 from __future__ import annotations
 
 import json
@@ -67,19 +68,27 @@ def _kill_and_reap(proc: subprocess.Popen) -> None:
     try:
         proc.wait(timeout=_REAP_TIMEOUT)
     except subprocess.TimeoutExpired:
-        LOG.warning("workerd 进程 kill 后 %.0fs 内仍未退出（pid=%s）——它占着的"
-                    "日志句柄可能还没还回来", _REAP_TIMEOUT,
-                    getattr(proc, "pid", "?"))
+        LOG.warning(
+            "workerd 进程 kill 后 %.0fs 内仍未退出（pid=%s）——它占着的日志句柄可能还没还回来",
+            _REAP_TIMEOUT,
+            getattr(proc, "pid", "?"),
+        )
     except (OSError, ValueError):
-        pass                        # 进程对象已不可用：当它已经退出
+        pass  # 进程对象已不可用：当它已经退出
 
 
 class WorkerdError(RuntimeError):
     """supervisor 层的结构化错误（`pool` 再转成 `WorkerError`）。"""
 
-    def __init__(self, message: str, code: str = "", retryable: bool = False,
-                 traceback_text: str = "", extra: dict | None = None,
-                 session_id: str = ""):
+    def __init__(
+        self,
+        message: str,
+        code: str = "",
+        retryable: bool = False,
+        traceback_text: str = "",
+        extra: dict | None = None,
+        session_id: str = "",
+    ):
         super().__init__(message)
         self.code = code
         self.retryable = retryable
@@ -100,14 +109,13 @@ def _dev_tree_candidates() -> list[str]:
     在非目标平台上构造另一半会直接抛 UnsupportedOperation（与 `runtime.py`
     同一条纪律）。
     """
-    here = os.path.dirname(os.path.abspath(__file__))       # engine/
-    pkg = os.path.dirname(here)                             # tavotto/
-    src = os.path.dirname(pkg)                              # src/
-    root = os.path.dirname(src)                             # 仓库根
+    here = os.path.dirname(os.path.abspath(__file__))  # engine/
+    pkg = os.path.dirname(here)  # tavotto/
+    src = os.path.dirname(pkg)  # src/
+    root = os.path.dirname(src)  # 仓库根
     base = os.path.join(root, "workerd", "target")
     # release 优先：开发机上两个都可能在，跑得快的那个才是想要的
-    return [os.path.join(base, "release", EXE_NAME),
-            os.path.join(base, "debug", EXE_NAME)]
+    return [os.path.join(base, "release", EXE_NAME), os.path.join(base, "debug", EXE_NAME)]
 
 
 def find_workerd() -> str | None:
@@ -124,8 +132,7 @@ def find_workerd() -> str | None:
     if override:
         if os.path.isfile(override):
             return override
-        LOG.warning("TAVOTTO_WORKERD 指向的文件不存在，回退到 Python 渲染池: %s",
-                    override)
+        LOG.warning("TAVOTTO_WORKERD 指向的文件不存在，回退到 Python 渲染池: %s", override)
         return None
 
     candidates: list[str] = []
@@ -163,7 +170,7 @@ class WorkerdClient:
         self._seq = 0
         self._restarts = 0
         self._started_at = 0.0
-        self.disabled = False                  # 连续崩溃后本进程放弃 workerd
+        self.disabled = False  # 连续崩溃后本进程放弃 workerd
         # **握过手才算「起来了」**：只看「进程对象还在」会把一个正在退出的
         # 进程当成就绪的 workerd（见 ensure_started 里的注释）
         self._ready = False
@@ -196,8 +203,7 @@ class WorkerdClient:
             if proc is not None and proc.poll() is None and self._ready:
                 return
             if self.disabled:
-                raise WorkerdError("workerd 已在本次进程内禁用",
-                                   code="workerd_unavailable")
+                raise WorkerdError("workerd 已在本次进程内禁用", code="workerd_unavailable")
             if proc is not None:
                 # 半启动的（还活着但没握上手）先收掉：不收就是每重启一次泄漏
                 # 一个子进程，而它还占着日志文件与管道——**要等到它真的退出**，
@@ -211,10 +217,12 @@ class WorkerdClient:
                     self._restarts = 1
                 if self._restarts > _MAX_RESTARTS:
                     self.disabled = True
-                    LOG.error("workerd 连续 %d 次起来就崩，本次进程改用 Python "
-                              "渲染池（日志见 %s）", self._restarts, self._log_path())
-                    raise WorkerdError("workerd 反复崩溃，已停用",
-                                       code="workerd_unavailable")
+                    LOG.error(
+                        "workerd 连续 %d 次起来就崩，本次进程改用 Python 渲染池（日志见 %s）",
+                        self._restarts,
+                        self._log_path(),
+                    )
+                    raise WorkerdError("workerd 反复崩溃，已停用", code="workerd_unavailable")
                 LOG.warning("workerd 已退出（第 %d 次），重启", self._restarts)
 
             self._ready = False
@@ -224,30 +232,40 @@ class WorkerdClient:
                 self._log = None
             proc = subprocess.Popen(
                 [self.exe],
-                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
                 stderr=self._log if self._log is not None else subprocess.DEVNULL,
-                text=True, bufsize=1,
+                text=True,
+                bufsize=1,
                 # 与 worker 管道同一条纪律：显式 UTF-8。Windows 的默认 stdio 编码
                 # 跟随系统区域（cp936），中文 stem / µ / ⁻¹ 一出现就解码失败。
-                encoding="utf-8", errors="replace",
+                encoding="utf-8",
+                errors="replace",
                 creationflags=runtime.CREATE_NO_WINDOW,
             )
             self._started_at = time.time()
             with self._lock:
                 self._proc = proc
-            threading.Thread(target=self._read_loop, args=(proc,),
-                             daemon=True, name="mm-workerd-read").start()
+            threading.Thread(
+                target=self._read_loop, args=(proc,), daemon=True, name="mm-workerd-read"
+            ).start()
             LOG.info("workerd 启动: %s（pid=%s）", self.exe, proc.pid)
 
             self.hello = self._call_on(
-                proc, "hello", None, None,
-                {"max_sessions": max_sessions, "max_queue": max_queue}, 15.0)
+                proc,
+                "hello",
+                None,
+                None,
+                {"max_sessions": max_sessions, "max_queue": max_queue},
+                15.0,
+            )
             got = self.hello.get("supervisor_protocol_version")
             if got != SUPERVISOR_PROTOCOL_VERSION:
                 raise WorkerdError(
                     f"workerd 说的是 supervisor 协议 v{got}，本版 Tavotto 说 "
                     f"v{SUPERVISOR_PROTOCOL_VERSION}",
-                    code="protocol_mismatch")
+                    code="protocol_mismatch",
+                )
             self._ready = True
 
     def close(self) -> None:
@@ -258,9 +276,15 @@ class WorkerdClient:
             return
         try:
             if proc.poll() is None:
-                self._write(proc, {
-                    "supervisor_protocol_version": SUPERVISOR_PROTOCOL_VERSION,
-                    "request_id": "c-shutdown", "op": "shutdown", "payload": {}})
+                self._write(
+                    proc,
+                    {
+                        "supervisor_protocol_version": SUPERVISOR_PROTOCOL_VERSION,
+                        "request_id": "c-shutdown",
+                        "op": "shutdown",
+                        "payload": {},
+                    },
+                )
                 proc.wait(timeout=5)
         except (OSError, ValueError, subprocess.SubprocessError):
             pass
@@ -311,8 +335,12 @@ class WorkerdClient:
         for slot in pending.values():
             slot["resp"] = {
                 "ok": False,
-                "error": {"code": "workerd_dead", "retryable": True,
-                          "message": message, "traceback": ""},
+                "error": {
+                    "code": "workerd_dead",
+                    "retryable": True,
+                    "message": message,
+                    "traceback": "",
+                },
             }
             slot["event"].set()
 
@@ -328,9 +356,16 @@ class WorkerdClient:
             return f"c-{self._seq}"
 
     # ---------------------------------------------------------------- 调用
-    def call(self, op: str, *, session_id: str | None = None,
-             stem: str | None = None, payload: dict | None = None,
-             timeout: float | None = None, slack: float | None = None) -> dict:
+    def call(
+        self,
+        op: str,
+        *,
+        session_id: str | None = None,
+        stem: str | None = None,
+        payload: dict | None = None,
+        timeout: float | None = None,
+        slack: float | None = None,
+    ) -> dict:
         """发一条请求并等它的响应；失败抛 `WorkerdError`。
 
         `slack` 是「workerd 自己都卡住了」的兜底余量，退出路径要把它调小：
@@ -340,12 +375,12 @@ class WorkerdClient:
         with self._lock:
             proc = self._proc
         if proc is None or proc.poll() is not None:
-            raise WorkerdError("workerd 进程不可用", code="workerd_unavailable",
-                               retryable=True)
+            raise WorkerdError("workerd 进程不可用", code="workerd_unavailable", retryable=True)
         return self._call_on(proc, op, session_id, stem, payload, timeout, slack)
 
-    def _call_on(self, proc, op, session_id, stem, payload, timeout,
-                 slack: float | None = None) -> dict:
+    def _call_on(
+        self, proc, op, session_id, stem, payload, timeout, slack: float | None = None
+    ) -> dict:
         rid = self._next_id()
         req = {
             "supervisor_protocol_version": SUPERVISOR_PROTOCOL_VERSION,
@@ -370,8 +405,9 @@ class WorkerdClient:
         except (OSError, ValueError) as exc:
             with self._lock:
                 self._pending.pop(rid, None)
-            raise WorkerdError(f"写 workerd 失败: {exc}",
-                               code="workerd_unavailable", retryable=True) from exc
+            raise WorkerdError(
+                f"写 workerd 失败: {exc}", code="workerd_unavailable", retryable=True
+            ) from exc
 
         budget = (timeout or 60.0) + (_SLACK_SECONDS if slack is None else slack)
         if not slot["event"].wait(budget):
@@ -381,7 +417,9 @@ class WorkerdClient:
             # 与「渲染超时」不是一回事，code 必须分开。
             raise WorkerdError(
                 f"workerd 在 {int(budget)} 秒内没有回应（op={op}）",
-                code="workerd_unavailable", retryable=True)
+                code="workerd_unavailable",
+                retryable=True,
+            )
 
         resp = slot["resp"] or {}
         if resp.get("ok"):
@@ -392,8 +430,11 @@ class WorkerdClient:
             code=err.get("code", ""),
             retryable=bool(err.get("retryable")),
             traceback_text=err.get("traceback", ""),
-            extra={k: v for k, v in err.items()
-                   if k not in ("code", "retryable", "message", "traceback")},
+            extra={
+                k: v
+                for k, v in err.items()
+                if k not in ("code", "retryable", "message", "traceback")
+            },
             # **顶层字段**，不在 error 里面：以前这里只拆 `resp["error"]`，
             # 于是 open 失败时调用方永远学不到这条会话的 id。
             session_id=str(resp.get("session_id") or ""),

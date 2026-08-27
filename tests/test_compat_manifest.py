@@ -12,6 +12,7 @@
 
 纯标准库，不需要 matplotlib——语料层本来就要在还没装科学栈的机器上跑得起来。
 """
+
 from __future__ import annotations
 
 import copy
@@ -89,8 +90,7 @@ class TestManifestShape:
         assert exc.value.code == "unknown_discovery"
 
     def test_too_many_mutation_targets_is_rejected(self, one_case):
-        one_case["mutations"] = [{"gid": "g", "prop": f"p{i}", "value": 1}
-                                 for i in range(6)]
+        one_case["mutations"] = [{"gid": "g", "prop": f"p{i}", "value": 1} for i in range(6)]
         with pytest.raises(CC.CorpusError) as exc:
             CC.validate_manifest(_doc([one_case]))
         assert exc.value.code == "too_many_mutations"
@@ -101,7 +101,7 @@ class TestExceptionsNeedReasons:
     @pytest.mark.parametrize("cls", CC.NEEDS_REASON)
     def test_every_non_full_classification_needs_a_reason(self, one_case, cls):
         one_case["classification"] = cls
-        one_case["tier"] = "expected"          # must 不许有 product_bug
+        one_case["tier"] = "expected"  # must 不许有 product_bug
         one_case.pop("reason", None)
         one_case.pop("follow_up", None)
         with pytest.raises(CC.CorpusError) as exc:
@@ -161,7 +161,8 @@ class TestExceptionsNeedReasons:
             cls = c.get("classification", "full_support")
             if cls in CC.NEEDS_REASON:
                 assert len(str(c.get("reason", "")).strip()) >= 20, (
-                    f"{c['id']} 的 reason 太短，说不清为什么")
+                    f"{c['id']} 的 reason 太短，说不清为什么"
+                )
             if cls in CC.NEEDS_FOLLOW_UP:
                 assert len(str(c.get("follow_up", "")).strip()) >= 20, c["id"]
             for stage, want in (c.get("expected") or {}).items():
@@ -177,7 +178,8 @@ class TestCoverage:
         assert smoke, "smoke 子集空 = PR 上没有兼容门禁"
         assert len(smoke) <= 30, (
             f"smoke 子集 {len(smoke)} 个太大——PR 档的目标是几分钟内跑完，"
-            f"塞进整套 corpus 只会让人开始跳过它")
+            f"塞进整套 corpus 只会让人开始跳过它"
+        )
 
     def test_smoke_covers_every_tier1_category(self, manifest):
         must_cats = {c["category"] for c in manifest["cases"] if c["tier"] == "must"}
@@ -190,11 +192,21 @@ class TestCoverage:
         这条防的是「把碍事的 case 降级成 exploratory 让门禁松一档」。
         """
         must = {c["id"] for c in manifest["cases"] if c["tier"] == "must"}
-        for needed in ("art_plot", "art_scatter", "art_bar", "art_hist",
-                       "art_imshow", "art_legend", "art_colorbar",
-                       "art_text_annotate", "ax_subplots", "ax_tight_layout",
-                       "shape_pyplot_show_only", "shape_oo_savefig",
-                       "shape_no_savefig_multi"):
+        for needed in (
+            "art_plot",
+            "art_scatter",
+            "art_bar",
+            "art_hist",
+            "art_imshow",
+            "art_legend",
+            "art_colorbar",
+            "art_text_annotate",
+            "ax_subplots",
+            "ax_tight_layout",
+            "shape_pyplot_show_only",
+            "shape_oo_savefig",
+            "shape_no_savefig_multi",
+        ):
             assert needed in must, f"{needed} 不在 Tier 1 里"
 
     def test_browser_subset_is_not_empty(self, manifest):
@@ -214,8 +226,9 @@ class TestCoverage:
             if not c.get("browser_eligible"):
                 continue
             src = (CC.COMPAT_DIR / c["script"]).read_text(encoding="utf-8")
-            assert c.get("entry", "main") == "__main__" or "if __name__ ==" in src, \
+            assert c.get("entry", "main") == "__main__" or "if __name__ ==" in src, (
                 f"{c['id']} 作为脚本跑不出图，不该进浏览器对拍"
+            )
             assert not c.get("assets"), f"{c['id']} 要数据文件，playground 没有"
             assert not c.get("extra_files"), f"{c['id']} 要本地 helper"
 
@@ -227,8 +240,13 @@ class TestCoverage:
 
     def test_every_category_is_represented(self, manifest):
         cats = {c["category"] for c in manifest["cases"]}
-        assert cats == {"script_shapes", "core_artists", "axes_layout",
-                        "scientific_stack", "metamorphic"}
+        assert cats == {
+            "script_shapes",
+            "core_artists",
+            "axes_layout",
+            "scientific_stack",
+            "metamorphic",
+        }
 
     def test_metamorphic_families_have_several_variants(self, manifest):
         """同一张视觉结果 × 不同写法：家族数与每族的变体数都要够。"""
@@ -273,21 +291,24 @@ class TestVersionMatrix:
     def test_bundled_target_resolves_to_the_runtime_lock(self):
         m = CC.load_matrix()
         got = CC.resolve_target(m, "bundled")
-        lock = json.loads(
-            (CC.REPO / "packaging" / "runtime-lock.json").read_text(encoding="utf-8"))
+        lock = json.loads((CC.REPO / "packaging" / "runtime-lock.json").read_text(encoding="utf-8"))
         target = next(iter(lock["targets"].values()))
         raw = target["packages"]
         # 锁文件的 packages 两种形状都合法（dict 或 [{name, version}]），
         # `_versions_from_lock` 两种都认——这里照样两种都接，免得这条用例
         # 在一次纯格式调整里变红。
-        want = ({k.lower(): v for k, v in raw.items()} if isinstance(raw, dict)
-                else {p["name"].lower(): p["version"] for p in raw})
+        want = (
+            {k.lower(): v for k, v in raw.items()}
+            if isinstance(raw, dict)
+            else {p["name"].lower(): p["version"] for p in raw}
+        )
         assert got["matplotlib"] == want["matplotlib"]
 
     def test_browser_target_resolves_to_the_playground_lock(self):
         got = CC.resolve_target(CC.load_matrix(), "browser")
-        lock = json.loads((CC.REPO / "packaging" / "playground-runtime.json")
-                          .read_text(encoding="utf-8"))
+        lock = json.loads(
+            (CC.REPO / "packaging" / "playground-runtime.json").read_text(encoding="utf-8")
+        )
         assert got["matplotlib"] == lock["packages"]["matplotlib"]
         assert got["pyodide"] == lock["pyodide_version"]
 
@@ -321,9 +342,9 @@ class TestVersionMatrix:
         pyproject = (CC.REPO / "pyproject.toml").read_text(encoding="utf-8")
         assert "matplotlib>=3.8" in pyproject, (
             "pyproject 的下界改过了，tests/compat/matrix.json 的 minimum "
-            "档要跟着改（改之前先确认新下界真的能装到）")
-        assert CC.resolve_target(CC.load_matrix(), "minimum")[
-            "matplotlib"].startswith("3.8.")
+            "档要跟着改（改之前先确认新下界真的能装到）"
+        )
+        assert CC.resolve_target(CC.load_matrix(), "minimum")["matplotlib"].startswith("3.8.")
 
 
 # ============================================================ 基线纪律
@@ -335,31 +356,44 @@ class TestBaselineDiscipline:
 
     def test_baseline_entry_without_reason_is_rejected(self):
         with pytest.raises(CC.CorpusError) as exc:
-            CC.validate_baseline({"schema": 1, "cases": {
-                "x": {"classification": "partial_support", "stages": {}}}})
+            CC.validate_baseline(
+                {"schema": 1, "cases": {"x": {"classification": "partial_support", "stages": {}}}}
+            )
         assert exc.value.code == "reason_required"
 
     def test_baseline_product_bug_without_follow_up_is_rejected(self):
         """把已知缺陷记进基线是为了**看住**它，不是为了接受它。"""
         with pytest.raises(CC.CorpusError) as exc:
-            CC.validate_baseline({"schema": 1, "cases": {
-                "x": {"classification": "product_bug", "stages": {},
-                      "reason": "撤销回不去"}}})
+            CC.validate_baseline(
+                {
+                    "schema": 1,
+                    "cases": {
+                        "x": {"classification": "product_bug", "stages": {}, "reason": "撤销回不去"}
+                    },
+                }
+            )
         assert exc.value.code == "follow_up_required"
 
     def test_baseline_may_not_carry_timestamps(self):
         """时间戳每次都变，会把真正的分类变化淹没在 diff 噪音里。"""
         with pytest.raises(CC.CorpusError) as exc:
-            CC.validate_baseline({"schema": 1, "generated_at": "2026-08-21",
-                                  "cases": {"x": {"classification": "full_support",
-                                                  "stages": {}}}})
+            CC.validate_baseline(
+                {
+                    "schema": 1,
+                    "generated_at": "2026-08-21",
+                    "cases": {"x": {"classification": "full_support", "stages": {}}},
+                }
+            )
         assert exc.value.code == "baseline_has_timestamp"
 
     def test_baseline_payload_is_deterministic(self):
         results = {
             "b": {"classification": "full_support", "stages": {"execute": True}},
-            "a": {"classification": "partial_support", "stages": {"open": True},
-                  "reason": "只认得一半"},
+            "a": {
+                "classification": "partial_support",
+                "stages": {"open": True},
+                "reason": "只认得一半",
+            },
         }
         first = CC.baseline_payload(results)
         second = CC.baseline_payload(dict(reversed(list(results.items()))))
@@ -367,16 +401,27 @@ class TestBaselineDiscipline:
         assert list(first["cases"]) == ["a", "b"], "基线的 case 必须按 id 排序"
 
     def test_baseline_payload_keeps_stage_order_stable(self):
-        payload = CC.baseline_payload({"x": {
-            "classification": "full_support",
-            "stages": {"export": True, "execute": True, "open": False}}})
+        payload = CC.baseline_payload(
+            {
+                "x": {
+                    "classification": "full_support",
+                    "stages": {"export": True, "execute": True, "open": False},
+                }
+            }
+        )
         assert list(payload["cases"]["x"]["stages"]) == ["execute", "open", "export"]
 
     def test_diff_reports_new_missing_and_changed(self):
-        base = {"cases": {"a": {"classification": "full_support", "stages": {}},
-                          "gone": {"classification": "full_support", "stages": {}}}}
-        results = {"a": {"classification": "product_bug", "stages": {}},
-                   "fresh": {"classification": "full_support", "stages": {}}}
+        base = {
+            "cases": {
+                "a": {"classification": "full_support", "stages": {}},
+                "gone": {"classification": "full_support", "stages": {}},
+            }
+        }
+        results = {
+            "a": {"classification": "product_bug", "stages": {}},
+            "fresh": {"classification": "full_support", "stages": {}},
+        }
         d = CC.diff_baseline(base, results)
         assert d["new"] == ["fresh"]
         assert d["missing"] == ["gone"]
@@ -392,7 +437,8 @@ class TestBaselineDiscipline:
         missing = ids - set(baseline["cases"])
         assert not missing, (
             f"清单里这些 case 不在基线里：{sorted(missing)[:10]}。"
-            f"本地跑 --all --update-baseline，逐条读过再提交")
+            f"本地跑 --all --update-baseline，逐条读过再提交"
+        )
 
 
 # ============================================================ CI 接线
@@ -438,9 +484,9 @@ class TestCiWiring:
         assert "compat_matrix.py" in wf and "--gate release" in wf
         rel = self._wf("release.yml")
         import re
+
         gate = rel.split("lab_release_gate:", 1)[1].split("\n  validate_artifacts:", 1)[0]
-        assert re.search(r"mode:\s*release", gate), \
-            "release.yml 没有按 release 档调用资格验证"
+        assert re.search(r"mode:\s*release", gate), "release.yml 没有按 release 档调用资格验证"
 
     def test_nightly_runs_the_version_matrix(self):
         wf = self._wf("nightly.yml")
@@ -482,8 +528,9 @@ class TestReasonsAreReviewable:
         size = CC.BASELINE_PATH.stat().st_size
         assert size < 200_000, f"基线 {size} 字节，太大了没人会读"
         entry = next(iter(CC.load_baseline()["cases"].values()))
-        assert set(entry) <= {"classification", "stages", "reason", "follow_up",
-                              "note", "stage"}, entry.keys()
+        assert set(entry) <= {"classification", "stages", "reason", "follow_up", "note", "stage"}, (
+            entry.keys()
+        )
 
     def test_baseline_records_the_environment_it_was_taken_on(self):
         """分类会随 matplotlib 版本变。不写下来的话「基线对不上」永远查不出
@@ -497,8 +544,7 @@ class TestReasonsAreReviewable:
         上碰巧装着的版本。"""
         gen = CC.load_baseline()["generated_for"]
         assert gen["target"] == "bundled"
-        assert gen["matplotlib"] == CC.resolve_target(
-            CC.load_matrix(), "bundled")["matplotlib"]
+        assert gen["matplotlib"] == CC.resolve_target(CC.load_matrix(), "bundled")["matplotlib"]
 
 
 def test_no_case_asserts_a_limitation_that_no_longer_exists(manifest):
@@ -512,15 +558,15 @@ def test_no_case_asserts_a_limitation_that_no_longer_exists(manifest):
     静态判据：reason 里如果点名了某个函数「返回 None / 不认得」，那个说法必须
     在源码里仍然成立。这里只查这一条已知的，加新说法时照此扩充。
     """
-    src = (CC.REPO / "src" / "tavotto" / "engine" / "overrides.py").read_text(
-        encoding="utf-8")
+    src = (CC.REPO / "src" / "tavotto" / "engine" / "overrides.py").read_text(encoding="utf-8")
     cls_key_takes_axesbase = "isinstance(artist, _AxesBase)" in src
     for c in manifest["cases"]:
         reason = str(c.get("reason", ""))
         if "_cls_key" in reason and "回 None" in reason:
             assert not cls_key_takes_axesbase, (
                 f"{c['id']} 的 reason 说 _cls_key 回 None，但源码里它已经认"
-                f"_AxesBase 了——这条限制不存在了，reason 要跟着改")
+                f"_AxesBase 了——这条限制不存在了，reason 要跟着改"
+            )
 
 
 def test_child_axes_cases_assert_on_the_child_itself(manifest):
@@ -535,7 +581,8 @@ def test_child_axes_cases_assert_on_the_child_itself(manifest):
         targets = {gid for gid, _p in c["semantic_expectations"]["editable"]}
         targets |= {m["gid"] for m in c.get("mutations") or []}
         assert any(g.startswith("axes_1") for g in targets), (
-            f"{cid} 的断言全落在宿主轴上，子 axes 回退了它也不会红：{sorted(targets)}")
+            f"{cid} 的断言全落在宿主轴上，子 axes 回退了它也不会红：{sorted(targets)}"
+        )
 
 
 def test_fallback_only_cases_are_not_claimed_as_full_support(manifest):
@@ -554,23 +601,26 @@ def test_fallback_only_cases_are_not_claimed_as_full_support(manifest):
     引擎阶段照常验（它们是真的），只有 `classification` 受这条约束。
     """
     import ast
+
     offenders = []
     for c in manifest["cases"]:
         src = (CC.COMPAT_DIR / c["script"]).read_text(encoding="utf-8")
         tree = ast.parse(src)
-        saves = [n for n in ast.walk(tree)
-                 if isinstance(n, ast.Call)
-                 and getattr(n.func, "attr", "") in ("savefig", "save")]
+        saves = [
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Call) and getattr(n.func, "attr", "") in ("savefig", "save")
+        ]
         if saves:
-            continue                       # 有存图调用 → 磁盘上会有产物
+            continue  # 有存图调用 → 磁盘上会有产物
         if c.get("classification", "full_support") != "full_support":
-            continue                       # 已如实降级的不受此条约束
+            continue  # 已如实降级的不受此条约束
         routes = c.get("product_routes") or {}
-        verified = all(routes.get(r) is True
-                       for r in ("desktop_project", "cli_open", "safe_probe"))
+        verified = all(routes.get(r) is True for r in ("desktop_project", "cli_open", "safe_probe"))
         if not verified:
             offenders.append(c["id"])
     assert not offenders, (
         "这些 case 的脚本一次都不存盘，却在没有声明（并被 runner 验证）"
         "desktop_project/cli_open/safe_probe 产品路由的情况下被记成"
-        f"「完全支持」：{offenders}")
+        f"「完全支持」：{offenders}"
+    )

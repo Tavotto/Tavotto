@@ -23,6 +23,7 @@
 **这不是风格检查。** 这条判断错一次的代价已经量过：override 挂在每帧被重建的
 幽灵上、写回被一条「元素不存在」阻断、拖动宿主时色条留在原地。
 """
+
 from __future__ import annotations
 
 import ast
@@ -44,8 +45,10 @@ ENGINE = os.path.join(REPO, "src", "tavotto", "engine")
 #: 挡不住函数内部的回归，所以那两个兜底被删掉了（`axes` 改成必填），
 #: 而不是把豁免写得更细。**能删掉豁免就别把豁免写精细。**
 _ALLOWED = {
-    ("manifest.py", "_ordered_axes"):
-        "遍历权威本身：它就是那个把 fig.axes 与 child_axes 合起来的函数",
+    (
+        "manifest.py",
+        "_ordered_axes",
+    ): "遍历权威本身：它就是那个把 fig.axes 与 child_axes 合起来的函数",
 }
 
 
@@ -60,14 +63,14 @@ def _fig_axes_sites(path: str) -> list[tuple[str, int]]:
     stack: list[str] = []
 
     class Visitor(ast.NodeVisitor):
-        def visit_FunctionDef(self, node):          # noqa: N802
+        def visit_FunctionDef(self, node):  # noqa: N802
             stack.append(node.name)
             self.generic_visit(node)
             stack.pop()
 
         visit_AsyncFunctionDef = visit_FunctionDef  # noqa: N815
 
-        def visit_Attribute(self, node):            # noqa: N802
+        def visit_Attribute(self, node):  # noqa: N802
             if node.attr == "axes":
                 base = node.value
                 name = getattr(base, "id", None) or getattr(base, "attr", None)
@@ -91,7 +94,8 @@ def test_fig_axes_only_where_it_is_allowed(fname):
         "这里要的多半是**figure 上所有的 axes**，而 `fig.axes` 里没有 "
         "`inset_axes` / `secondary_[xy]axis` 建出来的那些。改用 "
         "`manifest._ordered_axes(fig)[0]`（或由调用方传进来），别在这里再抄一遍"
-        "遍历：\n  " + "\n  ".join(offenders))
+        "遍历：\n  " + "\n  ".join(offenders)
+    )
 
 
 def test_the_allowlist_has_no_dead_entries():
@@ -100,8 +104,10 @@ def test_the_allowlist_has_no_dead_entries():
     一条指向不存在位置的豁免，读起来像「这里有个有据可查的例外」，实际什么都
     没豁免——与本轮反复在收的那种空门禁是同一个形状，只是长在豁免表里。
     """
-    live = {(f, func)
-            for f in ("manifest.py", "overrides.py")
-            for func, _ in _fig_axes_sites(os.path.join(ENGINE, f))}
+    live = {
+        (f, func)
+        for f in ("manifest.py", "overrides.py")
+        for func, _ in _fig_axes_sites(os.path.join(ENGINE, f))
+    }
     dead = sorted(k for k in _ALLOWED if k not in live)
     assert not dead, f"豁免表里这几条已经没有对应的代码了，删掉：{dead}"

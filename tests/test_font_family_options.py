@@ -11,6 +11,7 @@ matplotlib 静默回退到 DejaVuSans，而链路全通——override 记下了�
 
 本进程不 import matplotlib：探测跑在 worker 的科学栈解释器里。
 """
+
 import subprocess
 from pathlib import Path
 
@@ -24,11 +25,12 @@ except pool.WorkerError:
     WORKER_PY = None
 
 pytestmark = pytest.mark.skipif(
-    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）")
+    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）"
+)
 
 ENGINE_DIR = Path(__file__).resolve().parent.parent / "src" / "tavotto" / "engine"
 
-_DRIVER = '''\
+_DRIVER = """\
 import sys
 sys.path.insert(0, sys.argv[1])
 import matplotlib
@@ -73,7 +75,7 @@ assert manifest._family_options() == GENERIC, manifest._family_options()
 font_manager.findfont = real
 manifest._FONT_PRESENT.clear()
 print("OK")
-'''
+"""
 
 
 def test_the_font_dropdown_only_offers_what_this_runtime_can_draw():
@@ -83,8 +85,12 @@ def test_the_font_dropdown_only_offers_what_this_runtime_can_draw():
     Roman / Helvetica 一个都没装，那条断言只会在 macOS 上绿。要看的是
     「列出来的都解析得到」，它在每个平台上都成立，而且更强。
     """
-    out = subprocess.run([WORKER_PY, "-c", _DRIVER, str(ENGINE_DIR)],
-                         capture_output=True, text=True,
-                         encoding="utf-8", errors="replace")
+    out = subprocess.run(
+        [WORKER_PY, "-c", _DRIVER, str(ENGINE_DIR)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
     assert out.returncode == 0, out.stderr
     assert out.stdout.strip().endswith("OK")

@@ -1,4 +1,5 @@
 """组图↔子图 override 同步的纯函数测试（_remap_point / _best_offset / _axes_info）。"""
+
 import pytest
 
 from tavotto import app as m
@@ -53,14 +54,16 @@ def test_best_offset_prefers_similar_element_count():
 
 
 def test_axes_info_collects_bbox_texts_and_counts():
-    man = {"elements": [
-        {"gid": "axes_0", "bbox": [0, 0, 0.5, 1]},
-        {"gid": "axes_0.title", "editable": [{"prop": "text", "value": "Left"}]},
-        {"gid": "axes_0.line_0", "editable": []},
-        {"gid": "axes_1", "bbox": [0.5, 0, 0.5, 1]},
-        {"gid": "axes_1.title", "editable": [{"prop": "text", "value": "Right"}]},
-        {"gid": "figure", "editable": []},
-    ]}
+    man = {
+        "elements": [
+            {"gid": "axes_0", "bbox": [0, 0, 0.5, 1]},
+            {"gid": "axes_0.title", "editable": [{"prop": "text", "value": "Left"}]},
+            {"gid": "axes_0.line_0", "editable": []},
+            {"gid": "axes_1", "bbox": [0.5, 0, 0.5, 1]},
+            {"gid": "axes_1.title", "editable": [{"prop": "text", "value": "Right"}]},
+            {"gid": "figure", "editable": []},
+        ]
+    }
     info = m._axes_info(man)
     assert len(info) == 2
     assert info[0]["bbox"] == [0, 0, 0.5, 1]

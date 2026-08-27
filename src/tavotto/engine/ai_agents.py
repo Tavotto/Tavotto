@@ -17,6 +17,7 @@ history），`ai_providers` 只负责第三方接口的存取与注入——两�
 路径拼接一律用字符串，不用 pathlib（`os.name` 一变 `Path` 就分派到另一半
 实现，连跨平台测这段分支都做不到——与 `pool._candidate_pythons` 同一条约定）。
 """
+
 from __future__ import annotations
 
 import json
@@ -35,15 +36,15 @@ from .runtime import CREATE_NO_WINDOW
 #: `--version` 启动验证的结果。
 Source = str
 SOURCES: tuple[str, ...] = (
-    "custom",           # 用户在设置里指定的可执行文件
-    "path",             # 系统 PATH
-    "homebrew",         # Homebrew 前缀
+    "custom",  # 用户在设置里指定的可执行文件
+    "path",  # 系统 PATH
+    "homebrew",  # Homebrew 前缀
     "common_location",  # 各平台常见安装目录（bun / volta / scoop / winget / choco…）
-    "npm_global",       # npm 全局前缀
-    "chatgpt_bundle",   # macOS ChatGPT 应用内置的 codex
-    "windows_alias",    # %LOCALAPPDATA%\Microsoft\WindowsApps 执行别名
-    "windows_store",    # MSIX 包体内的真身
-    "package_binary",   # npm 包内部的平台原生二进制
+    "npm_global",  # npm 全局前缀
+    "chatgpt_bundle",  # macOS ChatGPT 应用内置的 codex
+    "windows_alias",  # %LOCALAPPDATA%\Microsoft\WindowsApps 执行别名
+    "windows_store",  # MSIX 包体内的真身
+    "package_binary",  # npm 包内部的平台原生二进制
 )
 
 #: 无副作用就绪检查的上限。到点就当 unknown——设置页绝不能被一个卡住的
@@ -55,6 +56,7 @@ VERSION_TIMEOUT_S = 10
 @dataclass(frozen=True)
 class SearchLocation:
     """一个候选目录 + 它的来源标签。"""
+
     path: str
     source: Source
 
@@ -62,6 +64,7 @@ class SearchLocation:
 @dataclass(frozen=True)
 class CliCandidate:
     """一个候选可执行文件 + 它是从哪儿翻出来的。"""
+
     path: str
     source: Source
 
@@ -69,6 +72,7 @@ class CliCandidate:
 @dataclass(frozen=True)
 class ModelCapabilities:
     """该 Agent 当前能提供的模型 / 推理强度选项。"""
+
     models: list[str] = field(default_factory=list)
     default_model: str | None = None
     efforts: list[str] = field(default_factory=list)
@@ -85,6 +89,7 @@ class ReadinessResult:
       unknown    — 不支持 / 超时 / 输出看不懂。**映射为「已安装」**，
                    绝不据此说「可用」，也绝不据此说「需要登录」。
     """
+
     state: str = "unknown"
     #: 稳定的诊断串（不含任何账号信息）；只在详情页的诊断折叠区显示。
     detail: str | None = None
@@ -93,6 +98,7 @@ class ReadinessResult:
 @dataclass(frozen=True)
 class InstallSpec:
     """一键安装的固定规格。**包名写死在适配器里**，绝不来自请求体。"""
+
     method: str
     package: str
 
@@ -100,7 +106,8 @@ class InstallSpec:
 @dataclass(frozen=True)
 class RunContext:
     """构造一次任务命令所需的全部输入。"""
-    argv: list[str]                 # 已通过启动验证的 CLI 启动 argv
+
+    argv: list[str]  # 已通过启动验证的 CLI 启动 argv
     prompt: str
     cwd: str
     model: str | None = None
@@ -113,6 +120,7 @@ class RunContext:
 @dataclass(frozen=True)
 class SpawnSpec:
     """→ (完整命令行, 需要追加到环境的变量)。"""
+
     argv: list[str]
     env: dict[str, str] = field(default_factory=dict)
 
@@ -134,7 +142,7 @@ def search_locations(name: str) -> list[SearchLocation]:
         local = os.environ.get("LOCALAPPDATA") or home + r"\AppData\Local"
         programs = os.environ.get("ProgramFiles") or r"C:\Program Files"
         raw: list[tuple[str, str]] = [
-            (appdata + r"\npm", "npm_global"),        # npm 全局（最常见）
+            (appdata + r"\npm", "npm_global"),  # npm 全局（最常见）
             (local + r"\npm", "npm_global"),
             # 微软商店 / MSIX 安装（OpenAI.Codex 就是这么发的）。真身在
             # C:\Program Files\WindowsApps\OpenAI.Codex_…\app，那个目录受 ACL
@@ -142,7 +150,7 @@ def search_locations(name: str) -> list[SearchLocation]:
             # （0 字节 reparse point，只能执行不能读）。少了这一条，商店版
             # codex 在系统里就是「找不到」。
             (local + r"\Microsoft\WindowsApps", "windows_alias"),
-            (home + r"\.local\bin", "common_location"),   # 官方安装脚本
+            (home + r"\.local\bin", "common_location"),  # 官方安装脚本
             (home + r"\.bun\bin", "common_location"),
             (local + r"\Volta\bin", "common_location"),
             (home + r"\scoop\shims", "common_location"),
@@ -222,6 +230,7 @@ def spawn_env(cli_path: str | None, extra: dict | None = None) -> dict:
     if os.name != "nt":
         # nvm 没有稳定的 current 目录：把装过的版本目录挑最新的补上
         import glob as _glob
+
         vers = sorted(_glob.glob(home + "/.nvm/versions/node/*/bin"))
         if vers:
             candidates.append(vers[-1])
@@ -242,11 +251,17 @@ def probe_version_detailed(argv: list[str]) -> tuple[str | None, str | None]:
     填错了。两者都不该覆盖用户原来有效的设置。
     """
     try:
-        out = subprocess.run([*argv, "--version"], capture_output=True,
-                             text=True, timeout=VERSION_TIMEOUT_S, encoding="utf-8",
-                             errors="replace", stdin=subprocess.DEVNULL,
-                             env=spawn_env(argv[-1]),
-                             creationflags=CREATE_NO_WINDOW)
+        out = subprocess.run(
+            [*argv, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=VERSION_TIMEOUT_S,
+            encoding="utf-8",
+            errors="replace",
+            stdin=subprocess.DEVNULL,
+            env=spawn_env(argv[-1]),
+            creationflags=CREATE_NO_WINDOW,
+        )
     except subprocess.TimeoutExpired:
         return None, "timeout"
     except OSError:
@@ -268,10 +283,17 @@ def _run_probe(argv: list[str], timeout: int = READINESS_TIMEOUT_S) -> tuple[int
     而不是把设置页挂死在那儿等输入。
     """
     try:
-        out = subprocess.run(argv, capture_output=True, text=True,
-                             timeout=timeout, encoding="utf-8", errors="replace",
-                             stdin=subprocess.DEVNULL, env=spawn_env(argv[0]),
-                             creationflags=CREATE_NO_WINDOW)
+        out = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            encoding="utf-8",
+            errors="replace",
+            stdin=subprocess.DEVNULL,
+            env=spawn_env(argv[0]),
+            creationflags=CREATE_NO_WINDOW,
+        )
     except (OSError, subprocess.TimeoutExpired):
         return None
     return out.returncode, ((out.stdout or "") + "\n" + (out.stderr or ""))
@@ -355,10 +377,8 @@ class CodexAgent(AgentDefinition):
         # 候选与其它落点一样要过 --version 启动验证才算数。
         home = os.path.expanduser("~")
         return [
-            SearchLocation("/Applications/ChatGPT.app/Contents/Resources",
-                           "chatgpt_bundle"),
-            SearchLocation(home + "/Applications/ChatGPT.app/Contents/Resources",
-                           "chatgpt_bundle"),
+            SearchLocation("/Applications/ChatGPT.app/Contents/Resources", "chatgpt_bundle"),
+            SearchLocation(home + "/Applications/ChatGPT.app/Contents/Resources", "chatgpt_bundle"),
         ]
 
     # -- codex 的模型清单来自它自己的 config.toml ---------------------------
@@ -381,20 +401,21 @@ class CodexAgent(AgentDefinition):
             return out
         try:
             import tomllib  # 3.11+
+
             data = tomllib.loads(text)
             out["default_model"] = data.get("model") or None
             out["default_effort"] = data.get("model_reasoning_effort") or None
             names = [data.get("model")]
             profiles = data.get("profiles")
             if isinstance(profiles, dict):
-                names += [p.get("model") for p in profiles.values()
-                          if isinstance(p, dict)]
+                names += [p.get("model") for p in profiles.values() if isinstance(p, dict)]
         except (ImportError, ValueError):
             # tomllib 缺席（3.10）或 TOML 有语法问题：退化成逐行取值，
             # 首个 model 视为默认。宁可少给，也不要报错让整个面板不可用。
             names = re.findall(r'^\s*model\s*=\s*["\']([^"\']+)["\']', text, re.M)
             efforts = re.findall(
-                r'^\s*model_reasoning_effort\s*=\s*["\']([^"\']+)["\']', text, re.M)
+                r'^\s*model_reasoning_effort\s*=\s*["\']([^"\']+)["\']', text, re.M
+            )
             out["default_model"] = names[0] if names else None
             out["default_effort"] = efforts[0] if efforts else None
         seen: list[str] = []
@@ -409,10 +430,12 @@ class CodexAgent(AgentDefinition):
         efforts = list(self.EFFORTS)
         if cfg["default_effort"] and cfg["default_effort"] not in efforts:
             efforts.append(cfg["default_effort"])
-        return ModelCapabilities(models=list(cfg["models"]),
-                                 default_model=cfg["default_model"],
-                                 efforts=efforts,
-                                 default_effort=cfg["default_effort"] or "medium")
+        return ModelCapabilities(
+            models=list(cfg["models"]),
+            default_model=cfg["default_model"],
+            efforts=efforts,
+            default_effort=cfg["default_effort"] or "medium",
+        )
 
     def readiness(self, argv: list[str]) -> ReadinessResult:
         """`codex login status` —— 官方的本地状态子命令，只读 auth 文件。
@@ -434,8 +457,16 @@ class CodexAgent(AgentDefinition):
         return ReadinessResult("unknown", "unrecognised_output")
 
     def build_command(self, ctx: RunContext) -> SpawnSpec:
-        cmd = [*ctx.argv, "exec", "-C", ctx.cwd, "--json",
-               "--sandbox", "workspace-write", "--skip-git-repo-check"]
+        cmd = [
+            *ctx.argv,
+            "exec",
+            "-C",
+            ctx.cwd,
+            "--json",
+            "--sandbox",
+            "workspace-write",
+            "--skip-git-repo-check",
+        ]
         cmd += ctx.endpoint_args
         if ctx.model:
             cmd += ["-m", ctx.model]
@@ -460,7 +491,7 @@ class CodexAgent(AgentDefinition):
             prev = state.get("msg_buf", "")
             if text.startswith(prev) and len(text) > len(prev):
                 state["msg_buf"] = text
-                return [("delta", text[len(prev):])]
+                return [("delta", text[len(prev) :])]
             return []
         if itype == "reasoning":
             if etype != "item.completed":
@@ -508,13 +539,15 @@ class ClaudeAgent(AgentDefinition):
         end = text.rfind("}")
         if start >= 0 and end > start:
             try:
-                data = json.loads(text[start:end + 1])
+                data = json.loads(text[start : end + 1])
             except ValueError:
                 data = None
             if isinstance(data, dict) and isinstance(data.get("loggedIn"), bool):
-                return (ReadinessResult("ready", "cli_reports_signed_in")
-                        if data["loggedIn"]
-                        else ReadinessResult("needs_auth", "cli_reports_signed_out"))
+                return (
+                    ReadinessResult("ready", "cli_reports_signed_in")
+                    if data["loggedIn"]
+                    else ReadinessResult("needs_auth", "cli_reports_signed_out")
+                )
         low = text.lower()
         if "not logged in" in low or "not authenticated" in low:
             return ReadinessResult("needs_auth", "cli_reports_signed_out")
@@ -524,10 +557,17 @@ class ClaudeAgent(AgentDefinition):
 
     def build_command(self, ctx: RunContext) -> SpawnSpec:
         # stream-json + partial messages → 逐 token 流式（kind="delta"）
-        cmd = [*ctx.argv, "-p", ctx.prompt,
-               "--permission-mode", "acceptEdits",
-               "--output-format", "stream-json", "--include-partial-messages",
-               "--verbose"]
+        cmd = [
+            *ctx.argv,
+            "-p",
+            ctx.prompt,
+            "--permission-mode",
+            "acceptEdits",
+            "--output-format",
+            "stream-json",
+            "--include-partial-messages",
+            "--verbose",
+        ]
         cmd += ctx.endpoint_args
         if ctx.model:
             cmd += ["--model", ctx.model]
@@ -548,7 +588,7 @@ class ClaudeAgent(AgentDefinition):
             return []
         if t == "assistant":
             out: list[tuple[str, str]] = []
-            for block in ((ev.get("message") or {}).get("content") or []):
+            for block in (ev.get("message") or {}).get("content") or []:
                 btype = block.get("type")
                 if btype == "text" and block.get("text"):
                     out.append(("message", str(block["text"])))  # 终结流式气泡
@@ -610,6 +650,7 @@ class Resolution:
     `argv` **只在后端内部用**（要么是 `[exe]`，要么是 `[node, script.js]`）；
     前端没有消费者，capabilities 不公开它。
     """
+
     argv: list[str] | None = None
     path: str | None = None
     version: str | None = None
@@ -647,8 +688,7 @@ def path_override(agent_id: str) -> str | None:
     return value or None
 
 
-def candidates(agent: AgentDefinition,
-               override: str | None = None) -> list[CliCandidate]:
+def candidates(agent: AgentDefinition, override: str | None = None) -> list[CliCandidate]:
     """该 Agent 的候选（按优先级、按实际路径去重）：设置 → PATH → 常见位置。
 
     刻意返回**全部**候选而不是第一个：Windows 上
@@ -731,15 +771,21 @@ def resolve(agent: AgentDefinition, probe_readiness: bool = True) -> Resolution:
         if broken is None:
             broken = cand.path
     if argv is None:
-        res = Resolution(searched=searched, broken_path=broken,
-                         error="launch_failed" if broken else "not_found")
+        res = Resolution(
+            searched=searched, broken_path=broken, error="launch_failed" if broken else "not_found"
+        )
     else:
         readiness = ReadinessResult()
         if probe_readiness and agent.supports_readiness_probe:
             readiness = agent.readiness(argv)
-        res = Resolution(argv=argv, path=argv[-1], version=version,
-                         source=found.source if found else None,
-                         searched=searched, readiness=readiness)
+        res = Resolution(
+            argv=argv,
+            path=argv[-1],
+            version=version,
+            source=found.source if found else None,
+            searched=searched,
+            readiness=readiness,
+        )
     _RESOLVE_CACHE[agent.id] = res
     return res
 
@@ -796,5 +842,6 @@ def validate_executable(agent: AgentDefinition, path: str) -> Resolution:
     if version is None:
         return Resolution(broken_path=resolved, error=failure or "launch_failed")
     readiness = agent.readiness(argv) if agent.supports_readiness_probe else ReadinessResult()
-    return Resolution(argv=argv, path=argv[-1], version=version,
-                      source="custom", readiness=readiness)
+    return Resolution(
+        argv=argv, path=argv[-1], version=version, source="custom", readiness=readiness
+    )

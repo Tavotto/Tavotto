@@ -13,6 +13,7 @@
 
 本进程不 import matplotlib：worker 经 `pool.one_shot()` 起在科学栈解释器里。
 """
+
 import pytest
 
 from tavotto.engine import pool
@@ -23,7 +24,8 @@ except pool.WorkerError:
     WORKER_PY = None
 
 pytestmark = pytest.mark.skipif(
-    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）")
+    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）"
+)
 
 SCRIPT_NAME = "fig_legend.py"
 ENTRY = "main"
@@ -31,7 +33,7 @@ STEM = "LegendFig"
 T0 = "axes_0.legend.texts_0"
 T1 = "axes_0.legend.texts_1"
 
-LIBRARY = '''\
+LIBRARY = """\
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -44,7 +46,7 @@ def main():
     ax.plot(x, np.sin(x) * 0.5, label="gamma")
     ax.legend()
     fig.savefig("LegendFig.pdf")
-'''
+"""
 
 
 @pytest.fixture(scope="module")
@@ -79,8 +81,11 @@ def _field(man, gid, prop):
 
 
 def _legend_texts(man):
-    return [_field(man, e["gid"], "text") for e in man["elements"]
-            if e["role"] == "legend_text" and ".texts_" in e["gid"]]
+    return [
+        _field(man, e["gid"], "text")
+        for e in man["elements"]
+        if e["role"] == "legend_text" and ".texts_" in e["gid"]
+    ]
 
 
 def test_single_legend_item_is_its_own_element(library):
@@ -108,30 +113,39 @@ def test_editing_the_source_label_does_not_rewrite_the_legend(library):
     man = _render(library, [{"gid": "axes_0.lines_0", "prop": "label", "value": "renamed"}])
     assert _field(man, "axes_0.lines_0", "label") == "renamed"
     assert _legend_texts(man)[0] == "alpha"
-    man2 = _render(library, [
-        {"gid": "axes_0.lines_0", "prop": "label", "value": "renamed"},
-        {"gid": "axes_0.legend", "prop": "ncol", "value": 1},   # 触发重建
-    ])
+    man2 = _render(
+        library,
+        [
+            {"gid": "axes_0.lines_0", "prop": "label", "value": "renamed"},
+            {"gid": "axes_0.legend", "prop": "ncol", "value": 1},  # 触发重建
+        ],
+    )
     assert _legend_texts(man2)[0] == "alpha", "重建也不该让曲线 label 覆盖图例文字"
 
 
 def test_item_text_survives_a_legend_rebuild(library):
     """ncol / entry_order 是构建期参数：文字对象整批换新，已应用的文字
     override 必须重放到新对象上，否则改过的那一项会自己变回去。"""
-    man = _render(library, [
-        {"gid": T0, "prop": "text", "value": "AAA"},
-        {"gid": T1, "prop": "text", "value": "BBB"},
-        {"gid": "axes_0.legend", "prop": "ncol", "value": 3},
-    ])
+    man = _render(
+        library,
+        [
+            {"gid": T0, "prop": "text", "value": "AAA"},
+            {"gid": T1, "prop": "text", "value": "BBB"},
+            {"gid": "axes_0.legend", "prop": "ncol", "value": 3},
+        ],
+    )
     assert _legend_texts(man)[:2] == ["AAA", "BBB"]
 
 
 def test_item_text_follows_display_order_after_reorder(library):
     """`texts_j` 指的是**显示顺序**里的第 j 项（与 entry_order 的语义一致）。"""
-    man = _render(library, [
-        {"gid": "axes_0.legend", "prop": "entry_order", "value": [2, 0, 1]},
-        {"gid": T0, "prop": "text", "value": "第一项"},
-    ])
+    man = _render(
+        library,
+        [
+            {"gid": "axes_0.legend", "prop": "entry_order", "value": [2, 0, 1]},
+            {"gid": T0, "prop": "text", "value": "第一项"},
+        ],
+    )
     assert _legend_texts(man) == ["第一项", "alpha", "beta"]
 
 
@@ -169,8 +183,10 @@ def test_hot_and_fresh_agree_on_text_plus_rebuild(library):
     """一步步改（先改字后换列数）== 全新 worker 一次性重放。"""
     steps = [
         [{"gid": T0, "prop": "text", "value": "AAA"}],
-        [{"gid": T0, "prop": "text", "value": "AAA"},
-         {"gid": "axes_0.legend", "prop": "ncol", "value": 2}],
+        [
+            {"gid": T0, "prop": "text", "value": "AAA"},
+            {"gid": "axes_0.legend", "prop": "ncol", "value": 2},
+        ],
     ]
     hot = _worker(library)
     try:
@@ -183,4 +199,5 @@ def test_hot_and_fresh_agree_on_text_plus_rebuild(library):
     man_fresh = _render(library, steps[-1])
     assert _legend_texts(man_hot) == _legend_texts(man_fresh)
     assert _el(man_hot, "axes_0.legend")["bbox"] == pytest.approx(
-        _el(man_fresh, "axes_0.legend")["bbox"], abs=5e-3)
+        _el(man_fresh, "axes_0.legend")["bbox"], abs=5e-3
+    )

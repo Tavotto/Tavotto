@@ -23,6 +23,7 @@
     python scripts/ci/benchmark.py --python .venv/bin/python --mode main
     python scripts/ci/benchmark.py --python .venv/bin/python --mode release --no-update
 """
+
 from __future__ import annotations
 
 import argparse
@@ -80,11 +81,17 @@ def check_environment() -> tuple[bool, dict]:
     load = _load_avg()
     free = _free_ram_gib()
     per_cpu = load / cpus
-    facts = {"load_avg_1m": round(load, 2), "cpu_count": cpus,
-             "load_per_cpu": round(per_cpu, 3), "free_ram_gib": free}
+    facts = {
+        "load_avg_1m": round(load, 2),
+        "cpu_count": cpus,
+        "load_per_cpu": round(per_cpu, 3),
+        "free_ram_gib": free,
+    }
     reasons = []
     if per_cpu > MAX_LOAD_PER_CPU:
-        reasons.append(f"每核负载 {per_cpu:.2f} > {MAX_LOAD_PER_CPU}（load {load:.1f} / {cpus} 核）")
+        reasons.append(
+            f"每核负载 {per_cpu:.2f} > {MAX_LOAD_PER_CPU}（load {load:.1f} / {cpus} 核）"
+        )
     if 0 <= free < MIN_FREE_RAM_GIB:
         reasons.append(f"可用内存仅 {free} GiB < {MIN_FREE_RAM_GIB}")
     facts["reasons"] = reasons
@@ -99,15 +106,27 @@ def measure(python: str, figures: Path, repeat: int, out_json: Path) -> dict:
     但两条一起跑会让墙钟翻倍，而回归判定只需要一条稳定的参照系。
     要对照两条控制面时用 bench_render 自己跑，那是它本来的用途。
     """
-    cmd = [python, str(REPO / "scripts" / "bench_render.py"),
-           "--python", python, "--figures", str(figures),
-           "--repeat", str(repeat), "--plane", "python",
-           "--json", str(out_json)]
+    cmd = [
+        python,
+        str(REPO / "scripts" / "bench_render.py"),
+        "--python",
+        python,
+        "--figures",
+        str(figures),
+        "--repeat",
+        str(repeat),
+        "--plane",
+        "python",
+        "--json",
+        str(out_json),
+    ]
     print(f"$ {' '.join(cmd)}", flush=True)
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=5400)
     if r.returncode != 0:
-        raise CiError("bench_failed",
-                      f"bench_render.py 退出码 {r.returncode}：\n{r.stdout[-1500:]}\n{r.stderr[-1500:]}")
+        raise CiError(
+            "bench_failed",
+            f"bench_render.py 退出码 {r.returncode}：\n{r.stdout[-1500:]}\n{r.stderr[-1500:]}",
+        )
     try:
         return json.loads(out_json.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
@@ -175,15 +194,28 @@ def compare(current: dict[str, float], baseline: dict | None) -> tuple[bool, lis
     for key, now in sorted(current.items()):
         was = base.get(key)
         if not isinstance(was, (int, float)) or was <= 0:
-            findings.append({"metric": key, "now_ms": round(now, 1), "baseline_ms": None,
-                             "delta_pct": None, "verdict": "new"})
+            findings.append(
+                {
+                    "metric": key,
+                    "now_ms": round(now, 1),
+                    "baseline_ms": None,
+                    "delta_pct": None,
+                    "verdict": "new",
+                }
+            )
             continue
         delta = (now - was) / was * 100.0
         bad = delta > REGRESSION_PCT
         regressed = regressed or bad
-        findings.append({"metric": key, "now_ms": round(now, 1), "baseline_ms": round(was, 1),
-                         "delta_pct": round(delta, 1),
-                         "verdict": "regression" if bad else ("faster" if delta < -10 else "ok")})
+        findings.append(
+            {
+                "metric": key,
+                "now_ms": round(now, 1),
+                "baseline_ms": round(was, 1),
+                "delta_pct": round(delta, 1),
+                "verdict": "regression" if bad else ("faster" if delta < -10 else "ok"),
+            }
+        )
     return (not regressed), findings
 
 
@@ -193,14 +225,16 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--python", default=sys.executable)
     ap.add_argument("--figures", default=str(DEFAULT_FIGURES))
     ap.add_argument("--repeat", type=int, default=7, help="热渲染采样次数（含 warmup）")
-    ap.add_argument("--mode", default="main",
-                    choices=["main", "nightly", "release", "weekly"])
-    ap.add_argument("--no-update", action="store_true",
-                    help="只比不写。release 模式下强制生效")
-    ap.add_argument("--gate", default=None,
-                    help="true/false 覆盖 LAB_PERF_GATE；不传时读环境变量，默认不阻断")
-    ap.add_argument("--allow-contaminated", action="store_true",
-                    help="机器忙时仍然测量（数字仅供参考，不参与门禁）")
+    ap.add_argument("--mode", default="main", choices=["main", "nightly", "release", "weekly"])
+    ap.add_argument("--no-update", action="store_true", help="只比不写。release 模式下强制生效")
+    ap.add_argument(
+        "--gate", default=None, help="true/false 覆盖 LAB_PERF_GATE；不传时读环境变量，默认不阻断"
+    )
+    ap.add_argument(
+        "--allow-contaminated",
+        action="store_true",
+        help="机器忙时仍然测量（数字仅供参考，不参与门禁）",
+    )
     args = ap.parse_args(argv)
 
     root = ensure_layout()
@@ -211,12 +245,21 @@ def main(argv: list[str] | None = None) -> int:
     if not clean and not args.allow_contaminated:
         msg = "；".join(env_facts["reasons"])
         print(f"::error::benchmark 环境被污染：{msg}", file=sys.stderr)
-        summary(f"\n> **benchmark 环境被污染** — {msg}\n>\n"
-                f"> 这台机器现在的数字没有参考价值。**不接受一份无意义的 benchmark**——"
-                f"把「机器忙」当成「Tavotto 变慢了」会让人去优化一个不存在的回归。\n")
-        write_report("benchmark.json",
-                     {"ok": False, "code": "environment_contaminated",
-                      "environment": env_facts, "metadata": run_metadata(args.mode)}, root)
+        summary(
+            f"\n> **benchmark 环境被污染** — {msg}\n>\n"
+            f"> 这台机器现在的数字没有参考价值。**不接受一份无意义的 benchmark**——"
+            f"把「机器忙」当成「Tavotto 变慢了」会让人去优化一个不存在的回归。\n"
+        )
+        write_report(
+            "benchmark.json",
+            {
+                "ok": False,
+                "code": "environment_contaminated",
+                "environment": env_facts,
+                "metadata": run_metadata(args.mode),
+            },
+            root,
+        )
         return 1
 
     tmp = Path(tempfile.mkdtemp(prefix="artifact-bench-", dir=str(root / "tmp")))
@@ -224,8 +267,9 @@ def main(argv: list[str] | None = None) -> int:
         raw = measure(args.python, Path(args.figures), args.repeat, tmp / "raw.json")
         metrics = extract_metrics(raw)
         if not metrics:
-            raise CiError("no_metrics",
-                          "bench_render 没产出任何可比指标（示例项目里没有可参数化面板？）")
+            raise CiError(
+                "no_metrics", "bench_render 没产出任何可比指标（示例项目里没有可参数化面板？）"
+            )
     except CiError as exc:
         print(f"::error::{exc.message}", file=sys.stderr)
         summary(f"\n> **benchmark 失败** `{exc.code}` — {exc.message}\n")
@@ -242,12 +286,15 @@ def main(argv: list[str] | None = None) -> int:
     may_update = (args.mode == "main") and not args.no_update and ok
     updated = False
     if may_update:
-        save_baseline(root, {
-            "metrics": metrics,
-            "metadata": run_metadata(args.mode),
-            "environment": env_facts,
-            "regression_pct_threshold": REGRESSION_PCT,
-        })
+        save_baseline(
+            root,
+            {
+                "metrics": metrics,
+                "metadata": run_metadata(args.mode),
+                "environment": env_facts,
+                "regression_pct_threshold": REGRESSION_PCT,
+            },
+        )
         updated = True
 
     payload = {
@@ -266,13 +313,21 @@ def main(argv: list[str] | None = None) -> int:
     write_report("benchmark.json", payload, root)
 
     if baseline is None:
-        summary("\n### 性能基线\n\n> 尚无历史基线，本次只记录不比较。"
-                "（基线在 main 模式跑绿后滚动建立）\n")
+        summary(
+            "\n### 性能基线\n\n> 尚无历史基线，本次只记录不比较。"
+            "（基线在 main 模式跑绿后滚动建立）\n"
+        )
         print("尚无历史基线，已记录本次结果" + ("并写入基线" if updated else ""))
         if args.mode == "main" and not args.no_update:
-            save_baseline(root, {"metrics": metrics, "metadata": run_metadata(args.mode),
-                                 "environment": env_facts,
-                                 "regression_pct_threshold": REGRESSION_PCT})
+            save_baseline(
+                root,
+                {
+                    "metrics": metrics,
+                    "metadata": run_metadata(args.mode),
+                    "environment": env_facts,
+                    "regression_pct_threshold": REGRESSION_PCT,
+                },
+            )
             print("已建立首个基线")
         return 0
 
@@ -280,20 +335,24 @@ def main(argv: list[str] | None = None) -> int:
     for f in findings:
         mark = {"regression": "❌", "faster": "🚀", "ok": "✅", "new": "🆕"}[f["verdict"]]
         delta = "—" if f["delta_pct"] is None else f"{f['delta_pct']:+.1f}%"
-        rows.append((f["metric"], mark,
-                     f"{f['now_ms']} ms（基线 {f['baseline_ms']} ms，{delta}）"))
-    summary(f"\n### 性能对比 · 基线 `{payload['baseline_sha'][:8] or '?'}`"
-            f"{'（本次已更新基线）' if updated else ''}\n\n" + summary_table(rows))
+        rows.append((f["metric"], mark, f"{f['now_ms']} ms（基线 {f['baseline_ms']} ms，{delta}）"))
+    summary(
+        f"\n### 性能对比 · 基线 `{payload['baseline_sha'][:8] or '?'}`"
+        f"{'（本次已更新基线）' if updated else ''}\n\n" + summary_table(rows)
+    )
 
     regressions = [f for f in findings if f["verdict"] == "regression"]
     for f in regressions:
-        print(f"::warning::性能回归 {f['metric']}: {f['now_ms']} ms vs 基线 {f['baseline_ms']} ms "
-              f"（{f['delta_pct']:+.1f}%）")
+        print(
+            f"::warning::性能回归 {f['metric']}: {f['now_ms']} ms vs 基线 {f['baseline_ms']} ms "
+            f"（{f['delta_pct']:+.1f}%）"
+        )
 
     if regressions and not gate:
         # 报告但不阻断：初期先收集数据，`LAB_PERF_GATE=true` 之后再变硬门禁。
-        summary(f"\n> 检测到 {len(regressions)} 项性能回归，但 `LAB_PERF_GATE` 未开启，"
-                f"本次不阻断。\n")
+        summary(
+            f"\n> 检测到 {len(regressions)} 项性能回归，但 `LAB_PERF_GATE` 未开启，本次不阻断。\n"
+        )
         print(f"\n性能：{len(regressions)} 项回归（未开启门禁，不阻断）")
         return 0
     print(f"\n性能：{'通过' if ok else f'{len(regressions)} 项回归'}")

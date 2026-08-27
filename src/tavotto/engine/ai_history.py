@@ -6,6 +6,7 @@
 后端重启后：启动时把所有 running 行改为 interrupted——历史里绝不出现
 空记录或 unknown 状态。
 """
+
 from __future__ import annotations
 
 import json
@@ -55,23 +56,49 @@ def record_start(sess: dict, db_path: Path | None = None) -> None:
                (id, project, canvas, panel, element, provider, model, effort,
                 scope, target, script, prompt, status, started_ms, snapshot_path)
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (sess["id"], sess.get("project", ""), sess.get("canvas"),
-             sess.get("panel"), sess.get("element"), sess["provider"],
-             sess.get("model"), sess.get("effort"), sess.get("scope"),
-             sess.get("target"), sess.get("script"), sess.get("prompt", ""),
-             "running", int(time.time() * 1000), sess.get("snapshot_path")))
+            (
+                sess["id"],
+                sess.get("project", ""),
+                sess.get("canvas"),
+                sess.get("panel"),
+                sess.get("element"),
+                sess["provider"],
+                sess.get("model"),
+                sess.get("effort"),
+                sess.get("scope"),
+                sess.get("target"),
+                sess.get("script"),
+                sess.get("prompt", ""),
+                "running",
+                int(time.time() * 1000),
+                sess.get("snapshot_path"),
+            ),
+        )
 
 
-def record_end(sid: str, status: str, diff: str = "", changed: bool = False,
-               error: str | None = None, transcript: list | None = None,
-               db_path: Path | None = None) -> None:
+def record_end(
+    sid: str,
+    status: str,
+    diff: str = "",
+    changed: bool = False,
+    error: str | None = None,
+    transcript: list | None = None,
+    db_path: Path | None = None,
+) -> None:
     with _connect(db_path) as con:
         con.execute(
             """UPDATE sessions SET status=?, diff=?, changed=?, error=?,
                transcript=?, ended_ms=? WHERE id=?""",
-            (status, diff, int(bool(changed)), error,
-             json.dumps(transcript or [], ensure_ascii=False),
-             int(time.time() * 1000), sid))
+            (
+                status,
+                diff,
+                int(bool(changed)),
+                error,
+                json.dumps(transcript or [], ensure_ascii=False),
+                int(time.time() * 1000),
+                sid,
+            ),
+        )
 
 
 def update_status(sid: str, status: str, db_path: Path | None = None) -> None:
@@ -83,15 +110,15 @@ def mark_interrupted_running(db_path: Path | None = None) -> int:
     """启动时调用：上个进程留下的 running 一律转为 interrupted。"""
     with _connect(db_path) as con:
         cur = con.execute(
-            "UPDATE sessions SET status='interrupted', ended_ms=? "
-            "WHERE status='running'", (int(time.time() * 1000),))
+            "UPDATE sessions SET status='interrupted', ended_ms=? WHERE status='running'",
+            (int(time.time() * 1000),),
+        )
         return cur.rowcount
 
 
 def set_pinned(sid: str, pinned: bool, db_path: Path | None = None) -> bool:
     with _connect(db_path) as con:
-        cur = con.execute("UPDATE sessions SET pinned=? WHERE id=?",
-                          (int(pinned), sid))
+        cur = con.execute("UPDATE sessions SET pinned=? WHERE id=?", (int(pinned), sid))
         return cur.rowcount > 0
 
 
@@ -107,8 +134,7 @@ def purge(keep_days: int, db_path: Path | None = None) -> int:
     # 否则边界结果取决于插入与 purge 是否落在同一毫秒（曾是间歇性失败的用例）。
     cutoff = int((time.time() - keep_days * 86400) * 1000)
     with _connect(db_path) as con:
-        cur = con.execute(
-            "DELETE FROM sessions WHERE pinned=0 AND started_ms <= ?", (cutoff,))
+        cur = con.execute("DELETE FROM sessions WHERE pinned=0 AND started_ms <= ?", (cutoff,))
         return cur.rowcount
 
 
@@ -125,9 +151,15 @@ def _row_to_dict(row: sqlite3.Row) -> dict:
     return d
 
 
-def list_sessions(project: str, query: str = "", status: str = "",
-                  pinned_only: bool = False, limit: int = 20, offset: int = 0,
-                  db_path: Path | None = None) -> dict:
+def list_sessions(
+    project: str,
+    query: str = "",
+    status: str = "",
+    pinned_only: bool = False,
+    limit: int = 20,
+    offset: int = 0,
+    db_path: Path | None = None,
+) -> dict:
     """分页 + 搜索（prompt/target 子串）+ 状态筛选。返回 {total, sessions}。"""
     where = ["project = ?"]
     args: list = [project]
@@ -141,12 +173,12 @@ def list_sessions(project: str, query: str = "", status: str = "",
         where.append("pinned = 1")
     clause = " AND ".join(where)
     with _connect(db_path) as con:
-        total = con.execute(
-            f"SELECT COUNT(*) FROM sessions WHERE {clause}", args).fetchone()[0]
+        total = con.execute(f"SELECT COUNT(*) FROM sessions WHERE {clause}", args).fetchone()[0]
         rows = con.execute(
             f"SELECT * FROM sessions WHERE {clause} "
             f"ORDER BY pinned DESC, started_ms DESC LIMIT ? OFFSET ?",
-            [*args, limit, offset]).fetchall()
+            [*args, limit, offset],
+        ).fetchall()
     return {"total": total, "sessions": [_row_to_dict(r) for r in rows]}
 
 

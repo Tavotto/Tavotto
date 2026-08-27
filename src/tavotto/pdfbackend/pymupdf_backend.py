@@ -11,6 +11,7 @@
 `ShapeView` + `types/document.lineEndpoints`、`_draw_text` 换行 ↔ `TextView`。
 改一边必须同步另一边，pytest 用 get_drawings() 做几何级看护。
 """
+
 from __future__ import annotations
 
 import math
@@ -60,12 +61,14 @@ def get_font(name: str) -> pymupdf.Font:
 
 
 def latin_font(bold: bool, italic: bool) -> pymupdf.Font:
-    return get_font({
-        (False, False): "times-roman",
-        (True, False): "times-bold",
-        (False, True): "times-italic",
-        (True, True): "times-bolditalic",
-    }[(bool(bold), bool(italic))])
+    return get_font(
+        {
+            (False, False): "times-roman",
+            (True, False): "times-bold",
+            (False, True): "times-italic",
+            (True, True): "times-bolditalic",
+        }[(bool(bold), bool(italic))]
+    )
 
 
 def _script_runs(s: str) -> list[list]:
@@ -131,9 +134,9 @@ def _rgba_pixels(path: Path) -> tuple[bytes, tuple[int, int]]:
     """
     pix = pymupdf.Pixmap(str(path))
     if pix.colorspace is None or pix.colorspace.n != 3:
-        pix = pymupdf.Pixmap(pymupdf.csRGB, pix)   # 灰度/CMYK → RGB，alpha 保留
+        pix = pymupdf.Pixmap(pymupdf.csRGB, pix)  # 灰度/CMYK → RGB，alpha 保留
     if not pix.alpha:
-        pix = pymupdf.Pixmap(pix, 1)               # 补一条全不透明的 alpha
+        pix = pymupdf.Pixmap(pix, 1)  # 补一条全不透明的 alpha
     return pix.samples, (pix.width, pix.height)
 
 
@@ -156,15 +159,26 @@ def compare_png(baseline: Path, candidate: Path) -> dict:
     a, size_a = _rgba_pixels(baseline)
     b, size_b = _rgba_pixels(candidate)
     if size_a != size_b:
-        return {"ok": False, "reason": "size_mismatch",
-                "baseline_size": list(size_a), "candidate_size": list(size_b),
-                "changed_pixel_ratio": 1.0, "mean_abs_diff": 255.0,
-                "max_abs_diff": 255}
+        return {
+            "ok": False,
+            "reason": "size_mismatch",
+            "baseline_size": list(size_a),
+            "candidate_size": list(size_b),
+            "changed_pixel_ratio": 1.0,
+            "mean_abs_diff": 255.0,
+            "max_abs_diff": 255,
+        }
     total = size_a[0] * size_a[1]
-    if a == b or not total:                       # 快路径：逐字节相同
-        return {"ok": True, "changed_pixel_ratio": 0.0, "mean_abs_diff": 0.0,
-                "max_abs_diff": 0, "changed_pixels": 0, "total_pixels": total,
-                "raw_mean_abs_diff": 0.0}
+    if a == b or not total:  # 快路径：逐字节相同
+        return {
+            "ok": True,
+            "changed_pixel_ratio": 0.0,
+            "mean_abs_diff": 0.0,
+            "max_abs_diff": 0,
+            "changed_pixels": 0,
+            "total_pixels": total,
+            "raw_mean_abs_diff": 0.0,
+        }
     changed = 0
     signal_sum = 0
     raw_sum = 0
@@ -172,7 +186,7 @@ def compare_png(baseline: Path, candidate: Path) -> dict:
     va, vb = memoryview(a), memoryview(b)
     for off in range(0, total * 4, 4):
         d = 0
-        for c in range(4):                        # 每像素取 RGBA 四通道最大差
+        for c in range(4):  # 每像素取 RGBA 四通道最大差
             x, y = va[off + c], vb[off + c]
             dc = x - y if x >= y else y - x
             if dc > d:
@@ -201,8 +215,11 @@ def compare_png(baseline: Path, candidate: Path) -> dict:
 # ---------------------------------------------------------------------------
 def _obj_rect(o: dict) -> pymupdf.Rect:
     return pymupdf.Rect(
-        mm2pt(o["x_mm"]), mm2pt(o["y_mm"]),
-        mm2pt(o["x_mm"] + o["w_mm"]), mm2pt(o["y_mm"] + o["h_mm"]))
+        mm2pt(o["x_mm"]),
+        mm2pt(o["y_mm"]),
+        mm2pt(o["x_mm"] + o["w_mm"]),
+        mm2pt(o["y_mm"] + o["h_mm"]),
+    )
 
 
 def _crop_clip(src_rect: pymupdf.Rect, crop: dict | None) -> pymupdf.Rect | None:
@@ -213,7 +230,8 @@ def _crop_clip(src_rect: pymupdf.Rect, crop: dict | None) -> pymupdf.Rect | None
         src_rect.x0 + float(crop["x"]) * src_rect.width,
         src_rect.y0 + float(crop["y"]) * src_rect.height,
         src_rect.x0 + (float(crop["x"]) + float(crop["w"])) * src_rect.width,
-        src_rect.y0 + (float(crop["y"]) + float(crop["h"])) * src_rect.height)
+        src_rect.y0 + (float(crop["y"]) + float(crop["h"])) * src_rect.height,
+    )
 
 
 def _obj_morph(o: dict):
@@ -222,8 +240,7 @@ def _obj_morph(o: dict):
     deg = float(o.get("rotation_deg") or 0) % 360
     if not deg:
         return None
-    center = pymupdf.Point(mm2pt(o["x_mm"] + o["w_mm"] / 2),
-                           mm2pt(o["y_mm"] + o["h_mm"] / 2))
+    center = pymupdf.Point(mm2pt(o["x_mm"] + o["w_mm"] / 2), mm2pt(o["y_mm"] + o["h_mm"] / 2))
     return center, pymupdf.Matrix(deg)
 
 
@@ -231,10 +248,8 @@ def _flip_pixmap_rows(pix: pymupdf.Pixmap) -> pymupdf.Pixmap:
     """垂直镜像：按行倒序重排 samples（水平镜像 = 垂直镜像 + 旋转 180°）。"""
     stride = pix.stride
     s = pix.samples
-    flipped = b"".join(s[i * stride:(i + 1) * stride]
-                       for i in range(pix.height - 1, -1, -1))
-    return pymupdf.Pixmap(pix.colorspace, pix.width, pix.height, flipped,
-                          bool(pix.alpha))
+    flipped = b"".join(s[i * stride : (i + 1) * stride] for i in range(pix.height - 1, -1, -1))
+    return pymupdf.Pixmap(pix.colorspace, pix.width, pix.height, flipped, bool(pix.alpha))
 
 
 def _dash_pattern(dash: str | None, sw: float) -> str | None:
@@ -252,17 +267,23 @@ def _arrow_heads(o: dict) -> tuple[str, str]:
     if hs is not None or he is not None:
         return str(hs or "none"), str(he or "none")
     legacy = o.get("head", "end")
-    return ("triangle" if legacy == "both" else "none",
-            "triangle" if legacy in ("end", "both") else "none")
+    return (
+        "triangle" if legacy == "both" else "none",
+        "triangle" if legacy in ("end", "both") else "none",
+    )
 
 
 def _polygon_points(sides: int, w: float, h: float, inset: float) -> list:
     """正 N 边形顶点（内切包围盒，顶点朝上）；与前端 shapeGeometry 同一公式。"""
     n = max(3, min(12, int(round(sides))))
     rx, ry = max(w / 2 - inset, 0.001), max(h / 2 - inset, 0.001)
-    return [(w / 2 + rx * math.cos(-math.pi / 2 + i * 2 * math.pi / n),
-             h / 2 + ry * math.sin(-math.pi / 2 + i * 2 * math.pi / n))
-            for i in range(n)]
+    return [
+        (
+            w / 2 + rx * math.cos(-math.pi / 2 + i * 2 * math.pi / n),
+            h / 2 + ry * math.sin(-math.pi / 2 + i * 2 * math.pi / n),
+        )
+        for i in range(n)
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -345,18 +366,20 @@ def _draw_text(page: pymupdf.Page, t: dict) -> None:
     if bg or border:
         shape = page.new_shape()
         shape.draw_rect(_obj_rect(t))
-        shape.finish(color=hex2rgb(border) if border else None,
-                     fill=hex2rgb(bg) if bg else None,
-                     width=max(float(t.get("border_pt") or 0.75), 0.05)
-                     if border else 1,
-                     morph=morph)
+        shape.finish(
+            color=hex2rgb(border) if border else None,
+            fill=hex2rgb(bg) if bg else None,
+            width=max(float(t.get("border_pt") or 0.75), 0.05) if border else 1,
+            morph=morph,
+        )
         shape.commit()
 
     # 行内标记（上标 ^{…} / 下标 _{…}）先解析成片段，换行与书写都按片段走：
     # 上下标字号只有正文的 62%，把它当正文宽度算会提前折行。
     def _unit_w(u: list[tuple[str, str]]) -> float:
-        return sum(_mixed_width(seg, latin, cjk, richtext.run_metrics(sc, size)[0])
-                   for seg, sc in u)
+        return sum(
+            _mixed_width(seg, latin, cjk, richtext.run_metrics(sc, size)[0]) for seg, sc in u
+        )
 
     def _rstrip(u: list[tuple[str, str]]) -> list[tuple[str, str]]:
         out = list(u)
@@ -373,7 +396,7 @@ def _draw_text(page: pymupdf.Page, t: dict) -> None:
 
     lines: list[list[tuple[str, str]]] = []
     for raw in text.split("\n"):
-        units: list[list[tuple[str, str]]] = []   # 每个换行单元 = 片段序列
+        units: list[list[tuple[str, str]]] = []  # 每个换行单元 = 片段序列
         cur: list[tuple[str, str]] = []
 
         def _push_char(ch: str, sc: str) -> None:
@@ -384,12 +407,12 @@ def _draw_text(page: pymupdf.Page, t: dict) -> None:
 
         for run in richtext.parse_runs(raw):
             for ch in run.text:
-                if ord(ch) > 0x2E80:      # 换行单元：CJK 逐字
+                if ord(ch) > 0x2E80:  # 换行单元：CJK 逐字
                     if cur:
                         units.append(cur)
                         cur = []
                     units.append([(ch, run.script)])
-                else:                      # 拉丁按词（空格附着前词）
+                else:  # 拉丁按词（空格附着前词）
                     _push_char(ch, run.script)
                     if ch == " ":
                         units.append(cur)
@@ -432,8 +455,13 @@ def _draw_text(page: pymupdf.Page, t: dict) -> None:
         if not line:
             continue
         w = _unit_w(line)
-        x = (x0 + (box_w - w) / 2 if align == "center"
-             else x0 + box_w - w if align == "right" else x0)
+        x = (
+            x0 + (box_w - w) / 2
+            if align == "center"
+            else x0 + box_w - w
+            if align == "right"
+            else x0
+        )
         y = baseline0 + i * size * line_h
         if t.get("underline"):
             # 下划线始终画在正文基线上：上下标不该把线拉出锯齿
@@ -449,8 +477,9 @@ def _draw_text(page: pymupdf.Page, t: dict) -> None:
         shape = page.new_shape()
         for x, y, w in underlines:
             shape.draw_line(pymupdf.Point(x, y), pymupdf.Point(x + w, y))
-        shape.finish(color=hex2rgb(t.get("color", "#000000")),
-                     width=max(size * 0.06, 0.3), morph=morph)
+        shape.finish(
+            color=hex2rgb(t.get("color", "#000000")), width=max(size * 0.06, 0.3), morph=morph
+        )
         shape.commit()
 
 
@@ -471,15 +500,18 @@ def _draw_arrow(page: pymupdf.Page, o: dict) -> None:
     head_len, head_half = sw * 4.0, sw * 1.7
     hs, he = _arrow_heads(o)
     trim = head_len * 0.75
-    p1 = pymupdf.Point(ax + (ux * trim if hs == "triangle" else 0),
-                       ay + (uy * trim if hs == "triangle" else 0))
-    p2 = pymupdf.Point(bx - (ux * trim if he == "triangle" else 0),
-                       by - (uy * trim if he == "triangle" else 0))
+    p1 = pymupdf.Point(
+        ax + (ux * trim if hs == "triangle" else 0), ay + (uy * trim if hs == "triangle" else 0)
+    )
+    p2 = pymupdf.Point(
+        bx - (ux * trim if he == "triangle" else 0), by - (uy * trim if he == "triangle" else 0)
+    )
 
     shape = page.new_shape()
     shape.draw_line(p1, p2)
-    shape.finish(color=color, width=sw, lineCap=1,
-                 dashes=_dash_pattern(o.get("dash"), sw), morph=morph)
+    shape.finish(
+        color=color, width=sw, lineCap=1, dashes=_dash_pattern(o.get("dash"), sw), morph=morph
+    )
     for tip_x, tip_y, sign, kind in ((bx, by, 1.0, he), (ax, ay, -1.0, hs)):
         if kind == "none":
             continue
@@ -493,8 +525,10 @@ def _draw_arrow(page: pymupdf.Page, o: dict) -> None:
             shape.draw_polyline([wing1, pymupdf.Point(tip_x, tip_y), wing2])
             shape.finish(color=color, width=sw, lineCap=1, lineJoin=1, morph=morph)
         elif kind == "bar":
-            shape.draw_line(pymupdf.Point(tip_x + nx * head_half, tip_y + ny * head_half),
-                            pymupdf.Point(tip_x - nx * head_half, tip_y - ny * head_half))
+            shape.draw_line(
+                pymupdf.Point(tip_x + nx * head_half, tip_y + ny * head_half),
+                pymupdf.Point(tip_x - nx * head_half, tip_y - ny * head_half),
+            )
             shape.finish(color=color, width=sw, lineCap=1, morph=morph)
     shape.commit()
 
@@ -516,12 +550,21 @@ def _draw_shape(page: pymupdf.Page, o: dict) -> None:
     shape = page.new_shape()
     # lineCap=1（圆帽）：dotted 的线段长只有 0.01×线宽，「点」全靠圆线帽画出来，
     # butt 帽下整圈描边不可见。与前端 ShapeView 的 strokeLinecap='round' 同源。
-    filled = dict(color=color, fill=fill, width=sw, dashes=dashes,
-                  fill_opacity=fill_opacity, lineJoin=1, lineCap=1, morph=morph)
+    filled = dict(
+        color=color,
+        fill=fill,
+        width=sw,
+        dashes=dashes,
+        fill_opacity=fill_opacity,
+        lineJoin=1,
+        lineCap=1,
+        morph=morph,
+    )
     if kind == "rect":
         radius_mm = float(o.get("corner_radius_mm") or 0)
-        rect = pymupdf.Rect(x + inset, y + inset,
-                            x + max(w - inset, inset), y + max(h - inset, inset))
+        rect = pymupdf.Rect(
+            x + inset, y + inset, x + max(w - inset, inset), y + max(h - inset, inset)
+        )
         if radius_mm > 0:
             # radius 参数是相对短边的比例
             frac = min(mm2pt(radius_mm) / max(min(rect.width, rect.height), 0.001), 0.5)
@@ -530,19 +573,28 @@ def _draw_shape(page: pymupdf.Page, o: dict) -> None:
             shape.draw_rect(rect)
         shape.finish(**filled)
     elif kind == "ellipse":
-        shape.draw_oval(pymupdf.Rect(x + inset, y + inset,
-                                     x + max(w - inset, inset), y + max(h - inset, inset)))
+        shape.draw_oval(
+            pymupdf.Rect(x + inset, y + inset, x + max(w - inset, inset), y + max(h - inset, inset))
+        )
         shape.finish(**filled)
     elif kind == "triangle":
-        shape.draw_polyline([pymupdf.Point(x + w / 2, y + inset),
-                             pymupdf.Point(x + w - inset, y + h - inset),
-                             pymupdf.Point(x + inset, y + h - inset)])
+        shape.draw_polyline(
+            [
+                pymupdf.Point(x + w / 2, y + inset),
+                pymupdf.Point(x + w - inset, y + h - inset),
+                pymupdf.Point(x + inset, y + h - inset),
+            ]
+        )
         shape.finish(**filled, closePath=True)
     elif kind == "diamond":
-        shape.draw_polyline([pymupdf.Point(x + w / 2, y + inset),
-                             pymupdf.Point(x + w - inset, y + h / 2),
-                             pymupdf.Point(x + w / 2, y + h - inset),
-                             pymupdf.Point(x + inset, y + h / 2)])
+        shape.draw_polyline(
+            [
+                pymupdf.Point(x + w / 2, y + inset),
+                pymupdf.Point(x + w - inset, y + h / 2),
+                pymupdf.Point(x + w / 2, y + h - inset),
+                pymupdf.Point(x + inset, y + h / 2),
+            ]
+        )
         shape.finish(**filled, closePath=True)
     elif kind == "polygon":
         pts = _polygon_points(int(o.get("sides") or 6), w, h, inset)
@@ -580,11 +632,11 @@ def _draw_shape(page: pymupdf.Page, o: dict) -> None:
 class Canvas:
     """一页白底合成画布。用法：
 
-        with compose(page_w_mm, page_h_mm) as canvas:
-            for o in objects:
-                canvas.place(o, dpi=dpi, resolve_panel=resolve)
-            canvas.save_pdf(path)      # 真矢量
-            canvas.save_png(path, dpi) # 由同一页渲染，保证两份完全一致
+    with compose(page_w_mm, page_h_mm) as canvas:
+        for o in objects:
+            canvas.place(o, dpi=dpi, resolve_panel=resolve)
+        canvas.save_pdf(path)      # 真矢量
+        canvas.save_png(path, dpi) # 由同一页渲染，保证两份完全一致
     """
 
     def __init__(self, page_w_mm: float, page_h_mm: float):
@@ -592,8 +644,7 @@ class Canvas:
         self._page = self._doc.new_page(width=mm2pt(page_w_mm), height=mm2pt(page_h_mm))
         self._page.draw_rect(self._page.rect, color=None, fill=(1, 1, 1))  # 白底
 
-    def place(self, o: dict, dpi: int,
-              resolve_panel: Callable[[dict, int], Path]) -> None:
+    def place(self, o: dict, dpi: int, resolve_panel: Callable[[dict, int], Path]) -> None:
         """按对象类型落一个元素。panel 的源文件路径由 resolve_panel 回调给出
         （项目路径解析与引擎重渲染留在调用方，后端只管画）。"""
         kind = o.get("type")
@@ -628,8 +679,9 @@ def compose(page_w_mm: float, page_h_mm: float) -> Canvas:
     return Canvas(page_w_mm, page_h_mm)
 
 
-def annotate_asset(pdf_path: Path, png_path: Path | None,
-                   objects: list[dict], dpi: int = 600) -> None:
+def annotate_asset(
+    pdf_path: Path, png_path: Path | None, objects: list[dict], dpi: int = 600
+) -> None:
     """把画布标注（text/arrow/shape，坐标为**该图自身的 mm**）画进导出的
     单图文件——「写回原始文件」勾选携带标注时用。
 
@@ -647,8 +699,7 @@ def annotate_asset(pdf_path: Path, png_path: Path | None,
                 _draw_arrow(page, o)
             elif kind == "shape":
                 _draw_shape(page, o)
-        doc.save(str(pdf_path), incremental=True,
-                 encryption=pymupdf.PDF_ENCRYPT_KEEP)
+        doc.save(str(pdf_path), incremental=True, encryption=pymupdf.PDF_ENCRYPT_KEEP)
         if png_path is not None:
             zoom = dpi / 72.0
             pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False)

@@ -4,6 +4,7 @@
 这里验的全是客户端自己那一半。真 workerd 的行为由 `workerd/` 的 cargo test 看护，
 两条链路合起来才是完整的验收。
 """
+
 import json
 import os
 import subprocess
@@ -14,7 +15,7 @@ import pytest
 
 from tavotto.engine import workerd_client
 
-FAKE_SUPERVISOR = '''\
+FAKE_SUPERVISOR = """\
 import json, sys, threading, time
 
 # argv: [die_after, version]  die_after>0 表示处理这么多条之后直接退出（模拟崩溃）
@@ -69,22 +70,26 @@ for line in sys.stdin:
     else:
         emit({**base, "echo": op, "session_id": req.get("session_id"),
               "stem": req.get("stem"), "payload": payload})
-'''
+"""
 
 
 def _fake_exe(tmp_path, die_after=0, version=1):
     """把假 supervisor 包成一个可执行文件（客户端只会 `Popen([exe])`）。"""
     import sys
+
     script = tmp_path / "fake_supervisor.py"
     script.write_text(FAKE_SUPERVISOR, encoding="utf-8")
     if os.name == "nt":
         exe = tmp_path / "fake.cmd"
-        exe.write_text(f'@"{sys.executable}" "{script}" {die_after} {version}\r\n',
-                       encoding="utf-8")
+        exe.write_text(
+            f'@"{sys.executable}" "{script}" {die_after} {version}\r\n', encoding="utf-8"
+        )
     else:
         exe = tmp_path / "fake.sh"
-        exe.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{script}" '
-                       f'{die_after} {version}\n', encoding="utf-8")
+        exe.write_text(
+            f'#!/bin/sh\nexec "{sys.executable}" "{script}" {die_after} {version}\n',
+            encoding="utf-8",
+        )
         exe.chmod(0o755)
     return str(exe)
 
@@ -148,11 +153,12 @@ def test_responses_are_routed_by_request_id_not_by_arrival_order(client):
     results: dict[str, dict] = {}
 
     def call(name, delay):
-        results[name] = client.call("slow", payload={"delay_ms": delay},
-                                    timeout=10)
+        results[name] = client.call("slow", payload={"delay_ms": delay}, timeout=10)
 
-    threads = [threading.Thread(target=call, args=(name, delay))
-               for name, delay in (("slow", 600), ("fast", 10))]
+    threads = [
+        threading.Thread(target=call, args=(name, delay))
+        for name, delay in (("slow", 600), ("fast", 10))
+    ]
     for t in threads:
         t.start()
     for t in threads:
@@ -184,11 +190,14 @@ def test_many_threads_share_one_pipe_without_crossing_wires(client):
 def test_error_envelopes_become_structured_exceptions(client):
     client.ensure_started()
     with pytest.raises(workerd_client.WorkerdError) as e:
-        client.call("fail", payload={"code": "unknown_stem", "message": "stem 不存在: nope",
-                                     "traceback": "tb"}, timeout=10)
+        client.call(
+            "fail",
+            payload={"code": "unknown_stem", "message": "stem 不存在: nope", "traceback": "tb"},
+            timeout=10,
+        )
     assert e.value.code == "unknown_stem"
     assert e.value.traceback_text == "tb"
-    assert e.value.extra["known"] == ["Fig1"]     # 多带的字段原样转交
+    assert e.value.extra["known"] == ["Fig1"]  # 多带的字段原样转交
 
 
 def test_the_session_id_on_a_failure_envelope_is_not_dropped(client):
@@ -201,8 +210,7 @@ def test_the_session_id_on_a_failure_envelope_is_not_dropped(client):
     """
     client.ensure_started()
     with pytest.raises(workerd_client.WorkerdError) as e:
-        client.call("fail", payload={"code": "handshake_timeout",
-                                     "session_id": "s-42"}, timeout=10)
+        client.call("fail", payload={"code": "handshake_timeout", "session_id": "s-42"}, timeout=10)
     assert e.value.session_id == "s-42"
 
 
@@ -215,8 +223,8 @@ def test_a_crash_fails_every_pending_call_immediately(tmp_path):
     """
     c = workerd_client.WorkerdClient(_fake_exe(tmp_path, die_after=3))
     try:
-        c.ensure_started()                      # 第 1 条 = hello
-        c.call("echo", timeout=5)               # 第 2 条
+        c.ensure_started()  # 第 1 条 = hello
+        c.call("echo", timeout=5)  # 第 2 条
         box: list = []
 
         def call():
@@ -230,7 +238,7 @@ def test_a_crash_fails_every_pending_call_immediately(tmp_path):
         t.start()
         time.sleep(0.3)
         try:
-            c.call("echo", timeout=5)           # 第 4 条 → 对面 break 退出
+            c.call("echo", timeout=5)  # 第 4 条 → 对面 break 退出
         except workerd_client.WorkerdError:
             pass
         t.join(timeout=10)
@@ -244,10 +252,10 @@ def test_a_crash_fails_every_pending_call_immediately(tmp_path):
 def test_it_restarts_on_the_next_call_after_a_crash(tmp_path):
     c = workerd_client.WorkerdClient(_fake_exe(tmp_path, die_after=1))
     try:
-        c.ensure_started()                      # 第 1 条 = hello
+        c.ensure_started()  # 第 1 条 = hello
         first_pid = c._proc.pid
         with pytest.raises(workerd_client.WorkerdError):
-            c.call("echo", timeout=5)           # 第 2 条 → 对面直接退出
+            c.call("echo", timeout=5)  # 第 2 条 → 对面直接退出
         # 下一次调用把它重新拉起来（会话丢了，但那是上层重开会话的事）
         time.sleep(0.2)
         c.ensure_started()
@@ -291,12 +299,11 @@ def test_a_wedged_supervisor_times_out_with_its_own_code(client, monkeypatch):
 
 def test_the_request_envelope_matches_the_supervisor_protocol(client):
     client.ensure_started()
-    resp = client.call("echo", session_id="s-7", stem="Fig1",
-                       payload={"patches": []}, timeout=3)
+    resp = client.call("echo", session_id="s-7", stem="Fig1", payload={"patches": []}, timeout=3)
     assert resp["session_id"] == "s-7"
     assert resp["stem"] == "Fig1"
     assert resp["payload"] == {"patches": []}
-    assert json.loads(json.dumps(resp))         # 纯 JSON，可原样进日志
+    assert json.loads(json.dumps(resp))  # 纯 JSON，可原样进日志
 
 
 # ----------------- kill 之后不收尸：句柄还占着就去动它占的东西 -----------------
@@ -307,6 +314,7 @@ def test_the_request_envelope_matches_the_supervisor_protocol(client):
 #   * shutdown 的 finally：kill 之后紧接着 `self._log.close()`。
 # 下面两条把那个窗口在任何平台上确定性地复现出来（真 Windows 上它才会炸，
 # 但判据不该只在某台机器上成立）。
+
 
 class _LingeringSupervisor:
     """Windows 关进程的真实时序：kill 只发信号，wait 才是「它没了」。
@@ -342,12 +350,12 @@ class _LingeringSupervisor:
         return 0 if self.reaped else None
 
     def kill(self):
-        self.kill_called = True          # ← 只发信号，进程还在，句柄还占着
+        self.kill_called = True  # ← 只发信号，进程还在，句柄还占着
 
     def wait(self, timeout=None):
         if not self.kill_called:
             raise subprocess.TimeoutExpired("tavotto-workerd", timeout or 0)
-        self.reaped = True               # ← 到这一刻它才真的没了
+        self.reaped = True  # ← 到这一刻它才真的没了
         return 0
 
 
@@ -378,8 +386,7 @@ def test_close_reaps_the_supervisor_before_closing_the_log(tmp_path):
 
     assert fake.kill_called, "优雅关停超时后本该 kill"
     assert fake.reaped, "kill 之后没有再 wait 一次：进程还没消失就返回了"
-    assert log.closed_while_alive is False, \
-        "日志句柄在子进程收尸之前就关了——正是 #46 的形状"
+    assert log.closed_while_alive is False, "日志句柄在子进程收尸之前就关了——正是 #46 的形状"
 
 
 def test_a_half_started_supervisor_is_reaped_before_the_restart(tmp_path):
@@ -392,7 +399,7 @@ def test_a_half_started_supervisor_is_reaped_before_the_restart(tmp_path):
     c = workerd_client.WorkerdClient(_fake_exe(tmp_path))
     fake = _LingeringSupervisor()
     c._proc, c._ready = fake, False
-    c._started_at = time.time()                       # 起来就崩：计数只加不清
+    c._started_at = time.time()  # 起来就崩：计数只加不清
     c._restarts = workerd_client._MAX_RESTARTS
 
     with pytest.raises(workerd_client.WorkerdError):

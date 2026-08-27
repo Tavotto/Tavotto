@@ -3,6 +3,7 @@
 需要科学栈的用例（worker round-trip）自行 spawn worker 解释器子进程，
 本进程始终保持与 Flask 父进程相同的依赖边界。
 """
+
 import os
 import tempfile
 
@@ -54,6 +55,6 @@ def telemetry_sent(_isolated_user_config, monkeypatch):
     monkeypatch.setattr(telemetry, "_post", box.append)
     telemetry.set_consent(telemetry.CONSENT_ENABLED)
     telemetry.flush(5.0)
-    box.clear()                 # 同意本身那两条不参与产品埋点的断言
+    box.clear()  # 同意本身那两条不参与产品埋点的断言
     yield box
     telemetry.reset_for_tests()

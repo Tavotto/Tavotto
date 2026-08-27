@@ -7,6 +7,7 @@ instrument(state)：build 后调用一次——走 Figure 的 artist 树，
 build_manifest(state)：每次渲染后调用——读取元素当前属性值与 bbox
 （figure 分数坐标、top-origin），产出发给前端的 manifest dict。
 """
+
 from __future__ import annotations
 
 import math
@@ -78,8 +79,22 @@ from overrides import (
     to_hex,
 )
 
-CMAPS = ["viridis", "plasma", "inferno", "magma", "cividis", "Greys", "gray",
-         "hot", "afmhot", "coolwarm", "RdBu_r", "seismic", "jet", "turbo"]
+CMAPS = [
+    "viridis",
+    "plasma",
+    "inferno",
+    "magma",
+    "cividis",
+    "Greys",
+    "gray",
+    "hot",
+    "afmhot",
+    "coolwarm",
+    "RdBu_r",
+    "seismic",
+    "jet",
+    "turbo",
+]
 
 _SKIP_LABELS = ("_child", "_nolegend_")
 
@@ -95,8 +110,9 @@ def _relabel(registered: str, text: str) -> str:
     return f"{head}“{_snippet(text)}”"
 
 
-def _register(state: FigState, gid: str, artist, role: str, label: str,
-              draggable: bool = False, **flags) -> None:
+def _register(
+    state: FigState, gid: str, artist, role: str, label: str, draggable: bool = False, **flags
+) -> None:
     """登记一个可编辑元素。
 
     `flags` 是挂在元素上的**编辑能力标记**（`position_locked` /
@@ -107,8 +123,16 @@ def _register(state: FigState, gid: str, artist, role: str, label: str,
     """
     artist.set_gid(gid)
     state.index[gid] = artist
-    state.elements.append({"gid": gid, "artist": artist, "role": role,
-                           "label": label, "draggable": draggable, **flags})
+    state.elements.append(
+        {
+            "gid": gid,
+            "artist": artist,
+            "role": role,
+            "label": label,
+            "draggable": draggable,
+            **flags,
+        }
+    )
 
 
 def _ordered_axes(fig) -> tuple[list, set]:
@@ -160,7 +184,7 @@ def _is_secondary_axis(ax) -> bool:
     """
     try:
         from matplotlib.axes._secondary_axes import SecondaryAxis
-    except ImportError:                                 # pragma: no cover - 版本相关
+    except ImportError:  # pragma: no cover - 版本相关
         return type(ax).__name__ == "SecondaryAxis"
     return isinstance(ax, SecondaryAxis)
 
@@ -169,11 +193,16 @@ def _is_secondary_axis(ax) -> bool:
 #: 能改什么由 `collection_caps()` 按真实 getter 实况说了算。认不出来的类回落到
 #: 类名本身：显示 "QuadMesh 3" 比显示「集合 3」有用得多，也不会假装认识它。
 _COLL_NAMES = [
-    ("QuadMesh", "彩色网格"), ("PolyQuadMesh", "彩色网格"),
-    ("ContourSet", "等值线"), ("QuadContourSet", "等值线"),
-    ("EventCollection", "事件标记"), ("LineCollection", "线集合"),
-    ("Quiver", "矢量场"), ("Barbs", "风羽"),
-    ("FillBetweenPolyCollection", "填充区域"), ("PolyCollection", "填充区域"),
+    ("QuadMesh", "彩色网格"),
+    ("PolyQuadMesh", "彩色网格"),
+    ("ContourSet", "等值线"),
+    ("QuadContourSet", "等值线"),
+    ("EventCollection", "事件标记"),
+    ("LineCollection", "线集合"),
+    ("Quiver", "矢量场"),
+    ("Barbs", "风羽"),
+    ("FillBetweenPolyCollection", "填充区域"),
+    ("PolyCollection", "填充区域"),
 ]
 
 
@@ -250,9 +279,15 @@ def _tick_label_entries(ax, which: str, ax_gid: str) -> list[tuple]:
     两边必须是同一个口径，否则「第 j 个刻度」在登记与应用时指的不是同一条。
     """
     raw = getattr(ax, f"get_{which}ticklabels")()
-    return [(f"{ax_gid}.{which}ticklabels_{j}", TickLabel(ax, which, j),
-             f"刻度 “{_snippet(t.get_text())}”")
-            for j, t in enumerate(raw) if t.get_text()]
+    return [
+        (
+            f"{ax_gid}.{which}ticklabels_{j}",
+            TickLabel(ax, which, j),
+            f"刻度 “{_snippet(t.get_text())}”",
+        )
+        for j, t in enumerate(raw)
+        if t.get_text()
+    ]
 
 
 def _sync_tick_labels(state: FigState, ax, which: str, ax_gid: str) -> None:
@@ -276,15 +311,22 @@ def sync_tick_elements(state: FigState) -> None:
     out: list[dict] = []
     for el in state.elements:
         if isinstance(el["artist"], TickLabel):
-            continue                      # 旧的一律丢掉，按当前状态重发
+            continue  # 旧的一律丢掉，按当前状态重发
         out.append(el)
         ts = el["artist"]
         if isinstance(ts, TickSet):
             ax_gid = el["gid"].rsplit(".", 1)[0]
             for gid, tl, label in _tick_label_entries(ts.ax, ts.which, ax_gid):
                 state.index[gid] = tl
-                out.append({"gid": gid, "artist": tl, "role": "ticklabel",
-                            "label": label, "draggable": False})
+                out.append(
+                    {
+                        "gid": gid,
+                        "artist": tl,
+                        "role": "ticklabel",
+                        "label": label,
+                        "draggable": False,
+                    }
+                )
     live = {el["gid"] for el in out}
     for gid in [g for g, a in state.index.items() if isinstance(a, TickLabel)]:
         if gid not in live:
@@ -299,13 +341,20 @@ def instrument(state: FigState) -> None:
 
     # figure 本体（点击空白处选中，可改尺寸）——不占用 artist gid
     state.index["figure"] = fig
-    state.elements.append({"gid": "figure", "artist": fig, "role": "figure",
-                           "label": "整张图", "draggable": False})
+    state.elements.append(
+        {"gid": "figure", "artist": fig, "role": "figure", "label": "整张图", "draggable": False}
+    )
 
     for i, t in enumerate(fig.texts):
         if t.get_text():
-            _register(state, f"fig.texts_{i}", t, "text",
-                      f"文字 “{_snippet(t.get_text())}”", draggable=True)
+            _register(
+                state,
+                f"fig.texts_{i}",
+                t,
+                "text",
+                f"文字 “{_snippet(t.get_text())}”",
+                draggable=True,
+            )
     for i, leg in enumerate(getattr(fig, "legends", []) or []):
         _register(state, f"fig.legend_{i}", leg, "legend", "图例", draggable=True)
 
@@ -341,34 +390,51 @@ def instrument(state: FigState) -> None:
         if is_child:
             kind = "secondary" if secondary else "inset"
             child_ordinal[kind] += 1
-            label = (f"次坐标轴 {child_ordinal['secondary']}" if secondary
-                     else f"插图 {child_ordinal['inset']}")
+            label = (
+                f"次坐标轴 {child_ordinal['secondary']}"
+                if secondary
+                else f"插图 {child_ordinal['inset']}"
+            )
         else:
             label = "色条轴" if ax in cbar_of_ax else f"子图 {i + 1}"
         # **脚本原样的轴方向要在这一刻采**：`ax.invert_yaxis()` 不关自动缩放，
         # 所以 lim 的 originals 里只会是 `_AUTOSCALE` 哨兵，方向那一半信息
         # 端点序里根本没有。晚一步采到的就是某次 override 之后的方向了。
         remember_axis_directions(ax)
-        _register(state, f"axes_{i}", ax, "axes3d" if is3d else "axes", label,
-                  position_locked=position_locked, limits_slaved=secondary)
+        _register(
+            state,
+            f"axes_{i}",
+            ax,
+            "axes3d" if is3d else "axes",
+            label,
+            position_locked=position_locked,
+            limits_slaved=secondary,
+        )
         if ax in cbar_of_ax:
             host = host_of_cbax.get(ax)
             n = cbar_ordinal.get(id(host), 0)
             cbar_ordinal[id(host)] = n + 1
-            proxy = ColorbarProxy(cbar_of_ax[ax], host, f"axes_{i}",
-                                  gid_of_ax.get(host, ""), n)
+            proxy = ColorbarProxy(cbar_of_ax[ax], host, f"axes_{i}", gid_of_ax.get(host, ""), n)
             _register(state, f"axes_{i}.colorbar", proxy, "colorbar", "色条")
             # 语义身份也进 index：`axes_i.colorbar` 是按邻居排序编出来的名字，
             # 语义身份（宿主 + 序号）才是「这是谁的色条」。两个 gid 指同一个
             # 代理对象，旧文档与将来可能的重建都认得出同一条色条。
             state.index[proxy.identity] = proxy
-        for suffix, t in (("title", ax.title),
-                          ("title_left", getattr(ax, "_left_title", None)),
-                          ("title_right", getattr(ax, "_right_title", None))):
+        for suffix, t in (
+            ("title", ax.title),
+            ("title_left", getattr(ax, "_left_title", None)),
+            ("title_right", getattr(ax, "_right_title", None)),
+        ):
             if t is not None and t.get_text():
                 t._mm_drag = ("title", ax)  # noqa: SLF001 — 拖动需绕过自动定位
-                _register(state, f"axes_{i}.{suffix}", t, "title",
-                          f"标题 “{_snippet(t.get_text())}”", draggable=True)
+                _register(
+                    state,
+                    f"axes_{i}.{suffix}",
+                    t,
+                    "title",
+                    f"标题 “{_snippet(t.get_text())}”",
+                    draggable=True,
+                )
         label_axes = [("x", ax.xaxis), ("y", ax.yaxis)]
         if is3d and getattr(ax, "zaxis", None) is not None:
             label_axes.append(("z", ax.zaxis))
@@ -385,22 +451,37 @@ def instrument(state: FigState) -> None:
                 # mplot3d 每次 draw 按投影轴线重算标签位置，set_label_coords
                 # 会被覆盖——3D 轴标签不可拖，位置微调走 labelpad（推远/拉近）
                 t._mm_axis = axis  # noqa: SLF001 — labelpad 字段/handler 反查轴
-                _register(state, f"axes_{i}.{name}label", t, "axis_label",
-                          f"{name.upper()} 轴 “{_snippet(t.get_text())}”")
+                _register(
+                    state,
+                    f"axes_{i}.{name}label",
+                    t,
+                    "axis_label",
+                    f"{name.upper()} 轴 “{_snippet(t.get_text())}”",
+                )
             else:
                 t._mm_drag = (f"{name}label", ax)  # noqa: SLF001
-                _register(state, f"axes_{i}.{name}label", t, "axis_label",
-                          f"{name.upper()} 轴 “{_snippet(t.get_text())}”",
-                          draggable=True)
+                _register(
+                    state,
+                    f"axes_{i}.{name}label",
+                    t,
+                    "axis_label",
+                    f"{name.upper()} 轴 “{_snippet(t.get_text())}”",
+                    draggable=True,
+                )
         for j, t in enumerate(ax.texts):
             if t.get_text():
-                _register(state, f"axes_{i}.texts_{j}", t, "text",
-                          f"文字 “{_snippet(t.get_text())}”", draggable=True)
+                _register(
+                    state,
+                    f"axes_{i}.texts_{j}",
+                    t,
+                    "text",
+                    f"文字 “{_snippet(t.get_text())}”",
+                    draggable=True,
+                )
             # annotate(...) 的箭头单独成元素；`annotate("", …)` 纯箭头也要能选中
             ap = getattr(t, "arrow_patch", None)
             if ap is not None:
-                _register(state, f"axes_{i}.texts_{j}.arrow", ap,
-                          "arrow_patch", "标注箭头")
+                _register(state, f"axes_{i}.texts_{j}.arrow", ap, "arrow_patch", "标注箭头")
         if not is3d:
             # 数据系列容器先注册（其成员不再作为独立曲线/集合重复注册）
             skip_ids: set[int] = set()
@@ -408,35 +489,46 @@ def instrument(state: FigState) -> None:
                 if isinstance(cont, BarContainer):
                     grp = SeriesGroup("bar_series", list(cont.patches), cont)
                     lab = str(cont.get_label() or "")
-                    nice = f"柱形系列 “{_snippet(lab)}”" if lab and not lab.startswith("_") \
+                    nice = (
+                        f"柱形系列 “{_snippet(lab)}”"
+                        if lab and not lab.startswith("_")
                         else f"柱形系列 {j + 1}"
+                    )
                     _register(state, f"axes_{i}.barseries_{j}", grp, "bar_series", nice)
                     for k, rect in enumerate(cont.patches):
                         rect._mm_bar = True  # noqa: SLF001 — _cls_key 识别标记
-                        skip_ids.add(id(rect))   # 柱也在 ax.patches 里，别再当独立形状登记
-                        _register(state, f"axes_{i}.barseries_{j}.bar_{k}", rect,
-                                  "bar", f"柱 {k + 1}")
+                        skip_ids.add(id(rect))  # 柱也在 ax.patches 里，别再当独立形状登记
+                        _register(
+                            state, f"axes_{i}.barseries_{j}.bar_{k}", rect, "bar", f"柱 {k + 1}"
+                        )
                 elif isinstance(cont, ErrorbarContainer):
                     line, caps, bars = cont.lines
-                    grp = SeriesGroup("errorbar",
-                                      {"line": line, "caps": list(caps), "bars": list(bars)},
-                                      cont)
-                    _register(state, f"axes_{i}.errorbar_{j}", grp, "errorbar",
-                              f"误差棒 {j + 1}")
+                    grp = SeriesGroup(
+                        "errorbar", {"line": line, "caps": list(caps), "bars": list(bars)}, cont
+                    )
+                    _register(state, f"axes_{i}.errorbar_{j}", grp, "errorbar", f"误差棒 {j + 1}")
                     for m in grp.members():
                         skip_ids.add(id(m))
                 elif isinstance(cont, StemContainer):
                     # 一次 `ax.stem()` 在用户眼里是**一条**系列，在 artist 树上
                     # 却是三样东西：markerline / stemlines / baseline。前两样
                     # 归这个容器，baseline（零线）继续以普通曲线的身份单独可编辑
-                    grp = SeriesGroup("stem_series",
-                                      {"marker": cont.markerline,
-                                       "stems": list(cont.stemlines)
-                                       if _is_seq(cont.stemlines) else [cont.stemlines]},
-                                      cont)
+                    grp = SeriesGroup(
+                        "stem_series",
+                        {
+                            "marker": cont.markerline,
+                            "stems": list(cont.stemlines)
+                            if _is_seq(cont.stemlines)
+                            else [cont.stemlines],
+                        },
+                        cont,
+                    )
                     lab = str(cont.get_label() or "")
-                    nice = f"茎叶系列 “{_snippet(lab)}”" if lab and not lab.startswith("_") \
+                    nice = (
+                        f"茎叶系列 “{_snippet(lab)}”"
+                        if lab and not lab.startswith("_")
                         else f"茎叶系列 {j + 1}"
+                    )
                     _register(state, f"axes_{i}.stemseries_{j}", grp, "stem_series", nice)
                     for m in grp.members():
                         skip_ids.add(id(m))
@@ -453,7 +545,11 @@ def instrument(state: FigState) -> None:
                 if id(ln) in skip_ids:
                     continue
                 lab = str(ln.get_label())
-                nice = f"曲线 “{_snippet(lab)}”" if lab and not lab.startswith("_") else f"曲线 {j + 1}"
+                nice = (
+                    f"曲线 “{_snippet(lab)}”"
+                    if lab and not lab.startswith("_")
+                    else f"曲线 {j + 1}"
+                )
                 _register(state, f"axes_{i}.lines_{j}", ln, "line", nice)
             for j, im in enumerate(ax.images):
                 _register(state, f"axes_{i}.images_{j}", im, "image", f"图像 {j + 1}")
@@ -478,8 +574,11 @@ def instrument(state: FigState) -> None:
                 gid = f"axes_{i}.{prefix}_{j}"
                 if prefix == "scatter":
                     lab = str(coll.get_label())
-                    nice = f"散点 “{_snippet(lab)}”" if lab and not lab.startswith("_") \
+                    nice = (
+                        f"散点 “{_snippet(lab)}”"
+                        if lab and not lab.startswith("_")
                         else f"散点系列 {j + 1}"
+                    )
                     _register(state, gid, coll, "scatter", nice)
                 elif prefix == "fill":
                     _register(state, gid, coll, "fill", _coll_label(coll, j))
@@ -503,8 +602,11 @@ def instrument(state: FigState) -> None:
                     # 是它。分开写必然漂开，而漂开的表现是元素表说通用、
                     # 检查器却按线组给字段，那个控件一个像素都改不动。
                     lab = str(coll.get_label())
-                    nice = f"线组 “{_snippet(lab)}”" if lab and not lab.startswith("_") \
+                    nice = (
+                        f"线组 “{_snippet(lab)}”"
+                        if lab and not lab.startswith("_")
                         else f"线组 {j + 1}"
+                    )
                     _register(state, gid, coll, "linecoll", nice)
                 else:
                     _register(state, gid, coll, "collection", _coll_label(coll, j))
@@ -532,13 +634,10 @@ def instrument(state: FigState) -> None:
                     # 独立箭头的端点归自己管（set_positions 持久生效），可拖；
                     # annotate 的 arrow_patch 每次 draw 被注释机制重定位，不标
                     pt._mm_arrow_standalone = True  # noqa: SLF001
-                    _register(state, f"axes_{i}.arrows_{j}", pt,
-                              "arrow_patch", f"箭头 {arrow_n}")
-                elif (isinstance(pt, Patch)
-                      and id(pt) not in skip_ids and not is_cbax):
+                    _register(state, f"axes_{i}.arrows_{j}", pt, "arrow_patch", f"箭头 {arrow_n}")
+                elif isinstance(pt, Patch) and id(pt) not in skip_ids and not is_cbax:
                     shape_n += 1
-                    _register(state, f"axes_{i}.patches_{j}", pt, "patch",
-                              f"形状 {shape_n}")
+                    _register(state, f"axes_{i}.patches_{j}", pt, "patch", f"形状 {shape_n}")
         # `ax.add_artist(...)` 放进来的东西（AnchoredText、自定义 Artist…）。
         # matplotlib 会把认得的类型改道进 lines/patches/collections，所以这里
         # 剩下的基本都是「我们不认识的」——**登记但只开 visible/zorder**
@@ -547,8 +646,9 @@ def instrument(state: FigState) -> None:
         for j, art in enumerate(getattr(ax, "artists", []) or []):
             if id(art) in state.index_ids():
                 continue
-            _register(state, f"axes_{i}.artists_{j}", art, "artist",
-                      f"{type(art).__name__} {j + 1}")
+            _register(
+                state, f"axes_{i}.artists_{j}", art, "artist", f"{type(art).__name__} {j + 1}"
+            )
         for j, tbl in enumerate(getattr(ax, "tables", []) or []):
             _register(state, f"axes_{i}.tables_{j}", tbl, "artist", f"表格 {j + 1}")
         leg = ax.get_legend()
@@ -556,12 +656,22 @@ def instrument(state: FigState) -> None:
             _register(state, f"axes_{i}.legend", leg, "legend", "图例", draggable=True)
             title = leg.get_title()
             if title is not None and title.get_text():
-                _register(state, f"axes_{i}.legend.title", title, "legend_text",
-                          f"图例标题 “{_snippet(title.get_text())}”")
+                _register(
+                    state,
+                    f"axes_{i}.legend.title",
+                    title,
+                    "legend_text",
+                    f"图例标题 “{_snippet(title.get_text())}”",
+                )
             for j, t in enumerate(leg.get_texts()):
                 if t.get_text():
-                    _register(state, f"axes_{i}.legend.texts_{j}", t, "legend_text",
-                              f"图例项 “{_snippet(t.get_text())}”")
+                    _register(
+                        state,
+                        f"axes_{i}.legend.texts_{j}",
+                        t,
+                        "legend_text",
+                        f"图例项 “{_snippet(t.get_text())}”",
+                    )
         if not is3d:
             # 边框模型的「脚本原样」也在这里采（与刻度模型同一时机：build 之后、
             # 任何 override 之前）
@@ -576,8 +686,9 @@ def instrument(state: FigState) -> None:
             # **无条件登记**刻度组：此刻没有刻度不代表以后没有——色条方向一翻，
             # 长短轴互换，原来空着的那条轴就成了带刻度的那条。build_manifest 会
             # 把当下真的没有刻度的组丢掉，所以多登记一个不会在界面上多出东西
-            _register(state, f"axes_{i}.{which}ticks", TickSet(ax, which), "ticks",
-                      f"{cn} 刻度文字")
+            _register(
+                state, f"axes_{i}.{which}ticks", TickSet(ax, which), "ticks", f"{cn} 刻度文字"
+            )
             _sync_tick_labels(state, ax, which, f"axes_{i}")
 
     state.unregistered = census(fig, state)
@@ -660,8 +771,7 @@ def census(fig, state: FigState) -> list[dict]:
             cls = type(child)
             key = (f"{cls.__module__}.{cls.__qualname__}", gid)
             seen[key] = seen.get(key, 0) + 1
-    return [{"cls": cls, "where": where, "count": n}
-            for (cls, where), n in sorted(seen.items())]
+    return [{"cls": cls, "where": where, "count": n} for (cls, where), n in sorted(seen.items())]
 
 
 # ---------------------------------------------------------------------------
@@ -690,9 +800,16 @@ def _alpha_field(artist) -> list[dict]:
     a = getattr(artist, "get_alpha", lambda: None)()
     if a is not None and hasattr(a, "shape") and getattr(a, "ndim", 0) > 0:
         return []
-    return [{"prop": "alpha", "type": "number",
-             "value": 1.0 if a is None else round(float(a), 2),
-             "min": 0, "max": 1, "step": 0.05}]
+    return [
+        {
+            "prop": "alpha",
+            "type": "number",
+            "value": 1.0 if a is None else round(float(a), 2),
+            "min": 0,
+            "max": 1,
+            "step": 0.05,
+        }
+    ]
 
 
 #: 三个通用族。**无条件保留**——它们由 rcParams 的族列表解析，运行时一定有
@@ -719,8 +836,9 @@ def _font_installed(name: str) -> bool:
     hit = _FONT_PRESENT.get(name)
     if hit is None:
         try:
-            font_manager.findfont(font_manager.FontProperties(family=name),
-                                  fallback_to_default=False)
+            font_manager.findfont(
+                font_manager.FontProperties(family=name), fallback_to_default=False
+            )
             hit = True
         except (ValueError, RuntimeError):
             hit = False
@@ -745,73 +863,166 @@ def _text_fields(t) -> list[dict]:
     patch = t.get_bbox_patch()
     if patch is not None:
         pad, rounded = _boxstyle_info(patch)
-        bb = {"visible": bool(patch.get_visible()),
-              "face": to_hex(patch.get_facecolor()),
-              "edge": to_hex(patch.get_edgecolor()),
-              "lw": round(float(patch.get_linewidth()), 2),
-              "alpha": 1.0 if patch.get_alpha() is None else round(float(patch.get_alpha()), 2),
-              "pad": round(pad, 2), "rounded": rounded}
+        bb = {
+            "visible": bool(patch.get_visible()),
+            "face": to_hex(patch.get_facecolor()),
+            "edge": to_hex(patch.get_edgecolor()),
+            "lw": round(float(patch.get_linewidth()), 2),
+            "alpha": 1.0 if patch.get_alpha() is None else round(float(patch.get_alpha()), 2),
+            "pad": round(pad, 2),
+            "rounded": rounded,
+        }
     else:
         # 还没有 bbox patch 时的合成默认值——**取自 `overrides.BBOX_DEFAULTS`**，
         # 那是这套默认值的唯一出处。三处消费它（现建的 patch 长什么样、还原
         # 写回什么、没有框时显示什么），少一处对齐的代价是「开一次框再关掉」
         # 之后 manifest 的值漂一格（手写的 `#FFFFFF` vs `to_hex` 的
         # `#ffffff`）：画面一个像素没变，热态却已经 ≠ 全量重放。
-        bb = {"visible": BBOX_DEFAULTS["bbox_visible"],
-              "face": BBOX_DEFAULTS["bbox_facecolor"],
-              "edge": BBOX_DEFAULTS["bbox_edgecolor"],
-              "lw": BBOX_DEFAULTS["bbox_linewidth"],
-              "alpha": BBOX_DEFAULTS["bbox_alpha"],
-              "pad": BBOX_DEFAULTS["bbox_pad"],
-              "rounded": BBOX_DEFAULTS["bbox_rounded"]}
+        bb = {
+            "visible": BBOX_DEFAULTS["bbox_visible"],
+            "face": BBOX_DEFAULTS["bbox_facecolor"],
+            "edge": BBOX_DEFAULTS["bbox_edgecolor"],
+            "lw": BBOX_DEFAULTS["bbox_linewidth"],
+            "alpha": BBOX_DEFAULTS["bbox_alpha"],
+            "pad": BBOX_DEFAULTS["bbox_pad"],
+            "rounded": BBOX_DEFAULTS["bbox_rounded"],
+        }
     st = _stroke_state(t)
     axis3d = getattr(t, "_mm_axis", None)  # 3D 轴标签：labelpad 是唯一的位置旋钮
     return [
         {"prop": "text", "type": "text", "value": t.get_text()},
-        *([{"prop": "labelpad", "type": "number",
-            "value": round(float(axis3d.labelpad), 1),
-            "min": -30, "max": 60, "step": 1, "unit": "pt"}]
-          if axis3d is not None else []),
-        {"prop": "fontsize", "type": "number", "value": round(float(t.get_fontsize()), 2),
-         "min": 3, "max": 36, "step": 0.5, "unit": "pt"},
+        *(
+            [
+                {
+                    "prop": "labelpad",
+                    "type": "number",
+                    "value": round(float(axis3d.labelpad), 1),
+                    "min": -30,
+                    "max": 60,
+                    "step": 1,
+                    "unit": "pt",
+                }
+            ]
+            if axis3d is not None
+            else []
+        ),
+        {
+            "prop": "fontsize",
+            "type": "number",
+            "value": round(float(t.get_fontsize()), 2),
+            "min": 3,
+            "max": 36,
+            "step": 0.5,
+            "unit": "pt",
+        },
         {"prop": "color", "type": "color", "value": to_hex(t.get_color())},
-        {"prop": "weight", "type": "enum", "value": str(t.get_fontweight()),
-         "options": ["normal", "bold"]},
-        {"prop": "style", "type": "enum", "value": str(t.get_fontstyle()),
-         "options": ["normal", "italic"]},
+        {
+            "prop": "weight",
+            "type": "enum",
+            "value": str(t.get_fontweight()),
+            "options": ["normal", "bold"],
+        },
+        {
+            "prop": "style",
+            "type": "enum",
+            "value": str(t.get_fontstyle()),
+            "options": ["normal", "italic"],
+        },
         {"prop": "fontfamily", "type": "enum", "value": str(fam), "options": fam_opts},
-        {"prop": "rotation", "type": "number", "value": round(float(t.get_rotation()), 1),
-         "min": -180, "max": 180, "step": 5, "unit": "°"},
-        {"prop": "alpha", "type": "number",
-         "value": 1.0 if alpha is None else round(float(alpha), 2),
-         "min": 0, "max": 1, "step": 0.05},
+        {
+            "prop": "rotation",
+            "type": "number",
+            "value": round(float(t.get_rotation()), 1),
+            "min": -180,
+            "max": 180,
+            "step": 5,
+            "unit": "°",
+        },
+        {
+            "prop": "alpha",
+            "type": "number",
+            "value": 1.0 if alpha is None else round(float(alpha), 2),
+            "min": 0,
+            "max": 1,
+            "step": 0.05,
+        },
         {"prop": "visible", "type": "bool", "value": bool(t.get_visible())},
-
-        {"prop": "ha", "type": "enum", "value": str(t.get_ha()),
-         "options": ["left", "center", "right"], "group": "排版"},
-        {"prop": "va", "type": "enum", "value": str(t.get_va()),
-         "options": ["top", "center", "bottom", "baseline"], "group": "排版"},
-        {"prop": "linespacing", "type": "number",
-         "value": round(text_linespacing(t), 2),
-         "min": 0.5, "max": 3, "step": 0.05, "group": "排版"},
-        {"prop": "zorder", "type": "number", "value": round(float(t.get_zorder()), 1),
-         "min": -5, "max": 50, "step": 1, "group": "排版"},
-
+        {
+            "prop": "ha",
+            "type": "enum",
+            "value": str(t.get_ha()),
+            "options": ["left", "center", "right"],
+            "group": "排版",
+        },
+        {
+            "prop": "va",
+            "type": "enum",
+            "value": str(t.get_va()),
+            "options": ["top", "center", "bottom", "baseline"],
+            "group": "排版",
+        },
+        {
+            "prop": "linespacing",
+            "type": "number",
+            "value": round(text_linespacing(t), 2),
+            "min": 0.5,
+            "max": 3,
+            "step": 0.05,
+            "group": "排版",
+        },
+        {
+            "prop": "zorder",
+            "type": "number",
+            "value": round(float(t.get_zorder()), 1),
+            "min": -5,
+            "max": 50,
+            "step": 1,
+            "group": "排版",
+        },
         {"prop": "bbox_visible", "type": "bool", "value": bb["visible"], "group": "背景"},
         {"prop": "bbox_facecolor", "type": "color", "value": bb["face"], "group": "背景"},
-        {"prop": "bbox_alpha", "type": "number", "value": bb["alpha"],
-         "min": 0, "max": 1, "step": 0.05, "group": "背景"},
+        {
+            "prop": "bbox_alpha",
+            "type": "number",
+            "value": bb["alpha"],
+            "min": 0,
+            "max": 1,
+            "step": 0.05,
+            "group": "背景",
+        },
         {"prop": "bbox_edgecolor", "type": "color", "value": bb["edge"], "group": "背景"},
-        {"prop": "bbox_linewidth", "type": "number", "value": bb["lw"],
-         "min": 0, "max": 3, "step": 0.25, "unit": "pt", "group": "背景"},
-        {"prop": "bbox_pad", "type": "number", "value": bb["pad"],
-         "min": 0, "max": 2, "step": 0.05, "group": "背景"},
+        {
+            "prop": "bbox_linewidth",
+            "type": "number",
+            "value": bb["lw"],
+            "min": 0,
+            "max": 3,
+            "step": 0.25,
+            "unit": "pt",
+            "group": "背景",
+        },
+        {
+            "prop": "bbox_pad",
+            "type": "number",
+            "value": bb["pad"],
+            "min": 0,
+            "max": 2,
+            "step": 0.05,
+            "group": "背景",
+        },
         {"prop": "bbox_rounded", "type": "bool", "value": bb["rounded"], "group": "背景"},
-
         {"prop": "stroke_enabled", "type": "bool", "value": bool(st["enabled"]), "group": "描边"},
         {"prop": "stroke_color", "type": "color", "value": to_hex(st["color"]), "group": "描边"},
-        {"prop": "stroke_width", "type": "number", "value": round(float(st["width"]), 2),
-         "min": 0.25, "max": 6, "step": 0.25, "unit": "pt", "group": "描边"},
+        {
+            "prop": "stroke_width",
+            "type": "number",
+            "value": round(float(st["width"]), 2),
+            "min": 0.25,
+            "max": 6,
+            "step": 0.25,
+            "unit": "pt",
+            "group": "描边",
+        },
     ]
 
 
@@ -824,24 +1035,68 @@ def _line_fields(ln) -> list[dict]:
     return [
         {"prop": "label", "type": "text", "value": "" if lab.startswith("_") else lab},
         {"prop": "color", "type": "color", "value": to_hex(ln.get_color())},
-        {"prop": "linewidth", "type": "number", "value": round(float(ln.get_linewidth()), 2),
-         "min": 0.1, "max": 8, "step": 0.1, "unit": "pt"},
-        {"prop": "linestyle", "type": "enum", "value": str(ln.get_linestyle()),
-         "options": ["-", "--", ":", "-."]},
-        {"prop": "alpha", "type": "number",
-         "value": 1.0 if ln.get_alpha() is None else round(float(ln.get_alpha()), 2),
-         "min": 0, "max": 1, "step": 0.05},
+        {
+            "prop": "linewidth",
+            "type": "number",
+            "value": round(float(ln.get_linewidth()), 2),
+            "min": 0.1,
+            "max": 8,
+            "step": 0.1,
+            "unit": "pt",
+        },
+        {
+            "prop": "linestyle",
+            "type": "enum",
+            "value": str(ln.get_linestyle()),
+            "options": ["-", "--", ":", "-."],
+        },
+        {
+            "prop": "alpha",
+            "type": "number",
+            "value": 1.0 if ln.get_alpha() is None else round(float(ln.get_alpha()), 2),
+            "min": 0,
+            "max": 1,
+            "step": 0.05,
+        },
         {"prop": "visible", "type": "bool", "value": bool(ln.get_visible())},
-        {"prop": "marker", "type": "enum", "value": marker, "options": m_opts,
-         "group": "线条与标记"},
-        {"prop": "markersize", "type": "number", "value": round(float(ln.get_markersize()), 2),
-         "min": 0, "max": 20, "step": 0.5, "unit": "pt", "group": "线条与标记"},
-        {"prop": "markerfacecolor", "type": "color",
-         "value": to_hex(ln.get_markerfacecolor()), "group": "线条与标记"},
-        {"prop": "markeredgecolor", "type": "color",
-         "value": to_hex(ln.get_markeredgecolor()), "group": "线条与标记"},
-        {"prop": "zorder", "type": "number", "value": round(float(ln.get_zorder()), 1),
-         "min": -5, "max": 50, "step": 1, "group": "排列"},
+        {
+            "prop": "marker",
+            "type": "enum",
+            "value": marker,
+            "options": m_opts,
+            "group": "线条与标记",
+        },
+        {
+            "prop": "markersize",
+            "type": "number",
+            "value": round(float(ln.get_markersize()), 2),
+            "min": 0,
+            "max": 20,
+            "step": 0.5,
+            "unit": "pt",
+            "group": "线条与标记",
+        },
+        {
+            "prop": "markerfacecolor",
+            "type": "color",
+            "value": to_hex(ln.get_markerfacecolor()),
+            "group": "线条与标记",
+        },
+        {
+            "prop": "markeredgecolor",
+            "type": "color",
+            "value": to_hex(ln.get_markeredgecolor()),
+            "group": "线条与标记",
+        },
+        {
+            "prop": "zorder",
+            "type": "number",
+            "value": round(float(ln.get_zorder()), 1),
+            "min": -5,
+            "max": 50,
+            "step": 1,
+            "group": "排列",
+        },
     ]
 
 
@@ -862,39 +1117,69 @@ def _collection_fields(coll, *, label: bool) -> list[dict]:
     那是显示口径的取舍，不是能力问题。
     """
     import numpy as np  # noqa: PLC0415 — worker 侧有科学栈
+
     caps = collection_caps(coll)
     ec = coll.get_edgecolor()
     lw = np.atleast_1d(coll.get_linewidths())
     lab = str(coll.get_label())
     fields: list[dict] = []
     if label:
-        fields.append({"prop": "label", "type": "text",
-                       "value": "" if lab.startswith("_") else lab})
+        fields.append(
+            {"prop": "label", "type": "text", "value": "" if lab.startswith("_") else lab}
+        )
     if "fill" in caps:
         fc = coll.get_facecolor()
-        fields.append({"prop": "facecolor", "type": "color",
-                       "value": to_hex(fc[0]) if len(fc) else "#000000"})
+        fields.append(
+            {"prop": "facecolor", "type": "color", "value": to_hex(fc[0]) if len(fc) else "#000000"}
+        )
     if "sizes" in caps:
         sizes = coll.get_sizes()
-        fields.append({"prop": "size", "type": "number",
-                       "value": round(float(np.mean(sizes)), 1) if len(sizes) else 20.0,
-                       "min": 1, "max": 400, "step": 1, "unit": "pt²"})
+        fields.append(
+            {
+                "prop": "size",
+                "type": "number",
+                "value": round(float(np.mean(sizes)), 1) if len(sizes) else 20.0,
+                "min": 1,
+                "max": 400,
+                "step": 1,
+                "unit": "pt²",
+            }
+        )
     if "marker" in caps:
         # marker 形状可整体替换（set_paths）；"original" = 脚本原始路径
         cur = getattr(coll, "_mm_marker", None) or "original"
-        m_opts = ["original", "o", "s", "D", "^", "v", "<", ">", "x", "+", "*", ".",
-                  "p", "h"]
-        fields.append({"prop": "marker", "type": "enum", "value": cur,
-                       "options": ([cur] if cur not in m_opts else []) + m_opts})
+        m_opts = ["original", "o", "s", "D", "^", "v", "<", ">", "x", "+", "*", ".", "p", "h"]
+        fields.append(
+            {
+                "prop": "marker",
+                "type": "enum",
+                "value": cur,
+                "options": ([cur] if cur not in m_opts else []) + m_opts,
+            }
+        )
     fields += [
         # 描边：`TriMesh` 连边都不画（`draw_gouraud_triangles` 只接顶点颜色），
         # 判据 `overrides.honours_stroke`
-        *([{"prop": "edgecolor", "type": "color",
-            "value": to_hex(ec[0]) if len(ec) else "#000000"},
-           {"prop": "linewidth", "type": "number",
-            "value": round(float(lw[0]), 2) if len(lw) else 0.0,
-            "min": 0, "max": 8, "step": 0.1, "unit": "pt"}]
-          if "stroke" in caps else []),
+        *(
+            [
+                {
+                    "prop": "edgecolor",
+                    "type": "color",
+                    "value": to_hex(ec[0]) if len(ec) else "#000000",
+                },
+                {
+                    "prop": "linewidth",
+                    "type": "number",
+                    "value": round(float(lw[0]), 2) if len(lw) else 0.0,
+                    "min": 0,
+                    "max": 8,
+                    "step": 0.1,
+                    "unit": "pt",
+                },
+            ]
+            if "stroke" in caps
+            else []
+        ),
         # **显示值与 handler 的 getter 必须同源**：这一族的 linestyle 走
         # `_get_linecoll_ls`（未缩放规格），所以反查也只能用 Collection 那条
         # `_linecoll_linestyle_name`。用 Line2D 那条 `_linestyle_name` 的话，
@@ -902,10 +1187,19 @@ def _collection_fields(coll, *, label: bool) -> list[dict]:
         # **任何**虚线都被当成自定义 dash 显示成实线占位——
         # `LineCollection(..., linestyles="--")` 画出来是虚线、检查器说实线。
         # 这正是「同一个判据写两遍」的标准症状（见 `is_linecoll_family`）。
-        *([{"prop": "linestyle", "type": "enum",
-            "value": _linecoll_linestyle_name(coll),
-            "options": ["-", "--", "-.", ":"], "group": "线条与填充"}]
-          if "stroke_style" in caps else []),
+        *(
+            [
+                {
+                    "prop": "linestyle",
+                    "type": "enum",
+                    "value": _linecoll_linestyle_name(coll),
+                    "options": ["-", "--", "-.", ":"],
+                    "group": "线条与填充",
+                }
+            ]
+            if "stroke_style" in caps
+            else []
+        ),
         *_alpha_field(coll),
         {"prop": "visible", "type": "bool", "value": bool(coll.get_visible())},
     ]
@@ -920,13 +1214,27 @@ def _collection_fields(coll, *, label: bool) -> list[dict]:
         # `PolyQuadMesh` 是 10692 / 1100）。判据是 `stroke_style`，实测表见
         # `overrides.honours_stroke_style`。
         fields.append(
-            {"prop": "hatch", "type": "enum", "value": str(coll.get_hatch() or ""),
-             "options": _hatch_options(coll.get_hatch()), "group": "线条与填充"})
+            {
+                "prop": "hatch",
+                "type": "enum",
+                "value": str(coll.get_hatch() or ""),
+                "options": _hatch_options(coll.get_hatch()),
+                "group": "线条与填充",
+            }
+        )
     if "mapped" in caps:
         fields += _colormap_fields(coll)
-    fields.append({"prop": "zorder", "type": "number",
-                   "value": round(float(coll.get_zorder()), 1),
-                   "min": -5, "max": 50, "step": 1, "group": "排列"})
+    fields.append(
+        {
+            "prop": "zorder",
+            "type": "number",
+            "value": round(float(coll.get_zorder()), 1),
+            "min": -5,
+            "max": 50,
+            "step": 1,
+            "group": "排列",
+        }
+    )
     return fields
 
 
@@ -947,14 +1255,27 @@ def _colormap_fields(m) -> list[dict]:
     step = max(span / 100.0, 1e-6)
     cname = m.get_cmap().name
     return [
-        {"prop": "cmap", "type": "enum", "value": cname,
-         "options": _cmap_options(cname), "group": "颜色映射"},
-        {"prop": "vmin", "type": "number",
-         "value": None if vmin is None else round(float(vmin), 4),
-         "step": round(step, 4), "group": "颜色映射"},
-        {"prop": "vmax", "type": "number",
-         "value": None if vmax is None else round(float(vmax), 4),
-         "step": round(step, 4), "group": "颜色映射"},
+        {
+            "prop": "cmap",
+            "type": "enum",
+            "value": cname,
+            "options": _cmap_options(cname),
+            "group": "颜色映射",
+        },
+        {
+            "prop": "vmin",
+            "type": "number",
+            "value": None if vmin is None else round(float(vmin), 4),
+            "step": round(step, 4),
+            "group": "颜色映射",
+        },
+        {
+            "prop": "vmax",
+            "type": "number",
+            "value": None if vmax is None else round(float(vmax), 4),
+            "step": round(step, 4),
+            "group": "颜色映射",
+        },
     ]
 
 
@@ -971,6 +1292,7 @@ def _linecoll_fields(coll) -> list[dict]:
     与这里的显示值不是同一个东西——显示可以有损，还原不行。
     """
     import numpy as np  # noqa: PLC0415 — worker 侧有科学栈
+
     # `get_color()` 的形状**不统一**：`hlines` 出的 LineCollection 回二维
     # `[[r,g,b,a]]`，而 `eventplot` 出的 EventCollection 回一维 `[r,g,b,a]`
     # （实测，两个 matplotlib 版本都如此）。直接取 `colors[0]` 在后者身上
@@ -978,18 +1300,37 @@ def _linecoll_fields(coll) -> list[dict]:
     colors = np.atleast_2d(coll.get_color())
     lw = coll.get_linewidths()
     return [
-        {"prop": "color", "type": "color",
-         "value": to_hex(colors[0]) if len(colors) else "#000000"},
-        {"prop": "linewidth", "type": "number",
-         "value": round(float(lw[0]), 2) if len(lw) else 1.0,
-         "min": 0, "max": 8, "step": 0.1, "unit": "pt"},
-        {"prop": "linestyle", "type": "enum",
-         "value": _linecoll_linestyle_name(coll),
-         "options": ["-", "--", "-.", ":"]},
+        {
+            "prop": "color",
+            "type": "color",
+            "value": to_hex(colors[0]) if len(colors) else "#000000",
+        },
+        {
+            "prop": "linewidth",
+            "type": "number",
+            "value": round(float(lw[0]), 2) if len(lw) else 1.0,
+            "min": 0,
+            "max": 8,
+            "step": 0.1,
+            "unit": "pt",
+        },
+        {
+            "prop": "linestyle",
+            "type": "enum",
+            "value": _linecoll_linestyle_name(coll),
+            "options": ["-", "--", "-.", ":"],
+        },
         *_alpha_field(coll),
         {"prop": "visible", "type": "bool", "value": bool(coll.get_visible())},
-        {"prop": "zorder", "type": "number", "value": round(float(coll.get_zorder()), 1),
-         "min": -5, "max": 50, "step": 1, "group": "排列"},
+        {
+            "prop": "zorder",
+            "type": "number",
+            "value": round(float(coll.get_zorder()), 1),
+            "min": -5,
+            "max": 50,
+            "step": 1,
+            "group": "排列",
+        },
     ]
 
 
@@ -1003,16 +1344,42 @@ def _bar_series_fields(grp) -> list[dict]:
         {"prop": "label", "type": "text", "value": "" if lab.startswith("_") else lab},
         {"prop": "facecolor", "type": "color", "value": to_hex(r0.get_facecolor())},
         {"prop": "edgecolor", "type": "color", "value": to_hex(r0.get_edgecolor())},
-        {"prop": "linewidth", "type": "number", "value": round(float(r0.get_linewidth()), 2),
-         "min": 0, "max": 5, "step": 0.1, "unit": "pt"},
-        {"prop": "bar_width", "type": "number", "value": round(float(r0.get_width()), 3),
-         "min": 0.01, "max": 5, "step": 0.02, "unit": "数据单位"},
-        {"prop": "alpha", "type": "number",
-         "value": 1.0 if r0.get_alpha() is None else round(float(r0.get_alpha()), 2),
-         "min": 0, "max": 1, "step": 0.05},
+        {
+            "prop": "linewidth",
+            "type": "number",
+            "value": round(float(r0.get_linewidth()), 2),
+            "min": 0,
+            "max": 5,
+            "step": 0.1,
+            "unit": "pt",
+        },
+        {
+            "prop": "bar_width",
+            "type": "number",
+            "value": round(float(r0.get_width()), 3),
+            "min": 0.01,
+            "max": 5,
+            "step": 0.02,
+            "unit": "数据单位",
+        },
+        {
+            "prop": "alpha",
+            "type": "number",
+            "value": 1.0 if r0.get_alpha() is None else round(float(r0.get_alpha()), 2),
+            "min": 0,
+            "max": 1,
+            "step": 0.05,
+        },
         {"prop": "visible", "type": "bool", "value": bool(r0.get_visible())},
-        {"prop": "zorder", "type": "number", "value": round(float(r0.get_zorder()), 1),
-         "min": -5, "max": 50, "step": 1, "group": "排列"},
+        {
+            "prop": "zorder",
+            "type": "number",
+            "value": round(float(r0.get_zorder()), 1),
+            "min": -5,
+            "max": 50,
+            "step": 1,
+            "group": "排列",
+        },
     ]
 
 
@@ -1020,11 +1387,23 @@ def _bar_fields(rect) -> list[dict]:
     return [
         {"prop": "facecolor", "type": "color", "value": to_hex(rect.get_facecolor())},
         {"prop": "edgecolor", "type": "color", "value": to_hex(rect.get_edgecolor())},
-        {"prop": "linewidth", "type": "number", "value": round(float(rect.get_linewidth()), 2),
-         "min": 0, "max": 5, "step": 0.1, "unit": "pt"},
-        {"prop": "alpha", "type": "number",
-         "value": 1.0 if rect.get_alpha() is None else round(float(rect.get_alpha()), 2),
-         "min": 0, "max": 1, "step": 0.05},
+        {
+            "prop": "linewidth",
+            "type": "number",
+            "value": round(float(rect.get_linewidth()), 2),
+            "min": 0,
+            "max": 5,
+            "step": 0.1,
+            "unit": "pt",
+        },
+        {
+            "prop": "alpha",
+            "type": "number",
+            "value": 1.0 if rect.get_alpha() is None else round(float(rect.get_alpha()), 2),
+            "min": 0,
+            "max": 1,
+            "step": 0.05,
+        },
         {"prop": "visible", "type": "bool", "value": bool(rect.get_visible())},
     ]
 
@@ -1038,8 +1417,12 @@ def _errorbar_fields(grp) -> list[dict]:
     if probe is None:
         return []
     color = probe.get_color()
-    if hasattr(color, "__len__") and not isinstance(color, str) and len(color) \
-            and not isinstance(color[0], (int, float)):
+    if (
+        hasattr(color, "__len__")
+        and not isinstance(color, str)
+        and len(color)
+        and not isinstance(color[0], (int, float))
+    ):
         color = color[0]
     cap0 = caps[0] if caps else None
     lw = probe.get_linewidth()
@@ -1047,17 +1430,41 @@ def _errorbar_fields(grp) -> list[dict]:
         lw = lw[0] if len(lw) else 1.0
     return [
         {"prop": "color", "type": "color", "value": to_hex(color)},
-        {"prop": "linewidth", "type": "number", "value": round(float(lw), 2),
-         "min": 0.1, "max": 5, "step": 0.1, "unit": "pt"},
-        {"prop": "capsize", "type": "number",
-         "value": round(float(cap0.get_markersize()), 2) if cap0 is not None else 0.0,
-         "min": 0, "max": 15, "step": 0.5, "unit": "pt"},
-        {"prop": "cap_thickness", "type": "number",
-         "value": round(float(cap0.get_markeredgewidth()), 2) if cap0 is not None else 1.0,
-         "min": 0.1, "max": 5, "step": 0.1, "unit": "pt"},
-        {"prop": "alpha", "type": "number",
-         "value": 1.0 if probe.get_alpha() is None else round(float(probe.get_alpha()), 2),
-         "min": 0, "max": 1, "step": 0.05},
+        {
+            "prop": "linewidth",
+            "type": "number",
+            "value": round(float(lw), 2),
+            "min": 0.1,
+            "max": 5,
+            "step": 0.1,
+            "unit": "pt",
+        },
+        {
+            "prop": "capsize",
+            "type": "number",
+            "value": round(float(cap0.get_markersize()), 2) if cap0 is not None else 0.0,
+            "min": 0,
+            "max": 15,
+            "step": 0.5,
+            "unit": "pt",
+        },
+        {
+            "prop": "cap_thickness",
+            "type": "number",
+            "value": round(float(cap0.get_markeredgewidth()), 2) if cap0 is not None else 1.0,
+            "min": 0.1,
+            "max": 5,
+            "step": 0.1,
+            "unit": "pt",
+        },
+        {
+            "prop": "alpha",
+            "type": "number",
+            "value": 1.0 if probe.get_alpha() is None else round(float(probe.get_alpha()), 2),
+            "min": 0,
+            "max": 1,
+            "step": 0.05,
+        },
         {"prop": "visible", "type": "bool", "value": bool(probe.get_visible())},
     ]
 
@@ -1077,19 +1484,47 @@ def _arrowpatch_fields(a) -> list[dict]:
     return [
         {"prop": "arrowstyle", "type": "enum", "value": style, "options": style_opts},
         {"prop": "color", "type": "color", "value": to_hex(a.get_edgecolor())},
-        {"prop": "linewidth", "type": "number",
-         "value": round(float(a.get_linewidth()), 2),
-         "min": 0.1, "max": 6, "step": 0.05, "unit": "pt"},
-        {"prop": "mutation_scale", "type": "number",
-         "value": round(float(a.get_mutation_scale()), 1),
-         "min": 1, "max": 40, "step": 0.5, "unit": "pt"},
-        {"prop": "linestyle", "type": "enum", "value": _linestyle_name(a),
-         "options": ["-", "--", "-.", ":"]},
-        {"prop": "alpha", "type": "number",
-         "value": 1.0 if alpha is None else round(float(alpha), 2),
-         "min": 0, "max": 1, "step": 0.05},
-        {"prop": "zorder", "type": "number", "value": round(float(a.get_zorder()), 1),
-         "min": -5, "max": 50, "step": 1, "group": "排列"},
+        {
+            "prop": "linewidth",
+            "type": "number",
+            "value": round(float(a.get_linewidth()), 2),
+            "min": 0.1,
+            "max": 6,
+            "step": 0.05,
+            "unit": "pt",
+        },
+        {
+            "prop": "mutation_scale",
+            "type": "number",
+            "value": round(float(a.get_mutation_scale()), 1),
+            "min": 1,
+            "max": 40,
+            "step": 0.5,
+            "unit": "pt",
+        },
+        {
+            "prop": "linestyle",
+            "type": "enum",
+            "value": _linestyle_name(a),
+            "options": ["-", "--", "-.", ":"],
+        },
+        {
+            "prop": "alpha",
+            "type": "number",
+            "value": 1.0 if alpha is None else round(float(alpha), 2),
+            "min": 0,
+            "max": 1,
+            "step": 0.05,
+        },
+        {
+            "prop": "zorder",
+            "type": "number",
+            "value": round(float(a.get_zorder()), 1),
+            "min": -5,
+            "max": 50,
+            "step": 1,
+            "group": "排列",
+        },
         {"prop": "visible", "type": "bool", "value": bool(a.get_visible())},
     ]
 
@@ -1126,26 +1561,52 @@ def _patch_fields(pt) -> list[dict]:
     ]
     fields += [
         {"prop": "edgecolor", "type": "color", "value": to_hex(pt.get_edgecolor())},
-        {"prop": "linewidth", "type": "number", "value": round(float(pt.get_linewidth()), 2),
-         "min": 0, "max": 8, "step": 0.1, "unit": "pt"},
-        {"prop": "linestyle", "type": "enum", "value": _linestyle_name(pt),
-         "options": ["-", "--", "-.", ":"]},
-        {"prop": "hatch", "type": "enum", "value": str(pt.get_hatch() or ""),
-         "options": _hatch_options(pt.get_hatch())},
-        {"prop": "alpha", "type": "number",
-         "value": 1.0 if alpha is None else round(float(alpha), 2),
-         "min": 0, "max": 1, "step": 0.05},
+        {
+            "prop": "linewidth",
+            "type": "number",
+            "value": round(float(pt.get_linewidth()), 2),
+            "min": 0,
+            "max": 8,
+            "step": 0.1,
+            "unit": "pt",
+        },
+        {
+            "prop": "linestyle",
+            "type": "enum",
+            "value": _linestyle_name(pt),
+            "options": ["-", "--", "-.", ":"],
+        },
+        {
+            "prop": "hatch",
+            "type": "enum",
+            "value": str(pt.get_hatch() or ""),
+            "options": _hatch_options(pt.get_hatch()),
+        },
+        {
+            "prop": "alpha",
+            "type": "number",
+            "value": 1.0 if alpha is None else round(float(alpha), 2),
+            "min": 0,
+            "max": 1,
+            "step": 0.05,
+        },
         {"prop": "visible", "type": "bool", "value": bool(pt.get_visible())},
-        {"prop": "zorder", "type": "number", "value": round(float(pt.get_zorder()), 1),
-         "min": -5, "max": 50, "step": 1, "group": "排列"},
+        {
+            "prop": "zorder",
+            "type": "number",
+            "value": round(float(pt.get_zorder()), 1),
+            "min": -5,
+            "max": 50,
+            "step": 1,
+            "group": "排列",
+        },
     ]
     return fields
 
 
 #: 界面上想优先给出的插值档位（从粗到细）。**这是排序偏好，不是有效值表**
 #: ——有效值一律问 matplotlib 要，见 `_interpolation_options`。
-_INTERP_PREFERRED = ("auto", "antialiased", "nearest", "bilinear", "bicubic",
-                     "lanczos", "none")
+_INTERP_PREFERRED = ("auto", "antialiased", "nearest", "bilinear", "bicubic", "lanczos", "none")
 
 #: 同义档位：列在一起会让其中一个看起来「点了没反应」。键在时把值去掉。
 #: `auto` 是 3.9 给 `antialiased` 起的新名字，两者**逐像素相同**（实测
@@ -1171,8 +1632,9 @@ def _interpolation_options(current: str) -> list[str]:
     """
     try:
         from matplotlib.image import _interpd_  # noqa: PLC0415, SLF001
+
         valid = set(_interpd_)
-    except Exception:                                # noqa: BLE001
+    except Exception:  # noqa: BLE001
         valid = set()
     opts = [o for o in _INTERP_PREFERRED if o in valid]
     for keep, drop in _INTERP_ALIASES.items():
@@ -1193,8 +1655,9 @@ def _image_fields(im) -> list[dict]:
     # 基色可整体替换，渐变形状与透明度原样保留。不是这种图就不出字段。
     grad = None if mappable else gradient_base_hex(im)
     if grad is not None:
-        fields.append({"prop": "gradient_color", "type": "color", "value": grad,
-                       "group": "渐变填充"})
+        fields.append(
+            {"prop": "gradient_color", "type": "color", "value": grad, "group": "渐变填充"}
+        )
     if mappable:
         # 与 Collection 共用同一份「颜色映射」字段：AxesImage 与 Collection 在
         # matplotlib 里同属 ColorizingArtist，cmap/clim 的语义逐字相同
@@ -1204,10 +1667,22 @@ def _image_fields(im) -> list[dict]:
     fields += [
         {"prop": "interpolation", "type": "enum", "value": interp, "options": i_opts},
         *_alpha_field(im),
-        {"prop": "origin", "type": "enum", "value": str(im.origin),
-         "options": ["upper", "lower"], "group": "高级"},
-        {"prop": "zorder", "type": "number", "value": round(float(im.get_zorder()), 1),
-         "min": -5, "max": 50, "step": 1, "group": "排列"},
+        {
+            "prop": "origin",
+            "type": "enum",
+            "value": str(im.origin),
+            "options": ["upper", "lower"],
+            "group": "高级",
+        },
+        {
+            "prop": "zorder",
+            "type": "number",
+            "value": round(float(im.get_zorder()), 1),
+            "min": -5,
+            "max": 50,
+            "step": 1,
+            "group": "排列",
+        },
         {"prop": "visible", "type": "bool", "value": bool(im.get_visible())},
     ]
     return fields
@@ -1238,15 +1713,26 @@ def _colorbar_fields(p) -> list[dict]:
         # 控件比一个不存在的控件糟糕得多，而用户没有理由预料到它会这样。
         # 真修法要把宿主从一个 axes 改成一组、`_cb_place` / `_cb_target_rect` /
         # `axes_follow` 三处按并集算——那是落位模型的改动，1.0 稳定期不做。
-        *([{"prop": "orientation", "type": "enum",
-            "value": str(getattr(cb, "orientation", "vertical")),
-            "options": ["vertical", "horizontal"]}]
-          if colorbar_host_count(cb) == 1 else []),
+        *(
+            [
+                {
+                    "prop": "orientation",
+                    "type": "enum",
+                    "value": str(getattr(cb, "orientation", "vertical")),
+                    "options": ["vertical", "horizontal"],
+                }
+            ]
+            if colorbar_host_count(cb) == 1
+            else []
+        ),
         # 两端的延伸三角（「超出色阶的值画成箭头」）。同样是结构改造：
         # 见 overrides._set_cb_extend
-        {"prop": "extend", "type": "enum",
-         "value": str(getattr(cb, "extend", "neither")),
-         "options": list(_CB_EXTENDS)},
+        {
+            "prop": "extend",
+            "type": "enum",
+            "value": str(getattr(cb, "extend", "neither")),
+            "options": list(_CB_EXTENDS),
+        },
         # 色图这三条要与**它的 mappable** 同一个判据开闸。色条与 mappable 是
         # 同一份状态的两个 gid（见 ALIAS_GROUPS），所以「此刻映射还在不在」
         # 也只能有一处答案——`color_mapping_is_live`。
@@ -1265,24 +1751,65 @@ def _colorbar_fields(p) -> list[dict]:
         # 刻意**不**反过来禁掉线组的 `edgecolor`：那个能力是真的（给映射线组
         # 定个固定颜色是正当需求），藏起一个能用的属性正是 `Arc` 那次的教训。
         # 撤掉边色 override，这三条自己就回来了。
-        *([{"prop": "cmap", "type": "enum", "value": cname,
-            "options": _cmap_options(cname), "group": "颜色映射"},
-           {"prop": "vmin", "type": "number",
-            "value": None if vmin is None else round(float(vmin), 4),
-            "step": round(step, 4), "group": "颜色映射"},
-           {"prop": "vmax", "type": "number",
-            "value": None if vmax is None else round(float(vmax), 4),
-            "step": round(step, 4), "group": "颜色映射"}]
-          if colorbar_mapping_is_live(cb) else []),
-        {"prop": "tick_fontsize", "type": "number", "value": round(_cb_tick_fontsize(p), 2),
-         "min": 3, "max": 24, "step": 0.5, "unit": "pt", "group": "刻度"},
-        {"prop": "tick_color", "type": "color", "value": to_hex(_cb_tick_color(p)),
-         "group": "刻度"},
-        {"prop": "outline_visible", "type": "bool", "value": bool(cb.outline.get_visible()),
-         "group": "高级"},
-        {"prop": "outline_width", "type": "number",
-         "value": round(float(cb.outline.get_linewidth()), 2),
-         "min": 0, "max": 3, "step": 0.1, "unit": "pt", "group": "高级"},
+        *(
+            [
+                {
+                    "prop": "cmap",
+                    "type": "enum",
+                    "value": cname,
+                    "options": _cmap_options(cname),
+                    "group": "颜色映射",
+                },
+                {
+                    "prop": "vmin",
+                    "type": "number",
+                    "value": None if vmin is None else round(float(vmin), 4),
+                    "step": round(step, 4),
+                    "group": "颜色映射",
+                },
+                {
+                    "prop": "vmax",
+                    "type": "number",
+                    "value": None if vmax is None else round(float(vmax), 4),
+                    "step": round(step, 4),
+                    "group": "颜色映射",
+                },
+            ]
+            if colorbar_mapping_is_live(cb)
+            else []
+        ),
+        {
+            "prop": "tick_fontsize",
+            "type": "number",
+            "value": round(_cb_tick_fontsize(p), 2),
+            "min": 3,
+            "max": 24,
+            "step": 0.5,
+            "unit": "pt",
+            "group": "刻度",
+        },
+        {
+            "prop": "tick_color",
+            "type": "color",
+            "value": to_hex(_cb_tick_color(p)),
+            "group": "刻度",
+        },
+        {
+            "prop": "outline_visible",
+            "type": "bool",
+            "value": bool(cb.outline.get_visible()),
+            "group": "高级",
+        },
+        {
+            "prop": "outline_width",
+            "type": "number",
+            "value": round(float(cb.outline.get_linewidth()), 2),
+            "min": 0,
+            "max": 3,
+            "step": 0.1,
+            "unit": "pt",
+            "group": "高级",
+        },
         {"prop": "visible", "type": "bool", "value": bool(cb.ax.get_visible())},
     ]
 
@@ -1294,36 +1821,94 @@ def _legend_fields(leg) -> list[dict]:
     loc_opts = (["custom"] if loc_name == "custom" else []) + _LEGEND_LOCS
     return [
         {"prop": "loc", "type": "enum", "value": loc_name, "options": loc_opts},
-        {"prop": "fontsize", "type": "number",
-         "value": round(float(sizes[0]), 2) if sizes else 8,
-         "min": 3, "max": 24, "step": 0.5, "unit": "pt"},
+        {
+            "prop": "fontsize",
+            "type": "number",
+            "value": round(float(sizes[0]), 2) if sizes else 8,
+            "min": 3,
+            "max": 24,
+            "step": 0.5,
+            "unit": "pt",
+        },
         {"prop": "frameon", "type": "bool", "value": bool(leg.get_frame_on())},
         {"prop": "visible", "type": "bool", "value": bool(leg.get_visible())},
-        {"prop": "title", "type": "text", "value": leg.get_title().get_text(),
-         "group": "样式"},
-        {"prop": "title_fontsize", "type": "number",
-         "value": round(float(leg.get_title().get_fontsize()), 2),
-         "min": 3, "max": 24, "step": 0.5, "unit": "pt", "group": "样式"},
-        {"prop": "facecolor", "type": "color", "value": to_hex(frame.get_facecolor()),
-         "group": "样式"},
-        {"prop": "framealpha", "type": "number",
-         "value": 1.0 if frame.get_alpha() is None else round(float(frame.get_alpha()), 2),
-         "min": 0, "max": 1, "step": 0.05, "group": "样式"},
-        {"prop": "edgecolor", "type": "color", "value": to_hex(frame.get_edgecolor()),
-         "group": "样式"},
+        {"prop": "title", "type": "text", "value": leg.get_title().get_text(), "group": "样式"},
+        {
+            "prop": "title_fontsize",
+            "type": "number",
+            "value": round(float(leg.get_title().get_fontsize()), 2),
+            "min": 3,
+            "max": 24,
+            "step": 0.5,
+            "unit": "pt",
+            "group": "样式",
+        },
+        {
+            "prop": "facecolor",
+            "type": "color",
+            "value": to_hex(frame.get_facecolor()),
+            "group": "样式",
+        },
+        {
+            "prop": "framealpha",
+            "type": "number",
+            "value": 1.0 if frame.get_alpha() is None else round(float(frame.get_alpha()), 2),
+            "min": 0,
+            "max": 1,
+            "step": 0.05,
+            "group": "样式",
+        },
+        {
+            "prop": "edgecolor",
+            "type": "color",
+            "value": to_hex(frame.get_edgecolor()),
+            "group": "样式",
+        },
         # 条目顺序：value 是按显示顺序排的原始序号；options 给当前显示的文字
         # （前端画上下移动列表，不是普通下拉）
-        {"prop": "entry_order", "type": "order",
-         "value": _legend_entry_order(leg),
-         "options": [t.get_text() for t in leg.get_texts()], "group": "布局"},
-        {"prop": "ncol", "type": "number", "value": int(getattr(leg, "_ncols", 1)),
-         "min": 1, "max": 6, "step": 1, "group": "布局"},
-        {"prop": "borderpad", "type": "number", "value": round(float(leg.borderpad), 2),
-         "min": 0, "max": 3, "step": 0.1, "group": "布局"},
-        {"prop": "labelspacing", "type": "number", "value": round(float(leg.labelspacing), 2),
-         "min": 0, "max": 3, "step": 0.1, "group": "布局"},
-        {"prop": "handlelength", "type": "number", "value": round(float(leg.handlelength), 2),
-         "min": 0, "max": 5, "step": 0.1, "group": "布局"},
+        {
+            "prop": "entry_order",
+            "type": "order",
+            "value": _legend_entry_order(leg),
+            "options": [t.get_text() for t in leg.get_texts()],
+            "group": "布局",
+        },
+        {
+            "prop": "ncol",
+            "type": "number",
+            "value": int(getattr(leg, "_ncols", 1)),
+            "min": 1,
+            "max": 6,
+            "step": 1,
+            "group": "布局",
+        },
+        {
+            "prop": "borderpad",
+            "type": "number",
+            "value": round(float(leg.borderpad), 2),
+            "min": 0,
+            "max": 3,
+            "step": 0.1,
+            "group": "布局",
+        },
+        {
+            "prop": "labelspacing",
+            "type": "number",
+            "value": round(float(leg.labelspacing), 2),
+            "min": 0,
+            "max": 3,
+            "step": 0.1,
+            "group": "布局",
+        },
+        {
+            "prop": "handlelength",
+            "type": "number",
+            "value": round(float(leg.handlelength), 2),
+            "min": 0,
+            "max": 5,
+            "step": 0.1,
+            "group": "布局",
+        },
     ]
 
 
@@ -1331,53 +1916,123 @@ def _tick_fields(ts: TickSet) -> list[dict]:
     t0 = _tick0(ts)
     is3d = getattr(ts.ax, "name", "") == "3d"
     fields = [
-        {"prop": "fontsize", "type": "number",
-         "value": round(float(ts._first(lambda t: t.get_fontsize(), 8.5)), 2),
-         "min": 3, "max": 24, "step": 0.5, "unit": "pt"},
-        {"prop": "color", "type": "color",
-         "value": to_hex(ts._first(lambda t: t.get_color(), "#000000"))},
-        {"prop": "rotation", "type": "number",
-         "value": round(float(ts._first(lambda t: t.get_rotation(), 0.0)), 1),
-         "min": -90, "max": 90, "step": 5, "unit": "°"},
-        {"prop": "visible", "type": "bool",
-         "value": bool(ts._first(lambda t: t.get_visible(), True))},
-        {"prop": "direction", "type": "enum",
-         "value": str(getattr(t0, "_tickdir", "out")),
-         "options": ["out", "in", "inout"], "group": "刻度线"},
-        {"prop": "length", "type": "number",
-         "value": round(float(getattr(t0, "_size", 3.5)), 2),
-         "min": 0, "max": 12, "step": 0.5, "unit": "pt", "group": "刻度线"},
+        {
+            "prop": "fontsize",
+            "type": "number",
+            "value": round(float(ts._first(lambda t: t.get_fontsize(), 8.5)), 2),
+            "min": 3,
+            "max": 24,
+            "step": 0.5,
+            "unit": "pt",
+        },
+        {
+            "prop": "color",
+            "type": "color",
+            "value": to_hex(ts._first(lambda t: t.get_color(), "#000000")),
+        },
+        {
+            "prop": "rotation",
+            "type": "number",
+            "value": round(float(ts._first(lambda t: t.get_rotation(), 0.0)), 1),
+            "min": -90,
+            "max": 90,
+            "step": 5,
+            "unit": "°",
+        },
+        {
+            "prop": "visible",
+            "type": "bool",
+            "value": bool(ts._first(lambda t: t.get_visible(), True)),
+        },
+        {
+            "prop": "direction",
+            "type": "enum",
+            "value": str(getattr(t0, "_tickdir", "out")),
+            "options": ["out", "in", "inout"],
+            "group": "刻度线",
+        },
+        {
+            "prop": "length",
+            "type": "number",
+            "value": round(float(getattr(t0, "_size", 3.5)), 2),
+            "min": 0,
+            "max": 12,
+            "step": 0.5,
+            "unit": "pt",
+            "group": "刻度线",
+        },
         # 刻度是 marker，线宽落在 markeredgewidth 上（get_linewidth 读到的是
         # lines.linewidth，改了也不会变）
-        {"prop": "width", "type": "number",
-         "value": round(float(t0.tick1line.get_markeredgewidth()), 2) if t0 is not None else 0.8,
-         "min": 0.1, "max": 3, "step": 0.1, "unit": "pt", "group": "刻度线"},
+        {
+            "prop": "width",
+            "type": "number",
+            "value": round(float(t0.tick1line.get_markeredgewidth()), 2) if t0 is not None else 0.8,
+            "min": 0.1,
+            "max": 3,
+            "step": 0.1,
+            "unit": "pt",
+            "group": "刻度线",
+        },
         # 数值格式（主刻度 Formatter）。"auto" = 回到脚本原样，不是「换成
         # ScalarFormatter」——对数轴上后者会把 10³ 写成 1000
-        {"prop": "format", "type": "enum", "value": tick_format_name(ts.ax, ts.which),
-         "options": list(_TICK_FORMATS), "group": "刻度线"},
-
+        {
+            "prop": "format",
+            "type": "enum",
+            "value": tick_format_name(ts.ax, ts.which),
+            "options": list(_TICK_FORMATS),
+            "group": "刻度线",
+        },
         # ---- 刻度定位（Locator）：几个刻度、落在哪 ----
-        {"prop": "major_mode", "type": "enum",
-         "value": tick_major_mode(ts.ax, ts.which),
-         "options": ["auto", "step", "fixed"], "group": "刻度定位"},
-        {"prop": "major_step", "type": "number",
-         "value": tick_major_step(ts.ax, ts.which),
-         "min": 0, "step": 0.1, "group": "刻度定位"},
-        {"prop": "major_values", "type": "number_list",
-         "value": tick_major_values(ts.ax, ts.which), "group": "刻度定位"},
-        {"prop": "minor_visible", "type": "bool",
-         "value": tick_minor_visible(ts.ax, ts.which), "group": "刻度定位"},
-        {"prop": "minor_mode", "type": "enum",
-         "value": tick_minor_mode(ts.ax, ts.which),
-         "options": ["auto", "step"], "group": "刻度定位"},
-        {"prop": "minor_step", "type": "number",
-         "value": tick_minor_step(ts.ax, ts.which),
-         "min": 0, "step": 0.1, "group": "刻度定位"},
+        {
+            "prop": "major_mode",
+            "type": "enum",
+            "value": tick_major_mode(ts.ax, ts.which),
+            "options": ["auto", "step", "fixed"],
+            "group": "刻度定位",
+        },
+        {
+            "prop": "major_step",
+            "type": "number",
+            "value": tick_major_step(ts.ax, ts.which),
+            "min": 0,
+            "step": 0.1,
+            "group": "刻度定位",
+        },
+        {
+            "prop": "major_values",
+            "type": "number_list",
+            "value": tick_major_values(ts.ax, ts.which),
+            "group": "刻度定位",
+        },
+        {
+            "prop": "minor_visible",
+            "type": "bool",
+            "value": tick_minor_visible(ts.ax, ts.which),
+            "group": "刻度定位",
+        },
+        {
+            "prop": "minor_mode",
+            "type": "enum",
+            "value": tick_minor_mode(ts.ax, ts.which),
+            "options": ["auto", "step"],
+            "group": "刻度定位",
+        },
+        {
+            "prop": "minor_step",
+            "type": "number",
+            "value": tick_minor_step(ts.ax, ts.which),
+            "min": 0,
+            "step": 0.1,
+            "group": "刻度定位",
+        },
         # 次刻度默认不标数字（"none"）；"auto" 与主刻度一样是「脚本原样」
-        {"prop": "minor_format", "type": "enum",
-         "value": tick_minor_format(ts.ax, ts.which),
-         "options": list(_TICK_MINOR_FORMATS), "group": "刻度定位"},
+        {
+            "prop": "minor_format",
+            "type": "enum",
+            "value": tick_minor_format(ts.ax, ts.which),
+            "options": list(_TICK_MINOR_FORMATS),
+            "group": "刻度定位",
+        },
     ]
     if is3d:
         # mplot3d 的刻度朝向由投影决定；label 显隐的 tick_params 键也不含 z
@@ -1406,89 +2061,202 @@ def _axes_fields(ax, el: dict | None = None) -> list[dict]:
     y0, y1 = ax.get_ylim()
     aspect = ax.get_aspect()
     return [
-        *([] if flags.get("position_locked") else [
-            {"prop": "position", "type": "rect",
-             "value": [round(float(v), 4) for v in ax.get_position().bounds]}]),
+        *(
+            []
+            if flags.get("position_locked")
+            else [
+                {
+                    "prop": "position",
+                    "type": "rect",
+                    "value": [round(float(v), 4) for v in ax.get_position().bounds],
+                }
+            ]
+        ),
         {"prop": "visible", "type": "bool", "value": bool(ax.get_visible())},
-
-        *([] if flags.get("limits_slaved") else [
-        {"prop": "xlim", "type": "pair", "value": [float(x0), float(x1)],
-         "group": "数据范围"},
-        {"prop": "ylim", "type": "pair", "value": [float(y0), float(y1)],
-         "group": "数据范围"},
-        # 选项由**当前这套 matplotlib 真正注册了的 scale** 决定，不写死清单：
-        # 列一个 set_[xy]scale 吃不下的名字，用户点了只会得到一次渲染失败
-        {"prop": "xscale", "type": "enum", "value": str(ax.get_xscale()),
-         "options": scale_options(ax.get_xscale()), "group": "数据范围"},
-        {"prop": "yscale", "type": "enum", "value": str(ax.get_yscale()),
-         "options": scale_options(ax.get_yscale()), "group": "数据范围"},
-        {"prop": "invert_x", "type": "bool", "value": bool(ax.xaxis_inverted()),
-         "group": "数据范围"},
-        {"prop": "invert_y", "type": "bool", "value": bool(ax.yaxis_inverted()),
-         "group": "数据范围"},
-        {"prop": "aspect", "type": "text",
-         "value": aspect if isinstance(aspect, str) else str(round(float(aspect), 3)),
-         "group": "数据范围"},
-        ]),
-
+        *(
+            []
+            if flags.get("limits_slaved")
+            else [
+                {
+                    "prop": "xlim",
+                    "type": "pair",
+                    "value": [float(x0), float(x1)],
+                    "group": "数据范围",
+                },
+                {
+                    "prop": "ylim",
+                    "type": "pair",
+                    "value": [float(y0), float(y1)],
+                    "group": "数据范围",
+                },
+                # 选项由**当前这套 matplotlib 真正注册了的 scale** 决定，不写死清单：
+                # 列一个 set_[xy]scale 吃不下的名字，用户点了只会得到一次渲染失败
+                {
+                    "prop": "xscale",
+                    "type": "enum",
+                    "value": str(ax.get_xscale()),
+                    "options": scale_options(ax.get_xscale()),
+                    "group": "数据范围",
+                },
+                {
+                    "prop": "yscale",
+                    "type": "enum",
+                    "value": str(ax.get_yscale()),
+                    "options": scale_options(ax.get_yscale()),
+                    "group": "数据范围",
+                },
+                {
+                    "prop": "invert_x",
+                    "type": "bool",
+                    "value": bool(ax.xaxis_inverted()),
+                    "group": "数据范围",
+                },
+                {
+                    "prop": "invert_y",
+                    "type": "bool",
+                    "value": bool(ax.yaxis_inverted()),
+                    "group": "数据范围",
+                },
+                {
+                    "prop": "aspect",
+                    "type": "text",
+                    "value": aspect if isinstance(aspect, str) else str(round(float(aspect), 3)),
+                    "group": "数据范围",
+                },
+            ]
+        ),
         # 刻度线的四边开关（issue #92）：论文规范常要四边镜像刻度或全部关掉，
         # 而上/右两边没有刻度数字、在画布上点不到——入口放在子图元素上。
         # 方向（in/out/inout）在刻度组元素上，这里不重复（单一权威）。
-        {"prop": "ticks_bottom", "type": "bool",
-         "value": tick_side_visible(ax, "x", 1), "group": "刻度线"},
-        {"prop": "ticks_top", "type": "bool",
-         "value": tick_side_visible(ax, "x", 2), "group": "刻度线"},
-        {"prop": "ticks_left", "type": "bool",
-         "value": tick_side_visible(ax, "y", 1), "group": "刻度线"},
-        {"prop": "ticks_right", "type": "bool",
-         "value": tick_side_visible(ax, "y", 2), "group": "刻度线"},
-
-        {"prop": "grid_x", "type": "bool", "value": _grid_visible(ax, "x"),
-         "group": "网格与边框"},
-        {"prop": "grid_y", "type": "bool", "value": _grid_visible(ax, "y"),
-         "group": "网格与边框"},
-        {"prop": "grid_color", "type": "color",
-         "value": to_hex(_grid_prop(lambda g: g.get_color(), "#b0b0b0")(ax)),
-         "group": "网格与边框"},
-        {"prop": "grid_linestyle", "type": "enum",
-         "value": str(_grid_prop(lambda g: g.get_linestyle(), ":")(ax)),
-         "options": ["-", "--", ":", "-."], "group": "网格与边框"},
-        {"prop": "grid_linewidth", "type": "number",
-         "value": round(float(_grid_prop(lambda g: g.get_linewidth(), 0.5)(ax)), 2),
-         "min": 0.1, "max": 3, "step": 0.1, "unit": "pt", "group": "网格与边框"},
-        {"prop": "grid_alpha", "type": "number",
-         "value": round(float(_grid_prop(lambda g: g.get_alpha(), None)(ax) or 1.0), 2),
-         "min": 0, "max": 1, "step": 0.05, "group": "网格与边框"},
-        {"prop": "spine_top", "type": "bool",
-         "value": bool(ax.spines["top"].get_visible()) if "top" in ax.spines else True,
-         "group": "网格与边框"},
-        {"prop": "spine_right", "type": "bool",
-         "value": bool(ax.spines["right"].get_visible()) if "right" in ax.spines else True,
-         "group": "网格与边框"},
-        {"prop": "spine_bottom", "type": "bool",
-         "value": bool(ax.spines["bottom"].get_visible()) if "bottom" in ax.spines else True,
-         "group": "网格与边框"},
-        {"prop": "spine_left", "type": "bool",
-         "value": bool(ax.spines["left"].get_visible()) if "left" in ax.spines else True,
-         "group": "网格与边框"},
+        {
+            "prop": "ticks_bottom",
+            "type": "bool",
+            "value": tick_side_visible(ax, "x", 1),
+            "group": "刻度线",
+        },
+        {
+            "prop": "ticks_top",
+            "type": "bool",
+            "value": tick_side_visible(ax, "x", 2),
+            "group": "刻度线",
+        },
+        {
+            "prop": "ticks_left",
+            "type": "bool",
+            "value": tick_side_visible(ax, "y", 1),
+            "group": "刻度线",
+        },
+        {
+            "prop": "ticks_right",
+            "type": "bool",
+            "value": tick_side_visible(ax, "y", 2),
+            "group": "刻度线",
+        },
+        {"prop": "grid_x", "type": "bool", "value": _grid_visible(ax, "x"), "group": "网格与边框"},
+        {"prop": "grid_y", "type": "bool", "value": _grid_visible(ax, "y"), "group": "网格与边框"},
+        {
+            "prop": "grid_color",
+            "type": "color",
+            "value": to_hex(_grid_prop(lambda g: g.get_color(), "#b0b0b0")(ax)),
+            "group": "网格与边框",
+        },
+        {
+            "prop": "grid_linestyle",
+            "type": "enum",
+            "value": str(_grid_prop(lambda g: g.get_linestyle(), ":")(ax)),
+            "options": ["-", "--", ":", "-."],
+            "group": "网格与边框",
+        },
+        {
+            "prop": "grid_linewidth",
+            "type": "number",
+            "value": round(float(_grid_prop(lambda g: g.get_linewidth(), 0.5)(ax)), 2),
+            "min": 0.1,
+            "max": 3,
+            "step": 0.1,
+            "unit": "pt",
+            "group": "网格与边框",
+        },
+        {
+            "prop": "grid_alpha",
+            "type": "number",
+            "value": round(float(_grid_prop(lambda g: g.get_alpha(), None)(ax) or 1.0), 2),
+            "min": 0,
+            "max": 1,
+            "step": 0.05,
+            "group": "网格与边框",
+        },
+        {
+            "prop": "spine_top",
+            "type": "bool",
+            "value": bool(ax.spines["top"].get_visible()) if "top" in ax.spines else True,
+            "group": "网格与边框",
+        },
+        {
+            "prop": "spine_right",
+            "type": "bool",
+            "value": bool(ax.spines["right"].get_visible()) if "right" in ax.spines else True,
+            "group": "网格与边框",
+        },
+        {
+            "prop": "spine_bottom",
+            "type": "bool",
+            "value": bool(ax.spines["bottom"].get_visible()) if "bottom" in ax.spines else True,
+            "group": "网格与边框",
+        },
+        {
+            "prop": "spine_left",
+            "type": "bool",
+            "value": bool(ax.spines["left"].get_visible()) if "left" in ax.spines else True,
+            "group": "网格与边框",
+        },
         # 「全部」这一档：四条边（含色条轴的 outline）统一改
-        {"prop": "spine_color", "type": "color",
-         "value": to_hex(spine_all_color(ax)), "group": "网格与边框"},
-        {"prop": "spine_linewidth", "type": "number",
-         "value": round(spine_all_width(ax), 2),
-         "min": 0.1, "max": 3, "step": 0.1, "unit": "pt", "group": "网格与边框"},
+        {
+            "prop": "spine_color",
+            "type": "color",
+            "value": to_hex(spine_all_color(ax)),
+            "group": "网格与边框",
+        },
+        {
+            "prop": "spine_linewidth",
+            "type": "number",
+            "value": round(spine_all_width(ax), 2),
+            "min": 0.1,
+            "max": 3,
+            "step": 0.1,
+            "unit": "pt",
+            "group": "网格与边框",
+        },
         # 逐条覆盖（只画左下两条粗边框是论文图的常见做法）。没表态的落回
         # 「全部」，「全部」也没表态就用脚本原样——优先级见 apply_spine_model
-        *[f for side in ("top", "right", "bottom", "left") for f in (
-            {"prop": f"spine_{side}_color", "type": "color",
-             "value": to_hex(spine_side_color(ax, side)), "group": "边框（逐条）"},
-            {"prop": f"spine_{side}_linewidth", "type": "number",
-             "value": round(spine_side_width(ax, side), 2),
-             "min": 0.1, "max": 3, "step": 0.1, "unit": "pt",
-             "group": "边框（逐条）"},
-        )],
-        {"prop": "facecolor", "type": "color", "value": to_hex(ax.get_facecolor()),
-         "group": "网格与边框"},
+        *[
+            f
+            for side in ("top", "right", "bottom", "left")
+            for f in (
+                {
+                    "prop": f"spine_{side}_color",
+                    "type": "color",
+                    "value": to_hex(spine_side_color(ax, side)),
+                    "group": "边框（逐条）",
+                },
+                {
+                    "prop": f"spine_{side}_linewidth",
+                    "type": "number",
+                    "value": round(spine_side_width(ax, side), 2),
+                    "min": 0.1,
+                    "max": 3,
+                    "step": 0.1,
+                    "unit": "pt",
+                    "group": "边框（逐条）",
+                },
+            )
+        ],
+        {
+            "prop": "facecolor",
+            "type": "color",
+            "value": to_hex(ax.get_facecolor()),
+            "group": "网格与边框",
+        },
     ]
 
 
@@ -1498,48 +2266,113 @@ def _axes3d_fields(ax) -> list[dict]:
     注意 Axes3D.set_position 之后 matplotlib 会按三维盒比例微调实际落位——
     manifest 重建返回真实 bbox，前端以它为准。"""
     fields = [
-        {"prop": "position", "type": "rect",
-         "value": [round(float(v), 4) for v in ax.get_position().bounds]},
+        {
+            "prop": "position",
+            "type": "rect",
+            "value": [round(float(v), 4) for v in ax.get_position().bounds],
+        },
         {"prop": "visible", "type": "bool", "value": bool(ax.get_visible())},
-        {"prop": "elev", "type": "number", "value": round(float(ax.elev), 1),
-         "min": -90, "max": 90, "step": 5, "unit": "°", "group": "视角"},
-        {"prop": "azim", "type": "number", "value": round(float(ax.azim), 1),
-         "min": -180, "max": 180, "step": 5, "unit": "°", "group": "视角"},
+        {
+            "prop": "elev",
+            "type": "number",
+            "value": round(float(ax.elev), 1),
+            "min": -90,
+            "max": 90,
+            "step": 5,
+            "unit": "°",
+            "group": "视角",
+        },
+        {
+            "prop": "azim",
+            "type": "number",
+            "value": round(float(ax.azim), 1),
+            "min": -180,
+            "max": 180,
+            "step": 5,
+            "unit": "°",
+            "group": "视角",
+        },
     ]
     if hasattr(ax, "roll"):  # matplotlib ≥3.6
-        fields.append({"prop": "roll", "type": "number",
-                       "value": round(float(ax.roll or 0.0), 1),
-                       "min": -180, "max": 180, "step": 5, "unit": "°",
-                       "group": "视角"})
+        fields.append(
+            {
+                "prop": "roll",
+                "type": "number",
+                "value": round(float(ax.roll or 0.0), 1),
+                "min": -180,
+                "max": 180,
+                "step": 5,
+                "unit": "°",
+                "group": "视角",
+            }
+        )
     line0, pane0 = ax.xaxis.line, ax.xaxis.pane
     fields += [
-        {"prop": "axline_color", "type": "color", "value": to_hex(line0.get_color()),
-         "group": "坐标轴"},
-        {"prop": "axline_width", "type": "number",
-         "value": round(float(line0.get_linewidth()), 2),
-         "min": 0.1, "max": 5, "step": 0.1, "unit": "pt", "group": "坐标轴"},
-        {"prop": "pane_visible", "type": "bool", "value": bool(pane0.get_visible()),
-         "group": "坐标轴"},
-        {"prop": "pane_color", "type": "color", "value": to_hex(pane0.get_facecolor()),
-         "group": "坐标轴"},
-        {"prop": "grid_visible", "type": "bool",
-         "value": bool(getattr(ax, "_draw_grid", True)), "group": "坐标轴"},
-        {"prop": "proj_type", "type": "enum",
-         "value": str(getattr(ax, "_proj_type", "persp")),
-         "options": ["persp", "ortho"], "group": "视角"},
+        {
+            "prop": "axline_color",
+            "type": "color",
+            "value": to_hex(line0.get_color()),
+            "group": "坐标轴",
+        },
+        {
+            "prop": "axline_width",
+            "type": "number",
+            "value": round(float(line0.get_linewidth()), 2),
+            "min": 0.1,
+            "max": 5,
+            "step": 0.1,
+            "unit": "pt",
+            "group": "坐标轴",
+        },
+        {
+            "prop": "pane_visible",
+            "type": "bool",
+            "value": bool(pane0.get_visible()),
+            "group": "坐标轴",
+        },
+        {
+            "prop": "pane_color",
+            "type": "color",
+            "value": to_hex(pane0.get_facecolor()),
+            "group": "坐标轴",
+        },
+        {
+            "prop": "grid_visible",
+            "type": "bool",
+            "value": bool(getattr(ax, "_draw_grid", True)),
+            "group": "坐标轴",
+        },
+        {
+            "prop": "proj_type",
+            "type": "enum",
+            "value": str(getattr(ax, "_proj_type", "persp")),
+            "options": ["persp", "ortho"],
+            "group": "视角",
+        },
     ]
     st = _arrow_style(ax)
     fields += [
-        {"prop": "axis_arrows", "type": "bool", "value": _axis_arrows_on(ax),
-         "group": "轴箭头"},
-        {"prop": "arrow_color", "type": "color", "value": to_hex(st["color"]),
-         "group": "轴箭头"},
-        {"prop": "arrow_width", "type": "number",
-         "value": round(float(st["width"]), 2),
-         "min": 0.1, "max": 3, "step": 0.1, "unit": "pt", "group": "轴箭头"},
-        {"prop": "arrow_head", "type": "number",
-         "value": round(float(st["head"]), 1),
-         "min": 2, "max": 20, "step": 0.5, "group": "轴箭头"},
+        {"prop": "axis_arrows", "type": "bool", "value": _axis_arrows_on(ax), "group": "轴箭头"},
+        {"prop": "arrow_color", "type": "color", "value": to_hex(st["color"]), "group": "轴箭头"},
+        {
+            "prop": "arrow_width",
+            "type": "number",
+            "value": round(float(st["width"]), 2),
+            "min": 0.1,
+            "max": 3,
+            "step": 0.1,
+            "unit": "pt",
+            "group": "轴箭头",
+        },
+        {
+            "prop": "arrow_head",
+            "type": "number",
+            "value": round(float(st["head"]), 1),
+            "min": 2,
+            "max": 20,
+            "step": 0.5,
+            "group": "轴箭头",
+        },
     ]
     return fields
 
@@ -1556,8 +2389,12 @@ def _stem_fields(grp) -> list[dict]:
         return []
     lab = str(grp.container.get_label() or "") if grp.container is not None else ""
     color = probe.get_color()
-    if hasattr(color, "__len__") and not isinstance(color, str) and len(color) \
-            and not isinstance(color[0], (int, float)):
+    if (
+        hasattr(color, "__len__")
+        and not isinstance(color, str)
+        and len(color)
+        and not isinstance(color[0], (int, float))
+    ):
         color = color[0]
     stem0 = stems[0] if stems else None
     lw = stem0.get_linewidth() if stem0 is not None else 1.0
@@ -1570,26 +2407,54 @@ def _stem_fields(grp) -> list[dict]:
     return [
         {"prop": "label", "type": "text", "value": "" if lab.startswith("_") else lab},
         {"prop": "color", "type": "color", "value": to_hex(color)},
-        {"prop": "linewidth", "type": "number", "value": round(float(lw), 2),
-         "min": 0.1, "max": 8, "step": 0.1, "unit": "pt"},
+        {
+            "prop": "linewidth",
+            "type": "number",
+            "value": round(float(lw), 2),
+            "min": 0.1,
+            "max": 8,
+            "step": 0.1,
+            "unit": "pt",
+        },
         # 茎是 **LineCollection**，反查要用未缩放规格那一套：`_linestyle_name`
         # 是 Line2D 那条（`get_linestyle()` 回字符串），喂给 Collection 时它
         # 拿到的是 `(offset, seq)`，于是**任何** dash 都显示成实线占位——
         # `ax.stem(..., linefmt="--")` 画出来是虚线、检查器却说实线。
-        {"prop": "linestyle", "type": "enum",
-         "value": _linecoll_linestyle_name(stem0) if stem0 is not None else "-",
-         "options": ["-", "--", "-.", ":"]},
-        {"prop": "marker", "type": "enum", "value": m_name, "options": m_opts,
-         "group": "标记"},
-        {"prop": "markersize", "type": "number",
-         "value": round(float(marker.get_markersize()), 2) if marker is not None else 6.0,
-         "min": 0, "max": 20, "step": 0.5, "unit": "pt", "group": "标记"},
-        {"prop": "alpha", "type": "number",
-         "value": 1.0 if probe.get_alpha() is None else round(float(probe.get_alpha()), 2),
-         "min": 0, "max": 1, "step": 0.05},
+        {
+            "prop": "linestyle",
+            "type": "enum",
+            "value": _linecoll_linestyle_name(stem0) if stem0 is not None else "-",
+            "options": ["-", "--", "-.", ":"],
+        },
+        {"prop": "marker", "type": "enum", "value": m_name, "options": m_opts, "group": "标记"},
+        {
+            "prop": "markersize",
+            "type": "number",
+            "value": round(float(marker.get_markersize()), 2) if marker is not None else 6.0,
+            "min": 0,
+            "max": 20,
+            "step": 0.5,
+            "unit": "pt",
+            "group": "标记",
+        },
+        {
+            "prop": "alpha",
+            "type": "number",
+            "value": 1.0 if probe.get_alpha() is None else round(float(probe.get_alpha()), 2),
+            "min": 0,
+            "max": 1,
+            "step": 0.05,
+        },
         {"prop": "visible", "type": "bool", "value": bool(probe.get_visible())},
-        {"prop": "zorder", "type": "number", "value": round(float(probe.get_zorder()), 1),
-         "min": -5, "max": 50, "step": 1, "group": "排列"},
+        {
+            "prop": "zorder",
+            "type": "number",
+            "value": round(float(probe.get_zorder()), 1),
+            "min": -5,
+            "max": 50,
+            "step": 1,
+            "group": "排列",
+        },
     ]
 
 
@@ -1603,8 +2468,15 @@ def _generic_fields(a) -> list[dict]:
     """
     return [
         {"prop": "visible", "type": "bool", "value": bool(a.get_visible())},
-        {"prop": "zorder", "type": "number", "value": round(float(a.get_zorder()), 1),
-         "min": -5, "max": 50, "step": 1, "group": "排列"},
+        {
+            "prop": "zorder",
+            "type": "number",
+            "value": round(float(a.get_zorder()), 1),
+            "min": -5,
+            "max": 50,
+            "step": 1,
+            "group": "排列",
+        },
     ]
 
 
@@ -1613,12 +2485,24 @@ def _fields_for(el) -> list[dict]:
     if role == "figure":
         w, h = artist.get_size_inches()
         return [
-            {"prop": "size_mm", "type": "pair",
-             "value": [round(w * 25.4, 1), round(h * 25.4, 1)], "unit": "mm"},
-            {"prop": "facecolor", "type": "color",
-             "value": to_hex(artist.patch.get_facecolor()), "group": "背景"},
-            {"prop": "transparent", "type": "bool",
-             "value": not artist.patch.get_visible(), "group": "背景"},
+            {
+                "prop": "size_mm",
+                "type": "pair",
+                "value": [round(w * 25.4, 1), round(h * 25.4, 1)],
+                "unit": "mm",
+            },
+            {
+                "prop": "facecolor",
+                "type": "color",
+                "value": to_hex(artist.patch.get_facecolor()),
+                "group": "背景",
+            },
+            {
+                "prop": "transparent",
+                "type": "bool",
+                "value": not artist.patch.get_visible(),
+                "group": "背景",
+            },
         ]
     key = _cls_key(artist)
     if key == "ticklabel":
@@ -1632,8 +2516,7 @@ def _fields_for(el) -> list[dict]:
     if key == "legend":
         return _legend_fields(artist)
     if key == "axes":
-        return (_axes3d_fields(artist) if role == "axes3d"
-                else _axes_fields(artist, el))
+        return _axes3d_fields(artist) if role == "axes3d" else _axes_fields(artist, el)
     if key == "image":
         return _image_fields(artist)
     if key == "arrowpatch":
@@ -1722,7 +2605,7 @@ def _collection_datalim(artist):
         return None
     try:
         bb = ax.transData.transform_bbox(artist.get_datalim(ax.transData))
-    except Exception:                                   # noqa: BLE001
+    except Exception:  # noqa: BLE001
         return None
     if not _finite_box(bb) or (bb.width <= 0 and bb.height <= 0):
         return None
@@ -1776,13 +2659,18 @@ def _collection_bbox(coll, renderer):
     命中框」按两套规则算，而两套规则会各自演进——这正是 §单一权威 要挡的
     那类分叉。SeriesGroup 的成员（误差棒的横杠、茎）也问同一个函数。
     """
+
     def _ok(bb):
         if bb is None:
             return False
         w, h = float(bb.width), float(bb.height)
-        return (w == w and h == h                      # NaN 自比不等
-                and abs(w) != float("inf") and abs(h) != float("inf")
-                and (w > 0 or h > 0))
+        return (
+            w == w
+            and h == h  # NaN 自比不等
+            and abs(w) != float("inf")
+            and abs(h) != float("inf")
+            and (w > 0 or h > 0)
+        )
 
     try:
         bb = coll.get_window_extent(renderer)
@@ -1811,7 +2699,8 @@ def _ensure_agg_canvas(fig):
     """
     if not hasattr(fig.canvas, "get_renderer"):
         from matplotlib.backends.backend_agg import FigureCanvasAgg
-        FigureCanvasAgg(fig)          # 构造即绑定到 fig.canvas
+
+        FigureCanvasAgg(fig)  # 构造即绑定到 fig.canvas
     fig.canvas.draw()
     return fig.canvas.get_renderer()
 
@@ -1842,14 +2731,18 @@ def build_manifest(state: FigState, stem: str) -> dict:
         if el["role"] in _DROP_CHURN_ROLES or why in ("empty_text", "gone"):
             return
         cls = type(el["artist"])
-        key = (f"{cls.__module__}.{cls.__qualname__}",
-               el["gid"].split(".", 1)[0], why)
+        key = (f"{cls.__module__}.{cls.__qualname__}", el["gid"].split(".", 1)[0], why)
         dropped[key] = dropped.get(key, 0) + 1
 
     for el in state.elements:
         artist = el["artist"]
-        entry = {"gid": el["gid"], "role": el["role"], "label": el["label"],
-                 "draggable": el["draggable"], "editable": _fields_for(el)}
+        entry = {
+            "gid": el["gid"],
+            "role": el["role"],
+            "label": el["label"],
+            "draggable": el["draggable"],
+            "editable": _fields_for(el),
+        }
         # 文字类元素的显示名跟着**当前**文字走：登记名是 build 那一刻的快照，
         # 改过字（或色条翻转把标签搬了家）之后它就成了旧内容，元素树里对不上
         if el["role"] in ("title", "axis_label", "text", "legend_text"):
@@ -1904,19 +2797,23 @@ def build_manifest(state: FigState, stem: str) -> dict:
             if not boxes:
                 _drop(el, "no_geometry")
                 continue
-            x0 = min(b.x0 for b in boxes); y0 = min(b.y0 for b in boxes)
-            x1 = max(b.x1 for b in boxes); y1 = max(b.y1 for b in boxes)
+            x0 = min(b.x0 for b in boxes)
+            y0 = min(b.y0 for b in boxes)
+            x1 = max(b.x1 for b in boxes)
+            y1 = max(b.y1 for b in boxes)
             entry["bbox"] = [x0 / W, 1.0 - y1 / H, (x1 - x0) / W, (y1 - y0) / H]
         elif isinstance(artist, SeriesGroup):
             boxes = []
-            members = (artist.artists if artist.kind == "bar_series"
-                       else artist.members())
+            members = artist.artists if artist.kind == "bar_series" else artist.members()
             for m in members:
                 try:
                     # 成员里混着 Collection（误差棒的横杠、茎叶的茎）——它们的
                     # get_window_extent 多半是无穷大空框，走同一条退路
-                    bb = (_collection_bbox(m, renderer) if isinstance(m, Collection)
-                          else m.get_window_extent(renderer))
+                    bb = (
+                        _collection_bbox(m, renderer)
+                        if isinstance(m, Collection)
+                        else m.get_window_extent(renderer)
+                    )
                     if bb is not None and (bb.width > 0 or bb.height > 0):
                         boxes.append(bb)
                 except Exception:
@@ -1924,8 +2821,10 @@ def build_manifest(state: FigState, stem: str) -> dict:
             if not boxes:
                 _drop(el, "no_geometry")
                 continue
-            x0 = min(b.x0 for b in boxes); y0 = min(b.y0 for b in boxes)
-            x1 = max(b.x1 for b in boxes); y1 = max(b.y1 for b in boxes)
+            x0 = min(b.x0 for b in boxes)
+            y0 = min(b.y0 for b in boxes)
+            x1 = max(b.x1 for b in boxes)
+            y1 = max(b.y1 for b in boxes)
             entry["bbox"] = [x0 / W, 1.0 - y1 / H, (x1 - x0) / W, (y1 - y0) / H]
         elif isinstance(artist, ColorbarProxy):
             try:
@@ -1950,8 +2849,12 @@ def build_manifest(state: FigState, stem: str) -> dict:
             hosts = colorbar_host_count(artist.cb)
             if hosts > 1:
                 entry["unsupported_props"] = [
-                    {"prop": "orientation", "reason": "multi_host_colorbar",
-                     "detail": {"hosts": hosts}}]
+                    {
+                        "prop": "orientation",
+                        "reason": "multi_host_colorbar",
+                        "detail": {"hosts": hosts},
+                    }
+                ]
         elif isinstance(artist, Collection):
             # 散点（PathCollection）**不再单开一支**：它当年之所以有自己的
             # 分支，是因为 `get_window_extent` 对集合回空框、需要用数据范围
@@ -1991,11 +2894,10 @@ def build_manifest(state: FigState, stem: str) -> dict:
             if pts is not None:
                 try:
                     conv = getattr(artist, "_convert_xy_units", lambda p: p)
-                    disp = artist.get_transform().transform(
-                        [conv(pts[0]), conv(pts[1])])
+                    disp = artist.get_transform().transform([conv(pts[0]), conv(pts[1])])
                     entry["arrow_endpoints"] = [
-                        [round(float(x) / W, 4), round(1.0 - float(y) / H, 4)]
-                        for x, y in disp]
+                        [round(float(x) / W, 4), round(1.0 - float(y) / H, 4)] for x, y in disp
+                    ]
                 except Exception:
                     pass
         # ---- 几何总闸：非有限值一个都不许出去 ----
@@ -2014,9 +2916,11 @@ def build_manifest(state: FigState, stem: str) -> dict:
         # 量不出位置的元素本来也选不中、画不了描边，丢掉与既有「零尺寸包围盒
         # 就 continue」是同一个取舍。丢了要说出来，别静默。
         if not _finite_geometry(entry):
-            print(f"[manifest] {el['gid']} 的几何不是有限值，已丢弃"
-                  f"（bbox={entry.get('bbox')} anchor={entry.get('anchor')}）",
-                  file=sys.stderr)
+            print(
+                f"[manifest] {el['gid']} 的几何不是有限值，已丢弃"
+                f"（bbox={entry.get('bbox')} anchor={entry.get('anchor')}）",
+                file=sys.stderr,
+            )
             _drop(el, "not_finite")
             continue
 
@@ -2041,13 +2945,18 @@ def build_manifest(state: FigState, stem: str) -> dict:
     if budget.skipped:
         # 降级要说出来：同一张图上有的曲线沿路径选、有的退回 bbox，
         # 不打这一行的话没人知道为什么
-        print(f"[geometry] 点数预算用尽，{budget.skipped} 个元素退回 bbox "
-              f"（TOTAL_BUDGET={pathgeom.TOTAL_BUDGET}）", file=sys.stderr)
+        print(
+            f"[geometry] 点数预算用尽，{budget.skipped} 个元素退回 bbox "
+            f"（TOTAL_BUDGET={pathgeom.TOTAL_BUDGET}）",
+            file=sys.stderr,
+        )
 
     w_in, h_in = fig.get_size_inches()
-    out = {"stem": stem,
-           "size_mm": [round(float(w_in) * 25.4, 2), round(float(h_in) * 25.4, 2)],
-           "elements": elements}
+    out = {
+        "stem": stem,
+        "size_mm": [round(float(w_in) * 25.4, 2), round(float(h_in) * 25.4, 2)],
+        "elements": elements,
+    }
     # 诊断字段：画在图上、却没进元素表的 artist（`census` 在 instrument 里采）。
     # 可选、只在非空时出现——旧前端不认识它会原样忽略，写回自检只比 gid 集合
     # 与几何，不看这里。有它才谈得上「知道自己漏了什么」（§35）。
@@ -2056,8 +2965,10 @@ def build_manifest(state: FigState, stem: str) -> dict:
     # 「不许静默消失」要防的情况（自定义 Artist 只实现 draw、没重写
     # get_window_extent 时基类回空框，就会走到这儿）。
     rows = list(state.unregistered)
-    rows += [{"cls": cls, "where": where, "count": n, "reason": why}
-             for (cls, where, why), n in sorted(dropped.items())]
+    rows += [
+        {"cls": cls, "where": where, "count": n, "reason": why}
+        for (cls, where, why), n in sorted(dropped.items())
+    ]
     if rows:
         out["unsupported"] = rows
     return out

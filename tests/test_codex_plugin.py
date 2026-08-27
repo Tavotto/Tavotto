@@ -4,6 +4,7 @@
 插件本体在 `codex-plugin/`。这几条断言盯的都是「坏了也不报错，只是悄悄不生效」
 的那类问题——清单字段错一个 Codex 就装不上，版本漂了用户装到的是另一代约定。
 """
+
 import ast
 import importlib.util
 import json
@@ -89,7 +90,7 @@ def test_skill_states_the_script_must_sit_next_to_the_figure():
     """整条链路的地基：没有同目录的脚本，图在 Tavotto 里就是一张死图。"""
     text = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
     assert "脚本与产物同目录" in text
-    assert "python -c" in text          # 明确禁掉临时出图的写法
+    assert "python -c" in text  # 明确禁掉临时出图的写法
 
 
 def test_skill_asks_the_three_setup_questions():
@@ -145,6 +146,7 @@ def test_skill_keeps_multi_panel_inside_matplotlib():
 # 已删除——同一会话里工具不重载，健康会话里那条命令只有网络与解析成本。
 # 新契约是状态机：健康 = 零安装；缺什么修什么；工具缺失 = 新会话 + 停止。
 
+
 def _skill_text() -> str:
     return (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
 
@@ -163,8 +165,9 @@ def test_skill_no_longer_reinstalls_the_plugin_every_session():
     跑一遍」的行为一个字都不许留。
     """
     everything = _all_skill_docs()
-    assert ("codex plugin marketplace add Tavotto/Tavotto && "
-            "codex plugin add tavotto@tavotto") not in everything
+    assert (
+        "codex plugin marketplace add Tavotto/Tavotto && codex plugin add tavotto@tavotto"
+    ) not in everything
     assert "每个会话只跑一次" not in everything
     assert "先同步插件" not in everything
 
@@ -191,11 +194,12 @@ def test_skill_entry_requires_a_new_session_when_tools_are_missing():
     assert "不要在旧会话里继续假装工具可用" in text
     # 两条安装命令分开写、sparse 双路径，在恢复 reference 里
     recovery = (SKILL_DIR / "references" / "first-run-and-recovery.md").read_text(encoding="utf-8")
-    assert ("codex plugin marketplace add Tavotto/Tavotto "
-            "--sparse .agents/plugins --sparse codex-plugin") in recovery
+    assert (
+        "codex plugin marketplace add Tavotto/Tavotto "
+        "--sparse .agents/plugins --sparse codex-plugin"
+    ) in recovery
     assert "codex plugin add tavotto@tavotto" in recovery
-    assert "&&" not in recovery.split("```sh")[1].split("```")[0], \
-        "安装命令要分开跑，不用 && 串联"
+    assert "&&" not in recovery.split("```sh")[1].split("```")[0], "安装命令要分开跑，不用 && 串联"
 
 
 def test_skill_entry_desktop_only_is_not_described_as_missing():
@@ -223,7 +227,7 @@ def test_skill_entry_failures_never_retry_or_fall_back_to_source():
     assert "不退回源码构建" in text
     recovery = (SKILL_DIR / "references" / "first-run-and-recovery.md").read_text(encoding="utf-8")
     assert "不循环重试" in recovery
-    assert "clone" in recovery       # 明确写出「不退回 clone 源码」
+    assert "clone" in recovery  # 明确写出「不退回 clone 源码」
 
 
 def test_skill_routes_each_reference_explicitly():
@@ -233,9 +237,14 @@ def test_skill_routes_each_reference_explicitly():
     """
     text = _skill_text()
     assert "什么情况下读哪份 reference" in text
-    for ref in ("first-run-and-recovery.md", "figure-contract.md",
-                "publication-style.md", "desktop-handoff.md",
-                "issue-reporting.md", "compatibility.md"):
+    for ref in (
+        "first-run-and-recovery.md",
+        "figure-contract.md",
+        "publication-style.md",
+        "desktop-handoff.md",
+        "issue-reporting.md",
+        "compatibility.md",
+    ):
         assert ref in text, f"SKILL.md 没写什么时候读 {ref}"
         assert (SKILL_DIR / "references" / ref).is_file(), f"references/{ref} 不存在"
     assert "用到才读" in text
@@ -257,8 +266,16 @@ def test_skill_files_issues_only_with_consent():
 #: 技能自带脚本允许 import 的标准库。加新名字前先想清楚：这些脚本跑在**用户
 #: 机器上**、跑在 Codex 的沙盒里，第三方依赖装不上就是整个技能不可用。
 _ALLOWED_STDLIB = {
-    "argparse", "json", "os", "shutil", "subprocess", "sys", "time",
-    "urllib", "winreg", "__future__",
+    "argparse",
+    "json",
+    "os",
+    "shutil",
+    "subprocess",
+    "sys",
+    "time",
+    "urllib",
+    "winreg",
+    "__future__",
 }
 
 
@@ -297,7 +314,7 @@ def test_handoff_script_reads_the_parameterizable_verdict():
 # ---------------------- handoff.py 自己的行为契约 -------------------------
 # 它跑在**用户机器上**、跑在 Codex 的沙盒里，出了错没人看得见 traceback。
 # 这几条用假的 tavotto CLI 把它的判据钉住，不需要真装 Tavotto 或 matplotlib。
-FAKE_CLI = '''#!PYTHON
+FAKE_CLI = """#!PYTHON
 import json, os, sys
 resp = json.load(open(os.environ["FAKE_RESPONSE"], encoding="utf-8"))
 with open(os.environ["FAKE_LOG"], "a", encoding="utf-8") as f:
@@ -305,7 +322,7 @@ with open(os.environ["FAKE_LOG"], "a", encoding="utf-8") as f:
 if "--no-launch" not in sys.argv:
     resp["launch"] = {"mode": "desktop"}
 print(json.dumps(resp, ensure_ascii=False))
-'''
+"""
 
 HANDOFF = SKILL_DIR / "scripts" / "handoff.py"
 
@@ -314,7 +331,8 @@ HANDOFF = SKILL_DIR / "scripts" / "handoff.py"
 #: 这三条验的是与平台无关的判据（退出码、调用次序），Windows 那侧真正的风险是
 #: 编码，由 tests/test_windows_regressions.py 的两条专门看着。
 posix_shim_only = pytest.mark.skipif(
-    os.name == "nt", reason="假 CLI 用 shebang 脚本，Windows 上起不来")
+    os.name == "nt", reason="假 CLI 用 shebang 脚本，Windows 上起不来"
+)
 
 
 def _run_handoff(tmp_path, response: dict, *args, _target=None):
@@ -335,23 +353,38 @@ def _run_handoff(tmp_path, response: dict, *args, _target=None):
     else:
         target = _target
 
-    env = {**os.environ, "PATH": str(bin_dir), "FAKE_RESPONSE": str(resp_file),
-           "FAKE_LOG": str(log)}
+    env = {
+        **os.environ,
+        "PATH": str(bin_dir),
+        "FAKE_RESPONSE": str(resp_file),
+        "FAKE_LOG": str(log),
+    }
     env.pop("TAVOTTO_CLI", None)
     # 子进程按 UTF-8 写（它自己 reconfigure 过），这边解码也得钉死——
     # 不钉就跟随系统区域编码，Windows 上读中文 JSON 当场变乱码
-    proc = subprocess.run([sys.executable, str(HANDOFF), str(target), *args],
-                          capture_output=True, text=True,
-                          encoding="utf-8", errors="replace", env=env)
+    proc = subprocess.run(
+        [sys.executable, str(HANDOFF), str(target), *args],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+    )
     calls = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
     return proc, calls
 
 
 @posix_shim_only
 def test_handoff_succeeds_when_the_figure_is_parameterizable(tmp_path):
-    proc, calls = _run_handoff(tmp_path, {
-        "ok": True, "project": "/p", "stem": "Fig1",
-        "registry": {"parameterizable": True, "conflicts": [], "dynamic_names": []}})
+    proc, calls = _run_handoff(
+        tmp_path,
+        {
+            "ok": True,
+            "project": "/p",
+            "stem": "Fig1",
+            "registry": {"parameterizable": True, "conflicts": [], "dynamic_names": []},
+        },
+    )
     assert proc.returncode == 0, proc.stderr
     out = json.loads(proc.stdout.strip().splitlines()[-1])
     assert out["parameterizable"] is True and out["launch"] == "desktop"
@@ -363,8 +396,10 @@ def test_handoff_succeeds_when_the_figure_is_parameterizable(tmp_path):
 
 def _load_plugin_handoff():
     import importlib.util
+
     spec = importlib.util.spec_from_file_location(
-        "_plugin_handoff_env", SKILL_DIR / "scripts" / "handoff.py")
+        "_plugin_handoff_env", SKILL_DIR / "scripts" / "handoff.py"
+    )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -401,10 +436,15 @@ def test_handoff_probes_before_running_a_script(tmp_path):
     script = tmp_path / "fig1.py"
     script.write_text("print('ok')\n", encoding="utf-8")
     proc, calls = _run_handoff(
-        tmp_path, {"ok": True, "project": str(tmp_path), "stem": None,
-                   "registry": {"parameterizable": True, "conflicts": [],
-                                "dynamic_names": []}},
-        _target=script)
+        tmp_path,
+        {
+            "ok": True,
+            "project": str(tmp_path),
+            "stem": None,
+            "registry": {"parameterizable": True, "conflicts": [], "dynamic_names": []},
+        },
+        _target=script,
+    )
     assert proc.returncode == 0, proc.stderr
     assert len(calls) == 2
     assert "--no-launch" in calls[0] and "--no-launch" not in calls[1]
@@ -413,9 +453,15 @@ def test_handoff_probes_before_running_a_script(tmp_path):
 @posix_shim_only
 def test_handoff_fails_loudly_when_the_figure_has_no_script(tmp_path):
     """用户强调的那条硬约定：脚本没跟图放在一起 = 没做完，退出码必须非零。"""
-    proc, _ = _run_handoff(tmp_path, {
-        "ok": True, "project": "/p", "stem": "Fig1",
-        "registry": {"parameterizable": False, "conflicts": [], "dynamic_names": []}})
+    proc, _ = _run_handoff(
+        tmp_path,
+        {
+            "ok": True,
+            "project": "/p",
+            "stem": "Fig1",
+            "registry": {"parameterizable": False, "conflicts": [], "dynamic_names": []},
+        },
+    )
     assert proc.returncode == 4
     out = json.loads(proc.stdout.strip().splitlines()[-1])
     assert "同一个目录" in out["hint"]
@@ -429,9 +475,14 @@ def test_handoff_reports_tavotto_open_failure(tmp_path):
 
 
 def test_handoff_rejects_missing_path(tmp_path):
-    proc = subprocess.run([sys.executable, str(HANDOFF), str(tmp_path / "nope.pdf")],
-                          capture_output=True, text=True,
-                          encoding="utf-8", errors="replace", env={**os.environ})
+    proc = subprocess.run(
+        [sys.executable, str(HANDOFF), str(tmp_path / "nope.pdf")],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env={**os.environ},
+    )
     assert proc.returncode == 2
     assert json.loads(proc.stdout)["ok"] is False
 
@@ -454,7 +505,7 @@ def test_plugin_is_excluded_from_the_python_package():
 # 的跨平台矩阵在 tests/test_install_locate.py（那边用注入的假文件系统，
 # 每个平台都测得了）。
 
-FAKE_BRIDGE = '''#!PYTHON
+FAKE_BRIDGE = """#!PYTHON
 import json, os, sys
 with open(os.environ["FAKE_LOG"], "a", encoding="utf-8") as f:
     f.write(json.dumps(sys.argv[1:], ensure_ascii=False) + "\\n")
@@ -462,30 +513,40 @@ resp = json.load(open(os.environ["FAKE_RESPONSE"], encoding="utf-8"))
 if "--no-launch" not in sys.argv:
     resp["launch"] = {"mode": "desktop"}
 print(json.dumps(resp, ensure_ascii=False))
-'''
+"""
 
-OK_RESPONSE = {"ok": True, "protocol": 1, "project": "/p", "stem": "Fig1",
-               "registry": {"parameterizable": True, "status": "created",
-                            "conflicts": [], "dynamic_names": []}}
+OK_RESPONSE = {
+    "ok": True,
+    "protocol": 1,
+    "project": "/p",
+    "stem": "Fig1",
+    "registry": {
+        "parameterizable": True,
+        "status": "created",
+        "conflicts": [],
+        "dynamic_names": [],
+    },
+}
 
 desktop_discovery_only = pytest.mark.skipif(
     sys.platform != "darwin",
     reason="假 bridge 要 shebang 脚本（Windows 起不来），"
-           "Linux 没有桌面发行形态（install_roots 本来就是空的）")
+    "Linux 没有桌面发行形态（install_roots 本来就是空的）",
+)
 
 #: macOS 的 `/Applications` 是绝对路径，env 隔离不掉它——**开发机上真装着的
 #: 那份 Tavotto 会真的被发现**（这本身正是发现链在干活）。所以「机器上没有
 #: 桌面版」这类模拟只在真没装时才成立；同一判据的注入版（假文件系统，与机器
 #: 无关）在 tests/test_install_locate.py，那边任何机器上都跑。
 REAL_APP = "/Applications/Tavotto.app/Contents/MacOS/Tavotto"
-REAL_APP_CLI = ("/Applications/Tavotto.app/Contents/Resources/"
-                "sidecar/Tavotto/tavotto-cli")
+REAL_APP_CLI = "/Applications/Tavotto.app/Contents/Resources/sidecar/Tavotto/tavotto-cli"
 needs_no_real_desktop = pytest.mark.skipif(
-    os.path.isfile(REAL_APP),
-    reason="这台机器上真装着 Tavotto 桌面版，「什么都没装」模拟不出来")
+    os.path.isfile(REAL_APP), reason="这台机器上真装着 Tavotto 桌面版，「什么都没装」模拟不出来"
+)
 needs_no_real_cli = pytest.mark.skipif(
     os.path.isfile(REAL_APP_CLI),
-    reason="这台机器上真装着带 CLI 的 Tavotto 桌面版，「装了但没 CLI」模拟不出来")
+    reason="这台机器上真装着带 CLI 的 Tavotto 桌面版，「装了但没 CLI」模拟不出来",
+)
 
 #: 假 bridge 是带 shebang 的脚本。Windows 的 CreateProcess 起不了它（也起不了
 #: .bat/.cmd，subprocess 不走 shell），所以这一类只在 POSIX 上跑——与文件上半部
@@ -493,7 +554,8 @@ needs_no_real_cli = pytest.mark.skipif(
 #: tests/test_install_locate.py 用注入的假文件系统测同一套判据（平台无关），
 #: 下面 test_real_cli_handoff_end_to_end 用 pip 装出来的真 tavotto 走完整链路。
 posix_bridge_only = pytest.mark.skipif(
-    os.name == "nt", reason="假 bridge 用 shebang 脚本，Windows 上起不来")
+    os.name == "nt", reason="假 bridge 用 shebang 脚本，Windows 上起不来"
+)
 
 
 @pytest.fixture(scope="module")
@@ -505,8 +567,9 @@ def clean_python(tmp_path_factory):
     救活，而它们恰恰是这次要修的东西。
     """
     venv = tmp_path_factory.mktemp("clean-venv") / "v"
-    subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(venv)],
-                   check=True, capture_output=True)
+    subprocess.run(
+        [sys.executable, "-m", "venv", "--without-pip", str(venv)], check=True, capture_output=True
+    )
     exe = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     if not exe.is_file():
         pytest.skip("建不出干净的解释器")
@@ -519,8 +582,7 @@ def clean_python(tmp_path_factory):
 def _write_bridge(path: Path) -> Path:
     """把假 bridge 写到 path（当成装好的 tavotto-cli）。"""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(FAKE_BRIDGE.replace("#!PYTHON", "#!" + sys.executable),
-                    encoding="utf-8")
+    path.write_text(FAKE_BRIDGE.replace("#!PYTHON", "#!" + sys.executable), encoding="utf-8")
     path.chmod(0o755)
     return path
 
@@ -538,10 +600,14 @@ def _plugin_env(tmp_path, **extra):
     roots = tmp_path / "roots"
     (roots / "local").mkdir(parents=True, exist_ok=True)
     (roots / "pf").mkdir(parents=True, exist_ok=True)
-    env = {**os.environ, "PATH": str(empty), "HOME": str(tmp_path),
-           "LOCALAPPDATA": str(roots / "local"),
-           "PROGRAMFILES": str(roots / "pf"),
-           "TAVOTTO_CONFIG_DIR": str(tmp_path / "config")}
+    env = {
+        **os.environ,
+        "PATH": str(empty),
+        "HOME": str(tmp_path),
+        "LOCALAPPDATA": str(roots / "local"),
+        "PROGRAMFILES": str(roots / "pf"),
+        "TAVOTTO_CONFIG_DIR": str(tmp_path / "config"),
+    }
     env.pop("PROGRAMFILES(X86)", None)
     env.pop("TAVOTTO_CLI", None)
     env.update(extra)
@@ -550,14 +616,22 @@ def _plugin_env(tmp_path, **extra):
 
 def _run_plugin(python, tmp_path, env, *args, response=None):
     resp_file = tmp_path / "response.json"
-    resp_file.write_text(json.dumps(response or OK_RESPONSE, ensure_ascii=False),
-                         encoding="utf-8")
+    resp_file.write_text(json.dumps(response or OK_RESPONSE, ensure_ascii=False), encoding="utf-8")
     log = tmp_path / "calls.log"
     env = {**env, "FAKE_RESPONSE": str(resp_file), "FAKE_LOG": str(log)}
-    proc = subprocess.run([python, str(HANDOFF), *args], capture_output=True,
-                          text=True, encoding="utf-8", errors="replace", env=env)
-    calls = [json.loads(line) for line in
-             log.read_text(encoding="utf-8").splitlines()] if log.exists() else []
+    proc = subprocess.run(
+        [python, str(HANDOFF), *args],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+    )
+    calls = (
+        [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+        if log.exists()
+        else []
+    )
     out = None
     if proc.stdout.strip():
         out = json.loads(proc.stdout.strip().splitlines()[-1])
@@ -579,12 +653,11 @@ def test_desktop_only_install_is_discovered(clean_python, tmp_path):
     target = tmp_path / "Fig1.pdf"
     target.write_bytes(b"%PDF-1.4\n%%EOF\n")
 
-    proc, out, calls = _run_plugin(clean_python, tmp_path,
-                                   _plugin_env(tmp_path), str(target))
+    proc, out, calls = _run_plugin(clean_python, tmp_path, _plugin_env(tmp_path), str(target))
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert out["ok"] is True and out["parameterizable"] is True
     assert out["tavotto"]["source"] == "install"
-    assert out["launch"] == "desktop"          # 原生窗口，不是浏览器
+    assert out["launch"] == "desktop"  # 原生窗口，不是浏览器
     # 稳定产物（.pdf）单跳交接，不再有多余的探测那一跳
     assert len(calls) == 1
     assert "--no-launch" not in calls[0]
@@ -605,8 +678,7 @@ def test_desktop_installed_but_without_cli_is_its_own_error(clean_python, tmp_pa
     target = tmp_path / "Fig1.pdf"
     target.write_bytes(b"%PDF-1.4\n%%EOF\n")
 
-    proc, out, _ = _run_plugin(clean_python, tmp_path,
-                               _plugin_env(tmp_path), str(target))
+    proc, out, _ = _run_plugin(clean_python, tmp_path, _plugin_env(tmp_path), str(target))
     assert proc.returncode == 3
     assert out["error_code"] == "desktop_found_cli_missing"
     assert out["desktop"].endswith("Tavotto.app/Contents/MacOS/Tavotto")
@@ -622,17 +694,26 @@ def test_manifest_discovery_survives_spaces_and_chinese(clean_python, tmp_path):
     bridge = _write_bridge(tmp_path / "我的 程序" / "Tavotto" / "tavotto-cli")
     config = tmp_path / "config"
     config.mkdir()
-    (config / "install.json").write_text(json.dumps(
-        {"protocol": 1, "product": "Tavotto", "version": "9.9.9",
-         "cli": str(bridge), "desktop": None, "install_dir": None,
-         "source": "installer"}), encoding="utf-8")
+    (config / "install.json").write_text(
+        json.dumps(
+            {
+                "protocol": 1,
+                "product": "Tavotto",
+                "version": "9.9.9",
+                "cli": str(bridge),
+                "desktop": None,
+                "install_dir": None,
+                "source": "installer",
+            }
+        ),
+        encoding="utf-8",
+    )
     project = tmp_path / "我的 图库"
     project.mkdir()
     target = project / "图 1.pdf"
     target.write_bytes(b"%PDF-1.4\n%%EOF\n")
 
-    proc, out, calls = _run_plugin(clean_python, tmp_path,
-                                   _plugin_env(tmp_path), str(target))
+    proc, out, calls = _run_plugin(clean_python, tmp_path, _plugin_env(tmp_path), str(target))
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert out["tavotto"]["source"] == "manifest"
     assert out["tavotto"]["cmd"] == str(bridge)
@@ -647,8 +728,9 @@ def test_explicit_env_override_still_wins(clean_python, tmp_path):
     ignored = _write_bridge(tmp_path / "ignored" / "tavotto-cli")
     config = tmp_path / "config"
     config.mkdir()
-    (config / "install.json").write_text(json.dumps(
-        {"protocol": 1, "cli": str(ignored)}), encoding="utf-8")
+    (config / "install.json").write_text(
+        json.dumps({"protocol": 1, "cli": str(ignored)}), encoding="utf-8"
+    )
     target = tmp_path / "Fig1.pdf"
     target.write_bytes(b"%PDF-1.4\n%%EOF\n")
 
@@ -666,9 +748,10 @@ def test_path_cli_still_wins_over_the_install(clean_python, tmp_path):
     _write_bridge(tmp_path / "config-cli" / "tavotto-cli")
     config = tmp_path / "config"
     config.mkdir()
-    (config / "install.json").write_text(json.dumps(
-        {"protocol": 1, "cli": str(tmp_path / "config-cli" / "tavotto-cli")}),
-        encoding="utf-8")
+    (config / "install.json").write_text(
+        json.dumps({"protocol": 1, "cli": str(tmp_path / "config-cli" / "tavotto-cli")}),
+        encoding="utf-8",
+    )
     target = tmp_path / "Fig1.pdf"
     target.write_bytes(b"%PDF-1.4\n%%EOF\n")
 
@@ -682,11 +765,10 @@ def test_path_cli_still_wins_over_the_install(clean_python, tmp_path):
 def test_nothing_installed_reports_tavotto_missing(clean_python, tmp_path):
     target = tmp_path / "Fig1.pdf"
     target.write_bytes(b"%PDF-1.4\n%%EOF\n")
-    proc, out, _ = _run_plugin(clean_python, tmp_path,
-                               _plugin_env(tmp_path), str(target))
+    proc, out, _ = _run_plugin(clean_python, tmp_path, _plugin_env(tmp_path), str(target))
     assert proc.returncode == 3
     assert out["error_code"] == "tavotto_missing"
-    assert out["tavotto_missing"] is True        # 旧字段保留（SKILL.md 认它）
+    assert out["tavotto_missing"] is True  # 旧字段保留（SKILL.md 认它）
     assert "releases" in out["hint"]
 
 
@@ -697,11 +779,10 @@ def test_no_launch_reaches_the_bridge(clean_python, tmp_path):
     target = tmp_path / "Fig1.pdf"
     target.write_bytes(b"%PDF-1.4\n%%EOF\n")
     env = _plugin_env(tmp_path, TAVOTTO_CLI=str(bridge))
-    proc, out, calls = _run_plugin(clean_python, tmp_path, env,
-                                   str(target), "--no-launch")
+    proc, out, calls = _run_plugin(clean_python, tmp_path, env, str(target), "--no-launch")
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert all("--no-launch" in call for call in calls)
-    assert out["launch"] is None                 # 一个界面都没起
+    assert out["launch"] is None  # 一个界面都没起
 
 
 @posix_bridge_only
@@ -715,9 +796,16 @@ def test_open_error_code_is_passed_through(clean_python, tmp_path):
     target.write_bytes(b"%PDF-1.4\n%%EOF\n")
     env = _plugin_env(tmp_path, TAVOTTO_CLI=str(bridge))
     proc, out, _ = _run_plugin(
-        clean_python, tmp_path, env, str(target),
-        response={"ok": False, "code": "registry_write_failed",
-                  "error": "注册表写不进去 /p/tavotto_registry.json"})
+        clean_python,
+        tmp_path,
+        env,
+        str(target),
+        response={
+            "ok": False,
+            "code": "registry_write_failed",
+            "error": "注册表写不进去 /p/tavotto_registry.json",
+        },
+    )
     assert proc.returncode == 2
     # **原样带出来**，不是压成 open_failed：SKILL.md 教 Codex 的就是按
     # error_code 分支（registry_write_failed → 换个可写目录）。藏进第二层
@@ -743,8 +831,9 @@ def test_open_failure_without_a_code_still_has_one(clean_python, tmp_path):
     target = tmp_path / "Fig1.pdf"
     target.write_bytes(b"%PDF-1.4\n%%EOF\n")
     env = _plugin_env(tmp_path, TAVOTTO_CLI=str(bridge))
-    proc, out, _ = _run_plugin(clean_python, tmp_path, env, str(target),
-                               response={"ok": False, "error": "说不清哪儿错了"})
+    proc, out, _ = _run_plugin(
+        clean_python, tmp_path, env, str(target), response={"ok": False, "error": "说不清哪儿错了"}
+    )
     assert proc.returncode == 2
     assert out["error_code"] == "open_failed"
 
@@ -762,11 +851,12 @@ def test_skill_documents_every_error_code_it_can_emit():
     src = HANDOFF.read_text(encoding="utf-8")
     for code in documented:
         if code in {"tavotto_missing", "desktop_found_cli_missing"}:
-            assert code in src                       # 插件自己的 code
+            assert code in src  # 插件自己的 code
         else:
             # 来自 tavotto open 的 code：靠 _open_failure 原样透传
-            assert "code or \"open_failed\"" in src, \
+            assert 'code or "open_failed"' in src, (
                 f"SKILL.md 承诺了 {code}，但插件没有透传 CLI 的 code"
+            )
 
 
 def test_plugin_consults_the_registry_like_the_engine_locator():
@@ -780,29 +870,31 @@ def test_plugin_consults_the_registry_like_the_engine_locator():
     assert "hkcu_install_dirs" in src
     assert "winreg" in src
     from tavotto.engine import locate
-    assert locate.UNINSTALL_KEY.replace("\\", "\\\\") in src or \
-        locate.UNINSTALL_KEY in src.replace("\\\\", "\\")
+
+    assert locate.UNINSTALL_KEY.replace("\\", "\\\\") in src or locate.UNINSTALL_KEY in src.replace(
+        "\\\\", "\\"
+    )
 
 
 def test_every_failure_payload_carries_an_error_code():
     """插件的每一条失败出口都要带 error_code——调用方按它分诊。"""
     src = HANDOFF.read_text(encoding="utf-8")
     tree = ast.parse(src)
-    emits = [n for n in ast.walk(tree)
-             if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "emit"]
+    emits = [
+        n for n in ast.walk(tree) if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "emit"
+    ]
     assert emits, "找不到 emit 调用"
     for node in emits:
         code = node.args[1]
         if isinstance(code, ast.Constant) and code.value == 0:
-            continue                              # 成功那条不需要
+            continue  # 成功那条不需要
         payload = node.args[0]
         if isinstance(payload, ast.Dict):
             keys = {k.value for k in payload.keys if isinstance(k, ast.Constant)}
             assert "error_code" in keys, f"第 {node.lineno} 行的失败出口没有 error_code"
 
 
-@pytest.mark.skipif(shutil.which("tavotto") is None,
-                    reason="PATH 里没有 pip 装出来的 tavotto")
+@pytest.mark.skipif(shutil.which("tavotto") is None, reason="PATH 里没有 pip 装出来的 tavotto")
 def test_real_cli_handoff_end_to_end(tmp_path):
     """拿**真的** tavotto CLI 走完整条链路——Windows 上也跑。
 
@@ -820,24 +912,38 @@ def test_real_cli_handoff_end_to_end(tmp_path):
         "def main():\n"
         "    fig, ax = plt.subplots()\n"
         '    fig.savefig(OUT / "Fig1_演示.pdf")\n',
-        encoding="utf-8")
+        encoding="utf-8",
+    )
     (project / "Fig1_演示.pdf").write_bytes(b"%PDF-1.4\n%%EOF\n")
 
-    env = {**os.environ,
-           "TAVOTTO_CLI": shutil.which("tavotto"),
-           "TAVOTTO_CONFIG_DIR": str(tmp_path / "cfg"),
-           "TAVOTTO_DATA_DIR": str(tmp_path / "data")}
+    env = {
+        **os.environ,
+        "TAVOTTO_CLI": shutil.which("tavotto"),
+        "TAVOTTO_CONFIG_DIR": str(tmp_path / "cfg"),
+        "TAVOTTO_DATA_DIR": str(tmp_path / "data"),
+    }
     proc = subprocess.run(
-        [sys.executable, str(HANDOFF), str(project / "fig_demo.py"),
-         "--run", "never", "--no-launch"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", env=env)
+        [
+            sys.executable,
+            str(HANDOFF),
+            str(project / "fig_demo.py"),
+            "--run",
+            "never",
+            "--no-launch",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+    )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     out = json.loads(proc.stdout.strip().splitlines()[-1])
     assert out["ok"] is True
     assert out["parameterizable"] is True
-    assert out["project"] == str(project)          # 空格与中文原样，没被拆开
+    assert out["project"] == str(project)  # 空格与中文原样，没被拆开
     assert out["stem"] == "Fig1_演示"
-    assert out["launch"] is None                   # --no-launch：一个界面都没起
+    assert out["launch"] is None  # --no-launch：一个界面都没起
     assert out["tavotto"]["source"] == "env"
     registry = json.loads((project / "tavotto_registry.json").read_text(encoding="utf-8"))
     assert "fig_demo.py" in registry["scripts"]
@@ -847,9 +953,11 @@ def test_real_cli_handoff_end_to_end(tmp_path):
 # 用户装了插件之后不会自动收到更新——Codex 不管这件事。所以插件自己查一份
 # 清单，而那份清单是发版时生成的。这几条盯的是「发版时它真的被生成、内容对」。
 
+
 def _manifest_module():
     spec = importlib.util.spec_from_file_location(
-        "make_plugin_manifest", ROOT / "scripts" / "make_plugin_manifest.py")
+        "make_plugin_manifest", ROOT / "scripts" / "make_plugin_manifest.py"
+    )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -865,8 +973,7 @@ def _make_manifest(tmp_path, tag):
 def test_plugin_manifest_matches_what_the_plugin_reads(tmp_path):
     """生成的清单，插件那侧要认得出来（schema 与字段名同源）。"""
     mod, data = _make_manifest(tmp_path, "v" + tavotto.__version__)
-    spec = importlib.util.spec_from_file_location(
-        "_uc", SKILL_DIR / "scripts" / "update_check.py")
+    spec = importlib.util.spec_from_file_location("_uc", SKILL_DIR / "scripts" / "update_check.py")
     uc = importlib.util.module_from_spec(spec)
     sys.path.insert(0, str(SKILL_DIR / "scripts"))
     try:
@@ -899,28 +1006,30 @@ def test_plugin_manifest_min_tavotto_version_is_real(tmp_path):
     mod, data = _make_manifest(tmp_path, "v" + tavotto.__version__)
     required = data["min_tavotto_version"]
     assert re.fullmatch(r"\d+\.\d+\.\d+", required), required
-    assert tuple(map(int, required.split("."))) <= \
-        tuple(map(int, tavotto.__version__.split(".")))
+    assert tuple(map(int, required.split("."))) <= tuple(map(int, tavotto.__version__.split(".")))
     assert mod.MIN_TAVOTTO_VERSION == required
 
 
 def test_plugin_zip_contains_the_skill(tmp_path):
     """安装包里要有技能本体，不能只有清单。"""
     import zipfile
+
     target = _manifest_module().build_zip(tmp_path / "p.zip")
     names = zipfile.ZipFile(target).namelist()
-    for needed in ("codex-plugin/.codex-plugin/plugin.json",
-                   "codex-plugin/skills/tavotto-figure/SKILL.md",
-                   "codex-plugin/skills/tavotto-figure/agents/openai.yaml",
-                   # SKILL.md 按需引用的细则必须随包走，缺一份 = 状态机断链
-                   "codex-plugin/skills/tavotto-figure/references/first-run-and-recovery.md",
-                   "codex-plugin/skills/tavotto-figure/references/figure-contract.md",
-                   "codex-plugin/skills/tavotto-figure/references/publication-style.md",
-                   "codex-plugin/skills/tavotto-figure/references/desktop-handoff.md",
-                   "codex-plugin/skills/tavotto-figure/references/issue-reporting.md",
-                   "codex-plugin/skills/tavotto-figure/references/compatibility.md",
-                   "codex-plugin/skills/tavotto-figure/scripts/handoff.py",
-                   "codex-plugin/skills/tavotto-figure/scripts/update_check.py"):
+    for needed in (
+        "codex-plugin/.codex-plugin/plugin.json",
+        "codex-plugin/skills/tavotto-figure/SKILL.md",
+        "codex-plugin/skills/tavotto-figure/agents/openai.yaml",
+        # SKILL.md 按需引用的细则必须随包走，缺一份 = 状态机断链
+        "codex-plugin/skills/tavotto-figure/references/first-run-and-recovery.md",
+        "codex-plugin/skills/tavotto-figure/references/figure-contract.md",
+        "codex-plugin/skills/tavotto-figure/references/publication-style.md",
+        "codex-plugin/skills/tavotto-figure/references/desktop-handoff.md",
+        "codex-plugin/skills/tavotto-figure/references/issue-reporting.md",
+        "codex-plugin/skills/tavotto-figure/references/compatibility.md",
+        "codex-plugin/skills/tavotto-figure/scripts/handoff.py",
+        "codex-plugin/skills/tavotto-figure/scripts/update_check.py",
+    ):
         assert needed in names, f"插件包里缺 {needed}"
     assert not [n for n in names if "__pycache__" in n]
 
@@ -935,8 +1044,7 @@ def test_release_workflow_publishes_the_plugin_channel():
     release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     assert "make_plugin_manifest.py" in release
     assert "out/codex-plugin.json" in release
-    desktop = (ROOT / ".github" / "workflows" /
-               "desktop-tauri.yml").read_text(encoding="utf-8")
+    desktop = (ROOT / ".github" / "workflows" / "desktop-tauri.yml").read_text(encoding="utf-8")
     assert "make_plugin_manifest" not in desktop
 
 
@@ -985,8 +1093,18 @@ def test_launcher_is_stdlib_only_and_parses():
             imported |= {a.name.split(".")[0] for a in node.names}
         elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
             imported.add(node.module.split(".")[0])
-    allowed = {"json", "os", "shutil", "subprocess", "sys", "time",
-               "__future__", "tavotto", "tavotto_mcp", "handoff"}
+    allowed = {
+        "json",
+        "os",
+        "shutil",
+        "subprocess",
+        "sys",
+        "time",
+        "__future__",
+        "tavotto",
+        "tavotto_mcp",
+        "handoff",
+    }
     assert not (imported - allowed), f"启动器引入了非标准库: {sorted(imported - allowed)}"
 
 
@@ -1005,10 +1123,16 @@ def test_launcher_reuses_the_plugin_locator_instead_of_a_third_copy():
     """
     src = (PLUGIN / "mcp" / "server.py").read_text(encoding="utf-8")
     assert "find_tavotto" in src, "启动器没有复用插件自带的定位器"
-    for owned_by_the_locator in ("LOCALAPPDATA", "install.json", "SIDECAR_REL",
-                                 "UNINSTALL_KEY", "/Applications/Tavotto.app"):
+    for owned_by_the_locator in (
+        "LOCALAPPDATA",
+        "install.json",
+        "SIDECAR_REL",
+        "UNINSTALL_KEY",
+        "/Applications/Tavotto.app",
+    ):
         assert owned_by_the_locator not in src, (
-            f"启动器里出现了 {owned_by_the_locator}——路径规则该由定位器说了算")
+            f"启动器里出现了 {owned_by_the_locator}——路径规则该由定位器说了算"
+        )
 
 
 def test_launcher_tells_desktop_only_users_the_truth():
@@ -1020,10 +1144,15 @@ def test_launcher_tells_desktop_only_users_the_truth():
     """
     sys.path.insert(0, str(PLUGIN / "mcp"))
     import importlib
+
     launcher = importlib.import_module("server")
 
-    code, hint = launcher.diagnose({"cmd": ["/Applications/Tavotto.app/…/tavotto-cli"],
-                                    "desktop": "/Applications/Tavotto.app/…/Tavotto"})
+    code, hint = launcher.diagnose(
+        {
+            "cmd": ["/Applications/Tavotto.app/…/tavotto-cli"],
+            "desktop": "/Applications/Tavotto.app/…/Tavotto",
+        }
+    )
     assert code == "desktop_only"
     assert "pipx install tavotto" in hint
     assert "没装" not in hint, "对着装了桌面版的用户说「没装」"
@@ -1043,11 +1172,12 @@ def test_launcher_only_takes_interpreters_it_can_actually_use():
     """
     sys.path.insert(0, str(PLUGIN / "mcp"))
     import importlib
+
     launcher = importlib.import_module("server")
 
     with tempfile.TemporaryDirectory() as tmp:
         frozen = os.path.join(tmp, "tavotto-cli")
-        with open(frozen, "wb") as f:                 # ELF/PE 头，不是 shebang
+        with open(frozen, "wb") as f:  # ELF/PE 头，不是 shebang
             f.write(b"\x7fELF\x02\x01\x01\x00")
         assert launcher._shebang_interpreter(frozen) is None
         assert launcher._interpreter_beside(frozen) == []
@@ -1074,16 +1204,16 @@ def test_widget_artifact_is_committed_next_to_the_server():
         pytest.skip("画布产物未构建（跑一次 scripts/build_mcp_widget.py）")
     text = canvas.read_text(encoding="utf-8")
     assert text.startswith("<!-- tavotto-mcp-widget ")
-    assert "<div id=\"root\">" in text
+    assert '<div id="root">' in text
 
 
 # ------------------------- prefs.py 的行为契约 ----------------------------
 # 开工三问的答案落在用户配置目录。这几条盯的是「偏好文件坏了/写不进去时
 # 技能仍然能工作（大不了重新问）」与「键是闭集，杂物进不来」。
 
+
 def _load_prefs_module():
-    spec = importlib.util.spec_from_file_location(
-        "_prefs", SKILL_DIR / "scripts" / "prefs.py")
+    spec = importlib.util.spec_from_file_location("_prefs", SKILL_DIR / "scripts" / "prefs.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -1093,15 +1223,23 @@ def test_prefs_roundtrip_and_key_closure(tmp_path):
     """写进去的读得回来；不认识的键与不合法的值在读取时被丢弃。"""
     mod = _load_prefs_module()
     path = str(tmp_path / "prefs.json")
-    assert mod.write_prefs({"width": "double", "font": "Arial",
-                            "legend_frame": "off"}, path)
-    assert mod.read_prefs(path) == {"width": "double", "font": "Arial",
-                                    "legend_frame": "off"}
+    assert mod.write_prefs({"width": "double", "font": "Arial", "legend_frame": "off"}, path)
+    assert mod.read_prefs(path) == {"width": "double", "font": "Arial", "legend_frame": "off"}
     # 手工塞进垃圾键/垃圾值：读取端按闭集过滤，不报错也不透传
-    (tmp_path / "prefs.json").write_text(json.dumps({
-        "schema": mod.SCHEMA,
-        "prefs": {"width": "wide", "font": "", "legend_frame": "off",
-                  "favorite_color": "blue"}}), encoding="utf-8")
+    (tmp_path / "prefs.json").write_text(
+        json.dumps(
+            {
+                "schema": mod.SCHEMA,
+                "prefs": {
+                    "width": "wide",
+                    "font": "",
+                    "legend_frame": "off",
+                    "favorite_color": "blue",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     assert mod.read_prefs(path) == {"legend_frame": "off"}
 
 
@@ -1112,8 +1250,7 @@ def test_prefs_read_never_raises_on_garbage(tmp_path):
     bad = tmp_path / "bad.json"
     bad.write_text("not json at all", encoding="utf-8")
     assert mod.read_prefs(str(bad)) == {}
-    bad.write_text(json.dumps({"schema": 999, "prefs": {"font": "Arial"}}),
-                   encoding="utf-8")
+    bad.write_text(json.dumps({"schema": 999, "prefs": {"font": "Arial"}}), encoding="utf-8")
     assert mod.read_prefs(str(bad)) == {}
 
 
@@ -1121,23 +1258,40 @@ def test_prefs_cli_writes_only_into_the_config_dir(tmp_path):
     """端到端：--set 落在 TAVOTTO_CONFIG_DIR，绝不写插件目录。"""
     env = {**os.environ, "TAVOTTO_CONFIG_DIR": str(tmp_path / "cfg")}
     script = SKILL_DIR / "scripts" / "prefs.py"
-    before = {p for p in SKILL_DIR.rglob("*") if p.is_file()
-              and "__pycache__" not in p.parts}
+    before = {p for p in SKILL_DIR.rglob("*") if p.is_file() and "__pycache__" not in p.parts}
     out = subprocess.run(
-        [sys.executable, str(script), "--set", "font=Times New Roman",
-         "--set", "width=single", "--json"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", env=env, check=True)
+        [
+            sys.executable,
+            str(script),
+            "--set",
+            "font=Times New Roman",
+            "--set",
+            "width=single",
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+        check=True,
+    )
     data = json.loads(out.stdout.strip().splitlines()[-1])
     assert data["saved"] is True
     assert data["prefs"] == {"font": "Times New Roman", "width": "single"}
     assert (tmp_path / "cfg" / "codex-plugin-figure-prefs.json").is_file()
-    after = {p for p in SKILL_DIR.rglob("*") if p.is_file()
-             and "__pycache__" not in p.parts}
+    after = {p for p in SKILL_DIR.rglob("*") if p.is_file() and "__pycache__" not in p.parts}
     assert after == before, "prefs.py 往插件目录里写了东西"
     # 再跑一次读 + unset：记录过的读得回来，退回后消失
     out = subprocess.run(
         [sys.executable, str(script), "--unset", "width", "--json"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", env=env, check=True)
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+        check=True,
+    )
     data = json.loads(out.stdout.strip().splitlines()[-1])
     assert data["prefs"] == {"font": "Times New Roman"}
 
@@ -1148,12 +1302,22 @@ def test_prefs_cli_rejects_unknown_keys(tmp_path):
     script = SKILL_DIR / "scripts" / "prefs.py"
     out = subprocess.run(
         [sys.executable, str(script), "--set", "favorite_color=blue", "--json"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", env=env)
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+    )
     assert out.returncode != 0
     assert not (tmp_path / "cfg" / "codex-plugin-figure-prefs.json").exists()
     out = subprocess.run(
         [sys.executable, str(script), "--set", "width=huge", "--json"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", env=env)
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+    )
     assert out.returncode != 0
 
 
@@ -1166,8 +1330,9 @@ READMES = {
     "zh": ROOT / "README.zh-CN.md",
     "en": ROOT / "README.md",
 }
-SPARSE_CMD = ("codex plugin marketplace add Tavotto/Tavotto "
-              "--sparse .agents/plugins --sparse codex-plugin")
+SPARSE_CMD = (
+    "codex plugin marketplace add Tavotto/Tavotto --sparse .agents/plugins --sparse codex-plugin"
+)
 
 
 def test_readme_first_use_entry_says_no_clone_no_build():
@@ -1233,11 +1398,13 @@ def test_openai_yaml_declares_the_mcp_dependency():
     block = m.group(1)
     assert re.search(r"^\s*tools:\s*$", block, re.M), "dependencies 下缺 tools 列表"
     assert re.search(r"^\s*-\s*type:\s*mcp\s*$", block, re.M)
-    assert re.search(rf"^\s*value:\s*{re.escape(server_key)}\s*$", block, re.M), \
+    assert re.search(rf"^\s*value:\s*{re.escape(server_key)}\s*$", block, re.M), (
         f"依赖的 value 必须等于 .mcp.json 的 server key（{server_key}）"
+    )
     assert re.search(r"^\s*transport:\s*stdio\s*$", block, re.M)
-    assert re.search(rf"^\s*command:\s*{re.escape(command)}\s*$", block, re.M), \
+    assert re.search(rf"^\s*command:\s*{re.escape(command)}\s*$", block, re.M), (
         f"stdio 依赖按 command 匹配，必须等于 .mcp.json 的 command（{command}）"
+    )
     # interface 与 policy 原样保留——加依赖不能把显示名与隐式触发挤掉
     assert re.search(r"^interface:", yaml_text, re.M)
     assert re.search(r"^\s*allow_implicit_invocation:\s*true\s*$", yaml_text, re.M)
@@ -1256,8 +1423,8 @@ def test_first_use_scenarios_are_anchored_in_the_docs():
     ——后者需要真 Codex 会话，见下面的真实 CLI 冒烟与 PR 里的验证清单。
     """
     data = json.loads(
-        (ROOT / "tests" / "fixtures" / "codex_first_use_scenarios.json")
-        .read_text(encoding="utf-8"))
+        (ROOT / "tests" / "fixtures" / "codex_first_use_scenarios.json").read_text(encoding="utf-8")
+    )
     scenarios = data["scenarios"]
     assert len(scenarios) >= 8, "八个基本场景一个都不能少"
     ids = [s["id"] for s in scenarios]
@@ -1269,10 +1436,12 @@ def test_first_use_scenarios_are_anchored_in_the_docs():
             doc = _squash(doc_path.read_text(encoding="utf-8"))
             for needle in anchor["must"]:
                 assert _squash(needle) in doc, (
-                    f"场景 {scenario['id']} 的锚点在 {anchor['doc']} 里找不到：{needle!r}")
+                    f"场景 {scenario['id']} 的锚点在 {anchor['doc']} 里找不到：{needle!r}"
+                )
             for needle in anchor.get("must_not", []):
                 assert _squash(needle) not in doc, (
-                    f"场景 {scenario['id']} 禁止的内容出现在 {anchor['doc']}：{needle!r}")
+                    f"场景 {scenario['id']} 禁止的内容出现在 {anchor['doc']}：{needle!r}"
+                )
 
 
 # -------------------- 真实 Codex CLI 安装冒烟（有 CLI 才跑） ---------------
@@ -1282,15 +1451,21 @@ def test_first_use_scenarios_are_anchored_in_the_docs():
 # 走 GitHub 源 + --sparse 的联网变体由 TAVOTTO_CODEX_NET_SMOKE=1 显式开启。
 
 codex_cli = shutil.which("codex")
-needs_codex_cli = pytest.mark.skipif(
-    codex_cli is None, reason="PATH 里没有 codex CLI")
+needs_codex_cli = pytest.mark.skipif(codex_cli is None, reason="PATH 里没有 codex CLI")
 
 
 def _codex(args, codex_home, cwd=None, timeout=120):
     env = {**os.environ, "CODEX_HOME": str(codex_home)}
-    return subprocess.run([codex_cli, *args], capture_output=True, text=True,
-                          encoding="utf-8", errors="replace", env=env,
-                          cwd=cwd, timeout=timeout)
+    return subprocess.run(
+        [codex_cli, *args],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+        cwd=cwd,
+        timeout=timeout,
+    )
 
 
 @needs_codex_cli
@@ -1311,8 +1486,7 @@ def test_real_codex_installs_the_plugin_from_a_local_marketplace(tmp_path):
     assert "tavotto" in proc.stdout
 
     # CODEX_HOME 里能找到插件本体的关键文件（缓存布局是实现细节，按内容找）
-    found = {name: False for name in
-             ("plugin.json", "SKILL.md", ".mcp.json", "openai.yaml")}
+    found = {name: False for name in ("plugin.json", "SKILL.md", ".mcp.json", "openai.yaml")}
     for path in home.rglob("*"):
         if path.name in found:
             found[path.name] = True
@@ -1321,21 +1495,33 @@ def test_real_codex_installs_the_plugin_from_a_local_marketplace(tmp_path):
 
 
 @needs_codex_cli
-@pytest.mark.skipif(os.environ.get("TAVOTTO_CODEX_NET_SMOKE") != "1",
-                    reason="联网冒烟需 TAVOTTO_CODEX_NET_SMOKE=1（nightly/手动）")
+@pytest.mark.skipif(
+    os.environ.get("TAVOTTO_CODEX_NET_SMOKE") != "1",
+    reason="联网冒烟需 TAVOTTO_CODEX_NET_SMOKE=1（nightly/手动）",
+)
 def test_real_codex_sparse_install_from_github(tmp_path):
     """README 教用户的那条 sparse 命令，对着真 GitHub 仓库跑一遍。"""
     home = tmp_path / "codex-home"
     home.mkdir()
-    proc = _codex(["plugin", "marketplace", "add", "Tavotto/Tavotto",
-                   "--sparse", ".agents/plugins", "--sparse", "codex-plugin"],
-                  home, timeout=300)
+    proc = _codex(
+        [
+            "plugin",
+            "marketplace",
+            "add",
+            "Tavotto/Tavotto",
+            "--sparse",
+            ".agents/plugins",
+            "--sparse",
+            "codex-plugin",
+        ],
+        home,
+        timeout=300,
+    )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     proc = _codex(["plugin", "add", "tavotto@tavotto"], home, timeout=300)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     proc = _codex(["plugin", "list"], home)
-    assert proc.returncode == 0 and "tavotto" in proc.stdout, \
-        proc.stdout + proc.stderr
+    assert proc.returncode == 0 and "tavotto" in proc.stdout, proc.stdout + proc.stderr
 
 
 def test_readme_desktop_only_route_never_advertises_a_bare_tavotto_command():
@@ -1363,5 +1549,6 @@ def test_shipped_skill_docs_never_reference_repo_relative_docs():
     """
     for path in [SKILL_DIR / "SKILL.md", *sorted((SKILL_DIR / "references").glob("*.md"))]:
         text = path.read_text(encoding="utf-8")
-        assert "../../../docs/" not in text and "../../docs/" not in text, \
+        assert "../../../docs/" not in text and "../../docs/" not in text, (
             f"{path.name} 引用了包外的仓库 docs/ 相对路径"
+        )

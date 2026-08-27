@@ -4,6 +4,7 @@
 engine/handoff.py 全程 os.path 拼字符串。这里的 win32 用例跑在 macOS/Linux
 的 CI 上，就是那条纪律的看护。
 """
+
 import ast
 import json
 import os
@@ -15,7 +16,7 @@ import pytest
 
 from tavotto.engine import handoff, registry as engine_registry
 
-SCRIPT = '''\
+SCRIPT = """\
 import matplotlib.pyplot as plt
 
 
@@ -23,7 +24,7 @@ def main():
     fig, ax = plt.subplots()
     ax.plot([0, 1], [0, 1])
     fig.savefig("Fig1_demo.pdf")
-'''
+"""
 
 
 @pytest.fixture()
@@ -63,14 +64,16 @@ def test_script_without_resolvable_stem_still_opens_project(tmp_path):
         "def main():\n"
         "    fig, ax = plt.subplots()\n"
         "    fig.savefig(sys.argv[1])\n",
-        encoding="utf-8")
+        encoding="utf-8",
+    )
     assert handoff.resolve_target(str(d / "gen.py")) == handoff.Target(str(d), None)
 
 
 def test_project_root_is_the_registry_layer(figures):
     """子目录里的图：项目 = 注册表所在的那一层，不是图自己的目录。"""
     engine_registry.registry_path(figures).write_text(
-        json.dumps({"version": 1, "scripts": {}}), encoding="utf-8")
+        json.dumps({"version": 1, "scripts": {}}), encoding="utf-8"
+    )
     sub = figures / "panels"
     sub.mkdir()
     (sub / "Fig9_extra.pdf").write_bytes(b"%PDF-1.4\n%%EOF\n")
@@ -81,7 +84,8 @@ def test_project_root_is_the_registry_layer(figures):
 def test_registry_search_stops_after_max_parents(tmp_path):
     """向上找有上限：绝不静默把某个上层目录当图库（那会扫一整棵源码树）。"""
     engine_registry.registry_path(tmp_path).write_text(
-        json.dumps({"version": 1, "scripts": {}}), encoding="utf-8")
+        json.dumps({"version": 1, "scripts": {}}), encoding="utf-8"
+    )
     deep = tmp_path
     for i in range(handoff.MAX_PARENTS + 2):
         deep = deep / f"lvl{i}"
@@ -122,10 +126,17 @@ def test_registered_stem_leaves_registry_untouched(figures):
     path = engine_registry.registry_path(figures)
     before = path.read_bytes()
     info = handoff.ensure_registered(str(figures), "Fig1_demo")
-    assert info == {"registry": str(path), "status": "already", "created": False,
-                    "added_scripts": [], "added_stems": {}, "conflicts": [],
-                    "dynamic_names": [], "parameterizable": True}
-    assert path.read_bytes() == before      # 已经登记过就一个字节都别动
+    assert info == {
+        "registry": str(path),
+        "status": "already",
+        "created": False,
+        "added_scripts": [],
+        "added_stems": {},
+        "conflicts": [],
+        "dynamic_names": [],
+        "parameterizable": True,
+    }
+    assert path.read_bytes() == before  # 已经登记过就一个字节都别动
 
 
 def test_shipped_example_galleries_use_the_current_registry_name():
@@ -137,11 +148,13 @@ def test_shipped_example_galleries_use_the_current_registry_name():
     而它后面的卸载断言从此一次都没执行过。
     """
     root = pathlib.Path(__file__).resolve().parent.parent / "examples"
-    stale = sorted(p.relative_to(root).as_posix()
-                   for p in root.rglob(engine_registry.LEGACY_REGISTRY_NAME))
+    stale = sorted(
+        p.relative_to(root).as_posix() for p in root.rglob(engine_registry.LEGACY_REGISTRY_NAME)
+    )
     assert stale == [], (
         f"examples/ 里还有旧名注册表 {stale}——它会让「必须出现 "
-        f"{engine_registry.REGISTRY_NAME}」那类验收永远红")
+        f"{engine_registry.REGISTRY_NAME}」那类验收永远红"
+    )
 
 
 def test_legacy_named_registry_is_honoured_without_drafting_a_new_one(figures):
@@ -155,10 +168,22 @@ def test_legacy_named_registry_is_honoured_without_drafting_a_new_one(figures):
     fixture 改名之后没有第二处了，这条用例就是它唯一的看护。
     """
     legacy = figures / engine_registry.LEGACY_REGISTRY_NAME
-    legacy.write_text(json.dumps({"version": 1, "scripts": {
-        "fig1_demo.py": {"entry": "main", "cost": "heavy",
-                         "notes": "手工裁决", "stems": ["Fig1_demo"]}}}),
-        encoding="utf-8")
+    legacy.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "scripts": {
+                    "fig1_demo.py": {
+                        "entry": "main",
+                        "cost": "heavy",
+                        "notes": "手工裁决",
+                        "stems": ["Fig1_demo"],
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     before = legacy.read_bytes()
 
     # 1. 定位：旧名那一层就是项目层，不会在它的上一层另起炉灶
@@ -181,12 +206,19 @@ def test_legacy_named_registry_is_honoured_without_drafting_a_new_one(figures):
 def test_merging_into_a_legacy_gallery_writes_the_new_name_once(figures):
     """合并一次即完成搬迁：读认两个名，**写只认新名**（旧名只读不写）。"""
     legacy = figures / engine_registry.LEGACY_REGISTRY_NAME
-    legacy.write_text(json.dumps({"version": 1, "scripts": {
-        "fig1_demo.py": {"entry": "main", "cost": "heavy",
-                         "stems": ["Fig1_demo"]}}}), encoding="utf-8")
+    legacy.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "scripts": {
+                    "fig1_demo.py": {"entry": "main", "cost": "heavy", "stems": ["Fig1_demo"]}
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     before = legacy.read_bytes()
-    (figures / "fig2_new.py").write_text(
-        SCRIPT.replace("Fig1_demo", "Fig2_new"), encoding="utf-8")
+    (figures / "fig2_new.py").write_text(SCRIPT.replace("Fig1_demo", "Fig2_new"), encoding="utf-8")
 
     info = handoff.ensure_registered(str(figures), "Fig2_new")
 
@@ -201,12 +233,23 @@ def test_merging_into_a_legacy_gallery_writes_the_new_name_once(figures):
 def test_new_script_merges_without_touching_existing_entries(figures):
     """用户手工裁决过的条目永远优先——合并只追加，绝不改写。"""
     path = engine_registry.registry_path(figures)
-    path.write_text(json.dumps({"version": 1, "scripts": {
-        "fig1_demo.py": {"entry": "main", "cost": "heavy",
-                         "notes": "手工裁决", "stems": ["Fig1_demo"]}}}),
-        encoding="utf-8")
-    (figures / "fig2_new.py").write_text(
-        SCRIPT.replace("Fig1_demo", "Fig2_new"), encoding="utf-8")
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "scripts": {
+                    "fig1_demo.py": {
+                        "entry": "main",
+                        "cost": "heavy",
+                        "notes": "手工裁决",
+                        "stems": ["Fig1_demo"],
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (figures / "fig2_new.py").write_text(SCRIPT.replace("Fig1_demo", "Fig2_new"), encoding="utf-8")
 
     info = handoff.ensure_registered(str(figures), "Fig2_new")
 
@@ -229,10 +272,11 @@ def test_merge_with_nothing_new_leaves_the_file_byte_identical(figures):
         '{\n  "version": 1,\n  "_comment": "手写的，别动我的排版",\n'
         '  "scripts": {\n    "fig1_demo.py": {"entry": "main", "cost": "light",\n'
         '                     "stems": ["Fig1_demo"]}\n  }\n}\n',
-        encoding="utf-8")
+        encoding="utf-8",
+    )
     before = path.read_bytes()
 
-    info = handoff.ensure_registered(str(figures), None)   # 目录级交接，无 stem
+    info = handoff.ensure_registered(str(figures), None)  # 目录级交接，无 stem
 
     assert info["added_scripts"] == [] and info["added_stems"] == {}
     assert path.read_bytes() == before
@@ -255,7 +299,8 @@ def test_dynamic_names_reported(tmp_path):
         "def main():\n"
         "    fig, ax = plt.subplots()\n"
         "    fig.savefig(sys.argv[1])\n",
-        encoding="utf-8")
+        encoding="utf-8",
+    )
     info = handoff.ensure_registered(str(d), None)
     assert info["dynamic_names"] == ["gen.py"]
 
@@ -269,12 +314,15 @@ def test_broken_registry_is_never_overwritten(figures):
     assert path.read_text(encoding="utf-8") == "{ 这不是 JSON"
 
 
-@pytest.mark.parametrize("body", [
-    '{"scripts": "not-a-dict"}',          # 结构合法、类型不对
-    '{"scripts": {"a.py": "not-a-dict"}}',  # 某个脚本条目不是对象
-    '{"scripts": {"a.py": {"stems": "Fig1"}}}',  # stems 不是列表
-    '["不是对象"]',                        # 顶层不是对象
-])
+@pytest.mark.parametrize(
+    "body",
+    [
+        '{"scripts": "not-a-dict"}',  # 结构合法、类型不对
+        '{"scripts": {"a.py": "not-a-dict"}}',  # 某个脚本条目不是对象
+        '{"scripts": {"a.py": {"stems": "Fig1"}}}',  # stems 不是列表
+        '["不是对象"]',  # 顶层不是对象
+    ],
+)
 def test_structurally_broken_registry_still_carries_a_code(figures, body):
     """**结构**坏掉的注册表也要走 HandoffError，不能抛裸异常。
 
@@ -290,14 +338,16 @@ def test_structurally_broken_registry_still_carries_a_code(figures, body):
     with pytest.raises(handoff.HandoffError) as exc:
         handoff.ensure_registered(str(figures), None)
     assert exc.value.code == "registry_invalid"
-    assert path.read_text(encoding="utf-8") == body      # 一个字节都没动
+    assert path.read_text(encoding="utf-8") == body  # 一个字节都没动
 
 
 # --------------------------- 3. 唤起界面 ---------------------------------
 def test_macos_candidates_are_bundle_binaries():
     got = handoff.desktop_app_candidates(system="darwin", environ={"HOME": "/Users/x"})
-    assert got == ["/Applications/Tavotto.app/Contents/MacOS/Tavotto",
-                   "/Users/x/Applications/Tavotto.app/Contents/MacOS/Tavotto"]
+    assert got == [
+        "/Applications/Tavotto.app/Contents/MacOS/Tavotto",
+        "/Users/x/Applications/Tavotto.app/Contents/MacOS/Tavotto",
+    ]
 
 
 def test_windows_candidates_start_at_localappdata():
@@ -305,11 +355,11 @@ def test_windows_candidates_start_at_localappdata():
 
     这条用例跑在 macOS/Linux 上——handoff 里一个 pathlib 都不用，就是为了它。
     """
-    env = {"LOCALAPPDATA": "C:\\Users\\x\\AppData\\Local",
-           "PROGRAMFILES": "C:\\Program Files"}
+    env = {"LOCALAPPDATA": "C:\\Users\\x\\AppData\\Local", "PROGRAMFILES": "C:\\Program Files"}
     assert handoff.desktop_app_candidates(system="win32", environ=env) == [
         "C:\\Users\\x\\AppData\\Local\\Tavotto\\Tavotto.exe",
-        "C:\\Program Files\\Tavotto\\Tavotto.exe"]
+        "C:\\Program Files\\Tavotto\\Tavotto.exe",
+    ]
 
 
 def test_linux_has_no_desktop_build():
@@ -318,32 +368,50 @@ def test_linux_has_no_desktop_build():
 
 def test_env_override_wins():
     env = {handoff.APP_ENV: "/tmp/dist/Tavotto/Tavotto", "HOME": "/Users/x"}
-    assert handoff.desktop_app_candidates(system="darwin", environ=env)[0] == \
-        "/tmp/dist/Tavotto/Tavotto"
+    assert (
+        handoff.desktop_app_candidates(system="darwin", environ=env)[0]
+        == "/tmp/dist/Tavotto/Tavotto"
+    )
 
 
 def test_desktop_argv_contract():
     """与 src-tauri/src/main.rs 的 parse_open_args 同源：改一边必须同步另一边。"""
-    assert handoff.desktop_argv("/A/Tavotto", handoff.Target("/p", "Fig1")) == \
-        ["/A/Tavotto", "--open", "/p", "--stem", "Fig1"]
-    assert handoff.desktop_argv("/A/Tavotto", handoff.Target("/p", None)) == \
-        ["/A/Tavotto", "--open", "/p"]
+    assert handoff.desktop_argv("/A/Tavotto", handoff.Target("/p", "Fig1")) == [
+        "/A/Tavotto",
+        "--open",
+        "/p",
+        "--stem",
+        "Fig1",
+    ]
+    assert handoff.desktop_argv("/A/Tavotto", handoff.Target("/p", None)) == [
+        "/A/Tavotto",
+        "--open",
+        "/p",
+    ]
 
 
 def test_launch_desktop_spawns_the_app():
     seen = []
-    out = handoff.launch(handoff.Target("/p", "Fig1"), system="darwin",
-                         environ={handoff.APP_ENV: "/A/Tavotto"},
-                         isfile=lambda p: p == "/A/Tavotto",
-                         spawn=lambda argv, **kw: seen.append((argv, kw)))
+    out = handoff.launch(
+        handoff.Target("/p", "Fig1"),
+        system="darwin",
+        environ={handoff.APP_ENV: "/A/Tavotto"},
+        isfile=lambda p: p == "/A/Tavotto",
+        spawn=lambda argv, **kw: seen.append((argv, kw)),
+    )
     assert out["mode"] == "desktop"
     assert seen[0][0] == ["/A/Tavotto", "--open", "/p", "--stem", "Fig1"]
 
 
 def test_launch_desktop_required_but_missing():
     with pytest.raises(handoff.HandoffError, match="桌面应用"):
-        handoff.launch(handoff.Target("/p", None), prefer="desktop",
-                       system="darwin", environ={}, isfile=lambda p: False)
+        handoff.launch(
+            handoff.Target("/p", None),
+            prefer="desktop",
+            system="darwin",
+            environ={},
+            isfile=lambda p: False,
+        )
 
 
 def test_launch_browser_hands_off_to_running_instance():
@@ -356,9 +424,13 @@ def test_launch_browser_hands_off_to_running_instance():
             return {"version": "0.6.0"}
         return {"id": "abc123", "figures_dir": "/p"}
 
-    out = handoff.launch(handoff.Target("/p", "Fig1"), prefer="browser",
-                         http=http, browse=opened.append,
-                         spawn=lambda *a, **k: pytest.fail("不该再起进程"))
+    out = handoff.launch(
+        handoff.Target("/p", "Fig1"),
+        prefer="browser",
+        http=http,
+        browse=opened.append,
+        spawn=lambda *a, **k: pytest.fail("不该再起进程"),
+    )
     assert out["mode"] == "browser-existing"
     assert calls[1][1] == {"path": "/p"}
     assert opened == ["http://127.0.0.1:5089/?pj=abc123&open=Fig1"]
@@ -366,13 +438,24 @@ def test_launch_browser_hands_off_to_running_instance():
 
 def test_launch_browser_starts_a_new_instance():
     seen = []
-    out = handoff.launch(handoff.Target("/p", "Fig1"), prefer="browser",
-                         http=lambda *a, **k: None,
-                         spawn=lambda argv, **kw: seen.append(argv),
-                         browse=lambda url: pytest.fail("新进程自己开浏览器"))
+    out = handoff.launch(
+        handoff.Target("/p", "Fig1"),
+        prefer="browser",
+        http=lambda *a, **k: None,
+        spawn=lambda argv, **kw: seen.append(argv),
+        browse=lambda url: pytest.fail("新进程自己开浏览器"),
+    )
     assert out["mode"] == "browser-new"
-    assert seen[0][1:] == ["-m", "tavotto", "--figures", "/p",
-                           "--port", "5089", "--open-stem", "Fig1"]
+    assert seen[0][1:] == [
+        "-m",
+        "tavotto",
+        "--figures",
+        "/p",
+        "--port",
+        "5089",
+        "--open-stem",
+        "Fig1",
+    ]
 
 
 def test_browser_url_escapes_stem():
@@ -382,8 +465,7 @@ def test_browser_url_escapes_stem():
 
 
 def test_browser_url_without_stem_is_bare_root():
-    assert handoff.browser_url(5089, handoff.Target("/p", None)) == \
-        "http://127.0.0.1:5089/"
+    assert handoff.browser_url(5089, handoff.Target("/p", None)) == "http://127.0.0.1:5089/"
 
 
 # ------------------------------ CLI 契约 ---------------------------------
@@ -412,17 +494,26 @@ def test_handoff_stays_stdlib_only():
     """Flask 父进程与 CLI 都 import 它：绝不能把 flask / matplotlib 拖进来。"""
     src = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src")
     out = subprocess.run(
-        [sys.executable, "-c",
-         "import sys; import tavotto.engine.handoff; "
-         "print([m for m in ('flask', 'matplotlib', 'numpy') if m in sys.modules])"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
-        env={**os.environ, "PYTHONPATH": src})
+        [
+            sys.executable,
+            "-c",
+            "import sys; import tavotto.engine.handoff; "
+            "print([m for m in ('flask', 'matplotlib', 'numpy') if m in sys.modules])",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=True,
+        env={**os.environ, "PYTHONPATH": src},
+    )
     assert out.stdout.strip() == "[]"
 
 
 # ========================= `tavotto open` 的机器接口 ======================
 # 外部程序（Codex 插件、编辑器、安装器）读的就是这一层：一行 JSON + 稳定的
 # error code + 「--no-launch 真的不起界面」。这几条把它钉住。
+
 
 def _run_cli(argv, monkeypatch):
     """跑一次 `tavotto open …`，返回 (退出码, 解析出来的 JSON, 起过的界面)。
@@ -436,18 +527,31 @@ def _run_cli(argv, monkeypatch):
         target = a[-1] if a and isinstance(a[-1], handoff.Target) else a[0]
         argv_contract = handoff.desktop_argv(app, target)
         launched.append(argv_contract)
-        return {"mode": "desktop", "app": app, "argv": argv_contract,
-                "via": "fake", "handoff": "launched", "pid": 4242,
-                "ready": "process_alive", "ready_ms": 1}
+        return {
+            "mode": "desktop",
+            "app": app,
+            "argv": argv_contract,
+            "via": "fake",
+            "handoff": "launched",
+            "pid": 4242,
+            "ready": "process_alive",
+            "ready_ms": 1,
+        }
 
-    monkeypatch.setattr(handoff, "_launch_desktop_via_open",
-                        lambda app, bundle, target, **kw: fake_launch(app, target))
-    monkeypatch.setattr(handoff, "_launch_desktop_via_spawn",
-                        lambda app, target, **kw: fake_launch(app, target))
-    monkeypatch.setattr(handoff, "find_desktop_app",
-                        lambda **kw: "/Applications/Tavotto.app/Contents/MacOS/Tavotto")
+    monkeypatch.setattr(
+        handoff,
+        "_launch_desktop_via_open",
+        lambda app, bundle, target, **kw: fake_launch(app, target),
+    )
+    monkeypatch.setattr(
+        handoff, "_launch_desktop_via_spawn", lambda app, target, **kw: fake_launch(app, target)
+    )
+    monkeypatch.setattr(
+        handoff, "find_desktop_app", lambda **kw: "/Applications/Tavotto.app/Contents/MacOS/Tavotto"
+    )
     import contextlib
     import io
+
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         rc = handoff.cli(argv)
@@ -461,7 +565,8 @@ def test_no_launch_registers_without_starting_anything(figures, monkeypatch):
     opened = []
     monkeypatch.setattr(handoff.webbrowser, "open", lambda url: opened.append(url))
     rc, out, launched = _run_cli(
-        [str(figures / "Fig1_demo.pdf"), "--json", "--no-launch"], monkeypatch)
+        [str(figures / "Fig1_demo.pdf"), "--json", "--no-launch"], monkeypatch
+    )
     assert rc == 0
     assert out["ok"] is True and out["protocol"] == 1
     assert out["stem"] == "Fig1_demo"
@@ -479,16 +584,21 @@ def test_second_call_launches_the_native_app(figures, monkeypatch):
     rc, out, launched = _run_cli([str(figures / "Fig1_demo.pdf"), "--json"], monkeypatch)
     assert rc == 0
     assert out["launch"]["mode"] == "desktop"
-    assert launched == [["/Applications/Tavotto.app/Contents/MacOS/Tavotto",
-                         "--open", str(figures), "--stem", "Fig1_demo"]]
-    assert opened == []                     # 装了桌面版就绝不弹浏览器
+    assert launched == [
+        [
+            "/Applications/Tavotto.app/Contents/MacOS/Tavotto",
+            "--open",
+            str(figures),
+            "--stem",
+            "Fig1_demo",
+        ]
+    ]
+    assert opened == []  # 装了桌面版就绝不弹浏览器
 
 
 def test_registry_is_left_alone_on_the_second_call(figures, monkeypatch):
-    rc, first, _ = _run_cli([str(figures / "Fig1_demo.pdf"), "--json",
-                             "--no-launch"], monkeypatch)
-    rc, second, _ = _run_cli([str(figures / "Fig1_demo.pdf"), "--json",
-                              "--no-launch"], monkeypatch)
+    rc, first, _ = _run_cli([str(figures / "Fig1_demo.pdf"), "--json", "--no-launch"], monkeypatch)
+    rc, second, _ = _run_cli([str(figures / "Fig1_demo.pdf"), "--json", "--no-launch"], monkeypatch)
     assert first["registry"]["status"] == "created"
     assert second["registry"]["status"] == "already"
 
@@ -529,8 +639,9 @@ def test_broken_registry_has_a_stable_code(figures, monkeypatch):
 _is_root = getattr(os, "geteuid", lambda: -1)() == 0
 
 
-@pytest.mark.skipif(os.name == "nt" or _is_root,
-                    reason="Windows 上 chmod 挡不住写入；root 无视权限位")
+@pytest.mark.skipif(
+    os.name == "nt" or _is_root, reason="Windows 上 chmod 挡不住写入；root 无视权限位"
+)
 def test_unwritable_project_reports_registry_write_failed(figures, monkeypatch):
     """图库目录只读时报 `registry_write_failed`，**不是** traceback。
 
@@ -557,6 +668,7 @@ def test_launch_failure_has_a_stable_code(figures, monkeypatch):
     monkeypatch.setattr(handoff, "_spawn_detached", boom)
     import contextlib
     import io
+
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         rc = handoff.cli([str(figures / "Fig1_demo.pdf"), "--json"])
@@ -565,26 +677,33 @@ def test_launch_failure_has_a_stable_code(figures, monkeypatch):
 
 
 def test_conflicting_launch_flags_still_emit_json(figures, monkeypatch):
-    rc, out, _ = _run_cli([str(figures / "Fig1_demo.pdf"), "--json",
-                           "--desktop", "--browser"], monkeypatch)
+    rc, out, _ = _run_cli(
+        [str(figures / "Fig1_demo.pdf"), "--json", "--desktop", "--browser"], monkeypatch
+    )
     assert rc == 2 and out["code"] == "bad_launch_mode"
 
 
 def test_every_handoff_error_carries_a_code():
     """`HandoffError` 不许再裸抛：没有 code 的那一条，调用方只能去匹配中文。"""
     import inspect
+
     src = inspect.getsource(handoff)
     tree = ast.parse(src)
     for node in ast.walk(tree):
-        if isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call) \
-                and getattr(node.exc.func, "id", "") == "HandoffError":
-            assert len(node.exc.args) == 2, \
+        if (
+            isinstance(node, ast.Raise)
+            and isinstance(node.exc, ast.Call)
+            and getattr(node.exc.func, "id", "") == "HandoffError"
+        ):
+            assert len(node.exc.args) == 2, (
                 f"handoff.py 第 {node.lineno} 行的 HandoffError 没给 code"
+            )
 
 
 # ============ 唤起：惯例位置之外的安装（Codex review 的两条） =============
 # 发现链找得到 CLI、唤起却按惯例位置找 = 用户明明装了桌面版，交接却静默退回
 # 浏览器模式。这几条把「唤起也认清单 / 也认自己旁边那个壳」钉住。
+
 
 def test_launch_uses_the_desktop_recorded_in_the_manifest(tmp_path, monkeypatch):
     """用户把 Tavotto.app 拖出了 /Applications：清单里记着它在哪。"""
@@ -592,8 +711,10 @@ def test_launch_uses_the_desktop_recorded_in_the_manifest(tmp_path, monkeypatch)
     moved.parent.mkdir(parents=True)
     moved.write_text("gui", encoding="utf-8")
     from tavotto.engine import locate
-    locate.write_manifest({"version": "1", "cli": None, "desktop": str(moved),
-                           "install_dir": None, "source": "app"})
+
+    locate.write_manifest(
+        {"version": "1", "cli": None, "desktop": str(moved), "install_dir": None, "source": "app"}
+    )
 
     got = handoff.desktop_app_candidates(environ=dict(os.environ))
     assert str(moved) in got, "清单里的桌面 App 没进候选"
@@ -607,9 +728,11 @@ def test_manifest_desktop_that_no_longer_exists_is_ignored(tmp_path):
     那属于惯例位置那条腿，与这里要验的事无关。）
     """
     from tavotto.engine import locate
+
     gone = str(tmp_path / "gone" / "Tavotto")
-    locate.write_manifest({"version": "1", "cli": None, "desktop": gone,
-                           "install_dir": None, "source": "app"})
+    locate.write_manifest(
+        {"version": "1", "cli": None, "desktop": gone, "install_dir": None, "source": "app"}
+    )
     assert gone not in handoff.desktop_app_candidates(environ=dict(os.environ))
 
 
@@ -620,6 +743,7 @@ def test_frozen_prefers_the_shell_sitting_next_to_itself(tmp_path, monkeypatch):
     这条验的是**优先级**，形状本身由 test_install_locate 的 describe_self 用例看着。
     """
     from tavotto.engine import locate
+
     root = tmp_path / ("Tavotto.app" if sys.platform == "darwin" else "Tavotto")
     cli = pathlib.Path(locate.cli_exe_for(str(root)))
     shell = pathlib.Path(locate.desktop_exe_for(str(root)))
@@ -635,8 +759,7 @@ def test_frozen_prefers_the_shell_sitting_next_to_itself(tmp_path, monkeypatch):
 
 def test_candidates_have_no_duplicates(tmp_path):
     """惯例位置与清单可能指同一个文件——候选里不该出现两遍。"""
-    got = handoff.desktop_app_candidates(system="darwin",
-                                         environ={"HOME": "/Users/x"})
+    got = handoff.desktop_app_candidates(system="darwin", environ={"HOME": "/Users/x"})
     assert len(got) == len(set(got))
 
 
@@ -649,13 +772,13 @@ def test_frozen_browser_fallback_never_builds_dash_m_tavotto(figures, monkeypatc
     """
     spawned = []
     monkeypatch.setattr(handoff, "find_desktop_app", lambda **kw: None)
-    monkeypatch.setattr(handoff, "_spawn_detached",
-                        lambda argv, **kw: spawned.append(argv))
+    monkeypatch.setattr(handoff, "_spawn_detached", lambda argv, **kw: spawned.append(argv))
     monkeypatch.setattr(handoff, "_http_json", lambda *a, **kw: None)
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.setattr(sys, "executable", "C:\\P\\Tavotto\\tavotto-cli.exe")
-    out = handoff.launch(handoff.Target(str(figures), "Fig1_demo"),
-                         prefer="browser", http=lambda *a, **kw: None)
+    out = handoff.launch(
+        handoff.Target(str(figures), "Fig1_demo"), prefer="browser", http=lambda *a, **kw: None
+    )
     assert out["mode"] == "browser-new"
     assert "-m" not in spawned[0], f"冻结产物拼出了 -m: {spawned[0]}"
     assert spawned[0][:2] == ["C:\\P\\Tavotto\\tavotto-cli.exe", "--figures"]
@@ -665,9 +788,7 @@ def test_source_mode_browser_fallback_still_uses_dash_m(figures, monkeypatch):
     """源码 / pip 模式照旧走 `python -m tavotto`——那条路一个字没改。"""
     spawned = []
     monkeypatch.setattr(handoff, "find_desktop_app", lambda **kw: None)
-    monkeypatch.setattr(handoff, "_spawn_detached",
-                        lambda argv, **kw: spawned.append(argv))
+    monkeypatch.setattr(handoff, "_spawn_detached", lambda argv, **kw: spawned.append(argv))
     monkeypatch.delattr(sys, "frozen", raising=False)
-    handoff.launch(handoff.Target(str(figures), None), prefer="browser",
-                   http=lambda *a, **kw: None)
+    handoff.launch(handoff.Target(str(figures), None), prefer="browser", http=lambda *a, **kw: None)
     assert spawned[0][:3] == [sys.executable, "-m", "tavotto"]

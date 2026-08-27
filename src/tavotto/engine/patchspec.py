@@ -30,6 +30,7 @@ golden vectors 在 `tests/golden/patch_vectors.json`；契约与已知的跨语�
 `import patchspec`）共用，**只许纯标准库**，且不得使用相对 import
 （worker 是把 engine 目录塞进 sys.path 后平铺 import 的）。
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -43,8 +44,8 @@ _FIELDS = ("gid", "prop", "value")
 #: 整数的安全区间 = i64。Python 整数是任意精度，JSON 也不限位数，但 Rust 侧
 #: 的 serde_json 默认只认 i64/u64——放行一个 10^30 会让两边的序列化当场分叉。
 #: override 的值是颜色 / 字号 / 分数坐标，撞不到这条线；撞到了就是脏数据。
-_INT_MIN = -(2 ** 63)
-_INT_MAX = 2 ** 63 - 1
+_INT_MIN = -(2**63)
+_INT_MAX = 2**63 - 1
 
 #: 嵌套深度上限。value 合法的嵌套只有 pos_frac / endpoints_frac 这类一两层的
 #: 数组，给到 32 已经绰绰有余；设上限是为了让恶意/损坏输入撞墙而不是递归爆栈。
@@ -57,7 +58,7 @@ def _value_problem(value: object, depth: int = 0) -> str:
         return "value_too_deep"
     if value is None or isinstance(value, (str, bool)):
         return ""
-    if isinstance(value, int):      # bool 已在上面拦掉（bool 是 int 的子类）
+    if isinstance(value, int):  # bool 已在上面拦掉（bool 是 int 的子类）
         return "" if _INT_MIN <= value <= _INT_MAX else "int_out_of_range"
     if isinstance(value, float):
         # NaN / Infinity 不是 JSON 值。Python 的 json 默认会写出裸 `NaN`，
@@ -99,38 +100,33 @@ def canonicalize_with_diagnostics(
     用户看到的是「我改了颜色但没生效」，没有任何线索。
     """
     if not isinstance(patches, (list, tuple)):
-        return [], [{"index": -1, "reason": "patches_not_a_list",
-                     "entry": _brief(patches)}]
+        return [], [{"index": -1, "reason": "patches_not_a_list", "entry": _brief(patches)}]
 
     dropped: list[dict] = []
     merged: dict[tuple[str, str], object] = {}
     for i, entry in enumerate(patches):
         if not isinstance(entry, dict):
-            dropped.append({"index": i, "reason": "not_an_object",
-                            "entry": _brief(entry)})
+            dropped.append({"index": i, "reason": "not_an_object", "entry": _brief(entry)})
             continue
         gid, prop = entry.get("gid"), entry.get("prop")
         if not isinstance(gid, str) or not gid:
-            dropped.append({"index": i, "reason": "bad_gid",
-                            "entry": _brief(entry)})
+            dropped.append({"index": i, "reason": "bad_gid", "entry": _brief(entry)})
             continue
         if not isinstance(prop, str) or not prop:
-            dropped.append({"index": i, "reason": "bad_prop",
-                            "entry": _brief(entry)})
+            dropped.append({"index": i, "reason": "bad_prop", "entry": _brief(entry)})
             continue
         if "value" not in entry:
-            dropped.append({"index": i, "reason": "missing_value",
-                            "entry": _brief(entry)})
+            dropped.append({"index": i, "reason": "missing_value", "entry": _brief(entry)})
             continue
         problem = _value_problem(entry["value"])
         if problem:
-            dropped.append({"index": i, "reason": problem,
-                            "entry": _brief(entry)})
+            dropped.append({"index": i, "reason": problem, "entry": _brief(entry)})
             continue
-        merged[(gid, prop)] = entry["value"]     # last-wins
+        merged[(gid, prop)] = entry["value"]  # last-wins
 
-    canonical = [{"gid": gid, "prop": prop, "value": value}
-                 for (gid, prop), value in sorted(merged.items())]
+    canonical = [
+        {"gid": gid, "prop": prop, "value": value} for (gid, prop), value in sorted(merged.items())
+    ]
     return canonical, dropped
 
 
@@ -149,9 +145,13 @@ def canonical_json(patches: object) -> str:
     * `ensure_ascii=False` —— 中文 / µ / ⁻¹ 原样出字（编码时统一 UTF-8）
     * `allow_nan=False` —— 非有限浮点已在规范化时剔除，这里是第二道保险
     """
-    return json.dumps(canonicalize(patches), sort_keys=True,
-                      separators=(",", ":"), ensure_ascii=False,
-                      allow_nan=False)
+    return json.dumps(
+        canonicalize(patches),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
 
 
 def patch_hash(patches: object) -> str:

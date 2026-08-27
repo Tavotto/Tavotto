@@ -27,6 +27,7 @@
 **与 `TAVOTTO_NO_UPDATE_CHECK` 是两个独立开关**：一个管「查不查新版本」，
 一个管「发不发匿名用量」，互不代管。
 """
+
 from __future__ import annotations
 
 import json
@@ -113,26 +114,26 @@ EVENTS: dict[str, dict[str, dict]] = {
     # 一次真实的应用会话。CLI 子命令、打包、单测 import 都不算。
     "app_started": {"app_mode": _enum("desktop", "browser")},
     # 用户真的进了某个面板的图内编辑流程（不是每次预览图请求）。
-    "figure_opened": {"asset_kind": _enum("pdf", "raster"),
-                      "editable": BOOL},
+    "figure_opened": {"asset_kind": _enum("pdf", "raster"), "editable": BOOL},
     # 一次语义编辑落进历史（拖动 = 1 条，不是 120 条 pointermove）。
     "figure_edit_completed": {
-        "edit_kind": _enum("text", "series", "axes", "annotation",
-                           "layout", "style", "other"),
+        "edit_kind": _enum("text", "series", "axes", "annotation", "layout", "style", "other"),
         "patch_count": _int(1000),
     },
     "canvas_created": {"creation_kind": _enum("blank", "project", "duplicate")},
     # 只有计数，没有任何一条检查项的文字、字体名、文件名或对象 id。
-    "preflight_completed": {"errors": _int(1000), "warnings": _int(1000),
-                            "not_verifiable": _int(1000),
-                            "suggestions": _int(1000), "passed": BOOL},
+    "preflight_completed": {
+        "errors": _int(1000),
+        "warnings": _int(1000),
+        "not_verifiable": _int(1000),
+        "suggestions": _int(1000),
+        "passed": BOOL,
+    },
     # 激活事件：**导出真的成功、文件真的写完之后**才发。
-    "export_completed": {"pdf": BOOL, "png": BOOL, "with_proof": BOOL,
-                         "panel_count": _int(1000)},
+    "export_completed": {"pdf": BOOL, "png": BOOL, "with_proof": BOOL, "panel_count": _int(1000)},
     # 只有「用了哪个 agent」。提示词 / 脚本 / 目标 / 会话 id 一个都不发。
     "ai_assistant_invoked": {"agent": _enum("codex", "claude", "other")},
-    "update_completed": {"update_kind": _enum("desktop", "pip", "pipx"),
-                         "target_version": VERSION},
+    "update_completed": {"update_kind": _enum("desktop", "pip", "pipx"), "target_version": VERSION},
 }
 
 
@@ -161,8 +162,10 @@ def _coerce(spec: dict, value):
         text = str(value)
         if not text or len(text) > 32:
             raise _Invalid("version")
-        if any(c not in "0123456789abcdefghijklmnopqrstuvwxyz"
-               "ABCDEFGHIJKLMNOPQRSTUVWXYZ.+-_" for c in text):
+        if any(
+            c not in "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.+-_"
+            for c in text
+        ):
             raise _Invalid("version")
         return text
     raise _Invalid("kind")
@@ -255,8 +258,7 @@ def _consent_is_current(st: dict) -> bool:
     `enabled()` 与 `capture()` 共用这一个判据——分成两份迟早分叉，而分叉的
     表现是「界面说没在发，实际还在发」。
     """
-    return (st["consent"] == CONSENT_ENABLED
-            and st["consent_version"] >= CONSENT_VERSION)
+    return st["consent"] == CONSENT_ENABLED and st["consent_version"] >= CONSENT_VERSION
 
 
 def needs_reconsent() -> bool:
@@ -270,8 +272,7 @@ def needs_reconsent() -> bool:
     if hard_disabled():
         return False
     st = settings()
-    return (st["consent"] == CONSENT_ENABLED
-            and st["consent_version"] < CONSENT_VERSION)
+    return st["consent"] == CONSENT_ENABLED and st["consent_version"] < CONSENT_VERSION
 
 
 def enabled() -> bool:
@@ -314,8 +315,9 @@ def set_consent(consent: str, source: str = "settings") -> dict:
         _drop_pending()
         return after
     if first_time:
-        capture("telemetry_enabled",
-                {"source": "first_run" if source == "first_run" else "settings"})
+        capture(
+            "telemetry_enabled", {"source": "first_run" if source == "first_run" else "settings"}
+        )
     # 本次会话已经是一次真实的应用会话了，补记一次（不重复发）
     _maybe_send_app_started()
     return after
@@ -376,14 +378,16 @@ def _distribution() -> str:
     """
     try:
         from . import diagnostics
+
         kind = diagnostics.install_kind()
-    except Exception:                          # noqa: BLE001 — 探测失败不该影响埋点
+    except Exception:  # noqa: BLE001 — 探测失败不该影响埋点
         return "unknown"
     return kind if kind in AUTO_PROPS["distribution"]["values"] else "unknown"
 
 
 def _auto_props() -> dict:
     from .. import __version__
+
     return {
         "app_version": __version__,
         "platform": _platform(),
@@ -416,7 +420,7 @@ def capture(event: str, properties: dict | None = None) -> bool:
             "properties": {**_auto_props(), **props},
         }
         return _enqueue(payload)
-    except Exception:                          # noqa: BLE001 — 埋点绝不上浮
+    except Exception:  # noqa: BLE001 — 埋点绝不上浮
         return False
 
 
@@ -427,8 +431,9 @@ def _enqueue(payload: dict) -> bool:
             _QUEUE = queue.Queue(maxsize=QUEUE_MAX)
         q = _QUEUE
         if _SENDER is None or not _SENDER.is_alive():
-            _SENDER = threading.Thread(target=_run_sender, args=(q,),
-                                       daemon=True, name="tavotto-telemetry")
+            _SENDER = threading.Thread(
+                target=_run_sender, args=(q,), daemon=True, name="tavotto-telemetry"
+            )
             _SENDER.start()
     try:
         q.put_nowait(payload)
@@ -455,14 +460,14 @@ def _drop_pending() -> None:
 def _run_sender(q: "queue.Queue[dict | None]") -> None:
     while True:
         payload = q.get()
-        if payload is None:                    # 退出哨兵（reset_for_tests）
+        if payload is None:  # 退出哨兵（reset_for_tests）
             q.task_done()
             return
         try:
             # 出队时再确认一次：用户可能在事件排队期间关掉了遥测
             if enabled():
                 _post(payload)
-        except Exception:                      # noqa: BLE001 — 网络失败是常态
+        except Exception:  # noqa: BLE001 — 网络失败是常态
             pass
         finally:
             q.task_done()
@@ -472,14 +477,19 @@ def _post(payload: dict) -> None:
     """真正的投递。测试把这个函数整体替换掉，一个真实请求都不发。"""
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     from .. import __version__
+
     req = urllib.request.Request(
-        endpoint(), data=data, method="POST",
-        headers={"Content-Type": "application/json",
-                 "User-Agent": f"{brand.PRODUCT_NAME}/{__version__}"},
+        endpoint(),
+        data=data,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": f"{brand.PRODUCT_NAME}/{__version__}",
+        },
     )
     try:
         with urllib.request.urlopen(req, timeout=NETWORK_TIMEOUT_S) as resp:
-            resp.read(1024)                    # 读掉响应体好让连接能复用/关闭
+            resp.read(1024)  # 读掉响应体好让连接能复用/关闭
     except (urllib.error.URLError, TimeoutError, OSError):
         # 离线、代理挂了、DNS 失败——都不是错误，是常态。**不记日志**：
         # 一个断网的用户不该在 app.log 里看到几十条遥测投递失败。
@@ -497,6 +507,7 @@ def flush(timeout: float = 2.0) -> bool:
     def wait():
         q.join()
         done.set()
+
     threading.Thread(target=wait, daemon=True).start()
     return done.wait(timeout)
 
@@ -515,6 +526,6 @@ def reset_for_tests() -> None:
         try:
             old.put_nowait(None)
         except queue.Full:
-            pass                               # 满着的队列里那条自然会被丢掉
+            pass  # 满着的队列里那条自然会被丢掉
     _session_mode = None
     _app_started_sent = False

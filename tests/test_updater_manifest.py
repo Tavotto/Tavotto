@@ -3,6 +3,7 @@
 看护的是发行链上最容易静默坏掉的一环：清单产不出来 / 产出半份，壳那边表现
 都是「一直显示已是最新」——用户停在旧版本上，而 CI 全绿。
 """
+
 import importlib.util
 import json
 from pathlib import Path
@@ -80,8 +81,9 @@ def test_intel_mac_gets_no_entry(tmp_path):
 def test_cli_writes_the_file(tmp_path):
     _artifact(tmp_path / "in", "Tavotto.app.tar.gz")
     out = tmp_path / "out" / "latest.json"
-    assert mod.main(["--artifacts", str(tmp_path / "in"), "--tag", "v1.2.3",
-                     "--out", str(out)]) == 0
+    assert (
+        mod.main(["--artifacts", str(tmp_path / "in"), "--tag", "v1.2.3", "--out", str(out)]) == 0
+    )
     data = json.loads(out.read_text(encoding="utf-8"))
     assert data["version"] == "1.2.3"
     assert data["platforms"]["darwin-aarch64"]["url"].endswith("/v1.2.3/Tavotto.app.tar.gz")
@@ -97,16 +99,24 @@ def test_half_a_manifest_is_rejected_when_both_platforms_are_required(tmp_path):
     _artifact(tmp_path / "desktop-tauri-nsis", "Tavotto_0.7.0_x64-setup.nsis.zip")
 
     with pytest.raises(SystemExit, match="清单缺平台：darwin-aarch64"):
-        mod.build_manifest(tmp_path, "0.7.0", "v0.7.0", "Tavotto", "Tavotto", "",
-                           ["darwin-aarch64", "windows-x86_64"])
+        mod.build_manifest(
+            tmp_path,
+            "0.7.0",
+            "v0.7.0",
+            "Tavotto",
+            "Tavotto",
+            "",
+            ["darwin-aarch64", "windows-x86_64"],
+        )
 
 
 def test_require_passes_when_both_are_present(tmp_path):
     _artifact(tmp_path / "desktop-tauri-dmg", "Tavotto.app.tar.gz")
     _artifact(tmp_path / "desktop-tauri-nsis", "Tavotto_0.7.0_x64-setup.nsis.zip")
 
-    man = mod.build_manifest(tmp_path, "0.7.0", "v0.7.0", "Tavotto", "Tavotto", "",
-                             ["darwin-aarch64", "windows-x86_64"])
+    man = mod.build_manifest(
+        tmp_path, "0.7.0", "v0.7.0", "Tavotto", "Tavotto", "", ["darwin-aarch64", "windows-x86_64"]
+    )
     assert set(man["platforms"]) == {"darwin-aarch64", "windows-x86_64"}
 
 

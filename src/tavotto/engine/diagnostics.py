@@ -16,6 +16,7 @@ Python」「日志在哪」）才能定位一次。有了这个包，用户点�
 
 纯标准库，Flask 父进程 import。
 """
+
 from __future__ import annotations
 
 import io
@@ -30,7 +31,7 @@ from pathlib import Path
 from . import ai_bridge, bootstrap, config, diagnostics_frontend, pool, runtime, telemetry, updater
 
 LOG_TAIL_LINES = 400
-ERROR_TAIL = 30          # 报告里单列的最近错误条数
+ERROR_TAIL = 30  # 报告里单列的最近错误条数
 
 #: 诊断包整体格式的版本。**读包的人不该靠 Tavotto 版本号去猜 schema**
 #: ——manifest.json 自报这个数。1 = 只有 report/app.log/config 的那一版；
@@ -41,8 +42,7 @@ FRONTEND_SNAPSHOT_SCHEMA = 1
 TRACE_SCHEMA = 1
 
 # 形如 sk-…、ghp_…、长十六进制串等，宁可多抹一点
-_SECRET_VALUE = re.compile(
-    r"\b(sk-[A-Za-z0-9_\-]{8,}|ghp_[A-Za-z0-9]{10,}|[A-Fa-f0-9]{32,})\b")
+_SECRET_VALUE = re.compile(r"\b(sk-[A-Za-z0-9_\-]{8,}|ghp_[A-Za-z0-9]{10,}|[A-Fa-f0-9]{32,})\b")
 _SECRET_KEYS = ("api_key", "token", "secret", "password", "auth")
 
 #: 假名标识：不是密钥，但也不该被顺手复制进 issue 或群聊。
@@ -61,8 +61,9 @@ def _install_id() -> str:
     """本机的匿名遥测标识（没同意过就是空串）。只用来把它从输出里抹掉。"""
     try:
         from . import telemetry
+
         return telemetry.install_id() or ""
-    except Exception:                          # noqa: BLE001 — 脱敏不该被它拖垮
+    except Exception:  # noqa: BLE001 — 脱敏不该被它拖垮
         return ""
 
 
@@ -80,7 +81,7 @@ def _redact_text(text: str) -> str:
         # Windows 上日志里可能混着两种分隔符写法
         text = text.replace(home.replace("\\", "/"), "~")
     user = os.environ.get("USER") or os.environ.get("USERNAME") or ""
-    if len(user) >= 3:      # 太短的用户名replace 会误伤正常词
+    if len(user) >= 3:  # 太短的用户名replace 会误伤正常词
         text = re.sub(rf"\b{re.escape(user)}\b", "<user>", text)
     return text
 
@@ -127,7 +128,7 @@ def install_kind() -> str:
     埋点为了拿这个值另写一份探测，就是制造第二个权威，两边迟早给出不同答案。
     """
     if pool.is_frozen():
-        return "desktop"          # .app / .exe 独立应用
+        return "desktop"  # .app / .exe 独立应用
     return updater.install_method()
 
 
@@ -215,17 +216,24 @@ def build_report(project: dict | None = None, port: int | None = None) -> dict:
         # 每个已注册编码 Agent 的探测结论。**不含就绪检查的账号细节**——
         # 那条只回 ready/needs_auth/unknown，邮箱与组织名一个字都不出现。
         "ai": {
-            entry["id"]: {"installed": entry["installed"],
-                          "enabled": entry["enabled"],
-                          "state": entry["state"],
-                          "path": entry["executable_path"],
-                          "source": entry["detection_source"],
-                          "version": entry["version"]}
+            entry["id"]: {
+                "installed": entry["installed"],
+                "enabled": entry["enabled"],
+                "state": entry["state"],
+                "path": entry["executable_path"],
+                "source": entry["detection_source"],
+                "version": entry["version"],
+            }
             for entry in caps.get("agents", [])
         },
         "ai_endpoints": [
-            {"id": e["id"], "label": e["label"], "agent": e["agent"],
-             "base_url": e["base_url"], "has_key": e["has_key"]}
+            {
+                "id": e["id"],
+                "label": e["label"],
+                "agent": e["agent"],
+                "base_url": e["base_url"],
+                "has_key": e["has_key"],
+            }
             for e in caps.get("endpoints", [])
         ],
         # 遥测**开没开**对排障有用（「我关了它为什么还联网」），
@@ -241,9 +249,12 @@ def build_report(project: dict | None = None, port: int | None = None) -> dict:
     return _redact_obj(report)
 
 
-def build_bundle(project: dict | None = None, port: int | None = None,
-                 frontend: dict | None = None,
-                 frontend_dropped: bool = False) -> bytes:
+def build_bundle(
+    project: dict | None = None,
+    port: int | None = None,
+    frontend: dict | None = None,
+    frontend_dropped: bool = False,
+) -> bytes:
     """诊断包 zip 的字节流（全部内容已脱敏）。
 
     `frontend` 是前端在用户点「导出诊断包」那一刻现采的载荷
@@ -253,13 +264,11 @@ def build_bundle(project: dict | None = None, port: int | None = None,
     report = build_report(project, port)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr("report.json",
-                   json.dumps(report, ensure_ascii=False, indent=1))
+        z.writestr("report.json", json.dumps(report, ensure_ascii=False, indent=1))
         z.writestr("app.log", _redact_text("\n".join(_log_tail())))
         try:
             cfg = json.loads(config.config_path().read_text(encoding="utf-8"))
-            z.writestr("config.json",
-                       json.dumps(_redact_obj(cfg), ensure_ascii=False, indent=1))
+            z.writestr("config.json", json.dumps(_redact_obj(cfg), ensure_ascii=False, indent=1))
         except (OSError, ValueError):
             pass
 
@@ -269,30 +278,36 @@ def build_bundle(project: dict | None = None, port: int | None = None,
         # 但 manifest 必须如实说「这份 trace 不完整」
         truncated = truncated or frontend_dropped
         if snapshot is not None:
-            z.writestr("frontend-state.json",
-                       json.dumps(snapshot, ensure_ascii=False, indent=1))
+            z.writestr("frontend-state.json", json.dumps(snapshot, ensure_ascii=False, indent=1))
         if trace:
-            z.writestr("interaction-trace.jsonl",
-                       diagnostics_frontend.trace_to_jsonl(trace))
+            z.writestr("interaction-trace.jsonl", diagnostics_frontend.trace_to_jsonl(trace))
 
-        z.writestr("manifest.json", json.dumps({
-            "schema_version": BUNDLE_SCHEMA_VERSION,
-            "created_at": _now_iso(),
-            "tavotto_version": report.get("tavotto", {}).get("version"),
-            "contains_frontend_state": snapshot is not None,
-            "contains_interaction_trace": bool(trace),
-            "privacy_mode": "safe-default",
-            "trace_event_count": len(trace),
-            "trace_truncated": truncated,
-            "frontend_snapshot_schema": FRONTEND_SNAPSHOT_SCHEMA,
-            "trace_schema": TRACE_SCHEMA,
-        }, ensure_ascii=False, indent=1))
+        z.writestr(
+            "manifest.json",
+            json.dumps(
+                {
+                    "schema_version": BUNDLE_SCHEMA_VERSION,
+                    "created_at": _now_iso(),
+                    "tavotto_version": report.get("tavotto", {}).get("version"),
+                    "contains_frontend_state": snapshot is not None,
+                    "contains_interaction_trace": bool(trace),
+                    "privacy_mode": "safe-default",
+                    "trace_event_count": len(trace),
+                    "trace_truncated": truncated,
+                    "frontend_snapshot_schema": FRONTEND_SNAPSHOT_SCHEMA,
+                    "trace_schema": TRACE_SCHEMA,
+                },
+                ensure_ascii=False,
+                indent=1,
+            ),
+        )
         z.writestr("README.txt", _readme(snapshot is not None, bool(trace)))
     return buf.getvalue()
 
 
 def _now_iso() -> str:
     from datetime import datetime, timezone
+
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
 
@@ -305,10 +320,10 @@ def _frontend_sections(frontend: dict | None) -> tuple[dict | None, list[dict], 
     """
     if not isinstance(frontend, dict):
         return None, [], False
-    snapshot = diagnostics_frontend.sanitize_snapshot(
-        frontend.get("frontend_state"), _redact_text)
+    snapshot = diagnostics_frontend.sanitize_snapshot(frontend.get("frontend_state"), _redact_text)
     trace, truncated = diagnostics_frontend.sanitize_trace(
-        frontend.get("interaction_trace"), _redact_text)
+        frontend.get("interaction_trace"), _redact_text
+    )
     return snapshot, trace, truncated
 
 
@@ -332,14 +347,14 @@ def _readme(has_state: bool, has_trace: bool) -> str:
         "- report.json：系统、运行环境与探测结果\n"
         "- app.log：最近的应用日志\n"
         "- config.json：用户配置（密钥已抹掉）\n"
-        + extra_zh +
-        "- manifest.json：本诊断包自身的格式说明\n"
+        + extra_zh
+        + "- manifest.json：本诊断包自身的格式说明\n"
         "\n"
         "- report.json: system and runtime information\n"
         "- app.log: recent Tavotto application logs\n"
         "- config.json: user configuration (secrets removed)\n"
-        + extra_en +
-        "- manifest.json: describes this package's own format\n"
+        + extra_en
+        + "- manifest.json: describes this package's own format\n"
         "\n"
         "不包含 / It does NOT intentionally contain:\n"
         "- 图中文字（标题、坐标轴标签、图例、标注）\n"

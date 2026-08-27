@@ -6,6 +6,7 @@
 同名的 fig1.py 是两个完全不同的脚本，只按脚本名索引会把 A 项目的会话
 交给 B 项目用（画面对不上，还会把 override 写到别人的 Figure 上）。
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -63,7 +64,7 @@ _RMTREE_BACKOFF = (0.0, 0.05, 0.1, 0.2)
 #: 各档按「正常情况下最坏要多久」给：build 要跑用户整个脚本（heavy 分钟级），
 #: 导出是 600dpi 全质量出图，override / 预览是热态操作。
 BUILD_TIMEOUT = 900.0
-REQUEST_TIMEOUT = 300.0     # override / render_png / preview_png
+REQUEST_TIMEOUT = 300.0  # override / render_png / preview_png
 EXPORT_TIMEOUT = 600.0
 #: 优雅关停：worker 收到就 SystemExit，等不到 5 秒说明它根本没在读 stdin。
 SHUTDOWN_TIMEOUT = 5.0
@@ -100,6 +101,7 @@ def worker_python_env() -> str | None:
     惯用写法，当成一个路径去探测只会白等一轮超时。
     """
     import os
+
     for name in (WORKER_PYTHON_ENV, LEGACY_WORKER_PYTHON_ENV):
         val = os.environ.get(name)
         if val:
@@ -108,12 +110,12 @@ def worker_python_env() -> str | None:
 
 
 #: 解释器来源（环境状态 API 与诊断包都用这套字符串，别在别处另起名字）
-SOURCE_ENV = "env_override"       # TAVOTTO_WORKER_PYTHON
+SOURCE_ENV = "env_override"  # TAVOTTO_WORKER_PYTHON
 SOURCE_CONFIGURED = "configured"  # 用户在设置里指定的
-SOURCE_MANAGED = "managed_venv"   # Tavotto 在源码模式下自建的 venv
-SOURCE_BUNDLED = "bundled"        # Windows 桌面版随包附带的私有 runtime
+SOURCE_MANAGED = "managed_venv"  # Tavotto 在源码模式下自建的 venv
+SOURCE_BUNDLED = "bundled"  # Windows 桌面版随包附带的私有 runtime
 SOURCE_CURRENT = "current_process"  # Flask 自己这个解释器（pip install tavotto[worker]）
-SOURCE_SYSTEM = "system"          # 探测到的系统 Python / Conda
+SOURCE_SYSTEM = "system"  # 探测到的系统 Python / Conda
 
 #: 给人看的来源名（诊断包与日志用；前端有自己的一份文案）
 SOURCE_LABELS = {
@@ -162,7 +164,7 @@ def stem_patch_hash(worker, stem: str) -> str:
     （空 patch 列表）；没 build 过 = 压根没有基准（回空串）。
     """
     by_stem = getattr(worker, "last_patch_hash_by_stem", None)
-    if by_stem is None:                       # 没有按 stem 账本的实现（假件）
+    if by_stem is None:  # 没有按 stem 账本的实现（假件）
         return getattr(worker, "last_patch_hash", "")
     if stem in by_stem:
         return by_stem[stem]
@@ -267,8 +269,7 @@ def script_sha1(figures_dir: str, script_name: str) -> str:
 
 
 class WorkerError(RuntimeError):
-    def __init__(self, message: str, traceback_text: str = "", code: str = "",
-                 module: str = ""):
+    def __init__(self, message: str, traceback_text: str = "", code: str = "", module: str = ""):
         super().__init__(message)
         self.traceback_text = traceback_text
         # 机器可读的原因；前端据此换成对应的引导界面而不是干甩一段错误文字
@@ -306,6 +307,7 @@ def _configured_source(path: str) -> str:
     要分得清：managed_venv 是我们该负责的，configured 是用户自己的环境。
     """
     from . import bootstrap
+
     try:
         managed = str(bootstrap.venv_python())
     except (OSError, ValueError):
@@ -364,8 +366,7 @@ def _prioritized_candidates() -> list[tuple[str, str]]:
         ]
         # python.org 的 framework 安装（新版优先）与 conda
         system += _glob("/Library/Frameworks/Python.framework/Versions/*/bin/python3")
-        system += [f"{home}/{n}/bin/python3"
-                   for n in ("anaconda3", "miniconda3", "mambaforge")]
+        system += [f"{home}/{n}/bin/python3" for n in ("anaconda3", "miniconda3", "mambaforge")]
     cands += [(p, SOURCE_SYSTEM) for p in system]
     return [(p, src) for p, src in cands if p]
 
@@ -382,6 +383,7 @@ def _candidate_pythons() -> list[str | None]:
 def _glob(pattern: str) -> list[str]:
     """新版优先的安全 glob：目录不存在/没权限时回空表，不把启动流程带崩。"""
     import glob as _g
+
     try:
         return sorted(_g.glob(pattern), reverse=True)
     except OSError:
@@ -407,10 +409,14 @@ def _has_matplotlib(python: str, *, bundled: bool = False) -> bool:
         # stdin 必须显式断开：桌面 sidecar 的 stdin 是「父进程死亡信号」管道，
         # 绝不能被子进程继承（Windows 上实测继承它会让子解释器启动挂死 30s，
         # 症状是桌面版「渲染环境不可用」而同一解释器在终端里探测秒过）
-        probe = subprocess.run([python, *args, "-c", "import matplotlib"],
-                               capture_output=True, timeout=30,
-                               stdin=subprocess.DEVNULL, env=env,
-                               creationflags=runtime.CREATE_NO_WINDOW)
+        probe = subprocess.run(
+            [python, *args, "-c", "import matplotlib"],
+            capture_output=True,
+            timeout=30,
+            stdin=subprocess.DEVNULL,
+            env=env,
+            creationflags=runtime.CREATE_NO_WINDOW,
+        )
     except (OSError, subprocess.SubprocessError):
         return False
     return probe.returncode == 0
@@ -430,7 +436,8 @@ def _no_python_error() -> "WorkerError":
     return WorkerError(
         "找不到装有 matplotlib 的 Python。可在设置里让 Tavotto 自动装一个，"
         "或指定你已有的解释器（环境变量 TAVOTTO_WORKER_PYTHON 同样有效）。",
-        code="no_worker_python")
+        code="no_worker_python",
+    )
 
 
 def select_worker_python() -> tuple[str, str]:
@@ -446,7 +453,7 @@ def select_worker_python() -> tuple[str, str]:
     for cand, source in _prioritized_candidates():
         if cand in seen:
             continue
-        seen.add(cand)   # 同一个解释器不重复探测（每次探测最多 30s）
+        seen.add(cand)  # 同一个解释器不重复探测（每次探测最多 30s）
         try:
             if not Path(cand).exists():
                 continue
@@ -493,6 +500,7 @@ def source_of(python: str) -> str:
     路径再问来源，而探测一次最多 30s，不能为了贴个标签再跑一遍。
     """
     import sys
+
     if _worker_python and same_python(python, _worker_python) and _worker_source:
         return _worker_source
     if same_python(python, worker_python_env()):
@@ -525,8 +533,9 @@ def reset_worker_python() -> None:
 
 
 class EngineWorker:
-    def __init__(self, script_name: str, figures_dir: str, entry: str,
-                 base_dir: Path | None = None):
+    def __init__(
+        self, script_name: str, figures_dir: str, entry: str, base_dir: Path | None = None
+    ):
         self.script_name = script_name
         self.figures_dir = figures_dir
         self.entry = entry
@@ -541,8 +550,8 @@ class EngineWorker:
         self.log_path = base / "worker.log"
         base.mkdir(parents=True, exist_ok=True)
         self._touched = 0.0
-        self._touch()                      # mkdir 对已存在的目录不动 mtime，见 _touch
-        self.rev = 0                       # 每次 override 递增，用于前端缓存穿透
+        self._touch()  # mkdir 对已存在的目录不动 mtime，见 _touch
+        self.rev = 0  # 每次 override 递增，用于前端缓存穿透
         # 这一代的序号：同一 (项目, 脚本) 每重建一次 +1，随每个请求发给 worker
         # 并原样回显（worker 不理解它，校验归调用方/未来的 supervisor）。
         self.generation = _next_generation((_norm_dir(figures_dir), script_name))
@@ -577,20 +586,30 @@ class EngineWorker:
         # Python 池的 Popen 仍用全量 `child_env()`（含摘除敌意变量），
         # 那是本控制面的机制细节，不属于执行语义。
         self.spec = execspec.safe_spec(
-            script_name, str(figures_dir), entry, interpreter=python,
+            script_name,
+            str(figures_dir),
+            entry,
+            interpreter=python,
             sandbox=str(self.sandbox),
-            env=runtime.child_env(base={}) if bundled else None)
-        LOG.info("worker 启动: %s（entry=%s，解释器来源=%s）",
-                 script_name, entry, self.python_source)
+            env=runtime.child_env(base={}) if bundled else None,
+        )
+        LOG.info(
+            "worker 启动: %s（entry=%s，解释器来源=%s）", script_name, entry, self.python_source
+        )
         self.proc = subprocess.Popen(
-            execspec.worker_argv(self.spec, worker_py=WORKER_PY,
-                                 out_dir=self.out_dir, runtime_args=args),
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self._log,
+            execspec.worker_argv(
+                self.spec, worker_py=WORKER_PY, out_dir=self.out_dir, runtime_args=args
+            ),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=self._log,
             env=env,
-            text=True, bufsize=1,
+            text=True,
+            bufsize=1,
             # 显式 UTF-8：text=True 默认跟随系统区域编码，Windows 上是 cp1252/
             # cp936，读 worker 回来的中文/µ/⁻¹ 会解码失败。worker 侧同样钉死。
-            encoding="utf-8", errors="replace",
+            encoding="utf-8",
+            errors="replace",
             creationflags=runtime.CREATE_NO_WINDOW,
         )
 
@@ -614,6 +633,7 @@ class EngineWorker:
         写不进去（只读介质 / 权限）就算了：清理是治理手段，不值得让渲染失败。
         """
         import os
+
         now = time.time()
         if now - self._touched < _TOUCH_INTERVAL:
             return
@@ -644,15 +664,14 @@ class EngineWorker:
         def read() -> None:
             try:
                 box.append(self.proc.stdout.readline())
-            except (OSError, ValueError):      # 进程被杀后管道关闭
+            except (OSError, ValueError):  # 进程被杀后管道关闭
                 box.append("")
 
         t = threading.Thread(target=read, daemon=True, name="mm-worker-read")
         t.start()
         t.join(timeout)
         if t.is_alive():
-            LOG.warning("worker 请求超时（%.0fs），强制 kill: %s",
-                        timeout, self.script_name)
+            LOG.warning("worker 请求超时（%.0fs），强制 kill: %s", timeout, self.script_name)
             try:
                 self.proc.kill()
                 self.proc.wait(timeout=_SHUTDOWN_JOIN_TIMEOUT)
@@ -662,7 +681,9 @@ class EngineWorker:
                 f"渲染超时（等了 {int(timeout)} 秒）。脚本可能陷入死循环，"
                 f"或这一步本身极慢；渲染会话已重启，可以重试。"
                 f"若每次都卡在同一步，请检查 {self.script_name} 里的耗时代码。",
-                self._log_tail(), code="worker_timeout")
+                self._log_tail(),
+                code="worker_timeout",
+            )
         return box[0] if box else ""
 
     def _envelope(self, obj: dict) -> dict:
@@ -712,11 +733,12 @@ class EngineWorker:
         if got == rid and ver == PROTOCOL_VERSION:
             return
         self._kill_now()
-        detail = (f"protocol_version={ver!r}" if got == rid
-                  else f"request_id={got!r}，期待 {rid!r}")
+        detail = f"protocol_version={ver!r}" if got == rid else f"request_id={got!r}，期待 {rid!r}"
         raise WorkerError(
             f"渲染会话协议错乱（{detail}）。会话已重启，可以重试。",
-            self._log_tail(), code="protocol_mismatch")
+            self._log_tail(),
+            code="protocol_mismatch",
+        )
 
     def _error_of(self, resp: dict) -> WorkerError:
         """v1 错误信封 → WorkerError（legacy 的扁平形状一并兼容）。"""
@@ -737,7 +759,10 @@ class EngineWorker:
                 f"脚本用到的 {mod} 在当前渲染环境里没有。"
                 f"可以在设置 →「渲染环境」里改用你自己那套装了 {mod} 的 "
                 f"Python / Conda 环境。",
-                tb, code="missing_dependency", module=mod)
+                tb,
+                code="missing_dependency",
+                module=mod,
+            )
         return WorkerError(msg, tb, code=code)
 
     def request(self, obj: dict, timeout: float | None = None) -> dict:
@@ -791,13 +816,17 @@ class EngineWorker:
         self._check_envelope(resp, rid)
         if resp.get("hash_mismatch"):
             # 不影响本次结果（worker 照常执行了），但两侧的规范化实现已经分叉
-            LOG.warning("worker 报告 patch 哈希不一致: %s → %s（%s）",
-                        env.get("canonical_patch_hash"),
-                        resp.get("worker_patch_hash"), self.script_name)
+            LOG.warning(
+                "worker 报告 patch 哈希不一致: %s → %s（%s）",
+                env.get("canonical_patch_hash"),
+                resp.get("worker_patch_hash"),
+                self.script_name,
+            )
         if not resp.get("ok"):
             raise self._error_of(resp)
-        return _merge_timings(resp, (t_lock - t_req) * 1000.0,
-                              (time.perf_counter() - t_req) * 1000.0)
+        return _merge_timings(
+            resp, (t_lock - t_req) * 1000.0, (time.perf_counter() - t_req) * 1000.0
+        )
 
     def ensure_built(self) -> dict:
         # build 要跑用户整个脚本（heavy 的分钟级），给最宽的一档
@@ -805,12 +834,12 @@ class EngineWorker:
         self.built = True
         self.last_build_descriptors = list(resp.get("descriptors") or [])
         self.last_patch_hash = _EMPTY_PATCH_HASH
-        self.last_patch_hash_by_stem.clear()      # 每个 stem 都回到脚本原样
+        self.last_patch_hash_by_stem.clear()  # 每个 stem 都回到脚本原样
         return resp
 
-    def override(self, stem: str, patches: list,
-                 preview_dpi: int | None = None,
-                 inline_svg: bool = False) -> dict:
+    def override(
+        self, stem: str, patches: list, preview_dpi: int | None = None, inline_svg: bool = False
+    ) -> dict:
         build = self.ensure_built().get("timings") if not self.built else None
         payload = {"cmd": "override", "stem": stem, "patches": patches}
         # 不给就**一个字段都不加**：信封形状对既有调用方一字不变
@@ -824,12 +853,19 @@ class EngineWorker:
         self.last_patch_hash_by_stem[stem] = self.last_patch_hash
         return _fold_build_timings(resp, build)
 
-    def export(self, stem: str, patches: list, path: str,
-               fmt: str = "pdf", dpi: int = 600) -> dict:
+    def export(self, stem: str, patches: list, path: str, fmt: str = "pdf", dpi: int = 600) -> dict:
         build = self.ensure_built().get("timings") if not self.built else None
-        resp = self.request({"cmd": "export", "stem": stem, "patches": patches,
-                             "path": path, "format": fmt, "dpi": dpi},
-                            EXPORT_TIMEOUT)
+        resp = self.request(
+            {
+                "cmd": "export",
+                "stem": stem,
+                "patches": patches,
+                "path": path,
+                "format": fmt,
+                "dpi": dpi,
+            },
+            EXPORT_TIMEOUT,
+        )
         return _fold_build_timings(resp, build)
 
     def svg_path(self, stem: str) -> Path:
@@ -838,16 +874,16 @@ class EngineWorker:
     def render_png(self, stem: str, width_px: int) -> Path:
         if not self.built:
             self.ensure_built()
-        resp = self.request({"cmd": "render_png", "stem": stem, "width": width_px},
-                            REQUEST_TIMEOUT)
+        resp = self.request({"cmd": "render_png", "stem": stem, "width": width_px}, REQUEST_TIMEOUT)
         return Path(resp["path"])
 
     def preview_png(self, stem: str, patches: list, width_px: int, tag: str) -> Path:
         if not self.built:
             self.ensure_built()
-        resp = self.request({"cmd": "preview_png", "stem": stem, "patches": patches,
-                             "width": width_px, "tag": tag},
-                            REQUEST_TIMEOUT)
+        resp = self.request(
+            {"cmd": "preview_png", "stem": stem, "patches": patches, "width": width_px, "tag": tag},
+            REQUEST_TIMEOUT,
+        )
         return Path(resp["path"])
 
     def _wait_until_exited(self, timeout: float) -> bool:
@@ -875,15 +911,17 @@ class EngineWorker:
         （worker 的 stderr 就直接绑在 `self._log` 上，它继承了 worker.log）。
         少关任何一个，Windows 上那棵目录都删不掉。
         """
-        for fh in (getattr(self.proc, "stdin", None),
-                   getattr(self.proc, "stdout", None),
-                   getattr(self.proc, "stderr", None),
-                   self._log):
+        for fh in (
+            getattr(self.proc, "stdin", None),
+            getattr(self.proc, "stdout", None),
+            getattr(self.proc, "stderr", None),
+            self._log,
+        ):
             if fh is None:
                 continue
             try:
                 fh.close()
-            except (OSError, ValueError):     # 已经关过 / 管道早断了
+            except (OSError, ValueError):  # 已经关过 / 管道早断了
                 pass
 
     def _terminate_and_reap(self, *, graceful: bool) -> None:
@@ -917,9 +955,12 @@ class EngineWorker:
                 # 到这一步只剩「内核也收不掉」这一种可能（Windows 上多半是
                 # 挂在某个不可中断的内核调用里）。不许静默：这条日志是后面
                 # 目录删不掉时唯一能对上号的线索。
-                LOG.warning("worker 进程 kill 后 %.0fs 内仍未退出（pid=%s）: %s",
-                            _REAP_TIMEOUT, getattr(self.proc, "pid", "?"),
-                            self.script_name)
+                LOG.warning(
+                    "worker 进程 kill 后 %.0fs 内仍未退出（pid=%s）: %s",
+                    _REAP_TIMEOUT,
+                    getattr(self.proc, "pid", "?"),
+                    self.script_name,
+                )
         self._close_handles()
 
     def shutdown(self) -> None:
@@ -964,15 +1005,30 @@ MAX_QUEUE = 32
 #: 这些 code 意味着**这条会话的状态已经不可知**，与 Python 池里「超时/错乱就
 #: kill，下一次 get() 原地重建」是同一条纪律：标记死亡 → `alive()` 回 False →
 #: `get()` 建新的。
-_FATAL_CODES = frozenset({
-    "session_dead", "spawn_failed", "handshake_timeout", "protocol_mismatch",
-    "worker_timeout", "workerd_dead", "workerd_unavailable",
-})
+_FATAL_CODES = frozenset(
+    {
+        "session_dead",
+        "spawn_failed",
+        "handshake_timeout",
+        "protocol_mismatch",
+        "worker_timeout",
+        "workerd_dead",
+        "workerd_unavailable",
+    }
+)
 
 
-def _spawn_spec(script_name: str, figures_dir: str, entry: str, out_dir: Path,
-                sandbox: Path, log_path: Path, python: str, source: str,
-                extra_env: dict | None = None) -> dict:
+def _spawn_spec(
+    script_name: str,
+    figures_dir: str,
+    entry: str,
+    out_dir: Path,
+    sandbox: Path,
+    log_path: Path,
+    python: str,
+    source: str,
+    extra_env: dict | None = None,
+) -> dict:
     """交给 workerd 的**完整** spawn 规格。
 
     与 `EngineWorker.__init__` 严格同源：两条路径的 argv 都由
@@ -983,9 +1039,13 @@ def _spawn_spec(script_name: str, figures_dir: str, entry: str, out_dir: Path,
     bundled = source == SOURCE_BUNDLED
     args = runtime.child_args() if bundled else []
     spec = execspec.safe_spec(
-        script_name, str(figures_dir), entry, interpreter=python,
+        script_name,
+        str(figures_dir),
+        entry,
+        interpreter=python,
         sandbox=str(sandbox),
-        env=runtime.child_env(base={}) if bundled else None)
+        env=runtime.child_env(base={}) if bundled else None,
+    )
     # 只给**增量**：workerd 继承的本来就是 Flask 自己的环境，整份传过去没有意义
     env = dict(spec.env or {})
     if extra_env:
@@ -993,8 +1053,7 @@ def _spawn_spec(script_name: str, figures_dir: str, entry: str, out_dir: Path,
         # 的 salt 就足以拿到一条**必然独立**的会话，绕开「同规格复用 + 引用计数」。
         env = {**env, **extra_env}
     return {
-        "argv": execspec.worker_argv(spec, worker_py=WORKER_PY,
-                                     out_dir=out_dir, runtime_args=args),
+        "argv": execspec.worker_argv(spec, worker_py=WORKER_PY, out_dir=out_dir, runtime_args=args),
         "env": env,
         "log_path": str(log_path),
         "handshake_timeout_ms": int(HANDSHAKE_TIMEOUT * 1000),
@@ -1002,8 +1061,9 @@ def _spawn_spec(script_name: str, figures_dir: str, entry: str, out_dir: Path,
     }
 
 
-def _worker_error(message: str, code: str, traceback_text: str,
-                  extra: dict | None = None) -> WorkerError:
+def _worker_error(
+    message: str, code: str, traceback_text: str, extra: dict | None = None
+) -> WorkerError:
     """错误三元组 → `WorkerError`，**`missing_dependency` 优先于协议 code**。
 
     判据与 `EngineWorker._error_of` 一致：脚本 `import rdkit` 而渲染环境没有，
@@ -1017,7 +1077,10 @@ def _worker_error(message: str, code: str, traceback_text: str,
             f"脚本用到的 {mod} 在当前渲染环境里没有。"
             f"可以在设置 →「渲染环境」里改用你自己那套装了 {mod} 的 "
             f"Python / Conda 环境。",
-            traceback_text, code="missing_dependency", module=mod)
+            traceback_text,
+            code="missing_dependency",
+            module=mod,
+        )
     err = WorkerError(message, traceback_text, code=code)
     if extra:
         # worker 多带的字段（unknown_stem 的 `known` 之类）留给上层
@@ -1033,9 +1096,15 @@ class WorkerdWorker:
     结构一字不差，切控制面对上层透明。
     """
 
-    def __init__(self, script_name: str, figures_dir: str, entry: str,
-                 client=None, base_dir: Path | None = None,
-                 extra_env: dict | None = None):
+    def __init__(
+        self,
+        script_name: str,
+        figures_dir: str,
+        entry: str,
+        client=None,
+        base_dir: Path | None = None,
+        extra_env: dict | None = None,
+    ):
         from . import workerd_client
 
         self.script_name = script_name
@@ -1076,27 +1145,43 @@ class WorkerdWorker:
         # 构造函数 `execspec.safe_spec`；argv 由 `_spec()` → `_spawn_spec`
         # 按同一份 spec 语义产出）。
         self.spec = execspec.safe_spec(
-            script_name, str(figures_dir), entry, interpreter=python,
+            script_name,
+            str(figures_dir),
+            entry,
+            interpreter=python,
             sandbox=str(self.sandbox),
-            env=(runtime.child_env(base={})
-                 if self.python_source == SOURCE_BUNDLED else None))
+            env=(runtime.child_env(base={}) if self.python_source == SOURCE_BUNDLED else None),
+        )
         self._session_id = ""
         self._open()
 
     # ---------------------------------------------------------------- 会话
     def _spec(self) -> dict:
-        return _spawn_spec(self.script_name, self.figures_dir, self.entry,
-                           self.out_dir, self.sandbox, self.log_path,
-                           self.python, self.python_source, self._extra_env)
+        return _spawn_spec(
+            self.script_name,
+            self.figures_dir,
+            self.entry,
+            self.out_dir,
+            self.sandbox,
+            self.log_path,
+            self.python,
+            self.python_source,
+            self._extra_env,
+        )
 
     def _open(self) -> None:
         from . import workerd_client
 
-        LOG.info("workerd 会话打开: %s（entry=%s，解释器来源=%s）",
-                 self.script_name, self.entry, self.python_source)
+        LOG.info(
+            "workerd 会话打开: %s（entry=%s，解释器来源=%s）",
+            self.script_name,
+            self.entry,
+            self.python_source,
+        )
         try:
-            resp = self._client.call("open_session", payload=self._spec(),
-                                     timeout=HANDSHAKE_TIMEOUT)
+            resp = self._client.call(
+                "open_session", payload=self._spec(), timeout=HANDSHAKE_TIMEOUT
+            )
         except workerd_client.WorkerdError as exc:
             self._dead = True
             # **失败也要认领 session_id 并把它关掉。**
@@ -1109,8 +1194,12 @@ class WorkerdWorker:
             # 真正的失败原因盖过去。
             if exc.session_id:
                 try:
-                    self._client.call("close_session", session_id=exc.session_id,
-                                      payload={"force": True}, timeout=5.0)
+                    self._client.call(
+                        "close_session",
+                        session_id=exc.session_id,
+                        payload={"force": True},
+                        timeout=5.0,
+                    )
                 except workerd_client.WorkerdError:
                     LOG.debug("open 失败后清理会话 %s 也没成功", exc.session_id)
             raise self._to_worker_error(exc) from exc
@@ -1132,11 +1221,12 @@ class WorkerdWorker:
             self._dead = True
         tb = exc.traceback_text or ""
         if not tb and code in _FATAL_CODES:
-            tb = self._log_tail()      # 进程级失败时 worker 的 traceback 全在日志里
+            tb = self._log_tail()  # 进程级失败时 worker 的 traceback 全在日志里
         return _worker_error(str(exc), code, tb, exc.extra)
 
-    def _call(self, op: str, timeout: float, *, stem: str | None = None,
-              payload: dict | None = None) -> dict:
+    def _call(
+        self, op: str, timeout: float, *, stem: str | None = None, payload: dict | None = None
+    ) -> dict:
         from . import workerd_client
 
         self.last_used = time.time()
@@ -1145,9 +1235,13 @@ class WorkerdWorker:
         for attempt in (0, 1):
             t_call = time.perf_counter()
             try:
-                resp = self._client.call(op, session_id=self._session_id,
-                                         stem=stem, payload=payload or {},
-                                         timeout=timeout)
+                resp = self._client.call(
+                    op,
+                    session_id=self._session_id,
+                    stem=stem,
+                    payload=payload or {},
+                    timeout=timeout,
+                )
             except workerd_client.WorkerdError as exc:
                 # workerd 重启过 → session_id 作废。这条**透明重开一次**：
                 # 对上层来说这只是一次稍慢的渲染，没有任何语义变化。
@@ -1158,21 +1252,24 @@ class WorkerdWorker:
                 raise self._to_worker_error(exc) from exc
             if resp.get("hash_mismatch"):
                 # 本次结果照常可用（worker 执行了），但两侧的规范化实现已经分叉
-                LOG.warning("worker 报告 patch 哈希不一致: %s → %s（%s）",
-                            resp.get("canonical_patch_hash"),
-                            resp.get("worker_patch_hash"), self.script_name)
+                LOG.warning(
+                    "worker 报告 patch 哈希不一致: %s → %s（%s）",
+                    resp.get("canonical_patch_hash"),
+                    resp.get("worker_patch_hash"),
+                    self.script_name,
+                )
             # queue_wait 的口径与 Python 池**不一样，这里如实标注**：真正的排队
             # 发生在 workerd 的合并队列里（Rust 侧），workerd 自报就透传它；
             # 没自报时只能给 Python 侧那段（≈0，本进程不排队），别把它当成
             # 「没排队」。差异见 ADR 0004 §6。
             reported = resp.get("queue_wait_ms")
-            wait_ms = (float(reported) if isinstance(reported, (int, float))
-                       and not isinstance(reported, bool)
-                       else (t_call - t_req) * 1000.0)
-            return _merge_timings(resp, wait_ms,
-                                  (time.perf_counter() - t_req) * 1000.0)
-        raise WorkerError("workerd 会话重开后仍不可用", self._log_tail(),
-                          code="session_dead")
+            wait_ms = (
+                float(reported)
+                if isinstance(reported, (int, float)) and not isinstance(reported, bool)
+                else (t_call - t_req) * 1000.0
+            )
+            return _merge_timings(resp, wait_ms, (time.perf_counter() - t_req) * 1000.0)
+        raise WorkerError("workerd 会话重开后仍不可用", self._log_tail(), code="session_dead")
 
     # ---------------------------------------------------------------- 同 EngineWorker
     def alive(self) -> bool:
@@ -1180,6 +1277,7 @@ class WorkerdWorker:
 
     def _touch(self) -> None:
         import os
+
         now = time.time()
         if now - self._touched < _TOUCH_INTERVAL:
             return
@@ -1194,12 +1292,12 @@ class WorkerdWorker:
         self.built = True
         self.last_build_descriptors = list(resp.get("descriptors") or [])
         self.last_patch_hash = _EMPTY_PATCH_HASH
-        self.last_patch_hash_by_stem.clear()      # 每个 stem 都回到脚本原样
+        self.last_patch_hash_by_stem.clear()  # 每个 stem 都回到脚本原样
         return resp
 
-    def override(self, stem: str, patches: list,
-                 preview_dpi: int | None = None,
-                 inline_svg: bool = False) -> dict:
+    def override(
+        self, stem: str, patches: list, preview_dpi: int | None = None, inline_svg: bool = False
+    ) -> dict:
         build = self.ensure_built().get("timings") if not self.built else None
         payload: dict = {"patches": patches}
         if preview_dpi:
@@ -1212,12 +1310,14 @@ class WorkerdWorker:
         self.last_patch_hash_by_stem[stem] = self.last_patch_hash
         return _fold_build_timings(resp, build)
 
-    def export(self, stem: str, patches: list, path: str,
-               fmt: str = "pdf", dpi: int = 600) -> dict:
+    def export(self, stem: str, patches: list, path: str, fmt: str = "pdf", dpi: int = 600) -> dict:
         build = self.ensure_built().get("timings") if not self.built else None
-        resp = self._call("export", EXPORT_TIMEOUT, stem=stem,
-                          payload={"patches": patches, "path": path,
-                                   "format": fmt, "dpi": dpi})
+        resp = self._call(
+            "export",
+            EXPORT_TIMEOUT,
+            stem=stem,
+            payload={"patches": patches, "path": path, "format": fmt, "dpi": dpi},
+        )
         return _fold_build_timings(resp, build)
 
     def svg_path(self, stem: str) -> Path:
@@ -1226,16 +1326,18 @@ class WorkerdWorker:
     def render_png(self, stem: str, width_px: int) -> Path:
         if not self.built:
             self.ensure_built()
-        resp = self._call("render_png", REQUEST_TIMEOUT, stem=stem,
-                          payload={"width": width_px})
+        resp = self._call("render_png", REQUEST_TIMEOUT, stem=stem, payload={"width": width_px})
         return Path(resp["path"])
 
     def preview_png(self, stem: str, patches: list, width_px: int, tag: str) -> Path:
         if not self.built:
             self.ensure_built()
-        resp = self._call("preview_png", REQUEST_TIMEOUT, stem=stem,
-                          payload={"patches": patches, "width": width_px,
-                                   "tag": tag})
+        resp = self._call(
+            "preview_png",
+            REQUEST_TIMEOUT,
+            stem=stem,
+            payload={"patches": patches, "width": width_px, "tag": tag},
+        )
         return Path(resp["path"])
 
     def shutdown(self) -> None:
@@ -1246,8 +1348,9 @@ class WorkerdWorker:
             return
         try:
             # 退出路径不许被一个卡住的 supervisor 拖住：余量收到 5 秒
-            self._client.call("close_session", session_id=self._session_id,
-                              timeout=SHUTDOWN_TIMEOUT, slack=5.0)
+            self._client.call(
+                "close_session", session_id=self._session_id, timeout=SHUTDOWN_TIMEOUT, slack=5.0
+            )
         except workerd_client.WorkerdError:
             pass
         finally:
@@ -1260,9 +1363,13 @@ class WorkerdWorker:
         if not self._session_id:
             return
         try:
-            self._client.call("close_session", session_id=self._session_id,
-                              payload={"force": True}, timeout=SHUTDOWN_TIMEOUT,
-                              slack=2.0)
+            self._client.call(
+                "close_session",
+                session_id=self._session_id,
+                payload={"force": True},
+                timeout=SHUTDOWN_TIMEOUT,
+                slack=2.0,
+            )
         except workerd_client.WorkerdError:
             pass
         finally:
@@ -1276,6 +1383,7 @@ class WorkerdUnavailable(RuntimeError):
 def workerd_path() -> str | None:
     """本次进程实际会用的 workerd 可执行文件（禁用或找不到回 None）。"""
     from . import workerd_client
+
     return workerd_client.find_workerd()
 
 
@@ -1289,10 +1397,10 @@ def control_plane() -> dict:
     """
     path = workerd_path()
     with _lock:
-        sessions = ["workerd" if isinstance(w, WorkerdWorker) else "python"
-                    for w in _workers.values()]
-    return {"selected": "workerd" if path else "python",
-            "path": path, "sessions": sessions}
+        sessions = [
+            "workerd" if isinstance(w, WorkerdWorker) else "python" for w in _workers.values()
+        ]
+    return {"selected": "workerd" if path else "python", "path": path, "sessions": sessions}
 
 
 def _new_worker(script_name: str, figures_dir: str, entry: str):
@@ -1338,9 +1446,13 @@ def one_shot(script_name: str, figures_dir: str, entry: str):
     try:
         if workerd_client.find_workerd():
             try:
-                return WorkerdWorker(script_name, figures_dir, entry,
-                                     base_dir=base,
-                                     extra_env={"TAVOTTO_REPLAY_NONCE": nonce})
+                return WorkerdWorker(
+                    script_name,
+                    figures_dir,
+                    entry,
+                    base_dir=base,
+                    extra_env={"TAVOTTO_REPLAY_NONCE": nonce},
+                )
             except (WorkerdUnavailable, WorkerError, OSError) as exc:
                 LOG.warning("workerd 一次性会话建立失败，回退到 Python 渲染池: %s", exc)
         return EngineWorker(script_name, figures_dir, entry, base_dir=base)
@@ -1375,12 +1487,16 @@ def _remove_oneshot_tree(path: Path, *, script_name: str = "") -> bool:
             shutil.rmtree(path)
             return True
         except FileNotFoundError:
-            return True                  # 已经不在了 = 目标达成
-        except OSError as exc:           # PermissionError 是它的子类
+            return True  # 已经不在了 = 目标达成
+        except OSError as exc:  # PermissionError 是它的子类
             last = exc
-    LOG.warning("一次性 worker 目录删除失败（%d 次尝试后放弃）: path=%s "
-                "script=%s error=%r", len(_RMTREE_BACKOFF), path,
-                script_name or "?", last)
+    LOG.warning(
+        "一次性 worker 目录删除失败（%d 次尝试后放弃）: path=%s script=%s error=%r",
+        len(_RMTREE_BACKOFF),
+        path,
+        script_name or "?",
+        last,
+    )
     return False
 
 
@@ -1404,7 +1520,7 @@ def discard(worker) -> None:
     script_name = getattr(worker, "script_name", "")
     try:
         worker.shutdown()
-    except Exception:            # noqa: BLE001 — 收尾动作不许连累主流程
+    except Exception:  # noqa: BLE001 — 收尾动作不许连累主流程
         LOG.warning("一次性 worker 关停失败: %s", script_name, exc_info=True)
     try:
         _remove_oneshot_tree(base, script_name=script_name)
@@ -1416,6 +1532,7 @@ def discard(worker) -> None:
 def _dir_size(path: Path) -> int:
     """目录占用字节数；读不动的条目跳过（宁可少算也不能把清理带崩）。"""
     import os
+
     total = 0
     for root, _dirs, files in os.walk(str(path)):
         for name in files:
@@ -1426,8 +1543,9 @@ def _dir_size(path: Path) -> int:
     return total
 
 
-def prune_engine_cache(max_bytes: int = ENGINE_CACHE_MAX_BYTES,
-                       keep: int = ENGINE_CACHE_KEEP) -> int:
+def prune_engine_cache(
+    max_bytes: int = ENGINE_CACHE_MAX_BYTES, keep: int = ENGINE_CACHE_KEEP
+) -> int:
     """会话缓存目录按最后使用时间从旧到新删至预算内，返回删除数。
 
     口径与 `app.prune_render_cache()`（容量）+ `app.prune_backups()`（份数）
@@ -1446,7 +1564,7 @@ def prune_engine_cache(max_bytes: int = ENGINE_CACHE_MAX_BYTES,
         busy = {str(w.base) for w in _workers.values()} | set(_oneshot_bases)
     try:
         entries = [p for p in ENGINE_CACHE.iterdir() if p.is_dir()]
-    except OSError:      # 缓存目录还没建起来
+    except OSError:  # 缓存目录还没建起来
         return 0
     items = []
     for p in entries:
@@ -1456,7 +1574,7 @@ def prune_engine_cache(max_bytes: int = ENGINE_CACHE_MAX_BYTES,
             items.append((p.stat().st_mtime, p, _dir_size(p)))
         except OSError:
             continue
-    items.sort(key=lambda it: it[0])   # 最久未用的排前面
+    items.sort(key=lambda it: it[0])  # 最久未用的排前面
     total = sum(size for _, _, size in items)
     count = len(entries)
     removed = 0
@@ -1472,8 +1590,12 @@ def prune_engine_cache(max_bytes: int = ENGINE_CACHE_MAX_BYTES,
         count -= 1
         removed += 1
     if removed:
-        LOG.info("引擎缓存清理: 删除 %d 个会话目录（预算 %dMB / %d 个）",
-                 removed, max_bytes // (1024 * 1024), keep)
+        LOG.info(
+            "引擎缓存清理: 删除 %d 个会话目录（预算 %dMB / %d 个）",
+            removed,
+            max_bytes // (1024 * 1024),
+            keep,
+        )
     return removed
 
 
@@ -1489,8 +1611,7 @@ def _schedule_prune() -> None:
     if now - _last_prune < _PRUNE_INTERVAL:
         return
     _last_prune = now
-    threading.Thread(target=prune_engine_cache, daemon=True,
-                     name="mm-engine-cache-prune").start()
+    threading.Thread(target=prune_engine_cache, daemon=True, name="mm-engine-cache-prune").start()
 
 
 def get(script_name: str, figures_dir: str, entry: str) -> EngineWorker:
@@ -1500,8 +1621,7 @@ def get(script_name: str, figures_dir: str, entry: str) -> EngineWorker:
     with _lock:
         w = _workers.get(key)
         if w is not None and (not w.alive() or w.entry != entry):
-            LOG.warning("worker %s，重建: %s",
-                        "已死" if not w.alive() else "入口已变", script_name)
+            LOG.warning("worker %s，重建: %s", "已死" if not w.alive() else "入口已变", script_name)
             w.shutdown()
             w = None
         if w is None:
@@ -1517,7 +1637,7 @@ def get(script_name: str, figures_dir: str, entry: str) -> EngineWorker:
                     LOG.info("worker LRU 淘汰: %s", victim.script_name)
                     _workers.pop(vkey, None)
                     threading.Thread(target=victim.shutdown, daemon=True).start()
-    if created:      # 出锁再清：prune 要遍历磁盘，不能占着 _lock
+    if created:  # 出锁再清：prune 要遍历磁盘，不能占着 _lock
         _schedule_prune()
     return w
 
@@ -1532,8 +1652,7 @@ def invalidate(script_name: str, figures_dir: str | None = None) -> None:
         if figures_dir is None:
             keys = [k for k in _workers if k[1] == script_name]
         else:
-            keys = [k for k in ((_norm_dir(figures_dir), script_name),)
-                    if k in _workers]
+            keys = [k for k in ((_norm_dir(figures_dir), script_name),) if k in _workers]
         victims = [_workers.pop(k) for k in keys]
     for w in victims:
         threading.Thread(target=w.shutdown, daemon=True).start()
@@ -1588,8 +1707,7 @@ def shutdown_all(figures_dir: str | None = None, wait: bool = False) -> None:
         for t, w in zip(threads, victims):
             t.join(timeout=_SHUTDOWN_JOIN_TIMEOUT)
             if t.is_alive():
-                LOG.warning("worker 关停超时（可能卡在死循环脚本里），强制 kill: %s",
-                            w.script_name)
+                LOG.warning("worker 关停超时（可能卡在死循环脚本里），强制 kill: %s", w.script_name)
                 # `force_kill()` 两条控制面都有：Python 池是 `proc.kill()`，
                 # workerd 是「当场关掉会话、不等在飞的活」。
                 w.force_kill()
@@ -1599,6 +1717,7 @@ def shutdown_all(figures_dir: str | None = None, wait: bool = False) -> None:
         # 消失；显式关掉能让退出是**可观测**的，冒烟脚本才断言得出来。
         try:
             from . import workerd_client
+
             workerd_client.reset_client()
         except Exception:  # noqa: BLE001 — 退出路径不许因为收尾动作抛出而中断
             pass
@@ -1656,17 +1775,16 @@ def start_watcher(figures_dir: str, scripts: list[str], on_change, interval: flo
             if not changed:
                 continue
             LOG.info("脚本变更: %s，作废会话", changed)
-            if "paper_style.py" in changed:      # 共享样式变了，本项目全作废
+            if "paper_style.py" in changed:  # 共享样式变了，本项目全作废
                 with _lock:
                     victims = [k[1] for k in _workers if k[0] == key]
             else:
                 victims = changed
             for name in victims:
-                invalidate(name, figures_dir)     # 只动本项目的会话
+                invalidate(name, figures_dir)  # 只动本项目的会话
             try:
                 on_change(changed)
             except Exception:  # noqa: BLE001 — watcher 不允许因回调挂掉
                 pass
 
-    threading.Thread(target=loop, daemon=True,
-                     name=f"mm-script-watcher-{key[-24:]}").start()
+    threading.Thread(target=loop, daemon=True, name=f"mm-script-watcher-{key[-24:]}").start()

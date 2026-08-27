@@ -9,6 +9,7 @@ NSIS 吃的是最保守的 BMP3 形态，sips 输出的 top-down DIB 反而有�
 
     .venv/bin/python scripts/build_installer_assets.py
 """
+
 from __future__ import annotations
 
 import struct
@@ -29,19 +30,22 @@ INK3 = (0x6B / 255, 0x6B / 255, 0x64 / 255)
 
 
 def hex_rgb(s: str) -> tuple[float, float, float]:
-    return tuple(int(s[i:i + 2], 16) / 255 for i in (1, 3, 5))  # type: ignore[return-value]
+    return tuple(int(s[i : i + 2], 16) / 255 for i in (1, 3, 5))  # type: ignore[return-value]
 
 
-def draw_mark(page: pymupdf.Page, x: float, y: float, size: float,
-              variant: str = "compact") -> None:
+def draw_mark(
+    page: pymupdf.Page, x: float, y: float, size: float, variant: str = "compact"
+) -> None:
     k = size / 1024.0
     palette = PALETTES["paper"]
     for role, g in GEOMETRY[variant]:
-        rect = pymupdf.Rect(x + g["x"] * k, y + g["y"] * k,
-                            x + (g["x"] + g["w"]) * k, y + (g["y"] + g["h"]) * k)
+        rect = pymupdf.Rect(
+            x + g["x"] * k, y + g["y"] * k, x + (g["x"] + g["w"]) * k, y + (g["y"] + g["h"]) * k
+        )
         if role == "ink-stroke":
-            page.draw_rect(rect, color=hex_rgb(palette["ink"]),
-                           width=max(g["sw"] * k, 0.6), fill=None)
+            page.draw_rect(
+                rect, color=hex_rgb(palette["ink"]), width=max(g["sw"] * k, 0.6), fill=None
+            )
         else:
             page.draw_rect(rect, color=None, fill=hex_rgb(palette[role]))
 
@@ -54,14 +58,13 @@ def save_bmp(page: pymupdf.Page, out: Path) -> None:
     row_pad = (-w * 3) % 4
     rows = bytearray()
     for y in range(h - 1, -1, -1):
-        row = samples[y * stride: y * stride + w * 3]
+        row = samples[y * stride : y * stride + w * 3]
         for x in range(w):
-            r, g, b = row[x * 3: x * 3 + 3]
+            r, g, b = row[x * 3 : x * 3 + 3]
             rows += bytes((b, g, r))
         rows += b"\x00" * row_pad
     header = struct.pack("<2sIHHI", b"BM", 54 + len(rows), 0, 0, 54)
-    info = struct.pack("<IiiHHIIiiII", 40, w, h, 1, 24, 0, len(rows),
-                       2835, 2835, 0, 0)
+    info = struct.pack("<IiiHHIIiiII", 40, w, h, 1, 24, 0, len(rows), 2835, 2835, 0, 0)
     out.write_bytes(header + info + rows)
     print(f"✓ {out.relative_to(ROOT)}")
 

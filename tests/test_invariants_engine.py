@@ -24,6 +24,7 @@
 不变式 4 / 5 需要引擎内部视角，走 `tests/support/engine_invariant_probe.py`
 子进程。
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -41,7 +42,8 @@ except pool.WorkerError:
     WORKER_PY = None
 
 pytestmark = pytest.mark.skipif(
-    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）")
+    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）"
+)
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROBE = os.path.join(REPO, "tests", "support", "engine_invariant_probe.py")
@@ -53,7 +55,7 @@ STEMS = ("InvMix", "InvCont", "InvCbar")
 #: 一个脚本出三张图，一次 build 全捕获（build 是这套用例里唯一慢的一步）。
 #: 每张图都刻意做得**元素互相重叠**——`zorder` 想被验出效果就得有东西挡；
 #: 每张图都带图例——`label` 想被验出效果就得有地方显形。
-LIBRARY = '''\
+LIBRARY = """\
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
@@ -176,7 +178,7 @@ def main():
     fig.colorbar(sm, ax=ax, location="left")
     fig.colorbar(sm, ax=ax, location="top", fraction=0.046)
     fig.savefig("InvCbar2.pdf")
-'''
+"""
 
 
 @pytest.fixture(scope="module")
@@ -266,15 +268,15 @@ def _sample_value(field):
         # 256 级色图上多半还是同一个颜色，于是「改了没反应」被误判成假支持。
         # 挑一个明显的差（有界的按值域 1/10，无界的按 5 个 step），越界再退回
         # 一个 step——这是**采样**的取舍，不是断言的松动。
-        delta = (float(hi) - float(lo)) / 10.0 if (lo is not None and hi is not None) \
-            else step * 5.0
+        delta = (
+            (float(hi) - float(lo)) / 10.0 if (lo is not None and hi is not None) else step * 5.0
+        )
         delta = max(abs(delta), abs(step))
-        for cand in (float(cur) + delta, float(cur) - delta,
-                     float(cur) + step, float(cur) - step):
+        for cand in (float(cur) + delta, float(cur) - delta, float(cur) + step, float(cur) - step):
             if (lo is None or cand >= float(lo)) and (hi is None or cand <= float(hi)):
                 return round(cand, 4)
         return None
-    return None      # pair / rect / order / number_list：各有各的契约
+    return None  # pair / rect / order / number_list：各有各的契约
 
 
 def _same_value(field, got, want) -> bool:
@@ -298,9 +300,11 @@ def _patch_for(gid, field, advertised):
     value = _SAMPLE_OVERRIDE.get(prop, _sample_value(field))
     if value is None:
         return None, None
-    enablers = [{"gid": gid, "prop": ep, "value": ev}
-                for ep, ev in _ENABLERS.get(prop, ())
-                if ep != prop and ep in advertised[gid]]
+    enablers = [
+        {"gid": gid, "prop": ep, "value": ev}
+        for ep, ev in _ENABLERS.get(prop, ())
+        if ep != prop and ep in advertised[gid]
+    ]
     return enablers, enablers + [{"gid": gid, "prop": prop, "value": value}]
 
 
@@ -396,8 +400,7 @@ def test_capability_truthfulness(hot, stem):
     """
     base = _man(hot, stem)
     base_png = _png(hot, stem, [], "base")
-    advertised = {el["gid"]: {f["prop"] for f in el["editable"]}
-                  for el in base["elements"]}
+    advertised = {el["gid"]: {f["prop"] for f in el["editable"]} for el in base["elements"]}
     role_of = {el["gid"]: el["role"] for el in base["elements"]}
     checked, invisible = 0, []
 
@@ -410,33 +413,35 @@ def test_capability_truthfulness(hot, stem):
 
         # ① + ② dispatch 得到，且 manifest 读回来就是写进去的那个
         resp = hot.override(stem, patch)
-        assert not (resp.get("warnings") or []), \
+        assert not (resp.get("warnings") or []), (
             f"{stem} {gid}.{prop} = {value!r} 报了 warning：{resp['warnings']}"
+        )
         got = _fields(resp["manifest"], gid)[prop]["value"]
-        assert _same_value(field, got, value), \
+        assert _same_value(field, got, value), (
             f"{stem} {gid}.{prop}：写进去 {value!r}，manifest 读回来 {got!r}"
+        )
 
         # ③ 画面真的变了。带了使能项的，基准也要是「只开使能项」那张图——
         # 否则比出来的差是使能项造成的，这一条 prop 照样可以是死的。
         if prop not in _NON_VISUAL_PROPS and (role_of[gid], prop) not in _NON_VISUAL_BY_ROLE:
-            ref = base_png if not enablers else _png(
-                hot, stem, enablers, f"{gid}.{prop}.enable")
+            ref = base_png if not enablers else _png(hot, stem, enablers, f"{gid}.{prop}.enable")
             if _png(hot, stem, patch, f"{gid}.{prop}") == ref:
                 invisible.append(f"{gid}.{prop} = {value!r}")
         checked += 1
 
-    _man(hot, stem)      # 全撤，别把状态留给下一个用例
+    _man(hot, stem)  # 全撤，别把状态留给下一个用例
     assert checked >= 20, f"{stem} 上只扫到 {checked} 条属性，覆盖太薄"
     assert not invisible, (
         f"{stem}：这些属性宣称可编辑、状态也设进去了，但画出来一个像素都没变——"
         f"要么砍掉这个控件，要么按真实能力建模，要么给 _NON_VISUAL_PROPS 补一条"
-        f"写得出理由的豁免：\n  " + "\n  ".join(sorted(invisible)))
+        f"写得出理由的豁免：\n  " + "\n  ".join(sorted(invisible))
+    )
 
 
 #: 枚举里那些**故意不可回灌**的值——它们是显示占位，不是可设的值。
 _ENUM_PLACEHOLDERS = {
-    "original",   # 散点 marker：「脚本原始路径」，还原用，不是一个 marker 名
-    "custom",     # 箭头样式：识别不出的自定义样式，选它 = 不动
+    "original",  # 散点 marker：「脚本原始路径」，还原用，不是一个 marker 名
+    "custom",  # 箭头样式：识别不出的自定义样式，选它 = 不动
 }
 
 
@@ -473,8 +478,8 @@ def test_every_enum_option_can_actually_be_applied(hot, stem):
     _man(hot, stem)
     assert not rejected, (
         f"{stem}：这些选项列在界面上，选了却报错——而 warning 一条就阻断写回。"
-        f"有效值要问 matplotlib 要，不要写死一张随版本漂移的表：\n  "
-        + "\n  ".join(rejected))
+        f"有效值要问 matplotlib 要，不要写死一张随版本漂移的表：\n  " + "\n  ".join(rejected)
+    )
 
 
 def test_colormap_controls_appear_only_while_the_mapping_is_live(hot):
@@ -496,18 +501,19 @@ def test_colormap_controls_appear_only_while_the_mapping_is_live(hot):
     能力真实那条扫的是单个 prop，看不见这种**组合态**——所以单列一条。
     """
     base = _man(hot, "InvMix")
-    dead = _fields(base, "axes_0.collections_7")      # 脚本写死颜色的那条
+    dead = _fields(base, "axes_0.collections_7")  # 脚本写死颜色的那条
     assert "cmap" not in dead, "数组在、映射不在，却给了色图控件"
     assert {"edgecolor", "linewidth"} <= set(dead), "边色反而该给——颜色归用户了"
 
-    live_gid = "axes_0.collections_6"                  # 真的在映射的那条
+    live_gid = "axes_0.collections_6"  # 真的在映射的那条
     assert {"cmap", "vmin", "vmax"} <= set(_fields(base, live_gid))
 
     # 设了边色之后映射就断了，三个色图控件必须跟着消失
     man = _man(hot, "InvMix", [{"gid": live_gid, "prop": "edgecolor", "value": "#123456"}])
     after = set(_fields(man, live_gid))
-    assert not ({"cmap", "vmin", "vmax"} & after), \
+    assert not ({"cmap", "vmin", "vmax"} & after), (
         f"边色 override 生效期间还摆着色图控件，而它们此刻一个像素都改不动：{sorted(after)}"
+    )
 
     # 撤掉就回来（`_get_coll_edgecolor` 回灌的是 `_original_edgecolor`）
     assert {"cmap", "vmin", "vmax"} <= set(_fields(_man(hot, "InvMix"), live_gid))
@@ -540,20 +546,21 @@ def test_colorbar_mapping_controls_follow_the_same_gate(hot_restore):
     lc = next(e["gid"] for e in base["elements"] if e["role"] == "collection")
     cb = next(e["gid"] for e in base["elements"] if e["gid"].endswith(".colorbar"))
     for gid in (lc, cb):
-        assert {"cmap", "vmin", "vmax"} <= set(_fields(base, gid)), \
-            f"基线上 {gid} 就该有色图控件"
+        assert {"cmap", "vmin", "vmax"} <= set(_fields(base, gid)), f"基线上 {gid} 就该有色图控件"
 
     man = _man(hot_restore, stem, [{"gid": lc, "prop": "edgecolor", "value": "#123456"}])
     for gid in (lc, cb):
         assert not ({"cmap", "vmin", "vmax"} & set(_fields(man, gid))), (
             f"边色 override 生效期间 {gid} 还摆着色图控件——改它只会让色条自己"
-            f"换色，而图上的线纹丝不动，色标与数据就此对不上")
+            f"换色，而图上的线纹丝不动，色标与数据就此对不上"
+        )
 
     # 撤掉边色，两边一起回来
     back = _man(hot_restore, stem)
     for gid in (lc, cb):
-        assert {"cmap", "vmin", "vmax"} <= set(_fields(back, gid)), \
+        assert {"cmap", "vmin", "vmax"} <= set(_fields(back, gid)), (
             f"撤掉边色之后 {gid} 的色图控件没回来"
+        )
     assert back == base
 
 
@@ -572,14 +579,13 @@ def test_exact_restore_is_pixel_and_manifest_identical(hot_restore, stem):
     """
     base = _man(hot_restore, stem)
     base_png = _png(hot_restore, stem, [], "restore-base")
-    advertised = {el["gid"]: {f["prop"] for f in el["editable"]}
-                  for el in base["elements"]}
+    advertised = {el["gid"]: {f["prop"] for f in el["editable"]} for el in base["elements"]}
     drifted, checked = [], 0
 
     for gid, field in _editable_targets(base):
         prop = field["prop"]
         if prop in _LEGEND_REBUILD_PROPS:
-            continue        # 已知缺陷，单独由下面那条用例钉着
+            continue  # 已知缺陷，单独由下面那条用例钉着
         _enablers, patch = _patch_for(gid, field, advertised)
         if patch is None:
             continue
@@ -587,12 +593,12 @@ def test_exact_restore_is_pixel_and_manifest_identical(hot_restore, stem):
         # bbox_* 会**现建**一个背景框——只发单条 prop 的话，扫描顺序恰好
         # 先开了框，后面每条都落在「框已存在」的分支上，那个缺陷永远碰不到。
         hot_restore.override(stem, patch)
-        after = _man(hot_restore, stem)                    # 空列表 = 全量撤销
+        after = _man(hot_restore, stem)  # 空列表 = 全量撤销
         if after != base:
-            diff = [e["gid"] for e in after["elements"]
-                    if e not in base["elements"]]
-            drifted.append(f"{gid}.{prop}（+{[e['prop'] for e in _enablers]}）"
-                           f" → manifest 变了：{diff[:4]}")
+            diff = [e["gid"] for e in after["elements"] if e not in base["elements"]]
+            drifted.append(
+                f"{gid}.{prop}（+{[e['prop'] for e in _enablers]}） → manifest 变了：{diff[:4]}"
+            )
         elif _png(hot_restore, stem, [], f"restore-{gid}.{prop}") != base_png:
             drifted.append(f"{gid}.{prop} → manifest 一样但**画面**变了")
         checked += 1
@@ -600,7 +606,8 @@ def test_exact_restore_is_pixel_and_manifest_identical(hot_restore, stem):
     assert checked >= 20, f"{stem} 上只扫到 {checked} 条属性，覆盖太薄"
     assert not drifted, (
         f"{stem}：撤销之后没有逐字回到脚本原样（getter 回的形状 ≠ setter 吃的"
-        f"形状，是这类 bug 的通用成因）：\n  " + "\n  ".join(drifted))
+        f"形状，是这类 bug 的通用成因）：\n  " + "\n  ".join(drifted)
+    )
 
 
 def test_undoing_a_background_edit_removes_the_box_it_created(hot_restore):
@@ -631,8 +638,10 @@ def test_undoing_a_background_edit_removes_the_box_it_created(hot_restore):
     assert base["bbox_visible"]["value"] is False, "夹具里这条文字本来就不该有框"
 
     # 只改背景色（**不碰 bbox_visible**）——产品约定：框会因此出现
-    on = _fields(_man(hot_restore, "InvCont",
-                      [{"gid": gid, "prop": "bbox_facecolor", "value": "#123456"}]), gid)
+    on = _fields(
+        _man(hot_restore, "InvCont", [{"gid": gid, "prop": "bbox_facecolor", "value": "#123456"}]),
+        gid,
+    )
     assert on["bbox_visible"]["value"] is True, "改了背景色却没出现框？产品约定变了"
 
     back = _fields(_man(hot_restore, "InvCont"), gid)
@@ -640,8 +649,10 @@ def test_undoing_a_background_edit_removes_the_box_it_created(hot_restore):
     assert back["bbox_facecolor"]["value"] == base["bbox_facecolor"]["value"]
 
     # 组里还有别的生效时**不许**把框摘掉：只撤 pad，背景色还在
-    two = [{"gid": gid, "prop": "bbox_facecolor", "value": "#123456"},
-           {"gid": gid, "prop": "bbox_pad", "value": 0.8}]
+    two = [
+        {"gid": gid, "prop": "bbox_facecolor", "value": "#123456"},
+        {"gid": gid, "prop": "bbox_pad", "value": 0.8},
+    ]
     _man(hot_restore, "InvCont", two)
     left = _fields(_man(hot_restore, "InvCont", two[:1]), gid)
     assert left["bbox_visible"]["value"] is True, "还有一条背景 override 生效，框不该被摘掉"
@@ -671,8 +682,9 @@ def test_undoing_a_background_edit_removes_the_box_it_created(hot_restore):
 #: **豁免不等于不管**：`test_legend_rebuild_drift_stays_where_it_is` 把这个
 #: 缺陷的边界钉死——只许发生在图例上、只许改像素不许改几何。它一旦扩大，
 #: 那条用例会红。
-_LEGEND_REBUILD_PROPS = frozenset({
-    "ncol", "borderpad", "labelspacing", "handlelength", "entry_order"})
+_LEGEND_REBUILD_PROPS = frozenset(
+    {"ncol", "borderpad", "labelspacing", "handlelength", "entry_order"}
+)
 
 
 @pytest.mark.parametrize("stem", ["InvCont"])
@@ -732,9 +744,11 @@ _SAME_ELEMENT_PAIRS = [
 ]
 
 
-@pytest.mark.parametrize("stem,gid,broad,narrow", _SAME_ELEMENT_PAIRS,
-                         ids=[f"{c[1].split('.')[-1]}-{c[2][0]}+{c[3][0]}"
-                              for c in _SAME_ELEMENT_PAIRS])
+@pytest.mark.parametrize(
+    "stem,gid,broad,narrow",
+    _SAME_ELEMENT_PAIRS,
+    ids=[f"{c[1].split('.')[-1]}-{c[2][0]}+{c[3][0]}" for c in _SAME_ELEMENT_PAIRS],
+)
 def test_same_element_pairs_restore_exactly(hot_restore, stem, gid, broad, narrow):
     """同一个元素上两条 prop **成对**改，撤销之后仍要逐字回到脚本原样。
 
@@ -757,8 +771,9 @@ def test_same_element_pairs_restore_exactly(hot_restore, stem, gid, broad, narro
     for order, patch in (("broad→narrow", [a, b]), ("narrow→broad", [b, a])):
         resp = hot_restore.override(stem, list(patch))
         assert not (resp.get("warnings") or []), (order, resp["warnings"])
-        assert _png(hot_restore, stem, patch, f"pair-on-{gid}-{broad[0]}") != base_png, \
+        assert _png(hot_restore, stem, patch, f"pair-on-{gid}-{broad[0]}") != base_png, (
             f"{order}：这一对根本没动画面，用例是空的"
+        )
         # **两条都得真的落地**。第一版只验了「非空转 + 撤销回得去」，于是
         # 漏掉了这一类里最要命的一种：两条 prop 共用一个 matplotlib 入口，
         # 后写的把先写的**抹掉**——apply 产生了错的状态，而撤销照样回得去，
@@ -778,15 +793,18 @@ def test_same_element_pairs_restore_exactly(hot_restore, stem, gid, broad, narro
                 # 这一对里有 `invert_*`：范围的端点顺序**本来就该跟着翻**，
                 # 比集合不比顺序。翻转生效与否由那条 `invert_*` 自己断言。
                 assert sorted(value) == sorted(float(x) for x in want), (
-                    f"{order}：{gid}.{prop} 请求 {want!r}，manifest 读回 {value!r}")
+                    f"{order}：{gid}.{prop} 请求 {want!r}，manifest 读回 {value!r}"
+                )
                 continue
             assert _same_value(got[prop], value, want), (
                 f"{order}：{gid}.{prop} 请求 {want!r}，manifest 读回 "
-                f"{value!r}——这一对里有一条把另一条抹掉了")
+                f"{value!r}——这一对里有一条把另一条抹掉了"
+            )
         after = _man(hot_restore, stem)
         assert after == base, f"{order}：撤销之后 manifest 没回到脚本原样"
-        assert _png(hot_restore, stem, [], f"pair-off-{gid}-{broad[0]}") == base_png, \
+        assert _png(hot_restore, stem, [], f"pair-off-{gid}-{broad[0]}") == base_png, (
             f"{order}：manifest 回去了但**画面**没有——正是 to_hex 丢 alpha 那一类"
+        )
 
 
 def test_explicit_script_limits_are_not_turned_into_autoscale(hot_restore):
@@ -812,10 +830,8 @@ def test_explicit_script_limits_are_not_turned_into_autoscale(hot_restore):
     # 而且后面再来一个会触发重新缩放的 prop，也不许把它变成自动缩放
     ys = [{"gid": "axes_0", "prop": "yscale", "value": "log"}]
     _man(hot_restore, "InvMix", [{"gid": "axes_0", "prop": "ylim", "value": [0.5, 3.0]}])
-    got = {k: v["value"]
-           for k, v in _fields(_man(hot_restore, "InvMix", ys), "axes_0").items()}
-    assert got["ylim"] == [-2.6, 4.6], \
-        f"撤掉 ylim 之后那条轴自己重新缩放了：{got['ylim']}"
+    got = {k: v["value"] for k, v in _fields(_man(hot_restore, "InvMix", ys), "axes_0").items()}
+    assert got["ylim"] == [-2.6, 4.6], f"撤掉 ylim 之后那条轴自己重新缩放了：{got['ylim']}"
     _man(hot_restore, "InvMix")
 
 
@@ -839,15 +855,17 @@ def test_explicit_no_inversion_beats_descending_endpoints(hot_restore, axis):
     """
     stem, gid = "InvScale", "axes_0"
     lo, hi = (1.5, 3.5) if axis == "x" else (2.0, 60.0)
-    desc = {"gid": gid, "prop": f"{axis}lim", "value": [hi, lo]}      # 降序
+    desc = {"gid": gid, "prop": f"{axis}lim", "value": [hi, lo]}  # 降序
     off = {"gid": gid, "prop": f"invert_{axis}", "value": False}
 
     got = _fields(_man(hot_restore, stem, [desc, off]), gid)
     assert got[f"invert_{axis}"]["value"] is False, (
         f"patch 明确写了 invert_{axis}=False，manifest 却报 "
-        f"{got[f'invert_{axis}']['value']!r}——降序端点把它顶回去了")
+        f"{got[f'invert_{axis}']['value']!r}——降序端点把它顶回去了"
+    )
     assert got[f"{axis}lim"]["value"] == [lo, hi], (
-        f"不翻转时端点该是升序，读到 {got[f'{axis}lim']['value']!r}")
+        f"不翻转时端点该是升序，读到 {got[f'{axis}lim']['value']!r}"
+    )
 
     # 列表序不许影响结果（`_rank` 保证 invert 先、lim 后，但列表可以反着给）
     got2 = _fields(_man(hot_restore, stem, [off, desc]), gid)
@@ -879,12 +897,15 @@ def test_range_and_direction_both_survive_together(hot_restore, axis):
 
     for order, patch in (("lim→invert", [lim, inv]), ("invert→lim", [inv, lim])):
         got = _fields(_man(hot_restore, stem, patch), gid)
-        assert got[f"invert_{axis}"]["value"] is True, \
+        assert got[f"invert_{axis}"]["value"] is True, (
             f"{order}：请求了翻转，manifest 却说没翻——范围那条把它抹掉了"
+        )
         assert got[f"{axis}lim"]["value"] == [hi, lo], (
-            f"{order}：翻转生效时端点该是降序，读到 {got[f'{axis}lim']['value']!r}")
-        assert _png(hot_restore, stem, patch, f"inv-{axis}-{order}") != only_lim, \
+            f"{order}：翻转生效时端点该是降序，读到 {got[f'{axis}lim']['value']!r}"
+        )
+        assert _png(hot_restore, stem, patch, f"inv-{axis}-{order}") != only_lim, (
             f"{order}：画面与「只设范围」一模一样，翻转根本没画出来"
+        )
     _man(hot_restore, stem)
 
 
@@ -903,10 +924,16 @@ def test_every_alias_group_survives_both_orders(hot_replay, library):
     base = _man(hot_replay, stem)
     img = next(g for g in (e["gid"] for e in base["elements"]) if ".images_" in g)
     cbar = next(g for g in (e["gid"] for e in base["elements"]) if g.endswith(".colorbar"))
-    for patch in ([{"gid": img, "prop": "cmap", "value": "plasma"},
-                   {"gid": cbar, "prop": "cmap", "value": "cividis"}],
-                  [{"gid": cbar, "prop": "cmap", "value": "cividis"},
-                   {"gid": img, "prop": "cmap", "value": "plasma"}]):
+    for patch in (
+        [
+            {"gid": img, "prop": "cmap", "value": "plasma"},
+            {"gid": cbar, "prop": "cmap", "value": "cividis"},
+        ],
+        [
+            {"gid": cbar, "prop": "cmap", "value": "cividis"},
+            {"gid": img, "prop": "cmap", "value": "plasma"},
+        ],
+    ):
         _man(hot_replay, stem, patch)
         assert _man(hot_replay, stem) == base, "色条 ↔ mappable 那一组撤销后没回原样"
 
@@ -938,8 +965,8 @@ def _fresh(library, stem, patches):
 _LEGEND = "axes_0.legend"
 _LEG_T1 = "axes_0.legend.texts_1"
 _STEM = "axes_0.stemseries_0"
-_STEM_MARKER_LEGACY = "axes_0.lines_0"      # 容器化之前 markerline 的 gid
-_STEM_LINES_LEGACY = "axes_0.linecoll_0"    # 容器化之前 stemlines 的 gid
+_STEM_MARKER_LEGACY = "axes_0.lines_0"  # 容器化之前 markerline 的 gid
+_STEM_LINES_LEGACY = "axes_0.linecoll_0"  # 容器化之前 stemlines 的 gid
 _BARS, _BAR1 = "axes_0.barseries_1", "axes_0.barseries_1.bar_1"
 
 _A_LEG = {"gid": _LEGEND, "prop": "fontsize", "value": 7.5}
@@ -968,9 +995,17 @@ REMOVAL_CASES = [
     ("C-stemlw-drop-both", "InvCont", [[_A_SLW, _B_SLW], []]),
     ("C-bars-drop-both", "InvCont", [[_A_BAR, _B_BAR], []]),
     # 色条 ↔ mappable：**这条重叠不是新开的**，一直在同一个 AxesImage 上
-    ("C-colorbar-drop-both", "InvCbar",
-     [[{"gid": "axes_0.images_0", "prop": "cmap", "value": "plasma"},
-       {"gid": "axes_1.colorbar", "prop": "cmap", "value": "cividis"}], []]),
+    (
+        "C-colorbar-drop-both",
+        "InvCbar",
+        [
+            [
+                {"gid": "axes_0.images_0", "prop": "cmap", "value": "plasma"},
+                {"gid": "axes_1.colorbar", "prop": "cmap", "value": "cividis"},
+            ],
+            [],
+        ],
+    ),
     # **撤销一条 prop 之后，被它关掉的「模式」也要回来**。`ax.set_ylim(...)`
     # 顺手把 `autoscaley_on` 关掉；撤销时把 `get_ylim()` 当原样回灌，数字对了、
     # 自动缩放却回不来。于是后面任何触发重新缩放的 prop（`yscale=log`）在热
@@ -980,16 +1015,30 @@ REMOVAL_CASES = [
     # 这条与本组其他几格不同：写回自检**看得见**它（几何真的变了），所以它不会
     # 静默写坏文件——代价是把一次完全正当的编辑序列拦下来。仍然是 P1：
     # `HOT(P) == REPLAY(P)` 是写回那条主线唯一的正确性依据。
-    ("C-autoscale-restored-after-lim", "InvScale",
-     [[{"gid": "axes_0", "prop": "ylim", "value": [2.0, 60.0]}],
-      [{"gid": "axes_0", "prop": "ylim", "value": [2.0, 60.0]},
-       {"gid": "axes_0", "prop": "yscale", "value": "log"}],
-      [{"gid": "axes_0", "prop": "yscale", "value": "log"}]]),
-    ("C-autoscale-x", "InvScale",
-     [[{"gid": "axes_0", "prop": "xlim", "value": [1.5, 3.5]}],
-      [{"gid": "axes_0", "prop": "xlim", "value": [1.5, 3.5]},
-       {"gid": "axes_0", "prop": "xscale", "value": "log"}],
-      [{"gid": "axes_0", "prop": "xscale", "value": "log"}]]),
+    (
+        "C-autoscale-restored-after-lim",
+        "InvScale",
+        [
+            [{"gid": "axes_0", "prop": "ylim", "value": [2.0, 60.0]}],
+            [
+                {"gid": "axes_0", "prop": "ylim", "value": [2.0, 60.0]},
+                {"gid": "axes_0", "prop": "yscale", "value": "log"},
+            ],
+            [{"gid": "axes_0", "prop": "yscale", "value": "log"}],
+        ],
+    ),
+    (
+        "C-autoscale-x",
+        "InvScale",
+        [
+            [{"gid": "axes_0", "prop": "xlim", "value": [1.5, 3.5]}],
+            [
+                {"gid": "axes_0", "prop": "xlim", "value": [1.5, 3.5]},
+                {"gid": "axes_0", "prop": "xscale", "value": "log"},
+            ],
+            [{"gid": "axes_0", "prop": "xscale", "value": "log"}],
+        ],
+    ),
     # ---- Case E：值被**改过一次**（不是删除），两次 apply ----
     #
     # 这一维原先一格都没有：所有 lim 用例都只 apply 一次，于是「轴此刻的方向
@@ -1001,16 +1050,31 @@ REMOVAL_CASES = [
     # 降序改回升序，画面纹丝不动，写回还会被 divergence 拦下来。
     #
     # **空门禁的另一种长法**：不是用例没写，是场景少了一维。
-    ("E-lim-descending-then-ascending-x", "InvScale",
-     [[{"gid": "axes_0", "prop": "xlim", "value": [3.5, 1.5]}],
-      [{"gid": "axes_0", "prop": "xlim", "value": [1.5, 3.5]}]]),
-    ("E-lim-descending-then-ascending-y", "InvScale",
-     [[{"gid": "axes_0", "prop": "ylim", "value": [60.0, 2.0]}],
-      [{"gid": "axes_0", "prop": "ylim", "value": [2.0, 60.0]}]]),
+    (
+        "E-lim-descending-then-ascending-x",
+        "InvScale",
+        [
+            [{"gid": "axes_0", "prop": "xlim", "value": [3.5, 1.5]}],
+            [{"gid": "axes_0", "prop": "xlim", "value": [1.5, 3.5]}],
+        ],
+    ),
+    (
+        "E-lim-descending-then-ascending-y",
+        "InvScale",
+        [
+            [{"gid": "axes_0", "prop": "ylim", "value": [60.0, 2.0]}],
+            [{"gid": "axes_0", "prop": "ylim", "value": [2.0, 60.0]}],
+        ],
+    ),
     # 反过来也要成立：脚本原样是升序，两次 apply 之后请求降序仍然是降序。
-    ("E-lim-ascending-then-descending-x", "InvScale",
-     [[{"gid": "axes_0", "prop": "xlim", "value": [1.5, 3.5]}],
-      [{"gid": "axes_0", "prop": "xlim", "value": [3.5, 1.5]}]]),
+    (
+        "E-lim-ascending-then-descending-x",
+        "InvScale",
+        [
+            [{"gid": "axes_0", "prop": "xlim", "value": [1.5, 3.5]}],
+            [{"gid": "axes_0", "prop": "xlim", "value": [3.5, 1.5]}],
+        ],
+    ),
     # ---- 一个 mappable 两条色条：一个窄 key 有**两个**广播端 ----
     #
     # 别名簿记原来是 `窄 key → 一个广播 key`，两条色条都解析到
@@ -1025,32 +1089,68 @@ REMOVAL_CASES = [
     #
     # 第二条尤其坏：`_compare_manifests` 只比几何，**看不见色图**，写回会
     # 静默写出与用户所见不同的颜色。
-    ("F-dupcb-drop-first", "InvCbar2",
-     [[{"gid": "axes_1.colorbar", "prop": "cmap", "value": "plasma"}],
-      [{"gid": "axes_1.colorbar", "prop": "cmap", "value": "plasma"},
-       {"gid": "axes_2.colorbar", "prop": "cmap", "value": "cividis"}],
-      [{"gid": "axes_2.colorbar", "prop": "cmap", "value": "cividis"}]]),
-    ("F-dupcb-drop-both", "InvCbar2",
-     [[{"gid": "axes_1.colorbar", "prop": "cmap", "value": "plasma"},
-       {"gid": "axes_2.colorbar", "prop": "cmap", "value": "cividis"}], []]),
+    (
+        "F-dupcb-drop-first",
+        "InvCbar2",
+        [
+            [{"gid": "axes_1.colorbar", "prop": "cmap", "value": "plasma"}],
+            [
+                {"gid": "axes_1.colorbar", "prop": "cmap", "value": "plasma"},
+                {"gid": "axes_2.colorbar", "prop": "cmap", "value": "cividis"},
+            ],
+            [{"gid": "axes_2.colorbar", "prop": "cmap", "value": "cividis"}],
+        ],
+    ),
+    (
+        "F-dupcb-drop-both",
+        "InvCbar2",
+        [
+            [
+                {"gid": "axes_1.colorbar", "prop": "cmap", "value": "plasma"},
+                {"gid": "axes_2.colorbar", "prop": "cmap", "value": "cividis"},
+            ],
+            [],
+        ],
+    ),
     # 独立 mappable 的两条色条：窄成员**没有 handler**，共享原样只能靠对等广播端
-    ("G-smcb-drop-first", "InvCbar2",
-     [[{"gid": "axes_3.colorbar", "prop": "cmap", "value": "plasma"}],
-      [{"gid": "axes_3.colorbar", "prop": "cmap", "value": "plasma"},
-       {"gid": "axes_4.colorbar", "prop": "cmap", "value": "cividis"}],
-      [{"gid": "axes_4.colorbar", "prop": "cmap", "value": "cividis"}]]),
-    ("G-smcb-drop-both", "InvCbar2",
-     [[{"gid": "axes_3.colorbar", "prop": "cmap", "value": "plasma"},
-       {"gid": "axes_4.colorbar", "prop": "cmap", "value": "cividis"}], []]),
-    ("A-colorbar-drop-mappable", "InvCbar",
-     [[{"gid": "axes_0.images_0", "prop": "cmap", "value": "plasma"},
-       {"gid": "axes_1.colorbar", "prop": "cmap", "value": "cividis"}],
-      [{"gid": "axes_1.colorbar", "prop": "cmap", "value": "cividis"}]]),
+    (
+        "G-smcb-drop-first",
+        "InvCbar2",
+        [
+            [{"gid": "axes_3.colorbar", "prop": "cmap", "value": "plasma"}],
+            [
+                {"gid": "axes_3.colorbar", "prop": "cmap", "value": "plasma"},
+                {"gid": "axes_4.colorbar", "prop": "cmap", "value": "cividis"},
+            ],
+            [{"gid": "axes_4.colorbar", "prop": "cmap", "value": "cividis"}],
+        ],
+    ),
+    (
+        "G-smcb-drop-both",
+        "InvCbar2",
+        [
+            [
+                {"gid": "axes_3.colorbar", "prop": "cmap", "value": "plasma"},
+                {"gid": "axes_4.colorbar", "prop": "cmap", "value": "cividis"},
+            ],
+            [],
+        ],
+    ),
+    (
+        "A-colorbar-drop-mappable",
+        "InvCbar",
+        [
+            [
+                {"gid": "axes_0.images_0", "prop": "cmap", "value": "plasma"},
+                {"gid": "axes_1.colorbar", "prop": "cmap", "value": "cividis"},
+            ],
+            [{"gid": "axes_1.colorbar", "prop": "cmap", "value": "cividis"}],
+        ],
+    ),
 ]
 
 
-@pytest.mark.parametrize("case_id,stem,steps", REMOVAL_CASES,
-                         ids=[c[0] for c in REMOVAL_CASES])
+@pytest.mark.parametrize("case_id,stem,steps", REMOVAL_CASES, ids=[c[0] for c in REMOVAL_CASES])
 def test_hot_equals_replay_after_removal(hot_replay, library, case_id, stem, steps):
     """`HOT(P) == REPLAY(P)` —— 尤其是 P 是**删出来**的那种。
 
@@ -1074,7 +1174,8 @@ def test_hot_equals_replay_after_removal(hot_replay, library, case_id, stem, ste
     assert hot_man == fresh_man, (
         f"{case_id}：热态与全新 worker 重放的 manifest 不一致——"
         f"用户「写回时的样子」与「重开后的样子」会不同，而写回自检只比几何、"
-        f"看不见这个差")
+        f"看不见这个差"
+    )
     assert hot_png == fresh_png, f"{case_id}：manifest 一样但**画出来**不一样"
     _man(hot_replay, stem)
 
@@ -1091,8 +1192,7 @@ ORDER_CASES = [
 ]
 
 
-@pytest.mark.parametrize("case_id,stem,patches", ORDER_CASES,
-                         ids=[c[0] for c in ORDER_CASES])
+@pytest.mark.parametrize("case_id,stem,patches", ORDER_CASES, ids=[c[0] for c in ORDER_CASES])
 def test_patch_order_does_not_change_the_result(hot_replay, stem, patches, case_id):
     """`[A, B]` 与 `[B, A]` 必须给出同一张图。"""
     forward = _man(hot_replay, stem, patches)
@@ -1110,8 +1210,9 @@ def test_patch_order_does_not_change_the_result(hot_replay, stem, patches, case_
 # ---------------------------------------------------------------------------
 @pytest.fixture(scope="module")
 def probe():
-    proc = subprocess.run([WORKER_PY, PROBE], capture_output=True,
-                          text=True, encoding="utf-8", timeout=300)
+    proc = subprocess.run(
+        [WORKER_PY, PROBE], capture_output=True, text=True, encoding="utf-8", timeout=300
+    )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     return json.loads(proc.stdout)
 
@@ -1127,10 +1228,11 @@ def test_no_artist_vanishes_between_elements_and_unsupported(probe):
     c = probe["completeness"]
     assert not c["orphans"], (
         "这些 artist 登记过、却既没进元素表也没报进 unsupported：\n  "
-        + "\n  ".join(f"{o['gid']} ({o['cls']})" for o in c["orphans"]))
-    assert not c["unseen"], (
-        "这些 artist 画在图上、普查也没报出来：\n  "
-        + "\n  ".join(f"{u['where']} {u['cls']}" for u in c["unseen"]))
+        + "\n  ".join(f"{o['gid']} ({o['cls']})" for o in c["orphans"])
+    )
+    assert not c["unseen"], "这些 artist 画在图上、普查也没报出来：\n  " + "\n  ".join(
+        f"{u['where']} {u['cls']}" for u in c["unseen"]
+    )
     # `unsupported` 只报类名、不报对象 id，所以「同一个 artist 同时在两边」
     # 从 manifest 侧判不出来（`Rectangle` 既是柱、又是插图背景 patch）。XOR
     # 的这一半由上面两条合起来保证：登记过的必须有代表 + 树里的必须被看见。
@@ -1145,8 +1247,9 @@ def test_the_churn_exemption_stays_small_and_named(probe):
     而 unsupported 一旦开始喊狼来了，真缺口就没人看了。
     """
     reasons = {row["why"] for row in probe["completeness"]["churn"]}
-    assert reasons <= {"tick_churn", "empty_text"}, \
+    assert reasons <= {"tick_churn", "empty_text"}, (
         f"豁免表里冒出了没有登记过的理由：{sorted(reasons - {'tick_churn', 'empty_text'})}"
+    )
 
 
 def test_unsupported_says_what_and_why(probe):
@@ -1154,18 +1257,21 @@ def test_unsupported_says_what_and_why(probe):
     for row in probe["completeness"]["unsupported"]:
         assert row.get("cls"), row
         assert row.get("where"), row
-    ghosts = [r for r in probe["completeness"]["unsupported"]
-              if "GhostArtist" in r["cls"]]
-    assert ghosts and all(g.get("reason") == "no_geometry" for g in ghosts), \
+    ghosts = [r for r in probe["completeness"]["unsupported"] if "GhostArtist" in r["cls"]]
+    assert ghosts and all(g.get("reason") == "no_geometry" for g in ghosts), (
         f"量不出几何的自定义 artist 没被报出来：{probe['completeness']['unsupported']}"
+    )
     # **插图里的那个也要报出来**。`inset_axes` / `secondary_[xy]axis` 挂在
     # `ax.child_axes` 上、不在 `fig.axes` 里——普查只走 fig.axes 的时候，插图
     # 里漏掉的 artist 在报告里一个字都不出现，而报告照样说「没漏」。
     assert len(ghosts) >= 2, f"插图里那个量不出几何的 artist 没被普查看见：{ghosts}"
     # 而插图自己的结构件（背景 patch、四条边框）**不许**被报成漏掉——
     # 它们由 `axes_i` 代表，报出来就是普查在喊狼来了
-    noise = [r for r in probe["completeness"]["unsupported"]
-             if r["cls"].endswith(("patches.Rectangle", "spines.Spine")) and not r.get("reason")]
+    noise = [
+        r
+        for r in probe["completeness"]["unsupported"]
+        if r["cls"].endswith(("patches.Rectangle", "spines.Spine")) and not r.get("reason")
+    ]
     assert not noise, f"axes 的结构件被报成漏掉的 artist：{noise}"
 
     # **普查本身也要走 child_axes**。上面两条走的是「登记了却被丢掉」那条路
@@ -1173,12 +1279,12 @@ def test_unsupported_says_what_and_why(probe):
     # `plot_surface` 的 `Poly3DCollection` 是 instrument **不登记**、只有普查
     # 报得出来的那一类（CompatBench 的「Top unrecognized artists」里排第一）。
     # 少了这一条，`census()` 走不走 `_ordered_axes` 没有任何用例能证明。
-    poly3d = [r for r in probe["completeness"]["unsupported"]
-              if "Poly3DCollection" in r["cls"]]
-    assert poly3d, ("子 axes 里普查该报的东西没报出来——`census()` 是不是又只走 "
-                    f"`fig.axes` 了？{probe['completeness']['unsupported']}")
-    assert poly3d[0]["where"] != "axes_0", \
-        f"报出来了，但位置指到了主 axes 上：{poly3d[0]}"
+    poly3d = [r for r in probe["completeness"]["unsupported"] if "Poly3DCollection" in r["cls"]]
+    assert poly3d, (
+        "子 axes 里普查该报的东西没报出来——`census()` 是不是又只走 "
+        f"`fig.axes` 了？{probe['completeness']['unsupported']}"
+    )
+    assert poly3d[0]["where"] != "axes_0", f"报出来了，但位置指到了主 axes 上：{poly3d[0]}"
 
 
 def test_colorbars_on_child_axes_are_recognised(probe):
@@ -1199,16 +1305,17 @@ def test_colorbars_on_child_axes_are_recognised(probe):
     c = probe["completeness"]
     assert len(c["colorbar_axes"]) >= 2, (
         f"夹具里有两条色条（一条挂在插图上），只认出 {c['colorbar_axes']}——"
-        f"`colorbar_maps` 是不是又只走 `fig.axes` 了？")
+        f"`colorbar_maps` 是不是又只走 `fig.axes` 了？"
+    )
     # **认出来之后还得留得住**：`follow_map` 用 `fig.axes` 编 gid 的时候，
     # 插图宿主查不到 gid，这条随行关系被**无声丢掉**（实测 `follow_map` 回
     # `{}`）。表现是拖动宿主时色条留在原地。它是上一条修好之后才够得着的——
     # 色条先要被认出来，这条关系才有机会被丢。
-    assert c["axes_follow"], (
-        f"一条随行关系都没有？插图上的色条该让宿主带着它走：{c['axes_follow']}")
+    assert c["axes_follow"], f"一条随行关系都没有？插图上的色条该让宿主带着它走：{c['axes_follow']}"
     assert not c["colorbar_leaks"], (
         f"色条轴上漏出了内部件：{c['colorbar_leaks']}。它们每次 `_draw_all()` "
-        f"都被删掉重建，登记它们等于让 override 挂在幽灵上")
+        f"都被删掉重建，登记它们等于让 override 挂在幽灵上"
+    )
     # **一条都不许漏**，判据取 matplotlib 自己的 `cax._colorbar`。
     # 只从 `mappable.colorbar` 正查的时候，同一个 mappable 建的第二条色条会把
     # 第一条的引用**顶掉**，先建的那条整个不被认出来——而拿「我们自己认出来的
@@ -1219,12 +1326,14 @@ def test_colorbars_on_child_axes_are_recognised(probe):
     # 语义身份退化成 `cbar:?:0`，**方向翻转算不出新矩形**——实测翻成横向后
     # 色条轴仍是 0.116×0.77 的竖条（有宿主的对照是 0.462×0.116）。
     assert not c["colorbar_hostless"], (
-        f"这些色条没有宿主：{c['colorbar_hostless']}。`_colorbar_info[\"parents\"]` "
-        f"那条回退是不是掉了？")
+        f'这些色条没有宿主：{c["colorbar_hostless"]}。`_colorbar_info["parents"]` '
+        f"那条回退是不是掉了？"
+    )
     assert not c["colorbar_axes_missed"], (
         f"matplotlib 认为这些轴是色条轴，我们没认出来：{c['colorbar_axes_missed']}。"
         f"`colorbar_maps` 是不是又只走 `mappable.colorbar` 了？那是**单个**引用，"
-        f"同一个 mappable 建两条色条时它只指向最后那条")
+        f"同一个 mappable 建两条色条时它只指向最后那条"
+    )
 
 
 def test_family_classification_has_a_single_authority(probe):
@@ -1238,12 +1347,16 @@ def test_family_classification_has_a_single_authority(probe):
     a = probe["single_authority"]
     assert not a["family_conflicts"], (
         "登记时挑的 role 与 dispatch 时算的 family 对不上：\n  "
-        + "\n  ".join(f"{c['gid']} role={c['role']} cls_key={c['cls_key']} "
-                      f"（应为 {c['expected']}）" for c in a["family_conflicts"]))
+        + "\n  ".join(
+            f"{c['gid']} role={c['role']} cls_key={c['cls_key']} （应为 {c['expected']}）"
+            for c in a["family_conflicts"]
+        )
+    )
     assert not a["prefix_conflicts"], (
         "gid 前缀与 dispatch family 对不上（`_collection_gid_prefix` 与 "
         "`is_linecoll_family` 必须是同一个判据）：\n  "
-        + "\n  ".join(str(c) for c in a["prefix_conflicts"]))
+        + "\n  ".join(str(c) for c in a["prefix_conflicts"])
+    )
 
 
 def test_every_advertised_prop_has_a_handler(probe):
@@ -1254,9 +1367,9 @@ def test_every_advertised_prop_has_a_handler(probe):
     这一侧的那一半：不变式 1 验的是它改不改得动，这里验的是它有没有人接。
     """
     missing = probe["single_authority"]["missing_handlers"]
-    assert not missing, (
-        "宣称了却没有 handler：\n  "
-        + "\n  ".join(f"{m['gid']} {m['cls_key']}.{m['prop']}" for m in missing))
+    assert not missing, "宣称了却没有 handler：\n  " + "\n  ".join(
+        f"{m['gid']} {m['cls_key']}.{m['prop']}" for m in missing
+    )
 
 
 def test_the_faces_table_holds_in_both_directions(probe):
@@ -1296,9 +1409,12 @@ def test_the_faces_table_holds_in_both_directions(probe):
             f"{row['case']}（{row['cls']}）：画布上的请求色像素 "
             f"{row.get('painted_px')}，而判据说"
             f"{'给' if offered else '不给'}。"
-            + ("**能改却不宣称**——用户拿不到一个确实能用的控件"
-               if works else
-               "**宣称却改不动**——用户改了、以为改了、把图交出去了"))
+            + (
+                "**能改却不宣称**——用户拿不到一个确实能用的控件"
+                if works
+                else "**宣称却改不动**——用户改了、以为改了、把图交出去了"
+            )
+        )
 
 
 def test_the_mesh_stroke_style_table_still_holds(probe):
@@ -1323,25 +1439,30 @@ def test_the_mesh_stroke_style_table_still_holds(probe):
         # 而 `TriMesh` 恰好连边都不画（`draw_gouraud_triangles` 只接顶点颜色，
         # 实测 0 像素）。于是那两个控件一路是「宣称了、画面纹丝不动」。
         if r["stroke"]:
-            assert r["stroke_px"] > 0, \
+            assert r["stroke_px"] > 0, (
                 f"{r['case']}（{r['cls']}）判据说认描边，实测改了 0 个像素：{r}"
+            )
         else:
             assert r["stroke_px"] == 0, (
                 f"{r['case']}（{r['cls']}）现在**认**描边了（{r['stroke_px']} 像素）"
-                f"——该放开 `honours_stroke` 的例外，而不是改这条断言")
+                f"——该放开 `honours_stroke` 的例外，而不是改这条断言"
+            )
         if r["predicate"]:
-            assert r["dash_px"] > 0, \
+            assert r["dash_px"] > 0, (
                 f"{r['case']}（{r['cls']}）判据说认线型，实测改了 0 个像素：{r}"
+            )
         else:
             assert r["hatch_px"] == 0 and r["dash_px"] == 0, (
                 f"{r['case']}（{r['cls']}）现在**认**花纹/线型了（"
                 f"hatch={r['hatch_px']} dash={r['dash_px']}）——matplotlib 补上了，"
-                f"该放开 `honours_stroke_style` 的例外，而不是改这条断言")
+                f"该放开 `honours_stroke_style` 的例外，而不是改这条断言"
+            )
 
 
 def test_alias_groups_are_self_consistent(probe):
     """别名表里的广播端自己得有 handler，否则那一组永远解析不出来。"""
     a = probe["single_authority"]
     assert not a["alias_without_handler"], a["alias_without_handler"]
-    assert a["alias_group_count"] >= 15, \
+    assert a["alias_group_count"] >= 15, (
         f"别名组只剩 {a['alias_group_count']} 条，是不是有人整批删了？"
+    )

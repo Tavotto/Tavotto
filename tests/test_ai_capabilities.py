@@ -7,6 +7,7 @@ account.`，用户在面板里只能看到一个不能用的下拉项。
 探测本身（候选来源、启动验证、就绪检查、注册表纪律）在
 `tests/test_ai_agents.py`；这里盯的是 capabilities 这层的输出。
 """
+
 import os
 
 import pytest
@@ -22,9 +23,10 @@ def _fake_cli(monkeypatch):
     probe_version 恒成功 = 「装了且能启动」。就绪检查一律钉成「查不了」——
     它会真去 spawn 子进程，断言不该跟着跑测试这台机器上装了什么走。"""
     monkeypatch.setattr(
-        ai_agents, "candidates",
-        lambda agent, override=None: [
-            ai_agents.CliCandidate(f"/usr/bin/{agent.id}", "path")])
+        ai_agents,
+        "candidates",
+        lambda agent, override=None: [ai_agents.CliCandidate(f"/usr/bin/{agent.id}", "path")],
+    )
     monkeypatch.setattr(ai_agents, "probe_version", lambda argv: "test 0.0.0")
     monkeypatch.setattr(ai_agents, "_run_probe", lambda argv, timeout=10: None)
     ai_bridge.invalidate_capabilities()
@@ -44,8 +46,9 @@ def _codex_caps(tmp_path, monkeypatch, config_text=None):
 
 
 def test_models_come_from_codex_config(tmp_path, monkeypatch):
-    caps = _codex_caps(tmp_path, monkeypatch,
-                       'model = "gpt-5.6-luna"\nmodel_reasoning_effort = "max"\n')
+    caps = _codex_caps(
+        tmp_path, monkeypatch, 'model = "gpt-5.6-luna"\nmodel_reasoning_effort = "max"\n'
+    )
     assert caps["models"] == ["gpt-5.6-luna"]
     assert caps["default_model"] == "gpt-5.6-luna"
     assert caps["default_effort"] == "max"
@@ -53,7 +56,10 @@ def test_models_come_from_codex_config(tmp_path, monkeypatch):
 
 
 def test_profiles_listed_after_the_active_model(tmp_path, monkeypatch):
-    caps = _codex_caps(tmp_path, monkeypatch, """
+    caps = _codex_caps(
+        tmp_path,
+        monkeypatch,
+        """
 model = "model-a"
 
 [profiles.fast]
@@ -61,8 +67,9 @@ model = "model-b"
 
 [profiles.same]
 model = "model-a"
-""")
-    assert caps["models"] == ["model-a", "model-b"]   # 去重且当前模型在首位
+""",
+    )
+    assert caps["models"] == ["model-a", "model-b"]  # 去重且当前模型在首位
 
 
 def test_no_guessed_model_without_config(tmp_path, monkeypatch):
@@ -71,21 +78,21 @@ def test_no_guessed_model_without_config(tmp_path, monkeypatch):
     caps = _codex_caps(tmp_path, monkeypatch)
     assert caps["models"] == []
     assert caps["default_model"] is None
-    assert caps["installed"] is True          # CLI 本身仍然是可用的
+    assert caps["installed"] is True  # CLI 本身仍然是可用的
     assert caps["efforts"], "推理强度是 CLI 侧开关，与模型清单无关，不该一起清空"
 
 
 def test_broken_config_does_not_break_the_panel(tmp_path, monkeypatch):
     caps = _codex_caps(tmp_path, monkeypatch, "model = 这不是合法 TOML\n[[[")
     assert caps["installed"] is True
-    assert caps["models"] == []               # 退化解析取不到带引号的值
+    assert caps["models"] == []  # 退化解析取不到带引号的值
 
 
 def test_claude_side_reports_no_effort_switch(tmp_path, monkeypatch):
     monkeypatch.setenv("CODEX_HOME", str(tmp_path))
     caps = _agent(ai_bridge.capabilities(refresh=True), "claude")
     assert caps["models"] == ["sonnet", "opus", "haiku"]
-    assert caps["efforts"] == []              # claude CLI 没有强度开关，不假装有
+    assert caps["efforts"] == []  # claude CLI 没有强度开关，不假装有
     assert caps["default_effort"] is None
 
 
@@ -98,9 +105,9 @@ def test_spawn_env_appends_cli_dir_and_common_bins(tmp_path, monkeypatch):
     monkeypatch.setenv("PATH", "/usr/bin")
     env = ai_agents.spawn_env(str(cli_dir / "codex"), {"X_EXTRA": "1"})
     parts = env["PATH"].split(os.pathsep)
-    assert parts[0] == "/usr/bin"          # 原有排序保持
-    assert str(cli_dir) in parts           # CLI 所在目录补上了（env node 可解析）
-    assert env["X_EXTRA"] == "1"           # 第三方接口的注入变量原样保留
+    assert parts[0] == "/usr/bin"  # 原有排序保持
+    assert str(cli_dir) in parts  # CLI 所在目录补上了（env node 可解析）
+    assert env["X_EXTRA"] == "1"  # 第三方接口的注入变量原样保留
 
 
 def test_spawn_env_does_not_duplicate_existing_dirs(tmp_path, monkeypatch):
@@ -131,16 +138,14 @@ def test_macos_searches_chatgpt_bundled_codex(monkeypatch):
     assert home + "/Applications/ChatGPT.app/Contents/Resources" in dirs
     # 常规安装位置优先：单独装的 codex 通常比 ChatGPT 内置的新
     assert dirs.index("/opt/homebrew/bin") < dirs.index(
-        "/Applications/ChatGPT.app/Contents/Resources")
+        "/Applications/ChatGPT.app/Contents/Resources"
+    )
     # 来源如实标记（诊断区要显示它，且它绝不参与「能不能用」的判断）
-    assert next(loc.source for loc in locs
-                if "ChatGPT" in loc.path) == "chatgpt_bundle"
-    assert all("ChatGPT" not in loc.path
-               for loc in ai_agents.agent_search_locations(claude))
+    assert next(loc.source for loc in locs if "ChatGPT" in loc.path) == "chatgpt_bundle"
+    assert all("ChatGPT" not in loc.path for loc in ai_agents.agent_search_locations(claude))
 
     monkeypatch.setattr(sys, "platform", "linux")
-    assert all("ChatGPT" not in loc.path
-               for loc in ai_agents.agent_search_locations(codex))
+    assert all("ChatGPT" not in loc.path for loc in ai_agents.agent_search_locations(codex))
 
 
 def test_capabilities_echo_the_saved_path_override_and_leak_nothing(monkeypatch):
@@ -150,17 +155,23 @@ def test_capabilities_echo_the_saved_path_override_and_leak_nothing(monkeypatch)
     from tavotto.engine import ai_providers, config
 
     config.set_ai_agent_settings("codex", {"path_override": "/somewhere/codex"})
-    ai_providers.save({"label": "Kimi", "agent": "claude",
-                       "api_key": "sk-secret-abcdef",
-                       "base_url": "https://api.moonshot.cn/anthropic"})
+    ai_providers.save(
+        {
+            "label": "Kimi",
+            "agent": "claude",
+            "api_key": "sk-secret-abcdef",
+            "base_url": "https://api.moonshot.cn/anthropic",
+        }
+    )
     caps = ai_bridge.capabilities(refresh=True)
     assert _agent(caps, "codex")["path_override"] == "/somewhere/codex"
     assert _agent(caps, "claude")["path_override"] is None
     import json
+
     blob = json.dumps(caps, ensure_ascii=False)
-    assert "sk-secret-abcdef" not in blob        # 密钥永不整串回传
+    assert "sk-secret-abcdef" not in blob  # 密钥永不整串回传
     assert "api_key" not in blob
-    assert '"argv"' not in blob                  # 前端没有消费者，就不公开
+    assert '"argv"' not in blob  # 前端没有消费者，就不公开
 
 
 def test_refresh_really_reprobes_the_resolver():

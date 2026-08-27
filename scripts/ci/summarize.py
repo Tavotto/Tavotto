@@ -13,6 +13,7 @@
 用法：
     python scripts/ci/summarize.py --mode nightly
 """
+
 from __future__ import annotations
 
 import argparse
@@ -51,8 +52,11 @@ def _detail(name: str, data: dict) -> str:
         return "全部通过" if not bad else "、".join(bad)
     if name == "acceptance.json":
         failed = [c["name"] for c in data.get("checks", []) if not c["ok"]]
-        return (f"{data.get('wheel', '?')} sha256 {str(data.get('sha256', ''))[:12]}…"
-                if not failed else "、".join(failed))
+        return (
+            f"{data.get('wheel', '?')} sha256 {str(data.get('sha256', ''))[:12]}…"
+            if not failed
+            else "、".join(failed)
+        )
     if name == "upgrade.json":
         # 跳过必须显示成跳过。把它渲染成 PASS 会让人以为升级路径验过了，
         # 而实际上一次都没跑——这正是「假绿」最典型的形态。
@@ -60,8 +64,11 @@ def _detail(name: str, data: dict) -> str:
             return f"⏭️ 跳过（{data.get('reason', '?')}）：{str(data.get('detail', ''))[:90]}"
         checks = data.get("checks", [])
         bad = [c["name"] for c in checks if not c["ok"]]
-        return (f"{data.get('baseline_tag', '?')} → 候选，{len(checks)} 项全过"
-                if not bad else "、".join(bad[:3]))
+        return (
+            f"{data.get('baseline_tag', '?')} → 候选，{len(checks)} 项全过"
+            if not bad
+            else "、".join(bad[:3])
+        )
     if name == "visual.json":
         cases = data.get("cases", {})
         total = len(cases)
@@ -77,23 +84,28 @@ def _detail(name: str, data: dict) -> str:
         cls = s2.get("classification", {})
         funnel = {r["stage"]: r for r in s2.get("funnel", [])}
         cap = funnel.get("capture", {})
-        parts = [f"{s2.get('cases', 0)} case",
-                 f"目标 {data.get('target', '?')}",
-                 f"捕获 {cap.get('passed', 0)}/{cap.get('total', 0)}",
-                 f"完全支持 {cls.get('full_support', 0)}"]
+        parts = [
+            f"{s2.get('cases', 0)} case",
+            f"目标 {data.get('target', '?')}",
+            f"捕获 {cap.get('passed', 0)}/{cap.get('total', 0)}",
+            f"完全支持 {cls.get('full_support', 0)}",
+        ]
         # **product_bug 必须出现在这一行**：把它折进「部分支持」的数字里，
         # 扫读的人就永远看不到「有几个是我们自己的缺陷」。
         bugs = s2.get("product_bugs", [])
         if bugs:
-            parts.append("产品缺陷 " + "、".join(
-                f"{b['id']}:{b['stage'] or '?'}" for b in bugs[:3]))
+            parts.append(
+                "产品缺陷 " + "、".join(f"{b['id']}:{b['stage'] or '?'}" for b in bugs[:3])
+            )
         else:
             parts.append("产品缺陷 0")
         return "，".join(parts)
     if name == "soak.json":
         a = data.get("analysis", {})
-        parts = [f"{data.get('operations', 0)} 次操作 / {len(data.get('errors', []))} 次错误",
-                 f"孤儿进程 {len(data.get('orphans', []))}"]
+        parts = [
+            f"{data.get('operations', 0)} 次操作 / {len(data.get('errors', []))} 次错误",
+            f"孤儿进程 {len(data.get('orphans', []))}",
+        ]
         if "fd_growth_over_span" in a:
             parts.append(f"FD {a['fd_growth_over_span']:+.0f}")
             parts.append(f"RSS {a['rss_growth_mib_over_span']:+.0f} MiB")
@@ -110,7 +122,9 @@ def _detail(name: str, data: dict) -> str:
         worst = max((f["delta_pct"] for f in findings if f["delta_pct"] is not None), default=0.0)
         s = f"{len(findings)} 项指标，最大变化 {worst:+.1f}%"
         if regs:
-            s += f" — 回归 {len(regs)} 项：" + "、".join(f["metric"].split("::")[-1] for f in regs[:3])
+            s += f" — 回归 {len(regs)} 项：" + "、".join(
+                f["metric"].split("::")[-1] for f in regs[:3]
+            )
         if not data.get("gate_enforced"):
             s += "（LAB_PERF_GATE 未开，不阻断）"
         return s
@@ -118,9 +132,11 @@ def _detail(name: str, data: dict) -> str:
         c = data.get("counts")
         if not c:
             return data.get("error", "未运行")
-        return (f"killed {c['killed']} / survived {c['survived']} "
-                f"（{data.get('survived_ratio', 0):.0%}）"
-                + ("" if data.get("gate_enforced") else "，report-only"))
+        return (
+            f"killed {c['killed']} / survived {c['survived']} "
+            f"（{data.get('survived_ratio', 0):.0%}）"
+            + ("" if data.get("gate_enforced") else "，report-only")
+        )
     return ""
 
 
@@ -148,10 +164,12 @@ def main(argv: list[str] | None = None) -> int:
     # 只有 GITHUB_RUN_ATTEMPT 递增——只比 run_id 的话，上一次尝试留下的报告
     # 会被当成本次的（#61 的 review 逮到）。
     def _identity(env_or_meta) -> tuple:
-        get = (env_or_meta.get if isinstance(env_or_meta, dict) else None)
+        get = env_or_meta.get if isinstance(env_or_meta, dict) else None
         src = env_or_meta if get else os.environ
-        return (str(src.get("run_id" if get else "GITHUB_RUN_ID", "") or ""),
-                str(src.get("run_attempt" if get else "GITHUB_RUN_ATTEMPT", "") or ""))
+        return (
+            str(src.get("run_id" if get else "GITHUB_RUN_ID", "") or ""),
+            str(src.get("run_attempt" if get else "GITHUB_RUN_ATTEMPT", "") or ""),
+        )
 
     this_run = _identity(os.environ)
 
@@ -206,9 +224,16 @@ def main(argv: list[str] | None = None) -> int:
         print("::warning::没有找到任何报告——前面的步骤可能全部未执行", file=sys.stderr)
 
     if args.json:
-        print(json.dumps({"correctness": verdicts["correctness"],
-                          "performance": verdicts["performance"],
-                          "reports_found": present}, ensure_ascii=False))
+        print(
+            json.dumps(
+                {
+                    "correctness": verdicts["correctness"],
+                    "performance": verdicts["performance"],
+                    "reports_found": present,
+                },
+                ensure_ascii=False,
+            )
+        )
     # 汇总本身不改变成败：各步骤已经各自决定过退出码。这里再判一次只会
     # 让「哪一步失败的」更难定位。
     return 0

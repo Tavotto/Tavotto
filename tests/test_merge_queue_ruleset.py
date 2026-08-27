@@ -8,6 +8,7 @@
 全部平台无关、纯标准库、零网络——`gh_api` 被 FakeApi 整个换掉，
 任何用例都不该发真实请求。
 """
+
 from __future__ import annotations
 
 import base64
@@ -26,31 +27,52 @@ import merge_queue_ruleset as MQ  # noqa: E402
 REPO = "Tavotto/Tavotto"
 
 
-def _ruleset(*, ruleset_id=21121430, name=MQ.DEFAULT_RULESET_NAME,
-             target="branch", strict=True, merge_queue=False,
-             contexts=None, extra_rules=(), bypass=()):
-    contexts = contexts if contexts is not None else [
-        "backend (ubuntu-latest, 3.10)", "frontend", "workerd", "invariants"]
+def _ruleset(
+    *,
+    ruleset_id=21121430,
+    name=MQ.DEFAULT_RULESET_NAME,
+    target="branch",
+    strict=True,
+    merge_queue=False,
+    contexts=None,
+    extra_rules=(),
+    bypass=(),
+):
+    contexts = (
+        contexts
+        if contexts is not None
+        else ["backend (ubuntu-latest, 3.10)", "frontend", "workerd", "invariants"]
+    )
     rules = [
         {"type": "deletion"},
         {"type": "non_fast_forward"},
-        {"type": "pull_request", "parameters": {
-            "required_review_thread_resolution": True,
-            "allowed_merge_methods": ["merge", "squash"]}},
-        {"type": "required_status_checks", "parameters": {
-            "strict_required_status_checks_policy": strict,
-            "do_not_enforce_on_create": False,
-            "required_status_checks": [{"context": c} for c in contexts]}},
+        {
+            "type": "pull_request",
+            "parameters": {
+                "required_review_thread_resolution": True,
+                "allowed_merge_methods": ["merge", "squash"],
+            },
+        },
+        {
+            "type": "required_status_checks",
+            "parameters": {
+                "strict_required_status_checks_policy": strict,
+                "do_not_enforce_on_create": False,
+                "required_status_checks": [{"context": c} for c in contexts],
+            },
+        },
         *copy.deepcopy(list(extra_rules)),
     ]
     if merge_queue:
-        rules.append({"type": "merge_queue",
-                      "parameters": dict(MQ.MERGE_QUEUE_PARAMS)})
+        rules.append({"type": "merge_queue", "parameters": dict(MQ.MERGE_QUEUE_PARAMS)})
     return {
-        "id": ruleset_id, "name": name, "target": target,
-        "source_type": "Repository", "source": REPO, "enforcement": "active",
-        "conditions": {"ref_name": {"exclude": [],
-                                    "include": ["~DEFAULT_BRANCH"]}},
+        "id": ruleset_id,
+        "name": name,
+        "target": target,
+        "source_type": "Repository",
+        "source": REPO,
+        "enforcement": "active",
+        "conditions": {"ref_name": {"exclude": [], "include": ["~DEFAULT_BRANCH"]}},
         "rules": rules,
         "bypass_actors": list(bypass),
     }
@@ -66,8 +88,14 @@ def _wf_text(with_merge_group=True):
 class FakeApi:
     """`gh_api` 的假实现：记录每一次调用，写请求单独记账。"""
 
-    def __init__(self, rulesets, *, gates_conclusion="success",
-                 gates_present=True, workflows_have_merge_group=True):
+    def __init__(
+        self,
+        rulesets,
+        *,
+        gates_conclusion="success",
+        gates_present=True,
+        workflows_have_merge_group=True,
+    ):
         self.rulesets = rulesets
         self.gates_conclusion = gates_conclusion
         self.gates_present = gates_present
@@ -83,8 +111,9 @@ class FakeApi:
         if path == f"repos/{REPO}":
             return {"default_branch": "main"}
         if path == f"repos/{REPO}/rulesets":
-            return [{"id": r["id"], "name": r["name"], "target": r["target"]}
-                    for r in self.rulesets]
+            return [
+                {"id": r["id"], "name": r["name"], "target": r["target"]} for r in self.rulesets
+            ]
         for r in self.rulesets:
             if path == f"repos/{REPO}/rulesets/{r['id']}":
                 return copy.deepcopy(r)
@@ -93,8 +122,7 @@ class FakeApi:
         if path.startswith(f"repos/{REPO}/commits/{'a' * 40}/check-runs"):
             runs = []
             if self.gates_present:
-                runs = [{"name": g, "conclusion": self.gates_conclusion}
-                        for g in MQ.GATE_CONTEXTS]
+                runs = [{"name": g, "conclusion": self.gates_conclusion} for g in MQ.GATE_CONTEXTS]
             return {"check_runs": runs}
         if path.startswith(f"repos/{REPO}/contents/"):
             text = _wf_text(self.workflows_have_merge_group)
@@ -114,8 +142,9 @@ def _plan_and_apply(api, phase, plan_dir, *, yes=True):
     with _patched(api):
         rc = MQ.main(["plan", "--phase", phase, "--plan-file", str(plan_file)])
         assert rc == 0
-        rc = MQ.main(["apply", "--phase", phase, "--plan-file", str(plan_file)]
-                     + (["--yes"] if yes else []))
+        rc = MQ.main(
+            ["apply", "--phase", phase, "--plan-file", str(plan_file)] + (["--yes"] if yes else [])
+        )
     return rc
 
 
@@ -153,8 +182,7 @@ class TestLocate:
 
     def test_tag_ruleset_is_structurally_unreachable(self):
         """tag ruleset（target != branch）连候选都进不了——改不到它。"""
-        tag = _ruleset(ruleset_id=21121449, name=MQ.DEFAULT_RULESET_NAME,
-                       target="tag")
+        tag = _ruleset(ruleset_id=21121449, name=MQ.DEFAULT_RULESET_NAME, target="tag")
         api = FakeApi([tag])
         with pytest.raises(MQ.MigrationError):
             MQ.find_ruleset(api, REPO, MQ.DEFAULT_RULESET_NAME, "main")
@@ -167,8 +195,11 @@ class TestEnableQueue:
         new = MQ.build_enable_queue(cur)
         rsc = [r for r in new["rules"] if r["type"] == "required_status_checks"][0]
         assert rsc["parameters"]["strict_required_status_checks_policy"] is False
-        assert [c["context"] for c in rsc["parameters"]["required_status_checks"]] \
-            == ["a", "b", "c"], "enable-queue 一个旧 context 都不许删"
+        assert [c["context"] for c in rsc["parameters"]["required_status_checks"]] == [
+            "a",
+            "b",
+            "c",
+        ], "enable-queue 一个旧 context 都不许删"
         mq = [r for r in new["rules"] if r["type"] == "merge_queue"]
         assert len(mq) == 1
         assert mq[0]["parameters"]["grouping_strategy"] == "ALLGREEN"
@@ -189,8 +220,7 @@ class TestEnableQueue:
             assert keep in kinds, f"{keep} rule 被抹掉了"
 
     def test_bypass_actors_survive_verbatim_and_are_never_added(self):
-        someone = [{"actor_id": 5, "actor_type": "RepositoryRole",
-                    "bypass_mode": "always"}]
+        someone = [{"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"}]
         cur = _ruleset(bypass=someone)
         assert MQ.build_enable_queue(cur)["bypass_actors"] == someone
         assert MQ.build_enable_queue(_ruleset())["bypass_actors"] == []
@@ -211,8 +241,11 @@ class TestSwitchToGates:
     def test_contexts_become_exactly_the_three_gates(self):
         new = MQ.build_switch_to_gates(_ruleset(strict=False, merge_queue=True))
         rsc = [r for r in new["rules"] if r["type"] == "required_status_checks"][0]
-        assert [c["context"] for c in rsc["parameters"]["required_status_checks"]] \
-            == ["CI fast gate", "CI integration gate", "CodeQL gate"]
+        assert [c["context"] for c in rsc["parameters"]["required_status_checks"]] == [
+            "CI fast gate",
+            "CI integration gate",
+            "CodeQL gate",
+        ]
 
     def test_gate_names_match_the_workflow_files(self):
         """脚本里的三个名字必须与 workflow 的 `name:` 逐字相同——差一个字节，
@@ -223,8 +256,7 @@ class TestSwitchToGates:
         assert "name: CI fast gate" in ci
         assert "name: CI integration gate" in ci
         assert "name: CodeQL gate" in codeql
-        assert MQ.GATE_CONTEXTS == ["CI fast gate", "CI integration gate",
-                                    "CodeQL gate"]
+        assert MQ.GATE_CONTEXTS == ["CI fast gate", "CI integration gate", "CodeQL gate"]
 
 
 # ============================================================ apply 的闸门
@@ -256,38 +288,34 @@ class TestApply:
         api = FakeApi([_ruleset()])
         plan_file = plan_dir / "p.json"
         with _patched(api):
-            assert MQ.main(["plan", "--phase", "enable-queue",
-                            "--plan-file", str(plan_file)]) == 0
+            assert MQ.main(["plan", "--phase", "enable-queue", "--plan-file", str(plan_file)]) == 0
         # 并发漂移：有人往线上 ruleset 加了一条规则
         api.rulesets[0]["rules"].append({"type": "somebody_elses_rule"})
         with _patched(api):
-            rc = MQ.main(["apply", "--phase", "enable-queue",
-                          "--plan-file", str(plan_file), "--yes"])
+            rc = MQ.main(
+                ["apply", "--phase", "enable-queue", "--plan-file", str(plan_file), "--yes"]
+            )
         assert rc == 1 and api.writes == []
         assert "哈希" in capsys.readouterr().err
 
     def test_switch_refuses_until_gates_ran_green_on_main(self, plan_dir, capsys):
-        api = FakeApi([_ruleset(strict=False, merge_queue=True)],
-                      gates_present=False)
+        api = FakeApi([_ruleset(strict=False, merge_queue=True)], gates_present=False)
         rc = _plan_and_apply(api, "switch-to-gates", plan_dir)
         assert rc == 1 and api.writes == []
         assert "从未出现" in capsys.readouterr().err
 
     def test_switch_refuses_a_non_success_gate(self, plan_dir, capsys):
-        api = FakeApi([_ruleset(strict=False, merge_queue=True)],
-                      gates_conclusion="failure")
+        api = FakeApi([_ruleset(strict=False, merge_queue=True)], gates_conclusion="failure")
         rc = _plan_and_apply(api, "switch-to-gates", plan_dir)
         assert rc == 1 and api.writes == []
         assert "不是 success" in capsys.readouterr().err
 
     def test_switch_refuses_workflows_without_merge_group(self, plan_dir, capsys):
-        api = FakeApi([_ruleset(strict=False, merge_queue=True)],
-                      workflows_have_merge_group=False)
+        api = FakeApi([_ruleset(strict=False, merge_queue=True)], workflows_have_merge_group=False)
         rc = _plan_and_apply(api, "switch-to-gates", plan_dir)
         assert rc == 1 and api.writes == []
 
-    def test_enable_queue_also_requires_merge_group_listeners(self, plan_dir,
-                                                              capsys):
+    def test_enable_queue_also_requires_merge_group_listeners(self, plan_dir, capsys):
         """队列一开候选就要在 merge_group 上等 required contexts；workflow 没
         监听的话每个候选白等 90 分钟——enable 前就要拦。"""
         api = FakeApi([_ruleset()], workflows_have_merge_group=False)
@@ -300,13 +328,14 @@ class TestApply:
         assert rc == 0 and len(api.writes) == 1
         body = api.writes[0][1]
         rsc = [r for r in body["rules"] if r["type"] == "required_status_checks"][0]
-        assert [c["context"] for c in rsc["parameters"]["required_status_checks"]] \
-            == MQ.GATE_CONTEXTS
-        assert [r for r in body["rules"] if r["type"] == "merge_queue"], \
+        assert [
+            c["context"] for c in rsc["parameters"]["required_status_checks"]
+        ] == MQ.GATE_CONTEXTS
+        assert [r for r in body["rules"] if r["type"] == "merge_queue"], (
             "gates-only 的 ruleset 里必须仍有强制 merge_queue"
+        )
 
-    def test_the_put_body_is_recomputed_from_live_state_not_the_plan(self, plan_dir,
-                                                                     capsys):
+    def test_the_put_body_is_recomputed_from_live_state_not_the_plan(self, plan_dir, capsys):
         """plan 文件只是确认物：PUT 的 body 必须等于对线上现状重算的变换。
 
         只抽查 bypass_actors 那种点名单挡不住被编辑的 plan（#119 评审 P1）
@@ -319,40 +348,40 @@ class TestApply:
         assert body["rules"] == expected["rules"]
         assert body["conditions"] == expected["conditions"]
 
-    def test_a_tampered_plan_that_drops_the_pull_request_rule_is_refused(
-            self, plan_dir, capsys):
+    def test_a_tampered_plan_that_drops_the_pull_request_rule_is_refused(self, plan_dir, capsys):
         """手改 plan 抹掉 pull_request rule：base 哈希核对的是 current，
         量不到 plan 本身——必须靠「与重算结果逐字节相等」逮住。"""
         api = FakeApi([_ruleset()])
         plan_file = plan_dir / "p.json"
         with _patched(api):
-            assert MQ.main(["plan", "--phase", "enable-queue",
-                            "--plan-file", str(plan_file)]) == 0
+            assert MQ.main(["plan", "--phase", "enable-queue", "--plan-file", str(plan_file)]) == 0
         plan = json.loads(plan_file.read_text(encoding="utf-8"))
-        plan["updated"]["rules"] = [r for r in plan["updated"]["rules"]
-                                    if r["type"] != "pull_request"]
+        plan["updated"]["rules"] = [
+            r for r in plan["updated"]["rules"] if r["type"] != "pull_request"
+        ]
         plan_file.write_text(json.dumps(plan), encoding="utf-8")
         with _patched(api):
-            rc = MQ.main(["apply", "--phase", "enable-queue",
-                          "--plan-file", str(plan_file), "--yes"])
+            rc = MQ.main(
+                ["apply", "--phase", "enable-queue", "--plan-file", str(plan_file), "--yes"]
+            )
         assert rc == 1 and api.writes == []
         assert "重算" in capsys.readouterr().err
 
-    def test_a_tampered_plan_that_swaps_required_contexts_is_refused(
-            self, plan_dir, capsys):
+    def test_a_tampered_plan_that_swaps_required_contexts_is_refused(self, plan_dir, capsys):
         api = FakeApi([_ruleset(strict=False, merge_queue=True)])
         plan_file = plan_dir / "p.json"
         with _patched(api):
-            assert MQ.main(["plan", "--phase", "switch-to-gates",
-                            "--plan-file", str(plan_file)]) == 0
+            assert (
+                MQ.main(["plan", "--phase", "switch-to-gates", "--plan-file", str(plan_file)]) == 0
+            )
         plan = json.loads(plan_file.read_text(encoding="utf-8"))
-        rsc = [r for r in plan["updated"]["rules"]
-               if r["type"] == "required_status_checks"][0]
+        rsc = [r for r in plan["updated"]["rules"] if r["type"] == "required_status_checks"][0]
         rsc["parameters"]["required_status_checks"] = [{"context": "totally fake"}]
         plan_file.write_text(json.dumps(plan), encoding="utf-8")
         with _patched(api):
-            rc = MQ.main(["apply", "--phase", "switch-to-gates",
-                          "--plan-file", str(plan_file), "--yes"])
+            rc = MQ.main(
+                ["apply", "--phase", "switch-to-gates", "--plan-file", str(plan_file), "--yes"]
+            )
         assert rc == 1 and api.writes == []
 
     def test_a_plan_that_injects_a_bypass_actor_is_refused(self, plan_dir, capsys):
@@ -360,24 +389,24 @@ class TestApply:
         api = FakeApi([_ruleset()])
         plan_file = plan_dir / "p.json"
         with _patched(api):
-            assert MQ.main(["plan", "--phase", "enable-queue",
-                            "--plan-file", str(plan_file)]) == 0
+            assert MQ.main(["plan", "--phase", "enable-queue", "--plan-file", str(plan_file)]) == 0
         plan = json.loads(plan_file.read_text(encoding="utf-8"))
         plan["updated"]["bypass_actors"] = [{"actor_id": 1}]
         plan_file.write_text(json.dumps(plan), encoding="utf-8")
         with _patched(api):
-            rc = MQ.main(["apply", "--phase", "enable-queue",
-                          "--plan-file", str(plan_file), "--yes"])
+            rc = MQ.main(
+                ["apply", "--phase", "enable-queue", "--plan-file", str(plan_file), "--yes"]
+            )
         assert rc == 1 and api.writes == []
 
     def test_phase_mismatch_between_plan_and_flag_is_refused(self, plan_dir):
         api = FakeApi([_ruleset()])
         plan_file = plan_dir / "p.json"
         with _patched(api):
-            assert MQ.main(["plan", "--phase", "enable-queue",
-                            "--plan-file", str(plan_file)]) == 0
-            rc = MQ.main(["apply", "--phase", "switch-to-gates",
-                          "--plan-file", str(plan_file), "--yes"])
+            assert MQ.main(["plan", "--phase", "enable-queue", "--plan-file", str(plan_file)]) == 0
+            rc = MQ.main(
+                ["apply", "--phase", "switch-to-gates", "--plan-file", str(plan_file), "--yes"]
+            )
         assert rc == 1 and api.writes == []
 
 
@@ -387,8 +416,7 @@ class TestTransformSafety:
         """`_assert_untouched` 是最后一道闸：托管之外的 rule 变了当场抛。"""
         cur = _ruleset()
         broken = copy.deepcopy(cur)
-        broken["rules"] = [r for r in broken["rules"]
-                           if r["type"] != "pull_request"]
+        broken["rules"] = [r for r in broken["rules"] if r["type"] != "pull_request"]
         with pytest.raises(MQ.MigrationError):
             MQ._assert_untouched(cur, broken)
 

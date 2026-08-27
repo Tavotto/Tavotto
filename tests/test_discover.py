@@ -1,5 +1,6 @@
 """discover 静态扫描：三种入口方言、f-string↔磁盘产物比对、冲突不自动裁决、
 merge 时现有注册表优先。全部纯 AST，不执行任何脚本。"""
+
 import json
 
 import pytest
@@ -21,7 +22,7 @@ def _touch(figs, *names):
         (figs / n).write_bytes(b"")
 
 
-MAIN_SCRIPT = '''\
+MAIN_SCRIPT = """\
 from paper_style import save
 
 def main():
@@ -32,7 +33,7 @@ def main():
 
 if __name__ == "__main__":
     main()
-'''
+"""
 
 
 def test_main_dialect_with_fstring_resolved_against_disk(figs):
@@ -53,10 +54,13 @@ def test_render_dialect_and_ext_stripped(figs):
 
 
 def test_inline_main_dialect(figs):
-    _script(figs, "fig_c.py",
-            'import matplotlib.pyplot as plt\n'
-            'if __name__ == "__main__":\n'
-            '    plt.savefig("FigC_d.png")\n')
+    _script(
+        figs,
+        "fig_c.py",
+        "import matplotlib.pyplot as plt\n"
+        'if __name__ == "__main__":\n'
+        '    plt.savefig("FigC_d.png")\n',
+    )
     assert discover.discover(figs)["scripts"]["fig_c.py"]["entry"] == "__main__"
 
 
@@ -70,14 +74,18 @@ def test_unresolved_fstring_reported_not_guessed(figs):
 def test_unrelated_ternary_string_is_not_a_stem(figs):
     """issue #88：与存图无关的三元字符串（numpy dtype、label……）的 else
     分支曾被无条件登记成 stem，`"<f8"` 就这么进了用户的注册表。"""
-    _script(figs, "fig_dtype.py", '''\
+    _script(
+        figs,
+        "fig_dtype.py",
+        """\
 wide = True
 
 def main():
     dtype = "<f4" if wide else "<f8"
     data = load(path, dtype)
     fig.savefig("real_output.pdf")
-''')
+""",
+    )
     info = discover.discover(figs)["scripts"]["fig_dtype.py"]
     assert info["stems"] == ["real_output"]
     assert info["unresolved"] == []
@@ -85,20 +93,27 @@ def main():
 
 def test_ternary_directly_in_savefig_registers_both_branches(figs):
     """三元表达式**作为存图实参**时两个分支都是真实产物，照旧都登记。"""
-    _script(figs, "fig_tern.py", '''\
+    _script(
+        figs,
+        "fig_tern.py",
+        """\
 def main():
     fig.savefig("FigT_final.pdf" if final else "FigT_draft.pdf")
-''')
+""",
+    )
     info = discover.discover(figs)["scripts"]["fig_tern.py"]
     assert info["stems"] == ["FigT_draft", "FigT_final"]
 
 
 def test_paper_style_and_helpers_skipped(figs):
-    _script(figs, "paper_style.py", 'def save(fig, stem):\n    fig.savefig(stem)\n')
-    _script(figs, "paper_style 2.py",  # macOS 复制产生的副本也不是产图脚本
-            'def main():\n    save(fig, "Stray")\n')
+    _script(figs, "paper_style.py", "def save(fig, stem):\n    fig.savefig(stem)\n")
+    _script(
+        figs,
+        "paper_style 2.py",  # macOS 复制产生的副本也不是产图脚本
+        'def main():\n    save(fig, "Stray")\n',
+    )
     _script(figs, "_helper.py", 'def main():\n    save(fig, "X")\n')
-    _script(figs, "data_module.py", 'def load():\n    return 1\n')  # 不产图
+    _script(figs, "data_module.py", "def load():\n    return 1\n")  # 不产图
     assert discover.discover(figs)["scripts"] == {}
 
 
@@ -122,25 +137,29 @@ def test_draft_loads_into_registry(figs):
 
 def test_merge_existing_registry_wins(figs):
     """现有注册表的归属永远优先：已登记的 stem 不会被重新分配。"""
-    existing = {"version": 1, "scripts": {
-        "old.py": {"entry": "render", "cost": "heavy", "notes": "",
-                   "stems": ["Kept_1"]}}}
-    registry.registry_path(figs).write_text(
-        json.dumps(existing), encoding="utf-8")
+    existing = {
+        "version": 1,
+        "scripts": {
+            "old.py": {"entry": "render", "cost": "heavy", "notes": "", "stems": ["Kept_1"]}
+        },
+    }
+    registry.registry_path(figs).write_text(json.dumps(existing), encoding="utf-8")
     # new.py 认领 Kept_1（已登记）+ New_1（新）；old.py 磁盘上已不存在
     _script(figs, "new.py", 'def main():\n    save(fig, "Kept_1")\n    save(fig, "New_1")\n')
     merged, _, changes = discover.merge(figs)
     assert merged["scripts"]["old.py"]["stems"] == ["Kept_1"]  # 原样保留
-    assert merged["scripts"]["new.py"]["stems"] == ["New_1"]   # 只拿到新 stem
+    assert merged["scripts"]["new.py"]["stems"] == ["New_1"]  # 只拿到新 stem
     assert changes["added_scripts"] == ["new.py"]
 
 
 def test_merge_appends_new_stems_to_existing_script(figs):
-    existing = {"version": 1, "scripts": {
-        "fig_a.py": {"entry": "main", "cost": "light", "notes": "",
-                     "stems": ["FigA_1"]}}}
-    registry.registry_path(figs).write_text(
-        json.dumps(existing), encoding="utf-8")
+    existing = {
+        "version": 1,
+        "scripts": {
+            "fig_a.py": {"entry": "main", "cost": "light", "notes": "", "stems": ["FigA_1"]}
+        },
+    }
+    registry.registry_path(figs).write_text(json.dumps(existing), encoding="utf-8")
     _script(figs, "fig_a.py", 'def main():\n    save(fig, "FigA_1")\n    save(fig, "FigA_2")\n')
     merged, _, changes = discover.merge(figs)
     assert merged["scripts"]["fig_a.py"]["stems"] == ["FigA_1", "FigA_2"]
@@ -148,7 +167,7 @@ def test_merge_appends_new_stems_to_existing_script(figs):
     assert changes["added_stems"] == {"fig_a.py": ["FigA_2"]}
 
 
-DYNAMIC_NAME_SCRIPT = '''\
+DYNAMIC_NAME_SCRIPT = """\
 from pathlib import Path
 
 OUT = Path(__file__).parent / "panels"
@@ -159,7 +178,7 @@ def save_panel(fig, stem):
 def main():
     for name in ("A", "B"):
         save_panel(build(), f"Dyn_{name}")
-'''
+"""
 
 
 def test_wrapper_function_and_constant_loop_are_resolved(figs):
@@ -173,13 +192,13 @@ def test_wrapper_function_and_constant_loop_are_resolved(figs):
     info = discover.discover(figs)["scripts"]["build_panels.py"]
     assert info["stems"] == ["Dyn_A", "Dyn_B"]
     assert info["dynamic_names"] is False
-    assert info["save_calls"] == 1          # 调用点算一次，不按循环次数重复计
+    assert info["save_calls"] == 1  # 调用点算一次，不按循环次数重复计
 
     cfg, _ = discover.build_draft(figs)
     assert cfg["scripts"]["build_panels.py"]["stems"] == ["Dyn_A", "Dyn_B"]
 
 
-RUNTIME_NAME_SCRIPT = '''\
+RUNTIME_NAME_SCRIPT = """\
 import sys
 from pathlib import Path
 
@@ -189,7 +208,7 @@ def main():
     for path in sorted(Path("data").glob("*.csv")):
         fig = build(path)
         fig.savefig(OUT / f"{path.stem}.pdf")
-'''
+"""
 
 
 def test_runtime_only_names_reported_not_guessed(figs):
@@ -214,7 +233,10 @@ def test_path_algebra_with_suffix_and_join(figs):
     v0.1.3 只认 save()/savefig() 里的字符串字面量，这类脚本一个 stem 都抽不
     出来，注册表必然是空的（= 全图库不可参数化）。
     """
-    _script(figs, "fig_paths.py", '''\
+    _script(
+        figs,
+        "fig_paths.py",
+        """\
 import os
 from pathlib import Path
 
@@ -228,7 +250,8 @@ def main():
     fig.savefig(os.path.join("out", "Fig_%s.png" % LABEL))
     fig.savefig(OUT.joinpath("Fig_{}.png".format("zeta")))
     fig.savefig(Path(__file__).with_suffix(".svg"))
-''')
+""",
+    )
     info = discover.discover(figs)["scripts"]["fig_paths.py"]
     # with_suffix 剥的是任意后缀（.py → .svg），不是只剥图片扩展名
     assert info["stems"] == ["Fig_kinetics", "Fig_map", "Fig_zeta", "fig_paths"]
@@ -241,15 +264,18 @@ def test_subdirectories_are_scanned(figs):
     _script(figs, "panels/fig_sub.py", 'def main():\n    save(fig, "Sub_1")\n')
     _script(figs, ".venv/lib/noise.py", 'def main():\n    save(fig, "Noise")\n')
     scripts = discover.discover(figs)["scripts"]
-    assert "panels/fig_sub.py" in scripts       # 子目录进来了
+    assert "panels/fig_sub.py" in scripts  # 子目录进来了
     assert all(".venv" not in k for k in scripts)  # 虚拟环境整棵剪掉
 
 
 def test_custom_entry_name_accepted(figs):
     """入口不必叫 main/render——worker 本来就是 getattr(module, entry)()。"""
-    _script(figs, "fig_custom.py",
-            'def _draw():\n    return 1\n\n'
-            'def plot():\n    fig = _draw()\n    fig.savefig("Custom_1.pdf")\n')
+    _script(
+        figs,
+        "fig_custom.py",
+        "def _draw():\n    return 1\n\n"
+        'def plot():\n    fig = _draw()\n    fig.savefig("Custom_1.pdf")\n',
+    )
     info = discover.discover(figs)["scripts"]["fig_custom.py"]
     assert info["entry"] == "plot"
     assert info["stems"] == ["Custom_1"]
@@ -257,7 +283,7 @@ def test_custom_entry_name_accepted(figs):
 
 def test_non_plotting_module_stays_quiet(figs):
     """没有任何 save 调用的模块不该被当成「命名有问题的绘图脚本」报出来。"""
-    _script(figs, "helpers_mod.py", 'def main():\n    return compute()\n')
+    _script(figs, "helpers_mod.py", "def main():\n    return compute()\n")
     assert discover.discover(figs)["scripts"] == {}
 
 
@@ -283,12 +309,19 @@ def test_registry_write_is_atomic(figs, monkeypatch):
 
     monkeypatch.setattr(Path, "replace", boom)
     with pytest.raises(OSError):
-        discover.write_config(figs, {"version": 1, "scripts": {
-            "a.py": {"entry": "main", "cost": "medium", "notes": "", "stems": ["A"]}}})
+        discover.write_config(
+            figs,
+            {
+                "version": 1,
+                "scripts": {
+                    "a.py": {"entry": "main", "cost": "medium", "notes": "", "stems": ["A"]}
+                },
+            },
+        )
     monkeypatch.undo()
 
-    assert path.read_text(encoding="utf-8") == original      # 原件一个字节没动
-    assert json.loads(path.read_text(encoding="utf-8"))      # 仍然读得回来
+    assert path.read_text(encoding="utf-8") == original  # 原件一个字节没动
+    assert json.loads(path.read_text(encoding="utf-8"))  # 仍然读得回来
     leftovers = [p.name for p in figs.iterdir() if p.name != path.name]
     assert not leftovers, f"半成品留在用户的图库目录里了: {leftovers}"
 
@@ -312,8 +345,15 @@ def test_concurrent_registry_writes_do_not_share_a_temp_file(figs, monkeypatch):
 
     monkeypatch.setattr(Path, "replace", spy)
     for stem in ("A", "B"):
-        discover.write_config(figs, {"version": 1, "scripts": {
-            f"{stem}.py": {"entry": "main", "cost": "medium", "notes": "", "stems": [stem]}}})
+        discover.write_config(
+            figs,
+            {
+                "version": 1,
+                "scripts": {
+                    f"{stem}.py": {"entry": "main", "cost": "medium", "notes": "", "stems": [stem]}
+                },
+            },
+        )
 
     assert len(seen) == 2
     assert seen[0] != seen[1], f"两次写用了同一个临时文件名: {seen[0]}"

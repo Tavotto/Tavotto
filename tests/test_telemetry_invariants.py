@@ -4,6 +4,7 @@
 一旦它能影响导出、AI、启动，或者能把用户的内容带出去，那就不是「少了个
 指标」，而是产品坏了 / 隐私承诺破了。
 """
+
 from __future__ import annotations
 
 import inspect
@@ -29,9 +30,13 @@ def test_no_consent_means_zero_network(monkeypatch):
     monkeypatch.delenv("TAVOTTO_NO_TELEMETRY", raising=False)
     telemetry.reset_for_tests()
     calls: list = []
-    monkeypatch.setattr(urllib.request, "urlopen",
-                        lambda *a, **kw: calls.append(a) or (_ for _ in ()).throw(
-                            AssertionError("没同意却发起了网络请求")))
+    monkeypatch.setattr(
+        urllib.request,
+        "urlopen",
+        lambda *a, **kw: (
+            calls.append(a) or (_ for _ in ()).throw(AssertionError("没同意却发起了网络请求"))
+        ),
+    )
     assert telemetry.settings()["consent"] == "unset"
     for event, props in [
         ("app_started", {"app_mode": "browser"}),
@@ -50,9 +55,11 @@ def test_import_time_makes_no_network_request(monkeypatch):
     import importlib
     import urllib.request
 
-    monkeypatch.setattr(urllib.request, "urlopen",
-                        lambda *a, **kw: (_ for _ in ()).throw(
-                            AssertionError("import 期间发起了网络请求")))
+    monkeypatch.setattr(
+        urllib.request,
+        "urlopen",
+        lambda *a, **kw: (_ for _ in ()).throw(AssertionError("import 期间发起了网络请求")),
+    )
     importlib.reload(telemetry)
 
 
@@ -64,18 +71,20 @@ def test_app_still_starts_when_telemetry_explodes(monkeypatch, telemetry_sent):
 
     它跑在 `app.main()` 里、`app.run()` 之前——抛出来就是「启动即崩」。
     """
+
     def boom(*_a, **_kw):
         raise RuntimeError("埋点炸了")
 
     monkeypatch.setattr(telemetry, "validate", boom)
     monkeypatch.setattr(telemetry, "_enqueue", boom)
-    telemetry.note_app_started("desktop")       # 不抛就算过
+    telemetry.note_app_started("desktop")  # 不抛就算过
 
 
 def test_capture_never_raises_whatever_goes_wrong(monkeypatch, telemetry_sent):
     for target in ("validate", "_auto_props", "_enqueue", "install_id"):
-        monkeypatch.setattr(telemetry, target,
-                            lambda *_a, **_kw: (_ for _ in ()).throw(RuntimeError("boom")))
+        monkeypatch.setattr(
+            telemetry, target, lambda *_a, **_kw: (_ for _ in ()).throw(RuntimeError("boom"))
+        )
         assert telemetry.capture("export_completed", {"pdf": True}) is False
         monkeypatch.undo()
 
@@ -83,8 +92,7 @@ def test_capture_never_raises_whatever_goes_wrong(monkeypatch, telemetry_sent):
 def test_set_consent_survives_a_broken_transport(monkeypatch):
     monkeypatch.delenv("TAVOTTO_NO_TELEMETRY", raising=False)
     telemetry.reset_for_tests()
-    monkeypatch.setattr(telemetry, "_post",
-                        lambda _p: (_ for _ in ()).throw(OSError("代理挂了")))
+    monkeypatch.setattr(telemetry, "_post", lambda _p: (_ for _ in ()).throw(OSError("代理挂了")))
     telemetry.set_consent(telemetry.CONSENT_ENABLED, source="first_run")
     assert telemetry.enabled() is True
     assert telemetry.flush(5.0)
@@ -95,10 +103,36 @@ def test_set_consent_survives_a_broken_transport(monkeypatch):
 # 内容在结构上就发不出去
 # ---------------------------------------------------------------------------
 CONTENT_BEARING = [
-    "stem", "filename", "file", "path", "dir", "export_dir", "script",
-    "source", "prompt", "response", "diff", "label", "gid", "text", "title",
-    "project", "canvas", "name", "traceback", "error", "module", "package",
-    "user", "email", "host", "hostname", "locale", "ip", "session", "url",
+    "stem",
+    "filename",
+    "file",
+    "path",
+    "dir",
+    "export_dir",
+    "script",
+    "source",
+    "prompt",
+    "response",
+    "diff",
+    "label",
+    "gid",
+    "text",
+    "title",
+    "project",
+    "canvas",
+    "name",
+    "traceback",
+    "error",
+    "module",
+    "package",
+    "user",
+    "email",
+    "host",
+    "hostname",
+    "locale",
+    "ip",
+    "session",
+    "url",
 ]
 
 
@@ -127,7 +161,12 @@ def test_no_property_accepts_a_container():
 def test_preflight_only_carries_counts():
     """预检事件只有四个计数 + 一个布尔，没有任何一条检查项的文字。"""
     assert set(telemetry.EVENTS["preflight_completed"]) == {
-        "errors", "warnings", "not_verifiable", "suggestions", "passed"}
+        "errors",
+        "warnings",
+        "not_verifiable",
+        "suggestions",
+        "passed",
+    }
     for prop in ("detail", "message", "id", "font", "object_ids", "gids", "text"):
         with pytest.raises(Exception):
             telemetry.validate("preflight_completed", {prop: "x"})
@@ -138,8 +177,7 @@ def test_ai_event_only_carries_the_agent():
 
 
 def test_export_event_only_carries_shape():
-    assert set(telemetry.EVENTS["export_completed"]) == {
-        "pdf", "png", "with_proof", "panel_count"}
+    assert set(telemetry.EVENTS["export_completed"]) == {"pdf", "png", "with_proof", "panel_count"}
 
 
 def test_enum_values_are_short_and_closed():
@@ -211,11 +249,11 @@ def test_app_started_is_only_called_from_main():
 def test_pytest_runs_with_telemetry_hard_disabled():
     """conftest 把硬开关钉死。这条用例故意**不**摘掉它。"""
     import os
+
     assert os.environ.get("TAVOTTO_NO_TELEMETRY") == "1"
 
 
-@pytest.mark.parametrize("workflow", ["ci.yml", "nightly.yml",
-                                      "desktop-tauri.yml", "release.yml"])
+@pytest.mark.parametrize("workflow", ["ci.yml", "nightly.yml", "desktop-tauri.yml", "release.yml"])
 def test_every_workflow_hard_disables_telemetry(workflow):
     """每条会真的把 Tavotto 跑起来的流水线都要在**工作流级**关掉遥测。
 
@@ -223,21 +261,19 @@ def test_every_workflow_hard_disables_telemetry(workflow):
     会变、会被某个步骤改掉、会被缓存的用户目录带进来。
     """
     text = (ROOT / ".github" / "workflows" / workflow).read_text(encoding="utf-8")
-    assert re.search(r"(?m)^env:\n(?:.*\n)*?  TAVOTTO_NO_TELEMETRY: \"1\"", text), \
+    assert re.search(r"(?m)^env:\n(?:.*\n)*?  TAVOTTO_NO_TELEMETRY: \"1\"", text), (
         f"{workflow} 没有在工作流级钉死 TAVOTTO_NO_TELEMETRY"
+    )
 
 
-@pytest.mark.parametrize("script", ["smoke_app.py", "smoke_desktop.py",
-                                    "bench_render.py"])
+@pytest.mark.parametrize("script", ["smoke_app.py", "smoke_desktop.py", "bench_render.py"])
 def test_smoke_and_bench_scripts_hard_disable_telemetry(script):
     text = (ROOT / "scripts" / script).read_text(encoding="utf-8")
-    assert '"TAVOTTO_NO_TELEMETRY": "1"' in text, \
-        f"{script} 起的进程可能会往生产分析后端发事件"
+    assert '"TAVOTTO_NO_TELEMETRY": "1"' in text, f"{script} 起的进程可能会往生产分析后端发事件"
 
 
 def test_metrics_workflow_keeps_the_token_out_of_yaml():
-    text = (ROOT / ".github" / "workflows" / "telemetry-metrics.yml").read_text(
-        encoding="utf-8")
+    text = (ROOT / ".github" / "workflows" / "telemetry-metrics.yml").read_text(encoding="utf-8")
     assert "secrets.TAVOTTO_METRICS_TOKEN" in text
     # 只读权限 + 只调采集器
     assert "contents: read" in text
@@ -252,10 +288,20 @@ def test_metrics_workflow_keeps_the_token_out_of_yaml():
 # ---------------------------------------------------------------------------
 def test_telemetry_module_is_pure_stdlib():
     """Flask 父进程 import 的模块必须纯标准库（同 registry / pool / updater）。"""
-    src = (ROOT / "src" / "tavotto" / "engine" / "telemetry.py").read_text(
-        encoding="utf-8")
-    third_party = {"posthog", "requests", "httpx", "urllib3", "flask", "pymupdf",
-                   "numpy", "matplotlib", "analytics", "segment", "mixpanel"}
+    src = (ROOT / "src" / "tavotto" / "engine" / "telemetry.py").read_text(encoding="utf-8")
+    third_party = {
+        "posthog",
+        "requests",
+        "httpx",
+        "urllib3",
+        "flask",
+        "pymupdf",
+        "numpy",
+        "matplotlib",
+        "analytics",
+        "segment",
+        "mixpanel",
+    }
     for line in src.splitlines():
         mod = re.match(r"^(?:import|from)\s+([\w.]+)", line.strip())
         if mod and mod.group(1).split(".")[0] in third_party:
@@ -265,8 +311,7 @@ def test_telemetry_module_is_pure_stdlib():
 def test_worker_knows_nothing_about_telemetry():
     """渲染 worker 与它周边的模块一行埋点都不该有。"""
     engine = ROOT / "src" / "tavotto" / "engine"
-    for name in ("worker.py", "manifest.py", "overrides.py", "pathgeom.py",
-                 "patchspec.py"):
+    for name in ("worker.py", "manifest.py", "overrides.py", "pathgeom.py", "patchspec.py"):
         text = (engine / name).read_text(encoding="utf-8")
         assert "telemetry" not in text, f"{name} 里出现了遥测"
 

@@ -18,6 +18,7 @@
   * pip / 源码模式不受影响，也不该被误判成「缺 runtime」；
   * 内置 runtime 绝不往安装目录写东西，也绝不吃用户环境里的 PYTHONHOME/PYTHONPATH。
 """
+
 import json
 import os
 import sys
@@ -34,8 +35,12 @@ def _host_platform_block():
     这条新校验。要测不匹配的那一档，用下面的 `foreign_manifest()` 显式构造——
     默认值应当表示「一切正常」，不匹配是特例。
     """
-    return {"os": runtime.host_os(), "arch": runtime.host_arch(),
-            "tag": "test", "pip_platforms": ["test"]}
+    return {
+        "os": runtime.host_os(),
+        "arch": runtime.host_arch(),
+        "tag": "test",
+        "pip_platforms": ["test"],
+    }
 
 
 MANIFEST = {
@@ -43,8 +48,11 @@ MANIFEST = {
     "product": "Tavotto",
     "kind": "test",
     "target": "test",
-    "python": {"version": "3.13.15", "implementation": "cpython",
-               "source": "https://example.invalid/x.tar.gz"},
+    "python": {
+        "version": "3.13.15",
+        "implementation": "cpython",
+        "source": "https://example.invalid/x.tar.gz",
+    },
     "platform": _host_platform_block(),
     "top_level": ["numpy", "matplotlib", "pillow"],
     "packages": {"numpy": "2.5.2", "matplotlib": "3.11.1", "pillow": "12.3.0"},
@@ -67,6 +75,7 @@ def manifest_claiming(os_name=None, arch=None):
 
 #: 与本机不符的那一份——用来验平台/架构核对真的会拦。
 foreign_manifest = manifest_claiming
+
 
 #: 配合「把 sys.platform 打桩成 darwin 来模拟 macOS」的用例。
 #:
@@ -138,7 +147,7 @@ def test_env_override_wins_over_everything(tmp_path, monkeypatch):
 def test_frozen_app_finds_runtime_next_to_meipass(tmp_path, monkeypatch):
     """onedir 布局：`Tavotto.exe` + `_internal/`，_MEIPASS 就是 `_internal`，
     runtime 经 spec 的 datas 落在 `_internal/runtime`。"""
-    monkeypatch.delenv("TAVOTTO_RUNTIME_DIR")   # 验的正是非覆盖的定位路径
+    monkeypatch.delenv("TAVOTTO_RUNTIME_DIR")  # 验的正是非覆盖的定位路径
     internal = tmp_path / "_internal"
     make_runtime(internal / "runtime")
     monkeypatch.setattr(runtime, "is_frozen", lambda: True)
@@ -150,7 +159,7 @@ def test_frozen_app_finds_runtime_next_to_meipass(tmp_path, monkeypatch):
 def test_frozen_app_falls_back_to_exe_dir_layouts(tmp_path, monkeypatch):
     """换 PyInstaller 版本 / 手工摆产物时布局可能变；exe 同级与
     exe/_internal 两条兜底不能少，否则一次升级就让内置环境集体失灵。"""
-    monkeypatch.delenv("TAVOTTO_RUNTIME_DIR")   # 验的正是非覆盖的定位路径
+    monkeypatch.delenv("TAVOTTO_RUNTIME_DIR")  # 验的正是非覆盖的定位路径
     monkeypatch.setattr(runtime, "is_frozen", lambda: True)
     monkeypatch.delattr(sys, "_MEIPASS", raising=False)
     monkeypatch.setattr(sys, "executable", str(tmp_path / "Tavotto.exe"))
@@ -161,12 +170,13 @@ def test_frozen_app_falls_back_to_exe_dir_layouts(tmp_path, monkeypatch):
 
 def test_source_tree_looks_at_repo_root(monkeypatch):
     """源码模式下 scripts/build_worker_runtime.py 默认产出到仓库根的 runtime/。"""
-    monkeypatch.delenv("TAVOTTO_RUNTIME_DIR")   # 验的正是非覆盖的定位路径
+    monkeypatch.delenv("TAVOTTO_RUNTIME_DIR")  # 验的正是非覆盖的定位路径
     monkeypatch.setattr(runtime, "is_frozen", lambda: False)
     roots = runtime._candidate_roots()
     assert roots, "源码模式至少要有一个候选位置"
-    assert roots[0].endswith(os.path.join("magic_matpliot", "runtime")) or \
-        roots[0].endswith(os.sep + "runtime")
+    assert roots[0].endswith(os.path.join("magic_matpliot", "runtime")) or roots[0].endswith(
+        os.sep + "runtime"
+    )
 
 
 def test_no_runtime_is_not_an_error_outside_windows_desktop(monkeypatch):
@@ -188,12 +198,11 @@ def test_missing_runtime_on_windows_desktop_is_reported(monkeypatch, tmp_path):
     assert st["valid"] is False
 
 
-def test_broken_runtime_on_windows_desktop_is_invalid_not_missing(
-        tmp_path, monkeypatch):
+def test_broken_runtime_on_windows_desktop_is_invalid_not_missing(tmp_path, monkeypatch):
     """目录在但内容不对（装了一半、被杀毒软件掏空）与「整个没带」要分开报：
     前者提示重装能修，后者可能是包本身就没打对。"""
     root = tmp_path / "rt"
-    make_runtime(root, manifest=None)          # 有解释器没清单
+    make_runtime(root, manifest=None)  # 有解释器没清单
     monkeypatch.setenv("TAVOTTO_RUNTIME_DIR", str(root))
     monkeypatch.setattr(runtime, "is_frozen", lambda: True)
     monkeypatch.setattr(os, "name", "nt")
@@ -210,11 +219,14 @@ def test_manifest_with_unknown_schema_is_rejected(tmp_path, monkeypatch):
     assert runtime.status()["valid"] is False
 
 
-@pytest.mark.parametrize("bad", [
-    {**MANIFEST, "packages": {}},                     # 一个包都没有
-    {**MANIFEST, "packages": "numpy"},                # 类型不对
-    {**MANIFEST, "python": {}},                       # 没版本号
-])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {**MANIFEST, "packages": {}},  # 一个包都没有
+        {**MANIFEST, "packages": "numpy"},  # 类型不对
+        {**MANIFEST, "python": {}},  # 没版本号
+    ],
+)
 def test_manifest_shape_is_validated(tmp_path, bad):
     make_runtime(tmp_path / "rt", manifest=bad)
     assert runtime.read_manifest(str(tmp_path / "rt")) is None
@@ -240,18 +252,19 @@ def test_manifest_reports_pinned_package_versions(tmp_path, monkeypatch):
 # ---------------- Windows 路径习惯 --------------------------------------------
 def test_runtime_python_layout_per_platform(monkeypatch, tmp_path):
     monkeypatch.setattr(os, "name", "nt")
-    assert runtime.runtime_python(r"C:\Program Files\Tavotto\runtime") == \
-        r"C:\Program Files\Tavotto\runtime\python.exe"
+    assert (
+        runtime.runtime_python(r"C:\Program Files\Tavotto\runtime")
+        == r"C:\Program Files\Tavotto\runtime\python.exe"
+    )
     monkeypatch.setattr(os, "name", "posix")
-    assert runtime.runtime_python("/opt/tavotto/runtime") == \
-        "/opt/tavotto/runtime/bin/python3"
+    assert runtime.runtime_python("/opt/tavotto/runtime") == "/opt/tavotto/runtime/bin/python3"
 
 
 def test_same_python_is_case_and_separator_insensitive_on_windows(monkeypatch):
     """`C:/Users/x/Python.exe` 与 `C:\\Users\\x\\python.exe` 是同一个文件。
     按字符串比会当成两个，来源标签立刻错位（内置的被当成 system）。"""
-    monkeypatch.setattr(os, "path", os.path)     # 明确不动 os.path
-    if os.name == "nt":                          # 真 Windows 上才有大小写不敏感
+    monkeypatch.setattr(os, "path", os.path)  # 明确不动 os.path
+    if os.name == "nt":  # 真 Windows 上才有大小写不敏感
         assert pool.same_python(r"C:\X\Python.exe", "C:/x/python.exe")
     # 三平台都必须成立的：同一条路径的不同写法
     assert pool.same_python("/a/b/../b/python3", "/a/b/python3")
@@ -276,11 +289,10 @@ def _bundled(tmp_path, monkeypatch):
     return py
 
 
-def test_bundled_runtime_is_used_when_nothing_else_configured(
-        tmp_path, monkeypatch):
+def test_bundled_runtime_is_used_when_nothing_else_configured(tmp_path, monkeypatch):
     """**这条就是产品承诺本身**：没装过 Python 的电脑上，渲染照样跑起来。"""
     py = _bundled(tmp_path, monkeypatch)
-    monkeypatch.setattr(runtime, "is_frozen", lambda: True)   # 桌面版：跳过 sys.executable
+    monkeypatch.setattr(runtime, "is_frozen", lambda: True)  # 桌面版：跳过 sys.executable
     monkeypatch.setattr(pool, "is_frozen", lambda: True)
     monkeypatch.setattr(pool, "_has_matplotlib", lambda p, **kw: True)
     assert pool.select_worker_python() == (py, pool.SOURCE_BUNDLED)
@@ -329,9 +341,10 @@ def test_bundled_sits_before_system_python(tmp_path, monkeypatch):
     order = [p for p, _ in pool._prioritized_candidates()]
     sources = {p: s for p, s in pool._prioritized_candidates()}
     assert py in order
-    later = [p for p in order[order.index(py) + 1:]]
-    assert all(sources[p] == pool.SOURCE_SYSTEM for p in later), \
+    later = [p for p in order[order.index(py) + 1 :]]
+    assert all(sources[p] == pool.SOURCE_SYSTEM for p in later), (
         "内置 runtime 之后只允许剩系统探测这一档兼容回退"
+    )
 
 
 def test_source_tree_still_prefers_its_own_interpreter(monkeypatch):
@@ -354,15 +367,13 @@ def test_source_of_classifies_without_probing(tmp_path, monkeypatch):
     每次刷新都等一轮是不能接受的。"""
     py = _bundled(tmp_path, monkeypatch)
     called = []
-    monkeypatch.setattr(pool, "_has_matplotlib",
-                        lambda p, **kw: called.append(p) or True)
+    monkeypatch.setattr(pool, "_has_matplotlib", lambda p, **kw: called.append(p) or True)
     assert pool.source_of(py) == pool.SOURCE_BUNDLED
     assert called == [], "source_of 不允许启动子进程"
 
 
 # ---------------- 失败路径 ----------------------------------------------------
-def test_desktop_missing_runtime_raises_machine_readable_code(monkeypatch,
-                                                              tmp_path):
+def test_desktop_missing_runtime_raises_machine_readable_code(monkeypatch, tmp_path):
     """桌面版缺内置环境时的报错**不是**「你没装 Python」——用户该做的是重装，
     两者的 code 必须分开，否则前端只能给一句谁也用不上的通用提示。"""
     monkeypatch.setattr(runtime, "is_frozen", lambda: True)
@@ -397,13 +408,14 @@ def test_probe_packages_reports_none_for_broken_interpreter(tmp_path):
 def test_missing_dependency_is_recognised_from_traceback():
     """内置 runtime 只带常用科学栈。用户脚本 import rdkit 时甩一段
     ModuleNotFoundError 等于什么都没说，认出包名才谈得上给出口。"""
-    tb = ('Traceback (most recent call last):\n'
-          '  File "fig.py", line 3, in <module>\n'
-          '    import rdkit.Chem\n'
-          "ModuleNotFoundError: No module named 'rdkit'\n")
+    tb = (
+        "Traceback (most recent call last):\n"
+        '  File "fig.py", line 3, in <module>\n'
+        "    import rdkit.Chem\n"
+        "ModuleNotFoundError: No module named 'rdkit'\n"
+    )
     assert pool.missing_module(tb) == "rdkit"
-    assert pool.missing_module("ModuleNotFoundError: No module named "
-                               '"astropy.io"') == "astropy"
+    assert pool.missing_module('ModuleNotFoundError: No module named "astropy.io"') == "astropy"
     assert pool.missing_module("ValueError: 随便什么别的错") == ""
 
 
@@ -459,8 +471,7 @@ def test_only_the_bundled_runtime_gets_b_flag(tmp_path, monkeypatch):
 
 
 # ---------------- bootstrap：不再劝用户装 Python -------------------------------
-def test_bootstrap_status_says_bundled_and_offers_no_install(
-        tmp_path, monkeypatch):
+def test_bootstrap_status_says_bundled_and_offers_no_install(tmp_path, monkeypatch):
     """有内置环境时界面必须显示「Tavotto 内置环境」，且**不出现任何安装引导**
     ——那时什么都不缺，弹窗只会让人以为出了问题。"""
     py = _bundled(tmp_path, monkeypatch)
@@ -474,8 +485,7 @@ def test_bootstrap_status_says_bundled_and_offers_no_install(
     assert "can_install" not in st or st["can_install"] is False
 
 
-def test_bootstrap_never_builds_a_venv_out_of_the_embedded_python(
-        tmp_path, monkeypatch):
+def test_bootstrap_never_builds_a_venv_out_of_the_embedded_python(tmp_path, monkeypatch):
     """官方 embeddable 不带 ensurepip，`-m venv` 会建到一半失败。
     把它选成基础解释器只会给用户一段看不懂的报错。"""
     py = _bundled(tmp_path, monkeypatch)
@@ -514,12 +524,12 @@ def test_source_mode_bootstrap_behaviour_is_unchanged(monkeypatch):
 @pytest.fixture
 def client():
     from tavotto import app as m
+
     m.app.config["TESTING"] = True
     return m.app.test_client()
 
 
-def test_environment_endpoint_exposes_source_and_runtime(client, tmp_path,
-                                                         monkeypatch):
+def test_environment_endpoint_exposes_source_and_runtime(client, tmp_path, monkeypatch):
     py = _bundled(tmp_path, monkeypatch)
     monkeypatch.setattr(pool, "find_worker_python", lambda: py)
     monkeypatch.setattr(bootstrap, "matplotlib_version", lambda p: "3.11.1")
@@ -533,9 +543,9 @@ def test_environment_probe_reports_each_package(client, tmp_path, monkeypatch):
     py = _bundled(tmp_path, monkeypatch)
     monkeypatch.setattr(pool, "find_worker_python", lambda: py)
     monkeypatch.setattr(bootstrap, "matplotlib_version", lambda p: "3.11.1")
-    monkeypatch.setattr(runtime, "probe_packages",
-                        lambda p, names=None: {n: "1.0" for n in
-                                               (names or ["numpy"])})
+    monkeypatch.setattr(
+        runtime, "probe_packages", lambda p, names=None: {n: "1.0" for n in (names or ["numpy"])}
+    )
     body = client.get("/api/engine/environment?probe=numpy,PIL").get_json()
     assert body["imports"] == {"numpy": "1.0", "PIL": "1.0"}
 
@@ -543,6 +553,7 @@ def test_environment_probe_reports_each_package(client, tmp_path, monkeypatch):
 def test_install_endpoint_tells_desktop_users_to_reinstall(client, monkeypatch):
     def boom():
         raise pool.WorkerError("no", code=runtime.CODE_MISSING)
+
     monkeypatch.setattr(pool, "find_worker_python", boom)
     monkeypatch.setattr(runtime, "ships_bundled_runtime", lambda: True)
     resp = client.post("/api/engine/environment/install")
@@ -559,16 +570,17 @@ def test_render_failure_carries_missing_module(client, monkeypatch, tmp_path):
     (figs / "p1.pdf").write_bytes(b"%PDF-1.4\n")
     m.open_project(str(figs))
     monkeypatch.setattr(
-        m.engine_registry.Registry, "for_stem",
-        lambda self, s: {"script": "x.py", "entry": "main", "cost": "light"})
+        m.engine_registry.Registry,
+        "for_stem",
+        lambda self, s: {"script": "x.py", "entry": "main", "cost": "light"},
+    )
 
     def boom(*a, **kw):
-        raise pool.WorkerError("缺 rdkit", "tb", code="missing_dependency",
-                               module="rdkit")
+        raise pool.WorkerError("缺 rdkit", "tb", code="missing_dependency", module="rdkit")
+
     monkeypatch.setattr(m.engine_pool, "get", boom)
 
-    body = client.post("/api/engine/render",
-                       json={"id": "p1.pdf", "patches": []}).get_json()
+    body = client.post("/api/engine/render", json={"id": "p1.pdf", "patches": []}).get_json()
     assert body["code"] == "missing_dependency" and body["module"] == "rdkit"
 
 
@@ -577,15 +589,19 @@ def test_render_failure_carries_missing_module(client, monkeypatch, tmp_path):
 # 这一节全是**跨平台可跑**的：靠打桩 os.name / sys.platform / host_arch 模拟
 # 另一台机器。原因还是那句——「装错架构」「Windows 的 runtime 混进 .app」
 # 这类故障只有在别人的电脑上才复现，而它们必须在这里就被钉住。
-@pytest.mark.parametrize("os_name,plat,frozen,expected", [
-    ("nt",    "win32",  True,  True),    # Windows 桌面版：NSIS 带 runtime
-    ("posix", "darwin", True,  True),    # macOS 桌面版：.app 带 runtime
-    ("posix", "linux",  True,  False),   # Linux 没有桌面发行形态
-    ("nt",    "win32",  False, False),   # pip / 源码：本来就不带
-    ("posix", "darwin", False, False),
-])
+@pytest.mark.parametrize(
+    "os_name,plat,frozen,expected",
+    [
+        ("nt", "win32", True, True),  # Windows 桌面版：NSIS 带 runtime
+        ("posix", "darwin", True, True),  # macOS 桌面版：.app 带 runtime
+        ("posix", "linux", True, False),  # Linux 没有桌面发行形态
+        ("nt", "win32", False, False),  # pip / 源码：本来就不带
+        ("posix", "darwin", False, False),
+    ],
+)
 def test_which_install_shapes_are_expected_to_ship_a_runtime(
-        monkeypatch, os_name, plat, frozen, expected):
+    monkeypatch, os_name, plat, frozen, expected
+):
     """`ships_bundled_runtime()` 回答的是「**本该**有吗」，不是「有没有」。
 
     判错的代价是两头的：判成 True 而实际不带（pip 安装被当成损坏的桌面版），
@@ -599,8 +615,7 @@ def test_which_install_shapes_are_expected_to_ship_a_runtime(
     assert runtime.ships_bundled_runtime() is expected
 
 
-def test_macos_desktop_missing_runtime_reports_reinstall_not_install_python(
-        monkeypatch, tmp_path):
+def test_macos_desktop_missing_runtime_reports_reinstall_not_install_python(monkeypatch, tmp_path):
     """macOS 桌面版缺 runtime 时的提示必须与 Windows 对等：**重装**，
     而不是「请先安装 Python」——用户装的是「开箱即用」的 dmg。"""
     monkeypatch.setattr(os, "name", "posix")
@@ -687,10 +702,12 @@ def test_host_arch_can_be_overridden_for_cross_checks(monkeypatch):
 def test_manifest_without_platform_block_is_rejected(tmp_path):
     """schema 2 起 platform.os / platform.arch 是硬要求：没有它们就无从判断
     这份 runtime 是不是给本机的，而那正是要挡的一档。"""
-    bads = [{**MANIFEST, "platform": {}},
-            {**MANIFEST, "platform": {"os": "macos"}},      # 缺 arch
-            {**MANIFEST, "platform": {"arch": "arm64"}},    # 缺 os
-            {**MANIFEST, "platform": "macos"}]              # 类型不对
+    bads = [
+        {**MANIFEST, "platform": {}},
+        {**MANIFEST, "platform": {"os": "macos"}},  # 缺 arch
+        {**MANIFEST, "platform": {"arch": "arm64"}},  # 缺 os
+        {**MANIFEST, "platform": "macos"},
+    ]  # 类型不对
     for i, bad in enumerate(bads):
         root = tmp_path / f"rt{i}"
         make_runtime(root, manifest=bad)
@@ -698,10 +715,13 @@ def test_manifest_without_platform_block_is_rejected(tmp_path):
 
 
 # ---------------- 两种布局都要认得 --------------------------------------------
-@pytest.mark.parametrize("layout,tail", [
-    ("windows", "python.exe"),                    # 官方 embeddable
-    ("posix", os.path.join("bin", "python3")),    # python-build-standalone
-])
+@pytest.mark.parametrize(
+    "layout,tail",
+    [
+        ("windows", "python.exe"),  # 官方 embeddable
+        ("posix", os.path.join("bin", "python3")),  # python-build-standalone
+    ],
+)
 def test_both_runtime_layouts_are_recognised(tmp_path, monkeypatch, layout, tail):
     """定位不能只认本平台那一种布局。
 
@@ -721,11 +741,15 @@ def test_runtime_python_stays_a_pure_function(monkeypatch):
     """`runtime_python()` 回答「该长什么样」，不碰磁盘——它要能在任何平台上
     被单测。真实落点由 `resolve_python()` 去 stat。"""
     monkeypatch.setattr(os, "name", "nt")
-    assert runtime.runtime_python(r"C:\Program Files\Tavotto\runtime") == \
-        r"C:\Program Files\Tavotto\runtime\python.exe"
+    assert (
+        runtime.runtime_python(r"C:\Program Files\Tavotto\runtime")
+        == r"C:\Program Files\Tavotto\runtime\python.exe"
+    )
     monkeypatch.setattr(os, "name", "posix")
-    assert runtime.runtime_python("/Applications/Tavotto.app/runtime") == \
-        "/Applications/Tavotto.app/runtime/bin/python3"
+    assert (
+        runtime.runtime_python("/Applications/Tavotto.app/runtime")
+        == "/Applications/Tavotto.app/runtime/bin/python3"
+    )
 
 
 def test_explicit_runtime_dir_override_is_exclusive(tmp_path, monkeypatch):
@@ -750,8 +774,8 @@ def test_explicit_runtime_dir_override_is_exclusive(tmp_path, monkeypatch):
 #: 保证并没有因此失去看护，它们由**不碰 pathlib**、因而 Windows 上照跑的用例
 #: 分别覆盖：`ships_bundled_runtime()` 的形态矩阵、两种布局的识别、平台/架构核对。
 posix_host_only = pytest.mark.skipif(
-    os.name == "nt",
-    reason="Windows 上无法模拟 POSIX 宿主：pool 里的 Path() 会分派到 PosixPath")
+    os.name == "nt", reason="Windows 上无法模拟 POSIX 宿主：pool 里的 Path() 会分派到 PosixPath"
+)
 
 
 @posix_host_only
@@ -837,4 +861,5 @@ def test_child_env_never_redirects_the_bytecode_cache():
     assert "PYTHONPYCACHEPREFIX" not in runtime.child_env({})
     # 用户 shell 里设了也要摘掉：它同样会让内置 runtime 读错地方
     assert "PYTHONPYCACHEPREFIX" not in runtime.child_env(
-        {"PYTHONPYCACHEPREFIX": "/somewhere/else"})
+        {"PYTHONPYCACHEPREFIX": "/somewhere/else"}
+    )

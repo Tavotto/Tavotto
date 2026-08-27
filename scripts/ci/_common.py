@@ -17,6 +17,7 @@
   CPU、换了 Python、换了 matplotlib 之后的数字和上一版根本不可比，而报告里
   只写一个百分比的话，没人能事后判断那次回归是真的还是换机器了。
 """
+
 from __future__ import annotations
 
 import json
@@ -79,8 +80,9 @@ class CiError(RuntimeError):
         self.message = message
 
     def as_json(self) -> str:
-        return json.dumps({"ok": False, "code": self.code, "error": self.message},
-                          ensure_ascii=False)
+        return json.dumps(
+            {"ok": False, "code": self.code, "error": self.message}, ensure_ascii=False
+        )
 
 
 # --------------------------------------------------------------------------
@@ -129,8 +131,11 @@ def is_ci_owned_tavotto(cmd: str, markers: list[str] | None = None) -> bool:
     if markers is None:
         markers = ci_owned_markers()
     looks_tavotto = "tavotto" in cmd and (
-        "engine/worker.py" in cmd or "tavotto-workerd" in cmd
-        or "-m tavotto" in cmd or "/tavotto " in cmd)
+        "engine/worker.py" in cmd
+        or "tavotto-workerd" in cmd
+        or "-m tavotto" in cmd
+        or "/tavotto " in cmd
+    )
     return looks_tavotto and any(m in cmd for m in markers)
 
 
@@ -148,13 +153,13 @@ def proc_cmdlines() -> list[tuple[int, str]]:
         except OSError:
             continue
         if raw:
-            out.append((int(entry.name),
-                        raw.replace(b"\0", b" ").decode("utf-8", "replace").strip()))
+            out.append(
+                (int(entry.name), raw.replace(b"\0", b" ").decode("utf-8", "replace").strip())
+            )
     return out
 
 
-def find_ci_owned_tavotto(extra_markers: list[str] | None = None
-                          ) -> list[tuple[int, str]]:
+def find_ci_owned_tavotto(extra_markers: list[str] | None = None) -> list[tuple[int, str]]:
     """当前活着的、归属本 CI 的 Tavotto 进程。自己不算。
 
     `extra_markers` 让调用方**追加**自己关心的路径（例如 `cleanup.py`
@@ -169,8 +174,11 @@ def find_ci_owned_tavotto(extra_markers: list[str] | None = None
     """
     markers = ci_owned_markers() + [m for m in (extra_markers or []) if m]
     me = os.getpid()
-    return [(pid, cmd) for pid, cmd in proc_cmdlines()
-            if pid != me and is_ci_owned_tavotto(cmd, markers)]
+    return [
+        (pid, cmd)
+        for pid, cmd in proc_cmdlines()
+        if pid != me and is_ci_owned_tavotto(cmd, markers)
+    ]
 
 
 def ensure_layout(root: Path | None = None) -> Path:
@@ -180,16 +188,17 @@ def ensure_layout(root: Path | None = None) -> Path:
         for rel in LAYOUT:
             (root / rel).mkdir(parents=True, exist_ok=True)
     except OSError as exc:
-        raise CiError("state_root_unwritable",
-                      f"建不出 CI 持久化目录 {root}：{exc}。"
-                      f"请确认 runner 用户拥有该目录（见 docs/ci/self-hosted-runner.md）") from exc
+        raise CiError(
+            "state_root_unwritable",
+            f"建不出 CI 持久化目录 {root}：{exc}。"
+            f"请确认 runner 用户拥有该目录（见 docs/ci/self-hosted-runner.md）",
+        ) from exc
     probe = root / ".write-probe"
     try:
         probe.write_text(str(time.time()), encoding="utf-8")
         probe.unlink()
     except OSError as exc:
-        raise CiError("state_root_unwritable",
-                      f"{root} 不可写：{exc}") from exc
+        raise CiError("state_root_unwritable", f"{root} 不可写：{exc}") from exc
     return root
 
 
@@ -230,12 +239,18 @@ def _cmd(argv: list[str]) -> str:
         out = subprocess.run(argv, capture_output=True, text=True, timeout=20)
     except (OSError, subprocess.SubprocessError):
         return ""
-    return (out.stdout or out.stderr).strip().splitlines()[0] if (out.stdout or out.stderr).strip() else ""
+    return (
+        (out.stdout or out.stderr).strip().splitlines()[0]
+        if (out.stdout or out.stderr).strip()
+        else ""
+    )
 
 
 def _cpu_model() -> str:
     try:
-        for line in Path("/proc/cpuinfo").read_text(encoding="utf-8", errors="replace").splitlines():
+        for line in (
+            Path("/proc/cpuinfo").read_text(encoding="utf-8", errors="replace").splitlines()
+        ):
             if line.startswith("model name"):
                 return line.split(":", 1)[1].strip()
     except OSError:
@@ -251,7 +266,9 @@ def _mem_total_gib() -> float:
     并被判成「内存不足」——一条永远在别人机器上红的门禁，比没有门禁更糟。
     """
     try:
-        for line in Path("/proc/meminfo").read_text(encoding="utf-8", errors="replace").splitlines():
+        for line in (
+            Path("/proc/meminfo").read_text(encoding="utf-8", errors="replace").splitlines()
+        ):
             if line.startswith("MemTotal:"):
                 return round(int(line.split()[1]) / 1024 / 1024, 1)
     except (OSError, ValueError, IndexError):
@@ -259,7 +276,7 @@ def _mem_total_gib() -> float:
     if sys.platform == "darwin":
         raw = _cmd(["sysctl", "-n", "hw.memsize"])
         try:
-            return round(int(raw) / 1024 ** 3, 1)
+            return round(int(raw) / 1024**3, 1)
         except ValueError:
             pass
     return 0.0
@@ -296,6 +313,7 @@ def _tavotto_version() -> str:
     """
     try:
         import tavotto  # noqa: PLC0415  (延迟 import 是有意的)
+
         return getattr(tavotto, "__version__", "")
     except Exception:
         init = Path(__file__).resolve().parents[2] / "src" / "tavotto" / "__init__.py"
@@ -382,15 +400,22 @@ def materialize_corpus(python: str, corpus_dir: Path, timeout: int = 900) -> lis
     if not scripts:
         raise CiError("corpus_empty", f"{corpus_dir} 里没有 corpus 脚本")
     for script in scripts:
-        out = subprocess.run([python, script.name], cwd=str(corpus_dir),
-                             capture_output=True, text=True, timeout=timeout)
+        out = subprocess.run(
+            [python, script.name],
+            cwd=str(corpus_dir),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
         if out.returncode != 0:
-            raise CiError("corpus_script_failed",
-                          f"corpus 脚本 {script.name} 跑不起来（退出码 {out.returncode}）：\n"
-                          f"{out.stdout[-1200:]}\n{out.stderr[-1200:]}")
-    produced = sorted(p.name for p in corpus_dir.iterdir()
-                      if p.suffix.lower() in (".pdf", ".png"))
+            raise CiError(
+                "corpus_script_failed",
+                f"corpus 脚本 {script.name} 跑不起来（退出码 {out.returncode}）：\n"
+                f"{out.stdout[-1200:]}\n{out.stderr[-1200:]}",
+            )
+    produced = sorted(p.name for p in corpus_dir.iterdir() if p.suffix.lower() in (".pdf", ".png"))
     if not produced:
-        raise CiError("corpus_no_output",
-                      f"{len(scripts)} 个 corpus 脚本都跑完了，却没产出任何 PDF/PNG")
+        raise CiError(
+            "corpus_no_output", f"{len(scripts)} 个 corpus 脚本都跑完了，却没产出任何 PDF/PNG"
+        )
     return produced

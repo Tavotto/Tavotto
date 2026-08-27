@@ -41,6 +41,7 @@ tavotto，只能照着读）。两侧的常量与候选路径由
 `tests/test_install_locate.py::test_plugin_mirrors_the_locator` 逐条比对，
 改一边必须同步另一边。
 """
+
 from __future__ import annotations
 
 import json
@@ -98,7 +99,7 @@ def _split(path: str, system: str) -> tuple[str, str]:
     idx = max(path.rfind(sep) for sep in seps)
     if idx < 0:
         return "", path
-    return (path[:idx] or seps[0]), path[idx + 1:]
+    return (path[:idx] or seps[0]), path[idx + 1 :]
 
 
 def _dirname(path: str, system: str) -> str:
@@ -106,8 +107,9 @@ def _dirname(path: str, system: str) -> str:
 
 
 # ------------------------------ 已知安装位置 -----------------------------
-def install_roots(*, system: str | None = None, environ: dict | None = None,
-                  extra: tuple[str, ...] = ()) -> list[str]:
+def install_roots(
+    *, system: str | None = None, environ: dict | None = None, extra: tuple[str, ...] = ()
+) -> list[str]:
     """安装根目录候选（按优先级）。
 
     Windows 上是 NSIS 的 `$INSTDIR`；macOS 上是 `.app` 包本身。`extra` 给
@@ -156,8 +158,12 @@ def resource_dir_for(root: str, *, system: str | None = None) -> str:
 def cli_exe_for(root: str, *, system: str | None = None) -> str:
     """安装根 → 随桌面版一起装的 console 版 CLI。"""
     system = _sys(system)
-    return _join(system, resource_dir_for(root, system=system),
-                 *SIDECAR_REL, _exe_name("tavotto-cli", system))
+    return _join(
+        system,
+        resource_dir_for(root, system=system),
+        *SIDECAR_REL,
+        _exe_name("tavotto-cli", system),
+    )
 
 
 def hkcu_install_dirs() -> list[str]:
@@ -170,7 +176,7 @@ def hkcu_install_dirs() -> list[str]:
         return []
     try:
         import winreg
-    except ImportError:                                  # pragma: no cover
+    except ImportError:  # pragma: no cover
         return []
     out: list[str] = []
     try:
@@ -211,20 +217,24 @@ def manifest_dir(*, system: str | None = None, environ: dict | None = None) -> s
 
 
 def manifest_path(*, system: str | None = None, environ: dict | None = None) -> str:
-    return _join(_sys(system),
-                 manifest_dir(system=system, environ=environ), MANIFEST_NAME)
+    return _join(_sys(system), manifest_dir(system=system, environ=environ), MANIFEST_NAME)
 
 
 def _validate(data: object) -> dict | None:
     if not isinstance(data, dict):
         return None
     if data.get("protocol") != PROTOCOL_VERSION:
-        return None                                  # 另一代约定：当没有
-    out = {"protocol": PROTOCOL_VERSION,
-           "product": data.get("product") or "Tavotto",
-           "version": data.get("version"),
-           "cli": None, "desktop": None, "install_dir": None,
-           "source": data.get("source"), "updated": data.get("updated")}
+        return None  # 另一代约定：当没有
+    out = {
+        "protocol": PROTOCOL_VERSION,
+        "product": data.get("product") or "Tavotto",
+        "version": data.get("version"),
+        "cli": None,
+        "desktop": None,
+        "install_dir": None,
+        "source": data.get("source"),
+        "updated": data.get("updated"),
+    }
     for key in ("cli", "desktop", "install_dir"):
         value = data.get(key)
         if isinstance(value, str) and value.strip():
@@ -232,8 +242,13 @@ def _validate(data: object) -> dict | None:
     return out
 
 
-def read_manifest(*, system: str | None = None, environ: dict | None = None,
-                  path: str | None = None, isfile=os.path.isfile) -> dict | None:
+def read_manifest(
+    *,
+    system: str | None = None,
+    environ: dict | None = None,
+    path: str | None = None,
+    isfile=os.path.isfile,
+) -> dict | None:
     """读清单并**核实里面的路径还在**。
 
     清单是缓存不是真相：卸载、手工删目录、从备份还原用户配置，都会留下一份
@@ -258,19 +273,24 @@ def read_manifest(*, system: str | None = None, environ: dict | None = None,
     return info
 
 
-def write_manifest(info: dict, *, system: str | None = None,
-                   environ: dict | None = None, path: str | None = None) -> str:
+def write_manifest(
+    info: dict, *, system: str | None = None, environ: dict | None = None, path: str | None = None
+) -> str:
     """原子写清单（先临时文件再 os.replace）。返回写到哪儿。"""
     target = path or manifest_path(system=system, environ=environ)
     folder = os.path.dirname(target)
     if folder:
         os.makedirs(folder, exist_ok=True)
-    payload = {"protocol": PROTOCOL_VERSION, "product": "Tavotto",
-               "version": info.get("version"),
-               "cli": info.get("cli"), "desktop": info.get("desktop"),
-               "install_dir": info.get("install_dir"),
-               "source": info.get("source"),
-               "updated": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    payload = {
+        "protocol": PROTOCOL_VERSION,
+        "product": "Tavotto",
+        "version": info.get("version"),
+        "cli": info.get("cli"),
+        "desktop": info.get("desktop"),
+        "install_dir": info.get("install_dir"),
+        "source": info.get("source"),
+        "updated": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
     tmp = target + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, ensure_ascii=False, indent=2)
@@ -279,8 +299,9 @@ def write_manifest(info: dict, *, system: str | None = None,
     return target
 
 
-def remove_manifest(*, system: str | None = None, environ: dict | None = None,
-                    path: str | None = None) -> bool:
+def remove_manifest(
+    *, system: str | None = None, environ: dict | None = None, path: str | None = None
+) -> bool:
     """卸载时清掉清单。删不掉不是错误（本来就没有 / 目录只读）。"""
     target = path or manifest_path(system=system, environ=environ)
     try:
@@ -295,10 +316,16 @@ def _scripts_dir(prefix: str, system: str) -> str:
     return _join(system, prefix, "Scripts" if _is_win(system) else "bin")
 
 
-def describe_self(*, executable: str | None = None, frozen: bool | None = None,
-                  prefix: str | None = None, system: str | None = None,
-                  environ: dict | None = None, isfile=os.path.isfile,
-                  version: str | None = None) -> dict:
+def describe_self(
+    *,
+    executable: str | None = None,
+    frozen: bool | None = None,
+    prefix: str | None = None,
+    system: str | None = None,
+    environ: dict | None = None,
+    isfile=os.path.isfile,
+    version: str | None = None,
+) -> dict:
     """当前这个进程所属的这套 Tavotto：CLI 在哪、桌面壳在哪、装在哪。
 
     冻结（PyInstaller）时 `sys.executable` 就是 sidecar 或 CLI 自己，一切从它
@@ -312,8 +339,14 @@ def describe_self(*, executable: str | None = None, frozen: bool | None = None,
     if version is None:
         from .. import __version__ as version  # 唯一版本出处
 
-    out = {"version": version, "cli": None, "desktop": None,
-           "install_dir": None, "source": "module", "frozen": bool(frozen)}
+    out = {
+        "version": version,
+        "cli": None,
+        "desktop": None,
+        "install_dir": None,
+        "source": "module",
+        "frozen": bool(frozen),
+    }
     exe_dir, exe_name = _split(executable, system)
 
     if frozen:
@@ -330,8 +363,7 @@ def describe_self(*, executable: str | None = None, frozen: bool | None = None,
             resources = _dirname(resources, system)
         # Windows：资源目录就是 $INSTDIR。macOS：Contents/Resources，再退两层
         # （Contents → .app）才是安装根。两条都试，认「壳真的在那儿」的那条。
-        for root in (resources,
-                     _dirname(_dirname(resources, system), system)):
+        for root in (resources, _dirname(_dirname(resources, system), system)):
             if not root:
                 continue
             desktop = desktop_exe_for(root, system=system)
@@ -340,10 +372,9 @@ def describe_self(*, executable: str | None = None, frozen: bool | None = None,
                 out["install_dir"] = root
                 break
         if out["install_dir"] is None:
-            out["install_dir"] = exe_dir             # 开发态 dist/Tavotto：没有壳
+            out["install_dir"] = exe_dir  # 开发态 dist/Tavotto：没有壳
     else:
-        cli = _join(system, _scripts_dir(prefix, system),
-                    _exe_name("tavotto", system))
+        cli = _join(system, _scripts_dir(prefix, system), _exe_name("tavotto", system))
         if isfile(cli):
             out["cli"] = cli
         root = find_install_root(system=system, environ=environ, isfile=isfile)
@@ -353,9 +384,13 @@ def describe_self(*, executable: str | None = None, frozen: bool | None = None,
     return out
 
 
-def find_install_root(*, system: str | None = None, environ: dict | None = None,
-                      isfile=os.path.isfile, extra: tuple[str, ...] = ()
-                      ) -> str | None:
+def find_install_root(
+    *,
+    system: str | None = None,
+    environ: dict | None = None,
+    isfile=os.path.isfile,
+    extra: tuple[str, ...] = (),
+) -> str | None:
     """第一个真的装着桌面 App 的安装根。"""
     system = _sys(system)
     for root in install_roots(system=system, environ=environ, extra=extra):
@@ -365,8 +400,14 @@ def find_install_root(*, system: str | None = None, environ: dict | None = None,
 
 
 # --------------------------------- 统一定位 -------------------------------
-def find_cli(*, system: str | None = None, environ: dict | None = None,
-             isfile=os.path.isfile, which=None, reg_dirs=None) -> dict:
+def find_cli(
+    *,
+    system: str | None = None,
+    environ: dict | None = None,
+    isfile=os.path.isfile,
+    which=None,
+    reg_dirs=None,
+) -> dict:
     """**这台机器上能用的 tavotto CLI 在哪**——统一定位器。
 
     优先级（与 Codex 插件那侧逐条同源）：
@@ -385,18 +426,17 @@ def find_cli(*, system: str | None = None, environ: dict | None = None,
     env = _env(environ)
     if which is None:
         import shutil
+
         which = shutil.which
     searched: list[str] = []
 
     override = (env.get(CLI_ENV) or "").strip()
     if override:
-        return {"cmd": [override], "source": "env", "desktop": None,
-                "searched": searched}
+        return {"cmd": [override], "source": "env", "desktop": None, "searched": searched}
 
     found = which("tavotto")
     if found:
-        return {"cmd": [found], "source": "path", "desktop": None,
-                "searched": searched}
+        return {"cmd": [found], "source": "path", "desktop": None, "searched": searched}
 
     desktop = None
     manifest = read_manifest(system=system, environ=environ, isfile=isfile)
@@ -405,8 +445,12 @@ def find_cli(*, system: str | None = None, environ: dict | None = None,
         if manifest.get("desktop"):
             desktop = manifest["desktop"]
         if manifest.get("cli"):
-            return {"cmd": [manifest["cli"]], "source": "manifest",
-                    "desktop": desktop, "searched": searched}
+            return {
+                "cmd": [manifest["cli"]],
+                "source": "manifest",
+                "desktop": desktop,
+                "searched": searched,
+            }
 
     extra = tuple(reg_dirs if reg_dirs is not None else hkcu_install_dirs())
     known = install_roots(system=system, environ=environ)
@@ -415,9 +459,12 @@ def find_cli(*, system: str | None = None, environ: dict | None = None,
         searched.append(cli)
         source = "install" if root in known else "registry"
         if isfile(cli):
-            return {"cmd": [cli], "source": source,
-                    "desktop": desktop or _existing_desktop(root, system, isfile),
-                    "searched": searched}
+            return {
+                "cmd": [cli],
+                "source": source,
+                "desktop": desktop or _existing_desktop(root, system, isfile),
+                "searched": searched,
+            }
         if desktop is None:
             desktop = _existing_desktop(root, system, isfile)
 

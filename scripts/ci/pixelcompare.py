@@ -22,6 +22,7 @@
 回归（元素挪位、消失、字号变了）在灰度上同样显眼——这让阈值好定，diff 图
 也好读。
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -45,9 +46,8 @@ def _imaging():
     try:
         import numpy as np
         from PIL import Image
-    except ImportError as exc:                       # pragma: no cover - 环境相关
-        raise MissingImagingDeps(
-            "像素比较需要 numpy 与 Pillow：pip install -e '.[ci]'") from exc
+    except ImportError as exc:  # pragma: no cover - 环境相关
+        raise MissingImagingDeps("像素比较需要 numpy 与 Pillow：pip install -e '.[ci]'") from exc
     return np, Image
 
 
@@ -65,10 +65,15 @@ def compare(baseline: Path, candidate: Path, diff_out: Path | None = None) -> di
     a, size_a = load_pixels(baseline)
     b, size_b = load_pixels(candidate)
     if size_a != size_b:
-        return {"ok": False, "reason": "size_mismatch",
-                "baseline_size": list(size_a), "candidate_size": list(size_b),
-                "changed_pixel_ratio": 1.0, "mean_abs_diff": 255.0,
-                "max_abs_diff": 255}
+        return {
+            "ok": False,
+            "reason": "size_mismatch",
+            "baseline_size": list(size_a),
+            "candidate_size": list(size_b),
+            "changed_pixel_ratio": 1.0,
+            "mean_abs_diff": 255.0,
+            "max_abs_diff": 255,
+        }
 
     delta = np.abs(a - b)
     signal = np.where(delta > NOISE_FLOOR, delta, 0)
@@ -90,7 +95,7 @@ def compare(baseline: Path, candidate: Path, diff_out: Path | None = None) -> di
             # 差异放大 4 倍再反相：肉眼看得清「哪里变了」，而不是一片近黑。
             vis = np.clip(delta.astype("int32") * 4, 0, 255).astype("uint8")
             Image.fromarray(255 - vis, mode="L").save(diff_out)
-        except Exception:                            # noqa: BLE001 - diff 图是辅助产物
+        except Exception:  # noqa: BLE001 - diff 图是辅助产物
             pass
     return metrics
 
@@ -98,12 +103,15 @@ def compare(baseline: Path, candidate: Path, diff_out: Path | None = None) -> di
 def verdict(metrics: dict, tol: dict) -> tuple[bool, list[str]]:
     """三个指标任一越界即回归。返回 (通过?, 人话理由列表)。"""
     if not metrics.get("ok", True):
-        return False, [f"尺寸不一致：基线 {metrics['baseline_size']} "
-                       f"vs 候选 {metrics['candidate_size']}"]
+        return False, [
+            f"尺寸不一致：基线 {metrics['baseline_size']} vs 候选 {metrics['candidate_size']}"
+        ]
     bad: list[str] = []
-    for key, label in (("changed_pixel_ratio", "变化像素占比"),
-                       ("mean_abs_diff", "平均绝对差"),
-                       ("max_abs_diff", "最大绝对差")):
+    for key, label in (
+        ("changed_pixel_ratio", "变化像素占比"),
+        ("mean_abs_diff", "平均绝对差"),
+        ("max_abs_diff", "最大绝对差"),
+    ):
         if key in tol and metrics[key] > tol[key]:
             bad.append(f"{label} {metrics[key]} > 阈值 {tol[key]}")
     return (not bad), bad
