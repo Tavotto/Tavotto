@@ -582,7 +582,37 @@ def _worker_error_payload(exc) -> dict:
     body = {"error": str(exc), "traceback": exc.traceback_text, "code": exc.code}
     if getattr(exc, "module", ""):
         body["module"] = exc.module
+    # 项目环境自动接手失败时的结构化原因（ADR 0015）：找不到 venv / venv 里
+    # 也没这个包 / 那个环境没有 matplotlib / Python 版本不支持。前端据此给出
+    # 各自不同的恢复引导——四种情况用户要做的事完全不同，混成一句话等于没说。
+    detail = getattr(exc, "project_env", None)
+    if isinstance(detail, dict) and detail.get("code"):
+        body["project_env"] = {
+            "code": detail.get("code", ""),
+            "module": detail.get("module", ""),
+            "venv": _project_relative(detail.get("venv", "")),
+            "candidates": [_project_relative(c) for c in (detail.get("candidates") or [])],
+            "python_version": (detail.get("health") or {}).get("python_version", ""),
+        }
     return body
+
+
+def _project_relative(path: str) -> str:
+    """项目内的路径显示成项目相对（`.venv`），项目外的原样交出。
+
+    界面上「找到了 `/Users/张三/paper/.venv`」远不如「找到了 `.venv`」好读，
+    诊断包也不该无谓地带上用户主目录名。
+    """
+    if not path:
+        return ""
+    try:
+        root = require_project()
+    except Exception:  # noqa: BLE001 —— 没有打开项目时不该影响错误响应
+        return str(path)
+    try:
+        return str(Path(path).resolve(strict=False).relative_to(Path(root).resolve(strict=False)))
+    except (OSError, ValueError):
+        return str(path)
 
 
 @app.errorhandler(engine_pool.WorkerError)
@@ -2021,6 +2051,44 @@ def _materialize_runtime(script: str, entry: str, descriptors: list) -> None:
         engine_runtimeasset.materialize(root, desc, worker.svg_path(stem))
 
 
+def _switched_to_project_env(worker, exc) -> bool:
+    """内置环境缺依赖时替**这个项目**切到它自己的 `.venv`；切成了回 True。
+
+    切成之后**调用方必须重新取一次 worker**：旧会话是内置解释器起的，
+    `pool.get()` 会因为「渲染解释器已变」把它换掉（ADR 0015 的 worker 身份
+    纪律）。切不成时把结构化原因挂回异常，`_worker_error_payload` 会带给前端。
+
+    只认 `missing_dependency`。脚本自己的 `ValueError` / `FileNotFoundError`
+    换个解释器一样错——为它们切环境是把代码错误伪装成环境问题。
+    """
+    if getattr(exc, "code", "") != "missing_dependency":
+        return False
+    try:
+        root = str(require_project())
+    except HTTPException:
+        return False
+    outcome = engine_pool.try_project_env(root, worker.script_name, getattr(exc, "module", ""))
+    if outcome.get("ok"):
+        return True
+    exc.project_env = outcome
+    return False
+
+
+def _engine_attempt(rel_id: str, worker, stem: str, action):
+    """`action(worker, stem)`；缺依赖时切项目环境**重试一次**。
+
+    回 `(worker, stem, 结果)`——重试后 worker 换成了新解释器起的那个，调用方
+    后续要拿 `rev` / `last_build_descriptors` 的话必须用回传的这一个。
+    """
+    try:
+        return worker, stem, action(worker, stem)
+    except engine_pool.WorkerError as exc:
+        if not _switched_to_project_env(worker, exc):
+            raise
+    worker, stem = _engine_worker(rel_id)
+    return worker, stem, action(worker, stem)
+
+
 def _engine_worker(rel_id: str):
     """面板 id → (worker, stem)；非脚本面板 404。
 
@@ -2102,7 +2170,16 @@ def api_engine_render():
         "render.started", {"pj": pj, "id": rel_id, "cost": info.get("cost", ""), "cold": cold}
     )
     try:
-        resp = worker.override(stem, body.get("patches", []), preview_dpi, inline_svg=inline_svg)
+        # 冷启动的第一次 build 就发生在这里（lazy 语义：打开面板不预跑脚本）。
+        # 内置环境缺依赖时自动改用项目自己的 .venv 重试一次（ADR 0015）。
+        worker, stem, resp = _engine_attempt(
+            rel_id,
+            worker,
+            stem,
+            lambda wk, st: wk.override(
+                st, body.get("patches", []), preview_dpi, inline_svg=inline_svg
+            ),
+        )
     except engine_pool.WorkerError as exc:
         LOG.error("引擎渲染失败: %s: %s", stem, exc)
         sse_publish("render.failed", {"pj": pj, "id": rel_id, "error": str(exc)})
@@ -2169,7 +2246,9 @@ def api_engine_preview_png():
     w = next((b for b in RENDER_BUCKETS if b >= want_w), RENDER_BUCKETS[-1])
     tag = "v" + engine_patchspec.patch_hash(patches).split(":")[-1][:12]
     try:
-        path = worker.preview_png(stem, patches, w, tag=tag)
+        worker, stem, path = _engine_attempt(
+            body.get("id", ""), worker, stem, lambda wk, st: wk.preview_png(st, patches, w, tag=tag)
+        )
     except engine_pool.WorkerError as exc:
         return jsonify(_worker_error_payload(exc)), 500
     resp = send_file(path, mimetype="image/png")
@@ -2189,7 +2268,9 @@ def api_engine_png():
     want_w = int(request.args.get("w", 800))
     w = next((b for b in RENDER_BUCKETS if b >= want_w), RENDER_BUCKETS[-1])
     try:
-        path = worker.render_png(stem, w)
+        worker, stem, path = _engine_attempt(
+            request.args.get("id", ""), worker, stem, lambda wk, st: wk.render_png(st, w)
+        )
     except engine_pool.WorkerError as exc:
         return jsonify(_worker_error_payload(exc)), 500
     resp = send_file(path, mimetype="image/png")
@@ -3026,10 +3107,13 @@ def api_engine_history_restore():
 @app.get("/api/engine/svg")
 def api_engine_svg():
     """当前 override 状态下的预览 SVG（元素带 gid）。"""
-    worker, stem = _engine_worker(request.args.get("id", ""))
+    rel_id = request.args.get("id", "")
+    worker, stem = _engine_worker(rel_id)
     try:
         if not worker.built:
-            worker.ensure_built()
+            worker, stem, _ = _engine_attempt(
+                rel_id, worker, stem, lambda wk, st: wk.ensure_built()
+            )
     except engine_pool.WorkerError as exc:
         return jsonify(_worker_error_payload(exc)), 500
     svg = worker.svg_path(stem)
