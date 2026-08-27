@@ -12,6 +12,7 @@
      都**不设 TAVOTTO_WORKERD**，靠 `--expect-control-plane workerd` 断言
      产物自带的那份真的被找到并用上了。
 """
+import re
 import sys
 from pathlib import Path
 
@@ -76,7 +77,21 @@ def test_the_packaged_name_is_the_one_the_client_looks_for():
 def test_build_desktop_builds_workerd_before_pyinstaller_and_checks_the_result():
     """顺序即依赖：cargo → PyInstaller。之后还要回头确认二进制真的落进去了。"""
     src = (REPO / "scripts" / "build_desktop.py").read_text(encoding="utf-8")
-    assert src.index("build_workerd()") < src.index('"-m", "PyInstaller"')
+    # 两个探针都用**容忍空白的正则**：
+    #
+    # * `"-m", "PyInstaller"` 经 `ruff format` 之后是分行的；
+    # * `build_workerd()` 更要紧——原本写的是 `src.index("build_workerd()")`，
+    #   而它命中的是**函数定义**那一行（`def build_workerd() -> Path:` 里就含
+    #   这个子串），位置恒在文件靠前，于是「调用在 PyInstaller 之前」这条断言
+    #   **无论调用挪到哪里都成立**。实测：把调用整个挪到 PyInstaller 之后，
+    #   这条用例照样绿。改成只认**语句位置上的调用**。
+    pyinstaller = re.search(r'"-m",\s*"PyInstaller"', src)
+    assert pyinstaller, "build_desktop.py 里找不到 PyInstaller 调用——改名了？"
+    call = re.search(r"(?m)^[ \t]+build_workerd\(\)[ \t]*$", src)
+    assert call, "build_desktop.py 里找不到 build_workerd() 的调用（不是定义）"
+    assert call.start() < pyinstaller.start(), (
+        "build_workerd() 的调用跑到 PyInstaller 之后了——顺序即依赖："
+        "spec 从 cargo 的产物位置取二进制，先打包就什么都取不到")
     assert '"_internal" / WORKERD_NAME' in src, \
         "打完要确认 _internal/ 里真有它——打包器换版本改落点是无声的"
     assert "shutil.which(\"cargo\")" in src, "没有 cargo 要给可读的错误并中止"

@@ -157,11 +157,26 @@ def test_enum_values_are_short_and_closed():
 # ---------------------------------------------------------------------------
 # 服务端埋点挂在成功边界上
 # ---------------------------------------------------------------------------
+def _at(src: str, pattern: str) -> int:
+    """按正则定位并返回起点；**找不到就抛**。
+
+    一个悄悄返回 -1 的探针会让下面所有「A 在 B 之前」的断言变成在比两个 -1，
+    全绿且毫无意义。
+
+    不用字面量 `str.index` 的原因：`ruff format` 会把
+    `capture("x", {...})` 拆成多行，字面量探针当场失配。这些用例盯的是
+    **顺序**，不该被排版牵着走。
+    """
+    m = re.search(pattern, src)
+    assert m, f"源码里找不到 {pattern!r}——被重构或改名了？"
+    return m.start()
+
+
 def test_export_is_captured_after_the_files_are_written():
     """源码级看护：`export_completed` 必须出现在 `canvas.save_*` 之后、
     `return jsonify` 之前。挪到函数开头的话失败的导出也会被记成成功。"""
     src = inspect.getsource(m.api_export)
-    at_capture = src.index('engine_telemetry.capture("export_completed"')
+    at_capture = _at(src, r'engine_telemetry\.capture\(\s*"export_completed"')
     assert src.index("canvas.save_pdf") < at_capture
     assert src.index("canvas.save_png") < at_capture
     assert at_capture < src.rindex("return jsonify")
@@ -169,7 +184,7 @@ def test_export_is_captured_after_the_files_are_written():
 
 def test_ai_is_captured_after_the_session_exists():
     src = inspect.getsource(m.api_ai_run)
-    at_capture = src.index('engine_telemetry.capture("ai_assistant_invoked"')
+    at_capture = _at(src, r'engine_telemetry\.capture\(\s*"ai_assistant_invoked"')
     assert src.index("sid = engine_ai.run(") < at_capture
     # 失败分支（except → 500）必须在埋点之前就 return 掉
     assert src.index('"code": "ai_start_failed"') < at_capture
