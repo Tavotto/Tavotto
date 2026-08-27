@@ -36,11 +36,21 @@ export function Select<T extends string>({
           'flex h-7 w-full items-center justify-between gap-1 rounded-sm border border-transparent',
           'bg-surface-2 px-1.5 text-xs text-ink outline-none transition-colors',
           'hover:border-border data-[state=open]:border-accent',
+          // **弹层关着的时候键盘用户也得看得见焦点在哪。** `outline-none` 只是
+          // 关掉浏览器默认那圈，不补一个替代品就是把焦点指示整个删掉——本仓库
+          // 别的可聚焦控件（Button / Toggle / Segmented / Field）一律配这条。
+          // 原生 `<select>` 自带默认焦点环，迁到这里时缺了它就是一条 a11y 回归。
+          'focus-visible:focus-ring',
           'disabled:pointer-events-none disabled:opacity-40',
           className,
         )}
       >
-        <RS.Value placeholder={placeholder} />
+        {/* 值可能是用户起的名字（接口标签后端允许 60 字）：**必须能被截断**，
+            否则一个长名字会把它撑出所在的那一行。`min-w-0` 是让 flex 子项真的
+            缩得下去的那一半，少了它 truncate 不生效 */}
+        <span className="min-w-0 flex-1 truncate text-left">
+          <RS.Value placeholder={placeholder} />
+        </span>
         <ChevronDown size={12} className="shrink-0 text-ink-3" />
       </RS.Trigger>
       <RS.Portal>

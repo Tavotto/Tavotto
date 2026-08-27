@@ -5,6 +5,7 @@ import type { AiAgentId, AiEndpoint, AiEndpointPreset, saveAiEndpoint } from '@/
 import { Button } from '../ui/Button'
 import { Dialog } from '../ui/Dialog'
 import { TextInput } from '../ui/Input'
+import { Select } from '../ui/Select'
 
 /** 本节文案在 dialogs:settings.agents.* 下 */
 const ag = (key: string, values?: Record<string, unknown>) =>
@@ -51,6 +52,10 @@ export function EndpointDialog({
   const [apiKey, setApiKey] = useState('')
   const [models, setModels] = useState((existing?.models ?? []).join(', '))
   const [wire, setWire] = useState<'responses' | 'chat'>(existing?.wire_api ?? 'chat')
+
+  // 选中的预设留在本地态：`ui/Select` 是受控的，不留住这一格触发器会一直显示
+  // 占位文案，用户看不出自己刚选了哪一个（原生 `<select>` 靠浏览器自己记）
+  const [preset, setPreset] = useState('')
 
   const applyPreset = (id: string) => {
     const p = presets.find((x) => x.id === id)
@@ -103,19 +108,17 @@ export function EndpointDialog({
       <div className="flex flex-col gap-2">
         {!existing && presets.length > 0 && (
           <Row label={ag('endpoint.preset')}>
-            <select
-              defaultValue=""
-              onChange={(e) => applyPreset(e.target.value)}
-              aria-label={ag('endpoint.presetAria')}
-              className="h-7 flex-1 rounded-sm border border-border bg-surface px-1.5 text-xs text-ink outline-none focus-visible:focus-ring"
-            >
-              <option value="">{ag('endpoint.presetPlaceholder')}</option>
-              {presets.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
+            <Select
+              value={preset}
+              onChange={(v) => {
+                setPreset(v)
+                applyPreset(v)
+              }}
+              options={presets.map((p) => ({ value: p.id, label: p.label }))}
+              placeholder={ag('endpoint.presetPlaceholder')}
+              ariaLabel={ag('endpoint.presetAria')}
+              className="flex-1"
+            />
           </Row>
         )}
         <Row label={ag('endpoint.name')}>
@@ -153,15 +156,16 @@ export function EndpointDialog({
         </Row>
         {wireApi && (
           <Row label={ag('endpoint.wire')}>
-            <select
+            <Select
               value={wire}
-              onChange={(e) => setWire(e.target.value as 'responses' | 'chat')}
-              aria-label={ag('endpoint.wireAria')}
-              className="h-7 flex-1 rounded-sm border border-border bg-surface px-1.5 text-xs text-ink outline-none focus-visible:focus-ring"
-            >
-              <option value="chat">{ag('endpoint.wireChat')}</option>
-              <option value="responses">{ag('endpoint.wireResponses')}</option>
-            </select>
+              onChange={(v) => setWire(v as 'responses' | 'chat')}
+              options={[
+                { value: 'chat', label: ag('endpoint.wireChat') },
+                { value: 'responses', label: ag('endpoint.wireResponses') },
+              ]}
+              ariaLabel={ag('endpoint.wireAria')}
+              className="flex-1"
+            />
           </Row>
         )}
         <p className="text-xs leading-relaxed text-ink-3">{ag('endpoint.keyNote')}</p>

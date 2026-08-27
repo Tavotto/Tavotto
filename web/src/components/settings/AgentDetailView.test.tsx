@@ -30,6 +30,9 @@ import { SettingsDialog } from '@/components/SettingsDialog'
 import { t } from '@/i18n'
 import { useAiStore } from '@/store/aiStore'
 import { useUiStore } from '@/store/uiStore'
+
+// Radix 的 Select 打开时会 scrollIntoView；jsdom 没有这个方法
+Element.prototype.scrollIntoView ??= function scrollIntoView() {}
 import { agentCaps, capsOf, claudeCaps } from './testCaps'
 
 declare global {
@@ -218,6 +221,31 @@ describe('Agent 详情', () => {
     expect(text()).toContain('Kimi')
     // 完整密钥永远不出现（后端也从不回传，这里守的是前端不自己拼一个出来）
     expect(text()).not.toContain('sk-')
+  })
+
+  it('模型服务下拉：换一个就真的切过去（原生 select 迁到 ui/Select 之后的交互覆盖）', async () => {
+    const ep = (id: string, label: string) => ({
+      id, label, agent: 'codex' as const,
+      base_url: 'https://example.test', models: ['m'],
+      default_model: 'm', wire_api: 'chat' as const, has_key: true, key_hint: '…abcd',
+    })
+    await openDetail(capsOf([agentCaps({ active_endpoint_id: 'kimi' })], {
+      endpoints: [ep('kimi', 'Kimi'), ep('glm', 'GLM')],
+    }))
+    const trigger = document.querySelector(
+      '[role="combobox"][aria-label^="' + ag('detail.serviceAria', { name: 'Codex' }).slice(0, 4) + '"]',
+    ) as HTMLElement
+    expect(trigger, '模型服务下拉不见了（迁到 ui/Select 之后是 combobox）').toBeTruthy()
+    await act(async () => {
+      trigger.click()
+    })
+    const glm = [...document.body.querySelectorAll('[role="option"]')]
+      .find((o) => o.textContent?.includes('GLM')) as HTMLElement
+    expect(glm, '第二个模型服务没出现在下拉里').toBeTruthy()
+    await act(async () => {
+      glm.click()
+    })
+    expect(vi.mocked(setAiEndpointActive)).toHaveBeenCalledWith('codex', 'glm')
   })
 
   it('不支持第三方接口的 Agent 不显示模型服务区块', async () => {

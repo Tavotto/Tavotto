@@ -341,7 +341,7 @@ P2 顺带**证伪了本文档先前的一句话**：原文写「`isTextLikeSelec
 | --- | --- | --- | --- | --- |
 | 1 | **图内文字 + 画布标注的跨 writer 批量样式** | 图内元素写 `override`（走引擎重放），画布标注写文档对象（走 `updateObjects`）。两条通道的事务、撤销标签、渲染时机都不同，合成一次 commit 要动 `applyMixedAlign` 那一层。本轮不做，**并且显式关掉了这种选择下的批量入口**（`mixedWithAnnotations`）：标注混进选区时 `batch` 与 `styleBatch` 都不给，对齐照旧可用 | 低（现状是能力缺失，不是错误行为） | 参照 `applyMixedAlign` 的做法做一个 `applyMixedTextStyle`，一次 commit 两边 |
 | 2 | **快捷键分区迁到 Help** | 会动设置导航结构与 `settingsSection` 的取值集合（AiPanel 按 `'ai'` 跳转依赖它），超出本轮范围 | 无 | 迁移时同步 `SectionId` 与所有 `setSettingsOpen(true, …)` 调用点 |
-| 3 | **AI 任务历史抽屉的状态筛选仍是原生 `<select>`** | 那是 #128 新加的面（`AiPanel.tsx:737`），本轮不进它的实现 | 低（P3，视觉不一致） | 与 `settings/EndpointDialog`、`AgentDetailView`、`CodingAgentsSection` 里的三个原生 `<select>` 一起换成 `ui/Select` |
+| 3 | ~~**AI 任务历史抽屉的状态筛选仍是原生 `<select>`**~~ | 那是 #128 新加的面（`AiPanel.tsx:737`），本轮不进它的实现 | 低（P3，视觉不一致） | **已做（#145）**：连同 `EndpointDialog`（预设 + wire 两处）、`AgentDetailView`、`CodingAgentsSection` 一起换成 `ui/Select`，全仓库不再有原生 `<select>`，由 `components/ui/nativeSelect.test.ts` 的源码扫描看住 |
 | 4 | **About 首屏没有 Python 版本行** | 任务书建议的结构里有「Python 3.13.x」，但 `/api/engine/environment` 与 `/api/diagnostics` 都不单独发 Python 版本（`worker_python` 那条 detail 是「路径（来源）」）。加一个字段就是为界面方便扩展协议，违反本轮约束 | 无 | 若确有需要，在 `engine/environment` 里补 `python_version`，与诊断包同源 |
 | 5 | **AI 弹层保留「作用范围」** | 任务书说「作用范围已在目标选择中表达时不要重复」——但本产品里它**没有**第二个入口，删掉等于删能力。保留并压缩成一行 + 一行面包屑 | 无 | 若将来目标选择器独立出去，再把这一段摘掉 |
 | 6 | **1024–1279 仍是左右互斥停靠** | `INSPECTOR_REDESIGN.md` §3.4 已记录的取舍，本轮不重开 | 无 | — |
