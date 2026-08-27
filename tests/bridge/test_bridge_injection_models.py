@@ -105,6 +105,16 @@ SHOW_ONLY = (
     "plt.plot([1,2],[3,4])\nplt.show()\n"
 )
 
+#: 自报「钩子装上了没有」。判"钩子在不在"要问的就是这个——**不是**去猜
+#: matplotlib 会不会打某句警告（那随版本变：本机 3.10.8 打，CI 的 3.11.1
+#: 不打，于是 `assert "non-interactive" in r.stderr` 在 CI 上红成一片，
+#: 而且捕到的是空串——"观测失效"和"断言失败"长得一模一样）。
+#: `tvt_boot` 是方案 B 的 sitecustomize 装进 `sys.modules` 的那个名字。
+HOOK_PROBE = (
+    "import sys\nprint('RAN', 'HOOKED' if 'tvt_boot' in sys.modules else 'NOT-HOOKED',"
+    " flush=True)\n" + SHOW_ONLY
+)
+
 
 @pytest.fixture
 def sc_naive(tmp_path):
@@ -210,13 +220,16 @@ def test_both_models_capture_a_show_only_figure(user_python, tmp_path, sc_chaine
     这条先立住，后面的差异才不是"B 根本没跑起来"造成的假象。
     """
     proj = tmp_path / "proj"
-    write(proj / "fig.py", SHOW_ONLY)
+    write(proj / "fig.py", HOOK_PROBE)
     ra, a = _run_a(user_python, proj / "fig.py", tmp_path, cwd=str(proj))
     assert ra.returncode == 0, ra.stderr
     rb, b = _run_b(user_python, sc_chained, proj / "fig.py", tmp_path, cwd=str(proj))
     assert rb.returncode == 0, rb.stderr
     assert [f["stem"] for f in a["figures"]] == ["fig"]
     assert b["figures"] == ["fig"], "方案 B（接力版）也确实捕获得到"
+    # 正向对照：正常情形下探针必须报 HOOKED——否则 `-E` 那条的 `NOT-HOOKED`
+    # 只是"探针永远这么说"，测不到任何东西。
+    assert "HOOKED" in rb.stdout and "NOT-HOOKED" not in rb.stdout, rb.stdout
 
 
 # ===========================================================================
@@ -294,19 +307,25 @@ def test_sitecustomize_silently_does_nothing_under_E(user_python, tmp_path, sc_c
     脚本照常跑完、退出码 0、**没有一句来自 Tavotto 的话**——用户只会看到
     "Tavotto 说这个脚本不出图"。静默的错比响亮的错难排查得多。
 
-    （stderr 上确实会多一句 matplotlib 自己的
-    `FigureCanvasAgg is non-interactive`——那是 `plt.show()` 没被我们接管时
-    的**原样**行为，恰恰证明钩子没装上；它不是 Tavotto 给出的诊断。）
+    三条判据分工：`RAN` = **观测有效**（脚本真的跑了，不是我们没抓到输出）；
+    `NOT-HOOKED` = 钩子确实没装上；`data is None` = 因此什么都没捕获到。
+
+    第一版拿 matplotlib 的 `FigureCanvasAgg is non-interactive` 警告当判据，
+    在 CI 上红了：那句警告随版本变（本机 3.10.8 打，CI 的 3.11.1 不打），
+    而失败长成 `assert "non-interactive" in ''`——**空串**。空串说明该问的是
+    "这次到底有没有捕到输出"，不是"matplotlib 为什么没警告"。
+    **先证明观测有效，再解释它的值**：判据换成夹具自报，与版本无关。
     """
     proj = tmp_path / "proj"
-    write(proj / "fig.py", SHOW_ONLY)
+    write(proj / "fig.py", HOOK_PROBE)
     r, data = _run_b(
         user_python, sc_chained, proj / "fig.py", tmp_path, flags=["-E"], cwd=str(proj)
     )
     assert r.returncode == 0, r.stderr
-    assert data is None, "-E 下 B 的钩子根本没装上"
+    assert "RAN" in r.stdout, f"观测失效：脚本根本没跑起来 {r.stdout!r} / {r.stderr!r}"
+    assert "NOT-HOOKED" in r.stdout, "-E 下 B 的钩子竟然装上了"
+    assert data is None, "-E 下 B 的钩子根本没装上，不该有报告"
     assert "tavotto" not in r.stderr.lower(), f"没有任何来自 Tavotto 的提示: {r.stderr}"
-    assert "non-interactive" in r.stderr, "用例前提：show 没被接管，走的是 matplotlib 原样行为"
 
 
 def test_sitecustomize_does_nothing_under_S(user_python, tmp_path, sc_chained):

@@ -722,6 +722,9 @@ def _write_report(run, args, exit_code: int) -> None:
         "stems": stems,
         "owner_thread": owner_thread,
         "main_thread": threading.get_ident(),
+        # 产物**实际**落在哪。判「有没有往用户 home 里写东西」要问的是这个，
+        # 而不是「home 里多了什么」——后者的主语是整台机器，不是本 runner。
+        "out_dir": os.path.abspath(args.out_dir),
         "exit_code": exit_code,
         "target_kind": args.target_kind,
         "target": args.target,

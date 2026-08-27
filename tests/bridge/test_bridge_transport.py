@@ -15,6 +15,7 @@ import socket
 import subprocess
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
@@ -292,19 +293,35 @@ def test_the_runner_never_writes_into_the_user_home(user_python, tmp_path, monke
         timeout=300,
     )
     assert r.returncode == 0, r.stderr
-    assert json.loads(report.read_text(encoding="utf-8"))["stems"] == ["fig"], (
-        "用例前提：确实渲染过（否则根本不会有产物要落盘）"
-    )
-    # 判据是「有没有 **Tavotto** 留下的东西」，不是「home 里一个文件都没多」：
-    # `.matplotlib`（字体缓存）是 **matplotlib 自己**建的，用户直接
-    # `python fig.py` 一样会有它——native 刻意**不**改 `MPLCONFIGDIR`
-    # （safe 那边改是因为内置 runtime 装在只读的安装目录里；用户的环境是
-    # 他的地盘，我们没资格替他改）。各平台上 matplotlib 落哪个目录不一样，
-    # 拿"必须为空"当判据会在别的平台上无缘无故红。
+    data = json.loads(report.read_text(encoding="utf-8"))
+    assert data["stems"] == ["fig"], "用例前提：确实渲染过（否则根本不会有产物要落盘）"
+
+    # **判据的主语是「产物去哪了」，不是「home 里有什么」。**
+    #
+    # 第一版写的是 `sorted(home.iterdir()) in ([], [".matplotlib"])`——它想问
+    # 「**我的 runner** 有没有往 home 写东西」，实际问的是「**这台机器上有没有
+    # 任何进程**碰过 home」。CI 上当场红：Linux 的 fontconfig 建了 `.cache`，
+    # 那不是我们建的。把 `.cache` 加进白名单只是治标，下一个共享目录出现时
+    # 照红（仓库里记过这个形状：泄漏断言只对本次操作建的 exact 资源负责）。
+    #
+    # 换成三条**主语正确**的：产物目录不在 home 里 → 产物确实落在那儿（观测
+    # 有效）→ home 里没有任何 Tavotto 名字、也没有混进去的产物文件。
+    out_dir = Path(data["out_dir"])
+    assert not out_dir.is_relative_to(home), f"产物目录落在用户 home 里: {out_dir}"
+    assert (out_dir / "fig.svg").is_file(), f"产物没落在报告说的地方: {out_dir}"
+
     leaked = sorted(p.name for p in home.iterdir() if "tavotto" in p.name.lower())
     assert leaked == [], f"runner 在用户 home 里留了 Tavotto 的东西: {leaked}"
-    others = sorted(p.name for p in home.iterdir())
-    assert others in ([], [".matplotlib"]), f"home 里多出了意料之外的东西: {others}"
+    # 找的是**本次产出的那几个文件名**，不是"任何 .svg/.json"：后者会逮到
+    # matplotlib 自己的字体缓存（`.matplotlib/fontlist-v390.json`）——又一次
+    # 量错对象。按 stem 找，只可能命中我们自己的产物。
+    strays = sorted(
+        str(f.relative_to(home))
+        for stem in data["stems"]
+        for pattern in (f"{stem}.svg", f"{stem}.json")
+        for f in home.rglob(pattern)
+    )
+    assert strays == [], f"runner 把产物写进了用户 home: {strays}"
 
 
 def test_the_spike_cli_is_not_wired_into_the_product_cli():
