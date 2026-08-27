@@ -206,6 +206,21 @@ def test_full_flow_over_real_stdio(client, project, tmp_path):
     assert set(checks["counts"]) == {"error", "warn", "not_verifiable", "suggestion"}
     assert checks["profile"]["profile_id"] == "lab-publication-v1"
 
+    # **打开与预检分离**（issue #102）：默认只回计数与阻断项，逐条明细要显式要。
+    # 用户只是想打开看看的时候，每次糊一屏重复的规范建议是纯噪声。
+    default_open = opened["preflight"]
+    assert default_open["detailed"] is False
+    assert set(default_open) == {"counts", "blocking", "detailed"}, (
+        "默认打开回了预检明细——那正是 #102 抱怨的噪声")
+    assert set(default_open["counts"]) == {"error", "warn", "not_verifiable", "suggestion"}, \
+        "计数不能一起省掉：「有没有问题」是打开时就该知道的一句话"
+
+    verbose = client.tool("tavotto_open_figure",
+                          {"project_path": str(project), "preflight": True})
+    assert verbose["preflight"]["detailed"] is True
+    assert "suggestions" in verbose["preflight"] and "warnings" in verbose["preflight"], \
+        "显式要了明细却没给"
+
     out_dir = tmp_path / "export"
     done = client.tool(
         "tavotto_export",

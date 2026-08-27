@@ -89,6 +89,9 @@ def _tools() -> list[dict]:
                 "hash 与出版规范。之后用 tavotto_apply_overrides 改图、tavotto_preflight "
                 "体检、tavotto_export 出图。"
                 "路径给产物（.pdf/.png）、脚本（.py）或图库目录都行。"
+                "**默认不回预检明细**，只回一行计数——只是打开看看的时候，"
+                "每次都糊一屏重复的规范建议是噪声；要逐条就 preflight=true "
+                "或事后调 tavotto_preflight。"
                 "若宿主支持 MCP elicitation 且没有传工作区根，第一次请传绝对路径；"
                 "Tavotto 会让宿主显示精确目录并请用户确认，本次连接内有效。"
             ),
@@ -118,6 +121,13 @@ def _tools() -> list[dict]:
                     "include_png": {
                         "type": "boolean",
                         "description": "顺带回一张 base64 位图预览（默认否，体积大）",
+                    },
+                    "preflight": {
+                        "type": "boolean",
+                        "description": (
+                            "回完整的出版规范预检明细（默认否：只回计数。"
+                            "想看逐条建议就调 tavotto_preflight）"
+                        ),
                     },
                 },
                 "additionalProperties": False,
@@ -282,10 +292,14 @@ def _call_open(args: dict) -> dict:
         journal=args.get("journal"),
         include_png=bool(args.get("include_png")),
     )
+    # **打开与预检分离**（issue #102）。预检本身很便宜（对 manifest 求值，不重渲染），
+    # 所以计数照回——「有没有阻断项」是打开时就该知道的一句话。但**逐条明细默认不回**：
+    # 用户只是想打开/看看时，每次都糊一屏重复的规范建议是纯噪声，而它还挤掉了
+    # manifest 摘要那几行真正有用的东西。要明细就显式要。
     checks = bridge.run_preflight(out["session_id"])
-    out["preflight"] = {
-        k: checks[k]
-        for k in (
+    detailed = bool(args.get("preflight"))
+    keep = (
+        (
             "counts",
             "blocking",
             "needs_confirm",
@@ -294,13 +308,24 @@ def _call_open(args: dict) -> dict:
             "not_verifiable",
             "suggestions",
         )
-    }
+        if detailed
+        else ("counts", "blocking")
+    )
+    out["preflight"] = {k: checks[k] for k in keep}
+    out["preflight"]["detailed"] = detailed
     lines = [
         f"已打开 {out['stem']}（会话 {out['session_id']}）",
         _brief_manifest(out.get("manifest")),
         f"规范 {out['profile']['profile_id']} v{out['profile']['profile_version']}；"
-        f"预检 {checks['counts']}",
+        f"预检 {checks['counts']}"
+        + ("" if detailed else "（明细未回；要逐条建议就 preflight=true 或调 tavotto_preflight）"),
     ]
+    # 阻断项是例外：它会挡住导出，打开时就必须说，不能等用户自己去问
+    if checks["blocking"]:
+        lines.append(
+            "! 阻断项："
+            + "; ".join((b.get("message") or b.get("id") or "?") for b in checks["blocking"][:5])
+        )
     if out["registry"].get("parameterizable") is False:
         lines.append("! 这张图不可参数化（没有对应脚本），只能当素材排版")
     if out.get("warnings"):
