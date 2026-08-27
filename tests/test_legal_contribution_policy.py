@@ -415,13 +415,56 @@ class TestAuditBaseline:
             "main 已经前进，基线必须重新审计并更新"
         )
 
+    @staticmethod
+    def _git(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True)
+
+    @classmethod
+    def _is_ancestor(cls, sha: str) -> tuple[int, bool]:
+        """`git merge-base --is-ancestor` 的三种退出码必须分开读。
+
+        0   是祖先
+        1   **不是**祖先          ← 判据真正要抓的缺陷
+        128 对象不在这个克隆里     ← 「看不见」，不是「不是」
+
+        CI 的 `actions/checkout` 默认 `fetch-depth: 1`（本仓库没有任何一处设过
+        它），浅克隆里只有 HEAD 一个提交。早先这里把 128 当成失败，于是
+        **本地永远绿（完整克隆）、CI 永远红**，失败信息还断言「不在本分支历史
+        里」——那是假结论，它只是没被下载。`backend-fast` 在 fast gate 的闭集
+        里，这条一旦进 main，此后每个 PR 与 merge_group 都会红，包括修它的
+        那个 PR。
+
+        **「按 SHA 定向 fetch 一次」不够，实测过**：`git fetch --depth=1 origin
+        <sha>` 之后 `is-ancestor` 回的是 **1** 而不是 0——取回来的是浅对象，
+        HEAD 自己也没有父提交，跨越 shallow 边界算不出可达性。那只是把 128
+        换成 1，仓库照样锁死。
+
+        所以浅克隆下**补全历史再判**（实测 3.7s / +7MB，只在浅克隆里付一次）。
+        不把 128 判成 skip：一条在 CI 上从没执行过的判据，是用假绿换真红；
+        也不给 `backend-fast` 加 `fetch-depth: 0`，那会把代价记在每个 job 上。
+
+        返回 (退出码, 是否补全过历史)。
+        """
+        rc = cls._git("merge-base", "--is-ancestor", sha, "HEAD").returncode
+        shallow = cls._git("rev-parse", "--is-shallow-repository").stdout.strip() == "true"
+        if rc == 0 or not shallow:
+            # 完整克隆里的 0/1 都是可信答案，一分钱不花。
+            return rc, False
+        cls._git("fetch", "--quiet", "--unshallow")
+        return cls._git("merge-base", "--is-ancestor", sha, "HEAD").returncode, True
+
     def test_current_baseline_is_a_real_commit_in_this_history(self):
         cur = self._sha("### Current audited baseline")
-        r = subprocess.run(
-            ["git", "merge-base", "--is-ancestor", cur, "HEAD"], cwd=ROOT, capture_output=True
-        )
-        assert r.returncode == 0, (
-            f"当前审计基线 {cur[:7]} 不在本分支历史里——它必须是一个真实审计过的、可达的提交"
+        rc, deepened = self._is_ancestor(cur)
+        where = "（补全历史之后仍然如此）" if deepened else ""
+        if rc == 128:
+            raise AssertionError(
+                f"当前审计基线 {cur[:7]} 在仓库里根本不存在{where}——"
+                "IP_PROVENANCE 记的必须是一个真实提交的 SHA"
+            )
+        assert rc == 0, (
+            f"当前审计基线 {cur[:7]} 是真实提交，但**不是本分支的祖先**{where}——"
+            "它必须是这条历史上真实审计过的那个点"
         )
 
 
