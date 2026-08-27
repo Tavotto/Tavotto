@@ -64,6 +64,15 @@ if __name__ == "__main__":
 REGISTRY = {"scripts": {"figm.py": {"entry": "main", "cost": "light", "stems": ["FigM"]}}}
 
 
+#: 一张**打开时就带阻断项**的图：刻度字号 6pt 一定撞出版规范的绝对下限。
+#: 没有它的话「有阻断项时该说什么」那条分支在整个用例集里从没被执行过——
+#: 而 `blocking` 是布尔不是列表，切它会当场 TypeError，**恰恰只在这类图上炸**。
+SCRIPT_BLOCKING = SCRIPT.replace(
+    'ax.tick_params(direction="in")', 'ax.tick_params(direction="in", labelsize=6)'
+)
+REGISTRY_BLOCKING = {"scripts": {"figb.py": {"entry": "main", "cost": "light", "stems": ["FigB"]}}}
+
+
 def _gid(manifest: dict, role: str, suffix: str = "") -> str:
     """按角色取一个真实存在的 gid。
 
@@ -100,6 +109,28 @@ def _worker_python():
 pytestmark = pytest.mark.skipif(
     _worker_python() is None, reason="没有带科学栈的解释器，跳过真链路用例"
 )
+
+
+@pytest.fixture
+def blocking_project(tmp_path):
+    figures = tmp_path / "blocking"
+    figures.mkdir()
+    (figures / "figb.py").write_text(
+        SCRIPT_BLOCKING.replace('OUT / "FigM.pdf"', 'OUT / "FigB.pdf"'), encoding="utf-8"
+    )
+    (figures / "tavotto_registry.json").write_text(
+        json.dumps(REGISTRY_BLOCKING, ensure_ascii=False), encoding="utf-8"
+    )
+    proc = subprocess.run(
+        [_worker_python(), str(figures / "figb.py")],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        cwd=str(figures),
+    )
+    assert proc.returncode == 0, proc.stderr
+    return figures
 
 
 @pytest.fixture
@@ -158,10 +189,13 @@ class Client:
         return json.loads(line.decode("utf-8"))
 
     def tool(self, name: str, args: dict) -> dict:
-        res = self.call("tools/call", {"name": name, "arguments": args})["result"]
+        raw = self.call("tools/call", {"name": name, "arguments": args})
+        assert "result" in raw, __import__("json").dumps(raw, ensure_ascii=False)[:1500]
+        res = raw["result"]
         assert not res.get("isError"), json.dumps(res.get("structuredContent"), ensure_ascii=False)[
             :2000
         ]
+        self.last_text = "\n".join(c.get("text", "") for c in res.get("content", []))
         return res["structuredContent"]
 
     def close(self):
@@ -205,6 +239,34 @@ def test_full_flow_over_real_stdio(client, project, tmp_path):
     checks = client.tool("tavotto_preflight", {"session_id": sid})
     assert set(checks["counts"]) == {"error", "warn", "not_verifiable", "suggestion"}
     assert checks["profile"]["profile_id"] == "lab-publication-v1"
+
+    # **打开与预检分离**（issue #102）：裁的是**给 agent 读的那段文字**，
+    # 结构化结果一个字段都不许少——内嵌画布从 `open.preflight` 初始化并直接展开
+    # 那四个数组，裁掉它等于把画布打死（Codex 在 PR #171 上指出）。
+    default_open = opened["preflight"]
+    assert default_open["detailed_text"] is False
+    for key in (
+        "counts",
+        "blocking",
+        "needs_confirm",
+        "errors",
+        "warnings",
+        "not_verifiable",
+        "suggestions",
+    ):
+        assert key in default_open, f"结构化结果少了 {key}——画布会在渲染前抛掉"
+    assert set(default_open["counts"]) == {"error", "warn", "not_verifiable", "suggestion"}
+    # 重开一次并当场取文字：`last_text` 记的是**最近一次**调用，上面刚跑过
+    # tavotto_preflight，读它读的是那一条
+    client.tool("tavotto_open_figure", {"project_path": str(project)})
+    quiet_text = client.last_text
+    assert "逐条建议未展开" in quiet_text
+    assert "[建议]" not in quiet_text, "默认打开就把逐条建议糊进了文字——#102 抱怨的正是它"
+
+    client.tool("tavotto_open_figure", {"project_path": str(project), "preflight": True})
+    loud_text = client.last_text
+    assert "逐条建议未展开" not in loud_text
+    assert len(loud_text) > len(quiet_text), "显式要了明细，文字却没变多"
 
     out_dir = tmp_path / "export"
     done = client.tool(
@@ -323,6 +385,24 @@ def test_reopening_a_session_replays_to_the_same_place(client, project):
     assert not diffs, json.dumps(diffs[:8], ensure_ascii=False)
     assert compared > 10
     assert bridge.manifest_hash(a["manifest"]) == bridge.manifest_hash(b["manifest"])
+
+
+def test_opening_a_blocking_figure_says_so_without_crashing(client, blocking_project):
+    """有阻断项时打开必须**照常成功**，并在文字里说清楚。
+
+    `preflight.blocking` 是**布尔**（`engine/preflight.summarize` 里
+    `len(buckets["error"]) > 0`），不是列表——把它当列表切会当场
+    `TypeError: 'bool' object is not subscriptable`，而且**只在有阻断项的图上炸**。
+    没有这条用例，那条分支在整个用例集里一次都不会被执行（第一版就是这样：变异
+    把它改回切 blocking，全套照样绿）。
+    """
+    opened = client.tool("tavotto_open_figure", {"project_path": str(blocking_project)})
+    assert opened["preflight"]["blocking"] is True
+    assert opened["preflight"]["counts"]["error"] > 0
+    text = client.last_text
+    assert "阻断项" in text and "会挡住导出" in text
+    # 默认仍然不糊逐条建议——阻断与噪声是两件事
+    assert "逐条建议未展开" in text
 
 
 def test_rejected_patches_are_never_silently_dropped(client, project):
