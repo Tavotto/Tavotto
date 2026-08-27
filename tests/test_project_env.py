@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 
+from support import venvfixture
 from tavotto.engine import (
     config as engine_config,
     execspec,
@@ -67,24 +68,19 @@ def fake_venv(path: Path, *, cfg: bool = True, exe: bool = True) -> Path:
 
 
 def real_venv(root: Path, *, name: str = ".venv", with_fixture: bool = True) -> Path:
-    """在 `root` 下建一个**能执行**的 venv。
+    """在 `root` 下建一个**能执行**的 venv（创建细节见 `support.venvfixture`）。
 
-    `--system-site-packages` 是关键：matplotlib 直接用宿主那份，CI 不必联网
-    装几百 MB 的科学栈。`with_fixture` 往它自己的 site-packages 写一个纯
-    Python 模块——「这个环境有而别处没有」这件事就是靠它成立的。
+    `with_fixture` 往它自己的 site-packages 写一个纯 Python 模块——「这个环境
+    有而别处没有」这件事就是靠它成立的。
     """
-    venv = root / name
-    subprocess.run([WORKER_PY, "-m", "venv", "--system-site-packages", str(venv)],
-                   check=True, capture_output=True, timeout=180)
+    venv = venvfixture.make_project_venv(root, name, python=WORKER_PY)
     if with_fixture:
         add_fixture_module(venv)
     return venv
 
 
 def add_fixture_module(venv: Path) -> Path:
-    site = next(iter(sorted(venv.glob("lib/python*/site-packages"))
-                     or sorted(venv.glob("Lib/site-packages"))))
-    mod = site / f"{FIXTURE_MODULE}.py"
+    mod = venvfixture.site_packages(venv) / f"{FIXTURE_MODULE}.py"
     mod.write_text("VALUE = 42\n", encoding="utf-8")
     return mod
 
@@ -203,6 +199,14 @@ def test_project_venv_starts_the_worker_without_installing_tavotto(tmp_path):
     """
     venv = real_venv(tmp_path)
     python = projectenv.interpreter_of(venv)
+    # **前提是被夹具「造出来」的，不是碰运气碰上的**：`--system-site-packages`
+    # 会把**基础解释器**的 site-packages 带进来，而 CI 的 backend-fast 正是
+    # `pip install -e ".[dev]"` 装进那个基础解释器的。少了这个替身，这条用例
+    # 在 CI 上前提当场失效（真红过一次），而本地永远复现不出来——本地从 venv
+    # 建 venv，继承的是基础解释器的 site-packages，不是父 venv 的。
+    # 先断言替身在：把遮蔽拆掉的人**在本地**就会看到红，不必等 CI。
+    assert (venvfixture.site_packages(venv) / "tavotto.py").is_file(), \
+        "夹具 venv 少了遮蔽宿主 Tavotto 的替身，下面那条断言就只是碰运气"
     # `-I`：跑测试时父进程带着 `PYTHONPATH=src`，不隔离的话这条断言会看到
     # 仓库源码目录里的 tavotto 而不是 venv 里装了什么，用例当场假绿。
     installed = subprocess.run([python, "-I", "-c", "import tavotto"],

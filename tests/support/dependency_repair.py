@@ -9,13 +9,13 @@
 """
 import base64
 import hashlib
-import subprocess
 import time
 import zipfile
 from pathlib import Path
 
 import pytest
 
+from support import venvfixture
 from tavotto.engine import deprepair, pool as engine_pool, projectenv
 
 try:
@@ -140,21 +140,16 @@ def build_wheel(dest: Path, *, name: str = FIXTURE_DIST,
 
 
 def real_venv(root: Path, *, name: str = ".venv") -> Path:
-    """在 `root` 下建一个**能执行**的 venv。
+    """在 `root` 下建一个**能执行**、且不含 Tavotto 的 venv。
 
-    `--system-site-packages` 是关键：matplotlib 直接用宿主那份，CI 不必联网
-    装几百 MB 的科学栈（与 `test_project_env.py` 同一套做法）。
+    创建细节（`--system-site-packages` 与遮蔽宿主的 Tavotto）在
+    `support.venvfixture` 一处——两组用例共用同一份，免得其中一份漏掉遮蔽
+    那一步之后在 CI 上才发现。
     """
-    venv = root / name
-    subprocess.run([WORKER_PY, "-m", "venv", "--system-site-packages", str(venv)],
-                   check=True, capture_output=True, timeout=300)
-    return venv
+    return venvfixture.make_project_venv(root, name, python=WORKER_PY)
 
 
-def site_packages(venv: Path) -> Path:
-    found = (sorted(venv.glob("lib/python*/site-packages"))
-             or sorted(venv.glob("Lib/site-packages")))
-    return found[0]
+site_packages = venvfixture.site_packages
 
 
 def wait_for(plan_id: str, states=(deprepair.STATE_DONE, deprepair.STATE_FAILED,
