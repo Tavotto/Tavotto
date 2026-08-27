@@ -55,7 +55,7 @@ Also: [`LICENSE`](../../LICENSE), [`TRADEMARKS.md`](../../TRADEMARKS.md) and
 | Rights holder | **Jiaqi Wan**, a natural person, under **Hong Kong SAR** law, contactable at <support@tavotto.com>. No company involved; none was required. |
 | CLA status | **`1.0` — final and signable.** No signature provider connected yet (deliberate: zero external contributions to date). |
 | Signature authority | **The provider.** The repository stores no signer data. |
-| CI enforcement | Gate script written and tested; **the `cla-check` job lands in a follow-up PR** (it reads its inputs from the default branch, so those must land first). Feeds the existing `CI fast gate` — no fourth required context. |
+| CI enforcement | **Live.** `cla-check` feeds the existing `CI fast gate`; no fourth required context added |
 | Trademark | **Tavotto™**, unregistered. ® is not used and CI fails if it appears |
 | Proprietary-edition readiness | **`READY_WITH_BLOCKERS`** — one real dependency blocker (**PyMuPDF**) plus governance items |
 

@@ -105,6 +105,63 @@ def load_json(path: Path, what: str):
         raise ConfigError(f"{what} 不是合法 JSON（{path}）：{exc}") from exc
 
 
+def load_commits(path: Path, expected: int | None) -> list:
+    """把 `pulls/{n}/commits` 的响应读成一个扁平的提交列表。
+
+    **三种形状都要接受，因为 `gh --paginate` 的输出形状随版本而变**：
+
+    * 单个数组 —— gh 2.97 实测对 REST 数组端点会把各页合并（per_page=5、9 页
+      仍然是一个合法的 41 条数组）；
+    * 多个数组首尾相接（`[...][...]`）—— `gh api --help` 写的是「Each page is
+      a separate JSON array or object」，旧版本确实这么输出；
+    * 数组的数组 —— 加了 `--slurp` 的形状（**不要**给数组端点加 `--slurp`，
+      它会把每页包成一层，正是这里要兼容掉的那种）。
+
+    **但兼容形状远不是重点。** 真正的危险是「只解析到第一页就当成全部」——
+    那会让判定器对一个 41 提交的 PR 只看前 30 个贡献者，**报 success 而实际
+    漏判**。对一个法律门禁来说这是最坏的结局：它看起来在守，其实没守。
+
+    所以这里**不靠信任分页，靠核对数量**：`expected` 来自 PR 自身的
+    `commits` 字段，对不上就当场失败。无论 gh 哪个版本、分不分页、合不合并，
+    少一条都红。
+    """
+    raw = path.read_text(encoding="utf-8").strip()
+    if not raw:
+        raise ConfigError(f"commits JSON 是空的（{path}）——取数那步多半失败了")
+
+    docs: list = []
+    dec = json.JSONDecoder()
+    idx = 0
+    while idx < len(raw):
+        try:
+            obj, end = dec.raw_decode(raw, idx)
+        except json.JSONDecodeError as exc:
+            raise ConfigError(f"commits JSON 解析失败（{path}，偏移 {idx}）：{exc}") from exc
+        docs.append(obj)
+        idx = end
+        while idx < len(raw) and raw[idx] in " \t\r\n":
+            idx += 1
+
+    commits: list = []
+    for doc in docs:
+        if not isinstance(doc, list):
+            raise ConfigError(f"commits JSON 里有非数组的顶层文档：{type(doc).__name__}")
+        for item in doc:
+            if isinstance(item, list):  # --slurp 的数组的数组
+                commits.extend(item)
+            else:
+                commits.append(item)
+
+    if expected is not None and len(commits) != expected:
+        raise ConfigError(
+            f"取到 {len(commits)} 个提交，但这个 PR 声明有 {expected} 个——"
+            f"分页多半只拿到了第一页。**绝不按不完整的贡献者名单判定**："
+            f"漏掉的那些人不会被检查，而门禁会报绿。"
+            f"（`gh api --paginate` 的输出形状随版本而变，所以这里核数量而不是信分页）"
+        )
+    return commits
+
+
 def validate_policy(policy: dict) -> None:
     """policy 的形状必须严格——安静地解析出空表的判定器会把「谁都没签」判成任何东西。"""
     if not isinstance(policy, dict):
@@ -545,6 +602,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--commits-json", default=None, help="`GET /repos/{o}/{r}/pulls/{n}/commits` 的响应文件"
     )
+    ap.add_argument(
+        "--expected-commits",
+        type=int,
+        default=None,
+        help="这个 PR 声明的提交数（PR 对象的 `commits` 字段）。对不上就失败"
+        "——防「分页只取到第一页、静默按不完整的贡献者名单判绿」",
+    )
     ap.add_argument("--repo-root", default=".", help="核对协议正文哈希时的仓库根")
     ap.add_argument(
         "--refresh-hashes",
@@ -580,7 +644,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             commits = []
             if args.commits_json:
-                commits = load_json(Path(args.commits_json), "commits JSON")
+                commits = load_commits(Path(args.commits_json), args.expected_commits)
             checks = None
             if args.provider_checks_json:
                 raw = load_json(Path(args.provider_checks_json), "provider check-runs JSON")

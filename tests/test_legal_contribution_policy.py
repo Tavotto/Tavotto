@@ -11,8 +11,8 @@
 * 出现 ® → 主张一个并不存在的注册。
 
 **`cla-check` 这个 CI job 的形状契约不在这里**，在
-`tests/test_cla_workflow_contract.py`——那份测试与 job 本身在同一个 PR 里落地，
-因为在 job 还不存在的树上断言它的形状只会是个必红的空门禁。
+`tests/test_cla_workflow_contract.py`——判据必须和它守的东西一起落地，
+在 job 还不存在的树上断言它的形状只会是个必红的空门禁。
 
 判据本身也做过反证（见 PR 描述的 mutation 表）：每一条都手工破坏过一次，
 确认它真的红。
@@ -825,6 +825,59 @@ class TestProviderImpersonation:
         """
         with pytest.raises(gate.ConfigError):
             gate.validate_policy(self._policy(**over))
+
+
+# ═══════════════════════════════ 8c. 分页形状与「静默少判」
+class TestCommitPagination:
+    """`gh api --paginate` 的输出形状随版本而变，但**少判贡献者绝不许静默**。"""
+
+    @staticmethod
+    def _c(sha):
+        return {
+            "sha": sha,
+            "commit": {
+                "author": {"name": "n", "email": "n@users.noreply.github.com"},
+                "message": "m",
+            },
+            "author": {"login": "n"},
+        }
+
+    def _write(self, tmp_path, payload):
+        f = tmp_path / "commits.json"
+        f.write_text(payload, encoding="utf-8")
+        return f
+
+    def test_single_merged_array(self, gate, tmp_path):
+        """gh 2.97 对 REST 数组端点会把各页合并成一个数组。"""
+        f = self._write(tmp_path, json.dumps([self._c(str(i)) for i in range(41)]))
+        assert len(gate.load_commits(f, 41)) == 41
+
+    def test_concatenated_arrays(self, gate, tmp_path):
+        """旧版 gh：每页一个数组，首尾相接（`[...][...]`）。"""
+        pages = [[self._c(str(i)) for i in range(0, 30)], [self._c(str(i)) for i in range(30, 41)]]
+        f = self._write(tmp_path, "".join(json.dumps(p) for p in pages))
+        assert len(gate.load_commits(f, 41)) == 41
+
+    def test_slurp_array_of_arrays(self, gate, tmp_path):
+        """`--slurp` 的形状：数组的数组。兼容掉，但 workflow 刻意不用它。"""
+        pages = [[self._c(str(i)) for i in range(0, 30)], [self._c(str(i)) for i in range(30, 41)]]
+        f = self._write(tmp_path, json.dumps(pages))
+        assert len(gate.load_commits(f, 41)) == 41
+
+    def test_truncated_to_first_page_is_rejected(self, gate, tmp_path):
+        """**核心**：只拿到第一页 → 必须红，绝不按不完整名单判定。"""
+        f = self._write(tmp_path, json.dumps([self._c(str(i)) for i in range(30)]))
+        with pytest.raises(gate.ConfigError) as e:
+            gate.load_commits(f, 41)
+        assert "30" in str(e.value) and "41" in str(e.value), "失败信息要说清差了多少"
+
+    def test_empty_payload_is_rejected(self, gate, tmp_path):
+        with pytest.raises(gate.ConfigError):
+            gate.load_commits(self._write(tmp_path, "   "), 41)
+
+    def test_malformed_payload_is_rejected(self, gate, tmp_path):
+        with pytest.raises(gate.ConfigError):
+            gate.load_commits(self._write(tmp_path, '[{"sha":1}] not json'), 1)
 
 
 # ═════════════════════════════════════════════ 9. 贡献者收集（单测）
