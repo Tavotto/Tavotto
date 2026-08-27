@@ -92,7 +92,9 @@ jobs:
   # 冒「静默不跑」的风险。
   # ────────────────────────────────────────────────────────────────
   python-lint:
-    name: Python lint (Ruff)
+    # job id 保持 `python-lint` 不变——Gate 的 needs / --required 闭集认的是它，
+    # 改 id 等于同时动三处。显示名跟着职责走：这一格现在同时管 lint 与格式。
+    name: Python quality (Ruff)
     # 与其它快线一致：PR 与 merge_group 都跑（PR 先绿才能进队列，队列的组合
     # 提交还要再验一遍——组合出来的树没有任何单个 PR 检查过）。push main 不跑，
     # 那棵树就是 merge_group 上刚验过的。
@@ -130,8 +132,53 @@ jobs:
       # 行内批注——从红灯到定位是一次点击，而不是翻日志找行号。
       # 规则集与豁免全在 pyproject 的 [tool.ruff]，这里**不加任何 --select /
       # --ignore**：命令行上再写一份，本地跑的就不是 CI 跑的那一套了。
-      - name: Ruff
+      - name: Ruff check
         run: ruff check --output-format github .
+      # **同一个 job、同一份 ruff、同一次 runner setup**——不新开 GitHub job，
+      # 也就不会多出第四个 required context，Gate 结构一个字不动。
+      #
+      # 分成两步而不是 `ruff check . && ruff format --check .`：合成一条时先失败
+      # 的那个会掩盖后一个，开发者修完格式重新 push 才发现还有 lint 错，一次
+      # CI 往返只换回一半信息。`if: always()` 让两条都出结论。
+      #
+      # **只 --check，不写回**：门禁替你把红的改绿了，就不再是门禁。
+      - name: Ruff format --check
+        if: always()
+        run: ruff format --check .
+
+      # `.git-blame-ignore-revs` 里写错的 SHA **不会喊疼**：git 对一个不存在的
+      # 全长 SHA 静默放过（exit 0，什么都不跳过）。pytest 里那条存在性判据在 CI
+      # 的浅克隆上只能 skip——`actions/checkout` 默认 `fetch-depth: 1`，历史对象
+      # 根本没下载——也就是说**它在 CI 里从没执行过**，一个不存在的 40 位 SHA
+      # 能通过全部门禁，正是它声称要防的那种静默失效。（Codex 在 #176 上指出的
+      # 就是这个洞：判据把自己的盲点写在了明处，但写在明处不等于补上了。）
+      #
+      # 这一步用**定向 fetch** 补上，不必把整个 checkout 换成 fetch-depth: 0：
+      # GitHub 允许按 SHA fetch，实测存在返回 0、不存在返回 128。代价约一秒。
+      - name: 校验 .git-blame-ignore-revs 里的每个 SHA 真的存在
+        if: always()
+        run: |
+          set -euo pipefail
+          n=0
+          while read -r sha; do
+            n=$((n + 1))
+            git fetch --quiet --depth=1 origin "$sha" || {
+              echo "::error::.git-blame-ignore-revs 里的 $sha 在本仓库不存在（合并队列强制 SQUASH，多半是忘了换成 squash 之后的 SHA）"
+              exit 1
+            }
+            git cat-file -e "${sha}^{commit}" || {
+              echo "::error::$sha 存在但不是一个 commit"
+              exit 1
+            }
+            echo "  ok $sha"
+          done < <(grep -vE '^[[:space:]]*(#|$)' .git-blame-ignore-revs)
+          # 一条都没解析出来时必须红：否则文件被清空 / 格式变了，这一步会变成
+          # 一个永远绿的空循环——正是本仓库反复吃过亏的那种空门禁。
+          if [ "$n" -eq 0 ]; then
+            echo "::error::.git-blame-ignore-revs 里一条 SHA 都没解析出来——文件空了还是格式变了？"
+            exit 1
+          fi
+          echo "校验通过：$n 条"
 
   # ────────────────────────────────────────────────────────────────
   # 第 1 层最靠前的一格：引擎的**结构性不变式**（tests/test_invariants_engine.py

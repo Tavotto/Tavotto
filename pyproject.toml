@@ -219,17 +219,6 @@ line-length = 100
 #       「谁是自家代码」这条线不再靠人肉维持。
 select = ["E4", "E7", "E9", "F", "I"]
 
-# 只有两条，且都是**排版**规则，不是语义规则：
-#   E701 `if x: y` 写在一行
-#   E702 `a = 1; b = 2` 分号连写
-# 本仓库有意用紧凑写法表达「这两行是一对」（manifest.py 的 bbox 四角取
-# min/max、recover_frac_positions.py 逐像素扫描里的四路 min/max 跟踪）。
-# 它们属于 formatter 的管辖范围——`ruff format` 落地那天会把这两种形状机械地、
-# 一致地拆开，那才是处理排版的正确位置。在 formatter 还没接入之前手工拆，
-# 等于用手做一遍将来工具会做的事，还要在 review 里逐行解释。
-# **formatter 迁移见 docs/ci/ruff.md 的「后续」一节；那件事做完这两条就该删掉。**
-ignore = ["E701", "E702"]
-
 [tool.ruff.lint.per-file-ignores]
 # 浏览器 playground 的示例脚本是**给用户看的成品**：它们经 `?raw` 原样打进
 # playground bundle（scripts/build_browser_playground.py），在网站 /try 的编辑器

@@ -38,7 +38,8 @@ to get back to development mode.
 ## Verifying a change
 
 ```sh
-ruff check .                      # Python lint (milliseconds — run this first)
+ruff check . --fix && ruff format .   # while working: fix, sort, format
+ruff check . && ruff format --check . # before pushing: exactly what CI runs
 .venv/bin/python -m pytest        # backend
 cd web && pnpm test               # frontend (vitest)
 cd web && pnpm build              # type-check + bundle
@@ -56,7 +57,15 @@ high-signal one (`E4`, `E7`, `E9`, `F`, `I`) that is meant to stay green rather
 than accumulate suppressions. Don't pass `--select` or `--ignore` on the command
 line: that would make your run differ from CI's.
 
-Current state: **lint on, import sorting on, formatter not yet enabled.**
+Current state: **lint, import sorting and the formatter are all on.**
+While working, let Ruff fix things: `ruff check . --fix && ruff format .`.
+Before pushing, run the read-only pair `ruff check . && ruff format --check .` —
+that is character-for-character what CI runs, so a green local run won't come
+back red on formatting. CI never rewrites the tree.
+
+The example gallery, the playground examples and the CompatBench corpus are
+**excluded from formatting**: their layout is product content, not our code
+style.
 `ruff check . --fix` sorts imports for you. First-party packages are recognised
 by directory via `[tool.ruff]`'s `src`, which lists the source roots that really
 get pushed onto `sys.path` at runtime — if you add a *new* such root, review that
