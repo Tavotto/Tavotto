@@ -191,9 +191,48 @@ class TestWorkerArgv:
             env=None,
             project_root="/home/u/proj",
             passthrough_savefig=True,
+            raw_target="fig.py",
         )
         with pytest.raises(ValueError, match="native"):
             execspec.worker_argv(native, worker_py="/w.py", out_dir="/o")
+
+    def test_native_spec_rejects_the_safe_shaped_fields(self):
+        """native 的三条硬约束在构造时就拦下来（ADR 0014 §2 / 0020）。
+
+        它们不是风格问题：带 entry 的 native = 「用户没写的入口函数」被调用；
+        `passthrough_savefig=False` 的 native = 用户原命令该产出的文件没了；
+        没有 `raw_target` 的 native = `sys.argv[0]` 与用户敲的那串对不上。
+        """
+        base = dict(
+            profile=execspec.PROFILE_NATIVE,
+            interpreter="/usr/bin/python3",
+            target_kind=execspec.TARGET_SCRIPT,
+            target="fig.py",
+            entry=None,
+            argv=(),
+            cwd="/home/u/proj",
+            env=None,
+            project_root="/home/u/proj",
+            passthrough_savefig=True,
+            raw_target="fig.py",
+        )
+        with pytest.raises(ValueError, match="entry"):
+            execspec.ExecutionSpec(**{**base, "entry": "main"})
+        with pytest.raises(ValueError, match="savefig"):
+            execspec.ExecutionSpec(**{**base, "passthrough_savefig": False})
+        with pytest.raises(ValueError, match="raw_target"):
+            execspec.ExecutionSpec(**{**base, "raw_target": ""})
+
+    def test_raw_target_never_reaches_the_stable_payload(self):
+        """`raw_target` 是 cwd 相关的一串，进 fingerprint 就跨不了机器。"""
+        native = execspec.native_spec(
+            "fig.py",
+            interpreter="/usr/bin/python3",
+            cwd="/home/u/proj",
+            project_root="/home/u/proj",
+        )
+        assert "raw_target" not in native.stable_payload()
+        assert native.to_payload()["raw_target"] == "fig.py"
 
 
 # ===========================================================================

@@ -10,7 +10,9 @@ worker 在此转换为各 artist 自己的坐标系。
 
 from __future__ import annotations
 
+import importlib
 import re
+import sys
 
 import matplotlib as mpl
 import matplotlib.colors as mcolors
@@ -33,6 +35,33 @@ from mpl_toolkits.mplot3d import proj3d
 
 #: 刻度标签的 gid 形状（`FigState.resolve` 按需现解时用）
 _TICKLABEL_GID = re.compile(r"^axes_(\d+)\.([xyz])ticklabels_(\d+)$")
+
+
+def _sibling(name: str):
+    """按**本模块自己的加载位置**解析兄弟模块（唯一用途：`manifest`）。
+
+    `manifest` 在模块层 import 本模块，反过来在模块层 import 会成环，所以
+    那两处只能延后到调用时——问题是**延后到什么时候执行、在谁的命名空间里
+    执行**，两条入口的答案不一样：
+
+    * safe worker 把 engine 目录插进 `sys.path` 后平铺 import
+      （`__name__ == "overrides"`），裸 `import manifest` 命中的是我们自己的；
+    * native bridge（ADR 0020）在**用户自己的进程**里跑用户的代码，engine
+      目录**必须**在 import 完就从 `sys.path` 收回——否则用户项目里那份
+      `manifest.py` / `overrides.py` / `config.py` 会被我们顶掉。此时
+      `__name__ == "tavotto_bridge_runtime.overrides"`，而这两处 late import
+      是在**用户代码跑起来之后**才执行的：裸 `import manifest` 会去命中
+      用户项目里的 `manifest.py`，然后报一个指向完全错误方向的
+      AttributeError。
+
+    按 `__name__` 的包前缀解析对两条入口都成立，且平铺那条**一个字节都没变**
+    （前缀为空 → 仍然是裸名 `manifest`）。看护：
+    `tests/bridge/test_bridge_namespace.py::test_user_module_wins_over_engine_sibling`。
+    """
+    pkg = __name__.rpartition(".")[0]
+    full = f"{pkg}.{name}" if pkg else name
+    mod = sys.modules.get(full)
+    return mod if mod is not None else importlib.import_module(full)
 
 
 class FigState:
@@ -89,7 +118,9 @@ class FigState:
         # 这条只在索引里还没有它时才走到（CLAUDE.md 记的「先改刻度定位、再改
         # 新出现的那条刻度」在全量重放里的情形），但那正是写回那条路。
         # late import：manifest 在模块层 import 本模块，反过来会成环。
-        from manifest import _ordered_axes  # noqa: PLC0415
+        # **不能写成裸 `import manifest`**——native bridge 里那会命中用户项目
+        # 自己的 manifest.py，理由见 `_sibling`。
+        _ordered_axes = _sibling("manifest")._ordered_axes
 
         axes = _ordered_axes(self.fig)[0]
         if not 0 <= i < len(axes):
@@ -2425,8 +2456,9 @@ def _refresh_axes_follow(state: "FigState") -> None:
     try:
         # 与 `instrument` 同一条遍历（插图里的宿主不在 `fig.axes` 里）。
         # 这里靠 late import 拿 `_ordered_axes`：manifest 在模块层 import
-        # overrides，反过来在模块层 import 会成环。
-        from manifest import _ordered_axes  # noqa: PLC0415
+        # overrides，反过来在模块层 import 会成环。**不能写成裸 import**，
+        # 理由见 `_sibling`。
+        _ordered_axes = _sibling("manifest")._ordered_axes
 
         _ordered = _ordered_axes(state.fig)[0]
         cbar_of_ax, host_of_cbax = colorbar_maps(state.fig, _ordered)

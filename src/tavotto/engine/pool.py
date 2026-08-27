@@ -80,6 +80,37 @@ PROTOCOL_VERSION = 1
 #: 那里没有历史包袱，不该背我们的旧名字。
 _V1_CMD = {"override": "render"}
 
+
+def build_envelope(obj: dict, *, generation: int = 0, revision: int = 0) -> dict:
+    """把 `{"cmd": …, 其余参数}` 装进 v1 信封——**调用侧的唯一出处**。
+
+    `stem` 走顶层（它是「这条请求作用在哪张图上」，与命令参数不是一回事），
+    其余参数进 `payload`。带 patches 的命令顺手算上 canonical hash——执行侧
+    会自己再算一遍对一下，两边序列化分歧当场暴露（这条自检为的是将来 Rust
+    supervisor 接手时不会静默地发出「看起来一样其实不一样」的 patch 列表）。
+
+    `EngineWorker`（stdin/stdout）与 native bridge（loopback socket）都吃这
+    一份：**换传输不换协议**（ADR 0020 §6）。在 bridge 里另拼一遍信封，
+    就是造第二套协议语义——它一开始逐字相同，然后在某次「只给 bridge 加个
+    字段」之后分叉。
+    """
+    payload = dict(obj)
+    cmd = payload.pop("cmd")
+    stem = payload.pop("stem", None)
+    env = {
+        "protocol_version": PROTOCOL_VERSION,
+        "request_id": f"r-{uuid.uuid4().hex}",
+        "worker_generation": generation,
+        "render_revision": revision,
+        "cmd": _V1_CMD.get(cmd, cmd),
+        "payload": payload,
+    }
+    if stem is not None:
+        env["stem"] = stem
+    if "patches" in payload:
+        env["canonical_patch_hash"] = patchspec.patch_hash(payload["patches"])
+    return env
+
 #: (项目, 脚本) → 已经起过第几代 worker。supervisor 靠 generation 分辨
 #: 「这条响应属于哪一代」：会话被超时 kill 后重建，晚到的旧响应必须能被认出来
 #: 丢弃，否则新会话会被上一代的 manifest 污染。
@@ -790,30 +821,7 @@ class EngineWorker:
         return box[0] if box else ""
 
     def _envelope(self, obj: dict) -> dict:
-        """把 `{"cmd": …, 其余参数}` 装进 v1 信封。
-
-        `stem` 走顶层（它是「这条请求作用在哪张图上」，与命令参数不是一回事），
-        其余参数进 `payload`。带 patches 的命令顺手算上 canonical hash——
-        worker 会自己再算一遍对一下，两边序列化分歧当场暴露（这条自检为的是
-        将来 Rust supervisor 接手时不会静默地发出「看起来一样其实不一样」的
-        patch 列表）。
-        """
-        payload = dict(obj)
-        cmd = payload.pop("cmd")
-        stem = payload.pop("stem", None)
-        env = {
-            "protocol_version": PROTOCOL_VERSION,
-            "request_id": f"r-{uuid.uuid4().hex}",
-            "worker_generation": self.generation,
-            "render_revision": self.rev,
-            "cmd": _V1_CMD.get(cmd, cmd),
-            "payload": payload,
-        }
-        if stem is not None:
-            env["stem"] = stem
-        if "patches" in payload:
-            env["canonical_patch_hash"] = patchspec.patch_hash(payload["patches"])
-        return env
+        return build_envelope(obj, generation=self.generation, revision=self.rev)
 
     def _kill_now(self) -> None:
         """状态未知的会话立即杀掉（与超时同纪律，绝不复用）。"""

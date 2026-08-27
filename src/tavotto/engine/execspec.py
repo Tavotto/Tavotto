@@ -88,6 +88,13 @@ class ExecutionSpec:
     env: dict[str, str] | None  # None = 原样继承；dict = 注入增量（见模块头）
     project_root: str  # 项目根（机器相关；safe 即 figures_dir 原串）
     passthrough_savefig: bool  # safe False（吞掉捕获）；native True（透传）
+    #: **用户原样敲进去的那个 target 串**（native 专用；safe 恒空）。
+    #: `target` 是规范化过的项目相对 POSIX 路径——它是身份，跨机器稳定；
+    #: 而 `sys.argv[0]` 必须是用户当初写的那一串（`python figure.py` 给
+    #: 相对，`python /abs/figure.py` 给绝对）。拿规范化后的那份去当 argv[0]
+    #: 会让脚本里的 `os.path.dirname(sys.argv[0])` 指到别处。
+    #: 机器相关，**不进 `stable_payload()`**。
+    raw_target: str = ""
 
     def __post_init__(self) -> None:
         if self.profile not in PROFILES:
@@ -110,6 +117,15 @@ class ExecutionSpec:
             raise ValueError("env 必须是 None 或 str→str 的 dict（只放增量）")
         if not isinstance(self.passthrough_savefig, bool):
             raise ValueError("passthrough_savefig 必须是布尔值")
+        if not isinstance(self.raw_target, str):
+            raise ValueError("raw_target 必须是字符串")
+        if self.profile == PROFILE_NATIVE:
+            if self.entry is not None:
+                raise ValueError("native profile 没有 entry 概念（恒 None）")
+            if not self.passthrough_savefig:
+                raise ValueError("native profile 的 savefig 必须透传（ADR 0014 §2）")
+            if not self.raw_target:
+                raise ValueError("native profile 必须带 raw_target（sys.argv[0] 的对拍口径）")
 
     # ---------------- 序列化 ----------------
     def to_payload(self) -> dict:
@@ -153,6 +169,7 @@ def spec_from_payload(data: dict) -> ExecutionSpec:
         env=data.get("env"),
         project_root=data.get("project_root", ""),
         passthrough_savefig=bool(data.get("passthrough_savefig", False)),
+        raw_target=data.get("raw_target", "") or "",
     )
 
 
@@ -184,6 +201,95 @@ def safe_spec(
         project_root=str(figures_dir),
         passthrough_savefig=False,
     )
+
+
+def native_spec(
+    raw_target: str,
+    *,
+    interpreter: str,
+    cwd: str,
+    project_root: str,
+    target_kind: str = TARGET_SCRIPT,
+    argv: tuple[str, ...] = (),
+) -> ExecutionSpec:
+    """native 档的**唯一权威构造函数**（ADR 0014 §2 / ADR 0020）。
+
+    native 的语义逐条与 safe 相反，而每一条都是「与用户自己敲那条命令等同」
+    的一部分：
+
+    * `entry=None` —— 没有入口函数这个概念，`python fig.py` 跑的是整个模块；
+    * `argv` —— 用户的**原样**（safe 恒空，因为那是隔离出来的）；
+    * `cwd` —— 用户的原样（safe 是沙盒）；
+    * `env=None` —— **原样继承**。bridge 只会额外注入 token 那一个变量，
+      而且子进程一起来就把它摘掉（`bridge_runner._take_token`）；
+    * `passthrough_savefig=True` —— 照常写文件。
+
+    `raw_target` 是用户敲的那串（argv[0] 的对拍口径）；`target` 由它规范化
+    成项目相对 POSIX 路径（身份，跨机器稳定）。target 落在 `project_root`
+    之外时会在这里抛——描述符与 asset id 的前提就是「项目相对」。
+    """
+    if target_kind == TARGET_MODULE:
+        target = raw_target
+    else:
+        target = os.path.relpath(os.path.abspath(raw_target), os.path.abspath(project_root))
+    return ExecutionSpec(
+        profile=PROFILE_NATIVE,
+        interpreter=interpreter,
+        target_kind=target_kind,
+        target=target,
+        entry=None,
+        argv=tuple(argv),
+        cwd=cwd,
+        env=None,
+        project_root=project_root,
+        passthrough_savefig=True,
+        raw_target=raw_target,
+    )
+
+
+def bridge_argv(
+    spec: ExecutionSpec,
+    *,
+    runner_py: str | os.PathLike,
+    out_dir: str | os.PathLike,
+    preview_dpi: int = 200,
+    control_host: str = "",
+    control_port: int = 0,
+    report: str = "",
+) -> list[str]:
+    """native bridge 子进程的完整命令行——**唯一出处**（对照 `worker_argv`）。
+
+    形状：
+
+        <用户的解释器> <runner.py> <bridge 参数…> -- <用户的 argv…>
+
+    `--` 之后是用户脚本自己的参数，runner 一个字都不解释。**解释器不加任何
+    标志**（没有 `-B`、没有 `-S`、没有 `-I`）：那是用户环境的地盘，加一个
+    标志就不是「与你自己敲那条命令等同」了。
+    """
+    if spec.profile != PROFILE_NATIVE:
+        raise ValueError("bridge_argv 只服务 native profile（safe 走 worker_argv）")
+    out = [
+        spec.interpreter,
+        str(runner_py),
+        "--target-kind",
+        spec.target_kind,
+        "--target",
+        spec.raw_target,
+        "--out-dir",
+        str(out_dir),
+        "--preview-dpi",
+        str(int(preview_dpi)),
+        "--project-root",
+        spec.project_root,
+    ]
+    if control_port:
+        out += ["--control-host", control_host or "127.0.0.1", "--control-port", str(control_port)]
+    if report:
+        out += ["--report", report]
+    out.append("--")
+    out.extend(spec.argv)
+    return out
 
 
 def worker_argv(
