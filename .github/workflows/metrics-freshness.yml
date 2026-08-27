@@ -1,0 +1,49 @@
+name: Metrics freshness
+
+# 发行量采集**有没有在跑**。和 telemetry-metrics.yml 问的不是同一件事：
+# 那边验「这次采集对不对」，这边验「到底有没有这次采集」。
+#
+# 为什么需要单独一道：telemetry-metrics.yml 头部承诺「丢数据必须有人看见，
+# 所以采集器失败就让这个 workflow 红」——那条保证只覆盖采集器**执行之后
+# 失败**。run 从没被创建时不产生任何红灯，只产生沉默。
+#
+# 2026-08-27 这个洞真的被踩到了：cron 槽被 GitHub 整个丢弃（不是排队、
+# 不是取消，是根本没有 run 记录），没有任何信号。
+#
+# **这道门禁自己也是 cron，所以不能只靠 cron。** 同时挂 push: main：
+# 事件触发不会被 schedule 的 best-effort 丢弃，仓库只要还在合东西，这道
+# 检查就还在跑。两条腿同时哑掉才会重新变回沉默。
+
+on:
+  schedule:
+    # 12:47 UTC。采集器名义 03:17、实测常态落在 04:00 前后，这里刻意隔开
+    # 大半天：既不与它抢同一个调度窗口，又能在当天就发现今天没跑。
+    - cron: "47 12 * * *"
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# 只读。这个工作流不写仓库、不上报、不碰任何密钥。
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  # **刻意不叫 distribution-metrics。** 和被观测者共用一个组，会让这道
+  # 检查在采集器运行时排队甚至被挤掉——观测者与被观测者绝不能共享命运。
+  group: metrics-freshness-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  freshness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with: { python-version: "3.13" }
+      - name: 采集是否还在跑
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python3 scripts/check_metrics_freshness.py

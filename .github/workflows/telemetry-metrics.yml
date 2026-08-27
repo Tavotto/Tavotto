@@ -8,6 +8,11 @@ name: Distribution metrics
 #   * 这一条：公开数据，从 CI 上发，不对应任何一个人；**丢数据必须有人看见**，
 #     所以采集器失败就让这个 workflow 红。
 #
+# 上面那条保证只覆盖采集器**执行之后失败**。run 从没被创建时（GitHub 的
+# schedule 会整槽丢弃，2026-08-27 实际发生过）不产生任何红灯，只产生沉默。
+# 补这个洞的是 metrics-freshness.yml——它盯的是「有没有跑」，不是「跑得
+# 对不对」。改这里的 cron 时记得看那边：两道 cron 不能挤进同一个调度窗口。
+#
 # GitHub 的 download_count 是**累计计数器**，采集器发的是快照，区间下载量由
 # 看板在两个快照之间做差（见 docs/analytics/yc-metrics.md）。因此重跑这个
 # workflow 不会让数字翻倍——同一天同一个资产的 snapshot_key 是一样的。
