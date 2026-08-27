@@ -2148,6 +2148,7 @@ export default interface Resources {
     "unlock": "解锁",
     "unsupported": {
       "multi_host_colorbar": "这条色条横跨 {{hosts}} 个子图，方向切换在当前版本不支持",
+      "partial": "（{{count}}/{{total}} 个元素）",
       "unknown": "当前版本不支持在这里修改这一项"
     },
     "versionHistory": {

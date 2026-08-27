@@ -20,7 +20,8 @@ import type { Manifest, ManifestElement } from '@/lib/api'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInspectorPrefs } from '@/store/inspectorPrefs'
-import { renderKeyOf, useRenderStore } from '@/store/renderStore'
+import { useRenderStore } from '@/store/renderStore'
+import { seedExactRender } from '@/test/renderFixtures'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { emptyProject, type PanelObject } from '@/types/document'
@@ -38,8 +39,11 @@ declare global {
 }
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
-const cbarEl = (unsupported: ManifestElement['unsupported_props']): ManifestElement => ({
-  gid: 'axes_1.colorbar',
+const cbarEl = (
+  unsupported: ManifestElement['unsupported_props'],
+  gid = 'axes_1.colorbar',
+): ManifestElement => ({
+  gid,
   role: 'colorbar',
   label: '色条',
   bbox: [0.85, 0.1, 0.04, 0.8],
@@ -48,12 +52,12 @@ const cbarEl = (unsupported: ManifestElement['unsupported_props']): ManifestElem
   unsupported_props: unsupported,
 })
 
-const manifestOf = (el: ManifestElement): Manifest => ({
+const manifestOf = (els: ManifestElement[]): Manifest => ({
   stem: 'A',
   size_mm: [100, 80],
   elements: [
     { gid: 'figure', role: 'figure', label: '整张图', bbox: [0, 0, 1, 1], editable: [], draggable: false },
-    el,
+    ...els,
   ],
 })
 
@@ -76,18 +80,19 @@ function Harness() {
   )
 }
 
-async function mount(el: ManifestElement) {
+async function mount(els: ManifestElement | ManifestElement[]) {
+  const list = Array.isArray(els) ? els : [els]
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_unsupported')
   useDocumentStore.getState().commit(literal('加面板'), (d) => {
     d.objects.push(panelOf())
   })
-  const key = renderKeyOf(panelOf())
-  useRenderStore.getState().patch(key, {
-    fileId: 'A.pdf', manifest: manifestOf(el), svg: '<svg/>', rev: 1,
-    status: 'ready', lastPatches: '[]',
-  })
-  useRenderStore.setState((s) => ({ latest: { ...s.latest, 'A.pdf': key } }))
-  useUiStore.setState({ elementPanelId: 'p1', selectedGids: [el.gid] })
+  // **走 seedExactRender**，不手写 renderStore 条目：手写出来的是真实渲染永远
+  // 不会有的形状（有 manifest、没有 lastPatches），而 `exactPanelRender` 正是拿
+  // lastPatches 判「这一版确实画出来过」——用例会在权威未就位的分支上绿，
+  // 而真正的 render-key / 权威接线坏掉时它照样绿（web/AGENTS.md 的既有纪律，
+  // Codex 在 PR #160 上按它指出，成立）。
+  seedExactRender(panelOf(), manifestOf(list))
+  useUiStore.setState({ elementPanelId: 'p1', selectedGids: list.map((e) => e.gid) })
   host = document.createElement('div')
   document.body.appendChild(host)
   root = createRoot(host)
@@ -135,6 +140,19 @@ describe('unsupported_props 的界面出口', () => {
     const row = host.querySelector('[data-unsupported-prop="orientation"]')!
     expect(row.textContent).not.toContain('some_future_reason_code')
     expect(row.textContent?.trim().length).toBeGreaterThan(4)
+  })
+
+  it('多选同类元素：批量分支同样把原因说出来（不是凭空消失）', async () => {
+    // 多选走的是批量分支，单元素表单整个让位。那条路上不渲染理由的话，#76 的
+    // 现场会原样复发——而多宿主色条恰恰是最容易被一起选中的那类元素。
+    await mount([
+      cbarEl([{ prop: 'orientation', reason: 'multi_host_colorbar', detail: { hosts: 2 } }]),
+      cbarEl(undefined, 'axes_2.colorbar'),
+    ])
+    const row = host.querySelector('[data-unsupported-prop="orientation"]')
+    expect(row, '多选时原因整个不见了——批量分支复发了 #76').toBeTruthy()
+    // 只有一个元素受影响：要说清是 1/2，别让用户以为两个都不能改
+    expect(row!.textContent).toContain('1/2')
   })
 
   it('没有 unsupported_props 时什么都不多出来', async () => {
