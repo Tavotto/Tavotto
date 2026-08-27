@@ -29,6 +29,7 @@ import sys
 from pathlib import Path
 
 from . import brand
+from .runtime import CREATE_NO_WINDOW
 
 #: 每一步的稳定 code。message 随时可改，code 不许改（调用方按它分诊）。
 ERR_CODEX_MISSING = "codex_cli_missing"
@@ -84,7 +85,8 @@ def _run(argv: list[str], timeout: int = _TIMEOUT) -> tuple[int, str]:
     """跑一条命令，回 (退出码, 合并输出)。绝不抛——失败也是一种结论。"""
     try:
         p = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8",
-                           errors="replace", timeout=timeout)
+                           errors="replace", timeout=timeout,
+                           creationflags=CREATE_NO_WINDOW)
     except FileNotFoundError:
         return 127, f"找不到可执行文件：{argv[0]}"
     except subprocess.TimeoutExpired:
