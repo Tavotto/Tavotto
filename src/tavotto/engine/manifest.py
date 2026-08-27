@@ -1942,10 +1942,10 @@ def build_manifest(state: FigState, stem: str) -> dict:
             # 以为是漏了或是坏了。这里给的是稳定 code，供界面按 code 翻译成
             # 「这条色条横跨多个子图，方向切换在 1.0 里不支持」。
             #
-            # **前端目前还没有渲染它**（issue #76）：`ManifestElement` 没声明
-            # 这个字段，inspector 只按 `editable` 建 UI。所以此刻这条 reason
-            # 只到 manifest、没到眼睛。写在这里而不是含糊过去，是因为
-            # 隔壁那份文档一度写着「界面才说得出」——而那句话当时不成立。
+            # 前端的出口是 `inspector/UnsupportedProps.tsx`（issue #76 已修）：
+            # 属性名置灰 + 一句按 code 翻出来的原因。这里给 code 不给文案，
+            # 措辞归界面——引擎发英文 code、界面出中英文，是 ADR 0008 之后
+            # 用户可见文案的统一形态。
             # 可选字段：旧前端不认识它会原样忽略，写回自检只比 gid 集合与几何。
             hosts = colorbar_host_count(artist.cb)
             if hosts > 1:

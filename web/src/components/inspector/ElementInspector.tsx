@@ -109,6 +109,7 @@ import { useInspectorPrefs } from '@/store/inspectorPrefs'
 import { TextActionRow } from './TextActions'
 import { hasTextStyleBar, TextStyleBar, TEXT_BAR_PROPS } from './TextStyleBar'
 import { HistoryPanel } from './HistoryPanel'
+import { UnsupportedProps } from './UnsupportedProps'
 import { UpdateSourceButton } from './UpdateSourceButton'
 import { SyncOverridesButton } from './SyncOverridesButton'
 
@@ -316,7 +317,12 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
             {el(render?.status === 'rendering' ? 'building' : 'waiting')}
           </p>
         ) : !element?.editable.length || !buckets ? (
-          <p className="text-xs text-ink-3">{el('clickToEdit')}</p>
+          <>
+            <p className="text-xs text-ink-3">{el('clickToEdit')}</p>
+            {/* 一条能改的都没有、但有说得出原因的不可改项时，原因仍然要出现
+                ——否则这个元素在界面上就只剩一句「点一下开始编辑」 */}
+            {element && <UnsupportedProps element={element} />}
+          </>
         ) : (
           <FieldList
             panel={panel}
@@ -606,6 +612,8 @@ function FieldList({
         </div>
       )}
       {primaryExtra && <div className="mt-2">{primaryExtra}</div>}
+      {/* guard 挡掉的能力要说得出为什么——否则开关就是「消失了」（#76） */}
+      <UnsupportedProps element={element} />
       {buckets.more.length > 0 && (
         <div className="mt-1.5 border-t border-border pt-1.5">
           <button
