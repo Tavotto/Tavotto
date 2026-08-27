@@ -147,6 +147,19 @@ PYTHONPATH=src .venv/bin/python scripts/ci/compat_matrix.py --smoke      # 通�
 | 自动接手仍是同步阻塞（体检最长 60s×候选数，命中第一个就停） | 低 | SSE 进度流条目沿用 |
 | 体检跑在 `-I` 下，worker 只在 bundled 档摘敌意环境变量（`PYTHONHOME`/`PYTHONPATH`）——从终端带着 conda 变量启动时体检会过而 worker 可能起不来 | 中（**不是本轮引入**：`configured`/`system` 一直如此） | 要同时动两条控制面与 `spec.env` 的增量模型（它表达不了「删掉某个变量」），独立一轮 |
 | 真机（WebView2/WKWebView 壳内）尚未走过这条路 | 中 | 见「待办」 |
+| 全量套件挂过**一次**（`test_invariants_engine` 的干净重放，父子进程双双 idle 到 19 分钟）；此后连跑两轮不复现 | 未定性 | 见下 |
+
+### 那次挂死的处置
+
+不复现，但**不当成噪音**。当时机器上同时在跑 CompatBench smoke 与
+`pnpm build`（两者都起自己的进程），worker 握手/build 撞上超时窗口是能解释
+的；同一轮还暴露出本文件的 `project` fixture 漏收 `open_project()` 起的
+watcher——而那些项目目录里各建着一个**真 venv（几千个文件）**，留着不收会
+让整个 pytest 进程持续监视一堆已删除的临时目录，正好加剧争用。
+
+已做的两件事：收 watcher（`77f5ef0`）、后续两轮全量都带
+`-o faulthandler_timeout=240` 跑（真挂会打出栈，不会再只看到「卡住」）。
+**再遇到先拿栈，别直接归因于机器忙**——「偶发」多半是断言与缺陷在赛跑。
 
 ## 不得被下一 Session 破坏的约束
 
