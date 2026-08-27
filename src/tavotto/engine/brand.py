@@ -30,6 +30,11 @@ RELEASES_URL = f"{REPO_URL}/releases"
 CODEX_MARKETPLACE = f"{REPO_OWNER}/{REPO_NAME}"
 #: 稀疏检出：只取插件本体与它的注册目录，不把整个仓库拉到用户机器上
 CODEX_SPARSE_PATHS = (".agents/plugins", "codex-plugin")
+#: **配置后的 marketplace 名**——与源 `Tavotto/Tavotto` 不是一回事：
+#: `codex plugin marketplace remove` 收的是这个名字，给它 `owner/repo` 会被拒
+#: （`/` 不是合法的 marketplace 名）。唯一出处是 `.agents/plugins/marketplace.json`
+#: 的 `name`，看护在 `tests/test_codex_install_cli.py`。
+CODEX_MARKETPLACE_NAME = "tavotto"
 #: `codex plugin add` 的目标（插件名@marketplace 名）
 CODEX_PLUGIN_REF = "tavotto@tavotto"
 #: 插件在 Codex 那边的名字（`codex plugin list` 里的那一列）

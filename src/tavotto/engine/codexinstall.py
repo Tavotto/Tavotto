@@ -112,6 +112,29 @@ def installed_plugin_dir() -> Path | None:
     return None
 
 
+def plugin_python() -> str | None:
+    """跑插件脚本（`--health` / `--provision`）该用哪个解释器。
+
+    **不能无脑用 `sys.executable`。** 桌面版的 `tavotto-cli` 是 PyInstaller 冻结出来
+    的可执行文件：把它当 python 使（`<tavotto-cli> server.py --health`）只会被
+    `packaging/entry.py` 当成 Tavotto 的命令行参数解析掉，插件脚本根本不会跑——
+    插件自己的 `server.py` 也明写着「冻结的 CLI 不能当解释器」。
+
+    冻结形态下退回 PATH 上的真 python；`TAVOTTO_MCP_PYTHON` 优先（那是插件自己
+    认的覆盖变量，用户指过就该听他的）。找不到就回 None——**说清楚比装作能跑好**。
+    """
+    override = os.environ.get("TAVOTTO_MCP_PYTHON")
+    if override and Path(override).is_file():
+        return override
+    if not getattr(sys, "frozen", False):
+        return sys.executable
+    for name in ("python3", "python"):
+        hit = shutil.which(name)
+        if hit:
+            return hit
+    return None
+
+
 def engine_importable() -> bool:
     """这个解释器能不能 `import tavotto.engine`——pip/pipx 形态天然满足。"""
     try:
@@ -132,9 +155,45 @@ def _step(name: str, *, ok: bool, skipped: bool = False, detail: str = "",
     return out
 
 
-def _marketplace_step(codex: str, *, apply: bool) -> dict:
+def _marketplace_configured(codex: str) -> bool:
+    """`codex plugin marketplace list` 的 MARKETPLACE 列里有没有我们这条。
+
+    按**整列相等**判，不是子串：ROOT 那一列是路径，里面出现 `tavotto` 太容易了
+    （用户的目录名、缓存路径都可能带上它），子串匹配会把「没登记」判成「已登记」，
+    然后 `plugin add` 找不到源而失败——症状离原因很远。
+    """
     rc, out = _run([codex, "plugin", "marketplace", "list"])
-    if rc == 0 and brand.CODEX_PLUGIN_NAME in out:
+    if rc != 0:
+        return False
+    for line in out.splitlines():
+        parts = line.split()
+        if parts and parts[0] == brand.CODEX_MARKETPLACE_NAME:
+            return True
+    return False
+
+
+def _plugin_installed(codex: str) -> bool:
+    """`codex plugin list` 里我们这条的 **STATUS 列**是不是「已安装」。
+
+    这里踩过一个坑（Codex 在 PR #169 上指出）：marketplace 加好但插件还没装时，
+    `plugin list` **照样会列出** `tavotto@tavotto`，只是 STATUS 是「not installed」。
+    拿「输出里有没有 tavotto」当判据，全新安装会被判成「已装」而跳过 `plugin add`，
+    后面的 cache 查找与 health 全挂——**主流程反而走不通**。
+    """
+    rc, out = _run([codex, "plugin", "list", "-m", brand.CODEX_MARKETPLACE_NAME])
+    if rc != 0:
+        return False
+    for line in out.splitlines():
+        parts = line.split()
+        if not parts or parts[0] != brand.CODEX_PLUGIN_REF:
+            continue
+        status = line[len(parts[0]):].strip().lower()
+        return status.startswith("installed")
+    return False
+
+
+def _marketplace_step(codex: str, *, apply: bool) -> dict:
+    if _marketplace_configured(codex):
         return _step("marketplace", ok=True, skipped=True, detail="已登记")
     if not apply:
         return _step("marketplace", ok=False, detail="未登记", code=ERR_MARKETPLACE)
@@ -148,8 +207,7 @@ def _marketplace_step(codex: str, *, apply: bool) -> dict:
 
 
 def _plugin_step(codex: str, *, apply: bool) -> dict:
-    rc, out = _run([codex, "plugin", "list"])
-    if rc == 0 and brand.CODEX_PLUGIN_NAME in out:
+    if _plugin_installed(codex):
         # **健康状态下不重装。** 升级归 `codex plugin marketplace upgrade`，
         # 由用户自己决定什么时候做；这条命令的职责是「缺什么补什么」。
         return _step("plugin", ok=True, skipped=True, detail="已安装")
@@ -161,8 +219,16 @@ def _plugin_step(codex: str, *, apply: bool) -> dict:
     return _step("plugin", ok=True, detail="已安装")
 
 
-def _engine_step(plugin_dir: Path | None, *, apply: bool) -> dict:
-    if engine_importable():
+def _engine_step(plugin_dir: Path | None, py: str | None, *, apply: bool) -> dict:
+    if py is None:
+        return _step("engine", ok=False, code=ERR_PROVISION,
+                     detail="PATH 上找不到真的 python3/python。桌面版的 tavotto-cli 是"
+                            "冻结产物，不能当解释器用；装一个 Python 或用 "
+                            "TAVOTTO_MCP_PYTHON 指一个。")
+    # **冻结形态下 `engine_importable()` 答的是错的问题**：冻结包自己当然 import 得到
+    # 引擎，但插件的 MCP server 用的是另一个解释器。那时候该问的是插件自己的
+    # `--health`——只有它知道 server 会挑哪个环境（Codex 在 PR #169 上指出）。
+    if not getattr(sys, "frozen", False) and engine_importable():
         return _step("engine", ok=True, skipped=True,
                      detail="当前解释器已能 import tavotto.engine")
     if plugin_dir is None:
@@ -171,20 +237,26 @@ def _engine_step(plugin_dir: Path | None, *, apply: bool) -> dict:
     server = plugin_dir / "mcp" / "server.py"
     if not server.is_file():
         return _step("engine", ok=False, detail=f"插件里没有 {server}", code=ERR_PROVISION)
+    rc, _out = _run([py, str(server), "--health"], timeout=90)
+    if rc == 0:
+        return _step("engine", ok=True, skipped=True, detail="插件已能解析到引擎")
     if not apply:
         return _step("engine", ok=False, detail="需要 provision", code=ERR_PROVISION)
     # **复用插件自己的 --provision**，不抄第二份：那份实现知道该建在哪、装什么版本
-    rc, out = _run([sys.executable, str(server), "--provision"])
+    rc, out = _run([py, str(server), "--provision"])
     if rc != 0:
         return _step("engine", ok=False, detail=out[-400:], code=ERR_PROVISION)
     return _step("engine", ok=True, detail="已准备匹配版本的引擎")
 
 
-def _health_step(plugin_dir: Path | None) -> dict:
+def _health_step(plugin_dir: Path | None, py: str | None) -> dict:
     if plugin_dir is None:
         return _step("health", ok=False, detail="找不到已装的插件", code=ERR_HEALTH)
+    if py is None:
+        return _step("health", ok=False, code=ERR_HEALTH,
+                     detail="PATH 上找不到真的 python3/python，跑不了插件的体检")
     server = plugin_dir / "mcp" / "server.py"
-    rc, out = _run([sys.executable, str(server), "--health"], timeout=90)
+    rc, out = _run([py, str(server), "--health"], timeout=90)
     if rc != 0:
         return _step("health", ok=False, detail=out[-400:], code=ERR_HEALTH)
     return _step("health", ok=True, detail=out[-400:])
@@ -215,10 +287,11 @@ def _run_pipeline(*, apply: bool) -> tuple[bool, list[dict]]:
     if not steps[-1]["ok"]:
         return False, steps
     plugin_dir = installed_plugin_dir()
-    steps.append(_engine_step(plugin_dir, apply=apply))
+    py = plugin_python()
+    steps.append(_engine_step(plugin_dir, py, apply=apply))
     if not steps[-1]["ok"]:
         return False, steps
-    steps.append(_health_step(plugin_dir))
+    steps.append(_health_step(plugin_dir, py))
     return steps[-1]["ok"], steps
 
 
@@ -228,17 +301,17 @@ def uninstall_steps() -> tuple[bool, list[dict]]:
     codex = _codex_or_fail(steps)
     if codex is None:
         return False, steps
-    rc, out = _run([codex, "plugin", "list"])
-    if rc == 0 and brand.CODEX_PLUGIN_NAME in out:
+    if _plugin_installed(codex):
         rc, out = _run([codex, "plugin", "remove", brand.CODEX_PLUGIN_REF])
         steps.append(_step("plugin", ok=rc == 0, detail=out[-400:] or "已移除",
                            code="" if rc == 0 else ERR_UNINSTALL))
     else:
         steps.append(_step("plugin", ok=True, skipped=True, detail="本来就没装"))
-    rc, out = _run([codex, "plugin", "marketplace", "list"])
-    if rc == 0 and brand.CODEX_PLUGIN_NAME in out:
+    if _marketplace_configured(codex):
+        # **收的是配置后的 marketplace 名，不是源。** 给 `Tavotto/Tavotto` 会被
+        # 直接拒（`/` 不是合法名字），于是插件删掉了、marketplace 却永远留着。
         rc, out = _run([codex, "plugin", "marketplace", "remove",
-                        brand.CODEX_MARKETPLACE])
+                        brand.CODEX_MARKETPLACE_NAME])
         steps.append(_step("marketplace", ok=rc == 0, detail=out[-400:] or "已移除",
                            code="" if rc == 0 else ERR_UNINSTALL))
     else:

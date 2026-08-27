@@ -44,13 +44,24 @@ d = load()
 if os.environ.get("FAKE_CODEX_FAIL") == " ".join(argv[:3]):
     print("boom", file=sys.stderr); sys.exit(3)
 if argv[:3] == ["plugin", "marketplace", "list"]:
-    print("tavotto" if d["marketplace"] else "(empty)")
+    # 真 CLI 的形状：MARKETPLACE / ROOT 两列。ROOT 里带 tavotto 是常事
+    # （用户目录、缓存路径），子串判据会在这里翻车
+    print("MARKETPLACE  ROOT")
+    print("personal     /home/u/tavotto-notes")
+    if d["marketplace"]:
+        print("tavotto      /home/u/.codex/.tmp/marketplaces/tavotto")
 elif argv[:3] == ["plugin", "marketplace", "add"]:
     d["marketplace"] = True; save(d); print("added")
 elif argv[:3] == ["plugin", "marketplace", "remove"]:
+    if "/" in argv[3]:
+        print("invalid marketplace name: " + argv[3], file=sys.stderr); sys.exit(2)
     d["marketplace"] = False; save(d); print("removed")
 elif argv[:2] == ["plugin", "list"]:
-    print("tavotto  enabled" if d["plugin"] else "(none)")
+    # **marketplace 加好之后插件照样会被列出来**，只是 STATUS 是 not installed
+    print("PLUGIN           STATUS              VERSION  PATH")
+    if d["marketplace"]:
+        st = "installed, enabled" if d["plugin"] else "not installed"
+        print("tavotto@tavotto  " + st + "  0.12.0  /tmp/p")
 elif argv[:2] == ["plugin", "add"]:
     d["plugin"] = True; save(d); print("added")
 elif argv[:2] == ["plugin", "remove"]:
@@ -129,6 +140,73 @@ def test_readme_and_cli_use_the_same_command():
     add_lines = [ln for ln in lines if ln.startswith("codex plugin add")]
     assert add_lines == [expected_add], (
         f"README 与 brand.py 漂开了：\nREADME  {add_lines}\nbrand   [{expected_add}]")
+
+
+def test_marketplace_name_matches_the_manifest():
+    """`marketplace remove` 收的是**配置后的名字**，不是 `owner/repo`。
+
+    给它源会被直接拒（`/` 不是合法名），症状是「插件删掉了、marketplace 永远留着」。
+    名字的唯一出处是 `.agents/plugins/marketplace.json` 的 `name`。
+    """
+    sys.path.insert(0, str(SRC))
+    from tavotto.engine import brand
+
+    manifest = json.loads(
+        (ROOT / ".agents" / "plugins" / "marketplace.json").read_text(encoding="utf-8"))
+    assert brand.CODEX_MARKETPLACE_NAME == manifest["name"]
+    assert "/" not in brand.CODEX_MARKETPLACE_NAME
+    assert brand.CODEX_PLUGIN_REF == f"{manifest['plugins'][0]['name']}@{manifest['name']}"
+
+
+def test_a_listed_but_uninstalled_plugin_is_not_mistaken_for_installed(fake_codex):
+    """marketplace 加好、插件还没装时 `plugin list` **照样列出它**（STATUS 是 not
+    installed）。拿「输出里有没有 tavotto」当判据，全新安装会被判成已装而跳过
+    `plugin add`——主流程反而走不通（Codex 在 PR #169 上指出，真 CLI 复核属实）。"""
+    # 先只把 marketplace 加上，插件仍未装
+    rc, out, _ = _run(["codex", "doctor", "--json"])
+    assert rc == 1
+    assert json.loads(out.strip().splitlines()[-1])["error_code"] == "marketplace_add_failed"
+
+    rc, out, err = _run(["codex", "install", "--json"])
+    assert rc == 0, err
+    steps = {s["step"]: s for s in json.loads(out.strip().splitlines()[-1])["steps"]}
+    assert steps["plugin"]["skipped"] is False, "全新安装被判成「已装」，plugin add 被跳过了"
+    calls = fake_codex["log"].read_text(encoding="utf-8")
+    assert "plugin add" in calls
+
+
+def test_uninstall_passes_the_configured_name_not_the_source(fake_codex):
+    """假 codex 照真 CLI 的行为拒绝带 `/` 的名字——传错就红。"""
+    assert _run(["codex", "install", "--json"])[0] == 0
+    rc, out, err = _run(["codex", "uninstall", "--json"])
+    assert rc == 0, out + err
+    calls = fake_codex["log"].read_text(encoding="utf-8")
+    assert "marketplace remove tavotto" in calls
+    assert "marketplace remove Tavotto/Tavotto" not in calls
+
+
+def test_frozen_cli_does_not_use_itself_as_the_interpreter(monkeypatch, tmp_path):
+    """桌面版的 `tavotto-cli` 是 PyInstaller 冻结产物，**不能当解释器用**。
+
+    把它当 python 使只会被 `packaging/entry.py` 当成 Tavotto 的命令行参数解析掉，
+    插件脚本根本不会跑（Codex 在 PR #169 上指出）。
+    """
+    sys.path.insert(0, str(SRC))
+    from tavotto.engine import codexinstall
+
+    monkeypatch.delenv("TAVOTTO_MCP_PYTHON", raising=False)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    real = tmp_path / "python3"
+    real.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setattr(codexinstall.shutil, "which",
+                        lambda n: str(real) if n == "python3" else None)
+    assert codexinstall.plugin_python() == str(real)
+
+    # PATH 上一个真 python 都没有：说清楚，别装作能跑
+    monkeypatch.setattr(codexinstall.shutil, "which", lambda _n: None)
+    assert codexinstall.plugin_python() is None
+    monkeypatch.delattr(sys, "frozen", raising=False)
+    assert codexinstall.plugin_python() == sys.executable
 
 
 # --------------------------- 分派与依赖 ---------------------------
