@@ -18,6 +18,7 @@
     python3 scripts/check_metrics_freshness.py            # 走 GitHub API
     python3 scripts/check_metrics_freshness.py --runs-json fixture.json
 """
+
 from __future__ import annotations
 
 import argparse
@@ -37,11 +38,20 @@ WORKFLOW = "telemetry-metrics.yml"
 #: 快照仍然是旧的。名字漂了要当场红，见 tests/test_metrics_freshness.py。
 UPLOAD_STEP = "采集并上报"
 
-#: 采集器名义上每 24 小时一次。阈值必须夹在「正常最坏」与「漏一次」之间：
-#: 正常情况下检查时刻看到的年龄最多约 24 小时（采集漂到很晚 + 检查在它之前），
-#: 漏一次则跳到约 48 小时。30 小时把两者分得干干净净，且容得下实测到的
-#: 常态漂移（约 45 分钟）乃至数小时级的坏窗口。
-MAX_AGE_HOURS = 30
+#: 采集器名义上每 24 小时一次。阈值必须夹在「正常最坏」与「漏一次」之间。
+#:
+#: **这个数字是被实测改过一次的。** 起初定 30 小时，理由是「常态漂移只有
+#: 约 45 分钟」。2026-08-27 实测推翻了它：那天 03:17 的槽被 GitHub 延迟到
+#: 14:10 才投递，**迟了约 11 小时**（同账户 Screener 那天迟 9 小时）。于是
+#: 相邻两次成功上报的间隔可以达到 24 + 11 ≈ 35 小时，30 小时会误报。
+#:
+#:   正常最坏（一次迟到 11 小时）   ≈ 35 小时
+#:   真漏一槽                      ≈ 48 小时
+#:
+#: 40 小时夹在两者之间。代价是发现一次真漏跑最多晚半天——可以接受：这道
+#: 门禁要防的是「连续不跑而无人知晓」，不是把每一次延迟都报成事故。
+#: 误报比漏报更贵：一盏经常无故亮红的灯，很快就没人看了。
+MAX_AGE_HOURS = 40
 
 OK = "OK"
 STALE = "STALE"
@@ -59,43 +69,66 @@ def _parse(ts: str) -> _dt.datetime:
     return _dt.datetime.fromisoformat(ts.replace("Z", "+00:00"))
 
 
-def evaluate(runs: list[dict], now: _dt.datetime,
-             max_age_hours: float = MAX_AGE_HOURS) -> tuple[str, float | None, str]:
+def evaluate(
+    runs: list[dict], now: _dt.datetime, max_age_hours: float = MAX_AGE_HOURS
+) -> tuple[str, float | None, str]:
     """→ (状态, 距上次成功的小时数, 给人看的一句话)。"""
     if not runs:
-        return NO_DATA, None, (
-            f"查不到 {WORKFLOW} 的任何 run。这是**观测无效**，不是「很旧」——"
-            f"先确认仓库（{REPO}）、workflow 文件名与 token 权限。")
-    ok_runs = [r for r in runs if r.get("conclusion") == "success"
-               and isinstance(r.get("updated_at"), str)]
+        return (
+            NO_DATA,
+            None,
+            (
+                f"查不到 {WORKFLOW} 的任何 run。这是**观测无效**，不是「很旧」——"
+                f"先确认仓库（{REPO}）、workflow 文件名与 token 权限。"
+            ),
+        )
+    ok_runs = [
+        r for r in runs if r.get("conclusion") == "success" and isinstance(r.get("updated_at"), str)
+    ]
     if not ok_runs:
         n = len(runs)
-        return NO_SUCCESS, None, (
-            f"{WORKFLOW} 最近 {n} 次 run 里没有一次成功。采集器在跑但没落数据。")
+        return (
+            NO_SUCCESS,
+            None,
+            (f"{WORKFLOW} 最近 {n} 次 run 里没有一次成功。采集器在跑但没落数据。"),
+        )
     # **成功 != 上报。** 演练跑（dry_run=true）会跳过上报那一步却整体成功。
     done = [r for r in ok_runs if r.get("uploaded")]
     if not done:
-        return DRY_RUN_ONLY, None, (
-            f"{WORKFLOW} 最近 {len(ok_runs)} 次成功的 run 全是演练"
-            f"（`{UPLOAD_STEP}` 那一步没执行），一份快照都没落。"
-            f"补跑用：gh workflow run {WORKFLOW} --ref main -f dry_run=false")
+        return (
+            DRY_RUN_ONLY,
+            None,
+            (
+                f"{WORKFLOW} 最近 {len(ok_runs)} 次成功的 run 全是演练"
+                f"（`{UPLOAD_STEP}` 那一步没执行），一份快照都没落。"
+                f"补跑用：gh workflow run {WORKFLOW} --ref main -f dry_run=false"
+            ),
+        )
     newest = max(_parse(r["updated_at"]) for r in done)
     age = (now - newest).total_seconds() / 3600
     stamp = newest.astimezone(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     if age > max_age_hours:
-        return STALE, age, (
-            f"上一次成功采集是 {stamp}，距今 {age:.1f} 小时，超过阈值 "
-            f"{max_age_hours} 小时。GitHub 的 schedule 会整槽丢弃，补跑用："
-            f"gh workflow run {WORKFLOW} --ref main -f dry_run=false")
+        return (
+            STALE,
+            age,
+            (
+                f"上一次成功采集是 {stamp}，距今 {age:.1f} 小时，超过阈值 "
+                f"{max_age_hours} 小时。GitHub 的 schedule 会整槽丢弃，补跑用："
+                f"gh workflow run {WORKFLOW} --ref main -f dry_run=false"
+            ),
+        )
     return OK, age, f"上一次成功采集 {stamp}，距今 {age:.1f} 小时。"
 
 
 def _get(url: str, token: str | None) -> dict:
-    req = urllib.request.Request(url, headers={
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        **({"Authorization": f"Bearer {token}"} if token else {}),
-    })
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            **({"Authorization": f"Bearer {token}"} if token else {}),
+        },
+    )
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             return json.loads(resp.read().decode("utf-8"))
@@ -114,8 +147,9 @@ def did_upload(run_id: int, token: str | None) -> bool:
     演练跑会把它 skip 掉，而 run 整体仍是 success——只看 run 的 conclusion
     分不出这两者。
     """
-    data = _get(f"https://api.github.com/repos/{REPO}/actions/runs/"
-                f"{run_id}/jobs?per_page=20", token)
+    data = _get(
+        f"https://api.github.com/repos/{REPO}/actions/runs/{run_id}/jobs?per_page=20", token
+    )
     for job in data.get("jobs") or []:
         for step in job.get("steps") or []:
             if step.get("name") == UPLOAD_STEP:
@@ -129,12 +163,18 @@ def fetch_runs(token: str | None, per_page: int = 20) -> list[dict]:
     只对成功的 run 多问一次 jobs，且**从新到旧问到第一个上报过的就停**——
     正常情况下这就是一次额外请求。
     """
-    data = _get(f"https://api.github.com/repos/{REPO}/actions/workflows/"
-                f"{WORKFLOW}/runs?per_page={per_page}", token)
+    data = _get(
+        f"https://api.github.com/repos/{REPO}/actions/workflows/"
+        f"{WORKFLOW}/runs?per_page={per_page}",
+        token,
+    )
     runs = data.get("workflow_runs", [])
     settled = False
-    for run in sorted((r for r in runs if r.get("conclusion") == "success"),
-                      key=lambda r: r.get("updated_at") or "", reverse=True):
+    for run in sorted(
+        (r for r in runs if r.get("conclusion") == "success"),
+        key=lambda r: r.get("updated_at") or "",
+        reverse=True,
+    ):
         if settled:
             run["uploaded"] = False
             continue
@@ -144,16 +184,16 @@ def fetch_runs(token: str | None, per_page: int = 20) -> list[dict]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--runs-json", default=None, help="离线 fixture：GitHub runs 响应")
     ap.add_argument("--max-age-hours", type=float, default=MAX_AGE_HOURS)
     ap.add_argument("--now", default=None, help="覆盖当前时刻（ISO8601），供测试用")
     args = ap.parse_args(argv)
 
     if args.runs_json:
-        runs = json.loads(open(args.runs_json, encoding="utf-8").read()).get(
-            "workflow_runs", [])
+        runs = json.loads(open(args.runs_json, encoding="utf-8").read()).get("workflow_runs", [])
     else:
         runs = fetch_runs(os.environ.get("GITHUB_TOKEN"))
     now = _parse(args.now) if args.now else _dt.datetime.now(_dt.timezone.utc)
