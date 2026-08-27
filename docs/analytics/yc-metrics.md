@@ -222,11 +222,37 @@ not in a sentence.
 
 `latest.json` moved `updater` → `update_check`; `codex-plugin.json` moved
 `plugin` → `plugin_manifest`. **Rows already sent are not retroactively
-reclassified.** A query filtering `asset_role = 'plugin'` across the full
-history returns manifest polls before that date and package downloads after it.
-Scope `asset_role` queries to `observed_date >= 2026-08-27`, or filter by
-`asset_id`. Expect "Plugin package downloads" to fall from ~3378 to ~5 at the
-changeover — that is the fix landing, not a collapse in adoption.
+reclassified**, so a reclassified `asset_id` has rows under two different
+`asset_role` values.
+
+**`asset_role` is a label on a row, not part of the asset's identity —
+`asset_id` is.** Filtering rows by `asset_role` and then aggregating *within
+the filtered set* cuts a reclassified asset in half at the changeover, and it
+breaks in both directions:
+
+| Query | Returns | Should be |
+|---|---|---|
+| `asset_role = 'plugin_manifest'`, 30d delta | **3387** — the whole lifetime counter | 5 |
+| `asset_role = 'plugin'`, 30d delta over the changeover | **382** — the manifest's pre-cutover growth | 0 |
+
+The first happens because no pre-cutover row survives the filter, so the
+`else 0` baseline makes the asset's entire cumulative counter look like period
+traffic. **A date filter does not fix this — scoping to
+`observed_date >= 2026-08-27` is precisely what makes the baseline fall back to
+0.**
+
+The rule, which every role-filtered metric in
+[`yc-dashboard.json`](yc-dashboard.json) now carries as `role_from`:
+
+```
+resolve each asset_id's role from its MOST RECENT snapshot
+then aggregate over ALL of that asset_id's rows,
+regardless of the role recorded on the older ones
+```
+
+No historical migration is needed. Expect "Plugin package downloads" to fall
+from ~3378 to ~5 at the changeover — that is the fix landing, not a collapse in
+adoption.
 
 ### GitHub 30-day installer downloads
 

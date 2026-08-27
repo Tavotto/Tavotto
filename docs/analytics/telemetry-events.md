@@ -193,9 +193,11 @@ Folding either back in overstates adoption by orders of magnitude, so
 Downloads, Users, or Installs.
 
 **Rows written before 2026-08-27 carry the old roles** and are not
-retroactively reclassified — see `role_reclassification` in
-[`yc-dashboard.json`](yc-dashboard.json) before writing any `asset_role` query
-that spans that date.
+retroactively reclassified. `asset_role` is a label on a row; the asset's
+identity is `asset_id`. Resolve each `asset_id`'s role from its most recent
+snapshot and aggregate over all of its rows — filtering rows by `asset_role`
+first splits a reclassified asset in two, and a date filter makes it worse, not
+better. See `role_resolution` in [`yc-dashboard.json`](yc-dashboard.json).
 
 ## Deduplication
 
