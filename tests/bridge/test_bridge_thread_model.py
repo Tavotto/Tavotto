@@ -85,6 +85,8 @@ def test_the_session_refuses_to_be_touched_from_another_thread(user_python, tmp_
         env=child_env(),
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=300,
     )
     assert r.returncode == 0, r.stderr

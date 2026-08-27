@@ -286,6 +286,13 @@ class Control:
     def __init__(self, host: str, port: int, token: str):
         self.sock = socket.create_connection((host, port), timeout=30.0)
         self.sock.settimeout(None)  # 屏障里要一直等（用户在编辑，没有超时可言）
+        # 通道**两侧都钉 UTF-8**（父进程那侧同样 `makefile(encoding="utf-8")`）：
+        # Windows 的默认 stdio 编码跟系统区域走（常是 cp936/cp1252），而响应里
+        # ensure_ascii=False——中文标签、µ、⁻¹ 一出现就 UnicodeEncodeError。
+        #
+        # **刻意不 reconfigure 用户的 sys.stdout/stderr**（safe worker 那边会，
+        # 因为协议就跑在它的 stdout 上）。这里协议在独立 socket 上，而用户的
+        # stdio 是他程序的一部分——替他改编码就不是"与你自己敲那条命令等同"了。
         self.rfile = self.sock.makefile("r", encoding="utf-8", newline="\n")
         self._send({HELLO_KEY: 1, "token": token, "pid": os.getpid(), "protocol_version": 1})
         line = self.rfile.readline()

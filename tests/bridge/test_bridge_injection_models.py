@@ -137,6 +137,8 @@ def _run_b(user_python, sc_dir, target, tmp_path, *, flags=(), env_extra=None, c
         env=env,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=300,
     )
     data = json.loads(report.read_text(encoding="utf-8")) if report.exists() else None
@@ -181,6 +183,8 @@ def test_naive_sitecustomize_breaks_homebrew_python(user_python, tmp_path, sc_na
         env=child_env(),
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=60,
     )
     if has_own.returncode != 0 or not has_own.stdout.strip():
@@ -262,6 +266,8 @@ def test_sitecustomize_silently_replaces_the_users_own(user_python, tmp_path, sc
         env=env,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=300,
     )
     assert not ran.exists(), "用例前提：两个 sitecustomize 只有一个会跑"
@@ -342,7 +348,14 @@ def test_bridge_runner_is_immune_to_E(user_python, tmp_path):
         "--",
     ]
     r = subprocess.run(
-        cmd, cwd=str(proj), env=child_env(), capture_output=True, text=True, timeout=300
+        cmd,
+        cwd=str(proj),
+        env=child_env(),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=300,
     )
     assert r.returncode == 0, r.stderr
     assert [f["stem"] for f in json.loads(report.read_text(encoding="utf-8"))["figures"]] == ["fig"]

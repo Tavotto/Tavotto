@@ -62,7 +62,16 @@ def parity(tmp_path, user_python):
         env = child_env({"PROBE_OUT": str(out), "TAVOTTO_PARITY_MARK": "kept"})
         if tag.startswith("direct"):
             cmd = [user_python, *(["-m", target] if kind == "module" else [target]), *argv]
-            r = subprocess.run(cmd, cwd=proj, env=env, capture_output=True, text=True, timeout=120)
+            r = subprocess.run(
+                cmd,
+                cwd=proj,
+                env=env,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=120,
+            )
         else:
             r = run_runner(
                 user_python,

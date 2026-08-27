@@ -287,6 +287,8 @@ def test_the_runner_never_writes_into_the_user_home(user_python, tmp_path, monke
         env=env,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=300,
     )
     assert r.returncode == 0, r.stderr

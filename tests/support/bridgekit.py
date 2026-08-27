@@ -75,6 +75,8 @@ def run_runner(
         env=child_env() if env is None else env,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=timeout,
     )
 

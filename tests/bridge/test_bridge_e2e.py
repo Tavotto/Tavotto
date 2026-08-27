@@ -230,6 +230,8 @@ def test_end_to_end_in_a_freshly_created_venv(tmp_path, bridge_session, monkeypa
         ],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=True,
         env=child_env(),
         timeout=120,
