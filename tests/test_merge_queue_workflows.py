@@ -313,14 +313,24 @@ class TestPythonLint:
 
     def test_pyproject_declares_exactly_one_ruff_constraint(self):
         """workflow 里那段提取逻辑要求 dev extra 里恰好一条 ruff 约束；
-        这里在本地就把那个前提钉住，而不是等 CI 上 SystemExit。"""
-        import tomllib
-        data = tomllib.loads((WF.parents[1] / "pyproject.toml")
-                             .read_text(encoding="utf-8"))
-        dev = data["project"]["optional-dependencies"]["dev"]
-        got = [s for s in dev if s.replace("_", "-").lower().startswith("ruff")]
+        这里在本地就把那个前提钉住，而不是等 CI 上 SystemExit。
+
+        **不用 tomllib 解析**：它是 3.11+ 才进标准库的，而本仓库承诺的下界是
+        3.10（backend-fast 有一条 Linux 3.10 腿，这条用例第一次跑就死在那）。
+        与本模块开头「不用 PyYAML」同一条纪律：解析器不在场时，判据要么整个
+        红、要么被 importorskip 静默跳过——后者正是空门禁。
+        workflow 里那段可以用 tomllib，因为 python-lint 明确钉了 3.13。
+        """
+        text = (WF.parents[1] / "pyproject.toml").read_text(encoding="utf-8")
+
+        m = re.search(r"(?m)^dev = \[(.+?)\]", text, re.S)
+        assert m, "pyproject 里读不出 dev extra 的形状——解析不出预期形状就当场抛"
+        got = re.findall(r'"(ruff[^"]*)"', m.group(1))
         assert len(got) == 1, f"dev extra 里的 ruff 约束应当恰好一条：{got}"
-        assert "ruff" not in " ".join(data["project"]["dependencies"]), \
+
+        m = re.search(r"(?m)^dependencies = \[(.*?)\]", text, re.S)
+        assert m, "pyproject 里读不出运行时 dependencies 的形状"
+        assert "ruff" not in m.group(1), \
             "ruff 混进了运行时依赖——普通用户不该因为装 Tavotto 拿到 lint 工具"
 
     def test_the_job_stays_cheap(self):
