@@ -20,6 +20,7 @@
 判据本身也做过反证（见 PR 描述的 mutation 表）：每一条都手工破坏过一次，
 确认它真的红。
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -57,14 +58,12 @@ def _code(text: str) -> str:
     这条很重要：注释里出现 `pull_request_target` 或 `actions/checkout`（比如
     解释「为什么**不**用它」）不该让安全判据红，而真写在 steps 里必须红。
     """
-    return "\n".join(ln for ln in text.splitlines()
-                     if not ln.lstrip().startswith("#"))
+    return "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
 
 
 def _job(text: str, job_id: str) -> str:
     """按缩进切出一个 job 块；切不出来当场抛（安静的空判据比没有更坏）。"""
-    m = re.search(rf"(?m)^  {re.escape(job_id)}:\n(.*?)(?=^  [\w-]+:|\Z)",
-                  text, re.S)
+    m = re.search(rf"(?m)^  {re.escape(job_id)}:\n(.*?)(?=^  [\w-]+:|\Z)", text, re.S)
     assert m, f"ci.yml 里切不出 job `{job_id}`——缩进形状变了？"
     return m.group(0)
 
@@ -101,16 +100,22 @@ class TestPublicLicence:
         m = re.search(r'(?m)^license\s*=\s*"([^"]+)"', pyproject)
         assert m, "pyproject 里读不出 license"
         assert m.group(1) == LICENCE_ID, (
-            f"pyproject 的 license 是 {m.group(1)}，必须是 {LICENCE_ID}")
+            f"pyproject 的 license 是 {m.group(1)}，必须是 {LICENCE_ID}"
+        )
 
     def test_pyproject_ships_the_licence_file(self):
         pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
         assert re.search(r'(?m)^license-files\s*=\s*\[\s*"LICENSE"\s*\]', pyproject), (
-            "wheel/sdist 必须带上 LICENSE")
+            "wheel/sdist 必须带上 LICENSE"
+        )
 
-    @pytest.mark.parametrize("manifest", [
-        "workerd/Cargo.toml", "src-tauri/Cargo.toml",
-    ])
+    @pytest.mark.parametrize(
+        "manifest",
+        [
+            "workerd/Cargo.toml",
+            "src-tauri/Cargo.toml",
+        ],
+    )
     def test_rust_crates_declare_agpl_only(self, manifest):
         text = (ROOT / manifest).read_text(encoding="utf-8")
         m = re.search(r'(?m)^license\s*=\s*"([^"]+)"', text)
@@ -119,8 +124,7 @@ class TestPublicLicence:
 
     def test_no_second_licence_file_at_root(self):
         """「官方另有商业授权权利」与「公开仓库同时摆两份 LICENSE」不是一回事。"""
-        strays = [p.name for p in ROOT.glob("LICENSE*")
-                  if p.name not in ("LICENSE",)]
+        strays = [p.name for p in ROOT.glob("LICENSE*") if p.name not in ("LICENSE",)]
         assert not strays, f"仓库根出现了第二份许可证文件：{strays}"
 
 
@@ -142,7 +146,8 @@ class TestContributing:
 
     def test_says_contributor_keeps_copyright(self, contributing):
         assert re.search(r"(?i)keep\s+the\s+copyright", contributing), (
-            "CONTRIBUTING 必须明说贡献者保留著作权——这是本模型的核心承诺")
+            "CONTRIBUTING 必须明说贡献者保留著作权——这是本模型的核心承诺"
+        )
 
     def test_states_the_community_licence(self, contributing):
         assert LICENCE_ID in contributing
@@ -151,18 +156,21 @@ class TestContributing:
         """DCO 证明来源，不是著作权授权。把它当 CLA 用是这轮最要防的误解。"""
         bad = re.search(
             r"(?i)DCO[^.\n]{0,80}(replaces?|instead of|substitute for|is a|"
-            r"serves? as)[^.\n]{0,40}CLA", contributing)
+            r"serves? as)[^.\n]{0,40}CLA",
+            contributing,
+        )
         assert not bad, f"CONTRIBUTING 把 DCO 说成了 CLA 的替代：{bad.group(0)!r}"
 
     def test_requires_cla_for_pull_requests_not_issues(self, contributing):
         assert re.search(r"(?is)issue.{0,200}\|\s*\*\*No\*\*", contributing), (
-            "CONTRIBUTING 应说明 issue / 讨论不要求 CLA")
+            "CONTRIBUTING 应说明 issue / 讨论不要求 CLA"
+        )
         assert re.search(r"(?is)pull request.{0,200}\|\s*\*\*Yes\*\*", contributing), (
-            "CONTRIBUTING 应说明 PR 一律要求 CLA")
+            "CONTRIBUTING 应说明 PR 一律要求 CLA"
+        )
 
     def test_points_employer_owned_work_at_corporate_cla(self, contributing):
-        assert re.search(r"(?i)employer", contributing), (
-            "CONTRIBUTING 必须处理「成果归雇主」的情形")
+        assert re.search(r"(?i)employer", contributing), "CONTRIBUTING 必须处理「成果归雇主」的情形"
 
 
 # ═════════════════════════════════════════════ 3. README 不变式（中英同步）
@@ -193,13 +201,21 @@ class TestTrademark:
         text = (ROOT / "TRADEMARKS.md").read_text(encoding="utf-8")
         for topic in (r"(?i)fork", r"(?i)logo", r"(?i)not a registered trademark"):
             assert re.search(topic, text), f"TRADEMARKS.md 缺少 {topic} 这一节"
-        assert re.search(r"(?i)licence.{0,40}not.{0,40}trademark|"
-                         r"does not cover trademarks", text), (
-            "TRADEMARKS.md 必须讲清「著作权许可 ≠ 商标许可」")
+        assert re.search(
+            r"(?i)licence.{0,40}not.{0,40}trademark|"
+            r"does not cover trademarks",
+            text,
+        ), "TRADEMARKS.md 必须讲清「著作权许可 ≠ 商标许可」"
 
-    @pytest.mark.parametrize("name", [
-        "README.md", "README.zh-CN.md", "TRADEMARKS.md", "CONTRIBUTING.md",
-    ])
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "README.md",
+            "README.zh-CN.md",
+            "TRADEMARKS.md",
+            "CONTRIBUTING.md",
+        ],
+    )
     def test_no_registered_symbol(self, name):
         """未注册就用 ® 是在主张一个不存在的注册。"""
         if name in self.REGISTERED_MARK_ALLOWED:
@@ -215,22 +231,23 @@ class TestTrademark:
             text = (ROOT / name).read_text(encoding="utf-8")
             assert "Tavotto™" in text
             assert re.search(r"(?i)unregistered|未注册", text), (
-                f"{name} 必须说明 Tavotto 是未注册商标")
+                f"{name} 必须说明 Tavotto 是未注册商标"
+            )
 
 
 # ═════════════════════════════════════════════ 5. CLA workflow 契约
 class TestClaWorkflowContract:
     def test_job_exists_with_a_pinned_name(self, cla_job):
         assert f"name: {CLA_JOB_NAME}" in cla_job, (
-            f"CLA cla_job 的 name 必须固定为 `{CLA_JOB_NAME}`")
+            f"CLA cla_job 的 name 必须固定为 `{CLA_JOB_NAME}`"
+        )
 
     def test_runs_on_pull_request(self, cla_job):
         """PR 路径必须执行——不跑的门禁是全绿的门禁。"""
         code = _code(cla_job)
         m = re.search(r"(?m)^\s+if:\s*(.+)$", code)
         assert m, "CLA cla_job 读不出 if 条件"
-        assert "pull_request" in m.group(1), (
-            "CLA cla_job 必须在 pull_request 上跑")
+        assert "pull_request" in m.group(1), "CLA cla_job 必须在 pull_request 上跑"
 
     def test_runs_on_merge_group_too(self, cla_job):
         """**这条是仓库能不能合并的开关。**
@@ -241,7 +258,8 @@ class TestClaWorkflowContract:
         code = _code(cla_job)
         m = re.search(r"(?m)^\s+if:\s*(.+)$", code)
         assert m and "merge_group" in m.group(1), (
-            "CLA cla_job 必须在 merge_group 上也跑——被跳过会把 CI fast gate 卡死")
+            "CLA cla_job 必须在 merge_group 上也跑——被跳过会把 CI fast gate 卡死"
+        )
 
     def test_feeds_the_fast_gate_without_a_new_required_context(self):
         """接进既有 Gate 的 needs + --required，**不新增第四个 required context**。"""
@@ -254,7 +272,8 @@ class TestClaWorkflowContract:
         assert CLA_JOB in needs_set, f"`{CLA_JOB}` 不在 fast gate 的 needs 里"
         assert CLA_JOB in req_set, f"`{CLA_JOB}` 不在 fast gate 的 --required 里"
         assert needs_set == req_set, (
-            f"fast gate 的 needs 与 --required 漂开了：{needs_set ^ req_set}")
+            f"fast gate 的 needs 与 --required 漂开了：{needs_set ^ req_set}"
+        )
 
     def test_gate_script_and_policy_exist(self):
         for f in (ROOT / "scripts" / "ci" / "cla_gate.py", POLICY_PATH):
@@ -267,36 +286,42 @@ class TestClaWorkflowSecurity:
         """privileged 触发器会带来写 token 与 secret；这个 cla_job 不需要它们。"""
         assert "pull_request_target" not in _code(cla_job), (
             "CLA cla_job 不许用 pull_request_target——它不需要写权限，"
-            "用了就把整类 fork PR 提权风险请了进来")
+            "用了就把整类 fork PR 提权风险请了进来"
+        )
 
     def test_workflow_is_not_triggered_by_pull_request_target(self):
         header = CI.split("jobs:", 1)[0]
-        assert "pull_request_target" not in _code(header), (
-            "ci.yml 顶层不许监听 pull_request_target")
+        assert "pull_request_target" not in _code(header), "ci.yml 顶层不许监听 pull_request_target"
 
     def test_does_not_checkout_pr_code(self, cla_job):
         """判定的输入全部取自默认分支；被审的树不能参与判定自己。"""
         assert "actions/checkout" not in _code(cla_job), (
-            "CLA cla_job 不许 checkout——判定器/政策/签署记录全部取自默认分支")
+            "CLA cla_job 不许 checkout——判定器/政策/签署记录全部取自默认分支"
+        )
 
     def test_does_not_execute_anything_from_the_pr(self, cla_job):
         code = _code(cla_job)
         # 判定器必须来自默认分支拉下来的可信副本（$TRUSTED），
         # 绝不是 `python scripts/ci/cla_gate.py` 这种相对本次 checkout 的路径。
         assert re.search(r"python3\s+-I\s+\"\$TRUSTED/scripts/ci/cla_gate\.py\"", code), (
-            "判定器必须从默认分支取下来的 $TRUSTED 副本执行，且带 -I 隔离")
+            "判定器必须从默认分支取下来的 $TRUSTED 副本执行，且带 -I 隔离"
+        )
         assert not re.search(r"(?m)^\s+run:.*\bpython3?\s+scripts/", code), (
-            "CLA cla_job 不许执行本次 revision 里的脚本")
+            "CLA cla_job 不许执行本次 revision 里的脚本"
+        )
 
     def test_trusted_inputs_come_from_the_default_branch(self, cla_job):
         code = _code(cla_job)
-        assert "default_branch" in code, (
-            "可信输入必须显式取自 default_branch")
-        for path in ("scripts/ci/cla_gate.py", ".github/cla-policy.json",
-                     "docs/legal/CLA_INDIVIDUAL.md"):
+        assert "default_branch" in code, "可信输入必须显式取自 default_branch"
+        for path in (
+            "scripts/ci/cla_gate.py",
+            ".github/cla-policy.json",
+            "docs/legal/CLA_INDIVIDUAL.md",
+        ):
             assert path in code, f"可信输入里少了 {path}"
         assert "cla-signatures.json" not in code, (
-            "仓库不保存签署事实——workflow 不该再去取一份 signer 名单")
+            "仓库不保存签署事实——workflow 不该再去取一份 signer 名单"
+        )
 
     def test_permissions_are_minimal(self, cla_job):
         code = _code(cla_job)
@@ -304,7 +329,8 @@ class TestClaWorkflowSecurity:
         assert m, "CLA cla_job 必须显式声明 permissions"
         perms = dict(re.findall(r"(\w[\w-]*):\s*(\w+)", m.group(1)))
         assert perms == {"contents": "read", "pull-requests": "read"}, (
-            f"CLA cla_job 的权限必须恰好是两个只读项，实际：{perms}")
+            f"CLA cla_job 的权限必须恰好是两个只读项，实际：{perms}"
+        )
         assert "write-all" not in code
         for scope in ("contents: write", "pull-requests: write", "issues: write"):
             assert scope not in code, f"CLA cla_job 不该有 `{scope}`"
@@ -321,17 +347,17 @@ class TestClaWorkflowSecurity:
                 continue
             assert re.search(r"@[0-9a-f]{40}$", ref), (
                 f"CLA cla_job 里的第三方 action `{ref}` 必须钉到 40 位 commit SHA，"
-                f"不能是 @main / @v1 / @v2")
+                f"不能是 @main / @v1 / @v2"
+            )
 
     def test_no_secrets_are_referenced(self, cla_job):
-        assert "secrets." not in _code(cla_job), (
-            "CLA cla_job 不该用任何 secret——它只读公开元数据")
+        assert "secrets." not in _code(cla_job), "CLA cla_job 不该用任何 secret——它只读公开元数据"
 
 
 # ═════════════════════════════════════════════ 7. 协议版本与哈希绑定
 class TestAgreementVersionBinding:
     def test_policy_shape_is_valid(self, gate, policy):
-        gate.validate_policy(policy)          # 形状不对当场抛
+        gate.validate_policy(policy)  # 形状不对当场抛
 
     @pytest.mark.parametrize("kind", ["individual", "corporate"])
     def test_recorded_hash_matches_the_document(self, gate, policy, kind):
@@ -342,7 +368,8 @@ class TestAgreementVersionBinding:
         actual = hashlib.sha256(path.read_bytes()).hexdigest()
         assert actual == ag["sha256"], (
             f"{ag['path']} 的 SHA-256 是 {actual}，policy 里记的是 {ag['sha256']}"
-            "——改了正文就必须走 docs/legal/CLA_VERSIONING.md 的版本流程")
+            "——改了正文就必须走 docs/legal/CLA_VERSIONING.md 的版本流程"
+        )
 
     @pytest.mark.parametrize("kind", ["individual", "corporate"])
     def test_document_declares_the_same_version_as_the_policy(self, policy, kind):
@@ -351,13 +378,15 @@ class TestAgreementVersionBinding:
         m = re.search(r"(?m)^\*\*CLA_VERSION:\s*(\S+?)\*\*", text)
         assert m, f"{ag['path']} 里读不出 CLA_VERSION"
         assert m.group(1) == ag["version"], (
-            f"{ag['path']} 声明的版本是 {m.group(1)}，policy 里是 {ag['version']}")
+            f"{ag['path']} 声明的版本是 {m.group(1)}，policy 里是 {ag['version']}"
+        )
 
     def test_versioning_history_lists_every_current_version(self, policy):
         text = (LEGAL / "CLA_VERSIONING.md").read_text(encoding="utf-8")
         for kind, ag in policy["agreements"].items():
             assert f"`{ag['version']}`" in text, (
-                f"CLA_VERSIONING.md 的版本历史里没有 {kind} 的当前版本 {ag['version']}")
+                f"CLA_VERSIONING.md 的版本历史里没有 {kind} 的当前版本 {ag['version']}"
+            )
 
     def test_repository_stores_no_signature_records(self):
         """**签署事实的权威只有一个：provider。**
@@ -368,24 +397,26 @@ class TestAgreementVersionBinding:
         stray = LEGAL / "cla-signatures.json"
         assert not stray.exists(), (
             "docs/legal/cla-signatures.json 又出现了——仓库不保存签署事实，"
-            "见 docs/legal/CLA_VERSIONING.md#where-signature-records-live")
+            "见 docs/legal/CLA_VERSIONING.md#where-signature-records-live"
+        )
         for name in ("signatures", "signers", "ledger"):
             assert name not in json.loads(POLICY_PATH.read_text(encoding="utf-8")), (
-                f"cla-policy 里出现了 `{name}` 字段——签署记录不归仓库管")
+                f"cla-policy 里出现了 `{name}` 字段——签署记录不归仓库管"
+            )
 
     def test_provider_is_the_declared_authority(self, gate, policy):
         prov = policy["provider"]
         assert isinstance(prov.get("configured"), bool)
         if prov["configured"]:
             assert prov.get("name") and prov.get("check_name"), (
-                "provider 已配置就必须指向一个具体的、可核对的 check")
+                "provider 已配置就必须指向一个具体的、可核对的 check"
+            )
 
     def test_draft_agreements_forbid_a_configured_provider(self, gate, policy):
         """草案上不存在有效签署——这条是结构性的，不靠人记得。"""
         pol = json.loads(json.dumps(policy))
         pol["provider"] = {"configured": True, "name": "X", "check_name": "Y"}
-        drafts = [k for k, ag in pol["agreements"].items()
-                  if str(ag["version"]).endswith("-draft")]
+        drafts = [k for k, ag in pol["agreements"].items() if str(ag["version"]).endswith("-draft")]
         if not drafts:
             pytest.skip("协议已脱离草案")
         with pytest.raises(gate.ConfigError):
@@ -401,14 +432,16 @@ class TestAgreementVersionBinding:
                 continue
             text = (ROOT / ag["path"]).read_text(encoding="utf-8")
             assert "RIGHTS_HOLDER_CONFIGURATION_REQUIRED" in text, (
-                f"{ag['path']} 是草案，却没标出待配置的法律主体")
+                f"{ag['path']} 是草案，却没标出待配置的法律主体"
+            )
 
     def test_exemptions_are_explicit_and_justified(self, policy):
         assert policy["exemptions"], "豁免表是空的？至少应有著作权人本人"
         for ex in policy["exemptions"]:
             assert ex["kind"] in ("rights_holder", "bot")
             assert len(ex["reason"]) > 20, (
-                f"豁免 `{ex['login']}` 的理由太短——写不出理由的豁免不该存在")
+                f"豁免 `{ex['login']}` 的理由太短——写不出理由的豁免不该存在"
+            )
 
 
 # ═══════════════════════════════ 7b. 法律表述的精度（本轮收紧的几处）
@@ -422,8 +455,10 @@ class TestLegalWordingPrecision:
     """
 
     LEGAL_DOCS = sorted(LEGAL.glob("*.md")) + [
-        ROOT / "CONTRIBUTING.md", ROOT / "README.md",
-        ROOT / "README.zh-CN.md", ROOT / "TRADEMARKS.md",
+        ROOT / "CONTRIBUTING.md",
+        ROOT / "README.md",
+        ROOT / "README.zh-CN.md",
+        ROOT / "TRADEMARKS.md",
     ]
 
     #: 「再授权能力被永久剥夺」的错误主张。命中即红。
@@ -455,7 +490,8 @@ class TestLegalWordingPrecision:
             "出现了「合入外部贡献即永久失去再授权能力」这类主张，但它不成立：\n  "
             + "\n  ".join(hits)
             + "\n准确说法是 Tavotto 不能**单方面**再授权；仍可通过事后 CLA、"
-              "单独许可、重写替换或排除在商业版之外解决。")
+            "单独许可、重写替换或排除在商业版之外解决。"
+        )
 
     @pytest.mark.parametrize("pattern", ENTITY_REQUIRED)
     def test_no_company_required_precondition(self, pattern):
@@ -465,31 +501,38 @@ class TestLegalWordingPrecision:
                 hits.append(f"{f.relative_to(ROOT)}: {m.group(0)!r}")
         assert not hits, (
             "出现了「必须先有公司/法人才能签 CLA」这类前提，但它不成立——"
-            "自然人同样可以是缔约方：\n  " + "\n  ".join(hits))
+            "自然人同样可以是缔约方：\n  " + "\n  ".join(hits)
+        )
 
     def test_rights_holder_marker_is_defined_accurately(self):
         """RIGHTS_HOLDER_CONFIGURATION_REQUIRED 必须有准确定义，而不只是个标记。"""
         text = (LEGAL / "CLA_AUTOMATION_SETUP.md").read_text(encoding="utf-8")
         assert "RIGHTS_HOLDER_CONFIGURATION_REQUIRED" in text
         assert re.search(r"(?i)legal person or entity", text), (
-            "定义必须说明要识别的是「legal person or entity」")
+            "定义必须说明要识别的是「legal person or entity」"
+        )
         assert re.search(r"(?i)does not (mean|require)[^.\n]{0,40}compan", text), (
-            "定义必须明说这不要求成立公司——否则读的人会以为要先注册法人")
-        assert re.search(r"(?i)individual rights holder is[^.\n]{0,40}supported"
-                         r"|natural person can", text), (
-            "必须明说自然人作为权利人是被支持的形态")
+            "定义必须明说这不要求成立公司——否则读的人会以为要先注册法人"
+        )
+        assert re.search(
+            r"(?i)individual rights holder is[^.\n]{0,40}supported"
+            r"|natural person can",
+            text,
+        ), "必须明说自然人作为权利人是被支持的形态"
 
     def test_draft_status_is_explained_by_the_marker_not_by_legal_form(self):
         for f in (LEGAL / "CLA_VERSIONING.md", ROOT / "CONTRIBUTING.md"):
             text = f.read_text(encoding="utf-8")
             if "-draft" not in text:
                 continue
-            ok = ("RIGHTS_HOLDER_CONFIGURATION_REQUIRED" in text
-                  or re.search(r"(?i)counterparty|governing law", text))
+            ok = "RIGHTS_HOLDER_CONFIGURATION_REQUIRED" in text or re.search(
+                r"(?i)counterparty|governing law", text
+            )
             assert ok, (
                 f"{f.name} 解释草案状态时必须指向 "
                 "RIGHTS_HOLDER_CONFIGURATION_REQUIRED / 缺失的缔约细节，"
-                "而不是某种法律形态")
+                "而不是某种法律形态"
+            )
 
 
 # ═══════════════════════════════ 7c. 审计基线的时效
@@ -506,43 +549,52 @@ class TestAuditBaseline:
     def _sha(label):
         text = PROVENANCE.read_text(encoding="utf-8")
         i = text.index(label)
-        m = re.search(r"`([0-9a-f]{40})`", text[i:i + 400])
+        m = re.search(r"`([0-9a-f]{40})`", text[i : i + 400])
         assert m, f"IP_PROVENANCE 的「{label}」下读不出 40 位 SHA"
         return m.group(1)
 
     def test_initial_baseline_is_retained_as_history(self):
         assert self._sha("### Initial audited baseline") == INITIAL_BASELINE, (
-            "首次审计基线是历史记录，不许被改掉或删掉")
+            "首次审计基线是历史记录，不许被改掉或删掉"
+        )
 
     def test_current_baseline_has_moved_past_the_initial_one(self):
         cur = self._sha("### Current audited baseline")
         assert cur != INITIAL_BASELINE, (
             f"当前审计基线仍写着首次基线 {INITIAL_BASELINE[:7]}——"
-            "main 已经前进，基线必须重新审计并更新")
+            "main 已经前进，基线必须重新审计并更新"
+        )
 
     def test_current_baseline_is_a_real_commit_in_this_history(self):
         cur = self._sha("### Current audited baseline")
-        r = subprocess.run(["git", "merge-base", "--is-ancestor", cur, "HEAD"],
-                           cwd=ROOT, capture_output=True)
+        r = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", cur, "HEAD"], cwd=ROOT, capture_output=True
+        )
         assert r.returncode == 0, (
-            f"当前审计基线 {cur[:7]} 不在本分支历史里——"
-            "它必须是一个真实审计过的、可达的提交")
+            f"当前审计基线 {cur[:7]} 不在本分支历史里——它必须是一个真实审计过的、可达的提交"
+        )
 
 
 # ═════════════════════════════════════════════ 8. 判定器行为（单测）
 class TestGateDecisions:
     def _policy(self, *, provider_on=False, draft=False):
         ver = "1.0-draft" if draft else "1.0"
-        prov = ({"configured": True, "name": "P", "check_name": "P check"}
-                if provider_on else {"configured": False, "name": None,
-                                     "check_name": None})
+        prov = (
+            {"configured": True, "name": "P", "check_name": "P check"}
+            if provider_on
+            else {"configured": False, "name": None, "check_name": None}
+        )
         return {
             "schema": 2,
-            "agreements": {"individual": {"path": "x.md", "version": ver,
-                                          "sha256": "a" * 64}},
+            "agreements": {"individual": {"path": "x.md", "version": ver, "sha256": "a" * 64}},
             "provider": prov,
-            "exemptions": [{"login": "owner", "kind": "rights_holder",
-                            "reason": "the rights holder, at length enough"}],
+            "exemptions": [
+                {
+                    "login": "owner",
+                    "kind": "rights_holder",
+                    "reason": "the rights holder, at length enough",
+                }
+            ],
         }
 
     @staticmethod
@@ -559,61 +611,80 @@ class TestGateDecisions:
             gate.decide("push", self._policy(), None, [])
 
     def test_exempt_contributor_passes_even_without_a_provider(self, gate):
-        v = gate.decide("pull_request", self._policy(), None,
-                        [{"login": "owner", "sources": ["pr_author"]}])
+        v = gate.decide(
+            "pull_request", self._policy(), None, [{"login": "owner", "sources": ["pr_author"]}]
+        )
         assert v["status"] == "success"
 
     def test_unconfigured_provider_blocks_everyone_else(self, gate):
         """**未配置 ≠ 放行。** 绝不因为服务没接上就把外部贡献者当成签过。"""
-        v = gate.decide("pull_request", self._policy(), None,
-                        [{"login": "stranger", "sources": ["pr_author"]}])
+        v = gate.decide(
+            "pull_request", self._policy(), None, [{"login": "stranger", "sources": ["pr_author"]}]
+        )
         assert v["status"] == "failure"
         assert "尚未启用" in " ".join(v["problems"])
 
     def test_unconfigured_provider_failure_is_actionable(self, gate):
         """只有一句 `CLA check failed` 会让合法 PR 卡死而没人知道下一步。"""
-        v = gate.decide("pull_request", self._policy(), None,
-                        [{"login": "stranger", "sources": ["pr_author"]}])
+        v = gate.decide(
+            "pull_request", self._policy(), None, [{"login": "stranger", "sources": ["pr_author"]}]
+        )
         msg = " ".join(v["problems"])
         assert "CLA_AUTOMATION_SETUP.md" in msg, "失败信息必须指出去哪儿看"
         assert "issue" in msg, "失败信息必须告诉贡献者眼下能做什么"
 
     def test_provider_success_qualifies_contributors(self, gate):
-        v = gate.decide("pull_request", self._policy(provider_on=True),
-                        self._ok_check(),
-                        [{"login": "stranger", "sources": ["pr_author"]}])
+        v = gate.decide(
+            "pull_request",
+            self._policy(provider_on=True),
+            self._ok_check(),
+            [{"login": "stranger", "sources": ["pr_author"]}],
+        )
         assert v["status"] == "success"
 
     def test_provider_failure_blocks(self, gate):
         checks = [{"name": "P check", "status": "completed", "conclusion": "failure"}]
-        v = gate.decide("pull_request", self._policy(provider_on=True), checks,
-                        [{"login": "stranger", "sources": ["pr_author"]}])
+        v = gate.decide(
+            "pull_request",
+            self._policy(provider_on=True),
+            checks,
+            [{"login": "stranger", "sources": ["pr_author"]}],
+        )
         assert v["status"] == "failure"
 
     def test_missing_provider_check_blocks_rather_than_guesses(self, gate):
-        v = gate.decide("pull_request", self._policy(provider_on=True), [],
-                        [{"login": "stranger", "sources": ["pr_author"]}])
+        v = gate.decide(
+            "pull_request",
+            self._policy(provider_on=True),
+            [],
+            [{"login": "stranger", "sources": ["pr_author"]}],
+        )
         assert v["status"] == "failure"
         assert "没找到" in " ".join(v["problems"])
 
     def test_incomplete_provider_check_blocks(self, gate):
         checks = [{"name": "P check", "status": "in_progress", "conclusion": None}]
-        v = gate.decide("pull_request", self._policy(provider_on=True), checks,
-                        [{"login": "stranger", "sources": ["pr_author"]}])
+        v = gate.decide(
+            "pull_request",
+            self._policy(provider_on=True),
+            checks,
+            [{"login": "stranger", "sources": ["pr_author"]}],
+        )
         assert v["status"] == "failure"
 
     def test_no_contributors_collected_is_a_failure(self, gate):
         """「一个人都没收集到」是取数出错，不是「所有人都签了」。"""
-        v = gate.decide("pull_request", self._policy(provider_on=True),
-                        self._ok_check(), [])
+        v = gate.decide("pull_request", self._policy(provider_on=True), self._ok_check(), [])
         assert v["status"] == "failure"
 
     def test_unresolved_co_author_fails_rather_than_being_ignored(self, gate):
-        v = gate.decide("pull_request", self._policy(provider_on=True),
-                        self._ok_check(),
-                        [{"login": "owner", "sources": ["pr_author"]}],
-                        [{"kind": "co_author", "sha": "abc", "name": "X",
-                          "email": "x@corp.example"}])
+        v = gate.decide(
+            "pull_request",
+            self._policy(provider_on=True),
+            self._ok_check(),
+            [{"login": "owner", "sources": ["pr_author"]}],
+            [{"kind": "co_author", "sha": "abc", "name": "X", "email": "x@corp.example"}],
+        )
         assert v["status"] == "failure"
         msg = " ".join(v["problems"])
         # 可操作性：说清哪个 commit、哪个身份、为什么、怎么处置
@@ -628,42 +699,68 @@ class TestGateDecisions:
 
     def test_bot_suffix_alone_does_not_grant_an_exemption(self, gate):
         """没有「名字带 [bot] 就放行」这条规则。"""
-        v = gate.decide("pull_request", self._policy(), None,
-                        [{"login": "some-random[bot]", "sources": ["pr_author"]}])
+        v = gate.decide(
+            "pull_request",
+            self._policy(),
+            None,
+            [{"login": "some-random[bot]", "sources": ["pr_author"]}],
+        )
         assert v["status"] == "failure"
 
     def test_repository_owner_is_not_dynamically_trusted(self, gate):
         """豁免只认显式点名，不许按「PR 作者 == 仓库 owner」动态猜。"""
-        v = gate.decide("pull_request", self._policy(), None,
-                        [{"login": "Tavotto", "sources": ["pr_author"]}])
+        v = gate.decide(
+            "pull_request", self._policy(), None, [{"login": "Tavotto", "sources": ["pr_author"]}]
+        )
         assert v["status"] == "failure"
 
 
 # ═════════════════════════════════════════════ 9. 贡献者收集（单测）
 class TestContributorCollection:
     def test_collects_author_commit_authors_and_co_authors(self, gate):
-        commits = [{
-            "sha": "deadbeef",
-            "commit": {"author": {"name": "A", "email": "a@users.noreply.github.com"},
-                       "message": "x\n\nCo-authored-by: B <2+bee@users.noreply.github.com>"},
-            "author": {"login": "alpha"},
-        }]
+        commits = [
+            {
+                "sha": "deadbeef",
+                "commit": {
+                    "author": {"name": "A", "email": "a@users.noreply.github.com"},
+                    "message": "x\n\nCo-authored-by: B <2+bee@users.noreply.github.com>",
+                },
+                "author": {"login": "alpha"},
+            }
+        ]
         found, unresolved = gate.collect_contributors("opener", commits)
         assert {c["login"].lower() for c in found} == {"opener", "alpha", "bee"}
         assert unresolved == []
 
     def test_commit_author_without_a_linked_account_is_unresolved(self, gate):
-        commits = [{"sha": "cafe", "commit": {"author": {"name": "N", "email": "n@corp.example"},
-                                              "message": "x"}, "author": None}]
+        commits = [
+            {
+                "sha": "cafe",
+                "commit": {"author": {"name": "N", "email": "n@corp.example"}, "message": "x"},
+                "author": None,
+            }
+        ]
         found, unresolved = gate.collect_contributors(None, commits)
         assert found == []
         assert unresolved and unresolved[0]["kind"] == "commit_author"
 
     def test_numeric_prefixed_noreply_resolves(self, gate):
-        found, _ = gate.collect_contributors(None, [
-            {"sha": "1", "commit": {"author": {"name": "E",
-                                               "email": "88193520+erwanjun@users.noreply.github.com"},
-                                    "message": "x"}, "author": None}])
+        found, _ = gate.collect_contributors(
+            None,
+            [
+                {
+                    "sha": "1",
+                    "commit": {
+                        "author": {
+                            "name": "E",
+                            "email": "88193520+erwanjun@users.noreply.github.com",
+                        },
+                        "message": "x",
+                    },
+                    "author": None,
+                }
+            ],
+        )
         assert [c["login"] for c in found] == ["erwanjun"]
 
     def test_malformed_commits_payload_raises(self, gate):
