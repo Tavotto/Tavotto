@@ -70,11 +70,19 @@ def _by_name(name: str, events):
         ("Tavotto.app.tar.gz.sig", "checksum", "macos"),
         ("Tavotto_0.8.0_x64-setup.nsis.zip", "updater", "windows"),
         ("Tavotto_0.8.0_x64-setup.nsis.zip.sig", "checksum", "windows"),
-        ("latest.json", "updater", "any"),
+        ("latest.json", "update_check", "any"),
         ("tavotto-0.8.0-py3-none-any.whl", "wheel", "any"),
         ("tavotto-0.8.0.tar.gz", "sdist", "any"),
-        ("codex-plugin.json", "plugin", "any"),
+        ("codex-plugin.json", "plugin_manifest", "any"),
+        ("codex-plugin.json.sha256", "checksum", "any"),
         ("codex-plugin-0.8.0.zip", "plugin", "any"),
+        # 兜底之前就被拦下：漏到 .tar.gz 那条会变成 sdist，等于把插件流量
+        # 混进 Python 包下载量。这条用例是那个陷阱的看门狗。
+        ("codex-plugin-0.12.0.tar.gz", "other", "other"),
+        # 后缀循环漏网的校验/溯源清单：.txt / .json 结尾，曾经全落进 other
+        ("SHA256SUMS.txt", "checksum", "any"),
+        ("artifact-manifest.json", "checksum", "any"),
+        ("artifact-manifest-python.json", "checksum", "any"),
         ("some-unlabelled-artifact.bin", "other", "other"),
     ],
 )
@@ -88,12 +96,136 @@ def test_updater_payloads_are_never_counted_as_installers(events):
     total = sum(e["properties"]["download_count_total"] for e in installers)
     assert total == 137 + 402 + 512 + 908
     # latest.json 被更新器每天拉一次，量最大且完全不是「装过的人」
-    assert _by_name("latest.json", events)["properties"]["asset_role"] == "updater"
+    assert _by_name("latest.json", events)["properties"]["asset_role"] == "update_check"
     assert all(
         e["properties"]["asset_role"] != "installer"
         for e in _gh(events)
         if e["properties"]["asset_id"] in (5003, 5004, 5005, 5006, 5007)
     )
+
+
+def test_plugin_manifest_polls_are_not_plugin_downloads(events):
+    """`codex-plugin.json` 是插件宿主检查更新时拉的，不是有人装了插件。
+
+    线上实测：合成一个角色时该角色 3387 次里 3382 次是 manifest，真实
+    zip 只有 5 次——「插件装机量」被放大近 700 倍。样本按同样形状构造。
+    """
+    manifest = _by_name("codex-plugin.json", events)["properties"]
+    package = _by_name("codex-plugin-0.8.0.zip", events)["properties"]
+    assert manifest["asset_role"] == "plugin_manifest"
+    assert package["asset_role"] == "plugin"
+    # 真正的护栏：轮询量必须**不在** plugin 这个角色里
+    plugin_total = sum(
+        e["properties"]["download_count_total"]
+        for e in _gh(events)
+        if e["properties"]["asset_role"] == "plugin"
+    )
+    assert plugin_total == package["download_count_total"]
+    assert manifest["download_count_total"] not in (plugin_total, 0)
+
+
+def test_automated_traffic_never_lands_in_human_downloads(events):
+    """轮询与更新载荷绝不能进 downloads 口径——这是看板分区的判据本身。"""
+    summary = collector.summarize(events)
+    by_role = summary["github_by_role"]
+    human = summary["github_human_downloads_lifetime"]
+    automated = summary["github_automated_requests_lifetime"]
+
+    assert set(collector.HUMAN_DOWNLOAD_ROLES).isdisjoint(collector.AUTOMATED_ROLES)
+    # latest.json 在样本里是最大的那个数：它一旦漏进 human，这条就红
+    assert by_role["update_check"]["downloads_total"] > human
+    assert human == sum(
+        by_role.get(r, {}).get("downloads_total", 0)
+        for r in ("installer", "plugin", "wheel", "sdist")
+    )
+    assert automated == sum(
+        by_role.get(r, {}).get("downloads_total", 0)
+        for r in ("update_check", "plugin_manifest", "updater")
+    )
+
+
+# ---------------------------------------------------------------------------
+# 看板与采集器的同源对：划分只写在一边，两边就会各说各的
+# ---------------------------------------------------------------------------
+DASHBOARD = ROOT / "docs" / "analytics" / "yc-dashboard.json"
+
+
+def _dashboard():
+    return json.loads(DASHBOARD.read_text(encoding="utf-8"))
+
+
+def _roles_of(section):
+    """看板某一区实际覆盖到的 asset_role 集合。"""
+    d = _dashboard()
+    by_id = {m["id"]: m for m in d["metrics"]}
+    roles = set()
+    for mid in d["sections"][section]["metrics"]:
+        f = by_id[mid].get("filter") or {}
+        if "asset_role" in f:
+            roles.add(f["asset_role"])
+    return roles
+
+
+def test_dashboard_sections_cover_exactly_the_collector_partition():
+    """采集器说哪些角色算「人下载的」，看板 Downloads 区就必须正好列这些。
+
+    这两处划分曾经各写各的：`sdist` 进了 HUMAN_DOWNLOAD_ROLES，却没有对应的
+    看板指标，于是「人主动下载」在汇总里和在看板上不是同一个数。
+    """
+    assert _roles_of("Distribution / Downloads") == set(collector.HUMAN_DOWNLOAD_ROLES)
+    assert _roles_of("Infrastructure / Automated Traffic") >= set(collector.AUTOMATED_ROLES)
+
+
+def test_every_classifier_role_is_reachable_from_some_dashboard_section():
+    """分类器能产出的角色，必须都能在看板上找到归宿——除了 checksum。
+
+    漏一个角色不会让任何查询报错，只会让那部分流量从看板上**静静消失**。
+    """
+    produced = {
+        collector.classify_asset(n)[0]
+        for n in (
+            "Tavotto-0.8.0-macOS.dmg",
+            "Tavotto.app.tar.gz",
+            "latest.json",
+            "tavotto-0.8.0-py3-none-any.whl",
+            "tavotto-0.8.0.tar.gz",
+            "codex-plugin.json",
+            "codex-plugin-0.8.0.zip",
+            "SHA256SUMS.txt",
+            "some-unlabelled-artifact.bin",
+        )
+    }
+    placed = _roles_of("Distribution / Downloads") | _roles_of("Infrastructure / Automated Traffic")
+    # checksum 是附属文件，刻意不进任何一区
+    assert produced - placed == {"checksum"}
+
+
+def test_role_filtered_metrics_carry_the_role_resolution_rule():
+    """按 asset_role 过滤再聚合，会把 2026-08-27 换过角色的资产从中间切断。
+
+    实测后果：plugin_manifest 的 30 天值变成整个累计计数器（3387 而不是 5），
+    plugin 则把换角色前的 manifest 增量算成插件包下载（382 而不是 0）。
+    每个按角色过滤的指标都必须自带「先按 asset_id 解析角色」这条规则。
+    """
+    d = _dashboard()
+    assert "role_resolution" in d
+    role_filtered = [
+        m for m in d["metrics"] if isinstance(m.get("filter"), dict) and "asset_role" in m["filter"]
+    ]
+    assert role_filtered, "看板里一个按角色过滤的指标都没有，用例失去意义"
+    for m in role_filtered:
+        assert m.get("role_from") == "latest_snapshot_per_asset_id", m["id"]
+        assert "RESOLVE ROLE PER asset_id FIRST" in m["query_note"], m["id"]
+
+
+def test_automated_roles_are_never_labelled_as_downloads():
+    """轮询指标必须显式禁用 Downloads/Users/Installs 这几个标题。"""
+    d = _dashboard()
+    by_id = {m["id"]: m for m in d["metrics"]}
+    for mid in ("update_checks_30d", "plugin_manifest_checks_30d"):
+        banned = set(by_id[mid]["label_must_not_be"])
+        assert {"Downloads", "Users", "Installs"} <= banned, mid
+    assert "hard_rule" in d["sections"]["Infrastructure / Automated Traffic"]
 
 
 def test_sdist_and_macos_updater_share_a_suffix_but_not_a_role(events):

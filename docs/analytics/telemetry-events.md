@@ -171,7 +171,7 @@ events always set `$process_person_profile: false` so they never create a person
 
 | Event | Properties |
 |---|---|
-| `github_release_asset_snapshot` | `release_id`, `release_tag`, `asset_id`, `asset_role` (`installer` \| `updater` \| `wheel` \| `sdist` \| `plugin` \| `checksum` \| `other`), `platform` (`macos` \| `windows` \| `linux` \| `any` \| `other`), `download_count_total`, `observed_date`, `snapshot_key` |
+| `github_release_asset_snapshot` | `release_id`, `release_tag`, `asset_id`, `asset_role` (`installer` \| `updater` \| `update_check` \| `wheel` \| `sdist` \| `plugin` \| `plugin_manifest` \| `checksum` \| `other`), `platform` (`macos` \| `windows` \| `linux` \| `any` \| `other`), `download_count_total`, `observed_date`, `snapshot_key` |
 | `pypi_daily_downloads` | `date`, `downloads`, `category` (`without_mirrors`), `snapshot_key` |
 | `github_repo_snapshot` | `stars`, `forks`, `observed_date`, `snapshot_key` |
 
@@ -179,6 +179,25 @@ events always set `$process_person_profile: false` so they never create a person
 snapshot; period downloads are a difference between snapshots. `asset_id` — not
 the filename — is the asset identity, so history survives an asset being deleted
 and re-uploaded.
+
+**Three of these roles are polls, not downloads.** `update_check`
+(`latest.json`) and `plugin_manifest` (`codex-plugin.json`) are fetched by the
+updater and the plugin host on a schedule; a machine that never upgrades still
+contributes one every time. `updater` (`Tavotto.app.tar.gz`, `*-setup.nsis.zip`)
+is a real transfer but the auto-updater starts it, not a person. Measured on
+2026-08-27: `codex-plugin.json` was **3382 of 3387** requests in the old combined
+`plugin` role, and `latest.json` **44 of 66** in the old combined `updater` role.
+Folding either back in overstates adoption by orders of magnitude, so
+[`yc-dashboard.json`](yc-dashboard.json) puts them in a separate
+*Infrastructure / Automated Traffic* section and forbids summing them into
+Downloads, Users, or Installs.
+
+**Rows written before 2026-08-27 carry the old roles** and are not
+retroactively reclassified. `asset_role` is a label on a row; the asset's
+identity is `asset_id`. Resolve each `asset_id`'s role from its most recent
+snapshot and aggregate over all of its rows — filtering rows by `asset_role`
+first splits a reclassified asset in two, and a date filter makes it worse, not
+better. See `role_resolution` in [`yc-dashboard.json`](yc-dashboard.json).
 
 ## Deduplication
 

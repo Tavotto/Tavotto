@@ -183,11 +183,76 @@ many days we have been collecting. Taking the per-asset maximum also preserves
 history for assets that were later deleted or replaced (which is why the identity
 is `asset_id`, not the filename).
 
-**`asset_role = 'installer'` only.** The `updater` role (`Tavotto.app.tar.gz`,
-`*-setup.nsis.zip`, `latest.json`) is traffic from the auto-updater — it grows
-with every existing user on every release and has nothing to do with new
-installs. `latest.json` alone will dwarf everything else. Mixing it in is the
-most tempting available way to exaggerate adoption.
+**`asset_role = 'installer'` only.** The `updater` role
+(`Tavotto.app.tar.gz`, `*-setup.nsis.zip`) is traffic from the auto-updater — it
+grows with every existing user on every release and has nothing to do with new
+installs. Mixing it in is the most tempting available way to exaggerate adoption.
+
+### Downloads vs automated traffic
+
+Not every row in `github_release_asset_snapshot` is a download, and two of them
+are not even transfers a person could have caused. The dashboard splits them
+into two sections and the split is **not cosmetic** — see `sections` in
+[`yc-dashboard.json`](yc-dashboard.json).
+
+| Section | Roles | What it means |
+|---|---|---|
+| **Distribution / Downloads** | `installer`, `plugin`, `wheel`, `sdist` | someone chose to fetch this |
+| **Infrastructure / Automated Traffic** | `update_check`, `plugin_manifest`, `updater` | a machine fetched it on a schedule |
+
+`update_check` (`latest.json`) and `plugin_manifest` (`codex-plugin.json`) are
+**polls**. A machine that installed once and never upgraded contributes one on
+every launch, forever. They are closer to a liveness signal than to adoption,
+and the honest ceiling on what they can tell you is "something is still running
+out there."
+
+How badly this matters, measured on 2026-08-27:
+
+| Old combined role | Poll requests | Real downloads | Inflation |
+|---|---|---|---|
+| `plugin` | 3382 (`codex-plugin.json`) | 5 (`codex-plugin-*.zip`) | **677x** |
+| `updater` | 44 (`latest.json`) | 22 (payloads) | 3x |
+
+A "plugin downloads" number built on the old classification was wrong by nearly
+three orders of magnitude. **Never put `plugin_manifest` or `update_check` into
+a Downloads, Users, or Installs figure** — not in the dashboard, not in a deck,
+not in a sentence.
+
+### Reclassification on 2026-08-27
+
+`latest.json` moved `updater` → `update_check`; `codex-plugin.json` moved
+`plugin` → `plugin_manifest`. **Rows already sent are not retroactively
+reclassified**, so a reclassified `asset_id` has rows under two different
+`asset_role` values.
+
+**`asset_role` is a label on a row, not part of the asset's identity —
+`asset_id` is.** Filtering rows by `asset_role` and then aggregating *within
+the filtered set* cuts a reclassified asset in half at the changeover, and it
+breaks in both directions:
+
+| Query | Returns | Should be |
+|---|---|---|
+| `asset_role = 'plugin_manifest'`, 30d delta | **3387** — the whole lifetime counter | 5 |
+| `asset_role = 'plugin'`, 30d delta over the changeover | **382** — the manifest's pre-cutover growth | 0 |
+
+The first happens because no pre-cutover row survives the filter, so the
+`else 0` baseline makes the asset's entire cumulative counter look like period
+traffic. **A date filter does not fix this — scoping to
+`observed_date >= 2026-08-27` is precisely what makes the baseline fall back to
+0.**
+
+The rule, which every role-filtered metric in
+[`yc-dashboard.json`](yc-dashboard.json) now carries as `role_from`:
+
+```
+resolve each asset_id's role from its MOST RECENT snapshot
+then aggregate over ALL of that asset_id's rows,
+regardless of the role recorded on the older ones
+```
+
+No historical migration is needed. Expect "Plugin package downloads" to fall
+from ~3378 to ~5 at the changeover — that is the fix landing, not a collapse in
+adoption.
 
 ### GitHub 30-day installer downloads
 

@@ -78,7 +78,20 @@ METRICS_EVENTS: dict[str, dict[str, dict]] = {
         "asset_id": integer(10**12),
         # 自动更新包与签名文件**不是人下载的安装包**。分不开这两类，
         # 「有多少人装过」就会被更新流量整个淹掉。
-        "asset_role": enum("installer", "updater", "wheel", "sdist", "plugin", "checksum", "other"),
+        # `update_check`（latest.json）与 `plugin_manifest`（codex-plugin.json）
+        # 是**轮询次数**：装了不升级的机器也天天贡献。它们绝不能进任何
+        # Downloads / Users / Installs 口径。
+        "asset_role": enum(
+            "installer",
+            "updater",
+            "update_check",
+            "wheel",
+            "sdist",
+            "plugin",
+            "plugin_manifest",
+            "checksum",
+            "other",
+        ),
         "platform": enum("macos", "windows", "linux", "any", "other"),
         "download_count_total": integer(10**9),
         "observed_date": DATE,
