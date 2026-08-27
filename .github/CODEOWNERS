@@ -1,0 +1,30 @@
+# 代码所有者——GitHub 按这里给 PR 自动请求评审。
+#
+# 这份文件只列**真实存在**的账号。写一个不存在的 @legal-team 会让 GitHub
+# 静默解析不到任何人，于是「法律文件有人把关」这件事看起来配好了、实际
+# 一个评审都不会发出去——和空门禁是同一种坏法。
+#
+# 目前仓库只有一个维护者，所以下面全是同一个人。等有了第二个维护者，或者
+# RIGHTS_HOLDER_CONFIGURATION_REQUIRED 定下来之后有了法务对接人，再细分。
+
+# 默认
+*                                       @erwanjun
+
+# ───────────────────────────────────────────────────────────────
+# 法律与许可 —— 改这些等于改权利边界，必须有人过目
+# ───────────────────────────────────────────────────────────────
+/LICENSE                                @erwanjun
+/TRADEMARKS.md                          @erwanjun
+/CONTRIBUTING.md                        @erwanjun
+/docs/legal/**                          @erwanjun
+
+# CLA 判定链：政策、签署记录、判定器、以及承载它的 workflow。
+# 签署记录（ledger）尤其重要——能往里加一行就等于能给自己放行。
+/.github/cla-policy.json                @erwanjun
+/docs/legal/cla-signatures.json         @erwanjun
+/scripts/ci/cla_gate.py                 @erwanjun
+/tests/test_legal_contribution_policy.py @erwanjun
+/.github/workflows/ci.yml               @erwanjun
+
+# 许可证元数据的另一处出处（license / license-files）
+/pyproject.toml                         @erwanjun

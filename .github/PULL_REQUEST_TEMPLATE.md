@@ -31,6 +31,17 @@ Fixes #
 - [ ] Tried it in the running app
 - [ ] Not needed, because:
 
+## Contributor agreement
+
+- [ ] I have completed the Tavotto CLA process, or this PR is made by an account
+      explicitly exempt under the repository's CLA policy
+      (`.github/cla-policy.json`).
+
+<!-- This checkbox is a reminder, not a signature. It has no legal effect and CI
+     does not read it — the `Contributor licence (CLA)` check reads the real
+     signature record. See docs/legal/CLA_INDIVIDUAL.md; if your employer owns
+     the work, docs/legal/CLA_CORPORATE.md. -->
+
 ## Checklist
 
 - [ ] A bug that only reproduces on Windows was turned into a case in `tests/test_windows_regressions.py` first, and that case was seen failing

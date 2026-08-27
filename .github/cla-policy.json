@@ -1,0 +1,44 @@
+{
+  "schema": 1,
+  "_comment": [
+    "CLA 判定的配置——scripts/ci/cla_gate.py 的唯一输入。",
+    "",
+    "agreements：每份协议的正文路径、版本与 SHA-256。哈希与磁盘上的正文对不上",
+    "就是「改了 CLA 正文却没走版本流程」，判定器与 pytest 两侧都会红。",
+    "改完正文跑 `python3 scripts/ci/cla_gate.py --refresh-hashes` 重算，",
+    "版本号是否要 bump 见 docs/legal/CLA_VERSIONING.md（那是个决定，脚本不替你做）。",
+    "",
+    "exemptions：**显式点名**的豁免，每一条都要写得出 kind 与 reason。",
+    "这里没有「名字带 [bot] 就放行」这种规则——dependabot 能过是因为它写在下面，",
+    "不是因为它的后缀。一条豁免如果说不出理由，就不该存在。"
+  ],
+  "agreements": {
+    "individual": {
+      "path": "docs/legal/CLA_INDIVIDUAL.md",
+      "version": "1.0-draft",
+      "sha256": "7acaf0bb5071002f91d9b0d464eb587c4fac2e0dc0eaeac8b4360ed50918ee62"
+    },
+    "corporate": {
+      "path": "docs/legal/CLA_CORPORATE.md",
+      "version": "1.0-draft",
+      "sha256": "394f9edbeeb1cc2dcbd9ce4b6edd3c422de96ac36068c3074107186e0407561e"
+    }
+  },
+  "exemptions": [
+    {
+      "login": "erwanjun",
+      "kind": "rights_holder",
+      "reason": "本仓库的著作权人本人。745 个 commit 中的 744 个出自这个身份（三个邮箱，同一个人；审计见 docs/legal/IP_PROVENANCE.md）。著作权人不需要向自己授权。RIGHTS_HOLDER_CONFIGURATION_REQUIRED 定下来之后要复核这一条：如果权利归属被转让给某个法律实体，这里要改成那个实体与本人的关系。"
+    },
+    {
+      "login": "dependabot[bot]",
+      "kind": "bot",
+      "reason": "GitHub 官方依赖升级机器人。它的 PR 只改依赖版本号与锁文件，不产生具有著作权意义的表达。仓库里有 1 个它的 commit（依赖升级）。"
+    },
+    {
+      "login": "github-actions[bot]",
+      "kind": "bot",
+      "reason": "本仓库 workflow 自己的提交身份（发布链里的受管产物与清单）。产出由仓库自有脚本机械生成，著作权归仓库既有代码的权利人。"
+    }
+  ]
+}
