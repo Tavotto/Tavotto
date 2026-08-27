@@ -64,8 +64,19 @@ src = [".", "src", "src/tavotto/engine", "scripts", "scripts/ci", "tests",
        "services/telemetry_proxy"]
 ```
 
-这几个目录**就是运行时真的被注入 sys.path 的那几个**，ruff 按路径解析，新增
-模块自动被认出来。判据与现实是同一个东西，不是它的一份拷贝。
+这几个目录**就是运行时真的被注入 sys.path 的那几个**，ruff 按路径解析。判据与
+现实是同一个东西，不是它的一份拷贝。
+
+**但它把维护降到了少数几个源码根，不是取消维护**，这条边界要说清楚：
+
+| 情况 | 要不要动 `src` |
+| --- | --- |
+| 在**已有**源码根下新增模块（如又往 `scripts/ci/` 加一个脚本） | 不用，ruff 按路径自然认出来 |
+| 新写一处 `sys.path.insert(0, NEW_ROOT)` 并从那里平铺 import | **必须回来审查这张表**，否则那些模块会被排进第三方组 |
+
+漏了第二种的表现很轻但很烦：那个目录的模块被排到 matplotlib 那一组里，
+`ruff check` 照样绿（它只管排得对不对，不管归属判得对不对），只有人读 diff
+时才觉得别扭。
 
 ### `combine-as-imports = true` 是必须的
 
@@ -96,9 +107,12 @@ from . import (  # noqa: E402 —— 必须在 app 实例创建之后
 接入时用「noqa 规则码逐个计数、比对前后」核过一遍：除了这一处 90 → 89
 （两条合成一条）之外，其余 8 个规则码的数量一个没变。
 
-## formatter：本轮**有意推迟**
+## formatter：**尚未启用**
 
-实测过再决定的，不是没做：
+当前状态一句话：**lint 已启用、import 排序（`I`）已启用、formatter 尚未启用**
+（AGENTS.md / .github/AGENTS.md / CONTRIBUTING.md 三处与此处必须一致）。
+
+推迟是实测过再决定的，不是没做：
 
 ```
 ruff format --check .   →  293 files would be reformatted, 87 already formatted
@@ -109,7 +123,7 @@ ruff format --check .   →  293 files would be reformatted, 87 already formatte
 把它塞进一个开发工具 PR 会得到几千行与 Ruff 配置本身无关的改动：review 淹掉、
 合并冲突暴涨、真正该被看的那几十行配置反而没人看。1.0 收敛阶段更不该这么干。
 
-`I`（import 排序）当时同样被推迟，**2026-08-27 已补开**，见下一节。
+`I`（import 排序）当时同样被推迟，**2026-08-27 已补开**，见上面的「import 排序（`I`）」一节。
 
 `line-length = 100` 已经按实测写进配置（全仓超过 100 列的只有 33 行，0.04%），
 所以**将来做 formatter 迁移时不必再重新测一遍行宽**；当前没有任何被选中的规则

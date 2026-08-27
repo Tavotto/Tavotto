@@ -53,7 +53,7 @@
 ## 最常用验证
 
 ```sh
-ruff check .                               # Python 静态检查（秒级，改完先跑它）
+ruff check .                               # Python 静态检查 + import 排序（秒级，改完先跑）
 .venv/bin/python -m pytest                 # 后端（tests/ 跑在 .venv）
 cd web && pnpm test && pnpm build          # 前端 + 类型检查（别用 tsc --noEmit：恒假绿）
 cd workerd && cargo test && cargo clippy --all-targets -- -D warnings && cargo fmt --check
@@ -64,8 +64,12 @@ python scripts/smoke_app.py --python .venv/bin/python   # 端到端冒烟
   全仓 20~30 ms 回来，挡的是拼错的名字、没用的 import、没用的局部变量那一类
   ——它们不值得先花十分钟跑完整套。能自动修的用 `ruff check . --fix`（只应用
   安全修复；`--unsafe-fixes` 会动语义，要逐条看过再用）。规则集在
-  `pyproject.toml` 的 `[tool.ruff]`，细节与后续（formatter 仍待迁移）见
-  `docs/ci/ruff.md`。**Ruff 不替代任何语义门禁**，它只是最便宜的第一层。
+  `pyproject.toml` 的 `[tool.ruff]`（lint 与 import 排序已启用，**formatter 尚未
+  启用**），细节见 `docs/ci/ruff.md`。
+- **新增一处会被塞进 `sys.path` 的仓库内源码根时，必须同步审查
+  `[tool.ruff]` 的 `src`**——否则从那个目录平铺 import 的模块会被 ruff 判成
+  第三方，排进 matplotlib 那一组。**在已有源码根下新增模块不用动它**，
+  ruff 按路径自然认出来。**Ruff 不替代任何语义门禁**，它只是最便宜的第一层。
 - 改了 `web/src` 或引擎四模块（manifest/overrides/pathgeom/patchspec）：
   **两个受管产物都要重建**——`python scripts/build_mcp_widget.py` 与
   `python scripts/build_browser_playground.py`（各有 `--check`）。
