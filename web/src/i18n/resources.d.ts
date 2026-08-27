@@ -2147,6 +2147,8 @@ export default interface Resources {
     },
     "unlock": "解锁",
     "unsupported": {
+      "child_axes_locator": "这个子 axes 的位置由父级每帧重算，改了会在下一次绘制时弹回去",
+      "layout_engine_tight": "这张图用了常驻的 tight 布局，子图位置每次绘制都会被它重新算过——改了不会生效",
       "multi_host_colorbar": "这条色条横跨 {{hosts}} 个子图，方向切换在当前版本不支持",
       "partial": "（{{count}}/{{total}} 个元素）",
       "unknown": "当前版本不支持在这里修改这一项"

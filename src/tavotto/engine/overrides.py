@@ -2091,6 +2091,108 @@ def _cb_orientation_snapshot(p: "ColorbarProxy") -> dict:
     }
 
 
+def figure_layout_engine_eats_position(fig) -> bool:
+    """这张图的布局引擎会不会把 `set_position` 整个算回去？
+
+    Tavotto 落 `axes.position` override 的方式是 `ax.set_position(v)`（见
+    `overrides` 的 `("axes","position")` setter）。图上挂着**持久的**
+    `TightLayoutEngine` 时，它会在紧随其后的那次绘制里把位置重算——文档里记着
+    override、画面上什么都没发生。用户拖子图、多选对齐、改 mm 宽高、成组缩放
+    都会撞上：点了、历史里有了、撤销栈里有了，图纹丝不动。
+
+    三个版本上逐个量过（3.9.4 / 3.10.8 / 3.11.1，结果完全一致）：
+
+    | 建图方式 | layout engine | set_position 之后再 draw |
+    |---|---|---|
+    | `plt.subplots()` | None | 保住 ✅ |
+    | `fig.tight_layout()` 调一次 | PlaceHolderLayoutEngine | 保住 ✅ |
+    | `plt.subplots(layout='tight')` | TightLayoutEngine | **被吃掉** ❌ |
+    | `plt.subplots(tight_layout=True)` | TightLayoutEngine | **被吃掉** ❌ |
+    | `layout='constrained'` / `constrained_layout=True` | ConstrainedLayoutEngine | 保住 ✅ |
+    | `layout='compressed'` | ConstrainedLayoutEngine | 保住 ✅ |
+
+    两条实测结论值得记下来：**constrained 不受影响**（曾被与 tight 并列写进
+    #137 的剩余风险，那一半是错的）；**最常见的 `fig.tight_layout()` 调用也不
+    受影响**——它执行完会把引擎换成 `PlaceHolderLayoutEngine`。中招的只有
+    「把 tight 设成常驻引擎」这一种写法。
+
+    还量了一条否定结论：`ax.set_in_layout(False)` **挡不住** TightLayoutEngine
+    （三个版本上都不行），所以不能靠它把能力救回来。
+
+    判据用 `isinstance` 而不是类名字符串：`PlaceHolderLayoutEngine` 与
+    `ConstrainedLayoutEngine` 都**不是** `TightLayoutEngine` 的子类（实测
+    `issubclass` 为 False），所以 isinstance 不会误伤它们。
+
+    **这只是图级的一半**，逐轴那一半见 `axes_position_eaten_by_layout`。
+    """
+    try:
+        from matplotlib.layout_engine import TightLayoutEngine
+
+        return isinstance(fig.get_layout_engine(), TightLayoutEngine)
+    except Exception:
+        return False
+
+
+def axes_position_eaten_by_layout(fig, ax) -> bool:
+    """**这一个** axes 的 `set_position` 会被布局引擎算回去吗？
+
+    图级的持久 tight 引擎只是必要条件。tight_layout 算的是 gridspec，
+    **没有 SubplotSpec 的 axes 它根本不参与**——`fig.add_axes([...])` 建的轴
+    （用户自己摆的插图、自己摆的色条 `cax=`）位置照旧保得住，甚至 matplotlib
+    自己会为此发一句 "This figure includes Axes that are not compatible with
+    tight_layout"。拿图级结果一刀切会**把一个真能力藏起来**，那比不支持更糟
+    （`Arc` 那次的教训）。
+
+    3.9.4 / 3.10.8 / 3.11.1 三版实测，结果一致：
+
+    | 同一张 `layout='tight'` 图上的 axes | SubplotSpec | set_position 之后再 draw |
+    |---|---|---|
+    | `plt.subplots()` 的子图 | 有 | **被吃掉** |
+    | `fig.add_axes([...])` | 无 | 保住 ✅ |
+    | `fig.colorbar(im, ax=ax)` 的色条轴 | 有（从宿主 gridspec 里抠的） | **被吃掉** |
+    | `fig.colorbar(im, cax=fig.add_axes(...))` 的色条轴 | 无 | 保住 ✅ |
+
+    （Codex 在 PR #161 上指出图级一刀切会误伤，逐版复核属实。）
+    """
+    if not figure_layout_engine_eats_position(fig):
+        return False
+    get_ss = getattr(ax, "get_subplotspec", None)
+    if get_ss is None:
+        return False
+    try:
+        return get_ss() is not None
+    except Exception:
+        return False
+
+
+def _set_axes_position(a, v) -> None:
+    """落 `axes.position`——**除非布局引擎会把它算回去**。
+
+    这是那条判据的**第二个消费点**。manifest 那边持久 tight 引擎下已经不宣称这条
+    能力了，但「不宣称」挡不住两种来路：一份 1.0 之前存下的旧文档，以及一个直接
+    调 API / MCP 的调用。它们发过来的 override 会被老老实实记成「已应用」、不发
+    任何 warning——而 tight 引擎随后把位置算回去，**全新重放也一样算回去**，于是
+    热态与重放「一致地错」，写回自检拦不住，一条永远不生效的改动被烙进
+    `baked_overrides`。
+
+    抛出去会变成 worker 的 warning，一条即阻断写回：用户看到的是「这条改不动」，
+    而不是「写回成功了，但图和屏幕上不一样」。判据与 manifest 共用
+    `axes_position_eaten_by_layout` 这一份实现（见 CLAUDE.md「共享判据修一处
+    不算修完」）。
+
+    **撤销那条路不走这里**（`_RESTORE` 里另有一条）：还原脚本原样是无害的，
+    在那儿抛只会让 undo 平白多一条 warning。
+    """
+    fig = getattr(a, "get_figure", lambda: None)()
+    if fig is not None and axes_position_eaten_by_layout(fig, a):
+        raise ValueError(
+            "layout_engine_tight: 这张图用了常驻的 tight 布局（layout='tight' / "
+            "tight_layout=True），子图位置每次绘制都会被重新算过，这条改动不会"
+            "生效。issue #162"
+        )
+    a.set_position([float(x) for x in v])
+
+
 def _set_cb_orientation(p: "ColorbarProxy", v, state: "FigState") -> None:
     # **第二个消费点。** manifest 那边多宿主时已经不宣称这条能力了，但
     # 「不宣称」挡不住一份**旧文档**：用户在 1.0 之前存过一条 orientation
@@ -3151,7 +3253,7 @@ HANDLERS: dict[tuple[str, str], tuple] = {
     ("axes", "ylim"): (_get_axes_lim("y"), _set_axes_lim("y")),
     ("axes", "position"): (
         lambda a: list(a.get_position().bounds),
-        lambda a, v: a.set_position([float(x) for x in v]),
+        _set_axes_position,
     ),
     ("axes", "visible"): (lambda a: a.get_visible(), lambda a, v: a.set_visible(bool(v))),
     ("image", "visible"): (lambda a: a.get_visible(), lambda a, v: a.set_visible(bool(v))),
@@ -3602,6 +3704,9 @@ _RESTORE: dict[tuple[str, str], object] = {
     ("ticklabel", "text"): _restore_ticklabel_text,
     ("colorbar", "orientation"): _restore_cb_orientation,
     ("colorbar", "extend"): _restore_cb_extend,
+    # 还原脚本原样：不过 `_set_axes_position` 的 guard——tight 引擎下还原是无害
+    # 的（它本来就要把位置算回去），在 undo 路上抛只会平白多一条 warning
+    ("axes", "position"): lambda a, orig: a.set_position([float(x) for x in orig]),
     ("figure", "size_mm"): lambda f, v: f.set_size_inches(v[0] / 25.4, v[1] / 25.4, forward=False),
 }
 for _p in _TICK_MODEL_PROPS:

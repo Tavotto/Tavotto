@@ -945,6 +945,8 @@
   },
   "unlock": "Unlock",
   "unsupported": {
+    "child_axes_locator": "This child axes is positioned by its parent on every frame; a change here would snap back on the next draw",
+    "layout_engine_tight": "This figure uses a persistent tight layout, which recomputes subplot positions on every draw — changes here would not take effect",
     "multi_host_colorbar": "This colorbar spans {{hosts}} subplots; switching its orientation is not supported in this version",
     "partial": "({{count}} of {{total}} elements)",
     "unknown": "Changing this here is not supported in this version"
