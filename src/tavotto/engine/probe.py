@@ -213,7 +213,7 @@ def probe(
             # （内置 runtime 缺依赖 → 项目自己的 .venv 接手，ADR 0018）。
             # 探测是「跑一次用户脚本」最主要的入口，自动接手必须覆盖它——
             # 否则素材库里能打开的项目，`tavotto open` 打不开。
-            worker, resp = pool.build(script, figures_dir, entry)
+            _worker, resp = pool.build(script, figures_dir, entry)
         except pool.WorkerError as exc:
             pool.invalidate(script, figures_dir)
             if cancelled():
