@@ -34,6 +34,7 @@ import {
   verifySourceIntegrity,
   type ActiveSession,
 } from './playgroundSession'
+import { useInspectorVisible } from './inspectorViewport'
 import { discardWarmClient, schedulePrewarm } from './prewarm'
 import { PlaygroundError, type PlaygroundClient } from './pyodideClient'
 import type { FigureChoice, PlaygroundFailure, PlaygroundPhase } from './protocol'
@@ -552,6 +553,8 @@ function EditorView({
   const [cueDismissed, setCueDismissed] = useState(false)
   // 首次引导（只对内置案例）：跳过/关闭记在会话态里，同一会话不再出现
   const [taskDismissed, setTaskDismissed] = useState(false)
+  // 属性页收起（<md）时不出引导——第 2 步指的字号控件就在属性页里
+  const inspectorShown = useInspectorVisible()
   // 会话起来时那次核对的结论；下面在有意义的时刻重新核对
   const [integrity, setIntegrity] = useState<SourceIntegrity>(session.integrity)
   // 从 1 起：**进编辑态本身就要复核一次**。load 时那次摘要是在 `open` 之前
@@ -726,7 +729,10 @@ function EditorView({
             不遮树、不遮属性页、无全屏遮罩 */}
         <div className="relative flex min-h-0 min-w-0 flex-1">
           <CanvasStage />
-          {example?.guidedTask && !taskDismissed && (
+          {/* 属性页收起时不出引导：第 2 步指的字号控件就在属性页里，窄屏上
+              它整个不存在。引导跟着属性页走，不自己另定一个宽度（同源对见
+              `inspectorViewport.ts`） */}
+          {example?.guidedTask && !taskDismissed && inspectorShown && (
             <GuidedTask
               task={example.guidedTask}
               scriptName={session.scriptName}
