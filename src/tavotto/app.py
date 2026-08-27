@@ -208,7 +208,14 @@ def source_sha1(path: Path) -> str:
         return hit[2]
     digest = _sha1_of(path)
     if time.time() < sig[0] + _SOURCE_SHA1_TICK:
-        return digest       # 还在同 tick 窗口里：这条 memo 不可信，不留
+        # 还在同 tick 窗口里：这条 memo 不可信，不留。**旧条目也要一并清掉**
+        # ——签名对不上只是「此刻对不上」，留着它就是一颗休眠的地雷：日后备份
+        # 还原/同步工具把那个 mtime 连同另一份同尺寸内容一起写回来，它就又匹配
+        # 了，而它挂的是更早那一版的摘要。改这条判据之前，每一次签名不匹配都会
+        # 覆盖掉旧条目，这个形状不存在。
+        with _SOURCE_SHA1_LOCK:
+            _SOURCE_SHA1.pop(key, None)
+        return digest
     with _SOURCE_SHA1_LOCK:
         if len(_SOURCE_SHA1) >= _SOURCE_SHA1_MAX:
             _SOURCE_SHA1.clear()

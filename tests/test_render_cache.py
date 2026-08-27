@@ -155,6 +155,29 @@ def test_same_tick_same_size_rewrite_never_returns_the_old_digest(client, tmp_pa
         "同 tick 同尺寸改写拿到了旧摘要——渲染缓存会挂着上一版的图"
 
 
+def test_a_young_signature_evicts_the_stale_memo_entry(client, tmp_path):
+    """同 tick 窗口里的那次调用**不留 memo，也不许把旧条目留在表里**。
+
+    Codex 在 PR #152 上指出的休眠形状：旧条目的签名此刻对不上，所以不会被
+    命中——但「对不上」只是此刻。备份还原 / 同步工具把那个 mtime 连同另一份
+    同尺寸内容一起写回来，它就又匹配了，交出来的是**更早那一版**的摘要，
+    `/api/render` 会一直挂着一张过期的 PNG。
+    """
+    src = tmp_path / "evict.bin"
+    src.write_bytes(b"A" * 640)
+    _settle(src, age=60)
+    old_stamp = src.stat().st_mtime_ns
+    first = m.source_sha1(src)                    # 安定文件：这条进了 memo
+    assert m._SOURCE_SHA1.get(str(src), (0, 0, ""))[2] == first
+
+    src.write_bytes(b"B" * 640)                   # 同尺寸，mtime 是「刚刚」
+    assert m.source_sha1(src) == hashlib.sha1(b"B" * 640).hexdigest()
+
+    os.utime(src, ns=(old_stamp, old_stamp))      # 把当初那个 mtime 还原回来
+    assert m.source_sha1(src) == hashlib.sha1(b"B" * 640).hexdigest(), \
+        "旧 memo 条目复活了：mtime 被还原之后它又匹配上，交出了上上版的摘要"
+
+
 def test_concurrent_requests_never_serve_a_torn_png(client, tmp_path, monkeypatch):
     """同键并发：每个响应都必须是一个完整的 PNG。
 
