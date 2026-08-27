@@ -170,23 +170,37 @@ test('抽屉开合：先播完再卸载、内容不挤、把手仍可拖', async
       (b) => b.getAttribute('aria-label') === '素材',
     ) as HTMLElement
     const rows: { outer: number; inner: number; anim: string; state?: string }[] = []
-    // **先进 rAF 循环再点**：退场只有 120ms，先点后进循环的话，一次慢帧
-    // （GC、前一个 CDP 调用）就足以让第一帧采样落在动画结束之后，
-    // 量到的全是收尾宽度——这种用例平时绿、偶尔红，最难查
-    for (let i = 0; i < 20; i++) {
-      if (i === 0) btn.click()
+    const drawer = () => document.querySelector('[data-left-drawer]') as HTMLElement | null
+    const widthOf = (el: HTMLElement) => +el.getBoundingClientRect().width.toFixed(1)
+
+    // **采样起点是「宽度动画的第一帧已经提交」，不是「点完之后的第一帧」**（#133）。
+    //
+    // 旧写法先进 rAF 循环再点，然后固定采 20 帧。那实际量的是「浏览器在 20 帧
+    // （约 320ms）内有没有把动画首帧提交出来」——退场只有 120ms，动画起步被推迟
+    // 时 8 帧全读到 300，`最后一帧 < 第一帧` 于是 300 < 300 直接红。判据的主语
+    // 错位：它自称测「先播完退场再卸载」，实际在赌起步速度（同族：#138 / #141）。
+    // CI 上 `retries: 1` 一直在吞它，只有本地 0 重试才偶尔看得见。
+    const opened = drawer()!
+    const startWidth = widthOf(opened)
+    btn.click()
+    let warmup = 0
+    while (opened.isConnected && widthOf(opened) === startWidth && warmup++ < 180) {
       await new Promise((r) => requestAnimationFrame(r))
-      const el = document.querySelector('[data-left-drawer]') as HTMLElement | null
+    }
+
+    for (let i = 0; i < 20; i++) {
+      const el = drawer()
       if (!el) break
       const inner = el.firstElementChild as HTMLElement
       rows.push({
-        outer: +el.getBoundingClientRect().width.toFixed(1),
+        outer: widthOf(el),
         inner: +inner.getBoundingClientRect().width.toFixed(1),
         anim: getComputedStyle(el).animationName,
         state: el.dataset.state,
       })
+      await new Promise((r) => requestAnimationFrame(r))
     }
-    return { rows, gone: !document.querySelector('[data-left-drawer]') }
+    return { rows, gone: !document.querySelector('[data-left-drawer]'), startWidth, warmup }
   })
   const after = await grab()
 
@@ -194,13 +208,26 @@ test('抽屉开合：先播完再卸载、内容不挤、把手仍可拖', async
   const inners = new Set(closing.rows.map((r) => r.inner))
   console.log(
     `[动效] 收起：${closing.rows.length} 帧 · 动画=${closing.rows[0]?.anim} · state=${closing.rows[0]?.state} · ` +
+      `起始宽 ${closing.startWidth} · 等首帧 ${closing.warmup} 帧 · ` +
       `外层宽 ${outers[0]}→${outers.at(-1)} · 内层宽 ${[...inners].join('/')} · 最终卸载=${closing.gone} · ` +
       `主线程 ${(((after.TaskDuration - before.TaskDuration) * 1000) / closing.rows.length).toFixed(2)}ms/帧`,
   )
+  expect(
+    closing.warmup,
+    `宽度动画的首帧始终没提交（等了 ${closing.warmup} 帧，宽度一直是 ${closing.startWidth}）`,
+  ).toBeLessThan(180)
   expect(closing.rows.length, '应当先播退场再卸载').toBeGreaterThan(2)
   expect(closing.rows[0].state).toBe('closed')
   expect(closing.rows[0].anim).toBe('drawer-out')
-  expect(outers.at(-1)!).toBeLessThan(outers[0])
+  // **量的是「退场期间缩过没有」，不是「最后一帧比第一帧小」。**
+  // 动画播完那一刻元素会弹回基准宽度（`drawer-out` 没有 fill-mode），React 再过
+  // 一帧才把它卸掉——所以最后一帧读到 300 还是读到 21 完全看采样落在弹回之前还是
+  // 之后，是抛硬币。实测 20 轮里两轮红，日志形如 `外层宽 265.8→300`。
+  // 「缩过」这条判据与弹回无关，也仍然抓得住 #133 的原始现场（全程 300 → 红）。
+  expect(
+    Math.min(...outers),
+    `退场期间外层宽度应当真的缩过（起始 ${closing.startWidth}，逐帧 ${outers.join('/')}）`,
+  ).toBeLessThan(closing.startWidth)
   expect(inners.size, '内容层宽度全程不变（不跟着挤）').toBe(1)
   expect(closing.gone).toBe(true)
 
