@@ -12,6 +12,7 @@ from __future__ import annotations
 import math
 import sys
 
+from matplotlib import font_manager
 from matplotlib.axes import Axes
 from matplotlib.axis import Axis
 from matplotlib.collections import Collection, PathCollection, PolyCollection
@@ -694,11 +695,52 @@ def _alpha_field(artist) -> list[dict]:
              "min": 0, "max": 1, "step": 0.05}]
 
 
+#: 三个通用族。**无条件保留**——它们由 rcParams 的族列表解析，运行时一定有
+#: 一个能落地。注意不能拿下面那个探测器判它们：`fallback_to_default=False`
+#: 下 `sans-serif` 会抛 ValueError（连字符被 fontconfig 语法当成分隔符解析
+#: 失败），尽管它当然可用。macOS / matplotlib 3.10.8 实测。
+_GENERIC_FAMILIES = ("serif", "sans-serif", "monospace")
+#: 具体字体名：装了才列。桌面上这三个通常都在，浏览器 playground（Pyodide
+#: 只带 DejaVu 三件套）与没装 msttcorefonts 的 Linux 上一个都没有。
+_NAMED_FAMILIES = ("Times New Roman", "Arial", "Helvetica")
+#: 探测结果按进程缓存：一次 manifest 要过很多个 Text，探测结果在一次渲染里
+#: 不会变。（`findfont` 自己也有 lru_cache，这层只是省掉异常构造。）
+_FONT_PRESENT: dict[str, bool] = {}
+
+
+def _font_installed(name: str) -> bool:
+    """这个运行时**画得出来**这个字体名吗？
+
+    走 matplotlib 自己的解析路径，所以「列出来的」== 「画得出来的」。
+    `fallback_to_default=False` 是关键：默认的回退会让任何名字都「成功」，
+    正是它让 playground 里选 Times New Roman 静默变成 DejaVuSans——链路全通、
+    override 记下了、图重绘了，只有字形没变，界面还报告成功。
+    """
+    hit = _FONT_PRESENT.get(name)
+    if hit is None:
+        try:
+            font_manager.findfont(font_manager.FontProperties(family=name),
+                                  fallback_to_default=False)
+            hit = True
+        except (ValueError, RuntimeError):
+            hit = False
+        _FONT_PRESENT[name] = hit
+    return hit
+
+
+def _family_options() -> list[str]:
+    """字体下拉的选项：由运行时的解析能力决定，不是写死的一张表。"""
+    return [*_GENERIC_FAMILIES, *(n for n in _NAMED_FAMILIES if _font_installed(n))]
+
+
 def _text_fields(t) -> list[dict]:
     alpha = t.get_alpha()
     fam = (t.get_fontfamily() or ["serif"])[0]
-    fam_opts = ["serif", "sans-serif", "monospace", "Times New Roman", "Arial", "Helvetica"]
+    fam_opts = _family_options()
     if fam not in fam_opts:
+        # 脚本自己写死了一个不在选项里的字体名。它是**当前值**，enum 必须含有
+        # 自己的值，否则界面显示空白。注意这与「提供一个死选项」不是一回事：
+        # 能选的只有它自己，选了也只是维持原状，不会新造一次静默失效。
         fam_opts = [fam] + fam_opts
     patch = t.get_bbox_patch()
     if patch is not None:
