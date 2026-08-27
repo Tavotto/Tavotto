@@ -168,15 +168,37 @@ def prune_render_cache(max_bytes: int = RENDER_CACHE_MAX_BYTES) -> int:
 #:     → 重算一次哈希，值不变，**缓存照常命中**；
 #:   * 内容变了 → mtime/size 必然也变，memo 失效重算，键跟着变，缓存必然失效。
 #: 反过来拿 mtime 当身份就只有第二条成立，第一条会白丢一张 3200px 的预览。
+#:
+#: 第二条有一个例外，见 `source_sha1` 的「同 tick 改写」窗口。
 _SOURCE_SHA1: dict[str, tuple[float, int, str]] = {}
 _SOURCE_SHA1_LOCK = threading.Lock()
 #: memo 条目上限（素材数量由用户的图库决定，不设上限就是慢性泄漏）。
 #: 满了整表清掉：LRU 只为省几次哈希，不值得多维护一个数据结构。
 _SOURCE_SHA1_MAX = 4096
+#: mtime 粒度的保守上界（秒）。各文件系统差得很远——APFS/ext4 是纳秒、
+#: HFS+/NTFS 到秒、FAT 到两秒——运行时问不出确切值，就按最粗的算。
+#: 这个常量只决定「多久之内写过的文件不进 memo」，估大了只是少省几次哈希。
+_SOURCE_SHA1_TICK = 2.0
 
 
 def source_sha1(path: Path) -> str:
-    """素材文件内容的 sha1（按 (mtime, size) memo，命中就不读文件）。"""
+    """素材文件内容的 sha1（按 (mtime, size) memo，命中就不读文件）。
+
+    **(mtime, size) 是「要不要重算」的信号，不是身份。** 它漏掉的是一种
+    改写：文件在**同一个 mtime tick 内被改写成同样大小**时两者一个比特都
+    不变，memo 会把上一版内容的摘要当成这一版交出去——而它正是渲染缓存的
+    键，用户看到的就是「脚本重跑了、文件变了，画布还是旧图」。粗粒度
+    文件系统（Windows/HFS+，一秒一跳）上这个窗口宽得能被日常操作撞到。
+
+    堵法用 git 判 "racily clean" 的同一招：**只有能证明「以后不会再有写入
+    落进同一个 tick」的条目才可信**。哈希算完时墙上时间已经越过
+    `mtime + _SOURCE_SHA1_TICK` → 之后任何写入都只能落进下一个 tick →
+    (mtime, size) 必然变 → 记 memo；还在窗口里就不记，下次老实重算。
+    刚写完的文件因此在两秒内每次都真算一遍哈希，**这正是需要它算的时候**。
+
+    时钟不一致（网络盘的 mtime 来自服务端）朝安全方向倒：服务端时钟偏快
+    → 窗口判定永远成立 → 退化成「不 memo」，只是慢，不会错。
+    """
     st = path.stat()
     key = str(path)
     sig = (st.st_mtime, st.st_size)
@@ -185,6 +207,15 @@ def source_sha1(path: Path) -> str:
     if hit is not None and hit[0] == sig[0] and hit[1] == sig[1]:
         return hit[2]
     digest = _sha1_of(path)
+    if time.time() < sig[0] + _SOURCE_SHA1_TICK:
+        # 还在同 tick 窗口里：这条 memo 不可信，不留。**旧条目也要一并清掉**
+        # ——签名对不上只是「此刻对不上」，留着它就是一颗休眠的地雷：日后备份
+        # 还原/同步工具把那个 mtime 连同另一份同尺寸内容一起写回来，它就又匹配
+        # 了，而它挂的是更早那一版的摘要。改这条判据之前，每一次签名不匹配都会
+        # 覆盖掉旧条目，这个形状不存在。
+        with _SOURCE_SHA1_LOCK:
+            _SOURCE_SHA1.pop(key, None)
+        return digest
     with _SOURCE_SHA1_LOCK:
         if len(_SOURCE_SHA1) >= _SOURCE_SHA1_MAX:
             _SOURCE_SHA1.clear()
