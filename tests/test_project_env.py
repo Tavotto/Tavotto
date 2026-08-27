@@ -237,11 +237,22 @@ def test_health_probe_reports_an_unusable_interpreter(tmp_path):
 # --------------------------------------------- 自动切换（真 worker，端到端）
 @pytest.fixture
 def project(tmp_path):
-    """一个图库目录 + 一个 import 了 fixture 模块的脚本。"""
+    """一个图库目录 + 一个 import 了 fixture 模块的脚本。
+
+    **退出前必须把项目关掉**：走 `client` 的用例会 `open_project()`，那会给
+    这个目录起一个 watcher；本文件的项目目录里还建着一个真 venv（几千个
+    文件），watcher 留着不收，整个 pytest 进程剩下的时间都在监视一堆已经被
+    删掉的临时目录。
+    """
+    from tavotto import app as m
+
     figs = tmp_path / "figs"
     figs.mkdir()
     (figs / "figure.py").write_text(SCRIPT, encoding="utf-8")
     yield figs
+    for pid in [p for p, ctx in list(m.PROJECTS.items())
+                if str(ctx.path) == str(figs)]:
+        m.close_project(pid, wait=True)
     engine_pool.shutdown_all(str(figs), wait=True)
 
 

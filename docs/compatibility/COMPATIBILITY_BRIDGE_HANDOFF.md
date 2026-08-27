@@ -145,6 +145,7 @@ PYTHONPATH=src .venv/bin/python scripts/ci/compat_matrix.py --smoke      # 通�
 | 记住的解释器在 reopen 时只做轻量复检（`import matplotlib`），不重跑完整体检 | 低 | 坏了会在起 worker 时报错，走正常恢复引导 |
 | 项目 venv 的 matplotlib 版本可能与视觉基线不同 | 低（标注为 `unverified_but_compatible`） | 不修，如实标注 |
 | 自动接手仍是同步阻塞（体检最长 60s×候选数，命中第一个就停） | 低 | SSE 进度流条目沿用 |
+| 体检跑在 `-I` 下，worker 只在 bundled 档摘敌意环境变量（`PYTHONHOME`/`PYTHONPATH`）——从终端带着 conda 变量启动时体检会过而 worker 可能起不来 | 中（**不是本轮引入**：`configured`/`system` 一直如此） | 要同时动两条控制面与 `spec.env` 的增量模型（它表达不了「删掉某个变量」），独立一轮 |
 | 真机（WebView2/WKWebView 壳内）尚未走过这条路 | 中 | 见「待办」 |
 
 ## 不得被下一 Session 破坏的约束
@@ -177,8 +178,9 @@ PYTHONPATH=src .venv/bin/python scripts/ci/compat_matrix.py --smoke      # 通�
 - [ ] **网站 playground re-sync**（PR 1 起就挂着）：合并后 main 上
   `python scripts/build_browser_playground.py` → 网站仓库
   `pnpm sync-playground`。
-- [ ] 受管产物重建（本 PR 改了 `web/src`）：`build_mcp_widget.py` 与
-  `build_browser_playground.py`，各自 `--check`。
+- [x] 受管产物重建（本 PR 改了 `web/src`）：`canvas.html` 指纹
+  42a8f188bc82dae0 → d1aec7a5393dcb20；playground 指纹 d79f50b4f385656d
+  （`web/dist-playground` 不进仓库）。
 
 ## 下一 Session：先出数据，再决定做什么
 

@@ -245,3 +245,12 @@ Layer 4  tavotto run / native 执行     ← 尚未实施，见「决策门」
   他们仍然走「选择其他 Python」那条明确的路，不是无声失败。
 * 项目 `.venv` 的 matplotlib 版本可能与 Tavotto 的视觉基线不同。这是**如实
   标注**而不是拒绝：支持等级里的 `unverified_but_compatible` 就是给它的。
+* **体检与 worker 的环境条件不完全一致**（已知，本轮不改）：体检跑在 `-I`
+  （隔离模式，忽略 `PYTHONHOME` / `PYTHONPATH`）下，而 worker 只在
+  `source == bundled` 时才由 `runtime.child_env()` 摘掉那些变量。用户从
+  终端启动 Tavotto、shell 里为 conda 设了 `PYTHONHOME` 时，体检会过而
+  worker 可能起不来。**这不是本轮引入的**——`configured` / `system` 两档
+  一直如此；项目 venv 只是加入了同一条船。真要修得同时动两条控制面与
+  `ExecutionSpec` 的 env 模型（`spec.env` 只存增量，表达不了「删掉某个
+  变量」），那是独立的一轮。发作时 worker 会正常报错并走恢复引导，不会
+  静默出错图。
