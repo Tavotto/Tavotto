@@ -112,7 +112,13 @@
   记住选择、SSE 进度。
 - [ ] **CompatBench 的 `native_run` 路由**从 `not_implemented` 升级。
 - [ ] **`_refresh_axes_follow` 的静默 except**：要不要收窄是独立一笔。
-- [ ] 上一轮遗留：真机最终产物证据（§六）、网站 playground re-sync。
+- [ ] **网站 playground re-sync**：本轮动了 `overrides.py`（`_sibling`），
+  playground 指纹变成 `1a7aefda8bbe880f`（canvas.html `9fe4aad080b18fa4`
+  不受影响——它不嵌 Python）。`web/dist-playground/` 是 gitignored 的可再生
+  产物，所以本分支里没有可提交的差异；合并后在新 main 上重跑
+  `python scripts/build_browser_playground.py`，再去网站仓库
+  `pnpm sync-playground`。
+- [ ] 上一轮遗留：真机最终产物证据（§六）。
 
 ## 下一 Session 首先阅读
 

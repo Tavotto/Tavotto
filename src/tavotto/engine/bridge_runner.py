@@ -537,7 +537,14 @@ def _derive_target_facts(args) -> None:
 def main(argv: list | None = None) -> int:
     args = _parse_args(list(sys.argv[1:] if argv is None else argv))
     if not args.out_dir:
-        args.out_dir = os.path.join(os.path.expanduser("~"), ".tavotto-bridge-out")
+        # **不往用户 home 里放一个 dotdir**。产物目录归 Tavotto 管
+        # （父进程按 `config.data_dir()` 算好经 `--out-dir` 传进来），
+        # 而 runner 跑在用户环境里、import 不到 `tavotto.engine.config`
+        # ——猜一个 `~/.tavotto-*` 就是在用户地盘上留垃圾。没给就用临时目录：
+        # 会话结束由系统回收，谁都不欠。
+        import tempfile  # noqa: PLC0415 — 只有「没给 out-dir」这条支线要
+
+        args.out_dir = tempfile.mkdtemp(prefix="tavotto-bridge-")
     _derive_target_facts(args)
     run = BridgeRun(args)
 

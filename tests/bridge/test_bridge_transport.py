@@ -12,11 +12,13 @@ from __future__ import annotations
 
 import json
 import socket
+import subprocess
 import threading
 import time
 
 import pytest
 
+from support import bridgekit
 from support.bridgekit import write
 from tavotto.engine import bridge, bridge_spike, pool
 
@@ -253,6 +255,51 @@ def test_shutdown_closes_the_socket_and_reaps_the_child(user_python, tmp_path):
         time.sleep(0.05)
     assert sess.proc.poll() is not None, "子进程没被收掉"
     assert sess.sock.fileno() == -1, "socket 没关"
+
+
+def test_the_runner_never_writes_into_the_user_home(user_python, tmp_path, monkeypatch):
+    """没给 `--out-dir` 时产物落**临时目录**，绝不在用户 home 里留 dotdir。
+
+    仓库纪律：运行时可写数据一律走 `config.data_dir()`，不往包目录 / 安装
+    目录 / 仓库根写东西。runner 跑在用户环境里 import 不到 `config`，所以
+    它的正确行为是"没给就用临时目录"，而不是猜一个 `~/.tavotto-*`。
+    （第一版猜了，本机 home 里当场多出一个 `.tavotto-bridge-out/`。）
+    """
+    home = tmp_path / "fakehome"
+    home.mkdir()
+    proj = tmp_path / "proj"
+    write(proj / "fig.py", SHOW_ONLY)
+    env = bridgekit.child_env({"HOME": str(home), "USERPROFILE": str(home)})
+    report = tmp_path / "report.json"
+    r = subprocess.run(
+        [
+            user_python,
+            str(bridge.RUNNER_PY),
+            "--target-kind",
+            "script",
+            "--target",
+            str(proj / "fig.py"),
+            "--report",
+            str(report),
+            "--",
+        ],
+        cwd=str(proj),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert r.returncode == 0, r.stderr
+    assert json.loads(report.read_text(encoding="utf-8"))["stems"] == ["fig"], (
+        "用例前提：确实渲染过（否则根本不会有产物要落盘）"
+    )
+    # `.matplotlib` 是 **matplotlib 自己**的字体缓存，用户直接
+    # `python fig.py` 一样会有它——native 刻意**不**改 `MPLCONFIGDIR`
+    # （safe 那边改是因为内置 runtime 装在只读的安装目录里；用户的环境是
+    # 他的地盘，我们没资格替他改）。判据是「有没有 **Tavotto** 留下的东西」。
+    leaked = sorted(p.name for p in home.iterdir() if p.name != ".matplotlib")
+    assert leaked == [], f"runner 在用户 home 里留了东西: {leaked}"
+    assert not any("tavotto" in p.name.lower() for p in home.iterdir())
 
 
 def test_the_spike_cli_is_not_wired_into_the_product_cli():
