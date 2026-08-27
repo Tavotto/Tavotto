@@ -56,6 +56,7 @@ import json
 import os
 import socket
 import sys
+import threading
 import traceback
 import types
 
@@ -609,8 +610,22 @@ def _derive_target_facts_module_fixup(args) -> None:
 
 
 def _write_report(run, args, exit_code: int) -> None:
-    """机器可读的运行小结（对拍夹具与 spike CLI 用；不是产品契约）。"""
+    """机器可读的运行小结（对拍夹具与 spike CLI 用；不是产品契约）。
+
+    捕获到图时**顺带把引擎跑一遍**（instrument + 首帧预览）：报告里的
+    `stems` / `owner_thread` 因此是真跑出来的事实，而不是一份"看起来该有"
+    的清单。没有图时一行 matplotlib 相关的代码都不碰。
+    """
+    stems: list = []
+    owner_thread = None
+    if _CAPTURE:
+        session = run._ensure_session()  # noqa: SLF001 — runner 自己的会话
+        stems = list(session.states)
+        owner_thread = session.owner_thread
     payload = {
+        "stems": stems,
+        "owner_thread": owner_thread,
+        "main_thread": threading.get_ident(),
         "exit_code": exit_code,
         "target_kind": args.target_kind,
         "target": args.target,
