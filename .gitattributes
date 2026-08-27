@@ -15,3 +15,14 @@ web/src/i18n/resources.d.ts text eol=lf
 
 # `python scripts/build_mcp_widget.py --check` 比的是 web/src 的源码指纹
 codex-plugin/mcp/widget/canvas.html text eol=lf
+
+# CLA 正文的 SHA-256 记在 .github/cla-policy.json 里，判据逐字节核对
+# （tests/test_legal_contribution_policy.py 的 test_recorded_hash_matches_the_document）。
+# 这两份**不是生成物**，是人写的法律文本，但落在同一类需求上：字节必须确定。
+# 2026-08-28 在合并队列里红过一次——policy 记的是 LF 哈希，Windows 检出成
+# CRLF，判据于是报「改了正文就必须走版本流程」，而正文一个字都没动。
+# 那是个假结论：它量的是工作区字节，不是内容。
+# 顺带：cla_gate.py 在 CI 上经 GitHub API 取 blob，拿到的本来就是 LF——
+# 钉住磁盘字节才让两个读取点真正一致。
+docs/legal/CLA_INDIVIDUAL.md text eol=lf
+docs/legal/CLA_CORPORATE.md text eol=lf
