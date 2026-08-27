@@ -399,7 +399,19 @@ cd web && pnpm build              # 类型检查（tsc -b）+ 打包
 ——许可证不影响你的作品。受约束的是分发：如果你把改过的 Tavotto 分发给别人，
 或架成别人能通过网络访问的服务，需要向这些用户提供对应的源码。
 
-Tavotto™ 是 Tavotto 项目的商标。
+### 贡献
+
+贡献按 Tavotto 贡献者许可协议（CLA）接受：**你保留自己贡献的著作权**，同时授权
+项目在社区版许可证下继续分发它，并在适用时按另行约定的商业条款分发。
+Tavotto 的著作权人可以提供另行授权的版本。
+
+见 [CONTRIBUTING.md](CONTRIBUTING.md) 与 [docs/legal/](docs/legal/)。
+
+### 商标
+
+**Tavotto™** 是 Tavotto 项目的未注册商标。开源的著作权许可不等于商标许可：
+欢迎 fork，也可以说明自己基于 Tavotto，但不应让人误以为是官方发行版。
+见 [TRADEMARKS.md](TRADEMARKS.md)。
 
 ---
 

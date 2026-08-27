@@ -171,7 +171,88 @@ with a Simplified Chinese README alongside. Either language is fine in a PR
 description. What matters more is that the message says *why*, and that a fix
 names the symptom a user would have seen.
 
-## Licence
+## Licence and contributor agreement
 
-Contributions are made under [AGPL-3.0-only](LICENSE), the same licence as the
-project.
+**Tavotto is licensed under [AGPL-3.0-only](LICENSE), and that is not changing.**
+
+**You keep the copyright in your contribution.** The Tavotto Contributor License
+Agreement gives Tavotto the additional rights needed to keep the community
+edition open under AGPL while preserving the option to offer separately licensed
+editions.
+
+### What the CLA actually does
+
+You grant Tavotto a perpetual, worldwide, non-exclusive, royalty-free,
+irrevocable licence to use, modify and distribute your contribution, including
+the right to sublicense it. In return Tavotto is bound to keep licensing your
+contribution under the licence in force when you submitted it — so the community
+edition cannot be closed behind your back.
+
+You keep every right you had before signing, including using and licensing your
+own code anywhere else.
+
+### Why it exists
+
+Without it, a contribution merged under AGPL-3.0-only can only ever be
+redistributed under AGPL-3.0-only. The CLA lets the maintainers continue
+distributing the same contribution in the AGPL community edition while retaining
+the ability to offer separately licensed editions.
+
+It does not promise that such an edition will exist, that contributors will be
+paid, or that any contribution will be merged.
+
+### When it applies
+
+| | CLA needed? |
+|---|---|
+| Issues, bug reports, feature requests, discussion | **No** |
+| Pull requests — code, documentation, design, anything | **Yes** |
+
+Every pull request goes through the CLA process. There is deliberately no
+"trivial change" exemption: whether a given diff attracts copyright is a legal
+question, and a CI check that tried to guess would be both unreliable and a
+constant source of argument. One rule is easier to follow than a boundary
+nobody can locate.
+
+The `Contributor licence (CLA)` check runs on every pull request and reports
+through `CI fast gate`. It qualifies **everyone in the PR** — the author, every
+commit author, and every `Co-authored-by` trailer — not just whoever opened it.
+
+### If your employer owns the work
+
+If you are contributing work created in the course of employment, your employer
+probably owns the copyright, and you cannot grant these rights on your own. Use
+the [Corporate CLA](docs/legal/CLA_CORPORATE.md) instead, which is signed by
+someone authorised to bind the company. Corporate agreements are reviewed by a
+person, not by CI.
+
+### The agreements
+
+- [Individual CLA](docs/legal/CLA_INDIVIDUAL.md)
+- [Corporate CLA](docs/legal/CLA_CORPORATE.md)
+- [Why it is versioned and hashed](docs/legal/CLA_VERSIONING.md)
+- [The full picture](docs/legal/LICENSING.md)
+
+Both are derived from the [Harmony Agreements](https://www.harmonyagreements.org/)
+1.0 templates rather than written from scratch.
+
+**Current status: the CLA is not yet in force.** The agreements are at version
+`1.0-draft` because the project has not yet recorded a legal entity to be the
+counterparty, and a draft cannot be signed. Until that is resolved the check
+qualifies only the rights holder and two named bots — see
+[docs/legal/CLA_AUTOMATION_SETUP.md](docs/legal/CLA_AUTOMATION_SETUP.md). If you
+want to contribute in the meantime, open an issue and we will sort it out.
+
+### Not a DCO
+
+Tavotto does not use a Developer Certificate of Origin. A DCO certifies
+*provenance* — that you had the right to submit the code under the project's
+existing licence. It is not a copyright grant and cannot support separately
+licensed editions, so it is not a substitute for a CLA and is not treated as
+one here.
+
+## Trademark
+
+The AGPL covers copyright, not the name. See [TRADEMARKS.md](TRADEMARKS.md) —
+forks are welcome and may say they are based on Tavotto; what they should not do
+is present themselves as the official one.

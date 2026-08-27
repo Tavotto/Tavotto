@@ -475,7 +475,22 @@ reach your work. The obligations apply to distribution: if you give a modified T
 to others, or run it as a network service for them, the corresponding source has to be
 available to those users.
 
-Tavotto™ is a trademark of the Tavotto project.
+### Contributing
+
+Contributions are accepted under the Tavotto Contributor License Agreement,
+which lets you **keep the copyright in your contribution** while allowing the
+project to distribute it under the community licence and, where applicable,
+under separate commercial terms. The Tavotto copyright holder(s) may offer
+separately licensed editions.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/legal/](docs/legal/).
+
+### Trademark
+
+**Tavotto™** is an unregistered trademark of the Tavotto project. An open-source
+copyright licence is not a trademark licence: forks are welcome and may say they
+are based on Tavotto, but shouldn't present themselves as the official release.
+See [TRADEMARKS.md](TRADEMARKS.md).
 
 ---
 
