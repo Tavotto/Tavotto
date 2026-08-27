@@ -181,12 +181,20 @@ def test_every_classifier_role_is_reachable_from_some_dashboard_section():
 
     漏一个角色不会让任何查询报错，只会让那部分流量从看板上**静静消失**。
     """
-    produced = {collector.classify_asset(n)[0] for n in (
-        "Tavotto-0.8.0-macOS.dmg", "Tavotto.app.tar.gz", "latest.json",
-        "tavotto-0.8.0-py3-none-any.whl", "tavotto-0.8.0.tar.gz",
-        "codex-plugin.json", "codex-plugin-0.8.0.zip",
-        "SHA256SUMS.txt", "some-unlabelled-artifact.bin",
-    )}
+    produced = {
+        collector.classify_asset(n)[0]
+        for n in (
+            "Tavotto-0.8.0-macOS.dmg",
+            "Tavotto.app.tar.gz",
+            "latest.json",
+            "tavotto-0.8.0-py3-none-any.whl",
+            "tavotto-0.8.0.tar.gz",
+            "codex-plugin.json",
+            "codex-plugin-0.8.0.zip",
+            "SHA256SUMS.txt",
+            "some-unlabelled-artifact.bin",
+        )
+    }
     placed = _roles_of("Distribution / Downloads") | _roles_of("Infrastructure / Automated Traffic")
     # checksum 是附属文件，刻意不进任何一区
     assert produced - placed == {"checksum"}
@@ -201,8 +209,9 @@ def test_role_filtered_metrics_carry_the_role_resolution_rule():
     """
     d = _dashboard()
     assert "role_resolution" in d
-    role_filtered = [m for m in d["metrics"]
-                     if isinstance(m.get("filter"), dict) and "asset_role" in m["filter"]]
+    role_filtered = [
+        m for m in d["metrics"] if isinstance(m.get("filter"), dict) and "asset_role" in m["filter"]
+    ]
     assert role_filtered, "看板里一个按角色过滤的指标都没有，用例失去意义"
     for m in role_filtered:
         assert m.get("role_from") == "latest_snapshot_per_asset_id", m["id"]
