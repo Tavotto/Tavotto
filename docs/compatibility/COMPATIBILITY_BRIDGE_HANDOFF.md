@@ -6,15 +6,18 @@
 
 - 日期：2026-08-27
 - 当前 branch：`compat/bridge-session07-project-env`（worktree
-  `.claude/worktrees/compat-bridge-session01`，基于 `origin/main` 的
-  `93cca88`；**尚未推送**）
+  `.claude/worktrees/compat-bridge-session01`），已 rebase 到 `origin/main`
+  的 `8e5a67f` 并推送 → **PR #177**
 - 本 branch 上现在有**两个 Session 的工作**：Session 7（项目 Python 环境
   自动发现与无感切换，ADR 0018）与 **Session 7B（受控依赖修复，ADR 0019）**。
   7B 建在 7 上面，**没有改动 7 的任何行为**（见下方「Session 7 一个字节没改」）。
 - 前一轮：PR 1（#127）Session 1–6 已合入 main（squash `6aeca9e`，2026-08-26），
   交接收尾 `9f48357`（#135）
-- **main 已经往前走了**（`b6a1cbf`）：本分支入队前要先 rebase 并按下面
-  「合并前必做」重跑。
+- 受管产物 `canvas.html` 指纹 **`2c5f737bd8d7903c`**（在 `8e5a67f` 上重建，
+  `--check` 通过）。**它会再次过期**：`tavotto-a7` 手上六条 PR
+  （#157/#160/#161/#164/#168/#171）都重建这份产物且排在前面，入队前要按
+  合并态再重建一次。rebase 时它撞了 3 次，每次都是重跑 `build_mcp_widget.py`
+  然后 `git add`——**managed artifact 的冲突不用手工解**，10 秒一次。
 
 ## Session 7B 做了什么
 
@@ -200,11 +203,50 @@ python scripts/build_mcp_widget.py --check                 # 一致
 
 ## 合并前必做
 
-- [ ] `git rebase origin/main`（main 已到 `b6a1cbf`），rebase 后**本地重跑**
-      整套后端 + 前端 + CompatBench smoke。
-- [ ] 受管产物冲突：`canvas.html` 是并行 PR 必撞的那一份，按「合并态重建 +
-      `--check`」处理（见 memory `managed-artifact-conflicts`）。
-- [ ] 打 `full-ci` 标签在 PR SHA 上取证。
+- [x] `git rebase origin/main`（到 `8e5a67f`），rebase 后**本地重跑**整套：
+      ruff 全绿 / pytest 2449 passed / web 1208 passed / CompatBench smoke 通过 /
+      `build_mcp_widget.py --check` 一致。
+- [ ] **入队前再重建一次 `canvas.html`**：a7 那六条排在前面，先到先得，
+      每次被顶掉都按「合并态重建 + `--check`」处理，**不手工解冲突**。
+- [ ] 打 `full-ci` 标签在 PR SHA 上取证（大改动入队规矩）。
+- [ ] **merge main 之后重跑 e2e**（asset-library / golden-paths 各一遍）：
+      windows-exe-smoke 的 Playwright 套件只在 merge_group 跑。
+
+### 与在途 PR 的两处交代（已同步给 `tavotto-d2`）
+
+- **Ruff formatter 迁移（#159 / #175 / #176）**：本 PR **刻意不含格式化提交**。
+  `ruff format src/tavotto/app.py` 会重排整个 3800 行文件——那几千行与本轮
+  无关的 churn 会淹掉评审，还会和每一条动 app.py / pool.py 的 PR 撞车，
+  而那正是 #175 存在的理由。实测本分支改过的 16 个 `.py` **全部**会被重排。
+  #175 落地后本分支按全仓 `ruff format .` + rebase 收敛；#176 落地后提交前
+  跑 `ruff check . && ruff format --check .`（与 CI 逐字相同）。
+- **CodeQL 门禁红着，需要维护者出手**（`CodeQL gate` 是 required check，
+  见 ruleset 21121430）。`CodeQL` 报 1 critical + 7 high，逐条定性写在
+  PR #177 的 issuecomment-5438197651。
+
+  **我开 PR 时的预判是错的，值得记下来**：我以为红灯来自「本 PR 改写了
+  `pool.py::EngineWorker.__init__` 里的一行，把那条 critical dismissal 的
+  指纹打散了」。实情不是——那 8 条**全部是新代码第一次被扫到**
+  （`projectenv.py` / `depresolve.py` 是本 PR 新增的文件，main 从没扫过），
+  与 dismissal 打散无关。`EngineWorker.__init__` 那条**要等本 PR 合进 main
+  之后**才会落空。
+
+  处置：**一条都没 dismiss。** main 上那 15 条的先例摆着——维护者
+  2026-08-26 逐条手写的理由，那不是 PR 作者该代劳的动作，更不该为了让门禁
+  变绿而做。也没有为了消 CodeQL 去改代码：#119 的守卫（正则白名单 +
+  `shell=False` + list argv）已经是正确形状。
+
+  其中 **#120（`app.py:3111`）要单独看**：它不在已 dismiss 的那三条所在的
+  函数里（那三条在 `api_registry_probe`），而在本 PR 新增的
+  `_set_project_environment`，且**故意接受项目外的绝对路径**（ADR 0018
+  写明「用户显式挑的项目外解释器（conda 环境）才存绝对路径」）。要不要收紧
+  是产品决定。
+
+  **两条方法学**（都来自这次，值得下一轮直接用）：
+  - 判「新增 high 告警是不是我引入的」，`state=open` 那个过滤器**会把
+    dismissed 排除掉**，只看它会得出相反结论。
+  - 判「我碰到那条 dismissal 了吗」，比 hunk 位置可靠的是**比锚点函数的
+    AST dump**——排版、行号、rebase 都不影响它，只有实质改动会变。
 
 ## 待办（本 PR 之外）
 
