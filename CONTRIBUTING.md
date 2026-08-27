@@ -171,7 +171,105 @@ with a Simplified Chinese README alongside. Either language is fine in a PR
 description. What matters more is that the message says *why*, and that a fix
 names the symptom a user would have seen.
 
-## Licence
+## Licence and contributor agreement
 
-Contributions are made under [AGPL-3.0-only](LICENSE), the same licence as the
-project.
+**Tavotto is licensed under [AGPL-3.0-only](LICENSE), and that is not changing.**
+
+**You keep the copyright in your contribution.** The Tavotto Contributor License
+Agreement gives Tavotto the additional rights needed to keep the community
+edition open under AGPL while preserving the option to offer separately licensed
+editions.
+
+### What the CLA actually does
+
+You grant Tavotto a perpetual, worldwide, non-exclusive, royalty-free,
+irrevocable licence to use, modify and distribute your contribution, including
+the right to sublicense it. In return Tavotto is bound to keep licensing your
+contribution under the licence in force when you submitted it — so the community
+edition cannot be closed behind your back.
+
+You keep every right you had before signing, including using and licensing your
+own code anywhere else.
+
+### Why it exists
+
+Without it, a contribution accepted only under AGPL-3.0-only can be
+redistributed by the project only under AGPL-3.0-only — the maintainers cannot
+unilaterally offer it under other terms, because it is your copyright, not
+theirs. The CLA lets them continue distributing the same contribution in the
+AGPL community edition while retaining the ability to offer separately licensed
+editions.
+
+It does not promise that such an edition will exist, that contributors will be
+paid, or that any contribution will be merged.
+
+### When it applies
+
+| | CLA needed? |
+|---|---|
+| Issues, bug reports, feature requests, discussion | **No** |
+| Pull requests — code, documentation, design, anything | **Yes** |
+
+Every pull request goes through the CLA process. There is deliberately no
+"trivial change" exemption: whether a given diff attracts copyright is a legal
+question, and a CI check that tried to guess would be both unreliable and a
+constant source of argument. One rule is easier to follow than a boundary
+nobody can locate.
+
+A `Contributor licence (CLA)` check enforces this in CI. It qualifies
+**everyone in the PR** — the author, every commit author, and every
+`Co-authored-by` trailer — not just whoever opened it, and it reports through the
+existing `CI fast gate` rather than adding a new required check.
+
+**The CI job lands in a follow-up pull request, not this one.** The check reads
+its policy and agreement texts from the default branch on purpose — a pull
+request must not be able to supply the rules that judge it — so those files have
+to exist on `main` before the job can run at all. Wiring it up in the same change
+that introduces them would deadlock: the job would fetch from `main`, find
+nothing, and fail forever.
+
+### If your employer owns the work
+
+If you are contributing work created in the course of employment, your employer
+probably owns the copyright, and you cannot grant these rights on your own. Use
+the [Corporate CLA](docs/legal/CLA_CORPORATE.md) instead, which is signed by
+someone authorised to bind the company. Corporate agreements are reviewed by a
+person, not by CI.
+
+### The agreements
+
+- [Individual CLA](docs/legal/CLA_INDIVIDUAL.md)
+- [Corporate CLA](docs/legal/CLA_CORPORATE.md)
+- [Why it is versioned and hashed](docs/legal/CLA_VERSIONING.md)
+- [The full picture](docs/legal/LICENSING.md)
+
+Both are derived from the [Harmony Agreements](https://www.harmonyagreements.org/)
+1.0 templates rather than written from scratch.
+The counterparty is **Jiaqi Wan**, a natural person; the governing law is that
+of the Hong Kong SAR.
+
+**Current status: the agreements are final at version `1.0`, but no signature
+service is connected yet.** That is a deliberate deferral rather than an
+omission — there have been no external contributions so far, so there is nothing
+for one to collect. Until one is connected, the check qualifies only the rights
+holder and two named bots, and blocks everyone else **with an explanation**
+rather than pretending they signed. See
+[docs/legal/CLA_AUTOMATION_SETUP.md](docs/legal/CLA_AUTOMATION_SETUP.md).
+
+**So if you want to contribute, please open an issue first** — this is a door
+that opens by hand at the moment, not a closed one, and it will be sorted out
+with you.
+
+### Not a DCO
+
+Tavotto does not use a Developer Certificate of Origin. A DCO certifies
+*provenance* — that you had the right to submit the code under the project's
+existing licence. It is not a copyright grant and cannot support separately
+licensed editions, so it is not a substitute for a CLA and is not treated as
+one here.
+
+## Trademark
+
+The AGPL covers copyright, not the name. See [TRADEMARKS.md](TRADEMARKS.md) —
+forks are welcome and may say they are based on Tavotto; what they should not do
+is present themselves as the official one.

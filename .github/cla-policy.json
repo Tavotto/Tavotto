@@ -1,0 +1,60 @@
+{
+  "schema": 2,
+  "_comment": [
+    "CLA 判定的配置——scripts/ci/cla_gate.py 的唯一输入。",
+    "",
+    "**仓库不保存任何签署事实。** schema 1 曾经带一份 docs/legal/cla-signatures.json，",
+    "那是错的：手工维护的 signer 名单会和签名服务商的数据库变成两个法律权威，",
+    "而两者一旦分叉，没有任何机制说得清哪一份算数。现在仓库只存",
+    "「协议正文 / 版本 / 哈希 / 政策 / 显式豁免 / 服务商配置」，",
+    "**签署事实一律以 provider 为准**（见 docs/legal/CLA_AUTOMATION_SETUP.md）。",
+    "",
+    "agreements：每份协议的正文路径、版本与 SHA-256。哈希与磁盘上的正文对不上",
+    "就是「改了 CLA 正文却没走版本流程」，判定器与 pytest 两侧都会红。",
+    "改完正文跑 `python3 scripts/ci/cla_gate.py --refresh-hashes` 重算，",
+    "版本号是否要 bump 见 docs/legal/CLA_VERSIONING.md（那是个决定，脚本不替你做）。",
+    "",
+    "provider：签名服务商。configured=false 时**没有任何人能被判成已签**——",
+    "非豁免的人类贡献者一律阻断并给出明确指引，绝不假装他签过。",
+    "启用步骤（含要加的 checks: read 权限）见 CLA_AUTOMATION_SETUP.md。",
+    "",
+    "exemptions：**显式点名**的豁免，每一条都要写得出 kind 与 reason。",
+    "这里没有「名字带 [bot] 就放行」这种规则，也没有「PR 作者 == 仓库 owner",
+    "就放行」这种动态猜测——dependabot 能过是因为它写在下面，不是因为后缀。"
+  ],
+  "agreements": {
+    "individual": {
+      "path": "docs/legal/CLA_INDIVIDUAL.md",
+      "version": "1.0",
+      "sha256": "6ceecfcf4bd49d2ffcfeab0f64ce0742565c6be303d410e5c8c54b07d7547cb9"
+    },
+    "corporate": {
+      "path": "docs/legal/CLA_CORPORATE.md",
+      "version": "1.0",
+      "sha256": "312e66508021f3141578b6dee8c2141cebb73c8c4163a683e3d5ee0c85a88842"
+    }
+  },
+  "provider": {
+    "configured": false,
+    "name": null,
+    "check_name": null,
+    "note": "未配置——这是**刻意的**，不是遗漏：至今零外部人类贡献，配了也没人用。RIGHTS_HOLDER_CONFIGURATION_REQUIRED 已解决（Jiaqi Wan / 香港法），协议已定版 1.0，因此现在随时可以启用。启用步骤见 docs/legal/CLA_AUTOMATION_SETUP.md。在此之前判定器对任何非豁免的人类贡献者一律阻断并给出指引，绝不假装谁签过。"
+  },
+  "exemptions": [
+    {
+      "login": "erwanjun",
+      "kind": "rights_holder",
+      "reason": "本仓库的著作权人 Jiaqi Wan 本人（GitHub 账号 erwanjun）。main 可达的 423 个 commit 中 422 个出自这个身份（三个邮箱，同一人；审计见 docs/legal/IP_PROVENANCE.md）。著作权人不需要向自己授权。若权利将来转移给某个实体，这一条要改成那个实体与本人的关系。"
+    },
+    {
+      "login": "dependabot[bot]",
+      "kind": "bot",
+      "reason": "GitHub 官方依赖升级机器人。它的 PR 只改依赖版本号与锁文件，不产生具有著作权意义的表达。main 历史里有 1 个它的 commit（依赖升级）。"
+    },
+    {
+      "login": "github-actions[bot]",
+      "kind": "bot",
+      "reason": "本仓库 workflow 自己的提交身份（发布链里的受管产物与清单）。产出由仓库自有脚本机械生成，著作权归仓库既有代码的权利人。"
+    }
+  ]
+}

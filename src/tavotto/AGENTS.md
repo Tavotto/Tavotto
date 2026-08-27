@@ -48,7 +48,7 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   text_width / compose + mm2pt / hex2rgb）。`app.py` 只认这些名字。
 - 为什么在意：PDF 库是可替换的实现细节，收敛成单一模块后换后端只需重写这一个
   文件，上层零改动。**别在 app.py 或别处新写 `import pymupdf`**——那会把这条
-  边界废掉。许可证说明见 `docs/LICENSING.md`。
+  边界废掉。许可证说明见 `docs/legal/LICENSING.md`。
 - **图内元素的命中判据跟渲染器走，不跟直觉走**（`web/src/lib/pathGeom.ts`）：
   填充用 **nonzero** 缠绕数（实测 matplotlib 3.10.8 + Agg：同向嵌套的中心
   像素是实心的，反向才是洞；even-odd 会让点在填了色的像素上选不中），

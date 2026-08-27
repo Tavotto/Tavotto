@@ -1191,6 +1191,12 @@ def _byte_compared_generated_files() -> list[str]:
         "web/src/i18n/resources.d.ts",
         # `python scripts/build_mcp_widget.py --check` 比的是源码指纹
         "codex-plugin/mcp/widget/canvas.html",
+        # CLA 正文：SHA-256 记在 .github/cla-policy.json，判据逐字节核对。
+        # 不是生成物，是人写的法律文本——但同样「字节必须确定」，而且
+        # 2026-08-28 就是在 Windows 那条腿上红过（policy 是 LF 哈希、
+        # 检出成 CRLF），所以同样归这张表管。
+        "docs/legal/CLA_INDIVIDUAL.md",
+        "docs/legal/CLA_CORPORATE.md",
     ]
 
 
