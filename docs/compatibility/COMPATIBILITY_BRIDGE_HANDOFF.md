@@ -9,7 +9,7 @@
   `.claude/worktrees/compat-bridge-session08`，**基于 `origin/main` `7952ceb`**，
   不 stacked 在任何未合并分支上）
 - 本 Session Prompt：Session 8 —— Matplotlib Bridge Technical Spike
-- 交付：**技术验证**（ADR 0020 定稿 + 可运行实现 + 62 条用例 + 8 条负向反证）。
+- 交付：**技术验证**（ADR 0020 定稿 + 可运行实现 + 63 条用例 + 9 条负向反证）。
   **不是产品**：`tavotto run` 不存在，spike 入口没有稳定契约。
 - **Session 7（PR #177，项目 .venv 自动接手 / ADR 0018+0019）仍 open**。
   本 Session **刻意不 stacked 在它上面**：spike 与它没有代码依赖，独立分支
@@ -53,11 +53,11 @@
 - [x] **ADR 0020**（Accepted，technical spike）+ `src/tavotto/AGENTS.md`
   新增「两条执行入口」一节。
 
-## 用例分布（tests/bridge/，62 passed + 1 slow）
+## 用例分布（tests/bridge/，63 passed + 1 slow）
 
 | 文件 | 条数 | 覆盖 |
 |---|---|---|
-| `test_bridge_namespace.py` | 6 | 装载器不变量、两阶段不重复装、用户项目 12 个同名模块全赢、late import、结构性守卫 |
+| `test_bridge_namespace.py` | 7 | 装载器不变量、两阶段不重复装、用户项目 12 个同名模块全赢、late import、结构性守卫 |
 | `test_bridge_invocation.py` | 6 | script/module 与真实 python 逐 13 字段对拍、绝对路径 argv[0]、不加解释器标志、env 原样继承、token 不进用户脚本 |
 | `test_bridge_capture.py` | 12 | prompt §十三的 12 条形态 |
 | `test_bridge_backend_and_show.py` | 8 | 不提前 import pyplot、三个后端、无 matplotlib 脚本、show 阻塞语义 |
@@ -66,7 +66,33 @@
 | `test_bridge_e2e.py` | 3 + 1 slow | 完整链（manifest→改字号→导出 PDF→撤销）、用户环境无 Tavotto、module 形态、**真 venv（`-m slow`）** |
 | `test_bridge_injection_models.py` | 9 | A/B 实测对比（§17 的裁决依据） |
 
-## 负向反证（本轮七条，全部先红后还原）
+## 实际运行的验证（worktree 内，PYTHONPATH=src，主仓 .venv 解释器）
+
+```bash
+ruff check . && ruff format --check .                       # 通过（229 文件）
+python -m pytest -q                                          # **全量绿**，7:57
+python -m pytest tests/bridge -q                             # 63 passed，24s
+python -m pytest tests/bridge -q -m slow                     # 1 passed（真 venv，联网装 matplotlib）
+python scripts/smoke_app.py --python .venv/bin/python        # 冒烟通过
+python scripts/ci/compat_matrix.py --smoke                   # 通过（路由 safe_probe/cli_open/
+                                                             #  desktop_project 各 3/3；native_run
+                                                             #  仍 not_implemented ×3 —— 如实记账）
+python scripts/build_mcp_widget.py --check                   # 9fe4aad080b18fa4 一致
+python scripts/build_browser_playground.py --check           # 1a7aefda8bbe880f 一致
+/opt/homebrew/opt/python@3.11/bin/python3.11 <runner> …      # 3.11 上单跑一次（无图路径）
+```
+
+`tests/bridge` 只占 24s（全量 7:57 的 5%），因为它们大多是"起一个进程、
+import matplotlib、跑几行、退出"。**这套用例走默认 pytest**，所以
+`backend-fast`（PR，Linux 3.10 + 3.13）与 `backend-platforms`
+（merge_group，mac + Windows）都会自动跑到——Windows 覆盖不需要新 workflow。
+
+坑复述：① 全量套件跑着的时候**不要改源码**——本轮那次 `F` 我一开始当成变异
+残留，实际是门禁真抓到了东西（9 处 subprocess 没钉 encoding）；② 本机
+`shell cwd` 会被重置，每条命令都要显式 `cd` 到 worktree，否则改动会落进
+主工作区（本轮发生过一次，已整体搬回）。
+
+## 负向反证（本轮九条，全部先红后还原）
 
 | # | 变异 | 判据 | 结果 |
 |---|---|---|---|
@@ -78,6 +104,7 @@
 | 6 | 两处 late import 改回裸 `import manifest` | `test_the_late_manifest_import_resolves...` + 结构性守卫 | **红**（2 条） |
 | 7 | `_own()` 不再断言 / 摘掉 `do_render` 的那一处 | `..._refuses_to_be_touched_from_another_thread` / `..._every_mutating_entry...` | **各红一条** |
 | 8 | engine 目录留在 `sys.path` 上 | `test_user_modules_win_over_the_engine_siblings` | **红** |
+| 9 | 装载失败时的还原从 `finally` 挪回顺序执行 | `test_a_failed_load_still_restores_the_user_namespace` | **红** |
 
 **反证 1 的诚实修正**：prompt 预期「去掉 show hook → show-only case 失败」。
 实测**不失败**——脚本结束时的 Gcf 兜底照样把图捕获到。show 钩子的独有价值
@@ -120,11 +147,7 @@
 - [ ] **target 不存在时报的是 `script_error`**（带一段 FileNotFoundError
   traceback），分类不准——那是 invocation 层的错，不是脚本的错。归到
   Session 9 的「invocation parser 错误分类与稳定错误码表」一起做。
-- [ ] **CI 时长**：`tests/bridge` 真起 ~70 个子进程（每个都要 import
-  matplotlib），会加进 `backend-fast`（PR 每次跑，Linux 3.10+3.13）与
-  `backend-platforms`（merge_group，mac+Windows）。**这正是 Windows 覆盖
-  缺口的解药**（用例本身平台无关），但入队前请先看一眼这一格的时长有没有
-  超出可接受范围；真超了再考虑把最重的几条挪到 `-m slow`。
+- [x] ~~CI 时长~~：实测 `tests/bridge` 24s（全量 7:57 的 5%），不构成问题。
 - [ ] **网站 playground re-sync**：本轮动了 `overrides.py`（`_sibling`），
   playground 指纹变成 `1a7aefda8bbe880f`（canvas.html `9fe4aad080b18fa4`
   不受影响——它不嵌 Python）。`web/dist-playground/` 是 gitignored 的可再生
