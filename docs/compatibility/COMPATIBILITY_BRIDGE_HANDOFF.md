@@ -441,8 +441,34 @@ if not WEB_DIST.is_dir():
   对照组（内容已跟上 main 的分支）两种做法都是 **0 冲突**。所以决定冲突的
   是**内容陈不陈旧**，不是格没格式化；分支跟上 main，重排根本不构成冲突源。
   这条与本轮自己踩的那两个 CI 红是同一件事的两面：**先 rebase 再干活**。
-- **CodeQL 有一条红，但它不挡合并**。`CodeQL` 报 1 critical + 7 high，
-  逐条定性写在 PR #177 的 issuecomment-5438197651。
+- **CodeQL 的红不是 required check，但它照样挡合并——走的是另一道门**。
+  `CodeQL` 报 1 critical + 7 high，逐条定性写在 PR #177 的
+  issuecomment-5438197651。
+
+  **这里我先写错过一版，值得留着**：原文说「所以那 8 条不是队列前置条件」。
+  那个结论只查了「`CodeQL` 是不是 required check」（不是），漏掉了**每条
+  告警会自动生成一条评审线程**，而 ruleset 21121430 里：
+
+  ```text
+  required_review_thread_resolution: true
+  ```
+
+  于是 8 条告警 = 8 条未解决线程 = `mergeStateStatus: BLOCKED`，**必须逐条
+  处置才能入队**。判「某件事挡不挡合并」不能只数 required contexts——
+  `pull_request` 规则里还有线程解决、approval 数、unattributed 改动几条
+  独立的门，任一条不满足都是 BLOCKED，而 BLOCKED 只有一个值，看不出是谁挡的。
+
+  查法（比从状态反推可靠）：
+
+  ```sh
+  gh api repos/Tavotto/Tavotto/rulesets/21121430 \
+    --jq '.rules[]|select(.type=="pull_request")|.parameters'
+  ```
+
+  同一份参数里还有 `require_extra_approval_for_unattributed_changes: true`。
+  #177 不触发（39 个提交全部归属到 `erwanjun`，`gh api pulls/177/commits
+  --jq '.[].author.login'` 逐条验过）——但这条是本轮那次 git identity 污染
+  （`q <q@l>`）真正的代价所在：**当时若没修，合并会被这条卡住**。
 
   **两个名字很像的检查别合成一个**（我第一轮就是这么看错的）：
 
@@ -455,8 +481,8 @@ if not WEB_DIST.is_dir():
 
   必需上下文只有三个（ruleset 21121430）：`CI fast gate` / `CI integration
   gate` / `CodeQL gate`。现成的对照：#175 的 `CodeQL` 同样 fail（20 条新
-  告警），`CodeQL gate` 照样 pass。**所以那 8 条不是队列前置条件**，是留给
-  维护者按自己节奏拍板的事。
+  告警），`CodeQL gate` 照样 pass。**但这只证明「`CodeQL` 这个 check 不挡」，
+  不证明「这些告警不挡」**——它们从线程那道门挡，见上。
 
   **我开 PR 时的预判是错的，值得记下来**：我以为红灯来自「本 PR 改写了
   `pool.py::EngineWorker.__init__` 里的一行，把那条 critical dismissal 的
@@ -467,8 +493,34 @@ if not WEB_DIST.is_dir():
 
   处置：**一条都没 dismiss。** main 上那 15 条的先例摆着——维护者
   2026-08-26 逐条手写的理由，那不是 PR 作者该代劳的动作，更不该为了让门禁
-  变绿而做。也没有为了消 CodeQL 去改代码：#119 的守卫（正则白名单 +
-  `shell=False` + list argv）已经是正确形状。
+  变绿而做。
+
+  **后来确实为此改了代码，但改的是真防线，不是装饰**：`contained_path()` /
+  `contained_file()` 那套路径遏制（realpath 后按前缀判）堵住了 `../` 逃逸，
+  是真加固，`backend-platforms (windows-latest)` 已验。#119 的守卫（正则
+  白名单 + `shell=False` + list argv）本来就是正确形状，没动。
+
+  **然后撞上一件事，下个会话大概率会重蹈**：改完之后我估「再做一轮 inline
+  净化能消掉 6 条」。逐条读了告警指的那一行，这个估计是 **0 条**——
+
+  ```text
+  projectenv.py:203   _within() 里的 path.resolve()
+                      ← 这函数存在的唯一理由就是拒绝越界路径，
+                        这次 resolve 就是净化过程本身
+  depresolve.py:338   净化已经是 inline 的（往下 3 行同函数内就校验并回退）
+                      ← 照报不误
+  projectenv.py:140   cand 已经是 contained_file() 的输出，即已净化的值
+  app.py:3404         报在净化前一行，下一行就是 contained_file()
+  ```
+
+  第一条说明**每加一层净化就多一个 sink**（任何范围判定都得先 resolve 两边
+  再比较），第二条说明**inline 化已经试过、无效**。污点分析报的是**数据流
+  经过的位置**，不是缺陷位置，而净化器天然坐在数据流上。
+
+  **所以拿到这类告警，先读它指的那一行，再估「能修几条」**——逐条读几分钟，
+  估错要赔一轮无用重构，且代码更差（真正的检查被淹在装饰性净化里）。
+  剩下的按「产品语义」处置：`app.py:3404` 接受用户指定的解释器路径是 ADR
+  0018 明确允许的（项目外的 conda 环境），要消除只能改产品行为。
 
   其中 **#120（`app.py:3111`）要单独看**：它不在已 dismiss 的那三条所在的
   函数里（那三条在 `api_registry_probe`），而在本 PR 新增的
@@ -535,6 +587,7 @@ src/tavotto/engine/pool.py 的 resolve_worker_python / build /
 ```bash
 git status --short && git log -10 --oneline
 ruff check .
+ruff format --check .          # #176 起也是门禁；ruff check 挡不住格式问题
 PYTHONPATH=src /Volumes/Projects/Tavotto/.venv/bin/python -m pytest -q \
     tests/test_project_env.py tests/test_dependency_repair.py
 PYTHONPATH=src /Volumes/Projects/Tavotto/.venv/bin/python -m pytest -q \
