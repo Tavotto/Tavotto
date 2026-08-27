@@ -7,6 +7,7 @@
 以 pytest 插件的形式挂进去（`pytest_plugins = ("support.dependency_repair",)`），
 不是 `from ... import fixture`——后者会让 fixture 名与用例参数名互相遮蔽。
 """
+
 import base64
 import hashlib
 import time
@@ -24,7 +25,8 @@ except engine_pool.WorkerError:
     WORKER_PY = None
 
 needs_worker = pytest.mark.skipif(
-    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）")
+    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）"
+)
 
 #: 只存在于测试造出来的 wheel 里的纯 Python 包。名字刻意不像任何真包——
 #: 它必须在宿主解释器里 import 不到，否则整组用例会假绿。
@@ -32,7 +34,7 @@ FIXTURE_IMPORT = "tavotto_test_missing_dep"
 FIXTURE_DIST = "tavotto-test-missing-dep"
 FIXTURE_VERSION = "1.0"
 
-SCRIPT = f'''\
+SCRIPT = f"""\
 import {FIXTURE_IMPORT}          # 只有装过修复包的环境里才有
 import matplotlib.pyplot as plt
 
@@ -40,7 +42,7 @@ fig, ax = plt.subplots()
 ax.plot([1, 2, 3], [4, 5, 6])
 ax.set_title("Original Title")     # 修好之后要能改它（端到端的编辑那一段）
 fig.savefig("Fig1.pdf")
-'''
+"""
 
 
 # --------------------------------------------------------------- fixture
@@ -76,8 +78,7 @@ def project(tmp_path):
     figs.mkdir()
     (figs / "figure.py").write_text(SCRIPT, encoding="utf-8")
     yield figs
-    for pid in [p for p, ctx in list(m.PROJECTS.items())
-                if str(ctx.path) == str(figs)]:
+    for pid in [p for p, ctx in list(m.PROJECTS.items()) if str(ctx.path) == str(figs)]:
         m.close_project(pid, wait=True)
     engine_pool.shutdown_all(str(figs), wait=True)
 
@@ -85,6 +86,7 @@ def project(tmp_path):
 @pytest.fixture
 def client():
     from tavotto import app as m
+
     m.app.config["TESTING"] = True
     return m.app.test_client()
 
@@ -105,9 +107,13 @@ def wheelhouse(tmp_path, monkeypatch):
 
 
 # --------------------------------------------------------------- 工具
-def build_wheel(dest: Path, *, name: str = FIXTURE_DIST,
-                import_name: str = FIXTURE_IMPORT,
-                version: str = FIXTURE_VERSION) -> Path:
+def build_wheel(
+    dest: Path,
+    *,
+    name: str = FIXTURE_DIST,
+    import_name: str = FIXTURE_IMPORT,
+    version: str = FIXTURE_VERSION,
+) -> Path:
     """手工造一个纯 Python wheel（不联网、不需要 build backend）。
 
     wheel 就是一个约定好目录结构的 zip。自己拼出来比 `pip wheel` 快得多，
@@ -118,17 +124,20 @@ def build_wheel(dest: Path, *, name: str = FIXTURE_DIST,
     info = f"{dist}-{version}.dist-info"
     payload = {
         f"{import_name}.py": f'VALUE = 42\nNAME = "{import_name}"\n',
-        f"{info}/METADATA": (f"Metadata-Version: 2.1\nName: {name}\n"
-                             f"Version: {version}\n"
-                             f"Summary: Tavotto test fixture\n"),
-        f"{info}/WHEEL": ("Wheel-Version: 1.0\nGenerator: tavotto-tests\n"
-                          "Root-Is-Purelib: true\nTag: py3-none-any\n"),
+        f"{info}/METADATA": (
+            f"Metadata-Version: 2.1\nName: {name}\n"
+            f"Version: {version}\n"
+            f"Summary: Tavotto test fixture\n"
+        ),
+        f"{info}/WHEEL": (
+            "Wheel-Version: 1.0\nGenerator: tavotto-tests\n"
+            "Root-Is-Purelib: true\nTag: py3-none-any\n"
+        ),
     }
     records = []
     for path, text in payload.items():
         raw = text.encode("utf-8")
-        digest = base64.urlsafe_b64encode(
-            hashlib.sha256(raw).digest()).rstrip(b"=").decode("ascii")
+        digest = base64.urlsafe_b64encode(hashlib.sha256(raw).digest()).rstrip(b"=").decode("ascii")
         records.append(f"{path},sha256={digest},{len(raw)}")
     records.append(f"{info}/RECORD,,")
     payload[f"{info}/RECORD"] = "\n".join(records) + "\n"
@@ -152,9 +161,11 @@ def real_venv(root: Path, *, name: str = ".venv") -> Path:
 site_packages = venvfixture.site_packages
 
 
-def wait_for(plan_id: str, states=(deprepair.STATE_DONE, deprepair.STATE_FAILED,
-                                   deprepair.STATE_CANCELLED),
-             timeout: float = 600.0) -> dict:
+def wait_for(
+    plan_id: str,
+    states=(deprepair.STATE_DONE, deprepair.STATE_FAILED, deprepair.STATE_CANCELLED),
+    timeout: float = 600.0,
+) -> dict:
     """等一个异步安装到终态。**轮询有上限**，超时就把最后状态摆出来。"""
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -162,5 +173,4 @@ def wait_for(plan_id: str, states=(deprepair.STATE_DONE, deprepair.STATE_FAILED,
         if rec.get("state") in states:
             return rec
         time.sleep(0.2)
-    raise AssertionError(f"安装没有在 {timeout}s 内到终态: "
-                         f"{deprepair.progress(plan_id)}")
+    raise AssertionError(f"安装没有在 {timeout}s 内到终态: {deprepair.progress(plan_id)}")

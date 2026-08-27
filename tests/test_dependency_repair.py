@@ -17,6 +17,7 @@
 这条决策的可测形态）。断言必须证明**包真的进了那个 venv**，不是「字符串
 选中了某条路径」。
 """
+
 import json
 import os
 import sys
@@ -54,17 +55,19 @@ def _clean(clean_state):
 # ===========================================================================
 # 一、解析：import 名不是包名
 # ===========================================================================
-@pytest.mark.parametrize("import_name,distribution", [
-    ("PIL", "Pillow"),
-    ("cv2", "opencv-python"),
-    ("sklearn", "scikit-learn"),
-    ("skimage", "scikit-image"),
-    ("yaml", "PyYAML"),
-    ("bs4", "beautifulsoup4"),
-    ("dateutil", "python-dateutil"),
-])
-def test_import_names_are_not_distribution_names(tmp_path, import_name,
-                                                 distribution):
+@pytest.mark.parametrize(
+    "import_name,distribution",
+    [
+        ("PIL", "Pillow"),
+        ("cv2", "opencv-python"),
+        ("sklearn", "scikit-learn"),
+        ("skimage", "scikit-image"),
+        ("yaml", "PyYAML"),
+        ("bs4", "beautifulsoup4"),
+        ("dateutil", "python-dateutil"),
+    ],
+)
+def test_import_names_are_not_distribution_names(tmp_path, import_name, distribution):
     """`pip install PIL` 装到的是**另一个包**——这条表就是为它存在的。"""
     req = depresolve.resolve(tmp_path, import_name)
     assert req is not None, f"{import_name} 应该解析得出来"
@@ -93,7 +96,8 @@ def test_an_unknown_import_is_never_installable(tmp_path):
 def test_project_declared_wins_and_carries_the_specifier(tmp_path):
     """项目自己声明过 → 用**它的**包名与版本约束（最可信的一档）。"""
     (tmp_path / "requirements.txt").write_text(
-        "# 注释\nlmfit>=1.3\nPillow >= 10\n", encoding="utf-8")
+        "# 注释\nlmfit>=1.3\nPillow >= 10\n", encoding="utf-8"
+    )
     lmfit = depresolve.resolve(tmp_path, "lmfit")
     assert lmfit.resolution_source == depresolve.SOURCE_PROJECT_DECLARED
     assert lmfit.requirement() == "lmfit>=1.3"
@@ -106,8 +110,7 @@ def test_project_declared_wins_and_carries_the_specifier(tmp_path):
 def test_a_private_package_becomes_installable_once_the_project_declares_it(tmp_path):
     """私有包 curated 里当然没有——但项目自己声明过就是可信证据。"""
     assert depresolve.resolve(tmp_path, "my_lab_tools") is None
-    (tmp_path / "requirements.txt").write_text("my-lab-tools==2.1\n",
-                                               encoding="utf-8")
+    (tmp_path / "requirements.txt").write_text("my-lab-tools==2.1\n", encoding="utf-8")
     req = depresolve.resolve(tmp_path, "my_lab_tools")
     assert req.resolution_source == depresolve.SOURCE_PROJECT_DECLARED
     assert req.requirement() == "my_lab_tools==2.1"
@@ -117,7 +120,9 @@ def test_pyproject_dependencies_are_read(tmp_path):
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nname = "paper"\n'
         'dependencies = ["astropy>=6", "opencv-python"]\n'
-        'classifiers = ["Programming Language :: Python"]\n', encoding="utf-8")
+        'classifiers = ["Programming Language :: Python"]\n',
+        encoding="utf-8",
+    )
     assert depresolve.resolve(tmp_path, "astropy").specifier == ">=6"
     cv2 = depresolve.resolve(tmp_path, "cv2")
     assert cv2.resolution_source == depresolve.SOURCE_PROJECT_DECLARED
@@ -130,8 +135,7 @@ def test_declaration_files_are_never_modified(tmp_path):
     req = tmp_path / "requirements.txt"
     req.write_text("lmfit>=1.3\n", encoding="utf-8")
     pyproject = tmp_path / "pyproject.toml"
-    pyproject.write_text('[project]\ndependencies = ["astropy"]\n',
-                         encoding="utf-8")
+    pyproject.write_text('[project]\ndependencies = ["astropy"]\n', encoding="utf-8")
     before = (req.read_bytes(), pyproject.read_bytes())
     depresolve.resolve(tmp_path, "lmfit")
     depresolve.resolve(tmp_path, "astropy")
@@ -141,7 +145,8 @@ def test_declaration_files_are_never_modified(tmp_path):
 def test_malformed_metadata_does_not_block_repair(tmp_path):
     """坏掉的 pyproject 只意味着「这一档解析源不可用」，不该连坐 curated。"""
     (tmp_path / "pyproject.toml").write_text(
-        "[project\nthis is not toml at all ][[[\n", encoding="utf-8")
+        "[project\nthis is not toml at all ][[[\n", encoding="utf-8"
+    )
     req = depresolve.resolve(tmp_path, "PIL")
     assert req is not None and req.distribution == "Pillow"
 
@@ -149,28 +154,31 @@ def test_malformed_metadata_does_not_block_repair(tmp_path):
 # ===========================================================================
 # 二、包名语法是安全边界（不是输入校验）
 # ===========================================================================
-@pytest.mark.parametrize("hostile", [
-    "-r evil.txt",
-    "-revil.txt",
-    "--index-url=https://evil.example/simple",
-    "--index-url https://evil.example/simple",
-    "--target=/tmp/anywhere",
-    "https://evil.example/pkg.whl",
-    "git+https://github.com/evil/pkg.git",
-    "file:///etc/passwd",
-    "../local-package",
-    "./local",
-    "pkg @ https://evil.example/pkg.whl",
-    "pkg[extra]",
-    'pkg;os_name=="nt"',
-    "lmfit==1.3 --index-url http://evil.example",
-    "pkg==$(id)",
-    "pkg|cat /etc/passwd",
-    "pkg&&whoami",
-    "pkg`id`",
-    "",
-    "  ",
-])
+@pytest.mark.parametrize(
+    "hostile",
+    [
+        "-r evil.txt",
+        "-revil.txt",
+        "--index-url=https://evil.example/simple",
+        "--index-url https://evil.example/simple",
+        "--target=/tmp/anywhere",
+        "https://evil.example/pkg.whl",
+        "git+https://github.com/evil/pkg.git",
+        "file:///etc/passwd",
+        "../local-package",
+        "./local",
+        "pkg @ https://evil.example/pkg.whl",
+        "pkg[extra]",
+        'pkg;os_name=="nt"',
+        "lmfit==1.3 --index-url http://evil.example",
+        "pkg==$(id)",
+        "pkg|cat /etc/passwd",
+        "pkg&&whoami",
+        "pkg`id`",
+        "",
+        "  ",
+    ],
+)
 def test_package_option_injection_is_rejected(hostile):
     """**负向反证 #4**：pip 自己会把这些解析成选项，`shell=False` 挡不住。
 
@@ -181,23 +189,25 @@ def test_package_option_injection_is_rejected(hostile):
     assert depresolve.from_user_input("x", hostile) is None
 
 
-@pytest.mark.parametrize("ok,name,spec", [
-    ("lmfit", "lmfit", ""),
-    ("lmfit>=1.3", "lmfit", ">=1.3"),
-    ("scikit-learn==1.4.2", "scikit-learn", "==1.4.2"),
-    ("pkg~=1.2", "pkg", "~=1.2"),
-    ("pkg>=1.2,<2", "pkg", ">=1.2,<2"),
-])
+@pytest.mark.parametrize(
+    "ok,name,spec",
+    [
+        ("lmfit", "lmfit", ""),
+        ("lmfit>=1.3", "lmfit", ">=1.3"),
+        ("scikit-learn==1.4.2", "scikit-learn", "==1.4.2"),
+        ("pkg~=1.2", "pkg", "~=1.2"),
+        ("pkg>=1.2,<2", "pkg", ">=1.2,<2"),
+    ],
+)
 def test_the_allowed_grammar_is_exactly_these_shapes(ok, name, spec):
     assert depresolve.parse_requirement(ok) == (name, spec)
 
 
 def test_a_hostile_requirement_never_reaches_pip(tmp_path):
     """第二道门：真正拼 argv 之前再验一次形状。"""
-    code, out = deprepair._pip_install(
-        sys.executable, "-r evil.txt", threading.Event(), None)
+    code, out = deprepair._pip_install(sys.executable, "-r evil.txt", threading.Event(), None)
     assert code == deprepair.ERROR_REQUIREMENT_INVALID
-    assert "evil" in out            # 如实回显被拒的那一串，不假装无事发生
+    assert "evil" in out  # 如实回显被拒的那一串，不假装无事发生
 
 
 # ===========================================================================
@@ -212,8 +222,7 @@ def test_the_bundled_runtime_is_never_a_mutation_target(project, monkeypatch):
     fake_bundled = str(project / "fake-bundled" / "python")
     Path(fake_bundled).parent.mkdir(parents=True, exist_ok=True)
     Path(fake_bundled).write_text("", encoding="utf-8")
-    monkeypatch.setattr(engine_pool.runtime, "bundled_python",
-                        lambda: fake_bundled)
+    monkeypatch.setattr(engine_pool.runtime, "bundled_python", lambda: fake_bundled)
 
     seen: list[list[str]] = []
 
@@ -227,35 +236,54 @@ def test_the_bundled_runtime_is_never_a_mutation_target(project, monkeypatch):
 
     # 目标环境的挑选**只从发现结果里取**，调用方给不了路径。
     with pytest.raises(deprepair.RepairError) as err:
-        deprepair.create_plan(str(project), "figure.py", "lmfit",
-                              target_kind=deprepair.TARGET_PROJECT_VENV)
+        deprepair.create_plan(
+            str(project), "figure.py", "lmfit", target_kind=deprepair.TARGET_PROJECT_VENV
+        )
     assert err.value.code == projectenv.ERROR_NOT_FOUND
-    assert not [argv for argv in seen
-                if engine_pool.same_python(argv[0], fake_bundled)]
+    assert not [argv for argv in seen if engine_pool.same_python(argv[0], fake_bundled)]
 
 
 def test_pip_argv_is_a_list_wheels_only_and_never_upgrades():
     """安装命令逐字节钉住——它是这个子系统唯一会往磁盘写东西的地方。"""
     argv = deprepair.pip_install_argv("/env/bin/python", "lmfit>=1.3")
-    assert argv == ["/env/bin/python", "-m", "pip", "install",
-                    "--disable-pip-version-check", "--no-input",
-                    "--only-binary=:all:", "lmfit>=1.3"]
+    assert argv == [
+        "/env/bin/python",
+        "-m",
+        "pip",
+        "install",
+        "--disable-pip-version-check",
+        "--no-input",
+        "--only-binary=:all:",
+        "lmfit>=1.3",
+    ]
     assert "--upgrade" not in argv, "默认升级会把用户的科学栈整体换掉"
     assert argv[0] != "pip", "绝不用 PATH 上的 pip：它属于哪个解释器全看 PATH"
     assert all(isinstance(a, str) for a in argv)
 
 
-@pytest.mark.parametrize("output,code", [
-    ("ERROR: Could not find a version that satisfies the requirement zzz "
-     "(from versions: none)", deprepair.ERROR_NOT_FOUND),
-    ("ERROR: Could not find a version that satisfies the requirement zzz "
-     "(from versions: 1.0, 2.0)", deprepair.ERROR_REQUIRES_BUILD),
-    ("WARNING: Retrying (Retry(total=4)) after connection broken by "
-     "NewConnectionError\nERROR: Could not find a version that satisfies "
-     "the requirement zzz (from versions: none)", deprepair.ERROR_NETWORK),
-    ("ERROR: ResolutionImpossible: for help visit …", deprepair.ERROR_CONFLICT),
-    ("ERROR: something else entirely", deprepair.ERROR_FAILED),
-])
+@pytest.mark.parametrize(
+    "output,code",
+    [
+        (
+            "ERROR: Could not find a version that satisfies the requirement zzz "
+            "(from versions: none)",
+            deprepair.ERROR_NOT_FOUND,
+        ),
+        (
+            "ERROR: Could not find a version that satisfies the requirement zzz "
+            "(from versions: 1.0, 2.0)",
+            deprepair.ERROR_REQUIRES_BUILD,
+        ),
+        (
+            "WARNING: Retrying (Retry(total=4)) after connection broken by "
+            "NewConnectionError\nERROR: Could not find a version that satisfies "
+            "the requirement zzz (from versions: none)",
+            deprepair.ERROR_NETWORK,
+        ),
+        ("ERROR: ResolutionImpossible: for help visit …", deprepair.ERROR_CONFLICT),
+        ("ERROR: something else entirely", deprepair.ERROR_FAILED),
+    ],
+)
 def test_pip_failures_get_distinguishable_codes(output, code):
     """「没网」与「没这个包」在 pip 输出里只差一句，用户要做的事完全不同。
 
@@ -274,10 +302,14 @@ def test_install_endpoint_refuses_without_a_plan(client, project):
     「按钮理论上不会调这个接口」不是边界。计划 id 不可猜、绑定项目、有有效期。
     """
     from tavotto import app as m
+
     m.open_project(str(project))
-    for body in ({}, {"plan_id": ""}, {"plan_id": "made-up"},
-                 {"plan_id": "x", "python": sys.executable,
-                  "distribution": "evil-package"}):
+    for body in (
+        {},
+        {"plan_id": ""},
+        {"plan_id": "made-up"},
+        {"plan_id": "x", "python": sys.executable, "distribution": "evil-package"},
+    ):
         resp = client.post("/api/engine/dependency/install", json=body)
         assert resp.status_code == 409, body
         assert resp.get_json()["code"] == deprepair.ERROR_NOT_ALLOWED
@@ -298,19 +330,21 @@ def test_the_plan_binds_the_requirement_not_the_request(project, monkeypatch):
     「装 lmfit 到项目环境」换成「装别的东西」。
     """
     venv = real_venv(project)
-    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n",
-                                              encoding="utf-8")
-    plan = deprepair.create_plan(str(project), "figure.py", FIXTURE_IMPORT,
-                                 target_kind=deprepair.TARGET_PROJECT_VENV)
+    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
+    plan = deprepair.create_plan(
+        str(project), "figure.py", FIXTURE_IMPORT, target_kind=deprepair.TARGET_PROJECT_VENV
+    )
     assert plan.requirement.distribution.replace("_", "-") == FIXTURE_DIST
     assert plan.python == projectenv.interpreter_of(venv)
 
     installs: list[str] = []
-    monkeypatch.setattr(deprepair, "_pip_install",
-                        lambda py, req, ev, log: (installs.append(req), ("", ""))[1])
+    monkeypatch.setattr(
+        deprepair, "_pip_install", lambda py, req, ev, log: (installs.append(req), ("", ""))[1]
+    )
     monkeypatch.setattr(deprepair, "_run", lambda argv, timeout: (0, "pip 24.0"))
-    monkeypatch.setattr(deprepair.projectenv, "probe_environment",
-                        lambda py, mod=None: {"ok": True, "python": py})
+    monkeypatch.setattr(
+        deprepair.projectenv, "probe_environment", lambda py, mod=None: {"ok": True, "python": py}
+    )
     monkeypatch.setattr(deprepair, "worker_self_test", lambda py: {"ok": True})
     monkeypatch.setattr(deprepair, "installed_version", lambda py, dist: "1.0")
 
@@ -322,10 +356,10 @@ def test_the_plan_binds_the_requirement_not_the_request(project, monkeypatch):
 def test_a_changed_environment_makes_the_plan_stale(project):
     """确认期间环境被换过 → `repair_plan_stale`，让用户重新看一遍再决定。"""
     venv = real_venv(project)
-    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n",
-                                              encoding="utf-8")
-    plan = deprepair.create_plan(str(project), "figure.py", FIXTURE_IMPORT,
-                                 target_kind=deprepair.TARGET_PROJECT_VENV)
+    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
+    plan = deprepair.create_plan(
+        str(project), "figure.py", FIXTURE_IMPORT, target_kind=deprepair.TARGET_PROJECT_VENV
+    )
     # venv 被删掉重建 = 另一个环境了（哪怕路径一模一样）
     cfg = venv / "pyvenv.cfg"
     cfg.write_text(cfg.read_text(encoding="utf-8") + "# 变了\n", encoding="utf-8")
@@ -342,14 +376,14 @@ def test_repair_rounds_are_capped(project, monkeypatch):
     会把用户拖进一个永远转圈的界面。
     """
     real_venv(project)
-    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n",
-                                              encoding="utf-8")
+    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
     for _ in range(deprepair.MAX_DEPENDENCY_REPAIR_ROUNDS):
         deprepair._note_round(str(project), "figure.py")
     assert deprepair.rounds_remaining(str(project), "figure.py") == 0
     with pytest.raises(deprepair.RepairError) as err:
-        deprepair.create_plan(str(project), "figure.py", FIXTURE_IMPORT,
-                              target_kind=deprepair.TARGET_PROJECT_VENV)
+        deprepair.create_plan(
+            str(project), "figure.py", FIXTURE_IMPORT, target_kind=deprepair.TARGET_PROJECT_VENV
+        )
     assert err.value.code == deprepair.ERROR_ROUNDS_EXHAUSTED
     offer = deprepair.offer(str(project), "figure.py", FIXTURE_IMPORT, None)
     assert offer["code"] == deprepair.ERROR_ROUNDS_EXHAUSTED
@@ -363,17 +397,22 @@ def test_an_unresolvable_module_gets_no_install_target(project):
     assert offer["code"] == deprepair.ERROR_UNRESOLVED
     assert offer["targets"] == []
     with pytest.raises(deprepair.RepairError) as err:
-        deprepair.create_plan(str(project), "figure.py", "my_lab_tools",
-                              target_kind=deprepair.TARGET_MANAGED)
+        deprepair.create_plan(
+            str(project), "figure.py", "my_lab_tools", target_kind=deprepair.TARGET_MANAGED
+        )
     assert err.value.code == deprepair.ERROR_UNRESOLVED
 
 
 def test_user_specified_package_still_goes_through_the_grammar(project):
     """用户手填的包名可以救私有包，但语法关一视同仁。"""
     with pytest.raises(deprepair.RepairError) as err:
-        deprepair.create_plan(str(project), "figure.py", "my_lab_tools",
-                              target_kind=deprepair.TARGET_MANAGED,
-                              user_distribution="-r evil.txt")
+        deprepair.create_plan(
+            str(project),
+            "figure.py",
+            "my_lab_tools",
+            target_kind=deprepair.TARGET_MANAGED,
+            user_distribution="-r evil.txt",
+        )
     assert err.value.code == deprepair.ERROR_REQUIREMENT_INVALID
 
 
@@ -408,12 +447,15 @@ def test_workers_on_the_mutating_environment_are_stopped(monkeypatch):
     other = _FakeWorker("/env/b/bin/python", "another.py")
     monkeypatch.setitem(engine_pool._workers, ("/p1", "figure.py"), mine)
     monkeypatch.setitem(engine_pool._workers, ("/p2", "another.py"), other)
-    monkeypatch.setattr(engine_pool.threading, "Thread",
-                        lambda target, **kw: type(
-                            "T", (), {"start": lambda s: target()})())
+    monkeypatch.setattr(
+        engine_pool.threading,
+        "Thread",
+        lambda target, **kw: type("T", (), {"start": lambda s: target()})(),
+    )
 
     with engine_pool.mutating_environment(
-            engine_pool.env_key_of("/env/a/bin/python"), "/env/a/bin/python"):
+        engine_pool.env_key_of("/env/a/bin/python"), "/env/a/bin/python"
+    ):
         assert mine.closed, "这个环境上的会话必须停掉"
         assert not other.closed, "**别的**环境上的会话不该被牵连"
         assert engine_pool.is_mutating("/env/a/bin/python")
@@ -421,13 +463,12 @@ def test_workers_on_the_mutating_environment_are_stopped(monkeypatch):
     assert not engine_pool.is_mutating("/env/a/bin/python")
 
 
-def test_a_new_session_is_refused_while_the_environment_is_mutating(
-        project, monkeypatch):
+def test_a_new_session_is_refused_while_the_environment_is_mutating(project, monkeypatch):
     """安装期间不许起新会话——半装完的包 import 到一半是最难解释的失败。"""
-    monkeypatch.setattr(engine_pool, "resolve_worker_python",
-                        lambda d=None: ("/env/a/bin/python", "system"))
-    with engine_pool.mutating_environment(
-            engine_pool.env_key_of("/env/a/bin/python"), ""):
+    monkeypatch.setattr(
+        engine_pool, "resolve_worker_python", lambda d=None: ("/env/a/bin/python", "system")
+    )
+    with engine_pool.mutating_environment(engine_pool.env_key_of("/env/a/bin/python"), ""):
         with pytest.raises(engine_pool.WorkerError) as err:
             engine_pool.get("figure.py", str(project), "__main__")
         assert err.value.code == engine_pool.ENVIRONMENT_MUTATING
@@ -442,7 +483,7 @@ def test_two_installs_on_one_environment_do_not_overlap():
             with engine_pool.mutating_environment(key_a, ""):
                 pass
         with engine_pool.mutating_environment(key_b, ""):
-            pass                      # 另一个环境照常
+            pass  # 另一个环境照常
 
 
 # ===========================================================================
@@ -460,13 +501,13 @@ def test_managed_environments_are_project_scoped(tmp_path):
     assert managedenv.env_dir(a) != managedenv.env_dir(b)
     assert managedenv.venv_python(a) != managedenv.venv_python(b)
     # 同一个项目、不同大小写/写法的路径必须是同一个环境
-    assert managedenv.project_fingerprint(a) == \
-        managedenv.project_fingerprint(str(a) + os.sep)
+    assert managedenv.project_fingerprint(a) == managedenv.project_fingerprint(str(a) + os.sep)
 
 
 def test_managed_environment_lives_in_the_data_dir_not_in_the_project(tmp_path):
     """绝不建在用户项目里：那会进他的 git、被同步、被 `rm -rf` 掉。"""
     from tavotto.engine import config as engine_config
+
     project = tmp_path / "paper"
     project.mkdir()
     env = managedenv.env_dir(project)
@@ -483,7 +524,7 @@ def test_a_half_built_managed_environment_is_not_reused(tmp_path):
     managedenv.write_manifest(project, managedenv.new_manifest(project, "/x/py"))
     managedenv.venv_python(project).parent.mkdir(parents=True, exist_ok=True)
     managedenv.venv_python(project).write_text("", encoding="utf-8")
-    assert managedenv.python_of(project) is None      # state=incomplete
+    assert managedenv.python_of(project) is None  # state=incomplete
     managedenv.mark_ready(project)
     assert managedenv.python_of(project) is not None
     managedenv.mark_incomplete(project, "安装被取消")
@@ -496,8 +537,7 @@ def test_a_directory_we_did_not_create_is_never_adopted(tmp_path):
     project.mkdir()
     path = managedenv.manifest_path(project)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"schema": managedenv.SCHEMA,
-                                "state": "ready"}), encoding="utf-8")
+    path.write_text(json.dumps({"schema": managedenv.SCHEMA, "state": "ready"}), encoding="utf-8")
     assert managedenv.read_manifest(project) is None
     assert managedenv.python_of(project) is None
 
@@ -507,21 +547,37 @@ def test_the_manifest_records_what_we_installed(tmp_path):
     project = tmp_path / "paper"
     project.mkdir()
     managedenv.write_manifest(project, managedenv.new_manifest(project, "/x/py"))
-    managedenv.record_install(project, import_name="lmfit", distribution="lmfit",
-                              requested_specifier=">=1.3",
-                              resolved_version="1.3.2", reason="missing_dependency")
-    managedenv.record_install(project, import_name="lmfit", distribution="lmfit",
-                              requested_specifier="", resolved_version="1.3.3",
-                              reason="missing_dependency")
-    managedenv.record_install(project, import_name="PIL", distribution="Pillow",
-                              requested_specifier="", resolved_version="11.0.0",
-                              reason="missing_dependency")
-    assert managedenv.installed_requirements(project) == \
-        ["lmfit==1.3.3", "Pillow==11.0.0"]
+    managedenv.record_install(
+        project,
+        import_name="lmfit",
+        distribution="lmfit",
+        requested_specifier=">=1.3",
+        resolved_version="1.3.2",
+        reason="missing_dependency",
+    )
+    managedenv.record_install(
+        project,
+        import_name="lmfit",
+        distribution="lmfit",
+        requested_specifier="",
+        resolved_version="1.3.3",
+        reason="missing_dependency",
+    )
+    managedenv.record_install(
+        project,
+        import_name="PIL",
+        distribution="Pillow",
+        requested_specifier="",
+        resolved_version="11.0.0",
+        reason="missing_dependency",
+    )
+    assert managedenv.installed_requirements(project) == ["lmfit==1.3.3", "Pillow==11.0.0"]
     # 诊断视图只出包名与版本，不出请求约束与原因（能少给就少给）
     installed = managedenv.state(project)["installed"]
-    assert installed == [{"distribution": "lmfit", "resolved_version": "1.3.3"},
-                         {"distribution": "Pillow", "resolved_version": "11.0.0"}]
+    assert installed == [
+        {"distribution": "lmfit", "resolved_version": "1.3.3"},
+        {"distribution": "Pillow", "resolved_version": "11.0.0"},
+    ]
 
 
 @needs_worker
@@ -545,16 +601,17 @@ def test_imports_can_pass_while_the_worker_still_cannot_run(project, monkeypatch
     `.so` 只在子进程里崩、后端起不来。只有真跑一次 worker 才看得见。
     """
     real_venv(project)
-    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n",
-                                              encoding="utf-8")
-    plan = deprepair.create_plan(str(project), "figure.py", FIXTURE_IMPORT,
-                                 target_kind=deprepair.TARGET_PROJECT_VENV)
+    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
+    plan = deprepair.create_plan(
+        str(project), "figure.py", FIXTURE_IMPORT, target_kind=deprepair.TARGET_PROJECT_VENV
+    )
     monkeypatch.setattr(deprepair, "_run", lambda argv, t: (0, "pip 24.0"))
     monkeypatch.setattr(deprepair, "_pip_install", lambda *a: ("", "ok"))
     monkeypatch.setattr(deprepair, "installed_version", lambda py, dist: "1.0")
     # 第一、二层：都说没问题
-    monkeypatch.setattr(deprepair.projectenv, "probe_environment",
-                        lambda py, mod=None: {"ok": True, "python": py})
+    monkeypatch.setattr(
+        deprepair.projectenv, "probe_environment", lambda py, mod=None: {"ok": True, "python": py}
+    )
     # 第三层：worker 起不来（这里用「worker 脚本不在」构造，症状与上面那几种
     # 真实成因一致——子进程根本跑不起来）
     monkeypatch.setattr(engine_pool, "WORKER_PY", project / "no-such-worker.py")
@@ -576,30 +633,28 @@ def test_managed_venv_creation_is_isolated_and_minimal(tmp_path, monkeypatch):
     project = tmp_path / "paper"
     project.mkdir()
     seen: list[list[str]] = []
-    monkeypatch.setattr(managedenv, "_run",
-                        lambda argv, timeout: (seen.append(list(argv)),
-                                               (1, "stub"))[1])
+    monkeypatch.setattr(
+        managedenv, "_run", lambda argv, timeout: (seen.append(list(argv)), (1, "stub"))[1]
+    )
     managedenv.create_venv(project, "/base/python")
-    assert seen == [["/base/python", "-m", "venv",
-                     str(managedenv.venv_dir(project))]]
+    assert seen == [["/base/python", "-m", "venv", str(managedenv.venv_dir(project))]]
     assert "--system-site-packages" not in seen[0]
     # numpy 由 matplotlib 带进来；pandas / scipy / seaborn 不预装——脚本真要
     # 用时会走同一条 missing_dependency 修复路。
     assert managedenv.BASE_PACKAGES == ("matplotlib",)
 
 
-def test_an_environment_without_pip_is_reported_not_silently_fixed(
-        project, monkeypatch):
+def test_an_environment_without_pip_is_reported_not_silently_fixed(project, monkeypatch):
     """没有 pip 的环境**不静默 `ensurepip`**——用户确认的是「装这个包」。
 
     往用户的环境里再塞一样他没同意的东西，与「改用户环境必须明确确认」
     是同一条纪律的两面。
     """
     real_venv(project)
-    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n",
-                                              encoding="utf-8")
-    plan = deprepair.create_plan(str(project), "figure.py", FIXTURE_IMPORT,
-                                 target_kind=deprepair.TARGET_PROJECT_VENV)
+    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
+    plan = deprepair.create_plan(
+        str(project), "figure.py", FIXTURE_IMPORT, target_kind=deprepair.TARGET_PROJECT_VENV
+    )
     seen: list[list[str]] = []
 
     def _no_pip(argv, timeout):
@@ -607,8 +662,9 @@ def test_an_environment_without_pip_is_reported_not_silently_fixed(
         return 1, "No module named pip"
 
     monkeypatch.setattr(deprepair, "_run", _no_pip)
-    monkeypatch.setattr(deprepair, "_pip_install",
-                        lambda *a: pytest.fail("没有 pip 就不该走到安装"))
+    monkeypatch.setattr(
+        deprepair, "_pip_install", lambda *a: pytest.fail("没有 pip 就不该走到安装")
+    )
     with pytest.raises(deprepair.RepairError) as err:
         deprepair.install(plan.plan_id)
     assert err.value.code == deprepair.ERROR_PIP_UNAVAILABLE
@@ -616,14 +672,14 @@ def test_an_environment_without_pip_is_reported_not_silently_fixed(
     assert not [a for a in seen if "ensurepip" in " ".join(a)]
 
 
-def test_managed_environment_is_not_offered_without_a_base_python(
-        project, monkeypatch):
+def test_managed_environment_is_not_offered_without_a_base_python(project, monkeypatch):
     """没有基础 Python 就没有受管环境这条路——如实说，不假装能修。"""
     monkeypatch.setattr(deprepair, "_base_python", None)
     monkeypatch.setattr(deprepair, "_base_python_known", True)
     with pytest.raises(deprepair.RepairError) as err:
-        deprepair.create_plan(str(project), "figure.py", "lmfit",
-                              target_kind=deprepair.TARGET_MANAGED)
+        deprepair.create_plan(
+            str(project), "figure.py", "lmfit", target_kind=deprepair.TARGET_MANAGED
+        )
     assert err.value.code == deprepair.ERROR_MANAGED_UNAVAILABLE
 
 
@@ -632,9 +688,11 @@ def test_managed_environment_is_not_offered_without_a_base_python(
 # ===========================================================================
 def test_install_logs_never_carry_the_package_index(tmp_path):
     """index 地址可能带凭据，也会泄漏用户所在机构——一个字节都不许出门。"""
-    raw = ("Looking in indexes: https://alice:s3cr3t@pypi.corp.example/simple\n"
-           "Collecting lmfit\n"
-           "  Downloading https://alice:s3cr3t@pypi.corp.example/lmfit.whl\n")
+    raw = (
+        "Looking in indexes: https://alice:s3cr3t@pypi.corp.example/simple\n"
+        "Collecting lmfit\n"
+        "  Downloading https://alice:s3cr3t@pypi.corp.example/lmfit.whl\n"
+    )
     clean = deprepair._sanitize(raw)
     assert "s3cr3t" not in clean
     assert "pypi.corp.example" not in clean or "<credentials>" in clean

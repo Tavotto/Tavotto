@@ -37,6 +37,7 @@
 自己的 CLI 才知道环境在哪（`conda env list` 可能几秒），而且环境往往在项目
 之外——那是另一个安全模型。等真实用户数据表明有需要再加。
 """
+
 from __future__ import annotations
 
 import json
@@ -179,13 +180,13 @@ def discover(figures_dir: str | Path, script: str | None = None) -> list[str]:
                 continue
             if interpreter_of(cand):
                 layer.append(str(cand))
-        for p in sorted(layer, key=lambda s: (VENV_DIRNAMES.index(Path(s).name),
-                                              os.path.normcase(s))):
+        for p in sorted(
+            layer, key=lambda s: (VENV_DIRNAMES.index(Path(s).name), os.path.normcase(s))
+        ):
             if p not in seen:
                 seen.add(p)
                 found.append(p)
-        if _same_dir(cur, root) or not _within(root, cur.parent) \
-                or _same_dir(cur.parent, cur):
+        if _same_dir(cur, root) or not _within(root, cur.parent) or _same_dir(cur.parent, cur):
             break
         cur = cur.parent
     return found
@@ -257,30 +258,41 @@ def probe_environment(python: str, module: str | None = None) -> dict:
     if module:
         argv.append(module)
     try:
-        proc = subprocess.run(argv, capture_output=True, text=True,
-                              encoding="utf-8", errors="replace",
-                              timeout=PROBE_TIMEOUT_S,
-                              stdin=subprocess.DEVNULL,
-                              creationflags=runtime.CREATE_NO_WINDOW)
+        proc = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=PROBE_TIMEOUT_S,
+            stdin=subprocess.DEVNULL,
+            creationflags=runtime.CREATE_NO_WINDOW,
+        )
     except (OSError, subprocess.SubprocessError) as exc:
         # 起不来：bad executable format（venv 建在另一个架构上）、被杀毒
         # 隔离、动态库缺失、venv 的 home 指向一个已经删掉的解释器……
-        return {"ok": False, "code": ERROR_UNUSABLE, "python": python,
-                "detail": str(exc)[:400]}
+        return {"ok": False, "code": ERROR_UNUSABLE, "python": python, "detail": str(exc)[:400]}
     if proc.returncode != 0:
-        return {"ok": False, "code": ERROR_UNUSABLE, "python": python,
-                "detail": (proc.stderr or "").strip()[:400]}
+        return {
+            "ok": False,
+            "code": ERROR_UNUSABLE,
+            "python": python,
+            "detail": (proc.stderr or "").strip()[:400],
+        }
     try:
         info = json.loads(proc.stdout.strip() or "{}")
     except ValueError:
-        return {"ok": False, "code": ERROR_UNUSABLE, "python": python,
-                "detail": (proc.stdout or "").strip()[:400]}
+        return {
+            "ok": False,
+            "code": ERROR_UNUSABLE,
+            "python": python,
+            "detail": (proc.stdout or "").strip()[:400],
+        }
 
     info["python"] = python
     version = tuple(info.get("version_info") or ())[:2]
     if not version or not (PYTHON_MIN <= version < PYTHON_MAX_EXCLUSIVE):
-        info.update(ok=False, code=ERROR_UNSUPPORTED_PYTHON,
-                    support=SUPPORT_UNSUPPORTED)
+        info.update(ok=False, code=ERROR_UNSUPPORTED_PYTHON, support=SUPPORT_UNSUPPORTED)
         return info
     if not info.get("matplotlib_version") or not info.get("tavotto_worker_ok"):
         # matplotlib 起不来 = 它不是一个绘图环境；worker 模块 import 不了 =
@@ -291,8 +303,7 @@ def probe_environment(python: str, module: str | None = None) -> dict:
     if module and info.get("requested_module_ok") is False:
         info.update(ok=False, code=ERROR_MODULE_MISSING)
         return info
-    info.update(ok=True, code="", support=support_status(
-        version, info.get("matplotlib_version")))
+    info.update(ok=True, code="", support=support_status(version, info.get("matplotlib_version")))
     return info
 
 
@@ -379,8 +390,7 @@ def project_relative(figures_dir: str | Path, python: str) -> str:
     项目一挪地方，记住的决策当场失效。这里要的是**布局意义上**的相对位置。
     """
     try:
-        rel = os.path.relpath(os.path.abspath(str(python)),
-                              os.path.abspath(str(figures_dir)))
+        rel = os.path.relpath(os.path.abspath(str(python)), os.path.abspath(str(figures_dir)))
     except (OSError, ValueError):
         return ""
     if os.path.isabs(rel) or rel.split(os.sep)[0] == os.pardir:
@@ -388,9 +398,15 @@ def project_relative(figures_dir: str | Path, python: str) -> str:
     return rel
 
 
-def remember(figures_dir: str | Path, python: str, *, automatic: bool,
-             trigger: str = "", module: str = "",
-             health: dict | None = None) -> None:
+def remember(
+    figures_dir: str | Path,
+    python: str,
+    *,
+    automatic: bool,
+    trigger: str = "",
+    module: str = "",
+    health: dict | None = None,
+) -> None:
     """记住这个项目该用哪个解释器（进程缓存 + 项目设置持久化）。
 
     **绝不写全局 `worker.python` 设置**：那会让 A 项目找到的 `.venv` 变成
@@ -400,8 +416,7 @@ def remember(figures_dir: str | Path, python: str, *, automatic: bool,
     with _lock:
         _resolved[key] = python
     root = Path(figures_dir)
-    payload = {"automatic": bool(automatic), "trigger": trigger or "",
-               "module": module or ""}
+    payload = {"automatic": bool(automatic), "trigger": trigger or "", "module": module or ""}
     # 把体检当时的事实一并存下来：诊断包要回答「为什么用了这个 Python」，
     # 而生成诊断包时**不该**再去起一个解释器问一遍（那要几十秒，用户点的是
     # 「导出诊断包」不是「重新体检」）。
@@ -416,7 +431,7 @@ def remember(figures_dir: str | Path, python: str, *, automatic: bool,
         payload["python"] = str(python)
     try:
         config.set_project_settings(str(root), {SETTINGS_KEY: payload})
-    except OSError as exc:      # 配置目录只读/满：记不住不该让渲染失败
+    except OSError as exc:  # 配置目录只读/满：记不住不该让渲染失败
         LOG.warning("项目环境决策未能持久化: %s", exc)
 
 
@@ -459,8 +474,7 @@ def mark_attempted(figures_dir: str | Path, script: str) -> bool:
         return True
 
 
-def resolve_for_missing_dependency(figures_dir: str | Path, script: str,
-                                   module: str) -> dict:
+def resolve_for_missing_dependency(figures_dir: str | Path, script: str, module: str) -> dict:
     """内置环境缺 `module` 时，看看这个项目自己的 venv 能不能顶上。
 
     回 `{"ok": True, "python": …, "venv": …, "health": {…}}`，或
@@ -488,12 +502,23 @@ def resolve_for_missing_dependency(figures_dir: str | Path, script: str,
         # 全都不健康：把**最靠前那个**的失败原因交出去（它是我们本来会选的
         # 那个，对用户最有解释力），而不是笼统一句「没有可用环境」。
         first = failures[0] if failures else {"code": ERROR_NOT_FOUND}
-        return {"ok": False, "code": first.get("code", ERROR_UNUSABLE),
-                "module": module, "health": first,
-                "venv": first.get("venv", ""), "candidates": candidates}
+        return {
+            "ok": False,
+            "code": first.get("code", ERROR_UNUSABLE),
+            "module": module,
+            "health": first,
+            "venv": first.get("venv", ""),
+            "candidates": candidates,
+        }
     best = healthy[0]
-    return {"ok": True, "python": best["python"], "venv": best["venv"],
-            "health": best, "module": module, "candidates": candidates}
+    return {
+        "ok": True,
+        "python": best["python"],
+        "venv": best["venv"],
+        "health": best,
+        "module": module,
+        "candidates": candidates,
+    }
 
 
 def state(figures_dir: str | Path) -> dict:
@@ -505,12 +530,15 @@ def state(figures_dir: str | Path) -> dict:
     stored = (config.project_settings(str(Path(figures_dir))) or {}).get(SETTINGS_KEY)
     stored = stored if isinstance(stored, dict) else {}
     python = remembered(figures_dir)
-    out = {"python": python or "", "automatic": bool(stored.get("automatic")),
-           "trigger": stored.get("trigger") or "",
-           "module": stored.get("module") or "",
-           "python_version": stored.get("python_version") or "",
-           "matplotlib_version": stored.get("matplotlib_version") or "",
-           "support": stored.get("support") or ""}
+    out = {
+        "python": python or "",
+        "automatic": bool(stored.get("automatic")),
+        "trigger": stored.get("trigger") or "",
+        "module": stored.get("module") or "",
+        "python_version": stored.get("python_version") or "",
+        "matplotlib_version": stored.get("matplotlib_version") or "",
+        "support": stored.get("support") or "",
+    }
     if python:
         out["python_relative"] = project_relative(figures_dir, python)
     return out

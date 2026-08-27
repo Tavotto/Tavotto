@@ -28,6 +28,7 @@ Tavotto 给出的仍然是一句 `ModuleNotFoundError` ——用户得先知道 
 纯标准库（Flask 父进程 import 链上）。设计与取舍见
 `docs/adr/0019-controlled-dependency-repair.md`。
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -133,12 +134,13 @@ class RepairPlan:
     执行的必须是**那一件事**。如果执行时按新请求里的 python / distribution 走，
     一个构造出来的请求就能把「装 lmfit 到项目环境」换成「装别的东西到别处」。
     """
+
     plan_id: str
     project: str
     project_id: str
     script: str
     target_kind: str
-    python: str                  # 受管环境还没建时为空
+    python: str  # 受管环境还没建时为空
     env_fingerprint: str
     requirement: depresolve.DependencyRequirement
     modifies_user_environment: bool
@@ -153,7 +155,7 @@ class RepairPlan:
             "plan_id": self.plan_id,
             "target_kind": self.target_kind,
             "python": projectenv.project_relative(self.project, self.python)
-                      or ("" if self.creates_environment else "…"),
+            or ("" if self.creates_environment else "…"),
             "creates_environment": self.creates_environment,
             "modifies_user_environment": self.modifies_user_environment,
             "network_required": self.network_required,
@@ -258,8 +260,7 @@ def managed_available() -> bool | None:
     with _lock:
         if _base_python_known:
             return bool(_base_python)
-    threading.Thread(target=_warm_base_python, daemon=True,
-                     name="tavotto-base-python").start()
+    threading.Thread(target=_warm_base_python, daemon=True, name="tavotto-base-python").start()
     return None
 
 
@@ -282,8 +283,7 @@ def base_python() -> str | None:
     return found
 
 
-def offer(project: str | Path, script: str, module: str,
-          project_env: dict | None = None) -> dict:
+def offer(project: str | Path, script: str, module: str, project_env: dict | None = None) -> dict:
     """缺 `module` 时「能怎么修」——**只读判断，不装任何东西**。
 
     挂在 `missing_dependency` 的错误响应上（ADR 0019 §UX）。`project_env` 是
@@ -321,30 +321,34 @@ def offer(project: str | Path, script: str, module: str,
         venv = detail.get("venv") or ""
         python = projectenv.interpreter_of(venv) if venv else None
         if python:
-            out["targets"].append({
-                "kind": TARGET_PROJECT_VENV,
-                "venv": projectenv.project_relative(root, venv) or venv,
-                "python": projectenv.project_relative(root, python) or python,
-                "modifies_user_environment": True,
-                "creates_environment": False,
-                "available": True,
-                "reason": "",
-            })
+            out["targets"].append(
+                {
+                    "kind": TARGET_PROJECT_VENV,
+                    "venv": projectenv.project_relative(root, venv) or venv,
+                    "python": projectenv.project_relative(root, python) or python,
+                    "modifies_user_environment": True,
+                    "creates_environment": False,
+                    "available": True,
+                    "reason": "",
+                }
+            )
 
     # ---- B. Tavotto 受管环境：可删可重建，改的是我们自己的东西 ------------
     managed = managedenv.state(root)
     available = True if managed["exists"] else managed_available()
-    out["targets"].append({
-        "kind": TARGET_MANAGED,
-        "venv": "",
-        "python": "",
-        "modifies_user_environment": False,
-        "creates_environment": not managed["exists"],
-        # None = 还不知道（基础解释器正在后台探）。界面照样把这条列出来，
-        # 真正的答案在创建计划那一步——那时用户已经点过，等几秒是合理的。
-        "available": available,
-        "reason": "" if available is not False else ERROR_MANAGED_UNAVAILABLE,
-    })
+    out["targets"].append(
+        {
+            "kind": TARGET_MANAGED,
+            "venv": "",
+            "python": "",
+            "modifies_user_environment": False,
+            "creates_environment": not managed["exists"],
+            # None = 还不知道（基础解释器正在后台探）。界面照样把这条列出来，
+            # 真正的答案在创建计划那一步——那时用户已经点过，等几秒是合理的。
+            "available": available,
+            "reason": "" if available is not False else ERROR_MANAGED_UNAVAILABLE,
+        }
+    )
     out["managed"] = managed
     return out
 
@@ -352,9 +356,9 @@ def offer(project: str | Path, script: str, module: str,
 # ---------------------------------------------------------------------------
 # 创建计划
 # ---------------------------------------------------------------------------
-def create_plan(project: str | Path, script: str, module: str, *,
-                target_kind: str,
-                user_distribution: str = "") -> RepairPlan:
+def create_plan(
+    project: str | Path, script: str, module: str, *, target_kind: str, user_distribution: str = ""
+) -> RepairPlan:
     """把「装什么、装到哪」定下来，发一个短期计划 id。
 
     这里做**一次**目标环境体检（受管环境还没建时跳过——没有可体检的东西）：
@@ -365,21 +369,18 @@ def create_plan(project: str | Path, script: str, module: str, *,
     if target_kind not in TARGETS:
         raise RepairError(ERROR_NOT_ALLOWED, f"未知的安装目标: {target_kind!r}")
     if rounds_remaining(root, script) <= 0:
-        raise RepairError(ERROR_ROUNDS_EXHAUSTED,
-                          "这个脚本的自动依赖修复已经用满")
+        raise RepairError(ERROR_ROUNDS_EXHAUSTED, "这个脚本的自动依赖修复已经用满")
     if not projectenv.valid_module_name(module):
         raise RepairError(ERROR_UNRESOLVED, f"模块名不合形状: {module!r}")
 
     if user_distribution:
         requirement = depresolve.from_user_input(module, user_distribution)
         if requirement is None:
-            raise RepairError(ERROR_REQUIREMENT_INVALID,
-                              "只接受 `包名` 或 `包名>=版本` 这样的形态")
+            raise RepairError(ERROR_REQUIREMENT_INVALID, "只接受 `包名` 或 `包名>=版本` 这样的形态")
     else:
         requirement = depresolve.resolve(root, module, script)
         if requirement is None:
-            raise RepairError(ERROR_UNRESOLVED,
-                              f"无法确定 {module} 对应哪个安装包")
+            raise RepairError(ERROR_UNRESOLVED, f"无法确定 {module} 对应哪个安装包")
     if not requirement.installable:
         raise RepairError(ERROR_REQUIREMENT_INVALID, "这个需求不可安装")
 
@@ -389,26 +390,23 @@ def create_plan(project: str | Path, script: str, module: str, *,
         python = _pick_project_venv(root, script, module)
         health = projectenv.probe_environment(python, module)
         if health.get("code") == projectenv.ERROR_MODULE_MISSING:
-            pass                       # 正是我们要修的状态
+            pass  # 正是我们要修的状态
         elif health.get("ok"):
-            raise RepairError(ERROR_NOT_ALLOWED,
-                              f"这个环境里已经有 {module} 了")
+            raise RepairError(ERROR_NOT_ALLOWED, f"这个环境里已经有 {module} 了")
         else:
-            raise RepairError(health.get("code") or ERROR_NOT_ALLOWED,
-                              "这个环境不适合作为安装目标",
-                              health=health)
+            raise RepairError(
+                health.get("code") or ERROR_NOT_ALLOWED, "这个环境不适合作为安装目标", health=health
+            )
     else:
         python = managedenv.python_of(root) or ""
         creates = not python
         if creates and not base_python():
-            raise RepairError(ERROR_MANAGED_UNAVAILABLE,
-                              "这台机器上没有可以用来创建环境的 Python")
+            raise RepairError(ERROR_MANAGED_UNAVAILABLE, "这台机器上没有可以用来创建环境的 Python")
 
     key = _env_key(target_kind, python, root)
     with _lock:
         if (key, requirement.requirement()) in _attempted:
-            raise RepairError(ERROR_NOT_ALLOWED,
-                              "同一个环境上的同一个需求这一轮已经试过了")
+            raise RepairError(ERROR_NOT_ALLOWED, "同一个环境上的同一个需求这一轮已经试过了")
     now = time.time()
     plan = RepairPlan(
         plan_id=secrets.token_urlsafe(24),
@@ -428,8 +426,7 @@ def create_plan(project: str | Path, script: str, module: str, *,
     _prune_plans()
     with _lock:
         _plans[plan.plan_id] = plan
-    LOG.info("依赖修复计划: %s → %s（%s）", plan.requirement.requirement(),
-             target_kind, script)
+    LOG.info("依赖修复计划: %s → %s（%s）", plan.requirement.requirement(), target_kind, script)
     return plan
 
 
@@ -442,8 +439,7 @@ def _pick_project_venv(project: str, script: str, module: str) -> str:
         python = projectenv.interpreter_of(venv)
         if python:
             return python
-    raise RepairError(projectenv.ERROR_NOT_FOUND,
-                      f"这个项目里没有可用的虚拟环境（缺 {module}）")
+    raise RepairError(projectenv.ERROR_NOT_FOUND, f"这个项目里没有可用的虚拟环境（缺 {module}）")
 
 
 def get_plan(plan_id: str) -> RepairPlan | None:
@@ -457,9 +453,10 @@ def get_plan(plan_id: str) -> RepairPlan | None:
 # ---------------------------------------------------------------------------
 def progress(plan_id: str) -> dict:
     with _lock:
-        return dict(_progress.get(str(plan_id or "")) or
-                    {"state": "idle", "plan_id": "", "log": "",
-                     "error": None, "code": ""})
+        return dict(
+            _progress.get(str(plan_id or ""))
+            or {"state": "idle", "plan_id": "", "log": "", "error": None, "code": ""}
+        )
 
 
 def cancel(plan_id: str) -> bool:
@@ -473,20 +470,19 @@ def cancel(plan_id: str) -> bool:
 
 
 def install_async(plan_id: str, on_event=None) -> None:
-    threading.Thread(target=lambda: _install_guarded(plan_id, on_event),
-                     daemon=True, name="tavotto-dep-install").start()
+    threading.Thread(
+        target=lambda: _install_guarded(plan_id, on_event), daemon=True, name="tavotto-dep-install"
+    ).start()
 
 
 def _install_guarded(plan_id: str, on_event) -> dict:
     try:
         return install(plan_id, on_event)
     except RepairError as exc:
-        return _emit(plan_id, STATE_FAILED, on_event, code=exc.code,
-                     error=str(exc))
-    except Exception as exc:                      # noqa: BLE001
+        return _emit(plan_id, STATE_FAILED, on_event, code=exc.code, error=str(exc))
+    except Exception as exc:  # noqa: BLE001
         LOG.exception("依赖安装线程异常")
-        return _emit(plan_id, STATE_FAILED, on_event, code=ERROR_FAILED,
-                     error=str(exc))
+        return _emit(plan_id, STATE_FAILED, on_event, code=ERROR_FAILED, error=str(exc))
 
 
 def install(plan_id: str, on_event=None) -> dict:
@@ -519,11 +515,10 @@ def install(plan_id: str, on_event=None) -> dict:
     finally:
         with _lock:
             _cancels.pop(plan.plan_id, None)
-            _plans.pop(plan.plan_id, None)      # 计划是一次性的
+            _plans.pop(plan.plan_id, None)  # 计划是一次性的
 
 
-def _run_install(plan: RepairPlan, env_key: str, on_event,
-                 cancel_ev: threading.Event) -> dict:
+def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.Event) -> dict:
     project, script = plan.project, plan.script
     req = plan.requirement
     _emit(plan.plan_id, STATE_PREPARING, on_event, plan=plan)
@@ -545,16 +540,19 @@ def _run_install(plan: RepairPlan, env_key: str, on_event,
         # 「装 lmfit」。受管环境是我们自己建的，`python -m venv` 已经带了 pip；
         # 走到这里说明它坏了。
         raise RepairError(
-            ERROR_PIP_UNAVAILABLE if plan.target_kind == TARGET_PROJECT_VENV
-            else ERROR_MANAGED_BROKEN, _sanitize(out)[-800:])
+            ERROR_PIP_UNAVAILABLE
+            if plan.target_kind == TARGET_PROJECT_VENV
+            else ERROR_MANAGED_BROKEN,
+            _sanitize(out)[-800:],
+        )
 
     # ---- 安装 -------------------------------------------------------------
     _emit(plan.plan_id, STATE_INSTALLING, on_event, plan=plan)
     with _lock:
-        _attempted.add((_env_key(plan.target_kind, python, project),
-                        req.requirement()))
-    code, out = _pip_install(python, req.requirement(), cancel_ev,
-                             lambda text: _append_log(plan.plan_id, text, on_event))
+        _attempted.add((_env_key(plan.target_kind, python, project), req.requirement()))
+    code, out = _pip_install(
+        python, req.requirement(), cancel_ev, lambda text: _append_log(plan.plan_id, text, on_event)
+    )
     if code == ERROR_CANCELLED:
         return _finish_cancelled(plan, on_event, python)
     if code:
@@ -568,36 +566,49 @@ def _run_install(plan: RepairPlan, env_key: str, on_event,
         # 包、扩展模块的 ABI 对不上——这三种都是 exit 0 + import 失败。
         raise RepairError(
             ERROR_IMPORT_STILL_FAILED if req.import_name else ERROR_FAILED,
-            health.get("detail") or health.get("error") or "", health=health)
+            health.get("detail") or health.get("error") or "",
+            health=health,
+        )
     selftest = worker_self_test(python)
     if not selftest.get("ok"):
-        raise RepairError(ERROR_SELFTEST_FAILED,
-                          _sanitize(selftest.get("detail", ""))[-800:])
+        raise RepairError(ERROR_SELFTEST_FAILED, _sanitize(selftest.get("detail", ""))[-800:])
 
     # ---- 记账 + 换环境 + 作废旧 worker -------------------------------------
     version = installed_version(python, req.distribution)
     if plan.target_kind == TARGET_MANAGED:
         managedenv.record_install(
-            project, import_name=req.import_name, distribution=req.distribution,
-            requested_specifier=req.specifier, resolved_version=version,
-            reason="missing_dependency")
+            project,
+            import_name=req.import_name,
+            distribution=req.distribution,
+            requested_specifier=req.specifier,
+            resolved_version=version,
+            reason="missing_dependency",
+        )
         managedenv.mark_ready(project)
-    projectenv.remember(project, python, automatic=False,
-                        trigger="dependency_repair",
-                        module=req.import_name, health=health)
+    projectenv.remember(
+        project,
+        python,
+        automatic=False,
+        trigger="dependency_repair",
+        module=req.import_name,
+        health=health,
+    )
     pool.note_project_python_ok(python)
     # 安装期间这个环境上的 worker 已经被停掉了（`mutating_environment`）。
     # 这里再点名作废一次：脚本自己的会话必须重建，import 系统 / sys.modules /
     # 已加载的动态库都不会因为磁盘上多了个包而刷新。
     pool.invalidate(script, project)
     _note_round(project, script)
-    result = {"ok": True, "python": python, "version": version,
-              "distribution": req.distribution,
-              "import_name": req.import_name,
-              "target_kind": plan.target_kind}
+    result = {
+        "ok": True,
+        "python": python,
+        "version": version,
+        "distribution": req.distribution,
+        "import_name": req.import_name,
+        "target_kind": plan.target_kind,
+    }
     _emit(plan.plan_id, STATE_DONE, on_event, plan=plan, result=result)
-    LOG.info("依赖修复成功: %s %s → %s", req.distribution, version,
-             plan.target_kind)
+    LOG.info("依赖修复成功: %s %s → %s", req.distribution, version, plan.target_kind)
     return result
 
 
@@ -605,8 +616,7 @@ def _create_managed(project: str, cancel_ev: threading.Event) -> str:
     """建一个受管环境并装上 worker 真正需要的那点东西。"""
     base = base_python()
     if not base:
-        raise RepairError(ERROR_MANAGED_UNAVAILABLE,
-                          "这台机器上没有可以用来创建环境的 Python")
+        raise RepairError(ERROR_MANAGED_UNAVAILABLE, "这台机器上没有可以用来创建环境的 Python")
     managedenv.write_manifest(project, managedenv.new_manifest(project, base))
     ok, out = managedenv.create_venv(project, base)
     if not ok:
@@ -620,10 +630,9 @@ def _create_managed(project: str, cancel_ev: threading.Event) -> str:
         if code:
             managedenv.mark_incomplete(project, f"{package} 安装失败")
             raise RepairError(
-                ERROR_MANAGED_CREATE_FAILED if code == ERROR_FAILED else code,
-                _sanitize(out)[-800:])
-    managedenv.update_manifest(
-        project, python_version=managedenv.python_version_of(python))
+                ERROR_MANAGED_CREATE_FAILED if code == ERROR_FAILED else code, _sanitize(out)[-800:]
+            )
+    managedenv.update_manifest(project, python_version=managedenv.python_version_of(python))
     managedenv.mark_ready(project)
     return python
 
@@ -633,27 +642,31 @@ def _create_managed(project: str, cancel_ev: threading.Event) -> str:
 REBUILD_PROGRESS_ID = "managed-rebuild"
 
 
-def rebuild_managed_async(project: str | Path, requirements: list[str],
-                          on_event=None) -> None:
+def rebuild_managed_async(project: str | Path, requirements: list[str], on_event=None) -> None:
     threading.Thread(
         target=lambda: _rebuild_guarded(project, requirements, on_event),
-        daemon=True, name="tavotto-managed-rebuild").start()
+        daemon=True,
+        name="tavotto-managed-rebuild",
+    ).start()
 
 
 def _rebuild_guarded(project, requirements, on_event) -> dict:
     try:
         return rebuild_managed(project, requirements, on_event)
     except RepairError as exc:
-        return _emit(REBUILD_PROGRESS_ID, STATE_FAILED, on_event,
-                     code=exc.code, error=str(exc))
-    except Exception as exc:                      # noqa: BLE001
+        return _emit(REBUILD_PROGRESS_ID, STATE_FAILED, on_event, code=exc.code, error=str(exc))
+    except Exception as exc:  # noqa: BLE001
         LOG.exception("受管环境重建异常")
-        return _emit(REBUILD_PROGRESS_ID, STATE_FAILED, on_event,
-                     code=ERROR_MANAGED_CREATE_FAILED, error=str(exc))
+        return _emit(
+            REBUILD_PROGRESS_ID,
+            STATE_FAILED,
+            on_event,
+            code=ERROR_MANAGED_CREATE_FAILED,
+            error=str(exc),
+        )
 
 
-def rebuild_managed(project: str | Path, requirements: list[str],
-                    on_event=None) -> dict:
+def rebuild_managed(project: str | Path, requirements: list[str], on_event=None) -> dict:
     """删掉重建受管环境，并把我们记过的那些装回去。
 
     **不声称 lockfile 级复现**：`environment.json` 里记的是安装当时解析出来的
@@ -674,12 +687,16 @@ def rebuild_managed(project: str | Path, requirements: list[str],
             for req in requirements:
                 if cancel_ev.is_set():
                     managedenv.mark_incomplete(root, "重建被取消")
-                    return _emit(REBUILD_PROGRESS_ID, STATE_CANCELLED, on_event,
-                                 code=ERROR_CANCELLED)
+                    return _emit(
+                        REBUILD_PROGRESS_ID, STATE_CANCELLED, on_event, code=ERROR_CANCELLED
+                    )
                 _emit(REBUILD_PROGRESS_ID, STATE_INSTALLING, on_event)
                 code, out = _pip_install(
-                    python, req, cancel_ev,
-                    lambda text: _append_log(REBUILD_PROGRESS_ID, text, on_event))
+                    python,
+                    req,
+                    cancel_ev,
+                    lambda text: _append_log(REBUILD_PROGRESS_ID, text, on_event),
+                )
                 if code:
                     managedenv.mark_incomplete(root, f"{req} 装不回去")
                     raise RepairError(code, _sanitize(out)[-800:])
@@ -688,8 +705,9 @@ def rebuild_managed(project: str | Path, requirements: list[str],
             selftest = worker_self_test(python)
             if not selftest.get("ok"):
                 managedenv.mark_incomplete(root, "worker 自检未通过")
-                raise RepairError(ERROR_MANAGED_BROKEN,
-                                  _sanitize(selftest.get("detail", ""))[-800:])
+                raise RepairError(
+                    ERROR_MANAGED_BROKEN, _sanitize(selftest.get("detail", ""))[-800:]
+                )
             managedenv.mark_ready(root)
             result = {"ok": True, "python": python, "restored": restored}
             _emit(REBUILD_PROGRESS_ID, STATE_DONE, on_event, result=result)
@@ -714,12 +732,9 @@ def _finish_cancelled(plan: RepairPlan, on_event, python: str) -> dict:
     if plan.target_kind == TARGET_MANAGED:
         managedenv.mark_incomplete(plan.project, "安装被取消")
     elif python:
-        health = projectenv.probe_environment(python, plan.requirement.import_name
-                                              or None)
-        detail = {"health_ok": bool(health.get("ok")),
-                  "health_code": health.get("code", "")}
-    _emit(plan.plan_id, STATE_CANCELLED, on_event, plan=plan,
-          code=ERROR_CANCELLED, result=detail)
+        health = projectenv.probe_environment(python, plan.requirement.import_name or None)
+        detail = {"health_ok": bool(health.get("ok")), "health_code": health.get("code", "")}
+    _emit(plan.plan_id, STATE_CANCELLED, on_event, plan=plan, code=ERROR_CANCELLED, result=detail)
     return {"ok": False, "code": ERROR_CANCELLED, **detail}
 
 
@@ -729,15 +744,24 @@ def _finish_cancelled(plan: RepairPlan, on_event, python: str) -> dict:
 #: 网络类失败的判据（**排在「找不到版本」之前**：断网时 pip 两句都会打，
 #: 只看后一句会把「没网」报成「这个包不存在」）。
 _NETWORK_MARKERS = (
-    "temporary failure in name resolution", "network is unreachable",
-    "could not fetch url", "failed to establish a new connection",
-    "connection refused", "connection reset", "read timed out",
-    "newconnectionerror", "proxyerror", "retrying (retry",
-    "name or service not known", "getaddrinfo failed",
+    "temporary failure in name resolution",
+    "network is unreachable",
+    "could not fetch url",
+    "failed to establish a new connection",
+    "connection refused",
+    "connection reset",
+    "read timed out",
+    "newconnectionerror",
+    "proxyerror",
+    "retrying (retry",
+    "name or service not known",
+    "getaddrinfo failed",
 )
 _CONFLICT_MARKERS = (
-    "resolutionimpossible", "conflicting dependencies",
-    "cannot install", "dependency conflicts",
+    "resolutionimpossible",
+    "conflicting dependencies",
+    "cannot install",
+    "dependency conflicts",
 )
 
 
@@ -753,10 +777,8 @@ def classify_pip_failure(text: str) -> str:
         return ERROR_NETWORK
     if any(m in low for m in _CONFLICT_MARKERS):
         return ERROR_CONFLICT
-    if ("could not find a version" in low
-            or "no matching distribution" in low):
-        return (ERROR_NOT_FOUND if "from versions: none" in low
-                else ERROR_REQUIRES_BUILD)
+    if "could not find a version" in low or "no matching distribution" in low:
+        return ERROR_NOT_FOUND if "from versions: none" in low else ERROR_REQUIRES_BUILD
     return ERROR_FAILED
 
 
@@ -775,13 +797,21 @@ def pip_install_argv(python: str, requirement: str) -> list[str]:
     argv 是 list、`shell=False`；包名与版本已在 `depresolve.parse_requirement`
     过了严格语法，`-r` / `--index-url` / URL / 本地路径在那里就死了。
     """
-    return [str(python), "-m", "pip", "install",
-            "--disable-pip-version-check", "--no-input",
-            "--only-binary=:all:", requirement]
+    return [
+        str(python),
+        "-m",
+        "pip",
+        "install",
+        "--disable-pip-version-check",
+        "--no-input",
+        "--only-binary=:all:",
+        requirement,
+    ]
 
 
-def _pip_install(python: str, requirement: str, cancel_ev: threading.Event,
-                 on_log) -> tuple[str, str]:
+def _pip_install(
+    python: str, requirement: str, cancel_ev: threading.Event, on_log
+) -> tuple[str, str]:
     """跑一次 pip。回 `("", 输出)` 表示成功，否则 `(错误码, 输出)`。"""
     if depresolve.parse_requirement(requirement) is None:
         # 第二道门：真正拼进 argv 之前再验一次形状。第一道在解析处，
@@ -791,9 +821,15 @@ def _pip_install(python: str, requirement: str, cancel_ev: threading.Event,
     LOG.info("pip install: %s", requirement)
     try:
         proc = subprocess.Popen(
-            argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            stdin=subprocess.DEVNULL, text=True, encoding="utf-8",
-            errors="replace", creationflags=runtime.CREATE_NO_WINDOW)
+            argv,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            creationflags=runtime.CREATE_NO_WINDOW,
+        )
     except OSError as exc:
         return ERROR_FAILED, str(exc)
 
@@ -839,10 +875,16 @@ def _kill(proc: subprocess.Popen) -> None:
 
 def _run(argv: list[str], timeout: int) -> tuple[int, str]:
     try:
-        proc = subprocess.run(argv, capture_output=True, text=True,
-                              encoding="utf-8", errors="replace",
-                              timeout=timeout, stdin=subprocess.DEVNULL,
-                              creationflags=runtime.CREATE_NO_WINDOW)
+        proc = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            stdin=subprocess.DEVNULL,
+            creationflags=runtime.CREATE_NO_WINDOW,
+        )
     except subprocess.TimeoutExpired:
         return 1, f"超时（{timeout}s）"
     except OSError as exc:
@@ -855,9 +897,15 @@ def installed_version(python: str, distribution: str) -> str:
 
     包名已经过语法关，但仍然经 `argv` 传参、不进 f-string 拼的代码字符串。
     """
-    rc, out = _run([str(python), "-c",
-                    "import sys,importlib.metadata as m;"
-                    "print(m.version(sys.argv[1]))", distribution], 60)
+    rc, out = _run(
+        [
+            str(python),
+            "-c",
+            "import sys,importlib.metadata as m;print(m.version(sys.argv[1]))",
+            distribution,
+        ],
+        60,
+    )
     return out.strip().splitlines()[-1].strip() if rc == 0 and out.strip() else ""
 
 
@@ -893,20 +941,26 @@ def worker_self_test(python: str) -> dict:
         out_dir, sandbox = root / "out", root / "sandbox"
         out_dir.mkdir()
         sandbox.mkdir()
-        spec = execspec.safe_spec(_SELFTEST_NAME, str(root), "__main__",
-                                  interpreter=str(python), sandbox=str(sandbox))
-        argv = execspec.worker_argv(spec, worker_py=pool.WORKER_PY,
-                                    out_dir=out_dir)
+        spec = execspec.safe_spec(
+            _SELFTEST_NAME, str(root), "__main__", interpreter=str(python), sandbox=str(sandbox)
+        )
+        argv = execspec.worker_argv(spec, worker_py=pool.WORKER_PY, out_dir=out_dir)
         proc = subprocess.Popen(
-            argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE, text=True, encoding="utf-8",
-            errors="replace", creationflags=runtime.CREATE_NO_WINDOW)
+            argv,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            creationflags=runtime.CREATE_NO_WINDOW,
+        )
         try:
             # legacy 信封（worker 明确支持，手工调试用的就是它）：一条 build
             # 一条 shutdown，读到 EOF 即结束，不必在这里重建一套超时读线程。
             stdout, stderr = proc.communicate(
-                '{"cmd": "build"}\n{"cmd": "shutdown"}\n',
-                timeout=SELFTEST_TIMEOUT_S)
+                '{"cmd": "build"}\n{"cmd": "shutdown"}\n', timeout=SELFTEST_TIMEOUT_S
+            )
         except subprocess.TimeoutExpired:
             _kill(proc)
             return {"ok": False, "detail": f"worker 自检超时（{SELFTEST_TIMEOUT_S}s）"}
@@ -926,6 +980,7 @@ def worker_self_test(python: str) -> dict:
         return {"ok": False, "detail": str(exc)[:800]}
     finally:
         import shutil
+
         shutil.rmtree(tmp, ignore_errors=True)
 
 
@@ -936,7 +991,8 @@ def worker_self_test(python: str) -> dict:
 #: （`https://user:token@pypi.example.com/simple`）。**一个字节都不许出门**。
 _INDEX_RE = re.compile(
     r"(?i)(looking in indexes:|--index-url[= ]|--extra-index-url[= ]|"
-    r"--trusted-host[= ])\s*\S+")
+    r"--trusted-host[= ])\s*\S+"
+)
 _URL_CRED_RE = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)[^\s/@]+@")
 
 
@@ -950,8 +1006,9 @@ def _sanitize(text: str) -> str:
     text = _URL_CRED_RE.sub(r"\1<credentials>@", text)
     try:
         from . import diagnostics
+
         text = diagnostics.redact_text(text)
-    except Exception:                            # noqa: BLE001 — 脱敏不该拖垮安装
+    except Exception:  # noqa: BLE001 — 脱敏不该拖垮安装
         pass
     return text
 
@@ -985,18 +1042,28 @@ def _append_log(plan_id: str, line: str, on_event) -> None:
         on_event(snapshot)
 
 
-def _emit(plan_id: str, state: str, on_event, *, plan: RepairPlan | None = None,
-          code: str = "", error: str | None = None,
-          result: dict | None = None) -> dict:
+def _emit(
+    plan_id: str,
+    state: str,
+    on_event,
+    *,
+    plan: RepairPlan | None = None,
+    code: str = "",
+    error: str | None = None,
+    result: dict | None = None,
+) -> dict:
     with _lock:
         rec = dict(_progress.get(plan_id) or {"log": ""})
-        rec.update(plan_id=plan_id, state=state, code=code, error=error,
-                   result=result or rec.get("result"))
+        rec.update(
+            plan_id=plan_id, state=state, code=code, error=error, result=result or rec.get("result")
+        )
         if plan is not None:
-            rec.update(import_name=plan.requirement.import_name,
-                       distribution=plan.requirement.distribution,
-                       target_kind=plan.target_kind,
-                       script=plan.script)
+            rec.update(
+                import_name=plan.requirement.import_name,
+                distribution=plan.requirement.distribution,
+                target_kind=plan.target_kind,
+                script=plan.script,
+            )
         _progress[plan_id] = rec
         snapshot = dict(rec)
     if on_event is not None:
@@ -1009,8 +1076,9 @@ def diagnostics_state(project: str | Path) -> dict:
     root = str(Path(project))
     managed = managedenv.state(root)
     with _lock:
-        rounds = {s: n for (pid, s), n in _rounds.items()
-                  if pid == managedenv.project_fingerprint(root)}
+        rounds = {
+            s: n for (pid, s), n in _rounds.items() if pid == managedenv.project_fingerprint(root)
+        }
     return {
         "rounds": rounds,
         "managed_environment": managed,

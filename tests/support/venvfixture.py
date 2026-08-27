@@ -8,21 +8,21 @@
    几百 MB 的科学栈。
 2. **必须把宿主的 `tavotto` 遮掉**（见下）。
 """
+
 import subprocess
 from pathlib import Path
 
 #: 遮蔽用的替身。真实用户的 venv 里就是**没有** Tavotto，`import tavotto`
 #: 抛的正是 ModuleNotFoundError——替身照着那个形状抛，而不是抛个别的。
 _MASK = (
-    '# 由 tests/support/venvfixture.py 写入：把宿主解释器上的 Tavotto 遮掉，\n'
-    '# 让这个 venv 长得跟真实用户的项目环境一样（那里面没有 Tavotto）。\n'
+    "# 由 tests/support/venvfixture.py 写入：把宿主解释器上的 Tavotto 遮掉，\n"
+    "# 让这个 venv 长得跟真实用户的项目环境一样（那里面没有 Tavotto）。\n"
     'raise ModuleNotFoundError("No module named \'tavotto\'", name="tavotto")\n'
 )
 
 
 def site_packages(venv: Path) -> Path:
-    found = (sorted(venv.glob("lib/python*/site-packages"))
-             or sorted(venv.glob("Lib/site-packages")))
+    found = sorted(venv.glob("lib/python*/site-packages")) or sorted(venv.glob("Lib/site-packages"))
     return found[0]
 
 
@@ -50,11 +50,14 @@ def mask_tavotto(venv: Path) -> Path:
     return shim
 
 
-def make_project_venv(root: Path, name: str = ".venv", *,
-                      python: str | None = None) -> Path:
+def make_project_venv(root: Path, name: str = ".venv", *, python: str | None = None) -> Path:
     """在 `root` 下建一个能执行、且**不含 Tavotto** 的 venv。"""
     venv = root / name
-    subprocess.run([python, "-m", "venv", "--system-site-packages", str(venv)],
-                   check=True, capture_output=True, timeout=300)
+    subprocess.run(
+        [python, "-m", "venv", "--system-site-packages", str(venv)],
+        check=True,
+        capture_output=True,
+        timeout=300,
+    )
     mask_tavotto(venv)
     return venv

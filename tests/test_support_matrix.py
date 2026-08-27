@@ -51,13 +51,11 @@ def test_project_env_mirrors_the_matrix():
     assert m, matrix["python"]["requires"]
     assert projectenv.PYTHON_MIN == (int(m.group(1)), int(m.group(2)))
     assert projectenv.PYTHON_MAX_EXCLUSIVE == (int(m.group(3)), int(m.group(4)))
-    tested = tuple(tuple(int(x) for x in v.split("."))
-                   for v in matrix["python"]["tested"])
+    tested = tuple(tuple(int(x) for x in v.split(".")) for v in matrix["python"]["tested"])
     assert projectenv.PYTHON_TESTED == tested
 
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    mm = re.search(r'worker\s*=\s*\["matplotlib>=(\d+)\.(\d+),<(\d+)\.(\d+)"',
-                   pyproject)
+    mm = re.search(r'worker\s*=\s*\["matplotlib>=(\d+)\.(\d+),<(\d+)\.(\d+)"', pyproject)
     assert mm, "pyproject 的 worker extra 里读不到 matplotlib 区间"
     assert projectenv.MPL_MIN == (int(mm.group(1)), int(mm.group(2)))
     assert projectenv.MPL_MAX_EXCLUSIVE == (int(mm.group(3)), int(mm.group(4)))

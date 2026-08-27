@@ -31,6 +31,7 @@ runtime 为代价。
 纯标准库（被 `engine/deprepair.py` import）。设计见
 `docs/adr/0019-controlled-dependency-repair.md`。
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -85,8 +86,7 @@ def project_fingerprint(project: str | Path) -> str:
     还缺」）。用 hash 而不是路径本身做目录名，顺带让数据目录里不再出现用户
     的课题名。
     """
-    text = config.normalize_path_identity(
-        os.path.abspath(os.fspath(project)))
+    text = config.normalize_path_identity(os.path.abspath(os.fspath(project)))
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
@@ -143,8 +143,7 @@ def write_manifest(project: str | Path, data: dict) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(path.name + ".tmp")
-        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1),
-                       encoding="utf-8")
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
         tmp.replace(path)
     except OSError as exc:
         LOG.warning("受管环境 manifest 写入失败: %s", exc)
@@ -183,17 +182,22 @@ def mark_incomplete(project: str | Path, reason: str = "") -> None:
 
 
 def mark_ready(project: str | Path) -> None:
-    update_manifest(project, state=STATE_READY, incomplete_reason="",
-            last_used=int(time.time()))
+    update_manifest(project, state=STATE_READY, incomplete_reason="", last_used=int(time.time()))
 
 
 def touch(project: str | Path) -> None:
     update_manifest(project, last_used=int(time.time()))
 
 
-def record_install(project: str | Path, *, import_name: str, distribution: str,
-                   requested_specifier: str, resolved_version: str,
-                   reason: str) -> None:
+def record_install(
+    project: str | Path,
+    *,
+    import_name: str,
+    distribution: str,
+    requested_specifier: str,
+    resolved_version: str,
+    reason: str,
+) -> None:
     """记一笔「Tavotto 往这个环境里装过什么」。
 
     重建时照着这份装回去。**同一个 distribution 只留最后一笔**：装过两次的
@@ -203,15 +207,21 @@ def record_install(project: str | Path, *, import_name: str, distribution: str,
         data = read_manifest(project)
         if not data:
             return
-        entries = [e for e in (data.get("installed_by_tavotto") or [])
-                   if isinstance(e, dict)
-                   and e.get("distribution") != distribution]
-        entries.append({"import_name": import_name,
-                        "distribution": distribution,
-                        "requested_specifier": requested_specifier,
-                        "resolved_version": resolved_version,
-                        "reason": reason,
-                        "at": int(time.time())})
+        entries = [
+            e
+            for e in (data.get("installed_by_tavotto") or [])
+            if isinstance(e, dict) and e.get("distribution") != distribution
+        ]
+        entries.append(
+            {
+                "import_name": import_name,
+                "distribution": distribution,
+                "requested_specifier": requested_specifier,
+                "resolved_version": resolved_version,
+                "reason": reason,
+                "at": int(time.time()),
+            }
+        )
         data["installed_by_tavotto"] = entries[-64:]
         write_manifest(project, data)
 
@@ -241,8 +251,13 @@ def state(project: str | Path) -> dict:
     """
     data = read_manifest(project)
     if not data:
-        return {"exists": False, "state": "", "python_version": "",
-                "installed": [], "created_at": 0}
+        return {
+            "exists": False,
+            "state": "",
+            "python_version": "",
+            "installed": [],
+            "created_at": 0,
+        }
     return {
         "exists": python_of(project) is not None,
         "state": data.get("state", ""),
@@ -251,10 +266,14 @@ def state(project: str | Path) -> dict:
         "last_used": int(data.get("last_used") or 0),
         # 只出包名与版本：requested_specifier / reason 是本地账，
         # 诊断包不需要它们（脱敏原则：能少给就少给）。
-        "installed": [{"distribution": e.get("distribution", ""),
-                       "resolved_version": e.get("resolved_version", "")}
-                      for e in (data.get("installed_by_tavotto") or [])
-                      if isinstance(e, dict)],
+        "installed": [
+            {
+                "distribution": e.get("distribution", ""),
+                "resolved_version": e.get("resolved_version", ""),
+            }
+            for e in (data.get("installed_by_tavotto") or [])
+            if isinstance(e, dict)
+        ],
     }
 
 
@@ -299,9 +318,10 @@ def base_python() -> str | None:
     并覆盖了 conda / python.org / PATH 的常见落点。**这里绝不新造一条探测链**。
     """
     from . import bootstrap
+
     try:
         return bootstrap.find_base_python()
-    except (OSError, ValueError) as exc:      # 探测本身不该让请求 500
+    except (OSError, ValueError) as exc:  # 探测本身不该让请求 500
         LOG.warning("基础解释器探测失败: %s", exc)
         return None
 
@@ -309,10 +329,16 @@ def base_python() -> str | None:
 def _run(argv: list[str], timeout: int) -> tuple[int, str]:
     """跑一条子进程。**shell=False、argv 是 list**（全模块唯一的执行入口）。"""
     try:
-        proc = subprocess.run(argv, capture_output=True, text=True,
-                              encoding="utf-8", errors="replace",
-                              timeout=timeout, stdin=subprocess.DEVNULL,
-                              creationflags=runtime.CREATE_NO_WINDOW)
+        proc = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            stdin=subprocess.DEVNULL,
+            creationflags=runtime.CREATE_NO_WINDOW,
+        )
     except subprocess.TimeoutExpired:
         return 1, f"超时（{timeout}s）"
     except OSError as exc:
@@ -346,6 +372,5 @@ def create_venv(project: str | Path, base: str) -> tuple[bool, str]:
 
 def python_version_of(python: str) -> str:
     """目标解释器自报的版本；问不出来回空串。"""
-    rc, out = _run([str(python), "-c",
-                    "import platform;print(platform.python_version())"], 60)
+    rc, out = _run([str(python), "-c", "import platform;print(platform.python_version())"], 60)
     return out.strip().splitlines()[-1].strip() if rc == 0 and out.strip() else ""

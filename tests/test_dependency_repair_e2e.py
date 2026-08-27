@@ -14,6 +14,7 @@
 断言必须证明**包真的进了那个环境**（site-packages 里有那个文件、
 `sys.executable` 是那个解释器），而不是「字符串选中了某条路径」。
 """
+
 import json
 import subprocess
 import sys
@@ -57,8 +58,9 @@ def _probe(client, script: str = "figure.py") -> dict:
     return resp.get_json()
 
 
-def _plan(client, module: str, target: str, script: str = "figure.py",
-          distribution: str = "") -> dict:
+def _plan(
+    client, module: str, target: str, script: str = "figure.py", distribution: str = ""
+) -> dict:
     body = {"module": module, "script": script, "target": target}
     if distribution:
         body["distribution"] = distribution
@@ -74,8 +76,14 @@ def _install(client, plan_id: str) -> dict:
 
 
 def _in_venv(python: str, expr: str) -> str:
-    out = subprocess.run([python, "-c", expr], capture_output=True, text=True,
-                         encoding="utf-8", errors="replace", timeout=120)
+    out = subprocess.run(
+        [python, "-c", expr],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=120,
+    )
     assert out.returncode == 0, out.stderr
     return out.stdout.strip()
 
@@ -94,8 +102,7 @@ def test_golden_path_install_into_the_project_venv(client, project, wheelhouse):
 
     venv = real_venv(project)
     # 项目自己声明过这个依赖 —— 最可信的那一档解析
-    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n",
-                                              encoding="utf-8")
+    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
     m.open_project(str(project))
 
     # ---- 1. 跑脚本：缺依赖，且**带着可执行的修复建议** -------------------
@@ -127,8 +134,7 @@ def test_golden_path_install_into_the_project_venv(client, project, wheelhouse):
     # ---- 4. 包**真的**进了那个 venv（不是「字符串对了」）------------------
     assert (site_packages(venv) / f"{FIXTURE_IMPORT}.py").is_file()
     python = projectenv.interpreter_of(venv)
-    where = _in_venv(python, f"import {FIXTURE_IMPORT},sys;"
-                             f"print(sys.executable)")
+    where = _in_venv(python, f"import {FIXTURE_IMPORT},sys;print(sys.executable)")
     assert Path(where).is_relative_to(project)
 
     # ---- 5. worker 用新解释器重建，Figure 出来 ---------------------------
@@ -141,27 +147,46 @@ def test_golden_path_install_into_the_project_venv(client, project, wheelhouse):
 
     # ---- 6. 编辑（改标题）+ 导出：修好之后是完整可用的，不是「能打开」----
     asset_id = second["descriptors"][0]["asset_id"]
-    rendered = client.post("/api/engine/render",
-                           json={"id": asset_id, "patches": []})
+    rendered = client.post("/api/engine/render", json={"id": asset_id, "patches": []})
     assert rendered.status_code == 200, rendered.get_json()
     manifest = rendered.get_json()["manifest"]
-    gid = next(el["gid"] for el in manifest["elements"]
-               for f in el.get("editable", [])
-               if f["prop"] == "text" and f["value"] == "Original Title")
+    gid = next(
+        el["gid"]
+        for el in manifest["elements"]
+        for f in el.get("editable", [])
+        if f["prop"] == "text" and f["value"] == "Original Title"
+    )
     patch = [{"gid": gid, "prop": "text", "value": "Repaired Title"}]
-    edited = client.post("/api/engine/render",
-                         json={"id": asset_id, "patches": patch})
+    edited = client.post("/api/engine/render", json={"id": asset_id, "patches": patch})
     assert edited.status_code == 200, edited.get_json()
-    assert any(f["value"] == "Repaired Title"
-               for el in edited.get_json()["manifest"]["elements"]
-               for f in el.get("editable", []) if f["prop"] == "text")
-    exported = client.post("/api/export", json={
-        "page_w_mm": 100, "page_h_mm": 80, "formats": ["pdf"], "stem": "repaired",
-        "objects": [{"type": "panel", "id": asset_id, "x_mm": 0, "y_mm": 0,
-                     "w_mm": 100, "h_mm": 80, "overrides": patch}]})
+    assert any(
+        f["value"] == "Repaired Title"
+        for el in edited.get_json()["manifest"]["elements"]
+        for f in el.get("editable", [])
+        if f["prop"] == "text"
+    )
+    exported = client.post(
+        "/api/export",
+        json={
+            "page_w_mm": 100,
+            "page_h_mm": 80,
+            "formats": ["pdf"],
+            "stem": "repaired",
+            "objects": [
+                {
+                    "type": "panel",
+                    "id": asset_id,
+                    "x_mm": 0,
+                    "y_mm": 0,
+                    "w_mm": 100,
+                    "h_mm": 80,
+                    "overrides": patch,
+                }
+            ],
+        },
+    )
     assert exported.status_code == 200, exported.get_json()
-    out = Path(exported.get_json()["export_dir"]) / \
-        exported.get_json()["files"][0]["name"]
+    out = Path(exported.get_json()["export_dir"]) / exported.get_json()["files"][0]["name"]
     assert out.is_file() and out.stat().st_size > 0
 
 
@@ -174,8 +199,7 @@ def test_the_sandbox_is_unchanged_after_a_repair(client, project, wheelhouse):
     from tavotto import app as m
 
     real_venv(project)
-    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n",
-                                              encoding="utf-8")
+    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
     m.open_project(str(project))
     _probe(client)
     plan = _plan(client, FIXTURE_IMPORT, deprepair.TARGET_PROJECT_VENV)
@@ -193,8 +217,7 @@ def test_the_sandbox_is_unchanged_after_a_repair(client, project, wheelhouse):
     assert not (project / "Fig1.pdf").exists()
 
 
-def test_pip_success_alone_is_not_success(client, project, wheelhouse,
-                                          monkeypatch):
+def test_pip_success_alone_is_not_success(client, project, wheelhouse, monkeypatch):
     """**负向反证 #5**：pip 退出码 0 之后不做 import 探测，这条必须红。
 
     「装进了另一个环境 / 装的是同名的另一个包 / 扩展模块 ABI 对不上」三种
@@ -204,32 +227,32 @@ def test_pip_success_alone_is_not_success(client, project, wheelhouse,
     from tavotto import app as m
 
     real_venv(project)
-    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n",
-                                              encoding="utf-8")
+    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
     m.open_project(str(project))
     _probe(client)
     plan = _plan(client, FIXTURE_IMPORT, deprepair.TARGET_PROJECT_VENV)
-    monkeypatch.setattr(deprepair, "_pip_install",
-                        lambda py, req, ev, log: ("", "Successfully installed\n"))
+    monkeypatch.setattr(
+        deprepair, "_pip_install", lambda py, req, ev, log: ("", "Successfully installed\n")
+    )
     final = _install(client, plan["plan_id"])
     assert final["state"] == deprepair.STATE_FAILED
     assert final["code"] == deprepair.ERROR_IMPORT_STILL_FAILED
 
 
-def test_a_package_that_does_not_exist_is_reported_as_such(client, project,
-                                                           wheelhouse):
+def test_a_package_that_does_not_exist_is_reported_as_such(client, project, wheelhouse):
     """本地 index 里没有这个包 → `dependency_not_found`，不是笼统的失败。"""
     from tavotto import app as m
 
     real_venv(project)
     (project / "requirements.txt").write_text(
-        "tavotto-test-nonexistent-package\n", encoding="utf-8")
+        "tavotto-test-nonexistent-package\n", encoding="utf-8"
+    )
     (project / "figure.py").write_text(
-        "import tavotto_test_nonexistent_package\n", encoding="utf-8")
+        "import tavotto_test_nonexistent_package\n", encoding="utf-8"
+    )
     m.open_project(str(project))
     _probe(client)
-    plan = _plan(client, "tavotto_test_nonexistent_package",
-                 deprepair.TARGET_PROJECT_VENV)
+    plan = _plan(client, "tavotto_test_nonexistent_package", deprepair.TARGET_PROJECT_VENV)
     final = _install(client, plan["plan_id"])
     assert final["state"] == deprepair.STATE_FAILED
     assert final["code"] == deprepair.ERROR_NOT_FOUND, final
@@ -264,19 +287,23 @@ def offline_managed_env(monkeypatch):
         if target.is_file():
             return True, ""
         root.parent.mkdir(parents=True, exist_ok=True)
-        out = subprocess.run([base, "-m", "venv", "--system-site-packages",
-                              str(root)], capture_output=True, text=True,
-                             encoding="utf-8", errors="replace", timeout=300)
+        out = subprocess.run(
+            [base, "-m", "venv", "--system-site-packages", str(root)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=300,
+        )
         return target.is_file(), out.stderr
 
-    assert original is managedenv.create_venv      # 换的是同一个出处
+    assert original is managedenv.create_venv  # 换的是同一个出处
     monkeypatch.setattr(managedenv, "create_venv", _with_host_stack)
     monkeypatch.setattr(deprepair, "_base_python", WORKER_PY)
     monkeypatch.setattr(deprepair, "_base_python_known", True)
 
 
-def test_managed_environment_end_to_end(client, project, wheelhouse,
-                                        offline_managed_env):
+def test_managed_environment_end_to_end(client, project, wheelhouse, offline_managed_env):
     """项目**没有** venv 时：建一个 Tavotto 自己的隔离环境并装进去。
 
     验证跑的真是那个环境（`sys.prefix` / `sys.executable` 都在受管目录里），
@@ -285,8 +312,7 @@ def test_managed_environment_end_to_end(client, project, wheelhouse,
     from tavotto import app as m
     from tavotto.engine import config as engine_config
 
-    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n",
-                                              encoding="utf-8")
+    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
     m.open_project(str(project))
     first = _probe(client)
     repair = first["error"]["dependency_repair"]
@@ -305,8 +331,8 @@ def test_managed_environment_end_to_end(client, project, wheelhouse,
     assert Path(python).is_relative_to(engine_config.data_dir())
     assert not Path(python).is_relative_to(project), "绝不建在用户项目里"
     prefix, executable = _in_venv(
-        python, f"import {FIXTURE_IMPORT},sys;print(sys.prefix);"
-                f"print(sys.executable)").splitlines()
+        python, f"import {FIXTURE_IMPORT},sys;print(sys.prefix);print(sys.executable)"
+    ).splitlines()
     # macOS 上 `/var` 是指向 `/private/var` 的软链接：比路径必须先 resolve，
     # 否则「同一个目录」会被判成两个。
     assert Path(prefix).resolve() == managedenv.venv_dir(project).resolve()
@@ -320,16 +346,16 @@ def test_managed_environment_end_to_end(client, project, wheelhouse,
     #     （projectenv 里同一个坑）。
     # 父目录（`Scripts/` / `bin/`）两个平台上都不是软链接，resolve 它只把
     # 短名与 `/var`→`/private/var` 这类展开掉，正好是要的那一半。
-    assert Path(executable).parent.resolve().is_relative_to(
-        managedenv.env_dir(project).resolve())
+    assert Path(executable).parent.resolve().is_relative_to(managedenv.env_dir(project).resolve())
 
     # manifest 如实记账：重建要照着它装回去
     data = managedenv.read_manifest(project)
     assert data["created_by_tavotto"] is True
     assert data["state"] == managedenv.STATE_READY
     assert data["python_version"]
-    entry = next(e for e in data["installed_by_tavotto"]
-                 if e["distribution"] == plan["distribution"])
+    entry = next(
+        e for e in data["installed_by_tavotto"] if e["distribution"] == plan["distribution"]
+    )
     assert entry["resolved_version"] == "1.0"
     assert entry["import_name"] == FIXTURE_IMPORT
 
@@ -337,12 +363,12 @@ def test_managed_environment_end_to_end(client, project, wheelhouse,
     second = _probe(client)
     assert second["error"] is None, second["error"]
     assert second["stems"] == ["Fig1"]
-    assert engine_pool.resolve_worker_python(str(project))[1] == \
-        engine_pool.SOURCE_MANAGED_PROJECT
+    assert engine_pool.resolve_worker_python(str(project))[1] == engine_pool.SOURCE_MANAGED_PROJECT
 
 
 def test_managed_environments_do_not_leak_across_projects(
-        client, tmp_path, wheelhouse, offline_managed_env):
+    client, tmp_path, wheelhouse, offline_managed_env
+):
     """**负向反证 #9 的真环境版**：两个项目各建各的，装的东西互不可见。"""
     from tavotto import app as m
 
@@ -350,11 +376,10 @@ def test_managed_environments_do_not_leak_across_projects(
     for root in (a, b):
         root.mkdir()
         (root / "figure.py").write_text(
-            "import matplotlib.pyplot as plt\n"
-            "fig, ax = plt.subplots()\nfig.savefig('Fig1.pdf')\n",
-            encoding="utf-8")
-        (root / "requirements.txt").write_text(f"{FIXTURE_DIST}\n",
-                                               encoding="utf-8")
+            "import matplotlib.pyplot as plt\nfig, ax = plt.subplots()\nfig.savefig('Fig1.pdf')\n",
+            encoding="utf-8",
+        )
+        (root / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
     try:
         m.open_project(str(a))
         plan = _plan(client, FIXTURE_IMPORT, deprepair.TARGET_MANAGED)
@@ -365,19 +390,16 @@ def test_managed_environments_do_not_leak_across_projects(
         assert managedenv.env_dir(a) != managedenv.env_dir(b)
     finally:
         for root in (a, b):
-            for pid in [p for p, ctx in list(m.PROJECTS.items())
-                        if str(ctx.path) == str(root)]:
+            for pid in [p for p, ctx in list(m.PROJECTS.items()) if str(ctx.path) == str(root)]:
                 m.close_project(pid, wait=True)
             engine_pool.shutdown_all(str(root), wait=True)
 
 
-def test_managed_environment_can_be_rebuilt(client, project, wheelhouse,
-                                            offline_managed_env):
+def test_managed_environment_can_be_rebuilt(client, project, wheelhouse, offline_managed_env):
     """受管环境坏了可以整个扔掉重建——这是它相对「改用户环境」的唯一优势。"""
     from tavotto import app as m
 
-    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n",
-                                              encoding="utf-8")
+    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
     m.open_project(str(project))
     plan = _plan(client, FIXTURE_IMPORT, deprepair.TARGET_MANAGED)
     assert _install(client, plan["plan_id"])["state"] == deprepair.STATE_DONE
@@ -397,12 +419,12 @@ def test_managed_environment_can_be_rebuilt(client, project, wheelhouse,
 
 
 def test_cancelling_leaves_the_managed_environment_marked_incomplete(
-        client, project, wheelhouse, offline_managed_env, monkeypatch):
+    client, project, wheelhouse, offline_managed_env, monkeypatch
+):
     """取消之后**不假装干净**：受管环境标成未完成，下次重建。"""
     from tavotto import app as m
 
-    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n",
-                                              encoding="utf-8")
+    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
     m.open_project(str(project))
     plan = _plan(client, FIXTURE_IMPORT, deprepair.TARGET_MANAGED)
 
@@ -420,15 +442,17 @@ def test_cancelling_leaves_the_managed_environment_marked_incomplete(
     monkeypatch.setattr(deprepair, "_pip_install", _slow)
     client.post("/api/engine/dependency/install", json={"plan_id": plan["plan_id"]})
     deadline = time.time() + 60
-    while deprepair.progress(plan["plan_id"]).get("state") != \
-            deprepair.STATE_INSTALLING and time.time() < deadline:
+    while (
+        deprepair.progress(plan["plan_id"]).get("state") != deprepair.STATE_INSTALLING
+        and time.time() < deadline
+    ):
         time.sleep(0.05)
-    assert client.post("/api/engine/dependency/cancel",
-                       json={"plan_id": plan["plan_id"]}).get_json()["cancelling"]
+    assert client.post(
+        "/api/engine/dependency/cancel", json={"plan_id": plan["plan_id"]}
+    ).get_json()["cancelling"]
     final = wait_for(plan["plan_id"])
     assert final["state"] == deprepair.STATE_CANCELLED
-    assert managedenv.read_manifest(project)["state"] == \
-        managedenv.STATE_INCOMPLETE
+    assert managedenv.read_manifest(project)["state"] == managedenv.STATE_INCOMPLETE
     assert managedenv.python_of(project) is None, "未完成的环境不许被复用"
 
 
@@ -436,7 +460,8 @@ def test_cancelling_leaves_the_managed_environment_marked_incomplete(
 # worker 生命周期（真进程）
 # ===========================================================================
 def test_the_old_worker_is_gone_and_the_new_one_uses_the_new_interpreter(
-        client, project, wheelhouse):
+    client, project, wheelhouse
+):
     """**负向反证 #6**：装完不作废 worker，这条必须红。
 
     磁盘上多一个包不会让一个已经起来的解释器看见它——`sys.modules` 是缓存
@@ -446,16 +471,14 @@ def test_the_old_worker_is_gone_and_the_new_one_uses_the_new_interpreter(
     from tavotto import app as m
 
     venv = real_venv(project)
-    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n",
-                                              encoding="utf-8")
+    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
     m.open_project(str(project))
     _probe(client)
 
     # 修复之前先起一个用**默认**解释器的会话，握在手里
     old = engine_pool.get("figure.py", str(project), "__main__")
     old_pid = old.proc.pid
-    assert not engine_pool.same_python(old.python,
-                                       projectenv.interpreter_of(venv))
+    assert not engine_pool.same_python(old.python, projectenv.interpreter_of(venv))
 
     plan = _plan(client, FIXTURE_IMPORT, deprepair.TARGET_PROJECT_VENV)
     assert _install(client, plan["plan_id"])["state"] == deprepair.STATE_DONE
@@ -475,15 +498,15 @@ def test_the_old_worker_is_gone_and_the_new_one_uses_the_new_interpreter(
 
 
 def test_diagnostics_explain_the_repair_without_leaking_paths(
-        client, project, wheelhouse, offline_managed_env):
+    client, project, wheelhouse, offline_managed_env
+):
     """诊断包要能回答「修过什么」，且不带路径 / index / 凭据。"""
     import io
     import zipfile
 
     from tavotto import app as m
 
-    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n",
-                                              encoding="utf-8")
+    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
     m.open_project(str(project))
     plan = _plan(client, FIXTURE_IMPORT, deprepair.TARGET_MANAGED)
     assert _install(client, plan["plan_id"])["state"] == deprepair.STATE_DONE

@@ -25,6 +25,7 @@
 纯标准库（被 `engine/deprepair.py` import，那条链一路到 Flask 父进程）。
 设计见 `docs/adr/0019-controlled-dependency-repair.md`。
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -46,8 +47,7 @@ SOURCE_CURATED = "curated"
 SOURCE_USER_SPECIFIED = "user_specified"
 
 #: 允许「一键安装」的来源。**guessed 不在其中，也没有 guessed 这一档**。
-INSTALLABLE_SOURCES = (SOURCE_PROJECT_DECLARED, SOURCE_CURATED,
-                       SOURCE_USER_SPECIFIED)
+INSTALLABLE_SOURCES = (SOURCE_PROJECT_DECLARED, SOURCE_CURATED, SOURCE_USER_SPECIFIED)
 
 CONFIDENCE_HIGH = "high"
 CONFIDENCE_LOW = "low"
@@ -94,24 +94,87 @@ CURATED: dict[str, str] = {
 }
 
 #: import 名与发行包名相同、且确认过的高频科研包。
-SAME_NAME: frozenset[str] = frozenset({
-    # 数值 / 科学栈
-    "numpy", "scipy", "pandas", "matplotlib", "sympy", "numba", "xarray",
-    "statsmodels", "h5py", "netcdf4", "zarr", "dask", "polars", "pyarrow",
-    # 领域库（用户复测里真实出现过的那几个就在这儿）
-    "astropy", "lmfit", "uncertainties", "emcee", "corner", "ovito",
-    "rdkit", "ase", "pymatgen", "MDAnalysis", "mdtraj", "nibabel", "pydicom",
-    "obspy", "cartopy", "geopandas", "shapely", "pyproj", "rasterio",
-    "networkx", "igraph", "scanpy", "anndata", "biotite",
-    # 绘图 / 输出
-    "seaborn", "plotly", "bokeh", "altair", "holoviews", "datashader",
-    "colorcet", "cmocean", "palettable", "adjustText", "mplcursors",
-    "squarify", "joypy", "pyvista", "trimesh", "meshio",
-    # 工具
-    "tqdm", "joblib", "openpyxl", "xlrd", "tabulate", "pint", "sympy",
-    "requests", "click", "rich", "typer", "attrs", "cattrs",
-    "torch", "tensorflow", "jax", "flax", "optax", "einops",
-})
+SAME_NAME: frozenset[str] = frozenset(
+    {
+        # 数值 / 科学栈
+        "numpy",
+        "scipy",
+        "pandas",
+        "matplotlib",
+        "sympy",
+        "numba",
+        "xarray",
+        "statsmodels",
+        "h5py",
+        "netcdf4",
+        "zarr",
+        "dask",
+        "polars",
+        "pyarrow",
+        # 领域库（用户复测里真实出现过的那几个就在这儿）
+        "astropy",
+        "lmfit",
+        "uncertainties",
+        "emcee",
+        "corner",
+        "ovito",
+        "rdkit",
+        "ase",
+        "pymatgen",
+        "MDAnalysis",
+        "mdtraj",
+        "nibabel",
+        "pydicom",
+        "obspy",
+        "cartopy",
+        "geopandas",
+        "shapely",
+        "pyproj",
+        "rasterio",
+        "networkx",
+        "igraph",
+        "scanpy",
+        "anndata",
+        "biotite",
+        # 绘图 / 输出
+        "seaborn",
+        "plotly",
+        "bokeh",
+        "altair",
+        "holoviews",
+        "datashader",
+        "colorcet",
+        "cmocean",
+        "palettable",
+        "adjustText",
+        "mplcursors",
+        "squarify",
+        "joypy",
+        "pyvista",
+        "trimesh",
+        "meshio",
+        # 工具
+        "tqdm",
+        "joblib",
+        "openpyxl",
+        "xlrd",
+        "tabulate",
+        "pint",
+        "sympy",
+        "requests",
+        "click",
+        "rich",
+        "typer",
+        "attrs",
+        "cattrs",
+        "torch",
+        "tensorflow",
+        "jax",
+        "flax",
+        "optax",
+        "einops",
+    }
+)
 
 
 def curated_distribution(import_name: str) -> str | None:
@@ -121,8 +184,7 @@ def curated_distribution(import_name: str) -> str | None:
         return CURATED[name]
     # 大小写：PyPI 名不区分大小写，但 import 名区分。同名表按规范化名比对，
     # 回的是 import 名本身（`MDAnalysis` 的包名就是 `MDAnalysis`）。
-    if normalize_distribution(name) in {normalize_distribution(n)
-                                        for n in SAME_NAME}:
+    if normalize_distribution(name) in {normalize_distribution(n) for n in SAME_NAME}:
         return name
     return None
 
@@ -184,8 +246,7 @@ def parse_requirement(text: str) -> tuple[str, str] | None:
         return None
     # **取最早出现的那个运算符**，不是「表里第一个能找到的」：
     # `pkg<2,>=1` 里 `>=` 出现在后面，按表序切会把 `pkg<2,` 当成包名。
-    cut = min((raw.find(op) for op in _OPERATORS if raw.find(op) > 0),
-              default=-1)
+    cut = min((raw.find(op) for op in _OPERATORS if raw.find(op) > 0), default=-1)
     if cut < 0:
         return (raw, "") if _NAME_RE.match(raw) else None
     name, spec = raw[:cut], raw[cut:]
@@ -206,7 +267,7 @@ def _valid_name_and_spec(name: str, spec: str) -> bool:
     for chunk in chunks:
         for op in _OPERATORS:
             if chunk.startswith(op):
-                if not _VERSION_RE.match(chunk[len(op):]):
+                if not _VERSION_RE.match(chunk[len(op) :]):
                     return False
                 break
         else:
@@ -224,6 +285,7 @@ class DependencyRequirement:
     `installable` 是**结构性**的：来源不在 `INSTALLABLE_SOURCES` 或包名不合
     语法时它就是 False，调用方不需要（也不该）自己再判一遍。
     """
+
     import_name: str
     distribution: str
     specifier: str = ""
@@ -232,23 +294,27 @@ class DependencyRequirement:
 
     @property
     def installable(self) -> bool:
-        return (bool(self.distribution)
-                and self.resolution_source in INSTALLABLE_SOURCES
-                and self.confidence == CONFIDENCE_HIGH
-                and parse_requirement(self.requirement()) is not None)
+        return (
+            bool(self.distribution)
+            and self.resolution_source in INSTALLABLE_SOURCES
+            and self.confidence == CONFIDENCE_HIGH
+            and parse_requirement(self.requirement()) is not None
+        )
 
     def requirement(self) -> str:
         """交给 pip 的那一个参数（`lmfit>=1.3`）。"""
         return f"{self.distribution}{self.specifier}"
 
     def to_payload(self) -> dict:
-        return {"import_name": self.import_name,
-                "distribution": self.distribution,
-                "specifier": self.specifier,
-                "requirement": self.requirement(),
-                "resolution_source": self.resolution_source,
-                "confidence": self.confidence,
-                "installable": self.installable}
+        return {
+            "import_name": self.import_name,
+            "distribution": self.distribution,
+            "specifier": self.specifier,
+            "requirement": self.requirement(),
+            "resolution_source": self.resolution_source,
+            "confidence": self.confidence,
+            "installable": self.installable,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -305,8 +371,8 @@ def parse_requirements_text(text: str) -> dict[str, str]:
     for raw in str(text or "").splitlines():
         line = raw.split("#", 1)[0].strip()
         if not line or line.startswith("-"):
-            continue                       # 选项行（-r / --index-url / -e）
-        line = line.split(";", 1)[0].strip()          # 环境标记
+            continue  # 选项行（-r / --index-url / -e）
+        line = line.split(";", 1)[0].strip()  # 环境标记
         line = re.sub(r"\[[^\]]*\]", "", line, count=1)  # extras
         parsed = parse_requirement(line.replace(" ", ""))
         if parsed is None:
@@ -326,26 +392,28 @@ def _pyproject_dependency_strings(text: str) -> list[str]:
     items: list[str] = []
     try:
         import tomllib  # 3.11+
+
         data = tomllib.loads(text)
     except (ImportError, ValueError):
         # 退化路径只认**名字里带 dependencies / requires** 的数组：
         # 认下 `classifiers = [...]` 那种表只会把无关字符串当成依赖声明。
         for block in re.findall(
-                r"(?ms)^\s*[\"']?[A-Za-z0-9_.-]*(?:dependencies|requires)"
-                r"[A-Za-z0-9_.-]*[\"']?\s*=\s*\[(.*?)\]", text, re.I):
+            r"(?ms)^\s*[\"']?[A-Za-z0-9_.-]*(?:dependencies|requires)"
+            r"[A-Za-z0-9_.-]*[\"']?\s*=\s*\[(.*?)\]",
+            text,
+            re.I,
+        ):
             items += re.findall(r"""["']([^"'\n]+)["']""", block)
         return items
     project = data.get("project")
     if isinstance(project, dict):
-        items += [d for d in (project.get("dependencies") or [])
-                  if isinstance(d, str)]
+        items += [d for d in (project.get("dependencies") or []) if isinstance(d, str)]
         extras = project.get("optional-dependencies")
         if isinstance(extras, dict):
             for group in extras.values():
                 items += [d for d in (group or []) if isinstance(d, str)]
     # Poetry 的表是 `{包名: 版本}`，形状不同但同样是「项目声明过」。
-    poetry = (((data.get("tool") or {}).get("poetry") or {})
-              .get("dependencies") or {})
+    poetry = ((data.get("tool") or {}).get("poetry") or {}).get("dependencies") or {}
     if isinstance(poetry, dict):
         for name, ver in poetry.items():
             if name.lower() == "python":
@@ -357,8 +425,7 @@ def _pyproject_dependency_strings(text: str) -> list[str]:
     return items
 
 
-def project_declared(figures_dir: str | Path,
-                     script: str | None = None) -> dict[str, str]:
+def project_declared(figures_dir: str | Path, script: str | None = None) -> dict[str, str]:
     """这个项目声明过哪些依赖 → `{规范化包名: 版本约束}`。
 
     **只读**：不修改、不创建、不 `pip install -r`。解析失败（malformed
@@ -390,8 +457,7 @@ def project_declared(figures_dir: str | Path,
                 continue
             try:
                 if path.name == PYPROJECT_NAME:
-                    found = parse_requirements_text(
-                        "\n".join(_pyproject_dependency_strings(text)))
+                    found = parse_requirements_text("\n".join(_pyproject_dependency_strings(text)))
                 else:
                     found = parse_requirements_text(text)
             except (ValueError, TypeError, RecursionError) as exc:
@@ -405,8 +471,9 @@ def project_declared(figures_dir: str | Path,
 # ---------------------------------------------------------------------------
 # 解析入口
 # ---------------------------------------------------------------------------
-def resolve(figures_dir: str | Path, import_name: str,
-            script: str | None = None) -> DependencyRequirement | None:
+def resolve(
+    figures_dir: str | Path, import_name: str, script: str | None = None
+) -> DependencyRequirement | None:
     """缺的 import 名 → 可信的安装目标；**解析不到就是 None**。
 
     顺序（可信度从高到低，与 ADR 0019 §解析可信度逐条对应）：
@@ -428,14 +495,20 @@ def resolve(figures_dir: str | Path, import_name: str,
         key = normalize_distribution(candidate)
         if key in declared:
             return DependencyRequirement(
-                import_name=import_name, distribution=candidate,
+                import_name=import_name,
+                distribution=candidate,
                 specifier=declared[key],
                 resolution_source=SOURCE_PROJECT_DECLARED,
-                confidence=CONFIDENCE_HIGH)
+                confidence=CONFIDENCE_HIGH,
+            )
     if curated:
         return DependencyRequirement(
-            import_name=import_name, distribution=curated, specifier="",
-            resolution_source=SOURCE_CURATED, confidence=CONFIDENCE_HIGH)
+            import_name=import_name,
+            distribution=curated,
+            specifier="",
+            resolution_source=SOURCE_CURATED,
+            confidence=CONFIDENCE_HIGH,
+        )
     return None
 
 
@@ -452,5 +525,8 @@ def from_user_input(import_name: str, text: str) -> DependencyRequirement | None
     name, spec = parsed
     return DependencyRequirement(
         import_name=import_name if valid_import_name(import_name) else "",
-        distribution=name, specifier=spec,
-        resolution_source=SOURCE_USER_SPECIFIED, confidence=CONFIDENCE_HIGH)
+        distribution=name,
+        specifier=spec,
+        resolution_source=SOURCE_USER_SPECIFIED,
+        confidence=CONFIDENCE_HIGH,
+    )

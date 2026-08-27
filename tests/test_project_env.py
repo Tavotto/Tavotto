@@ -16,6 +16,7 @@
 建一个（matplotlib 就是宿主那份），要「这个环境里有而别处没有」的包时，
 往它自己的 site-packages 里写一个纯 Python 的 fixture 模块。
 """
+
 import os
 import subprocess
 import sys
@@ -37,20 +38,21 @@ except engine_pool.WorkerError:
     WORKER_PY = None
 
 needs_worker = pytest.mark.skipif(
-    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）")
+    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）"
+)
 
 #: 只在测试建出来的 venv 里存在的纯 Python 包。名字刻意不像任何真包——
 #: 它必须在宿主解释器里 import 不到，否则整组 fallback 用例会假绿。
 FIXTURE_MODULE = "tavotto_probe_fixture"
 
-SCRIPT = f'''\
+SCRIPT = f"""\
 import {FIXTURE_MODULE}          # 只有项目 .venv 里有
 import matplotlib.pyplot as plt
 
 fig, ax = plt.subplots()
 ax.plot([1, 2, 3], [4, 5, 6])
 fig.savefig("Fig1.pdf")
-'''
+"""
 
 
 # --------------------------------------------------------------- 工具
@@ -104,10 +106,8 @@ def test_only_a_real_venv_counts(tmp_path):
     """光有目录名不算数——项目里叫 `env/` 的经常是别的东西。"""
     assert projectenv.interpreter_of(fake_venv(tmp_path / "a" / ".venv")) is not None
     # 有 pyvenv.cfg 没解释器、有解释器没 pyvenv.cfg，两种都不是可用环境
-    assert projectenv.interpreter_of(
-        fake_venv(tmp_path / "b" / ".venv", exe=False)) is None
-    assert projectenv.interpreter_of(
-        fake_venv(tmp_path / "c" / ".venv", cfg=False)) is None
+    assert projectenv.interpreter_of(fake_venv(tmp_path / "b" / ".venv", exe=False)) is None
+    assert projectenv.interpreter_of(fake_venv(tmp_path / "c" / ".venv", cfg=False)) is None
     assert projectenv.interpreter_of(tmp_path / "d" / "nope") is None
 
 
@@ -121,7 +121,11 @@ def test_discovery_prefers_the_nearest_then_dotvenv(tmp_path):
     fake_venv(root / "src" / "venv")
     found = projectenv.discover(root, "src/plots/figure.py")
     assert [Path(p).relative_to(root).as_posix() for p in found] == [
-        "src/venv", ".venv", "venv", "env"]
+        "src/venv",
+        ".venv",
+        "venv",
+        "env",
+    ]
 
 
 def test_discovery_is_deterministic(tmp_path):
@@ -136,7 +140,7 @@ def test_discovery_is_deterministic(tmp_path):
 
 def test_discovery_never_leaves_the_project_root(tmp_path):
     """项目外的 venv 一个都不认——那是**别人的**项目。"""
-    fake_venv(tmp_path / ".venv")            # 项目根的上一层
+    fake_venv(tmp_path / ".venv")  # 项目根的上一层
     root = tmp_path / "paper"
     root.mkdir()
     assert projectenv.discover(root, "figure.py") == []
@@ -171,8 +175,7 @@ def test_support_status_is_asymmetric_between_python_and_matplotlib():
     assert projectenv.support_status((3, 9), "3.10.8") == projectenv.SUPPORT_UNSUPPORTED
     assert projectenv.support_status((3, 14), "3.10.8") == projectenv.SUPPORT_UNSUPPORTED
     # 钉版之外但能 import 的 matplotlib 照用，只是如实标注
-    assert projectenv.support_status(
-        (3, 13), "3.12.0") == projectenv.SUPPORT_UNVERIFIED
+    assert projectenv.support_status((3, 13), "3.12.0") == projectenv.SUPPORT_UNVERIFIED
 
 
 # --------------------------------------------------------------- 体检
@@ -205,12 +208,14 @@ def test_project_venv_starts_the_worker_without_installing_tavotto(tmp_path):
     # 在 CI 上前提当场失效（真红过一次），而本地永远复现不出来——本地从 venv
     # 建 venv，继承的是基础解释器的 site-packages，不是父 venv 的。
     # 先断言替身在：把遮蔽拆掉的人**在本地**就会看到红，不必等 CI。
-    assert (venvfixture.site_packages(venv) / "tavotto.py").is_file(), \
+    assert (venvfixture.site_packages(venv) / "tavotto.py").is_file(), (
         "夹具 venv 少了遮蔽宿主 Tavotto 的替身，下面那条断言就只是碰运气"
+    )
     # `-I`：跑测试时父进程带着 `PYTHONPATH=src`，不隔离的话这条断言会看到
     # 仓库源码目录里的 tavotto 而不是 venv 里装了什么，用例当场假绿。
-    installed = subprocess.run([python, "-I", "-c", "import tavotto"],
-                               capture_output=True, timeout=120)
+    installed = subprocess.run(
+        [python, "-I", "-c", "import tavotto"], capture_output=True, timeout=120
+    )
     assert installed.returncode != 0, "fixture venv 不该装着 Tavotto，用例前提失效"
     info = projectenv.probe_environment(python)
     assert info["tavotto_worker_ok"], info
@@ -254,8 +259,7 @@ def project(tmp_path):
     figs.mkdir()
     (figs / "figure.py").write_text(SCRIPT, encoding="utf-8")
     yield figs
-    for pid in [p for p, ctx in list(m.PROJECTS.items())
-                if str(ctx.path) == str(figs)]:
+    for pid in [p for p, ctx in list(m.PROJECTS.items()) if str(ctx.path) == str(figs)]:
         m.close_project(pid, wait=True)
     engine_pool.shutdown_all(str(figs), wait=True)
 
@@ -284,8 +288,7 @@ def test_the_switch_is_remembered_project_scoped_not_globally(project, tmp_path)
     assert projectenv.remembered(other) is None
     # 全局设置一个字节都没被动过——那才是会污染其它项目的地方
     assert engine_config.worker_python() is None
-    assert engine_pool.resolve_worker_python(other)[1] != \
-        engine_pool.SOURCE_PROJECT_VENV
+    assert engine_pool.resolve_worker_python(other)[1] != engine_pool.SOURCE_PROJECT_VENV
 
 
 @needs_worker
@@ -346,8 +349,9 @@ def test_never_mixes_site_packages(project):
     real_venv(project)
     worker, _ = engine_pool.build("figure.py", str(project), "__main__")
     # 1) 真正被执行的就是 venv 自己的解释器
-    argv = execspec.worker_argv(worker.spec, worker_py=engine_pool.WORKER_PY,
-                                out_dir=worker.out_dir, runtime_args=[])
+    argv = execspec.worker_argv(
+        worker.spec, worker_py=engine_pool.WORKER_PY, out_dir=worker.out_dir, runtime_args=[]
+    )
     assert engine_pool.same_python(argv[0], worker.python)
     assert Path(worker.python).is_relative_to(project)
     # 2) 注入环境里没有任何 PYTHONPATH——有它就说明有人在拼 sys.path
@@ -361,8 +365,7 @@ def test_explicit_configuration_wins_over_automatic_discovery(project, monkeypat
     """用户显式挑过的环境，任何时候都不该被自动决策盖掉。"""
     real_venv(project)
     engine_pool.build("figure.py", str(project), "__main__")
-    assert engine_pool.resolve_worker_python(project)[1] == \
-        engine_pool.SOURCE_PROJECT_VENV
+    assert engine_pool.resolve_worker_python(project)[1] == engine_pool.SOURCE_PROJECT_VENV
     # 用户现在去设置里明确指了一条
     monkeypatch.setattr(engine_config, "worker_python", lambda: WORKER_PY)
     engine_pool.reset_worker_python()
@@ -373,8 +376,7 @@ def test_explicit_configuration_wins_over_automatic_discovery(project, monkeypat
     monkeypatch.setattr(engine_config, "worker_python", lambda: None)
     monkeypatch.setenv(engine_pool.WORKER_PYTHON_ENV, WORKER_PY)
     engine_pool.reset_worker_python()
-    assert engine_pool.resolve_worker_python(project)[1] != \
-        engine_pool.SOURCE_PROJECT_VENV
+    assert engine_pool.resolve_worker_python(project)[1] != engine_pool.SOURCE_PROJECT_VENV
 
 
 @needs_worker
@@ -420,8 +422,8 @@ def test_only_missing_dependency_triggers_a_switch(project):
     """脚本自己的 bug 换个解释器一样错——为它切环境是把代码错误伪装成环境问题。"""
     real_venv(project)
     (project / "boom.py").write_text(
-        "import matplotlib.pyplot as plt\nraise ValueError('script bug')\n",
-        encoding="utf-8")
+        "import matplotlib.pyplot as plt\nraise ValueError('script bug')\n", encoding="utf-8"
+    )
     with pytest.raises(engine_pool.WorkerError) as err:
         engine_pool.build("boom.py", str(project), "__main__")
     assert err.value.code != "missing_dependency"
@@ -430,7 +432,8 @@ def test_only_missing_dependency_triggers_a_switch(project):
     # 判据本身也钉住——两个消费者（pool.build 与 app 的端点重试）共用这一份
     assert not engine_pool.should_try_project_env(err.value)
     assert engine_pool.should_try_project_env(
-        engine_pool.WorkerError("x", code="missing_dependency", module="lmfit"))
+        engine_pool.WorkerError("x", code="missing_dependency", module="lmfit")
+    )
 
 
 def test_the_app_endpoint_retry_shares_the_same_predicate():
@@ -509,19 +512,18 @@ def test_forget_returns_the_project_to_the_default_chain(project):
     """用户选回内置环境时，自动决策要能干净地撤掉。"""
     real_venv(project)
     engine_pool.build("figure.py", str(project), "__main__")
-    assert engine_pool.resolve_worker_python(project)[1] == \
-        engine_pool.SOURCE_PROJECT_VENV
+    assert engine_pool.resolve_worker_python(project)[1] == engine_pool.SOURCE_PROJECT_VENV
     projectenv.forget(project)
     engine_pool.reset_worker_python()
     assert projectenv.remembered(project) is None
-    assert engine_pool.resolve_worker_python(project)[1] != \
-        engine_pool.SOURCE_PROJECT_VENV
+    assert engine_pool.resolve_worker_python(project)[1] != engine_pool.SOURCE_PROJECT_VENV
 
 
 # ----------------------------------------------------------------- 产品 API
 @pytest.fixture
 def client():
     from tavotto import app as m
+
     m.app.config["TESTING"] = True
     return m.app.test_client()
 
@@ -575,14 +577,12 @@ def test_project_scope_patch_never_touches_the_global_setting(client, project):
     venv = real_venv(project)
     m.open_project(str(project))
     rel = str(Path(projectenv.interpreter_of(venv)).relative_to(project))
-    resp = client.patch("/api/engine/environment",
-                        json={"scope": "project", "python": rel})
+    resp = client.patch("/api/engine/environment", json={"scope": "project", "python": rel})
     assert resp.status_code == 200, resp.get_json()
     assert resp.get_json()["project"]["source"] == engine_pool.SOURCE_PROJECT_VENV
     assert engine_config.worker_python() is None
     # 清掉 = 回到默认链条
-    resp = client.patch("/api/engine/environment",
-                        json={"scope": "project", "python": ""})
+    resp = client.patch("/api/engine/environment", json={"scope": "project", "python": ""})
     assert resp.status_code == 200
     assert resp.get_json()["project"]["source"] != engine_pool.SOURCE_PROJECT_VENV
 
@@ -594,8 +594,9 @@ def test_project_scope_patch_refuses_an_unusable_environment(client, project, tm
 
     real_venv(project)
     m.open_project(str(project))
-    resp = client.patch("/api/engine/environment",
-                        json={"scope": "project", "python": "nope/bin/python"})
+    resp = client.patch(
+        "/api/engine/environment", json={"scope": "project", "python": "nope/bin/python"}
+    )
     assert resp.status_code == 400
     assert resp.get_json()["code"] == "interpreter_not_found"
     assert projectenv.remembered(project) is None
