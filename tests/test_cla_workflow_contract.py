@@ -111,16 +111,25 @@ class TestClaPaginationContract:
     所以判定器不信分页，核数量：PR 自己声明的提交数对不上就红。
     """
 
-    def test_workflow_passes_the_expected_commit_count(self, cla_job):
-        """摘掉 `--expected-commits`，41 提交的 PR 就会被静默少判。"""
+    def test_workflow_verifies_the_commit_count_itself(self, cla_job):
+        """摘掉这段核对，41 提交的 PR 就会被静默少判。
+
+        **断言写在 workflow 的 bash 里，不推给判定器**——判定器取自默认分支，
+        给它加新参数会在同一个 PR 里报 `unrecognized arguments`（见 job 顶部
+        那段自举约束的注释）。能在 workflow 里做的断言就别跨那道边界。
+        """
         code = _code(cla_job)
-        assert "--expected-commits" in code, (
-            "workflow 必须把 PR 声明的提交数传给判定器——没有它，分页只取到"
-            "第一页时判定器会按不完整的名单判绿，而门禁看起来是在守的"
+        assert "pulls/$PR" in code and ".commits" in code, (
+            "workflow 必须取 PR 自身的 `commits` 字段当对照组"
         )
-        assert "github.event.pull_request.commits" in code, (
-            "期望的提交数要取自 PR 自身的 `commits` 字段"
+        assert re.search(r'--jq\s+[\'"]\.\[\]\.sha', code), (
+            "计数要用 `--jq '.[].sha'` **流式**输出：它按页应用过滤器，"
+            "与「gh 有没有把各页合并成一个数组」无关"
         )
+        assert re.search(r'\$got.*!=.*\$want|\$want.*!=.*\$got', code), (
+            "取到的条数必须与 PR 声明的条数比对——不比就等于信任分页"
+        )
+        assert "exit 1" in code, "对不上必须让这一步失败，不能只打印警告"
 
     def test_workflow_does_not_use_slurp(self, cla_job):
         """`--slurp` 把每页包成一层，产出数组的数组——它是错的解法，不是修法。"""
