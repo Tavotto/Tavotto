@@ -128,6 +128,16 @@ def load_engine_modules(engine_dir: str, names) -> types.ModuleType:
     saved_top = {n: sys.modules.get(n) for n in _TOPLEVEL_TO_RESTORE}
     saved_present = {n: (n in sys.modules) for n in _TOPLEVEL_TO_RESTORE}
     sys.path.insert(0, engine_dir)
+    # **把上一批已经装好的模块按平铺名重新摆回去**（装载窗口内）。
+    # 分两阶段装是有意的（第一阶段不许碰 matplotlib），代价是第一阶段结束时
+    # 顶层名字已经被收回了——第二阶段的 `figsession` 里那句 `import figcapture`
+    # 于是会**再装一份**。两份 figcapture 不会当场报错（常量字符串相等），
+    # 它会在别处以「捕获表对不上」的形状出现，而那时没人会想到模块身份。
+    # 看护：test_bridge_namespace.py::test_two_phase_load_never_duplicates_a_module
+    for name in ENGINE_SIBLINGS:
+        already = getattr(pkg, name, None)
+        if already is not None:
+            sys.modules[name] = already
     try:
         # 平铺 import：引擎模块之间就是这么互相引用的（`manifest` 里
         # `import pathgeom`、`from overrides import …`）。装载期让它们照旧

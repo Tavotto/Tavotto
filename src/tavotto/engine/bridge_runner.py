@@ -622,9 +622,14 @@ def _write_report(run, args, exit_code: int) -> None:
         "script_error": run.script_error,
         "engine_dir_was_on_sys_path": _ENGINE_DIR_WAS_ON_PATH,
         "engine_dir_on_sys_path_now": _HERE in [os.path.abspath(p) for p in sys.path],
-        "toplevel_engine_names_in_sys_modules": sorted(
-            n for n in bridgeboot.ENGINE_SIBLINGS if n in sys.modules
-        ),
+        # 顶层同名模块**可以存在**——用户项目里就有一份 manifest.py，他
+        # `import manifest` 拿到它天经地义。判据不是"名字在不在"，而是
+        # **那个名字下的文件是不是我们的**。
+        "toplevel_engine_module_files": {
+            n: getattr(sys.modules[n], "__file__", "") or ""
+            for n in bridgeboot.ENGINE_SIBLINGS
+            if n in sys.modules
+        },
         "matplotlib_backend": _backend_name(),
         "tavotto_importable": _tavotto_importable(),
     }
