@@ -3404,8 +3404,19 @@ def _set_project_environment(raw: str):
     candidate = Path(raw).expanduser()
     if not candidate.is_absolute():
         # 前端交回来的是项目相对路径（`.venv/bin/python`）——它才是能跟着
-        # 项目走的那种形态。
-        candidate = Path(root) / candidate
+        # 项目走的那种形态。**但相对不等于安全**：`../../../etc/x` 也是相对
+        # 路径，拼完就逃出项目了，而这条路径下游是要被当解释器 spawn 的。
+        # 所以拼完必须钉回项目内（realpath 之后按前缀判，软链接一并落地）。
+        contained = engine_projectenv.contained_file(root, candidate)
+        if contained is None:
+            return jsonify(
+                {
+                    "error": f"这条相对路径落在项目之外: {raw}",
+                    "code": "script_path_outside_project",
+                    "params": {"script": raw},
+                }
+            ), 400
+        candidate = Path(contained)
     if not candidate.is_file():
         return jsonify(
             {

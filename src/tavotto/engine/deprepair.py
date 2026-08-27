@@ -444,7 +444,7 @@ def _pick_project_venv(project: str, script: str, module: str) -> str:
     接受路径就等于开了一个「往任意解释器里 pip install」的接口。
     """
     for venv in projectenv.discover(project, script):
-        python = projectenv.interpreter_of(venv)
+        python = projectenv.interpreter_of(venv, root=project)
         if python:
             return python
     raise RepairError(projectenv.ERROR_NOT_FOUND, f"这个项目里没有可用的虚拟环境（缺 {module}）")

@@ -114,24 +114,81 @@ def _interpreter_names() -> tuple[str, ...]:
     return ("bin/python", "bin/python3")
 
 
-def interpreter_of(venv_dir: str | Path) -> str | None:
+def interpreter_of(venv_dir: str | Path, *, root: str | Path | None = None) -> str | None:
     """venv 目录 → 里面的解释器路径；不是有效 venv 回 None。
 
     **不能只看目录名**：项目里叫 `env/` 的目录经常是「环境配置」「环境变量
     样例」这类东西。判据是 `pyvenv.cfg` 存在（stdlib venv / virtualenv / uv
     三家都写它）**且**解释器文件真的在。
+
+    给了 `root` 就把候选**钉死在它之内**（`contained_path`）。生产上的每个
+    调用点都该传——回来的这条路径下游是要拿去 spawn 的。
     """
-    base = Path(venv_dir)
+    base_str = str(venv_dir) if root is None else contained_path(root, venv_dir)
+    if base_str is None:
+        # 给了 root 却逃出去了：这个候选一开始就不该被看见
+        return None
+    base = Path(base_str)
     if not (base / "pyvenv.cfg").is_file():
         return None
     for rel in _interpreter_names():
-        cand = base / rel
+        # `contained_file` 判的是**父目录**——解释器本身是软链接，不能 realpath。
+        cand = contained_file(base, rel)
+        if cand is None:
+            continue
         try:
-            if cand.is_file():
-                return str(cand)
+            if Path(cand).is_file():
+                return cand
         except OSError:
             continue
     return None
+
+
+def contained_path(root: str | Path, candidate: str | Path) -> str | None:
+    """把 `candidate` **钉死在** `root` 之内，回已 realpath 的绝对路径；逃出去回 None。
+
+    这是本模块（以及 app 的项目环境端点）**唯一**允许把用户派生路径交给
+    文件系统或子进程的入口。两步缺一不可，顺序也不能反：
+
+    1. **先 realpath**——软链接、`..`、`.` 全部在这一步落地。只做字符串
+       归一（`normpath`）的话，`<项目>/.venv -> /etc` 这种软链接看着在项目
+       内、实体在项目外。
+    2. **再按路径前缀判**——比较的是 realpath 之后的两条绝对路径，
+       `real == real_root` 或以 `real_root + os.sep` 开头才算数。
+       用 `+ os.sep` 而不是裸 `startswith`：否则 `/a/project-evil` 会被
+       `/a/project` 判成「在里面」。
+
+    `_within()` 回的是布尔、给发现流程做过滤；这一个回**净化后的路径本身**，
+    调用方拿它去 open/spawn——「判过了」与「用的是判过的那一个」是两件事，
+    分开写就还有把前者的结论用在后者之外的机会。
+    """
+    try:
+        real_root = os.path.realpath(os.fspath(root))
+        real = os.path.realpath(os.path.join(real_root, os.fspath(candidate)))
+    except (OSError, ValueError):
+        return None
+    if real != real_root and not real.startswith(real_root + os.sep):
+        return None
+    return real
+
+
+def contained_file(root: str | Path, candidate: str | Path) -> str | None:
+    """把一个**文件**候选钉在 `root` 之内：判它的**父目录**，回拼好的路径。
+
+    与 `contained_path` 的差别只有一条，但这条不认就会把功能判死：
+    **绝不 realpath 文件本身**。`venv/bin/python` 在 POSIX 上就是一条指向
+    基础解释器的软链接（`/opt/homebrew/.../python3.13`），跟着它走的话
+    **每一个** venv 都会被判成「在项目外」。
+
+    目录不是软链接，判目录既挡得住 `..` 逃逸与「软链接目录指到根外」，
+    又不会把合法的解释器误伤掉。这个坑本模块踩过两次（`project_relative`
+    的注释记过第一次），所以收成一个函数——第三个调用点直接用它。
+    """
+    rel = Path(candidate)
+    holder = contained_path(root, rel.parent if rel.name else rel)
+    if holder is None:
+        return None
+    return str(Path(holder) / rel.name) if rel.name else holder
 
 
 def _within(root: Path, path: Path) -> bool:
@@ -178,7 +235,7 @@ def discover(figures_dir: str | Path, script: str | None = None) -> list[str]:
             cand = cur / name
             if not _within(root, cand):
                 continue
-            if interpreter_of(cand):
+            if interpreter_of(cand, root=root):
                 layer.append(str(cand))
         for p in sorted(
             layer, key=lambda s: (VENV_DIRNAMES.index(Path(s).name), os.path.normcase(s))

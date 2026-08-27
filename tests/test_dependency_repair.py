@@ -706,6 +706,59 @@ def test_an_environment_without_pip_is_reported_not_silently_fixed(project, monk
     assert not [a for a in seen if "ensurepip" in " ".join(a)]
 
 
+@pytest.mark.parametrize(
+    "escape",
+    [
+        "../../../../usr/bin/python3",
+        ".venv/../../../../bin/sh",
+        # 用 os.sep 拼：硬写 `..\..\x` 在 POSIX 上根本不是逃逸（反斜杠不是
+        # 分隔符，那只是个带反斜杠的怪文件名），断言会红在 interpreter_not_found
+        # 上而不是逃逸判据上——那样这条用例在一半平台上量的是另一件事。
+        os.sep.join(["..", "..", "..", "somewhere", "python"]),
+    ],
+)
+def test_a_relative_interpreter_path_cannot_escape_the_project(client, project, escape):
+    """**相对不等于安全**：`../../../etc/x` 也是相对路径。
+
+    `PATCH /api/engine/environment` 的 `scope="project"` 分支把相对路径拼到
+    项目根上——不钉回去的话它能指到项目外任意可执行文件，**而这条路径下游
+    是要被当解释器 spawn 的**。绝对路径仍然允许（ADR 0018 明确写了用户可以
+    挑项目外的 conda 环境），被堵住的只有「假装是相对路径」这条。
+    """
+    from tavotto import app as m
+
+    m.open_project(str(project))
+    resp = client.patch("/api/engine/environment", json={"scope": "project", "python": escape})
+    assert resp.status_code == 400, resp.get_json()
+    assert resp.get_json()["code"] == "script_path_outside_project"
+    assert projectenv.remembered(project) is None
+
+
+def test_contained_path_pins_candidates_inside_the_root(tmp_path):
+    """`contained_path` 的两条判据各自都不可省。"""
+    root = tmp_path / "paper"
+    (root / ".venv" / "bin").mkdir(parents=True)
+    (root / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+    inside = projectenv.contained_path(root, ".venv/bin/python")
+    assert inside and Path(inside).is_file()
+
+    # `..` 逃逸
+    assert projectenv.contained_path(root, "../outside") is None
+    # 前缀相同但不是子目录：`/a/paper-evil` 不在 `/a/paper` 里
+    sibling = tmp_path / "paper-evil"
+    sibling.mkdir()
+    assert projectenv.contained_path(root, str(sibling)) is None
+    # 软链接指到根外：字符串看着在里面，实体在外面
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    link = root / "linked"
+    try:
+        link.symlink_to(outside, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("这个平台建不了软链接")
+    assert projectenv.contained_path(root, "linked") is None
+
+
 def test_reset_state_really_forgets_attempted_repairs(project, monkeypatch):
     """**负向反证（Codex 评审 P2）**：`reset_state(project)` 说「丢弃已试过」，
     就必须真的丢。
