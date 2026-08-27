@@ -97,8 +97,10 @@ const tabKey = () => (test.info().project.name.includes('webkit') ? 'Alt+Tab' : 
  * 按键的时间内首次构建能完成」——**判据的主语不是它自称的那个**（同族：#133、
  * #141）。机器忙时 4/4 红、闲时绿，而 CI 的 `retries: 1` 大概率一直在吞它。
  *
- * 现场 dump 给出的锚点很干脆：失败样本 `focusables=30` 且全是 button；成功样本
- * 33 个，多出来的三个里含 input。所以判据就是「有没有 input」，不是「按了几次」。
+ * 但它**不是**焦点能不能进文档的分界线。现场量过：失败那一刻页面上已经有 33 个
+ * 可聚焦元素、含两个 input，普通 Tab 与 Option+Tab 照样一步不动。真正的分界线是
+ * 「焦点还在不在文档里」——那一条由产品侧的焦点救援负责
+ * （`web/src/lib/focusRescue.ts`，同一轮修的），不是测试能补的。
  */
 async function waitForPlainTabEntry(page: Page, timeout = 120_000): Promise<void> {
   await expect
@@ -127,6 +129,9 @@ async function tabTo(
 ): Promise<void> {
   const seen: string[] = []
   const shift = opts.backward ? 'Shift+' : ''
+  // 已经站在目标上就不必再走：焦点救援之后确实可能一上来就在那儿，
+  // 先按一下反而会走开，然后绕一整圈才回来
+  if ((await focusInfo(page, needle)).hit) return
   for (let i = 0; i < max; i++) {
     // WebKit：焦点在 body 上时 Option+Tab 不动，普通 Tab 才重新进入文档
     const atBody = await page.evaluate(() => document.activeElement === document.body)

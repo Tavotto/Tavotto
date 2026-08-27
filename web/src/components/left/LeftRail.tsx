@@ -35,6 +35,9 @@ export function LeftRail() {
           <Tip key={id} label={active ? t('rail.collapse', { label }) : label} side="right">
             <button
               onClick={() => railClick(id)}
+              // 焦点救援的落点（`lib/focusRescue.ts`）：aria-label 是本地化文案，
+              // 不能当选择器用
+              data-rail={id}
               aria-label={label}
               aria-expanded={active}
               className={cn(
