@@ -136,7 +136,22 @@ test('AI CLI 不存在时，设置里说清「找过哪些位置」', async ({ a
   const a = await app({ env: { PATH: path.join(os.tmpdir(), 'empty-path-dir') } })
   await page.goto(a.baseURL)
 
-  const caps = await (await page.request.get(`${a.baseURL}/api/ai/capabilities?refresh=1`)).json()
+  // **先断言响应本身，再取字段**（#136）。`page.request` 是脱离页面上下文的裸
+  // 请求，不带会话令牌；ADR 0008 的会话认证一旦对这个端点生效，这里拿到的是
+  // 401 `session_auth_required`，而旧写法直接 `.json()` 再取字段会以一句
+  // `Cannot read properties of undefined` 收场——错误码被吞掉，排障要从
+  // undefined 反推。
+  //
+  // 主语写明：e2e 起的 app 由 fixtures 显式关掉会话认证
+  // （`TAVOTTO_INSECURE_NO_AUTH=1`，自 ADR 0008 落地那次起就在），认证本身有
+  // 自己的真 HTTP 套件 `tests/test_browser_auth.py`。所以这里**期望 200**；
+  // 拿到别的就把状态码与响应体原样报出来，而不是让它变成 TypeError。
+  const res = await page.request.get(`${a.baseURL}/api/ai/capabilities?refresh=1`)
+  expect(
+    res.status(),
+    `裸 page.request 拿到 ${res.status()}：${(await res.text()).slice(0, 200)}`,
+  ).toBe(200)
+  const caps = await res.json()
   // 注册表决定有哪些 Agent，用例不再自己列名单
   expect(caps.agents.length).toBeGreaterThan(0)
   for (const agent of caps.agents) {
