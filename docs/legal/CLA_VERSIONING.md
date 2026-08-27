@@ -74,42 +74,64 @@ is a signature that does not cover the text it is recorded against.
    not something CI decides.
 3. **Version strings are append-only.** `1.0` is never reused with different
    bytes. Superseded versions stay in the table below.
-4. **`-draft` is not signable.** A version carrying the `-draft` suffix has
-   unresolved `RIGHTS_HOLDER_CONFIGURATION_REQUIRED` blanks. The gate refuses to
-   treat any signature recorded against a draft version as valid.
+4. **`-draft` is not signable.** A version carrying the `-draft` suffix is one
+   where `RIGHTS_HOLDER_CONFIGURATION_REQUIRED` is unresolved and the text has
+   not been formally activated for signatures. This is about missing details —
+   counterparty, contact, governing law — not about any particular legal form
+   being required. The gate enforces it structurally: it refuses to let a
+   provider be marked as configured while any agreement is still a draft.
 
-## The signature ledger
+## Where signature records live
 
-`docs/legal/cla-signatures.json` is the repository's record of who has signed
-what. It is **a record, not the signing mechanism** — the consent itself is
-collected by a signature provider or by a countersigned document reviewed by a
-human (see [CLA_AUTOMATION_SETUP.md](CLA_AUTOMATION_SETUP.md)). Nothing is
-"signed" by virtue of appearing in this file; entries are written *because* a
-signature was already obtained.
+**Not in this repository.** The authoritative record of who has signed what is
+held by the signature provider (see
+[CLA_AUTOMATION_SETUP.md](CLA_AUTOMATION_SETUP.md)). The repository stores the
+agreement text, its version and hash, the policy, and the explicit exemptions —
+and nothing about individual signers.
 
-Each entry records:
+An earlier draft of this infrastructure kept a hand-maintained
+`docs/legal/cla-signatures.json`. That was removed, because it created **two
+sources of truth for the same legal fact**: the provider's database and a file
+in the repo. Nothing kept them in step, and once they disagreed there would be
+no principled way to say which one governed. A ledger is only safe if it is
+derived automatically and verifiably from the provider — and can detect its own
+staleness. Absent that, one authority is better than two.
 
-| Field | Meaning |
-|---|---|
-| `github_login` | The account whose contributions the signature covers |
-| `agreement` | `individual` or `corporate` |
-| `agreement_version` | The version signed — must exist in the table below |
-| `agreement_sha256` | The hash of the exact text signed |
-| `signed_at` | ISO-8601 UTC timestamp of the signature |
-| `recorded_by` | The maintainer who wrote the entry |
-| `evidence` | Where the signature itself can be found (provider record id, document reference) |
-| `entity` | Corporate only — the Legal Entity bound |
+What the version and hash in `.github/cla-policy.json` are *for*, then, is to
+pin **which text** the provider is collecting signatures against. The provider
+answers "did this person sign?"; the repository answers "sign what, exactly?".
 
-The gate reads this file **from the default branch**, never from the pull
-request under review. A PR cannot add its own author to the ledger and pass its
-own check.
+While no provider is configured, nobody can be recorded as having signed, and
+the gate blocks every non-exempt human contributor with an explanation. That is
+the correct behaviour: an unconfigured service is not consent.
+
+## Rights transfer, if the holder ever changes
+
+If the CLA is accepted by an individual rights holder and Tavotto's IP is later
+moved to a company — on incorporation, or as part of financing — the rights
+received under the CLA do not travel automatically. A future transfer would need
+to cover, at minimum:
+
+- copyright in Tavotto's own code;
+- the trademark rights described in [`TRADEMARKS.md`](../../TRADEMARKS.md);
+- the right to grant commercial licences;
+- **the contractual rights received under signed CLAs** — these are contracts
+  with each contributor, and Section 6.3 of both agreements requires an assignee
+  to agree in writing to abide by the agreement's rights and obligations;
+- any applicable patent rights.
+
+This repository deliberately does **not** contain an IP assignment agreement or
+attempt to draft one. This is corporate-formation and financing legal work, and
+it requires legal review at the time. It is recorded here only so that the CLA's
+existence is not forgotten during such a transaction.
 
 ## Version history
 
 | Version | Status | Date | Notes |
 |---|---|---|---|
-| `1.0-draft` | **Not signable** | 2026-08-27 | Initial text. Harmony 1.0, CLA form, Option Five. Blocked on `RIGHTS_HOLDER_CONFIGURATION_REQUIRED` (counterparty identity, governing law). No signatures may be recorded against it. |
+| `1.0-draft` | **Not activated for signatures** | 2026-08-27 | Initial text. Harmony 1.0, CLA form, Option Five. Held at draft because `RIGHTS_HOLDER_CONFIGURATION_REQUIRED` is unresolved: the counterparty, its contact address and the governing law are not yet filled in. Not a question of legal form — a natural person can be the counterparty. |
 
-When the rights holder is configured, the intended first signable version is
-`1.0` — a new row here, a new hash in the policy, and the `-draft` suffix
-removed from both documents.
+When `RIGHTS_HOLDER_CONFIGURATION_REQUIRED` is resolved, the intended first
+signable version is `1.0` — a new row here, refreshed hashes in the policy, and
+the `-draft` suffix removed from both documents. Only then may a provider be
+marked as configured.

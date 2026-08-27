@@ -26,6 +26,7 @@ import hashlib
 import importlib.util
 import json
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -36,7 +37,11 @@ CI = (WF / "ci.yml").read_text(encoding="utf-8")
 
 LEGAL = ROOT / "docs" / "legal"
 POLICY_PATH = ROOT / ".github" / "cla-policy.json"
-LEDGER_PATH = LEGAL / "cla-signatures.json"
+PROVENANCE = LEGAL / "IP_PROVENANCE.md"
+
+#: 首次审计的基线。它是**历史记录**，永远留在 IP_PROVENANCE 里；
+#: 但它不许再被当成「当前基线」——那正是本轮要修的陈旧断言。
+INITIAL_BASELINE = "aaa065f298ac4ce8a66a3482786bedf516a1154b"
 
 #: 社区版许可证的唯一正确取值。**不是** -or-later，也不是 dual。
 LICENCE_ID = "AGPL-3.0-only"
@@ -251,9 +256,9 @@ class TestClaWorkflowContract:
         assert needs_set == req_set, (
             f"fast gate 的 needs 与 --required 漂开了：{needs_set ^ req_set}")
 
-    def test_gate_script_and_policy_and_ledger_all_exist(self):
-        for p in (ROOT / "scripts" / "ci" / "cla_gate.py", POLICY_PATH, LEDGER_PATH):
-            assert p.is_file(), f"CLA 判定链缺文件：{p}"
+    def test_gate_script_and_policy_exist(self):
+        for f in (ROOT / "scripts" / "ci" / "cla_gate.py", POLICY_PATH):
+            assert f.is_file(), f"CLA 判定链缺文件：{f}"
 
 
 # ═════════════════════════════════════════════ 6. CLA workflow 安全边界
@@ -288,8 +293,10 @@ class TestClaWorkflowSecurity:
         assert "default_branch" in code, (
             "可信输入必须显式取自 default_branch")
         for path in ("scripts/ci/cla_gate.py", ".github/cla-policy.json",
-                     "docs/legal/cla-signatures.json"):
+                     "docs/legal/CLA_INDIVIDUAL.md"):
             assert path in code, f"可信输入里少了 {path}"
+        assert "cla-signatures.json" not in code, (
+            "仓库不保存签署事实——workflow 不该再去取一份 signer 名单")
 
     def test_permissions_are_minimal(self, cla_job):
         code = _code(cla_job)
@@ -352,25 +359,37 @@ class TestAgreementVersionBinding:
             assert f"`{ag['version']}`" in text, (
                 f"CLA_VERSIONING.md 的版本历史里没有 {kind} 的当前版本 {ag['version']}")
 
-    def test_ledger_entries_bind_to_a_known_version_and_hash(self, policy):
-        """ledger 里每条签名都必须指向 policy 里真实存在的版本+哈希。
+    def test_repository_stores_no_signature_records(self):
+        """**签署事实的权威只有一个：provider。**
 
-        现在 signatures 是空的——这条判据是为「将来真的加进签名」准备的，
-        它挡的是「记了一条签名，但它绑的版本/哈希根本不存在」。
+        仓库里不许再出现手工维护的 signer 名单——它会和服务商的数据库变成
+        两个法律权威，分叉之后没有任何机制说得清哪一份算数。
         """
-        ledger = json.loads(LEDGER_PATH.read_text(encoding="utf-8"))
-        assert isinstance(ledger.get("signatures"), list), "ledger 缺 signatures 数组"
-        required = {"github_login", "agreement", "agreement_version",
-                    "agreement_sha256", "signed_at", "recorded_by", "evidence"}
-        for i, sig in enumerate(ledger["signatures"]):
-            missing = required - set(sig)
-            assert not missing, f"signatures[{i}] 缺字段：{sorted(missing)}"
-            ag = policy["agreements"].get(sig["agreement"])
-            assert ag, f"signatures[{i}] 的 agreement `{sig['agreement']}` 不存在"
-            assert sig["agreement_version"] == ag["version"], (
-                f"signatures[{i}] 绑的版本 {sig['agreement_version']} 不是当前版本")
-            assert sig["agreement_sha256"] == ag["sha256"], (
-                f"signatures[{i}] 绑的哈希与当前正文对不上")
+        stray = LEGAL / "cla-signatures.json"
+        assert not stray.exists(), (
+            "docs/legal/cla-signatures.json 又出现了——仓库不保存签署事实，"
+            "见 docs/legal/CLA_VERSIONING.md#where-signature-records-live")
+        for name in ("signatures", "signers", "ledger"):
+            assert name not in json.loads(POLICY_PATH.read_text(encoding="utf-8")), (
+                f"cla-policy 里出现了 `{name}` 字段——签署记录不归仓库管")
+
+    def test_provider_is_the_declared_authority(self, gate, policy):
+        prov = policy["provider"]
+        assert isinstance(prov.get("configured"), bool)
+        if prov["configured"]:
+            assert prov.get("name") and prov.get("check_name"), (
+                "provider 已配置就必须指向一个具体的、可核对的 check")
+
+    def test_draft_agreements_forbid_a_configured_provider(self, gate, policy):
+        """草案上不存在有效签署——这条是结构性的，不靠人记得。"""
+        pol = json.loads(json.dumps(policy))
+        pol["provider"] = {"configured": True, "name": "X", "check_name": "Y"}
+        drafts = [k for k, ag in pol["agreements"].items()
+                  if str(ag["version"]).endswith("-draft")]
+        if not drafts:
+            pytest.skip("协议已脱离草案")
+        with pytest.raises(gate.ConfigError):
+            gate.validate_policy(pol)
 
     def test_draft_versions_carry_the_configuration_marker(self, policy):
         """草案必须自带 RIGHTS_HOLDER_CONFIGURATION_REQUIRED——
@@ -392,84 +411,231 @@ class TestAgreementVersionBinding:
                 f"豁免 `{ex['login']}` 的理由太短——写不出理由的豁免不该存在")
 
 
+# ═══════════════════════════════ 7b. 法律表述的精度（本轮收紧的几处）
+class TestLegalWordingPrecision:
+    """守的是**具体的错误主张**，不是某几个单词。
+
+    判据刻意写窄：文档里出现 `permanent` / `never` 本身完全正常（版本绑定
+    那条不变式就该这么说）。会误导未来维护者的是两类**具体断言**——
+    「合入外部贡献 = 永久失去再授权能力」与「必须先有公司才能签 CLA」——
+    它们都不成立，也都有真正的后续路径。
+    """
+
+    LEGAL_DOCS = sorted(LEGAL.glob("*.md")) + [
+        ROOT / "CONTRIBUTING.md", ROOT / "README.md",
+        ROOT / "README.zh-CN.md", ROOT / "TRADEMARKS.md",
+    ]
+
+    #: 「再授权能力被永久剥夺」的错误主张。命中即红。
+    PERMANENT_LOSS = (
+        r"(?i)(permanently|irreversibl\w*|forever)[^.\n]{0,60}(relicens|re-licens|proprietary|commercial)",
+        r"(?i)can\s+never[^.\n]{0,40}relicens",
+        r"(?i)(cannot|could)\s+ever\s+be\s+relicens",
+        r"(?i)the\s+window[^.\n]{0,30}(can\s+never|never)\s+reopen",
+        r"永久(?:地)?(?:失去|丧失)[^。\n]{0,20}(?:再)?授权",
+        r"(?:再也|永远)(?:不能|无法)(?:再)?授权",
+    )
+
+    #: 「必须先成立公司/法人」的错误前提。命中即红。
+    ENTITY_REQUIRED = (
+        r"(?i)must\s+(?:first\s+)?(?:form|incorporate|create|establish)\s+a\s+(?:compan|corporation|legal entity)",
+        r"(?i)(?:compan\w+|corporation|legal entity)\s+is\s+required\s+(?:before|for)[^.\n]{0,40}CLA",
+        r"(?i)cannot\s+be\s+signed\s+until[^.\n]{0,40}(compan|corporation|entity)[^.\n]{0,20}(exists|is formed)",
+        r"(?i)without\s+one,?\s+the\s+CLA\s+cannot\s+be\s+executed",
+        r"必须(?:先)?(?:成立|注册)(?:公司|法人)[^。\n]{0,20}(?:才能|方可)",
+    )
+
+    @pytest.mark.parametrize("pattern", PERMANENT_LOSS)
+    def test_no_permanent_relicensing_loss_claim(self, pattern):
+        hits = []
+        for f in self.LEGAL_DOCS:
+            for m in re.finditer(pattern, f.read_text(encoding="utf-8")):
+                hits.append(f"{f.relative_to(ROOT)}: {m.group(0)!r}")
+        assert not hits, (
+            "出现了「合入外部贡献即永久失去再授权能力」这类主张，但它不成立：\n  "
+            + "\n  ".join(hits)
+            + "\n准确说法是 Tavotto 不能**单方面**再授权；仍可通过事后 CLA、"
+              "单独许可、重写替换或排除在商业版之外解决。")
+
+    @pytest.mark.parametrize("pattern", ENTITY_REQUIRED)
+    def test_no_company_required_precondition(self, pattern):
+        hits = []
+        for f in self.LEGAL_DOCS:
+            for m in re.finditer(pattern, f.read_text(encoding="utf-8")):
+                hits.append(f"{f.relative_to(ROOT)}: {m.group(0)!r}")
+        assert not hits, (
+            "出现了「必须先有公司/法人才能签 CLA」这类前提，但它不成立——"
+            "自然人同样可以是缔约方：\n  " + "\n  ".join(hits))
+
+    def test_rights_holder_marker_is_defined_accurately(self):
+        """RIGHTS_HOLDER_CONFIGURATION_REQUIRED 必须有准确定义，而不只是个标记。"""
+        text = (LEGAL / "CLA_AUTOMATION_SETUP.md").read_text(encoding="utf-8")
+        assert "RIGHTS_HOLDER_CONFIGURATION_REQUIRED" in text
+        assert re.search(r"(?i)legal person or entity", text), (
+            "定义必须说明要识别的是「legal person or entity」")
+        assert re.search(r"(?i)does not (mean|require)[^.\n]{0,40}compan", text), (
+            "定义必须明说这不要求成立公司——否则读的人会以为要先注册法人")
+        assert re.search(r"(?i)individual rights holder is[^.\n]{0,40}supported"
+                         r"|natural person can", text), (
+            "必须明说自然人作为权利人是被支持的形态")
+
+    def test_draft_status_is_explained_by_the_marker_not_by_legal_form(self):
+        for f in (LEGAL / "CLA_VERSIONING.md", ROOT / "CONTRIBUTING.md"):
+            text = f.read_text(encoding="utf-8")
+            if "-draft" not in text:
+                continue
+            ok = ("RIGHTS_HOLDER_CONFIGURATION_REQUIRED" in text
+                  or re.search(r"(?i)counterparty|governing law", text))
+            assert ok, (
+                f"{f.name} 解释草案状态时必须指向 "
+                "RIGHTS_HOLDER_CONFIGURATION_REQUIRED / 缺失的缔约细节，"
+                "而不是某种法律形态")
+
+
+# ═══════════════════════════════ 7c. 审计基线的时效
+class TestAuditBaseline:
+    """`IP_PROVENANCE.md` 必须审计到一个**比首次基线更新**的真实提交。
+
+    **刻意不要求 baseline == HEAD**：那会让每一个正常 PR 都把 legal 门禁
+    弄红（main 一前进就过期）。这里守的是「最近一次审计过的权利基线」这个
+    概念本身——它必须真实存在、且在本分支历史里。新代码的持续保证来自
+    CLA gate 逐 PR 执行，不是靠每次提交重审全史。
+    """
+
+    @staticmethod
+    def _sha(label):
+        text = PROVENANCE.read_text(encoding="utf-8")
+        i = text.index(label)
+        m = re.search(r"`([0-9a-f]{40})`", text[i:i + 400])
+        assert m, f"IP_PROVENANCE 的「{label}」下读不出 40 位 SHA"
+        return m.group(1)
+
+    def test_initial_baseline_is_retained_as_history(self):
+        assert self._sha("### Initial audited baseline") == INITIAL_BASELINE, (
+            "首次审计基线是历史记录，不许被改掉或删掉")
+
+    def test_current_baseline_has_moved_past_the_initial_one(self):
+        cur = self._sha("### Current audited baseline")
+        assert cur != INITIAL_BASELINE, (
+            f"当前审计基线仍写着首次基线 {INITIAL_BASELINE[:7]}——"
+            "main 已经前进，基线必须重新审计并更新")
+
+    def test_current_baseline_is_a_real_commit_in_this_history(self):
+        cur = self._sha("### Current audited baseline")
+        r = subprocess.run(["git", "merge-base", "--is-ancestor", cur, "HEAD"],
+                           cwd=ROOT, capture_output=True)
+        assert r.returncode == 0, (
+            f"当前审计基线 {cur[:7]} 不在本分支历史里——"
+            "它必须是一个真实审计过的、可达的提交")
+
+
 # ═════════════════════════════════════════════ 8. 判定器行为（单测）
 class TestGateDecisions:
-    def _policy_min(self):
+    def _policy(self, *, provider_on=False, draft=False):
+        ver = "1.0-draft" if draft else "1.0"
+        prov = ({"configured": True, "name": "P", "check_name": "P check"}
+                if provider_on else {"configured": False, "name": None,
+                                     "check_name": None})
         return {
-            "schema": 1,
-            "agreements": {"individual": {"path": "x.md", "version": "1.0",
+            "schema": 2,
+            "agreements": {"individual": {"path": "x.md", "version": ver,
                                           "sha256": "a" * 64}},
+            "provider": prov,
             "exemptions": [{"login": "owner", "kind": "rights_holder",
                             "reason": "the rights holder, at length enough"}],
         }
 
+    @staticmethod
+    def _ok_check():
+        return [{"name": "P check", "status": "completed", "conclusion": "success"}]
+
     def test_merge_group_is_success_not_skipped(self, gate):
-        """判定器在队列候选上必须给出**成功**结论，而不是靠 cla_job 被跳过。"""
-        v = gate.decide("merge_group", self._policy_min(), {}, [])
+        """判定器在队列候选上必须给出**成功**结论，而不是靠 job 被跳过。"""
+        v = gate.decide("merge_group", self._policy(), None, [])
         assert v["status"] == "not_applicable"
 
     def test_unknown_event_is_a_config_error(self, gate):
         with pytest.raises(gate.ConfigError):
-            gate.decide("push", self._policy_min(), {}, [])
+            gate.decide("push", self._policy(), None, [])
 
-    def test_exempt_contributor_passes(self, gate):
-        v = gate.decide("pull_request", self._policy_min(), {"signatures": []},
+    def test_exempt_contributor_passes_even_without_a_provider(self, gate):
+        v = gate.decide("pull_request", self._policy(), None,
                         [{"login": "owner", "sources": ["pr_author"]}])
         assert v["status"] == "success"
 
-    def test_unsigned_contributor_fails(self, gate):
-        v = gate.decide("pull_request", self._policy_min(), {"signatures": []},
+    def test_unconfigured_provider_blocks_everyone_else(self, gate):
+        """**未配置 ≠ 放行。** 绝不因为服务没接上就把外部贡献者当成签过。"""
+        v = gate.decide("pull_request", self._policy(), None,
+                        [{"login": "stranger", "sources": ["pr_author"]}])
+        assert v["status"] == "failure"
+        assert "尚未启用" in " ".join(v["problems"])
+
+    def test_unconfigured_provider_failure_is_actionable(self, gate):
+        """只有一句 `CLA check failed` 会让合法 PR 卡死而没人知道下一步。"""
+        v = gate.decide("pull_request", self._policy(), None,
+                        [{"login": "stranger", "sources": ["pr_author"]}])
+        msg = " ".join(v["problems"])
+        assert "CLA_AUTOMATION_SETUP.md" in msg, "失败信息必须指出去哪儿看"
+        assert "issue" in msg, "失败信息必须告诉贡献者眼下能做什么"
+
+    def test_provider_success_qualifies_contributors(self, gate):
+        v = gate.decide("pull_request", self._policy(provider_on=True),
+                        self._ok_check(),
+                        [{"login": "stranger", "sources": ["pr_author"]}])
+        assert v["status"] == "success"
+
+    def test_provider_failure_blocks(self, gate):
+        checks = [{"name": "P check", "status": "completed", "conclusion": "failure"}]
+        v = gate.decide("pull_request", self._policy(provider_on=True), checks,
+                        [{"login": "stranger", "sources": ["pr_author"]}])
+        assert v["status"] == "failure"
+
+    def test_missing_provider_check_blocks_rather_than_guesses(self, gate):
+        v = gate.decide("pull_request", self._policy(provider_on=True), [],
+                        [{"login": "stranger", "sources": ["pr_author"]}])
+        assert v["status"] == "failure"
+        assert "没找到" in " ".join(v["problems"])
+
+    def test_incomplete_provider_check_blocks(self, gate):
+        checks = [{"name": "P check", "status": "in_progress", "conclusion": None}]
+        v = gate.decide("pull_request", self._policy(provider_on=True), checks,
                         [{"login": "stranger", "sources": ["pr_author"]}])
         assert v["status"] == "failure"
 
     def test_no_contributors_collected_is_a_failure(self, gate):
         """「一个人都没收集到」是取数出错，不是「所有人都签了」。"""
-        v = gate.decide("pull_request", self._policy_min(), {"signatures": []}, [])
+        v = gate.decide("pull_request", self._policy(provider_on=True),
+                        self._ok_check(), [])
         assert v["status"] == "failure"
-
-    def test_signature_on_a_stale_version_does_not_carry_over(self, gate):
-        ledger = {"signatures": [{"github_login": "someone", "agreement": "individual",
-                                  "agreement_version": "0.9", "agreement_sha256": "a" * 64}]}
-        v = gate.decide("pull_request", self._policy_min(), ledger,
-                        [{"login": "someone", "sources": ["pr_author"]}])
-        assert v["status"] == "failure"
-        assert "不自动迁移" in " ".join(v["problems"])
-
-    def test_signature_with_a_stale_hash_is_rejected(self, gate):
-        ledger = {"signatures": [{"github_login": "someone", "agreement": "individual",
-                                  "agreement_version": "1.0", "agreement_sha256": "b" * 64}]}
-        v = gate.decide("pull_request", self._policy_min(), ledger,
-                        [{"login": "someone", "sources": ["pr_author"]}])
-        assert v["status"] == "failure"
-
-    def test_signature_against_a_draft_version_is_never_valid(self, gate):
-        pol = self._policy_min()
-        pol["agreements"]["individual"]["version"] = "1.0-draft"
-        ledger = {"signatures": [{"github_login": "someone", "agreement": "individual",
-                                  "agreement_version": "1.0-draft",
-                                  "agreement_sha256": "a" * 64}]}
-        v = gate.decide("pull_request", pol, ledger,
-                        [{"login": "someone", "sources": ["pr_author"]}])
-        assert v["status"] == "failure"
-        assert "草案" in " ".join(v["problems"])
 
     def test_unresolved_co_author_fails_rather_than_being_ignored(self, gate):
-        v = gate.decide("pull_request", self._policy_min(), {"signatures": []},
+        v = gate.decide("pull_request", self._policy(provider_on=True),
+                        self._ok_check(),
                         [{"login": "owner", "sources": ["pr_author"]}],
                         [{"kind": "co_author", "sha": "abc", "name": "X",
                           "email": "x@corp.example"}])
         assert v["status"] == "failure"
+        msg = " ".join(v["problems"])
+        # 可操作性：说清哪个 commit、哪个身份、为什么、怎么处置
+        assert "abc" in msg and "x@corp.example" in msg
+        assert "处置" in msg, "认不出账号的红必须给出人工处置办法"
 
     def test_exemption_without_a_reason_is_rejected(self, gate):
-        pol = self._policy_min()
+        pol = self._policy()
         pol["exemptions"] = [{"login": "x", "kind": "bot", "reason": ""}]
         with pytest.raises(gate.ConfigError):
             gate.validate_policy(pol)
 
     def test_bot_suffix_alone_does_not_grant_an_exemption(self, gate):
         """没有「名字带 [bot] 就放行」这条规则。"""
-        v = gate.decide("pull_request", self._policy_min(), {"signatures": []},
+        v = gate.decide("pull_request", self._policy(), None,
                         [{"login": "some-random[bot]", "sources": ["pr_author"]}])
+        assert v["status"] == "failure"
+
+    def test_repository_owner_is_not_dynamically_trusted(self, gate):
+        """豁免只认显式点名，不许按「PR 作者 == 仓库 owner」动态猜。"""
+        v = gate.decide("pull_request", self._policy(), None,
+                        [{"login": "Tavotto", "sources": ["pr_author"]}])
         assert v["status"] == "failure"
 
 

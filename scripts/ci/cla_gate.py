@@ -4,9 +4,9 @@
     python3 scripts/ci/cla_gate.py \
         --event pull_request \
         --policy .github/cla-policy.json \
-        --ledger docs/legal/cla-signatures.json \
         --pr-author someone \
-        --commits-json commits.json
+        --commits-json commits.json \
+        [--provider-checks-json check-runs.json]
 
 为什么判定要单独成脚本（而不是几行 Bash 或者一个第三方 action 说了算）：
 
@@ -14,8 +14,11 @@
   判定逻辑散在 workflow 的 Bash 里没法单测，而「CLA 判错」的两头都不便宜：
   放过一个没签的外部贡献，将来那段代码就不能进任何非 AGPL 的发行版；
   错拦一个已签的人，PR 卡住而且没人看得懂为什么。
-* **这个脚本不是签署机制。** 它只读一份已经存在的签署记录（ledger），
-  记录是别处收上来的（签名服务商，或者人工复核过的书面协议）。
+* **这个脚本不是签署机制，仓库也不保存签署事实。**
+  签署的法律权威**只有一个：签名服务商**（provider）。仓库存的是协议正文、
+  版本、哈希、政策与显式豁免——不存 signer 名单。早期版本曾在
+  `docs/legal/cla-signatures.json` 里手工维护一份，那会和服务商的数据库
+  变成两个权威，分叉之后没有任何机制说得清哪一份算数，因此已经删掉。
   「在 PR 里回一句 I agree 然后 grep 评论」那种东西不在这里，也不该有。
 
 判定规则（详见 `decide()`）：
@@ -24,8 +27,10 @@
   验过，队列候选上没有 PR 上下文可查。**这一格必须是成功而不是 skipped**——
   `aggregate_gate.py --mode fast` 把 skipped 一律当失败，这个 job 在
   merge_group 上被跳过会把整个 `CI fast gate` 卡死（tests/ 里有专门的用例钉它）。
-* `--event pull_request`：PR 里出现的每一个人类贡献者都必须在 ledger 里有一条
-  绑到**当前 CLA 版本与哈希**的签名，或者在 policy 的豁免表里被点名。
+* `--event pull_request`：PR 里出现的每一个人类贡献者，要么在 policy 的豁免表
+  里被**点名**，要么由 provider 判定为已签。provider 未配置时（当前状态），
+  **没有任何人能被判成已签**——非豁免的人类一律阻断，并给出明确指引。
+  绝不因为「服务还没接上」就把外部贡献者当成签过。
 * 其他事件：配置错误 → 失败。没设计过的上下文不许静默变绿。
 
 fail-closed 的几处（每一处都是「宁可红」）：
@@ -36,8 +41,9 @@ fail-closed 的几处（每一处都是「宁可红」）：
   `dependabot[bot]` 能过是因为它在表里写着，不是因为它带个 `[bot]` 后缀；
 * policy 里记的文档哈希与磁盘上的文档对不上 → 失败（改了 CLA 正文却没走
   版本流程，见 docs/legal/CLA_VERSIONING.md）；
-* 版本带 `-draft` 后缀 → 该版本上的任何签名一律不认（草案还没定稿，
-  RIGHTS_HOLDER_CONFIGURATION_REQUIRED 没填完就不存在有效签署）。
+* 版本带 `-draft` 后缀 → provider 不许被标成已配置（草案上不存在有效签署，
+  见 docs/legal/CLA_VERSIONING.md）；
+* provider 说了已配置，却拿不到它的 check 结论 → 失败，不猜。
 
 退出码：0 = success 或 not_applicable；1 = 资格不足；2 = 配置 / 输入错误
 （同样让 Gate 红——判定器自己坏了不能算通过）。
@@ -66,7 +72,7 @@ CO_AUTHOR_RE = re.compile(r"(?im)^\s*Co-authored-by:\s*(?P<name>.*?)\s*<(?P<emai
 #: 别的邮箱一律算认不出（见模块 docstring 的 fail-closed 一节）。
 NOREPLY_RE = re.compile(r"(?i)^(?:\d+\+)?(?P<login>[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)@users\.noreply\.github\.com$")
 
-#: 草案后缀。带它的版本不可签署。
+#: 草案后缀。带它的版本不可签署，因此也不允许把 provider 标成已配置。
 DRAFT_SUFFIX = "-draft"
 
 
@@ -93,7 +99,7 @@ def validate_policy(policy: dict) -> None:
     """policy 的形状必须严格——安静地解析出空表的判定器会把「谁都没签」判成任何东西。"""
     if not isinstance(policy, dict):
         raise ConfigError("cla-policy 不是对象")
-    for key in ("schema", "agreements", "exemptions"):
+    for key in ("schema", "agreements", "exemptions", "provider"):
         if key not in policy:
             raise ConfigError(f"cla-policy 缺字段 `{key}`")
     if not isinstance(policy["agreements"], dict) or not policy["agreements"]:
@@ -121,6 +127,33 @@ def validate_policy(policy: dict) -> None:
             raise ConfigError(
                 f"cla-policy.exemptions[{i}].kind=`{ex['kind']}` 认不出"
                 "（只允许 rights_holder / bot）")
+    _validate_provider(policy)
+
+
+def _validate_provider(policy: dict) -> None:
+    """provider 段的形状。
+
+    **草案版本上不许把 provider 标成已配置**——那等于宣称一份还没定稿的
+    文本已经在收签名了。这条是结构性的，不靠人记得。
+    """
+    prov = policy["provider"]
+    if not isinstance(prov, dict) or "configured" not in prov:
+        raise ConfigError("cla-policy.provider 必须是带 `configured` 的对象")
+    if not isinstance(prov["configured"], bool):
+        raise ConfigError("cla-policy.provider.configured 必须是布尔")
+    if not prov["configured"]:
+        return
+    for key in ("name", "check_name"):
+        if not prov.get(key):
+            raise ConfigError(
+                f"provider.configured=true 时必须写明 `{key}`——"
+                "判定要指向一个具体的、可核对的 check")
+    drafts = [f"{k} {ag['version']}" for k, ag in policy["agreements"].items()
+              if str(ag["version"]).endswith(DRAFT_SUFFIX)]
+    if drafts:
+        raise ConfigError(
+            f"协议仍是草案（{'、'.join(drafts)}），不许把 provider 标成已配置——"
+            "草案上不存在有效签署，见 docs/legal/CLA_VERSIONING.md")
 
 
 def verify_documents(policy: dict, root: Path) -> list[str]:
@@ -210,30 +243,62 @@ def _exemption_for(login: str, policy: dict) -> dict | None:
     return None
 
 
-def _signature_for(login: str, ledger: dict, policy: dict) -> tuple[dict | None, str | None]:
-    """返回 (有效签名, 失效原因)。找不到就是 (None, None)。"""
-    for sig in ledger.get("signatures", []):
-        if str(sig.get("github_login", "")).lower() != login.lower():
+def signed_logins(provider_checks: list | None, policy: dict) -> tuple[set[str], str | None]:
+    """从 provider 的 check-run 结论里读出「谁算已签」。
+
+    返回 (已签 login 的小写集合, 不可用原因)。provider 未配置时永远是
+    (空集, 原因)——**未配置不等于放行**。
+
+    判据只认 provider 自己那条 check 的 `conclusion == "success"`：签署事实的
+    权威在服务商，仓库不复制、不缓存、不二次解释它的数据库。
+    """
+    prov = policy["provider"]
+    if not prov["configured"]:
+        return set(), "provider_not_configured"
+    if provider_checks is None:
+        return set(), "provider_checks_unavailable"
+    want = prov["check_name"]
+    for run in provider_checks:
+        if not isinstance(run, dict):
+            raise ConfigError("provider check-runs JSON 里有非对象条目")
+        if run.get("name") != want:
             continue
-        kind = sig.get("agreement")
-        ag = policy["agreements"].get(kind)
-        if ag is None:
-            return None, f"签的是 `{kind}`，policy 里没有这种协议"
-        if sig.get("agreement_version") != ag["version"]:
-            return None, (f"签的是 {kind} {sig.get('agreement_version')}，"
-                          f"当前版本是 {ag['version']}——旧签名不自动迁移")
-        if sig.get("agreement_sha256") != ag["sha256"]:
-            return None, (f"签名记的哈希与当前 {kind} 正文对不上"
-                          f"（签的是 {str(sig.get('agreement_sha256'))[:12]}…）")
-        if str(ag["version"]).endswith(DRAFT_SUFFIX):
-            return None, (f"{kind} {ag['version']} 是草案（RIGHTS_HOLDER_CONFIGURATION_"
-                          f"REQUIRED 未填完），草案上不存在有效签署")
-        return sig, None
-    return None, None
+        if run.get("status") != "completed":
+            return set(), f"provider_check_incomplete:{run.get('status')}"
+        if run.get("conclusion") != "success":
+            return set(), f"provider_check_not_success:{run.get('conclusion')}"
+        # provider 的 check 绿 = 它认为这个 PR 的贡献者资格齐了。
+        return {"*"}, None
+    return set(), "provider_check_missing"
 
 
-def decide(event: str, policy: dict, ledger: dict, contributors: list[dict],
-           unresolved: list[dict] | None = None) -> dict:
+def _unqualified_detail(reason: str | None, policy: dict) -> str:
+    """把「为什么没通过」翻译成维护者和贡献者都能照着做的一句话。
+
+    只写 `CLA check failed` 是最没用的一种红：看的人不知道是自己没签、
+    还是服务还没接上、还是判定器配错了。
+    """
+    prov = policy["provider"]
+    if reason == "provider_not_configured":
+        return (f"CLA 签名服务尚未启用（{prov.get('note') or 'provider.configured=false'}）"
+                "——目前只有 .github/cla-policy.json 里点名豁免的账号能通过。"
+                "想贡献请先开一个 issue，维护者会走人工流程；"
+                "启用步骤见 docs/legal/CLA_AUTOMATION_SETUP.md")
+    if reason == "provider_check_missing":
+        return (f"没找到 provider 的 check `{prov.get('check_name')}`——"
+                "它可能还没跑完，或者 GitHub App 没装在这个仓库上")
+    if reason and reason.startswith("provider_check_incomplete:"):
+        return f"provider 的 check 还没跑完（status={reason.split(':', 1)[1]}），等它出结论"
+    if reason and reason.startswith("provider_check_not_success:"):
+        return (f"provider 的 check 结论是 {reason.split(':', 1)[1]}——"
+                "按它给的链接签署 CLA 后重跑")
+    if reason == "provider_checks_unavailable":
+        return "取不到 provider 的 check 列表（权限或 API 失败）——判定器不猜，直接红"
+    return "没有签署记录"
+
+
+def decide(event: str, policy: dict, provider_checks: list | None,
+           contributors: list[dict], unresolved: list[dict] | None = None) -> dict:
     """核心判定。只做纯计算，不碰环境——单测才测得动每一格。"""
     unresolved = unresolved or []
 
@@ -248,12 +313,22 @@ def decide(event: str, policy: dict, ledger: dict, contributors: list[dict],
         raise ConfigError(f"事件 `{event}` 没有定义过的 CLA 判定——"
                           f"只支持 {'/'.join(KNOWN_EVENTS)}")
 
+    signed, why = signed_logins(provider_checks, policy)
+    detail_for_missing = _unqualified_detail(why, policy)
+
     problems: list[str] = []
     for u in unresolved:
+        # **认不出账号一律红，但必须红得可操作**：说清是哪个 commit、哪个身份、
+        # 为什么解析不出、以及维护者可以怎么处置。只有一句 "CLA check failed"
+        # 会让一个合法 PR 永久卡住而没人知道下一步该做什么。
         problems.append(
-            f"unresolved: {u['kind']} `{u['name']} <{u['email']}>`"
-            f"（commit {u['sha']}）认不出 GitHub 账号——"
-            f"请让本人用绑定该账号的邮箱重提，或由维护者在 ledger 里认领")
+            f"unresolved: commit `{u['sha']}` 的 {u['kind']} "
+            f"`{u['name']} <{u['email']}>` 解析不出 GitHub 账号"
+            f"（只有 `<login>@users.noreply.github.com` 与 "
+            f"`<id>+<login>@users.noreply.github.com` 两种形态能可靠反解）。"
+            f"处置：让本人用绑定该账号的邮箱重新提交该 commit；"
+            f"或由维护者确认其身份后，在 .github/cla-policy.json 里为其"
+            f"补一条写明理由的显式豁免（仅限确实无需授权的情形）")
 
     rows = []
     for c in contributors:
@@ -264,16 +339,14 @@ def decide(event: str, policy: dict, ledger: dict, contributors: list[dict],
                          "detail": f"{ex['kind']}: {ex['reason']}",
                          "sources": c["sources"]})
             continue
-        sig, why = _signature_for(login, ledger, policy)
-        if sig is not None:
+        if "*" in signed:
             rows.append({"login": login, "verdict": "signed",
-                         "detail": f"{sig['agreement']} {sig['agreement_version']}",
+                         "detail": f"provider `{policy['provider']['name']}` 判定已签",
                          "sources": c["sources"]})
             continue
-        detail = why or "没有签署记录"
-        rows.append({"login": login, "verdict": "missing", "detail": detail,
-                     "sources": c["sources"]})
-        problems.append(f"missing: `{login}` — {detail}")
+        rows.append({"login": login, "verdict": "missing",
+                     "detail": detail_for_missing, "sources": c["sources"]})
+        problems.append(f"missing: `{login}` — {detail_for_missing}")
 
     if not rows and not problems:
         # 一个人都没收集到 = 上游取数据出了问题，不是「所有人都签了」。
@@ -303,8 +376,10 @@ def render_summary(verdict: dict, policy: dict) -> str:
         lines += ["问题："] + [f"- {p}" for p in verdict["problems"]] + [""]
         ind = policy.get("agreements", {}).get("individual", {}).get("path", "docs/legal/CLA_INDIVIDUAL.md")
         corp = policy.get("agreements", {}).get("corporate", {}).get("path", "docs/legal/CLA_CORPORATE.md")
-        lines += [f"签署流程见 [`{ind}`]({ind}) / [`{corp}`]({corp}) 与 "
-                  "[`docs/legal/CLA_AUTOMATION_SETUP.md`](docs/legal/CLA_AUTOMATION_SETUP.md)。", ""]
+        lines += [f"协议正文 [`{ind}`]({ind}) / [`{corp}`]({corp})；"
+                  "签署事实的权威是签名服务商，仓库不保存 signer 名单——"
+                  "见 [`docs/legal/CLA_AUTOMATION_SETUP.md`]"
+                  "(docs/legal/CLA_AUTOMATION_SETUP.md)。", ""]
     return "\n".join(lines) + "\n"
 
 
@@ -350,7 +425,9 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     ap.add_argument("--event", help="github.event_name")
     ap.add_argument("--policy", default=".github/cla-policy.json")
-    ap.add_argument("--ledger", default="docs/legal/cla-signatures.json")
+    ap.add_argument("--provider-checks-json", default=None,
+                    help="`GET /repos/{o}/{r}/commits/{sha}/check-runs` 的响应文件"
+                         "（provider.configured=true 时才需要）")
     ap.add_argument("--pr-author", default=None)
     ap.add_argument("--commits-json", default=None,
                     help="`GET /repos/{o}/{r}/pulls/{n}/commits` 的响应文件")
@@ -383,14 +460,18 @@ def main(argv: list[str] | None = None) -> int:
             raise ConfigError("；".join(doc_problems))
 
         if args.event == "merge_group":
-            verdict = decide(args.event, policy, {}, [])
+            verdict = decide(args.event, policy, None, [])
         else:
-            ledger = load_json(Path(args.ledger), "cla-signatures")
             commits = []
             if args.commits_json:
                 commits = load_json(Path(args.commits_json), "commits JSON")
+            checks = None
+            if args.provider_checks_json:
+                raw = load_json(Path(args.provider_checks_json), "provider check-runs JSON")
+                # GitHub 的 check-runs 响应是 {"check_runs": [...]}；也接受裸数组。
+                checks = raw.get("check_runs", []) if isinstance(raw, dict) else raw
             contributors, unresolved = collect_contributors(args.pr_author, commits)
-            verdict = decide(args.event, policy, ledger, contributors, unresolved)
+            verdict = decide(args.event, policy, checks, contributors, unresolved)
     except ConfigError as exc:
         verdict = {"event": args.event, "status": "failure", "reason": "config_error",
                    "problems": [str(exc)], "contributors": []}

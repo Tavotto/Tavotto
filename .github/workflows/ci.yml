@@ -135,8 +135,13 @@ jobs:
 
   # ────────────────────────────────────────────────────────────────
   # CLA 资格：这个 PR 里出现的每一个人，是不是都已经签过、或被显式豁免。
-  # 判定逻辑在 scripts/ci/cla_gate.py，政策与豁免在 .github/cla-policy.json，
-  # 签署记录在 docs/legal/cla-signatures.json（那是**记录**，不是签署机制）。
+  # 判定逻辑在 scripts/ci/cla_gate.py，政策与豁免在 .github/cla-policy.json。
+  #
+  # **签署事实的唯一权威是签名服务商（provider），仓库不保存 signer 名单。**
+  # 早期版本曾带一份手工维护的 docs/legal/cla-signatures.json，那会和服务商的
+  # 数据库变成两个法律权威，分叉之后没有机制说得清哪份算数，已经删掉。
+  # provider 尚未配置时，判定器对任何非豁免的人类贡献者一律阻断并给出指引
+  # ——**绝不因为「服务还没接上」就把外部贡献者当成签过**。
   #
   # 三条形状上的要求，坏掉都不会有别的测试红，所以
   # tests/test_legal_contribution_policy.py 逐条钉住：
@@ -151,7 +156,8 @@ jobs:
   #    PR 侧只经 GitHub API 读元数据。因此这里**没有 actions/checkout**。
   # 3. **权限最小。** contents: read 读默认分支的文件，pull-requests: read 读
   #    PR 的 commit 列表。不写 comment、不写 status——签署 UX 归签名服务商，
-  #    这一格只负责判定。没有任何 secret。
+  #    这一格只负责判定。没有任何 secret。启用 provider 时才需要再加
+  #    `checks: read`（读它那条 check 的结论），届时同步改 tests 里的权限断言。
   #
   # 用 pull_request 而**不是** pull_request_target：后者会让这个 job 拿到写
   # 权限与 secret，然后所有防护都变成「别执行 PR 的代码」这一条人为纪律。
@@ -185,7 +191,6 @@ jobs:
           }
           fetch scripts/ci/cla_gate.py
           fetch .github/cla-policy.json
-          fetch docs/legal/cla-signatures.json
           fetch docs/legal/CLA_INDIVIDUAL.md
           fetch docs/legal/CLA_CORPORATE.md
           echo "TRUSTED=$TRUSTED" >> "$GITHUB_ENV"
@@ -211,9 +216,10 @@ jobs:
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: |
           set -euo pipefail
+          # provider.configured=true 之后这里还要多传 --provider-checks-json，
+          # 并给 job 加 `checks: read`——步骤见 docs/legal/CLA_AUTOMATION_SETUP.md。
           ARGS=(--event "${{ github.event_name }}"
                 --policy "$TRUSTED/.github/cla-policy.json"
-                --ledger "$TRUSTED/docs/legal/cla-signatures.json"
                 --repo-root "$TRUSTED")
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             ARGS+=(--pr-author "$PR_AUTHOR"

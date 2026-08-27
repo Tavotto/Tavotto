@@ -4,22 +4,62 @@
 > commercial licensing and trademark decisions should be reviewed by qualified
 > counsel.
 
-## Audited baseline
+## Audited baselines
+
+This audit has been run twice. Both are recorded: the first establishes when the
+rights position was first examined, the second is the one that describes the tree
+as it stands.
+
+### Initial audited baseline (historical record — do not update)
 
 | | |
 |---|---|
 | Commit | `aaa065f298ac4ce8a66a3482786bedf516a1154b` |
 | Branch | `main` |
 | Audit date | 2026-08-27 |
-| History audited | all refs (`git log --all`), 745 commits |
-| History span | 2026-08-16 (`c1cec93`, "Magplot 0.1.0") → 2026-08-27 |
-| Merged pull requests | 101 |
 
-Method: `git shortlog -sne --all`, `git log --format='%H %an %ae %cn %ce' --all`,
-full-history scans for `Co-authored-by` and `Signed-off-by` trailers, and
+The first full audit, performed when this legal infrastructure was written.
+Retained so the chain of review is traceable.
+
+### Current audited baseline
+
+| | |
+|---|---|
+| Commit | `ff732eaa8b58df9eeccf32ec5e0cbf5efb928851` |
+| Branch | `main` (`origin/main` at the time of the audit) |
+| Audit date | 2026-08-27 |
+| Commits reachable from this baseline | **419** |
+| Merged pull requests | **104** |
+
+**This is a "last audited rights baseline", not a claim about `HEAD`.** `main`
+moves; this marker is not re-stamped on every commit, and no test requires it to
+equal the current tip. Ongoing assurance for *new* work comes from the CLA gate
+running on each pull request, not from re-auditing the whole history each time.
+
+### A correction to the commit count
+
+The initial audit reported **745 commits**, counted with `git rev-list --all`.
+That number counts every reference in the local clone — including working
+branches and worktrees that were never merged. The figure that matters for the
+distributed product is what is **reachable from `main`**:
+
+| Measure | Count |
+|---|---|
+| Reachable from the current baseline (`git rev-list --count ff732ea`) | **419** |
+| All local refs (`git rev-list --count --all`) | 756 |
+
+The 419 figure is used throughout this document. The conclusion is unchanged in
+either denominator — the composition of authors is the same — but the earlier
+number overstated the size of the audited history and is corrected here.
+
+## Method
+
+`git shortlog -sne`, `git log --format='%H %an %ae %cn %ce'`, full-history scans
+for `Co-authored-by` and `Signed-off-by` trailers, and
 `gh pr list --state merged` for PR authorship. Third-party inventory by tree scan
 for licence headers, vendor directories and binary assets; dependency inventory
-from the manifests and the installed distributions' own metadata.
+from the manifests and from each installed distribution's own metadata
+(`cargo metadata`, PyPI JSON API, `node_modules/*/package.json`).
 
 ## Commit authors
 
@@ -29,19 +69,19 @@ Four distinct author identities appear in the entire history.
 
 | Identity | Commits | Note |
 |---|---|---|
-| `erwanjun <1259959884@qq.com>` | 607 | |
-| `erwanjun <88193520+erwanjun@users.noreply.github.com>` | 110 | GitHub web/API identity for account `erwanjun` |
-| `erwanjun <malajiaqi@gmail.com>` | 27 | |
+| `erwanjun <1259959884@qq.com>` | 305 | |
+| `erwanjun <88193520+erwanjun@users.noreply.github.com>` | 107 | GitHub web/API identity for account `erwanjun` |
+| `erwanjun <malajiaqi@gmail.com>` | 6 | |
 
-**744 of 745 commits.** These are three email addresses of one person: the
-GitHub noreply address encodes account id `88193520` / login `erwanjun`, which is
-also the account that authored 100 of the 101 merged pull requests. The
-repository records that person as the project author (`pyproject.toml`
-`authors = [{ name = "erwanjun" }]`).
+**418 of the 419 commits reachable from the baseline.** These are three email
+addresses of one person: the GitHub noreply address encodes account id
+`88193520` / login `erwanjun`, which is also the account that authored 103 of the
+104 merged pull requests. The repository records that person as the project
+author (`pyproject.toml` `authors = [{ name = "erwanjun" }]`).
 
-Committer identities add only `GitHub <noreply@github.com>` (110 commits) — the
-web-flow committer for squash merges performed through the GitHub UI. It is a
-mechanism, not an author.
+Committer identities add only `GitHub <noreply@github.com>` — the web-flow
+committer for squash merges performed through the GitHub UI. It is a mechanism,
+not an author.
 
 The first commit (`c1cec93`, 182 files, 37,668 insertions) is a project
 bootstrap authored by `erwanjun`, not an import of a pre-existing codebase from
@@ -59,6 +99,34 @@ the history's only `Signed-off-by` trailer
 convention; **the repository has never operated a DCO**, and this single trailer
 must not be read as one.
 
+### Incremental audit: `aaa065f` → `ff732ea`
+
+The 19 commits added between the two baselines were audited separately, because
+"the PR opener is the maintainer" is not by itself evidence that the *content*
+has a single rights source.
+
+| Check | Result |
+|---|---|
+| Commits | 19 |
+| Authors | **19/19** `erwanjun <88193520+erwanjun@users.noreply.github.com>` |
+| Committers | 19/19 `GitHub <noreply@github.com>` (squash-merge web flow) |
+| `Co-authored-by` trailers | **0** |
+| `Signed-off-by` trailers | **0** |
+| New files added | 13 — 5 `.py`, 5 `.ts`, 3 `.tsx`, all Tavotto-authored |
+| New binary or asset files | **0** |
+| Third-party markers introduced (`Copyright`, `SPDX-License-Identifier`, "derived from", "adapted from", "copied from", "vendored") | **0** |
+| Dependency manifests changed | `pyproject.toml` only — and the diff is **entirely Ruff configuration** (`I` rule, `src` roots). No new runtime, frontend or Rust dependency. |
+| Lockfiles changed | none (`pnpm-lock.yaml`, both `Cargo.lock`s, `runtime-lock.json`, `playground-runtime.json` untouched) |
+
+The diffstat for this range is large (243 files, +24205/−11663) but is dominated
+by `7d0f98b`, a repository-wide `ruff format` baseline described in its own
+commit message as "纯机械提交，无一处人工改动" (a purely mechanical commit).
+Reformatting existing first-party code creates no new authorship and introduces
+no third-party material. The functional work in this range is the 13 new files
+listed above plus edits to existing Tavotto code.
+
+**No external human contribution entered the tree in this range.**
+
 ### External human contributors
 
 **None found.** No commit, PR, co-author trailer or merge in the audited history
@@ -67,34 +135,38 @@ originates from a human other than the maintainer.
 There are no merges from forks: every merge commit in the history is the
 maintainer merging `origin/main` into their own branch.
 
-### Needs review
+### Machine-generated contributions — formal record
 
-| Identity | Where | Why it is listed here |
+Classified **REVIEW**. Both commits were re-verified against the current
+baseline and are reachable from `main`.
+
+| Field | `b8124733a328bae3e49773e1fef790ef441ef9d4` | `edf5469d808b50cc2c9c437c4074f4bf8565e4a6` |
 |---|---|---|
-| `Copilot Autofix powered by AI <175728472+Copilot@users.noreply.github.com>` | `Co-authored-by` on `b812473` and `edf5469` (both 2026-08-18) | See below. |
+| Date | 2026-08-18 15:26:06 +0800 | 2026-08-18 15:26:24 +0800 |
+| Author | `erwanjun <88193520+erwanjun@users.noreply.github.com>` | same |
+| Committer | `GitHub <noreply@github.com>` | same |
+| Trailer | `Co-authored-by: Copilot Autofix powered by AI <175728472+Copilot@users.noreply.github.com>` | same |
+| Subject | "Potential fix for pull request finding" | same |
+| Path | `src/magplot/engine/handoff.py` (now `src/tavotto/engine/handoff.py`) | same |
+| Diffstat | 8 lines changed (4+/4−) | 4 lines changed (3+/1−) |
+| Nature of change | Rewrote a four-line docstring paragraph explaining why `os.path` is used instead of `pathlib` | Added a three-line `should_write` guard around a config write |
+| Still present in the current tree? | Docstring has since been edited further | **Yes** — `should_write` is live at `src/tavotto/engine/handoff.py:226` |
 
-Both commits are authored **and** committed by `erwanjun`; Copilot Autofix
-appears only as a co-author trailer. They touch one file
-(`src/magplot/engine/handoff.py`, now `src/tavotto/engine/handoff.py`):
+A scan of the full history reachable from the baseline finds **exactly these
+two** commits carrying a Copilot or AI co-author trailer, and no others.
 
-- `b812473` — rewrote a four-line docstring paragraph.
-- `edf5469` — added a three-line `should_write` guard around a config write.
+**What this record does and does not say.** It records the facts: which commits,
+which paths, which lines, what metadata. It does not reach a legal conclusion.
 
-This is recorded rather than waved through because the copyright status of
-machine-generated code suggestions is unsettled, and differs by jurisdiction.
-Two things are worth separating:
+> The repository history records Copilot Autofix involvement in these two
+> commits. Whether any additional copyright or provenance action is required is
+> outside the repository's ability to determine.
 
-- There is **no third-party human rights holder** here. Copilot Autofix is a
-  GitHub feature operating on this repository's own code; no other person is
-  asserting authorship.
-- Whether the suggested lines attract copyright *at all*, and if so whose, is a
-  legal question this audit does not answer.
-
-**NEEDS LEGAL REVIEW** — before proprietary distribution, confirm that accepted
-AI-suggested edits carry no third-party rights encumbrance. The practical
-exposure is small and bounded (one file, seven lines, both changes reviewed and
-accepted by the rights holder), and if counsel wants it removed entirely, both
-changes are trivially reimplementable.
+Two observations that bound the question without resolving it: no third-party
+*human* is asserting authorship here — Copilot Autofix is a GitHub feature
+operating on this repository's own code, and both changes were reviewed and
+accepted by the rights holder. And the exposure is small and reimplementable —
+one file, seven lines — so if counsel prefers them removed, that is cheap.
 
 ## Historical contributions requiring follow-up
 
@@ -139,6 +211,28 @@ Binary assets in the tree are project-created brand and documentation material:
 (generated by the example scripts in the same directory). No stock imagery,
 icon set or third-party illustration was found.
 
+## Authorship of this legal documentation
+
+`docs/legal/**` is **not uniformly Tavotto-owned**, and should not be described
+that way.
+
+| Material | Origin | Terms |
+|---|---|---|
+| The operative `# Agreement` sections of [CLA_INDIVIDUAL.md](CLA_INDIVIDUAL.md) and [CLA_CORPORATE.md](CLA_CORPORATE.md) | **Harmony Agreements 1.0** (Project Harmony, 2011), with the template's own options selected and blanks filled | The template carries "This work is licensed under a Creative Commons Attribution 3.0 Unported License"; the Harmony policies page separately grants a worldwide, non-exclusive, royalty-free licence to modify, reproduce and distribute the templates. **Attribution is given** at the foot of each document. |
+| Everything else in those two files — provenance tables, configuration notes, "How to sign", Schedule A | Tavotto-authored | AGPL-3.0-only with the repository |
+| All other files in `docs/legal/`, plus `TRADEMARKS.md`, `.github/cla-policy.json`, `scripts/ci/cla_gate.py`, `tests/test_legal_contribution_policy.py` | Tavotto-authored | AGPL-3.0-only with the repository |
+
+Two consequences worth stating plainly:
+
+- **Do not claim blanket Tavotto copyright over `docs/legal/**`.** Part of it is
+  Harmony's text used under CC BY 3.0, and the attribution notices must survive
+  edits to those files.
+- **Project Harmony trademarks are not used.** Harmony's trademark licence
+  covers only the *unmodified* template; because options were selected and
+  blanks filled, that licence does not apply and is not relied on. The
+  references to Harmony are factual statements of derivation, not claims of
+  endorsement or certification.
+
 ## Generated files
 
 Two kinds, and the distinction matters:
@@ -174,34 +268,36 @@ third-party notices. See [Notices in distributed artefacts](#notices-in-distribu
 
 ## Notices in distributed artefacts
 
-| Artefact | `LICENSE` included? | Evidence |
-|---|---|---|
-| Wheel / sdist | **Yes** | `pyproject.toml` `license-files = ["LICENSE"]`; hatchling places it in `.dist-info/licenses/` |
-| GitHub Release | **Yes**, plus an SPDX SBOM of the wheel generated by `anchore/sbom-action` (`release.yml`) | |
-| Desktop app (PyInstaller + Tauri) | **No** | No packaging step copies `LICENSE`: `packaging/tavotto.spec` contains no licence or notice entry in `datas`, and a scan of `packaging/`, `scripts/build_desktop.py` and `src-tauri/tauri.conf.json` for `LICENSE` returns nothing |
-| Codex plugin | **No** | `codex-plugin/` ships `README.md`, `AGENTS.md`, `assets/`, `mcp/`, `skills/` — no licence file |
+Re-verified against the current baseline.
 
-**NEEDS FOLLOW-UP** — the desktop and plugin artefacts are distributed binaries
-of an AGPL-3.0-only program that also bundle MIT- and BSD-licensed components
-whose licences require their notices to travel with binary distributions. This
-is a genuine gap in the *current* AGPL distribution, independent of any future
-commercial edition.
+| Artefact | Project `LICENSE`? | Third-party notices? | Evidence |
+|---|---|---|---|
+| Wheel / sdist | **Yes** | via SBOM at release | `pyproject.toml` `license-files = ["LICENSE"]`; hatchling places it in `.dist-info/licenses/` |
+| GitHub Release | **Yes** (source archives) | SPDX SBOM of the wheel | `anchore/sbom-action` in `release.yml`; no separate `LICENSE`/`NOTICE` asset is uploaded |
+| Desktop app (PyInstaller + Tauri) | **No** | **No** | `packaging/tavotto.spec` contains zero occurrences of `license`/`notice`/`third-party`; `src-tauri/tauri.conf.json` has `bundle.licenseFile: null` and `bundle.resources` carrying only the sidecar |
+| Codex plugin | **No** | **No** | `codex-plugin/` ships `README.md`, `AGENTS.md`, `assets/`, `mcp/`, `skills/` — no licence file |
 
-It is deliberately **not** fixed in this change, which is scoped to contributor
-governance and licensing documentation; touching the packaging pipeline here
-would mix an unrelated risk into a legal-infrastructure diff. It should be its
-own change, and it should add a notices file assembled from the dependency
-closure rather than a hand-maintained list.
+**This is a gap in the current AGPL distribution**, independent of any future
+commercial edition. The desktop artefact is a distributed binary of an
+AGPL-3.0-only program that also bundles MIT-, BSD-, PSF- and MPL-licensed
+components whose licences require their notices to accompany binary
+distribution. Redistributed CPython is in the same position.
 
-Note that the CLA must **not** be shipped in any product artefact. It is
-contributor governance, not a runtime licence, and has no business in a
-user-facing package.
+It is deliberately **not fixed here.** This change is scoped to contributor
+governance and licensing documentation; packaging is a different root cause with
+a different verification surface, and a notices file should be *generated* from
+the dependency closure rather than hand-maintained. It is tracked separately —
+see the follow-up issue referenced from
+[COMMERCIAL_EDITION_RIGHTS_POLICY.md](COMMERCIAL_EDITION_RIGHTS_POLICY.md).
+
+The CLA must **not** be shipped in any product artefact. It is contributor
+governance, not a runtime licence.
 
 ## Open questions
 
 | # | Question | Status |
 |---|---|---|
-| 1 | Who is the legal rights holder? The repository records no legal entity — `README.md` says only "Tavotto™ is a trademark of the Tavotto project", which is not a contracting party. | **RIGHTS_HOLDER_CONFIGURATION_REQUIRED** — blocks CLA execution and any commercial licensing. See [CLA_AUTOMATION_SETUP.md](CLA_AUTOMATION_SETUP.md). |
+| 1 | Who is the rights holder, and under which law? The repository does not record the legal person or entity that owns the relevant rights, nor a contact address or governing law. `README.md` says only "Tavotto™ is a trademark of the Tavotto project", which does not identify a contracting party. **A company is not required — a natural person can hold the rights and be the counterparty.** | **RIGHTS_HOLDER_CONFIGURATION_REQUIRED** — blocks activating the CLA for signatures and any commercial licensing. See [CLA_AUTOMATION_SETUP.md](CLA_AUTOMATION_SETUP.md). |
 | 2 | Do the two accepted Copilot Autofix edits carry any third-party rights encumbrance? | **NEEDS LEGAL REVIEW** — scope bounded to seven lines in one file. |
 | 3 | Is the `erwanjun` identity's work encumbered by any employment or institutional agreement? An individual's own commits can still be owned by an employer. This audit can establish *who committed*; it cannot establish what agreements that person is subject to. | **NEEDS LEGAL REVIEW** — only the rights holder can answer. This is the single largest unverifiable assumption behind "rights-clean baseline". |
 | 4 | Was any part of the pre-rename `Magplot` history developed under a different arrangement? The rename is a clean break within this same repository (first commit 2026-08-16), not an import, so no separate rights chain was found — but the question is recorded rather than assumed away. | Nothing found; recorded for completeness. |
