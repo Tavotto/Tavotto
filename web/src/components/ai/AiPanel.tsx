@@ -668,6 +668,9 @@ function Breadcrumb({
 }
 
 /** 历史筛选下拉里的状态集合（会话状态 + 只在历史里出现的 interrupted） */
+/** 「全部状态」的哨兵：Radix Select 不接受空串作为 Item 的值 */
+const ALL_STATUSES = '__all__'
+
 const HISTORY_STATUSES = [
   'running',
   'done',
@@ -684,7 +687,7 @@ const PAGE = 20
  * 任务历史：项目级持久化记录（SQLite），刷新与后端重启后仍在。
  * 默认只显示人类可读目标；脚本名等技术信息在条目的「技术详情」里。
  */
-function TaskHistory({ onClose }: { onClose: () => void }) {
+export function TaskHistory({ onClose }: { onClose: () => void }) {
   useTranslation('ai')
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState('')
@@ -734,22 +737,21 @@ function TaskHistory({ onClose }: { onClose: () => void }) {
           aria-label={ai('history.searchAria')}
           className="h-6 min-w-0 flex-1 rounded-sm border border-border bg-surface px-1.5 text-xs text-ink outline-none placeholder:text-ink-faint focus:border-accent"
         />
-        <select
-          value={status}
-          onChange={(e) => {
-            setStatus(e.target.value)
+        <Select
+          value={status || ALL_STATUSES}
+          onChange={(v) => {
+            // Radix 的 Item 不许用空串当值（那是「未选中」的保留态），所以
+            // 「全部状态」走一个显式哨兵，只在这一层翻译成后端认的空筛选
+            setStatus(v === ALL_STATUSES ? '' : v)
             setOffset(0)
           }}
-          aria-label={ai('history.filterAria')}
-          className="h-6 rounded-sm border border-border bg-surface px-1 text-xs text-ink outline-none focus-visible:focus-ring"
-        >
-          <option value="">{ai('history.allStatuses')}</option>
-          {HISTORY_STATUSES.map((v) => (
-            <option key={v} value={v}>
-              {statusLabel(v)}
-            </option>
-          ))}
-        </select>
+          options={[
+            { value: ALL_STATUSES, label: ai('history.allStatuses') },
+            ...HISTORY_STATUSES.map((v) => ({ value: v, label: statusLabel(v) })),
+          ]}
+          ariaLabel={ai('history.filterAria')}
+          className="h-6 w-auto shrink-0"
+        />
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-2.5 pb-2">
         {error ? (

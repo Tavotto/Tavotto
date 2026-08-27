@@ -13,6 +13,7 @@ import { CODEX_GUIDE_URL, PRODUCT_NAME } from '@/lib/brand'
 import { formatDateTime } from '@/i18n/format'
 import { useAiStore } from '@/store/aiStore'
 import { Button } from '../ui/Button'
+import { Select } from '../ui/Select'
 import { AgentDetailView } from './AgentDetailView'
 import { AgentList } from './AgentList'
 import { ag } from './agentState'
@@ -242,18 +243,13 @@ function DefaultAgentPicker() {
       ) : list.length === 1 ? (
         <span className="text-xs text-ink">{list[0].display_name}</span>
       ) : (
-        <select
+        <Select
           value={effective ?? ''}
-          onChange={(e) => useAiStore.getState().setAgent(e.target.value)}
-          aria-label={ag('defaultAgentAria')}
-          className="h-7 min-w-32 rounded-sm border border-border bg-surface px-1.5 text-xs text-ink outline-none focus-visible:focus-ring"
-        >
-          {list.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.display_name}
-            </option>
-          ))}
-        </select>
+          onChange={(v) => useAiStore.getState().setAgent(v)}
+          options={list.map((a) => ({ value: a.id, label: a.display_name }))}
+          ariaLabel={ag('defaultAgentAria')}
+          className="min-w-32"
+        />
       )}
     </div>
   )

@@ -20,6 +20,9 @@ import { SettingsDialog } from '@/components/SettingsDialog'
 import { t } from '@/i18n'
 import { useAiStore } from '@/store/aiStore'
 import { useUiStore } from '@/store/uiStore'
+
+// Radix 的 Select 打开时会 scrollIntoView；jsdom 没有这个方法
+Element.prototype.scrollIntoView ??= function scrollIntoView() {}
 import { agentCaps, capsOf, claudeCaps } from './testCaps'
 
 declare global {
@@ -178,12 +181,31 @@ describe('编码 Agent 一级页面', () => {
     expect(text()).toContain(ag('defaultAgent'))
   })
 
+  /** 打开默认 Agent 下拉（`ui/Select` 是 Radix，选项在 portal 里，要先点开） */
+  const openDefaultAgentSelect = async (): Promise<HTMLElement[]> => {
+    const trigger = document.querySelector(
+      `[role="combobox"][aria-label="${ag('defaultAgentAria')}"]`,
+    ) as HTMLElement
+    expect(trigger, '默认 Agent 下拉不见了（原生 select 换成 ui/Select 之后是 combobox）').toBeTruthy()
+    await act(async () => {
+      trigger.click()
+    })
+    return [...document.body.querySelectorAll('[role="option"]')] as HTMLElement[]
+  }
+
   it('两个都可用时给下拉框，且只列可用的', async () => {
     await open(capsOf([agentCaps(), claudeCaps()]))
-    const sel = document.querySelector(
-      `select[aria-label="${ag('defaultAgentAria')}"]`,
-    ) as HTMLSelectElement
-    expect([...sel.options].map((o) => o.value)).toEqual(['codex', 'claude'])
+    const options = await openDefaultAgentSelect()
+    expect(options.map((o) => o.textContent?.trim())).toEqual(['Codex', 'Claude Code'])
+  })
+
+  it('下拉里选另一个 Agent：真的写进 store（迁移到 ui/Select 之后的交互覆盖）', async () => {
+    await open(capsOf([agentCaps(), claudeCaps()]))
+    const options = await openDefaultAgentSelect()
+    await act(async () => {
+      options[1].click()
+    })
+    expect(useAiStore.getState().agent).toBe('claude')
   })
 
   it('首选那个不可用时自动落到第一个可用的，但不改用户存着的首选值', async () => {

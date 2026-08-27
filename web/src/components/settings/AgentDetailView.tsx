@@ -17,6 +17,7 @@ import { formatDateTime } from '@/i18n/format'
 import { Button } from '../ui/Button'
 import { Dialog } from '../ui/Dialog'
 import { TextInput } from '../ui/Input'
+import { Select } from '../ui/Select'
 import { AgentIcon } from './AgentIcon'
 import { ag, AgentStateBadge } from './agentState'
 import { EndpointDialog } from './EndpointDialog'
@@ -183,19 +184,16 @@ export function AgentDetailView({
             {usingEndpoint && mine.length > 1 && (
               <label className="mt-1 flex items-center gap-2 text-xs text-ink-2">
                 {ag('detail.service')}
-                <select
+                <Select
                   value={agent.active_endpoint_id ?? ''}
-                  onChange={(e) => void run(() => setAiEndpointActive(agent.id, e.target.value))}
-                  aria-label={ag('detail.serviceAria', { name: agent.display_name })}
-                  className="h-7 min-w-0 flex-1 rounded-sm border border-border bg-surface px-1.5 text-xs text-ink outline-none focus-visible:focus-ring"
-                >
-                  {mine.map((e) => (
-                    <option key={e.id} value={e.id}>
-                      {e.label}
-                      {e.has_key ? '' : ag('detail.noKeySuffix')}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(v) => void run(() => setAiEndpointActive(agent.id, v))}
+                  options={mine.map((e) => ({
+                    value: e.id,
+                    label: `${e.label}${e.has_key ? '' : ag('detail.noKeySuffix')}`,
+                  }))}
+                  ariaLabel={ag('detail.serviceAria', { name: agent.display_name })}
+                  className="min-w-0 flex-1"
+                />
               </label>
             )}
             {mine.length > 0 && (
