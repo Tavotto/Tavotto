@@ -52,9 +52,11 @@ they are not bound by their own outbound licence and may additionally offer the
 same code under other terms, including commercial or proprietary ones — provided
 the rights chain is complete, which is what layer 2 is about.
 
-Today this is essentially the whole repository: 744 of 745 commits come from a
-single rights holder, with no external human contribution found. See
-[IP_PROVENANCE.md](IP_PROVENANCE.md).
+Today this is essentially the whole repository: **422 of the 423 commits
+reachable from the audited baseline** come from a single rights holder, with no
+external human contribution found. (An earlier draft quoted 744/745 — that was a
+`git rev-list --all` count including unmerged local refs, and it is not the
+figure the audit uses.) See [IP_PROVENANCE.md](IP_PROVENANCE.md).
 
 ## Layer 2 — Contributor-owned contributions
 

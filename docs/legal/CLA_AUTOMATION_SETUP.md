@@ -298,9 +298,31 @@ When the time comes:
    Assistant's README states Azure Cosmos DB in Europe. If not acceptable,
    self-host, or collect countersigned documents and use a manual check instead.
 4. **Wire it into the gate — four edits, all in this repository:**
-   - `.github/cla-policy.json`: set `provider.configured: true`, `provider.name`,
-     and `provider.check_name` to the **exact** check-run name the provider
-     publishes;
+   - `.github/cla-policy.json`: set `provider.configured: true`,
+     `provider.name`, `provider.check_name` (the **exact** check-run name the
+     provider publishes), and — **not optional** — `provider.app_slug` and
+     `provider.app_id`, the identity of the GitHub App that publishes it.
+
+     **Why the App identity is required.** A check-run's *name* is something any
+     integration can choose. If the gate matched on name alone, a pull request
+     could add a job to its own workflow — or rename an existing one — to the
+     configured check name; it would go green on the same head SHA and the gate
+     would accept it. **The pull request would have signed its own CLA**, even if
+     the real provider failed or never ran. This is the same hole as "a PR
+     supplies its own policy and exempts itself", entering through a different
+     door, and it is closed the same way: the judgement's inputs must not come
+     from the thing being judged. (Raised as P1 in review on #184.)
+
+     Read the App's identity off a real check run rather than guessing:
+
+     ```sh
+     gh api "repos/Tavotto/Tavotto/commits/<sha>/check-runs" \
+       --jq '.check_runs[] | {check: .name, app_slug: .app.slug, app_id: .app.id}'
+     ```
+
+     **`github-actions` (app id 15368) is refused outright** — it is the one App
+     every pull request can drive, so pinning to it would reopen the hole. The
+     gate raises a configuration error rather than accepting it.
    - `.github/workflows/ci.yml`, `cla-check` job: add `checks: read` to
      `permissions`, add a step fetching
      `gh api repos/$REPO/commits/<pr head sha>/check-runs`, and pass it as

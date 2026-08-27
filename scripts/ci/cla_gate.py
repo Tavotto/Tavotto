@@ -78,6 +78,12 @@ NOREPLY_RE = re.compile(
 #: 草案后缀。带它的版本不可签署，因此也不允许把 provider 标成已配置。
 DRAFT_SUFFIX = "-draft"
 
+#: GitHub Actions 自己的 App。**它绝不能被配成 provider**——每个 PR 都能驱动它
+#: （PR 里加一个 job、或把已有 job 改名成配置里那个 check 名，就能自己给自己签）。
+#: 认应用身份这件事的全部意义，就是排除「被判定的对象能提供的那个来源」。
+GITHUB_ACTIONS_APP_SLUG = "github-actions"
+GITHUB_ACTIONS_APP_ID = 15368
+
 
 class ConfigError(Exception):
     """输入 / 配置错误。它也让 Gate 失败：判定器自己坏了不能算通过。"""
@@ -150,11 +156,24 @@ def _validate_provider(policy: dict) -> None:
         raise ConfigError("cla-policy.provider.configured 必须是布尔")
     if not prov["configured"]:
         return
-    for key in ("name", "check_name"):
+    for key in ("name", "check_name", "app_slug", "app_id"):
         if not prov.get(key):
             raise ConfigError(
-                f"provider.configured=true 时必须写明 `{key}`——判定要指向一个具体的、可核对的 check"
+                f"provider.configured=true 时必须写明 `{key}`——判定要指向一个具体的、"
+                "可核对的 check，**而且要认它来自哪个 App**：只按 check 名匹配的话，"
+                "PR 自己加一个同名 job 就能给自己签"
             )
+    if not isinstance(prov["app_id"], int):
+        raise ConfigError("provider.app_id 必须是 GitHub App 的整数 id")
+    if (
+        str(prov["app_slug"]).lower() == GITHUB_ACTIONS_APP_SLUG
+        or prov["app_id"] == GITHUB_ACTIONS_APP_ID
+    ):
+        raise ConfigError(
+            "provider 不能是 GitHub Actions 本身——**每个 PR 都能驱动它**："
+            "在 PR 里加一个 job、或把已有 job 改名成配置里那个 check 名，"
+            "就能让判定器认自己签的 CLA。签名服务商必须是独立的 GitHub App。"
+        )
     drafts = [
         f"{k} {ag['version']}"
         for k, ag in policy["agreements"].items()
@@ -270,26 +289,43 @@ def signed_logins(provider_checks: list | None, policy: dict) -> tuple[set[str],
     返回 (已签 login 的小写集合, 不可用原因)。provider 未配置时永远是
     (空集, 原因)——**未配置不等于放行**。
 
-    判据只认 provider 自己那条 check 的 `conclusion == "success"`：签署事实的
-    权威在服务商，仓库不复制、不缓存、不二次解释它的数据库。
+    判据认三样东西同时成立：check **名字**、它来自哪个 **App**（slug 与整数
+    id 都要对）、以及它的 `conclusion == "success"`。
+
+    **为什么必须认 App 而不只认名字**：check-run 的名字是任何集成都能取的。
+    只匹配名字的话，一个 PR 在自己的 workflow 里加一个 job、或把已有 job
+    改名成配置里那个 check 名，它跑绿之后就出现在同一个 head SHA 上，判定器
+    会认——**PR 给自己签了 CLA**，哪怕真正的服务商红了或者压根没跑。这与
+    「PR 自带 policy 把自己写进豁免表」是同一个洞的两个入口，堵法也一样：
+    **判据的输入不能由被判定的对象提供**（Codex 评审 P1，#184）。
+
+    签署事实的权威在服务商，仓库不复制、不缓存、不二次解释它的数据库。
     """
     prov = policy["provider"]
     if not prov["configured"]:
         return set(), "provider_not_configured"
     if provider_checks is None:
         return set(), "provider_checks_unavailable"
-    want = prov["check_name"]
+    want, want_slug, want_id = prov["check_name"], prov["app_slug"], prov["app_id"]
+    impostor = False
     for run in provider_checks:
         if not isinstance(run, dict):
             raise ConfigError("provider check-runs JSON 里有非对象条目")
         if run.get("name") != want:
             continue
+        app = run.get("app") or {}
+        if app.get("slug") != want_slug or app.get("id") != want_id:
+            # 名字对、来源不对——这正是冒充的形状。**记下来继续找**：真正的
+            # provider check 可能也在这批里，不该被一个冒名的挤掉。
+            impostor = True
+            continue
         if run.get("status") != "completed":
             return set(), f"provider_check_incomplete:{run.get('status')}"
         if run.get("conclusion") != "success":
             return set(), f"provider_check_not_success:{run.get('conclusion')}"
-        # provider 的 check 绿 = 它认为这个 PR 的贡献者资格齐了。
         return {"*"}, None
+    if impostor:
+        return set(), "provider_check_wrong_app"
     return set(), "provider_check_missing"
 
 
@@ -316,6 +352,12 @@ def _unqualified_detail(reason: str | None, policy: dict) -> str:
         return f"provider 的 check 还没跑完（status={reason.split(':', 1)[1]}），等它出结论"
     if reason and reason.startswith("provider_check_not_success:"):
         return f"provider 的 check 结论是 {reason.split(':', 1)[1]}——按它给的链接签署 CLA 后重跑"
+    if reason == "provider_check_wrong_app":
+        return (
+            f"有一个叫 `{prov.get('check_name')}` 的 check，但它**不是来自配置的"
+            f"签名服务商**（期望 App `{prov.get('app_slug')}` id={prov.get('app_id')}）"
+            "——判定只认那个 App 的结论，同名的别家 check 一律不算"
+        )
     if reason == "provider_checks_unavailable":
         return "取不到 provider 的 check 列表（权限或 API 失败）——判定器不猜，直接红"
     return "没有签署记录"

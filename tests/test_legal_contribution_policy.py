@@ -519,13 +519,51 @@ class TestAuditBaseline:
             "它必须是这条历史上真实审计过的那个点"
         )
 
+    def test_commit_counts_agree_with_the_audited_baseline(self):
+        """法律文档里引用的提交数，必须与 IP_PROVENANCE 记的审计基线一致。
+
+        今天这个形状出现了三次（陈旧指纹、陈旧 CLA 版本示例、陈旧的全 ref
+        计数），共同点是**引用一个别处算出来的数，而那个数的口径已经变了**。
+        判据只认一件事：谁引用了「X of the Y commits」，Y 就得是基线那个 Y。
+
+        刻意**不禁止**提到旧数字本身——IP_PROVENANCE 里那句「745 来自
+        `git rev-list --all`」正是解释口径的，禁掉它反而会让纠正无法留档。
+        """
+        prov = PROVENANCE.read_text(encoding="utf-8")
+        m = re.search(r"\| Commits reachable from this baseline \| \*\*(\d+)\*\* \|", prov)
+        assert m, "IP_PROVENANCE 里读不出审计基线的提交数"
+        audited = m.group(1)
+
+        pattern = re.compile(r"(\d{3,})\s*(?:of the|of|/)\s*(\d{3,})\s+commits", re.I)
+        bad = []
+        for f in sorted(LEGAL.glob("*.md")) + [ROOT / "CONTRIBUTING.md", ROOT / "README.md"]:
+            text = f.read_text(encoding="utf-8")
+            for hit in pattern.finditer(text):
+                if hit.group(2) != audited:
+                    # 明确标注为「早先草稿/已纠正」的引用是留档，不算漂移。
+                    ctx = text[max(0, hit.start() - 160) : hit.end() + 60]
+                    if re.search(r"(?i)earlier draft|initial audit|rev-list --all|已纠正", ctx):
+                        continue
+                    bad.append(f"{f.relative_to(ROOT)}: {hit.group(0)!r}（基线是 {audited}）")
+        assert not bad, (
+            "法律文档引用的提交数与审计基线对不上——口径变了但引用没跟上：\n  " + "\n  ".join(bad)
+        )
+
 
 # ═════════════════════════════════════════════ 8. 判定器行为（单测）
 class TestGateDecisions:
     def _policy(self, *, provider_on=False, draft=False):
         ver = "1.0-draft" if draft else "1.0"
+        # 夹具必须与**真实** check-runs 响应同形状：provider 已配置时要有
+        # App 身份（见 TestProviderImpersonation——只认名字会被 PR 冒充）。
         prov = (
-            {"configured": True, "name": "P", "check_name": "P check"}
+            {
+                "configured": True,
+                "name": "P",
+                "check_name": "P check",
+                "app_slug": "p-app",
+                "app_id": 4242,
+            }
             if provider_on
             else {"configured": False, "name": None, "check_name": None}
         )
@@ -542,9 +580,19 @@ class TestGateDecisions:
             ],
         }
 
-    @staticmethod
-    def _ok_check():
-        return [{"name": "P check", "status": "completed", "conclusion": "success"}]
+    #: 与真实 `/commits/{sha}/check-runs` 同形状——含 `app` 身份。
+    APP = {"id": 4242, "slug": "p-app"}
+
+    @classmethod
+    def _ok_check(cls):
+        return [
+            {
+                "name": "P check",
+                "status": "completed",
+                "conclusion": "success",
+                "app": cls.APP,
+            }
+        ]
 
     def test_merge_group_is_success_not_skipped(self, gate):
         """判定器在队列候选上必须给出**成功**结论，而不是靠 job 被跳过。"""
@@ -588,7 +636,9 @@ class TestGateDecisions:
         assert v["status"] == "success"
 
     def test_provider_failure_blocks(self, gate):
-        checks = [{"name": "P check", "status": "completed", "conclusion": "failure"}]
+        checks = [
+            {"name": "P check", "status": "completed", "conclusion": "failure", "app": self.APP}
+        ]
         v = gate.decide(
             "pull_request",
             self._policy(provider_on=True),
@@ -608,7 +658,7 @@ class TestGateDecisions:
         assert "没找到" in " ".join(v["problems"])
 
     def test_incomplete_provider_check_blocks(self, gate):
-        checks = [{"name": "P check", "status": "in_progress", "conclusion": None}]
+        checks = [{"name": "P check", "status": "in_progress", "conclusion": None, "app": self.APP}]
         v = gate.decide(
             "pull_request",
             self._policy(provider_on=True),
@@ -658,6 +708,123 @@ class TestGateDecisions:
             "pull_request", self._policy(), None, [{"login": "Tavotto", "sources": ["pr_author"]}]
         )
         assert v["status"] == "failure"
+
+
+# ═══════════════════════════════ 8b. provider 冒充（Codex 评审 P1，#184）
+class TestProviderImpersonation:
+    """**判据的输入不能由被判定的对象提供。**
+
+    check-run 的名字是任何集成都能取的。只匹配名字的话，一个 PR 在自己的
+    workflow 里加一个 job、或把已有 job 改名成配置里那个 check 名，跑绿之后
+    就出现在同一个 head SHA 上——判定器会认，**PR 给自己签了 CLA**，哪怕真正
+    的服务商红了或压根没跑。
+
+    这与「PR 自带 policy 把自己写进豁免表」是同一个洞的两个入口（后者正是
+    否决 bootstrap 回退的理由），堵法也一样：认**应用身份**，不只认名字。
+    """
+
+    REAL_APP = {"id": 34321, "slug": "cla-assistant"}
+    ACTIONS_APP = {"id": 15368, "slug": "github-actions"}
+
+    def _policy(self, **over):
+        prov = {
+            "configured": True,
+            "name": "CLA Assistant",
+            "check_name": "license/cla",
+            "app_slug": "cla-assistant",
+            "app_id": 34321,
+        }
+        prov.update(over)
+        return {
+            "schema": 2,
+            "agreements": {"individual": {"path": "x.md", "version": "1.0", "sha256": "a" * 64}},
+            "provider": prov,
+            "exemptions": [
+                {
+                    "login": "owner",
+                    "kind": "rights_holder",
+                    "reason": "the rights holder, long enough",
+                }
+            ],
+        }
+
+    def _check(self, app, conclusion="success", name="license/cla"):
+        return {"name": name, "status": "completed", "conclusion": conclusion, "app": app}
+
+    @staticmethod
+    def _outsider():
+        return [{"login": "stranger", "sources": ["pr_author"]}]
+
+    def test_same_named_actions_check_cannot_sign_for_the_pr(self, gate):
+        """核心攻击：PR 自己加一个同名 GitHub Actions job → 必须不被认。"""
+        v = gate.decide(
+            "pull_request", self._policy(), [self._check(self.ACTIONS_APP)], self._outsider()
+        )
+        assert v["status"] == "failure"
+        assert "不是来自配置的签名服务商" in " ".join(v["problems"])
+
+    def test_impostor_does_not_crowd_out_the_real_provider(self, gate):
+        """冒名的排在前面时，不许让真 provider 的结论被挤掉。"""
+        v = gate.decide(
+            "pull_request",
+            self._policy(),
+            [self._check(self.ACTIONS_APP), self._check(self.REAL_APP)],
+            self._outsider(),
+        )
+        assert v["status"] == "success"
+
+    def test_impostor_cannot_override_a_failing_real_provider(self, gate):
+        v = gate.decide(
+            "pull_request",
+            self._policy(),
+            [self._check(self.REAL_APP, "failure"), self._check(self.ACTIONS_APP)],
+            self._outsider(),
+        )
+        assert v["status"] == "failure"
+
+    def test_genuine_provider_still_passes(self, gate):
+        v = gate.decide(
+            "pull_request", self._policy(), [self._check(self.REAL_APP)], self._outsider()
+        )
+        assert v["status"] == "success"
+
+    @pytest.mark.parametrize(
+        "app",
+        [
+            pytest.param({"id": 34321, "slug": "someone-else"}, id="right-id-wrong-slug"),
+            pytest.param({"id": 999999, "slug": "cla-assistant"}, id="right-slug-wrong-id"),
+            pytest.param({"id": 999999, "slug": "someone-else"}, id="both-wrong"),
+            pytest.param({}, id="no-app-at-all"),
+        ],
+    )
+    def test_half_a_matching_identity_is_not_enough(self, gate, app):
+        """**身份是两半，两半都要断言。**
+
+        只断言其中一半，另一半的判据被删掉时没有任何用例会红——变异反证里
+        「只认 slug 不认 id」正是这么漏过去的。slug 好猜（就是服务商的名字），
+        整数 id 才是难冒充的那半，两个都要对。
+        """
+        v = gate.decide("pull_request", self._policy(), [self._check(app)], self._outsider())
+        assert v["status"] == "failure"
+
+    @pytest.mark.parametrize(
+        "over",
+        [
+            {"app_slug": "github-actions"},
+            {"app_id": 15368},
+            {"app_slug": None},
+            {"app_id": None},
+            {"app_id": "34321"},
+        ],
+    )
+    def test_policy_rejects_unusable_provider_identity(self, gate, over):
+        """配置层就挡住：没有 App 身份、或把 GitHub Actions 当 provider。
+
+        GitHub Actions 是**每个 PR 都能驱动**的那个 App，把它配成 provider
+        等于把刚堵上的洞重新打开。
+        """
+        with pytest.raises(gate.ConfigError):
+            gate.validate_policy(self._policy(**over))
 
 
 # ═════════════════════════════════════════════ 9. 贡献者收集（单测）

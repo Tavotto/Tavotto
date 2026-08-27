@@ -50,7 +50,7 @@ Also: [`LICENSE`](../../LICENSE), [`TRADEMARKS.md`](../../TRADEMARKS.md) and
 | | |
 |---|---|
 | Community licence | **AGPL-3.0-only**, unchanged, and staying that way |
-| Rights baseline | 744/745 commits from one rights holder; **no external human contribution**; no third-party source copied in |
+| Rights baseline | **422/423** commits reachable from the audited baseline come from one rights holder; **no external human contribution**; no third-party source copied in |
 | CLA model | Contributor **keeps copyright**; Tavotto gets a sublicensable licence + the right to offer separately licensed editions |
 | Rights holder | **Jiaqi Wan**, a natural person, under **Hong Kong SAR** law, contactable at <support@tavotto.com>. No company involved; none was required. |
 | CLA status | **`1.0` — final and signable.** No signature provider connected yet (deliberate: zero external contributions to date). |
