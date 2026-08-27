@@ -103,6 +103,32 @@ class TestClaWorkflowContract:
             assert f.is_file(), f"CLA 判定链缺文件：{f}"
 
 
+class TestClaPaginationContract:
+    """分页只取到第一页 = 按不完整的贡献者名单判绿。**这是最坏的失败形态。**
+
+    `gh api --paginate` 的输出形状随版本而变（gh 2.97 合并数组，`--help` 却写
+    「Each page is a separate JSON array」），而 `test -s` 拦不住截断——文件非空。
+    所以判定器不信分页，核数量：PR 自己声明的提交数对不上就红。
+    """
+
+    def test_workflow_passes_the_expected_commit_count(self, cla_job):
+        """摘掉 `--expected-commits`，41 提交的 PR 就会被静默少判。"""
+        code = _code(cla_job)
+        assert "--expected-commits" in code, (
+            "workflow 必须把 PR 声明的提交数传给判定器——没有它，分页只取到"
+            "第一页时判定器会按不完整的名单判绿，而门禁看起来是在守的"
+        )
+        assert "github.event.pull_request.commits" in code, (
+            "期望的提交数要取自 PR 自身的 `commits` 字段"
+        )
+
+    def test_workflow_does_not_use_slurp(self, cla_job):
+        """`--slurp` 把每页包成一层，产出数组的数组——它是错的解法，不是修法。"""
+        assert "--slurp" not in _code(cla_job), (
+            "不要给数组端点加 --slurp：它产出数组的数组，判定器反而要额外兼容"
+        )
+
+
 class TestClaWorkflowSecurity:
     def test_does_not_use_pull_request_target(self, cla_job):
         """privileged 触发器会带来写 token 与 secret；这个 cla_job 不需要它们。"""

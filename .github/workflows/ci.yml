@@ -244,6 +244,17 @@ jobs:
 
       # PR 侧只读元数据：作者 + 每个 commit 的 author + Co-authored-by。
       # 只看 PR 发起人是不够的——commit 作者和 co-author 同样在投稿。
+      # `--paginate` 的**输出形状随 gh 版本而变**：gh 2.97 对 REST 数组端点会把
+      # 各页合并成一个数组，而 `gh api --help` 写的是「Each page is a separate
+      # JSON array or object」。判定器三种形状都吃（见 load_commits），所以这里
+      # 不去赌 runner 装的是哪个版本。
+      #
+      # **`--slurp` 是错的解法**：它把每页包成一层，产出数组的数组——判定器
+      # 反而要额外兼容。这里刻意不用。
+      #
+      # 真正要防的不是形状，是**只拿到第一页却当成全部**：一个 41 提交的 PR
+      # 会只判前 30 个贡献者，**报绿而实际漏判**。`test -s` 拦不住（文件非空）。
+      # 所以把 PR 自己声明的提交数一并传下去，由判定器核对——少一条就红。
       - name: 收集这个 PR 的贡献者（只读元数据）
         if: github.event_name == 'pull_request'
         env:
@@ -269,8 +280,11 @@ jobs:
                 --policy "$TRUSTED/.github/cla-policy.json"
                 --repo-root "$TRUSTED")
           if [ "${{ github.event_name }}" = "pull_request" ]; then
+            # --expected-commits 不是可选的：没有它，分页只取到第一页时
+            # 判定器会按不完整的名单判绿（见上面那段注释）。
             ARGS+=(--pr-author "$PR_AUTHOR"
-                   --commits-json "$RUNNER_TEMP/pr-commits.json")
+                   --commits-json "$RUNNER_TEMP/pr-commits.json"
+                   --expected-commits "${{ github.event.pull_request.commits }}")
           fi
           python3 -I "$TRUSTED/scripts/ci/cla_gate.py" "${ARGS[@]}"
 
