@@ -192,6 +192,11 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   （它把失败变成静默的空操作），撞锁做 0.35 秒封顶的有限退让，最终失败要记
   exact path + 异常 + 尝试次数 + 脚本名。看护：`test_windows_regressions.py`
   的假 Popen 锁窗口三条 + `test_worker_roundtrip.py` 的真 worker exact-base 用例。
+  **supervisor 那一侧同一条纪律**：`workerd_client` 的两处 kill（半启动回收、
+  shutdown 超时）走 `_kill_and_reap()`，收尸排在「重新 open 同一个日志文件」
+  与 `self._log.close()` 之前——workerd 的 stderr 就绑在那个文件上。看护：
+  `test_workerd_client.py` 的假 supervisor 两条（每处 call site 各一条，
+  合并成一条就抓不到只漏改一处的回归）。
 - **应用顺序规范化 + figure 锚定 prop 的重放（2026-08-17，数据损坏级）**：
   `overrides.apply` 按**七档规范顺序**应用（`_apply_rank` 是唯一出处）：
   图幅 size_mm → 色条方向 → 色条 extend → 子图 position → 刻度类型

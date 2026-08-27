@@ -6,6 +6,7 @@
 """
 import json
 import os
+import subprocess
 import threading
 import time
 
@@ -296,3 +297,106 @@ def test_the_request_envelope_matches_the_supervisor_protocol(client):
     assert resp["stem"] == "Fig1"
     assert resp["payload"] == {"patches": []}
     assert json.loads(json.dumps(resp))         # 纯 JSON，可原样进日志
+
+
+# ----------------- kill 之后不收尸：句柄还占着就去动它占的东西 -----------------
+# #46 的形状在 supervisor 生命周期路径上的两处复发（#132）。`kill()` 只是把终止
+# 请求交给内核，`poll()` 也只是问一次——**只有 `wait()` 回来了，子进程手里的日志
+# 文件句柄才真的还给了系统**。旧写法两处都是 kill 完立刻动它占着的东西：
+#   * 半启动回收：kill 之后马上拿同一个日志文件重新 open 一个写句柄；
+#   * shutdown 的 finally：kill 之后紧接着 `self._log.close()`。
+# 下面两条把那个窗口在任何平台上确定性地复现出来（真 Windows 上它才会炸，
+# 但判据不该只在某台机器上成立）。
+
+class _LingeringSupervisor:
+    """Windows 关进程的真实时序：kill 只发信号，wait 才是「它没了」。
+
+    * `poll()` 在被 reap 之前**永远**回 None（进程对象看着还活着）；
+    * 优雅关停的那次 `wait()` **超时**——这正是 shutdown 路径走到 kill 的前提；
+    * `kill()` 只置一个「信号发出去了」的标记；
+    * kill 之后的 `wait()` 才把它标成真的退出，句柄也是这一刻才还回来。
+    """
+
+    class _Pipe:
+        def __init__(self):
+            self.closed = False
+
+        def write(self, _line):
+            if self.closed:
+                raise ValueError("I/O operation on closed file")
+
+        def flush(self):
+            pass
+
+        def close(self):
+            self.closed = True
+
+    def __init__(self):
+        self.pid = 9200
+        self.stdin = self._Pipe()
+        self.stdout = self._Pipe()
+        self.kill_called = False
+        self.reaped = False
+
+    def poll(self):
+        return 0 if self.reaped else None
+
+    def kill(self):
+        self.kill_called = True          # ← 只发信号，进程还在，句柄还占着
+
+    def wait(self, timeout=None):
+        if not self.kill_called:
+            raise subprocess.TimeoutExpired("tavotto-workerd", timeout or 0)
+        self.reaped = True               # ← 到这一刻它才真的没了
+        return 0
+
+
+class _LogHandle:
+    """记下「关它的时候，子进程收尸了没有」——这条用例真正的判据。"""
+
+    def __init__(self, proc: _LingeringSupervisor):
+        self._proc = proc
+        self.closed_while_alive: bool | None = None
+
+    def close(self):
+        self.closed_while_alive = not self._proc.reaped
+
+
+def test_close_reaps_the_supervisor_before_closing_the_log(tmp_path):
+    """`close()` 关日志句柄时，子进程必须已经被 wait 回收。
+
+    workerd 的 stderr 直接绑在这个日志文件上。优雅关停超时 → kill → 立刻
+    `self._log.close()`，就是与一个「已 kill 但尚未退出」的子进程争同一个
+    文件——#46 在 Windows 上炸出来的那条链。
+    """
+    c = workerd_client.WorkerdClient(_fake_exe(tmp_path))
+    fake = _LingeringSupervisor()
+    log = _LogHandle(fake)
+    c._proc, c._log, c._ready = fake, log, True
+
+    c.close()
+
+    assert fake.kill_called, "优雅关停超时后本该 kill"
+    assert fake.reaped, "kill 之后没有再 wait 一次：进程还没消失就返回了"
+    assert log.closed_while_alive is False, \
+        "日志句柄在子进程收尸之前就关了——正是 #46 的形状"
+
+
+def test_a_half_started_supervisor_is_reaped_before_the_restart(tmp_path):
+    """重启前回收「半启动」的那条：kill 完要等到它真的退出。
+
+    紧接着的几行会拿**同一个日志文件**重新 open 一个写句柄；kill 之后子进程
+    还占着它，不收尸就是每重启一次泄漏一个句柄。这里把重启计数顶到上限，
+    让函数在真的 spawn 之前退出——要看的判据在 kill 那几行，不在 spawn。
+    """
+    c = workerd_client.WorkerdClient(_fake_exe(tmp_path))
+    fake = _LingeringSupervisor()
+    c._proc, c._ready = fake, False
+    c._started_at = time.time()                       # 起来就崩：计数只加不清
+    c._restarts = workerd_client._MAX_RESTARTS
+
+    with pytest.raises(workerd_client.WorkerdError):
+        c.ensure_started()
+
+    assert fake.kill_called, "半启动的那条根本没被收掉"
+    assert fake.reaped, "kill 之后没有再 wait 一次：进程还没消失就往下走了"
