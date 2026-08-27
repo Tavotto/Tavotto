@@ -84,6 +84,39 @@ async function focusInfo(page: Page, needle: string): Promise<FocusInfo> {
  *  Option+Tab 才遍历全部控件——这是 Safari 用户的真实键盘习惯。 */
 const tabKey = () => (test.info().project.name.includes('webkit') ? 'Alt+Tab' : 'Tab')
 
+/**
+ * 等到文档里出现**普通 Tab 进得去的元素**（input / textarea / select / 链接）。
+ *
+ * webkit 上这不是可有可无的一步（#138）。macOS/Safari 的普通 Tab 只走表单控件
+ * 和链接、**不走 button**（Safari 的「按 Tab 高亮每一项」默认关着，本 spec 的
+ * `tabKey()` 因此用 Option+Tab）——但焦点停在 body 上时 Option+Tab 不动，只有
+ * 普通 Tab 才重新进得了文档。首次构建完成前页面上全是 button、一个 input 都没有，
+ * 于是每一次 Tab 都留在 body。
+ *
+ * 少了这个同步点，`tabTo(page, '图内元素', 120)` 的实际语义就变成「赌 120 次
+ * 按键的时间内首次构建能完成」——**判据的主语不是它自称的那个**（同族：#133、
+ * #141）。机器忙时 4/4 红、闲时绿，而 CI 的 `retries: 1` 大概率一直在吞它。
+ *
+ * 现场 dump 给出的锚点很干脆：失败样本 `focusables=30` 且全是 button；成功样本
+ * 33 个，多出来的三个里含 input。所以判据就是「有没有 input」，不是「按了几次」。
+ */
+async function waitForPlainTabEntry(page: Page, timeout = 120_000): Promise<void> {
+  await expect
+    .poll(
+      () =>
+        page
+          .locator('input:visible, textarea:visible, select:visible, a[href]:visible')
+          .count(),
+      {
+        timeout,
+        message:
+          '文档里始终没有普通 Tab 进得去的元素（input/textarea/select/链接）——' +
+          'webkit 的焦点会一直卡在 body 上',
+      },
+    )
+    .toBeGreaterThan(0)
+}
+
 /** 连续 Tab 直到焦点落在目标上；每一步断言焦点没有丢。
  *  backward=true 用 Shift+Tab 反向走（目标在当前焦点之前时）。 */
 async function tabTo(
@@ -181,9 +214,15 @@ test('纯键盘走完核心闭环：开项目 → 编辑元素 → undo/redo →
   // ── 3. 进入图内编辑：Tab 到属性栏的「编辑图内元素」，Enter ────────────
   await tabTo(page, '编辑图内元素')
   await page.keyboard.press('Enter')
+  // **同步点显式化**（#138）：进图内编辑会触发首次构建（跑一遍脚本）。构建完成
+  // 前属性栏还没渲染，页面上一个 input 都没有，webkit 的普通 Tab 因此进不了文档。
+  // 在这里等到「有元素可供普通 Tab 进入」，下面那串 Tab 才是在测键盘可达性，
+  // 而不是在赌构建速度。
+  await waitForPlainTabEntry(page)
   // 选中对象时素材抽屉让位给属性页（autoShowProperties），左抽屉是关的。
   // 键盘用户经左侧图标轨道打开「图内元素」树——鼠标用户直接点画布上的
   // 元素，树是 #37 要求的等价路径。
+  // 次数是**步数预算**，不再兼任超时预算：同步点已经在上面等过了。
   await tabTo(page, '图内元素', 120)
   await page.keyboard.press('Enter')
   // 首次进入要跑一遍脚本构建 figure——等元素树真的长出条目，
