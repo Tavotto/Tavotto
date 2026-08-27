@@ -8,6 +8,7 @@
 `/proc`、`resource`、POSIX 权限之类的假设；确实只在 Linux 有意义的分支
 （进程扫描）用「能力探测 + 跳过」而不是硬跳 sys.platform。
 """
+
 from __future__ import annotations
 
 import json
@@ -118,7 +119,7 @@ class TestStateRoot:
         _common.ensure_layout(root)
         for rel in _common.LAYOUT:
             assert (root / rel).is_dir(), f"{rel} 没建出来"
-        _common.ensure_layout(root)          # 再来一次不该炸
+        _common.ensure_layout(root)  # 再来一次不该炸
         assert (root / "baselines" / "perf").is_dir()
 
     def test_ensure_layout_reports_unwritable(self, tmp_path):
@@ -246,30 +247,34 @@ class TestPreflight:
         而恒红的门禁很快就会被加进忽略列表。
         """
         monkeypatch.setattr(_common, "_mem_total_gib", lambda: 0.0)
-        monkeypatch.setattr(lab_preflight, "run_metadata",
-                            lambda *a, **k: {"cpu_count": 16, "ram_gib": 0.0})
+        monkeypatch.setattr(
+            lab_preflight, "run_metadata", lambda *a, **k: {"cpu_count": 16, "ram_gib": 0.0}
+        )
         checks = lab_preflight.check_hardware()
         mem = [c for c in checks if c.name == "内存"][0]
         assert mem.ok is True and mem.warn is True
 
     def test_insufficient_memory_does_block(self, monkeypatch):
         """但真读到了且真不够时，必须拦下来——否则上一条就成了万能借口。"""
-        monkeypatch.setattr(lab_preflight, "run_metadata",
-                            lambda *a, **k: {"cpu_count": 16, "ram_gib": 2.0})
+        monkeypatch.setattr(
+            lab_preflight, "run_metadata", lambda *a, **k: {"cpu_count": 16, "ram_gib": 2.0}
+        )
         checks = lab_preflight.check_hardware()
         mem = [c for c in checks if c.name == "内存"][0]
         assert mem.ok is False and mem.warn is False
 
     def test_low_cpu_blocks(self, monkeypatch):
-        monkeypatch.setattr(lab_preflight, "run_metadata",
-                            lambda *a, **k: {"cpu_count": 1, "ram_gib": 32.0})
+        monkeypatch.setattr(
+            lab_preflight, "run_metadata", lambda *a, **k: {"cpu_count": 1, "ram_gib": 32.0}
+        )
         cpu = [c for c in lab_preflight.check_hardware() if c.name == "CPU 核数"][0]
         assert cpu.ok is False
 
     def test_rust_only_required_for_deep_modes(self, monkeypatch):
         """main 模式不跑 Rust，就不该拿 cargo 缺席去拦它。"""
-        monkeypatch.setattr(lab_preflight.shutil, "which",
-                            lambda exe: None if exe == "cargo" else f"/usr/bin/{exe}")
+        monkeypatch.setattr(
+            lab_preflight.shutil, "which", lambda exe: None if exe == "cargo" else f"/usr/bin/{exe}"
+        )
         names_main = {c.name for c in lab_preflight.check_toolchain("main")}
         names_nightly = {c.name for c in lab_preflight.check_toolchain("nightly")}
         assert "Rust cargo" not in names_main
@@ -296,10 +301,14 @@ class TestPreflight:
     def test_cli_passes_on_a_healthy_root(self, tmp_path, monkeypatch):
         monkeypatch.setenv("TAVOTTO_CI_STATE_ROOT", str(tmp_path / "state"))
         monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
-        monkeypatch.setattr(lab_preflight, "run_metadata",
-                            lambda *a, **k: {"cpu_count": 16, "ram_gib": 32.0})
-        monkeypatch.setattr(lab_preflight, "check_state_root",
-                            lambda mode: [lab_preflight.Check("持久化根目录", True, "ok")])
+        monkeypatch.setattr(
+            lab_preflight, "run_metadata", lambda *a, **k: {"cpu_count": 16, "ram_gib": 32.0}
+        )
+        monkeypatch.setattr(
+            lab_preflight,
+            "check_state_root",
+            lambda mode: [lab_preflight.Check("持久化根目录", True, "ok")],
+        )
         monkeypatch.setattr(lab_preflight.shutil, "which", lambda exe: f"/usr/bin/{exe}")
         assert lab_preflight.main(["--mode", "main", "--no-report"]) == 0
 
@@ -314,5 +323,10 @@ def test_scripts_run_without_the_product_installed():
     for script in ("lab_preflight.py", "cleanup.py"):
         out = subprocess.run(
             [sys.executable, str(CI_DIR / script), "--help"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=60,
+        )
         assert out.returncode == 0, f"{script} --help 都跑不了：{out.stderr}"

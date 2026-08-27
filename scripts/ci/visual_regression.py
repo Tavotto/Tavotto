@@ -22,6 +22,7 @@
     python scripts/ci/visual_regression.py --python .venv/bin/python
     python scripts/ci/visual_regression.py --update-baselines   # 只有人能跑
 """
+
 from __future__ import annotations
 
 import argparse
@@ -70,8 +71,13 @@ def load_manifest() -> dict:
 def case_tolerance(manifest: dict, stem: str) -> dict:
     tol = dict(manifest["defaults"]["tolerance"])
     tol.pop("_comment", None)
-    tol.update({k: v for k, v in manifest["cases"].get(stem, {}).get("tolerance", {}).items()
-                if not k.startswith("_")})
+    tol.update(
+        {
+            k: v
+            for k, v in manifest["cases"].get(stem, {}).get("tolerance", {}).items()
+            if not k.startswith("_")
+        }
+    )
     return tol
 
 
@@ -109,9 +115,11 @@ def _post_png(base: str, stem_id: str, out: Path, timeout: int = 600) -> None:
     # （要的是 PNG 字节而不是 JSON，SA 没有对应助手）。漏了的表现是
     # 「面板列出来了、第一张图 401」——而 `adopt_session_credentials` 明明
     # 已经调过，看上去像认证装了却不生效。Codex 在 #56 上逮到的正是它。
-    req = urllib.request.Request(f"{base}/api/engine/preview_png", data=body,
-                                 headers={"Content-Type": "application/json",
-                                          **SA._AUTH})
+    req = urllib.request.Request(
+        f"{base}/api/engine/preview_png",
+        data=body,
+        headers={"Content-Type": "application/json", **SA._AUTH},
+    )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         if resp.status != 200:
             raise CiError("preview_png_failed", f"{stem_id}: HTTP {resp.status}")
@@ -121,8 +129,9 @@ def _post_png(base: str, stem_id: str, out: Path, timeout: int = 600) -> None:
     out.write_bytes(data)
 
 
-def render_corpus(launch: list[str], workdir: Path, stems: list[str],
-                  runner_python: str) -> dict[str, Path]:
+def render_corpus(
+    launch: list[str], workdir: Path, stems: list[str], runner_python: str
+) -> dict[str, Path]:
     """把 corpus 逐张渲成 PNG，返回 stem → 文件路径。"""
     port = SA._free_port()
     base = f"http://127.0.0.1:{port}"
@@ -165,8 +174,7 @@ def render_corpus(launch: list[str], workdir: Path, stems: list[str],
     # （日志量正好填满缓冲），py-spy 的栈是 emit→pipe_write +
     # 八个线程 acquire。改成落文件：既没有这个失败模式，又比 DEVNULL
     # 多留一份启动期 traceback（那些进不了 app.log）。
-    proc = subprocess.Popen(cmd, env=env, stdout=_child_log,
-                            stderr=subprocess.STDOUT)
+    proc = subprocess.Popen(cmd, env=env, stdout=_child_log, stderr=subprocess.STDOUT)
     out: dict[str, Path] = {}
     try:
         SA._wait_ready(base, proc, SA.BOOT_TIMEOUT_S)
@@ -178,9 +186,11 @@ def render_corpus(launch: list[str], workdir: Path, stems: list[str],
         by_stem = {p["id"].rsplit(".", 1)[0]: p["id"] for p in panels if p.get("script")}
         missing = [s for s in stems if s not in by_stem]
         if missing:
-            raise CiError("corpus_stem_missing",
-                          f"corpus 里这些 stem 没被扫出来：{missing}。"
-                          f"实际扫到 {sorted(by_stem)}。检查 tavotto_registry.json")
+            raise CiError(
+                "corpus_stem_missing",
+                f"corpus 里这些 stem 没被扫出来：{missing}。"
+                f"实际扫到 {sorted(by_stem)}。检查 tavotto_registry.json",
+            )
         for stem in stems:
             dest = shots / f"{stem}.png"
             t0 = time.time()
@@ -190,7 +200,7 @@ def render_corpus(launch: list[str], workdir: Path, stems: list[str],
         try:
             SA._post(f"{base}/api/shutdown", {}, timeout=60)
             proc.wait(timeout=120)
-        except Exception:                                  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             pass
     finally:
         if proc.poll() is None:
@@ -205,8 +215,11 @@ def main(argv: list[str] | None = None) -> int:
     g = ap.add_mutually_exclusive_group()
     g.add_argument("--python", default=sys.executable)
     g.add_argument("--exe", default=None)
-    ap.add_argument("--update-baselines", action="store_true",
-                    help="重建基线。**CI 永远不该传这个**——基线必须经人眼 review")
+    ap.add_argument(
+        "--update-baselines",
+        action="store_true",
+        help="重建基线。**CI 永远不该传这个**——基线必须经人眼 review",
+    )
     ap.add_argument("--out", default=None, help="产物目录（diff 图与 metrics）")
     ap.add_argument("--only", default=None, help="只跑某几个 stem，逗号分隔")
     args = ap.parse_args(argv)
@@ -214,8 +227,11 @@ def main(argv: list[str] | None = None) -> int:
     # 硬拦截：即使有人在 workflow 里手滑加了这个参数，也不让它在 CI 上生效。
     # 「基线不存在 → 自动创建 → 报绿」是这套门禁最容易退化成的样子。
     if args.update_baselines and os.environ.get("CI") == "true":
-        print("::error::--update-baselines 不允许在 CI 环境使用："
-              "基线必须由人在本地生成并经 code review", file=sys.stderr)
+        print(
+            "::error::--update-baselines 不允许在 CI 环境使用："
+            "基线必须由人在本地生成并经 code review",
+            file=sys.stderr,
+        )
         return 2
 
     manifest = load_manifest()
@@ -235,14 +251,18 @@ def main(argv: list[str] | None = None) -> int:
     results: dict[str, dict] = {}
     ok = True
     try:
-        shots = render_corpus(launch, workdir, stems, args.python if not args.exe else sys.executable)
+        shots = render_corpus(
+            launch, workdir, stems, args.python if not args.exe else sys.executable
+        )
 
         for stem in stems:
             baseline = BASELINE_DIR / f"{stem}.png"
             if stem in skipped:
                 rows.append((stem, "⏭️", manifest["cases"][stem].get("visual_skip_reason", "")[:80]))
-                results[stem] = {"skipped": True,
-                                 "reason": manifest["cases"][stem].get("visual_skip_reason", "")}
+                results[stem] = {
+                    "skipped": True,
+                    "reason": manifest["cases"][stem].get("visual_skip_reason", ""),
+                }
                 continue
 
             if args.update_baselines:
@@ -254,7 +274,9 @@ def main(argv: list[str] | None = None) -> int:
             if not baseline.exists():
                 # 这就是那条最重要的规矩：缺基线**失败**，不自动补。
                 ok = False
-                rows.append((stem, "❌", "基线不存在 —— 本地跑 --update-baselines 并提交，经 review 后再合"))
+                rows.append(
+                    (stem, "❌", "基线不存在 —— 本地跑 --update-baselines 并提交，经 review 后再合")
+                )
                 results[stem] = {"ok": False, "reason": "baseline_missing"}
                 continue
 
@@ -263,10 +285,15 @@ def main(argv: list[str] | None = None) -> int:
             good, reasons = verdict(metrics, case_tolerance(manifest, stem))
             results[stem] = {"ok": good, "metrics": metrics, "reasons": reasons}
             if good:
-                rows.append((stem, "✅",
-                             f"变化 {metrics.get('changed_pixel_ratio', 0):.5f} / "
-                             f"均差 {metrics.get('mean_abs_diff', 0):.2f}"))
-                diff_path.unlink(missing_ok=True)          # 通过的不留 diff 图，免得 artifact 里全是噪音
+                rows.append(
+                    (
+                        stem,
+                        "✅",
+                        f"变化 {metrics.get('changed_pixel_ratio', 0):.5f} / "
+                        f"均差 {metrics.get('mean_abs_diff', 0):.2f}",
+                    )
+                )
+                diff_path.unlink(missing_ok=True)  # 通过的不留 diff 图，免得 artifact 里全是噪音
             else:
                 ok = False
                 rows.append((stem, "❌", "；".join(reasons)[:110]))
@@ -288,7 +315,8 @@ def main(argv: list[str] | None = None) -> int:
         "metadata": run_metadata(),
     }
     (out_dir / "metrics.json").write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     write_report("visual.json", payload, root)
 
     summary(f"\n### Golden 视觉回归 · {len(visual_stems)} 张\n\n" + summary_table(rows))

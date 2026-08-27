@@ -18,6 +18,7 @@
 跨平台可跑：拿不到真实 Windows 语义的地方就直接测**那段逻辑本身**
 （monkeypatch 出同样的失败），而不是假装在 Windows 上跑。
 """
+
 import ast
 import io
 import json
@@ -51,14 +52,23 @@ def _figs(tmp_path, name="figs"):
     doc.new_page(width=100, height=50)
     doc.save(figs / "Fig1.pdf")
     doc.close()
-    (figs / "tavotto_registry.json").write_text(json.dumps({"version": 1, "scripts": {
-        "fig1.py": {"entry": "main", "cost": "light", "notes": "", "stems": ["Fig1"]},
-    }}), encoding="utf-8")
+    (figs / "tavotto_registry.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "scripts": {
+                    "fig1.py": {"entry": "main", "cost": "light", "notes": "", "stems": ["Fig1"]},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     (figs / "fig1.py").write_text("def main():\n    pass\n", encoding="utf-8")
     return figs
 
 
 # ---------------- 文件被占用（Windows 独占锁） -------------------------------
+
 
 def _fake_workers(monkeypatch, figs, tmp_path, payload: bytes) -> None:
     """接上假 worker（热会话 + 写回用的一次性重放）。
@@ -76,7 +86,7 @@ def _fake_workers(monkeypatch, figs, tmp_path, payload: bytes) -> None:
         figures_dir = str(figs)
         base = out_dir = out
         built = True
-        script_sha1 = ""     # 空 = 会话没记指纹，前置的脚本检查自然跳过
+        script_sha1 = ""  # 空 = 会话没记指纹，前置的脚本检查自然跳过
         last_patch_hash = ""
 
         def override(self, stem, patches, preview_dpi=None, inline_svg=False):
@@ -116,23 +126,21 @@ def test_write_back_reports_locked_file_instead_of_500(client, tmp_path, monkeyp
     """
     figs = _figs(tmp_path)
     m.open_project(str(figs))
-    _fake_workers(monkeypatch, figs, tmp_path, b"%PDF-1.4\n")   # 假装导出成功
+    _fake_workers(monkeypatch, figs, tmp_path, b"%PDF-1.4\n")  # 假装导出成功
     _lock(monkeypatch, "Fig1.pdf")
 
-    resp = client.post("/api/engine/update_source",
-                       json={"id": "Fig1.pdf", "patches": []})
+    resp = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
     assert resp.status_code == 409
     body = resp.get_json()
     assert body["code"] == "file_locked"
     assert body["file"] == "Fig1.pdf"
-    assert "关闭" in body["error"]          # 告诉用户该去做什么
+    assert "关闭" in body["error"]  # 告诉用户该去做什么
     # 半成品不许留在图库里
     assert not list(figs.glob(".*updating"))
-    assert (figs / "Fig1.pdf").is_file()   # 原文件完好
+    assert (figs / "Fig1.pdf").is_file()  # 原文件完好
 
 
-def test_write_back_rolls_back_when_the_second_target_is_locked(client, tmp_path,
-                                                                monkeypatch):
+def test_write_back_rolls_back_when_the_second_target_is_locked(client, tmp_path, monkeypatch):
     """PDF 换成功、PNG 被占用：把 PDF 从备份恢复回去，并说清事情的结局。
 
     一张图的 PDF 是新的、PNG 还是旧的，比整件事失败糟糕得多——用户在画布上看
@@ -145,23 +153,24 @@ def test_write_back_rolls_back_when_the_second_target_is_locked(client, tmp_path
     _fake_workers(monkeypatch, figs, tmp_path, b"x" * 16)
     _lock(monkeypatch, "Fig1.png")
 
-    body = client.post("/api/engine/update_source",
-                       json={"id": "Fig1.pdf", "patches": []}).get_json()
+    body = client.post(
+        "/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []}
+    ).get_json()
     assert body["file"] == "Fig1.png"
     assert body["rolled_back"] == ["Fig1.pdf"] and body["rollback_failed"] == []
-    assert body["updated"] == []          # 回滚成功 = 没有文件停在「已被换掉」
+    assert body["updated"] == []  # 回滚成功 = 没有文件停在「已被换掉」
     assert (figs / "Fig1.pdf").read_bytes() == before_pdf
     assert not list(figs.glob(".*updating"))
 
 
 # ---------------- 路径：盘符、反斜杠、中文与空格 ------------------------------
 
+
 def test_browse_accepts_backslashes_and_chinese_spaces(client, tmp_path):
     """路径可以手输/粘贴，用户粘过来的就是资源管理器那种反斜杠写法。"""
     target = tmp_path / "我的 论文" / "figures"
     target.mkdir(parents=True)
-    for raw in (str(target), str(target).replace("/", "\\") if os.name == "nt"
-                else str(target)):
+    for raw in (str(target), str(target).replace("/", "\\") if os.name == "nt" else str(target)):
         body = client.get(f"/api/projects/browse?path={raw}").get_json()
         assert body["path"] == str(target)
 
@@ -185,6 +194,7 @@ def test_drive_roots_listed_on_windows_only(client):
 
 
 # ---------------- 端口被占用 --------------------------------------------------
+
 
 def test_busy_port_falls_back_instead_of_crashing():
     """5089 被别的程序占着时顺延到下一个空闲端口。
@@ -225,18 +235,35 @@ def test_worker_pipes_survive_non_utf8_locale(tmp_path):
         "def main():\n"
         "    fig, ax = plt.subplots(figsize=(2, 1.5))\n"
         "    ax.plot([0, 1], [0, 1])\n"
-        "    ax.set_xlabel('波长 / µm⁻¹')\n"   # 中文 + µ + 上标：cp936 的经典雷区
+        "    ax.set_xlabel('波长 / µm⁻¹')\n"  # 中文 + µ + 上标：cp936 的经典雷区
         "    fig.savefig('CJK_1.pdf')\n",
-        encoding="utf-8")
+        encoding="utf-8",
+    )
 
     proc = subprocess.Popen(
-        [worker_py, str(WORKER_PY), "--script", str(figs / "fig_cjk.py"),
-         "--figures-dir", str(figs), "--out-dir", str(tmp_path / "out"),
-         "--sandbox", str(tmp_path / "sandbox"), "--entry", "main"],
-        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, bufsize=1, encoding="utf-8", errors="replace",
-        env={**os.environ, "PYTHONIOENCODING": "gbk:replace",
-             "PYTHONUTF8": "0", "LC_ALL": "C"})
+        [
+            worker_py,
+            str(WORKER_PY),
+            "--script",
+            str(figs / "fig_cjk.py"),
+            "--figures-dir",
+            str(figs),
+            "--out-dir",
+            str(tmp_path / "out"),
+            "--sandbox",
+            str(tmp_path / "sandbox"),
+            "--entry",
+            "main",
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1,
+        encoding="utf-8",
+        errors="replace",
+        env={**os.environ, "PYTHONIOENCODING": "gbk:replace", "PYTHONUTF8": "0", "LC_ALL": "C"},
+    )
     try:
         proc.stdin.write(json.dumps({"cmd": "build"}) + "\n")
         proc.stdin.flush()
@@ -265,9 +292,7 @@ def test_every_entry_point_reconfigures_stdout_to_utf8():
     repo = Path(__file__).resolve().parent.parent
     impl = (repo / "src" / "tavotto" / "engine" / "cli.py").read_text(encoding="utf-8")
     assert 'reconfigure(encoding="utf-8"' in impl
-    for rel in ("src/tavotto/cli_entry.py",
-                "packaging/entry.py",
-                "src/tavotto/app.py"):
+    for rel in ("src/tavotto/cli_entry.py", "packaging/entry.py", "src/tavotto/app.py"):
         src = (repo / rel).read_text(encoding="utf-8")
         assert "use_utf8_streams()" in src, f"{rel} 没有把 stdout 钉成 UTF-8"
 
@@ -286,14 +311,22 @@ def test_cli_entry_survives_a_non_utf8_console(tmp_path, argv):
     只在 Windows 上发作，本机与 Linux 全绿——所以用 `PYTHONIOENCODING`
     把那台机器搬过来（与本文件里 worker 那条同一手法）。
     """
-    env = {**os.environ,
-           "PYTHONIOENCODING": "cp1252",
-           "TAVOTTO_CONFIG_DIR": str(tmp_path / "cfg"),
-           "TAVOTTO_DATA_DIR": str(tmp_path / "data"),
-           "PYTHONPATH": str(Path(__file__).resolve().parent.parent / "src")}
-    proc = subprocess.run([sys.executable, "-m", "tavotto", *argv],
-                          capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", env=env, timeout=120)
+    env = {
+        **os.environ,
+        "PYTHONIOENCODING": "cp1252",
+        "TAVOTTO_CONFIG_DIR": str(tmp_path / "cfg"),
+        "TAVOTTO_DATA_DIR": str(tmp_path / "data"),
+        "PYTHONPATH": str(Path(__file__).resolve().parent.parent / "src"),
+    }
+    proc = subprocess.run(
+        [sys.executable, "-m", "tavotto", *argv],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+        timeout=120,
+    )
     assert "UnicodeEncodeError" not in proc.stderr, proc.stderr
     assert proc.returncode == 0, proc.stderr
 
@@ -305,21 +338,24 @@ def test_packaging_entry_points_reconfigure_stdout_to_utf8():
     tavotto.spec 的中文 print）。新加的入口脚本都要沿用 build_frontend.py
     的同一段写法。"""
     repo = Path(__file__).resolve().parent.parent
-    for rel in ("packaging/tavotto.spec",
-                "scripts/build_frontend.py",
-                "scripts/build_desktop.py",
-                "scripts/build_worker_runtime.py",
-                "scripts/smoke_app.py",
-                "scripts/smoke_desktop.py",
-                # Codex 插件的交接脚本：Codex 调它时 stdout 就是管道，
-                # 输出的 JSON 带中文（hint / tavotto open 回来的错误）
-                "codex-plugin/skills/tavotto-figure/scripts/handoff.py",
-                # 这两个的结论全是中文，而 pytest 与 CI 都是捕获着调它们的
-                "scripts/gen_preflight_vectors.py",
-                "scripts/build_mcp_widget.py"):
+    for rel in (
+        "packaging/tavotto.spec",
+        "scripts/build_frontend.py",
+        "scripts/build_desktop.py",
+        "scripts/build_worker_runtime.py",
+        "scripts/smoke_app.py",
+        "scripts/smoke_desktop.py",
+        # Codex 插件的交接脚本：Codex 调它时 stdout 就是管道，
+        # 输出的 JSON 带中文（hint / tavotto open 回来的错误）
+        "codex-plugin/skills/tavotto-figure/scripts/handoff.py",
+        # 这两个的结论全是中文，而 pytest 与 CI 都是捕获着调它们的
+        "scripts/gen_preflight_vectors.py",
+        "scripts/build_mcp_widget.py",
+    ):
         src = (repo / rel).read_text(encoding="utf-8")
-        assert 'reconfigure(encoding="utf-8"' in src, \
+        assert 'reconfigure(encoding="utf-8"' in src, (
             f"{rel} 没做 stdout reconfigure，Windows 管道下中文日志会打死进程"
+        )
 
 
 def test_codex_handoff_json_survives_cp1252_stdout():
@@ -334,9 +370,14 @@ def test_codex_handoff_json_survives_cp1252_stdout():
     script = repo / "codex-plugin/skills/tavotto-figure/scripts/handoff.py"
     r = subprocess.run(
         [sys.executable, str(script), str(repo / "不存在的图.pdf")],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
-        env={**os.environ, "PYTHONIOENCODING": "cp1252"})
-    assert r.returncode == 2, r.stderr        # 2 = 路径不对，不是 1（崩了）
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=60,
+        env={**os.environ, "PYTHONIOENCODING": "cp1252"},
+    )
+    assert r.returncode == 2, r.stderr  # 2 = 路径不对，不是 1（崩了）
     assert "路径不存在" in json.loads(r.stdout.strip().splitlines()[-1])["error"]
 
 
@@ -353,17 +394,28 @@ def test_maintenance_scripts_report_under_cp1252_stdout(tmp_path):
     env = {**os.environ, "PYTHONIOENCODING": "cp1252"}
 
     # 校验器：向量与实现一致时退 0，并把那句中文结论说出来
-    r = subprocess.run([sys.executable, str(repo / "scripts/gen_preflight_vectors.py")],
-                       capture_output=True, text=True, encoding="utf-8",
-                       errors="replace", timeout=120, env=env)
+    r = subprocess.run(
+        [sys.executable, str(repo / "scripts/gen_preflight_vectors.py")],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=120,
+        env=env,
+    )
     assert r.returncode == 0, r.stdout + r.stderr
     assert "Python 实现一致" in r.stdout
 
     # 画布同步门禁：--check 不需要 Node，纯指纹比对
-    r = subprocess.run([sys.executable, str(repo / "scripts/build_mcp_widget.py"),
-                        "--check"],
-                       capture_output=True, text=True, encoding="utf-8",
-                       errors="replace", timeout=120, env=env)
+    r = subprocess.run(
+        [sys.executable, str(repo / "scripts/build_mcp_widget.py"), "--check"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=120,
+        env=env,
+    )
     assert r.returncode == 0, r.stdout + r.stderr
     assert "画布产物与源码一致" in r.stdout
 
@@ -390,15 +442,19 @@ def test_widget_fingerprint_is_the_same_on_windows_and_posix():
     import build_mcp_widget
 
     # 一份「Windows 视角」：反斜杠 + CRLF + 大小写不敏感的那个顺序
-    windows = build_mcp_widget.digest([
-        (PureWindowsPath(r"web\src\lib\apple.ts"), b"a\r\nb\r\n"),
-        (PureWindowsPath(r"web\src\lib\Zebra.ts"), b"z\r\n"),
-    ])
+    windows = build_mcp_widget.digest(
+        [
+            (PureWindowsPath(r"web\src\lib\apple.ts"), b"a\r\nb\r\n"),
+            (PureWindowsPath(r"web\src\lib\Zebra.ts"), b"z\r\n"),
+        ]
+    )
     # 一份「POSIX 视角」：正斜杠 + LF + 大小写敏感的那个顺序
-    posix = build_mcp_widget.digest([
-        (PurePosixPath("web/src/lib/Zebra.ts"), b"z\n"),
-        (PurePosixPath("web/src/lib/apple.ts"), b"a\nb\n"),
-    ])
+    posix = build_mcp_widget.digest(
+        [
+            (PurePosixPath("web/src/lib/Zebra.ts"), b"z\n"),
+            (PurePosixPath("web/src/lib/apple.ts"), b"a\nb\n"),
+        ]
+    )
     assert windows == posix, "同一份源码在两个平台上算出了不同的指纹"
 
 
@@ -409,9 +465,11 @@ def test_widget_fingerprint_still_notices_a_real_change():
 
     base = [(PurePosixPath("web/src/a.ts"), b"x\n")]
     assert build_mcp_widget.digest(base) != build_mcp_widget.digest(
-        [(PurePosixPath("web/src/a.ts"), b"y\n")]), "内容变了却算出同一个指纹"
+        [(PurePosixPath("web/src/a.ts"), b"y\n")]
+    ), "内容变了却算出同一个指纹"
     assert build_mcp_widget.digest(base) != build_mcp_widget.digest(
-        [(PurePosixPath("web/src/b.ts"), b"x\n")]), "文件名变了却算出同一个指纹"
+        [(PurePosixPath("web/src/b.ts"), b"x\n")]
+    ), "文件名变了却算出同一个指纹"
 
 
 def test_codex_handoff_pins_utf8_on_every_decoding_spawn():
@@ -426,14 +484,18 @@ def test_codex_handoff_pins_utf8_on_every_decoding_spawn():
     tree = ast.parse(script.read_text(encoding="utf-8"))
     checked = 0
     for node in ast.walk(tree):
-        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                and node.func.attr == "run"):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "run"
+        ):
             continue
         kwargs = {kw.arg for kw in node.keywords}
         if "text" not in kwargs:
-            continue                          # 只看 returncode 的那次不解码
-        assert "encoding" in kwargs and "errors" in kwargs, \
+            continue  # 只看 returncode 的那次不解码
+        assert "encoding" in kwargs and "errors" in kwargs, (
             f"handoff.py 第 {node.lineno} 行 text=True 却没钉 encoding/errors"
+        )
         checked += 1
     assert checked >= 2, "一处都没扫到 = 匹配逻辑坏了，别让空断言冒充通过"
 
@@ -444,16 +506,25 @@ def test_runtime_build_log_survives_cp1252_stdout():
     （GitHub CI windows-exe-smoke 实测）。log() 必须自己兜底。"""
     scripts = Path(__file__).resolve().parent.parent / "scripts"
     r = subprocess.run(
-        [sys.executable, "-c",
-         "import sys; sys.path.insert(0, sys.argv[1]); "
-         "import build_worker_runtime as brt; brt.log('↓ https://example.invalid')",
-         str(scripts)],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
-        env={**os.environ, "PYTHONIOENCODING": "cp1252"})
+        [
+            sys.executable,
+            "-c",
+            "import sys; sys.path.insert(0, sys.argv[1]); "
+            "import build_worker_runtime as brt; brt.log('↓ https://example.invalid')",
+            str(scripts),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+        env={**os.environ, "PYTHONIOENCODING": "cp1252"},
+    )
     assert r.returncode == 0, r.stderr
 
 
 # ---------------- AI CLI 的 Windows 落点 --------------------------------------
+
 
 def test_cli_search_dirs_cover_windows_install_locations(monkeypatch):
     """Windows 上 PATH 最不可靠：npm 全局目录要重开终端才进 PATH，从桌面
@@ -481,9 +552,9 @@ def test_npm_cmd_shim_resolves_to_real_executable(tmp_path, monkeypatch):
     exe.write_bytes(b"MZ")
     shim = tmp_path / "codex.cmd"
     shim.write_text(
-        '@ECHO off\r\n'
-        '"%dp0%\\node_modules\\@openai\\codex\\bin\\codex.exe" %*\r\n',
-        encoding="utf-8")
+        '@ECHO off\r\n"%dp0%\\node_modules\\@openai\\codex\\bin\\codex.exe" %*\r\n',
+        encoding="utf-8",
+    )
     assert ai_agents.resolve_shim(str(shim)) == [str(exe.resolve())]
 
 
@@ -511,21 +582,19 @@ def test_executable_bit_gate_is_a_noop_on_windows(tmp_path, monkeypatch):
     plain = tmp_path / "codex"
     plain.write_text("不是可执行文件", encoding="utf-8")
     try:
-        plain.chmod(0o644)          # POSIX 上摘掉可执行位；Windows 上无效
+        plain.chmod(0o644)  # POSIX 上摘掉可执行位；Windows 上无效
     except OSError:
         pass
 
     # 模拟 Windows：X_OK 恒真
     monkeypatch.setattr(agents.os, "access", lambda *a, **k: True)
-    monkeypatch.setattr(agents, "probe_version_detailed",
-                        lambda argv: (None, "launch_failed"))
+    monkeypatch.setattr(agents, "probe_version_detailed", lambda argv: (None, "launch_failed"))
     res = agents.validate_executable(codex, str(plain))
     # 那道闸放行了，但结论一样是「拒」——由启动验证兜住
     assert res.argv is None and res.error == "launch_failed"
 
     # 反过来：真能起来的就该过（否则这条用例用「恒拒」也能假绿）
-    monkeypatch.setattr(agents, "probe_version_detailed",
-                        lambda argv: ("codex-cli 1.0", None))
+    monkeypatch.setattr(agents, "probe_version_detailed", lambda argv: ("codex-cli 1.0", None))
     ok = agents.validate_executable(codex, str(plain))
     assert ok.argv is not None and ok.version == "codex-cli 1.0"
 
@@ -540,12 +609,13 @@ def test_capabilities_tells_where_it_looked_when_missing(monkeypatch):
     assert [a["id"] for a in caps["agents"]] == ["codex", "claude"]
     for info in caps["agents"]:
         assert info["installed"] is False
-        assert info["state"] == "not_installed"      # 没装不是「坏了」
+        assert info["state"] == "not_installed"  # 没装不是「坏了」
         assert info["diagnostics"]["searched"], "必须报出找过的目录"
     ai_bridge.invalidate_capabilities()
 
 
 # ---------------- 渲染解释器探测 ----------------------------------------------
+
 
 def test_worker_python_candidates_cover_common_windows_installs(monkeypatch):
     """python.org、conda、以及 PATH 里的 python 都要在候选里。
@@ -564,10 +634,10 @@ def test_worker_python_candidates_cover_common_windows_installs(monkeypatch):
     monkeypatch.setattr(pool, "_glob", lambda pat: probed.append(pat) or [])
 
     cands = " | ".join(c for c in pool._candidate_pythons() if c).lower()
-    assert "anaconda3" in cands and "miniconda3" in cands   # conda
+    assert "anaconda3" in cands and "miniconda3" in cands  # conda
     globbed = " | ".join(probed).lower()
-    assert r"programs\python" in globbed                    # python.org 安装器
-    assert globbed.count("python*") >= 2                    # 还兜了 C:\ 根
+    assert r"programs\python" in globbed  # python.org 安装器
+    assert globbed.count("python*") >= 2  # 还兜了 C:\ 根
 
 
 def test_frozen_app_never_probes_its_own_executable(monkeypatch):
@@ -581,6 +651,7 @@ def test_frozen_app_never_probes_its_own_executable(monkeypatch):
 
 # ---------------- 一键诊断包 --------------------------------------------------
 
+
 def test_diagnostics_bundle_redacts_secrets_and_home(client, tmp_path, monkeypatch):
     """诊断包会被用户贴进 issue 或发到群里：密钥和个人目录一个都不许漏。"""
     import io
@@ -588,11 +659,22 @@ def test_diagnostics_bundle_redacts_secrets_and_home(client, tmp_path, monkeypat
 
     from tavotto.engine import ai_providers, diagnostics
 
-    ai_providers.save({"label": "Kimi", "agent": "claude", "api_key": "sk-abcdef123456",
-                       "base_url": "https://api.moonshot.cn/anthropic"})
-    monkeypatch.setattr(diagnostics, "_log_tail",
-                        lambda n=400: [f"用户目录 {os.path.expanduser('~')}/paper",
-                                       "Authorization: Bearer sk-abcdef123456"])
+    ai_providers.save(
+        {
+            "label": "Kimi",
+            "agent": "claude",
+            "api_key": "sk-abcdef123456",
+            "base_url": "https://api.moonshot.cn/anthropic",
+        }
+    )
+    monkeypatch.setattr(
+        diagnostics,
+        "_log_tail",
+        lambda n=400: [
+            f"用户目录 {os.path.expanduser('~')}/paper",
+            "Authorization: Bearer sk-abcdef123456",
+        ],
+    )
 
     resp = client.get("/api/diagnostics/bundle")
     assert resp.status_code == 200
@@ -601,12 +683,12 @@ def test_diagnostics_bundle_redacts_secrets_and_home(client, tmp_path, monkeypat
     assert set(z.namelist()) >= {"report.json", "app.log", "README.txt"}
 
     blob = "\n".join(z.read(n).decode("utf-8") for n in z.namelist())
-    assert "sk-abcdef123456" not in blob        # 密钥
+    assert "sk-abcdef123456" not in blob  # 密钥
     assert os.path.expanduser("~") not in blob  # 个人主目录
     report = json.loads(z.read("report.json"))
     assert report["tavotto"]["version"]
     assert "platform" in report["system"]
-    assert report["ai_endpoints"][0]["has_key"] is True   # 有没有 key 要报，key 本身不报
+    assert report["ai_endpoints"][0]["has_key"] is True  # 有没有 key 要报，key 本身不报
 
 
 def test_diagnostics_bundle_survives_missing_log(client, monkeypatch):
@@ -624,6 +706,7 @@ def test_diagnostics_bundle_survives_missing_log(client, monkeypatch):
 # 历来最容易出错的部分：路径解析在非目标平台上直接崩、`._pth` 写成正斜杠、
 # 往安装目录里写缓存。
 
+
 def test_runtime_path_logic_never_instantiates_a_foreign_pathlib():
     """`Path(...)` 按 os.name 分派 Posix/Windows 实现，在另一个平台上构造
     直接抛 UnsupportedOperation——真踩过：加了内置 runtime 之后，
@@ -637,12 +720,14 @@ def test_runtime_path_logic_never_instantiates_a_foreign_pathlib():
     src = Path(rt.__file__).read_text(encoding="utf-8")
     body = src.split("# 定位", 1)[1].split("# manifest", 1)[0]
     # 只看真代码：注释和 docstring 里当然要提到 Path(...) 说明为什么不用它
-    code = "\n".join(ln for ln in body.splitlines()
-                     if ln.strip() and not ln.lstrip().startswith("#"))
+    code = "\n".join(
+        ln for ln in body.splitlines() if ln.strip() and not ln.lstrip().startswith("#")
+    )
     assert "Path(" not in code, "定位逻辑里不允许出现 pathlib"
 
     # 直接验行为：把 os.name 改成 nt，整条链路都不许炸
     import os as _os
+
     old = _os.name
     try:
         _os.name = "nt"
@@ -669,9 +754,12 @@ def test_bundled_runtime_lives_under_the_onedir_internal_folder(tmp_path, monkey
     py = Path(rt.runtime_python(str(internal)))
     py.parent.mkdir(parents=True, exist_ok=True)
     py.write_text("#!/bin/sh\n")
-    (internal / "runtime-manifest.json").write_text(_json.dumps({
-        "schema": 1, "python": {"version": "3.13.15"},
-        "packages": {"numpy": "2.5.2"}}), encoding="utf-8")
+    (internal / "runtime-manifest.json").write_text(
+        _json.dumps(
+            {"schema": 1, "python": {"version": "3.13.15"}, "packages": {"numpy": "2.5.2"}}
+        ),
+        encoding="utf-8",
+    )
 
     monkeypatch.setattr(rt, "is_frozen", lambda: True)
     monkeypatch.delattr(sys, "_MEIPASS", raising=False)
@@ -695,8 +783,7 @@ def test_bundled_worker_writes_no_cache_into_the_install_directory(monkeypatch):
     assert env["PATH"] == r"C:\Windows\system32", "不该动用户原有的 PATH"
 
 
-def test_windows_desktop_missing_runtime_says_reinstall_not_install_python(
-        tmp_path, monkeypatch):
+def test_windows_desktop_missing_runtime_says_reinstall_not_install_python(tmp_path, monkeypatch):
     """朋友那台机器上如果 runtime 没打进去，弹「请先安装 Python 3.10 以上」
     是纯粹的误导——他什么都没做错，是我们的包不完整。"""
     from tavotto.engine import runtime as rt
@@ -725,6 +812,7 @@ def test_windows_desktop_missing_runtime_says_reinstall_not_install_python(
 # 控制台并显示出来——用户每渲染一张图都看见黑框闪一下。macOS 上完全看不到
 # 这个现象，所以只能靠静态扫描钉死。
 
+
 def _subprocess_spawns(path: Path) -> list[tuple[str, int, ast.Call]]:
     """文件里所有 `subprocess.Popen` / `subprocess.run` 调用节点。
 
@@ -741,11 +829,13 @@ def _subprocess_spawns(path: Path) -> list[tuple[str, int, ast.Call]]:
 
     found = []
     for node in ast.walk(tree):
-        if (isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-                and node.func.attr in ("Popen", "run")
-                and isinstance(node.func.value, ast.Name)
-                and node.func.value.id in aliases):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in ("Popen", "run")
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id in aliases
+        ):
             found.append((f"{path.name}:{node.lineno}", node.lineno, node))
     return found
 
@@ -759,9 +849,7 @@ def _spawn_sites() -> list[tuple[str, ast.Call]]:
     """
     engine = Path(pool.__file__).parent
     files = sorted(engine.glob("*.py")) + [Path(m.__file__)]
-    return [(where, call)
-            for py in files
-            for where, _lineno, call in _subprocess_spawns(py)]
+    return [(where, call) for py in files for where, _lineno, call in _subprocess_spawns(py)]
 
 
 def test_every_backend_subprocess_hides_the_console_window():
@@ -775,8 +863,8 @@ def test_every_backend_subprocess_hides_the_console_window():
     for where, call in _spawn_sites():
         kwargs = {kw.arg for kw in call.keywords}
         assert "creationflags" in kwargs, (
-            f"{where} 的 subprocess 调用漏了 creationflags="
-            "CREATE_NO_WINDOW（Windows 上会闪黑框）")
+            f"{where} 的 subprocess 调用漏了 creationflags=CREATE_NO_WINDOW（Windows 上会闪黑框）"
+        )
         checked.append(where)
     # 一个都没扫到 = 匹配逻辑坏了，别让空断言冒充通过
     assert len(checked) >= 9, f"只扫到 {checked}，AST 匹配逻辑可能失效了"
@@ -794,7 +882,8 @@ def test_every_backend_subprocess_that_decodes_pins_utf8():
         if "text" not in kwargs and "universal_newlines" not in kwargs:
             continue
         assert "encoding" in kwargs and "errors" in kwargs, (
-            f"{where} 用了 text=True 却没钉 encoding/errors，cp936 下会解码失败")
+            f"{where} 用了 text=True 却没钉 encoding/errors，cp936 下会解码失败"
+        )
 
 
 def test_create_no_window_has_exactly_one_definition():
@@ -805,9 +894,13 @@ def test_create_no_window_has_exactly_one_definition():
     from tavotto.engine import runtime as rt
 
     engine = Path(pool.__file__).parent
-    definers = [py.name for py in sorted(engine.glob("*.py"))
-                if any(ln.startswith("CREATE_NO_WINDOW")
-                       for ln in py.read_text(encoding="utf-8").splitlines())]
+    definers = [
+        py.name
+        for py in sorted(engine.glob("*.py"))
+        if any(
+            ln.startswith("CREATE_NO_WINDOW") for ln in py.read_text(encoding="utf-8").splitlines()
+        )
+    ]
     assert definers == ["runtime.py"], f"重复定义：{definers}"
 
     # 值本身：Windows 上是 CREATE_NO_WINDOW，别处必须是 0（等同于不传）
@@ -840,8 +933,8 @@ def test_upgrade_pins_utf8_so_pip_output_cannot_explode(monkeypatch):
 
 # ---------------- 换名盖不掉正被读的文件（os.replace → WinError 5） ----------
 
-def test_render_cache_yields_when_the_target_is_locked_by_a_reader(tmp_path,
-                                                                   monkeypatch):
+
+def test_render_cache_yields_when_the_target_is_locked_by_a_reader(tmp_path, monkeypatch):
     """Windows：目标正被 `send_file` 读着时 `os.replace` 报 WinError 5。
 
     POSIX 的 rename 盖得掉一个开着的文件，Windows 盖不掉（werkzeug 的
@@ -853,7 +946,7 @@ def test_render_cache_yields_when_the_target_is_locked_by_a_reader(tmp_path,
     m.CACHE_DIR.mkdir(parents=True, exist_ok=True)
     cached = m.CACHE_DIR / "locked-target.png"
 
-    m._write_render_cache(src, 200, cached)          # 先有一份完整的
+    m._write_render_cache(src, 200, cached)  # 先有一份完整的
     good = cached.read_bytes()
     assert good.startswith(b"\x89PNG\r\n\x1a\n")
 
@@ -861,7 +954,7 @@ def test_render_cache_yields_when_the_target_is_locked_by_a_reader(tmp_path,
         raise PermissionError(5, "Access is denied")
 
     monkeypatch.setattr(m.os, "replace", denied)
-    m._write_render_cache(src, 200, cached)          # 退让，不许抛
+    m._write_render_cache(src, 200, cached)  # 退让，不许抛
     assert cached.read_bytes() == good, "已经在那儿的同一张图不该被动过"
     assert not list(m.CACHE_DIR.glob("*.part.png")), "临时文件必须清掉"
 
@@ -876,16 +969,19 @@ def test_a_replace_that_never_succeeds_still_fails_loudly(tmp_path, monkeypatch)
     m.CACHE_DIR.mkdir(parents=True, exist_ok=True)
     cached = m.CACHE_DIR / "never-lands.png"
 
-    monkeypatch.setattr(m, "_REPLACE_BACKOFF_S", 0.0)   # 别让重试拖慢测试
-    monkeypatch.setattr(m.os, "replace",
-                        lambda _a, _b: (_ for _ in ()).throw(
-                            PermissionError(5, "Access is denied")))
+    monkeypatch.setattr(m, "_REPLACE_BACKOFF_S", 0.0)  # 别让重试拖慢测试
+    monkeypatch.setattr(
+        m.os,
+        "replace",
+        lambda _a, _b: (_ for _ in ()).throw(PermissionError(5, "Access is denied")),
+    )
     with pytest.raises(PermissionError):
         m._write_render_cache(figs / "Fig1.pdf", 200, cached)
     assert not list(m.CACHE_DIR.glob("*.part.png")), "失败路径也不许留临时文件"
 
 
 # ---------------- 关进程慢：poll() 还说活着，握手其实早就失败了 --------------
+
 
 class _ZombiePopen:
     """起得来、握不上手、还迟迟不肯退——Windows 关进程的那个窗口。
@@ -912,7 +1008,7 @@ class _ZombiePopen:
 
     # 进程
     def poll(self):
-        return None                       # ← 关键：永远说「我还活着」
+        return None  # ← 关键：永远说「我还活着」
 
     def kill(self):
         self.killed = True
@@ -942,8 +1038,7 @@ def test_workerd_that_dies_while_poll_still_says_alive_gets_disabled(monkeypatch
             break
 
     assert c.disabled, "反复起来就崩必须停用 workerd"
-    assert len(_ZombiePopen.instances) <= workerd_client._MAX_RESTARTS + 1, \
-        "重启次数不该超过上限"
+    assert len(_ZombiePopen.instances) <= workerd_client._MAX_RESTARTS + 1, "重启次数不该超过上限"
     # 半启动的都被收掉了：不收就是每重启一次泄漏一个子进程
     assert all(z.killed for z in _ZombiePopen.instances[:-1])
 
@@ -967,16 +1062,26 @@ def test_no_test_id_can_blow_the_windows_env_var_limit():
     # **不能加 -q**：安静模式把每个文件折叠成一行计数，id 根本不出现，
     # 这条守卫就永远是绿的（第一版正是这么写的，改回原 bug 也没红）
     out = subprocess.run(
-        [sys.executable, "-m", "pytest", "--collect-only", "--no-header",
-         "-p", "no:cacheprovider", str(Path(__file__).parent)],
-        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "--collect-only",
+            "--no-header",
+            "-p",
+            "no:cacheprovider",
+            str(Path(__file__).parent),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
         cwd=Path(__file__).resolve().parents[1],
     )
     assert out.returncode == 0, f"收集用例就失败了:\n{out.stdout[-3000:]}\n{out.stderr[-2000:]}"
 
     LIMIT = 32767 // 4
-    worst = max((ln for ln in out.stdout.splitlines() if "::" in ln),
-                key=len, default="")
+    worst = max((ln for ln in out.stdout.splitlines() if "::" in ln), key=len, default="")
     assert len(worst) <= LIMIT, (
         f"有用例 id 长达 {len(worst)} 字符（上限 {LIMIT}）——多半是 parametrize "
         f"直接吃了整个文件的内容。开头：{worst[:200]}"
@@ -1001,8 +1106,10 @@ def test_no_test_id_can_blow_the_windows_env_var_limit():
 WIN_INSTALL = "C:\\Users\\张三\\AppData\\Local\\Tavotto"
 WIN_DESKTOP_EXE = WIN_INSTALL + "\\Tavotto.exe"
 WIN_CLI_EXE = WIN_INSTALL + "\\sidecar\\Tavotto\\tavotto-cli.exe"
-WIN_ENVIRON = {"LOCALAPPDATA": "C:\\Users\\张三\\AppData\\Local",
-               "APPDATA": "C:\\Users\\张三\\AppData\\Roaming"}
+WIN_ENVIRON = {
+    "LOCALAPPDATA": "C:\\Users\\张三\\AppData\\Local",
+    "APPDATA": "C:\\Users\\张三\\AppData\\Roaming",
+}
 
 
 def test_desktop_only_windows_install_exposes_a_usable_cli():
@@ -1014,9 +1121,13 @@ def test_desktop_only_windows_install_exposes_a_usable_cli():
     from tavotto.engine import locate
 
     installed = {WIN_DESKTOP_EXE, WIN_CLI_EXE}
-    got = locate.find_cli(system="win32", environ=WIN_ENVIRON,
-                          isfile=lambda p: p in installed,
-                          which=lambda name: None, reg_dirs=())
+    got = locate.find_cli(
+        system="win32",
+        environ=WIN_ENVIRON,
+        isfile=lambda p: p in installed,
+        which=lambda name: None,
+        reg_dirs=(),
+    )
     assert got["cmd"] == [WIN_CLI_EXE], "只装桌面版就找不到 CLI = 那个 bug 回来了"
     assert got["source"] == "install"
 
@@ -1031,9 +1142,13 @@ def test_the_gui_binary_is_never_offered_as_a_command_line():
     from tavotto.engine import locate
 
     only_gui = {WIN_DESKTOP_EXE}
-    got = locate.find_cli(system="win32", environ=WIN_ENVIRON,
-                          isfile=lambda p: p in only_gui,
-                          which=lambda name: None, reg_dirs=())
+    got = locate.find_cli(
+        system="win32",
+        environ=WIN_ENVIRON,
+        isfile=lambda p: p in only_gui,
+        which=lambda name: None,
+        reg_dirs=(),
+    )
     assert got["cmd"] is None, "把 GUI exe 当 CLI 交出去了"
     assert got["desktop"] == WIN_DESKTOP_EXE, "得说清楚「装了，只是缺 CLI」"
 
@@ -1048,9 +1163,9 @@ def test_the_windows_installer_ships_and_registers_that_cli():
     assert 'name="tavotto-cli"' in spec, "安装产物里没有 console 版 CLI"
     assert "console=True" in spec
 
-    nsi = (root / "src-tauri" / "windows" /
-           "installer.nsi").read_text(encoding="utf-8")
+    nsi = (root / "src-tauri" / "windows" / "installer.nsi").read_text(encoding="utf-8")
     from tavotto.engine import locate
+
     assert locate.CLI_NAME in nsi, "安装器没提到 tavotto-cli.exe"
     assert "doctor --json --write-manifest" in nsi, "装完没有登记安装清单"
 
@@ -1067,6 +1182,7 @@ def test_the_windows_installer_ships_and_registers_that_cli():
 # 文件内容一个字都没错，只是换行符被 git 改了。
 #
 # 修法是 .gitattributes 把这类「会被逐字节比对的生成物」钉成 LF。
+
 
 def _byte_compared_generated_files() -> list[str]:
     """会被逐字节 / 逐指纹比对的生成物。新增一个就往这里加一行。"""
@@ -1101,8 +1217,11 @@ def test_byte_compared_artifacts_are_pinned_to_lf(rel):
         "没有 .gitattributes：Git for Windows 默认 core.autocrlf=true，"
         "检出时会把这些生成物换成 CRLF，逐字节比对当场失败"
     )
-    rules = [ln.strip() for ln in ga.read_text(encoding="utf-8").splitlines()
-             if ln.strip() and not ln.strip().startswith("#")]
+    rules = [
+        ln.strip()
+        for ln in ga.read_text(encoding="utf-8").splitlines()
+        if ln.strip() and not ln.strip().startswith("#")
+    ]
     hit = [r for r in rules if r.split()[0] in (rel, "*") and "eol=lf" in r]
     assert hit, f".gitattributes 没有把 {rel} 钉成 eol=lf；现有规则：{rules}"
 
@@ -1130,12 +1249,15 @@ def test_no_test_judges_executability_by_filesystem_mode() -> None:
         # **按 token 扫，不是按行切 `#`**：docstring 里解释这个坑的文字
         # 会被行级判据当成犯规（第一版就是这么误报的）。字符串与注释都跳过。
         with tokenize.open(path) as fh:
-            names = [t for t in tokenize.generate_tokens(fh.readline)
-                     if t.type == tokenize.NAME or t.type == tokenize.NUMBER]
+            names = [
+                t
+                for t in tokenize.generate_tokens(fh.readline)
+                if t.type == tokenize.NAME or t.type == tokenize.NUMBER
+            ]
         for i, tok in enumerate(names):
             if tok.string != "st_mode":
                 continue
-            near = {t.string for t in names[max(0, i - 6):i + 7]}
+            near = {t.string for t in names[max(0, i - 6) : i + 7]}
             if near & {"0o111", "0o100", "S_IXUSR", "S_IXGRP", "S_IXOTH"}:
                 offenders.append(f"{path.name}:{tok.start[0]}")
 
@@ -1143,7 +1265,6 @@ def test_no_test_judges_executability_by_filesystem_mode() -> None:
         "这些断言在 Windows 上恒假（st_mode 没有执行位），"
         "改查 git 索引里的 mode：\n  " + "\n  ".join(offenders)
     )
-
 
 
 # ---------------------------------------------------------------------------
@@ -1167,10 +1288,13 @@ def test_compat_baseline_is_written_with_lf_on_every_platform(tmp_path):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts" / "ci"))
     import compat_corpus as CC
 
-    payload = {"schema": 1,
-               "generated_for": {"target": "bundled", "matplotlib": "3.11.1"},
-               "cases": {"a": {"classification": "full_support",
-                               "stages": {"execute": True, "capture": True}}}}
+    payload = {
+        "schema": 1,
+        "generated_for": {"target": "bundled", "matplotlib": "3.11.1"},
+        "cases": {
+            "a": {"classification": "full_support", "stages": {"execute": True, "capture": True}}
+        },
+    }
     CC.validate_baseline(payload)
     dest = CC.write_baseline(payload, tmp_path / "baseline.json")
     raw = dest.read_bytes()
@@ -1204,13 +1328,15 @@ def test_compat_text_writes_all_pin_the_newline():
             if not any(c in ln for c in calls):
                 continue
             checked += 1
-            block = "\n".join(lines[i:i + 4])
+            block = "\n".join(lines[i : i + 4])
             assert 'newline="\\n"' in block, (
                 f"{name}:{i + 1} 的 write_text 没钉换行——Windows 上会写成 "
-                f"CRLF，而这是提交进仓库/要被 diff 的产出物")
+                f"CRLF，而这是提交进仓库/要被 diff 的产出物"
+            )
     assert checked >= 3, (
         f"只扫到 {checked} 处写入，比预期少——写盘的地方挪了位置？"
-        f"这条用例要跟着改，别让它安静地什么都不检查")
+        f"这条用例要跟着改，别让它安静地什么都不检查"
+    )
 
 
 def test_playground_writes_the_workspace_source_byte_for_byte():
@@ -1245,7 +1371,8 @@ def test_playground_writes_the_workspace_source_byte_for_byte():
     assert writes, "用例前提失效：browser.py 不再往工作区写脚本了？"
     assert all("b" in str(m) for m in writes), (
         f"browser.py 必须用二进制模式写工作区源文件（现在是 {writes}）——"
-        "文本模式会在 Windows 上翻译换行，源文件完整性校验永远 mismatch。")
+        "文本模式会在 Windows 上翻译换行，源文件完整性校验永远 mismatch。"
+    )
 
 
 def test_artist_census_prints_chinese_under_a_legacy_code_page(tmp_path):
@@ -1280,22 +1407,30 @@ def test_artist_census_prints_chinese_under_a_legacy_code_page(tmp_path):
         "ax.plot([0, 1], [0, 1])\n"
         "ax.set_title('中文标题')\n"
         "fig.savefig('cp_probe.pdf')\n",
-        encoding="utf-8")
+        encoding="utf-8",
+    )
 
     env = dict(os.environ, PYTHONIOENCODING="cp1252")
     # 父进程这一侧指名 UTF-8：工具的 stdout 已经钉成 UTF-8，而 `text=True`
     # 用的是**父进程** locale。两边不一致时 subprocess 的读线程会死在解码上，
     # `communicate()` 把那一路交成 None，报出来的是一句莫名其妙的 TypeError。
-    proc = subprocess.run([worker_py, str(tool), "fig.py"], cwd=str(tmp_path),
-                          capture_output=True, timeout=300, env=env,
-                          encoding="utf-8", errors="replace")
+    proc = subprocess.run(
+        [worker_py, str(tool), "fig.py"],
+        cwd=str(tmp_path),
+        capture_output=True,
+        timeout=300,
+        env=env,
+        encoding="utf-8",
+        errors="replace",
+    )
     assert "UnicodeEncodeError" not in (proc.stdout + proc.stderr), (
-        "普查工具在非 UTF-8 控制台上崩了——stdout 必须钉成 UTF-8"
-        f"\n{proc.stdout}\n{proc.stderr}")
+        f"普查工具在非 UTF-8 控制台上崩了——stdout 必须钉成 UTF-8\n{proc.stdout}\n{proc.stderr}"
+    )
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
 
 # ---------------- 子进程输出的解码（本地代码页 ≠ UTF-8）------------------------
+
 
 def test_child_output_survives_a_legacy_codepage():
     """真复现：子进程打中文，用**旧代码页**解码就会丢掉整段诊断。
@@ -1318,24 +1453,35 @@ def test_child_output_survives_a_legacy_codepage():
     # 的那个平台上直接失败，而且失败原因与被测的「父进程解码」毫无关系。
     # 走 `stdout.buffer.write` 绕开文本层，产出的字节与 locale 无关。
     # （Codex 在 #57 上指出的正是这个：上一版只控制了父进程的解码器。）
-    child = ("import sys; "
-             "sys.stdout.buffer.write('渲染环境不可用：缺少 matplotlib'"
-             ".encode('utf-8'))")
+    child = "import sys; sys.stdout.buffer.write('渲染环境不可用：缺少 matplotlib'.encode('utf-8'))"
 
     # ① 按旧代码页解码：诊断没了（丢字节或整段变成替换字符）
     legacy = subprocess.run(  # 复现用：这里就是要那个会丢字节的旧代码页
-        [sys.executable, "-c", child], capture_output=True,
-        text=True, encoding="cp1252", errors="replace", timeout=60)
+        [sys.executable, "-c", child],
+        capture_output=True,
+        text=True,
+        encoding="cp1252",
+        errors="replace",
+        timeout=60,
+    )
     assert legacy.returncode == 0, "子进程本身应当成功——失败的只是解码"
     assert "渲染环境不可用" not in legacy.stdout, (
-        "这条用例的前提失效了：cp1252 竟然解出了中文，说明构造的复现不成立")
+        "这条用例的前提失效了：cp1252 竟然解出了中文，说明构造的复现不成立"
+    )
 
     # ② 按 utf-8 解码：诊断完整
-    ok = subprocess.run([sys.executable, "-c", child], capture_output=True,
-                        text=True, encoding="utf-8", errors="replace", timeout=60)
+    ok = subprocess.run(
+        [sys.executable, "-c", child],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=60,
+    )
     assert ok.returncode == 0
-    assert "渲染环境不可用：缺少 matplotlib" in ok.stdout, \
+    assert "渲染环境不可用：缺少 matplotlib" in ok.stdout, (
         "显式 utf-8 之后诊断必须完整——否则这条修复没有意义"
+    )
 
 
 def test_the_repo_scripts_really_round_trip_chinese_help():
@@ -1346,12 +1492,18 @@ def test_the_repo_scripts_really_round_trip_chinese_help():
     Codex 在 #57 上指出的正是这个缺口。
     """
     script = Path(__file__).resolve().parents[1] / "scripts" / "ci" / "lab_preflight.py"
-    out = subprocess.run([sys.executable, str(script), "--help"],
-                         capture_output=True, text=True,
-                         encoding="utf-8", errors="replace", timeout=120)
+    out = subprocess.run(
+        [sys.executable, str(script), "--help"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=120,
+    )
     assert out.returncode == 0, f"--help 都跑不了：{out.stderr}"
-    assert any("一" <= ch <= "鿿" for ch in out.stdout), \
+    assert any("一" <= ch <= "鿿" for ch in out.stdout), (
         "帮助文本里一个中文都没读到——要么脚本变了，要么解码又丢了"
+    )
 
 
 def test_no_ci_script_hard_codes_a_posix_only_signal():
@@ -1398,7 +1550,8 @@ def test_no_ci_script_hard_codes_a_posix_only_signal():
     assert not offenders, (
         "这些地方直接取了 POSIX 专属信号，Windows 上会 AttributeError：\n  "
         + "\n  ".join(offenders)
-        + "\n用 getattr(signal, \"SIGKILL\", signal.SIGTERM) 代替")
+        + '\n用 getattr(signal, "SIGKILL", signal.SIGTERM) 代替'
+    )
 
 
 def test_artifact_manifest_summary_survives_a_windows_codepage(tmp_path):
@@ -1425,18 +1578,32 @@ def test_artifact_manifest_summary_survives_a_windows_codepage(tmp_path):
     out = tmp_path / "artifact-manifest.json"
 
     env = dict(os.environ)
-    env["PYTHONIOENCODING"] = "cp1252"      # 复现 runner 上的默认编码
-    env.pop("GITHUB_STEP_SUMMARY", None)    # 不往真的 step summary 里写
+    env["PYTHONIOENCODING"] = "cp1252"  # 复现 runner 上的默认编码
+    env.pop("GITHUB_STEP_SUMMARY", None)  # 不往真的 step summary 里写
 
     r = subprocess.run(
-        [sys.executable, str(script), "build",
-         "--version", "0.9.2", "--source-sha", "a" * 40,
-         "--add", f"wheel:{wheel.name}:any",
-         "--base", str(tmp_path), "--out", str(out)],
-        capture_output=True, text=True, encoding="utf-8", env=env)
+        [
+            sys.executable,
+            str(script),
+            "build",
+            "--version",
+            "0.9.2",
+            "--source-sha",
+            "a" * 40,
+            "--add",
+            f"wheel:{wheel.name}:any",
+            "--base",
+            str(tmp_path),
+            "--out",
+            str(out),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env=env,
+    )
 
-    assert r.returncode == 0, (
-        f"cp1252 下 build 挂了（returncode={r.returncode}）：\n{r.stderr}")
+    assert r.returncode == 0, f"cp1252 下 build 挂了（returncode={r.returncode}）：\n{r.stderr}"
     assert "UnicodeEncodeError" not in r.stderr, r.stderr
     assert out.is_file(), "清单没写出来"
 
@@ -1446,6 +1613,7 @@ def test_artifact_manifest_summary_survives_a_windows_codepage(tmp_path):
 # 第三方软件改成 text/plain。send_from_directory 照猜发出去，而入口脚本是
 # <script type="module">——WebView2 按严格 MIME 检查拒绝执行，React 不挂载，
 # 桌面版整窗白屏、零报错。资产的 Content-Type 必须与机器级关联无关。
+
 
 def _broken_registry_guess(_name, strict=True):
     """模拟被改坏的 Windows 注册表：所有扩展名都猜成 text/plain。"""
@@ -1465,13 +1633,14 @@ def test_js_assets_ignore_broken_windows_mime_registry(client, tmp_path, monkeyp
     # 换掉这个函数 == 在一台注册表被改坏的 Windows 上跑
     monkeypatch.setattr(mimetypes, "guess_type", _broken_registry_guess)
 
-    for name, want in [("index-abc123.js", "text/javascript"),
-                       ("index-abc123.css", "text/css"),
-                       ("logo.svg", "image/svg+xml")]:
+    for name, want in [
+        ("index-abc123.js", "text/javascript"),
+        ("index-abc123.css", "text/css"),
+        ("logo.svg", "image/svg+xml"),
+    ]:
         r = client.get(f"/assets/{name}")
         assert r.status_code == 200
-        assert r.mimetype == want, (
-            f"{name} 发成了 {r.mimetype}——严格 MIME 检查下浏览器会拒载")
+        assert r.mimetype == want, f"{name} 发成了 {r.mimetype}——严格 MIME 检查下浏览器会拒载"
         # 缓存策略不因强制 MIME 而丢
         assert "immutable" in r.headers.get("Cache-Control", "")
 
@@ -1500,7 +1669,8 @@ def test_index_busts_the_poisoned_asset_cache(client, tmp_path, monkeypatch):
     r = client.get("/")
     assert r.status_code == 200
     assert r.headers.get("Clear-Site-Data") == '"cache"', (
-        "没有这个头，0.10.x 缓存过错误 MIME 的浏览器升级后仍旧白屏")
+        "没有这个头，0.10.x 缓存过错误 MIME 的浏览器升级后仍旧白屏"
+    )
     assert r.headers.get("Cache-Control") == "no-cache"
 
 
@@ -1512,6 +1682,7 @@ def test_index_busts_the_poisoned_asset_cache(client, tmp_path, monkeypatch):
 #   → rmtree(ignore_errors=True) 撞 sharing violation → 静默留下整棵树。
 # 下面这条用例把那个窗口在任何平台上确定性地复现出来：进程没被 reap 之前，
 # 删除就抛 Windows 风格的 PermissionError。
+
 
 class _LingeringPopen:
     """Windows 关进程的真实时序：kill 只是「发出请求」，wait 才是「它没了」。
@@ -1532,7 +1703,7 @@ class _LingeringPopen:
         self.kill_called = False
         self.wait_called = False
         self.reaped = False
-        type(self).instances.append(self)   # 子类各记各的（见 _StubbornPopen）
+        type(self).instances.append(self)  # 子类各记各的（见 _StubbornPopen）
 
     class _Pipe:
         def __init__(self, eof: bool = False):
@@ -1547,7 +1718,7 @@ class _LingeringPopen:
             pass
 
         def readline(self):
-            return ""                     # ← shutdown 之后的 EOF
+            return ""  # ← shutdown 之后的 EOF
 
         def close(self):
             self.closed = True
@@ -1556,11 +1727,11 @@ class _LingeringPopen:
         return 0 if self.reaped else None
 
     def kill(self):
-        self.kill_called = True           # ← 只发信号，进程还在，句柄还占着
+        self.kill_called = True  # ← 只发信号，进程还在，句柄还占着
 
     def wait(self, timeout=None):
         self.wait_called = True
-        self.reaped = True                # ← 到这一刻它才真的没了
+        self.reaped = True  # ← 到这一刻它才真的没了
         return 0
 
 
@@ -1576,19 +1747,18 @@ def _windows_locked_rmtree(fake: _LingeringPopen, calls: list):
         calls.append(Path(path))
         if not fake.reaped:
             exc = PermissionError(
-                13, "The process cannot access the file because it is being "
-                    "used by another process")
+                13, "The process cannot access the file because it is being used by another process"
+            )
             exc.winerror = 32
             if ignore_errors:
-                return None               # ← 真 shutil 就是这么把失败吞掉的
+                return None  # ← 真 shutil 就是这么把失败吞掉的
             raise exc
         return real(path, ignore_errors=ignore_errors, **kw)
 
     return rmtree
 
 
-def test_discard_reaps_the_process_before_deleting_the_replay_dir(tmp_path,
-                                                                  monkeypatch):
+def test_discard_reaps_the_process_before_deleting_the_replay_dir(tmp_path, monkeypatch):
     """`discard()` 返回时：进程已被 wait 回收、句柄已关、exact base 已消失。
 
     旧实现在这里必然红：整条关停路径一次 `proc.wait()` 都没有（shutdown 命令
@@ -1602,8 +1772,7 @@ def test_discard_reaps_the_process_before_deleting_the_replay_dir(tmp_path,
 
     monkeypatch.setattr(pool, "ENGINE_CACHE", tmp_path / "engine")
     monkeypatch.setattr(pool.subprocess, "Popen", fake_cls)
-    monkeypatch.setattr(pool, "select_worker_python",
-                        lambda: ("py-fake", pool.SOURCE_SYSTEM))
+    monkeypatch.setattr(pool, "select_worker_python", lambda: ("py-fake", pool.SOURCE_SYSTEM))
     monkeypatch.setattr(workerd_client, "find_workerd", lambda: None)
 
     figs = _figs(tmp_path)
@@ -1628,14 +1797,12 @@ def test_discard_reaps_the_process_before_deleting_the_replay_dir(tmp_path,
     assert str(base) not in pool._oneshot_bases, "删干净了还占着 prune 豁免名额"
 
 
-def test_discard_logs_the_exact_path_when_the_tree_survives(tmp_path, monkeypatch,
-                                                            caplog):
+def test_discard_logs_the_exact_path_when_the_tree_survives(tmp_path, monkeypatch, caplog):
     """删到底还是删不掉时：不静默、不抛、注销豁免让 prune 还有机会回收。"""
     _LingeringPopen.instances = []
     monkeypatch.setattr(pool, "ENGINE_CACHE", tmp_path / "engine")
     monkeypatch.setattr(pool.subprocess, "Popen", _LingeringPopen)
-    monkeypatch.setattr(pool, "select_worker_python",
-                        lambda: ("py-fake", pool.SOURCE_SYSTEM))
+    monkeypatch.setattr(pool, "select_worker_python", lambda: ("py-fake", pool.SOURCE_SYSTEM))
     monkeypatch.setattr(workerd_client, "find_workerd", lambda: None)
 
     figs = _figs(tmp_path)
@@ -1657,14 +1824,15 @@ def test_discard_logs_the_exact_path_when_the_tree_survives(tmp_path, monkeypatc
     monkeypatch.setattr(pool, "_RMTREE_BACKOFF", (0.0, 0.0, 0.0))
 
     with caplog.at_level("WARNING", logger="tavotto.engine"):
-        pool.discard(w)                    # 绝不抛：写回的成败与收尾无关
+        pool.discard(w)  # 绝不抛：写回的成败与收尾无关
 
     assert len(attempts) == 3, "有限退让：既不是只试一次，也不是无限重试"
     text = "\n".join(r.getMessage() for r in caplog.records)
     assert str(base) in text, "日志里没有 exact path，线上根本对不上号"
     assert "fig_stuck.py" in text and "PermissionError" in text
     assert str(base) not in pool._oneshot_bases, (
-        "删不掉更要注销，否则这棵孤儿目录被永久豁免、prune 再也收不走")
+        "删不掉更要注销，否则这棵孤儿目录被永久豁免、prune 再也收不走"
+    )
 
 
 class _StubbornPopen(_LingeringPopen):
@@ -1694,8 +1862,7 @@ def test_force_kill_waits_until_the_process_is_actually_gone(tmp_path, monkeypat
     calls: list[Path] = []
     monkeypatch.setattr(pool, "ENGINE_CACHE", tmp_path / "engine")
     monkeypatch.setattr(pool.subprocess, "Popen", _StubbornPopen)
-    monkeypatch.setattr(pool, "select_worker_python",
-                        lambda: ("py-fake", pool.SOURCE_SYSTEM))
+    monkeypatch.setattr(pool, "select_worker_python", lambda: ("py-fake", pool.SOURCE_SYSTEM))
     monkeypatch.setattr(workerd_client, "find_workerd", lambda: None)
     monkeypatch.setattr(pool, "_REAP_TIMEOUT", 1.0)
 
@@ -1713,6 +1880,6 @@ def test_force_kill_waits_until_the_process_is_actually_gone(tmp_path, monkeypat
     assert not w.alive(), "被硬杀的会话必须判死，绝不许被 get() 捡回去复用"
     assert fake.stdin.closed and fake.stdout.closed and w._log.closed
 
-    pool.discard(w)                        # 幂等：第二次关停不许抛
+    pool.discard(w)  # 幂等：第二次关停不许抛
     assert not base.exists(), f"exact base 没删掉：{base}（rmtree 调用={calls}）"
     assert str(base) not in pool._oneshot_bases

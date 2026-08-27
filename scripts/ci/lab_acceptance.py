@@ -20,6 +20,7 @@ artifact / publish exact artifact，这里只是把 test 那一环加深。
     python scripts/ci/lab_acceptance.py --dist dist/
     python scripts/ci/lab_acceptance.py --dist dist/ --skip-smoke   # 只做结构断言
 """
+
 from __future__ import annotations
 
 import argparse
@@ -51,14 +52,17 @@ def find_wheel(dist: Path) -> Path:
     if not wheels:
         raise CiError("no_wheel", f"{dist} 里没有 wheel；lab gate 必须消费 build job 的产物")
     if len(wheels) > 1:
-        raise CiError("ambiguous_wheel",
-                      f"{dist} 里有 {len(wheels)} 个 wheel：{[w.name for w in wheels]}。"
-                      "候选包必须唯一，否则验收的和发布的可能不是同一个")
+        raise CiError(
+            "ambiguous_wheel",
+            f"{dist} 里有 {len(wheels)} 个 wheel：{[w.name for w in wheels]}。"
+            "候选包必须唯一，否则验收的和发布的可能不是同一个",
+        )
     return wheels[0]
 
 
 def sha256(path: Path) -> str:
     import hashlib
+
     h = hashlib.sha256()
     with path.open("rb") as fh:
         for chunk in iter(lambda: fh.read(1 << 20), b""):
@@ -68,20 +72,31 @@ def sha256(path: Path) -> str:
 
 def make_venv(where: Path) -> Path:
     """全新 venv。返回解释器路径。"""
-    subprocess.run([sys.executable, "-m", "venv", str(where)], check=True,
-                   capture_output=True, timeout=300)
-    py = where / ("Scripts" if os.name == "nt" else "bin") / ("python.exe" if os.name == "nt" else "python")
+    subprocess.run(
+        [sys.executable, "-m", "venv", str(where)], check=True, capture_output=True, timeout=300
+    )
+    py = (
+        where
+        / ("Scripts" if os.name == "nt" else "bin")
+        / ("python.exe" if os.name == "nt" else "python")
+    )
     if not py.exists():
         raise CiError("venv_failed", f"建完 venv 但找不到解释器：{py}")
     return py
 
 
 def pip_install(py: Path, args: list[str], timeout: int = 1800) -> None:
-    out = subprocess.run([str(py), "-m", "pip", "install", "--disable-pip-version-check", *args],
-                         capture_output=True, text=True, timeout=timeout)
+    out = subprocess.run(
+        [str(py), "-m", "pip", "install", "--disable-pip-version-check", *args],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
     if out.returncode != 0:
-        raise CiError("pip_install_failed",
-                      f"pip install {' '.join(args)} 失败：\n{out.stdout[-2000:]}\n{out.stderr[-2000:]}")
+        raise CiError(
+            "pip_install_failed",
+            f"pip install {' '.join(args)} 失败：\n{out.stdout[-2000:]}\n{out.stderr[-2000:]}",
+        )
 
 
 # --------------------------------------------------------------------------
@@ -113,13 +128,34 @@ print(json.dumps(out))
     results.append(("版本号非空", bool(info["version"]), info["version"] or "(空)"))
     # 这一条是 CLAUDE.md 里点名的坑：hatchling 默认跳过 VCS 忽略的文件，
     # 前端产物必须靠 pyproject 的 artifacts 收回，漏了的话 wheel 里没有界面。
-    results.append(("包内前端产物 web/index.html", info["web_index"],
-                    "在" if info["web_index"] else "缺失 —— 装完首页会 404"))
-    results.append(("worker 入口 engine/worker.py", info["worker"],
-                    "在" if info["worker"] else "缺失 —— 一张图都渲染不出来"))
-    results.append(("patch 规范化 engine/patchspec.py", info["patchspec"], "在" if info["patchspec"] else "缺失"))
-    results.append(("出版规范 profiles/publication.json", info["profiles"],
-                    "在" if info["profiles"] else "缺失 —— 预检规则随 wheel 分发，少了它 MCP 侧会崩"))
+    results.append(
+        (
+            "包内前端产物 web/index.html",
+            info["web_index"],
+            "在" if info["web_index"] else "缺失 —— 装完首页会 404",
+        )
+    )
+    results.append(
+        (
+            "worker 入口 engine/worker.py",
+            info["worker"],
+            "在" if info["worker"] else "缺失 —— 一张图都渲染不出来",
+        )
+    )
+    results.append(
+        (
+            "patch 规范化 engine/patchspec.py",
+            info["patchspec"],
+            "在" if info["patchspec"] else "缺失",
+        )
+    )
+    results.append(
+        (
+            "出版规范 profiles/publication.json",
+            info["profiles"],
+            "在" if info["profiles"] else "缺失 —— 预检规则随 wheel 分发，少了它 MCP 侧会崩",
+        )
+    )
     return results
 
 
@@ -135,20 +171,39 @@ def cli_checks(py: Path) -> list[tuple[str, bool, str]]:
     results.append(("console script 存在", exe.exists(), str(exe) if exe.exists() else "缺失"))
     if exe.exists():
         r = subprocess.run([str(exe), "--help"], capture_output=True, text=True, timeout=120)
-        results.append(("tavotto --help", r.returncode == 0,
-                        "ok" if r.returncode == 0 else r.stderr.strip()[-300:]))
-    r = subprocess.run([str(py), "-m", "tavotto", "doctor", "--json"],
-                       capture_output=True, text=True, timeout=180)
+        results.append(
+            (
+                "tavotto --help",
+                r.returncode == 0,
+                "ok" if r.returncode == 0 else r.stderr.strip()[-300:],
+            )
+        )
+    r = subprocess.run(
+        [str(py), "-m", "tavotto", "doctor", "--json"], capture_output=True, text=True, timeout=180
+    )
     ok = r.returncode == 0 and r.stdout.strip().startswith("{")
-    results.append(("tavotto doctor --json", ok,
-                    "输出合法 JSON" if ok else (r.stderr or r.stdout).strip()[-300:]))
+    results.append(
+        (
+            "tavotto doctor --json",
+            ok,
+            "输出合法 JSON" if ok else (r.stderr or r.stdout).strip()[-300:],
+        )
+    )
     return results
 
 
 def smoke(py: Path, figures: Path, workdir: Path) -> tuple[bool, str]:
     """跑既有的端到端冒烟。返回 (通过, 摘要)。"""
-    cmd = [sys.executable, str(REPO / "scripts" / "smoke_app.py"),
-           "--python", str(py), "--figures", str(figures), "--workdir", str(workdir)]
+    cmd = [
+        sys.executable,
+        str(REPO / "scripts" / "smoke_app.py"),
+        "--python",
+        str(py),
+        "--figures",
+        str(figures),
+        "--workdir",
+        str(workdir),
+    ]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=2400)
     tail = (r.stdout + r.stderr).strip().splitlines()
     return r.returncode == 0, "\n".join(tail[-25:])
@@ -206,13 +261,19 @@ def main(argv: list[str] | None = None) -> int:
         else:
             good, tail = smoke(py, Path(args.figures), work_dir)
             ok = ok and good
-            rows.append(("端到端冒烟（smoke_app）", "✅" if good else "❌",
-                         "启动/渲染/热渲染/导出/覆盖导出/干净退出" if good
-                         else "见下方日志"))
+            rows.append(
+                (
+                    "端到端冒烟（smoke_app）",
+                    "✅" if good else "❌",
+                    "启动/渲染/热渲染/导出/覆盖导出/干净退出" if good else "见下方日志",
+                )
+            )
             if not good:
                 print("---- smoke_app 输出尾部 ----", file=sys.stderr)
                 print(tail, file=sys.stderr)
-                summary(f"\n<details><summary>smoke_app 失败输出</summary>\n\n```\n{tail}\n```\n</details>\n")
+                summary(
+                    f"\n<details><summary>smoke_app 失败输出</summary>\n\n```\n{tail}\n```\n</details>\n"
+                )
     except CiError as exc:
         ok = False
         rows.append((exc.code, "❌", exc.message))
@@ -223,6 +284,7 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         if not args.keep:
             import shutil
+
             for d in (venv_dir, work_dir):
                 shutil.rmtree(d, ignore_errors=True)
 
@@ -237,8 +299,9 @@ def main(argv: list[str] | None = None) -> int:
     }
     write_report("acceptance.json", payload)
 
-    summary(f"\n### 候选包验收\n\n`{wheel.name}`  sha256 `{digest[:16]}…`\n\n"
-            + summary_table(rows))
+    summary(
+        f"\n### 候选包验收\n\n`{wheel.name}`  sha256 `{digest[:16]}…`\n\n" + summary_table(rows)
+    )
     print("\n候选包验收：" + ("通过" if ok else "失败"))
     return 0 if ok else 1
 

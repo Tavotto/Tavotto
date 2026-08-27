@@ -39,6 +39,7 @@
     python scripts/ci/compat_matrix.py --case shape_pyplot_show_only
     python scripts/ci/compat_matrix.py --all --update-baseline   # 本地，人来读
 """
+
 from __future__ import annotations
 
 import argparse
@@ -150,15 +151,18 @@ def stage_discover(project: Path, script_rel: str, case: dict) -> dict:
     stem = case["stem"]
     info = reg.for_stem(stem)
     detail["static_entry"] = (report["scripts"].get(script_rel) or {}).get("entry")
-    detail["static_stems"] = sorted(
-        (report["scripts"].get(script_rel) or {}).get("stems") or [])
+    detail["static_stems"] = sorted((report["scripts"].get(script_rel) or {}).get("stems") or [])
     detail["conflicts"] = sorted(report.get("conflicts") or {})
 
     if info is not None:
         detail["actual"] = "discoverable"
         detail["entry"] = info["entry"]
-        return {"ok": want_mode == "discoverable", "detail": detail,
-                "entry": info["entry"], "registry": reg}
+        return {
+            "ok": want_mode == "discoverable",
+            "detail": detail,
+            "entry": info["entry"],
+            "registry": reg,
+        }
 
     if want_mode == "discoverable":
         detail["actual"] = "not_discovered"
@@ -166,15 +170,22 @@ def stage_discover(project: Path, script_rel: str, case: dict) -> dict:
 
     # 试运行探测：stem 只有运行期才知道时的那条路。
     result = engine_probe.probe_and_register(project, script_rel)
-    detail["probe"] = {"entry": result.get("entry"), "tried": result.get("tried"),
-                       "stems": result.get("stems"), "error": result.get("error")}
+    detail["probe"] = {
+        "entry": result.get("entry"),
+        "tried": result.get("tried"),
+        "stems": result.get("stems"),
+        "error": result.get("error"),
+    }
     reg = engine_registry.Registry()
     reg.load(project)
     info = reg.for_stem(stem)
     detail["actual"] = "requires_probe" if info is not None else "not_discovered"
-    return {"ok": info is not None and want_mode == "requires_probe",
-            "detail": detail,
-            "entry": info["entry"] if info else None, "registry": reg}
+    return {
+        "ok": info is not None and want_mode == "requires_probe",
+        "detail": detail,
+        "entry": info["entry"] if info else None,
+        "registry": reg,
+    }
 
 
 # --------------------------------------------------------------------------
@@ -182,6 +193,7 @@ def stage_discover(project: Path, script_rel: str, case: dict) -> dict:
 # --------------------------------------------------------------------------
 def _fresh_worker(script_rel: str, project: Path, entry: str):
     from tavotto.engine import pool
+
     w = pool.one_shot(script_rel, str(project), entry)
     w.ensure_built()
     return w
@@ -221,13 +233,19 @@ def stage_semantic(man: dict, case: dict) -> dict:
     sem = case.get("semantic_expectations") or {}
     roles = {el["role"] for el in man["elements"]}
     missing_roles = [r for r in sem.get("roles_present") or [] if r not in roles]
-    missing_fields = [f"{gid}.{prop}"
-                      for gid, prop in (sem.get("editable") or [])
-                      if _field(man, gid, prop) is _MISSING]
-    return {"ok": not missing_roles and not missing_fields,
-            "detail": {"roles": sorted(roles),
-                       "missing_roles": missing_roles,
-                       "missing_editable": missing_fields}}
+    missing_fields = [
+        f"{gid}.{prop}"
+        for gid, prop in (sem.get("editable") or [])
+        if _field(man, gid, prop) is _MISSING
+    ]
+    return {
+        "ok": not missing_roles and not missing_fields,
+        "detail": {
+            "roles": sorted(roles),
+            "missing_roles": missing_roles,
+            "missing_editable": missing_fields,
+        },
+    }
 
 
 def stage_edit(worker, stem: str, case: dict, base_man: dict) -> dict:
@@ -250,9 +268,16 @@ def stage_edit(worker, stem: str, case: dict, base_man: dict) -> dict:
         warns = resp.get("warnings") or []
         after = _field(resp["manifest"], gid, prop)
         landed = after is not _MISSING and _same_value(value, after)
-        results.append({"gid": gid, "prop": prop, "applied": landed,
-                        "warnings": warns, "before": _jsonable(before),
-                        "after": _jsonable(after)})
+        results.append(
+            {
+                "gid": gid,
+                "prop": prop,
+                "applied": landed,
+                "warnings": warns,
+                "before": _jsonable(before),
+                "after": _jsonable(after),
+            }
+        )
         if warns or not landed:
             ok = False
     # 一次性全撤（全量列表 = 空列表），逐条核对回到原值
@@ -266,16 +291,24 @@ def stage_edit(worker, stem: str, case: dict, base_man: dict) -> dict:
             restore_bad.append(f"{gid}.{prop}: {want!r} → {got!r}")
     if restore_bad or (restored.get("warnings") or []):
         ok = False
-    return {"ok": ok, "detail": {"targets": results,
-                                 "restore_failures": restore_bad,
-                                 "restore_warnings": restored.get("warnings") or []},
-            "full_patches": applied}
+    return {
+        "ok": ok,
+        "detail": {
+            "targets": results,
+            "restore_failures": restore_bad,
+            "restore_warnings": restored.get("warnings") or [],
+        },
+        "full_patches": applied,
+    }
 
 
 def _editable_snapshot(man: dict) -> dict:
     """manifest 里每个可编辑字段的当前值：`{"gid.prop": value}`。"""
-    return {f"{el['gid']}.{f['prop']}": f["value"]
-            for el in man.get("elements", []) for f in el.get("editable", [])}
+    return {
+        f"{el['gid']}.{f['prop']}": f["value"]
+        for el in man.get("elements", [])
+        for f in el.get("editable", [])
+    }
 
 
 def _prop_diffs(a: dict, b: dict, limit: int = 8) -> list[str]:
@@ -318,22 +351,36 @@ def stage_replay(worker, fresh, stem: str, patches: list) -> dict:
 
     legs = []
     ok = True
-    for name_a, a, name_b, b in (("hot", hot, "clear+replay", replay),
-                                 ("hot", hot, "fresh worker", fresh_man)):
+    for name_a, a, name_b, b in (
+        ("hot", hot, "clear+replay", replay),
+        ("hot", hot, "fresh worker", fresh_man),
+    ):
         diffs, compared = _compare_manifests(a, b)
         if compared == 0:
             ok = False
-            legs.append({"pair": f"{name_a} vs {name_b}", "compared": 0,
-                         "diffs": ["没有可比元素（manifest 空？）"]})
+            legs.append(
+                {
+                    "pair": f"{name_a} vs {name_b}",
+                    "compared": 0,
+                    "diffs": ["没有可比元素（manifest 空？）"],
+                }
+            )
             continue
         props = _prop_diffs(a, b)
         if diffs or props:
             ok = False
-        legs.append({"pair": f"{name_a} vs {name_b}", "compared": compared,
-                     "diffs": [f"{d['gid'] or '<figure>'}.{d['field']}: "
-                               f"{d['hot']} vs {d['fresh']}" for d in diffs[:8]],
-                     # 几何之外那一半——产品的写回门禁看不见这一列，见 docstring
-                     "prop_diffs": props})
+        legs.append(
+            {
+                "pair": f"{name_a} vs {name_b}",
+                "compared": compared,
+                "diffs": [
+                    f"{d['gid'] or '<figure>'}.{d['field']}: {d['hot']} vs {d['fresh']}"
+                    for d in diffs[:8]
+                ],
+                # 几何之外那一半——产品的写回门禁看不见这一列，见 docstring
+                "prop_diffs": props,
+            }
+        )
     fresh.override(stem, [])
     return {"ok": ok, "detail": {"legs": legs}}
 
@@ -346,15 +393,13 @@ def stage_export(worker, stem: str, out_dir: Path, formats: list[str]) -> dict:
     for fmt in formats:
         path = out_dir / f"{stem}.{fmt}"
         try:
-            resp = worker.export(stem, [], str(path), fmt=fmt,
-                                 dpi=200 if fmt == "png" else 600)
-        except Exception as exc:                        # noqa: BLE001
+            resp = worker.export(stem, [], str(path), fmt=fmt, dpi=200 if fmt == "png" else 600)
+        except Exception as exc:  # noqa: BLE001
             ok = False
             results[fmt] = {"ok": False, "error": str(exc)[:400]}
             continue
         warns = resp.get("warnings") or []
-        entry: dict = {"warnings": warns,
-                       "export_ms": (resp.get("timings") or {}).get("export_ms")}
+        entry: dict = {"warnings": warns, "export_ms": (resp.get("timings") or {}).get("export_ms")}
         if not path.is_file():
             entry.update(ok=False, error="导出说成功了，文件却不在")
         else:
@@ -377,26 +422,30 @@ def _decode_check(path: Path, fmt: str) -> dict:
     if fmt == "pdf":
         try:
             import pymupdf
-        except ImportError:                             # pragma: no cover
+        except ImportError:  # pragma: no cover
             return {"ok": True, "decoded": "skipped_no_pymupdf"}
         try:
             with pymupdf.open(path) as doc:
                 if doc.page_count < 1:
                     return {"ok": False, "error": "PDF 里一页都没有"}
                 rect = doc[0].rect
-            return {"ok": True, "pages": 1,
-                    "page_pt": [round(rect.width, 2), round(rect.height, 2)]}
-        except Exception as exc:                        # noqa: BLE001
+            return {
+                "ok": True,
+                "pages": 1,
+                "page_pt": [round(rect.width, 2), round(rect.height, 2)],
+            }
+        except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": f"PDF 打不开：{exc}"}
     try:
         from PIL import Image
+
         with Image.open(path) as im:
             im.verify()
             size = im.size
         return {"ok": True, "px": list(size)}
-    except ImportError:                                 # pragma: no cover
+    except ImportError:  # pragma: no cover
         return {"ok": True, "decoded": "skipped_no_pillow"}
-    except Exception as exc:                            # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": f"PNG 打不开：{exc}"}
 
 
@@ -405,35 +454,54 @@ def _decode_check(path: Path, fmt: str) -> dict:
 # --------------------------------------------------------------------------
 def run_driver(python: str, mode: str, request: dict, timeout: int = 900) -> dict:
     """spawn 旁路驱动。父进程（.venv）没有 matplotlib，只能这样跑。"""
-    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False,
-                                     encoding="utf-8") as fh:
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as fh:
         json.dump(request, fh)
         req_path = fh.name
     try:
         out = subprocess.run(
             [python, str(DRIVER), "--mode", mode, "--request", req_path],
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=timeout, stdin=subprocess.DEVNULL,
-            env={**os.environ, "MPLBACKEND": "Agg", "PYTHONHASHSEED": "0"})
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            stdin=subprocess.DEVNULL,
+            env={**os.environ, "MPLBACKEND": "Agg", "PYTHONHASHSEED": "0"},
+        )
     except subprocess.TimeoutExpired:
-        return {"ok": False, "code": "driver_timeout",
-                "message": f"{mode} 驱动超过 {timeout}s"}
+        return {"ok": False, "code": "driver_timeout", "message": f"{mode} 驱动超过 {timeout}s"}
     finally:
         os.unlink(req_path)
     text = (out.stdout or "").strip()
     if not text:
-        return {"ok": False, "code": "driver_no_output",
-                "message": f"{mode} 驱动没有输出", "stderr": out.stderr[-1500:]}
+        return {
+            "ok": False,
+            "code": "driver_no_output",
+            "message": f"{mode} 驱动没有输出",
+            "stderr": out.stderr[-1500:],
+        }
     try:
         return json.loads(text.splitlines()[-1])
     except ValueError:
-        return {"ok": False, "code": "driver_bad_output",
-                "message": f"{mode} 驱动末行不是 JSON",
-                "stdout": text[-800:], "stderr": out.stderr[-1500:]}
+        return {
+            "ok": False,
+            "code": "driver_bad_output",
+            "message": f"{mode} 驱动末行不是 JSON",
+            "stdout": text[-800:],
+            "stderr": out.stderr[-1500:],
+        }
 
 
-def stage_fidelity(python: str, project: Path, script_rel: str, entry: str,
-                   worker, stem: str, workdir: Path, out_dir: Path) -> dict:
+def stage_fidelity(
+    python: str,
+    project: Path,
+    script_rel: str,
+    entry: str,
+    worker,
+    stem: str,
+    workdir: Path,
+    out_dir: Path,
+) -> dict:
     """**原生 matplotlib** vs **Tavotto 零 override**。
 
     这是 golden 回归回答不了的那个问题：golden 比的是「Tavotto 今天 vs
@@ -441,21 +509,30 @@ def stage_fidelity(python: str, project: Path, script_rel: str, entry: str,
     原则很硬：**没有任何 override 时，Tavotto 不该改变用户的 Figure。**
     """
     native_dir = workdir / "native"
-    native = run_driver(python, "native", {
-        "script": str(project / script_rel), "project": str(project),
-        "engine_dir": str(ENGINE_DIR), "entry": entry,
-        "out_dir": str(native_dir), "width": FIDELITY_WIDTH,
-    })
+    native = run_driver(
+        python,
+        "native",
+        {
+            "script": str(project / script_rel),
+            "project": str(project),
+            "engine_dir": str(ENGINE_DIR),
+            "entry": entry,
+            "out_dir": str(native_dir),
+            "width": FIDELITY_WIDTH,
+        },
+    )
     if not native.get("ok"):
         return {"ok": False, "detail": {"native": native}}
     control = native["shots"].get(stem)
     if control is None:
-        return {"ok": False, "detail": {
-            "error": f"原生对照里没有 {stem}（捕获到 {native['stems']}）"}}
+        return {
+            "ok": False,
+            "detail": {"error": f"原生对照里没有 {stem}（捕获到 {native['stems']}）"},
+        }
 
     try:
         shot = worker.render_png(stem, FIDELITY_WIDTH)
-    except Exception as exc:                            # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
         return {"ok": False, "detail": {"error": f"Tavotto 出图失败：{exc}"}}
 
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -466,12 +543,14 @@ def stage_fidelity(python: str, project: Path, script_rel: str, entry: str,
         raise Skip(str(exc)) from exc
     good, reasons = pixelcompare.verdict(metrics, FIDELITY_TOLERANCE)
     if good:
-        diff.unlink(missing_ok=True)                    # 通过的不留噪音
+        diff.unlink(missing_ok=True)  # 通过的不留噪音
     else:
         shutil.copy2(control, out_dir / f"{stem}.control.png")
         shutil.copy2(shot, out_dir / f"{stem}.tavotto.png")
-    return {"ok": good, "detail": {"metrics": metrics, "reasons": reasons,
-                                   "tolerance": FIDELITY_TOLERANCE}}
+    return {
+        "ok": good,
+        "detail": {"metrics": metrics, "reasons": reasons, "tolerance": FIDELITY_TOLERANCE},
+    }
 
 
 def _jsonable(v):
@@ -506,12 +585,10 @@ def route_probe_via_app(project: Path, script_rel: str) -> dict:
     client = tavotto_app.app.test_client()
     r = client.post("/api/projects/open", json={"path": str(project)})
     if r.status_code != 200:
-        return {"ok": False, "code": "project_open_failed",
-                "detail": {"status": r.status_code}}
+        return {"ok": False, "code": "project_open_failed", "detail": {"status": r.status_code}}
     pj = r.get_json()["id"]
     # 项目留给 desktop_project 路由复用，由调用方（stage_product_routes）关闭
-    r = client.post(f"/api/registry/probe?pj={pj}",
-                    json={"script": script_rel})
+    r = client.post(f"/api/registry/probe?pj={pj}", json={"script": script_rel})
     body = r.get_json() or {}
     ok = r.status_code == 200 and bool(body.get("registered"))
     code = None
@@ -523,15 +600,16 @@ def route_probe_via_app(project: Path, script_rel: str) -> dict:
             code = body["code"]
         else:
             code = f"http_{r.status_code}"
-    return {"ok": ok, "code": code,
-            "via": "POST /api/registry/probe",
-            "detail": {"stems": body.get("stems"),
-                       "error": body.get("error")},
-            "pj": pj}
+    return {
+        "ok": ok,
+        "code": code,
+        "via": "POST /api/registry/probe",
+        "detail": {"stems": body.get("stems"), "error": body.get("error")},
+        "pj": pj,
+    }
 
 
-def route_desktop_project(project: Path, script_rel: str, pj: str,
-                          stems: list[str]) -> dict:
+def route_desktop_project(project: Path, script_rel: str, pj: str, stems: list[str]) -> dict:
     """desktop_project 路由：素材库两区读的端点（脚本可见 + 图区有条目）。
 
     前提：safe_probe 路由刚在同一项目上跑过（素材库的真实顺序也是
@@ -543,47 +621,68 @@ def route_desktop_project(project: Path, script_rel: str, pj: str,
     client = tavotto_app.app.test_client()
     r = client.get(f"/api/registry?pj={pj}")
     if r.status_code != 200:
-        return {"ok": False, "code": "registry_view_failed",
-                "detail": {"status": r.status_code}}
+        return {"ok": False, "code": "registry_view_failed", "detail": {"status": r.status_code}}
     view = r.get_json() or {}
     listed = {e.get("script") for e in view.get("all_scripts") or []}
     if script_rel not in listed:
-        return {"ok": False, "code": "script_not_listed",
-                "via": "GET /api/registry",
-                "detail": {"all_scripts": sorted(listed)[:20]}}
+        return {
+            "ok": False,
+            "code": "script_not_listed",
+            "via": "GET /api/registry",
+            "detail": {"all_scripts": sorted(listed)[:20]},
+        }
     r = client.get(f"/api/runtime/assets?pj={pj}")
     assets = {a["stem"]: a for a in (r.get_json() or {}).get("assets") or []}
     missing = [s for s in stems if s not in assets]
-    uncached = [s for s in stems
-                if s in assets and not assets[s].get("descriptor")]
+    uncached = [s for s in stems if s in assets and not assets[s].get("descriptor")]
     ok = r.status_code == 200 and not missing and not uncached
-    return {"ok": ok,
-            "code": None if ok else "runtime_asset_missing",
-            "via": "GET /api/registry + GET /api/runtime/assets",
-            "detail": {"missing": missing, "uncached": uncached,
-                       "listed": sorted(assets)}}
+    return {
+        "ok": ok,
+        "code": None if ok else "runtime_asset_missing",
+        "via": "GET /api/registry + GET /api/runtime/assets",
+        "detail": {"missing": missing, "uncached": uncached, "listed": sorted(assets)},
+    }
 
 
-def route_cli_open(project: Path, script_rel: str, *,
-                   stem: str | None = None, timeout: int = 900) -> dict:
+def route_cli_open(
+    project: Path, script_rel: str, *, stem: str | None = None, timeout: int = 900
+) -> dict:
     """cli_open 路由：真的跑 `python -m tavotto open <脚本> --json --no-launch`。
 
     `--port 0` 钉死本地探测——机器上碰巧开着的 Tavotto 实例绝不能被这台
     benchmark 委托执行（那会把探测跑进用户的真实会话里）。
     """
-    argv = [sys.executable, "-m", "tavotto", "open",
-            str(project / script_rel), "--json", "--no-launch", "--port", "0"]
+    argv = [
+        sys.executable,
+        "-m",
+        "tavotto",
+        "open",
+        str(project / script_rel),
+        "--json",
+        "--no-launch",
+        "--port",
+        "0",
+    ]
     if stem is not None:
         argv += ["--stem", stem]
-    env = {**os.environ,
-           "PYTHONPATH": os.pathsep.join(
-               [str(REPO / "src"), os.environ.get("PYTHONPATH", "")]).rstrip(
-                   os.pathsep),
-           "TAVOTTO_NO_TELEMETRY": "1"}
+    env = {
+        **os.environ,
+        "PYTHONPATH": os.pathsep.join([str(REPO / "src"), os.environ.get("PYTHONPATH", "")]).rstrip(
+            os.pathsep
+        ),
+        "TAVOTTO_NO_TELEMETRY": "1",
+    }
     try:
-        out = subprocess.run(argv, capture_output=True, text=True,
-                             encoding="utf-8", errors="replace",
-                             timeout=timeout, stdin=subprocess.DEVNULL, env=env)
+        out = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            stdin=subprocess.DEVNULL,
+            env=env,
+        )
     except subprocess.TimeoutExpired:
         return {"ok": False, "code": "cli_timeout", "argv": argv, "detail": {}}
     lines = [ln for ln in (out.stdout or "").strip().splitlines() if ln.strip()]
@@ -592,12 +691,19 @@ def route_cli_open(project: Path, script_rel: str, *,
     except ValueError:
         payload = {}
     if not payload:
-        return {"ok": False, "code": "cli_no_json", "argv": argv,
-                "detail": {"stdout": (out.stdout or "")[-500:],
-                           "stderr": (out.stderr or "")[-500:]}}
-    return {"ok": bool(payload.get("ok")), "code": payload.get("code"),
-            "argv": argv, "via": "python -m tavotto open --json",
-            "payload": payload}
+        return {
+            "ok": False,
+            "code": "cli_no_json",
+            "argv": argv,
+            "detail": {"stdout": (out.stdout or "")[-500:], "stderr": (out.stderr or "")[-500:]},
+        }
+    return {
+        "ok": bool(payload.get("ok")),
+        "code": payload.get("code"),
+        "argv": argv,
+        "via": "python -m tavotto open --json",
+        "payload": payload,
+    }
 
 
 def stage_product_routes(group: list[dict], root: Path, results: dict) -> None:
@@ -621,8 +727,7 @@ def stage_product_routes(group: list[dict], root: Path, results: dict) -> None:
         pj = probe_res.pop("pj", None)
         try:
             if probe_res["ok"] and pj:
-                desktop_res = route_desktop_project(
-                    app_project, script_rel, pj, stems)
+                desktop_res = route_desktop_project(app_project, script_rel, pj, stems)
         finally:
             if pj:
                 tavotto_app.close_project(pj)
@@ -636,8 +741,7 @@ def stage_product_routes(group: list[dict], root: Path, results: dict) -> None:
         multi = len(group) > 1 or int(group[0].get("expected_figures") or 1) > 1
         if multi:
             # 多 Figure：裸调必须显式拒绝（不静默选第一张），--stem 必须选中
-            cli_selected = route_cli_open(cli_project, cli_script,
-                                          stem=group[-1]["stem"])
+            cli_selected = route_cli_open(cli_project, cli_script, stem=group[-1]["stem"])
 
         for ca in group:
             declared = ca.get("product_routes") or {}
@@ -654,23 +758,30 @@ def stage_product_routes(group: list[dict], root: Path, results: dict) -> None:
                 elif name == "desktop_project":
                     # 覆盖组内每个 stem（route_desktop_project 逐 stem 判
                     # missing/uncached——该 case 的 stem 不串条目）
-                    res = desktop_res or {"ok": False,
-                                          "code": "probe_route_failed",
-                                          "detail": {"probe": probe_res}}
+                    res = desktop_res or {
+                        "ok": False,
+                        "code": "probe_route_failed",
+                        "detail": {"probe": probe_res},
+                    }
                     routes[name] = _route_entry(res, ca)
                 elif name == "cli_open":
-                    routes[name] = _route_cli_verdict(
-                        ca, group, cli_bare, cli_selected)
+                    routes[name] = _route_cli_verdict(ca, group, cli_bare, cli_selected)
                 elif name == "browser_playground":
                     br = results[ca["id"]].get("browser")
                     if br is None:
-                        routes[name] = {"status": "not_run",
-                                        "detail": "本次运行没有开 --browser 对拍"}
+                        routes[name] = {
+                            "status": "not_run",
+                            "detail": "本次运行没有开 --browser 对拍",
+                        }
                     else:
                         routes[name] = _route_entry(
-                            {"ok": bool(br.get("ok")),
-                             "code": None if br.get("ok") else "browser_parity",
-                             "detail": {"reason": br.get("reason")}}, ca)
+                            {
+                                "ok": bool(br.get("ok")),
+                                "code": None if br.get("ok") else "browser_parity",
+                                "detail": {"reason": br.get("reason")},
+                            },
+                            ca,
+                        )
             results[ca["id"]]["routes"] = routes
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
@@ -679,19 +790,20 @@ def stage_product_routes(group: list[dict], root: Path, results: dict) -> None:
 def _route_entry(res: dict, case: dict) -> dict:
     """路由结果 → 报告条目。失败必须带 stage/code/classification/reason。"""
     if res.get("ok"):
-        return {"status": "pass", "via": res.get("via"),
-                "detail": res.get("detail")}
-    return {"status": "fail", "via": res.get("via"),
-            "code": res.get("code") or "route_failed",
-            "classification": "product_bug",
-            "reason": f"产品路由未走通（case {case['id']}）",
-            "follow_up": str(case.get("follow_up", "")).strip()
-            or "读 routes 里的 detail，修产品入口而不是改声明",
-            "detail": res.get("detail") or res}
+        return {"status": "pass", "via": res.get("via"), "detail": res.get("detail")}
+    return {
+        "status": "fail",
+        "via": res.get("via"),
+        "code": res.get("code") or "route_failed",
+        "classification": "product_bug",
+        "reason": f"产品路由未走通（case {case['id']}）",
+        "follow_up": str(case.get("follow_up", "")).strip()
+        or "读 routes 里的 detail，修产品入口而不是改声明",
+        "detail": res.get("detail") or res,
+    }
 
 
-def _route_cli_verdict(case: dict, group: list[dict], bare: dict,
-                       selected: dict | None) -> dict:
+def _route_cli_verdict(case: dict, group: list[dict], bare: dict, selected: dict | None) -> dict:
     """cli_open 的判定：单图裸调直达；多图裸调必须显式拒绝 + --stem 可选中。
 
     多图 = **脚本产出多张**（组里多个 case，或单 case 的 expected_figures>1）。
@@ -700,35 +812,46 @@ def _route_cli_verdict(case: dict, group: list[dict], bare: dict,
     if not multi:
         payload = bare.get("payload") or {}
         ok = bare.get("ok") and payload.get("stem") == case["stem"]
-        return _route_entry({"ok": ok,
-                             "code": None if ok else (bare.get("code")
-                                                     or "wrong_stem"),
-                             "via": bare.get("via"),
-                             "detail": {"payload_stem": payload.get("stem"),
-                                        "code": bare.get("code")}}, case)
+        return _route_entry(
+            {
+                "ok": ok,
+                "code": None if ok else (bare.get("code") or "wrong_stem"),
+                "via": bare.get("via"),
+                "detail": {"payload_stem": payload.get("stem"), "code": bare.get("code")},
+            },
+            case,
+        )
     # 多 Figure：机器调用（--no-launch）不许静默选第一张
     payload = bare.get("payload") or {}
     figures = [f.get("stem") for f in payload.get("figures") or []]
-    refused = (not bare.get("ok")
-               and bare.get("code") == "multiple_figures_found"
-               and case["stem"] in figures)
-    picked = bool(selected and selected.get("ok")
-                  and (selected.get("payload") or {}).get(
-                      "stem") == group[-1]["stem"])
+    refused = (
+        not bare.get("ok")
+        and bare.get("code") == "multiple_figures_found"
+        and case["stem"] in figures
+    )
+    picked = bool(
+        selected
+        and selected.get("ok")
+        and (selected.get("payload") or {}).get("stem") == group[-1]["stem"]
+    )
     ok = refused and picked
     return _route_entry(
-        {"ok": ok,
-         "code": None if ok else "multi_figure_contract",
-         "via": bare.get("via"),
-         "detail": {"bare_code": bare.get("code"), "figures": figures,
-                    "selected_ok": picked}}, case)
+        {
+            "ok": ok,
+            "code": None if ok else "multi_figure_contract",
+            "via": bare.get("via"),
+            "detail": {"bare_code": bare.get("code"), "figures": figures, "selected_ok": picked},
+        },
+        case,
+    )
 
 
 # --------------------------------------------------------------------------
 # 分类：把阶段结果折成六选一
 # --------------------------------------------------------------------------
-def classify(case: dict, stages: dict, skipped: dict,
-             routes: dict | None = None) -> tuple[str, str, str]:
+def classify(
+    case: dict, stages: dict, skipped: dict, routes: dict | None = None
+) -> tuple[str, str, str]:
     """→ (classification, reason, detail)。
 
     **只有清单显式声明过的边界才允许落到非 product_bug 上。**
@@ -743,17 +866,17 @@ def classify(case: dict, stages: dict, skipped: dict,
     declared_reason = str(case.get("reason", "")).strip()
     expected = case.get("expected", {})
 
-    failed_routes = [n for n, e in (routes or {}).items()
-                     if isinstance(e, dict) and e.get("status") == "fail"]
+    failed_routes = [
+        n for n, e in (routes or {}).items() if isinstance(e, dict) and e.get("status") == "fail"
+    ]
     if failed_routes:
-        return ("product_bug", declared_reason or "",
-                f"产品路由未通过：{failed_routes}")
+        return ("product_bug", declared_reason or "", f"产品路由未通过：{failed_routes}")
 
-    failed = [s for s in CC.STAGES
-              if s in stages and not stages[s] and expected.get(s, True)]
+    failed = [s for s in CC.STAGES if s in stages and not stages[s] and expected.get(s, True)]
     # 期望里写着 false 的阶段失败了 —— 那是**声明过的**边界，不是缺陷。
-    by_design = [s for s in CC.STAGES
-                 if s in stages and not stages[s] and not expected.get(s, True)]
+    by_design = [
+        s for s in CC.STAGES if s in stages and not stages[s] and not expected.get(s, True)
+    ]
 
     if not failed:
         if by_design or declared != "full_support":
@@ -763,8 +886,11 @@ def classify(case: dict, stages: dict, skipped: dict,
                 # 不说的话读报告的人分不清「这一档跳过了」和「这一档跑过了
                 # 而且全绿」——那正是环境依赖最容易被误读的地方。
                 note = "本次环境满足依赖，全部阶段通过"
-            return (declared if declared != "full_support" else "partial_support",
-                    declared_reason or "清单声明的产品边界", note)
+            return (
+                declared if declared != "full_support" else "partial_support",
+                declared_reason or "清单声明的产品边界",
+                note,
+            )
         return "full_support", "", ""
 
     # 有阶段在**期望通过**的地方栽了。
@@ -797,8 +923,15 @@ def product_bug_stage(stages: dict, expected: dict) -> str:
 # --------------------------------------------------------------------------
 # 一个 case 组的完整跑法
 # --------------------------------------------------------------------------
-def run_group(group: list[dict], *, python: str, root: Path, out_dir: Path,
-              want_fidelity: bool, want_browser: bool) -> dict:
+def run_group(
+    group: list[dict],
+    *,
+    python: str,
+    root: Path,
+    out_dir: Path,
+    want_fidelity: bool,
+    want_browser: bool,
+) -> dict:
     """同一个脚本的所有 case 共用**一次 build**（两条 worker：热 + 全新）。
 
     分开跑等于把 corpus 的耗时乘以 stem 数，而 build 才是大头。
@@ -833,16 +966,22 @@ def run_group(group: list[dict], *, python: str, root: Path, out_dir: Path,
             # 这里留着是为了发现异常 case（一个 30 秒的 build 说明 corpus 里
             # 混进了不确定性或真实数据量，那种 case 迟早会变成偶发超时）。
             t = built.get("timings") or {}
-            exec_ok, exec_detail = True, {
-                "stems": sorted(stems),
-                "dropped": built.get("dropped_figures", 0),
-                "script_exec_ms": t.get("script_exec_ms"),
-                "build_ms": t.get("script_build_ms")}
-        except Exception as exc:                        # noqa: BLE001
+            exec_ok, exec_detail = (
+                True,
+                {
+                    "stems": sorted(stems),
+                    "dropped": built.get("dropped_figures", 0),
+                    "script_exec_ms": t.get("script_exec_ms"),
+                    "build_ms": t.get("script_build_ms"),
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
             exec_ok = False
             stems = {}
-            exec_detail = {"error": str(exc)[:600],
-                           "traceback": getattr(exc, "traceback_text", "")[-1500:]}
+            exec_detail = {
+                "error": str(exc)[:600],
+                "traceback": getattr(exc, "traceback_text", "")[-1500:],
+            }
         for ca in group:
             r = results[ca["id"]]
             r["stages"]["execute"] = exec_ok
@@ -852,9 +991,12 @@ def run_group(group: list[dict], *, python: str, root: Path, out_dir: Path,
                 want = ca["expected_figures"]
                 r["stages"]["capture"] = (ca["stem"] in stems) and got == want
                 r["detail"]["capture"] = {
-                    "want_figures": want, "got_figures": got,
-                    "want_stem": ca["stem"], "stems": sorted(stems),
-                    "source": (stems.get(ca["stem"]) or {}).get("source", "")}
+                    "want_figures": want,
+                    "got_figures": got,
+                    "want_stem": ca["stem"],
+                    "stems": sorted(stems),
+                    "source": (stems.get(ca["stem"]) or {}).get("source", ""),
+                }
         if not exec_ok:
             return _finish(results, group, t0)
 
@@ -866,17 +1008,19 @@ def run_group(group: list[dict], *, python: str, root: Path, out_dir: Path,
             stem = ca["stem"]
             try:
                 opened = hot.override(stem, [])
-            except Exception as exc:                    # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
                 r["stages"]["open"] = False
                 r["detail"]["open"] = {"error": str(exc)[:600]}
                 continue
             base_man = opened["manifest"]
             ot = opened.get("timings") or {}
             r["stages"]["open"] = bool(base_man.get("elements"))
-            r["detail"]["open"] = {"elements": len(base_man.get("elements", [])),
-                                   "warnings": opened.get("warnings") or [],
-                                   "size_mm": base_man.get("size_mm"),
-                                   "render_ms": ot.get("total_ms")}
+            r["detail"]["open"] = {
+                "elements": len(base_man.get("elements", [])),
+                "warnings": opened.get("warnings") or [],
+                "size_mm": base_man.get("size_mm"),
+                "render_ms": ot.get("total_ms"),
+            }
             if not r["stages"]["open"]:
                 continue
 
@@ -889,22 +1033,25 @@ def run_group(group: list[dict], *, python: str, root: Path, out_dir: Path,
             r["detail"]["semantic"]["editable_all"] = sorted(
                 f"{el['gid']}.{f['prop']}"
                 for el in base_man.get("elements", [])
-                for f in el.get("editable", []))
+                for f in el.get("editable", [])
+            )
 
             # 保真度必须在**任何编辑之前**量：零 patch 的定义就是「还没动过」。
             # 放在 edit/还原之后的话，一个还原不干净的 case 会把自己的污染
             # 算成「Tavotto 偷偷改了用户的图」——两件事得分开报。
             if want_fidelity and ca["expected"].get("fidelity", True):
                 try:
-                    fid = stage_fidelity(python, project, script_rel, entry,
-                                         hot, stem, workdir, out_dir / "fidelity")
+                    fid = stage_fidelity(
+                        python, project, script_rel, entry, hot, stem, workdir, out_dir / "fidelity"
+                    )
                     r["stages"]["fidelity"] = fid["ok"]
                     r["detail"]["fidelity"] = fid["detail"]
                 except Skip as exc:
                     r["skipped"]["fidelity"] = str(exc)
             elif not ca["expected"].get("fidelity", True):
-                r["skipped"]["fidelity"] = (
-                    ca.get("expected_false_reasons") or {}).get("fidelity", "")
+                r["skipped"]["fidelity"] = (ca.get("expected_false_reasons") or {}).get(
+                    "fidelity", ""
+                )
             else:
                 r["skipped"]["fidelity"] = "本次运行没有开保真度比对"
 
@@ -916,7 +1063,7 @@ def run_group(group: list[dict], *, python: str, root: Path, out_dir: Path,
             except Skip as exc:
                 r["skipped"]["edit"] = str(exc)
                 patches = []
-            except Exception as exc:                    # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
                 r["stages"]["edit"] = False
                 r["detail"]["edit"] = {"error": str(exc)[:600]}
                 patches = []
@@ -928,32 +1075,41 @@ def run_group(group: list[dict], *, python: str, root: Path, out_dir: Path,
                     rep = stage_replay(hot, fresh, stem, patches)
                     r["stages"]["replay"] = rep["ok"]
                     r["detail"]["replay"] = rep["detail"]
-                except Exception as exc:                # noqa: BLE001
+                except Exception as exc:  # noqa: BLE001
                     r["stages"]["replay"] = False
                     r["detail"]["replay"] = {"error": str(exc)[:600]}
             else:
                 r["skipped"]["replay"] = "没有编辑目标，无从比较重放"
-            hot.override(stem, [])                      # 回零，别影响导出
+            hot.override(stem, [])  # 回零，别影响导出
 
-            exp = stage_export(hot, stem, workdir / "exports",
-                               ca.get("export_formats") or ["pdf", "png"])
+            exp = stage_export(
+                hot, stem, workdir / "exports", ca.get("export_formats") or ["pdf", "png"]
+            )
             r["stages"]["export"] = exp["ok"]
             r["detail"]["export"] = exp["detail"]
 
             # 还原不干净的 case 会把脏状态留给**同一个脚本的下一个 stem**
             # （一个脚本的所有 stem 共用这一条热会话）。同组里的 case 必须
             # 互相独立，否则报告会随清单顺序变——那种失败最难查。
-            if r["detail"].get("edit", {}).get("restore_failures") or \
-                    r["detail"].get("edit", {}).get("restore_warnings"):
+            if r["detail"].get("edit", {}).get("restore_failures") or r["detail"].get(
+                "edit", {}
+            ).get("restore_warnings"):
                 r["dirty"] = True
                 pool.discard(hot)
                 hot = _fresh_worker(script_rel, project, entry)
 
         # ── artist 普查（纯诊断，不参与 pass/fail）─────────────
-        census = run_driver(python, "census", {
-            "script": str(project / script_rel), "project": str(project),
-            "engine_dir": str(ENGINE_DIR), "entry": entry,
-            "sandbox": str(workdir / "census-sandbox")})
+        census = run_driver(
+            python,
+            "census",
+            {
+                "script": str(project / script_rel),
+                "project": str(project),
+                "engine_dir": str(ENGINE_DIR),
+                "entry": entry,
+                "sandbox": str(workdir / "census-sandbox"),
+            },
+        )
         if census.get("ok"):
             for ca in group:
                 data = (census.get("census") or {}).get(ca["stem"])
@@ -968,34 +1124,44 @@ def run_group(group: list[dict], *, python: str, root: Path, out_dir: Path,
         if want_browser:
             eligible = [ca for ca in group if ca.get("browser_eligible")]
             if eligible:
-                probes = {ca["stem"]: [{"gid": m["gid"], "prop": m["prop"],
-                                        "value": m["value"]}
-                                       for m in (ca.get("mutations") or [])]
-                          for ca in eligible}
-                br = run_driver(python, "browser", {
-                    "script": str(project / script_rel),
-                    "engine_dir": str(ENGINE_DIR),
-                    "workspace": str(workdir / "browser-ws"),
-                    "patch_probe": probes})
+                probes = {
+                    ca["stem"]: [
+                        {"gid": m["gid"], "prop": m["prop"], "value": m["value"]}
+                        for m in (ca.get("mutations") or [])
+                    ]
+                    for ca in eligible
+                }
+                br = run_driver(
+                    python,
+                    "browser",
+                    {
+                        "script": str(project / script_rel),
+                        "engine_dir": str(ENGINE_DIR),
+                        "workspace": str(workdir / "browser-ws"),
+                        "patch_probe": probes,
+                    },
+                )
                 for ca in eligible:
-                    results[ca["id"]]["browser"] = _browser_verdict(
-                        ca, br, results[ca["id"]])
+                    results[ca["id"]]["browser"] = _browser_verdict(ca, br, results[ca["id"]])
 
         # ── 产品路由（Session 6）：真实端点 / 真实 CLI ───────────
         try:
             stage_product_routes(group, root, results)
-        except Exception:                               # noqa: BLE001
+        except Exception:  # noqa: BLE001
             # 路由验证自己崩了也要如实记账（与 runner 崩溃同一条纪律）
             tb = traceback.format_exc()
             for ca in group:
                 if ca.get("product_routes"):
                     results[ca["id"]]["routes"] = {
-                        "runner_error": {"status": "fail",
-                                         "code": "route_runner_crashed",
-                                         "classification": "product_bug",
-                                         "reason": "路由 runner 崩溃",
-                                         "follow_up": "读 detail 里的 traceback",
-                                         "detail": tb[-2000:]}}
+                        "runner_error": {
+                            "status": "fail",
+                            "code": "route_runner_crashed",
+                            "classification": "product_bug",
+                            "reason": "路由 runner 崩溃",
+                            "follow_up": "读 detail 里的 traceback",
+                            "detail": tb[-2000:],
+                        }
+                    }
     finally:
         for w in (hot, fresh):
             if w is not None:
@@ -1023,9 +1189,11 @@ def _browser_verdict(case: dict, br: dict, desktop: dict) -> dict:
     # 浏览器把源文件名收紧过（`_safe_script_name`），stem 可能不同名——
     # 数量对上、角色对上就够；对不上一律如实报，不做名字上的猜测匹配。
     if sem is None:
-        return {"ok": False,
-                "reason": f"浏览器没有捕获到 {stem}（捕获到 {figures}）",
-                "figures": figures}
+        return {
+            "ok": False,
+            "reason": f"浏览器没有捕获到 {stem}（捕获到 {figures}）",
+            "figures": figures,
+        }
     # **捕获到几张也要比，而且要比截断。** 上面那句「数量对上、角色对上就够」
     # 说的是「不按名字猜测匹配」，可代码里 `figures` 只在 stem 缺失那一支用过
     # ——数量从来没真的比过。这不是假想：`MAX_FIGURES` 在两侧作用的对象不同，
@@ -1040,13 +1208,12 @@ def _browser_verdict(case: dict, br: dict, desktop: dict) -> dict:
     #
     # 截断单独报：它与「少捕获了一张」原因不同（一个是上限、一个是能力差），
     # 混成一句话会让人查错方向。
-    desktop_stems = list((desktop.get("detail", {}).get("capture") or {})
-                         .get("stems") or [])
+    desktop_stems = list((desktop.get("detail", {}).get("capture") or {}).get("stems") or [])
     count_reasons = []
     if desktop_stems and len(figures) != len(desktop_stems):
         count_reasons.append(
-            f"捕获张数不一致：桌面 {len(desktop_stems)}（{desktop_stems}）"
-            f" vs 浏览器 {len(figures)}")
+            f"捕获张数不一致：桌面 {len(desktop_stems)}（{desktop_stems}） vs 浏览器 {len(figures)}"
+        )
     want_figs = case.get("expected_figures")
     if want_figs is not None and len(figures) != want_figs:
         count_reasons.append(f"浏览器捕获 {len(figures)} 张，清单期望 {want_figs} 张")
@@ -1069,15 +1236,20 @@ def _browser_verdict(case: dict, br: dict, desktop: dict) -> dict:
     # Pyodide 平铺 import 的是同一个文件）。父进程算一遍、浏览器侧算一遍，
     # 两个数必须逐字相同——这条断言看住的正是「有没有人在某一侧另写了一份」。
     from tavotto.engine import patchspec
+
     hash_ok = True
     want_hash = ""
-    mutations = [{"gid": m["gid"], "prop": m["prop"], "value": m["value"]}
-                 for m in (case.get("mutations") or [])]
+    mutations = [
+        {"gid": m["gid"], "prop": m["prop"], "value": m["value"]}
+        for m in (case.get("mutations") or [])
+    ]
     if mutations:
         want_hash = patchspec.patch_hash(mutations)
-        hash_ok = (bool(sem.get("apply_ok"))
-                   and not sem.get("apply_warnings")
-                   and sem.get("applied_patch_hash") == want_hash)
+        hash_ok = (
+            bool(sem.get("apply_ok"))
+            and not sem.get("apply_warnings")
+            and sem.get("applied_patch_hash") == want_hash
+        )
     reasons = list(count_reasons)
     if role_diff:
         reasons.append(f"角色不一致：{role_diff}")
@@ -1086,27 +1258,41 @@ def _browser_verdict(case: dict, br: dict, desktop: dict) -> dict:
     if not hash_ok:
         reasons.append(
             f"patch 应用不一致：hash {sem.get('applied_patch_hash')!r} vs "
-            f"{want_hash!r}，warnings={sem.get('apply_warnings')}")
-    return {"ok": not reasons,
-            "reason": "；".join(reasons),
-            "figures": figures,
-            "desktop_stems": desktop_stems,
-            "truncated": br.get("truncated", 0),
-            "roles_only_desktop": sorted(desktop_roles - browser_roles),
-            "roles_only_browser": sorted(browser_roles - desktop_roles),
-            "editable_only_desktop": sorted(desktop_edit - browser_edit)[:20],
-            "editable_only_browser": sorted(browser_edit - desktop_edit)[:20],
-            "patch_hash": sem.get("patch_hash", ""),
-            "applied_patch_hash": sem.get("applied_patch_hash", ""),
-            "expected_patch_hash": want_hash,
-            "apply_warnings": sem.get("apply_warnings") or []}
+            f"{want_hash!r}，warnings={sem.get('apply_warnings')}"
+        )
+    return {
+        "ok": not reasons,
+        "reason": "；".join(reasons),
+        "figures": figures,
+        "desktop_stems": desktop_stems,
+        "truncated": br.get("truncated", 0),
+        "roles_only_desktop": sorted(desktop_roles - browser_roles),
+        "roles_only_browser": sorted(browser_roles - desktop_roles),
+        "editable_only_desktop": sorted(desktop_edit - browser_edit)[:20],
+        "editable_only_browser": sorted(browser_edit - desktop_edit)[:20],
+        "patch_hash": sem.get("patch_hash", ""),
+        "applied_patch_hash": sem.get("applied_patch_hash", ""),
+        "expected_patch_hash": want_hash,
+        "apply_warnings": sem.get("apply_warnings") or [],
+    }
 
 
 def _blank(case: dict) -> dict:
-    return {"id": case["id"], "category": case["category"], "tier": case["tier"],
-            "stages": {}, "detail": {}, "skipped": {}, "census": {},
-            "browser": None, "routes": {}, "classification": "", "reason": "",
-            "follow_up": "", "duration_ms": 0}
+    return {
+        "id": case["id"],
+        "category": case["category"],
+        "tier": case["tier"],
+        "stages": {},
+        "detail": {},
+        "skipped": {},
+        "census": {},
+        "browser": None,
+        "routes": {},
+        "classification": "",
+        "reason": "",
+        "follow_up": "",
+        "duration_ms": 0,
+    }
 
 
 def _finish(results: dict, group: list[dict], t0: float) -> dict:
@@ -1114,17 +1300,18 @@ def _finish(results: dict, group: list[dict], t0: float) -> dict:
     for case in group:
         r = results[case["id"]]
         r["duration_ms"] = ms
-        cls, reason, detail = classify(case, r["stages"], r["skipped"],
-                                       r.get("routes"))
+        cls, reason, detail = classify(case, r["stages"], r["skipped"], r.get("routes"))
         r["classification"] = cls
         r["reason"] = reason
         r["detail_note"] = detail
         if cls == "product_bug":
             stage = product_bug_stage(r["stages"], case.get("expected", {}))
             if not stage:
-                bad_routes = [n for n, e in (r.get("routes") or {}).items()
-                              if isinstance(e, dict)
-                              and e.get("status") == "fail"]
+                bad_routes = [
+                    n
+                    for n, e in (r.get("routes") or {}).items()
+                    if isinstance(e, dict) and e.get("status") == "fail"
+                ]
                 stage = f"route:{bad_routes[0]}" if bad_routes else ""
             r["stage"] = stage
             r["follow_up"] = str(case.get("follow_up", "")).strip()
@@ -1143,9 +1330,16 @@ def funnel(cases: list[dict], results: dict) -> list[dict]:
         total = sum(1 for c in cases if stage in results[c["id"]]["stages"])
         passed = sum(1 for c in cases if results[c["id"]]["stages"].get(stage))
         skipped = sum(1 for c in cases if stage in results[c["id"]]["skipped"])
-        rows.append({"stage": stage, "label": CC.STAGE_LABELS[stage],
-                     "passed": passed, "total": total, "skipped": skipped,
-                     "rate": round(passed / total, 4) if total else None})
+        rows.append(
+            {
+                "stage": stage,
+                "label": CC.STAGE_LABELS[stage],
+                "passed": passed,
+                "total": total,
+                "skipped": skipped,
+                "rate": round(passed / total, 4) if total else None,
+            }
+        )
     return rows
 
 
@@ -1170,26 +1364,41 @@ def artist_census(results: dict) -> list[dict]:
     for cls, n in total.items():
         rec = recognized.get(cls, 0)
         if rec >= n:
-            continue                                    # 全认得，不是缺口
-        rows.append({"artist": cls, "instances": n, "recognized": rec,
-                     "unrecognized": n - rec, "cases": len(cases_with[cls])})
+            continue  # 全认得，不是缺口
+        rows.append(
+            {
+                "artist": cls,
+                "instances": n,
+                "recognized": rec,
+                "unrecognized": n - rec,
+                "cases": len(cases_with[cls]),
+            }
+        )
     rows.sort(key=lambda r: (-r["unrecognized"], -r["cases"], r["artist"]))
     return rows
 
 
-def build_report(cases: list[dict], results: dict, target: dict,
-                 target_name: str, mode: str) -> dict:
+def build_report(
+    cases: list[dict], results: dict, target: dict, target_name: str, mode: str
+) -> dict:
     by_cls: dict[str, list[str]] = {}
     for c in cases:
         by_cls.setdefault(results[c["id"]]["classification"], []).append(c["id"])
-    bugs = [{"id": cid, "stage": results[cid].get("stage", ""),
-             "tier": results[cid]["tier"],
-             "follow_up": results[cid].get("follow_up", ""),
-             "detail": results[cid].get("detail_note", "")}
-            for cid in by_cls.get("product_bug", [])]
-    parity = [{"id": cid, **(results[cid]["browser"] or {})}
-              for cid in sorted(results)
-              if results[cid].get("browser") is not None]
+    bugs = [
+        {
+            "id": cid,
+            "stage": results[cid].get("stage", ""),
+            "tier": results[cid]["tier"],
+            "follow_up": results[cid].get("follow_up", ""),
+            "detail": results[cid].get("detail_note", ""),
+        }
+        for cid in by_cls.get("product_bug", [])
+    ]
+    parity = [
+        {"id": cid, **(results[cid]["browser"] or {})}
+        for cid in sorted(results)
+        if results[cid].get("browser") is not None
+    ]
     route_rows: dict[str, dict[str, int]] = {}
     route_failures: list[dict] = []
     for cid in sorted(results):
@@ -1197,13 +1406,17 @@ def build_report(cases: list[dict], results: dict, target: dict,
             if not isinstance(entry, dict):
                 continue
             st = entry.get("status", "fail")
-            route_rows.setdefault(name, {})[st] = \
-                route_rows.setdefault(name, {}).get(st, 0) + 1
+            route_rows.setdefault(name, {})[st] = route_rows.setdefault(name, {}).get(st, 0) + 1
             if st == "fail":
-                route_failures.append({"id": cid, "route": name,
-                                       "code": entry.get("code"),
-                                       "reason": entry.get("reason"),
-                                       "follow_up": entry.get("follow_up")})
+                route_failures.append(
+                    {
+                        "id": cid,
+                        "route": name,
+                        "code": entry.get("code"),
+                        "reason": entry.get("reason"),
+                        "follow_up": entry.get("follow_up"),
+                    }
+                )
     return {
         "schema": 1,
         # 时间戳只进**报告**，绝不进 committed 基线。
@@ -1220,29 +1433,35 @@ def build_report(cases: list[dict], results: dict, target: dict,
             "classification": {k: len(v) for k, v in sorted(by_cls.items())},
             "product_bugs": bugs,
             "worker_crashes": sum(
-                1 for c in cases
-                if "worker" in str(results[c["id"]]["detail"]
-                                   .get("execute", {}).get("error", "")).lower()
-                and not results[c["id"]]["stages"].get("execute")),
+                1
+                for c in cases
+                if "worker"
+                in str(results[c["id"]]["detail"].get("execute", {}).get("error", "")).lower()
+                and not results[c["id"]]["stages"].get("execute")
+            ),
         },
         # 性能只作**记录**，不设门禁（那是 scripts/ci/benchmark.py 的活）。
         # 它回答的是「有没有哪个 case 慢得不正常」——corpus 里混进真实数据量
         # 或不确定性的表现就是某一条突然要几十秒。
-        "slowest": [{"id": results[cid]["id"],
-                     "duration_ms": results[cid].get("duration_ms", 0),
-                     "script_exec_ms": (results[cid].get("detail") or {})
-                     .get("execute", {}).get("script_exec_ms")}
-                    # 并列时按 id 兜底排序：`sorted` 是稳定的，只按耗时排会让
-                    # 顺序跟着 dict 的插入序走，报告就不再可 diff。
-                    for cid in sorted(
-                        results,
-                        key=lambda c: (-results[c].get("duration_ms", 0), c))[:10]],
+        "slowest": [
+            {
+                "id": results[cid]["id"],
+                "duration_ms": results[cid].get("duration_ms", 0),
+                "script_exec_ms": (results[cid].get("detail") or {})
+                .get("execute", {})
+                .get("script_exec_ms"),
+            }
+            # 并列时按 id 兜底排序：`sorted` 是稳定的，只按耗时排会让
+            # 顺序跟着 dict 的插入序走，报告就不再可 diff。
+            for cid in sorted(results, key=lambda c: (-results[c].get("duration_ms", 0), c))[:10]
+        ],
         "artist_census": artist_census(results),
         "browser_parity": parity,
         # 产品路由（Session 6）：路由 × 状态计数 + 失败明细
-        "product_routes": {"summary": {k: dict(sorted(v.items()))
-                                       for k, v in sorted(route_rows.items())},
-                           "failures": route_failures},
+        "product_routes": {
+            "summary": {k: dict(sorted(v.items())) for k, v in sorted(route_rows.items())},
+            "failures": route_failures,
+        },
         # 报告必须可 diff：case 一律按 id 排序。
         "cases": [results[cid] for cid in sorted(results)],
     }
@@ -1250,8 +1469,11 @@ def build_report(cases: list[dict], results: dict, target: dict,
 
 def render_summary(report: dict) -> str:
     s = report["summary"]
-    out = [f"\n## Matplotlib Compatibility · {report['target']} · {s['cases']} cases\n",
-           "| Stage | Pass | Total | Rate |", "|---|---:|---:|---:|"]
+    out = [
+        f"\n## Matplotlib Compatibility · {report['target']} · {s['cases']} cases\n",
+        "| Stage | Pass | Total | Rate |",
+        "|---|---:|---:|---:|",
+    ]
     for row in s["funnel"]:
         rate = "—" if row["rate"] is None else f"{row['rate'] * 100:.1f}%"
         out.append(f"| {row['label']} | {row['passed']} | {row['total']} | {rate} |")
@@ -1263,8 +1485,7 @@ def render_summary(report: dict) -> str:
     if s["product_bugs"]:
         out.append("\n### Product bugs\n")
         for b in s["product_bugs"]:
-            out.append(f"- `{b['id']}` — {b['stage'] or '?'} "
-                       f"（tier {b['tier']}）{b['detail']}")
+            out.append(f"- `{b['id']}` — {b['stage'] or '?'} （tier {b['tier']}）{b['detail']}")
     else:
         out.append("\n**Product bugs: 0**\n")
     census = report["artist_census"][:10]
@@ -1273,19 +1494,21 @@ def render_summary(report: dict) -> str:
         out.append("| Artist | Unrecognized | Instances | Cases |")
         out.append("|---|---:|---:|---:|")
         for row in census:
-            out.append(f"| {row['artist']} | {row['unrecognized']} | "
-                       f"{row['instances']} | {row['cases']} |")
+            out.append(
+                f"| {row['artist']} | {row['unrecognized']} | {row['instances']} | {row['cases']} |"
+            )
     pr = report.get("product_routes") or {}
     if pr.get("summary"):
         out.append("\n### Product routes\n")
         out.append("| Route | Pass | Fail | Other |")
         out.append("|---|---:|---:|---|")
         for name, counts in pr["summary"].items():
-            other = {k: v for k, v in counts.items()
-                     if k not in ("pass", "fail")}
-            out.append(f"| {name} | {counts.get('pass', 0)} | "
-                       f"{counts.get('fail', 0)} | "
-                       f"{', '.join(f'{k}={v}' for k, v in other.items()) or '—'} |")
+            other = {k: v for k, v in counts.items() if k not in ("pass", "fail")}
+            out.append(
+                f"| {name} | {counts.get('pass', 0)} | "
+                f"{counts.get('fail', 0)} | "
+                f"{', '.join(f'{k}={v}' for k, v in other.items()) or '—'} |"
+            )
         for f in (pr.get("failures") or [])[:10]:
             out.append(f"- ❌ `{f['id']}` × {f['route']} — {f.get('code')}")
     bad_parity = [p for p in report["browser_parity"] if not p.get("ok")]
@@ -1301,21 +1524,32 @@ def render_summary(report: dict) -> str:
 # --------------------------------------------------------------------------
 #: 各档要求。`product_bugs` 是**上限**，`tier1_*` 是必须为 100% 的阶段。
 GATES = {
-    "pr":      {"tier1_stages": ("execute", "capture", "open"),
-                "product_bugs": 0, "allow_baseline_bugs": True},
-    "main":    {"tier1_stages": ("execute", "capture", "open", "export", "edit"),
-                "product_bugs": 0, "allow_baseline_bugs": True},
-    "nightly": {"tier1_stages": ("execute", "capture", "open", "export", "edit",
-                                 "replay"),
-                "product_bugs": 0, "allow_baseline_bugs": True},
-    "release": {"tier1_stages": ("execute", "capture", "open", "export", "edit",
-                                 "replay", "fidelity"),
-                "product_bugs": 0, "allow_baseline_bugs": False},
+    "pr": {
+        "tier1_stages": ("execute", "capture", "open"),
+        "product_bugs": 0,
+        "allow_baseline_bugs": True,
+    },
+    "main": {
+        "tier1_stages": ("execute", "capture", "open", "export", "edit"),
+        "product_bugs": 0,
+        "allow_baseline_bugs": True,
+    },
+    "nightly": {
+        "tier1_stages": ("execute", "capture", "open", "export", "edit", "replay"),
+        "product_bugs": 0,
+        "allow_baseline_bugs": True,
+    },
+    "release": {
+        "tier1_stages": ("execute", "capture", "open", "export", "edit", "replay", "fidelity"),
+        "product_bugs": 0,
+        "allow_baseline_bugs": False,
+    },
 }
 
 
-def evaluate_gate(gate: str, cases: list[dict], results: dict,
-                  baseline: dict | None) -> tuple[bool, list[str]]:
+def evaluate_gate(
+    gate: str, cases: list[dict], results: dict, baseline: dict | None
+) -> tuple[bool, list[str]]:
     """门禁判定。返回 (通过?, 失败理由)。
 
     分三条，每条都对应一种「benchmark 会退化成摆设」的方式：
@@ -1340,20 +1574,25 @@ def evaluate_gate(gate: str, cases: list[dict], results: dict,
     fails: list[str] = []
 
     for stage in spec["tier1_stages"]:
-        bad = [c["id"] for c in cases
-               if c["tier"] == "must"
-               and c["expected"].get(stage, True)
-               and stage in results[c["id"]]["stages"]
-               and not results[c["id"]]["stages"][stage]]
+        bad = [
+            c["id"]
+            for c in cases
+            if c["tier"] == "must"
+            and c["expected"].get(stage, True)
+            and stage in results[c["id"]]["stages"]
+            and not results[c["id"]]["stages"][stage]
+        ]
         if bad:
             fails.append(f"Tier 1 的 {CC.STAGE_LABELS[stage]} 不是 100%：{bad}")
 
     known = set()
     if baseline:
-        known = {cid for cid, e in baseline.get("cases", {}).items()
-                 if e.get("classification") == "product_bug"}
-    bugs = [c["id"] for c in cases
-            if results[c["id"]]["classification"] == "product_bug"]
+        known = {
+            cid
+            for cid, e in baseline.get("cases", {}).items()
+            if e.get("classification") == "product_bug"
+        }
+    bugs = [c["id"] for c in cases if results[c["id"]]["classification"] == "product_bug"]
     new_bugs = [b for b in bugs if b not in known]
     if new_bugs:
         fails.append(f"新出现的 product_bug：{new_bugs}")
@@ -1361,8 +1600,9 @@ def evaluate_gate(gate: str, cases: list[dict], results: dict,
         fails.append(f"{gate} 档不接受任何 product_bug（含基线里已知的）：{bugs}")
 
     # 桌面/浏览器语义分叉：任何档位一律红（见 docstring 第 4 条）
-    parity_bad = [c["id"] for c in cases
-                  if (results[c["id"]].get("browser") or {}).get("ok") is False]
+    parity_bad = [
+        c["id"] for c in cases if (results[c["id"]].get("browser") or {}).get("ok") is False
+    ]
     if parity_bad:
         detail = []
         for cid in parity_bad[:5]:
@@ -1371,9 +1611,19 @@ def evaluate_gate(gate: str, cases: list[dict], results: dict,
         fails.append("桌面/浏览器语义分叉：" + "；".join(detail))
 
     if baseline:
-        rank = {c: i for i, c in enumerate(
-            ("full_support", "partial_support", "environment_dependency",
-             "unsupported_by_design", "invalid_fixture", "product_bug"))}
+        rank = {
+            c: i
+            for i, c in enumerate(
+                (
+                    "full_support",
+                    "partial_support",
+                    "environment_dependency",
+                    "unsupported_by_design",
+                    "invalid_fixture",
+                    "product_bug",
+                )
+            )
+        }
         for c in cases:
             was = baseline.get("cases", {}).get(c["id"], {}).get("classification")
             now = results[c["id"]]["classification"]
@@ -1396,6 +1646,7 @@ def _worker_python(explicit: str | None) -> str:
     只有文字部分对不上（同一套矢量、不同版本的字体度量）。
     """
     from tavotto.engine import pool
+
     chosen = explicit or pool.find_worker_python()
     os.environ["TAVOTTO_WORKER_PYTHON"] = chosen
     pool.reset_worker_python()
@@ -1403,8 +1654,8 @@ def _worker_python(explicit: str | None) -> str:
     picked, source = pool.select_worker_python()
     if not pool.same_python(picked, chosen):
         raise RuntimeError(
-            f"渲染池没有采纳指定的解释器：要 {chosen}，它选了 {picked}"
-            f"（来源 {source}）")
+            f"渲染池没有采纳指定的解释器：要 {chosen}，它选了 {picked}（来源 {source}）"
+        )
     return chosen
 
 
@@ -1429,8 +1680,13 @@ print(json.dumps(out))
 
 def probe_versions(python: str) -> dict:
     """问渲染解释器它到底装了什么。"""
-    out = subprocess.run([python, "-c", _VERSION_PROBE], capture_output=True,
-                         text=True, timeout=180, stdin=subprocess.DEVNULL)
+    out = subprocess.run(
+        [python, "-c", _VERSION_PROBE],
+        capture_output=True,
+        text=True,
+        timeout=180,
+        stdin=subprocess.DEVNULL,
+    )
     try:
         return json.loads((out.stdout or "").strip().splitlines()[-1])
     except (ValueError, IndexError):
@@ -1477,8 +1733,11 @@ def check_target_versions(target: dict, actual: dict) -> list[str]:
 
 def _target_env(target: dict) -> list[str]:
     """把 target 的版本要求折成人能读的一行。"""
-    return [f"{k}={v}" for k, v in sorted(target.items())
-            if k not in ("source", "required", "subset", "note", "runner")]
+    return [
+        f"{k}={v}"
+        for k, v in sorted(target.items())
+        if k not in ("source", "required", "subset", "note", "runner")
+    ]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1486,47 +1745,56 @@ def main(argv: list[str] | None = None) -> int:
         description="Tavotto Matplotlib CompatBench —— 兼容性资格验证",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="示例：\n"
-               "  %(prog)s --smoke                 PR 档的最小子集\n"
-               "  %(prog)s --all                   全量 corpus\n"
-               "  %(prog)s --target bundled        指定版本目标\n"
-               "  %(prog)s --case shape_pyplot_show_only\n"
-               "  %(prog)s --all --update-baseline 重建基线（CI 里被硬拒）\n")
+        "  %(prog)s --smoke                 PR 档的最小子集\n"
+        "  %(prog)s --all                   全量 corpus\n"
+        "  %(prog)s --target bundled        指定版本目标\n"
+        "  %(prog)s --case shape_pyplot_show_only\n"
+        "  %(prog)s --all --update-baseline 重建基线（CI 里被硬拒）\n",
+    )
     scope = ap.add_mutually_exclusive_group()
-    scope.add_argument("--smoke", action="store_true",
-                       help="只跑 smoke 子集（PR 档，覆盖全部 Tier 1 维度）")
+    scope.add_argument(
+        "--smoke", action="store_true", help="只跑 smoke 子集（PR 档，覆盖全部 Tier 1 维度）"
+    )
     scope.add_argument("--all", action="store_true", help="跑全部 case")
-    scope.add_argument("--case", default=None,
-                       help="只跑指定 case（逗号分隔）")
-    ap.add_argument("--tier", default=None,
-                    help="按档位过滤：must,expected,exploratory")
+    scope.add_argument("--case", default=None, help="只跑指定 case（逗号分隔）")
+    ap.add_argument("--tier", default=None, help="按档位过滤：must,expected,exploratory")
     ap.add_argument("--category", default=None, help="按类别过滤（逗号分隔）")
-    ap.add_argument("--target", default="current",
-                    help="版本目标（见 tests/compat/matrix.json）")
-    ap.add_argument("--python", default=None,
-                    help="渲染解释器（默认走 pool 的探测链）")
-    ap.add_argument("--gate", default="nightly", choices=sorted(GATES),
-                    help="门禁档位（默认 nightly）")
+    ap.add_argument("--target", default="current", help="版本目标（见 tests/compat/matrix.json）")
+    ap.add_argument("--python", default=None, help="渲染解释器（默认走 pool 的探测链）")
+    ap.add_argument(
+        "--gate", default="nightly", choices=sorted(GATES), help="门禁档位（默认 nightly）"
+    )
     ap.add_argument("--out", default=None, help="产物目录（报告与失败 diff）")
-    ap.add_argument("--json", dest="json_out", default=None,
-                    help="compat-report.json 的落点")
-    ap.add_argument("--fidelity", dest="fidelity", action="store_true",
-                    default=None, help="强制开启零 patch 原生保真度比对")
-    ap.add_argument("--no-fidelity", dest="fidelity", action="store_false",
-                    help="跳过保真度比对（省一半时间）")
-    ap.add_argument("--browser", action="store_true",
-                    help="对 browser_eligible 的 case 做桌面/浏览器语义对拍")
-    ap.add_argument("--update-baseline", action="store_true",
-                    help="重建 tests/compat/baseline.json。**CI 里被硬拒**"
-                         "——基线必须由人逐条读过再提交")
+    ap.add_argument("--json", dest="json_out", default=None, help="compat-report.json 的落点")
+    ap.add_argument(
+        "--fidelity",
+        dest="fidelity",
+        action="store_true",
+        default=None,
+        help="强制开启零 patch 原生保真度比对",
+    )
+    ap.add_argument(
+        "--no-fidelity", dest="fidelity", action="store_false", help="跳过保真度比对（省一半时间）"
+    )
+    ap.add_argument(
+        "--browser", action="store_true", help="对 browser_eligible 的 case 做桌面/浏览器语义对拍"
+    )
+    ap.add_argument(
+        "--update-baseline",
+        action="store_true",
+        help="重建 tests/compat/baseline.json。**CI 里被硬拒**——基线必须由人逐条读过再提交",
+    )
     ap.add_argument("--list", action="store_true", help="只列出选中的 case")
     args = ap.parse_args(argv)
 
     # 硬拦截。「case 红了 → 自动更新基线 → 报绿」是这套东西唯一致命的退化方式，
     # 而且它会一直报平安。
     if args.update_baseline and os.environ.get("CI") == "true":
-        print("::error::--update-baseline 不允许在 CI 环境使用："
-              "基线必须由人在本地生成、逐条读过、经 code review 之后提交",
-              file=sys.stderr)
+        print(
+            "::error::--update-baseline 不允许在 CI 环境使用："
+            "基线必须由人在本地生成、逐条读过、经 code review 之后提交",
+            file=sys.stderr,
+        )
         return 2
 
     try:
@@ -1538,16 +1806,15 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     # 默认档：显式挑 case 或指定档位时跑那些；否则 smoke。
-    want_smoke = args.smoke or not (args.all or args.case or args.tier
-                                    or args.category)
+    want_smoke = args.smoke or not (args.all or args.case or args.tier or args.category)
     try:
         cases = CC.select(
             manifest["cases"],
             ids=[c.strip() for c in args.case.split(",")] if args.case else None,
             tiers=[t.strip() for t in args.tier.split(",")] if args.tier else None,
-            categories=[c.strip() for c in args.category.split(",")]
-            if args.category else None,
-            smoke=want_smoke)
+            categories=[c.strip() for c in args.category.split(",")] if args.category else None,
+            smoke=want_smoke,
+        )
     except CC.CorpusError as exc:
         print(f"::error::{exc.message}", file=sys.stderr)
         return 2
@@ -1558,8 +1825,10 @@ def main(argv: list[str] | None = None) -> int:
     if subset == "browser_eligible":
         before = len(cases)
         cases = [c for c in cases if c.get("browser_eligible")]
-        print(f"target {args.target!r} 声明只跑 browser_eligible 子集："
-              f"{before} → {len(cases)} 个 case")
+        print(
+            f"target {args.target!r} 声明只跑 browser_eligible 子集："
+            f"{before} → {len(cases)} 个 case"
+        )
     if not cases:
         print("::error::选出来一个 case 都没有", file=sys.stderr)
         return 2
@@ -1570,19 +1839,17 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\n合计 {len(cases)} 个 case")
         return 0
 
-    mode = ("smoke" if want_smoke else
-            "case" if args.case else "tier" if args.tier else "all")
+    mode = "smoke" if want_smoke else "case" if args.case else "tier" if args.tier else "all"
     # 保真度默认只在全量档开：它要为每个脚本多起一个进程、多渲一遍图。
     want_fidelity = args.fidelity if args.fidelity is not None else (mode == "all")
 
     try:
         python = _worker_python(args.python)
-    except Exception as exc:                            # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
         print(f"::error::渲染解释器不可用：{exc}", file=sys.stderr)
         return 2
 
-    out_dir = Path(args.out) if args.out else Path(
-        tempfile.mkdtemp(prefix="compat-report-"))
+    out_dir = Path(args.out) if args.out else Path(tempfile.mkdtemp(prefix="compat-report-"))
     out_dir.mkdir(parents=True, exist_ok=True)
     scratch = Path(tempfile.mkdtemp(prefix="compat-run-"))
     # 运行时可写数据隔离进本轮 scratch：产品路由会经真实端点物化 runtime
@@ -1592,30 +1859,39 @@ def main(argv: list[str] | None = None) -> int:
     os.environ.setdefault("TAVOTTO_CONFIG_DIR", str(scratch / "config"))
     os.environ.setdefault("TAVOTTO_NO_TELEMETRY", "1")
 
-    print(f"CompatBench · {mode} · target={args.target} "
-          f"({', '.join(_target_env(target)) or '当前环境'})")
+    print(
+        f"CompatBench · {mode} · target={args.target} "
+        f"({', '.join(_target_env(target)) or '当前环境'})"
+    )
     print(f"渲染解释器：{python}")
     actual = probe_versions(python)
     print(f"实际装的：{', '.join(f'{k}={v}' for k, v in sorted(actual.items()))}")
     import platform as _pf
-    py_actual = subprocess.run(
-        [python, "-c", "import platform;print(platform.python_version())"],
-        capture_output=True, text=True, timeout=120,
-        encoding="utf-8", errors="replace").stdout.strip() or _pf.python_version()
+
+    py_actual = (
+        subprocess.run(
+            [python, "-c", "import platform;print(platform.python_version())"],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            encoding="utf-8",
+            errors="replace",
+        ).stdout.strip()
+        or _pf.python_version()
+    )
     print(f"渲染解释器版本：Python {py_actual}")
-    mismatch = (check_target_versions(target, actual)
-                + check_python_version(target, py_actual))
+    mismatch = check_target_versions(target, actual) + check_python_version(target, py_actual)
     if mismatch:
         for line in mismatch:
-            print(f"::error::target {args.target} 的版本对不上——{line}",
-                  file=sys.stderr)
-        print(f"::error::一份标着 target={args.target} 却跑在别的版本上的报告，"
-              f"比没有报告更坏。装对版本再跑，或者用 --target current。",
-              file=sys.stderr)
+            print(f"::error::target {args.target} 的版本对不上——{line}", file=sys.stderr)
+        print(
+            f"::error::一份标着 target={args.target} 却跑在别的版本上的报告，"
+            f"比没有报告更坏。装对版本再跑，或者用 --target current。",
+            file=sys.stderr,
+        )
         return 2
     target = {**target, "actual": {**actual, "python": py_actual}}
-    print(f"case {len(cases)} 个，分 {len(CC.group_by_project(cases))} 组构建\n",
-          flush=True)
+    print(f"case {len(cases)} 个，分 {len(CC.group_by_project(cases))} 组构建\n", flush=True)
 
     results: dict = {}
     try:
@@ -1623,10 +1899,17 @@ def main(argv: list[str] | None = None) -> int:
             names = ", ".join(c["id"] for c in group)
             print(f"[{i}] {names}", flush=True)
             try:
-                results.update(run_group(
-                    group, python=python, root=scratch, out_dir=out_dir,
-                    want_fidelity=want_fidelity, want_browser=args.browser))
-            except Exception:                           # noqa: BLE001
+                results.update(
+                    run_group(
+                        group,
+                        python=python,
+                        root=scratch,
+                        out_dir=out_dir,
+                        want_fidelity=want_fidelity,
+                        want_browser=args.browser,
+                    )
+                )
+            except Exception:  # noqa: BLE001
                 # runner 自己崩了也要如实记账，绝不让整轮消失。
                 tb = traceback.format_exc()
                 for ca in group:
@@ -1640,14 +1923,19 @@ def main(argv: list[str] | None = None) -> int:
                     results[ca["id"]] = r
             for ca in group:
                 r = results[ca["id"]]
-                mark = {"full_support": "✅", "partial_support": "🟡",
-                        "unsupported_by_design": "⚪",
-                        "environment_dependency": "🌤",
-                        "product_bug": "❌", "invalid_fixture": "🛠"}.get(
-                            r["classification"], "?")
-                print(f"    {mark} {ca['id']:<38} {r['classification']}"
-                      f"{'  ' + r.get('detail_note', '') if r.get('detail_note') else ''}",
-                      flush=True)
+                mark = {
+                    "full_support": "✅",
+                    "partial_support": "🟡",
+                    "unsupported_by_design": "⚪",
+                    "environment_dependency": "🌤",
+                    "product_bug": "❌",
+                    "invalid_fixture": "🛠",
+                }.get(r["classification"], "?")
+                print(
+                    f"    {mark} {ca['id']:<38} {r['classification']}"
+                    f"{'  ' + r.get('detail_note', '') if r.get('detail_note') else ''}",
+                    flush=True,
+                )
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
@@ -1656,11 +1944,14 @@ def main(argv: list[str] | None = None) -> int:
     json_path.parent.mkdir(parents=True, exist_ok=True)
     json_path.write_text(
         json.dumps(report, ensure_ascii=False, indent=2, sort_keys=False) + "\n",
-        encoding="utf-8", newline="\n")
+        encoding="utf-8",
+        newline="\n",
+    )
 
     if args.update_baseline:
         payload = CC.baseline_payload(
-            results, {"target": args.target, **{k: v for k, v in actual.items()}})
+            results, {"target": args.target, **{k: v for k, v in actual.items()}}
+        )
         CC.validate_baseline(payload)
         CC.write_baseline(payload)
         print(f"\n基线已重建：{CC.BASELINE_PATH}（{len(payload['cases'])} 条）")
@@ -1676,29 +1967,31 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     gen = baseline.get("generated_for") or {}
-    drift = [f"{k}: 基线 {gen[k]} vs 现在 {actual.get(k)}"
-             for k in _VERSION_KEYS
-             if gen.get(k) and actual.get(k) and gen[k] != actual[k]]
+    drift = [
+        f"{k}: 基线 {gen[k]} vs 现在 {actual.get(k)}"
+        for k in _VERSION_KEYS
+        if gen.get(k) and actual.get(k) and gen[k] != actual[k]
+    ]
     if drift:
         # 只是提醒，不是失败：本地 `--target current` 拿全量基线做快速核对是
         # 正当用法。但「基线对不上」时得先知道是不是环境变了，别去查产品。
-        print("\n注意：基线是在另一套科学栈上采的，分类差异未必来自产品改动：",
-              file=sys.stderr)
+        print("\n注意：基线是在另一套科学栈上采的，分类差异未必来自产品改动：", file=sys.stderr)
         for line in drift:
             print(f"  · {line}", file=sys.stderr)
-        print(f"  基线 target={gen.get('target')!r}，本次 target={args.target!r}",
-              file=sys.stderr)
+        print(f"  基线 target={gen.get('target')!r}，本次 target={args.target!r}", file=sys.stderr)
 
     delta = CC.diff_baseline(baseline, results)
     report["baseline_diff"] = delta
     json_path.write_text(
-        json.dumps(report, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8", newline="\n")
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n"
+    )
 
     ok, fails = evaluate_gate(args.gate, cases, results, baseline)
     if delta["new"]:
-        print(f"\n基线里没有这些 case（新加的？先跑一次 --update-baseline）："
-              f"{delta['new']}", file=sys.stderr)
+        print(
+            f"\n基线里没有这些 case（新加的？先跑一次 --update-baseline）：{delta['new']}",
+            file=sys.stderr,
+        )
         ok = False
         fails.append(f"case 不在基线里：{delta['new']}")
 
@@ -1706,8 +1999,10 @@ def main(argv: list[str] | None = None) -> int:
     if delta["changed"]:
         lines = ["\n### 与基线的差异\n"]
         for ch in delta["changed"][:20]:
-            lines.append(f"- `{ch['id']}`：{ch['was']} → {ch['now']}"
-                         + (f"，阶段 {ch['stages']}" if ch["stages"] else ""))
+            lines.append(
+                f"- `{ch['id']}`：{ch['was']} → {ch['now']}"
+                + (f"，阶段 {ch['stages']}" if ch["stages"] else "")
+            )
         _summary("\n".join(lines))
         print("\n".join(lines))
 

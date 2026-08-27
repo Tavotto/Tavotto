@@ -24,6 +24,7 @@ qualification 变红，是把手段当成了目的。
     python scripts/ci/cleanup.py --dry-run       # 只报告不动手
     python scripts/ci/cleanup.py --kill-stale    # 顺便收掉遗留进程
 """
+
 from __future__ import annotations
 
 import argparse
@@ -72,8 +73,12 @@ def sweep(root: Path, dry_run: bool = False) -> list[dict]:
             age = _age_days(entry)
             if age <= days:
                 continue
-            record = {"path": str(entry), "age_days": round(age, 1),
-                      "reason": f"{sub} 保留 {days} 天", "removed": False}
+            record = {
+                "path": str(entry),
+                "age_days": round(age, 1),
+                "reason": f"{sub} 保留 {days} 天",
+                "removed": False,
+            }
             if not dry_run:
                 try:
                     record["removed"] = safe_rmtree(entry, root)
@@ -98,8 +103,12 @@ def sweep_workspace_leftovers(root: Path, dry_run: bool = False) -> list[dict]:
     if not tmp.is_dir():
         return actions
     for entry in sorted(tmp.glob("venv-*")) + sorted(tmp.glob("artifact-*")):
-        record = {"path": str(entry), "age_days": round(_age_days(entry), 1),
-                  "reason": "一次性 venv / 解包产物", "removed": False}
+        record = {
+            "path": str(entry),
+            "age_days": round(_age_days(entry), 1),
+            "reason": "一次性 venv / 解包产物",
+            "removed": False,
+        }
         if not dry_run:
             try:
                 record["removed"] = safe_rmtree(entry, root)
@@ -146,20 +155,24 @@ def kill_stale_processes(root: Path, dry_run: bool = False) -> list[dict]:
 
 def disk_report(root: Path) -> dict:
     import shutil as _sh
+
     try:
         usage = _sh.disk_usage(root)
     except OSError:
         return {}
-    return {"total_gib": round(usage.total / 1024 ** 3, 1),
-            "free_gib": round(usage.free / 1024 ** 3, 1),
-            "used_pct": round(usage.used / usage.total * 100, 1)}
+    return {
+        "total_gib": round(usage.total / 1024**3, 1),
+        "free_gib": round(usage.free / 1024**3, 1),
+        "used_pct": round(usage.used / usage.total * 100, 1),
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="实验室 runner 磁盘清理")
     ap.add_argument("--dry-run", action="store_true", help="只报告，不删除")
-    ap.add_argument("--kill-stale", action="store_true",
-                    help="顺便 SIGTERM 掉归属本 CI 根的遗留 Tavotto 进程")
+    ap.add_argument(
+        "--kill-stale", action="store_true", help="顺便 SIGTERM 掉归属本 CI 根的遗留 Tavotto 进程"
+    )
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
 
@@ -187,7 +200,9 @@ def main(argv: list[str] | None = None) -> int:
     verb = "将删除" if args.dry_run else "已删除"
     print(f"{verb} {n_rm} 项；保留 {', '.join(PROTECTED)}")
     if procs:
-        print(f"遗留进程 {len(procs)} 个" + ("（dry-run 未处理）" if args.dry_run else "，已 SIGTERM"))
+        print(
+            f"遗留进程 {len(procs)} 个" + ("（dry-run 未处理）" if args.dry_run else "，已 SIGTERM")
+        )
     if after:
         print(f"磁盘：{after['free_gib']} GiB 可用（{after['used_pct']}% 已用）")
     summary(f"\n**清理** — {verb} {n_rm} 项，剩余 {after.get('free_gib', '?')} GiB\n")

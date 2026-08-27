@@ -31,6 +31,7 @@ rebinding。Host 只认 `127.0.0.1:<port>` 一种写法；带 Origin 的请求�
 测试 / 开发旁路：app.config 里没有 `TAVOTTO_SESSION_STATE` 时 guard 全部
 放行（test_client、`--insecure-no-auth`、vite dev proxy 的后端就是这一档）。
 """
+
 from __future__ import annotations
 
 import hmac
@@ -61,12 +62,18 @@ BROWSER_COOKIE_MAX_AGE = 30 * 24 * 3600
 # bootstrap/relaunch 本身（各有各的凭据校验），以及 /api/version——
 # 实例探测（resolve_port / handoff）靠它区分「Tavotto 在跑」与「别的程序」，
 # 它只回版本号与 build 标记。其余一律凭 cookie 或本机凭据头。
-_PUBLIC_PATHS = {"/", "/favicon.ico", "/api/version",
-                 BOOTSTRAP_PATH, LEGACY_BOOTSTRAP_PATH, RELAUNCH_PATH}
+_PUBLIC_PATHS = {
+    "/",
+    "/favicon.ico",
+    "/api/version",
+    BOOTSTRAP_PATH,
+    LEGACY_BOOTSTRAP_PATH,
+    RELAUNCH_PATH,
+}
 _PUBLIC_PREFIXES = ("/assets/",)
 
-_MAX_TOKENS = 8          # 并存的已认证浏览器上下文上限（relaunch 一次多一个）
-_MAX_PENDING = 8         # 未兑换的一次性 nonce 上限
+_MAX_TOKENS = 8  # 并存的已认证浏览器上下文上限（relaunch 一次多一个）
+_MAX_PENDING = 8  # 未兑换的一次性 nonce 上限
 _RELAUNCH_NONCE_TTL = 300.0
 
 
@@ -78,8 +85,9 @@ class SessionState:
     桌面为 None，磁盘上不存在任何凭据）与 `persistent_cookie`。
     """
 
-    def __init__(self, nonce: str, *, api_secret: str | None = None,
-                 persistent_cookie: bool = False) -> None:
+    def __init__(
+        self, nonce: str, *, api_secret: str | None = None, persistent_cookie: bool = False
+    ) -> None:
         # nonce → 过期时刻（None = 启动 nonce 不过期：窗口/浏览器可能起得慢）
         self._pending: dict[str, float | None] = {nonce: None}
         self._tokens: list[str] = []
@@ -126,8 +134,11 @@ class SessionState:
             return any(hmac.compare_digest(t, token) for t in self._tokens)
 
     def valid_api_secret(self, submitted: str | None) -> bool:
-        return bool(self.api_secret) and bool(submitted) \
+        return (
+            bool(self.api_secret)
+            and bool(submitted)
             and hmac.compare_digest(self.api_secret, submitted)
+        )
 
     def _prune_locked(self) -> None:
         now = time.monotonic()
@@ -150,18 +161,22 @@ def install(flask_app) -> None:
         body = request.get_json(force=True, silent=True) or {}
         token = state.redeem(str(body.get("nonce") or ""))
         if token is None:
-            return jsonify({"error": "启动凭据无效或已使用",
-                            "code": "bad_nonce"}), 403
+            return jsonify({"error": "启动凭据无效或已使用", "code": "bad_nonce"}), 403
         resp = jsonify({"ok": True})
         max_age = BROWSER_COOKIE_MAX_AGE if state.persistent_cookie else None
-        resp.set_cookie(COOKIE_NAME, token, httponly=True, samesite="Strict",
-                        secure=False, path="/", max_age=max_age)
+        resp.set_cookie(
+            COOKIE_NAME,
+            token,
+            httponly=True,
+            samesite="Strict",
+            secure=False,
+            path="/",
+            max_age=max_age,
+        )
         return resp
 
-    flask_app.add_url_rule(BOOTSTRAP_PATH, "session_bootstrap",
-                           _bootstrap, methods=["POST"])
-    flask_app.add_url_rule(LEGACY_BOOTSTRAP_PATH, "desktop_bootstrap",
-                           _bootstrap, methods=["POST"])
+    flask_app.add_url_rule(BOOTSTRAP_PATH, "session_bootstrap", _bootstrap, methods=["POST"])
+    flask_app.add_url_rule(LEGACY_BOOTSTRAP_PATH, "desktop_bootstrap", _bootstrap, methods=["POST"])
 
     @flask_app.post(RELAUNCH_PATH)
     def _session_relaunch():
@@ -199,8 +214,7 @@ def install(flask_app) -> None:
             return None
         if state.valid_api_secret(request.headers.get(session_client.AUTH_HEADER)):
             return None
-        return jsonify({"error": "会话未建立或已失效",
-                        "code": "session_auth_required"}), 401
+        return jsonify({"error": "会话未建立或已失效", "code": "session_auth_required"}), 401
 
 
 def new_browser_state(port: int) -> tuple[SessionState, str]:

@@ -20,6 +20,7 @@
     python scripts/dev/matplotlib_artist_census.py path/to/figure.py --entry main
     python scripts/dev/matplotlib_artist_census.py --api --json
 """
+
 from __future__ import annotations
 
 import argparse
@@ -35,7 +36,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 #: 默认用本仓库的引擎；`TAVOTTO_CENSUS_ENGINE` 可指到另一份（把改动前后的
 #: manifest/overrides 各普查一遍，缺口清单的前后对照就是这么来的）。
 ENGINE = os.environ.get("TAVOTTO_CENSUS_ENGINE") or os.path.normpath(
-    os.path.join(HERE, "..", "..", "src", "tavotto", "engine"))
+    os.path.join(HERE, "..", "..", "src", "tavotto", "engine")
+)
 sys.path.insert(0, ENGINE)
 
 import matplotlib  # noqa: E402
@@ -56,11 +58,11 @@ from overrides import SeriesGroup, _cls_key  # noqa: E402
 # ---------------------------------------------------------------------------
 #: 每张图上属于 matplotlib 自己的结构件。把它们算成「Tavotto 漏掉了」，
 #: 普查结果就会被几十条噪音淹没，真正的缺口反而看不见（§29）。
-SEMANTIC = "semantic"          # 已登记成语义元素
-COMPOSITE = "composite"        # 被容器消费（柱 / 误差棒横杠 / 茎）
-INTERNAL = "internal"          # 轴、边框、背景矩形——由刻度/边框/facecolor 模型代表
-GENERIC = "generic"            # 登记了，但只开 visible/zorder
-MISSING = "missing"            # 真的漏了
+SEMANTIC = "semantic"  # 已登记成语义元素
+COMPOSITE = "composite"  # 被容器消费（柱 / 误差棒横杠 / 茎）
+INTERNAL = "internal"  # 轴、边框、背景矩形——由刻度/边框/facecolor 模型代表
+GENERIC = "generic"  # 登记了，但只开 visible/zorder
+MISSING = "missing"  # 真的漏了
 
 
 # `_internal_ids` **不在这里重写**：`manifest` 里那份是唯一权威。曾经这里
@@ -68,7 +70,7 @@ MISSING = "missing"            # 真的漏了
 # `secondary_[xy]axis`（它们挂在 `ax.child_axes` 上、`in fig.axes` 为 False）
 # 里的 artist 在普查报告里一个字都不出现，而报告照样给出一张干净的成绩单。
 # 修的时候只修了产品侧那份、忘了这份，就是这条重复的代价。
-_internal_ids = manifest_mod._internal_ids          # noqa: SLF001
+_internal_ids = manifest_mod._internal_ids  # noqa: SLF001
 
 
 def _qual(obj) -> str:
@@ -92,22 +94,26 @@ def census(fig) -> dict:
             if isinstance(art.artists, list):
                 composite_ids.update(id(m) for m in art.artists)
             continue
-        (generic_ids if el["role"] == "artist" else semantic_ids.setdefault(
-            id(art), el["role"]) or semantic_ids)
+        (
+            generic_ids
+            if el["role"] == "artist"
+            else semantic_ids.setdefault(id(art), el["role"]) or semantic_ids
+        )
         if el["role"] == "artist":
             generic_ids.add(id(art))
         else:
             semantic_ids[id(art)] = el["role"]
 
     internal = _internal_ids(fig, state.colorbar_axes)
-    buckets: dict[str, Counter] = {k: Counter() for k in
-                                   (SEMANTIC, COMPOSITE, INTERNAL, GENERIC, MISSING)}
+    buckets: dict[str, Counter] = {
+        k: Counter() for k in (SEMANTIC, COMPOSITE, INTERNAL, GENERIC, MISSING)
+    }
     # **必须走 `_ordered_axes`**：`ax.inset_axes()` / `ax.secondary_[xy]axis()`
     # 建出来的 axes 挂在 `ax.child_axes` 上，`in fig.axes` 为 False。
     # `manifest.instrument` 早就按它遍历了，普查跟不上的话，插图里漏掉的
     # artist 在报告里不出现、`n_axes` 也少数——**一份报平安的普查比没有普查
     # 更坏**，而普查存在的唯一理由就是回答「有没有东西被我们悄悄漏掉了」。
-    _census_axes, _child_ids = manifest_mod._ordered_axes(fig)   # noqa: SLF001
+    _census_axes, _child_ids = manifest_mod._ordered_axes(fig)  # noqa: SLF001
     for owner in [fig] + list(_census_axes):
         for child in owner.get_children():
             if isinstance(child, (Axes, Axis)):
@@ -127,15 +133,22 @@ def census(fig) -> dict:
             else:
                 buckets[MISSING][key] += 1
 
-    elements = [{"gid": el["gid"], "role": el["role"],
-                 "cls": _qual(el["artist"]),
-                 "family": _cls_key(el["artist"]),
-                 "fields": len(manifest_mod._fields_for(el))}   # noqa: SLF001
-                for el in state.elements]
-    return {"buckets": {k: dict(v) for k, v in buckets.items() if v},
-            "elements": elements,
-            # 与上面的遍历同一口径：`fig.axes` 数不到插图与次坐标轴
-            "n_axes": len(_census_axes)}
+    elements = [
+        {
+            "gid": el["gid"],
+            "role": el["role"],
+            "cls": _qual(el["artist"]),
+            "family": _cls_key(el["artist"]),
+            "fields": len(manifest_mod._fields_for(el)),
+        }  # noqa: SLF001
+        for el in state.elements
+    ]
+    return {
+        "buckets": {k: dict(v) for k, v in buckets.items() if v},
+        "elements": elements,
+        # 与上面的遍历同一口径：`fig.axes` 数不到插图与次坐标轴
+        "n_axes": len(_census_axes),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -181,8 +194,7 @@ def from_script(path: str, entry: str | None) -> list[tuple[str, Figure]]:
             else:
                 runpy.run_path(script, run_name="__main__")
             if not grabbed:
-                grabbed.extend((f"fig{i}", plt.figure(n))
-                               for i, n in enumerate(plt.get_fignums()))
+                grabbed.extend((f"fig{i}", plt.figure(n)) for i, n in enumerate(plt.get_fignums()))
             return list(grabbed)
     finally:
         sys.argv, _ = argv, os.chdir(cwd)
@@ -194,6 +206,7 @@ def from_script(path: str, entry: str | None) -> list[tuple[str, Figure]]:
 # ---------------------------------------------------------------------------
 def api_specimens(with_seaborn: bool) -> list[tuple[str, object]]:
     import numpy as np
+
     rng = np.random.RandomState(0)
     x = np.linspace(0.5, 6.0, 30)
     Z = rng.rand(8, 8)
@@ -222,18 +235,26 @@ def api_specimens(with_seaborn: bool) -> list[tuple[str, object]]:
         ("imshow", lambda ax: ax.imshow(Z)),
         ("quiver", lambda ax: ax.quiver(Z[:4, :4], Z[:4, :4])),
         ("barbs", lambda ax: ax.barbs(Z[:4, :4], Z[:4, :4])),
-        ("streamplot", lambda ax: ax.streamplot(np.arange(5), np.arange(5),
-                                                Z[:5, :5], Z[:5, :5])),
+        ("streamplot", lambda ax: ax.streamplot(np.arange(5), np.arange(5), Z[:5, :5], Z[:5, :5])),
         ("table", lambda ax: ax.table([[1, 2], [3, 4]])),
         ("axhspan", lambda ax: ax.axhspan(0.2, 0.4)),
-        ("annotate", lambda ax: ax.annotate("hi", (1, 0), (2, 0.5),
-                                            arrowprops=dict(arrowstyle="->"))),
+        (
+            "annotate",
+            lambda ax: ax.annotate("hi", (1, 0), (2, 0.5), arrowprops=dict(arrowstyle="->")),
+        ),
     ]
     if with_seaborn:
         import pandas as pd
         import seaborn as sns
-        df = pd.DataFrame({"x": np.tile(np.arange(10), 3), "y": rng.randn(30),
-                           "g": np.repeat(list("abc"), 10), "z": rng.rand(30)})
+
+        df = pd.DataFrame(
+            {
+                "x": np.tile(np.arange(10), 3),
+                "y": rng.randn(30),
+                "g": np.repeat(list("abc"), 10),
+                "z": rng.rand(30),
+            }
+        )
         mat = pd.DataFrame(rng.rand(5, 5))
         cases += [
             ("sns.lineplot", lambda ax: sns.lineplot(df, x="x", y="y", hue="g", ax=ax)),
@@ -262,7 +283,7 @@ def run_api_table(with_seaborn: bool) -> dict:
                 fn(ax)
             fig.canvas.draw()
             rows[name] = census(fig)
-        except Exception as exc:                     # noqa: BLE001 — 逐条报告，不中断普查
+        except Exception as exc:  # noqa: BLE001 — 逐条报告，不中断普查
             rows[name] = {"error": f"{type(exc).__name__}: {exc}"}
         finally:
             plt.close(fig)
@@ -279,8 +300,10 @@ def _fmt_counter(d: dict) -> str:
 def print_report(rows: dict) -> int:
     missing_total: Counter = Counter()
     print(f"matplotlib {matplotlib.__version__}\n")
-    print(f"{'API / figure':22s} {'元素':>4s} {'语义':>4s} {'容器成员':>8s} "
-          f"{'仅识别':>7s} {'漏掉':>5s}  漏掉的类")
+    print(
+        f"{'API / figure':22s} {'元素':>4s} {'语义':>4s} {'容器成员':>8s} "
+        f"{'仅识别':>7s} {'漏掉':>5s}  漏掉的类"
+    )
     print("-" * 100)
     for name, r in rows.items():
         if "error" in r:
@@ -291,13 +314,19 @@ def print_report(rows: dict) -> int:
         missing_total.update(miss)
         # 「元素」是元素表里的条目数（含容器、刻度组这些伪元素）；「语义」只数
         # 真 artist——误差棒那种全部由容器代表的，语义列是 0 而元素列不是
-        n_user = len([e for e in r["elements"]
-                      if e["role"] not in ("axes", "axes3d", "figure",
-                                           "ticks", "ticklabel")])
-        print(f"{name:22s} {n_user:4d} {sum(b.get(SEMANTIC, {}).values()):4d} "
-              f"{sum(b.get(COMPOSITE, {}).values()):8d} "
-              f"{sum(b.get(GENERIC, {}).values()):7d} "
-              f"{sum(miss.values()):5d}  {_fmt_counter(miss)}")
+        n_user = len(
+            [
+                e
+                for e in r["elements"]
+                if e["role"] not in ("axes", "axes3d", "figure", "ticks", "ticklabel")
+            ]
+        )
+        print(
+            f"{name:22s} {n_user:4d} {sum(b.get(SEMANTIC, {}).values()):4d} "
+            f"{sum(b.get(COMPOSITE, {}).values()):8d} "
+            f"{sum(b.get(GENERIC, {}).values()):7d} "
+            f"{sum(miss.values()):5d}  {_fmt_counter(miss)}"
+        )
     print("-" * 100)
     if missing_total:
         print("\n还没有语义模型的类（按出现次数）：")
@@ -325,18 +354,22 @@ def _force_utf8_stdio() -> None:
         try:
             stream.reconfigure(encoding="utf-8", errors="replace")
         except (AttributeError, OSError):
-            pass   # 被重定向成别的对象（或已关闭）：照旧，不拦工具跑
+            pass  # 被重定向成别的对象（或已关闭）：照旧，不拦工具跑
 
 
 def main() -> int:
     _force_utf8_stdio()
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("script", nargs="?", help="要普查的画图脚本")
     ap.add_argument("--entry", default=None, help="脚本入口函数名（默认整脚本跑一遍）")
     ap.add_argument("--api", action="store_true", help="普查代表性 matplotlib API 表")
-    ap.add_argument("--with-seaborn", action="store_true",
-                    help="同时普查 seaborn / pandas（验证上层库不需要专有 handler）")
+    ap.add_argument(
+        "--with-seaborn",
+        action="store_true",
+        help="同时普查 seaborn / pandas（验证上层库不需要专有 handler）",
+    )
     ap.add_argument("--json", action="store_true", help="输出 JSON（给 CI / CompatBench 用）")
     args = ap.parse_args()
 
@@ -358,8 +391,13 @@ def main() -> int:
     # `{"error": ...}`，那时报告里连「漏没漏」都无从谈起。
     errors = sum(1 for r in rows.values() if isinstance(r, dict) and "error" in r)
     if args.json:
-        json.dump({"matplotlib": matplotlib.__version__, "figures": rows},
-                  sys.stdout, ensure_ascii=False, indent=2, sort_keys=True)
+        json.dump(
+            {"matplotlib": matplotlib.__version__, "figures": rows},
+            sys.stdout,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
         print()
         return 1 if errors else 0
     missing = print_report(rows)

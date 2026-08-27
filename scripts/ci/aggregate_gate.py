@@ -39,6 +39,7 @@
 stdout 恒输出一行机器可读 JSON；`$GITHUB_STEP_SUMMARY` 存在时另写
 人类可读的 Markdown。纯标准库。
 """
+
 from __future__ import annotations
 
 import argparse
@@ -77,9 +78,16 @@ def parse_needs(raw: str) -> dict[str, str]:
     return out
 
 
-def decide(mode: str, event: str, required: list[str], results: dict[str, str],
-           *, require_heavy: bool = False, allow_deferred: bool = False,
-           full_ci: bool = False) -> dict:
+def decide(
+    mode: str,
+    event: str,
+    required: list[str],
+    results: dict[str, str],
+    *,
+    require_heavy: bool = False,
+    allow_deferred: bool = False,
+    full_ci: bool = False,
+) -> dict:
     """核心判定。返回 {"status": "success"|"failure"|"deferred", ...}。
 
     只做纯计算，不碰环境——所有 I/O 留在 main() 里，单测才测得动每一格。
@@ -91,7 +99,8 @@ def decide(mode: str, event: str, required: list[str], results: dict[str, str],
         if require_heavy == allow_deferred:
             raise ConfigError(
                 "--mode integration 必须且只能带 --require-heavy 或 "
-                "--allow-deferred 之一——不显式选，就是把判定交给巧合")
+                "--allow-deferred 之一——不显式选，就是把判定交给巧合"
+            )
     else:
         if require_heavy or allow_deferred:
             raise ConfigError(f"--mode {mode} 不接受 heavy/deferred 开关")
@@ -109,7 +118,8 @@ def decide(mode: str, event: str, required: list[str], results: dict[str, str],
     for j in unexpected:
         problems.append(
             f"unexpected: job `{j}` 在 needs 里却不在 --required 里——"
-            f"两处必须同步，否则它的失败不会被 Gate 看见")
+            f"两处必须同步，否则它的失败不会被 Gate 看见"
+        )
     for j, r in sorted(results.items()):
         if r not in KNOWN_RESULTS:
             problems.append(f"unknown: job `{j}` 的结论 `{r}` 认不出")
@@ -121,32 +131,31 @@ def decide(mode: str, event: str, required: list[str], results: dict[str, str],
     base = {"gate": mode, "event": event, "jobs": jobs}
 
     if problems:
-        return {**base, "status": "failure", "reason": "contract_violation",
-                "problems": problems}
+        return {**base, "status": "failure", "reason": "contract_violation", "problems": problems}
 
     req_results = [results[j] for j in required]
 
     if allow_deferred and all(r == "skipped" for r in req_results):
-        return {**base, "status": "deferred", "reason": DEFER_REASON,
-                "problems": []}
+        return {**base, "status": "deferred", "reason": DEFER_REASON, "problems": []}
 
     bad = [f"{j}: {results[j]}" for j in required if results[j] != "success"]
     if bad:
-        return {**base, "status": "failure", "reason": "upstream_not_success",
-                "problems": bad}
-    return {**base, "status": "success", "reason": "all_required_success",
-            "problems": []}
+        return {**base, "status": "failure", "reason": "upstream_not_success", "problems": bad}
+    return {**base, "status": "success", "reason": "all_required_success", "problems": []}
 
 
 def render_summary(verdict: dict, required: list[str]) -> str:
     icon = {"success": "✅", "deferred": "⏭️", "failure": "❌"}[verdict["status"]]
     lines = [f"## {icon} {verdict['gate']} gate — {verdict['status']}", ""]
     if verdict["status"] == "deferred":
-        lines += ["**Full integration qualification deferred to merge_group.**",
-                  "",
-                  "完整合并资格（跨平台打包 / 真产物冒烟）没有在这个 PR 的",
-                  "commit 上执行；它会在进入 Merge Queue 后、对最终组合提交",
-                  "真实运行。这个 Gate 的绿不代表重型验证通过。", ""]
+        lines += [
+            "**Full integration qualification deferred to merge_group.**",
+            "",
+            "完整合并资格（跨平台打包 / 真产物冒烟）没有在这个 PR 的",
+            "commit 上执行；它会在进入 Merge Queue 后、对最终组合提交",
+            "真实运行。这个 Gate 的绿不代表重型验证通过。",
+            "",
+        ]
     lines += ["| job | result |", "|---|---|"]
     for j in sorted(verdict["jobs"]):
         lines.append(f"| `{j}` | {verdict['jobs'][j]} |")
@@ -158,30 +167,53 @@ def render_summary(verdict: dict, required: list[str]) -> str:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     ap.add_argument("--mode", required=True, choices=("fast", "integration", "codeql"))
-    ap.add_argument("--event", required=True,
-                    help="github.event_name（pull_request / merge_group / push / schedule）")
-    ap.add_argument("--required", required=True,
-                    help="逗号分隔的上游 job id 闭集，必须与 Gate 的 needs 一致")
-    ap.add_argument("--needs-json", required=True,
-                    help="workflow 里 `toJSON(needs)` 的输出")
-    ap.add_argument("--require-heavy", action="store_true",
-                    help="integration：重型 job 必须真实 success（merge_group / full-ci / push）")
-    ap.add_argument("--allow-deferred", action="store_true",
-                    help="integration：普通 PR 上允许整体 skipped → deferred")
-    ap.add_argument("--full-ci", action="store_true",
-                    help="PR 带 full-ci 标签——与 --allow-deferred 互斥，脚本会复核")
+    ap.add_argument(
+        "--event",
+        required=True,
+        help="github.event_name（pull_request / merge_group / push / schedule）",
+    )
+    ap.add_argument(
+        "--required", required=True, help="逗号分隔的上游 job id 闭集，必须与 Gate 的 needs 一致"
+    )
+    ap.add_argument("--needs-json", required=True, help="workflow 里 `toJSON(needs)` 的输出")
+    ap.add_argument(
+        "--require-heavy",
+        action="store_true",
+        help="integration：重型 job 必须真实 success（merge_group / full-ci / push）",
+    )
+    ap.add_argument(
+        "--allow-deferred",
+        action="store_true",
+        help="integration：普通 PR 上允许整体 skipped → deferred",
+    )
+    ap.add_argument(
+        "--full-ci",
+        action="store_true",
+        help="PR 带 full-ci 标签——与 --allow-deferred 互斥，脚本会复核",
+    )
     args = ap.parse_args(argv)
 
     required = [s.strip() for s in args.required.split(",") if s.strip()]
     try:
         results = parse_needs(args.needs_json)
-        verdict = decide(args.mode, args.event, required, results,
-                         require_heavy=args.require_heavy,
-                         allow_deferred=args.allow_deferred,
-                         full_ci=args.full_ci)
+        verdict = decide(
+            args.mode,
+            args.event,
+            required,
+            results,
+            require_heavy=args.require_heavy,
+            allow_deferred=args.allow_deferred,
+            full_ci=args.full_ci,
+        )
     except ConfigError as exc:
-        verdict = {"gate": args.mode, "event": args.event, "status": "failure",
-                   "reason": "config_error", "problems": [str(exc)], "jobs": {}}
+        verdict = {
+            "gate": args.mode,
+            "event": args.event,
+            "status": "failure",
+            "reason": "config_error",
+            "problems": [str(exc)],
+            "jobs": {},
+        }
         _emit(verdict, required)
         return 2
 
@@ -196,7 +228,7 @@ def _emit(verdict: dict, required: list[str]) -> None:
         try:
             with open(summary_path, "a", encoding="utf-8") as fh:
                 fh.write(render_summary(verdict, required))
-        except OSError as exc:                        # summary 写不进不改变结论
+        except OSError as exc:  # summary 写不进不改变结论
             print(f"::warning::写不进 GITHUB_STEP_SUMMARY：{exc}", file=sys.stderr)
 
 

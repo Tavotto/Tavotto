@@ -12,6 +12,7 @@
 
 纯标准库。
 """
+
 from __future__ import annotations
 
 import argparse
@@ -41,7 +42,7 @@ def use_utf8_streams() -> None:
             try:
                 stream.reconfigure(encoding="utf-8", errors="replace")
             except (ValueError, OSError):
-                pass          # 已经被接管成不可重配的对象：不值得为它崩
+                pass  # 已经被接管成不可重配的对象：不值得为它崩
 
 
 def dispatch(argv: list[str]) -> int | None:
@@ -52,11 +53,13 @@ def dispatch(argv: list[str]) -> int | None:
     use_utf8_streams()
     if argv[0] == "open":
         from . import handoff
+
         return handoff.cli(argv[1:])
     if argv[0] == "codex":
         # ADR 0012：安装 / 诊断 / 移除 Codex 集成。同样是纯标准库那一层——
         # 桌面设置页的按钮以后 spawn 的就是它，**不许另写一套安装器**。
         from . import codexinstall
+
         return codexinstall.cli(argv[1:])
     return doctor(argv[1:])
 
@@ -73,8 +76,11 @@ def _doctor_migrate(args) -> int:
     if args.migrate and args.rollback_migration:
         msg = "--migrate 与 --rollback-migration 不能同时给"
         if args.json:
-            print(json.dumps({"ok": False, "code": "bad_migrate_action",
-                              "error": msg}, ensure_ascii=False))
+            print(
+                json.dumps(
+                    {"ok": False, "code": "bad_migrate_action", "error": msg}, ensure_ascii=False
+                )
+            )
         else:
             print(msg, file=sys.stderr)
         return 2
@@ -82,15 +88,22 @@ def _doctor_migrate(args) -> int:
     if args.rollback_migration:
         result = migrate.rollback()
         if args.json:
-            print(json.dumps({"ok": result["rolled_back"],
-                              "code": (None if result["rolled_back"]
-                                       else "rollback_unavailable"),
-                              **result},
-                             ensure_ascii=False))
+            print(
+                json.dumps(
+                    {
+                        "ok": result["rolled_back"],
+                        "code": (None if result["rolled_back"] else "rollback_unavailable"),
+                        **result,
+                    },
+                    ensure_ascii=False,
+                )
+            )
         else:
             if result["rolled_back"]:
-                print(f"* 已回滚迁移：删除 {len(result['removed'])} 个文件"
-                      f"（Magplot 旧数据从头到尾没动过）")
+                print(
+                    f"* 已回滚迁移：删除 {len(result['removed'])} 个文件"
+                    f"（Magplot 旧数据从头到尾没动过）"
+                )
             else:
                 print(f"* 无法回滚：{result['reason']}")
         return 0 if result["rolled_back"] else 1
@@ -98,12 +111,13 @@ def _doctor_migrate(args) -> int:
     report = migrate.execute(dry_run=args.dry_run)
     plan = report["plan"]
     if args.json:
-        print(json.dumps({"ok": True, "code": None, **report},
-                         ensure_ascii=False))
+        print(json.dumps({"ok": True, "code": None, **report}, ensure_ascii=False))
     else:
         if plan["nothing_to_migrate"]:
-            print("* 没找到可迁移的 Magplot 数据"
-                  f"（找过 {plan['legacy_config_dir']} 与 {plan['legacy_data_dir']}）")
+            print(
+                "* 没找到可迁移的 Magplot 数据"
+                f"（找过 {plan['legacy_config_dir']} 与 {plan['legacy_data_dir']}）"
+            )
         elif args.dry_run:
             print("* 迁移计划（dry-run，一个字节没写）：")
             print(f"  将复制 {len(plan['copies'])} 个文件 → {plan['target_data_dir']}")
@@ -112,16 +126,18 @@ def _doctor_migrate(args) -> int:
             for rel in plan["conflicts"]:
                 print(f"  ⚠ 目标已存在且内容不同，将跳过: {rel}")
         else:
-            print(f"* 已复制 {len(report['created'])} 个文件"
-                  f" → {plan['target_data_dir']}")
+            print(f"* 已复制 {len(report['created'])} 个文件 → {plan['target_data_dir']}")
             if report.get("config", {}) and report["config"].get("merged"):
                 a = report["config"]["added"]
-                print(f"* 配置已合并：补入 {a['recent_projects']} 条最近项目、"
-                      f"{a['projects']} 个项目设置")
+                print(
+                    f"* 配置已合并：补入 {a['recent_projects']} 条最近项目、"
+                    f"{a['projects']} 个项目设置"
+                )
             for rel in plan["conflicts"]:
                 print(f"⚠ 跳过（目标已存在且内容不同）: {rel}")
-            print(f"* 迁移报告: {migrate.report_path()}"
-                  "（回滚用 tavotto doctor --rollback-migration）")
+            print(
+                f"* 迁移报告: {migrate.report_path()}（回滚用 tavotto doctor --rollback-migration）"
+            )
             print("* Magplot 旧数据原样保留，确认无误后可自行删除")
     return 1 if (not args.dry_run and plan["conflicts"]) else 0
 
@@ -146,20 +162,29 @@ def doctor(argv: list[str]) -> int:
     件事的处置完全不同：前者还能用，后者得重装。
     """
     ap = argparse.ArgumentParser(
-        prog="tavotto doctor",
-        description="检查这台机器上的 Tavotto 安装，并维护交接用的安装清单")
+        prog="tavotto doctor", description="检查这台机器上的 Tavotto 安装，并维护交接用的安装清单"
+    )
     ap.add_argument("--json", action="store_true", help="输出机器可读结果")
-    ap.add_argument("--write-manifest", action="store_true",
-                    help="把安装清单刷新成当前这套安装（安装器/升级时用）")
-    ap.add_argument("--remove-manifest", action="store_true",
-                    help="删除安装清单（卸载时用）")
-    ap.add_argument("--migrate", action="store_true",
-                    help="把 Magplot 0.7 的用户数据（配置/布局/版本历史/AI 记录）"
-                         "迁入 Tavotto。只复制不覆盖，旧数据一个字节不动")
-    ap.add_argument("--dry-run", action="store_true",
-                    help="与 --migrate 连用：只输出迁移计划，不写任何东西")
-    ap.add_argument("--rollback-migration", action="store_true",
-                    help="按上次迁移报告删除迁移时创建的文件（旧数据无关）")
+    ap.add_argument(
+        "--write-manifest",
+        action="store_true",
+        help="把安装清单刷新成当前这套安装（安装器/升级时用）",
+    )
+    ap.add_argument("--remove-manifest", action="store_true", help="删除安装清单（卸载时用）")
+    ap.add_argument(
+        "--migrate",
+        action="store_true",
+        help="把 Magplot 0.7 的用户数据（配置/布局/版本历史/AI 记录）"
+        "迁入 Tavotto。只复制不覆盖，旧数据一个字节不动",
+    )
+    ap.add_argument(
+        "--dry-run", action="store_true", help="与 --migrate 连用：只输出迁移计划，不写任何东西"
+    )
+    ap.add_argument(
+        "--rollback-migration",
+        action="store_true",
+        help="按上次迁移报告删除迁移时创建的文件（旧数据无关）",
+    )
     args = ap.parse_args(argv)
 
     from .. import __version__
@@ -171,11 +196,18 @@ def doctor(argv: list[str]) -> int:
         # 字符串——而这条恰恰是它自己把参数拼错了，最该被程序读懂。
         msg = "--write-manifest 与 --remove-manifest 不能同时给"
         if args.json:
-            print(json.dumps({"ok": False, "protocol": locate.PROTOCOL_VERSION,
-                              "code": "bad_manifest_action", "error": msg,
-                              "problems": [{"code": "bad_manifest_action",
-                                            "message": msg}]},
-                             ensure_ascii=False))
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "protocol": locate.PROTOCOL_VERSION,
+                        "code": "bad_manifest_action",
+                        "error": msg,
+                        "problems": [{"code": "bad_manifest_action", "message": msg}],
+                    },
+                    ensure_ascii=False,
+                )
+            )
         else:
             print(msg, file=sys.stderr)
         return 2
@@ -195,8 +227,12 @@ def doctor(argv: list[str]) -> int:
         "cli": me["cli"],
         "desktop": me["desktop"],
         "install_dir": me["install_dir"],
-        "manifest": {"path": locate.manifest_path(), "action": "read",
-                     "written": False, "removed": False},
+        "manifest": {
+            "path": locate.manifest_path(),
+            "action": "read",
+            "written": False,
+            "removed": False,
+        },
         "problems": problems,
     }
 
@@ -212,10 +248,12 @@ def doctor(argv: list[str]) -> int:
         except OSError as exc:
             # 清单写不出来不代表这台机器不能用：已知安装位置那条腿还在。
             # 但要如实说，别让安装器以为一切正常。
-            problems.append({
-                "code": "manifest_write_failed",
-                "message": f"安装清单写不出来（{exc}）；"
-                           "外部程序仍可按已知安装位置发现 Tavotto"})
+            problems.append(
+                {
+                    "code": "manifest_write_failed",
+                    "message": f"安装清单写不出来（{exc}）；外部程序仍可按已知安装位置发现 Tavotto",
+                }
+            )
     else:
         found = locate.read_manifest()
         report["manifest"]["found"] = bool(found)
@@ -227,34 +265,47 @@ def doctor(argv: list[str]) -> int:
     if me["frozen"] and not me["cli"]:
         # 冻结产物里没有 console 版 CLI = 这个安装包漏打了 tavotto-cli，
         # 外部程序（Codex 插件）只能看到一个不能当 CLI 用的 GUI 可执行文件。
-        problems.append({
-            "code": "bundled_cli_missing",
-            "message": "这套安装里没有 tavotto-cli（console 版命令行）——"
-                       "外部程序将无法通过安装位置发现 Tavotto，请重新安装最新版本"})
+        problems.append(
+            {
+                "code": "bundled_cli_missing",
+                "message": "这套安装里没有 tavotto-cli（console 版命令行）——"
+                "外部程序将无法通过安装位置发现 Tavotto，请重新安装最新版本",
+            }
+        )
     # `notes` 是**不翻 ok 的提示**：装置能用，但有一件事值得知道。
     # 2026-08-20 实测的那台机器就是这样：旧 Magplot.app 目录被就地升级成了
     # Tavotto 0.8.0，文件都在、签名有效，doctor 报「一切正常」——而桌面启动
     # 异常时这条目录名错位正是第一线索，不说出来用户毫无抓手。
     notes: list[dict] = report.setdefault("notes", [])
     install_dir = me["install_dir"] or ""
-    if sys.platform == "darwin" and install_dir.endswith(".app") \
-            and not install_dir.endswith("/Tavotto.app"):
-        notes.append({
-            "code": "bundle_dir_renamed",
-            "message": f"安装目录名与产品不符：{install_dir}"
-                       "（多半是旧版本目录被就地升级）。功能不受影响；"
-                       "如桌面启动异常，先卸载这份、重装到 Tavotto.app"})
+    if (
+        sys.platform == "darwin"
+        and install_dir.endswith(".app")
+        and not install_dir.endswith("/Tavotto.app")
+    ):
+        notes.append(
+            {
+                "code": "bundle_dir_renamed",
+                "message": f"安装目录名与产品不符：{install_dir}"
+                "（多半是旧版本目录被就地升级）。功能不受影响；"
+                "如桌面启动异常，先卸载这份、重装到 Tavotto.app",
+            }
+        )
     # 旧 Magplot 数据还在、又没迁移过：明说有一条产品化的迁移路，
     # 别让最早那批用户以为升级 = 从零开始（P1-08）。
     try:
         from . import migrate
+
         if migrate.legacy_found() and not migrate.report_path().is_file():
-            notes.append({
-                "code": "magplot_data_found",
-                "message": "检测到 Magplot 0.7 的用户数据。"
-                           "运行 `tavotto doctor --migrate` 可把配置/布局/"
-                           "版本历史/AI 记录迁入 Tavotto（只复制不覆盖，"
-                           "旧数据一个字节不动；--dry-run 先看计划）"})
+            notes.append(
+                {
+                    "code": "magplot_data_found",
+                    "message": "检测到 Magplot 0.7 的用户数据。"
+                    "运行 `tavotto doctor --migrate` 可把配置/布局/"
+                    "版本历史/AI 记录迁入 Tavotto（只复制不覆盖，"
+                    "旧数据一个字节不动；--dry-run 先看计划）",
+                }
+            )
     except Exception:  # noqa: BLE001 — 体检的附注绝不能把体检本身弄挂
         pass
     report["ok"] = not problems
@@ -269,8 +320,7 @@ def doctor(argv: list[str]) -> int:
         print(f"* 可执行文件: {report['executable']}")
         print(f"* 命令行入口: {report['cli'] or '（无）'}")
         print(f"* 桌面应用:   {report['desktop'] or '（未安装或未找到）'}")
-        print(f"* 安装清单:   {report['manifest']['path']}"
-              f"（{report['manifest']['action']}）")
+        print(f"* 安装清单:   {report['manifest']['path']}（{report['manifest']['action']}）")
         for problem in problems:
             print(f"! [{problem['code']}] {problem['message']}")
         for note in report["notes"]:

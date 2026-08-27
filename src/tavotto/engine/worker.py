@@ -30,6 +30,7 @@
   * 拦截 Figure.savefig 与 paper_style.save（import 脚本前安装）——build 期间不写任何图文件
   * 脚本的 stdout 重定向到 stderr，保证协议通道干净
 """
+
 from __future__ import annotations
 
 import argparse
@@ -64,7 +65,7 @@ import overrides as overrides_mod  # noqa: E402
 # 缓存永远不命中，没人会立刻联想到序列化细节。
 import patchspec  # noqa: E402
 
-CAPTURE: dict[str, object] = {}   # stem -> Figure（脚本产出顺序）
+CAPTURE: dict[str, object] = {}  # stem -> Figure（脚本产出顺序）
 #: 每个 stem 的捕获来源（figcapture.SOURCE_*）。`pyplot` 的那些从没存过盘，
 #: 因此**没有原始产物可写回**——build 响应如实带出去，别让调用方以为
 #: 「捕获到了」就等于「磁盘上有一份原件」。
@@ -78,10 +79,18 @@ _REAL_SAVEFIG = mfigure.Figure.savefig
 PROTOCOL_VERSION = 1
 
 #: v1 命令集——不在表里的一律 unknown_cmd，绝不「猜一个最像的」。
-V1_COMMANDS = frozenset({
-    "ping", "build", "render", "render_png", "preview_png",
-    "export", "cancel", "shutdown",
-})
+V1_COMMANDS = frozenset(
+    {
+        "ping",
+        "build",
+        "render",
+        "render_png",
+        "preview_png",
+        "export",
+        "cancel",
+        "shutdown",
+    }
+)
 
 #: 带 patches 的命令（要算 canonical hash 做序列化自检）
 _PATCH_COMMANDS = frozenset({"render", "preview_png", "export"})
@@ -108,8 +117,14 @@ class ProtocolError(Exception):
     （我们也不知道为什么）才值得重启后重试一次；bad_request / unknown_cmd /
     unknown_stem / script_error 重试多少次都是同一个结果。"""
 
-    def __init__(self, code: str, message: str, retryable: bool = False,
-                 traceback_text: str = "", extra: dict | None = None):
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        retryable: bool = False,
+        traceback_text: str = "",
+        extra: dict | None = None,
+    ):
         super().__init__(message)
         self.code = code
         self.message = message
@@ -126,8 +141,7 @@ def _int_arg(payload: dict, key: str, default: int) -> int:
     try:
         return int(raw)
     except ValueError as exc:
-        raise ProtocolError("bad_request",
-                            f"payload.{key} 必须是整数: {raw!r}") from exc
+        raise ProtocolError("bad_request", f"payload.{key} 必须是整数: {raw!r}") from exc
 
 
 def _patched_savefig(self, fname, *args, **kwargs):
@@ -237,8 +251,7 @@ class Worker:
         # 写法在 `python figure.py` 下是天经地义的。只读、只在沙盒里确实没有
         # 这个文件时、且换算后仍落在图库内才生效——写/删/改一个字节都不经过
         # 它，沙盒作为**写入**边界完全没有松动（语义与理由见 figcapture）。
-        figcapture.install_relative_read_fallback(str(self.script.parent),
-                                                 str(self.figures_dir))
+        figcapture.install_relative_read_fallback(str(self.script.parent), str(self.figures_dir))
 
         # 拦截必须发生在 import 脚本之前（多数脚本 from paper_style import save）
         mfigure.Figure.savefig = _patched_savefig
@@ -250,8 +263,7 @@ class Worker:
         except ImportError:
             pass
         else:
-            paper_style.save = (
-                lambda fig, stem, outdir="figures": CAPTURE.setdefault(stem, fig))
+            paper_style.save = lambda fig, stem, outdir="figures": CAPTURE.setdefault(stem, fig)
 
         # 脚本看到的 argv 必须是它自己的，不是 worker 的。不换的话
         # `sys.argv[1:]` 拿到的是 --script/--out-dir/--entry 这串内部参数，
@@ -263,6 +275,7 @@ class Worker:
         with contextlib.redirect_stdout(sys.stderr):
             if self.entry == "__main__":
                 import runpy  # noqa: PLC0415 — 内联脚本（fig4c / fig_models）
+
                 runpy.run_path(str(self.script), run_name="__main__")
             else:
                 module = importlib.import_module(self.script.stem)
@@ -278,16 +291,17 @@ class Worker:
         # 凭空建一个 figure 管理器）。
         _plt = sys.modules.get("matplotlib.pyplot")
         if _plt is not None:
-            fallback, dropped = figcapture.collect_pyplot_figures(
-                CAPTURE, self.script.stem, _plt)
+            fallback, dropped = figcapture.collect_pyplot_figures(CAPTURE, self.script.stem, _plt)
             for stem in fallback:
                 CAPTURE_SOURCE[stem] = figcapture.SOURCE_PYPLOT
             if dropped:
                 # 丢了就说，绝不静默：用户会数图。
-                print(f"[capture] 脚本留下的 pyplot Figure 超过 "
-                      f"{figcapture.MAX_PYPLOT_FALLBACK} 张上限，"
-                      f"未捕获 {dropped} 张（显式 savefig 的不受此限）",
-                      file=sys.stderr)
+                print(
+                    f"[capture] 脚本留下的 pyplot Figure 超过 "
+                    f"{figcapture.MAX_PYPLOT_FALLBACK} 张上限，"
+                    f"未捕获 {dropped} 张（显式 savefig 的不受此限）",
+                    file=sys.stderr,
+                )
                 self.dropped_figures = dropped
 
         for stem, fig in CAPTURE.items():
@@ -312,46 +326,62 @@ class Worker:
         """
         try:
             rel = self.script.relative_to(self.figures_dir).as_posix()
-        except ValueError:                       # 脚本不在图库下（防御，不该发生）
+        except ValueError:  # 脚本不在图库下（防御，不该发生）
             rel = self.script.name
         try:
             script_bytes = self.script.read_bytes()
         except OSError:
             script_bytes = b""
         fingerprint = figcapture.source_fingerprint(
-            script_bytes, script=rel, entry=self.entry,
-            profile=figcapture.PROFILE_SAFE, target_kind="script", argv=(),
+            script_bytes,
+            script=rel,
+            entry=self.entry,
+            profile=figcapture.PROFILE_SAFE,
+            target_kind="script",
+            argv=(),
             passthrough_savefig=False,
-            matplotlib_version=matplotlib.__version__)
+            matplotlib_version=matplotlib.__version__,
+        )
         out = []
-        for stem in STATES:                      # 捕获顺序（dict 保序）
+        for stem in STATES:  # 捕获顺序（dict 保序）
             source = CAPTURE_SOURCE.get(stem, figcapture.SOURCE_SAVEFIG)
             artifact = None
             if source == figcapture.SOURCE_SAVEFIG:
-                artifact = figcapture.find_original_artifact(
-                    str(self.figures_dir), stem)
-            out.append(figcapture.build_descriptor(
-                script=rel, entry=self.entry, stem=stem, capture_source=source,
-                execution_profile=figcapture.PROFILE_SAFE,
-                size_mm=figcapture.size_mm_of(STATES[stem].fig),
-                source_fingerprint=fingerprint,
-                original_artifact=artifact).to_payload())
+                artifact = figcapture.find_original_artifact(str(self.figures_dir), stem)
+            out.append(
+                figcapture.build_descriptor(
+                    script=rel,
+                    entry=self.entry,
+                    stem=stem,
+                    capture_source=source,
+                    execution_profile=figcapture.PROFILE_SAFE,
+                    size_mm=figcapture.size_mm_of(STATES[stem].fig),
+                    source_fingerprint=fingerprint,
+                    original_artifact=artifact,
+                ).to_payload()
+            )
         return out
 
     def _stems_summary(self) -> dict:
         # `source` 是加字段，不升协议版本（ADR 0003 §1：两侧容忍未知字段）。
         # 它回答的是「这张图有没有原始产物」——`pyplot` 的那些从没存过盘，
         # 渲染/编辑/导出都成立，写回无从谈起。
-        out = {"stems": {s: {"size_mm": self._manifest_cache[s]["size_mm"],
-                             "source": CAPTURE_SOURCE.get(
-                                 s, figcapture.SOURCE_SAVEFIG)}
-                         for s in STATES}}
+        out = {
+            "stems": {
+                s: {
+                    "size_mm": self._manifest_cache[s]["size_mm"],
+                    "source": CAPTURE_SOURCE.get(s, figcapture.SOURCE_SAVEFIG),
+                }
+                for s in STATES
+            }
+        }
         if self.dropped_figures:
             out["dropped_figures"] = self.dropped_figures
         return out
 
-    def _render(self, stem: str, timings: dict | None = None,
-                preview_dpi: int | None = None) -> dict:
+    def _render(
+        self, stem: str, timings: dict | None = None, preview_dpi: int | None = None
+    ) -> dict:
         """导出预览 SVG + 重建 manifest，写入 out_dir。
 
         `preview_dpi` 只影响 SVG 里**嵌入位图**的分辨率（imshow / 光栅化的
@@ -372,26 +402,31 @@ class Worker:
         man = manifest_mod.build_manifest(state, stem)
         t1 = time.perf_counter()
         with _real_output():
-            state.fig.savefig(self.out_dir / f"{stem}.svg", format="svg",
-                              dpi=preview_dpi or self.preview_dpi)
+            state.fig.savefig(
+                self.out_dir / f"{stem}.svg", format="svg", dpi=preview_dpi or self.preview_dpi
+            )
         if timings is not None:
             timings["manifest_ms"] = round((t1 - t0) * 1000.0, 3)
             timings["canvas_draw_ms"] = _ms(t1)
         (self.out_dir / f"{stem}.json").write_text(
-            json.dumps(man, ensure_ascii=False, default=_json_default), encoding="utf-8")
+            json.dumps(man, ensure_ascii=False, default=_json_default), encoding="utf-8"
+        )
         self._manifest_cache[stem] = man
         return man
 
     # ---------------- 命令原语（两套信封共用同一份实现） ----------------
     def _snapshot(self, state) -> list[dict]:
         """当前会话已应用的 override，作为「全量列表」形状的快照。"""
-        return [{"gid": g, "prop": p, "value": v}
-                for (g, p), v in state.applied.items()]
+        return [{"gid": g, "prop": p, "value": v} for (g, p), v in state.applied.items()]
 
-    def _do_render(self, stem: str, patches: list,
-                   timings: dict | None = None,
-                   preview_dpi: int | None = None,
-                   inline_svg: bool = False) -> dict:
+    def _do_render(
+        self,
+        stem: str,
+        patches: list,
+        timings: dict | None = None,
+        preview_dpi: int | None = None,
+        inline_svg: bool = False,
+    ) -> dict:
         """应用全量 override 列表 + 重出预览 SVG/manifest（v1 的 render）。
 
         `inline_svg=True` 时响应里**多带一份 SVG 文本**。为什么要它：SVG 与
@@ -404,8 +439,7 @@ class Worker:
         warnings = overrides_mod.apply(STATES[stem], patches)
         if timings is not None:
             timings["patch_apply_ms"] = _ms(t0)
-        result = {"manifest": self._render(stem, timings, preview_dpi),
-                  "warnings": warnings}
+        result = {"manifest": self._render(stem, timings, preview_dpi), "warnings": warnings}
         if inline_svg:
             # 读回磁盘那一份而不是另存一个内存缓冲：调用方拿到的与
             # out_dir/<stem>.svg 逐字节相同，排障时不必怀疑「是不是两份」
@@ -438,9 +472,15 @@ class Worker:
             overrides_mod.apply(state, prev)
         return {"path": str(path)}
 
-    def _do_export(self, stem: str, patches: list, path: str,
-                   fmt: str = "pdf", dpi: int = 600,
-                   timings: dict | None = None) -> dict:
+    def _do_export(
+        self,
+        stem: str,
+        patches: list,
+        path: str,
+        fmt: str = "pdf",
+        dpi: int = 600,
+        timings: dict | None = None,
+    ) -> dict:
         """全质量导出（供 PyMuPDF 合成）。
 
         与 preview_png 同一纪律：export 是**状态中立**的一次性动作。
@@ -489,22 +529,33 @@ class Worker:
 
         stem = req.get("stem", "")
         if stem not in STATES:
-            return {"ok": False, "error": f"stem 不存在: {stem}",
-                    "known": sorted(STATES)}
+            return {"ok": False, "error": f"stem 不存在: {stem}", "known": sorted(STATES)}
 
         if cmd == "override":
             return {"ok": True, **self._do_render(stem, req.get("patches", []))}
         if cmd == "preview_png":
-            return {"ok": True, **self._do_preview_png(
-                stem, req.get("patches", []), int(req.get("width", 400)),
-                str(req.get("tag", "p")))}
+            return {
+                "ok": True,
+                **self._do_preview_png(
+                    stem,
+                    req.get("patches", []),
+                    int(req.get("width", 400)),
+                    str(req.get("tag", "p")),
+                ),
+            }
         if cmd == "render_png":
-            return {"ok": True, **self._do_render_png(
-                stem, int(req.get("width", 800)))}
+            return {"ok": True, **self._do_render_png(stem, int(req.get("width", 800)))}
         if cmd == "export":
-            return {"ok": True, **self._do_export(
-                stem, req.get("patches", []), req["path"],
-                req.get("format", "pdf"), int(req.get("dpi", 600)))}
+            return {
+                "ok": True,
+                **self._do_export(
+                    stem,
+                    req.get("patches", []),
+                    req["path"],
+                    req.get("format", "pdf"),
+                    int(req.get("dpi", 600)),
+                ),
+            }
 
         return {"ok": False, "error": f"未知指令: {cmd}"}
 
@@ -527,9 +578,12 @@ class Worker:
         try:
             self.build(timings)
         except Exception as exc:  # noqa: BLE001 — 转成结构化错误，进程不退出
-            raise ProtocolError("script_error", f"脚本执行失败: {exc}",
-                                retryable=False,
-                                traceback_text=traceback.format_exc()) from exc
+            raise ProtocolError(
+                "script_error",
+                f"脚本执行失败: {exc}",
+                retryable=False,
+                traceback_text=traceback.format_exc(),
+            ) from exc
 
     def handle_v1(self, req: dict) -> dict:
         """v1 信封 → v1 响应。抛 ProtocolError 由 `_v1_error()` 转成错误信封。"""
@@ -538,7 +592,8 @@ class Worker:
             raise ProtocolError(
                 "bad_request",
                 f"不支持的 protocol_version: {req.get('protocol_version')!r}"
-                f"（本 worker 说 v{PROTOCOL_VERSION}）")
+                f"（本 worker 说 v{PROTOCOL_VERSION}）",
+            )
         if not isinstance(rid, str) or not rid:
             raise ProtocolError("bad_request", "request_id 必须是非空字符串")
         cmd = req.get("cmd")
@@ -554,8 +609,9 @@ class Worker:
             if val is not None and not isinstance(val, int):
                 raise ProtocolError("bad_request", f"{key} 必须是整数")
         if cmd not in V1_COMMANDS:
-            raise ProtocolError("unknown_cmd", f"未知指令: {cmd}",
-                                extra={"known": sorted(V1_COMMANDS)})
+            raise ProtocolError(
+                "unknown_cmd", f"未知指令: {cmd}", extra={"known": sorted(V1_COMMANDS)}
+            )
 
         self._seen.append(rid)
 
@@ -576,8 +632,11 @@ class Worker:
         if cmd == "build":
             # `descriptors` 是加字段，不升协议版本（ADR 0003 §1）；**只在 v1
             # 出现**，legacy 信封的形状一字不改（与 `timings` 同一条纪律）。
-            return {**self._stems_summary(),
-                    "descriptors": self._descriptor_cache, "timings": timings}
+            return {
+                **self._stems_summary(),
+                "descriptors": self._descriptor_cache,
+                "timings": timings,
+            }
 
         result: dict = {}
         stem = req.get("stem")
@@ -585,8 +644,9 @@ class Worker:
             if not isinstance(stem, str) or not stem:
                 raise ProtocolError("bad_request", "stem 必须是非空字符串")
             if stem not in STATES:
-                raise ProtocolError("unknown_stem", f"stem 不存在: {stem}",
-                                    extra={"known": sorted(STATES)})
+                raise ProtocolError(
+                    "unknown_stem", f"stem 不存在: {stem}", extra={"known": sorted(STATES)}
+                )
 
         # 参数校验全部先做完再进渲染：混在下面那个 try 里的话，matplotlib 自己
         # 抛的 ValueError（画的时候什么都可能抛）会被当成「调用方参数写错了」，
@@ -604,36 +664,35 @@ class Worker:
         if "preview_dpi" in payload and payload["preview_dpi"] is not None:
             preview_dpi = _int_arg(payload, "preview_dpi", self.preview_dpi)
             if preview_dpi <= 0:
-                raise ProtocolError("bad_request",
-                                    f"payload.preview_dpi 必须为正: {preview_dpi}")
+                raise ProtocolError("bad_request", f"payload.preview_dpi 必须为正: {preview_dpi}")
         # 可选：把这次的预览 SVG 一并放进响应（与 manifest 原子配对，见 _do_render）。
         # 只认真正的布尔值——"false"/0 这类写法在真值判断下会静默地做反，
         # 而这个字段决定的是「调用方能不能拿到配对的 SVG」，静默出错代价太大。
         inline_svg = payload.get("inline_svg", False)
         if not isinstance(inline_svg, bool):
-            raise ProtocolError("bad_request",
-                                f"payload.inline_svg 必须是布尔值: {inline_svg!r}")
+            raise ProtocolError("bad_request", f"payload.inline_svg 必须是布尔值: {inline_svg!r}")
 
         try:
             if cmd == "render":
-                result = self._do_render(stem, patches, timings, preview_dpi,
-                                         inline_svg)
+                result = self._do_render(stem, patches, timings, preview_dpi, inline_svg)
             elif cmd == "render_png":
                 result = self._do_render_png(stem, width)
             elif cmd == "preview_png":
-                result = self._do_preview_png(
-                    stem, patches, width, str(payload.get("tag", "p")))
+                result = self._do_preview_png(stem, patches, width, str(payload.get("tag", "p")))
             elif cmd == "export":
-                result = self._do_export(stem, patches, payload["path"],
-                                         str(payload.get("format", "pdf")), dpi,
-                                         timings)
+                result = self._do_export(
+                    stem, patches, payload["path"], str(payload.get("format", "pdf")), dpi, timings
+                )
         except ProtocolError:
             raise
         except Exception as exc:  # noqa: BLE001
             # 我们也不知道为什么——supervisor 重启后重试一次是合理的
-            raise ProtocolError("internal", str(exc) or exc.__class__.__name__,
-                                retryable=True,
-                                traceback_text=traceback.format_exc()) from exc
+            raise ProtocolError(
+                "internal",
+                str(exc) or exc.__class__.__name__,
+                retryable=True,
+                traceback_text=traceback.format_exc(),
+            ) from exc
         if cmd in _TIMED_COMMANDS:
             result["timings"] = timings
         return result
@@ -650,9 +709,11 @@ class Worker:
         if not isinstance(target, str) or not target:
             raise ProtocolError("bad_request", "cancel 需要 payload.request_id")
         seen = target in self._seen
-        note = ("该请求已执行完毕，取消无事可做（worker 串行执行，"
-                "读到 cancel 时它必然已结束）" if seen else
-                "没见过这个 request_id（可能已被淘汰出最近记录，或从未到达）")
+        note = (
+            "该请求已执行完毕，取消无事可做（worker 串行执行，读到 cancel 时它必然已结束）"
+            if seen
+            else "没见过这个 request_id（可能已被淘汰出最近记录，或从未到达）"
+        )
         return {"note": note, "cancelled": False, "seen": seen}
 
 
@@ -663,8 +724,7 @@ def _echo(req: dict) -> dict:
     账本（哪一代 worker、渲染到第几版、这组 patch 的身份），worker 插手只会
     多出一个可能与账本不一致的地方。回显让上层能把响应对回请求。
     """
-    out = {"protocol_version": PROTOCOL_VERSION,
-           "request_id": req.get("request_id")}
+    out = {"protocol_version": PROTOCOL_VERSION, "request_id": req.get("request_id")}
     for key in ("worker_generation", "render_revision", "canonical_patch_hash"):
         if key in req:
             out[key] = req[key]
@@ -686,14 +746,21 @@ def _hash_check(req: dict) -> dict:
     mine = patchspec.patch_hash(patches)
     if mine == claimed:
         return {}
-    print(f"[protocol] canonical_patch_hash 不一致: 请求 {claimed} / "
-          f"本地 {mine}（照常执行，请检查两侧的规范化实现）", file=sys.stderr)
+    print(
+        f"[protocol] canonical_patch_hash 不一致: 请求 {claimed} / "
+        f"本地 {mine}（照常执行，请检查两侧的规范化实现）",
+        file=sys.stderr,
+    )
     return {"hash_mismatch": True, "worker_patch_hash": mine}
 
 
 def _v1_error(req: dict, exc: ProtocolError) -> dict:
-    err = {"code": exc.code, "retryable": exc.retryable,
-           "message": exc.message, "traceback": exc.traceback_text}
+    err = {
+        "code": exc.code,
+        "retryable": exc.retryable,
+        "message": exc.message,
+        "traceback": exc.traceback_text,
+    }
     err.update(exc.extra)
     return {"ok": False, **_echo(req), "error": err}
 
@@ -711,9 +778,15 @@ def _respond(worker: "Worker", req: object) -> dict:
     except SystemExit:
         raise
     except Exception as exc:  # noqa: BLE001 — 兜底，绝不让 worker 静默退出
-        return _v1_error(req, ProtocolError(
-            "internal", str(exc) or exc.__class__.__name__, retryable=True,
-            traceback_text=traceback.format_exc()))
+        return _v1_error(
+            req,
+            ProtocolError(
+                "internal",
+                str(exc) or exc.__class__.__name__,
+                retryable=True,
+                traceback_text=traceback.format_exc(),
+            ),
+        )
     return {"ok": True, **_echo(req), **_hash_check(req), **result}
 
 
@@ -766,14 +839,17 @@ def main() -> None:
         # 将来别处再漏一个非有限值时，它变成一条**结构化错误**（两条控制面
         # 表现一致、说得出是哪个字段），而不是一条只在其中一条上炸的坏帧。
         try:
-            line = json.dumps(resp, ensure_ascii=False, default=_json_default,
-                              allow_nan=False)
+            line = json.dumps(resp, ensure_ascii=False, default=_json_default, allow_nan=False)
         except ValueError as exc:
-            line = json.dumps({"ok": False, "code": "non_finite_response",
-                               "error": f"响应里有非有限数值，无法编成合法 JSON: {exc}",
-                               "request_id": (req or {}).get("request_id")
-                               if isinstance(req, dict) else None},
-                              ensure_ascii=False)
+            line = json.dumps(
+                {
+                    "ok": False,
+                    "code": "non_finite_response",
+                    "error": f"响应里有非有限数值，无法编成合法 JSON: {exc}",
+                    "request_id": (req or {}).get("request_id") if isinstance(req, dict) else None,
+                },
+                ensure_ascii=False,
+            )
         sys.stdout.write(line + "\n")
         sys.stdout.flush()
 

@@ -22,6 +22,7 @@ basename、不带任何目录前缀。
     python scripts/make_updater_zip.py --exe out/Tavotto-X.Y.Z-Windows-Setup.exe \
         --out out/Tavotto_X.Y.Z_x64-setup.nsis.zip
 """
+
 from __future__ import annotations
 
 import argparse

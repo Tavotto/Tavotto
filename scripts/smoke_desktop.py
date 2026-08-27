@@ -17,6 +17,7 @@
 
 数据/配置目录全程隔离在临时目录，绝不碰真实用户数据。
 """
+
 from __future__ import annotations
 
 import argparse
@@ -59,8 +60,14 @@ def _descendants(pid: int) -> set[int]:
     没有 `ps` 的平台（Windows）回空集：那儿由 `_leftover_workers` 兜底。
     """
     try:
-        out = subprocess.run(["ps", "-eo", "pid=,ppid="], capture_output=True,
-                             text=True, encoding="utf-8", errors="replace", timeout=20).stdout
+        out = subprocess.run(
+            ["ps", "-eo", "pid=,ppid="],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=20,
+        ).stdout
     except (OSError, subprocess.SubprocessError):
         return set()
     kids: dict[int, list[int]] = {}
@@ -89,7 +96,7 @@ def _alive(pid: int) -> bool:
     except ProcessLookupError:
         return False
     except PermissionError:
-        return True                      # 还在，只是不归我们管
+        return True  # 还在，只是不归我们管
     except OSError:
         return False
     return True
@@ -114,8 +121,7 @@ def is_packaged(exe: Path) -> bool:
     return (exe.parent / "_internal").is_dir()
 
 
-def check_control_plane(port: int, cookie: str, packaged: bool,
-                        rendered: bool) -> None:
+def check_control_plane(port: int, cookie: str, packaged: bool, rendered: bool) -> None:
     """渲染控制面必须是 workerd（Rust supervisor），而且渲染真的走了它。
 
     回退到 Python 池是**静默**的（`pool._new_worker()` 的 except 分支），所以
@@ -128,28 +134,36 @@ def check_control_plane(port: int, cookie: str, packaged: bool,
     selected, sessions = cp.get("selected"), cp.get("sessions") or []
 
     if selected != "workerd":
-        msg = (f"渲染控制面是 {selected!r} 而不是 workerd——"
-               "产物里没有 tavotto-workerd，渲染会静默回退到 Python 渲染池")
+        msg = (
+            f"渲染控制面是 {selected!r} 而不是 workerd——"
+            "产物里没有 tavotto-workerd，渲染会静默回退到 Python 渲染池"
+        )
         if packaged:
             fail(msg)
-        print(f"⚠ {msg}；源码模式下先跑 "
-              "cargo build --release --manifest-path workerd/Cargo.toml")
+        print(f"⚠ {msg}；源码模式下先跑 cargo build --release --manifest-path workerd/Cargo.toml")
         return
     ok(f"渲染控制面: workerd（{cp.get('path')}）")
 
     if not rendered:
-        print("⚠ 本次没跑渲染（环境缺 matplotlib）：只验到「带着 workerd」，"
-              "没验到「渲染真走了它」")
+        print("⚠ 本次没跑渲染（环境缺 matplotlib）：只验到「带着 workerd」，没验到「渲染真走了它」")
         return
     if "workerd" not in sessions:
-        fail(f"渲染跑完了，但会话走的是 Python 渲染池: {sessions}"
-             "（workerd 起不来？看数据目录 cache/workerd.log）")
+        fail(
+            f"渲染跑完了，但会话走的是 Python 渲染池: {sessions}"
+            "（workerd 起不来？看数据目录 cache/workerd.log）"
+        )
     ok(f"渲染会话确实跑在 workerd 上: {sessions}")
 
 
-def request(port: int, method: str, path: str, body: dict | None = None,
-            cookie: str | None = None, host: str | None = None,
-            origin: str | None = None) -> tuple[int, dict]:
+def request(
+    port: int,
+    method: str,
+    path: str,
+    body: dict | None = None,
+    cookie: str | None = None,
+    host: str | None = None,
+    origin: str | None = None,
+) -> tuple[int, dict]:
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=120)
     try:
         payload = json.dumps(body).encode() if body is not None else None
@@ -179,8 +193,11 @@ def request(port: int, method: str, path: str, body: dict | None = None,
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--sidecar", required=True,
-                    help="sidecar 可执行文件（dist/Tavotto/Tavotto 或 .venv/bin/tavotto）")
+    ap.add_argument(
+        "--sidecar",
+        required=True,
+        help="sidecar 可执行文件（dist/Tavotto/Tavotto 或 .venv/bin/tavotto）",
+    )
     ap.add_argument("--figures", default=str(ROOT / "examples" / "figures"))
     args = ap.parse_args()
 
@@ -190,19 +207,24 @@ def main() -> None:
 
     tmp = Path(tempfile.mkdtemp(prefix="tavotto-smoke-"))
     handshake = tmp / "handshake.json"
-    env = {**os.environ,
-           "TAVOTTO_DATA_DIR": str(tmp / "data"),
-           "TAVOTTO_CONFIG_DIR": str(tmp / "config"),
-           # CI / 冒烟绝不产生真实的产品事件
-           "TAVOTTO_NO_TELEMETRY": "1",
-           "TAVOTTO_DESKTOP_HANDSHAKE": str(handshake)}
+    env = {
+        **os.environ,
+        "TAVOTTO_DATA_DIR": str(tmp / "data"),
+        "TAVOTTO_CONFIG_DIR": str(tmp / "config"),
+        # CI / 冒烟绝不产生真实的产品事件
+        "TAVOTTO_NO_TELEMETRY": "1",
+        "TAVOTTO_DESKTOP_HANDSHAKE": str(handshake),
+    }
     env.pop("TAVOTTO_DESKTOP_NONCE", None)
 
     proc = subprocess.Popen(
         [str(exe), "--desktop-sidecar"],
         stdin=subprocess.PIPE,
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        env=env, cwd=str(tmp))
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        env=env,
+        cwd=str(tmp),
+    )
     try:
         # 凭据走 stdin 首行（与 Tauri 壳同一协议）；管道保持打开
         assert proc.stdin is not None
@@ -247,8 +269,9 @@ def main() -> None:
         ok("bootstrap：错误 nonce 403 / 正确换 cookie / 重放 403")
 
         # ---- 项目与素材 ----
-        st, body = request(port, "POST", "/api/projects/open",
-                           {"path": args.figures}, cookie=cookie)
+        st, body = request(
+            port, "POST", "/api/projects/open", {"path": args.figures}, cookie=cookie
+        )
         assert st == 200, f"打开项目失败: {st} {body}"
         st, body = request(port, "GET", "/api/panels", cookie=cookie)
         assert st == 200 and body.get("panels"), f"素材扫描失败: {st}"
@@ -260,29 +283,53 @@ def main() -> None:
         script_panel = next((p for p in panels if p.get("script")), None)
         rendered = False
         if not envst.get("ok"):
-            print(f"⚠ 渲染环境不可用（{envst.get('reason') or 'matplotlib 缺失'}）："
-                  "跳过参数化渲染/导出验证——这是环境限制，不是通过")
+            print(
+                f"⚠ 渲染环境不可用（{envst.get('reason') or 'matplotlib 缺失'}）："
+                "跳过参数化渲染/导出验证——这是环境限制，不是通过"
+            )
         elif script_panel is None:
             print("⚠ 示例项目里没有可参数化面板：跳过渲染验证")
         else:
             rendered = True
-            st, body = request(port, "POST", "/api/engine/render",
-                               {"id": script_panel["id"], "patches": []},
-                               cookie=cookie)
+            st, body = request(
+                port,
+                "POST",
+                "/api/engine/render",
+                {"id": script_panel["id"], "patches": []},
+                cookie=cookie,
+            )
             assert st == 200 and body.get("manifest"), f"渲染失败: {st} {body}"
-            ok(f"参数化渲染: {script_panel['id']}（manifest "
-               f"{len(body['manifest'].get('elements', []))} 元素）")
+            ok(
+                f"参数化渲染: {script_panel['id']}（manifest "
+                f"{len(body['manifest'].get('elements', []))} 元素）"
+            )
 
             w = script_panel.get("native_w_mm", 80)
             h = script_panel.get("native_h_mm", 60)
-            st, body = request(port, "POST", "/api/export", {
-                "page_w_mm": w + 10, "page_h_mm": h + 10, "dpi": 200,
-                "formats": ["png", "pdf"], "stem": "smoke",
-                "objects": [{"type": "panel", "id": script_panel["id"],
-                             "x_mm": 5, "y_mm": 5, "w_mm": w, "h_mm": h}],
-            }, cookie=cookie)
-            assert st == 200 and len(body.get("files", [])) == 2, \
-                f"导出失败: {st} {body}"
+            st, body = request(
+                port,
+                "POST",
+                "/api/export",
+                {
+                    "page_w_mm": w + 10,
+                    "page_h_mm": h + 10,
+                    "dpi": 200,
+                    "formats": ["png", "pdf"],
+                    "stem": "smoke",
+                    "objects": [
+                        {
+                            "type": "panel",
+                            "id": script_panel["id"],
+                            "x_mm": 5,
+                            "y_mm": 5,
+                            "w_mm": w,
+                            "h_mm": h,
+                        }
+                    ],
+                },
+                cookie=cookie,
+            )
+            assert st == 200 and len(body.get("files", [])) == 2, f"导出失败: {st} {body}"
             for f in body["files"]:
                 p = Path(body["export_dir"]) / f["name"]
                 assert p.is_file() and p.stat().st_size > 0, f"导出文件缺失: {p}"

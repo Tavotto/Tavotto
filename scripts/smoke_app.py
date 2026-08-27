@@ -42,6 +42,7 @@ tavotto-workerd 时功能一样不缺、只是慢，不断言就永远发现不�
     # 中文 + 空格路径（用户目录整个搬过去，不只是项目路径）
     python scripts/smoke_app.py --exe ... --workdir "/tmp/我的 目录/smoke"
 """
+
 from __future__ import annotations
 
 import argparse
@@ -65,8 +66,8 @@ for _stream in (sys.stdout, sys.stderr):
 
 REPO = Path(__file__).resolve().parent.parent
 DEFAULT_FIGURES = REPO / "examples" / "figures"
-BOOT_TIMEOUT_S = 120      # 冷启动 + 首次 import 在 Windows runner 上可能很慢
-RENDER_TIMEOUT_S = 300    # 冷启动一个 matplotlib 会话
+BOOT_TIMEOUT_S = 120  # 冷启动 + 首次 import 在 Windows runner 上可能很慢
+RENDER_TIMEOUT_S = 300  # 冷启动一个 matplotlib 会话
 
 #: `--expect-source bundled` 时必须从子进程环境里摘掉的变量。
 #:
@@ -78,10 +79,18 @@ RENDER_TIMEOUT_S = 300    # 冷启动一个 matplotlib 会话
 #:   PYTHONPATH / PYTHONUSERBASE  import 到别处的 numpy，版本对不上却「能跑」
 _HOSTILE_TO_BUNDLED = (
     "TAVOTTO_WORKER_PYTHON",
-    "CONDA_PREFIX", "CONDA_DEFAULT_ENV", "CONDA_EXE", "CONDA_PYTHON_EXE",
-    "CONDA_PROMPT_MODIFIER", "CONDA_SHLVL",
-    "VIRTUAL_ENV", "VIRTUAL_ENV_PROMPT",
-    "PYTHONHOME", "PYTHONPATH", "PYTHONUSERBASE", "PYTHONSTARTUP",
+    "CONDA_PREFIX",
+    "CONDA_DEFAULT_ENV",
+    "CONDA_EXE",
+    "CONDA_PYTHON_EXE",
+    "CONDA_PROMPT_MODIFIER",
+    "CONDA_SHLVL",
+    "VIRTUAL_ENV",
+    "VIRTUAL_ENV_PROMPT",
+    "PYTHONHOME",
+    "PYTHONPATH",
+    "PYTHONUSERBASE",
+    "PYTHONSTARTUP",
     "PYTHONEXECUTABLE",
 )
 
@@ -109,8 +118,11 @@ def _get(url: str, timeout: float = 30) -> dict:
 
 def _post(url: str, payload: dict, timeout: float = 30) -> dict:
     req = urllib.request.Request(
-        url, data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json", **_AUTH}, method="POST")
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json", **_AUTH},
+        method="POST",
+    )
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode("utf-8"))
 
@@ -131,8 +143,7 @@ def _assert_auth_enforced(base: str, data_dir: Path, port: int) -> None:
     else:
         raise SmokeError("未认证请求被放行了——会话认证没有生效（P0 回归）")
     if not adopt_session_credentials(data_dir, port):
-        raise SmokeError(
-            f"本机会话凭据文件缺失: {session_credential_path(data_dir, port)}")
+        raise SmokeError(f"本机会话凭据文件缺失: {session_credential_path(data_dir, port)}")
     _get(f"{base}/api/session/ping", timeout=10)
     print("✓ 会话认证：默认 deny + 本机凭据交接可用")
 
@@ -216,17 +227,29 @@ def _leftover_workers(data_dir: Path) -> list[str]:
         if os.name == "nt":
             out = subprocess.run(
                 ["wmic", "process", "get", "CommandLine"],
-                capture_output=True, text=True, timeout=20,
-                encoding="utf-8", errors="replace").stdout
+                capture_output=True,
+                text=True,
+                timeout=20,
+                encoding="utf-8",
+                errors="replace",
+            ).stdout
         else:
             # -ww：不按终端宽度截断（截断了就什么都匹配不上）
-            out = subprocess.run(["ps", "-eww", "-o", "args="],
-                                 capture_output=True, text=True, encoding="utf-8", errors="replace",
-                                 timeout=20).stdout
+            out = subprocess.run(
+                ["ps", "-eww", "-o", "args="],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=20,
+            ).stdout
     except (OSError, subprocess.SubprocessError):
         return []
-    return [ln.strip()[:160] for ln in out.splitlines()
-            if marker in ln and "--figures-dir" in ln and ours in ln]
+    return [
+        ln.strip()[:160]
+        for ln in out.splitlines()
+        if marker in ln and "--figures-dir" in ln and ours in ln
+    ]
 
 
 def _tail(path: Path, n: int = 120) -> str:
@@ -237,9 +260,9 @@ def _tail(path: Path, n: int = 120) -> str:
     return "\n".join(lines[-n:])
 
 
-def _check_environment(base: str, expect_source: str | None,
-                       expect_packages: list[str],
-                       expect_runtime: bool = False) -> None:
+def _check_environment(
+    base: str, expect_source: str | None, expect_packages: list[str], expect_runtime: bool = False
+) -> None:
     """渲染环境自检：解释器来源 + 内置 runtime 完整性 + 科学栈真能 import。
 
     分三步问是有意的：`source` 回答「用的是谁的 Python」，`runtime` 回答
@@ -250,14 +273,15 @@ def _check_environment(base: str, expect_source: str | None,
     query = "?probe=" + (",".join(expect_packages) if expect_packages else "1")
     env = _get(f"{base}/api/engine/environment{query}", timeout=180)
     src = env.get("source") or "(无)"
-    print(f"✓ 渲染环境: python={env.get('python')} 来源={src} "
-          f"matplotlib={env.get('matplotlib')}")
+    print(f"✓ 渲染环境: python={env.get('python')} 来源={src} matplotlib={env.get('matplotlib')}")
 
     rt = env.get("runtime") or {}
     if rt.get("present"):
-        print(f"  内置 runtime: Python {rt.get('python')}，"
-              f"{len(rt.get('packages') or {})} 个锁定包，"
-              f"expected={rt.get('expected')} valid={rt.get('valid')}")
+        print(
+            f"  内置 runtime: Python {rt.get('python')}，"
+            f"{len(rt.get('packages') or {})} 个锁定包，"
+            f"expected={rt.get('expected')} valid={rt.get('valid')}"
+        )
 
     if expect_source:
         if not env.get("ok"):
@@ -266,28 +290,29 @@ def _check_environment(base: str, expect_source: str | None,
             raise SmokeError(
                 f"解释器来源应为 {expect_source}，实际是 {src}"
                 f"（python={env.get('python')}）。桌面版这一条不能将就："
-                "说明内置 runtime 没进包，或者被机器上别的 Python 抢先了。")
+                "说明内置 runtime 没进包，或者被机器上别的 Python 抢先了。"
+            )
 
     if expect_runtime:
         if not rt.get("expected"):
             raise SmokeError(
                 "runtime.expected 为假——这个产物没有被识别成「本该自带 runtime」"
                 "的桌面形态。多半是 engine/runtime.ships_bundled_runtime() 没把"
-                "本平台算进去，或者跑的根本不是冻结产物。")
+                "本平台算进去，或者跑的根本不是冻结产物。"
+            )
         if not rt.get("valid"):
             raise SmokeError(
                 f"runtime.valid 为假：{rt.get('error') or rt.get('code') or rt}。"
-                "内置渲染环境缺失/损坏/架构不符——这样的安装包不能发。")
+                "内置渲染环境缺失/损坏/架构不符——这样的安装包不能发。"
+            )
         print("✓ 内置 runtime: expected=True valid=True")
 
     if expect_packages:
         imports = env.get("imports") or {}
         missing = [n for n in expect_packages if not imports.get(n)]
         if missing:
-            raise SmokeError(f"这些包在渲染环境里 import 不到: {missing}"
-                             f"（实测结果 {imports}）")
-        print("✓ 内置科学栈: " +
-              "  ".join(f"{n}={imports[n]}" for n in expect_packages))
+            raise SmokeError(f"这些包在渲染环境里 import 不到: {missing}（实测结果 {imports}）")
+        print("✓ 内置科学栈: " + "  ".join(f"{n}={imports[n]}" for n in expect_packages))
 
 
 def _check_control_plane(base: str, expect: str | None) -> None:
@@ -298,26 +323,32 @@ def _check_control_plane(base: str, expect: str | None) -> None:
     渲染池（那是刻意设计的降级），做出来的包功能一样不缺、只是慢，界面上
     一点异常都没有。
     """
-    cp = (_get(f"{base}/api/engine/environment").get("control_plane") or {})
+    cp = _get(f"{base}/api/engine/environment").get("control_plane") or {}
     selected, sessions = cp.get("selected"), cp.get("sessions") or []
     print(f"✓ 渲染控制面: selected={selected} sessions={sessions}")
     if not expect:
         return
     if selected != expect:
         raise SmokeError(
-            f"渲染控制面应为 {expect}，实际是 {selected}"
-            "（产物里没打进 tavotto-workerd？）")
+            f"渲染控制面应为 {expect}，实际是 {selected}（产物里没打进 tavotto-workerd？）"
+        )
     if expect == "workerd" and "workerd" not in sessions:
         raise SmokeError(
             f"二进制在，但刚才那次渲染走的是 {sessions}——workerd 起不来，"
-            "已静默回退到 Python 渲染池（看数据目录 cache/workerd.log）")
+            "已静默回退到 Python 渲染池（看数据目录 cache/workerd.log）"
+        )
 
 
-def run_smoke(launch: list[str], figures: Path, workdir: Path,
-              port: int | None = None, expect_source: str | None = None,
-              expect_packages: list[str] | None = None,
-              expect_control_plane: str | None = None,
-              expect_runtime: bool = False) -> None:
+def run_smoke(
+    launch: list[str],
+    figures: Path,
+    workdir: Path,
+    port: int | None = None,
+    expect_source: str | None = None,
+    expect_packages: list[str] | None = None,
+    expect_control_plane: str | None = None,
+    expect_runtime: bool = False,
+) -> None:
     port = port or _free_port()
     base = f"http://127.0.0.1:{port}"
     data_dir = workdir / "data"
@@ -359,8 +390,10 @@ def run_smoke(launch: list[str], figures: Path, workdir: Path,
         # 与其看着断言失败，不如在这里就摘干净并逐条说清楚。
         for key in _HOSTILE_TO_BUNDLED:
             if env.pop(key, None):
-                print(f"! 已从子进程环境移除 {key}"
-                      "（--expect-source=bundled 要求不借助任何外部解释器）")
+                print(
+                    f"! 已从子进程环境移除 {key}"
+                    "（--expect-source=bundled 要求不借助任何外部解释器）"
+                )
         # 配置目录本来就是隔离的新目录，所以「用户在设置里指定的解释器」
         # 天然为空——这里不需要额外处理，但值得说明白，免得下次有人再加一条。
 
@@ -374,8 +407,7 @@ def run_smoke(launch: list[str], figures: Path, workdir: Path,
     # 这个管道。落文件同时满足两件事——没有缓冲上限，诊断还留在磁盘上。
     _child_log_path = workdir / "server-stdout.log"
     _child_log = _child_log_path.open("w", encoding="utf-8")
-    proc = subprocess.Popen(cmd, env=env, stdout=_child_log,
-                            stderr=subprocess.STDOUT)
+    proc = subprocess.Popen(cmd, env=env, stdout=_child_log, stderr=subprocess.STDOUT)
     log_path = data_dir / "cache" / "app.log"
     # 记几个墙钟数只是为了让排障时有个量级参照（「是不是比上次慢了一个数量级」），
     # **不是性能承诺**：CI runner 的负载天天不一样，真正的基线在
@@ -385,13 +417,14 @@ def run_smoke(launch: list[str], figures: Path, workdir: Path,
     try:
         version = _wait_ready(base, proc, BOOT_TIMEOUT_S)
         timings["app_ready_s"] = time.time() - spawned_at
-        print(f"✓ 已启动: version={version.get('version')} "
-              f"build={version.get('build')}（{timings['app_ready_s']:.1f}s）")
+        print(
+            f"✓ 已启动: version={version.get('version')} "
+            f"build={version.get('build')}（{timings['app_ready_s']:.1f}s）"
+        )
 
         _assert_auth_enforced(base, data_dir, port)
 
-        _check_environment(base, expect_source, expect_packages or [],
-                           expect_runtime)
+        _check_environment(base, expect_source, expect_packages or [], expect_runtime)
 
         project = _get(f"{base}/api/project")
         if not project.get("open"):
@@ -407,44 +440,68 @@ def run_smoke(launch: list[str], figures: Path, workdir: Path,
         if scripted:
             target = scripted[0]
             t0 = time.time()
-            res = _post(f"{base}/api/engine/render",
-                        {"id": target["id"], "patches": []},
-                        timeout=RENDER_TIMEOUT_S)
+            res = _post(
+                f"{base}/api/engine/render",
+                {"id": target["id"], "patches": []},
+                timeout=RENDER_TIMEOUT_S,
+            )
             timings["first_render_s"] = time.time() - t0
             if not res.get("manifest"):
                 raise SmokeError(f"渲染没回 manifest: {res}")
-            print(f"✓ 引擎渲染 {target['id']}: "
-                  f"{len(res['manifest'].get('elements', []))} 个元素"
-                  f"（{timings['first_render_s']:.1f}s，含冷启动）")
+            print(
+                f"✓ 引擎渲染 {target['id']}: "
+                f"{len(res['manifest'].get('elements', []))} 个元素"
+                f"（{timings['first_render_s']:.1f}s，含冷启动）"
+            )
 
             # 第二次渲染走热会话：验的是「第一次没把会话搞坏」。冷/热两个数
             # 差得很远（冷的要起解释器 + import 整个科学栈），混在一起看不出
             # 任何东西，所以分开记。
             t0 = time.time()
-            res2 = _post(f"{base}/api/engine/render",
-                         {"id": target["id"], "patches": []},
-                         timeout=RENDER_TIMEOUT_S)
+            res2 = _post(
+                f"{base}/api/engine/render",
+                {"id": target["id"], "patches": []},
+                timeout=RENDER_TIMEOUT_S,
+            )
             timings["second_render_s"] = time.time() - t0
             if not res2.get("manifest"):
                 raise SmokeError(f"第二次渲染没回 manifest: {res2}")
-            print(f"✓ 再渲染一次（热会话）"
-                  f"（{timings['second_render_s']:.2f}s）")
+            print(f"✓ 再渲染一次（热会话）（{timings['second_render_s']:.2f}s）")
             _check_control_plane(base, expect_control_plane)
         else:
             print("! 没有可参数化面板，跳过引擎渲染（注册表为空？）")
             if expect_control_plane:
                 raise SmokeError(
                     "要求断言控制面，但这个示例项目里没有可参数化面板——"
-                    "没渲染就无从判断走的是哪条控制面")
+                    "没渲染就无从判断走的是哪条控制面"
+                )
 
         spec = {
-            "page_w_mm": 80, "page_h_mm": 40, "formats": ["pdf"], "stem": "smoke",
+            "page_w_mm": 80,
+            "page_h_mm": 40,
+            "formats": ["pdf"],
+            "stem": "smoke",
             "objects": [
-                {"type": "text", "text": "Smoke cm^{-1}", "x_mm": 5, "y_mm": 5,
-                 "w_mm": 70, "h_mm": 8, "size_pt": 10, "bold": False,
-                 "color": "#000000", "align": "left"},
-                {"type": "panel", "id": panels[0]["id"], "x_mm": 5, "y_mm": 15,
-                 "w_mm": 40, "h_mm": 20},
+                {
+                    "type": "text",
+                    "text": "Smoke cm^{-1}",
+                    "x_mm": 5,
+                    "y_mm": 5,
+                    "w_mm": 70,
+                    "h_mm": 8,
+                    "size_pt": 10,
+                    "bold": False,
+                    "color": "#000000",
+                    "align": "left",
+                },
+                {
+                    "type": "panel",
+                    "id": panels[0]["id"],
+                    "x_mm": 5,
+                    "y_mm": 15,
+                    "w_mm": 40,
+                    "h_mm": 20,
+                },
             ],
         }
         t0 = time.time()
@@ -453,13 +510,11 @@ def run_smoke(launch: list[str], figures: Path, workdir: Path,
         first = Path(out["export_dir"]) / out["files"][0]["name"]
         if not first.is_file() or first.stat().st_size < 500:
             raise SmokeError(f"导出的 PDF 不对劲: {first}")
-        print(f"✓ 导出 {first.name}（{first.stat().st_size} 字节，"
-              f"{timings['export_s']:.1f}s）")
+        print(f"✓ 导出 {first.name}（{first.stat().st_size} 字节，{timings['export_s']:.1f}s）")
 
         # 覆盖导出：Windows 上文件占用/只读的表现与 POSIX 完全不同，
         # 而「再导出一次」正是用户最常做的动作
-        out2 = _post(f"{base}/api/export", {**spec, "overwrite": True},
-                     timeout=RENDER_TIMEOUT_S)
+        out2 = _post(f"{base}/api/export", {**spec, "overwrite": True}, timeout=RENDER_TIMEOUT_S)
         second = Path(out2["export_dir"]) / out2["files"][0]["name"]
         if not second.is_file():
             raise SmokeError("第二次导出没有产出文件")
@@ -467,11 +522,12 @@ def run_smoke(launch: list[str], figures: Path, workdir: Path,
 
         diag = _get(f"{base}/api/diagnostics")["checks"]
         bad = [c for c in diag if not c["ok"]]
-        print(f"✓ 诊断 {len(diag)} 项，其中未通过 {len(bad)}: "
-              f"{[c['id'] for c in bad]}")
+        print(f"✓ 诊断 {len(diag)} 项，其中未通过 {len(bad)}: {[c['id'] for c in bad]}")
         if timings:
-            print("· 墙钟参考（**不是性能承诺**，基线见 docs/perf-baseline.md）: "
-                  + "  ".join(f"{k}={v:.2f}s" for k, v in timings.items()))
+            print(
+                "· 墙钟参考（**不是性能承诺**，基线见 docs/perf-baseline.md）: "
+                + "  ".join(f"{k}={v:.2f}s" for k, v in timings.items())
+            )
     except Exception:
         print("--- app.log ---", flush=True)
         print(_tail(log_path), flush=True)
@@ -482,8 +538,10 @@ def run_smoke(launch: list[str], figures: Path, workdir: Path,
         # 内置 runtime 的清单：装了哪个 Python、哪些包、构建时冒烟过没有。
         # 只看固定的几个落点，不 rglob 整个 dist（那是几万个文件）。
         exe_dir = Path(launch[0]).resolve().parent
-        for mf in (exe_dir / "_internal" / "runtime" / "runtime-manifest.json",
-                   exe_dir / "runtime" / "runtime-manifest.json"):
+        for mf in (
+            exe_dir / "_internal" / "runtime" / "runtime-manifest.json",
+            exe_dir / "runtime" / "runtime-manifest.json",
+        ):
             if mf.is_file():
                 print(f"--- {mf} ---", flush=True)
                 print(_tail(mf, 80), flush=True)
@@ -498,8 +556,7 @@ def run_smoke(launch: list[str], figures: Path, workdir: Path,
                 _post(f"{base}/api/shutdown", {}, timeout=10)
                 proc.wait(timeout=30)
                 graceful = proc.returncode == 0
-            except (urllib.error.URLError, OSError, TimeoutError,
-                    subprocess.TimeoutExpired):
+            except (urllib.error.URLError, OSError, TimeoutError, subprocess.TimeoutExpired):
                 pass
         if proc.poll() is None:
             proc.terminate()
@@ -512,8 +569,11 @@ def run_smoke(launch: list[str], figures: Path, workdir: Path,
             _child_log.close()
         except OSError:
             pass
-        out_text = _child_log_path.read_text(encoding="utf-8", errors="replace") \
-            if _child_log_path.is_file() else ""
+        out_text = (
+            _child_log_path.read_text(encoding="utf-8", errors="replace")
+            if _child_log_path.is_file()
+            else ""
+        )
         if out_text.strip():
             print("--- 进程输出 ---")
             print(out_text[-4000:])
@@ -534,22 +594,36 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--figures", default=str(DEFAULT_FIGURES))
     ap.add_argument("--port", type=int, default=None)
     ap.add_argument("--keep", action="store_true", help="保留临时工作目录便于排查")
-    ap.add_argument("--expect-source", default=None,
-                    help="断言渲染解释器的来源（bundled / configured / "
-                         "managed_venv / system / current_process / env_override）")
-    ap.add_argument("--expect-packages", default="",
-                    help="逗号分隔的 import 名，断言在渲染环境里都能 import "
-                         "（如 numpy,pandas,scipy,seaborn,PIL,matplotlib）")
-    ap.add_argument("--expect-control-plane", default=None,
-                    choices=["workerd", "python"],
-                    help="断言渲染控制面（workerd = Rust supervisor）。"
-                         "桌面产物用 workerd：回退是静默的，不断言就发现不了")
-    ap.add_argument("--expect-runtime", action="store_true",
-                    help="断言 runtime.expected 与 runtime.valid 均为真"
-                         "（该带内置 runtime 的形态，且带的这份完整可用）")
-    ap.add_argument("--workdir", default=None,
-                    help="隔离用户目录的落点（默认系统临时目录）。"
-                         "指到中文/带空格的路径可覆盖那一档回归")
+    ap.add_argument(
+        "--expect-source",
+        default=None,
+        help="断言渲染解释器的来源（bundled / configured / "
+        "managed_venv / system / current_process / env_override）",
+    )
+    ap.add_argument(
+        "--expect-packages",
+        default="",
+        help="逗号分隔的 import 名，断言在渲染环境里都能 import "
+        "（如 numpy,pandas,scipy,seaborn,PIL,matplotlib）",
+    )
+    ap.add_argument(
+        "--expect-control-plane",
+        default=None,
+        choices=["workerd", "python"],
+        help="断言渲染控制面（workerd = Rust supervisor）。"
+        "桌面产物用 workerd：回退是静默的，不断言就发现不了",
+    )
+    ap.add_argument(
+        "--expect-runtime",
+        action="store_true",
+        help="断言 runtime.expected 与 runtime.valid 均为真"
+        "（该带内置 runtime 的形态，且带的这份完整可用）",
+    )
+    ap.add_argument(
+        "--workdir",
+        default=None,
+        help="隔离用户目录的落点（默认系统临时目录）。指到中文/带空格的路径可覆盖那一档回归",
+    )
     args = ap.parse_args(argv)
 
     launch = [args.exe] if args.exe else [args.python, "-m", "tavotto"]
@@ -572,9 +646,16 @@ def main(argv: list[str] | None = None) -> int:
         workdir = Path(tempfile.mkdtemp(prefix="tavotto-smoke-"))
     print(f"· 隔离用户目录: {workdir}")
     try:
-        run_smoke(launch, figures, workdir, args.port,
-                  args.expect_source, packages, args.expect_control_plane,
-                  args.expect_runtime)
+        run_smoke(
+            launch,
+            figures,
+            workdir,
+            args.port,
+            args.expect_source,
+            packages,
+            args.expect_control_plane,
+            args.expect_runtime,
+        )
     except Exception as exc:  # noqa: BLE001 — 冒烟脚本要给人看结论
         print(f"::error::冒烟失败: {exc}", file=sys.stderr)
         return 1

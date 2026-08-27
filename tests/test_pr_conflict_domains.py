@@ -6,6 +6,7 @@
 
 全部平台无关、纯标准库、零网络——fetch 一律注入假实现。
 """
+
 from __future__ import annotations
 
 import json
@@ -31,8 +32,12 @@ def _domains():
 class FakeGitHub:
     """挂在 fetch 形参上的假 API：按 URL 分派，带真实的分页形状。"""
 
-    def __init__(self, prs: dict[int, list[str]], titles: dict[int, str] | None = None,
-                 drafts: set[int] = frozenset()):
+    def __init__(
+        self,
+        prs: dict[int, list[str]],
+        titles: dict[int, str] | None = None,
+        drafts: set[int] = frozenset(),
+    ):
         self.prs = prs
         self.titles = titles or {}
         self.drafts = set(drafts)
@@ -42,8 +47,15 @@ class FakeGitHub:
         self.urls.append(url)
         page = int(url.split("page=")[-1])
         if "/pulls?" in url:
-            rows = [{"number": n, "state": "open", "title": self.titles.get(n, f"PR {n}"),
-                     "draft": n in self.drafts} for n in sorted(self.prs)]
+            rows = [
+                {
+                    "number": n,
+                    "state": "open",
+                    "title": self.titles.get(n, f"PR {n}"),
+                    "draft": n in self.drafts,
+                }
+                for n in sorted(self.prs)
+            ]
             return self._page(rows, page)
         for n, files in self.prs.items():
             if f"/pulls/{n}/files" in url:
@@ -52,7 +64,7 @@ class FakeGitHub:
 
     @staticmethod
     def _page(rows, page):
-        return rows[(page - 1) * 100: page * 100]
+        return rows[(page - 1) * 100 : page * 100]
 
 
 # ============================================================ 配置本身
@@ -74,33 +86,34 @@ class TestRealConfig:
         assert CD.matches("AGENTS.md", d["root-agent-contract"]["files"])
         assert CD.matches(".github/workflows/ci.yml", d["ci-control-plane"]["files"])
         assert CD.matches("scripts/ci/aggregate_gate.py", d["ci-control-plane"]["files"])
-        assert CD.matches("docs/release-notes/v0.1.1.md",
-                          d["release-control-plane"]["files"])
+        assert CD.matches("docs/release-notes/v0.1.1.md", d["release-control-plane"]["files"])
 
     def test_broken_config_shapes_are_rejected(self, tmp_path):
         p = tmp_path / "c.json"
         p.write_text('{"domains": {}}', encoding="utf-8")
         with pytest.raises(CD.ConfigError):
             CD.load_config(p)
-        p.write_text('{"domains": {"x": {"files": ["a"], "policy": "??"}}}',
-                     encoding="utf-8")
+        p.write_text('{"domains": {"x": {"files": ["a"], "policy": "??"}}}', encoding="utf-8")
         with pytest.raises(CD.ConfigError):
             CD.load_config(p)
 
 
 # ============================================================ glob
 class TestGlob:
-    @pytest.mark.parametrize("pattern,path,ok", [
-        ("web/src/**", "web/src/a.ts", True),
-        ("web/src/**", "web/src/deep/nested/b.tsx", True),
-        ("web/src/**", "web/dist/a.ts", False),
-        (".github/workflows/**", ".github/workflows/ci.yml", True),
-        ("AGENTS.md", "AGENTS.md", True),
-        ("AGENTS.md", "docs/AGENTS.md", False),
-        ("scripts/ci/*.py", "scripts/ci/soak.py", True),
-        ("scripts/ci/*.py", "scripts/ci/sub/x.py", False),
-        ("tests/golden/**", "tests/golden/patch_vectors.json", True),
-    ])
+    @pytest.mark.parametrize(
+        "pattern,path,ok",
+        [
+            ("web/src/**", "web/src/a.ts", True),
+            ("web/src/**", "web/src/deep/nested/b.tsx", True),
+            ("web/src/**", "web/dist/a.ts", False),
+            (".github/workflows/**", ".github/workflows/ci.yml", True),
+            ("AGENTS.md", "AGENTS.md", True),
+            ("AGENTS.md", "docs/AGENTS.md", False),
+            ("scripts/ci/*.py", "scripts/ci/soak.py", True),
+            ("scripts/ci/*.py", "scripts/ci/sub/x.py", False),
+            ("tests/golden/**", "tests/golden/patch_vectors.json", True),
+        ],
+    )
     def test_matching(self, pattern, path, ok):
         assert CD.matches(path, [pattern]) is ok
 
@@ -118,8 +131,13 @@ class TestOverlaps:
         return rc, fake
 
     def test_two_prs_both_touching_canvas_html(self, capsys):
-        rc, _ = self._run(1, {1: ["codex-plugin/mcp/widget/canvas.html"],
-                              2: ["codex-plugin/mcp/widget/canvas.html"]})
+        rc, _ = self._run(
+            1,
+            {
+                1: ["codex-plugin/mcp/widget/canvas.html"],
+                2: ["codex-plugin/mcp/widget/canvas.html"],
+            },
+        )
         out = capsys.readouterr().out
         assert rc == 0
         assert "::warning::" in out and "mcp-widget" in out
@@ -128,28 +146,31 @@ class TestOverlaps:
 
     def test_source_change_vs_generated_change_is_an_indirect_overlap(self, capsys):
         """一个改 web/src、一个带 canvas.html——文件毫无交集，仍然要报。"""
-        rc, _ = self._run(1, {1: ["web/src/canvas/ContextBar.tsx"],
-                              2: ["codex-plugin/mcp/widget/canvas.html"]})
+        rc, _ = self._run(
+            1, {1: ["web/src/canvas/ContextBar.tsx"], 2: ["codex-plugin/mcp/widget/canvas.html"]}
+        )
         out = capsys.readouterr().out
         assert "生成物重叠" in out
         assert json.loads(out.strip().splitlines()[-1])["overlapping_prs"] == [2]
 
     def test_two_source_edits_in_a_generated_domain_are_a_generated_overlap(
-            self, capsys, tmp_path, monkeypatch):
+        self, capsys, tmp_path, monkeypatch
+    ):
         """两个 PR 各改 web/src 的**不同**文件、谁都没带 canvas.html——
         合并时各自重建的仍是同一个 bundle。判定按域声明走（#120 评审 P2）：
         声明了 generated 的域里 sources×sources 就是生成物重叠，建议 train。"""
         summary = tmp_path / "s.md"
         monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
-        rc, _ = self._run(1, {1: ["web/src/canvas/ContextBar.tsx"],
-                              2: ["web/src/store/renderStore.ts"]})
+        rc, _ = self._run(
+            1, {1: ["web/src/canvas/ContextBar.tsx"], 2: ["web/src/store/renderStore.ts"]}
+        )
         out = capsys.readouterr().out
         assert "生成物重叠" in out, "warning 一档就要说出是生成物撞点"
-        assert "train" in summary.read_text(encoding="utf-8"), \
-            "建议里必须指向 train 工作流"
+        assert "train" in summary.read_text(encoding="utf-8"), "建议里必须指向 train 工作流"
 
     def test_domains_without_generated_do_not_invent_an_overlap(
-            self, capsys, tmp_path, monkeypatch):
+        self, capsys, tmp_path, monkeypatch
+    ):
         """没有 generated 声明的域（如 root-agent-contract）不许把同域
         误报成生成物重叠——那会让 serialize 域的建议文案错位。"""
         summary = tmp_path / "s.md"
@@ -161,16 +182,14 @@ class TestOverlaps:
         assert "串行" in text, "serialize 域的建议必须是排队，不是 train"
 
     def test_unrelated_prs_do_not_warn(self, capsys):
-        rc, _ = self._run(1, {1: ["src/tavotto/app.py"],
-                              2: ["docs/i18n.md"]})
+        rc, _ = self._run(1, {1: ["src/tavotto/app.py"], 2: ["docs/i18n.md"]})
         out = capsys.readouterr().out
         assert "::warning::" not in out
         assert json.loads(out.strip().splitlines()[-1])["overlapping_prs"] == []
 
     def test_draft_prs_still_warn(self, capsys):
         """draft 也在开发、也会撞——不因为暂时不能合并就装看不见。"""
-        rc, _ = self._run(1, {1: ["web/src/a.ts"],
-                              2: ["web/src/b.ts"]}, drafts={2})
+        rc, _ = self._run(1, {1: ["web/src/a.ts"], 2: ["web/src/b.ts"]}, drafts={2})
         out = capsys.readouterr().out
         assert json.loads(out.strip().splitlines()[-1])["overlapping_prs"] == [2]
 
@@ -182,14 +201,14 @@ class TestOverlaps:
 
     def test_own_pr_is_not_its_own_conflict(self, capsys):
         rc, _ = self._run(7, {7: ["web/src/a.ts"]})
-        assert json.loads(capsys.readouterr().out.strip().splitlines()[-1])[
-            "overlapping_prs"] == []
+        assert json.loads(capsys.readouterr().out.strip().splitlines()[-1])["overlapping_prs"] == []
 
     def test_stack_parent_and_child_are_reported_as_overlap(self, capsys):
         """同一个 stack 的父子 PR 改同一批文件——照报。检查不知道 stack
         关系，报出来让作者自己确认「这是刻意的」比静默漏掉安全。"""
-        rc, _ = self._run(1, {1: ["scripts/ci/aggregate_gate.py"],
-                              2: ["scripts/ci/aggregate_gate.py"]})
+        rc, _ = self._run(
+            1, {1: ["scripts/ci/aggregate_gate.py"], 2: ["scripts/ci/aggregate_gate.py"]}
+        )
         out = capsys.readouterr().out
         assert "ci-control-plane" in out
 
@@ -206,14 +225,14 @@ class TestApiBehaviour:
     def test_api_unavailable_warns_and_exits_zero(self, capsys):
         def down(url, token):
             raise CD.ApiUnavailable("GitHub API 请求失败")
+
         rc = CD.run(REPO, 1, CONFIG, token=None, fetch=down)
         out = capsys.readouterr().out
         assert rc == 0, "咨询性检查绝不阻断产品 CI"
         assert "::warning::" in out
 
     def test_missing_config_warns_and_exits_zero(self, capsys, tmp_path):
-        rc = CD.run(REPO, 1, tmp_path / "nope.json", token=None,
-                    fetch=FakeGitHub({1: []}))
+        rc = CD.run(REPO, 1, tmp_path / "nope.json", token=None, fetch=FakeGitHub({1: []}))
         assert rc == 0
         assert "::warning::" in capsys.readouterr().out
 
@@ -224,6 +243,7 @@ class TestApiBehaviour:
 
         def down(url, token):
             raise CD.ApiUnavailable(f"GitHub API 请求失败（{url.split('?')[0]}）：URLError")
+
         CD.run(REPO, 1, CONFIG, token=secret, fetch=down)
         captured = capsys.readouterr()
         assert secret not in captured.out + captured.err
@@ -237,12 +257,10 @@ class TestApiBehaviour:
 
 # ============================================================ workflow 契约
 class TestWorkflowContract:
-    WF = (ROOT / ".github" / "workflows" / "pr-conflict-domains.yml").read_text(
-        encoding="utf-8")
+    WF = (ROOT / ".github" / "workflows" / "pr-conflict-domains.yml").read_text(encoding="utf-8")
 
     def _code(self):
-        return "\n".join(ln for ln in self.WF.splitlines()
-                         if not ln.lstrip().startswith("#"))
+        return "\n".join(ln for ln in self.WF.splitlines() if not ln.lstrip().startswith("#"))
 
     def test_read_only_permissions(self):
         code = self._code()
@@ -259,6 +277,7 @@ class TestWorkflowContract:
 
     def test_it_is_not_a_required_context_in_the_migration_tool(self):
         import merge_queue_ruleset as MQ
+
         assert "conflict domains (advisory)" not in MQ.GATE_CONTEXTS
 
     def test_bootstrap_window_is_a_skip_not_a_failure(self):
@@ -269,7 +288,8 @@ class TestWorkflowContract:
         python3 退出码 2。同样的形状在未来仍会出现（fork 的默认分支落后、
         脚本被移动改名的过渡 PR），所以守卫要留着，不是一次性补丁。"""
         code = self._code()
-        assert "if [ ! -f scripts/ci/pr_conflict_domains.py ]" in code, \
+        assert "if [ ! -f scripts/ci/pr_conflict_domains.py ]" in code, (
             "bootstrap 守卫没了——脚本缺席时这个咨询检查会红，阻断的正是产品 PR"
+        )
         guard = code.split("if [ ! -f scripts/ci/pr_conflict_domains.py ]", 1)[1]
         assert "exit 0" in guard.split("fi", 1)[0], "守卫必须以 exit 0 收尾"

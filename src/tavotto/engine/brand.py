@@ -9,6 +9,7 @@
 存量项目包需要能打开时，做法是写一个一次性转换脚本，而不是把读取端摊成三档。
 （文档 schema 的迁移是另一回事，`migrateToProject` 那条链照旧。）
 """
+
 PRODUCT_NAME = "Tavotto"
 
 PACKAGE_KIND = "tavotto-package"
@@ -16,7 +17,7 @@ PROOF_KIND = "tavotto-proof"
 PACKAGE_EXT = ".tavotto"
 
 # 分发标识：检查更新与 About 里的链接都从这里取，别处不得再手写仓库地址。
-DIST_NAME = "tavotto"                      # PyPI / wheel 包名
+DIST_NAME = "tavotto"  # PyPI / wheel 包名
 REPO_OWNER = "Tavotto"
 REPO_NAME = "Tavotto"
 REPO_URL = f"https://github.com/{REPO_OWNER}/{REPO_NAME}"

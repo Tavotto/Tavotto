@@ -36,6 +36,7 @@
 GitHub 访问全部经本机 `gh api`（借用已登录的凭据，脚本自己不碰 token）。
 纯标准库。
 """
+
 from __future__ import annotations
 
 import argparse
@@ -80,6 +81,7 @@ class MigrationError(Exception):
 
 # ---------------------------------------------------------------- gh 访问层
 
+
 def gh_api(path: str, *, method: str = "GET", body: dict | None = None) -> object:
     """经 `gh api` 打 GitHub REST。测试用假实现替换这个函数。"""
     cmd = ["gh", "api", "-X", method, path]
@@ -87,14 +89,14 @@ def gh_api(path: str, *, method: str = "GET", body: dict | None = None) -> objec
     if body is not None:
         cmd += ["--input", "-"]
         stdin = json.dumps(body)
-    proc = subprocess.run(cmd, input=stdin, capture_output=True,
-                          text=True, encoding="utf-8")
+    proc = subprocess.run(cmd, input=stdin, capture_output=True, text=True, encoding="utf-8")
     if proc.returncode != 0:
         raise MigrationError(f"gh api {method} {path} 失败：{proc.stderr.strip()[:500]}")
     return json.loads(proc.stdout) if proc.stdout.strip() else {}
 
 
 # ---------------------------------------------------------------- 读取与定位
+
 
 def stable_hash(obj: object) -> str:
     """Ruleset JSON 的稳定哈希——并发漂移检测用。"""
@@ -129,7 +131,8 @@ def find_ruleset(api, repo: str, name: str, branch: str) -> dict:
     if not candidates:
         raise MigrationError(
             f"找不到名为「{name}」、作用于默认分支的 branch ruleset——"
-            f"名字改过的话用 --ruleset-name 指定")
+            f"名字改过的话用 --ruleset-name 指定"
+        )
     if len(candidates) > 1:
         ids = [c["id"] for c in candidates]
         raise MigrationError(f"同名 ruleset 有 {len(candidates)} 个（{ids}）——先在网页上收敛成一个")
@@ -145,19 +148,20 @@ def _rule(ruleset: dict, rtype: str) -> dict | None:
 
 # ---------------------------------------------------------------- 两个阶段的变换
 
+
 def build_enable_queue(current: dict) -> dict:
     """当前 Ruleset → 加 merge_queue + strict=false，其余逐字保留。"""
     updated = copy.deepcopy(current)
     rsc = _rule(updated, "required_status_checks")
     if rsc is None:
-        raise MigrationError("当前 ruleset 里没有 required_status_checks rule——"
-                             "这不是预期的形状，先人工确认")
+        raise MigrationError(
+            "当前 ruleset 里没有 required_status_checks rule——这不是预期的形状，先人工确认"
+        )
     rsc.setdefault("parameters", {})["strict_required_status_checks_policy"] = False
 
     mq = _rule(updated, "merge_queue")
     if mq is None:
-        updated["rules"].append({"type": "merge_queue",
-                                 "parameters": dict(MERGE_QUEUE_PARAMS)})
+        updated["rules"].append({"type": "merge_queue", "parameters": dict(MERGE_QUEUE_PARAMS)})
     else:
         mq["parameters"] = dict(MERGE_QUEUE_PARAMS)
     _assert_untouched(current, updated)
@@ -167,8 +171,10 @@ def build_enable_queue(current: dict) -> dict:
 def build_switch_to_gates(current: dict) -> dict:
     """当前 Ruleset → required contexts 收敛为三个 Gate。前提在这里就查一轮。"""
     if _rule(current, "merge_queue") is None:
-        raise MigrationError("ruleset 里还没有 merge_queue rule——先跑 enable-queue。"
-                             "只收敛 contexts 不强制队列，旧 main 上绿过的 PR 仍可直接合并")
+        raise MigrationError(
+            "ruleset 里还没有 merge_queue rule——先跑 enable-queue。"
+            "只收敛 contexts 不强制队列，旧 main 上绿过的 PR 仍可直接合并"
+        )
     rsc_now = _rule(current, "required_status_checks")
     if rsc_now is None:
         raise MigrationError("当前 ruleset 里没有 required_status_checks rule")
@@ -177,8 +183,7 @@ def build_switch_to_gates(current: dict) -> dict:
 
     updated = copy.deepcopy(current)
     rsc = _rule(updated, "required_status_checks")
-    rsc["parameters"]["required_status_checks"] = [
-        {"context": c} for c in GATE_CONTEXTS]
+    rsc["parameters"]["required_status_checks"] = [{"context": c} for c in GATE_CONTEXTS]
     _assert_untouched(current, updated)
     return updated
 
@@ -192,11 +197,14 @@ def _assert_untouched(current: dict, updated: dict) -> None:
     before = [r for r in current.get("rules", []) if r.get("type") not in managed]
     after = [r for r in updated.get("rules", []) if r.get("type") not in managed]
     if before != after:
-        raise MigrationError("变换意外改动了托管之外的 rule（pull_request / deletion / "
-                             "non_fast_forward / 未来新增的类型都不归这个脚本管）")
+        raise MigrationError(
+            "变换意外改动了托管之外的 rule（pull_request / deletion / "
+            "non_fast_forward / 未来新增的类型都不归这个脚本管）"
+        )
 
 
 # ---------------------------------------------------------------- 前置条件
+
 
 def check_gates_on_main(api, repo: str, branch: str) -> list[str]:
     """三个 Gate 必须已在默认分支最新 commit 上真实产出 success。"""
@@ -244,8 +252,7 @@ def check_workflows_listen_to_merge_group(api, repo: str, branch: str) -> list[s
     return problems
 
 
-def preconditions(api, repo: str, branch: str, phase: str,
-                  current: dict) -> list[str]:
+def preconditions(api, repo: str, branch: str, phase: str, current: dict) -> list[str]:
     problems: list[str] = []
     if phase == "enable-queue":
         # 队列一开，候选就要在 merge_group 上等 required contexts；
@@ -257,13 +264,13 @@ def preconditions(api, repo: str, branch: str, phase: str,
         if _rule(current, "merge_queue") is None:
             problems.append("ruleset 里还没有 merge_queue rule")
         rsc = _rule(current, "required_status_checks")
-        if rsc and rsc.get("parameters", {}).get(
-                "strict_required_status_checks_policy", True):
+        if rsc and rsc.get("parameters", {}).get("strict_required_status_checks_policy", True):
             problems.append("strict 还开着")
     return problems
 
 
 # ---------------------------------------------------------------- 命令
+
 
 def plan_path(phase: str) -> Path:
     return Path(f"ruleset-plan-{phase}.json")
@@ -278,7 +285,9 @@ def cmd_inspect(api, repo: str, name: str) -> int:
     print(f"\n# ruleset {ruleset['id']}「{ruleset['name']}」→ {branch}", file=sys.stderr)
     print(f"# strict: {params.get('strict_required_status_checks_policy')}", file=sys.stderr)
     print(f"# merge_queue: {'有' if _rule(ruleset, 'merge_queue') else '无'}", file=sys.stderr)
-    print(f"# required contexts: {len(params.get('required_status_checks', []))} 个", file=sys.stderr)
+    print(
+        f"# required contexts: {len(params.get('required_status_checks', []))} 个", file=sys.stderr
+    )
     print(f"# bypass actors: {ruleset.get('bypass_actors')}", file=sys.stderr)
     print(f"# hash: {stable_hash(ruleset)}", file=sys.stderr)
     return 0
@@ -287,8 +296,7 @@ def cmd_inspect(api, repo: str, name: str) -> int:
 def cmd_plan(api, repo: str, name: str, phase: str, out: Path) -> int:
     branch = default_branch(api, repo)
     current = find_ruleset(api, repo, name, branch)
-    build = {"enable-queue": build_enable_queue,
-             "switch-to-gates": build_switch_to_gates}[phase]
+    build = {"enable-queue": build_enable_queue, "switch-to-gates": build_switch_to_gates}[phase]
     updated = build(current)
     plan = {
         "phase": phase,
@@ -301,8 +309,10 @@ def cmd_plan(api, repo: str, name: str, phase: str, out: Path) -> int:
     }
     out.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
     _describe_diff(current, updated)
-    print(f"\nplan 已写入 {out}（base_hash {plan['base_hash'][:16]}…）。"
-          f"apply 前会重读线上并比对这个哈希。")
+    print(
+        f"\nplan 已写入 {out}（base_hash {plan['base_hash'][:16]}…）。"
+        f"apply 前会重读线上并比对这个哈希。"
+    )
     return 0
 
 
@@ -312,10 +322,14 @@ def _describe_diff(current: dict, updated: dict) -> None:
     cur_ctx = [c["context"] for c in cur_rsc.get("required_status_checks", [])]
     new_ctx = [c["context"] for c in new_rsc.get("required_status_checks", [])]
     print("将要做的改动：")
-    print(f"  strict: {cur_rsc.get('strict_required_status_checks_policy')} → "
-          f"{new_rsc.get('strict_required_status_checks_policy')}")
-    print(f"  merge_queue: {'有' if _rule(current, 'merge_queue') else '无'} → "
-          f"{'有' if _rule(updated, 'merge_queue') else '无'}")
+    print(
+        f"  strict: {cur_rsc.get('strict_required_status_checks_policy')} → "
+        f"{new_rsc.get('strict_required_status_checks_policy')}"
+    )
+    print(
+        f"  merge_queue: {'有' if _rule(current, 'merge_queue') else '无'} → "
+        f"{'有' if _rule(updated, 'merge_queue') else '无'}"
+    )
     if cur_ctx != new_ctx:
         print(f"  required contexts: {len(cur_ctx)} 个 → {len(new_ctx)} 个")
         for c in cur_ctx:
@@ -329,8 +343,7 @@ def _describe_diff(current: dict, updated: dict) -> None:
     print("  其余 rules / conditions / bypass_actors：原样保留")
 
 
-def cmd_apply(api, repo: str, name: str, phase: str, plan_file: Path,
-              yes: bool) -> int:
+def cmd_apply(api, repo: str, name: str, phase: str, plan_file: Path, yes: bool) -> int:
     if not plan_file.is_file():
         raise MigrationError(f"没有 plan 文件 {plan_file}——先跑 plan --phase {phase}")
     plan = json.loads(plan_file.read_text(encoding="utf-8"))
@@ -346,7 +359,8 @@ def cmd_apply(api, repo: str, name: str, phase: str, plan_file: Path,
     if stable_hash(current) != plan["base_hash"]:
         raise MigrationError(
             "Ruleset 自 plan 之后被改过（哈希不符）——拿旧 JSON 盖上去会抹掉"
-            "别人刚做的修改。重新跑 plan，人工读一遍 diff 再 apply")
+            "别人刚做的修改。重新跑 plan，人工读一遍 diff 再 apply"
+        )
 
     problems = preconditions(api, repo, branch, phase, current)
     if problems:
@@ -358,13 +372,13 @@ def cmd_apply(api, repo: str, name: str, phase: str, plan_file: Path,
     # 或生成它的脚本版本与现在不同。只抽查 bypass_actors 那种点名单是
     # 挡不住的：被编辑的 plan 可以抹掉 pull_request rule、换掉 conditions
     # 或 contexts，哈希核对的是 current、根本量不到它（#119 评审 P1）。
-    build = {"enable-queue": build_enable_queue,
-             "switch-to-gates": build_switch_to_gates}[phase]
+    build = {"enable-queue": build_enable_queue, "switch-to-gates": build_switch_to_gates}[phase]
     updated = build(current)
     if plan["updated"] != updated:
         raise MigrationError(
             "plan 的 updated 与从线上现状重算出的变换不一致——plan 文件被"
-            "编辑过，或生成它的脚本版本与当前不同。重新跑 plan 并人工读 diff")
+            "编辑过，或生成它的脚本版本与当前不同。重新跑 plan 并人工读 diff"
+        )
     if updated.get("target") != "branch":
         raise MigrationError("变换结果的 target 不是 branch——绝不写 tag ruleset")
 
@@ -389,14 +403,16 @@ def cmd_apply(api, repo: str, name: str, phase: str, plan_file: Path,
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     ap.add_argument("command", choices=("inspect", "plan", "apply"))
-    ap.add_argument("--phase", choices=PHASES,
-                    help="plan / apply 必填")
+    ap.add_argument("--phase", choices=PHASES, help="plan / apply 必填")
     ap.add_argument("--repo", default=DEFAULT_REPO)
     ap.add_argument("--ruleset-name", default=DEFAULT_RULESET_NAME)
-    ap.add_argument("--plan-file", type=Path, default=None,
-                    help="plan 的输出 / apply 的输入（默认 ruleset-plan-<phase>.json）")
-    ap.add_argument("--yes", action="store_true",
-                    help="apply 时真的写入；不带它 = 只演练")
+    ap.add_argument(
+        "--plan-file",
+        type=Path,
+        default=None,
+        help="plan 的输出 / apply 的输入（默认 ruleset-plan-<phase>.json）",
+    )
+    ap.add_argument("--yes", action="store_true", help="apply 时真的写入；不带它 = 只演练")
     args = ap.parse_args(argv)
 
     try:
@@ -407,8 +423,7 @@ def main(argv: list[str] | None = None) -> int:
         plan_file = args.plan_file or plan_path(args.phase)
         if args.command == "plan":
             return cmd_plan(gh_api, args.repo, args.ruleset_name, args.phase, plan_file)
-        return cmd_apply(gh_api, args.repo, args.ruleset_name, args.phase,
-                         plan_file, args.yes)
+        return cmd_apply(gh_api, args.repo, args.ruleset_name, args.phase, plan_file, args.yes)
     except MigrationError as exc:
         print(f"错误：{exc}", file=sys.stderr)
         return 1

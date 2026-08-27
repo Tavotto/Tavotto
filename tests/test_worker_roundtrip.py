@@ -7,6 +7,7 @@
   * export 应用 patches 后的 PDF 矢量文字保真
   * 协议 v1 信封（文件末尾一节）：回显、错误 code、hash 自检、legacy 兼容
 """
+
 import json
 import math
 import os
@@ -26,7 +27,8 @@ except pool.WorkerError:
     WORKER_PY = None
 
 pytestmark = pytest.mark.skipif(
-    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）")
+    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）"
+)
 
 FIG_SCRIPT = """\
 import matplotlib.pyplot as plt
@@ -82,8 +84,7 @@ def _rpc(proc, obj, timeout=120):
     proc.stdin.flush()
 
     box: list = []
-    reader = threading.Thread(target=lambda: box.append(proc.stdout.readline()),
-                              daemon=True)
+    reader = threading.Thread(target=lambda: box.append(proc.stdout.readline()), daemon=True)
     reader.start()
     reader.join(timeout)
     assert not reader.is_alive(), f"worker 超时（{timeout}s）: {obj.get('cmd')}"
@@ -107,15 +108,28 @@ def _text_value(manifest, gid):
 
 def _spawn(script: Path, figs: Path, tmp_path: Path, entry: str = "main"):
     return subprocess.Popen(
-        [WORKER_PY, str(pool.WORKER_PY),
-         "--script", str(script),
-         "--figures-dir", str(figs),
-         "--out-dir", str(tmp_path / "out"),
-         "--sandbox", str(tmp_path / "sandbox"),
-         "--entry", entry],
-        stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE, text=True, bufsize=1,
-        encoding="utf-8", errors="replace")   # 同 pool.py：管道钉死 UTF-8
+        [
+            WORKER_PY,
+            str(pool.WORKER_PY),
+            "--script",
+            str(script),
+            "--figures-dir",
+            str(figs),
+            "--out-dir",
+            str(tmp_path / "out"),
+            "--sandbox",
+            str(tmp_path / "sandbox"),
+            "--entry",
+            entry,
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1,
+        encoding="utf-8",
+        errors="replace",
+    )  # 同 pool.py：管道钉死 UTF-8
 
 
 @pytest.fixture
@@ -141,9 +155,11 @@ def test_full_roundtrip(worker):
 
     man = json.loads((out / "TestFig_a.json").read_text(encoding="utf-8"))
     title_gid = next(
-        el["gid"] for el in man["elements"]
+        el["gid"]
+        for el in man["elements"]
         for f in el.get("editable", [])
-        if f["prop"] == "text" and f["value"] == "Original Title")
+        if f["prop"] == "text" and f["value"] == "Original Title"
+    )
 
     # ---- override：改标题 ----
     patch = [{"gid": title_gid, "prop": "text", "value": "Changed Title"}]
@@ -157,8 +173,17 @@ def test_full_roundtrip(worker):
 
     # ---- export：应用 patches 全质量导出，矢量文字保真 ----
     pdf = tmp / "export.pdf"
-    _rpc(proc, {"cmd": "export", "stem": "TestFig_a", "patches": patch,
-                "path": str(pdf), "format": "pdf", "dpi": 600})
+    _rpc(
+        proc,
+        {
+            "cmd": "export",
+            "stem": "TestFig_a",
+            "patches": patch,
+            "path": str(pdf),
+            "format": "pdf",
+            "dpi": 600,
+        },
+    )
     with pymupdf.open(pdf) as doc:
         text = doc[0].get_text()
     assert "Changed Title" in text
@@ -180,9 +205,11 @@ def test_export_is_state_neutral(worker):
     _rpc(proc, {"cmd": "build"})
     man = json.loads((out / "TestFig_a.json").read_text(encoding="utf-8"))
     title_gid = next(
-        el["gid"] for el in man["elements"]
+        el["gid"]
+        for el in man["elements"]
         for f in el.get("editable", [])
-        if f["prop"] == "text" and f["value"] == "Original Title")
+        if f["prop"] == "text" and f["value"] == "Original Title"
+    )
 
     patch = [{"gid": title_gid, "prop": "text", "value": "Hot Session Title"}]
     _rpc(proc, {"cmd": "override", "stem": "TestFig_a", "patches": patch})
@@ -191,10 +218,19 @@ def test_export_is_state_neutral(worker):
 
     # 用另一组 patches 导出（空列表 = 脚本原始状态，与热会话状态截然不同）
     pdf = tmp / "neutral.pdf"
-    _rpc(proc, {"cmd": "export", "stem": "TestFig_a", "patches": [],
-                "path": str(pdf), "format": "pdf", "dpi": 200})
+    _rpc(
+        proc,
+        {
+            "cmd": "export",
+            "stem": "TestFig_a",
+            "patches": [],
+            "path": str(pdf),
+            "format": "pdf",
+            "dpi": 200,
+        },
+    )
     with pymupdf.open(pdf) as doc:
-        assert "Original Title" in doc[0].get_text()   # 导出确实用的是自己那组
+        assert "Original Title" in doc[0].get_text()  # 导出确实用的是自己那组
 
     resp = _rpc(proc, {"cmd": "render_png", "stem": "TestFig_a", "width": 400})
     png_after = Path(resp["path"]).read_bytes()
@@ -215,25 +251,36 @@ def test_export_stays_state_neutral_when_it_fails(worker):
     _rpc(proc, {"cmd": "build"})
     man = json.loads((out / "TestFig_a.json").read_text(encoding="utf-8"))
     title_gid = next(
-        el["gid"] for el in man["elements"]
+        el["gid"]
+        for el in man["elements"]
         for f in el.get("editable", [])
-        if f["prop"] == "text" and f["value"] == "Original Title")
+        if f["prop"] == "text" and f["value"] == "Original Title"
+    )
 
     patch = [{"gid": title_gid, "prop": "text", "value": "Hot Session Title"}]
     _rpc(proc, {"cmd": "override", "stem": "TestFig_a", "patches": patch})
     resp = _rpc(proc, {"cmd": "render_png", "stem": "TestFig_a", "width": 400})
     png_before = Path(resp["path"]).read_bytes()
 
-    blocker = tmp / "blocker"           # 是文件，不是目录 → mkdir 必炸
+    blocker = tmp / "blocker"  # 是文件，不是目录 → mkdir 必炸
     blocker.write_bytes(b"x")
     # 手写协议：_rpc 断言 ok=True，而本例要的正是一次失败（同 _assert_unknown_stem）
-    proc.stdin.write(json.dumps({"cmd": "export", "stem": "TestFig_a", "patches": [],
-                                 "path": str(blocker / "nope.pdf"),
-                                 "format": "pdf", "dpi": 200}) + "\n")
+    proc.stdin.write(
+        json.dumps(
+            {
+                "cmd": "export",
+                "stem": "TestFig_a",
+                "patches": [],
+                "path": str(blocker / "nope.pdf"),
+                "format": "pdf",
+                "dpi": 200,
+            }
+        )
+        + "\n"
+    )
     proc.stdin.flush()
     box: list = []
-    reader = threading.Thread(target=lambda: box.append(proc.stdout.readline()),
-                              daemon=True)
+    reader = threading.Thread(target=lambda: box.append(proc.stdout.readline()), daemon=True)
     reader.start()
     reader.join(120)
     assert not reader.is_alive() and box and box[0], "worker 对失败的导出无回应"
@@ -261,8 +308,8 @@ def test_axes3d_position_roundtrip(worker):
     patch = [{"gid": ax["gid"], "prop": "position", "value": [0.3, 0.55, 0.4, 0.4]}]
     resp = _rpc(proc, {"cmd": "override", "stem": "TestFig_3d", "patches": patch})
     pos1 = _pos_of(resp["manifest"], ax["gid"])
-    assert abs(pos1[1] - 0.55) < 0.1, pos1     # y 明显移向目标
-    assert pos1[1] - pos0[1] > 0.2             # 相对原位确实动了
+    assert abs(pos1[1] - 0.55) < 0.1, pos1  # y 明显移向目标
+    assert pos1[1] - pos0[1] > 0.2  # 相对原位确实动了
 
     resp = _rpc(proc, {"cmd": "override", "stem": "TestFig_3d", "patches": []})
     pos2 = _pos_of(resp["manifest"], ax["gid"])
@@ -314,8 +361,17 @@ def test_axes3d_axis_arrows_roundtrip(worker):
 
     # 带箭头导出 PDF：draw 路径（含投影现算落边）不炸即为过；文字仍矢量
     pdf = tmp / "arrows3d.pdf"
-    _rpc(proc, {"cmd": "export", "stem": "TestFig_3d", "patches": patch,
-                "path": str(pdf), "format": "pdf", "dpi": 600})
+    _rpc(
+        proc,
+        {
+            "cmd": "export",
+            "stem": "TestFig_3d",
+            "patches": patch,
+            "path": str(pdf),
+            "format": "pdf",
+            "dpi": 600,
+        },
+    )
     with pymupdf.open(pdf) as doc:
         assert "3D Title" in doc[0].get_text()
 
@@ -365,8 +421,17 @@ def test_legend_entry_order_roundtrip(worker):
 
     # 重排后导出的 PDF 图例文字仍是矢量（重建型属性不破坏导出）
     pdf = tmp / "order.pdf"
-    _rpc(proc, {"cmd": "export", "stem": "TestFig_sc", "patches": patch,
-                "path": str(pdf), "format": "pdf", "dpi": 600})
+    _rpc(
+        proc,
+        {
+            "cmd": "export",
+            "stem": "TestFig_sc",
+            "patches": patch,
+            "path": str(pdf),
+            "format": "pdf",
+            "dpi": 600,
+        },
+    )
     with pymupdf.open(pdf) as doc:
         text = doc[0].get_text()
     for lab in labels0:
@@ -381,8 +446,7 @@ def _assert_unknown_stem(proc):
     proc.stdin.write(json.dumps({"cmd": "override", "stem": "nope", "patches": []}) + "\n")
     proc.stdin.flush()
     box: list = []
-    reader = threading.Thread(target=lambda: box.append(proc.stdout.readline()),
-                              daemon=True)
+    reader = threading.Thread(target=lambda: box.append(proc.stdout.readline()), daemon=True)
     reader.start()
     reader.join(30)
     assert not reader.is_alive() and box and box[0], "worker 对未知 stem 无回应"
@@ -401,37 +465,62 @@ def test_fontfamily_override_syncs_mathtext(worker):
     proc, out, tmp = worker
     _rpc(proc, {"cmd": "build"})
     man = json.loads((out / "TestFig_a.json").read_text(encoding="utf-8"))
-    el = next(e for e in man["elements"]
-              for f in e.get("editable", [])
-              if f["prop"] == "text" and "cm$^{-1}$" in str(f["value"]))
+    el = next(
+        e
+        for e in man["elements"]
+        for f in e.get("editable", [])
+        if f["prop"] == "text" and "cm$^{-1}$" in str(f["value"])
+    )
     patch = [{"gid": el["gid"], "prop": "fontfamily", "value": "serif"}]
     _rpc(proc, {"cmd": "override", "stem": "TestFig_a", "patches": patch})
 
     pdf = tmp / "font_export.pdf"
-    _rpc(proc, {"cmd": "export", "stem": "TestFig_a", "patches": patch,
-                "path": str(pdf), "format": "pdf", "dpi": 600})
+    _rpc(
+        proc,
+        {
+            "cmd": "export",
+            "stem": "TestFig_a",
+            "patches": patch,
+            "path": str(pdf),
+            "format": "pdf",
+            "dpi": 600,
+        },
+    )
     with pymupdf.open(pdf) as doc:
         page = doc[0]
         w, h = page.rect.width, page.rect.height
         bx, by, bw, bh = el["bbox"]
         clip = pymupdf.Rect(bx * w - 2, by * h - 2, (bx + bw) * w + 2, (by + bh) * h + 2)
-        fonts = {s["font"]
-                 for blk in page.get_text("rawdict", clip=clip)["blocks"]
-                 for ln in blk.get("lines", [])
-                 for s in ln.get("spans", [])}
+        fonts = {
+            s["font"]
+            for blk in page.get_text("rawdict", clip=clip)["blocks"]
+            for ln in blk.get("lines", [])
+            for s in ln.get("spans", [])
+        }
     assert fonts, "ylabel 区域抽不到文字"
     assert all("Serif" in f for f in fonts), f"上下标没跟着换字体: {fonts}"
 
     # 撤销（全量列表语义）后 math 字体集也要回到原生状态：再导出，上标回到 Sans
     _rpc(proc, {"cmd": "override", "stem": "TestFig_a", "patches": []})
     pdf2 = tmp / "font_export_undo.pdf"
-    _rpc(proc, {"cmd": "export", "stem": "TestFig_a", "patches": [],
-                "path": str(pdf2), "format": "pdf", "dpi": 600})
+    _rpc(
+        proc,
+        {
+            "cmd": "export",
+            "stem": "TestFig_a",
+            "patches": [],
+            "path": str(pdf2),
+            "format": "pdf",
+            "dpi": 600,
+        },
+    )
     with pymupdf.open(pdf2) as doc:
-        fonts2 = {s["font"]
-                  for blk in doc[0].get_text("rawdict", clip=clip)["blocks"]
-                  for ln in blk.get("lines", [])
-                  for s in ln.get("spans", [])}
+        fonts2 = {
+            s["font"]
+            for blk in doc[0].get_text("rawdict", clip=clip)["blocks"]
+            for ln in blk.get("lines", [])
+            for s in ln.get("spans", [])
+        }
     assert fonts2 and all("Serif" not in f for f in fonts2), f"撤销未还原 math 字体: {fonts2}"
 
 
@@ -446,19 +535,35 @@ def test_non_ascii_survives_the_pipe(worker):
     _rpc(proc, {"cmd": "build"})
     man = json.loads((out / "TestFig_a.json").read_text(encoding="utf-8"))
     title_gid = next(
-        el["gid"] for el in man["elements"]
+        el["gid"]
+        for el in man["elements"]
         for f in el.get("editable", [])
-        if f["prop"] == "text" and f["value"] == "Original Title")
+        if f["prop"] == "text" and f["value"] == "Original Title"
+    )
 
     tricky = "反应速率 µm·h⁻¹ ±0.5 ℃"
-    resp = _rpc(proc, {"cmd": "override", "stem": "TestFig_a",
-                       "patches": [{"gid": title_gid, "prop": "text", "value": tricky}]})
+    resp = _rpc(
+        proc,
+        {
+            "cmd": "override",
+            "stem": "TestFig_a",
+            "patches": [{"gid": title_gid, "prop": "text", "value": tricky}],
+        },
+    )
     assert _text_value(resp["manifest"], title_gid) == tricky
 
     pdf = tmp / "cjk.pdf"
-    _rpc(proc, {"cmd": "export", "stem": "TestFig_a",
-                "patches": [{"gid": title_gid, "prop": "text", "value": tricky}],
-                "path": str(pdf), "format": "pdf", "dpi": 300})
+    _rpc(
+        proc,
+        {
+            "cmd": "export",
+            "stem": "TestFig_a",
+            "patches": [{"gid": title_gid, "prop": "text", "value": tricky}],
+            "path": str(pdf),
+            "format": "pdf",
+            "dpi": 300,
+        },
+    )
     assert pdf.is_file() and pdf.stat().st_size > 0
     assert proc.poll() is None, "worker 不该因为非 ASCII 文字退出"
 
@@ -553,8 +658,9 @@ def test_arrowpatch_and_gradient_fill_editable(tmp_path):
         man = resp["manifest"]
         arrows = [e for e in man["elements"] if e["role"] == "arrow_patch"]
         # add_patch 的独立箭头 + annotate 的标注箭头都在
-        assert {e["gid"] for e in arrows} >= {"axes_0.arrows_1", "axes_0.texts_0.arrow"}, \
-            [e["gid"] for e in arrows]
+        assert {e["gid"] for e in arrows} >= {"axes_0.arrows_1", "axes_0.texts_0.arrow"}, [
+            e["gid"] for e in arrows
+        ]
         for e in arrows:
             assert e.get("bbox"), f"{e['gid']} 没有 bbox，画布上选不中"
         assert _field_value(man, "axes_0.arrows_1", "color").lower() == "#76008a"
@@ -626,8 +732,7 @@ def test_arrowpatch_endpoints_and_style_roundtrip(tmp_path):
         el = next(e for e in man["elements"] if e["gid"] == "axes_0.arrows_1")
         got = el["arrow_endpoints"]
         for want, have in zip([moved[:2], moved[2:]], got):
-            assert abs(want[0] - have[0]) < 0.01 and abs(want[1] - have[1]) < 0.01, \
-                (moved, got)
+            assert abs(want[0] - have[0]) < 0.01 and abs(want[1] - have[1]) < 0.01, (moved, got)
         assert _field_value(man, "axes_0.arrows_1", "arrowstyle") == "->"
         assert _field_value(man, "axes_0.arrows_1", "linestyle") == "--"
 
@@ -804,7 +909,7 @@ def test_shutdown_all_kills_hung_worker(tmp_path, monkeypatch):
 
     def hold_the_lock():
         try:
-            w.ensure_built()      # 前端的渲染请求；卡在 readline 上不返回
+            w.ensure_built()  # 前端的渲染请求；卡在 readline 上不返回
         except Exception:  # noqa: BLE001 — 子进程被 kill 后这里必然抛，与断言无关
             pass
 
@@ -817,7 +922,7 @@ def test_shutdown_all_kills_hung_worker(tmp_path, monkeypatch):
 
         pool.shutdown_all(figures_dir=str(figs), wait=True)
 
-        assert w.proc.wait(timeout=10) is not None   # 已被 kill 并回收
+        assert w.proc.wait(timeout=10) is not None  # 已被 kill 并回收
         if os.name == "posix":
             # 再从 OS 层确认 PID 已消失（没留僵尸）。Windows 上做不了这条探测：
             # Popen 还握着进程句柄时 PID 不会被回收，os.kill(pid, 0) 对
@@ -826,7 +931,7 @@ def test_shutdown_all_kills_hung_worker(tmp_path, monkeypatch):
             with pytest.raises(ProcessLookupError):
                 os.kill(pid, 0)
     finally:
-        if w.proc.poll() is None:                    # 兜底：绝不在测试机上留僵尸
+        if w.proc.poll() is None:  # 兜底：绝不在测试机上留僵尸
             w.proc.kill()
             w.proc.wait(timeout=10)
 
@@ -842,15 +947,15 @@ def test_request_timeout_kills_and_rebuilds_worker(tmp_path, monkeypatch):
     figs.mkdir()
     (figs / "fig_hang.py").write_text(HANG_SCRIPT, encoding="utf-8")
 
-    monkeypatch.setattr(pool, "BUILD_TIMEOUT", 2.0)   # 否则用例要干等 15 分钟
+    monkeypatch.setattr(pool, "BUILD_TIMEOUT", 2.0)  # 否则用例要干等 15 分钟
     w = pool.get("fig_hang.py", str(figs), "main")
     try:
         with pytest.raises(pool.WorkerError) as e:
             w.ensure_built()
         assert e.value.code == "worker_timeout"
-        assert "重试" in str(e.value)                 # 告诉用户能怎么办
+        assert "重试" in str(e.value)  # 告诉用户能怎么办
 
-        assert w.proc.wait(timeout=10) is not None    # 已被 kill 并回收
+        assert w.proc.wait(timeout=10) is not None  # 已被 kill 并回收
         assert not w.alive()
 
         # 状态未知的会话绝不复用：下一次请求原地重建一个新进程
@@ -908,8 +1013,9 @@ def test_frac_anchored_props_survive_geometry_moves(tmp_path):
         _rpc(proc, {"cmd": "build"})
         resp = _rpc(proc, {"cmd": "override", "stem": "ReplayFig", "patches": []})
         man = resp["manifest"]
-        txt = next(e["gid"] for e in man["elements"]
-                   if e["role"] == "text" and "texts_" in e["gid"])
+        txt = next(
+            e["gid"] for e in man["elements"] if e["role"] == "text" and "texts_" in e["gid"]
+        )
         axg = next(e["gid"] for e in man["elements"] if e["role"] == "axes")
 
         # 1) 先放文字（pos_frac 在列表里排在几何之前——与真实事故同序）
@@ -935,8 +1041,7 @@ def test_frac_anchored_props_survive_geometry_moves(tmp_path):
         _rpc(proc, {"cmd": "override", "stem": "ReplayFig", "patches": []})
         resp = _rpc(proc, {"cmd": "override", "stem": "ReplayFig", "patches": p3})
         bbox_replay = _bbox_of(resp["manifest"], txt)
-        assert bbox_replay == pytest.approx(bbox_live, abs=0.005), \
-            (bbox_live, bbox_replay)
+        assert bbox_replay == pytest.approx(bbox_live, abs=0.005), (bbox_live, bbox_replay)
     finally:
         if proc.poll() is None:
             proc.kill()
@@ -959,12 +1064,15 @@ def test_frac_anchor_exact_on_aspect_equal_axes(tmp_path):
         _rpc(proc, {"cmd": "build"})
         resp = _rpc(proc, {"cmd": "override", "stem": "ReplayEq", "patches": []})
         man = resp["manifest"]
-        txt = next(e["gid"] for e in man["elements"]
-                   if e["role"] == "text" and "texts_" in e["gid"])
+        txt = next(
+            e["gid"] for e in man["elements"] if e["role"] == "text" and "texts_" in e["gid"]
+        )
         axg = next(e["gid"] for e in man["elements"] if e["role"] == "axes")
 
-        p = [{"gid": txt, "prop": "pos_frac", "value": [0.35, 0.25]},
-             {"gid": axg, "prop": "position", "value": [0.45, 0.4, 0.42, 0.45]}]
+        p = [
+            {"gid": txt, "prop": "pos_frac", "value": [0.35, 0.25]},
+            {"gid": axg, "prop": "position", "value": [0.45, 0.4, 0.42, 0.45]},
+        ]
         resp = _rpc(proc, {"cmd": "override", "stem": "ReplayEq", "patches": p})
         a = _anchor_of(resp["manifest"], txt)
         assert a == pytest.approx([0.35, 0.25], abs=0.02), a
@@ -985,11 +1093,16 @@ def test_frac_anchor_exact_on_aspect_equal_axes(tmp_path):
 # Rust supervisor（Phase C）接手前把契约钉在 Python 两侧的地方——信封字段、
 # 回显语义、错误 code、legacy 兼容，改一条就得先改 ADR。
 
-def _v1(cmd, *, stem=None, payload=None, rid="r-test-1",
-        generation=7, revision=3, patch_hash=None):
-    env = {"protocol_version": 1, "request_id": rid,
-           "worker_generation": generation, "render_revision": revision,
-           "cmd": cmd, "payload": payload or {}}
+
+def _v1(cmd, *, stem=None, payload=None, rid="r-test-1", generation=7, revision=3, patch_hash=None):
+    env = {
+        "protocol_version": 1,
+        "request_id": rid,
+        "worker_generation": generation,
+        "render_revision": revision,
+        "cmd": cmd,
+        "payload": payload or {},
+    }
     if stem is not None:
         env["stem"] = stem
     if patch_hash is not None:
@@ -1002,8 +1115,7 @@ def _raw(proc, env, timeout=120):
     proc.stdin.write(json.dumps(env, ensure_ascii=False) + "\n")
     proc.stdin.flush()
     box: list = []
-    reader = threading.Thread(target=lambda: box.append(proc.stdout.readline()),
-                              daemon=True)
+    reader = threading.Thread(target=lambda: box.append(proc.stdout.readline()), daemon=True)
     reader.start()
     reader.join(timeout)
     assert not reader.is_alive(), f"worker 超时（{timeout}s）: {env.get('cmd')}"
@@ -1034,36 +1146,59 @@ def test_v1_envelope_echoes_generation_revision_and_hash(worker):
 
     man = json.loads((out / "TestFig_a.json").read_text(encoding="utf-8"))
     title_gid = next(
-        el["gid"] for el in man["elements"]
+        el["gid"]
+        for el in man["elements"]
         for f in el.get("editable", [])
-        if f["prop"] == "text" and f["value"] == "Original Title")
+        if f["prop"] == "text" and f["value"] == "Original Title"
+    )
     patch = [{"gid": title_gid, "prop": "text", "value": "V1 Title"}]
     h = patchspec.patch_hash(patch)
 
-    resp = _ok(proc, _v1("render", stem="TestFig_a", payload={"patches": patch},
-                         rid="r-r1", generation=2, revision=5, patch_hash=h))
+    resp = _ok(
+        proc,
+        _v1(
+            "render",
+            stem="TestFig_a",
+            payload={"patches": patch},
+            rid="r-r1",
+            generation=2,
+            revision=5,
+            patch_hash=h,
+        ),
+    )
     assert resp["request_id"] == "r-r1" and resp["render_revision"] == 5
     assert resp["canonical_patch_hash"] == h
-    assert "hash_mismatch" not in resp          # 两侧规范化实现一致
+    assert "hash_mismatch" not in resp  # 两侧规范化实现一致
     assert _text_value(resp["manifest"], title_gid) == "V1 Title"
     assert resp["warnings"] == []
 
     pdf = tmp / "v1_export.pdf"
-    resp = _ok(proc, _v1("export", stem="TestFig_a",
-                         payload={"patches": patch, "path": str(pdf),
-                                  "format": "pdf", "dpi": 200},
-                         rid="r-e1", patch_hash=h))
+    resp = _ok(
+        proc,
+        _v1(
+            "export",
+            stem="TestFig_a",
+            payload={"patches": patch, "path": str(pdf), "format": "pdf", "dpi": 200},
+            rid="r-e1",
+            patch_hash=h,
+        ),
+    )
     assert resp["request_id"] == "r-e1" and resp["path"] == str(pdf)
     with pymupdf.open(pdf) as doc:
         assert "V1 Title" in doc[0].get_text()
 
     # render_png / preview_png / ping 也在 v1 命令集里
-    resp = _ok(proc, _v1("render_png", stem="TestFig_a", payload={"width": 300},
-                         rid="r-p1"))
+    resp = _ok(proc, _v1("render_png", stem="TestFig_a", payload={"width": 300}, rid="r-p1"))
     assert Path(resp["path"]).exists()
-    resp = _ok(proc, _v1("preview_png", stem="TestFig_a",
-                         payload={"patches": [], "width": 300, "tag": "hist1"},
-                         rid="r-p2"))
+    resp = _ok(
+        proc,
+        _v1(
+            "preview_png",
+            stem="TestFig_a",
+            payload={"patches": [], "width": 300, "tag": "hist1"},
+            rid="r-p2",
+        ),
+    )
     assert Path(resp["path"]).exists()
     assert _ok(proc, _v1("ping", rid="r-ping"))["request_id"] == "r-ping"
 
@@ -1073,35 +1208,39 @@ def test_v1_error_envelope_shapes(worker):
     proc, out, tmp = worker
     _ok(proc, _v1("build", rid="r-b2"))
 
-    resp = _raw(proc, _v1("render", stem="nope", payload={"patches": []},
-                          rid="r-err1"))
+    resp = _raw(proc, _v1("render", stem="nope", payload={"patches": []}, rid="r-err1"))
     assert resp["ok"] is False
     assert resp["protocol_version"] == 1 and resp["request_id"] == "r-err1"
     err = resp["error"]
     assert err["code"] == "unknown_stem" and err["retryable"] is False
     assert "nope" in err["message"]
-    assert "TestFig_a" in err["known"]          # 告诉调用方有哪些 stem
+    assert "TestFig_a" in err["known"]  # 告诉调用方有哪些 stem
 
     resp = _raw(proc, _v1("frobnicate", rid="r-err2"))
     assert resp["error"]["code"] == "unknown_cmd"
     assert "render" in resp["error"]["known"]
 
     # 信封字段缺失/类型错 → bad_request
-    for bad in ({"protocol_version": 1, "cmd": "ping"},                    # 无 rid
-                {"protocol_version": 1, "request_id": "r-x", "cmd": 1},    # cmd 非串
-                {"protocol_version": 1, "request_id": "r-x", "cmd": "ping",
-                 "payload": []},                                          # payload 非对象
-                {"protocol_version": 99, "request_id": "r-x", "cmd": "ping"}):
+    for bad in (
+        {"protocol_version": 1, "cmd": "ping"},  # 无 rid
+        {"protocol_version": 1, "request_id": "r-x", "cmd": 1},  # cmd 非串
+        {
+            "protocol_version": 1,
+            "request_id": "r-x",
+            "cmd": "ping",
+            "payload": [],
+        },  # payload 非对象
+        {"protocol_version": 99, "request_id": "r-x", "cmd": "ping"},
+    ):
         resp = _raw(proc, bad)
         assert resp["ok"] is False, bad
         assert resp["error"]["code"] == "bad_request", bad
 
     # export 缺 path 也是 bad_request（不是 internal——调用方写错了）
-    resp = _raw(proc, _v1("export", stem="TestFig_a", payload={"patches": []},
-                          rid="r-err3"))
+    resp = _raw(proc, _v1("export", stem="TestFig_a", payload={"patches": []}, rid="r-err3"))
     assert resp["error"]["code"] == "bad_request"
 
-    assert proc.poll() is None                  # 全程没把 worker 打死
+    assert proc.poll() is None  # 全程没把 worker 打死
     _ok(proc, _v1("ping", rid="r-alive"))
 
 
@@ -1115,24 +1254,43 @@ def test_v1_hash_mismatch_is_flagged_but_still_executed(worker):
     _ok(proc, _v1("build", rid="r-b3"))
     man = json.loads((out / "TestFig_a.json").read_text(encoding="utf-8"))
     title_gid = next(
-        el["gid"] for el in man["elements"]
+        el["gid"]
+        for el in man["elements"]
         for f in el.get("editable", [])
-        if f["prop"] == "text" and f["value"] == "Original Title")
+        if f["prop"] == "text" and f["value"] == "Original Title"
+    )
     patch = [{"gid": title_gid, "prop": "text", "value": "Mismatch Title"}]
 
-    resp = _ok(proc, _v1("render", stem="TestFig_a", payload={"patches": patch},
-                         rid="r-hm", patch_hash="sha256:" + "0" * 64))
+    resp = _ok(
+        proc,
+        _v1(
+            "render",
+            stem="TestFig_a",
+            payload={"patches": patch},
+            rid="r-hm",
+            patch_hash="sha256:" + "0" * 64,
+        ),
+    )
     assert resp["hash_mismatch"] is True
     assert resp["worker_patch_hash"] == patchspec.patch_hash(patch)
-    assert resp["canonical_patch_hash"] == "sha256:" + "0" * 64   # 仍原样回显
+    assert resp["canonical_patch_hash"] == "sha256:" + "0" * 64  # 仍原样回显
     assert _text_value(resp["manifest"], title_gid) == "Mismatch Title"
 
     # 等价写法（乱序 + 重复条目）算出的哈希一致，不该报 mismatch
-    equivalent = [{"gid": title_gid, "prop": "text", "value": "早写的"},
-                  {"gid": title_gid, "prop": "text", "value": "Mismatch Title"}]
-    resp = _ok(proc, _v1("render", stem="TestFig_a",
-                         payload={"patches": equivalent}, rid="r-hm2",
-                         patch_hash=patchspec.patch_hash(patch)))
+    equivalent = [
+        {"gid": title_gid, "prop": "text", "value": "早写的"},
+        {"gid": title_gid, "prop": "text", "value": "Mismatch Title"},
+    ]
+    resp = _ok(
+        proc,
+        _v1(
+            "render",
+            stem="TestFig_a",
+            payload={"patches": equivalent},
+            rid="r-hm2",
+            patch_hash=patchspec.patch_hash(patch),
+        ),
+    )
     assert "hash_mismatch" not in resp
 
 
@@ -1149,9 +1307,8 @@ def test_v1_cancel_is_an_honest_idempotent_noop(worker):
     assert resp["cancelled"] is False and resp["seen"] is False
 
     # 幂等：再取消一次还是同一个答案
-    assert _ok(proc, _v1("cancel", payload={"request_id": "r-b4"},
-                         rid="r-c3"))["seen"] is True
-    resp = _raw(proc, _v1("cancel", rid="r-c4"))          # 没给目标 id
+    assert _ok(proc, _v1("cancel", payload={"request_id": "r-b4"}, rid="r-c3"))["seen"] is True
+    resp = _raw(proc, _v1("cancel", rid="r-c4"))  # 没给目标 id
     assert resp["error"]["code"] == "bad_request"
 
 
@@ -1170,12 +1327,10 @@ def test_legacy_envelope_keeps_the_old_response_shape(worker):
     assert set(resp) == {"ok", "manifest", "warnings"}
 
     # 老的错误形状也不变：扁平 error 字符串 + known
-    proc.stdin.write(json.dumps({"cmd": "override", "stem": "nope",
-                                 "patches": []}) + "\n")
+    proc.stdin.write(json.dumps({"cmd": "override", "stem": "nope", "patches": []}) + "\n")
     proc.stdin.flush()
     box: list = []
-    reader = threading.Thread(target=lambda: box.append(proc.stdout.readline()),
-                              daemon=True)
+    reader = threading.Thread(target=lambda: box.append(proc.stdout.readline()), daemon=True)
     reader.start()
     reader.join(30)
     resp = json.loads(box[0])
@@ -1192,7 +1347,8 @@ def test_v1_script_error_is_not_retryable(tmp_path):
     figs = tmp_path / "figures"
     figs.mkdir()
     (figs / "fig_boom.py").write_text(
-        "def main():\n    raise ValueError('脚本自己炸了')\n", encoding="utf-8")
+        "def main():\n    raise ValueError('脚本自己炸了')\n", encoding="utf-8"
+    )
     proc = _spawn(figs / "fig_boom.py", figs, tmp_path)
     try:
         resp = _raw(proc, _v1("build", rid="r-boom"))
@@ -1200,8 +1356,8 @@ def test_v1_script_error_is_not_retryable(tmp_path):
         err = resp["error"]
         assert err["code"] == "script_error" and err["retryable"] is False
         assert "脚本自己炸了" in err["message"]
-        assert "ValueError" in err["traceback"]      # 真正的原因原样带着
-        assert proc.poll() is None                   # 进程不退出，可继续排障
+        assert "ValueError" in err["traceback"]  # 真正的原因原样带着
+        assert proc.poll() is None  # 进程不退出，可继续排障
     finally:
         if proc.poll() is None:
             proc.kill()
@@ -1237,15 +1393,21 @@ def test_v1_bad_payload_args_are_bad_request_not_internal(worker):
     """
     proc, out, tmp = worker
     _ok(proc, _v1("build", rid="r-b5"))
-    resp = _raw(proc, _v1("render_png", stem="TestFig_a",
-                          payload={"width": "很宽"}, rid="r-bad1"))
+    resp = _raw(proc, _v1("render_png", stem="TestFig_a", payload={"width": "很宽"}, rid="r-bad1"))
     assert resp["error"]["code"] == "bad_request"
-    resp = _raw(proc, _v1("export", stem="TestFig_a",
-                          payload={"patches": [], "path": str(tmp / "x.pdf"),
-                                   "dpi": {"nope": 1}}, rid="r-bad2"))
+    resp = _raw(
+        proc,
+        _v1(
+            "export",
+            stem="TestFig_a",
+            payload={"patches": [], "path": str(tmp / "x.pdf"), "dpi": {"nope": 1}},
+            rid="r-bad2",
+        ),
+    )
     assert resp["error"]["code"] == "bad_request"
-    resp = _raw(proc, _v1("render", stem="TestFig_a",
-                          payload={"patches": "不是数组"}, rid="r-bad3"))
+    resp = _raw(
+        proc, _v1("render", stem="TestFig_a", payload={"patches": "不是数组"}, rid="r-bad3")
+    )
     assert resp["error"]["code"] == "bad_request"
     assert proc.poll() is None
 
@@ -1268,8 +1430,7 @@ def test_v1_timings_have_the_documented_shape(worker):
     # build = 跑脚本 + instrument + 每个 stem 的首次预览，必然 ≥ 脚本本身
     assert 0 < t["script_exec_ms"] <= t["script_build_ms"]
 
-    resp = _ok(proc, _v1("render", stem="TestFig_a", payload={"patches": []},
-                         rid="r-t2"))
+    resp = _ok(proc, _v1("render", stem="TestFig_a", payload={"patches": []}, rid="r-t2"))
     t = resp["timings"]
     assert set(t) == {"patch_apply_ms", "canvas_draw_ms", "manifest_ms"}
     assert "svg_ms" not in t
@@ -1277,17 +1438,24 @@ def test_v1_timings_have_the_documented_shape(worker):
     assert t["canvas_draw_ms"] > 0 and t["manifest_ms"] > 0
 
     pdf = tmp / "timed_export.pdf"
-    resp = _ok(proc, _v1("export", stem="TestFig_a",
-                         payload={"patches": [], "path": str(pdf),
-                                  "format": "pdf", "dpi": 150}, rid="r-t3"))
+    resp = _ok(
+        proc,
+        _v1(
+            "export",
+            stem="TestFig_a",
+            payload={"patches": [], "path": str(pdf), "format": "pdf", "dpi": 150},
+            rid="r-t3",
+        ),
+    )
     t = resp["timings"]
     assert set(t) == {"patch_apply_ms", "export_ms"} and t["export_ms"] > 0
 
     # 第二次 build 是 no-op：计时表为空而不是凭空冒出一个 script_build_ms
     assert _ok(proc, _v1("build", rid="r-t4"))["timings"] == {}
     # 不带计时的命令不许多出这个键
-    assert "timings" not in _ok(proc, _v1("render_png", stem="TestFig_a",
-                                          payload={"width": 200}, rid="r-t5"))
+    assert "timings" not in _ok(
+        proc, _v1("render_png", stem="TestFig_a", payload={"width": 200}, rid="r-t5")
+    )
 
 
 def test_v1_inline_svg_returns_the_very_svg_it_just_wrote(worker):
@@ -1303,30 +1471,45 @@ def test_v1_inline_svg_returns_the_very_svg_it_just_wrote(worker):
     _ok(proc, _v1("build", rid="r-i0"))
 
     # 不要就一个字段都不多（信封形状对老调用方一字不变）
-    plain = _ok(proc, _v1("render", stem="TestFig_a", payload={"patches": []},
-                          rid="r-i1"))
+    plain = _ok(proc, _v1("render", stem="TestFig_a", payload={"patches": []}, rid="r-i1"))
     assert "svg" not in plain
 
-    gid = next(el["gid"] for el in plain["manifest"]["elements"]
-               for f in el.get("editable", [])
-               if f["prop"] == "text" and f["value"] == "Original Title")
-    resp = _ok(proc, _v1("render", stem="TestFig_a", rid="r-i2",
-                         payload={"patches": [{"gid": gid, "prop": "text",
-                                               "value": "Inline Title"}],
-                                  "inline_svg": True}))
+    gid = next(
+        el["gid"]
+        for el in plain["manifest"]["elements"]
+        for f in el.get("editable", [])
+        if f["prop"] == "text" and f["value"] == "Original Title"
+    )
+    resp = _ok(
+        proc,
+        _v1(
+            "render",
+            stem="TestFig_a",
+            rid="r-i2",
+            payload={
+                "patches": [{"gid": gid, "prop": "text", "value": "Inline Title"}],
+                "inline_svg": True,
+            },
+        ),
+    )
     svg = resp["svg"]
     assert svg.lstrip().startswith("<?xml") or svg.lstrip().startswith("<svg")
     # 与磁盘上那一份逐字节相同（同一次渲染的产物，不是另存的第二份）
     assert svg == (out / "TestFig_a.svg").read_text(encoding="utf-8")
     # 而且确实是这一次的：manifest 与 SVG 里都是新标题
     assert "Inline" in svg
-    assert any(f["value"] == "Inline Title"
-               for el in resp["manifest"]["elements"]
-               for f in el.get("editable", []) if f["prop"] == "text")
+    assert any(
+        f["value"] == "Inline Title"
+        for el in resp["manifest"]["elements"]
+        for f in el.get("editable", [])
+        if f["prop"] == "text"
+    )
 
     # 写错类型是 bad_request（真值判断会让 "false" 静默地做反）
-    bad = _raw(proc, _v1("render", stem="TestFig_a", rid="r-i3",
-                         payload={"patches": [], "inline_svg": "yes"}))
+    bad = _raw(
+        proc,
+        _v1("render", stem="TestFig_a", rid="r-i3", payload={"patches": [], "inline_svg": "yes"}),
+    )
     assert bad["error"]["code"] == "bad_request"
     assert proc.poll() is None
 
@@ -1342,14 +1525,22 @@ def test_v1_preview_dpi_is_optional_and_validated(worker):
     _ok(proc, _v1("build", rid="r-d0"))
 
     # 给了就照常渲染（矢量图上产物一致，只有嵌入位图会变）
-    resp = _ok(proc, _v1("render", stem="TestFig_a",
-                         payload={"patches": [], "preview_dpi": 72}, rid="r-d1"))
+    resp = _ok(
+        proc,
+        _v1("render", stem="TestFig_a", payload={"patches": [], "preview_dpi": 72}, rid="r-d1"),
+    )
     assert (out / "TestFig_a.svg").exists() and resp["manifest"]["elements"]
 
     for bad in (0, -10, "很高"):
-        resp = _raw(proc, _v1("render", stem="TestFig_a",
-                              payload={"patches": [], "preview_dpi": bad},
-                              rid=f"r-d-{bad}"))
+        resp = _raw(
+            proc,
+            _v1(
+                "render",
+                stem="TestFig_a",
+                payload={"patches": [], "preview_dpi": bad},
+                rid=f"r-d-{bad}",
+            ),
+        )
         assert resp["error"]["code"] == "bad_request", (bad, resp)
     assert proc.poll() is None
 
@@ -1360,11 +1551,13 @@ def test_v1_preview_dpi_is_optional_and_validated(worker):
 # 渲染 / 全量列表还原 / 导出状态中立 / 超时重建。两条控制面在这些语义上必须
 # 逐条一致——有一条不一致，用户就会在「装没装 workerd」之间看到不同的图。
 
+
 def _workerd_binary() -> str | None:
     """忽略 conftest 的默认禁用开关，只看 cargo 产物在不在。"""
     saved = os.environ.pop("TAVOTTO_WORKERD", None)
     try:
         from tavotto.engine import workerd_client
+
         return workerd_client.find_workerd()
     finally:
         if saved is not None:
@@ -1373,8 +1566,8 @@ def _workerd_binary() -> str | None:
 
 WORKERD_EXE = _workerd_binary()
 needs_workerd = pytest.mark.skipif(
-    WORKERD_EXE is None,
-    reason="没有 tavotto-workerd 产物（先在 workerd/ 里 cargo build）")
+    WORKERD_EXE is None, reason="没有 tavotto-workerd 产物（先在 workerd/ 里 cargo build）"
+)
 
 
 @pytest.fixture
@@ -1397,9 +1590,12 @@ def workerd_figs(tmp_path, monkeypatch):
 
 def _title_gid(worker, stem="TestFig_a"):
     man = json.loads((worker.out_dir / f"{stem}.json").read_text(encoding="utf-8"))
-    return next(el["gid"] for el in man["elements"]
-                for f in el.get("editable", [])
-                if f["prop"] == "text" and f["value"] == "Original Title")
+    return next(
+        el["gid"]
+        for el in man["elements"]
+        for f in el.get("editable", [])
+        if f["prop"] == "text" and f["value"] == "Original Title"
+    )
 
 
 @needs_workerd
@@ -1437,10 +1633,9 @@ def test_workerd_export_is_state_neutral(workerd_figs, tmp_path):
     pdf = tmp_path / "workerd_neutral.pdf"
     w.export("TestFig_a", [], str(pdf), "pdf", 200)
     with pymupdf.open(pdf) as doc:
-        assert "Original Title" in doc[0].get_text()   # 导出用的是自己那组
+        assert "Original Title" in doc[0].get_text()  # 导出用的是自己那组
 
-    assert w.render_png("TestFig_a", 400).read_bytes() == png_before, \
-        "export 污染了热会话状态"
+    assert w.render_png("TestFig_a", 400).read_bytes() == png_before, "export 污染了热会话状态"
 
 
 @needs_workerd
@@ -1484,7 +1679,7 @@ def test_workerd_timeout_kills_and_rebuilds(tmp_path, monkeypatch):
     figs = tmp_path / "figures"
     figs.mkdir()
     (figs / "fig_hang.py").write_text(HANG_SCRIPT, encoding="utf-8")
-    monkeypatch.setattr(pool, "BUILD_TIMEOUT", 3.0)   # 否则要干等 15 分钟
+    monkeypatch.setattr(pool, "BUILD_TIMEOUT", 3.0)  # 否则要干等 15 分钟
     try:
         w = pool.get("fig_hang.py", str(figs), "main")
         assert isinstance(w, pool.WorkerdWorker)
@@ -1508,10 +1703,19 @@ def test_workerd_timeout_kills_and_rebuilds(tmp_path, monkeypatch):
 #   热态所见 == 写进文件的 == 重开后重放出来的。
 # 假 worker 测不到这条——那里 manifest 是我们自己造的，重放与热态天然一致。
 
-REGISTRY = json.dumps({"version": 1, "scripts": {
-    "fig_test.py": {"entry": "main", "cost": "light", "notes": "",
-                    "stems": ["TestFig_a", "TestFig_3d", "TestFig_sc"]},
-}})
+REGISTRY = json.dumps(
+    {
+        "version": 1,
+        "scripts": {
+            "fig_test.py": {
+                "entry": "main",
+                "cost": "light",
+                "notes": "",
+                "stems": ["TestFig_a", "TestFig_3d", "TestFig_sc"],
+            },
+        },
+    }
+)
 
 
 def _write_back_project(tmp_path, monkeypatch):
@@ -1590,13 +1794,16 @@ def _assert_this_write_back_leaked_nothing(created: list[Path]) -> None:
 
 # ---------------- 同一 stem 的多个变体（Phase F，真渲染） ----------------
 
+
 def _http_title_gid(client) -> str:
-    resp = client.post("/api/engine/render",
-                       json={"id": "TestFig_a.pdf", "patches": []})
+    resp = client.post("/api/engine/render", json={"id": "TestFig_a.pdf", "patches": []})
     assert resp.status_code == 200, resp.get_json()
-    return next(el["gid"] for el in resp.get_json()["manifest"]["elements"]
-                for f in el.get("editable", [])
-                if f["prop"] == "text" and f["value"] == "Original Title")
+    return next(
+        el["gid"]
+        for el in resp.get_json()["manifest"]["elements"]
+        for f in el.get("editable", [])
+        if f["prop"] == "text" and f["value"] == "Original Title"
+    )
 
 
 def test_variants_take_turns_on_one_live_figure(write_back):
@@ -1610,10 +1817,14 @@ def test_variants_take_turns_on_one_live_figure(write_back):
     gid = _http_title_gid(client)
 
     def render(title):
-        resp = client.post("/api/engine/render",
-                           json={"id": "TestFig_a.pdf", "inline_svg": True,
-                                 "patches": [{"gid": gid, "prop": "text",
-                                              "value": title}]})
+        resp = client.post(
+            "/api/engine/render",
+            json={
+                "id": "TestFig_a.pdf",
+                "inline_svg": True,
+                "patches": [{"gid": gid, "prop": "text", "value": title}],
+            },
+        )
         assert resp.status_code == 200, resp.get_json()
         return resp.get_json()
 
@@ -1623,9 +1834,12 @@ def test_variants_take_turns_on_one_live_figure(write_back):
 
     for body, want in ((a1, "AAA"), (b1, "BBB"), (a2, "AAA")):
         assert want in body["svg"], body["svg"][:400]
-        assert any(f["value"] == f"Variant {want}"
-                   for el in body["manifest"]["elements"]
-                   for f in el.get("editable", []) if f["prop"] == "text")
+        assert any(
+            f["value"] == f"Variant {want}"
+            for el in body["manifest"]["elements"]
+            for f in el.get("editable", [])
+            if f["prop"] == "text"
+        )
     # 谁也没沾上谁：每份 SVG 里只有自己那个标题
     # （逐字节比 SVG 没有意义——matplotlib 每次给 defs 的 id 都不一样）
     assert "BBB" not in a1["svg"] and "BBB" not in a2["svg"]
@@ -1644,8 +1858,9 @@ def test_preview_png_is_state_neutral_across_variants(write_back):
     b = [{"gid": gid, "prop": "text", "value": "PNG Variant BBB"}]
 
     def png(patches):
-        resp = client.post("/api/engine/preview_png",
-                           json={"id": "TestFig_a.pdf", "patches": patches, "w": 400})
+        resp = client.post(
+            "/api/engine/preview_png", json={"id": "TestFig_a.pdf", "patches": patches, "w": 400}
+        )
         assert resp.status_code == 200, resp.get_json()
         assert resp.headers["Cache-Control"] == "no-store"
         return resp.data
@@ -1660,11 +1875,15 @@ def test_preview_png_is_state_neutral_across_variants(write_back):
     assert a_while_hot_is_b != b_while_hot_is_b, "不同变体不能出同一张图"
 
     # 出图不许污染热会话：随后一次 render 的 manifest 仍是最后设定的那个变体
-    man = client.post("/api/engine/render",
-                      json={"id": "TestFig_a.pdf", "patches": b}).get_json()["manifest"]
-    assert any(f["value"] == "PNG Variant BBB"
-               for el in man["elements"]
-               for f in el.get("editable", []) if f["prop"] == "text")
+    man = client.post("/api/engine/render", json={"id": "TestFig_a.pdf", "patches": b}).get_json()[
+        "manifest"
+    ]
+    assert any(
+        f["value"] == "PNG Variant BBB"
+        for el in man["elements"]
+        for f in el.get("editable", [])
+        if f["prop"] == "text"
+    )
 
 
 def _figs3_patches(client) -> tuple[list, str]:
@@ -1673,13 +1892,15 @@ def _figs3_patches(client) -> tuple[list, str]:
     这正是当年出事的组合——几何一变，pos_frac 这类锚在 figure 分数上的属性
     必须被重放，否则热会话的状态与全量重放对不上。
     """
-    resp = client.post("/api/engine/render",
-                       json={"id": "TestFig_a.pdf", "patches": []})
+    resp = client.post("/api/engine/render", json={"id": "TestFig_a.pdf", "patches": []})
     assert resp.status_code == 200, resp.get_json()
     man = resp.get_json()["manifest"]
-    title_gid = next(el["gid"] for el in man["elements"]
-                     for f in el.get("editable", [])
-                     if f["prop"] == "text" and f["value"] == "Original Title")
+    title_gid = next(
+        el["gid"]
+        for el in man["elements"]
+        for f in el.get("editable", [])
+        if f["prop"] == "text" and f["value"] == "Original Title"
+    )
     return [
         {"gid": "axes_0", "prop": "position", "value": [0.22, 0.20, 0.60, 0.62]},
         {"gid": title_gid, "prop": "text", "value": "Vector Title"},
@@ -1692,22 +1913,24 @@ def _run_write_back(client, figs):
     from tavotto.engine import patchspec as ps
 
     patches, _gid = _figs3_patches(client)
-    r = client.post("/api/engine/render",
-                    json={"id": "TestFig_a.pdf", "patches": patches})
+    r = client.post("/api/engine/render", json={"id": "TestFig_a.pdf", "patches": patches})
     assert r.status_code == 200, r.get_json()
 
-    resp = client.post("/api/engine/update_source",
-                       json={"id": "TestFig_a.pdf", "patches": patches,
-                             "expected_mtime": int((figs / "TestFig_a.pdf")
-                                                   .stat().st_mtime)})
+    resp = client.post(
+        "/api/engine/update_source",
+        json={
+            "id": "TestFig_a.pdf",
+            "patches": patches,
+            "expected_mtime": int((figs / "TestFig_a.pdf").stat().st_mtime),
+        },
+    )
     assert resp.status_code == 200, resp.get_json()
     body = resp.get_json()
     assert body["patch_hash"] == ps.patch_hash(patches)
     return body, patches
 
 
-def test_write_back_verifies_a_clean_replay_and_keeps_vector_text(write_back,
-                                                                 replay_bases):
+def test_write_back_verifies_a_clean_replay_and_keeps_vector_text(write_back, replay_bases):
     """真链路：热态拖过文字、挪过子图 → 写回通过干净重放校验，产物仍是矢量。"""
     m, client, figs = write_back
     body, patches = _run_write_back(client, figs)
@@ -1716,7 +1939,7 @@ def test_write_back_verifies_a_clean_replay_and_keeps_vector_text(write_back,
     assert body["verification"]["elements"] > 0
     # 纯几何修改（挪子图 / 拖文字）不许被像素门误伤——热态与重放本来就一致
     assert body["verification"]["pixels"] == "ok", body["verification"]
-    assert body["updated"] == ["TestFig_a.pdf"]       # 图库里只有 PDF 这一份
+    assert body["updated"] == ["TestFig_a.pdf"]  # 图库里只有 PDF 这一份
     assert body["warnings"] == []
     assert "post_check" not in body, "落盘后的页面尺寸该与重放 manifest 一致"
     assert body["source_sha1"]["TestFig_a.pdf"] == m._sha1_of(figs / "TestFig_a.pdf")
@@ -1734,8 +1957,7 @@ def test_write_back_verifies_a_clean_replay_and_keeps_vector_text(write_back,
     # 版本历史带上权威 patch_hash，热会话照常可用（重放没有动它）
     ctx = m.PROJECTS[m._project_id(figs.resolve())]
     assert m.load_baked(ctx)["TestFig_a"]["versions"][-1]["patch_hash"] == body["patch_hash"]
-    again = client.post("/api/engine/render",
-                        json={"id": "TestFig_a.pdf", "patches": patches})
+    again = client.post("/api/engine/render", json={"id": "TestFig_a.pdf", "patches": patches})
     assert again.status_code == 200, again.get_json()
 
 
@@ -1747,8 +1969,9 @@ def test_write_back_blocks_when_the_script_changed_mid_session(write_back):
     before = (figs / "TestFig_a.pdf").read_bytes()
 
     (figs / "fig_test.py").write_text(FIG_SCRIPT + "\n# touched\n", encoding="utf-8")
-    resp = client.post("/api/engine/update_source",
-                       json={"id": "TestFig_a.pdf", "patches": patches})
+    resp = client.post(
+        "/api/engine/update_source", json={"id": "TestFig_a.pdf", "patches": patches}
+    )
     assert resp.status_code == 409
     assert resp.get_json()["code"] == "script_changed"
     assert (figs / "TestFig_a.pdf").read_bytes() == before
@@ -1757,23 +1980,27 @@ def test_write_back_blocks_when_the_script_changed_mid_session(write_back):
 
 # ---------------- 写回的像素门（issue #81，真链路） ----------------
 
+
 def _series_line_gid(client) -> str:
     """TestFig_a 里那条 series-a 曲线的 gid（color / linestyle / alpha 都可改）。"""
-    resp = client.post("/api/engine/render",
-                       json={"id": "TestFig_a.pdf", "patches": []})
+    resp = client.post("/api/engine/render", json={"id": "TestFig_a.pdf", "patches": []})
     assert resp.status_code == 200, resp.get_json()
-    return next(el["gid"] for el in resp.get_json()["manifest"]["elements"]
-                if {"color", "linestyle", "alpha"}
-                <= {f["prop"] for f in el.get("editable", [])})
+    return next(
+        el["gid"]
+        for el in resp.get_json()["manifest"]["elements"]
+        if {"color", "linestyle", "alpha"} <= {f["prop"] for f in el.get("editable", [])}
+    )
 
 
-@pytest.mark.parametrize("prop,value", [
-    ("color", "#ff2222"),      # 颜色：几何一个字节不动
-    ("linestyle", "--"),       # 线型：bbox 仍由数据范围决定，不变
-    ("alpha", 0.25),           # 透明度：同上
-])
-def test_write_back_blocks_attribute_only_divergence(write_back, replay_bases,
-                                                    prop, value):
+@pytest.mark.parametrize(
+    "prop,value",
+    [
+        ("color", "#ff2222"),  # 颜色：几何一个字节不动
+        ("linestyle", "--"),  # 线型：bbox 仍由数据范围决定，不变
+        ("alpha", 0.25),  # 透明度：同上
+    ],
+)
+def test_write_back_blocks_attribute_only_divergence(write_back, replay_bases, prop, value):
     """几何完全一致、只有纯属性不同的热态 → 写回必须 409（issue #81 的封口）。
 
     模拟的是 FigS3 / PR #49 那一类热态漂移：一条**绕过 pool 记账**的 override
@@ -1786,13 +2013,17 @@ def test_write_back_blocks_attribute_only_divergence(write_back, replay_bases,
     before = (figs / "TestFig_a.pdf").read_bytes()
 
     worker = pool.get("fig_test.py", str(figs), "main")
-    resp = worker.request({"cmd": "override", "stem": "TestFig_a",
-                           "patches": [{"gid": gid, "prop": prop, "value": value}]})
+    resp = worker.request(
+        {
+            "cmd": "override",
+            "stem": "TestFig_a",
+            "patches": [{"gid": gid, "prop": prop, "value": value}],
+        }
+    )
     assert resp.get("ok"), resp
     assert not resp.get("warnings"), resp
 
-    r = client.post("/api/engine/update_source",
-                    json={"id": "TestFig_a.pdf", "patches": []})
+    r = client.post("/api/engine/update_source", json={"id": "TestFig_a.pdf", "patches": []})
     assert r.status_code == 409, (prop, r.get_json())
     body = r.get_json()
     assert body["code"] == "replay_divergence"
@@ -1810,8 +2041,7 @@ def test_write_back_without_overrides_passes_the_pixel_gate(write_back):
     """无 override 的正常写回照常通过，且响应里如实报告像素门跑过了。"""
     _m, client, figs = write_back
     client.post("/api/engine/render", json={"id": "TestFig_a.pdf", "patches": []})
-    resp = client.post("/api/engine/update_source",
-                       json={"id": "TestFig_a.pdf", "patches": []})
+    resp = client.post("/api/engine/update_source", json={"id": "TestFig_a.pdf", "patches": []})
     assert resp.status_code == 200, resp.get_json()
     body = resp.get_json()
     assert body["verification"]["replay"] == "ok"
@@ -1823,18 +2053,17 @@ def test_write_back_with_attribute_patches_passes_the_pixel_gate(write_back):
     _m, client, figs = write_back
     gid = _series_line_gid(client)
     patches = [{"gid": gid, "prop": "color", "value": "#ff2222"}]
-    r = client.post("/api/engine/render",
-                    json={"id": "TestFig_a.pdf", "patches": patches})
+    r = client.post("/api/engine/render", json={"id": "TestFig_a.pdf", "patches": patches})
     assert r.status_code == 200, r.get_json()
-    resp = client.post("/api/engine/update_source",
-                       json={"id": "TestFig_a.pdf", "patches": patches})
+    resp = client.post(
+        "/api/engine/update_source", json={"id": "TestFig_a.pdf", "patches": patches}
+    )
     assert resp.status_code == 200, resp.get_json()
     assert resp.get_json()["verification"]["pixels"] == "ok"
 
 
 @needs_workerd
-def test_workerd_write_back_replays_without_leaking_a_session(tmp_path, monkeypatch,
-                                                              replay_bases):
+def test_workerd_write_back_replays_without_leaking_a_session(tmp_path, monkeypatch, replay_bases):
     """workerd 路径同语义，且**一次性会话不泄漏**。
 
     workerd 按 spawn 规格哈希复用会话（引用计数，ADR 0004）：重放会话靠独立的
@@ -1913,26 +2142,25 @@ def test_axes_follow_gids_cover_colorbar_and_twin_but_not_shared(tmp_path):
         _rpc(proc, {"cmd": "build"})
 
         # 色条：宿主点名色条轴，色条轴自己不反过来点名宿主
-        man = _rpc(proc, {"cmd": "override", "stem": "FollowCbar",
-                          "patches": []})["manifest"]
-        cbar_gid = next(e["gid"] for e in man["elements"]
-                        if e["role"] == "axes" and e.get("is_colorbar"))
-        host_gid = next(e["gid"] for e in man["elements"]
-                        if e["role"] == "axes" and not e.get("is_colorbar"))
+        man = _rpc(proc, {"cmd": "override", "stem": "FollowCbar", "patches": []})["manifest"]
+        cbar_gid = next(
+            e["gid"] for e in man["elements"] if e["role"] == "axes" and e.get("is_colorbar")
+        )
+        host_gid = next(
+            e["gid"] for e in man["elements"] if e["role"] == "axes" and not e.get("is_colorbar")
+        )
         assert _follow_of(man, host_gid) == [cbar_gid]
         assert _follow_of(man, cbar_gid) is None
 
         # twinx：两边互相点名（拖哪个都该带上另一个）
-        man = _rpc(proc, {"cmd": "override", "stem": "FollowTwin",
-                          "patches": []})["manifest"]
+        man = _rpc(proc, {"cmd": "override", "stem": "FollowTwin", "patches": []})["manifest"]
         twins = [e["gid"] for e in man["elements"] if e["role"] == "axes"]
         assert len(twins) == 2, twins
         assert _follow_of(man, twins[0]) == [twins[1]]
         assert _follow_of(man, twins[1]) == [twins[0]]
 
         # sharex 的并排子图：共享轴 ≠ 孪生轴，一条联动都不能有
-        man = _rpc(proc, {"cmd": "override", "stem": "FollowShare",
-                          "patches": []})["manifest"]
+        man = _rpc(proc, {"cmd": "override", "stem": "FollowShare", "patches": []})["manifest"]
         for e in man["elements"]:
             if e["role"] == "axes":
                 assert e.get("follow_gids") is None, e
@@ -1945,7 +2173,7 @@ def test_axes_follow_gids_cover_colorbar_and_twin_but_not_shared(tmp_path):
 # ---------------------------------------------------------------------------
 # Collection 的包围盒兜底（CompatBench minimum 档抓到的）
 # ---------------------------------------------------------------------------
-FILL_LIB = '''\
+FILL_LIB = """\
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -1964,7 +2192,7 @@ def main():
     bx.pcolor(np.arange(64, dtype="float64").reshape(8, 8), cmap="viridis")
     bx.set_title("Mesh")
     fig2.savefig("FillMesh.pdf")
-'''
+"""
 
 
 def test_fill_between_area_is_editable(tmp_path):
@@ -1986,12 +2214,15 @@ def test_fill_between_area_is_editable(tmp_path):
         fills = [e for e in man["elements"] if e["role"] == "fill"]
         assert fills, "fill_between 的填充区没有进 manifest"
         gid = fills[0]["gid"]
-        resp = w.override("FillBand", [{"gid": gid, "prop": "facecolor",
-                                        "value": "#AA5533"}])
+        resp = w.override("FillBand", [{"gid": gid, "prop": "facecolor", "value": "#AA5533"}])
         assert not (resp.get("warnings") or []), resp["warnings"]
-        got = next(f["value"] for e in resp["manifest"]["elements"]
-                   if e["gid"] == gid for f in e["editable"]
-                   if f["prop"] == "facecolor")
+        got = next(
+            f["value"]
+            for e in resp["manifest"]["elements"]
+            if e["gid"] == gid
+            for f in e["editable"]
+            if f["prop"] == "facecolor"
+        )
         assert got.lower() == "#aa5533"
     finally:
         pool.discard(w)
@@ -2022,12 +2253,11 @@ def test_scalar_mapped_meshes_never_advertise_facecolor(tmp_path):
         meshes = [e for e in man["elements"] if e["role"] in ("fill", "collection")]
         assert meshes, "标量映射的网格整个没进 manifest——它的色图与描边是真改得动的"
         props = {f["prop"] for e in meshes for f in e["editable"]}
-        assert "facecolor" not in props, \
-            "映射中的网格给了 facecolor——它的编辑会被 colormap 顶回去"
-        assert {"cmap", "vmin", "vmax"} <= props, \
-            "映射中的网格连色图都改不了"
-        assert [e for e in man["elements"] if e["role"] == "title"], \
+        assert "facecolor" not in props, "映射中的网格给了 facecolor——它的编辑会被 colormap 顶回去"
+        assert {"cmap", "vmin", "vmax"} <= props, "映射中的网格连色图都改不了"
+        assert [e for e in man["elements"] if e["role"] == "title"], (
             "整张图都没进 manifest，兜底判据写反了"
+        )
     finally:
         pool.discard(w)
 
@@ -2035,7 +2265,7 @@ def test_scalar_mapped_meshes_never_advertise_facecolor(tmp_path):
 # ---------------------------------------------------------------------------
 # 别名组：广播型 prop 与它管着的窄 prop（overrides.ALIAS_GROUPS）
 # ---------------------------------------------------------------------------
-ALIAS_LIB = '''\
+ALIAS_LIB = """\
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -2051,7 +2281,7 @@ def main():
     bx.set_title("Map")
     fig.tight_layout()
     fig.savefig("Alias.pdf")
-'''
+"""
 
 #: (广播 gid, 广播 prop, 广播值, 窄 gid, 窄 prop, 窄值)。三族别名各取一条。
 #: 窄端一律避开成员 0——整组字段报的是成员 0，覆盖它会让「广播落没落」在
@@ -2059,8 +2289,14 @@ def main():
 ALIAS_CASES = [
     ("axes_0.legend", "fontsize", 7.5, "axes_0.legend.texts_1", "fontsize", 9.5),
     ("axes_0.legend", "title_fontsize", 7.0, "axes_0.legend.title", "fontsize", 11.0),
-    ("axes_0.barseries_0", "facecolor", "#775599",
-     "axes_0.barseries_0.bar_1", "facecolor", "#22aa44"),
+    (
+        "axes_0.barseries_0",
+        "facecolor",
+        "#775599",
+        "axes_0.barseries_0.bar_1",
+        "facecolor",
+        "#22aa44",
+    ),
     ("axes_2.colorbar", "tick_fontsize", 6.0, "axes_2.yticks", "fontsize", 9.0),
 ]
 
@@ -2081,10 +2317,13 @@ def _same_val(a, b) -> bool:
 
 
 @pytest.mark.parametrize(
-    "bgid,bprop,bval,ngid,nprop,nval", ALIAS_CASES,
-    ids=[f"{c[0].split('.')[-1]}-{c[1]}" for c in ALIAS_CASES])
+    "bgid,bprop,bval,ngid,nprop,nval",
+    ALIAS_CASES,
+    ids=[f"{c[0].split('.')[-1]}-{c[1]}" for c in ALIAS_CASES],
+)
 def test_overlapping_override_undo_returns_to_the_script_original(
-        tmp_path, bgid, bprop, bval, ngid, nprop, nval):
+    tmp_path, bgid, bprop, bval, ngid, nprop, nval
+):
     """广播 → 窄 → 撤销窄 → 撤销广播，每一步都核对，最后必须回到脚本原样。
 
     坏掉的样子：`originals` 存的是「第一次碰到这个 key 时的当前值」，所以窄
@@ -2110,8 +2349,9 @@ def test_overlapping_override_undo_returns_to_the_script_original(
         # ① 只有广播：窄端跟着走（这条 case 的前提）
         r = w.override("Alias", [bpatch])
         assert not (r.get("warnings") or []), r["warnings"]
-        assert _same_val(_field_value(r["manifest"], ngid, nprop), bval), \
+        assert _same_val(_field_value(r["manifest"], ngid, nprop), bval), (
             "广播 prop 没有作用到窄端——这条 case 的前提就不成立"
+        )
 
         # ② 加上窄端：窄端听自己的
         r = w.override("Alias", [bpatch, npatch])
@@ -2129,8 +2369,9 @@ def test_overlapping_override_undo_returns_to_the_script_original(
         w.override("Alias", [bpatch, npatch])
         r = w.override("Alias", [bpatch])
         assert not (r.get("warnings") or []), r["warnings"]
-        assert _same_val(_field_value(r["manifest"], ngid, nprop), bval), \
+        assert _same_val(_field_value(r["manifest"], ngid, nprop), bval), (
             "撤销窄 override 应当回落到广播那一档，而不是脚本原样"
+        )
 
         # ⑤ 收尾：广播也撤掉，仍然回得到脚本原样
         r = w.override("Alias", [])
@@ -2151,17 +2392,24 @@ def test_overlapping_override_undo_of_the_broadcast_keeps_the_narrow_one(tmp_pat
         base = w.override("Alias", [])["manifest"]
         n0_other = _field_value(base, "axes_0.legend.texts_0", "fontsize")
 
-        w.override("Alias", [
-            {"gid": "axes_0.legend", "prop": "fontsize", "value": 7.5},
-            {"gid": "axes_0.legend.texts_1", "prop": "fontsize", "value": 9.5}])
-        r = w.override("Alias", [
-            {"gid": "axes_0.legend.texts_1", "prop": "fontsize", "value": 9.5}])
+        w.override(
+            "Alias",
+            [
+                {"gid": "axes_0.legend", "prop": "fontsize", "value": 7.5},
+                {"gid": "axes_0.legend.texts_1", "prop": "fontsize", "value": 9.5},
+            ],
+        )
+        r = w.override(
+            "Alias", [{"gid": "axes_0.legend.texts_1", "prop": "fontsize", "value": 9.5}]
+        )
         assert not (r.get("warnings") or []), r["warnings"]
         man = r["manifest"]
-        assert _same_val(_field_value(man, "axes_0.legend.texts_1", "fontsize"), 9.5), \
+        assert _same_val(_field_value(man, "axes_0.legend.texts_1", "fontsize"), 9.5), (
             "撤销广播把窄 override 一起冲掉了"
-        assert _same_val(_field_value(man, "axes_0.legend.texts_0", "fontsize"),
-                         n0_other), "没被单独 override 的那一条应当回到脚本原样"
+        )
+        assert _same_val(_field_value(man, "axes_0.legend.texts_0", "fontsize"), n0_other), (
+            "没被单独 override 的那一条应当回到脚本原样"
+        )
     finally:
         pool.discard(w)
 
@@ -2177,12 +2425,10 @@ def test_overlapping_override_is_independent_of_patch_list_order(tmp_path):
         b = {"gid": "axes_0.legend", "prop": "fontsize", "value": 8.0}
         n = {"gid": "axes_0.legend.texts_1", "prop": "fontsize", "value": 12.0}
         forward = w.override("Alias", [b, n])["manifest"]
-        got_f = [_field_value(forward, f"axes_0.legend.texts_{i}", "fontsize")
-                 for i in (0, 1)]
+        got_f = [_field_value(forward, f"axes_0.legend.texts_{i}", "fontsize") for i in (0, 1)]
         w.override("Alias", [])
         reverse = w.override("Alias", [n, b])["manifest"]
-        got_r = [_field_value(reverse, f"axes_0.legend.texts_{i}", "fontsize")
-                 for i in (0, 1)]
+        got_r = [_field_value(reverse, f"axes_0.legend.texts_{i}", "fontsize") for i in (0, 1)]
         assert got_f == got_r == [8.0, 12.0], (got_f, got_r)
     finally:
         pool.discard(w)
@@ -2191,7 +2437,7 @@ def test_overlapping_override_is_independent_of_patch_list_order(tmp_path):
 # ---------------------------------------------------------------------------
 # 线组 LineCollection（CompatBench artist 普查里权重最高的缺口）
 # ---------------------------------------------------------------------------
-LINECOLL_LIB = '''\
+LINECOLL_LIB = """\
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -2220,7 +2466,7 @@ def main():
     cx.contour(xx, yy, np.exp(-(xx ** 2 + yy ** 2)), levels=6, cmap="viridis")
     cx.set_title("Contour")
     fig3.savefig("LcContour.pdf")
-'''
+"""
 
 
 def _lc_worker(tmp_path):
@@ -2256,11 +2502,14 @@ def test_line_collections_are_registered_and_editable(tmp_path):
         assert _lc_field(man, gid, "color").lower() == "#b4473c"
         assert _lc_field(man, gid, "linestyle") == "--"
 
-        resp = w.override("LcLines", [
-            {"gid": gid, "prop": "color", "value": "#118844"},
-            {"gid": gid, "prop": "linewidth", "value": 3.0},
-            {"gid": gid, "prop": "linestyle", "value": ":"},
-        ])
+        resp = w.override(
+            "LcLines",
+            [
+                {"gid": gid, "prop": "color", "value": "#118844"},
+                {"gid": gid, "prop": "linewidth", "value": 3.0},
+                {"gid": gid, "prop": "linestyle", "value": ":"},
+            ],
+        )
         assert not (resp.get("warnings") or []), resp["warnings"]
         got = resp["manifest"]
         assert _lc_field(got, gid, "color").lower() == "#118844"
@@ -2282,14 +2531,19 @@ def test_line_collection_edits_undo_exactly(tmp_path):
     try:
         base = w.override("LcLines", [])["manifest"]
         gid = next(e["gid"] for e in base["elements"] if e["role"] == "linecoll")
-        before = {p: _lc_field(base, gid, p)
-                  for p in ("color", "linewidth", "linestyle", "alpha", "visible")}
+        before = {
+            p: _lc_field(base, gid, p)
+            for p in ("color", "linewidth", "linestyle", "alpha", "visible")
+        }
 
-        w.override("LcLines", [
-            {"gid": gid, "prop": "color", "value": "#118844"},
-            {"gid": gid, "prop": "linewidth", "value": 3.0},
-            {"gid": gid, "prop": "linestyle", "value": ":"},
-        ])
+        w.override(
+            "LcLines",
+            [
+                {"gid": gid, "prop": "color", "value": "#118844"},
+                {"gid": gid, "prop": "linewidth", "value": 3.0},
+                {"gid": gid, "prop": "linestyle", "value": ":"},
+            ],
+        )
         restored = w.override("LcLines", [])
         assert not (restored.get("warnings") or []), restored["warnings"]
         after = {p: _lc_field(restored["manifest"], gid, p) for p in before}
@@ -2324,10 +2578,12 @@ def test_contour_is_still_not_registered_as_line_collections(tmp_path):
     w = _lc_worker(tmp_path)
     try:
         man = w.override("LcContour", [])["manifest"]
-        assert not [e for e in man["elements"] if e["role"] == "linecoll"], \
+        assert not [e for e in man["elements"] if e["role"] == "linecoll"], (
             "等值线被当成线组登记了——它的 color 编辑会被 colormap 顶回去"
-        assert [e for e in man["elements"] if e["role"] == "title"], \
+        )
+        assert [e for e in man["elements"] if e["role"] == "title"], (
             "整张图都没进 manifest，判据写反了"
+        )
     finally:
         pool.discard(w)
 
@@ -2340,8 +2596,7 @@ def test_line_collections_expose_style_only_never_data(tmp_path):
         man = w.override("LcLines", [])["manifest"]
         el = next(e for e in man["elements"] if e["role"] == "linecoll")
         props = {f["prop"] for f in el["editable"]}
-        assert props == {"color", "linewidth", "linestyle", "alpha",
-                         "visible", "zorder"}, props
+        assert props == {"color", "linewidth", "linestyle", "alpha", "visible", "zorder"}, props
         # 路径几何刻意不给（pathgeom 是按单条路径写的，线组有 N 条），
         # 降级成 bbox 并如实记录
         assert "geometry" not in el
@@ -2354,7 +2609,7 @@ def test_line_collections_expose_style_only_never_data(tmp_path):
 # 子 axes（inset_axes / secondary_[xy]axis）
 # CompatBench 的 ax_inset / ax_secondary_x / ax_secondary_y 抓到的缺口
 # ---------------------------------------------------------------------------
-CHILD_AXES_LIB = '''\
+CHILD_AXES_LIB = """\
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -2384,7 +2639,7 @@ def main():
     c2.plot(x, -x)
     c2.twinx().plot(x, x ** 2)
     fig3.savefig("ChildNone.pdf")
-'''
+"""
 
 
 def _child_axes_worker(tmp_path):
@@ -2405,8 +2660,7 @@ def _props_of(man: dict, gid: str) -> list[str]:
 
 
 def _field_of(man: dict, gid: str, prop: str):
-    return next(f["value"] for f in _el_of(man, gid)["editable"]
-                if f["prop"] == prop)
+    return next(f["value"] for f in _el_of(man, gid)["editable"] if f["prop"] == prop)
 
 
 def test_inset_axes_contents_are_registered_and_editable(tmp_path):
@@ -2426,15 +2680,12 @@ def test_inset_axes_contents_are_registered_and_editable(tmp_path):
         assert "axes_1.title" in gids, "插图的标题选不中"
 
         before = _field_of(man, "axes_1.title", "fontsize")
-        resp = w.override("ChildInset", [{"gid": "axes_1.title",
-                                          "prop": "fontsize", "value": 7.5}])
+        resp = w.override("ChildInset", [{"gid": "axes_1.title", "prop": "fontsize", "value": 7.5}])
         assert not (resp.get("warnings") or []), resp["warnings"]
-        assert _field_of(resp["manifest"], "axes_1.title", "fontsize") == \
-            pytest.approx(7.5)
+        assert _field_of(resp["manifest"], "axes_1.title", "fontsize") == pytest.approx(7.5)
         back = w.override("ChildInset", [])
         assert not (back.get("warnings") or [])
-        assert _field_of(back["manifest"], "axes_1.title", "fontsize") == \
-            pytest.approx(before)
+        assert _field_of(back["manifest"], "axes_1.title", "fontsize") == pytest.approx(before)
     finally:
         pool.discard(w)
 
@@ -2448,8 +2699,9 @@ def test_secondary_axis_label_is_editable(tmp_path):
         assert "axes_1" in gids and _el_of(man, "axes_1")["label"] == "次坐标轴 1"
         assert "axes_1.xlabel" in gids, f"次坐标轴的标签选不中：{gids}"
 
-        resp = w.override("ChildSecondary", [{"gid": "axes_1.xlabel",
-                                              "prop": "text", "value": "波数"}])
+        resp = w.override(
+            "ChildSecondary", [{"gid": "axes_1.xlabel", "prop": "text", "value": "波数"}]
+        )
         assert not (resp.get("warnings") or []), resp["warnings"]
         assert _field_of(resp["manifest"], "axes_1.xlabel", "text") == "波数"
         back = w.override("ChildSecondary", [])
@@ -2470,11 +2722,11 @@ def test_child_axes_never_expose_position(tmp_path):
     try:
         for stem in ("ChildInset", "ChildSecondary"):
             man = w.override(stem, [])["manifest"]
-            assert "position" not in _props_of(man, "axes_1"), \
-                f"{stem}: 子 axes 出了 position 字段"
-            assert _el_of(man, "axes_1")["resizable"] is False, \
-                f"{stem}: resizable 与 position 字段不一致，" \
+            assert "position" not in _props_of(man, "axes_1"), f"{stem}: 子 axes 出了 position 字段"
+            assert _el_of(man, "axes_1")["resizable"] is False, (
+                f"{stem}: resizable 与 position 字段不一致，"
                 f"前端会拿着一个后端不认的 prop 发 override"
+            )
             # 宿主照常可拖
             assert "position" in _props_of(man, "axes_0")
             assert _el_of(man, "axes_0")["resizable"] is True
@@ -2495,8 +2747,7 @@ def test_secondary_axis_hides_the_slaved_data_range(tmp_path):
     w = _child_axes_worker(tmp_path)
     try:
         sec = _props_of(w.override("ChildSecondary", [])["manifest"], "axes_1")
-        for prop in ("xlim", "ylim", "xscale", "yscale",
-                     "invert_x", "invert_y", "aspect"):
+        for prop in ("xlim", "ylim", "xscale", "yscale", "invert_x", "invert_y", "aspect"):
             assert prop not in sec, f"次坐标轴不该出 {prop}"
         # 断言写成「有的话不能是那几个」而不是「必须有 visible」：
         # `SecondaryAxis` **不是 `Axes` 子类**（直接从 `_AxesBase` 派生），
@@ -2507,8 +2758,9 @@ def test_secondary_axis_hides_the_slaved_data_range(tmp_path):
             assert "visible" in sec, "字段回来了就该带上 visible"
 
         ins = _props_of(w.override("ChildInset", [])["manifest"], "axes_1")
-        assert "xlim" in ins and "yscale" in ins, \
+        assert "xlim" in ins and "yscale" in ins, (
             "插图的数据范围是真能改的，不该跟着次坐标轴一起被关掉"
+        )
         assert "visible" in ins, "插图是正经 Axes 子类，字段该齐"
     finally:
         pool.discard(w)
@@ -2536,8 +2788,7 @@ def test_secondary_axis_container_props_are_editable(tmp_path):
         for want in ("visible", "grid_x", "spine_color"):
             assert want in props, f"{want} 不在次坐标轴的可编辑字段里：{props}"
         # 改得动 + 撤得回，才算真的支持
-        r = w.override("ChildSecondary",
-                       [{"gid": "axes_1", "prop": "visible", "value": False}])
+        r = w.override("ChildSecondary", [{"gid": "axes_1", "prop": "visible", "value": False}])
         assert not (r.get("warnings") or []), r["warnings"]
         back = w.override("ChildSecondary", [])
         assert not (back.get("warnings") or []), back["warnings"]
@@ -2561,8 +2812,9 @@ def test_existing_gid_numbering_is_untouched(tmp_path):
         man = w.override("ChildNone", [])["manifest"]
         axes_gids = [e["gid"] for e in man["elements"] if e["role"] == "axes"]
         assert axes_gids == ["axes_0", "axes_1", "axes_2"], axes_gids
-        assert [_el_of(man, g)["label"] for g in axes_gids] == \
-            ["子图 1", "子图 2", "子图 3"], "没有子 axes 的图不该出现插图/次坐标轴标签"
+        assert [_el_of(man, g)["label"] for g in axes_gids] == ["子图 1", "子图 2", "子图 3"], (
+            "没有子 axes 的图不该出现插图/次坐标轴标签"
+        )
         for g in axes_gids:
             assert "position" in _props_of(man, g)
             assert _el_of(man, g)["resizable"] is True
@@ -2588,8 +2840,14 @@ def test_secondary_axis_detection_still_works():
         "print(M._is_secondary_axis(s), M._is_secondary_axis(ax),"
         " M._is_secondary_axis(ins))" % str(engine_dir)
     )
-    out = subprocess.run([WORKER_PY, "-c", probe], capture_output=True, text=True,
-                         timeout=180, encoding="utf-8", errors="replace")
+    out = subprocess.run(
+        [WORKER_PY, "-c", probe],
+        capture_output=True,
+        text=True,
+        timeout=180,
+        encoding="utf-8",
+        errors="replace",
+    )
     assert out.returncode == 0, out.stderr[-800:]
     assert out.stdout.split() == ["True", "False", "False"], out.stdout
 
@@ -2678,7 +2936,8 @@ def main():
 
 
 def test_discarding_a_real_one_shot_worker_reaps_it_and_removes_its_exact_base(
-        tmp_path, monkeypatch):
+    tmp_path, monkeypatch
+):
     """真 worker：`discard()` 返回的**那一刻**，进程已退出、exact base 已消失。
 
     与 `tests/test_windows_regressions.py` 里那条确定性用例互补：那条用假
@@ -2704,9 +2963,10 @@ def test_discarding_a_real_one_shot_worker_reaps_it_and_removes_its_exact_base(
     for round_no in range(3):
         w = pool.one_shot("fig_lifecycle.py", str(figs), "main")
         assert isinstance(w, pool.EngineWorker), (
-            f"第 {round_no} 轮走到了 workerd 控制面，这条用例问的是 Python 池")
+            f"第 {round_no} 轮走到了 workerd 控制面，这条用例问的是 Python 池"
+        )
         try:
-            w.ensure_built()            # 子进程真的起来了、真的打开了输出与日志
+            w.ensure_built()  # 子进程真的起来了、真的打开了输出与日志
         except BaseException:
             pool.discard(w)
             raise
@@ -2719,11 +2979,11 @@ def test_discarding_a_real_one_shot_worker_reaps_it_and_removes_its_exact_base(
         pool.discard(w)
 
         assert proc.poll() is not None, (
-            f"第 {round_no} 轮：discard() 返回了，子进程还没被 wait 回收")
-        assert not base.exists(), (
-            f"第 {round_no} 轮：exact base 没删掉：{base}")
+            f"第 {round_no} 轮：discard() 返回了，子进程还没被 wait 回收"
+        )
+        assert not base.exists(), f"第 {round_no} 轮：exact base 没删掉：{base}"
         assert str(base) not in pool._oneshot_bases, (
-            f"第 {round_no} 轮：base 删了却还占着 prune 豁免名额")
+            f"第 {round_no} 轮：base 删了却还占着 prune 豁免名额"
+        )
 
-    assert not list(pool.ENGINE_CACHE.glob("_replay-*")), (
-        "本用例自己建的 replay 目录一个都不该剩下")
+    assert not list(pool.ENGINE_CACHE.glob("_replay-*")), "本用例自己建的 replay 目录一个都不该剩下"

@@ -15,19 +15,20 @@
 先把 stdout/stderr 接到数据目录的日志文件上，再进正常入口——出问题时用户至少
 有一份可以发给我们的日志。
 """
+
 import os
 import sys
 
 
 def _redirect_streams() -> None:
     if sys.stdout is not None and sys.stderr is not None:
-        return                     # 有真终端（比如从命令行启动 .app 里的可执行文件）
+        return  # 有真终端（比如从命令行启动 .app 里的可执行文件）
     try:
         from tavotto.engine import config
+
         log_dir = config.data_dir() / "cache"
         log_dir.mkdir(parents=True, exist_ok=True)
-        target = open(log_dir / "app.log", "a", encoding="utf-8",
-                      errors="replace", buffering=1)
+        target = open(log_dir / "app.log", "a", encoding="utf-8", errors="replace", buffering=1)
     except OSError:
         target = open(os.devnull, "w", encoding="utf-8")
     if sys.stdout is None:
@@ -46,6 +47,7 @@ def main() -> None:
     # 走 app.main() 会 import Flask + pymupdf + 整个 app.py，而一次交接
     # 一个 HTTP 端点都用不上——那份冷启动全是白付的。
     from tavotto.engine import cli as engine_cli
+
     # Windows 上冻结的 console exe 被安装器 / Codex 用管道接管时，stdout 退回
     # cp1252/cp936——中文一出现就 UnicodeEncodeError，调用方等的那行 JSON
     # 一个字节都收不到。实现只有一份（engine/cli.py）。
@@ -54,6 +56,7 @@ def main() -> None:
     if rc is not None:
         sys.exit(rc)
     from tavotto.app import main as app_main
+
     app_main()
 
 

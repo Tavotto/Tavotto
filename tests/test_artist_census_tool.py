@@ -3,6 +3,7 @@
 它不在产品路径上（普查是诊断，权威是 `manifest.instrument`），但它是排
 兼容缺口时第一个被拿起来的东西——跑不起来就等于没有。
 """
+
 from __future__ import annotations
 
 import os
@@ -18,7 +19,8 @@ except pool.WorkerError:
     WORKER_PY = None
 
 pytestmark = pytest.mark.skipif(
-    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）")
+    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）"
+)
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TOOL = os.path.join(REPO, "scripts", "dev", "matplotlib_artist_census.py")
@@ -59,8 +61,11 @@ def test_relative_path_with_directories_still_finds_the_script(tmp_path):
     # ——看上去像用例写错了，其实是编码。CI 的 windows 腿实测逮到过。
     proc = subprocess.run(
         [WORKER_PY, TOOL, os.path.join("sub", "fig.py")],
-        cwd=str(tmp_path), capture_output=True, timeout=300,
-        encoding="utf-8", errors="replace",
+        cwd=str(tmp_path),
+        capture_output=True,
+        timeout=300,
+        encoding="utf-8",
+        errors="replace",
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     # 干净的图退 0；有缺口的退非 0，见下一条
@@ -105,17 +110,22 @@ def test_a_census_that_lists_gaps_must_not_exit_zero(tmp_path):
     clean.write_text(SCRIPT, encoding="utf-8")
 
     def run(script, *extra):
-        return subprocess.run([WORKER_PY, TOOL, str(script), *extra],
-                              cwd=str(tmp_path), capture_output=True,
-                              text=True, encoding="utf-8", timeout=300)
+        return subprocess.run(
+            [WORKER_PY, TOOL, str(script), *extra],
+            cwd=str(tmp_path),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=300,
+        )
 
     ok = run(clean)
     assert ok.returncode == 0, ok.stdout + ok.stderr
 
     gap = run(tmp_path / "gap.py")
     assert gap.returncode != 0, (
-        "普查列出了漏掉的 artist，退出码却是 0——调用方会把它当成审计通过：\n"
-        + gap.stdout[-1500:])
+        "普查列出了漏掉的 artist，退出码却是 0——调用方会把它当成审计通过：\n" + gap.stdout[-1500:]
+    )
     assert "Poly3DCollection" in gap.stdout, gap.stdout[-1500:]
 
     # JSON 模式把判定交给调用方，照旧回 0

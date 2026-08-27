@@ -18,6 +18,7 @@
 发一份说自己是 0.7.1、里面装着 0.7.0 的清单，用户会永远看到「有新版本」，
 更新完还是看到——而且没有任何报错。
 """
+
 from __future__ import annotations
 
 import argparse
@@ -57,7 +58,8 @@ def check_tag(tag: str, version: str) -> None:
         raise SystemExit(
             f"tag {tag} 与插件版本 {version} 对不上。\n"
             f"  发版前先改 {PLUGIN_JSON.relative_to(ROOT)} 的 version——"
-            "清单说自己是新版、里面却是旧版，用户会永远看到「有新版本」。")
+            "清单说自己是新版、里面却是旧版，用户会永远看到「有新版本」。"
+        )
 
 
 def build_manifest(tag: str, version: str, *, published_at: str | None = None) -> dict:
@@ -94,8 +96,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--tag", required=True, help="发布的 tag（如 v0.7.1）")
     ap.add_argument("--out", required=True, help="清单写到哪儿")
     ap.add_argument("--zip", default=None, help="同时打一个插件 zip 到这儿")
-    ap.add_argument("--published-at", default=None,
-                    help="ISO8601 发布时间（CI 传 date -u）")
+    ap.add_argument("--published-at", default=None, help="ISO8601 发布时间（CI 传 date -u）")
     args = ap.parse_args(argv)
 
     version = plugin_version()
@@ -104,15 +105,15 @@ def main(argv: list[str] | None = None) -> int:
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
-                   encoding="utf-8")
+    out.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"* 插件清单: {out}（{version}）")
     if args.zip:
         made = build_zip(Path(args.zip))
         print(f"* 插件包: {made}（{made.stat().st_size // 1024} KiB）")
         if made.name != f"codex-plugin-{version}.zip":
-            print(f"::warning::zip 名字与清单里的 download_url 对不上: {made.name}",
-                  file=sys.stderr)
+            print(
+                f"::warning::zip 名字与清单里的 download_url 对不上: {made.name}", file=sys.stderr
+            )
     return 0
 
 

@@ -21,6 +21,7 @@
 
 纯标准库，Flask 父进程可安全 import。
 """
+
 from __future__ import annotations
 
 import json
@@ -100,23 +101,28 @@ class Registry:
                 raise RuntimeError(f"{source}: {script} 的配置必须是对象")
             entry = cfg.get("entry", "main")
             if not valid_entry(entry):
-                raise RuntimeError(f"{source}: {script} entry 非法: {entry!r}"
-                                   f"（入口函数名，或 {INLINE_ENTRY!r} 表示内联脚本）")
+                raise RuntimeError(
+                    f"{source}: {script} entry 非法: {entry!r}"
+                    f"（入口函数名，或 {INLINE_ENTRY!r} 表示内联脚本）"
+                )
             cost = cfg.get("cost", "medium")
             if cost not in VALID_COSTS:
-                raise RuntimeError(f"{source}: {script} cost 非法: {cost!r}"
-                                   f"（可选 {sorted(VALID_COSTS)}）")
+                raise RuntimeError(
+                    f"{source}: {script} cost 非法: {cost!r}（可选 {sorted(VALID_COSTS)}）"
+                )
             stems = cfg.get("stems") or []
             if not isinstance(stems, list) or not all(isinstance(s, str) for s in stems):
                 raise RuntimeError(f"{source}: {script} stems 必须是字符串列表")
             for stem in stems:
                 if stem in index:
-                    raise RuntimeError(
-                        f"stem 重复注册: {stem} ({index[stem]} vs {script})")
+                    raise RuntimeError(f"stem 重复注册: {stem} ({index[stem]} vs {script})")
                 index[stem] = script
-            cleaned[script] = {"entry": entry, "cost": cost,
-                               "notes": str(cfg.get("notes", "")),
-                               "stems": list(stems)}
+            cleaned[script] = {
+                "entry": entry,
+                "cost": cost,
+                "notes": str(cfg.get("notes", "")),
+                "stems": list(stems),
+            }
         self._scripts, self._index, self._source = cleaned, index, source
 
     # ---------------- 查询 ----------------
@@ -132,8 +138,7 @@ class Registry:
         if script is None:
             return None
         cfg = self._scripts[script]
-        return {"script": script, "entry": cfg["entry"], "cost": cfg["cost"],
-                "notes": cfg["notes"]}
+        return {"script": script, "entry": cfg["entry"], "cost": cfg["cost"], "notes": cfg["notes"]}
 
     def all_scripts(self) -> list[str]:
         return list(self._scripts)

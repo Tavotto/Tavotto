@@ -24,6 +24,7 @@
 浏览器侧 spawn 同一个解释器直接跑 `engine/browser.py`（与
 `tests/test_browser_session.py` 同一条纪律）。
 """
+
 import json
 import os
 import subprocess
@@ -39,20 +40,21 @@ except pool.WorkerError:
     WORKER_PY = None
 
 pytestmark = pytest.mark.skipif(
-    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）")
+    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）"
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 ENGINE_DIR = ROOT / "src" / "tavotto" / "engine"
 
-SHOW_ONLY = '''\
+SHOW_ONLY = """\
 import matplotlib.pyplot as plt
 
 plt.plot([1, 2, 3], [4, 5, 6])
 plt.title("AI generated")
 plt.show()
-'''
+"""
 
-MULTI_NO_SAVEFIG = '''\
+MULTI_NO_SAVEFIG = """\
 import matplotlib.pyplot as plt
 
 plt.figure(figsize=(3.0, 2.0))
@@ -71,16 +73,16 @@ plt.plot([2, 3, 1])
 plt.title("third")
 
 plt.show()
-'''
+"""
 
-OO_NO_PYPLOT = '''\
+OO_NO_PYPLOT = """\
 from matplotlib.figure import Figure
 
 fig = Figure(figsize=(3.0, 2.0))
 ax = fig.add_subplot(1, 1, 1)
 ax.plot([1, 2, 3])
 fig.savefig("only_one.pdf")
-'''
+"""
 
 #: 浏览器侧驱动：一个全新解释器跑一串命令，末行吐 JSON（一个 Worker 一个会话）。
 _BROWSER_DRIVER = """
@@ -95,10 +97,15 @@ sys.stdout.write("\\n" + json.dumps(out))
 def browser_load(source: str, filename: str, workspace: Path) -> dict:
     proc = subprocess.run(
         [WORKER_PY, "-c", _BROWSER_DRIVER, str(ENGINE_DIR)],
-        input=json.dumps([{"cmd": "load", "filename": filename,
-                           "source": source, "workspace": str(workspace)}]),
-        capture_output=True, text=True, encoding="utf-8", errors="replace",
-        timeout=300)
+        input=json.dumps(
+            [{"cmd": "load", "filename": filename, "source": source, "workspace": str(workspace)}]
+        ),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=300,
+    )
     assert proc.returncode == 0, f"浏览器驱动失败:\n{proc.stderr[-2000:]}"
     return json.loads(proc.stdout.strip().splitlines()[-1])[0]
 
@@ -152,9 +159,9 @@ class TestNoSavefigCapture:
         figs = tmp_path / "figs"
         write(figs, "show_only.py", SHOW_ONLY)
         desktop = sorted(desktop_build(figs, "show_only.py")["stems"])
-        browser = sorted(f["stem"]
-                         for f in browser_load(SHOW_ONLY, "show_only.py",
-                                               tmp_path / "ws")["figures"])
+        browser = sorted(
+            f["stem"] for f in browser_load(SHOW_ONLY, "show_only.py", tmp_path / "ws")["figures"]
+        )
         assert desktop == browser == ["show_only"]
 
     def test_savefig_captured_stems_are_not_marked_pyplot(self, tmp_path):
@@ -214,7 +221,10 @@ class TestFallbackStems:
     def test_savefig_stems_win_and_fallback_fills_the_rest(self, tmp_path):
         """显式 savefig 认领过的名字不会被兜底顶掉，也不会重复捕获同一张图。"""
         figs = tmp_path / "figs"
-        write(figs, "mixed.py", '''\
+        write(
+            figs,
+            "mixed.py",
+            """\
 import matplotlib.pyplot as plt
 
 fig1 = plt.figure(figsize=(3.0, 2.0))
@@ -224,7 +234,8 @@ fig1.savefig("mixed.pdf")          # 认领 "mixed"
 plt.figure(figsize=(3.0, 2.0))     # 没存过，靠兜底
 plt.plot([3, 2, 1])
 plt.show()
-''')
+""",
+        )
         stems = desktop_build(figs, "mixed.py")["stems"]
         assert sorted(stems) == ["mixed", "mixed-2"]
         # 同一张 Figure 绝不出现两次（savefig 之后它还活在 pyplot 里）
@@ -245,7 +256,10 @@ class TestRelativeFileIO:
 
     def test_builtin_open_resolves_next_to_the_script(self, tmp_path):
         figs = tmp_path / "figs"
-        write(figs, "reader.py", '''\
+        write(
+            figs,
+            "reader.py",
+            """\
 import csv
 import matplotlib.pyplot as plt
 
@@ -254,7 +268,8 @@ with open("data.csv", newline="", encoding="utf-8") as fh:
 fig, ax = plt.subplots()
 ax.plot([float(r["x"]) for r in rows], [float(r["y"]) for r in rows])
 fig.savefig("reader.pdf")
-''')
+""",
+        )
         (figs / "data.csv").write_text("x,y\n1,2\n2,4\n3,9\n", encoding="utf-8")
         assert list(desktop_build(figs, "reader.py")["stems"]) == ["reader"]
 
@@ -266,7 +281,10 @@ fig.savefig("reader.pdf")
         两种等价写法行为不一致，是最难查的那种。
         """
         figs = tmp_path / "figs"
-        write(figs, "preader.py", '''\
+        write(
+            figs,
+            "preader.py",
+            """\
 import json
 from pathlib import Path
 
@@ -276,14 +294,18 @@ cfg = json.loads(Path("cfg.json").read_text(encoding="utf-8"))
 fig, ax = plt.subplots()
 ax.plot(cfg["points"])
 fig.savefig("preader.pdf")
-''')
+""",
+        )
         (figs / "cfg.json").write_text('{"points": [1, 4, 9]}', encoding="utf-8")
         assert list(desktop_build(figs, "preader.py")["stems"]) == ["preader"]
 
     def test_relative_write_still_lands_in_the_sandbox(self, tmp_path):
         """脚本写出来的中间文件绝不能落进用户的图库目录。"""
         figs = tmp_path / "figs"
-        write(figs, "writer.py", '''\
+        write(
+            figs,
+            "writer.py",
+            """\
 import matplotlib.pyplot as plt
 
 with open("scratch.txt", "w", encoding="utf-8") as fh:
@@ -293,15 +315,20 @@ with open("scratch.txt", encoding="utf-8") as fh:
 fig, ax = plt.subplots()
 ax.plot(ys)
 fig.savefig("writer.pdf")
-''')
+""",
+        )
         assert list(desktop_build(figs, "writer.py")["stems"]) == ["writer"]
-        assert not (figs / "scratch.txt").exists(), \
+        assert not (figs / "scratch.txt").exists(), (
             "脚本的相对写落进了用户的图库目录——沙盒边界被打穿了"
+        )
 
     def test_sandbox_copy_wins_over_the_script_directory(self, tmp_path):
         """脚本自己写出来的那一份优先——只读回退不能把它顶掉。"""
         figs = tmp_path / "figs"
-        write(figs, "shadow.py", '''\
+        write(
+            figs,
+            "shadow.py",
+            """\
 import matplotlib.pyplot as plt
 
 with open("values.txt", "w", encoding="utf-8") as fh:
@@ -312,7 +339,8 @@ assert ys == [9.0, 9.0, 9.0], f"读到的是图库里那一份: {ys}"
 fig, ax = plt.subplots()
 ax.plot(ys)
 fig.savefig("shadow.pdf")
-''')
+""",
+        )
         (figs / "values.txt").write_text("1 2 3\n", encoding="utf-8")
         assert list(desktop_build(figs, "shadow.py")["stems"]) == ["shadow"]
 
@@ -322,7 +350,10 @@ fig.savefig("shadow.pdf")
         outside.mkdir()
         (outside / "secret.txt").write_text("nope", encoding="utf-8")
         figs = tmp_path / "figs"
-        write(figs, "escape.py", '''\
+        write(
+            figs,
+            "escape.py",
+            """\
 import matplotlib.pyplot as plt
 
 try:
@@ -336,7 +367,8 @@ assert not leaked, "沙盒外的文件被只读回退送进来了"
 fig, ax = plt.subplots()
 ax.plot([1, 2, 3])
 fig.savefig("escape.pdf")
-''')
+""",
+        )
         assert list(desktop_build(figs, "escape.py")["stems"]) == ["escape"]
 
 
@@ -355,26 +387,39 @@ class TestNoFakeWriteBackTarget:
 
     def test_panel_scan_only_lists_real_files(self, tmp_path, monkeypatch):
         from tavotto import app
+
         figs = tmp_path / "figs"
         write(figs, "show_only.py", SHOW_ONLY)
-        (figs / "tavotto_registry.json").write_text(json.dumps({
-            "scripts": {"show_only.py": {"entry": "__main__", "cost": "light",
-                                         "stems": ["show_only"]}}}),
-            encoding="utf-8")
+        (figs / "tavotto_registry.json").write_text(
+            json.dumps(
+                {
+                    "scripts": {
+                        "show_only.py": {
+                            "entry": "__main__",
+                            "cost": "light",
+                            "stems": ["show_only"],
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
         info = app.open_project(str(figs))
         ctx = app.PROJECTS[info["id"]]
         monkeypatch.setattr(app, "current_ctx", lambda: ctx)
         monkeypatch.setattr(app, "current_registry", lambda: ctx.registry)
         monkeypatch.setattr(app, "require_project", lambda: ctx.path)
         panels = app.scan_panels()
-        assert not [p for p in panels if p["name"] == "show_only"], \
+        assert not [p for p in panels if p["name"] == "show_only"], (
             "注册表里有这个 stem，但磁盘上没有产物——它不该出现在面板列表里"
+        )
 
     def test_write_back_target_must_exist_on_disk(self, tmp_path, monkeypatch):
         """指向一个不存在的产物时，写回端点必须 4xx，而不是假装成功。"""
         from werkzeug.exceptions import NotFound
 
         from tavotto import app
+
         figs = tmp_path / "figs"
         figs.mkdir(parents=True, exist_ok=True)
         monkeypatch.setattr(app, "require_project", lambda: figs.resolve())
@@ -397,7 +442,7 @@ class TestEntrySemanticsDifferBySide:
     说明为什么那样做比复现 `python figure.py` 更好。
     """
 
-    ENTRY_ONLY = '''\
+    ENTRY_ONLY = """\
 import matplotlib.pyplot as plt
 
 
@@ -405,7 +450,7 @@ def main():
     fig, ax = plt.subplots()
     ax.plot([1, 2, 3])
     fig.savefig("entry_only.pdf")
-'''
+"""
 
     def test_desktop_runs_the_registered_entry(self, tmp_path):
         figs = tmp_path / "figs"
@@ -418,7 +463,8 @@ def main():
         assert resp.get("ok"), resp
         assert resp["figures"] == [], (
             "playground 应当复现 `python entry_only.py` 的行为（什么都不画），"
-            "而不是自作主张替用户调 main()")
+            "而不是自作主张替用户调 main()"
+        )
 
     def test_a_guarded_script_works_on_both_sides(self, tmp_path):
         """加上 `if __name__ == "__main__"` 守卫之后两边一致——AI 生成的脚本
@@ -427,8 +473,9 @@ def main():
         figs = tmp_path / "figs"
         write(figs, "guarded.py", source)
         desktop = sorted(desktop_build(figs, "guarded.py", entry="__main__")["stems"])
-        browser = sorted(f["stem"] for f in
-                         browser_load(source, "guarded.py", tmp_path / "ws")["figures"])
+        browser = sorted(
+            f["stem"] for f in browser_load(source, "guarded.py", tmp_path / "ws")["figures"]
+        )
         assert desktop == browser == ["entry_only"]
 
 
@@ -445,8 +492,7 @@ class TestDescriptorParity:
         figs = tmp_path / "figs"
         write(figs, "show_only.py", SHOW_ONLY)
         desktop = desktop_build(figs, "show_only.py")["descriptors"]
-        browser = browser_load(SHOW_ONLY, "show_only.py",
-                               tmp_path / "ws")["descriptors"]
+        browser = browser_load(SHOW_ONLY, "show_only.py", tmp_path / "ws")["descriptors"]
         assert desktop == browser
         assert len(desktop) == 1
         d = desktop[0]
@@ -463,8 +509,7 @@ class TestDescriptorParity:
         write(figs, "multi.py", MULTI_NO_SAVEFIG)
         desktop = desktop_build(figs, "multi.py")["descriptors"]
         again = desktop_build(figs, "multi.py")["descriptors"]
-        browser = browser_load(MULTI_NO_SAVEFIG, "multi.py",
-                               tmp_path / "ws")["descriptors"]
+        browser = browser_load(MULTI_NO_SAVEFIG, "multi.py", tmp_path / "ws")["descriptors"]
         assert [d["stem"] for d in desktop] == ["multi", "multi-2", "multi-3"]
         assert desktop == again == browser
 
@@ -480,8 +525,7 @@ class TestDescriptorParity:
         assert b"\r\n" in crlf
         (figs / "show_only.py").write_bytes(crlf)
         desktop = desktop_build(figs, "show_only.py")["descriptors"]
-        browser = browser_load(SHOW_ONLY, "show_only.py",
-                               tmp_path / "ws")["descriptors"]
+        browser = browser_load(SHOW_ONLY, "show_only.py", tmp_path / "ws")["descriptors"]
         assert desktop == browser
 
     def test_savefig_descriptor_without_an_artifact_on_disk(self, tmp_path):
@@ -502,8 +546,7 @@ class TestDescriptorParity:
         assert d["original_artifact"] == "only_one.pdf"
         assert d["can_writeback_artifact"] is True
 
-    def test_a_coincidental_file_does_not_make_a_pyplot_figure_writable(
-            self, tmp_path):
+    def test_a_coincidental_file_does_not_make_a_pyplot_figure_writable(self, tmp_path):
         """**writeback 能力不由前端猜，也不由磁盘巧合决定。**
 
         show-only 脚本从没存过盘；磁盘上碰巧躺着同 stem 的 PDF 时，那份文件
@@ -518,8 +561,7 @@ class TestDescriptorParity:
         assert d["original_artifact"] is None
         assert d["can_writeback_artifact"] is False
 
-    def test_asset_id_and_fingerprint_are_stable_across_project_paths(
-            self, tmp_path):
+    def test_asset_id_and_fingerprint_are_stable_across_project_paths(self, tmp_path):
         """同一份脚本放在两个不同的绝对路径下，描述符必须逐字节相同。
 
         asset id / fingerprint 一旦混入项目绝对路径，换台机器（或换个挂载点）
@@ -529,8 +571,10 @@ class TestDescriptorParity:
         b = tmp_path / "elsewhere" / "deeper" / "figs"
         write(a, "show_only.py", SHOW_ONLY)
         write(b, "show_only.py", SHOW_ONLY)
-        assert desktop_build(a, "show_only.py")["descriptors"] == \
-            desktop_build(b, "show_only.py")["descriptors"]
+        assert (
+            desktop_build(a, "show_only.py")["descriptors"]
+            == desktop_build(b, "show_only.py")["descriptors"]
+        )
 
     def test_the_legacy_envelope_is_untouched(self, tmp_path):
         """legacy 信封（无 protocol_version）的 build 响应**一字不改**：
@@ -539,13 +583,27 @@ class TestDescriptorParity:
         write(figs, "show_only.py", SHOW_ONLY)
         out = tmp_path / "out"
         proc = subprocess.run(
-            [WORKER_PY, str(ENGINE_DIR / "worker.py"),
-             "--script", str(figs / "show_only.py"),
-             "--figures-dir", str(figs),
-             "--out-dir", str(out), "--sandbox", str(tmp_path / "box"),
-             "--entry", "__main__"],
-            input='{"cmd": "build"}\n', capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=300)
+            [
+                WORKER_PY,
+                str(ENGINE_DIR / "worker.py"),
+                "--script",
+                str(figs / "show_only.py"),
+                "--figures-dir",
+                str(figs),
+                "--out-dir",
+                str(out),
+                "--sandbox",
+                str(tmp_path / "box"),
+                "--entry",
+                "__main__",
+            ],
+            input='{"cmd": "build"}\n',
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=300,
+        )
         assert proc.returncode == 0, proc.stderr[-2000:]
         resp = json.loads(proc.stdout.strip().splitlines()[-1])
         assert resp["ok"] is True
@@ -631,8 +689,7 @@ class TestAbsolutizedRelativeRead:
     def test_absolute_path_into_sandbox_is_redirected(self, tmp_path, monkeypatch):
         project, sandbox = self._sandbox(tmp_path)
         monkeypatch.chdir(sandbox)
-        undo = figcapture.install_relative_read_fallback(
-            str(project / "sub"), str(project))
+        undo = figcapture.install_relative_read_fallback(str(project / "sub"), str(project))
         try:
             # 库先把相对路径解成绝对（Pillow 10.4.0 就是这么干的），
             # 再交给 builtins.open。
@@ -644,15 +701,13 @@ class TestAbsolutizedRelativeRead:
         finally:
             undo()
 
-    def test_absolute_path_outside_sandbox_is_never_redirected(self, tmp_path,
-                                                              monkeypatch):
+    def test_absolute_path_outside_sandbox_is_never_redirected(self, tmp_path, monkeypatch):
         """沙盒外的绝对路径一个都不碰——那是边界，不是笔误。"""
         project, sandbox = self._sandbox(tmp_path)
         elsewhere = tmp_path / "elsewhere"
         elsewhere.mkdir()
         monkeypatch.chdir(sandbox)
-        undo = figcapture.install_relative_read_fallback(
-            str(project / "sub"), str(project))
+        undo = figcapture.install_relative_read_fallback(str(project / "sub"), str(project))
         try:
             with pytest.raises(FileNotFoundError):
                 open(str(elsewhere / "data.csv"), "r", encoding="utf-8")
@@ -661,32 +716,27 @@ class TestAbsolutizedRelativeRead:
         finally:
             undo()
 
-    def test_absolute_write_into_sandbox_still_lands_in_the_sandbox(
-            self, tmp_path, monkeypatch):
+    def test_absolute_write_into_sandbox_still_lands_in_the_sandbox(self, tmp_path, monkeypatch):
         """写永远不改道：脚本写出来的那份必须留在沙盒里。"""
         project, sandbox = self._sandbox(tmp_path)
         monkeypatch.chdir(sandbox)
-        undo = figcapture.install_relative_read_fallback(
-            str(project / "sub"), str(project))
+        undo = figcapture.install_relative_read_fallback(str(project / "sub"), str(project))
         try:
             target = os.path.join(os.getcwd(), "data.csv")
             with open(target, "w", encoding="utf-8") as fh:
                 fh.write("written\n")
             assert (sandbox / "data.csv").read_text(encoding="utf-8") == "written\n"
             # 项目里那份一个字节没动。
-            assert (project / "sub" / "data.csv").read_text(
-                encoding="utf-8").startswith("x,y")
+            assert (project / "sub" / "data.csv").read_text(encoding="utf-8").startswith("x,y")
         finally:
             undo()
 
-    def test_existing_sandbox_file_wins_over_the_project_copy(self, tmp_path,
-                                                             monkeypatch):
+    def test_existing_sandbox_file_wins_over_the_project_copy(self, tmp_path, monkeypatch):
         """沙盒里已经有了就用沙盒那份——脚本自己写出来的优先。"""
         project, sandbox = self._sandbox(tmp_path)
         (sandbox / "data.csv").write_text("sandbox\n", encoding="utf-8")
         monkeypatch.chdir(sandbox)
-        undo = figcapture.install_relative_read_fallback(
-            str(project / "sub"), str(project))
+        undo = figcapture.install_relative_read_fallback(str(project / "sub"), str(project))
         try:
             absolutized = os.path.realpath(os.path.join(os.getcwd(), "data.csv"))
             with open(absolutized, "r", encoding="utf-8") as fh:
@@ -694,8 +744,7 @@ class TestAbsolutizedRelativeRead:
         finally:
             undo()
 
-    def test_chdir_then_write_then_read_keeps_the_scripts_own_copy(
-            self, tmp_path, monkeypatch):
+    def test_chdir_then_write_then_read_keeps_the_scripts_own_copy(self, tmp_path, monkeypatch):
         """脚本 `os.chdir()` 进子目录再写再读——读到的必须是它自己写的那份。
 
         存在性判据必须跟着**真正的 open 会用的那条路径**走。拿沙盒根去判的话
@@ -707,28 +756,28 @@ class TestAbsolutizedRelativeRead:
         work.mkdir()
         monkeypatch.chdir(work)
         undo = figcapture.install_relative_read_fallback(
-            str(project / "sub"), str(project), sandbox_dir=str(sandbox))
+            str(project / "sub"), str(project), sandbox_dir=str(sandbox)
+        )
         try:
             with open("data.csv", "w", encoding="utf-8") as fh:
                 fh.write("mine\n")
             with open("data.csv", "r", encoding="utf-8") as fh:
-                assert fh.read() == "mine\n"          # 不是项目里那份 "x,y"
+                assert fh.read() == "mine\n"  # 不是项目里那份 "x,y"
             # 没写过的名字仍然救得回来。
-            with open("data.csv".replace("data", "data"), "r",
-                      encoding="utf-8") as fh:
+            with open("data.csv".replace("data", "data"), "r", encoding="utf-8") as fh:
                 assert fh.read() == "mine\n"
         finally:
             undo()
 
-    def test_chdir_then_read_a_file_only_the_project_has(self, tmp_path,
-                                                         monkeypatch):
+    def test_chdir_then_read_a_file_only_the_project_has(self, tmp_path, monkeypatch):
         """chdir 之后读一个只有项目里才有的文件——仍然要救得回来。"""
         project, sandbox = self._sandbox(tmp_path)
         work = sandbox / "work"
         work.mkdir()
         monkeypatch.chdir(work)
         undo = figcapture.install_relative_read_fallback(
-            str(project / "sub"), str(project), sandbox_dir=str(sandbox))
+            str(project / "sub"), str(project), sandbox_dir=str(sandbox)
+        )
         try:
             with open("data.csv", "r", encoding="utf-8") as fh:
                 assert fh.read().startswith("x,y")

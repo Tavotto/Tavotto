@@ -11,6 +11,7 @@
 
 纯标准库。
 """
+
 from __future__ import annotations
 
 import json

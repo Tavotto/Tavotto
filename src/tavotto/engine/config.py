@@ -13,6 +13,7 @@
 装成 pip 包后 site-packages 不可写，运行时产物一律落在数据目录；
 测试可用 TAVOTTO_CONFIG_DIR / TAVOTTO_DATA_DIR 分别重定向。
 """
+
 from __future__ import annotations
 
 import json
@@ -73,12 +74,11 @@ def path_is_case_insensitive(path: str | Path) -> bool:
             try:
                 st = os.stat(probe)
                 other = os.path.join(head, flipped)
-                result = (os.path.exists(other)
-                          and os.path.samestat(st, os.stat(other)))
+                result = os.path.exists(other) and os.path.samestat(st, os.stat(other))
                 break
             except OSError:
-                pass                            # 权限/竞态：换上一层再试
-        if parent == probe:                     # 到根了，只能用兜底值
+                pass  # 权限/竞态：换上一层再试
+        if parent == probe:  # 到根了，只能用兜底值
             break
         probe = parent
     _CASEFOLD_CACHE[key] = result
@@ -131,8 +131,14 @@ def data_path(*parts: str) -> Path:
 
 
 def _defaults() -> dict:
-    return {"recent_projects": [], "projects": {}, "ai": {}, "updates": {},
-            "worker": {}, "telemetry": {}}
+    return {
+        "recent_projects": [],
+        "projects": {},
+        "ai": {},
+        "updates": {},
+        "worker": {},
+        "telemetry": {},
+    }
 
 
 def load() -> dict:
@@ -146,7 +152,8 @@ def load() -> dict:
     out = _defaults()
     if isinstance(data.get("recent_projects"), list):
         out["recent_projects"] = [
-            e for e in data["recent_projects"]
+            e
+            for e in data["recent_projects"]
             if isinstance(e, dict) and isinstance(e.get("path"), str)
         ]
     if isinstance(data.get("projects"), dict):
@@ -180,8 +187,11 @@ def touch_recent(path: str, name: str | None = None) -> None:
     with _LOCK:
         cfg = load()
         path = str(Path(path))
-        entry = {"path": path, "name": name or Path(path).name,
-                 "last_opened": int(time.time() * 1000)}
+        entry = {
+            "path": path,
+            "name": name or Path(path).name,
+            "last_opened": int(time.time() * 1000),
+        }
         cfg["recent_projects"] = (
             [entry] + [e for e in cfg["recent_projects"] if e["path"] != path]
         )[:RECENT_KEEP]
@@ -235,8 +245,7 @@ def project_store_dir(project: str | Path) -> Path:
     return Path(project) / PROJECT_STORE_DIRNAME
 
 
-def project_export_dir(project: str | Path | None,
-                       fallback: Path | None = None) -> Path:
+def project_export_dir(project: str | Path | None, fallback: Path | None = None) -> Path:
     """项目的导出目录（项目设置可覆盖）。**规则的唯一出处**。
 
     缺省 `<项目>/tavottofile/export/`——成图要交给投稿/合作者，跟着项目走才
@@ -307,8 +316,11 @@ def _migrate_ai_agents() -> None:
         if not legacy:
             return
         raw = ai.get("agents")
-        agents = {k: dict(v) for k, v in raw.items()
-                  if isinstance(v, dict)} if isinstance(raw, dict) else {}
+        agents = (
+            {k: dict(v) for k, v in raw.items() if isinstance(v, dict)}
+            if isinstance(raw, dict)
+            else {}
+        )
         for key in legacy:
             agent_id = _AI_LEGACY_PATH_RE.match(key).group(1)
             value = ai.pop(key)
@@ -342,13 +354,16 @@ def ai_agent_settings() -> dict:
 
 def set_ai_agent_settings(agent_id: str, patch: dict) -> dict:
     """写一个 Agent 的设置；值为 None = 清除该键（回到默认语义）。"""
-    ai_agent_settings()          # 先把旧键迁完，免得两份并存
+    ai_agent_settings()  # 先把旧键迁完，免得两份并存
     with _LOCK:
         cfg = load()
         ai = dict(cfg.get("ai") or {})
         raw = ai.get("agents")
-        agents = {k: dict(v) for k, v in raw.items()
-                  if isinstance(v, dict)} if isinstance(raw, dict) else {}
+        agents = (
+            {k: dict(v) for k, v in raw.items() if isinstance(v, dict)}
+            if isinstance(raw, dict)
+            else {}
+        )
         rec = dict(agents.get(agent_id) or {})
         for key, value in patch.items():
             if value is None:

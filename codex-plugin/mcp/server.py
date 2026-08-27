@@ -39,6 +39,7 @@ shebang、旁边没有 python——交接（`tavotto open`）用它绰绰有余�
 
 纯标准库，Python 3.8+（找不到 tavotto 时用户机器上的 python3 可能很老）。
 """
+
 from __future__ import annotations
 
 import json
@@ -77,8 +78,10 @@ DESKTOP_ONLY_HINT = (
 #: ImportError，resolver 交棒过去 server 当场崩死（比诚实降级糟得多）。
 #: 两侧由 tests/test_mcp_resolver.py::test_bridge_import_probe_matches_the_bridge
 #: 对拍，改 bridge 的 import 必须同步这里。
-_BRIDGE_IMPORT = ("from tavotto.engine import config, handoff, patchspec, "
-                  "pool, preflight, profiles, registry, telemetry")
+_BRIDGE_IMPORT = (
+    "from tavotto.engine import config, handoff, patchspec, "
+    "pool, preflight, profiles, registry, telemetry"
+)
 
 
 def _importable(python: str, timeout: float = 30.0) -> bool:
@@ -89,9 +92,12 @@ def _importable(python: str, timeout: float = 30.0) -> bool:
     在 host 面前崩死。
     """
     try:
-        proc = subprocess.run([python, "-c", _BRIDGE_IMPORT],
-                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                              timeout=timeout)
+        proc = subprocess.run(
+            [python, "-c", _BRIDGE_IMPORT],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=timeout,
+        )
     except (OSError, subprocess.TimeoutExpired):
         return False
     return proc.returncode == 0
@@ -101,7 +107,7 @@ def _current_engine_ok() -> bool:
     """当前解释器里的引擎够不够用（与 `_importable` 同一把尺，进程内验）。"""
     try:
         exec(_BRIDGE_IMPORT, {})
-    except Exception:                       # noqa: BLE001 — 缺模块/坏安装都算不够
+    except Exception:  # noqa: BLE001 — 缺模块/坏安装都算不够
         return False
     return True
 
@@ -112,11 +118,11 @@ def _plugin_locator():
     与本文件同属一个插件包，按相对路径 import 即可——**不在这里抄第三遍**
     路径规则（Tavotto 一份、插件的 handoff 一份，已经是能接受的上限）。
     """
-    scripts = os.path.abspath(os.path.join(HERE, "..", "skills",
-                                           "tavotto-figure", "scripts"))
+    scripts = os.path.abspath(os.path.join(HERE, "..", "skills", "tavotto-figure", "scripts"))
     if scripts not in sys.path:
         sys.path.insert(0, scripts)
     import handoff  # noqa: PLC0415
+
     return handoff
 
 
@@ -150,15 +156,15 @@ _LAUNCHER_SCAN_MAX = 2 * 1024 * 1024
 def _embedded_shebang(exe: str) -> "str | None":
     r"""Windows console script `.exe` 里嵌着的解释器路径。
 
-    pip / pipx 在 Windows 上生成的 `tavotto.exe` 是 distlib 启动器：
-    `launcher.exe` + `b"#!<venv>\Scripts\python.exe
-"` + 一个 zip。
-    **pipx 还会把它复制到共享的 bin 目录暴露出来**，那儿旁边根本没有 python
-    （venv 在 `pipx/venvs/tavotto` 里），`_interpreter_beside` 因此一无所获，
-    `_shebang_interpreter` 又只读头 512 字节的文本 shebang——两条都落空，
-    于是官方推荐的 `pipx install tavotto` 在 Windows 上被判成 `desktop_only`，
-    MCP 的工具一个都不出现。复制品里那行 shebang 仍然指着 venv，
-    它是「哪个环境装了它」在 Windows 上唯一可靠的答案。
+        pip / pipx 在 Windows 上生成的 `tavotto.exe` 是 distlib 启动器：
+        `launcher.exe` + `b"#!<venv>\Scripts\python.exe
+    "` + 一个 zip。
+        **pipx 还会把它复制到共享的 bin 目录暴露出来**，那儿旁边根本没有 python
+        （venv 在 `pipx/venvs/tavotto` 里），`_interpreter_beside` 因此一无所获，
+        `_shebang_interpreter` 又只读头 512 字节的文本 shebang——两条都落空，
+        于是官方推荐的 `pipx install tavotto` 在 Windows 上被判成 `desktop_only`，
+        MCP 的工具一个都不出现。复制品里那行 shebang 仍然指着 venv，
+        它是「哪个环境装了它」在 Windows 上唯一可靠的答案。
     """
     try:
         if os.path.getsize(exe) > _LAUNCHER_SCAN_MAX:
@@ -169,8 +175,7 @@ def _embedded_shebang(exe: str) -> "str | None":
         return None
     at = blob.rfind(b"#!")
     while at != -1:
-        line = blob[at + 2:blob.find(b"\n", at) if blob.find(b"\n", at) != -1
-                    else len(blob)]
+        line = blob[at + 2 : blob.find(b"\n", at) if blob.find(b"\n", at) != -1 else len(blob)]
         cand = line.strip().strip(b'"').decode("utf-8", "replace").strip()
         # 只认指向真实文件的绝对路径；`#!/usr/bin/env python3` 给不出环境
         if cand and not cand.endswith("env") and os.path.isfile(cand):
@@ -186,8 +191,11 @@ def _interpreter_beside(exe: str) -> "list[str]":
     放在 `_internal/`），所以这条天然区分「pip 装的」与「桌面版带的」。
     """
     base = os.path.dirname(os.path.abspath(exe))
-    return [os.path.join(base, n) for n in ("python.exe", "python3", "python")
-            if os.path.isfile(os.path.join(base, n))]
+    return [
+        os.path.join(base, n)
+        for n in ("python.exe", "python3", "python")
+        if os.path.isfile(os.path.join(base, n))
+    ]
 
 
 def _interp_key(path: str) -> str:
@@ -205,7 +213,7 @@ def _interp_key(path: str) -> str:
 def _interpreters_for(found: dict) -> "list[str]":
     """定位结果 → 可能能 import tavotto 的解释器候选（CLI 反推 + PATH 兜底）。"""
     out: "list[str]" = []
-    for exe in (found.get("cmd") or []):
+    for exe in found.get("cmd") or []:
         interp = _shebang_interpreter(exe) or _embedded_shebang(exe)
         if interp:
             out.append(interp)
@@ -260,8 +268,7 @@ def _configured_worker_python() -> "str | None":
     return python if isinstance(python, str) and python.strip() else None
 
 
-def resolver_candidates(found: dict, environ: "dict | None" = None
-                        ) -> "list[tuple[str, str]]":
+def resolver_candidates(found: dict, environ: "dict | None" = None) -> "list[tuple[str, str]]":
     """解释器候选（(路径, 来源标签)，前面的赢）。**当前解释器不在表里**——
     它在 `main()` 里已经试过（试过才会走到这儿）。
 
@@ -291,7 +298,7 @@ def resolver_candidates(found: dict, environ: "dict | None" = None
         cands.append((python, "discovered"))
     seen, uniq = set(), []
     for path, source in cands:
-        key = _interp_key(path)                      # 不 realpath，见 _interp_key
+        key = _interp_key(path)  # 不 realpath，见 _interp_key
         if key not in seen:
             seen.add(key)
             uniq.append((path, source))
@@ -304,8 +311,13 @@ def resolve(found: dict) -> dict:
     `tried` 里是每个候选的 (路径, 来源, 存在与否, import 结论, 耗时 ms)。"""
     tried: "list[dict]" = []
     for python, source in resolver_candidates(found):
-        entry = {"python": python, "source": source,
-                 "exists": os.path.isfile(python), "importable": False, "ms": 0}
+        entry = {
+            "python": python,
+            "source": source,
+            "exists": os.path.isfile(python),
+            "importable": False,
+            "ms": 0,
+        }
         # 「刚试过就是它」只认**同一条路径**，不 realpath（见 _interp_key）：
         # venv 的 python 是指向基础解释器的符号链接，realpath 相同 ≠ 同一个
         # 解释器——按 realpath 跳过会把刚 provision 好的自管环境略过不探测。
@@ -344,16 +356,20 @@ def diagnose_resolved(found: dict, resolution: dict) -> "tuple[str, str]":
     `engine_unavailable` 并指名道姓——静默落到「桌面版」那格，用户改了半天
     桌面安装，问题其实在他自己设的那个变量上。
     """
-    override = next((t for t in resolution["tried"] if t["source"] == "mcp_env"),
-                    None)
+    override = next((t for t in resolution["tried"] if t["source"] == "mcp_env"), None)
     if override is not None and not override["importable"]:
-        why = "指向的文件不存在" if not override["exists"] \
+        why = (
+            "指向的文件不存在"
+            if not override["exists"]
             else "import tavotto.engine 失败（那个环境里没装 tavotto）"
-        return ("engine_unavailable",
-                f"{MCP_PYTHON_ENV} 指定的解释器用不了：{override['python']}"
-                f"（{why}）。修正它，或者去掉这个变量让 resolver 自己找；"
-                "装引擎可用 `python3 <插件目录>/mcp/server.py --provision`。"
-                "改完新开一次 Codex 会话。")
+        )
+        return (
+            "engine_unavailable",
+            f"{MCP_PYTHON_ENV} 指定的解释器用不了：{override['python']}"
+            f"（{why}）。修正它，或者去掉这个变量让 resolver 自己找；"
+            "装引擎可用 `python3 <插件目录>/mcp/server.py --provision`。"
+            "改完新开一次 Codex 会话。",
+        )
     return diagnose(found)
 
 
@@ -361,22 +377,35 @@ def diagnose_resolved(found: dict, resolution: dict) -> "tuple[str, str]":
 #: 正常模式下的六个工具名。降级模式**不把它们列进 tools/list**（列了就是
 #: 伪装成可用），但对着旧会话里模型记住的名字调用时，回结构化错误而不是
 #: method_not_found——错误里说清缺什么、怎么修。
-NORMAL_TOOLS = ("tavotto_open_figure", "tavotto_apply_overrides",
-                "tavotto_preflight", "tavotto_export",
-                "tavotto_verify_replay", "tavotto_close_session")
+NORMAL_TOOLS = (
+    "tavotto_open_figure",
+    "tavotto_apply_overrides",
+    "tavotto_preflight",
+    "tavotto_export",
+    "tavotto_verify_replay",
+    "tavotto_close_session",
+)
+
 
 #: 恢复步骤（结构化，降级 server 与 --health 共用一份）
 def _recovery_steps(code: str) -> "list[str]":
     steps = []
-    if code in ("desktop_only", "engine_unavailable", "tavotto_missing",
-                "desktop_found_cli_missing"):
-        steps.append("方式一（推荐，零配置）：python3 <插件目录>/mcp/server.py"
-                     " --provision  （在 Tavotto 配置目录下建插件自管环境，"
-                     "不碰系统 Python）")
-        steps.append("方式二：pipx install tavotto（或 pip install tavotto），"
-                     "或把 TAVOTTO_MCP_PYTHON 指到一个装了 tavotto 的解释器")
-    steps.append("装好后**新开一次 Codex 会话**——已开的会话不会重新加载"
-                 " MCP 工具（这一步最容易漏）")
+    if code in (
+        "desktop_only",
+        "engine_unavailable",
+        "tavotto_missing",
+        "desktop_found_cli_missing",
+    ):
+        steps.append(
+            "方式一（推荐，零配置）：python3 <插件目录>/mcp/server.py"
+            " --provision  （在 Tavotto 配置目录下建插件自管环境，"
+            "不碰系统 Python）"
+        )
+        steps.append(
+            "方式二：pipx install tavotto（或 pip install tavotto），"
+            "或把 TAVOTTO_MCP_PYTHON 指到一个装了 tavotto 的解释器"
+        )
+    steps.append("装好后**新开一次 Codex 会话**——已开的会话不会重新加载 MCP 工具（这一步最容易漏）")
     steps.append("自检：python3 <插件目录>/mcp/server.py --health")
     return steps
 
@@ -386,19 +415,21 @@ def _degraded_payload(code: str, hint: str, resolution: "dict | None") -> dict:
         "ok": False,
         "code": code,
         "error": hint,
-        "engine": {"available": False, "missing": "一个能 import tavotto.engine"
-                                                  " 的 Python 解释器"},
-        "canvas": {"available": False,
-                   "reason": "内嵌画布跑在 MCP server 里，引擎不可用时它也"
-                             "不可用。桌面窗口 / 浏览器**不是**内嵌画布的替代品。"},
+        "engine": {"available": False, "missing": "一个能 import tavotto.engine 的 Python 解释器"},
+        "canvas": {
+            "available": False,
+            "reason": "内嵌画布跑在 MCP server 里，引擎不可用时它也"
+            "不可用。桌面窗口 / 浏览器**不是**内嵌画布的替代品。",
+        },
         "unavailable_tools": list(NORMAL_TOOLS),
         "recovery": _recovery_steps(code),
         "tried": (resolution or {}).get("tried", []),
     }
 
 
-def _degraded_server(code: str, hint: str, resolution: "dict | None" = None,
-                     stdin=None, stdout=None) -> int:
+def _degraded_server(
+    code: str, hint: str, resolution: "dict | None" = None, stdin=None, stdout=None
+) -> int:
     """跑不起来时的降级 server。
 
     * 能握手（initialize / ping），serverInfo.version 固定 "0"——健康的
@@ -419,11 +450,12 @@ def _degraded_server(code: str, hint: str, resolution: "dict | None" = None,
     health_tool = {
         "name": "tavotto_health",
         "title": "Tavotto 健康检查",
-        "description": ("诊断 Tavotto MCP 的当前状态：引擎在不在、缺什么、"
-                        "怎么恢复。当前引擎不可用（" + code + "），其余工具"
-                        "暂不提供。"),
-        "inputSchema": {"type": "object", "properties": {},
-                        "additionalProperties": False},
+        "description": (
+            "诊断 Tavotto MCP 的当前状态：引擎在不在、缺什么、"
+            "怎么恢复。当前引擎不可用（" + code + "），其余工具"
+            "暂不提供。"
+        ),
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
     }
 
     def send(obj):
@@ -443,37 +475,72 @@ def _degraded_server(code: str, hint: str, resolution: "dict | None" = None,
             continue
         if method == "initialize":
             want = msg.get("params", {}).get("protocolVersion")
-            send({"jsonrpc": "2.0", "id": rid, "result": {
-                "protocolVersion": want if isinstance(want, str) else "2025-11-25",
-                "capabilities": {"tools": {"listChanged": False}},
-                "serverInfo": {"name": "tavotto", "version": "0"},
-                "instructions": f"[{code}] {hint}"}})
+            send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": rid,
+                    "result": {
+                        "protocolVersion": want if isinstance(want, str) else "2025-11-25",
+                        "capabilities": {"tools": {"listChanged": False}},
+                        "serverInfo": {"name": "tavotto", "version": "0"},
+                        "instructions": f"[{code}] {hint}",
+                    },
+                }
+            )
         elif method == "tools/list":
             send({"jsonrpc": "2.0", "id": rid, "result": {"tools": [health_tool]}})
         elif method == "tools/call":
             name = (msg.get("params") or {}).get("name")
             if name == "tavotto_health":
-                send({"jsonrpc": "2.0", "id": rid, "result": {
-                    "content": [{"type": "text",
-                                 "text": f"[{code}] {hint}\n恢复步骤：\n- "
-                                         + "\n- ".join(payload["recovery"])}],
-                    "structuredContent": payload}})
+                send(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": rid,
+                        "result": {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": f"[{code}] {hint}\n恢复步骤：\n- "
+                                    + "\n- ".join(payload["recovery"]),
+                                }
+                            ],
+                            "structuredContent": payload,
+                        },
+                    }
+                )
             elif name in NORMAL_TOOLS:
-                send({"jsonrpc": "2.0", "id": rid, "result": {
-                    "isError": True,
-                    "content": [{"type": "text", "text": f"[{code}] {hint}"}],
-                    "structuredContent": payload}})
+                send(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": rid,
+                        "result": {
+                            "isError": True,
+                            "content": [{"type": "text", "text": f"[{code}] {hint}"}],
+                            "structuredContent": payload,
+                        },
+                    }
+                )
             else:
-                send({"jsonrpc": "2.0", "id": rid,
-                      "error": {"code": -32601, "message": f"没有这个工具: {name}"}})
+                send(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": rid,
+                        "error": {"code": -32601, "message": f"没有这个工具: {name}"},
+                    }
+                )
         elif method == "ping":
             send({"jsonrpc": "2.0", "id": rid, "result": {}})
         elif method in ("resources/list", "resources/templates/list"):
             key = "resources" if method == "resources/list" else "resourceTemplates"
             send({"jsonrpc": "2.0", "id": rid, "result": {key: []}})
         else:
-            send({"jsonrpc": "2.0", "id": rid,
-                  "error": {"code": -32601, "message": f"不支持的方法: {method}"}})
+            send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": rid,
+                    "error": {"code": -32601, "message": f"不支持的方法: {method}"},
+                }
+            )
     return 0
 
 
@@ -488,14 +555,19 @@ def health() -> "tuple[dict, int]":
     report: dict = {
         "ok": False,
         "mode": "degraded",
-        "desktop": {"cli": (found.get("cmd") or [None])[0],
-                    "source": found.get("source"),
-                    "desktop": found.get("desktop")},
-        "widget": {"available": os.path.isfile(widget_file)
-                                and os.path.getsize(widget_file) > 0,
-                   "path": widget_file},
-        "managed_runtime": {"python": managed_python(),
-                            "present": os.path.isfile(managed_python())},
+        "desktop": {
+            "cli": (found.get("cmd") or [None])[0],
+            "source": found.get("source"),
+            "desktop": found.get("desktop"),
+        },
+        "widget": {
+            "available": os.path.isfile(widget_file) and os.path.getsize(widget_file) > 0,
+            "path": widget_file,
+        },
+        "managed_runtime": {
+            "python": managed_python(),
+            "present": os.path.isfile(managed_python()),
+        },
         "notes": [
             "engine 可用但 Codex 里还是没有工具？新开一次会话——已开的会话"
             "不会重新加载 MCP 工具，`codex plugin list` 的 enabled 也不代表"
@@ -504,30 +576,51 @@ def health() -> "tuple[dict, int]":
     }
     if current_ok:
         import tavotto
-        report.update(ok=True, mode="engine", python=sys.executable,
-                      source="current", engine_version=tavotto.__version__)
-        report["tried"] = [{"python": sys.executable, "source": "current",
-                            "exists": True, "importable": True, "ms": 0}]
+
+        report.update(
+            ok=True,
+            mode="engine",
+            python=sys.executable,
+            source="current",
+            engine_version=tavotto.__version__,
+        )
+        report["tried"] = [
+            {
+                "python": sys.executable,
+                "source": "current",
+                "exists": True,
+                "importable": True,
+                "ms": 0,
+            }
+        ]
     else:
         resolution = resolve(found)
-        report["tried"] = [{"python": sys.executable, "source": "current",
-                            "exists": True, "importable": False, "ms": 0}] \
-            + resolution["tried"]
+        report["tried"] = [
+            {
+                "python": sys.executable,
+                "source": "current",
+                "exists": True,
+                "importable": False,
+                "ms": 0,
+            }
+        ] + resolution["tried"]
         if resolution["python"]:
-            report.update(ok=True, mode="engine", python=resolution["python"],
-                          source=resolution["source"])
+            report.update(
+                ok=True, mode="engine", python=resolution["python"], source=resolution["source"]
+            )
             try:
                 proc = subprocess.run(
-                    [resolution["python"], "-c",
-                     "import tavotto; print(tavotto.__version__)"],
-                    capture_output=True, text=True, timeout=30)
+                    [resolution["python"], "-c", "import tavotto; print(tavotto.__version__)"],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
                 report["engine_version"] = (proc.stdout or "").strip() or None
             except (OSError, subprocess.TimeoutExpired):
                 report["engine_version"] = None
         else:
             code, hint = diagnose_resolved(found, resolution)
-            report.update(code=code, error=hint,
-                          recovery=_recovery_steps(code))
+            report.update(code=code, error=hint, recovery=_recovery_steps(code))
     report["timings"] = {"health_ms": int((time.monotonic() - t0) * 1000)}
     return report, (0 if report["ok"] else 3)
 
@@ -568,40 +661,74 @@ def provision(spec: "str | None" = None) -> "tuple[dict, int]":
     def _run(argv, what):
         t = time.monotonic()
         try:
-            proc = subprocess.run(argv, capture_output=True, text=True,
-                                  timeout=900)
+            proc = subprocess.run(argv, capture_output=True, text=True, timeout=900)
         except (OSError, subprocess.TimeoutExpired) as exc:
             steps.append({"step": what, "ok": False, "error": str(exc)})
             return False
-        steps.append({"step": what, "ok": proc.returncode == 0,
-                      "ms": int((time.monotonic() - t) * 1000),
-                      "tail": (proc.stderr or proc.stdout or "")
-                      .strip().splitlines()[-5:]})
+        steps.append(
+            {
+                "step": what,
+                "ok": proc.returncode == 0,
+                "ms": int((time.monotonic() - t) * 1000),
+                "tail": (proc.stderr or proc.stdout or "").strip().splitlines()[-5:],
+            }
+        )
         return proc.returncode == 0
 
     os.makedirs(root, exist_ok=True)
     if not os.path.isfile(python):
         if not _run([sys.executable, "-m", "venv", venv_dir], "venv"):
-            return ({"ok": False, "code": "provision_failed", "steps": steps,
-                     "error": f"建不出 venv（基础解释器 {sys.executable}）"}, 1)
+            return (
+                {
+                    "ok": False,
+                    "code": "provision_failed",
+                    "steps": steps,
+                    "error": f"建不出 venv（基础解释器 {sys.executable}）",
+                },
+                1,
+            )
     if not _run([python, "-m", "pip", "install", "--upgrade", spec], "pip"):
-        return ({"ok": False, "code": "provision_failed", "steps": steps,
-                 "error": f"pip install {spec} 失败（离线？给 --from 指一个"
-                          "本地 wheel 或源码目录）"}, 1)
+        return (
+            {
+                "ok": False,
+                "code": "provision_failed",
+                "steps": steps,
+                "error": f"pip install {spec} 失败（离线？给 --from 指一个本地 wheel 或源码目录）",
+            },
+            1,
+        )
     if not _importable(python):
-        return ({"ok": False, "code": "provision_failed", "steps": steps,
-                 "error": "装完仍 import 不了 tavotto.engine——环境是半成品，"
-                          "删掉 mcp-runtime 目录后重试"}, 1)
-    marker = {"spec": spec, "python": python,
-              "provisioned_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+        return (
+            {
+                "ok": False,
+                "code": "provision_failed",
+                "steps": steps,
+                "error": "装完仍 import 不了 tavotto.engine——环境是半成品，"
+                "删掉 mcp-runtime 目录后重试",
+            },
+            1,
+        )
+    marker = {
+        "spec": spec,
+        "python": python,
+        "provisioned_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
     try:
         with open(os.path.join(root, "provision.json"), "w", encoding="utf-8") as fh:
             json.dump(marker, fh, ensure_ascii=False, indent=1)
     except OSError:
         pass
-    return ({"ok": True, "python": python, "spec": spec, "steps": steps,
-             "ms": int((time.monotonic() - t0) * 1000),
-             "next": "新开一次 Codex 会话即可在 Codex 内使用 Tavotto 画布"}, 0)
+    return (
+        {
+            "ok": True,
+            "python": python,
+            "spec": spec,
+            "steps": steps,
+            "ms": int((time.monotonic() - t0) * 1000),
+            "next": "新开一次 Codex 会话即可在 Codex 内使用 Tavotto 画布",
+        },
+        0,
+    )
 
 
 # --------------------------------- 主入口 -----------------------------------
@@ -617,19 +744,28 @@ def main() -> int:
             at = argv.index("--from")
             spec = argv[at + 1] if at + 1 < len(argv) else None
             if spec is None:
-                print(json.dumps({"ok": False, "code": "bad_args",
-                                  "error": "--from 后面要跟 wheel/源码目录/"
-                                           "requirement"}, ensure_ascii=False))
+                print(
+                    json.dumps(
+                        {
+                            "ok": False,
+                            "code": "bad_args",
+                            "error": "--from 后面要跟 wheel/源码目录/requirement",
+                        },
+                        ensure_ascii=False,
+                    )
+                )
                 return 2
         report, rc = provision(spec)
         print(json.dumps(report, ensure_ascii=False))
         return rc
 
-    sys.path.insert(0, HERE)            # 让 `tavotto_mcp` 包可 import
+    sys.path.insert(0, HERE)  # 让 `tavotto_mcp` 包可 import
     if _current_engine_ok():
         from tavotto_mcp.rpc import StdioConnection
+
         StdioConnection.hijack_stdout()
         from tavotto_mcp.server import main as run
+
         return run(argv)
 
     found = _plugin_locator().find_tavotto()
@@ -637,20 +773,23 @@ def main() -> int:
         t0 = time.monotonic()
         resolution = resolve(found)
         if resolution["python"]:
-            print(f"tavotto-mcp: 引擎解释器 {resolution['python']}"
-                  f"（{resolution['source']}，解析 "
-                  f"{int((time.monotonic() - t0) * 1000)}ms），交棒。",
-                  file=sys.stderr)
+            print(
+                f"tavotto-mcp: 引擎解释器 {resolution['python']}"
+                f"（{resolution['source']}，解析 "
+                f"{int((time.monotonic() - t0) * 1000)}ms），交棒。",
+                file=sys.stderr,
+            )
             os.environ[_EXECED_ENV] = "1"
             # execv 而不是 subprocess：同一个进程 = stdio 原样继承，
             # host 那边不会看到管道换了一层（也不用管转发与信号）
-            os.execv(resolution["python"],
-                     [resolution["python"], os.path.abspath(__file__), *argv])
+            os.execv(resolution["python"], [resolution["python"], os.path.abspath(__file__), *argv])
     else:
         resolution = {"python": None, "source": None, "tried": []}
     code, hint = diagnose_resolved(found, resolution)
-    print(f"tavotto-mcp: 没找到能 import tavotto.engine 的解释器（{code}），"
-          "进入降级模式。" + hint, file=sys.stderr)
+    print(
+        f"tavotto-mcp: 没找到能 import tavotto.engine 的解释器（{code}），进入降级模式。" + hint,
+        file=sys.stderr,
+    )
     return _degraded_server(code, hint, resolution)
 
 

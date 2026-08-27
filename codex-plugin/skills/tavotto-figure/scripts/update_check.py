@@ -39,6 +39,7 @@
 
 纯标准库，Python 3.8+。
 """
+
 from __future__ import annotations
 
 import argparse
@@ -54,8 +55,7 @@ import urllib.request
 SCHEMA = 1
 #: 默认清单地址。与 Tauri updater 的 `latest.json` 同一条惯例
 #: （`releases/latest/download/<名字>`），发布时作为 Release 资产上传。
-DEFAULT_URL = ("https://github.com/Tavotto/Tavotto/releases/latest/download/"
-               "codex-plugin.json")
+DEFAULT_URL = "https://github.com/Tavotto/Tavotto/releases/latest/download/codex-plugin.json"
 URL_ENV = "TAVOTTO_UPDATE_URL"
 DISABLE_ENV = "TAVOTTO_DISABLE_UPDATE_CHECK"
 CACHE_NAME = "codex-plugin-update.json"
@@ -77,8 +77,7 @@ def plugin_manifest_path() -> str:
 
     scripts/ → tavotto-figure/ → skills/ → codex-plugin/ → .codex-plugin/
     """
-    return os.path.normpath(os.path.join(
-        _HERE, "..", "..", "..", ".codex-plugin", "plugin.json"))
+    return os.path.normpath(os.path.join(_HERE, "..", "..", "..", ".codex-plugin", "plugin.json"))
 
 
 def current_version(path: str | None = None) -> str | None:
@@ -106,7 +105,7 @@ def parse_version(text: object) -> tuple | None:
     raw = text.strip().lstrip("vV")
     if not raw:
         return None
-    raw = raw.split("+", 1)[0]                       # 构建元数据不参与比较
+    raw = raw.split("+", 1)[0]  # 构建元数据不参与比较
     core, _, pre = raw.partition("-")
     parts = core.split(".")
     if not parts or len(parts) > 4:
@@ -121,8 +120,7 @@ def parse_version(text: object) -> tuple | None:
     # 没有预发布后缀的排在后面（正式版 > 预发布版）
     if not pre:
         return (tuple(numbers), 1, ())
-    pieces: tuple = tuple(
-        (0, int(p), "") if p.isdigit() else (1, 0, p) for p in pre.split("."))
+    pieces: tuple = tuple((0, int(p), "") if p.isdigit() else (1, 0, p) for p in pre.split("."))
     return (tuple(numbers), 0, pieces)
 
 
@@ -137,6 +135,7 @@ def is_newer(candidate: object, baseline: object) -> bool | None:
 # -------------------------------- 缓存 -----------------------------------
 def cache_path(environ: dict | None = None) -> str:
     from handoff import config_dir  # 目录规则只有一份
+
     return os.path.join(config_dir(environ=environ), CACHE_NAME)
 
 
@@ -191,7 +190,7 @@ def fetch(url: str, timeout: float = TIMEOUT) -> dict | None:
         req = urllib.request.Request(url, headers={"Accept": "application/json"})
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             chunks, total = [], 0
-            while total < 64 * 1024:                 # 清单是几百字节，封个顶
+            while total < 64 * 1024:  # 清单是几百字节，封个顶
                 if time.monotonic() >= deadline:
                     return None
                 block = resp.read(min(_CHUNK, 64 * 1024 - total))
@@ -211,9 +210,15 @@ def fetch(url: str, timeout: float = TIMEOUT) -> dict | None:
 
 
 # ------------------------------- 主判断 ----------------------------------
-def check(*, force: bool = False, environ: dict | None = None,
-          tavotto_version: str | None = None, now: float | None = None,
-          fetcher=fetch, version: str | None = None) -> dict:
+def check(
+    *,
+    force: bool = False,
+    environ: dict | None = None,
+    tavotto_version: str | None = None,
+    now: float | None = None,
+    fetcher=fetch,
+    version: str | None = None,
+) -> dict:
     """回一份 `update` 字段。**永远返回 dict，永远不抛。**
 
     `status`：
@@ -235,15 +240,19 @@ def check(*, force: bool = False, environ: dict | None = None,
         path = cache_path(env)
         cache = read_cache(path)
     except (OSError, ValueError, ImportError):
-        path, cache = "", {}                         # 没缓存也能工作，只是每次都问
+        path, cache = "", {}  # 没缓存也能工作，只是每次都问
     manifest = cache.get("manifest") if cache.get("url") == url else None
 
     due = force or _due(cache, url, now)
     if due:
         fresh = fetcher(url, TIMEOUT)
-        entry = {"schema": SCHEMA, "url": url, "attempted_at": now,
-                 "checked_at": cache.get("checked_at") if cache.get("url") == url else None,
-                 "manifest": manifest}
+        entry = {
+            "schema": SCHEMA,
+            "url": url,
+            "attempted_at": now,
+            "checked_at": cache.get("checked_at") if cache.get("url") == url else None,
+            "manifest": manifest,
+        }
         if fresh is not None:
             entry["checked_at"] = now
             entry["manifest"] = manifest = fresh
@@ -254,7 +263,7 @@ def check(*, force: bool = False, environ: dict | None = None,
         source = "cache"
 
     if not isinstance(manifest, dict):
-        return base                                  # 问不到又没缓存：闭嘴
+        return base  # 问不到又没缓存：闭嘴
     latest = manifest.get("latest_version")
     newer = is_newer(latest, mine)
     out = {
@@ -273,21 +282,24 @@ def check(*, force: bool = False, environ: dict | None = None,
     if tavotto_version and isinstance(required, str):
         too_old = is_newer(required, tavotto_version)
         if too_old:
-            out["tavotto"] = {"status": "too_old", "current_version": tavotto_version,
-                              "required_version": required}
+            out["tavotto"] = {
+                "status": "too_old",
+                "current_version": tavotto_version,
+                "required_version": required,
+            }
     return out
 
 
 def _due(cache: dict, url: str, now: float) -> bool:
     """该问了吗？成功 24 小时一次；失败 1 小时后可重试。"""
     if cache.get("url") != url:
-        return True                                  # 换过地址：缓存不作数
+        return True  # 换过地址：缓存不作数
     checked = cache.get("checked_at")
     if isinstance(checked, (int, float)) and now - checked < INTERVAL:
         return False
     attempted = cache.get("attempted_at")
     if isinstance(attempted, (int, float)) and now - attempted < RETRY_INTERVAL:
-        return False                                 # 刚失败过，别每次画图都白等
+        return False  # 刚失败过，别每次画图都白等
     return True
 
 
@@ -309,9 +321,11 @@ def tavotto_hint(update: dict) -> str | None:
     info = (update or {}).get("tavotto")
     if not info:
         return None
-    return (f"这台机器上的 Tavotto 是 {info['current_version']}，"
-            f"新版插件要求 {info['required_version']} 或更高："
-            "https://github.com/Tavotto/Tavotto/releases")
+    return (
+        f"这台机器上的 Tavotto 是 {info['current_version']}，"
+        f"新版插件要求 {info['required_version']} 或更高："
+        "https://github.com/Tavotto/Tavotto/releases"
+    )
 
 
 # ------------------------------ 显式入口 ---------------------------------
@@ -320,11 +334,13 @@ def main(argv: list[str] | None = None) -> int:
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(
-        description="检查 Tavotto Codex 插件有没有新版本（只提醒，不下载、不安装）")
+        description="检查 Tavotto Codex 插件有没有新版本（只提醒，不下载、不安装）"
+    )
     ap.add_argument("--json", action="store_true", help="输出机器可读结果")
     ap.add_argument("--force", action="store_true", help="忽略 24 小时缓存，立刻问一次")
-    ap.add_argument("--tavotto-version", default=None,
-                    help="本机 Tavotto 的版本（用于比 min_tavotto_version）")
+    ap.add_argument(
+        "--tavotto-version", default=None, help="本机 Tavotto 的版本（用于比 min_tavotto_version）"
+    )
     args = ap.parse_args(argv)
 
     update = check(force=args.force, tavotto_version=args.tavotto_version)

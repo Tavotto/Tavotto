@@ -50,16 +50,16 @@ SCHEMA = 1
 # updater 清单指向其中一个、PyPI 收到另一个，这种状态没有任何一步会报错，
 # 而用户装到的和我们验过的不是同一个东西。
 ROLES = {
-    "wheel":              {"unique": True},
-    "sdist":              {"unique": True},
-    "windows-installer":  {"unique": True},
-    "macos-installer":    {"unique": True},
-    "windows-updater":    {"unique": True},
-    "macos-updater":      {"unique": True},
-    "updater-manifest":   {"unique": True},
-    "sbom":               {"unique": False},
-    "checksums":          {"unique": True},
-    "codex-plugin":       {"unique": False},
+    "wheel": {"unique": True},
+    "sdist": {"unique": True},
+    "windows-installer": {"unique": True},
+    "macos-installer": {"unique": True},
+    "windows-updater": {"unique": True},
+    "macos-updater": {"unique": True},
+    "updater-manifest": {"unique": True},
+    "sbom": {"unique": False},
+    "checksums": {"unique": True},
+    "codex-plugin": {"unique": False},
 }
 
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -81,8 +81,9 @@ def sha256_of(path: Path) -> str:
     return h.hexdigest()
 
 
-def build(version: str, source_sha: str, entries: list[tuple[str, str, str]],
-          base: Path | None = None) -> dict:
+def build(
+    version: str, source_sha: str, entries: list[tuple[str, str, str]], base: Path | None = None
+) -> dict:
     """按 `(role, path, platform)` 造清单。文件不存在**立刻抛**。"""
     if not _SHA_RE.match(source_sha or ""):
         raise ManifestError(f"source_sha 必须是 40 位十六进制，拿到 {source_sha!r}")
@@ -90,8 +91,7 @@ def build(version: str, source_sha: str, entries: list[tuple[str, str, str]],
     arts = []
     for role, rel, platform in entries:
         if role not in ROLES:
-            raise ManifestError(
-                f"不认识的 role {role!r}；认识的：{', '.join(sorted(ROLES))}")
+            raise ManifestError(f"不认识的 role {role!r}；认识的：{', '.join(sorted(ROLES))}")
         # **通配符先判。** 放在「文件不存在」之后的话，喂进来一个
         # `dist/*.whl` 会报「文件不存在 dist/*.whl」——挡是挡住了，
         # 但它把人指向「产物没造出来」，而真实原因是「这里不该写 glob」。
@@ -100,19 +100,26 @@ def build(version: str, source_sha: str, entries: list[tuple[str, str, str]],
             raise ManifestError(
                 f"{role}: 清单里不许出现通配符：{rel}。"
                 f"清单存的必须是**一个具体文件**——glob 进了清单，"
-                f"就等于把 #63 那个 bug 搬到了七个消费者面前")
+                f"就等于把 #63 那个 bug 搬到了七个消费者面前"
+            )
         p = (base / rel) if not Path(rel).is_absolute() else Path(rel)
         if not p.is_file():
             raise ManifestError(f"{role}: 文件不存在 {rel}")
-        arts.append({
-            "role": role,
-            "path": str(rel).replace(os.sep, "/"),
-            "sha256": sha256_of(p),
-            "size": p.stat().st_size,
-            "platform": platform,
-        })
-    m = {"schema": SCHEMA, "version": version, "source_sha": source_sha,
-         "artifacts": sorted(arts, key=lambda a: (a["role"], a["path"]))}
+        arts.append(
+            {
+                "role": role,
+                "path": str(rel).replace(os.sep, "/"),
+                "sha256": sha256_of(p),
+                "size": p.stat().st_size,
+                "platform": platform,
+            }
+        )
+    m = {
+        "schema": SCHEMA,
+        "version": version,
+        "source_sha": source_sha,
+        "artifacts": sorted(arts, key=lambda a: (a["role"], a["path"])),
+    }
     check_shape(m)
     return m
 
@@ -138,11 +145,17 @@ def check_shape(m: dict) -> None:
         if ROLES[role]["unique"] and n > 1:
             raise ManifestError(
                 f"role {role} 出现了 {n} 次，而它必须**恰好一个**。"
-                f"两个 wheel 谁都不会报错，但用户装到的和我们验过的不是同一个")
+                f"两个 wheel 谁都不会报错，但用户装到的和我们验过的不是同一个"
+            )
 
 
-def verify(m: dict, require: list[str], base: Path,
-           version: str | None = None, source_sha: str | None = None) -> list[str]:
+def verify(
+    m: dict,
+    require: list[str],
+    base: Path,
+    version: str | None = None,
+    source_sha: str | None = None,
+) -> list[str]:
     """把清单与磁盘、与期望的版本/SHA 逐条核对。回问题清单（空 = 通过）。"""
     problems: list[str] = []
     try:
@@ -156,7 +169,8 @@ def verify(m: dict, require: list[str], base: Path,
         problems.append(
             f"source SHA 对不上：清单 {m['source_sha']}，期望 {source_sha}。"
             f"**这意味着产物不是同一个 commit 造的**——"
-            f"「同一个 tag」证明不了这件事，两个 workflow 各自 checkout 就会分叉")
+            f"「同一个 tag」证明不了这件事，两个 workflow 各自 checkout 就会分叉"
+        )
 
     have = {a["role"] for a in m["artifacts"]}
     for role in require:
@@ -172,7 +186,8 @@ def verify(m: dict, require: list[str], base: Path,
         if got != a["sha256"]:
             problems.append(
                 f"{a['role']}: sha256 对不上（清单 {a['sha256'][:12]}…，"
-                f"磁盘 {got[:12]}…）——产物在造好之后被换过")
+                f"磁盘 {got[:12]}…）——产物在造好之后被换过"
+            )
         if p.stat().st_size != a.get("size", p.stat().st_size):
             problems.append(f"{a['role']}: 大小对不上")
     return problems
@@ -192,13 +207,18 @@ def merge(manifests: list[dict]) -> dict:
         raise ManifestError(
             f"source SHA 不一致：{sorted(shas)}。"
             f"**wheel 与桌面产物必须来自同一个 commit**——"
-            f"这正是合并这一步要挡住的东西")
+            f"这正是合并这一步要挡住的东西"
+        )
     arts: list[dict] = []
     for m in manifests:
         arts.extend(m["artifacts"])
-    out = {"schema": SCHEMA, "version": versions.pop(), "source_sha": shas.pop(),
-           "artifacts": sorted(arts, key=lambda a: (a["role"], a["path"]))}
-    check_shape(out)          # 合并之后 unique 约束才真正生效
+    out = {
+        "schema": SCHEMA,
+        "version": versions.pop(),
+        "source_sha": shas.pop(),
+        "artifacts": sorted(arts, key=lambda a: (a["role"], a["path"])),
+    }
+    check_shape(out)  # 合并之后 unique 约束才真正生效
     return out
 
 
@@ -212,11 +232,17 @@ def path_of(m: dict, role: str) -> str:
 
 
 def render_summary(m: dict) -> str:
-    L = [f"### 发行产物清单 · {m['version']} · `{m['source_sha'][:12]}`", "",
-         "| role | 文件 | 平台 | 大小 | sha256 |", "|---|---|---|---:|---|"]
+    L = [
+        f"### 发行产物清单 · {m['version']} · `{m['source_sha'][:12]}`",
+        "",
+        "| role | 文件 | 平台 | 大小 | sha256 |",
+        "|---|---|---|---:|---|",
+    ]
     for a in m["artifacts"]:
-        L.append(f"| `{a['role']}` | `{a['path']}` | {a['platform']} | "
-                 f"{a.get('size', 0):,} | `{a['sha256'][:16]}…` |")
+        L.append(
+            f"| `{a['role']}` | `{a['path']}` | {a['platform']} | "
+            f"{a.get('size', 0):,} | `{a['sha256'][:16]}…` |"
+        )
     return "\n".join(L) + "\n"
 
 
@@ -250,16 +276,21 @@ def _utf8_stdout() -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     b = sub.add_parser("build")
     b.add_argument("--version", required=True)
     b.add_argument("--source-sha", required=True)
-    b.add_argument("--add", action="append", default=[],
-                   metavar="ROLE:PATH:PLATFORM",
-                   help="可重复。PATH 必须是**一个具体文件**，不许是 glob")
+    b.add_argument(
+        "--add",
+        action="append",
+        default=[],
+        metavar="ROLE:PATH:PLATFORM",
+        help="可重复。PATH 必须是**一个具体文件**，不许是 glob",
+    )
     b.add_argument("--base", type=Path, default=Path.cwd())
     b.add_argument("--out", type=Path, required=True)
 
@@ -289,8 +320,7 @@ def main(argv: list[str] | None = None) -> int:
                     raise ManifestError(f"--add 要 ROLE:PATH:PLATFORM，拿到 {spec!r}")
                 entries.append((parts[0], parts[1], parts[2]))
             m = build(a.version, a.source_sha, entries, a.base)
-            a.out.write_text(json.dumps(m, indent=2, ensure_ascii=False) + "\n",
-                             encoding="utf-8")
+            a.out.write_text(json.dumps(m, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
             print(render_summary(m))
             _step_summary(render_summary(m))
             return 0
@@ -302,11 +332,12 @@ def main(argv: list[str] | None = None) -> int:
             if problems:
                 for p in problems:
                     print(f"::error::{p}")
-                print("\n产物清单校验未通过：\n  " + "\n  ".join(problems),
-                      file=sys.stderr)
+                print("\n产物清单校验未通过：\n  " + "\n  ".join(problems), file=sys.stderr)
                 return 1
-            print(f"产物清单校验通过：{len(m['artifacts'])} 个产物，"
-                  f"版本 {m['version']}，SHA {m['source_sha'][:12]}")
+            print(
+                f"产物清单校验通过：{len(m['artifacts'])} 个产物，"
+                f"版本 {m['version']}，SHA {m['source_sha'][:12]}"
+            )
             _step_summary(render_summary(m))
             return 0
 
@@ -316,8 +347,7 @@ def main(argv: list[str] | None = None) -> int:
 
         if a.cmd == "merge":
             m = merge([_load(p) for p in a.manifests])
-            a.out.write_text(json.dumps(m, indent=2, ensure_ascii=False) + "\n",
-                             encoding="utf-8")
+            a.out.write_text(json.dumps(m, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
             print(render_summary(m))
             _step_summary(render_summary(m))
             return 0

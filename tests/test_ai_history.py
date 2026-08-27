@@ -1,4 +1,5 @@
 """AI 历史（SQLite）与 capabilities 探测、CLI 命令构造。"""
+
 import pytest
 
 from tavotto.engine import ai_agents, ai_bridge, ai_history
@@ -10,17 +11,30 @@ def db(tmp_path):
 
 
 def _start(db, sid="s1", **kw):
-    ai_history.record_start({
-        "id": sid, "project": "/p", "provider": "codex",
-        "prompt": kw.pop("prompt", "改图例"), "target": kw.pop("target", "整张图"),
-        "script": "fig9.py", **kw,
-    }, db_path=db)
+    ai_history.record_start(
+        {
+            "id": sid,
+            "project": "/p",
+            "provider": "codex",
+            "prompt": kw.pop("prompt", "改图例"),
+            "target": kw.pop("target", "整张图"),
+            "script": "fig9.py",
+            **kw,
+        },
+        db_path=db,
+    )
 
 
 def test_roundtrip_and_end(db):
     _start(db, model="gpt-5-codex", effort="high")
-    ai_history.record_end("s1", "done", diff="+x", changed=True,
-                          transcript=[{"kind": "message", "text": "ok"}], db_path=db)
+    ai_history.record_end(
+        "s1",
+        "done",
+        diff="+x",
+        changed=True,
+        transcript=[{"kind": "message", "text": "ok"}],
+        db_path=db,
+    )
     row = ai_history.get("s1", db_path=db)
     assert row["status"] == "done" and row["changed"] is True
     assert row["model"] == "gpt-5-codex" and row["effort"] == "high"
@@ -66,6 +80,7 @@ def test_pin_delete_purge(db):
 
 # ---------------- capabilities 与命令构造 -------------------------------------
 
+
 @pytest.fixture(autouse=True)
 def _clean_caps_cache():
     """capabilities 缓存是模块级全局：本文件的用例在 monkeypatch 生效期间
@@ -76,9 +91,10 @@ def _clean_caps_cache():
 
 def _fake_candidates(paths_by_agent, source="path"):
     """把 `ai_agents.candidates` 钉成给定路径（带来源标签）。"""
+
     def fake(agent, override=None):
-        return [ai_agents.CliCandidate(p, source)
-                for p in paths_by_agent(agent.id)]
+        return [ai_agents.CliCandidate(p, source) for p in paths_by_agent(agent.id)]
+
     return fake
 
 
@@ -104,7 +120,7 @@ def test_capabilities_reports_uninstalled(monkeypatch):
     for name in ("codex", "claude"):
         p = _agent(caps, name)
         assert p["installed"] is False and p["models"] == []
-        assert p["state"] == "not_installed"        # 没装 ≠ 坏了
+        assert p["state"] == "not_installed"  # 没装 ≠ 坏了
         assert p["usable"] is False
         # 未安装时给出一键安装的可行性信息（npm 在不在由测试机决定，不断言）
         assert p["install"]["method"] == "npm" and p["install"]["package"]
@@ -113,8 +129,7 @@ def test_capabilities_reports_uninstalled(monkeypatch):
 
 def test_capabilities_agent_specific(monkeypatch):
     _no_readiness(monkeypatch)
-    monkeypatch.setattr(ai_agents, "candidates",
-                        _fake_candidates(lambda i: [f"/fake/{i}"]))
+    monkeypatch.setattr(ai_agents, "candidates", _fake_candidates(lambda i: [f"/fake/{i}"]))
     monkeypatch.setattr(ai_agents, "probe_version", lambda argv: "v1.0")
     ai_agents.clear_cache()
     caps = ai_bridge.capabilities(refresh=True)
@@ -142,20 +157,20 @@ def test_broken_candidate_falls_through(monkeypatch):
     def cands(agent, override=None):
         return [
             ai_agents.CliCandidate(
-                rf"C:\Users\x\AppData\Local\Microsoft\WindowsApps\{agent.id}.exe",
-                "windows_alias"),
-            ai_agents.CliCandidate(
-                rf"C:\Users\x\AppData\Roaming\npm\{agent.id}.cmd", "npm_global"),
+                rf"C:\Users\x\AppData\Local\Microsoft\WindowsApps\{agent.id}.exe", "windows_alias"
+            ),
+            ai_agents.CliCandidate(rf"C:\Users\x\AppData\Roaming\npm\{agent.id}.cmd", "npm_global"),
         ]
 
     monkeypatch.setattr(ai_agents, "candidates", cands)
     monkeypatch.setattr(ai_agents, "resolve_shim", lambda p: None)
-    monkeypatch.setattr(ai_agents, "probe_version",
-                        lambda argv: "v9.9" if "npm" in argv[0] else None)
+    monkeypatch.setattr(
+        ai_agents, "probe_version", lambda argv: "v9.9" if "npm" in argv[0] else None
+    )
     codex = _agent(ai_bridge.capabilities(refresh=True), "codex")
     assert codex["installed"] is True
     assert "npm" in codex["executable_path"] and codex["version"] == "v9.9"
-    assert codex["detection_source"] == "npm_global"   # 来源如实记账
+    assert codex["detection_source"] == "npm_global"  # 来源如实记账
 
     # 全部候选都启动不了：**broken**（不是 not_installed）+ 指出坏在哪
     ai_bridge.invalidate_capabilities()
@@ -179,10 +194,12 @@ def test_start_install_reports_missing_npm(monkeypatch):
 
 def _install_registry(monkeypatch):
     """让 `_cmd` 能拿到一个「已解析」的 CLI，而不用真去探测。"""
+
     def fake_resolve(agent, probe_readiness=True):
-        return ai_agents.Resolution(argv=[f"/fake/{agent.id}"],
-                                    path=f"/fake/{agent.id}", version="v1",
-                                    source="path")
+        return ai_agents.Resolution(
+            argv=[f"/fake/{agent.id}"], path=f"/fake/{agent.id}", version="v1", source="path"
+        )
+
     monkeypatch.setattr(ai_agents, "resolve", fake_resolve)
 
 
@@ -192,7 +209,7 @@ def test_cmd_passes_model_and_effort(monkeypatch):
     assert "-m" in cmd and "gpt-5" in cmd
     assert "-c" in cmd and "model_reasoning_effort=high" in cmd
     assert cmd[-1] == "p"  # prompt 恒在末位
-    assert env == {}       # 没选第三方接口就不注入任何环境变量
+    assert env == {}  # 没选第三方接口就不注入任何环境变量
     cmd, _ = ai_bridge._cmd("claude", "p", "/cwd", model="opus")
     assert "--model" in cmd and "opus" in cmd
     # 不传参数 = 不携带对应 flag
@@ -209,31 +226,54 @@ def test_cmd_is_equivalent_to_the_pre_registry_shape(monkeypatch):
     """
     _install_registry(monkeypatch)
     cmd, _ = ai_bridge._cmd("codex", "PROMPT", "/figs")
-    assert cmd == ["/fake/codex", "exec", "-C", "/figs", "--json",
-                   "--sandbox", "workspace-write", "--skip-git-repo-check",
-                   "PROMPT"]
+    assert cmd == [
+        "/fake/codex",
+        "exec",
+        "-C",
+        "/figs",
+        "--json",
+        "--sandbox",
+        "workspace-write",
+        "--skip-git-repo-check",
+        "PROMPT",
+    ]
     cmd, _ = ai_bridge._cmd("claude", "PROMPT", "/figs")
-    assert cmd == ["/fake/claude", "-p", "PROMPT",
-                   "--permission-mode", "acceptEdits",
-                   "--output-format", "stream-json", "--include-partial-messages",
-                   "--verbose"]
+    assert cmd == [
+        "/fake/claude",
+        "-p",
+        "PROMPT",
+        "--permission-mode",
+        "acceptEdits",
+        "--output-format",
+        "stream-json",
+        "--include-partial-messages",
+        "--verbose",
+    ]
 
 
 def test_cmd_injects_third_party_endpoint(monkeypatch):
     """第三方接口只经环境变量 / `-c` 临时覆盖注入——绝不改写用户
     自己的 ~/.claude/settings.json 或 ~/.codex/config.toml。"""
     _install_registry(monkeypatch)
-    claude_ep = {"agent": "claude", "label": "Kimi", "api_key": "sk-k",
-                 "base_url": "https://api.moonshot.cn/anthropic"}
-    cmd, env = ai_bridge._cmd("claude", "p", "/cwd", model="kimi-k2",
-                              endpoint=claude_ep)
+    claude_ep = {
+        "agent": "claude",
+        "label": "Kimi",
+        "api_key": "sk-k",
+        "base_url": "https://api.moonshot.cn/anthropic",
+    }
+    cmd, env = ai_bridge._cmd("claude", "p", "/cwd", model="kimi-k2", endpoint=claude_ep)
     assert env["ANTHROPIC_BASE_URL"] == "https://api.moonshot.cn/anthropic"
     assert env["ANTHROPIC_AUTH_TOKEN"] == "sk-k"
     assert env["ANTHROPIC_MODEL"] == "kimi-k2"
     assert not any(a.startswith("ANTHROPIC") for a in cmd)  # 密钥不进命令行
 
-    codex_ep = {"agent": "codex", "label": "DeepSeek", "api_key": "sk-d",
-                "base_url": "https://api.deepseek.com/v1", "wire_api": "chat"}
+    codex_ep = {
+        "agent": "codex",
+        "label": "DeepSeek",
+        "api_key": "sk-d",
+        "base_url": "https://api.deepseek.com/v1",
+        "wire_api": "chat",
+    }
     cmd, env = ai_bridge._cmd("codex", "p", "/cwd", endpoint=codex_ep)
     joined = " ".join(cmd)
     assert 'model_provider="tavotto"' in joined
@@ -279,5 +319,6 @@ def test_build_prompt_normalized(tmp_path):
 
     # 上下文照常拼进去
     p3 = ai_bridge._build_prompt(
-        "fig1.py", "换配色", {"stem": "Fig1", "gid": "axes_0"}, str(tmp_path))
+        "fig1.py", "换配色", {"stem": "Fig1", "gid": "axes_0"}, str(tmp_path)
+    )
     assert "Fig1" in p3 and "axes_0" in p3 and "换配色" in p3

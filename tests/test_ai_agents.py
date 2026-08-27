@@ -4,6 +4,7 @@
 注册表说了算、适配器各管各的、通用层对它们一视同仁。所有用例都是 mock 的
 ——开发机上装没装 codex / claude 与结论无关（真 CLI 的冒烟另外条件 skip）。
 """
+
 import json
 import os
 import subprocess
@@ -19,11 +20,13 @@ _REAL_RUN_PROBE = ai_agents._run_probe
 
 def _honour_override(fallback):
     """候选桩：优先用配置里的自定义路径（与真实 candidates 同一条优先级）。"""
+
     def fake(agent, override=None):
         custom = override if override is not None else ai_agents.path_override(agent.id)
         if custom:
             return [ai_agents.CliCandidate(custom, "custom")]
         return [ai_agents.CliCandidate(p, s) for p, s in fallback]
+
     return fake
 
 
@@ -37,6 +40,7 @@ def _clean(monkeypatch):
 
 
 # ---------------- 注册表纪律 --------------------------------------------------
+
 
 def test_registry_ids_are_unique_and_ordered():
     ids = ai_agents.agent_ids()
@@ -59,11 +63,13 @@ def test_every_agent_declares_the_full_contract():
 def test_unknown_agent_id_is_refused_everywhere():
     """未知 id 一律当场拒，绝不继续往下传（更不会被拼进命令行）。"""
     assert ai_agents.get_agent("opencode") is None
-    for call in (lambda: ai_bridge.require_agent("opencode"),
-                 lambda: ai_bridge.start_install("opencode"),
-                 lambda: ai_bridge.set_agent_enabled("opencode", True),
-                 lambda: ai_bridge.set_agent_path_override("opencode", "/x"),
-                 lambda: ai_bridge.require_usable("opencode")):
+    for call in (
+        lambda: ai_bridge.require_agent("opencode"),
+        lambda: ai_bridge.start_install("opencode"),
+        lambda: ai_bridge.set_agent_enabled("opencode", True),
+        lambda: ai_bridge.set_agent_path_override("opencode", "/x"),
+        lambda: ai_bridge.require_usable("opencode"),
+    ):
         with pytest.raises(ai_bridge.AgentError) as exc:
             call()
         assert exc.value.code == "ai_agent_unknown"
@@ -75,6 +81,7 @@ class _FakeAgent(ai_agents.AgentDefinition):
     它的作用是反证「capabilities 里没有硬编码分支」：把它塞进注册表，
     通用层必须原样把它当第三个 Agent 处理——不需要在 ai_bridge / app 里
     加任何一行。"""
+
     id = "fake"
     display_name = "Fake Agent"
     icon_key = "fake"
@@ -97,12 +104,12 @@ class _FakeAgent(ai_agents.AgentDefinition):
 
 def test_a_third_agent_needs_no_new_branch(monkeypatch):
     """把 Fake Adapter 加进注册表 → capabilities 自动多一条，形状齐全。"""
-    monkeypatch.setattr(ai_agents, "AGENT_REGISTRY",
-                        (*ai_agents.AGENT_REGISTRY, _FakeAgent()))
+    monkeypatch.setattr(ai_agents, "AGENT_REGISTRY", (*ai_agents.AGENT_REGISTRY, _FakeAgent()))
     monkeypatch.setattr(
-        ai_agents, "candidates",
-        lambda agent, override=None: [
-            ai_agents.CliCandidate(f"/fake/{agent.id}", "path")])
+        ai_agents,
+        "candidates",
+        lambda agent, override=None: [ai_agents.CliCandidate(f"/fake/{agent.id}", "path")],
+    )
     monkeypatch.setattr(ai_agents, "probe_version", lambda argv: "v1")
     caps = ai_bridge.capabilities(refresh=True)
     ids = [a["id"] for a in caps["agents"]]
@@ -111,11 +118,13 @@ def test_a_third_agent_needs_no_new_branch(monkeypatch):
     assert fake["display_name"] == "Fake Agent"
     assert fake["state"] == "installed" and fake["usable"] is True
     assert fake["models"] == ["m1"]
-    assert fake["features"] == {"third_party_endpoints": False,
-                                "model_selection": True,
-                                "effort_selection": False,
-                                "wire_api_selection": False,
-                                "readiness_probe": False}
+    assert fake["features"] == {
+        "third_party_endpoints": False,
+        "model_selection": True,
+        "effort_selection": False,
+        "wire_api_selection": False,
+        "readiness_probe": False,
+    }
     # 不声明 install spec 就没有安装入口（界面据此不画那个按钮）
     assert "install" not in fake
     # 第三方接口的白名单也跟着注册表走，不是第二份手写清单
@@ -128,20 +137,23 @@ def test_a_third_agent_needs_no_new_branch(monkeypatch):
 
 # ---------------- 候选来源与优先级 --------------------------------------------
 
+
 def test_custom_path_wins_over_everything(tmp_path, monkeypatch):
     exe = tmp_path / "mycodex"
     exe.write_text("#!/bin/sh\n", encoding="utf-8")
     exe.chmod(0o755)
-    monkeypatch.setattr(ai_agents.shutil, "which",
-                        lambda name, path=None: "/usr/bin/codex")
+    monkeypatch.setattr(ai_agents.shutil, "which", lambda name, path=None: "/usr/bin/codex")
     cands = ai_agents.candidates(ai_agents.get_agent("codex"), override=str(exe))
     assert cands[0].path == str(exe) and cands[0].source == "custom"
-    assert "/usr/bin/codex" in [c.path for c in cands]   # PATH 仍是次选
+    assert "/usr/bin/codex" in [c.path for c in cands]  # PATH 仍是次选
 
 
 def test_path_candidate_is_tagged_path(monkeypatch):
-    monkeypatch.setattr(ai_agents.shutil, "which",
-                        lambda name, path=None: "/usr/bin/codex" if path is None else None)
+    monkeypatch.setattr(
+        ai_agents.shutil,
+        "which",
+        lambda name, path=None: "/usr/bin/codex" if path is None else None,
+    )
     cands = ai_agents.candidates(ai_agents.get_agent("codex"), override="")
     assert cands and cands[0] == ai_agents.CliCandidate("/usr/bin/codex", "path")
 
@@ -152,20 +164,28 @@ def test_common_location_candidates_carry_their_source(tmp_path, monkeypatch):
     brew = tmp_path / "brew"
     brew.mkdir()
     (brew / "codex").write_text("", encoding="utf-8")
-    monkeypatch.setattr(ai_agents, "search_locations",
-                        lambda name: [ai_agents.SearchLocation(str(brew), "homebrew")])
-    monkeypatch.setattr(ai_agents.shutil, "which",
-                        lambda name, path=None: (str(brew / name) if path else None))
+    monkeypatch.setattr(
+        ai_agents,
+        "search_locations",
+        lambda name: [ai_agents.SearchLocation(str(brew), "homebrew")],
+    )
+    monkeypatch.setattr(
+        ai_agents.shutil, "which", lambda name, path=None: str(brew / name) if path else None
+    )
     cands = ai_agents.candidates(ai_agents.get_agent("codex"), override="")
     assert cands == [ai_agents.CliCandidate(str(brew / "codex"), "homebrew")]
 
 
 def test_resolution_records_where_it_was_found(monkeypatch):
     monkeypatch.setattr(
-        ai_agents, "candidates",
+        ai_agents,
+        "candidates",
         lambda agent, override=None: [
-            ai_agents.CliCandidate("/Applications/ChatGPT.app/Contents/Resources/codex",
-                                   "chatgpt_bundle")])
+            ai_agents.CliCandidate(
+                "/Applications/ChatGPT.app/Contents/Resources/codex", "chatgpt_bundle"
+            )
+        ],
+    )
     monkeypatch.setattr(ai_agents, "probe_version", lambda argv: "codex-cli 1.0")
     ai_agents.clear_cache()
     res = ai_agents.resolve(ai_agents.get_agent("codex"))
@@ -175,8 +195,10 @@ def test_resolution_records_where_it_was_found(monkeypatch):
 def test_only_a_real_version_launch_counts(monkeypatch):
     """光有文件不算数：`--version` 起不来就当没有（找到候选 = broken）。"""
     monkeypatch.setattr(
-        ai_agents, "candidates",
-        lambda agent, override=None: [ai_agents.CliCandidate("/x/codex", "path")])
+        ai_agents,
+        "candidates",
+        lambda agent, override=None: [ai_agents.CliCandidate("/x/codex", "path")],
+    )
     monkeypatch.setattr(ai_agents, "probe_version", lambda argv: None)
     ai_agents.clear_cache()
     res = ai_agents.resolve(ai_agents.get_agent("codex"))
@@ -184,6 +206,7 @@ def test_only_a_real_version_launch_counts(monkeypatch):
 
 
 # ---------------- 就绪检查 ----------------------------------------------------
+
 
 def test_readiness_never_sends_a_model_request(monkeypatch):
     """健康检查只允许跑官方的**本地状态**子命令。
@@ -212,8 +235,7 @@ def test_readiness_never_sends_a_model_request(monkeypatch):
 
 
 def _probe(monkeypatch, code, text):
-    monkeypatch.setattr(ai_agents, "_run_probe",
-                        lambda argv, timeout=10: (code, text))
+    monkeypatch.setattr(ai_agents, "_run_probe", lambda argv, timeout=10: (code, text))
 
 
 def test_codex_readiness_states(monkeypatch):
@@ -226,15 +248,21 @@ def test_codex_readiness_states(monkeypatch):
     _probe(monkeypatch, 2, "error: unrecognized subcommand 'status'")
     assert codex.readiness(["/x"]).state == "unknown"
     monkeypatch.setattr(ai_agents, "_run_probe", lambda argv, timeout=10: None)
-    assert codex.readiness(["/x"]).state == "unknown"      # 超时 / 起不来
+    assert codex.readiness(["/x"]).state == "unknown"  # 超时 / 起不来
 
 
 def test_claude_readiness_reads_only_the_logged_in_flag(monkeypatch):
     """`claude auth status` 的 JSON 里还有邮箱、组织名、订阅档位。
     **只取 loggedIn**——其余一个字节都不该进 capabilities、日志或诊断包。"""
     claude = ai_agents.get_agent("claude")
-    payload = json.dumps({"loggedIn": True, "email": "someone@example.com",
-                          "orgName": "Someone's Org", "subscriptionType": "max"})
+    payload = json.dumps(
+        {
+            "loggedIn": True,
+            "email": "someone@example.com",
+            "orgName": "Someone's Org",
+            "subscriptionType": "max",
+        }
+    )
     _probe(monkeypatch, 0, payload)
     out = claude.readiness(["/x"])
     assert out.state == "ready"
@@ -247,40 +275,48 @@ def test_claude_readiness_reads_only_the_logged_in_flag(monkeypatch):
 
 def test_readiness_timeout_does_not_hang_the_settings_page(monkeypatch):
     """就绪检查超时 = unknown = 界面显示「已安装」，其余一切照常工作。"""
+
     def boom(argv, **kw):
         raise subprocess.TimeoutExpired(argv, kw.get("timeout", 1))
 
     monkeypatch.setattr(ai_agents.subprocess, "run", boom)
     monkeypatch.setattr(
-        ai_agents, "candidates",
-        lambda agent, override=None: [ai_agents.CliCandidate("/x/cli", "path")])
+        ai_agents,
+        "candidates",
+        lambda agent, override=None: [ai_agents.CliCandidate("/x/cli", "path")],
+    )
     monkeypatch.setattr(ai_agents, "probe_version", lambda argv: "v1")
     ai_agents.clear_cache()
     caps = ai_bridge.capabilities(refresh=True)
     codex = caps["agents"][0]
-    assert codex["state"] == "installed"          # 不是 ready，也不是 needs_auth
+    assert codex["state"] == "installed"  # 不是 ready，也不是 needs_auth
     assert codex["diagnostics"]["readiness"] == "unknown"
 
 
 def test_needs_auth_is_not_usable(monkeypatch):
     monkeypatch.setattr(
-        ai_agents, "candidates",
-        lambda agent, override=None: [ai_agents.CliCandidate(f"/x/{agent.id}", "path")])
+        ai_agents,
+        "candidates",
+        lambda agent, override=None: [ai_agents.CliCandidate(f"/x/{agent.id}", "path")],
+    )
     monkeypatch.setattr(ai_agents, "probe_version", lambda argv: "v1")
     _probe(monkeypatch, 1, "Not logged in")
     ai_agents.clear_cache()
     codex = ai_bridge.capabilities(refresh=True)["agents"][0]
     assert codex["state"] == "needs_auth"
     assert codex["installed"] is True and codex["enabled"] is True
-    assert codex["usable"] is False               # 明确要登录 = 现在派不了活
+    assert codex["usable"] is False  # 明确要登录 = 现在派不了活
 
 
 # ---------------- enabled / usable 语义 ---------------------------------------
 
+
 def _installed(monkeypatch):
     monkeypatch.setattr(
-        ai_agents, "candidates",
-        lambda agent, override=None: [ai_agents.CliCandidate(f"/x/{agent.id}", "path")])
+        ai_agents,
+        "candidates",
+        lambda agent, override=None: [ai_agents.CliCandidate(f"/x/{agent.id}", "path")],
+    )
     monkeypatch.setattr(ai_agents, "probe_version", lambda argv: "v1")
     ai_agents.clear_cache()
 
@@ -340,6 +376,7 @@ def test_disabled_agent_is_refused_at_run_time(monkeypatch):
 
 # ---------------- 接了第三方接口时，CLI 自己的登录态不算数 ----------------
 
+
 def test_endpoint_backed_agent_stays_usable_without_cli_login(monkeypatch):
     """配了第三方接口的用户不该因为「没登录官方账号」被踢出选择器。
 
@@ -347,22 +384,29 @@ def test_endpoint_backed_agent_stays_usable_without_cli_login(monkeypatch):
     去回答「现在能不能派活」是把判据的主语搞错了。（PR #128 评审 P1）
     """
     _installed(monkeypatch)
-    _probe(monkeypatch, 1, "Not logged in")          # CLI 自己没登录
+    _probe(monkeypatch, 1, "Not logged in")  # CLI 自己没登录
     ai_bridge.invalidate_capabilities()
     # 先确认「没接接口时」它确实是 needs_auth——否则这条用例什么也没证明
     assert _codex(ai_bridge.capabilities(refresh=True))["state"] == "needs_auth"
 
-    ai_providers.save({"id": "deepseek-oai", "label": "DeepSeek", "agent": "codex",
-                       "base_url": "https://api.deepseek.com/v1",
-                       "api_key": "sk-x", "wire_api": "chat"})
+    ai_providers.save(
+        {
+            "id": "deepseek-oai",
+            "label": "DeepSeek",
+            "agent": "codex",
+            "base_url": "https://api.deepseek.com/v1",
+            "api_key": "sk-x",
+            "wire_api": "chat",
+        }
+    )
     ai_providers.set_active("codex", "deepseek-oai")
     ai_bridge.invalidate_capabilities()
     entry = _codex(ai_bridge.capabilities(refresh=True))
-    assert entry["state"] == "installed"             # 不再是 needs_auth
-    assert entry["usable"] is True                   # 选择器里留得住
+    assert entry["state"] == "installed"  # 不再是 needs_auth
+    assert entry["usable"] is True  # 选择器里留得住
     # 原始结论照实记在诊断里，只是不再当闸
     assert entry["diagnostics"]["readiness"] == "needs_auth"
-    ai_bridge.require_usable("codex")                # 运行这条闸也放行
+    ai_bridge.require_usable("codex")  # 运行这条闸也放行
 
 
 def test_an_endpoint_that_injects_nothing_does_not_excuse_the_login(monkeypatch):
@@ -374,8 +418,15 @@ def test_an_endpoint_that_injects_nothing_does_not_excuse_the_login(monkeypatch)
     """
     _installed(monkeypatch)
     _probe(monkeypatch, 1, "Not logged in")
-    ai_providers.save({"id": "official", "label": "OpenAI 官方", "agent": "codex",
-                       "base_url": "", "wire_api": "responses"})
+    ai_providers.save(
+        {
+            "id": "official",
+            "label": "OpenAI 官方",
+            "agent": "codex",
+            "base_url": "",
+            "wire_api": "responses",
+        }
+    )
     ai_providers.set_active("codex", "official")
     ai_bridge.invalidate_capabilities()
     entry = _codex(ai_bridge.capabilities(refresh=True))
@@ -395,12 +446,12 @@ def test_run_refuses_an_agent_that_needs_auth(monkeypatch):
 
 # ---------------- 自定义可执行文件 --------------------------------------------
 
+
 def test_custom_path_is_validated_the_same_way_as_autodetection(tmp_path, monkeypatch):
     exe = tmp_path / "codex"
     exe.write_text("", encoding="utf-8")
-    exe.chmod(0o755)                     # 校验要求可执行位，fixture 得是真的
-    monkeypatch.setattr(ai_agents, "probe_version_detailed",
-                        lambda argv: ("codex-cli 9.9", None))
+    exe.chmod(0o755)  # 校验要求可执行位，fixture 得是真的
+    monkeypatch.setattr(ai_agents, "probe_version_detailed", lambda argv: ("codex-cli 9.9", None))
     monkeypatch.setattr(ai_agents, "candidates", _honour_override([]))
     monkeypatch.setattr(ai_agents, "probe_version", lambda argv: "codex-cli 9.9")
     caps = ai_bridge.set_agent_path_override("codex", str(exe))
@@ -414,8 +465,7 @@ def test_invalid_custom_path_does_not_clobber_the_saved_one(tmp_path, monkeypatc
     good = tmp_path / "codex"
     good.write_text("", encoding="utf-8")
     good.chmod(0o755)
-    monkeypatch.setattr(ai_agents, "probe_version_detailed",
-                        lambda argv: ("codex-cli 9.9", None))
+    monkeypatch.setattr(ai_agents, "probe_version_detailed", lambda argv: ("codex-cli 9.9", None))
     monkeypatch.setattr(ai_agents, "candidates", _honour_override([]))
     monkeypatch.setattr(ai_agents, "probe_version", lambda argv: "codex-cli 9.9")
     ai_bridge.set_agent_path_override("codex", str(good))
@@ -425,8 +475,7 @@ def test_invalid_custom_path_does_not_clobber_the_saved_one(tmp_path, monkeypatc
     bad = tmp_path / "codex-broken"
     bad.write_text("", encoding="utf-8")
     bad.chmod(0o755)
-    monkeypatch.setattr(ai_agents, "probe_version_detailed",
-                        lambda argv: (None, "launch_failed"))
+    monkeypatch.setattr(ai_agents, "probe_version_detailed", lambda argv: (None, "launch_failed"))
     with pytest.raises(ai_bridge.AgentError) as exc:
         ai_bridge.set_agent_path_override("codex", str(bad))
     assert exc.value.code == "ai_agent_executable_invalid"
@@ -438,8 +487,7 @@ def test_invalid_custom_path_does_not_clobber_the_saved_one(tmp_path, monkeypatc
     assert exc.value.code == "ai_agent_executable_invalid"
 
     # 探测超时有自己的 code（可重试，不是「路径填错了」）
-    monkeypatch.setattr(ai_agents, "probe_version_detailed",
-                        lambda argv: (None, "timeout"))
+    monkeypatch.setattr(ai_agents, "probe_version_detailed", lambda argv: (None, "timeout"))
     with pytest.raises(ai_bridge.AgentError) as exc:
         ai_bridge.set_agent_path_override("codex", str(bad))
     assert exc.value.code == "ai_agent_probe_timeout"
@@ -454,8 +502,7 @@ def test_custom_path_refuses_an_arbitrary_executable(tmp_path, monkeypatch):
     换掉将要被启动的程序。判据是文件名必须指向这个 Agent。
     """
     codex = ai_agents.get_agent("codex")
-    monkeypatch.setattr(ai_agents, "probe_version_detailed",
-                        lambda argv: ("codex-cli 9.9", None))
+    monkeypatch.setattr(ai_agents, "probe_version_detailed", lambda argv: ("codex-cli 9.9", None))
 
     evil = tmp_path / "sh"
     evil.write_text("#!/bin/sh\n", encoding="utf-8")
@@ -495,10 +542,12 @@ def test_custom_path_normalises_before_judging(tmp_path, monkeypatch):
     assert res.argv is None and res.error == "not_this_agent"
 
 
-@pytest.mark.skipif(os.name == "nt",
-                    reason="Windows 没有可执行位语义：os.access(X_OK) 对任何存在的"
-                           "文件都为真。那一侧由 test_windows_regressions.py 的"
-                           "「起不来的文件仍然被拒」看护")
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="Windows 没有可执行位语义：os.access(X_OK) 对任何存在的"
+    "文件都为真。那一侧由 test_windows_regressions.py 的"
+    "「起不来的文件仍然被拒」看护",
+)
 def test_custom_path_requires_an_executable_bit(tmp_path, monkeypatch):
     """POSIX：没有可执行位的文件当场拒，不必等到 spawn 才失败。"""
     codex = ai_agents.get_agent("codex")
@@ -521,8 +570,7 @@ def test_a_file_that_cannot_run_is_refused_on_every_platform(tmp_path, monkeypat
     """
     codex = ai_agents.get_agent("codex")
     monkeypatch.setattr(ai_agents.os, "access", lambda *a, **k: True)
-    monkeypatch.setattr(ai_agents, "probe_version_detailed",
-                        lambda argv: (None, "launch_failed"))
+    monkeypatch.setattr(ai_agents, "probe_version_detailed", lambda argv: (None, "launch_failed"))
     plain = tmp_path / "codex"
     plain.write_text("这不是可执行文件", encoding="utf-8")
     res = ai_agents.validate_executable(codex, str(plain))
@@ -539,10 +587,8 @@ def test_clearing_the_override_returns_to_autodetection(tmp_path, monkeypatch):
     exe = tmp_path / "codex"
     exe.write_text("", encoding="utf-8")
     exe.chmod(0o755)
-    monkeypatch.setattr(ai_agents, "probe_version_detailed",
-                        lambda argv: ("v1", None))
-    monkeypatch.setattr(ai_agents, "candidates",
-                        _honour_override([("/usr/bin/codex", "path")]))
+    monkeypatch.setattr(ai_agents, "probe_version_detailed", lambda argv: ("v1", None))
+    monkeypatch.setattr(ai_agents, "candidates", _honour_override([("/usr/bin/codex", "path")]))
     monkeypatch.setattr(ai_agents, "probe_version", lambda argv: "v1")
     ai_bridge.set_agent_path_override("codex", str(exe))
     assert _codex(ai_bridge.capabilities())["detection_source"] == "custom"
@@ -554,14 +600,20 @@ def test_clearing_the_override_returns_to_autodetection(tmp_path, monkeypatch):
 
 # ---------------- 旧配置迁移 --------------------------------------------------
 
+
 def test_legacy_cli_paths_migrate_into_the_generic_shape(tmp_path, monkeypatch):
     """v0.10 及更早存的是 `ai.codex_path` / `ai.claude_path`。
 
     迁移完必须**删掉旧键**：两份权威并存的话，一边改路径另一边不知道。
     """
     monkeypatch.setenv("TAVOTTO_CONFIG_DIR", str(tmp_path))
-    cfg = {"ai": {"codex_path": "/old/codex", "claude_path": "/old/claude",
-                  "providers": [{"id": "kimi", "agent": "claude"}]}}
+    cfg = {
+        "ai": {
+            "codex_path": "/old/codex",
+            "claude_path": "/old/claude",
+            "providers": [{"id": "kimi", "agent": "claude"}],
+        }
+    }
     config.save({**config._defaults(), **cfg})
 
     agents = config.ai_agent_settings()
@@ -575,17 +627,24 @@ def test_legacy_cli_paths_migrate_into_the_generic_shape(tmp_path, monkeypatch):
 
 def test_legacy_migration_does_not_override_the_new_shape(tmp_path, monkeypatch):
     monkeypatch.setenv("TAVOTTO_CONFIG_DIR", str(tmp_path))
-    config.save({**config._defaults(),
-                 "ai": {"codex_path": "/old/codex",
-                        "agents": {"codex": {"path_override": "/new/codex"}}}})
+    config.save(
+        {
+            **config._defaults(),
+            "ai": {
+                "codex_path": "/old/codex",
+                "agents": {"codex": {"path_override": "/new/codex"}},
+            },
+        }
+    )
     assert config.ai_agent_settings()["codex"]["path_override"] == "/new/codex"
 
 
 def test_unknown_agent_settings_survive(tmp_path, monkeypatch):
     """配置里留着不认识的 Agent（降级 / 未来版本）不能让设置页整个炸掉。"""
     monkeypatch.setenv("TAVOTTO_CONFIG_DIR", str(tmp_path))
-    config.save({**config._defaults(),
-                 "ai": {"agents": {"someday": {"enabled": True}, "codex": {}}}})
+    config.save(
+        {**config._defaults(), "ai": {"agents": {"someday": {"enabled": True}, "codex": {}}}}
+    )
     assert config.ai_agent_settings()["someday"] == {"enabled": True}
     caps = ai_bridge.capabilities(refresh=True)
     assert [a["id"] for a in caps["agents"]] == ["codex", "claude"]
@@ -594,6 +653,7 @@ def test_unknown_agent_settings_survive(tmp_path, monkeypatch):
 
 
 # ---------------- 一键安装的包名来源 -------------------------------------------
+
 
 def test_install_package_comes_only_from_the_adapter(monkeypatch):
     """包名写死在适配器里；请求体里没有、也不接受任何包名字段。"""
@@ -612,6 +672,7 @@ def test_install_package_comes_only_from_the_adapter(monkeypatch):
         if ai_bridge.install_status("codex")["status"] != "running":
             break
         import time as _t
+
         _t.sleep(0.01)
     assert ran and ran[0] == ["/usr/bin/npm", "install", "-g", "@openai/codex"]
     assert ai_bridge.install_status("codex")["status"] == "done"
@@ -622,11 +683,14 @@ def test_npm_success_still_requires_a_real_launch(monkeypatch):
     monkeypatch.setattr(ai_bridge, "_npm_argv", lambda: ["/usr/bin/npm"])
     monkeypatch.setattr(ai_bridge, "_INSTALLS", {})
     monkeypatch.setattr(
-        ai_bridge.subprocess, "run",
-        lambda argv, **kw: subprocess.CompletedProcess(argv, 0, "added 1 package", ""))
+        ai_bridge.subprocess,
+        "run",
+        lambda argv, **kw: subprocess.CompletedProcess(argv, 0, "added 1 package", ""),
+    )
     monkeypatch.setattr(ai_agents, "candidates", lambda agent, override=None: [])
     ai_bridge.start_install("codex")
     import time as _t
+
     for _ in range(200):
         if ai_bridge.install_status("codex")["status"] != "running":
             break
@@ -637,20 +701,19 @@ def test_npm_success_still_requires_a_real_launch(monkeypatch):
 
 # ---------------- 输出分类的等价性 ---------------------------------------------
 
+
 def test_codex_classification_is_unchanged():
     st: dict = {}
-    line = json.dumps({"type": "item.completed",
-                       "item": {"type": "agent_message", "text": "done"}})
+    line = json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": "done"}})
     assert ai_bridge._classify("codex", line, st) == [("message", "done")]
     st = {}
-    upd = json.dumps({"type": "item.updated",
-                      "item": {"type": "agent_message", "text": "hel"}})
+    upd = json.dumps({"type": "item.updated", "item": {"type": "agent_message", "text": "hel"}})
     assert ai_bridge._classify("codex", upd, st) == [("delta", "hel")]
-    upd2 = json.dumps({"type": "item.updated",
-                       "item": {"type": "agent_message", "text": "hello"}})
+    upd2 = json.dumps({"type": "item.updated", "item": {"type": "agent_message", "text": "hello"}})
     assert ai_bridge._classify("codex", upd2, st) == [("delta", "lo")]
-    cmd = json.dumps({"type": "item.completed",
-                      "item": {"type": "command_execution", "command": "ls"}})
+    cmd = json.dumps(
+        {"type": "item.completed", "item": {"type": "command_execution", "command": "ls"}}
+    )
     assert ai_bridge._classify("codex", cmd, st) == [("action", "$ ls")]
     patch = json.dumps({"type": "item.completed", "item": {"type": "patch_apply"}})
     assert ai_bridge._classify("codex", patch, st) == [("action", "✎ 修改文件")]
@@ -659,16 +722,30 @@ def test_codex_classification_is_unchanged():
 
 def test_claude_classification_is_unchanged():
     st: dict = {}
-    delta = json.dumps({"type": "stream_event",
-                        "event": {"type": "content_block_delta",
-                                  "delta": {"type": "text_delta", "text": "hi"}}})
+    delta = json.dumps(
+        {
+            "type": "stream_event",
+            "event": {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "hi"}},
+        }
+    )
     assert ai_bridge._classify("claude", delta, st) == [("delta", "hi")]
-    asst = json.dumps({"type": "assistant", "message": {"content": [
-        {"type": "text", "text": "ok"},
-        {"type": "tool_use", "name": "Edit", "input": {"file_path": "a.py"}},
-        {"type": "thinking", "thinking": "hmm"}]}})
+    asst = json.dumps(
+        {
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {"type": "text", "text": "ok"},
+                    {"type": "tool_use", "name": "Edit", "input": {"file_path": "a.py"}},
+                    {"type": "thinking", "thinking": "hmm"},
+                ]
+            },
+        }
+    )
     assert ai_bridge._classify("claude", asst, st) == [
-        ("message", "ok"), ("action", "✎ Edit a.py"), ("thinking", "hmm")]
+        ("message", "ok"),
+        ("action", "✎ Edit a.py"),
+        ("thinking", "hmm"),
+    ]
     err = json.dumps({"type": "result", "is_error": True, "result": "boom"})
     assert ai_bridge._classify("claude", err, st) == [("message", "boom")]
     assert ai_bridge._classify("claude", json.dumps({"type": "system"}), st) == []
@@ -680,8 +757,11 @@ def test_classification_of_an_unknown_agent_is_empty():
 
 # ---------------- 真 CLI 冒烟（装了才跑）---------------------------------------
 
-@pytest.mark.skipif(not os.environ.get("TAVOTTO_REAL_CLI_SMOKE"),
-                    reason="需要本机真的装了 codex / claude；设 TAVOTTO_REAL_CLI_SMOKE=1 开启")
+
+@pytest.mark.skipif(
+    not os.environ.get("TAVOTTO_REAL_CLI_SMOKE"),
+    reason="需要本机真的装了 codex / claude；设 TAVOTTO_REAL_CLI_SMOKE=1 开启",
+)
 def test_real_cli_detection_smoke():
     ai_agents.clear_cache()
     for agent in ai_agents.agents():

@@ -11,6 +11,7 @@ MCP Roots 从协议版本 2026-07-28 起已弃用；Tavotto 仍在 2025-era stdi
 
 纯标准库。
 """
+
 from __future__ import annotations
 
 import ntpath
@@ -22,8 +23,12 @@ from urllib.parse import urlsplit
 from urllib.request import url2pathname
 
 ROOTS_ENV = "TAVOTTO_MCP_ROOTS"
-WORKSPACE_ENVS = ("TAVOTTO_MCP_WORKSPACE", "CODEX_WORKSPACE_ROOT",
-                  "CODEX_PROJECT_ROOT", "CODEX_WORKSPACE_DIR")
+WORKSPACE_ENVS = (
+    "TAVOTTO_MCP_WORKSPACE",
+    "CODEX_WORKSPACE_ROOT",
+    "CODEX_PROJECT_ROOT",
+    "CODEX_WORKSPACE_DIR",
+)
 
 
 def _within(path: str, root: str) -> bool:
@@ -54,8 +59,10 @@ def _windows_absolute_realpath(path: str, resolver) -> str:
             resolved = resolver(probe)
             break
         except OSError as exc:
-            if (not isinstance(exc, FileNotFoundError)
-                    and getattr(exc, "winerror", None) not in {2, 3}):
+            if not isinstance(exc, FileNotFoundError) and getattr(exc, "winerror", None) not in {
+                2,
+                3,
+            }:
                 raise
             parent, name = ntpath.split(probe)
             if not name or parent == probe:
@@ -68,9 +75,9 @@ def _windows_absolute_realpath(path: str, resolver) -> str:
     if not had_prefix:
         folded = ntpath.normcase(resolved)
         if folded.startswith(ntpath.normcase(unc_prefix)):
-            resolved = "\\\\" + resolved[len(unc_prefix):]
+            resolved = "\\\\" + resolved[len(unc_prefix) :]
         elif folded.startswith(ntpath.normcase(prefix)):
-            resolved = resolved[len(prefix):]
+            resolved = resolved[len(prefix) :]
     return resolved
 
 
@@ -93,8 +100,7 @@ def is_filesystem_root(path: str) -> bool:
     normalized = os.path.normpath(path)
     if not os.path.isabs(normalized):
         return False
-    return (os.path.normcase(os.path.dirname(normalized))
-            == os.path.normcase(normalized))
+    return os.path.normcase(os.path.dirname(normalized)) == os.path.normcase(normalized)
 
 
 @dataclass(frozen=True)
@@ -144,8 +150,9 @@ class RootAuthority:
             self._generation = 0
             self._last_identity: tuple[str, tuple[str, ...], tuple[str, ...]] | None = None
 
-    def observe_client(self, protocol_version: str | None,
-                       capabilities: Any, client_info: Any) -> None:
+    def observe_client(
+        self, protocol_version: str | None, capabilities: Any, client_info: Any
+    ) -> None:
         """记录 initialize 中由宿主自己声明的 capability；不猜。"""
         caps = capabilities if isinstance(capabilities, dict) else {}
         roots_cap = caps.get("roots")
@@ -158,13 +165,11 @@ class RootAuthority:
             self._client_capability_keys = tuple(sorted(str(key) for key in caps))
             self._client_elicitation = isinstance(caps.get("elicitation"), dict)
             self._client_sampling = isinstance(caps.get("sampling"), dict)
-            self._user_binding_state = (
-                "available" if self._client_elicitation else "unsupported")
+            self._user_binding_state = "available" if self._client_elicitation else "unsupported"
             self._user_root = None
             self._user_binding_error = None
             self._protocol_supported = supported
-            self._protocol_list_changed = bool(
-                supported and roots_cap.get("listChanged"))
+            self._protocol_list_changed = bool(supported and roots_cap.get("listChanged"))
             self._protocol_state = "pending" if supported else "unsupported"
             self._protocol_roots = ()
             self._protocol_error = None
@@ -183,7 +188,9 @@ class RootAuthority:
             return False
         with self._lock:
             return self._protocol_supported and self._protocol_state in {
-                "pending", "stale", "error"
+                "pending",
+                "stale",
+                "error",
             }
 
     def user_binding_candidate(self, target: Any) -> str | None:
@@ -329,8 +336,7 @@ class RootAuthority:
     def _select_unlocked(self) -> tuple[tuple[str, ...], str, tuple[str, ...]]:
         raw = (os.environ.get(ROOTS_ENV) or "").strip()
         if raw:
-            roots, warnings = self._paths_from_config(raw, reject_plugin=True,
-                                                       reject_fs_root=True)
+            roots, warnings = self._paths_from_config(raw, reject_plugin=True, reject_fs_root=True)
             return roots, "explicit_env", warnings
 
         if self._protocol_supported:
@@ -338,8 +344,7 @@ class RootAuthority:
                 return self._protocol_roots, "mcp_roots", self._protocol_warnings
             if self._protocol_state in {"pending", "stale"}:
                 return (), "mcp_roots_pending", ()
-            return (), "mcp_roots_error", tuple(
-                x for x in (self._protocol_error,) if x)
+            return (), "mcp_roots_error", tuple(x for x in (self._protocol_error,) if x)
 
         if self._user_root is not None:
             return (self._user_root,), "user_elicitation", ()
@@ -348,7 +353,8 @@ class RootAuthority:
             hint = (os.environ.get(name) or "").strip()
             if hint:
                 roots, warnings = self._paths_from_config(
-                    hint, reject_plugin=True, reject_fs_root=True)
+                    hint, reject_plugin=True, reject_fs_root=True
+                )
                 return roots, f"workspace_env:{name}", warnings
 
         try:
@@ -361,8 +367,9 @@ class RootAuthority:
             return (), "none", ("进程 cwd 是文件系统根目录，不作为工作区",)
         return (cwd,), "cwd", ()
 
-    def _paths_from_config(self, raw: str, *, reject_plugin: bool,
-                           reject_fs_root: bool) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    def _paths_from_config(
+        self, raw: str, *, reject_plugin: bool, reject_fs_root: bool
+    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
         accepted: list[str] = []
         warnings: list[str] = []
         for item in (part.strip() for part in raw.split(os.pathsep)):

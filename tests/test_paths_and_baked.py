@@ -1,4 +1,5 @@
 """safe_resolve 越权防护、layout_path 清洗、baked 历史的迁移与截断。"""
+
 import json
 
 import pytest
@@ -64,9 +65,17 @@ def _make_project(tmp_path, name: str, stems: list[str]):
     figs = tmp_path / name
     figs.mkdir(parents=True, exist_ok=True)
     (figs / "fig.py").write_text("def main():\n    pass\n", encoding="utf-8")
-    (figs / "tavotto_registry.json").write_text(json.dumps({"version": 1, "scripts": {
-        "fig.py": {"entry": "main", "cost": "light", "notes": "", "stems": stems},
-    }}), encoding="utf-8")
+    (figs / "tavotto_registry.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "scripts": {
+                    "fig.py": {"entry": "main", "cost": "light", "notes": "", "stems": stems},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     m.open_project(str(figs))
     return m.PROJECTS[m._project_id(figs.resolve())]
 
@@ -79,6 +88,7 @@ def baked(tmp_path, monkeypatch):
     绝不碰真实数据目录。
     """
     from tavotto.engine import pool as engine_pool
+
     m.reset_projects()
     monkeypatch.setattr(m, "BAKED_DIR", tmp_path / "_baked")
     monkeypatch.setattr(m, "BAKED_PATH", tmp_path / "_legacy_baked.json")
@@ -95,12 +105,21 @@ def test_load_baked_missing_file(baked, tmp_path):
 def test_load_baked_migrates_legacy_single_version(baked, tmp_path):
     ctx = _make_project(tmp_path, "pa", ["Fig1"])
     m._baked_path(ctx).parent.mkdir(parents=True, exist_ok=True)
-    m._baked_path(ctx).write_text(json.dumps(
-        {"Fig1": {"patches": [{"gid": "g", "prop": "p", "value": 1}],
-                  "updated_at": "2026-01-01"}}), encoding="utf-8")
+    m._baked_path(ctx).write_text(
+        json.dumps(
+            {
+                "Fig1": {
+                    "patches": [{"gid": "g", "prop": "p", "value": 1}],
+                    "updated_at": "2026-01-01",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
     data = m.load_baked(ctx)
     assert data["Fig1"]["versions"] == [
-        {"ts": "2026-01-01", "patches": [{"gid": "g", "prop": "p", "value": 1}]}]
+        {"ts": "2026-01-01", "patches": [{"gid": "g", "prop": "p", "value": 1}]}
+    ]
 
 
 def test_append_baked_concurrent_no_lost_updates(baked, tmp_path):
@@ -151,18 +170,25 @@ def test_legacy_global_baked_migrates_once_filtered_by_registry(baked, tmp_path)
     别的项目的 stem 留在旧文件里等它自己迁移（所以旧文件不删）；迁移之后
     分键文件即唯一权威——再往旧文件里塞东西也不会漏进来。
     """
-    baked.write_text(json.dumps({
-        "Fig1": {"versions": [{"ts": "t", "patches": [{"gid": "g", "prop": "p",
-                                                       "value": 1}]}]},
-        "Other": {"versions": [{"ts": "t", "patches": [{"gid": "x", "prop": "p",
-                                                        "value": 2}]}]},
-    }), encoding="utf-8")
+    baked.write_text(
+        json.dumps(
+            {
+                "Fig1": {
+                    "versions": [{"ts": "t", "patches": [{"gid": "g", "prop": "p", "value": 1}]}]
+                },
+                "Other": {
+                    "versions": [{"ts": "t", "patches": [{"gid": "x", "prop": "p", "value": 2}]}]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     ctx = _make_project(tmp_path, "pa", ["Fig1"])
 
     data = m.load_baked(ctx)
-    assert set(data) == {"Fig1"}                 # 本项目认得的 stem 才搬
+    assert set(data) == {"Fig1"}  # 本项目认得的 stem 才搬
     assert m._baked_path(ctx).is_file()
-    assert baked.is_file()                       # 旧文件保留：别的项目还要迁
+    assert baked.is_file()  # 旧文件保留：别的项目还要迁
 
     # 迁移只发生一次：旧文件后来变了也不再影响本项目
     legacy = json.loads(baked.read_text(encoding="utf-8"))
@@ -174,8 +200,9 @@ def test_legacy_global_baked_migrates_once_filtered_by_registry(baked, tmp_path)
 def test_legacy_migration_writes_empty_file_when_nothing_matches(baked, tmp_path):
     """一条都没搬也要落一个空文件——否则「本项目没有基线」与「还没迁移」
     分不开，每次读都要再翻一遍旧文件。"""
-    baked.write_text(json.dumps(
-        {"Other": {"versions": [{"ts": "t", "patches": []}]}}), encoding="utf-8")
+    baked.write_text(
+        json.dumps({"Other": {"versions": [{"ts": "t", "patches": []}]}}), encoding="utf-8"
+    )
     ctx = _make_project(tmp_path, "pa", ["Fig1"])
     assert m.load_baked(ctx) == {}
     assert json.loads(m._baked_path(ctx).read_text(encoding="utf-8")) == {}
@@ -183,6 +210,7 @@ def test_legacy_migration_writes_empty_file_when_nothing_matches(baked, tmp_path
 
 def test_crop_clip_maps_normalized_rect():
     import pymupdf
+
     src = pymupdf.Rect(0, 0, 100, 200)
     clip = pb._crop_clip(src, {"x": 0.25, "y": 0.5, "w": 0.5, "h": 0.25})
     assert (clip.x0, clip.y0, clip.x1, clip.y1) == (25, 100, 75, 150)
@@ -224,21 +252,24 @@ def test_tavottofile_store(figs, monkeypatch):
     assert client.get("/api/layouts/旧画布").status_code == 200
 
     # 版本历史 → tavottofile/versions/
-    ok = client.post("/api/versions/doc9", json={
-        "doc": {"schema": 2, "page": {"w": 10, "h": 10}, "objects": [], "guides": []}})
+    ok = client.post(
+        "/api/versions/doc9",
+        json={"doc": {"schema": 2, "page": {"w": 10, "h": 10}, "objects": [], "guides": []}},
+    )
     assert ok.status_code == 200, ok.get_json()
     assert (figs / "tavottofile" / "versions" / "doc9.json").is_file()
 
     # 数据目录里升级前的历史只读兜底
     m.VERSIONS_DIR.mkdir(parents=True, exist_ok=True)
     (m.VERSIONS_DIR / "docold.json").write_text(
-        json.dumps({"versions": [{"id": "v1", "name": "n", "ts": 0, "doc": {}}]}),
-        encoding="utf-8")
+        json.dumps({"versions": [{"id": "v1", "name": "n", "ts": 0, "doc": {}}]}), encoding="utf-8"
+    )
     got = client.get("/api/versions/docold").get_json()["versions"]
     assert [v["id"] for v in got] == ["v1"]
 
     # 素材扫描剪掉 tavottofile/：同一份真 PDF，根目录的收录、export/ 里的不收
     import pymupdf
+
     exp = figs / "tavottofile" / "export"
     exp.mkdir(parents=True, exist_ok=True)
     doc = pymupdf.open()

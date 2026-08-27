@@ -4,6 +4,7 @@
 `tavotto.engine.pool` 一路下去会 import 不少模块，任何一行 print 落进 stdout
 都会让 host 侧看到「不是合法 JSON-RPC」然后断开，而错误现场早就过去了。
 """
+
 from __future__ import annotations
 
 import sys

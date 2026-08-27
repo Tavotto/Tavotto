@@ -13,6 +13,7 @@
 
 纯标准库。
 """
+
 from __future__ import annotations
 
 from typing import NamedTuple
@@ -29,7 +30,7 @@ _OPENER = {"^": "sup", "_": "sub"}
 
 class TextRun(NamedTuple):
     text: str
-    script: str        # "" | "sup" | "sub"
+    script: str  # "" | "sup" | "sub"
 
 
 def _match_brace(text: str, open_at: int) -> int:
@@ -62,7 +63,7 @@ def parse_runs(text: str) -> list[TextRun]:
     while i < len(text):
         ch = text[i]
         if ch == "\\" and i + 1 < len(text) and text[i + 1] in "^_\\":
-            buf += text[i + 1]           # 转义：\^ \_ \\ → 字面量
+            buf += text[i + 1]  # 转义：\^ \_ \\ → 字面量
             i += 2
             continue
         kind = _OPENER.get(ch)
@@ -72,7 +73,7 @@ def parse_runs(text: str) -> list[TextRun]:
                 if buf:
                     runs.append(TextRun(buf, ""))
                     buf = ""
-                inner = text[i + 2:close]
+                inner = text[i + 2 : close]
                 if inner:
                     runs.append(TextRun(inner, kind))
                 i = close + 1

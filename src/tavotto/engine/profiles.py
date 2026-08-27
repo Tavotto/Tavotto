@@ -16,6 +16,7 @@ journal 覆盖（期刊自定义尺寸）是**浅合并 + 三个白名单子对�
 覆盖后的 profile 带 `derived_from` 与 `journal`，proof report 里据实写出来
 ——「这张图是按哪套规矩过的检」必须能从留档里读回来。
 """
+
 from __future__ import annotations
 
 import copy
@@ -37,14 +38,31 @@ DEFAULT_SEVERITY = "warn"
 SEVERITIES = ("error", "warn", "not_verifiable", "suggestion")
 
 #: journal 覆盖里允许深合并的子对象（其余键整体替换）
-_DEEP_KEYS = ("widths_mm", "legend_policy", "axis_policy", "font_family",
-              "cjk_fallback", "severity", "preferred_formats")
+_DEEP_KEYS = (
+    "widths_mm",
+    "legend_policy",
+    "axis_policy",
+    "font_family",
+    "cjk_fallback",
+    "severity",
+    "preferred_formats",
+)
 
 _REQUIRED = (
-    "profile_id", "version", "widths_mm", "allowed_aspect_ratios",
-    "font_family", "cjk_fallback", "default_font_size_pt",
-    "min_effective_font_size_pt", "min_raster_dpi", "preferred_formats",
-    "line_widths_pt", "axis_policy", "legend_policy", "palette_policy",
+    "profile_id",
+    "version",
+    "widths_mm",
+    "allowed_aspect_ratios",
+    "font_family",
+    "cjk_fallback",
+    "default_font_size_pt",
+    "min_effective_font_size_pt",
+    "min_raster_dpi",
+    "preferred_formats",
+    "line_widths_pt",
+    "axis_policy",
+    "legend_policy",
+    "palette_policy",
     "severity",
 )
 
@@ -65,6 +83,7 @@ def profiles_path() -> Path:
         return Path(override)
     try:
         from importlib.resources import files
+
         cand = Path(str(files("tavotto").joinpath("profiles", PROFILE_FILE)))
         if cand.is_file():
             return cand
@@ -93,11 +112,11 @@ def _validate(profile: dict, pid: str) -> None:
         raise ProfileError(f"profile {pid} 缺少字段: {', '.join(missing)}")
     if profile.get("profile_id") != pid:
         raise ProfileError(
-            f"profile 的键与 profile_id 不一致: {pid} != {profile.get('profile_id')}")
+            f"profile 的键与 profile_id 不一致: {pid} != {profile.get('profile_id')}"
+        )
     for key, value in (profile.get("severity") or {}).items():
         if value not in SEVERITIES:
-            raise ProfileError(
-                f"profile {pid} 的 severity[{key}] 不是合法等级: {value!r}")
+            raise ProfileError(f"profile {pid} 的 severity[{key}] 不是合法等级: {value!r}")
     widths = profile.get("widths_mm") or {}
     for key in ("single", "double"):
         if not isinstance(widths.get(key), (int, float)) or widths[key] <= 0:
@@ -109,10 +128,14 @@ def list_profiles() -> list[dict]:
     doc = _load_document()
     out = []
     for pid, profile in doc["profiles"].items():
-        out.append({"profile_id": pid,
-                    "version": profile.get("version", ""),
-                    "label": profile.get("label", pid),
-                    "source": profile.get("source", "")})
+        out.append(
+            {
+                "profile_id": pid,
+                "version": profile.get("version", ""),
+                "label": profile.get("label", pid),
+                "source": profile.get("source", ""),
+            }
+        )
     return sorted(out, key=lambda p: p["profile_id"] != doc.get("default_profile"))
 
 
@@ -144,7 +167,8 @@ def load(profile_id: str | None = None, journal: dict | None = None) -> dict:
     pid = profile_id or doc.get("default_profile")
     if pid not in doc["profiles"]:
         raise ProfileError(
-            f"没有这个出版规范: {pid!r}（可用: {', '.join(sorted(doc['profiles']))}）")
+            f"没有这个出版规范: {pid!r}（可用: {', '.join(sorted(doc['profiles']))}）"
+        )
     profile = copy.deepcopy(doc["profiles"][pid])
     _validate(profile, pid)
     if not journal:
@@ -169,9 +193,11 @@ def severity_of(profile: dict, check_id: str) -> str:
 
 def stamp(profile: dict) -> dict:
     """proof report / MCP 响应里的 profile 身份戳。"""
-    out = {"profile_id": profile.get("profile_id"),
-           "profile_version": profile.get("version"),
-           "label": profile.get("label", "")}
+    out = {
+        "profile_id": profile.get("profile_id"),
+        "profile_version": profile.get("version"),
+        "label": profile.get("label", ""),
+    }
     if profile.get("journal"):
         out["journal"] = profile["journal"]
         out["derived_from"] = profile.get("derived_from")

@@ -33,6 +33,7 @@
 失败就**大声失败**（非零退出）：这条链路和桌面遥测相反——桌面丢事件必须无声，
 定时采集器丢数据必须有人看见，否则看板会安静地缺一段而没人知道。
 """
+
 from __future__ import annotations
 
 import argparse
@@ -140,8 +141,7 @@ def classify_asset(name: str) -> tuple[str, str]:
 def _platform_hint(lower: str) -> str:
     if "macos" in lower or "darwin" in lower or lower.endswith((".dmg", ".app.tar.gz")):
         return "macos"
-    if "windows" in lower or "win" in lower or lower.endswith((".exe", ".msi",
-                                                               ".nsis.zip")):
+    if "windows" in lower or "win" in lower or lower.endswith((".exe", ".msi", ".nsis.zip")):
         return "windows"
     if lower.endswith((".appimage", ".deb", ".rpm")) or "linux" in lower:
         return "linux"
@@ -162,52 +162,54 @@ def github_release_snapshots(releases: list[dict], observed_date: str) -> list[d
     for release in releases or []:
         if not isinstance(release, dict):
             continue
-        release_id = _clamp(release.get("id"), 10 ** 12)
+        release_id = _clamp(release.get("id"), 10**12)
         tag = str(release.get("tag_name") or "")[:32] or "untagged"
         for asset in release.get("assets") or []:
             if not isinstance(asset, dict):
                 continue
             name = str(asset.get("name") or "")
-            asset_id = _clamp(asset.get("id"), 10 ** 12)
+            asset_id = _clamp(asset.get("id"), 10**12)
             role, platform = classify_asset(name)
-            out.append({
-                "event": "github_release_asset_snapshot",
-                "properties": {
-                    "release_id": release_id,
-                    "release_tag": tag,
-                    # 身份是 asset_id：资产被删掉重传时文件名会重复，id 不会
-                    "asset_id": asset_id,
-                    "asset_role": role,
-                    "platform": platform,
-                    # 累计计数器，不是日增量——看板做差才是区间下载量
-                    "download_count_total": _clamp(asset.get("download_count"),
-                                                   10 ** 9),
-                    "observed_date": observed_date,
-                    "snapshot_key": f"gh-asset:{asset_id}:{observed_date}",
-                },
-            })
+            out.append(
+                {
+                    "event": "github_release_asset_snapshot",
+                    "properties": {
+                        "release_id": release_id,
+                        "release_tag": tag,
+                        # 身份是 asset_id：资产被删掉重传时文件名会重复，id 不会
+                        "asset_id": asset_id,
+                        "asset_role": role,
+                        "platform": platform,
+                        # 累计计数器，不是日增量——看板做差才是区间下载量
+                        "download_count_total": _clamp(asset.get("download_count"), 10**9),
+                        "observed_date": observed_date,
+                        "snapshot_key": f"gh-asset:{asset_id}:{observed_date}",
+                    },
+                }
+            )
     return out
 
 
 def github_repo_snapshot(repo: dict, observed_date: str) -> list[dict]:
     if not isinstance(repo, dict):
         return []
-    return [{
-        "event": "github_repo_snapshot",
-        "properties": {
-            "stars": _clamp(repo.get("stargazers_count"), 10 ** 8),
-            "forks": _clamp(repo.get("forks_count"), 10 ** 8),
-            "observed_date": observed_date,
-            "snapshot_key": f"gh-repo:{REPO_OWNER}-{REPO_NAME}:{observed_date}",
-        },
-    }]
+    return [
+        {
+            "event": "github_repo_snapshot",
+            "properties": {
+                "stars": _clamp(repo.get("stargazers_count"), 10**8),
+                "forks": _clamp(repo.get("forks_count"), 10**8),
+                "observed_date": observed_date,
+                "snapshot_key": f"gh-repo:{REPO_OWNER}-{REPO_NAME}:{observed_date}",
+            },
+        }
+    ]
 
 
 # ---------------------------------------------------------------------------
 # PyPI
 # ---------------------------------------------------------------------------
-def pypi_snapshots(payload: dict, today: str, window_days: int = PYPI_HEAL_DAYS
-                   ) -> list[dict]:
+def pypi_snapshots(payload: dict, today: str, window_days: int = PYPI_HEAL_DAYS) -> list[dict]:
     """PyPIStats overall 时间序列 → 一批 `pypi_daily_downloads` 事件。
 
     **只取 without_mirrors**：`with_mirrors` 把镜像同步也算进去，那个数字对
@@ -235,16 +237,18 @@ def pypi_snapshots(payload: dict, today: str, window_days: int = PYPI_HEAL_DAYS
         except ValueError:
             continue
         seen.add(date)
-        out.append({
-            "event": "pypi_daily_downloads",
-            "properties": {
-                "date": date,
-                "downloads": _clamp(row.get("downloads"), 10 ** 9),
-                "category": "without_mirrors",
-                # 同一天重复上报靠它去重（看板按 snapshot_key 取一条）
-                "snapshot_key": f"pypi:{PYPI_PACKAGE}:{date}",
-            },
-        })
+        out.append(
+            {
+                "event": "pypi_daily_downloads",
+                "properties": {
+                    "date": date,
+                    "downloads": _clamp(row.get("downloads"), 10**9),
+                    "category": "without_mirrors",
+                    # 同一天重复上报靠它去重（看板按 snapshot_key 取一条）
+                    "snapshot_key": f"pypi:{PYPI_PACKAGE}:{date}",
+                },
+            }
+        )
     return sorted(out, key=lambda e: e["properties"]["date"])
 
 
@@ -257,7 +261,7 @@ def _date(text: str):
 # ---------------------------------------------------------------------------
 def fetch_github(token: str | None) -> tuple[list[dict], dict]:
     releases: list[dict] = []
-    for page in range(1, 11):           # 有上限：不给自己写一个无限翻页
+    for page in range(1, 11):  # 有上限：不给自己写一个无限翻页
         url = f"{GITHUB_API}/repos/{REPO_OWNER}/{REPO_NAME}/releases?per_page=100&page={page}"
         batch = _get_json(url, token)
         if not isinstance(batch, list) or not batch:
@@ -282,8 +286,10 @@ def _pypi_reason(exc: "CollectError") -> str:
     写错这一句的代价是：看到 notice 的人跑去查发布链路，而发布链路好着呢。
     """
     if exc.status == 404:
-        return (f"PyPIStats 上还没有 {PYPI_PACKAGE} 的统计数据"
-                "（刚发布、或还没有下载记录时正常；它按天跑批，不是实时的）")
+        return (
+            f"PyPIStats 上还没有 {PYPI_PACKAGE} 的统计数据"
+            "（刚发布、或还没有下载记录时正常；它按天跑批，不是实时的）"
+        )
     if exc.status == 429:
         return "PyPIStats 限流（429）"
     if exc.status:
@@ -313,16 +319,23 @@ def fetch_pypi() -> dict:
         payload = _get_json(f"{PYPISTATS_API}/packages/{PYPI_PACKAGE}/overall")
     except CollectError as exc:
         _pypi_skip_reason = _pypi_reason(exc)
-        print(f"::notice::{_pypi_skip_reason}；本次跳过 PyPI 下载量，"
-              f"GitHub 部分照常采集（最近 {PYPI_HEAL_DAYS} 天的自愈窗口会在"
-              "下次运行时补上漏掉的日期）", file=sys.stderr)
+        print(
+            f"::notice::{_pypi_skip_reason}；本次跳过 PyPI 下载量，"
+            f"GitHub 部分照常采集（最近 {PYPI_HEAL_DAYS} 天的自愈窗口会在"
+            "下次运行时补上漏掉的日期）",
+            file=sys.stderr,
+        )
         return {}
     return payload if isinstance(payload, dict) else {}
 
 
-def collect(observed_date: str, *, github_token: str | None,
-            github_json: str | None = None, pypi_json: str | None = None
-            ) -> list[dict]:
+def collect(
+    observed_date: str,
+    *,
+    github_token: str | None,
+    github_json: str | None = None,
+    pypi_json: str | None = None,
+) -> list[dict]:
     if github_json:
         data = json.loads(open(github_json, encoding="utf-8").read())
         releases, repo = data.get("releases") or [], data.get("repo") or {}
@@ -337,13 +350,17 @@ def collect(observed_date: str, *, github_token: str | None,
 
 
 def transmit(events: list[dict], url: str, token: str) -> None:
-    body = json.dumps({"schema_version": SCHEMA_VERSION,
-                       "events": events}).encode("utf-8")
+    body = json.dumps({"schema_version": SCHEMA_VERSION, "events": events}).encode("utf-8")
     req = urllib.request.Request(
-        url, data=body, method="POST",
-        headers={"Content-Type": "application/json",
-                 "Authorization": f"Bearer {token}",
-                 "User-Agent": USER_AGENT})
+        url,
+        data=body,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {token}",
+            "User-Agent": USER_AGENT,
+        },
+    )
     try:
         with urllib.request.urlopen(req, timeout=NETWORK_TIMEOUT_S) as resp:
             resp.read(4096)
@@ -369,27 +386,27 @@ def summarize(events: list[dict]) -> dict:
     return {
         "events": len(events),
         "github_by_role": by_role,
-        "github_installer_downloads_lifetime":
-            by_role.get("installer", {}).get("downloads_total", 0),
+        "github_installer_downloads_lifetime": by_role.get("installer", {}).get(
+            "downloads_total", 0
+        ),
         "pypi_days": len(pypi),
         "pypi_downloads_in_window": sum(e["properties"]["downloads"] for e in pypi),
         # 0 天有好几种可能（统计还没出批 / 限流 / 窗口内确实没人下载），
         # 别让看的人自己猜——取不到时 fetch_pypi 会把确切原因留在这里
-        "pypi_note": (_pypi_skip_reason or
-                      ("窗口内没有下载记录" if not pypi else "")),
+        "pypi_note": (_pypi_skip_reason or ("窗口内没有下载记录" if not pypi else "")),
         "note": "downloads != users（重装 / CI / 自动化都在里面）",
     }
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--dry-run", action="store_true",
-                    help="只采集与打印，**不上报**")
-    ap.add_argument("--date", default=None,
-                    help="观测日期 YYYY-MM-DD（默认今天 UTC）")
-    ap.add_argument("--github-json", default=None,
-                    help="离线 fixture：{\"releases\": [...], \"repo\": {...}}")
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument("--dry-run", action="store_true", help="只采集与打印，**不上报**")
+    ap.add_argument("--date", default=None, help="观测日期 YYYY-MM-DD（默认今天 UTC）")
+    ap.add_argument(
+        "--github-json", default=None, help='离线 fixture：{"releases": [...], "repo": {...}}'
+    )
     ap.add_argument("--pypi-json", default=None, help="离线 fixture：PyPIStats 响应")
     args = ap.parse_args(argv)
 
@@ -397,8 +414,9 @@ def main(argv: list[str] | None = None) -> int:
     token = os.environ.get("GITHUB_TOKEN") or None
 
     try:
-        events = collect(observed, github_token=token,
-                         github_json=args.github_json, pypi_json=args.pypi_json)
+        events = collect(
+            observed, github_token=token, github_json=args.github_json, pypi_json=args.pypi_json
+        )
     except (CollectError, OSError, ValueError) as exc:
         print(f"::error::采集失败: {exc}", file=sys.stderr)
         return 1

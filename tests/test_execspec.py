@@ -6,6 +6,7 @@ JSON 序列化可逆且坏数据在边界上死、asset id / fingerprint 不含�
 手拼的逐字节一致（golden）。真跑 worker 的对拍在
 `test_compat_capture_parity.py`。
 """
+
 import dataclasses
 from pathlib import Path
 
@@ -15,11 +16,15 @@ from tavotto.engine import execspec, figcapture, pool
 
 
 def _spec(**overrides):
-    kw = dict(script="fig.py", figures_dir="/proj", entry="main",
-              interpreter="/usr/bin/python3", sandbox="/proj/.box")
+    kw = dict(
+        script="fig.py",
+        figures_dir="/proj",
+        entry="main",
+        interpreter="/usr/bin/python3",
+        sandbox="/proj/.box",
+    )
     kw.update(overrides)
-    return execspec.safe_spec(kw.pop("script"), kw.pop("figures_dir"),
-                              kw.pop("entry"), **kw)
+    return execspec.safe_spec(kw.pop("script"), kw.pop("figures_dir"), kw.pop("entry"), **kw)
 
 
 # ===========================================================================
@@ -31,9 +36,9 @@ class TestSafeDefaults:
         s = _spec()
         assert s.profile == execspec.PROFILE_SAFE
         assert s.target_kind == execspec.TARGET_SCRIPT
-        assert s.argv == ()                      # 脚本的 sys.argv[1:] 为空
-        assert s.passthrough_savefig is False    # savefig 吞掉捕获
-        assert s.env is None                     # 默认原样继承，不复制父环境
+        assert s.argv == ()  # 脚本的 sys.argv[1:] 为空
+        assert s.passthrough_savefig is False  # savefig 吞掉捕获
+        assert s.env is None  # 默认原样继承，不复制父环境
         assert s.entry == "main"
         assert s.cwd == "/proj/.box"
 
@@ -51,6 +56,7 @@ class TestSerialization:
 
     def test_roundtrip_survives_json_encoding(self):
         import json
+
         s = _spec()
         wire = json.dumps(s.to_payload(), ensure_ascii=False)
         assert execspec.spec_from_payload(json.loads(wire)) == s
@@ -84,9 +90,13 @@ class TestValidation:
 
     def test_invalid_payloads_are_rejected(self):
         base = _spec().to_payload()
-        for key, bad in [("profile", "trusted"), ("target_kind", "shell"),
-                         ("interpreter", ""), ("argv", "not-a-list"),
-                         ("target", "/abs/fig.py")]:
+        for key, bad in [
+            ("profile", "trusted"),
+            ("target_kind", "shell"),
+            ("interpreter", ""),
+            ("argv", "not-a-list"),
+            ("target", "/abs/fig.py"),
+        ]:
             payload = {**base, key: bad}
             with pytest.raises(ValueError):
                 execspec.spec_from_payload(payload)
@@ -97,8 +107,7 @@ class TestValidation:
 
     def test_module_target_must_be_a_dotted_identifier(self):
         with pytest.raises(ValueError, match="模块名"):
-            dataclasses.replace(_spec(), target_kind=execspec.TARGET_MODULE,
-                                target="not a module!")
+            dataclasses.replace(_spec(), target_kind=execspec.TARGET_MODULE, target="not a module!")
 
 
 class TestScriptNormalization:
@@ -127,14 +136,24 @@ class TestWorkerArgv:
         script_name)`，Windows 上产出反斜杠**是被冻结的旧语义**，不是漂移；
         其余元素全部逐字面透传。"""
         s = _spec()
-        argv = execspec.worker_argv(s, worker_py="/eng/worker.py",
-                                    out_dir="/cache/out", runtime_args=["-B"])
-        assert argv == ["/usr/bin/python3", "-B", "/eng/worker.py",
-                        "--script", str(Path("/proj") / "fig.py"),
-                        "--figures-dir", "/proj",
-                        "--out-dir", "/cache/out",
-                        "--sandbox", "/proj/.box",
-                        "--entry", "main"]
+        argv = execspec.worker_argv(
+            s, worker_py="/eng/worker.py", out_dir="/cache/out", runtime_args=["-B"]
+        )
+        assert argv == [
+            "/usr/bin/python3",
+            "-B",
+            "/eng/worker.py",
+            "--script",
+            str(Path("/proj") / "fig.py"),
+            "--figures-dir",
+            "/proj",
+            "--out-dir",
+            "/cache/out",
+            "--sandbox",
+            "/proj/.box",
+            "--entry",
+            "main",
+        ]
 
     def test_engine_worker_carries_the_spec_it_spawned_from(self, monkeypatch, tmp_path):
         """EngineWorker 的 Popen argv 必须就是它自己那份 spec 的 worker_argv。"""
@@ -149,21 +168,30 @@ class TestWorkerArgv:
                 return None
 
         monkeypatch.setattr(pool.subprocess, "Popen", _Rec)
-        monkeypatch.setattr(pool, "select_worker_python",
-                            lambda: ("/usr/bin/python3", pool.SOURCE_SYSTEM))
+        monkeypatch.setattr(
+            pool, "select_worker_python", lambda: ("/usr/bin/python3", pool.SOURCE_SYSTEM)
+        )
         w = pool.EngineWorker("fig.py", str(tmp_path), "draw")
         assert w.spec.profile == execspec.PROFILE_SAFE
         assert w.spec.target == "fig.py"
         assert w.spec.entry == "draw"
         assert box["argv"] == execspec.worker_argv(
-            w.spec, worker_py=pool.WORKER_PY, out_dir=w.out_dir)
+            w.spec, worker_py=pool.WORKER_PY, out_dir=w.out_dir
+        )
 
     def test_native_is_not_served_yet(self):
         native = execspec.ExecutionSpec(
-            profile=execspec.PROFILE_NATIVE, interpreter="/usr/bin/python3",
-            target_kind=execspec.TARGET_SCRIPT, target="fig.py", entry=None,
-            argv=("--dataset", "run7"), cwd="/home/u/proj", env=None,
-            project_root="/home/u/proj", passthrough_savefig=True)
+            profile=execspec.PROFILE_NATIVE,
+            interpreter="/usr/bin/python3",
+            target_kind=execspec.TARGET_SCRIPT,
+            target="fig.py",
+            entry=None,
+            argv=("--dataset", "run7"),
+            cwd="/home/u/proj",
+            env=None,
+            project_root="/home/u/proj",
+            passthrough_savefig=True,
+        )
         with pytest.raises(ValueError, match="native"):
             execspec.worker_argv(native, worker_py="/w.py", out_dir="/o")
 
@@ -172,24 +200,32 @@ class TestWorkerArgv:
 # CapturedFigureDescriptor：id / fingerprint / 能力派生
 # ===========================================================================
 def _descriptor(**overrides):
-    kw = dict(script="fig.py", entry="main", stem="Fig1",
-              capture_source=figcapture.SOURCE_SAVEFIG,
-              execution_profile=figcapture.PROFILE_SAFE,
-              size_mm=(80.0, 60.0), source_fingerprint="sha256:feed")
+    kw = dict(
+        script="fig.py",
+        entry="main",
+        stem="Fig1",
+        capture_source=figcapture.SOURCE_SAVEFIG,
+        execution_profile=figcapture.PROFILE_SAFE,
+        size_mm=(80.0, 60.0),
+        source_fingerprint="sha256:feed",
+    )
     kw.update(overrides)
     return figcapture.build_descriptor(**kw)
 
 
 class TestAssetId:
     def test_the_id_shape_is_the_adr_0013_one(self):
-        assert figcapture.runtime_asset_id("panels/myplot.py", "myplot") == \
-            "runtime:panels/myplot.py#myplot"
+        assert (
+            figcapture.runtime_asset_id("panels/myplot.py", "myplot")
+            == "runtime:panels/myplot.py#myplot"
+        )
 
     def test_the_id_has_no_project_path_dimension(self):
         """id 只由 (脚本相对路径, stem) 决定——**没有任何参数能把绝对项目
         路径混进来**。跨机器/跨挂载点的稳定性由这条签名保证；真 worker 在
         两个不同项目根下产出同一 id 的对拍在 parity 测试里。"""
         import inspect
+
         params = inspect.signature(figcapture.runtime_asset_id).parameters
         assert list(params) == ["script", "stem"]
 
@@ -198,10 +234,12 @@ class TestAssetId:
             figcapture.runtime_asset_id("/abs/fig.py", "Fig1")
 
     def test_different_stems_and_scripts_do_not_collide(self):
-        ids = {figcapture.runtime_asset_id("a.py", "fig"),
-               figcapture.runtime_asset_id("a.py", "fig-2"),
-               figcapture.runtime_asset_id("b.py", "fig"),
-               figcapture.runtime_asset_id("sub/a.py", "fig")}
+        ids = {
+            figcapture.runtime_asset_id("a.py", "fig"),
+            figcapture.runtime_asset_id("a.py", "fig-2"),
+            figcapture.runtime_asset_id("b.py", "fig"),
+            figcapture.runtime_asset_id("sub/a.py", "fig"),
+        }
         assert len(ids) == 4
 
     def test_entry_deliberately_does_not_enter_the_id(self):
@@ -210,8 +248,7 @@ class TestAssetId:
         变成新身份，历史 override 全部成孤儿。entry 的差异由 descriptor 的
         独立字段与 fingerprint 承担。"""
         a = _descriptor(entry="main")
-        b = _descriptor(entry="__main__",
-                        source_fingerprint="sha256:other")
+        b = _descriptor(entry="__main__", source_fingerprint="sha256:other")
         assert a.asset_id == b.asset_id
         assert a.entry != b.entry
         assert a.source_fingerprint != b.source_fingerprint
@@ -221,6 +258,7 @@ class TestWritebackCapabilityIsDerived:
     def test_the_factory_has_no_way_to_dictate_capability(self):
         """`can_writeback_*` 不在工厂参数里——前端与上游**没有**渠道去猜/钦定。"""
         import inspect
+
         params = inspect.signature(figcapture.build_descriptor).parameters
         assert "can_writeback_artifact" not in params
         assert "can_writeback_source" not in params
@@ -229,8 +267,7 @@ class TestWritebackCapabilityIsDerived:
         """pyplot 捕获的图从没存过盘：磁盘上碰巧同名的文件不是它的原件，
         写回它 = 覆盖一个不相干的文件。工厂对这种组合直接抛。"""
         with pytest.raises(ValueError, match="pyplot"):
-            _descriptor(capture_source=figcapture.SOURCE_PYPLOT,
-                        original_artifact="Fig1.pdf")
+            _descriptor(capture_source=figcapture.SOURCE_PYPLOT, original_artifact="Fig1.pdf")
 
     def test_pyplot_capture_cannot_write_back(self):
         d = _descriptor(capture_source=figcapture.SOURCE_PYPLOT)
@@ -286,9 +323,12 @@ class TestDescriptorSerialization:
 
 class TestSourceFingerprint:
     def _fp(self, **overrides):
-        kw = dict(script="fig.py", entry="main",
-                  profile=figcapture.PROFILE_SAFE,
-                  matplotlib_version="3.11.1")
+        kw = dict(
+            script="fig.py",
+            entry="main",
+            profile=figcapture.PROFILE_SAFE,
+            matplotlib_version="3.11.1",
+        )
         body = overrides.pop("script_bytes", b"print('hi')")
         kw.update(overrides)
         return figcapture.source_fingerprint(body, **kw)
@@ -320,6 +360,7 @@ class TestSourceFingerprint:
     def test_does_not_depend_on_any_absolute_path(self):
         """指纹的输入签名里没有项目根/解释器/cwd——跨机器稳定性的另一半。"""
         import inspect
+
         params = set(inspect.signature(figcapture.source_fingerprint).parameters)
         assert not params & {"project_root", "figures_dir", "interpreter", "cwd"}
 
@@ -337,5 +378,6 @@ class TestFindOriginalArtifact:
         """discover.OUT_EXTS / handoff.OUT_EXTS 是 figcapture.ARTIFACT_EXTS
         的镜像别名——三处认的必须是同一张表。"""
         from tavotto.engine import discover, handoff
+
         assert discover.OUT_EXTS is figcapture.ARTIFACT_EXTS
         assert handoff.OUT_EXTS is figcapture.ARTIFACT_EXTS

@@ -11,6 +11,7 @@
 对数轴与 twinx 正是这两条的现场，放进 corpus 是为了让「热态所见 == 全量重放」
 在真实图形上被持续验证，而不只是在单元测试的合成 figure 上。
 """
+
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -55,8 +56,8 @@ def log_scale():
     """
     x = np.logspace(0, 4, 60)
     fig, ax = plt.subplots(figsize=(3.4, 2.4))
-    ax.loglog(x, x ** -0.8 * 1e3, lw=1.3, color="#2a6f4e", label="slope −0.8")
-    ax.loglog(x, x ** -1.2 * 1e4, lw=1.3, ls="--", color="#a8331c", label="slope −1.2")
+    ax.loglog(x, x**-0.8 * 1e3, lw=1.3, color="#2a6f4e", label="slope −0.8")
+    ax.loglog(x, x**-1.2 * 1e4, lw=1.3, ls="--", color="#a8331c", label="slope −1.2")
     ax.set_xlabel("frequency (Hz)")
     ax.set_ylabel("power")
     ax.set_title("Log–log")

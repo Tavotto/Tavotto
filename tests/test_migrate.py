@@ -4,6 +4,7 @@
 可回滚、`doctor` 里有产品化入口（用户不需要理解内部目录命名）。
 fixture 是按 0.7.x 真实布局合成的用户目录。
 """
+
 from __future__ import annotations
 
 import json
@@ -24,17 +25,21 @@ def legacy(tmp_path, monkeypatch):
     (lroot / "cache").mkdir()
     (lroot / "ai_snapshots").mkdir()
 
-    (lroot / "config.json").write_text(json.dumps({
-        "recent_projects": ["/papers/figs-a", "/papers/figs-b"],
-        "projects": {"/papers/figs-a": {"export_dir": "/papers/out"}},
-        "worker": {"python": "/opt/py/bin/python"},
-    }), encoding="utf-8")
+    (lroot / "config.json").write_text(
+        json.dumps(
+            {
+                "recent_projects": ["/papers/figs-a", "/papers/figs-b"],
+                "projects": {"/papers/figs-a": {"export_dir": "/papers/out"}},
+                "worker": {"python": "/opt/py/bin/python"},
+            }
+        ),
+        encoding="utf-8",
+    )
     (lroot / "layouts" / "论文一.json").write_text(
-        json.dumps({"schema": 2, "name": "论文一", "objects": []}),
-        encoding="utf-8")
+        json.dumps({"schema": 2, "name": "论文一", "objects": []}), encoding="utf-8"
+    )
     (lroot / "layouts" / "_versions" / "v1.json").write_text("{}", "utf-8")
-    (lroot / "layouts" / "_autosave" / "doc1.json").write_text(
-        json.dumps({"schema": 3}), "utf-8")
+    (lroot / "layouts" / "_autosave" / "doc1.json").write_text(json.dumps({"schema": 3}), "utf-8")
     (lroot / "layouts" / "_styles.json").write_text("[]", "utf-8")
     (lroot / "baked_overrides.json").write_text("{}", "utf-8")
     (lroot / "baked_overrides" / "proj1.json").write_text("{}", "utf-8")
@@ -53,8 +58,9 @@ def legacy(tmp_path, monkeypatch):
 
 
 def _snapshot(root: Path) -> dict:
-    return {str(p.relative_to(root)): p.read_bytes()
-            for p in sorted(root.rglob("*")) if p.is_file()}
+    return {
+        str(p.relative_to(root)): p.read_bytes() for p in sorted(root.rglob("*")) if p.is_file()
+    }
 
 
 def test_dry_run_plans_everything_and_writes_nothing(legacy, tmp_path):
@@ -103,7 +109,8 @@ def test_conflicting_target_is_reported_not_overwritten(legacy, tmp_path):
     target = tmp_path / "Tavotto"
     (target / "layouts").mkdir(parents=True)
     (target / "layouts" / "论文一.json").write_text(
-        json.dumps({"schema": 2, "name": "我自己的新版本"}), "utf-8")
+        json.dumps({"schema": 2, "name": "我自己的新版本"}), "utf-8"
+    )
     report = migrate.execute()
     assert "layouts/论文一.json" in report["plan"]["conflicts"]
     kept = json.loads((target / "layouts" / "论文一.json").read_text("utf-8"))
@@ -113,15 +120,20 @@ def test_conflicting_target_is_reported_not_overwritten(legacy, tmp_path):
 def test_config_merge_never_overwrites_existing_values(legacy, tmp_path):
     target = tmp_path / "Tavotto"
     target.mkdir()
-    (target / "config.json").write_text(json.dumps({
-        "recent_projects": ["/new/figs"],
-        "worker": {"python": "/tavotto/py"},
-    }), "utf-8")
+    (target / "config.json").write_text(
+        json.dumps(
+            {
+                "recent_projects": ["/new/figs"],
+                "worker": {"python": "/tavotto/py"},
+            }
+        ),
+        "utf-8",
+    )
     migrate.execute()
     cfg = json.loads((target / "config.json").read_text("utf-8"))
-    assert cfg["recent_projects"][0] == "/new/figs"          # 现有的在前
-    assert "/papers/figs-a" in cfg["recent_projects"]        # 旧的补在后
-    assert cfg["worker"] == {"python": "/tavotto/py"}        # 绝不被旧值顶掉
+    assert cfg["recent_projects"][0] == "/new/figs"  # 现有的在前
+    assert "/papers/figs-a" in cfg["recent_projects"]  # 旧的补在后
+    assert cfg["worker"] == {"python": "/tavotto/py"}  # 绝不被旧值顶掉
     assert cfg["projects"] == {"/papers/figs-a": {"export_dir": "/papers/out"}}
 
 
@@ -142,10 +154,8 @@ def test_rollback_removes_only_created_files(legacy, tmp_path):
 
 
 def test_nothing_to_migrate_is_a_clean_no_op(tmp_path, monkeypatch):
-    monkeypatch.setenv("TAVOTTO_MIGRATE_LEGACY_CONFIG_DIR",
-                       str(tmp_path / "nope"))
-    monkeypatch.setenv("TAVOTTO_MIGRATE_LEGACY_DATA_DIR",
-                       str(tmp_path / "nope"))
+    monkeypatch.setenv("TAVOTTO_MIGRATE_LEGACY_CONFIG_DIR", str(tmp_path / "nope"))
+    monkeypatch.setenv("TAVOTTO_MIGRATE_LEGACY_DATA_DIR", str(tmp_path / "nope"))
     monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "t"))
     monkeypatch.setenv("TAVOTTO_CONFIG_DIR", str(tmp_path / "t"))
     report = migrate.execute()
@@ -175,7 +185,7 @@ def test_doctor_migrate_json_roundtrip(legacy, capsys):
 def test_doctor_migrate_exit_code_flags_conflicts(legacy, tmp_path, capsys):
     target = tmp_path / "Tavotto"
     (target / "layouts").mkdir(parents=True)
-    (target / "layouts" / "论文一.json").write_text("{\"mine\": 1}", "utf-8")
+    (target / "layouts" / "论文一.json").write_text('{"mine": 1}', "utf-8")
     rc, out = _run_doctor(capsys, "--migrate")
     assert rc == 1
     assert "跳过" in out
@@ -188,5 +198,7 @@ def test_doctor_migrate_rejects_conflicting_flags(legacy, capsys):
 
 def test_plain_doctor_notes_legacy_data(legacy, capsys):
     """用户不需要知道任何内部目录：`tavotto doctor` 自己会说。"""
-    rc, out = _run_doctor(capsys, )
+    rc, out = _run_doctor(
+        capsys,
+    )
     assert "magplot_data_found" in out and "--migrate" in out

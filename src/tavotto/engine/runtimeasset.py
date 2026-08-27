@@ -40,6 +40,7 @@ tmp + os.replace）：预览写到一半失败时磁盘上没有 metadata，整�
 
 纯标准库；Flask 父进程 import（边界同 registry/pool）。
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -62,13 +63,13 @@ CACHE_SCHEMA = 1
 # ---------------------------------------------------------------------------
 # stale 状态（稳定枚举：前后端共用字面量，改语义才改名）
 # ---------------------------------------------------------------------------
-STALE_FRESH = "fresh"                        # 脚本与执行配置自捕获以来未变
-STALE_POSSIBLY = "possibly_stale"            # 脚本或 entry 已变化（数据依赖不追踪）
-STALE_MISSING_SOURCE = "missing_source"      # 脚本已不在磁盘上
+STALE_FRESH = "fresh"  # 脚本与执行配置自捕获以来未变
+STALE_POSSIBLY = "possibly_stale"  # 脚本或 entry 已变化（数据依赖不追踪）
+STALE_MISSING_SOURCE = "missing_source"  # 脚本已不在磁盘上
 STALE_MISSING_ENVIRONMENT = "missing_environment"  # 找不到可用渲染解释器
-STALE_NEEDS_RERUN = "needs_rerun"            # 无 cache 或未登记：先跑一次才有图
-STALE_RERUN_FAILED = "rerun_failed"          # 重新运行失败（producer 在前端：
-                                             # runtime 面板渲染 error 态映射到它）
+STALE_NEEDS_RERUN = "needs_rerun"  # 无 cache 或未登记：先跑一次才有图
+STALE_RERUN_FAILED = "rerun_failed"  # 重新运行失败（producer 在前端：
+# runtime 面板渲染 error 态映射到它）
 
 # ---------------------------------------------------------------------------
 # 稳定错误码（producer 在 app.py；文案 zh/en 两侧 errors.json backend.*）
@@ -102,11 +103,14 @@ def resolve(asset_id: str, registry) -> dict | None:
         for stem in info.get("stems", ()):
             try:
                 if figcapture.runtime_asset_id(script, stem) == asset_id:
-                    return {"script": script, "stem": stem,
-                            "entry": info.get("entry", "main"),
-                            "cost": info.get("cost", "medium")}
+                    return {
+                        "script": script,
+                        "stem": stem,
+                        "entry": info.get("entry", "main"),
+                        "cost": info.get("cost", "medium"),
+                    }
             except ValueError:
-                continue          # 注册表里的坏条目不该让整个解析炸掉
+                continue  # 注册表里的坏条目不该让整个解析炸掉
     return None
 
 
@@ -119,9 +123,9 @@ def _norm_project(project_root: str | Path) -> str:
 
 def cache_dir(project_root: str | Path, asset_id: str) -> Path:
     """该 (项目, asset) 的 cache 目录。slug 只是文件名安全化，不是身份。"""
-    slug = hashlib.sha256(
-        f"{_norm_project(project_root)}|{asset_id}".encode("utf-8")
-    ).hexdigest()[:24]
+    slug = hashlib.sha256(f"{_norm_project(project_root)}|{asset_id}".encode("utf-8")).hexdigest()[
+        :24
+    ]
     return config.data_path("cache", "runtime", slug)
 
 
@@ -141,8 +145,7 @@ def script_sha256(project_root: str | Path, script: str) -> str | None:
     return hashlib.sha256(data).hexdigest()
 
 
-def materialize(project_root: str | Path, descriptor: dict,
-                svg_source: Path) -> Path | None:
+def materialize(project_root: str | Path, descriptor: dict, svg_source: Path) -> Path | None:
     """把一张捕获 Figure 的预览物化进 cache；返回 cache 目录（失败 None）。
 
     `descriptor` 是 CapturedFigureDescriptor 的 payload（worker/probe 响应
@@ -172,9 +175,10 @@ def materialize(project_root: str | Path, descriptor: dict,
             "script_sha256": script_sha256(project_root, script),
             "preview": "preview.svg",
         }
-        _atomic_write(target / "metadata.json",
-                      json.dumps(meta, ensure_ascii=False, indent=1,
-                                 sort_keys=True).encode("utf-8"))
+        _atomic_write(
+            target / "metadata.json",
+            json.dumps(meta, ensure_ascii=False, indent=1, sort_keys=True).encode("utf-8"),
+        )
         return target
     except OSError:
         LOG.warning("runtime cache 物化失败: %s", asset_id, exc_info=True)
@@ -217,8 +221,7 @@ RUNTIME_CACHE_MAX_BYTES = 256 * 1024 * 1024
 RUNTIME_CACHE_KEEP = 200
 
 
-def prune_cache(max_bytes: int = RUNTIME_CACHE_MAX_BYTES,
-                keep: int = RUNTIME_CACHE_KEEP) -> int:
+def prune_cache(max_bytes: int = RUNTIME_CACHE_MAX_BYTES, keep: int = RUNTIME_CACHE_KEEP) -> int:
     """runtime cache 按预算清理，返回删除的目录数。
 
     删除永远安全：文档持有的是描述符不是 cache 路径，被删的 asset 下一次
@@ -260,13 +263,19 @@ def _probe_worker_python(worker_python: object) -> object:
     if callable(worker_python):
         try:
             return worker_python()
-        except Exception:                       # 探测失败 = 没有可用环境
+        except Exception:  # 探测失败 = 没有可用环境
             return None
     return worker_python
 
 
-def _status_ladder(project_root: str | Path, info: dict, *, registered: bool,
-                   meta: dict | None, worker_python: object) -> str:
+def _status_ladder(
+    project_root: str | Path,
+    info: dict,
+    *,
+    registered: bool,
+    meta: dict | None,
+    worker_python: object,
+) -> str:
     """六档 stale 阶梯的唯一实现（`stale_status` 与 `list_assets` 共用）。
 
     `worker_python` 在这里是**已探测过的值**（None = 没有可用环境）——
@@ -281,15 +290,23 @@ def _status_ladder(project_root: str | Path, info: dict, *, registered: bool,
         return STALE_NEEDS_RERUN
     current = script_sha256(project_root, info["script"])
     cached_desc = meta.get("descriptor") or {}
-    if (current is None or current != meta.get("script_sha256")
-            or cached_desc.get("entry") != info["entry"]):
+    if (
+        current is None
+        or current != meta.get("script_sha256")
+        or cached_desc.get("entry") != info["entry"]
+    ):
         return STALE_POSSIBLY
     return STALE_FRESH
 
 
-def stale_status(project_root: str | Path, asset_id: str, registry,
-                 *, source: dict | None = None,
-                 worker_python: object = None) -> dict:
+def stale_status(
+    project_root: str | Path,
+    asset_id: str,
+    registry,
+    *,
+    source: dict | None = None,
+    worker_python: object = None,
+) -> dict:
     """一个 runtime 素材当前的 stale 状态（诚实边界见模块头）。
 
     `source` 是文档里持久化的描述块（{script, stem, ...}），注册表解析不到
@@ -306,23 +323,39 @@ def stale_status(project_root: str | Path, asset_id: str, registry,
         script = source.get("script")
         stem = source.get("stem")
         try:
-            if (isinstance(script, str) and isinstance(stem, str)
-                    and figcapture.runtime_asset_id(script, stem) == asset_id):
-                info = {"script": script, "stem": stem, "entry": None,
-                        "cost": "medium"}
+            if (
+                isinstance(script, str)
+                and isinstance(stem, str)
+                and figcapture.runtime_asset_id(script, stem) == asset_id
+            ):
+                info = {"script": script, "stem": stem, "entry": None, "cost": "medium"}
         except ValueError:
             info = None
     if info is None:
-        return {"status": None, "script": None, "stem": None, "entry": None,
-                "registered": False, "cached": False}
+        return {
+            "status": None,
+            "script": None,
+            "stem": None,
+            "entry": None,
+            "registered": False,
+            "cached": False,
+        }
 
     meta = load_metadata(project_root, asset_id)
-    return {"script": info["script"], "stem": info["stem"],
-            "entry": info["entry"], "registered": registered,
-            "cached": meta is not None,
-            "status": _status_ladder(
-                project_root, info, registered=registered, meta=meta,
-                worker_python=_probe_worker_python(worker_python))}
+    return {
+        "script": info["script"],
+        "stem": info["stem"],
+        "entry": info["entry"],
+        "registered": registered,
+        "cached": meta is not None,
+        "status": _status_ladder(
+            project_root,
+            info,
+            registered=registered,
+            meta=meta,
+            worker_python=_probe_worker_python(worker_python),
+        ),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -336,12 +369,10 @@ def is_pyplot_capture(descriptor: object) -> bool:
     文件只可能是旧样本或无关文件，**不是**这张图的原件——按文件名巧合把
     runtime 素材让位给它，用户编辑的就是陈旧文件（Codex 评审 P1）。
     """
-    return isinstance(descriptor, dict) and \
-        descriptor.get("capture_source") == "pyplot"
+    return isinstance(descriptor, dict) and descriptor.get("capture_source") == "pyplot"
 
 
-def list_assets(project_root: str | Path, registry,
-                *, worker_python: object = None) -> list[dict]:
+def list_assets(project_root: str | Path, registry, *, worker_python: object = None) -> list[dict]:
     """当前项目全部 RuntimeFigureAsset 的清单——**只读，绝不执行脚本**。
 
     条目 = 注册表里每对 (script, stem) 中**磁盘上没有这张图自己的原始
@@ -366,26 +397,35 @@ def list_assets(project_root: str | Path, registry,
             try:
                 asset_id = figcapture.runtime_asset_id(script, stem)
             except ValueError:
-                continue                        # 坏条目不该炸掉整张清单
+                continue  # 坏条目不该炸掉整张清单
             meta = load_metadata(project_root, asset_id)
             desc = (meta or {}).get("descriptor") or None
-            if figcapture.find_original_artifact(root, stem) is not None \
-                    and not is_pyplot_capture(desc):
-                continue                        # 磁盘有原件 → FileAsset 的地盘
+            if figcapture.find_original_artifact(root, stem) is not None and not is_pyplot_capture(
+                desc
+            ):
+                continue  # 磁盘有原件 → FileAsset 的地盘
             size = desc.get("size_mm") if isinstance(desc, dict) else None
-            out.append({
-                "id": asset_id, "script": script, "stem": stem,
-                "entry": entry,
-                "status": _status_ladder(
-                    project_root,
-                    {"script": script, "stem": stem, "entry": entry},
-                    registered=True, meta=meta, worker_python=py),
-                "cached": meta is not None,
-                "size_mm": size,
-                "capture_source": (desc.get("capture_source")
-                                   if isinstance(desc, dict) else None),
-                "descriptor": desc,
-            })
+            out.append(
+                {
+                    "id": asset_id,
+                    "script": script,
+                    "stem": stem,
+                    "entry": entry,
+                    "status": _status_ladder(
+                        project_root,
+                        {"script": script, "stem": stem, "entry": entry},
+                        registered=True,
+                        meta=meta,
+                        worker_python=py,
+                    ),
+                    "cached": meta is not None,
+                    "size_mm": size,
+                    "capture_source": (
+                        desc.get("capture_source") if isinstance(desc, dict) else None
+                    ),
+                    "descriptor": desc,
+                }
+            )
     return out
 
 

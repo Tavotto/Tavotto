@@ -16,6 +16,7 @@ matplotlib 换一个小版本就可能改掉抗锯齿、字体度量或默认样
     python scripts/ci/runtime_pins.py                 # matplotlib==3.11.1 numpy==2.5.2 …
     python scripts/ci/runtime_pins.py --format lines  # 每行一个
 """
+
 from __future__ import annotations
 
 import argparse
@@ -27,8 +28,16 @@ LOCK = REPO / "packaging" / "runtime-lock.json"
 
 # 影响渲染像素的包。fonttools 与 pillow 看着不起眼，但前者决定字形度量、
 # 后者决定 PNG 编码，两者都能让「同一张图」在像素上对不上。
-RENDER_CRITICAL = ("matplotlib", "numpy", "pillow", "contourpy", "fonttools",
-                   "kiwisolver", "cycler", "pyparsing")
+RENDER_CRITICAL = (
+    "matplotlib",
+    "numpy",
+    "pillow",
+    "contourpy",
+    "fonttools",
+    "kiwisolver",
+    "cycler",
+    "pyparsing",
+)
 
 #: CompatBench 的语料另外用到的科学栈。**刻意不并进 RENDER_CRITICAL**：
 #: 那一组的判据是「影响像素」，视觉回归的环境按它装；pandas / scipy / seaborn
@@ -74,7 +83,8 @@ def pins(lock_path: Path = LOCK, include_corpus: bool = False) -> list[str]:
         elif include_corpus and name in CORPUS_EXTRA:
             raise SystemExit(
                 f"锁文件里没有 {name}——CompatBench 的语料要用它，"
-                f"缺了会让 sci_* 那几条 case 变成假的 product_bug")
+                f"缺了会让 sci_* 那几条 case 变成假的 product_bug"
+            )
     if not any(p.startswith("matplotlib==") for p in out):
         raise SystemExit("锁文件里没有 matplotlib——视觉基线将失去版本保证，拒绝继续")
     return out
@@ -83,8 +93,11 @@ def pins(lock_path: Path = LOCK, include_corpus: bool = False) -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="输出与内置 runtime 一致的科学栈版本")
     ap.add_argument("--format", choices=["args", "lines"], default="args")
-    ap.add_argument("--include-corpus", action="store_true",
-                    help="连 CompatBench 语料要用的 pandas / scipy / seaborn 一起吐")
+    ap.add_argument(
+        "--include-corpus",
+        action="store_true",
+        help="连 CompatBench 语料要用的 pandas / scipy / seaborn 一起吐",
+    )
     args = ap.parse_args(argv)
     got = pins(include_corpus=args.include_corpus)
     print("\n".join(got) if args.format == "lines" else " ".join(got))

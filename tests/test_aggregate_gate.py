@@ -7,6 +7,7 @@ Gate 是 ruleset 收敛后唯一的合并资格出口，它判错的两个方向
 
 全部平台无关、纯标准库。
 """
+
 from __future__ import annotations
 
 import json
@@ -33,11 +34,16 @@ def _fast(results, event="pull_request"):
     return AG.decide("fast", event, FAST_REQ, results)
 
 
-def _integration(results, event="pull_request", *, heavy=False, deferred=False,
-                 full_ci=False):
-    return AG.decide("integration", event, HEAVY_REQ, results,
-                     require_heavy=heavy, allow_deferred=deferred,
-                     full_ci=full_ci)
+def _integration(results, event="pull_request", *, heavy=False, deferred=False, full_ci=False):
+    return AG.decide(
+        "integration",
+        event,
+        HEAVY_REQ,
+        results,
+        require_heavy=heavy,
+        allow_deferred=deferred,
+        full_ci=full_ci,
+    )
 
 
 def _all(status: str, req=FAST_REQ) -> dict[str, str]:
@@ -89,11 +95,12 @@ class TestFastGate:
 
     def test_matrix_job_aggregate_failure(self):
         """矩阵 job 在 needs 里只有一个条目，任一腿失败整体就是 failure。"""
-        v = AG.decide("codeql", "pull_request", ["analyze"],
-                      {"analyze": "failure"})
+        v = AG.decide("codeql", "pull_request", ["analyze"], {"analyze": "failure"})
         assert v["status"] == "failure"
-        assert AG.decide("codeql", "merge_group", ["analyze"],
-                         {"analyze": "success"})["status"] == "success"
+        assert (
+            AG.decide("codeql", "merge_group", ["analyze"], {"analyze": "success"})["status"]
+            == "success"
+        )
 
 
 # ============================================================ integration gate
@@ -116,21 +123,20 @@ class TestIntegrationGate:
         """重活真的跑了（PR 1 阶段的 ready PR）就按真实结果判，不算 deferred。"""
         v = _integration(_all("success", HEAVY_REQ), deferred=True)
         assert v["status"] == "success"
-        v = _integration(dict(_all("success", HEAVY_REQ),
-                              **{"windows-exe-smoke": "failure"}), deferred=True)
+        v = _integration(
+            dict(_all("success", HEAVY_REQ), **{"windows-exe-smoke": "failure"}), deferred=True
+        )
         assert v["status"] == "failure"
 
     def test_partial_skip_is_failure_not_deferred(self):
         """半套资格不是资格：跑了两个跳了一个，一律失败。"""
-        v = _integration(dict(_all("success", HEAVY_REQ), package="skipped"),
-                         deferred=True)
+        v = _integration(dict(_all("success", HEAVY_REQ), package="skipped"), deferred=True)
         assert v["status"] == "failure"
 
     def test_merge_group_may_not_defer(self):
         """merge_group 是完整资格的唯一执行点，deferred 在那里是配置错误。"""
         with pytest.raises(AG.ConfigError):
-            _integration(_all("skipped", HEAVY_REQ), event="merge_group",
-                         deferred=True)
+            _integration(_all("skipped", HEAVY_REQ), event="merge_group", deferred=True)
 
     def test_full_ci_pr_may_not_defer(self):
         with pytest.raises(AG.ConfigError):
@@ -171,50 +177,75 @@ class TestInputs:
 
     def test_fast_mode_rejects_integration_flags(self):
         with pytest.raises(AG.ConfigError):
-            AG.decide("fast", "pull_request", FAST_REQ, _all("success"),
-                      allow_deferred=True)
+            AG.decide("fast", "pull_request", FAST_REQ, _all("success"), allow_deferred=True)
 
 
 # ============================================================ CLI（退出码契约）
 class TestCli:
     def _run(self, args, needs, capsys):
-        rc = AG.main(args + ["--needs-json", json.dumps(
-            {j: {"result": r} for j, r in needs.items()})])
+        rc = AG.main(
+            args + ["--needs-json", json.dumps({j: {"result": r} for j, r in needs.items()})]
+        )
         out = capsys.readouterr().out.strip().splitlines()[-1]
         return rc, json.loads(out)
 
     def test_success_exit_zero_with_machine_json(self, capsys):
-        rc, v = self._run(["--mode", "fast", "--event", "pull_request",
-                           "--required", ",".join(FAST_REQ)],
-                          _all("success"), capsys)
+        rc, v = self._run(
+            ["--mode", "fast", "--event", "pull_request", "--required", ",".join(FAST_REQ)],
+            _all("success"),
+            capsys,
+        )
         assert rc == 0 and v["status"] == "success"
 
     def test_failure_exit_one(self, capsys):
-        rc, v = self._run(["--mode", "fast", "--event", "pull_request",
-                           "--required", ",".join(FAST_REQ)],
-                          dict(_all("success"), backend="failure"), capsys)
+        rc, v = self._run(
+            ["--mode", "fast", "--event", "pull_request", "--required", ",".join(FAST_REQ)],
+            dict(_all("success"), backend="failure"),
+            capsys,
+        )
         assert rc == 1 and v["status"] == "failure"
 
     def test_deferred_exit_zero_with_machine_readable_reason(self, capsys):
         """普通 PR 的合法 deferred：结论是成功，但 JSON 里写得明明白白。"""
-        rc, v = self._run(["--mode", "integration", "--event", "pull_request",
-                           "--allow-deferred", "--required", ",".join(HEAVY_REQ)],
-                          _all("skipped", HEAVY_REQ), capsys)
+        rc, v = self._run(
+            [
+                "--mode",
+                "integration",
+                "--event",
+                "pull_request",
+                "--allow-deferred",
+                "--required",
+                ",".join(HEAVY_REQ),
+            ],
+            _all("skipped", HEAVY_REQ),
+            capsys,
+        )
         assert rc == 0
         assert v["status"] == "deferred" and v["reason"] == "merge_group_required"
 
     def test_config_error_exit_two_and_fails_the_gate(self, capsys):
         """判定器自己坏了（非法组合 / 烂 JSON）也不能算通过。"""
-        rc = AG.main(["--mode", "integration", "--event", "merge_group",
-                      "--allow-deferred", "--required", ",".join(HEAVY_REQ),
-                      "--needs-json", "{}"])
+        rc = AG.main(
+            [
+                "--mode",
+                "integration",
+                "--event",
+                "merge_group",
+                "--allow-deferred",
+                "--required",
+                ",".join(HEAVY_REQ),
+                "--needs-json",
+                "{}",
+            ]
+        )
         assert rc == 2
         v = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
         assert v["status"] == "failure" and v["reason"] == "config_error"
 
     def test_bad_json_exit_two(self, capsys):
-        rc = AG.main(["--mode", "fast", "--event", "pull_request",
-                      "--required", "a", "--needs-json", "{{{"])
+        rc = AG.main(
+            ["--mode", "fast", "--event", "pull_request", "--required", "a", "--needs-json", "{{{"]
+        )
         assert rc == 2
 
     def test_summary_mentions_deferral(self, capsys, tmp_path, monkeypatch):
@@ -222,16 +253,35 @@ class TestCli:
         一个安静的绿 Gate 会让人以为重型验证过了。"""
         summary = tmp_path / "summary.md"
         monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
-        self._run(["--mode", "integration", "--event", "pull_request",
-                   "--allow-deferred", "--required", ",".join(HEAVY_REQ)],
-                  _all("skipped", HEAVY_REQ), capsys)
+        self._run(
+            [
+                "--mode",
+                "integration",
+                "--event",
+                "pull_request",
+                "--allow-deferred",
+                "--required",
+                ",".join(HEAVY_REQ),
+            ],
+            _all("skipped", HEAVY_REQ),
+            capsys,
+        )
         text = summary.read_text(encoding="utf-8")
         assert "deferred to merge_group" in text
 
     def test_always_gate_still_fails_after_upstream_failure(self, capsys):
         """`if: always()` 让 Gate 在上游失败后照跑——照跑的它必须红。"""
-        rc, v = self._run(["--mode", "integration", "--event", "merge_group",
-                           "--require-heavy", "--required", ",".join(HEAVY_REQ)],
-                          {"package": "failure", "windows-exe-smoke": "cancelled",
-                           "macos-app-smoke": "skipped"}, capsys)
+        rc, v = self._run(
+            [
+                "--mode",
+                "integration",
+                "--event",
+                "merge_group",
+                "--require-heavy",
+                "--required",
+                ",".join(HEAVY_REQ),
+            ],
+            {"package": "failure", "windows-exe-smoke": "cancelled", "macos-app-smoke": "skipped"},
+            capsys,
+        )
         assert rc == 1 and v["status"] == "failure"

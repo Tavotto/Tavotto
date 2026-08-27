@@ -28,6 +28,7 @@
         --figures ~/papers/figures --repeat 9 --out docs/perf-baseline.md
     python scripts/bench_render.py --python .venv/bin/python --plane python
 """
+
 from __future__ import annotations
 
 import argparse
@@ -53,13 +54,20 @@ for _stream in (sys.stdout, sys.stderr):
 REPO = Path(__file__).resolve().parent.parent
 DEFAULT_FIGURES = REPO / "examples" / "figures"
 BOOT_TIMEOUT_S = 120
-RENDER_TIMEOUT_S = 900     # 冷启动可以是分钟级（heavy 脚本）
+RENDER_TIMEOUT_S = 900  # 冷启动可以是分钟级（heavy 脚本）
 
 #: 表里逐列展示的计时键（顺序即列序）。`svg_ms` 不在其中——SVG 序列化与 draw
 #: 在 matplotlib 里分不开，合并在 `canvas_draw_ms` 里，见 ADR 0003 §9。
-TIMING_KEYS = ["worker_get_ms", "queue_wait_ms", "build_total_ms",
-               "script_build_ms", "patch_apply_ms", "canvas_draw_ms",
-               "manifest_ms", "total_ms"]
+TIMING_KEYS = [
+    "worker_get_ms",
+    "queue_wait_ms",
+    "build_total_ms",
+    "script_build_ms",
+    "patch_apply_ms",
+    "canvas_draw_ms",
+    "manifest_ms",
+    "total_ms",
+]
 
 
 class BenchError(RuntimeError):
@@ -80,8 +88,11 @@ def _get(url: str, timeout: float = 30) -> dict:
 
 def _req(url: str, payload: dict, method: str, timeout: float) -> dict:
     req = urllib.request.Request(
-        url, data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"}, method=method)
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method=method,
+    )
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode("utf-8"))
 
@@ -147,8 +158,9 @@ def _median(samples: list[dict], key: str) -> float | None:
     return round(statistics.median(vals), 1) if vals else None
 
 
-def bench_panel(base: str, panel: dict, repeat: int, export_stem: str,
-                preview_dpi: int | None = None) -> dict:
+def bench_panel(
+    base: str, panel: dict, repeat: int, export_stem: str, preview_dpi: int | None = None
+) -> dict:
     """单个面板：冷启动 → 热 override×repeat（取中位）→ 导出。
 
     `preview_dpi` 用来量「预览降质换快显」这个旋钮值不值——它只改预览 SVG
@@ -156,12 +168,12 @@ def bench_panel(base: str, panel: dict, repeat: int, export_stem: str,
     """
     pid = panel["id"]
     extra = {"preview_dpi": preview_dpi} if preview_dpi else {}
-    rec: dict = {"id": pid, "cost": panel.get("cost", ""),
-                 "preview_dpi": preview_dpi or "(默认)"}
+    rec: dict = {"id": pid, "cost": panel.get("cost", ""), "preview_dpi": preview_dpi or "(默认)"}
 
     t0 = time.perf_counter()
-    res = _post(f"{base}/api/engine/render", {"id": pid, "patches": [], **extra},
-                timeout=RENDER_TIMEOUT_S)
+    res = _post(
+        f"{base}/api/engine/render", {"id": pid, "patches": [], **extra}, timeout=RENDER_TIMEOUT_S
+    )
     cold = dict(res.get("timings") or {})
     cold["wall_ms"] = round((time.perf_counter() - t0) * 1000, 1)
     # 只有真的跑了脚本才算冷启动（一脚本多产物时第二个 stem 是热的）
@@ -169,33 +181,46 @@ def bench_panel(base: str, panel: dict, repeat: int, export_stem: str,
     rec["really_cold"] = "script_build_ms" in cold
 
     patch = _pick_patch(res.get("manifest") or {})
-    rec["patch"] = f'{patch["gid"]}.{patch["prop"]}' if patch else "(空列表)"
-    rev = res["rev"]                # --repeat 0 时下面的循环一次都不跑
+    rec["patch"] = f"{patch['gid']}.{patch['prop']}" if patch else "(空列表)"
+    rev = res["rev"]  # --repeat 0 时下面的循环一次都不跑
     samples: list[dict] = []
     for i in range(repeat):
         t = time.perf_counter()
-        r = _post(f"{base}/api/engine/render",
-                  {"id": pid, "patches": _variant(patch, i), **extra},
-                  timeout=RENDER_TIMEOUT_S)
+        r = _post(
+            f"{base}/api/engine/render",
+            {"id": pid, "patches": _variant(patch, i), **extra},
+            timeout=RENDER_TIMEOUT_S,
+        )
         s = dict(r.get("timings") or {})
         s["wall_ms"] = round((time.perf_counter() - t) * 1000, 1)
         samples.append(s)
-        rev = r["rev"]        # 取 SVG 要带上（服务端拿它做缓存穿透）
-    rec["hot"] = {k: _median(samples, k)
-                  for k in [*TIMING_KEYS, "wall_ms"]}
+        rev = r["rev"]  # 取 SVG 要带上（服务端拿它做缓存穿透）
+    rec["hot"] = {k: _median(samples, k) for k in [*TIMING_KEYS, "wall_ms"]}
     rec["hot_n"] = repeat
     # 预览 SVG 的体积：前端每次渲染都要把它下载 + 解析一遍，属于「快显」的
     # 另一半（含 imshow 的面板里它是 dpi 的直接函数，纯矢量图上是常数）
-    rec["svg_kb"] = round(len(_text(
-        f"{base}/api/engine/svg?id={urllib.parse.quote(pid)}&rev={rev}"
-    ).encode("utf-8")) / 1024, 1)
+    rec["svg_kb"] = round(
+        len(_text(f"{base}/api/engine/svg?id={urllib.parse.quote(pid)}&rev={rev}").encode("utf-8"))
+        / 1024,
+        1,
+    )
 
     spec = {
-        "page_w_mm": 90, "page_h_mm": 70, "formats": ["pdf"],
+        "page_w_mm": 90,
+        "page_h_mm": 70,
+        "formats": ["pdf"],
         "stem": export_stem,
-        "objects": [{"type": "panel", "id": pid, "x_mm": 5, "y_mm": 5,
-                     "w_mm": 80, "h_mm": 60,
-                     "overrides": _variant(patch, 0)}],
+        "objects": [
+            {
+                "type": "panel",
+                "id": pid,
+                "x_mm": 5,
+                "y_mm": 5,
+                "w_mm": 80,
+                "h_mm": 60,
+                "overrides": _variant(patch, 0),
+            }
+        ],
     }
     t = time.perf_counter()
     out = _post(f"{base}/api/export", spec, timeout=RENDER_TIMEOUT_S)
@@ -204,9 +229,16 @@ def bench_panel(base: str, panel: dict, repeat: int, export_stem: str,
     return rec
 
 
-def run_plane(launch: list[str], figures: Path, workdir: Path, plane: str,
-              workerd: str | None, repeat: int, fresh_home: bool = False,
-              preview_dpi: int | None = None) -> list[dict]:
+def run_plane(
+    launch: list[str],
+    figures: Path,
+    workdir: Path,
+    plane: str,
+    workerd: str | None,
+    repeat: int,
+    fresh_home: bool = False,
+    preview_dpi: int | None = None,
+) -> list[dict]:
     """起一次服务，测完整个图库，干净退出。`plane` 只用于命名与报告。
 
     **默认沿用真实的 HOME**（与 `smoke_app.py` 刻意不同）：matplotlib 的字体
@@ -254,8 +286,7 @@ def run_plane(launch: list[str], figures: Path, workdir: Path, plane: str,
     # （日志量正好填满缓冲），py-spy 的栈是 emit→pipe_write +
     # 八个线程 acquire。改成落文件：既没有这个失败模式，又比 DEVNULL
     # 多留一份启动期 traceback（那些进不了 app.log）。
-    proc = subprocess.Popen(cmd, env=env, stdout=_child_log,
-                            stderr=subprocess.STDOUT)
+    proc = subprocess.Popen(cmd, env=env, stdout=_child_log, stderr=subprocess.STDOUT)
     try:
         _wait_ready(base, proc, BOOT_TIMEOUT_S)
         # 导出落到临时目录：默认是项目内的 tavottofile/export/，
@@ -271,17 +302,19 @@ def run_plane(launch: list[str], figures: Path, workdir: Path, plane: str,
             rec = bench_panel(base, panel, repeat, f"bench{i}", preview_dpi)
             rec["plane"] = plane
             rows.append(rec)
-            print(f" 冷 {rec['cold']['wall_ms']:.0f}ms / "
-                  f"热中位 {rec['hot']['wall_ms']:.0f}ms / "
-                  f"导出 {rec['export_wall_ms']:.0f}ms", flush=True)
+            print(
+                f" 冷 {rec['cold']['wall_ms']:.0f}ms / "
+                f"热中位 {rec['hot']['wall_ms']:.0f}ms / "
+                f"导出 {rec['export_wall_ms']:.0f}ms",
+                flush=True,
+            )
         return rows
     finally:
         if proc.poll() is None:
             try:
                 _post(f"{base}/api/shutdown", {}, timeout=10)
                 proc.wait(timeout=30)
-            except (urllib.error.URLError, OSError, TimeoutError,
-                    subprocess.TimeoutExpired):
+            except (urllib.error.URLError, OSError, TimeoutError, subprocess.TimeoutExpired):
                 pass
         if proc.poll() is None:
             proc.terminate()
@@ -300,12 +333,12 @@ def markdown(rows: list[dict], meta: dict) -> str:
     out: list[str] = []
     out.append(f"机器：{meta['machine']}")
     out.append("")
-    out.append(f"图库：`{meta['figures']}`　解释器：`{meta['python']}`　"
-               f"热态样本：每面板 {meta['repeat']} 次取中位"
-               + (f"　预览 dpi={meta['preview_dpi']}"
-                  if meta.get("preview_dpi") else "")
-               + ("　**--fresh-home（含字体缓存重建，非稳态）**"
-                  if meta.get("fresh_home") else ""))
+    out.append(
+        f"图库：`{meta['figures']}`　解释器：`{meta['python']}`　"
+        f"热态样本：每面板 {meta['repeat']} 次取中位"
+        + (f"　预览 dpi={meta['preview_dpi']}" if meta.get("preview_dpi") else "")
+        + ("　**--fresh-home（含字体缓存重建，非稳态）**" if meta.get("fresh_home") else "")
+    )
     out.append("")
 
     planes = []
@@ -317,9 +350,11 @@ def markdown(rows: list[dict], meta: dict) -> str:
         mine = [r for r in rows if r["plane"] == plane]
         out.append(f"### 控制面：{plane}")
         out.append("")
-        out.append("| 面板 | cost | 冷 wall | 冷 worker_get | 冷 build 往返 | "
-                   "冷 script_build | 热 wall(中位) | queue_wait | patch_apply | "
-                   "canvas_draw | manifest | worker total | SVG | 导出 wall |")
+        out.append(
+            "| 面板 | cost | 冷 wall | 冷 worker_get | 冷 build 往返 | "
+            "冷 script_build | 热 wall(中位) | queue_wait | patch_apply | "
+            "canvas_draw | manifest | worker total | SVG | 导出 wall |"
+        )
         out.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
         for r in mine:
             cold, hot = r["cold"], r["hot"]
@@ -332,30 +367,40 @@ def markdown(rows: list[dict], meta: dict) -> str:
                 f"{_cell(hot.get('wall_ms'))} | {_cell(hot.get('queue_wait_ms'))} | "
                 f"{_cell(hot.get('patch_apply_ms'))} | {_cell(hot.get('canvas_draw_ms'))} | "
                 f"{_cell(hot.get('manifest_ms'))} | {_cell(hot.get('total_ms'))} | "
-                f"{_cell(r.get('svg_kb'))}KB | {_cell(r['export_wall_ms'])} |")
+                f"{_cell(r.get('svg_kb'))}KB | {_cell(r['export_wall_ms'])} |"
+            )
         out.append("")
-    out.append("单位全部是毫秒（SVG 列除外）。`wall` 是客户端看到的整次 HTTP 往返；"
-               "`worker_get` 是取（必要时 spawn）会话；`build 往返` 是父进程量到的"
-               "整条 build 命令（含子解释器启动与 import matplotlib），"
-               "`script_build` 是其中 worker 自己那一段——两者之差就是**进程与"
-               "import 的开销**；`worker total` 是那次 render 的 worker 往返，"
-               "其余各列由 worker 自报。")
+    out.append(
+        "单位全部是毫秒（SVG 列除外）。`wall` 是客户端看到的整次 HTTP 往返；"
+        "`worker_get` 是取（必要时 spawn）会话；`build 往返` 是父进程量到的"
+        "整条 build 命令（含子解释器启动与 import matplotlib），"
+        "`script_build` 是其中 worker 自己那一段——两者之差就是**进程与"
+        "import 的开销**；`worker total` 是那次 render 的 worker 往返，"
+        "其余各列由 worker 自报。"
+    )
     return "\n".join(out)
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--python", default=sys.executable,
-                    help="跑 Tavotto 的解释器（默认当前解释器）")
+    ap.add_argument(
+        "--python", default=sys.executable, help="跑 Tavotto 的解释器（默认当前解释器）"
+    )
     ap.add_argument("--exe", default=None, help="打包产物（与 --python 二选一）")
     ap.add_argument("--figures", default=str(DEFAULT_FIGURES))
     ap.add_argument("--repeat", type=int, default=7, help="热 override 采样次数")
     ap.add_argument("--plane", choices=["both", "python", "workerd"], default="both")
-    ap.add_argument("--preview-dpi", type=int, default=None,
-                    help="每条 render 都带上这个预览 dpi（量降质换快显的旋钮）")
-    ap.add_argument("--fresh-home", action="store_true",
-                    help="连 HOME 一起隔离：量的是「新机器上的第一次」"
-                         "（含 matplotlib 字体缓存重建），不是稳态")
+    ap.add_argument(
+        "--preview-dpi",
+        type=int,
+        default=None,
+        help="每条 render 都带上这个预览 dpi（量降质换快显的旋钮）",
+    )
+    ap.add_argument(
+        "--fresh-home",
+        action="store_true",
+        help="连 HOME 一起隔离：量的是「新机器上的第一次」（含 matplotlib 字体缓存重建），不是稳态",
+    )
     ap.add_argument("--out", default=None, help="把 markdown 表写到这个文件")
     ap.add_argument("--json", default=None, help="原始测量结果（便于事后对比）")
     args = ap.parse_args(argv)
@@ -368,9 +413,16 @@ def main(argv: list[str] | None = None) -> int:
 
     # workerd 二进制：release 优先（debug 版的 Rust 慢得没有参考价值）
     workerd = next(
-        (str(p) for p in (REPO / "workerd" / "target" / "release" / "tavotto-workerd",
-                          REPO / "workerd" / "target" / "debug" / "tavotto-workerd")
-         if p.is_file()), None)
+        (
+            str(p)
+            for p in (
+                REPO / "workerd" / "target" / "release" / "tavotto-workerd",
+                REPO / "workerd" / "target" / "debug" / "tavotto-workerd",
+            )
+            if p.is_file()
+        ),
+        None,
+    )
 
     planes: list[tuple[str, str | None]] = []
     if args.plane in ("both", "python"):
@@ -379,8 +431,7 @@ def main(argv: list[str] | None = None) -> int:
         if workerd:
             planes.append((f"workerd（{Path(workerd).parent.name}）", workerd))
         elif args.plane == "workerd":
-            print("找不到 tavotto-workerd 二进制（先 cargo build --release）",
-                  file=sys.stderr)
+            print("找不到 tavotto-workerd 二进制（先 cargo build --release）", file=sys.stderr)
             return 2
         else:
             print("! 没有 tavotto-workerd 二进制，跳过该控制面", file=sys.stderr)
@@ -389,8 +440,9 @@ def main(argv: list[str] | None = None) -> int:
     for label, exe in planes:
         workdir = Path(tempfile.mkdtemp(prefix="tavotto-bench-"))
         try:
-            rows += run_plane(launch, figures, workdir, label, exe, args.repeat,
-                              args.fresh_home, args.preview_dpi)
+            rows += run_plane(
+                launch, figures, workdir, label, exe, args.repeat, args.fresh_home, args.preview_dpi
+            )
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
 
@@ -409,8 +461,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\n已写入 {args.out}")
     if args.json:
         Path(args.json).write_text(
-            json.dumps({"meta": meta, "rows": rows}, ensure_ascii=False, indent=1),
-            encoding="utf-8")
+            json.dumps({"meta": meta, "rows": rows}, ensure_ascii=False, indent=1), encoding="utf-8"
+        )
     return 0
 
 

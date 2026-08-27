@@ -10,6 +10,7 @@
   corpus 要验的是 Tavotto 对**任意** matplotlib 脚本的处理能力，
   而不是对某一份样式模块的处理能力。savefig 由 worker 拦截。
 """
+
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -37,7 +38,7 @@ def scatter():
     """散点：manifest 刻意**不给** geometry（见 CLAUDE.md 的路径几何一节），
     所以这个 case 同时看护「散点降级为 bbox」那条约定还在生效。"""
     x = _lin(40, 0, 4)
-    y = x ** 1.6 - 2.0
+    y = x**1.6 - 2.0
     sizes = 12 + (x * 6)
     fig, ax = plt.subplots(figsize=(3.4, 2.4))
     ax.scatter(x, y, s=sizes, c="#2a6f4e", alpha=0.75, edgecolors="none", label="run A")
@@ -75,8 +76,18 @@ def errorbar():
     y = np.array([2.1, 3.4, 4.0, 5.2, 5.9, 6.1, 6.8, 7.0])
     yerr = np.array([0.2, 0.25, 0.3, 0.22, 0.35, 0.28, 0.4, 0.3])
     fig, ax = plt.subplots(figsize=(3.4, 2.4))
-    ax.errorbar(x, y, yerr=yerr, fmt="o-", lw=1.1, ms=4,
-                color="#4a2c6b", ecolor="#9b86b8", capsize=3, label="mean ± sd")
+    ax.errorbar(
+        x,
+        y,
+        yerr=yerr,
+        fmt="o-",
+        lw=1.1,
+        ms=4,
+        color="#4a2c6b",
+        ecolor="#9b86b8",
+        capsize=3,
+        label="mean ± sd",
+    )
     ax.set_xlabel("cycle")
     ax.set_ylabel("capacity")
     ax.set_title("Errorbar")

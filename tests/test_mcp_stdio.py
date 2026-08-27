@@ -14,6 +14,7 @@
 
 顺带记录启动延迟（体检门槛的性能预算）。
 """
+
 import json
 import os
 import subprocess
@@ -33,8 +34,12 @@ class Client:
     def __init__(self, argv_python: str, env: dict, cwd: str | None = None):
         self.proc = subprocess.Popen(
             [argv_python, str(SERVER)],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE, env=env, cwd=cwd or str(ROOT))
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
+            cwd=cwd or str(ROOT),
+        )
         self.n = 0
 
     def write(self, msg: dict) -> None:
@@ -45,8 +50,8 @@ class Client:
         line = self.proc.stdout.readline()
         if not line:
             raise AssertionError(
-                "server 挂了:\n"
-                + self.proc.stderr.read().decode("utf-8", "replace")[-4000:])
+                "server 挂了:\n" + self.proc.stderr.read().decode("utf-8", "replace")[-4000:]
+            )
         return json.loads(line.decode("utf-8"))
 
     def call(self, method: str, params=None) -> dict:
@@ -67,8 +72,11 @@ class Client:
 
 @pytest.fixture()
 def engine_client(tmp_path):
-    env = {**os.environ, "TAVOTTO_MCP_ROOTS": str(tmp_path),
-           "TAVOTTO_DATA_DIR": str(tmp_path / "data")}
+    env = {
+        **os.environ,
+        "TAVOTTO_MCP_ROOTS": str(tmp_path),
+        "TAVOTTO_DATA_DIR": str(tmp_path / "data"),
+    }
     c = Client(sys.executable, env)
     yield c
     c.close()
@@ -78,9 +86,13 @@ def engine_client(tmp_path):
 def rootless_engine_client(tmp_path):
     """模拟真实安装：cwd 在插件包内，且没有任何手工根环境变量。"""
     env = {**os.environ, "TAVOTTO_DATA_DIR": str(tmp_path / "data")}
-    for name in ("TAVOTTO_MCP_ROOTS", "TAVOTTO_MCP_WORKSPACE",
-                 "CODEX_WORKSPACE_ROOT", "CODEX_PROJECT_ROOT",
-                 "CODEX_WORKSPACE_DIR"):
+    for name in (
+        "TAVOTTO_MCP_ROOTS",
+        "TAVOTTO_MCP_WORKSPACE",
+        "CODEX_WORKSPACE_ROOT",
+        "CODEX_PROJECT_ROOT",
+        "CODEX_WORKSPACE_DIR",
+    ):
         env.pop(name, None)
     c = Client(sys.executable, env, cwd=str(ROOT / "codex-plugin"))
     yield c
@@ -95,14 +107,22 @@ def degraded_client(tmp_path):
     bare = venv_dir / ("Scripts/python.exe" if os.name == "nt" else "bin/python3")
     empty = tmp_path / "empty-bin"
     empty.mkdir()
-    env = {**os.environ,
-           "PATH": str(empty),                       # PATH 兜底也不给
-           "HOME": str(tmp_path),
-           "TAVOTTO_CONFIG_DIR": str(tmp_path / "config"),
-           "LOCALAPPDATA": str(tmp_path / "lapp"),
-           "PROGRAMFILES": str(tmp_path / "pf")}
-    for name in ("TAVOTTO_CLI", "TAVOTTO_MCP_PYTHON", "TAVOTTO_WORKER_PYTHON",
-                 "MM_WORKER_PYTHON", "TAVOTTO_MCP_EXECED", "PYTHONPATH"):
+    env = {
+        **os.environ,
+        "PATH": str(empty),  # PATH 兜底也不给
+        "HOME": str(tmp_path),
+        "TAVOTTO_CONFIG_DIR": str(tmp_path / "config"),
+        "LOCALAPPDATA": str(tmp_path / "lapp"),
+        "PROGRAMFILES": str(tmp_path / "pf"),
+    }
+    for name in (
+        "TAVOTTO_CLI",
+        "TAVOTTO_MCP_PYTHON",
+        "TAVOTTO_WORKER_PYTHON",
+        "MM_WORKER_PYTHON",
+        "TAVOTTO_MCP_EXECED",
+        "PYTHONPATH",
+    ):
         env.pop(name, None)
     c = Client(str(bare), env)
     yield c
@@ -112,10 +132,16 @@ def degraded_client(tmp_path):
 # -------------------------------- engine 模式 -------------------------------
 def test_engine_mode_reports_the_real_version_and_ui(engine_client):
     import tavotto
+
     t0 = time.monotonic()
-    res = engine_client.call("initialize", {"protocolVersion": "2025-11-25",
-                                            "capabilities": {},
-                                            "clientInfo": {"name": "t", "version": "1"}})
+    res = engine_client.call(
+        "initialize",
+        {
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "clientInfo": {"name": "t", "version": "1"},
+        },
+    )
     startup_ms = int((time.monotonic() - t0) * 1000)
     info = res["result"]["serverInfo"]
     assert info["version"] == tavotto.__version__ and info["version"] != "0"
@@ -147,8 +173,7 @@ def test_engine_mode_serves_the_canvas_resource(engine_client):
 
 def test_engine_mode_health_tool_says_ready(engine_client, tmp_path):
     engine_client.call("initialize", {"protocolVersion": "2025-11-25"})
-    res = engine_client.call("tools/call", {"name": "tavotto_health",
-                                            "arguments": {}})["result"]
+    res = engine_client.call("tools/call", {"name": "tavotto_health", "arguments": {}})["result"]
     assert not res.get("isError")
     body = res["structuredContent"]
     assert body["ok"] is True and body["engine"]["available"] is True
@@ -156,62 +181,101 @@ def test_engine_mode_health_tool_says_ready(engine_client, tmp_path):
     assert str(tmp_path) in body["roots"]
 
 
-def test_real_stdio_client_supplies_workspace_through_roots(
-        rootless_engine_client, tmp_path):
+def test_real_stdio_client_supplies_workspace_through_roots(rootless_engine_client, tmp_path):
     """真子进程验证双向 JSON-RPC：不是直接调用 RootAuthority 的假绿。"""
     c = rootless_engine_client
-    c.write({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
-        "protocolVersion": "2025-11-25",
-        "capabilities": {"roots": {"listChanged": True}},
-        "clientInfo": {"name": "fake-codex", "version": "1"},
-    }})
+    c.write(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {"roots": {"listChanged": True}},
+                "clientInfo": {"name": "fake-codex", "version": "1"},
+            },
+        }
+    )
     assert c.read()["result"]["protocolVersion"] == "2025-11-25"
     c.write({"jsonrpc": "2.0", "method": "notifications/initialized"})
-    c.write({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
-        "name": "tavotto_health", "arguments": {},
-    }})
+    c.write(
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "tavotto_health",
+                "arguments": {},
+            },
+        }
+    )
     request = c.read()
     assert request["method"] == "roots/list"
-    c.write({"jsonrpc": "2.0", "id": request["id"],
-             "result": {"roots": [{"uri": tmp_path.resolve().as_uri()}]}})
+    c.write(
+        {
+            "jsonrpc": "2.0",
+            "id": request["id"],
+            "result": {"roots": [{"uri": tmp_path.resolve().as_uri()}]},
+        }
+    )
     response = c.read()["result"]["structuredContent"]
     assert response["roots"] == [str(tmp_path.resolve())]
     assert response["root_authority"]["source"] == "mcp_roots"
     assert response["root_authority"]["client"]["name"] == "fake-codex"
 
 
-def test_real_stdio_client_confirms_workspace_through_elicitation(
-        rootless_engine_client, tmp_path):
+def test_real_stdio_client_confirms_workspace_through_elicitation(rootless_engine_client, tmp_path):
     """真子进程双向握手：模型给候选，host 代表用户确认后才成为根。"""
     c = rootless_engine_client
-    init = c.call("initialize", {
-        "protocolVersion": "2025-06-18",
-        "capabilities": {"elicitation": {}},
-        "clientInfo": {"name": "codex-mcp-client", "version": "test"},
-    })
+    init = c.call(
+        "initialize",
+        {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {"elicitation": {}},
+            "clientInfo": {"name": "codex-mcp-client", "version": "test"},
+        },
+    )
     assert init["result"]["protocolVersion"] == "2025-06-18"
     c.write({"jsonrpc": "2.0", "method": "notifications/initialized"})
     c.n += 1
-    c.write({"jsonrpc": "2.0", "id": c.n, "method": "tools/call", "params": {
-        "name": "tavotto_open_figure",
-        "arguments": {"project_path": str(tmp_path.resolve())},
-    }})
+    c.write(
+        {
+            "jsonrpc": "2.0",
+            "id": c.n,
+            "method": "tools/call",
+            "params": {
+                "name": "tavotto_open_figure",
+                "arguments": {"project_path": str(tmp_path.resolve())},
+            },
+        }
+    )
     request = c.read()
     assert request["method"] == "elicitation/create"
     assert str(tmp_path.resolve()) in request["params"]["message"]
     assert request["params"]["requestedSchema"]["required"] == ["approve"]
-    c.write({"jsonrpc": "2.0", "id": request["id"], "result": {
-        "action": "accept", "content": {"approve": True},
-    }})
+    c.write(
+        {
+            "jsonrpc": "2.0",
+            "id": request["id"],
+            "result": {
+                "action": "accept",
+                "content": {"approve": True},
+            },
+        }
+    )
     # 目录为空，所以业务层应诚实报 no_registry/no_figure；关键是授权已完成，
     # 不是 no_workspace_root，也不是传输死锁。
     opened = c.read()["result"]
     assert opened["isError"] is True
     assert opened["structuredContent"]["code"] in ("no_registry", "no_figure")
 
-    health = c.call("tools/call", {
-        "name": "tavotto_health", "arguments": {},
-    })["result"]["structuredContent"]
+    health = c.call(
+        "tools/call",
+        {
+            "name": "tavotto_health",
+            "arguments": {},
+        },
+    )["result"]["structuredContent"]
     assert health["roots"] == [str(tmp_path.resolve())]
     assert health["root_authority"]["source"] == "user_elicitation"
     assert health["root_authority"]["workspace_confirmation"]["state"] == "accepted"
@@ -241,14 +305,18 @@ def test_degraded_mode_over_real_stdio(degraded_client):
     tools = degraded_client.call("tools/list")["result"]["tools"]
     assert [t["name"] for t in tools] == ["tavotto_health"]
 
-    res = degraded_client.call("tools/call", {
-        "name": "tavotto_open_figure",
-        "arguments": {"script_path": "/tmp/fig.py"}})["result"]
+    res = degraded_client.call(
+        "tools/call", {"name": "tavotto_open_figure", "arguments": {"script_path": "/tmp/fig.py"}}
+    )["result"]
     assert res["isError"] is True
     body = res["structuredContent"]
     assert body["ok"] is False
-    assert body["code"] in ("tavotto_missing", "desktop_only",
-                            "desktop_found_cli_missing", "engine_unavailable")
+    assert body["code"] in (
+        "tavotto_missing",
+        "desktop_only",
+        "desktop_found_cli_missing",
+        "engine_unavailable",
+    )
     assert body["canvas"]["available"] is False
     assert body["recovery"]
     text = res["content"][0]["text"]
@@ -260,8 +328,7 @@ def test_degraded_mode_over_real_stdio(degraded_client):
 
 def test_degraded_mode_health_check_is_actionable(degraded_client):
     degraded_client.call("initialize", {"protocolVersion": "2025-06-18"})
-    res = degraded_client.call("tools/call", {"name": "tavotto_health",
-                                              "arguments": {}})["result"]
+    res = degraded_client.call("tools/call", {"name": "tavotto_health", "arguments": {}})["result"]
     assert not res.get("isError")
     body = res["structuredContent"]
     assert body["engine"]["available"] is False

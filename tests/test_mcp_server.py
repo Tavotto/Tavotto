@@ -11,6 +11,7 @@
 需要 matplotlib 的全链路在 `tests/test_mcp_roundtrip.py`（自己 spawn worker）。
 这里用假 worker，跑在 .venv 里。
 """
+
 import io
 import json
 import os
@@ -39,22 +40,49 @@ class FakeWorker:
     def _manifest(self, patches):
         size = [80.0, 60.0]
         elements = [
-            {"gid": "figure", "role": "figure", "label": "整图", "draggable": False,
-             "bbox": [0, 0, 1, 1], "editable": []},
-            {"gid": "axes_0", "role": "axes", "label": "子图", "draggable": False,
-             "bbox": [0.1, 0.1, 0.8, 0.8],
-             "editable": [{"prop": "spine_top", "value": True},
-                          {"prop": "spine_right", "value": True},
-                          {"prop": "spine_bottom", "value": True},
-                          {"prop": "spine_left", "value": True},
-                          {"prop": "spine_linewidth", "value": 0.75}]},
-            {"gid": "axes_0.xticks", "role": "ticks", "label": "x 刻度",
-             "draggable": False, "bbox": [0.1, 0.9, 0.8, 0.05],
-             "editable": [{"prop": "direction", "value": "in"},
-                          {"prop": "fontsize",
-                           "value": next((p["value"] for p in patches
-                                          if p["gid"] == "axes_0.xticks"
-                                          and p["prop"] == "fontsize"), 9.0)}]},
+            {
+                "gid": "figure",
+                "role": "figure",
+                "label": "整图",
+                "draggable": False,
+                "bbox": [0, 0, 1, 1],
+                "editable": [],
+            },
+            {
+                "gid": "axes_0",
+                "role": "axes",
+                "label": "子图",
+                "draggable": False,
+                "bbox": [0.1, 0.1, 0.8, 0.8],
+                "editable": [
+                    {"prop": "spine_top", "value": True},
+                    {"prop": "spine_right", "value": True},
+                    {"prop": "spine_bottom", "value": True},
+                    {"prop": "spine_left", "value": True},
+                    {"prop": "spine_linewidth", "value": 0.75},
+                ],
+            },
+            {
+                "gid": "axes_0.xticks",
+                "role": "ticks",
+                "label": "x 刻度",
+                "draggable": False,
+                "bbox": [0.1, 0.9, 0.8, 0.05],
+                "editable": [
+                    {"prop": "direction", "value": "in"},
+                    {
+                        "prop": "fontsize",
+                        "value": next(
+                            (
+                                p["value"]
+                                for p in patches
+                                if p["gid"] == "axes_0.xticks" and p["prop"] == "fontsize"
+                            ),
+                            9.0,
+                        ),
+                    },
+                ],
+            },
         ]
         return {"stem": "Fig1", "size_mm": size, "elements": elements}
 
@@ -92,9 +120,10 @@ def project(tmp_path, monkeypatch):
     figures.mkdir()
     (figures / "fig1.py").write_text("def main():\n    pass\n", encoding="utf-8")
     (figures / "Fig1.pdf").write_bytes(b"%PDF-1.4\n")
-    (figures / "tavotto_registry.json").write_text(json.dumps(
-        {"scripts": {"fig1.py": {"entry": "main", "cost": "light", "stems": ["Fig1"]}}}),
-        encoding="utf-8")
+    (figures / "tavotto_registry.json").write_text(
+        json.dumps({"scripts": {"fig1.py": {"entry": "main", "cost": "light", "stems": ["Fig1"]}}}),
+        encoding="utf-8",
+    )
     monkeypatch.setenv(bridge.ROOTS_ENV, str(tmp_path))
     return figures
 
@@ -131,13 +160,19 @@ def test_initialize_falls_back_to_our_latest_for_unknown_versions():
 
 
 def test_tools_list_shape():
-    tools = server.Server(rpc.StdioConnection(io.BytesIO(), io.BytesIO())) \
-        .dispatch("tools/list", {})["tools"]
+    tools = server.Server(rpc.StdioConnection(io.BytesIO(), io.BytesIO())).dispatch(
+        "tools/list", {}
+    )["tools"]
     names = [t["name"] for t in tools]
-    assert names == ["tavotto_health",
-                     "tavotto_open_figure", "tavotto_apply_overrides",
-                     "tavotto_preflight", "tavotto_export",
-                     "tavotto_verify_replay", "tavotto_close_session"]
+    assert names == [
+        "tavotto_health",
+        "tavotto_open_figure",
+        "tavotto_apply_overrides",
+        "tavotto_preflight",
+        "tavotto_export",
+        "tavotto_verify_replay",
+        "tavotto_close_session",
+    ]
     for t in tools:
         assert t["description"] and t["inputSchema"]["type"] == "object"
 
@@ -169,7 +204,8 @@ def test_notifications_are_never_answered():
 
 
 def test_real_protocol_roundtrip_acquires_host_roots_and_opens_canvas(
-        project, fake_pool, monkeypatch):
+    project, fake_pool, monkeypatch
+):
     """假 Codex host 走完整双向协议，不靠 TAVOTTO_MCP_ROOTS 偷渡答案。
 
     roots/list 必须嵌在真实 tools/call 处理窗口里；拿到根后 health 能说明来源，
@@ -181,21 +217,40 @@ def test_real_protocol_roundtrip_acquires_host_roots_and_opens_canvas(
     monkeypatch.chdir(PLUGIN / "mcp")
     root_uri = project.parent.resolve().as_uri()
     incoming = [
-        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
-            "protocolVersion": "2025-11-25",
-            "capabilities": {"roots": {"listChanged": True}},
-            "clientInfo": {"name": "codex-test", "version": "1"},
-        }},
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {"roots": {"listChanged": True}},
+                "clientInfo": {"name": "codex-test", "version": "1"},
+            },
+        },
         {"jsonrpc": "2.0", "method": "notifications/initialized"},
-        {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
-            "name": "tavotto_health", "arguments": {},
-        }},
-        {"jsonrpc": "2.0", "id": "tavotto-roots-1",
-         "result": {"roots": [{"uri": root_uri, "name": "fixture"}]}},
-        {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
-            "name": "tavotto_open_figure",
-            "arguments": {"project_path": "figures"},
-        }},
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "tavotto_health",
+                "arguments": {},
+            },
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": "tavotto-roots-1",
+            "result": {"roots": [{"uri": root_uri, "name": "fixture"}]},
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "name": "tavotto_open_figure",
+                "arguments": {"project_path": "figures"},
+            },
+        },
     ]
     wire = b"".join((json.dumps(msg) + "\n").encode() for msg in incoming)
     out = io.BytesIO()
@@ -223,8 +278,7 @@ def test_real_protocol_roundtrip_acquires_host_roots_and_opens_canvas(
         assert opened["_meta"]["openai/outputTemplate"] == widget.RESOURCE_URI
 
 
-def test_roots_change_notification_refreshes_only_inside_the_next_tool_call(
-        tmp_path, monkeypatch):
+def test_roots_change_notification_refreshes_only_inside_the_next_tool_call(tmp_path, monkeypatch):
     monkeypatch.delenv(bridge.ROOTS_ENV, raising=False)
     for name in bridge.WORKSPACE_ENVS:
         monkeypatch.delenv(name, raising=False)
@@ -234,30 +288,59 @@ def test_roots_change_notification_refreshes_only_inside_the_next_tool_call(
     first.mkdir()
     second.mkdir()
     incoming = [
-        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
-            "protocolVersion": "2025-11-25",
-            "capabilities": {"roots": {"listChanged": True}},
-        }},
-        {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
-            "name": "tavotto_health", "arguments": {},
-        }},
-        {"jsonrpc": "2.0", "id": "tavotto-roots-1", "result": {
-            "roots": [{"uri": first.resolve().as_uri()}],
-        }},
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {"roots": {"listChanged": True}},
+            },
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "tavotto_health",
+                "arguments": {},
+            },
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": "tavotto-roots-1",
+            "result": {
+                "roots": [{"uri": first.resolve().as_uri()}],
+            },
+        },
         {"jsonrpc": "2.0", "method": "notifications/roots/list_changed"},
-        {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
-            "name": "tavotto_health", "arguments": {},
-        }},
-        {"jsonrpc": "2.0", "id": "tavotto-roots-2", "result": {
-            "roots": [{"uri": second.resolve().as_uri()}],
-        }},
+        {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "name": "tavotto_health",
+                "arguments": {},
+            },
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": "tavotto-roots-2",
+            "result": {
+                "roots": [{"uri": second.resolve().as_uri()}],
+            },
+        },
     ]
     wire = b"".join((json.dumps(msg) + "\n").encode() for msg in incoming)
     out = io.BytesIO()
     assert server.Server(rpc.StdioConnection(io.BytesIO(wire), out)).serve_forever() == 0
     frames = [json.loads(line) for line in out.getvalue().splitlines()]
     assert [frame.get("method") for frame in frames] == [
-        None, "roots/list", None, "roots/list", None,
+        None,
+        "roots/list",
+        None,
+        "roots/list",
+        None,
     ]
     assert frames[2]["result"]["structuredContent"]["roots"] == [str(first.resolve())]
     refreshed = frames[4]["result"]["structuredContent"]["root_authority"]
@@ -266,7 +349,8 @@ def test_roots_change_notification_refreshes_only_inside_the_next_tool_call(
 
 
 def test_real_protocol_roundtrip_elicits_one_connection_scoped_root_and_opens_canvas(
-        project, fake_pool, monkeypatch):
+    project, fake_pool, monkeypatch
+):
     """当前 Codex 不声明 roots，但声明 elicitation：用户确认必须成为授权边界。"""
     monkeypatch.delenv(bridge.ROOTS_ENV, raising=False)
     for name in bridge.WORKSPACE_ENVS:
@@ -274,22 +358,43 @@ def test_real_protocol_roundtrip_elicits_one_connection_scoped_root_and_opens_ca
     monkeypatch.chdir(PLUGIN / "mcp")
     candidate = str(project.resolve())
     incoming = [
-        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
-            "protocolVersion": "2025-06-18",
-            "capabilities": {"elicitation": {}},
-            "clientInfo": {"name": "codex-mcp-client", "version": "0.149.1"},
-        }},
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {"elicitation": {}},
+                "clientInfo": {"name": "codex-mcp-client", "version": "0.149.1"},
+            },
+        },
         {"jsonrpc": "2.0", "method": "notifications/initialized"},
-        {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
-            "name": "tavotto_open_figure",
-            "arguments": {"project_path": candidate},
-        }},
-        {"jsonrpc": "2.0", "id": "tavotto-elicitation-1", "result": {
-            "action": "accept", "content": {"approve": True},
-        }},
-        {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
-            "name": "tavotto_health", "arguments": {},
-        }},
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "tavotto_open_figure",
+                "arguments": {"project_path": candidate},
+            },
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": "tavotto-elicitation-1",
+            "result": {
+                "action": "accept",
+                "content": {"approve": True},
+            },
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "name": "tavotto_health",
+                "arguments": {},
+            },
+        },
     ]
     wire = b"".join((json.dumps(msg) + "\n").encode() for msg in incoming)
     out = io.BytesIO()
@@ -318,28 +423,44 @@ def test_real_protocol_roundtrip_elicits_one_connection_scoped_root_and_opens_ca
     assert authority["workspace_confirmation"]["lifetime"] == "mcp_connection"
 
 
-@pytest.mark.parametrize("action,state", [
-    ("decline", "declined"),
-    ("cancel", "cancelled"),
-])
-def test_workspace_elicitation_refusal_fails_closed(
-        project, monkeypatch, action, state):
+@pytest.mark.parametrize(
+    "action,state",
+    [
+        ("decline", "declined"),
+        ("cancel", "cancelled"),
+    ],
+)
+def test_workspace_elicitation_refusal_fails_closed(project, monkeypatch, action, state):
     monkeypatch.delenv(bridge.ROOTS_ENV, raising=False)
     for name in bridge.WORKSPACE_ENVS:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.chdir(PLUGIN / "mcp")
     incoming = [
-        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
-            "protocolVersion": "2025-06-18",
-            "capabilities": {"elicitation": {}},
-        }},
-        {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
-            "name": "tavotto_open_figure",
-            "arguments": {"project_path": str(project.resolve())},
-        }},
-        {"jsonrpc": "2.0", "id": "tavotto-elicitation-1", "result": {
-            "action": action,
-        }},
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {"elicitation": {}},
+            },
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "tavotto_open_figure",
+                "arguments": {"project_path": str(project.resolve())},
+            },
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": "tavotto-elicitation-1",
+            "result": {
+                "action": action,
+            },
+        },
     ]
     wire = b"".join((json.dumps(msg) + "\n").encode() for msg in incoming)
     out = io.BytesIO()
@@ -353,21 +474,30 @@ def test_workspace_elicitation_refusal_fails_closed(
     assert bridge.sessions() == {}
 
 
-def test_rootless_elicitation_requires_an_absolute_existing_candidate(
-        monkeypatch):
+def test_rootless_elicitation_requires_an_absolute_existing_candidate(monkeypatch):
     monkeypatch.delenv(bridge.ROOTS_ENV, raising=False)
     for name in bridge.WORKSPACE_ENVS:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.chdir(PLUGIN / "mcp")
     incoming = [
-        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
-            "protocolVersion": "2025-06-18",
-            "capabilities": {"elicitation": {}},
-        }},
-        {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
-            "name": "tavotto_open_figure",
-            "arguments": {"project_path": "figures"},
-        }},
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {"elicitation": {}},
+            },
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "tavotto_open_figure",
+                "arguments": {"project_path": "figures"},
+            },
+        },
     ]
     wire = b"".join((json.dumps(msg) + "\n").encode() for msg in incoming)
     out = io.BytesIO()
@@ -379,22 +509,31 @@ def test_rootless_elicitation_requires_an_absolute_existing_candidate(
     assert "绝对" in payload["recovery"]
 
 
-def test_roots_client_that_disconnects_fails_closed_without_internal_error(
-        tmp_path, monkeypatch):
+def test_roots_client_that_disconnects_fails_closed_without_internal_error(tmp_path, monkeypatch):
     """声明 capability 却不回答的 host 不得锁死，也不得退回插件 cwd。"""
     monkeypatch.delenv(bridge.ROOTS_ENV, raising=False)
     for name in bridge.WORKSPACE_ENVS:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.chdir(PLUGIN / "mcp")
     incoming = [
-        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
-            "protocolVersion": "2025-11-25",
-            "capabilities": {"roots": {"listChanged": False}},
-        }},
-        {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
-            "name": "tavotto_open_figure",
-            "arguments": {"project_path": str(tmp_path)},
-        }},
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {"roots": {"listChanged": False}},
+            },
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "tavotto_open_figure",
+                "arguments": {"project_path": str(tmp_path)},
+            },
+        },
     ]
     wire = b"".join((json.dumps(msg) + "\n").encode() for msg in incoming)
     out = io.BytesIO()
@@ -405,8 +544,7 @@ def test_roots_client_that_disconnects_fails_closed_without_internal_error(
     opened = frames[2]["result"]
     assert opened["isError"] is True
     assert opened["structuredContent"]["code"] == "no_workspace_root"
-    assert all(frame.get("error", {}).get("code") != rpc.INTERNAL_ERROR
-               for frame in frames)
+    assert all(frame.get("error", {}).get("code") != rpc.INTERNAL_ERROR for frame in frames)
 
 
 def test_handler_exceptions_do_not_kill_the_connection(monkeypatch):
@@ -429,10 +567,10 @@ def test_protocol_owns_the_real_stdout(monkeypatch):
     monkeypatch.setattr(sys, "stdout", fake_stdout)
     monkeypatch.setattr(rpc, "_REAL_STDOUT", None)
     rpc.StdioConnection.hijack_stdout()
-    assert sys.stdout is sys.stderr          # 后续 print 一律去 stderr
+    assert sys.stdout is sys.stderr  # 后续 print 一律去 stderr
     conn = rpc.StdioConnection(io.BytesIO())
     conn.result(1, {"ok": True})
-    assert b'"ok"' in real.getvalue()        # 协议帧仍走真正的 stdout
+    assert b'"ok"' in real.getvalue()  # 协议帧仍走真正的 stdout
 
 
 def test_a_flood_of_blank_lines_does_not_blow_the_stack():
@@ -446,7 +584,7 @@ def test_a_flood_of_blank_lines_does_not_blow_the_stack():
     flood = b"\n" * 5000 + b'{"jsonrpc":"2.0","id":1,"method":"ping"}\n'
     conn = rpc.StdioConnection(io.BytesIO(flood), io.BytesIO())
     assert conn.read() == {"jsonrpc": "2.0", "id": 1, "method": "ping"}
-    assert conn.read() is None                # 空行吃完即 EOF，不是无限循环
+    assert conn.read() is None  # 空行吃完即 EOF，不是无限循环
 
 
 # ------------------------------ 路径范围 ------------------------------------
@@ -534,26 +672,35 @@ def test_open_apply_preflight_export_close_without_any_ui(project, fake_pool, tm
     assert res["content"][0]["text"]
 
     patches = [{"gid": "axes_0.xticks", "prop": "fontsize", "value": 7.0}]
-    applied = _body(_call("tavotto_apply_overrides",
-                          {"session_id": sid, "patches": patches}))
+    applied = _body(_call("tavotto_apply_overrides", {"session_id": sid, "patches": patches}))
     assert applied["applied"] == 1 and applied["rejected"] == []
     # worker 拿到的是**过滤后仍保持原始顺序**的那份，与 Flask 走的完全一样
     assert fake_pool.calls[-1][2] == patches
 
     checks = _body(_call("tavotto_preflight", {"session_id": sid}))
-    assert checks["blocking"] is True          # 7pt 撞绝对下限
+    assert checks["blocking"] is True  # 7pt 撞绝对下限
     assert any(i["id"] == "font-below-absolute-floor" for i in checks["errors"])
     assert "阻断" in checks["report"]
 
     out_dir = tmp_path / "out"
-    blocked = _call("tavotto_export", {"session_id": sid, "formats": ["pdf"],
-                                       "out_dir": str(out_dir)})
+    blocked = _call(
+        "tavotto_export", {"session_id": sid, "formats": ["pdf"], "out_dir": str(out_dir)}
+    )
     assert blocked["isError"] and _body(blocked)["code"] == "preflight_blocked"
     assert not out_dir.exists(), "被阻断时一张图都不该出"
 
-    done = _body(_call("tavotto_export",
-                       {"session_id": sid, "formats": ["pdf", "png"], "dpi": 300,
-                        "out_dir": str(out_dir), "explicit_confirm": True}))
+    done = _body(
+        _call(
+            "tavotto_export",
+            {
+                "session_id": sid,
+                "formats": ["pdf", "png"],
+                "dpi": 300,
+                "out_dir": str(out_dir),
+                "explicit_confirm": True,
+            },
+        )
+    )
     assert [f["format"] for f in done["files"]] == ["pdf", "png"]
     assert done["forced"] is True
     assert [f["vector"] for f in done["files"]] == [True, False]
@@ -574,11 +721,10 @@ def test_patches_are_a_full_list_and_dirty_entries_are_reported(project, fake_po
     sid = _body(_call("tavotto_open_figure", {"project_path": str(project)}))["session_id"]
     patches = [
         {"gid": "axes_0.xticks", "prop": "fontsize", "value": 9.0},
-        {"gid": "", "prop": "x", "value": 1},                    # 坏 gid
-        {"gid": "a", "prop": "b", "value": float("inf")},        # 非有限浮点
+        {"gid": "", "prop": "x", "value": 1},  # 坏 gid
+        {"gid": "a", "prop": "b", "value": float("inf")},  # 非有限浮点
     ]
-    body = _body(_call("tavotto_apply_overrides",
-                       {"session_id": sid, "patches": patches}))
+    body = _body(_call("tavotto_apply_overrides", {"session_id": sid, "patches": patches}))
     # 脏条目**不静默丢**：连同原因一起交出来
     assert [d["reason"] for d in body["rejected"]] == ["bad_gid", "non_finite_float"]
     assert body["applied"] == 1
@@ -587,6 +733,7 @@ def test_patches_are_a_full_list_and_dirty_entries_are_reported(project, fake_po
 
 def test_patch_hash_is_the_canonical_one(project, fake_pool):
     from tavotto.engine import patchspec
+
     sid = _body(_call("tavotto_open_figure", {"project_path": str(project)}))["session_id"]
     a = [{"gid": "g2", "prop": "p", "value": 1}, {"gid": "g1", "prop": "p", "value": 2}]
     b = [{"gid": "g1", "prop": "p", "value": 2}, {"gid": "g2", "prop": "p", "value": 1}]
@@ -599,23 +746,38 @@ def test_patch_hash_is_the_canonical_one(project, fake_pool):
 def test_export_defaults_to_the_project_export_dir(project, fake_pool, monkeypatch):
     """与画布导出同一条规则（engine/config.project_export_dir），不另写一份。"""
     from tavotto.engine import config as engine_config
+
     sid = _body(_call("tavotto_open_figure", {"project_path": str(project)}))["session_id"]
     _call("tavotto_apply_overrides", {"session_id": sid, "patches": []})
-    done = _body(_call("tavotto_export", {"session_id": sid, "formats": ["pdf"],
-                                          "explicit_confirm": True}))
+    done = _body(
+        _call("tavotto_export", {"session_id": sid, "formats": ["pdf"], "explicit_confirm": True})
+    )
     assert Path(done["export_dir"]) == engine_config.project_export_dir(str(project))
     assert Path(done["export_dir"]).name == "export"
 
 
 def test_export_writes_a_proof_report(project, fake_pool, tmp_path):
     from tavotto.engine.brand import PROOF_KIND
+
     sid = _body(_call("tavotto_open_figure", {"project_path": str(project)}))["session_id"]
-    _call("tavotto_apply_overrides",
-          {"session_id": sid,
-           "patches": [{"gid": "axes_0.xticks", "prop": "fontsize", "value": 7.0}]})
-    done = _body(_call("tavotto_export",
-                       {"session_id": sid, "formats": ["pdf"], "explicit_confirm": True,
-                        "out_dir": str(tmp_path / "out")}))
+    _call(
+        "tavotto_apply_overrides",
+        {
+            "session_id": sid,
+            "patches": [{"gid": "axes_0.xticks", "prop": "fontsize", "value": 7.0}],
+        },
+    )
+    done = _body(
+        _call(
+            "tavotto_export",
+            {
+                "session_id": sid,
+                "formats": ["pdf"],
+                "explicit_confirm": True,
+                "out_dir": str(tmp_path / "out"),
+            },
+        )
+    )
     proof = json.loads(Path(done["proof_path"]).read_text(encoding="utf-8"))
     assert proof["kind"] == PROOF_KIND and proof["version"] == 2
     assert proof["source"] == "codex-mcp"
@@ -631,17 +793,22 @@ def test_journal_override_reaches_preflight(project, fake_pool):
     sid = _body(_call("tavotto_open_figure", {"project_path": str(project)}))["session_id"]
     base = _body(_call("tavotto_preflight", {"session_id": sid}))
     assert not any(i["id"] == "page-width" for i in base["errors"])
-    tight = _body(_call("tavotto_preflight",
-                        {"session_id": sid,
-                         "journal": {"widths_mm": {"single": 55.0, "double": 120.0}}}))
+    tight = _body(
+        _call(
+            "tavotto_preflight",
+            {"session_id": sid, "journal": {"widths_mm": {"single": 55.0, "double": 120.0}}},
+        )
+    )
     assert any(i["id"] == "page-width" for i in tight["errors"])
     assert tight["profile"]["journal"]["widths_mm"]["double"] == 120.0
 
 
 def test_bad_format_and_dpi_are_refused(project, fake_pool):
     sid = _body(_call("tavotto_open_figure", {"project_path": str(project)}))["session_id"]
-    assert _body(_call("tavotto_export", {"session_id": sid, "formats": ["docx"]}))["code"] \
+    assert (
+        _body(_call("tavotto_export", {"session_id": sid, "formats": ["docx"]}))["code"]
         == "bad_format"
+    )
     assert _body(_call("tavotto_export", {"session_id": sid, "dpi": 0}))["code"] == "bad_dpi"
 
 
@@ -656,8 +823,10 @@ def test_a_directory_without_a_registry_is_a_clear_error(tmp_path, monkeypatch, 
 
 def test_session_eviction_keeps_the_lid_on(project, fake_pool, monkeypatch):
     monkeypatch.setattr(bridge, "MAX_SESSIONS", 2)
-    ids = [_body(_call("tavotto_open_figure", {"project_path": str(project)}))["session_id"]
-           for _ in range(4)]
+    ids = [
+        _body(_call("tavotto_open_figure", {"project_path": str(project)}))["session_id"]
+        for _ in range(4)
+    ]
     assert len(bridge.sessions()) == 2
     assert ids[-1] in bridge.sessions()
 
@@ -667,12 +836,14 @@ def test_widget_artifact_is_in_sync_with_the_frontend():
     """产物过期 = 用户装到的是旧画布。指纹算法纯 Python，CI 不需要 Node。"""
     sys.path.insert(0, str(ROOT / "scripts"))
     import build_mcp_widget
+
     have = build_mcp_widget.current_fingerprint()
     if have is None:
         pytest.skip("画布产物未构建（源码检出后跑一次 scripts/build_mcp_widget.py）")
     assert have == build_mcp_widget.source_fingerprint(), (
         "codex-plugin/mcp/widget/canvas.html 与 web/src 不同步，"
-        "跑一次 python scripts/build_mcp_widget.py")
+        "跑一次 python scripts/build_mcp_widget.py"
+    )
 
 
 def test_widget_resource_is_self_contained():
@@ -688,9 +859,12 @@ def test_widget_resource_is_self_contained():
     # 根本没有可寻址的来源（我们也刻意把 resourceDomains 留空）。
     # 只看**标签**，不看正文——压缩过的 JS 里满地都是 `src=`。
     import re as _re
-    externals = [m.group(0) for m in
-                 _re.finditer(r"<(?:script|link)\b[^>]*>", html, _re.I)
-                 if _re.search(r'\b(?:src|href)\s*=\s*"(?!data:)', m.group(0), _re.I)]
+
+    externals = [
+        m.group(0)
+        for m in _re.finditer(r"<(?:script|link)\b[^>]*>", html, _re.I)
+        if _re.search(r'\b(?:src|href)\s*=\s*"(?!data:)', m.group(0), _re.I)
+    ]
     assert not externals, f"画布 HTML 里有外链: {externals[:3]}"
     assert "<script" in html and "<style" in html
     contents = widget.resource_contents()
@@ -712,7 +886,7 @@ def test_missing_widget_is_said_out_loud_on_open(project, fake_pool, monkeypatch
     monkeypatch.setattr(widget, "available", lambda: False)
     res = _call("tavotto_open_figure", {"project_path": str(project)})
     body = _body(res)
-    assert body["ok"] is True                      # 工具本身没坏
+    assert body["ok"] is True  # 工具本身没坏
     assert body["canvas_ui"]["available"] is False
     assert body["canvas_ui"]["code"] == "widget_missing"
     assert "内嵌画布不可用" in res["content"][0]["text"]
@@ -741,6 +915,7 @@ def test_health_tool_reports_capabilities(project, fake_pool):
 # ===========================================================================
 # Codex review (#8/#10) 抓到的那批：桥接层的边界、会话生命周期与导出判据
 # ===========================================================================
+
 
 # ------------------------------ 允许的项目根 ---------------------------------
 def test_plugin_cwd_is_not_a_workspace(monkeypatch):
@@ -823,7 +998,8 @@ def test_protocol_root_survives_a_deleted_plugin_cwd(monkeypatch, tmp_path):
 
 
 def test_open_session_is_revoked_when_host_switches_workspace(
-        project, fake_pool, monkeypatch, tmp_path):
+    project, fake_pool, monkeypatch, tmp_path
+):
     opened = _body(_call("tavotto_open_figure", {"project_path": str(project)}))
     sid = opened["session_id"]
     other = tmp_path / "other-workspace"
@@ -839,7 +1015,8 @@ def test_open_session_is_revoked_when_host_switches_workspace(
 
 
 def test_open_session_is_revoked_when_project_retargets_outside_workspace(
-        project, fake_pool, tmp_path, tmp_path_factory):
+    project, fake_pool, tmp_path, tmp_path_factory
+):
     """会话不能在项目目录被换成越界 symlink 后继续复用旧的词法路径。"""
     opened = _body(_call("tavotto_open_figure", {"project_path": str(project)}))
     sid = opened["session_id"]
@@ -861,7 +1038,8 @@ def test_open_session_is_revoked_when_project_retargets_outside_workspace(
 
 
 def test_session_project_is_recanonicalized_before_worker_access(
-        project, fake_pool, monkeypatch, tmp_path_factory):
+    project, fake_pool, monkeypatch, tmp_path_factory
+):
     """Windows 无 symlink 权限时也要确定会话检查真的重新解析当前目标。"""
     opened = _body(_call("tavotto_open_figure", {"project_path": str(project)}))
     sid = opened["session_id"]
@@ -902,10 +1080,11 @@ def test_registry_outside_the_root_is_never_written(tmp_path, monkeypatch, fake_
     # 这条用例变成空转的门禁——它还在报平安。
     (inner / "fig1.py").write_text(
         "import matplotlib.pyplot as plt\n\n\n"
-        "def main():\n    fig = plt.figure()\n    fig.savefig(\"Fig1.pdf\")\n",
-        encoding="utf-8")
+        'def main():\n    fig = plt.figure()\n    fig.savefig("Fig1.pdf")\n',
+        encoding="utf-8",
+    )
     (inner / "Fig1.pdf").write_bytes(b"%PDF-1.4\n")
-    monkeypatch.setenv(bridge.ROOTS_ENV, str(inner))       # 只允许 inner
+    monkeypatch.setenv(bridge.ROOTS_ENV, str(inner))  # 只允许 inner
 
     with pytest.raises(bridge.BridgeError) as exc:
         bridge.open_figure(str(inner / "Fig1.pdf"))
@@ -920,6 +1099,7 @@ def test_failed_first_render_leaves_no_session_behind(project, monkeypatch):
     先登记后渲染的话，反复失败的 open 会把账本堆满，再靠 `_evict_if_needed()`
     把**真正在用的**会话挤出去。
     """
+
     class Boom:
         rev = 0
         generation = 1
@@ -934,8 +1114,7 @@ def test_failed_first_render_leaves_no_session_behind(project, monkeypatch):
     assert bridge.sessions() == {}, "失败的 open 在账本里留下了够不着的会话"
 
 
-def test_preview_png_failure_still_hands_back_the_session(project, fake_pool,
-                                                          monkeypatch):
+def test_preview_png_failure_still_hands_back_the_session(project, fake_pool, monkeypatch):
     """位图那一跳失败不能把会话变成「够不着的幽灵」。
 
     主渲染成功后会话已经登记，而 `include_png` 的位图是**第二次独立的
@@ -944,6 +1123,7 @@ def test_preview_png_failure_still_hands_back_the_session(project, fake_pool,
     账本直到被 `_evict_if_needed()` 挤掉，而被挤掉的往往是真正在用的那条。
     位图是顺带产物：降级，但如实回一个 code（不静默）。
     """
+
     def boom(*a, **k):
         raise bridge.BridgeError("位图挂了", code="preview_failed")
 
@@ -952,11 +1132,10 @@ def test_preview_png_failure_still_hands_back_the_session(project, fake_pool,
     assert out["ok"] is True
     assert out["session_id"] in bridge.sessions(), "会话必须还够得着"
     assert "preview_png_base64" not in out
-    assert out["preview_png_error"] == "preview_failed"     # 不静默
+    assert out["preview_png_error"] == "preview_failed"  # 不静默
 
 
-def test_unreadable_preview_file_is_still_a_bridge_error(project, fake_pool,
-                                                          tmp_path):
+def test_unreadable_preview_file_is_still_a_bridge_error(project, fake_pool, tmp_path):
     """worker 说成了、文件却读不出来，也必须走降级而不是裸 OSError。
 
     `Path(path).read_bytes()` 那一步在 try 之外，抛的是 OSError（被杀毒隔离、
@@ -964,8 +1143,7 @@ def test_unreadable_preview_file_is_still_a_bridge_error(project, fake_pool,
     它——那条刚登记的会话又变回谁也够不着的幽灵，正是这次修复要堵的洞。
     """
     # worker 报告成功、文件却不在（被杀毒隔离、缓存目录被清、磁盘满写了个寂寞）
-    fake_pool.preview_png = lambda stem, patches, width, tag: str(
-        tmp_path / "gone" / "nope.png")
+    fake_pool.preview_png = lambda stem, patches, width, tag: str(tmp_path / "gone" / "nope.png")
     out = bridge.open_figure(str(project), include_png=True)
     assert out["ok"] is True
     assert out["session_id"] in bridge.sessions()
@@ -1000,8 +1178,7 @@ def _open(project) -> str:
     return bridge.open_figure(str(project))["session_id"]
 
 
-def test_export_default_dir_goes_through_check_scope(project, fake_pool, tmp_path,
-                                                     monkeypatch):
+def test_export_default_dir_goes_through_check_scope(project, fake_pool, tmp_path, monkeypatch):
     """项目设置里的 `export_dir` 可以是任意绝对路径（桌面版下完全合法）。
 
     默认值不过尺的话，一个对桌面版有效的项目就能让导出落到 MCP 的边界之外
@@ -1009,8 +1186,7 @@ def test_export_default_dir_goes_through_check_scope(project, fake_pool, tmp_pat
     """
     sid = _open(project)
     outside = tmp_path.parent / "elsewhere-export"
-    monkeypatch.setattr(bridge.engine_config, "project_export_dir",
-                        lambda *a, **k: outside)
+    monkeypatch.setattr(bridge.engine_config, "project_export_dir", lambda *a, **k: outside)
     with pytest.raises(bridge.BridgeError) as exc:
         bridge.export(sid, formats=["pdf"])
     assert exc.value.code == "path_out_of_scope"
@@ -1036,10 +1212,14 @@ def test_png_below_the_profile_dpi_needs_explicit_confirm(project, fake_pool):
 def test_default_formats_follow_the_profile_of_this_call(project, fake_pool):
     """带了 journal 覆盖时，预检与 proof 盖的是新 profile 的章——格式也必须是。"""
     sid = _open(project)
-    done = bridge.export(sid, formats=[], journal={
-        "name": "Some Journal",
-        "preferred_formats": {"export_default": ["svg"]},
-    })
+    done = bridge.export(
+        sid,
+        formats=[],
+        journal={
+            "name": "Some Journal",
+            "preferred_formats": {"export_default": ["svg"]},
+        },
+    )
     assert [f["format"] for f in done["files"]] == ["svg"]
 
 
@@ -1050,14 +1230,20 @@ def test_replay_reports_missing_and_extra_elements():
     静默跳过「重放里没有这个元素」会让 `ok: true` 出现在两张画得完全不一样
     的图上——而脚本不确定 / 重放有 bug 正是这个自检唯一要抓的东西。
     """
-    hot = {"size_mm": [80.0, 60.0], "elements": [
-        {"gid": "figure", "bbox": [0, 0, 1, 1]},
-        {"gid": "axes_0.line_0", "bbox": [0.1, 0.1, 0.5, 0.5]},
-    ]}
-    fresh = {"size_mm": [80.0, 60.0], "elements": [
-        {"gid": "figure", "bbox": [0, 0, 1, 1]},
-        {"gid": "axes_0.line_1", "bbox": [0.1, 0.1, 0.5, 0.5]},
-    ]}
+    hot = {
+        "size_mm": [80.0, 60.0],
+        "elements": [
+            {"gid": "figure", "bbox": [0, 0, 1, 1]},
+            {"gid": "axes_0.line_0", "bbox": [0.1, 0.1, 0.5, 0.5]},
+        ],
+    }
+    fresh = {
+        "size_mm": [80.0, 60.0],
+        "elements": [
+            {"gid": "figure", "bbox": [0, 0, 1, 1]},
+            {"gid": "axes_0.line_1", "bbox": [0.1, 0.1, 0.5, 0.5]},
+        ],
+    }
     diffs, compared = bridge.compare_manifests(hot, fresh)
     fields = {d["field"] for d in diffs}
     assert "missing_in_fresh" in fields, "热态有、重放没有的元素被静默跳过了"

@@ -9,6 +9,7 @@ schema 2（2026-08-18）起锁文件按**目标**分层（windows-amd64 / macos-
 macos-x86_64）。分层的意义只有一条：一个平台的 wheel 绝不能被另一个平台复用。
 下面每条针对单个目标的用例都对**所有目标**跑一遍，免得新增目标时漏掉看护。
 """
+
 import json
 import re
 import sys
@@ -70,8 +71,7 @@ def test_intel_mac_is_locked_but_honestly_marked_unshipped(lock):
     真要发 Intel 版，先有 runner 与真实绘图冒烟，再改这个标记和 README。
     """
     t = lock["targets"]["macos-x86_64"]
-    assert t.get("shipped") is False, \
-        "要把 Intel 改成 shipped，得先有 Intel runner 上的真实冒烟"
+    assert t.get("shipped") is False, "要把 Intel 改成 shipped，得先有 Intel runner 上的真实冒烟"
 
 
 @pytest.mark.parametrize("name", ALL_TARGETS)
@@ -88,8 +88,7 @@ def test_every_version_is_exact(lock, name):
     """范围版本 = 两次构建可能装出不同的东西，用户报的 bug 就没法复现。"""
     for pkg, ver in lock["targets"][name]["packages"].items():
         assert brt.EXACT_VERSION.match(ver), f"{name}: {pkg}={ver} 不是精确版本"
-        assert not re.search(r"[><=~*^]|latest", ver), \
-            f"{name}: {pkg}={ver} 含范围符号"
+        assert not re.search(r"[><=~*^]|latest", ver), f"{name}: {pkg}={ver} 含范围符号"
 
 
 @pytest.mark.parametrize("name", ALL_TARGETS)
@@ -106,18 +105,23 @@ def test_cpython_comes_only_from_the_one_allowed_source(lock, name):
     """每种 runtime 只认一个上游。写死前缀是供应链上的一道硬闸：
     锁文件被人改成从别处取一个「CPython」时当场拒绝，而不是照单下载。"""
     target = lock["targets"][name]
-    assert target["python"]["url"].startswith(
-        brt.KIND_SOURCE_PREFIX[target["kind"]])
+    assert target["python"]["url"].startswith(brt.KIND_SOURCE_PREFIX[target["kind"]])
 
 
 @pytest.mark.parametrize("name", ALL_TARGETS)
 def test_closure_is_complete_not_just_top_level(lock, name):
     """只锁顶层的话，某个传递依赖发新版就会让两次构建装出不同的东西。
     matplotlib 的这几个依赖是最容易被漏掉的。"""
-    for dep in ("contourpy", "cycler", "fonttools", "kiwisolver", "pyparsing",
-                "packaging", "python-dateutil"):
-        assert dep in lock["targets"][name]["packages"], \
-            f"{name}: 闭包里少了 {dep}"
+    for dep in (
+        "contourpy",
+        "cycler",
+        "fonttools",
+        "kiwisolver",
+        "pyparsing",
+        "packaging",
+        "python-dateutil",
+    ):
+        assert dep in lock["targets"][name]["packages"], f"{name}: 闭包里少了 {dep}"
 
 
 def test_all_targets_pin_the_same_versions(lock):
@@ -137,7 +141,8 @@ def test_all_targets_pin_the_same_versions(lock):
             f"  只在 {name}: {set(pkgs) - set(closures[first])}\n"
             f"  版本不同: {{k: (closures[first][k], pkgs[k]) "
             f"for k in set(pkgs) & set(closures[first]) "
-            f"if closures[first][k] != pkgs[k]}}")
+            f"if closures[first][k] != pkgs[k]}}"
+        )
 
 
 @pytest.mark.parametrize("name", ALL_TARGETS)
@@ -149,8 +154,9 @@ def test_pip_platform_tags_are_declared(lock, name):
     arch_token = {"x86_64": ("amd64", "x86_64"), "arm64": ("arm64",)}
     tokens = arch_token[lock["targets"][name]["arch"]]
     for tag in pip["platforms"]:
-        assert any(tok in tag for tok in tokens), \
+        assert any(tok in tag for tok in tokens), (
             f"{name}: 平台标签 {tag} 与架构 {lock['targets'][name]['arch']} 对不上"
+        )
 
 
 def test_macos_urls_percent_encode_the_plus(lock):
@@ -164,31 +170,36 @@ def test_macos_urls_percent_encode_the_plus(lock):
 
 
 # ---------------- 锁文件（拒绝的形状）-----------------------------------------
-@pytest.mark.parametrize("mutate, why", [
-    (lambda t: t["packages"].update(numpy=">=2.0"), "范围版本"),
-    (lambda t: t["packages"].update(numpy="latest"), "latest"),
-    (lambda t: t["packages"].clear(), "空闭包"),
-    (lambda t: t["python"].update(sha256="deadbeef"), "sha256 长度不对"),
-    (lambda t: t["python"].update(version="3.13"), "不是补丁版本"),
-    (lambda t: t["python"].update(version="3.12.9"), "不是 3.13"),
-    (lambda t: t["python"].update(url="https://evil.example/py.zip"), "非官方下载源"),
-    (lambda t: t.update(kind="something-else"), "不认识的 kind"),
-    (lambda t: t.pop("arch"), "缺架构"),
-    (lambda t: t.get("pip", {}).pop("platforms"), "缺 pip 平台标签"),
-])
+@pytest.mark.parametrize(
+    "mutate, why",
+    [
+        (lambda t: t["packages"].update(numpy=">=2.0"), "范围版本"),
+        (lambda t: t["packages"].update(numpy="latest"), "latest"),
+        (lambda t: t["packages"].clear(), "空闭包"),
+        (lambda t: t["python"].update(sha256="deadbeef"), "sha256 长度不对"),
+        (lambda t: t["python"].update(version="3.13"), "不是补丁版本"),
+        (lambda t: t["python"].update(version="3.12.9"), "不是 3.13"),
+        (lambda t: t["python"].update(url="https://evil.example/py.zip"), "非官方下载源"),
+        (lambda t: t.update(kind="something-else"), "不认识的 kind"),
+        (lambda t: t.pop("arch"), "缺架构"),
+        (lambda t: t.get("pip", {}).pop("platforms"), "缺 pip 平台标签"),
+    ],
+)
 def test_validate_lock_rejects_broken_targets(lock, mutate, why):
     mutate(lock["targets"]["macos-arm64"])
     with pytest.raises(brt.BuildError):
         brt.validate_lock(lock)
 
 
-@pytest.mark.parametrize("mutate, why", [
-    (lambda k: k.update(schema=1), "schema 1 是旧的平铺格式"),
-    (lambda k: k["top_level"].append("rdkit"), "top_level 不在闭包里"),
-    (lambda k: k.update(targets={}), "一个目标都没有"),
-    (lambda k: [t.update(shipped=False) for t in k["targets"].values()],
-     "一个 shipped 都没有"),
-])
+@pytest.mark.parametrize(
+    "mutate, why",
+    [
+        (lambda k: k.update(schema=1), "schema 1 是旧的平铺格式"),
+        (lambda k: k["top_level"].append("rdkit"), "top_level 不在闭包里"),
+        (lambda k: k.update(targets={}), "一个目标都没有"),
+        (lambda k: [t.update(shipped=False) for t in k["targets"].values()], "一个 shipped 都没有"),
+    ],
+)
 def test_validate_lock_rejects_broken_files(lock, mutate, why):
     mutate(lock)
     with pytest.raises(brt.BuildError):
@@ -201,9 +212,12 @@ def test_schema_1_lock_is_refused_outright(lock):
     默默接受的话，macOS 构建会拿着一份没有 macOS 目标的锁文件跑，
     最后产出一个不带 runtime 的 .app。
     """
-    legacy = {"schema": 1, "python": lock["targets"]["windows-amd64"]["python"],
-              "packages": lock["targets"]["windows-amd64"]["packages"],
-              "top_level": lock["top_level"]}
+    legacy = {
+        "schema": 1,
+        "python": lock["targets"]["windows-amd64"]["python"],
+        "packages": lock["targets"]["windows-amd64"]["packages"],
+        "top_level": lock["top_level"],
+    }
     with pytest.raises(brt.BuildError, match="schema"):
         brt.validate_lock(legacy)
 
@@ -267,8 +281,7 @@ def _fake_pbs_bin(root: Path) -> Path:
     return real
 
 
-def test_alias_prune_only_removes_symlinks_and_keeps_the_real_interpreter(
-        tmp_path, lock):
+def test_alias_prune_only_removes_symlinks_and_keeps_the_real_interpreter(tmp_path, lock):
     """剪别名是为了省下 Tauri 拍平符号链接带来的 34 MiB。
 
     **只删符号链接**：万一上游哪天把 `bin/python3` 换成实体文件，这里必须
@@ -355,22 +368,23 @@ def test_pth_adds_site_packages_and_enables_site():
     assert lines[0] == "python313.zip"
     assert "Lib\\site-packages" in lines
     assert "import site" in lines
-    assert not any(ln.strip() == "#import site" for ln in lines), \
+    assert not any(ln.strip() == "#import site" for ln in lines), (
         "import site 必须是放开的，不能还注释着"
+    )
 
 
 def test_pth_uses_windows_separator():
     """`._pth` 是 Windows 解释器读的，写成 `Lib/site-packages` 在某些版本上不生效。"""
-    assert "/" not in [ln for ln in brt.pth_lines("python313.zip")
-                       if "site-packages" in ln][0]
+    assert "/" not in [ln for ln in brt.pth_lines("python313.zip") if "site-packages" in ln][0]
 
 
 # ---------------- 清单 --------------------------------------------------------
 @pytest.mark.parametrize("name", ALL_TARGETS)
 def test_manifest_records_everything_needed_to_diagnose(lock, name):
     target = lock["targets"][name]
-    info = brt.manifest_dict(lock, name, target, "run-42",
-                             "2026-08-18T00:00:00Z", "a" * 64, "passed")
+    info = brt.manifest_dict(
+        lock, name, target, "run-42", "2026-08-18T00:00:00Z", "a" * 64, "passed"
+    )
     assert info["schema"] == brt.MANIFEST_SCHEMA
     assert info["target"] == name
     assert info["kind"] == target["kind"]
@@ -391,13 +405,13 @@ def test_manifest_schema_matches_the_reader():
     """构建脚本写的 schema 与 engine/runtime.py 认的必须是同一个数字，
     否则打出来的包一装上就被自己判成「损坏」。"""
     from tavotto.engine import runtime
+
     assert brt.MANIFEST_SCHEMA == runtime.MANIFEST_SCHEMA
     assert brt.MANIFEST_NAME == runtime.MANIFEST_NAME
 
 
 @pytest.mark.parametrize("name", ALL_TARGETS)
-def test_manifest_is_readable_by_the_runtime_module(tmp_path, lock, name,
-                                                    monkeypatch):
+def test_manifest_is_readable_by_the_runtime_module(tmp_path, lock, name, monkeypatch):
     """端到端：构建脚本产出的清单，engine/runtime.py 必须能读懂，
     而且**架构核对要判它是给本机的**（打桩成该目标的平台再问一次）。"""
     from tavotto.engine import runtime
@@ -405,8 +419,7 @@ def test_manifest_is_readable_by_the_runtime_module(tmp_path, lock, name,
     target = lock["targets"][name]
     root = tmp_path / "rt"
     root.mkdir()
-    info = brt.manifest_dict(lock, name, target, "x", "2026-08-18T00:00:00Z",
-                             "b" * 64, "passed")
+    info = brt.manifest_dict(lock, name, target, "x", "2026-08-18T00:00:00Z", "b" * 64, "passed")
     (root / brt.MANIFEST_NAME).write_text(json.dumps(info), encoding="utf-8")
 
     got = runtime.read_manifest(str(root))
@@ -421,8 +434,7 @@ def test_manifest_is_readable_by_the_runtime_module(tmp_path, lock, name,
 # ---------------- 「这份 runtime 配不配得上这次构建」---------------------------
 def _write_manifest(tmp_path, lock, name, smoke="passed"):
     target = lock["targets"][name]
-    info = brt.manifest_dict(lock, name, target, "x", "2026-08-18T00:00:00Z",
-                            "c" * 64, smoke)
+    info = brt.manifest_dict(lock, name, target, "x", "2026-08-18T00:00:00Z", "c" * 64, smoke)
     path = tmp_path / brt.MANIFEST_NAME
     path.write_text(json.dumps(info), encoding="utf-8")
     return path
@@ -430,8 +442,7 @@ def _write_manifest(tmp_path, lock, name, smoke="passed"):
 
 def test_check_runtime_dir_accepts_a_matching_runtime(tmp_path, lock):
     path = _write_manifest(tmp_path, lock, "macos-arm64")
-    info = brt.check_runtime_dir(path, require_smoke=True,
-                                 host=("macos", "arm64"))
+    info = brt.check_runtime_dir(path, require_smoke=True, host=("macos", "arm64"))
     assert info["target"] == "macos-arm64"
 
 
@@ -467,13 +478,11 @@ def test_check_runtime_dir_rejects_a_foreign_arch(tmp_path, lock):
 def test_release_build_refuses_a_runtime_that_never_ran_its_smoke(tmp_path, lock):
     """`--allow-skip-smoke` 产出的中间件一个 import 都没跑过。
     混进安装包等于把验证推给用户。"""
-    path = _write_manifest(tmp_path, lock, "macos-arm64",
-                           smoke="skipped:foreign-host")
+    path = _write_manifest(tmp_path, lock, "macos-arm64", smoke="skipped:foreign-host")
     with pytest.raises(brt.BuildError, match="冒烟"):
         brt.check_runtime_dir(path, require_smoke=True, host=("macos", "arm64"))
     # 开发态（不要求发行）仍然可用，只是不许发
-    assert brt.check_runtime_dir(path, require_smoke=False,
-                                 host=("macos", "arm64"))
+    assert brt.check_runtime_dir(path, require_smoke=False, host=("macos", "arm64"))
 
 
 def test_check_runtime_dir_rejects_an_unreadable_or_stale_manifest(tmp_path, lock):
@@ -507,10 +516,13 @@ def test_prune_never_touches_public_testing_apis():
         assert keep not in brt.PRUNE_DIRS
 
 
-@pytest.mark.parametrize("kind,rel", [
-    (brt.KIND_WINDOWS, ("Lib", "site-packages")),
-    (brt.KIND_MACOS, ("lib", "python3.13", "site-packages")),
-])
+@pytest.mark.parametrize(
+    "kind,rel",
+    [
+        (brt.KIND_WINDOWS, ("Lib", "site-packages")),
+        (brt.KIND_MACOS, ("lib", "python3.13", "site-packages")),
+    ],
+)
 def test_prune_removes_test_dirs_only(tmp_path, kind, rel):
     target = {"kind": kind, "python": {"version": "3.13.15"}}
     site = tmp_path.joinpath(*rel)
@@ -570,10 +582,12 @@ def test_wheel_and_sdist_never_pick_up_the_runtime():
     """pip 用户拿到的是轻量包，不该被塞进一堆平台二进制。"""
     cfg = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))
     build = cfg["tool"]["hatch"]["build"]
-    assert any(p.startswith("runtime") for p in build.get("exclude", [])), \
+    assert any(p.startswith("runtime") for p in build.get("exclude", [])), (
         "pyproject 必须显式把 runtime 排除在构建之外"
-    assert not any("runtime" in a for a in build.get("artifacts", [])), \
+    )
+    assert not any("runtime" in a for a in build.get("artifacts", [])), (
         "artifacts 是「强行收回被 gitignore 的东西」，runtime 绝不能在里面"
+    )
     sdist = cfg["tool"]["hatch"]["build"]["targets"]["sdist"]["include"]
     assert not any(p.strip("/").startswith("runtime") for p in sdist)
 
@@ -604,10 +618,14 @@ def test_spec_ships_every_module_the_worker_imports():
 
     def flat_imports(path):
         tree = ast.parse(path.read_text(encoding="utf-8"))
-        names = {a.name for node in ast.walk(tree) if isinstance(node, ast.Import)
-                 for a in node.names}
-        names |= {node.module for node in ast.walk(tree)
-                  if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module}
+        names = {
+            a.name for node in ast.walk(tree) if isinstance(node, ast.Import) for a in node.names
+        }
+        names |= {
+            node.module
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module
+        }
         # 只要**同目录**的平铺模块：worker 把 engine/ 插进 sys.path 之后
         # `import manifest` 找的就是它们；`matplotlib` 这类第三方不在此列
         return {n for n in names if (engine / f"{n}.py").is_file()}
@@ -621,8 +639,9 @@ def test_spec_ships_every_module_the_worker_imports():
         todo += list(flat_imports(engine / f"{name}.py"))
     siblings = {f"{n}.py" for n in closure}
     assert "patchspec.py" in siblings, "用例前提：worker 确实平铺 import 了 patchspec"
-    assert "pathgeom.py" in siblings, \
+    assert "pathgeom.py" in siblings, (
         "用例前提：manifest 确实平铺 import 了 pathgeom（传递闭包这一层的样本）"
+    )
 
     spec = (REPO / "packaging" / "tavotto.spec").read_text(encoding="utf-8")
     shipped = set(re.findall(r'"(\w+\.py)"', spec))
@@ -638,8 +657,7 @@ def test_release_chain_refuses_to_ship_without_the_runtime():
     sidecar 目录（含 _internal/runtime）收走，打完还要过
     `--expect-source bundled --expect-runtime` 的真渲染冒烟。
     """
-    wf = (REPO / ".github" / "workflows" / "desktop-tauri.yml").read_text(
-        encoding="utf-8")
+    wf = (REPO / ".github" / "workflows" / "desktop-tauri.yml").read_text(encoding="utf-8")
     assert "TAVOTTO_REQUIRE_RUNTIME" in wf, "构建必须能把「必须带 runtime」打开"
     assert "--expect-source bundled" in wf, "打包后必须断言渲染真的走了内置 runtime"
     assert "--expect-runtime" in wf, "还要断言 runtime 本身 expected + valid"
@@ -654,10 +672,10 @@ def test_macos_ci_no_longer_fakes_a_worker_env():
     根本没打进安装包」这件事没有任何一处会发现——那正是用户装完打不开图的原因。
     这条用例盯着它别被人「顺手加回来」。
     """
-    wf = (REPO / ".github" / "workflows" / "desktop-tauri.yml").read_text(
-        encoding="utf-8")
-    assert "TAVOTTO_WORKER_PYTHON=" not in wf, \
+    wf = (REPO / ".github" / "workflows" / "desktop-tauri.yml").read_text(encoding="utf-8")
+    assert "TAVOTTO_WORKER_PYTHON=" not in wf, (
         "发行冒烟不许借用外部解释器——那会让「runtime 没打进去」全程绿灯"
+    )
     assert "python -m venv worker-env" not in wf
 
 
@@ -673,8 +691,7 @@ def test_orphan_check_does_not_rely_on_a_dead_parent_pid():
     """
     src = (REPO / "scripts" / "smoke_desktop.py").read_text(encoding="utf-8")
     # 只盯**调用形态**（argv 列表里的 "pgrep"），别把解释这件事的注释也判红
-    assert '"pgrep"' not in src, \
-        "父进程已退出时按 PPID 查孤儿必然一无所获——这条断言恒真"
+    assert '"pgrep"' not in src, "父进程已退出时按 PPID 查孤儿必然一无所获——这条断言恒真"
     # 两条判据缺一不可：pid 快照精确（连没有命令行特征的 tavotto-workerd 也
     # 盖得住），命令行扫描兜住父子关系没记全的那些
     assert "_descendants(proc.pid)" in src, "退出前要把后代 pid 快照下来"
@@ -685,8 +702,7 @@ def test_macos_release_signs_and_verifies_every_nested_macho():
     """`--deep` 签不到 Resources 里的内置 runtime（500+ 个 .so）：它们不被
     识别为嵌套代码。漏签的表现是公证 Invalid，或者更坏——公证过了但
     Gatekeeper 在用户机器上拦下某个 .so。"""
-    wf = (REPO / ".github" / "workflows" / "desktop-tauri.yml").read_text(
-        encoding="utf-8")
+    wf = (REPO / ".github" / "workflows" / "desktop-tauri.yml").read_text(encoding="utf-8")
     assert "codesign_macos.py sign" in wf
     assert "codesign_macos.py verify" in wf
     assert "--expect-arch" in wf, "还要核对架构：混进另一个架构的 .so 签名照样能过"
@@ -694,8 +710,7 @@ def test_macos_release_signs_and_verifies_every_nested_macho():
 
 def _release_signing_gate() -> str:
     """desktop-tauri.yml 里那一步「发行签名门禁」的正文。"""
-    wf = (REPO / ".github" / "workflows" / "desktop-tauri.yml").read_text(
-        encoding="utf-8")
+    wf = (REPO / ".github" / "workflows" / "desktop-tauri.yml").read_text(encoding="utf-8")
     assert "发行签名门禁" in wf, "签名门禁整个不见了"
     step = wf.split("发行签名门禁", 1)[1].split("\n      - name:", 1)[0]
     assert "IS_RELEASE_BUILD" in step, "门禁必须只对发行构建生效"
@@ -716,12 +731,19 @@ def test_release_signing_gate_still_hard_fails_on_everything_but_authenticode():
     step = _release_signing_gate()
     hard = [ln.strip() for ln in step.splitlines() if "missing+=" in ln]
     joined = "\n".join(hard)
-    for cred in ("TAURI_SIGNING_PRIVATE_KEY", "MACOS_CERTIFICATE",
-                 "MACOS_SIGN_IDENTITY", "APPLE_ID"):
+    for cred in (
+        "TAURI_SIGNING_PRIVATE_KEY",
+        "MACOS_CERTIFICATE",
+        "MACOS_SIGN_IDENTITY",
+        "APPLE_ID",
+    ):
         assert cred in joined, f"{cred} 不再让发行构建失败——门禁被掏空了"
     assert "exit 1" in step, "凑齐 missing 之后必须真的退出非零"
     # 例外只有这一个，而且不许扩散到别处
-    assert "SIGNPATH" not in joined,         "SignPath 是自觉的例外（见 docs/code-signing-policy.md），不该回到硬失败；"         "要恢复的话连同这条用例一起改"
+    assert "SIGNPATH" not in joined, (
+        "SignPath 是自觉的例外（见 docs/code-signing-policy.md），不该回到硬失败；"
+        "要恢复的话连同这条用例一起改"
+    )
 
 
 def test_unsigned_windows_release_is_loud_not_silent():
@@ -733,8 +755,10 @@ def test_unsigned_windows_release_is_loud_not_silent():
     """
     step = _release_signing_gate()
     assert "::warning" in step, "未签名的发行必须在运行页顶部留下 annotation"
-    assert "GITHUB_STEP_SUMMARY" in step,         "还要写进 job summary——日志第 33 步里的一行 warning 没人会翻到"
-    assert "minisign" in step,         "摘要要说清更新链仍可信，否则读的人会以为自动更新也不安全了"
+    assert "GITHUB_STEP_SUMMARY" in step, (
+        "还要写进 job summary——日志第 33 步里的一行 warning 没人会翻到"
+    )
+    assert "minisign" in step, "摘要要说清更新链仍可信，否则读的人会以为自动更新也不安全了"
 
 
 # ---------------- 真产物（构建过才跑）------------------------------------------
@@ -742,8 +766,9 @@ RUNTIME_DIR = REPO / "runtime"
 _has_runtime = (RUNTIME_DIR / brt.MANIFEST_NAME).is_file()
 
 
-@pytest.mark.skipif(not _has_runtime,
-                    reason="本机没构建过 runtime（跑 scripts/build_worker_runtime.py）")
+@pytest.mark.skipif(
+    not _has_runtime, reason="本机没构建过 runtime（跑 scripts/build_worker_runtime.py）"
+)
 def test_built_runtime_ships_licences_and_notices():
     """AGPL 的项目分发别人的二进制，许可证义务是硬的：BSD/MIT/HPND/Apache-2.0
     全都要求随分发附带版权声明。用户装到的是我们打的包，义务落在我们身上。"""
@@ -761,13 +786,13 @@ def test_built_runtime_ships_licences_and_notices():
 @pytest.mark.skipif(not _has_runtime, reason="本机没构建过 runtime")
 def test_built_runtime_manifest_passes_its_own_gate():
     """构建脚本产出的东西，必须过构建脚本自己的验收（本机同平台同架构）。"""
-    info = brt.check_runtime_dir(RUNTIME_DIR / brt.MANIFEST_NAME,
-                                 require_smoke=False)
+    info = brt.check_runtime_dir(RUNTIME_DIR / brt.MANIFEST_NAME, require_smoke=False)
     assert info["packages"]["matplotlib"]
     lock = json.loads(LOCK_PATH.read_text(encoding="utf-8"))
     target = lock["targets"][info["target"]]
-    assert info["packages"] == dict(sorted(target["packages"].items())), \
+    assert info["packages"] == dict(sorted(target["packages"].items())), (
         "产物里的版本与锁文件对不上——锁文件改过但没重新构建？"
+    )
 
 
 @pytest.mark.skipif(not _has_runtime, reason="本机没构建过 runtime")
@@ -786,8 +811,7 @@ def test_built_runtime_is_usable_by_the_engine_and_really_renders():
     assert st["valid"] is True, f"engine 认为这份 runtime 不可用: {st}"
     py = st["python"]
 
-    got = runtime.probe_packages(py, ["numpy", "matplotlib", "pandas",
-                                      "scipy", "seaborn", "PIL"])
+    got = runtime.probe_packages(py, ["numpy", "matplotlib", "pandas", "scipy", "seaborn", "PIL"])
     missing = [n for n, v in got.items() if not v]
     assert not missing, f"这些包 import 不到: {missing}"
 
@@ -800,9 +824,15 @@ def test_built_runtime_is_usable_by_the_engine_and_really_renders():
         "assert b.getbuffer().nbytes > 500\n"
         "print('render-ok')\n"
     )
-    proc = subprocess.run([py, *runtime.child_args(), "-c", code],
-                          capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600,
-                          env=runtime.child_env())
+    proc = subprocess.run(
+        [py, *runtime.child_args(), "-c", code],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=600,
+        env=runtime.child_env(),
+    )
     assert "render-ok" in proc.stdout, f"真实渲染失败：\n{proc.stderr[-2000:]}"
 
 
@@ -819,12 +849,20 @@ def test_built_runtime_does_not_write_into_itself_while_rendering():
 
     before = {p for p in RUNTIME_DIR.rglob("*") if p.is_file()}
     py = runtime.status()["python"]
-    code = ("import matplotlib; matplotlib.use('Agg')\n"
-            "import matplotlib.pyplot as plt, pandas, scipy\n"
-            "plt.subplots()\nprint('ok')\n")
-    subprocess.run([py, *runtime.child_args(), "-c", code],
-                   capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600,
-                   env=runtime.child_env())
+    code = (
+        "import matplotlib; matplotlib.use('Agg')\n"
+        "import matplotlib.pyplot as plt, pandas, scipy\n"
+        "plt.subplots()\nprint('ok')\n"
+    )
+    subprocess.run(
+        [py, *runtime.child_args(), "-c", code],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=600,
+        env=runtime.child_env(),
+    )
     after = {p for p in RUNTIME_DIR.rglob("*") if p.is_file()}
     created = after - before
     assert not created, f"渲染往安装目录里写了东西: {sorted(created)[:10]}"

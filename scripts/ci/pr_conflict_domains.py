@@ -20,6 +20,7 @@ Merge Queue 能验「组合起来还绿不绿」，验不了真正的 Git 冲突
 输出里绝不包含 token 或请求头。纯标准库；网络走 GITHUB_TOKEN 的
 Bearer 认证（GitHub Actions 注入），本地跑也可以用 `gh auth token`。
 """
+
 from __future__ import annotations
 
 import argparse
@@ -35,6 +36,7 @@ API = "https://api.github.com"
 
 # ---------------------------------------------------------------- glob 匹配
 
+
 def glob_to_regex(pattern: str) -> re.Pattern:
     """`**` 跨路径段、`*` 段内、`?` 单字符。锚定全路径。"""
     out = []
@@ -42,11 +44,11 @@ def glob_to_regex(pattern: str) -> re.Pattern:
     while i < len(pattern):
         ch = pattern[i]
         if ch == "*":
-            if pattern[i:i + 3] == "**/":
+            if pattern[i : i + 3] == "**/":
                 out.append(r"(?:[^/]+/)*")
                 i += 3
                 continue
-            if pattern[i:i + 2] == "**":
+            if pattern[i : i + 2] == "**":
                 out.append(r".*")
                 i += 2
                 continue
@@ -64,6 +66,7 @@ def matches(path: str, patterns: list[str]) -> bool:
 
 
 # ---------------------------------------------------------------- 配置
+
 
 class ConfigError(Exception):
     pass
@@ -92,6 +95,7 @@ def domain_patterns(spec: dict) -> list[str]:
 
 # ---------------------------------------------------------------- GitHub API
 
+
 class ApiUnavailable(Exception):
     """网络 / 认证问题——如实 warning，不阻断。"""
 
@@ -107,7 +111,9 @@ def _request(url: str, token: str | None) -> object:
             return json.loads(resp.read().decode("utf-8"))
     except (urllib.error.URLError, OSError, json.JSONDecodeError, TimeoutError) as exc:
         # 绝不把 token / 请求头写进异常文本
-        raise ApiUnavailable(f"GitHub API 请求失败（{url.split('?')[0]}）：{type(exc).__name__}") from exc
+        raise ApiUnavailable(
+            f"GitHub API 请求失败（{url.split('?')[0]}）：{type(exc).__name__}"
+        ) from exc
 
 
 def paginate(url_base: str, token: str | None, fetch=_request) -> list:
@@ -136,6 +142,7 @@ def pr_files(repo: str, number: int, token: str | None, fetch=_request) -> list[
 
 
 # ---------------------------------------------------------------- 判定
+
 
 def classify(files: list[str], domains: dict) -> dict[str, dict[str, list[str]]]:
     """每个域里，这组文件分别命中了 files/sources/generated 的哪些。"""
@@ -170,12 +177,14 @@ def overlaps(mine: dict, theirs: dict, domains: dict) -> list[dict]:
         a_touch = a.get("sources") or a.get("generated")
         b_touch = b.get("sources") or b.get("generated")
         cross_generated = bool(declares_generated and a_touch and b_touch)
-        out.append({
-            "domain": name,
-            "policy": domains[name]["policy"],
-            "direct": direct,
-            "generated_overlap": cross_generated,
-        })
+        out.append(
+            {
+                "domain": name,
+                "policy": domains[name]["policy"],
+                "direct": direct,
+                "generated_overlap": cross_generated,
+            }
+        )
     return out
 
 
@@ -183,21 +192,29 @@ def advice(policy: str, generated_overlap: bool) -> str:
     if policy == "serialize":
         return "串行：一次只开一个动这个域的 PR，按队列先后合，后者在前者合入后 rebase"
     if generated_overlap:
-        return ("生成物会撞：相关改动改用 Stacked PR；互不相关的进同一个 train "
-                "branch，源码冲突解完后在最终状态上只重建一次生成物"
-                "（见 docs/ci/parallel-prs.md）")
+        return (
+            "生成物会撞：相关改动改用 Stacked PR；互不相关的进同一个 train "
+            "branch，源码冲突解完后在最终状态上只重建一次生成物"
+            "（见 docs/ci/parallel-prs.md）"
+        )
     return "同域但暂无生成物撞点：留意合并顺序，后合的一侧 rebase 后重跑快线即可"
 
 
 # ---------------------------------------------------------------- 输出
 
+
 def render(pr_number: int, findings: list[dict], summary_lines: list[str]) -> None:
     for f in findings:
         for o in f["overlaps"]:
-            level = "直接文件重叠" if o["direct"] else (
-                "生成物重叠" if o["generated_overlap"] else "同域")
-            print(f"::warning::PR #{f['number']}「{f['title'][:80]}」与本 PR 在域 "
-                  f"`{o['domain']}` {level}（policy: {o['policy']}）")
+            level = (
+                "直接文件重叠"
+                if o["direct"]
+                else ("生成物重叠" if o["generated_overlap"] else "同域")
+            )
+            print(
+                f"::warning::PR #{f['number']}「{f['title'][:80]}」与本 PR 在域 "
+                f"`{o['domain']}` {level}（policy: {o['policy']}）"
+            )
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary_path:
         try:
@@ -207,8 +224,7 @@ def render(pr_number: int, findings: list[dict], summary_lines: list[str]) -> No
             pass
 
 
-def build_summary(pr_number: int, mine_hit: dict, findings: list[dict],
-                  domains: dict) -> list[str]:
+def build_summary(pr_number: int, mine_hit: dict, findings: list[dict], domains: dict) -> list[str]:
     lines = [f"## PR #{pr_number} 冲突域检查", ""]
     if not mine_hit:
         lines.append("本 PR 不落在任何声明过的冲突域里。")
@@ -223,17 +239,22 @@ def build_summary(pr_number: int, mine_hit: dict, findings: list[dict],
         for o in f["overlaps"]:
             direct = "<br>".join(f"`{p}`" for p in o["direct"][:5]) or "—"
             gen = "是" if o["generated_overlap"] else "—"
-            lines.append(f"| #{f['number']} {f['title'][:60]} | `{o['domain']}` "
-                         f"| {direct} | {gen} | {advice(o['policy'], o['generated_overlap'])} |")
-    lines += ["", "本检查只是导航（不是 required check）；两种协作形态的具体做法见 "
-              "`docs/ci/parallel-prs.md`。"]
+            lines.append(
+                f"| #{f['number']} {f['title'][:60]} | `{o['domain']}` "
+                f"| {direct} | {gen} | {advice(o['policy'], o['generated_overlap'])} |"
+            )
+    lines += [
+        "",
+        "本检查只是导航（不是 required check）；两种协作形态的具体做法见 "
+        "`docs/ci/parallel-prs.md`。",
+    ]
     return lines
 
 
 # ---------------------------------------------------------------- 主流程
 
-def run(repo: str, pr_number: int, config_path: Path, token: str | None,
-        fetch=_request) -> int:
+
+def run(repo: str, pr_number: int, config_path: Path, token: str | None, fetch=_request) -> int:
     try:
         domains = load_config(config_path)
     except ConfigError as exc:
@@ -241,27 +262,41 @@ def run(repo: str, pr_number: int, config_path: Path, token: str | None,
         return 0
     try:
         my_files = pr_files(repo, pr_number, token, fetch)
-        others = [p for p in open_prs(repo, token, fetch)
-                  if p.get("number") != pr_number and p.get("state") == "open"]
+        others = [
+            p
+            for p in open_prs(repo, token, fetch)
+            if p.get("number") != pr_number and p.get("state") == "open"
+        ]
         mine_hit = classify(my_files, domains)
         findings = []
-        if mine_hit:                     # 自己不在任何域里就不用翻别人的文件
+        if mine_hit:  # 自己不在任何域里就不用翻别人的文件
             for p in others:
                 their_files = pr_files(repo, p["number"], token, fetch)
                 their_hit = classify(their_files, domains)
                 ols = overlaps(mine_hit, their_hit, domains)
                 if ols:
-                    findings.append({"number": p["number"],
-                                     "title": p.get("title", ""),
-                                     "draft": bool(p.get("draft")),
-                                     "overlaps": ols})
+                    findings.append(
+                        {
+                            "number": p["number"],
+                            "title": p.get("title", ""),
+                            "draft": bool(p.get("draft")),
+                            "overlaps": ols,
+                        }
+                    )
     except ApiUnavailable as exc:
         print(f"::warning::{exc}——冲突域检查这次没跑成（不阻断产品 CI）")
         return 0
     render(pr_number, findings, build_summary(pr_number, mine_hit, findings, domains))
-    print(json.dumps({"pr": pr_number, "domains": sorted(mine_hit),
-                      "overlapping_prs": [f["number"] for f in findings]},
-                     ensure_ascii=False))
+    print(
+        json.dumps(
+            {
+                "pr": pr_number,
+                "domains": sorted(mine_hit),
+                "overlapping_prs": [f["number"] for f in findings],
+            },
+            ensure_ascii=False,
+        )
+    )
     return 0
 
 
@@ -269,8 +304,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     ap.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", ""))
     ap.add_argument("--pr", type=int, required=True)
-    ap.add_argument("--config", type=Path,
-                    default=Path(".github/conflict-domains.json"))
+    ap.add_argument("--config", type=Path, default=Path(".github/conflict-domains.json"))
     args = ap.parse_args(argv)
     if not args.repo:
         print("::warning::没有 --repo 也没有 GITHUB_REPOSITORY——检查跳过")

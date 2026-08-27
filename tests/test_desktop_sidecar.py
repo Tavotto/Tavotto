@@ -4,6 +4,7 @@
 优雅关停走的都是 werkzeug 线程 server 的真实路径。浏览器模式回归用例
 确认这些钩子在非桌面模式下完全旁路。
 """
+
 from __future__ import annotations
 
 import http.client
@@ -67,8 +68,8 @@ def http_get(url: str, headers: dict | None = None):
 def http_post_json(url: str, body: dict, headers: dict | None = None):
     data = json.dumps(body).encode()
     req = urllib.request.Request(
-        url, data=data,
-        headers={"Content-Type": "application/json", **(headers or {})})
+        url, data=data, headers={"Content-Type": "application/json", **(headers or {})}
+    )
     try:
         with urllib.request.urlopen(req, timeout=5) as resp:
             return resp.status, dict(resp.headers), resp.read()
@@ -77,8 +78,7 @@ def http_post_json(url: str, body: dict, headers: dict | None = None):
 
 
 def bootstrap_cookie(sc: Sidecar) -> str:
-    status, headers, _ = http_post_json(sc.url(desktop.BOOTSTRAP_PATH),
-                                        {"nonce": NONCE})
+    status, headers, _ = http_post_json(sc.url(desktop.BOOTSTRAP_PATH), {"nonce": NONCE})
     assert status == 200
     set_cookie = headers.get("Set-Cookie", "")
     assert desktop.COOKIE_NAME in set_cookie
@@ -146,28 +146,26 @@ def test_bootstrap_flow_and_replay(sidecar):
     assert json.loads(body)["code"] == "session_auth_required"
 
     # 错误 nonce → 403，且不作废真 nonce
-    status, _, body = http_post_json(sidecar.url(desktop.BOOTSTRAP_PATH),
-                                     {"nonce": "wrong"})
+    status, _, body = http_post_json(sidecar.url(desktop.BOOTSTRAP_PATH), {"nonce": "wrong"})
     assert status == 403 and json.loads(body)["code"] == "bad_nonce"
 
     cookie = bootstrap_cookie(sidecar)
 
     # 重放同一 nonce → 403（一次性）
-    status, _, _ = http_post_json(sidecar.url(desktop.BOOTSTRAP_PATH),
-                                  {"nonce": NONCE})
+    status, _, _ = http_post_json(sidecar.url(desktop.BOOTSTRAP_PATH), {"nonce": NONCE})
     assert status == 403
 
     # 有 cookie → 放行到业务层：没开项目时 409 no_project；全量测试里其他用例
     # 可能已把默认项目打开（进程级状态），那时是 200——两者都证明穿过了认证
-    status, _, body = http_get(sidecar.url("/api/panels"),
-                               headers={"Cookie": cookie})
+    status, _, body = http_get(sidecar.url("/api/panels"), headers={"Cookie": cookie})
     assert status in (200, 409)
     if status == 409:
         assert json.loads(body)["code"] == "no_project"
 
     # 伪造 cookie → 401
-    status, _, _ = http_get(sidecar.url("/api/panels"),
-                            headers={"Cookie": f"{desktop.COOKIE_NAME}=forged"})
+    status, _, _ = http_get(
+        sidecar.url("/api/panels"), headers={"Cookie": f"{desktop.COOKIE_NAME}=forged"}
+    )
     assert status == 401
 
 
@@ -191,8 +189,9 @@ def test_public_paths_no_auth(sidecar):
 # ---------------------------------------------------------------------------
 # Host / Origin
 # ---------------------------------------------------------------------------
-def _raw_request(port: int, path: str, host: str, origin: str | None = None,
-                 cookie: str | None = None):
+def _raw_request(
+    port: int, path: str, host: str, origin: str | None = None, cookie: str | None = None
+):
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
     try:
         conn.putrequest("GET", path, skip_host=True)
@@ -212,19 +211,20 @@ def test_host_check(sidecar):
     status, body = _raw_request(sidecar.port, "/api/version", host="evil.example")
     assert status == 403 and body["code"] == "bad_host"
     # localhost 拼法也拒：只认 127.0.0.1:<port> 一种写法，堵 DNS rebinding
-    status, body = _raw_request(sidecar.port, "/api/version",
-                                host=f"localhost:{sidecar.port}")
+    status, body = _raw_request(sidecar.port, "/api/version", host=f"localhost:{sidecar.port}")
     assert status == 403
 
 
 def test_origin_check(sidecar):
     cookie = bootstrap_cookie(sidecar)
     good = f"127.0.0.1:{sidecar.port}"
-    status, body = _raw_request(sidecar.port, "/api/version", host=good,
-                                origin="http://evil.example", cookie=cookie)
+    status, body = _raw_request(
+        sidecar.port, "/api/version", host=good, origin="http://evil.example", cookie=cookie
+    )
     assert status == 403 and body["code"] == "bad_origin"
-    status, _ = _raw_request(sidecar.port, "/api/version", host=good,
-                             origin=f"http://{good}", cookie=cookie)
+    status, _ = _raw_request(
+        sidecar.port, "/api/version", host=good, origin=f"http://{good}", cookie=cookie
+    )
     assert status == 200
 
 
@@ -233,14 +233,14 @@ def test_origin_check(sidecar):
 # ---------------------------------------------------------------------------
 def test_updater_disabled_in_desktop(sidecar):
     cookie = bootstrap_cookie(sidecar)
-    status, _, body = http_get(sidecar.url("/api/update/check"),
-                               headers={"Cookie": cookie})
+    status, _, body = http_get(sidecar.url("/api/update/check"), headers={"Cookie": cookie})
     assert status == 200
     data = json.loads(body)
     assert data["desktop"] is True and data["update_available"] is False
 
-    status, _, body = http_post_json(sidecar.url("/api/update/apply"), {},
-                                     headers={"Cookie": cookie})
+    status, _, body = http_post_json(
+        sidecar.url("/api/update/apply"), {}, headers={"Cookie": cookie}
+    )
     assert status == 409
     assert json.loads(body)["code"] == "desktop_updater_disabled"
 
@@ -277,19 +277,15 @@ def test_parent_stdin_eof_triggers_shutdown(tmp_path):
 # 启动凭据读取
 # ---------------------------------------------------------------------------
 def test_read_credentials_env_takes_priority_and_is_scrubbed():
-    env = {"TAVOTTO_DESKTOP_NONCE": "env-nonce",
-           "TAVOTTO_DESKTOP_PARENT_PID": "4242"}
-    nonce, pid, _ = desktop.read_launch_credentials(stdin=io.StringIO(""),
-                                                    environ=env)
+    env = {"TAVOTTO_DESKTOP_NONCE": "env-nonce", "TAVOTTO_DESKTOP_PARENT_PID": "4242"}
+    nonce, pid, _ = desktop.read_launch_credentials(stdin=io.StringIO(""), environ=env)
     assert nonce == "env-nonce" and pid == 4242
     assert "TAVOTTO_DESKTOP_NONCE" not in env  # 用后即焚，不让子进程继承
 
 
 def test_read_credentials_from_stdin_line():
-    stream = io.StringIO(json.dumps({"nonce": "stdin-nonce",
-                                     "parent_pid": 77}) + "\n")
-    nonce, pid, returned = desktop.read_launch_credentials(stdin=stream,
-                                                           environ={})
+    stream = io.StringIO(json.dumps({"nonce": "stdin-nonce", "parent_pid": 77}) + "\n")
+    nonce, pid, returned = desktop.read_launch_credentials(stdin=stream, environ={})
     assert nonce == "stdin-nonce" and pid == 77
     assert returned is stream  # 首行之后的流留给父进程监视
 
@@ -340,17 +336,19 @@ def test_engine_subprocess_calls_never_pop_console_windows():
        探测/安装/AI CLI 一律 stdin=DEVNULL，渲染 worker 是 stdin=PIPE（协议）。
     """
     import re
+
     root = Path(__file__).resolve().parent.parent / "src" / "tavotto"
-    files = [root / "engine" / n for n in
-             ("pool.py", "bootstrap.py", "ai_bridge.py")] + [root / "app.py"]
+    files = [root / "engine" / n for n in ("pool.py", "bootstrap.py", "ai_bridge.py")] + [
+        root / "app.py"
+    ]
     missing = []
     for path in files:
         src = path.read_text(encoding="utf-8")
         for m in re.finditer(r"(?:subprocess|sp)\.(?:run|Popen)\(", src):
-            window = src[m.start():m.start() + 700]
+            window = src[m.start() : m.start() + 700]
             for required in ("creationflags", "stdin="):
                 if required not in window:
-                    line = src[:m.start()].count("\n") + 1
+                    line = src[: m.start()].count("\n") + 1
                     missing.append(f"{path.name}:{line} 缺 {required}")
     assert not missing, f"引擎子进程调用不合规: {missing}"
 
@@ -359,6 +357,7 @@ def test_no_window_flag_value():
     import subprocess as sp
 
     from tavotto.engine import runtime
+
     if os.name == "nt":
         assert runtime.CREATE_NO_WINDOW == sp.CREATE_NO_WINDOW
     else:

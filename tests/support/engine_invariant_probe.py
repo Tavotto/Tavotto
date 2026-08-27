@@ -10,6 +10,7 @@ matplotlib，所以它们只能在这一侧回答。用法：
 `tests/test_invariants_engine.py`，这里只**如实报事实**。探针自己下判决的话，
 「这条该不该算违规」的裁决就藏进了被测的那一侧。
 """
+
 from __future__ import annotations
 
 import json
@@ -72,9 +73,14 @@ def build_figure():
     ax.eventplot([[1.0, 2.0, 3.0]], lineoffsets=5.0, linelengths=0.6)
     ax.hlines([4.2], 1.0, 3.0, color="#B34700")
     # 标量映射的线组：**不算线组那一族**（登记与 dispatch 必须同判据）
-    ax.add_collection(LineCollection(
-        [[(0.5, -2.0), (6.0, -2.0)], [(0.5, -1.6), (6.0, -1.6)]],
-        array=np.array([0.2, 0.8]), cmap="viridis", linestyles="--"))
+    ax.add_collection(
+        LineCollection(
+            [[(0.5, -2.0), (6.0, -2.0)], [(0.5, -1.6), (6.0, -1.6)]],
+            array=np.array([0.2, 0.8]),
+            cmap="viridis",
+            linestyles="--",
+        )
+    )
     ax.set_xlim(0, 10)
     ax.set_ylim(-2.5, 6)
     ax.legend()
@@ -99,7 +105,7 @@ def build_figure():
     # --- 子 axes：插图 + 次坐标轴（**不在 `fig.axes` 里**） ---
     ins = ax3.inset_axes([0.62, 0.62, 0.34, 0.34])
     ins.plot([0.0, 1.0], [0.0, 1.0], color="#804000")
-    ins.add_artist(GhostArtist())          # 插图里也放一个量不出几何的
+    ins.add_artist(GhostArtist())  # 插图里也放一个量不出几何的
     ax3.secondary_xaxis("top")
     # **3D 插图**：`plot_surface` 出的 `Poly3DCollection` 是普查真正报得出来
     # 的那一类（CompatBench 的「Top unrecognized artists」里排第一）。放在
@@ -134,6 +140,7 @@ def build_figure():
     # 横色条被塞在原来那个竖框里，全程无报错。
     from matplotlib.cm import ScalarMappable
     from matplotlib.colors import Normalize
+
     fig.colorbar(ScalarMappable(norm=Normalize(0, 1), cmap="cividis"), ax=ax3)
     ax4.text(1.0, 1.0, "note", color="#804000")
 
@@ -172,7 +179,7 @@ def completeness(fig, state, man) -> dict:
             if isinstance(art.artists, list):
                 consumed.update(id(m) for m in art.artists)
 
-    internal = M._internal_ids(fig, state.colorbar_axes)      # noqa: SLF001
+    internal = M._internal_ids(fig, state.colorbar_axes)  # noqa: SLF001
     unsupported_classes = {row["cls"] for row in man.get("unsupported", [])}
 
     def qual(a) -> str:
@@ -214,9 +221,8 @@ def completeness(fig, state, man) -> dict:
     # 与 `census` / `instrument` 同一条遍历：`inset_axes` 与 `secondary_[xy]axis`
     # 挂在 `ax.child_axes` 上，**不在 `fig.axes` 里**。只走 fig.axes 的话，
     # 插图里漏掉的 artist 连这条不变式都看不见——探针自己成了那个报平安的门禁。
-    ordered, _child_ids = M._ordered_axes(fig)          # noqa: SLF001
-    for owner_gid, owner in ([("figure", fig)]
-                             + [(f"axes_{i}", ax) for i, ax in enumerate(ordered)]):
+    ordered, _child_ids = M._ordered_axes(fig)  # noqa: SLF001
+    for owner_gid, owner in [("figure", fig)] + [(f"axes_{i}", ax) for i, ax in enumerate(ordered)]:
         for child in owner.get_children():
             if id(child) in known or isinstance(child, (Axes, Axis)):
                 continue
@@ -246,33 +252,40 @@ def completeness(fig, state, man) -> dict:
     # gid 编号必须与产品同源（`_ordered_axes` 是那个唯一权威），这里要的
     # 独立性是**「哪些轴是色条轴」这个判据**：`cax._colorbar` 而不是
     # `mappable.colorbar`。
-    _cb_axes = M._ordered_axes(fig)[0]                        # noqa: SLF001
+    _cb_axes = M._ordered_axes(fig)[0]  # noqa: SLF001
     gid_of_ax = {a: f"axes_{i}" for i, a in enumerate(_cb_axes)}
-    mpl_cbar_gids = {gid_of_ax[a] for a in _cb_axes
-                     if getattr(a, "_colorbar", None) is not None}
+    mpl_cbar_gids = {gid_of_ax[a] for a in _cb_axes if getattr(a, "_colorbar", None) is not None}
     cbar_leaks = sorted(
-        g for g in manifest_gids
+        g
+        for g in manifest_gids
         for cg in (cbar_gids | mpl_cbar_gids)
-        if g.startswith(f"{cg}.")
-        and not g.startswith((f"{cg}.colorbar", f"{cg}.x", f"{cg}.y")))
+        if g.startswith(f"{cg}.") and not g.startswith((f"{cg}.colorbar", f"{cg}.x", f"{cg}.y"))
+    )
 
     # 随行关系：拖动宿主时该一起走的那些 axes。插图上的色条被认出来之后，
     # 这条关系还会在 `follow_map` 里被丢一次（宿主不在 `fig.axes` 里 →
     # `gid_of_ax.get(host)` 是 None → link 直接返回，没有任何提示）。
     follow = {k: sorted(v) for k, v in sorted(state.axes_follow.items())}
 
-    return {"orphans": orphans, "churn": churn, "unseen": unseen,
-            "colorbar_axes": sorted(cbar_gids), "colorbar_leaks": cbar_leaks,
-            "colorbar_axes_missed": sorted(mpl_cbar_gids - cbar_gids),
-            "colorbar_hostless": sorted(
-                e["gid"] for e in man["elements"]
-                if e.get("role") == "colorbar" and not e.get("host_gid")),
-            "axes_follow": follow,
-            "unsupported": man.get("unsupported", []),
-            "element_count": len(man["elements"]),
-            "registered_count": len(state.index),
-            "consumed_count": len(consumed),
-            "unused": sorted(element_ids - live_ids - consumed)[:0]}
+    return {
+        "orphans": orphans,
+        "churn": churn,
+        "unseen": unseen,
+        "colorbar_axes": sorted(cbar_gids),
+        "colorbar_leaks": cbar_leaks,
+        "colorbar_axes_missed": sorted(mpl_cbar_gids - cbar_gids),
+        "colorbar_hostless": sorted(
+            e["gid"]
+            for e in man["elements"]
+            if e.get("role") == "colorbar" and not e.get("host_gid")
+        ),
+        "axes_follow": follow,
+        "unsupported": man.get("unsupported", []),
+        "element_count": len(man["elements"]),
+        "registered_count": len(state.index),
+        "consumed_count": len(consumed),
+        "unused": sorted(element_ids - live_ids - consumed)[:0],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -282,13 +295,29 @@ def completeness(fig, state, man) -> dict:
 #: 三条兼容前缀（scatter / fill / collections）指的是同一族，前缀是历史命名、
 #: 不是分类；`linecoll` 才是真的另一族（对外 prop 叫 `color`）。
 _ROLE_TO_FAMILY = {
-    "scatter": "collection", "fill": "collection", "collection": "collection",
-    "linecoll": "linecoll", "patch": "patch", "bar": "bar", "line": "line",
-    "image": "image", "text": "text", "title": "text", "axis_label": "text",
-    "legend_text": "text", "legend": "legend", "axes": "axes", "axes3d": "axes",
-    "arrow_patch": "arrowpatch", "stem_series": "stem_series",
-    "bar_series": "bar_series", "errorbar": "errorbar", "colorbar": "colorbar",
-    "ticks": "ticks", "ticklabel": "ticklabel", "artist": "artist",
+    "scatter": "collection",
+    "fill": "collection",
+    "collection": "collection",
+    "linecoll": "linecoll",
+    "patch": "patch",
+    "bar": "bar",
+    "line": "line",
+    "image": "image",
+    "text": "text",
+    "title": "text",
+    "axis_label": "text",
+    "legend_text": "text",
+    "legend": "legend",
+    "axes": "axes",
+    "axes3d": "axes",
+    "arrow_patch": "arrowpatch",
+    "stem_series": "stem_series",
+    "bar_series": "bar_series",
+    "errorbar": "errorbar",
+    "colorbar": "colorbar",
+    "ticks": "ticks",
+    "ticklabel": "ticklabel",
+    "artist": "artist",
 }
 
 
@@ -302,38 +331,44 @@ def single_authority(fig, state, man) -> dict:
         if el is None or entry["gid"] == "figure":
             continue
         art, role = el["artist"], el["role"]
-        key = O._cls_key(art)                            # noqa: SLF001
+        key = O._cls_key(art)  # noqa: SLF001
         want = _ROLE_TO_FAMILY.get(role)
         if want is not None and key != want:
             family_conflicts.append(
-                {"gid": entry["gid"], "role": role, "cls_key": key, "expected": want})
+                {"gid": entry["gid"], "role": role, "cls_key": key, "expected": want}
+            )
         # 元素表宣称可编辑的每一条，dispatch 侧都必须有 handler
         for f in entry["editable"]:
             if (key, f["prop"]) not in O.HANDLERS:
-                missing_handlers.append(
-                    {"gid": entry["gid"], "cls_key": key, "prop": f["prop"]})
+                missing_handlers.append({"gid": entry["gid"], "cls_key": key, "prop": f["prop"]})
 
     # gid 前缀这条判断只有 `_collection_gid_prefix` 一处；它与 dispatch 侧的
     # `is_linecoll_family` 必须给出同一个答案——这正是「映射的线组」那个 bug
     for i, ax in enumerate(fig.axes):
         for j, coll in enumerate(ax.collections):
-            prefix = M._collection_gid_prefix(coll)       # noqa: SLF001
-            key = O._cls_key(coll)                        # noqa: SLF001
+            prefix = M._collection_gid_prefix(coll)  # noqa: SLF001
+            key = O._cls_key(coll)  # noqa: SLF001
             want = _ROLE_TO_FAMILY.get(prefix if prefix != "collections" else "collection")
             if want != key:
                 prefix_conflicts.append(
-                    {"where": f"axes_{i}.{prefix}_{j}", "prefix": prefix,
-                     "cls_key": key, "cls": type(coll).__name__})
+                    {
+                        "where": f"axes_{i}.{prefix}_{j}",
+                        "prefix": prefix,
+                        "cls_key": key,
+                        "cls": type(coll).__name__,
+                    }
+                )
 
     # 别名表：广播端自己得有 handler，否则那一组永远解析不出来
-    alias_without_handler = [f"{c}.{p}" for (c, p) in O.ALIAS_GROUPS
-                             if (c, p) not in O.HANDLERS]
+    alias_without_handler = [f"{c}.{p}" for (c, p) in O.ALIAS_GROUPS if (c, p) not in O.HANDLERS]
 
-    return {"family_conflicts": family_conflicts,
-            "missing_handlers": missing_handlers,
-            "prefix_conflicts": prefix_conflicts,
-            "alias_without_handler": sorted(alias_without_handler),
-            "alias_group_count": len(O.ALIAS_GROUPS)}
+    return {
+        "family_conflicts": family_conflicts,
+        "missing_handlers": missing_handlers,
+        "prefix_conflicts": prefix_conflicts,
+        "alias_without_handler": sorted(alias_without_handler),
+        "alias_group_count": len(O.ALIAS_GROUPS),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -347,6 +382,7 @@ def stroke_style_table() -> list[dict]:
     `draw_quad_mesh` 补上花纹，那张表就开始撒谎，而症状是「界面上少了个能用
     的开关」，没有任何报错。所以这里不看类名、只看像素，判定归调用方。
     """
+
     def ink(fig):
         fig.canvas.draw()
         return np.asarray(fig.canvas.buffer_rgba()).copy()
@@ -359,14 +395,17 @@ def stroke_style_table() -> list[dict]:
     z = rng.rand(3, 3)
     cases = {
         "QuadMesh": lambda ax: ax.pcolormesh(grid, grid, z),
-        "TriMesh": lambda ax: ax.tripcolor(rng.rand(20), rng.rand(20), rng.rand(20),
-                                           shading="gouraud"),
+        "TriMesh": lambda ax: ax.tripcolor(
+            rng.rand(20), rng.rand(20), rng.rand(20), shading="gouraud"
+        ),
         "PolyQuadMesh": lambda ax: ax.pcolor(grid, grid, z),
-        "PolyCollection": lambda ax: ax.fill_between(np.linspace(0, 1, 20), 0,
-                                                     np.linspace(0, 1, 20)),
+        "PolyCollection": lambda ax: ax.fill_between(
+            np.linspace(0, 1, 20), 0, np.linspace(0, 1, 20)
+        ),
         "PathCollection": lambda ax: ax.scatter(rng.rand(9), rng.rand(9), s=900),
-        "LineCollection": lambda ax: ax.add_collection(LineCollection(
-            [[(0.0, 0.0), (1.0, 1.0)]], linewidths=3)),
+        "LineCollection": lambda ax: ax.add_collection(
+            LineCollection([[(0.0, 0.0), (1.0, 1.0)]], linewidths=3)
+        ),
     }
     rows = []
     for name, make in cases.items():
@@ -392,11 +431,17 @@ def stroke_style_table() -> list[dict]:
         ink(fig)
         coll.set_linestyle("--")
         dash_px = changed(base, ink(fig))
-        rows.append({"case": name, "cls": type(coll).__name__,
-                     "stroke_px": stroke_px, "hatch_px": hatch_px,
-                     "dash_px": dash_px,
-                     "stroke": bool(O.honours_stroke(coll)),
-                     "predicate": bool(O.honours_stroke_style(coll))})
+        rows.append(
+            {
+                "case": name,
+                "cls": type(coll).__name__,
+                "stroke_px": stroke_px,
+                "hatch_px": hatch_px,
+                "dash_px": dash_px,
+                "stroke": bool(O.honours_stroke(coll)),
+                "predicate": bool(O.honours_stroke_style(coll)),
+            }
+        )
         plt.close(fig)
     return rows
 
@@ -413,6 +458,7 @@ def faces_table() -> list[dict]:
     `scatter(facecolors="none")` 的 `get_facecolor()` 长度为 0，而 marker 路径
     是闭合可填的。这张表把两个方向都量出来，判定归调用方。
     """
+
     def ink(fig):
         fig.canvas.draw()
         return np.asarray(fig.canvas.buffer_rgba()).copy()
@@ -420,19 +466,21 @@ def faces_table() -> list[dict]:
     def changed(a, b):
         return int((np.abs(a.astype(int) - b.astype(int)).sum(axis=2) > 0).sum())
 
-    want = (255, 0, 255)          # 画布是 RGBA uint8
+    want = (255, 0, 255)  # 画布是 RGBA uint8
     rng = np.random.RandomState(0)
     grid = np.linspace(0, 1, 4)
     cases = {
-        "scatter_hollow": lambda ax: ax.scatter(rng.rand(9), rng.rand(9), s=900,
-                                                facecolors="none", edgecolors="C0"),
+        "scatter_hollow": lambda ax: ax.scatter(
+            rng.rand(9), rng.rand(9), s=900, facecolors="none", edgecolors="C0"
+        ),
         "scatter_solid": lambda ax: ax.scatter(rng.rand(9), rng.rand(9), s=900),
-        "scatter_mapped": lambda ax: ax.scatter(rng.rand(9), rng.rand(9), s=900,
-                                                c=rng.rand(9)),
-        "PolyCollection": lambda ax: ax.fill_between(np.linspace(0, 1, 20), 0,
-                                                     np.linspace(0, 1, 20)),
-        "LineCollection": lambda ax: ax.add_collection(LineCollection(
-            [[(0.0, 0.0), (1.0, 1.0)]], linewidths=3)),
+        "scatter_mapped": lambda ax: ax.scatter(rng.rand(9), rng.rand(9), s=900, c=rng.rand(9)),
+        "PolyCollection": lambda ax: ax.fill_between(
+            np.linspace(0, 1, 20), 0, np.linspace(0, 1, 20)
+        ),
+        "LineCollection": lambda ax: ax.add_collection(
+            LineCollection([[(0.0, 0.0), (1.0, 1.0)]], linewidths=3)
+        ),
         "contour": lambda ax: ax.contour(grid, grid, rng.rand(4, 4)),
         "QuadMesh": lambda ax: ax.pcolormesh(grid, grid, rng.rand(3, 3)),
     }
@@ -450,9 +498,11 @@ def faces_table() -> list[dict]:
         # `get_facecolor()` 已经被这一次设值填上了，`honours_faces` 于是对每
         # 一族都回 True——一张恒真的表，正是它本该抓的那种空门禁。
         # 与 `stroke_style_table` 当初「把描边当成没人验的基线」是同一个坑。
-        before = {"predicate": bool(O.honours_faces(coll)),
-                  "mapping_live": bool(O.color_mapping_is_live(coll)),
-                  "advertised": "faces" in O.collection_caps(coll)}
+        before = {
+            "predicate": bool(O.honours_faces(coll)),
+            "mapping_live": bool(O.color_mapping_is_live(coll)),
+            "advertised": "faces" in O.collection_caps(coll),
+        }
         try:
             coll.set_facecolor("#FF00FF")
             after = ink(fig)
@@ -461,14 +511,26 @@ def faces_table() -> list[dict]:
             # 映射类会把属性也盖回去（contour 实测回 viridis），可 LineCollection
             # 这类没人盖它属性的，属性永远等于请求值——那个判据对它恒真，
             # 什么也没证明。真正要问的是「画出来的那片像素是不是请求的颜色」。
-            painted = int(((after[..., 0] == want[0]) & (after[..., 1] == want[1])
-                           & (after[..., 2] == want[2])).sum())
+            painted = int(
+                (
+                    (after[..., 0] == want[0])
+                    & (after[..., 1] == want[1])
+                    & (after[..., 2] == want[2])
+                ).sum()
+            )
             got_want = painted > 0
-        except Exception as exc:                       # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             px, got_want = f"raised:{type(exc).__name__}", False
-        rows.append({"case": name, "cls": type(coll).__name__,
-                     "face_px": px, "painted_px": painted if got_want or isinstance(px, int) else 0,
-                     "became_requested": got_want, **before})
+        rows.append(
+            {
+                "case": name,
+                "cls": type(coll).__name__,
+                "face_px": px,
+                "painted_px": painted if got_want or isinstance(px, int) else 0,
+                "became_requested": got_want,
+                **before,
+            }
+        )
         plt.close(fig)
     return rows
 
@@ -478,11 +540,13 @@ def main() -> int:
     state = O.FigState(fig)
     M.instrument(state)
     man = M.build_manifest(state, "Probe")
-    report = {"matplotlib": matplotlib.__version__,
-              "completeness": completeness(fig, state, man),
-              "single_authority": single_authority(fig, state, man),
-              "stroke_style_table": stroke_style_table(),
-              "faces_table": faces_table()}
+    report = {
+        "matplotlib": matplotlib.__version__,
+        "completeness": completeness(fig, state, man),
+        "single_authority": single_authority(fig, state, man),
+        "stroke_style_table": stroke_style_table(),
+        "faces_table": faces_table(),
+    }
     if "--pretty" in sys.argv:
         print(json.dumps(report, ensure_ascii=False, indent=2))
     else:

@@ -6,6 +6,7 @@
 `test_browser_session.py` 就不行，那个文件模块级 skipif 没有 matplotlib 的
 解释器——一条会静默跳过的门禁比没有门禁更坏，它在报平安。
 """
+
 import ast
 import sys
 from pathlib import Path
@@ -24,10 +25,12 @@ def _flat_imports(path: Path) -> set[str]:
     `matplotlib` 这类第三方不在此列。
     """
     tree = ast.parse(path.read_text(encoding="utf-8"))
-    names = {a.name for node in ast.walk(tree) if isinstance(node, ast.Import)
-             for a in node.names}
-    names |= {node.module for node in ast.walk(tree)
-              if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module}
+    names = {a.name for node in ast.walk(tree) if isinstance(node, ast.Import) for a in node.names}
+    names |= {
+        node.module
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module
+    }
     return {n for n in names if (ENGINE / f"{n}.py").is_file()}
 
 
@@ -63,21 +66,24 @@ def test_engine_zip_ships_every_module_the_browser_imports():
     # 用例前提：闭包确实穿透了不止一层（pathgeom 是 manifest 引进来的，
     # browser.py 自己并不直接 import 它）
     assert "pathgeom.py" in need, "用例前提失效：manifest 不再平铺 import pathgeom？"
-    assert "browser.py" not in _flat_imports(ENGINE / "manifest.py"), \
+    assert "browser.py" not in _flat_imports(ENGINE / "manifest.py"), (
         "引擎模块反过来 import browser 会让这条闭包失去意义"
+    )
 
     missing = need - set(bbp.ENGINE_FILES)
     assert not missing, (
         f"scripts/build_browser_playground.py 的 ENGINE_FILES 漏了 browser.py "
-        f"要用的模块: {sorted(missing)}。加平铺 import 就要同步加白名单。")
+        f"要用的模块: {sorted(missing)}。加平铺 import 就要同步加白名单。"
+    )
 
 
 def test_engine_files_all_exist_and_are_sorted():
     """白名单里的每一项都得是真文件；顺序固定，zip 才是确定性产物。"""
     for name in bbp.ENGINE_FILES:
         assert (ENGINE / name).is_file(), f"ENGINE_FILES 里的 {name} 不存在"
-    assert bbp.ENGINE_FILES == sorted(bbp.ENGINE_FILES), \
+    assert bbp.ENGINE_FILES == sorted(bbp.ENGINE_FILES), (
         "ENGINE_FILES 请保持排序——构建脚本按名排序写 zip，清单同序才好读 diff"
+    )
 
 
 def test_fingerprint_covers_every_shipped_engine_module():
@@ -90,4 +96,5 @@ def test_fingerprint_covers_every_shipped_engine_module():
     src = (REPO / "scripts" / "build_browser_playground.py").read_text(encoding="utf-8")
     assert "ENGINE / name for name in ENGINE_FILES" in src, (
         "source_fingerprint() 不再按 ENGINE_FILES 收引擎模块了——"
-        "白名单与指纹输入必须是同一份清单，分开写迟早漏。")
+        "白名单与指纹输入必须是同一份清单，分开写迟早漏。"
+    )

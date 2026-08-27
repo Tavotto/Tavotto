@@ -22,6 +22,7 @@
 
 纯标准库。
 """
+
 from __future__ import annotations
 
 import argparse
@@ -106,15 +107,22 @@ def source_fingerprint() -> str:
         for p in base.rglob("*"):
             if p.is_file() and p.suffix in (".ts", ".tsx", ".css") and ".test." not in p.name:
                 files.append(p)
-    files += [WEB / "mcp.html", WEB / "vite.mcp.config.ts", WEB / "package.json",
-              ROOT / "src" / "tavotto" / "profiles" / "publication.json"]
+    files += [
+        WEB / "mcp.html",
+        WEB / "vite.mcp.config.ts",
+        WEB / "package.json",
+        ROOT / "src" / "tavotto" / "profiles" / "publication.json",
+    ]
     return digest((p.relative_to(ROOT), p.read_bytes()) for p in files if p.is_file())
 
 
 def build() -> str:
     """跑 vite，把 JS/CSS 内联成一份 HTML 文本。"""
-    cmd = [*_pnpm(), "exec", "vite", "build", "--config", "vite.mcp.config.ts"] \
-        if _pnpm()[0].endswith("pnpm") else [*_pnpm(), "build", "--config", "vite.mcp.config.ts"]
+    cmd = (
+        [*_pnpm(), "exec", "vite", "build", "--config", "vite.mcp.config.ts"]
+        if _pnpm()[0].endswith("pnpm")
+        else [*_pnpm(), "build", "--config", "vite.mcp.config.ts"]
+    )
     proc = subprocess.run(cmd, cwd=WEB, text=True, encoding="utf-8", errors="replace")
     if proc.returncode != 0:
         raise SystemExit(f"vite build 失败（退出码 {proc.returncode}）")
@@ -130,10 +138,14 @@ def build() -> str:
 
     # 替换文本必须走 lambda：`re.sub` 会解释替换串里的反斜杠转义，
     # 而打包出来的 JS 里到处是 `\u`、`\d`——直接当模板传进去当场 PatternError
-    html = re.sub(r'<script[^>]*src="[^"]*canvas\.js"[^>]*>\s*</script>',
-                  lambda _m: f'<script type="module">{js}</script>', html)
-    html = re.sub(r'<link[^>]*href="[^"]*canvas\.css"[^>]*>',
-                  lambda _m: f"<style>{css}</style>", html)
+    html = re.sub(
+        r'<script[^>]*src="[^"]*canvas\.js"[^>]*>\s*</script>',
+        lambda _m: f'<script type="module">{js}</script>',
+        html,
+    )
+    html = re.sub(
+        r'<link[^>]*href="[^"]*canvas\.css"[^>]*>', lambda _m: f"<style>{css}</style>", html
+    )
     if "canvas.js" in html or "canvas.css" in html:
         raise SystemExit("内联失败：产物里还留着外链引用（vite 的输出形状变了？）")
 
@@ -152,8 +164,9 @@ def current_fingerprint() -> str | None:
 def main(argv: list[str] | None = None) -> int:
     _force_utf8()
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--check", action="store_true",
-                    help="只校验产物是否与源码同步（CI 用），不构建")
+    ap.add_argument(
+        "--check", action="store_true", help="只校验产物是否与源码同步（CI 用），不构建"
+    )
     ap.add_argument("--json", action="store_true", help="输出机器可读结果")
     args = ap.parse_args(argv)
 
@@ -162,11 +175,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.check:
         ok = have == want
         report = {"ok": ok, "expected": want, "found": have, "path": str(OUT)}
-        print(json.dumps(report, ensure_ascii=False) if args.json else
-              (f"画布产物与源码一致（{want}）" if ok else
-               f"画布产物过期：源码指纹 {want}，产物里是 {have}。"
-               f"跑一次 python scripts/build_mcp_widget.py"),
-              file=sys.stdout if ok else sys.stderr)
+        print(
+            json.dumps(report, ensure_ascii=False)
+            if args.json
+            else (
+                f"画布产物与源码一致（{want}）"
+                if ok
+                else f"画布产物过期：源码指纹 {want}，产物里是 {have}。"
+                f"跑一次 python scripts/build_mcp_widget.py"
+            ),
+            file=sys.stdout if ok else sys.stderr,
+        )
         return 0 if ok else 1
 
     html = build()
@@ -174,8 +193,11 @@ def main(argv: list[str] | None = None) -> int:
     OUT.write_text(html, encoding="utf-8")
     size = OUT.stat().st_size
     report = {"ok": True, "path": str(OUT), "bytes": size, "fingerprint": want}
-    print(json.dumps(report, ensure_ascii=False) if args.json else
-          f"已写入 {OUT}（{size / 1024:.0f} KiB，指纹 {want}）")
+    print(
+        json.dumps(report, ensure_ascii=False)
+        if args.json
+        else f"已写入 {OUT}（{size / 1024:.0f} KiB，指纹 {want}）"
+    )
     # dist-mcp 是中间产物，留着只会让人以为它是发布物
     shutil.rmtree(DIST, ignore_errors=True)
     return 0

@@ -32,9 +32,9 @@ _SOURCE_FILES = ("app.py", "security.py", "desktop.py", "engine/ai_bridge.py")
 
 def _all_error_sources() -> str:
     root = ROOT / "src" / "tavotto"
-    return "\n".join((root / n).read_text(encoding="utf-8")
-                     for n in _SOURCE_FILES
-                     if (root / n).is_file())
+    return "\n".join(
+        (root / n).read_text(encoding="utf-8") for n in _SOURCE_FILES if (root / n).is_file()
+    )
 
 
 #: 源码里「声明了一个 code」的两种写法：字面量响应，或带 code 的异常。
@@ -46,6 +46,7 @@ def _declared_codes(text: str) -> set[str]:
     for pat in _CODE_PATTERNS:
         out.update(re.findall(pat, text))
     return out
+
 
 # code → 后端会塞进 params 的键（2026-08-21 起覆盖 app.py 的**全部**字面量
 # code——审计 P1-02：错误尾部不许泄漏中文，所以每个 code 都要有两种语言的
@@ -184,7 +185,7 @@ def test_the_agent_error_funnel_still_carries_the_original_text():
     漏斗只有一处，所以单独钉死它——上面那条对它们只能确认「异常存在」。"""
     app = APP.read_text(encoding="utf-8")
     start = app.index("def _agent_error(")
-    block = app[start:start + 600]
+    block = app[start : start + 600]
     assert '"error"' in block and '"code": exc.code' in block
     assert '"params": exc.params' in block
 
@@ -206,23 +207,32 @@ SCANNED = [n for n in _SOURCE_FILES if (SRC_DIR / n).is_file()]
 #: 刻意没有文案的 code：不是用户可见的失败（前端把这类调用整个吞掉或只做
 #: 分诊）。会话 guard 那几个的拒绝对象是攻击页面/畸形请求，正常界面路径由
 #: main.tsx 的专用启动页兜住；401 的 session_auth_required 另有 backend 文案。
-NON_UI_CODES = {"telemetry_rejected", "invalid_telemetry_event",
-                "bad_nonce", "bad_host", "bad_origin", "bad_secret",
-                "no_session_mode", "desktop_auth_required",
-                # 一键安装的**进度**状态码，不是错误响应：它们的文案在
-                # dialogs:settings.agents.install.error.*（由 pnpm i18n:check
-                # 守双语齐全），不该也不能进 errors.backend 那张表。
-                "npm_missing", "npm_failed", "installed_but_not_found",
-                "spawn_failed"}
+NON_UI_CODES = {
+    "telemetry_rejected",
+    "invalid_telemetry_event",
+    "bad_nonce",
+    "bad_host",
+    "bad_origin",
+    "bad_secret",
+    "no_session_mode",
+    "desktop_auth_required",
+    # 一键安装的**进度**状态码，不是错误响应：它们的文案在
+    # dialogs:settings.agents.install.error.*（由 pnpm i18n:check
+    # 守双语齐全），不该也不能进 errors.backend 那张表。
+    "npm_missing",
+    "npm_failed",
+    "installed_but_not_found",
+    "spawn_failed",
+}
 
 
 def _error_blocks(text: str):
     """每个 `jsonify({"error": ...})` 调用的文本块（到第一个 `})` 为止——
     本仓库的错误响应都是字面量 dict，这个粗粒度够用且改坏会立刻可见。"""
     for m in re.finditer(r'jsonify\(\{"error"', text):
-        window = text[m.start():m.start() + 600]
+        window = text[m.start() : m.start() + 600]
         end = window.find("})")
-        yield text[:m.start()].count("\n") + 1, window[:end if end != -1 else 600]
+        yield text[: m.start()].count("\n") + 1, window[: end if end != -1 else 600]
 
 
 def test_every_error_response_carries_a_stable_code():
@@ -235,9 +245,9 @@ def test_every_error_response_carries_a_stable_code():
             key = f"{name}:{line}"
             if key not in NO_CODE_ALLOWLIST:
                 missing.append((key, block.splitlines()[0]))
-    assert not missing, (
-        "以下错误响应没有稳定 code（英文界面会在这里冒中文）：\n"
-        + "\n".join(f"  {k}  {frag}" for k, frag in missing))
+    assert not missing, "以下错误响应没有稳定 code（英文界面会在这里冒中文）：\n" + "\n".join(
+        f"  {k}  {frag}" for k, frag in missing
+    )
 
 
 def test_visible_codes_table_covers_every_literal_code():

@@ -25,6 +25,7 @@
        -H 'Content-Type: application/json' \
        -d '{"name": "文字位置恢复", "doc": <文件内容>}'
 """
+
 from __future__ import annotations
 
 import argparse
@@ -44,8 +45,8 @@ import pymupdf
 ROOT = Path(__file__).resolve().parent.parent
 FRAC_PROPS = {"pos_frac", "loc_frac", "endpoints_frac"}
 GEOM_PROPS = {"position", "size_mm"}
-DELTA_TOL = 0.006      # 同轴成员漂移一致性的容差（figure 分数）
-MIN_DELTA = 0.002      # 小于它视作没漂，不改写
+DELTA_TOL = 0.006  # 同轴成员漂移一致性的容差（figure 分数）
+MIN_DELTA = 0.002  # 小于它视作没漂，不改写
 
 
 # 会话凭据（ADR 0008）。装载判据只有一处——`smoke_app.adopt_session_credentials`
@@ -62,14 +63,23 @@ def _adopt(data_dir: Path, port: int) -> bool:
 
 
 def start_server(figures: Path, port: int, scratch: Path) -> subprocess.Popen:
-    env = dict(os.environ,
-               TAVOTTO_DATA_DIR=str(scratch / "data"),
-               TAVOTTO_CONFIG_DIR=str(scratch / "cfg"))
+    env = dict(
+        os.environ, TAVOTTO_DATA_DIR=str(scratch / "data"), TAVOTTO_CONFIG_DIR=str(scratch / "cfg")
+    )
     proc = subprocess.Popen(
-        [str(ROOT / ".venv/bin/tavotto"), "--figures", str(figures),
-         "--no-browser", "--port", str(port)],
-        env=env, cwd=str(ROOT),
-        stdout=open(scratch / "srv.log", "w"), stderr=subprocess.STDOUT)
+        [
+            str(ROOT / ".venv/bin/tavotto"),
+            "--figures",
+            str(figures),
+            "--no-browser",
+            "--port",
+            str(port),
+        ],
+        env=env,
+        cwd=str(ROOT),
+        stdout=open(scratch / "srv.log", "w"),
+        stderr=subprocess.STDOUT,
+    )
     base = f"http://127.0.0.1:{port}"
     data_dir = scratch / "data"
     for _ in range(120):
@@ -80,8 +90,8 @@ def start_server(figures: Path, port: int, scratch: Path) -> subprocess.Popen:
         _adopt(data_dir, port)
         try:
             urllib.request.urlopen(
-                urllib.request.Request(base + "/api/panels", headers=_AUTH),
-                timeout=5).read()
+                urllib.request.Request(base + "/api/panels", headers=_AUTH), timeout=5
+            ).read()
             return proc
         except Exception:
             time.sleep(0.3)
@@ -122,29 +132,37 @@ def pdf_text_lines(src: Path) -> list[dict]:
                 if not text.strip() or not spans:
                     continue
                 x0, y0, x1, y1 = line["bbox"]
-                out.append({"norm": norm_text(text),
-                            "bbox": (x0 / W, y0 / H,
-                                     (x1 - x0) / W, (y1 - y0) / H)})
+                out.append(
+                    {
+                        "norm": norm_text(text),
+                        "bbox": (x0 / W, y0 / H, (x1 - x0) / W, (y1 - y0) / H),
+                    }
+                )
     return out
 
 
-def tight_ink_center(gray: "Gray", fx: float, fy: float, fw: float, fh: float,
-                     pad: int = 3) -> tuple[float, float] | None:
+def tight_ink_center(
+    gray: "Gray", fx: float, fy: float, fw: float, fh: float, pad: int = 3
+) -> tuple[float, float] | None:
     """区域内墨迹紧框的中心（px）。"""
     x0 = max(0, int(fx * gray.w) - pad)
     y0 = max(0, int(fy * gray.h) - pad)
     x1 = min(gray.w, int((fx + fw) * gray.w) + pad)
     y1 = min(gray.h, int((fy + fh) * gray.h) + pad)
-    ix0 = iy0 = 10 ** 9
+    ix0 = iy0 = 10**9
     ix1 = iy1 = -1
     for y in range(y0, y1):
-        row = gray.data[y * gray.stride: y * gray.stride + gray.w]
+        row = gray.data[y * gray.stride : y * gray.stride + gray.w]
         for x in range(x0, x1):
             if 255 - row[x] > 40:
-                if x < ix0: ix0 = x
-                if x > ix1: ix1 = x
-                if y < iy0: iy0 = y
-                if y > iy1: iy1 = y
+                if x < ix0:
+                    ix0 = x
+                if x > ix1:
+                    ix1 = x
+                if y < iy0:
+                    iy0 = y
+                if y > iy1:
+                    iy1 = y
     if ix1 < 0:
         return None
     return ((ix0 + ix1) / 2, (iy0 + iy1) / 2)
@@ -168,15 +186,18 @@ RASTER_W = 1600
 REFINE_R = 10
 
 
-def refine_delta(replay: Gray, baked: Gray, bbox_px: tuple[int, int, int, int],
-                 dx_px: int, dy_px: int) -> tuple[int, int] | None:
+def refine_delta(
+    replay: Gray, baked: Gray, bbox_px: tuple[int, int, int, int], dx_px: int, dy_px: int
+) -> tuple[int, int] | None:
     """基线对基线的 Δ 已经很准；非默认对齐（ha/va）的小残差在 ±REFINE_R px
     内按墨迹 SAD 精配掉。"""
     x0, y0, bw, bh = bbox_px
-    pts = [(x, y, replay.ink(x, y))
-           for y in range(max(0, y0), min(replay.h, y0 + bh))
-           for x in range(max(0, x0), min(replay.w, x0 + bw))
-           if replay.ink(x, y) > 40]
+    pts = [
+        (x, y, replay.ink(x, y))
+        for y in range(max(0, y0), min(replay.h, y0 + bh))
+        for x in range(max(0, x0), min(replay.w, x0 + bw))
+        if replay.ink(x, y) > 40
+    ]
     if len(pts) < 30:
         return None
     if len(pts) > 1200:  # 大块文字抽稀，够定位就行
@@ -208,7 +229,7 @@ def refine_delta(replay: Gray, baked: Gray, bbox_px: tuple[int, int, int, int],
 
 
 def panels_of(doc: dict):
-    for canvas in (doc.get("canvases") or [doc]):
+    for canvas in doc.get("canvases") or [doc]:
         for o in canvas.get("objects", []):
             if o.get("type") == "panel":
                 yield o
@@ -223,8 +244,9 @@ def axes_group(gid: str) -> str:
     return gid.split(".", 1)[0] if "." in gid else gid
 
 
-def recover_panel(base: str, figures: Path, panel: dict,
-                  verbose: bool = False) -> tuple[int, list[str]]:
+def recover_panel(
+    base: str, figures: Path, panel: dict, verbose: bool = False
+) -> tuple[int, list[str]]:
     """就地修正 panel['overrides'] 里的 frac 锚定值。返回 (改写条数, 报告)。"""
     rel_id = panel["fileId"]
     src = figures / rel_id
@@ -233,8 +255,9 @@ def recover_panel(base: str, figures: Path, panel: dict,
         return 0, [f"{rel_id}: 源文件不存在，跳过"]
 
     patches = panel["overrides"]
-    resp = json.load(req(base, "/api/engine/render",
-                         {"id": quote(rel_id, safe='/'), "patches": patches}))
+    resp = json.load(
+        req(base, "/api/engine/render", {"id": quote(rel_id, safe="/"), "patches": patches})
+    )
     elements = {e["gid"]: e for e in resp["manifest"]["elements"]}
     lines = pdf_text_lines(src)
 
@@ -255,8 +278,9 @@ def recover_panel(base: str, figures: Path, panel: dict,
         if el is None:
             report.append(f"{p['gid']}: 重放 manifest 里找不到，未改动")
             continue
-        text = next((f.get("value") for f in el.get("editable", [])
-                     if f.get("prop") == "text"), None)
+        text = next(
+            (f.get("value") for f in el.get("editable", []) if f.get("prop") == "text"), None
+        )
         if not text:
             report.append(f"{p['gid']}: 非文字元素（{p['prop']}），此工具不处理")
             continue
@@ -274,13 +298,20 @@ def recover_panel(base: str, figures: Path, panel: dict,
             if bc is None:
                 continue
             cands.append(((bc[0] - rc[0]) / W, (bc[1] - rc[1]) / H, i))
-        items.append({"patch": p, "gid": p["gid"], "cands": cands,
-                      "group": axes_group(p["gid"]),
-                      "bbox_px": (int(bx * W) - 2, int(by * H) - 2,
-                                  int(bw * W) + 4, int(bh * H) + 4)})
+        items.append(
+            {
+                "patch": p,
+                "gid": p["gid"],
+                "cands": cands,
+                "group": axes_group(p["gid"]),
+                "bbox_px": (int(bx * W) - 2, int(by * H) - 2, int(bw * W) + 4, int(bh * H) + 4),
+            }
+        )
         if verbose:
-            print(f"  ? {p['gid']} 「{norm}」 cands="
-                  + "; ".join(f"({dx:+.4f},{dy:+.4f})" for dx, dy, _ in cands))
+            print(
+                f"  ? {p['gid']} 「{norm}」 cands="
+                + "; ".join(f"({dx:+.4f},{dy:+.4f})" for dx, dy, _ in cands)
+            )
         if not cands:
             report.append(f"{p['gid']}: 写回 PDF 里找不到文本「{text}」，未改动")
 
@@ -294,8 +325,9 @@ def recover_panel(base: str, figures: Path, panel: dict,
     claimed: set[int] = set()
     changed = 0
     sibling_deltas: dict[str, list[tuple[float, float]]] = {}
-    order = sorted((it for it in items if it["cands"]),
-                   key=lambda it: min(mag(c) for c in it["cands"]))
+    order = sorted(
+        (it for it in items if it["cands"]), key=lambda it: min(mag(c) for c in it["cands"])
+    )
     for m in order:
         free = sorted((c for c in m["cands"] if c[2] not in claimed), key=mag)
         pick = None
@@ -307,9 +339,14 @@ def recover_panel(base: str, figures: Path, panel: dict,
             # 间距远大于真实漂移）
             pick = free[0]
         else:
-            near = [c for c in free
-                    if any(abs(c[0] - sx) < DELTA_TOL and abs(c[1] - sy) < DELTA_TOL
-                           for sx, sy in sibling_deltas.get(m["group"], []))]
+            near = [
+                c
+                for c in free
+                if any(
+                    abs(c[0] - sx) < DELTA_TOL and abs(c[1] - sy) < DELTA_TOL
+                    for sx, sy in sibling_deltas.get(m["group"], [])
+                )
+            ]
             if len(near) == 1:
                 pick = near[0]
         if pick is None or mag(pick) > 0.35:
@@ -321,20 +358,22 @@ def recover_panel(base: str, figures: Path, panel: dict,
         # 文本层只到行框中心精度：±REFINE_R px 内按墨迹精配，
         # 顺带把「本来没漂、只是行框中心偏差」的项归零
         raw = (dx, dy)
-        refined = refine_delta(replay, baked, m["bbox_px"],
-                               round(dx * W), round(dy * H))
+        refined = refine_delta(replay, baked, m["bbox_px"], round(dx * W), round(dy * H))
         if refined is not None:
             dx, dy = refined[0] / W, refined[1] / H
         if verbose:
-            print(f"  = {m['gid']} 文本层Δ({raw[0]:+.4f},{raw[1]:+.4f})"
-                  f" 精配Δ({dx:+.4f},{dy:+.4f})")
+            print(f"  = {m['gid']} 文本层Δ({raw[0]:+.4f},{raw[1]:+.4f}) 精配Δ({dx:+.4f},{dy:+.4f})")
         if abs(dx) < MIN_DELTA and abs(dy) < MIN_DELTA:
             continue  # 本来就没漂
         p = m["patch"]
         v = p["value"]
         if p["prop"] == "endpoints_frac":
-            p["value"] = [round(v[0] + dx, 4), round(v[1] + dy, 4),
-                          round(v[2] + dx, 4), round(v[3] + dy, 4)]
+            p["value"] = [
+                round(v[0] + dx, 4),
+                round(v[1] + dy, 4),
+                round(v[2] + dx, 4),
+                round(v[3] + dy, 4),
+            ]
         else:
             p["value"] = [round(v[0] + dx, 4), round(v[1] + dy, 4)]
         changed += 1
@@ -362,8 +401,7 @@ def main() -> None:
             for panel in panels_of(doc):
                 if not at_risk(panel):
                     continue
-                changed, report = recover_panel(base, figures, panel,
-                                                verbose=args.verbose)
+                changed, report = recover_panel(base, figures, panel, verbose=args.verbose)
                 total += changed
                 print(f"[{panel['fileId']}] 改写 {changed} 条")
                 for line in report:
@@ -375,8 +413,7 @@ def main() -> None:
             except subprocess.TimeoutExpired:
                 srv.kill()
 
-    Path(args.out).write_text(json.dumps(doc, ensure_ascii=False),
-                              encoding="utf-8")
+    Path(args.out).write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
     print(f"共改写 {total} 条，修正文档已另存：{args.out}")
 
 

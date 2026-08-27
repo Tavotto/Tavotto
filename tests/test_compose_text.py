@@ -4,6 +4,7 @@
 拉丁按词；行高 1.25；CSS 行盒基线）。这里从真实 PDF 页面提取字形原点，
 把后端行为钉死；前端若要改排版算法，必须同步改这里的期望值。
 """
+
 import pymupdf
 import pytest
 
@@ -38,8 +39,7 @@ def _rows(page) -> list[str]:
 
 
 def _base(text: str, **kw) -> dict:
-    return {"text": text, "x_mm": 10, "y_mm": 10, "w_mm": 60, "h_mm": 20,
-            "size_pt": 9, **kw}
+    return {"text": text, "x_mm": 10, "y_mm": 10, "w_mm": 60, "h_mm": 20, "size_pt": 9, **kw}
 
 
 SIZE = 9.0
@@ -109,9 +109,7 @@ def test_alignment(align):
     page = _draw(_base(text, w_mm=pt2mm(box_w), align=align))
     x0 = pb.mm2pt(10)
     w = width(text)
-    expected = {"left": x0,
-                "center": x0 + (box_w - w) / 2,
-                "right": x0 + box_w - w}[align]
+    expected = {"left": x0, "center": x0 + (box_w - w) / 2, "right": x0 + box_w - w}[align]
     assert _chars(page)[0][0] == pytest.approx(expected, abs=0.2)
 
 
@@ -121,20 +119,22 @@ def test_empty_text_draws_nothing():
 
 
 def _fonts(page) -> set[str]:
-    return {span["font"]
-            for block in page.get_text("rawdict")["blocks"]
-            for line in block.get("lines", [])
-            for span in line.get("spans", [])}
+    return {
+        span["font"]
+        for block in page.get_text("rawdict")["blocks"]
+        for line in block.get("lines", [])
+        for span in line.get("spans", [])
+    }
 
 
 def test_italic_and_bold_pick_matching_latin_fonts():
     assert any("Italic" in f for f in _fonts(_draw(_base("abc", italic=True))))
-    assert any("BoldItalic" in f
-               for f in _fonts(_draw(_base("abc", bold=True, italic=True))))
+    assert any("BoldItalic" in f for f in _fonts(_draw(_base("abc", bold=True, italic=True))))
     assert all("Italic" not in f for f in _fonts(_draw(_base("abc"))))
 
 
 # ---------------- 行内标记：上标 ^{…} / 下标 _{…} ---------------------------
+
 
 def _spans(page):
     """页面全部 span：[(size, origin_y, text)]。上下标靠字号与基线区分。"""
@@ -188,13 +188,16 @@ def test_escaped_markers_render_literally():
 
 # ---------------- 超宽单词逐字兜底（前端 word-break:break-word 同源）---------
 
+
 def _max_x1(page) -> float:
     """页面全部字形右边界的最大值——越界与否只能看 x1，看不了 origin。"""
-    return max(ch["bbox"][2]
-               for block in page.get_text("rawdict")["blocks"]
-               for line in block.get("lines", [])
-               for span in line.get("spans", [])
-               for ch in span.get("chars", []))
+    return max(
+        ch["bbox"][2]
+        for block in page.get_text("rawdict")["blocks"]
+        for line in block.get("lines", [])
+        for span in line.get("spans", [])
+        for ch in span.get("chars", [])
+    )
 
 
 def test_long_unbroken_word_breaks_inside_word_to_stay_in_box():
@@ -215,27 +218,40 @@ def test_long_unbroken_word_breaks_inside_word_to_stay_in_box():
 def test_long_word_gets_a_fresh_line_before_being_broken():
     """超宽词先让它独占新行再拆（CSS overflow-wrap 的语义），
     前面那半行不该被卷进逐字断行里。"""
-    t = _base("The ABCDEFGHIJKLMNOPQRSTUVWXYZ end",
-              x_mm=10, w_mm=20, h_mm=30, size_pt=12)
+    t = _base("The ABCDEFGHIJKLMNOPQRSTUVWXYZ end", x_mm=10, w_mm=20, h_mm=30, size_pt=12)
     page = _draw(t)
     assert _max_x1(page) <= pb.mm2pt(t["x_mm"] + t["w_mm"]) + 0.5
     rows = _rows(page)
     assert rows[0] == "The" and rows[-1] == "end"
 
 
-CONTROL = ("The quick brown fox jumps over the lazy dog "
-           "while plasma etching proceeds at a steady rate")
+CONTROL = (
+    "The quick brown fox jumps over the lazy dog while plasma etching proceeds at a steady rate"
+)
 
 
-@pytest.mark.parametrize("w_mm,expected", [
-    (60, ["The quick brown fox jumps over the lazy dog",
-          "while plasma etching proceeds at a steady rate"]),
-    (30, ["The quick brown fox",
-          "jumps over the lazy",
-          "dog while plasma",
-          "etching proceeds at a",
-          "steady rate"]),
-])
+@pytest.mark.parametrize(
+    "w_mm,expected",
+    [
+        (
+            60,
+            [
+                "The quick brown fox jumps over the lazy dog",
+                "while plasma etching proceeds at a steady rate",
+            ],
+        ),
+        (
+            30,
+            [
+                "The quick brown fox",
+                "jumps over the lazy",
+                "dog while plasma",
+                "etching proceeds at a",
+                "steady rate",
+            ],
+        ),
+    ],
+)
 def test_normal_words_wrap_exactly_as_before_the_force_break_fallback(w_mm, expected):
     """对照组：期望值是加"超宽单词逐字兜底"之前跑出来的真实断行结果。
     兜底分支只在"这个 unit 自己就放不下一整行"时才触发，正常带空格的句子
@@ -248,8 +264,7 @@ def test_force_break_keeps_script_marks_on_each_char():
     下沉基线，不能因为断行退化成正文。"""
     from tavotto import richtext
 
-    t = _base("Ca_{10}(PO_{4})_{6}(OH)_{2}",
-              x_mm=10, w_mm=20, h_mm=30, size_pt=12)
+    t = _base("Ca_{10}(PO_{4})_{6}(OH)_{2}", x_mm=10, w_mm=20, h_mm=30, size_pt=12)
     page = _draw(t)
     assert _max_x1(page) <= pb.mm2pt(t["x_mm"] + t["w_mm"]) + 0.5
     sizes = sorted({s[0] for s in _spans(page)})

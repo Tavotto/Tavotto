@@ -18,6 +18,7 @@
     # 2) 核对
     python scripts/check_updater_key.py --sig /tmp/probe.bin.sig
 """
+
 from __future__ import annotations
 
 import argparse
@@ -63,11 +64,11 @@ def _decode_maybe_b64(text: str) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--conf", type=Path, default=DEFAULT_CONF)
-    ap.add_argument("--sig", type=Path, required=True,
-                    help="用私钥签出来的 .sig 文件")
+    ap.add_argument("--sig", type=Path, required=True, help="用私钥签出来的 .sig 文件")
     args = ap.parse_args(argv)
 
     conf = json.loads(args.conf.read_text(encoding="utf-8"))

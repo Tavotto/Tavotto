@@ -16,6 +16,7 @@
 
 本进程不 import matplotlib：worker 经 `pool.one_shot()` 起在科学栈解释器里。
 """
+
 import pytest
 
 from tavotto.engine import pool
@@ -26,12 +27,13 @@ except pool.WorkerError:
     WORKER_PY = None
 
 pytestmark = pytest.mark.skipif(
-    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）")
+    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）"
+)
 
 SCRIPT_NAME = "fig_cbar.py"
 ENTRY = "main"
 STEM = "CbarFig"
-CB = "axes_1.colorbar"          # 色条伪元素（宿主是 axes_0，色条轴是 axes_1）
+CB = "axes_1.colorbar"  # 色条伪元素（宿主是 axes_0，色条轴是 axes_1）
 CBAX = "axes_1"
 
 #: 第二张图与第一张**除了 extend 之外一模一样**：`extend` 事务做完的落位
@@ -42,7 +44,7 @@ STEM_NATIVE = "CbarNative"
 #: 而翻转的落位规则一度只会算出 right/bottom。
 STEM_LEFT = "CbarLeft"
 
-LIBRARY = '''\
+LIBRARY = """\
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -60,7 +62,7 @@ def main():
     _draw("CbarFig")
     _draw("CbarNative", extend="both")
     _draw("CbarLeft", location="left")
-'''
+"""
 
 
 @pytest.fixture(scope="module")
@@ -95,8 +97,11 @@ def _field(man, gid, prop):
 
 
 def _tick_gids(man, ax_gid, which):
-    return [e["gid"] for e in man["elements"]
-            if e["role"] == "ticklabel" and e["gid"].startswith(f"{ax_gid}.{which}tick")]
+    return [
+        e["gid"]
+        for e in man["elements"]
+        if e["role"] == "ticklabel" and e["gid"].startswith(f"{ax_gid}.{which}tick")
+    ]
 
 
 HORIZONTAL = [{"gid": CB, "prop": "orientation", "value": "horizontal"}]
@@ -131,16 +136,19 @@ def test_ticks_move_to_the_other_axis(library):
 
 
 def test_existing_colorbar_properties_survive_the_flip(library):
-    man = _render(library, [
-        *HORIZONTAL,
-        {"gid": CB, "prop": "cmap", "value": "plasma"},
-        {"gid": CB, "prop": "vmin", "value": 8.0},
-        {"gid": CB, "prop": "vmax", "value": 50.0},
-        {"gid": CB, "prop": "tick_fontsize", "value": 6.0},
-        {"gid": CB, "prop": "tick_color", "value": "#B34700"},
-        {"gid": CB, "prop": "outline_width", "value": 1.4},
-        {"gid": CB, "prop": "label", "value": "counts"},
-    ])
+    man = _render(
+        library,
+        [
+            *HORIZONTAL,
+            {"gid": CB, "prop": "cmap", "value": "plasma"},
+            {"gid": CB, "prop": "vmin", "value": 8.0},
+            {"gid": CB, "prop": "vmax", "value": 50.0},
+            {"gid": CB, "prop": "tick_fontsize", "value": 6.0},
+            {"gid": CB, "prop": "tick_color", "value": "#B34700"},
+            {"gid": CB, "prop": "outline_width", "value": 1.4},
+            {"gid": CB, "prop": "label", "value": "counts"},
+        ],
+    )
     assert _field(man, CB, "orientation") == "horizontal"
     assert _field(man, CB, "cmap") == "plasma"
     assert _field(man, CB, "vmin") == pytest.approx(8.0)
@@ -155,8 +163,11 @@ def test_label_does_not_stay_behind_on_the_old_long_axis(library):
     """长轴标签要**搬家**，不是复制一份：旧轴那份不清，横过来之后左边还挂着
     一行竖排文字。"""
     man = _render(library, HORIZONTAL)
-    labels = [e["label"] for e in man["elements"]
-              if e["role"] == "axis_label" and e["gid"].startswith(CBAX)]
+    labels = [
+        e["label"]
+        for e in man["elements"]
+        if e["role"] == "axis_label" and e["gid"].startswith(CBAX)
+    ]
     assert len(labels) == 1, labels
     assert "intensity" in labels[0]
 
@@ -172,11 +183,11 @@ def test_gids_are_untouched_by_the_flip(library):
     """
     before = {e["gid"] for e in _render(library)["elements"]}
     after = {e["gid"] for e in _render(library, HORIZONTAL)["elements"]}
+
     # 刻度与长轴标签**本来就该**换一条轴（横色条的刻度在 x 上、标签是 xlabel），
     # 那不是编号漂移；其余每一个 gid 都必须逐个对上。
     def strip(gids):
-        return {g for g in gids
-                if not any(k in g for k in ("ticklabels_", "ticks", "label"))}
+        return {g for g in gids if not any(k in g for k in ("ticklabels_", "ticks", "label"))}
 
     assert strip(after) == strip(before)
     # 而且色条轴自己的编号纹丝不动
@@ -226,8 +237,7 @@ def test_flip_twice_is_idempotent_and_reversible(library):
         assert not vert["warnings"], vert["warnings"]
     finally:
         pool.discard(w)
-    assert _el(vert["manifest"], CBAX)["bbox"] == pytest.approx(
-        _el(base, CBAX)["bbox"], abs=1e-9)
+    assert _el(vert["manifest"], CBAX)["bbox"] == pytest.approx(_el(base, CBAX)["bbox"], abs=1e-9)
 
 
 # ---------------------------------------------------------------------------
@@ -242,8 +252,11 @@ def test_hot_replay_and_fresh_worker_agree(library):
     steps = [
         HORIZONTAL,
         [*HORIZONTAL, {"gid": CB, "prop": "label", "value": "counts"}],
-        [*HORIZONTAL, {"gid": CB, "prop": "label", "value": "counts"},
-         {"gid": CB, "prop": "tick_fontsize", "value": 6.0}],
+        [
+            *HORIZONTAL,
+            {"gid": CB, "prop": "label", "value": "counts"},
+            {"gid": CB, "prop": "tick_fontsize", "value": 6.0},
+        ],
     ]
     full = steps[-1]
     hot = _worker(library)
@@ -403,8 +416,9 @@ def test_extend_triangles_are_not_user_shapes(library):
     """
     for patches in ([], _ext("both"), [*HORIZONTAL, *_ext("both")]):
         man = _render(library, patches)
-        ghosts = [e["gid"] for e in man["elements"]
-                  if e["role"] == "patch" and e["gid"].startswith(CBAX)]
+        ghosts = [
+            e["gid"] for e in man["elements"] if e["role"] == "patch" and e["gid"].startswith(CBAX)
+        ]
         assert not ghosts, ghosts
 
 
@@ -429,13 +443,16 @@ def test_extend_composes_with_the_orientation_flip(library):
 
 
 def test_extend_keeps_the_other_colorbar_properties(library):
-    man = _render(library, [
-        *_ext("both"),
-        {"gid": CB, "prop": "cmap", "value": "plasma"},
-        {"gid": CB, "prop": "vmin", "value": 8.0},
-        {"gid": CB, "prop": "tick_fontsize", "value": 6.0},
-        {"gid": CB, "prop": "label", "value": "counts"},
-    ])
+    man = _render(
+        library,
+        [
+            *_ext("both"),
+            {"gid": CB, "prop": "cmap", "value": "plasma"},
+            {"gid": CB, "prop": "vmin", "value": 8.0},
+            {"gid": CB, "prop": "tick_fontsize", "value": 6.0},
+            {"gid": CB, "prop": "label", "value": "counts"},
+        ],
+    )
     assert _field(man, CB, "extend") == "both"
     assert _field(man, CB, "cmap") == "plasma"
     assert _field(man, CB, "vmin") == pytest.approx(8.0)
@@ -444,10 +461,11 @@ def test_extend_keeps_the_other_colorbar_properties(library):
 
 
 def test_extend_hot_replay_and_fresh_worker_agree(library):
-    steps = [_ext("both"),
-             [*_ext("both"), {"gid": CB, "prop": "label", "value": "counts"}],
-             [*HORIZONTAL, *_ext("both"),
-              {"gid": CB, "prop": "label", "value": "counts"}]]
+    steps = [
+        _ext("both"),
+        [*_ext("both"), {"gid": CB, "prop": "label", "value": "counts"}],
+        [*HORIZONTAL, *_ext("both"), {"gid": CB, "prop": "label", "value": "counts"}],
+    ]
     full = steps[-1]
     hot = _worker(library)
     try:
@@ -502,13 +520,19 @@ def test_flipping_back_returns_a_left_colorbar_to_the_left(library):
     旧实现在这条路上把色条永久搬到了右边，刻度也跟着换边。
     """
     base = _render(library, stem=STEM_LEFT)
-    back = _render(library, [{"gid": CB, "prop": "orientation", "value": "horizontal"},
-                             {"gid": CB, "prop": "orientation", "value": "vertical"}],
-                   stem=STEM_LEFT)
+    back = _render(
+        library,
+        [
+            {"gid": CB, "prop": "orientation", "value": "horizontal"},
+            {"gid": CB, "prop": "orientation", "value": "vertical"},
+        ],
+        stem=STEM_LEFT,
+    )
     assert _field(back, CB, "orientation") == "vertical"
     for i, axis in enumerate("xywh"):
-        assert _bbox(back, CBAX)[i] == pytest.approx(_bbox(base, CBAX)[i], abs=2e-3), \
+        assert _bbox(back, CBAX)[i] == pytest.approx(_bbox(base, CBAX)[i], abs=2e-3), (
             f"翻回来之后 bbox.{axis} 变了：色条被搬了家"
+        )
     # 刻度也要回到左边（右边不该有）
     assert _tick_gids(back, CBAX, "y"), "竖色条的刻度应当在 y 轴上"
 
@@ -537,7 +561,7 @@ MULTI_SCRIPT = "fig_multi_cbar.py"
 MULTI_STEM = "CbarMulti"
 SINGLE_STEM = "CbarSingleForContrast"
 
-MULTI_LIBRARY = '''\
+MULTI_LIBRARY = """\
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -556,7 +580,7 @@ def main():
     im2 = ax.imshow(np.arange(64).reshape(8, 8), cmap="viridis")
     fig2.colorbar(im2, ax=ax)
     fig2.savefig("CbarSingleForContrast.pdf")
-'''
+"""
 
 
 @pytest.fixture(scope="module")
@@ -576,8 +600,9 @@ def _multi_render(figs, stem, patches=()):
 
 
 def _colorbar_el(man):
-    els = [e for e in man["elements"] if e.get("role") == "colorbar"
-           or e["gid"].endswith(".colorbar")]
+    els = [
+        e for e in man["elements"] if e.get("role") == "colorbar" or e["gid"].endswith(".colorbar")
+    ]
     assert els, f"这张图里没有色条元素：{[e['gid'] for e in man['elements']]}"
     return els[0]
 
@@ -590,7 +615,7 @@ def test_the_multi_host_predicate_matches_matplotlib(multi_library):
     `cax=` → 没有 `_colorbar_info`（按 1 算），独立 mappable 两种 → 1 / 2。
     这里在 worker 的解释器里复量一次，免得两边的 matplotlib 版本不同。
     """
-    probe = '''
+    probe = """
 import json, numpy as np, matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -620,20 +645,25 @@ sm = ScalarMappable(cmap="viridis"); sm.set_array([])
 out["standalone_two"] = hosts(fig.colorbar(sm, ax=[a,b])); plt.close(fig)
 
 print(json.dumps(out))
-'''
+"""
     import json
     import subprocess
+
     # **显式钉 utf-8**：不给的话 Windows 按系统代码页解码，探针里那些中文
     # 一出现就把 stdout/stderr 静默丢掉（#57）。这条是仓库既有的硬门禁
     # （`test_source_hygiene.py::test_windows_bound_subprocesses_pin_their_decoding`）
     # ——本轮它当场逮到了这一处。
-    r = subprocess.run([WORKER_PY, "-c", probe], capture_output=True,
-                       text=True, encoding="utf-8", errors="replace",
-                       timeout=180)
+    r = subprocess.run(
+        [WORKER_PY, "-c", probe],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=180,
+    )
     assert r.returncode == 0, r.stderr[-800:]
     got = json.loads(r.stdout.strip().splitlines()[-1])
-    assert got == {"single": 1, "two": 2, "three": 3,
-                   "explicit_cax": 1, "standalone_two": 2}, got
+    assert got == {"single": 1, "two": 2, "three": 3, "explicit_cax": 1, "standalone_two": 2}, got
 
 
 def test_multi_host_colorbar_does_not_offer_orientation(multi_library):
@@ -645,8 +675,7 @@ def test_multi_host_colorbar_does_not_offer_orientation(multi_library):
     man = _multi_render(multi_library, MULTI_STEM)["manifest"]
     el = _colorbar_el(man)
     props = {f["prop"] for f in el["editable"]}
-    assert "orientation" not in props, (
-        "多宿主色条仍然宣称 orientation——那条改了会把色条缩到一图宽")
+    assert "orientation" not in props, "多宿主色条仍然宣称 orientation——那条改了会把色条缩到一图宽"
     # 其余能力一条都不许受牵连：guard 收的是**一条 prop**，不是整个元素
     for keep in ("label", "extend", "tick_fontsize", "visible"):
         assert keep in props, f"guard 顺手把 {keep} 也收走了"
@@ -677,8 +706,9 @@ def test_a_single_host_colorbar_still_offers_orientation(multi_library):
     el = _colorbar_el(man)
     props = {f["prop"] for f in el["editable"]}
     assert "orientation" in props, "单宿主色条的方向能力被误伤了"
-    assert not el.get("unsupported_props"), \
+    assert not el.get("unsupported_props"), (
         f"单宿主色条不该有 unsupported_props：{el.get('unsupported_props')}"
+    )
 
 
 def test_an_old_document_cannot_sneak_the_patch_through(multi_library):
@@ -690,10 +720,17 @@ def test_an_old_document_cannot_sneak_the_patch_through(multi_library):
     这里要的是 **warning**（→ 写回阻断），不是静默忽略——
     「写回成功了，但图和屏幕上不一样」是这条链上最不能接受的失败。
     """
-    resp = _multi_render(multi_library, MULTI_STEM,
-                         [{"gid": _colorbar_el(
-                             _multi_render(multi_library, MULTI_STEM)["manifest"]
-                         )["gid"], "prop": "orientation", "value": "horizontal"}])
+    resp = _multi_render(
+        multi_library,
+        MULTI_STEM,
+        [
+            {
+                "gid": _colorbar_el(_multi_render(multi_library, MULTI_STEM)["manifest"])["gid"],
+                "prop": "orientation",
+                "value": "horizontal",
+            }
+        ],
+    )
     warns = resp.get("warnings") or []
     assert warns, "旧文档里的 orientation 补丁被静默吃掉了"
     assert any("multi_host_colorbar" in str(w) for w in warns), warns
@@ -705,19 +742,26 @@ def test_the_host_count_predicate_has_one_implementation():
     """
     import ast
     from pathlib import Path
+
     src = Path(__file__).resolve().parents[1] / "src" / "tavotto" / "engine"
     tree = ast.parse((src / "overrides.py").read_text(encoding="utf-8"))
-    defs = [n for n in ast.walk(tree)
-            if isinstance(n, ast.FunctionDef) and n.name == "colorbar_host_count"]
+    defs = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.FunctionDef) and n.name == "colorbar_host_count"
+    ]
     assert len(defs) == 1, "colorbar_host_count 有多份定义"
 
     # 两个消费方都必须调它，而不是各自去读 `_colorbar_info`
-    for fname, func in (("overrides.py", "_set_cb_orientation"),
-                        ("manifest.py", "_colorbar_fields")):
+    for fname, func in (
+        ("overrides.py", "_set_cb_orientation"),
+        ("manifest.py", "_colorbar_fields"),
+    ):
         t = ast.parse((src / fname).read_text(encoding="utf-8"))
-        fn = next(n for n in ast.walk(t)
-                  if isinstance(n, ast.FunctionDef) and n.name == func)
-        called = {n.func.id for n in ast.walk(fn)
-                  if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
-        assert "colorbar_host_count" in called, \
-            f"{fname}::{func} 没有走那份唯一判据"
+        fn = next(n for n in ast.walk(t) if isinstance(n, ast.FunctionDef) and n.name == func)
+        called = {
+            n.func.id
+            for n in ast.walk(fn)
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+        }
+        assert "colorbar_host_count" in called, f"{fname}::{func} 没有走那份唯一判据"

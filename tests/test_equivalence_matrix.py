@@ -18,6 +18,7 @@ size_mm 0.01mm）与产品判据一字不差；另起一套只会让矩阵与产
 
 场景 × patch 组的覆盖表见 `_SCENARIOS` / `GROUPS` 两张表的注释。
 """
+
 import json
 import os
 import subprocess
@@ -34,7 +35,8 @@ except pool.WorkerError:
     WORKER_PY = None
 
 pytestmark = pytest.mark.skipif(
-    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）")
+    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）"
+)
 
 SCRIPT_NAME = "fig_equivalence.py"
 ENTRY = "main"
@@ -52,17 +54,34 @@ ENTRY = "main"
 #             一样满足四路一致——否则「写回时的样子 ≠ 重开后的样子」
 #   EqvAlias  s8 柱形系列 + 带标题的图例 + 色条——三族**别名组**一次盖到
 #             （广播型 prop 与它管着的窄 prop 同时被 override，见 ALIAS_GROUPS）
-_SCENARIOS = ("EqvMulti", "EqvImage", "EqvAnnot", "Eqv3D", "EqvMath", "EqvCJK",
-              "EqvFam", "EqvAlias")
+_SCENARIOS = (
+    "EqvMulti",
+    "EqvImage",
+    "EqvAnnot",
+    "Eqv3D",
+    "EqvMath",
+    "EqvCJK",
+    "EqvFam",
+    "EqvAlias",
+)
 
 #: s6 用的中文字体候选。matplotlib 找不到任何一个时 s6 的用例 **skip 并注明
 #: 理由**——静默换成拉丁文本跑过去，等于宣称测过中文而实际没有。
-_CJK_CANDIDATES = ("PingFang SC", "Heiti SC", "Heiti TC", "Songti SC",
-                   "STHeiti", "Noto Sans CJK SC", "Source Han Sans SC",
-                   "Microsoft YaHei", "SimHei", "WenQuanYi Zen Hei",
-                   "Arial Unicode MS")
+_CJK_CANDIDATES = (
+    "PingFang SC",
+    "Heiti SC",
+    "Heiti TC",
+    "Songti SC",
+    "STHeiti",
+    "Noto Sans CJK SC",
+    "Source Han Sans SC",
+    "Microsoft YaHei",
+    "SimHei",
+    "WenQuanYi Zen Hei",
+    "Arial Unicode MS",
+)
 
-LIBRARY = '''\
+LIBRARY = """\
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import FancyArrowPatch
@@ -172,7 +191,7 @@ def main():
     hx.set_title("Map")
     fig8.tight_layout()
     fig8.savefig("EqvAlias.pdf")
-'''
+"""
 
 _FONT_PROBE = """\
 import json, sys
@@ -187,8 +206,13 @@ def _detect_cjk_font() -> str:
     try:
         out = subprocess.run(
             [WORKER_PY, "-c", _FONT_PROBE, *_CJK_CANDIDATES],
-            capture_output=True, text=True, timeout=120,
-            encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL)
+            capture_output=True,
+            text=True,
+            timeout=120,
+            encoding="utf-8",
+            errors="replace",
+            stdin=subprocess.DEVNULL,
+        )
     except (OSError, subprocess.SubprocessError):
         return ""
     try:
@@ -210,8 +234,7 @@ def cjk_font() -> str:
 def library(tmp_path_factory, cjk_font) -> Path:
     """一份 6 figure 的测试图库（整个模块共用，脚本内容全程不变）。"""
     figs = tmp_path_factory.mktemp("eqv-figures")
-    (figs / SCRIPT_NAME).write_text(LIBRARY.format(cjk=cjk_font),
-                                    encoding="utf-8")
+    (figs / SCRIPT_NAME).write_text(LIBRARY.format(cjk=cjk_font), encoding="utf-8")
     return figs
 
 
@@ -232,6 +255,7 @@ def _worker(figs: Path):
 # ---------------------------------------------------------------------------
 def _compare(a: dict, b: dict) -> tuple[list, int]:
     from tavotto.app import _compare_manifests
+
     return _compare_manifests(a, b)
 
 
@@ -239,11 +263,14 @@ def _assert_same(name_a: str, man_a: dict, name_b: str, man_b: dict) -> None:
     diffs, compared = _compare(man_a, man_b)
     assert compared > 0, f"{name_a} / {name_b} 之间没有可比元素（manifest 空？）"
     if diffs:
-        lines = [f"{d['gid'] or '<figure>'}.{d['field']}: "
-                 f"{name_a}={d['hot']} {name_b}={d['fresh']}" for d in diffs[:12]]
+        lines = [
+            f"{d['gid'] or '<figure>'}.{d['field']}: {name_a}={d['hot']} {name_b}={d['fresh']}"
+            for d in diffs[:12]
+        ]
         raise AssertionError(
             f"{name_a} 与 {name_b} 的 manifest 分歧 {len(diffs)} 处"
-            f"（比过 {compared} 个元素）:\n  " + "\n  ".join(lines))
+            f"（比过 {compared} 个元素）:\n  " + "\n  ".join(lines)
+        )
 
 
 #: 「这个元素上根本没有这个可编辑字段」——与 `value` 真的是 None 区分开
@@ -256,8 +283,7 @@ def _el(man: dict, gid: str) -> dict:
 
 def _field(man: dict, gid: str, prop: str):
     el = _el(man, gid)
-    return next((f["value"] for f in el.get("editable", []) if f["prop"] == prop),
-                _MISSING)
+    return next((f["value"] for f in el.get("editable", []) if f["prop"] == prop), _MISSING)
 
 
 def _assert_effect(man: dict, patches: list) -> None:
@@ -302,8 +328,7 @@ def _no_apply_warnings(resp: dict, arm: str) -> dict:
 # ---------------------------------------------------------------------------
 # 三路（热 / 清空重放 / 全新 worker）；第四路（写回后重开）另有专门用例
 # ---------------------------------------------------------------------------
-def _three_ways(figs: Path, stem: str, steps: list[list],
-                expect_cls=None) -> dict:
+def _three_ways(figs: Path, stem: str, steps: list[list], expect_cls=None) -> dict:
     """`steps` 是**逐步累积**的 patch 列表（模拟用户一下一下地改），末条即全量。
 
     返回三条腿的 manifest。热路与清空重放共用一条 worker（它们本来就是同一
@@ -312,8 +337,9 @@ def _three_ways(figs: Path, stem: str, steps: list[list],
     full = steps[-1]
     hot = _worker(figs)
     if expect_cls is not None:
-        assert isinstance(hot, expect_cls), \
+        assert isinstance(hot, expect_cls), (
             f"控制面不对：期望 {expect_cls.__name__}，实际 {type(hot).__name__}"
+        )
     try:
         man_hot = {}
         for step in steps:
@@ -410,8 +436,12 @@ def _g_annotation_text_move(_getbase):
 def _g_arrow_endpoints(getbase):
     """独立箭头端点拖动（endpoints_frac，figure 分数、y 向下）+ 换样式。"""
     pts = _el(getbase(), "axes_0.arrows_0")["arrow_endpoints"]
-    moved = [round(pts[0][0] + 0.08, 4), round(pts[0][1] - 0.05, 4),
-             round(pts[1][0] + 0.05, 4), round(pts[1][1] + 0.06, 4)]
+    moved = [
+        round(pts[0][0] + 0.08, 4),
+        round(pts[0][1] - 0.05, 4),
+        round(pts[1][0] + 0.05, 4),
+        round(pts[1][1] + 0.06, 4),
+    ]
     return _cumulative(
         {"gid": "axes_0.arrows_0", "prop": "endpoints_frac", "value": moved},
         {"gid": "axes_0.arrows_0", "prop": "arrowstyle", "value": "->"},
@@ -511,8 +541,11 @@ def _g_fixed_ticks_and_label_text(getbase):
     # 刻度文字刻意用 ASCII：这条用例最后要从写回的 PDF 里把它读出来，而中文
     # 得先有 CJK 字体（s6 为此专门做了字体探测）。要验的是「文字留住了没有」，
     # 不是字体，别把两件事绑在一起。
-    xticks = [e["gid"] for e in getbase()["elements"]
-              if e["role"] == "ticklabel" and e["gid"].startswith("axes_0.xtick")]
+    xticks = [
+        e["gid"]
+        for e in getbase()["elements"]
+        if e["role"] == "ticklabel" and e["gid"].startswith("axes_0.xtick")
+    ]
     return _cumulative(
         {"gid": "axes_0.xticks", "prop": "major_mode", "value": "fixed"},
         {"gid": "axes_0.xticks", "prop": "major_values", "value": [0.5, 1.5, 2.5, 3.5]},
@@ -640,35 +673,34 @@ def _g_alias_mixed(_getbase):
 
 
 GROUPS = [
-    ("s1-text-then-axes",   "EqvMulti", _g_text_then_axes),
+    ("s1-text-then-axes", "EqvMulti", _g_text_then_axes),
     ("s1-labels-and-title", "EqvMulti", _g_labels_and_title),
-    ("s1-legend-reorder",   "EqvMulti", _g_legend_move_and_reorder),
+    ("s1-legend-reorder", "EqvMulti", _g_legend_move_and_reorder),
     ("s1-mixed-12-patches", "EqvMulti", _g_mixed),
     ("s1-range-scale-ticks", "EqvMulti", _g_axes_range_scale_and_ticks),
     ("s1-fixed-ticks-text", "EqvMulti", _g_fixed_ticks_and_label_text),
     ("s1-nonlinear-scales", "EqvMulti", _g_nonlinear_scales),
     ("s1-legend-item-text", "EqvMulti", _g_legend_item_text),
-    ("s2-colorbar-range",   "EqvImage", _g_colorbar_range),
+    ("s2-colorbar-range", "EqvImage", _g_colorbar_range),
     ("s2-colorbar-orientation", "EqvImage", _g_colorbar_orientation),
-    ("s2-scatter-marker",   "EqvImage", _g_scatter_marker),
-    ("s3-annotation-move",  "EqvAnnot", _g_annotation_text_move),
-    ("s3-arrow-endpoints",  "EqvAnnot", _g_arrow_endpoints),
-    ("s4-view3d-visible",   "Eqv3D",    _g_view3d_and_visible),
-    ("s5-mathtext-labels",  "EqvMath",  _g_labels_and_title),
-    ("s7-collection-family", "EqvFam",  _g_collection_family),
-    ("s7-patch-and-stem",   "EqvFam",   _g_patch_family_and_stem),
+    ("s2-scatter-marker", "EqvImage", _g_scatter_marker),
+    ("s3-annotation-move", "EqvAnnot", _g_annotation_text_move),
+    ("s3-arrow-endpoints", "EqvAnnot", _g_arrow_endpoints),
+    ("s4-view3d-visible", "Eqv3D", _g_view3d_and_visible),
+    ("s5-mathtext-labels", "EqvMath", _g_labels_and_title),
+    ("s7-collection-family", "EqvFam", _g_collection_family),
+    ("s7-patch-and-stem", "EqvFam", _g_patch_family_and_stem),
     # 色条的 `tick_*` 与色条轴刻度组**刻意不在这里**：它俩覆盖的是同一批
     # 标签（不是「整组 vs 其中一个」），后应用的必然盖掉前一个，manifest 也
     # 只报得出一个值——`_assert_effect` 表达不了「两个都落地」。它的还原语义
     # 由 tests/test_worker_roundtrip.py 的别名组用例看着。
-    ("s8-alias-legend",     "EqvAlias", _g_alias_legend),
-    ("s8-alias-bars",       "EqvAlias", _g_alias_bars),
+    ("s8-alias-legend", "EqvAlias", _g_alias_legend),
+    ("s8-alias-bars", "EqvAlias", _g_alias_bars),
     ("s8-alias-mixed-reversed", "EqvAlias", _g_alias_mixed),
 ]
 
 
-@pytest.mark.parametrize("case_id,stem,builder", GROUPS,
-                         ids=[g[0] for g in GROUPS])
+@pytest.mark.parametrize("case_id,stem,builder", GROUPS, ids=[g[0] for g in GROUPS])
 def test_three_ways_agree(library, case_id, stem, builder):
     """热路 / 清空重放 / 全新 worker 三条腿在 manifest 几何上必须逐位一致。"""
     steps = builder(_base_getter(library, stem))
@@ -698,18 +730,23 @@ def test_cjk_scenario_three_ways_agree(library, cjk_font):
     没有任何 CJK 字体时 **skip 并说明**，不静默换成拉丁文本混过去。
     """
     if not cjk_font:
-        pytest.skip("matplotlib 找不到任何中文字体"
-                    f"（找过：{', '.join(_CJK_CANDIDATES)}）——s6 无法如实验证")
+        pytest.skip(
+            f"matplotlib 找不到任何中文字体（找过：{', '.join(_CJK_CANDIDATES)}）——s6 无法如实验证"
+        )
     _three_ways(library, "EqvCJK", _g_text_then_size(None))
 
 
 # ---------------------------------------------------------------------------
 # 第四路：写回文件之后，全新 worker 重放仍与热态一致
 # ---------------------------------------------------------------------------
-REGISTRY = json.dumps({"version": 1, "scripts": {
-    SCRIPT_NAME: {"entry": ENTRY, "cost": "light", "notes": "",
-                  "stems": list(_SCENARIOS)},
-}})
+REGISTRY = json.dumps(
+    {
+        "version": 1,
+        "scripts": {
+            SCRIPT_NAME: {"entry": ENTRY, "cost": "light", "notes": "", "stems": list(_SCENARIOS)},
+        },
+    }
+)
 
 
 def _flask_project(tmp_path, monkeypatch, library: Path):
@@ -723,7 +760,8 @@ def _flask_project(tmp_path, monkeypatch, library: Path):
     figs = tmp_path / "figures"
     figs.mkdir()
     (figs / SCRIPT_NAME).write_text(
-        (library / SCRIPT_NAME).read_text(encoding="utf-8"), encoding="utf-8")
+        (library / SCRIPT_NAME).read_text(encoding="utf-8"), encoding="utf-8"
+    )
     (figs / "tavotto_registry.json").write_text(REGISTRY, encoding="utf-8")
     # 写回覆盖的是磁盘上**已有**的原件（真实图库里它由脚本跑出来）。
     # 只给真的会被写回的那几个 stem 造占位——`WRITE_BACK_GROUPS` 里出现过
@@ -757,8 +795,9 @@ def project(tmp_path, monkeypatch, library):
 
 
 def _render(client, stem, patches, **extra):
-    resp = client.post("/api/engine/render",
-                       json={"id": f"{stem}.pdf", "patches": patches, **extra})
+    resp = client.post(
+        "/api/engine/render", json={"id": f"{stem}.pdf", "patches": patches, **extra}
+    )
     assert resp.status_code == 200, resp.get_json()
     return resp.get_json()
 
@@ -767,7 +806,7 @@ def _all_pairs_agree(arms: dict) -> None:
     """四路**两两**比较（6 对），一次把分歧全指出来。"""
     names = list(arms)
     for i, a in enumerate(names):
-        for b in names[i + 1:]:
+        for b in names[i + 1 :]:
             _assert_same(a, arms[a], b, arms[b])
 
 
@@ -790,10 +829,12 @@ WRITE_BACK_GROUPS = [
 ]
 
 
-@pytest.mark.parametrize("case_id,stem,builder,markers", WRITE_BACK_GROUPS,
-                         ids=[g[0] for g in WRITE_BACK_GROUPS])
+@pytest.mark.parametrize(
+    "case_id,stem,builder,markers", WRITE_BACK_GROUPS, ids=[g[0] for g in WRITE_BACK_GROUPS]
+)
 def test_write_back_then_reopen_matches_the_hot_session(
-        project, library, case_id, stem, builder, markers):
+    project, library, case_id, stem, builder, markers
+):
     """完整四路：热态 / 清空重放 / 全新 worker / **写回原件后重开**，两两一致。
 
     第四条腿走的是产品路径 `POST /api/engine/update_source`——它内部已有一次性
@@ -804,7 +845,7 @@ def test_write_back_then_reopen_matches_the_hot_session(
     steps = builder(_base_getter(library, stem))
     full = steps[-1]
 
-    for step in steps:                      # 热态：一下一下地改
+    for step in steps:  # 热态：一下一下地改
         body = _render(client, stem, step)
     man_hot = body["manifest"]
     _assert_effect(man_hot, full)
@@ -823,29 +864,37 @@ def test_write_back_then_reopen_matches_the_hot_session(
     # 热会话被上面两步动过，写回前先把它放回热态那一组 patch
     _assert_same("热态", man_hot, "写回前热态", _render(client, stem, full)["manifest"])
 
-    resp = client.post("/api/engine/update_source",
-                       json={"id": f"{stem}.pdf", "patches": full,
-                             "expected_mtime": int((figs / f"{stem}.pdf")
-                                                   .stat().st_mtime)})
+    resp = client.post(
+        "/api/engine/update_source",
+        json={
+            "id": f"{stem}.pdf",
+            "patches": full,
+            "expected_mtime": int((figs / f"{stem}.pdf").stat().st_mtime),
+        },
+    )
     assert resp.status_code == 200, resp.get_json()
     wb = resp.get_json()
     assert wb["verification"]["replay"] == "ok", wb["verification"]
     assert wb["warnings"] == []
 
     # 写回没有污染热会话：同一组 patch 再渲染一次，manifest 逐位不变
-    _assert_same("热态", man_hot, "写回后热态",
-                 _render(client, stem, full)["manifest"])
+    _assert_same("热态", man_hot, "写回后热态", _render(client, stem, full)["manifest"])
 
     # 第四路本身：文件已被替换，脚本没变 → 全新 worker 全量重放
     post = _worker(figs)
     try:
-        man_reopened = _no_apply_warnings(
-            post.override(stem, full), "写回后重开")["manifest"]
+        man_reopened = _no_apply_warnings(post.override(stem, full), "写回后重开")["manifest"]
     finally:
         pool.discard(post)
 
-    _all_pairs_agree({"热态": man_hot, "清空重放": man_replay,
-                      "全新 worker": man_fresh, "写回后重开": man_reopened})
+    _all_pairs_agree(
+        {
+            "热态": man_hot,
+            "清空重放": man_replay,
+            "全新 worker": man_fresh,
+            "写回后重开": man_reopened,
+        }
+    )
 
     # 落盘的那份就是热态所见：页面尺寸对上 manifest，文字仍是矢量
     with pymupdf.open(figs / f"{stem}.pdf") as doc:
@@ -866,6 +915,7 @@ def _workerd_binary() -> str | None:
     saved = os.environ.pop("TAVOTTO_WORKERD", None)
     try:
         from tavotto.engine import workerd_client
+
         return workerd_client.find_workerd()
     finally:
         if saved is not None:
@@ -874,8 +924,8 @@ def _workerd_binary() -> str | None:
 
 WORKERD_EXE = _workerd_binary()
 needs_workerd = pytest.mark.skipif(
-    WORKERD_EXE is None,
-    reason="没有 tavotto-workerd 产物（先在 workerd/ 里 cargo build）")
+    WORKERD_EXE is None, reason="没有 tavotto-workerd 产物（先在 workerd/ 里 cargo build）"
+)
 
 
 @pytest.fixture
@@ -892,10 +942,14 @@ def workerd(monkeypatch):
 
 
 @needs_workerd
-@pytest.mark.parametrize("case_id,stem,builder", [
-    ("s1-mixed-12-patches", "EqvMulti", _g_mixed),
-    ("s2-colorbar-range",   "EqvImage", _g_colorbar_range),
-], ids=["s1-mixed-12-patches", "s2-colorbar-range"])
+@pytest.mark.parametrize(
+    "case_id,stem,builder",
+    [
+        ("s1-mixed-12-patches", "EqvMulti", _g_mixed),
+        ("s2-colorbar-range", "EqvImage", _g_colorbar_range),
+    ],
+    ids=["s1-mixed-12-patches", "s2-colorbar-range"],
+)
 def test_three_ways_agree_on_workerd(library, workerd, case_id, stem, builder):
     """核心场景在 workerd 控制面上的同一条不变式。
 
@@ -907,8 +961,7 @@ def test_three_ways_agree_on_workerd(library, workerd, case_id, stem, builder):
 
 
 @needs_workerd
-def test_workerd_inline_svg_is_byte_identical_to_the_file_it_just_wrote(
-        workerd, project):
+def test_workerd_inline_svg_is_byte_identical_to_the_file_it_just_wrote(workerd, project):
     """响应里内联的 SVG 与这一次写到磁盘上的那份**逐字节相同**。
 
     前端只认响应里这一份（第二跳 GET 会被别的变体挤掉），所以两者不同就是
@@ -920,8 +973,12 @@ def test_workerd_inline_svg_is_byte_identical_to_the_file_it_just_wrote(
     worker = pool.get(SCRIPT_NAME, str(figs), ENTRY)
     assert isinstance(worker, pool.WorkerdWorker), "应当走 workerd 控制面"
 
-    body = _render(client, stem, [{"gid": "axes_0.title", "prop": "text",
-                                   "value": "Inline SVG"}], inline_svg=True)
+    body = _render(
+        client,
+        stem,
+        [{"gid": "axes_0.title", "prop": "text", "value": "Inline SVG"}],
+        inline_svg=True,
+    )
     assert "svg" in body
     on_disk = worker.svg_path(stem).read_text(encoding="utf-8")
     assert body["svg"] == on_disk, "内联 SVG 与本次写盘的那份不是同一份"
@@ -946,8 +1003,9 @@ def test_workerd_preview_png_is_state_neutral_across_variants(workerd, project):
     b = [{"gid": "axes_0.title", "prop": "text", "value": "Variant BBB"}]
 
     def png(patches):
-        resp = client.post("/api/engine/preview_png",
-                           json={"id": "EqvMulti.pdf", "patches": patches, "w": 400})
+        resp = client.post(
+            "/api/engine/preview_png", json={"id": "EqvMulti.pdf", "patches": patches, "w": 400}
+        )
         assert resp.status_code == 200, resp.get_json()
         return resp.data
 
@@ -977,16 +1035,20 @@ def test_workerd_write_back_of_one_variant_still_verifies(workerd, project):
     other = [{"gid": "axes_0.title", "prop": "text", "value": "Other Variant"}]
     mine = _g_mixed(None)[-1]
 
-    _render(client, stem, other)          # 另一个变体先占住热会话
+    _render(client, stem, other)  # 另一个变体先占住热会话
     man_hot = _render(client, stem, mine)["manifest"]
-    _render(client, stem, other)          # 再切回去
+    _render(client, stem, other)  # 再切回去
     man_hot2 = _render(client, stem, mine)["manifest"]
     _assert_same("首次热态", man_hot, "轮流之后", man_hot2)
 
-    resp = client.post("/api/engine/update_source",
-                       json={"id": f"{stem}.pdf", "patches": mine,
-                             "expected_mtime": int((figs / f"{stem}.pdf")
-                                                   .stat().st_mtime)})
+    resp = client.post(
+        "/api/engine/update_source",
+        json={
+            "id": f"{stem}.pdf",
+            "patches": mine,
+            "expected_mtime": int((figs / f"{stem}.pdf").stat().st_mtime),
+        },
+    )
     assert resp.status_code == 200, resp.get_json()
     wb = resp.get_json()
     assert wb["verification"]["replay"] == "ok", wb["verification"]
@@ -995,5 +1057,6 @@ def test_workerd_write_back_of_one_variant_still_verifies(workerd, project):
         assert "Panel A" in doc[0].get_text()
 
     # 写回之后另一个变体照常可渲染（会话没被写回带走）
-    assert _field(_render(client, stem, other)["manifest"],
-                  "axes_0.title", "text") == "Other Variant"
+    assert (
+        _field(_render(client, stem, other)["manifest"], "axes_0.title", "text") == "Other Variant"
+    )

@@ -27,6 +27,7 @@
 桌面与浏览器模式的差别只剩参数：桌面的 cookie 是会话级（窗口即进程）、
 没有磁盘上的本机凭据文件（nonce 走 stdin，实例复用由壳的单实例转发负责）。
 """
+
 from __future__ import annotations
 
 import json
@@ -54,8 +55,9 @@ DesktopState = security.SessionState
 # ---------------------------------------------------------------------------
 # 握手文件
 # ---------------------------------------------------------------------------
-def write_handshake(path: Path | None, *, ready: bool, port: int | None = None,
-                    error: str | None = None) -> None:
+def write_handshake(
+    path: Path | None, *, ready: bool, port: int | None = None, error: str | None = None
+) -> None:
     """原子写握手数据（tmp + replace）。只有状态，绝无认证材料。"""
     if path is None:
         return
@@ -111,6 +113,7 @@ def read_launch_credentials(stdin=None, environ=None) -> tuple[str | None, int |
 
 def watch_stdin_eof(stream, on_gone) -> None:
     """stdin 读到 EOF = 父进程（Tauri）没了 → 回调。跨平台、无轮询。"""
+
     def run():
         try:
             buf = getattr(stream, "buffer", stream)
@@ -132,6 +135,7 @@ def watch_parent_pid(parent_pid: int, on_gone, interval: float = 1.0) -> None:
     POSIX：sidecar 是 Tauri 的直接子进程，父亡则被 reparent——getppid 变化
     即为信号。Windows：拿 SYNCHRONIZE 句柄 WaitForSingleObject。
     """
+
     def run_posix():
         while True:
             if os.getppid() != parent_pid:
@@ -142,6 +146,7 @@ def watch_parent_pid(parent_pid: int, on_gone, interval: float = 1.0) -> None:
 
     def run_windows():
         import ctypes
+
         SYNCHRONIZE = 0x00100000
         h = ctypes.windll.kernel32.OpenProcess(SYNCHRONIZE, False, parent_pid)
         if not h:
@@ -161,8 +166,7 @@ def watch_parent_pid(parent_pid: int, on_gone, interval: float = 1.0) -> None:
 class SidecarServer:
     """绑定 127.0.0.1:0 的受控 server；shutdown 幂等且线程安全。"""
 
-    def __init__(self, flask_app, state: DesktopState,
-                 handshake: Path | None = None) -> None:
+    def __init__(self, flask_app, state: DesktopState, handshake: Path | None = None) -> None:
         self._app = flask_app
         self._handshake = handshake
         # threaded=True：SSE 长连接 + 渲染请求并存；werkzeug 的线程 server
@@ -198,8 +202,7 @@ class SidecarServer:
         if self._shutting_down.is_set():
             return
         self._shutting_down.set()
-        threading.Thread(target=self._srv.shutdown, daemon=True,
-                         name="mm-sidecar-shutdown").start()
+        threading.Thread(target=self._srv.shutdown, daemon=True, name="mm-sidecar-shutdown").start()
 
     def wait_stopped(self, timeout: float | None = None) -> bool:
         return self._stopped.wait(timeout)
@@ -207,7 +210,7 @@ class SidecarServer:
     def _cleanup(self) -> None:
         """serve 循环退出后：停 watcher → 同步关 worker → 中断 AI → 清握手。"""
         try:
-            engine_pool.stop_watcher()          # None = 停掉全部项目的 watcher
+            engine_pool.stop_watcher()  # None = 停掉全部项目的 watcher
             engine_pool.shutdown_all(wait=True)  # 同步等 worker 真的退了再走
             engine_ai.interrupt_all()
         except Exception:  # noqa: BLE001 — 清理路径绝不能把退出堵死
@@ -234,8 +237,10 @@ def run(flask_app) -> int:
     if not nonce:
         # 没有凭据坚决不起「无认证的桌面模式」——宁可失败清楚，
         # 也不给任何本地页面一个不设防的全功能后端。
-        msg = ("desktop sidecar 需要启动凭据：由 Tavotto 桌面应用启动，"
-               "或调试时设置 TAVOTTO_DESKTOP_NONCE")
+        msg = (
+            "desktop sidecar 需要启动凭据：由 Tavotto 桌面应用启动，"
+            "或调试时设置 TAVOTTO_DESKTOP_NONCE"
+        )
         LOG.error(msg)
         write_handshake(handshake, ready=False, error=msg)
         return 2
@@ -244,8 +249,7 @@ def run(flask_app) -> int:
     try:
         srv = SidecarServer(flask_app, state, handshake)
     except OSError as exc:
-        write_handshake(handshake, ready=False,
-                        error=f"无法绑定 127.0.0.1 端口: {exc}")
+        write_handshake(handshake, ready=False, error=f"无法绑定 127.0.0.1 端口: {exc}")
         LOG.error("sidecar 绑定失败: %s", exc)
         return 1
 

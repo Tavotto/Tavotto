@@ -14,6 +14,7 @@
 （它不在 `.venv` 里，importorskip 会让整个模块静默跳过——那正是空门禁），
 用只认本仓库缩进形状的字符串判据，解析不出预期形状时当场抛。
 """
+
 from __future__ import annotations
 
 import re
@@ -31,14 +32,12 @@ GATE_IN_CODEQL = "CodeQL gate"
 
 def _code(text: str) -> str:
     """剥掉注释行——判据只看会被执行的部分。"""
-    return "\n".join(ln for ln in text.splitlines()
-                     if not ln.lstrip().startswith("#"))
+    return "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
 
 
 def _job(text: str, job_id: str) -> str:
     """按缩进切出一个 job 块；切不出来当场抛（安静的空判据比没有更坏）。"""
-    m = re.search(rf"(?m)^  {re.escape(job_id)}:\n(.*?)(?=^  [\w-]+:|\Z)",
-                  text, re.S)
+    m = re.search(rf"(?m)^  {re.escape(job_id)}:\n(.*?)(?=^  [\w-]+:|\Z)", text, re.S)
     assert m, f"ci/codeql 里切不出 job `{job_id}`——缩进形状变了？"
     return m.group(0)
 
@@ -58,25 +57,32 @@ def _required_of(job_block: str) -> set[str]:
 # ============================================================ merge_group 触发
 class TestMergeGroupTrigger:
     def test_ci_listens_to_merge_group_checks_requested(self):
-        assert re.search(r"(?m)^  merge_group:\n(?:\s*#.*\n)*\s+types: \[checks_requested\]",
-                         CI), "ci.yml 没有监听 merge_group.checks_requested"
+        assert re.search(r"(?m)^  merge_group:\n(?:\s*#.*\n)*\s+types: \[checks_requested\]", CI), (
+            "ci.yml 没有监听 merge_group.checks_requested"
+        )
 
     def test_codeql_listens_to_merge_group_checks_requested(self):
-        assert re.search(r"(?m)^  merge_group:\n(?:\s*#.*\n)*\s+types: \[checks_requested\]",
-                         CODEQL), "codeql.yml 没有监听 merge_group.checks_requested"
+        assert re.search(
+            r"(?m)^  merge_group:\n(?:\s*#.*\n)*\s+types: \[checks_requested\]", CODEQL
+        ), "codeql.yml 没有监听 merge_group.checks_requested"
 
     def test_gate_workflows_still_listen_to_pull_request(self):
         """Gate 也要在 PR 上产出结论——PR 得先绿才能进队列。"""
         for name, text in (("ci.yml", CI), ("codeql.yml", CODEQL)):
-            assert re.search(r"(?m)^  pull_request:", text), \
-                f"{name} 掉了 pull_request 触发"
+            assert re.search(r"(?m)^  pull_request:", text), f"{name} 掉了 pull_request 触发"
 
     def test_non_required_workflows_do_not_join_the_queue(self):
         """nightly / release / lab 不产出 required contexts，盲目接进
         merge_group 只会把深度验证和发布链拖进每一次排队。"""
-        for name in ("nightly.yml", "release.yml", "lab-ci.yml",
-                     "desktop-tauri.yml", "telemetry-metrics.yml",
-                     "_lab-qualification.yml", "pr-conflict-domains.yml"):
+        for name in (
+            "nightly.yml",
+            "release.yml",
+            "lab-ci.yml",
+            "desktop-tauri.yml",
+            "telemetry-metrics.yml",
+            "_lab-qualification.yml",
+            "pr-conflict-domains.yml",
+        ):
             text = _code((WF / name).read_text(encoding="utf-8"))
             assert "merge_group" not in text, f"{name} 不该监听 merge_group"
 
@@ -86,8 +92,11 @@ class TestConcurrency:
     def _groups(self):
         out = {}
         for name, text in (("ci.yml", CI), ("codeql.yml", CODEQL)):
-            m = re.search(r"(?m)^concurrency:\n(?:\s*#.*\n)*\s+group: (.+)\n"
-                          r"(?:\s*#.*\n)*\s+cancel-in-progress: (.+)$", text)
+            m = re.search(
+                r"(?m)^concurrency:\n(?:\s*#.*\n)*\s+group: (.+)\n"
+                r"(?:\s*#.*\n)*\s+cancel-in-progress: (.+)$",
+                text,
+            )
             assert m, f"{name} 顶层 concurrency 解析不出来"
             out[name] = (m.group(1), m.group(2))
         return out
@@ -97,14 +106,16 @@ class TestConcurrency:
         merge_group 的 head SHA 兜底——临时分支 SHA ≠ PR head SHA。"""
         for name, (group, _) in self._groups().items():
             assert "github.event_name" in group, f"{name} 的组名没带 event_name"
-            assert "github.event.merge_group.head_sha" in group, \
+            assert "github.event.merge_group.head_sha" in group, (
                 f"{name} 的组名没把 merge_group 候选彼此分开"
+            )
 
     def test_cancel_in_progress_only_for_pull_request(self):
         """写成全局 true 的那天：队列候选被取消、main 的唯一验证记录被取消。"""
         for name, (_, cancel) in self._groups().items():
-            assert cancel.strip() == "${{ github.event_name == 'pull_request' }}", \
+            assert cancel.strip() == "${{ github.event_name == 'pull_request' }}", (
                 f"{name} 的 cancel-in-progress 不再只对 PR 开：{cancel}"
+            )
 
     def test_ci_and_codeql_use_distinct_namespaces(self):
         """两个 workflow 的组名都带 github.workflow——名字不同，天然不同组。"""
@@ -123,21 +134,22 @@ class TestEventFieldAccess:
         for name, text in (("ci.yml", CI), ("codeql.yml", CODEQL)):
             code = _code(text)
             # 按「一段表达式」检查：if 块（>- 折叠）或单行
-            for m in re.finditer(r"(?m)^(\s+)(if|group): (>-\n(?:\1  .+\n)+|.*$)",
-                                 code):
+            for m in re.finditer(r"(?m)^(\s+)(if|group): (>-\n(?:\1  .+\n)+|.*$)", code):
                 expr = m.group(3)
                 if "github.event.pull_request." not in expr:
                     continue
-                guarded = ("github.event_name == 'pull_request'" in expr
-                           or "||" in expr)
-                assert guarded, (
-                    f"{name} 里这段表达式未按事件分支就读 PR 字段：\n{expr}")
+                guarded = "github.event_name == 'pull_request'" in expr or "||" in expr
+                assert guarded, f"{name} 里这段表达式未按事件分支就读 PR 字段：\n{expr}"
 
     def test_no_bare_head_ref_or_label_event_usage(self):
         for name, text in (("ci.yml", CI), ("codeql.yml", CODEQL)):
             code = _code(text)
-            for bad in ("github.head_ref", "github.base_ref",
-                        "github.event.label", "github.event.action"):
+            for bad in (
+                "github.head_ref",
+                "github.base_ref",
+                "github.event.label",
+                "github.event.action",
+            ):
                 assert bad not in code, f"{name} 用了 {bad}——merge_group 下没有它"
 
 
@@ -149,11 +161,15 @@ class TestGates:
         assert f"name: {GATE_IN_CODEQL}\n" in CODEQL
 
     def test_gates_run_on_always(self):
-        for job_id, text in (("ci-fast-gate", CI), ("ci-integration-gate", CI),
-                             ("codeql-gate", CODEQL)):
+        for job_id, text in (
+            ("ci-fast-gate", CI),
+            ("ci-integration-gate", CI),
+            ("codeql-gate", CODEQL),
+        ):
             block = _code(_job(text, job_id))
-            assert re.search(r"(?m)^\s+if:.*always\(\)", block), \
+            assert re.search(r"(?m)^\s+if:.*always\(\)", block), (
                 f"{job_id} 不是 always()——上游失败时它不会跑，required check 没结论"
+            )
 
     def test_gates_run_the_trusted_copy_of_the_verdict(self):
         """switch-to-gates 之后 Gate 是唯一的 required check，判定逻辑必须
@@ -161,34 +177,44 @@ class TestGates:
         一个 scripts/ci/json.py，`import json` 时 SystemExit(0)，全红的
         needs 就被判成绿）。`python3 -I` 是第二道：不挂脚本目录进 sys.path、
         无视 PYTHONPATH。bootstrap 回退只许在默认分支缺这份脚本时走。"""
-        for job_id, text in (("ci-fast-gate", CI), ("ci-integration-gate", CI),
-                             ("codeql-gate", CODEQL)):
+        for job_id, text in (
+            ("ci-fast-gate", CI),
+            ("ci-integration-gate", CI),
+            ("codeql-gate", CODEQL),
+        ):
             block = _code(_job(text, job_id))
-            assert "?ref=${{ github.event.repository.default_branch }}" in block, \
+            assert "?ref=${{ github.event.repository.default_branch }}" in block, (
                 f"{job_id} 不再从默认分支取判定器"
-            assert 'python3 -I "$RUNNER_TEMP/trusted-gate/aggregate_gate.py"' in block, \
+            )
+            assert 'python3 -I "$RUNNER_TEMP/trusted-gate/aggregate_gate.py"' in block, (
                 f"{job_id} 没有用 -I 执行可信副本"
-            assert "python3 scripts/ci/aggregate_gate.py" not in block, \
+            )
+            assert "python3 scripts/ci/aggregate_gate.py" not in block, (
                 f"{job_id} 还在执行 checkout 里（PR 可改写）的判定器"
+            )
 
     def test_fast_gate_needs_matches_required_closed_set(self):
         block = _job(CI, "ci-fast-gate")
-        assert _needs_of(block) == _required_of(block), \
+        assert _needs_of(block) == _required_of(block), (
             "fast gate 的 needs 与 --required 漂开了——新 job 的失败 Gate 看不见"
+        )
 
     def test_integration_gate_needs_matches_required_closed_set(self):
         block = _job(CI, "ci-integration-gate")
         assert _needs_of(block) == _required_of(block)
 
     def test_fast_gate_covers_the_fast_layer(self):
-        assert {"python-lint", "invariants", "frontend", "workerd",
-                "compat-smoke"} <= _needs_of(_job(CI, "ci-fast-gate"))
-        assert _needs_of(_job(CI, "ci-fast-gate")) \
-            & {"backend", "backend-fast"}, "fast gate 必须聚合 backend 快线"
+        assert {"python-lint", "invariants", "frontend", "workerd", "compat-smoke"} <= _needs_of(
+            _job(CI, "ci-fast-gate")
+        )
+        assert _needs_of(_job(CI, "ci-fast-gate")) & {"backend", "backend-fast"}, (
+            "fast gate 必须聚合 backend 快线"
+        )
 
     def test_integration_gate_covers_the_heavy_layer(self):
-        assert {"package", "windows-exe-smoke",
-                "macos-app-smoke"} <= _needs_of(_job(CI, "ci-integration-gate"))
+        assert {"package", "windows-exe-smoke", "macos-app-smoke"} <= _needs_of(
+            _job(CI, "ci-integration-gate")
+        )
 
     def test_codeql_gate_depends_on_analyze(self):
         block = _job(CODEQL, "codeql-gate")
@@ -215,11 +241,11 @@ class TestGates:
     def test_full_ci_label_still_triggers_the_heavy_layer(self):
         code = _code(CI)
         assert "contains(github.event.pull_request.labels.*.name, 'full-ci')" in code
-        assert re.search(r"types: \[[^\]]*labeled", CI), \
+        assert re.search(r"types: \[[^\]]*labeled", CI), (
             "pull_request types 里掉了 labeled——加标签不会触发新 run"
+        )
 
-    HEAVY = ("backend-platforms", "package", "windows-exe-smoke",
-             "macos-app-smoke")
+    HEAVY = ("backend-platforms", "package", "windows-exe-smoke", "macos-app-smoke")
 
     def _heavy_cond(self, job_id: str) -> str:
         """折叠块的行模式写成 ` {6,}\\S.*`（缩进全部交给 ` {6,}`、正文以 \\S
@@ -234,10 +260,12 @@ class TestGates:
         """重型资格在 merge_group 上必须产出结论，否则队列候选白等超时。"""
         for job_id in self.HEAVY:
             cond = self._heavy_cond(job_id)
-            assert "github.event_name == 'merge_group'" in cond, \
+            assert "github.event_name == 'merge_group'" in cond, (
                 f"{job_id} 在 merge_group 上不跑——队列候选会白等超时"
-            assert "github.event_name != 'pull_request'" not in cond, \
+            )
+            assert "github.event_name != 'pull_request'" not in cond, (
                 f"{job_id} 用了过宽的否定条件——未来事件会误入重型路径"
+            )
 
     def test_heavy_jobs_do_not_run_on_plain_prs_or_push(self):
         """PR 2 定版：重型资格只在 merge_group 或 full-ci PR 上跑——
@@ -245,23 +273,30 @@ class TestGates:
         for job_id in self.HEAVY:
             cond = self._heavy_cond(job_id)
             assert "'full-ci'" in cond, f"{job_id} 掉了 full-ci 提前跑的入口"
-            assert "== 'push'" not in cond, \
-                f"{job_id} 还在 push main 上重复制造同一批产物"
-            assert "draft" not in cond, \
+            assert "== 'push'" not in cond, f"{job_id} 还在 push main 上重复制造同一批产物"
+            assert "draft" not in cond, (
                 f"{job_id} 还在按草稿与否分层——那套信号已被 merge_group 取代"
+            )
 
     def test_fast_jobs_cover_pr_and_merge_group_but_not_push(self):
         """快线在 PR 与 merge_group 上都要跑（PR 先绿才能进队列，组合提交
         还要再验一遍）；push main 只留 landing audit。"""
-        for job_id in ("python-lint", "invariants", "backend-fast", "frontend",
-                       "workerd", "compat-smoke"):
+        for job_id in (
+            "python-lint",
+            "invariants",
+            "backend-fast",
+            "frontend",
+            "workerd",
+            "compat-smoke",
+        ):
             block = _code(_job(CI, job_id))
             m = re.search(r"(?m)^\s+if: (.+)$", block)
             assert m, f"{job_id} 没有事件条件"
             cond = m.group(1)
-            assert "github.event_name == 'pull_request'" in cond and \
-                "github.event_name == 'merge_group'" in cond, \
-                f"{job_id} 的事件条件不对：{cond}"
+            assert (
+                "github.event_name == 'pull_request'" in cond
+                and "github.event_name == 'merge_group'" in cond
+            ), f"{job_id} 的事件条件不对：{cond}"
 
     def test_backend_split_keeps_all_four_tiers(self):
         """backend-fast + backend-platforms 合起来必须与从前的四腿矩阵逐档
@@ -269,13 +304,14 @@ class TestGates:
         merge_group 上四档全跑（fast 与 platforms 都在），一档都不许少。"""
         fast = _job(CI, "backend-fast")
         platforms = _job(CI, "backend-platforms")
-        tiers = set(re.findall(r"\{ os: ([\w-]+),\s*python: \"([\d.]+)\" \}",
-                               fast + platforms))
-        assert tiers == {("ubuntu-latest", "3.10"), ("ubuntu-latest", "3.13"),
-                         ("macos-latest", "3.13"), ("windows-latest", "3.13")}, \
-            f"backend 覆盖漂了：{sorted(tiers)}"
-        assert "python -m pytest" in _code(fast) and \
-            "python -m pytest" in _code(platforms)
+        tiers = set(re.findall(r"\{ os: ([\w-]+),\s*python: \"([\d.]+)\" \}", fast + platforms))
+        assert tiers == {
+            ("ubuntu-latest", "3.10"),
+            ("ubuntu-latest", "3.13"),
+            ("macos-latest", "3.13"),
+            ("windows-latest", "3.13"),
+        }, f"backend 覆盖漂了：{sorted(tiers)}"
+        assert "python -m pytest" in _code(fast) and "python -m pytest" in _code(platforms)
 
     def test_integration_gate_includes_backend_platforms(self):
         assert "backend-platforms" in _needs_of(_job(CI, "ci-integration-gate"))
@@ -298,18 +334,21 @@ class TestPythonLint:
 
     def test_the_job_exists_with_a_name_that_says_what_broke(self):
         block = _job(CI, "python-lint")
-        assert "name: Python lint (Ruff)" in block, \
+        assert "name: Python lint (Ruff)" in block, (
             "红灯上得看得出是 lint 挂了，而不是一个叫 checks2 的东西"
+        )
 
     def test_ruff_version_is_read_from_pyproject_not_hardcoded(self):
         """本地与 CI 的 ruff 版本一旦漂开，「本地绿、CI 红」变成常态，
         而那是让人不再信任 lint 门禁最快的方式。所以 workflow 里**不许**
         出现版本字面量——它必须从 pyproject 的 dev extra 里读。"""
         block = _code(_job(CI, "python-lint"))
-        assert "optional-dependencies" in block and "tomllib" in block, \
+        assert "optional-dependencies" in block and "tomllib" in block, (
             "python-lint 不再从 pyproject 取 ruff 版本"
-        assert not re.search(r"(?m)pip install\s+[\"']?ruff[=><~]", block), \
+        )
+        assert not re.search(r"(?m)pip install\s+[\"']?ruff[=><~]", block), (
             "workflow 里抄了一份 ruff 版本字面量——它会和 pyproject 漂开"
+        )
 
     def test_pyproject_declares_exactly_one_ruff_constraint(self):
         """workflow 里那段提取逻辑要求 dev extra 里恰好一条 ruff 约束；
@@ -330,23 +369,30 @@ class TestPythonLint:
 
         m = re.search(r"(?m)^dependencies = \[(.*?)\]", text, re.S)
         assert m, "pyproject 里读不出运行时 dependencies 的形状"
-        assert "ruff" not in m.group(1), \
+        assert "ruff" not in m.group(1), (
             "ruff 混进了运行时依赖——普通用户不该因为装 Tavotto 拿到 lint 工具"
+        )
 
     def test_the_job_stays_cheap(self):
         """这一格存在的理由就是**十几秒回来**。一旦有人往里加科学栈、
         前端构建或 `pip install -e .`，它就退化成又一个慢检查，
         「先跑 Ruff 再跑 pytest」的习惯也就没人守了。"""
         block = _code(_job(CI, "python-lint"))
-        for heavy in ("matplotlib", "numpy", "pnpm", "cargo", "pytest",
-                      "pip install -e", "runtime_pins"):
+        for heavy in (
+            "matplotlib",
+            "numpy",
+            "pnpm",
+            "cargo",
+            "pytest",
+            "pip install -e",
+            "runtime_pins",
+        ):
             assert heavy not in block, f"python-lint 里混进了重活：{heavy}"
 
     def test_rule_selection_lives_in_pyproject_only(self):
         """命令行上再写一份 --select/--ignore，本地跑的就不是 CI 跑的那一套。"""
         block = _code(_job(CI, "python-lint"))
-        assert re.search(r"(?m)^\s+run: ruff check .*\.$", block), \
-            "读不出 ruff check 那一步"
+        assert re.search(r"(?m)^\s+run: ruff check .*\.$", block), "读不出 ruff check 那一步"
         for flag in ("--select", "--ignore", "--extend-select", "--fix"):
             assert flag not in block, f"python-lint 在命令行上覆盖了规则集：{flag}"
 
@@ -363,10 +409,8 @@ class TestLandingAudit:
         assert re.search(r"(?m)^\s+if: github\.event_name == 'push'$", block)
         assert "build_mcp_widget.py --check" in block, "受管生成物一致性掉了"
         assert "pytest" in block, "结构契约那一步掉了"
-        for heavy_marker in ("pyinstaller", "smoke_app.py", "python -m build",
-                             "matplotlib"):
-            assert heavy_marker not in block, \
-                f"landing audit 里混进了重活：{heavy_marker}"
+        for heavy_marker in ("pyinstaller", "smoke_app.py", "python -m build", "matplotlib"):
+            assert heavy_marker not in block, f"landing audit 里混进了重活：{heavy_marker}"
 
     def test_landing_audit_structural_tests_exist(self):
         """audit 里点名的测试文件必须真实存在——点一个不存在的文件，pytest

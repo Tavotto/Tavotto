@@ -37,6 +37,7 @@ cwd、argv、env——继续散着拼，就是把同一个语义写第 N 份。�
 不需要它——profile 常量的唯一出处在 `figcapture`（它们平铺 import 得到），
 这里 re-export。
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -57,8 +58,7 @@ TARGET_KINDS = (TARGET_SCRIPT, TARGET_MODULE)
 SPEC_VERSION = 1
 
 #: `stable_payload()` 覆盖的字段——**跨机器稳定**的那部分执行语义。
-STABLE_FIELDS = ("profile", "target_kind", "target", "entry", "argv",
-                 "passthrough_savefig")
+STABLE_FIELDS = ("profile", "target_kind", "target", "entry", "argv", "passthrough_savefig")
 
 
 def _normalize_target(target: str, target_kind: str) -> str:
@@ -78,39 +78,35 @@ def _normalize_target(target: str, target_kind: str) -> str:
 class ExecutionSpec:
     """一次脚本执行的完整描述（不可变，可 JSON 化，无不可序列化对象）。"""
 
-    profile: str                     # PROFILE_SAFE | PROFILE_NATIVE
-    interpreter: str                 # 解释器绝对路径（机器相关）
-    target_kind: str                 # TARGET_SCRIPT | TARGET_MODULE
-    target: str                      # script: 项目相对路径（POSIX）；module: 模块名
-    entry: str | None                # safe 的入口函数；native 恒 None
-    argv: tuple[str, ...]            # 脚本看到的 sys.argv[1:]（safe 恒空）
-    cwd: str                         # safe: 会话沙盒；native: 用户 cwd（机器相关）
-    env: dict[str, str] | None       # None = 原样继承；dict = 注入增量（见模块头）
-    project_root: str                # 项目根（机器相关；safe 即 figures_dir 原串）
-    passthrough_savefig: bool        # safe False（吞掉捕获）；native True（透传）
+    profile: str  # PROFILE_SAFE | PROFILE_NATIVE
+    interpreter: str  # 解释器绝对路径（机器相关）
+    target_kind: str  # TARGET_SCRIPT | TARGET_MODULE
+    target: str  # script: 项目相对路径（POSIX）；module: 模块名
+    entry: str | None  # safe 的入口函数；native 恒 None
+    argv: tuple[str, ...]  # 脚本看到的 sys.argv[1:]（safe 恒空）
+    cwd: str  # safe: 会话沙盒；native: 用户 cwd（机器相关）
+    env: dict[str, str] | None  # None = 原样继承；dict = 注入增量（见模块头）
+    project_root: str  # 项目根（机器相关；safe 即 figures_dir 原串）
+    passthrough_savefig: bool  # safe False（吞掉捕获）；native True（透传）
 
     def __post_init__(self) -> None:
         if self.profile not in PROFILES:
             raise ValueError(f"profile 非法: {self.profile!r}（可选 {PROFILES}）")
         if self.target_kind not in TARGET_KINDS:
-            raise ValueError(
-                f"target_kind 非法: {self.target_kind!r}（可选 {TARGET_KINDS}）")
-        object.__setattr__(self, "target",
-                           _normalize_target(self.target, self.target_kind))
+            raise ValueError(f"target_kind 非法: {self.target_kind!r}（可选 {TARGET_KINDS}）")
+        object.__setattr__(self, "target", _normalize_target(self.target, self.target_kind))
         if not isinstance(self.interpreter, str) or not self.interpreter:
             raise ValueError("interpreter 必须是非空字符串")
-        if self.entry is not None and (
-                not isinstance(self.entry, str) or not self.entry):
+        if self.entry is not None and (not isinstance(self.entry, str) or not self.entry):
             raise ValueError(f"entry 必须是 None 或非空字符串: {self.entry!r}")
         if self.profile == PROFILE_SAFE and self.entry is None:
             raise ValueError("safe profile 必须指定 entry（内联脚本用 '__main__'）")
-        if not isinstance(self.argv, tuple) or not all(
-                isinstance(a, str) for a in self.argv):
+        if not isinstance(self.argv, tuple) or not all(isinstance(a, str) for a in self.argv):
             raise ValueError(f"argv 必须是字符串元组: {self.argv!r}")
         if self.env is not None and (
-                not isinstance(self.env, dict)
-                or not all(isinstance(k, str) and isinstance(v, str)
-                           for k, v in self.env.items())):
+            not isinstance(self.env, dict)
+            or not all(isinstance(k, str) and isinstance(v, str) for k, v in self.env.items())
+        ):
             raise ValueError("env 必须是 None 或 str→str 的 dict（只放增量）")
         if not isinstance(self.passthrough_savefig, bool):
             raise ValueError("passthrough_savefig 必须是布尔值")
@@ -142,8 +138,7 @@ def spec_from_payload(data: dict) -> ExecutionSpec:
         raise ValueError("ExecutionSpec payload 必须是对象")
     version = data.get("spec_version", SPEC_VERSION)
     if version != SPEC_VERSION:
-        raise ValueError(f"不认识的 spec_version: {version!r}"
-                         f"（本实现说 v{SPEC_VERSION}）")
+        raise ValueError(f"不认识的 spec_version: {version!r}（本实现说 v{SPEC_VERSION}）")
     argv = data.get("argv", [])
     if not isinstance(argv, (list, tuple)):
         raise ValueError(f"argv 必须是数组: {argv!r}")
@@ -161,9 +156,15 @@ def spec_from_payload(data: dict) -> ExecutionSpec:
     )
 
 
-def safe_spec(script: str, figures_dir: str | os.PathLike, entry: str, *,
-              interpreter: str, sandbox: str, env: dict[str, str] | None = None,
-              ) -> ExecutionSpec:
+def safe_spec(
+    script: str,
+    figures_dir: str | os.PathLike,
+    entry: str,
+    *,
+    interpreter: str,
+    sandbox: str,
+    env: dict[str, str] | None = None,
+) -> ExecutionSpec:
     """safe 档的**唯一权威构造函数**——运行时默认值只写在这里。
 
     safe 的语义（与 ADR 0014 §2 逐条对应）：target 是项目内脚本、argv 只有
@@ -185,9 +186,13 @@ def safe_spec(script: str, figures_dir: str | os.PathLike, entry: str, *,
     )
 
 
-def worker_argv(spec: ExecutionSpec, *, worker_py: str | os.PathLike,
-                out_dir: str | os.PathLike,
-                runtime_args: list[str] | tuple[str, ...] = ()) -> list[str]:
+def worker_argv(
+    spec: ExecutionSpec,
+    *,
+    worker_py: str | os.PathLike,
+    out_dir: str | os.PathLike,
+    runtime_args: list[str] | tuple[str, ...] = (),
+) -> list[str]:
     """safe worker 子进程的完整命令行——**两条控制面共用的唯一出处**。
 
     `EngineWorker.__init__` 的 Popen 与 workerd 的 spawn 规格都吃这份；
@@ -197,9 +202,18 @@ def worker_argv(spec: ExecutionSpec, *, worker_py: str | os.PathLike,
     """
     if spec.profile != PROFILE_SAFE or spec.target_kind != TARGET_SCRIPT:
         raise ValueError("worker_argv 目前只服务 safe/script（native 是 PR 2）")
-    return [spec.interpreter, *runtime_args, str(worker_py),
-            "--script", str(Path(spec.project_root) / spec.target),
-            "--figures-dir", spec.project_root,
-            "--out-dir", str(out_dir),
-            "--sandbox", spec.cwd,
-            "--entry", spec.entry]
+    return [
+        spec.interpreter,
+        *runtime_args,
+        str(worker_py),
+        "--script",
+        str(Path(spec.project_root) / spec.target),
+        "--figures-dir",
+        spec.project_root,
+        "--out-dir",
+        str(out_dir),
+        "--sandbox",
+        spec.cwd,
+        "--entry",
+        spec.entry,
+    ]

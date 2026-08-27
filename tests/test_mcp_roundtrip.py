@@ -13,6 +13,7 @@ size_mm 0.01mm）。
 
 缺 matplotlib 就跳过（.venv 里没有科学栈是常态）。
 """
+
 import json
 import os
 import subprocess
@@ -60,8 +61,8 @@ if __name__ == "__main__":
     main()
 '''
 
-REGISTRY = {"scripts": {"figm.py": {"entry": "main", "cost": "light",
-                                    "stems": ["FigM"]}}}
+REGISTRY = {"scripts": {"figm.py": {"entry": "main", "cost": "light", "stems": ["FigM"]}}}
+
 
 def _gid(manifest: dict, role: str, suffix: str = "") -> str:
     """按角色取一个真实存在的 gid。
@@ -80,8 +81,7 @@ def patches_for(manifest: dict) -> list[dict]:
     return [
         {"gid": _gid(manifest, "title"), "prop": "fontsize", "value": 10.0},
         {"gid": _gid(manifest, "title"), "prop": "pos_frac", "value": [0.35, 0.08]},
-        {"gid": _gid(manifest, "axes"), "prop": "position",
-         "value": [0.18, 0.2, 0.7, 0.68]},
+        {"gid": _gid(manifest, "axes"), "prop": "position", "value": [0.18, 0.2, 0.7, 0.68]},
         {"gid": _gid(manifest, "legend"), "prop": "loc_frac", "value": [0.55, 0.72]},
         {"gid": _gid(manifest, "line"), "prop": "linewidth", "value": 0.75},
         {"gid": _gid(manifest, "errorbar"), "prop": "linewidth", "value": 0.75},
@@ -97,8 +97,9 @@ def _worker_python():
         return None
 
 
-pytestmark = pytest.mark.skipif(_worker_python() is None,
-                                reason="没有带科学栈的解释器，跳过真链路用例")
+pytestmark = pytest.mark.skipif(
+    _worker_python() is None, reason="没有带科学栈的解释器，跳过真链路用例"
+)
 
 
 @pytest.fixture
@@ -107,9 +108,16 @@ def project(tmp_path):
     figures.mkdir()
     (figures / "figm.py").write_text(SCRIPT, encoding="utf-8")
     (figures / "tavotto_registry.json").write_text(
-        json.dumps(REGISTRY, ensure_ascii=False), encoding="utf-8")
-    proc = subprocess.run([_worker_python(), str(figures / "figm.py")],
-                          capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(figures))
+        json.dumps(REGISTRY, ensure_ascii=False), encoding="utf-8"
+    )
+    proc = subprocess.run(
+        [_worker_python(), str(figures / "figm.py")],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        cwd=str(figures),
+    )
     assert proc.returncode == 0, proc.stderr
     assert (figures / "FigM.pdf").is_file()
     return figures
@@ -119,14 +127,20 @@ class Client:
     """跑一个真的 MCP server 子进程，按行收发 JSON-RPC。"""
 
     def __init__(self, roots: str, data_dir: str):
-        env = {**os.environ,
-               "TAVOTTO_MCP_ROOTS": roots,
-               "TAVOTTO_DATA_DIR": data_dir,
-               "PYTHONPATH": str(ROOT / "src")}
+        env = {
+            **os.environ,
+            "TAVOTTO_MCP_ROOTS": roots,
+            "TAVOTTO_DATA_DIR": data_dir,
+            "PYTHONPATH": str(ROOT / "src"),
+        }
         self.proc = subprocess.Popen(
             [sys.executable, str(ROOT / "codex-plugin" / "mcp" / "server.py")],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            env=env, cwd=str(ROOT))
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
+            cwd=str(ROOT),
+        )
         self.n = 0
 
     def call(self, method: str, params=None) -> dict:
@@ -138,14 +152,16 @@ class Client:
         self.proc.stdin.flush()
         line = self.proc.stdout.readline()
         if not line:
-            raise AssertionError("server 挂了:\n" +
-                                 self.proc.stderr.read().decode("utf-8", "replace")[-4000:])
+            raise AssertionError(
+                "server 挂了:\n" + self.proc.stderr.read().decode("utf-8", "replace")[-4000:]
+            )
         return json.loads(line.decode("utf-8"))
 
     def tool(self, name: str, args: dict) -> dict:
         res = self.call("tools/call", {"name": name, "arguments": args})["result"]
-        assert not res.get("isError"), json.dumps(res.get("structuredContent"),
-                                                  ensure_ascii=False)[:2000]
+        assert not res.get("isError"), json.dumps(res.get("structuredContent"), ensure_ascii=False)[
+            :2000
+        ]
         return res["structuredContent"]
 
     def close(self):
@@ -159,8 +175,14 @@ class Client:
 @pytest.fixture
 def client(project, tmp_path):
     c = Client(str(tmp_path), str(tmp_path / "data"))
-    c.call("initialize", {"protocolVersion": "2025-11-25", "capabilities": {},
-                          "clientInfo": {"name": "pytest", "version": "1"}})
+    c.call(
+        "initialize",
+        {
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "clientInfo": {"name": "pytest", "version": "1"},
+        },
+    )
     yield c
     c.close()
 
@@ -176,8 +198,7 @@ def test_full_flow_over_real_stdio(client, project, tmp_path):
     assert {"axes", "legend", "line", "ticks", "axis_label", "title"} <= roles
 
     patches = patches_for(opened["manifest"])
-    applied = client.tool("tavotto_apply_overrides",
-                          {"session_id": sid, "patches": patches})
+    applied = client.tool("tavotto_apply_overrides", {"session_id": sid, "patches": patches})
     assert applied["applied"] == len(patches) and applied["rejected"] == []
     assert applied["warnings"] == [], f"override 没写进去: {applied['warnings']}"
 
@@ -186,16 +207,23 @@ def test_full_flow_over_real_stdio(client, project, tmp_path):
     assert checks["profile"]["profile_id"] == "lab-publication-v1"
 
     out_dir = tmp_path / "export"
-    done = client.tool("tavotto_export",
-                       {"session_id": sid, "formats": ["pdf", "png", "svg"],
-                        "dpi": 300, "out_dir": str(out_dir),
-                        "explicit_confirm": True})
+    done = client.tool(
+        "tavotto_export",
+        {
+            "session_id": sid,
+            "formats": ["pdf", "png", "svg"],
+            "dpi": 300,
+            "out_dir": str(out_dir),
+            "explicit_confirm": True,
+        },
+    )
     files = {f["format"]: Path(f["path"]) for f in done["files"]}
     assert all(p.is_file() and p.stat().st_size > 0 for p in files.values())
     assert done["patch_hash"] == applied["patch_hash"]
 
     # PDF 必须是**真矢量**：文字取得出来才算
     import pymupdf
+
     with pymupdf.open(files["pdf"]) as doc:
         page = doc[0]
         assert "Time (min)" in page.get_text()
@@ -208,7 +236,8 @@ def test_full_flow_over_real_stdio(client, project, tmp_path):
     i = raw.find(b"pHYs")
     assert i > 0, "PNG 没写分辨率信息"
     import struct
-    px_per_m, _, unit = struct.unpack(">IIB", raw[i + 4:i + 13])
+
+    px_per_m, _, unit = struct.unpack(">IIB", raw[i + 4 : i + 13])
     assert unit == 1 and round(px_per_m * 0.0254) == 300
 
     proof = json.loads(Path(done["proof_path"]).read_text(encoding="utf-8"))
@@ -226,8 +255,9 @@ def test_hot_equals_fresh_worker_replay(client, project):
     """不变式一：热态 == 全新 worker 从零全量重放。"""
     opened = client.tool("tavotto_open_figure", {"project_path": str(project)})
     sid = opened["session_id"]
-    client.tool("tavotto_apply_overrides",
-                {"session_id": sid, "patches": patches_for(opened["manifest"])})
+    client.tool(
+        "tavotto_apply_overrides", {"session_id": sid, "patches": patches_for(opened["manifest"])}
+    )
     verdict = client.tool("tavotto_verify_replay", {"session_id": sid})
     assert verdict["ok"], json.dumps(verdict["divergence"][:8], ensure_ascii=False)
     assert verdict["compared_elements"] > 10
@@ -243,8 +273,10 @@ def test_figure_size_change_keeps_frac_anchored_props(client, project):
     """
     opened = client.tool("tavotto_open_figure", {"project_path": str(project)})
     sid = opened["session_id"]
-    patches = [{"gid": "figure", "prop": "size_mm", "value": [120.0, 70.0]},
-               *patches_for(opened["manifest"])]
+    patches = [
+        {"gid": "figure", "prop": "size_mm", "value": [120.0, 70.0]},
+        *patches_for(opened["manifest"]),
+    ]
     applied = client.tool("tavotto_apply_overrides", {"session_id": sid, "patches": patches})
     assert applied["manifest"]["size_mm"] == [120.0, 70.0]
     verdict = client.tool("tavotto_verify_replay", {"session_id": sid})
@@ -256,10 +288,11 @@ def test_axes_position_change_keeps_dependent_props(client, project):
     opened = client.tool("tavotto_open_figure", {"project_path": str(project)})
     sid = opened["session_id"]
     man = opened["manifest"]
-    patches = [{"gid": _gid(man, "axes"), "prop": "position",
-                "value": [0.25, 0.28, 0.6, 0.6]},
-               {"gid": _gid(man, "title"), "prop": "pos_frac", "value": [0.4, 0.06]},
-               {"gid": _gid(man, "legend"), "prop": "loc_frac", "value": [0.3, 0.5]}]
+    patches = [
+        {"gid": _gid(man, "axes"), "prop": "position", "value": [0.25, 0.28, 0.6, 0.6]},
+        {"gid": _gid(man, "title"), "prop": "pos_frac", "value": [0.4, 0.06]},
+        {"gid": _gid(man, "legend"), "prop": "loc_frac", "value": [0.3, 0.5]},
+    ]
     client.tool("tavotto_apply_overrides", {"session_id": sid, "patches": patches})
     verdict = client.tool("tavotto_verify_replay", {"session_id": sid})
     assert verdict["ok"], json.dumps(verdict["divergence"][:8], ensure_ascii=False)
@@ -273,16 +306,19 @@ def test_reopening_a_session_replays_to_the_same_place(client, project):
     """
     first = client.tool("tavotto_open_figure", {"project_path": str(project)})
     patches = patches_for(first["manifest"])
-    a = client.tool("tavotto_apply_overrides",
-                    {"session_id": first["session_id"], "patches": patches})
+    a = client.tool(
+        "tavotto_apply_overrides", {"session_id": first["session_id"], "patches": patches}
+    )
     client.tool("tavotto_close_session", {"session_id": first["session_id"]})
 
     second = client.tool("tavotto_open_figure", {"project_path": str(project)})
-    b = client.tool("tavotto_apply_overrides",
-                    {"session_id": second["session_id"], "patches": patches})
+    b = client.tool(
+        "tavotto_apply_overrides", {"session_id": second["session_id"], "patches": patches}
+    )
     assert a["patch_hash"] == b["patch_hash"]
 
     from tavotto_mcp import bridge
+
     diffs, compared = bridge.compare_manifests(a["manifest"], b["manifest"])
     assert not diffs, json.dumps(diffs[:8], ensure_ascii=False)
     assert compared > 10
@@ -292,11 +328,16 @@ def test_reopening_a_session_replays_to_the_same_place(client, project):
 def test_rejected_patches_are_never_silently_dropped(client, project):
     opened = client.tool("tavotto_open_figure", {"project_path": str(project)})
     sid = opened["session_id"]
-    body = client.tool("tavotto_apply_overrides", {
-        "session_id": sid,
-        "patches": [{"gid": _gid(opened["manifest"], "title"),
-                     "prop": "fontsize", "value": 10.0},
-                    {"gid": "no-such-element", "prop": "fontsize", "value": 10.0}]})
+    body = client.tool(
+        "tavotto_apply_overrides",
+        {
+            "session_id": sid,
+            "patches": [
+                {"gid": _gid(opened["manifest"], "title"), "prop": "fontsize", "value": 10.0},
+                {"gid": "no-such-element", "prop": "fontsize", "value": 10.0},
+            ],
+        },
+    )
     # 形状合法但元素不存在：**worker 的 warning**，不是 rejected——两者含义不同
     assert body["rejected"] == []
     assert any("no-such-element" in w for w in body["warnings"]), body["warnings"]
@@ -306,23 +347,36 @@ def test_export_is_blocked_until_explicitly_confirmed(client, project, tmp_path)
     opened = client.tool("tavotto_open_figure", {"project_path": str(project)})
     sid = opened["session_id"]
     # 把刻度字号压到 6pt：一定撞绝对下限
-    client.tool("tavotto_apply_overrides", {
-        "session_id": sid,
-        "patches": [{"gid": _gid(opened["manifest"], "ticks", "xticks"),
-                     "prop": "fontsize", "value": 6.0}]})
+    client.tool(
+        "tavotto_apply_overrides",
+        {
+            "session_id": sid,
+            "patches": [
+                {
+                    "gid": _gid(opened["manifest"], "ticks", "xticks"),
+                    "prop": "fontsize",
+                    "value": 6.0,
+                }
+            ],
+        },
+    )
     out = tmp_path / "blocked"
-    res = client.call("tools/call", {"name": "tavotto_export",
-                                     "arguments": {"session_id": sid,
-                                                   "formats": ["pdf"],
-                                                   "out_dir": str(out)}})["result"]
+    res = client.call(
+        "tools/call",
+        {
+            "name": "tavotto_export",
+            "arguments": {"session_id": sid, "formats": ["pdf"], "out_dir": str(out)},
+        },
+    )["result"]
     assert res["isError"]
     assert res["structuredContent"]["code"] == "preflight_blocked"
     assert not out.exists(), "被阻断时一张图都不该出"
 
     # 明确确认之后放行，并且**记进 proof**——「这次是带着问题出的」必须留痕
-    done = client.tool("tavotto_export", {"session_id": sid, "formats": ["pdf"],
-                                          "out_dir": str(out),
-                                          "explicit_confirm": True})
+    done = client.tool(
+        "tavotto_export",
+        {"session_id": sid, "formats": ["pdf"], "out_dir": str(out), "explicit_confirm": True},
+    )
     assert done["forced"] is True
     proof = json.loads(Path(done["proof_path"]).read_text(encoding="utf-8"))
     assert proof["forced"] is True and proof["acknowledged"]
@@ -338,25 +392,26 @@ def test_open_and_apply_latency_budget(client, project):
     实测值随断言打印，进 perf 报告。
     """
     import time as _time
+
     t0 = _time.monotonic()
     opened = client.tool("tavotto_open_figure", {"project_path": str(project)})
     open_ms = int((_time.monotonic() - t0) * 1000)
     sid = opened["session_id"]
 
-    patches = [{"gid": _gid(opened["manifest"], "title"),
-                "prop": "fontsize", "value": 10.0}]
+    patches = [{"gid": _gid(opened["manifest"], "title"), "prop": "fontsize", "value": 10.0}]
     t1 = _time.monotonic()
-    client.tool("tavotto_apply_overrides", {"session_id": sid,
-                                            "patches": patches})
+    client.tool("tavotto_apply_overrides", {"session_id": sid, "patches": patches})
     first_apply_ms = int((_time.monotonic() - t1) * 1000)
     t2 = _time.monotonic()
-    body = client.tool("tavotto_apply_overrides", {"session_id": sid,
-                                                   "patches": patches})
+    body = client.tool("tavotto_apply_overrides", {"session_id": sid, "patches": patches})
     hot_apply_ms = int((_time.monotonic() - t2) * 1000)
-    print(f"\n[perf] open(cold): {open_ms}ms  apply#1: {first_apply_ms}ms  "
-          f"apply#2(hot): {hot_apply_ms}ms  worker timings: {body['timings']}")
+    print(
+        f"\n[perf] open(cold): {open_ms}ms  apply#1: {first_apply_ms}ms  "
+        f"apply#2(hot): {hot_apply_ms}ms  worker timings: {body['timings']}"
+    )
     assert open_ms < 60_000, f"冷启动 {open_ms}ms 超预算"
     assert hot_apply_ms < 5_000, f"热 apply {hot_apply_ms}ms 超预算——会话没复用？"
     # 热路径不该重跑脚本：worker 计时里没有 script_build（只有 patch/draw）
-    assert not body["timings"].get("script_build_ms"), \
+    assert not body["timings"].get("script_build_ms"), (
         "热 apply 重跑了脚本 build——稳定产物被重复渲染"
+    )

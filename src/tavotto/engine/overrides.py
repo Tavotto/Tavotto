@@ -7,6 +7,7 @@ worker 维护每张图的 applied / originals 两张表：
 坐标约定：前端发来的位置一律是 figure 分数坐标、y 轴向下（top-origin），
 worker 在此转换为各 artist 自己的坐标系。
 """
+
 from __future__ import annotations
 
 import re
@@ -39,15 +40,15 @@ class FigState:
 
     def __init__(self, fig: Figure):
         self.fig = fig
-        self.elements: list[dict] = []      # manifest.instrument 填充（含 artist 引用）
+        self.elements: list[dict] = []  # manifest.instrument 填充（含 artist 引用）
         self.index: dict[str, object] = {}  # gid -> artist（"figure" -> Figure）
-        self.applied: dict[tuple, object] = {}    # (gid,prop) -> 请求值
+        self.applied: dict[tuple, object] = {}  # (gid,prop) -> 请求值
         self.originals: dict[tuple, object] = {}  # (gid,prop) -> 原生值
         # 由**广播型 prop** 代为采下的「脚本原样」（见 ALIAS_GROUPS）。它们
         # 是 originals 里没有对应 applied 条目的那些，单独记一笔才能在广播
         # 撤销之后跟着清掉——否则 originals 里会留下永远没人回收的条目。
         self.alias_seeded: set[tuple] = set()
-        self.colorbar_axes: set = set()     # 承载色条的轴（manifest 标记用）
+        self.colorbar_axes: set = set()  # 承载色条的轴（manifest 标记用）
         # 宿主 axes gid -> 拖动它时应当一起走的其他 axes gid（色条轴 / 孪生轴）
         self.axes_follow: dict[str, list[str]] = {}
         # 画在图上、却没进元素表的 artist（manifest.census 填充，诊断用）
@@ -89,6 +90,7 @@ class FigState:
         # 新出现的那条刻度」在全量重放里的情形），但那正是写回那条路。
         # late import：manifest 在模块层 import 本模块，反过来会成环。
         from manifest import _ordered_axes  # noqa: PLC0415
+
         axes = _ordered_axes(self.fig)[0]
         if not 0 <= i < len(axes):
             return None
@@ -123,7 +125,9 @@ class SeriesGroup:
     def members(self) -> list:
         if self.kind == "errorbar":
             line = self.artists.get("line")
-            return ([line] if line is not None else []) + self.artists["caps"] + self.artists["bars"]
+            return (
+                ([line] if line is not None else []) + self.artists["caps"] + self.artists["bars"]
+            )
         if self.kind == "stem_series":
             # baseline **不进成员**：它是零线，不是这条系列的一部分，仍以普通
             # 曲线（axes_i.lines_j）的身份单独可编辑
@@ -144,13 +148,12 @@ class ColorbarProxy:
     色条轴时，旧文档的 `axes_i.colorbar` 与新身份都还认得出同一个对象。
     """
 
-    def __init__(self, cb, host=None, cbax_gid: str = "", host_gid: str = "",
-                 ordinal: int = 0):
+    def __init__(self, cb, host=None, cbax_gid: str = "", host_gid: str = "", ordinal: int = 0):
         self.cb = cb
-        self.host = host                 # 宿主 Axes（方向翻转的落位参照）
-        self.cbax_gid = cbax_gid         # 色条**轴**的 gid（axes_i）
+        self.host = host  # 宿主 Axes（方向翻转的落位参照）
+        self.cbax_gid = cbax_gid  # 色条**轴**的 gid（axes_i）
         self.host_gid = host_gid
-        self.ordinal = ordinal           # 同一宿主上的第几条色条
+        self.ordinal = ordinal  # 同一宿主上的第几条色条
         # box_aspect 基线必须在这一刻采：`instrument` 跑在 build 之后、任何
         # override 之前，而 extend 的 locator 会在渲染时把 box_aspect 改成
         # `aspect*shrink`——晚一步采就把它的中间态当成了脚本原样
@@ -336,7 +339,7 @@ def _set_text_fontfamily(t: Text, v) -> None:
         mpl.rcParams["mathtext.bf"] = f"{math_name}:bold"
         mpl.rcParams["mathtext.sf"] = math_name
     except (ValueError, KeyError):
-        return                      # 正文已经改好；上下标留在默认字体集
+        return  # 正文已经改好；上下标留在默认字体集
     t.set_math_fontfamily("custom")
 
 
@@ -377,14 +380,27 @@ def _restore_legend_loc(leg: Legend, orig) -> None:
 # ---------------------------------------------------------------------------
 # 图内独立箭头（FancyArrowPatch）：端点拖动 + 箭头样式
 # ---------------------------------------------------------------------------
-_ARROWSTYLES = ["-", "->", "-|>", "<-", "<|-", "<->", "<|-|>", "|-|", "]-[",
-                "simple", "fancy", "wedge"]
+_ARROWSTYLES = [
+    "-",
+    "->",
+    "-|>",
+    "<-",
+    "<|-",
+    "<->",
+    "<|-|>",
+    "|-|",
+    "]-[",
+    "simple",
+    "fancy",
+    "wedge",
+]
 
 
 def _arrowstyle_name(a) -> str:
     """当前 ArrowStyle 的注册名；识别不出（带参数的自定义写法）报 'custom'，
     前端把它放进选项里，选它 = 保持脚本原样。"""
     from matplotlib.patches import ArrowStyle
+
     st = a.get_arrowstyle()
     for name, cls in ArrowStyle._style_list.items():  # noqa: SLF001
         if type(st) is cls:
@@ -450,11 +466,13 @@ BBOX_DEFAULTS = {
     "bbox_rounded": False,
 }
 
-_BBOX_CREATE = dict(boxstyle=f"square,pad={BBOX_DEFAULTS['bbox_pad']}",
-                    facecolor=BBOX_DEFAULTS["bbox_facecolor"],
-                    edgecolor=BBOX_DEFAULTS["bbox_edgecolor"],
-                    linewidth=BBOX_DEFAULTS["bbox_linewidth"],
-                    alpha=BBOX_DEFAULTS["bbox_alpha"])
+_BBOX_CREATE = dict(
+    boxstyle=f"square,pad={BBOX_DEFAULTS['bbox_pad']}",
+    facecolor=BBOX_DEFAULTS["bbox_facecolor"],
+    edgecolor=BBOX_DEFAULTS["bbox_edgecolor"],
+    linewidth=BBOX_DEFAULTS["bbox_linewidth"],
+    alpha=BBOX_DEFAULTS["bbox_alpha"],
+)
 
 
 def _bbox_ensure(t: Text):
@@ -469,7 +487,7 @@ def _bbox_ensure(t: Text):
     """
     patch = t.get_bbox_patch()
     if patch is None:
-        t._mm_bbox_created = True          # noqa: SLF001 — 见上
+        t._mm_bbox_created = True  # noqa: SLF001 — 见上
         t.set_bbox(dict(_BBOX_CREATE))
         patch = t.get_bbox_patch()
     return patch
@@ -485,7 +503,7 @@ class _NoBbox:
 
     __slots__ = ()
 
-    def __repr__(self) -> str:                 # 诊断里要看得懂
+    def __repr__(self) -> str:  # 诊断里要看得懂
         return "<no bbox>"
 
 
@@ -506,7 +524,7 @@ def _text_has_bbox_left(t: Text, state: "FigState") -> bool:
         try:
             if state.resolve(gid) is t:
                 n += 1
-        except Exception:                      # noqa: BLE001 — 解析不出就不算
+        except Exception:  # noqa: BLE001 — 解析不出就不算
             continue
     return n > 1
 
@@ -535,13 +553,14 @@ def _bbox_handler(read, write, default) -> tuple:
     一起摘掉（与 ALIAS_GROUPS 处理的是同一类重叠，只是这里的「组」小到可以
     就地数清楚）。
     """
+
     def g(t):
         p = t.get_bbox_patch()
         return read(p) if p is not None else _NO_BBOX
 
     def s(t, v):
         if v is _NO_BBOX:
-            return                              # 还原路径专用，见下面的 restore
+            return  # 还原路径专用，见下面的 restore
         write(_bbox_ensure(t), v)
 
     def r(t, orig, state):
@@ -556,12 +575,12 @@ def _bbox_handler(read, write, default) -> tuple:
             # 判据用记号而不是 `orig is _NO_BBOX`：后者会因为采样时机而失真
             # （见 `_bbox_ensure`）。
             t.set_bbox(None)
-            t._mm_bbox_created = False          # noqa: SLF001
+            t._mm_bbox_created = False  # noqa: SLF001
             return
         if orig is not _NO_BBOX:
             write(_bbox_ensure(t), orig)
 
-    r._needs_state = True                       # noqa: SLF001
+    r._needs_state = True  # noqa: SLF001
     return (g, s), r
 
 
@@ -627,13 +646,12 @@ _ORIG_DIR = "_mm_orig_inverted"
 def remember_axis_directions(ax) -> None:
     """记下脚本原样的两条轴方向。instrument 调用，重复调用不覆盖。"""
     if not hasattr(ax, _ORIG_DIR):
-        setattr(ax, _ORIG_DIR,
-                (bool(ax.xaxis_inverted()), bool(ax.yaxis_inverted())))
+        setattr(ax, _ORIG_DIR, (bool(ax.xaxis_inverted()), bool(ax.yaxis_inverted())))
 
 
 def _orig_inverted(ax, axis: str) -> bool:
     d = getattr(ax, _ORIG_DIR, None)
-    if d is None:                     # 没经过 instrument（手工构造）→ 退回实况
+    if d is None:  # 没经过 instrument（手工构造）→ 退回实况
         return bool(getattr(ax, f"{axis}axis_inverted")())
     return bool(d[0 if axis == "x" else 1])
 
@@ -687,11 +705,13 @@ def _get_axes_lim(axis: str):
     读 `ax.get_[xy]lim()` 报具体数字（`_axes_fields`），检查器里仍然是两个能
     改的数——显示与回灌本来就是两个口径。
     """
+
     def get(ax):
         on = getattr(ax, f"get_autoscale{axis}_on", None)
         if on is not None and on():
             return _AUTOSCALE
         return ax.get_xlim() if axis == "x" else ax.get_ylim()
+
     return get
 
 
@@ -721,6 +741,7 @@ def _set_axes_lim(axis: str):
     用户直接把范围写成降序（`[60, 2]`）仍然表达翻转：那时 `pending` 里没有
     `invert_*`，端点顺序照旧说了算。
     """
+
     def put(ax, v, state=None):
         if v is _AUTOSCALE:
             ax.autoscale(enable=True, axis=axis)
@@ -758,7 +779,8 @@ def _set_axes_lim(axis: str):
             # 又把轴翻回去，而幸存的 patch 写着 False。
             lo, hi = hi, lo
         (ax.set_xlim if axis == "x" else ax.set_ylim)(lo, hi)
-    put._needs_state = True                     # noqa: SLF001
+
+    put._needs_state = True  # noqa: SLF001
     return put
 
 
@@ -787,9 +809,11 @@ def _get_marker_color(attr: str, getter_name: str):
     manifest 那边照旧显示 `to_hex(get_marker*color())`（解析后的具体色），
     检查器里仍然是一个能点的色块——显示与回灌本来就该是两个口径。
     """
+
     def get(a):
         raw = getattr(a, attr, None)
         return raw if raw is not None else getattr(a, getter_name)()
+
     return get
 
 
@@ -836,12 +860,14 @@ def _stroke_state(t: Text) -> dict:
     st = getattr(t, "_mm_stroke", None)
     if st is None:
         st = {"enabled": False, "color": "#FFFFFF", "width": 1.5}
-        for eff in (t.get_path_effects() or []):
+        for eff in t.get_path_effects() or []:
             if isinstance(eff, mpatheffects.withStroke):
                 kw = getattr(eff, "_gc", {})
-                st = {"enabled": True,
-                      "color": to_hex(kw.get("foreground", "#FFFFFF")),
-                      "width": float(kw.get("linewidth", 1.5))}
+                st = {
+                    "enabled": True,
+                    "color": to_hex(kw.get("foreground", "#FFFFFF")),
+                    "width": float(kw.get("linewidth", 1.5)),
+                }
                 break
         t._mm_stroke = st  # noqa: SLF001
     return st
@@ -850,11 +876,11 @@ def _stroke_state(t: Text) -> dict:
 def _stroke_set(t: Text, key: str, v) -> None:
     _stroke_state(t)[key] = v
     st = t._mm_stroke  # noqa: SLF001
-    rest = [e for e in (t.get_path_effects() or [])
-            if not isinstance(e, mpatheffects.withStroke)]
+    rest = [e for e in (t.get_path_effects() or []) if not isinstance(e, mpatheffects.withStroke)]
     if st["enabled"]:
-        rest = [mpatheffects.withStroke(linewidth=float(st["width"]),
-                                        foreground=st["color"])] + rest
+        rest = [
+            mpatheffects.withStroke(linewidth=float(st["width"]), foreground=st["color"])
+        ] + rest
     t.set_path_effects(rest)
 
 
@@ -879,6 +905,7 @@ def _grid_prop(read, default):
     def g(ax):
         gl = _gridline0(ax)
         return read(gl) if gl is not None else default
+
     return g
 
 
@@ -900,8 +927,11 @@ def _spines_get(ax: Axes, fn, default):
 # 那是它原本的口径，收窄成四条会让色条的外框突然改不动了。
 # ---------------------------------------------------------------------------
 _SPINE_SIDES = ("top", "right", "bottom", "left")
-_SPINE_CFG_KEYS = ("all_color", "all_width",
-                   *(f"{s}_{k}" for s in _SPINE_SIDES for k in ("color", "width")))
+_SPINE_CFG_KEYS = (
+    "all_color",
+    "all_width",
+    *(f"{s}_{k}" for s in _SPINE_SIDES for k in ("color", "width")),
+)
 
 
 def spine_cfg(ax: Axes) -> dict:
@@ -910,8 +940,9 @@ def spine_cfg(ax: Axes) -> dict:
     cfg = getattr(ax, "_mm_spine_cfg", None)
     if cfg is None:
         cfg = {k: None for k in _SPINE_CFG_KEYS}
-        cfg["orig"] = {name: (sp.get_edgecolor(), float(sp.get_linewidth()))
-                       for name, sp in ax.spines.items()}
+        cfg["orig"] = {
+            name: (sp.get_edgecolor(), float(sp.get_linewidth())) for name, sp in ax.spines.items()
+        }
         ax._mm_spine_cfg = cfg  # noqa: SLF001
     return cfg
 
@@ -989,15 +1020,18 @@ def _mk_spine_handler(key: str, read):
     def s(ax: Axes, v) -> None:
         spine_cfg(ax)[key] = v
         apply_spine_model(ax)
+
     return (g, s)
 
 
 def _mk_spine_restore(key: str):
     """撤销一条边框设定 = **退回未表态**（落回「全部」那一档，或脚本原样），
     不是把当前推断出来的值钉死成一条显式配置。"""
+
     def r(ax: Axes, _orig) -> None:
         spine_cfg(ax)[key] = None
         apply_spine_model(ax)
+
     return r
 
 
@@ -1011,8 +1045,7 @@ def _tick0(ts: "TickSet"):
 
 
 #: (轴, line) → 边名。line 1 = 下/左（tick1line），line 2 = 上/右（tick2line）
-_TICK_SIDES = {("x", 1): "bottom", ("x", 2): "top",
-               ("y", 1): "left", ("y", 2): "right"}
+_TICK_SIDES = {("x", 1): "bottom", ("x", 2): "top", ("y", 1): "left", ("y", 2): "right"}
 
 
 def _tick_side_state(axis, which: str, line: int, minor: bool) -> bool:
@@ -1038,10 +1071,11 @@ def _tick_side_state(axis, which: str, line: int, minor: bool) -> bool:
     side = _TICK_SIDES[(which, line)]
     try:
         grp = "minor" if minor else "major"
-        return bool(mpl.rcParams[f"{which}tick.{side}"]
-                    and mpl.rcParams[f"{which}tick.{grp}.{side}"])
+        return bool(
+            mpl.rcParams[f"{which}tick.{side}"] and mpl.rcParams[f"{which}tick.{grp}.{side}"]
+        )
     except KeyError:
-        return line == 1        # 最后的兜底：matplotlib 默认下/左有、上/右无
+        return line == 1  # 最后的兜底：matplotlib 默认下/左有、上/右无
 
 
 def tick_side_visible(ax, which: str, line: int) -> bool:
@@ -1071,12 +1105,15 @@ def _mk_tick_side(which: str, side: str, line: int):
     manifest 显示仍是一个 bool（`tick_side_visible`），显示与回灌本来就该
     是两个口径。
     """
+
     def get(a):
         axis = getattr(a, f"{which}axis", None)
         if axis is None:
             return (line == 1, line == 1)
-        return (_tick_side_state(axis, which, line, minor=False),
-                _tick_side_state(axis, which, line, minor=True))
+        return (
+            _tick_side_state(axis, which, line, minor=False),
+            _tick_side_state(axis, which, line, minor=True),
+        )
 
     def put(a, v):
         if isinstance(v, (tuple, list)):
@@ -1120,9 +1157,16 @@ def _set_tick_width(ts: "TickSet", v) -> None:
 #     换 scale 之后必须**重新采集** orig（`invalidate_tick_cfg`），否则
 #     「自动」会把线性轴的 AutoLocator 按到对数轴上。
 # ---------------------------------------------------------------------------
-_TICK_MODEL_PROPS = ("major_mode", "major_step", "major_values",
-                     "minor_visible", "minor_mode", "minor_step",
-                     "format", "minor_format")
+_TICK_MODEL_PROPS = (
+    "major_mode",
+    "major_step",
+    "major_values",
+    "minor_visible",
+    "minor_mode",
+    "minor_step",
+    "format",
+    "minor_format",
+)
 
 _TICK_FORMATS = ["auto", "%.0f", "%.1f", "%.2f", "%.3f", "%g", "sci"]
 #: 次刻度的格式多一档 "none"（不标数字）——**那才是默认**，所以它得排在最前。
@@ -1172,8 +1216,7 @@ def _minor_auto_locator(axis):
         base = getattr(getattr(axis, "_scale", None), "base", 10)
         return mticker.LogLocator(base=base, subs="auto")
     if name == "symlog":
-        return mticker.SymmetricalLogLocator(axis.get_transform(),
-                                             subs=list(range(1, 10)))
+        return mticker.SymmetricalLogLocator(axis.get_transform(), subs=list(range(1, 10)))
     if name == "logit":
         return mticker.LogitLocator(minor=True)
     return mticker.AutoMinorLocator()
@@ -1206,7 +1249,7 @@ def _baseline_major_locs(axis, cfg: dict) -> list[float]:
         return _major_locs(axis)
     keep = axis.get_major_locator()
     try:
-        axis.set_major_locator(orig)          # 绑定到本轴，取值才用对 view interval
+        axis.set_major_locator(orig)  # 绑定到本轴，取值才用对 view interval
         return _major_locs(axis)
     except Exception:  # noqa: BLE001 — 取不到就退回当前值，总好过抛
         return _major_locs(axis)
@@ -1284,17 +1327,15 @@ def apply_tick_model(ax: Axes, which: str) -> None:
     else:
         axis.set_major_locator(cfg["orig_major_locator"])
 
-    axis.set_major_formatter(_formatter_for(cfg["format"],
-                                           cfg["orig_major_formatter"]))
+    axis.set_major_formatter(_formatter_for(cfg["format"], cfg["orig_major_formatter"]))
 
-    axis.set_minor_formatter(_formatter_for(cfg["minor_format"],
-                                           cfg["orig_minor_formatter"]))
+    axis.set_minor_formatter(_formatter_for(cfg["minor_format"], cfg["orig_minor_formatter"]))
 
     vis, mmode, mstep = cfg["minor_visible"], cfg["minor_mode"], cfg["minor_step"]
     if vis is False:
         axis.set_minor_locator(mticker.NullLocator())
     elif vis is None and mmode is None and mstep is None:
-        axis.set_minor_locator(cfg["orig_minor_locator"])   # 没人表态 → 脚本原样
+        axis.set_minor_locator(cfg["orig_minor_locator"])  # 没人表态 → 脚本原样
     elif (mmode or "auto") == "step" and mstep and float(mstep) > 0:
         axis.set_minor_locator(mticker.MultipleLocator(float(mstep)))
     else:
@@ -1363,10 +1404,16 @@ def tick_minor_format(ax: Axes, which: str) -> str:
 
 def _mk_tick_model_handler(key: str, cast=None):
     """刻度模型 prop 的 (getter, setter)：写进 cfg 再整体重建。"""
-    readers = {"major_mode": tick_major_mode, "major_step": tick_major_step,
-               "major_values": tick_major_values, "minor_visible": tick_minor_visible,
-               "minor_mode": tick_minor_mode, "minor_step": tick_minor_step,
-               "format": tick_format_name, "minor_format": tick_minor_format}
+    readers = {
+        "major_mode": tick_major_mode,
+        "major_step": tick_major_step,
+        "major_values": tick_major_values,
+        "minor_visible": tick_minor_visible,
+        "minor_mode": tick_minor_mode,
+        "minor_step": tick_minor_step,
+        "format": tick_format_name,
+        "minor_format": tick_minor_format,
+    }
 
     def g(ts: "TickSet"):
         return readers[key](ts.ax, ts.which)
@@ -1374,6 +1421,7 @@ def _mk_tick_model_handler(key: str, cast=None):
     def s(ts: "TickSet", v) -> None:
         tick_cfg(ts.ax, ts.which)[key] = None if v is None else cast(v)
         apply_tick_model(ts.ax, ts.which)
+
     return (g, s)
 
 
@@ -1381,17 +1429,18 @@ def _mk_tick_model_restore(key: str):
     """撤销一条刻度模型 prop = **把它退回未表态**（脚本原样），而不是把
     「当前推断出来的值」钉死成一条显式配置——后者会让 undo 之后的图与
     从没改过的图不是同一张。"""
+
     def r(ts: "TickSet", _orig) -> None:
         tick_cfg(ts.ax, ts.which)[key] = None
         apply_tick_model(ts.ax, ts.which)
+
     return r
 
 
 def _num_list(v) -> list[float]:
     if isinstance(v, (int, float)) and not isinstance(v, bool):
         return [float(v)]
-    return [float(x) for x in (v or []) if isinstance(x, (int, float))
-            and not isinstance(x, bool)]
+    return [float(x) for x in (v or []) if isinstance(x, (int, float)) and not isinstance(x, bool)]
 
 
 def _freeze_tick_texts(ax: Axes, which: str, edits: dict) -> None:
@@ -1408,8 +1457,7 @@ def _freeze_tick_texts(ax: Axes, which: str, edits: dict) -> None:
     texts = [str(t) for t in axis.get_major_formatter().format_ticks(locs)]
     for idx, val in edits.items():
         if not (0 <= int(idx) < len(texts)):
-            raise ValueError(
-                f"刻度 #{int(idx)} 已不存在（当前只有 {len(texts)} 个主刻度）")
+            raise ValueError(f"刻度 #{int(idx)} 已不存在（当前只有 {len(texts)} 个主刻度）")
         texts[int(idx)] = str(val)
     getattr(ax, f"set_{which}ticks")(locs, texts)
 
@@ -1427,8 +1475,12 @@ def _set_ticklabel_text(tl: "TickLabel", value, state: "FigState") -> None:
         if prop != "text":
             continue
         other = state.resolve(gid)
-        if (isinstance(other, TickLabel) and other.ax is tl.ax
-                and other.which == tl.which and other.index != tl.index):
+        if (
+            isinstance(other, TickLabel)
+            and other.ax is tl.ax
+            and other.which == tl.which
+            and other.index != tl.index
+        ):
             edits[other.index] = str(v)
     edits[tl.index] = str(value)
     _freeze_tick_texts(tl.ax, tl.which, edits)
@@ -1463,10 +1515,9 @@ class _AxisArrow3D(FancyArrowPatch):
     """
 
     def __init__(self, axis, index: int, overhang: float = 0.06, **kw):
-        super().__init__((0, 0), (0, 0), shrinkA=0, shrinkB=0,
-                         clip_on=False, **kw)
+        super().__init__((0, 0), (0, 0), shrinkA=0, shrinkB=0, clip_on=False, **kw)
         self._mm_axis3d = axis
-        self._mm_index = index      # 0/1/2 = x/y/z
+        self._mm_index = index  # 0/1/2 = x/y/z
         self._mm_overhang = overhang
 
     def do_3d_projection(self, renderer=None):
@@ -1483,7 +1534,8 @@ class _AxisArrow3D(FancyArrowPatch):
             p1, p2 = p2, p1  # 箭头指向坐标增大的一端（含反转轴也语义正确）
         p2 = p2 + (p2 - p1) * self._mm_overhang
         xs, ys, zs = proj3d.proj_transform(
-            (p1[0], p2[0]), (p1[1], p2[1]), (p1[2], p2[2]), self.axes.M)
+            (p1[0], p2[0]), (p1[1], p2[1]), (p1[2], p2[2]), self.axes.M
+        )
         self.set_positions((xs[0], ys[0]), (xs[1], ys[1]))
         return min(zs)
 
@@ -1513,10 +1565,15 @@ def _set_axis_arrows(a, v) -> None:
         arrows = []
         for i, axis in enumerate(_axes3d_axes(a)):
             axis.line.set_visible(False)
-            arr = _AxisArrow3D(axis, i, arrowstyle="-|>",
-                               mutation_scale=float(st["head"]),
-                               lw=float(st["width"]), color=st["color"],
-                               zorder=60)
+            arr = _AxisArrow3D(
+                axis,
+                i,
+                arrowstyle="-|>",
+                mutation_scale=float(st["head"]),
+                lw=float(st["width"]),
+                color=st["color"],
+                zorder=60,
+            )
             a.add_artist(arr)
             arrows.append(arr)
         a._mm_axis_arrows = arrows  # noqa: SLF001
@@ -1530,6 +1587,7 @@ def _set_axis_arrows(a, v) -> None:
 
 def _mk_arrow_style_handler(key: str, apply):
     """样式旋钮：写进缓存，并即时作用到已存在的箭头上。"""
+
     def g(a):
         return _arrow_style(a)[key]
 
@@ -1538,6 +1596,7 @@ def _mk_arrow_style_handler(key: str, apply):
         st[key] = v
         for arr in getattr(a, "_mm_axis_arrows", None) or []:
             apply(arr, v)
+
     return (g, s)
 
 
@@ -1545,11 +1604,13 @@ def _view3d_get(which: str):
     def g(a):
         v = getattr(a, which, 0.0)
         return 0.0 if v is None else float(v)
+
     return g
 
 
 def _view3d_set(which: str):
     """view_init 未传的角度会被重置回初始视角，所以每次都全量带上现值。"""
+
     def s(a, v) -> None:
         kw = {"elev": a.elev, "azim": a.azim}
         if hasattr(a, "roll"):
@@ -1557,14 +1618,22 @@ def _view3d_set(which: str):
         kw[which] = float(v)
         a.view_init(**kw)
         a.stale = True
+
     return s
 
 
 def _tri_handler(get1, set1):
     """x/y/z 三条 3D 轴的同名属性：getter 收集各轴原值，统一应用、按轴还原。"""
-    def g(a): return [get1(ax) for ax in _axes3d_axes(a)]
-    def s(a, v): [set1(ax, v) for ax in _axes3d_axes(a)]
-    def r(a, orig): [set1(ax, o) for ax, o in zip(_axes3d_axes(a), orig)]
+
+    def g(a):
+        return [get1(ax) for ax in _axes3d_axes(a)]
+
+    def s(a, v):
+        [set1(ax, v) for ax in _axes3d_axes(a)]
+
+    def r(a, orig):
+        [set1(ax, o) for ax, o in zip(_axes3d_axes(a), orig)]
+
     return (g, s), r
 
 
@@ -1573,9 +1642,16 @@ def _tri_handler(get1, set1):
 # ---------------------------------------------------------------------------
 def _bar_handler(get1, set1):
     """柱形系列：getter 收集每根柱的原值列表，setter 统一应用，restore 逐柱还原。"""
-    def g(grp): return [get1(r) for r in grp.artists]
-    def s(grp, v): [set1(r, v) for r in grp.artists]
-    def r(grp, orig): [set1(rct, o) for rct, o in zip(grp.artists, orig)]
+
+    def g(grp):
+        return [get1(r) for r in grp.artists]
+
+    def s(grp, v):
+        [set1(r, v) for r in grp.artists]
+
+    def r(grp, orig):
+        [set1(rct, o) for rct, o in zip(grp.artists, orig)]
+
     return (g, s), r
 
 
@@ -1595,15 +1671,24 @@ def _bar_width_set(rect: Rectangle, v) -> None:
 
 def _eb_handler(getter_each, setter_each, members_fn=None):
     """误差棒：作用于 members()（或指定子集），原值按成员列表还原。"""
+
     def pick(grp):
         return members_fn(grp) if members_fn else grp.members()
-    def g(grp): return [getter_each(a) for a in pick(grp)]
-    def s(grp, v): [setter_each(a, v) for a in pick(grp)]
-    def r(grp, orig): [setter_each(a, o) for a, o in zip(pick(grp), orig)]
+
+    def g(grp):
+        return [getter_each(a) for a in pick(grp)]
+
+    def s(grp, v):
+        [setter_each(a, v) for a in pick(grp)]
+
+    def r(grp, orig):
+        [setter_each(a, o) for a, o in zip(pick(grp), orig)]
+
     return (g, s), r
 
 
-def _eb_caps(grp): return grp.artists["caps"]
+def _eb_caps(grp):
+    return grp.artists["caps"]
 
 
 def _eb_linewidth_members(grp):
@@ -1619,6 +1704,7 @@ def _mk_set_invert(which: str):
         cur = a.xaxis_inverted() if which == "x" else a.yaxis_inverted()
         if bool(v) != bool(cur):
             (a.invert_xaxis if which == "x" else a.invert_yaxis)()
+
     return s
 
 
@@ -1635,6 +1721,7 @@ def _mk_spine_set(name: str):
     def s(a: Axes, v) -> None:
         if name in a.spines:
             a.spines[name].set_visible(bool(v))
+
     return s
 
 
@@ -1795,8 +1882,7 @@ _CB_TICKLOC = {"vertical": "right", "horizontal": "bottom"}
 #: 竖色条翻成横的再翻回来，就永久搬到了右边——**方向明明转回原值了，
 #: 图却回不去**，刻度也跟着换了边。撤销那条路（`_restore_cb_orientation`）
 #: 一直是对的，走「把值设回去」这条路的才坏，两条路必须给出同一张图。
-_CB_SIDE_FLIP = {"right": "bottom", "bottom": "right",
-                 "left": "top", "top": "left"}
+_CB_SIDE_FLIP = {"right": "bottom", "bottom": "right", "left": "top", "top": "left"}
 #: 每种方向合法的侧（防止外部塞进来的怪值把落位算成 NaN）
 _CB_SIDES = {"vertical": ("left", "right"), "horizontal": ("top", "bottom")}
 
@@ -1808,9 +1894,9 @@ def _cb_side0(cb) -> str:
         orient = str(getattr(cb, "orientation", "vertical"))
         if side not in _CB_SIDES.get(orient, ()):
             side = _CB_TICKLOC.get(orient, "right")
-        cb._mm_cb_side0 = side           # noqa: SLF001
-        cb._mm_cb_orient0 = orient       # noqa: SLF001
-    return cb._mm_cb_side0               # noqa: SLF001
+        cb._mm_cb_side0 = side  # noqa: SLF001
+        cb._mm_cb_orient0 = orient  # noqa: SLF001
+    return cb._mm_cb_side0  # noqa: SLF001
 
 
 def _cb_target_side(cb, to: str) -> str:
@@ -1820,11 +1906,16 @@ def _cb_target_side(cb, to: str) -> str:
     side = side0 if to == orient0 else _CB_SIDE_FLIP.get(side0, "")
     return side if side in _CB_SIDES[to] else _CB_TICKLOC[to]
 
+
 #: `Colorbar._inside` 是按 extend 切出来的那段 boundaries。它**只在 `__init__`
 #: 里设过一次**——改 `cb.extend` 不动它，于是 `_draw_all()` 会拿 259 条边界去配
 #: 256 块颜色，当场 TypeError。两者必须一起改。
-_CB_INSIDE = {"neither": slice(0, None), "both": slice(1, -1),
-              "min": slice(1, None), "max": slice(0, -1)}
+_CB_INSIDE = {
+    "neither": slice(0, None),
+    "both": slice(1, -1),
+    "min": slice(1, None),
+    "max": slice(0, -1),
+}
 _CB_EXTENDS = ["neither", "both", "min", "max"]
 
 
@@ -1854,7 +1945,7 @@ def _set_cb_extend(p: "ColorbarProxy", v) -> None:
     cb.ax.set_box_aspect(_cb_box_aspect0(cb))
     cb.extend = to
     cb._inside = _CB_INSIDE[to]  # noqa: SLF001 — 见 _CB_INSIDE 的注释
-    cb._draw_all()               # noqa: SLF001
+    cb._draw_all()  # noqa: SLF001
 
 
 def _restore_cb_extend(p: "ColorbarProxy", orig) -> None:
@@ -1862,12 +1953,16 @@ def _restore_cb_extend(p: "ColorbarProxy", orig) -> None:
 
 
 def _cb_label_text(cb) -> str:
-    return (cb.ax.get_ylabel() if getattr(cb, "orientation", "vertical") == "vertical"
-            else cb.ax.get_xlabel())
+    return (
+        cb.ax.get_ylabel()
+        if getattr(cb, "orientation", "vertical") == "vertical"
+        else cb.ax.get_xlabel()
+    )
 
 
-def _cb_place(host_rect, cur_rect, to: str, *,
-              from_side: str = "", to_side: str = "") -> list[float]:
+def _cb_place(
+    host_rect, cur_rect, to: str, *, from_side: str = "", to_side: str = ""
+) -> list[float]:
     """翻转后色条轴该落在哪儿（figure 分数，matplotlib 的 bottom-origin）。
 
     规则：厚度取色条自己的短边、间距沿用它与宿主之间原本那道缝，长边跟宿主
@@ -1884,17 +1979,23 @@ def _cb_place(host_rect, cur_rect, to: str, *,
     thick = min(cw, ch)
     from_side = from_side or ("bottom" if to == "vertical" else "right")
     to_side = to_side or _CB_TICKLOC[to]
-    pad = {"right": cx - (hx + hw),
-           "left": hx - (cx + cw),
-           "bottom": hy - (cy + ch),
-           "top": cy - (hy + hh)}.get(from_side, 0.04)
+    pad = {
+        "right": cx - (hx + hw),
+        "left": hx - (cx + cw),
+        "bottom": hy - (cy + ch),
+        "top": cy - (hy + hh),
+    }.get(from_side, 0.04)
     if not 0.0 <= pad <= 0.4:
         pad = 0.04
     if to == "horizontal":
-        return ([hx, hy + hh + pad, hw, thick] if to_side == "top"
-                else [hx, hy - pad - thick, hw, thick])
-    return ([hx - pad - thick, hy, thick, hh] if to_side == "left"
-            else [hx + hw + pad, hy, thick, hh])
+        return (
+            [hx, hy + hh + pad, hw, thick]
+            if to_side == "top"
+            else [hx, hy - pad - thick, hw, thick]
+        )
+    return (
+        [hx - pad - thick, hy, thick, hh] if to_side == "left" else [hx + hw + pad, hy, thick, hh]
+    )
 
 
 def _cb_current_side(cb) -> str:
@@ -1925,9 +2026,13 @@ def _cb_target_rect(p: "ColorbarProxy", to: str, state: "FigState"):
     # ——`original` 还没经过 box_aspect 收缩，拿它反解厚度会粗好几倍。
     # extend 的收缩只发生在长轴上，而 `_cb_place` 读的恰好是短边与短轴方向的
     # 间距，两者不打架。
-    return _cb_place(host_rect, p.cb.ax.get_position().bounds, to,
-                     from_side=_cb_current_side(p.cb),
-                     to_side=_cb_target_side(p.cb, to))
+    return _cb_place(
+        host_rect,
+        p.cb.ax.get_position().bounds,
+        to,
+        from_side=_cb_current_side(p.cb),
+        to_side=_cb_target_side(p.cb, to),
+    )
 
 
 def _cb_reorient(p: "ColorbarProxy", to: str, state: "FigState") -> None:
@@ -1955,9 +2060,9 @@ def _cb_reorient(p: "ColorbarProxy", to: str, state: "FigState") -> None:
     info = getattr(cb.ax, "_colorbar_info", None)
     if isinstance(info, dict):
         info["aspect"] = False
-    cb._mm_box_aspect0 = None            # noqa: SLF001 — 新的 box_aspect 基线
+    cb._mm_box_aspect0 = None  # noqa: SLF001 — 新的 box_aspect 基线
     cb._reset_locator_formatter_scale()  # noqa: SLF001 — 官方也是这么重建的
-    cb._draw_all()                       # noqa: SLF001
+    cb._draw_all()  # noqa: SLF001
     if label:
         cb.set_label(label)
     # locator/formatter 被上面整套换掉了：刻度模型的「脚本原样」必须重采
@@ -1970,18 +2075,20 @@ def _cb_orientation_snapshot(p: "ColorbarProxy") -> dict:
     """撤销用的原始快照：方向 + 刻度侧 + 完整落位 + 长轴标签。"""
     ax = p.cb.ax
     info = getattr(ax, "_colorbar_info", None)
-    return {"orientation": str(getattr(p.cb, "orientation", "vertical")),
-            "ticklocation": str(getattr(p.cb, "ticklocation", "right")),
-            # 落位记 original：locator 每帧从它推出 extend 收缩后的实际位置，
-            # 记实际位置的话还原一次就再收缩一次
-            "position": list(ax.get_position(original=True).bounds),
-            # box_aspect 记**基线**而不是此刻观察到的值：extend 开着时
-            # locator 已经把它改成了 aspect*shrink，那是中间态不是原样
-            "box_aspect0": _cb_box_aspect0(p.cb),
-            "info_aspect": info.get("aspect") if isinstance(info, dict) else None,
-            "aspect": ax.get_aspect(),
-            "anchor": ax.get_anchor(),
-            "label": _cb_label_text(p.cb)}
+    return {
+        "orientation": str(getattr(p.cb, "orientation", "vertical")),
+        "ticklocation": str(getattr(p.cb, "ticklocation", "right")),
+        # 落位记 original：locator 每帧从它推出 extend 收缩后的实际位置，
+        # 记实际位置的话还原一次就再收缩一次
+        "position": list(ax.get_position(original=True).bounds),
+        # box_aspect 记**基线**而不是此刻观察到的值：extend 开着时
+        # locator 已经把它改成了 aspect*shrink，那是中间态不是原样
+        "box_aspect0": _cb_box_aspect0(p.cb),
+        "info_aspect": info.get("aspect") if isinstance(info, dict) else None,
+        "aspect": ax.get_aspect(),
+        "anchor": ax.get_anchor(),
+        "label": _cb_label_text(p.cb),
+    }
 
 
 def _set_cb_orientation(p: "ColorbarProxy", v, state: "FigState") -> None:
@@ -1999,7 +2106,8 @@ def _set_cb_orientation(p: "ColorbarProxy", v, state: "FigState") -> None:
         raise ValueError(
             f"multi_host_colorbar: 这条色条横跨 {hosts} 个子图，"
             f"方向切换在 1.0 里不支持（落位只按第一个宿主算，翻转后会被缩到"
-            f"一图宽）。issue #69")
+            f"一图宽）。issue #69"
+        )
     to = "horizontal" if str(v) == "horizontal" else "vertical"
     _cb_reorient(p, to, state)
 
@@ -2016,8 +2124,8 @@ def _restore_cb_orientation(p: "ColorbarProxy", orig, state: "FigState") -> None
     cb.orientation = orig["orientation"]
     cb.ticklocation = orig["ticklocation"]
     # 基准也一并放回：还原之后再改一次方向，得从脚本那份原样重新起算
-    cb._mm_cb_side0 = orig["ticklocation"]      # noqa: SLF001
-    cb._mm_cb_orient0 = orig["orientation"]     # noqa: SLF001
+    cb._mm_cb_side0 = orig["ticklocation"]  # noqa: SLF001
+    cb._mm_cb_orient0 = orig["orientation"]  # noqa: SLF001
     ax.set_xlabel("")
     ax.set_ylabel("")
     ax.set_box_aspect(orig["box_aspect0"])
@@ -2029,7 +2137,7 @@ def _restore_cb_orientation(p: "ColorbarProxy", orig, state: "FigState") -> None
     if isinstance(info, dict) and orig.get("info_aspect") is not None:
         info["aspect"] = orig["info_aspect"]
     cb._reset_locator_formatter_scale()  # noqa: SLF001
-    cb._draw_all()                       # noqa: SLF001
+    cb._draw_all()  # noqa: SLF001
     if orig["label"]:
         cb.set_label(orig["label"])
     for which in ("x", "y"):
@@ -2204,8 +2312,7 @@ def follow_map(fig, cbar_of_ax: dict, host_of_cbax: dict, axes) -> dict[str, lis
         for other in ordered:
             if other is ax or other in cbar_of_ax or other not in siblings:
                 continue
-            if all(abs(a - b) < 1e-6
-                   for a, b in zip(pos, other.get_position().bounds)):
+            if all(abs(a - b) < 1e-6 for a, b in zip(pos, other.get_position().bounds)):
                 link(ax, other)
 
     return follow
@@ -2218,6 +2325,7 @@ def _refresh_axes_follow(state: "FigState") -> None:
         # 这里靠 late import 拿 `_ordered_axes`：manifest 在模块层 import
         # overrides，反过来在模块层 import 会成环。
         from manifest import _ordered_axes  # noqa: PLC0415
+
         _ordered = _ordered_axes(state.fig)[0]
         cbar_of_ax, host_of_cbax = colorbar_maps(state.fig, _ordered)
         state.colorbar_axes = set(cbar_of_ax)
@@ -2237,6 +2345,7 @@ _SCALE_CHOICES = ("linear", "log", "symlog", "logit")
 
 def scale_options(current: str) -> list[str]:
     import matplotlib.scale as mscale  # noqa: PLC0415 — worker 侧才有科学栈
+
     have = set(mscale.get_scale_names())
     opts = [s for s in _SCALE_CHOICES if s in have]
     return ([str(current)] if str(current) not in opts else []) + opts
@@ -2246,18 +2355,30 @@ def _mk_set_scale(which: str):
     """换 scale。matplotlib 会把该轴的 locator/formatter 整套换成新 scale 的
     默认值，所以刻度模型的「脚本原样」必须当场重采——不重采的话「自动刻度」
     会把线性轴的 AutoLocator 按到对数轴上（一个刻度都出不来）。"""
+
     def s(a: Axes, v) -> None:
         getattr(a, f"set_{which}scale")(str(v))
         invalidate_tick_cfg(a, which)
+
     return s
 
 
 # ---------------------------------------------------------------------------
 # 图例：loc 预设与「重建型」布局属性（ncol/labelspacing/…）
 # ---------------------------------------------------------------------------
-_LEGEND_LOCS = ["best", "upper right", "upper left", "lower left", "lower right",
-                "right", "center left", "center right", "lower center",
-                "upper center", "center"]
+_LEGEND_LOCS = [
+    "best",
+    "upper right",
+    "upper left",
+    "lower left",
+    "lower right",
+    "right",
+    "center left",
+    "center right",
+    "lower center",
+    "upper center",
+    "center",
+]
 
 
 def _set_legend_loc_preset(leg: Legend, v) -> None:
@@ -2273,8 +2394,12 @@ def _legend_loc_name(leg: Legend) -> str:
     return inv.get(loc, "best")
 
 
-_LEGEND_LAYOUT_ATTRS = {"ncol": "_ncols", "borderpad": "borderpad",
-                        "labelspacing": "labelspacing", "handlelength": "handlelength"}
+_LEGEND_LAYOUT_ATTRS = {
+    "ncol": "_ncols",
+    "borderpad": "borderpad",
+    "labelspacing": "labelspacing",
+    "handlelength": "handlelength",
+}
 
 
 def _legend_rebuild_setter(prop: str):
@@ -2484,24 +2609,28 @@ def _get_coll_facecolor(coll):
 # ---------------------------------------------------------------------------
 #: Collection / Patch 通用的「安全 setter」——都是 Artist 基类或 family 基类
 #: 上的公开 API，子类没有一个重定义成别的语义。
-_CAP_ALPHA = (lambda a: a.get_alpha(),
-              lambda a, v: a.set_alpha(None if v is None else float(v)))
+_CAP_ALPHA = (lambda a: a.get_alpha(), lambda a, v: a.set_alpha(None if v is None else float(v)))
 _CAP_VISIBLE = (lambda a: a.get_visible(), lambda a, v: a.set_visible(bool(v)))
 _CAP_ZORDER = (lambda a: float(a.get_zorder()), lambda a, v: a.set_zorder(float(v)))
 _CAP_LABEL = (lambda a: str(a.get_label()), lambda a, v: a.set_label(str(v)))
-_CAP_HATCH = (lambda a: a.get_hatch(),
-              lambda a, v: a.set_hatch(None if v in (None, "", "none") else str(v)))
+_CAP_HATCH = (
+    lambda a: a.get_hatch(),
+    lambda a, v: a.set_hatch(None if v in (None, "", "none") else str(v)),
+)
 #: 颜色映射（ScalarMappable / ColorizingArtist）：Collection 与 AxesImage 共享。
 #: 原生值存 Colormap 对象本身，`set_cmap` 两种都吃。
 _CAP_CMAP = (lambda a: a.get_cmap(), lambda a, v: a.set_cmap(v))
-_CAP_VMIN = (lambda a: a.get_clim()[0],
-             lambda a, v: a.set_clim(vmin=(None if v is None else float(v))))
-_CAP_VMAX = (lambda a: a.get_clim()[1],
-             lambda a, v: a.set_clim(vmax=(None if v is None else float(v))))
+_CAP_VMIN = (
+    lambda a: a.get_clim()[0],
+    lambda a, v: a.set_clim(vmin=(None if v is None else float(v))),
+)
+_CAP_VMAX = (
+    lambda a: a.get_clim()[1],
+    lambda a, v: a.set_clim(vmax=(None if v is None else float(v))),
+)
 
 #: 花纹的可选项。`""` = 不用花纹（黑白印刷时区分同色区块的标准手段）。
-HATCHES = ["", "/", "\\", "|", "-", "+", "x", "o", "O", ".", "*",
-           "//", "\\\\", "xx", "..", "++"]
+HATCHES = ["", "/", "\\", "|", "-", "+", "x", "o", "O", ".", "*", "//", "\\\\", "xx", "..", "++"]
 
 #: Collection family（PathCollection / PolyCollection / LineCollection /
 #: QuadMesh / ContourSet / EventCollection / Quiver …）。颜色与线宽都是
@@ -2634,7 +2763,7 @@ def color_mapping_is_live(artist) -> bool:
         return getattr(arr, "ndim", 0) == 2
     orig_fc = getattr(artist, "_original_facecolor", None)
     if not _is_none_color(orig_fc):
-        return True          # 面在映射（facecolor 没被写死成 'none'）
+        return True  # 面在映射（facecolor 没被写死成 'none'）
     return getattr(artist, "_original_edgecolor", None) is None
 
 
@@ -2865,7 +2994,7 @@ def _gradient_decompose(a: np.ndarray):
         rgb = rgb / 255.0
     flat = rgb.reshape(-1, 3)
     dist = ((1.0 - flat) ** 2).sum(axis=1)
-    if float(dist.max()) < 1e-3:   # 全白：没有可辨识的基色
+    if float(dist.max()) < 1e-3:  # 全白：没有可辨识的基色
         return None
     base = flat[int(np.argmax(dist))]
     ok = np.abs(1.0 - base) > 1e-3  # 基色为 1 的通道恒等于 1，解不出 s
@@ -2875,7 +3004,7 @@ def _gradient_decompose(a: np.ndarray):
     if s.shape[1] > 1:
         spread = s.max(axis=1) - s.min(axis=1)
         if float(np.mean(spread > 0.04)) > 0.02:
-            return None            # 通道间不一致 → 不是单色渐变
+            return None  # 通道间不一致 → 不是单色渐变
     sm = s.mean(axis=1)
     if float(sm.min()) < -0.04 or float(sm.max()) > 1.04:
         return None
@@ -2891,7 +3020,7 @@ def gradient_base_hex(im) -> str | None:
     a = np.asarray(im.get_array())
     if a.ndim != 3:
         return None
-    sub = a[::max(1, a.shape[0] // 64), ::max(1, a.shape[1] // 64)]
+    sub = a[:: max(1, a.shape[0] // 64), :: max(1, a.shape[1] // 64)]
     if _gradient_decompose(np.asarray(sub)) is None:
         return None
     dec = _gradient_decompose(a)
@@ -2930,67 +3059,81 @@ def _restore_image_gradient(im, orig) -> None:
 
 
 HANDLERS: dict[tuple[str, str], tuple] = {
-    ("text", "text"):     (lambda a: a.get_text(),          lambda a, v: a.set_text(str(v))),
-    ("text", "fontsize"): (lambda a: a.get_fontsize(),      lambda a, v: a.set_fontsize(float(v))),
-    ("text", "color"):    (lambda a: a.get_color(),         lambda a, v: a.set_color(v)),
-    ("text", "weight"):   (lambda a: a.get_fontweight(),    lambda a, v: a.set_fontweight(v)),
-    ("text", "style"):    (lambda a: a.get_fontstyle(),     lambda a, v: a.set_fontstyle(v)),
-    ("text", "rotation"): (lambda a: a.get_rotation(),      lambda a, v: a.set_rotation(float(v))),
-    ("text", "visible"):  (lambda a: a.get_visible(),       lambda a, v: a.set_visible(bool(v))),
-    ("text", "pos_frac"): (_get_text_pos,                   _set_text_pos_frac),
-    ("text", "alpha"):    (lambda a: a.get_alpha(),
-                           lambda a, v: a.set_alpha(None if v is None else float(v))),
-    ("text", "fontfamily"): (_get_text_fontfamily,          _set_text_fontfamily),
-    ("text", "ha"):       (lambda a: a.get_ha(),            lambda a, v: a.set_ha(v)),
-    ("text", "va"):       (lambda a: a.get_va(),            lambda a, v: a.set_va(v)),
+    ("text", "text"): (lambda a: a.get_text(), lambda a, v: a.set_text(str(v))),
+    ("text", "fontsize"): (lambda a: a.get_fontsize(), lambda a, v: a.set_fontsize(float(v))),
+    ("text", "color"): (lambda a: a.get_color(), lambda a, v: a.set_color(v)),
+    ("text", "weight"): (lambda a: a.get_fontweight(), lambda a, v: a.set_fontweight(v)),
+    ("text", "style"): (lambda a: a.get_fontstyle(), lambda a, v: a.set_fontstyle(v)),
+    ("text", "rotation"): (lambda a: a.get_rotation(), lambda a, v: a.set_rotation(float(v))),
+    ("text", "visible"): (lambda a: a.get_visible(), lambda a, v: a.set_visible(bool(v))),
+    ("text", "pos_frac"): (_get_text_pos, _set_text_pos_frac),
+    ("text", "alpha"): (
+        lambda a: a.get_alpha(),
+        lambda a, v: a.set_alpha(None if v is None else float(v)),
+    ),
+    ("text", "fontfamily"): (_get_text_fontfamily, _set_text_fontfamily),
+    ("text", "ha"): (lambda a: a.get_ha(), lambda a, v: a.set_ha(v)),
+    ("text", "va"): (lambda a: a.get_va(), lambda a, v: a.set_va(v)),
     # getter 回**可回灌**的原样（可能是 `'normal'`），不是显示用的 1.2
     ("text", "linespacing"): (_get_text_linespacing, _set_text_linespacing),
     # 仅 3D 轴标签（manifest 打了 _mm_axis 标记）：沿投影轴推远/拉近
-    ("text", "labelpad"): (lambda a: float(a._mm_axis.labelpad),
-                           lambda a, v: setattr(a._mm_axis, "labelpad", float(v))),
-    ("text", "zorder"):   (lambda a: float(a.get_zorder()), lambda a, v: a.set_zorder(float(v))),
-
+    ("text", "labelpad"): (
+        lambda a: float(a._mm_axis.labelpad),
+        lambda a, v: setattr(a._mm_axis, "labelpad", float(v)),
+    ),
+    ("text", "zorder"): (lambda a: float(a.get_zorder()), lambda a, v: a.set_zorder(float(v))),
     # 背景框那一族的注册在下面（`_BBOX_PROPS`）——它们共用一个 patch，
     # 还原要能把「本来就没有框」整个还回去，所以 handler 与 restore 成对登记。
-
-    ("text", "stroke_enabled"): (lambda a: bool(_stroke_state(a)["enabled"]),
-                                 lambda a, v: _stroke_set(a, "enabled", bool(v))),
-    ("text", "stroke_color"):   (lambda a: _stroke_state(a)["color"],
-                                 lambda a, v: _stroke_set(a, "color", v)),
-    ("text", "stroke_width"):   (lambda a: float(_stroke_state(a)["width"]),
-                                 lambda a, v: _stroke_set(a, "width", float(v))),
-
+    ("text", "stroke_enabled"): (
+        lambda a: bool(_stroke_state(a)["enabled"]),
+        lambda a, v: _stroke_set(a, "enabled", bool(v)),
+    ),
+    ("text", "stroke_color"): (
+        lambda a: _stroke_state(a)["color"],
+        lambda a, v: _stroke_set(a, "color", v),
+    ),
+    ("text", "stroke_width"): (
+        lambda a: float(_stroke_state(a)["width"]),
+        lambda a, v: _stroke_set(a, "width", float(v)),
+    ),
     # 图内独立箭头（FancyArrowPatch：脚本 add_patch 的与 annotate 的 arrow_patch
     # 同一个类）。set_color 同时写 edge+face——"-|>" 这类实心帽两者必须一致，
     # 分开暴露只会做出「帽黑杆红」的半成品
     ("arrowpatch", "color"): (lambda a: a.get_edgecolor(), lambda a, v: a.set_color(v)),
-    ("arrowpatch", "linewidth"): (lambda a: a.get_linewidth(),
-                                  lambda a, v: a.set_linewidth(float(v))),
-    ("arrowpatch", "mutation_scale"): (lambda a: a.get_mutation_scale(),
-                                       lambda a, v: a.set_mutation_scale(float(v))),
-    ("arrowpatch", "alpha"): (lambda a: a.get_alpha(),
-                              lambda a, v: a.set_alpha(None if v is None else float(v))),
-    ("arrowpatch", "visible"): (lambda a: a.get_visible(),
-                                lambda a, v: a.set_visible(bool(v))),
-    ("arrowpatch", "zorder"): (lambda a: float(a.get_zorder()),
-                               lambda a, v: a.set_zorder(float(v))),
+    ("arrowpatch", "linewidth"): (
+        lambda a: a.get_linewidth(),
+        lambda a, v: a.set_linewidth(float(v)),
+    ),
+    ("arrowpatch", "mutation_scale"): (
+        lambda a: a.get_mutation_scale(),
+        lambda a, v: a.set_mutation_scale(float(v)),
+    ),
+    ("arrowpatch", "alpha"): (
+        lambda a: a.get_alpha(),
+        lambda a, v: a.set_alpha(None if v is None else float(v)),
+    ),
+    ("arrowpatch", "visible"): (lambda a: a.get_visible(), lambda a, v: a.set_visible(bool(v))),
+    ("arrowpatch", "zorder"): (
+        lambda a: float(a.get_zorder()),
+        lambda a, v: a.set_zorder(float(v)),
+    ),
     # 端点与样式：位置只对独立箭头开放（manifest 侧把关），样式两类都能改。
     # 原生值分别是 transform 坐标的端点对 / ArrowStyle 对象 / linestyle 原值，
     # 恢复走 _RESTORE 里的专用函数
     ("arrowpatch", "endpoints_frac"): (_get_arrow_endpoints, _set_arrow_endpoints),
     ("arrowpatch", "arrowstyle"): (lambda a: a.get_arrowstyle(), _set_arrowstyle),
-    ("arrowpatch", "linestyle"): (lambda a: a.get_linestyle(),
-                                  lambda a, v: a.set_linestyle(str(v))),
-
-    ("line", "color"):     (lambda a: a.get_color(),      lambda a, v: a.set_color(v)),
-    ("line", "linewidth"): (lambda a: a.get_linewidth(),  lambda a, v: a.set_linewidth(float(v))),
-    ("line", "linestyle"): (lambda a: a.get_linestyle(),  lambda a, v: a.set_linestyle(v)),
-    ("line", "marker"):    (lambda a: a.get_marker(),     lambda a, v: a.set_marker(v)),
-    ("line", "markersize"):(lambda a: a.get_markersize(), lambda a, v: a.set_markersize(float(v))),
-    ("line", "visible"):   (lambda a: a.get_visible(),    lambda a, v: a.set_visible(bool(v))),
-
-    ("legend", "visible"):  (lambda a: a.get_visible(), lambda a, v: a.set_visible(bool(v))),
-    ("legend", "frameon"):  (lambda a: a.get_frame_on(), lambda a, v: a.set_frame_on(bool(v))),
+    ("arrowpatch", "linestyle"): (
+        lambda a: a.get_linestyle(),
+        lambda a, v: a.set_linestyle(str(v)),
+    ),
+    ("line", "color"): (lambda a: a.get_color(), lambda a, v: a.set_color(v)),
+    ("line", "linewidth"): (lambda a: a.get_linewidth(), lambda a, v: a.set_linewidth(float(v))),
+    ("line", "linestyle"): (lambda a: a.get_linestyle(), lambda a, v: a.set_linestyle(v)),
+    ("line", "marker"): (lambda a: a.get_marker(), lambda a, v: a.set_marker(v)),
+    ("line", "markersize"): (lambda a: a.get_markersize(), lambda a, v: a.set_markersize(float(v))),
+    ("line", "visible"): (lambda a: a.get_visible(), lambda a, v: a.set_visible(bool(v))),
+    ("legend", "visible"): (lambda a: a.get_visible(), lambda a, v: a.set_visible(bool(v))),
+    ("legend", "frameon"): (lambda a: a.get_frame_on(), lambda a, v: a.set_frame_on(bool(v))),
     # getter 回**一条一个**的列表（脚本可以把某一条设成别的字号，撤销时要能
     # 逐条还原回去），所以 setter 必须同时吃标量与序列——**restore 走的正是
     # `setter(artist, originals[key])`**，两边形状不一致的话「改了图例字号
@@ -3002,29 +3145,27 @@ HANDLERS: dict[tuple[str, str], tuple] = {
         lambda a, v: _set_legend_fontsize(a, v),
     ),
     ("legend", "loc_frac"): (_get_legend_loc, _set_legend_loc_frac),
-
     # 坐标范围的 getter 回**可回灌**的表示：脚本没有显式设过范围时，那个
     # 「原样」不是一对数字，而是「自动缩放」这个**模式**。见 `_get_axes_lim`。
-    ("axes", "xlim"):     (_get_axes_lim("x"), _set_axes_lim("x")),
-    ("axes", "ylim"):     (_get_axes_lim("y"), _set_axes_lim("y")),
+    ("axes", "xlim"): (_get_axes_lim("x"), _set_axes_lim("x")),
+    ("axes", "ylim"): (_get_axes_lim("y"), _set_axes_lim("y")),
     ("axes", "position"): (
         lambda a: list(a.get_position().bounds),
         lambda a, v: a.set_position([float(x) for x in v]),
     ),
-    ("axes", "visible"):  (lambda a: a.get_visible(), lambda a, v: a.set_visible(bool(v))),
-
+    ("axes", "visible"): (lambda a: a.get_visible(), lambda a, v: a.set_visible(bool(v))),
     ("image", "visible"): (lambda a: a.get_visible(), lambda a, v: a.set_visible(bool(v))),
     # 原生值 = 整个像素数组（恢复走 set_data，见 _restore_image_gradient）
-    ("image", "gradient_color"): (lambda a: np.array(a.get_array(), copy=True),
-                                  _set_image_gradient),
-
+    ("image", "gradient_color"): (
+        lambda a: np.array(a.get_array(), copy=True),
+        _set_image_gradient,
+    ),
     # 单条刻度文字：冻结整条轴（FixedLocator + FixedFormatter）才留得住，
     # 生命周期与索引身份见 TickLabel 的类注释
     ("ticklabel", "text"): (
         lambda a: a.get_text(),
         _set_ticklabel_text,
     ),
-
     ("ticks", "fontsize"): (
         lambda a: float(a._first(lambda t: t.get_fontsize(), 8.5)),
         lambda a, v: a.tick_params(labelsize=float(v)),
@@ -3040,18 +3181,21 @@ HANDLERS: dict[tuple[str, str], tuple] = {
     ("ticks", "visible"): (
         lambda a: bool(a._first(lambda t: t.get_visible(), True)),
         lambda a, v: a.tick_params(
-            **({"labelbottom": bool(v)} if a.which == "x" else {"labelleft": bool(v)})),
+            **({"labelbottom": bool(v)} if a.which == "x" else {"labelleft": bool(v)})
+        ),
     ),
-
     ("figure", "size_mm"): (
         lambda f: [x * 25.4 for x in f.get_size_inches()],
         lambda f, v: f.set_size_inches(float(v[0]) / 25.4, float(v[1]) / 25.4, forward=False),
     ),
-    ("figure", "facecolor"): (lambda f: f.patch.get_facecolor(),
-                              lambda f, v: f.patch.set_facecolor(v)),
-    ("figure", "transparent"): (lambda f: not f.patch.get_visible(),
-                                lambda f, v: f.patch.set_visible(not bool(v))),
-
+    ("figure", "facecolor"): (
+        lambda f: f.patch.get_facecolor(),
+        lambda f, v: f.patch.set_facecolor(v),
+    ),
+    ("figure", "transparent"): (
+        lambda f: not f.patch.get_visible(),
+        lambda f, v: f.patch.set_visible(not bool(v)),
+    ),
     # ---- axes: 比例 / 反转 / 缩放 / 网格 / spine / 底色 ----
     ("axes", "xscale"): (lambda a: a.get_xscale(), _mk_set_scale("x")),
     ("axes", "yscale"): (lambda a: a.get_yscale(), _mk_set_scale("y")),
@@ -3059,45 +3203,61 @@ HANDLERS: dict[tuple[str, str], tuple] = {
     ("axes", "invert_y"): (lambda a: bool(a.yaxis_inverted()), _mk_set_invert("y")),
     ("axes", "aspect"): (lambda a: a.get_aspect(), _set_aspect),
     ("axes", "spine_top_color"): _mk_spine_handler(
-        "top_color", lambda a, _s="top": spine_side_color(a, _s)),
+        "top_color", lambda a, _s="top": spine_side_color(a, _s)
+    ),
     ("axes", "spine_top_linewidth"): _mk_spine_handler(
-        "top_width", lambda a, _s="top": spine_side_width(a, _s)),
+        "top_width", lambda a, _s="top": spine_side_width(a, _s)
+    ),
     ("axes", "spine_right_color"): _mk_spine_handler(
-        "right_color", lambda a, _s="right": spine_side_color(a, _s)),
+        "right_color", lambda a, _s="right": spine_side_color(a, _s)
+    ),
     ("axes", "spine_right_linewidth"): _mk_spine_handler(
-        "right_width", lambda a, _s="right": spine_side_width(a, _s)),
+        "right_width", lambda a, _s="right": spine_side_width(a, _s)
+    ),
     ("axes", "spine_bottom_color"): _mk_spine_handler(
-        "bottom_color", lambda a, _s="bottom": spine_side_color(a, _s)),
+        "bottom_color", lambda a, _s="bottom": spine_side_color(a, _s)
+    ),
     ("axes", "spine_bottom_linewidth"): _mk_spine_handler(
-        "bottom_width", lambda a, _s="bottom": spine_side_width(a, _s)),
+        "bottom_width", lambda a, _s="bottom": spine_side_width(a, _s)
+    ),
     ("axes", "spine_left_color"): _mk_spine_handler(
-        "left_color", lambda a, _s="left": spine_side_color(a, _s)),
+        "left_color", lambda a, _s="left": spine_side_color(a, _s)
+    ),
     ("axes", "spine_left_linewidth"): _mk_spine_handler(
-        "left_width", lambda a, _s="left": spine_side_width(a, _s)),
+        "left_width", lambda a, _s="left": spine_side_width(a, _s)
+    ),
     ("axes", "facecolor"): (lambda a: a.get_facecolor(), lambda a, v: a.set_facecolor(v)),
-    ("axes", "grid_x"): (lambda a: _grid_visible(a, "x"),
-                         lambda a, v: a.grid(visible=bool(v), axis="x")),
-    ("axes", "grid_y"): (lambda a: _grid_visible(a, "y"),
-                         lambda a, v: a.grid(visible=bool(v), axis="y")),
+    ("axes", "grid_x"): (
+        lambda a: _grid_visible(a, "x"),
+        lambda a, v: a.grid(visible=bool(v), axis="x"),
+    ),
+    ("axes", "grid_y"): (
+        lambda a: _grid_visible(a, "y"),
+        lambda a, v: a.grid(visible=bool(v), axis="y"),
+    ),
     ("axes", "grid_color"): (
         _grid_prop(lambda g: g.get_color(), "#b0b0b0"),
-        lambda a, v: a.tick_params(axis="both", which="both", grid_color=v)),
+        lambda a, v: a.tick_params(axis="both", which="both", grid_color=v),
+    ),
     ("axes", "grid_linestyle"): (
         _grid_prop(lambda g: g.get_linestyle(), ":"),
-        lambda a, v: a.tick_params(axis="both", which="both", grid_linestyle=str(v))),
+        lambda a, v: a.tick_params(axis="both", which="both", grid_linestyle=str(v)),
+    ),
     ("axes", "grid_linewidth"): (
         _grid_prop(lambda g: float(g.get_linewidth()), 0.5),
-        lambda a, v: a.tick_params(axis="both", which="both", grid_linewidth=float(v))),
+        lambda a, v: a.tick_params(axis="both", which="both", grid_linewidth=float(v)),
+    ),
     ("axes", "grid_alpha"): (
         _grid_prop(lambda g: g.get_alpha(), None),
-        lambda a, v: a.tick_params(axis="both", which="both",
-                                   grid_alpha=(None if v is None else float(v)))),
+        lambda a, v: a.tick_params(
+            axis="both", which="both", grid_alpha=(None if v is None else float(v))
+        ),
+    ),
     # ---- axes: 刻度线四边开关（issue #92）----
     ("axes", "ticks_bottom"): _mk_tick_side("x", "bottom", 1),
-    ("axes", "ticks_top"):    _mk_tick_side("x", "top", 2),
-    ("axes", "ticks_left"):   _mk_tick_side("y", "left", 1),
-    ("axes", "ticks_right"):  _mk_tick_side("y", "right", 2),
-
+    ("axes", "ticks_top"): _mk_tick_side("x", "top", 2),
+    ("axes", "ticks_left"): _mk_tick_side("y", "left", 1),
+    ("axes", "ticks_right"): _mk_tick_side("y", "right", 2),
     ("axes", "spine_top"): (_mk_spine_get("top"), _mk_spine_set("top")),
     ("axes", "spine_right"): (_mk_spine_get("right"), _mk_spine_set("right")),
     ("axes", "spine_bottom"): (_mk_spine_get("bottom"), _mk_spine_set("bottom")),
@@ -3106,55 +3266,66 @@ HANDLERS: dict[tuple[str, str], tuple] = {
     # 应用顺序不影响结果（见上方 apply_spine_model 的注释）
     ("axes", "spine_color"): _mk_spine_handler("all_color", spine_all_color),
     ("axes", "spine_linewidth"): _mk_spine_handler("all_width", spine_all_width),
-
     # ---- axes3d: 视角 / 网格（manifest 只对 3D 轴放出这些字段）----
     ("axes", "elev"): (_view3d_get("elev"), _view3d_set("elev")),
     ("axes", "azim"): (_view3d_get("azim"), _view3d_set("azim")),
     ("axes", "roll"): (_view3d_get("roll"), _view3d_set("roll")),
-    ("axes", "grid_visible"): (lambda a: bool(getattr(a, "_draw_grid", True)),
-                               lambda a, v: a.grid(bool(v))),
-    ("axes", "proj_type"): (lambda a: str(getattr(a, "_proj_type", "persp")),
-                            lambda a, v: a.set_proj_type(str(v))),
-
+    ("axes", "grid_visible"): (
+        lambda a: bool(getattr(a, "_draw_grid", True)),
+        lambda a, v: a.grid(bool(v)),
+    ),
+    ("axes", "proj_type"): (
+        lambda a: str(getattr(a, "_proj_type", "persp")),
+        lambda a, v: a.set_proj_type(str(v)),
+    ),
     # ---- axes3d: 轴箭头（隐藏原生轴线，按当前投影的盒边画带箭头的轴）----
     ("axes", "axis_arrows"): (_axis_arrows_on, _set_axis_arrows),
-    ("axes", "arrow_color"): _mk_arrow_style_handler(
-        "color", lambda p, v: p.set_color(v)),
+    ("axes", "arrow_color"): _mk_arrow_style_handler("color", lambda p, v: p.set_color(v)),
     ("axes", "arrow_width"): _mk_arrow_style_handler(
-        "width", lambda p, v: p.set_linewidth(float(v))),
+        "width", lambda p, v: p.set_linewidth(float(v))
+    ),
     ("axes", "arrow_head"): _mk_arrow_style_handler(
-        "head", lambda p, v: p.set_mutation_scale(float(v))),
-
+        "head", lambda p, v: p.set_mutation_scale(float(v))
+    ),
     # ---- image: 颜色映射 / 显示 ----
     ("image", "cmap"): (lambda a: a.get_cmap(), lambda a, v: a.set_cmap(v)),
-    ("image", "vmin"): (lambda a: a.get_clim()[0],
-                        lambda a, v: a.set_clim(vmin=(None if v is None else float(v)))),
-    ("image", "vmax"): (lambda a: a.get_clim()[1],
-                        lambda a, v: a.set_clim(vmax=(None if v is None else float(v)))),
-    ("image", "interpolation"): (lambda a: a.get_interpolation(),
-                                 lambda a, v: a.set_interpolation(str(v))),
-    ("image", "alpha"): (lambda a: a.get_alpha(),
-                         lambda a, v: a.set_alpha(None if v is None else float(v))),
+    ("image", "vmin"): (
+        lambda a: a.get_clim()[0],
+        lambda a, v: a.set_clim(vmin=(None if v is None else float(v))),
+    ),
+    ("image", "vmax"): (
+        lambda a: a.get_clim()[1],
+        lambda a, v: a.set_clim(vmax=(None if v is None else float(v))),
+    ),
+    ("image", "interpolation"): (
+        lambda a: a.get_interpolation(),
+        lambda a, v: a.set_interpolation(str(v)),
+    ),
+    ("image", "alpha"): (
+        lambda a: a.get_alpha(),
+        lambda a, v: a.set_alpha(None if v is None else float(v)),
+    ),
     ("image", "origin"): (lambda a: a.origin, _set_image_origin),
     ("image", "zorder"): (lambda a: float(a.get_zorder()), lambda a, v: a.set_zorder(float(v))),
-
     # ---- line: 标签 / 透明度 / 层级 / marker 颜色 ----
     ("line", "label"): (lambda a: str(a.get_label()), lambda a, v: a.set_label(str(v))),
-    ("line", "alpha"): (lambda a: a.get_alpha(),
-                        lambda a, v: a.set_alpha(None if v is None else float(v))),
+    ("line", "alpha"): (
+        lambda a: a.get_alpha(),
+        lambda a, v: a.set_alpha(None if v is None else float(v)),
+    ),
     ("line", "zorder"): (lambda a: float(a.get_zorder()), lambda a, v: a.set_zorder(float(v))),
     # marker 的两个颜色：getter 回**原始设定**（可能是 `'auto'`），不是
     # `get_marker*color()` 解析出来的那个具体色，见 `_get_marker_color`。
-    ("line", "markerfacecolor"): (_get_marker_color("_markerfacecolor",
-                                                    "get_markerfacecolor"),
-                                  lambda a, v: a.set_markerfacecolor(v)),
-    ("line", "markeredgecolor"): (_get_marker_color("_markeredgecolor",
-                                                    "get_markeredgecolor"),
-                                  lambda a, v: a.set_markeredgecolor(v)),
-
+    ("line", "markerfacecolor"): (
+        _get_marker_color("_markerfacecolor", "get_markerfacecolor"),
+        lambda a, v: a.set_markerfacecolor(v),
+    ),
+    ("line", "markeredgecolor"): (
+        _get_marker_color("_markeredgecolor", "get_markeredgecolor"),
+        lambda a, v: a.set_markeredgecolor(v),
+    ),
     # ---- collection / patch / bar 的通用属性走能力层（见 _install_caps 那一节）；
     # 这里只留族里的**专用**契约 ----
-
     # ---- 线组 LineCollection（hlines/vlines、stem、eventplot、streamplot）----
     # 它**不**走能力层：对外那套 prop 名（`color` 而不是 edgecolor）是已经
     # 发出去的契约，与 Collection 族并不同名。
@@ -3170,50 +3341,59 @@ HANDLERS: dict[tuple[str, str], tuple] = {
     # 实现细节、不是它承诺的契约（那个数组 `flags.writeable` 是 True），而
     # `originals` 存错一次的后果是撤销回不到原样。拷一份的代价是几个浮点数。
     # 与 `_COLLECTION_CAPS` 那一族的 `.copy()` 同一个理由。
-    ("linecoll", "color"): (lambda a: a.get_color().copy(),
-                            lambda a, v: a.set_color(v)),
+    ("linecoll", "color"): (lambda a: a.get_color().copy(), lambda a, v: a.set_color(v)),
     ("linecoll", "linewidth"): (lambda a: a.get_linewidths().copy(), _set_collection_lw),
     ("linecoll", "linestyle"): (_get_linecoll_ls, _set_linecoll_ls),
-    ("linecoll", "alpha"): (lambda a: a.get_alpha(),
-                            lambda a, v: a.set_alpha(None if v is None else float(v))),
-    ("linecoll", "zorder"): (lambda a: float(a.get_zorder()),
-                             lambda a, v: a.set_zorder(float(v))),
-    ("linecoll", "visible"): (lambda a: a.get_visible(),
-                              lambda a, v: a.set_visible(bool(v))),
-
+    ("linecoll", "alpha"): (
+        lambda a: a.get_alpha(),
+        lambda a, v: a.set_alpha(None if v is None else float(v)),
+    ),
+    ("linecoll", "zorder"): (lambda a: float(a.get_zorder()), lambda a, v: a.set_zorder(float(v))),
+    ("linecoll", "visible"): (lambda a: a.get_visible(), lambda a, v: a.set_visible(bool(v))),
     # ---- legend: 预设位置 / 标题 / 边框样式 ----
     ("legend", "loc"): (_get_legend_loc, _set_legend_loc_preset),
-    ("legend", "title"): (lambda a: a.get_title().get_text(),
-                          lambda a, v: a.set_title(str(v))),
-    ("legend", "title_fontsize"): (lambda a: float(a.get_title().get_fontsize()),
-                                   lambda a, v: a.get_title().set_fontsize(float(v))),
-    ("legend", "facecolor"): (lambda a: a.get_frame().get_facecolor(),
-                              lambda a, v: a.get_frame().set_facecolor(v)),
-    ("legend", "framealpha"): (lambda a: a.get_frame().get_alpha(),
-                               lambda a, v: a.get_frame().set_alpha(
-                                   None if v is None else float(v))),
-    ("legend", "edgecolor"): (lambda a: a.get_frame().get_edgecolor(),
-                              lambda a, v: a.get_frame().set_edgecolor(v)),
+    ("legend", "title"): (lambda a: a.get_title().get_text(), lambda a, v: a.set_title(str(v))),
+    ("legend", "title_fontsize"): (
+        lambda a: float(a.get_title().get_fontsize()),
+        lambda a, v: a.get_title().set_fontsize(float(v)),
+    ),
+    ("legend", "facecolor"): (
+        lambda a: a.get_frame().get_facecolor(),
+        lambda a, v: a.get_frame().set_facecolor(v),
+    ),
+    ("legend", "framealpha"): (
+        lambda a: a.get_frame().get_alpha(),
+        lambda a, v: a.get_frame().set_alpha(None if v is None else float(v)),
+    ),
+    ("legend", "edgecolor"): (
+        lambda a: a.get_frame().get_edgecolor(),
+        lambda a, v: a.get_frame().set_edgecolor(v),
+    ),
     ("legend", "entry_order"): (_legend_entry_order, _set_legend_entry_order),
     ("legend", "ncol"): (lambda a: int(getattr(a, "_ncols", 1)), _legend_rebuild_setter("ncol")),
     ("legend", "borderpad"): (lambda a: float(a.borderpad), _legend_rebuild_setter("borderpad")),
-    ("legend", "labelspacing"): (lambda a: float(a.labelspacing),
-                                 _legend_rebuild_setter("labelspacing")),
-    ("legend", "handlelength"): (lambda a: float(a.handlelength),
-                                 _legend_rebuild_setter("handlelength")),
-
+    ("legend", "labelspacing"): (
+        lambda a: float(a.labelspacing),
+        _legend_rebuild_setter("labelspacing"),
+    ),
+    ("legend", "handlelength"): (
+        lambda a: float(a.handlelength),
+        _legend_rebuild_setter("handlelength"),
+    ),
     # ---- ticks: 方向 / 长度 / 线宽 / 数字格式 ----
     ("ticks", "direction"): (
         lambda a: str(getattr(_tick0(a), "_tickdir", "out")),
-        lambda a, v: a.tick_params(direction=str(v))),
+        lambda a, v: a.tick_params(direction=str(v)),
+    ),
     ("ticks", "length"): (
         lambda a: float(getattr(_tick0(a), "_size", 3.5)),
-        lambda a, v: a.tick_params(length=float(v))),
+        lambda a, v: a.tick_params(length=float(v)),
+    ),
     # 刻度是 marker：线宽在 markeredgewidth 上，get_linewidth 是错误口径
     ("ticks", "width"): (
         lambda a: float(_tick0(a).tick1line.get_markeredgewidth()) if _tick0(a) else 0.8,
-        _set_tick_width),
-
+        _set_tick_width,
+    ),
     # ---- ticks: 刻度定位模型（Locator / Formatter）----
     ("ticks", "major_mode"): _mk_tick_model_handler("major_mode", str),
     ("ticks", "major_step"): _mk_tick_model_handler("major_step", float),
@@ -3223,35 +3403,46 @@ HANDLERS: dict[tuple[str, str], tuple] = {
     ("ticks", "minor_step"): _mk_tick_model_handler("minor_step", float),
     ("ticks", "format"): _mk_tick_model_handler("format", str),
     ("ticks", "minor_format"): _mk_tick_model_handler("minor_format", str),
-
     # ---- colorbar（ColorbarProxy 伪元素）----
-    ("colorbar", "label"): (lambda p: _cb_axis(p).label.get_text(),
-                            lambda p, v: p.cb.set_label(str(v))),
-    ("colorbar", "cmap"): (lambda p: p.cb.mappable.get_cmap(),
-                           lambda p, v: p.cb.mappable.set_cmap(v)),
-    ("colorbar", "vmin"): (lambda p: p.cb.mappable.get_clim()[0],
-                           lambda p, v: p.cb.mappable.set_clim(
-                               vmin=(None if v is None else float(v)))),
-    ("colorbar", "vmax"): (lambda p: p.cb.mappable.get_clim()[1],
-                           lambda p, v: p.cb.mappable.set_clim(
-                               vmax=(None if v is None else float(v)))),
-    ("colorbar", "tick_fontsize"): (_cb_tick_fontsize,
-                                    lambda p, v: p.cb.ax.tick_params(labelsize=float(v))),
-    ("colorbar", "tick_color"): (_cb_tick_color,
-                                 lambda p, v: p.cb.ax.tick_params(labelcolor=v)),
-    ("colorbar", "outline_visible"): (lambda p: bool(p.cb.outline.get_visible()),
-                                      lambda p, v: p.cb.outline.set_visible(bool(v))),
-    ("colorbar", "outline_width"): (lambda p: float(p.cb.outline.get_linewidth()),
-                                    lambda p, v: p.cb.outline.set_linewidth(float(v))),
-    ("colorbar", "visible"): (lambda p: p.cb.ax.get_visible(),
-                              lambda p, v: p.cb.ax.set_visible(bool(v))),
+    ("colorbar", "label"): (
+        lambda p: _cb_axis(p).label.get_text(),
+        lambda p, v: p.cb.set_label(str(v)),
+    ),
+    ("colorbar", "cmap"): (
+        lambda p: p.cb.mappable.get_cmap(),
+        lambda p, v: p.cb.mappable.set_cmap(v),
+    ),
+    ("colorbar", "vmin"): (
+        lambda p: p.cb.mappable.get_clim()[0],
+        lambda p, v: p.cb.mappable.set_clim(vmin=(None if v is None else float(v))),
+    ),
+    ("colorbar", "vmax"): (
+        lambda p: p.cb.mappable.get_clim()[1],
+        lambda p, v: p.cb.mappable.set_clim(vmax=(None if v is None else float(v))),
+    ),
+    ("colorbar", "tick_fontsize"): (
+        _cb_tick_fontsize,
+        lambda p, v: p.cb.ax.tick_params(labelsize=float(v)),
+    ),
+    ("colorbar", "tick_color"): (_cb_tick_color, lambda p, v: p.cb.ax.tick_params(labelcolor=v)),
+    ("colorbar", "outline_visible"): (
+        lambda p: bool(p.cb.outline.get_visible()),
+        lambda p, v: p.cb.outline.set_visible(bool(v)),
+    ),
+    ("colorbar", "outline_width"): (
+        lambda p: float(p.cb.outline.get_linewidth()),
+        lambda p, v: p.cb.outline.set_linewidth(float(v)),
+    ),
+    ("colorbar", "visible"): (
+        lambda p: p.cb.ax.get_visible(),
+        lambda p, v: p.cb.ax.set_visible(bool(v)),
+    ),
     # 方向：就地结构改造（见上方 `_cb_reorient`），不是普通 setter。
     # 原生值是一整份快照，撤销走 _RESTORE 里的专用函数
     ("colorbar", "orientation"): (_cb_orientation_snapshot, _set_cb_orientation),
     # 两端的延伸三角。同样是结构改造：改 extend 必须连 `_inside` 一起改，
     # 否则 `_draw_all()` 会拿错长度的边界去配颜色（见 _CB_INSIDE）
-    ("colorbar", "extend"): (lambda p: str(getattr(p.cb, "extend", "neither")),
-                             _set_cb_extend),
+    ("colorbar", "extend"): (lambda p: str(getattr(p.cb, "extend", "neither")), _set_cb_extend),
 }
 
 # 系列伪元素：统一应用、按成员还原（restore 函数暂存，随后并入 _RESTORE）
@@ -3271,22 +3462,42 @@ for _prop, _g1, _s1 in [
     _PENDING_RESTORES[("bar_series", _prop)] = _r
 HANDLERS[("bar_series", "label")] = (
     lambda g: str(g.container.get_label()) if g.container is not None else "",
-    lambda g, v: g.container.set_label(str(v)) if g.container is not None else None)
+    lambda g, v: g.container.set_label(str(v)) if g.container is not None else None,
+)
 
 for _prop, _pair in [
     ("color", _eb_handler(lambda a: a.get_color(), lambda a, v: a.set_color(v))),
-    ("linewidth", _eb_handler(lambda a: a.get_linewidth(), lambda a, v: a.set_linewidth(v),
-                              _eb_linewidth_members)),
-    ("capsize", _eb_handler(lambda a: float(a.get_markersize()),
-                            lambda a, v: a.set_markersize(float(v)), _eb_caps)),
-    ("cap_thickness", _eb_handler(lambda a: float(a.get_markeredgewidth()),
-                                  lambda a, v: a.set_markeredgewidth(float(v)), _eb_caps)),
-    ("alpha", _eb_handler(lambda a: a.get_alpha(),
-                          lambda a, v: a.set_alpha(None if v is None else float(v)))),
+    (
+        "linewidth",
+        _eb_handler(
+            lambda a: a.get_linewidth(), lambda a, v: a.set_linewidth(v), _eb_linewidth_members
+        ),
+    ),
+    (
+        "capsize",
+        _eb_handler(
+            lambda a: float(a.get_markersize()), lambda a, v: a.set_markersize(float(v)), _eb_caps
+        ),
+    ),
+    (
+        "cap_thickness",
+        _eb_handler(
+            lambda a: float(a.get_markeredgewidth()),
+            lambda a, v: a.set_markeredgewidth(float(v)),
+            _eb_caps,
+        ),
+    ),
+    (
+        "alpha",
+        _eb_handler(
+            lambda a: a.get_alpha(), lambda a, v: a.set_alpha(None if v is None else float(v))
+        ),
+    ),
     ("visible", _eb_handler(lambda a: a.get_visible(), lambda a, v: a.set_visible(bool(v)))),
 ]:
     HANDLERS[("errorbar", _prop)] = _pair[0]
     _PENDING_RESTORES[("errorbar", _prop)] = _pair[1]
+
 
 # ---------------------------------------------------------------------------
 # stem 系列（StemContainer）：markerline(Line2D) + stemlines(LineCollection)
@@ -3314,29 +3525,40 @@ def _stem_marker_get(a):
 
 for _prop, _pair in [
     ("color", _eb_handler(lambda a: a.get_color(), lambda a, v: a.set_color(v))),
-    ("linewidth", _eb_handler(lambda a: a.get_linewidth(),
-                              lambda a, v: a.set_linewidth(v), _stem_stems)),
+    (
+        "linewidth",
+        _eb_handler(lambda a: a.get_linewidth(), lambda a, v: a.set_linewidth(v), _stem_stems),
+    ),
     # 茎是 LineCollection，所以线型必须走**未缩放**规格：`get_linestyle()` 回的
     # 是按线宽缩放过的 dash，`set_linestyle()` 会再缩一遍，每撤销一次疏一档
     # （实测 `ax.stem(..., linefmt="--")` 在默认 lw=1.5 下 5.55 → 8.325 → 12.49）。
     # 判据与理由在 `_get_linecoll_ls`——那一族已经修过，这里是同一个坑的第二个入口。
     ("linestyle", _eb_handler(_get_linecoll_ls, _set_linecoll_ls, _stem_stems)),
-    ("marker", _eb_handler(_stem_marker_get,
-                           lambda a, v: a.set_marker(str(v)), _stem_markers)),
-    ("markersize", _eb_handler(lambda a: float(a.get_markersize()),
-                               lambda a, v: a.set_markersize(float(v)), _stem_markers)),
-    ("alpha", _eb_handler(lambda a: a.get_alpha(),
-                          lambda a, v: a.set_alpha(None if v is None else float(v)))),
+    ("marker", _eb_handler(_stem_marker_get, lambda a, v: a.set_marker(str(v)), _stem_markers)),
+    (
+        "markersize",
+        _eb_handler(
+            lambda a: float(a.get_markersize()),
+            lambda a, v: a.set_markersize(float(v)),
+            _stem_markers,
+        ),
+    ),
+    (
+        "alpha",
+        _eb_handler(
+            lambda a: a.get_alpha(), lambda a, v: a.set_alpha(None if v is None else float(v))
+        ),
+    ),
     ("visible", _eb_handler(lambda a: a.get_visible(), lambda a, v: a.set_visible(bool(v)))),
-    ("zorder", _eb_handler(lambda a: float(a.get_zorder()),
-                           lambda a, v: a.set_zorder(float(v)))),
+    ("zorder", _eb_handler(lambda a: float(a.get_zorder()), lambda a, v: a.set_zorder(float(v)))),
 ]:
     HANDLERS[("stem_series", _prop)] = _pair[0]
     _PENDING_RESTORES[("stem_series", _prop)] = _pair[1]
 
 HANDLERS[("stem_series", "label")] = (
     lambda g: str(g.container.get_label()) if g.container is not None else "",
-    lambda g, v: g.container.set_label(str(v)) if g.container is not None else None)
+    lambda g, v: g.container.set_label(str(v)) if g.container is not None else None,
+)
 
 # ---- 能力层落地：一族一份实现，注册给对应的 family key ----
 # `_install_caps` 用 setdefault，所以上面所有**专用**契约（色条的 label、
@@ -3349,12 +3571,17 @@ _install_caps("artist", _GENERIC_CAPS)
 # 3D 轴线 / 背景面板：作用于 x/y/z 三条轴，原值按轴列表还原
 for _prop, _g3, _s3 in [
     ("axline_color", lambda ax: ax.line.get_color(), lambda ax, v: ax.line.set_color(v)),
-    ("axline_width", lambda ax: float(ax.line.get_linewidth()),
-     lambda ax, v: ax.line.set_linewidth(float(v))),
-    ("pane_visible", lambda ax: bool(ax.pane.get_visible()),
-     lambda ax, v: ax.pane.set_visible(bool(v))),
-    ("pane_color", lambda ax: ax.pane.get_facecolor(),
-     lambda ax, v: ax.pane.set_facecolor(v)),
+    (
+        "axline_width",
+        lambda ax: float(ax.line.get_linewidth()),
+        lambda ax, v: ax.line.set_linewidth(float(v)),
+    ),
+    (
+        "pane_visible",
+        lambda ax: bool(ax.pane.get_visible()),
+        lambda ax, v: ax.pane.set_visible(bool(v)),
+    ),
+    ("pane_color", lambda ax: ax.pane.get_facecolor(), lambda ax, v: ax.pane.set_facecolor(v)),
 ]:
     _h3, _r3 = _tri_handler(_g3, _s3)
     HANDLERS[("axes", _prop)] = _h3
@@ -3363,26 +3590,31 @@ for _prop, _g3, _s3 in [
 # 恢复原值时 pos_frac / loc_frac 的原生值需要走原生 setter。
 # 标了 `_needs_state` 的 restore 函数额外收一个 state（与 setter 同一约定）。
 _RESTORE: dict[tuple[str, str], object] = {
-    ("collection", "marker"):  _restore_scatter_marker,
+    ("collection", "marker"): _restore_scatter_marker,
     ("arrowpatch", "endpoints_frac"): _restore_arrow_endpoints,
     ("arrowpatch", "arrowstyle"): lambda a, orig: a.set_arrowstyle(orig),
     ("arrowpatch", "linestyle"): lambda a, orig: a.set_linestyle(orig),
-    ("text", "pos_frac"):   _restore_text_pos,
+    ("text", "pos_frac"): _restore_text_pos,
     ("text", "fontfamily"): _restore_text_fontfamily,
     ("image", "gradient_color"): _restore_image_gradient,
     ("legend", "loc_frac"): _restore_legend_loc,
-    ("legend", "loc"):      _restore_legend_loc,  # loc 预设的原生值同为 (loc, 锚框)
-    ("ticklabel", "text"):  _restore_ticklabel_text,
+    ("legend", "loc"): _restore_legend_loc,  # loc 预设的原生值同为 (loc, 锚框)
+    ("ticklabel", "text"): _restore_ticklabel_text,
     ("colorbar", "orientation"): _restore_cb_orientation,
     ("colorbar", "extend"): _restore_cb_extend,
-    ("figure", "size_mm"):  lambda f, v: f.set_size_inches(v[0] / 25.4, v[1] / 25.4, forward=False),
+    ("figure", "size_mm"): lambda f, v: f.set_size_inches(v[0] / 25.4, v[1] / 25.4, forward=False),
 }
 for _p in _TICK_MODEL_PROPS:
     _RESTORE[("ticks", _p)] = _mk_tick_model_restore(_p)
-for _prop, _key in [("spine_color", "all_color"), ("spine_linewidth", "all_width"),
-                    *[(f"spine_{_s}_{_n}", f"{_s}_{_k}")
-                      for _s in _SPINE_SIDES
-                      for _n, _k in (("color", "color"), ("linewidth", "width"))]]:
+for _prop, _key in [
+    ("spine_color", "all_color"),
+    ("spine_linewidth", "all_width"),
+    *[
+        (f"spine_{_s}_{_n}", f"{_s}_{_k}")
+        for _s in _SPINE_SIDES
+        for _n, _k in (("color", "color"), ("linewidth", "width"))
+    ],
+]:
     _RESTORE[("axes", _prop)] = _mk_spine_restore(_key)
 # ---------------------------------------------------------------------------
 # 背景框（bbox_*）：六条 prop 写的是**同一个 patch**，而那个 patch 可能是被
@@ -3391,17 +3623,16 @@ for _prop, _key in [("spine_color", "all_color"), ("spine_linewidth", "all_width
 # ---------------------------------------------------------------------------
 #: prop → (读, 写)。**默认值不在这儿**，在 `BBOX_DEFAULTS`（唯一出处）。
 _BBOX_PROPS = {
-    "bbox_visible": (lambda p: bool(p.get_visible()),
-                     lambda p, v: p.set_visible(bool(v))),
+    "bbox_visible": (lambda p: bool(p.get_visible()), lambda p, v: p.set_visible(bool(v))),
     "bbox_facecolor": (lambda p: p.get_facecolor(), lambda p, v: p.set_facecolor(v)),
     "bbox_edgecolor": (lambda p: p.get_edgecolor(), lambda p, v: p.set_edgecolor(v)),
-    "bbox_linewidth": (lambda p: float(p.get_linewidth()),
-                       lambda p, v: p.set_linewidth(float(v))),
-    "bbox_alpha": (lambda p: p.get_alpha(),
-                   lambda p, v: p.set_alpha(None if v is None else float(v))),
+    "bbox_linewidth": (lambda p: float(p.get_linewidth()), lambda p, v: p.set_linewidth(float(v))),
+    "bbox_alpha": (
+        lambda p: p.get_alpha(),
+        lambda p, v: p.set_alpha(None if v is None else float(v)),
+    ),
     "bbox_pad": (lambda p: _boxstyle_info(p)[0], lambda p, v: _boxstyle_set(p, pad=v)),
-    "bbox_rounded": (lambda p: _boxstyle_info(p)[1],
-                     lambda p, v: _boxstyle_set(p, rounded=v)),
+    "bbox_rounded": (lambda p: _boxstyle_info(p)[1], lambda p, v: _boxstyle_set(p, rounded=v)),
 }
 for _bp, (_bread, _bwrite) in _BBOX_PROPS.items():
     _bpair, _brestore = _bbox_handler(_bread, _bwrite, BBOX_DEFAULTS[_bp])
@@ -3409,8 +3640,7 @@ for _bp, (_bread, _bwrite) in _BBOX_PROPS.items():
     _RESTORE[("text", _bp)] = _brestore
 # `bbox_visible=False` 不该为了「关」而现建一个 patch（本来就没有框时它是
 # no-op）。其余五条照旧「首次改任何背景属性即出现背景框」。
-HANDLERS[("text", "bbox_visible")] = (
-    HANDLERS[("text", "bbox_visible")][0], _set_bbox_visible)
+HANDLERS[("text", "bbox_visible")] = (HANDLERS[("text", "bbox_visible")][0], _set_bbox_visible)
 
 _RESTORE.update(_PENDING_RESTORES)
 
@@ -3473,10 +3703,11 @@ def _alias_by_artists(pick, narrow_prop: str):
     存在的元素，而症状是撤销时静默少还原一个。身份反查天然只命中真的登记
     过的那些。
     """
+
     def resolve(state: "FigState", rev: dict, artist) -> list[tuple]:
         try:
             members = pick(artist)
-        except Exception:                    # noqa: BLE001 — 结构不符就当没有
+        except Exception:  # noqa: BLE001 — 结构不符就当没有
             return []
         out = []
         for m in members:
@@ -3484,6 +3715,7 @@ def _alias_by_artists(pick, narrow_prop: str):
             if gid is not None:
                 out.append((gid, narrow_prop))
         return out
+
     return resolve
     # 这里**刻意不再筛一遍**「窄端那一族有没有这条 prop」。组里确实会混进解析
     # 不出 handler 的键（`("stem_series","marker")` 的成员含 stemlines，而
@@ -3511,6 +3743,7 @@ def _alias_colorbar_mappable(narrow_prop: str):
     第二条比第一条更要命，也正是广播端「动手之前先把组员的脚本原样采下来」
     那段逻辑存在的理由。
     """
+
     def resolve(state: "FigState", rev: dict, artist) -> list[tuple]:
         m = getattr(getattr(artist, "cb", None), "mappable", None)
         if m is None:
@@ -3533,6 +3766,7 @@ def _alias_colorbar_mappable(narrow_prop: str):
             # 那一段）。分组令牌照样是需要的：没有它连组都不成立。
             return [(f"mappable#{id(m):x}", narrow_prop)]
         return [(gid, narrow_prop)]
+
     return resolve
 
 
@@ -3543,12 +3777,17 @@ def _alias_colorbar_ticks(narrow_prop: str):
     刻度组是伪元素（`TickSet`），不在广播端写的 artist 列表里，只能按结构找
     ——这也是别名解析要做成函数而不是静态映射的原因。
     """
+
     def resolve(state: "FigState", rev: dict, artist) -> list[tuple]:
         cb_ax = getattr(getattr(artist, "cb", None), "ax", None)
         if cb_ax is None:
             return []
-        return [(el["gid"], narrow_prop) for el in state.elements
-                if isinstance(el["artist"], TickSet) and el["artist"].ax is cb_ax]
+        return [
+            (el["gid"], narrow_prop)
+            for el in state.elements
+            if isinstance(el["artist"], TickSet) and el["artist"].ax is cb_ax
+        ]
+
     return resolve
 
 
@@ -3565,9 +3804,11 @@ def _alias_same_element(narrow_prop: str):
     组员是不是同一个 artist，反查表 `rev[id(artist)]` 回的正是它自己的 gid。
     缺的只是这张表里的条目。
     """
+
     def resolve(state: "FigState", rev: dict, artist) -> list[tuple]:
         gid = rev.get(id(artist))
         return [(gid, narrow_prop)] if gid is not None else []
+
     return resolve
 
 
@@ -3584,11 +3825,9 @@ def _alias_same_element(narrow_prop: str):
 #:     管住了（刻度文字永远最后、且每次重放）。
 ALIAS_GROUPS: dict[tuple[str, str], object] = {
     # 图例整体字号 → 每一条图例项的字号
-    ("legend", "fontsize"): _alias_by_artists(
-        lambda leg: list(leg.get_texts()), "fontsize"),
+    ("legend", "fontsize"): _alias_by_artists(lambda leg: list(leg.get_texts()), "fontsize"),
     # 图例标题字号 → 图例标题那个 Text（它不在 get_texts() 里，单独一条）
-    ("legend", "title_fontsize"): _alias_by_artists(
-        lambda leg: [leg.get_title()], "fontsize"),
+    ("legend", "title_fontsize"): _alias_by_artists(lambda leg: [leg.get_title()], "fontsize"),
     # 色条刻度 → 色条轴上的刻度组（tick_params 默认写 x/y 两条）
     ("colorbar", "tick_fontsize"): _alias_colorbar_ticks("fontsize"),
     ("colorbar", "tick_color"): _alias_colorbar_ticks("color"),
@@ -3596,8 +3835,7 @@ ALIAS_GROUPS: dict[tuple[str, str], object] = {
 # 柱形系列的样式 prop → 每一根柱的同名 prop。`bar_width` 与 `label` 不在此列：
 # 前者窄端没有对应 prop（`bar` 不暴露宽度），后者写的是 container 不是柱。
 for _bprop in ("facecolor", "edgecolor", "linewidth", "alpha", "visible"):
-    ALIAS_GROUPS[("bar_series", _bprop)] = _alias_by_artists(
-        lambda g: list(g.artists), _bprop)
+    ALIAS_GROUPS[("bar_series", _bprop)] = _alias_by_artists(lambda g: list(g.artists), _bprop)
 # stem 系列 → 被它消费掉的成员。这里的「窄端」不是界面上的另一个条目，而是
 # 那些成员的**旧 gid 别名**（`manifest._alias_consumed_member`）：容器化之前
 # markerline 是一条普通曲线（`axes_i.lines_k`）、stemlines 是一条线组
@@ -3605,8 +3843,7 @@ for _bprop in ("facecolor", "edgecolor", "linewidth", "alpha", "visible"):
 # 同一个 artist 上。走别名组的机制，撤销任一侧都会让另一侧重放。
 #
 for _sprop in ("color", "alpha", "visible", "zorder", "marker", "markersize"):
-    ALIAS_GROUPS[("stem_series", _sprop)] = _alias_by_artists(
-        lambda g: g.members(), _sprop)
+    ALIAS_GROUPS[("stem_series", _sprop)] = _alias_by_artists(lambda g: g.members(), _sprop)
 # `linewidth` / `linestyle` **也是别名组，但窄端只有茎**：它们经 `_stem_stems`
 # 只写 stemlines，markerline 一个字节都不碰。而茎自己也有旧 gid 别名
 # （`axes_i.linecoll_j`，容器化之前的登记名，见 `manifest._alias_consumed_member`）
@@ -3838,8 +4075,7 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
         # 次序位：组内成员必须排在**它的广播 prop 之后**。同一组 patch 无论
         # 列表序怎么排都得落成同一张图——热会话与全量重放同序是写回自检的
         # 前提。默认 0，不影响任何非别名 prop 的既有相对顺序。
-        return (_apply_rank(prop, state.resolve(gid), gid),
-                1 if (gid, prop) in owner else 0)
+        return (_apply_rank(prop, state.resolve(gid), gid), 1 if (gid, prop) in owner else 0)
 
     drawn_after_geometry = False
     try:
@@ -3856,8 +4092,7 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
             # 几何组应用完、进入其余 prop 之前强制一次布局：aspect="equal" 的
             # 子图只有 draw 才 apply_aspect，不刷新的话 figure 锚定的换算会拿着
             # 旧 transform 落错位置（AFM 方图上尤其明显）
-            if (geometry_moved and not drawn_after_geometry
-                    and not _is_geometry_key(prop, artist)):
+            if geometry_moved and not drawn_after_geometry and not _is_geometry_key(prop, artist):
                 drawn_after_geometry = True
                 try:
                     state.fig.draw_without_rendering()
@@ -3867,10 +4102,12 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
                 # 值没变也要重放：① figure 锚定的位置（几何动过，本地坐标已失效）；
                 # ② 刻度定位与刻度文字（它们按当前状态重算，见 `_must_replay`）；
                 # ③ 别名组里被同组其他成员盖掉的（见 ALIAS_GROUPS / dirty_groups）
-                if not (geometry_moved and prop in _FRAC_ANCHORED) \
-                        and not _must_replay(prop, artist) \
-                        and key not in dirty_groups \
-                        and not dirty_groups.intersection(owner.get(key, ())):
+                if (
+                    not (geometry_moved and prop in _FRAC_ANCHORED)
+                    and not _must_replay(prop, artist)
+                    and key not in dirty_groups
+                    and not dirty_groups.intersection(owner.get(key, ()))
+                ):
                     continue
             elif _is_geometry_key(prop, artist):
                 geometry_moved = True
@@ -3907,21 +4144,18 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
                         # 同一个窄 key 上挂着两个以上同名广播端。
                         if _nk[1] != key[1] or _nk not in state.originals:
                             continue
-                        if any(_b != key and _b[1] == key[1]
-                               for _b in owner.get(_nk, ())):
+                        if any(_b != key and _b[1] == key[1] for _b in owner.get(_nk, ())):
                             _seeded = state.originals[_nk]
                             break
                     if _seeded is _NOTHING:
                         for _nk in _alias_members(key, artist):
                             for _b in owner.get(_nk, ()):
-                                if (_b != key and _b[1] == key[1]
-                                        and _b in state.originals):
+                                if _b != key and _b[1] == key[1] and _b in state.originals:
                                     _seeded = state.originals[_b]
                                     break
                             if _seeded is not _NOTHING:
                                 break
-                    state.originals[key] = (getter(artist) if _seeded is _NOTHING
-                                            else _seeded)
+                    state.originals[key] = getter(artist) if _seeded is _NOTHING else _seeded
                 # 广播型 prop：**在自己动手之前**把组内窄 prop 的「脚本原样」
                 # 一起采下来。等窄 prop 自己被应用时再采就晚了——那时读到的
                 # 已经是被广播改过的值，撤销就回不到原样（这正是本 bug）。
@@ -3932,14 +4166,13 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
                         if nkey in state.originals:
                             continue
                         nart = state.resolve(nkey[0])
-                        nh = (HANDLERS.get((_cls_key(nart), nkey[1]))
-                              if nart is not None else None)
+                        nh = HANDLERS.get((_cls_key(nart), nkey[1])) if nart is not None else None
                         if nh is None:
                             continue
                         try:
                             state.originals[nkey] = nh[0](nart)
                             state.alias_seeded.add(nkey)
-                        except Exception:      # noqa: BLE001 — 采不到就退回旧行为
+                        except Exception:  # noqa: BLE001 — 采不到就退回旧行为
                             pass
                 if getattr(setter, "_needs_state", False):
                     setter(artist, value, state)

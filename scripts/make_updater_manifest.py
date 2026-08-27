@@ -13,6 +13,7 @@
 **这里只搬运，不生成签名**——没有 .sig 的平台直接报错，绝不产出一份「看着
 完整、装到一半发现签名对不上」的清单。
 """
+
 from __future__ import annotations
 
 import argparse
@@ -60,8 +61,15 @@ def collect(root: Path) -> dict[str, tuple[Path, Path]]:
     return found
 
 
-def build_manifest(root: Path, version: str, tag: str, owner: str, repo: str,
-                   notes: str, require: list[str] | None = None) -> dict:
+def build_manifest(
+    root: Path,
+    version: str,
+    tag: str,
+    owner: str,
+    repo: str,
+    notes: str,
+    require: list[str] | None = None,
+) -> dict:
     found = collect(root)
     if not found:
         raise SystemExit("一个更新包都没找到——检查 createUpdaterArtifacts 与私钥配置")
@@ -92,24 +100,22 @@ def build_manifest(root: Path, version: str, tag: str, owner: str, repo: str,
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--artifacts", required=True, type=Path,
-                    help="收集到的产物目录（递归扫描）")
+    ap.add_argument("--artifacts", required=True, type=Path, help="收集到的产物目录（递归扫描）")
     ap.add_argument("--tag", required=True, help="Release tag，如 v0.6.1")
     ap.add_argument("--owner", default="Tavotto")
     ap.add_argument("--repo", default="tavotto")
     ap.add_argument("--notes", default="", help="更新说明（原样写进清单）")
-    ap.add_argument("--require", default="",
-                    help="必须齐全的平台（逗号分隔），缺一个即失败")
+    ap.add_argument("--require", default="", help="必须齐全的平台（逗号分隔），缺一个即失败")
     ap.add_argument("--out", required=True, type=Path)
     args = ap.parse_args(argv)
 
     version = args.tag[1:] if args.tag.startswith("v") else args.tag
     require = [k.strip() for k in args.require.split(",") if k.strip()]
-    manifest = build_manifest(args.artifacts, version, args.tag,
-                              args.owner, args.repo, args.notes, require)
+    manifest = build_manifest(
+        args.artifacts, version, args.tag, args.owner, args.repo, args.notes, require
+    )
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
-                        encoding="utf-8")
+    args.out.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"✓ {args.out}（{', '.join(manifest['platforms'])}）")
     return 0
 

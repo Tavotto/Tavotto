@@ -65,6 +65,7 @@ None，输出会被改道进 app.log，调用方 capture_output 拿到的是空�
 打死进程，读回来 UnicodeDecodeError。两侧都得自己兜底，见 `_force_utf8()` 与每个
 `subprocess.run` 的 `encoding=`。
 """
+
 from __future__ import annotations
 
 import argparse
@@ -162,8 +163,9 @@ def hkcu_install_dirs() -> list[str]:
     return []
 
 
-def install_roots(system: str | None = None, environ: dict | None = None,
-                  extra: tuple = ()) -> list[str]:
+def install_roots(
+    system: str | None = None, environ: dict | None = None, extra: tuple = ()
+) -> list[str]:
     """桌面版安装根目录的候选（按优先级）。
 
     `extra` 给「从别处问出来的位置」（HKCU 的 InstallLocation），排在惯例位置
@@ -233,8 +235,9 @@ def manifest_path(system: str | None = None, environ: dict | None = None) -> str
     return _join(system, config_dir(system, environ), MANIFEST_NAME)
 
 
-def read_manifest(system: str | None = None, environ: dict | None = None,
-                  isfile=os.path.isfile) -> dict | None:
+def read_manifest(
+    system: str | None = None, environ: dict | None = None, isfile=os.path.isfile
+) -> dict | None:
     """读安装清单。**里面的路径要核实还在**——清单是缓存不是真相。
 
     卸载、手工删目录、从备份还原用户配置，都会留下一份指向不存在文件的清单。
@@ -248,9 +251,8 @@ def read_manifest(system: str | None = None, environ: dict | None = None,
     except (OSError, ValueError):
         return None
     if not isinstance(data, dict) or data.get("protocol") != PROTOCOL:
-        return None                                   # 另一代约定：当没有
-    out = {"path": path, "cli": None, "desktop": None,
-           "version": data.get("version")}
+        return None  # 另一代约定：当没有
+    out = {"path": path, "cli": None, "desktop": None, "version": data.get("version")}
     for key in ("cli", "desktop"):
         value = data.get(key)
         if isinstance(value, str) and value.strip() and isfile(value):
@@ -258,8 +260,13 @@ def read_manifest(system: str | None = None, environ: dict | None = None,
     return out
 
 
-def find_tavotto(system: str | None = None, environ: dict | None = None,
-                 isfile=os.path.isfile, which=None, reg_dirs=None) -> dict:
+def find_tavotto(
+    system: str | None = None,
+    environ: dict | None = None,
+    isfile=os.path.isfile,
+    which=None,
+    reg_dirs=None,
+) -> dict:
     """定位 tavotto 命令行。返回
 
         {"cmd": [...] | None, "source": ..., "desktop": ..., "searched": [...]}
@@ -273,39 +280,47 @@ def find_tavotto(system: str | None = None, environ: dict | None = None,
     searched: list[str] = []
 
     override = (env.get(CLI_ENV) or "").strip()
-    if override:                                      # 1. 显式覆盖
-        return {"cmd": [override], "source": "env", "desktop": None,
-                "searched": searched}
+    if override:  # 1. 显式覆盖
+        return {"cmd": [override], "source": "env", "desktop": None, "searched": searched}
 
     found = which("tavotto")
-    if found:                                         # 2. PATH
-        return {"cmd": [found], "source": "path", "desktop": None,
-                "searched": searched}
+    if found:  # 2. PATH
+        return {"cmd": [found], "source": "path", "desktop": None, "searched": searched}
 
     desktop = None
-    manifest = read_manifest(system, env, isfile)     # 3. 安装清单
+    manifest = read_manifest(system, env, isfile)  # 3. 安装清单
     if manifest:
         searched.append(manifest["path"])
         desktop = manifest["desktop"]
         if manifest["cli"]:
-            return {"cmd": [manifest["cli"]], "source": "manifest",
-                    "desktop": desktop, "searched": searched}
+            return {
+                "cmd": [manifest["cli"]],
+                "source": "manifest",
+                "desktop": desktop,
+                "searched": searched,
+            }
 
     extra = tuple(reg_dirs if reg_dirs is not None else hkcu_install_dirs())
     known = install_roots(system, env)
-    for root in install_roots(system, env, extra):    # 4. 已知位置 / 5. HKCU
+    for root in install_roots(system, env, extra):  # 4. 已知位置 / 5. HKCU
         cli = cli_exe_for(root, system)
         searched.append(cli)
         if isfile(cli):
-            return {"cmd": [cli],
-                    "source": "install" if root in known else "registry",
-                    "desktop": desktop or _desktop_at(root, system, isfile),
-                    "searched": searched}
+            return {
+                "cmd": [cli],
+                "source": "install" if root in known else "registry",
+                "desktop": desktop or _desktop_at(root, system, isfile),
+                "searched": searched,
+            }
         if desktop is None:
             desktop = _desktop_at(root, system, isfile)
 
-    return {"cmd": None, "source": None, "desktop": desktop,   # 6. 本解释器
-            "searched": searched}
+    return {
+        "cmd": None,
+        "source": None,
+        "desktop": desktop,  # 6. 本解释器
+        "searched": searched,
+    }
 
 
 def _desktop_at(root: str, system: str, isfile) -> str | None:
@@ -318,8 +333,7 @@ def tavotto_cmd() -> dict:
     found = find_tavotto()
     if found["cmd"]:
         return found
-    probe = subprocess.run([sys.executable, "-c", "import tavotto"],
-                           capture_output=True)
+    probe = subprocess.run([sys.executable, "-c", "import tavotto"], capture_output=True)
     if probe.returncode == 0:
         found = dict(found)
         found["cmd"] = [sys.executable, "-m", "tavotto"]
@@ -337,16 +351,19 @@ def run_tavotto_open(cmd: list[str], path: str, *, launch: bool) -> dict:
         # 交给 CreateProcess/execve 自己处理，经 shell 中转必然出事。
         # encoding 也必须显式：text=True 跟随系统区域编码，cp936/cp1252 下
         # `tavotto open` 回来的中文 JSON 一解码就炸（Windows CI 实测）。
-        proc = subprocess.run(argv, capture_output=True, text=True,
-                              encoding="utf-8", errors="replace")
+        proc = subprocess.run(
+            argv, capture_output=True, text=True, encoding="utf-8", errors="replace"
+        )
     except OSError as exc:
         # CLI 路径指到了不存在/起不来的东西：说清楚是哪一条，别抛 traceback
-        return {"ok": False, "code": "cli_exec_failed",
-                "error": f"执行不了 {argv[0]}: {exc}"}
+        return {"ok": False, "code": "cli_exec_failed", "error": f"执行不了 {argv[0]}: {exc}"}
     line = (proc.stdout or "").strip().splitlines()
     try:
-        return json.loads(line[-1]) if line else {
-            "ok": False, "error": (proc.stderr or "").strip() or "tavotto open 没有输出"}
+        return (
+            json.loads(line[-1])
+            if line
+            else {"ok": False, "error": (proc.stderr or "").strip() or "tavotto open 没有输出"}
+        )
     except ValueError:
         return {"ok": False, "error": (proc.stderr or proc.stdout or "").strip()[:500]}
 
@@ -365,7 +382,7 @@ def needs_run(script: str, project: str, stem: str | None, mode: str) -> bool:
     if mode == "never" or not script.endswith(".py"):
         return False
     if stem is None:
-        return True                       # 还不知道产物是什么：跑一遍才有得看
+        return True  # 还不知道产物是什么：跑一遍才有得看
     product = product_of(project, stem)
     if product is None:
         return True
@@ -392,7 +409,7 @@ def script_env(environ: dict | None = None) -> dict:
             os.makedirs(cache, exist_ok=True)
             env["MPLCONFIGDIR"] = cache
         except OSError:
-            pass                       # 建不出来就让 matplotlib 走自己的默认
+            pass  # 建不出来就让 matplotlib 走自己的默认
     return env
 
 
@@ -402,10 +419,15 @@ def run_script(python: str, script: str) -> tuple[bool, str]:
     成败**只看退出码**：matplotlib 的 UserWarning/DeprecationWarning 走 stderr，
     把 stderr 有内容当失败会把一半正常脚本误杀。
     """
-    proc = subprocess.run([python, script], capture_output=True, text=True,
-                          encoding="utf-8", errors="replace",
-                          env=script_env(),
-                          cwd=os.path.dirname(os.path.abspath(script)) or ".")
+    proc = subprocess.run(
+        [python, script],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=script_env(),
+        cwd=os.path.dirname(os.path.abspath(script)) or ".",
+    )
     if proc.returncode == 0:
         return True, ""
     tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-25:]
@@ -431,10 +453,13 @@ def _open_failure(result: dict, tavotto: dict, **extra) -> dict:
     不同的话术，压掉细节等于让 Codex 只能对用户说「失败了」。
     """
     code = result.get("code")
-    out = {"ok": False, "tavotto": tavotto,
-           "error_code": code or "open_failed",
-           "code": code,
-           "error": result.get("error", "tavotto open 失败")}
+    out = {
+        "ok": False,
+        "tavotto": tavotto,
+        "error_code": code or "open_failed",
+        "code": code,
+        "error": result.get("error", "tavotto open 失败"),
+    }
     for key in _FAILURE_DETAIL_KEYS:
         if key in result:
             out[key] = result[key]
@@ -450,8 +475,9 @@ def update_notice(tavotto_version: str | None = None) -> dict | None:
     """
     try:
         import update_check
+
         found = update_check.check(tavotto_version=tavotto_version)
-    except Exception:                                 # noqa: BLE001 —— 提醒不许拖累出图
+    except Exception:  # noqa: BLE001 —— 提醒不许拖累出图
         return None
     return None if found.get("status") == "disabled" else found
 
@@ -467,10 +493,11 @@ def emit(payload: dict, code: int, tavotto_version: str | None = None) -> int:
         payload["update"] = update
         try:
             import update_check
+
             for line in (update_check.hint(update), update_check.tavotto_hint(update)):
                 if line:
                     print(line, file=sys.stderr)
-        except Exception:                             # noqa: BLE001
+        except Exception:  # noqa: BLE001
             pass
     print(json.dumps(payload, ensure_ascii=False))
     return code
@@ -479,31 +506,52 @@ def emit(payload: dict, code: int, tavotto_version: str | None = None) -> int:
 def _missing_payload(found: dict, ran: bool, script: str) -> tuple[dict, int]:
     """没有可用 CLI 时的结构化回报。**两种情况不能混为一谈。**"""
     if found.get("desktop"):
-        return ({"ok": False, "error_code": "desktop_found_cli_missing",
-                 "tavotto_missing": True, "ran": ran, "script": script,
-                 "desktop": found["desktop"], "searched": found.get("searched", []),
-                 "hint": UPGRADE_HINT}, 3)
-    return ({"ok": False, "error_code": "tavotto_missing",
-             "tavotto_missing": True, "ran": ran, "script": script,
-             "searched": found.get("searched", []), "hint": INSTALL_HINT}, 3)
+        return (
+            {
+                "ok": False,
+                "error_code": "desktop_found_cli_missing",
+                "tavotto_missing": True,
+                "ran": ran,
+                "script": script,
+                "desktop": found["desktop"],
+                "searched": found.get("searched", []),
+                "hint": UPGRADE_HINT,
+            },
+            3,
+        )
+    return (
+        {
+            "ok": False,
+            "error_code": "tavotto_missing",
+            "tavotto_missing": True,
+            "ran": ran,
+            "script": script,
+            "searched": found.get("searched", []),
+            "hint": INSTALL_HINT,
+        },
+        3,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
     _force_utf8()
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("path", help="脚本（.py）或它的产物（.pdf/.png…）")
-    ap.add_argument("--run", choices=("auto", "always", "never"), default="auto",
-                    help="是否先跑一遍脚本：auto=产物缺失或比脚本旧才跑")
-    ap.add_argument("--python", default=sys.executable,
-                    help="跑脚本用的解释器（默认与本脚本相同）")
-    ap.add_argument("--no-launch", action="store_true",
-                    help="只登记与自检，不唤起 Tavotto 界面")
+    ap.add_argument(
+        "--run",
+        choices=("auto", "always", "never"),
+        default="auto",
+        help="是否先跑一遍脚本：auto=产物缺失或比脚本旧才跑",
+    )
+    ap.add_argument("--python", default=sys.executable, help="跑脚本用的解释器（默认与本脚本相同）")
+    ap.add_argument("--no-launch", action="store_true", help="只登记与自检，不唤起 Tavotto 界面")
     args = ap.parse_args(argv)
 
     path = os.path.abspath(os.path.expanduser(args.path))
     if not os.path.exists(path):
-        return emit({"ok": False, "error_code": "path_not_found",
-                     "error": f"路径不存在: {path}"}, 2)
+        return emit(
+            {"ok": False, "error_code": "path_not_found", "error": f"路径不存在: {path}"}, 2
+        )
 
     found = tavotto_cmd()
     if found["cmd"] is None:
@@ -512,14 +560,22 @@ def main(argv: list[str] | None = None) -> int:
         if args.run != "never" and path.endswith(".py"):
             ran, err = run_script(args.python, path)
             if not ran:
-                return emit({"ok": False, "error_code": "script_failed",
-                             "error": "脚本运行失败", "stderr": err}, 1)
+                return emit(
+                    {
+                        "ok": False,
+                        "error_code": "script_failed",
+                        "error": "脚本运行失败",
+                        "stderr": err,
+                    },
+                    1,
+                )
         payload, code = _missing_payload(found, ran, path)
         return emit(payload, code)
 
     cmd = found["cmd"]
     tavotto = {"source": found["source"], "cmd": cmd[0]}
     import time
+
     t0 = time.monotonic()
     timings: dict = {}
 
@@ -542,9 +598,16 @@ def main(argv: list[str] | None = None) -> int:
             ran, err = run_script(args.python, path)
             timings["run_ms"] = int((time.monotonic() - t) * 1000)
             if not ran:
-                return emit({"ok": False, "error_code": "script_failed",
-                             "error": "脚本运行失败", "stderr": err,
-                             "project": probe["project"]}, 1)
+                return emit(
+                    {
+                        "ok": False,
+                        "error_code": "script_failed",
+                        "error": "脚本运行失败",
+                        "stderr": err,
+                        "project": probe["project"],
+                    },
+                    1,
+                )
 
     # 3. 交接。跑过脚本时**必须再解析一次**：刚跑出来的产物可能带来新的 stem，
     #    第一次探测时它还不在磁盘上（登记与定位都会落空）。
@@ -583,7 +646,8 @@ def main(argv: list[str] | None = None) -> int:
         payload["hint"] = (
             "这张图没有对应脚本，在 Tavotto 里只能当素材排版。"
             "把产出它的 .py 放到产物同一个目录，并让产物名是脚本里的字面量"
-            "（不要来自 sys.argv / 时间戳），然后重新交接。")
+            "（不要来自 sys.argv / 时间戳），然后重新交接。"
+        )
         return emit(payload, 4, version)
     return emit(payload, 0, version)
 

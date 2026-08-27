@@ -9,6 +9,7 @@
   （`TAVOTTO_CODEX_REAL_SMOKE=1`），默认 skip。从没跑过的门禁不会保持正确，
   但把网络写进快线只会让它天天红。
 """
+
 from __future__ import annotations
 
 import json
@@ -24,7 +25,7 @@ SRC = ROOT / "src"
 
 #: 假 codex：`plugin list` / `marketplace list` 的输出由 STATE 文件决定，
 #: `add` / `remove` 改写它。这样「装过没有」是**可观察的真状态**，不是打桩。
-FAKE_CODEX = '''\
+FAKE_CODEX = """\
 import json, os, sys
 state = os.environ["FAKE_CODEX_STATE"]
 def load():
@@ -68,7 +69,7 @@ elif argv[:2] == ["plugin", "remove"]:
     d["plugin"] = False; save(d); print("removed")
 else:
     print("unknown: " + " ".join(argv), file=sys.stderr); sys.exit(2)
-'''
+"""
 
 
 @pytest.fixture
@@ -83,19 +84,20 @@ def fake_codex(tmp_path, monkeypatch):
         exe.write_text(f'@"{sys.executable}" "{script}" %*\r\n', encoding="utf-8")
     else:
         exe = bindir / "codex"
-        exe.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{script}" "$@"\n',
-                       encoding="utf-8")
+        exe.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{script}" "$@"\n', encoding="utf-8")
         exe.chmod(0o755)
 
     codex_home = tmp_path / "codexhome"
     plugin_dir = codex_home / "plugins" / "cache" / "abc123"
     (plugin_dir / ".codex-plugin").mkdir(parents=True)
     (plugin_dir / ".codex-plugin" / "plugin.json").write_text(
-        json.dumps({"name": "tavotto"}), encoding="utf-8")
+        json.dumps({"name": "tavotto"}), encoding="utf-8"
+    )
     (plugin_dir / "mcp").mkdir()
     # 假 server：--health 回一行 JSON，--provision 直接成功
     (plugin_dir / "mcp" / "server.py").write_text(
-        'import sys\nprint(\'{"ok": true}\')\nsys.exit(0)\n', encoding="utf-8")
+        "import sys\nprint('{\"ok\": true}')\nsys.exit(0)\n", encoding="utf-8"
+    )
 
     monkeypatch.setenv("PATH", str(bindir) + os.pathsep + os.environ.get("PATH", ""))
     monkeypatch.setenv("CODEX_HOME", str(codex_home))
@@ -106,9 +108,15 @@ def fake_codex(tmp_path, monkeypatch):
 
 def _run(argv: list[str], env_extra: dict | None = None) -> tuple[int, str, str]:
     env = {**os.environ, "PYTHONPATH": str(SRC), **(env_extra or {})}
-    p = subprocess.run([sys.executable, "-m", "tavotto.cli_entry", *argv],
-                       capture_output=True, text=True, encoding="utf-8",
-                       errors="replace", env=env, timeout=180)
+    p = subprocess.run(
+        [sys.executable, "-m", "tavotto.cli_entry", *argv],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+        timeout=180,
+    )
     return p.returncode, p.stdout, p.stderr
 
 
@@ -129,17 +137,23 @@ def test_readme_and_cli_use_the_same_command():
     # 删成一个，拼出来的短命令仍然是 README 那行的子串，判据照样绿（本用例第一版
     # 就是这么写的，变异当场抓住）。
     expected_market = " ".join(
-        ["codex plugin marketplace add", brand.CODEX_MARKETPLACE,
-         *[f"--sparse {p}" for p in brand.CODEX_SPARSE_PATHS]])
+        [
+            "codex plugin marketplace add",
+            brand.CODEX_MARKETPLACE,
+            *[f"--sparse {p}" for p in brand.CODEX_SPARSE_PATHS],
+        ]
+    )
     market_lines = [ln for ln in lines if ln.startswith("codex plugin marketplace add")]
     assert market_lines, "README 首用章节里没有 marketplace add 那行了"
     assert market_lines == [expected_market], (
-        f"README 与 brand.py 漂开了：\nREADME  {market_lines}\nbrand   [{expected_market}]")
+        f"README 与 brand.py 漂开了：\nREADME  {market_lines}\nbrand   [{expected_market}]"
+    )
 
     expected_add = f"codex plugin add {brand.CODEX_PLUGIN_REF}"
     add_lines = [ln for ln in lines if ln.startswith("codex plugin add")]
     assert add_lines == [expected_add], (
-        f"README 与 brand.py 漂开了：\nREADME  {add_lines}\nbrand   [{expected_add}]")
+        f"README 与 brand.py 漂开了：\nREADME  {add_lines}\nbrand   [{expected_add}]"
+    )
 
 
 def test_marketplace_name_matches_the_manifest():
@@ -152,7 +166,8 @@ def test_marketplace_name_matches_the_manifest():
     from tavotto.engine import brand
 
     manifest = json.loads(
-        (ROOT / ".agents" / "plugins" / "marketplace.json").read_text(encoding="utf-8"))
+        (ROOT / ".agents" / "plugins" / "marketplace.json").read_text(encoding="utf-8")
+    )
     assert brand.CODEX_MARKETPLACE_NAME == manifest["name"]
     assert "/" not in brand.CODEX_MARKETPLACE_NAME
     assert brand.CODEX_PLUGIN_REF == f"{manifest['plugins'][0]['name']}@{manifest['name']}"
@@ -198,8 +213,9 @@ def test_frozen_cli_does_not_use_itself_as_the_interpreter(monkeypatch, tmp_path
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     real = tmp_path / "python3"
     real.write_text("#!/bin/sh\n", encoding="utf-8")
-    monkeypatch.setattr(codexinstall.shutil, "which",
-                        lambda n: str(real) if n == "python3" else None)
+    monkeypatch.setattr(
+        codexinstall.shutil, "which", lambda n: str(real) if n == "python3" else None
+    )
     assert codexinstall.plugin_python() == str(real)
 
     # PATH 上一个真 python 都没有：说清楚，别装作能跑
@@ -220,9 +236,9 @@ def test_codex_subcommand_runs_without_flask_or_pymupdf(tmp_path):
     blocker.mkdir()
     for name in ("flask", "fitz", "pymupdf"):
         (blocker / f"{name}.py").write_text(
-            "raise ImportError('本用例故意挡住它')", encoding="utf-8")
-    rc, out, err = _run(["codex", "--help"],
-                        {"PYTHONPATH": f"{blocker}{os.pathsep}{SRC}"})
+            "raise ImportError('本用例故意挡住它')", encoding="utf-8"
+        )
+    rc, out, err = _run(["codex", "--help"], {"PYTHONPATH": f"{blocker}{os.pathsep}{SRC}"})
     assert rc == 0, err
     assert "install" in out and "doctor" in out and "uninstall" in out
 
@@ -235,8 +251,7 @@ def test_missing_codex_cli_reports_a_stable_code_and_where_it_looked(capsys, mon
     sys.path.insert(0, str(SRC))
     from tavotto.engine import codexinstall
 
-    monkeypatch.setattr(codexinstall, "find_codex",
-                        lambda: (None, ["PATH", "/nowhere/bin"]))
+    monkeypatch.setattr(codexinstall, "find_codex", lambda: (None, ["PATH", "/nowhere/bin"]))
     rc = codexinstall.cli(["doctor", "--json"])
     assert rc == 1
     data = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
@@ -299,8 +314,9 @@ def test_doctor_diagnoses_without_changing_anything(fake_codex):
 
 
 def test_a_failing_step_stops_the_pipeline_and_names_itself(fake_codex):
-    rc, out, err = _run(["codex", "install", "--json"],
-                        {"FAKE_CODEX_FAIL": "plugin marketplace add"})
+    rc, out, err = _run(
+        ["codex", "install", "--json"], {"FAKE_CODEX_FAIL": "plugin marketplace add"}
+    )
     assert rc == 1
     data = json.loads(out.strip().splitlines()[-1])
     assert data["error_code"] == "marketplace_add_failed"
@@ -338,10 +354,13 @@ def test_success_only_tells_the_user_to_open_a_new_session(fake_codex):
 
 
 # --------------------------- 真 CLI（显式 opt-in） ---------------------------
-@pytest.mark.skipif(not os.environ.get("TAVOTTO_CODEX_REAL_SMOKE"),
-                    reason="要网络与真实 marketplace：设 TAVOTTO_CODEX_REAL_SMOKE=1 才跑")
+@pytest.mark.skipif(
+    not os.environ.get("TAVOTTO_CODEX_REAL_SMOKE"),
+    reason="要网络与真实 marketplace：设 TAVOTTO_CODEX_REAL_SMOKE=1 才跑",
+)
 def test_real_codex_cli_install_then_doctor(tmp_path):
     import shutil
+
     if shutil.which("codex") is None:
         pytest.skip("这台机器上没有 codex CLI")
     env = {"CODEX_HOME": str(tmp_path / "codexhome")}

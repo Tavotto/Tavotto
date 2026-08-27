@@ -26,6 +26,7 @@ r"""给 macOS 的 Tavotto.app 逐个签名并验收（纯标准库 + 系统 code
         --expect-arch arm64
     python scripts/codesign_macos.py scan   --app path/to/Tavotto.app
 """
+
 from __future__ import annotations
 
 import argparse
@@ -52,8 +53,7 @@ CPU_TYPE_X86_64 = 0x01000007
 CPU_TYPE_ARM64 = 0x0100000C
 _CPU_NAMES = {CPU_TYPE_X86_64: "x86_64", CPU_TYPE_ARM64: "arm64"}
 
-_ARCH_ALIASES = {"amd64": "x86_64", "x86_64": "x86_64",
-                 "arm64": "arm64", "aarch64": "arm64"}
+_ARCH_ALIASES = {"amd64": "x86_64", "x86_64": "x86_64", "arm64": "arm64", "aarch64": "arm64"}
 
 
 class SignError(RuntimeError):
@@ -70,7 +70,7 @@ class MachO:
         self.is_executable = is_executable
         self.arches = arches
 
-    def __repr__(self) -> str:      # pragma: no cover - 只在排障时用
+    def __repr__(self) -> str:  # pragma: no cover - 只在排障时用
         kind = "exe" if self.is_executable else "lib"
         return f"<MachO {kind} {'/'.join(self.arches)} {self.path}>"
 
@@ -78,10 +78,10 @@ class MachO:
 #: 魔数的**字节序列**唯一决定字节序，不能靠「按大端读出来像不像魔数」去猜:
 #: FE ED FA CE 与 CE FA ED FE 互为反转，两边解出来都落在魔数集合里。
 _THIN_MAGIC_BYTES = {
-    b"\xfe\xed\xfa\xce": ">",   # 32 位大端
-    b"\xfe\xed\xfa\xcf": ">",   # 64 位大端
-    b"\xce\xfa\xed\xfe": "<",   # 32 位小端
-    b"\xcf\xfa\xed\xfe": "<",   # 64 位小端（现代 macOS 全是这个）
+    b"\xfe\xed\xfa\xce": ">",  # 32 位大端
+    b"\xfe\xed\xfa\xcf": ">",  # 64 位大端
+    b"\xce\xfa\xed\xfe": "<",  # 32 位小端
+    b"\xcf\xfa\xed\xfe": "<",  # 64 位小端（现代 macOS 全是这个）
 }
 
 
@@ -110,7 +110,7 @@ def inspect(path: Path) -> MachO | None:
 
             if magic_be in _FAT:
                 nfat = struct.unpack(">I", head[4:8])[0]
-                if nfat > 64:            # 明显不对，别顺着坏数据读下去
+                if nfat > 64:  # 明显不对，别顺着坏数据读下去
                     return None
                 arches, filetype = [], 0
                 for i in range(nfat):
@@ -134,8 +134,7 @@ def inspect(path: Path) -> MachO | None:
             if filetype not in (MH_EXECUTE, MH_DYLIB, MH_BUNDLE):
                 # .o 目标文件、dSYM 之类：不是要签的东西
                 return None
-            return MachO(path, filetype == MH_EXECUTE,
-                         [_CPU_NAMES.get(cputype, hex(cputype))])
+            return MachO(path, filetype == MH_EXECUTE, [_CPU_NAMES.get(cputype, hex(cputype))])
     except OSError:
         return None
 
@@ -161,21 +160,23 @@ def scan(app: Path) -> list[MachO]:
 
 
 def _codesign(args: list[str]) -> tuple[int, str]:
-    proc = subprocess.run(["codesign", *args], capture_output=True, text=True,
-                          encoding="utf-8", errors="replace")
+    proc = subprocess.run(
+        ["codesign", *args], capture_output=True, text=True, encoding="utf-8", errors="replace"
+    )
     return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
 
 
 def sign(app: Path, identity: str, entitlements: Path | None) -> int:
     """自内向外签完整个 .app。任何一个失败即中止——漏签一个就等于没签。"""
     items = scan(app)
-    print(f"* 待签 Mach-O：{len(items)} 个"
-          f"（可执行 {sum(1 for m in items if m.is_executable)}，"
-          f"库/bundle {sum(1 for m in items if not m.is_executable)}）")
+    print(
+        f"* 待签 Mach-O：{len(items)} 个"
+        f"（可执行 {sum(1 for m in items if m.is_executable)}，"
+        f"库/bundle {sum(1 for m in items if not m.is_executable)}）"
+    )
 
     for mo in items:
-        args = ["--force", "--timestamp", "--options", "runtime",
-                "--sign", identity]
+        args = ["--force", "--timestamp", "--options", "runtime", "--sign", identity]
         # entitlements 只对可执行文件有意义：内置解释器要靠
         # disable-library-validation 才能加载 numpy/scipy 自带的 .dylib
         if entitlements and mo.is_executable:
@@ -209,8 +210,8 @@ def check_arch(app: Path, items: list[MachO], expect_arch: str | None) -> None:
     if bad:
         raise SignError(
             f"这些 Mach-O 不含 {want}（共 {len(bad)} 个，列前 10 个）：\n  "
-            + "\n  ".join(f"{m.path.relative_to(app)} → {'/'.join(m.arches)}"
-                          for m in bad[:10]))
+            + "\n  ".join(f"{m.path.relative_to(app)} → {'/'.join(m.arches)}" for m in bad[:10])
+        )
     print(f"✓ 全部 {len(items)} 个 Mach-O 都含 {want}")
 
 
@@ -242,8 +243,7 @@ def bundle_main_executables(app: Path) -> set[Path]:
     return skip
 
 
-def verify(app: Path, expect_arch: str | None, expect_identity: str | None,
-           jobs: int = 8) -> None:
+def verify(app: Path, expect_arch: str | None, expect_identity: str | None, jobs: int = 8) -> None:
     """验收：签名完整 + 一个没漏 + 架构统一。
 
     `codesign --verify --deep` **验不出**「Resources 里躺着一个没签名的 .so」
@@ -258,8 +258,7 @@ def verify(app: Path, expect_arch: str | None, expect_identity: str | None,
     if expect_identity:
         rc, out = _codesign(["-dvvv", str(app)])
         if expect_identity not in out:
-            raise SignError(
-                f"签名主体不是期望的 {expect_identity!r}（很可能仍是 adhoc）：\n{out}")
+            raise SignError(f"签名主体不是期望的 {expect_identity!r}（很可能仍是 adhoc）：\n{out}")
         print(f"✓ 签名主体含 {expect_identity}")
 
     items = scan(app)
@@ -277,10 +276,12 @@ def verify(app: Path, expect_arch: str | None, expect_identity: str | None,
     if unsigned:
         raise SignError(
             f"有 {len(unsigned)} 个 Mach-O 没签名或签名坏了（列前 10 个）：\n  "
-            + "\n  ".join(f"{p.relative_to(app)}: {msg[:160]}"
-                          for p, msg in unsigned[:10]))
-    print(f"✓ 逐个校验通过：{len(targets)} 个 Mach-O 全部已签名"
-          f"（另有 {len(skip)} 个 bundle 主可执行文件随 bundle 一起验）")
+            + "\n  ".join(f"{p.relative_to(app)}: {msg[:160]}" for p, msg in unsigned[:10])
+        )
+    print(
+        f"✓ 逐个校验通过：{len(targets)} 个 Mach-O 全部已签名"
+        f"（另有 {len(skip)} 个 bundle 主可执行文件随 bundle 一起验）"
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -299,11 +300,12 @@ def main(argv: list[str] | None = None) -> int:
 
     p_scan = sub.add_parser("scan", help="列出 Mach-O；可顺带核对架构（签名前用）")
     p_scan.add_argument("--app", required=True)
-    p_scan.add_argument("--expect-arch", default=None,
-                        help="断言每个 Mach-O 都含该架构（如 arm64）；"
-                             "不需要签名，因此可以在签名之前跑")
-    p_scan.add_argument("--quiet", action="store_true",
-                        help="只报统计与核对结果，不逐个列出")
+    p_scan.add_argument(
+        "--expect-arch",
+        default=None,
+        help="断言每个 Mach-O 都含该架构（如 arm64）；不需要签名，因此可以在签名之前跑",
+    )
+    p_scan.add_argument("--quiet", action="store_true", help="只报统计与核对结果，不逐个列出")
 
     args = ap.parse_args(argv)
     app = Path(args.app)
@@ -311,8 +313,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"找不到 {app}", file=sys.stderr)
         return 2
     if sys.platform != "darwin":
-        print("::error::这个脚本只在 macOS 上有意义（要用系统的 codesign）",
-              file=sys.stderr)
+        print("::error::这个脚本只在 macOS 上有意义（要用系统的 codesign）", file=sys.stderr)
         return 2
 
     try:
@@ -328,11 +329,12 @@ def main(argv: list[str] | None = None) -> int:
             if not args.quiet:
                 for mo in items:
                     kind = "exe" if mo.is_executable else "lib"
-                    print(f"{kind}  {'/'.join(mo.arches):16} "
-                          f"{mo.path.relative_to(app)}")
-            print(f"共 {len(items)} 个 Mach-O"
-                  f"（可执行 {sum(1 for m in items if m.is_executable)}），"
-                  f"本机架构 {_ARCH_ALIASES.get(platform.machine().lower(), '?')}")
+                    print(f"{kind}  {'/'.join(mo.arches):16} {mo.path.relative_to(app)}")
+            print(
+                f"共 {len(items)} 个 Mach-O"
+                f"（可执行 {sum(1 for m in items if m.is_executable)}），"
+                f"本机架构 {_ARCH_ALIASES.get(platform.machine().lower(), '?')}"
+            )
             if not items:
                 raise SignError(f"{app} 里一个 Mach-O 都没扫到——路径给错了？")
             check_arch(app, items, args.expect_arch)

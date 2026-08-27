@@ -31,6 +31,7 @@ Peucker 抽稀，超过 `_MAX_POINTS` 就按 `_TOL_GROWTH` 逐档放大容差重
 元素不再出 geometry——前端对没有 geometry 的元素本来就退回 bbox，这是
 **有意的降级**，并会在 stderr 上说明是哪一个元素被降级了。
 """
+
 from __future__ import annotations
 
 import sys
@@ -139,7 +140,7 @@ def _rdp(pts: np.ndarray, tol: float) -> np.ndarray:
         i, j = stack.pop()
         if j <= i + 1:
             continue
-        seg = pts[i + 1:j]
+        seg = pts[i + 1 : j]
         a = pts[i]
         b = pts[j]
         d = b - a
@@ -246,12 +247,17 @@ def _clip_rect(artist, W: float, H: float):
     bb = artist.get_clip_box()
     if bb is None or bb.width <= 0 or bb.height <= 0:
         return None
-    return [round(bb.x0 / W, _ND), round(1.0 - bb.y1 / H, _ND),
-            round(bb.width / W, _ND), round(bb.height / H, _ND)]
+    return [
+        round(bb.x0 / W, _ND),
+        round(1.0 - bb.y1 / H, _ND),
+        round(bb.width / W, _ND),
+        round(bb.height / H, _ND),
+    ]
 
 
-def _pack(subpaths, W, H, *, fill: bool, stroke: bool, clip, budget,
-          stroke_pt: float = 0.0) -> dict | None:
+def _pack(
+    subpaths, W, H, *, fill: bool, stroke: bool, clip, budget, stroke_pt: float = 0.0
+) -> dict | None:
     paths = []
     total = 0
     for pts, closed in subpaths:
@@ -352,24 +358,41 @@ def element_geometry(artist, W: float, H: float, budget: Budget) -> dict | None:
             if str(artist.get_linestyle()).lower() in ("none", "", " "):
                 return None
             subs = _display_subpaths(artist.get_path(), artist.get_transform())
-            return _pack(subs, W, H, fill=False, stroke=True,
-                         stroke_pt=float(artist.get_linewidth() or 0.0),
-                         clip=_clip_rect(artist, W, H), budget=budget)
+            return _pack(
+                subs,
+                W,
+                H,
+                fill=False,
+                stroke=True,
+                stroke_pt=float(artist.get_linewidth() or 0.0),
+                clip=_clip_rect(artist, W, H),
+                budget=budget,
+            )
         if isinstance(artist, PolyCollection):
             subs = _collection_subpaths(artist, budget)
             lw = artist.get_linewidths()
-            return _pack(subs, W, H,
-                         fill=_has_paint(artist.get_facecolor()),
-                         stroke=_has_paint(artist.get_edgecolor()) and bool(len(lw)) and lw[0] > 0,
-                         stroke_pt=float(lw[0]) if len(lw) else 0.0,
-                         clip=_clip_rect(artist, W, H), budget=budget)
+            return _pack(
+                subs,
+                W,
+                H,
+                fill=_has_paint(artist.get_facecolor()),
+                stroke=_has_paint(artist.get_edgecolor()) and bool(len(lw)) and lw[0] > 0,
+                stroke_pt=float(lw[0]) if len(lw) else 0.0,
+                clip=_clip_rect(artist, W, H),
+                budget=budget,
+            )
         if isinstance(artist, (Polygon, PathPatch)):
             subs = _display_subpaths(artist.get_path(), artist.get_transform())
-            return _pack(subs, W, H,
-                         fill=bool(artist.get_fill()) and _has_paint(artist.get_facecolor()),
-                         stroke=_has_paint(artist.get_edgecolor()) and artist.get_linewidth() > 0,
-                         stroke_pt=float(artist.get_linewidth() or 0.0),
-                         clip=_clip_rect(artist, W, H), budget=budget)
+            return _pack(
+                subs,
+                W,
+                H,
+                fill=bool(artist.get_fill()) and _has_paint(artist.get_facecolor()),
+                stroke=_has_paint(artist.get_edgecolor()) and artist.get_linewidth() > 0,
+                stroke_pt=float(artist.get_linewidth() or 0.0),
+                clip=_clip_rect(artist, W, H),
+                budget=budget,
+            )
     except Exception as exc:  # noqa: BLE001 — 取几何失败只是少一条轮廓，不拦渲染
         print(f"[geometry] {type(artist).__name__} 取路径失败: {exc}", file=sys.stderr)
     return None

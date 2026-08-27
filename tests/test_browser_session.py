@@ -15,6 +15,7 @@
     `tavotto.engine.patchspec` 对同一列表算出的值（同一份实现跑在两个
     解释器里，这是 §49「不许移植第二份规范化」的看护）。
 """
+
 import hashlib
 import json
 import subprocess
@@ -30,12 +31,14 @@ except pool.WorkerError:
     WORKER_PY = None
 
 pytestmark = pytest.mark.skipif(
-    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）")
+    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）"
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 ENGINE_DIR = ROOT / "src" / "tavotto" / "engine"
 RUNTIME_LOCK = json.loads(
-    (ROOT / "packaging" / "playground-runtime.json").read_text(encoding="utf-8"))
+    (ROOT / "packaging" / "playground-runtime.json").read_text(encoding="utf-8")
+)
 SUPPORTED_ROOTS = RUNTIME_LOCK["import_roots"]
 
 #: 子进程驱动：stdin 收 JSON 请求列表，stdout 末行吐 JSON 响应列表。
@@ -66,15 +69,19 @@ def drive(reqs: list[dict], tmp_path: Path) -> list[dict]:
             r.setdefault("workspace", str(tmp_path / "ws"))
     proc = subprocess.run(
         [WORKER_PY, "-c", _DRIVER, str(ENGINE_DIR)],
-        input=json.dumps(reqs), capture_output=True, text=True,
-        encoding="utf-8", errors="replace", timeout=180)
+        input=json.dumps(reqs),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=180,
+    )
     assert proc.returncode == 0, f"驱动进程失败:\n{proc.stderr}"
     return json.loads(proc.stdout.strip().splitlines()[-1])
 
 
 def _module_available(name: str) -> bool:
-    return subprocess.run([WORKER_PY, "-c", f"import {name}"],
-                          capture_output=True).returncode == 0
+    return subprocess.run([WORKER_PY, "-c", f"import {name}"], capture_output=True).returncode == 0
 
 
 def roles(manifest: dict) -> set[str]:
@@ -94,14 +101,21 @@ def field_value(manifest: dict, gid: str, prop: str):
 
 #: (名字, 脚本, 必须出现的角色, 一条真实 override 的 (gid, prop, value))
 FIXTURES = [
-    ("line_savefig", """
+    (
+        "line_savefig",
+        """
 import matplotlib.pyplot as plt
 fig, ax = plt.subplots(figsize=(3, 2))
 ax.plot([0, 1, 2], [1, 0, 2])
 ax.set_title("Line")
 fig.savefig("out.pdf")
-""", {"title", "line"}, ("axes_0.title", "fontsize", 15)),
-    ("multiline_legend_show", """
+""",
+        {"title", "line"},
+        ("axes_0.title", "fontsize", 15),
+    ),
+    (
+        "multiline_legend_show",
+        """
 import numpy as np
 import matplotlib.pyplot as plt
 t = np.linspace(0, 6, 60)
@@ -112,24 +126,39 @@ plt.xlabel("t")
 plt.title("Waves")
 plt.legend()
 plt.show()
-""", {"title", "line", "legend", "axis_label"}, ("axes_0.lines_0", "linewidth", 2.5)),
-    ("scatter", """
+""",
+        {"title", "line", "legend", "axis_label"},
+        ("axes_0.lines_0", "linewidth", 2.5),
+    ),
+    (
+        "scatter",
+        """
 import numpy as np
 import matplotlib.pyplot as plt
 rng = np.random.default_rng(7)
 fig, ax = plt.subplots(figsize=(3, 2.2))
 ax.scatter(rng.random(30), rng.random(30))
 fig.savefig("Scatter.png")
-""", {"scatter"}, ("axes_0.scatter_0", "alpha", 0.4)),
-    ("annotation", """
+""",
+        {"scatter"},
+        ("axes_0.scatter_0", "alpha", 0.4),
+    ),
+    (
+        "annotation",
+        """
 import matplotlib.pyplot as plt
 fig, ax = plt.subplots(figsize=(3, 2))
 ax.plot([0, 1, 2], [0, 2, 1])
 ax.annotate("peak", xy=(1, 2), xytext=(1.4, 1.5),
             arrowprops=dict(arrowstyle="->"))
 fig.savefig("Anno.pdf")
-""", {"line", "text"}, ("axes_0.texts_0", "fontsize", 11)),
-    ("custom_ticks", """
+""",
+        {"line", "text"},
+        ("axes_0.texts_0", "fontsize", 11),
+    ),
+    (
+        "custom_ticks",
+        """
 import matplotlib.pyplot as plt
 fig, ax = plt.subplots(figsize=(3, 2))
 ax.plot([0, 1, 2, 3], [3, 1, 2, 0])
@@ -137,8 +166,13 @@ ax.set_xticks([0, 1.5, 3])
 ax.set_xlabel("x")
 ax.set_ylabel("y")
 fig.savefig("Ticks.pdf")
-""", {"ticks", "axis_label"}, ("axes_0.xticks", "fontsize", 7)),
-    ("fill_between", """
+""",
+        {"ticks", "axis_label"},
+        ("axes_0.xticks", "fontsize", 7),
+    ),
+    (
+        "fill_between",
+        """
 import numpy as np
 import matplotlib.pyplot as plt
 t = np.linspace(0, 4, 80)
@@ -146,28 +180,46 @@ fig, ax = plt.subplots(figsize=(3, 2))
 ax.plot(t, np.sin(t))
 ax.fill_between(t, np.sin(t) - 0.2, np.sin(t) + 0.2, alpha=0.3)
 fig.savefig("Band.pdf")
-""", {"line", "fill"}, ("axes_0.lines_0", "color", "#aa3311")),
-    ("colorbar", """
+""",
+        {"line", "fill"},
+        ("axes_0.lines_0", "color", "#aa3311"),
+    ),
+    (
+        "colorbar",
+        """
 import numpy as np
 import matplotlib.pyplot as plt
 fig, ax = plt.subplots(figsize=(3, 2.4))
 im = ax.imshow(np.arange(20.0).reshape(4, 5), cmap="viridis")
 fig.colorbar(im, ax=ax)
 fig.savefig("Heat.pdf")
-""", {"image", "colorbar"}, ("axes_0.images_0", "cmap", "plasma")),
+""",
+        {"image", "colorbar"},
+        ("axes_0.images_0", "cmap", "plasma"),
+    ),
 ]
 
 if WORKER_PY and _module_available("pandas"):
-    FIXTURES.append(("pandas_plot", """
+    FIXTURES.append(
+        (
+            "pandas_plot",
+            """
 import pandas as pd
 import matplotlib.pyplot as plt
 df = pd.DataFrame({"a": [1.0, 3.0, 2.0], "b": [2.0, 1.0, 3.0]})
 ax = df.plot(figsize=(3, 2), title="Frame")
 ax.figure.savefig("Frame.pdf")
-""", {"title", "line", "legend"}, ("axes_0.title", "text", "Renamed")))
+""",
+            {"title", "line", "legend"},
+            ("axes_0.title", "text", "Renamed"),
+        )
+    )
 
 if WORKER_PY and _module_available("scipy"):
-    FIXTURES.append(("scipy_data", """
+    FIXTURES.append(
+        (
+            "scipy_data",
+            """
 import numpy as np
 from scipy import signal
 import matplotlib.pyplot as plt
@@ -176,28 +228,35 @@ fig, ax = plt.subplots(figsize=(3, 2))
 ax.plot(t, signal.sawtooth(2 * np.pi * 4 * t))
 ax.set_title("Sawtooth")
 fig.savefig("Saw.pdf")
-""", {"title", "line"}, ("axes_0.title", "color", "#2266aa")))
+""",
+            {"title", "line"},
+            ("axes_0.title", "color", "#2266aa"),
+        )
+    )
 
 
-@pytest.mark.parametrize(("name", "src", "want_roles", "patch"),
-                         FIXTURES, ids=[f[0] for f in FIXTURES])
+@pytest.mark.parametrize(
+    ("name", "src", "want_roles", "patch"), FIXTURES, ids=[f[0] for f in FIXTURES]
+)
 def test_fixture_runs_edits_and_reverts(name, src, want_roles, patch, tmp_path):
     gid, prop, value = patch
     patches = [{"gid": gid, "prop": prop, "value": value}]
     # 先单独 load 一次拿 stem（savefig 的文件名只有跑过才知道），
     # 再起一个全新会话跑完整的 load → open → 编辑 → 还原 序列
-    (load,) = drive([{"cmd": "load", "filename": f"{name}.py", "source": src}],
-                    tmp_path)
+    (load,) = drive([{"cmd": "load", "filename": f"{name}.py", "source": src}], tmp_path)
     assert load["ok"], load
     assert load["figures"], f"{name}: 没捕获到 figure"
     stem = load["figures"][0]["stem"]
 
-    load, opened, edited, reverted = drive([
-        {"cmd": "load", "filename": f"{name}.py", "source": src},
-        {"cmd": "open", "stem": stem},
-        {"cmd": "render", "stem": stem, "patches": patches},
-        {"cmd": "render", "stem": stem, "patches": []},
-    ], tmp_path)
+    load, opened, edited, reverted = drive(
+        [
+            {"cmd": "load", "filename": f"{name}.py", "source": src},
+            {"cmd": "open", "stem": stem},
+            {"cmd": "render", "stem": stem, "patches": patches},
+            {"cmd": "render", "stem": stem, "patches": []},
+        ],
+        tmp_path,
+    )
     assert opened["ok"], opened
     man = opened["manifest"]
     assert want_roles <= roles(man), f"{name}: 缺角色 {want_roles - roles(man)}"
@@ -222,8 +281,9 @@ def test_fixture_runs_edits_and_reverts(name, src, want_roles, patch, tmp_path):
     # 空列表 = 全量还原（undo 的基础）
     assert reverted["ok"], reverted
     assert reverted["warnings"] == []
-    assert field_value(reverted["manifest"], gid, prop) == \
-        field_value(opened["manifest"], gid, prop)
+    assert field_value(reverted["manifest"], gid, prop) == field_value(
+        opened["manifest"], gid, prop
+    )
 
     # §49：browser 侧的 patch_hash 与父进程 patchspec 同源同值
     assert edited["patch_hash"] == patchspec.patch_hash(patches)
@@ -231,6 +291,7 @@ def test_fixture_runs_edits_and_reverts(name, src, want_roles, patch, tmp_path):
 
 
 # ---------------------------------------------------------------- 执行语义
+
 
 def test_script_sees_own_argv_and_file(tmp_path):
     src = """
@@ -297,21 +358,29 @@ ax.plot([0, 1, 2], [0, 2, 1])
 ax.set_title("Neutral")
 fig.savefig("N.pdf")
 """
-    load, opened, png, after = drive([
-        {"cmd": "load", "filename": "n.py", "source": src},
-        {"cmd": "open", "stem": "N"},
-        {"cmd": "preview_png", "stem": "N",
-         "patches": [{"gid": "axes_0.title", "prop": "fontsize", "value": 30}],
-         "width": 300},
-        {"cmd": "render", "stem": "N", "patches": []},
-    ], tmp_path)
+    load, opened, png, after = drive(
+        [
+            {"cmd": "load", "filename": "n.py", "source": src},
+            {"cmd": "open", "stem": "N"},
+            {
+                "cmd": "preview_png",
+                "stem": "N",
+                "patches": [{"gid": "axes_0.title", "prop": "fontsize", "value": 30}],
+                "width": 300,
+            },
+            {"cmd": "render", "stem": "N", "patches": []},
+        ],
+        tmp_path,
+    )
     assert png["ok"] and png["png"], png
     # preview 用的 patches 不许留在常驻 figure 上
-    assert field_value(after["manifest"], "axes_0.title", "fontsize") == \
-        field_value(opened["manifest"], "axes_0.title", "fontsize")
+    assert field_value(after["manifest"], "axes_0.title", "fontsize") == field_value(
+        opened["manifest"], "axes_0.title", "fontsize"
+    )
 
 
 # ---------------------------------------------------------------- import 分类
+
 
 def test_classify_maps_roots_to_packages(tmp_path):
     src = """
@@ -323,8 +392,9 @@ from PIL import Image
 from scipy import stats
 import rdkit
 """
-    (out,) = drive([{"cmd": "classify", "source": src,
-                     "supported_roots": SUPPORTED_ROOTS}], tmp_path)
+    (out,) = drive(
+        [{"cmd": "classify", "source": src, "supported_roots": SUPPORTED_ROOTS}], tmp_path
+    )
     assert out["ok"]
     assert out["unsupported"] == ["rdkit"]
     assert set(out["supported"]) == {"numpy", "pandas", "PIL", "scipy"}
@@ -340,27 +410,37 @@ try:
 except ImportError:
     sns = None
 """
-    (out,) = drive([{"cmd": "classify", "source": src,
-                     "supported_roots": SUPPORTED_ROOTS}], tmp_path)
+    (out,) = drive(
+        [{"cmd": "classify", "source": src, "supported_roots": SUPPORTED_ROOTS}], tmp_path
+    )
     assert out["unsupported"] == []
     assert out["optional_unsupported"] == ["seaborn"]
 
 
 def test_classify_syntax_error_has_code(tmp_path):
-    (out,) = drive([{"cmd": "classify", "source": "def broken(:",
-                     "supported_roots": SUPPORTED_ROOTS}], tmp_path)
+    (out,) = drive(
+        [{"cmd": "classify", "source": "def broken(:", "supported_roots": SUPPORTED_ROOTS}],
+        tmp_path,
+    )
     assert out["ok"] is False and out["code"] == "syntax_error"
 
 
 # ---------------------------------------------------------------- 错误分诊
 
-@pytest.mark.parametrize(("name", "src", "code"), [
-    ("syntax", "def broken(:\n", "syntax_error"),
-    ("dynamic_import", "import importlib\nimportlib.import_module('rdkit')",
-     "unsupported_import"),
-    ("missing_file", "open('data.csv').read()", "missing_file"),
-    ("crash", "raise RuntimeError('boom')", "script_error"),
-])
+
+@pytest.mark.parametrize(
+    ("name", "src", "code"),
+    [
+        ("syntax", "def broken(:\n", "syntax_error"),
+        (
+            "dynamic_import",
+            "import importlib\nimportlib.import_module('rdkit')",
+            "unsupported_import",
+        ),
+        ("missing_file", "open('data.csv').read()", "missing_file"),
+        ("crash", "raise RuntimeError('boom')", "script_error"),
+    ],
+)
 def test_load_failures_carry_stable_codes(name, src, code, tmp_path):
     (load,) = drive([{"cmd": "load", "filename": "f.py", "source": src}], tmp_path)
     assert load["ok"] is False
@@ -374,28 +454,32 @@ def test_load_failures_carry_stable_codes(name, src, code, tmp_path):
 
 
 def test_no_figure_is_ok_with_empty_list(tmp_path):
-    (load,) = drive([{"cmd": "load", "filename": "f.py",
-                      "source": "x = 1 + 1\n"}], tmp_path)
+    (load,) = drive([{"cmd": "load", "filename": "f.py", "source": "x = 1 + 1\n"}], tmp_path)
     assert load["ok"] and load["figures"] == []
 
 
 def test_oversized_source_is_rejected(tmp_path):
-    (load,) = drive([{"cmd": "load", "filename": "f.py",
-                      "source": "# " + "x" * (300 * 1024)}], tmp_path)
+    (load,) = drive(
+        [{"cmd": "load", "filename": "f.py", "source": "# " + "x" * (300 * 1024)}], tmp_path
+    )
     assert load["ok"] is False and load["code"] == "source_too_large"
 
 
 def test_commands_before_load_are_bad_request(tmp_path):
-    out = drive([{"cmd": "render", "stem": "F", "patches": []},
-                 {"cmd": "unheard_of"}], tmp_path)
+    out = drive([{"cmd": "render", "stem": "F", "patches": []}, {"cmd": "unheard_of"}], tmp_path)
     assert out[0]["code"] == "bad_request"
     assert out[1]["code"] == "unknown_cmd"
 
 
 def test_second_load_in_one_session_is_refused(tmp_path):
     src = "import matplotlib.pyplot as plt\nplt.plot([0,1])\nplt.show()\n"
-    a, b = drive([{"cmd": "load", "filename": "a.py", "source": src},
-                  {"cmd": "load", "filename": "b.py", "source": src}], tmp_path)
+    a, b = drive(
+        [
+            {"cmd": "load", "filename": "a.py", "source": src},
+            {"cmd": "load", "filename": "b.py", "source": src},
+        ],
+        tmp_path,
+    )
     assert a["ok"] and b["ok"] is False and b["code"] == "bad_request"
 
 
@@ -420,13 +504,19 @@ def test_workspace_source_hash_equals_the_input_and_survives_edits(tmp_path):
     （Web Crypto 算原文）在 `web/src/playground/sourceIntegrity.test.ts`。
     """
     want = hashlib.sha256(_INTEGRITY_SRC.encode("utf-8")).hexdigest()
-    load, opened, rendered, status = drive([
-        {"cmd": "load", "filename": "integrity.py", "source": _INTEGRITY_SRC},
-        {"cmd": "open", "stem": "I"},
-        {"cmd": "render", "stem": "I",
-         "patches": [{"gid": "axes_0.title", "prop": "fontsize", "value": 17}]},
-        {"cmd": "source_status"},
-    ], tmp_path)
+    load, opened, rendered, status = drive(
+        [
+            {"cmd": "load", "filename": "integrity.py", "source": _INTEGRITY_SRC},
+            {"cmd": "open", "stem": "I"},
+            {
+                "cmd": "render",
+                "stem": "I",
+                "patches": [{"gid": "axes_0.title", "prop": "fontsize", "value": 17}],
+            },
+            {"cmd": "source_status"},
+        ],
+        tmp_path,
+    )
 
     assert load["ok"], load
     assert load["script"] == "integrity.py"
@@ -449,13 +539,19 @@ def test_tampered_workspace_source_is_reported_not_hidden(tmp_path):
     **校验本身有效**——一个永远返回相同哈希的实现会在这里红。
     """
     want = hashlib.sha256(_INTEGRITY_SRC.encode("utf-8")).hexdigest()
-    load, before, _tampered, after = drive([
-        {"cmd": "load", "filename": "integrity.py", "source": _INTEGRITY_SRC},
-        {"cmd": "source_status"},
-        {"cmd": "__tamper", "path": str(tmp_path / "ws" / "integrity.py"),
-         "append": "\n# someone edited this\n"},
-        {"cmd": "source_status"},
-    ], tmp_path)
+    load, before, _tampered, after = drive(
+        [
+            {"cmd": "load", "filename": "integrity.py", "source": _INTEGRITY_SRC},
+            {"cmd": "source_status"},
+            {
+                "cmd": "__tamper",
+                "path": str(tmp_path / "ws" / "integrity.py"),
+                "append": "\n# someone edited this\n",
+            },
+            {"cmd": "source_status"},
+        ],
+        tmp_path,
+    )
 
     assert load["ok"] and before["ok"]
     assert before["sha256"] == want
@@ -507,7 +603,8 @@ ax.plot(np.array([0.0, 1.0]), np.array([1.0, 0.5]))
 ax.set_xlim(np.float64(0), np.float64(1))
 fig.savefig("J.pdf")
 """
-    _, opened = drive([{"cmd": "load", "filename": "j.py", "source": src},
-                       {"cmd": "open", "stem": "J"}], tmp_path)
+    _, opened = drive(
+        [{"cmd": "load", "filename": "j.py", "source": src}, {"cmd": "open", "stem": "J"}], tmp_path
+    )
     # drive 本身就做了严格 json 解析；这里再断言可以逐字节重序列化
     json.dumps(opened["manifest"], allow_nan=False)

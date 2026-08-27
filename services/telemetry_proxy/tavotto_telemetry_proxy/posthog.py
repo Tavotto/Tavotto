@@ -24,6 +24,7 @@
   去重，所以定时采集器另外带一个稳定的 `snapshot_key` 属性，看板查询按它
   去重（见 docs/analytics/yc-metrics.md）。不猜，写下来。
 """
+
 from __future__ import annotations
 
 import json
@@ -66,8 +67,14 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def build_event(event: str, distinct_id: str, properties: dict, *,
-                anonymous: bool, snapshot_key: str | None = None) -> dict:
+def build_event(
+    event: str,
+    distinct_id: str,
+    properties: dict,
+    *,
+    anonymous: bool,
+    snapshot_key: str | None = None,
+) -> dict:
     """规范化事件 → PostHog 批次里的一条。**只有这里认识 `$` 开头的属性。**"""
     props = {
         **properties,
@@ -81,8 +88,9 @@ def build_event(event: str, distinct_id: str, properties: dict, *,
         "distinct_id": distinct_id,
         "properties": props,
         "timestamp": _now_iso(),
-        "uuid": (str(uuid.uuid5(_SNAPSHOT_NS, snapshot_key)) if snapshot_key
-                 else str(uuid.uuid4())),
+        "uuid": (
+            str(uuid.uuid5(_SNAPSHOT_NS, snapshot_key)) if snapshot_key else str(uuid.uuid4())
+        ),
     }
 
 
@@ -97,9 +105,10 @@ def send(events: list[dict]) -> None:
         raise UpstreamError("analytics backend is not configured")
     body = json.dumps({"api_key": key, "batch": events}).encode("utf-8")
     req = urllib.request.Request(
-        ingest_url(), data=body, method="POST",
-        headers={"Content-Type": "application/json",
-                 "User-Agent": "tavotto-telemetry-proxy/1"},
+        ingest_url(),
+        data=body,
+        method="POST",
+        headers={"Content-Type": "application/json", "User-Agent": "tavotto-telemetry-proxy/1"},
     )
     try:
         with urllib.request.urlopen(req, timeout=UPSTREAM_TIMEOUT_S) as resp:

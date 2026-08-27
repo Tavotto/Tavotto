@@ -12,6 +12,7 @@ Applications 495,190，窗口内容 660×400）。
 
     .venv/bin/python scripts/build_dmg_background.py
 """
+
 from __future__ import annotations
 
 import sys
@@ -39,7 +40,7 @@ FOLDER_POS = (495.0, 190.0)
 
 
 def hex_rgb(s: str) -> tuple[float, float, float]:
-    return tuple(int(s[i:i + 2], 16) / 255 for i in (1, 3, 5))  # type: ignore[return-value]
+    return tuple(int(s[i : i + 2], 16) / 255 for i in (1, 3, 5))  # type: ignore[return-value]
 
 
 def draw_mark(page: pymupdf.Page, x: float, y: float, size: float) -> None:
@@ -47,17 +48,24 @@ def draw_mark(page: pymupdf.Page, x: float, y: float, size: float) -> None:
     k = size / 1024.0
     palette = PALETTES["paper"]
     for role, g in GEOMETRY["compact"]:
-        rect = pymupdf.Rect(x + g["x"] * k, y + g["y"] * k,
-                            x + (g["x"] + g["w"]) * k, y + (g["y"] + g["h"]) * k)
+        rect = pymupdf.Rect(
+            x + g["x"] * k, y + g["y"] * k, x + (g["x"] + g["w"]) * k, y + (g["y"] + g["h"]) * k
+        )
         if role == "ink-stroke":
-            page.draw_rect(rect, color=hex_rgb(palette["ink"]),
-                           width=g["sw"] * k, fill=None)
+            page.draw_rect(rect, color=hex_rgb(palette["ink"]), width=g["sw"] * k, fill=None)
         else:
             page.draw_rect(rect, color=None, fill=hex_rgb(palette[role]))
 
 
-def centered(page: pymupdf.Page, font: pymupdf.Font, text: str, cx: float,
-             baseline: float, size: float, color) -> None:
+def centered(
+    page: pymupdf.Page,
+    font: pymupdf.Font,
+    text: str,
+    cx: float,
+    baseline: float,
+    size: float,
+    color,
+) -> None:
     w = font.text_length(text, fontsize=size)
     tw = pymupdf.TextWriter(page.rect, color=color)
     tw.append((cx - w / 2, baseline), text, font=font, fontsize=size)

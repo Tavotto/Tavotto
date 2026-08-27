@@ -13,6 +13,7 @@ fixture 只能验证我们对它的想象，所以这份由真产物生成。
 需要科学栈：解释器用 `engine.pool.find_worker_python()` 探到的那个
 （与 worker 同源），本进程的 .venv 里没有 matplotlib。
 """
+
 from __future__ import annotations
 
 import argparse
@@ -25,7 +26,7 @@ ROOT = os.path.dirname(HERE)
 OUT = os.path.join(ROOT, "web", "src", "lib", "__fixtures__", "matplotlibSvg.ts")
 
 # 子进程里跑：本脚本所在解释器不一定有 matplotlib
-_CHILD = r'''
+_CHILD = r"""
 import sys, os, re, json
 sys.path.insert(0, os.path.join(%(root)r, "src", "tavotto", "engine"))
 import matplotlib
@@ -78,9 +79,9 @@ buf = __import__("io").StringIO()
 fig.savefig(buf, format="svg")
 print(json.dumps({"svg": buf.getvalue(),
                   "gids": [[e["gid"], e["role"]] for e in mani["elements"]]}))
-''' % {"root": ROOT}
+""" % {"root": ROOT}
 
-HEADER = '''/* eslint-disable */
+HEADER = """/* eslint-disable */
 /**
  * **真实 matplotlib 输出**的 SVG fixture，由 `scripts/dump_svg_fixture.py` 生成
  * （不要手改）。样式适配器的全部断言都打在这份上——手写一份「看起来像
@@ -108,16 +109,20 @@ HEADER = '''/* eslint-disable */
  * 只能回退后端：axes_0.errorbar_* / axes_0.barseries_N / axes_0.[xy]ticks /
  * axes_0.[xy]ticklabels_*。
  */
-'''
+"""
 
 
 def shrink(svg: str) -> str:
     import re
-    svg = svg[svg.index("<svg"):]
+
+    svg = svg[svg.index("<svg") :]
     svg = re.sub(r"<metadata>[\s\S]*?</metadata>", "", svg)
     svg = re.sub(r'\sd="[^"]{60,}"', ' d="M 0 0 L 1 1"', svg)
-    svg = re.sub(r'xlink:href="data:image/png;base64,[^"]*"',
-                 'xlink:href="data:image/png;base64,iVBORw0KGgo="', svg)
+    svg = re.sub(
+        r'xlink:href="data:image/png;base64,[^"]*"',
+        'xlink:href="data:image/png;base64,iVBORw0KGgo="',
+        svg,
+    )
     svg = re.sub(r"\n\s*\n", "\n", svg)
     # 行尾空格：matplotlib 的路径数据里每个折点后面都跟一个空格再换行。它对
     # SVG 毫无意义，却让这份文件每一次重生成都往 `git diff --check` 里塞一堆
@@ -128,7 +133,7 @@ def shrink(svg: str) -> str:
     # 不归一化的话 fixture 每生成一次就「变了」，--check 永远红，
     # 真正的输出变化（我们要看护的那种）就淹没在噪音里。
     seen: dict[str, str] = {}
-    for raw in re.findall(r'\b([pm][0-9a-f]{10})\b', svg):
+    for raw in re.findall(r"\b([pm][0-9a-f]{10})\b", svg):
         seen.setdefault(raw, "%s%03d" % (raw[0], len(seen)))
     for raw, stable in seen.items():
         svg = re.sub(r"\b%s\b" % raw, stable, svg)
@@ -144,6 +149,7 @@ def build() -> str:
         raise SystemExit("找不到带科学栈的解释器（TAVOTTO_WORKER_PYTHON 可覆盖）")
     out = subprocess.run([py, "-c", _CHILD], capture_output=True, text=True, check=True)
     import json
+
     data = json.loads(out.stdout.strip().splitlines()[-1])
     svg = shrink(data["svg"])
     if "`" in svg or "${" in svg:
@@ -159,9 +165,11 @@ def main() -> int:
     if args.check:
         cur = open(OUT, encoding="utf-8").read() if os.path.exists(OUT) else ""
         if cur != text:
-            print("fixture 与当前 matplotlib 输出不一致：跑一次 "
-                  "`python scripts/dump_svg_fixture.py` 更新，并复核 svgStyle 的适配器",
-                  file=sys.stderr)
+            print(
+                "fixture 与当前 matplotlib 输出不一致：跑一次 "
+                "`python scripts/dump_svg_fixture.py` 更新，并复核 svgStyle 的适配器",
+                file=sys.stderr,
+            )
             return 1
         print("fixture 与当前 matplotlib 输出一致")
         return 0

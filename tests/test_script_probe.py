@@ -16,6 +16,7 @@
 真执行脚本的用例与 `test_compat_capture_parity.py` 同一条纪律：本进程不
 import matplotlib，桌面侧经 pool 起真 worker。
 """
+
 import json
 import os
 from pathlib import Path
@@ -32,15 +33,16 @@ except engine_pool.WorkerError:
     WORKER_PY = None
 
 needs_worker = pytest.mark.skipif(
-    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）")
+    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）"
+)
 
-SHOW_ONLY = '''\
+SHOW_ONLY = """\
 import matplotlib.pyplot as plt
 
 plt.plot([1, 2, 3], [4, 5, 6])
 plt.title("AI generated")
 plt.show()
-'''
+"""
 
 
 def write(figs: Path, name: str, source: str) -> Path:
@@ -84,17 +86,23 @@ class TestScriptInventory:
 
     def test_reason_codes_cover_every_category(self, figs):
         write(figs, "show_only.py", SHOW_ONLY)
-        write(figs, "static.py",
-              'import matplotlib.pyplot as plt\n'
-              'def main():\n'
-              '    fig, ax = plt.subplots()\n'
-              '    fig.savefig("Fig1.pdf")\n')
-        write(figs, "dynamic.py",
-              'import sys\n'
-              'import matplotlib.pyplot as plt\n'
-              'def main():\n'
-              '    fig, ax = plt.subplots()\n'
-              '    fig.savefig(sys.argv[0] + ".pdf")\n')
+        write(
+            figs,
+            "static.py",
+            "import matplotlib.pyplot as plt\n"
+            "def main():\n"
+            "    fig, ax = plt.subplots()\n"
+            '    fig.savefig("Fig1.pdf")\n',
+        )
+        write(
+            figs,
+            "dynamic.py",
+            "import sys\n"
+            "import matplotlib.pyplot as plt\n"
+            "def main():\n"
+            "    fig, ax = plt.subplots()\n"
+            '    fig.savefig(sys.argv[0] + ".pdf")\n',
+        )
         write(figs, "test_foo.py", "def test_x():\n    pass\n")
         write(figs, "_helper.py", "X = 1\n")
         write(figs, "paper_style.py", "def save(fig, stem):\n    pass\n")
@@ -139,11 +147,14 @@ class TestScriptInventory:
         那会改变现有项目打开时自动起草的注册表内容。
         """
         write(figs, "show_only.py", SHOW_ONLY)
-        write(figs, "test_foo.py",
-              'import matplotlib.pyplot as plt\n'
-              'def main():\n'
-              '    fig, ax = plt.subplots()\n'
-              '    fig.savefig("Sneaky.pdf")\n')
+        write(
+            figs,
+            "test_foo.py",
+            "import matplotlib.pyplot as plt\n"
+            "def main():\n"
+            "    fig, ax = plt.subplots()\n"
+            '    fig.savefig("Sneaky.pdf")\n',
+        )
         rep = discover.discover(figs)
         assert rep["scripts"] == {}
         listed = {e["script"] for e in engine_probe.script_inventory(figs)}
@@ -152,12 +163,15 @@ class TestScriptInventory:
     def test_entry_candidates_only_include_callable_entries(self, figs):
         """必填参数的 main 不进候选（worker 零参调用必炸，试它白付冷启动）；
         本 Session 刻意不做「自动构造必填参数」。"""
-        write(figs, "argmain.py",
-              'import matplotlib.pyplot as plt\n'
-              'def main(datafile):\n'
-              '    plt.plot([1])\n'
-              'def draw():\n'
-              '    plt.plot([1])\n')
+        write(
+            figs,
+            "argmain.py",
+            "import matplotlib.pyplot as plt\n"
+            "def main(datafile):\n"
+            "    plt.plot([1])\n"
+            "def draw():\n"
+            "    plt.plot([1])\n",
+        )
         (entry,) = engine_probe.script_inventory(figs)
         assert "main" not in entry["entry_candidates"]
         assert "draw" in entry["entry_candidates"]
@@ -234,8 +248,7 @@ class TestProductApiProbe:
         write(figs, "show_only.py", SHOW_ONLY)
         client.post("/api/projects/open", json={"path": str(figs)})
         try:
-            resp = client.post("/api/registry/probe",
-                               json={"script": "show_only.py"})
+            resp = client.post("/api/registry/probe", json={"script": "show_only.py"})
             assert resp.status_code == 200
             result = resp.get_json()
             assert result["error"] is None
@@ -244,8 +257,7 @@ class TestProductApiProbe:
             (d,) = result["descriptors"]
             assert d["asset_id"] == "runtime:show_only.py#show_only"
             assert d["capture_source"] == "pyplot"
-            cfg = json.loads((figs / "tavotto_registry.json")
-                             .read_text(encoding="utf-8"))
+            cfg = json.loads((figs / "tavotto_registry.json").read_text(encoding="utf-8"))
             assert cfg["scripts"]["show_only.py"]["stems"] == ["show_only"]
         finally:
             engine_pool.shutdown_all(str(figs), wait=True)
@@ -266,53 +278,64 @@ class TestEntrySelection:
         assert result["tried"] == ["__main__"]
 
     def test_guarded_main_module(self, figs):
-        write(figs, "guarded.py",
-              'import matplotlib.pyplot as plt\n'
-              'def draw():\n'
-              '    plt.plot([1, 2, 3])\n'
-              'if __name__ == "__main__":\n'
-              '    draw()\n')
+        write(
+            figs,
+            "guarded.py",
+            "import matplotlib.pyplot as plt\n"
+            "def draw():\n"
+            "    plt.plot([1, 2, 3])\n"
+            'if __name__ == "__main__":\n'
+            "    draw()\n",
+        )
         result = engine_probe.probe(figs, "guarded.py")
         assert result["error"] is None
         assert result["entry"] == "__main__"
 
     def test_main_entry(self, figs):
-        write(figs, "with_main.py",
-              'import matplotlib.pyplot as plt\n'
-              'def main():\n'
-              '    plt.plot([1, 2, 3])\n')
+        write(
+            figs,
+            "with_main.py",
+            "import matplotlib.pyplot as plt\ndef main():\n    plt.plot([1, 2, 3])\n",
+        )
         result = engine_probe.probe(figs, "with_main.py")
         assert result["error"] is None
         assert result["entry"] == "main"
         assert result["tried"] == ["main"]
 
     def test_render_entry(self, figs):
-        write(figs, "with_render.py",
-              'import matplotlib.pyplot as plt\n'
-              'def render():\n'
-              '    plt.plot([1, 2, 3])\n')
+        write(
+            figs,
+            "with_render.py",
+            "import matplotlib.pyplot as plt\ndef render():\n    plt.plot([1, 2, 3])\n",
+        )
         result = engine_probe.probe(figs, "with_render.py")
         assert result["error"] is None
         assert result["entry"] == "render"
 
     def test_custom_zero_arg_entry(self, figs):
         """自定义入口：无必填参数且能到达绘图调用的函数会被静态找出来。"""
-        write(figs, "custom.py",
-              'import matplotlib.pyplot as plt\n'
-              'def make_chart(style="default"):\n'
-              '    plt.plot([3, 1, 2])\n')
+        write(
+            figs,
+            "custom.py",
+            "import matplotlib.pyplot as plt\n"
+            'def make_chart(style="default"):\n'
+            "    plt.plot([3, 1, 2])\n",
+        )
         result = engine_probe.probe(figs, "custom.py")
         assert result["error"] is None
         assert result["entry"] == "make_chart"
 
     def test_a_failing_entry_does_not_poison_the_next(self, figs):
         """错误 entry 各自新建 worker；成功后 error 归 None。"""
-        write(figs, "twostep.py",
-              'import matplotlib.pyplot as plt\n'
-              'def main():\n'
-              '    raise RuntimeError("boom in main")\n'
-              'def render():\n'
-              '    plt.plot([1, 2, 3])\n')
+        write(
+            figs,
+            "twostep.py",
+            "import matplotlib.pyplot as plt\n"
+            "def main():\n"
+            '    raise RuntimeError("boom in main")\n'
+            "def render():\n"
+            "    plt.plot([1, 2, 3])\n",
+        )
         result = engine_probe.probe(figs, "twostep.py")
         assert result["error"] is None
         assert result["entry"] == "render"
@@ -320,12 +343,15 @@ class TestEntrySelection:
 
     def test_first_error_is_kept_when_all_entries_fail(self, figs):
         """报错保留**第一个**候选的（静态推断的那个，对用户最有解释力）。"""
-        write(figs, "allfail.py",
-              'import matplotlib.pyplot as plt\n'
-              'def main():\n'
-              '    raise RuntimeError("first boom")\n'
-              'def render():\n'
-              '    raise RuntimeError("second boom")\n')
+        write(
+            figs,
+            "allfail.py",
+            "import matplotlib.pyplot as plt\n"
+            "def main():\n"
+            '    raise RuntimeError("first boom")\n'
+            "def render():\n"
+            '    raise RuntimeError("second boom")\n',
+        )
         result = engine_probe.probe(figs, "allfail.py")
         err = result["error"]
         assert err["code"] == engine_probe.ERROR_PROBE_FAILED
@@ -335,12 +361,15 @@ class TestEntrySelection:
 
     def test_ran_but_no_figure_tries_the_next_entry(self, figs):
         """「跑通但没有 Figure」不算终局——继续试下一个 entry。"""
-        write(figs, "quiet_then_draw.py",
-              'import matplotlib.pyplot as plt\n'
-              'def main():\n'
-              '    pass\n'
-              'def draw():\n'
-              '    plt.plot([1, 2])\n')
+        write(
+            figs,
+            "quiet_then_draw.py",
+            "import matplotlib.pyplot as plt\n"
+            "def main():\n"
+            "    pass\n"
+            "def draw():\n"
+            "    plt.plot([1, 2])\n",
+        )
         result = engine_probe.probe(figs, "quiet_then_draw.py")
         assert result["error"] is None
         assert result["entry"] == "draw"
@@ -362,10 +391,13 @@ class TestErrorModel:
         assert result["stems"] == []
 
     def test_missing_dependency_names_the_module(self, figs):
-        write(figs, "needy.py",
-              'import tavotto_definitely_missing_pkg\n'
-              'import matplotlib.pyplot as plt\n'
-              'plt.plot([1])\n')
+        write(
+            figs,
+            "needy.py",
+            "import tavotto_definitely_missing_pkg\n"
+            "import matplotlib.pyplot as plt\n"
+            "plt.plot([1])\n",
+        )
         result = engine_probe.probe(figs, "needy.py")
         err = result["error"]
         assert err["code"] == engine_probe.ERROR_MISSING_DEPENDENCY
@@ -373,7 +405,7 @@ class TestErrorModel:
 
     def test_timeout_maps_to_execution_timeout(self, figs, monkeypatch):
         monkeypatch.setattr(engine_pool, "BUILD_TIMEOUT", 8)
-        write(figs, "sleepy.py", 'import time\ntime.sleep(60)\n')
+        write(figs, "sleepy.py", "import time\ntime.sleep(60)\n")
         result = engine_probe.probe(figs, "sleepy.py")
         assert result["error"]["code"] == engine_probe.ERROR_TIMEOUT
 
@@ -384,11 +416,11 @@ class TestErrorModel:
     def test_probe_error_codes_have_text_in_both_languages(self):
         """probe 的稳定码表与前端文案同一条纪律（test_error_codes 的延伸）：
         每个 code 两种语言都有文案，占位符与后端 params 对得上。"""
-        locales = (Path(__file__).resolve().parent.parent
-                   / "web" / "src" / "i18n" / "locales")
+        locales = Path(__file__).resolve().parent.parent / "web" / "src" / "i18n" / "locales"
         if not (locales / "zh-CN" / "errors.json").is_file():
             pytest.skip("没有 web/（wheel/sdist 里不含前端源码）")
         import re
+
         codes_and_params = {
             engine_probe.ERROR_OUTSIDE_PROJECT: {"script"},
             engine_probe.ERROR_NOT_FOUND: {"script"},
@@ -402,8 +434,9 @@ class TestErrorModel:
             engine_probe.ERROR_STEM_CONFLICT: {"detail"},
         }
         for locale in ("zh-CN", "en-US"):
-            table = json.loads((locales / locale / "errors.json")
-                               .read_text(encoding="utf-8"))["backend"]
+            table = json.loads((locales / locale / "errors.json").read_text(encoding="utf-8"))[
+                "backend"
+            ]
             for code, params in codes_and_params.items():
                 assert code in table, f"{locale} 缺 {code} 的文案"
                 used = set(re.findall(r"\{\{\s*(\w+)\s*\}\}", table[code]))
@@ -418,25 +451,28 @@ class TestCaptureResults:
     def test_multi_figure_returns_every_descriptor_in_order(self, figs):
         """多张图**完整**返回、顺序确定（负向反证 #4 的看护对象：
         只返回第一张，这里的数量断言必须红）。"""
-        write(figs, "multi.py",
-              'import matplotlib.pyplot as plt\n'
-              'for i in range(3):\n'
-              '    plt.figure(figsize=(3, 2))\n'
-              '    plt.plot([1, 2, i])\n'
-              'plt.show()\n')
+        write(
+            figs,
+            "multi.py",
+            "import matplotlib.pyplot as plt\n"
+            "for i in range(3):\n"
+            "    plt.figure(figsize=(3, 2))\n"
+            "    plt.plot([1, 2, i])\n"
+            "plt.show()\n",
+        )
         result = engine_probe.probe(figs, "multi.py")
         assert result["error"] is None
         assert len(result["descriptors"]) == 3
-        assert [d["stem"] for d in result["descriptors"]] == \
-            ["multi", "multi-2", "multi-3"]
+        assert [d["stem"] for d in result["descriptors"]] == ["multi", "multi-2", "multi-3"]
         assert result["stems"] == ["multi", "multi-2", "multi-3"]
 
     def test_savefig_and_live_pyplot_figure_deduplicate(self, figs):
         """同一个 Figure savefig 后仍活在 pyplot 里：一张图一个描述符。"""
-        write(figs, "saved.py",
-              'import matplotlib.pyplot as plt\n'
-              'plt.plot([1, 2, 3])\n'
-              'plt.savefig("real_name.pdf")\n')
+        write(
+            figs,
+            "saved.py",
+            'import matplotlib.pyplot as plt\nplt.plot([1, 2, 3])\nplt.savefig("real_name.pdf")\n',
+        )
         result = engine_probe.probe(figs, "saved.py")
         assert result["error"] is None
         (d,) = result["descriptors"]
@@ -445,22 +481,28 @@ class TestCaptureResults:
 
     def test_dropped_figures_are_reported_not_silent(self, figs):
         n = figcapture.MAX_PYPLOT_FALLBACK + 2
-        write(figs, "many.py",
-              'import matplotlib.pyplot as plt\n'
-              f'for i in range({n}):\n'
-              '    plt.figure(figsize=(2, 1.5))\n'
-              '    plt.plot([1, i])\n')
+        write(
+            figs,
+            "many.py",
+            "import matplotlib.pyplot as plt\n"
+            f"for i in range({n}):\n"
+            "    plt.figure(figsize=(2, 1.5))\n"
+            "    plt.plot([1, i])\n",
+        )
         result = engine_probe.probe(figs, "many.py")
         assert result["error"] is None
         assert len(result["descriptors"]) == figcapture.MAX_PYPLOT_FALLBACK
         assert result["dropped_figures"] == 2
 
     def test_stdout_noise_does_not_break_the_protocol(self, figs):
-        write(figs, "noisy.py",
-              'import matplotlib.pyplot as plt\n'
-              'print("{\\"ok\\": false, \\"garbage\\": true}")\n'
-              'print("随便打印点什么 " * 100)\n'
-              'plt.plot([1, 2, 3])\n')
+        write(
+            figs,
+            "noisy.py",
+            "import matplotlib.pyplot as plt\n"
+            'print("{\\"ok\\": false, \\"garbage\\": true}")\n'
+            'print("随便打印点什么 " * 100)\n'
+            "plt.plot([1, 2, 3])\n",
+        )
         result = engine_probe.probe(figs, "noisy.py")
         assert result["error"] is None
         assert result["stems"] == ["noisy"]
@@ -475,10 +517,11 @@ class TestCaptureResults:
 
     def test_subdirectory_script_imports_its_local_helper(self, figs):
         write(figs, "panels/datautil.py", "VALUES = [5, 3, 4]\n")
-        write(figs, "panels/chart.py",
-              'import datautil\n'
-              'import matplotlib.pyplot as plt\n'
-              'plt.plot(datautil.VALUES)\n')
+        write(
+            figs,
+            "panels/chart.py",
+            "import datautil\nimport matplotlib.pyplot as plt\nplt.plot(datautil.VALUES)\n",
+        )
         result = engine_probe.probe(figs, "panels/chart.py")
         assert result["error"] is None
         assert result["stems"] == ["chart"]
@@ -489,10 +532,19 @@ class TestCaptureResults:
         write(figs, "show_only.py", SHOW_ONLY)
         result = engine_probe.probe(figs, "show_only.py")
         (d,) = result["descriptors"]
-        assert set(d) == {"asset_id", "script", "entry", "stem",
-                          "capture_source", "execution_profile",
-                          "original_artifact", "size_mm", "source_fingerprint",
-                          "can_writeback_artifact", "can_writeback_source"}
+        assert set(d) == {
+            "asset_id",
+            "script",
+            "entry",
+            "stem",
+            "capture_source",
+            "execution_profile",
+            "original_artifact",
+            "size_mm",
+            "source_fingerprint",
+            "can_writeback_artifact",
+            "can_writeback_source",
+        }
         rebuilt = figcapture.descriptor_from_payload(d).to_payload()
         assert rebuilt == d
         assert result["timings"].get("script_build_ms", 0) > 0
@@ -505,14 +557,17 @@ class TestCaptureResults:
         「probe 执行一次 → 取预览再执行一次 → 登记再执行一次」是被禁止的。
         """
         counter = tmp_path / "exec_count.txt"
-        write(figs, "counted.py",
-              'from pathlib import Path\n'
-              'import matplotlib.pyplot as plt\n'
-              'def main():\n'
-              f'    p = Path({str(counter)!r})\n'
-              '    n = int(p.read_text()) if p.exists() else 0\n'
-              '    p.write_text(str(n + 1))\n'
-              '    plt.plot([1, 2, 3])\n')
+        write(
+            figs,
+            "counted.py",
+            "from pathlib import Path\n"
+            "import matplotlib.pyplot as plt\n"
+            "def main():\n"
+            f"    p = Path({str(counter)!r})\n"
+            "    n = int(p.read_text()) if p.exists() else 0\n"
+            "    p.write_text(str(n + 1))\n"
+            "    plt.plot([1, 2, 3])\n",
+        )
         result = engine_probe.probe_and_register(figs, "counted.py")
         assert result["error"] is None and result["registered"] is True
         assert int(counter.read_text()) == 1
@@ -525,22 +580,25 @@ class TestCaptureResults:
     def test_failed_entries_may_rerun_but_success_only_once(self, figs, tmp_path):
         """失败 entry 允许各自新建 worker 重跑；成功那次之后不再执行。"""
         counter = tmp_path / "exec_count2.txt"
-        write(figs, "counted2.py",
-              'from pathlib import Path\n'
-              'import matplotlib.pyplot as plt\n'
-              f'_p = Path({str(counter)!r})\n'
-              '_n = int(_p.read_text()) if _p.exists() else 0\n'
-              '_p.write_text(str(_n + 1))\n'
-              'def main():\n'
-              '    raise RuntimeError("wrong entry")\n'
-              'def draw():\n'
-              '    plt.plot([1, 2])\n')
+        write(
+            figs,
+            "counted2.py",
+            "from pathlib import Path\n"
+            "import matplotlib.pyplot as plt\n"
+            f"_p = Path({str(counter)!r})\n"
+            "_n = int(_p.read_text()) if _p.exists() else 0\n"
+            "_p.write_text(str(_n + 1))\n"
+            "def main():\n"
+            '    raise RuntimeError("wrong entry")\n'
+            "def draw():\n"
+            "    plt.plot([1, 2])\n",
+        )
         result = engine_probe.probe(figs, "counted2.py")
         assert result["error"] is None and result["entry"] == "draw"
-        ran = int(counter.read_text())          # main 失败一次 + draw 成功一次
+        ran = int(counter.read_text())  # main 失败一次 + draw 成功一次
         w = engine_pool.get("counted2.py", str(figs), "draw")
         w.ensure_built()
-        assert int(counter.read_text()) == ran   # 成功之后零新增
+        assert int(counter.read_text()) == ran  # 成功之后零新增
 
 
 @needs_worker
@@ -554,19 +612,29 @@ class TestRegistryEffects:
         write(figs, "good.py", SHOW_ONLY.replace("show_only", "good"))
         assert engine_probe.probe_and_register(figs, "good.py")["registered"]
         before = (figs / "tavotto_registry.json").read_bytes()
-        assert engine_probe.probe_and_register(figs, "quiet.py")[
-            "registered"] is False
+        assert engine_probe.probe_and_register(figs, "quiet.py")["registered"] is False
         assert (figs / "tavotto_registry.json").read_bytes() == before
 
     def test_stem_conflict_with_a_live_script_is_not_silently_stolen(self, figs):
         """产出的 stem 已被另一份**仍存在**的脚本登记：报 code，不写注册表。"""
         write(figs, "a.py", 'print("owner")\n')
-        (figs / "tavotto_registry.json").write_text(json.dumps({
-            "version": 1,
-            "scripts": {"a.py": {"entry": "main", "cost": "medium",
-                                 "notes": "", "stems": ["figure"]}},
-        }), encoding="utf-8")
-        write(figs, "panels/figure.py", SHOW_ONLY)   # fallback stem = "figure"
+        (figs / "tavotto_registry.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "scripts": {
+                        "a.py": {
+                            "entry": "main",
+                            "cost": "medium",
+                            "notes": "",
+                            "stems": ["figure"],
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        write(figs, "panels/figure.py", SHOW_ONLY)  # fallback stem = "figure"
         before = (figs / "tavotto_registry.json").read_bytes()
         result = engine_probe.probe_and_register(figs, "panels/figure.py")
         assert result["registered"] is False
@@ -576,15 +644,25 @@ class TestRegistryEffects:
 
     def test_a_dead_owners_stems_are_reassigned(self, figs):
         """归属脚本已不在磁盘上的旧条目不算冲突——改名/删除后重探测要顺畅。"""
-        (figs / "tavotto_registry.json").write_text(json.dumps({
-            "version": 1,
-            "scripts": {"ghost.py": {"entry": "main", "cost": "medium",
-                                     "notes": "", "stems": ["figure"]}},
-        }), encoding="utf-8")
+        (figs / "tavotto_registry.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "scripts": {
+                        "ghost.py": {
+                            "entry": "main",
+                            "cost": "medium",
+                            "notes": "",
+                            "stems": ["figure"],
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
         write(figs, "panels/figure.py", SHOW_ONLY)
         result = engine_probe.probe_and_register(figs, "panels/figure.py")
         assert result["error"] is None and result["registered"] is True
-        cfg = json.loads((figs / "tavotto_registry.json")
-                         .read_text(encoding="utf-8"))
+        cfg = json.loads((figs / "tavotto_registry.json").read_text(encoding="utf-8"))
         assert cfg["scripts"]["panels/figure.py"]["stems"] == ["figure"]
         assert "figure" not in cfg["scripts"].get("ghost.py", {}).get("stems", [])

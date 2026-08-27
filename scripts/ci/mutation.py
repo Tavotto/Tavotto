@@ -20,6 +20,7 @@
     python scripts/ci/mutation.py --python .venv/bin/python
     python scripts/ci/mutation.py --python .venv/bin/python --max-children 12
 """
+
 from __future__ import annotations
 
 import argparse
@@ -82,26 +83,32 @@ def verify_scope_is_configured(repo: Path) -> list[str]:
     try:
         if sys.version_info >= (3, 11):
             import tomllib
+
             data = tomllib.loads((repo / "pyproject.toml").read_text(encoding="utf-8"))
-        else:                                       # pragma: no cover - CI 用 3.13
+        else:  # pragma: no cover - CI 用 3.13
             raise CiError("python_too_old", "mutation 需要 Python 3.11+ 的 tomllib")
     except (OSError, ValueError) as exc:
         raise CiError("pyproject_unreadable", f"读不到 pyproject.toml：{exc}") from exc
 
     cfg = data.get("tool", {}).get("mutmut")
     if not cfg:
-        raise CiError("mutmut_scope_missing",
-                      "pyproject.toml 里没有 [tool.mutmut]。缺了它 mutmut 会变异整个 "
-                      "source_paths，产出几千个 mutant 与一份没人会读的报告")
+        raise CiError(
+            "mutmut_scope_missing",
+            "pyproject.toml 里没有 [tool.mutmut]。缺了它 mutmut 会变异整个 "
+            "source_paths，产出几千个 mutant 与一份没人会读的报告",
+        )
     only = cfg.get("only_mutate") or []
     if not only:
-        raise CiError("mutmut_scope_unbounded",
-                      "[tool.mutmut] 里 only_mutate 为空——scope 没有被圈住")
+        raise CiError(
+            "mutmut_scope_unbounded", "[tool.mutmut] 里 only_mutate 为空——scope 没有被圈住"
+        )
     missing = [t for t in only if not (repo / t).is_file() and not t.endswith("*")]
     if missing:
-        raise CiError("mutmut_target_missing",
-                      f"only_mutate 指向不存在的文件：{missing}。"
-                      "模块被改名或移动后，mutation 会安静地少验一大块")
+        raise CiError(
+            "mutmut_target_missing",
+            f"only_mutate 指向不存在的文件：{missing}。"
+            "模块被改名或移动后，mutation 会安静地少验一大块",
+        )
     return list(only)
 
 
@@ -122,8 +129,12 @@ def parse_results(text: str) -> dict:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Mutation testing（weekly）")
     ap.add_argument("--python", default=sys.executable)
-    ap.add_argument("--max-children", type=int, default=max(2, (os.cpu_count() or 4) - 4),
-                    help="并发。留出余量给 OS 与 runner 自身")
+    ap.add_argument(
+        "--max-children",
+        type=int,
+        default=max(2, (os.cpu_count() or 4) - 4),
+        help="并发。留出余量给 OS 与 runner 自身",
+    )
     ap.add_argument("--timeout", type=int, default=5400)
     args = ap.parse_args(argv)
 
@@ -132,20 +143,30 @@ def main(argv: list[str] | None = None) -> int:
     started = time.time()
 
     mutants_dir = REPO / "mutants"
-    payload: dict = {"ok": True, "gate_enforced": gate,
-                     "metadata": run_metadata("weekly")}
+    payload: dict = {"ok": True, "gate_enforced": gate, "metadata": run_metadata("weekly")}
     try:
         # 先确认 scope 真的被圈住了，再开跑（理由见 verify_scope_is_configured）
         payload["targets"] = verify_scope_is_configured(REPO)
         env = dict(os.environ)
         run = subprocess.run(
             [args.python, "-m", "mutmut", "run", "--max-children", str(args.max_children)],
-            cwd=REPO, env=env, capture_output=True, text=True, timeout=args.timeout)
+            cwd=REPO,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=args.timeout,
+        )
         payload["run_returncode"] = run.returncode
         payload["run_tail"] = (run.stdout + run.stderr)[-4000:]
 
-        res = subprocess.run([args.python, "-m", "mutmut", "results"],
-                             cwd=REPO, env=env, capture_output=True, text=True, timeout=900)
+        res = subprocess.run(
+            [args.python, "-m", "mutmut", "results"],
+            cwd=REPO,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=900,
+        )
         payload["results_text"] = res.stdout[-8000:]
         counts = parse_results(res.stdout)
         payload["counts"] = counts
@@ -157,8 +178,14 @@ def main(argv: list[str] | None = None) -> int:
 
         # export-cicd-stats 是 3.x 提供的机器可读产物，有就一并收走
         try:
-            stats = subprocess.run([args.python, "-m", "mutmut", "export-cicd-stats"],
-                                   cwd=REPO, env=env, capture_output=True, text=True, timeout=300)
+            stats = subprocess.run(
+                [args.python, "-m", "mutmut", "export-cicd-stats"],
+                cwd=REPO,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
             if stats.returncode == 0 and stats.stdout.strip():
                 payload["cicd_stats"] = stats.stdout[:20000]
         except subprocess.SubprocessError:
@@ -169,22 +196,35 @@ def main(argv: list[str] | None = None) -> int:
             ("survived", "⚠️" if ratio > SURVIVED_RATIO_WARN else "✅", str(counts["survived"])),
             ("timeout", "·", str(counts["timeout"])),
             ("suspicious", "·", str(counts["suspicious"])),
-            ("survived 占比", "⚠️" if ratio > SURVIVED_RATIO_WARN else "✅",
-             f"{ratio:.1%}（观察阈值 {SURVIVED_RATIO_WARN:.0%}）"),
+            (
+                "survived 占比",
+                "⚠️" if ratio > SURVIVED_RATIO_WARN else "✅",
+                f"{ratio:.1%}（观察阈值 {SURVIVED_RATIO_WARN:.0%}）",
+            ),
         ]
-        summary(f"\n### Mutation（{'门禁已开' if gate else 'report-only'}）\n\n"
-                + summary_table(rows)
-                + f"\n\n目标模块：{', '.join(Path(t).name for t in payload['targets'])}\n")
+        summary(
+            f"\n### Mutation（{'门禁已开' if gate else 'report-only'}）\n\n"
+            + summary_table(rows)
+            + f"\n\n目标模块：{', '.join(Path(t).name for t in payload['targets'])}\n"
+        )
         # survived 必须**显式列出来**，不能只给一个数字：
         # 「有 12 个存活变异」没人会去查，贴出来才有人看。
         if counts["survived"]:
-            summary("\n<details><summary>survived mutants（点开看）</summary>\n\n```\n"
-                    + res.stdout[-6000:] + "\n```\n</details>\n")
+            summary(
+                "\n<details><summary>survived mutants（点开看）</summary>\n\n```\n"
+                + res.stdout[-6000:]
+                + "\n```\n</details>\n"
+            )
 
         payload["ok"] = (ratio <= SURVIVED_RATIO_WARN) if gate else True
     except subprocess.TimeoutExpired:
-        payload.update({"ok": not gate, "code": "mutation_timeout",
-                        "error": f"mutmut 超过 {args.timeout}s 未完成"})
+        payload.update(
+            {
+                "ok": not gate,
+                "code": "mutation_timeout",
+                "error": f"mutmut 超过 {args.timeout}s 未完成",
+            }
+        )
         print(f"::warning::mutation 超时（{args.timeout}s）", file=sys.stderr)
     except CiError as exc:
         # scope 没圈住属于配置错误，**一律阻断**，与 gate 无关：
@@ -202,9 +242,16 @@ def main(argv: list[str] | None = None) -> int:
 
     payload["elapsed_s"] = round(time.time() - started, 1)
     write_report("mutation.json", payload, root)
-    print(json.dumps({k: v for k, v in payload.items()
-                      if k in ("ok", "counts", "survived_ratio", "elapsed_s")},
-                     ensure_ascii=False))
+    print(
+        json.dumps(
+            {
+                k: v
+                for k, v in payload.items()
+                if k in ("ok", "counts", "survived_ratio", "elapsed_s")
+            },
+            ensure_ascii=False,
+        )
+    )
     return 0 if payload["ok"] else 1
 
 

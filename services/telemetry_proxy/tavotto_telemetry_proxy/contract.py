@@ -11,6 +11,7 @@
     它们**不属于任何一个匿名用户**，distinct_id 是常量 `distribution_metrics`；
   * 字符串类属性的**长度与字符集**约束 —— 客户端是自己人，代理面对的是公网。
 """
+
 from __future__ import annotations
 
 SCHEMA_VERSION = 1
@@ -30,9 +31,9 @@ def integer(maximum: int) -> dict:
 
 
 BOOL = {"kind": "bool"}
-VERSION = {"kind": "version"}          # 短版本串：[0-9A-Za-z.+-_]{1,32}
-DATE = {"kind": "date"}                # YYYY-MM-DD
-KEY = {"kind": "key"}                  # 快照身份：[A-Za-z0-9:._-]{1,120}
+VERSION = {"kind": "version"}  # 短版本串：[0-9A-Za-z.+-_]{1,32}
+DATE = {"kind": "date"}  # YYYY-MM-DD
+KEY = {"kind": "key"}  # 快照身份：[A-Za-z0-9:._-]{1,120}
 
 AUTO_PROPS: dict[str, dict] = {
     "app_version": VERSION,
@@ -46,19 +47,25 @@ EVENTS: dict[str, dict[str, dict]] = {
     "app_started": {"app_mode": enum("desktop", "browser")},
     "figure_opened": {"asset_kind": enum("pdf", "raster"), "editable": BOOL},
     "figure_edit_completed": {
-        "edit_kind": enum("text", "series", "axes", "annotation",
-                          "layout", "style", "other"),
+        "edit_kind": enum("text", "series", "axes", "annotation", "layout", "style", "other"),
         "patch_count": integer(1000),
     },
     "canvas_created": {"creation_kind": enum("blank", "project", "duplicate")},
-    "preflight_completed": {"errors": integer(1000), "warnings": integer(1000),
-                            "not_verifiable": integer(1000),
-                            "suggestions": integer(1000), "passed": BOOL},
-    "export_completed": {"pdf": BOOL, "png": BOOL, "with_proof": BOOL,
-                         "panel_count": integer(1000)},
+    "preflight_completed": {
+        "errors": integer(1000),
+        "warnings": integer(1000),
+        "not_verifiable": integer(1000),
+        "suggestions": integer(1000),
+        "passed": BOOL,
+    },
+    "export_completed": {
+        "pdf": BOOL,
+        "png": BOOL,
+        "with_proof": BOOL,
+        "panel_count": integer(1000),
+    },
     "ai_assistant_invoked": {"agent": enum("codex", "claude", "other")},
-    "update_completed": {"update_kind": enum("desktop", "pip", "pipx"),
-                         "target_version": VERSION},
+    "update_completed": {"update_kind": enum("desktop", "pip", "pipx"), "target_version": VERSION},
 }
 
 #: 发行量指标。**它们不是用户**——GitHub 的 download_count 是累计计数器，
@@ -66,27 +73,26 @@ EVENTS: dict[str, dict[str, dict]] = {
 #: 「distribution downloads」，绝不是「users」。
 METRICS_EVENTS: dict[str, dict[str, dict]] = {
     "github_release_asset_snapshot": {
-        "release_id": integer(10 ** 12),
+        "release_id": integer(10**12),
         "release_tag": VERSION,
-        "asset_id": integer(10 ** 12),
+        "asset_id": integer(10**12),
         # 自动更新包与签名文件**不是人下载的安装包**。分不开这两类，
         # 「有多少人装过」就会被更新流量整个淹掉。
-        "asset_role": enum("installer", "updater", "wheel", "sdist",
-                           "plugin", "checksum", "other"),
+        "asset_role": enum("installer", "updater", "wheel", "sdist", "plugin", "checksum", "other"),
         "platform": enum("macos", "windows", "linux", "any", "other"),
-        "download_count_total": integer(10 ** 9),
+        "download_count_total": integer(10**9),
         "observed_date": DATE,
         "snapshot_key": KEY,
     },
     "pypi_daily_downloads": {
         "date": DATE,
-        "downloads": integer(10 ** 9),
+        "downloads": integer(10**9),
         "category": enum("without_mirrors"),
         "snapshot_key": KEY,
     },
     "github_repo_snapshot": {
-        "stars": integer(10 ** 8),
-        "forks": integer(10 ** 8),
+        "stars": integer(10**8),
+        "forks": integer(10**8),
         "observed_date": DATE,
         "snapshot_key": KEY,
     },

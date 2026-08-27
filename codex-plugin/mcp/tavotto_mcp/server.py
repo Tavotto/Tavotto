@@ -11,6 +11,7 @@ UI 只挂在真正需要画布的两个工具上（open / apply），见 `widget
 manifest / SVG 这类大字段只进 `structuredContent`，不进 `content` 文本——
 把一整份 SVG 塞进模型上下文既没用又贵。
 """
+
 from __future__ import annotations
 
 import json
@@ -49,8 +50,9 @@ ELICITATION_REQUEST_TIMEOUT_S = 300.0
 def _version() -> str:
     try:
         import tavotto
+
         return tavotto.__version__
-    except Exception:                       # noqa: BLE001 — 版本读不到不该拖垮握手
+    except Exception:  # noqa: BLE001 — 版本读不到不该拖垮握手
         return "0"
 
 
@@ -70,9 +72,10 @@ def _tools() -> list[dict]:
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "probe_worker": {"type": "boolean",
-                                     "description": "顺带探测渲染解释器（matplotlib"
-                                                    " 在哪个环境），较慢"},
+                    "probe_worker": {
+                        "type": "boolean",
+                        "description": "顺带探测渲染解释器（matplotlib 在哪个环境），较慢",
+                    },
                 },
                 "additionalProperties": False,
             },
@@ -92,19 +95,30 @@ def _tools() -> list[dict]:
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "project_path": {"type": "string",
-                                     "description": "图库目录（含 tavotto_registry.json）"},
-                    "script_path": {"type": "string",
-                                    "description": "脚本或产物的路径；与 project_path 二选一"},
-                    "stem": {"type": "string",
-                             "description": "产物文件名主干（一个项目多张图时必须点名）"},
-                    "profile_id": {"type": "string",
-                                   "description": "出版规范 id，缺省用规范文件里的 default"},
-                    "journal": {"type": "object",
-                                "description": "期刊自定义覆盖，如 "
-                                               "{\"widths_mm\": {\"double\": 178}}"},
-                    "include_png": {"type": "boolean",
-                                    "description": "顺带回一张 base64 位图预览（默认否，体积大）"},
+                    "project_path": {
+                        "type": "string",
+                        "description": "图库目录（含 tavotto_registry.json）",
+                    },
+                    "script_path": {
+                        "type": "string",
+                        "description": "脚本或产物的路径；与 project_path 二选一",
+                    },
+                    "stem": {
+                        "type": "string",
+                        "description": "产物文件名主干（一个项目多张图时必须点名）",
+                    },
+                    "profile_id": {
+                        "type": "string",
+                        "description": "出版规范 id，缺省用规范文件里的 default",
+                    },
+                    "journal": {
+                        "type": "object",
+                        "description": '期刊自定义覆盖，如 {"widths_mm": {"double": 178}}',
+                    },
+                    "include_png": {
+                        "type": "boolean",
+                        "description": "顺带回一张 base64 位图预览（默认否，体积大）",
+                    },
                 },
                 "additionalProperties": False,
             },
@@ -129,17 +143,20 @@ def _tools() -> list[dict]:
                         "items": {
                             "type": "object",
                             "properties": {
-                                "gid": {"type": "string",
-                                        "description": "manifest 元素的 gid"},
-                                "prop": {"type": "string",
-                                         "description": "该元素 editable 里的 prop"},
+                                "gid": {"type": "string", "description": "manifest 元素的 gid"},
+                                "prop": {
+                                    "type": "string",
+                                    "description": "该元素 editable 里的 prop",
+                                },
                                 "value": {"description": "新值（类型见 editable 的 type）"},
                             },
                             "required": ["gid", "prop", "value"],
                         },
                     },
-                    "preview_dpi": {"type": "integer",
-                                    "description": "预览 SVG 里内嵌位图的 dpi（含 imshow 的图才有意义）"},
+                    "preview_dpi": {
+                        "type": "integer",
+                        "description": "预览 SVG 里内嵌位图的 dpi（含 imshow 的图才有意义）",
+                    },
                 },
                 "required": ["session_id", "patches"],
                 "additionalProperties": False,
@@ -178,12 +195,16 @@ def _tools() -> list[dict]:
                 "type": "object",
                 "properties": {
                     "session_id": {"type": "string"},
-                    "formats": {"type": "array", "items": {"type": "string",
-                                                           "enum": list(bridge.EXPORT_FORMATS)}},
+                    "formats": {
+                        "type": "array",
+                        "items": {"type": "string", "enum": list(bridge.EXPORT_FORMATS)},
+                    },
                     "dpi": {"type": "integer", "description": "PNG 的分辨率，默认 600"},
                     "stem": {"type": "string", "description": "输出文件名主干"},
-                    "out_dir": {"type": "string",
-                                "description": "输出目录；缺省 <项目>/tavottofile/export/"},
+                    "out_dir": {
+                        "type": "string",
+                        "description": "输出目录；缺省 <项目>/tavottofile/export/",
+                    },
                     "profile_id": {"type": "string"},
                     "journal": {"type": "object"},
                     "explicit_confirm": {
@@ -226,9 +247,11 @@ def _tools() -> list[dict]:
     if ui:
         by_name = {t["name"]: t for t in tools}
         by_name["tavotto_open_figure"]["_meta"] = widget.tool_meta(
-            invoking="正在打开 Tavotto 画布…", invoked="Tavotto 画布已就绪")
+            invoking="正在打开 Tavotto 画布…", invoked="Tavotto 画布已就绪"
+        )
         by_name["tavotto_apply_overrides"]["_meta"] = widget.tool_meta(
-            invoking="正在重渲染…", invoked="已更新")
+            invoking="正在重渲染…", invoked="已更新"
+        )
     return tools
 
 
@@ -252,14 +275,26 @@ def _call_open(args: dict) -> dict:
     target = args.get("project_path") or args.get("script_path")
     if not target:
         raise RpcError(INVALID_PARAMS, "要给 project_path 或 script_path 其中之一")
-    out = bridge.open_figure(str(target), stem=args.get("stem"),
-                             profile_id=args.get("profile_id"),
-                             journal=args.get("journal"),
-                             include_png=bool(args.get("include_png")))
+    out = bridge.open_figure(
+        str(target),
+        stem=args.get("stem"),
+        profile_id=args.get("profile_id"),
+        journal=args.get("journal"),
+        include_png=bool(args.get("include_png")),
+    )
     checks = bridge.run_preflight(out["session_id"])
-    out["preflight"] = {k: checks[k] for k in
-                        ("counts", "blocking", "needs_confirm", "errors",
-                         "warnings", "not_verifiable", "suggestions")}
+    out["preflight"] = {
+        k: checks[k]
+        for k in (
+            "counts",
+            "blocking",
+            "needs_confirm",
+            "errors",
+            "warnings",
+            "not_verifiable",
+            "suggestions",
+        )
+    }
     lines = [
         f"已打开 {out['stem']}（会话 {out['session_id']}）",
         _brief_manifest(out.get("manifest")),
@@ -274,23 +309,29 @@ def _call_open(args: dict) -> dict:
 
 
 def _call_apply(args: dict) -> dict:
-    out = bridge.apply_overrides(str(args.get("session_id") or ""),
-                                 args.get("patches"),
-                                 preview_dpi=args.get("preview_dpi"))
-    lines = [f"已应用 {out['applied']} 条 override（hash {out['patch_hash'][:19]}…）",
-             _brief_manifest(out.get("manifest"))]
+    out = bridge.apply_overrides(
+        str(args.get("session_id") or ""), args.get("patches"), preview_dpi=args.get("preview_dpi")
+    )
+    lines = [
+        f"已应用 {out['applied']} 条 override（hash {out['patch_hash'][:19]}…）",
+        _brief_manifest(out.get("manifest")),
+    ]
     if out["rejected"]:
-        lines.append("被拒条目（形状不合法，未应用）: " +
-                     "; ".join(f"#{d['index']} {d['reason']}" for d in out["rejected"][:5]))
+        lines.append(
+            "被拒条目（形状不合法，未应用）: "
+            + "; ".join(f"#{d['index']} {d['reason']}" for d in out["rejected"][:5])
+        )
     if out["warnings"]:
         lines.append("worker 警告: " + "; ".join(out["warnings"][:5]))
     return {"content": _text(*lines), "structuredContent": out}
 
 
 def _call_preflight(args: dict) -> dict:
-    out = bridge.run_preflight(str(args.get("session_id") or ""),
-                               profile_id=args.get("profile_id"),
-                               journal=args.get("journal"))
+    out = bridge.run_preflight(
+        str(args.get("session_id") or ""),
+        profile_id=args.get("profile_id"),
+        journal=args.get("journal"),
+    )
     return {"content": _text(out["report"]), "structuredContent": out}
 
 
@@ -298,15 +339,17 @@ def _call_export(args: dict) -> dict:
     # dpi **不能写成 `or 600`**：显式给的 0 是写错了，不是「没给」，
     # 悄悄替它换成 600 会让用户以为自己的参数生效了
     raw_dpi = args.get("dpi")
-    out = bridge.export(str(args.get("session_id") or ""),
-                        formats=args.get("formats") or [],
-                        dpi=600 if raw_dpi is None else raw_dpi,
-                        stem=args.get("stem"),
-                        out_dir=args.get("out_dir"),
-                        profile_id=args.get("profile_id"),
-                        journal=args.get("journal"),
-                        explicit_confirm=bool(args.get("explicit_confirm")),
-                        proof=args.get("proof") is not False)
+    out = bridge.export(
+        str(args.get("session_id") or ""),
+        formats=args.get("formats") or [],
+        dpi=600 if raw_dpi is None else raw_dpi,
+        stem=args.get("stem"),
+        out_dir=args.get("out_dir"),
+        profile_id=args.get("profile_id"),
+        journal=args.get("journal"),
+        explicit_confirm=bool(args.get("explicit_confirm")),
+        proof=args.get("proof") is not False,
+    )
     lines = ["已导出：" + "、".join(f["path"] for f in out["files"])]
     if out.get("proof_path"):
         lines.append("留档：" + out["proof_path"])
@@ -320,31 +363,39 @@ def _call_export(args: dict) -> dict:
 def _call_verify(args: dict) -> dict:
     out = bridge.verify_replay(str(args.get("session_id") or ""))
     if out["ok"]:
-        head = f"一致：热态与全新 worker 全量重放逐元素相同（比了 {out['compared_elements']} 个元素）"
+        head = (
+            f"一致：热态与全新 worker 全量重放逐元素相同（比了 {out['compared_elements']} 个元素）"
+        )
     else:
-        head = (f"发现 {len(out['divergence'])} 处分歧——"
-                "热态所见与「重开后重放」不一样，别直接拿去投稿")
+        head = (
+            f"发现 {len(out['divergence'])} 处分歧——热态所见与「重开后重放」不一样，别直接拿去投稿"
+        )
     return {"content": _text(head), "structuredContent": out}
 
 
 def _call_close(args: dict) -> dict:
     out = bridge.close_session(str(args.get("session_id") or ""))
-    return {"content": _text(out.get("note") or f"已关闭会话 {args.get('session_id')}"),
-            "structuredContent": out}
+    return {
+        "content": _text(out.get("note") or f"已关闭会话 {args.get('session_id')}"),
+        "structuredContent": out,
+    }
 
 
 def _call_health(args: dict) -> dict:
     """能力自检：引擎 / 画布 / 项目根，一次说清。**先体检再出图**（便宜）。"""
     import time as _time
+
     t0 = _time.monotonic()
     root_info = bridge.root_diagnostics()
     out: dict = {
         "ok": True,
         "mode": "engine",
         "engine": {"available": True, "version": _version()},
-        "canvas": {"available": widget.available(),
-                   "resource_uri": widget.RESOURCE_URI,
-                   "path": str(widget.widget_path())},
+        "canvas": {
+            "available": widget.available(),
+            "resource_uri": widget.RESOURCE_URI,
+            "path": str(widget.widget_path()),
+        },
         "roots": root_info["roots"],
         "root_authority": root_info,
         "sessions": sorted(bridge.sessions()),
@@ -354,16 +405,20 @@ def _call_health(args: dict) -> dict:
     if args.get("probe_worker"):
         try:
             from tavotto.engine import pool as _pool
+
             python, source = _pool.select_worker_python()
             out["worker"] = {"python": python, "source": source}
-        except Exception as exc:            # noqa: BLE001 — 探测失败也要如实说
+        except Exception as exc:  # noqa: BLE001 — 探测失败也要如实说
             out["worker"] = {"error": str(exc)}
     out["timings"] = {"health_ms": int((_time.monotonic() - t0) * 1000)}
-    lines = [f"引擎就绪（tavotto {out['engine']['version']}）",
-             "画布资源就绪" if out["canvas"]["available"]
-             else "! 画布资源缺失：" + out["canvas"].get("reason", ""),
-             "允许的项目根: " + (os.pathsep.join(out["roots"]) or "（未配置）"),
-             "根来源: " + root_info["source"]]
+    lines = [
+        f"引擎就绪（tavotto {out['engine']['version']}）",
+        "画布资源就绪"
+        if out["canvas"]["available"]
+        else "! 画布资源缺失：" + out["canvas"].get("reason", ""),
+        "允许的项目根: " + (os.pathsep.join(out["roots"]) or "（未配置）"),
+        "根来源: " + root_info["source"],
+    ]
     return {"content": _text(*lines), "structuredContent": out}
 
 
@@ -392,9 +447,11 @@ def call_tool(name: str, args: dict) -> dict:
     except bridge.BridgeError as exc:
         payload = exc.payload()
         # 失败也要机器可读：Codex 得能据此决定下一步（改路径？装 tavotto？确认导出？）
-        return {"isError": True,
-                "content": _text(f"[{payload['code']}] {payload['error']}"),
-                "structuredContent": payload}
+        return {
+            "isError": True,
+            "content": _text(f"[{payload['code']}] {payload['error']}"),
+            "structuredContent": payload,
+        }
     if name in UI_TOOLS:
         if widget.available():
             meta = dict(widget.resource_meta())
@@ -408,7 +465,10 @@ def call_tool(name: str, args: dict) -> dict:
             # 的是「说好的画布呢」，而且没有任何线索。
             reason = widget.missing_reason()
             result["structuredContent"]["canvas_ui"] = {
-                "available": False, "code": "widget_missing", "reason": reason}
+                "available": False,
+                "code": "widget_missing",
+                "reason": reason,
+            }
             note = f"! 内嵌画布不可用：{reason}"
             content = result.get("content") or []
             if content and content[0].get("type") == "text":
@@ -435,7 +495,7 @@ class Server:
         if method is None:
             self._handle_response(msg)
             return
-        if rid is None:                 # 通知：不回，永远不回
+        if rid is None:  # 通知：不回，永远不回
             self._handle_notification(method)
             return
         try:
@@ -455,7 +515,7 @@ class Server:
             self.conn.result(rid, self.dispatch(method, params))
         except RpcError as exc:
             self.conn.error(rid, exc)
-        except Exception as exc:        # noqa: BLE001 — 任何异常都不许打死连接
+        except Exception as exc:  # noqa: BLE001 — 任何异常都不许打死连接
             print("tavotto-mcp: 未处理异常\n" + traceback.format_exc(), file=sys.stderr)
             self.conn.error(rid, RpcError(INTERNAL_ERROR, f"内部错误: {exc}"))
 
@@ -482,9 +542,9 @@ class Server:
             return f"{error.get('code', 'error')}: {error.get('message', error)}"
         return str(error)
 
-    def _client_request(self, label: str, method: str,
-                        params: dict | None, timeout: float
-                        ) -> tuple[dict | None, str | None]:
+    def _client_request(
+        self, label: str, method: str, params: dict | None, timeout: float
+    ) -> tuple[dict | None, str | None]:
         """在当前 tools/call 内发一个关联的 server→client 请求并有界等待。"""
         if self._input_closed:
             return None, "宿主输入已经关闭"
@@ -518,7 +578,8 @@ class Server:
         if not bridge.protocol_roots_needed():
             return
         response, transport_error = self._client_request(
-            "roots", "roots/list", None, ROOTS_REQUEST_TIMEOUT_S)
+            "roots", "roots/list", None, ROOTS_REQUEST_TIMEOUT_S
+        )
         if transport_error:
             bridge.fail_protocol_roots(transport_error)
             return
@@ -541,7 +602,9 @@ class Server:
             "MCP 连接内有效；拒绝不会修改任何文件。"
         )
         response, transport_error = self._client_request(
-            "elicitation", "elicitation/create", {
+            "elicitation",
+            "elicitation/create",
+            {
                 "message": message,
                 "requestedSchema": {
                     "type": "object",
@@ -555,7 +618,9 @@ class Server:
                     },
                     "required": ["approve"],
                 },
-            }, ELICITATION_REQUEST_TIMEOUT_S)
+            },
+            ELICITATION_REQUEST_TIMEOUT_S,
+        )
         if transport_error:
             bridge.fail_user_binding(transport_error)
             return
@@ -602,8 +667,7 @@ class Server:
             if not widget.available():
                 # 资源 URI 对、文件却不在：**明确报缺失与修法**，不给空 HTML
                 # ——空的会渲染成一个白框，用户与 host 都拿不到任何线索。
-                raise RpcError(INVALID_PARAMS,
-                               f"画布资源缺失: {widget.missing_reason()}")
+                raise RpcError(INVALID_PARAMS, f"画布资源缺失: {widget.missing_reason()}")
             return {"contents": [widget.resource_contents()]}
         if method == "prompts/list":
             return {"prompts": []}
@@ -611,19 +675,16 @@ class Server:
 
     def initialize(self, params: dict) -> dict:
         want = params.get("protocolVersion")
-        version = want if want in SUPPORTED_PROTOCOL_VERSIONS \
-            else SUPPORTED_PROTOCOL_VERSIONS[0]
+        version = want if want in SUPPORTED_PROTOCOL_VERSIONS else SUPPORTED_PROTOCOL_VERSIONS[0]
         self.initialized = True
-        bridge.observe_mcp_client(version, params.get("capabilities"),
-                                  params.get("clientInfo"))
+        bridge.observe_mcp_client(version, params.get("capabilities"), params.get("clientInfo"))
         caps: dict = {"tools": {"listChanged": False}}
         if widget.available():
             caps["resources"] = {"listChanged": False, "subscribe": False}
         return {
             "protocolVersion": version,
             "capabilities": caps,
-            "serverInfo": {"name": SERVER_NAME, "title": "Tavotto",
-                           "version": _version()},
+            "serverInfo": {"name": SERVER_NAME, "title": "Tavotto", "version": _version()},
             "instructions": (
                 "Tavotto 负责结构化图表编辑：改的是 override（gid + prop + value），"
                 "**不会动用户的 Python 源码**。流程：tavotto_open_figure 打开 → "
@@ -652,14 +713,13 @@ class Server:
                 if msg is None:
                     return
 
-        threading.Thread(target=read_loop, daemon=True,
-                         name="tavotto-mcp-stdio-reader").start()
+        threading.Thread(target=read_loop, daemon=True, name="tavotto-mcp-stdio-reader").start()
         while True:
             event = self._deferred.popleft() if self._deferred else inbox.get()
             if isinstance(event, RpcError):
                 self.conn.error(None, event)
                 continue
-            if event is None:           # stdin EOF = host 走了，收摊
+            if event is None:  # stdin EOF = host 走了，收摊
                 return 0
             self.handle(event)
             if self._input_closed and not self._deferred:
@@ -692,8 +752,9 @@ def _self_check() -> int:
     }
     try:
         from tavotto.engine import pool
+
         report["worker_python"] = list(pool.select_worker_python())
-    except Exception as exc:            # noqa: BLE001 — 探测失败也要如实说
+    except Exception as exc:  # noqa: BLE001 — 探测失败也要如实说
         report["worker_python_error"] = str(exc)
     print(json.dumps(report, ensure_ascii=False, indent=1), file=sys.stderr)
     return 0

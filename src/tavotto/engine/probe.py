@@ -25,6 +25,7 @@ spawn 路径都是 `execspec.safe_spec()` 的消费者）：cwd 在沙盒、argv
 
 纯标准库，Flask 父进程 import。
 """
+
 from __future__ import annotations
 
 import logging
@@ -60,8 +61,7 @@ ERROR_STEM_CONFLICT = "multiple_stem_conflict"
 _TRACEBACK_LIMIT = 4000
 
 
-def _err(code: str, message: str, params: dict | None = None,
-         traceback_text: str = "") -> dict:
+def _err(code: str, message: str, params: dict | None = None, traceback_text: str = "") -> dict:
     """结构化探测错误：主文案（中文回退）+ code + params；traceback 单列。"""
     out = {"code": code, "message": message, "params": params or {}}
     tb = (traceback_text or "").strip()
@@ -80,19 +80,31 @@ def _error_from_worker(exc: pool.WorkerError, entry: str) -> dict:
     """
     reason = _short(str(exc), exc.traceback_text)
     if exc.code == "missing_dependency":
-        return _err(ERROR_MISSING_DEPENDENCY,
-                    f"缺少依赖包：{exc.module}（当前渲染环境里没有它）",
-                    params={"module": exc.module},
-                    traceback_text=exc.traceback_text)
+        return _err(
+            ERROR_MISSING_DEPENDENCY,
+            f"缺少依赖包：{exc.module}（当前渲染环境里没有它）",
+            params={"module": exc.module},
+            traceback_text=exc.traceback_text,
+        )
     if exc.code == "worker_timeout":
-        return _err(ERROR_TIMEOUT, f"脚本执行超时（入口 {entry}）",
-                    params={"entry": entry}, traceback_text=exc.traceback_text)
+        return _err(
+            ERROR_TIMEOUT,
+            f"脚本执行超时（入口 {entry}）",
+            params={"entry": entry},
+            traceback_text=exc.traceback_text,
+        )
     if exc.code == "session_dead":
-        return _err(ERROR_CANCELLED, "试运行被中断（会话在执行期间被终止）",
-                    traceback_text=exc.traceback_text)
-    return _err(ERROR_PROBE_FAILED, f"试运行失败（入口 {entry}）：{reason}",
-                params={"entry": entry, "reason": reason},
-                traceback_text=exc.traceback_text)
+        return _err(
+            ERROR_CANCELLED,
+            "试运行被中断（会话在执行期间被终止）",
+            traceback_text=exc.traceback_text,
+        )
+    return _err(
+        ERROR_PROBE_FAILED,
+        f"试运行失败（入口 {entry}）：{reason}",
+        params={"entry": entry, "reason": reason},
+        traceback_text=exc.traceback_text,
+    )
 
 
 def entry_candidates(figures_dir: str | Path, script: str) -> list[str]:
@@ -109,7 +121,7 @@ def entry_candidates(figures_dir: str | Path, script: str) -> list[str]:
     out: list[str] = []
     if info:
         out.append(info["entry"])
-    for e in (static if static is not None else FALLBACK_ENTRIES):
+    for e in static if static is not None else FALLBACK_ENTRIES:
         if e not in out:
             out.append(e)
     if not out:
@@ -117,9 +129,9 @@ def entry_candidates(figures_dir: str | Path, script: str) -> list[str]:
     return out
 
 
-def probe(figures_dir: str | Path, script: str,
-          entries: list[str] | None = None,
-          should_cancel=None) -> dict:
+def probe(
+    figures_dir: str | Path, script: str, entries: list[str] | None = None, should_cancel=None
+) -> dict:
     """跑一次脚本，返回它真实产出的 stem 与每张图的结构化描述。
 
     返回 dict：
@@ -148,28 +160,41 @@ def probe(figures_dir: str | Path, script: str,
     `execution_cancelled`——被用户取消的 probe 报「脚本坏了」是撒谎。
     """
     figures_dir = str(Path(figures_dir))
-    cancelled = (lambda: bool(should_cancel())) if callable(should_cancel) \
-        else (lambda: False)
-    empty = {"script": script, "entry": None, "stems": [], "descriptors": [],
-             "tried": [], "error": None, "timings": {}, "dropped_figures": 0}
+    cancelled = (lambda: bool(should_cancel())) if callable(should_cancel) else (lambda: False)
+    empty = {
+        "script": script,
+        "entry": None,
+        "stems": [],
+        "descriptors": [],
+        "tried": [],
+        "error": None,
+        "timings": {},
+        "dropped_figures": 0,
+    }
     _cancel_err = lambda: _err(  # noqa: E731 —— 两个出口共用同一句
-        ERROR_CANCELLED, "试运行已取消")
+        ERROR_CANCELLED, "试运行已取消"
+    )
     script_path = Path(figures_dir) / script
     if not script_path.is_file():
-        return {**empty,
-                "error": _err(ERROR_NOT_FOUND, f"脚本不存在: {script}",
-                              params={"script": script})}
+        return {
+            **empty,
+            "error": _err(ERROR_NOT_FOUND, f"脚本不存在: {script}", params={"script": script}),
+        }
     if entries is not None:
         bad = [e for e in entries if not registry.valid_entry(e)]
         if bad:
-            return {**empty,
-                    "error": _err(ERROR_INVALID_ENTRY,
-                                  f"entry 非法: {', '.join(map(str, bad))}",
-                                  params={"entry": ", ".join(map(str, bad))})}
+            return {
+                **empty,
+                "error": _err(
+                    ERROR_INVALID_ENTRY,
+                    f"entry 非法: {', '.join(map(str, bad))}",
+                    params={"entry": ", ".join(map(str, bad))},
+                ),
+            }
 
     tried: list[str] = []
     first_error: dict | None = None
-    for entry in (entries or entry_candidates(figures_dir, script)):
+    for entry in entries or entry_candidates(figures_dir, script):
         if cancelled():
             return {**empty, "tried": tried, "error": _cancel_err()}
         tried.append(entry)
@@ -193,23 +218,31 @@ def probe(figures_dir: str | Path, script: str,
         stems = sorted(resp.get("stems") or {})
         if stems:
             LOG.info("探测成功 %s [entry=%s] → %s", script, entry, stems)
-            return {"script": script, "entry": entry, "stems": stems,
-                    "descriptors": list(resp.get("descriptors") or []),
-                    "tried": tried, "error": None,
-                    "timings": dict(resp.get("timings") or {}),
-                    "dropped_figures": int(resp.get("dropped_figures") or 0)}
+            return {
+                "script": script,
+                "entry": entry,
+                "stems": stems,
+                "descriptors": list(resp.get("descriptors") or []),
+                "tried": tried,
+                "error": None,
+                "timings": dict(resp.get("timings") or {}),
+                "dropped_figures": int(resp.get("dropped_figures") or 0),
+            }
         # 跑通了但一张图都没产出：这个 entry 大概率不是出图入口，换下一个
         if first_error is None:
             first_error = _err(
                 ERROR_NO_FIGURE,
                 f"脚本跑通了，但没有捕获到任何 Figure（入口 {entry} 可能不出图）",
-                params={"entry": entry})
+                params={"entry": entry},
+            )
         pool.invalidate(script, figures_dir)
 
-    return {**empty, "tried": tried,
-            "error": first_error or _err(ERROR_PROBE_FAILED, "无法确定入口",
-                                         params={"entry": "",
-                                                 "reason": "无法确定入口"})}
+    return {
+        **empty,
+        "tried": tried,
+        "error": first_error
+        or _err(ERROR_PROBE_FAILED, "无法确定入口", params={"entry": "", "reason": "无法确定入口"}),
+    }
 
 
 def _short(message: str, traceback_text: str = "", limit: int = 600) -> str:
@@ -222,8 +255,7 @@ def _short(message: str, traceback_text: str = "", limit: int = 600) -> str:
     return text[:limit]
 
 
-def _live_stem_conflicts(figures_dir: str | Path, script: str,
-                         stems: list[str]) -> dict[str, str]:
+def _live_stem_conflicts(figures_dir: str | Path, script: str, stems: list[str]) -> dict[str, str]:
     """本次产出里被**另一份仍在磁盘上的脚本**登记着的 stem → 归属脚本。
 
     脚本已经不在磁盘上的旧条目不算冲突（改名/删除后的重探测该顺畅走完，
@@ -234,7 +266,7 @@ def _live_stem_conflicts(figures_dir: str | Path, script: str,
     try:
         reg.load(figures_dir)
     except (FileNotFoundError, RuntimeError):
-        return {}                     # 没有注册表 / 注册表坏了：没有冲突可言
+        return {}  # 没有注册表 / 注册表坏了：没有冲突可言
     out: dict[str, str] = {}
     for stem in stems:
         info = reg.for_stem(stem)
@@ -245,8 +277,9 @@ def _live_stem_conflicts(figures_dir: str | Path, script: str,
     return out
 
 
-def probe_and_register(figures_dir: str | Path, script: str,
-                       cost: str = "medium", should_cancel=None) -> dict:
+def probe_and_register(
+    figures_dir: str | Path, script: str, cost: str = "medium", should_cancel=None
+) -> dict:
     """探测成功就写进 tavotto_registry.json 并重载注册表。
 
     失败原样返回（`registered: False`），**注册表零改动**——不留半写文件、
@@ -263,15 +296,18 @@ def probe_and_register(figures_dir: str | Path, script: str,
         return {**result, "registered": False}
     conflicts = _live_stem_conflicts(figures_dir, script, result["stems"])
     if conflicts:
-        detail = "；".join(f"{stem} → {owner}"
-                          for stem, owner in sorted(conflicts.items()))
-        return {**result, "registered": False, "stem_conflicts": conflicts,
-                "error": _err(ERROR_STEM_CONFLICT,
-                              f"产出的图名已被其它脚本登记：{detail}"
-                              "（在脚本注册表里手工裁决归属后重试）",
-                              params={"detail": detail})}
-    discover.register(figures_dir, script, result["stems"],
-                      entry=result["entry"], cost=cost)
+        detail = "；".join(f"{stem} → {owner}" for stem, owner in sorted(conflicts.items()))
+        return {
+            **result,
+            "registered": False,
+            "stem_conflicts": conflicts,
+            "error": _err(
+                ERROR_STEM_CONFLICT,
+                f"产出的图名已被其它脚本登记：{detail}（在脚本注册表里手工裁决归属后重试）",
+                params={"detail": detail},
+            ),
+        }
+    discover.register(figures_dir, script, result["stems"], entry=result["entry"], cost=cost)
     registry.load(figures_dir)
     return {**result, "registered": True}
 
@@ -280,16 +316,15 @@ def probe_and_register(figures_dir: str | Path, script: str,
 # 脚本清单（Session 3：所有合理项目脚本可见）
 # ---------------------------------------------------------------------------
 #: 清单条目的稳定 reason code（契约，改语义才改码）。
-REASON_REGISTERED = "registered"            # 已登记（注册表里有这条脚本）
-REASON_STATIC = "static_candidate"          # 静态解得出产物，可直接登记
-REASON_DYNAMIC = "dynamic_stems"            # 有存图调用但 stem 来自运行期数据
+REASON_REGISTERED = "registered"  # 已登记（注册表里有这条脚本）
+REASON_STATIC = "static_candidate"  # 静态解得出产物，可直接登记
+REASON_DYNAMIC = "dynamic_stems"  # 有存图调用但 stem 来自运行期数据
 REASON_NO_STATIC_OUTPUT = "no_static_output"  # 没有存图调用（可能创建 Figure）
-REASON_INFRASTRUCTURE = "infrastructure"    # 测试/工具/样式模块（按文件名判）
-REASON_UNPARSEABLE = "unparseable"          # 读不动或语法错误（试运行会给真报错）
+REASON_INFRASTRUCTURE = "infrastructure"  # 测试/工具/样式模块（按文件名判）
+REASON_UNPARSEABLE = "unparseable"  # 读不动或语法错误（试运行会给真报错）
 
 
-def script_inventory(figures_dir: str | Path,
-                     registered: set[str] | None = None) -> list[dict]:
+def script_inventory(figures_dir: str | Path, registered: set[str] | None = None) -> list[dict]:
     """项目内全部合理 .py 的清单——「列给用户挑」的唯一数据源。
 
     walk 规则复用 `discover.iter_all_scripts`（PRUNE_DIRS / MAX_DEPTH /
@@ -321,7 +356,7 @@ def script_inventory(figures_dir: str | Path,
         candidates: list[str] = []
         if info:
             candidates.append(info["entry"])
-        for e in (static if static is not None else FALLBACK_ENTRIES):
+        for e in static if static is not None else FALLBACK_ENTRIES:
             if e not in candidates:
                 candidates.append(e)
         if rel in registered:
@@ -331,14 +366,19 @@ def script_inventory(figures_dir: str | Path,
         elif info is None:
             # analyze 的 None 分不清「不出图」与「解析不了」——静态候选
             # 也给不出来的才是后者。
-            reason = (REASON_UNPARSEABLE if static is None
-                      else REASON_NO_STATIC_OUTPUT)
+            reason = REASON_UNPARSEABLE if static is None else REASON_NO_STATIC_OUTPUT
         elif info["dynamic_names"]:
             reason = REASON_DYNAMIC
         else:
             reason = REASON_STATIC
-        out.append({"script": rel, "registered": rel in registered,
-                    "static_stems": list(info["stems"]) if info else [],
-                    "entry_candidates": candidates,
-                    "reason": reason, "can_probe": True})
+        out.append(
+            {
+                "script": rel,
+                "registered": rel in registered,
+                "static_stems": list(info["stems"]) if info else [],
+                "entry_candidates": candidates,
+                "reason": reason,
+                "can_probe": True,
+            }
+        )
     return out

@@ -24,8 +24,24 @@ ROOT = Path(__file__).resolve().parent.parent
 
 #: 按扩展名认「文本源文件」。二进制资产（图标 / 字体 / 测试用的 PDF）不在此列。
 TEXT_SUFFIXES = {
-    ".py", ".ts", ".tsx", ".js", ".mjs", ".cjs", ".rs", ".json", ".jsonc",
-    ".md", ".css", ".html", ".yml", ".yaml", ".toml", ".sh", ".nsi", ".spec",
+    ".py",
+    ".ts",
+    ".tsx",
+    ".js",
+    ".mjs",
+    ".cjs",
+    ".rs",
+    ".json",
+    ".jsonc",
+    ".md",
+    ".css",
+    ".html",
+    ".yml",
+    ".yaml",
+    ".toml",
+    ".sh",
+    ".nsi",
+    ".spec",
 }
 
 
@@ -37,7 +53,12 @@ def _tracked_text_files() -> list[Path]:
     """
     out = subprocess.run(
         ["git", "ls-files", "-z"],
-        cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=True,
     ).stdout
     return [
         ROOT / name
@@ -51,7 +72,7 @@ def test_no_literal_nul_in_text_sources() -> None:
     for path in _tracked_text_files():
         try:
             data = path.read_bytes()
-        except OSError:                      # 文件已被删除但索引还没更新
+        except OSError:  # 文件已被删除但索引还没更新
             continue
         if b"\0" in data:
             at = data.index(b"\0")
@@ -59,8 +80,7 @@ def test_no_literal_nul_in_text_sources() -> None:
             offenders.append(f"{path.relative_to(ROOT)}:{line}")
     assert not offenders, (
         "这些文本源文件里有字面 NUL 字节，git 会把它们当二进制、"
-        "从此无法 diff 审查（需要 NUL 当值时请写成 '\\u0000' 转义）：\n  "
-        + "\n  ".join(offenders)
+        "从此无法 diff 审查（需要 NUL 当值时请写成 '\\u0000' 转义）：\n  " + "\n  ".join(offenders)
     )
 
 
@@ -81,7 +101,12 @@ def test_no_venv_or_self_referential_symlink_is_tracked() -> None:
     """
     out = subprocess.run(
         ["git", "ls-files", "-s"],
-        cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=True,
     ).stdout
 
     offenders = []
@@ -91,7 +116,7 @@ def test_no_venv_or_self_referential_symlink_is_tracked() -> None:
         if name in (".venv", "venv") or name.endswith("/.venv"):
             offenders.append(f"{name}（虚拟环境不该进版本库）")
             continue
-        if mode != "120000":                 # 只有符号链接需要再查内容
+        if mode != "120000":  # 只有符号链接需要再查内容
             continue
         try:
             target = (ROOT / name).readlink()
@@ -101,10 +126,8 @@ def test_no_venv_or_self_referential_symlink_is_tracked() -> None:
             offenders.append(f"{name} → {target}（绝对路径符号链接）")
 
     assert not offenders, (
-        "这些条目会在别人机器上（或改名/stash 之后）指向错误的位置：\n  "
-        + "\n  ".join(offenders)
+        "这些条目会在别人机器上（或改名/stash 之后）指向错误的位置：\n  " + "\n  ".join(offenders)
     )
-
 
 
 def test_no_launcher_leaves_a_child_pipe_undrained():
@@ -124,6 +147,7 @@ def test_no_launcher_leaves_a_child_pipe_undrained():
     DEVNULL 还多留一份启动期 traceback（那些进不了 app.log）。
     """
     import ast
+
     offenders = []
     for path in sorted((ROOT / "scripts").rglob("*.py")):
         if "__pycache__" in path.parts:
@@ -143,8 +167,7 @@ def test_no_launcher_leaves_a_child_pipe_undrained():
         # 这些启动器**根本不需要**流式读子进程输出（诊断走 app.log 与落盘的
         # server-stdout.log），那就不许开这个管道。
         for node in ast.walk(tree):
-            if not (isinstance(node, ast.Call)
-                    and getattr(node.func, "attr", "") == "Popen"):
+            if not (isinstance(node, ast.Call) and getattr(node.func, "attr", "") == "Popen"):
                 continue
             kws = {k.arg: ast.unparse(k.value) for k in node.keywords if k.arg}
             # **两个流都要看。** 子进程有 stdout 和 stderr 两条出路，任一条是
@@ -155,13 +178,15 @@ def test_no_launcher_leaves_a_child_pipe_undrained():
             for stream in ("stdout", "stderr"):
                 val = kws.get(stream, "")
                 if "PIPE" not in val:
-                    continue      # 落文件 / DEVNULL / STDOUT / 继承，都不会填满缓冲
+                    continue  # 落文件 / DEVNULL / STDOUT / 继承，都不会填满缓冲
                 offenders.append(
                     f"{path.relative_to(ROOT)}:{node.lineno} {stream}=PIPE"
-                    "——启动器一律落文件或 DEVNULL；「稍后再读」不算排空")
+                    "——启动器一律落文件或 DEVNULL；「稍后再读」不算排空"
+                )
     assert not offenders, (
         "这些子进程的输出管道开了却没人读，写满 64 KiB 之后应用会卡死在写日志上：\n  "
-        + "\n  ".join(offenders))
+        + "\n  ".join(offenders)
+    )
 
 
 def test_windows_bound_subprocesses_pin_their_decoding():
@@ -184,8 +209,11 @@ def test_windows_bound_subprocesses_pin_their_decoding():
     那里 `text=True` 没有这个问题，硬要求它们也写等于给噪音加噪音。
     """
     import ast
+
     scope = sorted(ROOT.joinpath("tests").rglob("*.py")) + [
-        ROOT / "scripts" / "smoke_app.py", ROOT / "scripts" / "smoke_desktop.py"]
+        ROOT / "scripts" / "smoke_app.py",
+        ROOT / "scripts" / "smoke_desktop.py",
+    ]
     offenders = []
     for path in scope:
         if "__pycache__" in path.parts:
@@ -222,28 +250,34 @@ def test_windows_bound_subprocesses_pin_their_decoding():
             enc = next((k.value for k in node.keywords if k.arg == "encoding"), None)
             if enc is None:
                 offenders.append(
-                    f"{path.relative_to(ROOT)}:{node.lineno} {name}(...) 没给 encoding")
+                    f"{path.relative_to(ROOT)}:{node.lineno} {name}(...) 没给 encoding"
+                )
                 continue
             # **光有这个关键字不够**：`encoding=None` 就是「按系统默认」，
             # `encoding="cp1252"` 更是直接复现那个 bug。判据要问的是「解码用的
             # 是不是 UTF-8」，不是「有没有写过 encoding 这个词」——Codex 在 #57
             # 上指出的正是这个缺口。判不出的（变量、表达式）不放行，指名道姓。
-            if (isinstance(enc, ast.Constant) and isinstance(enc.value, str)
-                    and enc.value.lower().replace("-", "") == "utf8"):
+            if (
+                isinstance(enc, ast.Constant)
+                and isinstance(enc.value, str)
+                and enc.value.lower().replace("-", "") == "utf8"
+            ):
                 continue
             # **唯一的豁免：复现这个 bug 本身。** 那条用例必须用旧代码页才能
             # 证明「不给 utf-8 会丢掉诊断」。豁免要求同一行有 `# 复现用` 标记
             # ——不是按文件名放行，否则那个文件里往后写的每一处都跟着白拿。
-            block = "\n".join(text.splitlines()[node.lineno - 1: node.lineno + 3])
+            block = "\n".join(text.splitlines()[node.lineno - 1 : node.lineno + 3])
             if "复现用" in block:
                 continue
             offenders.append(
                 f"{path.relative_to(ROOT)}:{node.lineno} {name}(...) "
                 f"encoding={ast.unparse(enc)}——必须是 utf-8 字面量"
-                "（复现这个 bug 的用例请在调用处标 `# 复现用`）")
+                "（复现这个 bug 的用例请在调用处标 `# 复现用`）"
+            )
     assert not offenders, (
         "这些 subprocess 在 Windows 上会用系统默认编码解码子进程输出，"
-        "中文一出现就静默丢掉 stdout/stderr：\n  " + "\n  ".join(offenders))
+        "中文一出现就静默丢掉 stdout/stderr：\n  " + "\n  ".join(offenders)
+    )
 
 
 # ── 版本号：七处必须一致 ────────────────────────────────────────────
@@ -269,14 +303,15 @@ _VERSION_SITES = [
 
 
 def _product_version() -> str:
-    m = re.search(r'__version__\s*=\s*"([^"]+)"',
-                  (ROOT / "src" / "tavotto" / "__init__.py").read_text(encoding="utf-8"))
+    m = re.search(
+        r'__version__\s*=\s*"([^"]+)"',
+        (ROOT / "src" / "tavotto" / "__init__.py").read_text(encoding="utf-8"),
+    )
     assert m, "读不出 src/tavotto/__init__.py 的 __version__"
     return m.group(1)
 
 
-@pytest.mark.parametrize("rel,pattern", _VERSION_SITES,
-                         ids=[r for r, _ in _VERSION_SITES])
+@pytest.mark.parametrize("rel,pattern", _VERSION_SITES, ids=[r for r, _ in _VERSION_SITES])
 def test_every_shipped_version_string_matches_the_product(rel, pattern):
     """**每一处会被发布产物印出来的版本号都要等于 `__version__`。**
 
@@ -290,4 +325,5 @@ def test_every_shipped_version_string_matches_the_product(rel, pattern):
     assert m.group(1) == want, (
         f"{rel} 是 {m.group(1)}，而 __version__ 是 {want}。\n"
         "发版时漏改一处的表现是「装完显示的版本和发布页对不上」，"
-        "没有任何一步会失败。")
+        "没有任何一步会失败。"
+    )

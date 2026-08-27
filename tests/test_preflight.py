@@ -7,6 +7,7 @@
 3. **两个求值器不许分叉**——golden 向量在 pytest 与 vitest 各跑一遍
    （`web/src/lib/preflight.golden.test.ts`），任一侧改了都得让两边同时绿。
 """
+
 import json
 import subprocess
 import sys
@@ -37,7 +38,8 @@ def test_typescript_reads_the_same_file():
         assert "'@profiles'" in text, f"{cfg} 没配 @profiles 别名"
         assert "../src/tavotto/profiles/publication.json" in text, (
             f"{cfg} 的 @profiles 指到了别的文件——两侧规则一分叉，"
-            "同一张图会得到两个互相矛盾的体检结论")
+            "同一张图会得到两个互相矛盾的体检结论"
+        )
 
 
 def test_default_profile_exists_and_validates():
@@ -65,11 +67,9 @@ def test_lab_profile_matches_the_agreed_numbers():
     assert {r["id"] for r in p["allowed_aspect_ratios"]} == {"16:9", "4:3", "1:1"}
     # PDF 里把 Times New Roman 拼成了 "Times New Roma"；规范里只许有正确拼写
     assert p["font_family"]["latin"] == "Times New Roman"
-    assert "Times New Roma" not in json.dumps(p, ensure_ascii=False).replace(
-        "Times New Roman", "")
+    assert "Times New Roma" not in json.dumps(p, ensure_ascii=False).replace("Times New Roman", "")
     assert p["cjk_fallback"]["required"] is True and p["cjk_fallback"]["accepted"]
-    assert p["palette_policy"]["auto_recolor"] is False, (
-        "绝不能默认替用户的图重新配色")
+    assert p["palette_policy"]["auto_recolor"] is False, "绝不能默认替用户的图重新配色"
 
 
 def test_unknown_profile_is_an_error_not_a_silent_default():
@@ -80,8 +80,8 @@ def test_unknown_profile_is_an_error_not_a_silent_default():
 def test_journal_override_is_a_shallow_merge_that_keeps_identity():
     p = profiles.load("lab-publication-v1", {"widths_mm": {"double": 178.0}})
     assert p["widths_mm"]["double"] == 178.0
-    assert p["widths_mm"]["single"] == 80.0          # 没点名的键继承
-    assert p["profile_id"] == "lab-publication-v1"   # 覆盖不换身份
+    assert p["widths_mm"]["single"] == 80.0  # 没点名的键继承
+    assert p["profile_id"] == "lab-publication-v1"  # 覆盖不换身份
     assert p["derived_from"] == "lab-publication-v1"
     assert p["journal"] == {"widths_mm": {"double": 178.0}}
     assert profiles.stamp(p)["journal"] == {"widths_mm": {"double": 178.0}}
@@ -120,6 +120,7 @@ def _all_check_ids() -> set[str]:
         ids |= {i["id"] for i in case["expected"]}
     src = (ROOT / "src" / "tavotto" / "engine" / "preflight.py").read_text(encoding="utf-8")
     import re
+
     ids |= set(re.findall(r'sink\.add\(\s*"([a-z0-9-]+)"', src))
     return ids
 
@@ -133,17 +134,35 @@ def test_default_severity_is_not_silently_permissive():
 # ------------------------------- 预检本体 -----------------------------------
 def _manifest(**fields) -> dict:
     """一张最小的合规图（80×60、9pt、Times、封闭轴、刻度朝内）。"""
+
     def el(gid, role, **props):
-        return {"gid": gid, "role": role, "label": gid, "draggable": False,
-                "bbox": [0.1, 0.1, 0.2, 0.2],
-                "editable": [{"prop": k, "value": v} for k, v in props.items()]}
+        return {
+            "gid": gid,
+            "role": role,
+            "label": gid,
+            "draggable": False,
+            "bbox": [0.1, 0.1, 0.2, 0.2],
+            "editable": [{"prop": k, "value": v} for k, v in props.items()],
+        }
+
     elements = [
-        el("axes_0", "axes", spine_top=True, spine_right=True, spine_bottom=True,
-           spine_left=True, spine_linewidth=0.75),
-        el("axes_0.xticks", "ticks", direction="in",
-           fontsize=fields.get("tick_pt", 9.0)),
-        el("axes_0.xlabel", "axis_label", text="Temperature (K)",
-           fontsize=9.0, fontfamily=fields.get("family", "Times New Roman")),
+        el(
+            "axes_0",
+            "axes",
+            spine_top=True,
+            spine_right=True,
+            spine_bottom=True,
+            spine_left=True,
+            spine_linewidth=0.75,
+        ),
+        el("axes_0.xticks", "ticks", direction="in", fontsize=fields.get("tick_pt", 9.0)),
+        el(
+            "axes_0.xlabel",
+            "axis_label",
+            text="Temperature (K)",
+            fontsize=9.0,
+            fontfamily=fields.get("family", "Times New Roman"),
+        ),
     ]
     return {"stem": "Fig1", "size_mm": [80.0, 60.0], "elements": elements}
 
@@ -161,7 +180,7 @@ def test_clean_figure_reports_nothing():
 def test_width_check_uses_the_profile_not_a_hardcoded_number():
     p = profiles.load("lab-publication-v1")
     spec = preflight.spec_from_manifest(_manifest())
-    spec["page"]["w_mm"] = 85.0                       # 老代码里写死的那个数
+    spec["page"]["w_mm"] = 85.0  # 老代码里写死的那个数
     assert "page-width" in _ids(preflight.run(spec, p))
     # 期刊覆盖之后同一张图必须放行
     p85 = profiles.load("lab-publication-v1", {"widths_mm": {"single": 85.0}})
@@ -173,7 +192,7 @@ def test_aspect_ratio_check():
     spec = preflight.spec_from_manifest(_manifest())
     spec["page"] = {"w_mm": 150.0, "h_mm": 40.0, "margin_mm": 0.0}
     assert "page-aspect" in _ids(preflight.run(spec, p))
-    spec["page"] = {"w_mm": 150.0, "h_mm": 84.375, "margin_mm": 0.0}   # 16:9
+    spec["page"] = {"w_mm": 150.0, "h_mm": 84.375, "margin_mm": 0.0}  # 16:9
     assert "page-aspect" not in _ids(preflight.run(spec, p))
 
 
@@ -235,9 +254,16 @@ def test_data_semantics_are_only_suggestions():
     """柱状图误差棒、拟合置信带这类判断**绝不替用户裁决**。"""
     p = profiles.load("lab-publication-v1")
     man = _manifest()
-    man["elements"].append({"gid": "axes_0.barseries_0", "role": "bar_series",
-                            "label": "", "draggable": False, "bbox": [0, 0, 1, 1],
-                            "editable": [{"prop": "linewidth", "value": 0.75}]})
+    man["elements"].append(
+        {
+            "gid": "axes_0.barseries_0",
+            "role": "bar_series",
+            "label": "",
+            "draggable": False,
+            "bbox": [0, 0, 1, 1],
+            "editable": [{"prop": "linewidth", "value": 0.75}],
+        }
+    )
     spec = preflight.spec_from_manifest(man)
     issues = {i["id"]: i for i in preflight.run(spec, p)}
     assert issues["bar-without-errorbar"]["severity"] == "suggestion"
@@ -249,19 +275,21 @@ def test_summarize_blocks_only_on_errors():
     summary = preflight.summarize(preflight.run(spec, p))
     assert summary["blocking"] is True
     assert summary["counts"]["error"] >= 1
-    clean = preflight.summarize(preflight.run(
-        preflight.spec_from_manifest(_manifest()), p))
+    clean = preflight.summarize(preflight.run(preflight.spec_from_manifest(_manifest()), p))
     assert clean["blocking"] is False
-    assert clean["counts"] == {"error": 0, "warn": 0, "not_verifiable": 0,
-                               "suggestion": 0}
+    assert clean["counts"] == {"error": 0, "warn": 0, "not_verifiable": 0, "suggestion": 0}
 
 
 # ----------------------------- golden 向量 ----------------------------------
 def test_golden_vectors_match_this_implementation():
     """向量文件与本实现一致（vitest 断言 TS 侧也一致，两边同一份输入）。"""
-    proc = subprocess.run([sys.executable, str(ROOT / "scripts" / "gen_preflight_vectors.py")],
-                          capture_output=True, text=True, encoding="utf-8",
-                          errors="replace")
+    proc = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "gen_preflight_vectors.py")],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
 
@@ -292,8 +320,12 @@ def test_every_issue_carries_a_translatable_message():
     for case in data["cases"]:
         for issue in case["expected"]:
             msg = issue.get("message")
-            assert isinstance(msg, dict) and isinstance(msg.get("key"), str) \
-                and msg["key"] and isinstance(msg.get("params"), dict), issue["id"]
+            assert (
+                isinstance(msg, dict)
+                and isinstance(msg.get("key"), str)
+                and msg["key"]
+                and isinstance(msg.get("params"), dict)
+            ), issue["id"]
             seen += 1
     assert seen > 20
 
@@ -314,7 +346,9 @@ def test_every_message_key_is_registered_in_both_locales():
     keys.add("exportRasterDpi")
     for locale in ("zh-CN", "en-US"):
         table = json.loads(
-            (ROOT / "web" / "src" / "i18n" / "locales" / locale / "errors.json")
-            .read_text(encoding="utf-8"))["preflight"]
+            (ROOT / "web" / "src" / "i18n" / "locales" / locale / "errors.json").read_text(
+                encoding="utf-8"
+            )
+        )["preflight"]
         missing = keys - set(table)
         assert not missing, f"{locale} 缺 preflight 文案 key：{sorted(missing)}"

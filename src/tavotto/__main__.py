@@ -3,6 +3,7 @@
 指向 `cli_entry` 而不是 `app`：子命令要在 import Flask 之前分派掉，
 理由写在 `cli_entry` 的模块说明里。
 """
+
 from .cli_entry import main
 
 if __name__ == "__main__":

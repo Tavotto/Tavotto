@@ -10,6 +10,7 @@
 两侧都是纯 os.path 字符串拼接，就是为了这件事（同 `engine/runtime.py`）。
 真安装产物的验收在 `.github/workflows/nightly.yml` 的「装一遍再冒烟」那条链路。
 """
+
 import ast
 import importlib.util
 import json
@@ -22,8 +23,7 @@ import pytest
 from tavotto.engine import config as engine_config, locate
 
 ROOT = Path(__file__).resolve().parent.parent
-PLUGIN_HANDOFF = (ROOT / "codex-plugin" / "skills" / "tavotto-figure" /
-                  "scripts" / "handoff.py")
+PLUGIN_HANDOFF = ROOT / "codex-plugin" / "skills" / "tavotto-figure" / "scripts" / "handoff.py"
 
 WIN_ENV = {
     "LOCALAPPDATA": "C:\\Users\\张三\\AppData\\Local",
@@ -48,8 +48,9 @@ def nothing_on_path(_name):
 
 
 def find(system, environ, isfile, **kw):
-    return locate.find_cli(system=system, environ=environ, isfile=isfile,
-                           which=nothing_on_path, reg_dirs=(), **kw)
+    return locate.find_cli(
+        system=system, environ=environ, isfile=isfile, which=nothing_on_path, reg_dirs=(), **kw
+    )
 
 
 # ------------------------------ 清单本身 ---------------------------------
@@ -65,10 +66,16 @@ def test_manifest_dir_matches_config_dir():
 
 def test_manifest_roundtrip(tmp_path):
     path = str(tmp_path / "cfg" / "install.json")
-    locate.write_manifest({"version": "9.9.9", "cli": str(tmp_path / "cli"),
-                           "desktop": str(tmp_path / "app"),
-                           "install_dir": str(tmp_path), "source": "installer"},
-                          path=path)
+    locate.write_manifest(
+        {
+            "version": "9.9.9",
+            "cli": str(tmp_path / "cli"),
+            "desktop": str(tmp_path / "app"),
+            "install_dir": str(tmp_path),
+            "source": "installer",
+        },
+        path=path,
+    )
     (tmp_path / "cli").write_text("x", encoding="utf-8")
     (tmp_path / "app").write_text("x", encoding="utf-8")
     got = locate.read_manifest(path=path)
@@ -86,9 +93,16 @@ def test_manifest_drops_paths_that_no_longer_exist(tmp_path):
     而用户需要看到的是「没装，去装一个」。
     """
     path = str(tmp_path / "install.json")
-    locate.write_manifest({"version": "1", "cli": str(tmp_path / "gone"),
-                           "desktop": None, "install_dir": None,
-                           "source": "installer"}, path=path)
+    locate.write_manifest(
+        {
+            "version": "1",
+            "cli": str(tmp_path / "gone"),
+            "desktop": None,
+            "install_dir": None,
+            "source": "installer",
+        },
+        path=path,
+    )
     got = locate.read_manifest(path=path)
     assert got["cli"] is None and got["stale"] is True
 
@@ -110,25 +124,33 @@ def test_remove_manifest_is_idempotent(tmp_path):
     path = str(tmp_path / "install.json")
     locate.write_manifest({"version": "1"}, path=path)
     assert locate.remove_manifest(path=path) is True
-    assert locate.remove_manifest(path=path) is False       # 已经没了，不是错误
+    assert locate.remove_manifest(path=path) is False  # 已经没了，不是错误
 
 
 # ------------------------------ 发现链顺序 -------------------------------
 def test_explicit_override_wins_over_everything():
     """TAVOTTO_CLI 是高级覆盖：用户指定的永远第一，哪怕别处也找得到。"""
     env = {**WIN_ENV, locate.CLI_ENV: "D:\\我的 工具\\tavotto.exe"}
-    got = locate.find_cli(system="win32", environ=env, isfile=only(WIN_CLI),
-                          which=lambda n: "C:\\py\\Scripts\\tavotto.exe",
-                          reg_dirs=())
+    got = locate.find_cli(
+        system="win32",
+        environ=env,
+        isfile=only(WIN_CLI),
+        which=lambda n: "C:\\py\\Scripts\\tavotto.exe",
+        reg_dirs=(),
+    )
     assert got["cmd"] == ["D:\\我的 工具\\tavotto.exe"]
     assert got["source"] == "env"
 
 
 def test_path_cli_beats_the_desktop_install():
     """PATH 里有 tavotto（pip/pipx 装的）就用它——既有行为，不许被新链路顶掉。"""
-    got = locate.find_cli(system="win32", environ=WIN_ENV, isfile=only(WIN_CLI),
-                          which=lambda n: "C:\\py\\Scripts\\tavotto.exe",
-                          reg_dirs=())
+    got = locate.find_cli(
+        system="win32",
+        environ=WIN_ENV,
+        isfile=only(WIN_CLI),
+        which=lambda n: "C:\\py\\Scripts\\tavotto.exe",
+        reg_dirs=(),
+    )
     assert got["cmd"] == ["C:\\py\\Scripts\\tavotto.exe"]
     assert got["source"] == "path"
 
@@ -142,10 +164,13 @@ def test_manifest_is_used_when_path_has_nothing(tmp_path):
     env = {"TAVOTTO_CONFIG_DIR": str(tmp_path)}
     manifest = locate.manifest_path(environ=env)
     portable = str(tmp_path / "便携版" / "Tavotto" / "tavotto-cli")
-    locate.write_manifest({"version": "1", "cli": portable, "desktop": None,
-                           "install_dir": None, "source": "app"}, path=manifest)
-    got = locate.find_cli(environ=env, isfile=only(portable, manifest),
-                          which=nothing_on_path, reg_dirs=())
+    locate.write_manifest(
+        {"version": "1", "cli": portable, "desktop": None, "install_dir": None, "source": "app"},
+        path=manifest,
+    )
+    got = locate.find_cli(
+        environ=env, isfile=only(portable, manifest), which=nothing_on_path, reg_dirs=()
+    )
     assert got["cmd"] == [portable] and got["source"] == "manifest"
 
 
@@ -154,9 +179,10 @@ def test_known_locations_still_work_when_the_manifest_is_gone(tmp_path):
 
     这就是「不把任何单一机制当唯一依据」的实测——清单、注册表都可能不在。
     """
-    env = {**WIN_ENV, "TAVOTTO_CONFIG_DIR": str(tmp_path)}   # 目录里没有 install.json
-    got = locate.find_cli(system="win32", environ=env, isfile=only(WIN_CLI),
-                          which=nothing_on_path, reg_dirs=())
+    env = {**WIN_ENV, "TAVOTTO_CONFIG_DIR": str(tmp_path)}  # 目录里没有 install.json
+    got = locate.find_cli(
+        system="win32", environ=env, isfile=only(WIN_CLI), which=nothing_on_path, reg_dirs=()
+    )
     assert got["cmd"] == [WIN_CLI] and got["source"] == "install"
 
 
@@ -176,8 +202,7 @@ def test_legacy_program_files_install_is_found():
 
 
 def test_paths_with_spaces_and_chinese_survive():
-    env = {"LOCALAPPDATA": "D:\\我的 程序\\Local",
-           "APPDATA": "D:\\我的 程序\\Roaming"}
+    env = {"LOCALAPPDATA": "D:\\我的 程序\\Local", "APPDATA": "D:\\我的 程序\\Roaming"}
     cli = "D:\\我的 程序\\Local\\Tavotto\\sidecar\\Tavotto\\tavotto-cli.exe"
     got = find("win32", env, only(cli))
     assert got["cmd"] == [cli]
@@ -218,8 +243,9 @@ def test_registry_is_a_supplement_not_the_only_way():
     odd = "E:\\Tools\\Tavotto"
     cli = odd + "\\sidecar\\Tavotto\\tavotto-cli.exe"
     # 只有注册表知道这个位置
-    got = locate.find_cli(system="win32", environ=WIN_ENV, isfile=only(cli),
-                          which=nothing_on_path, reg_dirs=(odd,))
+    got = locate.find_cli(
+        system="win32", environ=WIN_ENV, isfile=only(cli), which=nothing_on_path, reg_dirs=(odd,)
+    )
     assert got["cmd"] == [cli] and got["source"] == "registry"
     # 注册表读不到（被策略挡住）也不影响惯例位置那条腿
     got = find("win32", WIN_ENV, only(WIN_CLI))
@@ -235,9 +261,14 @@ def test_hkcu_lookup_is_silent_off_windows():
 def test_describe_self_from_a_frozen_windows_sidecar():
     """sidecar 认得出自己旁边的 CLI 和上两层的壳——安装到哪个盘都不用猜。"""
     exe = WIN_CURRENT_USER + "\\sidecar\\Tavotto\\Tavotto.exe"
-    me = locate.describe_self(executable=exe, frozen=True, system="win32",
-                              environ=WIN_ENV, version="1.2.3",
-                              isfile=only(WIN_CLI, WIN_DESKTOP))
+    me = locate.describe_self(
+        executable=exe,
+        frozen=True,
+        system="win32",
+        environ=WIN_ENV,
+        version="1.2.3",
+        isfile=only(WIN_CLI, WIN_DESKTOP),
+    )
     assert me["cli"] == WIN_CLI
     assert me["desktop"] == WIN_DESKTOP
     assert me["install_dir"] == WIN_CURRENT_USER
@@ -248,17 +279,28 @@ def test_describe_self_from_a_frozen_macos_bundle():
     exe = app + "/Contents/Resources/sidecar/Tavotto/Tavotto"
     cli = app + "/Contents/Resources/sidecar/Tavotto/tavotto-cli"
     desktop = app + "/Contents/MacOS/Tavotto"
-    me = locate.describe_self(executable=exe, frozen=True, system="darwin",
-                              environ={"HOME": "/Users/x"}, version="1.2.3",
-                              isfile=only(cli, desktop))
+    me = locate.describe_self(
+        executable=exe,
+        frozen=True,
+        system="darwin",
+        environ={"HOME": "/Users/x"},
+        version="1.2.3",
+        isfile=only(cli, desktop),
+    )
     assert me["cli"] == cli and me["desktop"] == desktop
     assert me["install_dir"] == app
 
 
 def test_describe_self_from_the_cli_shim_itself():
     """被调用的就是 tavotto-cli 时，它认自己，不去旁边找另一个。"""
-    me = locate.describe_self(executable=WIN_CLI, frozen=True, system="win32",
-                              environ=WIN_ENV, version="1", isfile=only(WIN_CLI))
+    me = locate.describe_self(
+        executable=WIN_CLI,
+        frozen=True,
+        system="win32",
+        environ=WIN_ENV,
+        version="1",
+        isfile=only(WIN_CLI),
+    )
     assert me["cli"] == WIN_CLI
 
 
@@ -273,9 +315,13 @@ def test_describe_self_from_a_pip_install(tmp_path):
     scripts.mkdir()
     exe = scripts / ("tavotto.exe" if win else "tavotto")
     exe.write_text("#!/bin/sh\n", encoding="utf-8")
-    me = locate.describe_self(executable=str(scripts / "python"), frozen=False,
-                              prefix=str(tmp_path), environ={"HOME": str(tmp_path)},
-                              version="1")
+    me = locate.describe_self(
+        executable=str(scripts / "python"),
+        frozen=False,
+        prefix=str(tmp_path),
+        environ={"HOME": str(tmp_path)},
+        version="1",
+    )
     assert os.path.normpath(me["cli"]) == os.path.normpath(str(exe))
     assert me["source"] == "module"
 
@@ -283,9 +329,14 @@ def test_describe_self_from_a_pip_install(tmp_path):
 def test_dev_tree_dist_has_no_desktop_shell():
     """`python scripts/build_desktop.py --skip-tauri` 只出 sidecar，没有壳。"""
     exe = "/repo/dist/Tavotto/Tavotto"
-    me = locate.describe_self(executable=exe, frozen=True, system="darwin",
-                              environ={"HOME": "/h"}, version="1",
-                              isfile=only("/repo/dist/Tavotto/tavotto-cli"))
+    me = locate.describe_self(
+        executable=exe,
+        frozen=True,
+        system="darwin",
+        environ={"HOME": "/h"},
+        version="1",
+        isfile=only("/repo/dist/Tavotto/tavotto-cli"),
+    )
     assert me["cli"] == "/repo/dist/Tavotto/tavotto-cli"
     assert me["desktop"] is None
     assert me["install_dir"] == "/repo/dist/Tavotto"
@@ -301,9 +352,8 @@ def _plugin_module():
 
 MIRROR_ENVS = [
     ("win32", WIN_ENV),
-    ("win32", {"LOCALAPPDATA": "D:\\我的 程序\\Local",
-               "APPDATA": "D:\\我的 程序\\Roaming"}),
-    ("win32", {}),                                   # 环境变量都没有：不许炸
+    ("win32", {"LOCALAPPDATA": "D:\\我的 程序\\Local", "APPDATA": "D:\\我的 程序\\Roaming"}),
+    ("win32", {}),  # 环境变量都没有：不许炸
     ("darwin", {"HOME": "/Users/张三"}),
     ("darwin", {}),
     ("linux", {"HOME": "/home/x"}),
@@ -332,30 +382,38 @@ def test_plugin_mirrors_the_locator():
         # HKCU 问出来的位置（第 5 条腿）两侧的排法也必须一样：只有一侧有的话，
         # 「装在非默认目录 + 没有清单」的机器上会出现两个不同的答案
         extra = ("E:\\Tools\\Tavotto", "  ", roots[0] if roots else "X")
-        assert plugin.install_roots(system, env, extra) == \
-            locate.install_roots(system=system, environ=env, extra=extra), (system, env)
-        assert plugin.manifest_path(system, env) == \
-            locate.manifest_path(system=system, environ=env), (system, env)
+        assert plugin.install_roots(system, env, extra) == locate.install_roots(
+            system=system, environ=env, extra=extra
+        ), (system, env)
+        assert plugin.manifest_path(system, env) == locate.manifest_path(
+            system=system, environ=env
+        ), (system, env)
         for root in roots:
-            assert plugin.cli_exe_for(root, system) == \
-                locate.cli_exe_for(root, system=system), (system, root)
-            assert plugin.desktop_exe_for(root, system) == \
-                locate.desktop_exe_for(root, system=system), (system, root)
+            assert plugin.cli_exe_for(root, system) == locate.cli_exe_for(root, system=system), (
+                system,
+                root,
+            )
+            assert plugin.desktop_exe_for(root, system) == locate.desktop_exe_for(
+                root, system=system
+            ), (system, root)
 
 
 REG_ROOT = "E:\\Tools\\Tavotto"
 REG_CLI = REG_ROOT + "\\sidecar\\Tavotto\\tavotto-cli.exe"
 
 
-@pytest.mark.parametrize("present,reg,expect_source", [
-    ((WIN_CLI, WIN_DESKTOP), (), "install"),
-    ((WIN_DESKTOP,), (), None),
-    ((), (), None),
-    # 装在非默认目录、清单又没写成：只有注册表知道。**两侧都得知道。**
-    ((REG_CLI,), (REG_ROOT,), "registry"),
-    # 注册表读不到（组策略锁了）时，惯例位置那条腿照样管用
-    ((WIN_CLI,), (), "install"),
-])
+@pytest.mark.parametrize(
+    "present,reg,expect_source",
+    [
+        ((WIN_CLI, WIN_DESKTOP), (), "install"),
+        ((WIN_DESKTOP,), (), None),
+        ((), (), None),
+        # 装在非默认目录、清单又没写成：只有注册表知道。**两侧都得知道。**
+        ((REG_CLI,), (REG_ROOT,), "registry"),
+        # 注册表读不到（组策略锁了）时，惯例位置那条腿照样管用
+        ((WIN_CLI,), (), "install"),
+    ],
+)
 def test_plugin_and_locator_agree_on_the_same_filesystem(present, reg, expect_source):
     """同一个（假的）文件系统上，两侧给出同一个答案。
 
@@ -363,10 +421,10 @@ def test_plugin_and_locator_agree_on_the_same_filesystem(present, reg, expect_so
     """
     plugin = _plugin_module()
     isfile = only(*present)
-    mine = locate.find_cli(system="win32", environ=WIN_ENV, isfile=isfile,
-                           which=nothing_on_path, reg_dirs=reg)
-    theirs = plugin.find_tavotto("win32", WIN_ENV, isfile, nothing_on_path,
-                                 reg_dirs=reg)
+    mine = locate.find_cli(
+        system="win32", environ=WIN_ENV, isfile=isfile, which=nothing_on_path, reg_dirs=reg
+    )
+    theirs = plugin.find_tavotto("win32", WIN_ENV, isfile, nothing_on_path, reg_dirs=reg)
     for key in ("cmd", "source", "desktop"):
         assert mine[key] == theirs[key], key
     assert mine["source"] == expect_source
@@ -383,8 +441,11 @@ def test_locator_never_instantiates_a_foreign_pathlib():
     for path in (ROOT / "src" / "tavotto" / "engine" / "locate.py", PLUGIN_HANDOFF):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
-                    and node.func.id in {"Path", "PurePath", "WindowsPath", "PosixPath"}:
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id in {"Path", "PurePath", "WindowsPath", "PosixPath"}
+            ):
                 raise AssertionError(f"{path.name} 第 {node.lineno} 行用了 pathlib")
 
 
@@ -420,11 +481,20 @@ import subprocess  # noqa: E402
 
 
 def _doctor(tmp_path, *args, env=None):
-    environ = {**os.environ, "TAVOTTO_CONFIG_DIR": str(tmp_path),
-               "PYTHONPATH": str(ROOT / "src"), **(env or {})}
-    proc = subprocess.run([sys.executable, "-m", "tavotto", "doctor", *args],
-                          capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", env=environ)
+    environ = {
+        **os.environ,
+        "TAVOTTO_CONFIG_DIR": str(tmp_path),
+        "PYTHONPATH": str(ROOT / "src"),
+        **(env or {}),
+    }
+    proc = subprocess.run(
+        [sys.executable, "-m", "tavotto", "doctor", *args],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=environ,
+    )
     return proc
 
 
@@ -489,7 +559,7 @@ def test_doctor_rejects_contradictory_flags(tmp_path):
     assert out["ok"] is False
     assert out["code"] == "bad_manifest_action"
     assert out["problems"][0]["code"] == "bad_manifest_action"
-    assert not (tmp_path / "install.json").exists()    # 什么都没动
+    assert not (tmp_path / "install.json").exists()  # 什么都没动
 
 
 def test_doctor_rejects_contradictory_flags_in_human_mode(tmp_path):
@@ -507,9 +577,11 @@ def test_every_doctor_json_failure_has_a_code():
     """
     src = (ROOT / "src" / "tavotto" / "engine" / "cli.py").read_text(encoding="utf-8")
     tree = ast.parse(src)
-    dumps = [n for n in ast.walk(tree)
-             if isinstance(n, ast.Call)
-             and getattr(n.func, "attr", "") == "dumps"]
+    dumps = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call) and getattr(n.func, "attr", "") == "dumps"
+    ]
     assert dumps, "cli.py 里没有 json.dumps"
     for node in dumps:
         payload = node.args[0]
@@ -527,6 +599,7 @@ def test_open_and_doctor_are_dispatched_before_argparse():
     命令行整个换掉；而 argparse 见到位置参数 `doctor` 只会报 unrecognized。
     """
     from tavotto.engine import cli as engine_cli
+
     assert set(engine_cli.COMMANDS) == {"open", "doctor", "codex"}
     assert engine_cli.dispatch([]) is None
     assert engine_cli.dispatch(["--figures", "/tmp"]) is None
@@ -539,6 +612,7 @@ def test_open_and_doctor_are_dispatched_before_argparse():
 # 与 `tavotto open` 同一条纪律：文案随时可改，code 不行。只给一句中文的话，
 # 调用方要区分「清单写不出来」和「这个包漏打了 CLI」就只能去匹配字符串——
 # 而这两件事的处置完全不同：前者还能用，后者得重装。
+
 
 def test_doctor_problems_carry_stable_codes(tmp_path):
     """配置目录写不进去 → `manifest_write_failed`，不是一句散文。"""
@@ -556,7 +630,7 @@ def test_doctor_problems_carry_stable_codes(tmp_path):
     assert out["ok"] is False
     assert out["code"] == "manifest_write_failed"
     assert [p["code"] for p in out["problems"]] == ["manifest_write_failed"]
-    assert out["problems"][0]["message"]              # 人话也还在
+    assert out["problems"][0]["message"]  # 人话也还在
 
 
 def test_doctor_reports_no_code_when_healthy(tmp_path):
@@ -569,8 +643,11 @@ def test_every_doctor_problem_is_a_coded_dict():
     src = (ROOT / "src" / "tavotto" / "engine" / "cli.py").read_text(encoding="utf-8")
     tree = ast.parse(src)
     for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and getattr(node.func, "attr", "") == "append" \
-                and getattr(node.func.value, "id", "") == "problems":
+        if (
+            isinstance(node, ast.Call)
+            and getattr(node.func, "attr", "") == "append"
+            and getattr(node.func.value, "id", "") == "problems"
+        ):
             arg = node.args[0]
             assert isinstance(arg, ast.Dict), f"第 {node.lineno} 行 append 了非 dict"
             keys = {k.value for k in arg.keys if isinstance(k, ast.Constant)}
@@ -591,8 +668,9 @@ def test_nightly_uninstall_assertion_is_not_vacuous():
     uninstalled = text.index("Start-Process -Wait $uninst")
     gone = text.index('throw "卸载后安装清单仍在')
     between = text[removed:uninstalled]
-    assert "Test-Path $manifest" in between, \
+    assert "Test-Path $manifest" in between, (
         "删掉清单之后、卸载之前没有再确认它存在——那条卸载断言是空的"
+    )
     assert removed < uninstalled < gone
 
 
@@ -609,26 +687,27 @@ def test_nightly_shell_probe_dumps_the_log_before_it_cleans_up():
     判据同样是顺序：先转储、再清理（且清理带 -ErrorAction SilentlyContinue）。
     """
     text = (ROOT / ".github" / "workflows" / "nightly.yml").read_text(encoding="utf-8")
+
     # 只看代码那一半：注释里提到 Stop-Process 是在解释这条纪律本身
     def code_only(block: str) -> str:
-        return "\n".join(ln for ln in block.splitlines()
-                          if not ln.strip().startswith("#"))
+        return "\n".join(ln for ln in block.splitlines() if not ln.strip().startswith("#"))
 
     branch = code_only(
-        text[text.index("if (-not $child) {"):text.index('throw "装好的壳没有拉起 sidecar')])
+        text[text.index("if (-not $child) {") : text.index('throw "装好的壳没有拉起 sidecar')]
+    )
     dump = branch.index("sidecar.log")
     kill = branch.index("Stop-Process")
     assert dump < kill, "清理排在日志转储前面：壳先退时会把真正的失败原因吞掉"
-    assert "-ErrorAction SilentlyContinue" in branch[kill:], \
+    assert "-ErrorAction SilentlyContinue" in branch[kill:], (
         "Stop-Process 没带 -ErrorAction SilentlyContinue：进程已退时它自己会抛"
+    )
     # 整个 nightly 里不许再有会自己抛的 Stop-Process
     for i, line in enumerate(text.splitlines(), 1):
         bare = line.strip()
         if bare.startswith("#"):
             continue
         if "Stop-Process" in bare and "SilentlyContinue" not in bare:
-            raise AssertionError(
-                f"nightly.yml:{i} 的 Stop-Process 没兜住「进程已经退了」：{bare}")
+            raise AssertionError(f"nightly.yml:{i} 的 Stop-Process 没兜住「进程已经退了」：{bare}")
 
 
 # ------------------- 刷新清单只补充，不抹掉（Codex #6） -------------------
@@ -645,15 +724,26 @@ def test_refresh_keeps_a_desktop_path_it_cannot_rediscover(tmp_path, monkeypatch
     moved.parent.mkdir(parents=True)
     moved.write_text("gui", encoding="utf-8")
     # 桌面版（冻结）先写下它在哪
-    locate.write_manifest({"version": "1", "cli": None, "desktop": str(moved),
-                           "install_dir": str(tmp_path / "Tools" / "Tavotto.app"),
-                           "source": "app"})
+    locate.write_manifest(
+        {
+            "version": "1",
+            "cli": None,
+            "desktop": str(moved),
+            "install_dir": str(tmp_path / "Tools" / "Tavotto.app"),
+            "source": "app",
+        }
+    )
 
     # pip 装的那份跑一次。用 system="linux" 表示「惯例位置里没有壳」——那儿
     # 本来就没有桌面发行形态，install_roots 恒为空，与开发机上 /Applications
     # 里是否真装着一份无关（那是绝对路径，env 隔离不掉）。
-    locate.refresh_manifest(frozen=False, system="linux", prefix=str(tmp_path),
-                            environ={"HOME": str(tmp_path)}, version="1")
+    locate.refresh_manifest(
+        frozen=False,
+        system="linux",
+        prefix=str(tmp_path),
+        environ={"HOME": str(tmp_path)},
+        version="1",
+    )
 
     got = locate.read_manifest()
     assert got["desktop"] == str(moved), "刷新把桌面版的路径抹掉了"
@@ -662,11 +752,22 @@ def test_refresh_keeps_a_desktop_path_it_cannot_rediscover(tmp_path, monkeypatch
 def test_refresh_drops_a_desktop_path_that_no_longer_exists(tmp_path, monkeypatch):
     """沿用的前提是它**还在**——read_manifest 已经核实过，别把死路径留下来。"""
     monkeypatch.setenv("TAVOTTO_CONFIG_DIR", str(tmp_path))
-    locate.write_manifest({"version": "1", "cli": None,
-                           "desktop": str(tmp_path / "gone" / "Tavotto"),
-                           "install_dir": None, "source": "app"})
-    locate.refresh_manifest(frozen=False, system="linux", prefix=str(tmp_path),
-                            environ={"HOME": str(tmp_path)}, version="1")
+    locate.write_manifest(
+        {
+            "version": "1",
+            "cli": None,
+            "desktop": str(tmp_path / "gone" / "Tavotto"),
+            "install_dir": None,
+            "source": "app",
+        }
+    )
+    locate.refresh_manifest(
+        frozen=False,
+        system="linux",
+        prefix=str(tmp_path),
+        environ={"HOME": str(tmp_path)},
+        version="1",
+    )
     assert locate.read_manifest()["desktop"] is None
 
 
@@ -676,15 +777,23 @@ def test_refresh_still_updates_what_it_does_know(tmp_path, monkeypatch):
     old_cli = tmp_path / "old" / "tavotto"
     old_cli.parent.mkdir()
     old_cli.write_text("x", encoding="utf-8")
-    locate.write_manifest({"version": "0.0.1", "cli": str(old_cli), "desktop": None,
-                           "install_dir": None, "source": "installer"})
+    locate.write_manifest(
+        {
+            "version": "0.0.1",
+            "cli": str(old_cli),
+            "desktop": None,
+            "install_dir": None,
+            "source": "installer",
+        }
+    )
 
     scripts = tmp_path / ("Scripts" if os.name == "nt" else "bin")
     scripts.mkdir()
     new_cli = scripts / ("tavotto.exe" if os.name == "nt" else "tavotto")
     new_cli.write_text("x", encoding="utf-8")
-    locate.refresh_manifest(frozen=False, prefix=str(tmp_path),
-                            environ={"HOME": str(tmp_path)}, version="9.9.9")
+    locate.refresh_manifest(
+        frozen=False, prefix=str(tmp_path), environ={"HOME": str(tmp_path)}, version="9.9.9"
+    )
 
     got = locate.read_manifest()
     assert os.path.normpath(got["cli"]) == os.path.normpath(str(new_cli))
@@ -727,14 +836,18 @@ def test_installed_entry_point_dispatches_before_importing_the_app():
     for node in top:
         mod = getattr(node, "module", "") or ""
         names = {a.name for a in node.names}
-        assert "app" not in mod and "app" not in names, \
+        assert "app" not in mod and "app" not in names, (
             "cli_entry 在模块层 import 了 app —— 那就等于没有轻量入口"
+        )
 
 
-@pytest.mark.parametrize("argv", [
-    ["doctor", "--json"],
-    ["open", "--help"],
-])
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["doctor", "--json"],
+        ["open", "--help"],
+    ],
+)
 def test_subcommands_run_without_flask_or_pymupdf(tmp_path, argv):
     """把 flask / pymupdf 变成 import 就炸，子命令仍要跑通。
 
@@ -743,10 +856,13 @@ def test_subcommands_run_without_flask_or_pymupdf(tmp_path, argv):
     旧入口会先崩在 import 上——最需要它的时候正好用不了。
     """
     import subprocess
-    env = {**os.environ,
-           "PYTHONPATH": str(ROOT / "src"),
-           "TAVOTTO_CONFIG_DIR": str(tmp_path / "cfg"),
-           "TAVOTTO_DATA_DIR": str(tmp_path / "data")}
+
+    env = {
+        **os.environ,
+        "PYTHONPATH": str(ROOT / "src"),
+        "TAVOTTO_CONFIG_DIR": str(tmp_path / "cfg"),
+        "TAVOTTO_DATA_DIR": str(tmp_path / "data"),
+    }
     code = _BLOCK_UI_IMPORTS + (
         "import sys\n"
         f"sys.argv = ['tavotto', {', '.join(repr(a) for a in argv)}]\n"
@@ -756,7 +872,14 @@ def test_subcommands_run_without_flask_or_pymupdf(tmp_path, argv):
         "except SystemExit as e:\n"
         "    raise SystemExit(e.code)\n"
     )
-    proc = subprocess.run([sys.executable, "-c", code], capture_output=True,
-                          text=True, encoding="utf-8", errors="replace", env=env, timeout=120)
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+        timeout=120,
+    )
     assert "不该 import" not in proc.stderr, proc.stderr
     assert proc.returncode == 0, proc.stderr

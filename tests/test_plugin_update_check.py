@@ -13,6 +13,7 @@
 跑的是插件自己的脚本（`codex-plugin/skills/tavotto-figure/scripts/`），
 不是 tavotto 包里的代码。
 """
+
 import ast
 import importlib.util
 import json
@@ -35,8 +36,7 @@ def uc():
     """import 插件的 update_check（它会 `from handoff import config_dir`）。"""
     sys.path.insert(0, str(SCRIPTS))
     try:
-        spec = importlib.util.spec_from_file_location(
-            "update_check", SCRIPTS / "update_check.py")
+        spec = importlib.util.spec_from_file_location("update_check", SCRIPTS / "update_check.py")
         mod = importlib.util.module_from_spec(spec)
         sys.modules["update_check"] = mod
         spec.loader.exec_module(mod)
@@ -47,11 +47,15 @@ def uc():
 
 
 def manifest(version="0.9.9", **extra):
-    out = {"schema": 1, "plugin": "tavotto", "channel": "stable",
-           "latest_version": version,
-           "download_url": "https://example.com/p.zip",
-           "release_notes_url": "https://example.com/notes",
-           "published_at": "2026-08-18T00:00:00Z"}
+    out = {
+        "schema": 1,
+        "plugin": "tavotto",
+        "channel": "stable",
+        "latest_version": version,
+        "download_url": "https://example.com/p.zip",
+        "release_notes_url": "https://example.com/notes",
+        "published_at": "2026-08-18T00:00:00Z",
+    }
     out.update(extra)
     return out
 
@@ -61,19 +65,23 @@ def fetcher_for(payload, calls=None):
         if calls is not None:
             calls.append((url, timeout))
         return payload
+
     return _fetch
 
 
 # ------------------------------ 版本比较 ---------------------------------
-@pytest.mark.parametrize("newer,older", [
-    ("0.7.1", "0.7.0"),
-    ("0.10.0", "0.9.0"),          # 按字符串比会判反——发到两位数小版本就踩
-    ("1.0.0", "0.99.99"),
-    ("0.8", "0.7.9"),             # 位数不齐要补零
-    ("v0.7.1", "0.7.0"),          # 前缀 v
-    ("0.7.1", "0.7.1-rc.1"),      # 正式版 > 预发布版
-    ("0.7.1-rc.2", "0.7.1-rc.1"),
-])
+@pytest.mark.parametrize(
+    "newer,older",
+    [
+        ("0.7.1", "0.7.0"),
+        ("0.10.0", "0.9.0"),  # 按字符串比会判反——发到两位数小版本就踩
+        ("1.0.0", "0.99.99"),
+        ("0.8", "0.7.9"),  # 位数不齐要补零
+        ("v0.7.1", "0.7.0"),  # 前缀 v
+        ("0.7.1", "0.7.1-rc.1"),  # 正式版 > 预发布版
+        ("0.7.1-rc.2", "0.7.1-rc.1"),
+    ],
+)
 def test_semantic_version_ordering(uc, newer, older):
     assert uc.is_newer(newer, older) is True
     assert uc.is_newer(older, newer) is False
@@ -81,7 +89,7 @@ def test_semantic_version_ordering(uc, newer, older):
 
 def test_same_version_is_not_newer(uc):
     assert uc.is_newer("0.7.0", "0.7.0") is False
-    assert uc.is_newer("0.7.0+build.9", "0.7.0") is False   # 构建元数据不参与比较
+    assert uc.is_newer("0.7.0+build.9", "0.7.0") is False  # 构建元数据不参与比较
 
 
 @pytest.mark.parametrize("junk", ["", "latest", "0.7.x", None, 7, "1.2.3.4.5"])
@@ -94,9 +102,8 @@ def test_unparsable_versions_never_guess(uc, junk):
 # --------------------------- 版本号只有一处 -------------------------------
 def test_current_version_comes_from_plugin_json(uc, tmp_path):
     """当前版本从 plugin.json 读——发版只改那一个文件。"""
-    assert uc.current_version() == json.loads(
-        PLUGIN_JSON.read_text(encoding="utf-8"))["version"]
-    assert uc.current_version() == tavotto.__version__   # 既有约定：随产品发版
+    assert uc.current_version() == json.loads(PLUGIN_JSON.read_text(encoding="utf-8"))["version"]
+    assert uc.current_version() == tavotto.__version__  # 既有约定：随产品发版
 
     other = tmp_path / "plugin.json"
     other.write_text(json.dumps({"version": "1.2.3"}), encoding="utf-8")
@@ -109,8 +116,7 @@ def test_no_version_string_is_hardcoded_in_the_script():
     tree = ast.parse(src)
     for node in ast.walk(tree):
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
-            assert node.value != tavotto.__version__, \
-                f"第 {node.lineno} 行写死了版本号"
+            assert node.value != tavotto.__version__, f"第 {node.lineno} 行写死了版本号"
 
 
 def test_missing_plugin_json_is_not_a_crash(uc, tmp_path):
@@ -121,8 +127,7 @@ def test_missing_plugin_json_is_not_a_crash(uc, tmp_path):
 def test_first_check_hits_the_network_then_caches(uc, tmp_path):
     calls = []
     env = {"TAVOTTO_CONFIG_DIR": str(tmp_path)}
-    got = uc.check(environ=env, fetcher=fetcher_for(manifest(), calls),
-                   version="0.7.0", now=1000.0)
+    got = uc.check(environ=env, fetcher=fetcher_for(manifest(), calls), version="0.7.0", now=1000.0)
     assert got["status"] == "available" and got["source"] == "network"
     assert got["latest_version"] == "0.9.9"
     assert len(calls) == 1
@@ -134,15 +139,17 @@ def test_second_check_within_24h_does_not_touch_the_network(uc, tmp_path):
     env = {"TAVOTTO_CONFIG_DIR": str(tmp_path)}
     uc.check(environ=env, fetcher=fetcher_for(manifest()), version="0.7.0", now=1000.0)
     calls = []
-    got = uc.check(environ=env, fetcher=fetcher_for(manifest(), calls),
-                   version="0.7.0", now=1000.0 + 23 * 3600)
+    got = uc.check(
+        environ=env, fetcher=fetcher_for(manifest(), calls), version="0.7.0", now=1000.0 + 23 * 3600
+    )
     assert calls == [], "24 小时内又发请求了"
     assert got["source"] == "cache" and got["status"] == "available"
 
     # 满 24 小时才再问
     calls = []
-    uc.check(environ=env, fetcher=fetcher_for(manifest(), calls),
-             version="0.7.0", now=1000.0 + 25 * 3600)
+    uc.check(
+        environ=env, fetcher=fetcher_for(manifest(), calls), version="0.7.0", now=1000.0 + 25 * 3600
+    )
     assert len(calls) == 1
 
 
@@ -150,17 +157,17 @@ def test_force_ignores_the_cache(uc, tmp_path):
     env = {"TAVOTTO_CONFIG_DIR": str(tmp_path)}
     uc.check(environ=env, fetcher=fetcher_for(manifest()), version="0.7.0", now=1000.0)
     calls = []
-    uc.check(environ=env, fetcher=fetcher_for(manifest(), calls),
-             version="0.7.0", now=1001.0, force=True)
+    uc.check(
+        environ=env, fetcher=fetcher_for(manifest(), calls), version="0.7.0", now=1001.0, force=True
+    )
     assert len(calls) == 1
 
 
 def test_network_failure_falls_back_to_the_last_good_answer(uc, tmp_path):
     env = {"TAVOTTO_CONFIG_DIR": str(tmp_path)}
     uc.check(environ=env, fetcher=fetcher_for(manifest()), version="0.7.0", now=1000.0)
-    got = uc.check(environ=env, fetcher=fetcher_for(None), version="0.7.0",
-                   now=1000.0 + 25 * 3600)
-    assert got["status"] == "available"          # 断网不该让提醒凭空消失
+    got = uc.check(environ=env, fetcher=fetcher_for(None), version="0.7.0", now=1000.0 + 25 * 3600)
+    assert got["status"] == "available"  # 断网不该让提醒凭空消失
     assert got["source"] == "cache"
 
 
@@ -178,12 +185,12 @@ def test_failure_backs_off_but_not_for_a_whole_day(uc, tmp_path):
     env = {"TAVOTTO_CONFIG_DIR": str(tmp_path)}
     uc.check(environ=env, fetcher=fetcher_for(None), version="0.7.0", now=1000.0)
     calls = []
-    uc.check(environ=env, fetcher=fetcher_for(None, calls), version="0.7.0",
-             now=1000.0 + 600)
+    uc.check(environ=env, fetcher=fetcher_for(None, calls), version="0.7.0", now=1000.0 + 600)
     assert calls == []
     calls = []
-    uc.check(environ=env, fetcher=fetcher_for(manifest(), calls), version="0.7.0",
-             now=1000.0 + 3700)
+    uc.check(
+        environ=env, fetcher=fetcher_for(manifest(), calls), version="0.7.0", now=1000.0 + 3700
+    )
     assert len(calls) == 1
 
 
@@ -191,32 +198,40 @@ def test_changing_the_url_invalidates_the_cache(uc, tmp_path):
     env = {"TAVOTTO_CONFIG_DIR": str(tmp_path)}
     uc.check(environ=env, fetcher=fetcher_for(manifest()), version="0.7.0", now=1000.0)
     calls = []
-    uc.check(environ={**env, "TAVOTTO_UPDATE_URL": "https://elsewhere/x.json"},
-             fetcher=fetcher_for(manifest(), calls), version="0.7.0", now=1001.0)
+    uc.check(
+        environ={**env, "TAVOTTO_UPDATE_URL": "https://elsewhere/x.json"},
+        fetcher=fetcher_for(manifest(), calls),
+        version="0.7.0",
+        now=1001.0,
+    )
     assert len(calls) == 1 and calls[0][0] == "https://elsewhere/x.json"
 
 
 def test_corrupt_cache_is_not_a_crash(uc, tmp_path):
     (tmp_path / "codex-plugin-update.json").write_text("{ 不是 JSON", encoding="utf-8")
     env = {"TAVOTTO_CONFIG_DIR": str(tmp_path)}
-    got = uc.check(environ=env, fetcher=fetcher_for(manifest()), version="0.7.0",
-                   now=1000.0)
+    got = uc.check(environ=env, fetcher=fetcher_for(manifest()), version="0.7.0", now=1000.0)
     assert got["status"] == "available"
 
 
 _is_root = getattr(os, "geteuid", lambda: -1)() == 0
 
 
-@pytest.mark.skipif(os.name == "nt" or _is_root,
-                    reason="Windows 上 chmod 挡不住写入；root 无视权限位")
+@pytest.mark.skipif(
+    os.name == "nt" or _is_root, reason="Windows 上 chmod 挡不住写入；root 无视权限位"
+)
 def test_readonly_cache_dir_is_not_a_crash(uc, tmp_path):
     """配置目录只读时照样能用，只是每次都问一遍。"""
     readonly = tmp_path / "ro"
     readonly.mkdir()
     readonly.chmod(0o500)
     try:
-        got = uc.check(environ={"TAVOTTO_CONFIG_DIR": str(readonly)},
-                       fetcher=fetcher_for(manifest()), version="0.7.0", now=1000.0)
+        got = uc.check(
+            environ={"TAVOTTO_CONFIG_DIR": str(readonly)},
+            fetcher=fetcher_for(manifest()),
+            version="0.7.0",
+            now=1000.0,
+        )
     finally:
         readonly.chmod(0o700)
     assert got["status"] == "available"
@@ -228,8 +243,12 @@ def test_a_garbage_config_dir_is_not_a_crash(uc, tmp_path):
     `os.makedirs` 对空字节抛的是 ValueError 不是 OSError——只接 OSError
     的话，一个环境变量就能让「画张图」整个失败。
     """
-    got = uc.check(environ={"TAVOTTO_CONFIG_DIR": str(tmp_path / "\0bad")},
-                   fetcher=fetcher_for(manifest()), version="0.7.0", now=1000.0)
+    got = uc.check(
+        environ={"TAVOTTO_CONFIG_DIR": str(tmp_path / "\0bad")},
+        fetcher=fetcher_for(manifest()),
+        version="0.7.0",
+        now=1000.0,
+    )
     assert got["status"] == "available"
 
 
@@ -246,18 +265,25 @@ def test_the_cache_never_lands_in_the_plugin_directory(uc, tmp_path):
 def test_disable_env_sends_nothing(uc, tmp_path):
     calls = []
     for value in ("1", "true", "yes", "on"):
-        got = uc.check(environ={"TAVOTTO_CONFIG_DIR": str(tmp_path),
-                                "TAVOTTO_DISABLE_UPDATE_CHECK": value},
-                       fetcher=fetcher_for(manifest(), calls), version="0.7.0")
+        got = uc.check(
+            environ={"TAVOTTO_CONFIG_DIR": str(tmp_path), "TAVOTTO_DISABLE_UPDATE_CHECK": value},
+            fetcher=fetcher_for(manifest(), calls),
+            version="0.7.0",
+        )
         assert got["status"] == "disabled"
     assert calls == [], "关掉了还发请求"
 
 
 def test_custom_url_env_is_honoured(uc, tmp_path):
     calls = []
-    uc.check(environ={"TAVOTTO_CONFIG_DIR": str(tmp_path),
-                      "TAVOTTO_UPDATE_URL": "https://mirror.internal/plugin.json"},
-             fetcher=fetcher_for(manifest(), calls), version="0.7.0")
+    uc.check(
+        environ={
+            "TAVOTTO_CONFIG_DIR": str(tmp_path),
+            "TAVOTTO_UPDATE_URL": "https://mirror.internal/plugin.json",
+        },
+        fetcher=fetcher_for(manifest(), calls),
+        version="0.7.0",
+    )
     assert calls[0][0] == "https://mirror.internal/plugin.json"
 
 
@@ -274,8 +300,9 @@ def test_network_timeout_is_short(uc):
 
 def test_manifest_from_another_schema_is_ignored(uc, tmp_path):
     env = {"TAVOTTO_CONFIG_DIR": str(tmp_path)}
-    got = uc.check(environ=env, version="0.7.0", now=1000.0,
-                   fetcher=fetcher_for(None))          # fetch 自己会挡掉 schema
+    got = uc.check(
+        environ=env, version="0.7.0", now=1000.0, fetcher=fetcher_for(None)
+    )  # fetch 自己会挡掉 schema
     assert got["status"] == "unknown"
     # fetch 层的判据
     assert uc.SCHEMA == 1
@@ -283,8 +310,7 @@ def test_manifest_from_another_schema_is_ignored(uc, tmp_path):
 
 def test_real_fetch_rejects_a_wrong_schema(uc, tmp_path):
     bad = tmp_path / "m.json"
-    bad.write_text(json.dumps({"schema": 99, "latest_version": "9.9.9"}),
-                   encoding="utf-8")
+    bad.write_text(json.dumps({"schema": 99, "latest_version": "9.9.9"}), encoding="utf-8")
     assert uc.fetch(bad.as_uri(), timeout=2.0) is None
     good = tmp_path / "g.json"
     good.write_text(json.dumps(manifest()), encoding="utf-8")
@@ -305,25 +331,43 @@ def test_min_tavotto_version_is_compared_against_tavotto_not_the_plugin(uc, tmp_
     """
     env = {"TAVOTTO_CONFIG_DIR": str(tmp_path)}
     payload = manifest(min_tavotto_version="0.7.0")
-    got = uc.check(environ=env, fetcher=fetcher_for(payload), version="0.7.0",
-                   tavotto_version="0.6.0", now=1000.0)
-    assert got["tavotto"] == {"status": "too_old", "current_version": "0.6.0",
-                              "required_version": "0.7.0"}
+    got = uc.check(
+        environ=env,
+        fetcher=fetcher_for(payload),
+        version="0.7.0",
+        tavotto_version="0.6.0",
+        now=1000.0,
+    )
+    assert got["tavotto"] == {
+        "status": "too_old",
+        "current_version": "0.6.0",
+        "required_version": "0.7.0",
+    }
     assert "Tavotto 是 0.6.0" in uc.tavotto_hint(got)
 
 
 def test_new_enough_tavotto_is_not_nagged(uc, tmp_path):
     env = {"TAVOTTO_CONFIG_DIR": str(tmp_path)}
-    got = uc.check(environ=env, fetcher=fetcher_for(manifest(min_tavotto_version="0.7.0")),
-                   version="0.7.0", tavotto_version="0.7.0", now=1000.0)
+    got = uc.check(
+        environ=env,
+        fetcher=fetcher_for(manifest(min_tavotto_version="0.7.0")),
+        version="0.7.0",
+        tavotto_version="0.7.0",
+        now=1000.0,
+    )
     assert "tavotto" not in got
 
 
 def test_unknown_tavotto_version_says_nothing(uc, tmp_path):
     """发现链是从 PATH 走的时候拿不到版本——那就别猜。"""
     env = {"TAVOTTO_CONFIG_DIR": str(tmp_path)}
-    got = uc.check(environ=env, fetcher=fetcher_for(manifest(min_tavotto_version="9.9.9")),
-                   version="0.7.0", tavotto_version=None, now=1000.0)
+    got = uc.check(
+        environ=env,
+        fetcher=fetcher_for(manifest(min_tavotto_version="9.9.9")),
+        version="0.7.0",
+        tavotto_version=None,
+        now=1000.0,
+    )
     assert "tavotto" not in got
 
 
@@ -332,23 +376,36 @@ def test_hint_only_speaks_when_there_is_an_update(uc):
     assert uc.hint({"status": "current"}) is None
     assert uc.hint({"status": "unknown"}) is None
     assert uc.hint({}) is None
-    text = uc.hint({"status": "available", "latest_version": "0.7.1",
-                    "current_version": "0.7.0",
-                    "upgrade_command": "codex plugin marketplace upgrade tavotto",
-                    "release_notes_url": "https://example.com/n"})
+    text = uc.hint(
+        {
+            "status": "available",
+            "latest_version": "0.7.1",
+            "current_version": "0.7.0",
+            "upgrade_command": "codex plugin marketplace upgrade tavotto",
+            "release_notes_url": "https://example.com/n",
+        }
+    )
     assert "0.7.1" in text and "0.7.0" in text and "upgrade tavotto" in text
 
 
 # ------------------------- 与 handoff.py 的接线 ---------------------------
 def _run_handoff(tmp_path, target, env_extra, *args):
-    env = {**os.environ,
-           "TAVOTTO_CONFIG_DIR": str(tmp_path / "cfg"),
-           "TAVOTTO_DATA_DIR": str(tmp_path / "data"), **env_extra}
+    env = {
+        **os.environ,
+        "TAVOTTO_CONFIG_DIR": str(tmp_path / "cfg"),
+        "TAVOTTO_DATA_DIR": str(tmp_path / "data"),
+        **env_extra,
+    }
     env.pop("TAVOTTO_CLI", None)
     env.update(env_extra)
     return subprocess.run(
         [sys.executable, str(SCRIPTS / "handoff.py"), str(target), *args],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", env=env)
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+    )
 
 
 @pytest.fixture()
@@ -359,8 +416,7 @@ def project(tmp_path):
     return d
 
 
-@pytest.mark.skipif(not (ROOT / "src" / "tavotto" / "__init__.py").is_file(),
-                    reason="需要源码树")
+@pytest.mark.skipif(not (ROOT / "src" / "tavotto" / "__init__.py").is_file(), reason="需要源码树")
 def test_handoff_stdout_stays_one_parseable_json_line(tmp_path, project):
     """**最重要的一条**：提醒绝不能把那行 JSON 弄脏。
 
@@ -369,9 +425,11 @@ def test_handoff_stdout_stays_one_parseable_json_line(tmp_path, project):
     """
     remote = tmp_path / "latest.json"
     remote.write_text(json.dumps(manifest("99.0.0")), encoding="utf-8")
-    proc = _run_handoff(tmp_path, project / "Fig1.pdf",
-                        {"TAVOTTO_UPDATE_URL": remote.as_uri(),
-                         "TAVOTTO_CLI": str(tmp_path / "没有这个 CLI")})
+    proc = _run_handoff(
+        tmp_path,
+        project / "Fig1.pdf",
+        {"TAVOTTO_UPDATE_URL": remote.as_uri(), "TAVOTTO_CLI": str(tmp_path / "没有这个 CLI")},
+    )
     lines = proc.stdout.strip().splitlines()
     assert len(lines) == 1, f"stdout 不止一行: {lines}"
     out = json.loads(lines[0])
@@ -382,26 +440,31 @@ def test_handoff_stdout_stays_one_parseable_json_line(tmp_path, project):
     assert "有新版本" not in proc.stdout
 
 
-@pytest.mark.skipif(not (ROOT / "src" / "tavotto" / "__init__.py").is_file(),
-                    reason="需要源码树")
+@pytest.mark.skipif(not (ROOT / "src" / "tavotto" / "__init__.py").is_file(), reason="需要源码树")
 def test_handoff_omits_the_field_entirely_when_disabled(tmp_path, project):
-    proc = _run_handoff(tmp_path, project / "Fig1.pdf",
-                        {"TAVOTTO_DISABLE_UPDATE_CHECK": "1",
-                         "TAVOTTO_CLI": str(tmp_path / "没有这个 CLI")})
+    proc = _run_handoff(
+        tmp_path,
+        project / "Fig1.pdf",
+        {"TAVOTTO_DISABLE_UPDATE_CHECK": "1", "TAVOTTO_CLI": str(tmp_path / "没有这个 CLI")},
+    )
     out = json.loads(proc.stdout.strip().splitlines()[-1])
     assert "update" not in out
     assert proc.stderr.strip() == "" or "有新版本" not in proc.stderr
 
 
-@pytest.mark.skipif(not (ROOT / "src" / "tavotto" / "__init__.py").is_file(),
-                    reason="需要源码树")
+@pytest.mark.skipif(not (ROOT / "src" / "tavotto" / "__init__.py").is_file(), reason="需要源码树")
 def test_a_broken_update_check_never_breaks_the_handoff(tmp_path, project):
     """更新检查炸了，交接照常。它是提醒，不是功能。"""
-    proc = _run_handoff(tmp_path, project / "Fig1.pdf",
-                        {"TAVOTTO_UPDATE_URL": "http://127.0.0.1:1/x.json",
-                         "TAVOTTO_CLI": str(tmp_path / "没有这个 CLI")})
+    proc = _run_handoff(
+        tmp_path,
+        project / "Fig1.pdf",
+        {
+            "TAVOTTO_UPDATE_URL": "http://127.0.0.1:1/x.json",
+            "TAVOTTO_CLI": str(tmp_path / "没有这个 CLI"),
+        },
+    )
     out = json.loads(proc.stdout.strip().splitlines()[-1])
-    assert out["error_code"] == "cli_exec_failed"       # 该报的还是照报
+    assert out["error_code"] == "cli_exec_failed"  # 该报的还是照报
     assert out.get("update", {}).get("status") in (None, "unknown")
 
 
@@ -409,12 +472,19 @@ def test_a_broken_update_check_never_breaks_the_handoff(tmp_path, project):
 def test_explicit_entry_point_json(tmp_path):
     remote = tmp_path / "latest.json"
     remote.write_text(json.dumps(manifest("1.0.0")), encoding="utf-8")
-    env = {**os.environ, "TAVOTTO_CONFIG_DIR": str(tmp_path / "cfg"),
-           "TAVOTTO_UPDATE_URL": remote.as_uri()}
-    proc = subprocess.run([sys.executable, str(SCRIPTS / "update_check.py"),
-                           "--json", "--force"],
-                          capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", env=env)
+    env = {
+        **os.environ,
+        "TAVOTTO_CONFIG_DIR": str(tmp_path / "cfg"),
+        "TAVOTTO_UPDATE_URL": remote.as_uri(),
+    }
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPTS / "update_check.py"), "--json", "--force"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+    )
     assert proc.returncode == 0, proc.stderr
     out = json.loads(proc.stdout.strip().splitlines()[-1])
     assert out["status"] == "available" and out["latest_version"] == "1.0.0"
@@ -423,11 +493,19 @@ def test_explicit_entry_point_json(tmp_path):
 def test_explicit_entry_point_human(tmp_path):
     remote = tmp_path / "latest.json"
     remote.write_text(json.dumps(manifest(tavotto.__version__)), encoding="utf-8")
-    env = {**os.environ, "TAVOTTO_CONFIG_DIR": str(tmp_path / "cfg"),
-           "TAVOTTO_UPDATE_URL": remote.as_uri()}
-    proc = subprocess.run([sys.executable, str(SCRIPTS / "update_check.py"), "--force"],
-                          capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", env=env)
+    env = {
+        **os.environ,
+        "TAVOTTO_CONFIG_DIR": str(tmp_path / "cfg"),
+        "TAVOTTO_UPDATE_URL": remote.as_uri(),
+    }
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPTS / "update_check.py"), "--force"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+    )
     assert proc.returncode == 0, proc.stderr
     assert "已是最新" in proc.stdout
 
@@ -440,8 +518,17 @@ def test_no_download_or_execution_anywhere():
     """
     src = (SCRIPTS / "update_check.py").read_text(encoding="utf-8")
     tree = ast.parse(src)
-    banned = {"urlretrieve", "extractall", "system", "Popen", "run", "call",
-              "check_output", "exec", "eval"}
+    banned = {
+        "urlretrieve",
+        "extractall",
+        "system",
+        "Popen",
+        "run",
+        "call",
+        "check_output",
+        "exec",
+        "eval",
+    }
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
             name = getattr(node.func, "attr", None) or getattr(node.func, "id", None)

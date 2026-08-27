@@ -29,6 +29,7 @@ benchmark 从此只证明「我们接受现状」。所以：
 分类只有六种（`CLASSIFICATIONS`），阶段只有九个（`STAGES`），两张表都是
 闭集：写错一个字当场报错，绝不当成「一个我们没见过的新状态」放行。
 """
+
 from __future__ import annotations
 
 import json
@@ -44,8 +45,17 @@ ASSETS_DIR = COMPAT_DIR / "assets"
 
 #: 兼容漏斗的九级。**顺序即依赖**：前一级不过，后面的一律 skip 而不是 fail
 #: ——「execute 崩了所以 export 也失败」重复计数会让报告读起来像塌方。
-STAGES = ("discover", "execute", "capture", "open", "semantic",
-          "edit", "replay", "export", "fidelity")
+STAGES = (
+    "discover",
+    "execute",
+    "capture",
+    "open",
+    "semantic",
+    "edit",
+    "replay",
+    "export",
+    "fidelity",
+)
 
 #: 漏斗每一级在报告里的名字。
 STAGE_LABELS = {
@@ -63,12 +73,12 @@ STAGE_LABELS = {
 #: 失败分类。闭集——PASS/FAIL 两分法会把「产品边界」与「我们的 bug」混成
 #: 同一个数字，而那正是这套 benchmark 存在的理由。
 CLASSIFICATIONS = (
-    "full_support",            # 全绿
-    "partial_support",         # 跑得起来、认得出来，但部分元素不可编辑
-    "unsupported_by_design",   # 产品刻意不支持（数据/结构性修改回代码）
+    "full_support",  # 全绿
+    "partial_support",  # 跑得起来、认得出来，但部分元素不可编辑
+    "unsupported_by_design",  # 产品刻意不支持（数据/结构性修改回代码）
     "environment_dependency",  # 缺字体 / 缺可选包，不是引擎问题
-    "product_bug",             # Tavotto 自己的缺陷，待修
-    "invalid_fixture",         # case 自己写错了
+    "product_bug",  # Tavotto 自己的缺陷，待修
+    "invalid_fixture",  # case 自己写错了
 )
 
 #: 需要写明理由的分类（`full_support` 之外全都要）。
@@ -92,8 +102,7 @@ NON_NEGOTIABLE_STAGES = ("execute", "capture", "open")
 #: 产品路由（Session 6）。「worker 能直接调」不等于「真实用户能使用」——
 #: case 可以在 `product_routes` 里声明哪些**产品入口**必须走得通，runner
 #: 走真实端点/真实 CLI 验证（绝不直接调内部 probe 代表产品成功）。闭集。
-PRODUCT_ROUTES = ("desktop_project", "cli_open", "safe_probe",
-                  "browser_playground", "native_run")
+PRODUCT_ROUTES = ("desktop_project", "cli_open", "safe_probe", "browser_playground", "native_run")
 
 #: 路由声明的合法取值。`true` = 必须通过；两个字符串档是**如实记账**：
 #: not_implemented（产品还没有这条路，如 native_run）/ not_applicable
@@ -132,8 +141,7 @@ def load_manifest(path: Path = MANIFEST_PATH) -> dict:
 
 def validate_manifest(data: dict, root: Path = COMPAT_DIR) -> None:
     if data.get("schema") != 1:
-        raise CorpusError("manifest_schema",
-                          f"清单 schema 必须是 1，实际 {data.get('schema')!r}")
+        raise CorpusError("manifest_schema", f"清单 schema 必须是 1，实际 {data.get('schema')!r}")
     cases = data.get("cases")
     if not isinstance(cases, list) or not cases:
         raise CorpusError("manifest_empty", "清单里一个 case 都没有")
@@ -162,8 +170,10 @@ def _validate_case(case: dict, root: Path) -> None:
     if case.get("tier") not in TIERS:
         bad("unknown_tier", f"tier 非法 {case.get('tier')!r}（可选 {list(TIERS)}）")
     if case.get("discovery") not in DISCOVERY_MODES:
-        bad("unknown_discovery",
-            f"discovery 非法 {case.get('discovery')!r}（可选 {list(DISCOVERY_MODES)}）")
+        bad(
+            "unknown_discovery",
+            f"discovery 非法 {case.get('discovery')!r}（可选 {list(DISCOVERY_MODES)}）",
+        )
 
     script = case.get("script")
     if not isinstance(script, str) or not script:
@@ -199,54 +209,69 @@ def _validate_case(case: dict, root: Path) -> None:
             # 「声明它不该通过」是把门禁关掉最省事的办法。这三级任何档位都
             # 不许关：跑不起来 / 捕获不到 / 打不开，那就是不兼容，理由再充分
             # 也得记成 classification，不能记成「本来就没期望它过」。
-            bad("stage_not_negotiable",
+            bad(
+                "stage_not_negotiable",
                 f"expected.{stage}=false 不允许——execute / capture / open "
                 f"是任何 tier 的下限。真跑不起来的请写 classification"
-                f"（environment_dependency / unsupported_by_design / product_bug）")
+                f"（environment_dependency / unsupported_by_design / product_bug）",
+            )
         if not str(reasons.get(stage, "")).strip():
-            bad("expected_false_reason_required",
+            bad(
+                "expected_false_reason_required",
                 f"expected.{stage}=false 必须在 expected_false_reasons.{stage} "
-                f"里写明理由——没有理由的例外，下一个人无法判断它还该不该存在")
+                f"里写明理由——没有理由的例外，下一个人无法判断它还该不该存在",
+            )
 
     cls = case.get("classification", "full_support")
     if cls not in CLASSIFICATIONS:
-        bad("unknown_classification",
-            f"classification 非法 {cls!r}（可选 {list(CLASSIFICATIONS)}）")
+        bad(
+            "unknown_classification", f"classification 非法 {cls!r}（可选 {list(CLASSIFICATIONS)}）"
+        )
     if cls in NEEDS_REASON and not str(case.get("reason", "")).strip():
         # 没有理由的例外，下一个人无法判断它还该不该存在，最终只会被无限期沿用。
         bad("reason_required", f"classification={cls} 必须写明 reason")
     if cls in NEEDS_FOLLOW_UP and not str(case.get("follow_up", "")).strip():
-        bad("follow_up_required",
+        bad(
+            "follow_up_required",
             f"classification={cls} 必须写明 follow_up（product_bug 是待修缺陷，"
-            f"不是可以长期接受的状态）")
+            f"不是可以长期接受的状态）",
+        )
     if cls == "product_bug" and case.get("tier") == "must":
-        bad("tier1_product_bug",
+        bad(
+            "tier1_product_bug",
             "Tier 1 不允许存在 product_bug——那一档是标准 matplotlib 的高频"
             "路径，有 bug 就是发不了版。要么修，要么把它降级并写清楚为什么"
-            "它不再是高频路径")
+            "它不再是高频路径",
+        )
 
     routes = case.get("product_routes") or {}
     unknown_routes = set(routes) - set(PRODUCT_ROUTES)
     if unknown_routes:
-        bad("unknown_route",
-            f"product_routes 里有未知路由 {sorted(unknown_routes)}"
-            f"（可选 {list(PRODUCT_ROUTES)}）")
+        bad(
+            "unknown_route",
+            f"product_routes 里有未知路由 {sorted(unknown_routes)}（可选 {list(PRODUCT_ROUTES)}）",
+        )
     for route, want in routes.items():
         if want not in ROUTE_EXPECTATIONS:
-            bad("route_expectation_invalid",
+            bad(
+                "route_expectation_invalid",
                 f"product_routes.{route} 非法 {want!r}"
-                f"（可选 true / 'not_implemented' / 'not_applicable'）")
+                f"（可选 true / 'not_implemented' / 'not_applicable'）",
+            )
         if route == "native_run" and want is True:
             # native 执行是 PR 2：现在声明「必须通过」只能靠伪装 pass 兑现，
             # 而这份 benchmark 的第一条纪律就是不许假兼容。
-            bad("native_run_not_implemented",
+            bad(
+                "native_run_not_implemented",
                 "native_run 尚未实现——第一阶段只能声明 not_implemented / "
-                "not_applicable，不要伪装 pass")
-        if route == "browser_playground" and want is True \
-                and not case.get("browser_eligible"):
-            bad("route_not_browser_eligible",
+                "not_applicable，不要伪装 pass",
+            )
+        if route == "browser_playground" and want is True and not case.get("browser_eligible"):
+            bad(
+                "route_not_browser_eligible",
                 "browser_playground=true 但 case 不是 browser_eligible——"
-                "对拍腿根本不会跑它，这条声明永远验不了")
+                "对拍腿根本不会跑它，这条声明永远验不了",
+            )
 
     sem = case.get("semantic_expectations") or {}
     for gid_prop in sem.get("editable") or []:
@@ -258,16 +283,16 @@ def _validate_case(case: dict, root: Path) -> None:
         if "value" not in target:
             bad("mutation_shape", f"mutation 必须带 value：{target!r}")
     if len(case.get("mutations") or []) > 5:
-        bad("too_many_mutations",
-            "每个 case 最多 5 个代表性编辑目标——遍历所有属性是 pytest 的活，"
-            "不是兼容基准的活")
+        bad(
+            "too_many_mutations",
+            "每个 case 最多 5 个代表性编辑目标——遍历所有属性是 pytest 的活，不是兼容基准的活",
+        )
 
 
 def _validate_smoke_subset(cases: list[dict]) -> None:
     smoke = [c for c in cases if c.get("smoke")]
     if not smoke:
-        raise CorpusError("smoke_empty",
-                          "smoke 子集是空的——PR 上就等于没有兼容门禁")
+        raise CorpusError("smoke_empty", "smoke 子集是空的——PR 上就等于没有兼容门禁")
     if not any(c["tier"] == "must" for c in smoke):
         raise CorpusError("smoke_no_tier1", "smoke 子集里一个 Tier 1 都没有")
     cats = {c["category"] for c in smoke}
@@ -275,7 +300,8 @@ def _validate_smoke_subset(cases: list[dict]) -> None:
     if missing:
         raise CorpusError(
             "smoke_missing_category",
-            f"smoke 子集没覆盖到这些有 Tier 1 case 的类别：{sorted(missing)}")
+            f"smoke 子集没覆盖到这些有 Tier 1 case 的类别：{sorted(missing)}",
+        )
 
 
 #: `matrix.json` 里 target 可以声明只跑一个子集。值即判据名，闭集——
@@ -283,9 +309,15 @@ def _validate_smoke_subset(cases: list[dict]) -> None:
 SUBSETS = ("browser_eligible",)
 
 
-def select(cases: list[dict], *, ids: list[str] | None = None,
-           tiers: list[str] | None = None, categories: list[str] | None = None,
-           smoke: bool = False, browser_only: bool = False) -> list[dict]:
+def select(
+    cases: list[dict],
+    *,
+    ids: list[str] | None = None,
+    tiers: list[str] | None = None,
+    categories: list[str] | None = None,
+    smoke: bool = False,
+    browser_only: bool = False,
+) -> list[dict]:
     """按条件挑 case。**顺序永远是清单里的顺序**——报告要可 diff。"""
     out = cases
     if ids:
@@ -293,8 +325,7 @@ def select(cases: list[dict], *, ids: list[str] | None = None,
         known = {c["id"] for c in out}
         unknown = want - known
         if unknown:
-            raise CorpusError("unknown_case_id",
-                              f"没有这些 case：{sorted(unknown)}")
+            raise CorpusError("unknown_case_id", f"没有这些 case：{sorted(unknown)}")
         out = [c for c in out if c["id"] in want]
     if smoke:
         out = [c for c in out if c.get("smoke")]
@@ -360,18 +391,19 @@ def validate_matrix(data: dict) -> None:
                 "unknown_subset",
                 f"target {name} 的 subset 非法 {sub!r}（可选 {list(SUBSETS)}）。"
                 f"`true` 这种写法不再接受——它说不出**跑哪个**子集，"
-                f"于是 runner 只能忽略它，而 workflow 的注释还在说它跑了子集")
+                f"于是 runner 只能忽略它，而 workflow 的注释还在说它跑了子集",
+            )
         src = spec.get("source")
         if src is not None:
             # 版本真相只有一份：这里只准写「去哪读」。
             if not (REPO / src).is_file():
-                raise CorpusError("target_source_missing",
-                                  f"target {name} 的 source 不存在：{src}")
+                raise CorpusError("target_source_missing", f"target {name} 的 source 不存在：{src}")
             if "matplotlib" in spec:
                 raise CorpusError(
                     "target_duplicates_version",
                     f"target {name} 既写了 source 又写死了 matplotlib 版本。"
-                    f"版本真相只能有一份——删掉写死的那个")
+                    f"版本真相只能有一份——删掉写死的那个",
+                )
         elif not spec.get("matplotlib"):
             # `required: false` 的 target 允许「当前环境是什么就用什么」
             # （本地开发那一档）；**要当发行判据的必须钉死版本**，
@@ -380,15 +412,18 @@ def validate_matrix(data: dict) -> None:
                 raise CorpusError(
                     "target_no_version",
                     f"target {name} 标了 required 却既没有 source 也没有精确"
-                    f"版本——那样它在 CI 上等于装 latest")
+                    f"版本——那样它在 CI 上等于装 latest",
+                )
         elif str(spec["matplotlib"])[0] not in "0123456789":
             raise CorpusError(
                 "target_version_not_exact",
                 f"target {name} 的 matplotlib 必须是精确版本，不许范围/latest："
-                f"{spec['matplotlib']!r}")
+                f"{spec['matplotlib']!r}",
+            )
     if not any(t.get("required") for t in targets.values()):
-        raise CorpusError("matrix_nothing_required",
-                          "没有任何 target 标了 required——这个矩阵不会拦住任何东西")
+        raise CorpusError(
+            "matrix_nothing_required", "没有任何 target 标了 required——这个矩阵不会拦住任何东西"
+        )
 
 
 def resolve_target(matrix: dict, name: str) -> dict:
@@ -396,9 +431,9 @@ def resolve_target(matrix: dict, name: str) -> dict:
     try:
         spec = dict(matrix["targets"][name])
     except KeyError:
-        raise CorpusError("unknown_target",
-                          f"没有这个 target：{name}"
-                          f"（可选 {sorted(matrix['targets'])}）") from None
+        raise CorpusError(
+            "unknown_target", f"没有这个 target：{name}（可选 {sorted(matrix['targets'])}）"
+        ) from None
     src = spec.pop("source", None)
     if src:
         spec.update(_versions_from_lock(REPO / src))
@@ -409,24 +444,31 @@ def resolve_target(matrix: dict, name: str) -> dict:
 def _versions_from_lock(path: Path) -> dict:
     """从两种锁文件里取科学栈版本。两种形状各自认，不做「猜一个」。"""
     data = _load(path, "lock")
-    if "pyodide_version" in data:                       # playground-runtime.json
+    if "pyodide_version" in data:  # playground-runtime.json
         # **键名是 `pyodide_python` 而不是 `python`**：那一档锁的是 Pyodide
         # 里那个解释器的版本，与「拿哪个 CPython 跑 browser.py」无关。叫
         # `python` 的话会被 runner 的 Python 版本核对当成运行时要求——实测
         # 后果是 nightly 的 browser 那条腿**永久红**（矩阵给 3.13，锁文件说
         # 3.14.2，版本核对当场退出 2，一个 case 都跑不到）。
-        return {"pyodide_python": data.get("python", ""),
-                "pyodide": data.get("pyodide_version", ""),
-                **{k: v for k, v in (data.get("packages") or {}).items()}}
-    targets = data.get("targets") or {}                 # runtime-lock.json
+        return {
+            "pyodide_python": data.get("python", ""),
+            "pyodide": data.get("pyodide_version", ""),
+            **{k: v for k, v in (data.get("packages") or {}).items()},
+        }
+    targets = data.get("targets") or {}  # runtime-lock.json
     if not targets:
         raise CorpusError("lock_unreadable", f"{path} 里既没有包表也没有 targets")
     first = next(iter(targets.values()))
     raw = first.get("packages") or {}
-    pkgs = ({str(k).lower(): str(v) for k, v in raw.items()}
-            if isinstance(raw, dict)
-            else {str(i["name"]).lower(): str(i.get("version", ""))
-                  for i in raw if isinstance(i, dict) and i.get("name")})
+    pkgs = (
+        {str(k).lower(): str(v) for k, v in raw.items()}
+        if isinstance(raw, dict)
+        else {
+            str(i["name"]).lower(): str(i.get("version", ""))
+            for i in raw
+            if isinstance(i, dict) and i.get("name")
+        }
+    )
     return {"python": (first.get("python") or {}).get("version", ""), **pkgs}
 
 
@@ -444,7 +486,8 @@ def load_baseline(path: Path = BASELINE_PATH) -> dict:
             "baseline_missing",
             f"基线不存在：{path}。本地跑 "
             f"`python scripts/ci/compat_matrix.py --all --update-baseline` "
-            f"生成并**逐条读过**之后提交——CI 里绝不自动生成")
+            f"生成并**逐条读过**之后提交——CI 里绝不自动生成",
+        )
     data = _load(path, "baseline")
     validate_baseline(data)
     return data
@@ -459,33 +502,34 @@ def validate_baseline(data: dict) -> None:
     for cid, entry in cases.items():
         cls = entry.get("classification")
         if cls not in CLASSIFICATIONS:
-            raise CorpusError("unknown_classification",
-                              f"基线 {cid}: classification 非法 {cls!r}")
+            raise CorpusError("unknown_classification", f"基线 {cid}: classification 非法 {cls!r}")
         if cls in NEEDS_REASON and not str(entry.get("reason", "")).strip():
-            raise CorpusError("reason_required",
-                              f"基线 {cid}: classification={cls} 必须写明 reason")
+            raise CorpusError(
+                "reason_required", f"基线 {cid}: classification={cls} 必须写明 reason"
+            )
         if cls in NEEDS_FOLLOW_UP and not str(entry.get("follow_up", "")).strip():
             raise CorpusError(
                 "follow_up_required",
                 f"基线 {cid}: product_bug 必须写明 follow_up。"
-                f"把已知缺陷记进基线是为了看住它，不是为了接受它")
+                f"把已知缺陷记进基线是为了看住它，不是为了接受它",
+            )
         stages = entry.get("stages") or {}
         unknown = set(stages) - set(STAGES)
         if unknown:
-            raise CorpusError("unknown_stage",
-                              f"基线 {cid}: 未知阶段 {sorted(unknown)}")
+            raise CorpusError("unknown_stage", f"基线 {cid}: 未知阶段 {sorted(unknown)}")
     gen = data.get("generated_for")
     if gen is not None and (not isinstance(gen, dict) or not gen.get("target")):
-        raise CorpusError("baseline_no_target",
-                          "generated_for 必须写明 target（这份基线是在哪套"
-                          "版本上采的）")
+        raise CorpusError(
+            "baseline_no_target", "generated_for 必须写明 target（这份基线是在哪套版本上采的）"
+        )
     # 时间戳不进基线：它每次跑都变，diff 里全是噪音，还会让「基线没动」
     # 这件事看不出来。
     for forbidden in ("generated_at", "timestamp", "run_id"):
         if forbidden in data:
-            raise CorpusError("baseline_has_timestamp",
-                              f"基线里不许有 {forbidden}——它每次都变，"
-                              f"会把真正的分类变化淹没在 diff 噪音里")
+            raise CorpusError(
+                "baseline_has_timestamp",
+                f"基线里不许有 {forbidden}——它每次都变，会把真正的分类变化淹没在 diff 噪音里",
+            )
 
 
 def baseline_payload(results: dict, generated_for: dict | None = None) -> dict:
@@ -538,8 +582,9 @@ def write_baseline(payload: dict, path: Path = BASELINE_PATH) -> Path:
     「只在别人电脑上发生」的 bug 先变成那里的用例。
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-                    encoding="utf-8", newline="\n")
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n"
+    )
     return path
 
 
@@ -555,13 +600,18 @@ def diff_baseline(baseline: dict, results: dict) -> dict:
     changed = []
     for cid in sorted(set(results) & set(base)):
         was, now = base[cid], results[cid]
-        stage_diff = {s: [was.get("stages", {}).get(s), now["stages"].get(s)]
-                      for s in STAGES
-                      if s in now["stages"]
-                      and was.get("stages", {}).get(s) != now["stages"][s]}
+        stage_diff = {
+            s: [was.get("stages", {}).get(s), now["stages"].get(s)]
+            for s in STAGES
+            if s in now["stages"] and was.get("stages", {}).get(s) != now["stages"][s]
+        }
         if was.get("classification") != now["classification"] or stage_diff:
-            changed.append({"id": cid,
-                            "was": was.get("classification"),
-                            "now": now["classification"],
-                            "stages": stage_diff})
+            changed.append(
+                {
+                    "id": cid,
+                    "was": was.get("classification"),
+                    "now": now["classification"],
+                    "stages": stage_diff,
+                }
+            )
     return {"new": new, "missing": missing, "changed": changed}

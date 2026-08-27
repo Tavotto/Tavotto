@@ -27,6 +27,7 @@
 CI / 测试挂在 `--check` 上（web/src/playground/examples.test.ts 也会
 读同一份 manifest 比对源码哈希）。
 """
+
 from __future__ import annotations
 
 import argparse
@@ -136,8 +137,11 @@ def generate() -> int:
 
 def check() -> int:
     if not MANIFEST.is_file():
-        print(f"没有封面 manifest（{MANIFEST} 不存在）。"
-              f"先跑 python scripts/generate_playground_examples.py", file=sys.stderr)
+        print(
+            f"没有封面 manifest（{MANIFEST} 不存在）。"
+            f"先跑 python scripts/generate_playground_examples.py",
+            file=sys.stderr,
+        )
         return 1
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
     ok = True
@@ -150,8 +154,10 @@ def check() -> int:
             ok = False
             continue
         if entry.get("sourceSha256") != source_sha256(path):
-            print(f"{stem}.py 已改动但封面没有重新生成"
-                  f"（manifest 里的源码哈希已过期）", file=sys.stderr)
+            print(
+                f"{stem}.py 已改动但封面没有重新生成（manifest 里的源码哈希已过期）",
+                file=sys.stderr,
+            )
             ok = False
         cover = GENERATED / f"{stem}.webp"
         if not cover.is_file() or cover.stat().st_size == 0:
@@ -170,8 +176,7 @@ def check() -> int:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--check", action="store_true",
-                    help="只校验封面与源码是否一致，不生成")
+    ap.add_argument("--check", action="store_true", help="只校验封面与源码是否一致，不生成")
     args = ap.parse_args(argv)
     return check() if args.check else generate()
 

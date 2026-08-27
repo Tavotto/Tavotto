@@ -9,6 +9,7 @@
 * `/api/engine/preview_png` 按给定 patches 出图，与热会话当前是哪个变体无关
   （`/api/engine/png` 从 live figure 直接 savefig，那是「谁最后渲染谁说了算」）。
 """
+
 import pymupdf
 import pytest
 
@@ -46,8 +47,9 @@ class _FakeWorker:
         self._png = png_path
 
     def override(self, stem, patches, preview_dpi=None, inline_svg=False):
-        self.renders.append({"patches": patches, "preview_dpi": preview_dpi,
-                             "inline_svg": inline_svg})
+        self.renders.append(
+            {"patches": patches, "preview_dpi": preview_dpi, "inline_svg": inline_svg}
+        )
         resp = {"manifest": {"elements": []}, "warnings": []}
         if inline_svg:
             # worker 把刚写完的那份读回来；这里用 patches 做指纹，好断言配对
@@ -61,8 +63,10 @@ class _FakeWorker:
 
 def _stub_engine(monkeypatch, worker):
     monkeypatch.setattr(
-        m.engine_registry.Registry, "for_stem",
-        lambda self, s: {"script": "x.py", "entry": "main", "cost": "light"})
+        m.engine_registry.Registry,
+        "for_stem",
+        lambda self, s: {"script": "x.py", "entry": "main", "cost": "light"},
+    )
     monkeypatch.setattr(m.engine_pool, "get", lambda *a, **kw: worker)
 
 
@@ -74,21 +78,21 @@ def _open(client, tmp_path, name="variants"):
 
 # --------------------------- inline_svg（F1） -------------------------------
 
+
 def test_render_can_return_the_svg_inline(client, tmp_path, monkeypatch):
     """要了就给，而且是**这一次**那份；不要就一个字段都不多。"""
     _open(client, tmp_path)
     worker = _FakeWorker()
     _stub_engine(monkeypatch, worker)
 
-    plain = client.post("/api/engine/render",
-                        json={"id": "p1.pdf", "patches": []}).get_json()
-    assert "svg" not in plain                       # 响应形状对老调用方一字不变
+    plain = client.post("/api/engine/render", json={"id": "p1.pdf", "patches": []}).get_json()
+    assert "svg" not in plain  # 响应形状对老调用方一字不变
     assert worker.renders[-1]["inline_svg"] is False
 
     patches = [{"gid": "text_0", "prop": "text", "value": "A"}]
-    body = client.post("/api/engine/render",
-                       json={"id": "p1.pdf", "patches": patches,
-                             "inline_svg": True}).get_json()
+    body = client.post(
+        "/api/engine/render", json={"id": "p1.pdf", "patches": patches, "inline_svg": True}
+    ).get_json()
     assert worker.renders[-1]["inline_svg"] is True
     assert body["svg"] == "<svg data-variant='1'/>"
     assert body["manifest"] == {"elements": []} and body["rev"] == 7
@@ -104,18 +108,31 @@ def test_inline_svg_pairs_with_the_manifest_of_the_same_call(client, tmp_path, m
     _open(client, tmp_path, "pairing")
     _stub_engine(monkeypatch, _FakeWorker())
 
-    one = client.post("/api/engine/render",
-                      json={"id": "p1.pdf", "inline_svg": True,
-                            "patches": [{"gid": "a", "prop": "text", "value": "1"}]})
-    two = client.post("/api/engine/render",
-                      json={"id": "p1.pdf", "inline_svg": True,
-                            "patches": [{"gid": "a", "prop": "text", "value": "1"},
-                                        {"gid": "b", "prop": "text", "value": "2"}]})
+    one = client.post(
+        "/api/engine/render",
+        json={
+            "id": "p1.pdf",
+            "inline_svg": True,
+            "patches": [{"gid": "a", "prop": "text", "value": "1"}],
+        },
+    )
+    two = client.post(
+        "/api/engine/render",
+        json={
+            "id": "p1.pdf",
+            "inline_svg": True,
+            "patches": [
+                {"gid": "a", "prop": "text", "value": "1"},
+                {"gid": "b", "prop": "text", "value": "2"},
+            ],
+        },
+    )
     assert one.get_json()["svg"] == "<svg data-variant='1'/>"
     assert two.get_json()["svg"] == "<svg data-variant='2'/>"
 
 
 # ------------------------- preview_png（F3） --------------------------------
+
 
 def test_preview_png_is_rendered_from_the_given_patches(client, tmp_path, monkeypatch):
     """按 patches 出图（状态中立），并按 bucket 归档宽度。"""
@@ -126,13 +143,14 @@ def test_preview_png_is_rendered_from_the_given_patches(client, tmp_path, monkey
     _stub_engine(monkeypatch, worker)
 
     patches = [{"gid": "text_0", "prop": "text", "value": "A"}]
-    resp = client.post("/api/engine/preview_png",
-                       json={"id": "p1.pdf", "patches": patches, "w": 500})
+    resp = client.post(
+        "/api/engine/preview_png", json={"id": "p1.pdf", "patches": patches, "w": 500}
+    )
     assert resp.status_code == 200
     assert resp.mimetype == "image/png"
     assert resp.headers["Cache-Control"] == "no-store"
     assert worker.previews[-1]["patches"] == patches
-    assert worker.previews[-1]["width"] == 800      # 500 → 下一档
+    assert worker.previews[-1]["width"] == 800  # 500 → 下一档
 
 
 def test_preview_png_tags_are_per_variant_and_filename_safe(client, tmp_path, monkeypatch):
@@ -150,8 +168,7 @@ def test_preview_png_tags_are_per_variant_and_filename_safe(client, tmp_path, mo
     a = [{"gid": "g", "prop": "text", "value": "A"}]
     b = [{"gid": "g", "prop": "text", "value": "B"}]
     for patches in (a, b, a):
-        client.post("/api/engine/preview_png",
-                    json={"id": "p1.pdf", "patches": patches, "w": 400})
+        client.post("/api/engine/preview_png", json={"id": "p1.pdf", "patches": patches, "w": 400})
 
     tags = [p["tag"] for p in worker.previews]
     assert tags[0] == tags[2] and tags[0] != tags[1]
@@ -164,8 +181,7 @@ def test_preview_png_rejects_a_bogus_patch_list(client, tmp_path, monkeypatch):
     """patches 写错是调用方的错（400），不能变成一次 500。"""
     _open(client, tmp_path, "bogus")
     _stub_engine(monkeypatch, _FakeWorker())
-    resp = client.post("/api/engine/preview_png",
-                       json={"id": "p1.pdf", "patches": {"gid": "g"}})
+    resp = client.post("/api/engine/preview_png", json={"id": "p1.pdf", "patches": {"gid": "g"}})
     assert resp.status_code == 400
 
 

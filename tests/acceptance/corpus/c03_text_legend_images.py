@@ -10,6 +10,7 @@
 中文那个 case 在 manifest 里标了 `visual: false`——理由写在 manifest 的
 `visual_skip_reason` 字段里，不在这里重复。
 """
+
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -19,8 +20,9 @@ def legend_variants():
     x = np.linspace(0, 8, 100)
     fig, ax = plt.subplots(figsize=(3.8, 2.5))
     for k, color in enumerate(["#1f4e79", "#c1440e", "#2a6f4e", "#4a2c6b"]):
-        ax.plot(x, np.sin(x + k * 0.5) * (1 - k * 0.15), lw=1.1,
-                color=color, label=f"series {k + 1}")
+        ax.plot(
+            x, np.sin(x + k * 0.5) * (1 - k * 0.15), lw=1.1, color=color, label=f"series {k + 1}"
+        )
     ax.set_title("Legend, 2 columns")
     ax.set_xlabel("x")
     ax.set_ylabel("y")
@@ -35,14 +37,28 @@ def annotations():
     y = np.exp(-((x - 4) ** 2) / 2.0)
     fig, ax = plt.subplots(figsize=(3.6, 2.5))
     ax.plot(x, y, lw=1.4, color="#1f4e79")
-    ax.annotate("peak", xy=(4.0, 1.0), xytext=(6.5, 0.8),
-                arrowprops=dict(arrowstyle="->", lw=1.0, color="#333333"),
-                fontsize=9)
-    ax.annotate("baseline", xy=(9.0, 0.02), xytext=(6.2, 0.25),
-                arrowprops=dict(arrowstyle="-|>", lw=1.0, color="#a8331c"),
-                fontsize=8, color="#a8331c")
-    ax.text(0.4, 0.85, "FWHM $=2\\sqrt{2\\ln 2}\\,\\sigma$", fontsize=8,
-            bbox=dict(boxstyle="round,pad=0.3", fc="#f3f1ea", ec="#cfc9b8", lw=0.6))
+    ax.annotate(
+        "peak",
+        xy=(4.0, 1.0),
+        xytext=(6.5, 0.8),
+        arrowprops=dict(arrowstyle="->", lw=1.0, color="#333333"),
+        fontsize=9,
+    )
+    ax.annotate(
+        "baseline",
+        xy=(9.0, 0.02),
+        xytext=(6.2, 0.25),
+        arrowprops=dict(arrowstyle="-|>", lw=1.0, color="#a8331c"),
+        fontsize=8,
+        color="#a8331c",
+    )
+    ax.text(
+        0.4,
+        0.85,
+        "FWHM $=2\\sqrt{2\\ln 2}\\,\\sigma$",
+        fontsize=8,
+        bbox=dict(boxstyle="round,pad=0.3", fc="#f3f1ea", ec="#cfc9b8", lw=0.6),
+    )
     ax.set_title("Annotations")
     ax.set_xlabel("position")
     fig.tight_layout()
@@ -72,8 +88,7 @@ def image_panel():
     y, x = np.mgrid[0:64, 0:64]
     z = np.sin(x / 6.0) * np.cos(y / 9.0) + (x - 32) / 96.0
     fig, ax = plt.subplots(figsize=(3.4, 2.8))
-    im = ax.imshow(z, cmap="magma", origin="lower", aspect="auto",
-                   vmin=-1.0, vmax=1.2)
+    im = ax.imshow(z, cmap="magma", origin="lower", aspect="auto", vmin=-1.0, vmax=1.2)
     cb = fig.colorbar(im, ax=ax, extend="both")
     cb.set_label("signal (a.u.)")
     ax.set_title("imshow + extended colorbar")
@@ -97,8 +112,13 @@ def cjk_labels():
     # 回退链留着 DejaVu：字体没装时至少别让整个脚本崩掉，
     # 而 manifest 里这个 case 本来就不做像素比对。
     plt.rcParams["font.sans-serif"] = [
-        "Noto Sans CJK SC", "Noto Sans CJK JP", "Noto Sans SC",
-        "WenQuanYi Zen Hei", "PingFang SC", "Microsoft YaHei", "DejaVu Sans",
+        "Noto Sans CJK SC",
+        "Noto Sans CJK JP",
+        "Noto Sans SC",
+        "WenQuanYi Zen Hei",
+        "PingFang SC",
+        "Microsoft YaHei",
+        "DejaVu Sans",
     ]
     plt.rcParams["axes.unicode_minus"] = False
 

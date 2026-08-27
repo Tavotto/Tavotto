@@ -8,6 +8,7 @@
 信封与响应形状严格照 `docs/adr/0003-worker-protocol-v1.md`；下面那些 --flag
 是**故意的失灵开关**，每一个都对应一条 supervisor 必须接住的失败路径。
 """
+
 import argparse
 import json
 import os
@@ -35,35 +36,40 @@ def error(req, code, message, retryable=False):
         "request_id": req.get("request_id"),
         "worker_generation": req.get("worker_generation"),
         "render_revision": req.get("render_revision"),
-        "error": {"code": code, "retryable": retryable,
-                  "message": message, "traceback": ""},
+        "error": {"code": code, "retryable": retryable, "message": message, "traceback": ""},
     }
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--stems", default="Fig1,Fig2")
-    ap.add_argument("--sleep-ms", type=float, default=0.0,
-                    help="每条 render/export 处理前睡多久")
-    ap.add_argument("--first-sleep-ms", type=float, default=0.0,
-                    help="只有第一条 render/export 睡（用来把后续请求逼进队列）")
-    ap.add_argument("--hang", action="store_true",
-                    help="render 永不返回（模拟死循环脚本）")
-    ap.add_argument("--hang-handshake", action="store_true",
-                    help="连 ping 都不回（模拟起来了但不说话的解释器）")
+    ap.add_argument("--sleep-ms", type=float, default=0.0, help="每条 render/export 处理前睡多久")
+    ap.add_argument(
+        "--first-sleep-ms",
+        type=float,
+        default=0.0,
+        help="只有第一条 render/export 睡（用来把后续请求逼进队列）",
+    )
+    ap.add_argument("--hang", action="store_true", help="render 永不返回（模拟死循环脚本）")
+    ap.add_argument(
+        "--hang-handshake", action="store_true", help="连 ping 都不回（模拟起来了但不说话的解释器）"
+    )
     ap.add_argument("--wrong-request-id", action="store_true")
     ap.add_argument("--bad-protocol-version", action="store_true")
-    ap.add_argument("--garbage", action="store_true",
-                    help="往 stdout 写一行非 JSON")
-    ap.add_argument("--die-on-render", action="store_true",
-                    help="收到 render 就直接退出（模拟 worker 崩溃）")
-    ap.add_argument("--linger-after-close-ms", type=float, default=0.0,
-                    help="配合 --die-on-render：关掉 stdout（管道 EOF）之后**先赖着**"
-                         "不退这么久。真实崩溃里这个窗口是几微秒、只是偶尔被撞上；"
-                         "把它拉长，'try_wait() 还回 Ok(None)' 就从抖动变成必然，"
-                         "让「EOF 之后必须重建」这条有确定性的用例可证。")
-    ap.add_argument("--trace", default="",
-                    help="把收到的每条请求追加到这个文件（一行一条 JSON）")
+    ap.add_argument("--garbage", action="store_true", help="往 stdout 写一行非 JSON")
+    ap.add_argument(
+        "--die-on-render", action="store_true", help="收到 render 就直接退出（模拟 worker 崩溃）"
+    )
+    ap.add_argument(
+        "--linger-after-close-ms",
+        type=float,
+        default=0.0,
+        help="配合 --die-on-render：关掉 stdout（管道 EOF）之后**先赖着**"
+        "不退这么久。真实崩溃里这个窗口是几微秒、只是偶尔被撞上；"
+        "把它拉长，'try_wait() 还回 Ok(None)' 就从抖动变成必然，"
+        "让「EOF 之后必须重建」这条有确定性的用例可证。",
+    )
+    ap.add_argument("--trace", default="", help="把收到的每条请求追加到这个文件（一行一条 JSON）")
     args = ap.parse_args()
 
     sys.stdin.reconfigure(encoding="utf-8", errors="replace")
@@ -79,15 +85,21 @@ def main():
         cmd = req.get("cmd")
         if args.trace:
             with open(args.trace, "a", encoding="utf-8") as fh:
-                fh.write(json.dumps({
-                    "cmd": cmd,
-                    "stem": req.get("stem"),
-                    "request_id": req.get("request_id"),
-                    "worker_generation": req.get("worker_generation"),
-                    "render_revision": req.get("render_revision"),
-                    "canonical_patch_hash": req.get("canonical_patch_hash"),
-                    "payload": req.get("payload"),
-                }, ensure_ascii=False) + "\n")
+                fh.write(
+                    json.dumps(
+                        {
+                            "cmd": cmd,
+                            "stem": req.get("stem"),
+                            "request_id": req.get("request_id"),
+                            "worker_generation": req.get("worker_generation"),
+                            "render_revision": req.get("render_revision"),
+                            "canonical_patch_hash": req.get("canonical_patch_hash"),
+                            "payload": req.get("payload"),
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "\n"
+                )
 
         if cmd == "shutdown":
             return
@@ -116,10 +128,12 @@ def main():
             if stem not in stems:
                 resp = error(req, "unknown_stem", f"stem 不存在: {stem}")
             elif cmd == "render":
-                resp = reply(req, {"manifest": {"stem": stem, "elements": []},
-                                   "warnings": []},
-                             wrong_request_id=args.wrong_request_id,
-                             bad_version=args.bad_protocol_version)
+                resp = reply(
+                    req,
+                    {"manifest": {"stem": stem, "elements": []}, "warnings": []},
+                    wrong_request_id=args.wrong_request_id,
+                    bad_version=args.bad_protocol_version,
+                )
             elif cmd == "export":
                 resp = reply(req, {"path": req["payload"]["path"], "warnings": []})
             else:

@@ -15,6 +15,7 @@
 （色值走 CSS token）；README hero（assets/readme/hero.svg）内嵌一份 full 版。
 这两处的坐标以本文件为准，改几何时须同步。
 """
+
 from __future__ import annotations
 
 import re
@@ -118,7 +119,7 @@ def icon_svg() -> str:
         '  <g clip-path="url(#squircle)">\n'
         '    <rect width="1024" height="1024" fill="#f2f2ef"/>\n'
         '    <g transform="translate(96 96) scale(0.8125)">\n'
-        f'{rects("full", PALETTES["paper"], indent="      ")}\n'
+        f"{rects('full', PALETTES['paper'], indent='      ')}\n"
         "    </g>\n"
         "  </g>\n"
         "</svg>\n"

@@ -19,6 +19,7 @@
 真执行脚本的用例与 test_script_probe.py 同一条纪律：本进程不 import
 matplotlib，桌面侧经 pool 起真 worker。
 """
+
 import json
 import shutil
 from pathlib import Path
@@ -41,15 +42,16 @@ except engine_pool.WorkerError:
     WORKER_PY = None
 
 needs_worker = pytest.mark.skipif(
-    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）")
+    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）"
+)
 
-SHOW_ONLY = '''\
+SHOW_ONLY = """\
 import matplotlib.pyplot as plt
 
 plt.plot([1, 2, 3], [4, 5, 6])
 plt.title("AI generated")
 plt.show()
-'''
+"""
 
 
 def write(figs: Path, name: str, source: str) -> Path:
@@ -82,11 +84,14 @@ def _reg_entry(stems, entry="__main__"):
 def _descriptor(script="show_only.py", stem="show_only", entry="__main__"):
     """构造一份合法描述符 payload（工厂派生，pyplot 来源、无原件）。"""
     return figcapture.build_descriptor(
-        script=script, entry=entry, stem=stem,
+        script=script,
+        entry=entry,
+        stem=stem,
         capture_source=figcapture.SOURCE_PYPLOT,
         execution_profile=figcapture.PROFILE_SAFE,
         size_mm=(120.0, 90.0),
-        source_fingerprint="sha256:deadbeef").to_payload()
+        source_fingerprint="sha256:deadbeef",
+    ).to_payload()
 
 
 @pytest.fixture
@@ -121,8 +126,12 @@ class TestIdentityAndResolve:
     def test_resolve_regenerates_ids_from_the_registry(self):
         reg = _registry_of({"panels/plot.py": _reg_entry(["plot", "plot-2"])})
         got = runtimeasset.resolve("runtime:panels/plot.py#plot-2", reg)
-        assert got == {"script": "panels/plot.py", "stem": "plot-2",
-                       "entry": "__main__", "cost": "medium"}
+        assert got == {
+            "script": "panels/plot.py",
+            "stem": "plot-2",
+            "entry": "__main__",
+            "cost": "medium",
+        }
         assert runtimeasset.resolve("runtime:panels/plot.py#nope", reg) is None
         assert runtimeasset.resolve("panels/Fig1.pdf", reg) is None
 
@@ -137,8 +146,7 @@ class TestIdentityAndResolve:
     def test_asset_id_is_project_relative_and_machine_stable(self, tmp_path):
         """同一 (脚本, stem) 在两个不同项目根下 id 完全相同——id 里绝不混入
         绝对路径/机器信息（负向反证 #1 的静态面）。"""
-        assert (figcapture.runtime_asset_id("panels/p.py", "s")
-                == "runtime:panels/p.py#s")
+        assert figcapture.runtime_asset_id("panels/p.py", "s") == "runtime:panels/p.py#s"
         with pytest.raises(ValueError):
             figcapture.runtime_asset_id(str(tmp_path / "abs.py"), "s")
 
@@ -156,10 +164,10 @@ class TestCache:
         assert target is not None
         meta = runtimeasset.load_metadata(figs, desc["asset_id"])
         assert meta is not None
-        assert meta["generated_by"] == "Tavotto"      # cache 不冒充用户原件
+        assert meta["generated_by"] == "Tavotto"  # cache 不冒充用户原件
         assert meta["asset_id"] == desc["asset_id"]
         assert meta["descriptor"] == desc
-        assert meta["script_sha256"]                   # stale 判定的比对基准
+        assert meta["script_sha256"]  # stale 判定的比对基准
         p = runtimeasset.preview_path(figs, desc["asset_id"])
         assert p is not None and p.read_text(encoding="utf-8") == "<svg>fake preview</svg>"
 
@@ -181,8 +189,7 @@ class TestCache:
         monkeypatch.setattr(runtimeasset.os, "replace", failing_replace)
         assert runtimeasset.materialize(figs, desc, svg) is None
         monkeypatch.undo()
-        assert not (runtimeasset.cache_dir(figs, desc["asset_id"])
-                    / "metadata.json").exists()
+        assert not (runtimeasset.cache_dir(figs, desc["asset_id"]) / "metadata.json").exists()
         assert runtimeasset.load_metadata(figs, desc["asset_id"]) is None
 
     def test_broken_metadata_is_treated_as_absent(self, figs, tmp_path):
@@ -196,8 +203,12 @@ class TestCache:
         (target / "metadata.json").write_text("{ not json", encoding="utf-8")
         assert runtimeasset.load_metadata(figs, desc["asset_id"]) is None
 
-        meta = {"schema": runtimeasset.CACHE_SCHEMA, "generated_by": "Tavotto",
-                "asset_id": "runtime:other.py#x", "preview": "preview.svg"}
+        meta = {
+            "schema": runtimeasset.CACHE_SCHEMA,
+            "generated_by": "Tavotto",
+            "asset_id": "runtime:other.py#x",
+            "preview": "preview.svg",
+        }
         (target / "metadata.json").write_text(json.dumps(meta), encoding="utf-8")
         assert runtimeasset.load_metadata(figs, desc["asset_id"]) is None
 
@@ -217,7 +228,7 @@ class TestCache:
         runtimeasset.drop_cache(figs, desc["asset_id"])
         assert runtimeasset.load_metadata(figs, desc["asset_id"]) is None
 
-        runtimeasset.materialize(figs, desc, svg)      # 可重建
+        runtimeasset.materialize(figs, desc, svg)  # 可重建
         assert runtimeasset.load_metadata(figs, desc["asset_id"]) is not None
         removed = runtimeasset.prune_cache(max_bytes=0, keep=0)
         assert removed >= 1
@@ -239,31 +250,26 @@ class TestStaleStatus:
 
     def test_fresh_when_nothing_changed(self, figs, tmp_path):
         asset_id, reg = self._materialized(figs, tmp_path)
-        st = runtimeasset.stale_status(figs, asset_id, reg,
-                                       worker_python="python3")
+        st = runtimeasset.stale_status(figs, asset_id, reg, worker_python="python3")
         assert st["status"] == runtimeasset.STALE_FRESH
         assert st["registered"] is True and st["cached"] is True
 
     def test_possibly_stale_after_script_edit(self, figs, tmp_path):
         asset_id, reg = self._materialized(figs, tmp_path)
         write(figs, "show_only.py", SHOW_ONLY + "\n# edited\n")
-        st = runtimeasset.stale_status(figs, asset_id, reg,
-                                       worker_python="python3")
+        st = runtimeasset.stale_status(figs, asset_id, reg, worker_python="python3")
         assert st["status"] == runtimeasset.STALE_POSSIBLY
 
     def test_possibly_stale_after_entry_change(self, figs, tmp_path):
         asset_id, _ = self._materialized(figs, tmp_path)
-        reg = _registry_of({"show_only.py": _reg_entry(["show_only"],
-                                                       entry="main")})
-        st = runtimeasset.stale_status(figs, asset_id, reg,
-                                       worker_python="python3")
+        reg = _registry_of({"show_only.py": _reg_entry(["show_only"], entry="main")})
+        st = runtimeasset.stale_status(figs, asset_id, reg, worker_python="python3")
         assert st["status"] == runtimeasset.STALE_POSSIBLY
 
     def test_missing_source_when_the_script_is_gone(self, figs, tmp_path):
         asset_id, reg = self._materialized(figs, tmp_path)
         (figs / "show_only.py").unlink()
-        st = runtimeasset.stale_status(figs, asset_id, reg,
-                                       worker_python="python3")
+        st = runtimeasset.stale_status(figs, asset_id, reg, worker_python="python3")
         assert st["status"] == runtimeasset.STALE_MISSING_SOURCE
 
     def test_missing_environment(self, figs, tmp_path):
@@ -272,8 +278,7 @@ class TestStaleStatus:
         def no_python():
             raise RuntimeError("no interpreter anywhere")
 
-        st = runtimeasset.stale_status(figs, asset_id, reg,
-                                       worker_python=no_python)
+        st = runtimeasset.stale_status(figs, asset_id, reg, worker_python=no_python)
         assert st["status"] == runtimeasset.STALE_MISSING_ENVIRONMENT
         st = runtimeasset.stale_status(figs, asset_id, reg, worker_python=None)
         assert st["status"] == runtimeasset.STALE_MISSING_ENVIRONMENT
@@ -281,8 +286,9 @@ class TestStaleStatus:
     def test_needs_rerun_without_cache(self, figs):
         write(figs, "show_only.py", SHOW_ONLY)
         reg = _registry_of({"show_only.py": _reg_entry(["show_only"])})
-        st = runtimeasset.stale_status(figs, "runtime:show_only.py#show_only",
-                                       reg, worker_python="python3")
+        st = runtimeasset.stale_status(
+            figs, "runtime:show_only.py#show_only", reg, worker_python="python3"
+        )
         assert st["status"] == runtimeasset.STALE_NEEDS_RERUN
         assert st["cached"] is False
 
@@ -292,9 +298,12 @@ class TestStaleStatus:
         write(figs, "show_only.py", SHOW_ONLY)
         reg = _registry_of({})
         st = runtimeasset.stale_status(
-            figs, "runtime:show_only.py#show_only", reg,
+            figs,
+            "runtime:show_only.py#show_only",
+            reg,
             source={"script": "show_only.py", "stem": "show_only"},
-            worker_python="python3")
+            worker_python="python3",
+        )
         assert st["status"] == runtimeasset.STALE_NEEDS_RERUN
         assert st["registered"] is False
 
@@ -303,9 +312,12 @@ class TestStaleStatus:
         write(figs, "other.py", SHOW_ONLY)
         reg = _registry_of({})
         st = runtimeasset.stale_status(
-            figs, "runtime:show_only.py#show_only", reg,
+            figs,
+            "runtime:show_only.py#show_only",
+            reg,
             source={"script": "other.py", "stem": "other"},
-            worker_python="python3")
+            worker_python="python3",
+        )
         assert st["status"] is None
 
 
@@ -314,10 +326,10 @@ class TestStaleStatus:
 # ===========================================================================
 class TestWritebackContract:
     def test_v1_rejects_both_writeback_kinds(self):
-        assert (runtimeasset.writeback_rejection("artifact")
-                == "runtime_asset_has_no_original_artifact")
-        assert (runtimeasset.writeback_rejection("source")
-                == "runtime_source_writeback_unsupported")
+        assert (
+            runtimeasset.writeback_rejection("artifact") == "runtime_asset_has_no_original_artifact"
+        )
+        assert runtimeasset.writeback_rejection("source") == "runtime_source_writeback_unsupported"
 
     def test_app_layer_literals_match_the_engine_authority(self):
         """app.py 的字面量 code 是 runtimeasset.ERROR_* 的镜像（字面量是
@@ -331,19 +343,21 @@ class TestWritebackContract:
         """码表 ←→ 双语文案对拍（probe 码表纪律的延伸）。
         runtime_source_writeback_unsupported 尚无 producer 端点，也必须先有
         文案——「新码先加表、加文案、加对拍，再有 producer」。"""
-        locales = (Path(__file__).resolve().parent.parent
-                   / "web" / "src" / "i18n" / "locales")
+        locales = Path(__file__).resolve().parent.parent / "web" / "src" / "i18n" / "locales"
         if not (locales / "zh-CN" / "errors.json").is_file():
             pytest.skip("没有 web/（wheel/sdist 里不含前端源码）")
-        codes = (runtimeasset.ERROR_UNKNOWN, runtimeasset.ERROR_NO_ARTIFACT,
-                 runtimeasset.ERROR_SOURCE_WRITEBACK,
-                 runtimeasset.ERROR_CACHE_MISSING)
+        codes = (
+            runtimeasset.ERROR_UNKNOWN,
+            runtimeasset.ERROR_NO_ARTIFACT,
+            runtimeasset.ERROR_SOURCE_WRITEBACK,
+            runtimeasset.ERROR_CACHE_MISSING,
+        )
         for locale in ("zh-CN", "en-US"):
-            table = json.loads((locales / locale / "errors.json")
-                               .read_text(encoding="utf-8"))["backend"]
+            table = json.loads((locales / locale / "errors.json").read_text(encoding="utf-8"))[
+                "backend"
+            ]
             for code in codes:
-                assert code in table and str(table[code]).strip(), \
-                    f"{locale} 缺 {code} 的文案"
+                assert code in table and str(table[code]).strip(), f"{locale} 缺 {code} 的文案"
 
     def test_descriptor_capabilities_are_derived_not_declared(self):
         """负向反证 #3 的看护对象：把 can_writeback_artifact 硬设 true，
@@ -352,8 +366,7 @@ class TestWritebackContract:
         assert desc["can_writeback_artifact"] is False
         assert desc["can_writeback_source"] is False
         with pytest.raises(ValueError):
-            figcapture.descriptor_from_payload(
-                {**desc, "can_writeback_artifact": True})
+            figcapture.descriptor_from_payload({**desc, "can_writeback_artifact": True})
 
 
 # ===========================================================================
@@ -374,14 +387,17 @@ class TestRuntimeProductApi:
         manifest 到手。一次执行贯穿全链（execution-count 纪律）。"""
         figs = _make_project(tmp_path)
         counter = tmp_path / "count.txt"
-        write(figs, "counted.py",
-              'from pathlib import Path\n'
-              'import matplotlib.pyplot as plt\n'
-              'def main():\n'
-              f'    p = Path({str(counter)!r})\n'
-              '    n = int(p.read_text()) if p.exists() else 0\n'
-              '    p.write_text(str(n + 1))\n'
-              '    plt.plot([1, 2, 3])\n')
+        write(
+            figs,
+            "counted.py",
+            "from pathlib import Path\n"
+            "import matplotlib.pyplot as plt\n"
+            "def main():\n"
+            f"    p = Path({str(counter)!r})\n"
+            "    n = int(p.read_text()) if p.exists() else 0\n"
+            "    p.write_text(str(n + 1))\n"
+            "    plt.plot([1, 2, 3])\n",
+        )
         try:
             result = self._probe(client, figs, "counted.py")
             (d,) = result["descriptors"]
@@ -395,15 +411,14 @@ class TestRuntimeProductApi:
             assert resp.status_code == 200
             assert b"<svg" in resp.data.lower()
 
-            st = client.post("/api/runtime/status",
-                             json={"id": asset_id}).get_json()
+            st = client.post("/api/runtime/status", json={"id": asset_id}).get_json()
             assert st["status"] == runtimeasset.STALE_FRESH
             assert st["cached"] is True and st["registered"] is True
 
             # 渲染复用热会话：manifest 到手，执行计数仍是 1
-            r = client.post("/api/engine/render",
-                            json={"id": asset_id, "patches": [],
-                                  "inline_svg": True})
+            r = client.post(
+                "/api/engine/render", json={"id": asset_id, "patches": [], "inline_svg": True}
+            )
             assert r.status_code == 200
             body = r.get_json()
             assert body["manifest"]["elements"]
@@ -414,23 +429,24 @@ class TestRuntimeProductApi:
 
     def test_multi_figure_assets_are_distinct(self, client, tmp_path):
         figs = _make_project(tmp_path)
-        write(figs, "multi.py",
-              'import matplotlib.pyplot as plt\n'
-              'for i in range(2):\n'
-              '    plt.figure(figsize=(3, 2))\n'
-              '    plt.plot([1, 2, i])\n'
-              'plt.show()\n')
+        write(
+            figs,
+            "multi.py",
+            "import matplotlib.pyplot as plt\n"
+            "for i in range(2):\n"
+            "    plt.figure(figsize=(3, 2))\n"
+            "    plt.plot([1, 2, i])\n"
+            "plt.show()\n",
+        )
         try:
             result = self._probe(client, figs, "multi.py")
             ids = [d["asset_id"] for d in result["descriptors"]]
             assert ids == ["runtime:multi.py#multi", "runtime:multi.py#multi-2"]
             assert len(set(ids)) == 2
             for asset_id in ids:
-                st = client.post("/api/runtime/status",
-                                 json={"id": asset_id}).get_json()
+                st = client.post("/api/runtime/status", json={"id": asset_id}).get_json()
                 assert st["status"] == runtimeasset.STALE_FRESH
-                r = client.post("/api/engine/render",
-                                json={"id": asset_id, "patches": []})
+                r = client.post("/api/engine/render", json={"id": asset_id, "patches": []})
                 assert r.status_code == 200
         finally:
             engine_pool.shutdown_all(str(figs), wait=True)
@@ -463,15 +479,19 @@ class TestRuntimeProductApi:
             result = self._probe(client, figs)
             (d,) = result["descriptors"]
             asset_id = d["asset_id"]
-            engine_pool.shutdown_all(str(figs), wait=True)   # 模拟重开 app
+            engine_pool.shutdown_all(str(figs), wait=True)  # 模拟重开 app
             runtimeasset.drop_cache(figs, asset_id)
-            assert client.get("/api/runtime/preview", query_string={"id": asset_id}).status_code == 404
+            assert (
+                client.get("/api/runtime/preview", query_string={"id": asset_id}).status_code == 404
+            )
 
-            r = client.post("/api/engine/render",
-                            json={"id": asset_id, "patches": [],
-                                  "inline_svg": True})
+            r = client.post(
+                "/api/engine/render", json={"id": asset_id, "patches": [], "inline_svg": True}
+            )
             assert r.status_code == 200
-            assert client.get("/api/runtime/preview", query_string={"id": asset_id}).status_code == 200
+            assert (
+                client.get("/api/runtime/preview", query_string={"id": asset_id}).status_code == 200
+            )
         finally:
             engine_pool.shutdown_all(str(figs), wait=True)
 
@@ -483,22 +503,23 @@ class TestRuntimeProductApi:
         try:
             self._probe(client, figs)
             asset_id = "runtime:show_only.py#show_only"
-            r = client.post("/api/engine/render",
-                            json={"id": asset_id, "patches": []}).get_json()
+            r = client.post("/api/engine/render", json={"id": asset_id, "patches": []}).get_json()
             title_gid = next(
-                el["gid"] for el in r["manifest"]["elements"]
-                if any(f.get("prop") == "text" and f.get("type") == "text"
-                       for f in el.get("editable", [])))
+                el["gid"]
+                for el in r["manifest"]["elements"]
+                if any(
+                    f.get("prop") == "text" and f.get("type") == "text"
+                    for f in el.get("editable", [])
+                )
+            )
 
-            engine_pool.shutdown_all(str(figs), wait=True)    # 模拟重开
+            engine_pool.shutdown_all(str(figs), wait=True)  # 模拟重开
             patches = [{"gid": title_gid, "prop": "text", "value": "Replayed"}]
-            r2 = client.post("/api/engine/render",
-                             json={"id": asset_id, "patches": patches})
+            r2 = client.post("/api/engine/render", json={"id": asset_id, "patches": patches})
             assert r2.status_code == 200
             body = r2.get_json()
             assert body["warnings"] == []
-            assert any(el["gid"] == title_gid
-                       for el in body["manifest"]["elements"])
+            assert any(el["gid"] == title_gid for el in body["manifest"]["elements"])
         finally:
             engine_pool.shutdown_all(str(figs), wait=True)
 
@@ -518,17 +539,17 @@ class TestRuntimeProductApi:
         shutil.move(str(figs), str(moved))
         try:
             client.post("/api/projects/open", json={"path": str(moved)})
-            st = client.post("/api/runtime/status",
-                             json={"id": asset_id}).get_json()
+            st = client.post("/api/runtime/status", json={"id": asset_id}).get_json()
             # 新位置没有 cache（cache 键含项目路径），但身份与登记原样成立
             assert st["registered"] is True
             assert st["script"] == "show_only.py"
             assert st["status"] == runtimeasset.STALE_NEEDS_RERUN
-            r = client.post("/api/engine/render",
-                            json={"id": asset_id, "patches": []})
+            r = client.post("/api/engine/render", json={"id": asset_id, "patches": []})
             assert r.status_code == 200
             # 渲染顺手把新位置的 cache 物化出来
-            assert client.get("/api/runtime/preview", query_string={"id": asset_id}).status_code == 200
+            assert (
+                client.get("/api/runtime/preview", query_string={"id": asset_id}).status_code == 200
+            )
         finally:
             engine_pool.shutdown_all(str(moved), wait=True)
 
@@ -542,14 +563,25 @@ class TestRuntimeProductApi:
             asset_id = "runtime:show_only.py#show_only"
             # 哨兵：cache 里躺着一份根本不是图的垃圾
             target = runtimeasset.cache_dir(figs, asset_id)
-            (target / "preview.svg").write_text("SENTINEL-NOT-A-FIGURE",
-                                                encoding="utf-8")
-            spec = {"page_w_mm": 150, "page_h_mm": 100, "dpi": 150,
-                    "formats": ["pdf"], "stem": "runtime_export",
-                    "objects": [{"type": "panel", "id": asset_id,
-                                 "x_mm": 10, "y_mm": 10,
-                                 "w_mm": 100, "h_mm": 75,
-                                 "overrides": []}]}
+            (target / "preview.svg").write_text("SENTINEL-NOT-A-FIGURE", encoding="utf-8")
+            spec = {
+                "page_w_mm": 150,
+                "page_h_mm": 100,
+                "dpi": 150,
+                "formats": ["pdf"],
+                "stem": "runtime_export",
+                "objects": [
+                    {
+                        "type": "panel",
+                        "id": asset_id,
+                        "x_mm": 10,
+                        "y_mm": 10,
+                        "w_mm": 100,
+                        "h_mm": 75,
+                        "overrides": [],
+                    }
+                ],
+            }
             r = client.post("/api/export", json=spec)
             assert r.status_code == 200
             (f,) = r.get_json()["files"]
@@ -573,12 +605,10 @@ class TestRuntimeProductApi:
         try:
             self._probe(client, figs)
             asset_id = "runtime:show_only.py#show_only"
-            r = client.post("/api/engine/update_source",
-                            json={"id": asset_id, "patches": []})
+            r = client.post("/api/engine/update_source", json={"id": asset_id, "patches": []})
             assert r.status_code == 400
             assert r.get_json()["code"] == "runtime_asset_has_no_original_artifact"
-            r = client.post("/api/engine/history/restore",
-                            json={"id": asset_id, "n": -1})
+            r = client.post("/api/engine/history/restore", json={"id": asset_id, "n": -1})
             assert r.status_code == 400
             assert r.get_json()["code"] == "runtime_asset_has_no_original_artifact"
         finally:
@@ -590,15 +620,12 @@ class TestRuntimeProductApi:
         绝不落到「当成相对路径读出别的文件」。"""
         figs = _make_project(tmp_path)
         client.post("/api/projects/open", json={"path": str(figs)})
-        r = client.post("/api/engine/render",
-                        json={"id": "runtime:ghost.py#ghost", "patches": []})
+        r = client.post("/api/engine/render", json={"id": "runtime:ghost.py#ghost", "patches": []})
         assert r.status_code == 404
         assert r.get_json()["code"] == "runtime_asset_unknown"
-        r = client.post("/api/engine/render",
-                        json={"id": "future:whatever", "patches": []})
+        r = client.post("/api/engine/render", json={"id": "future:whatever", "patches": []})
         assert r.status_code == 404
-        st = client.post("/api/runtime/status",
-                         json={"id": "p1.pdf"})
+        st = client.post("/api/runtime/status", json={"id": "p1.pdf"})
         assert st.status_code == 400
         assert st.get_json()["code"] == "runtime_asset_unknown"
 
@@ -610,16 +637,27 @@ class TestRuntimeProductApi:
         try:
             self._probe(client, figs)
             asset_id = "runtime:show_only.py#show_only"
-            doc = {"schema": 2, "name": "t", "page": {"w": 150, "h": 100},
-                   "objects": [{"type": "panel", "id": "obj1",
-                                "fileId": asset_id, "fileKind": "runtime",
-                                "overrides": []}],
-                   "guides": []}
+            doc = {
+                "schema": 2,
+                "name": "t",
+                "page": {"w": 150, "h": 100},
+                "objects": [
+                    {
+                        "type": "panel",
+                        "id": "obj1",
+                        "fileId": asset_id,
+                        "fileKind": "runtime",
+                        "overrides": [],
+                    }
+                ],
+                "guides": [],
+            }
             r = client.post("/api/package", json={"doc": doc, "stem": "pkg"})
             assert r.status_code == 200
             body = r.get_json()
             assert body["missing"] == []
             import zipfile
+
             export_dir = None
             for base in (figs / "tavottofile" / "export",):
                 if base.is_dir():

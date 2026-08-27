@@ -12,6 +12,7 @@
 上游超时很短。真正的速率限制交给部署层（见 README）——那是它擅长的事，
 在这里自己实现一个内存计数器在 serverless 上根本不成立（每个实例各数各的）。
 """
+
 from __future__ import annotations
 
 import hmac
@@ -28,8 +29,7 @@ MAX_EVENT_BODY = 8 * 1024
 MAX_METRICS_BODY = 256 * 1024
 MAX_METRICS_BATCH = 500
 
-_UUID4 = re.compile(
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
+_UUID4 = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
 _VERSION = re.compile(r"^[0-9A-Za-z.+_-]{1,32}$")
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _KEY = re.compile(r"^[A-Za-z0-9:._-]{1,120}$")
@@ -114,9 +114,13 @@ def handle_event(body: dict) -> dict:
         raise Rejected("bad_distinct_id", "distinct_id must be a random UUIDv4") from None
     allowed = {**AUTO_PROPS, **EVENTS[event]}
     props = _check_properties(allowed, body.get("properties") or {})
-    posthog.send([posthog.build_event(
-        event, distinct_id, props,
-        anonymous=posthog.person_profiles_mode() == "anonymous")])
+    posthog.send(
+        [
+            posthog.build_event(
+                event, distinct_id, props, anonymous=posthog.person_profiles_mode() == "anonymous"
+            )
+        ]
+    )
     return {"ok": True}
 
 
@@ -125,14 +129,15 @@ def handle_event(body: dict) -> dict:
 # ---------------------------------------------------------------------------
 def _authorized(header: str | None) -> bool:
     import os
+
     expected = os.environ.get("TAVOTTO_METRICS_TOKEN") or ""
     if not expected:
-        return False                    # 没配 token = 这个端点关着，不是敞开
+        return False  # 没配 token = 这个端点关着，不是敞开
     prefix = "Bearer "
     if not header or not header.startswith(prefix):
         return False
     # 常量时间比较：长度不同也不能提前 return（compare_digest 自己处理）
-    return hmac.compare_digest(header[len(prefix):], expected)
+    return hmac.compare_digest(header[len(prefix) :], expected)
 
 
 def handle_metrics(body: dict, authorization: str | None) -> dict:
@@ -156,11 +161,16 @@ def handle_metrics(body: dict, authorization: str | None) -> dict:
         if not isinstance(event, str) or event not in METRICS_EVENTS:
             raise Rejected("unknown_event", "unknown metrics event")
         props = _check_properties(METRICS_EVENTS[event], item.get("properties") or {})
-        batch.append(posthog.build_event(
-            event, METRICS_DISTINCT_ID, props,
-            # 发行量快照永远匿名：它们不对应任何一个人
-            anonymous=True,
-            snapshot_key=props.get("snapshot_key")))
+        batch.append(
+            posthog.build_event(
+                event,
+                METRICS_DISTINCT_ID,
+                props,
+                # 发行量快照永远匿名：它们不对应任何一个人
+                anonymous=True,
+                snapshot_key=props.get("snapshot_key"),
+            )
+        )
     posthog.send(batch)
     return {"ok": True, "accepted": len(batch)}
 
@@ -199,18 +209,16 @@ def handle(method: str, path: str, headers: dict, raw: bytes) -> tuple[int, dict
             raise Rejected("method_not_allowed", "POST only", status=405)
         ctype = (headers.get("content-type") or "").split(";", 1)[0].strip().lower()
         if ctype != "application/json":
-            raise Rejected("bad_content_type", "Content-Type must be application/json",
-                           status=415)
+            raise Rejected("bad_content_type", "Content-Type must be application/json", status=415)
 
         if path == "/v1/events":
             return 200, handle_event(_parse_json(raw, MAX_EVENT_BODY))
-        return 200, handle_metrics(_parse_json(raw, MAX_METRICS_BODY),
-                                   headers.get("authorization"))
+        return 200, handle_metrics(_parse_json(raw, MAX_METRICS_BODY), headers.get("authorization"))
     except Rejected as exc:
         return exc.status, {"ok": False, "code": exc.code, "error": exc.message}
     except posthog.UpstreamError as exc:
         # 上游挂了要如实报（客户端会丢弃这条事件），但消息里没有密钥、
         # 没有载荷、没有上游响应体
         return 502, {"ok": False, "code": "upstream_error", "error": str(exc)}
-    except Exception:                          # noqa: BLE001 — 绝不把 traceback 交给公网
+    except Exception:  # noqa: BLE001 — 绝不把 traceback 交给公网
         return 500, {"ok": False, "code": "internal_error", "error": "internal error"}

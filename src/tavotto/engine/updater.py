@@ -16,6 +16,7 @@
 - **不做静默自动升级**。学术制图要的是可复现：版本什么时候变、变成什么，
   必须是用户按下按钮的结果。
 """
+
 from __future__ import annotations
 
 import json
@@ -43,6 +44,7 @@ _LOCK = threading.Lock()
 # ---------------------------------------------------------------------------
 def current_version() -> str:
     from .. import __version__
+
     return __version__
 
 
@@ -69,8 +71,8 @@ def is_newer(latest: str, current: str) -> bool:
 # 安装方式探测
 # ---------------------------------------------------------------------------
 def install_method() -> str:
-    """"pipx" / "pip" / "source" —— 决定用哪条升级命令，以及能不能代劳。"""
-    pkg_root = Path(__file__).resolve().parent.parent      # …/tavotto
+    """ "pipx" / "pip" / "source" —— 决定用哪条升级命令，以及能不能代劳。"""
+    pkg_root = Path(__file__).resolve().parent.parent  # …/tavotto
     # 源码检出：包目录上面两级还躺着 pyproject.toml（src 布局）
     for up in (pkg_root.parent, pkg_root.parent.parent):
         if (up / "pyproject.toml").is_file():
@@ -113,9 +115,11 @@ def upgrade_command(release: dict | None = None) -> list[str] | None:
 # ---------------------------------------------------------------------------
 def settings() -> dict:
     cfg = config.load().get("updates") or {}
-    return {"auto_check": bool(cfg.get("auto_check", True)),
-            "last_check_ms": int(cfg.get("last_check_ms") or 0),
-            "last_result": cfg.get("last_result") or None}
+    return {
+        "auto_check": bool(cfg.get("auto_check", True)),
+        "last_check_ms": int(cfg.get("last_check_ms") or 0),
+        "last_result": cfg.get("last_result") or None,
+    }
 
 
 def set_settings(patch: dict) -> dict:
@@ -133,8 +137,10 @@ def set_settings(patch: dict) -> dict:
 def _fetch_latest_release() -> dict:
     req = urllib.request.Request(
         brand.RELEASES_API,
-        headers={"Accept": "application/vnd.github+json",
-                 "User-Agent": f"{brand.PRODUCT_NAME}/{current_version()}"},
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": f"{brand.PRODUCT_NAME}/{current_version()}",
+        },
     )
     with urllib.request.urlopen(req, timeout=NETWORK_TIMEOUT_S) as resp:
         return json.loads(resp.read().decode("utf-8"))
@@ -147,9 +153,13 @@ def check(force: bool = False) -> dict:
     不联网。界面上的「立即检查」传 force=True。
     """
     st = settings()
-    base = {"current": current_version(), "method": install_method(),
-            "auto_check": st["auto_check"], "repo_url": brand.REPO_URL,
-            "releases_url": brand.RELEASES_URL}
+    base = {
+        "current": current_version(),
+        "method": install_method(),
+        "auto_check": st["auto_check"],
+        "repo_url": brand.REPO_URL,
+        "releases_url": brand.RELEASES_URL,
+    }
     fresh = (time.time() * 1000 - st["last_check_ms"]) < CHECK_INTERVAL_S * 1000
     if not force and (not st["auto_check"] or fresh):
         cached = dict(st["last_result"] or {})
@@ -158,8 +168,7 @@ def check(force: bool = False) -> dict:
         # 0.4.0（当前 0.4.0）」，纠缠用户直到 24h 节流过期
         latest = str(cached.get("latest") or "")
         cached["update_available"] = bool(latest) and is_newer(latest, current_version())
-        return {**base, **cached, "cached": True,
-                "checked_at_ms": st["last_check_ms"]}
+        return {**base, **cached, "cached": True, "checked_at_ms": st["last_check_ms"]}
 
     try:
         release = _fetch_latest_release()
@@ -167,10 +176,15 @@ def check(force: bool = False) -> dict:
         # 离线是常态而不是错误：如实回报，不打断任何操作。
         # code + params 让前端按界面语言渲染（issue #30：英文界面不得漏出
         # 「检查失败:」这半句中文）；error 原文照旧留作回退。
-        return {**base, "error": f"检查失败: {exc}",
-                "code": "update_check_failed", "params": {"error": str(exc)},
-                "update_available": False,
-                "cached": False, "checked_at_ms": int(time.time() * 1000)}
+        return {
+            **base,
+            "error": f"检查失败: {exc}",
+            "code": "update_check_failed",
+            "params": {"error": str(exc)},
+            "update_available": False,
+            "cached": False,
+            "checked_at_ms": int(time.time() * 1000),
+        }
 
     latest = str(release.get("tag_name") or "").lstrip("v")
     cmd = upgrade_command(release)
@@ -184,8 +198,7 @@ def check(force: bool = False) -> dict:
         "upgrade_command": " ".join(cmd) if cmd else "git pull",
     }
     set_settings({"last_check_ms": int(time.time() * 1000), "last_result": result})
-    return {**base, **result, "cached": False,
-            "checked_at_ms": int(time.time() * 1000)}
+    return {**base, **result, "cached": False, "checked_at_ms": int(time.time() * 1000)}
 
 
 def check_in_background() -> None:
@@ -204,6 +217,7 @@ def check_in_background() -> None:
             check(force=False)
         except Exception:  # noqa: BLE001 — 后台探测不允许把主进程带下水
             pass
+
     if settings()["auto_check"]:
         threading.Thread(target=run, daemon=True, name="mm-update-check").start()
 
@@ -220,27 +234,42 @@ def apply_upgrade() -> dict:
     method = install_method()
     cmd = upgrade_command(release)
     if cmd is None:
-        return {"ok": False, "command": "git pull", "restart_required": False,
-                "log": "这是源码检出的运行方式，请在仓库目录执行 git pull 后重启。"}
+        return {
+            "ok": False,
+            "command": "git pull",
+            "restart_required": False,
+            "log": "这是源码检出的运行方式，请在仓库目录执行 git pull 后重启。",
+        }
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True,
-                              # 显式 UTF-8：text=True 默认跟随系统区域编码，
-                              # cp936 下 pip 的进度条/中文路径一解码就抛
-                              # UnicodeDecodeError，直接逃出 apply_upgrade 变 500
-                              encoding="utf-8", errors="replace",
-                              timeout=UPGRADE_TIMEOUT_S,
-                              creationflags=runtime.CREATE_NO_WINDOW)
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            # 显式 UTF-8：text=True 默认跟随系统区域编码，
+            # cp936 下 pip 的进度条/中文路径一解码就抛
+            # UnicodeDecodeError，直接逃出 apply_upgrade 变 500
+            encoding="utf-8",
+            errors="replace",
+            timeout=UPGRADE_TIMEOUT_S,
+            creationflags=runtime.CREATE_NO_WINDOW,
+        )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        return {"ok": False, "command": " ".join(cmd), "restart_required": False,
-                "log": f"升级命令执行失败: {exc}"}
+        return {
+            "ok": False,
+            "command": " ".join(cmd),
+            "restart_required": False,
+            "log": f"升级命令执行失败: {exc}",
+        }
     log = (proc.stdout or "") + (proc.stderr or "")
     ok = proc.returncode == 0
     if ok:
         # **装成功之后**才记一条，且不带 release notes 的任何文字。
         # 埋点失败绝不影响这里的返回值：capture() 自己吞掉一切。
-        telemetry.capture("update_completed", {
-            "update_kind": method,
-            "target_version": str((release or {}).get("tag_name") or "").lstrip("v"),
-        })
-    return {"ok": ok, "command": " ".join(cmd), "restart_required": ok,
-            "log": log[-8000:]}
+        telemetry.capture(
+            "update_completed",
+            {
+                "update_kind": method,
+                "target_version": str((release or {}).get("tag_name") or "").lstrip("v"),
+            },
+        )
+    return {"ok": ok, "command": " ".join(cmd), "restart_required": ok, "log": log[-8000:]}

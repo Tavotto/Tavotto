@@ -12,6 +12,7 @@ Flask 父进程——它的依赖边界是 flask + pymupdf，wheel 不带科学�
 漂开：对拍用例在**灰度等值图**（r==g==b、全不透明，两份实现的语义交集）上
 逐指标比对输出（与 patchspec ↔ Rust、telemetry 客户端 ↔ 代理同一套纪律）。
 """
+
 import json
 import subprocess
 import sys
@@ -72,14 +73,12 @@ def test_a_real_change_is_measured(tmp_path):
     assert got["mean_abs_diff"] == pytest.approx(160 * 0.5)
 
 
-def _solid(path: Path, rgb: tuple[int, int, int], alpha: int | None = None,
-           n: int = 8) -> Path:
+def _solid(path: Path, rgb: tuple[int, int, int], alpha: int | None = None, n: int = 8) -> Path:
     """n×n 的纯色图；alpha 非 None 时带 alpha 通道。"""
     if alpha is None:
         pix = pymupdf.Pixmap(pymupdf.csRGB, n, n, bytes(rgb) * (n * n), False)
     else:
-        pix = pymupdf.Pixmap(pymupdf.csRGB, n, n,
-                             bytes([*rgb, alpha]) * (n * n), True)
+        pix = pymupdf.Pixmap(pymupdf.csRGB, n, n, bytes([*rgb, alpha]) * (n * n), True)
     pix.save(str(path))
     return path
 
@@ -139,9 +138,13 @@ def _ci_metrics(a: Path, b: Path) -> dict | None:
     for exe in (sys.executable, _worker_python()):
         if not exe:
             continue
-        proc = subprocess.run([exe, "-c", code, str(CI_DIR), str(a), str(b)],
-                              capture_output=True, encoding="utf-8",
-                              errors="replace", timeout=120)
+        proc = subprocess.run(
+            [exe, "-c", code, str(CI_DIR), str(a), str(b)],
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=120,
+        )
         if proc.returncode == 0:
             return json.loads(proc.stdout.strip().splitlines()[-1])
     return None
@@ -149,6 +152,7 @@ def _ci_metrics(a: Path, b: Path) -> dict | None:
 
 def _worker_python() -> str | None:
     from tavotto.engine import pool
+
     try:
         return pool.find_worker_python()
     except Exception:  # noqa: BLE001 - 找不到就跳过对拍
@@ -160,9 +164,9 @@ def test_backend_comparator_matches_the_ci_implementation(tmp_path):
     必须给出相同的判据输出——两份实现不许漂开（漂开的那天，写回像素门与
     CI 视觉门禁会对同一张图给出相反结论）。"""
     pairs = [
-        ([40] * 16 + [120] * 16, [40] * 16 + [120] * 16),   # 完全相同
-        ([40] * 32, [42] * 32),                             # 底噪之内
-        ([40] * 16 + [40] * 16, [40] * 16 + [200] * 16),    # 真实差异
+        ([40] * 16 + [120] * 16, [40] * 16 + [120] * 16),  # 完全相同
+        ([40] * 32, [42] * 32),  # 底噪之内
+        ([40] * 16 + [40] * 16, [40] * 16 + [200] * 16),  # 真实差异
     ]
     ran = False
     for i, (rows_a, rows_b) in enumerate(pairs):
@@ -173,12 +177,18 @@ def test_backend_comparator_matches_the_ci_implementation(tmp_path):
             pytest.skip("numpy / Pillow 不可用（本机与 worker 解释器都没有）")
         ran = True
         ours = pdfbackend.compare_png(a, b)
-        for key in ("changed_pixel_ratio", "mean_abs_diff", "max_abs_diff",
-                    "changed_pixels", "total_pixels"):
+        for key in (
+            "changed_pixel_ratio",
+            "mean_abs_diff",
+            "max_abs_diff",
+            "changed_pixels",
+            "total_pixels",
+        ):
             assert ours[key] == pytest.approx(ci[key]), (i, key, ours, ci)
     assert ran
     # 底噪常量也不许漂：这里断言的是数值本身（import 不到那份模块时也要看住）
     src = (CI_DIR / "pixelcompare.py").read_text(encoding="utf-8")
     assert "NOISE_FLOOR = 3" in src
     from tavotto.pdfbackend import pymupdf_backend
+
     assert pymupdf_backend.PNG_NOISE_FLOOR == 3

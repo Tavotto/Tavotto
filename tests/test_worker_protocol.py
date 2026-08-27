@@ -5,6 +5,7 @@
 号时会不会继续用这个会话。后者是数据损坏级的——管道串行，回显对不上意味着
 之后每一条响应都错位，A 图的 manifest 会落到 B 图上。
 """
+
 import json
 import threading
 
@@ -49,7 +50,7 @@ class _FakeProc:
         self.killed = False
 
     def queue(self, resp) -> None:
-        if resp == "":          # 模拟「进程死了」：readline 直接读到 EOF
+        if resp == "":  # 模拟「进程死了」：readline 直接读到 EOF
             return
         line = resp if isinstance(resp, str) else json.dumps(resp, ensure_ascii=False)
         self.pending.append(line + "\n")
@@ -81,25 +82,28 @@ def _worker(responder, tmp_path) -> pool.EngineWorker:
     w.entry = "main"
     w.base = tmp_path
     w.out_dir = tmp_path / "out"
-    w.log_path = tmp_path / "worker.log"     # 不存在 → _log_tail 回空串
+    w.log_path = tmp_path / "worker.log"  # 不存在 → _log_tail 回空串
     w.lock = threading.Lock()
     w.rev = 0
     w.generation = 4
     w.built = True
     w.last_patch_hash = ""
-    w.last_patch_hash_by_stem = {}           # 写回自检按 stem 问的那份账本
+    w.last_patch_hash_by_stem = {}  # 写回自检按 stem 问的那份账本
     w.last_used = 0.0
-    w._touched = float("inf")                # 关掉 _touch 的落盘（无 base 目录也不炸）
+    w._touched = float("inf")  # 关掉 _touch 的落盘（无 base 目录也不炸）
     w.proc = _FakeProc(responder)
     return w
 
 
 def _echo(env, **overrides) -> dict:
     """一个「规矩的」v1 成功响应。"""
-    resp = {"ok": True, "protocol_version": 1,
-            "request_id": env["request_id"],
-            "worker_generation": env.get("worker_generation"),
-            "render_revision": env.get("render_revision")}
+    resp = {
+        "ok": True,
+        "protocol_version": 1,
+        "request_id": env["request_id"],
+        "worker_generation": env.get("worker_generation"),
+        "render_revision": env.get("render_revision"),
+    }
     if "canonical_patch_hash" in env:
         resp["canonical_patch_hash"] = env["canonical_patch_hash"]
     resp.update(overrides)
@@ -110,8 +114,10 @@ def _echo(env, **overrides) -> dict:
 def test_envelope_carries_version_generation_revision_and_hash(tmp_path):
     w = _worker(lambda env: _echo(env, manifest={}, warnings=[]), tmp_path)
     w.rev = 12
-    patches = [{"gid": "b", "prop": "text", "value": "后写的"},
-               {"gid": "a", "prop": "text", "value": "先写的"}]
+    patches = [
+        {"gid": "b", "prop": "text", "value": "后写的"},
+        {"gid": "a", "prop": "text", "value": "先写的"},
+    ]
     w.override("Fig1", patches)
 
     env = w.proc.stdin.sent[-1]
@@ -121,7 +127,7 @@ def test_envelope_carries_version_generation_revision_and_hash(tmp_path):
     assert env["render_revision"] == 12
     # 池方法叫 override（app.py 一路这么叫），线上命令叫 render
     assert env["cmd"] == "render"
-    assert env["stem"] == "Fig1"             # stem 走顶层，不在 payload 里
+    assert env["stem"] == "Fig1"  # stem 走顶层，不在 payload 里
     assert env["payload"] == {"patches": patches}
     assert env["canonical_patch_hash"] == patchspec.patch_hash(patches)
 
@@ -135,8 +141,9 @@ def test_request_ids_are_unique_per_request(tmp_path):
 
 
 def test_commands_map_to_the_v1_names_and_payloads(tmp_path):
-    w = _worker(lambda env: _echo(env, path="/tmp/x.png", stems={},
-                                  manifest={}, warnings=[]), tmp_path)
+    w = _worker(
+        lambda env: _echo(env, path="/tmp/x.png", stems={}, manifest={}, warnings=[]), tmp_path
+    )
     w.ensure_built()
     w.render_png("Fig1", 800)
     w.preview_png("Fig1", [], 400, "hist3")
@@ -144,18 +151,21 @@ def test_commands_map_to_the_v1_names_and_payloads(tmp_path):
     sent = {e["cmd"]: e for e in w.proc.stdin.sent}
     assert set(sent) == {"build", "render_png", "preview_png", "export"}
     assert sent["build"]["payload"] == {}
-    assert "canonical_patch_hash" not in sent["build"]     # 不带 patches 就不算
+    assert "canonical_patch_hash" not in sent["build"]  # 不带 patches 就不算
     assert sent["render_png"]["payload"] == {"width": 800}
-    assert sent["preview_png"]["payload"] == {"patches": [], "width": 400,
-                                              "tag": "hist3"}
-    assert sent["export"]["payload"] == {"patches": [], "path": "/tmp/x.pdf",
-                                         "format": "pdf", "dpi": 300}
+    assert sent["preview_png"]["payload"] == {"patches": [], "width": 400, "tag": "hist3"}
+    assert sent["export"]["payload"] == {
+        "patches": [],
+        "path": "/tmp/x.pdf",
+        "format": "pdf",
+        "dpi": 300,
+    }
 
 
 def test_generation_increments_per_pool_key():
     """同一 (项目, 脚本) 每重建一次 +1；不同池键各算各的。"""
     a = pool._next_generation(("/proj/gen-a", "fig1.py"))
-    assert a == 1                                   # 从 1 开始
+    assert a == 1  # 从 1 开始
     assert pool._next_generation(("/proj/gen-a", "fig1.py")) == 2
     # 另一个池键独立计数（同名脚本在两个项目里是两个会话）
     assert pool._next_generation(("/proj/gen-b", "fig1.py")) == 1
@@ -190,7 +200,7 @@ def test_pipe_eof_kills_the_session_so_get_cannot_reuse_it(tmp_path):
     各有一条用例。那边的窗口是靠假 worker「关了 stdout 先赖 1.5 秒」拉长成必然
     的；这边用假进程直接把 `poll()` 钉成 None。
     """
-    w = _worker(lambda env: "", tmp_path)        # responder 回 "" = 读到 EOF
+    w = _worker(lambda env: "", tmp_path)  # responder 回 "" = 读到 EOF
     assert w.proc.poll() is None, "前提：进程对象此刻还『活着』"
     with pytest.raises(pool.WorkerError) as e:
         w.request({"cmd": "ping"})
@@ -202,7 +212,8 @@ def test_pipe_eof_kills_the_session_so_get_cannot_reuse_it(tmp_path):
     assert w.proc.poll() is None, "前提：kill 之后进程还没被回收（真实情形）"
     assert not w.alive(), (
         "kill 完 alive() 必须立刻是假。只问 `poll()` 的话这里会回 True——"
-        "而 `Popen.kill()` 只发信号、不等退出")
+        "而 `Popen.kill()` 只发信号、不等退出"
+    )
 
 
 def test_protocol_version_mismatch_kills_the_session(tmp_path):
@@ -214,11 +225,20 @@ def test_protocol_version_mismatch_kills_the_session(tmp_path):
 
 
 def test_v1_error_envelope_becomes_a_workererror(tmp_path):
-    w = _worker(lambda env: {
-        "ok": False, "protocol_version": 1, "request_id": env["request_id"],
-        "error": {"code": "unknown_stem", "retryable": False,
-                  "message": "stem 不存在: nope", "traceback": ""},
-    }, tmp_path)
+    w = _worker(
+        lambda env: {
+            "ok": False,
+            "protocol_version": 1,
+            "request_id": env["request_id"],
+            "error": {
+                "code": "unknown_stem",
+                "retryable": False,
+                "message": "stem 不存在: nope",
+                "traceback": "",
+            },
+        },
+        tmp_path,
+    )
     with pytest.raises(pool.WorkerError) as e:
         w.request({"cmd": "ping"})
     assert e.value.code == "unknown_stem"
@@ -228,12 +248,21 @@ def test_v1_error_envelope_becomes_a_workererror(tmp_path):
 
 def test_missing_dependency_still_wins_over_the_protocol_code(tmp_path):
     """缺包对用户是完全不同的一件事（有可执行出口），优先于协议 code。"""
-    tb = 'Traceback…\nModuleNotFoundError: No module named \'rdkit.Chem\'\n'
-    w = _worker(lambda env: {
-        "ok": False, "protocol_version": 1, "request_id": env["request_id"],
-        "error": {"code": "script_error", "retryable": False,
-                  "message": "脚本执行失败", "traceback": tb},
-    }, tmp_path)
+    tb = "Traceback…\nModuleNotFoundError: No module named 'rdkit.Chem'\n"
+    w = _worker(
+        lambda env: {
+            "ok": False,
+            "protocol_version": 1,
+            "request_id": env["request_id"],
+            "error": {
+                "code": "script_error",
+                "retryable": False,
+                "message": "脚本执行失败",
+                "traceback": tb,
+            },
+        },
+        tmp_path,
+    )
     with pytest.raises(pool.WorkerError) as e:
         w.request({"cmd": "ping"})
     assert e.value.code == "missing_dependency"
@@ -242,10 +271,16 @@ def test_missing_dependency_still_wins_over_the_protocol_code(tmp_path):
 
 def test_hash_mismatch_is_logged_but_the_result_is_used(tmp_path, caplog):
     """哈希分歧只是警告：worker 照常执行了，结果照常用。"""
-    w = _worker(lambda env: _echo(env, manifest={"elements": []}, warnings=[],
-                                  hash_mismatch=True,
-                                  worker_patch_hash="sha256:" + "1" * 64),
-                tmp_path)
+    w = _worker(
+        lambda env: _echo(
+            env,
+            manifest={"elements": []},
+            warnings=[],
+            hash_mismatch=True,
+            worker_patch_hash="sha256:" + "1" * 64,
+        ),
+        tmp_path,
+    )
     with caplog.at_level("WARNING", logger="tavotto.engine"):
         resp = w.override("Fig1", [{"gid": "g", "prop": "text", "value": "x"}])
     assert resp["manifest"] == {"elements": []}
@@ -254,7 +289,7 @@ def test_hash_mismatch_is_logged_but_the_result_is_used(tmp_path, caplog):
 
 def test_dead_worker_and_empty_response_keep_their_old_errors(tmp_path):
     """老的两条兜底不变：进程已退出 / 无响应。"""
-    w = _worker(lambda env: "", tmp_path)          # 空行 = EOF = 崩了
+    w = _worker(lambda env: "", tmp_path)  # 空行 = EOF = 崩了
     w.proc.pending.clear()
     with pytest.raises(pool.WorkerError, match="崩溃"):
         w.request({"cmd": "ping"})
@@ -268,11 +303,15 @@ def test_dead_worker_and_empty_response_keep_their_old_errors(tmp_path):
 # ------------------------------ 计时管道 ------------------------------
 def test_control_plane_adds_queue_wait_and_total(tmp_path):
     """父进程补的两个数一定在：worker 只说自己那一段，排队与往返归控制面。"""
-    w = _worker(lambda env: _echo(env, manifest={}, warnings=[],
-                                  timings={"patch_apply_ms": 1.5,
-                                           "canvas_draw_ms": 9.0,
-                                           "manifest_ms": 4.0}),
-                tmp_path)
+    w = _worker(
+        lambda env: _echo(
+            env,
+            manifest={},
+            warnings=[],
+            timings={"patch_apply_ms": 1.5, "canvas_draw_ms": 9.0, "manifest_ms": 4.0},
+        ),
+        tmp_path,
+    )
     resp = w.override("Fig1", [])
     t = resp["timings"]
     # worker 自报的一个都不许被改
@@ -294,19 +333,22 @@ def test_cold_render_folds_in_the_build_timings(tmp_path):
 
     不并过来的话响应里只剩几毫秒的 apply/draw，而用户刚等了半分钟。
     """
+
     def responder(env):
         if env["cmd"] == "build":
-            return _echo(env, stems={}, timings={"script_build_ms": 4200.0,
-                                                 "script_exec_ms": 4100.0})
-        return _echo(env, manifest={}, warnings=[],
-                     timings={"patch_apply_ms": 0.4, "canvas_draw_ms": 8.0})
+            return _echo(
+                env, stems={}, timings={"script_build_ms": 4200.0, "script_exec_ms": 4100.0}
+            )
+        return _echo(
+            env, manifest={}, warnings=[], timings={"patch_apply_ms": 0.4, "canvas_draw_ms": 8.0}
+        )
 
     w = _worker(responder, tmp_path)
     w.built = False
     t = w.override("Fig1", [])["timings"]
     assert t["script_build_ms"] == 4200.0 and t["script_exec_ms"] == 4100.0
-    assert t["build_total_ms"] >= 0          # build 那次往返，与 render 的分开
-    assert t["canvas_draw_ms"] == 8.0        # render 自己那份没被盖掉
+    assert t["build_total_ms"] >= 0  # build 那次往返，与 render 的分开
+    assert t["canvas_draw_ms"] == 8.0  # render 自己那份没被盖掉
     # 已经 built 的会话不再折叠（第二次渲染不该凭空冒出 script_build_ms）
     assert "script_build_ms" not in w.override("Fig1", [])["timings"]
 
