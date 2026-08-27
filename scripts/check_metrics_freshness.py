@@ -1,0 +1,122 @@
+#!/usr/bin/env python3
+"""发行量采集**有没有在跑**。注意：不是「跑得对不对」。
+
+`telemetry-metrics.yml` 头部承诺「丢数据必须有人看见，所以采集器失败就让
+这个 workflow 红」。那条保证只覆盖采集器**执行之后失败**——run 从没被创建
+时不产生任何红灯，只产生沉默，而沉默和「今天没事」长得一模一样。
+
+2026-08-27 这个洞真的被踩到了：cron 槽被 GitHub 整个丢弃（不是排队、不是
+取消，是根本没有 run 记录）。同一账户同一时间窗，auto-hosts 的每小时 cron
+丢掉大半、Screener 迟到 9 小时。GitHub 的 schedule 是 best-effort，会迟到
+也会整槽丢弃。当时没有任何信号，是人在查别的事时偶然撞见的。
+
+后果不止少一天：`download_count_total` 是累计计数器，区间量靠两次快照做差，
+缺一个观测点会让那一段覆盖约 48 小时而不是 24 小时——日粒度趋势上表现为
+一根偏高的柱子，**看起来像涨了**。
+
+用法：
+    python3 scripts/check_metrics_freshness.py            # 走 GitHub API
+    python3 scripts/check_metrics_freshness.py --runs-json fixture.json
+"""
+from __future__ import annotations
+
+import argparse
+import datetime as _dt
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+
+REPO = os.environ.get("GITHUB_REPOSITORY", "Tavotto/Tavotto")
+WORKFLOW = "telemetry-metrics.yml"
+
+#: 采集器名义上每 24 小时一次。阈值必须夹在「正常最坏」与「漏一次」之间：
+#: 正常情况下检查时刻看到的年龄最多约 24 小时（采集漂到很晚 + 检查在它之前），
+#: 漏一次则跳到约 48 小时。30 小时把两者分得干干净净，且容得下实测到的
+#: 常态漂移（约 45 分钟）乃至数小时级的坏窗口。
+MAX_AGE_HOURS = 30
+
+OK = "OK"
+STALE = "STALE"
+NO_SUCCESS = "NO_SUCCESS"
+#: **观测无效，不是「很旧」。** 一次都查不到 run 有两种成因：仓库真的从没
+#: 跑过，或者我们问错了地方（改名 / 换仓库 / token 权限不足）。把它当成
+#: 「年龄无穷大」会让一个坏掉的判据看起来像一条真实告警。
+NO_DATA = "NO_DATA"
+
+
+def _parse(ts: str) -> _dt.datetime:
+    return _dt.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+
+
+def evaluate(runs: list[dict], now: _dt.datetime,
+             max_age_hours: float = MAX_AGE_HOURS) -> tuple[str, float | None, str]:
+    """→ (状态, 距上次成功的小时数, 给人看的一句话)。"""
+    if not runs:
+        return NO_DATA, None, (
+            f"查不到 {WORKFLOW} 的任何 run。这是**观测无效**，不是「很旧」——"
+            f"先确认仓库（{REPO}）、workflow 文件名与 token 权限。")
+    done = [r for r in runs if r.get("conclusion") == "success"
+            and isinstance(r.get("updated_at"), str)]
+    if not done:
+        n = len(runs)
+        return NO_SUCCESS, None, (
+            f"{WORKFLOW} 最近 {n} 次 run 里没有一次成功。采集器在跑但没落数据。")
+    newest = max(_parse(r["updated_at"]) for r in done)
+    age = (now - newest).total_seconds() / 3600
+    stamp = newest.astimezone(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if age > max_age_hours:
+        return STALE, age, (
+            f"上一次成功采集是 {stamp}，距今 {age:.1f} 小时，超过阈值 "
+            f"{max_age_hours} 小时。GitHub 的 schedule 会整槽丢弃，补跑用："
+            f"gh workflow run {WORKFLOW} --ref main -f dry_run=false")
+    return OK, age, f"上一次成功采集 {stamp}，距今 {age:.1f} 小时。"
+
+
+def fetch_runs(token: str | None, per_page: int = 20) -> list[dict]:
+    url = (f"https://api.github.com/repos/{REPO}/actions/workflows/"
+           f"{WORKFLOW}/runs?per_page={per_page}")
+    req = urllib.request.Request(url, headers={
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        **({"Authorization": f"Bearer {token}"} if token else {}),
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read().decode("utf-8")).get("workflow_runs", [])
+    except urllib.error.HTTPError as exc:
+        # **绝不打印响应体**，它可能回显我们发过去的 header
+        print(f"::error::查询 run 列表失败: HTTP {exc.code}", file=sys.stderr)
+        raise SystemExit(2) from None
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        print(f"::error::查询 run 列表失败: {type(exc).__name__}", file=sys.stderr)
+        raise SystemExit(2) from None
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--runs-json", default=None, help="离线 fixture：GitHub runs 响应")
+    ap.add_argument("--max-age-hours", type=float, default=MAX_AGE_HOURS)
+    ap.add_argument("--now", default=None, help="覆盖当前时刻（ISO8601），供测试用")
+    args = ap.parse_args(argv)
+
+    if args.runs_json:
+        runs = json.loads(open(args.runs_json, encoding="utf-8").read()).get(
+            "workflow_runs", [])
+    else:
+        runs = fetch_runs(os.environ.get("GITHUB_TOKEN"))
+    now = _parse(args.now) if args.now else _dt.datetime.now(_dt.timezone.utc)
+
+    status, age, msg = evaluate(runs, now, args.max_age_hours)
+    if status == OK:
+        print(f"* {msg}")
+        return 0
+    # NO_DATA 与 NO_SUCCESS 也红：它们同样意味着「我们不知道数据还在不在落」
+    print(f"::error title=发行量采集陈旧（{status}）::{msg}")
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
