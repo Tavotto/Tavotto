@@ -144,6 +144,81 @@ def test_automated_traffic_never_lands_in_human_downloads(events):
     )
 
 
+# ---------------------------------------------------------------------------
+# 看板与采集器的同源对：划分只写在一边，两边就会各说各的
+# ---------------------------------------------------------------------------
+DASHBOARD = ROOT / "docs" / "analytics" / "yc-dashboard.json"
+
+
+def _dashboard():
+    return json.loads(DASHBOARD.read_text(encoding="utf-8"))
+
+
+def _roles_of(section):
+    """看板某一区实际覆盖到的 asset_role 集合。"""
+    d = _dashboard()
+    by_id = {m["id"]: m for m in d["metrics"]}
+    roles = set()
+    for mid in d["sections"][section]["metrics"]:
+        f = by_id[mid].get("filter") or {}
+        if "asset_role" in f:
+            roles.add(f["asset_role"])
+    return roles
+
+
+def test_dashboard_sections_cover_exactly_the_collector_partition():
+    """采集器说哪些角色算「人下载的」，看板 Downloads 区就必须正好列这些。
+
+    这两处划分曾经各写各的：`sdist` 进了 HUMAN_DOWNLOAD_ROLES，却没有对应的
+    看板指标，于是「人主动下载」在汇总里和在看板上不是同一个数。
+    """
+    assert _roles_of("Distribution / Downloads") == set(collector.HUMAN_DOWNLOAD_ROLES)
+    assert _roles_of("Infrastructure / Automated Traffic") >= set(collector.AUTOMATED_ROLES)
+
+
+def test_every_classifier_role_is_reachable_from_some_dashboard_section():
+    """分类器能产出的角色，必须都能在看板上找到归宿——除了 checksum。
+
+    漏一个角色不会让任何查询报错，只会让那部分流量从看板上**静静消失**。
+    """
+    produced = {collector.classify_asset(n)[0] for n in (
+        "Tavotto-0.8.0-macOS.dmg", "Tavotto.app.tar.gz", "latest.json",
+        "tavotto-0.8.0-py3-none-any.whl", "tavotto-0.8.0.tar.gz",
+        "codex-plugin.json", "codex-plugin-0.8.0.zip",
+        "SHA256SUMS.txt", "some-unlabelled-artifact.bin",
+    )}
+    placed = _roles_of("Distribution / Downloads") | _roles_of("Infrastructure / Automated Traffic")
+    # checksum 是附属文件，刻意不进任何一区
+    assert produced - placed == {"checksum"}
+
+
+def test_role_filtered_metrics_carry_the_role_resolution_rule():
+    """按 asset_role 过滤再聚合，会把 2026-08-27 换过角色的资产从中间切断。
+
+    实测后果：plugin_manifest 的 30 天值变成整个累计计数器（3387 而不是 5），
+    plugin 则把换角色前的 manifest 增量算成插件包下载（382 而不是 0）。
+    每个按角色过滤的指标都必须自带「先按 asset_id 解析角色」这条规则。
+    """
+    d = _dashboard()
+    assert "role_resolution" in d
+    role_filtered = [m for m in d["metrics"]
+                     if isinstance(m.get("filter"), dict) and "asset_role" in m["filter"]]
+    assert role_filtered, "看板里一个按角色过滤的指标都没有，用例失去意义"
+    for m in role_filtered:
+        assert m.get("role_from") == "latest_snapshot_per_asset_id", m["id"]
+        assert "RESOLVE ROLE PER asset_id FIRST" in m["query_note"], m["id"]
+
+
+def test_automated_roles_are_never_labelled_as_downloads():
+    """轮询指标必须显式禁用 Downloads/Users/Installs 这几个标题。"""
+    d = _dashboard()
+    by_id = {m["id"]: m for m in d["metrics"]}
+    for mid in ("update_checks_30d", "plugin_manifest_checks_30d"):
+        banned = set(by_id[mid]["label_must_not_be"])
+        assert {"Downloads", "Users", "Installs"} <= banned, mid
+    assert "hard_rule" in d["sections"]["Infrastructure / Automated Traffic"]
+
+
 def test_sdist_and_macos_updater_share_a_suffix_but_not_a_role(events):
     """`Tavotto.app.tar.gz` 与 `tavotto-0.8.0.tar.gz` 后缀完全一样。"""
     assert _by_name("Tavotto.app.tar.gz", events)["properties"]["asset_role"] == "updater"

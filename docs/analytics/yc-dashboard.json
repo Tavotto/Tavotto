@@ -19,6 +19,15 @@
       "distinct_id": "distribution_metrics"
     }
   },
+  "role_resolution": {
+    "rule": "RESOLVE ROLE PER asset_id FIRST: asset_role is a label on a row, not part of the asset's identity — asset_id is. Take the role from each asset_id's MOST RECENT snapshot, then aggregate over ALL of that asset_id's rows regardless of the role recorded on older ones. Filtering rows by asset_role and aggregating within the filtered set splits a reclassified asset in two.",
+    "why": "Roles were reclassified on 2026-08-27 (see role_reclassification). Rows already in PostHog keep their old label, so a reclassified asset_id has rows under two different asset_role values.",
+    "wrong_and_what_it_produces": [
+      "filter asset_role='plugin_manifest', then first = MAX(value) where observed_date <= period_start else 0 -> no pre-cutover row survives the filter, first falls back to 0, and the asset's ENTIRE lifetime counter is reported as period traffic (measured: 3387 instead of 5)",
+      "filter asset_role='plugin' over a window spanning the cutover -> the manifest's pre-cutover growth is counted as plugin package downloads (measured: 382 instead of 0)"
+    ],
+    "note": "A date filter does NOT fix this. Scoping to observed_date >= cutover is exactly what makes the baseline fall back to 0."
+  },
   "engaged_events": [
     "figure_opened",
     "figure_edit_completed",
@@ -240,8 +249,9 @@
       "group_by": "asset_id",
       "value_property": "download_count_total",
       "dedupe_by": "snapshot_key",
-      "query_note": "download_count_total is a CUMULATIVE counter snapshotted daily. Take MAX per asset_id, then sum across asset_ids. Summing snapshot rows multiplies the number by the number of collection days. Per-asset MAX also preserves history for assets that were deleted or replaced.",
-      "not": "not users; not installs; excludes updater/update_check/checksum/wheel/sdist/plugin/plugin_manifest roles on purpose"
+      "query_note": "RESOLVE ROLE PER asset_id FIRST: asset_role is a label on a row, not part of the asset's identity — asset_id is. Take the role from each asset_id's MOST RECENT snapshot, then aggregate over ALL of that asset_id's rows regardless of the role recorded on older ones. Filtering rows by asset_role and aggregating within the filtered set splits a reclassified asset in two. download_count_total is a CUMULATIVE counter snapshotted daily. Take MAX per asset_id, then sum across asset_ids. Summing snapshot rows multiplies the number by the number of collection days. Per-asset MAX also preserves history for assets that were deleted or replaced.",
+      "not": "not users; not installs; excludes updater/update_check/checksum/wheel/sdist/plugin/plugin_manifest roles on purpose",
+      "role_from": "latest_snapshot_per_asset_id"
     },
     {
       "id": "github_installer_downloads_30d",
@@ -257,7 +267,8 @@
       "value_property": "download_count_total",
       "window_days": 30,
       "dedupe_by": "snapshot_key",
-      "query_note": "per asset_id: last = MAX(value) where observed_date <= period_end; first = MAX(value) where observed_date <= period_start else 0; delta = max(0, last - first); then sum. Baseline 0 makes a release published mid-period contribute all of its downloads; max(0,...) guards a replaced asset whose counter appears to move backwards."
+      "query_note": "RESOLVE ROLE PER asset_id FIRST: asset_role is a label on a row, not part of the asset's identity — asset_id is. Take the role from each asset_id's MOST RECENT snapshot, then aggregate over ALL of that asset_id's rows regardless of the role recorded on older ones. Filtering rows by asset_role and aggregating within the filtered set splits a reclassified asset in two. per asset_id: last = MAX(value) where observed_date <= period_end; first = MAX(value) where observed_date <= period_start else 0; delta = max(0, last - first); then sum. Baseline 0 makes a release published mid-period contribute all of its downloads; max(0,...) guards a replaced asset whose counter appears to move backwards.",
+      "role_from": "latest_snapshot_per_asset_id"
     },
     {
       "id": "github_plugin_package_downloads_30d",
@@ -273,8 +284,9 @@
       "value_property": "download_count_total",
       "window_days": 30,
       "dedupe_by": "snapshot_key",
-      "query_note": "per asset_id: last = MAX(value) where observed_date <= period_end; first = MAX(value) where observed_date <= period_start else 0; delta = max(0, last - first); then sum.",
-      "not": "not users; not plugin installs; codex-plugin-*.zip only — the codex-plugin.json manifest is a SEPARATE role and must never be added in"
+      "query_note": "RESOLVE ROLE PER asset_id FIRST: asset_role is a label on a row, not part of the asset's identity — asset_id is. Take the role from each asset_id's MOST RECENT snapshot, then aggregate over ALL of that asset_id's rows regardless of the role recorded on older ones. Filtering rows by asset_role and aggregating within the filtered set splits a reclassified asset in two. per asset_id: last = MAX(value) where observed_date <= period_end; first = MAX(value) where observed_date <= period_start else 0; delta = max(0, last - first); then sum.",
+      "not": "not users; not plugin installs; codex-plugin-*.zip only — the codex-plugin.json manifest is a SEPARATE role and must never be added in",
+      "role_from": "latest_snapshot_per_asset_id"
     },
     {
       "id": "github_wheel_downloads_30d",
@@ -290,8 +302,27 @@
       "value_property": "download_count_total",
       "window_days": 30,
       "dedupe_by": "snapshot_key",
-      "query_note": "per asset_id: last = MAX(value) where observed_date <= period_end; first = MAX(value) where observed_date <= period_start else 0; delta = max(0, last - first); then sum.",
-      "not": "not users; GitHub Release wheels only, disjoint from pypi_downloads_30d — never add the two together"
+      "query_note": "RESOLVE ROLE PER asset_id FIRST: asset_role is a label on a row, not part of the asset's identity — asset_id is. Take the role from each asset_id's MOST RECENT snapshot, then aggregate over ALL of that asset_id's rows regardless of the role recorded on older ones. Filtering rows by asset_role and aggregating within the filtered set splits a reclassified asset in two. per asset_id: last = MAX(value) where observed_date <= period_end; first = MAX(value) where observed_date <= period_start else 0; delta = max(0, last - first); then sum.",
+      "not": "not users; GitHub Release wheels only, disjoint from pypi_downloads_30d — never add the two together",
+      "role_from": "latest_snapshot_per_asset_id"
+    },
+    {
+      "id": "github_sdist_downloads_30d",
+      "title": "Source distribution downloads (30d)",
+      "source": "distribution_metrics",
+      "population": "distribution_metrics",
+      "event": "github_release_asset_snapshot",
+      "filter": {
+        "asset_role": "sdist"
+      },
+      "aggregation": "sum_of_per_asset_counter_delta",
+      "group_by": "asset_id",
+      "value_property": "download_count_total",
+      "window_days": 30,
+      "dedupe_by": "snapshot_key",
+      "query_note": "RESOLVE ROLE PER asset_id FIRST: asset_role is a label on a row, not part of the asset's identity — asset_id is. Take the role from each asset_id's MOST RECENT snapshot, then aggregate over ALL of that asset_id's rows regardless of the role recorded on older ones. Filtering rows by asset_role and aggregating within the filtered set splits a reclassified asset in two. per asset_id: last = MAX(value) where observed_date <= period_end; first = MAX(value) where observed_date <= period_start else 0; delta = max(0, last - first); then sum.",
+      "not": "not users; GitHub Release sdists only, disjoint from pypi_downloads_30d — never add the two together",
+      "role_from": "latest_snapshot_per_asset_id"
     },
     {
       "id": "update_checks_30d",
@@ -307,14 +338,15 @@
       "value_property": "download_count_total",
       "window_days": 30,
       "dedupe_by": "snapshot_key",
-      "query_note": "per asset_id: last = MAX(value) where observed_date <= period_end; first = MAX(value) where observed_date <= period_start else 0; delta = max(0, last - first); then sum.",
+      "query_note": "RESOLVE ROLE PER asset_id FIRST: asset_role is a label on a row, not part of the asset's identity — asset_id is. Take the role from each asset_id's MOST RECENT snapshot, then aggregate over ALL of that asset_id's rows regardless of the role recorded on older ones. Filtering rows by asset_role and aggregating within the filtered set splits a reclassified asset in two. per asset_id: last = MAX(value) where observed_date <= period_end; first = MAX(value) where observed_date <= period_start else 0; delta = max(0, last - first); then sum.",
       "not": "NOT a download and NOT a user. latest.json is polled by the updater on launch; a machine that never upgrades still contributes one per poll. Closer to a liveness signal than to adoption.",
       "label_must_not_be": [
         "Downloads",
         "Users",
         "Installs",
         "Active users"
-      ]
+      ],
+      "role_from": "latest_snapshot_per_asset_id"
     },
     {
       "id": "plugin_manifest_checks_30d",
@@ -330,14 +362,15 @@
       "value_property": "download_count_total",
       "window_days": 30,
       "dedupe_by": "snapshot_key",
-      "query_note": "per asset_id: last = MAX(value) where observed_date <= period_end; first = MAX(value) where observed_date <= period_start else 0; delta = max(0, last - first); then sum.",
+      "query_note": "RESOLVE ROLE PER asset_id FIRST: asset_role is a label on a row, not part of the asset's identity — asset_id is. Take the role from each asset_id's MOST RECENT snapshot, then aggregate over ALL of that asset_id's rows regardless of the role recorded on older ones. Filtering rows by asset_role and aggregating within the filtered set splits a reclassified asset in two. per asset_id: last = MAX(value) where observed_date <= period_end; first = MAX(value) where observed_date <= period_start else 0; delta = max(0, last - first); then sum.",
       "not": "NOT a download and NOT a plugin install. codex-plugin.json is polled by the plugin host. Measured 2026-08-27: 3382 manifest polls vs 5 real package downloads — folding this into 'plugin downloads' inflates it ~677x.",
       "label_must_not_be": [
         "Downloads",
         "Users",
         "Installs",
         "Plugin installs"
-      ]
+      ],
+      "role_from": "latest_snapshot_per_asset_id"
     },
     {
       "id": "updater_payload_downloads_30d",
@@ -353,12 +386,13 @@
       "value_property": "download_count_total",
       "window_days": 30,
       "dedupe_by": "snapshot_key",
-      "query_note": "per asset_id: last = MAX(value) where observed_date <= period_end; first = MAX(value) where observed_date <= period_start else 0; delta = max(0, last - first); then sum.",
+      "query_note": "RESOLVE ROLE PER asset_id FIRST: asset_role is a label on a row, not part of the asset's identity — asset_id is. Take the role from each asset_id's MOST RECENT snapshot, then aggregate over ALL of that asset_id's rows regardless of the role recorded on older ones. Filtering rows by asset_role and aggregating within the filtered set splits a reclassified asset in two. per asset_id: last = MAX(value) where observed_date <= period_end; first = MAX(value) where observed_date <= period_start else 0; delta = max(0, last - first); then sum.",
       "not": "not users and not new installs; Tavotto.app.tar.gz / *-setup.nsis.zip are pulled by the auto-updater, so this grows with EXISTING users on every release",
       "label_must_not_be": [
         "Installs",
         "New users"
-      ]
+      ],
+      "role_from": "latest_snapshot_per_asset_id"
     },
     {
       "id": "other_release_assets_30d",
@@ -374,8 +408,9 @@
       "value_property": "download_count_total",
       "window_days": 30,
       "dedupe_by": "snapshot_key",
-      "query_note": "per asset_id: last = MAX(value) where observed_date <= period_end; first = MAX(value) where observed_date <= period_start else 0; delta = max(0, last - first); then sum.",
-      "not": "unclassified shapes; a non-zero value here means classify_asset() needs a new branch, not that something was adopted"
+      "query_note": "RESOLVE ROLE PER asset_id FIRST: asset_role is a label on a row, not part of the asset's identity — asset_id is. Take the role from each asset_id's MOST RECENT snapshot, then aggregate over ALL of that asset_id's rows regardless of the role recorded on older ones. Filtering rows by asset_role and aggregating within the filtered set splits a reclassified asset in two. per asset_id: last = MAX(value) where observed_date <= period_end; first = MAX(value) where observed_date <= period_start else 0; delta = max(0, last - first); then sum.",
+      "not": "unclassified shapes; a non-zero value here means classify_asset() needs a new branch, not that something was adopted",
+      "role_from": "latest_snapshot_per_asset_id"
     },
     {
       "id": "pypi_downloads_30d",
@@ -486,12 +521,14 @@
       "metrics": [
         "github_installer_downloads_30d",
         "github_plugin_package_downloads_30d",
-        "github_wheel_downloads_30d"
+        "github_wheel_downloads_30d",
+        "github_sdist_downloads_30d"
       ],
       "titles": {
         "github_installer_downloads_30d": "Desktop installer downloads",
         "github_plugin_package_downloads_30d": "Plugin package downloads",
-        "github_wheel_downloads_30d": "Python wheel downloads"
+        "github_wheel_downloads_30d": "Python wheel downloads",
+        "github_sdist_downloads_30d": "Source distribution downloads"
       }
     },
     "Infrastructure / Automated Traffic": {
@@ -515,7 +552,7 @@
     "date": "2026-08-27",
     "what_changed": "latest.json moved from role 'updater' to 'update_check'; codex-plugin.json moved from role 'plugin' to 'plugin_manifest'.",
     "why": "Both are polled by machines. Measured on 2026-08-27: codex-plugin.json accounted for 3382 of 3387 requests in the old 'plugin' role (99.85%), and latest.json for 44 of 66 in the old 'updater' role.",
-    "query_impact": "Rows already in PostHog are NOT retroactively reclassified. A query filtering asset_role='plugin' across the whole history returns manifest polls before this date and package downloads after it. Scope every asset_role query to observed_date >= 2026-08-27, or filter by asset_id.",
+    "query_impact": "Rows already in PostHog are NOT retroactively reclassified, so a reclassified asset_id has rows under two asset_role values. Do NOT filter rows by asset_role and aggregate within the filtered set, and do NOT try to fix it with a date filter — see role_resolution. Resolve each asset_id's role from its latest snapshot, then aggregate over all of that asset_id's rows.",
     "expected_artifact": "'Plugin package downloads' drops from ~3378 to ~5 on the changeover date. That is the fix landing, not a regression."
   }
 }
