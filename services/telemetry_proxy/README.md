@@ -144,8 +144,12 @@ deduplicate on it explicitly (see `docs/analytics/yc-dashboard.json`).
 11. **Verify the distribution events arrived** in PostHog: filter on
     `distinct_id = distribution_metrics` and confirm
     `github_release_asset_snapshot`, `pypi_daily_downloads` and
-    `github_repo_snapshot`. Spot-check that `asset_role` splits `installer` from
-    `updater` the way `docs/analytics/yc-metrics.md` expects.
+    `github_repo_snapshot`. Spot-check that `asset_role` keeps all four
+    groups apart the way `docs/analytics/yc-metrics.md` expects: human
+    downloads (`installer` / `plugin` / `wheel` / `sdist`), automated traffic
+    (`update_check` / `plugin_manifest` / `updater`), `checksum`, and `other`.
+    If `plugin_manifest` shows up folded into `plugin`, the collector is stale —
+    `codex-plugin.json` is a poll and outnumbers real package downloads ~677:1.
 12. **Test one development client** without touching production:
     ```bash
     TAVOTTO_TELEMETRY_ENDPOINT=https://telemetry.tavotto.com/v1/events tavotto

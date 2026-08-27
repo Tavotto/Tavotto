@@ -103,7 +103,16 @@ def classify_asset(name: str) -> tuple[str, str]:
         `.tar.gz` 结尾，先判后缀会把签名算成 sdist；
       * `Tavotto.app.tar.gz`（更新包）必须早于 `tavotto-0.8.0.tar.gz`（sdist），
         两者后缀完全一样，只有前半段能分开；
-      * `*-setup.nsis.zip`（更新包）必须早于 `*Setup.exe`（安装器）。
+      * `*-setup.nsis.zip`（更新包）必须早于 `*Setup.exe`（安装器）；
+      * `codex-plugin*` 的三条必须整体早于 `.tar.gz` / `.zip` 兜底，否则
+        `codex-plugin-*.zip` 会被算成 sdist。
+
+    角色分四类，看板不能混（见 docs/analytics/yc-metrics.md）：
+      * 人主动下载：`installer` / `plugin` / `wheel` / `sdist`
+      * 机器自动拉取：`update_check` / `plugin_manifest` / `updater`
+      * 附属文件：`checksum`
+      * 不认识：`other`
+    **`update_check` 与 `plugin_manifest` 是轮询次数，不是下载、更不是人。**
     未知形状回 ("other", "other")：**宁可少算，也不能把不认识的东西
     悄悄算进安装量**。
     """
@@ -114,13 +123,23 @@ def classify_asset(name: str) -> tuple[str, str]:
             # 平台按**被签的那个文件**判：`Tavotto.app.tar.gz.sig` 的平台
             # 信息全在被剥掉的那一段里，直接看 `.sig` 只会得到 "any"
             return "checksum", _platform_hint(lower[: -len(suffix)])
+    # 后缀之外的校验/溯源清单。`SHA256SUMS.txt` 由 release.yml 的
+    # `shasum -a 256` 产出，`artifact-manifest*.json` 由 scripts/ci/
+    # artifact_manifest.py 产出（role/path/sha256）。两者都以 .txt / .json
+    # 结尾，**穿不过上面那个后缀循环**，2026-08-27 之前一直落在 other 里
+    # 攒了 227 次。它们是供应链验证文件，任何情况下都不是产品下载。
+    if lower.startswith("sha256sums") or lower.startswith("artifact-manifest"):
+        return "checksum", "any"
     # Tauri 更新器的载荷：更新器自己拉的，不是人点的
     if lower.endswith(".app.tar.gz"):
         return "updater", "macos"
     if lower.endswith(".nsis.zip"):
         return "updater", "windows"
+    # 更新检查**不是下载**：更新器每次启动都拉一次 latest.json，装了但
+    # 从没升过级的机器也会天天贡献一次。2026-08-27 实测 updater 角色 66 次
+    # 里 44 次是它。合成一个角色，「更新包下载量」就成了在线机器数的影子。
     if lower == "latest.json":
-        return "updater", "any"
+        return "update_check", "any"
     # 人下载的安装包
     if lower.endswith(".dmg"):
         return "installer", "macos"
@@ -131,8 +150,18 @@ def classify_asset(name: str) -> tuple[str, str]:
     # 包管理器分发
     if lower.endswith(".whl"):
         return "wheel", "any"
-    if lower.startswith("codex-plugin"):
+    # Codex 插件：**manifest 与安装包必须分开**。`codex-plugin.json` 是
+    # 插件宿主检查更新时拉的，2026-08-27 实测该角色 3387 次里 3382 次是它，
+    # 真正下载 zip 只有 5 次——合成一个角色会把插件装机量放大近 700 倍。
+    if lower == "codex-plugin.json":
+        return "plugin_manifest", "any"
+    if lower.startswith("codex-plugin-") and lower.endswith(".zip"):
         return "plugin", "any"
+    # 其余 codex-plugin* 必须在下面 .tar.gz/.zip 兜底**之前**拦掉：漏下去会被
+    # 算成 sdist，等于把插件流量混进 Python 包下载量。将来若真出了
+    # codex-plugin-*.tar.gz，它会落到 other 而不是被悄悄算错。
+    if lower.startswith("codex-plugin"):
+        return "other", "other"
     if lower.endswith((".tar.gz", ".zip")):
         return "sdist", "any"
     return "other", "other"
@@ -371,9 +400,20 @@ def transmit(events: list[dict], url: str, token: str) -> None:
         raise CollectError(f"上报失败: {type(exc).__name__}") from None
 
 
+#: 人主动点下来的东西。只有这一组可以叫 downloads。
+HUMAN_DOWNLOAD_ROLES = ("installer", "plugin", "wheel", "sdist")
+#: 机器拉的。轮询次数与载荷分开：前两个连「下载」都不算。
+AUTOMATED_ROLES = ("update_check", "plugin_manifest", "updater")
+
+
 def summarize(events: list[dict]) -> dict:
     """给人看的汇总。**刻意把安装包与更新包分开列**——合起来的那个数
-    没有任何意义，而且正是最容易被误当成「用户数」的那个。"""
+    没有任何意义，而且正是最容易被误当成「用户数」的那个。
+
+    2026-08-27 起再分一层：`update_check` / `plugin_manifest` 是**轮询**，
+    连「下载」都不是。实测 `codex-plugin.json` 一个文件就占了旧 `plugin`
+    角色的 99.85%；不拆开，「插件装机量」这个数就是错的。
+    """
     by_role: dict[str, dict] = {}
     for e in events:
         if e["event"] != "github_release_asset_snapshot":
@@ -388,6 +428,17 @@ def summarize(events: list[dict]) -> dict:
         "github_by_role": by_role,
         "github_installer_downloads_lifetime": by_role.get("installer", {}).get(
             "downloads_total", 0
+        ),
+        # 两个口径**必须并排出现**，不然读的人会拿 github_by_role 求和
+        "github_human_downloads_lifetime": sum(
+            by_role.get(r, {}).get("downloads_total", 0) for r in HUMAN_DOWNLOAD_ROLES
+        ),
+        "github_automated_requests_lifetime": sum(
+            by_role.get(r, {}).get("downloads_total", 0) for r in AUTOMATED_ROLES
+        ),
+        "roles_note": (
+            "update_check / plugin_manifest 是轮询次数，"
+            "不是下载、更不是人；绝不能进 Downloads/Users/Installs"
         ),
         "pypi_days": len(pypi),
         "pypi_downloads_in_window": sum(e["properties"]["downloads"] for e in pypi),
