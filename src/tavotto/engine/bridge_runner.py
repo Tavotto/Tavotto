@@ -226,7 +226,17 @@ def run_script(target: str, argv: list) -> None:
     sys.path.insert(0, os.path.dirname(abspath))
     with io.open_code(abspath) as f:
         source = f.read()
-    code = compile(source, abspath, "exec", dont_inherit=False)
+    # `dont_inherit=True` **是必须的**：本文件自己有 `from __future__ import
+    # annotations`，而 `compile()` 默认会把**调用处生效的** future 语句一并
+    # 传给被编译的代码。于是用户脚本会在不知情的情况下拿到 PEP 563 语义——
+    #
+    #     x: NoSuchType = 5       # 直跑 python：NameError
+    #                             # bridge（dont_inherit=False）：静默通过
+    #
+    # 这正是 native 最不能出的那类错：脚本在 Tavotto 里的行为与他自己敲
+    # `python fig.py` 不一样，而且是**朝着"更宽松"的方向**静默不一样。
+    # 脚本自己写的 `from __future__ import ...` 不受影响（它在源码里）。
+    code = compile(source, abspath, "exec", dont_inherit=True)
     main_mod = types.ModuleType("__main__")
     main_mod.__file__ = abspath
     main_mod.__builtins__ = builtins
@@ -239,20 +249,52 @@ def run_script(target: str, argv: list) -> None:
     exec(code, main_mod.__dict__)
 
 
-def run_module(target: str, argv: list) -> None:
+def resolve_module_origin(target: str) -> str:
+    """`python -m <target>` 真正会执行的那个文件（runpy 的解析口径）。
+
+    **必须在 `run_module` 之前算好。** `runpy.run_module(alter_sys=True)` 用
+    `_TempModule` 把用户的模块**临时**装成 `sys.modules["__main__"]`，返回时
+    恢复原样——也就是把 runner 自己装回去。跑完再去读
+    `sys.modules["__main__"].__file__`，拿到的是 `bridge_runner.py`。
+
+    后果不是"日志里名字难看"：描述符的 `script` 与 asset id 都由它派生，
+    于是用户的图会被挂到 `runtime:bridge_runner.py#Fig1` 这个不存在的脚本上，
+    保存重开之后 override 全成孤儿。只 `savefig` 不 `show` 的 module 目标
+    （很常见）走的正是这条——它只有脚本结束那一次屏障，那时早已恢复过了。
+
+    `pkg` → `pkg.__main__` 的处理与 runpy 同款。解析失败一律回空串，让
+    `run_module` 去报它本来该报的错，不在这里抢着报一个我们编的。
+    """
+    import importlib.util  # noqa: PLC0415 — 与 runpy 同属 module 目标才付的成本
+
+    try:
+        spec = importlib.util.find_spec(target)
+        if spec is not None and spec.submodule_search_locations is not None:
+            spec = importlib.util.find_spec(f"{target}.__main__")
+    except (ImportError, AttributeError, TypeError, ValueError):
+        return ""
+    return getattr(spec, "origin", "") or ""
+
+
+def run_module(target: str, argv: list, on_origin=None) -> None:
     """等价于 `python -m <target> <argv…>`。
 
     `runpy.run_module(..., run_name="__main__", alter_sys=True)` 在
     `__name__` / `__package__` / `__spec__` / `__file__` / `sys.argv[0]`
-    五项上与真实 `python -m` **实测逐字段一致**（3.9 / 3.11 / 3.13 各验过）。
-    唯一要自己补的是 `sys.path[0]`：真实 `-m` 把**当前工作目录**（绝对）
-    放在最前，而 runpy 不动 sys.path——不补的话，`python -m paper.figure`
-    在 bridge 里连 `paper` 都 import 不到。
+    五项上与真实 `python -m` 开箱一致（对拍用例是版本无关的：同一个解释器
+    跑两遍再比）。唯一要自己补的是 `sys.path[0]`：真实 `-m` 把**当前工作
+    目录**（绝对）放在最前，而 runpy 不动 sys.path——不补的话
+    `python -m paper.figure` 在 bridge 里连 `paper` 都 import 不到。
+
+    `on_origin` 在**开跑之前**收到目标模块的源文件路径（见
+    `resolve_module_origin`）。
     """
     import runpy  # noqa: PLC0415 — 只有 module 目标才需要，脚本目标不必付这份 import
 
     sys.argv = [target, *argv]  # run_module(alter_sys=True) 会把 argv[0] 换成模块文件
     sys.path.insert(0, os.getcwd())
+    if on_origin is not None:
+        on_origin(resolve_module_origin(target))
     runpy.run_module(target, run_name="__main__", alter_sys=True)
 
 
@@ -371,9 +413,28 @@ class BridgeRun:
         bridgeboot.load_engine_modules(_HERE, _PHASE2)
         self._pkg2_loaded = True
 
+    def _sync_captures(self) -> None:
+        """把模块级捕获表里**还没进会话**的图补进去。
+
+        钩子（savefig / show 兜底）写的是模块级的 `_CAPTURE`——它们是类属性
+        级的 monkeypatch，拿不到 BridgeRun 实例。会话是在**第一个屏障**那一刻
+        才建的，此后脚本继续跑、继续产图，那些图只会落进 `_CAPTURE`。
+
+        不同步的后果：脚本 `show()` → 编辑 → 继续 → 再画一张 → 再 `show()`，
+        第二个屏障里**看不到第二张图**（stems / build 响应 / 可编辑会话里都
+        没有它），而脚本明明画出来了。用户会数图。
+
+        `add_figure` 对已有 stem 返回 False 不覆盖，所以这里是幂等的；
+        `instrument_all()` 也只给还没有 FigState 的图建状态——已经在编辑的
+        那些带着用户的 override，重建等于把编辑丢掉。
+        """
+        for stem, fig in _CAPTURE.items():
+            self.session.add_figure(stem, fig, _CAPTURE_SOURCE[stem])
+
     def _ensure_session(self):
         self._ensure_engine()
         if self.session is not None:
+            self._sync_captures()
             self.session.instrument_all()
             return self.session
         figsession = _PKG.figsession
@@ -403,8 +464,7 @@ class BridgeRun:
                 raise wireproto.ProtocolError("unknown_cmd", f"未知指令: {cmd}")
 
         self.session = _NativeSession(self.args.out_dir, self.args.preview_dpi)
-        for stem, fig in _CAPTURE.items():
-            self.session.add_figure(stem, fig, _CAPTURE_SOURCE[stem])
+        self._sync_captures()
         self.session.instrument_all()
         self.handler = _NativeHandler(self.session)
         return self.session
@@ -573,7 +633,7 @@ def main(argv: list | None = None) -> int:
         if args.target_kind == "script":
             run_script(args.target, args.user_argv)
         else:
-            run_module(args.target, args.user_argv)
+            run_module(args.target, args.user_argv, on_origin=_set_module_source(args))
     except SystemExit as exc:  # 用户脚本自己 sys.exit(...)：图仍然算数
         exit_code = exc.code if isinstance(exc.code, int) else (0 if exc.code is None else 1)
     except BaseException as exc:  # noqa: BLE001 — 脚本炸了也要把已有的图交出去
@@ -607,23 +667,32 @@ def main(argv: list | None = None) -> int:
     return exit_code
 
 
+def _set_module_source(args):
+    """给 `run_module` 的回调：把开跑前解析出来的源文件记进 args。"""
+
+    def _record(origin: str) -> None:
+        if origin:
+            args.source_path = origin
+            _resolve_module_source(args)
+
+    return _record
+
+
 def _resolve_module_source(args) -> None:
-    """module 目标的源文件路径要等 import 之后才知道——**在第一次要用它之前**修正。
+    """把 module 目标的相对路径算出来（描述符的 `script` / asset id 用它）。
 
-    `python -m paper.figure` 的源文件是 `runpy` 解析出来的，bridge 在跑之前
-    只能猜一个（`figure.py`）。而描述符里的 `script` / `asset_id` 必须是
-    `paper/figure.py`——asset id 是 override 挂靠的身份，猜错等于用户的编辑
-    在重开之后挂在一个不存在的东西上。
-
-    修正点**必须在 `build_result()` 里也调一次**：`plt.show()` 的屏障发生在
-    脚本执行**中间**，那时 `main()` 还没走到收尾的修正（第一版就是这样，
-    描述符里留着 `figure.py`）。`__main__` 在 runpy 启动的那一刻就已经设好，
-    所以屏障处读得到。
+    正常路径上 `args.source_path` 已经由 `run_module` 的 `on_origin` 回调在
+    **开跑之前**填好了（见 `resolve_module_origin`）。这里的 `__main__` 兜底
+    只在解析失败时才用得上，而且**显式排除 runner 自己**：runpy 跑完会把
+    runner 装回 `sys.modules["__main__"]`，读到的就是 `bridge_runner.py`，
+    那会把用户的图挂到一个不存在的脚本上。
     """
     if args.target_kind != "module":
         return
-    main_mod = sys.modules.get("__main__")
-    args.source_path = getattr(main_mod, "__file__", "") or args.source_path
+    if not args.source_path:
+        cand = getattr(sys.modules.get("__main__"), "__file__", "") or ""
+        if cand and os.path.abspath(cand) != os.path.abspath(__file__):
+            args.source_path = cand
     if not args.source_path:
         return
     root = args.project_root or os.getcwd()

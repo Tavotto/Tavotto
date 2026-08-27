@@ -9,7 +9,7 @@
   `.claude/worktrees/compat-bridge-session08`，**基于 `origin/main` `7952ceb`**，
   不 stacked 在任何未合并分支上）
 - 本 Session Prompt：Session 8 —— Matplotlib Bridge Technical Spike
-- 交付：**技术验证**（ADR 0020 定稿 + 可运行实现 + 63 条用例 + 9 条负向反证）。
+- 交付：**技术验证**（ADR 0020 定稿 + 可运行实现 + 69 条用例 + 12 条负向反证）。
   **不是产品**：`tavotto run` 不存在，spike 入口没有稳定契约。
 - **Session 7（PR #177，项目 .venv 自动接手 / ADR 0018+0019）仍 open**。
   本 Session **刻意不 stacked 在它上面**：spike 与它没有代码依赖，独立分支
@@ -53,17 +53,17 @@
 - [x] **ADR 0020**（Accepted，technical spike）+ `src/tavotto/AGENTS.md`
   新增「两条执行入口」一节。
 
-## 用例分布（tests/bridge/，63 passed + 1 slow）
+## 用例分布（tests/bridge/，69 passed + 1 slow）
 
 | 文件 | 条数 | 覆盖 |
 |---|---|---|
 | `test_bridge_namespace.py` | 7 | 装载器不变量、两阶段不重复装、用户项目 12 个同名模块全赢、late import、结构性守卫 |
-| `test_bridge_invocation.py` | 6 | script/module 与真实 python 逐 13 字段对拍、绝对路径 argv[0]、不加解释器标志、env 原样继承、token 不进用户脚本 |
-| `test_bridge_capture.py` | 12 | prompt §十三的 12 条形态 |
+| `test_bridge_invocation.py` | 8 | script/module 与真实 python 逐 13 字段对拍、绝对路径 argv[0]、不加解释器标志、env 原样继承、token 不进用户脚本 |
+| `test_bridge_capture.py` | 14 | prompt §十三的 12 条形态 + 屏障之后新产的图 / 编辑不被冲掉（评审轮 1） |
 | `test_bridge_backend_and_show.py` | 8 | 不提前 import pyplot、三个后端、无 matplotlib 脚本、show 阻塞语义 |
 | `test_bridge_transport.py` | 10 | loopback-only、错 token、token 随机、信封同源、stdout 噪声、断开、shutdown、不往用户 home 写、spike 未接进产品 CLI |
 | `test_bridge_thread_model.py` | 8 | WrongThread、族判据、无后台线程、运行时线程 id 相等、零 pickle、通道只跑 JSON |
-| `test_bridge_e2e.py` | 3 + 1 slow | 完整链（manifest→改字号→导出 PDF→撤销）、用户环境无 Tavotto、module 形态、**真 venv（`-m slow`）** |
+| `test_bridge_e2e.py` | 5 + 1 slow | 完整链（manifest→改字号→导出 PDF→撤销）、用户环境无 Tavotto、module 形态、**真 venv（`-m slow`）** |
 | `test_bridge_injection_models.py` | 9 | A/B 实测对比（§17 的裁决依据） |
 
 ## 实际运行的验证（worktree 内，PYTHONPATH=src，主仓 .venv 解释器）
@@ -71,7 +71,7 @@
 ```bash
 ruff check . && ruff format --check .                       # 通过（229 文件）
 python -m pytest -q                                          # **全量绿**，7:57
-python -m pytest tests/bridge -q                             # 63 passed，24s
+python -m pytest tests/bridge -q                             # 69 passed
 python -m pytest tests/bridge -q -m slow                     # 1 passed（真 venv，联网装 matplotlib）
 python scripts/smoke_app.py --python .venv/bin/python        # 冒烟通过
 python scripts/ci/compat_matrix.py --smoke                   # 通过（路由 safe_probe/cli_open/
@@ -92,7 +92,7 @@ import matplotlib、跑几行、退出"。**这套用例走默认 pytest**，所
 `shell cwd` 会被重置，每条命令都要显式 `cd` 到 worktree，否则改动会落进
 主工作区（本轮发生过一次，已整体搬回）。
 
-## 负向反证（本轮九条，全部先红后还原）
+## 负向反证（本轮十二条，全部先红后还原）
 
 | # | 变异 | 判据 | 结果 |
 |---|---|---|---|
@@ -105,6 +105,9 @@ import matplotlib、跑几行、退出"。**这套用例走默认 pytest**，所
 | 7 | `_own()` 不再断言 / 摘掉 `do_render` 的那一处 | `..._refuses_to_be_touched_from_another_thread` / `..._every_mutating_entry...` | **各红一条** |
 | 8 | engine 目录留在 `sys.path` 上 | `test_user_modules_win_over_the_engine_siblings` | **红** |
 | 9 | 装载失败时的还原从 `finally` 挪回顺序执行 | `test_a_failed_load_still_restores_the_user_namespace` | **红** |
+| 10 | 屏障复用分支去掉 `_sync_captures()` | `test_a_figure_created_after_the_first_barrier_reaches_the_session` | **红**（评审轮 1） |
+| 11 | `compile` 改回 `dont_inherit=False` | `test_bridge_future_flags_never_leak_into_the_user_script` | **红**（评审轮 1） |
+| 12 | module 源文件退回"跑完读 `__main__`" | `..._without_show_still_knows_its_own_file` + `..._dunder_main` | **红 ×2**（评审轮 1） |
 
 **反证 1 的诚实修正**：prompt 预期「去掉 show hook → show-only case 失败」。
 实测**不失败**——脚本结束时的 Gcf 兜底照样把图捕获到。show 钩子的独有价值
@@ -116,6 +119,28 @@ import matplotlib、跑几行、退出"。**这套用例走默认 pytest**，所
 **静默**失败的。判据换成不吞异常的 `FigState.resolve` 那条路径（先把刻度
 定位改 fixed + 给 15 个值，再改第 13 条刻度的文字，那条 gid 不在 index 里），
 另加一条结构性守卫盖住整族。
+
+## PR #186 评审轮 1（Codex，2026-08-28）
+
+**三条 P1 全部核实成立，逐条复现过再修，各带回归用例 + 手工反证一次红。**
+
+| # | 问题 | 复现 | 修法 |
+|---|---|---|---|
+| 1 | **屏障之后新产的图进不了会话**。钩子写的是模块级 `_CAPTURE`（它们是类属性级 monkeypatch，拿不到实例），而会话是第一个屏障那一刻才建的；复用分支只 `instrument_all()`，没把新条目搬进去 | `show()` → 继续 → 再画一张 → 再 `show()`：屏障 2 的 stems 仍只有第一张 | `_ensure_session` 复用分支先 `_sync_captures()`（幂等：`add_figure` 不覆盖、`instrument_all` 不重建） |
+| 2 | **runner 自己的 future flag 泄漏给用户脚本**。`compile(..., dont_inherit=False)` 会把调用处生效的 future 语句一并传下去，而 runner 有 `from __future__ import annotations` | `x: NoSuchType = 5` 直跑报 `NameError`，bridge 里**静默通过** | `dont_inherit=True`。脚本自己写的 future import 不受影响（在源码里） |
+| 3 | **module 目标跑完之后 `__main__` 已被 runpy 恢复成 runner**。只 savefig 不 show 的 `-m` 目标只有脚本结束那一次屏障，那时读到的 `__file__` 是 `bridge_runner.py` | `rel_target == "bridge_runner.py"`，asset id 变成 `runtime:bridge_runner.py#Fig1` | 开跑**之前**用 `resolve_module_origin()` 解析（`pkg` → `pkg.__main__` 与 runpy 同款），经 `on_origin` 回调记下；`__main__` 兜底显式排除 runner 自己 |
+
+**三条被漏掉的共同形状**（值得记）：我的用例只跑了**方便的那个时刻**。
+
+* 第 1 条：`test_repeated_show_captures_each_new_figure_once` 跑在 `--report`
+  形态（没有控制通道），屏障立刻返回、会话是脚本跑完才建的一次性对象
+  ——那时所有图早就都在表里了；
+* 第 3 条：`test_module_target_end_to_end` 的夹具调了 `plt.show()`，屏障发生
+  在 `run_module` **执行中间**，那时 `__main__` 还是用户的模块；
+* 第 2 条：根本没有一条用例问过"注解语义一样吗"。
+
+前两条都是**状态会被恢复/变陈旧的那个时刻没测**。新增用例一律钉在那个时刻上
+（真屏障、没有 show 的那一支），并各留了一句"上面那条为什么测不到这个"。
 
 ## 本轮踩到并留了注释的三个坑
 

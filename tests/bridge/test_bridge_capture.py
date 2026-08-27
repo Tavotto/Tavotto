@@ -201,6 +201,93 @@ def test_repeated_show_captures_each_new_figure_once(user_python, tmp_path):
     assert _stems(data) == ["fig", "fig-2"]
 
 
+def test_a_figure_created_after_the_first_barrier_reaches_the_session(
+    user_python, tmp_path, bridge_session
+):
+    """`show()` → 编辑 → 继续 → **再画一张** → 再 `show()`：第二张必须出现。
+
+    钩子写的是模块级捕获表（它们是类属性级 monkeypatch，拿不到会话实例），
+    而会话是在**第一个屏障**那一刻才建的。此后产的图只落进模块级表——不把
+    它们同步进会话，第二个屏障里 stems / build 响应 / 可编辑会话里都没有它，
+    而脚本明明画出来了。**用户会数图。**
+
+    上面那条 `test_repeated_show_captures_each_new_figure_once` 测不到这个：
+    它跑在 `--report` 形态（没有控制通道），屏障立刻返回，会话是脚本跑完
+    才建的一次性对象——那时所有图早就都在表里了。**判据必须走真屏障。**
+
+    反证：把 `BridgeRun._ensure_session` 里复用分支的 `_sync_captures()`
+    去掉，本条当场红（屏障 2 只有一张图）。
+    """
+    proj = tmp_path / "proj"
+    write(
+        proj / "fig.py",
+        HEAD + "plt.figure(); plt.plot([1,2],[1,2]); plt.title('first')\n"
+        "plt.show()\n"
+        "plt.figure(); plt.plot([1,2],[2,1]); plt.title('second')\n"
+        "plt.show()\n",
+    )
+    with bridge_session(proj / "fig.py", cwd=str(proj)) as sess:
+        first = sess.wait_event("barrier")
+        assert first["stems"] == ["fig"], "屏障 1 只该有第一张"
+        assert list(sess.ensure_built()["stems"]) == ["fig"]
+        sess.resume()
+
+        second = sess.wait_event("barrier")
+        assert second["stems"] == ["fig", "fig-2"], "屏障 2 少了脚本刚画的那张"
+        build = sess.ensure_built()
+        assert list(build["stems"]) == ["fig", "fig-2"]
+        # 新图要真的可编辑（不只是名字出现在清单里）
+        assert sess.override("fig-2", [])["warnings"] == []
+        assert (sess.out_dir / "fig-2.svg").is_file()
+        sess.resume()
+        sess.wait_event("barrier")
+        sess.resume()
+        sess.wait_event("exit")
+
+
+def test_editing_survives_the_next_barrier(user_python, tmp_path, bridge_session):
+    """同步新图**不许**把已经在编辑的那张重建掉。
+
+    `instrument_all()` 只给还没有 FigState 的图建状态——已经在编辑的那些
+    带着用户的 override，重建等于把编辑丢掉。这条与上一条是同一次修复的
+    两面：一面是"新的要进来"，一面是"旧的不许被撞掉"。
+    """
+    proj = tmp_path / "proj"
+    write(
+        proj / "fig.py",
+        HEAD + "plt.figure(); plt.plot([1,2],[1,2]); plt.title('T')\n"
+        "plt.show()\n"
+        "plt.figure(); plt.plot([1,2],[2,1])\n"
+        "plt.show()\n",
+    )
+    with bridge_session(proj / "fig.py", cwd=str(proj)) as sess:
+        sess.wait_event("barrier")
+        man = sess.ensure_built()
+        stem = next(iter(man["stems"]))
+        doc = json.loads((sess.out_dir / f"{stem}.json").read_text(encoding="utf-8"))
+        gid = next(
+            el["gid"]
+            for el in doc["elements"]
+            for f in el.get("editable", [])
+            if f["prop"] == "text" and f["value"] == "T"
+        )
+        patches = [{"gid": gid, "prop": "fontsize", "value": 21.0}]
+        assert sess.override(stem, patches)["warnings"] == []
+        sess.resume()
+
+        sess.wait_event("barrier")
+        again = sess.override(stem, patches)  # 全量列表语义：同一组 patch 应当仍然成立
+        el = next(e for e in again["manifest"]["elements"] if e["gid"] == gid)
+        size = next(f["value"] for f in el["editable"] if f["prop"] == "fontsize")
+        assert size == 21.0, "屏障之后这张图的编辑被冲掉了"
+        sess.resume()
+        # 两次 `show()` 之后还有**脚本结束**那一次屏障——不应答它就是两边
+        # 各等各的（我等 exit，它等 continue），一路挂到 BARRIER_TIMEOUT。
+        sess.wait_event("barrier")
+        sess.resume()
+        sess.wait_event("exit")
+
+
 def test_sys_exit_still_hands_over_the_figures(user_python, tmp_path):
     """脚本 `sys.exit(0)`——图已经画出来了，不该跟着蒸发。
 

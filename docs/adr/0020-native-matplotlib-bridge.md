@@ -203,6 +203,18 @@ safe worker 的平铺形态下前缀为空，行为一个字节没变。
   脚本里的 `os.path.dirname(sys.argv[0])` 指到别处。
 - **解释器不加任何标志**：没有 `-B`、没有 `-S`、没有 `-I`、没有 `-E`。
   那是用户环境的地盘。
+- **`compile(..., dont_inherit=True)`**：`compile()` 默认会把**调用处生效的**
+  `__future__` 语句一并传给被编译的代码，而 runner 自己有
+  `from __future__ import annotations`。不关掉的话用户脚本会在不知情的情况下
+  拿到 PEP 563 语义——`x: NoSuchType = 5` 直跑报 `NameError`，在 bridge 里
+  **静默通过**。这是最坏的那种不一致：朝着"更宽松"的方向、无声地发生。
+  脚本自己写的 future import 不受影响（它在源码里）。
+- **module 的源文件必须在开跑之前解析**（`resolve_module_origin()`，
+  `pkg` → `pkg.__main__` 与 runpy 同款）：`run_module(alter_sys=True)` 返回时
+  会把 runner 装回 `sys.modules["__main__"]`，跑完再读 `__file__` 拿到的是
+  `bridge_runner.py`，于是 asset id 变成 `runtime:bridge_runner.py#Fig1`
+  ——用户的 override 保存重开之后全成孤儿。只 savefig 不 show 的 `-m` 目标
+  走的正是这条。
 
 ### 环境继承
 
@@ -302,6 +314,14 @@ plt.show()  →  收 Gcf  →  屏障（主线程服务控制循环）  →  con
 
 **每个屏障都必须被应答。** 一次运行里屏障可能出现多次；只应答第一个然后去等
 `exit`，两边就各等各的（本机挂死过一次）。
+
+**每个屏障也都要先把新捕获同步进会话。** 钩子写的是模块级捕获表（它们是类
+属性级 monkeypatch，拿不到会话实例），而会话是**第一个屏障**那一刻才建的。
+此后脚本继续跑、继续产图，那些图只会落进模块级表——不同步的话第二个屏障里
+看不到第二张图（stems / build 响应 / 可编辑会话里都没有），而脚本明明画出来
+了。同步必须是幂等的：`add_figure` 对已有 stem 不覆盖，`instrument_all()`
+只给还没有 FigState 的图建状态——已经在编辑的那些带着用户的 override，
+重建等于把编辑丢掉。
 
 父进程走掉时屏障**放开**——native 里那个进程是用户的，控制通道断了只说明
 "没人在编辑了"，脚本该接着跑完。

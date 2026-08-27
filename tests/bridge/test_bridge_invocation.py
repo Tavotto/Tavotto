@@ -167,6 +167,62 @@ def test_bridge_adds_no_interpreter_flags(parity):
     assert via["dont_write_bytecode"] is False
 
 
+def test_bridge_future_flags_never_leak_into_the_user_script(tmp_path, user_python):
+    """runner 自己的 `from __future__ import annotations` **不许**传给用户脚本。
+
+    `compile()` 默认（`dont_inherit=False`）会把**调用处生效的** future 语句
+    一并传给被编译的代码。runner 自己有 `from __future__ import annotations`，
+    于是用户脚本会在不知情的情况下拿到 PEP 563 语义：
+
+        x: NoSuchType = 5       # 直跑 python：NameError
+                                # dont_inherit=False：静默通过
+
+    这是 native 最不能出的那类错——行为差异**朝着"更宽松"的方向静默发生**，
+    脚本在 Tavotto 里"跑通了"，用户自己跑却报错。
+
+    判据是 A/B：同一个解释器、同一份夹具，直跑与 bridge 必须给同一个结果。
+
+    反证：把 `run_script` 里的 `dont_inherit=True` 改回 `False`，本条当场红。
+    """
+    proj = tmp_path / "proj"
+    write(proj / "ann.py", "x: NoSuchType = 5\nprint('NO ERROR')\n")
+    env = child_env()
+    direct = subprocess.run(
+        [user_python, "ann.py"],
+        cwd=proj,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=120,
+    )
+    via = run_runner(user_python, bridge.RUNNER_PY, target="ann.py", cwd=str(proj), env=env)
+    assert direct.returncode != 0 and "NameError" in direct.stderr, (
+        f"用例前提：直跑必须报 NameError，得到 {direct.stderr!r}"
+    )
+    assert via.returncode == direct.returncode, "bridge 的退出码与直跑不一致"
+    assert "NameError" in via.stderr, f"bridge 里注解被惰性化了: {via.stdout!r} / {via.stderr!r}"
+    assert "NO ERROR" not in via.stdout
+
+
+def test_the_scripts_own_future_import_still_works(tmp_path, user_python):
+    """脚本**自己**写的 `from __future__ import annotations` 照常生效。
+
+    `dont_inherit=True` 关掉的是"从我们这儿继承"，不是"脚本自己声明"——
+    后者在源码里，编译器照读不误。少了这条，上一条的修法可能是把功能改坏了
+    而不是改对了。
+    """
+    proj = tmp_path / "proj"
+    write(
+        proj / "ann2.py",
+        "from __future__ import annotations\nx: NoSuchType = 5\nprint('LAZY OK')\n",
+    )
+    r = run_runner(user_python, bridge.RUNNER_PY, target="ann2.py", cwd=str(proj), env=child_env())
+    assert r.returncode == 0, r.stderr
+    assert "LAZY OK" in r.stdout
+
+
 def test_environment_is_inherited_verbatim(parity):
     """env **原样继承**：不重建 conda / poetry / uv，不清洗 PATH。
 

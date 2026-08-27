@@ -203,6 +203,81 @@ def test_module_target_end_to_end(user_python, tmp_path, bridge_session):
         sess.wait_event("exit")
 
 
+def test_a_module_target_without_show_still_knows_its_own_file(user_python, tmp_path):
+    """只 `savefig` 不 `show` 的 `-m` 目标，描述符里的 `script` 必须还是它自己。
+
+    `runpy.run_module(alter_sys=True)` 跑完会把 **runner 自己**装回
+    `sys.modules["__main__"]`。这类脚本只有"脚本结束"那一次屏障，那时早已
+    恢复过了——跑完再去读 `__main__.__file__` 拿到的是 `bridge_runner.py`，
+    于是 asset id 变成 `runtime:bridge_runner.py#Fig1`，用户的 override 保存
+    重开之后全成孤儿。
+
+    上面那条 `test_module_target_end_to_end` 测不到：它的夹具调了
+    `plt.show()`，屏障发生在 run_module **执行中间**，那时 `__main__` 还是
+    用户的模块。**判据必须是没有 show 的那一支。**
+
+    反证：把 `run_module` 的 `on_origin` 回调去掉（退回跑完读 `__main__`），
+    本条当场红（`rel_target` 变成 `bridge_runner.py`）。
+    """
+    from support.bridgekit import run_runner
+
+    proj = tmp_path / "proj"
+    write(proj / "paper" / "__init__.py", "")
+    write(
+        proj / "paper" / "figure.py",
+        "import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\n"
+        "fig, ax = plt.subplots()\nax.plot([1,2,3],[1,4,9])\nfig.savefig('Fig1.pdf')\n",
+    )
+    report = tmp_path / "report.json"
+    r = run_runner(
+        user_python,
+        bridge.RUNNER_PY,
+        target="paper.figure",
+        target_kind="module",
+        cwd=str(proj),
+        report=report,
+        out_dir=tmp_path / "out",
+    )
+    assert r.returncode == 0, r.stderr
+    data = json.loads(report.read_text(encoding="utf-8"))
+    assert data["stems"] == ["Fig1"], "用例前提：确实捕获到了那张图"
+    assert data["rel_target"] == "paper/figure.py", (
+        f"描述符指向了错误的脚本: {data['rel_target']!r}"
+    )
+    assert "bridge_runner" not in data["rel_target"]
+
+
+def test_a_package_main_target_resolves_to_its_dunder_main(user_python, tmp_path):
+    """`python -m pkg` 跑的是 `pkg/__main__.py`——解析口径与 runpy 同款。
+
+    包目标是 `resolve_module_origin` 里唯一需要多走一步的形态；不处理的话
+    `find_spec("pkg")` 给的是 `pkg/__init__.py`，描述符会指错文件。
+    """
+    from support.bridgekit import run_runner
+
+    proj = tmp_path / "proj"
+    write(proj / "pkg" / "__init__.py", "")
+    write(
+        proj / "pkg" / "__main__.py",
+        "import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\n"
+        "fig, ax = plt.subplots()\nax.plot([1,2],[3,4])\nfig.savefig('P.pdf')\n",
+    )
+    report = tmp_path / "report.json"
+    r = run_runner(
+        user_python,
+        bridge.RUNNER_PY,
+        target="pkg",
+        target_kind="module",
+        cwd=str(proj),
+        report=report,
+        out_dir=tmp_path / "out",
+    )
+    assert r.returncode == 0, r.stderr
+    data = json.loads(report.read_text(encoding="utf-8"))
+    assert data["stems"] == ["P"]
+    assert data["rel_target"] == "pkg/__main__.py", data["rel_target"]
+
+
 @pytest.mark.slow
 def test_end_to_end_in_a_freshly_created_venv(tmp_path, bridge_session, monkeypatch):
     """真造一个**只有 matplotlib** 的 venv，整条链照样走得通。
