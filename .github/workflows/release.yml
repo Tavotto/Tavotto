@@ -827,10 +827,39 @@ jobs:
             if ($fresh) { break }
           }
           if (-not $fresh) { throw "更新装完后没有新 Tavotto 进程出现（/R 重启失败？）" }
-          $pv = $fresh.MainModule.FileVersionInfo.ProductVersion
-          Write-Host "✓ 新进程 pid $($fresh.Id)，ProductVersion=$pv"
-          if (-not $pv.StartsWith($env:NEW_VERSION)) {
-            throw "重启后跑的不是新版本：ProductVersion=$pv，期望 $env:NEW_VERSION"
+
+          # 判据三：装上去的确实是新版本。
+          # 版本资源从**磁盘上的 exe** 读，不从进程句柄读。旧写法是
+          # `$fresh.MainModule.FileVersionInfo.ProductVersion`：新进程离
+          # DisplayVersion 确认只有一秒，MainModule 此刻可能还没填好，读回空
+          # 串，随后 `$pv.StartsWith()` 在 null 上抛 InvalidOperation——一条
+          # 本该输出「重启后跑的不是新版本：ProductVersion=…」的断言变成裸脚本
+          # 错误，而更新链本身是成功的（v0.12.0 发布 run 33027201414）。
+          # 磁盘路径没有这个时序：DisplayVersion 已经变成新版本，就是安装器
+          # 把 exe 替换完的证据。仍然带 15s 轮询兜底文件刚落盘的窗口。
+          $vi = $null
+          foreach ($i in 1..15) {
+            $vi = (Get-Item $shell -ErrorAction SilentlyContinue).VersionInfo
+            if ($vi -and -not [string]::IsNullOrWhiteSpace($vi.ProductVersion)) { break }
+            Start-Sleep 1
+          }
+          $exePv = if ($vi) { "$($vi.ProductVersion)".Trim() } else { "" }
+          # 进程句柄那份只当诊断：读不到不构成失败，但读到什么必须留在日志里
+          # ——「ProductVersion 为何为空」要靠它定性（#147 关闭条件 3）。
+          $procPv = "<未读取>"
+          try { $procPv = "$($fresh.MainModule.FileVersionInfo.ProductVersion)" }
+          catch { $procPv = "<读取失败：$($_.Exception.GetType().Name)>" }
+          Write-Host "✓ 新进程 pid $($fresh.Id)"
+          Write-Host "  磁盘 exe：$shell"
+          Write-Host "    ProductVersion='$exePv'  FileVersion='$(if ($vi) { $vi.FileVersion })'"
+          Write-Host "  进程句柄 MainModule → ProductVersion='$procPv'"
+          if ([string]::IsNullOrWhiteSpace($exePv)) {
+            throw ("读不到新版本号：$shell 的版本资源里 ProductVersion 为空（已轮询 15s）。" +
+                   "新进程 pid $($fresh.Id)，句柄读值='$procPv'——更新链可能是成功的，" +
+                   "先看上面三行再判。")
+          }
+          if (-not $exePv.StartsWith($env:NEW_VERSION)) {
+            throw "装上去的不是新版本：ProductVersion=$exePv，期望 $env:NEW_VERSION"
           }
           # 收掉窗口进程，下一步对 sidecar 冒烟
           Get-Process Tavotto -ErrorAction SilentlyContinue |
