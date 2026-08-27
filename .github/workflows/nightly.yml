@@ -557,21 +557,24 @@ jobs:
           # **不**另写一份（stem 已登记 → status=already，见 handoff.ensure_registered）。
           # 旧断言「必须生成 tavotto_registry.json」在 fixture 还叫 mm_registry.json
           # 的那几晚永远红：读取端回退认旧名、无需写盘，新名文件自然不出现。
-          # 判据是**「有没有写盘」**，不是某一个具体的词。四态里 `already` 与
-          # `unchanged` 都表示没写，`created` 与 `merged` 都表示写了：
+          # 这条路径上**只有 `unchanged` 是对的**，四态里其余三个都要拒绝：
           #   created  没认出这个图库，又按新名写了第二份
           #   merged   fixture 漂移了，扫出了新脚本 / 新 stem
-          # 三态本地实测可复现且互斥（删掉注册表→created；加一个未登记脚本→
-          # merged；原样→unchanged），所以接受两个值**不是**退回「只判非空」：
-          # 四选二仍然拒绝作者点名的两种事故。
+          #   already  **扫描被短路了**——见下
           #
-          # 曾经写死 `-ne "already"`，连红。`already` 由 ensure_registered 第一个
-          # 提前返回产生，前提是 `stem is not None`；而这里跑的是**脚本目标**，
-          # open_target 对脚本目标刻意传 `stem=None`（先做一遍全量静态发现，
-          # 探测路由要读注册表现状）。扫描真跑了，按 docstring 的定义就该是
+          # 曾经写死 `-ne "already"`，连红一周：`already` 由 ensure_registered
+          # 第一个提前返回产生，前提是 `stem is not None`；而这里跑的是脚本
+          # 目标，open_target 对脚本目标刻意传 `stem=None`（先做一遍全量静态
+          # 发现，探测路由要读注册表现状）。扫描真跑了，按 docstring 就该是
           # `unchanged`——`already` 在这条路径上结构性不可达。
-          if ($j.registry_status -notin @("already", "unchanged")) {
-            throw "注册表被改写了（status=$($j.registry_status)，期望 already/unchanged）: $out"
+          #
+          # **不要因为「already 也表示没写盘」就把它一起接受。** 那个提前返回
+          # 是在 engine_discover.merge() **之前**短路的：拿到 already 就意味着
+          # 全量扫描根本没跑，于是 fixture 漂移（merged）从此测不出来，而这盏
+          # 灯照样绿。实测：给漂移过的图库传 stem=None 报 merged，传已登记的
+          # stem 报 already。接受 already = 把漂移检测悄悄让掉。
+          if ($j.registry_status -ne "unchanged") {
+            throw "注册表状态应为 unchanged，实际 $($j.registry_status): $out"
           }
           # 项目层必须正好是这个图库。少了这条，上面那条 Test-Path 光靠
           # Copy-Item 就能满足——交接一个字节都没干也照样绿。
