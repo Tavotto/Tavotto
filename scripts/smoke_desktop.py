@@ -28,8 +28,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 # Windows 上 stdout 被重定向成管道时会退回系统区域编码（cp1252/cp936），

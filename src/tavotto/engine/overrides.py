@@ -21,7 +21,6 @@ from matplotlib.axes import Axes
 from matplotlib.axes._base import _AxesBase
 from matplotlib.collections import (Collection, LineCollection, PathCollection,
                                     QuadMesh, TriMesh)
-from matplotlib.container import BarContainer, ErrorbarContainer
 from matplotlib.figure import Figure
 from matplotlib.legend import Legend
 from matplotlib.lines import Line2D

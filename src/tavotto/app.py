@@ -15,7 +15,6 @@ import argparse
 import hashlib
 import json
 import logging
-import math
 import os
 import re
 import threading
@@ -36,7 +35,6 @@ from flask import (Flask, Response, abort, has_request_context, jsonify,
 from werkzeug.exceptions import HTTPException
 
 from . import pdfbackend
-from .pdfbackend import hex2rgb, mm2pt
 from .engine import ai_bridge as engine_ai
 from .engine import bootstrap as engine_bootstrap
 from .engine import ai_history as engine_ai_history

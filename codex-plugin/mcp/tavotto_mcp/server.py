@@ -234,7 +234,7 @@ def _tools() -> list[dict]:
 
 # ------------------------------- 工具实现 -----------------------------------
 def _text(*lines: str) -> list[dict]:
-    return [{"type": "text", "text": "\n".join(l for l in lines if l)}]
+    return [{"type": "text", "text": "\n".join(ln for ln in lines if ln)}]
 
 
 def _brief_manifest(manifest: dict | None) -> str:

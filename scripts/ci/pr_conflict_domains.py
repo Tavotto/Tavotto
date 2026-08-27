@@ -23,11 +23,9 @@ Bearer 认证（GitHub Actions 注入），本地跑也可以用 `gh auth token`
 from __future__ import annotations
 
 import argparse
-import fnmatch
 import json
 import os
 import re
-import sys
 import urllib.error
 import urllib.request
 from pathlib import Path

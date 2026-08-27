@@ -12,9 +12,8 @@ from __future__ import annotations
 import math
 import sys
 
-from matplotlib.artist import Artist
 from matplotlib.axes import Axes
-from matplotlib.collections import (Collection, LineCollection, PathCollection,
+from matplotlib.collections import (Collection, PathCollection,
                                     PolyCollection)
 from matplotlib.axis import Axis
 from matplotlib.container import (BarContainer, ErrorbarContainer,
@@ -23,11 +22,11 @@ from matplotlib.patches import FancyArrowPatch, Patch
 from matplotlib.text import Text
 
 import pathgeom
-from overrides import (BBOX_DEFAULTS, ColorbarProxy, FigState, HANDLERS, HATCHES, SeriesGroup,
+from overrides import (BBOX_DEFAULTS, ColorbarProxy, FigState, HATCHES, SeriesGroup,
                        TickLabel, TickSet, _ARROWSTYLES, _CB_EXTENDS, _LEGEND_LOCS,
                        _TICK_FORMATS, _TICK_MINOR_FORMATS,
-                       collection_caps, color_mapping_is_live, colorbar_host_count,
-                       is_color_mapped, is_linecoll_family,
+                       collection_caps, colorbar_host_count,
+                       is_linecoll_family,
                        _arrow_style, _arrowstyle_name, _axis_arrows_on,
                        _linestyle_name, _linecoll_linestyle_name,
                        _boxstyle_info, _cb_axis, _cb_tick_color,

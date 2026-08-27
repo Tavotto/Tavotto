@@ -631,7 +631,7 @@ def test_the_dry_run_still_exercises_signing_and_the_updater_manifest():
     assert "publish" not in desktop.split("secrets:")[0].replace(
         "release_build", ""), "桌面链又跟着 publish 走了"
 
-    desk = _wf(DESKTOP)
+    _wf(DESKTOP)          # 构造即自检形状：切不出预期的 job/step 就抛
     head = _strip_comments(DESKTOP.read_text(encoding="utf-8")).split("\njobs:")[0]
     assert "release_build:" in head
     assert "inputs.publish" not in _strip_comments(

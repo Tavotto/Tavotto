@@ -17,7 +17,6 @@
 真执行的用例与 test_script_probe 同一条纪律：本进程不 import matplotlib。
 """
 import json
-import os
 from pathlib import Path
 
 import pytest
@@ -25,7 +24,6 @@ import pytest
 from tavotto.engine import handoff
 from tavotto.engine import discover as engine_discover
 from tavotto.engine import pool as engine_pool
-from tavotto.engine import registry as engine_registry
 
 try:
     WORKER_PY = engine_pool.find_worker_python()

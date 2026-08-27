@@ -38,10 +38,26 @@ to get back to development mode.
 ## Verifying a change
 
 ```sh
+ruff check .                      # Python lint (milliseconds — run this first)
 .venv/bin/python -m pytest        # backend
 cd web && pnpm test               # frontend (vitest)
 cd web && pnpm build              # type-check + bundle
 ```
+
+**Run `ruff check .` before pytest.** It comes back in about 20 ms for the whole
+repository and catches the things that are cheap to find and expensive to wait
+for — a misspelled name, an import left behind after a refactor, a local variable
+nobody reads. `ruff check . --fix` applies the safe fixes; `--unsafe-fixes` can
+change behaviour, so read those one at a time rather than applying them in bulk.
+Ruff comes with `pip install -e ".[dev]"`.
+
+The rule set lives in `[tool.ruff]` in `pyproject.toml` — deliberately a small,
+high-signal one (`E4`, `E7`, `E9`, `F`) that is meant to stay green rather than
+accumulate suppressions. Don't pass `--select` or `--ignore` on the command line:
+that would make your run differ from CI's. The formatter (`ruff format`) and
+import sorting are **not** enabled yet — see [docs/ci/ruff.md](docs/ci/ruff.md)
+for why and what's queued next. CI runs the same `ruff check .` as the
+`Python lint (Ruff)` job, which feeds the `CI fast gate`.
 
 **Use `pnpm build`, not `tsc --noEmit`, for type checking.** The root `tsconfig.json`
 is a solution file (`files: []` + project references); `--noEmit` doesn't follow

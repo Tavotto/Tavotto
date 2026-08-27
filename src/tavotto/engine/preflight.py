@@ -506,15 +506,15 @@ def _check_panel_axes(panel: dict, profile: dict, sink: _Sink) -> None:
                      message=("barWithoutErrorbar", {}),
                      object_ids=[pid], gids=[ax])
         lines = lines_by_axes.get(ax) or []
-        if any(_FIT_WORDS.search(str(_field(l, "label") or "")) for l in lines) \
+        if any(_FIT_WORDS.search(str(_field(ln, "label") or "")) for ln in lines) \
                 and "fill" not in roles:
             sink.add("fit-without-ci",
                      "有拟合曲线但没有置信区间填充带——投稿时通常要求给出拟合的不确定度",
                      message=("fitWithoutCi", {}),
                      object_ids=[pid], gids=[ax])
         if len(lines) >= 2 and all(
-                str(_field(l, "marker") or "None") in ("None", "none", "")
-                for l in lines):
+                str(_field(ln, "marker") or "None") in ("None", "none", "")
+                for ln in lines):
             sink.add("palette-line-markers",
                      f"{len(lines)} 条曲线全部没有 marker，黑白打印或色觉障碍读者难以区分，"
                      "可考虑点线图或不同线型",

@@ -424,7 +424,8 @@ class TestUpgradeRenameBoundary:
 
         # 更要紧的是**结果列**：扫读的人先看那一列，一个 ✅ PASS 会让他
         # 以为这项验过了，而实际上一次都没跑。
-        import io, contextlib
+        import io
+        import contextlib
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             SM.main(["--mode", "release"])
@@ -947,7 +948,8 @@ def test_summary_refuses_reports_from_another_run(tmp_path, monkeypatch):
     汇总因为另一个 bug 直接崩了（#61），反而没来得及说这个谎——修好解释器
     却不修这一条，等于把「崩掉」换成「说谎」。
     """
-    import importlib.util, json as _json
+    import importlib.util
+    import json as _json
     (tmp_path / "reports").mkdir()
     (tmp_path / "reports" / "soak.json").write_text(_json.dumps(
         {"ok": True, "metadata": {"run_id": "1111"}}), encoding="utf-8")
@@ -961,7 +963,8 @@ def test_summary_refuses_reports_from_another_run(tmp_path, monkeypatch):
     _sys.path.insert(0, str(CI_DIR))
     spec.loader.exec_module(mod)
 
-    import io as _io, contextlib
+    import io as _io
+    import contextlib
     buf = _io.StringIO()
     with contextlib.redirect_stdout(buf):
         mod.main(["--mode", "release"])
@@ -984,7 +987,11 @@ def test_summary_keeps_this_runs_report_even_across_a_rerun(tmp_path, monkeypatc
       CompatBench 报告会被一律拒收（误报未运行）。**我修「说谎」的时候造出了
       「误报」**，两头都是诊断失真。
     """
-    import importlib.util, json as _json, io as _io, contextlib, sys as _sys
+    import importlib.util
+    import json as _json
+    import io as _io
+    import contextlib
+    import sys as _sys
     (tmp_path / "reports").mkdir()
     # 本轮 attempt=2；报告来自 attempt=1（同一个 run_id）
     (tmp_path / "reports" / "soak.json").write_text(_json.dumps(
@@ -1023,7 +1030,8 @@ def test_every_report_writer_stamps_its_identity():
     # （compat_matrix 自己 json.dump，不走那个助手）、按「源码里出现哪个报告名」
     # 扫（compat.json 这个名字压根不在它源码里，是 workflow 用 `--json` 传进去的）。
     # 正确的问法是：**workflow 里哪个脚本产出 SECTIONS 里的那份报告。**
-    import ast, re
+    import ast
+    import re
     spec_src = (CI_DIR / "summarize.py").read_text(encoding="utf-8")
     wanted = set(re.findall(r'"(\w+\.json)"', spec_src.split("SECTIONS", 1)[1][:800]))
     assert len(wanted) >= 4, f"只解析出 {wanted}——SECTIONS 的形状变了，判据失效"

@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from tavotto.engine import cli as engine_cli
-from tavotto.engine import config, migrate
+from tavotto.engine import migrate
 
 
 @pytest.fixture

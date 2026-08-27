@@ -22,7 +22,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _common import reports_dir, run_metadata, state_root, summary  # noqa: E402
+from _common import reports_dir, run_metadata, summary  # noqa: E402
 
 # (报告文件, 显示名, 归到哪一类)
 SECTIONS = [

@@ -181,7 +181,7 @@ class TestGates:
         assert _needs_of(block) == _required_of(block)
 
     def test_fast_gate_covers_the_fast_layer(self):
-        assert {"invariants", "frontend", "workerd",
+        assert {"python-lint", "invariants", "frontend", "workerd",
                 "compat-smoke"} <= _needs_of(_job(CI, "ci-fast-gate"))
         assert _needs_of(_job(CI, "ci-fast-gate")) \
             & {"backend", "backend-fast"}, "fast gate 必须聚合 backend 快线"
@@ -253,8 +253,8 @@ class TestGates:
     def test_fast_jobs_cover_pr_and_merge_group_but_not_push(self):
         """快线在 PR 与 merge_group 上都要跑（PR 先绿才能进队列，组合提交
         还要再验一遍）；push main 只留 landing audit。"""
-        for job_id in ("invariants", "backend-fast", "frontend", "workerd",
-                       "compat-smoke"):
+        for job_id in ("python-lint", "invariants", "backend-fast", "frontend",
+                       "workerd", "compat-smoke"):
             block = _code(_job(CI, job_id))
             m = re.search(r"(?m)^\s+if: (.+)$", block)
             assert m, f"{job_id} 没有事件条件"
@@ -280,6 +280,82 @@ class TestGates:
     def test_integration_gate_includes_backend_platforms(self):
         assert "backend-platforms" in _needs_of(_job(CI, "ci-integration-gate"))
 
+    def test_python_lint_failure_cannot_be_invisible_to_the_gate(self):
+        """Ruff 红了 fast gate 必须跟着红。
+
+        这条与上面两条合起来才是完整的：`needs` 里有它（gate 看得见）、
+        `--required` 里有它（闭集校验数得到它）、事件条件与快线一致
+        （PR 与 merge_group 都真的跑）。缺任何一环，python-lint 就是一格
+        「看起来在检查、实际挡不住任何东西」的空门禁。
+        """
+        block = _job(CI, "ci-fast-gate")
+        assert "python-lint" in _needs_of(block)
+        assert "python-lint" in _required_of(block)
+
+
+class TestPythonLint:
+    """Ruff 那一格的形状。它的价值全在「便宜且真的跑」，两头都要钉住。"""
+
+    def test_the_job_exists_with_a_name_that_says_what_broke(self):
+        block = _job(CI, "python-lint")
+        assert "name: Python lint (Ruff)" in block, \
+            "红灯上得看得出是 lint 挂了，而不是一个叫 checks2 的东西"
+
+    def test_ruff_version_is_read_from_pyproject_not_hardcoded(self):
+        """本地与 CI 的 ruff 版本一旦漂开，「本地绿、CI 红」变成常态，
+        而那是让人不再信任 lint 门禁最快的方式。所以 workflow 里**不许**
+        出现版本字面量——它必须从 pyproject 的 dev extra 里读。"""
+        block = _code(_job(CI, "python-lint"))
+        assert "optional-dependencies" in block and "tomllib" in block, \
+            "python-lint 不再从 pyproject 取 ruff 版本"
+        assert not re.search(r"(?m)pip install\s+[\"']?ruff[=><~]", block), \
+            "workflow 里抄了一份 ruff 版本字面量——它会和 pyproject 漂开"
+
+    def test_pyproject_declares_exactly_one_ruff_constraint(self):
+        """workflow 里那段提取逻辑要求 dev extra 里恰好一条 ruff 约束；
+        这里在本地就把那个前提钉住，而不是等 CI 上 SystemExit。
+
+        **不用 tomllib 解析**：它是 3.11+ 才进标准库的，而本仓库承诺的下界是
+        3.10（backend-fast 有一条 Linux 3.10 腿，这条用例第一次跑就死在那）。
+        与本模块开头「不用 PyYAML」同一条纪律：解析器不在场时，判据要么整个
+        红、要么被 importorskip 静默跳过——后者正是空门禁。
+        workflow 里那段可以用 tomllib，因为 python-lint 明确钉了 3.13。
+        """
+        text = (WF.parents[1] / "pyproject.toml").read_text(encoding="utf-8")
+
+        m = re.search(r"(?m)^dev = \[(.+?)\]", text, re.S)
+        assert m, "pyproject 里读不出 dev extra 的形状——解析不出预期形状就当场抛"
+        got = re.findall(r'"(ruff[^"]*)"', m.group(1))
+        assert len(got) == 1, f"dev extra 里的 ruff 约束应当恰好一条：{got}"
+
+        m = re.search(r"(?m)^dependencies = \[(.*?)\]", text, re.S)
+        assert m, "pyproject 里读不出运行时 dependencies 的形状"
+        assert "ruff" not in m.group(1), \
+            "ruff 混进了运行时依赖——普通用户不该因为装 Tavotto 拿到 lint 工具"
+
+    def test_the_job_stays_cheap(self):
+        """这一格存在的理由就是**十几秒回来**。一旦有人往里加科学栈、
+        前端构建或 `pip install -e .`，它就退化成又一个慢检查，
+        「先跑 Ruff 再跑 pytest」的习惯也就没人守了。"""
+        block = _code(_job(CI, "python-lint"))
+        for heavy in ("matplotlib", "numpy", "pnpm", "cargo", "pytest",
+                      "pip install -e", "runtime_pins"):
+            assert heavy not in block, f"python-lint 里混进了重活：{heavy}"
+
+    def test_rule_selection_lives_in_pyproject_only(self):
+        """命令行上再写一份 --select/--ignore，本地跑的就不是 CI 跑的那一套。"""
+        block = _code(_job(CI, "python-lint"))
+        assert re.search(r"(?m)^\s+run: ruff check .*\.$", block), \
+            "读不出 ruff check 那一步"
+        for flag in ("--select", "--ignore", "--extend-select", "--fix"):
+            assert flag not in block, f"python-lint 在命令行上覆盖了规则集：{flag}"
+
+    def test_ci_never_rewrites_the_tree(self):
+        """CI 只检查不修改：`--fix` 在门禁里意味着「它替你把红的改绿了」。"""
+        assert "--fix" not in _code(_job(CI, "python-lint"))
+
+
+class TestLandingAudit:
     def test_main_push_runs_only_the_landing_audit(self):
         """push main 的落地审计存在、只在 push 上跑、且真的轻——不装科学栈、
         不打包、不跑冒烟。"""

@@ -2,7 +2,6 @@
 
 全部用 get_drawings()/get_text() 验证真矢量——不允许位图化。
 """
-import math
 
 import pymupdf
 import pytest
@@ -190,7 +189,7 @@ def test_text_line_height(client, tmp_path):
     for lh in (1.25, 2.0):
         doc = _export(client, tmp_path, [_text(text="A\nB", line_height=lh)])
         spans = [s for b in doc[0].get_text("dict")["blocks"]
-                 for l in b.get("lines", []) for s in l.get("spans", [])]
+                 for ln in b.get("lines", []) for s in ln.get("spans", [])]
         ys = sorted(s["origin"][1] for s in spans)
         docs[lh] = ys[1] - ys[0]
     assert abs(docs[2.0] - 24) < 0.5  # 12pt × 2.0

@@ -492,7 +492,6 @@ def source_of(python: str) -> str:
     否则按位置归类。之所以要能脱离缓存单独判断：环境状态 API 允许上层先拿到
     路径再问来源，而探测一次最多 30s，不能为了贴个标签再跑一遍。
     """
-    import os
     import sys
     if _worker_python and same_python(python, _worker_python) and _worker_source:
         return _worker_source

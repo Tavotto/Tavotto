@@ -17,7 +17,6 @@
 """
 import os
 import sys
-from pathlib import Path
 
 
 def _redirect_streams() -> None:

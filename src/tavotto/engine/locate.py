@@ -306,7 +306,6 @@ def describe_self(*, executable: str | None = None, frozen: bool | None = None,
     模式下 CLI 是解释器同级的 console script，桌面壳（如果另外装了）按惯例位置找。
     """
     system = _sys(system)
-    env = _env(environ)
     frozen = getattr(sys, "frozen", False) if frozen is None else frozen
     executable = sys.executable if executable is None else executable
     prefix = sys.prefix if prefix is None else prefix

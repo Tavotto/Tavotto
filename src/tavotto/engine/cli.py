@@ -100,7 +100,7 @@ def _doctor_migrate(args) -> int:
             print("* 没找到可迁移的 Magplot 数据"
                   f"（找过 {plan['legacy_config_dir']} 与 {plan['legacy_data_dir']}）")
         elif args.dry_run:
-            print(f"* 迁移计划（dry-run，一个字节没写）：")
+            print("* 迁移计划（dry-run，一个字节没写）：")
             print(f"  将复制 {len(plan['copies'])} 个文件 → {plan['target_data_dir']}")
             if plan["config_merge"]:
                 print(f"  将合并配置 {plan['config_merge']}（只补缺，不覆盖）")
