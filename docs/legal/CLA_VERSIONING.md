@@ -21,7 +21,7 @@ a word of `CLA_INDIVIDUAL.md` without updating the policy turns CI red.
 
 | Field | Where it lives | Example |
 |---|---|---|
-| Version | `CLA_VERSION:` line in the document, mirrored in `.github/cla-policy.json` | `1.0-draft` |
+| Version | `CLA_VERSION:` line in the document, mirrored in `.github/cla-policy.json` | `1.0` |
 | Hash | `.github/cla-policy.json` only — never inside the document, which would be circular | `sha256:…` |
 
 The hash is SHA-256 over the raw bytes of the file:
