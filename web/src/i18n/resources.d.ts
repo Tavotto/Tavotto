@@ -1215,6 +1215,7 @@ export default interface Resources {
       "repairTitle": "这个项目还缺少 {{module}}",
       "repairUnresolved": "Tavotto 无法确定「{{module}}」对应哪个安装包，所以不会替你安装。你可以自己指定安装包，或者换一个已经装好它的 Python 环境。",
       "repairUseManaged": "安装到 Tavotto 环境",
+      "repairUseOtherPython": "或者换一个已经装好它的 Python 环境（只对这个项目生效）",
       "repairUseProjectEnv": "安装到项目环境",
       "repairVerifying": "正在验证…",
       "repairWillInstall": "将安装：{{requirement}}",

@@ -157,7 +157,45 @@ export function DependencyRepairCard({
         </div>
       )}
 
+      {/* **任何一条修复路径走不通时的兜底出口**（ADR 0019 §五 与兼容层
+          Layer 4）：换一个已经装好那个包的 Python。它必须**始终在**——
+          解析不出包名、没有可用目标、装完还是失败，用户都还有这条路。
+          少了它，文案里那句「或者换一个已经装好它的 Python 环境」就指不出
+          任何控件（e2e 抓到过一次：卡片只剩「指定安装包」）。 */}
+      <OtherPython />
+
       <Failure code={errorCode} text={errorText} />
+    </div>
+  )
+}
+
+/**
+ * 「选择其他 Python」——写项目作用域那一条（ADR 0018 的 `scope="project"`），
+ * 不写全局：用户是在修**这个项目**的这个脚本，没理由改变别的项目的渲染环境。
+ */
+function OtherPython() {
+  useTranslation('errors')
+  const { setProjectPython } = useEnvStore()
+  const [path, setPath] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  return (
+    <div className="flex flex-col gap-1.5 border-t border-border pt-2.5">
+      <span className="text-xs text-ink-2">{en('repairUseOtherPython')}</span>
+      <div className="flex items-center gap-1.5">
+        <TextInput
+          value={path}
+          onChange={(e) => setPath(e.target.value)}
+          placeholder={en('pathPlaceholder')}
+          aria-label={en('pathAria')}
+        />
+        <Button
+          disabled={!path.trim()}
+          onClick={async () => setError(await setProjectPython(path.trim()))}
+        >
+          {en('apply')}
+        </Button>
+      </div>
+      {error && <p className="text-xs text-danger">{error}</p>}
     </div>
   )
 }

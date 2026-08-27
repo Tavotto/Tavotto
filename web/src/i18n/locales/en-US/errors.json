@@ -170,6 +170,7 @@
     "repairTitle": "This project is missing {{module}}",
     "repairUnresolved": "Tavotto cannot tell which package provides “{{module}}”, so it will not install anything. Name the package yourself, or switch to a Python environment that already has it.",
     "repairUseManaged": "Install into Tavotto environment",
+    "repairUseOtherPython": "Or point this project at a Python environment that already has it",
     "repairUseProjectEnv": "Install into project environment",
     "repairVerifying": "Verifying…",
     "repairWillInstall": "Will install: {{requirement}}",

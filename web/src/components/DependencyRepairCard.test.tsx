@@ -277,6 +277,26 @@ describe('无障碍与窄栏', () => {
     expect(input.getAttribute('aria-label')).toBe(en('repairPackageAria'))
   })
 
+  it('任何场景都留着「换一个 Python」的出口 —— 那是最后一条路', async () => {
+    // 一度漏掉过：解析不出包名时卡片只剩「指定安装包」，而文案还写着
+    // 「或者换一个已经装好它的 Python 环境」——指不出任何控件。
+    // e2e（真浏览器）抓到的，这条把它钉在单测层。
+    for (const offer of [
+      OFFER,                                                     // 有可信包名
+      { ...OFFER, requirement: null, targets: [], code: 'dependency_unresolved' },
+      { ...OFFER, rounds_remaining: 0, targets: [],
+        code: 'dependency_repair_rounds_exhausted' },            // 轮次用完
+    ] as DependencyRepairOffer[]) {
+      await act(async () => root?.unmount())
+      host?.remove()
+      await render(offer)
+      expect(
+        document.querySelector(`input[aria-label="${en('pathAria')}"]`),
+        `这个场景少了「换一个 Python」的出口`,
+      ).toBeTruthy()
+    }
+  })
+
   it('目标按钮不与说明并排 —— 右栏只有约 272px，并排会把它撑破', async () => {
     await render()
     const button = byName(en('repairUseProjectEnv'))!
