@@ -34,6 +34,7 @@ from flask import (
     Flask,
     Response,
     abort,
+    g,
     has_request_context,
     jsonify,
     request,
@@ -59,6 +60,7 @@ from .engine import (
     patchspec as engine_patchspec,
     pool as engine_pool,
     probe as engine_probe,
+    projectenv as engine_projectenv,
     registry as engine_registry,
     runtime as engine_runtime,
     runtimeasset as engine_runtimeasset,
@@ -582,7 +584,7 @@ def _worker_error_payload(exc) -> dict:
     body = {"error": str(exc), "traceback": exc.traceback_text, "code": exc.code}
     if getattr(exc, "module", ""):
         body["module"] = exc.module
-    # 项目环境自动接手失败时的结构化原因（ADR 0015）：找不到 venv / venv 里
+    # 项目环境自动接手失败时的结构化原因（ADR 0018）：找不到 venv / venv 里
     # 也没这个包 / 那个环境没有 matplotlib / Python 版本不支持。前端据此给出
     # 各自不同的恢复引导——四种情况用户要做的事完全不同，混成一句话等于没说。
     detail = getattr(exc, "project_env", None)
@@ -607,12 +609,13 @@ def _project_relative(path: str) -> str:
         return ""
     try:
         root = require_project()
-    except Exception:  # noqa: BLE001 —— 没有打开项目时不该影响错误响应
+    except NoProjectError:  # 没有打开项目时不该影响错误响应
         return str(path)
-    try:
-        return str(Path(path).resolve(strict=False).relative_to(Path(root).resolve(strict=False)))
-    except (OSError, ValueError):
-        return str(path)
+    # **走 projectenv 那一份**：它刻意不 `resolve()` 解释器本身。
+    # `.venv/bin/python` 在 POSIX 上是指向基础解释器的软链接，跟着它走的话
+    # 每一个项目 venv 都会被判成「在项目外」，界面上于是显示一条用户主目录
+    # 打头的绝对路径，而我们本想显示的是 `.venv`。
+    return engine_projectenv.project_relative(root, str(path)) or str(path)
 
 
 @app.errorhandler(engine_pool.WorkerError)
@@ -1473,8 +1476,28 @@ def _read_frontend_payload() -> tuple[dict | None, bool]:
 
 def _diagnostics_bundle_response(frontend: dict | None = None, frontend_dropped: bool = False):
     ctx = _request_ctx()
+    status = project_status(ctx)
+    if ctx is not None:
+        # 「为什么用了这个 Python」必须能在诊断包里读出来（ADR 0018 §诊断）：
+        # 是自动接手还是用户挑的、因为缺哪个包、那个环境的版本是多少。
+        # **这里不体检**——事实在切换当时就存下来了。
+        st = engine_projectenv.state(str(ctx.path))
+        status["environment_resolution"] = {
+            "source": engine_pool.SOURCE_PROJECT_VENV
+            if st.get("python")
+            else engine_pool.worker_source(),
+            "automatic": st.get("automatic", False),
+            "trigger": st.get("trigger", ""),
+            "module": st.get("module", ""),
+            "python_version": st.get("python_version", ""),
+            "matplotlib_version": st.get("matplotlib_version", ""),
+            "support": st.get("support", ""),
+            # 项目内的解释器只出**项目相对**路径：用户主目录名不该无谓地
+            # 进诊断包，而相对路径已经足够定位问题。
+            "executable": st.get("python_relative", ""),
+        }
     data = engine_diagnostics.build_bundle(
-        project=project_status(ctx),
+        project=status,
         port=request.host.rsplit(":", 1)[-1],
         frontend=frontend,
         frontend_dropped=frontend_dropped,
@@ -2055,7 +2078,7 @@ def _switched_to_project_env(worker, exc) -> bool:
     """内置环境缺依赖时替**这个项目**切到它自己的 `.venv`；切成了回 True。
 
     切成之后**调用方必须重新取一次 worker**：旧会话是内置解释器起的，
-    `pool.get()` 会因为「渲染解释器已变」把它换掉（ADR 0015 的 worker 身份
+    `pool.get()` 会因为「渲染解释器已变」把它换掉（ADR 0018 的 worker 身份
     纪律）。切不成时把结构化原因挂回异常，`_worker_error_payload` 会带给前端。
 
     「值不值得为这个错误换环境」的判据只有一份
@@ -2065,10 +2088,18 @@ def _switched_to_project_env(worker, exc) -> bool:
         return False
     try:
         root = str(require_project())
-    except HTTPException:
+    except NoProjectError:
         return False
     outcome = engine_pool.try_project_env(root, worker.script_name, getattr(exc, "module", ""))
     if outcome.get("ok"):
+        # 记在**请求作用域**里：渲染端点据此在响应里带一句「已自动使用这个
+        # 项目的 Python 环境」，前端给一条轻量 toast。用户不该被一个阻断式
+        # 对话框拦住去读一段他没要求的技术说明——但也不能完全看不见。
+        g.environment_switched = {
+            "source": engine_pool.SOURCE_PROJECT_VENV,
+            "python": _project_relative(outcome.get("python", "")),
+            "module": outcome.get("module", ""),
+        }
         return True
     exc.project_env = outcome
     return False
@@ -2171,7 +2202,7 @@ def api_engine_render():
     )
     try:
         # 冷启动的第一次 build 就发生在这里（lazy 语义：打开面板不预跑脚本）。
-        # 内置环境缺依赖时自动改用项目自己的 .venv 重试一次（ADR 0015）。
+        # 内置环境缺依赖时自动改用项目自己的 .venv 重试一次（ADR 0018）。
         worker, stem, resp = _engine_attempt(
             rel_id,
             worker,
@@ -2211,6 +2242,10 @@ def api_engine_render():
     # 没要就不加这个字段（响应形状对老调用方一字不变）
     if inline_svg and "svg" in resp:
         out["svg"] = resp["svg"]
+    switched = g.pop("environment_switched", None)
+    if switched:
+        # 同上：加字段不改老形状。只在**真的发生了自动切换**的那一次响应里出现。
+        out["environment_switched"] = switched
     return jsonify(out)
 
 
@@ -3211,9 +3246,42 @@ def api_engine_environment():
         )
         py = st.get("python")
         st["imports"] = engine_runtime.probe_packages(py, names) if py else {}
+    st["project"] = _project_environment_state()
     resp = jsonify(st)
     resp.headers["Cache-Control"] = "no-store"
     return resp
+
+
+def _project_environment_state() -> dict:
+    """当前项目的渲染环境（ADR 0018）——**不做任何体检**。
+
+    界面刷新不该为了贴个版本号去起一个 Python（体检最长 60s）。这里只把
+    已经记住的决策原样交出去；真要现场核实走 `?probe=1` 那条路。
+
+    `source` 用 `pool` 的那套字符串（`project_venv` / `bundled` / …），
+    前端据此显示「项目 .venv · Python 3.12」而不是含糊的一句「Python」——
+    同一条路径，「内置」和「你自己的 conda」在排障时含义天差地别。
+    """
+    try:
+        root = str(require_project())
+    except NoProjectError:
+        return {"open": False}
+    state = engine_projectenv.state(root)
+    try:
+        python, source = engine_pool.resolve_worker_python(root)
+    except engine_pool.WorkerError:
+        python, source = "", ""
+    out = {
+        "open": True,
+        "source": source,
+        "source_label": engine_pool.SOURCE_LABELS.get(source, source),
+        "python": _project_relative(python) or python,
+        "automatic": state.get("automatic", False),
+        "trigger": state.get("trigger", ""),
+        "module": state.get("module", ""),
+        "can_use_project_venv": [_project_relative(v) for v in engine_projectenv.discover(root)],
+    }
+    return out
 
 
 @app.post("/api/engine/environment/install")
@@ -3242,9 +3310,16 @@ def api_engine_environment_install():
 
 @app.patch("/api/engine/environment")
 def api_engine_environment_set():
-    """手动指定渲染解释器；path 为空 = 清除，回到自动探测。"""
+    """手动指定渲染解释器；path 为空 = 清除，回到自动探测。
+
+    `scope="project"` 时改的是**当前项目**那一条（ADR 0018）：项目自己的
+    `.venv`、或用户为这个项目挑的别的环境。绝不写全局设置——A 项目挑的环境
+    变成 B 项目的渲染环境是本轮明确要避免的事。
+    """
     body = request.get_json(force=True)
     raw = str(body.get("python") or "").strip()
+    if str(body.get("scope") or "global") == "project":
+        return _set_project_environment(raw)
     if raw:
         p = Path(raw).expanduser()
         if not p.is_file():
@@ -3269,6 +3344,63 @@ def api_engine_environment_set():
         engine_config.set_worker_python(None)
     engine_pool.reset_worker_python()
     return jsonify(engine_bootstrap.status())
+
+
+def _set_project_environment(raw: str):
+    """设定/清除**当前项目**的渲染解释器。
+
+    路径为空 = 回到默认链条（内置 runtime 优先）。给了路径就先真体检一遍：
+    「选了但用不了」比「没选」更难查——用户以为设好了，实际每次打开都在报
+    另一个错。体检不过一律 400 + 稳定 code，绝不先存下来再说。
+    """
+    root = str(require_project())
+    if not raw:
+        engine_projectenv.forget(root)
+        engine_pool.reset_worker_python()
+        return jsonify({"ok": True, "project": _project_environment_state()})
+    candidate = Path(raw).expanduser()
+    if not candidate.is_absolute():
+        # 前端交回来的是项目相对路径（`.venv/bin/python`）——它才是能跟着
+        # 项目走的那种形态。
+        candidate = Path(root) / candidate
+    if not candidate.is_file():
+        return jsonify(
+            {
+                "error": f"找不到该文件: {candidate}",
+                "code": "interpreter_not_found",
+                "params": {"path": str(candidate)},
+            }
+        ), 400
+    health = engine_projectenv.probe_environment(str(candidate))
+    if not health.get("ok"):
+        return jsonify(
+            {
+                "error": _project_env_message(health),
+                "code": health.get("code", ""),
+                "params": {
+                    "path": _project_relative(str(candidate)),
+                    "python_version": health.get("python_version", ""),
+                },
+            }
+        ), 400
+    engine_projectenv.remember(
+        root, str(candidate), automatic=False, trigger="user_selected", health=health
+    )
+    engine_pool.reset_worker_python()
+    engine_pool.shutdown_all(root)
+    return jsonify({"ok": True, "health": health, "project": _project_environment_state()})
+
+
+def _project_env_message(health: dict) -> str:
+    """体检失败的中文回退文案（前端有自己的 i18n，这里是后端兜底）。"""
+    code = health.get("code", "")
+    if code == engine_projectenv.ERROR_UNSUPPORTED_PYTHON:
+        return f"这个环境的 Python {health.get('python_version', '')} 不在 Tavotto 当前支持的范围内"
+    if code == engine_projectenv.ERROR_NO_MATPLOTLIB:
+        return "这个环境里 import 不到 matplotlib，它不是一个可用的绘图环境"
+    if code == engine_projectenv.ERROR_MODULE_MISSING:
+        return f"这个环境里也没有 {health.get('requested_module', '')}"
+    return f"这个 Python 起不来：{health.get('detail', '')}"
 
 
 # ------------------------- 检查更新 -----------------------------------------

@@ -483,7 +483,7 @@ _project_python_lock = threading.Lock()
 def resolve_worker_python(figures_dir: str | Path | None = None) -> tuple[str, str]:
     """**某个项目**该用哪个解释器，回 (路径, 来源)——项目级决策的唯一出处。
 
-    优先级（「用户显式选择 > 自动猜测」，ADR 0015 §优先级）：
+    优先级（「用户显式选择 > 自动猜测」，ADR 0018 §优先级）：
 
     1. `TAVOTTO_WORKER_PYTHON`   —— 环境变量
     2. 用户在设置里指定的         —— 全局显式选择
@@ -636,7 +636,7 @@ class EngineWorker:
         self.last_used = time.time()
         self._log = open(self.log_path, "ab", buffering=0)
         # **项目级**解释器决策：同一台机器上 A 项目可能用内置 runtime，
-        # B 项目用它自己的 .venv（ADR 0015）。两条控制面都从这一个出处取。
+        # B 项目用它自己的 .venv（ADR 0018）。两条控制面都从这一个出处取。
         python, self.python_source = resolve_worker_python(figures_dir)
         self.python = python
         # 内置 runtime 装在安装目录里（可能是 Program Files），一个字节都不往
@@ -1699,7 +1699,7 @@ def get(script_name: str, figures_dir: str, entry: str) -> EngineWorker:
             elif w.entry != entry:
                 why = "入口已变"
             elif not same_python(w.python, want_python):
-                # **worker 身份包含解释器**（ADR 0015）：项目自动切到 .venv 之后
+                # **worker 身份包含解释器**（ADR 0018）：项目自动切到 .venv 之后
                 # 还复用那条内置 runtime 起的会话，用户看到的就是「明明切了环境，
                 # 还是报缺包」。判据与 `entry` 那条同形，不另起一套 key。
                 why = "渲染解释器已变"
@@ -1767,7 +1767,12 @@ def try_project_env(figures_dir: str, script_name: str, module: str) -> dict:
         return outcome
     python = outcome["python"]
     projectenv.remember(
-        figures_dir, python, automatic=True, trigger="missing_dependency", module=module
+        figures_dir,
+        python,
+        automatic=True,
+        trigger="missing_dependency",
+        module=module,
+        health=outcome.get("health"),
     )
     with _project_python_lock:
         # 刚刚整套体检过（比 `_has_matplotlib` 严得多），不必再验一遍。

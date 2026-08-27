@@ -501,3 +501,113 @@ def test_forget_returns_the_project_to_the_default_chain(project):
     assert projectenv.remembered(project) is None
     assert engine_pool.resolve_worker_python(project)[1] != \
         engine_pool.SOURCE_PROJECT_VENV
+
+
+# ----------------------------------------------------------------- 产品 API
+@pytest.fixture
+def client():
+    from tavotto import app as m
+    m.app.config["TESTING"] = True
+    return m.app.test_client()
+
+
+@needs_worker
+def test_environment_endpoint_reports_the_project_environment(client, project):
+    """界面要能显示「项目 .venv · Python 3.12」，而不是含糊的一句「Python」。"""
+    from tavotto import app as m
+
+    real_venv(project)
+    m.open_project(str(project))
+    before = client.get("/api/engine/environment").get_json()["project"]
+    assert before["open"] is True
+    assert before["source"] != engine_pool.SOURCE_PROJECT_VENV
+    # 发现到的候选也要交出来——「找到了但没在用」是用户该看得见的状态
+    assert before["can_use_project_venv"] == [".venv"]
+
+    engine_pool.build("figure.py", str(project), "__main__")
+    after = client.get("/api/engine/environment").get_json()["project"]
+    assert after["source"] == engine_pool.SOURCE_PROJECT_VENV
+    assert after["automatic"] is True
+    assert after["trigger"] == "missing_dependency"
+    assert after["module"] == FIXTURE_MODULE
+    assert after["python"].startswith(".venv")
+
+
+def test_environment_endpoint_still_works_without_a_project(client, monkeypatch):
+    """没打开项目时环境状态端点**必须照常返回**，不能变成 409。
+
+    首次运行的「渲染环境」界面就在没有项目的状态下打开——那一屏 409 掉，
+    用户连「自动安装渲染环境」的按钮都看不到。加项目环境这一段时正是这么
+    把整个端点带崩过一次：`require_project()` 抛的是 `NoProjectError`，
+    不是 `HTTPException`。
+    """
+    from tavotto import app as m
+
+    # **经 monkeypatch 改**：直接 `PROJECTS.clear()` 会把同一进程里别的用例
+    # 打开的项目一起清掉，后面那些用例于是在「没有项目」的状态下继续跑。
+    monkeypatch.setattr(m, "DEFAULT_PROJECT", None)
+    monkeypatch.setattr(m, "PROJECTS", {})
+    body = client.get("/api/engine/environment").get_json()
+    assert "ok" in body, body
+    assert body["project"] == {"open": False}
+
+
+@needs_worker
+def test_project_scope_patch_never_touches_the_global_setting(client, project):
+    """为**这个项目**选环境不许写全局设置——那是 A 污染 B 的唯一途径。"""
+    from tavotto import app as m
+
+    venv = real_venv(project)
+    m.open_project(str(project))
+    rel = str(Path(projectenv.interpreter_of(venv)).relative_to(project))
+    resp = client.patch("/api/engine/environment",
+                        json={"scope": "project", "python": rel})
+    assert resp.status_code == 200, resp.get_json()
+    assert resp.get_json()["project"]["source"] == engine_pool.SOURCE_PROJECT_VENV
+    assert engine_config.worker_python() is None
+    # 清掉 = 回到默认链条
+    resp = client.patch("/api/engine/environment",
+                        json={"scope": "project", "python": ""})
+    assert resp.status_code == 200
+    assert resp.get_json()["project"]["source"] != engine_pool.SOURCE_PROJECT_VENV
+
+
+@needs_worker
+def test_project_scope_patch_refuses_an_unusable_environment(client, project, tmp_path):
+    """「选了但用不了」比「没选」更难查——存下来之前先真体检一遍。"""
+    from tavotto import app as m
+
+    real_venv(project)
+    m.open_project(str(project))
+    resp = client.patch("/api/engine/environment",
+                        json={"scope": "project", "python": "nope/bin/python"})
+    assert resp.status_code == 400
+    assert resp.get_json()["code"] == "interpreter_not_found"
+    assert projectenv.remembered(project) is None
+
+
+@needs_worker
+def test_diagnostics_explains_why_this_python_was_chosen(client, project):
+    """诊断包要能回答「为什么用了这个 Python」，且**不在生成时重新体检**。"""
+    import io
+    import json
+    import zipfile
+
+    from tavotto import app as m
+
+    real_venv(project)
+    m.open_project(str(project))
+    engine_pool.build("figure.py", str(project), "__main__")
+    blob = client.get("/api/diagnostics/bundle").data
+    with zipfile.ZipFile(io.BytesIO(blob)) as z:
+        name = next(n for n in z.namelist() if n.endswith(".json"))
+        report = json.loads(z.read(name).decode("utf-8"))
+    res = report["project"]["environment_resolution"]
+    assert res["source"] == engine_pool.SOURCE_PROJECT_VENV
+    assert res["automatic"] is True
+    assert res["trigger"] == "missing_dependency"
+    assert res["python_version"]
+    assert res["matplotlib_version"]
+    # 项目内的解释器只出项目相对路径：用户主目录名不该无谓地进诊断包
+    assert res["executable"].startswith(".venv")
+    assert not Path(res["executable"]).is_absolute()

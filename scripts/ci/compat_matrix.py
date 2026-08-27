@@ -1890,7 +1890,14 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
-    target = {**target, "actual": {**actual, "python": py_actual}}
+    # 报告里必须能看出这一轮跑在**哪一档解释器**上（ADR 0018）：同一份语料
+    # 在内置 runtime 与某个项目 .venv 上跑出来的数字不该被当成同一件事。
+    from tavotto.engine import pool as _pool
+
+    target = {
+        **target,
+        "actual": {**actual, "python": py_actual, "interpreter_source": _pool.source_of(python)},
+    }
     print(f"case {len(cases)} 个，分 {len(CC.group_by_project(cases))} 组构建\n", flush=True)
 
     results: dict = {}

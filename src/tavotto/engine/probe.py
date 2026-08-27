@@ -81,7 +81,7 @@ def _error_from_worker(exc: pool.WorkerError, entry: str) -> dict:
     reason = _short(str(exc), exc.traceback_text)
     if exc.code == "missing_dependency":
         params = {"module": exc.module}
-        # 项目环境自动接手为什么没成（ADR 0015）：找不到 venv / venv 里也没这个
+        # 项目环境自动接手为什么没成（ADR 0018）：找不到 venv / venv 里也没这个
         # 包 / 那个环境没有 matplotlib / Python 版本不支持。四种情况用户要做的
         # 事完全不同，只报「缺少依赖包」等于把可执行的出路藏起来。
         detail = getattr(exc, "project_env", None)
@@ -210,7 +210,7 @@ def probe(
         pool.invalidate(script, figures_dir)
         try:
             # `pool.build` = get + ensure_built + **一次项目环境自动 fallback**
-            # （内置 runtime 缺依赖 → 项目自己的 .venv 接手，ADR 0015）。
+            # （内置 runtime 缺依赖 → 项目自己的 .venv 接手，ADR 0018）。
             # 探测是「跑一次用户脚本」最主要的入口，自动接手必须覆盖它——
             # 否则素材库里能打开的项目，`tavotto open` 打不开。
             worker, resp = pool.build(script, figures_dir, entry)

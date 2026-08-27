@@ -5,8 +5,9 @@
 科研项目自己就带着一个能跑通的环境（`.venv/`），本模块负责把它找出来、验证
 它真的能跑 Tavotto 的 worker，然后交给 `pool` 作为**该项目**的渲染解释器。
 
-**本模块只做发现与体检，不做决策**：谁压过谁是 `pool._prioritized_candidates`
-那条唯一优先级链的事（`pool.resolve_worker_python`），本模块不碰它。
+**本模块只做发现与体检，不做决策**：谁压过谁是 `pool.resolve_worker_python`
+那条唯一优先级链的事，本模块不碰它。完整设计见
+`docs/adr/0018-project-python-environment-resolution.md`。
 
 **纯标准库**：被 `engine/pool.py` import，而 pool 被 Flask import
 （进程与依赖边界见 `src/tavotto/AGENTS.md`）。
@@ -388,7 +389,8 @@ def project_relative(figures_dir: str | Path, python: str) -> str:
 
 
 def remember(figures_dir: str | Path, python: str, *, automatic: bool,
-             trigger: str = "", module: str = "") -> None:
+             trigger: str = "", module: str = "",
+             health: dict | None = None) -> None:
     """记住这个项目该用哪个解释器（进程缓存 + 项目设置持久化）。
 
     **绝不写全局 `worker.python` 设置**：那会让 A 项目找到的 `.venv` 变成
@@ -400,6 +402,12 @@ def remember(figures_dir: str | Path, python: str, *, automatic: bool,
     root = Path(figures_dir)
     payload = {"automatic": bool(automatic), "trigger": trigger or "",
                "module": module or ""}
+    # 把体检当时的事实一并存下来：诊断包要回答「为什么用了这个 Python」，
+    # 而生成诊断包时**不该**再去起一个解释器问一遍（那要几十秒，用户点的是
+    # 「导出诊断包」不是「重新体检」）。
+    for key in ("python_version", "matplotlib_version", "support"):
+        if (health or {}).get(key):
+            payload[key] = str(health[key])
     rel = project_relative(root, python)
     if rel:
         payload["python_relative"] = rel
@@ -499,7 +507,10 @@ def state(figures_dir: str | Path) -> dict:
     python = remembered(figures_dir)
     out = {"python": python or "", "automatic": bool(stored.get("automatic")),
            "trigger": stored.get("trigger") or "",
-           "module": stored.get("module") or ""}
+           "module": stored.get("module") or "",
+           "python_version": stored.get("python_version") or "",
+           "matplotlib_version": stored.get("matplotlib_version") or "",
+           "support": stored.get("support") or ""}
     if python:
         out["python_relative"] = project_relative(figures_dir, python)
     return out
