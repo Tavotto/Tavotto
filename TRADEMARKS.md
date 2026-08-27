@@ -88,13 +88,9 @@ for what would be involved in changing that.
 
 ## Ownership
 
-The rights holder for the Tavotto marks is **not yet formally established**
-(`RIGHTS_HOLDER_CONFIGURATION_REQUIRED`). The repository does not record a legal
-entity, and nothing has been invented to fill that gap — see
-[`docs/legal/CLA_AUTOMATION_SETUP.md`](docs/legal/CLA_AUTOMATION_SETUP.md).
-
-This affects *who* can enforce or license the marks. It does not affect the
-guidance above, which reflects how the project asks the name to be used.
+The Tavotto marks are held by **Jiaqi Wan**, a natural person. No company is
+involved. Requests to use the marks beyond what this document already permits
+should be raised as an issue.
 
 ## Questions
 

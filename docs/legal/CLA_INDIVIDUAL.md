@@ -1,12 +1,10 @@
 # Tavotto Individual Contributor License Agreement
 
-**CLA_VERSION: 1.0-draft**
+**CLA_VERSION: 1.0**
 
-> This document is an engineering/licensing artefact, not legal advice. It is
-> **not yet in force**: the counterparty ("We"/"Us") and the governing law are
-> still unset — see [Configuration required](#configuration-required). Final
+> This document is an engineering/licensing artefact, not legal advice. Final
 > commercial licensing and trademark decisions should be reviewed by qualified
-> counsel.
+> counsel before this agreement is relied on in a transaction.
 
 ## Provenance of this text
 
@@ -46,38 +44,43 @@ with the template's own choices resolved. The record of those choices:
 | `[PROJECT_NAME]` | `Tavotto` |
 | `[SUBMISSION_INSTRUCTIONS]` | See [How to sign](#how-to-sign). |
 | `[NONOWNER_INSTRUCTIONS]` | See [If you do not own the whole contribution](#if-you-do-not-own-the-whole-contribution). |
-| `[JURISDICTION]` | **`RIGHTS_HOLDER_CONFIGURATION_REQUIRED`** — unresolved. |
+| `[JURISDICTION]` | Hong Kong SAR, China. |
 
 No other wording in the operative sections was altered. Section headings were
 renumbered for Markdown only.
 
-## Configuration required
+## The counterparty
 
-Two blanks are unresolved, and the agreement cannot be executed until they are
-filled in by the rights holder:
+**"We"/"Us" is Jiaqi Wan**, a natural person, who holds the relevant Tavotto
+rights. This is a fully supported configuration: a natural person can hold
+copyright, grant and receive licences, and be a party to this agreement. No
+company is involved, and none is required.
 
-- **`RIGHTS_HOLDER_CONFIGURATION_REQUIRED` — the identity of "We"/"Us".** The
-  project has not yet identified the legal person or entity that owns, or is
-  authorised to receive, the relevant Tavotto rights, nor recorded a contact
-  address for it. **This does not require forming a company** — a natural person
-  can be the counterparty, and an individual rights holder is fully supported.
-  What is missing is the decision and its details. `README.md` says only
-  "Tavotto™ is a trademark of the Tavotto project" and `pyproject.toml` names
-  `erwanjun` as author; neither identifies a contracting party, and a GitHub
-  organisation is not itself a legal person.
-- **`RIGHTS_HOLDER_CONFIGURATION_REQUIRED` — the governing law (Section 6.1).**
+The governing law is that of the Hong Kong Special Administrative Region
+(Section 6.1).
 
-Until both are set and the version is moved off `-draft`, this document is a
-prepared template, not an operative contract — not because any particular legal
-form is missing, but because the counterparty and governing law have not been
-filled in. See [CLA_AUTOMATION_SETUP.md](CLA_AUTOMATION_SETUP.md).
+If those rights are ever transferred to a company, the rights received under
+signed CLAs do **not** travel automatically — Section 6.3 requires an assignee to
+agree in writing to abide by this agreement. See
+[CLA_VERSIONING.md](CLA_VERSIONING.md#rights-transfer-if-the-holder-ever-changes).
+
+**Postal address.** Deliberately not published here. Publishing a natural
+person's home address in a public repository is a privacy exposure with no
+corresponding benefit; the address is completed on the executed copy of the
+agreement, which is exchanged privately.
 
 ## How to sign
 
-The signing flow is not yet enabled — no signature provider is installed. See
-[CLA_AUTOMATION_SETUP.md](CLA_AUTOMATION_SETUP.md) for the remaining steps and
-[CLA_VERSIONING.md](CLA_VERSIONING.md) for how a signature is bound to a
-specific version of this text.
+**No signature provider is configured yet**, which is a deliberate choice rather
+than an omission: there have been no external contributions to date, so there is
+nothing for one to collect. Until one is configured, the CI check qualifies only
+the rights holder and two named bots, and blocks everyone else **with an
+explanation** — it never treats an unsigned contributor as signed.
+
+If you want to contribute now, **open an issue first** and it will be arranged
+directly. See [CLA_AUTOMATION_SETUP.md](CLA_AUTOMATION_SETUP.md) for how a
+provider gets wired in, and [CLA_VERSIONING.md](CLA_VERSIONING.md) for how a
+signature is bound to a specific version of this text.
 
 ## If you do not own the whole contribution
 
@@ -226,8 +229,8 @@ OTHERWISE) UPON WHICH THE CLAIM IS BASED.
 ## 6. Miscellaneous
 
 6.1 This Agreement will be governed by and construed in accordance with the laws
-of `RIGHTS_HOLDER_CONFIGURATION_REQUIRED` excluding its conflicts of law
-provisions. Under certain circumstances, the governing law in this section might
+of the Hong Kong Special Administrative Region of the People's Republic of China
+excluding its conflicts of law provisions. Under certain circumstances, the governing law in this section might
 be superseded by the United Nations Convention on Contracts for the
 International Sale of Goods ("UN Convention") and the parties intend to avoid
 the application of the UN Convention to this Agreement and, thus, exclude the
@@ -272,7 +275,7 @@ GitHub:    ________________________
 
 ```
 Signature: ________________________
-Name:      ________________________   (RIGHTS_HOLDER_CONFIGURATION_REQUIRED)
+Name:      Jiaqi Wan
 Title:     ________________________
 Address:   ________________________
 Date:      ________________________

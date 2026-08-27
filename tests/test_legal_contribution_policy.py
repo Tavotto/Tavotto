@@ -370,6 +370,46 @@ class TestLegalWordingPrecision:
             text,
         ), "必须明说自然人作为权利人是被支持的形态"
 
+    def test_resolved_rights_holder_is_recorded_consistently(self):
+        """权利人一旦定下来，就不许在任何一处被静默改掉或抹掉。
+
+        它是 CLA 的缔约方——两份协议、商标政策、以及给维护者看的状态表必须
+        说同一件事。**只在已经解析出权利人时才生效**：还没定的仓库不该被这条
+        判据逼着编一个出来。
+        """
+        individual = (LEGAL / "CLA_INDIVIDUAL.md").read_text(encoding="utf-8")
+        m = re.search(r'(?m)^\*\*"We"/"Us" is ([^*]+)\*\*', individual)
+        if not m:
+            pytest.skip("权利人尚未配置")
+        holder = m.group(1).strip()
+        assert len(holder) > 2, "权利人名字读出来是空的？"
+        for f in (
+            "docs/legal/CLA_CORPORATE.md",
+            "TRADEMARKS.md",
+            "docs/legal/README.md",
+            "CONTRIBUTING.md",
+        ):
+            assert holder in (ROOT / f).read_text(encoding="utf-8"), (
+                f"{f} 里没有权利人 `{holder}`——缔约方必须处处一致"
+            )
+        # 签名块里的 Us 也必须是同一个人，而不是残留的占位
+        assert f"Name:      {holder}" in individual, "Individual CLA 的 Us 签名块没填权利人"
+
+    def test_no_personal_postal_address_is_published(self):
+        """自然人权利人的住址不该出现在公开仓库里。
+
+        地址在**签署时的执行副本**上填，不在模板里。这条判据挡的是「顺手把
+        联系方式补全」——那是隐私暴露，而且换不来任何东西。
+        """
+        for f in ("docs/legal/CLA_INDIVIDUAL.md", "docs/legal/CLA_CORPORATE.md"):
+            text = (ROOT / f).read_text(encoding="utf-8")
+            # 「Us」签名块里 Address 后面必须仍是空白横线，不是真地址
+            m = re.search(r"(?s)\*\*Us\*\*.{0,400}?Address:\s*(\S+)", text)
+            if m:
+                assert set(m.group(1)) <= {"_"}, (
+                    f"{f} 的 Us 签名块里填了真实地址：{m.group(1)[:40]!r}"
+                )
+
     def test_draft_status_is_explained_by_the_marker_not_by_legal_form(self):
         for f in (LEGAL / "CLA_VERSIONING.md", ROOT / "CONTRIBUTING.md"):
             text = f.read_text(encoding="utf-8")

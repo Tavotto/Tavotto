@@ -1,12 +1,10 @@
 # Tavotto Corporate (Entity) Contributor License Agreement
 
-**CLA_VERSION: 1.0-draft**
+**CLA_VERSION: 1.0**
 
-> This document is an engineering/licensing artefact, not legal advice. It is
-> **not yet in force**: the counterparty ("We"/"Us") and the governing law are
-> still unset — see [Configuration required](#configuration-required). Final
+> This document is an engineering/licensing artefact, not legal advice. Final
 > commercial licensing and trademark decisions should be reviewed by qualified
-> counsel.
+> counsel before this agreement is relied on in a transaction.
 
 ## When this agreement applies instead of the individual one
 
@@ -52,7 +50,7 @@ terms, with attribution given above.
 | `[PROJECT_NAME]` | `Tavotto` |
 | `[SUBMISSION_INSTRUCTIONS]` | See [How to sign](#how-to-sign). |
 | `[NONOWNER_INSTRUCTIONS]` | See [Schedule A](#schedule-a--authorised-contributors). |
-| `[JURISDICTION]` | **`RIGHTS_HOLDER_CONFIGURATION_REQUIRED`** — unresolved. |
+| `[JURISDICTION]` | Hong Kong SAR, China. |
 
 **One addition beyond the template.** Harmony 1.0 has no schedule of covered
 people; it binds the Entity as a whole. Tavotto needs to know *which GitHub
@@ -62,11 +60,13 @@ is therefore appended as an **administrative annex**. It is deliberately placed
 *after* the operative text and grants no rights of its own — it records scope and
 points of contact for the agreement, and Section 2 is unchanged by it.
 
-## Configuration required
+## The counterparty
 
-Identical to the Individual CLA: the identity of "We"/"Us" and the governing law
-in Section 6.1 are both `RIGHTS_HOLDER_CONFIGURATION_REQUIRED`. See
-[CLA_AUTOMATION_SETUP.md](CLA_AUTOMATION_SETUP.md).
+Identical to the Individual CLA: **"We"/"Us" is Jiaqi Wan**, a natural person,
+and the governing law is that of the Hong Kong Special Administrative Region
+(Section 6.1). The postal address is completed on the executed copy rather than
+published here. See
+[CLA_INDIVIDUAL.md](CLA_INDIVIDUAL.md#the-counterparty).
 
 ## How to sign
 
@@ -84,7 +84,9 @@ The intended flow, once the rights holder is configured:
 
 1. The company's authorised signatory completes this agreement, including
    Schedule A.
-2. It is sent to the rights holder's contact address and reviewed by a human.
+2. It is sent to the rights holder for review by a human — **open an issue to
+   start this** and the delivery details will be exchanged privately, so that no
+   personal address needs to be published in the repository.
 3. On acceptance, the covered accounts from Schedule A are registered with the
    signature provider, against the agreement version that was signed.
 4. From that point the provider's check recognises those accounts, and the
@@ -239,8 +241,8 @@ OTHERWISE) UPON WHICH THE CLAIM IS BASED.
 ## 6. Miscellaneous
 
 6.1 This Agreement will be governed by and construed in accordance with the laws
-of `RIGHTS_HOLDER_CONFIGURATION_REQUIRED` excluding its conflicts of law
-provisions. Under certain circumstances, the governing law in this section might
+of the Hong Kong Special Administrative Region of the People's Republic of China
+excluding its conflicts of law provisions. Under certain circumstances, the governing law in this section might
 be superseded by the United Nations Convention on Contracts for the
 International Sale of Goods ("UN Convention") and the parties intend to avoid
 the application of the UN Convention to this Agreement and, thus, exclude the
@@ -286,7 +288,7 @@ Date:         ________________________
 
 ```
 Signature: ________________________
-Name:      ________________________   (RIGHTS_HOLDER_CONFIGURATION_REQUIRED)
+Name:      Jiaqi Wan
 Title:     ________________________
 Address:   ________________________
 Date:      ________________________

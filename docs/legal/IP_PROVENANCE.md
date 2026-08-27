@@ -299,7 +299,7 @@ governance, not a runtime licence.
 
 | # | Question | Status |
 |---|---|---|
-| 1 | Who is the rights holder, and under which law? The repository does not record the legal person or entity that owns the relevant rights, nor a contact address or governing law. `README.md` says only "Tavotto™ is a trademark of the Tavotto project", which does not identify a contracting party. **A company is not required — a natural person can hold the rights and be the counterparty.** | **RIGHTS_HOLDER_CONFIGURATION_REQUIRED** — blocks activating the CLA for signatures and any commercial licensing. See [CLA_AUTOMATION_SETUP.md](CLA_AUTOMATION_SETUP.md). |
+| 1 | ~~Who is the rights holder, and under which law?~~ | **Resolved 2026-08-28: Jiaqi Wan**, a natural person, under Hong Kong SAR law. A company was not required. CLA is at `1.0` and signable. |
 | 2 | Do the two accepted Copilot Autofix edits carry any third-party rights encumbrance? | **NEEDS LEGAL REVIEW** — scope bounded to seven lines in one file. |
 | 3 | Is the `erwanjun` identity's work encumbered by any employment or institutional agreement? An individual's own commits can still be owned by an employer. This audit can establish *who committed*; it cannot establish what agreements that person is subject to. | **NEEDS LEGAL REVIEW** — only the rights holder can answer. This is the single largest unverifiable assumption behind "rights-clean baseline". |
 | 4 | Was any part of the pre-rename `Magplot` history developed under a different arrangement? The rename is a clean break within this same repository (first commit 2026-08-16), not an import, so no separate rights chain was found — but the question is recorded rather than assumed away. | Nothing found; recorded for completeness. |

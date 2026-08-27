@@ -245,17 +245,20 @@ person, not by CI.
 
 Both are derived from the [Harmony Agreements](https://www.harmonyagreements.org/)
 1.0 templates rather than written from scratch.
+The counterparty is **Jiaqi Wan**, a natural person; the governing law is that
+of the Hong Kong SAR.
 
-**Current status: the CLA is not yet activated for signatures.** The agreements
-are at version `1.0-draft` because the project has not yet recorded who the
-counterparty is, how to reach them, and which law governs the agreement — and a
-draft is not signable. Until that is resolved the check qualifies only the
-rights holder and two named bots, and blocks everyone else with an explanation
+**Current status: the agreements are final at version `1.0`, but no signature
+service is connected yet.** That is a deliberate deferral rather than an
+omission — there have been no external contributions so far, so there is nothing
+for one to collect. Until one is connected, the check qualifies only the rights
+holder and two named bots, and blocks everyone else **with an explanation**
 rather than pretending they signed. See
 [docs/legal/CLA_AUTOMATION_SETUP.md](docs/legal/CLA_AUTOMATION_SETUP.md).
 
-**If you want to contribute in the meantime, please open an issue first** — this
-is a temporary state, not a closed door, and we will sort it out with you.
+**So if you want to contribute, please open an issue first** — this is a door
+that opens by hand at the moment, not a closed one, and it will be sorted out
+with you.
 
 ### Not a DCO
 

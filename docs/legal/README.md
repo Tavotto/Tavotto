@@ -52,7 +52,8 @@ Also: [`LICENSE`](../../LICENSE), [`TRADEMARKS.md`](../../TRADEMARKS.md) and
 | Community licence | **AGPL-3.0-only**, unchanged, and staying that way |
 | Rights baseline | 744/745 commits from one rights holder; **no external human contribution**; no third-party source copied in |
 | CLA model | Contributor **keeps copyright**; Tavotto gets a sublicensable licence + the right to offer separately licensed editions |
-| CLA status | **`1.0-draft` — not activated for signatures.** Blocked on `RIGHTS_HOLDER_CONFIGURATION_REQUIRED` (counterparty, contact, governing law). Not a question of legal form — an individual can be the counterparty. |
+| Rights holder | **Jiaqi Wan**, a natural person, under **Hong Kong SAR** law. No company involved; none was required. |
+| CLA status | **`1.0` — final and signable.** No signature provider connected yet (deliberate: zero external contributions to date). |
 | Signature authority | **The provider.** The repository stores no signer data. |
 | CI enforcement | Gate script written and tested; **the `cla-check` job lands in a follow-up PR** (it reads its inputs from the default branch, so those must land first). Feeds the existing `CI fast gate` — no fourth required context. |
 | Trademark | **Tavotto™**, unregistered. ® is not used and CI fails if it appears |

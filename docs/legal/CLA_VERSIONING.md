@@ -80,6 +80,7 @@ is a signature that does not cover the text it is recorded against.
    counterparty, contact, governing law — not about any particular legal form
    being required. The gate enforces it structurally: it refuses to let a
    provider be marked as configured while any agreement is still a draft.
+   *(No agreement is currently a draft; the rule stands for future revisions.)*
 
 ## Where signature records live
 
@@ -101,9 +102,10 @@ What the version and hash in `.github/cla-policy.json` are *for*, then, is to
 pin **which text** the provider is collecting signatures against. The provider
 answers "did this person sign?"; the repository answers "sign what, exactly?".
 
-While no provider is configured, nobody can be recorded as having signed, and
-the gate blocks every non-exempt human contributor with an explanation. That is
-the correct behaviour: an unconfigured service is not consent.
+While no provider is configured — which is the current state, deliberately —
+nobody can be recorded as having signed, and the gate blocks every non-exempt
+human contributor **with an explanation**. That is the correct behaviour: an
+unconfigured service is not consent, and silence is not a signature.
 
 ## Rights transfer, if the holder ever changes
 
@@ -129,9 +131,9 @@ existence is not forgotten during such a transaction.
 
 | Version | Status | Date | Notes |
 |---|---|---|---|
-| `1.0-draft` | **Not activated for signatures** | 2026-08-27 | Initial text. Harmony 1.0, CLA form, Option Five. Held at draft because `RIGHTS_HOLDER_CONFIGURATION_REQUIRED` is unresolved: the counterparty, its contact address and the governing law are not yet filled in. Not a question of legal form — a natural person can be the counterparty. |
+| `1.0-draft` | Superseded by `1.0` | 2026-08-27 | Initial text. Harmony 1.0, CLA form, Option Five. Held at draft while `RIGHTS_HOLDER_CONFIGURATION_REQUIRED` was unresolved. **No signature was ever collected against it**, so nothing had to migrate. |
+| **`1.0`** | **Current — signable** | 2026-08-28 | `RIGHTS_HOLDER_CONFIGURATION_REQUIRED` resolved: counterparty is **Jiaqi Wan**, a natural person; governing law is the **Hong Kong SAR**. Both are material fields, so this is a new version rather than an edit to the draft. Operative text otherwise byte-identical to `1.0-draft`. |
 
-When `RIGHTS_HOLDER_CONFIGURATION_REQUIRED` is resolved, the intended first
-signable version is `1.0` — a new row here, refreshed hashes in the policy, and
-the `-draft` suffix removed from both documents. Only then may a provider be
-marked as configured.
+A provider may now be marked as configured (the structural bar on draft versions
+no longer applies), but none is configured yet — see
+[CLA_AUTOMATION_SETUP.md](CLA_AUTOMATION_SETUP.md).

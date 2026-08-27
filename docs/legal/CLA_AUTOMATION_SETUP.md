@@ -4,14 +4,16 @@
 
 ## Current status
 
-**CLA enforcement is scaffolded and wired into CI, but not in force.** The check
-runs on every pull request today and correctly qualifies the rights holder and
-the two exempt bots. It cannot yet *accept* a signature from anybody else,
-because the agreements are still `1.0-draft` with an unset counterparty.
+**The agreements are final and signable; no signature service is connected
+yet.** The check qualifies the rights holder and the two exempt bots, and blocks
+everyone else **with an explanation** — it never treats an unsigned contributor
+as signed. What is missing is only the collection mechanism, and that is a
+deliberate deferral rather than an omission: there have been no external
+contributions to date, so there is nothing for a provider to collect.
 
-Do not describe this as "CLA legal onboarding is production-ready". It is not.
-Policy infrastructure being ready and a legal signature service being activated
-are two different things, and only the first is done.
+Policy infrastructure being ready and a signature service being connected are
+two different things. The first is done; the second is a decision waiting for a
+reason.
 
 | Piece | State |
 |---|---|
@@ -20,8 +22,9 @@ are two different things, and only the first is done.
 | Repository-side qualification check | Written and tested; **the CI job lands in a follow-up PR** — see [Why the CI job ships separately](#why-the-ci-job-ships-separately) |
 | Security model of that check | Complete; no secrets, no PR code executed |
 | Signature source of truth | **Defined: the provider.** The repository stores no signer data. |
-| Rights holder (`RIGHTS_HOLDER_CONFIGURATION_REQUIRED`) | **Unresolved — blocks activation** |
-| Signature provider | Not configured (`provider.configured: false`) |
+| Rights holder | **Resolved — Jiaqi Wan (natural person), Hong Kong SAR law** |
+| Agreement version | **`1.0` — signable** |
+| Signature provider | Not configured (`provider.configured: false`) — deliberate, see below |
 
 ## Why it was built this way
 
@@ -224,7 +227,11 @@ shape directly.
 
 In order. Step 1 blocks everything else.
 
-### 1. Resolve `RIGHTS_HOLDER_CONFIGURATION_REQUIRED` — **required, and not an engineering task**
+### 1. ~~Resolve `RIGHTS_HOLDER_CONFIGURATION_REQUIRED`~~ — **done (2026-08-28)**
+
+**Resolved as: Jiaqi Wan**, a natural person, under **Hong Kong SAR** law.
+Agreements are at version `1.0` and signable. The rest of this section is kept
+because it defines what the marker meant and why it was never about legal form.
 
 **Definition.** Before the CLA is activated for real signatures, the project
 must identify the legal person or entity that currently owns, or is authorised
@@ -250,7 +257,12 @@ name, or an entity formed or nominated for the purpose. Both are ordinary; the
 choice has tax, liability and jurisdiction consequences that belong with
 counsel, and the repository must not make it for the owner.
 
-Once decided, fill in:
+**The postal address was deliberately not published.** Publishing a natural
+person's home address in a public repository is a privacy exposure with no
+corresponding benefit; corporate signing is initiated by opening an issue and
+the delivery details are exchanged privately.
+
+What was filled in:
 
 - the counterparty in `docs/legal/CLA_INDIVIDUAL.md` and
   `docs/legal/CLA_CORPORATE.md` (the "Us" signature block, and the opening line);

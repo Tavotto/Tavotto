@@ -51,8 +51,8 @@ ready, and one item on it is a genuine blocker.
 | # | Blocker | Class | Owner |
 |---|---|---|---|
 | 1 | **PyMuPDF.** Dual-licensed AGPL-3.0 / Artifex commercial; taken under the AGPL arm. Continuing to distribute it under AGPL terms inside a proprietary product may create incompatible obligations. | Third-party licence | Requires an Artifex commercial licence, a replacement backend, or other appropriate authorisation. **Legal review required before proprietary distribution.** |
-| 2 | **The rights holder is not yet configured.** The project has not identified the legal person or entity that owns, or is authorised to receive, the relevant Tavotto rights, nor recorded its contact details and governing law. **This does not require forming a company** — a natural person can be the counterparty and grant or receive a commercial licence. What is missing is the decision and its details. | Governance/legal | `RIGHTS_HOLDER_CONFIGURATION_REQUIRED`. See [CLA_AUTOMATION_SETUP.md](CLA_AUTOMATION_SETUP.md). |
-| 3 | **The CLA is not yet activated for signatures.** Agreements are `1.0-draft` because `RIGHTS_HOLDER_CONFIGURATION_REQUIRED` is unresolved and the text has not been formally activated; no signature provider is configured. Once the CI job lands (a follow-up PR, for bootstrap-ordering reasons) enforcement qualifies only the rights holder and two named bots, and blocks everyone else with an explanatory message. | Governance | Follows from #2. |
+| 2 | ~~The rights holder is not configured.~~ **Resolved 2026-08-28.** | — | **Jiaqi Wan**, a natural person, under Hong Kong SAR law. A company was not required. |
+| 3 | **No signature provider is connected.** Agreements are final at `1.0` and signable, but nothing collects signatures yet. This is a deliberate deferral (zero external contributions to date), not an omission. The gate blocks non-exempt human contributors with an explanation rather than treating them as signed. | Governance | Connect a provider when an external contribution is actually expected — see [CLA_AUTOMATION_SETUP.md](CLA_AUTOMATION_SETUP.md). |
 | 4 | **Distributed artefacts carry no notices.** The desktop app and the Codex plugin ship neither `LICENSE` nor third-party notices, and 5 unmodified MPL-2.0 Rust crates are statically linked into the desktop binary (MPL-2.0 §3.2 requires telling recipients how to obtain their source). This is an obligation of the **current AGPL distribution**, not only a future commercial one. | Packaging | **Tracked separately as [#182](https://github.com/Tavotto/Tavotto/issues/182)** — not fixed in the legal-governance change. See [IP_PROVENANCE.md](IP_PROVENANCE.md#notices-in-distributed-artefacts). |
 | 5 | **Two AI-suggested edits unreviewed.** Copilot Autofix co-authored seven lines across two commits in one file. | Provenance | **NEEDS LEGAL REVIEW**; bounded and trivially reimplementable. |
 | 6 | **Rights-holder encumbrance unverified.** Whether the rights holder's own work is subject to an employment or institutional agreement cannot be established from the repository. | Provenance | Only the rights holder can answer. |
@@ -143,9 +143,9 @@ its naming are governed by [`TRADEMARKS.md`](../../TRADEMARKS.md) independently.
 
 ## What would move this to `READY`
 
-1. Resolve `RIGHTS_HOLDER_CONFIGURATION_REQUIRED` — identify the legal person
-   or entity (an individual is sufficient), record its contact details and the
-   governing law; finalise the CLA at `1.0` and configure a provider.
+1. ~~Resolve `RIGHTS_HOLDER_CONFIGURATION_REQUIRED`~~ — **done**: Jiaqi Wan,
+   Hong Kong SAR law, CLA final at `1.0`. Remaining: connect a signature
+   provider when an external contribution is actually expected.
 2. Resolve PyMuPDF — Artifex commercial licence, or an alternative backend
    behind the existing `pdfbackend/` contract.
 3. Ship licence and third-party notices in every distributed artefact,

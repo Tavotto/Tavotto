@@ -25,26 +25,26 @@
   "agreements": {
     "individual": {
       "path": "docs/legal/CLA_INDIVIDUAL.md",
-      "version": "1.0-draft",
-      "sha256": "95f7bff63085be58dbd4598e4b5fca3734d818d2b5860bc5388c69bde1212ca8"
+      "version": "1.0",
+      "sha256": "b56e64beefa7252800014b8cd7a2af2c9d8a5a8d7efc4483b983122be02338ea"
     },
     "corporate": {
       "path": "docs/legal/CLA_CORPORATE.md",
-      "version": "1.0-draft",
-      "sha256": "6b964069ee911d20aeb4814ed7af455fa00a2e99e2544663fe4f587b886ab744"
+      "version": "1.0",
+      "sha256": "01f01742b239fc45c722eca72ec0ac3be6b80863bb7e016c8c144d54f9fcb2b4"
     }
   },
   "provider": {
     "configured": false,
     "name": null,
     "check_name": null,
-    "note": "未配置。前置条件是 RIGHTS_HOLDER_CONFIGURATION_REQUIRED 得到解决、协议脱离 -draft。在此之前判定器对任何非豁免的人类贡献者一律阻断。"
+    "note": "未配置——这是**刻意的**，不是遗漏：至今零外部人类贡献，配了也没人用。RIGHTS_HOLDER_CONFIGURATION_REQUIRED 已解决（Jiaqi Wan / 香港法），协议已定版 1.0，因此现在随时可以启用。启用步骤见 docs/legal/CLA_AUTOMATION_SETUP.md。在此之前判定器对任何非豁免的人类贡献者一律阻断并给出指引，绝不假装谁签过。"
   },
   "exemptions": [
     {
       "login": "erwanjun",
       "kind": "rights_holder",
-      "reason": "本仓库当前的著作权人本人。main 可达的 419 个 commit 中 418 个出自这个身份（三个邮箱，同一人；审计见 docs/legal/IP_PROVENANCE.md）。著作权人不需要向自己授权。RIGHTS_HOLDER_CONFIGURATION_REQUIRED 得到解决之后要复核这一条：如果权利被转移给某个实体，这里要改成那个实体与本人的关系。"
+      "reason": "本仓库的著作权人 Jiaqi Wan 本人（GitHub 账号 erwanjun）。main 可达的 419 个 commit 中 418 个出自这个身份（三个邮箱，同一人；审计见 docs/legal/IP_PROVENANCE.md）。著作权人不需要向自己授权。若权利将来转移给某个实体，这一条要改成那个实体与本人的关系。"
     },
     {
       "login": "dependabot[bot]",
