@@ -18,6 +18,16 @@ test('同一项目开两个标签页：标签 A 复制面板，标签 B 粘贴',
   await expect(tabA.getByRole('button', { name: /当前项目/ })).toBeVisible({
     timeout: 30_000,
   })
+  // 等待器要在触发改动**之前**挂上：autosave 防抖只有几百毫秒，事后再等就可能
+  // 已经错过那次响应
+  const autosaved = tabA.waitForResponse(
+    (r) =>
+      r.request().method() === 'PUT' &&
+      r.url().includes('/api/autosave/') &&
+      r.status() >= 200 &&
+      r.status() < 300,
+    { timeout: 30_000 },
+  )
   await tabA.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
   await expect(tabA.locator('[data-object-id]')).toHaveCount(1)
   await tabA.keyboard.press('ControlOrMeta+c')
@@ -31,10 +41,11 @@ test('同一项目开两个标签页：标签 A 复制面板，标签 B 粘贴',
   // 面板起来，粘贴后是 2 个，用例误红；赶在之后就是 1 个，用例侥幸绿。同一份
   // 代码两种结果，判据的主语错位（同族：#133 / #136 / #138）。
   //
-  // 顶栏那句「已自动保存 …」是 dirty 翻回 false 的直接体现，也就是防抖窗口已经
-  // 结束、文档已经写到磁盘。把赌变成一个**同步点**：此后标签 B 每次都带着那 1
-  // 个面板加载，基线是确定的。
-  await expect(tabA.getByText(/已自动保存/)).toBeVisible({ timeout: 30_000 })
+  // 同步点盯的是**后端真的收下了那次写**（`PUT /api/autosave/<id>` 回 2xx），
+  // 不是顶栏那句「已自动保存」——后者是乐观的：`flushAutosave()` 排完盘就立刻
+  // 把 dirty 翻成 false，PUT 还在路上。标签 B 的加载读的是磁盘那一份，所以判据
+  // 必须落在磁盘上（Codex 在 PR #163 上指出，成立）。
+  await autosaved
 
   // 标签 B：同一项目的另一个标签页，直接 ⌘V
   const tabB = await context.newPage()
