@@ -462,6 +462,49 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   会拿到 worker 的 `--script/--out-dir/--entry`，存出一堆叫 `--entry` 的图
   （试运行探测时当场撞见过，`test_script_sees_its_own_argv_not_the_workers` 看护）。
 
+## 受控依赖修复（ADR 0019，2026-08-27）
+
+缺包时「一键装上并继续」。**动它之前先读 ADR 0019**——它是本仓库唯一一个会
+往磁盘装第三方代码的子系统，边界比实现重要得多。
+
+- **四个模块各是自己那件事的唯一出处**：`engine/depresolve.py`（import 名 →
+  distribution 的可信解析 + 包名语法）、`engine/managedenv.py`（Tavotto 替
+  项目管的隔离环境）、`engine/deprepair.py`（计划 / 安装 / 取消 / 验证 /
+  记账）、`engine/pool.py` 增量（环境改动期间的 worker 生命周期）。
+  全部纯标准库（Flask 父进程 import 链上）。
+- **内置 runtime 永远不是安装目标**。它是「重装就能修」这条退路的前提。
+  缺包时它只是触发器。安装目标只有两种：用户的项目 `.venv`（要明确确认）
+  与 Tavotto 受管环境（我们自己的，可删可重建）。
+- **import 名不是包名**。只认 `project_declared` / `curated` 两档高置信解析，
+  外加用户手填的 `user_specified`。**没有「同名试试看」这一档**——那是抢注
+  攻击的入口。依赖声明只读：不改 requirements.txt / pyproject.toml，不
+  `pip install -r`。
+- **包名语法是安全边界不是输入校验**：`shell=False` 挡不住 pip 自己把 `-r` /
+  `--index-url` / `--target` 解析成选项。白名单语法在
+  `depresolve.parse_requirement`，安装前在 `_pip_install` 里**再验一次**。
+- **计划绑定，不是 `confirmed=true`**：plan（说清楚装什么装到哪）与 install
+  （只发 plan_id）分两步；执行端一个字节都不从请求体里读，且执行前重算环境
+  指纹（`repair_plan_stale`）。没有计划 → `dependency_install_not_allowed`。
+- **pip exit 0 不等于修好了**：验证三层——import 那个包 / import matplotlib /
+  **真起一次 worker 跑通 build**（`deprepair.worker_self_test`，argv 走
+  `execspec.worker_argv` 那一份，不另拼）。
+- **安装期间那个环境上不许有 worker**：`pool.mutating_environment()` 先把该
+  解释器上的会话全停、并让 `pool.get()` 拒起新会话（`environment_mutating`）。
+  锁的粒度是**一个环境**，不是全局。装完 `pool.invalidate()` 点名作废——
+  磁盘上多个包不会让已经起来的解释器看见它。
+- **用户环境上的安装只进不退**：本轮禁止任何自动 `pip uninstall`。取消之后
+  对用户 `.venv` **不假装完整 rollback**，如实说「可能已发生部分修改」；
+  受管环境标 incomplete、下次重建。
+- **隐私**：安装日志两道脱敏（pip 特有的 index 地址与 URL 凭据归
+  `deprepair._sanitize`，路径与密钥走 `diagnostics.redact_text` 那一份）；
+  诊断只记 `custom_package_index: true/false`，**绝不记地址**。本轮**没有加
+  遥测事件**（EVENTS 扩容要升 CONSENT_VERSION 并让所有人重新同意，理由见
+  ADR 0019 §十二）。
+- 看护：`tests/test_dependency_repair.py`（十五条负向反证）+
+  `tests/test_dependency_repair_e2e.py`（真建 venv、真跑 pip、真起 worker、
+  真出图；不联网靠手工 wheel + `PIP_FIND_LINKS`/`PIP_NO_INDEX`）+ web 的
+  `DependencyRepairCard.test.tsx`。
+
 ## 布局层（R18）
 
 - **布局版本**：`/api/versions/<docId>` 系列，快照存 `layouts/_versions/`，

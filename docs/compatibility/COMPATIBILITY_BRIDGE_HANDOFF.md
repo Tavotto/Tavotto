@@ -7,233 +7,261 @@
 - 日期：2026-08-27
 - 当前 branch：`compat/bridge-session07-project-env`（worktree
   `.claude/worktrees/compat-bridge-session01`，基于 `origin/main` 的
-  `93cca88`，**不再 stacked**——PR 1 的那条链已经合并完了）
-- 本 Session Prompt：项目 Python 环境自动发现与无感切换
-  （**替代**原计划的 Native Execution / `tavotto run` Session）
-- 目标 PR：Session 7 单独一条 PR
-- 前一轮：PR 1（#127）Session 1–6 已合入 main（squash `6aeca9e`，
-  2026-08-26），交接收尾 `9f48357`（#135）
+  `93cca88`；**尚未推送**）
+- 本 branch 上现在有**两个 Session 的工作**：Session 7（项目 Python 环境
+  自动发现与无感切换，ADR 0018）与 **Session 7B（受控依赖修复，ADR 0019）**。
+  7B 建在 7 上面，**没有改动 7 的任何行为**（见下方「Session 7 一个字节没改」）。
+- 前一轮：PR 1（#127）Session 1–6 已合入 main（squash `6aeca9e`，2026-08-26），
+  交接收尾 `9f48357`（#135）
+- **main 已经往前走了**（`b6a1cbf`）：本分支入队前要先 rebase 并按下面
+  「合并前必做」重跑。
 
-## 为什么这一轮不是 `tavotto run`
+## Session 7B 做了什么
 
-用户在 PR 1 合并后拿一批旧项目做了复测（那是 Session 7 的入场券）。结论
-比预期干净得多：**绝大多数脚本现在都能正常发现与打开，剩下的失败几乎只有
-一类——内置渲染环境缺第三方依赖。**
+Session 7 解决的是「项目自己带着一个能跑通的 `.venv`」。真实用户里还有一半
+不是这样：项目有 `.venv` 但它也缺这个包、或者项目根本没有 venv。那时 Tavotto
+给出的仍然只有一句 `ModuleNotFoundError` 与「去设置里手填一条解释器路径」。
 
-真实样本：用户的 `2d 处理` 项目，8 个脚本全部 `import ovito`（另有一个
-`import seaborn`，那个内置就有、本来就能跑）。报错是
+本轮给这类局面一条产品化的路：
 
 ```text
-ModuleNotFoundError: No module named 'ovito'
+missing_dependency（唯一触发器）
+    ↓  import 名 → 可信的 distribution（解析不到就停在这儿）
+    ↓  选目标：项目 .venv（改用户环境）/ Tavotto 受管环境（改我们自己的）
+    ↓  用户明确点一次（改用户环境时文案说清「这会改你的环境」）
+    ↓  pip install（wheels 优先、shell=False、不 --upgrade）
+    ↓  验证三层：import 那个包 / import matplotlib / 真起一次 worker
+    ↓  作废旧 worker → 重跑脚本 → Figure 出来
 ```
 
-而项目自己就带着能跑通的环境。当时 Tavotto 给用户的唯一出路是「去设置里
-手填一条解释器路径」——对科研用户门槛过高。
+## Session 7 一个字节没改
 
-于是本轮做的是「**把项目自己的 `.venv` 找出来用上**」，而不是「按项目原本
-的方式运行」。后者复杂得多、放弃沙盒保证，而数据表明它解决的不是当前的
-主要矛盾。`tavotto run` / ADR 0014 继续延期，决策门见下方。
+下面这些是 Session 7 的实现面，本轮**只读、只复用，没有修改语义**：
 
-## 本轮唯一目标
+- `engine/projectenv.py`：发现、体检、记住/忘记、项目级缓存与重试上限——
+  整个文件本轮**零改动**。
+- `pool.resolve_worker_python()` 的优先级链（env > 设置 > 项目记住的 >
+  内置/自身/系统）与「两条显式来源各自判、不短路」。
+- `pool.should_try_project_env()`（只有 `missing_dependency` 触发）与
+  `pool.build()` 的「一次 build 最多自动切一次」。
+- `pool.get()` 的身份守卫（入口已变 / 渲染解释器已变）。
+- `app._switched_to_project_env()` 与 `_engine_attempt()` 的端点侧重试。
+- `GET/PATCH /api/engine/environment` 的既有字段与 `scope="project"` 语义。
+- 诊断包的 `project.environment_resolution`（本轮是**新增**了平级的
+  `project.dependency_repair`，没动它）。
 
-内置 runtime 因 `missing_dependency` 失败时，自动发现并整体换用项目本地
-虚拟环境（`.venv` / `venv` / `env`），对普通用户尽量无感，但保留清晰、
-可诊断、可关闭的环境状态。**不实现 `tavotto run`；不自动 pip install；
-不修改用户环境；不混装 site-packages。**
+pool 侧本轮的增量都是**加**出来的，不改既有判据：`SOURCE_MANAGED_PROJECT`
+（受管环境的来源标签）、`remembered_source()`、`note_project_python_ok()`
+（把 `try_project_env` 里那两行重复的登记收成一处）、
+`mutating_environment()` / `is_mutating()` / `shutdown_workers_using()`。
 
 ## 已完成
 
-- [x] **`engine/projectenv.py`**（新，纯标准库——被 `pool` import，而 pool
-  被 Flask import）：发现（只认带 `pyvenv.cfg` 的真 venv；范围锁在项目根内，
-  不上溯、不顺软链接跳出去；优先级 = 离脚本最近 → `.venv`/`venv`/`env` →
-  路径字典序）、体检（在候选解释器里真跑一次：版本、matplotlib、缺的那个
-  模块、**能不能起 Tavotto worker**）、项目级决策的记/忘/缓存/重试上限。
-- [x] **`pool.resolve_worker_python(figures_dir)`**：项目级解释器决策的
-  唯一出处。优先级 = 环境变量 > 设置里指定的 > **这个项目记住的** >
-  内置/自身/系统。两条显式来源**各自判**，不 `env or configured` 短路。
-- [x] **`pool.build()`**：get + ensure_built + **一次**自动 fallback，
-  「跑一次用户脚本」的统一入口（`probe.probe()` 已改用它）。
-- [x] **`pool.should_try_project_env(exc)`**：「什么错该换环境」的唯一判据
-  （只有 `missing_dependency`）。`pool.build` 与 app 端点重试共用它。
-- [x] **`pool.get()` 身份守卫加「渲染解释器已变」**，与既有的「入口已变」
-  同形，不另起一套 key。
-- [x] **端点侧重试**（`app._engine_attempt`）：render / preview_png /
-  png / svg 这几条**惰性 build** 的路也覆盖到——只在 probe 那条路上做
-  fallback 的话，「素材库能打开、直接点面板打不开」就成立了。
-- [x] **产品 API**：`GET /api/engine/environment` 多一段 `project`
-  （来源、项目相对解释器路径、是否自动、因为缺哪个包、发现到的候选）；
-  `PATCH /api/engine/environment` 支持 `scope="project"`（存下来之前先真
-  体检；清空 = 回默认链条）。
-- [x] **前端**：环境卡显示「项目环境：.venv/bin/python」+ 一键改回内置；
-  `MissingDependencyCard` 重做成恢复引导（先给一键用项目 `.venv`，再给
-  手填路径；四种「没接手成」各有各的文案）；自动接手成功时一条轻量 toast
-  （`environment_switched` 只在真的切了的那一次响应里出现）。中英各一份。
-- [x] **诊断**：`project.environment_resolution`（来源/自动与否/触发原因/
-  缺的模块/Python 与 matplotlib 版本/支持等级/**项目相对**解释器路径）。
-  版本这些事实在切换当时就存下来了，**生成诊断包时不重新体检**。
-- [x] **CompatBench**：报告的 `target.actual` 多一个 `interpreter_source`，
-  内置与项目 venv 跑出来的数字不再被当成同一件事。
-- [x] **支持口径**：`projectenv` 的 Python/matplotlib 区间是
-  `docs/support-matrix.json` 与 pyproject 的运行时镜像，
-  `test_support_matrix.py::test_project_env_mirrors_the_matrix` 逐条对拍。
-- [x] **ADR 0018** 与 `docs/compatibility/legacy-projects.md`（兼容层分层）。
+- [x] **`engine/depresolve.py`**（新）：import 名 → distribution 的可信解析。
+  三档来源（project_declared / curated / user_specified），**没有第四档**；
+  curated 分「名字不同要查表」与「同名但显式登记过」两张表；包名语法作为
+  安全边界（白名单，URL/VCS/路径/extras/marker/带空格一律拒）。
+  依赖声明只读（requirements*.txt / pyproject 的 project + optional +
+  poetry），解析失败只让这一档不可用、不连坐。
+- [x] **`engine/managedenv.py`**（新）：`<data_dir>/environments/<项目指纹>/`。
+  一个项目一个、绝不建在用户项目里、不带 `--system-site-packages`、只装
+  matplotlib（numpy 由它带）。`environment.json` 记 schema / 是不是我们建的 /
+  Python 版本 / 基础解释器指纹（**不是路径**）/ 装过什么。
+- [x] **`engine/deprepair.py`**（新）：错误码表、`RepairPlan`（绑项目 + 环境
+  指纹 + 需求 + 有效期）、`offer()`（只读的修复建议）、`create_plan()`、
+  `install()`（环境锁 → pip 可用性 → pip → 三层验证 → 记账 → 作废 worker）、
+  `cancel()`、`rebuild_managed()`、`worker_self_test()`、日志脱敏、
+  `diagnostics_state()`。
+- [x] **`pool` 侧的 worker 生命周期**：安装期间该环境上的会话全停 +
+  `get()` 拒起新会话（`environment_mutating`）；锁按环境不按全局。
+- [x] **端点**：`POST /api/engine/dependency/plan | install | cancel`、
+  `GET /api/engine/dependency/state`、
+  `POST /api/engine/environment/managed/rebuild`。进度经 SSE
+  `engine.dependency`。
+- [x] **修复建议挂在两条入口上**：渲染端点的 `_worker_error_payload` 与
+  素材库那条 `registry/probe`（`probe._error_from_worker`）。只给一条的话
+  「素材库里打不开、面板里能修」又是一次两个入口两个答案。
+- [x] **前端**：`DependencyRepairCard`（起点 → 确认 → 进度 → 结果）、
+  `depRepairStore`、SSE 路由、`ManagedEnvironmentRow`（设置页里的「装了
+  什么 + 重建」）、中英各一份文案、按钮进 overflow 字数预算表。
+- [x] **诊断**：`project.dependency_repair`（修过几轮、受管环境状态与
+  包名+版本）。**没有路径、没有 pip 配置、没有 index 地址。**
+- [x] **ADR 0019** 与 `docs/compatibility/legacy-projects.md`（兼容层从四层
+  变五层，新的第 3 层就是本轮）。
 
-## 顺手修掉的两个既有缺陷
+## 刻意没做
 
-- **`TAVOTTO_WORKER_PYTHON` 漏给整个 pytest 进程**（`d2b93f4`）：
-  `CM._worker_python()` 直接写 `os.environ`（它是 CI 驱动，不是被测函数），
-  而那条用例让它在写完之后才抛错。`monkeypatch.delenv(name, raising=False)`
-  **在变量本来就没设的时候什么都不记账**，于是逃得掉自动还原。
-  现在 `tests/conftest.py` 有一条 autouse fixture 兜住整类问题。
-  这条漏出来的环境变量正是 Session 7 的显式优先级用例「单跑绿、全量红」
-  的成因。
-- **显式来源短路**：`worker_python_env() or config.worker_python()` 让
-  一条指向不存在路径的环境变量把设置里那条完全遮住。上面那条泄漏把它撞了
-  出来，现在两条各自判，并有专门的用例。
+- **没有加遥测事件**。`EVENTS` 扩容意味着采集范围变化，按既有纪律要升
+  `CONSENT_VERSION` 并让所有人重新同意一次。为了几个计数让全体用户重新表态，
+  这笔账本轮不划算。要数据时单独一轮做，连同代理侧那份对拍表一起。
+- **没有实现 `tavotto run`**（ADR 0014 仍是 Proposed）。
+- **没有自动 `pip uninstall`**、没有自动改 requirements/pyproject、没有自动
+  建 `project/.venv`、没有静态扫描后批量安装、没有 sdist 编译。
 
-## 负向反证（本轮十一条，全部先红后还原）
+## 负向反证
+
+**后端十五条**（变异脚本在仓库外，**从内存还原不用 `git checkout`**——
+工作区有未提交改动时它会一起吃掉，Session 7 就吃掉过一次）：
 
 | # | 抽掉什么 | 哪条用例变红 |
 |---|---|---|
-| 1 | 项目 venv 发现 | `test_missing_dependency_falls_back_to_the_project_venv` |
-| 2 | 给 worker 注 venv 的 `PYTHONPATH`（混装） | `test_never_mixes_site_packages` |
-| 3 | worker 身份里的解释器 | `test_worker_identity_includes_the_interpreter` |
-| 4 | 干净重放跟着项目走 | `test_replay_and_export_use_the_same_interpreter` |
-| 5 | 显式选择优先 | `test_explicit_configuration_wins_over_automatic_discovery` |
-| 6 | 显式来源各自判（改回短路） | `test_a_stale_env_var_does_not_hide_an_explicit_setting` |
-| 7 | 项目作用域（改写全局设置） | `test_the_switch_is_remembered_project_scoped_not_globally` |
-| 8 | 重试上限 | `test_fallback_is_attempted_at_most_once` |
-| 9 | 只认 `missing_dependency` | `test_only_missing_dependency_triggers_a_switch` |
-| 10 | 模块名校验 | `test_module_name_must_be_a_bare_identifier` |
-| 11 | 端点侧共用同一判据 | `test_the_app_endpoint_retry_shares_the_same_predicate` |
+| 1 | 内置 runtime 可以当安装目标 | `test_the_bundled_runtime_is_never_a_mutation_target` |
+| 2 | 没有计划也能调安装接口 | `test_install_endpoint_refuses_without_a_plan` |
+| 3 | 未知 import 按同名装 | `test_an_unknown_import_is_never_installable` |
+| 4 | 包名语法放行（option injection） | `test_package_option_injection_is_rejected` |
+| 5 | pip 成功后不做 import 探测 | `test_pip_success_alone_is_not_success` |
+| 6 | 装完不作废 worker | `test_the_old_worker_is_gone_and_the_new_one_uses_the_new_interpreter` |
+| 7 | 安装期间旧 worker 照常工作 | `test_workers_on_the_mutating_environment_are_stopped` |
+| 8 | 安装期间还能起新会话 | `test_a_new_session_is_refused_while_the_environment_is_mutating` |
+| 9 | 修复轮次没有上限 | `test_repair_rounds_are_capped` |
+| 10 | 受管环境被所有项目共用 | `test_managed_environments_are_project_scoped` |
+| 11 | 计划不绑环境指纹（TOCTOU） | `test_a_changed_environment_makes_the_plan_stale` |
+| 12 | 受管环境不隔离（`--system-site-packages`） | `test_managed_venv_creation_is_isolated_and_minimal` |
+| 13 | pip 默认 `--upgrade` / 允许 sdist | `test_pip_argv_is_a_list_wheels_only_and_never_upgrades` |
+| 14 | 装完不做 worker 自检 | `test_imports_can_pass_while_the_worker_still_cannot_run` |
+| 15 | 没有 pip 就静默 ensurepip | `test_an_environment_without_pip_is_reported_not_silently_fixed` |
 
-**第一轮跑出两条空门禁，都是真问题**：
+**前端八条**：不提示「这会改你的环境」/ 解析不出包名也给一键安装 / 安装请求
+带前端拼的包名 / 轮次用完仍给入口 / 不可用目标也列出来 / pip 日志糊在主文案
+上 / 失败甩后端中文原文 / 取消后对用户环境也说「已回滚」——全部变红。
 
-- #3 抽掉不红——自动 fallback 那条路顺手 `invalidate()` 过，所以「切过去」
-  那一半根本用不到 `get()` 里的比对。补上反向的一半（用户切回内置走
-  `forget()`，它不作废任何 worker）才真正看护到那条守卫。
-- #9/#11 抽掉不红——判据在 `pool.build` 与 `app` 各写了一份，用例只走
-  pool 那条路。收进 `pool.should_try_project_env()` 之后两处共用一份。
+### 两条第一轮抽掉不红（都是**缺维度**，不是死代码）
 
-变异脚本不用 `git checkout` 还原（工作区里有未提交改动时它会一起吃掉，
-这一轮就吃掉过一次），改成写回内存里的原文。
+- **#14（worker 自检）**：原本挂在 golden path 上，而那条用例里环境本来就
+  是好的，跳过自检什么都不变。补了「前两层都放行、worker 仍然起不来」
+  （字体缓存不可写 / `.so` 只在子进程里崩的同形状）之后才真正看护到它。
+- **前端 #2（解析不出包名也给一键安装）**：用例里 `targets` 恰好是空的，
+  guard 抽掉照样没按钮。补了「后端给了目标但没有可信包名」那一维——一键
+  安装的前提是「知道要装什么」，不是「有地方可以装」。
 
-## 真 venv 测试怎么做到不联网
+## 真安装 E2E 怎么做到不联网
 
-从当前 worker 解释器 `python -m venv --system-site-packages` 建一个：
-matplotlib 直接用宿主那份。要「这个环境有而别处没有」的包时，往它自己的
-site-packages 写一个纯 Python 的 fixture 模块（`tavotto_probe_fixture`）。
+临时目录里**手工拼一个纯 Python wheel**（wheel 就是约定好目录结构的 zip：
+模块 + `dist-info/{METADATA,WHEEL,RECORD}`），再用 pip 自己的
+`PIP_FIND_LINKS` + `PIP_NO_INDEX` 指过去。后者顺带验证了「index 用那个环境
+自己的配置」这条决策：**安装命令一个字节都不用为测试改动**。
 
-断言必须证明**跑的是那个解释器**（`sys.executable` / `sys.prefix` 在 venv
-里），不是「字符串选中了 `/tmp/.venv/bin/python`」。
+断言必须证明**包真的进了那个环境**：site-packages 里有那个文件、在那个解释器
+里 import 得到、`sys.prefix` / `sys.executable` 是它。
+
+受管环境那组另有一个**离线 fixture**（基础栈换空表 + venv 带
+`--system-site-packages`，因为 CI 装不了 matplotlib）。被放宽的那两条**另有
+单元用例逐字节钉住**——否则「离线 fixture 好使」会掩盖「生产上建出来的环境
+根本不隔离」。
 
 ## 实际运行的测试
 
 ```sh
-ruff check .                                              # 全绿
-PYTHONPATH=src .venv/bin/python -m pytest -q               # 全绿
-PYTHONPATH=src .venv/bin/python -m pytest -q tests/test_project_env.py   # 29 passed
+ruff check .                                               # 全绿
+PYTHONPATH=src .venv/bin/python -m pytest -q -o faulthandler_timeout=600
+                                                           # 全绿（无 F）
+PYTHONPATH=src .venv/bin/python -m pytest -q \
+    tests/test_dependency_repair.py tests/test_dependency_repair_e2e.py
+                                                           # 80 passed
 cd web && pnpm build && pnpm test && pnpm lint && pnpm i18n:check
-PYTHONPATH=src .venv/bin/python scripts/ci/compat_matrix.py --smoke      # 通过
+                                                           # 1201 passed / 全绿
+PYTHONPATH=src .venv/bin/python scripts/ci/compat_matrix.py --smoke   # 通过
+python scripts/build_mcp_widget.py --check                 # 一致
 ```
 
 ## 已知失败与限制
 
 | 问题 | 严重度 | 后续 |
 |---|---|---|
-| 只认 `.venv`/`venv`/`env`；Poetry / Conda / pyenv / pixi 用户走「选择其他 Python」 | 中（如实记账，不是无声失败） | 等真实用户数据 |
-| 记住的解释器在 reopen 时只做轻量复检（`import matplotlib`），不重跑完整体检 | 低 | 坏了会在起 worker 时报错，走正常恢复引导 |
-| 项目 venv 的 matplotlib 版本可能与视觉基线不同 | 低（标注为 `unverified_but_compatible`） | 不修，如实标注 |
-| 自动接手仍是同步阻塞（体检最长 60s×候选数，命中第一个就停） | 低 | SSE 进度流条目沿用 |
-| 体检跑在 `-I` 下，worker 只在 bundled 档摘敌意环境变量（`PYTHONHOME`/`PYTHONPATH`）——从终端带着 conda 变量启动时体检会过而 worker 可能起不来 | 中（**不是本轮引入**：`configured`/`system` 一直如此） | 要同时动两条控制面与 `spec.env` 的增量模型（它表达不了「删掉某个变量」），独立一轮 |
-| 真机（WebView2/WKWebView 壳内）尚未走过这条路 | 中 | 见「待办」 |
-| 全量套件挂过**一次**（`test_invariants_engine` 的干净重放，父子进程双双 idle 到 19 分钟）；此后连跑两轮不复现 | 未定性 | 见下 |
-
-### 那次挂死的处置
-
-不复现，但**不当成噪音**。当时机器上同时在跑 CompatBench smoke 与
-`pnpm build`（两者都起自己的进程），worker 握手/build 撞上超时窗口是能解释
-的；同一轮还暴露出本文件的 `project` fixture 漏收 `open_project()` 起的
-watcher——而那些项目目录里各建着一个**真 venv（几千个文件）**，留着不收会
-让整个 pytest 进程持续监视一堆已删除的临时目录，正好加剧争用。
-
-已做的两件事：收 watcher（`77f5ef0`）、后续两轮全量都带
-`-o faulthandler_timeout=240` 跑（真挂会打出栈，不会再只看到「卡住」）。
-**再遇到先拿栈，别直接归因于机器忙**——「偶发」多半是断言与缺陷在赛跑。
+| 没有 wheel 的包走不了一键路径（如实报 `dependency_requires_build`） | 中（如实记账） | 「允许源码构建」是高级功能，等数据 |
+| 机器上没有任何可建 venv 的 Python 时受管环境这条路不存在 | 中 | 如实报 `managed_env_unavailable`，退回「选择其他 Python」 |
+| 私有 index 上的包：pip 用那个环境自己的配置，能装；但**诊断里只记有没有自定义 index**，排障信息比公网少 | 低 | 刻意如此（凭据） |
+| Conda 专属的包（只在 conda-forge 上）装不了 | 中 | 走「选择其他 Python」 |
+| 受管环境按**项目路径指纹**寻址：项目整个挪走 = 换了一个环境（旧的留在数据目录里） | 低 | 用户可以重建；自动搬迁要另想身份模型 |
+| 受管环境**不声称 lockfile 级复现**：重建时某个版本从 index 撤了会如实报错 | 低 | 刻意如此 |
+| 取消对用户 `.venv` 没有回滚 | 中（**已在 UI 与 ADR 里说明**） | 不修，pip 层面做不到 |
+| 真机（WebView2 / WKWebView 壳内）尚未走过这条路 | 中 | 与 Session 7 同一条待办 |
+| Session 7 遗留：只认 `.venv`/`venv`/`env`；体检跑在 `-I` 下与 worker 的环境条件差异 | 见上一轮记录 | 未变 |
 
 ## 不得被下一 Session 破坏的约束
 
-- Session 2–6 的全部约束仍然有效（runtime id 不透明、打开绝不执行、cache
-  是派生物、writeback 拒绝在后端、lazy 门、取消端到端、`_PROBES` 并发闸、
-  `GET /api/runtime/assets` 零执行、scriptRunStore 代际纪律、不渲染假
-  native 入口、素材库两区是普通路径唯一入口、`tavotto open script.py` 的
-  执行次数纪律、多 Figure 绝不静默选第一张、`desktop_argv()` ↔
-  `parse_open_args()` 同源、CompatBench 产品路由不得旁路、基线只在 target
-  bundled 的钉版环境上重生成）。
-- **绝不混装 site-packages**：切换的单位永远是完整解释器。给任何 worker 注
-  一条指向 venv site-packages 的 `PYTHONPATH` 都是本条的破坏。
-- **绝不 pip install**：内置 runtime 与用户 venv 一个字节都不改。
-- **绝不写全局 `worker.python`** 来表达项目级决策。
-- **用户显式选择 > 自动猜测**，且两条显式来源各自判、不短路。
-- **一次 build 最多自动切一次**；只有 `missing_dependency` 触发，判据只有
-  `pool.should_try_project_env()` 一份。
-- **一个 worker 生命周期一个解释器**：热态 / 干净重放 / 导出 / 写回自检
-  必须同源。
-- **merge main 之后必须重跑 e2e**（asset-library / golden-paths 至少各一
-  遍）：windows-exe-smoke 的 Playwright 套件只在 merge_group 跑，PR CI 绿
-  不代表它绿。大改动入队前先打 `full-ci` 标签在 PR SHA 上取证。
+- Session 2–7 的全部约束仍然有效（见 git 历史里的上一版本文件，逐条未变）。
+- **内置 runtime 永远不是安装目标**。缺包时它只是触发器。
+- **未知 import 绝不按同名安装**。一键安装只允许 `project_declared` /
+  `curated` 两档高置信解析。
+- **包名与版本必须过 `depresolve.parse_requirement`**，且安装前再验一次。
+  `shell=False` 不是免死金牌——pip 自己会把参数解析成选项。
+- **没有计划就不许改任何环境**；计划绑项目 + 环境指纹 + 需求，执行端一个
+  字节都不从请求体里读。
+- **改用户 `.venv` 必须是用户明确点击的结果**，且**不假装能回滚**。
+- **pip exit 0 不等于成功**：三层验证缺一不可。
+- **安装期间那个环境上不许有 worker 在跑，也不许起新的**；锁按环境不按全局。
+- **绝不自动 `pip uninstall`**、绝不自动改 requirements/pyproject、绝不
+  自动建 `project/.venv`、打开项目绝不联网。
+- **诊断与遥测里绝不出现 index 地址、pip 配置、绝对路径、凭据**。
+- **merge main 之后必须重跑 e2e**（asset-library / golden-paths 至少各一遍）：
+  windows-exe-smoke 的 Playwright 套件只在 merge_group 跑。大改动入队前
+  先打 `full-ci` 标签在 PR SHA 上取证。
+
+## 合并前必做
+
+- [ ] `git rebase origin/main`（main 已到 `b6a1cbf`），rebase 后**本地重跑**
+      整套后端 + 前端 + CompatBench smoke。
+- [ ] 受管产物冲突：`canvas.html` 是并行 PR 必撞的那一份，按「合并态重建 +
+      `--check`」处理（见 memory `managed-artifact-conflicts`）。
+- [ ] 打 `full-ci` 标签在 PR SHA 上取证。
 
 ## 待办（本 PR 之外）
 
 - [ ] **真机验证这条路**：Windows/macOS 壳内用一个带 `.venv` 且缺包的真实
-  项目走一遍（用户的 `2d 处理` 就是现成样本）。CI 侧覆盖不了 WebView2 /
-  WKWebView 壳内交互。
+      项目走一遍完整修复（用户的 `2d 处理` 是现成样本）。CI 侧覆盖不了
+      WebView2 / WKWebView 壳内交互。
 - [ ] **网站 playground re-sync**（PR 1 起就挂着）：合并后 main 上
-  `python scripts/build_browser_playground.py` → 网站仓库
-  `pnpm sync-playground`。
-- [x] 受管产物重建（本 PR 改了 `web/src`）：`canvas.html` 指纹
-  42a8f188bc82dae0 → d1aec7a5393dcb20；playground 指纹 d79f50b4f385656d
-  （`web/dist-playground` 不进仓库）。
+      `python scripts/build_browser_playground.py` → 网站仓库
+      `pnpm sync-playground`。
+- [ ] **curated 表的第一次扩充等真实数据**：哪些包最常缺、哪些解析不出来。
+      `dependency_unresolved` 出现的频率就是这张表该不该长的依据。
+- [x] 受管产物重建（本轮改了 `web/src`）：`canvas.html` 指纹
+      d1aec7a5393dcb20 → 10f822e0302251de；playground 指纹 670ecdf05bede0f3
+      （`web/dist-playground` 不进仓库）。
 
-## 下一 Session：先出数据，再决定做什么
+## 下一 Session：Session 8 — Matplotlib Bridge Technical Spike
 
-**不要自动进入 `tavotto run`。** 本轮合并后先回答两个问题：
+**不要把 `tavotto run` 塞进 Session 8。** ADR 0014 的决策门没有变：只有当
+真实数据表明剩余失败仍大量集中在 cwd / argv / shell env / `python -m` /
+自定义启动语义上时，才恢复它。
 
-1. 之前失败的旧项目里，有多少因为项目 `.venv` 自动接手而成功了？
-2. 剩余失败按原因分类各占多少？
+本轮之后要回答的数据问题多了一条：
 
-分类口径：`environment_missing` / `unsupported_python` / `cwd_semantics` /
+1. 之前失败的旧项目里，有多少因为项目 `.venv` 自动接手而成功了？（Session 7）
+2. **有多少因为一键装依赖而成功了？**（Session 7B）
+3. 剩余失败按原因分类各占多少？
+
+分类口径不变：`environment_missing` / `unsupported_python` / `cwd_semantics` /
 `argv_semantics` / `env_var_semantics` / `module_invocation` /
-`package_layout` / `custom_launcher` / `artist_support` /
-`actual_script_bug`。
+`package_layout` / `custom_launcher` / `artist_support` / `actual_script_bug`。
 
-**只有**当数据表明剩余失败仍大量集中在 `cwd` / `argv` / shell env /
-`python -m` / 自定义启动语义上时，才恢复 `tavotto run`（ADR 0014）。
-绝大多数项目能正常打开的话，它继续延期——native 执行放弃的是沙盒保证，
-那个代价不该为了长尾去付。
-
-本轮的决策输出：**DEFER_TAVOTTO_RUN**（依据：真实用户复测的失败集中在缺
-依赖这一类，而本轮正是针对它的；`tavotto run` 的必要性尚无数据支持）。
+本轮的决策输出仍是：**DEFER_TAVOTTO_RUN**。
 
 ## 下一 Session 首先阅读
 
 ```text
 AGENTS.md / CLAUDE.md
+src/tavotto/AGENTS.md 的「受控依赖修复」一节
 docs/compatibility/COMPATIBILITY_BRIDGE_MASTER_PLAN.md
 docs/compatibility/COMPATIBILITY_BRIDGE_HANDOFF.md（本文件）
-docs/compatibility/legacy-projects.md（兼容层分层）
-docs/adr/0018-project-python-environment-resolution.md（本轮）
+docs/compatibility/legacy-projects.md（兼容层五层）
+docs/adr/0018-project-python-environment-resolution.md（Session 7）
+docs/adr/0019-controlled-dependency-repair.md（Session 7B）
 docs/adr/0014-safe-native-execution-profiles.md（仍是 Proposed）
-src/tavotto/engine/projectenv.py
-src/tavotto/engine/pool.py 的 resolve_worker_python / build / try_project_env
+src/tavotto/engine/{projectenv,depresolve,managedenv,deprepair}.py
+src/tavotto/engine/pool.py 的 resolve_worker_python / build /
+    try_project_env / mutating_environment
 ```
 
 ## 建议启动命令
 
 ```bash
-git status --short && git log -8 --oneline
+git status --short && git log -10 --oneline
 ruff check .
 PYTHONPATH=src /Volumes/Projects/Tavotto/.venv/bin/python -m pytest -q \
-    tests/test_project_env.py tests/test_open_script_route.py
+    tests/test_project_env.py tests/test_dependency_repair.py
+PYTHONPATH=src /Volumes/Projects/Tavotto/.venv/bin/python -m pytest -q \
+    tests/test_dependency_repair_e2e.py        # 真装包，约 1–2 分钟
 /Volumes/Projects/Tavotto/.venv/bin/python scripts/ci/compat_matrix.py --smoke
 ```
