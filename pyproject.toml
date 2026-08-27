@@ -269,6 +269,43 @@ ignore = ["E701", "E702"]
 # 的豁免并写明理由，**不是**为了让 lint 高兴去「现代化」语料——那会悄悄改掉
 # 这条门禁在问的问题。
 
+# ---------------------------------------------------------------------------
+# Formatter（`ruff format`）
+#
+# **exclude 的 glob 是实测确定的，不是照着直觉写的。** 用当前钉住的 ruff 0.16.4
+# 配 `--force-exclude` 逐个验过：目录形式（`"examples/"`）**一个文件都排不掉**
+# ——写成目录形式与「三个目录一条都不排」得到的是同一个数（291 个 .py，
+# 286 待重排 + 5 已合规），必须写成 `**/*.py`。
+#
+# 覆盖面因此是算得出来的：仓库 291 个 .py − 三个内容目录 86 个 = **205**，
+# 与 `ruff format --check .` 报的 202 待重排 + 3 已合规逐位相同。
+[tool.ruff.format]
+exclude = [
+    # **Markdown。** `ruff format` 会重排 .md 里 ```python 代码块，而
+    # `ruff check` 对同一个文件说「No Python files found」——门禁的两半对
+    # 「什么算 Python」判断不一致，本身就该消除。而那些文件是什么更要紧：
+    # docs/release-notes/** 是**已经发出去的历史记录**；docs/adr/0014 里
+    # dataclass 的行尾注释对齐成一列，那份对齐就是它想表达的东西；
+    # docs/audit/** 记的是当时那份复现配方的原样；codex-plugin 的
+    # figure-contract.md 随插件发给用户。文档里的代码块是**内容**。
+    "*.md",
+    # 下面三处与 lint 的 per-file-ignores 是**同一批目录、同一条理由**：
+    # 这些 .py 的排版是给人看的内容，不是我们的代码风格。
+    #   examples/**            随产品分发、用户会在应用里打开的示例图库
+    #   web/src/playground/**  /try 编辑器里逐字显示给用户，且参与产物指纹
+    #   tests/compat/cases/**  CompatBench 语料，模拟外部 matplotlib 世界的
+    #                          真实写法；`script_shapes/` 问的正是「用户脚本
+    #                          的 import 长什么样」，AST 一样不代表 shape 可改
+    # 两张清单必须一起改——漏一处的表现是 `ruff check` 放过而
+    # `ruff format --check` 报红，而两条门禁说的是同一件事。
+    "examples/**/*.py",
+    "web/src/playground/examples/**/*.py",
+    "tests/compat/cases/**/*.py",
+]
+# **显式关掉，即使当前版本默认就是关的。** docstring 里的代码片段不该因为将来
+# 某次 ruff 升版而自动触发第二轮全仓迁移——真想开的话单独一个 PR 评估。
+docstring-code-format = false
+
 [tool.ruff.lint.isort]
 # **必须开**。默认 `false` 时 ruff 会把带 as 别名的成员拆成一条条独立语句：
 #     from tavotto.engine import (config as engine_config,
