@@ -351,7 +351,10 @@ previewStyle`（只改 DOM）→ `pointerup → setOverride(…) + commitElement
   发射点横跨三处源码——`src/tavotto/**.py`、`web/src/**.ts(x)`、
   **`codex-plugin/mcp/tavotto_mcp/`**（`errors:preflight.*` 的第二个发射点）；
   扫描范围里绝不能放生成物（`resources.d.ts` / `canvas.html`），放进去这道门禁
-  就恒绿。豁免按**键**不按文件，且必须写理由。
+  就恒绿。判「有发射点」只认**引号字面量**或**完整键路径**——剥掉命名空间之后的
+  裸子串会让一个死键靠另一个命名空间的同名活键蒙混过关。豁免按**键**不按文件、
+  必须写理由；动态拼接的容器（`` en(`sourceLabel.${…}`) ``）不是整片放行，它的
+  子键必须与一个**闭集出处**逐字相等（`EngineSource` 联合类型现取，不再抄一份）。
 - 英文更长：`web/src/i18n/overflow.test.tsx` 守字数预算与截断兜底，
   `e2e/i18n.spec.ts` 在真浏览器 1024px 下量 `scrollWidth > clientWidth`
   （jsdom 没有布局引擎，量不出溢出）。
