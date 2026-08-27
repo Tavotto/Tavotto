@@ -35,14 +35,37 @@ export async function lowContrastNodes(page: Page, root = 'body'): Promise<strin
       })
       return 0.2126 * f[0] + 0.7152 * f[1] + 0.0722 * f[2]
     }
-    const opaqueBg = (el: HTMLElement): number[] => {
+    /** 向上找第一个不透明背景，连同「它是谁」一起返回（算 opacity 要用） */
+    const opaqueBg = (el: HTMLElement): { color: number[]; node: HTMLElement | null } => {
       let n: HTMLElement | null = el
       while (n) {
         const c = parse(getComputedStyle(n).backgroundColor)
-        if (c && c[3] === 1) return c
+        if (c && c[3] === 1) return { color: c, node: n }
         n = n.parentElement
       }
-      return [255, 255, 255, 1]
+      return { color: [255, 255, 255, 1], node: null }
+    }
+    /**
+     * 从文字元素累乘到背景那一层的 **CSS `opacity`**。
+     *
+     * `getComputedStyle(e).color` **不含**祖先的 group opacity——本仓库大量使用
+     * `opacity-60` / `disabled:opacity-35` 这类淡化态，只看 color 的 alpha 会把
+     * 它们全都当成不透明，算出来的比值偏乐观。而被覆盖层遮住的节点 axe 本来就
+     * 只放进 incomplete，两边一起放行就等于没测（Codex 在 PR #167 上指出）。
+     *
+     * 累乘到**背景那一层为止（含）**：背景自己也淡化时，把它的 opacity 记在前景
+     * 上是保守方向——算出来的比值只会更差，不会更好。门禁宁可偏严。
+     */
+    const groupOpacity = (el: HTMLElement, stop: HTMLElement | null): number => {
+      let n: HTMLElement | null = el
+      let a = 1
+      while (n) {
+        const o = parseFloat(getComputedStyle(n).opacity)
+        if (!Number.isNaN(o)) a *= o
+        if (n === stop) break
+        n = n.parentElement
+      }
+      return a
     }
     const scope = document.querySelector(rootSelector)
     if (!scope) return [`NO ROOT: ${rootSelector}`]
@@ -59,10 +82,19 @@ export async function lowContrastNodes(page: Page, root = 'body'): Promise<strin
       const cs = getComputedStyle(e)
       if (cs.visibility === 'hidden' || cs.display === 'none') continue
       if (!e.getClientRects().length) continue
+      // **禁用态不在 WCAG 1.4.3 的范围内**（"Incidental: text that is part of an
+      // inactive user interface component"），axe 的 color-contrast 同样跳过。
+      // 本仓库的禁用态就是靠 `disabled:opacity-35` 做的——把 opacity 计入之后
+      // 不排除它们，每一个灰掉的按钮都会变成一条假红，而误报比漏报更糟：它逼人
+      // 去「修」一件标准上根本不要求的事。
+      if (e.closest('[disabled], [aria-disabled="true"], fieldset[disabled]')) continue
       const fgRaw = parse(cs.color)
       if (!fgRaw) continue
-      const bg = opaqueBg(e)
-      const a = fgRaw[3]
+      const { color: bg, node: bgNode } = opaqueBg(e)
+      // 半透明前景先与背景合成，否则算出来的比值偏乐观。alpha 有两个来源：
+      // 颜色自己的 alpha，以及**从这里累乘到背景那一层的 CSS opacity**。
+      const a = fgRaw[3] * groupOpacity(e, bgNode)
+      if (a <= 0.01) continue      // 整个透明：看不见的东西不谈对比度
       const fg = [0, 1, 2].map((i) => fgRaw[i] * a + bg[i] * (1 - a))
       const size = parseFloat(cs.fontSize)
       const large = size >= 24 || (size >= 18.66 && Number(cs.fontWeight) >= 700)
@@ -73,7 +105,8 @@ export async function lowContrastNodes(page: Page, root = 'body'): Promise<strin
       if (ratio < need) {
         out.push(
           `${e.tagName}.${String(e.className).slice(0, 40)} "${text.slice(0, 16)}" ` +
-            `${ratio.toFixed(2)}:1 < ${need}`,
+            `${ratio.toFixed(2)}:1 < ${need}` +
+            (a < 0.999 ? ` (有效 alpha ${a.toFixed(2)})` : ''),
         )
       }
     }

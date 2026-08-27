@@ -27,23 +27,139 @@ import { lowContrastNodes } from './contrast'
  * 内容上）让 axe 算不出背景色，于是 color-contrast 整片进 `incomplete`；把
  * `--color-warn` 改成明显不达标的 `#e8c98f`，只看 violations 的检查照样绿。
  *
- * 这张表是**逐条定性**的结果：每个 id 都要写明「axe 查不了，但这件事由谁覆盖」。
- * 不在表里的 incomplete 会让用例红——新出现一类「查不了」不许再静默通过。
+ * 所以每条用例都要把 `incomplete` 交代清楚。两条纪律：
+ *
+ * 1. **豁免绑在场景上，不是绑在规则 id 上。** 一张全局表会让「项目选择器上冒出
+ *    aria-hidden-focus」也被静默接受，理由却写着「由导出对话框那条用例的 focus
+ *    trap 覆盖」——那是在更粗的粒度上重造同一个失灵。
+ * 2. **每条豁免都得把 axe 没做完的那件事自己做一遍**，并逐节点核对。只写一句
+ *    「由别处覆盖」而不验，等于换个地方写「查不了 = 通过」。
+ *
+ * （两条都是 Codex 在 PR #167 上指出的，成立。）
  */
-const INCOMPLETE_COVERED_ELSEWHERE: Record<string, string> = {
-  // 被覆盖层遮住的文字 axe 算不出背景色；由本文件的自算对比度断言逐节点覆盖
-  'color-contrast': 'lowContrastNodes()（本文件每条用例都跑）',
-  // 模态对话框打开时背景整片 aria-hidden，axe 判不出它同时也进不去焦点；
-  // 「焦点确实困在对话框里」由「导出对话框」那条用例的 focus trap 断言覆盖
-  'aria-hidden-focus': '导出对话框用例的 focus trap + Escape 后焦点恢复断言',
+interface IncompleteAllowance {
+  rule: string
+  /** axe 查不了，但这件事由谁覆盖 */
+  why: string
+  /** 逐节点核对：拿到 axe 报的 target 选择器，自己去页面里把那件事查一遍 */
+  verify: (page: Page, targets: string[]) => Promise<void>
+}
+
+/**
+ * 模态对话框打开时，Radix 把背景整片标成 `aria-hidden` 并插入焦点哨兵；axe 判不出
+ * 「它同时也进不去焦点」，于是整片进 incomplete。
+ *
+ * 核对的是**语义**而不是选择器长相：每个节点要么是 Radix 的焦点哨兵，要么处在
+ * 一棵 `aria-hidden` 的子树里，且都在对话框**之外**。而「焦点确实困在对话框里」
+ * 由同一条用例紧接着那圈 Tab 断言覆盖。
+ */
+const dialogBackgroundIsInert: IncompleteAllowance = {
+  rule: 'aria-hidden-focus',
+  why: '对话框背景整片 aria-hidden；焦点进不去这一点由同一条用例的 focus trap 断言覆盖',
+  verify: async (page, targets) => {
+    const bad = await page.evaluate((sels) => {
+      const out: string[] = []
+      for (const sel of sels) {
+        let el: Element | null = null
+        try {
+          el = document.querySelector(sel)
+        } catch {
+          out.push(`${sel}（选择器解析不了）`)
+          continue
+        }
+        if (!el) continue // 扫描之后已经消失：不构成放行理由，也不构成失败
+        const guard = el.hasAttribute('data-radix-focus-guard')
+        const hidden = el.closest('[aria-hidden="true"], [data-aria-hidden="true"]') != null
+        const inDialog = el.closest('[role="dialog"]') != null
+        if (inDialog || (!guard && !hidden)) {
+          out.push(`${sel}（guard=${guard} hidden=${hidden} inDialog=${inDialog}）`)
+        }
+      }
+      return out
+    }, targets)
+    expect(
+      bad,
+      'aria-hidden-focus 的 incomplete 里混进了不属于「对话框背景已 inert」这一类的节点',
+    ).toEqual([])
+  },
+}
+
+/**
+ * 被覆盖层遮住的文字，axe 算不出背景色 → 整片进 incomplete。
+ *
+ * 这**正是自算对比度那条判据存在的理由**：它不依赖 axe 能不能算出背景色，扫的是
+ * 整个 root，且把 CSS `opacity` 计入有效 alpha。所以这里核对的是「axe 报的每一个
+ * 节点，我们自己那把尺子确实量得到」——量不到的要红，不能靠规则 id 一刀放行。
+ */
+const contrastCoveredByOurOwnRuler: IncompleteAllowance = {
+  rule: 'color-contrast',
+  why: '覆盖层下 axe 算不出背景色；由本文件的自算对比度判据逐节点覆盖',
+  verify: async (page, targets) => {
+    const unreachable = await page.evaluate((sels) => {
+      const out: string[] = []
+      for (const sel of sels) {
+        let el: Element | null = null
+        try {
+          el = document.querySelector(sel)
+        } catch {
+          out.push(`${sel}（选择器解析不了）`)
+          continue
+        }
+        if (!el) continue
+        // 自算判据只看「自己直接持有文字」的元素；禁用态按 WCAG 1.4.3 本就不在
+        // 范围内。两者都不是就说明它落在我们的尺子之外，这条豁免对它不成立。
+        const direct = [...el.childNodes]
+          .filter((n) => n.nodeType === 3)
+          .map((n) => n.textContent ?? '')
+          .join('')
+          .trim()
+        const disabled = el.closest('[disabled], [aria-disabled="true"], fieldset[disabled]')
+        if (!direct && !disabled) out.push(`${sel}（没有直接文字，自算判据扫不到它）`)
+      }
+      return out
+    }, targets)
+    expect(
+      unreachable,
+      'color-contrast 的 incomplete 里有自算判据也覆盖不到的节点——不能按规则 id 放行',
+    ).toEqual([])
+  },
+}
+
+/**
+ * axe 判不了标题层级时（跨 landmark、`role="heading"` 的自定义标题）也会进
+ * incomplete。同样不按 id 放行：这里**自己把那件事查一遍**——文档顺序上标题层级
+ * 不许一次跳超过一级（`h2` 之后直接 `h4` 是屏幕阅读器用户真会迷路的那种）。
+ */
+const headingOrderCheckedByOurselves: IncompleteAllowance = {
+  rule: 'heading-order',
+  why: 'axe 判不了跨 landmark 的标题顺序；这里自己按文档顺序核对不跳级',
+  verify: async (page) => {
+    const jumps = await page.evaluate(() => {
+      const levelOf = (h: Element): number =>
+        Number(h.getAttribute('aria-level') ?? h.tagName.slice(1))
+      const heads = [...document.querySelectorAll('h1,h2,h3,h4,h5,h6,[role="heading"]')]
+        .filter((h) => (h as HTMLElement).getClientRects().length > 0)
+      const out: string[] = []
+      let prev = 0
+      for (const h of heads) {
+        const lvl = levelOf(h)
+        if (prev && lvl > prev + 1) {
+          out.push(`${(h.textContent ?? '').trim().slice(0, 16)}：h${prev} → h${lvl}`)
+        }
+        prev = lvl
+      }
+      return out
+    })
+    expect(jumps, '标题层级跳级了（axe 判不了这一条，所以这里自己查）').toEqual([])
+  },
 }
 
 interface AxeReport {
   violations: unknown[]
-  unexplainedIncomplete: { id: string; impact: string | null | undefined; n: number }[]
+  incomplete: { id: string; impact: string | null | undefined; targets: string[] }[]
 }
 
-/** critical / serious 违规 + **未被解释的 incomplete**。
+/** 扫描一次，拿回 critical/serious 违规与**全部** incomplete（含每个节点的 target）。
  *  扫描前把动效关掉：对话框/抽屉的进出场动画进行到一半时，axe 对
  *  颜色对比的取样会撞上过渡态，产出不可复现的假阳性；应用本来就支持
  *  prefers-reduced-motion，这也是它的一次真实行使。 */
@@ -61,25 +177,47 @@ async function axeReport(page: Page): Promise<AxeReport> {
           why: n.failureSummary?.split('\n').slice(0, 3).join(' '),
         })),
       })),
-    unexplainedIncomplete: results.incomplete
-      .filter((v) => !(v.id in INCOMPLETE_COVERED_ELSEWHERE))
-      .map((v) => ({ id: v.id, impact: v.impact, n: v.nodes.length })),
+    incomplete: results.incomplete.map((v) => ({
+      id: v.id,
+      impact: v.impact,
+      targets: v.nodes.map((n) => n.target.join(' ')),
+    })),
   }
 }
 
 /**
  * 一处界面的完整可访问性判据：
  *   ① axe 没有 critical/serious **违规**；
- *   ② axe 说「查不了」的，每一类都在 `INCOMPLETE_COVERED_ELSEWHERE` 里有去处；
- *   ③ **自算对比度**没有不达标的文字——这一条不依赖 axe 能不能算出背景色。
+ *   ② axe 说「查不了」的，**这个场景**必须逐条声明去处，且每条都把那件事自己
+ *      查一遍、逐节点核对；
+ *   ③ **自算对比度**没有不达标的文字——不依赖 axe 能不能算出背景色，并且把 CSS
+ *      `opacity` 计入有效 alpha（禁用态按 WCAG 1.4.3 排除）。
+ *
+ * `allow` 默认是空的：一处界面**本来就该**没有「查不了」。要放行就得写清楚并验。
  */
-async function expectAccessible(page: Page, root = 'body') {
+async function expectAccessible(
+  page: Page,
+  { allow = [] as IncompleteAllowance[], root = 'body' } = {},
+) {
   const report = await axeReport(page)
   expect(report.violations).toEqual([])
+
+  const byRule = new Map(allow.map((a) => [a.rule, a]))
+  const unexplained = report.incomplete
+    .filter((v) => !byRule.has(v.id))
+    .map((v) => ({ id: v.id, impact: v.impact, n: v.targets.length }))
   expect(
-    report.unexplainedIncomplete,
-    'axe 报了一类新的「查不了」——先定性它由谁覆盖，再加进 INCOMPLETE_COVERED_ELSEWHERE',
+    unexplained,
+    '这个场景冒出了没有交代的「axe 查不了」——先定性它由谁覆盖，再在该用例上声明并验',
   ).toEqual([])
+
+  for (const v of report.incomplete) {
+    await byRule.get(v.id)!.verify(page, v.targets)
+  }
+  // 刻意不断言「声明了就必须出现」：同一处界面的 incomplete 会随抽屉开合、卡片
+  // 数量、浏览器而变（实测工作台在 chromium 上有 color-contrast、chromium-en 上
+  // 没有）。每条豁免都带着真核对，用不上并不构成放行。
+
   expect(
     await lowContrastNodes(page, root),
     '自算 WCAG 对比度不达标（axe 可能因为覆盖层根本没测到这些节点）',
@@ -103,7 +241,11 @@ test('工作台（项目已开、画布有面板）：axe 无违规、无未定�
   // 等面板真的渲染出来再扫，扫到一半加载的骨架屏没有意义
   await expect(page.locator('[data-canvas-stage] img, [data-canvas-stage] svg').first())
     .toBeVisible({ timeout: 60_000 })
-  await expectAccessible(page)
+  // 素材卡上的角标是「覆盖层下的文字」，axe 算不出背景色；标题层级它也判不了。
+  // 两条都不按规则 id 放行——各自带一遍真核对。
+  await expectAccessible(page, {
+    allow: [contrastCoveredByOurOwnRuler, headingOrderCheckedByOurselves],
+  })
 })
 
 test('导出对话框：axe 干净 + 焦点 trap + Escape 关闭后焦点恢复', async ({
@@ -120,7 +262,9 @@ test('导出对话框：axe 干净 + 焦点 trap + Escape 关闭后焦点恢复'
   const dialog = page.getByRole('dialog')
   await expect(dialog).toBeVisible()
 
-  await expectAccessible(page)
+  // 这个场景**唯一**允许的「查不了」：对话框背景整片 aria-hidden。逐节点核对过，
+  // 而且「焦点确实困在对话框里」由紧接着那圈 Tab 断言覆盖。
+  await expectAccessible(page, { allow: [dialogBackgroundIsInert] })
 
   // 焦点 trap：连按 Tab 一整圈，焦点永远落在对话框里
   for (let i = 0; i < 25; i++) {
