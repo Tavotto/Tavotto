@@ -45,6 +45,33 @@ _SLACK_SECONDS = 30.0
 _MAX_RESTARTS = 3
 #: 起来之后活过这么久就算这次重启成功，重启计数清零。
 _MIN_UPTIME = 5.0
+#: kill 之后等它真的消失的上限。`kill()` 只是「把终止请求交给内核」——子进程
+#: 手里的日志文件与管道句柄要等它**真正退出**才还回来。这条上限是硬的：
+#: 退出流程不许被一个不肯死的子进程无限挂住。
+_REAP_TIMEOUT = 5.0
+
+
+def _kill_and_reap(proc: subprocess.Popen) -> None:
+    """kill 一条 supervisor 子进程，并**确认它已经消失**（幂等，绝不抛）。
+
+    `kill()` ≠「进程没了」，`poll()` 也答不了这个问题（前者只是发出请求，
+    后者只是问一次）。**只有 `wait()` 回来了，它的文件句柄才真的还给了系统**
+    ——kill 完紧接着去关/删它占着的东西，就是 #46 在 Windows 上炸出来的那个
+    窗口。这里补上有界的 `wait()`，超时不静默：那条日志是事后唯一能对上号
+    的线索。
+    """
+    try:
+        proc.kill()
+    except (OSError, ValueError):
+        pass
+    try:
+        proc.wait(timeout=_REAP_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        LOG.warning("workerd 进程 kill 后 %.0fs 内仍未退出（pid=%s）——它占着的"
+                    "日志句柄可能还没还回来", _REAP_TIMEOUT,
+                    getattr(proc, "pid", "?"))
+    except (OSError, ValueError):
+        pass                        # 进程对象已不可用：当它已经退出
 
 
 class WorkerdError(RuntimeError):
@@ -173,12 +200,10 @@ class WorkerdClient:
                                    code="workerd_unavailable")
             if proc is not None:
                 # 半启动的（还活着但没握上手）先收掉：不收就是每重启一次泄漏
-                # 一个子进程，而它还占着日志文件与管道
+                # 一个子进程，而它还占着日志文件与管道——**要等到它真的退出**，
+                # 因为下面几行就会拿同一个日志文件重新 open 一个写句柄
                 if proc.poll() is None:
-                    try:
-                        proc.kill()
-                    except OSError:
-                        pass
+                    _kill_and_reap(proc)
                 # 上一条已经不能用了：起得来但活不过 _MIN_UPTIME 就是「起来就崩」
                 if time.time() - self._started_at < _MIN_UPTIME:
                     self._restarts += 1
@@ -240,8 +265,11 @@ class WorkerdClient:
         except (OSError, ValueError, subprocess.SubprocessError):
             pass
         finally:
+            # 收尸排在关日志之前：workerd 的 stderr 直接绑在 `self._log` 上，
+            # kill 之后它还占着那个句柄（#46 的形状——kill-without-wait 紧跟
+            # 一次对子进程占用资源的操作）
             if proc.poll() is None:
-                proc.kill()
+                _kill_and_reap(proc)
             if self._log is not None:
                 try:
                     self._log.close()
