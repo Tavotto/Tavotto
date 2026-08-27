@@ -142,6 +142,67 @@ import matplotlib、跑几行、退出"。**这套用例走默认 pytest**，所
 前两条都是**状态会被恢复/变陈旧的那个时刻没测**。新增用例一律钉在那个时刻上
 （真屏障、没有 show 的那一支），并各留了一句"上面那条为什么测不到这个"。
 
+## CI 轮 1 的两条红（2026-08-27，由 tavotto-16 / tavotto-89 报）
+
+**两条都不是产品缺陷，是判据量错了对象——本机绿、CI 红，而 CI 是对的。**
+
+| 症状 | 真正的毛病 | 修法 |
+|---|---|---|
+| `home 里多出了意料之外的东西: ['.cache']` | 「不往用户 home 写」被量成「home 里有什么」。主语从**本 runner** 滑到了**整台机器**——`.cache` 是 Linux 的 fontconfig 建的。用例注释自己写着正确判据，下一行却与它矛盾 | 报告新增 `out_dir`（产物**实际**去了哪）→ 断言它不在 home → 断言产物确实落在那儿（观测有效）→ 按**本次的 stem** 在 home 下找混进去的产物 |
+| `assert 'non-interactive' in ''` | 拿 matplotlib 的警告**文案**当「钩子没装上」的代理判据。它随版本变：本机 3.10.8 打，CI 的 3.11.1 不打。而且失败长成空串——**观测失效和断言失败长得一模一样** | 夹具**自报** `RAN` + `HOOKED`/`NOT-HOOKED`：`RAN` 是观测有效的前提，`NOT-HOOKED` 才是结论，与版本无关。基准那条加正向对照，免得探针变成永远说 NOT-HOOKED 的空判据 |
+
+**修第一条时同一个错误又犯了一次**：stray 判据先写成「任何 `.svg`/`.json`」，
+本机当场逮到 matplotlib 自己的 `.matplotlib/fontlist-v390.json`。按 stem 找
+才只可能命中我们自己的产物。**"量错对象"不是一次失误，是一个会连着犯的家族。**
+
+不采纳的修法与理由：
+
+- **把 `.cache` 加进白名单** —— 治标，下一个共享目录出现时照红；
+- **删掉那条只留 `leaked`（名字判据）** —— peer 的建议，方向对但留了洞：
+  runner 往 `~/figs/` 写产物时名字里没有 "tavotto"，纯名字判据放行。
+  反证 14 专门钉这一条。
+
+**另一条与验证口径有关的**：`#185` 落地后 `cla-check` 进了 `CI fast gate`
+的闭集。17:50 那轮跑的时候还没有这一格——**下一轮的 fast gate 与那一轮不是
+同一个东西**，名字相同不等于同一次验证（"数有结论的 run"那条纪律的近邻形态）。
+本分支已 rebase 到 `ee19e29` 重跑。
+
+`cla-check` 是新格，本能的担心是"它会不会因为配置缺失静默 skip，而汇总把
+skipped 当不阻塞"——**已由 tavotto-89 在 #185 上验过两条路径，结论是反的**：
+
+* `pull_request`（job 98670257761）：真的判了并输出
+  `{"login":"erwanjun","verdict":"exempt","sources":["pr_author","commit_author"]}`，
+  提交数核对 4/4；
+* `merge_group`（job 98682598080，**今天之前从没跑过**）：收集贡献者那步
+  按设计 skipped（队列里没有 PR 上下文），判定步给
+  `{"status":"not_applicable","reason":"qualified_at_pull_request"}`。
+
+而且**这个仓库的 `aggregate_gate` 把 `skipped` 当成 problem**（#184 的
+integration gate 日志实证：`"problems":["backend-platforms: skipped",…]` →
+`"status":"failure"`），所以"被跳过 = 静默放行"那个空门禁形状在这里
+**结构上不成立**——被跳过的 needs 会让 `CI fast gate` 永久红。
+
+## 与 #177 的合并顺序（2026-08-28，tavotto-89 发现，本会话复核）
+
+**#186 与 #177 之间有冲突，两个方向都有**——此前我们各自量的都是"对
+`origin/main` 零冲突"，**没人量过两个分支之间**。那个判据回答的是「我能不能
+落到今天的 main 上」，不是「我们俩能不能都落地」，又一次主语差一层。
+
+```
+git merge-tree --write-tree --name-only HEAD origin/compat/bridge-session07-project-env
+  CONFLICT  docs/compatibility/COMPATIBILITY_BRIDGE_HANDOFF.md
+  CONFLICT  src/tavotto/AGENTS.md
+  （src/tavotto/engine/pool.py 三方合并自动过，改动区域不同）
+```
+
+两处都是**双方各加一节**（交接：Session 7B 段 vs Session 8 段；
+`src/tavotto/AGENTS.md`：项目环境接手 vs 「两条执行入口」），解法是取并集
+不是二选一。
+
+**顺序：#177 优先**（它工程侧已就绪、只等用户对 8 条 code-scanning 告警拍板；
+#186 是预研，没有时间压力）。所以由 **#186 在 #177 落地之后解这两个文件**，
+且**等它真落地再解**——main 一动预解就作废。
+
 ## 本轮踩到并留了注释的三个坑
 
 1. **`V1Handler` 的分派方法不能叫 `handle`**——safe worker 的 legacy 扁平信封
