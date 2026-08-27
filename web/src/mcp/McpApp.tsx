@@ -141,16 +141,20 @@ export function McpApp({
     () =>
       preflight
         ? [
-            ...preflight.errors,
-            ...preflight.warnings,
-            ...preflight.not_verifiable,
-            ...preflight.suggestions,
+            // **每一段都兜底**：`open.preflight` 是别的进程给的负载，某一档为空
+            // 时整个画布会在渲染前抛掉——那时候用户看到的是白屏，而不是一张图
+            // （issue #102 那轮改动差点这么干；判据只挡住了它自己那一侧）
+            ...(preflight.errors ?? []),
+            ...(preflight.warnings ?? []),
+            ...(preflight.not_verifiable ?? []),
+            ...(preflight.suggestions ?? []),
           ]
         : [],
     [preflight],
   )
   const needsConfirm =
-    !!preflight && (preflight.errors.length > 0 || preflight.not_verifiable.length > 0)
+    !!preflight
+    && ((preflight.errors ?? []).length > 0 || (preflight.not_verifiable ?? []).length > 0)
 
   if (!panel) {
     return <div className="p-4 text-sm text-ink-2">{mc('panelGone')}</div>

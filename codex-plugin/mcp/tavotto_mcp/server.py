@@ -292,14 +292,18 @@ def _call_open(args: dict) -> dict:
         journal=args.get("journal"),
         include_png=bool(args.get("include_png")),
     )
-    # **打开与预检分离**（issue #102）。预检本身很便宜（对 manifest 求值，不重渲染），
-    # 所以计数照回——「有没有阻断项」是打开时就该知道的一句话。但**逐条明细默认不回**：
-    # 用户只是想打开/看看时，每次都糊一屏重复的规范建议是纯噪声，而它还挤掉了
-    # manifest 摘要那几行真正有用的东西。要明细就显式要。
+    # **打开与预检分离**（issue #102）：噪声在**给 agent 读的那段文字**里——
+    # 每开一张图糊一屏重复的规范建议，还挤掉了 manifest 摘要那几行真正有用的东西。
+    #
+    # 所以裁的是文字，**结构化结果一个字段都不动**：内嵌画布从 `open.preflight`
+    # 初始化自己的状态并直接展开那四个数组（`web/src/mcp/McpApp.tsx`），程序化调用
+    # 方也可能在读它。裁掉结构化字段等于把画布打死——第一版就是那么写的，
+    # Codex 在 PR #171 上指出。
     checks = bridge.run_preflight(out["session_id"])
     detailed = bool(args.get("preflight"))
-    keep = (
-        (
+    out["preflight"] = {
+        k: checks[k]
+        for k in (
             "counts",
             "blocking",
             "needs_confirm",
@@ -308,24 +312,27 @@ def _call_open(args: dict) -> dict:
             "not_verifiable",
             "suggestions",
         )
-        if detailed
-        else ("counts", "blocking")
-    )
-    out["preflight"] = {k: checks[k] for k in keep}
-    out["preflight"]["detailed"] = detailed
+    }
+    out["preflight"]["detailed_text"] = detailed
     lines = [
         f"已打开 {out['stem']}（会话 {out['session_id']}）",
         _brief_manifest(out.get("manifest")),
         f"规范 {out['profile']['profile_id']} v{out['profile']['profile_version']}；"
         f"预检 {checks['counts']}"
-        + ("" if detailed else "（明细未回；要逐条建议就 preflight=true 或调 tavotto_preflight）"),
+        + ("" if detailed else "（逐条建议未展开；要就 preflight=true 或调 tavotto_preflight）"),
     ]
-    # 阻断项是例外：它会挡住导出，打开时就必须说，不能等用户自己去问
-    if checks["blocking"]:
-        lines.append(
-            "! 阻断项："
-            + "; ".join((b.get("message") or b.get("id") or "?") for b in checks["blocking"][:5])
-        )
+    # **`blocking` 是布尔不是列表**（`engine/preflight.summarize` 里
+    # `len(buckets["error"]) > 0`）——切它会当场 TypeError，而且**恰恰是在有阻断项
+    # 的那些图上**炸（Codex 在 PR #171 上指出）。这里只说「有几条、会挡住导出」，
+    # 逐条留给 report。
+    if checks["blocking"] and not detailed:
+        lines.append(f"! 有 {len(checks['errors'])} 条阻断项，会挡住导出——逐条见 tavotto_preflight")
+    if detailed:
+        # **文案不在这里拼。** 预检条目的 `message` 是 `{key, params}`（PR #113 的
+        # 文案协议：Python 发 id+params，宿主按 locale 渲染），字符串拼接会直接
+        # `str + dict` 炸掉。渲染好的那一份是 `report`，与 tavotto_preflight 用的
+        # 是同一个——不在这里造第二份。
+        lines.append(checks["report"])
     if out["registry"].get("parameterizable") is False:
         lines.append("! 这张图不可参数化（没有对应脚本），只能当素材排版")
     if out.get("warnings"):
