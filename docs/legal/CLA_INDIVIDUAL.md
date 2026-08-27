@@ -57,15 +57,20 @@ Two blanks are unresolved, and the agreement cannot be executed until they are
 filled in by the rights holder:
 
 - **`RIGHTS_HOLDER_CONFIGURATION_REQUIRED` — the identity of "We"/"Us".** The
-  repository does not currently record a legal contracting entity. `README.md`
-  says only "Tavotto™ is a trademark of the Tavotto project", `pyproject.toml`
-  names `erwanjun` as author, and no company, foundation or incorporated body
-  appears anywhere in the tree. A GitHub organisation is not a legal person.
+  project has not yet identified the legal person or entity that owns, or is
+  authorised to receive, the relevant Tavotto rights, nor recorded a contact
+  address for it. **This does not require forming a company** — a natural person
+  can be the counterparty, and an individual rights holder is fully supported.
+  What is missing is the decision and its details. `README.md` says only
+  "Tavotto™ is a trademark of the Tavotto project" and `pyproject.toml` names
+  `erwanjun` as author; neither identifies a contracting party, and a GitHub
+  organisation is not itself a legal person.
 - **`RIGHTS_HOLDER_CONFIGURATION_REQUIRED` — the governing law (Section 6.1).**
 
 Until both are set and the version is moved off `-draft`, this document is a
-prepared template, not an operative contract. See
-[CLA_AUTOMATION_SETUP.md](CLA_AUTOMATION_SETUP.md).
+prepared template, not an operative contract — not because any particular legal
+form is missing, but because the counterparty and governing law have not been
+filled in. See [CLA_AUTOMATION_SETUP.md](CLA_AUTOMATION_SETUP.md).
 
 ## How to sign
 

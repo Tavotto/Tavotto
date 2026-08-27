@@ -26,16 +26,22 @@ ready, and one item on it is a genuine blocker.
 
 ### Why not `NOT_READY`
 
-- **The rights baseline is clean.** 744 of 745 commits from a single rights
-  holder; one Dependabot version bump; no external human contributor; no
-  third-party source copied into the tree; no vendored code; no bundled fonts.
+- **The rights baseline is clean, and stayed clean.** 418 of the 419 commits
+  reachable from baseline `ff732ea` come from a single rights holder; one is a
+  Dependabot version bump; there is no external human contributor, no
+  third-party source copied into the tree, no vendored code and no bundled
+  fonts. The 19 commits added since the previous audit introduced no external
+  contribution, no new dependency and no third-party material.
 - **No relicensing-blocked contribution has been merged.** There is nothing to
   claw back, rewrite or exclude — the usual reason projects cannot dual-license
   simply does not apply here.
 - **The dependency position is better than typical.** Of ~900 distributed
-  third-party components across Python, JavaScript and Rust, exactly one is a
-  blocker. No GPL, LGPL, SSPL, BUSL, Commons Clause or source-available
-  dependency exists anywhere in the closure.
+  third-party components across Python, JavaScript and Rust (re-measured: 22 +
+  526 Rust crates, 363 frontend packages, plus the pinned Python closure),
+  exactly one is a blocker. No GPL, LGPL, SSPL, BUSL, Commons Clause or
+  source-available dependency exists anywhere in the closure. The MPL-2.0 items
+  are a notice obligation, not a copyleft barrier — see the
+  [dependency audit](COMMERCIALIZATION_DEPENDENCY_AUDIT.md#the-mpl-20-crates-facts-separated-from-conclusions).
 - **The one blocker has a designed exit.** `pdfbackend/` is already a contract
   boundary with a single permitted `import pymupdf`, enforced as a repository
   invariant.
@@ -45,15 +51,16 @@ ready, and one item on it is a genuine blocker.
 | # | Blocker | Class | Owner |
 |---|---|---|---|
 | 1 | **PyMuPDF.** Dual-licensed AGPL-3.0 / Artifex commercial; taken under the AGPL arm. Continuing to distribute it under AGPL terms inside a proprietary product may create incompatible obligations. | Third-party licence | Requires an Artifex commercial licence, a replacement backend, or other appropriate authorisation. **Legal review required before proprietary distribution.** |
-| 2 | **No legal rights holder is configured.** The repository records no legal contracting entity. A GitHub organisation is not a legal person. Without one, the CLA cannot be executed and no commercial licence can be granted or received. | Corporate/legal | `RIGHTS_HOLDER_CONFIGURATION_REQUIRED`. See [CLA_AUTOMATION_SETUP.md](CLA_AUTOMATION_SETUP.md). |
-| 3 | **The CLA is not in force.** Agreements are `1.0-draft` and unsignable by design; no signature provider is installed. Enforcement is live but currently qualifies only the rights holder and two named bots. | Governance | Follows from #2. |
-| 4 | **Distributed artefacts carry no notices.** The desktop app ships neither `LICENSE` nor third-party notices, and 5 MPL-2.0 Rust crates are statically linked into it. This is an obligation of the **current AGPL distribution**, not only a future commercial one. | Packaging | Separate change; see [IP_PROVENANCE.md](IP_PROVENANCE.md#notices-in-distributed-artefacts). |
+| 2 | **The rights holder is not yet configured.** The project has not identified the legal person or entity that owns, or is authorised to receive, the relevant Tavotto rights, nor recorded its contact details and governing law. **This does not require forming a company** — a natural person can be the counterparty and grant or receive a commercial licence. What is missing is the decision and its details. | Governance/legal | `RIGHTS_HOLDER_CONFIGURATION_REQUIRED`. See [CLA_AUTOMATION_SETUP.md](CLA_AUTOMATION_SETUP.md). |
+| 3 | **The CLA is not yet activated for signatures.** Agreements are `1.0-draft` because `RIGHTS_HOLDER_CONFIGURATION_REQUIRED` is unresolved and the text has not been formally activated; no signature provider is configured. Enforcement is live but currently qualifies only the rights holder and two named bots, and blocks everyone else with an explanatory message. | Governance | Follows from #2. |
+| 4 | **Distributed artefacts carry no notices.** The desktop app and the Codex plugin ship neither `LICENSE` nor third-party notices, and 5 unmodified MPL-2.0 Rust crates are statically linked into the desktop binary (MPL-2.0 §3.2 requires telling recipients how to obtain their source). This is an obligation of the **current AGPL distribution**, not only a future commercial one. | Packaging | **Tracked separately — not fixed in the legal-governance change.** See [IP_PROVENANCE.md](IP_PROVENANCE.md#notices-in-distributed-artefacts). |
 | 5 | **Two AI-suggested edits unreviewed.** Copilot Autofix co-authored seven lines across two commits in one file. | Provenance | **NEEDS LEGAL REVIEW**; bounded and trivially reimplementable. |
 | 6 | **Rights-holder encumbrance unverified.** Whether the rights holder's own work is subject to an employment or institutional agreement cannot be established from the repository. | Provenance | Only the rights holder can answer. |
 
-Blockers 2 and 3 are governance and cost nothing but a decision. Blocker 1 is
-the one that costs money or engineering. Blocker 4 should be fixed regardless of
-whether Pro ever happens.
+Blockers 2 and 3 are governance: they cost a decision and the details that go
+with it, not a corporate structure. Blocker 1 is the only one with real money or
+engineering attached. Blocker 4 should be fixed regardless of whether any
+commercial edition ever happens — it is an obligation of what is shipping today.
 
 ## Principles for a future proprietary edition
 
@@ -109,22 +116,36 @@ relicense: a contributor declines the CLA, or code arrives under a
 copyleft-compatible-but-not-relicensable licence.
 
 The system must allow marking it **`community-only`** — merged into the AGPL
-edition, permanently excluded from any proprietary one. It must never be forced
-into Pro, and it must never be rejected merely because the label is
-inconvenient.
+edition and excluded from any separately licensed one unless and until the
+necessary rights are obtained. It must never be forced into Pro, and it must
+never be rejected merely because the label is inconvenient.
 
 Under current policy every external PR requires a CLA, so this should be rare.
 "Rare" is not "impossible", and a policy with no path for it will be quietly
 violated the first time it happens.
 
-### 6. No trademark rights travel with the code
+### 6. A change of rights holder is itself a rights event
+
+If the CLA is accepted by an individual and Tavotto's IP later moves to a
+company, the rights received under signed CLAs must be transferred explicitly
+along with copyright, trademarks, commercial licensing rights and any patent
+rights — Section 6.3 of both agreements requires an assignee to agree in writing
+to abide by them. A proprietary edition assembled *after* such a transfer but
+*without* it having been done properly would rest on rights the new entity does
+not hold. This repository does not draft that assignment; it requires legal
+review at the time. See
+[CLA_VERSIONING.md](CLA_VERSIONING.md#rights-transfer-if-the-holder-ever-changes).
+
+### 7. No trademark rights travel with the code
 
 An AGPL copyright licence is not a trademark licence. A proprietary edition and
 its naming are governed by [`TRADEMARKS.md`](../../TRADEMARKS.md) independently.
 
 ## What would move this to `READY`
 
-1. Configure the legal rights holder; finalise the CLA at `1.0`.
+1. Resolve `RIGHTS_HOLDER_CONFIGURATION_REQUIRED` — identify the legal person
+   or entity (an individual is sufficient), record its contact details and the
+   governing law; finalise the CLA at `1.0` and configure a provider.
 2. Resolve PyMuPDF — Artifex commercial licence, or an alternative backend
    behind the existing `pdfbackend/` contract.
 3. Ship licence and third-party notices in every distributed artefact,

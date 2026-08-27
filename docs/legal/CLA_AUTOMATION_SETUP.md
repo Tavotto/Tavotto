@@ -10,7 +10,8 @@ the two exempt bots. It cannot yet *accept* a signature from anybody else,
 because the agreements are still `1.0-draft` with an unset counterparty.
 
 Do not describe this as "CLA legal onboarding is production-ready". It is not.
-Two things are missing, and only one of them is engineering work.
+Policy infrastructure being ready and a legal signature service being activated
+are two different things, and only the first is done.
 
 | Piece | State |
 |---|---|
@@ -18,42 +19,69 @@ Two things are missing, and only one of them is engineering work.
 | Versioning + hash-binding policy | In force — CI red on drift |
 | Repository-side qualification check | **Live** — feeds `CI fast gate` |
 | Security model of that check | Complete; no secrets, no PR code executed |
-| Signature ledger | Present, empty, schema documented |
-| Legal counterparty ("We"/"Us") | **MISSING — blocks everything below** |
-| Signature collection provider | Not installed |
+| Signature source of truth | **Defined: the provider.** The repository stores no signer data. |
+| Rights holder (`RIGHTS_HOLDER_CONFIGURATION_REQUIRED`) | **Unresolved — blocks activation** |
+| Signature provider | Not configured (`provider.configured: false`) |
 
 ## Why it was built this way
 
 The obvious approach — install a CLA bot and let it own the whole problem — did
-not survive contact with the candidates.
+not survive contact with the candidates. Facts below were checked via the GitHub
+API on 2026-08-27; they are observations, not endorsements, and they go stale.
 
-| Option | Finding | Verdict |
+| Option | Observed facts | Verdict |
 |---|---|---|
-| **CLA Assistant Lite** (`contributor-assistant/github-action`) | The repository is **archived and read-only as of 2026-03-23**. Its README: *"This repository is no longer actively maintained. I no longer have the bandwidth to maintain this project. The repository has been archived and is now read-only."* It also requires `pull_request_target` with write permissions. | **Rejected.** An unmaintained action holding write permissions on a privileged trigger is the worst combination available: no security fixes will ever ship for it. |
-| **`iainmcgin/cla-github-action`** (fork of the above) | Explicitly documented as maintained for internal use only, not a general-purpose community successor, with no support or issue triage. | **Rejected.** |
+| **CLA Assistant Lite** (`contributor-assistant/github-action`) | `archived: true` (last push 2026-03-23). README: *"This repository is no longer actively maintained. I no longer have the bandwidth to maintain this project. The repository has been archived and is now read-only."* Requires `pull_request_target` with write permissions. | **Rejected.** An archived action holding write permissions on a privileged trigger will never receive a security fix. |
+| **`iainmcgin/cla-github-action`** (fork of the above) | Documented as maintained for internal use only, explicitly not a general-purpose community successor, no support or issue triage. | **Rejected.** |
 | **EasyCLA** (Linux Foundation) | Designed around LF-hosted projects and LF membership. | **Not applicable.** |
-| **CLA Assistant** (`cla-assistant/cla-assistant`, by SAP) | Actively maintained. Free hosted offering at `cla-assistant.io`; also self-hostable via Docker. Signatures stored in Azure Cosmos DB in Europe since 2021-08-27, exportable as CSV. Uses a GitHub App plus an OAuth app. | **Recommended as the signature provider**, when signature collection is needed. |
+| **CLA Assistant** (`cla-assistant/cla-assistant`, by SAP) | Repository `archived: false`, `disabled: false`. **Last commit 2023-10-16; last release `v2.13.1` on 2023-08-15; last push 2024-06-06; 242 open issues.** Hosted service `https://cla-assistant.io` returned **HTTP 200** on 2026-08-27. Self-hosting via Docker is documented. Signatures stored in Azure Cosmos DB in Europe (per its README, since 2021-08-27); CSV export available. | **The most plausible provider, if one is adopted** — but see the note below. |
 | **Writing our own signing flow** ("comment `I agree`, then grep the comments") | — | **Rejected outright.** Contract formation is not something to prototype. |
 
-So the responsibilities were split, along the line where each side is actually
-competent:
+**On CLA Assistant's status, precisely.** The hosted service is *currently
+available and operational*. The repository is *not archived*. Those are the two
+things that can be verified. What cannot be claimed from this evidence is that
+the project is actively maintained or a safe long-term bet: there have been no
+commits for roughly three years and no release since 2023. An earlier draft of
+this document described it as "actively maintained" — that was not supported by
+the evidence and has been corrected.
+
+The practical consequence is that **choosing a provider is a decision to be made
+when one is actually needed**, against the facts of that day, not a choice
+locked in now. The architecture below is deliberately provider-agnostic for
+exactly this reason.
+
+## Architecture: one authority for signatures
+
+Responsibilities are split along the line where each side is competent:
 
 ```
-Signature collection  →  an external provider (or a countersigned document)
-                         — contract formation, identity, consent UX
+Signature collection + record  →  the provider  (AUTHORITATIVE)
+                                  contract formation, identity, consent UX,
+                                  and the database of who signed what
 
-Signature record      →  docs/legal/cla-signatures.json
-                         — a reviewable ledger in the repository
+Agreement identity             →  this repository
+                                  CLA text, version, SHA-256, policy,
+                                  explicit exemptions, provider configuration
 
-Qualification check   →  scripts/ci/cla_gate.py
-                         — small, pure-stdlib, unit-tested, no network,
-                           no secrets, feeds the existing CI fast gate
+Qualification decision         →  scripts/ci/cla_gate.py
+                                  enumerate every human in the PR, apply
+                                  exemptions, and ask the provider's own
+                                  check for the signature verdict
 ```
 
-The ledger is **a record, not the signing mechanism**. Nothing is signed by
-appearing in it; entries are written *because* a signature was already obtained
-elsewhere. That distinction is what keeps this from being the DIY contract
-infrastructure rejected above.
+**The repository stores no signature data.** An earlier draft kept a
+hand-maintained `docs/legal/cla-signatures.json` listing signers. That was
+removed before this ever ran, because it created **two sources of truth for the
+same legal fact** — the provider's database and a file in the repo — with
+nothing keeping them in step and no principled way to resolve a disagreement. A
+repository ledger is only defensible if it is derived automatically and
+verifiably from the provider and can detect its own staleness. Absent that, one
+authority beats two.
+
+The gate therefore reads the provider's own check-run conclusion for the pull
+request head, and treats it as the answer to "did these people sign?". The
+repository answers only "sign *what*, exactly?" — which text, which version,
+which hash.
 
 ## Security model
 
@@ -76,13 +104,15 @@ are exposed. The signing UX belongs to the provider, which runs as its own app.
 ### 2. It never checks out or executes PR code
 
 The `cla-check` job contains **no `actions/checkout` step at all**. Everything
-the decision depends on — the gate script, the policy, the ledger, and both
-agreement texts — is fetched from the **default branch** via `gh api`, the same
-pattern `ci.yml` already uses to obtain a trusted `aggregate_gate.py`.
+the decision depends on — the gate script, the policy (including the exemption
+list) and both agreement texts — is fetched from the **default branch** via
+`gh api`, the same pattern `ci.yml` already uses to obtain a trusted
+`aggregate_gate.py`.
 
 The reasoning is the same as for the gates: the tree under review must not
 supply the logic that judges it. Here it is sharper still, because a PR that
-could supply its own ledger could add its author to it and pass its own check.
+could supply its own policy could add its own author to the exemption list and
+pass its own check.
 
 The gate script runs under `python3 -I` (isolated mode: no script-directory
 `sys.path` entry, `PYTHONPATH` ignored), so a shadowing module cannot be
@@ -92,7 +122,7 @@ smuggled in either.
 
 ```yaml
 permissions:
-  contents: read        # read policy/ledger/agreements from the default branch
+  contents: read        # read policy + agreement texts from the default branch
   pull-requests: read   # read the PR's commit list
 ```
 
@@ -159,20 +189,31 @@ shape directly.
 
 In order. Step 1 blocks everything else.
 
-### 1. Decide the legal rights holder — **required, and not an engineering task**
+### 1. Resolve `RIGHTS_HOLDER_CONFIGURATION_REQUIRED` — **required, and not an engineering task**
 
-Every `RIGHTS_HOLDER_CONFIGURATION_REQUIRED` marker traces to one unanswered
-question: *who is the legal person on the other side of this agreement?*
+**Definition.** Before the CLA is activated for real signatures, the project
+must identify the legal person or entity that currently owns, or is authorised
+to receive, the relevant Tavotto rights — and record its name, contact address
+and choice of governing law in the agreement.
 
-The repository does not say. `README.md` states only "Tavotto™ is a trademark of
-the Tavotto project"; `pyproject.toml` names `erwanjun` as author; there is no
-company, foundation, or incorporated body anywhere in the tree. **A GitHub
-organisation is not a legal person and cannot hold rights or sign agreements.**
-Nothing was invented to fill this gap.
+**This does not mean a company has to be formed.** A natural person can hold
+copyright, grant and receive licences, and be a party to a contract. An
+individual rights holder is a fully supported configuration here, and given that
+the audit finds a single individual behind essentially the whole history, it is
+the most obvious one.
 
-The options are the individual rights holder in their own name, or a legal
-entity formed or nominated for the purpose. Both are ordinary; the choice has
-tax, liability and jurisdiction consequences that belong with counsel.
+What is missing is not a corporation. It is a **decision plus the details that
+go with it**: which legal person is "Us", how they are reached, and under which
+law the agreement is read. The repository records none of these — `README.md`
+says only "Tavotto™ is a trademark of the Tavotto project", and `pyproject.toml`
+names `erwanjun` as author, neither of which identifies a contracting party.
+Note that a GitHub organisation is *not* itself a legal person, so naming the
+org would not resolve this either. Nothing was invented to fill the gap.
+
+The realistic options are the current individual rights holder in their own
+name, or an entity formed or nominated for the purpose. Both are ordinary; the
+choice has tax, liability and jurisdiction consequences that belong with
+counsel, and the repository must not make it for the owner.
 
 Once decided, fill in:
 
@@ -194,28 +235,43 @@ draft version is unsignable by design.
 
 ### 2. Install a signature provider — only when an external contribution is actually expected
 
-Not needed while contributions come solely from the rights holder. When it is:
+Not needed while contributions come solely from the rights holder. Step 1 must
+be done first — a provider cannot be marked configured while any agreement is
+still `-draft`, and the gate enforces that structurally.
 
-1. Sign in at <https://cla-assistant.io> with the GitHub account that owns the
-   repository and authorise the app for `Tavotto/Tavotto`.
-2. Point it at `docs/legal/CLA_INDIVIDUAL.md` as the agreement text.
-3. Note that CLA Assistant stores signatures in Azure Cosmos DB in Europe.
-   If that is unacceptable, self-host it (the project ships Docker instructions)
-   or collect signatures as countersigned documents instead — the ledger and the
-   gate work identically either way.
-4. Export signatures and record them in `docs/legal/cla-signatures.json` with
-   the version and hash signed, per
-   [CLA_VERSIONING.md](CLA_VERSIONING.md#the-signature-ledger).
+When the time comes:
 
-The gate reads only the ledger, so the provider is swappable and no CI change is
-needed to adopt, replace or drop one.
+1. **Re-check the provider's status on that day.** The facts in the table above
+   will be stale. Confirm the service is operational and decide whether its
+   maintenance position is acceptable; self-hosting is an option.
+2. Install the provider's GitHub App on `Tavotto/Tavotto` and point it at
+   `docs/legal/CLA_INDIVIDUAL.md` as the agreement text.
+3. Check where it stores signatures and whether that is acceptable. CLA
+   Assistant's README states Azure Cosmos DB in Europe. If not acceptable,
+   self-host, or collect countersigned documents and use a manual check instead.
+4. **Wire it into the gate — four edits, all in this repository:**
+   - `.github/cla-policy.json`: set `provider.configured: true`, `provider.name`,
+     and `provider.check_name` to the **exact** check-run name the provider
+     publishes;
+   - `.github/workflows/ci.yml`, `cla-check` job: add `checks: read` to
+     `permissions`, add a step fetching
+     `gh api repos/$REPO/commits/<pr head sha>/check-runs`, and pass it as
+     `--provider-checks-json`;
+   - `tests/test_legal_contribution_policy.py`: update the permissions assertion
+     to the new expected set (it pins the exact permission map on purpose);
+   - run `python3 scripts/ci/cla_gate.py --refresh-hashes` if the agreement text
+     changed at the same time.
+
+The gate reads only the provider's check-run conclusion, so providers are
+swappable: replacing one is a config change plus a check name, not a redesign.
 
 ### 3. Corporate signatures stay manual — deliberately
 
 No CI check can establish that a GitHub username is authorised to bind a
 company. That evidence lives outside GitHub entirely. Corporate agreements are
-reviewed by a human, and a maintainer then records the covered accounts in the
-ledger. See [CLA_CORPORATE.md](CLA_CORPORATE.md#how-to-sign).
+reviewed by a human, and the covered accounts are then registered with the
+provider so its check reflects them. See
+[CLA_CORPORATE.md](CLA_CORPORATE.md#how-to-sign).
 
 ## Verifying the check locally
 
@@ -227,7 +283,8 @@ python3 scripts/ci/cla_gate.py --event pull_request --pr-author erwanjun \
 # Merge queue → not_applicable, exit 0 (must never be skipped)
 python3 scripts/ci/cla_gate.py --event merge_group
 
-# Unsigned external contributor → exit 1
+# Non-exempt contributor with no provider configured → exit 1, with an
+# explanation naming the reason and where to go next (never a silent pass)
 python3 scripts/ci/cla_gate.py --event pull_request --pr-author outsider \
   --commits-json <(echo '[{"sha":"b","commit":{"author":{"name":"o","email":"o@example.com"},"message":"x"},"author":{"login":"outsider"}}]')
 

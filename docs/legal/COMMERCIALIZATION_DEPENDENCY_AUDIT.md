@@ -20,8 +20,19 @@ by its own terms.
 
 ## Audited baseline
 
-Commit `aaa065f`, 2026-08-27. Sources, all read from the manifests and the
-artefacts' own metadata rather than from memory:
+Commit **`ff732eaa8b58df9eeccf32ec5e0cbf5efb928851`** (`main`), re-measured
+2026-08-27. The previous run of this audit was at `aaa065f`.
+
+**Delta since `aaa065f`: none.** The 19 intervening commits changed exactly one
+dependency manifest — `pyproject.toml` — and that diff is entirely Ruff
+configuration (adding the `I` rule and the `src` roots). No new runtime,
+frontend or Rust dependency was introduced; `web/pnpm-lock.yaml`, both
+`Cargo.lock` files, `packaging/runtime-lock.json` and
+`packaging/playground-runtime.json` are untouched. Every count below was
+nonetheless **re-measured rather than carried over**.
+
+Sources, all read from the manifests and the artefacts' own metadata rather than
+from memory:
 
 | Layer | Source of truth | Scope |
 |---|---|---|
@@ -141,9 +152,43 @@ licence, and no package with an unknown or missing licence field.**
 |---|---|---|---|---|---|---|---|
 | `tavotto-workerd` closure (22 crates: serde_json, sha2, and transitives) | see `workerd/Cargo.lock` | 16× `MIT OR Apache-2.0`, 2× MIT, 1× `Unlicense OR MIT`, 1× `MIT/Apache-2.0`, 1× `(MIT OR Apache-2.0) AND Unicode-3.0`; the 22nd is `tavotto-workerd` itself (AGPL-3.0-only, Tavotto's own code) | Rust supervisor | Yes — shipped binary | None | GREEN — entire third-party closure permissive | Notice |
 | `tavotto-desktop` closure (526 crates: Tauri 2 + transitives) | see `src-tauri/Cargo.lock` | 243× `MIT OR Apache-2.0`, 116× MIT, 56× `Apache-2.0 OR MIT`, 19× `MIT/Apache-2.0`, 18× `Zlib OR Apache-2.0 OR MIT`, 18× Unicode-3.0, 9× `Unlicense OR MIT`, plus ISC / BSD-3-Clause / LLVM-exception variants | Desktop shell | Yes — shipped binary | None | GREEN | Notice |
-| `cssparser`, `cssparser-macros`, `dtoa-short`, `option-ext`, `selectors` | 0.36.0 / 0.6.1 / 0.3.5 / 0.2.0 / 0.36.1 | **MPL-2.0** (5 crates, within the desktop shell closure) | Transitive under Tauri | **Yes** — statically linked into the desktop binary | None | **REVIEW.** MPL-2.0 is file-level copyleft: obligations attach to modified MPL files, and it explicitly contemplates combination with proprietary code. Tavotto does not modify them. Distributing them in a proprietary binary is normally permissible with source availability for the MPL files themselves. | Confirm unmodified; make MPL source availability part of the notices work. **Requires legal review before proprietary distribution.** |
+| `cssparser`, `cssparser-macros`, `dtoa-short`, `option-ext`, `selectors` | 0.36.0 / 0.6.1 / 0.3.5 / 0.2.0 / 0.36.1 | **MPL-2.0** (5 crates, within the desktop shell closure) | Transitive under Tauri | **Yes** — statically linked into the desktop binary | None | **REVIEW** — see the note below. | Notice + source-location disclosure. **Requires legal review before proprietary distribution.** |
 | `webpki-root-certs` | 1.0.9 | CDLA-Permissive-2.0 | Transitive | Yes | None | GREEN — permissive data licence | Notice |
 | ICU crates (`icu_*`, `zerovec`, `yoke`, `tinystr`, `litemap`, `writeable`, `potential_utf`, `zerotrie`, `zerofrom`) | 2.3.x / 0.x | Unicode-3.0 | Transitive | Yes | None | GREEN — Unicode License v3 is permissive | Notice |
+
+### The MPL-2.0 crates, facts separated from conclusions
+
+An earlier draft of this audit summarised these as "statically linked, no
+notice, current obligation gap", which blurred an observation into a legal
+conclusion. Separated:
+
+**Verified facts**
+
+| Fact | Evidence |
+|---|---|
+| 5 MPL-2.0 crates in the desktop shell closure | `cargo metadata` on `src-tauri/Cargo.toml` |
+| All resolved from crates.io, **unmodified** | every one has `source = "registry+https://github.com/rust-lang/crates.io-index"`; there is no `[patch]` section, no `path`/`git` override, no `vendor/` directory and no `.cargo/config` override in the repository |
+| Upstream source is publicly available | `servo/rust-cssparser`, `servo/stylo`, `upsuper/dtoa-short`, `soc/option-ext` |
+| Statically linked into the shipped desktop binary | Rust default linkage |
+| The desktop artefact ships no notices | `packaging/tavotto.spec` and `src-tauri/tauri.conf.json` — see [IP_PROVENANCE.md](IP_PROVENANCE.md#notices-in-distributed-artefacts) |
+
+**What the licence text provides for.** MPL-2.0 is *file-level* copyleft: its
+obligations attach to the MPL-licensed files themselves, and §3.3 expressly
+contemplates distributing them as part of a "Larger Work" under other terms —
+including proprietary ones — provided the MPL files remain under the MPL. For
+distribution in Executable Form, §3.2 requires that recipients be **informed how
+to obtain the Source Code Form**.
+
+**What this means here, stated carefully.** Because the crates are unmodified
+and their source is publicly available, the shortfall appears to be a **missing
+notice and source-location disclosure**, not an inability to distribute. Static
+linking of unmodified MPL-2.0 code is **not**, on this evidence, a
+closed-source blocker, and this audit does not classify it as one.
+
+That is an engineering reading of the licence text, not a legal opinion, and it
+does not excuse the missing notice — which is an obligation of the **current
+AGPL distribution** and should be fixed regardless of whether any commercial
+edition is ever built.
 
 ## Browser playground
 
@@ -165,12 +210,19 @@ GPL**) — both arrive via `twine` in the `[dev]` extra and never ship. `ruff`,
 
 ## Summary
 
+Re-measured at baseline `ff732ea`:
+
 | Class | Count | Items |
 |---|---|---|
-| **BLOCKER** | 1 | **PyMuPDF** |
-| **REVIEW** | 4 | 5 MPL-2.0 Rust crates (shipped, unmodified); Pyodide (CDN-loaded); lightningcss (build-time); axe-core (test-only) |
-| **GREEN** | everything else | The entire Python scientific stack, CPython, all 363 frontend packages except the MPL items, and both Rust closures |
-| **UNKNOWN** | 0 | Every scanned component reported a licence |
+| **BLOCKER** | **1** | **PyMuPDF** |
+| **REVIEW** | **4** | 5 MPL-2.0 Rust crates (shipped, unmodified — notice/source disclosure, not a copyleft blocker); Pyodide (CDN-loaded, not redistributed); lightningcss (build-time only); axe-core (test-only) |
+| **GREEN** | everything else | The entire Python scientific stack, CPython, all 363 frontend packages except the MPL items, and both Rust closures (22 + 526 crates) |
+| **UNKNOWN** | **0** | Every scanned component reported a licence |
+
+Closure sizes re-measured: `workerd` **22** crates (0 MPL), `src-tauri` **526**
+crates (5 MPL), frontend **363** packages (318 MIT / 11 Apache-2.0 / 10 ISC /
+6 MPL / 5 BlueOak / …). Identical to the previous baseline, as expected from a
+range that touched no lockfile.
 
 **The headline: exactly one true blocker, and it is PyMuPDF.** Everything else
 is permissive, build-time-only, or file-level copyleft that MPL-2.0 explicitly
@@ -183,7 +235,8 @@ commercial plan:
    distributions, and the desktop app currently ships none. See
    [IP_PROVENANCE.md](IP_PROVENANCE.md#notices-in-distributed-artefacts).
 2. The 5 MPL-2.0 Rust crates are statically linked into the shipped desktop
-   binary and need MPL source availability handled in the same work.
+   binary; MPL-2.0 §3.2 requires recipients to be told how to obtain their
+   Source Code Form, which the same notices work should cover.
 
 ## Re-running this audit
 

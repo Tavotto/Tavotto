@@ -18,10 +18,10 @@
 /CONTRIBUTING.md                        @erwanjun
 /docs/legal/**                          @erwanjun
 
-# CLA 判定链：政策、签署记录、判定器、以及承载它的 workflow。
-# 签署记录（ledger）尤其重要——能往里加一行就等于能给自己放行。
+# CLA 判定链：政策（含豁免与 provider 配置）、判定器、承载它的 workflow。
+# 豁免表尤其重要——能往里加一行就等于能给自己放行。
+# 仓库**不保存**签署事实（那是 provider 的），所以这里没有 signer 名单。
 /.github/cla-policy.json                @erwanjun
-/docs/legal/cla-signatures.json         @erwanjun
 /scripts/ci/cla_gate.py                 @erwanjun
 /tests/test_legal_contribution_policy.py @erwanjun
 /.github/workflows/ci.yml               @erwanjun

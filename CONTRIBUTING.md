@@ -193,10 +193,12 @@ own code anywhere else.
 
 ### Why it exists
 
-Without it, a contribution merged under AGPL-3.0-only can only ever be
-redistributed under AGPL-3.0-only. The CLA lets the maintainers continue
-distributing the same contribution in the AGPL community edition while retaining
-the ability to offer separately licensed editions.
+Without it, a contribution accepted only under AGPL-3.0-only can be
+redistributed by the project only under AGPL-3.0-only — the maintainers cannot
+unilaterally offer it under other terms, because it is your copyright, not
+theirs. The CLA lets them continue distributing the same contribution in the
+AGPL community edition while retaining the ability to offer separately licensed
+editions.
 
 It does not promise that such an edition will exist, that contributors will be
 paid, or that any contribution will be merged.
@@ -236,12 +238,16 @@ person, not by CI.
 Both are derived from the [Harmony Agreements](https://www.harmonyagreements.org/)
 1.0 templates rather than written from scratch.
 
-**Current status: the CLA is not yet in force.** The agreements are at version
-`1.0-draft` because the project has not yet recorded a legal entity to be the
-counterparty, and a draft cannot be signed. Until that is resolved the check
-qualifies only the rights holder and two named bots — see
-[docs/legal/CLA_AUTOMATION_SETUP.md](docs/legal/CLA_AUTOMATION_SETUP.md). If you
-want to contribute in the meantime, open an issue and we will sort it out.
+**Current status: the CLA is not yet activated for signatures.** The agreements
+are at version `1.0-draft` because the project has not yet recorded who the
+counterparty is, how to reach them, and which law governs the agreement — and a
+draft is not signable. Until that is resolved the check qualifies only the
+rights holder and two named bots, and blocks everyone else with an explanation
+rather than pretending they signed. See
+[docs/legal/CLA_AUTOMATION_SETUP.md](docs/legal/CLA_AUTOMATION_SETUP.md).
+
+**If you want to contribute in the meantime, please open an issue first** — this
+is a temporary state, not a closed door, and we will sort it out with you.
 
 ### Not a DCO
 

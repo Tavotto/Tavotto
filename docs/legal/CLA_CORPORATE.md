@@ -85,13 +85,15 @@ The intended flow, once the rights holder is configured:
 1. The company's authorised signatory completes this agreement, including
    Schedule A.
 2. It is sent to the rights holder's contact address and reviewed by a human.
-3. On acceptance, a maintainer records the covered accounts in the signature
-   ledger (see [CLA_VERSIONING.md](CLA_VERSIONING.md)), with the agreement
-   version and hash that were signed.
-4. From that point the automated check recognises those accounts.
+3. On acceptance, the covered accounts from Schedule A are registered with the
+   signature provider, against the agreement version that was signed.
+4. From that point the provider's check recognises those accounts, and the
+   repository's gate follows it.
 
-Step 3 is the only point where automation is involved, and it records a decision
-a human already made.
+The repository itself stores no record of who signed — that lives with the
+provider (see [CLA_VERSIONING.md](CLA_VERSIONING.md#where-signature-records-live)).
+Step 3 is the only point where automation is involved, and it merely reflects a
+decision a human already made.
 
 ---
 

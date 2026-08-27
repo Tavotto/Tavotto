@@ -96,7 +96,7 @@ factually is, drawn from the repository's own description:
 
 | Question | Status |
 |---|---|
-| Who would be the applicant? | **`RIGHTS_HOLDER_CONFIGURATION_REQUIRED`.** No legal entity is recorded anywhere in the repository. An applicant must be a legal person; a GitHub organisation is not one. This blocks any filing. |
+| Who would be the applicant? | **`RIGHTS_HOLDER_CONFIGURATION_REQUIRED`.** The repository does not record who owns the marks. An applicant must be a legal person — **which an individual can be**; forming a company is not a precondition. A GitHub organisation, however, is not itself a legal person. This blocks any filing until decided. |
 | Which jurisdictions? | **Requires trademark counsel / filing decision.** Not inferable from the repository. |
 | Which Nice classes? | **Requires trademark counsel / filing decision.** Class 9 and/or 42 are the obvious neighbourhood for downloadable software and SaaS, but scope is a legal judgement. |
 | Is "Tavotto" available and registrable? | **Not searched.** No clearance search has been performed — no knock-out search, no full search, no common-law or domain conflict review. Nothing here says the mark is available. |

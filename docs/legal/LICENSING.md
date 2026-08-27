@@ -61,10 +61,21 @@ single rights holder, with no external human contribution found. See
 When someone else contributes, **they own their contribution**. Tavotto does not
 acquire it by merging it.
 
-Without a further grant, a contribution made under AGPL-3.0-only can be
-redistributed by Tavotto only under AGPL-3.0-only. That single fact is what
-would foreclose a future commercial edition: one merged external patch, and the
-project can no longer relicense that part of its own tree.
+Without a further grant, a contribution accepted only under AGPL-3.0-only can
+be redistributed by Tavotto only under AGPL-3.0-only. **Tavotto cannot
+unilaterally relicense that contribution under proprietary terms** — the
+decision belongs to whoever holds its copyright, not to the project.
+
+That is a constraint, not a dead end. It can still be resolved later by
+obtaining a retroactive CLA or a separate licence from the contributor, by
+rewriting or replacing the contribution, or by excluding it from a separately
+licensed edition. What changes is that future relicensing of that code becomes
+**dependent on additional permission or on replacement**, rather than being
+Tavotto's to decide.
+
+The reason to have a CLA in place beforehand is that all of those remedies cost
+more, and depend on a third party's cooperation, than simply asking at the time
+of the contribution.
 
 The [Contributor License Agreement](CLA_INDIVIDUAL.md) resolves this without
 taking anyone's copyright:
@@ -142,6 +153,24 @@ also a licensing control, and it should not be relaxed.
 Complete lists: `web/pnpm-lock.yaml`, `packaging/runtime-lock.json`,
 `workerd/Cargo.lock`, `src-tauri/Cargo.lock`. Releases also publish an SPDX SBOM
 of the wheel.
+
+## If the rights holder ever changes
+
+The CLA may be accepted by an individual rights holder — that is a fully
+supported configuration, and forming a company is not a precondition. But if
+Tavotto's IP is later moved to a company, on incorporation or as part of
+financing, the rights do not travel automatically. Such a transfer would need to
+cover copyright in Tavotto's own code, the trademark rights in
+[`TRADEMARKS.md`](../../TRADEMARKS.md), the right to grant commercial licences,
+**the contractual rights received under signed CLAs**, and any applicable patent
+rights.
+
+Section 6.3 of both agreements is directly relevant: an assignee must agree in
+writing to abide by the agreement's rights and obligations. This repository does
+not contain, and does not attempt to draft, an IP assignment agreement — that is
+corporate-formation and financing legal work requiring review at the time. It is
+noted here only so the CLA is not overlooked during such a transaction. See
+[CLA_VERSIONING.md](CLA_VERSIONING.md#rights-transfer-if-the-holder-ever-changes).
 
 ## What is *not* promised
 

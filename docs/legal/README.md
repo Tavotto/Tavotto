@@ -52,7 +52,8 @@ Also: [`LICENSE`](../../LICENSE), [`TRADEMARKS.md`](../../TRADEMARKS.md) and
 | Community licence | **AGPL-3.0-only**, unchanged, and staying that way |
 | Rights baseline | 744/745 commits from one rights holder; **no external human contribution**; no third-party source copied in |
 | CLA model | Contributor **keeps copyright**; Tavotto gets a sublicensable licence + the right to offer separately licensed editions |
-| CLA status | **`1.0-draft` — not signable.** Blocked on the legal rights holder being configured |
+| CLA status | **`1.0-draft` — not activated for signatures.** Blocked on `RIGHTS_HOLDER_CONFIGURATION_REQUIRED` (counterparty, contact, governing law). Not a question of legal form — an individual can be the counterparty. |
+| Signature authority | **The provider.** The repository stores no signer data. |
 | CI enforcement | **Live.** `cla-check` feeds the existing `CI fast gate`; no fourth required context added |
 | Trademark | **Tavotto™**, unregistered. ® is not used and CI fails if it appears |
 | Proprietary-edition readiness | **`READY_WITH_BLOCKERS`** — one real dependency blocker (**PyMuPDF**) plus governance items |
