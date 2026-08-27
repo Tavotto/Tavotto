@@ -221,6 +221,32 @@ python scripts/build_mcp_widget.py --check                 # 一致
 第 1 条现在先断言遮蔽文件在（拆掉遮蔽本地当场红，已反证）；第 2 条靠
 rebase 到最新 main 把门禁拿进来。
 
+**第 3 轮（full-ci）红在 Windows 平台档**，同样是**测试断言**不是产品：
+
+`backend-platforms (windows-latest)` 上
+`test_managed_environment_end_to_end` 红。根因是 **Windows 的 8.3 短名**：
+runner 的 `TEMP` 是 `C:\Users\RUNNER~1\...`，`config.data_dir()` 从它派生，
+于是子进程报回来的 `sys.executable` 带短名，而断言另一侧的 `.resolve()`
+把它展开成了长名（`runneradmin`）——一边展开一边不展开，`is_relative_to`
+按路径段比就永远不等。
+
+只有受管环境那条路会撞上：golden path 用的项目路径来自 pytest 的 `tmp_path`
+（长名），两边一致。
+
+修法是**归一父目录、不归一解释器本身**：`Path(executable).parent.resolve()`。
+两条约束缺一不可——不 resolve 就展不开短名，resolve 解释器本身则会在 POSIX
+上跟着 `venv/bin/python` 的软链接走到基础解释器（projectenv 里同一个坑）。
+父目录（`Scripts/` / `bin/`）两个平台上都不是软链接，正好只展开该展开的那半。
+
+**顺带查到一个既有面（本轮不动）**：`managedenv.project_fingerprint()` 走
+`config.normalize_path_identity(os.path.abspath(...))`，而那个函数**只做
+大小写、不展开 8.3 短名**。所以同一个项目用短名路径与长名路径打开，会拿到
+两个不同的受管环境。**这不是本轮引入的**——`app._project_id()` /
+`pool._norm_dir()` 共用同一份判据，同样如此；受管环境刻意与它们同源
+（写在 `project_fingerprint` 的 docstring 里），单方面在这里改成 resolve
+会让环境 key 与项目 id 不同源，那比现在糟。真要修是**改那份共用判据**，
+独立一轮、连同 `_project_id` / `_norm_dir` 一起。
+
 **下一轮直接用的两条**：
 - 夹具 venv 的「前提」要**造出来**，不能指望宿主碰巧没装（`--system-site-packages`
   会把基础解释器的东西带进来）。

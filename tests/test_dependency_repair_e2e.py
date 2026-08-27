@@ -310,9 +310,17 @@ def test_managed_environment_end_to_end(client, project, wheelhouse,
     # macOS 上 `/var` 是指向 `/private/var` 的软链接：比路径必须先 resolve，
     # 否则「同一个目录」会被判成两个。
     assert Path(prefix).resolve() == managedenv.venv_dir(project).resolve()
-    # **不 resolve 解释器本身**：`venv/bin/python` 是指向基础解释器的软链接，
-    # 跟着它走的话每一个 venv 都会被判成「在别处」（projectenv 里同一个坑）。
-    assert Path(executable).is_relative_to(
+    # 比路径**两边都要归一**，而归一的对象是**父目录**不是解释器本身：
+    #   * Windows runner 的 TEMP 是 8.3 短名（`C:\Users\RUNNER~1\...`），
+    #     子进程报回来的 `sys.executable` 带短名，而 `.resolve()` 会把它展开成
+    #     长名（`runneradmin`）——一边展开一边不展开，`is_relative_to` 按路径段
+    #     比就永远不等（Windows 平台档上真红过一次）；
+    #   * 但**不能 resolve 解释器本身**：`venv/bin/python` 在 POSIX 上是指向
+    #     基础解释器的软链接，跟着它走每个 venv 都会被判成「在别处」
+    #     （projectenv 里同一个坑）。
+    # 父目录（`Scripts/` / `bin/`）两个平台上都不是软链接，resolve 它只把
+    # 短名与 `/var`→`/private/var` 这类展开掉，正好是要的那一半。
+    assert Path(executable).parent.resolve().is_relative_to(
         managedenv.env_dir(project).resolve())
 
     # manifest 如实记账：重建要照着它装回去
