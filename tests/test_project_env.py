@@ -296,12 +296,20 @@ def test_replay_and_export_use_the_same_interpreter(project):
     """
     real_venv(project)
     hot, _ = engine_pool.build("figure.py", str(project), "__main__")
+    assert hot.python_source == engine_pool.SOURCE_PROJECT_VENV
     replay = engine_pool.one_shot("figure.py", str(project), "__main__")
     try:
         assert engine_pool.same_python(replay.python, hot.python)
         assert replay.python_source == engine_pool.SOURCE_PROJECT_VENV
+        # 重放是**从零跑一遍脚本**：它真的在项目环境里跑通了，才说明
+        # 「热态所见 == 全量重放出来的」这条写回不变式没有跨环境断掉。
+        assert sorted(replay.ensure_built().get("stems") or {}) == ["Fig1"]
     finally:
         engine_pool.discard(replay)
+    # 导出走同一条构造路径——它也必须落在项目解释器上，否则「所见 != 所出」。
+    out = hot.export_dir / "Fig1.pdf"
+    hot.export("Fig1", [], str(out), "pdf", 200)
+    assert out.exists() and out.stat().st_size > 0
 
 
 @needs_worker
