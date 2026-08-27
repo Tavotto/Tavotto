@@ -11,8 +11,8 @@
 * 出现 ® → 主张一个并不存在的注册。
 
 **`cla-check` 这个 CI job 的形状契约不在这里**，在
-`tests/test_cla_workflow_contract.py`——那份测试与 job 本身在同一个 PR 里落地，
-因为在 job 还不存在的树上断言它的形状只会是个必红的空门禁。
+`tests/test_cla_workflow_contract.py`——判据必须和它守的东西一起落地，
+在 job 还不存在的树上断言它的形状只会是个必红的空门禁。
 
 判据本身也做过反证（见 PR 描述的 mutation 表）：每一条都手工破坏过一次，
 确认它真的红。

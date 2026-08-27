@@ -19,7 +19,7 @@ reason.
 |---|---|
 | Agreement texts (Individual, Corporate) | Written, versioned, hashed |
 | Versioning + hash-binding policy | In force — CI red on drift |
-| Repository-side qualification check | Written and tested; **the CI job lands in a follow-up PR** — see [Why the CI job ships separately](#why-the-ci-job-ships-separately) |
+| Repository-side qualification check | **Live** — the `cla-check` job feeds `CI fast gate` |
 | Security model of that check | Complete; no secrets, no PR code executed |
 | Signature source of truth | **Defined: the provider.** The repository stores no signer data. |
 | Rights holder | **Resolved — Jiaqi Wan (natural person), Hong Kong SAR law, <support@tavotto.com>** |
@@ -86,27 +86,30 @@ request head, and treats it as the answer to "did these people sign?". The
 repository answers only "sign *what*, exactly?" — which text, which version,
 which hash.
 
-## Why the CI job ships separately
+## Why the CI job shipped separately
 
-The `cla-check` job is **not** introduced in the same pull request as the gate
-script, the policy and the agreement texts. That is deliberate, and the reason is
-a direct consequence of the security model below.
+The `cla-check` job was **not** introduced in the same pull request as the gate
+script, the policy and the agreement texts. That was deliberate, and the reason
+is a direct consequence of the security model below. It is recorded here because
+the same trap will catch the next person who adds a check that trusts the default
+branch.
 
 The job fetches everything it judges by — `cla_gate.py`, `cla-policy.json` and
 both agreements — from the **default branch**, never from the pull request under
-review. So on the pull request that first introduces those files, they do not yet
-exist on `main`: the fetch returns HTTP 404, the job dies at its second step, and
-the judgement never executes. Because `cla-check` is also inside the fast gate's
-`needs` and `--required` closure, `CI fast gate` would then be permanently red
-and the change could never merge — a self-bootstrap deadlock.
+review. On the pull request that first introduced those files they did not yet
+exist on `main`: the fetch returned HTTP 404, the job died at its second step,
+and the judgement never executed. Because `cla-check` also sits inside the fast
+gate's `needs` and `--required` closure, `CI fast gate` was permanently red and
+the change could never have merged — a self-bootstrap deadlock, observed rather
+than theorised.
 
-The fix is ordering, not a weaker check:
+The fix was ordering, not a weaker check:
 
 1. **Content first** — gate script, policy, agreements, docs and policy tests
-   land on `main`.
-2. **Wiring second** — the `cla-check` job plus the two `needs` / `--required`
-   edits. By then the default branch has what the job fetches, so it runs and
-   reaches a real verdict.
+   landed on `main`.
+2. **Wiring second** — this job plus the two `needs` / `--required` edits. By
+   then the default branch had what the job fetches, so it runs and reaches a
+   real verdict.
 
 **A bootstrap fallback was considered and rejected.** `ci.yml` uses one for
 `aggregate_gate.py`: if the default branch lacks the script, it falls back to the
