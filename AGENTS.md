@@ -53,19 +53,24 @@
 ## 最常用验证
 
 ```sh
-ruff check .                               # Python 静态检查 + import 排序（秒级，改完先跑）
+ruff check . --fix && ruff format .        # 开发时：修 + 排 import + 格式化（秒级）
+ruff check . && ruff format --check .      # 提交前：只检查，与 CI 跑的完全一致
 .venv/bin/python -m pytest                 # 后端（tests/ 跑在 .venv）
 cd web && pnpm test && pnpm build          # 前端 + 类型检查（别用 tsc --noEmit：恒假绿）
 cd workerd && cargo test && cargo clippy --all-targets -- -D warnings && cargo fmt --check
 python scripts/smoke_app.py --python .venv/bin/python   # 端到端冒烟
 ```
 
-- **改完 Python 先 `ruff check .`，再跑针对性 pytest，最后才是完整验证。**
+- **改完 Python 先过 Ruff，再跑针对性 pytest，最后才是完整验证。**
+  开发时 `ruff check . --fix && ruff format .` 让它替你修；提交前跑
+  `ruff check . && ruff format --check .`——**与 CI 那一格逐字相同**，
+  本地绿就不会在 CI 上因为格式再红一轮。
   全仓 20~30 ms 回来，挡的是拼错的名字、没用的 import、没用的局部变量那一类
   ——它们不值得先花十分钟跑完整套。能自动修的用 `ruff check . --fix`（只应用
   安全修复；`--unsafe-fixes` 会动语义，要逐条看过再用）。规则集在
-  `pyproject.toml` 的 `[tool.ruff]`（lint 与 import 排序已启用，**formatter 尚未
-  启用**），细节见 `docs/ci/ruff.md`。
+  `pyproject.toml` 的 `[tool.ruff]`（lint、import 排序、formatter **均已启用**），
+  细节见 `docs/ci/ruff.md`。示例图库 / playground 示例 / CompatBench 语料
+  **不参与格式化**，它们的排版属于内容。
 - **新增一处会被塞进 `sys.path` 的仓库内源码根时，必须同步审查
   `[tool.ruff]` 的 `src`**——否则从那个目录平铺 import 的模块会被 ruff 判成
   第三方，排进 matplotlib 那一组。**在已有源码根下新增模块不用动它**，

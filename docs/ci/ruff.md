@@ -1,7 +1,10 @@
 # Ruff — Python 快速静态检查
 
-`ruff check .` 是本仓库 Python 改动的**第一层反馈**：全仓 290 个文件、
-85762 行，本机实测冷缓存 20~30 ms、热缓存 ~10 ms。它挡的是「一个拼错的名字、一个删了引用却忘了
+`ruff check .` 是本仓库 Python 改动的**第一层反馈**：全仓 295 个文件、
+96993 行，本机实测冷缓存 29 ms、热缓存 12~13 ms（formatter 迁移后重测；
+迁移前是 290 个文件 85762 行、20~30 ms / ~10 ms——**行数涨了 12%**，
+因为 `ruff format` 把多元素的集合/参数列表一行一个地拆开，
+见下面「formatter」一节）。它挡的是「一个拼错的名字、一个删了引用却忘了
 删的 import」这类在编辑器里一秒可判、却要消耗一整轮十分钟 CI 才被发现的问题。
 
 **它加速的是开发反馈，不是产品。** Ruff 不在渲染路径上，不参与 worker 协议，
@@ -11,10 +14,15 @@
 ## 日常怎么用
 
 ```sh
-ruff check .              # 检查（CI 跑的就是这一条）
-ruff check . --fix        # 只应用安全修复
-ruff check path/to/x.py   # 只看一个文件
+# 开发时：让它替你修
+ruff check . --fix && ruff format .
+
+# 提交前：只检查，**与 CI 那一格逐字相同**
+ruff check . && ruff format --check .
 ```
+
+本地跑过后一对再 push，就不会在 CI 上因为格式又红一轮。
+`--unsafe-fixes` 会动语义，要逐条看过再用，不是迁移手段。
 
 改完 Python 的顺序是 **Ruff → 针对性 pytest → 完整验证**，别把顺序倒过来：
 一个 F821 不值得先跑十分钟矩阵。
@@ -107,27 +115,76 @@ from . import (  # noqa: E402 —— 必须在 app 实例创建之后
 接入时用「noqa 规则码逐个计数、比对前后」核过一遍：除了这一处 90 → 89
 （两条合成一条）之外，其余 8 个规则码的数量一个没变。
 
-## formatter：**尚未启用**
+## formatter：**已启用**（2026-08-27）
 
-当前状态一句话：**lint 已启用、import 排序（`I`）已启用、formatter 尚未启用**
+当前状态一句话：**lint、import 排序（`I`）、formatter 三项均已启用**
 （AGENTS.md / .github/AGENTS.md / CONTRIBUTING.md 三处与此处必须一致）。
 
-推迟是实测过再决定的，不是没做：
+### 覆盖面是算得出来的
 
 ```
-ruff format --check .   →  293 files would be reformatted, 87 already formatted
+迁移那一刻仓库 .py 294 − 三个内容目录 86 = 208   ← 覆盖数，与 ruff 报的逐位相同
 ```
 
-380 个文件里 293 个会被重写，而且 `line-length` 88 与 100 的结果只差 1 个文件
-（292 / 293）——说明差异不在行宽，在括号换行风格、引号、空行这些**结构**上。
-把它塞进一个开发工具 PR 会得到几千行与 Ruff 配置本身无关的改动：review 淹掉、
-合并冲突暴涨、真正该被看的那几十行配置反而没人看。1.0 收敛阶段更不该这么干。
+`[tool.ruff.format]` 的 `exclude` 与 lint 的 per-file-ignores **是同一批目录**，
+理由同一条：那些 .py 的排版是给人看的**内容**，不是我们的代码风格。
+两处清单必须一起改——漏一处的表现是 `ruff check` 放过而 `ruff format --check`
+报红，而两条门禁说的是同一件事。`TestPythonLint` 对拍这两张清单。
 
-`I`（import 排序）当时同样被推迟，**2026-08-27 已补开**，见上面的「import 排序（`I`）」一节。
+**glob 是实测确定的**：用钉住的 ruff 0.16.4 配 `--force-exclude` 逐个验过，
+目录形式（`"examples/"`）**一个文件都排不掉**，必须写成 `**/*.py`。
 
-`line-length = 100` 已经按实测写进配置（全仓超过 100 列的只有 33 行，0.04%），
-所以**将来做 formatter 迁移时不必再重新测一遍行宽**；当前没有任何被选中的规则
-消费它，它只作用于 `ruff format`。
+### `*.md` 也排除了
+
+`ruff format` 会重排 Markdown 里 ```` ```python ```` 代码块，而 `ruff check`
+对同一个文件说「No Python files found」——门禁的两半对「什么算 Python」判断不
+一致，本身就该消除。更要紧的是那些文件是什么：`docs/release-notes/**` 是**已经
+发出去的历史记录**；`docs/adr/0014` 里 dataclass 的行尾注释对齐成一列，那份对齐
+就是它想表达的东西；`docs/audit/**` 记的是当时那份复现配方的原样；
+codex-plugin 的 `figure-contract.md` 随插件发给用户。
+
+### `docstring-code-format = false` 是显式写出的
+
+即使当前版本默认就是关的。docstring 里的代码片段不该因为将来某次 ruff 升版
+自动触发第二轮全仓迁移；真想开的话单独一个 PR 评估。
+
+### 它没有动语义，这一条是证明出来的
+
+205 个文件、约 32000 行的 diff（净增约 9600 行——ruff 把多元素的集合与参数
+列表一行一个地拆开，这是它的风格，不是有东西被加进来），靠「测试过了」背书不够。落地前对**每一个**改动
+文件做了 AST 比对，并对有差异的逐个审计：
+
+```
+AST 逐节点完全相同 201 ／ 仅 docstring 文本有差异 4 ／ 其它 0
+```
+
+那 4 个差异都在 docstring 上：两处是 ruff 在 `"""` 后补空格（docstring 以 `"`
+开头时），两处是正文缩进被规范化。逐条查过谁在读 `__doc__`——全仓 28 个文件读它，
+且**清一色**是 `argparse.ArgumentParser(description=__doc__…)`，读的都是**模块**
+docstring；改到的这四处一处都不是模块 docstring（两个函数、一个类、一个函数），
+也没有任何测试或产物断言这四段文本。另外全仓 294 个 .py 在 Python
+3.10 / 3.11 / 3.13 上逐个 `compile()` 成功；本机没有 3.12，另用
+`ruff --isolated --target-version py312 --select E9` 做语法层面的补充（CI 矩阵
+同样没有 3.12）。
+
+### `ignore` 整个删掉了
+
+接入那轮豁免过 `E701` / `E702`，理由写明是「formatter 的活，它落地那天就该删」。
+formatter 落地了，那 8 处紧凑写法被机械地拆开，豁免的理由随之消失——**豁免要
+跟着它的理由一起消失**。没有留 `ignore = []`：一条不说明任何事的配置，只会让
+读的人去想「为什么要显式写个空的」。
+
+### git blame
+
+这次动了 205 个文件，纯格式化提交的 SHA 记在 `.git-blame-ignore-revs` 里。
+GitHub 网页版自动读它；本地要生效各自配一次：
+
+```sh
+git config blame.ignoreRevsFile .git-blame-ignore-revs
+```
+
+往那个文件里只加**确实只有工具产出、没有一行人工改动**的提交——夹带了别的东西，
+blame 会连那些一起忽略掉，而那正是你将来最想查到的部分。
 
 ## 后续（各自独立 PR）
 
@@ -135,8 +192,7 @@ ruff format --check .   →  293 files would be reformatted, 87 already formatte
 
 1. ~~`I`（import 排序）~~ —— **2026-08-27 已完成**（用 `src` 而不是
    `known-first-party`，理由见上）。
-2. `ruff format` 全仓迁移 —— 一次性格式化 + `ruff format --check .` 进门禁，
-   落地后 `ignore` 里的 `E701` / `E702` 就该删掉（那两条本来就是它的活）。
+2. ~~`ruff format` 全仓迁移~~ —— **2026-08-27 已完成**，`ignore` 也随之整个删掉。
 3. `B` / `UP` / `SIM` / `RUF` —— 每族先单独跑一遍看噪声比，值得再开。
    `RUF100`（unused noqa）尤其要注意：本仓库有 295 条 `# noqa`，其中
    BLE001 / SLF001 / PLC0415 / N802 这些规则**当前没有启用**，冒然开 RUF100
@@ -146,8 +202,11 @@ ruff format --check .   →  293 files would be reformatted, 87 already formatte
 
 ## CI
 
-`python-lint` 是快线里最便宜的一格（只装一个 wheel，不碰科学栈 / 前端 / Rust），
-在 `pull_request` 与 `merge_group` 上都跑，经 **CI fast gate** 参与合并资格：
+`python-lint`（显示名 **Python quality (Ruff)**）是快线里最便宜的一格：只装一个
+wheel，不碰科学栈 / 前端 / Rust，在同一个 job 里跑 `ruff check` 与
+`ruff format --check` **两步**（format 那步带 `if: always()`，两条独立出结论）。
+**因此没有多出第四个 required context。** 它在 `pull_request` 与 `merge_group`
+上都跑，经 **CI fast gate** 参与合并资格：
 
 ```
 PR / merge_group

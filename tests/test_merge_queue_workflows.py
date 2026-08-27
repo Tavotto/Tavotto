@@ -334,7 +334,7 @@ class TestPythonLint:
 
     def test_the_job_exists_with_a_name_that_says_what_broke(self):
         block = _job(CI, "python-lint")
-        assert "name: Python lint (Ruff)" in block, (
+        assert "name: Python quality (Ruff)" in block, (
             "红灯上得看得出是 lint 挂了，而不是一个叫 checks2 的东西"
         )
 
@@ -393,12 +393,122 @@ class TestPythonLint:
         """命令行上再写一份 --select/--ignore，本地跑的就不是 CI 跑的那一套。"""
         block = _code(_job(CI, "python-lint"))
         assert re.search(r"(?m)^\s+run: ruff check .*\.$", block), "读不出 ruff check 那一步"
-        for flag in ("--select", "--ignore", "--extend-select", "--fix"):
+        for flag in (
+            "--select",
+            "--ignore",
+            "--extend-select",
+            "--fix",
+            "--line-length",
+            "--config",
+        ):
             assert flag not in block, f"python-lint 在命令行上覆盖了规则集：{flag}"
+
+    def test_formatter_is_also_gated(self):
+        """`ruff format` 的迁移只有配上 --check 才算落地。
+
+        少了这一步，仓库会**慢慢漂回**未格式化状态：谁本地没跑 format 就提交，
+        没有任何东西会说话，直到下一个人跑一次 `ruff format .` 撞出几百行与他
+        的改动无关的 diff。这正是「格式化过一次」与「保持被格式化」的区别。
+        """
+        block = _code(_job(CI, "python-lint"))
+        assert re.search(r"(?m)^\s+run: ruff format --check \.$", block), (
+            "python-lint 里没有 `ruff format --check .`"
+        )
+
+    def test_lint_and_format_report_independently(self):
+        """format 那一步要有 `if: always()`。
+
+        没有它时 lint 先红就看不到格式问题：开发者修完 lint 重新 push，才发现
+        还有一堆格式要改——一次 CI 往返只换回一半信息。
+        """
+        block = _code(_job(CI, "python-lint"))
+        i = block.index("- name: Ruff format --check")
+        assert "if: always()" in block[i:], "format 那一步没有 always()——lint 先红就看不到它了"
+
+    def test_format_and_lint_exclusions_stay_in_step(self):
+        """三处「代码即内容」的目录必须**同时**出现在 lint 的 per-file-ignores
+        与 formatter 的 exclude 里，且 lint 侧豁免的确实是 I001。
+
+        漏掉一处的表现很别扭：`ruff check` 放过而 `ruff format --check` 报红
+        （或反过来），而两条门禁说的是同一件事——那些目录里的排版不归我们管。
+        """
+        text = (WF.parents[1] / "pyproject.toml").read_text(encoding="utf-8")
+        # 用**行首锚定**的正则切段落。按字面量 split 会切错：表名在解释性注释里
+        # 也出现过，于是两次都在同一张表里找，怎么改都绿。
+        heads = {m.group(1): m.start() for m in re.finditer(r"(?m)^\[(tool\.ruff[-.\w]*)\]$", text)}
+        for need in ("tool.ruff.lint.per-file-ignores", "tool.ruff.format"):
+            assert need in heads, f"pyproject 里切不出 [{need}] 这一节"
+        starts = sorted(heads.values())
+
+        def _section(name: str) -> str:
+            i = heads[name]
+            after = [s for s in starts if s > i]
+            return text[i : after[0]] if after else text[i:]
+
+        lint = _code(_section("tool.ruff.lint.per-file-ignores"))
+        fmt = _code(_section("tool.ruff.format"))
+        # **只看真正的条目，不看散文**：上一版用 `d in section` 在原文里找，
+        # 匹配到的是注释里的 "examples/**"，把整条豁免删掉判据照样绿。
+        lint_rules = dict(re.findall(r'(?m)^"([^"]+)"\s*=\s*\[([^\]]*)\]', lint))
+        fmt_globs = set(re.findall(r'(?m)^\s+"([^"]+)",', fmt))
+        assert lint_rules, "per-file-ignores 里一条条目都没解析出来——形状变了？"
+        assert fmt_globs, "formatter exclude 里一条条目都没解析出来——形状变了？"
+
+        for d in ("examples/", "web/src/playground/examples/", "tests/compat/cases/"):
+            covering = [g for g in lint_rules if g.startswith(d)]
+            assert covering, f"lint 的 per-file-ignores 里没有覆盖 {d} 的条目"
+            assert all("I001" in lint_rules[g] for g in covering), (
+                f"{d} 在表里，但豁免的规则里没有 I001"
+            )
+            assert any(g.startswith(d) for g in fmt_globs), (
+                f"formatter 的 exclude 里没有覆盖 {d} 的条目：{sorted(fmt_globs)}"
+            )
+        assert "*.md" in fmt_globs, (
+            "formatter 的 exclude 里掉了 *.md——ruff format 会去重排文档里的 "
+            "```python 代码块，而 ruff check 根本不把 .md 当 Python"
+        )
+
+    def test_docstring_code_formatting_stays_off(self):
+        """显式关着。开了它，docstring 里的代码片段会在某次 ruff 升版后触发
+        第二轮全仓迁移，而那应该是一个单独评估过的决定。"""
+        text = (WF.parents[1] / "pyproject.toml").read_text(encoding="utf-8")
+        assert re.search(r"(?m)^docstring-code-format = false$", text), (
+            "pyproject 里没有显式的 docstring-code-format = false"
+        )
+
+    def test_blame_ignore_revs_existence_is_gated_in_ci(self):
+        """`.git-blame-ignore-revs` 的存在性必须在 **CI 里**真的执行一次。
+
+        `tests/test_blame_ignore_revs.py` 那条存在性判据在浅克隆上 skip，而 CI 的
+        `actions/checkout` 默认 `fetch-depth: 1`——也就是说它**在 CI 里从没执行
+        过**，一个不存在的 40 位 SHA 能通过全部门禁。补法是 workflow 里按 SHA 做
+        定向 fetch。这条判据盯着那一步别被删掉，也盯着它的「一条都没解析出来」
+        护栏还在（没有那个护栏，文件被清空之后它就是个永远绿的空循环）。
+        """
+        block = _code(_job(CI, "python-lint"))
+        # **要求它是循环的输入，不是随便出现在哪**：上一版只写
+        # `".git-blame-ignore-revs" in block`，而那个串在报错文案里也有——
+        # 把循环的输入换成 `echo`（读不到任何 SHA）判据照样绿。
+        assert re.search(r"done < <\(grep .*\.git-blame-ignore-revs\)", block), (
+            "python-lint 里那一步没有把 .git-blame-ignore-revs 当成循环的输入"
+        )
+        assert re.search(r"git fetch .*--depth=1 origin \"\$sha\"", block), (
+            "没有按 SHA 定向 fetch——浅克隆上就查不出 SHA 存不存在"
+        )
+        assert re.search(r'git cat-file -e "\$\{sha\}\^\{commit\}"', block), (
+            "fetch 之后没有确认它是一个 commit"
+        )
+        assert re.search(r'if \[ "\$n" -eq 0 \]; then', block), (
+            "少了「一条都没解析出来就红」的护栏——文件清空后这一步会变成空循环"
+        )
 
     def test_ci_never_rewrites_the_tree(self):
         """CI 只检查不修改：`--fix` 在门禁里意味着「它替你把红的改绿了」。"""
-        assert "--fix" not in _code(_job(CI, "python-lint"))
+        block = _code(_job(CI, "python-lint"))
+        assert "--fix" not in block
+        assert not re.search(r"(?m)^\s+run: ruff format \.$", block), (
+            "CI 在写回格式化结果，而不是检查"
+        )
 
 
 class TestLandingAudit:
