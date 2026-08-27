@@ -51,10 +51,12 @@ from overrides import (
     _linestyle_name,
     _stroke_state,
     _tick0,
+    axes_position_eaten_by_layout,
     collection_caps,
     colorbar_host_count,
     colorbar_mapping_is_live,
     colorbar_maps,
+    figure_layout_engine_eats_position,
     follow_map,
     gradient_base_hex,
     is_linecoll_family,
@@ -375,6 +377,8 @@ def instrument(state: FigState) -> None:
     # 插图与次坐标轴**各数各的**：共用一个计数器会让「只有一个次坐标轴」的图
     # 上出现「次坐标轴 2」，因为前面那个 1 被插图占掉了。
     child_ordinal: dict[str, int] = {"inset": 0, "secondary": 0}
+    # 图级判据，整轮只算一次
+    tight_layout_engine = figure_layout_engine_eats_position(fig)
 
     for i, ax in enumerate(all_axes):
         is3d = getattr(ax, "name", "") == "3d"
@@ -387,6 +391,15 @@ def instrument(state: FigState) -> None:
         # `_ColorbarAxesLocator`，而色条的 position override 是**支持**的
         # （用户自己摆过色条时就靠它），光判 locator 会把那条功能一起砍掉。
         position_locked = is_child and ax.get_axes_locator() is not None
+        # 持久 tight 引擎会在下一次绘制里把位置整个算回去。同样宁可不支持也不给
+        # 一个按了会弹回来的旋钮——但这一次要说得出为什么（reason 走
+        # `unsupported_props`，界面按 code 翻译）。
+        # **逐轴判，不是图级一刀切**：同一张 tight 图上 `fig.add_axes()` 建的轴
+        # 不参与 tight 计算，位置是真能改的（见 axes_position_eaten_by_layout）。
+        locked_by_layout = (
+            tight_layout_engine and not position_locked and axes_position_eaten_by_layout(fig, ax)
+        )
+        position_locked = position_locked or locked_by_layout
         if is_child:
             kind = "secondary" if secondary else "inset"
             child_ordinal[kind] += 1
@@ -409,6 +422,13 @@ def instrument(state: FigState) -> None:
             label,
             position_locked=position_locked,
             limits_slaved=secondary,
+            position_locked_reason=(
+                "layout_engine_tight"
+                if locked_by_layout
+                else "child_axes_locator"
+                if position_locked
+                else ""
+            ),
         )
         if ax in cbar_of_ax:
             host = host_of_cbax.get(ax)
@@ -2045,9 +2065,12 @@ def _axes_fields(ax, el: dict | None = None) -> list[dict]:
 
     `el` 带着遍历时才知道的能力标记（见 `_register`）：
 
-    * `position_locked` —— 子 axes（inset / secondary）的落位由父级的
-      `_axes_locator` 每帧重算，`set_position` 一 draw 就被顶回去。**不出这个
-      字段**，宁可不支持也不给一个按了会弹回来的旋钮。
+    * `position_locked` —— 落位不归 Tavotto 管，`set_position` 一 draw 就被顶
+      回去。**不出这个字段**，宁可不支持也不给一个按了会弹回来的旋钮。两个
+      来源，理由不同、reason code 也不同（`position_locked_reason`）：子 axes
+      （inset / secondary）的父级 `_axes_locator` 每帧重算；整张图挂着**持久的**
+      `TightLayoutEngine` 时它会把所有子图的位置重算（#140，判据见
+      `figure_layout_engine_eats_position`）。
     * `limits_slaved` —— 次坐标轴的数据范围由父轴经换算函数每帧重算。实测：
       `set_xlim` 与 `invert_xaxis` 被顶回去、`set_aspect` 被 matplotlib 自己
       拒绝（"Secondary Axes can't set the aspect ratio"）、`get_xscale()` 回的
@@ -2757,6 +2780,15 @@ def build_manifest(state: FigState, stem: str) -> dict:
             # 同步不出 `position` 字段，两处必须一致，否则前端会拿着一个
             # 后端根本不认的 prop 发 override。
             entry["resizable"] = not el.get("position_locked", False)
+            # 能力被挡掉时**说得出为什么**（`detect → guard → reason → issue → 修`）。
+            # 没有这一环，用户看到的就是「位置那一栏凭空没有了」，而拖动、对齐、
+            # 成组缩放也一起静默失灵——比不支持更难排查。渲染出口在
+            # `web/src/components/inspector/UnsupportedProps.tsx`。
+            reason = el.get("position_locked_reason")
+            if reason:
+                entry.setdefault("unsupported_props", []).append(
+                    {"prop": "position", "reason": reason}
+                )
             if artist in state.colorbar_axes:
                 entry["is_colorbar"] = True
                 entry["colorbar_gid"] = f"{el['gid']}.colorbar"
