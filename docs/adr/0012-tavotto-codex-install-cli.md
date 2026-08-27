@@ -1,7 +1,11 @@
 # ADR 0012：统一的 Codex 集成安装 CLI（`tavotto codex …`）
 
-日期：2026-08-25 · 状态：**Proposed**（接口已定，实现待排期；本 ADR 随
-「Codex 首次使用体验」PR 提交，评估目标是 v1.0 前）
+日期：2026-08-25 · 状态：**Accepted**（2026-08-27 实现落地，issue #117）
+
+实现落在 `src/tavotto/engine/codexinstall.py`（纯标准库，挂在 `engine/cli.py` 的
+分派点上）。与本 ADR 的差异只有一处：**桌面设置页的按钮尚未做**，拆成后继 issue
+——但那条约束（「按钮 spawn `tavotto-cli codex install --json`，不写第二套安装
+器」）已经由实现本身保证：安装器只有这一份，按钮到时候只能 spawn 它。
 
 ## 背景
 
@@ -56,14 +60,23 @@ tavotto codex uninstall   # 移除插件与 marketplace 项（不碰引擎）
 - 不在健康状态下重装任何组件（与 SKILL 会话入口同一契约）。
 - 不把 `codex` 子命令做成交互向导——一次跑完、如实报告。
 
-## 验收（实现时）
+## 验收（已落地，看护在 `tests/test_codex_install_cli.py`）
 
-- `tests/test_codex_plugin.py` 的真实 CLI 冒烟扩展：fresh `CODEX_HOME` 下
-  `tavotto codex install` 走到 plugin list 可见（无 codex CLI 的机器 skip）。
-- `install` 幂等：连跑两次，第二次全部 `skipped`，零网络写操作（marketplace
-  查询除外）。
-- 三个子命令在没装 Flask/PyMuPDF 的解释器里也能跑
-  （与 `test_subcommands_run_without_flask_or_pymupdf` 同一纪律）。
+- **单一权威**：README 首用章节里那两条命令必须由 `brand.py` 的常量逐字拼得出来
+  （`CODEX_MARKETPLACE` / `CODEX_SPARSE_PATHS` / `CODEX_PLUGIN_REF`）。
+- **幂等**：连跑两次，第二次 marketplace 与 plugin 都 `skipped`，且假 codex 的
+  调用日志里 `plugin add` 只出现一次。
+- **doctor 只诊断不改动**：调用日志里不许出现任何 `add`。
+- **失败停在原地并指名道姓**：某一步失败时后面的步骤压根不出现，`error_code`
+  就是那一步的。
+- **找不到 codex 时报 `codex_cli_missing` 并列出找过哪些位置**；不代装。
+- **uninstall 不碰引擎**，重复卸载两步都 `skipped`。
+- **收尾只说「新开一个 Codex 会话」**，不说「已启用」——旧会话里验不出来。
+- 三个子命令在没装 Flask/PyMuPDF 的解释器里也能跑（与
+  `test_subcommands_run_without_flask_or_pymupdf` 同一纪律）。
+- 真 CLI 冒烟（fresh `CODEX_HOME` → install → doctor）要网络与真实 marketplace，
+  按 `TAVOTTO_CODEX_REAL_SMOKE=1` 显式 opt-in，默认 skip：把网络写进快线只会让它
+  天天红，而那条红与产品无关。
 
 ## 关联
 
