@@ -30,6 +30,12 @@ import urllib.request
 
 REPO = os.environ.get("GITHUB_REPOSITORY", "Tavotto/Tavotto")
 WORKFLOW = "telemetry-metrics.yml"
+#: 真正把数据送出去的那一步。它带 `if: ${{ !inputs.dry_run }}`，所以
+#: **演练时它是 skipped，而整个 run 照样 success**。判据只看 run 的
+#: conclusion 就会把一次 `dry_run=true` 的手动补跑当成「数据落了」，
+#: 于是漏跑之后再手动演练一次，看门狗就闭嘴 30 小时——而磁盘上那份
+#: 快照仍然是旧的。名字漂了要当场红，见 tests/test_metrics_freshness.py。
+UPLOAD_STEP = "采集并上报"
 
 #: 采集器名义上每 24 小时一次。阈值必须夹在「正常最坏」与「漏一次」之间：
 #: 正常情况下检查时刻看到的年龄最多约 24 小时（采集漂到很晚 + 检查在它之前），
@@ -40,6 +46,9 @@ MAX_AGE_HOURS = 30
 OK = "OK"
 STALE = "STALE"
 NO_SUCCESS = "NO_SUCCESS"
+#: run 成功过，但没有一次真的上报（全是 dry_run）。**不能报 OK**：
+#: 「跑过了」不等于「数据落了」。
+DRY_RUN_ONLY = "DRY_RUN_ONLY"
 #: **观测无效，不是「很旧」。** 一次都查不到 run 有两种成因：仓库真的从没
 #: 跑过，或者我们问错了地方（改名 / 换仓库 / token 权限不足）。把它当成
 #: 「年龄无穷大」会让一个坏掉的判据看起来像一条真实告警。
@@ -57,12 +66,19 @@ def evaluate(runs: list[dict], now: _dt.datetime,
         return NO_DATA, None, (
             f"查不到 {WORKFLOW} 的任何 run。这是**观测无效**，不是「很旧」——"
             f"先确认仓库（{REPO}）、workflow 文件名与 token 权限。")
-    done = [r for r in runs if r.get("conclusion") == "success"
-            and isinstance(r.get("updated_at"), str)]
-    if not done:
+    ok_runs = [r for r in runs if r.get("conclusion") == "success"
+               and isinstance(r.get("updated_at"), str)]
+    if not ok_runs:
         n = len(runs)
         return NO_SUCCESS, None, (
             f"{WORKFLOW} 最近 {n} 次 run 里没有一次成功。采集器在跑但没落数据。")
+    # **成功 != 上报。** 演练跑（dry_run=true）会跳过上报那一步却整体成功。
+    done = [r for r in ok_runs if r.get("uploaded")]
+    if not done:
+        return DRY_RUN_ONLY, None, (
+            f"{WORKFLOW} 最近 {len(ok_runs)} 次成功的 run 全是演练"
+            f"（`{UPLOAD_STEP}` 那一步没执行），一份快照都没落。"
+            f"补跑用：gh workflow run {WORKFLOW} --ref main -f dry_run=false")
     newest = max(_parse(r["updated_at"]) for r in done)
     age = (now - newest).total_seconds() / 3600
     stamp = newest.astimezone(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -74,9 +90,7 @@ def evaluate(runs: list[dict], now: _dt.datetime,
     return OK, age, f"上一次成功采集 {stamp}，距今 {age:.1f} 小时。"
 
 
-def fetch_runs(token: str | None, per_page: int = 20) -> list[dict]:
-    url = (f"https://api.github.com/repos/{REPO}/actions/workflows/"
-           f"{WORKFLOW}/runs?per_page={per_page}")
+def _get(url: str, token: str | None) -> dict:
     req = urllib.request.Request(url, headers={
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
@@ -84,14 +98,49 @@ def fetch_runs(token: str | None, per_page: int = 20) -> list[dict]:
     })
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
-            return json.loads(resp.read().decode("utf-8")).get("workflow_runs", [])
+            return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         # **绝不打印响应体**，它可能回显我们发过去的 header
-        print(f"::error::查询 run 列表失败: HTTP {exc.code}", file=sys.stderr)
+        print(f"::error::查询 GitHub API 失败: HTTP {exc.code}", file=sys.stderr)
         raise SystemExit(2) from None
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        print(f"::error::查询 run 列表失败: {type(exc).__name__}", file=sys.stderr)
+        print(f"::error::查询 GitHub API 失败: {type(exc).__name__}", file=sys.stderr)
         raise SystemExit(2) from None
+
+
+def did_upload(run_id: int, token: str | None) -> bool:
+    """这次 run 里，`采集并上报` 那一步真的执行且成功了吗。
+
+    演练跑会把它 skip 掉，而 run 整体仍是 success——只看 run 的 conclusion
+    分不出这两者。
+    """
+    data = _get(f"https://api.github.com/repos/{REPO}/actions/runs/"
+                f"{run_id}/jobs?per_page=20", token)
+    for job in data.get("jobs") or []:
+        for step in job.get("steps") or []:
+            if step.get("name") == UPLOAD_STEP:
+                return step.get("conclusion") == "success"
+    return False
+
+
+def fetch_runs(token: str | None, per_page: int = 20) -> list[dict]:
+    """run 列表，并给成功的那些标上「到底有没有上报」。
+
+    只对成功的 run 多问一次 jobs，且**从新到旧问到第一个上报过的就停**——
+    正常情况下这就是一次额外请求。
+    """
+    data = _get(f"https://api.github.com/repos/{REPO}/actions/workflows/"
+                f"{WORKFLOW}/runs?per_page={per_page}", token)
+    runs = data.get("workflow_runs", [])
+    settled = False
+    for run in sorted((r for r in runs if r.get("conclusion") == "success"),
+                      key=lambda r: r.get("updated_at") or "", reverse=True):
+        if settled:
+            run["uploaded"] = False
+            continue
+        run["uploaded"] = did_upload(run.get("id"), token)
+        settled = run["uploaded"]
+    return runs
 
 
 def main(argv: list[str] | None = None) -> int:

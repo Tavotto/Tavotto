@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import importlib.util
+import re
 from pathlib import Path
 
 import pytest
@@ -35,9 +36,10 @@ checker = _load()
 NOW = _dt.datetime(2026, 8, 27, 12, 47, tzinfo=_dt.timezone.utc)
 
 
-def _run(hours_ago: float, conclusion: str = "success") -> dict:
+def _run(hours_ago: float, conclusion: str = "success",
+         uploaded: bool = True) -> dict:
     ts = NOW - _dt.timedelta(hours=hours_ago)
-    return {"conclusion": conclusion,
+    return {"conclusion": conclusion, "uploaded": uploaded,
             "updated_at": ts.strftime("%Y-%m-%dT%H:%M:%SZ")}
 
 
@@ -84,6 +86,44 @@ def test_runs_exist_but_none_succeeded():
 
 
 # ---------------------------------------------------------------------------
+# 「跑过了」不是「数据落了」
+# ---------------------------------------------------------------------------
+def test_dry_run_success_does_not_count_as_fresh():
+    """演练跑会跳过上报那一步却整体成功。
+
+    真实场景：cron 漏了一槽，有人手动 `dry_run=true` 看一眼输出——只看
+    run 的 conclusion，看门狗就会为此闭嘴 30 小时，而磁盘上那份快照仍是旧的。
+    """
+    status, age, msg = checker.evaluate([_run(2, uploaded=False)], NOW)
+    assert status == checker.DRY_RUN_ONLY
+    assert status != checker.OK
+    assert age is None
+    assert checker.UPLOAD_STEP in msg
+    assert "gh workflow run" in msg
+
+
+def test_age_is_measured_from_the_last_real_upload_not_the_last_dry_run():
+    """新的演练跑不能把年龄「刷新」——它没落任何数据。"""
+    status, age, _ = checker.evaluate(
+        [_run(1, uploaded=False), _run(40, uploaded=True)], NOW)
+    assert status == checker.STALE
+    assert age == pytest.approx(40, abs=0.1)
+
+
+def test_upload_step_name_matches_the_collector_workflow():
+    """判据认的是一个步骤名。名字在采集器那边一改，这里就该当场红——
+    否则判据会安静地永远判成「没上报」。"""
+    wf = (ROOT / ".github" / "workflows" / "telemetry-metrics.yml").read_text(
+        encoding="utf-8")
+    assert f"- name: {checker.UPLOAD_STEP}" in wf, (
+        f"telemetry-metrics.yml 里没有名为 {checker.UPLOAD_STEP!r} 的步骤")
+    # 而且它必须仍然是「非演练才跑」的那一步，否则演练照样会被算成上报
+    m = re.search(rf"- name: {re.escape(checker.UPLOAD_STEP)}\n\s*if: (.+)", wf)
+    assert m and "dry_run" in m.group(1), (
+        f"{checker.UPLOAD_STEP} 那一步不再由 dry_run 守卫，判据失效")
+
+
+# ---------------------------------------------------------------------------
 # 「查不到」不是「很旧」
 # ---------------------------------------------------------------------------
 def test_no_runs_at_all_is_a_broken_observation_not_a_stale_reading():
@@ -105,6 +145,7 @@ def test_every_non_ok_status_is_red():
     import tempfile
     for payload, expect in (({"workflow_runs": []}, 1),
                             ({"workflow_runs": [_run(2, "failure")]}, 1),
+                            ({"workflow_runs": [_run(2, uploaded=False)]}, 1),
                             ({"workflow_runs": [_run(40)]}, 1),
                             ({"workflow_runs": [_run(3)]}, 0)):
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
