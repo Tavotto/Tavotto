@@ -182,6 +182,66 @@ python scripts/build_mcp_widget.py --check                 # 一致
 | 真机（WebView2 / WKWebView 壳内）尚未走过这条路 | 中 | 与 Session 7 同一条待办 |
 | Session 7 遗留：只认 `.venv`/`venv`/`env`；体检跑在 `-I` 下与 worker 的环境条件差异 | 见上一轮记录 | 未变 |
 
+## 路径净化：两个出口，第二个是踩出来的
+
+用户裁决 8 条 code-scanning 告警**走改码、不 dismiss**（`# nosec` /
+`# codeql[...]` 这类抑制注释等于换个地方 dismiss，不算数）。8 条里 7 条是
+**同一条污点流**：项目根 → 派生路径 → `open()` / 子进程 argv。所以收成两个
+出口，不是打 7 个补丁：
+
+| 函数 | 用于 | 判据 |
+| --- | --- | --- |
+| `projectenv.contained_path(root, cand)` | **目录** | 先 `realpath`（软链接 / `..` / `.` 全在这步落地），再按 `real_root + os.sep` 前缀判 |
+| `projectenv.contained_file(root, cand)` | **文件** | 判**父目录**，回拼好的路径，**绝不 realpath 文件本身** |
+
+两条容易写错的地方，各配了一条负向反证：
+
+* **前缀判必须带 `os.sep`**。裸 `startswith(real_root)` 会把 `/a/paper-evil`
+  判成「在 `/a/paper` 里面」。
+* **顺序不能反**，也不能用 `normpath` 代替 `realpath`：`<项目>/.venv -> /etc`
+  这种软链接在字符串上看着在项目内。
+
+**为什么需要第二个函数**（这是踩出来的，不是设计出来的）：只有
+`contained_path` 时，`venv/bin/python` 会被 realpath 解析成
+`/opt/homebrew/.../python3.13`——**每一个 venv 都被判成「在项目外」**，
+`test_project_env` 与 `test_dependency_repair` 当场全红。目录不是软链接，
+判目录既挡得住逃逸又不误伤。**这个坑在 `project_relative` 的注释里已经记过
+一次**，改 `interpreter_of` 时又踩了——所以这次收成函数，第三个调用点直接用。
+
+顺带堵上一个**真缺陷**（不只是静态分析的抱怨）：`PATCH /api/engine/environment`
+的 `scope="project"` 分支把相对路径拼到项目根上却没验逃逸，`../../../x`
+拼完就出了项目，**而那条路径下游是要被当解释器 spawn 的**。绝对路径仍然
+允许（ADR 0018 写明用户可以挑项目外的 conda 环境），堵住的只有「假装是
+相对路径」那条。
+
+> **写跨平台逃逸用例时**：硬写 `..\..\x` 在 POSIX 上根本不是逃逸（反斜杠
+> 不是分隔符，那只是个怪文件名），断言会红在 `interpreter_not_found` 上而不是
+> 逃逸判据上——用例在一半平台上量的是另一件事。用 `os.sep.join([...])`。
+
+## ⚠️ linked worktree 共享主仓库的 `.git/config`
+
+另一个会话在临时 worktree 里跑 `git config user.email q@l`，以为只作用于
+那个 worktree。实际上 **`extensions.worktreeConfig` 没启用时，`git config`
+不带 `--worktree` 一律写进共享的 `.git/config`**——于是本仓库（含所有
+linked worktree）此后每一次提交的作者都变成了 `q <q@l>`，本分支有两个提交
+中招。
+
+排查与修复：
+
+```sh
+git config --show-origin user.email     # 看是哪一层盖住了全局身份
+git log --format='%an <%ae>' origin/main..HEAD | sort -u   # 应当只有一行
+# 改写时**显式带身份**，别依赖配置（那条配置可能还生效着）：
+git -c user.name=… -c user.email=… \
+    rebase --exec 'git commit --amend --reset-author --no-edit' <base>
+```
+
+`git -c` 设的参数经 `GIT_CONFIG_PARAMETERS` 传给子进程，所以 `--exec` 里的
+`git commit` 拿到的是你指定的身份——这一点验过再用，别想当然。
+
+后果不只是「名字不好看」：权利溯源审计要求 main 可达的提交出自同一权利人，
+而 `q@l` 反解不出 GitHub 账号，CLA 判定器会判 `unresolved` 并阻断。
+
 ## 不得被下一 Session 破坏的约束
 
 - Session 2–7 的全部约束仍然有效（见 git 历史里的上一版本文件，逐条未变）。
