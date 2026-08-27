@@ -128,6 +128,40 @@ export function takeWarmClient(): { client: PlaygroundClient; wasWarm: boolean }
   return { client, wasWarm: false }
 }
 
+/**
+ * 回到空状态时排一次预热。返回取消函数（组件卸载 / 又离开空状态时调用）。
+ *
+ * `afterCancel` 是**唯一**的行为差别：用户刚按过「取消」时，这次回到空状态
+ * 不是「闲下来了」，是「别再下载了」。取消刚 dispose 掉一个在途 Worker，
+ * 紧接着的空闲回调若照常预热，后台立刻又起一个继续下载 Pyodide——按钮上写着
+ * 取消，机器上什么都没停。
+ *
+ * 这种情况下改成等一次**明确的意图**（指针按下 / 按键）再排预热。刻意不用
+ * hover：鼠标扫过页面不是意图，那会让「取消」在几十毫秒后就失效。
+ *
+ * 这里只决定**什么时候排**；起不起、起几个仍然全由上面那本账本
+ * （cold / warming / ready）与 `shouldPrewarm()` 说了算——不引入第二套账本。
+ */
+export function schedulePrewarm({ afterCancel = false } = {}): () => void {
+  if (!afterCancel) return onIdle(() => prewarm())
+
+  let cancelIdle: (() => void) | null = null
+  const rearm = () => {
+    detach()
+    cancelIdle = onIdle(() => prewarm())
+  }
+  const detach = () => {
+    globalThis.removeEventListener('pointerdown', rearm)
+    globalThis.removeEventListener('keydown', rearm)
+  }
+  globalThis.addEventListener('pointerdown', rearm)
+  globalThis.addEventListener('keydown', rearm)
+  return () => {
+    detach()
+    cancelIdle?.()
+  }
+}
+
 /** 丢掉暖着的那个（页面卸载）。幂等。 */
 export function discardWarmClient(): void {
   warm?.dispose()

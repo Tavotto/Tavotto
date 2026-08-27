@@ -34,7 +34,7 @@ import {
   verifySourceIntegrity,
   type ActiveSession,
 } from './playgroundSession'
-import { discardWarmClient, onIdle, prewarm } from './prewarm'
+import { discardWarmClient, schedulePrewarm } from './prewarm'
 import { PlaygroundError, type PlaygroundClient } from './pyodideClient'
 import type { FigureChoice, PlaygroundFailure, PlaygroundPhase } from './protocol'
 import { MAX_SOURCE_BYTES } from './runtime'
@@ -118,8 +118,13 @@ export function PlaygroundApp() {
     [],
   )
 
+  /** 这次回到空状态是不是由「取消加载」带来的（见下面的 effect）。 */
+  const cancelledRef = useRef(false)
+
   /**
-   * 空闲时预热 Pyodide 核心（`prewarm.ts`）。挂载后与每次回到空状态各一次。
+   * 空闲时预热 Pyodide 核心（`prewarm.ts`）。挂载后与每次回到空状态各一次，
+   * **但「取消」带来的那一次要等用户再次表达意图**——否则取消刚杀掉一个
+   * Worker，紧接着又起一个在后台继续下载。
    *
    * 三条纪律：① 只发生在 `/try` 这个应用页面上——营销首页是另一个仓库里的
    * 静态页，与本模块毫无连接，一个字节的 Pyodide 都不会加载；② 首帧不等它，
@@ -128,7 +133,9 @@ export function PlaygroundApp() {
    */
   useEffect(() => {
     if (stage.kind !== 'idle') return
-    return onIdle(() => prewarm())
+    const afterCancel = cancelledRef.current
+    cancelledRef.current = false
+    return schedulePrewarm({ afterCancel })
   }, [stage.kind])
 
   const fail = useCallback((failure: PlaygroundFailure, filename: string, origin: PlaygroundOrigin) => {
@@ -268,6 +275,7 @@ export function PlaygroundApp() {
   /** 取消加载：真正 dispose 在途 Worker（不是把加载藏起来），回案例库。 */
   const cancelLoading = useCallback(() => {
     launchSeq.current++
+    cancelledRef.current = true      // 紧随其后的那次空闲预热要等明确意图
     loadingClientRef.current?.dispose()
     loadingClientRef.current = null
     teardownSession(sessionRef.current)
