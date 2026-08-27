@@ -1482,10 +1482,16 @@ def _diagnostics_bundle_response(frontend: dict | None = None, frontend_dropped:
         # 是自动接手还是用户挑的、因为缺哪个包、那个环境的版本是多少。
         # **这里不体检**——事实在切换当时就存下来了。
         st = engine_projectenv.state(str(ctx.path))
+        try:
+            # **按真正生效的那条判**，不是「记住过就算数」：用户在设置里显式
+            # 指了别的解释器时，项目记住的那条并不生效，诊断包写成 project_venv
+            # 就是在骗人。这一步与报告里既有的 `find_worker_python()` 同档
+            # 开销（都可能探测一次），不额外拖慢什么。
+            effective = engine_pool.resolve_worker_python(str(ctx.path))[1]
+        except engine_pool.WorkerError:
+            effective = ""
         status["environment_resolution"] = {
-            "source": engine_pool.SOURCE_PROJECT_VENV
-            if st.get("python")
-            else engine_pool.worker_source(),
+            "source": effective,
             "automatic": st.get("automatic", False),
             "trigger": st.get("trigger", ""),
             "module": st.get("module", ""),
