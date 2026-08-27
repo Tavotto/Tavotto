@@ -109,6 +109,7 @@ import { useInspectorPrefs } from '@/store/inspectorPrefs'
 import { TextActionRow } from './TextActions'
 import { hasTextStyleBar, TextStyleBar, TEXT_BAR_PROPS } from './TextStyleBar'
 import { HistoryPanel } from './HistoryPanel'
+import { mergeUnsupported, UnsupportedProps } from './UnsupportedProps'
 import { UpdateSourceButton } from './UpdateSourceButton'
 import { SyncOverridesButton } from './SyncOverridesButton'
 
@@ -316,7 +317,12 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
             {el(render?.status === 'rendering' ? 'building' : 'waiting')}
           </p>
         ) : !element?.editable.length || !buckets ? (
-          <p className="text-xs text-ink-3">{el('clickToEdit')}</p>
+          <>
+            <p className="text-xs text-ink-3">{el('clickToEdit')}</p>
+            {/* 一条能改的都没有、但有说得出原因的不可改项时，原因仍然要出现
+                ——否则这个元素在界面上就只剩一句「点一下开始编辑」 */}
+            {element && <UnsupportedProps elements={[element]} />}
+          </>
         ) : (
           <FieldList
             panel={panel}
@@ -606,6 +612,8 @@ function FieldList({
         </div>
       )}
       {primaryExtra && <div className="mt-2">{primaryExtra}</div>}
+      {/* guard 挡掉的能力要说得出为什么——否则开关就是「消失了」（#76） */}
+      <UnsupportedProps elements={[element]} />
       {buckets.more.length > 0 && (
         <div className="mt-1.5 border-t border-border pt-1.5">
           <button
@@ -800,7 +808,10 @@ function BatchSection({
 
   // 公共样式已由上面的 TextStyleBatchSection 承接、这里一条不剩时整段不画：
   // 紧挨着可用的样式控件再来一句「没有公共属性」是自相矛盾的
-  if (skip && !fields.length) return null
+  const unsupported = mergeUnsupported(elements)
+  // 多选时单元素表单整个让位给这一段——这里不渲染理由的话，「开关凭空消失」
+  // 会在批量路径上原样复发（#76 的现场就在多宿主色条上，而色条常被多选）
+  if (skip && !fields.length && unsupported.length === 0) return null
 
   const rows = (list: EditableField[]) => (
     <div className="flex flex-col gap-1.5">
@@ -844,6 +855,7 @@ function BatchSection({
           })}
         </>
       )}
+      <UnsupportedProps elements={elements} />
     </Section>
   )
 }

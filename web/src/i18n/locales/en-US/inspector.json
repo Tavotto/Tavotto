@@ -944,6 +944,11 @@
     "title": "Transform"
   },
   "unlock": "Unlock",
+  "unsupported": {
+    "multi_host_colorbar": "This colorbar spans {{hosts}} subplots; switching its orientation is not supported in this version",
+    "partial": "({{count}} of {{total}} elements)",
+    "unknown": "Changing this here is not supported in this version"
+  },
   "versionHistory": {
     "confirmRestore": "Restore",
     "currentSuffix": " · current",

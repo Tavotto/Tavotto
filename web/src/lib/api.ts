@@ -668,6 +668,21 @@ export interface ElementGeometry {
   clip?: [number, number, number, number]
 }
 
+/**
+ * guard 挡掉一条能力时给出的**稳定 reason**。
+ *
+ * guard 的完整形态是 `detect → guard/hide → unsupported reason → issue → 修`：
+ * 少了 reason 这一环，用户看到的就是「开关就这么消失了，没有任何解释」。
+ *
+ * `reason` 是 code 不是文案——界面按 code 翻译（`inspector:unsupported.*`），
+ * 绝不透传英文。`detail` 里的字段进插值（如 `multi_host_colorbar` 的 hosts）。
+ */
+export interface UnsupportedProp {
+  prop: string
+  reason: string
+  detail?: Record<string, unknown>
+}
+
 export interface ManifestElement {
   gid: string
   role: string
@@ -680,6 +695,11 @@ export interface ManifestElement {
   draggable: boolean
   /** axes：可在画布上直接拖动/缩放子图占比（写 position override） */
   resizable?: boolean
+  /**
+   * 引擎明确不宣称、且**说得出为什么**的属性。渲染出口在
+   * `inspector/UnsupportedProps.tsx`；没有它这个字段就只到 manifest、没到眼睛。
+   */
+  unsupported_props?: UnsupportedProp[]
   /**
    * 自己没有几何属性、位置由别的元素决定时，指向那个元素的 gid。
    * imshow 位图就是这样贴合宿主 axes 的：拖它等于拖宿主子图。
