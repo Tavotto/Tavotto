@@ -218,6 +218,58 @@ python scripts/build_mcp_widget.py --check                 # 一致
 > 不是分隔符，那只是个怪文件名），断言会红在 `interpreter_not_found` 上而不是
 > 逃逸判据上——用例在一半平台上量的是另一件事。用 `os.sep.join([...])`。
 
+## ⚠️ PR 有冲突时 CI **根本不会跑**（不是「还没跑」）
+
+`#177` 有过两次「推上去 46 分钟一个 run 都没有」。当时的判断是「push 事件
+丢了，重推一次」——**重推没用，因为根因不是派发**：
+
+```
+gh pr view 177 --json mergeable   →  CONFLICTING
+```
+
+**PR 有合并冲突时 GitHub 算不出 merge commit，`pull_request` 触发的
+workflow 就不派发。** 三点对照（同一条分支、同一段时间窗，唯一变的是
+`mergeable`）：
+
+| head | mergeable | runs |
+| --- | --- | --- |
+| `82d893d` | CONFLICTING | 0（等了 46 分钟） |
+| `c4f6af0` | CONFLICTING | 0（重推换了 SHA，仍然 0） |
+| `9b6007c` | **MERGEABLE** | **3（rebase 之后立刻派发）** |
+
+**查它之前先查 `mergeable`**，它是 O(1) 的，而「计时 + 看别人有没有 run」
+要 30 分钟且答不了这个问题：
+
+```text
+CONFLICTING                    → 根因是冲突，rebase 才会有 run
+MERGEABLE 且别人有 run 它没有  → 被单独跳过
+MERGEABLE 且大家都没有         → 平台滞后
+```
+
+看板上 `checks=UNREPORTED` 与「永远不会报告」长得一样，这类状态要单独一档
+（`BLOCKED(conflicting)`）。
+
+**这里还藏着一个更一般的教训**：当时的推理是「排除了平台整体故障 → 所以是
+事件丢了」。**排除一个解释不等于证明另一个**——中间少了「还有别的可能吗」
+那一步，而第三种可能用一个字段就能查出来。
+
+## ⚠️ 脚本报「完成」不等于它做过事
+
+`rebase_loop.sh` 有一轮报「rebase 已完成」，而 **HEAD 一动没动**：它只会
+「继续」一个进行中的 rebase，没有 rebase 时 `git rebase --continue` 报
+"no rebase in progress"，脚本把那当成了完成。
+
+修法是**在结束时验证目标状态**，而不是信一句话：
+
+```sh
+git merge-base --is-ancestor origin/main HEAD || { echo "什么都没做"; exit 4; }
+```
+
+这与本轮别处踩的几次同源（`CodeQL` 与 `CodeQL gate` 当成同一个 check、
+`CONFLICT` 行读 stderr、`--name-only` 分节、按分支 ref 查 code-scanning
+alerts 永远是 0）：**输出看着像结论，其实回答的是另一个问题**。
+每条判据先造一个已知答案的样本验一遍再用。
+
 ## ⚠️ linked worktree 共享主仓库的 `.git/config`
 
 另一个会话在临时 worktree 里跑 `git config user.email q@l`，以为只作用于
