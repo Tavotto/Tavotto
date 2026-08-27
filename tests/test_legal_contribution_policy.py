@@ -457,7 +457,14 @@ class TestAuditBaseline:
 
     @staticmethod
     def _git(*args: str) -> subprocess.CompletedProcess:
-        return subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True)
+        # **`encoding="utf-8"` 不能省。** `text=True` 单独出现时按系统默认代码页
+        # 解码，Windows 上是 ANSI——git 的中文输出（本仓库的提交信息、以及
+        # git 自己的本地化错误）会静默丢掉 stdout/stderr，于是这里的失败信息
+        # 在最需要它的那台机器上正好是空的。
+        # 看护判据：tests/test_source_hygiene.py::test_windows_bound_subprocesses_pin_their_decoding
+        return subprocess.run(
+            ["git", *args], cwd=ROOT, capture_output=True, text=True, encoding="utf-8"
+        )
 
     @classmethod
     def _is_ancestor(cls, sha: str) -> tuple[int, bool]:
@@ -498,9 +505,14 @@ class TestAuditBaseline:
         rc, deepened = self._is_ancestor(cur)
         where = "（补全历史之后仍然如此）" if deepened else ""
         if rc == 128:
+            # **不要在这里断言「这个 SHA 不存在」**——补全之后仍取不到，可能是
+            # 它真的不存在，也可能是它在一条本次没有 fetch 的分支上（浅克隆
+            # 只补它跟踪的那些）。两种都该红，但只有一种成立时说死就是又一个
+            # 假结论。判据要的是「在这条历史上可达」，如实说到这里为止。
             raise AssertionError(
-                f"当前审计基线 {cur[:7]} 在仓库里根本不存在{where}——"
-                "IP_PROVENANCE 记的必须是一个真实提交的 SHA"
+                f"当前审计基线 {cur[:7]} 在这个克隆里取不到{where}——"
+                "要么这个 SHA 不存在，要么它不在本分支的历史上。"
+                "IP_PROVENANCE 记的必须是本历史上一个真实审计过的提交"
             )
         assert rc == 0, (
             f"当前审计基线 {cur[:7]} 是真实提交，但**不是本分支的祖先**{where}——"
