@@ -112,6 +112,14 @@
   记住选择、SSE 进度。
 - [ ] **CompatBench 的 `native_run` 路由**从 `not_implemented` 升级。
 - [ ] **`_refresh_axes_follow` 的静默 except**：要不要收窄是独立一笔。
+- [ ] **target 不存在时报的是 `script_error`**（带一段 FileNotFoundError
+  traceback），分类不准——那是 invocation 层的错，不是脚本的错。归到
+  Session 9 的「invocation parser 错误分类与稳定错误码表」一起做。
+- [ ] **CI 时长**：`tests/bridge` 真起 ~70 个子进程（每个都要 import
+  matplotlib），会加进 `backend-fast`（PR 每次跑，Linux 3.10+3.13）与
+  `backend-platforms`（merge_group，mac+Windows）。**这正是 Windows 覆盖
+  缺口的解药**（用例本身平台无关），但入队前请先看一眼这一格的时长有没有
+  超出可接受范围；真超了再考虑把最重的几条挪到 `-m slow`。
 - [ ] **网站 playground re-sync**：本轮动了 `overrides.py`（`_sibling`），
   playground 指纹变成 `1a7aefda8bbe880f`（canvas.html `9fe4aad080b18fa4`
   不受影响——它不嵌 Python）。`web/dist-playground/` 是 gitignored 的可再生

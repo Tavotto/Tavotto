@@ -42,10 +42,11 @@ no attribute 'load_runs'）指向的方向与真实原因毫无关系。
     matplotlib.use("Agg")          # ← 这一句只在 pyplot 还没 import 时是纯的
     import matplotlib.pyplot as plt
 
-bridge 只要先 import 了 pyplot，`use()` 就变成 `switch_backend()`——语义、
-告警、乃至（视 matplotlib 版本而定）活着的 Figure 都可能不一样。实测
-matplotlib 3.10.8 的 `switch_backend` 源码里确实有 `close("all")`，只是当前
-版本走不到那条分支；**这种"当前版本碰巧没事"的事实不该被依赖**。
+bridge 只要先 import 了 pyplot，`use()` 就变成 `switch_backend()`——而它的
+**文档承诺会销毁我们刚捕获的 Figure**（docstring：*"all open Figures will be
+closed via ``plt.close('all')``"*）。matplotlib 3.10.8 实测**并不会**（函数体
+里根本没有那个调用，只有 docstring 里有），也就是这一版的文档与实现不一致。
+依赖"实现碰巧不销毁"而不是"文档说会销毁"，是下一次发版就塌的赌注。
 
 所以钩子靠 `sys.meta_path` 上的一个**后置 import 钩子**安装：它不 import
 任何东西，只在别人 import 到 `matplotlib.figure` / `matplotlib.pyplot`
@@ -156,24 +157,26 @@ def load_engine_modules(engine_dir: str, names) -> types.ModuleType:
         # 解析，装完再整体搬家——比逐个改成相对 import 的侵入面小得多，
         # 而且 safe worker 那条路一个字节都不用动。
         loaded = {n: importlib.import_module(n) for n in todo}
+        for name, mod in loaded.items():
+            # `__name__` 改成带包前缀的：`overrides._sibling()` 按它解析兄弟
+            # 模块，traceback 里也如实显示这是 Tavotto 的私有副本而不是用户的。
+            mod.__name__ = f"{PRIVATE_PKG}.{name}"
+            sys.modules[f"{PRIVATE_PKG}.{name}"] = mod
+            setattr(pkg, name, mod)
     finally:
+        # **还原走 finally，不走顺序执行。** 装载抛异常（缺 numpy、matplotlib
+        # 版本不兼容、磁盘错误……）是完全可能的，而那时用户的 `sys.path` 与
+        # 顶层模块名还被我们挪着——他之后的 `import manifest` 会拿不到自己
+        # 那份，报出来的错与真实原因（"引擎没装起来"）毫无关系。
         sys.path[:] = saved_path
-
-    for name, mod in loaded.items():
-        # `__name__` 改成带包前缀的：`overrides._sibling()` 按它解析兄弟模块，
-        # traceback 里也如实显示这是 Tavotto 的私有副本而不是用户的模块。
-        mod.__name__ = f"{PRIVATE_PKG}.{name}"
-        sys.modules[f"{PRIVATE_PKG}.{name}"] = mod
-        setattr(pkg, name, mod)
-
-    # 顶层名字**逐个还原**（原本没有的删掉）。到这一步为止引擎模块之间的
-    # 引用早已绑进各自的 globals，删名字不影响它们；唯一会在运行期再查名字
-    # 的是 overrides 那两处 late import，它们走 `_sibling()`。
-    for name in _TOPLEVEL_TO_RESTORE:
-        if saved_present.get(name):
-            sys.modules[name] = saved_top[name]
-        else:
-            sys.modules.pop(name, None)
+        # 顶层名字逐个还原（原本没有的删掉）。到这一步为止引擎模块之间的
+        # 引用早已绑进各自的 globals，删名字不影响它们；唯一会在运行期再查
+        # 名字的是 overrides 那两处 late import，它们走 `_sibling()`。
+        for name in _TOPLEVEL_TO_RESTORE:
+            if saved_present.get(name):
+                sys.modules[name] = saved_top[name]
+            else:
+                sys.modules.pop(name, None)
     return pkg
 
 

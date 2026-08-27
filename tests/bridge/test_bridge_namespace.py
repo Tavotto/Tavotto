@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -110,6 +111,29 @@ def test_two_phase_load_never_duplicates_a_module():
     pkg2 = boot.load_engine_modules(str(ENGINE_DIR), ("figcapture", "patchspec"))
     assert pkg2 is pkg
     assert pkg2.figcapture is first, "第二阶段装出了第二份 figcapture"
+
+
+def test_a_failed_load_still_restores_the_user_namespace():
+    """装载**抛异常**时，`sys.path` 与顶层模块名也必须还原。
+
+    装引擎是会失败的（缺 numpy、matplotlib 版本不兼容、磁盘错误……）。那时
+    用户的 `sys.path` 与顶层模块名还被我们挪着——他之后的 `import manifest`
+    拿不到自己那份，报出来的错与真实原因（"引擎没装起来"）毫无关系。
+
+    反证：把 `load_engine_modules` 里的还原从 `finally` 挪回顺序执行，本条当场红。
+    """
+    boot = _boot()
+    sentinel = types.ModuleType("manifest")
+    sentinel.WHOSE = "user"
+    sys.modules["manifest"] = sentinel
+    before_path = list(sys.path)
+    try:
+        with pytest.raises(ModuleNotFoundError):
+            boot.load_engine_modules(str(ENGINE_DIR), ("figcapture", "no_such_engine_module"))
+        assert sys.path == before_path, "装载失败之后 sys.path 没还原"
+        assert sys.modules.get("manifest") is sentinel, "装载失败之后用户的模块没还回去"
+    finally:
+        sys.modules.pop("manifest", None)
 
 
 # ===========================================================================
