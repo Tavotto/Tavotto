@@ -754,6 +754,19 @@ export interface EngineRenderResponse {
    * 或另一个标签页的渲染插进来就会拿到别人的图，而元素框还是这次的。
    */
   svg?: string
+  /**
+   * 只在**这一次响应真的发生了项目环境自动接手**时出现（ADR 0018）：
+   * 内置环境缺包 → Tavotto 自己找到并换用了项目的 `.venv`。界面据此给一条
+   * 轻量 toast（「已自动使用这个项目的 Python 环境」），不弹阻断式对话框——
+   * 用户点的是「渲染」，不是「读一段技术说明」。
+   */
+  environment_switched?: {
+    source: EngineSource
+    /** 项目相对路径 */
+    python: string
+    /** 因为缺哪个包才切的 */
+    module: string
+  }
 }
 
 export class EngineError extends Error {
@@ -768,11 +781,24 @@ export class EngineError extends Error {
   code: string
   /** code === 'missing_dependency' 时缺的那个包名 */
   module: string
-  constructor(message: string, traceback = '', code = '', module = '') {
+  /**
+   * `missing_dependency` 且**项目环境自动接手也没成**时的结构化原因
+   * （ADR 0018）。有它才能把「这个项目附近没有虚拟环境」和「找到了但它
+   * 也没有这个包」分开引导。
+   */
+  projectEnv?: ProjectEnvFailure
+  constructor(
+    message: string,
+    traceback = '',
+    code = '',
+    module = '',
+    projectEnv?: ProjectEnvFailure,
+  ) {
     super(message)
     this.traceback = traceback
     this.code = code
     this.module = module
+    this.projectEnv = projectEnv
   }
 }
 
@@ -819,6 +845,7 @@ export async function engineRender(
       (body.traceback as string) || '',
       (body.code as string) || '',
       (body.module as string) || '',
+      body.project_env as ProjectEnvFailure | undefined,
     )
   }
   return body as EngineRenderResponse
@@ -852,6 +879,7 @@ export async function enginePreviewPng(
       (body.traceback as string) || '',
       (body.code as string) || '',
       (body.module as string) || '',
+      body.project_env as ProjectEnvFailure | undefined,
     )
   }
   return res.blob()
@@ -1481,6 +1509,7 @@ export type EngineSource =
   | 'bundled'         // Windows 桌面版随包附带的内置环境
   | 'current_process' // Tavotto 自身的解释器（pip install tavotto[worker]）
   | 'system'          // 探测到的系统 Python / Conda
+  | 'project_venv'    // 项目自带的 .venv（内置缺依赖时自动接手，ADR 0018）
   | ''
 
 /** 内置渲染环境（Windows 桌面版随包附带）的现状 */
@@ -1494,6 +1523,42 @@ export interface BundledRuntime {
   build: Record<string, unknown>
   code: string
   error: string | null
+}
+
+/**
+ * 当前项目的渲染环境（ADR 0018）。全局环境之外**每个项目还有自己的一份**：
+ * 项目自带 `.venv` 时 Tavotto 会自动换过去，用户也可以只为这个项目指定。
+ */
+export interface ProjectEnvironment {
+  open: boolean
+  /** 稳定枚举，与全局那份同一套（`project_venv` / `bundled` / …） */
+  source?: EngineSource
+  source_label?: string
+  /** 项目内的解释器显示成项目相对路径（`.venv/bin/python`） */
+  python?: string
+  /** true = 自动接手的结果，而不是用户挑的 */
+  automatic?: boolean
+  /** 自动接手的触发原因（目前只有 `missing_dependency`） */
+  trigger?: string
+  /** 因为缺哪个包才切的 */
+  module?: string
+  /** 在这个项目里发现到的候选虚拟环境（项目相对路径），可能是空表 */
+  can_use_project_venv?: string[]
+}
+
+/**
+ * 项目环境**没能**自动接手时的结构化原因。四种情况用户要做的事完全不同，
+ * 混成一句「缺少依赖包」等于把可执行的出路藏起来。
+ */
+export interface ProjectEnvFailure {
+  /** project_env_not_found / project_env_module_missing /
+   *  project_env_no_matplotlib / project_env_unsupported_python /
+   *  project_env_unusable / project_env_already_attempted */
+  code: string
+  module: string
+  venv: string
+  candidates: string[]
+  python_version: string
 }
 
 export interface EngineEnvironment {
@@ -1516,6 +1581,8 @@ export interface EngineEnvironment {
   error?: string | null
   /** ?probe= 时才有：各包实测 import 到的版本，null = import 不到 */
   imports?: Record<string, string | null>
+  /** 当前项目那一份（没打开项目时是 `{ open: false }`） */
+  project?: ProjectEnvironment
 }
 
 export interface BootstrapProgress {
@@ -1537,6 +1604,19 @@ export const setEngineEnvironment = (python: string | null) =>
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ python }),
+  })
+
+/**
+ * 只为**当前项目**指定渲染解释器（ADR 0018）。`null` = 清除，回到默认链条。
+ *
+ * 与 `setEngineEnvironment` 的区别就是作用域：那个写全局设置，会连带改变
+ * 别的项目；这个只影响当前项目，且存的是项目相对路径（项目挪走仍然有效）。
+ */
+export const setProjectEnvironment = (python: string | null) =>
+  jsonFetch<{ ok: boolean; project: ProjectEnvironment }>('/api/engine/environment', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ scope: 'project', python }),
   })
 
 /* --------------------------- 脚本注册表（stem ↔ 脚本） ----------------------- */

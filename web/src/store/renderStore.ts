@@ -1,9 +1,17 @@
 import { useMemo } from 'react'
 import { msg, type UiMessage } from '@/i18n'
 import { create } from 'zustand'
-import { EngineError, engineErrorMsg, engineRender, type Manifest } from '@/lib/api'
+import {
+  EngineError,
+  engineErrorMsg,
+  engineRender,
+  type Manifest,
+  type ProjectEnvFailure,
+} from '@/lib/api'
 import { engineTransport } from '@/lib/engineTransport'
 import { useAssetStore } from '@/store/assetStore'
+import { useEnvStore } from '@/store/envStore'
+import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
 import { fileHash, recordDiagnosticEvent, variantHash } from '@/diagnostics'
 
@@ -32,6 +40,12 @@ export interface PanelRender {
   code: string
   /** code === 'missing_dependency' 时缺的那个包名 */
   module: string
+  /**
+   * `missing_dependency` 且**项目环境自动接手也没成**时的结构化原因
+   * （ADR 0018）：找不到 venv / 找到了但也没这个包 / 没有 matplotlib /
+   * Python 版本不支持。界面据此给四种不同的恢复引导。
+   */
+  projectEnv: ProjectEnvFailure | null
   traceback: string
   warnings: string[]
   /** 最近一次成功渲染的阶段计时（毫秒，键见 api.ts）；暂不做 UI */
@@ -59,6 +73,7 @@ const EMPTY: PanelRender = {
   error: null,
   code: '',
   module: '',
+  projectEnv: null,
   traceback: '',
   warnings: [],
   timings: {},
@@ -289,12 +304,23 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           const res = transport
             ? await transport.render(fileId, current, opts)
             : await engineRender(fileId, current, opts)
+          if (res.environment_switched) {
+            // 内置环境缺包，Tavotto 自己找到并换用了项目的 .venv（ADR 0018）。
+            // 一条轻量 toast 就够——**不弹阻断式对话框**：用户点的是「渲染」，
+            // 不是「读一段技术说明」。完全不提示也不行，跑脚本的解释器换了，
+            // 版本对不上时用户得知道去哪儿看。
+            useUiStore.getState().setStatus(
+              msg('render.projectEnvSwitched',
+                  { path: res.environment_switched.python }, 'errors'))
+            void useEnvStore.getState().refresh()
+          }
           const next: Partial<PanelRender> = {
             fileId,
             rev: res.rev,
             manifest: res.manifest,
             status: 'ready',
             error: null,
+            projectEnv: null,
             traceback: '',
             warnings: res.warnings ?? [],
             timings: res.timings ?? {},
@@ -360,6 +386,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
             status: 'error',
             code: err instanceof EngineError ? err.code : '',
             module: err instanceof EngineError ? err.module : '',
+            projectEnv: err instanceof EngineError ? (err.projectEnv ?? null) : null,
             error: timedOut
               ? msg('render.timeout',
                     { minutes: Math.round(timeoutMs / 60_000) }, 'errors')

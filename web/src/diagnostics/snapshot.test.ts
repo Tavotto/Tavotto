@@ -36,6 +36,7 @@ const ready = (overrides: unknown[]): PanelRender =>
     error: null,
     code: '',
     module: '',
+    projectEnv: null,
     traceback: '',
     warnings: [],
     timings: {},

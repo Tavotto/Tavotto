@@ -42,6 +42,12 @@
     "package_schema_unsupported": "项目包里的布局既不是 schema 2 也不是 schema 3",
     "permission_denied": "无权限读取：{{path}}",
     "probe_in_progress": "这个脚本已有一次运行在进行中：{{script}}",
+    "project_env_already_attempted": "这一轮已经自动换过一次环境了，请手动重试",
+    "project_env_module_missing": "找到的项目环境里也没有这个包",
+    "project_env_no_matplotlib": "找到的项目环境导入不了 matplotlib",
+    "project_env_not_found": "这个项目附近没有找到可用的 Python 虚拟环境",
+    "project_env_unsupported_python": "找到的项目环境 Python 版本不在支持范围内",
+    "project_env_unusable": "找到的项目环境无法启动",
     "python_missing": "这台机器上没找到可用的 Python，请先安装 Python 3.10 以上再重试",
     "read_failed": "无法读取：{{reason}}",
     "registry_update_failed": "注册表更新失败：{{reason}}",
@@ -99,6 +105,15 @@
     "okTitle": "渲染环境",
     "pathAria": "渲染解释器路径",
     "pathPlaceholder": "/path/to/python 或 conda 环境里的 python",
+    "projectEnvAlsoMissing": "找到了项目环境 {{venv}}，但它里面也没有 {{module}}。",
+    "projectEnvNoMatplotlib": "找到了项目环境 {{venv}}，但它导入不了 matplotlib——它不是一个可用的绘图环境。",
+    "projectEnvNotFound": "内置环境里没有 {{module}}，这个项目附近也没有找到可用的 Python 虚拟环境。",
+    "projectEnvPick": "用这个项目自己的 Python 环境",
+    "projectEnvUnsupported": "找到了项目环境 {{venv}}，但它的 Python {{version}} 不在 Tavotto 当前支持的范围内。",
+    "projectEnvUnusable": "找到了项目环境 {{venv}}，但它的 Python 起不来。诊断里有完整的错误输出。",
+    "projectEnvUseBuiltIn": "改回 Tavotto 内置环境",
+    "projectEnvUsing": "项目环境：{{path}}",
+    "projectEnvWhy": "内置环境里没有 {{module}}，已自动改用这个项目自己的环境。",
     "setPythonFailed": "设置失败",
     "sourceLabel": {
       "bundled": "Tavotto 内置环境",
@@ -106,6 +121,7 @@
       "current_process": "Tavotto 自身的解释器",
       "env_override": "环境变量 TAVOTTO_WORKER_PYTHON",
       "managed_venv": "Tavotto 自建的环境",
+      "project_venv": "项目自带的虚拟环境",
       "system": "系统 Python / Conda",
       "unknown": "已配置的环境"
     },
@@ -158,6 +174,7 @@
   "render": {
     "failed": "渲染失败（HTTP {{status}}）",
     "previewPngFailed": "取预览位图失败（HTTP {{status}}）",
+    "projectEnvSwitched": "已自动使用这个项目的 Python 环境（{{path}}）",
     "timeout": "渲染超过 {{minutes}} 分钟无响应，已断开请求；服务可能仍在后台运行，可稍后重试"
   },
   "update": {

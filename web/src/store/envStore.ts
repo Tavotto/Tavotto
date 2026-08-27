@@ -4,6 +4,7 @@ import {
   fetchEngineEnvironment,
   installEngineEnvironment,
   setEngineEnvironment,
+  setProjectEnvironment,
   type EngineEnvironment,
 } from '@/lib/api'
 
@@ -22,6 +23,12 @@ interface EnvState {
   refresh: () => Promise<void>
   install: () => Promise<void>
   setPython: (path: string | null) => Promise<string | null>
+  /**
+   * 只为**当前项目**指定解释器（ADR 0018）。传 `null` = 回到默认链条。
+   * 与 `setPython` 的区别只有作用域，但那个区别很大：`setPython` 写的是
+   * 全局设置，会连带改变别的项目的渲染环境。
+   */
+  setProjectPython: (path: string | null) => Promise<string | null>
   /** SSE 推进度时调用 */
   onProgress: (p: { state: string; log: string; error: string | null }) => void
 }
@@ -55,6 +62,19 @@ export const useEnvStore = create<EnvState>((set, get) => ({
   setPython: async (path) => {
     try {
       set({ env: await setEngineEnvironment(path) })
+      return null
+    } catch (e) {
+      return e instanceof Error ? e.message : t('engine.setPythonFailed', { ns: 'errors' })
+    }
+  },
+
+  setProjectPython: async (path) => {
+    try {
+      const res = await setProjectEnvironment(path)
+      // 项目那半边变了，全局状态里的 project 换成后端刚算出来的那份
+      const env = get().env
+      if (env) set({ env: { ...env, project: res.project } })
+      else await get().refresh()
       return null
     } catch (e) {
       return e instanceof Error ? e.message : t('engine.setPythonFailed', { ns: 'errors' })
