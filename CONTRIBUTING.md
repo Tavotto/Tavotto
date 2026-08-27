@@ -54,10 +54,14 @@ Ruff comes with `pip install -e ".[dev]"`.
 The rule set lives in `[tool.ruff]` in `pyproject.toml` — deliberately a small,
 high-signal one (`E4`, `E7`, `E9`, `F`, `I`) that is meant to stay green rather
 than accumulate suppressions. Don't pass `--select` or `--ignore` on the command
-line: that would make your run differ from CI's. Import sorting (`I`) is on, and
-`ruff check . --fix` will sort for you; the formatter (`ruff format`) is **not**
-enabled yet — see [docs/ci/ruff.md](docs/ci/ruff.md) for why and what's queued
-next. CI runs the same `ruff check .` as the
+line: that would make your run differ from CI's.
+
+Current state: **lint on, import sorting on, formatter not yet enabled.**
+`ruff check . --fix` sorts imports for you. First-party packages are recognised
+by directory via `[tool.ruff]`'s `src`, which lists the source roots that really
+get pushed onto `sys.path` at runtime — if you add a *new* such root, review that
+list; adding a module under an existing root needs no config change. See
+[docs/ci/ruff.md](docs/ci/ruff.md) for why the formatter is still queued. CI runs the same `ruff check .` as the
 `Python lint (Ruff)` job, which feeds the `CI fast gate`.
 
 **Use `pnpm build`, not `tsc --noEmit`, for type checking.** The root `tsconfig.json`

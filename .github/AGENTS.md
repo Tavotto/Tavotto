@@ -38,9 +38,11 @@ codeql.yml 的 `cancel-in-progress` **只对 PR 开**：merge_group 候选与 ma
   资格（`needs` 与 `--required` 闭集里都有它，红了或 skipped 都会让 Gate 红），
   **没有新增 required context**。规则集与豁免的唯一出处是 `pyproject.toml` 的
   `[tool.ruff]`——workflow 命令行上不许再写一份，CI 也不许 `--fix`。
-  import 排序（`I`）已开启，first-party 靠 `[tool.ruff]` 的 `src` **按目录**判
-  （那几个目录就是运行时真的被注入 sys.path 的），不靠一张会漂的名字清单；
-  formatter 仍待迁移。理由与后续见 `docs/ci/ruff.md`。
+  当前状态：**lint 已启用、import 排序（`I`）已启用、formatter 尚未启用**。
+  first-party 靠 `[tool.ruff]` 的 `src` **按目录**判（那几个目录就是运行时真的
+  被注入 sys.path 的），不靠一张会漂的名字清单——**但新增一处 sys.path 源码根
+  时必须回来审查 `src`**，在已有源码根下加模块则不用动。
+  理由与后续见 `docs/ci/ruff.md`。
 - 每个「只在别人电脑上发生」的 bug 先变成 `tests/test_windows_regressions.py`
   的用例再谈修（cp936 编码、文件占用、盘符/反斜杠/中文路径、端口占用、
   CLI 只有 .cmd、解释器探测）。

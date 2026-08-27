@@ -24,7 +24,7 @@ if not PROXY_ROOT.is_dir():
 sys.path.insert(0, str(PROXY_ROOT))
 
 from tavotto_telemetry_proxy import (  # noqa: E402
-    contract as proxy_contract,  # noqa: E402
+    contract as proxy_contract,
     core,
     posthog,
 )
