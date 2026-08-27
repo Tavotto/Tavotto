@@ -132,12 +132,30 @@ def test_end_to_end_on_the_users_own_interpreter(user_python, tmp_path, bridge_s
         sess.wait_event("exit")
 
 
-def test_the_user_environment_does_not_have_tavotto_installed(user_python, tmp_path):
-    """§三的硬要求：**用户环境不需要也不允许安装 Tavotto**。
+def test_the_runner_never_imports_tavotto(user_python, tmp_path):
+    """§三的硬要求：**用户环境不需要也不允许安装 Tavotto**——判机制。
 
-    报告里如实记一笔 `tavotto_importable`——跑得通，且它是 False。
+    两层判据，因为它们各自会在不同的地方失效：
+
+    * **结构性**（永远跑）：跑在用户进程里的那两个文件不许出现 `import
+      tavotto`，也不许出现任何包内相对 import（`from . import …`）——它们
+      是被**按文件路径**执行的，包上下文根本不存在。
+    * **行为性**（有干净解释器时跑）：报告里 `tavotto_importable` 是 False。
+      CI 上 `pip install -e .` 与 matplotlib 装在同一个解释器里，那时这条
+      **明说跳过**而不是假装通过（真 venv 的证明在下面那条 slow 用例）。
     """
+    import re
+
     from support.bridgekit import run_runner
+
+    for name in ("bridge_runner.py", "bridgeboot.py"):
+        src = (bridge.RUNNER_PY.parent / name).read_text(encoding="utf-8")
+        assert not re.search(r"^\s*(?:import tavotto|from tavotto)\b", src, re.M), (
+            f"{name} 里 import 了 tavotto——用户环境里没有它"
+        )
+        assert not re.search(r"^\s*from \.", src, re.M), (
+            f"{name} 里有包内相对 import——它是按文件路径执行的，没有包上下文"
+        )
 
     proj = tmp_path / "proj"
     write(proj / "paper.py", PAPER)
@@ -153,10 +171,13 @@ def test_the_user_environment_does_not_have_tavotto_installed(user_python, tmp_p
     assert r.returncode == 0, r.stderr
     data = json.loads(report.read_text(encoding="utf-8"))
     assert data["figures"], "前提：确实捕获到了图"
-    assert data["tavotto_importable"] is False, (
-        "这个解释器里能 import tavotto——本条证明不了「不装也行」。"
-        "检查是不是有 PYTHONPATH 漏进了子进程。"
-    )
+    if data["tavotto_importable"]:
+        pytest.skip(
+            "这台机器上唯一装了 matplotlib 的解释器同时装了 Tavotto"
+            "（CI 就是这样：pip install -e . 与 matplotlib 同一个解释器）。"
+            "行为性判据由 -m slow 的真 venv 用例承担。"
+        )
+    assert data["tavotto_importable"] is False
 
 
 def test_module_target_end_to_end(user_python, tmp_path, bridge_session):

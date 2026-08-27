@@ -115,9 +115,19 @@ B  sitecustomize   PYTHONPATH=<注入目录> <用户python> <目标>
 ```
 
 这与 ADR 0018 已经在用的那条路径同构（那里也是让项目 `.venv` 的 Python
-去跑 Tavotto 的 `worker.py`）。看护：`test_the_user_environment_does_not_have
-_tavotto_installed`（报告里 `tavotto_importable` 必须是 False）+ slow 档的
-真 venv E2E。
+去跑 Tavotto 的 `worker.py`）。
+
+看护分两层，因为它们各自会在不同的地方失效：
+
+- **结构性**（永远跑）：`bridge_runner.py` / `bridgeboot.py` 里不许出现
+  `import tavotto`，也不许出现包内相对 import（`from . import …`）——它们
+  是被**按文件路径**执行的，包上下文根本不存在；
+- **行为性**：报告里 `tavotto_importable` 必须是 False。**CI 上这条会跳过**
+  ——`pip install -e ".[dev]"` 与 `pip install matplotlib` 装在同一个解释器
+  里，那台机器上唯一能跑 matplotlib 的 Python 同时装着 Tavotto。跳过时
+  明说原因，不假装通过；真正的行为证明由 `-m slow` 的**真 venv E2E**
+  （`python -m venv` + `pip install matplotlib`，先断言 `find_spec("tavotto")
+  is None`）承担。
 
 ### 3.1 命名空间：用户项目里的模块**永远赢**
 
@@ -216,10 +226,21 @@ matplotlib.use("Agg")          # ← 这一句只在 pyplot 还没 import 时是
 import matplotlib.pyplot as plt
 ```
 
-bridge 只要先 import 了 pyplot，`use()` 就变成 `switch_backend()`。实测
-matplotlib 3.10.8 的 `switch_backend` 源码里确实有 `close("all")`，只是当前
-版本走不到那条分支（同版本实测：`pdf → Agg` 切换后 `get_fignums()` 不变）
-——**这种"当前版本碰巧没事"的事实不该被依赖**。
+bridge 只要先 import 了 pyplot，`use()` 就变成 `switch_backend()`——而
+**它的文档承诺会销毁我们刚捕获的 Figure**：
+
+> `switch_backend` docstring（matplotlib 3.10.8）：
+> *"If the new backend is different than the current backend then all open
+> Figures will be closed via ``plt.close('all')``."*
+
+实测同版本**并不会**：`use("pdf")` 之后建两张图再 `use("Agg")`，
+`plt.get_fignums()` 仍是 `[1, 2]`；`switch_backend` 的**函数体里根本没有
+`close(` 这个调用**（那句只在 docstring 里，`matplotlib.use()` 的函数体里
+也没有）。也就是说**这一版的文档与实现不一致**。
+
+依赖"实现碰巧不销毁"而不是"文档说会销毁"，是那种下一次发版就塌的赌注。
+所以判据不是"当前版本安不安全"，而是**根本不去踩这条路**：bridge 不提前
+import pyplot，`use()` 就永远是纯的那一支。
 
 所以钩子挂在 `sys.meta_path` 上：一个**后置 import 钩子**，自己不 import
 任何东西，只在别人 import 到 `matplotlib.figure` / `matplotlib.pyplot`

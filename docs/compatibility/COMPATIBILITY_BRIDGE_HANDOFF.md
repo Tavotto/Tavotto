@@ -9,7 +9,7 @@
   `.claude/worktrees/compat-bridge-session08`，**基于 `origin/main` `7952ceb`**，
   不 stacked 在任何未合并分支上）
 - 本 Session Prompt：Session 8 —— Matplotlib Bridge Technical Spike
-- 交付：**技术验证**（ADR 0020 定稿 + 可运行实现 + 61 条用例 + 7 条负向反证）。
+- 交付：**技术验证**（ADR 0020 定稿 + 可运行实现 + 62 条用例 + 8 条负向反证）。
   **不是产品**：`tavotto run` 不存在，spike 入口没有稳定契约。
 - **Session 7（PR #177，项目 .venv 自动接手 / ADR 0018+0019）仍 open**。
   本 Session **刻意不 stacked 在它上面**：spike 与它没有代码依赖，独立分支
@@ -53,7 +53,7 @@
 - [x] **ADR 0020**（Accepted，technical spike）+ `src/tavotto/AGENTS.md`
   新增「两条执行入口」一节。
 
-## 用例分布（tests/bridge/，61 passed）
+## 用例分布（tests/bridge/，62 passed + 1 slow）
 
 | 文件 | 条数 | 覆盖 |
 |---|---|---|
@@ -61,8 +61,8 @@
 | `test_bridge_invocation.py` | 6 | script/module 与真实 python 逐 13 字段对拍、绝对路径 argv[0]、不加解释器标志、env 原样继承、token 不进用户脚本 |
 | `test_bridge_capture.py` | 12 | prompt §十三的 12 条形态 |
 | `test_bridge_backend_and_show.py` | 8 | 不提前 import pyplot、三个后端、无 matplotlib 脚本、show 阻塞语义 |
-| `test_bridge_transport.py` | 9 | loopback-only、错 token、token 随机、信封同源、stdout 噪声、断开、shutdown、spike 未接进产品 CLI |
-| `test_bridge_thread_model.py` | 7 | WrongThread、族判据、无后台线程、运行时线程 id 相等、零 pickle、通道只跑 JSON |
+| `test_bridge_transport.py` | 10 | loopback-only、错 token、token 随机、信封同源、stdout 噪声、断开、shutdown、不往用户 home 写、spike 未接进产品 CLI |
+| `test_bridge_thread_model.py` | 8 | WrongThread、族判据、无后台线程、运行时线程 id 相等、零 pickle、通道只跑 JSON |
 | `test_bridge_e2e.py` | 3 + 1 slow | 完整链（manifest→改字号→导出 PDF→撤销）、用户环境无 Tavotto、module 形态、**真 venv（`-m slow`）** |
 | `test_bridge_injection_models.py` | 9 | A/B 实测对比（§17 的裁决依据） |
 

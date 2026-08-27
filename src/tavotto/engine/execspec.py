@@ -231,7 +231,13 @@ def native_spec(
     if target_kind == TARGET_MODULE:
         target = raw_target
     else:
-        target = os.path.relpath(os.path.abspath(raw_target), os.path.abspath(project_root))
+        try:
+            target = os.path.relpath(os.path.abspath(raw_target), os.path.abspath(project_root))
+        except ValueError as exc:  # Windows：脚本与项目根不在同一个盘符上
+            raise ValueError(
+                f"脚本与项目根不在同一个盘符上，算不出项目相对路径: "
+                f"{raw_target!r} / {project_root!r}"
+            ) from exc
     return ExecutionSpec(
         profile=PROFILE_NATIVE,
         interpreter=interpreter,

@@ -293,13 +293,16 @@ def test_the_runner_never_writes_into_the_user_home(user_python, tmp_path, monke
     assert json.loads(report.read_text(encoding="utf-8"))["stems"] == ["fig"], (
         "用例前提：确实渲染过（否则根本不会有产物要落盘）"
     )
-    # `.matplotlib` 是 **matplotlib 自己**的字体缓存，用户直接
+    # 判据是「有没有 **Tavotto** 留下的东西」，不是「home 里一个文件都没多」：
+    # `.matplotlib`（字体缓存）是 **matplotlib 自己**建的，用户直接
     # `python fig.py` 一样会有它——native 刻意**不**改 `MPLCONFIGDIR`
     # （safe 那边改是因为内置 runtime 装在只读的安装目录里；用户的环境是
-    # 他的地盘，我们没资格替他改）。判据是「有没有 **Tavotto** 留下的东西」。
-    leaked = sorted(p.name for p in home.iterdir() if p.name != ".matplotlib")
-    assert leaked == [], f"runner 在用户 home 里留了东西: {leaked}"
-    assert not any("tavotto" in p.name.lower() for p in home.iterdir())
+    # 他的地盘，我们没资格替他改）。各平台上 matplotlib 落哪个目录不一样，
+    # 拿"必须为空"当判据会在别的平台上无缘无故红。
+    leaked = sorted(p.name for p in home.iterdir() if "tavotto" in p.name.lower())
+    assert leaked == [], f"runner 在用户 home 里留了 Tavotto 的东西: {leaked}"
+    others = sorted(p.name for p in home.iterdir())
+    assert others in ([], [".matplotlib"]), f"home 里多出了意料之外的东西: {others}"
 
 
 def test_the_spike_cli_is_not_wired_into_the_product_cli():

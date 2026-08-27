@@ -4,10 +4,11 @@
 
 1. **bridge 绝不提前 import pyplot。** 用户脚本有权决定后端，而
    `matplotlib.use()` 只在 pyplot 还没 import 时是"纯"的——之后它变成
-   `switch_backend()`，语义、告警、乃至（视版本而定）活着的 Figure 都可能
-   不一样。实测 matplotlib 3.10.8 的 `switch_backend` 源码里确实有
-   `close("all")`，只是当前版本走不到那条分支；**这种"当前版本碰巧没事"
-   的事实不该被依赖**。
+   `switch_backend()`，而后者的 **docstring 明写着**"all open Figures will
+   be closed via ``plt.close('all')``"。matplotlib 3.10.8 实测**并不会**
+   （函数体里根本没有那个调用，只有 docstring 里有），也就是这一版的文档
+   与实现不一致。依赖"实现碰巧不销毁"而不是"文档说会销毁"是下一次发版就
+   塌的赌注——所以判据是**根本不去踩这条路**。
 2. `show()` 的阻塞语义按脚本自己说的算：默认阻塞（进屏障），
    `block=False` 立刻返回。不把 show 永久换成 no-op。
 """
