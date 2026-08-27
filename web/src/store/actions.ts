@@ -1,6 +1,7 @@
 import { requestRender, type RenderPolicy } from '@/hooks/useEngineSync'
 import { msg, t, type UiMessage } from '@/i18n'
 import { listJoin } from '@/i18n/format'
+import { rescueFocus } from '@/lib/focusRescue'
 import { newId } from '@/lib/id'
 import { flipCapture } from '@/lib/motion'
 import { applyAlign, boundsOf, readingOrder, type AlignMode } from '@/lib/geometry'
@@ -803,6 +804,12 @@ export function enterElementEdit(panelId: string) {
     ui.setLeftTab('elements')
   }
   if (seeded) status(note('bakedSeeded', { count: seeded }))
+  // **焦点救援**：调用方多半是一个自己会被卸载的控件（画布工具条上那个
+  // 「编辑图内元素」按钮点完就没了）。焦点掉回 body 之后 WebKit 的 Tab 与
+  // Shift+Tab 双向都不动，键盘用户就此困在页面里（macOS 桌面壳 = WKWebView）。
+  // 交给左轨的「图内元素」入口——它一直在，而且正是键盘用户接下来要去的地方
+  // （#37 要求的等价路径）。详见 `lib/focusRescue.ts` 的实测记录。
+  rescueFocus(() => document.querySelector<HTMLElement>('[data-rail="elements"]'))
 }
 
 /* ------------------------------ 论文样式应用 -------------------------------- */
