@@ -1729,6 +1729,20 @@ def get(script_name: str, figures_dir: str, entry: str) -> EngineWorker:
 PROJECT_ENV_ALREADY_ATTEMPTED = "project_env_already_attempted"
 
 
+def should_try_project_env(exc) -> bool:
+    """这个错误值不值得为它换个环境重跑——**判据的唯一出处**。
+
+    只有 `missing_dependency`。脚本自己的 `ValueError` / `TypeError` /
+    `FileNotFoundError` 换个解释器一样错：为它们切环境既要多跑一遍脚本，
+    又把真正的代码错误伪装成了环境问题（用户于是去折腾环境，而 bug 在第 12 行）。
+
+    `pool.build()` 与 `app._switched_to_project_env()` 都是它的消费者。两处
+    各写一份 `exc.code == …` 的话，其中一处迟早会放宽，而只有另一处有用例
+    看着——门禁抽掉不红正是这么来的。
+    """
+    return getattr(exc, "code", "") == "missing_dependency"
+
+
 def try_project_env(figures_dir: str, script_name: str, module: str) -> dict:
     """内置环境缺 `module` 时，改用这个项目自己的 `.venv`（成功则作废旧会话）。
 
@@ -1782,7 +1796,7 @@ def build(script_name: str, figures_dir: str, entry: str, *, allow_project_env: 
     try:
         return worker, worker.ensure_built()
     except WorkerError as exc:
-        if not allow_project_env or exc.code != "missing_dependency":
+        if not allow_project_env or not should_try_project_env(exc):
             raise
         outcome = try_project_env(figures_dir, script_name, exc.module)
         if not outcome.get("ok"):

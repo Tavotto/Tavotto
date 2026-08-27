@@ -2058,10 +2058,10 @@ def _switched_to_project_env(worker, exc) -> bool:
     `pool.get()` 会因为「渲染解释器已变」把它换掉（ADR 0015 的 worker 身份
     纪律）。切不成时把结构化原因挂回异常，`_worker_error_payload` 会带给前端。
 
-    只认 `missing_dependency`。脚本自己的 `ValueError` / `FileNotFoundError`
-    换个解释器一样错——为它们切环境是把代码错误伪装成环境问题。
+    「值不值得为这个错误换环境」的判据只有一份
+    （`pool.should_try_project_env`）——这里绝不再写一遍 `exc.code == …`。
     """
-    if getattr(exc, "code", "") != "missing_dependency":
+    if not engine_pool.should_try_project_env(exc):
         return False
     try:
         root = str(require_project())

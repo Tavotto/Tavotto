@@ -284,6 +284,14 @@ def test_worker_identity_includes_the_interpreter(project):
     fresh = engine_pool.get("figure.py", str(project), "__main__")
     assert fresh is not stale
     assert fresh.python_source == engine_pool.SOURCE_PROJECT_VENV
+    # 反向也要成立，而且这一半才真正看护 `get()` 里那条守卫：用户把项目切回
+    # 内置环境走的是 `forget()`，它**不作废任何 worker**（自动 fallback 那条
+    # 路顺手 invalidate 过，所以只测那一半是空门禁——抽掉守卫照样绿）。
+    projectenv.forget(project)
+    engine_pool.reset_worker_python()
+    back = engine_pool.get("figure.py", str(project), "__main__")
+    assert back is not fresh
+    assert back.python_source != engine_pool.SOURCE_PROJECT_VENV
 
 
 @needs_worker
@@ -404,6 +412,27 @@ def test_only_missing_dependency_triggers_a_switch(project):
     assert err.value.code != "missing_dependency"
     # 一次自动切换都没发生：这个项目仍然没有记住任何环境
     assert projectenv.remembered(project) is None
+    # 判据本身也钉住——两个消费者（pool.build 与 app 的端点重试）共用这一份
+    assert not engine_pool.should_try_project_env(err.value)
+    assert engine_pool.should_try_project_env(
+        engine_pool.WorkerError("x", code="missing_dependency", module="lmfit"))
+
+
+def test_the_app_endpoint_retry_shares_the_same_predicate():
+    """端点侧的自动重试不许自己再写一遍「什么错该换环境」。
+
+    两处各写一份 `exc.code == …` 的话，其中一处迟早会放宽，而只有另一处有
+    用例看着——这正是「抽掉门禁却不红」的典型来源。
+    """
+    from tavotto import app as m
+
+    class _FakeWorker:
+        script_name = "figure.py"
+
+    for code in ("script_error", "worker_timeout", "", "protocol_mismatch"):
+        exc = engine_pool.WorkerError("boom", code=code)
+        assert m._switched_to_project_env(_FakeWorker(), exc) is False
+        assert not hasattr(exc, "project_env")
 
 
 def test_no_automatic_switch_without_a_module_name(tmp_path):
