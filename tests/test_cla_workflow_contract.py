@@ -126,7 +126,7 @@ class TestClaPaginationContract:
             "计数要用 `--jq '.[].sha'` **流式**输出：它按页应用过滤器，"
             "与「gh 有没有把各页合并成一个数组」无关"
         )
-        assert re.search(r'\$got.*!=.*\$want|\$want.*!=.*\$got', code), (
+        assert re.search(r"\$got.*!=.*\$want|\$want.*!=.*\$got", code), (
             "取到的条数必须与 PR 声明的条数比对——不比就等于信任分页"
         )
         assert "exit 1" in code, "对不上必须让这一步失败，不能只打印警告"
