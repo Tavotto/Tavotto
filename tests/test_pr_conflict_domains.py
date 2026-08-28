@@ -101,6 +101,19 @@ class TestRealConfig:
         assert not CD.matches("docs/perf-baseline.md", spec["files"])
         assert spec["policy"] == "coordinate"
 
+    def test_the_adr_advice_asks_you_to_check_instead_of_asserting_a_collision(self):
+        """处方只许说「去核对」，不许断言「你们撞了」。
+
+        域只知道两个 PR 都动了 `docs/adr/**`，**不知道它们的编号**——一个改
+        0008、一个加 0021 完全不撞。断言一件检查本身证不了的事比不说更坏：
+        判据一旦对，人更会信它说的那句话（Codex 在 #194 上指出）。
+        """
+        advice = _domains()["adr-numbering"]["advice"]
+        assert "核对" in advice, "处方要让人去核对编号"
+        # 不许出现无条件的断言句式
+        for claimed in ("合完 main 上会有两个同号", "你们撞了", "一定会撞"):
+            assert claimed not in advice, f"处方断言了它证不了的事：{claimed}"
+
     def test_the_adr_domain_carries_its_own_advice(self):
         """通用兜底文案在这个域上是**对的判据 + 错的处方**：它说「rebase 后
         重跑快线即可」，而 rebase 根本不会报冲突。判据一旦对，人更会信它说

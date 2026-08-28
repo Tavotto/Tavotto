@@ -73,9 +73,36 @@ release 编排、golden vectors、锁文件：**一次只开一个动它的 PR**
 
 这一档既不该 stack（两份 ADR 通常毫不相干），也不该 train（没有共享生成物），
 更不该 serialize（ADR 加得很频繁，串行化会拖住一切）。要做的只有一件事：
-**开工前看一眼同域 PR 占了哪个号**。已经撞了就让先开的那个保留编号，后者
-改号——`git filter-branch --msg-filter` 连提交消息一起改，改完核对树哈希
-逐条相同、author 与 author date 原样。
+**开工前看一眼同域 PR 占了哪个号**。
+
+### 已经撞了怎么改号
+
+让**先开的那个**保留编号，后者改。这是**两步**，两步该核的东西不一样——
+把它们压成一句话是错的（`--msg-filter` 只动消息，动不了文件名；而真改文件名
+必然改树哈希）：
+
+```sh
+# 第 1 步：改文件名 + 全仓引用 → 一个**新提交**（树当然会变，这一步不核树）
+git mv docs/adr/0021-<slug>.md docs/adr/0022-<slug>.md
+#   连带改掉正文标题、以及所有引用它的代码注释 / 文档 / 用例
+git commit -am "ADR 改号 0021 → 0022：编号撞了 PR #NNN"
+#   核的是：`grep -rn "ADR 0021\|adr/0021-<slug>"` 一条不剩
+
+# 第 2 步：把**历史提交消息**里的旧编号一并改掉（这一步树哈希必须不变）
+git log --format='%T' origin/main..HEAD > /tmp/before-trees
+FILTER_BRANCH_SQUELCH_WARNING=1 git filter-branch -f \
+    --msg-filter 'sed "s/ADR 0021/ADR 0022/g"' origin/main..HEAD
+git log --format='%T' origin/main..HEAD > /tmp/after-trees
+diff /tmp/before-trees /tmp/after-trees        # 必须一字不差：只动了消息
+git log --format='%an <%ae> %ad' --date=iso origin/main..HEAD   # author 与日期原样
+```
+
+**别用 `git commit --amend --reset-author`** 改任何一步：它会把 author 日期
+也改成现在。第 2 步之后如果分支已经推过，用
+`--force-with-lease=<branch>:<你实际看到的远端 SHA>`。
+
+如果改动还没提交就别急着做第 2 步——`filter-branch` 只改历史，工作区那份
+得先落进第 1 步的提交里。
 
 这类域在配置里**自带一句处方**（`advice` 字段）。通用兜底文案在这里是
 「对的判据 + 错的处方」：它说「留意合并顺序，后合的一侧 rebase 后重跑快线
