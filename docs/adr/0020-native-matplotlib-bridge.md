@@ -1,8 +1,12 @@
 # ADR 0020：Native Matplotlib Bridge（用用户自己的 Python 跑，只接管 Figure 生命周期）
 
 状态：**Accepted（technical spike）**——机制与边界已定稿并有可运行实现 +
-用例；**产品化未开始**（`tavotto run` 不存在，spike 入口不是对外承诺，
-见 §11）。
+用例。**产品化已完成**：`tavotto run`（Beta）的产品契约见
+[ADR 0021](0021-tavotto-run-product-contract.md)。本 ADR 描述的机制在产品里
+逐条成立，只有两处被 0021 修订（都记在 §11 与 §5.4 里）：控制通道多了一跳
+CLI 托管的 raw relay，屏障多了 `restore before continue, rebase at next
+barrier` 的基准纪律。spike 入口（`python -m tavotto.engine.bridge_spike`）
+仍然不是对外承诺（§11）。
 日期：2026-08-28（Compatibility Bridge Session 8）
 相关：[总纲](../compatibility/COMPATIBILITY_BRIDGE_MASTER_PLAN.md)、
 [0014 Safe/Native 两档 Profile](0014-safe-native-execution-profiles.md)（本
@@ -303,6 +307,12 @@ import pyplot，`use()` 就永远是纯的那一支。
 
 ### 5.4 屏障（barrier）
 
+> **ADR 0021 §8 的修订**：屏障释放之前必须把 Figure 恢复成**脚本原样**，
+> 下一个屏障重新采基准并按稳定 gid 重放用户的编辑。本节下面描述的是 spike
+> 的形态（编辑留在 live Figure 上），产品里不是那样——那会让用户脚本
+> `show()` 之后看到 Tavotto 的 override，也就改变了直接跑 Python 的语义。
+
+
 ```text
 plt.show()  →  收 Gcf  →  屏障（主线程服务控制循环）  →  continue  →  show() 返回 → 脚本继续
 脚本结束    →  收 Gcf  →  屏障                        →  continue/shutdown  →  进程退出
@@ -468,10 +478,16 @@ bridgeboot.py      ← 私有命名空间装载器 + import 钩子
 
 > **Tavotto adds hooks, not privileges.**
 
-spike 入口（`python -m tavotto.engine.bridge_spike`）**不是产品**：没有接进
-`tavotto` 的 CLI（`cli.py` 一个字都没改，看护
-`test_the_spike_cli_is_not_wired_into_the_product_cli`）、不进 README、
-不进官网、不进 release notes、没有稳定契约。
+spike 入口（`python -m tavotto.engine.bridge_spike`）**不是产品**：它没有接进
+`tavotto` 的 CLI（看护 `test_the_spike_cli_is_not_wired_into_the_product_cli`）、
+不进 README、不进官网、没有稳定契约。
+
+**产品入口是 `tavotto run`（ADR 0021，Beta）**，它与 spike 共用同一份
+`bridge_runner.py` / `figsession` / `wireproto`，但控制面完全不同：一次性
+handoff descriptor、CLI 托管的认证 relay、独立的会话注册表、单 reader 传输。
+CompatBench 的 `native_run` 路由**必须**走产品那条（看护
+`tests/test_compat_product_routes.py::test_native_run_route_goes_through_the_product_control_plane`）
+——拿 `BridgeSession` 代表产品成功，正是"基准替产品打掩护"的形状。
 
 ---
 

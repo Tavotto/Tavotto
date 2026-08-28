@@ -1,10 +1,10 @@
 # ADR 0014：Safe 与 Native 两档执行 Profile
 
-状态：**Proposed**（Session 1 草案，2026-08-25）。**§3 捕获通道与
-§7 全部待定稿事项已由 [ADR 0020](0020-native-matplotlib-bridge.md) 裁决**
-（Session 8 technical spike，2026-08-28）；本文件的两档 profile 定义
-（§2）与「为什么不 pickle」（§6）仍然有效并被 0020 引用。剩下未定的只有
-产品面（`tavotto run` 的 CLI 契约、UI 确认、是否进池），留给 Session 9。
+状态：**Accepted**（Session 1 草案 2026-08-25；机制由
+[ADR 0020](0020-native-matplotlib-bridge.md) 定稿，产品面由
+[ADR 0021](0021-tavotto-run-product-contract.md) 定稿，2026-08-28）。
+本文件的两档 profile 定义（§2）与「为什么不 pickle」（§6）是仍然有效的那部分，
+0020 / 0021 都引用它。**§7 的四个待定稿事项现已全部裁决**（见文末表）。
 相关：[Compatibility Bridge 总纲](../compatibility/COMPATIBILITY_BRIDGE_MASTER_PLAN.md)、
 [事实审计](../compatibility/compatibility-bridge-audit.md)、
 [Pylustrator 研究](../compatibility/pylustrator-study.md)、
@@ -98,9 +98,15 @@ Session 7 比较后定稿）。约束：
 
 ### 5. 安全确认
 
-- **CLI**：用户亲手敲 `tavotto run python fig.py` 即为授权（等同他自己敲
-  `python fig.py`）；首次仍打印一行如实说明（"脚本将以你的权限正常运行，
-  Tavotto 不做沙盒"），不设阻断式确认。
+> **Session 9 的修正**：下面这条草案说"CLI 侧不设阻断式确认"。实际裁决是
+> **设**——桌面上一次确认，而且**在 spawn 用户 Python 之前**（ADR 0021 §7）。
+> 理由是草案没想到的那一半：CLI 与 UI 不是两个入口，而是同一条流程的两段，
+> 而 native 与 safe 的权限差异大到值得让用户看一眼"具体是哪个解释器、哪个
+> 目录、哪个目标"。顺序更重要——反过来做（先跑起来再找 UI）的表现是脚本
+> 已经写了文件、跑了半小时，然后 Tavotto 才说"没有桌面应用"。
+
+- **CLI**：用户亲手敲 `tavotto run -- python fig.py` 是发起，不是全部授权；
+  第一次对某个（项目 × 解释器）组合仍在桌面上确认一次（可勾"记住"）。
 - **UI**：native 运行入口必须有一次显式确认，写明解释器路径、cwd、
   "拥有你当前用户的全部权限"；每项目记住选择（可撤销），不做全局默认。
 - **MCP**：**模型给的路径/命令不是授权**（沿 ADR 0009 的 fail-closed
@@ -140,7 +146,9 @@ Session 7 比较后定稿）。约束：
 | 1 | 捕获注入机制选型（驱动脚本 vs sitecustomize）与 Windows 差异 | **BRIDGE_RUNNER_SELECTED**——由 A/B 实测差异支撑（sitecustomize 的坑位在 Homebrew Python 上早就有人占着，直白实现会让用户环境里的 matplotlib 直接消失）。Windows 走同一条路径（loopback socket + argv 列表 spawn），**设计与用例就绪、真机未跑** | ADR 0020 §2 / §12 |
 | 2 | MCP 是否提供 native 工具 | **v1 不提供**（模型给的路径/命令不是授权，沿 ADR 0009 的 fail-closed 纪律） | ADR 0020 §10 |
 | 3 | invocation parser 的错误分类与稳定错误码表 | **推迟到 Session 9**（产品面）。spike 只认 `python 文件.py` / `python -m 模块`，其余显式拒绝 | ADR 0020 §10 / §13 |
-| 4 | native 会话是否进池复用 | **推迟到 Session 9**。spike 先证明单次跑得通；native 会话绑着一次具体 invocation（cwd/argv/env 都可能不同），复用条件比 safe 复杂得多 | ADR 0020 §13 |
+| 4 | native 会话是否进池复用 | **不进池**（Session 9 裁决）。池的每一条语义对它都是错的：LRU 淘汰 = 杀掉用户正在跑的脚本；`unknown_session → reopen` = 重跑用户的一次具体 invocation；key 也对不上（native 的身份还含 cwd/argv/env/解释器）。独立 `NativeSessionRegistry`，但对上层是 Worker-like 接口 | ADR 0021 §5 |
+| 5 | native 会话与 pip 安装的互斥（rebase 到 #177 之后浮出来的） | **抽出唯一的环境租约表 `engine/envlease.py`**，safe worker / native 会话 / 安装三方共用。有活跃 native 会话时**拒绝安装**（`environment_in_use_by_native_session`），**绝不自动杀用户的脚本** | ADR 0021 §6 |
+| 6 | `tavotto run` 的 CLI 契约、UI 确认、是否记住许可 | **已定稿**（Beta）：`--` 强制、CLI 拥有用户 Python、确认之前一行代码都没跑、许可绑定（项目 × 解释器 × schema） | ADR 0021 §2 / §7 |
 
 另有两条本 ADR 起草时没想到、由 spike 定下的机制：
 
