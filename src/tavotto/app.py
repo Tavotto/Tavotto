@@ -56,14 +56,19 @@ from .engine import (
     diagnostics as engine_diagnostics,
     diagnostics_frontend as engine_diagnostics_frontend,
     discover as engine_discover,
+    enginesession as engine_enginesession,
     handoff as engine_handoff,
     locate as engine_locate,
     managedenv as engine_managedenv,
+    nativehandoff as engine_nativehandoff,
+    nativeperm as engine_nativeperm,
+    nativesession as engine_nativesession,
     patchspec as engine_patchspec,
     pool as engine_pool,
     probe as engine_probe,
     projectenv as engine_projectenv,
     registry as engine_registry,
+    runcodes as engine_runcodes,
     runtime as engine_runtime,
     runtimeasset as engine_runtimeasset,
     session_client as engine_session_client,
@@ -659,6 +664,18 @@ def _worker_error(exc):
     return jsonify(_worker_error_payload(exc)), 500
 
 
+@app.errorhandler(engine_runcodes.RunError)
+def _run_error(exc):
+    """`tavotto run` 家族的结构化失败（ADR 0021 §13）。
+
+    多数端点自己 catch 了，但 `_engine_worker()` → `enginesession.resolve()`
+    这条路常落在 try 之外：native 面板的会话结束之后它会抛
+    `native_session_offline`，而没有这个处理器时它会掉进通用 Exception，
+    `code` 全丢——前端就分不出「会话结束了，重跑那条命令即可」和「后端崩了」。
+    """
+    return _native_error(exc)
+
+
 @app.errorhandler(Exception)
 def _unhandled(exc):
     """未处理异常：记日志并回 JSON（前端各处都按 JSON 解析错误）。
@@ -810,11 +827,10 @@ def _resolve_panel_source(o: dict, dpi: int, sink: list | None = None) -> Path:
     """
     rel_id = str(o.get("id", ""))
     if engine_runtimeasset.is_runtime_id(rel_id):
-        info = engine_runtimeasset.resolve(rel_id, current_registry())
-        if info is None:
-            abort(_runtime_asset_unknown(rel_id))
-        worker = engine_pool.get(info["script"], str(require_project()), info["entry"])
-        stem = info["stem"]
+        # **走同一扇门**（`_engine_worker` → `enginesession.resolve`）：这里曾经
+        # 直接 `pool.get()`，于是同一张 native 图「预览是 native 的、画布导出
+        # 是 safe 的」——两张不一样的图，而界面上什么都没说。
+        worker, stem = _engine_worker(rel_id)
         tmp = worker.export_dir / f"{stem}.pdf"
         resp = worker.export(stem, o.get("overrides") or [], str(tmp), "pdf", dpi)
         if sink is not None:
@@ -828,7 +844,7 @@ def _resolve_panel_source(o: dict, dpi: int, sink: list | None = None) -> Path:
     if overrides:
         info = current_registry().for_stem(path.stem)
         if info is not None:
-            worker = engine_pool.get(info["script"], str(require_project()), info["entry"])
+            worker = _safe_worker(info["script"], info["entry"], path.stem)
             tmp = worker.export_dir / f"{path.stem}.pdf"
             resp = worker.export(path.stem, overrides, str(tmp), "pdf", dpi)
             if sink is not None:
@@ -1264,6 +1280,11 @@ def reset_projects(wait: bool = False) -> None:
         DEFAULT_PROJECT = None
     for pid in ids:
         close_project(pid, wait=wait)
+    # native 会话：**只放手，不杀**（ADR 0021 §8.1）。用户的脚本是他自己的
+    # 进程，关掉 Tavotto 不该把它一起带走——runner 看到控制通道 EOF 会先把
+    # Figure 恢复成脚本原样，再放开屏障让脚本跑完。这就是「关掉 App 默认
+    # detach and continue」。
+    engine_nativesession.REGISTRY.shutdown_all()
     if wait:
         engine_pool.shutdown_all(wait=True)  # 兜底：不属于任何项目的残留
 
@@ -2091,6 +2112,227 @@ def _runtime_asset_unknown(rel_id: str):
     return resp
 
 
+# --------------------- Tavotto Run · Beta（native 会话）----------------------
+# ADR 0021。进程关系是**倒过来**的：用户的 Python 是 `tavotto run` CLI 的子进程，
+# sidecar 只是通过一条认证 relay 连上去。这里全部是**控制面**，一个字节的
+# Figure 都不经过（Figure 永远留在用户那个进程里）。
+#
+# 前端能提交的只有 `native_id`——host / port / token / interpreter / 完整命令
+# 一律来自那份 0600 的 descriptor 文件，不来自请求体（ADR 0021 §4.1）。
+
+#: 稳定码 → HTTP 状态。**不把所有失败都 400**：调用方靠状态码分诊
+#: "没有这个东西"（404）与"有，但现在不能"（409）。
+_NATIVE_STATUS = {
+    engine_runcodes.NATIVE_HANDOFF_INVALID: 404,
+    engine_runcodes.NATIVE_SESSION_UNKNOWN: 404,
+    engine_runcodes.NATIVE_HANDOFF_EXPIRED: 409,
+    engine_runcodes.NATIVE_HANDOFF_CONSUMED: 409,
+    engine_runcodes.NATIVE_ATTACH_CANCELLED: 409,
+    engine_runcodes.NATIVE_SESSION_CONFLICT: 409,
+    engine_runcodes.NATIVE_ASSET_CONFLICT: 409,
+    engine_runcodes.NATIVE_SESSION_NOT_AT_BARRIER: 409,
+    engine_runcodes.NATIVE_SESSION_OFFLINE: 409,
+    engine_runcodes.NATIVE_SESSION_ENDED: 409,
+    engine_runcodes.NATIVE_SESSION_DISCONNECTED: 409,
+    engine_runcodes.NATIVE_AUTH_FAILED: 403,
+    engine_runcodes.NATIVE_ATTACH_FAILED: 502,
+    engine_runcodes.NATIVE_RELAY_FAILED: 502,
+}
+
+
+def _native_error(exc: "engine_runcodes.RunError"):
+    resp = jsonify(exc.payload())
+    resp.status_code = _NATIVE_STATUS.get(exc.code, 400)
+    return resp
+
+
+def _native_session_event(session, entry: dict) -> None:
+    """会话状态变了 → SSE。**在 reader 线程里跑**，所以只 put 一条消息。
+
+    带上 `pj`（项目短 id）与 `sequence`：另一个项目的标签页要能把不属于自己
+    的事件丢掉，而迟到的事件要能按序号判出"这条比我手里的旧"（前端代际
+    纪律，与 `panel.file_changed` 同一条）。
+    """
+    try:
+        pj = _project_id(Path(session.project_root))
+    except (OSError, ValueError):  # 项目目录已经不在了：事件照发，pj 留空
+        pj = ""
+    sse_publish(
+        "native.session",
+        {"pj": pj, "session": session.public_state(), "event": entry},
+    )
+
+
+engine_nativesession.REGISTRY.on_change = _native_session_event
+
+
+@app.get("/api/native/pending/<native_id>")
+def api_native_pending(native_id: str):
+    """待确认的一条 native 交接。**返回的 metadata 里没有 token、没有端口。**"""
+    try:
+        meta = engine_nativehandoff.sanitized(native_id)
+    except engine_runcodes.RunError as exc:
+        return _native_error(exc)
+    meta["remembered"] = engine_nativeperm.is_remembered(
+        meta.get("project_root", ""), meta.get("permission_key", "")
+    )
+    return jsonify({"ok": True, "pending": meta})
+
+
+@app.post("/api/native/pending/<native_id>/approve")
+def api_native_approve(native_id: str):
+    """用户点了"运行并连接"。
+
+    **这一步之后 CLI 才会 spawn 用户的 Python**（ADR 0021 §7）：attach 成功
+    是 CLI 那边"可以开跑了"的信号。所以确认之前一行用户代码都没跑。
+
+    请求体里只认 `remember`（布尔）。interpreter / target / host / port 一律
+    从 descriptor 文件读——界面确认的是哪条 invocation，执行端就只能执行那条。
+    """
+    body = request.get_json(silent=True) or {}
+    try:
+        descriptor = engine_nativehandoff.consume(native_id)
+    except engine_runcodes.RunError as exc:
+        return _native_error(exc)
+    meta = descriptor.get("metadata") or {}
+    try:
+        session = engine_nativesession.REGISTRY.attach(descriptor)
+    except engine_runcodes.RunError as exc:
+        return _native_error(exc)
+    except engine_pool.EnvironmentBusy as exc:
+        resp = jsonify({"ok": False, "code": exc.code, "error": str(exc)})
+        resp.status_code = 409
+        return resp
+    if body.get("remember") is True:
+        engine_nativeperm.remember(
+            meta.get("project_root", ""),
+            meta.get("permission_key", ""),
+            interpreter=meta.get("interpreter", ""),
+        )
+    return jsonify({"ok": True, "session": session.public_state()})
+
+
+@app.post("/api/native/pending/<native_id>/cancel")
+def api_native_cancel(native_id: str):
+    """用户点了"取消"。CLI 正盯着这份 descriptor，会当场收摊并退出 3。"""
+    try:
+        engine_nativehandoff.cancel(native_id)
+    except engine_runcodes.RunError as exc:
+        return _native_error(exc)
+    return jsonify({"ok": True, "cancelled": True})
+
+
+@app.get("/api/native/sessions")
+def api_native_sessions():
+    project = request.args.get("project_root", "")
+    sessions = engine_nativesession.REGISTRY.list(project)
+    return jsonify({"ok": True, "sessions": [s.public_state() for s in sessions]})
+
+
+@app.get("/api/native/sessions/<session_id>")
+def api_native_session(session_id: str):
+    try:
+        session = engine_nativesession.REGISTRY.get(session_id)
+    except engine_runcodes.RunError as exc:
+        return _native_error(exc)
+    return jsonify({"ok": True, "session": session.public_state()})
+
+
+@app.post("/api/native/sessions/<session_id>/build")
+def api_native_session_build(session_id: str):
+    """在屏障处 build 一次：拿到 stems / descriptors，并绑定 live route。
+
+    **由界面显式调**，不在收到 barrier 事件时自动发：那条事件是在 reader
+    线程里收到的，而 build 的响应要由**同一个** reader 读回来——在那里发请求
+    就是自己等自己（ADR 0021 §5.2）。
+    """
+    try:
+        session = engine_nativesession.REGISTRY.get(session_id)
+        resp = session.ensure_built()
+    except engine_runcodes.RunError as exc:
+        return _native_error(exc)
+    except engine_pool.WorkerError as exc:
+        return _worker_error_payload(exc)
+    rejected = engine_nativesession.REGISTRY.bind_assets(session)
+    _materialize_native(session)
+    out = {
+        "ok": True,
+        "session": session.public_state(),
+        "stems": resp.get("stems", {}),
+        "descriptors": session.descriptors,
+    }
+    if rejected:
+        # **如实说**：这些 stem 已经被另一条还活着的会话占着（用户在两个终端
+        # 跑了同一个脚本）。静默抢过来的表现是他在界面上看到的图突然换成了
+        # 另一次运行的，而界面什么都没说（ADR 0021 §9.2）。
+        out["conflicts"] = {"code": engine_runcodes.NATIVE_ASSET_CONFLICT, "stems": rejected}
+    return jsonify(out)
+
+
+def _native_action(session_id: str, action: str):
+    try:
+        session = engine_nativesession.REGISTRY.get(session_id)
+        result = getattr(session, action)()
+    except engine_runcodes.RunError as exc:
+        return _native_error(exc)
+    except engine_pool.WorkerError as exc:
+        return _worker_error_payload(exc)
+    return jsonify({"ok": True, "result": result, "session": session.public_state()})
+
+
+@app.post("/api/native/sessions/<session_id>/continue")
+def api_native_continue(session_id: str):
+    """继续运行脚本。**runner 会先把 Figure 恢复成脚本原样**（ADR 0021 §8）。"""
+    return _native_action(session_id, "resume")
+
+
+@app.post("/api/native/sessions/<session_id>/detach")
+def api_native_detach(session_id: str):
+    """放手：脚本继续正常跑完，Tavotto 不再控制它。**不杀进程。**"""
+    return _native_action(session_id, "detach")
+
+
+@app.post("/api/native/sessions/<session_id>/terminate")
+def api_native_terminate(session_id: str):
+    """结束用户脚本——**明确的危险操作**，退出码固定 5，不伪装成 continue。
+
+    只在屏障处可用。脚本正在跑的时候没有人读控制通道，而那时真正该做的是
+    用户在自己的终端里按 Ctrl+C：那个进程是他的，信号也是他的。
+    """
+    return _native_action(session_id, "terminate")
+
+
+@app.get("/api/native/permissions")
+def api_native_permissions():
+    root = request.args.get("project_root", "") or str(require_project())
+    return jsonify({"ok": True, "permissions": engine_nativeperm.listing(root)})
+
+
+@app.delete("/api/native/permissions")
+def api_native_forget_permission():
+    body = request.get_json(silent=True) or {}
+    root = body.get("project_root") or str(require_project())
+    removed = engine_nativeperm.forget(root, body.get("permission_key", "") or "")
+    return jsonify({"ok": True, "removed": removed})
+
+
+def _materialize_native(session) -> None:
+    """把 native 会话这一轮的预览物化进 runtime cache（**last known preview**）。
+
+    它不是 live Figure，也不是原始产物：会话结束之后这份 cache 仍然看得见，
+    但对象级编辑与权威导出一律不可用（ADR 0021 §9.4）。cache 里有东西
+    **不等于** live session 还在——那条判据只有 `route_for()` 说了算。
+    """
+    root = session.project_root
+    for desc in session.descriptors or []:
+        if not isinstance(desc, dict):
+            continue
+        stem = desc.get("stem")
+        if not stem:
+            continue
+        engine_runtimeasset.materialize(root, desc, session.svg_path(stem))
+
+
 def _materialize_runtime(script: str, entry: str, descriptors: list) -> None:
     """把一次成功 build 捕获的每张图物化进 runtime cache（失败只记日志）。
 
@@ -2100,7 +2342,7 @@ def _materialize_runtime(script: str, entry: str, descriptors: list) -> None:
     if not script or not entry:
         return
     try:
-        worker = engine_pool.get(script, str(require_project()), entry)
+        worker = _safe_worker(script, entry)
     except engine_pool.WorkerError:
         return
     root = require_project()
@@ -2159,27 +2401,66 @@ def _engine_attempt(rel_id: str, worker, stem: str, action):
     return worker, stem, action(worker, stem)
 
 
+def _safe_worker(script: str, entry: str, stem: str = ""):
+    """**磁盘面板永远是 safe**——它有自己的原始产物，那是 safe worker 产出的
+    世界（写回、画布合成、两图同步走的都是这条）。
+
+    仍然经 `enginesession.resolve()` 而不是直接 `pool.get()`：不是为了在这里
+    产生分支，而是为了让"谁来渲染"这个判断在整份 `app.py` 里**只有一扇门**。
+    绕过去的那几处正是"共享判据修了一处、第二个消费点还是老样子"的形状，
+    仓库里同形状的缺陷出现过三次。
+    """
+    return engine_enginesession.resolve(
+        project_root=str(require_project()),
+        script=script,
+        entry=entry,
+        stem=stem,
+        execution_profile=engine_enginesession.PROFILE_SAFE,
+    )
+
+
 def _engine_worker(rel_id: str):
-    """面板 id → (worker, stem)；非脚本面板 404。
+    """面板 id → (worker-like, stem)；非脚本面板 404。
 
     runtime 素材（`runtime:` 前缀，ADR 0013）不经 safe_resolve——它没有磁盘
     原件。解析走注册表正向重算（`runtimeasset.resolve`，不反解 id），解析
     不到回 404 + 稳定 code。冷启动的 build 由后续的 override/export 惰性
     触发（与磁盘面板同一 lazy 语义），这里不主动 build。
+
+    **"谁来渲染"的判据只有一处**：`enginesession.resolve()`（ADR 0021 §5）。
+    这里绝不写 `if 有 native 会话 … else pool.get(…)`——那个形状会在下一个
+    端点上被漏掉一次，表现是"预览是 native 的、导出是 safe 的"。
     """
+    root = str(require_project())
     if engine_runtimeasset.is_runtime_id(rel_id):
         info = engine_runtimeasset.resolve(rel_id, current_registry())
         if info is None:
             abort(_runtime_asset_unknown(rel_id))
         return (
-            engine_pool.get(info["script"], str(require_project()), info["entry"]),
+            engine_enginesession.resolve(
+                project_root=root,
+                script=info["script"],
+                entry=info["entry"],
+                stem=info["stem"],
+                execution_profile=engine_enginesession.profile_of(root, rel_id),
+            ),
             info["stem"],
         )
     path = safe_resolve(rel_id)
     info = current_registry().for_stem(path.stem)
     if info is None:
         abort(404)
-    return engine_pool.get(info["script"], str(require_project()), info["entry"]), path.stem
+    # 磁盘面板永远是 safe：它有自己的原始产物，那是 safe worker 产出的世界。
+    return (
+        engine_enginesession.resolve(
+            project_root=root,
+            script=info["script"],
+            entry=info["entry"],
+            stem=path.stem,
+            execution_profile=engine_enginesession.PROFILE_SAFE,
+        ),
+        path.stem,
+    )
 
 
 @app.post("/api/engine/render")
@@ -2397,7 +2678,7 @@ def api_engine_update_source():
         return jsonify(
             {"error": "该面板不可参数化（没有对应脚本）", "code": "not_parameterizable"}
         ), 404
-    worker = engine_pool.get(info["script"], str(require_project()), info["entry"])
+    worker = _safe_worker(info["script"], info["entry"], src.stem)
     try:
         result = _write_source_files(
             src, patches, worker, annotations=annotations, expected_mtime=body.get("expected_mtime")
@@ -3058,7 +3339,7 @@ def api_engine_sync_overrides():
         return jsonify(
             {"error": "两张图不属于同一个脚本，无法同步", "code": "sync_different_scripts"}
         ), 400
-    worker = engine_pool.get(info_s["script"], str(require_project()), info_s["entry"])
+    worker = _safe_worker(info_s["script"], info_s["entry"], src_path.stem)
     try:
         man_s = _manifest_of(worker, src_path.stem)
         man_d = _manifest_of(worker, dst_path.stem)

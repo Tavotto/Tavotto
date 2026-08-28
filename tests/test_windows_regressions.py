@@ -23,6 +23,7 @@ import ast
 import io
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -852,22 +853,84 @@ def _spawn_sites() -> list[tuple[str, ast.Call]]:
     return [(where, call) for py in files for where, _lineno, call in _subprocess_spawns(py)]
 
 
-def test_every_backend_subprocess_hides_the_console_window():
-    """每个 spawn 都必须传 creationflags。
+#: `creationflags` 允许的两个值——**闭集**。每个 spawn 必须说清自己属于哪一类：
+#:
+#: * `CREATE_NO_WINDOW` —— **GUI 拥有的隐藏子进程**（桌面版起 python/pip/codex）。
+#:   不传就是用户可见的黑框；
+#: * `INHERIT_CONSOLE` —— **CLI 拥有的控制台子进程**（`tavotto run` 起用户的
+#:   Python，ADR 0021 §1）。它必须留在用户的终端上，加 `CREATE_NO_WINDOW`
+#:   会让 `input()` 当场 EOF、Ctrl+C 送不到。
+#:
+#: 值都是 0（非 Windows）/ 一个是 0（`INHERIT_CONSOLE` 在所有平台都是 0），
+#: 所以这条判据**不改变任何运行时行为**——它要的是"源码里写得出这个 spawn
+#: 属于哪一类"。
+#: 判据按**常量名**判（`value.rsplit(".", 1)[-1]`），不按整串：模块别名各处
+#: 不同（`runtime.` / `engine_runtime.` / 裸名），把别名也钉进闭集只会让这条
+#: 用例在下一次改 import 时假红。
+_ALLOWED_CREATIONFLAGS = {"CREATE_NO_WINDOW", "INHERIT_CONSOLE"}
+#: 只认**具名常量**（可带模块前缀）。字面量 `0`、`A | B` 这类表达式一律拒——
+#: 那是绕过声明的写法。
+_CREATIONFLAGS_SHAPE = re.compile(r"^(?:\w+\.)?[A-Z_]+$")
 
-    非 Windows 上常量为 0，等同于不传——所以「全都传」没有代价，而漏一个
-    就是用户可见的黑框。审计当时六处漏传（外加 app.py 里没点出来的第七处），
-    靠人眼逐个核对找出来的；这条用例接手这件事。
+
+def test_every_backend_subprocess_declares_its_console_ownership():
+    """每个 spawn 都必须传 `creationflags`，而且只能是那两个具名常量之一。
+
+    原来这条只要求"传了 creationflags"，因为那时后端只有一类子进程：桌面版
+    起的隐藏子进程，漏传 = 用户可见的黑框（审计当时六处漏传，外加 app.py 里
+    没点出来的第七处）。
+
+    2026-08-28 多了第二类：`tavotto run` 起的**用户自己的 Python**，它跑在
+    用户的终端里，加 `CREATE_NO_WINDOW` 恰恰是**错的**。所以判据从"传了没有"
+    升级成"**声明的是哪一类**"——两类都写得出名字，谁都不能靠"漏传"或者
+    "抄了旁边那一行"蒙混过去。
+
+    这不是给新代码开豁免：`INHERIT_CONSOLE` 的值就是 0，与"不传"运行时等价；
+    它买到的是**可读性与可审查性**——下一个人在一个 GUI 路径里看到
+    `INHERIT_CONSOLE` 会知道那不对，而看到一个空白的 kwargs 不会。
     """
-    checked = []
+    checked, console_owned = [], []
     for where, call in _spawn_sites():
-        kwargs = {kw.arg for kw in call.keywords}
+        kwargs = {kw.arg: ast.unparse(kw.value) for kw in call.keywords if kw.arg}
         assert "creationflags" in kwargs, (
-            f"{where} 的 subprocess 调用漏了 creationflags=CREATE_NO_WINDOW（Windows 上会闪黑框）"
+            f"{where} 的 subprocess 调用漏了 creationflags——"
+            "GUI 拥有的子进程用 CREATE_NO_WINDOW，CLI 拥有的用 INHERIT_CONSOLE"
+        )
+        value = kwargs["creationflags"]
+        assert _CREATIONFLAGS_SHAPE.match(value), (
+            f"{where} 的 creationflags={value!r} 不是具名常量——"
+            "只认 CREATE_NO_WINDOW / INHERIT_CONSOLE（可带模块前缀）"
+        )
+        assert value.rsplit(".", 1)[-1] in _ALLOWED_CREATIONFLAGS, (
+            f"{where} 的 creationflags={value!r} 不在闭集里 {sorted(_ALLOWED_CREATIONFLAGS)}"
         )
         checked.append(where)
+        if value.endswith("INHERIT_CONSOLE"):
+            console_owned.append(where)
     # 一个都没扫到 = 匹配逻辑坏了，别让空断言冒充通过
-    assert len(checked) >= 9, f"只扫到 {checked}，AST 匹配逻辑可能失效了"
+    assert len(checked) >= 10, f"只扫到 {checked}，AST 匹配逻辑可能失效了"
+    # **CLI 拥有的那一类只有一处**：`tavotto run` 起用户的 Python。多出来一处
+    # 就要有人解释为什么——这不是可以顺手复制的写法。
+    assert [w.split(":")[0] for w in console_owned] == ["runcli.py"], console_owned
+
+
+def test_the_user_python_is_never_detached_from_the_terminal():
+    """反方向：`tavotto run` 起的用户 Python **绝不能**带 `CREATE_NO_WINDOW`。
+
+    上面那条防的是"漏了声明"；这条防的是"有人好心把它'修'成和别处一样"。
+    Windows 上加了它的表现全都是静默的：`input()` 立刻 EOF、Ctrl+C 送不到、
+    `print` 去了一个没人看的地方——而 macOS 上一切正常，看不出来。
+    """
+    from tavotto.engine import runcli
+
+    src = Path(runcli.__file__).read_text(encoding="utf-8")
+    body = src.split("def _spawn_user_python", 1)[1].split("\ndef ", 1)[0]
+    body = body.split('"""', 2)[-1]  # docstring 里恰恰会解释"为什么不用它"
+    assert "CREATE_NO_WINDOW" not in body, (
+        "tavotto run 起的用户 Python 带上了 CREATE_NO_WINDOW——"
+        "那会把它从用户的终端上摘下来（ADR 0021 §1）"
+    )
+    assert "INHERIT_CONSOLE" in body
 
 
 def test_every_backend_subprocess_that_decodes_pins_utf8():

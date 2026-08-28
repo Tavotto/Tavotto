@@ -55,6 +55,19 @@ CODE_INVALID = "bundled_runtime_invalid"
 #: `int` 常量不破坏「纯标准库」边界。非 Windows 上值为 0，等同于不传。
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
+#: **另一类子进程**：由 `tavotto run` CLI 拥有、跑在用户终端里的那一个
+#: （ADR 0021 §1）。它必须**留在当前控制台上**——那是用户的终端：
+#:
+#: * `CREATE_NO_WINDOW` 会把子进程从控制台上摘下来，于是 `input()` 当场 EOF、
+#:   Ctrl+C 送不到、`print` 去了一个没人看的地方；
+#: * 而 `tavotto run` 的核心承诺恰恰是「与你自己在终端里跑这条命令完全等同」。
+#:
+#: 值就是 0（所有平台）。**它存在的意义不是改变行为，是让"这个 spawn 属于
+#: 哪一类"变成源码里写得出来的事实**——`test_windows_regressions` 因此可以
+#: 要求每个 spawn 都显式声明自己是 GUI 拥有的隐藏子进程还是 CLI 拥有的
+#: 控制台子进程，而不是"漏传就当成前者"。
+INHERIT_CONSOLE = 0
+
 
 def is_frozen() -> bool:
     """是否跑在 PyInstaller 打出的独立应用里（.app / .exe）。"""
