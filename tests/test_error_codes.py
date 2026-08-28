@@ -395,12 +395,14 @@ def test_every_worker_error_response_carries_a_failure_status():
     看不见的（它们断言的是 body 里的 code，200 与 500 都读得到）。
     """
     src = APP.read_text(encoding="utf-8")
+    seen: list[str] = []
     bad: list[str] = []
     for i, line in enumerate(src.splitlines(), start=1):
         if "_worker_error_payload(" not in line:
             continue
         if line.lstrip().startswith(("#", "*", "def ")):
             continue  # 定义处与注释不算调用
+        seen.append(f"app.py:{i}")
         if re.search(r"jsonify\(_worker_error_payload\([^)]*\)\)\s*,\s*[45]\d\d", line):
             continue
         bad.append(f"app.py:{i}: {line.strip()}")
@@ -408,4 +410,16 @@ def test_every_worker_error_response_carries_a_failure_status():
         "这些 worker 错误响应没带失败状态码，会以 HTTP 200 发出去：\n  "
         + "\n  ".join(bad)
         + "\n  前端按状态码判成败——200 的失败会被当成成功。"
+    )
+    # **扫到的条数也要钉**（2026-08-28 实测 11 处）。上面那条只在"扫到了"的
+    # 前提下成立：有人把调用包一层（`_native_worker_error()` 内部再调），
+    # 新的出口就不含这个字符串，扫描**看不见**它——那时上面那条恒绿。
+    #
+    # 加调用点时这个数要跟着涨。写成 `>=` 的话它会跟着系统一起长、却不会
+    # 跟着系统一起收紧：那样"悄悄少两处"永远不会响（仓库里那条下限判据向上
+    # 腐烂的同族）。
+    assert len(seen) == 11, (
+        f"`_worker_error_payload` 的调用点从 11 变成了 {len(seen)}：{seen}\n"
+        "  新增出口 → 把这个数改成新的实测值；变少了 → 先确认不是被包了一层"
+        "（包一层的话上面那条判据就再也看不见它了）。"
     )
