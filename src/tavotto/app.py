@@ -4497,17 +4497,31 @@ def tavotto_is_serving(port: int) -> bool:
         return False
 
 
+#: TCP 端口号的上限。**不是风格常量**：`bind()` 收到 65535 以上的号抛的是
+#: `OverflowError` 而不是 `OSError`，而 `port_is_free()` 只 catch 后者。
+MAX_PORT = 65535
+
+
 def resolve_port(preferred: int, tries: int = 20) -> int | None:
     """要用的端口；None = 该端口上已经有一个 Tavotto 在跑，不必再起。
 
     被别的程序占用时顺延找下一个空闲端口——双击启动的应用不能因为端口冲突就
     一声不响地退出（窗口化打包下用户连 traceback 都看不到）。
+
+    **顺延绝不越过 `MAX_PORT`。** 越过去的表现恰恰是这个函数自己承诺不许发生
+    的那件事：`bind(65536)` 抛的是 `OverflowError`，而 `port_is_free()` 只
+    catch `OSError`——于是 `preferred` 落在范围顶端 `tries` 个之内、且那几个
+    都被占着时，这里**当场崩掉**。默认参数下窗口是 65516–65535；调用方把
+    `tries` 调大，窗口就跟着变大。
+
+    扫不动了就退回 `preferred`（与"全占满了"同一条出口）：交给 `app.run`
+    报一个说得清的错，而不是从一个探测函数里抛 OverflowError。
     """
     if port_is_free(preferred):
         return preferred
     if tavotto_is_serving(preferred):
         return None
-    for p in range(preferred + 1, preferred + 1 + tries):
+    for p in range(preferred + 1, min(preferred + 1 + tries, MAX_PORT + 1)):
         if port_is_free(p):
             return p
     return preferred  # 全占满了：交给 app.run 报错，至少日志里有据可查
