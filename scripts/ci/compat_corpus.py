@@ -99,6 +99,12 @@ DISCOVERY_MODES = ("discoverable", "requires_probe", "manual_registry")
 #: 出现在报告里，不能记成 `expected.execute=false` 让门禁静悄悄地放行。
 NON_NEGOTIABLE_STAGES = ("execute", "capture", "open")
 
+#: `native_eligible`：这条 case 能不能走 `tavotto run`（ADR 0021 §12/§13）。
+#: 判据：Python 脚本或模块 / Figure 在**当前进程**里创建 / 非 Jupyter /
+#: 不依赖任意 shell 包装 / 测试环境跑得起来。**默认 false**——
+#: 「不是每条 case 都默认 true」与 `browser_eligible` 同一条纪律。
+NATIVE_ELIGIBLE_KEY = "native_eligible"
+
 #: 产品路由（Session 6）。「worker 能直接调」不等于「真实用户能使用」——
 #: case 可以在 `product_routes` 里声明哪些**产品入口**必须走得通，runner
 #: 走真实端点/真实 CLI 验证（绝不直接调内部 probe 代表产品成功）。闭集。
@@ -258,13 +264,17 @@ def _validate_case(case: dict, root: Path) -> None:
                 f"product_routes.{route} 非法 {want!r}"
                 f"（可选 true / 'not_implemented' / 'not_applicable'）",
             )
-        if route == "native_run" and want is True:
-            # native 执行是 PR 2：现在声明「必须通过」只能靠伪装 pass 兑现，
-            # 而这份 benchmark 的第一条纪律就是不许假兼容。
+        if route == "native_run" and want is True and not case.get("native_eligible"):
+            # **不是每条 case 都默认 true**（ADR 0021 §44 的同款纪律）：
+            # native 只接管**当前这个 Python 进程**里创建的 Figure。子进程
+            # 出图、Jupyter、任意 shell 包装、以及这台机器上跑不起来的
+            # 依赖，都不该声明「必须通过」——那只能靠伪装 pass 兑现，而这份
+            # benchmark 的第一条纪律就是不许假兼容。
             bad(
-                "native_run_not_implemented",
-                "native_run 尚未实现——第一阶段只能声明 not_implemented / "
-                "not_applicable，不要伪装 pass",
+                "route_not_native_eligible",
+                "native_run=true 但 case 不是 native_eligible——"
+                "先说清它为什么能走 native（Python 脚本/模块、图在当前进程、"
+                "非 Jupyter、不依赖任意 shell 包装）",
             )
         if route == "browser_playground" and want is True and not case.get("browser_eligible"):
             bad(
@@ -306,7 +316,7 @@ def _validate_smoke_subset(cases: list[dict]) -> None:
 
 #: `matrix.json` 里 target 可以声明只跑一个子集。值即判据名，闭集——
 #: 写错一个字当场报错，不当成「一个我们没见过的新子集」放行。
-SUBSETS = ("browser_eligible",)
+SUBSETS = ("browser_eligible", "native_eligible")
 
 
 def select(
@@ -317,6 +327,7 @@ def select(
     categories: list[str] | None = None,
     smoke: bool = False,
     browser_only: bool = False,
+    native_only: bool = False,
 ) -> list[dict]:
     """按条件挑 case。**顺序永远是清单里的顺序**——报告要可 diff。"""
     out = cases
@@ -335,6 +346,8 @@ def select(
         out = [c for c in out if c["category"] in set(categories)]
     if browser_only:
         out = [c for c in out if c.get("browser_eligible")]
+    if native_only:
+        out = [c for c in out if c.get(NATIVE_ELIGIBLE_KEY)]
     return out
 
 

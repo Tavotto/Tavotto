@@ -43,6 +43,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import shutil
@@ -706,6 +707,198 @@ def route_cli_open(
     }
 
 
+#: native_run 路由的各阶段——报告里逐段记账，**不是一个笼统的"通过了"**。
+NATIVE_STAGES = (
+    "invocation_parse",
+    "desktop_handoff",
+    "attach",
+    "execute",
+    "barrier",
+    "capture",
+    "open",
+    "edit",
+    "replay",
+    "export",
+)
+
+
+def route_native_run(project: Path, script_rel: str, stems: list[str], *, timeout: int = 900):
+    """native_run 路由：**真的跑 `tavotto run`**（ADR 0021）。
+
+    走的是完整产品控制面，一步都不许旁路：
+
+        tavotto run 的 parser
+            → native handoff descriptor（0600 的一次性凭据）
+            → sidecar 侧 attach（`nativesession.REGISTRY.attach`）
+            → Worker-like 接口（build / override / export）
+            → continue → 脚本结束
+
+    **绝不直接构造 `bridge.BridgeSession`**：那是 ADR 0020 的内部 spike 入口，
+    拿它代表产品路由成功，正是 Session 6 记下的那条——"基准替产品打掩护"。
+    看护 `tests/test_compat_product_routes.py`。
+
+    唯一被替掉的是"有没有窗口"：这里的桌面是一个 headless attach 客户端，
+    但它读的是同一份 descriptor、过的是同一道 token 认证、说的是同一套
+    worker v1。
+    """
+    import sys as _sys
+
+    _sys.path.insert(0, str(REPO / "tests" / "support"))
+    from tavotto.engine import nativehandoff, nativesession, pool  # noqa: PLC0415
+
+    reached: dict = {}
+
+    def _fail(stage: str, code: str, **detail) -> dict:
+        return {
+            "ok": False,
+            "code": code,
+            "via": "tavotto run",
+            "detail": {"stage": stage, "reached": reached, **detail},
+        }
+
+    try:
+        python = pool.find_worker_python()
+    except pool.WorkerError:
+        return {"ok": False, "code": "native_no_interpreter", "detail": {"reached": reached}}
+
+    env = {
+        **os.environ,
+        "PYTHONPATH": os.pathsep.join([str(REPO / "src"), os.environ.get("PYTHONPATH", "")]).rstrip(
+            os.pathsep
+        ),
+        "TAVOTTO_NO_TELEMETRY": "1",
+    }
+    before = _pending_native_ids()
+    # **不开 PIPE**：这一趟没人流式读子进程的输出，而用户脚本的 stdout 是
+    # 原样继承给它的——写满 64 KiB 之后 CLI 会永久阻塞在写日志上，症状看起来
+    # 像"native 会话挂死"，与真实原因毫不相干（仓库里 soak.py 踩过同一个坑，
+    # 看护 `test_source_hygiene::test_no_launcher_leaves_a_child_pipe_undrained`）。
+    # 落文件：排障时那份输出还在。
+    log = (project / "_native_run.log").open("w", encoding="utf-8")
+    proc = subprocess.Popen(
+        [
+            _sys.executable,
+            "-m",
+            "tavotto",
+            "run",
+            "--x-no-desktop",
+            "--quiet",
+            "--",
+            python,
+            script_rel,
+        ],
+        cwd=str(project),
+        env=env,
+        stdin=subprocess.DEVNULL,
+        stdout=log,
+        stderr=subprocess.STDOUT,
+    )
+    session = None
+    try:
+        native_id = _wait_native_pending(before, proc, timeout=60)
+        if native_id is None:
+            return _fail("desktop_handoff", "native_handoff_never_written")
+        reached["invocation_parse"] = True
+        reached["desktop_handoff"] = True
+
+        session = nativesession.REGISTRY.attach(nativehandoff.consume(native_id))
+        reached["attach"] = True
+
+        state = session.wait_for_state([nativesession.BARRIER], timeout)
+        reached["execute"] = state != nativesession.FAILED
+        if state != nativesession.BARRIER:
+            return _fail("barrier", "native_no_barrier", state=state)
+        reached["barrier"] = True
+
+        build = session.ensure_built()
+        got = sorted(build.get("stems") or {})
+        missing = [s for s in stems if s not in got]
+        if missing:
+            return _fail("capture", "native_stem_missing", missing=missing, got=got)
+        reached["capture"] = True
+        reached["open"] = all((session.svg_path(s)).is_file() for s in stems)
+
+        stem = stems[0]
+        man = json.loads(session.svg_path(stem).with_suffix(".json").read_text(encoding="utf-8"))
+        target = _first_editable(man)
+        if target is None:
+            return _fail("edit", "native_nothing_editable")
+        session.override(stem, [target])
+        reached["edit"] = True
+
+        # 重放：同一份 patch 再发一次，热态必须收敛到同一个状态（全量列表语义）
+        session.override(stem, [target])
+        reached["replay"] = True
+
+        out = project / "_native_export.pdf"
+        session.export(stem, [target], str(out), "pdf", 200)
+        reached["export"] = out.is_file()
+        if not reached["export"]:
+            return _fail("export", "native_export_missing")
+
+        # **每个屏障都要被应答**，否则两边各等各的
+        while session.state not in nativesession.TERMINAL_STATES:
+            if session.wait_for_state([nativesession.BARRIER], timeout) != nativesession.BARRIER:
+                break
+            session.resume()
+        code = proc.wait(timeout=timeout)
+        if code != 0:
+            return _fail("execute", "native_script_failed", exit_code=code)
+        return {"ok": True, "via": "tavotto run", "detail": {"reached": reached}}
+    except Exception as exc:  # noqa: BLE001 — 路由失败要如实记账，不能把 runner 拖垮
+        return _fail("attach", getattr(exc, "code", "") or "native_route_crashed", error=str(exc))
+    finally:
+        if session is not None:
+            with contextlib.suppress(Exception):
+                session.shutdown()
+            nativesession.REGISTRY.forget(session.session_id)
+        if proc.poll() is None:
+            proc.kill()
+            with contextlib.suppress(Exception):
+                proc.wait(timeout=30)
+        with contextlib.suppress(Exception):
+            log.close()
+
+
+def _pending_native_ids() -> set:
+    from tavotto.engine import nativehandoff  # noqa: PLC0415
+
+    d = nativehandoff.native_dir()
+    os.makedirs(d, exist_ok=True)
+    return {n[:-5] for n in os.listdir(d) if n.endswith(".json")}
+
+
+def _wait_native_pending(before: set, proc, *, timeout: float):
+    """等 CLI 写出 descriptor。**盯着子进程**——它要是直接死了就别白等。"""
+    from tavotto.engine import nativehandoff  # noqa: PLC0415
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        for native_id in sorted(_pending_native_ids() - before):
+            try:
+                nativehandoff.peek(native_id)
+            except Exception:  # noqa: BLE001
+                continue
+            return native_id
+        if proc.poll() is not None:
+            return None
+        time.sleep(0.05)
+    return None
+
+
+def _first_editable(manifest: dict):
+    """manifest 里第一个能改的数值属性（编辑/重放/导出三段都用它）。"""
+    for el in manifest.get("elements") or []:
+        for field in el.get("editable") or []:
+            if field.get("type") == "number" and isinstance(field.get("value"), (int, float)):
+                return {
+                    "gid": el["gid"],
+                    "prop": field["prop"],
+                    "value": round(float(field["value"]) + 1.5, 2),
+                }
+    return None
+
+
 def stage_product_routes(group: list[dict], root: Path, results: dict) -> None:
     """按 case 声明的 product_routes 逐条验证，结果记进 results[cid]["routes"]。
 
@@ -735,6 +928,11 @@ def stage_product_routes(group: list[dict], root: Path, results: dict) -> None:
         # ── CLI 侧：另一个全新项目（CLI 自己 probe，子进程） ──
         cli_project, cli_script, _ = materialize(group, workdir / "cli")
         cli_bare = route_cli_open(cli_project, cli_script)
+        # native 侧再要一个全新项目：`tavotto run` 会**透传** savefig（native
+        # 的 passthrough 语义），跟别的路由共用一个目录会让那些文件混进
+        # safe 侧的判据里。
+        native_project, native_script, _ = materialize(group, workdir / "native")
+        native_res = None
         cli_selected = None
         # 「多 Figure」看的是**脚本产出几张图**，不是组里有几个 case：
         # shape_loop_figures 一个 case 循环存三张，同样走多图契约
@@ -766,6 +964,10 @@ def stage_product_routes(group: list[dict], root: Path, results: dict) -> None:
                     routes[name] = _route_entry(res, ca)
                 elif name == "cli_open":
                     routes[name] = _route_cli_verdict(ca, group, cli_bare, cli_selected)
+                elif name == "native_run":
+                    if native_res is None:
+                        native_res = route_native_run(native_project, native_script, stems)
+                    routes[name] = _route_entry(native_res, ca)
                 elif name == "browser_playground":
                     br = results[ca["id"]].get("browser")
                     if br is None:
@@ -1822,13 +2024,10 @@ def main(argv: list[str] | None = None) -> int:
     # 不照做的后果不是「多跑几条」而是**说假话**：browser 那一档会跑满 149 条
     # 桌面脚本，而 workflow 注释与文档都写着它跑的是 12 条对拍子集。
     subset = target.get("subset")
-    if subset == "browser_eligible":
+    if subset in CC.SUBSETS:
         before = len(cases)
-        cases = [c for c in cases if c.get("browser_eligible")]
-        print(
-            f"target {args.target!r} 声明只跑 browser_eligible 子集："
-            f"{before} → {len(cases)} 个 case"
-        )
+        cases = [c for c in cases if c.get(subset)]
+        print(f"target {args.target!r} 声明只跑 {subset} 子集：{before} → {len(cases)} 个 case")
     if not cases:
         print("::error::选出来一个 case 都没有", file=sys.stderr)
         return 2
