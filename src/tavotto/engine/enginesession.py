@@ -41,6 +41,30 @@ from .runcodes import RunError
 PROFILE_SAFE = figcapture.PROFILE_SAFE
 PROFILE_NATIVE = figcapture.PROFILE_NATIVE
 
+#: **Worker-like 面的唯一枚举**——`resolve()` 回来的两种对象都必须满足它。
+#:
+#: 写成常量而不是散在 docstring 里的一句话，是因为散句只约束读到它的人：
+#: 这份契约原来只列了方法名（`ensure_built` / `override` / …），而调用方同时
+#: 还读 `built` / `export_dir` / `last_build_descriptors` 这三个**属性**，
+#: `NativeSession` 一个都没有——native 面板一进 `/api/engine/render` 就是
+#: AttributeError。少的不是某个成员，是"清单能被跑一遍"这件事本身。
+#:
+#: 守卫在 `tests/native/test_native_api.py`：两边少一个成员就红。
+WORKER_LIKE = (
+    "built",  # 冷启动判据（render.started 的 cold）
+    "rev",  # 前端缓存穿透用的版本号
+    "out_dir",  # manifest / SVG 的落点
+    "export_dir",  # 导出临时件的落点（画布导出）
+    "last_build_descriptors",  # runtime cache 物化的描述符
+    "ensure_built",
+    "override",
+    "export",
+    "render_png",
+    "preview_png",
+    "svg_path",
+    "shutdown",
+)
+
 
 def profile_of(project_root, asset_id: str, *, default: str = PROFILE_SAFE) -> str:
     """这个 runtime 素材是哪一档跑出来的——**按物化 descriptor 的记载**。
@@ -71,9 +95,9 @@ def resolve(
 ):
     """按 profile 给出一个 **Worker-like** 的东西。
 
-    回来的两种对象共享同一批方法名（`ensure_built` / `override` / `export` /
-    `render_png` / `preview_png` / `svg_path` / `shutdown`），所以调用方**不必
-    知道自己拿到的是哪一种**——这正是不写 `if native` 的前提。
+    回来的两种对象共享同一批成员——**枚举在 `WORKER_LIKE`**，属性与方法都在
+    里面——所以调用方**不必知道自己拿到的是哪一种**，这正是不写 `if native`
+    的前提。前提要成立，那份清单就得能被跑一遍，而不是只写在这段话里。
     """
     del registry  # 预留：将来按注册表校验归属；现在解析已经在调用方做完了
     if execution_profile == PROFILE_NATIVE:

@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import socket
 
@@ -23,6 +24,7 @@ from tavotto.engine import (
     nativehandoff,
     nativeperm,
     nativesession,
+    pool as engine_pool,
     runcodes,
     runspec,
 )
@@ -247,6 +249,74 @@ def test_the_resolver_is_the_only_place_that_branches():
         if "engine_pool.get(" in line and "engine_enginesession" not in line
     ]
     assert hits == [], f"app.py 里还有绕过 resolve() 的 pool.get: {hits}"
+
+
+# --------------------------------------------------------------------------
+# worker-like 面：两种对象必须长成一样
+# --------------------------------------------------------------------------
+def _provides(cls, name: str) -> bool:
+    """类上有（方法 / property），或者 `__init__` 给实例装了这个属性。
+
+    只查类是不够的：`pool.EngineWorker` 的 `built` / `export_dir` /
+    `last_build_descriptors` 全是 `__init__` 里赋的实例属性，`hasattr(cls, …)`
+    一律 False。构造一个真 worker 来查又要 mkdir、开日志文件、算 generation
+    ——判据不该带这些副作用，所以查 `__init__` 字节码里的属性名。
+    """
+    if hasattr(cls, name):
+        return True
+    code = getattr(getattr(cls, "__init__", None), "__code__", None)
+    return code is not None and name in code.co_names
+
+
+@pytest.mark.parametrize("cls", [engine_pool.EngineWorker, nativesession.NativeSession])
+def test_both_worker_kinds_provide_the_whole_worker_like_surface(cls):
+    """**结构性守卫**：`resolve()` 回的两种对象都必须盖住 `WORKER_LIKE`。
+
+    这条用例存在是因为它真的漏过一次：契约原来只列**方法名**
+    （`ensure_built` / `override` / …），而 `app.py` 同时还读三个**属性**
+    ——`built`（冷启动判据）、`export_dir`（画布导出落点）、
+    `last_build_descriptors`（runtime cache 物化）——`NativeSession` 一个
+    都没有。表现是 native 面板一进 `/api/engine/render` 就 AttributeError，
+    而"两种对象共享同一批成员"这句话就明明白白写在 `resolve()` 的 docstring
+    里。散在文档里的清单只约束读到它的人；这一条让它每次都被跑一遍。
+    """
+    missing = [n for n in enginesession.WORKER_LIKE if not _provides(cls, n)]
+    assert missing == [], f"{cls.__name__} 缺 worker-like 成员: {missing}"
+
+
+def test_the_render_call_shape_fits_both_worker_kinds():
+    """成员名对上**还不够**：`app.py:2530` 发的是
+    `wk.override(st, patches, preview_dpi, inline_svg=…)`——第三个是**位置**
+    参数。`NativeSession.override(self, stem, patches, **kw)` 名字在、签名不在，
+    照样每次渲染 TypeError。名字与调用形状是两件事，分别钉。
+    """
+    for cls in (engine_pool.EngineWorker, nativesession.NativeSession):
+        inspect.signature(cls.override).bind(
+            object(),  # self
+            "Fig1",
+            [{"gid": "g", "prop": "text", "value": "x"}],
+            200,
+            inline_svg=True,
+        )
+
+
+def test_a_native_session_answers_the_attributes_the_routes_read(tmp_path):
+    """在**真对象**上跑一遍那三个属性——签名对了不等于值对了。"""
+    out = tmp_path / "out"
+    session = nativesession.NativeSession(
+        session_id="native-x",
+        descriptor={"native_id": "x" * 32, "metadata": FIELDS, "out_dir": str(out)},
+    )
+    assert session.built is False, "还没 build 就说 build 过了，冷启动提示会消失"
+    assert session.last_build_descriptors == []
+
+    # 导出临时件单独一层：`out_dir` 是会话自己的产出面（runner 往里写
+    # `{stem}.svg`，`runcli._figures_written()` 还要扫它数图）。
+    assert session.export_dir.is_dir()
+    assert session.export_dir.parent == out
+
+    session.descriptors = [{"stem": "Fig1"}]
+    assert session.last_build_descriptors == [{"stem": "Fig1"}], "别名与存储分叉了"
 
 
 # --------------------------------------------------------------------------

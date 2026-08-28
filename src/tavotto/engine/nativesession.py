@@ -305,6 +305,10 @@ class NativeSession:
         self.transport: NativeTransport | None = None
         self.generation = 1
         self.rev = 0
+        #: 与 `pool.EngineWorker.built` **同名同义**——「脚本跑过了没有」。
+        #: `app.py` 的渲染端点用 `not worker.built` 判冷启动（发 render.started
+        #: 的 `cold`），它不知道自己手里是哪一种，也不该知道。
+        self.built = False
         self.last_build: dict | None = None
         self._lock = threading.Lock()
         self._changed = threading.Condition(self._lock)
@@ -421,19 +425,53 @@ class NativeSession:
             obj, generation=self.generation, revision=self.rev, timeout=timeout
         )
 
+    @property
+    def last_build_descriptors(self) -> list:
+        """`pool.EngineWorker` 上这批描述符叫这个名字，`app.py` 的 runtime
+        cache 物化只认这个名字。**存储仍然只有 `descriptors` 一份**——别名
+        只读，两份各自更新迟早会分叉。
+        """
+        return self.descriptors
+
+    @property
+    def export_dir(self) -> Path:
+        """导出临时件的落点（画布导出取 `export_dir / f"{stem}.pdf"`）。
+
+        与 safe worker 一样**单独一层子目录**，不直接用 `out_dir`：那是会话
+        自己的产出面，runner 往里写 `{stem}.svg` / `{stem}.json` / 预览 PNG，
+        `runcli._figures_written()` 还会扫它来数这次跑出了几张图。导出的临时
+        件属于另一层，混进去就是让两件事共用一个目录。
+        """
+        d = self.out_dir / "export"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
     def ensure_built(self) -> dict:
         resp = self._request({"cmd": "build"}, BUILD_TIMEOUT)
+        self.built = True
         self.last_build = resp
         self.descriptors = list(resp.get("descriptors") or [])
         self.stems = list((resp.get("stems") or {}).keys())
         self.script_error = resp.get("script_error") or self.script_error
         return resp
 
-    def override(self, stem: str, patches: list, **kw) -> dict:
+    def override(
+        self, stem: str, patches: list, preview_dpi: int | None = None, inline_svg: bool = False
+    ) -> dict:
+        """**签名与 `pool.EngineWorker.override()` 逐参对齐。**
+
+        `app.py` 的渲染端点发的是 `wk.override(st, patches, preview_dpi,
+        inline_svg=...)`——第三个是**位置**参数。原来的 `**kw` 收不下它，
+        native 面板每一次渲染都是 TypeError。
+        """
         self.rev += 1
-        return self._request(
-            {"cmd": "override", "stem": stem, "patches": patches, **kw}, REQUEST_TIMEOUT
-        )
+        payload = {"cmd": "override", "stem": stem, "patches": patches}
+        # 不给就**一个字段都不加**：信封形状与 safe worker 一字不差
+        if preview_dpi:
+            payload["preview_dpi"] = int(preview_dpi)
+        if inline_svg:
+            payload["inline_svg"] = True
+        return self._request(payload, REQUEST_TIMEOUT)
 
     def export(self, stem: str, patches: list, path: str, fmt: str = "pdf", dpi: int = 600) -> dict:
         return self._request(
