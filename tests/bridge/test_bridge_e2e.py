@@ -1,0 +1,329 @@
+"""native bridge 端到端：用户自己的 Python → Figure → 改标题字号 → 导出 PDF。
+
+**真进程、真 matplotlib、真 socket、真 PDF。** 这条链是整个 spike 的完成
+定义（§二十一）里最靠后的那几项：manifest / override / export 复用 Tavotto
+现有引擎、Figure 不出进程、用户环境不装 Tavotto。
+
+两档：
+
+* 默认那条用**本机装了 matplotlib 的解释器**当"用户的 Python"，并把
+  `PYTHONPATH` 洗掉——报告里 `tavotto_importable` 因此是 False；
+* `-m slow` 那条真造一个 `python -m venv`（**不带** system-site-packages）
+  再 `pip install matplotlib`，证明"一个只有 matplotlib 的干净环境"也跑得通。
+  它要联网，所以按仓库惯例标 slow，默认跳过。
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+
+import pytest
+
+from support.bridgekit import child_env, write
+from tavotto.engine import bridge
+
+pytestmark = pytest.mark.usefixtures("clean_env")
+
+PAPER = """\
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import sys
+
+print("running", sys.argv[1:], flush=True)
+fig, ax = plt.subplots(figsize=(4.0, 3.0))
+ax.plot([1, 2, 3], [2.0, 4.5, 9.0], label="run")
+ax.set_title("Original Title")
+ax.legend()
+plt.show()
+print("done", flush=True)
+"""
+
+
+def _title_gid(manifest: dict) -> str:
+    return next(
+        el["gid"]
+        for el in manifest["elements"]
+        for f in el.get("editable", [])
+        if f["prop"] == "text" and f["value"] == "Original Title"
+    )
+
+
+def _title_fontsize(manifest: dict, gid: str) -> float:
+    el = next(e for e in manifest["elements"] if e["gid"] == gid)
+    return next(f["value"] for f in el["editable"] if f["prop"] == "fontsize")
+
+
+def _pdf_title_size(path) -> float:
+    """从导出的 PDF 里量出"Original Title"那段文字的字号。
+
+    用 PyMuPDF（Flask 父进程本来就有它，而且它是全仓库唯一 import pymupdf
+    的模块之外的唯一读者——这里只读不写）。量的是**真 PDF 里的事实**，
+    不是 manifest 自己报的数——manifest 说改了、PDF 里没改，正是这条要挡的。
+    """
+    import pymupdf
+
+    with pymupdf.open(path) as doc:
+        for block in doc[0].get_text("dict")["blocks"]:
+            for line in block.get("lines", []):
+                for span in line.get("spans", []):
+                    if "Original Title" in span.get("text", ""):
+                        return round(float(span["size"]), 2)
+    raise AssertionError("导出的 PDF 里找不到标题文字")
+
+
+def _full_chain(sess, tmp_path, *, expect_stem_count=1):
+    """屏障 → build → manifest → 改字号 → 导出 PDF → 逐条核对。"""
+    ev = sess.wait_event("barrier")
+    assert ev["reason"] == "show"
+    build = sess.ensure_built()
+    assert len(build["stems"]) == expect_stem_count
+    stem = next(iter(build["stems"]))
+
+    # 描述符：native profile、pyplot 来源、没有原始产物 → 写回原件不成立
+    desc = next(d for d in build["descriptors"] if d["stem"] == stem)
+    assert desc["execution_profile"] == "native"
+    assert desc["capture_source"] == "pyplot"
+    assert desc["original_artifact"] is None
+    assert desc["can_writeback_artifact"] is False
+    assert desc["can_writeback_source"] is False
+
+    man = json.loads((sess.out_dir / f"{stem}.json").read_text(encoding="utf-8"))
+    gid = _title_gid(man)
+    before = _title_fontsize(man, gid)
+    assert before != 22.0, "用例前提：初值不能恰好等于要改成的值（同值提交是 no-op）"
+
+    patches = [{"gid": gid, "prop": "fontsize", "value": 22.0}]
+    resp = sess.override(stem, patches)
+    assert resp["warnings"] == []
+    assert _title_fontsize(resp["manifest"], gid) == 22.0
+
+    # 导出**必须带上同一组 patches**：v1 的 override 是「全量列表」语义，
+    # 空列表 = 撤销一切。带空列表导出出来的会是脚本原样那张图。
+    out = tmp_path / "paper.pdf"
+    exported = sess.export(stem, patches, str(out))
+    assert exported["warnings"] == []
+    assert out.is_file() and out.read_bytes()[:4] == b"%PDF"
+    assert _pdf_title_size(out) == 22.0, "PDF 里的字号与 manifest 报的对不上"
+
+    # 状态中立：导出没把 patches 留在热会话上，也没把它们撤掉
+    again = sess.override(stem, patches)
+    assert _title_fontsize(again["manifest"], gid) == 22.0
+    reverted = sess.override(stem, [])
+    assert _title_fontsize(reverted["manifest"], gid) == before, "全量列表回空 = 回到脚本原样"
+    return stem
+
+
+def test_end_to_end_on_the_users_own_interpreter(user_python, tmp_path, bridge_session):
+    """完整链：用户的 Python → 捕获 → manifest → 改字号 → 导出 PDF → 撤销。
+
+    顺带钉住两条 native 的承诺：用户的 argv 原样到脚本手里、用户的 stdout
+    归他自己（协议走 socket）。
+    """
+    proj = tmp_path / "proj"
+    write(proj / "paper.py", PAPER)
+    with bridge_session(proj / "paper.py", cwd=str(proj), argv=("--dataset", "run7")) as sess:
+        _full_chain(sess, tmp_path)
+        sess.resume()
+        sess.wait_event("barrier")  # 脚本跑完那次
+        sess.resume()
+        sess.wait_event("exit")
+
+
+def test_the_runner_never_imports_tavotto(user_python, tmp_path):
+    """§三的硬要求：**用户环境不需要也不允许安装 Tavotto**——判机制。
+
+    两层判据，因为它们各自会在不同的地方失效：
+
+    * **结构性**（永远跑）：跑在用户进程里的那两个文件不许出现 `import
+      tavotto`，也不许出现任何包内相对 import（`from . import …`）——它们
+      是被**按文件路径**执行的，包上下文根本不存在。
+    * **行为性**（有干净解释器时跑）：报告里 `tavotto_importable` 是 False。
+      CI 上 `pip install -e .` 与 matplotlib 装在同一个解释器里，那时这条
+      **明说跳过**而不是假装通过（真 venv 的证明在下面那条 slow 用例）。
+    """
+    import re
+
+    from support.bridgekit import run_runner
+
+    for name in ("bridge_runner.py", "bridgeboot.py"):
+        src = (bridge.RUNNER_PY.parent / name).read_text(encoding="utf-8")
+        assert not re.search(r"^\s*(?:import tavotto|from tavotto)\b", src, re.M), (
+            f"{name} 里 import 了 tavotto——用户环境里没有它"
+        )
+        assert not re.search(r"^\s*from \.", src, re.M), (
+            f"{name} 里有包内相对 import——它是按文件路径执行的，没有包上下文"
+        )
+
+    proj = tmp_path / "proj"
+    write(proj / "paper.py", PAPER)
+    report = tmp_path / "report.json"
+    r = run_runner(
+        user_python,
+        bridge.RUNNER_PY,
+        target=proj / "paper.py",
+        cwd=str(proj),
+        report=report,
+        out_dir=tmp_path / "out",
+    )
+    assert r.returncode == 0, r.stderr
+    data = json.loads(report.read_text(encoding="utf-8"))
+    assert data["figures"], "前提：确实捕获到了图"
+    if data["tavotto_importable"]:
+        pytest.skip(
+            "这台机器上唯一装了 matplotlib 的解释器同时装了 Tavotto"
+            "（CI 就是这样：pip install -e . 与 matplotlib 同一个解释器）。"
+            "行为性判据由 -m slow 的真 venv 用例承担。"
+        )
+    assert data["tavotto_importable"] is False
+
+
+def test_module_target_end_to_end(user_python, tmp_path, bridge_session):
+    """`python -m paper.figure` 形态走完同一条链。
+
+    module 目标的相对路径要等 import 之后才知道（`__main__.__file__`），
+    描述符里的 `script` 因此是跑完之后修正的——这条钉住它没有留成空。
+    """
+    proj = tmp_path / "proj"
+    write(proj / "paper" / "__init__.py", "")
+    write(proj / "paper" / "figure.py", PAPER)
+    with bridge_session(
+        "paper.figure", cwd=str(proj), target_kind="module", argv=("--dataset", "run7")
+    ) as sess:
+        stem = _full_chain(sess, tmp_path)
+        build = sess.last_build
+        desc = next(d for d in build["descriptors"] if d["stem"] == stem)
+        assert desc["script"] == "paper/figure.py", desc["script"]
+        assert desc["asset_id"] == f"runtime:paper/figure.py#{stem}"
+        sess.resume()
+        sess.wait_event("barrier")
+        sess.resume()
+        sess.wait_event("exit")
+
+
+def test_a_module_target_without_show_still_knows_its_own_file(user_python, tmp_path):
+    """只 `savefig` 不 `show` 的 `-m` 目标，描述符里的 `script` 必须还是它自己。
+
+    `runpy.run_module(alter_sys=True)` 跑完会把 **runner 自己**装回
+    `sys.modules["__main__"]`。这类脚本只有"脚本结束"那一次屏障，那时早已
+    恢复过了——跑完再去读 `__main__.__file__` 拿到的是 `bridge_runner.py`，
+    于是 asset id 变成 `runtime:bridge_runner.py#Fig1`，用户的 override 保存
+    重开之后全成孤儿。
+
+    上面那条 `test_module_target_end_to_end` 测不到：它的夹具调了
+    `plt.show()`，屏障发生在 run_module **执行中间**，那时 `__main__` 还是
+    用户的模块。**判据必须是没有 show 的那一支。**
+
+    反证：把 `run_module` 的 `on_origin` 回调去掉（退回跑完读 `__main__`），
+    本条当场红（`rel_target` 变成 `bridge_runner.py`）。
+    """
+    from support.bridgekit import run_runner
+
+    proj = tmp_path / "proj"
+    write(proj / "paper" / "__init__.py", "")
+    write(
+        proj / "paper" / "figure.py",
+        "import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\n"
+        "fig, ax = plt.subplots()\nax.plot([1,2,3],[1,4,9])\nfig.savefig('Fig1.pdf')\n",
+    )
+    report = tmp_path / "report.json"
+    r = run_runner(
+        user_python,
+        bridge.RUNNER_PY,
+        target="paper.figure",
+        target_kind="module",
+        cwd=str(proj),
+        report=report,
+        out_dir=tmp_path / "out",
+    )
+    assert r.returncode == 0, r.stderr
+    data = json.loads(report.read_text(encoding="utf-8"))
+    assert data["stems"] == ["Fig1"], "用例前提：确实捕获到了那张图"
+    assert data["rel_target"] == "paper/figure.py", (
+        f"描述符指向了错误的脚本: {data['rel_target']!r}"
+    )
+    assert "bridge_runner" not in data["rel_target"]
+
+
+def test_a_package_main_target_resolves_to_its_dunder_main(user_python, tmp_path):
+    """`python -m pkg` 跑的是 `pkg/__main__.py`——解析口径与 runpy 同款。
+
+    包目标是 `resolve_module_origin` 里唯一需要多走一步的形态；不处理的话
+    `find_spec("pkg")` 给的是 `pkg/__init__.py`，描述符会指错文件。
+    """
+    from support.bridgekit import run_runner
+
+    proj = tmp_path / "proj"
+    write(proj / "pkg" / "__init__.py", "")
+    write(
+        proj / "pkg" / "__main__.py",
+        "import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\n"
+        "fig, ax = plt.subplots()\nax.plot([1,2],[3,4])\nfig.savefig('P.pdf')\n",
+    )
+    report = tmp_path / "report.json"
+    r = run_runner(
+        user_python,
+        bridge.RUNNER_PY,
+        target="pkg",
+        target_kind="module",
+        cwd=str(proj),
+        report=report,
+        out_dir=tmp_path / "out",
+    )
+    assert r.returncode == 0, r.stderr
+    data = json.loads(report.read_text(encoding="utf-8"))
+    assert data["stems"] == ["P"]
+    assert data["rel_target"] == "pkg/__main__.py", data["rel_target"]
+
+
+@pytest.mark.slow
+def test_end_to_end_in_a_freshly_created_venv(tmp_path, bridge_session, monkeypatch):
+    """真造一个**只有 matplotlib** 的 venv，整条链照样走得通。
+
+    `python -m venv`（不带 `--system-site-packages`）：里面没有 Tavotto、
+    没有 Flask、没有 PyMuPDF——正是科研项目 `.venv` 的样子。要联网装包，
+    所以标 slow（仓库惯例：默认跳过，`-m slow` 单独跑）。
+    """
+    venv = tmp_path / "uservenv"
+    subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True, timeout=300)
+    py = venv / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+    assert py.is_file()
+    subprocess.run(
+        [str(py), "-m", "pip", "install", "--quiet", "--disable-pip-version-check", "matplotlib"],
+        check=True,
+        timeout=1800,
+        env=child_env(),
+    )
+    probe = subprocess.run(
+        [
+            str(py),
+            "-c",
+            "import importlib.util as u, matplotlib, sys;"
+            "sys.stdout.write(str(u.find_spec('tavotto') is not None))",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=True,
+        env=child_env(),
+        timeout=120,
+    )
+    assert probe.stdout.strip() == "False", "夹具 venv 里竟然有 Tavotto"
+
+    proj = tmp_path / "proj"
+    write(proj / "paper.py", PAPER)
+    spec = bridge.spec_for(str(proj / "paper.py"), interpreter=str(py), cwd=str(proj))
+    monkeypatch.delenv("PYTHONPATH", raising=False)
+    sess = bridge.BridgeSession(spec, out_dir=tmp_path / "out")
+    try:
+        sess.start()
+        _full_chain(sess, tmp_path)
+        sess.resume()
+        sess.wait_event("barrier")
+        sess.resume()
+        sess.wait_event("exit")
+    finally:
+        sess.close()

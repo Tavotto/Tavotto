@@ -74,9 +74,15 @@ datas = [
     # 前端构建产物：app.py 按 PKG_ROOT/"web" 找，冻结后 PKG_ROOT 落在 _MEIPASS/tavotto
     (str(PKG / "web"), "tavotto/web"),
 ]
-# worker 子进程要用的源码（见文件头说明 1）
+# 执行侧子进程要用的源码（见文件头说明 1）。两条入口：
+#   safe worker      —— worker.py 及它平铺 import 的传递闭包；
+#   native bridge    —— bridge_runner.py（用户自己的 Python 按绝对路径起它）
+#                       + bridgeboot.py（私有命名空间装载器）。
+# 两份清单由 tests/test_runtime_build.py 从**源码的 import 闭包**反推校验，
+# 不靠人记得回来改这一行。
 for name in ("worker.py", "manifest.py", "overrides.py", "patchspec.py",
-             "pathgeom.py", "figcapture.py"):
+             "pathgeom.py", "figcapture.py", "figsession.py", "wireproto.py",
+             "bridge_runner.py", "bridgeboot.py"):
     datas.append((str(PKG / "engine" / name), "tavotto/engine"))
 
 # 内置渲染 runtime（见文件头说明 3）。

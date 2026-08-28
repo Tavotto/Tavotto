@@ -630,7 +630,10 @@ def test_spec_ships_every_module_the_worker_imports():
         # `import manifest` 找的就是它们；`matplotlib` 这类第三方不在此列
         return {n for n in names if (engine / f"{n}.py").is_file()}
 
-    closure, todo = set(), ["worker"]
+    # **两个根**：safe worker 与 native bridge runner 是两条各自独立起进程的
+    # 入口（后者由用户自己的解释器按绝对路径执行，见 ADR 0020）。只查一个根
+    # 就是这条用例 docstring 里说的「只查半条链」的同款缺陷，换了个位置。
+    closure, todo = set(), ["worker", "bridge_runner"]
     while todo:
         name = todo.pop()
         if name in closure:
@@ -641,6 +644,9 @@ def test_spec_ships_every_module_the_worker_imports():
     assert "patchspec.py" in siblings, "用例前提：worker 确实平铺 import 了 patchspec"
     assert "pathgeom.py" in siblings, (
         "用例前提：manifest 确实平铺 import 了 pathgeom（传递闭包这一层的样本）"
+    )
+    assert "figsession.py" in siblings and "wireproto.py" in siblings, (
+        "用例前提：worker 确实经 figsession / wireproto 复用编辑语义与信封"
     )
 
     spec = (REPO / "packaging" / "tavotto.spec").read_text(encoding="utf-8")

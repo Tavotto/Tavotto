@@ -5,8 +5,10 @@
 > 进度与交接在同目录 `COMPATIBILITY_BRIDGE_HANDOFF.md`，事实审计在
 > `compatibility-bridge-audit.md`。与本纲领相关的 ADR：
 > [0013 Runtime Figure Assets](../adr/0013-runtime-figure-assets.md)、
-> [0014 Safe/Native Execution Profiles](../adr/0014-safe-native-execution-profiles.md)
-> （两份均为 Proposed 草案）。
+> [0014 Safe/Native Execution Profiles](../adr/0014-safe-native-execution-profiles.md)、
+> [0020 Native Matplotlib Bridge](../adr/0020-native-matplotlib-bridge.md)
+> （0020 是 0014 §3「捕获通道」与 §7「待定稿事项」的裁决，
+> Session 8 technical spike，**机制已定稿、产品化未开始**）。
 
 ## 总目标
 
@@ -279,6 +281,8 @@ Compatibility Bridge 最终必须证明：
 - Copy as Matplotlib Code；
 - Jupyter capture；
 - 任意 shell command 注入；
+- **子进程里产生的 Figure**（native bridge 的钩子只在被直接执行的那个进程里
+  ——孙进程干净是它的优点，同时也是这条限制，见 ADR 0020 §10）；
 - R/Julia 等非 Python 绘图环境。
 
 不要为了显得完整而在前两轮提前扩大安全面。

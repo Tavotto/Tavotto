@@ -1,6 +1,10 @@
 # ADR 0014：Safe 与 Native 两档执行 Profile
 
-状态：**Proposed**（Session 1 草案，2026-08-25；预定 Session 7 设计轮定稿）
+状态：**Proposed**（Session 1 草案，2026-08-25）。**§3 捕获通道与
+§7 全部待定稿事项已由 [ADR 0020](0020-native-matplotlib-bridge.md) 裁决**
+（Session 8 technical spike，2026-08-28）；本文件的两档 profile 定义
+（§2）与「为什么不 pickle」（§6）仍然有效并被 0020 引用。剩下未定的只有
+产品面（`tavotto run` 的 CLI 契约、UI 确认、是否进池），留给 Session 9。
 相关：[Compatibility Bridge 总纲](../compatibility/COMPATIBILITY_BRIDGE_MASTER_PLAN.md)、
 [事实审计](../compatibility/compatibility-bridge-audit.md)、
 [Pylustrator 研究](../compatibility/pylustrator-study.md)、
@@ -129,9 +133,18 @@ Session 7 比较后定稿）。约束：
   权限悄悄给 safe；
 - 不自动升级：safe 失败绝不静默改跑 native。
 
-## 待定稿事项（Session 7 前必须裁决）
+## 待定稿事项（裁决记录）
 
-1. 捕获注入机制选型（驱动脚本 vs sitecustomize）与 Windows 差异；
-2. MCP 是否提供 native 工具（倾向 v1 不提供）；
-3. invocation parser 的错误分类与稳定错误码表；
-4. native 会话是否进池复用（倾向：进池，键带 spec 哈希）。
+| # | 问题 | 裁决 | 出处 |
+|---|---|---|---|
+| 1 | 捕获注入机制选型（驱动脚本 vs sitecustomize）与 Windows 差异 | **BRIDGE_RUNNER_SELECTED**——由 A/B 实测差异支撑（sitecustomize 的坑位在 Homebrew Python 上早就有人占着，直白实现会让用户环境里的 matplotlib 直接消失）。Windows 走同一条路径（loopback socket + argv 列表 spawn），**设计与用例就绪、真机未跑** | ADR 0020 §2 / §12 |
+| 2 | MCP 是否提供 native 工具 | **v1 不提供**（模型给的路径/命令不是授权，沿 ADR 0009 的 fail-closed 纪律） | ADR 0020 §10 |
+| 3 | invocation parser 的错误分类与稳定错误码表 | **推迟到 Session 9**（产品面）。spike 只认 `python 文件.py` / `python -m 模块`，其余显式拒绝 | ADR 0020 §10 / §13 |
+| 4 | native 会话是否进池复用 | **推迟到 Session 9**。spike 先证明单次跑得通；native 会话绑着一次具体 invocation（cwd/argv/env 都可能不同），复用条件比 safe 复杂得多 | ADR 0020 §13 |
+
+另有两条本 ADR 起草时没想到、由 spike 定下的机制：
+
+- **控制通道不能走 stdin/stdout**（那是用户程序的语义）→ loopback + 一次性
+  token，**协议信封零改动**（ADR 0020 §6）；
+- **Figure 归主线程**，native 侧不起后台线程 + `LiveFigureSession` 的线程
+  身份断言（ADR 0020 §7）。

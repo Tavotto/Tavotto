@@ -4,6 +4,323 @@
 
 ## 当前状态
 
+- 日期：2026-08-28
+- 当前 branch：`compat/bridge-session08-native-spike`（worktree
+  `.claude/worktrees/compat-bridge-session08`，**基于 `origin/main` `7952ceb`**，
+  不 stacked 在任何未合并分支上）
+- 本 Session Prompt：Session 8 —— Matplotlib Bridge Technical Spike
+- 交付：**技术验证**（ADR 0020 定稿 + 可运行实现 + 69 条用例 + 12 条负向反证）。
+  **不是产品**：`tavotto run` 不存在，spike 入口没有稳定契约。
+- **Session 7（PR #177，项目 .venv 自动接手 / ADR 0018+0019）仍 open**。
+  本 Session **刻意不 stacked 在它上面**：spike 与它没有代码依赖，独立分支
+  两边都能先合（ADR 编号取 0020，与 #177 的 0018/0019 无冲突）。
+
+## Session 8 结论（一句话）
+
+> **GO / BRIDGE_RUNNER_SELECTED。** 在不改用户源码、不往用户环境装 Tavotto、
+> 不重建用户 shell 环境的前提下，用户自己的 Python 跑用户的原脚本、Figure
+> 留在那个进程里、Tavotto 经 loopback + worker 协议 v1 做 manifest / override
+> / render / export——**全链已在真进程里跑通**（含只有 matplotlib 的干净 venv）。
+
+完整裁决与证据在 **[ADR 0020](../adr/0020-native-matplotlib-bridge.md)**。
+
+## 本轮交付
+
+- [x] **共用编辑语义**：`engine/figsession.py`（`LiveFigureSession`）——捕获表 /
+  FigState / manifest / render / render_png / preview_png / export / snapshot。
+  `worker.Worker` 与 native bridge 都是它的消费者。**safe worker 语义逐条保留**
+  （全量 pytest 绿）。
+- [x] **共用信封语义**：`engine/wireproto.py`（v1 解析 / 校验 / 分派 / 回显 /
+  错误信封）。native 只多一个命令 `continue`。**没有第二套 protocol semantics。**
+- [x] **调用侧信封唯一出处**：`pool.build_envelope()`，`EngineWorker` 与
+  bridge 客户端都吃它。
+- [x] **`engine/bridgeboot.py`**：私有包命名空间装载器（`tavotto_bridge_runtime.*`）
+  + `sys.meta_path` 后置 import 钩子（自己不 import 任何东西）。
+- [x] **`engine/bridge_runner.py`**：交给用户 Python 的那份代码。收回
+  `sys.path[0]`、装钩子、按 CPython 自己的做法组装 `__main__`（script）或
+  `runpy.run_module(alter_sys=True)` + `sys.path[0]=cwd`（module）、屏障、
+  loopback 控制循环。
+- [x] **`engine/bridge.py`**：父进程侧（listen / spawn / 认证 / v1 请求）。
+- [x] **`engine/bridge_spike.py`**：验证 CLI，**刻意没有接进 `tavotto` CLI**。
+- [x] **`execspec`**：`native_spec()` / `bridge_argv()` + `raw_target` 字段
+  （argv[0] 的对拍口径；native 的三条硬约束在构造时就拦）。
+- [x] **`overrides._sibling()`**：两处 late import 不再走裸名（理由见 ADR 0020 §3.1）。
+- [x] **打包**：`figsession` / `wireproto` / `bridge_runner` / `bridgeboot`
+  进 `packaging/tavotto.spec`；`test_runtime_build` 的 import 闭包门禁从
+  一个根扩到两个根。
+- [x] **用例 61 条**（`tests/bridge/`，全部真起子进程）+ 助手
+  `tests/support/bridgekit.py`。
+- [x] **ADR 0020**（Accepted，technical spike）+ `src/tavotto/AGENTS.md`
+  新增「两条执行入口」一节。
+
+## 用例分布（tests/bridge/，69 passed + 1 slow）
+
+| 文件 | 条数 | 覆盖 |
+|---|---|---|
+| `test_bridge_namespace.py` | 7 | 装载器不变量、两阶段不重复装、用户项目 12 个同名模块全赢、late import、结构性守卫 |
+| `test_bridge_invocation.py` | 8 | script/module 与真实 python 逐 13 字段对拍、绝对路径 argv[0]、不加解释器标志、env 原样继承、token 不进用户脚本 |
+| `test_bridge_capture.py` | 14 | prompt §十三的 12 条形态 + 屏障之后新产的图 / 编辑不被冲掉（评审轮 1） |
+| `test_bridge_backend_and_show.py` | 8 | 不提前 import pyplot、三个后端、无 matplotlib 脚本、show 阻塞语义 |
+| `test_bridge_transport.py` | 10 | loopback-only、错 token、token 随机、信封同源、stdout 噪声、断开、shutdown、不往用户 home 写、spike 未接进产品 CLI |
+| `test_bridge_thread_model.py` | 8 | WrongThread、族判据、无后台线程、运行时线程 id 相等、零 pickle、通道只跑 JSON |
+| `test_bridge_e2e.py` | 5 + 1 slow | 完整链（manifest→改字号→导出 PDF→撤销）、用户环境无 Tavotto、module 形态、**真 venv（`-m slow`）** |
+| `test_bridge_injection_models.py` | 9 | A/B 实测对比（§17 的裁决依据） |
+
+## 实际运行的验证（worktree 内，PYTHONPATH=src，主仓 .venv 解释器）
+
+```bash
+ruff check . && ruff format --check .                       # 通过（229 文件）
+python -m pytest -q                                          # **全量绿**，7:57
+python -m pytest tests/bridge -q                             # 69 passed
+python -m pytest tests/bridge -q -m slow                     # 1 passed（真 venv，联网装 matplotlib）
+python scripts/smoke_app.py --python .venv/bin/python        # 冒烟通过
+python scripts/ci/compat_matrix.py --smoke                   # 通过（路由 safe_probe/cli_open/
+                                                             #  desktop_project 各 3/3；native_run
+                                                             #  仍 not_implemented ×3 —— 如实记账）
+python scripts/build_mcp_widget.py --check                   # 9fe4aad080b18fa4 一致
+python scripts/build_browser_playground.py --check           # 1a7aefda8bbe880f 一致
+/opt/homebrew/opt/python@3.11/bin/python3.11 <runner> …      # 3.11 上单跑一次（无图路径）
+```
+
+`tests/bridge` 只占 24s（全量 7:57 的 5%），因为它们大多是"起一个进程、
+import matplotlib、跑几行、退出"。**这套用例走默认 pytest**，所以
+`backend-fast`（PR，Linux 3.10 + 3.13）与 `backend-platforms`
+（merge_group，mac + Windows）都会自动跑到——Windows 覆盖不需要新 workflow。
+
+坑复述：① 全量套件跑着的时候**不要改源码**——本轮那次 `F` 我一开始当成变异
+残留，实际是门禁真抓到了东西（9 处 subprocess 没钉 encoding）；② 本机
+`shell cwd` 会被重置，每条命令都要显式 `cd` 到 worktree，否则改动会落进
+主工作区（本轮发生过一次，已整体搬回）。
+
+## 负向反证（本轮十二条，全部先红后还原）
+
+| # | 变异 | 判据 | 结果 |
+|---|---|---|---|
+| 1 | 摘掉 `plt.show` 钩子 | `test_show_blocks_by_default_and_returns_after_continue` | **红** |
+| 2 | runner 顶上 `import matplotlib.pyplot` | `test_user_code_is_the_first_to_import_pyplot` + `..._never_touches_matplotlib...` | **红**（2 条） |
+| 3 | 控制通道改回 stdin/stdout | `test_a_noisy_script_never_desyncs_the_control_channel` + E2E | **红**（2 条） |
+| 4 | `figsession` 里 `import pickle` | `test_no_engine_module_ever_pickles_a_figure` | **红** |
+| 5 | 捕获不去重（savefig 之后 Gcf 再收） | `test_savefig_then_still_in_gcf_is_not_captured_twice` | **红** |
+| 6 | 两处 late import 改回裸 `import manifest` | `test_the_late_manifest_import_resolves...` + 结构性守卫 | **红**（2 条） |
+| 7 | `_own()` 不再断言 / 摘掉 `do_render` 的那一处 | `..._refuses_to_be_touched_from_another_thread` / `..._every_mutating_entry...` | **各红一条** |
+| 8 | engine 目录留在 `sys.path` 上 | `test_user_modules_win_over_the_engine_siblings` | **红** |
+| 9 | 装载失败时的还原从 `finally` 挪回顺序执行 | `test_a_failed_load_still_restores_the_user_namespace` | **红** |
+| 10 | 屏障复用分支去掉 `_sync_captures()` | `test_a_figure_created_after_the_first_barrier_reaches_the_session` | **红**（评审轮 1） |
+| 11 | `compile` 改回 `dont_inherit=False` | `test_bridge_future_flags_never_leak_into_the_user_script` | **红**（评审轮 1） |
+| 12 | module 源文件退回"跑完读 `__main__`" | `..._without_show_still_knows_its_own_file` + `..._dunder_main` | **红 ×2**（评审轮 1） |
+
+**反证 1 的诚实修正**：prompt 预期「去掉 show hook → show-only case 失败」。
+实测**不失败**——脚本结束时的 Gcf 兜底照样把图捕获到。show 钩子的独有价值
+是**中途屏障**（脚本还没跑完就能编辑），红的正是那一条。这是设计比预期更
+稳健，不是判据不成立。
+
+**反证 6 的第一版是空的**：最初拿「翻转色条方向」当判据，变异跑完全绿——
+`_refresh_axes_follow` 外面包着 `except Exception: pass`，裸 import 在那里是
+**静默**失败的。判据换成不吞异常的 `FigState.resolve` 那条路径（先把刻度
+定位改 fixed + 给 15 个值，再改第 13 条刻度的文字，那条 gid 不在 index 里），
+另加一条结构性守卫盖住整族。
+
+## PR #186 评审轮 1（Codex，2026-08-28）
+
+**三条 P1 全部核实成立，逐条复现过再修，各带回归用例 + 手工反证一次红。**
+
+| # | 问题 | 复现 | 修法 |
+|---|---|---|---|
+| 1 | **屏障之后新产的图进不了会话**。钩子写的是模块级 `_CAPTURE`（它们是类属性级 monkeypatch，拿不到实例），而会话是第一个屏障那一刻才建的；复用分支只 `instrument_all()`，没把新条目搬进去 | `show()` → 继续 → 再画一张 → 再 `show()`：屏障 2 的 stems 仍只有第一张 | `_ensure_session` 复用分支先 `_sync_captures()`（幂等：`add_figure` 不覆盖、`instrument_all` 不重建） |
+| 2 | **runner 自己的 future flag 泄漏给用户脚本**。`compile(..., dont_inherit=False)` 会把调用处生效的 future 语句一并传下去，而 runner 有 `from __future__ import annotations` | `x: NoSuchType = 5` 直跑报 `NameError`，bridge 里**静默通过** | `dont_inherit=True`。脚本自己写的 future import 不受影响（在源码里） |
+| 3 | **module 目标跑完之后 `__main__` 已被 runpy 恢复成 runner**。只 savefig 不 show 的 `-m` 目标只有脚本结束那一次屏障，那时读到的 `__file__` 是 `bridge_runner.py` | `rel_target == "bridge_runner.py"`，asset id 变成 `runtime:bridge_runner.py#Fig1` | 开跑**之前**用 `resolve_module_origin()` 解析（`pkg` → `pkg.__main__` 与 runpy 同款），经 `on_origin` 回调记下；`__main__` 兜底显式排除 runner 自己 |
+
+**三条被漏掉的共同形状**（值得记）：我的用例只跑了**方便的那个时刻**。
+
+* 第 1 条：`test_repeated_show_captures_each_new_figure_once` 跑在 `--report`
+  形态（没有控制通道），屏障立刻返回、会话是脚本跑完才建的一次性对象
+  ——那时所有图早就都在表里了；
+* 第 3 条：`test_module_target_end_to_end` 的夹具调了 `plt.show()`，屏障发生
+  在 `run_module` **执行中间**，那时 `__main__` 还是用户的模块；
+* 第 2 条：根本没有一条用例问过"注解语义一样吗"。
+
+前两条都是**状态会被恢复/变陈旧的那个时刻没测**。新增用例一律钉在那个时刻上
+（真屏障、没有 show 的那一支），并各留了一句"上面那条为什么测不到这个"。
+
+## CI 轮 1 的两条红（2026-08-27，由 tavotto-16 / tavotto-89 报）
+
+**两条都不是产品缺陷，是判据量错了对象——本机绿、CI 红，而 CI 是对的。**
+
+| 症状 | 真正的毛病 | 修法 |
+|---|---|---|
+| `home 里多出了意料之外的东西: ['.cache']` | 「不往用户 home 写」被量成「home 里有什么」。主语从**本 runner** 滑到了**整台机器**——`.cache` 是 Linux 的 fontconfig 建的。用例注释自己写着正确判据，下一行却与它矛盾 | 报告新增 `out_dir`（产物**实际**去了哪）→ 断言它不在 home → 断言产物确实落在那儿（观测有效）→ 按**本次的 stem** 在 home 下找混进去的产物 |
+| `assert 'non-interactive' in ''` | 拿 matplotlib 的警告**文案**当「钩子没装上」的代理判据。它随版本变：本机 3.10.8 打，CI 的 3.11.1 不打。而且失败长成空串——**观测失效和断言失败长得一模一样** | 夹具**自报** `RAN` + `HOOKED`/`NOT-HOOKED`：`RAN` 是观测有效的前提，`NOT-HOOKED` 才是结论，与版本无关。基准那条加正向对照，免得探针变成永远说 NOT-HOOKED 的空判据 |
+
+**修第一条时同一个错误又犯了一次**：stray 判据先写成「任何 `.svg`/`.json`」，
+本机当场逮到 matplotlib 自己的 `.matplotlib/fontlist-v390.json`。按 stem 找
+才只可能命中我们自己的产物。**"量错对象"不是一次失误，是一个会连着犯的家族。**
+
+不采纳的修法与理由：
+
+- **把 `.cache` 加进白名单** —— 治标，下一个共享目录出现时照红；
+- **删掉那条只留 `leaked`（名字判据）** —— peer 的建议，方向对但留了洞：
+  runner 往 `~/figs/` 写产物时名字里没有 "tavotto"，纯名字判据放行。
+  反证 14 专门钉这一条。
+
+**另一条与验证口径有关的**：`#185` 落地后 `cla-check` 进了 `CI fast gate`
+的闭集。17:50 那轮跑的时候还没有这一格——**下一轮的 fast gate 与那一轮不是
+同一个东西**，名字相同不等于同一次验证（"数有结论的 run"那条纪律的近邻形态）。
+本分支已 rebase 到 `ee19e29` 重跑。
+
+`cla-check` 是新格，本能的担心是"它会不会因为配置缺失静默 skip，而汇总把
+skipped 当不阻塞"——**已由 tavotto-89 在 #185 上验过两条路径，结论是反的**：
+
+* `pull_request`（job 98670257761）：真的判了并输出
+  `{"login":"erwanjun","verdict":"exempt","sources":["pr_author","commit_author"]}`，
+  提交数核对 4/4；
+* `merge_group`（job 98682598080，**今天之前从没跑过**）：收集贡献者那步
+  按设计 skipped（队列里没有 PR 上下文），判定步给
+  `{"status":"not_applicable","reason":"qualified_at_pull_request"}`。
+
+而且**这个仓库的 `aggregate_gate` 把 `skipped` 当成 problem**（#184 的
+integration gate 日志实证：`"problems":["backend-platforms: skipped",…]` →
+`"status":"failure"`），所以"被跳过 = 静默放行"那个空门禁形状在这里
+**结构上不成立**——被跳过的 needs 会让 `CI fast gate` 永久红。
+
+## `cla-check` 在本 PR 上判红，而它是对的（2026-08-28）
+
+**这是那一格在这个仓库的第一次真实否定结论，是个真阳性。**
+
+```
+2. 取默认分支上的可信判定输入   success
+3. 收集这个 PR 的贡献者          success
+4. 判定                          failure   ← 真判据、真结论，不是配置缺失静默失败
+```
+
+根因在本分支：13 个提交里 **10 个的 author 是 `q <q@l>`**——本会话启动时生效
+的 git 身份（会话环境块写着 `Git user: q`），而 **GitHub 把 `q@l` 映射到一个
+第三方账号**。那一格看到两个贡献者、其中一个从没签过，判红完全正确。
+
+已修：那 10 个提交 re-author 成 `erwanjun <1259959884@qq.com>`（现在 git config
+说的、本分支另外 3 个提交用的、也是 main 历史里用的）。核对过**树哈希逐条相同
+（内容一字未动）、消息逐条相同、author date 保留**，GitHub 现在看到 13 个全是
+`erwanjun`。`q@l` 在 main 里从没出现过，其它远端分支也没有——是本会话独有的。
+
+**两条留给后来人的**：
+
+- **开工前核一次 `git log -1 --format='%an <%ae>'`。** 身份错了全程零提示，
+  一路到 CLA 那格才炸，而中间每个提交都在公开地把用户的工作记在陌生人名下。
+  判据要看 **author** 不是 committer——rebase/amend 会换 committer、**保留
+  author**，所以 committer 对了不代表 author 对了（本例 13 个 committer 全对）。
+- **提交数守卫这轮没被验到**：它防的是分页截断（GitHub 每页 30），本分支 13 个
+  压不到那条边界。第一次真正的压力测试是 #177 的 41 个提交（tavotto-89 指出）。
+
+## 与 #177 的合并顺序（2026-08-28，tavotto-89 发现，本会话复核）
+
+**#186 与 #177 之间有冲突，两个方向都有**——此前我们各自量的都是"对
+`origin/main` 零冲突"，**没人量过两个分支之间**。那个判据回答的是「我能不能
+落到今天的 main 上」，不是「我们俩能不能都落地」，又一次主语差一层。
+
+```
+git merge-tree --write-tree --name-only HEAD origin/compat/bridge-session07-project-env
+  CONFLICT  docs/compatibility/COMPATIBILITY_BRIDGE_HANDOFF.md
+  CONFLICT  src/tavotto/AGENTS.md
+  （src/tavotto/engine/pool.py 三方合并自动过，改动区域不同）
+```
+
+两处都是**双方各加一节**（交接：Session 7B 段 vs Session 8 段；
+`src/tavotto/AGENTS.md`：项目环境接手 vs 「两条执行入口」），解法是取并集
+不是二选一。
+
+**顺序：#177 优先**（它工程侧已就绪、只等用户对 8 条 code-scanning 告警拍板；
+#186 是预研，没有时间压力）。所以由 **#186 在 #177 落地之后解这两个文件**，
+且**等它真落地再解**——main 一动预解就作废。
+
+## 本轮踩到并留了注释的三个坑
+
+1. **`V1Handler` 的分派方法不能叫 `handle`**——safe worker 的 legacy 扁平信封
+   入口历来就叫 `handle`，子类同名会静默顶掉，表现是每条 v1 请求都被答成
+   「未知指令: render」。
+2. **每个屏障都必须被应答**——一次运行里屏障出现多次（每个 `plt.show()` 一次
+   + 脚本跑完一次）。只应答第一个然后去等 `exit`，两边各等各的，本机挂死。
+3. **装载窗口内要把用户已 import 的同名模块挪开**——`importlib.import_module`
+   先查 `sys.modules`，用户项目里的 `figsession.py` 会被当成我们的，报出
+   `AttributeError: ... has no attribute 'LiveFigureSession'`。这条是用例
+   抓出来的，不是设计时想到的。
+
+## 未完成 / 进 Session 9 的入场券
+
+- [ ] **Windows 真机执行**：`tests/bridge/` 走默认 pytest，所以
+  `backend-platforms`（merge_group / `full-ci`）本来就会在 mac + Windows 上
+  各跑一遍——缺的只是**看见那一遍的结果**。入队前用 `full-ci` 标签在 PR SHA
+  上取证，别拿整轮队列资格试错（Session 6 的教训）。
+  本轮已经被仓库既有的 Windows 门禁抓到过一次真缺陷（9 处
+  `subprocess.run(text=True)` 没钉 `encoding`），说明「平台无关」不能只靠
+  眼睛看。
+- [ ] **native 会话是否进池复用**（ADR 0014 §7 第 4 问）。
+- [ ] **产品面**：`tavotto run` 的稳定 CLI 契约与错误码表、桌面交接、UI 一次性
+  确认（必须写明解释器路径 / cwd / 「拥有你当前用户的全部权限」）、每项目
+  记住选择、SSE 进度。
+- [ ] **CompatBench 的 `native_run` 路由**从 `not_implemented` 升级。
+- [ ] **`_refresh_axes_follow` 的静默 except**：要不要收窄是独立一笔。
+- [ ] **target 不存在时报的是 `script_error`**（带一段 FileNotFoundError
+  traceback），分类不准——那是 invocation 层的错，不是脚本的错。归到
+  Session 9 的「invocation parser 错误分类与稳定错误码表」一起做。
+- [x] ~~CI 时长~~：实测 `tests/bridge` 24s（全量 7:57 的 5%），不构成问题。
+- [ ] **网站 playground re-sync**：本轮动了 `overrides.py`（`_sibling`），
+  playground 指纹变成 `1a7aefda8bbe880f`（canvas.html `9fe4aad080b18fa4`
+  不受影响——它不嵌 Python）。`web/dist-playground/` 是 gitignored 的可再生
+  产物，所以本分支里没有可提交的差异；合并后在新 main 上重跑
+  `python scripts/build_browser_playground.py`，再去网站仓库
+  `pnpm sync-playground`。
+- [ ] 上一轮遗留：真机最终产物证据（§六）。
+
+## rebase 到 #177 之后浮出来的一条（Session 9 必看）
+
+`#177` 落地后 main 上有了 `pool.mutating_environment()`：装依赖期间独占一个
+环境——先 `shutdown_workers_using(python)` 收掉该解释器上的会话，再让
+`pool.get()` 拒起新的（`environment_mutating`）。
+
+**native bridge 的会话不在池里**（它自己 spawn 用户的解释器，不经 `pool.get()`），
+所以那把锁**覆盖不到它**。也就是说 `tavotto run` 一旦成为产品：
+
+> 用户在 native 会话里握着 live Figure 的同时，另一个请求可以往**同一个解释器**
+> 装包——`pip` 会替换 / 删除已有包的文件，而那个进程还在跑。
+
+今天**够不着**：native 唯一入口是 spike CLI，没接进任何产品面，两条路凑不到
+一起。但这是 Session 9 做产品化时必须先回答的一条，且答案不止一种（native
+会话也进那把锁 / native 会话进池 / 装包时显式拒绝并说明有活跃的 native 会话）。
+选哪个连着 ADR 0014 §7 第 4 问（native 要不要进池）。
+
+**这条是 rebase 才浮出来的**：两个子系统各自的用例都绿，`pool.py` 的改动区域
+也不重叠（本轮加在 84 行的 `build_envelope`，#177 加在 157+/1757+），**三方合并
+自动通过**——冲突检测回答的是「文本能不能合」，不是「语义能不能共存」。
+
+## 下一 Session 首先阅读
+
+```text
+docs/adr/0020-native-matplotlib-bridge.md   ← 本轮的全部裁决与证据
+docs/adr/0014-safe-native-execution-profiles.md（§3/§7 已由 0020 裁决）
+docs/compatibility/COMPATIBILITY_BRIDGE_MASTER_PLAN.md
+src/tavotto/AGENTS.md 的「两条执行入口」一节
+src/tavotto/engine/{bridgeboot,bridge_runner,bridge,figsession,wireproto}.py
+tests/bridge/（尤其 test_bridge_injection_models.py —— §17 的裁决依据）
+```
+
+## 建议启动命令
+
+```bash
+git status --short && git log -8 --oneline
+PYTHONPATH=src /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/bridge -q
+PYTHONPATH=src /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/bridge -q -m slow  # 真 venv，要联网
+PYTHONPATH=src /Volumes/Projects/Tavotto/.venv/bin/python -m tavotto.engine.bridge_spike run \
+    -- <你的python> <你的脚本.py>
+```
+
+---
+
+
+---
+
+# 历史（Session 7 / 7B —— PR #177，已合入 main `8118ba2`）
+
+> 下面是上一轮的交接原文。Session 6 及更早的历史由 #177 收走（本轮沿用它的处置，不再重新展开）；需要时查 git 历史与 PR #127。
+
 - 日期：2026-08-27
 - 当前 branch：`compat/bridge-session07-project-env`（worktree
   `.claude/worktrees/compat-bridge-session01`），已 rebase 到 `origin/main`
@@ -58,9 +375,6 @@ pool 侧本轮的增量都是**加**出来的，不改既有判据：`SOURCE_MAN
 （受管环境的来源标签）、`remembered_source()`、`note_project_python_ok()`
 （把 `try_project_env` 里那两行重复的登记收成一处）、
 `mutating_environment()` / `is_mutating()` / `shutdown_workers_using()`。
-
-## 已完成
-
 - [x] **`engine/depresolve.py`**（新）：import 名 → distribution 的可信解析。
   三档来源（project_declared / curated / user_specified），**没有第四档**；
   curated 分「名字不同要查表」与「同名但显式登记过」两张表；包名语法作为
