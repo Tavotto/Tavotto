@@ -44,6 +44,27 @@
 "Safe native execution" / "Fully sandboxed"，理由与 ADR 0014 §2 同一条：
 **两档的文案必须与机制逐条一致**。
 
+### 0.1 落地状态（2026-08-28）
+
+控制面（PR 9A）与桌面产品面（PR 9B）**背靠背落地**，两者缺一都不成立：
+9A 单独进 main 的话，README 上那句「你确认之前，一行代码都不会跑」是**假**
+的——桌面首启的落地 URL 丢掉了交接 ID，确认屏永远不出现，CLI 挂到 attach
+超时，而每一条门禁都是绿的。
+
+那件事本身是这一版最值得记的一笔：**裁决写在 Markdown 里拦不住任何人。**
+`TAVOTTO_RUN_BETA = BLOCKED` 当时只存在于交接文档，全仓代码零处，而 `run`
+已经进了 CLI 的子命令闭集。现在这句承诺由
+`tests/native/test_run_beta_claims.py` 看着：它把 README 的每一句承诺连到
+兑现它的那几行代码上（跨 Rust / TypeScript / Python 三种语言——三条腿缺任何
+一条那句话就是假的，而没有任何单语言的用例看得见这一点）。
+
+**仍未验证的只剩一条**：Windows / macOS **安装包**上的真机 E2E（§58）。本轮
+全部在源码检出上跑；`tests/native` 走默认 pytest，所以 `backend-platforms`
+会在 mac + Windows 上各跑一遍——但那证明的是后端与 CLI，不是安装包里的
+`tavotto-cli.exe` + 桌面壳。打包闭包已经在真产物上有了看护
+（`build_desktop.py` 与 `windows-exe-smoke` 各跑一次 `run --help` 与一条
+故意的用法错误），壳内交互仍待真机。
+
 ---
 
 ## 1. 进程所有权：CLI 必须继续拥有用户的 Python

@@ -58,8 +58,30 @@ describe('runtimeAssetStore', () => {
       stem: 'fig',
     })
     expect(useRuntimeAssetStore.getState().byId['runtime:fig.py#fig']).toEqual({
-      status: 'fresh', cached: true, registered: true, checked: true,
+      status: 'fresh', cached: true, registered: true, checked: true, profile: 'safe',
     })
+  })
+
+  it('后端说 native 就记 native——离线角标靠它（ADR 0021 §9）', async () => {
+    mockFetch.mockResolvedValue({
+      id: 'runtime:fig.py#fig', status: 'fresh', script: 'fig.py',
+      stem: 'fig', entry: '__main__', registered: true, cached: true,
+      execution_profile: 'native',
+    })
+    useRuntimeAssetStore.getState().ensure(runtimePanel())
+    await flush()
+    expect(useRuntimeAssetStore.getState().byId['runtime:fig.py#fig'].profile).toBe('native')
+  })
+
+  it('**未知不等于 native**：老后端不给这个字段时按 safe 记', async () => {
+    // 反过来的话，每一个普通 runtime 面板都会挂上「会话已结束」的角标
+    mockFetch.mockResolvedValue({
+      id: 'runtime:fig.py#fig', status: 'fresh', script: 'fig.py',
+      stem: 'fig', entry: '__main__', registered: true, cached: true,
+    })
+    useRuntimeAssetStore.getState().ensure(runtimePanel())
+    await flush()
+    expect(useRuntimeAssetStore.getState().byId['runtime:fig.py#fig'].profile).toBe('safe')
   })
 
   it('非 runtime 面板绝不查询', () => {
@@ -74,6 +96,8 @@ describe('runtimeAssetStore', () => {
     await flush()
     expect(useRuntimeAssetStore.getState().byId['runtime:fig.py#fig']).toEqual({
       status: 'needs_rerun', cached: false, registered: false, checked: true,
+      // 查询失败时同样按 safe：不猜成 native，也就不会误挂「会话已结束」
+      profile: 'safe',
     })
   })
 

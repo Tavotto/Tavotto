@@ -106,6 +106,22 @@ def _read(rel: str) -> str:
     return (ROOT / rel).read_text(encoding="utf-8")
 
 
+#: 注释行（`//` / `*` / `/*` / `#` 开头）。Rust、TS、Python 三种源码共用。
+_COMMENT_LINE = re.compile(r"^\s*(//|\*|/\*|\*/|#)")
+
+
+def code_only(text: str) -> str:
+    """去掉注释行之后的源码。
+
+    **这一步是变异测试逼出来的。** 判据原本直接在整份文件里找 marker，而
+    `NativeConfirmDialog.tsx` 的模块注释里正好写着一句「必须做出选择
+    （`blockDismiss`）」——于是把那个 prop 整个删掉之后，门禁**照样绿**。
+
+    一条被注释满足的门禁比没有门禁更坏：它让人以为那行代码还在。
+    """
+    return "\n".join(ln for ln in text.splitlines() if not _COMMENT_LINE.match(ln))
+
+
 def _readmes() -> dict[str, str]:
     return {name: _read(name) for name in ("README.md", "README.zh-CN.md")}
 
@@ -129,7 +145,8 @@ def test_each_readme_promise_is_backed_by_code(claim: Claim):
         f"这句承诺只在其中一份 README 里：{promised}\n  zh: {claim.zh}\n  en: {claim.en}"
     )
     for leg in claim.legs:
-        assert re.search(leg.pattern, _read(leg.path)), (
+        # **只在代码里找**：注释里提一句不算兑现（见 `code_only` 的说明）
+        assert re.search(leg.pattern, code_only(_read(leg.path))), (
             f"{leg.path} 里找不到 /{leg.pattern}/ —— README 的这句话因此不再成立：\n"
             f"  「{claim.zh}」\n"
             f"  这一行的作用：{leg.why}\n"
@@ -147,10 +164,54 @@ def test_the_cli_only_spawns_after_the_desktop_has_attached():
     行为本身由 `test_native_api.py` / `test_run_cli_integration.py` 量；这里
     量的是**源码顺序**，因为它是那句承诺里唯一一条单靠读代码就能看出对错的。
     """
-    src = _read("src/tavotto/engine/runcli.py")
+    src = code_only(_read("src/tavotto/engine/runcli.py"))
     wait = src.index("relay.wait_for_desktop(")
     spawn = src.index("proc = _spawn_user_python(")
     assert wait < spawn, (
         "`tavotto run` 在桌面 attach 之前就 spawn 了用户的 Python——"
         "README 的「你确认之前，一行代码都不会跑」当场变成谎话"
     )
+
+
+def test_a_marker_that_only_appears_in_a_comment_does_not_count():
+    """`code_only` 自己的看护——**这条是变异测试逼出来的**。
+
+    第一版判据直接在整份文件里找 marker，而 `NativeConfirmDialog.tsx` 的模块
+    注释里正好写着一句「必须做出选择（`blockDismiss`）」。于是把那个 prop
+    整个删掉之后门禁**照样绿**：一条被注释满足的门禁比没有门禁更坏，它让人
+    以为那行代码还在。
+
+    这条用例钉的是"注释不算数"这件事本身，跑不到真文件上——真文件里今天
+    两者都在，量不出区别（这正是当初没发现的原因）。
+    """
+    ts = "\n".join(
+        [
+            "/**",
+            " * 必须做出选择（`blockDismiss`）：点外面和 Esc 都不算回答。",
+            " */",
+            "export function Dialog() {",
+            "  return <RD.Root open />",
+            "}",
+        ]
+    )
+    assert "blockDismiss" in ts
+    assert "blockDismiss" not in code_only(ts)
+
+    with_prop = ts.replace("  return <RD.Root open />", "  return <RD.Root open blockDismiss />")
+    assert "blockDismiss" in code_only(with_prop)
+
+
+def test_code_only_keeps_ordinary_source_lines():
+    """反方向：别把正常代码也删了（那会让整族判据变成恒红）。"""
+    src = "\n".join(
+        [
+            "# 注释",
+            "x = 1  # 行尾注释不算注释行",
+            "    // rust/ts 的注释",
+            "    let y = 2;",
+            "  * jsdoc 续行",
+        ]
+    )
+    kept = code_only(src)
+    assert "x = 1" in kept and "let y = 2;" in kept
+    assert "# 注释" not in kept and "rust/ts 的注释" not in kept and "jsdoc" not in kept
