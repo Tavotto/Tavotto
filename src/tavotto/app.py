@@ -34,6 +34,7 @@ from flask import (
     Flask,
     Response,
     abort,
+    g,
     has_request_context,
     jsonify,
     request,
@@ -51,14 +52,17 @@ from .engine import (
     brand as engine_brand,
     cli as engine_cli,
     config as engine_config,
+    deprepair as engine_deprepair,
     diagnostics as engine_diagnostics,
     diagnostics_frontend as engine_diagnostics_frontend,
     discover as engine_discover,
     handoff as engine_handoff,
     locate as engine_locate,
+    managedenv as engine_managedenv,
     patchspec as engine_patchspec,
     pool as engine_pool,
     probe as engine_probe,
+    projectenv as engine_projectenv,
     registry as engine_registry,
     runtime as engine_runtime,
     runtimeasset as engine_runtimeasset,
@@ -582,7 +586,65 @@ def _worker_error_payload(exc) -> dict:
     body = {"error": str(exc), "traceback": exc.traceback_text, "code": exc.code}
     if getattr(exc, "module", ""):
         body["module"] = exc.module
+    # 项目环境自动接手失败时的结构化原因（ADR 0018）：找不到 venv / venv 里
+    # 也没这个包 / 那个环境没有 matplotlib / Python 版本不支持。前端据此给出
+    # 各自不同的恢复引导——四种情况用户要做的事完全不同，混成一句话等于没说。
+    detail = getattr(exc, "project_env", None)
+    if isinstance(detail, dict) and detail.get("code"):
+        body["project_env"] = {
+            "code": detail.get("code", ""),
+            "module": detail.get("module", ""),
+            "venv": _project_relative(detail.get("venv", "")),
+            "candidates": [_project_relative(c) for c in (detail.get("candidates") or [])],
+            "python_version": (detail.get("health") or {}).get("python_version", ""),
+        }
+    if exc.code == "missing_dependency" and getattr(exc, "module", ""):
+        repair = _dependency_repair_offer(exc, detail)
+        if repair is not None:
+            body["dependency_repair"] = repair
     return body
+
+
+def _dependency_repair_offer(exc, project_env: dict | None) -> dict | None:
+    """「这个缺的包能不能一键装上」——挂在 missing_dependency 的错误响应里。
+
+    **只读判断**（ADR 0019 §UX）：解析 import 名 → distribution、看项目里那个
+    `.venv` 是不是「除了这个包之外都健康」、看能不能建受管环境。一个子进程都
+    不起，也**绝不**在这里安装任何东西——安装要用户先看到「装什么、装到哪、
+    会不会改你的环境」再点一次。
+
+    没有打开项目（CLI 单文件、素材库之外的路径）时回 None：修复的作用域是
+    项目，没有项目就没有可信的依赖声明，也没有地方记账。
+    """
+    try:
+        root = str(require_project())
+    except NoProjectError:
+        return None
+    script = getattr(exc, "script_name", "") or ""
+    try:
+        return engine_deprepair.offer(root, script, exc.module, project_env)
+    except (OSError, ValueError) as err:  # 修复建议失败不该盖掉原始错误
+        LOG.warning("依赖修复建议生成失败: %s", err)
+        return None
+
+
+def _project_relative(path: str) -> str:
+    """项目内的路径显示成项目相对（`.venv`），项目外的原样交出。
+
+    界面上「找到了 `/Users/张三/paper/.venv`」远不如「找到了 `.venv`」好读，
+    诊断包也不该无谓地带上用户主目录名。
+    """
+    if not path:
+        return ""
+    try:
+        root = require_project()
+    except NoProjectError:  # 没有打开项目时不该影响错误响应
+        return str(path)
+    # **走 projectenv 那一份**：它刻意不 `resolve()` 解释器本身。
+    # `.venv/bin/python` 在 POSIX 上是指向基础解释器的软链接，跟着它走的话
+    # 每一个项目 venv 都会被判成「在项目外」，界面上于是显示一条用户主目录
+    # 打头的绝对路径，而我们本想显示的是 `.venv`。
+    return engine_projectenv.project_relative(root, str(path)) or str(path)
 
 
 @app.errorhandler(engine_pool.WorkerError)
@@ -1443,8 +1505,38 @@ def _read_frontend_payload() -> tuple[dict | None, bool]:
 
 def _diagnostics_bundle_response(frontend: dict | None = None, frontend_dropped: bool = False):
     ctx = _request_ctx()
+    status = project_status(ctx)
+    if ctx is not None:
+        # 「为什么用了这个 Python」必须能在诊断包里读出来（ADR 0018 §诊断）：
+        # 是自动接手还是用户挑的、因为缺哪个包、那个环境的版本是多少。
+        # **这里不体检**——事实在切换当时就存下来了。
+        st = engine_projectenv.state(str(ctx.path))
+        try:
+            # **按真正生效的那条判**，不是「记住过就算数」：用户在设置里显式
+            # 指了别的解释器时，项目记住的那条并不生效，诊断包写成 project_venv
+            # 就是在骗人。这一步与报告里既有的 `find_worker_python()` 同档
+            # 开销（都可能探测一次），不额外拖慢什么。
+            effective = engine_pool.resolve_worker_python(str(ctx.path))[1]
+        except engine_pool.WorkerError:
+            effective = ""
+        status["environment_resolution"] = {
+            "source": effective,
+            "automatic": st.get("automatic", False),
+            "trigger": st.get("trigger", ""),
+            "module": st.get("module", ""),
+            "python_version": st.get("python_version", ""),
+            "matplotlib_version": st.get("matplotlib_version", ""),
+            "support": st.get("support", ""),
+            # 项目内的解释器只出**项目相对**路径：用户主目录名不该无谓地
+            # 进诊断包，而相对路径已经足够定位问题。
+            "executable": st.get("python_relative", ""),
+        }
+        # 受控依赖修复的账（ADR 0019 §诊断）：修过几轮、受管环境里装了什么。
+        # **不含** index 地址、pip 配置、绝对路径——那三样是这一族功能里
+        # 最容易顺手泄漏凭据的地方。
+        status["dependency_repair"] = engine_deprepair.diagnostics_state(str(ctx.path))
     data = engine_diagnostics.build_bundle(
-        project=project_status(ctx),
+        project=status,
         port=request.host.rsplit(":", 1)[-1],
         frontend=frontend,
         frontend_dropped=frontend_dropped,
@@ -2021,6 +2113,52 @@ def _materialize_runtime(script: str, entry: str, descriptors: list) -> None:
         engine_runtimeasset.materialize(root, desc, worker.svg_path(stem))
 
 
+def _switched_to_project_env(worker, exc) -> bool:
+    """内置环境缺依赖时替**这个项目**切到它自己的 `.venv`；切成了回 True。
+
+    切成之后**调用方必须重新取一次 worker**：旧会话是内置解释器起的，
+    `pool.get()` 会因为「渲染解释器已变」把它换掉（ADR 0018 的 worker 身份
+    纪律）。切不成时把结构化原因挂回异常，`_worker_error_payload` 会带给前端。
+
+    「值不值得为这个错误换环境」的判据只有一份
+    （`pool.should_try_project_env`）——这里绝不再写一遍 `exc.code == …`。
+    """
+    if not engine_pool.should_try_project_env(exc):
+        return False
+    try:
+        root = str(require_project())
+    except NoProjectError:
+        return False
+    outcome = engine_pool.try_project_env(root, worker.script_name, getattr(exc, "module", ""))
+    if outcome.get("ok"):
+        # 记在**请求作用域**里：渲染端点据此在响应里带一句「已自动使用这个
+        # 项目的 Python 环境」，前端给一条轻量 toast。用户不该被一个阻断式
+        # 对话框拦住去读一段他没要求的技术说明——但也不能完全看不见。
+        g.environment_switched = {
+            "source": engine_pool.SOURCE_PROJECT_VENV,
+            "python": _project_relative(outcome.get("python", "")),
+            "module": outcome.get("module", ""),
+        }
+        return True
+    exc.project_env = outcome
+    return False
+
+
+def _engine_attempt(rel_id: str, worker, stem: str, action):
+    """`action(worker, stem)`；缺依赖时切项目环境**重试一次**。
+
+    回 `(worker, stem, 结果)`——重试后 worker 换成了新解释器起的那个，调用方
+    后续要拿 `rev` / `last_build_descriptors` 的话必须用回传的这一个。
+    """
+    try:
+        return worker, stem, action(worker, stem)
+    except engine_pool.WorkerError as exc:
+        if not _switched_to_project_env(worker, exc):
+            raise
+    worker, stem = _engine_worker(rel_id)
+    return worker, stem, action(worker, stem)
+
+
 def _engine_worker(rel_id: str):
     """面板 id → (worker, stem)；非脚本面板 404。
 
@@ -2102,7 +2240,16 @@ def api_engine_render():
         "render.started", {"pj": pj, "id": rel_id, "cost": info.get("cost", ""), "cold": cold}
     )
     try:
-        resp = worker.override(stem, body.get("patches", []), preview_dpi, inline_svg=inline_svg)
+        # 冷启动的第一次 build 就发生在这里（lazy 语义：打开面板不预跑脚本）。
+        # 内置环境缺依赖时自动改用项目自己的 .venv 重试一次（ADR 0018）。
+        worker, stem, resp = _engine_attempt(
+            rel_id,
+            worker,
+            stem,
+            lambda wk, st: wk.override(
+                st, body.get("patches", []), preview_dpi, inline_svg=inline_svg
+            ),
+        )
     except engine_pool.WorkerError as exc:
         LOG.error("引擎渲染失败: %s: %s", stem, exc)
         sse_publish("render.failed", {"pj": pj, "id": rel_id, "error": str(exc)})
@@ -2134,6 +2281,10 @@ def api_engine_render():
     # 没要就不加这个字段（响应形状对老调用方一字不变）
     if inline_svg and "svg" in resp:
         out["svg"] = resp["svg"]
+    switched = g.pop("environment_switched", None)
+    if switched:
+        # 同上：加字段不改老形状。只在**真的发生了自动切换**的那一次响应里出现。
+        out["environment_switched"] = switched
     return jsonify(out)
 
 
@@ -2169,7 +2320,9 @@ def api_engine_preview_png():
     w = next((b for b in RENDER_BUCKETS if b >= want_w), RENDER_BUCKETS[-1])
     tag = "v" + engine_patchspec.patch_hash(patches).split(":")[-1][:12]
     try:
-        path = worker.preview_png(stem, patches, w, tag=tag)
+        worker, stem, path = _engine_attempt(
+            body.get("id", ""), worker, stem, lambda wk, st: wk.preview_png(st, patches, w, tag=tag)
+        )
     except engine_pool.WorkerError as exc:
         return jsonify(_worker_error_payload(exc)), 500
     resp = send_file(path, mimetype="image/png")
@@ -2189,7 +2342,9 @@ def api_engine_png():
     want_w = int(request.args.get("w", 800))
     w = next((b for b in RENDER_BUCKETS if b >= want_w), RENDER_BUCKETS[-1])
     try:
-        path = worker.render_png(stem, w)
+        worker, stem, path = _engine_attempt(
+            request.args.get("id", ""), worker, stem, lambda wk, st: wk.render_png(st, w)
+        )
     except engine_pool.WorkerError as exc:
         return jsonify(_worker_error_payload(exc)), 500
     resp = send_file(path, mimetype="image/png")
@@ -3026,10 +3181,13 @@ def api_engine_history_restore():
 @app.get("/api/engine/svg")
 def api_engine_svg():
     """当前 override 状态下的预览 SVG（元素带 gid）。"""
-    worker, stem = _engine_worker(request.args.get("id", ""))
+    rel_id = request.args.get("id", "")
+    worker, stem = _engine_worker(rel_id)
     try:
         if not worker.built:
-            worker.ensure_built()
+            worker, stem, _ = _engine_attempt(
+                rel_id, worker, stem, lambda wk, st: wk.ensure_built()
+            )
     except engine_pool.WorkerError as exc:
         return jsonify(_worker_error_payload(exc)), 500
     svg = worker.svg_path(stem)
@@ -3127,9 +3285,46 @@ def api_engine_environment():
         )
         py = st.get("python")
         st["imports"] = engine_runtime.probe_packages(py, names) if py else {}
+    st["project"] = _project_environment_state()
     resp = jsonify(st)
     resp.headers["Cache-Control"] = "no-store"
     return resp
+
+
+def _project_environment_state() -> dict:
+    """当前项目的渲染环境（ADR 0018）——**不做任何体检**。
+
+    界面刷新不该为了贴个版本号去起一个 Python（体检最长 60s）。这里只把
+    已经记住的决策原样交出去；真要现场核实走 `?probe=1` 那条路。
+
+    `source` 用 `pool` 的那套字符串（`project_venv` / `bundled` / …），
+    前端据此显示「项目 .venv · Python 3.12」而不是含糊的一句「Python」——
+    同一条路径，「内置」和「你自己的 conda」在排障时含义天差地别。
+    """
+    try:
+        root = str(require_project())
+    except NoProjectError:
+        return {"open": False}
+    state = engine_projectenv.state(root)
+    try:
+        python, source = engine_pool.resolve_worker_python(root)
+    except engine_pool.WorkerError:
+        python, source = "", ""
+    out = {
+        "open": True,
+        "source": source,
+        "source_label": engine_pool.SOURCE_LABELS.get(source, source),
+        "python": _project_relative(python) or python,
+        "automatic": state.get("automatic", False),
+        "trigger": state.get("trigger", ""),
+        "module": state.get("module", ""),
+        "can_use_project_venv": [_project_relative(v) for v in engine_projectenv.discover(root)],
+        # Tavotto 替这个项目建过的隔离环境（ADR 0019）。**不做任何体检**，
+        # 只把 `environment.json` 里记的事实交出去：界面据此显示「Tavotto
+        # 环境 · 装了什么」与「重建」入口。
+        "managed": engine_managedenv.state(root),
+    }
+    return out
 
 
 @app.post("/api/engine/environment/install")
@@ -3158,9 +3353,16 @@ def api_engine_environment_install():
 
 @app.patch("/api/engine/environment")
 def api_engine_environment_set():
-    """手动指定渲染解释器；path 为空 = 清除，回到自动探测。"""
+    """手动指定渲染解释器；path 为空 = 清除，回到自动探测。
+
+    `scope="project"` 时改的是**当前项目**那一条（ADR 0018）：项目自己的
+    `.venv`、或用户为这个项目挑的别的环境。绝不写全局设置——A 项目挑的环境
+    变成 B 项目的渲染环境是本轮明确要避免的事。
+    """
     body = request.get_json(force=True)
     raw = str(body.get("python") or "").strip()
+    if str(body.get("scope") or "global") == "project":
+        return _set_project_environment(raw)
     if raw:
         p = Path(raw).expanduser()
         if not p.is_file():
@@ -3185,6 +3387,187 @@ def api_engine_environment_set():
         engine_config.set_worker_python(None)
     engine_pool.reset_worker_python()
     return jsonify(engine_bootstrap.status())
+
+
+def _set_project_environment(raw: str):
+    """设定/清除**当前项目**的渲染解释器。
+
+    路径为空 = 回到默认链条（内置 runtime 优先）。给了路径就先真体检一遍：
+    「选了但用不了」比「没选」更难查——用户以为设好了，实际每次打开都在报
+    另一个错。体检不过一律 400 + 稳定 code，绝不先存下来再说。
+    """
+    root = str(require_project())
+    if not raw:
+        engine_projectenv.forget(root)
+        engine_pool.reset_worker_python()
+        return jsonify({"ok": True, "project": _project_environment_state()})
+    candidate = Path(raw).expanduser()
+    if not candidate.is_absolute():
+        # 前端交回来的是项目相对路径（`.venv/bin/python`）——它才是能跟着
+        # 项目走的那种形态。**但相对不等于安全**：`../../../etc/x` 也是相对
+        # 路径，拼完就逃出项目了，而这条路径下游是要被当解释器 spawn 的。
+        # 所以拼完必须钉回项目内（realpath 之后按前缀判，软链接一并落地）。
+        contained = engine_projectenv.contained_file(root, candidate)
+        if contained is None:
+            return jsonify(
+                {
+                    "error": f"这条相对路径落在项目之外: {raw}",
+                    "code": "script_path_outside_project",
+                    "params": {"script": raw},
+                }
+            ), 400
+        candidate = Path(contained)
+    if not candidate.is_file():
+        return jsonify(
+            {
+                "error": f"找不到该文件: {candidate}",
+                "code": "interpreter_not_found",
+                "params": {"path": str(candidate)},
+            }
+        ), 400
+    health = engine_projectenv.probe_environment(str(candidate))
+    if not health.get("ok"):
+        return jsonify(
+            {
+                "error": _project_env_message(health),
+                "code": health.get("code", ""),
+                "params": {
+                    "path": _project_relative(str(candidate)),
+                    "python_version": health.get("python_version", ""),
+                },
+            }
+        ), 400
+    engine_projectenv.remember(
+        root, str(candidate), automatic=False, trigger="user_selected", health=health
+    )
+    engine_pool.reset_worker_python()
+    engine_pool.shutdown_all(root)
+    return jsonify({"ok": True, "health": health, "project": _project_environment_state()})
+
+
+def _project_env_message(health: dict) -> str:
+    """体检失败的中文回退文案（前端有自己的 i18n，这里是后端兜底）。"""
+    code = health.get("code", "")
+    if code == engine_projectenv.ERROR_UNSUPPORTED_PYTHON:
+        return f"这个环境的 Python {health.get('python_version', '')} 不在 Tavotto 当前支持的范围内"
+    if code == engine_projectenv.ERROR_NO_MATPLOTLIB:
+        return "这个环境里 import 不到 matplotlib，它不是一个可用的绘图环境"
+    if code == engine_projectenv.ERROR_MODULE_MISSING:
+        return f"这个环境里也没有 {health.get('requested_module', '')}"
+    return f"这个 Python 起不来：{health.get('detail', '')}"
+
+
+# ------------------------- 受控依赖修复（ADR 0019）--------------------------
+#
+# 三个端点，职责刻意分开：
+#
+#   POST /api/engine/dependency/plan     「装什么、装到哪」定下来，发一个短期
+#                                        计划 id。**这一步不装任何东西。**
+#   POST /api/engine/dependency/install   执行**那个计划**。请求体里只有
+#                                        plan_id——装什么不由这次请求说了算
+#                                        （防 TOCTOU）。
+#   POST /api/engine/dependency/cancel    取消。
+#
+# 「没有确认就不许改用户环境」是**后端的**能力边界，不是「按钮理论上不会调
+# 这个接口」：没有计划 id 一律 `dependency_install_not_allowed`。
+def _repair_error(exc: "engine_deprepair.RepairError", status: int = 400):
+    body = {"error": str(exc), "code": exc.code}
+    health = (exc.extra or {}).get("health")
+    if isinstance(health, dict):
+        body["params"] = {"python_version": health.get("python_version", "")}
+    return jsonify(body), status
+
+
+@app.post("/api/engine/dependency/plan")
+def api_dependency_plan():
+    """为「缺 X」形成一个安装计划（不安装）。
+
+    `target` = `project_venv`（改用户环境，需要用户在界面上明确确认）或
+    `tavotto_managed`（Tavotto 自己的隔离环境，改的是我们的东西）。
+    `distribution` 只在解析不出来时由用户给，仍要过严格语法校验。
+    """
+    root = str(require_project())
+    body = request.get_json(force=True)
+    module = str(body.get("module") or "").strip()
+    script = str(body.get("script") or "").strip()
+    target = str(body.get("target") or "").strip()
+    # 空 module / 不合形状的 module 一律交给 `create_plan`：「什么样的模块名
+    # 能拿去 import」只有 `projectenv.valid_module_name` 一份判据，端点这里
+    # 再写一遍迟早与它分叉。
+    try:
+        plan = engine_deprepair.create_plan(
+            root,
+            script,
+            module,
+            target_kind=target,
+            user_distribution=str(body.get("distribution") or "").strip(),
+        )
+    except engine_deprepair.RepairError as exc:
+        return _repair_error(exc)
+    return jsonify({"plan": plan.to_payload()})
+
+
+@app.post("/api/engine/dependency/install")
+def api_dependency_install():
+    """执行一个已经形成的计划。进度经 SSE `engine.dependency` 推送。
+
+    **请求体里只有 plan_id**：解释器、包名、版本、目标环境全部来自计划本身。
+    用户看到的是「把 lmfit 装进 项目 .venv」，点下去执行的就必须是那一件事。
+    """
+    require_project()
+    body = request.get_json(force=True)
+    plan_id = str(body.get("plan_id") or "")
+    plan = engine_deprepair.get_plan(plan_id)
+    if plan is None:
+        return jsonify(
+            {
+                "error": "没有这个修复计划（或已过期），请重新开始。",
+                "code": engine_deprepair.ERROR_NOT_ALLOWED,
+            }
+        ), 409
+    if plan.project != str(require_project()):
+        # 计划绑定项目：A 项目的计划不能拿到 B 项目来执行
+        return jsonify(
+            {"error": "这个修复计划不属于当前项目。", "code": engine_deprepair.ERROR_NOT_ALLOWED}
+        ), 409
+    engine_deprepair.install_async(plan_id, lambda p: sse_publish("engine.dependency", p))
+    return jsonify({"started": True, **engine_deprepair.progress(plan_id)})
+
+
+@app.post("/api/engine/dependency/cancel")
+def api_dependency_cancel():
+    """取消安装。**不承诺完整 rollback**（用户环境上做不到，见 ADR 0019）。"""
+    require_project()
+    body = request.get_json(force=True)
+    ok = engine_deprepair.cancel(str(body.get("plan_id") or ""))
+    return jsonify({"cancelling": bool(ok)})
+
+
+@app.get("/api/engine/dependency/state")
+def api_dependency_state():
+    """某个计划的当前进度（SSE 断了之后的补拉）。"""
+    resp = jsonify(engine_deprepair.progress(request.args.get("plan_id", "")))
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/engine/environment/managed/rebuild")
+def api_managed_environment_rebuild():
+    """删掉并重建当前项目的 Tavotto 受管环境。
+
+    这是受管环境相对「改用户 `.venv`」的**唯一优势**：坏了可以整个扔掉重来。
+    重建会按 `environment.json` 里记的把我们装过的包装回去——但**不声称
+    lockfile 级复现**：某个版本从 index 上消失时如实报错。
+    """
+    root = str(require_project())
+    # **端点自己不删任何东西**（Codex 评审 P1）：拆旧与重建必须在同一把环境
+    # 锁之内。以前是这里先查一下 `is_mutating()`、再在锁外把 venv 删掉、
+    # 然后异步去重建——那个窗口里一个已经形成的 plan 可以开始往这个解释器
+    # 里 pip install，而它的 venv 正在被删；而且两边拿的还是不同的 key
+    # （install 用解释器路径，重建当时用合成 key），根本不互斥。
+    engine_deprepair.reset_state(root)
+    engine_deprepair.rebuild_managed_async(root, lambda p: sse_publish("engine.dependency", p))
+    return jsonify({"started": True})
 
 
 # ------------------------- 检查更新 -----------------------------------------

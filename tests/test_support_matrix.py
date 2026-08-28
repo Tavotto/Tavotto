@@ -36,6 +36,31 @@ def _targets() -> dict:
     return {t["id"]: t for t in _matrix()["targets"]}
 
 
+def test_project_env_mirrors_the_matrix():
+    """`engine/projectenv.py` 的支持区间是矩阵与 pyproject 的**运行时镜像**。
+
+    那两份文件不随 wheel 发布，运行时读不到，所以只能在代码里再写一遍——
+    于是必须有人盯着两侧别漂。矩阵放宽到 3.14 而 projectenv 还卡在 3.13 的话，
+    用户的 3.14 环境会被判成 `project_env_unsupported_python`，而 README 上
+    白纸黑字写着支持——这里先红。
+    """
+    from tavotto.engine import projectenv
+
+    matrix = _matrix()
+    m = re.match(r">=(\d+)\.(\d+),<(\d+)\.(\d+)$", matrix["python"]["requires"])
+    assert m, matrix["python"]["requires"]
+    assert projectenv.PYTHON_MIN == (int(m.group(1)), int(m.group(2)))
+    assert projectenv.PYTHON_MAX_EXCLUSIVE == (int(m.group(3)), int(m.group(4)))
+    tested = tuple(tuple(int(x) for x in v.split(".")) for v in matrix["python"]["tested"])
+    assert projectenv.PYTHON_TESTED == tested
+
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    mm = re.search(r'worker\s*=\s*\["matplotlib>=(\d+)\.(\d+),<(\d+)\.(\d+)"', pyproject)
+    assert mm, "pyproject 的 worker extra 里读不到 matplotlib 区间"
+    assert projectenv.MPL_MIN == (int(mm.group(1)), int(mm.group(2)))
+    assert projectenv.MPL_MAX_EXCLUSIVE == (int(mm.group(3)), int(mm.group(4)))
+
+
 def test_python_range_matches_pyproject():
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     m = re.search(r'requires-python\s*=\s*"([^"]+)"', pyproject)

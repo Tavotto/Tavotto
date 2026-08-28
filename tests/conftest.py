@@ -30,6 +30,30 @@ os.environ.setdefault("TAVOTTO_WORKERD", "0")
 os.environ["TAVOTTO_NO_TELEMETRY"] = "1"
 
 
+#: 会改变「渲染解释器选谁」的进程级环境变量。用例之间必须互不影响。
+_INTERPRETER_ENV = ("TAVOTTO_WORKER_PYTHON",)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_interpreter_env():
+    """每个用例结束后把渲染解释器相关的环境变量恢复原状。
+
+    `monkeypatch.delenv(name, raising=False)` **在变量本来就没设的时候什么都
+    不记账**（pytest 的 delitem 直接返回），所以「先 delenv 再由被测代码
+    `os.environ[name] = …`」这条组合逃得掉自动还原——CompatBench 的驱动
+    `_worker_python()` 正是直接写 `os.environ`（它是 CI 驱动，不是被测函数）。
+    结果是一条解释器路径漏给同一进程里后面的每一个用例：单跑绿、全量红，
+    而且红在完全无关的文件里。这里兜住整类问题，不是某一个用例。
+    """
+    saved = {k: os.environ.get(k) for k in _INTERPRETER_ENV}
+    yield
+    for k, v in saved.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+
+
 @pytest.fixture(autouse=True)
 def _isolated_user_config(tmp_path_factory, monkeypatch):
     """所有测试的用户级配置（最近项目等）落在临时目录，绝不碰真实用户配置。"""

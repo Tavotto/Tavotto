@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useEnvStore } from '@/store/envStore'
 import { t as translate } from '@/i18n'
-import type { EngineSource } from '@/lib/api'
+import type { EngineSource, ProjectEnvFailure } from '@/lib/api'
+import { ManagedEnvironmentRow } from './DependencyRepairCard'
 import { Button } from './ui/Button'
 import { TextInput } from './ui/Input'
 
@@ -104,6 +105,7 @@ export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
           ) : (
             <p className="mt-1 break-all font-mono text-xs text-ink-3">{env.python}</p>
           )}
+          <ProjectEnvironmentLine compact={compact} />
         </div>
         {env.bundled && Object.keys(env.runtime?.packages ?? {}).length > 0 && (
           <details className="text-xs text-ink-3">
@@ -188,38 +190,144 @@ export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
 }
 
 /**
+ * 当前项目用的是哪个渲染环境（ADR 0018）。
+ *
+ * 用内置环境时**什么都不显示**：那是默认，说一遍等于噪音。项目自己的
+ * `.venv` 接手了才显示——那一刻用户需要知道「跑我脚本的不是 Tavotto 自带的
+ * 那个 Python」，否则版本对不上时无从查起。
+ */
+function ProjectEnvironmentLine({ compact }: { compact?: boolean }) {
+  useTranslation('errors')
+  const { env, setProjectPython } = useEnvStore()
+  const project = env?.project
+  if (compact || !project?.open) return null
+  // Tavotto 替这个项目建的环境是另一种局面：它归我们管，所以那一行还带
+  // 「装了什么」与「重建」（ADR 0019），由 ManagedEnvironmentRow 单独渲染。
+  if (project.source === 'managed_project_env') return <ManagedEnvironmentRow />
+  if (project.source !== 'project_venv') return null
+  return (
+    <div className="mt-1.5 flex flex-col gap-0.5 border-t border-border pt-1.5">
+      <span className="text-xs text-ink-2">
+        {en('projectEnvUsing', { path: project.python || '.venv' })}
+      </span>
+      {project.automatic && project.module && (
+        <span className="text-xs text-ink-3">
+          {en('projectEnvWhy', { module: project.module })}
+        </span>
+      )}
+      <button
+        type="button"
+        onClick={() => void setProjectPython(null)}
+        className="self-start text-xs text-accent hover:underline"
+      >
+        {en('projectEnvUseBuiltIn')}
+      </button>
+    </div>
+  )
+}
+
+/**
  * 用户脚本 import 了当前渲染环境里没有的包。
  *
- * 这一档**刻意不提供「帮你装上」**：往内置环境里随便 pip install 会让它不再
- * 可复现，也让「重装就能修」这条退路失效。给的是另一个出口——换成用户自己
- * 那套已经装好这些包的科研环境。
+ * 顺序是有讲究的：**先给项目自己的环境，再给手填路径**。绝大多数科研项目
+ * 旁边就有一个能跑通的 `.venv`，一键切过去比让用户去翻自己 conda 环境的
+ * 解释器路径低太多门槛（这正是 Session 7 的起点）。
+ *
+ * 这一档**始终不提供「帮你装上」**：往内置环境里随便 pip install 会让它不再
+ * 可复现，也让「重装就能修」这条退路失效。
+ *
+ * `projectEnv` 是后端说明「自动接手为什么没成」的结构化原因——四种情况用户
+ * 要做的事完全不同，混成一句话等于把可执行的出路藏起来。
  */
-export function MissingDependencyCard({ module }: { module: string }) {
+export function MissingDependencyCard({
+  module,
+  projectEnv,
+}: {
+  module: string
+  projectEnv?: ProjectEnvFailure
+}) {
   useTranslation('errors')
-  const { setPython } = useEnvStore()
+  const { env, setPython, setProjectPython } = useEnvStore()
   const [manual, setManual] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const pkg = module || en('missingModulePackage')
+  // 后端发现到但还没在用的候选。`projectEnv.candidates` 是这次失败时算出来的，
+  // 没有它就退回环境状态里那份（用户是从设置页看到这张卡的场合）。
+  const candidates = projectEnv?.candidates?.length
+    ? projectEnv.candidates
+    : (env?.project?.can_use_project_venv ?? [])
+
+  /** 四种「没接手成」各有各的下一步，绝不合并成一句 */
+  const reason = (() => {
+    switch (projectEnv?.code) {
+      case 'project_env_module_missing':
+        return en('projectEnvAlsoMissing', { venv: projectEnv.venv || '.venv', module: pkg })
+      case 'project_env_no_matplotlib':
+        return en('projectEnvNoMatplotlib', { venv: projectEnv.venv || '.venv' })
+      case 'project_env_unsupported_python':
+        return en('projectEnvUnsupported', {
+          venv: projectEnv.venv || '.venv',
+          version: projectEnv.python_version || '?',
+        })
+      case 'project_env_unusable':
+        return en('projectEnvUnusable', { venv: projectEnv.venv || '.venv' })
+      case 'project_env_not_found':
+        return en('projectEnvNotFound', { module: pkg })
+      default:
+        return null
+    }
+  })()
+
+  const applyVenv = async (rel: string) => {
+    setBusy(true)
+    setError(await setProjectPython(rel))
+    setBusy(false)
+  }
 
   return (
     <div className="flex flex-col gap-2.5 rounded-md border border-border bg-surface p-3">
       <div>
         <h3 className="text-xs font-medium text-ink">
           {/* 包名是脚本里的标识符，原样显示 */}
-          {en('missingModuleTitle', { module: module || en('missingModulePackage') })}
+          {en('missingModuleTitle', { module: pkg })}
         </h3>
-        <p className="mt-1 text-xs leading-relaxed text-ink-2">{en('missingModuleBody')}</p>
+        <p className="mt-1 text-xs leading-relaxed text-ink-2">
+          {reason ?? en('missingModuleBody')}
+        </p>
       </div>
-      <div className="flex items-center gap-1.5">
-        <TextInput
-          value={manual}
-          onChange={(e) => setManual(e.target.value)}
-          placeholder={en('pathPlaceholder')}
-          aria-label={en('pathAria')}
-        />
-        <Button onClick={() => void setPython(manual.trim() || null).then(setError)}>
-          {en('apply')}
-        </Button>
+
+      {/* 1. 项目自己就有能用的环境——一键切过去，门槛最低的那条路 */}
+      {candidates.length > 0 && (
+        <div className="flex flex-col gap-1.5">
+          <span className="text-xs text-ink-2">{en('projectEnvPick')}</span>
+          <div className="flex flex-wrap gap-1.5">
+            {candidates.map((rel) => (
+              <Button key={rel} disabled={busy} onClick={() => void applyVenv(rel)}>
+                {rel}
+              </Button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 2. 都不行时才轮到手填路径（Conda / pyenv / 项目外的环境） */}
+      <div className="flex flex-col gap-1.5">
+        <span className="text-xs text-ink-2">{en('useOther')}</span>
+        <div className="flex items-center gap-1.5">
+          <TextInput
+            value={manual}
+            onChange={(e) => setManual(e.target.value)}
+            placeholder={en('pathPlaceholder')}
+            aria-label={en('pathAria')}
+          />
+          <Button onClick={() => void setPython(manual.trim() || null).then(setError)}>
+            {en('apply')}
+          </Button>
+        </div>
       </div>
+
       {error && <p className="text-xs text-danger">{error}</p>}
       <p className="text-xs leading-relaxed text-ink-3">
         {en('missingModuleNoteBefore')}

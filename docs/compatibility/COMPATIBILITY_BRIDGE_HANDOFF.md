@@ -4,455 +4,597 @@
 
 ## 当前状态
 
-- 日期：2026-08-26
-- 当前 branch：`compat/bridge-session05-asset-library`（worktree
-  `.claude/worktrees/compat-bridge-session01`，stacked 在
-  `compat/bridge-session04-runtime-asset` → `…session03-script-probe` →
-  `…session02-execution-spec` → `…session01-audit` 之上）
-- 基于 commit：Session 5 落库提交 `f3b09ab`
-- 本 Session Prompt：`07_SESSION_06_TAVOTTO_OPEN_AND_PRODUCT_ROUTES.md`
-- 目标 PR：**PR 1 收口**（本 Session 交付 `tavotto open script.py` 自动
-  safe probe、单/多 Figure 产品交接、CompatBench 产品路由、完整
-  保存/重开/重放/预检/导出 E2E）
-- **PR 1（#127）已合入 main：2026-08-26 15:16Z，squash `6aeca9e`**
-  （排在 v0.11.0 tag 与 #129 之后）。合并队列走了 4 轮（各轮定性见下方
-  「合并队列轮 1–3」小节；轮 4 = 修复 nav toggle 盲点击后，先打
-  `full-ci` 标签在 PR SHA 上取得 windows-exe-smoke / macos-app-smoke
-  全绿证据再入队，一次通过）。16 条 CompatBench case 已升 full_support
-  随 PR 落库。
-- **合并后教训（进入约束节）**：merge_group-only 套件（windows-exe-smoke
-  的 Playwright E2E、backend-platforms）在 PR CI 上不跑——大改动入队前
-  用 `full-ci` 标签在 PR SHA 上先跑一轮，别拿整轮队列资格试错。
+- 日期：2026-08-27
+- 当前 branch：`compat/bridge-session07-project-env`（worktree
+  `.claude/worktrees/compat-bridge-session01`），已 rebase 到 `origin/main`
+  的 `e025612` 并推送 → **PR #177**，**三个 required gate 全绿**
+  （`CI fast gate` / `CI integration gate` / `CodeQL gate`）
+- 本 branch 上现在有**两个 Session 的工作**：Session 7（项目 Python 环境
+  自动发现与无感切换，ADR 0018）与 **Session 7B（受控依赖修复，ADR 0019）**。
+  7B 建在 7 上面，**没有改动 7 的任何行为**（见下方「Session 7 一个字节没改」）。
+- 前一轮：PR 1（#127）Session 1–6 已合入 main（squash `6aeca9e`，2026-08-26），
+  交接收尾 `9f48357`（#135）
+- 受管产物 `canvas.html` 指纹 **`5ede3212c4d0db9e`**（在 `e025612` 上重建，
+  `--check` 通过）。**它会再次过期**：`tavotto-a7` 手上六条 PR
+  （#157/#160/#161/#164/#168/#171）都重建这份产物且排在前面，入队前要按
+  合并态再重建一次。rebase 时它撞了 3 次，每次都是重跑 `build_mcp_widget.py`
+  然后 `git add`——**managed artifact 的冲突不用手工解**，10 秒一次。
 
-## 本轮唯一目标
+## Session 7B 做了什么
 
-`tavotto open script.py` 在静态发现失败时安全 probe；单/多 Figure 正确
-交接到桌面或浏览器；CompatBench 真正测产品路由（不再直接调内部 probe）；
-保存/重开/重放/预检/导出 E2E 完整；收口 PR 1。**不做** `tavotto run`、
-native profile、generic Artist fallback、source hints、Copy as Python、
-新 Artist family、无关 UI 重构。
+Session 7 解决的是「项目自己带着一个能跑通的 `.venv`」。真实用户里还有一半
+不是这样：项目有 `.venv` 但它也缺这个包、或者项目根本没有 venv。那时 Tavotto
+给出的仍然只有一句 `ModuleNotFoundError` 与「去设置里手填一条解释器路径」。
+
+本轮给这类局面一条产品化的路：
+
+```text
+missing_dependency（唯一触发器）
+    ↓  import 名 → 可信的 distribution（解析不到就停在这儿）
+    ↓  选目标：项目 .venv（改用户环境）/ Tavotto 受管环境（改我们自己的）
+    ↓  用户明确点一次（改用户环境时文案说清「这会改你的环境」）
+    ↓  pip install（wheels 优先、shell=False、不 --upgrade）
+    ↓  验证三层：import 那个包 / import matplotlib / 真起一次 worker
+    ↓  作废旧 worker → 重跑脚本 → Figure 出来
+```
+
+## Session 7 一个字节没改
+
+下面这些是 Session 7 的实现面，本轮**只读、只复用，没有修改语义**：
+
+- `engine/projectenv.py`：发现、体检、记住/忘记、项目级缓存与重试上限——
+  整个文件本轮**零改动**。
+- `pool.resolve_worker_python()` 的优先级链（env > 设置 > 项目记住的 >
+  内置/自身/系统）与「两条显式来源各自判、不短路」。
+- `pool.should_try_project_env()`（只有 `missing_dependency` 触发）与
+  `pool.build()` 的「一次 build 最多自动切一次」。
+- `pool.get()` 的身份守卫（入口已变 / 渲染解释器已变）。
+- `app._switched_to_project_env()` 与 `_engine_attempt()` 的端点侧重试。
+- `GET/PATCH /api/engine/environment` 的既有字段与 `scope="project"` 语义。
+- 诊断包的 `project.environment_resolution`（本轮是**新增**了平级的
+  `project.dependency_repair`，没动它）。
+
+pool 侧本轮的增量都是**加**出来的，不改既有判据：`SOURCE_MANAGED_PROJECT`
+（受管环境的来源标签）、`remembered_source()`、`note_project_python_ok()`
+（把 `try_project_env` 里那两行重复的登记收成一处）、
+`mutating_environment()` / `is_mutating()` / `shutdown_workers_using()`。
 
 ## 已完成
 
-- [x] **`tavotto open script.py` 自动 safe probe**
-  （`handoff.resolve_script_route`）：显式给出 `.py` = 运行意图（总纲原则
-  5）。顺序：静态发现/注册表的每张图都已有路由（磁盘原件或 runtime
-  cache）→ 复用零执行；否则 probe——本机实例在 `--port` 上跑就**委托**
-  （`POST /api/registry/probe`，同一个 `_PROBES` 并发闸，409 →
-  `probe_in_progress`），否则本进程 `probe_and_register` + 物化 cache
-  （只复制热 worker 的预览 SVG，绝不二次执行），返回前 `pool.invalidate`
-  关净 worker（不留 orphan）。交接目标进程读注册表 + cache，零重跑。
-- [x] **CLI 参数**：`--no-probe`（关掉探测）、`--stem <名字>`（多图显式
-  选，只对 `.py` 有效）；`--json` 单行 UTF-8、成功失败都机器可读、
-  stdout/stderr 纪律与既有 open/doctor 一致。稳定错误码（全表在
-  `docs/handoff-protocol.md`）：`script_no_figure` / `script_probe_failed` /
-  `multiple_figures_found`（`--no-launch` 的机器调用必须显式选；extra 带
-  `figures`）/ `invalid_stem`（extra 带 `stems`）/ `runtime_asset_failed` /
-  `native_run_required`（missing_dependency 的映射，extra 带 `module` +
-  原始 `probe_code`）/ `probe_in_progress`（retryable）；其余 probe 码
-  原样透传。成功 payload 带 `probe{performed,via,entry,dropped_figures}` /
-  `figures[{stem,asset_id,artifact,cached}]` / `pick`。
-- [x] **单/多 Figure 交接**：单图直达 stem（frontend `applyOpenRequest`
-  找不到磁盘面板时按 stem 查 runtime 清单，有描述符 `addRuntimePanel`，
-  没有描述符如实引导不造假面板）。多图**不静默选第一张**：桌面契约扩展
-  `--open <目录> [--stem <s> | --pick-script <脚本>]`（`desktop_argv` ↔
-  `parse_open_args` 双侧单测同步；macOS `open -na … --args` 复用
-  desktop_argv 切片不再手拼），浏览器 `?pick=`、browser-new `--open-pick`，
-  三条路汇进前端 `FigurePickerDialog`（每张可见、各自可加、磁盘图走
-  addPanel、runtime 走描述符、没预览的不渲染假按钮）。
-- [x] **CompatBench 产品路由**：manifest case 可声明 `product_routes`
-  （闭集 desktop_project / cli_open / safe_probe / browser_playground /
-  native_run；`native_run=true` 被 schema 拒绝——第一阶段只许
-  not_implemented，不伪装 pass）。runner 走真实产品面：safe_probe =
-  `POST /api/registry/probe`；desktop_project = `GET /api/registry` +
-  `GET /api/runtime/assets`（条目带物化描述符，零执行）；cli_open = 真
-  spawn `python -m tavotto open --json --no-launch --port 0`（多图脚本验
-  完整契约：裸调必须 `multiple_figures_found` 显式拒绝 + `--stem` 选中；
-  「多图」判据是 expected_figures，不是组内 case 数）。声明为 true 的路由
-  失败 = product_bug（stage `route:<名>`，报告带 code/reason/follow_up）。
-  guard `tests/test_compat_product_routes.py`：改回内部 probe 当场红
-  （app 端点必物化 cache、CLI 输出必带 protocol 字段）。
-- [x] **16 条「入口不可达」case 升级 full_support**（show-only 家族 12 条
-  + 静态发现缺口家族 4 条；art_contour/contourf 的 partial 是 artist
-  识别问题，不动）。基线在 **target bundled**（3.13 venv + mpl 3.11.1 全
-  钉版）上重生成并逐条读过 diff：恰好这 16 条 partial→full，其余零变化，
-  `generated_for` 指纹不变。全量：full 134 / partial 2 / by_design 7 /
-  env 6 / **product_bug 0**；路由 16/16 全通。
-  `test_compat_manifest.py` 的结构性守卫同步升级：no-savefig case 只有
-  声明并验证三条产品路由才许 full_support（新 case 不许搭便车）。
-- [x] **完整 E2E**（`web/e2e/asset-library.spec.ts`，共 4 条全绿）：
-  * 黄金路径 + 窄视口（Session 5 原有 2 条）；
-  * **完整链**：show-only 项目 → 素材库运行发现 → 加画布 → 编辑标题字号
-    + 曲线线宽 → undo/redo → 磁盘自动保存（读 autosave JSON 验 override
-    落盘）→ **关闭 App** → 重开（同数据目录；localStorage 恢复索引经
-    addInitScript 带过去，等价真实浏览器重启）→ lazy rehydrate（cache
-    占位零执行）→ 进入编辑重放（字号 12 恢复）→ 出版预检（导出对话框）
-    → `/api/export` PDF+PNG（同一次合成；runtime 面板由当次 live worker
-    按 override 渲染）；
-  * **多 Figure**：真实 probe 两张 → `?pick=` 选择器两张全可见 → 选第二
-    张 → autosave 里面板 fileId = 第二张的 asset id（stem/id 不串）。
-  * **CLI E2E**（pytest `tests/test_open_script_route.py`，真 worker）：
-    open_target 本地 probe 一次 → 项目目录零写入（safe 隔离）→ CLI 池
-    清零（无 orphan）→ Flask app 打开项目列清单/取预览全程只读、cache
-    mtime 不变（execution-count 纪律，反证 #6 的看护）。
-- [x] **测试**：后端新增 `tests/test_open_script_route.py` 23 项（fake
-  probe 单元 + 契约 + 真执行）、`tests/test_compat_product_routes.py` 2 项
-  guard；`tests/test_handoff.py` / `test_desktop_launch.py` 原样全绿；
-  src-tauri `cargo test` 14 项（含 `--pick-script` 契约 3 项新增）；前端
-  vitest 88 文件 957 项（openRequest +5、FigurePickerDialog +3）；
-  `pnpm build` / `pnpm i18n:check` 绿；全量 pytest 绿；smoke_app 绿。
-- [x] 两个受管产物重建且 `--check` 一致：canvas.html 指纹
-  `dad5cb6bc0df93a5`、playground 指纹 `95afb3e65de4ebe6`。
-  PR 1 合并后 re-sync 网站仓库。
-- [x] 文档：`docs/handoff-protocol.md`（safe probe 小节 + 新码表）、
-  `docs/adr/0005` 增补（契约扩展）、`docs/ci/matplotlib-compatibility.md`
-  §6b（产品路由）、`src/tavotto/AGENTS.md` / `web/AGENTS.md`、
-  codex-plugin `references/desktop-handoff.md`（新码的分诊话术）。
-  ADR 0013 仍 Accepted、0014 仍 Proposed（native 属 PR 2）。
+- [x] **`engine/depresolve.py`**（新）：import 名 → distribution 的可信解析。
+  三档来源（project_declared / curated / user_specified），**没有第四档**；
+  curated 分「名字不同要查表」与「同名但显式登记过」两张表；包名语法作为
+  安全边界（白名单，URL/VCS/路径/extras/marker/带空格一律拒）。
+  依赖声明只读（requirements*.txt / pyproject 的 project + optional +
+  poetry），解析失败只让这一档不可用、不连坐。
+- [x] **`engine/managedenv.py`**（新）：`<data_dir>/environments/<项目指纹>/`。
+  一个项目一个、绝不建在用户项目里、不带 `--system-site-packages`、只装
+  matplotlib（numpy 由它带）。`environment.json` 记 schema / 是不是我们建的 /
+  Python 版本 / 基础解释器指纹（**不是路径**）/ 装过什么。
+- [x] **`engine/deprepair.py`**（新）：错误码表、`RepairPlan`（绑项目 + 环境
+  指纹 + 需求 + 有效期）、`offer()`（只读的修复建议）、`create_plan()`、
+  `install()`（环境锁 → pip 可用性 → pip → 三层验证 → 记账 → 作废 worker）、
+  `cancel()`、`rebuild_managed()`、`worker_self_test()`、日志脱敏、
+  `diagnostics_state()`。
+- [x] **`pool` 侧的 worker 生命周期**：安装期间该环境上的会话全停 +
+  `get()` 拒起新会话（`environment_mutating`）；锁按环境不按全局。
+- [x] **端点**：`POST /api/engine/dependency/plan | install | cancel`、
+  `GET /api/engine/dependency/state`、
+  `POST /api/engine/environment/managed/rebuild`。进度经 SSE
+  `engine.dependency`。
+- [x] **修复建议挂在两条入口上**：渲染端点的 `_worker_error_payload` 与
+  素材库那条 `registry/probe`（`probe._error_from_worker`）。只给一条的话
+  「素材库里打不开、面板里能修」又是一次两个入口两个答案。
+- [x] **前端**：`DependencyRepairCard`（起点 → 确认 → 进度 → 结果）、
+  `depRepairStore`、SSE 路由、`ManagedEnvironmentRow`（设置页里的「装了
+  什么 + 重建」）、中英各一份文案、按钮进 overflow 字数预算表。
+- [x] **诊断**：`project.dependency_repair`（修过几轮、受管环境状态与
+  包名+版本）。**没有路径、没有 pip 配置、没有 index 地址。**
+- [x] **ADR 0019** 与 `docs/compatibility/legacy-projects.md`（兼容层从四层
+  变五层，新的第 3 层就是本轮）。
 
-## PR #127 评审轮 1（Codex，2026-08-26）
+## 刻意没做
 
-三条全部核实成立并已修复（各带看护测试 + 手工反证一次红）：
+- **没有加遥测事件**。`EVENTS` 扩容意味着采集范围变化，按既有纪律要升
+  `CONSENT_VERSION` 并让所有人重新同意一次。为了几个计数让全体用户重新表态，
+  这笔账本轮不划算。要数据时单独一轮做，连同代理侧那份对拍表一起。
+- **没有实现 `tavotto run`**（ADR 0014 仍是 Proposed）。
+- **没有自动 `pip uninstall`**、没有自动改 requirements/pyproject、没有自动
+  建 `project/.venv`、没有静态扫描后批量安装、没有 sdist 编译。
 
-- **P1 归属按捕获来源判，不按文件名巧合**：pyplot 捕获从来没有原件
-  （figcapture 工厂本来就钉死了这个语义——消费点漏了这一维）。新判据
-  `runtimeasset.is_pyplot_capture`，三个消费点同步修：`list_assets`
-  （旧同名文件不再把 runtime 素材顶掉）、`handoff._script_figures`
-  （交接路由不再指向陈旧文件）、前端 `applyOpenRequest`（stem 碰撞时
-  pyplot 捕获优先）。savefig 来源 + 磁盘原件照旧归 FileAsset 不双列。
-- **P1 runtimeAssetStore 项目代际**：模块级 in-flight（清单 + 逐面板
-  status）活得比 Zustand reset 长——`clear()` 现在换 epoch + 清 inflight，
-  A 项目的响应绝不落进 B（与 scriptRunStore 同一条纪律）。
-- **P2 scriptLibraryStore 同一条代际纪律**（顺手修掉，不转 issue）。
+## 负向反证
 
-## PR #127 合并队列轮 1（CI #444，2026-08-26）
+**后端十五条**（变异脚本在仓库外，**从内存还原不用 `git checkout`**——
+工作区有未提交改动时它会一起吃掉，Session 7 就吃掉过一次）：
 
-v0.11.0 tag 落地后（用户经 tavotto-0a 入队）queue run #444 的 Windows 腿
-（backend-platforms windows-latest 3.13）红了两条——`backend-platforms`
-在 PR 分支 CI 上是 SKIPPED（#120 分层，完整跨平台只在队列跑），所以
-Session 2 的这两处 Windows 事实第一次被执行到：
-
-- **`test_execspec` argv golden 把 POSIX 拼接写死**：`worker_argv` 在
-  Windows 上出 `\proj\fig.py` 与重构前 pool.py 的
-  `str(Path(figures_dir) / script_name)` 逐字节一致（查过
-  session01-audit 的旧代码），**产品语义没漂移，是 golden 自己平台相关**。
-  修测试：`--script` 期望改为 `str(Path("/proj") / "fig.py")`，注释钉明
-  Windows 反斜杠是被冻结的旧语义。macOS 上无法反证（POSIX 拼接恒同），
-  红证据即 CI #444 本身。
-- **`source_fingerprint` 行尾分叉**：worker 从磁盘 `read_bytes`（Windows
-  文本模式检出 = CRLF），browser 拿编辑器 `str`（LF）——同一份逻辑源码
-  两个指纹，描述符对拍红。修在唯一出处：`figcapture.source_fingerprint`
-  内 CRLF/CR→LF 归一后再哈希（LF 输入指纹不变，POSIX 零漂移；消费面全是
-  不透明比对）。新增平台无关回归：`test_line_endings_do_not_split_the_
-  fingerprint` + parity 的 `test_crlf_checkout_matches_the_editor_source`
-  （显式 `write_bytes` CRLF，任何平台可红）；负向反证：抽掉归一化两条
-  当场红，还原后绿。
-- 同轮 merge origin/main（v0.11.0 bump + #125 旧名注册表看护，无冲突；
-  合并态 test_handoff 56 项预演过）。playground 产物因 figcapture 变更
-  重建（指纹 `97cfbe416d563733`）；canvas.html 不受影响
-  （`2e3df71339c204d3`）。
-- **真机取证口径（重要）**：v0.11.0 正式产物**不含** #127 代码，不能用它
-  取桥接功能的真机证据；有效证据只能来自 PR 分支（或合并后 main）构建的
-  候选产物。
-
-## PR #127 合并队列轮 2（CI #447，2026-08-26）
-
-backend-platforms 全绿（轮 1 两条修复生效）。windows-exe-smoke 红 3 条，
-全部是**测试缺陷**，产品行为均正确；这套 Playwright E2E 只在 merge_group
-跑（issue #30 的覆盖缺口），PR 分支 CI 从未执行过它们：
-
-- **asset-library 两条（merge 交互缺陷，平台无关）**：#109（8-25 进 main）
-  给 NumberField 加了同值提交 no-op 拦截（Tab 路过不产生假历史，产品行为
-  正确）；而 e2e 把标题字号「编辑」成 12——恰好等于初值（axes.titlesize=
-  large = 12.0pt，本机 manifest 实测），fill+Enter 从 `d78e5ea` merge 起
-  变成静默 no-op，「1 项已修改」永不出现。**macOS 本机红证复现**（同一行
-  110 同形状失败），修为 fill('13')（重放断言联动 12→13）后 chromium
-  全绿。Session 6 跑绿是在 merge 之前——**merge main 之后必须重跑 e2e**，
-  这条教训记进下面的约束。
-- **golden-paths 一条（选择器歧义）**：素材库脚本区（Session 5）让
-  `render_map.py` 全页三处合法出现；断言收窄到注册表对话框 +
-  `.first()`（对话框内候选区/列表区两处也都合法）。webkit + chromium
-  本机验证过。
-
-本机验证：`asset-library + golden-paths` chromium 12 passed；golden-paths
-webkit 1 passed（worktree 首跑需 `pnpm exec playwright install`）。
-
-## PR #127 合并队列轮 3（CI #453，2026-08-26）
-
-轮 2 的三条修成两条；剩「完整链」换了形状：重开后 `nav 图内元素` 点击处
-900s 挂死（树项 resolve 后 141ms detach、之后 860s 再未出现；终态截图
-左栏收起、右栏「2 项已修改」——重放本身是好的）。根因（本机反证复现）：
-
-- rail 按钮是 **toggle**（`uiStore.setLeftTab`：对已激活 tab 再点一次 =
-  收起）；`enterElementEdit` 在 wide 布局会自动切左栏到元素树；e2e 随后的
-  盲点击在「已自动切过去」的时序下把面板关掉，`usePresence` 的 ~150ms
-  收起动画让树在窗口里仍可 resolve——click 一开始就 detach，面板永久
-  关闭。CI/本机差异只是「点击时 leftTab 是否已是 elements」的时序差。
-- 产品 toggle 行为正常，测试盲点击是缺陷。修法：`fixtures.openElementsTab`
-  幂等 helper（按 nav 按钮 `aria-expanded` 判态，不在才点，点完等坐实），
-  替换全部 4 处盲点击（asset-library ×3 + inspector-redesign ×1）。
-- 反证：临时 spec 证明「已激活时盲点击 → treeitem count 0」成立、helper
-  能救回（跑过即删）。本机三 spec chromium 15 passed。
-- 下轮入队前先打 **full-ci 标签**在 PR SHA 上跑 windows-exe-smoke 取证，
-  不再拿整轮队列资格试错。
-
-CodeQL 报 9 条新告警（1 critical + 8 high）：逐条核实全部有结构性防线，
-必需的「CodeQL gate」本来就是绿的（红的是非必需的原生 annotation
-check）。#95（pool.py 命令行，critical）已带理由 dismiss（won't fix：
-执行用户脚本是产品语义，argv 列表无 shell + safe 沙盒）；**#96–103 待
-用户在 Security 页 dismiss**（会话权限拦截了批量操作），理由如下：
-
-- #96–98（app.py probe 端点，py/path-injection）→ false positive：
-  判据在 realpath 之后（resolve + is_relative_to(项目根)），回溯/
-  symlink/项目外/非 .py 各有稳定 code + 用例（test_script_probe 路径
-  边界组）；CodeQL 不识别 is_relative_to 这个 sanitizer。
-- #99（discover.py probe_entry_candidates 读脚本）→ false positive：
-  path 来自项目内 walk 或已过 probe 端点校验。
-- #100–103（runtimeasset.py cache 读写）→ false positive：cache 目录名
-  是 sha256(项目|asset_id) 的 hex slug（结构上无路径分隔符）；
-  script_sha256 只读取比对、script 来自注册表且 stale_status 兜底路径
-  有 fail-closed 的 id 重算校验。
-
-## 未完成 / 待用户拍板
-
-- [ ] **真机最终产物证据（§六，顺序已调整）**：合并前未能产出（本机产不了
-  签名候选产物）；经用户拍板改为**合并后**用新 main（≥`6aeca9e`）构建
-  签名候选产物在真机/lab runner 补齐。注意：v0.11.0 正式产物**不含**
-  #127 代码，不能用于桥接功能取证。CI 侧的部分替代证据：queue 轮 4 +
-  full-ci 的 windows-exe-smoke（Playwright × 打包 EXE 服务面）与
-  macos-app-smoke 全绿——但 WebView2/WKWebView 壳内交互仍需真机。
-- [ ] **真实用户复测清单（Session 7 前置）**：PR 1 合并后请真实用户
-  （issue #83 的外部科研用户等）重测此前失败的项目。仍失败且归因于
-  原 Python/Conda 环境、cwd、argv、env、本地模块、matplotlibrc/style/
-  font、safe 写入隔离的，每个做脱敏最小 fixture——这是 Session 7
-  （native execution 设计）的入场券；没有这些证据不开工。
-- [x] PR #127 merge（2026-08-26 squash `6aeca9e`，队列轮 4）。
-- [ ] 网站 playground re-sync（在合并后 main 上
-  `python scripts/build_browser_playground.py` → 网站仓库
-  `pnpm sync-playground`；指纹 `97cfbe416d563733`，含 figcapture
-  行尾归一）。
-
-## 本轮关键决策
-
-### 决策 1：probe 委托优先，本地兜底
-
-- 实例在跑（浏览器模式端口可达）→ 试运行**委托给它**：同一个 `_PROBES`
-  并发闸真实生效（素材库与 CLI 并发同脚本 = 409）、热会话与 cache 留在
-  实例手里、交接零重跑。桌面 sidecar 绑动态端口够不着——那时本地 probe，
-  注册表 + materialized cache 落盘即共享状态（「复用同一登记表」）。
-- 老版本实例的响应形状不归我们管：`_probe_error` 对非 dict error 防御性
-  包装（实测本机 5089 上挂着一个 magplot 时代实例，错误是一句字符串）。
-
-### 决策 2：多 Figure 的选择信息走契约扩展（`--pick-script` / `?pick=`）
-
-- stem 与 pick 在 Target 上互斥；壳只透传不选择，Figure 选择器唯一实现
-  在前端（`FigurePickerDialog`，条目从 assetStore + runtimeAssetStore
-  现算——快照存 store 会陈旧）。`--no-launch` 没有界面接选择器，机器
-  调用必须 `--stem`，否则 `multiple_figures_found` + figures 列表。
-- macOS `open -na … --args` 之后的 argv 改为**复用 `desktop_argv()[1:]`**
-  ——同一契约两处手拼迟早漂移。
-
-### 决策 3：产品路由失败与引擎阶段失败同罪
-
-- `product_routes` 声明 true 的路由失败直接 product_bug（stage
-  `route:<名>`）。「引擎全绿、用户够不着」正是 show-only 被记两个月
-  partial 的原因；路由失败不红，这套声明就只是装饰。
-- runner 绝不直接调 `engine_probe` 代表产品成功；guard 钉**只有产品面才
-  有的副作用**（cache 物化 / protocol 字段），改回内部调用当场红。
-- 升级 full_support 的门票就是路由声明 + 验证（`test_compat_manifest` 的
-  结构性守卫从「一律不许」升级成「验过才许」——守卫的精神保留，判据换
-  成新的现实）。
-
-### 决策 4：CompatBench 运行时数据隔离
-
-- bench 进程 `TAVOTTO_DATA_DIR`/`CONFIG_DIR` setdefault 进本轮 scratch：
-  产品路由会经真实端点物化 cache、写事件，benchmark 的临时项目不该在
-  用户数据目录留派生物。cli_open 一律 `--port 0`：机器上碰巧开着的
-  Tavotto 实例绝不能被 benchmark 委托执行。
-
-## 架构与数据契约
-
-### 新增/修改接口
-
-```text
-engine/handoff.py
-  Target(project, stem, pick=None)            # pick 与 stem 互斥
-  resolve_script_route(project, script, *, stem_arg, no_probe, port, …)
-  _remote_probe / _local_probe / _probe_error / _script_figures
-  desktop_argv(): … [--stem s | --pick-script script]
-  browser_url(): ?open= | ?pick=
-  open_target(raw, *, stem=None, no_probe=False, …)
-  cli(): + --no-probe / --stem
-src/tavotto/app.py
-  main(): + --open-pick（browser-new 的 pick 通道，landing 复用 browser_url）
-src-tauri/src/main.rs
-  OpenRequest{project, stem, pick} + parse_open_args(--pick-script)
-  landing URL: ?pick=；tavotto:open 事件带 pick
-
-web/src/lib/openRequest.ts   OpenRequest.pick；?pick= 读取；runtime 素材
-                             按 stem 兜底定位（loadAssets 只读）
-web/src/store/figurePickerStore.ts（新）
-web/src/components/FigurePickerDialog.tsx（新）
-web/src/lib/desktop.ts       DesktopOpenPayload.pick
-
-scripts/ci/compat_corpus.py  PRODUCT_ROUTES / ROUTE_EXPECTATIONS + 校验
-scripts/ci/compat_matrix.py  route_probe_via_app / route_desktop_project /
-                             route_cli_open / stage_product_routes；
-                             classify 吃路由失败；报告 product_routes 节
-```
-
-### 稳定错误码（本轮新增，全表在 docs/handoff-protocol.md）
-
-```text
-script_no_figure / script_probe_failed / multiple_figures_found /
-invalid_stem / runtime_asset_failed / native_run_required /
-probe_in_progress（CLI 面；probe 其余码原样透传）
-```
-
-worker/browser 协议**零改动**；文档 schema 零改动；注册表格式零改动；
-`/api/*` 只加了 `--open-pick` 启动参数，端点零新增。
-
-## 修改文件
-
-| 文件 | 修改原因 | 是否有测试 |
+| # | 抽掉什么 | 哪条用例变红 |
 |---|---|---|
-| src/tavotto/engine/handoff.py | 脚本路由 + pick 契约 + probe 委托 | test_open_script_route 23 项 + test_handoff 原样绿 |
-| src/tavotto/app.py | --open-pick | smoke_app + landing 复用 browser_url |
-| src-tauri/src/main.rs | --pick-script 契约 + ?pick= | cargo test 14（+3） |
-| scripts/ci/compat_corpus.py | product_routes schema | load_manifest 全量校验 + test_compat_manifest |
-| scripts/ci/compat_matrix.py | 产品路由 runner + 分类 + 报告 + 数据隔离 | test_compat_product_routes + --all 全绿 |
-| tests/compat/manifest.json | 16 条声明路由并升级 full_support | schema 校验 + 守卫 |
-| tests/compat/baseline.json | bundled target 重生成（逐条读过） | 门禁 diff |
-| tests/test_compat_manifest.py | 守卫判据升级（验过路由才许 full） | 自身 |
-| tests/test_open_script_route.py（新） | Session 6 CLI 面 | 23 项 |
-| tests/test_compat_product_routes.py（新） | 反证 #2 的 guard | 2 项 |
-| web/src/lib/openRequest.ts(+test) | pick + runtime 兜底 | vitest +5 |
-| web/src/store/figurePickerStore.ts（新） | 选择器状态 | 经 Dialog 测试 |
-| web/src/components/FigurePickerDialog.tsx(+test)（新） | Figure 选择器 | vitest 3 |
-| web/src/App.tsx / lib/desktop.ts | pick 贯通 | 间接 |
-| web/src/i18n/locales/*/project.json | figurePicker/runtimeNeedsRun 双语 | i18n:check |
-| web/e2e/asset-library.spec.ts | 完整链 + 多 Figure e2e | e2e 4 条 |
-| web/e2e/fixtures.ts | freePort 导出 | — |
-| docs/handoff-protocol.md 等五份文档 | 契约与路由记录 | 文档 |
-| codex-plugin/…/desktop-handoff.md | 新码分诊话术 | 文档 |
+| 1 | 内置 runtime 可以当安装目标 | `test_the_bundled_runtime_is_never_a_mutation_target` |
+| 2 | 没有计划也能调安装接口 | `test_install_endpoint_refuses_without_a_plan` |
+| 3 | 未知 import 按同名装 | `test_an_unknown_import_is_never_installable` |
+| 4 | 包名语法放行（option injection） | `test_package_option_injection_is_rejected` |
+| 5 | pip 成功后不做 import 探测 | `test_pip_success_alone_is_not_success` |
+| 6 | 装完不作废 worker | `test_the_old_worker_is_gone_and_the_new_one_uses_the_new_interpreter` |
+| 7 | 安装期间旧 worker 照常工作 | `test_workers_on_the_mutating_environment_are_stopped` |
+| 8 | 安装期间还能起新会话 | `test_a_new_session_is_refused_while_the_environment_is_mutating` |
+| 9 | 修复轮次没有上限 | `test_repair_rounds_are_capped` |
+| 10 | 受管环境被所有项目共用 | `test_managed_environments_are_project_scoped` |
+| 11 | 计划不绑环境指纹（TOCTOU） | `test_a_changed_environment_makes_the_plan_stale` |
+| 12 | 受管环境不隔离（`--system-site-packages`） | `test_managed_venv_creation_is_isolated_and_minimal` |
+| 13 | pip 默认 `--upgrade` / 允许 sdist | `test_pip_argv_is_a_list_wheels_only_and_never_upgrades` |
+| 14 | 装完不做 worker 自检 | `test_imports_can_pass_while_the_worker_still_cannot_run` |
+| 15 | 没有 pip 就静默 ensurepip | `test_an_environment_without_pip_is_reported_not_silently_fixed` |
+
+**前端八条**：不提示「这会改你的环境」/ 解析不出包名也给一键安装 / 安装请求
+带前端拼的包名 / 轮次用完仍给入口 / 不可用目标也列出来 / pip 日志糊在主文案
+上 / 失败甩后端中文原文 / 取消后对用户环境也说「已回滚」——全部变红。
+
+### 两条第一轮抽掉不红（都是**缺维度**，不是死代码）
+
+- **#14（worker 自检）**：原本挂在 golden path 上，而那条用例里环境本来就
+  是好的，跳过自检什么都不变。补了「前两层都放行、worker 仍然起不来」
+  （字体缓存不可写 / `.so` 只在子进程里崩的同形状）之后才真正看护到它。
+- **前端 #2（解析不出包名也给一键安装）**：用例里 `targets` 恰好是空的，
+  guard 抽掉照样没按钮。补了「后端给了目标但没有可信包名」那一维——一键
+  安装的前提是「知道要装什么」，不是「有地方可以装」。
+
+## 真安装 E2E 怎么做到不联网
+
+临时目录里**手工拼一个纯 Python wheel**（wheel 就是约定好目录结构的 zip：
+模块 + `dist-info/{METADATA,WHEEL,RECORD}`），再用 pip 自己的
+`PIP_FIND_LINKS` + `PIP_NO_INDEX` 指过去。后者顺带验证了「index 用那个环境
+自己的配置」这条决策：**安装命令一个字节都不用为测试改动**。
+
+断言必须证明**包真的进了那个环境**：site-packages 里有那个文件、在那个解释器
+里 import 得到、`sys.prefix` / `sys.executable` 是它。
+
+受管环境那组另有一个**离线 fixture**（基础栈换空表 + venv 带
+`--system-site-packages`，因为 CI 装不了 matplotlib）。被放宽的那两条**另有
+单元用例逐字节钉住**——否则「离线 fixture 好使」会掩盖「生产上建出来的环境
+根本不隔离」。
 
 ## 实际运行的测试
 
-```bash
-# worktree 内、PYTHONPATH=src、主仓 .venv 解释器
-PYTHONPATH=src …/python -m pytest tests/test_open_script_route.py \
-    tests/test_handoff.py tests/test_desktop_launch.py     # 91 passed
-PYTHONPATH=src …/python -m pytest tests/test_compat_product_routes.py  # 2 passed
-PYTHONPATH=src …/python -m pytest -q                       # 全量绿
-cd src-tauri && cargo test                                 # 14 passed（需 dist/Tavotto 占位目录）
-cd web && pnpm test                                        # 88 文件 957 项
-cd web && pnpm build && pnpm i18n:check
-python scripts/build_mcp_widget.py && … --check            # dad5cb6bc0df93a5
-python scripts/build_browser_playground.py && … --check    # 95afb3e65de4ebe6
-python scripts/smoke_app.py --python .venv/bin/python      # 通过
-# CompatBench：bundled target 基线重生成（3.13 venv 按 runtime-lock 钉版）
-python scripts/ci/compat_matrix.py --all --update-baseline \
-    --target bundled --python <钉版 venv>/bin/python       # 134 full / 0 bug / 路由 16/16
-python scripts/ci/compat_matrix.py --smoke --gate pr       # 通过
-# e2e（先 python scripts/build_frontend.py；worktree 跑法同 Session 5）
-cd web && TAVOTTO_PYTHON=… PYTHONPATH=<worktree>/src \
-    pnpm playwright test e2e/asset-library.spec.ts         # 4 passed
-    pnpm playwright test e2e/playground.spec.ts e2e/mcp-canvas.spec.ts
+```sh
+ruff check .                                               # 全绿
+PYTHONPATH=src .venv/bin/python -m pytest -q -o faulthandler_timeout=600
+                                                           # 全绿（无 F）
+PYTHONPATH=src .venv/bin/python -m pytest -q \
+    tests/test_dependency_repair.py tests/test_dependency_repair_e2e.py
+                                                           # 80 passed
+cd web && pnpm build && pnpm test && pnpm lint && pnpm i18n:check
+                                                           # 1201 passed / 全绿
+PYTHONPATH=src .venv/bin/python scripts/ci/compat_matrix.py --smoke   # 通过
+python scripts/build_mcp_widget.py --check                 # 一致
 ```
-
-（坑复述：① 本机 5089 上可能挂着旧实例——涉及 `_remote_probe` 的测试
-必须 monkeypatch 掉委托，CompatBench 的 cli_open 一律 `--port 0`；
-② e2e 里「关闭再重开」不要钉同一端口（TIME_WAIT 会让 resolve_port 换
-端口），恢复索引用 addInitScript 跨 origin 带过去；③ `#` 在 URL 查询里
-是 fragment，runtime asset id 进 URL 必须编码；④ 基线必须在 target
-bundled 的钉版环境上重生成——在 current 上重生成会把 seaborn 六条写成
-execute:false，属于环境倒退不是产品事实。）
-
-## 负向反证（本轮六条，全部先红后还原）
-
-| # | 变异 | 判据测试 | 结果 |
-|---|---|---|---|
-| 1 | resolve_script_route 不再自动 probe（探测分支钉 False） | `test_open_script_route`（14 条连锁红，含 CLI show-only E2E） | **红**（还原后绿） |
-| 2 | CompatBench safe_probe 路由改回内部 `probe_and_register` | `test_compat_product_routes::test_safe_probe_route…`（cache 未物化） | **红**（还原后绿） |
-| 3 | 多 Figure 静默选第一张（pick 分支改 stems[0]） | `test_open_script_route` 的 multi/picker 三条 | **红**（还原后绿） |
-| 4 | useEngineSync runtime 分支恒 false（重开只显示旧 cache 不重放） | vitest `useEngineSync.test.ts` runtime 门 2 条 | **红**（还原后绿） |
-| 5 | `_resolve_panel_source` runtime 分支改拿 cache 文件交差 | `test_runtime_asset::test_export_uses_the_live_worker_not_the_cache` | **红**（还原后绿） |
-| 6 | `GET /api/runtime/assets` 触发 build（交接重新执行脚本） | `test_open_script_route::…executes_once…` | 首轮**没红**——「池清零」被 close_project 洗掉；哨兵改成项目外执行计数文件后**红**（还原后绿）。检测洞已修进测试 |
-
-## 真机/产品证据
-
-- macOS（arm64，开发机）：e2e 真实链路 4 条（真 Flask + 真 matplotlib
-  worker + 真浏览器），含关闭重开与导出双格式。CLI 面真执行（pytest）。
-- **Windows WebView2 / macOS WKWebView 最终候选产物证据未产出**（本机
-  产不了签名候选产物；lab runner 待用户启动）。原计划合并前补齐（§六）；
-  经用户拍板改为**合并后跟进**（见「未完成」首条）：用 ≥`6aeca9e` 的
-  main 构建候选产物取证。CI 侧已有部分替代证据（queue 轮 4 + full-ci 的
-  windows-exe-smoke / macos-app-smoke 全绿），壳内交互仍需真机。
 
 ## 已知失败与限制
 
-| 问题 | Stage/Route | 严重度 | 是否本轮 | 后续 |
-|---|---|---|---|---|
-| 真机最终产物证据缺失 | 全路由 × desktop | 高（**合并后跟进**，经用户拍板由合并阻断改期；发版声明前补齐） | 是 | lab runner / 用户真机（main ≥`6aeca9e` 构建候选产物） |
-| 桌面 sidecar 动态端口 → CLI 探测委托够不着在跑的桌面实例（本地 probe 兜底，registry+cache 仍共享） | cli_open × desktop | 低（记录在案） | 是 | 不修（单实例转发语义不变） |
-| probe 仍同步阻塞（CLI 无进度输出，只等结果） | cli_open | 低 | 是 | SSE 进度流条目沿用 |
-| `browser_playground` 路由平时 not_run（只有 --browser 腿跑） | compatbench | 低（如实记账） | 是 | nightly browser 腿覆盖 |
-| runtime 卡片在「来源」筛选生效时整体隐藏 | asset_model | 低 | 否（S5 记录） | 不修 |
+| 问题 | 严重度 | 后续 |
+|---|---|---|
+| 没有 wheel 的包走不了一键路径（如实报 `dependency_requires_build`） | 中（如实记账） | 「允许源码构建」是高级功能，等数据 |
+| 机器上没有任何可建 venv 的 Python 时受管环境这条路不存在 | 中 | 如实报 `managed_env_unavailable`，退回「选择其他 Python」 |
+| 私有 index 上的包：pip 用那个环境自己的配置，能装；但**诊断里只记有没有自定义 index**，排障信息比公网少 | 低 | 刻意如此（凭据） |
+| Conda 专属的包（只在 conda-forge 上）装不了 | 中 | 走「选择其他 Python」 |
+| 受管环境按**项目路径指纹**寻址：项目整个挪走 = 换了一个环境（旧的留在数据目录里） | 低 | 用户可以重建；自动搬迁要另想身份模型 |
+| 受管环境**不声称 lockfile 级复现**：重建时某个版本从 index 撤了会如实报错 | 低 | 刻意如此 |
+| 取消对用户 `.venv` 没有回滚 | 中（**已在 UI 与 ADR 里说明**） | 不修，pip 层面做不到 |
+| 真机（WebView2 / WKWebView 壳内）尚未走过这条路 | 中 | 与 Session 7 同一条待办 |
+| Session 7 遗留：只认 `.venv`/`venv`/`env`；体检跑在 `-I` 下与 worker 的环境条件差异 | 见上一轮记录 | 未变 |
+
+## 路径净化：两个出口，第二个是踩出来的
+
+用户裁决 8 条 code-scanning 告警**走改码、不 dismiss**（`# nosec` /
+`# codeql[...]` 这类抑制注释等于换个地方 dismiss，不算数）。8 条里 7 条是
+**同一条污点流**：项目根 → 派生路径 → `open()` / 子进程 argv。所以收成两个
+出口，不是打 7 个补丁：
+
+| 函数 | 用于 | 判据 |
+| --- | --- | --- |
+| `projectenv.contained_path(root, cand)` | **目录** | 先 `realpath`（软链接 / `..` / `.` 全在这步落地），再按 `real_root + os.sep` 前缀判 |
+| `projectenv.contained_file(root, cand)` | **文件** | 判**父目录**，回拼好的路径，**绝不 realpath 文件本身** |
+
+两条容易写错的地方，各配了一条负向反证：
+
+* **前缀判必须带 `os.sep`**。裸 `startswith(real_root)` 会把 `/a/paper-evil`
+  判成「在 `/a/paper` 里面」。
+* **顺序不能反**，也不能用 `normpath` 代替 `realpath`：`<项目>/.venv -> /etc`
+  这种软链接在字符串上看着在项目内。
+
+**为什么需要第二个函数**（这是踩出来的，不是设计出来的）：只有
+`contained_path` 时，`venv/bin/python` 会被 realpath 解析成
+`/opt/homebrew/.../python3.13`——**每一个 venv 都被判成「在项目外」**，
+`test_project_env` 与 `test_dependency_repair` 当场全红。目录不是软链接，
+判目录既挡得住逃逸又不误伤。**这个坑在 `project_relative` 的注释里已经记过
+一次**，改 `interpreter_of` 时又踩了——所以这次收成函数，第三个调用点直接用。
+
+顺带堵上一个**真缺陷**（不只是静态分析的抱怨）：`PATCH /api/engine/environment`
+的 `scope="project"` 分支把相对路径拼到项目根上却没验逃逸，`../../../x`
+拼完就出了项目，**而那条路径下游是要被当解释器 spawn 的**。绝对路径仍然
+允许（ADR 0018 写明用户可以挑项目外的 conda 环境），堵住的只有「假装是
+相对路径」那条。
+
+> **写跨平台逃逸用例时**：硬写 `..\..\x` 在 POSIX 上根本不是逃逸（反斜杠
+> 不是分隔符，那只是个怪文件名），断言会红在 `interpreter_not_found` 上而不是
+> 逃逸判据上——用例在一半平台上量的是另一件事。用 `os.sep.join([...])`。
+
+## ⚠️ PR 有冲突时 CI **根本不会跑**（不是「还没跑」）
+
+`#177` 有过两次「推上去 46 分钟一个 run 都没有」。当时的判断是「push 事件
+丢了，重推一次」——**重推没用，因为根因不是派发**：
+
+```
+gh pr view 177 --json mergeable   →  CONFLICTING
+```
+
+**PR 有合并冲突时 GitHub 算不出 merge commit，`pull_request` 触发的
+workflow 就不派发。** 三点对照（同一条分支、同一段时间窗，唯一变的是
+`mergeable`）：
+
+| head | mergeable | runs |
+| --- | --- | --- |
+| `82d893d` | CONFLICTING | 0（等了 46 分钟） |
+| `c4f6af0` | CONFLICTING | 0（重推换了 SHA，仍然 0） |
+| `9b6007c` | **MERGEABLE** | **3（rebase 之后立刻派发）** |
+
+**查它之前先查 `mergeable`**，它是 O(1) 的，而「计时 + 看别人有没有 run」
+要 30 分钟且答不了这个问题：
+
+```text
+CONFLICTING                    → 根因是冲突，rebase 才会有 run
+MERGEABLE 且别人有 run 它没有  → 被单独跳过
+MERGEABLE 且大家都没有         → 平台滞后
+```
+
+看板上 `checks=UNREPORTED` 与「永远不会报告」长得一样，这类状态要单独一档
+（`BLOCKED(conflicting)`）。
+
+**这里还藏着一个更一般的教训**：当时的推理是「排除了平台整体故障 → 所以是
+事件丢了」。**排除一个解释不等于证明另一个**——中间少了「还有别的可能吗」
+那一步，而第三种可能用一个字段就能查出来。
+
+## ⚠️ 脚本报「完成」不等于它做过事
+
+`rebase_loop.sh` 有一轮报「rebase 已完成」，而 **HEAD 一动没动**：它只会
+「继续」一个进行中的 rebase，没有 rebase 时 `git rebase --continue` 报
+"no rebase in progress"，脚本把那当成了完成。
+
+修法是**在结束时验证目标状态**，而不是信一句话：
+
+```sh
+git merge-base --is-ancestor origin/main HEAD || { echo "什么都没做"; exit 4; }
+```
+
+这与本轮别处踩的几次同源（`CodeQL` 与 `CodeQL gate` 当成同一个 check、
+`CONFLICT` 行读 stderr、`--name-only` 分节、按分支 ref 查 code-scanning
+alerts 永远是 0）：**输出看着像结论，其实回答的是另一个问题**。
+每条判据先造一个已知答案的样本验一遍再用。
+
+## ⚠️ linked worktree 共享主仓库的 `.git/config`
+
+另一个会话在临时 worktree 里跑 `git config user.email q@l`，以为只作用于
+那个 worktree。实际上 **`extensions.worktreeConfig` 没启用时，`git config`
+不带 `--worktree` 一律写进共享的 `.git/config`**——于是本仓库（含所有
+linked worktree）此后每一次提交的作者都变成了 `q <q@l>`，本分支有两个提交
+中招。
+
+排查与修复：
+
+```sh
+git config --show-origin user.email     # 看是哪一层盖住了全局身份
+git log --format='%an <%ae>' origin/main..HEAD | sort -u   # 应当只有一行
+# 改写时**显式带身份**，别依赖配置（那条配置可能还生效着）：
+git -c user.name=… -c user.email=… \
+    rebase --exec 'git commit --amend --reset-author --no-edit' <base>
+```
+
+`git -c` 设的参数经 `GIT_CONFIG_PARAMETERS` 传给子进程，所以 `--exec` 里的
+`git commit` 拿到的是你指定的身份——这一点验过再用，别想当然。
+
+后果不只是「名字不好看」：权利溯源审计要求 main 可达的提交出自同一权利人，
+而 `q@l` 反解不出 GitHub 账号，CLA 判定器会判 `unresolved` 并阻断。
 
 ## 不得被下一 Session 破坏的约束
 
-- Session 2–5 的全部约束仍然有效（runtime id 不透明、打开绝不执行、
-  cache 是派生物、writeback 拒绝在后端、lazy 门、取消端到端、`_PROBES`
-  并发闸、`GET /api/runtime/assets` 零执行、scriptRunStore 代际纪律、
-  不渲染假 native 入口、素材库两区是普通路径唯一入口）。
-- **`tavotto open script.py` 的执行次数纪律**：probe 一次；交接目标进程
-  零重跑；CLI 退出前池清零（execution-count 用例看护）。
-- **多 Figure 绝不静默选第一张**：CLI（multiple_figures_found /
-  --stem）、pick 契约、FigurePickerDialog 三层都有用例看护。
-- **契约同源对新增一对**：`desktop_argv()` ↔ `parse_open_args()` 现在含
-  `--pick-script`；macOS open -na 复用 desktop_argv 切片——别再手拼。
-- **CompatBench 产品路由不得旁路**：safe_probe/desktop_project 走真实
-  端点、cli_open 真 spawn + `--port 0`；no-savefig case 升 full_support
-  的门票是三条路由声明 + 验证（结构性守卫看护）。
-- **基线只在 target bundled 的钉版环境上重生成**，并逐条读 diff。
-- **merge main 之后必须重跑 e2e**（asset-library / golden-paths 至少各一
-  遍）：windows-exe-smoke 的 Playwright 套件只在 merge_group 跑，PR CI 绿
-  不代表它绿；队列轮 2 的三条红全是 merge 交互/选择器歧义这类「两侧各自
-  正确、合起来才红」的形状。
+- Session 2–7 的全部约束仍然有效（见 git 历史里的上一版本文件，逐条未变）。
+- **内置 runtime 永远不是安装目标**。缺包时它只是触发器。
+- **未知 import 绝不按同名安装**。一键安装只允许 `project_declared` /
+  `curated` 两档高置信解析。
+- **包名与版本必须过 `depresolve.parse_requirement`**，且安装前再验一次。
+  `shell=False` 不是免死金牌——pip 自己会把参数解析成选项。
+- **没有计划就不许改任何环境**；计划绑项目 + 环境指纹 + 需求，执行端一个
+  字节都不从请求体里读。
+- **改用户 `.venv` 必须是用户明确点击的结果**，且**不假装能回滚**。
+- **pip exit 0 不等于成功**：三层验证缺一不可。
+- **安装期间那个环境上不许有 worker 在跑，也不许起新的**；锁按环境不按全局。
+- **绝不自动 `pip uninstall`**、绝不自动改 requirements/pyproject、绝不
+  自动建 `project/.venv`、打开项目绝不联网。
+- **诊断与遥测里绝不出现 index 地址、pip 配置、绝对路径、凭据**。
+- **merge main 之后必须重跑 e2e**（asset-library / golden-paths 至少各一遍）：
+  windows-exe-smoke 的 Playwright 套件只在 merge_group 跑。大改动入队前
+  先打 `full-ci` 标签在 PR SHA 上取证。
 
-## 下一 Session 唯一目标
+## 合并前必做
 
-> 只设计 native execution 契约与安全边界，写 ADR（0014 定稿）和
-> contract tests，**不直接实现全部 `tavotto run`**。
+- [x] `git rebase origin/main`（到 `e025612`），rebase 后**本地重跑**整套：
+      ruff 全绿 / pytest 2454 passed / web 1215 passed / CompatBench smoke 通过 /
+      `build_mcp_widget.py --check` 一致。CI 上三个 required gate 也全绿。
 
-**入场券（先于一切）**：真实用户复测清单（见「未完成」第二条）已产出
-脱敏最小 fixture——Session 7 prompt 的前置条件原文是「PR 1 已合并 +
-真实用户重测后仍有项目因环境/cwd/argv/env/本地模块/matplotlibrc/safe
-隔离失败」。**没有这些证据不开工**（2026-08-26 已因此叫停过一次，
-用户拍板顺序：先合并链，后复测，再 Session 7）。
+### CI 红过两轮，两次都是「本地复现不出来」——记法比结论有用
+
+两轮红的**都不是功能**，是环境漂移，而且两次本地都是绿的：
+
+| 轮次 | 红在哪 | 根因 | 本地为什么看不见 |
+|---|---|---|---|
+| 1 | `test_project_venv_starts_the_worker_without_installing_tavotto` | 夹具 venv 用 `--system-site-packages`，继承的是**基础解释器**的 site-packages，而 CI 的 backend-fast 正是 `pip install -e ".[dev]"` 装进那里的 → 「项目 venv 里没有 Tavotto」这个**前提**当场失效 | 本地 pytest 跑在 `.venv` 里，**从 venv 建 venv 继承的是基础解释器、不是父 venv** |
+| 2 | `test_i18n_dead_keys.py` | `EngineSource` 加了 `managed_project_env` 却没给 `engine.sourceLabel.*` 文案——界面上会显示成键名 | 那条反向门禁是 main 上 #158 **刚落地**的，我的 base 里没有；CI 测的是 merge ref |
+
+两条都按同一条纪律收尾：**把「只有 CI 能发现」变成「本地就能发现」**。
+第 1 条现在先断言遮蔽文件在（拆掉遮蔽本地当场红，已反证）；第 2 条靠
+rebase 到最新 main 把门禁拿进来。
+
+**第 3 轮（full-ci）红在 Windows 平台档**，同样是**测试断言**不是产品：
+
+`backend-platforms (windows-latest)` 上
+`test_managed_environment_end_to_end` 红。根因是 **Windows 的 8.3 短名**：
+runner 的 `TEMP` 是 `C:\Users\RUNNER~1\...`，`config.data_dir()` 从它派生，
+于是子进程报回来的 `sys.executable` 带短名，而断言另一侧的 `.resolve()`
+把它展开成了长名（`runneradmin`）——一边展开一边不展开，`is_relative_to`
+按路径段比就永远不等。
+
+只有受管环境那条路会撞上：golden path 用的项目路径来自 pytest 的 `tmp_path`
+（长名），两边一致。
+
+修法是**归一父目录、不归一解释器本身**：`Path(executable).parent.resolve()`。
+两条约束缺一不可——不 resolve 就展不开短名，resolve 解释器本身则会在 POSIX
+上跟着 `venv/bin/python` 的软链接走到基础解释器（projectenv 里同一个坑）。
+父目录（`Scripts/` / `bin/`）两个平台上都不是软链接，正好只展开该展开的那半。
+
+**顺带查到一个既有面（本轮不动）**：`managedenv.project_fingerprint()` 走
+`config.normalize_path_identity(os.path.abspath(...))`，而那个函数**只做
+大小写、不展开 8.3 短名**。所以同一个项目用短名路径与长名路径打开，会拿到
+两个不同的受管环境。**这不是本轮引入的**——`app._project_id()` /
+`pool._norm_dir()` 共用同一份判据，同样如此；受管环境刻意与它们同源
+（写在 `project_fingerprint` 的 docstring 里），单方面在这里改成 resolve
+会让环境 key 与项目 id 不同源，那比现在糟。真要修是**改那份共用判据**，
+独立一轮、连同 `_project_id` / `_norm_dir` 一起。
+
+**第 4 轮红在 `windows-exe-smoke`，这次是真的产品缺陷**：
+
+Playwright 用例找不到「换渲染环境」的引导。第一反应是「文案变了、改断言」，
+**打印面板全文之后发现不是**——新的修复卡在「解析不出包名」那一档只剩
+「指定安装包」，而文案还写着「或者换一个已经装好它的 Python 环境」，
+那句话**指不出任何控件**。ADR 0019 §五 我自己写的是两个操作并列
+（`[选择其他 Python]` / `[指定安装包…]`），实现漏了前一个。
+
+补上了，而且**任何场景都保留**（解析不出 / 没有可用目标 / 轮次用完），
+它是兼容层 Layer 4 的入口——最后一条路不能只在某些分支里有。
+e2e 断言同时改成盯**控件的无障碍名**而不是散文（文案会改，无障碍名是契约
+的一部分），并补了单测（抽掉 `<OtherPython />` 当场变红，已反证）。
+
+### ⚠️ 本地 e2e 会假绿：`src/tavotto/web/` 是陈旧的构建残留
+
+**这一条会反复咬人，务必先读。** 那条 e2e 我本地跑**一直是 `1 passed`**，
+CI 却红。根因：
+
+```python
+WEB_DIST = PKG_ROOT / "web"          # src/tavotto/web —— 打包产物，被 gitignore
+if not WEB_DIST.is_dir():
+    WEB_DIST = ... / "web" / "dist"  # 只有前者不存在才回退到 pnpm build 的输出
+```
+
+`src/tavotto/web/` 一旦在工作区里存在（以前打过包就会留下），它**优先于**
+`web/dist`。于是本地起的后端 serve 的是**那天打包时的前端**，当天所有
+`web/src` 改动一个都看不见——`pnpm build` 跑多少次都没用。
+
+**跑 e2e 之前先 `rm -rf src/tavotto/web`**（它被 gitignore，打包时会重新
+生成）。删掉之后我本地逐字复现了 CI 的 locator 报错。
+
+定位过程值得照抄，因为它没有一步是猜的：
+
+1. 拦 HTTP 响应 → 后端**确实**发了 `dependency_repair`（排除后端）；
+2. grep bundle → 解析代码**在**里面（排除「没 build」）；
+3. 打印浏览器实际加载的资源名 → `index-D7n3D3ef.js`，而 `web/dist/assets`
+   里**根本没有这个文件**（元凶现形）。
+
+前两步都指向「应该是好的」，只有第三步问了「浏览器到底拿到了哪一份」。
+**「各个环节看起来都对」时，去问那个没人验过的环节。**
+
+**下一轮直接用的两条**：
+- 夹具 venv 的「前提」要**造出来**，不能指望宿主碰巧没装（`--system-site-packages`
+  会把基础解释器的东西带进来）。
+- 本地全绿 ≠ CI 会绿：**main 上新落地的门禁不在你的 base 里**。开 PR 前先
+  `git fetch && git rebase origin/main` 再跑一遍，比看 CI 红了再查便宜。
+- [ ] **入队前再重建一次 `canvas.html`**：a7 那六条排在前面，先到先得，
+      每次被顶掉都按「合并态重建 + `--check`」处理，**不手工解冲突**。
+- [ ] 打 `full-ci` 标签在 PR SHA 上取证（大改动入队规矩）。
+- [ ] **merge main 之后重跑 e2e**（asset-library / golden-paths 各一遍）：
+      windows-exe-smoke 的 Playwright 套件只在 merge_group 跑。
+
+### 与在途 PR 的两处交代（已同步给 `tavotto-d2`）
+
+- **Ruff formatter 迁移（#159 / #175 / #176）**：本 PR **刻意不含格式化提交**。
+  `ruff format src/tavotto/app.py` 会重排整个 3800 行文件——那几千行与本轮
+  无关的 churn 会淹掉评审，还会和每一条动 app.py / pool.py 的 PR 撞车，
+  而那正是 #175 存在的理由。实测本分支改过的 16 个 `.py` **全部**会被重排。
+
+  **收敛顺序：rebase 在前，格式化在后，而且多半不需要后面那步。**
+
+  ```sh
+  git fetch origin && git rebase origin/main     # 就这个
+  ruff format --check .                          # 它说红了才补一个格式化提交
+  ```
+
+  「先在自己分支上 `ruff format .` 再 rebase，两边形态相同、冲突自己消失」
+  这条听着顺理成章，**实测是反的**（`tavotto-d2` 用 `git merge-tree
+  --write-tree` 在两条真实在途分支上数冲突文件与 `<<<<<<<` 块）：
+
+  | 分支 | 不格式化 | 预先格式化 |
+  |---|---|---|
+  | #161 | 3 文件 / 3 块 | **5 文件 / 7 块** |
+  | #171 | 3 文件 / 4 块 | **5 文件 / 10 块** |
+
+  机制：分支 base 停在旧 main，在它上面格式化得到的是「**旧内容**的新排版」，
+  而 main 上是「**新内容**的新排版」——两边动同一批行，本来能干净带过去的
+  文件反而变成冲突。**格式化把陈旧内容烤进了新形状。**
+
+  对照组（内容已跟上 main 的分支）两种做法都是 **0 冲突**。所以决定冲突的
+  是**内容陈不陈旧**，不是格没格式化；分支跟上 main，重排根本不构成冲突源。
+  这条与本轮自己踩的那两个 CI 红是同一件事的两面：**先 rebase 再干活**。
+- **CodeQL 的红不是 required check，但它照样挡合并——走的是另一道门**。
+  `CodeQL` 报 1 critical + 7 high，逐条定性写在 PR #177 的
+  issuecomment-5438197651。
+
+  **这里我先写错过一版，值得留着**：原文说「所以那 8 条不是队列前置条件」。
+  那个结论只查了「`CodeQL` 是不是 required check」（不是），漏掉了**每条
+  告警会自动生成一条评审线程**，而 ruleset 21121430 里：
+
+  ```text
+  required_review_thread_resolution: true
+  ```
+
+  于是 8 条告警 = 8 条未解决线程 = `mergeStateStatus: BLOCKED`，**必须逐条
+  处置才能入队**。判「某件事挡不挡合并」不能只数 required contexts——
+  `pull_request` 规则里还有线程解决、approval 数、unattributed 改动几条
+  独立的门，任一条不满足都是 BLOCKED，而 BLOCKED 只有一个值，看不出是谁挡的。
+
+  查法（比从状态反推可靠）：
+
+  ```sh
+  gh api repos/Tavotto/Tavotto/rulesets/21121430 \
+    --jq '.rules[]|select(.type=="pull_request")|.parameters'
+  ```
+
+  同一份参数里还有 `require_extra_approval_for_unattributed_changes: true`。
+  #177 不触发（39 个提交全部归属到 `erwanjun`，`gh api pulls/177/commits
+  --jq '.[].author.login'` 逐条验过）——但这条是本轮那次 git identity 污染
+  （`q <q@l>`）真正的代价所在：**当时若没修，合并会被这条卡住**。
+
+  **两个名字很像的检查别合成一个**（我第一轮就是这么看错的）：
+
+  ```text
+  CodeQL        GitHub 生成的告警汇总 check，报「新增几条告警」——不是 required
+  CodeQL gate   required 的是这个。codeql.yml 里 needs: [analyze]，走
+                aggregate_gate.py --mode codeql --required analyze，
+                聚合的是四个 analyze job 的**结论**，不看告警条数
+  ```
+
+  必需上下文只有三个（ruleset 21121430）：`CI fast gate` / `CI integration
+  gate` / `CodeQL gate`。现成的对照：#175 的 `CodeQL` 同样 fail（20 条新
+  告警），`CodeQL gate` 照样 pass。**但这只证明「`CodeQL` 这个 check 不挡」，
+  不证明「这些告警不挡」**——它们从线程那道门挡，见上。
+
+  **我开 PR 时的预判是错的，值得记下来**：我以为红灯来自「本 PR 改写了
+  `pool.py::EngineWorker.__init__` 里的一行，把那条 critical dismissal 的
+  指纹打散了」。实情不是——那 8 条**全部是新代码第一次被扫到**
+  （`projectenv.py` / `depresolve.py` 是本 PR 新增的文件，main 从没扫过），
+  与 dismissal 打散无关。`EngineWorker.__init__` 那条**要等本 PR 合进 main
+  之后**才会落空。
+
+  处置：**一条都没 dismiss。** main 上那 15 条的先例摆着——维护者
+  2026-08-26 逐条手写的理由，那不是 PR 作者该代劳的动作，更不该为了让门禁
+  变绿而做。
+
+  **后来确实为此改了代码，但改的是真防线，不是装饰**：`contained_path()` /
+  `contained_file()` 那套路径遏制（realpath 后按前缀判）堵住了 `../` 逃逸，
+  是真加固，`backend-platforms (windows-latest)` 已验。#119 的守卫（正则
+  白名单 + `shell=False` + list argv）本来就是正确形状，没动。
+
+  **然后撞上一件事，下个会话大概率会重蹈**：改完之后我估「再做一轮 inline
+  净化能消掉 6 条」。逐条读了告警指的那一行，这个估计是 **0 条**——
+
+  ```text
+  projectenv.py:203   _within() 里的 path.resolve()
+                      ← 这函数存在的唯一理由就是拒绝越界路径，
+                        这次 resolve 就是净化过程本身
+  depresolve.py:338   净化已经是 inline 的（往下 3 行同函数内就校验并回退）
+                      ← 照报不误
+  projectenv.py:140   cand 已经是 contained_file() 的输出，即已净化的值
+  app.py:3404         报在净化前一行，下一行就是 contained_file()
+  ```
+
+  第一条说明**每加一层净化就多一个 sink**（任何范围判定都得先 resolve 两边
+  再比较），第二条说明**inline 化已经试过、无效**。污点分析报的是**数据流
+  经过的位置**，不是缺陷位置，而净化器天然坐在数据流上。
+
+  **所以拿到这类告警，先读它指的那一行，再估「能修几条」**——逐条读几分钟，
+  估错要赔一轮无用重构，且代码更差（真正的检查被淹在装饰性净化里）。
+  剩下的按「产品语义」处置：`app.py:3404` 接受用户指定的解释器路径是 ADR
+  0018 明确允许的（项目外的 conda 环境），要消除只能改产品行为。
+
+  其中 **#120（`app.py:3111`）要单独看**：它不在已 dismiss 的那三条所在的
+  函数里（那三条在 `api_registry_probe`），而在本 PR 新增的
+  `_set_project_environment`，且**故意接受项目外的绝对路径**（ADR 0018
+  写明「用户显式挑的项目外解释器（conda 环境）才存绝对路径」）。要不要收紧
+  是产品决定。
+
+  **两条方法学**（都来自这次，值得下一轮直接用）：
+  - 判「新增 high 告警是不是我引入的」，`state=open` 那个过滤器**会把
+    dismissed 排除掉**，只看它会得出相反结论。
+  - 判「我碰到那条 dismissal 了吗」，比 hunk 位置可靠的是**比锚点函数的
+    AST dump**——排版、行号、rebase 都不影响它，只有实质改动会变。
+
+## 待办（本 PR 之外）
+
+- [ ] **真机验证这条路**：Windows/macOS 壳内用一个带 `.venv` 且缺包的真实
+      项目走一遍完整修复（用户的 `2d 处理` 是现成样本）。CI 侧覆盖不了
+      WebView2 / WKWebView 壳内交互。
+- [ ] **网站 playground re-sync**（PR 1 起就挂着）：合并后 main 上
+      `python scripts/build_browser_playground.py` → 网站仓库
+      `pnpm sync-playground`。
+- [ ] **curated 表的第一次扩充等真实数据**：哪些包最常缺、哪些解析不出来。
+      `dependency_unresolved` 出现的频率就是这张表该不该长的依据。
+- [x] 受管产物重建（本轮改了 `web/src`）：`canvas.html` 指纹
+      d1aec7a5393dcb20 → 10f822e0302251de；playground 指纹 670ecdf05bede0f3
+      （`web/dist-playground` 不进仓库）。
+
+## 下一 Session：Session 8 — Matplotlib Bridge Technical Spike
+
+**不要把 `tavotto run` 塞进 Session 8。** ADR 0014 的决策门没有变：只有当
+真实数据表明剩余失败仍大量集中在 cwd / argv / shell env / `python -m` /
+自定义启动语义上时，才恢复它。
+
+本轮之后要回答的数据问题多了一条：
+
+1. 之前失败的旧项目里，有多少因为项目 `.venv` 自动接手而成功了？（Session 7）
+2. **有多少因为一键装依赖而成功了？**（Session 7B）
+3. 剩余失败按原因分类各占多少？
+
+分类口径不变：`environment_missing` / `unsupported_python` / `cwd_semantics` /
+`argv_semantics` / `env_var_semantics` / `module_invocation` /
+`package_layout` / `custom_launcher` / `artist_support` / `actual_script_bug`。
+
+本轮的决策输出仍是：**DEFER_TAVOTTO_RUN**。
 
 ## 下一 Session 首先阅读
 
 ```text
-AGENTS.md / CLAUDE.md（src/tavotto/AGENTS.md 的「tavotto open 自动 safe
-  probe」一节 + 外部交接一节）
+AGENTS.md / CLAUDE.md
+src/tavotto/AGENTS.md 的「受控依赖修复」一节
 docs/compatibility/COMPATIBILITY_BRIDGE_MASTER_PLAN.md
 docs/compatibility/COMPATIBILITY_BRIDGE_HANDOFF.md（本文件）
-docs/adr/0014-safe-native-execution-profiles.md（Proposed 草案，本轮定稿）
-docs/handoff-protocol.md（native_run_required 的对外承诺口径）
-src/tavotto/engine/execspec.py（profile 字段已预留 safe|native）
-scripts/ci/compat_matrix.py（native_run 路由从 not_implemented 升级的位置）
+docs/compatibility/legacy-projects.md（兼容层五层）
+docs/adr/0018-project-python-environment-resolution.md（Session 7）
+docs/adr/0019-controlled-dependency-repair.md（Session 7B）
+docs/adr/0014-safe-native-execution-profiles.md（仍是 Proposed）
+src/tavotto/engine/{projectenv,depresolve,managedenv,deprepair}.py
+src/tavotto/engine/pool.py 的 resolve_worker_python / build /
+    try_project_env / mutating_environment
 ```
-
-注意：merge SHA 与复测清单已登记（本 PR）；开工判据只剩**真实用户复测
-证据**（上节入场券）。`native_run_required` 已是对外错误码，ADR 0014
-的契约必须与它的文案承诺一致（「按项目原方式运行」）。
 
 ## 建议启动命令
 
 ```bash
-git status --short && git log -8 --oneline
+git status --short && git log -10 --oneline
+
+# 全部走 venv 的绝对路径，别用裸命令——本机 PATH 里没有 ruff（直接报错），
+# 而 pytest **有**：`/opt/homebrew/bin/pytest`，那是另一个解释器的。
+# 前者立刻失败反而安全，后者会跑起来并给出主语错误的结果。
+/Volumes/Projects/Tavotto/.venv/bin/ruff check .
+/Volumes/Projects/Tavotto/.venv/bin/ruff format --check .   # #176 起也是门禁
 PYTHONPATH=src /Volumes/Projects/Tavotto/.venv/bin/python -m pytest -q \
-    tests/test_open_script_route.py tests/test_compat_product_routes.py
+    tests/test_project_env.py tests/test_dependency_repair.py
+PYTHONPATH=src /Volumes/Projects/Tavotto/.venv/bin/python -m pytest -q \
+    tests/test_dependency_repair_e2e.py        # 真装包，约 1–2 分钟
 /Volumes/Projects/Tavotto/.venv/bin/python scripts/ci/compat_matrix.py --smoke
 ```

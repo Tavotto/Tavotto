@@ -70,7 +70,9 @@ def _err(code: str, message: str, params: dict | None = None, traceback_text: st
     return out
 
 
-def _error_from_worker(exc: pool.WorkerError, entry: str) -> dict:
+def _error_from_worker(
+    exc: pool.WorkerError, entry: str, *, figures_dir: str = "", script: str = ""
+) -> dict:
     """WorkerError → 稳定探测错误码。
 
     映射是收敛的：缺包与超时各有可执行出口（换环境 / 检查死循环），单独
@@ -80,12 +82,27 @@ def _error_from_worker(exc: pool.WorkerError, entry: str) -> dict:
     """
     reason = _short(str(exc), exc.traceback_text)
     if exc.code == "missing_dependency":
-        return _err(
+        params = {"module": exc.module}
+        # 项目环境自动接手为什么没成（ADR 0018）：找不到 venv / venv 里也没这个
+        # 包 / 那个环境没有 matplotlib / Python 版本不支持。四种情况用户要做的
+        # 事完全不同，只报「缺少依赖包」等于把可执行的出路藏起来。
+        detail = getattr(exc, "project_env", None)
+        if isinstance(detail, dict) and detail.get("code"):
+            params["project_env"] = detail.get("code", "")
+        out = _err(
             ERROR_MISSING_DEPENDENCY,
             f"缺少依赖包：{exc.module}（当前渲染环境里没有它）",
-            params={"module": exc.module},
+            params=params,
             traceback_text=exc.traceback_text,
         )
+        # 「能不能一键装上」（ADR 0019）。**素材库这条路必须也带上它**：
+        # 用户打开旧项目走的就是这里，只在渲染端点上给恢复引导的话，
+        # 「素材库里打不开、面板里能修」又是一次两个入口两个答案。
+        if figures_dir:
+            from . import deprepair
+
+            out["dependency_repair"] = deprepair.offer(figures_dir, script, exc.module, detail)
+        return out
     if exc.code == "worker_timeout":
         return _err(
             ERROR_TIMEOUT,
@@ -202,8 +219,11 @@ def probe(
         # 复用旧进程等于一直用错的入口重试。
         pool.invalidate(script, figures_dir)
         try:
-            worker = pool.get(script, figures_dir, entry)
-            resp = worker.ensure_built()
+            # `pool.build` = get + ensure_built + **一次项目环境自动 fallback**
+            # （内置 runtime 缺依赖 → 项目自己的 .venv 接手，ADR 0018）。
+            # 探测是「跑一次用户脚本」最主要的入口，自动接手必须覆盖它——
+            # 否则素材库里能打开的项目，`tavotto open` 打不开。
+            _worker, resp = pool.build(script, figures_dir, entry)
         except pool.WorkerError as exc:
             pool.invalidate(script, figures_dir)
             if cancelled():
@@ -213,7 +233,7 @@ def probe(
                 return {**empty, "tried": tried, "error": _cancel_err()}
             LOG.info("探测失败 %s [entry=%s]: %s", script, entry, exc)
             if first_error is None:
-                first_error = _error_from_worker(exc, entry)
+                first_error = _error_from_worker(exc, entry, figures_dir=figures_dir, script=script)
             continue
         stems = sorted(resp.get("stems") or {})
         if stems:

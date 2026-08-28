@@ -9,9 +9,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -20,7 +22,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import config, execspec, patchspec, runtime
+from . import config, execspec, patchspec, projectenv, runtime
 
 LOG = logging.getLogger("tavotto.engine")
 
@@ -116,6 +118,11 @@ SOURCE_MANAGED = "managed_venv"  # Tavotto 在源码模式下自建的 venv
 SOURCE_BUNDLED = "bundled"  # Windows 桌面版随包附带的私有 runtime
 SOURCE_CURRENT = "current_process"  # Flask 自己这个解释器（pip install tavotto[worker]）
 SOURCE_SYSTEM = "system"  # 探测到的系统 Python / Conda
+SOURCE_PROJECT_VENV = "project_venv"  # 项目自带的 .venv（内置缺依赖时自动接手）
+#: Tavotto 替**这个项目**建的隔离环境（ADR 0019 的受控依赖修复）。与
+#: `SOURCE_MANAGED` 刻意分开：那个是全局的 `worker-env/`（「这台机器上没有
+#: 科学栈」的兜底），这个是项目作用域的，两者的排障含义完全不同。
+SOURCE_MANAGED_PROJECT = "managed_project_env"
 
 #: 给人看的来源名（诊断包与日志用；前端有自己的一份文案）
 SOURCE_LABELS = {
@@ -125,6 +132,8 @@ SOURCE_LABELS = {
     SOURCE_BUNDLED: "Tavotto 内置环境",
     SOURCE_CURRENT: "Tavotto 自身的解释器",
     SOURCE_SYSTEM: "系统 Python / Conda",
+    SOURCE_PROJECT_VENV: "项目自带的虚拟环境",
+    SOURCE_MANAGED_PROJECT: "Tavotto 为这个项目建的环境",
 }
 
 _worker_python: str | None = None
@@ -276,6 +285,9 @@ class WorkerError(RuntimeError):
         self.code = code
         # code == "missing_dependency" 时是缺的那个模块名
         self.module = module
+        #: 哪个脚本报的（missing_dependency 时由 `_error_of` 填）。依赖修复
+        #: 按 (项目, 脚本) 记轮次、按脚本所在目录找依赖声明，都要它。
+        self.script_name = ""
 
 
 _MISSING_RE = re.compile(r"No module named ['\"]([\w.]+)['\"]")
@@ -471,6 +483,88 @@ def find_worker_python() -> str:
     return select_worker_python()[0]
 
 
+#: 项目记住的解释器**这次进程里**验过没有（避免每次 get() 都起一个 Python）。
+#: **刻意不共用 `_lock`**：worker 构造函数在 `get()` 已持有 `_lock` 时调用
+#: `resolve_worker_python()`，同一把非重入锁会当场自锁。
+_project_python_ok: dict[str, bool] = {}
+_project_python_lock = threading.Lock()
+
+
+def resolve_worker_python(figures_dir: str | Path | None = None) -> tuple[str, str]:
+    """**某个项目**该用哪个解释器，回 (路径, 来源)——项目级决策的唯一出处。
+
+    优先级（「用户显式选择 > 自动猜测」，ADR 0018 §优先级）：
+
+    1. `TAVOTTO_WORKER_PYTHON`   —— 环境变量
+    2. 用户在设置里指定的         —— 全局显式选择
+    3. **这个项目记住的解释器**   —— 自动 fallback 定下来的，或用户为该项目挑的
+    4. 内置 runtime / 自身 / 系统 —— `select_worker_python()` 的老链条
+
+    第 3 条排在内置**之前**而不是之后：一旦某个项目已经确认「内置环境缺包跑
+    不了它、项目 `.venv` 可以」，每次都先从内置重来一遍只是把同一个
+    `missing_dependency` 重演一次，用户看到的是「每次打开都先失败一下」。
+    1、2 仍然压过它——用户显式挑过的环境任何时候都不该被自动决策盖掉。
+
+    不给 `figures_dir`（无项目上下文的诊断、bootstrap）时退化成
+    `select_worker_python()`，行为一字不变。
+    """
+    if figures_dir is None:
+        return select_worker_python()
+    # **两条显式来源各自判**，不能 `env or configured` 短路：环境变量指向一条
+    # 已经不存在的路径时（改过环境、跟着别的 shell 配置进来的老值），短路会让
+    # 一条完全有效的设置里的解释器被跳过，自动决策于是压过了用户的显式选择。
+    for explicit in (worker_python_env(), config.worker_python()):
+        if not explicit:
+            continue
+        try:
+            if Path(explicit).exists():
+                # 显式选择还在：交给老链条（它会挑中这条），不做任何自动决策。
+                return select_worker_python()
+        except OSError:
+            continue
+    remembered = projectenv.remembered(figures_dir)
+    if remembered:
+        with _project_python_lock:
+            ok = _project_python_ok.get(remembered)
+        if ok is None:
+            # 轻量复检：venv 被删掉 / 被重建成另一个 Python 是常事，
+            # 记住过不等于现在还成立。每个进程每条解释器只做一次。
+            ok = _has_matplotlib(remembered)
+            with _project_python_lock:
+                _project_python_ok[remembered] = ok
+            if not ok:
+                LOG.warning("项目记住的解释器已不可用，回退默认链条: %s", remembered)
+        if ok:
+            return remembered, remembered_source(figures_dir, remembered)
+    return select_worker_python()
+
+
+def remembered_source(figures_dir: str | Path, python: str) -> str:
+    """项目记住的这条解释器**是哪一档**：项目自带的还是 Tavotto 替它建的。
+
+    两者都排在同一优先级上，但对用户与排障是两件事：项目 `.venv` 是**他的**
+    环境（我们只是用它），受管环境是**我们的**（可删可重建）。同一个标签会
+    让「重建 Tavotto 环境」这个动作显示在一个我们无权重建的环境上。
+    """
+    from . import managedenv
+
+    try:
+        managed = str(managedenv.venv_python(figures_dir))
+    except (OSError, ValueError):
+        return SOURCE_PROJECT_VENV
+    return SOURCE_MANAGED_PROJECT if same_python(python, managed) else SOURCE_PROJECT_VENV
+
+
+def note_project_python_ok(python: str) -> None:
+    """登记「这条解释器刚整套体检过」，省掉下一次 `get()` 的轻量复检。
+
+    `try_project_env()` 与依赖修复装完之后各调一次——两处都刚跑过比
+    `_has_matplotlib` 严得多的检查。
+    """
+    with _project_python_lock:
+        _project_python_ok[python] = True
+
+
 def same_python(a: str | None, b: str | None) -> bool:
     """两条路径是不是同一个解释器。
 
@@ -525,11 +619,18 @@ def worker_source() -> str:
 
 def reset_worker_python() -> None:
     """丢弃已缓存的解释器选择——改了设置或刚装完环境后必须调用，
-    否则本次进程会一直用着旧的（或继续认为「找不到」）。"""
+    否则本次进程会一直用着旧的（或继续认为「找不到」）。
+
+    项目级那半边（`projectenv` 的解析缓存、本模块的复检结果）一并清掉：
+    用户刚把设置里的解释器改掉，项目侧还端着上一轮的结论就是两套答案。
+    """
     global _worker_python, _worker_source
     with _lock:
         _worker_python = None
         _worker_source = ""
+    with _project_python_lock:
+        _project_python_ok.clear()
+    projectenv.reset_cache()
 
 
 class EngineWorker:
@@ -570,7 +671,9 @@ class EngineWorker:
         self.last_build_descriptors: list = []
         self.last_used = time.time()
         self._log = open(self.log_path, "ab", buffering=0)
-        python, self.python_source = select_worker_python()
+        # **项目级**解释器决策：同一台机器上 A 项目可能用内置 runtime，
+        # B 项目用它自己的 .venv（ADR 0018）。两条控制面都从这一个出处取。
+        python, self.python_source = resolve_worker_python(figures_dir)
         self.python = python
         # 内置 runtime 装在安装目录里（可能是 Program Files），一个字节都不往
         # 那儿写：.pyc 与 matplotlib 字体缓存改道到数据目录。用户自己的环境
@@ -755,7 +858,7 @@ class EngineWorker:
         # script_error，但对用户来说「缺包」是完全不同的一件事（有可执行出口）。
         mod = missing_module(f"{msg}\n{tb}")
         if mod:
-            return WorkerError(
+            exc = WorkerError(
                 f"脚本用到的 {mod} 在当前渲染环境里没有。"
                 f"可以在设置 →「渲染环境」里改用你自己那套装了 {mod} 的 "
                 f"Python / Conda 环境。",
@@ -763,6 +866,10 @@ class EngineWorker:
                 code="missing_dependency",
                 module=mod,
             )
+            # **谁的脚本缺这个包**：依赖修复要按 (项目, 脚本) 记轮次、按脚本
+            # 所在目录找依赖声明。异常一路抛到 app 层时那边只剩下 exc。
+            exc.script_name = self.script_name
+            return exc
         return WorkerError(msg, tb, code=code)
 
     def request(self, obj: dict, timeout: float | None = None) -> dict:
@@ -1139,7 +1246,9 @@ class WorkerdWorker:
         self._client = client or workerd_client.client()
         if self._client is None:
             raise WorkerdUnavailable("workerd 不可用")
-        python, self.python_source = select_worker_python()
+        # 与 EngineWorker 同源：项目级解释器决策的唯一出处是
+        # `resolve_worker_python`，换控制面不换答案。
+        python, self.python_source = resolve_worker_python(figures_dir)
         self.python = python
         # 与 EngineWorker 同形：两条控制面都持一份 ExecutionSpec（唯一权威
         # 构造函数 `execspec.safe_spec`；argv 由 `_spec()` → `_spawn_spec`
@@ -1222,7 +1331,10 @@ class WorkerdWorker:
         tb = exc.traceback_text or ""
         if not tb and code in _FATAL_CODES:
             tb = self._log_tail()  # 进程级失败时 worker 的 traceback 全在日志里
-        return _worker_error(str(exc), code, tb, exc.extra)
+        err = _worker_error(str(exc), code, tb, exc.extra)
+        # 两条控制面在「缺包时上层拿得到哪些事实」上必须给同一个答案
+        err.script_name = self.script_name
+        return err
 
     def _call(
         self, op: str, timeout: float, *, stem: str | None = None, payload: dict | None = None
@@ -1614,14 +1726,110 @@ def _schedule_prune() -> None:
     threading.Thread(target=prune_engine_cache, daemon=True, name="mm-engine-cache-prune").start()
 
 
+#: 正在被改动（pip install / 建 venv）的环境。key 是**规范化的解释器路径**，
+#: 受管环境还没建出来时是 `<目标>:<项目指纹>`——粒度是**一个环境**，不是全局：
+#: A 项目在装包，B 项目的健康 worker 照常工作。
+_mutating: dict[str, str] = {}
+_mutating_lock = threading.Lock()
+
+#: 环境正在被改动时新起会话的 code（可恢复，不是故障）。
+ENVIRONMENT_MUTATING = "environment_mutating"
+
+
+class EnvironmentBusy(RuntimeError):
+    """这个环境上已经有一个改动在跑（同一环境不允许并发 pip）。"""
+
+
+def env_key_of(python: str) -> str:
+    """解释器路径 → 环境 key（与 `deprepair._env_key` 同一份归一）。"""
+    return os.path.normcase(os.path.normpath(os.path.abspath(str(python))))
+
+
+def is_mutating(python: str) -> bool:
+    with _mutating_lock:
+        return bool(python) and env_key_of(python) in _mutating
+
+
+def shutdown_workers_using(python: str) -> int:
+    """把用这条解释器的会话全部关掉；回关了几个。
+
+    安装开始前必须做：磁盘上的 site-packages 正在变，而一个已经起来的
+    worker 的 `sys.modules`、已加载的动态库、import 缓存**都不会**跟着变。
+    让它继续接渲染请求，用户看到的是「装完了还是老错误」或者更糟——半新
+    半旧的一次 import。
+    """
+    with _lock:
+        keys = [k for k, w in _workers.items() if same_python(w.python, python)]
+        victims = [_workers.pop(k) for k in keys]
+    for w in victims:
+        threading.Thread(target=w.shutdown, daemon=True).start()
+    return len(victims)
+
+
+@contextlib.contextmanager
+def mutating_environment(key: str, python: str = ""):
+    """安装期间独占一个环境：挡住新会话、先把旧会话收掉。
+
+    `key` 由调用方给（受管环境还没建出来时它还没有解释器路径）。解释器路径
+    已知时**两个 key 都登记**，否则「建完 venv 再装包」那段窗口里，另一个
+    请求可以按解释器路径拿到锁。
+    """
+    keys = {k for k in (key, env_key_of(python) if python else "") if k}
+    with _mutating_lock:
+        busy = [k for k in keys if k in _mutating]
+        if busy:
+            raise EnvironmentBusy(f"这个环境上已经有一个安装在进行中: {busy[0]}")
+        for k in keys:
+            _mutating[k] = key
+    try:
+        if python:
+            shutdown_workers_using(python)
+        yield
+    finally:
+        with _mutating_lock:
+            # **按归属清，不是按进入时那几个 key 清**：受管环境是先拿锁、
+            # 后建出解释器的，那条路径上 `note_mutating_python()` 会再登记
+            # 一个 key。只清进入时那几个的话，解释器那条会永远留在表里，
+            # 之后对这个环境的任何操作都被判成「正在安装」。
+            for k in [k for k, owner in _mutating.items() if owner == key]:
+                _mutating.pop(k, None)
+
+
+def note_mutating_python(key: str, python: str) -> None:
+    """受管环境**建出来之后**把解释器路径也登记进同一次改动。"""
+    if not python:
+        return
+    with _mutating_lock:
+        if key in _mutating:
+            _mutating[env_key_of(python)] = key
+
+
 def get(script_name: str, figures_dir: str, entry: str) -> EngineWorker:
     """取（或重建）某脚本的 worker；崩溃的自动换新；超出 MAX_ALIVE 按 LRU 淘汰。"""
     key = (_norm_dir(figures_dir), script_name)
     created = False
+    # **在锁外**算这个项目现在该用哪个解释器：worker 构造函数自己也会调它，
+    # 在 `_lock` 里再调一次就是自锁。缓存命中时这是一次字典查询。
+    want_python = resolve_worker_python(figures_dir)[0]
+    if is_mutating(want_python):
+        # 这个环境的 site-packages 正在被写。**不起新会话**——半装完的包
+        # import 到一半是最难解释的一档失败（有时成功、有时缺一个子模块）。
+        raise WorkerError("这个 Python 环境正在安装依赖，请稍候再试。", code=ENVIRONMENT_MUTATING)
     with _lock:
         w = _workers.get(key)
-        if w is not None and (not w.alive() or w.entry != entry):
-            LOG.warning("worker %s，重建: %s", "已死" if not w.alive() else "入口已变", script_name)
+        why = ""
+        if w is not None:
+            if not w.alive():
+                why = "已死"
+            elif w.entry != entry:
+                why = "入口已变"
+            elif not same_python(w.python, want_python):
+                # **worker 身份包含解释器**（ADR 0018）：项目自动切到 .venv 之后
+                # 还复用那条内置 runtime 起的会话，用户看到的就是「明明切了环境，
+                # 还是报缺包」。判据与 `entry` 那条同形，不另起一套 key。
+                why = "渲染解释器已变"
+        if why:
+            LOG.warning("worker %s，重建: %s", why, script_name)
             w.shutdown()
             w = None
         if w is None:
@@ -1640,6 +1848,91 @@ def get(script_name: str, figures_dir: str, entry: str) -> EngineWorker:
     if created:  # 出锁再清：prune 要遍历磁盘，不能占着 _lock
         _schedule_prune()
     return w
+
+
+#: 自动切换被重试上限挡下时的 code（不是失败，是「这一轮已经切过了」）。
+PROJECT_ENV_ALREADY_ATTEMPTED = "project_env_already_attempted"
+
+
+def should_try_project_env(exc) -> bool:
+    """这个错误值不值得为它换个环境重跑——**判据的唯一出处**。
+
+    只有 `missing_dependency`。脚本自己的 `ValueError` / `TypeError` /
+    `FileNotFoundError` 换个解释器一样错：为它们切环境既要多跑一遍脚本，
+    又把真正的代码错误伪装成了环境问题（用户于是去折腾环境，而 bug 在第 12 行）。
+
+    `pool.build()` 与 `app._switched_to_project_env()` 都是它的消费者。两处
+    各写一份 `exc.code == …` 的话，其中一处迟早会放宽，而只有另一处有用例
+    看着——门禁抽掉不红正是这么来的。
+    """
+    return getattr(exc, "code", "") == "missing_dependency"
+
+
+def try_project_env(figures_dir: str, script_name: str, module: str) -> dict:
+    """内置环境缺 `module` 时，改用这个项目自己的 `.venv`（成功则作废旧会话）。
+
+    回 `projectenv.resolve_for_missing_dependency` 的结构，成功时已经：
+    记住决策（项目级，不写全局设置）→ 作废该脚本的旧 worker。调用方只需
+    重新 `get()` 一次，新会话就是用项目解释器起的。
+
+    **一次 build 最多自动切一次**（`projectenv.mark_attempted`）：没有这条，
+    「内置缺包 → 切 venv → venv 也缺 → 切回内置」会来回打转，用户看到的是
+    界面卡在「正在运行」而后台在反复起 Python。用户手动重试走
+    `projectenv.reset_cache()`，可以重新来一轮。
+    """
+    if not module or not projectenv.valid_module_name(module):
+        # 认不出缺的是哪个包（或名字不合形状）就没有可验证的目标：
+        # 找到一个 .venv 也无从判断它到底解不解决问题，不切。
+        return {"ok": False, "code": projectenv.ERROR_NOT_FOUND, "module": module}
+    if not projectenv.mark_attempted(figures_dir, script_name):
+        return {"ok": False, "code": PROJECT_ENV_ALREADY_ATTEMPTED, "module": module}
+    outcome = projectenv.resolve_for_missing_dependency(figures_dir, script_name, module)
+    if not outcome.get("ok"):
+        LOG.info("项目环境自动接手失败（%s）: %s", outcome.get("code"), script_name)
+        return outcome
+    python = outcome["python"]
+    projectenv.remember(
+        figures_dir,
+        python,
+        automatic=True,
+        trigger="missing_dependency",
+        module=module,
+        health=outcome.get("health"),
+    )
+    # 刚刚整套体检过（比 `_has_matplotlib` 严得多），不必再验一遍。
+    note_project_python_ok(python)
+    invalidate(script_name, figures_dir)
+    LOG.info("项目环境自动接手: %s → %s（缺 %s）", script_name, python, module)
+    return outcome
+
+
+def build(script_name: str, figures_dir: str, entry: str, *, allow_project_env: bool = True):
+    """取会话并确保脚本已 build——**带一次项目环境自动 fallback**。
+
+    回 `(worker, build 响应)`。所有会真正跑用户脚本的入口都该走这里，而不是
+    自己 `get()` + `ensure_built()`：自动 fallback 只有一份实现，漏掉一个入口
+    就是「素材库里能打开、CLI 打不开」这类两个入口两个答案的老问题。
+
+    只有 `missing_dependency` 触发 fallback。`ValueError` / `TypeError` /
+    `FileNotFoundError` 这些是用户代码自己的问题，换个解释器一样错——为它们
+    切环境等于把真正的代码错误伪装成环境问题，而且要多跑一遍脚本。
+
+    fallback 没成功时，把结构化结果挂在异常的 `project_env` 上再抛出去，
+    上层据此渲染恢复引导（找不到 venv / venv 也缺这个包 / 没有 matplotlib /
+    Python 版本不支持），而不是干甩一段 traceback。
+    """
+    worker = get(script_name, figures_dir, entry)
+    try:
+        return worker, worker.ensure_built()
+    except WorkerError as exc:
+        if not allow_project_env or not should_try_project_env(exc):
+            raise
+        outcome = try_project_env(figures_dir, script_name, exc.module)
+        if not outcome.get("ok"):
+            exc.project_env = outcome
+            raise
+    worker = get(script_name, figures_dir, entry)
+    return worker, worker.ensure_built()
 
 
 def invalidate(script_name: str, figures_dir: str | None = None) -> None:

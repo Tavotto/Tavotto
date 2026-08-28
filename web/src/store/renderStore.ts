@@ -1,9 +1,19 @@
 import { useMemo } from 'react'
 import { msg, type UiMessage } from '@/i18n'
 import { create } from 'zustand'
-import { EngineError, engineErrorMsg, engineRender, type Manifest } from '@/lib/api'
+import {
+  ENVIRONMENT_CODES,
+  EngineError,
+  engineErrorMsg,
+  engineRender,
+  type DependencyRepairOffer,
+  type Manifest,
+  type ProjectEnvFailure,
+} from '@/lib/api'
 import { engineTransport } from '@/lib/engineTransport'
 import { useAssetStore } from '@/store/assetStore'
+import { useEnvStore } from '@/store/envStore'
+import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
 import { fileHash, recordDiagnosticEvent, variantHash } from '@/diagnostics'
 
@@ -32,6 +42,17 @@ export interface PanelRender {
   code: string
   /** code === 'missing_dependency' 时缺的那个包名 */
   module: string
+  /**
+   * `missing_dependency` 且**项目环境自动接手也没成**时的结构化原因
+   * （ADR 0018）：找不到 venv / 找到了但也没这个包 / 没有 matplotlib /
+   * Python 版本不支持。界面据此给四种不同的恢复引导。
+   */
+  projectEnv: ProjectEnvFailure | null
+  /**
+   * `missing_dependency` 时「这个包能怎么修」（ADR 0019）：解析出来的包名、
+   * 可选的安装目标、还剩几轮。null = 后端没给（老服务端 / 没打开项目）。
+   */
+  dependencyRepair: DependencyRepairOffer | null
   traceback: string
   warnings: string[]
   /** 最近一次成功渲染的阶段计时（毫秒，键见 api.ts）；暂不做 UI */
@@ -59,6 +80,8 @@ const EMPTY: PanelRender = {
   error: null,
   code: '',
   module: '',
+  projectEnv: null,
+  dependencyRepair: null,
   traceback: '',
   warnings: [],
   timings: {},
@@ -154,6 +177,19 @@ interface RenderState {
   ) => Promise<void>
   /** 脚本变更：转入引擎跟踪并清掉该文件**全部变体**的 lastPatches */
   markStale: (fileIds: string[]) => void
+  /**
+   * 环境变了（装完缺的那个包、换了解释器）：把**所有因缺件失败**的面板
+   * 重新排队。
+   *
+   * 少了这一步，「点一次「安装并继续」→ 图出来」这条主路根本走不完：
+   * 失败那次的 `wantPatches` 仍等于当前 overrides，`useEngineSync` 会
+   * 认为「这一版已经排过了」直接跳过，于是卡片停在原地，用户要么改点
+   * 别的、要么刷新页面才看得到图（Codex 评审 P1）。
+   *
+   * 按**错误码**收面板而不是按脚本名：同一个环境上因缺包失败的可能不止
+   * 一个面板，而装上那个包对它们是同一件好事。
+   */
+  retryEnvironmentFailures: () => void
   /** 丢掉某个文件的全部变体 */
   reset: (fileId: string) => void
   /**
@@ -289,12 +325,24 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           const res = transport
             ? await transport.render(fileId, current, opts)
             : await engineRender(fileId, current, opts)
+          if (res.environment_switched) {
+            // 内置环境缺包，Tavotto 自己找到并换用了项目的 .venv（ADR 0018）。
+            // 一条轻量 toast 就够——**不弹阻断式对话框**：用户点的是「渲染」，
+            // 不是「读一段技术说明」。完全不提示也不行，跑脚本的解释器换了，
+            // 版本对不上时用户得知道去哪儿看。
+            useUiStore.getState().setStatus(
+              msg('render.projectEnvSwitched',
+                  { path: res.environment_switched.python }, 'errors'))
+            void useEnvStore.getState().refresh()
+          }
           const next: Partial<PanelRender> = {
             fileId,
             rev: res.rev,
             manifest: res.manifest,
             status: 'ready',
             error: null,
+            projectEnv: null,
+            dependencyRepair: null,
             traceback: '',
             warnings: res.warnings ?? [],
             timings: res.timings ?? {},
@@ -360,6 +408,9 @@ export const useRenderStore = create<RenderState>((set, get) => ({
             status: 'error',
             code: err instanceof EngineError ? err.code : '',
             module: err instanceof EngineError ? err.module : '',
+            projectEnv: err instanceof EngineError ? (err.projectEnv ?? null) : null,
+            dependencyRepair:
+              err instanceof EngineError ? (err.dependencyRepair ?? null) : null,
             error: timedOut
               ? msg('render.timeout',
                     { minutes: Math.round(timeoutMs / 60_000) }, 'errors')
@@ -381,6 +432,19 @@ export const useRenderStore = create<RenderState>((set, get) => ({
     } finally {
       slot.busy = false
     }
+  },
+
+  retryEnvironmentFailures: () => {
+    const ids = new Set<string>()
+    for (const v of Object.values(get().byKey)) {
+      if (v.status === 'error' && (ENVIRONMENT_CODES as readonly string[]).includes(v.code)) {
+        ids.add(v.fileId)
+      }
+    }
+    // `markStale` 已经做了要做的三件事：清 lastPatches/wantPatches（否则
+    // 同步器跳过）、置 stale、把文件级跟踪位打开（该文件可能一个变体都还
+    // 没成功渲染过——冷启动就缺包的面板正是这种）。
+    if (ids.size) get().markStale([...ids])
   },
 
   markStale: (fileIds) =>

@@ -62,6 +62,7 @@ import { canPreviewStyle } from '@/lib/svgStyle'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useExactPanelManifest, usePanelRender } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
+import { DependencyRepairCard } from '@/components/DependencyRepairCard'
 import {
   EngineEnvironmentCard,
   MissingDependencyCard,
@@ -270,7 +271,17 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
       {/* 缺渲染环境不是「出错」而是缺件，给能点的出口；脚本真报错才显示 traceback */}
       {render?.code === 'missing_dependency' ? (
         <Section>
-          <MissingDependencyCard module={render.module} />
+          {/* 后端给了修复建议就先给「安装并继续」这条路（ADR 0019）；
+              没给（老服务端 / 没打开项目）时退回原来的换环境引导 */}
+          {render.dependencyRepair ? (
+            <DependencyRepairCard
+              offer={render.dependencyRepair}
+              module={render.module}
+              script={render.dependencyRepair.script}
+            />
+          ) : (
+            <MissingDependencyCard module={render.module} projectEnv={render.projectEnv ?? undefined} />
+          )}
         </Section>
       ) : ENVIRONMENT_CODES.includes(render?.code as (typeof ENVIRONMENT_CODES)[number]) ? (
         <Section>

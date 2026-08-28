@@ -532,6 +532,10 @@ def test_worker_python_override_refuses_when_the_pool_disagrees(monkeypatch):
     """池没采纳指定的解释器时必须**报错**，不许悄悄用别的跑完。"""
     from tavotto.engine import pool
 
+    # `_worker_python()` 直接写 `os.environ`（它是 CI 驱动，不是被测函数），
+    # 而这里它在写完之后才抛错——不经 monkeypatch 记账的话，这条指向
+    # 不存在路径的 TAVOTTO_WORKER_PYTHON 会一直漏给同一进程里后面的所有用例。
+    monkeypatch.delenv("TAVOTTO_WORKER_PYTHON", raising=False)
     monkeypatch.setattr(pool, "select_worker_python", lambda: ("/somewhere/else/python", "system"))
     monkeypatch.setattr(pool, "reset_worker_python", lambda: None)
     with pytest.raises(RuntimeError, match="没有采纳"):
