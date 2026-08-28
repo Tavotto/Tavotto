@@ -358,7 +358,7 @@ def test_every_registered_route_denies_without_session(served):
             continue
         methods = sorted(m for m in rule.methods if m not in {"HEAD", "OPTIONS"})
         for method in methods:
-            status, _, body = _request_without_session(method, served.url(_concrete(path)))
+            status, _, body = _request_without_session(served.port, method, _concrete(path))
             assert status == 401, f"{method} {path} 未认证也放行了（{status}）"
             assert json.loads(body)["code"] == "session_auth_required", (
                 f"{method} {path} 拒了，但给的不是 session_auth_required"
@@ -370,13 +370,54 @@ def test_every_registered_route_denies_without_session(served):
     assert checked >= 80, f"只检查了 {checked} 条路由，url_map 多半没取全"
 
 
-def _request_without_session(method: str, url: str):
-    """发一个不带任何凭据的请求。GET 之外都带空 JSON 体。"""
+def _request_without_session(port: int, method: str, path: str):
+    """发一个不带任何凭据的请求，**看第一个响应，不跟随重定向**。
+
+    这里不能用 `urllib.request.urlopen`：它会自动跟随 3xx。于是一个**绕过了
+    认证**、返回 302 指向任意受保护 URL 的端点，最终仍会拿到 401——断言照过，
+    而那个端点其实放行了。判据问的必须是「**这个端点**的第一个响应是什么」，
+    不是「跟着跳转走到最后拿到了什么」。
+    """
     data = None if method == "GET" else json.dumps({}).encode()
     headers = {} if method == "GET" else {"Content-Type": "application/json"}
-    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
     try:
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            return resp.status, dict(resp.headers), resp.read()
-    except urllib.error.HTTPError as e:
-        return e.code, dict(e.headers), e.read()
+        conn.request(method, path, body=data, headers=headers)
+        resp = conn.getresponse()
+        return resp.status, dict(resp.headers), resp.read()
+    finally:
+        conn.close()
+
+
+def test_the_unauthenticated_probe_does_not_follow_redirects():
+    """把「看第一跳」这个性质钉死——上面那条枚举用例的全部有效性系于它。
+
+    若探针换回 `urllib.request.urlopen`（自动跟随 3xx），一个**绕过了认证**、
+    返回 302 指向任意受保护 URL 的端点，会让判据拿到最终的 401 而报绿。
+    实测过：同一个变异（让 `/api/panels` 绕过认证并 302 到 `/api/styles`）下，
+    跟随重定向的写法**绿**，不跟随的写法**红**。
+
+    所以这条用例护的不是产品，是**那条判据本身**：判据一旦被改宽，这里先红。
+    """
+
+    def _always_redirect(environ, start_response):
+        # 跳转目标回 200：这样「跟随了重定向」的失败形态是**干净的断言失败**
+        # （拿到 200 而不是 302），而不是撞进无限重定向抛异常——异常也会红，
+        # 但读起来像用例坏了，不像判据被改宽了。
+        if environ["PATH_INFO"] == "/landed":
+            start_response("200 OK", [("Content-Type", "text/plain")])
+            return [b"landed"]
+        start_response("302 Found", [("Location", "/landed")])
+        return [b""]
+
+    srv = make_server("127.0.0.1", 0, _always_redirect)
+    thread = threading.Thread(target=srv.serve_forever, daemon=True)
+    thread.start()
+    try:
+        status, headers, _ = _request_without_session(srv.server_port, "GET", "/anything")
+    finally:
+        srv.shutdown()
+        thread.join(timeout=5)
+
+    assert status == 302, "探针跟随了重定向——枚举用例会拿到别人的响应，形同虚设"
+    assert headers.get("Location") == "/landed"
