@@ -674,3 +674,35 @@ class TestRuntimeProductApi:
             assert asset_id not in manifest["missing_at_pack_time"]
         finally:
             engine_pool.shutdown_all(str(figs), wait=True)
+
+    def test_status_says_which_profile_produced_this_figure(self, client, tmp_path):
+        """`/api/runtime/status` 带上 `execution_profile`（ADR 0021 §9.4）。
+
+        这是**离线角标**的数据源。native 会话结束之后 cache 里仍然有一张
+        预览，但对象级编辑与权威导出都不可用了；界面靠这个字段在**重开文档
+        那一刻**就说得出来，而不是等用户点进图内编辑撞上一条 409。
+
+        两个方向都量：真跑出来的 safe 图报 `safe`，把 cache 里的描述符改成
+        native 之后报 `native`。只量后者的话，一个「无脑回 native」的实现
+        照样绿——而那会给每一个普通 runtime 面板都挂上「会话已结束」。
+        """
+        figs = _make_project(tmp_path)
+        write(figs, "show_only.py", SHOW_ONLY)
+        try:
+            (d,) = self._probe(client, figs, "show_only.py")["descriptors"]
+            asset_id = d["asset_id"]
+
+            st = client.post("/api/runtime/status", json={"id": asset_id}).get_json()
+            assert st["execution_profile"] == "safe", st
+
+            # 把物化下来的那份描述符改成 native——这正是一条 native 会话
+            # 跑完之后 cache 里的样子（`_materialize_native` 写的就是它）
+            meta_path = runtimeasset.cache_dir(figs, asset_id) / "metadata.json"
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            meta["descriptor"]["execution_profile"] = "native"
+            meta_path.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+
+            st = client.post("/api/runtime/status", json={"id": asset_id}).get_json()
+            assert st["execution_profile"] == "native", st
+        finally:
+            engine_pool.shutdown_all(str(figs), wait=True)

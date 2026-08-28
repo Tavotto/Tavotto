@@ -18,7 +18,7 @@ import {
 import { addRuntimePanel } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { useFigurePickerStore } from '@/store/figurePickerStore'
-import { useNativeSessionStore, sortSessions } from './nativeSessionStore'
+import { nativePanelState, sortSessions, useNativeSessionStore } from './nativeSessionStore'
 
 vi.mock('@/lib/api', async (orig) => {
   const real = await orig<typeof import('@/lib/api')>()
@@ -421,5 +421,52 @@ describe('对账与收卡片', () => {
     const live = session({ session_id: 'a', state: 'barrier', started_at: 1 })
     const done = session({ session_id: 'b', state: 'ended', started_at: 9 })
     expect(sortSessions([done, live]).map((s) => s.session_id)).toEqual(['a', 'b'])
+  })
+})
+
+describe('面板与会话的关系（角标判据）', () => {
+  const bound = (over: Partial<NativeSessionInfo> = {}) => ({
+    [`native-${ID}`]: session({ descriptors: [desc('Fig1')], ...over }),
+  })
+
+  it('停在屏障上：不打扰——此刻编辑一切正常', () => {
+    const s = bound({ state: 'barrier', editable: true })
+    expect(nativePanelState(s, 'runtime:fig.py#Fig1', 'native')).toBeNull()
+  })
+
+  it('脚本正在跑：先说一句，别让用户点进去撞 409', () => {
+    const s = bound({ state: 'running_script', editable: false })
+    expect(nativePanelState(s, 'runtime:fig.py#Fig1', 'native')).toBe('running')
+  })
+
+  it('会话结束了：cache 里那张是 last-known preview，说清楚', () => {
+    const s = bound({ state: 'ended', editable: false })
+    expect(nativePanelState(s, 'runtime:fig.py#Fig1', 'native')).toBe('offline')
+  })
+
+  it('一条会话都没有、但这张图出自 native：同样是 offline', () => {
+    expect(nativePanelState({}, 'runtime:fig.py#Fig1', 'native')).toBe('offline')
+  })
+
+  it('**按 asset id 认领，不按 stem 猜**：同名 stem 在两个项目里到处都是', () => {
+    const s = bound({ state: 'running_script', editable: false })
+    // 同一个 stem、不同项目 → 不同的 asset id：这张图不归那条会话管
+    expect(nativePanelState(s, 'runtime:other/fig.py#Fig1', 'native')).toBe('offline')
+  })
+
+  it('safe 面板不受任何影响——哪怕正好有一条 native 会话在跑', () => {
+    const s = bound({ state: 'running_script', editable: false })
+    expect(nativePanelState(s, 'Fig1.pdf', 'safe')).toBeNull()
+  })
+
+  it('**未知不等于 native**：老后端不给 profile 时不挂「会话已结束」', () => {
+    expect(nativePanelState({}, 'runtime:fig.py#Fig1', undefined)).toBeNull()
+  })
+
+  it('editable 由后端说了算，不按 state 名字自己推', () => {
+    // 后端说停在屏障上、但 editable 是 false（正在处理上一条请求）——
+    // 以 editable 为准，那是对端报上来的事实
+    const s = bound({ state: 'barrier', editable: false })
+    expect(nativePanelState(s, 'runtime:fig.py#Fig1', 'native')).toBe('running')
   })
 })

@@ -117,6 +117,35 @@ interface NativeSessionStore {
   clear: () => void
 }
 
+/**
+ * 一个面板与 `tavotto run` 会话的关系（ADR 0021 §9）——面板角标的判据。
+ *
+ * | 情况 | 结果 | 为什么 |
+ * |---|---|---|
+ * | 活会话拥有它，且停在屏障上 | `null` | 此刻编辑一切正常，不打扰 |
+ * | 活会话拥有它，脚本正在跑 | `'running'` | 现在编辑会撞 409，先说 |
+ * | 出自 native，但没有活会话 | `'offline'` | cache 里那张是 last-known preview |
+ * | 不是 native | `null` | |
+ *
+ * **按描述符里的 asset id 认领，不按 stem 猜**：同名 stem（`Fig1`）在两个项目
+ * 里到处都是，而 asset id 是后端算出来的那一个。
+ *
+ * `profile` 未知（老后端不给这个字段）时按 `safe` 走——**未知不等于 native**，
+ * 把未知当 native 会给一个普通面板挂上「会话已结束」。
+ */
+export function nativePanelState(
+  sessions: Record<string, NativeSessionInfo>,
+  fileId: string,
+  profile: 'safe' | 'native' | undefined,
+): 'running' | 'offline' | null {
+  const live = Object.values(sessions).find(
+    (one) =>
+      !isNativeTerminal(one.state) && one.descriptors.some((d) => d.asset_id === fileId),
+  )
+  if (live) return live.editable ? null : 'running'
+  return profile === 'native' ? 'offline' : null
+}
+
 /** 卡片按开始时间排；活着的排在前面（用户此刻要动的是那些）。 */
 export const sortSessions = (all: NativeSessionInfo[]): NativeSessionInfo[] =>
   [...all].sort((a, b) => {

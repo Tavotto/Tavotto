@@ -634,6 +634,22 @@ Tavotto / `sitecustomize` / 第二套 manifest·override·export / 静默
 safe→native 或 native→safe fallback / native 模式自动 pip install /
 源码写回 / 原始产物写回 / 未经同意决定就扩遥测事件表 / 宣称 Stable。
 
+### 14.1 native 会话**不许**自动切到项目 `.venv`
+
+ADR 0018 的「缺依赖就接手项目自己的 `.venv`」是 safe 档的解药，在 native 档
+是**反的**：用户已经亲手指定了解释器，Tavotto 替他换一个等于把这个模式最核心
+的那句承诺（"跑的是你自己的 Python"）当场违掉，而且不会有任何提示。
+
+今天这条路不可达——`should_try_project_env()` 只认 `missing_dependency`，而
+native 侧的错误码里没有它（bridge_runner 产的是 `script_error` /
+`non_finite_response`）。所以 `_switched_to_project_env()` 里那个对
+`NativeSession` 会 AttributeError 的 `worker.script_name` **不是缺陷，也不加
+防御性分支**：加一个今天没人走的分支，只会在没人验证的路径上慢慢腐烂。
+
+写在这里是因为它会变：哪天 native 侧真的产生了 `missing_dependency`，那条路
+就活了。**那时该做的不是切环境，是明确拒绝**并把缺的包名告诉用户——让他自己
+决定往自己的环境里装什么。
+
 ## 15. 遥测与诊断
 
 **本轮不新增 telemetry event。** 采集范围变化要升 `CONSENT_VERSION` 并让所有

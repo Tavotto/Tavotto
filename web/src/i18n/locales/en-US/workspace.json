@@ -295,6 +295,8 @@
     "cold": "Cold start — this can take a few minutes…",
     "error": "Render failed",
     "firstBuild": "First build…",
+    "nativeOffline": "Session ended — re-run the original command to keep editing",
+    "nativeRunning": "Script is running — editing resumes when it stops",
     "rendering": "Rendering…",
     "runtimeMissingEnvironment": "No rendering environment available",
     "runtimeMissingSource": "The script is no longer on disk",

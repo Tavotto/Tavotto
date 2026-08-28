@@ -735,7 +735,16 @@ jobs:
           if (-not $j.ok) { throw "open 回了 ok=false: $out" }
           if ($j.launch) { throw "--no-launch 却起了界面: $out" }
           if (-not (Test-Path "$proj\tavotto_registry.json")) { throw "没生成 tavotto_registry.json" }
-          Write-Host "✓ 真产物上的 doctor / open --json --no-launch 都通了"
+          # `tavotto run` 的打包闭包复核（ADR 0021）。runcli / runspec /
+          # runcodes 靠 PyInstaller 的字节码分析被收进去，spec 里没有它们的
+          # 名字——漏收的表现不是构建失败，是用户机器上的 ModuleNotFoundError。
+          # 两条都**不起任何子进程**：--help 退 0；故意的用法错误退 2，后者
+          # 顺带证明 runcodes 的退出码闭集也真的进了包（--help 碰不到它）。
+          & $cli run --help > $null
+          if ($LASTEXITCODE -ne 0) { throw "tavotto-cli run --help 失败（$LASTEXITCODE）——runcli 多半没进包" }
+          & $cli run python x.py 2>&1 > $null
+          if ($LASTEXITCODE -ne 2) { throw "tavotto-cli run 的用法错误退出码是 $LASTEXITCODE，应为 2" }
+          Write-Host "✓ 真产物上的 doctor / open --json --no-launch / run 闭包都通了"
 
       - name: 断言产物里真有内置 runtime
         run: |

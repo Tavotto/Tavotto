@@ -1994,7 +1994,17 @@ def api_runtime_status():
     )
     if status["status"] is None:
         return _runtime_asset_unknown(rel_id)
-    return jsonify({"id": rel_id, **status})
+    # **上一次这张图是怎么产生的**（ADR 0021 §9）。界面靠它在重开文档时就说得出
+    # 「这张图来自一条 native 会话」——而不是等用户点进图内编辑、撞上一条 409
+    # 才知道。判据与渲染路由同一个出处（`enginesession.profile_of`），不另立
+    # 一份：两份判据迟早会在某个边角上分叉，而分叉的那一侧会显示成"能编辑"。
+    return jsonify(
+        {
+            "id": rel_id,
+            "execution_profile": engine_enginesession.profile_of(ctx.path, rel_id),
+            **status,
+        }
+    )
 
 
 @app.get("/api/runtime/preview")

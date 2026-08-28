@@ -11,6 +11,7 @@ import { diagnosticHash } from '@/diagnostics'
 import { isJustBakedBaseline } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
 import { useInteractionStore } from '@/store/interactionStore'
+import { nativePanelState, useNativeSessionStore } from '@/store/nativeSessionStore'
 import {
   renderKeyOf,
   useExactPanelManifest,
@@ -597,6 +598,25 @@ const RUNTIME_BADGE: Record<string, { key: string; tone: 'error' | 'stale' }> = 
   rerun_failed: { key: 'runtimeRerunFailed', tone: 'error' },
 }
 
+/**
+ * 这张图与 `tavotto run` 会话的关系（ADR 0021 §9）——**只在需要说话时说话**。
+ *
+ * 判据本体在 `nativeSessionStore.nativePanelState`（那里有完整的四格表与
+ * 用例）；这里只是把两个 store 的读取接上去。
+ *
+ * 「脚本正在运行」与「会话已结束」都是**在用户动手之前**说的。不说的话，他
+ * 点进图内编辑得到的是一条 409（`native_session_not_at_barrier` /
+ * `native_session_offline`），而那两句话描述的是正常状态、不是故障——用错误
+ * 弹窗讲正常状态最劝退。
+ */
+function useNativePanelState(obj: PanelObject): 'running' | 'offline' | null {
+  const profile = useRuntimeAssetStore((s) =>
+    panelKind(obj) === 'runtime' ? s.byId[obj.fileId]?.profile : undefined,
+  )
+  const sessions = useNativeSessionStore((s) => s.sessions)
+  return nativePanelState(sessions, obj.fileId, profile)
+}
+
 function RenderStatusBadge({ obj }: { obj: PanelObject }) {
   const render = usePanelRender(obj)
   // 冷启动/构建中是**文件级**的事实（一个 stem 一份 live figure），由 SSE 写；
@@ -606,12 +626,14 @@ function RenderStatusBadge({ obj }: { obj: PanelObject }) {
   const runtimeStatus = useRuntimeAssetStore((s) =>
     panelKind(obj) === 'runtime' ? s.byId[obj.fileId]?.status : undefined,
   )
+  const nativeState = useNativePanelState(obj)
   const zoom = useViewportStore((s) => s.zoom)
 
   // 角标画在世界层里，反向缩放保持屏幕上恒定大小
   const scale = 1 / zoom
   const runtimeBadge = runtimeStatus ? RUNTIME_BADGE[runtimeStatus] : undefined
-  const relevant = editing || obj.overrides.length > 0 || render?.stale || !!runtimeBadge
+  const relevant =
+    editing || obj.overrides.length > 0 || render?.stale || !!runtimeBadge || !!nativeState
   const info = useMemo(() => {
     if (!relevant) return null
     if (render?.status === 'rendering' || building) {
@@ -631,12 +653,21 @@ function RenderStatusBadge({ obj }: { obj: PanelObject }) {
       return { tone: 'error' as const, cold: false, text: badge('error') }
     }
     if (render?.stale) return { tone: 'stale' as const, cold: false, text: badge('stale') }
+    // native 排在 runtime stale 之前：一条还活着的会话上，「脚本可能已变化」
+    // 是次要的，「现在能不能编辑」才是用户下一步要做的事。
+    if (nativeState) {
+      return {
+        tone: 'stale' as const,
+        cold: false,
+        text: badge(nativeState === 'running' ? 'nativeRunning' : 'nativeOffline'),
+      }
+    }
     // runtime 的 stale 语义（诚实文案：说「可能已变化」，不说「数据未变」）
     if (runtimeBadge) {
       return { tone: runtimeBadge.tone, cold: false, text: badge(runtimeBadge.key) }
     }
     return null
-  }, [render, relevant, building, runtimeBadge])
+  }, [render, relevant, building, runtimeBadge, nativeState])
 
   // 退场那 90ms 里 info 已经是 null 了，留住最后一版才播得完
   const last = useRef(info)

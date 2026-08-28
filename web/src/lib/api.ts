@@ -1923,6 +1923,16 @@ export interface RuntimeStatus {
   registered: boolean
   /** materialized cache 是否可用（true = runtimePreviewUrl 取得到首帧占位） */
   cached: boolean
+  /**
+   * **上一次这张图是怎么产生的**（`enginesession.profile_of`，ADR 0021 §9）。
+   *
+   * `native` = 它出自用户自己的 Python 进程。那条会话结束之后 cache 里仍然
+   * 有一张预览，但对象级编辑与权威导出都不可用了——界面靠这个字段在**重开
+   * 文档那一刻**就说得出来，而不是等用户点进图内编辑撞上 409 才知道。
+   *
+   * 老后端不返回它 → undefined，按 safe 处理（未知不等于 native）。
+   */
+  execution_profile?: 'safe' | 'native'
 }
 
 /**
