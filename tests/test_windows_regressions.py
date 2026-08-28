@@ -2036,3 +2036,59 @@ def test_force_kill_waits_until_the_process_is_actually_gone(tmp_path, monkeypat
     pool.discard(w)  # 幂等：第二次关停不许抛
     assert not base.exists(), f"exact base 没删掉：{base}（rmtree 调用={calls}）"
     assert str(base) not in pool._oneshot_bases
+
+
+def test_preview_svg_is_written_without_newline_translation():
+    """预览 SVG 的**判定量**在 Windows 上不许比别的平台大。
+
+    `svg_bytes` 取自 `stat().st_size`，而 `mode_for_svg_bytes()` 拿它决定
+    vector 还是 raster。matplotlib 拿到**路径**时走
+    `cbook.to_filehandle` → `open(fname, "w", encoding=…)`——**没有 `newline`
+    参数**，于是 Windows 上每个 `\\n` 变成 `\\r\\n`，同一张图的判定量凭空
+    大约 **+3.8%**（实测 22511 vs 21688，差值正好是换行数），**更早掉进
+    raster**。用户看到的是「同一份项目，在 Windows 上预览掉档了」，而没有
+    任何地方会报错。
+
+    **这条判据是源码级的，因为行为级的在 POSIX 上恒绿**——`\\r\\n` 在这里
+    根本不会发生，写完再去数字节永远相等。今晚第四条「本机恒绿、单平台红」
+    的缺陷，能提前挡住的只有这个形态。
+
+    反证：把那句改回 `state.fig.savefig(<路径>, format="svg")`，本条当场红。
+    """
+    src = (Path(__file__).resolve().parent.parent / "src/tavotto/engine/figsession.py").read_text(
+        encoding="utf-8"
+    )
+    tree = ast.parse(src)
+
+    offenders = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+            continue
+        if node.func.attr != "savefig":
+            continue
+        fmt = next(
+            (k.value for k in node.keywords if k.arg == "format"),
+            None,
+        )
+        # 只管文本格式（svg）；png/pdf 走二进制，matplotlib 用 "wb"，不翻译
+        if not (isinstance(fmt, ast.Constant) and fmt.value == "svg"):
+            continue
+        target = node.args[0] if node.args else None
+        # 允许的形状：传一个**已经打开的文件对象**（名字里带 fh/handle/buf）
+        if isinstance(target, ast.Name) and any(
+            k in target.id.lower() for k in ("fh", "handle", "buf")
+        ):
+            continue
+        offenders.append(f"figsession.py:{node.lineno} savefig(…, format='svg') 传的不是文件对象")
+    assert not offenders, (
+        "写文本格式必须传 `open(..., newline='')` 出来的文件对象，不能传路径"
+        "——传路径时 matplotlib 用文本模式打开，Windows 上 `\\n` 会变 `\\r\\n`，"
+        "而 `svg_bytes` 是判定 vector/raster 的量：\n  " + "\n  ".join(offenders)
+    )
+
+    # 第二侧：确实是用 `newline=""` 打开的（光"传了个文件对象"不够，
+    # 传一个默认模式打开的照样翻译）
+    assert 'open(svg_path, "w", encoding="utf-8", newline="")' in src, (
+        'figsession 写预览 SVG 必须显式 `newline=""`——默认的 universal '
+        "newlines 会在 Windows 上把 `\\n` 翻成 `\\r\\n`"
+    )

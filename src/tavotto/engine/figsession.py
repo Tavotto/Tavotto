@@ -214,10 +214,26 @@ class LiveFigureSession:
         t0 = time.perf_counter()
         man = manifest_mod.build_manifest(state, stem)
         t1 = time.perf_counter()
-        with self.real_output():
-            state.fig.savefig(
-                self.out_dir / f"{stem}.svg", format="svg", dpi=preview_dpi or self.preview_dpi
-            )
+        # **传文件对象、且 `newline=""`，不许传路径。** matplotlib 拿到路径时走
+        # `cbook.to_filehandle` → `open(fname, "w", encoding=…)`——**没有
+        # `newline` 参数**，于是 Windows 上每个 `\n` 被翻成 `\r\n`。
+        #
+        # 后果不是「文件大一点」：`svg_bytes` 是**判定量**（`mode_for_svg_bytes`
+        # 拿它决定 vector 还是 raster），而它取自 `stat().st_size`。同一张图在
+        # Windows 上因此显得大约 **+3.8%**（实测 22511 vs 21688，差值正好是
+        # 换行数），**更早掉进 raster**——而没有任何地方会报错，用户看到的是
+        # 「同一份项目，在 Windows 上预览掉档了」。
+        #
+        # 这也让 `do_render` 那句「读回磁盘那一份，与 out_dir/<stem>.svg 逐字节
+        # 相同」重新成立——在此之前它在 Windows 上是假的（读回来时
+        # universal-newlines 又把 `\r\n` 翻回 `\n`，两侧字节数对不上）。
+        #
+        # 抓到它的是 `test_v1_render_reports_the_preview_verdict` 在
+        # `backend-platforms (windows-latest)` 上——PR 上那一格是 skipping，
+        # 所以本机与 PR 全绿都是真的，它只在 merge_group 里发作。
+        svg_path = self.out_dir / f"{stem}.svg"
+        with self.real_output(), open(svg_path, "w", encoding="utf-8", newline="") as fh:
+            state.fig.savefig(fh, format="svg", dpi=preview_dpi or self.preview_dpi)
         if timings is not None:
             timings["manifest_ms"] = round((t1 - t0) * 1000.0, 3)
             timings["canvas_draw_ms"] = ms_since(t1)
