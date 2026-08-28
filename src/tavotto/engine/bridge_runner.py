@@ -312,6 +312,12 @@ TOKEN_ENV = "TAVOTTO_BRIDGE_TOKEN"
 HELLO_KEY = "bridge_hello"
 EVENT_KEY = "bridge_event"
 
+#: 用户在 UI 里点"终止脚本"时本进程的退出码（ADR 0021 §10.2）。
+#: **与 `runcodes.EXIT_TERMINATED` 严格同源**——这份文件被用户的解释器按路径
+#: 执行，import 不到 `tavotto.*`，所以只能各写一份、由用例逐字节对拍
+#: （`tests/native/test_run_codes.py::test_the_runner_and_the_cli_agree_on_the_terminate_code`）。
+TERMINATE_EXIT = 5
+
 
 def _take_token() -> str:
     """取走 token 并**从 os.environ 里摘掉**。
@@ -400,6 +406,25 @@ class BridgeRun:
         self.script_error: dict | None = None
         self.released = False
         self._pkg2_loaded = False
+        #: 上一次屏障离开时保存下来的 Tavotto override（stem → 全量 patch 列表）。
+        #: **它不在 Figure 上**——离开屏障之前 Figure 已经被恢复成脚本原样了
+        #: （ADR 0021 §8）。下一个屏障按稳定 gid 重放。
+        self.saved_patches: dict = {}
+        #: 上一次重放里没找到落点的那些（孤儿）。如实报给上层，**绝不落到
+        #: "最像的对象"上**。
+        self.rebase_warnings: dict = {}
+        #: 已经进过至少一个屏障。第一个屏障没有可 rebase 的东西——states 就是
+        #: 那一刻建的。
+        self._had_barrier = False
+        #: 上一个屏障离开时**已经存在**的 stem。这一轮新出现的图不需要 rebase
+        #: （`instrument_all()` 刚给它们采过 baseline），重复一遍只是多一次
+        #: savefig。
+        self._known_stems: set = set()
+        #: 用户在 UI 里明确点了"终止脚本"。**退出码要确定**（ADR 0021 §10.2），
+        #: 所以除了抛 SystemExit 还要记一笔：用户脚本完全可能把它吞掉
+        #: （`except BaseException:` / `except SystemExit:` / 一个 `finally`
+        #: 里再 return），那时"终止"就变成了一次静默的普通退出。
+        self.terminated = False
 
     # ---- 第二阶段装载 ----
     def _ensure_engine(self):
@@ -447,9 +472,15 @@ class BridgeRun:
                 return _no_capture()
 
         class _NativeHandler(wireproto.V1Handler):
-            """native 的信封处理：**只多一个 `continue`**，其余逐字复用 v1。"""
+            """native 的信封处理：**只多两个命令**，其余逐字复用 v1。
 
-            _EXTRA = frozenset({"continue"})
+            `continue` —— 放开屏障（ADR 0020）。
+            `terminate` —— 用户在 UI 里明确点了"终止脚本"（ADR 0021 §10.2）。
+            它**不伪装成 continue**：退出码是确定的 `TERMINATE_EXIT`，
+            桌面据此把会话记成"被终止"而不是"正常结束"。
+            """
+
+            _EXTRA = frozenset({"continue", "terminate"})
 
             def commands(self):
                 return wireproto.V1_COMMANDS | self._EXTRA
@@ -461,6 +492,12 @@ class BridgeRun:
                 if cmd == "continue":
                     run.released = True
                     return {"released": True}
+                if cmd == "terminate":
+                    run.terminated = True
+                    run.released = True
+                    # 与 `shutdown` 同一条出路（`wireproto` 把 SystemExit 原样
+                    # 抛出去），只是带一个确定的退出码。
+                    raise SystemExit(TERMINATE_EXIT)
                 raise wireproto.ProtocolError("unknown_cmd", f"未知指令: {cmd}")
 
         self.session = _NativeSession(self.args.out_dir, self.args.preview_dpi)
@@ -505,16 +542,90 @@ class BridgeRun:
             matplotlib_version=getattr(matplotlib, "__version__", ""),
         )
 
+    # ---- 屏障基准：restore before continue, rebase at next barrier ----
+    def rebase(self) -> None:
+        """把用户代码此后产生的新状态当作**新 baseline**，再重放保存的 patches。
+
+        为什么必须重新 `instrument`：脚本在两个屏障之间可以往同一张 Figure 上
+        再画一条线、换掉 locator、删掉一个 artist。`state.elements` / `index`
+        是上一个屏障那一刻的快照，不重建的话新画的东西在 manifest 里根本
+        不存在，而界面按 gid 索引一切。
+
+        为什么重放要在 `instrument` 之后：`overrides.apply` 会在第一次碰到
+        某个 `(gid, prop)` 时**采样**它的原值。离开上一个屏障时 `apply([])`
+        已经把 `originals` 清空了，所以这里采到的是**脚本此刻的值**——这正是
+        "新 baseline" 的定义。反过来（先重放再 instrument）采到的会是上一次
+        的旧值，撤销时就回到了一个脚本从来没有过的状态。
+
+        找不到落点的 patch 变成**孤儿警告**照实报出去。`overrides.apply` 自己
+        就报「元素不存在（脚本可能已改动）」，这里只是把它收集起来——
+        **绝不去找"最像的对象"**：猜错的表现是用户的字号改到了另一条曲线上，
+        而两边都没有任何提示。
+        """
+        if not self._had_barrier or self.session is None:
+            return  # 第一个屏障：states 就是这一刻建的，没有可 rebase 的
+        manifest = _PKG.manifest
+        overrides = _PKG.overrides
+        self.rebase_warnings = {}
+        for stem, state in self.session.states.items():
+            if stem not in self._known_stems:
+                # 这一轮**新出现**的图：`instrument_all()` 刚给它建过状态、
+                # 出过预览，baseline 就是此刻。再来一遍纯属重复渲染。
+                continue
+            manifest.instrument(state)
+            patches = self.saved_patches.get(stem) or []
+            warnings = overrides.apply(state, patches) if patches else []
+            if warnings:
+                self.rebase_warnings[stem] = list(warnings)
+            self.session.render(stem)
+
+    def release_barrier(self, reason: str) -> None:
+        """**任何**离开屏障的路径都要经过这里（ADR 0021 §8.1）。
+
+            continue / detach / 桌面断开 / App 崩了 / relay EOF / shutdown
+
+        做两件事，顺序不能换：保存当前的 Tavotto patch 列表，然后把 Figure
+        恢复成**本次屏障的 script baseline**（`overrides.apply(state, [])` 的
+        全量列表语义天然就是"回到原样"）。
+
+        为什么这条对**故障路径**尤其重要：不做的话，App 一崩，用户的脚本反而
+        带着 Tavotto 的 override 继续跑完——故障路径上的语义比正常路径更宽松，
+        而这正是最难被发现的一类不一致（谁会去测"崩溃之后脚本看到了什么"）。
+        """
+        if self.session is None:
+            return
+        overrides = _PKG.overrides
+        for stem, state in self.session.states.items():
+            snapshot = self.session.snapshot(stem)
+            if snapshot:
+                self.saved_patches[stem] = snapshot
+            else:
+                self.saved_patches.pop(stem, None)
+            try:
+                overrides.apply(state, [])
+            except Exception as exc:  # noqa: BLE001 — 一张图还原不了不该拖垮脚本
+                print(
+                    f"[tavotto] 恢复 {stem} 的脚本原样时出错（{reason}）: {exc}",
+                    file=sys.stderr,
+                )
+        self._known_stems = set(self.session.states)
+        self._had_barrier = True
+
     # ---- 屏障 ----
     def barrier(self, reason: str) -> None:
         """在**拥有 Figure 的这个线程**上服务控制循环，直到 continue/shutdown。
 
         没有控制通道时（`--report` 形态、对拍夹具）立刻返回——那时本来就
         没人要编辑。
+
+        进屏障先 `rebase()`（新 baseline + 重放），离开屏障必经
+        `release_barrier()`（保存 + 恢复原样）。**后者在 `finally` 里**：
+        `return`（父进程走了）与 `raise`（shutdown / terminate）都要经过它。
         """
         if self.control is None:
             return
         self._ensure_session()
+        self.rebase()
         wireproto = _PKG.wireproto
         self.released = False
         self.control.event(
@@ -522,32 +633,38 @@ class BridgeRun:
             reason=reason,
             stems=list(self.session.states),
             script_error=self.script_error,
+            rebase_warnings=self.rebase_warnings or None,
         )
-        while not self.released:
-            line = self.control.readline()
-            if not line:  # 父进程走了：不能把用户的脚本永远挂在这儿
-                self.control = None
-                return
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                req = json.loads(line)
-            except ValueError as exc:
-                self.control.respond(
-                    wireproto.v1_error(
-                        {}, wireproto.ProtocolError("bad_request", f"JSON 解析失败: {exc}")
+        try:
+            while not self.released:
+                line = self.control.readline()
+                if not line:  # 父进程走了：不能把用户的脚本永远挂在这儿
+                    self.control = None
+                    return
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    req = json.loads(line)
+                except ValueError as exc:
+                    self.control.respond(
+                        wireproto.v1_error(
+                            {}, wireproto.ProtocolError("bad_request", f"JSON 解析失败: {exc}")
+                        )
                     )
-                )
-                continue
-            try:
-                resp = wireproto.respond(self.handler, req)
-            except SystemExit:
-                self.control.event("shutdown", reason="client")
-                self.control.close()
-                self.control = None
-                raise
-            self.control.respond(resp)
+                    continue
+                try:
+                    resp = wireproto.respond(self.handler, req)
+                except SystemExit:
+                    self.control.event(
+                        "shutdown", reason="terminate" if self.terminated else "client"
+                    )
+                    self.control.close()
+                    self.control = None
+                    raise
+                self.control.respond(resp)
+        finally:
+            self.release_barrier(reason)
         self.control.event("released", reason=reason)
 
 
@@ -646,6 +763,13 @@ def main(argv: list | None = None) -> int:
         traceback.print_exc()
     finally:
         hook.uninstall()
+
+    if run.terminated:
+        # **确定的退出码**，不管用户脚本对 SystemExit 做了什么。
+        # `except BaseException:` / `except SystemExit:` / `finally: return`
+        # 都能把上面那个 5 吃掉，而"我点了终止"与"脚本自己正常退出了"必须
+        # 在退出码上分得开（ADR 0021 §10.2）。
+        exit_code = TERMINATE_EXIT
 
     _resolve_module_source(args)
 
