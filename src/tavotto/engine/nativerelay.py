@@ -264,10 +264,36 @@ class NativeRelay:
         _quiet_close(self._child_listener)
 
     def close(self) -> None:
+        """关掉整条 relay。**已连上的两条要先 `shutdown` 再 `close`。**
+
+        少了 `shutdown` 的那一版在 macOS 上一直是绿的，在 Linux 上必挂——
+        差别不在"慢"，在 `close()` 与阻塞中的 `recv()` 的语义：
+
+        * **Linux**：`close(fd)` 立刻返回，但**不唤醒**另一个线程里阻塞着的
+          `recv(fd)`；那个系统调用还持着底层的 file description，于是 FIN
+          **不会被发出去**。两个 pump 线程此刻正好各自阻塞在一侧的 `recv`
+          上（脚本停在屏障上，两边都没有字节可读），所以对端永远等不到 EOF。
+        * **macOS / BSD**：`close()` 会让阻塞中的 `recv` 带 `EBADF` 返回，
+          套接字随即拆掉、FIN 发出——**所以本机怎么跑都是对的**。
+
+        这条路径上"对端永远等不到 EOF"的具体形状是：用户按了 Ctrl+C，脚本
+        收到了、也打印了、也 `sys.exit(130)` 了，但 Bridge Runner 停在"脚本
+        结束"那个屏障上等控制通道说话——通道没关，屏障不放，进程不退，
+        用户的终端再也回不来。**Tavotto 改变了 Ctrl+C 的含义**，而这正是
+        `_wait_for_child_process()` 那段注释里明写着不许发生的事。
+
+        `shutdown(SHUT_RDWR)` 作用在**套接字**而不是 fd 表上：两个平台都会
+        立刻发 FIN，并让阻塞中的 `recv` 返回 0（EOF）。`nativesession` 那边
+        的 `Transport.close()` 一直是这么写的——这里是漏掉的第二个消费点。
+        """
         if self._closed:
             return
         self._closed = True
         self._cancel.set()
+        # 顺序是硬的：先让两条已连上的通道 EOF，再关 fd。反过来就是上面那个
+        # Linux 死锁（fd 关了、FIN 还没发）。
+        for s in (self.attach_sock, self.child_sock):
+            _quiet_shutdown(s)
         for s in (self._attach_listener, self._child_listener, self.attach_sock, self.child_sock):
             _quiet_close(s)
 
@@ -326,6 +352,18 @@ def _quiet_close(obj) -> None:
         return
     with _suppress():
         obj.close()
+
+
+def _quiet_shutdown(sock) -> None:
+    """让对端立刻看到 EOF，并唤醒本进程里阻塞在这条 socket 上的 `recv`。
+
+    没连上（`ENOTCONN`）或已经关了的一律吞掉——`close()` 是收尾路径，
+    在那里抛异常只会盖住真正的失败原因。
+    """
+    if sock is None:
+        return
+    with _suppress():
+        sock.shutdown(socket.SHUT_RDWR)
 
 
 class _suppress:

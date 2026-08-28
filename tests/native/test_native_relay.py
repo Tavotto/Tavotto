@@ -302,3 +302,82 @@ def _swallow(fn, *args):
         return fn(*args)
     except BaseException:  # noqa: BLE001 — 这个线程只是为了让 accept 循环转起来
         return None
+
+
+# --------------------------------------------------------------------------
+# close() 的顺序：先 shutdown 后 close
+# --------------------------------------------------------------------------
+# 这两条守的是同一件事，但**判别力在不同平台上**，所以两条都要有：
+#
+# * 顺序那条在任何平台都红——它量的是不变式本身；
+# * EOF 那条在 macOS 上无论修没修都绿（那边 `close()` 会唤醒阻塞中的
+#   `recv`），只有 Linux 会红。
+#
+# 只留后者的话，本机永远看不到问题，而 CI 会在一个 90 秒超时里告诉你
+# "某条用例挂了"——那正是这个缺陷第一次出现时的样子。
+def test_close_shuts_the_connected_sockets_down_before_closing_them():
+    """**顺序是硬的**：`shutdown` 在前，`close` 在后。
+
+    Linux 上 `close(fd)` 不唤醒另一个线程里阻塞着的 `recv(fd)`，那个系统调用
+    还持着底层 file description，于是 **FIN 不会被发出去**——对端永远等不到
+    EOF。macOS 会让阻塞中的 `recv` 带 EBADF 返回，所以那边怎么写都对。
+
+    产品上的形状：用户按了 Ctrl+C，脚本收到了也退出了，但 Bridge Runner 停在
+    "脚本结束"那个屏障上等控制通道说话，通道没关、屏障不放、进程不退——
+    **Tavotto 改变了 Ctrl+C 的含义**。
+    """
+
+    class Recorder:
+        def __init__(self, log, name):
+            self.log, self.name = log, name
+
+        def shutdown(self, how):
+            assert how == socket.SHUT_RDWR, f"{self.name} 半关不够：{how}"
+            self.log.append(("shutdown", self.name))
+
+        def close(self):
+            self.log.append(("close", self.name))
+
+    log: list[tuple[str, str]] = []
+    r = nativerelay.NativeRelay()
+    r.close()  # 先把真的两个 listener 还回去，下面全用替身
+    r._closed = False
+    r._attach_listener = Recorder(log, "attach_listener")
+    r._child_listener = Recorder(log, "child_listener")
+    r.attach_sock = Recorder(log, "desktop")
+    r.child_sock = Recorder(log, "child")
+
+    r.close()
+
+    for name in ("desktop", "child"):
+        assert ("shutdown", name) in log, f"{name} 这条已连上的通道没有 shutdown"
+        assert log.index(("shutdown", name)) < log.index(("close", name)), (
+            f"{name} 先 close 后 shutdown——Linux 上 FIN 发不出去，对端永远等 EOF"
+        )
+    # 两个 listener 没连上，shutdown 它们没有意义（ENOTCONN），只 close
+    assert ("shutdown", "attach_listener") not in log
+
+
+def test_both_peers_see_eof_even_while_the_pumps_are_blocked_on_recv(relay):
+    """`close()` 之后两侧都要**立刻**看到 EOF —— 哪怕转发线程正阻塞在 recv 上。
+
+    这正是 Ctrl+C 那条路径的现场：脚本停在屏障上，两个方向都没有字节可读，
+    两个 pump 线程各自阻塞在一侧的 `recv()` 里。**Linux 上没有 shutdown 就
+    死锁**（见上一条）。
+
+    这条在 macOS 上修不修都绿——它是 CI 那一侧的判据，与上面那条顺序判据
+    互补，不是重复。
+    """
+    desktop, child, _ = both_sides(relay)
+    # 两个 pump 此刻都阻塞在 recv 上（谁也没有字节要转发）
+    time.sleep(0.05)
+    relay.close()
+    for name, sock in (("桌面", desktop), ("子进程", child)):
+        sock.settimeout(10)
+        try:
+            got = sock.recv(4096)
+        except OSError as exc:  # 对端 RST 也算"通道没了"，但 EOF 才是正常形状
+            pytest.fail(f"{name}侧没有收到 EOF：{exc!r}")
+        assert got == b"", f"{name}侧没有收到 EOF（收到 {got!r}）"
+    desktop.close()
+    child.close()
