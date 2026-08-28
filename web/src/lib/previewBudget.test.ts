@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest'
 import {
   EDITOR_SVG_HARD_LIMIT_BYTES,
   resolvePreview,
+  svgByteLength,
   VECTOR_PREVIEW,
   type PreviewMetadata,
 } from './previewBudget'
@@ -56,5 +57,46 @@ describe('resolvePreview', () => {
   it('闸内的大图照旧透传（阈值是 >，不是 >=）', () => {
     const big = 'x'.repeat(EDITOR_SVG_HARD_LIMIT_BYTES)
     expect(resolvePreview({ svg: big }).svg).toBe(big)
+  })
+
+  it('量的是 UTF-8 字节，不是 UTF-16 码元——中文 SVG 不许漏过去', () => {
+    // 一个 BMP 内的中文字符占 **1 个码元、3 个 UTF-8 字节**。拿 `length`
+    // 直接比是低估：下面这串 `length` 只有五百多万、稳稳低于 16 MiB 阈值，
+    // 实际 payload 却是 16.8 MiB。图内中文标签的科研图正是 Tavotto 的主场，
+    // 这一条漏掉等于对整个中文用户群不设防。
+    const chars = Math.ceil(EDITOR_SVG_HARD_LIMIT_BYTES / 3) + 10_000
+    const cjk = '图'.repeat(chars)
+    expect(cjk.length).toBeLessThan(EDITOR_SVG_HARD_LIMIT_BYTES) // 码元数没超
+    expect(new TextEncoder().encode(cjk).length).toBeGreaterThan(
+      EDITOR_SVG_HARD_LIMIT_BYTES,
+    ) // 字节数超了
+
+    const out = resolvePreview({ svg: cjk })
+    expect(out.svg).toBeNull()
+    expect(out.preview.reason).toBe('fallback')
+  })
+})
+
+describe('svgByteLength：两头零成本，只有临近阈值才真的编码', () => {
+  const LIMIT = 300
+
+  it('下界已经超了就不精确算（返回码元数即可，反正 > limit）', () => {
+    const s = 'x'.repeat(LIMIT + 1)
+    expect(svgByteLength(s, LIMIT)).toBeGreaterThan(LIMIT)
+  })
+
+  it('上界都没到也不精确算', () => {
+    // 全是 3 字节字符时 length*3 恰好等于 limit——仍然不超，走零成本那条
+    const s = '图'.repeat(LIMIT / 3)
+    expect(svgByteLength(s, LIMIT)).toBe(LIMIT / 3)
+  })
+
+  it('中间那段才真的编码，且数出来的是字节', () => {
+    // length 在 (limit/3, limit] 之间：纯 ASCII 时字节 == 码元
+    const ascii = 'x'.repeat(LIMIT)
+    expect(svgByteLength(ascii, LIMIT)).toBe(LIMIT)
+    // 同一段长度换成中文，字节数就是三倍——这正是低估会漏掉的那部分
+    const cjk = '图'.repeat(LIMIT - 1)
+    expect(svgByteLength(cjk, LIMIT)).toBe((LIMIT - 1) * 3)
   })
 })
