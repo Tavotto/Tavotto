@@ -4,6 +4,242 @@
 
 ## 当前状态
 
+> **这一段是整段一起重写的**（不是在旧快照上加一行）。半新半旧的状态块比
+> 完全陈旧更坏：完全陈旧至少自洽、读者看日期就知道该怀疑什么；半更新销毁了
+> 这个自洽性，却继承了"刚被人动过"的可信度。
+
+- 日期：2026-08-28
+- 本 Session Prompt：Session 9 —— `tavotto run` · Matplotlib Bridge Beta
+- **状态：PR 9A 已就绪，未推送。** 分支 `compat/bridge-session09-native-run`
+  （worktree `.claude/worktrees/compat-bridge-session08`），基于
+  `origin/main` 的 `b23f8d9`（#187 认证枚举那一条）。
+- **本轮交付 = 控制面（PR 9A）。桌面产品面（PR 9B）没做**，见下方
+  「未完成 / 进 PR 9B 的入场券」。
+- **产品裁决**：`TAVOTTO_RUN_BETA = BLOCKED`（**不是 READY**）。后端与 CLI
+  的每一条不变式都立住了，缺的是 §68 里那几条只有 9B 能满足的：桌面确认
+  界面、native 会话 UI、offline / 重新绑定的面板行为、以及 Windows / macOS
+  **安装包**上的真机 E2E。
+- 裁决与理由：**[ADR 0021](../adr/0021-tavotto-run-product-contract.md)**
+  （新增，Accepted）；ADR 0014 的四个待定稿事项到此全部关闭。
+
+## Session 9 结论（一句话）
+
+> **控制面成立。** `tavotto run -- python fig.py` 在真进程链上跑通：CLI 拥有
+> 用户的 Python（stdio / cwd / env / argv / Ctrl+C 全部原样），桌面确认之前
+> 一行用户代码都没跑，编辑不改变脚本看到的状态（restore before continue,
+> rebase at next barrier），CompatBench 的 `native_run` 从 `not_implemented`
+> 升级成走**产品控制面**的真实路由。
+
+## 本轮交付（PR 9A）
+
+- [x] **ADR 0021**（Accepted）——12 条裁决，含"CLI 必须继续拥有用户 Python"
+  这条最重要的架构约束。
+- [x] `engine/runcodes.py`：**稳定错误码 + 中英同表**（27 条）+ 退出码闭集
+  （2/3/4/5，**不把所有失败都返回 1**）。
+- [x] `engine/runspec.py`：严格 invocation 解析（**`--` 强制**）、解释器
+  只读体检、`cwd` 与 `project_root` 分家、`--status-file`（原子写、无 token、
+  argv 只记数量）。**没有 `--json`**（stdout 是用户程序的）。
+- [x] `engine/nativehandoff.py`：一次性交接凭据。0700 目录 / 0600 文件 /
+  不透明 ID / realpath 判据 / 过期 / **墓碑**（consume 与 cancel 分得开，
+  且墓碑里没有 token）。
+- [x] `engine/nativerelay.py`：CLI 托管的认证 raw relay。两侧各一枚 token、
+  只 loopback、错 token 不消耗 listener、**握手之后纯字节转发**
+  （结构性守卫：本模块不许 import 任何引擎语义）。
+- [x] `engine/nativesession.py`：sidecar 侧注册表 + **单 reader** 传输
+  （按 request_id 配对、坏帧即判 failed、EOF 唤醒所有等待者、超时 poison）、
+  状态闭集 10 档、logical asset → live route。
+- [x] `engine/envlease.py`：**环境占用的唯一一张表**。`pool._mutating` 整个
+  搬过来，`pool` 变消费者（既有 dependency-repair 用例一个字没改）；native
+  会话在这里登记租约，两条方向相反的拒绝各有各的码。
+- [x] `engine/enginesession.py`：**"谁来渲染"的唯一判据**。`app.py` 里
+  5 处绕过 `resolve()` 的 `pool.get()` 一并收编（其中画布合成导出那一处
+  是真的路由缺口：同一张 native 图会"预览是 native 的、导出是 safe 的"）。
+- [x] `engine/runcli.py`：`tavotto run` 本身。顺序编排 + Ctrl+C 语义 +
+  `INHERIT_CONSOLE`（**不是** `CREATE_NO_WINDOW`）。
+- [x] `engine/nativeperm.py`：许可绑定（项目 × 解释器 × schema），默认不记住、
+  可撤销、schema 一升旧许可全失效。
+- [x] `bridge_runner`：`rebase()` / `release_barrier()` / `terminate` 命令 +
+  确定的退出码 5。
+- [x] 后端端点 11 条（`/api/native/...`）+ SSE `native.session` + `RunError`
+  的 errorhandler。
+- [x] **桌面 argv 契约两侧同源**：`handoff.desktop_argv()` 的
+  `--native-session` 与 `main.rs::parse_open_args()`（Rust 侧 3 条新用例，
+  含畸形 ID 不转发）。
+- [x] CompatBench：`native_run` 路由（走真 `tavotto run`）+ `native_eligible`
+  子集判据 + 阶段账本 + guard。
+- [x] 文档：`docs/compatibility/tavotto-run.md`（新）、README ×2、
+  `handoff-protocol.md`、`legacy-projects.md` Layer 5、ADR 0014 / 0020 修订、
+  `src/tavotto/AGENTS.md` 新增一节。
+
+## 用例分布（tests/native/）
+
+| 文件 | 覆盖 |
+|---|---|
+| `test_run_invocation.py` | `--` 强制、两种形态、拒绝面、体检、cwd vs project_root、指纹与许可键、status file |
+| `test_run_codes.py` | 码表：中英都非空、占位符两侧一致、常量↔表双向、退出码闭集 |
+| `test_native_handoff.py` | 0600 / 一次性 / 墓碑无 token / 过期 / 坏 ID / symlink 穿越 / 前端零凭据 |
+| `test_native_relay.py` | loopback、两枚 token、错 token 不消耗 listener、二次 attach、**字节透明**、断链、清理 |
+| `test_native_registry.py` | 状态机、单 reader、超时 poison、坏帧、EOF 唤醒、not-at-barrier、asset 冲突、租约 |
+| `test_env_lease.py` | 两条反向拒绝、不自动杀、粒度按环境、并发只有一个赢、pool 是消费者 |
+| `test_native_api.py` | 端点状态码、**请求体不能替换 invocation**、许可作用域、safe↔native 不串路由 |
+| `test_native_barrier_semantics.py` | **判别性用例**（脚本永远看不到 override）、断开/detach 也恢复、重复 show、孤儿 |
+| `test_run_cli_integration.py` | 真进程：stdio/cwd/env/argv、退出码透传、脚本出错仍交图、stdin、`-m`、Ctrl+C、terminate |
+
+后四个文件跑的是**完整产品链**：真 `tavotto run` 进程 → 假桌面 attach（走真
+控制面：consume descriptor + token 认证 + 单 reader 传输）→ 真用户 Python →
+真 Bridge Runner → 真 Matplotlib Figure。唯一被替掉的是"有没有窗口"。
+
+## 实际运行的验证（worktree 内，PYTHONPATH=src，主仓 .venv 解释器）
+
+```bash
+ruff check . && ruff format --check .                        # 通过（261 文件）
+python -m pytest -q                                          # 全量（三条红已修，见下）
+python -m pytest tests/native tests/bridge -q                # 320 passed
+python scripts/ci/compat_matrix.py --smoke                   # 通过；native_run 3/3
+cd src-tauri && cargo test && cargo clippy --all-targets -- -D warnings   # 20 passed / 无警告
+```
+
+**全量套件第一轮红了三条，全部是真的**（不是环境噪音）：
+
+| 红的用例 | 它抓到了什么 |
+|---|---|
+| `test_install_locate::test_open_and_doctor_are_dispatched_before_argparse` | 子命令闭集里没加 `run`——那条断言就是为"加了命令却忘了让它在 argparse 之前分派"写的 |
+| `test_source_hygiene::test_no_launcher_leaves_a_child_pipe_undrained` | CompatBench 的 native 路由开了 `stdout=PIPE` 却没人读。用户脚本的输出原样继承给它，写满 64 KiB 之后 CLI 永久阻塞——症状看起来像"native 会话挂死" |
+| `test_windows_regressions::test_every_backend_subprocess_hides_the_console_window` | **这条最有意思**：它要求每个 spawn 都传 `CREATE_NO_WINDOW`，而 `tavotto run` 起的用户 Python **恰恰不能带它**（会从终端上摘下来）。见下 |
+
+### 那条 Windows 守卫的处置：把前提的变化写进判据，**不是开豁免**
+
+原来的判据成立是因为后端只有一类子进程：桌面版起的隐藏子进程，漏传 =
+用户可见的黑框。2026-08-28 多了第二类：**CLI 拥有的、跑在用户终端里的**
+那一个。
+
+处置**不是**给 `runcli.py` 开白名单（白名单挡不住"下一个人在 GUI 路径里
+抄了这一行"），而是把判据升级成**枚举**：
+
+* 新增 `runtime.INHERIT_CONSOLE = 0`（所有平台都是 0，**不改变任何运行时
+  行为**）；
+* 每个 spawn 必须显式声明自己是哪一类，`creationflags` 只认这两个具名常量
+  （字面量 `0`、`A | B` 一律拒）；
+* `INHERIT_CONSOLE` 只允许出现在 `runcli.py`，多一处就要有人解释；
+* 另加一条**反方向**的用例：`tavotto run` 的 spawn 里不许出现
+  `CREATE_NO_WINDOW`——防的是"有人好心把它修成和别处一样"。
+
+## 负向反证（本轮二十条，全部先红后还原）
+
+| # | 变异 | 判据 | 结果 |
+|---|---|---|---|
+| 1 | 用户 Python 不再继承当前 env（≈ sidecar 重建环境） | `test_the_script_keeps_the_users_stdout_cwd_env_and_argv` | **红** |
+| 2 | CLI 不再要求 `--` | `test_run_requires_delimiter` | **红** |
+| 3 | Tavotto 状态行改写 stdout | `test_run_messages_only_stderr` | **红** |
+| 4 | 失败信息改写 stdout | `test_usage_errors_exit_two_and_run_nothing` | **红** |
+| 5 | descriptor 不再核实 realpath 仍在固定目录里 | `test_descriptor_path_escape` | **红**（判据改过一次，见下） |
+| 6 | 前端请求体可以覆盖 descriptor（TOCTOU） | `test_the_request_body_cannot_replace_the_invocation` | **红** |
+| 7 | token 进 Tauri argv | `test_the_desktop_argv_never_carries_a_credential` | **红** |
+| 8 | native 会话不登记环境租约 | `test_attach_takes_an_environment_lease_and_gives_it_back` | **红** |
+| 9 | 安装器把活跃 native 会话直接清掉 | `test_active_native_blocks_install` | **红** |
+| 10 | native 会话进 safe 池 | `test_the_registry_is_not_the_worker_pool` | **红** |
+| 11 | 每条请求另开一个 reader（spike 的形态） | `test_native_single_reader` | **红** |
+| 12 | 超时之后会话仍假装可用 | `test_native_timeout_does_not_leave_a_second_reader` | **红** |
+| 13 | continue 之前不恢复 script baseline | `test_the_script_never_sees_a_tavotto_override` | **红** |
+| 14 | 下一个屏障不 rebase / 不重放 | 同上 | **红** |
+| 15 | native 面板悄悄退回 safe worker | `test_a_native_panel_never_falls_back_to_a_safe_worker` | **红** |
+| 16 | 第二条 native 会话静默抢走面板 | `test_native_asset_conflict_is_reported_not_silently_taken` | **红** |
+| 17 | 关掉 App 就杀用户脚本 | `test_shutdown_all_does_not_kill_the_user_script` | **红** |
+| 18 | CompatBench 绕回内部 `BridgeSession` | `test_native_run_route_goes_through_the_product_control_plane` | **红** |
+| 19 | 用户 Python 带上 `CREATE_NO_WINDOW` | `test_the_user_python_is_never_detached_from_the_terminal` | **红** |
+| 20 | relay 在中间解析并重写帧 | `test_relay_is_byte_transparent` | **红** |
+
+### 变异测试自己踩到的三个坑（值得记）
+
+**① `__pycache__` 让变异假绿。** 第 3 条第一轮报绿。原因不是判据空，是
+`sys.stderr` → `sys.stdout` 是**同样长度**的替换：CPython 的 .pyc 校验用
+(mtime, size)，同一秒里写回同样大小的文件，解释器认为缓存仍然有效，跑的还是
+变异**之前**那份字节码。手工复跑同一条变异当场红。
+
+这是变异测试里最坏的一种假绿：它让人以为判据是空的，从而去"加强"一条本来
+就好好的判据。变异脚本现在每次写完都清 `__pycache__`。
+
+**② 判据不是"红了就算数"，要红在对的原因上。** 第 5 条原本抽的是
+`_ID_RE` 的格式判据——抽掉之后 `test_descriptor_bad_id` 照样红，但**红的
+原因变了**（文件不存在 → INVALID），不是格式判据在起作用。换成抽 realpath
+那道之后又发现 `test_descriptor_path_escape` 也不红：symlink 的目标内容是
+随手写的，`_check_live` 会因为缺 `state` 而拒绝。**把目标改成一份完全合法的
+pending descriptor**，判据才真正只量那一条路径检查。
+
+顺带一条诚实记账：`_ID_RE` 单独抽掉在**行为上观测不到**（realpath 那道会
+兜住它）。它是第二层防御，它自己的看护在 Rust 侧
+（`a_malformed_native_session_id_is_dropped_not_forwarded`——那边没有 realpath
+可依赖，ID 会被直接拼进落地 URL）。
+
+**③ 变异要长成真缺陷的样子。** 第 11 条第一版起的是一个立刻结束的空线程，
+数线程时它早就没了。改成"起一个真的去 `readline()` 的线程"——那才是 spike
+的形态，也才真的会把响应偷走。
+
+## 未完成 / 进 PR 9B 的入场券
+
+**PR 9B（Desktop Product Surface）整个没做**，§68 完成定义里下面这些因此
+还是空的：
+
+- [ ] **桌面确认界面**：pending native request 的那一屏（Python 路径 / 工作
+  目录 / 目标 / 权限说明 / `□ 记住此项目和此 Python`）。后端
+  （`/api/native/pending/...` + `nativeperm`）已就绪，前端零行。
+- [ ] **native 会话状态 UI**：starting / waiting-for-figure / barrier /
+  continuing / ended / failed 六屏 + 「继续运行脚本」「放手」「终止脚本」。
+- [ ] **native live asset 绑面板**：`nativeSessionStore`（含项目代际纪律）、
+  offline badge、重新 attach 之后重放、多图选择器接 native 数据源。
+- [ ] **中英文案**：native 相关的 i18n key 一条都还没有；`native_session_*`
+  这批码在前端还没有对应文案（后端两种语言都齐了，见 `runcodes.MESSAGES`）。
+- [ ] **Windows / macOS 安装包真机 E2E**（§58）。本轮全部在**源码检出**上
+  跑；`tests/native` 走默认 pytest，所以 `backend-platforms` 会在 mac +
+  Windows 上各跑一遍——但那证明的是**后端与 CLI**，不是安装包里的
+  `tavotto-cli.exe` + 桌面壳。
+- [ ] **打包闭包复核**：`runcli` 等模块靠 PyInstaller 的字节码分析被收进
+  （与 `handoff` / `codexinstall` 同一条既有路径），本轮**没有**在真产物上
+  验过 `tavotto-cli run --help`。
+
+### 本轮刻意没做的
+
+- **不新增 telemetry 事件**（与 Session 7B 同一笔账：扩事件表要升
+  `CONSENT_VERSION` 并让所有人重新表态）。
+- **不提供 `native_run` MCP 工具**（模型给的路径/命令不是授权）。
+- **Linux / 没有桌面应用**：明确报 `native_desktop_required`，**在 spawn
+  之前**。浏览器 fallback 没做——做半个比不做更坏。
+- **terminate 只在屏障处可用**。脚本正在跑时没有人读控制通道，而那时真正
+  该做的是用户在自己的终端里按 Ctrl+C：那个进程是他的，信号也是他的。
+  Tavotto 不从 GUI 里去杀一个别的进程的子进程。
+
+## 下一 Session 首先阅读
+
+```text
+docs/adr/0021-tavotto-run-product-contract.md    ← 本轮的全部裁决
+docs/compatibility/tavotto-run.md                ← 面向用户的完整契约
+src/tavotto/AGENTS.md 的「tavotto run 的控制面」一节
+src/tavotto/engine/{runcli,runspec,nativesession,nativerelay,envlease,enginesession}.py
+tests/native/                                    ← 尤其 test_native_barrier_semantics.py
+```
+
+## 建议启动命令
+
+```bash
+git status --short && git log -1 --format='%an <%ae>'    # 身份三秒核一次
+PYTHONPATH=src /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/native -q
+PYTHONPATH=src /Volumes/Projects/Tavotto/.venv/bin/python scripts/ci/compat_matrix.py --smoke
+
+# 手动跑一次完整链（需要桌面应用；没有就加 --x-no-desktop 自己 attach）
+PYTHONPATH=src /Volumes/Projects/Tavotto/.venv/bin/python -m tavotto run -- python figure.py
+```
+
+---
+
+
+---
+
+# 历史（Session 8 —— PR #186 / #188，已合入 main `8c5a697` / `6e5bbfb`）
+
+> 下面是上一轮的交接原文。
+
+## 当时的状态
+
 > **这一段是合并后的快照，整段一起重写过**（不是在旧快照上加一行）。
 > 半新半旧的状态块比完全陈旧更坏：完全陈旧至少自洽、读者看日期就知道该
 > 怀疑什么；半更新销毁了这个自洽性，却继承了"刚被人动过"的可信度。
