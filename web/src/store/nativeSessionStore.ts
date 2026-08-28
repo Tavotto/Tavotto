@@ -96,10 +96,18 @@ interface NativeSessionStore {
 
   /** 收到一条交接 ID（落地 URL 的 `?native=` / `tavotto:open` 事件） */
   receive: (nativeId: string) => Promise<void>
-  /** 用户点了「运行并连接」 */
-  approve: (remember: boolean) => Promise<void>
-  /** 用户点了「取消」——CLI 当场收摊并退出 3 */
-  cancel: () => Promise<void>
+  /**
+   * 批准**指定的那一条**。
+   *
+   * **`nativeId` 是必填的，这是刻意的。** 上一版按队首批准，而"记住过所以
+   * 自动批准"这条判据的主语是**刚取回来的那一条**——两个主语在队列里不止
+   * 一条时就分开了：A（没记住、正等用户确认）在队首，B（记住过）后到，
+   * 于是**批准的是 A**，而 A 从来没被确认过。那一刻 `tavotto run` 最核心
+   * 的那句承诺（"你确认之前一行代码都不会跑"）当场失效。
+   */
+  approve: (nativeId: string, remember: boolean) => Promise<void>
+  /** 取消**指定的那一条**——CLI 当场收摊并退出 3 */
+  cancel: (nativeId: string) => Promise<void>
   /** 取不到 / 已过期的那一条：从队列里去掉，不留一个转不动的对话框 */
   dismissPending: () => void
 
@@ -167,15 +175,15 @@ export const useNativeSessionStore = create<NativeSessionStore>((set, get) => ({
     if (!nativeId) return
     // 同一条 ID 来两次（首启 URL + 单实例事件都送到了）不排两遍队
     if (get().pendingQueue.some((p) => p.native_id === nativeId)) return
-    const epoch = get().epoch
     set((s) => ({
       pendingQueue: [
         ...s.pendingQueue,
         { native_id: nativeId, info: null, loading: true, submitting: false, error: null },
       ],
     }))
+    // **不按项目代际作废**：待确认的交接不属于任何一个界面项目（见 `clear()`）。
+    // 该作废它的只有一件事——它已经不在队列里了（用户关掉 / 取消 / 批准过）。
     const patch = (next: Partial<NativePendingState>) => {
-      if (get().epoch !== epoch) return
       set((s) => ({
         pendingQueue: s.pendingQueue.map((p) =>
           p.native_id === nativeId ? { ...p, ...next } : p,
@@ -188,18 +196,16 @@ export const useNativeSessionStore = create<NativeSessionStore>((set, get) => ({
       // **记住过就不再问**（ADR 0021 §7.1）：许可绑的是项目 × 解释器 ×
       // schema，解释器换了 / 项目搬了 / schema 升了都会让它失效并重新问。
       // 这不是「允许 AI 自动执行」——用户仍然是自己在终端里敲的那条命令。
-      if (res.pending.remembered) await get().approve(false)
+      if (res.pending.remembered) await get().approve(nativeId, false)
     } catch (e) {
       // 过期 / 已被处理 / ID 不对：如实说，不留一个转圈的对话框
       patch({ loading: false, error: toNativeError(e) })
     }
   },
 
-  approve: async (remember) => {
-    const head = get().pendingQueue[0]
-    if (!head || head.submitting || !head.info) return
-    const epoch = get().epoch
-    const id = head.native_id
+  approve: async (id, remember) => {
+    const one = get().pendingQueue.find((p) => p.native_id === id)
+    if (!one || one.submitting || !one.info) return
     set((s) => ({
       pendingQueue: s.pendingQueue.map((p) =>
         p.native_id === id ? { ...p, submitting: true, error: null } : p,
@@ -207,13 +213,11 @@ export const useNativeSessionStore = create<NativeSessionStore>((set, get) => ({
     }))
     try {
       const res = await approveNativePending(id, remember)
-      if (get().epoch !== epoch) return
       set((s) => ({
         pendingQueue: s.pendingQueue.filter((p) => p.native_id !== id),
         sessions: { ...s.sessions, [res.session.session_id]: res.session },
       }))
     } catch (e) {
-      if (get().epoch !== epoch) return
       // 连不上 / 环境被占 / 已被处理：**留在队列里**并显示原因。
       // 悄悄关掉对话框等于让那个终端继续挂着而用户不知道为什么。
       set((s) => ({
@@ -224,10 +228,9 @@ export const useNativeSessionStore = create<NativeSessionStore>((set, get) => ({
     }
   },
 
-  cancel: async () => {
-    const head = get().pendingQueue[0]
-    if (!head || head.submitting) return
-    const id = head.native_id
+  cancel: async (id) => {
+    const one = get().pendingQueue.find((p) => p.native_id === id)
+    if (!one || one.submitting) return
     set((s) => ({
       pendingQueue: s.pendingQueue.map((p) =>
         p.native_id === id ? { ...p, submitting: true } : p,
@@ -335,7 +338,15 @@ export const useNativeSessionStore = create<NativeSessionStore>((set, get) => ({
   clear: () =>
     set((s) => ({
       epoch: s.epoch + 1,
-      pendingQueue: [],
+      // **`pendingQueue` 刻意不清。** 待确认的交接不属于任何一个界面项目：
+      // 它自带 project / interpreter / cwd，attach 也不看界面此刻开着哪个
+      // 项目（这正是 `applyOpenRequest` 里"每条出口都要排队"的理由）。
+      //
+      // 跟着清的表现是：终端 1 的确认屏还开着，终端 2 起了另一个项目的
+      // `tavotto run` → 换项目 → 第一条**既没批准也没取消**地消失，终端 1
+      // 白等满 5 分钟的 attach 超时。
+      //
+      // live 会话跟着清是对的（它们是这个项目的渲染状态），pending 不是。
       sessions: {},
       busy: {},
       errors: {},

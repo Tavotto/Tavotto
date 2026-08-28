@@ -139,30 +139,32 @@ function SessionCard({ session }: { session: NativeSessionInfo }) {
         </p>
       )}
 
-      {!terminal && (
+      {/* **三个动作都只在屏障处**。不是排版偏好——`NativeSession` 的每一条
+          命令都走 `_require_barrier()`，别的状态下点下去必然拿到
+          `native_session_not_at_barrier`。一个必然失败的按钮和一条"作废之后
+          还留着的运行并连接"是同一个形状：看起来能做，点了只会得到一条
+          描述正常状态的错误。
+          脚本正在跑时用户该做什么，卡片那行状态说了（Ctrl+C 在他自己的
+          终端里，那个进程是他的）。 */}
+      {!terminal && atBarrier && (
         <div className="mt-1.5 flex flex-wrap items-center gap-1">
-          {atBarrier && (
-            <Button
-              variant="primary"
-              size="sm"
-              loading={busy}
-              onClick={act(store.resume)}
-              title={ns('resumeHint')}
-            >
-              <Play size={11} />
-              {ns('resume')}
-            </Button>
-          )}
+          <Button
+            variant="primary"
+            size="sm"
+            loading={busy}
+            onClick={act(store.resume)}
+            title={ns('resumeHint')}
+          >
+            <Play size={11} />
+            {ns('resume')}
+          </Button>
           <Button variant="outline" size="sm" disabled={busy} onClick={act(store.detach)}>
             <Unplug size={11} />
             {ns('detach')}
           </Button>
-          {/* 只在屏障处：见组件说明 */}
-          {atBarrier && (
-            <Button variant="danger" size="sm" disabled={busy} onClick={confirmTerminate}>
-              {ns('terminate')}
-            </Button>
-          )}
+          <Button variant="danger" size="sm" disabled={busy} onClick={confirmTerminate}>
+            {ns('terminate')}
+          </Button>
         </div>
       )}
     </section>

@@ -192,6 +192,69 @@ describe('待确认的交接', () => {
     expect(mockPending).toHaveBeenCalledTimes(1)
   })
 
+  it('**自动批准批的是被记住的那一条，不是队首**（P1-A）', async () => {
+    // 判据的主语（B 记住过）和动作的主语（队首是 A）在队列里不止一条时就
+    // 分开了。批错的后果不是"多点一次"，是 **A 的 Python 在用户点任何东西
+    // 之前就跑起来了**——`tavotto run` 最核心的那句承诺当场失效。
+    const other = 'ffffffffffffffffffffffffffffffff'
+    mockPending.mockImplementation(async (id) => ({
+      pending: pending({ native_id: id, remembered: id === other }),
+    }))
+    mockApprove.mockResolvedValue({ session: session() })
+
+    await store().receive(ID) // A：没记住，排在队首，等用户确认
+    await store().receive(other) // B：记住过 → 应该自动批准 **B**
+
+    expect(mockApprove).toHaveBeenCalledTimes(1)
+    expect(mockApprove).toHaveBeenCalledWith(other, false)
+    // A 还在队列里等着——它从来没被确认过
+    expect(store().pendingQueue.map((p) => p.native_id)).toEqual([ID])
+  })
+
+  it('批准点名的那一条，队首在不在都不影响', async () => {
+    const other = 'ffffffffffffffffffffffffffffffff'
+    mockPending.mockImplementation(async (id) => ({ pending: pending({ native_id: id }) }))
+    mockApprove.mockResolvedValue({ session: session() })
+    await store().receive(ID)
+    await store().receive(other)
+
+    await store().approve(other, true)
+
+    expect(mockApprove).toHaveBeenCalledWith(other, true)
+    expect(store().pendingQueue.map((p) => p.native_id)).toEqual([ID])
+  })
+
+  it('**换项目不动待确认队列**（P1-B）', async () => {
+    // pending 不属于任何一个界面项目：它自带 project / interpreter / cwd，
+    // attach 也不看界面此刻开着哪个项目。跟着清的表现是终端 1 的那条**既没
+    // 批准也没取消**地消失，而它白等满 300 秒的 attach 超时。
+    mockPending.mockResolvedValue({ pending: pending() })
+    await store().receive(ID)
+    expect(store().pendingQueue).toHaveLength(1)
+
+    store().clear() // 换项目
+
+    expect(store().pendingQueue.map((p) => p.native_id)).toEqual([ID])
+  })
+
+  it('换项目之后那条 pending 仍然批得动（代际不该作废它）', async () => {
+    mockPending.mockResolvedValue({ pending: pending() })
+    await store().receive(ID)
+    store().clear()
+    mockApprove.mockResolvedValue({ session: session() })
+
+    await store().approve(ID, false)
+
+    expect(mockApprove).toHaveBeenCalledWith(ID, false)
+    expect(store().pendingQueue).toHaveLength(0)
+  })
+
+  it('换项目仍然清掉 live 会话（那才是项目状态）', () => {
+    seed({ state: 'barrier', sequence: 4 })
+    store().clear()
+    expect(store().sessions).toEqual({})
+  })
+
   it('取不到（过期/已处理）时留下的是一条错误，不是一个转圈的对话框', async () => {
     mockPending.mockRejectedValue(apiError('native_handoff_expired'))
     await store().receive(ID)
@@ -206,7 +269,7 @@ describe('待确认的交接', () => {
     mockPending.mockResolvedValue({ pending: pending() })
     await store().receive(ID)
     mockApprove.mockRejectedValue(apiError('environment_mutating'))
-    await store().approve(true)
+    await store().approve(ID, true)
     const head = store().pendingQueue[0]
     expect(head.native_id).toBe(ID)
     expect(head.submitting).toBe(false)
@@ -217,7 +280,7 @@ describe('待确认的交接', () => {
     mockPending.mockResolvedValue({ pending: pending() })
     await store().receive(ID)
     mockCancel.mockRejectedValue(new Error('网络断了'))
-    await store().cancel()
+    await store().cancel(ID)
     expect(store().pendingQueue).toHaveLength(0)
   })
 
@@ -225,7 +288,7 @@ describe('待确认的交接', () => {
     mockPending.mockResolvedValue({ pending: pending() })
     mockApprove.mockResolvedValue({ session: session() })
     await store().receive(ID)
-    await store().approve(true)
+    await store().approve(ID, true)
     expect(mockApprove).toHaveBeenCalledWith(ID, true)
   })
 })

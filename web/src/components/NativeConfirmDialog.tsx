@@ -104,7 +104,12 @@ export function NativeConfirmDialog() {
       size="lg"
       footer={
         <>
-          <Button variant="outline" size="md" disabled={busy} onClick={() => store.cancel()}>
+          <Button
+            variant="outline"
+            size="md"
+            disabled={busy}
+            onClick={() => store.cancel(head.native_id)}
+          >
             {nr('cancel')}
           </Button>
           <Button
@@ -112,7 +117,7 @@ export function NativeConfirmDialog() {
             size="md"
             loading={busy}
             loadingLabel={nr('approving')}
-            onClick={() => store.approve(remember)}
+            onClick={() => store.approve(head.native_id, remember)}
           >
             {nr('approve')}
           </Button>
