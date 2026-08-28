@@ -276,6 +276,19 @@ describe('待确认的交接', () => {
     expect(head.error?.code).toBe('environment_mutating')
   })
 
+  it('关闭点名的那一条，不是"丢队首"', async () => {
+    // 上一版是 slice(1)。今天它碰巧安全（确认屏渲染的就是队首），但那份
+    // 安全性依赖的是**另一个文件里的渲染约定**——与 P1-A 同一类跨文件不变式。
+    const other = 'ffffffffffffffffffffffffffffffff'
+    mockPending.mockImplementation(async (id) => ({ pending: pending({ native_id: id }) }))
+    await store().receive(ID)
+    await store().receive(other)
+
+    store().dismissPending(other)
+
+    expect(store().pendingQueue.map((p) => p.native_id)).toEqual([ID])
+  })
+
   it('取消：即使取消请求本身失败也照样出队', async () => {
     mockPending.mockResolvedValue({ pending: pending() })
     await store().receive(ID)

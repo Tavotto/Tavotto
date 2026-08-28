@@ -68,13 +68,13 @@ export function NativeConfirmDialog() {
     return (
       <Dialog
         open
-        onOpenChange={(v) => !v && store.dismissPending()}
+        onOpenChange={(v) => !v && store.dismissPending(head.native_id)}
         title={nr('title')}
         size="sm"
         busy={head.loading}
         footer={
           !head.loading && (
-            <Button variant="outline" size="md" onClick={() => store.dismissPending()}>
+            <Button variant="outline" size="md" onClick={() => store.dismissPending(head.native_id)}>
               {translate('actions.close')}
             </Button>
           )

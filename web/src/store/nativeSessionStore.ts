@@ -108,8 +108,15 @@ interface NativeSessionStore {
   approve: (nativeId: string, remember: boolean) => Promise<void>
   /** 取消**指定的那一条**——CLI 当场收摊并退出 3 */
   cancel: (nativeId: string) => Promise<void>
-  /** 取不到 / 已过期的那一条：从队列里去掉，不留一个转不动的对话框 */
-  dismissPending: () => void
+  /**
+   * 关掉**指定的那一条**（取不到 / 已过期 / descriptor 作废）。
+   *
+   * **同样点名。** 上一版是 `slice(1)`——丢队首。今天它是安全的，因为确认屏
+   * 渲染的就是 `pendingQueue[0]`；但那个安全性依赖的是**另一个文件里的渲染
+   * 约定**，与 P1-A（判据的主语和动作的主语在两个文件里）是同一类跨文件
+   * 不变式。多一个参数就不必再依赖它。
+   */
+  dismissPending: (nativeId: string) => void
 
   /** SSE `native.session`：按 sequence 判后落地 */
   applyEvent: (session: NativeSessionInfo) => void
@@ -246,8 +253,8 @@ export const useNativeSessionStore = create<NativeSessionStore>((set, get) => ({
     set((s) => ({ pendingQueue: s.pendingQueue.filter((p) => p.native_id !== id) }))
   },
 
-  dismissPending: () =>
-    set((s) => ({ pendingQueue: s.pendingQueue.slice(1) })),
+  dismissPending: (id) =>
+    set((s) => ({ pendingQueue: s.pendingQueue.filter((p) => p.native_id !== id) })),
 
   applyEvent: (session) => {
     const prev = get().sessions[session.session_id]

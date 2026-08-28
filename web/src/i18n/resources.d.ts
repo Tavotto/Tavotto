@@ -2715,10 +2715,10 @@ export default interface Resources {
         "endedWithCode": "已结束（退出码 {{code}}）；捕获到的图：{{figures}} 张",
         "failed": "这条会话失败了",
         "pending_confirmation": "等你确认",
-        "running_script": "脚本正在运行",
+        "running_script": "脚本正在运行；停下来才能操作",
         "starting_python": "正在启动你的 Python…",
         "waiting_for_cli": "正在连接…",
-        "waiting_for_figure": "在等第一张图"
+        "waiting_for_figure": "在等第一张图；停下来才能操作"
       },
       "terminate": "终止脚本",
       "terminateConfirm": {

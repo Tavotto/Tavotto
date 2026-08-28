@@ -280,10 +280,10 @@
       "endedWithCode": "Finished (exit code {{code}}); figures captured: {{figures}}",
       "failed": "This session failed",
       "pending_confirmation": "Waiting for you to confirm",
-      "running_script": "The script is running",
+      "running_script": "The script is running — actions resume when it stops",
       "starting_python": "Starting your Python…",
       "waiting_for_cli": "Connecting…",
-      "waiting_for_figure": "Waiting for the first figure"
+      "waiting_for_figure": "Waiting for the first figure — actions resume when it stops"
     },
     "terminate": "Stop the script",
     "terminateConfirm": {
