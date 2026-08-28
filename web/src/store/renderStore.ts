@@ -594,7 +594,7 @@ function mergeRender(
     // **表示法跟着 SVG 走**：退回来的是上一版那张图，那么「该怎么显示它」
     // 也得是上一版的答案。拿自己那份（还没画出来 = 默认 vector）去解读别人
     // 的 SVG，正是 raster 面板会在退回窗口里闪一下矢量图的那条路。
-    preview: own.svg ? own.preview : prev.preview,
+    preview: (own.svg ? own.preview : prev.preview) ?? VECTOR_PREVIEW,
   }
 }
 
@@ -699,7 +699,7 @@ export function panelDisplayView(
       render: exact,
     }
   }
-  if (exact && exact.preview.mode === 'raster') {
+  if (exact && exact.preview?.mode === 'raster') {
     // 没有 SVG **不等于**没画出来。这一档要是掉进下面的 fallback 分支，
     // 诊断里的 `display_variant` 会指向另一个变体，`display_exact` 报 false
     // ——画布上明明挂的就是这一版。

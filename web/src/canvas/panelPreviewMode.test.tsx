@@ -239,6 +239,27 @@ describe('PanelView：三档预览表示法', () => {
     expect(wrap.className).toContain('pointer-events-none')
   })
 
+  it('渲染态里根本没有 preview 字段：按 vector 走，不许崩', async () => {
+    // **`seed()` 会填上 `VECTOR_PREVIEW`，所以它造不出这个形状。** 类型上
+    // `preview` 是必填，但类型只活在编译期——老用例、老持久化状态、跨版本的
+    // store 都能 `setState` 出一个没有它的 `PanelRender`。
+    // 实测：`render?.preview.mode` 的可选链只保护 `render`，那时不是"按
+    // vector 解读"，是当场 TypeError（#192 的角标用例正是这么被打红的）。
+    useRenderStore.getState().patch(renderKeyOf(PANEL), {
+      fileId: PANEL.fileId,
+      manifest: MANIFEST,
+      rev: 3,
+      status: 'ready',
+      lastPatches: JSON.stringify(PANEL.overrides),
+      svg: '<svg id="nopreview"/>',
+      preview: undefined as never, // ← 字段整个不在
+    })
+    await mount()
+
+    expect(inlineSvg()?.innerHTML).toContain('id="nopreview"')
+    expect(container.querySelector('img')).toBeNull()
+  })
+
   it('老后端不返回 preview：行为与从前逐字节相同', async () => {
     // `EMPTY.preview` 就是 VECTOR_PREVIEW——这条钉的是「加字段协议没有把
     // 旧路径改掉」，而不是某个新分支好用

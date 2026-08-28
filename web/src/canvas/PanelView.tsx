@@ -89,7 +89,13 @@ export function PanelView({ obj }: { obj: PanelObject }) {
 
   // 这一版该用哪种预览表示法（ADR 0022）。老后端不返回 `preview` 时是
   // `vector`，下面每一处的行为与从前逐字节相同。
-  const rasterPreview = render?.preview.mode === 'raster'
+  //
+  // **`preview?.` 里那个问号不是防御性冗余，是这条协议的另一半。** 类型上它
+  // 是必填，但类型只活在编译期：任何人 `setState` 一个裸 `PanelRender`
+  // （老用例、老持久化状态、跨版本的 store）都能造出没有它的对象，而
+  // `render?.preview.mode` 只保护 `render`——那时它不是"按 vector 解读"，
+  // 是当场 TypeError。实测撞见过。
+  const rasterPreview = render?.preview?.mode === 'raster'
   // 编辑态用 SVG（要 gid 命中）；退出后有 override 的用引擎 PNG（imshow 面板不发糊）。
   // **raster 档下编辑态也走位图**：那一版根本没有 SVG——引擎按硬闸决定不把
   // 它读进内存（issue #181）。命中层不受影响，见下面的 ElementHitLayer：
@@ -654,7 +660,7 @@ function RenderStatusBadge({ obj }: { obj: PanelObject }) {
   const runtimeBadge = runtimeStatus ? RUNTIME_BADGE[runtimeStatus] : undefined
   // 低内存编辑预览（ADR 0022）只在**编辑态**说一次：退出编辑后画布本来就走
   // 位图，没什么可解释的。
-  const rasterEditing = editing && render?.preview.mode === 'raster'
+  const rasterEditing = editing && render?.preview?.mode === 'raster'
   const relevant =
     editing ||
     obj.overrides.length > 0 ||
