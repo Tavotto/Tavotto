@@ -94,11 +94,16 @@ class Target(NamedTuple):
     多张图、调用方又没有 `--stem` 显式指定时，**绝不静默选第一张**——把
     「选哪张」交给界面的 Figure 选择器（前端 lib/openRequest.ts 消费）。
     stem 与 pick 互斥：定得下来一张就不需要选择器。
+
+    `native` 是 `tavotto run` 的一次性交接 ID（ADR 0021 §4）：**不透明串，
+    不是凭据**——token / 端口 / 完整命令都在那份 0600 的 descriptor 文件里，
+    argv 上只有这个 ID（同机上 `ps` 对别的用户可见）。
     """
 
     project: str
     stem: str | None
     pick: str | None = None
+    native: str | None = None
 
 
 # --------------------------- 1. 解析目标 ---------------------------------
@@ -577,12 +582,18 @@ def desktop_argv(app: str, target: Target) -> list[str]:
     `--pick-script <脚本相对路径>`：多 Figure 交接的选择信息（Session 6）。
     壳只负责把它原样送进落地 URL 的 `?pick=` / `tavotto:open` 事件，
     选择器在前端。与 `--stem` 互斥（生产侧 Target 已保证）。
+
+    `--native-session <ID>`：`tavotto run` 的一次性交接 ID（ADR 0021 §4）。
+    它与 stem / pick **不互斥**——那两个说的是"打开哪张图"，这个说的是
+    "有一条 native 会话在等你确认"，同一次交接完全可以两者都有。
     """
     argv = [app, "--open", target.project]
     if target.stem:
         argv += ["--stem", target.stem]
     elif target.pick:
         argv += ["--pick-script", target.pick]
+    if target.native:
+        argv += ["--native-session", target.native]
     return argv
 
 

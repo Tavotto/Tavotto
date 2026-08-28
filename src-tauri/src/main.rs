@@ -44,6 +44,14 @@ struct OpenRequest {
     project: String,
     stem: Option<String>,
     pick: Option<String>,
+    /// `tavotto run` 的一次性交接 ID（ADR 0021 §4）。**不透明串，不是凭据**
+    /// ——token、端口、完整命令都在那份 0600 的 descriptor 文件里，argv 上
+    /// 只有这个 ID（同机上 `ps` 对别的用户可见）。壳一个字都不解释，原样
+    /// 送进落地 URL / `tavotto:open` 事件，确认界面在前端。
+    ///
+    /// 与 stem / pick **不互斥**：那两个说的是"打开哪张图"，这个说的是
+    /// "有一条 native 会话在等你确认"。
+    native: Option<String>,
 }
 
 /// 认不出的参数一律忽略：macOS 从 Finder / Dock 启动会塞 `-psn_0_12345`，
@@ -52,12 +60,14 @@ fn parse_open_args(args: &[String]) -> Option<OpenRequest> {
     let mut project: Option<String> = None;
     let mut stem: Option<String> = None;
     let mut pick: Option<String> = None;
+    let mut native: Option<String> = None;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--open" => project = it.next().cloned(),
             "--stem" => stem = it.next().cloned(),
             "--pick-script" => pick = it.next().cloned(),
+            "--native-session" => native = it.next().cloned(),
             _ => {}
         }
     }
@@ -68,10 +78,16 @@ fn parse_open_args(args: &[String]) -> Option<OpenRequest> {
     let stem = stem.filter(|s| !s.trim().is_empty());
     // stem 定得下来一张就不需要选择器（生产侧本来就互斥，这里兜底同语义）
     let pick = pick.filter(|s| !s.trim().is_empty()).filter(|_| stem.is_none());
+    // ID 的格式判据与 Python 侧（`nativehandoff._ID_RE`）同源：32 个小写
+    // 十六进制字符。壳在这里挡一道，是因为它下一步要把这个串拼进落地 URL
+    // ——一个含 `&` 或 `#` 的"ID"会把后面的查询参数整个改掉。
+    let native = native
+        .filter(|s| s.len() == 32 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')));
     Some(OpenRequest {
         project,
         stem,
         pick,
+        native,
     })
 }
 
@@ -606,6 +622,52 @@ mod tests {
         .unwrap();
         assert_eq!(req.stem.as_deref(), Some("Fig1"));
         assert_eq!(req.pick, None);
+    }
+
+    #[test]
+    fn parses_the_native_session_handoff() {
+        // ADR 0021：`tavotto run` 的交接。**与 handoff.desktop_argv() 严格同源**
+        // （两侧各有一条用例，改一处必须改两处）。
+        let id = "0123456789abcdef0123456789abcdef";
+        let req = parse_open_args(&args(&["--open", "/p", "--native-session", id])).unwrap();
+        assert_eq!(req.native.as_deref(), Some(id));
+        assert_eq!(req.stem, None);
+    }
+
+    #[test]
+    fn native_session_coexists_with_stem() {
+        // 这两个**不互斥**：一次交接完全可以既打开某张图、又带一条待确认的
+        // native 会话。把它写成互斥（照抄 stem/pick 那条）会让 UI 二选一。
+        let id = "0123456789abcdef0123456789abcdef";
+        let req = parse_open_args(&args(&[
+            "--open",
+            "/p",
+            "--stem",
+            "Fig1",
+            "--native-session",
+            id,
+        ]))
+        .unwrap();
+        assert_eq!(req.stem.as_deref(), Some("Fig1"));
+        assert_eq!(req.native.as_deref(), Some(id));
+    }
+
+    #[test]
+    fn a_malformed_native_session_id_is_dropped_not_forwarded() {
+        // 这个串下一步会被拼进落地 URL。含 `&` / `#` 的"ID"会把后面的查询
+        // 参数整个改掉，而它来自 argv——任何人都能往一个正在跑的实例转发。
+        for bad in [
+            "",
+            "  ",
+            "0123456789abcdef0123456789abcde",   // 31 位
+            "0123456789abcdef0123456789abcdefa", // 33 位
+            "0123456789ABCDEF0123456789abcdef",  // 大写
+            "0123456789abcdef0123456789abcde&",  // 有 `&`
+            "../../etc/passwd0000000000000000",
+        ] {
+            let req = parse_open_args(&args(&["--open", "/p", "--native-session", bad])).unwrap();
+            assert_eq!(req.native, None, "不该被转发: {bad:?}");
+        }
     }
 
     #[test]
