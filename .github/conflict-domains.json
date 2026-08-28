@@ -6,7 +6,9 @@
     "policy 的含义见 docs/ci/parallel-prs.md：",
     "  stack-or-train  相关改动用 Stacked PR；不相关但共享生成物的用 Train Branch，",
     "                  生成物在最终源码状态上只重建一次；",
-    "  serialize       一次只开一个动它的 PR，按队列先后串行合。",
+    "  serialize       一次只开一个动它的 PR，按队列先后串行合；",
+    "  coordinate      不必串行也不必 train，但两边共享一个**命名/编号空间**，",
+    "                  开工前要互相看一眼错开。撞的不是文本，是名字。",
     "sources/generated 成对声明的域还能查出「不同源码、同一生成物」的间接重叠",
     "——canvas.html 冲突的多数形态正是它。glob 语法：** 跨路径段，* 段内。",
     "格式是 JSON 不是 YAML：检查脚本与它的测试都要纯标准库（.venv 无 PyYAML）。"
@@ -21,6 +23,20 @@
       "sources": ["web/src/**", "src/tavotto/engine/browser.py", "scripts/build_browser_playground.py"],
       "generated": ["web/dist-playground/**"],
       "policy": "stack-or-train"
+    },
+    "adr-numbering": {
+      "_why": [
+        "2026-08-28 实测撞过一次：两个并行 PR 各自新增 ADR 0021（一个是",
+        "tavotto-run 的产品契约，一个是复杂度感知预览）。`git merge-tree`",
+        "报**零冲突**——两份文件名不同，git 看到的是两个新文件——而合完的",
+        "main 上会躺着两个「ADR 0021」。",
+        "撞的是编号空间，不是路径，所以 direct/generated 那两条判据都够不着；",
+        "policy 也不是 stack/train/serialize 里的任何一个：两份 ADR 通常毫不",
+        "相干，只需要各自挑一个没人占的号。"
+      ],
+      "files": ["docs/adr/**"],
+      "policy": "coordinate",
+      "advice": "撞的是编号不是文本：rebase 不会报冲突（文件名不同），合完 main 上会有两个同号 ADR。开工前 `ls docs/adr/` 之外还要看一眼同域 PR 占了哪个号；已经撞了就让先开的那个保留编号。"
     },
     "root-agent-contract": {
       "files": ["AGENTS.md", "CLAUDE.md"],

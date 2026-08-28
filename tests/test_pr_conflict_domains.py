@@ -88,6 +88,47 @@ class TestRealConfig:
         assert CD.matches("scripts/ci/aggregate_gate.py", d["ci-control-plane"]["files"])
         assert CD.matches("docs/release-notes/v0.1.1.md", d["release-control-plane"]["files"])
 
+    def test_adr_numbering_is_a_declared_domain(self):
+        """两个 PR 各加一份 ADR **不会**产生 Git 冲突（文件名不同），
+        合完的 main 上却会有两个同号 ADR。2026-08-28 实测撞过一次。
+
+        撞的是**编号空间**，不是路径——所以既有的 direct / generated 两条
+        判据一条都够不着，只能靠「同域」把两个 PR 摆到一起。
+        """
+        d = _domains()
+        spec = d["adr-numbering"]
+        assert CD.matches("docs/adr/0022-complexity-aware-editor-preview.md", spec["files"])
+        assert not CD.matches("docs/perf-baseline.md", spec["files"])
+        assert spec["policy"] == "coordinate"
+
+    def test_the_adr_domain_carries_its_own_advice(self):
+        """通用兜底文案在这个域上是**对的判据 + 错的处方**：它说「rebase 后
+        重跑快线即可」，而 rebase 根本不会报冲突。判据一旦对，人更会信它说
+        的那句话，所以这个域必须自带处方。"""
+        spec = _domains()["adr-numbering"]
+        assert spec.get("advice"), "adr-numbering 必须自带处方"
+        assert CD.advice(spec["policy"], False, spec["advice"]) == spec["advice"]
+        # 兜底那句在这里是错的——确认它确实被顶掉了
+        assert "重跑快线" not in CD.advice(spec["policy"], False, spec["advice"])
+
+    def test_coordinate_is_an_accepted_policy(self, tmp_path):
+        p = tmp_path / "c.json"
+        p.write_text(
+            '{"domains": {"x": {"files": ["a"], "policy": "coordinate"}}}', encoding="utf-8"
+        )
+        assert CD.load_config(p)["x"]["policy"] == "coordinate"
+
+    def test_a_non_string_advice_is_rejected(self, tmp_path):
+        """处方要么是一句话，要么没有。给个列表进来的话它会被原样拼进
+        Markdown 表格里——那一格从此谁也读不懂。"""
+        p = tmp_path / "c.json"
+        p.write_text(
+            '{"domains": {"x": {"files": ["a"], "policy": "serialize", "advice": ["x"]}}}',
+            encoding="utf-8",
+        )
+        with pytest.raises(CD.ConfigError):
+            CD.load_config(p)
+
     def test_broken_config_shapes_are_rejected(self, tmp_path):
         p = tmp_path / "c.json"
         p.write_text('{"domains": {}}', encoding="utf-8")

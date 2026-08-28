@@ -64,6 +64,24 @@ release 编排、golden vectors、锁文件：**一次只开一个动它的 PR**
 的冲突不是文本问题，是语义问题（两个 PR 各自改 CI 控制面，合并后的组合
 谁都没验过）；train 与 stack 都救不了，只有先后。
 
+## coordinate 域：撞的是名字，不是文本
+
+`docs/adr/**`：两个 PR 各加一份 ADR，**`git merge-tree` 报零冲突**——文件名
+不同，git 看到的是两个新文件——而合完的 main 上会躺着两个「ADR 0021」。
+2026-08-28 实测撞过一次（`0021-tavotto-run-product-contract` 与
+`0021-complexity-aware-editor-preview`）。
+
+这一档既不该 stack（两份 ADR 通常毫不相干），也不该 train（没有共享生成物），
+更不该 serialize（ADR 加得很频繁，串行化会拖住一切）。要做的只有一件事：
+**开工前看一眼同域 PR 占了哪个号**。已经撞了就让先开的那个保留编号，后者
+改号——`git filter-branch --msg-filter` 连提交消息一起改，改完核对树哈希
+逐条相同、author 与 author date 原样。
+
+这类域在配置里**自带一句处方**（`advice` 字段）。通用兜底文案在这里是
+「对的判据 + 错的处方」：它说「留意合并顺序，后合的一侧 rebase 后重跑快线
+即可」，而 rebase 根本不会报冲突，重跑快线也发现不了。判据一旦对，人更会
+信它说的那句话。
+
 ## 与队列的关系速查
 
 | 情形 | 做法 |
@@ -72,3 +90,4 @@ release 编排、golden vectors、锁文件：**一次只开一个动它的 PR**
 | 相关改动、有依赖 | Stack，从底向上进队列 |
 | 不相关、同一生成物 | Train，一个集成 PR 进队列 |
 | 同一 serialize 域 | 排队：一个合完，下一个 rebase 再开 |
+| 同一 coordinate 域 | 各自挑一个没人占的名字/编号；已撞就后开的那个改 |
