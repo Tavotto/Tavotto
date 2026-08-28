@@ -353,10 +353,31 @@ def _jobs_without_timeout(text: str) -> list[str]:
     return bad
 
 
-@pytest.mark.parametrize(
-    "wf",
-    sorted(p.name for p in (ROOT / ".github" / "workflows").glob("*.yml")),
-)
+#: `.github/workflows/` 里的**每一个文件**，不是「每个 .yml」。
+#:
+#: 上一版写的是 `glob("*.yml")`，而 GitHub 同样认 `.yaml`——于是一个将来新增的
+#: `foo.yaml` 里可以躺着没有上限的 job，而这条判据**照样绿**。评审（#195 P2）
+#: 抓到的正是这一点，而它出现在一条**本身就是为了"别再漏掉新加的 job"而写**的
+#: 守卫上：我用枚举代替了白名单，却把枚举的范围又写成了一个白名单。
+#:
+#: 现在扫整个目录。这比「枚举 .yml 和 .yaml 两个扩展名」更彻底——它不依赖
+#: 我们对 GitHub 认哪些后缀的记忆，那份记忆正是上一版错的地方。
+_WORKFLOW_DIR = ROOT / ".github" / "workflows"
+_WORKFLOWS = sorted(p.name for p in _WORKFLOW_DIR.iterdir() if p.is_file())
+
+
+def test_the_timeout_guard_actually_sees_some_workflows():
+    """**先证明观测有效，再解释零值。**
+
+    上面那条是参数化的：如果目录搬了家、或者 glob 一个都没匹配上，pytest 会
+    生成**零个**用例，而"零个用例"在报告里和"全部通过"长得一模一样——
+    一条什么都没扫的判据会安静地绿到天荒地老。
+    """
+    assert _WORKFLOW_DIR.is_dir(), f"{_WORKFLOW_DIR} 不在了——上面那条判据在扫空气"
+    assert _WORKFLOWS, "workflows 目录是空的？那条上限判据一个文件都没扫到"
+
+
+@pytest.mark.parametrize("wf", _WORKFLOWS)
 def test_every_ci_job_has_a_time_limit(wf):
     """**每个 job 都必须有 `timeout-minutes`。**
 
@@ -369,11 +390,11 @@ def test_every_ci_job_has_a_time_limit(wf):
     卡在队列里。当时 `windows-exe-smoke` / `invariants` 这些都有上限，
     偏偏跑全套测试的那两个 backend job 没有。
 
-    判据写成**枚举**（扫每个 workflow 的每个 job）而不是白名单，是因为
+    判据写成**枚举**（扫目录里每个文件的每个 job）而不是白名单，是因为
     白名单挡不住「下一个人新加一个 job」——而这个洞正是这么留下的。
     上限的值各 job 自己按实测定，这里只管「有没有」。
     """
-    text = (ROOT / ".github" / "workflows" / wf).read_text(encoding="utf-8")
+    text = (_WORKFLOW_DIR / wf).read_text(encoding="utf-8")
     bad = _jobs_without_timeout(text)
     assert bad == [], (
         f"{wf} 里这些 job 没有 timeout-minutes: {bad}\n"
