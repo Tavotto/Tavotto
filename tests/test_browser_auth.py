@@ -12,6 +12,7 @@ from __future__ import annotations
 import http.client
 import json
 import os
+import re
 import stat
 import threading
 import urllib.error
@@ -300,3 +301,82 @@ def test_session_client_tolerates_missing_or_garbage_file(tmp_path, monkeypatch)
     p.mkdir()
     (p / "port-59999.json").write_text("not json", encoding="utf-8")
     assert session_client.read_secret(59999) is None
+
+
+# ---------------------------------------------------------------------------
+# 默认拒绝：**从 url_map 枚举**，而不是手写清单
+# ---------------------------------------------------------------------------
+# 上面那两条枚举用例是白名单式的：它们只覆盖作者当时记得写进去的 14 条。
+# 而 /api 现在有 84 条，新端点每周还在加——**白名单永远覆盖不了没人记得加的
+# 东西**。本轮 PR #177 的 8 条 code-scanning dismissal 正是以「这些路径需要
+# 会话认证」为前提的，而其中的 `PATCH /api/engine/environment`（设置项目
+# 解释器）当时恰好不在那 14 条里。
+#
+# 所以这里换成枚举式：**每条路由默认被覆盖，除非显式豁免**。
+
+
+def _concrete(rule: str) -> str:
+    """把 `/api/x/<id>` 变成可以真发请求的路径。
+
+    用一个不可能存在的值：认证若正常，请求在 before_request 就被 401 挡下，
+    根本走不到处理器；只有认证失效时才会真执行——而那正是要发现的事。
+    """
+    return re.sub(r"<[^>]+>", "__nonexistent__", rule)
+
+
+def test_the_public_path_list_itself_is_pinned():
+    """把产品那份公开清单钉死。
+
+    下面那条枚举用例的豁免取自 `security._PUBLIC_PATHS`（单一事实来源，
+    不在测试里抄第二份，否则两边会漂移）。**但只做到这一步就是个空门禁**：
+    往那个集合里加一条，枚举用例会自动放行它，一声不响。
+
+    所以清单的**内容**必须在这里被钉住——加豁免就得有人显式改这个断言，
+    并在 review 里说明为什么那条可以公开。
+    """
+    assert security._PUBLIC_PATHS == {
+        "/",  # 首屏 HTML，页面得先起来才能跑 bootstrap
+        "/favicon.ico",  # 静态图标，无用户数据
+        "/api/version",  # 实例探测的判据，只回版本号与 build 标记
+        security.BOOTSTRAP_PATH,  # 换会话的入口，按定义必须未认证可达
+        security.LEGACY_BOOTSTRAP_PATH,  # 同一处理器的兼容别名
+        security.RELAUNCH_PATH,  # 安全实例交接，自带本机凭据校验
+    }
+    assert security._PUBLIC_PREFIXES == ("/assets/",)  # 前端构建产物
+
+
+def test_every_registered_route_denies_without_session(served):
+    """url_map 里每条非公开路由，未认证一律 401 + session_auth_required。
+
+    这条用例的价值在于**它随 url_map 自动生长**：新加端点若忘了想认证的事，
+    这里立刻红，不需要谁记得回来补一行。
+    """
+    checked = 0
+    for rule in appmod.app.url_map.iter_rules():
+        path = str(rule.rule)
+        if path in security._PUBLIC_PATHS or path.startswith(security._PUBLIC_PREFIXES):
+            continue
+        methods = sorted(m for m in rule.methods if m not in {"HEAD", "OPTIONS"})
+        for method in methods:
+            status, _, body = _request_without_session(method, served.url(_concrete(path)))
+            assert status == 401, f"{method} {path} 未认证也放行了（{status}）"
+            assert json.loads(body)["code"] == "session_auth_required", (
+                f"{method} {path} 拒了，但给的不是 session_auth_required"
+            )
+            checked += 1
+
+    # **下限断言**：url_map 若取空（导入失败、蓝图没注册），上面的循环一次都不跑，
+    # 用例会「全过」——那是最坏的空门禁。这一行让它变成红。
+    assert checked >= 80, f"只检查了 {checked} 条路由，url_map 多半没取全"
+
+
+def _request_without_session(method: str, url: str):
+    """发一个不带任何凭据的请求。GET 之外都带空 JSON 体。"""
+    data = None if method == "GET" else json.dumps({}).encode()
+    headers = {} if method == "GET" else {"Content-Type": "application/json"}
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return resp.status, dict(resp.headers), resp.read()
+    except urllib.error.HTTPError as e:
+        return e.code, dict(e.headers), e.read()
