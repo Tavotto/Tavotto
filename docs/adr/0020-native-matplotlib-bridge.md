@@ -499,7 +499,23 @@ stderr 内容分诊的判据。这条说明"平台无关"不能只靠眼睛看�
 1. **Windows 真机执行**：`tests/bridge/` 在 Windows 上跑一遍。CI 侧
    `backend-platforms` 只在 merge queue 跑，PR 上是 SKIPPED——大改动入队前
    用 `full-ci` 标签在 PR SHA 上先取证。
-2. **native 会话进池 / 复用**（ADR 0014 §7 第 4 问）。
+2. **native 会话进池 / 复用**（ADR 0014 §7 第 4 问）。**#177 落地后这一问
+   多了一个必须回答的具体场景**：`pool.mutating_environment()` 在装依赖期间
+   独占一个环境——`shutdown_workers_using(python)` 收掉**池里的** worker，
+   再让 `pool.get()` 拒起新的（`environment_mutating`）。native 会话
+   **不经过池**（自己 `subprocess.Popen` 用户的解释器），所以那把锁对它
+   **机制上不可见**——不是漏了一个分支，是实现方式决定的。
+
+   `tavotto run` 一旦成为产品：用户握着 live Figure 的同时，另一个请求可以往
+   **同一个解释器**装包，而 pip 会替换 / 删除已有包的文件。三个候选答案
+   （native 也进那把锁 / native 进池 / 装包时显式拒绝并说明有活跃 native
+   会话）各自的代价不同，选哪个与本条第 2 问是同一个决定。
+
+   **今天够不着**：native 唯一入口是没接进任何产品面的 spike CLI，两条路凑不
+   到一起。这条是 rebase 到 `8118ba2` 之后读代码才浮出来的——两个子系统各自
+   的用例都绿、`pool.py` 的改动区域也不相交（#177 在 1726+/1850+，本轮在
+   80+/822+），**三方合并零冲突**。冲突检测回答的是「文本能不能合」，不是
+   「语义能不能共存」。
 3. **产品面**：`tavotto run` 的稳定 CLI 契约与错误码、桌面交接、UI 确认文案
    （必须写明解释器路径、cwd、"拥有你当前用户的全部权限"）、每项目记住选择。
 4. **CompatBench 的 `native_run` 路由**从 `not_implemented` 升级（总纲 §六）。
