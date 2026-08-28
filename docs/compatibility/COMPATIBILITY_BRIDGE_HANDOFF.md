@@ -270,6 +270,27 @@ git merge-tree --write-tree --name-only HEAD origin/compat/bridge-session07-proj
   `pnpm sync-playground`。
 - [ ] 上一轮遗留：真机最终产物证据（§六）。
 
+## rebase 到 #177 之后浮出来的一条（Session 9 必看）
+
+`#177` 落地后 main 上有了 `pool.mutating_environment()`：装依赖期间独占一个
+环境——先 `shutdown_workers_using(python)` 收掉该解释器上的会话，再让
+`pool.get()` 拒起新的（`environment_mutating`）。
+
+**native bridge 的会话不在池里**（它自己 spawn 用户的解释器，不经 `pool.get()`），
+所以那把锁**覆盖不到它**。也就是说 `tavotto run` 一旦成为产品：
+
+> 用户在 native 会话里握着 live Figure 的同时，另一个请求可以往**同一个解释器**
+> 装包——`pip` 会替换 / 删除已有包的文件，而那个进程还在跑。
+
+今天**够不着**：native 唯一入口是 spike CLI，没接进任何产品面，两条路凑不到
+一起。但这是 Session 9 做产品化时必须先回答的一条，且答案不止一种（native
+会话也进那把锁 / native 会话进池 / 装包时显式拒绝并说明有活跃的 native 会话）。
+选哪个连着 ADR 0014 §7 第 4 问（native 要不要进池）。
+
+**这条是 rebase 才浮出来的**：两个子系统各自的用例都绿，`pool.py` 的改动区域
+也不重叠（本轮加在 84 行的 `build_envelope`，#177 加在 157+/1757+），**三方合并
+自动通过**——冲突检测回答的是「文本能不能合」，不是「语义能不能共存」。
+
 ## 下一 Session 首先阅读
 
 ```text
