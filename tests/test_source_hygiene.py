@@ -327,3 +327,76 @@ def test_every_shipped_version_string_matches_the_product(rel, pattern):
         "发版时漏改一处的表现是「装完显示的版本和发布页对不上」，"
         "没有任何一步会失败。"
     )
+
+
+# ---------------------------------------------------------------------------
+# 每个 job 都要有时间上限
+# ---------------------------------------------------------------------------
+def _jobs_without_timeout(text: str) -> list[str]:
+    """一个 workflow 文本里「有 runs-on 却没有 timeout-minutes」的 job 名。
+
+    不引 YAML 解析器：这份判据要能在任何环境里跑（`test_source_hygiene` 全文
+    都是这个纪律），而 job 块的形状在本仓库是稳定的两空格缩进。
+    """
+    lines = text.splitlines()
+    heads = [
+        (i, m.group(1))
+        for i, line in enumerate(lines)
+        if (m := re.match(r"^  ([A-Za-z0-9_-]+):\s*$", line))
+    ]
+    bad = []
+    for n, (i, name) in enumerate(heads):
+        end = heads[n + 1][0] if n + 1 < len(heads) else len(lines)
+        body = "\n".join(lines[i:end])
+        if "runs-on:" in body and "timeout-minutes:" not in body:
+            bad.append(name)
+    return bad
+
+
+#: `.github/workflows/` 里的**每一个文件**，不是「每个 .yml」。
+#:
+#: 上一版写的是 `glob("*.yml")`，而 GitHub 同样认 `.yaml`——于是一个将来新增的
+#: `foo.yaml` 里可以躺着没有上限的 job，而这条判据**照样绿**。评审（#195 P2）
+#: 抓到的正是这一点，而它出现在一条**本身就是为了"别再漏掉新加的 job"而写**的
+#: 守卫上：我用枚举代替了白名单，却把枚举的范围又写成了一个白名单。
+#:
+#: 现在扫整个目录。这比「枚举 .yml 和 .yaml 两个扩展名」更彻底——它不依赖
+#: 我们对 GitHub 认哪些后缀的记忆，那份记忆正是上一版错的地方。
+_WORKFLOW_DIR = ROOT / ".github" / "workflows"
+_WORKFLOWS = sorted(p.name for p in _WORKFLOW_DIR.iterdir() if p.is_file())
+
+
+def test_the_timeout_guard_actually_sees_some_workflows():
+    """**先证明观测有效，再解释零值。**
+
+    上面那条是参数化的：如果目录搬了家、或者 glob 一个都没匹配上，pytest 会
+    生成**零个**用例，而"零个用例"在报告里和"全部通过"长得一模一样——
+    一条什么都没扫的判据会安静地绿到天荒地老。
+    """
+    assert _WORKFLOW_DIR.is_dir(), f"{_WORKFLOW_DIR} 不在了——上面那条判据在扫空气"
+    assert _WORKFLOWS, "workflows 目录是空的？那条上限判据一个文件都没扫到"
+
+
+@pytest.mark.parametrize("wf", _WORKFLOWS)
+def test_every_ci_job_has_a_time_limit(wf):
+    """**每个 job 都必须有 `timeout-minutes`。**
+
+    没有上限的 job 不是「跑得久一点」，是**能把合并队列堵死**：队列在等它
+    应答，而它永远不应答，于是**所有** PR 都落不了地，且日志取不到
+    （in_progress 的 job 没有 blob，只能整个取消，什么都不剩）。
+
+    2026-08-28 实际发生过一次：`backend-platforms (windows-latest)` 的 pytest
+    步骤挂了 **8 小时 20 分**（同一个 job 上一轮 27:57 跑完），四个 PR 全程
+    卡在队列里。当时 `windows-exe-smoke` / `invariants` 这些都有上限，
+    偏偏跑全套测试的那两个 backend job 没有。
+
+    判据写成**枚举**（扫目录里每个文件的每个 job）而不是白名单，是因为
+    白名单挡不住「下一个人新加一个 job」——而这个洞正是这么留下的。
+    上限的值各 job 自己按实测定，这里只管「有没有」。
+    """
+    text = (_WORKFLOW_DIR / wf).read_text(encoding="utf-8")
+    bad = _jobs_without_timeout(text)
+    assert bad == [], (
+        f"{wf} 里这些 job 没有 timeout-minutes: {bad}\n"
+        "没有上限的 job 挂死时会堵住合并队列，而且取不到日志。"
+    )

@@ -379,6 +379,9 @@ jobs:
         include:
           - { os: ubuntu-latest,  python: "3.10" }
           - { os: ubuntu-latest,  python: "3.13" }
+    # 同 backend-platforms：实测 20–25 分钟，40 给余量。没有上限的 job
+    # 在 merge_group 上会把队列堵死，而队列堵死时**所有** PR 都落不了地。
+    timeout-minutes: 40
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -410,6 +413,10 @@ jobs:
           - { os: macos-latest,   python: "3.13" }
           - { os: windows-latest, python: "3.13" }
     runs-on: ${{ matrix.os }}
+    # 上一轮实测 27:57（Windows，2994 条）。45 分钟给足余量，但**必须有**：
+    # 这个 job 没有上限时，一条挂死的用例会把整个**合并队列**堵住——
+    # 2026-08-28 就发生过一次，8 小时 20 分，其间没有任何 PR 能落地。
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -437,6 +444,7 @@ jobs:
   # ────────────────────────────────────────────────────────────────
   compat-smoke:
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    timeout-minutes: 20  # 实测 2.4 分钟；没有上限的 job 会堵死合并队列
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -469,6 +477,7 @@ jobs:
 
   frontend:
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    timeout-minutes: 20  # 实测 2.2 分钟；没有上限的 job 会堵死合并队列
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -523,6 +532,7 @@ jobs:
   # 只在 Linux 上跑一份：纯标准库 + serde 的 stdio 进程，没有平台分支。
   workerd:
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    timeout-minutes: 15  # 实测 0.3 分钟；没有上限的 job 会堵死合并队列
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -559,6 +569,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+    timeout-minutes: 60  # 与 windows-exe-smoke / macos-app-smoke 同档；没有上限的 job 会堵死合并队列
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

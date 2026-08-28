@@ -88,6 +88,7 @@ jobs:
   # 其余所有 job 只认这里输出的 SHA，不再各自 checkout tag 名。
   # ────────────────────────────────────────────────────────────────
   trust:
+    timeout-minutes: 60  # 上限是防挂死、不是性能预算：把损失从「无限」变成「有界」
     runs-on: ubuntu-latest
     # 顶层是 contents: read；这里加 issues: read 是给 release-blocker 门禁
     # 查 label 用的。job 级 permissions 会整个替换默认，contents 要重申。
@@ -222,6 +223,7 @@ jobs:
 
   build:
     needs: trust
+    timeout-minutes: 60  # 上限是防挂死、不是性能预算：把损失从「无限」变成「有界」
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -376,6 +378,7 @@ jobs:
   # ────────────────────────────────────────────────────────────────
   validate_artifacts:
     needs: [trust, build, desktop, lab_release_gate]
+    timeout-minutes: 60  # 上限是防挂死、不是性能预算：把损失从「无限」变成「有界」
     runs-on: ubuntu-latest
     outputs:
       # has_notes = 有没有手写正文；release body（支持段 + 签名披露）两种情况都有
@@ -596,6 +599,7 @@ jobs:
   github_release:
     needs: [trust, validate_artifacts]
     if: needs.trust.outputs.publish == 'true'
+    timeout-minutes: 60  # 上限是防挂死、不是性能预算：把损失从「无限」变成「有界」
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -942,6 +946,7 @@ jobs:
         (github.event_name == 'push' && vars.PYPI_PUBLISH_ENABLED == 'true') ||
         (github.event_name == 'workflow_dispatch' && inputs.pypi != 'none')
       )
+    timeout-minutes: 60  # 上限是防挂死、不是性能预算：把损失从「无限」变成「有界」
     runs-on: ubuntu-latest
     # PyPI 上的项目名一旦被占用就再也拿不回来，同名文件也永远不能重传。
     # environment 让正式发布可以卡一道人工确认（给它加 required reviewers 即可）。

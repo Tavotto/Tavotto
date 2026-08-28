@@ -94,6 +94,7 @@ jobs:
   # self-hosted 那边再解析一次，拿到的可能已经是另一个 commit 了。
   # ────────────────────────────────────────────────────────────────
   trust-check:
+    timeout-minutes: 60  # 上限是防挂死、不是性能预算：把损失从「无限」变成「有界」
     runs-on: ubuntu-latest
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
