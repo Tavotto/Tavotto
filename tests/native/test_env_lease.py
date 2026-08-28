@@ -152,13 +152,40 @@ def test_deprepair_reports_the_native_case_with_its_own_code():
     assert deprepair._busy_error(other).code == deprepair.ERROR_BUSY  # noqa: SLF001
 
 
+def _wait(barrier: threading.Barrier, results: list[str]) -> bool:
+    """在屏障上等，**带上限**。等不到就记一笔并让线程死掉，回 True。
+
+    上一版是裸 `start.wait()`（无上限）+ 非 daemon 线程 + `join(10)`。三样凑在
+    一起会挂死**整个解释器**：某一轮有个线程 >10s 没到屏障，`join(10)` 放弃、
+    用例继续，而那个线程还 park 在一个**下一轮就被换掉**的屏障上，永远不会
+    满员；40 轮跑完 pytest 报全绿，然后 `threading._shutdown()` 去 join
+    非 daemon 线程——**永久挂住**。
+
+    2026-08-28 它在合并队列的 Windows 腿上挂了 8 小时 20 分，**日志一个字都
+    没有**：pytest 早就跑完了，挂的是解释器退出，摘要还在缓冲区里没落盘。
+    这也解释了为什么同一个 job 上一轮 27:57 正常跑完——它是负载相关的。
+
+    **两个方向都要堵**（缺一不可）：这条上限让缺陷从"静默泄漏一个线程"变成
+    "一条响亮的失败"；调用方的 `daemon=True` 让症状从"8 小时黑洞"变成"进程
+    正常退出"。只加 daemon 的话，那个并发判据会在被泄漏的那一轮**静默地少验
+    一次**——而少验不会有任何人知道。
+    """
+    try:
+        barrier.wait(10)
+    except threading.BrokenBarrierError:
+        results.append("barrier-broken")
+        return True
+    return False
+
+
 def test_concurrent_acquire_and_mutate_never_both_win():
     """并发下**只有一个赢**。两张表的时候这条恰恰是最难说清的那一半。"""
     results: list[str] = []
     start = threading.Barrier(2)
 
     def _native():
-        start.wait()
+        if _wait(start, results):
+            return
         try:
             envlease.acquire_native(PY_A, "s1")
             results.append("native")
@@ -166,7 +193,8 @@ def test_concurrent_acquire_and_mutate_never_both_win():
             results.append("native-refused")
 
     def _install():
-        start.wait()
+        if _wait(start, results):
+            return
         try:
             with envlease.mutating(envlease.env_key_of(PY_A), PY_A):
                 results.append("install")
@@ -177,11 +205,18 @@ def test_concurrent_acquire_and_mutate_never_both_win():
         envlease.reset_for_tests()
         results.clear()
         start = threading.Barrier(2)
-        threads = [threading.Thread(target=_native), threading.Thread(target=_install)]
+        # `daemon=True`：就算真有线程卡住，也不许它拦住解释器退出。
+        threads = [
+            threading.Thread(target=_native, daemon=True),
+            threading.Thread(target=_install, daemon=True),
+        ]
         for t in threads:
             t.start()
         for t in threads:
-            t.join(10)
+            # **必须比 barrier 的上限宽**：barrier 到点会让线程带着
+            # BrokenBarrierError 死掉，join 要能收到它。反过来（join 先放弃）
+            # 就回到了原来那个泄漏。
+            t.join(30)
         assert sorted(results) in (
             ["install", "native"],  # 安装先跑完再起会话，或反过来（各自不重叠）
             ["install-refused", "native"],
