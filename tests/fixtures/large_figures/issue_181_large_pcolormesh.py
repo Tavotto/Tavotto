@@ -15,7 +15,7 @@ Issue #181 是**性能与架构**问题：几十万个 vector primitive 的预�
     └─ (1,1) 两条普通曲线 + 图例      ← 正常矢量语义，必须继续可编辑
 
 第四格是**判据的一部分**，不是装饰：#181 的最终解法（complexity-aware hybrid
-preview，ADR 0021）要求 mesh 层可以临时 rasterize、而文字/坐标轴/图例/普通
+preview，ADR 0022）要求 mesh 层可以临时 rasterize、而文字/坐标轴/图例/普通
 曲线保持 vector。一张只有 mesh 的图问不出「hybrid 有没有把该留的留住」。
 
 规模旋钮：环境变量 `TAVOTTO_ISSUE181_MESH_N`（每个 mesh 的边长，默认 470

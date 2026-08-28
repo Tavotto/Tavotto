@@ -2500,7 +2500,7 @@ def api_engine_render():
     渲染插进来就会与本次 manifest 错配（元素框对不上图）。端点保留兼容，
     但新代码不要再用两跳。
 
-    响应恒带 `preview`（ADR 0021）：这一版该用哪种预览表示法。**要了
+    响应恒带 `preview`（ADR 0022）：这一版该用哪种预览表示法。**要了
     `inline_svg` 却没有 `svg`** 不是错误——`preview.mode == "raster"` 时
     worker 按硬闸决定不把那份 SVG 读进内存，manifest / warnings / timings /
     rev 一样不少。老 worker 不返回它时字段整个不出现。
@@ -2587,7 +2587,7 @@ def api_engine_render():
     # 没要就不加这个字段（响应形状对老调用方一字不变）
     if inline_svg and "svg" in resp:
         out["svg"] = resp["svg"]
-    # 这一版预览该用什么画法（ADR 0021）。**要了 inline_svg 却没拿到 svg**
+    # 这一版预览该用什么画法（ADR 0022）。**要了 inline_svg 却没拿到 svg**
     # 的正常形态就在这里：`preview.mode == "raster"` 表示 worker 按硬闸决定
     # 不读那份 SVG（不是渲染失败），前端据此走位图编辑预览。
     # 老 worker 不返回 `preview` 时这个字段整个不出现，前端维持既有行为。

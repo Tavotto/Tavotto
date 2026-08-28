@@ -137,7 +137,7 @@ def test_inline_svg_pairs_with_the_manifest_of_the_same_call(client, tmp_path, m
     assert two.get_json()["svg"] == "<svg data-variant='2'/>"
 
 
-# --------------------- 预览表示法（ADR 0021 / issue #181） --------------------
+# --------------------- 预览表示法（ADR 0022 / issue #181） --------------------
 
 
 def test_render_passes_the_preview_verdict_through(client, tmp_path, monkeypatch):

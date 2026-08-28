@@ -28,7 +28,7 @@ export interface PanelRender {
   /** 已处理好的 SVG 文本（去掉 width/height，铺满容器） */
   svg: string | null
   /**
-   * 这一版该用哪种预览表示法（ADR 0021）。老后端不返回 `preview` 时是
+   * 这一版该用哪种预览表示法（ADR 0022）。老后端不返回 `preview` 时是
    * `VECTOR_PREVIEW`，行为与从前逐字节一致。
    *
    * `mode === 'raster'` ⇒ **`svg` 必然是 null**，而且那是刻意的：引擎按硬闸
@@ -362,7 +362,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
             lastPatches: JSON.stringify(current),
             previewDpi: dpi ?? null,
           }
-          // 二道闸（ADR 0021）：后端的 pre-read 闸才是第一道保护，这里拦的是
+          // 二道闸（ADR 0022）：后端的 pre-read 闸才是第一道保护，这里拦的是
           // 「字节已经进了浏览器进程」之后的那一步——绝不 prepareSvg + 存进
           // store + 塞进 DOM。判据收在 `resolvePreview` 一处。
           const guarded = resolvePreview(res)
@@ -649,7 +649,7 @@ export type PanelDisplayView =
     }
   | {
       /**
-       * 这一版画出来了，但**刻意没有矢量 SVG**（ADR 0021 的 raster 档）：
+       * 这一版画出来了，但**刻意没有矢量 SVG**（ADR 0022 的 raster 档）：
        * 画布挂的是这一版自己的位图。`manifest` 在——几何权威一个字都不放松。
        * 与 `fallback` 的区别是要害：那个是「暂时挂着**别人**的图」，
        * 这个是「挂着**自己**的图，只是画法不同」。

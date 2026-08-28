@@ -26,7 +26,7 @@ export interface OpenFigureResult {
   cost?: string
   manifest: Manifest
   svg: string | null
-  /** 这一版的预览表示法（ADR 0021）；老 server 不返回它。 */
+  /** 这一版的预览表示法（ADR 0022）；老 server 不返回它。 */
   preview?: PreviewMetadata
   /** `preview.mode === 'raster'` 时**同一次响应**里带回的受控尺寸位图。 */
   preview_png_base64?: string
@@ -67,7 +67,7 @@ export interface PreflightPayload {
 const sessionOf = new Map<string, string>()
 
 /**
- * raster 档下最近一次渲染带回来的位图（ADR 0021）。
+ * raster 档下最近一次渲染带回来的位图（ADR 0022）。
  *
  * **按变体存**，不是「最后一张」：同文件多变体时拿错一张就是「一个面板显示
  * 了另一个面板的图」——HTTP 那条路上正是为了这个才把 `/api/engine/png` 换成

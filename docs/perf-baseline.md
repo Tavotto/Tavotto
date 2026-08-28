@@ -340,7 +340,7 @@ JSON 只多几百字节。合成的重图上是 +26ms —— 但那张图本身�
 ## 大图预览基线（issue #181，修复前）
 
 日期：2026-08-28 ｜ 提交：`b23f8d9` + 本分支的合成 fixture ｜ **这是 before-fix
-基线**，任何针对 [ADR 0021](adr/0021-complexity-aware-editor-preview.md) 的改动
+基线**，任何针对 [ADR 0022](adr/0022-complexity-aware-editor-preview.md) 的改动
 都要回到这张表给出前后对照。
 
 上面那份 Phase E 基线量的是**普通科研图**（25–68 个元素、纯矢量、SVG 几十到
@@ -423,7 +423,7 @@ TAVOTTO_ISSUE181_MESH_N=470 python scripts/bench_render.py \
 
 * **浏览器 / WebView2 的实际内存与冻结时长**：`dangerouslySetInnerHTML`
   一份 126 MB 的 SVG 正是 issue #181 的症状本身，在本机跑它只会得到一次
-  无响应，量不出可比的数字。这项要在 ADR 0021 的安全闸落地**之后**，
+  无响应，量不出可比的数字。这项要在 ADR 0022 的安全闸落地**之后**，
   用受控规模（临近阈值）在真浏览器里测，属于后续 Session。
 * **workerd 控制面**：本轮只测 Python 池。两条控制面在这条路径上走的是同一份
   `figsession.do_render`，差异在信封传输——大 payload 下它可能不一样，但那是
@@ -463,7 +463,7 @@ raster 档下用户实际看到的那张图（`preview_png`，宽度钉死
   ——安全闸只是不让那份产物进内存与 DOM，没有让它不产生。真正砍掉这一段是
   Session 02/03（复杂度分析器 + hybrid：mesh 层直接 rasterize，根本不生成
   那 66 万个 `<path>`）。
-* **软闸（8–16 MiB）今天不改变任何行为**，见 ADR 0021 §4。
+* **软闸（8–16 MiB）今天不改变任何行为**，见 ADR 0022 §4。
 * **浏览器侧仍未实测**：闸落地之后可以用「临近阈值」的受控规模在真浏览器里
   量 DOM 节点数与 WebView2 内存了，但那是 Session 05 的事。
 

@@ -1,4 +1,4 @@
-# ADR 0021：Complexity-Aware Editor Preview（预览表示法与语义编辑解耦）
+# ADR 0022：Complexity-Aware Editor Preview（预览表示法与语义编辑解耦）
 
 状态：**Accepted（架构契约已定稿；分阶段落地进行中）**
 日期：2026-08-28

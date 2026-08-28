@@ -87,7 +87,7 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   const bucket = Math.max(bucketRef.current, pickBucket(needed))
   bucketRef.current = bucket
 
-  // 这一版该用哪种预览表示法（ADR 0021）。老后端不返回 `preview` 时是
+  // 这一版该用哪种预览表示法（ADR 0022）。老后端不返回 `preview` 时是
   // `vector`，下面每一处的行为与从前逐字节相同。
   const rasterPreview = render?.preview.mode === 'raster'
   // 编辑态用 SVG（要 gid 命中）；退出后有 override 的用引擎 PNG（imshow 面板不发糊）。

@@ -43,7 +43,7 @@ beforeEach(() => {
   useRenderStore.getState().clear()
 })
 
-describe('二道闸：超大 SVG 不进 store（ADR 0021）', () => {
+describe('二道闸：超大 SVG 不进 store（ADR 0022）', () => {
   it('后端说 raster 时不存 svg，但 manifest / status 照常', async () => {
     const p = panel('a', 'Fig1.pdf')
     engineRender.mockResolvedValue({

@@ -1264,7 +1264,7 @@ def test_open_with_an_unknown_profile_carries_a_code(project, fake_pool):
 #
 # 内嵌画布里**没有可连的 HTTP 服务**（sidecar 端口是动态的，MCP Apps 的 CSP
 # 也不许连），所以 `svg=None` 那一刻要是响应里再没有别的东西，Codex 那边就是
-# 一张全白的画布。ADR 0021 不变量 5：降级是**换一种画法**，不是不给画。
+# 一张全白的画布。ADR 0022 不变量 5：降级是**换一种画法**，不是不给画。
 class RasterWorker(FakeWorker):
     """超过硬闸的那种图：manifest 照给，`svg` 一个字节都不给。"""
 

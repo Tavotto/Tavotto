@@ -229,7 +229,7 @@ def bench_panel(
     # 塞进 DOM，属于「快显」的另一半（含 imshow 的面板里体积是 dpi 的直接
     # 函数，纯矢量图上是常数）。**path 数比体积更能说明问题**——体积随
     # colormap 与坐标精度浮动，而「一个 quad 一个 path」是 issue #181 的机制
-    # 本身（docs/adr/0021）。
+    # 本身（docs/adr/0022）。
     svg = _svg_stats(f"{base}/api/engine/svg?id={urllib.parse.quote(pid)}&rev={rev}")
     rec.update(svg)
     rec["svg_kb"] = round(svg["svg_bytes"] / 1024, 1)
@@ -403,7 +403,7 @@ def markdown(rows: list[dict], meta: dict) -> str:
     out.append(
         "单位全部是毫秒（SVG / path / image 三列除外）。`path` 与 `image` 是"
         "预览 SVG 里的 primitive 计数——**大图的成本主要由 path 数决定**，"
-        "体积只是它的影子（issue #181 / ADR 0021）。`wall` 是客户端看到的整次 HTTP 往返；"
+        "体积只是它的影子（issue #181 / ADR 0022）。`wall` 是客户端看到的整次 HTTP 往返；"
         "`worker_get` 是取（必要时 spawn）会话；`build 往返` 是父进程量到的"
         "整条 build 命令（含子解释器启动与 import matplotlib），"
         "`script_build` 是其中 worker 自己那一段——两者之差就是**进程与"

@@ -1313,7 +1313,7 @@ def test_v1_cancel_is_an_honest_idempotent_noop(worker):
 
 
 def test_v1_render_reports_the_preview_verdict(worker):
-    """v1 的 render **恒带** `preview`（ADR 0021）：这一版该用哪种表示法。
+    """v1 的 render **恒带** `preview`（ADR 0022）：这一版该用哪种表示法。
 
     没有它的话前端只看得到「有没有 svg」，而「没有 svg」有两种成因——老后端
     没实现 inline_svg，和引擎按硬闸主动不读。两者要走完全不同的路（前者保留

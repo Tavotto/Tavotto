@@ -57,7 +57,7 @@ for r in reqs:
             f.write(r["append"])
         out.append({"ok": True})
         continue
-    # 同上，**只存在于测试驱动里**：把 ADR 0021 的硬闸现场压到一个很小的数，
+    # 同上，**只存在于测试驱动里**：把 ADR 0022 的硬闸现场压到一个很小的数，
     # 好用一张普通的小图验证机制，而不是画一张一百多 MB 的图来验一个阈值。
     # 阈值本身由 tests/test_preview_budget.py 单独钉住。
     if r.get("cmd") == "__budget":
@@ -388,7 +388,7 @@ fig.savefig("N.pdf")
 
 
 def test_oversized_preview_svg_never_crosses_the_worker_boundary(tmp_path):
-    """ADR 0021 不变量 3 在 playground 这条入口上同样成立。
+    """ADR 0022 不变量 3 在 playground 这条入口上同样成立。
 
     桌面那侧判的是 `stat().st_size`（判定必须在 `read_text` 之前）；这里 SVG
     生在内存缓冲里，没有那一读——但**放大发生在它之后**：decode 一份 str、

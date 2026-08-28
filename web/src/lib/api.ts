@@ -756,7 +756,7 @@ export interface EngineRenderResponse {
    */
   svg?: string
   /**
-   * 这一版预览该用哪种表示法（ADR 0021）。**加字段协议**：老后端不返回它，
+   * 这一版预览该用哪种表示法（ADR 0022）。**加字段协议**：老后端不返回它，
    * 前端按 `vector` 解读，行为与从前逐字节一致。
    *
    * `mode === 'raster'` 时 `svg` **不出现**——那不是渲染失败，是引擎按硬闸

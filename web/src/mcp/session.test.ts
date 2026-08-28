@@ -225,7 +225,7 @@ describe('MCP 传输', () => {
   })
 })
 
-describe('raster 档：内嵌画布不能变成空白（ADR 0021）', () => {
+describe('raster 档：内嵌画布不能变成空白（ADR 0022）', () => {
   const RASTER = {
     mode: 'raster' as const,
     reason: 'svg_hard_limit' as const,

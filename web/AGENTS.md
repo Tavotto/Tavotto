@@ -91,10 +91,10 @@ fileId，写**文件级** `building` 表，绝不盖任何变体条目（盖了�
   测试里「这一版已经精确画好」用 `test/renderFixtures.ts` 的 `seedExactRender()`
   ——手写 `{manifest, status:'ready'}` 造出来的是真实渲染永远不会有的形状。
 
-## 预览表示法：vector / hybrid / raster（2026-08-28，issue #181；ADR 0021）
+## 预览表示法：vector / hybrid / raster（2026-08-28，issue #181；ADR 0022）
 
 **画法可以换，能编辑的东西一个都不许少。** 细则在
-`docs/adr/0021-complexity-aware-editor-preview.md`，动手前先读。要点：
+`docs/adr/0022-complexity-aware-editor-preview.md`，动手前先读。要点：
 
 * 渲染响应带 `preview`（`web/src/lib/previewBudget.ts` 的 `PreviewMetadata`）。
   **加字段协议**：老后端不返回它，`EMPTY.preview` 就是 `VECTOR_PREVIEW`，

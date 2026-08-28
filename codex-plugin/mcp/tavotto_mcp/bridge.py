@@ -220,7 +220,7 @@ class Session:
     patches: list = field(default_factory=list)
     manifest: dict | None = None
     svg: str | None = None
-    #: 这一版的预览表示法元数据（ADR 0021）。`mode == "raster"` 时 `svg` 是
+    #: 这一版的预览表示法元数据（ADR 0022）。`mode == "raster"` 时 `svg` 是
     #: None——那是一次**成功**的渲染，只是引擎按硬闸决定不把 SVG 读出来。
     preview: dict | None = None
     rev: int = 0
@@ -465,7 +465,7 @@ def open_figure(
         #
         # 失败不静默：降级但如实回一个 code，调用方要么重试要么就看 SVG
         # （显示本来就走 SVG，位图只是给不能渲染 SVG 的 host 兜底）。
-        # raster 档的渲染已经在同一次响应里带了一张（ADR 0021）——**别再画一次**。
+        # raster 档的渲染已经在同一次响应里带了一张（ADR 0022）——**别再画一次**。
         # 那张更小（RASTER_PREVIEW_WIDTH_PX），但它是画布此刻要显示的东西，
         # 而 `include_png` 要的只是「顺带给我一张位图」。为了 400px 的差别
         # 让 #181 那种图多画一遍不划算。
@@ -507,7 +507,7 @@ def _render(session: Session, patches: list, *, preview_dpi: int | None) -> dict
     if session.preview is not None:
         out["preview"] = session.preview
     # raster 档下 `svg` 是 None，而**内嵌画布里没有可连的 HTTP 服务**——
-    # 不在同一次响应里把位图带上，Codex 那边的画布就整个空掉（ADR 0021
+    # 不在同一次响应里把位图带上，Codex 那边的画布就整个空掉（ADR 0022
     # 「不变量 5」：降级是换一种画法，不是不给画）。
     #
     # 与位图**同一次响应**也不只是省一跳：另开一个工具去取，取回来的可能已经

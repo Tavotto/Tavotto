@@ -233,7 +233,7 @@ class V1Handler:
 
         # 阶段计时（毫秒）。**只在 v1 出现**，legacy 信封的形状一字不改。
         timings: dict[str, float] = {}
-        #: 这一版的预览表示法（ADR 0021）。与 `timings` 同一条纪律：**只在 v1
+        #: 这一版的预览表示法（ADR 0022）。与 `timings` 同一条纪律：**只在 v1
         #: 出现**，出参形态传下去，legacy 的 `{ok, manifest, warnings}` 一字不动。
         preview: dict = {}
         self.ensure_built(timings)

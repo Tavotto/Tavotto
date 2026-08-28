@@ -1,4 +1,4 @@
-"""编辑预览的表示法模型与复杂度预算——**唯一出处**（ADR 0021）。
+"""编辑预览的表示法模型与复杂度预算——**唯一出处**（ADR 0022）。
 
 ## 这个模块回答一个问题
 
@@ -49,7 +49,7 @@ MODE_VECTOR = "vector"
 #: 普通曲线保持矢量。**Session 03 才产出**，这里先进类型与协议。
 MODE_HYBRID = "hybrid"
 #: 最后的安全降级：显示位图。**不是只读**——命中层与 exact manifest 照常在
-#: （ADR 0021 不变量 4）。
+#: （ADR 0022 不变量 4）。
 MODE_RASTER = "raster"
 
 MODES = (MODE_VECTOR, MODE_HYBRID, MODE_RASTER)
@@ -79,7 +79,7 @@ EDITOR_SVG_SOFT_LIMIT_BYTES = 8 * 1024 * 1024
 EDITOR_SVG_HARD_LIMIT_BYTES = 16 * 1024 * 1024
 
 #: raster 档下位图预览的目标像素宽。**受控尺寸**是这条路径的前提——
-#: MCP 那侧要把它 base64 塞进 JSON-RPC 响应里（ADR 0021 §6：绝不把 giant SVG
+#: MCP 那侧要把它 base64 塞进 JSON-RPC 响应里（ADR 0022 §6：绝不把 giant SVG
 #: 转成 base64 塞回去，raster 走的是另一样东西）。7 英寸宽的图上 1200px
 #: ≈ 171 dpi，屏幕上够看，payload 是 MB 级而不是百 MB 级。
 RASTER_PREVIEW_WIDTH_PX = 1200

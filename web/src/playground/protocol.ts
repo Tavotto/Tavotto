@@ -77,7 +77,7 @@ export interface OpenResult {
   stem: string
   script: string
   manifest: import('@/lib/api').Manifest
-  /** 超过硬闸时是 null（ADR 0021 的 raster 档）；老引擎不返回 `preview`。 */
+  /** 超过硬闸时是 null（ADR 0022 的 raster 档）；老引擎不返回 `preview`。 */
   svg: string | null
   preview?: import('@/lib/previewBudget').PreviewMetadata
   patch_hash: string

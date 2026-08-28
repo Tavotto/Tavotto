@@ -467,10 +467,10 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   会拿到 worker 的 `--script/--out-dir/--entry`，存出一堆叫 `--entry` 的图
   （试运行探测时当场撞见过，`test_script_sees_its_own_argv_not_the_workers` 看护）。
 
-## 编辑预览的表示法与复杂度预算（ADR 0021，issue #181）
+## 编辑预览的表示法与复杂度预算（ADR 0022，issue #181）
 
 **预览怎么画** 与 **能编辑什么** 是两件事。动这一带之前先读
-`docs/adr/0021-complexity-aware-editor-preview.md` 与
+`docs/adr/0022-complexity-aware-editor-preview.md` 与
 `docs/perf-baseline.md` 的「大图预览基线」。
 
 - **常量与判据唯一出处 `engine/previewbudget.py`**（前端镜像

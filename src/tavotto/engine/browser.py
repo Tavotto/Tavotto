@@ -465,7 +465,7 @@ class BrowserSession:
     def _render(self, state, stem: str, preview_dpi: int | None = None):
         """→ `(manifest, svg_or_None, preview)`。
 
-        **超过硬闸就不把 SVG 交出去**（ADR 0021 不变量 3）。桌面那侧判的是
+        **超过硬闸就不把 SVG 交出去**（ADR 0022 不变量 3）。桌面那侧判的是
         `stat().st_size`（判定必须在 `read_text` 之前）；这里 SVG 生在内存
         缓冲里，没有那一读——但**放大发生在它之后**：`decode()` 一份 str、
         `json.dumps` 一份、postMessage 过 Worker 边界再一份，然后展开成几十万
