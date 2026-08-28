@@ -7,8 +7,9 @@
 > [0013 Runtime Figure Assets](../adr/0013-runtime-figure-assets.md)、
 > [0014 Safe/Native Execution Profiles](../adr/0014-safe-native-execution-profiles.md)、
 > [0020 Native Matplotlib Bridge](../adr/0020-native-matplotlib-bridge.md)
-> （0020 是 0014 §3「捕获通道」与 §7「待定稿事项」的裁决，
-> Session 8 technical spike，**机制已定稿、产品化未开始**）。
+> （0014 §3「捕获通道」的裁决，Session 8 technical spike）、
+> [0021 `tavotto run` 产品契约](../adr/0021-tavotto-run-product-contract.md)
+> （Session 9，**产品面 Beta**：0014 §7 四个待定稿事项到此全部关闭）。
 
 ## 总目标
 
