@@ -44,6 +44,7 @@ jobs:
   # 发布后它会转绿。发布前看到红灯，请不要来「修」这个门禁。
   # ────────────────────────────────────────────────────────────────
   updater-consumer-fidelity:
+    timeout-minutes: 60  # 上限是防挂死、不是性能预算：把损失从「无限」变成「有界」
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -90,6 +91,7 @@ jobs:
   # 换机器比像素没有意义。
   # ────────────────────────────────────────────────────────────────
   compat-version-matrix:
+    timeout-minutes: 60  # 上限是防挂死、不是性能预算：把损失从「无限」变成「有界」
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -184,6 +186,7 @@ jobs:
           if-no-files-found: warn
 
   windows-install:
+    timeout-minutes: 60  # 上限是防挂死、不是性能预算：把损失从「无限」变成「有界」
     runs-on: windows-latest
     strategy:
       fail-fast: false

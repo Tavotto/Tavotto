@@ -327,3 +327,55 @@ def test_every_shipped_version_string_matches_the_product(rel, pattern):
         "发版时漏改一处的表现是「装完显示的版本和发布页对不上」，"
         "没有任何一步会失败。"
     )
+
+
+# ---------------------------------------------------------------------------
+# 每个 job 都要有时间上限
+# ---------------------------------------------------------------------------
+def _jobs_without_timeout(text: str) -> list[str]:
+    """一个 workflow 文本里「有 runs-on 却没有 timeout-minutes」的 job 名。
+
+    不引 YAML 解析器：这份判据要能在任何环境里跑（`test_source_hygiene` 全文
+    都是这个纪律），而 job 块的形状在本仓库是稳定的两空格缩进。
+    """
+    lines = text.splitlines()
+    heads = [
+        (i, m.group(1))
+        for i, line in enumerate(lines)
+        if (m := re.match(r"^  ([A-Za-z0-9_-]+):\s*$", line))
+    ]
+    bad = []
+    for n, (i, name) in enumerate(heads):
+        end = heads[n + 1][0] if n + 1 < len(heads) else len(lines)
+        body = "\n".join(lines[i:end])
+        if "runs-on:" in body and "timeout-minutes:" not in body:
+            bad.append(name)
+    return bad
+
+
+@pytest.mark.parametrize(
+    "wf",
+    sorted(p.name for p in (ROOT / ".github" / "workflows").glob("*.yml")),
+)
+def test_every_ci_job_has_a_time_limit(wf):
+    """**每个 job 都必须有 `timeout-minutes`。**
+
+    没有上限的 job 不是「跑得久一点」，是**能把合并队列堵死**：队列在等它
+    应答，而它永远不应答，于是**所有** PR 都落不了地，且日志取不到
+    （in_progress 的 job 没有 blob，只能整个取消，什么都不剩）。
+
+    2026-08-28 实际发生过一次：`backend-platforms (windows-latest)` 的 pytest
+    步骤挂了 **8 小时 20 分**（同一个 job 上一轮 27:57 跑完），四个 PR 全程
+    卡在队列里。当时 `windows-exe-smoke` / `invariants` 这些都有上限，
+    偏偏跑全套测试的那两个 backend job 没有。
+
+    判据写成**枚举**（扫每个 workflow 的每个 job）而不是白名单，是因为
+    白名单挡不住「下一个人新加一个 job」——而这个洞正是这么留下的。
+    上限的值各 job 自己按实测定，这里只管「有没有」。
+    """
+    text = (ROOT / ".github" / "workflows" / wf).read_text(encoding="utf-8")
+    bad = _jobs_without_timeout(text)
+    assert bad == [], (
+        f"{wf} 里这些 job 没有 timeout-minutes: {bad}\n"
+        "没有上限的 job 挂死时会堵住合并队列，而且取不到日志。"
+    )

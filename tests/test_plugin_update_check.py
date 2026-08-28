@@ -15,11 +15,13 @@
 """
 
 import ast
+import http.server
 import importlib.util
 import json
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -44,6 +46,56 @@ def uc():
     finally:
         sys.path.remove(str(SCRIPTS))
         sys.modules.pop("update_check", None)
+
+
+@pytest.fixture
+def serve_manifest():
+    """把清单用**真 HTTP**（loopback）发出去，不要用 `file://`。
+
+    起子进程的那几条用例吃的是脚本里的 `TIMEOUT = 1.5`，而那是一条**总墙钟**。
+    用 `file://` 时这条预算是坏的：
+
+    * `urlopen(timeout=)` 对 HTTP 有效（`AbstractHTTPHandler.do_open` 收这个参数），
+      对 `file://` **完全无效**——CPython 的 `FileHandler.open_local_file(self, req)`
+      连 timeout 参数都不接；
+    * 于是"打开文件"这一步不受任何约束（Windows 上 Defender 扫一个刚建的临时
+      文件足以卡住它），等它慢慢成功返回之后，读循环第一次掐表就已经超时，
+      `fetch()` 回 `None`——**一个字节都还没读**。
+
+    表现是 `status: "unknown"`，而 `fetch()` 按设计吞掉全部失败原因（生产上
+    这个取舍是对的：用户是来画图的），所以用例只能告诉你"取不到"，
+    告诉不了你为什么。2026-08-28 它在合并队列的 Windows 腿上红过一次。
+
+    改用 loopback HTTP 之后，那条预算恢复了它本来的语义（它防的是"挂了的代理、
+    被限速的镜像"，见脚本 docstring），而本地回环快到不可能吃掉 1.5 秒。
+    """
+    box = {"body": b"{}"}
+
+    class _H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802 — BaseHTTPRequestHandler 的接口
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(box["body"])))
+            self.end_headers()
+            self.wfile.write(box["body"])
+
+        def log_message(self, *a):  # 别把 CI 日志刷满
+            pass
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _H)
+    t = threading.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+
+    def publish(obj) -> str:
+        box["body"] = json.dumps(obj).encode("utf-8")
+        return f"http://127.0.0.1:{srv.server_address[1]}/latest.json"
+
+    try:
+        yield publish
+    finally:
+        srv.shutdown()
+        srv.server_close()
+        t.join(timeout=5)
 
 
 def manifest(version="0.9.9", **extra):
@@ -417,18 +469,17 @@ def project(tmp_path):
 
 
 @pytest.mark.skipif(not (ROOT / "src" / "tavotto" / "__init__.py").is_file(), reason="需要源码树")
-def test_handoff_stdout_stays_one_parseable_json_line(tmp_path, project):
+def test_handoff_stdout_stays_one_parseable_json_line(tmp_path, project, serve_manifest):
     """**最重要的一条**：提醒绝不能把那行 JSON 弄脏。
 
     调用方读的是 stdout 的最后一行。往 stdout 里 print 一句「有新版本」，
     整条链路当场从「能用」变成「json.loads 报错」。
     """
-    remote = tmp_path / "latest.json"
-    remote.write_text(json.dumps(manifest("99.0.0")), encoding="utf-8")
+    url = serve_manifest(manifest("99.0.0"))
     proc = _run_handoff(
         tmp_path,
         project / "Fig1.pdf",
-        {"TAVOTTO_UPDATE_URL": remote.as_uri(), "TAVOTTO_CLI": str(tmp_path / "没有这个 CLI")},
+        {"TAVOTTO_UPDATE_URL": url, "TAVOTTO_CLI": str(tmp_path / "没有这个 CLI")},
     )
     lines = proc.stdout.strip().splitlines()
     assert len(lines) == 1, f"stdout 不止一行: {lines}"
@@ -469,13 +520,11 @@ def test_a_broken_update_check_never_breaks_the_handoff(tmp_path, project):
 
 
 # ------------------------------ 显式入口 ---------------------------------
-def test_explicit_entry_point_json(tmp_path):
-    remote = tmp_path / "latest.json"
-    remote.write_text(json.dumps(manifest("1.0.0")), encoding="utf-8")
+def test_explicit_entry_point_json(tmp_path, serve_manifest):
     env = {
         **os.environ,
         "TAVOTTO_CONFIG_DIR": str(tmp_path / "cfg"),
-        "TAVOTTO_UPDATE_URL": remote.as_uri(),
+        "TAVOTTO_UPDATE_URL": serve_manifest(manifest("1.0.0")),
     }
     proc = subprocess.run(
         [sys.executable, str(SCRIPTS / "update_check.py"), "--json", "--force"],
@@ -487,16 +536,19 @@ def test_explicit_entry_point_json(tmp_path):
     )
     assert proc.returncode == 0, proc.stderr
     out = json.loads(proc.stdout.strip().splitlines()[-1])
-    assert out["status"] == "available" and out["latest_version"] == "1.0.0"
+    # **两条分开写**：`assert A and B` 时 pytest 只报左边那个合取项，于是失败
+    # 信息永远是 `assert ('unknown' == 'available')`，看不出 latest_version 是
+    # None（问不到）还是 "1.0.0"（问到了但版本号解不出）——而这两种成因的修法
+    # 完全不同。失败信息本身也是断言。
+    assert out["latest_version"] == "1.0.0", f"清单没取到或解错了: {out}"
+    assert out["status"] == "available", f"取到了清单但状态不对: {out}"
 
 
-def test_explicit_entry_point_human(tmp_path):
-    remote = tmp_path / "latest.json"
-    remote.write_text(json.dumps(manifest(tavotto.__version__)), encoding="utf-8")
+def test_explicit_entry_point_human(tmp_path, serve_manifest):
     env = {
         **os.environ,
         "TAVOTTO_CONFIG_DIR": str(tmp_path / "cfg"),
-        "TAVOTTO_UPDATE_URL": remote.as_uri(),
+        "TAVOTTO_UPDATE_URL": serve_manifest(manifest(tavotto.__version__)),
     }
     proc = subprocess.run(
         [sys.executable, str(SCRIPTS / "update_check.py"), "--force"],
