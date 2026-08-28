@@ -736,12 +736,8 @@ function RenderStatusBadge({ obj }: { obj: PanelObject }) {
       style={{ transform: `scale(${scale})` }}
     >
       <span
-        // tooltip 要能被指到：外层是 pointer-events-none（角标不该挡住画布），
-        // 只有带解释的那一档把指针事件收回来
-        title={shown.hint}
         className={cn(
           'relative flex items-center gap-1 overflow-hidden rounded-sm px-1.5 py-0.5 text-xs',
-          shown.hint && 'pointer-events-auto cursor-help',
           shown.tone === 'error'
             ? 'bg-danger text-white'
             : shown.tone === 'stale'
@@ -755,6 +751,19 @@ function RenderStatusBadge({ obj }: { obj: PanelObject }) {
           <span className="h-2 w-2 animate-pulse rounded-full bg-white/80" />
         )}
         {shown.text}
+        {/* 只有这一小块接指针事件。整枚角标收回指针事件是不行的：外层刻意是
+            `pointer-events-none`（角标画在面板左上角，图内标题常常就在那儿），
+            而 raster 那一档的角标**整个编辑期间常驻**——89×19 的一块死区会让
+            用户点不到自己的标题。实测撞见过。 */}
+        {shown.hint && (
+          <span
+            title={shown.hint}
+            aria-label={shown.hint}
+            className="pointer-events-auto cursor-help font-bold opacity-80"
+          >
+            ⓘ
+          </span>
+        )}
         {/* 冷启动可能要几分钟：一个呼吸的圆点表达不出「还在动」，补一条来回扫的
             不确定进度条。**不做百分比**——worker 那边根本没有进度可报，
             假进度条比没有更坏。 */}

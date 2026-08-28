@@ -211,9 +211,27 @@ describe('PanelView：三档预览表示法', () => {
     seed({ svg: null, preview: RASTER })
     await mount()
 
-    const badge = [...container.querySelectorAll('span')].find((el) => el.title)
-    expect(badge?.textContent).toBe('低内存编辑预览')
-    expect(badge?.title).toContain('导出质量')
+    const hint = container.querySelector('span[title]') as HTMLElement | null
+    expect(hint?.title).toContain('导出质量')
+    expect(hint?.title).not.toContain('太大') // 不责怪用户
+    expect(hint?.parentElement?.textContent).toContain('低内存编辑预览')
+  })
+
+  it('raster 角标不许吃掉画布的指针事件', async () => {
+    // 角标画在面板左上角，而 raster 这一档**整个编辑期间常驻**——图内标题
+    // 常常就在那儿。既有角标全是 pointer-events-none；带 tooltip 的那一档
+    // 只有 ⓘ 那一小块把指针事件收回来，角标本体不许收。
+    // （真浏览器实测撞见过：整枚角标接指针事件时，标题点不中。）
+    seed({ svg: null, preview: RASTER })
+    await mount()
+
+    const hint = container.querySelector('span[title]') as HTMLElement
+    const badge = hint.parentElement as HTMLElement
+    expect(badge.className).not.toContain('pointer-events-auto')
+    expect(hint.className).toContain('pointer-events-auto')
+    // 最外层那一格照旧完全透明
+    const wrap = badge.parentElement as HTMLElement
+    expect(wrap.className).toContain('pointer-events-none')
   })
 
   it('老后端不返回 preview：行为与从前逐字节相同', async () => {
