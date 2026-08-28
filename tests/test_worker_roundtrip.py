@@ -1312,6 +1312,54 @@ def test_v1_cancel_is_an_honest_idempotent_noop(worker):
     assert resp["error"]["code"] == "bad_request"
 
 
+def test_v1_render_reports_the_preview_verdict(worker):
+    """v1 的 render **恒带** `preview`（ADR 0021）：这一版该用哪种表示法。
+
+    没有它的话前端只看得到「有没有 svg」，而「没有 svg」有两种成因——老后端
+    没实现 inline_svg，和引擎按硬闸主动不读。两者要走完全不同的路（前者保留
+    上一版画面，后者切位图预览），猜错任何一个都是用户可见的错。
+
+    只在 v1 出现：legacy 那条由
+    `test_legacy_envelope_keeps_the_old_response_shape` 反向钉住。
+    """
+    proc, out, tmp = worker
+    _ok(proc, _v1("build", rid="r-pb"))
+
+    resp = _ok(
+        proc,
+        _v1(
+            "render",
+            stem="TestFig_a",
+            payload={"patches": [], "inline_svg": True},
+            rid="r-pv1",
+            patch_hash=patchspec.patch_hash([]),
+        ),
+    )
+    preview = resp["preview"]
+    # 这张小图远在闸内：照旧内联 SVG，表示法是 vector
+    assert preview["mode"] == "vector"
+    assert preview["reason"] == "normal"
+    assert preview["rasterized_artist_count"] == 0
+    # `svg_bytes` 说的是**磁盘上那一份**的大小，不是响应里那串的长度——
+    # 判定发生在读之前，量的必须是同一个东西
+    assert preview["svg_bytes"] == (out / "TestFig_a.svg").stat().st_size
+    assert len(resp["svg"].encode("utf-8")) == preview["svg_bytes"]
+
+    # 不要 inline_svg 时判定照做（表示法是这一版的属性，与要不要那串文本无关）
+    resp = _ok(
+        proc,
+        _v1(
+            "render",
+            stem="TestFig_a",
+            payload={"patches": []},
+            rid="r-pv2",
+            patch_hash=patchspec.patch_hash([]),
+        ),
+    )
+    assert resp["preview"]["mode"] == "vector"
+    assert "svg" not in resp
+
+
 def test_legacy_envelope_keeps_the_old_response_shape(worker):
     """无 protocol_version 的老信封必须**一字不变**地按旧形状回应。
 
