@@ -1271,6 +1271,13 @@ export type ServerEvent =
   | ({ kind: 'panel.file_changed'; scripts?: string[]; stems?: string[] } & ProjectScoped)
   | ({ kind: 'registry.changed'; script: string; stems: string[] } & ProjectScoped)
   | ({ kind: 'probe.started'; script: string } & ProjectScoped)
+  | ({
+      kind: 'native.session'
+      /** 事件发生那一刻会话的完整状态（后端不发增量，发的是快照） */
+      session: NativeSessionInfo
+      /** 这一步本身：`{seq, state, at, …}`（时间线用） */
+      event: { seq: number; state: NativeSessionState; at: number } & Record<string, unknown>
+    } & ProjectScoped)
   | { kind: 'engine.bootstrap'; state: string; log: string; error: string | null }
   | ({ kind: 'engine.dependency' } & DependencyProgress)
   | { kind: 'ai.delta'; session: string; text: string; kindOf?: AiDeltaKind }
@@ -1291,6 +1298,7 @@ const EVENT_KINDS = [
   'panel.file_changed',
   'registry.changed',
   'probe.started',
+  'native.session',
   'engine.bootstrap',
   'engine.dependency',
   'ai.delta',
@@ -1951,3 +1959,183 @@ export interface RuntimeAssetInfo {
 /** runtime 素材清单。**只读**：后端绝不因此执行脚本。 */
 export const fetchRuntimeAssets = () =>
   jsonFetch<{ assets: RuntimeAssetInfo[] }>('/api/runtime/assets')
+
+/* ------------------ Tavotto Run · native 会话（ADR 0021） ------------------ */
+
+/**
+ * 会话状态的**闭集**——与后端 `nativesession.STATES` 同字面量（ADR 0021 §5.1）。
+ *
+ * 不用几个互相矛盾的 boolean：`running` + `atBarrier` + `dead` 三个布尔有八种
+ * 组合，其中五种没有意义，而没有意义的那几种迟早会出现在某条分支上。
+ */
+export type NativeSessionState =
+  | 'pending_confirmation'
+  | 'waiting_for_cli'
+  | 'starting_python'
+  | 'running_script'
+  | 'waiting_for_figure'
+  | 'barrier'
+  | 'continuing'
+  | 'ended'
+  | 'detached'
+  | 'failed'
+
+/** 终态：进了就不再出来（`detached` 也是——Tavotto 已经放手了）。 */
+export const NATIVE_TERMINAL_STATES: readonly NativeSessionState[] = [
+  'ended',
+  'detached',
+  'failed',
+]
+
+export const isNativeTerminal = (s: NativeSessionState): boolean =>
+  NATIVE_TERMINAL_STATES.includes(s)
+
+/**
+ * 待确认的一条交接（`nativehandoff.sanitized()` 原样）。
+ *
+ * **这份里没有 token、没有端口、没有 host，也没有 argv 的值**——前端能提交的
+ * 只有 `native_id`，连哪儿是后端的事（ADR 0021 §4）。`arg_count` 只有数量：
+ * 确认界面要说得出「带了 3 个参数」，但那些参数的内容不该经过界面。
+ */
+export interface NativePending {
+  native_id: string
+  created_at: number
+  expires_at: number
+  project_root: string
+  interpreter: string
+  cwd: string
+  target_kind: 'script' | 'module'
+  target_display: string
+  arg_count: number
+  command_fingerprint: string
+  permission_key: string
+  python_version: string
+  /** 这个（项目 × 解释器 × schema）此前已被「记住」——无需再问一次 */
+  remembered: boolean
+}
+
+/** 一条 native 会话对外的全部状态（`NativeSession.public_state()` 原样）。 */
+export interface NativeSessionInfo {
+  session_id: string
+  project_root: string
+  interpreter: string
+  interpreter_fingerprint: string
+  target_kind: 'script' | 'module'
+  target_display: string
+  cwd: string
+  arg_count: number
+  python_version: string
+  state: NativeSessionState
+  barrier_reason: string
+  process_pid: number
+  stems: string[]
+  descriptors: CapturedFigureDescriptor[]
+  script_error: { type?: string; message?: string } | null
+  terminal_error: { code?: string; message?: string } | null
+  exit_code: number | null
+  figures_captured: number
+  started_at: number
+  last_event_at: number
+  /** 单调递增的事件序号：迟到的事件按它判「这条比我手里的旧」 */
+  sequence: number
+  /** 此刻能不能做对象级编辑（= 停在屏障上）。后端说了算，前端不自己推 */
+  editable: boolean
+}
+
+/** 一次 build 的结果：stems + 描述符 + （如实报的）冲突。 */
+export interface NativeBuildResult {
+  session: NativeSessionInfo
+  stems: Record<string, unknown>
+  descriptors: CapturedFigureDescriptor[]
+  /** 这些 stem 已被另一条还活着的会话占着——**报出来，不静默抢过来** */
+  conflicts?: { code: string; stems: string[] }
+}
+
+/** 记住过的一条许可（设置里的撤销入口用）。 */
+export interface NativePermission {
+  permission_key: string
+  interpreter: string
+  remembered_at: number
+  schema: number
+}
+
+export const fetchNativePending = (nativeId: string) =>
+  jsonFetch<{ pending: NativePending }>(
+    `/api/native/pending/${encodeURIComponent(nativeId)}`,
+  )
+
+/**
+ * 用户点了「运行并连接」。**这一步之后 CLI 才会 spawn 用户的 Python**
+ * （ADR 0021 §7）——所以确认之前一行用户代码都没跑。
+ *
+ * 请求体里只有 `remember`：interpreter / target / host / port 一律由后端从
+ * descriptor 文件读。界面确认的是哪条 invocation，执行端就只能执行那条
+ * （「请求体不能替换 invocation」由后端用例看护）。
+ */
+export const approveNativePending = (nativeId: string, remember: boolean) =>
+  jsonFetch<{ session: NativeSessionInfo }>(
+    `/api/native/pending/${encodeURIComponent(nativeId)}/approve`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ remember }),
+    },
+  )
+
+/** 用户点了「取消」。CLI 正盯着这份 descriptor，会当场收摊并退出 3。 */
+export const cancelNativePending = (nativeId: string) =>
+  jsonFetch<{ cancelled: boolean }>(
+    `/api/native/pending/${encodeURIComponent(nativeId)}/cancel`,
+    { method: 'POST' },
+  )
+
+export const fetchNativeSessions = (projectRoot?: string) =>
+  jsonFetch<{ sessions: NativeSessionInfo[] }>(
+    `/api/native/sessions${
+      projectRoot ? `?project_root=${encodeURIComponent(projectRoot)}` : ''
+    }`,
+  )
+
+/**
+ * 在屏障处 build 一次：拿到 stems / descriptors，并绑定 live route。
+ *
+ * **由界面显式调**，后端不在收到 barrier 事件时自动发——那条事件是在 reader
+ * 线程里收到的，而 build 的响应要由**同一个** reader 读回来（ADR 0021 §5.2）。
+ */
+export const buildNativeSession = (sessionId: string) =>
+  jsonFetch<NativeBuildResult>(
+    `/api/native/sessions/${encodeURIComponent(sessionId)}/build`,
+    { method: 'POST' },
+  )
+
+const nativeAction = (sessionId: string, action: string) =>
+  jsonFetch<{ session: NativeSessionInfo }>(
+    `/api/native/sessions/${encodeURIComponent(sessionId)}/${action}`,
+    { method: 'POST' },
+  )
+
+/** 继续运行脚本。**runner 会先把 Figure 恢复成脚本原样**（ADR 0021 §8）。 */
+export const continueNativeSession = (sessionId: string) =>
+  nativeAction(sessionId, 'continue')
+
+/** 放手：脚本继续正常跑完，Tavotto 不再控制它。**不杀进程。** */
+export const detachNativeSession = (sessionId: string) =>
+  nativeAction(sessionId, 'detach')
+
+/** 结束用户脚本——**明确的危险操作**，退出码固定 5，不伪装成 continue。 */
+export const terminateNativeSession = (sessionId: string) =>
+  nativeAction(sessionId, 'terminate')
+
+export const fetchNativePermissions = (projectRoot?: string) =>
+  jsonFetch<{ permissions: NativePermission[] }>(
+    `/api/native/permissions${
+      projectRoot ? `?project_root=${encodeURIComponent(projectRoot)}` : ''
+    }`,
+  )
+
+export const forgetNativePermission = (permissionKey: string, projectRoot?: string) =>
+  jsonFetch<{ removed: boolean }>('/api/native/permissions', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ permission_key: permissionKey, project_root: projectRoot }),
+  })

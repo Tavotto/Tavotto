@@ -91,6 +91,54 @@ fn parse_open_args(args: &[String]) -> Option<OpenRequest> {
     })
 }
 
+/// 首启的落地 URL 查询串（不含前导 `?` 时为空串）。
+///
+/// **抽成函数是为了能被量到。** 这段以前长在 `setup` 的闭包里，谁也测不着
+/// ——于是 `--native-session` 在这里被漏掉了整整一轮：壳把它解析出来了、
+/// `tavotto:open` 事件也带着它，只有**首启**这一条路把它丢了。表现是
+/// `tavotto run` 在 Tavotto 还没开着的时候唤起界面，窗口起来了、确认界面
+/// 永远不出现，CLI 一直挂在 "Waiting for Tavotto desktop…" 上直到 attach
+/// 超时，而两边都不报错。
+///
+/// 三个参数的语义与 `handoff.browser_url()` / `tavotto:open` 事件同源：
+/// * `open=<stem>` 与 `pick=<脚本>` 互斥（定得下来一张就不需要选择器）；
+/// * `native=<ID>` 与那两个**不互斥**——它说的是"有一条 native 会话在等
+///   你确认"，不是"打开哪张图"；
+/// * `lang=` 只在用户亲手选过语言时带。
+fn landing_query(open: Option<&OpenRequest>, lang: Option<&str>) -> String {
+    let mut params: Vec<String> = Vec::new();
+    if let Some(stem) = open.and_then(|o| o.stem.as_deref()) {
+        params.push(format!(
+            "open={}",
+            utf8_percent_encode(stem, NON_ALPHANUMERIC)
+        ));
+    } else if let Some(pick) = open.and_then(|o| o.pick.as_deref()) {
+        // 多 Figure 交接：把脚本交给前端的 Figure 选择器
+        // （与 handoff.browser_url 的 `?pick=` 同一份语义）
+        params.push(format!(
+            "pick={}",
+            utf8_percent_encode(pick, NON_ALPHANUMERIC)
+        ));
+    }
+    if let Some(native) = open.and_then(|o| o.native.as_deref()) {
+        // `parse_open_args` 已经把它限成 32 位小写十六进制，编码在这里是
+        // 恒等的——留着是因为那道格式判据将来一旦放宽，这里不该跟着变成
+        // 一个注入点。
+        params.push(format!(
+            "native={}",
+            utf8_percent_encode(native, NON_ALPHANUMERIC)
+        ));
+    }
+    if let Some(tag) = lang {
+        params.push(format!("lang={tag}"));
+    }
+    if params.is_empty() {
+        String::new()
+    } else {
+        format!("?{}", params.join("&"))
+    }
+}
+
 impl AppState {
     fn shutdown_sidecar(&self) {
         if let Some(sc) = self.sidecar.lock().unwrap().take() {
@@ -336,28 +384,10 @@ fn spawn_sidecar_and_navigate(app: tauri::AppHandle) {
                 // 存在 localStorage 的语言偏好活不过一次重启，`detectLocale()`
                 // 会退回系统语言，再把那个退回值报给壳，把用户真正的选择
                 // **覆盖掉**。壳记的这份是唯一活得下来的存储，所以由它带过去。
-                let mut params: Vec<String> = Vec::new();
-                if let Some(stem) = open.as_ref().and_then(|o| o.stem.as_deref()) {
-                    params.push(format!(
-                        "open={}",
-                        utf8_percent_encode(stem, NON_ALPHANUMERIC)
-                    ));
-                } else if let Some(pick) = open.as_ref().and_then(|o| o.pick.as_deref()) {
-                    // 多 Figure 交接：把脚本交给前端的 Figure 选择器
-                    // （与 handoff.browser_url 的 `?pick=` 同一份语义）
-                    params.push(format!(
-                        "pick={}",
-                        utf8_percent_encode(pick, NON_ALPHANUMERIC)
-                    ));
-                }
-                if chosen_locale.is_some() {
-                    params.push(format!("lang={}", menu_locale.tag()));
-                }
-                let query = if params.is_empty() {
-                    String::new()
-                } else {
-                    format!("?{}", params.join("&"))
-                };
+                let query = landing_query(
+                    open.as_ref(),
+                    chosen_locale.is_some().then(|| menu_locale.tag()),
+                );
                 let url = format!("http://127.0.0.1:{port}/{query}#dnonce={nonce}");
                 if win
                     .eval(format!("window.location.replace({})", js_string(&url)))
@@ -674,6 +704,52 @@ mod tests {
     fn stem_is_optional() {
         let req = parse_open_args(&args(&["--open", "/p/figures"])).unwrap();
         assert_eq!(req.stem, None);
+    }
+
+    /// 首启这条路曾经把 `native` 丢掉：解析出来了、事件里也有，只有落地 URL
+    /// 没带——`tavotto run` 在 Tavotto 没开着时唤起界面，窗口起来了但确认
+    /// 界面永远不出现，CLI 挂到 attach 超时，两边都不报错。
+    #[test]
+    fn the_landing_url_carries_the_native_session() {
+        let id = "0123456789abcdef0123456789abcdef";
+        let req = parse_open_args(&args(&["--open", "/p", "--native-session", id])).unwrap();
+        let q = landing_query(Some(&req), None);
+        assert_eq!(q, format!("?native={id}"));
+    }
+
+    #[test]
+    fn the_landing_url_carries_a_figure_and_a_native_session_together() {
+        // 两者不互斥：这一次交接既要打开 Fig1，又有一条会话在等确认。
+        let id = "0123456789abcdef0123456789abcdef";
+        let req = parse_open_args(&args(&[
+            "--open",
+            "/p",
+            "--stem",
+            "Fig1",
+            "--native-session",
+            id,
+        ]))
+        .unwrap();
+        let q = landing_query(Some(&req), Some("zh-CN"));
+        assert_eq!(q, format!("?open=Fig1&native={id}&lang=zh-CN"));
+    }
+
+    #[test]
+    fn the_landing_url_percent_encodes_the_pick_script() {
+        // 脚本相对路径里有 `/`，原样拼进查询串会被前端解成另一个参数边界。
+        let req =
+            parse_open_args(&args(&["--open", "/p", "--pick-script", "sub/plot.py"])).unwrap();
+        assert_eq!(landing_query(Some(&req), None), "?pick=sub%2Fplot%2Epy");
+    }
+
+    #[test]
+    fn a_plain_launch_has_no_query_at_all() {
+        // 没有交接、也没亲手选过语言时不该冒出一个空的 `?`——那会让
+        // 「地址栏里有没有参数」这个判据在正常启动上就已经是真的。
+        assert_eq!(landing_query(None, None), "");
+        let req = parse_open_args(&args(&["--open", "/p"])).unwrap();
+        assert_eq!(landing_query(Some(&req), None), "");
+        assert_eq!(landing_query(Some(&req), Some("en-US")), "?lang=en-US");
     }
 
     #[test]

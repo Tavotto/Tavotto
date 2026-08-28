@@ -298,6 +298,31 @@ export default interface Resources {
       "rendering": "正在重渲染",
       "synced": "已同步"
     },
+    "nativeRun": {
+      "approve": "运行并连接",
+      "approving": "正在连接…",
+      "argCount_other": "{{count}} 个（参数值不经过这个窗口）",
+      "cancel": "取消",
+      "description": "这条命令还没有开始运行——你确认之后才会。",
+      "descriptionQueued": "这条命令还没有开始运行——你确认之后才会。还有 {{queued}} 条在排队。",
+      "fields": {
+        "args": "参数",
+        "cwd": "工作目录",
+        "interpreter": "Python",
+        "project": "图库",
+        "target": "运行"
+      },
+      "loading": "正在读取这条运行请求…",
+      "permissionNotice": "此模式使用项目自己的 Python。脚本拥有与你在终端中直接运行时相同的文件权限。Tavotto 只接管当前 Python 进程中的 Matplotlib Figure。仅运行你信任的代码。",
+      "pythonVersion": "Python {{version}}",
+      "remember": "记住此项目和此 Python",
+      "rememberHint": "下次同一个图库配同一个解释器就不再询问。解释器换了、图库移动了、或者权限规则升级之后会重新询问；随时可以在设置里撤销。",
+      "targetKind": {
+        "module": "模块",
+        "script": "脚本"
+      },
+      "title": "用你自己的 Python 运行并连接"
+    },
     "palette": {
       "commands": {
         "add-text": {
@@ -1060,6 +1085,7 @@ export default interface Resources {
       "dir_missing": "目录不存在：{{path}}",
       "endpoint_invalid": "接口配置无效：{{reason}}",
       "endpoint_save_failed": "接口保存失败：{{reason}}",
+      "environment_in_use_by_native_session": "这个 Python 环境正在被 Tavotto Run 使用。请先结束正在运行的脚本，再安装依赖。",
       "environment_mutating": "这个 Python 环境正在安装依赖，请稍候再试。",
       "execution_cancelled": "试运行被中断（会话在执行期间被终止）",
       "execution_timeout": "脚本执行超时（入口 {{entry}}）",
@@ -1080,6 +1106,23 @@ export default interface Resources {
       "mkdir_failed": "无法创建目录：{{reason}}",
       "multiple_stem_conflict": "产出的图名已被其它脚本登记：{{detail}}（在脚本注册表里手工裁决归属后重试）",
       "name_missing": "缺少名称",
+      "native_asset_conflict": "这张图已经绑在另一个 Tavotto Run 会话上了。那个会话结束后再试。",
+      "native_attach_cancelled": "已取消——你的脚本一行都没有运行。",
+      "native_attach_failed": "Tavotto 桌面没能连上这次运行。",
+      "native_attach_timeout": "等 Tavotto 桌面连接超时（{{seconds}}s）——你的脚本一行都没有运行。",
+      "native_auth_failed": "Tavotto Run 控制通道认证失败。",
+      "native_desktop_required": "Tavotto Run 需要 Tavotto 桌面应用。装一个（GitHub Releases），或用 TAVOTTO_DESKTOP_APP 指到它的可执行文件。",
+      "native_handoff_consumed": "这条 Tavotto Run 交接请求已经被处理过了。",
+      "native_handoff_expired": "这条 Tavotto Run 交接请求已过期，请重新运行原命令。",
+      "native_handoff_invalid": "这条 Tavotto Run 交接请求无效。",
+      "native_relay_failed": "Tavotto Run 的控制通道断了。",
+      "native_session_conflict": "这个项目已经有一个 Tavotto Run 会话在进行中。",
+      "native_session_disconnected": "与 Tavotto Run 会话的连接断开了；你的脚本仍在自己继续运行。",
+      "native_session_ended": "这个 Tavotto Run 会话已经结束。",
+      "native_session_not_at_barrier": "脚本正在运行，等下一个 Matplotlib figure。等它停下来才能编辑。",
+      "native_session_offline": "这张图来自已结束的 Tavotto Run 会话。重新运行原命令后可继续对象级编辑。",
+      "native_session_unknown": "没有这个 Tavotto Run 会话。",
+      "no_figure_captured": "脚本跑完了，但没有捕获到任何 Matplotlib figure。",
       "no_project": "尚未打开项目",
       "not_parameterizable": "该面板不可参数化（没有对应脚本）",
       "open_project_failed": "打不开这个项目：{{reason}}",
@@ -2659,6 +2702,32 @@ export default interface Resources {
       "col": "列布局",
       "grid": "网格布局",
       "row": "行布局"
+    },
+    "nativeSession": {
+      "assetConflict": "这些图已经绑在另一条还在运行的会话上，本次运行没有接管它们：{{stems}}",
+      "cardAria": "Tavotto Run 会话：{{target}}",
+      "detach": "放手",
+      "resume": "继续运行脚本",
+      "resumeHint": "先把图恢复成脚本原来的样子再继续；你的编辑会在下一次停下来时重放",
+      "state": {
+        "barrierAfterError": "脚本出错后停下了；已经捕获的图仍然可以编辑",
+        "barrier_other": "已停下，{{count}} 张图可以编辑",
+        "continuing": "正在继续运行…",
+        "detached": "已放手，脚本正在自己跑完",
+        "ended": "已结束；捕获到的图：{{figures}} 张",
+        "endedWithCode": "已结束（退出码 {{code}}）；捕获到的图：{{figures}} 张",
+        "failed": "这条会话失败了",
+        "pending_confirmation": "等你确认",
+        "running_script": "脚本正在运行",
+        "starting_python": "正在启动你的 Python…",
+        "waiting_for_cli": "正在连接…",
+        "waiting_for_figure": "在等第一张图"
+      },
+      "terminate": "终止脚本",
+      "terminateConfirm": {
+        "body": "这会直接结束 {{target}}，脚本剩下的部分不会执行。已经放进画布的图会留下，但它们不再连着任何还在跑的进程。",
+        "title": "终止这个脚本？"
+      }
     },
     "panelBadge": {
       "cold": "冷启动中，可能需要几分钟…",

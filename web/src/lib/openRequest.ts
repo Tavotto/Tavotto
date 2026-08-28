@@ -21,6 +21,7 @@ import { addPanel, addRuntimePanel } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useFigurePickerStore } from '@/store/figurePickerStore'
+import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -37,6 +38,11 @@ export interface OpenRequest {
   /** 多 Figure 交接：脚本的项目相对路径（`tavotto open` 的 `?pick=` /
    *  `--pick-script`）。不静默选第一张——打开 Figure 选择器让用户挑。 */
   pick?: string | null
+  /** `tavotto run` 的一次性交接 ID（ADR 0021 §4）。**不透明串，不是凭据**
+   *  ——token 与端口都在那份 0600 的 descriptor 里，这边只拿得到 ID。
+   *  与 stem / pick **不互斥**：那两个说"打开哪张图"，这个说"有一条 native
+   *  会话在等你确认"。 */
+  native?: string | null
 }
 
 export type OpenOutcome =
@@ -45,6 +51,7 @@ export type OpenOutcome =
   | 'picker'           // 多 Figure：已打开 Figure 选择器
   | 'runtime-uncached' // 运行时图已登记但还没有预览，引导去素材库运行
   | 'project-only'     // 只交接了项目，没指定面板
+  | 'native-pending'   // `tavotto run` 的确认已排队，没有别的面板要落
   | 'missing'          // 项目里找不到这个 stem
   | 'no-project'       // 没有项目可落
   | 'failed'
@@ -75,13 +82,19 @@ export function readOpenRequestFromUrl(): OpenRequest | null {
     const params = new URLSearchParams(window.location.search)
     const stem = params.get('open')
     const pick = params.get('pick')
-    if (!stem && !pick) return null
+    // `?native=` 是 `tavotto run` 首启这一条路（壳的 `landing_query`）。
+    // 二次交接走 `tavotto:open` 事件——两条都必须带它，漏掉哪一条，那一条
+    // 上的 CLI 就一直挂在「Waiting for Tavotto desktop…」上直到超时。
+    const native = params.get('native')
+    if (!stem && !pick && !native) return null
     const url = new URL(window.location.href)
     url.searchParams.delete('open')
     url.searchParams.delete('pick')
+    url.searchParams.delete('native')
     window.history.replaceState(null, '', url.pathname + url.search + url.hash)
-    // stem 定得下来一张就不需要选择器（后端生产侧本来就互斥，这里同语义）
-    return stem ? { stem } : { pick }
+    // stem 定得下来一张就不需要选择器（后端生产侧本来就互斥，这里同语义）；
+    // native 与它们不互斥，单独带上
+    return { ...(stem ? { stem } : pick ? { pick } : {}), ...(native ? { native } : {}) }
   } catch {
     return null
   }
@@ -101,8 +114,24 @@ function selectExisting(fileId: string): boolean {
 export async function applyOpenRequest(req: OpenRequest): Promise<OpenOutcome> {
   const stem = (req.stem ?? '').trim()
   const pick = (req.pick ?? '').trim()
-  if (!stem && !pick && !req.project) return 'failed'
+  const native = (req.native ?? '').trim()
+  if (!stem && !pick && !native && !req.project) return 'failed'
   const ui = useUiStore.getState()
+
+  /**
+   * `tavotto run` 的确认屏排队。
+   *
+   * 与「打开哪张图」互不相干，所以**每条出口都要排**——包括项目没能打开的
+   * 那两条：确认屏自带项目路径 / 解释器 / 工作目录，attach 也不依赖界面此刻
+   * 开着哪个项目。不排的表现是那个终端一直挂到 attach 超时，而界面上什么都
+   * 没发生过。
+   *
+   * 顺序是硬的：**必须在 `proj.open()` 之后**——换项目会把 native 会话状态
+   * 整个换代掉（projectStore 的 resetForNewProject），排在前面等于白排。
+   */
+  const queueNative = () => {
+    if (native) void useNativeSessionStore.getState().receive(native)
+  }
 
   try {
     const proj = useProjectStore.getState()
@@ -111,18 +140,21 @@ export async function applyOpenRequest(req: OpenRequest): Promise<OpenOutcome> {
       // 换项目：projectStore.open 里已经先冲刷了当前文档的自动保存
       await proj.open(req.project)
     } else if (proj.phase !== 'open') {
+      queueNative()
       ui.setStatus(msg('handoff.noProject', undefined, 'project'), 'error')
-      return 'no-project'
+      return native ? 'native-pending' : 'no-project'
     } else {
       await useAssetStore.getState().load()
     }
   } catch (err) {
+    queueNative()
     ui.setStatus(
       msg('handoff.openFailed', { error: backendErrorText(err) }, 'project'),
       'error',
     )
     return 'failed'
   }
+  queueNative()
 
   // 多 Figure（`tavotto open script.py` 产出不止一张）：打开 Figure 选择器，
   // **绝不静默选第一张**——选择信息（脚本）由 CLI 带进来，挑哪张归用户。
@@ -131,6 +163,10 @@ export async function applyOpenRequest(req: OpenRequest): Promise<OpenOutcome> {
     useFigurePickerStore.getState().open(pick)
     return 'picker'
   }
+
+  // `tavotto run`：这次交接的全部内容就是那一屏确认，没有面板要落。
+  // （图要等用户确认、脚本跑到第一个屏障之后才存在。）
+  if (!stem && native) return 'native-pending'
 
   // `tavotto open <目录>`：只把图库换过来，不指定面板
   if (!stem) {
