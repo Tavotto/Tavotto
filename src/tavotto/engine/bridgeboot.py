@@ -79,8 +79,20 @@ PRIVATE_PKG = "tavotto_bridge_runtime"
 #: 所以它们**只在捕获之后**才装（见 `bridge_runner` 的两阶段装载）。
 ENGINE_SIBLINGS = ("figcapture", "patchspec", "pathgeom", "overrides", "manifest")
 
-#: 装载后必须还给用户的顶层名字（= ENGINE_SIBLINGS + 它们内部会平铺 import 的）
-_TOPLEVEL_TO_RESTORE = (*ENGINE_SIBLINGS, "figsession", "wireproto")
+#: 装载后必须还给用户的顶层名字（= ENGINE_SIBLINGS + **它们平铺 import 的
+#: 整条传递闭包**）。
+#:
+#: 漏一个的两种下场都很难查：用户项目里恰好有同名模块时，我们拿到的是**他
+#: 那份**（import 系统先查 sys.modules，根本不会走 sys.path），表现是一个
+#: 指向完全错误方向的 AttributeError；用户没有同名模块时，Tavotto 的那份会
+#: **留在他的顶层 `sys.modules` 里**——他之后 import 同名模块就再也拿不到
+#: 自己那份了。
+#:
+#: **这张表不靠人记得改**：`test_bridge_namespace.py` 从 AST 反推闭包并逐个
+#: 比对（与 `test_runtime_build.py` 对 PyInstaller spec 的判据同一形状）。
+#: 2026-08-28 加 `previewbudget` 时这张表漏过一次，是评审抓的不是门禁抓的
+#: ——那条门禁当时只查 `ENGINE_SIBLINGS`，查不到 figsession 平铺进来的这一层。
+_TOPLEVEL_TO_RESTORE = (*ENGINE_SIBLINGS, "figsession", "wireproto", "previewbudget")
 
 
 def drop_script_dir_from_sys_path(here: str) -> bool:
