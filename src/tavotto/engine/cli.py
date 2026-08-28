@@ -1,4 +1,4 @@
-"""`tavotto` 的子命令分派：`open`、`doctor` 与 `codex`。
+"""`tavotto` 的子命令分派：`open`、`run`、`doctor` 与 `codex`。
 
 **为什么单独一个模块。** 这两条命令是给别的程序调的（Codex 插件、安装器、
 编辑器），它们只需要纯标准库的那点逻辑，却曾经只能从 `app.main()` 进——
@@ -20,7 +20,7 @@ import json
 import sys
 
 #: 认得的子命令。放在这里是为了让「它是不是子命令」这个判断只有一处。
-COMMANDS = ("open", "doctor", "codex")
+COMMANDS = ("open", "run", "doctor", "codex")
 
 
 def use_utf8_streams() -> None:
@@ -55,6 +55,15 @@ def dispatch(argv: list[str]) -> int | None:
         from . import handoff
 
         return handoff.cli(argv[1:])
+    if argv[0] == "run":
+        # ADR 0021：Native Bridge 的产品入口（Beta）。用用户自己的 Python 跑
+        # 他的原脚本，只接管那个进程里的 Matplotlib Figure。
+        # **不 import Flask、不 import matplotlib**——这条命令要在用户敲下
+        # 回车之后立刻给出反馈（解释器找不到、目标不存在这类），付不起
+        # `app.py` 的冷启动。
+        from . import runcli
+
+        return runcli.cli(argv[1:])
     if argv[0] == "codex":
         # ADR 0012：安装 / 诊断 / 移除 Codex 集成。同样是纯标准库那一层——
         # 桌面设置页的按钮以后 spawn 的就是它，**不许另写一套安装器**。

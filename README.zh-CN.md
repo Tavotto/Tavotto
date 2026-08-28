@@ -190,6 +190,49 @@ tavotto open figures/                    # 或者整个图库
 模型建议的路径永远不等于权限。零配置第一次打开时，支持这项能力的 Codex 会把
 规范化后的本地目录展示给你确认；批准只在当前 Tavotto MCP 连接内有效。
 
+## 把现成的项目带进来 · `tavotto run`（Beta）
+
+`tavotto open` 假设的是 Tavotto 喜欢的形状：脚本挨着它的产物，都在一个图库目录
+里。真实的论文项目常常不是这样——一个 conda 环境、一个包、几个命令行参数：
+
+```sh
+conda activate paper
+python -m figures.fig3 --dataset run7
+```
+
+这一类，在你本来就在敲的那条命令前面加 `tavotto run --`：
+
+```sh
+tavotto run -- python figure.py
+tavotto run -- python figure.py --sample A --temperature 800
+tavotto run -- /path/to/paper/.venv/bin/python figure.py
+tavotto run -- python -m paper.figures.xps --sample A
+```
+
+Tavotto 用**你给的那条 Python 命令**去跑，只接管那个进程里创建的 Matplotlib
+Figure。解释器、工作目录、命令行参数、环境变量、`stdout` / `stdin`——一样都不
+重建、不接管。`savefig` 照常写它本来就会写的文件；Ctrl+C 照常打断你的脚本；
+`tavotto run` 返回的是**你脚本自己的退出码**。
+
+在 Tavotto 里编辑**不会改变你的脚本看到的东西**：
+
+```python
+ax.set_title("Script")
+plt.show()                          # 你在 Tavotto 里把标题改掉
+assert ax.get_title() == "Script"   # 通过——你的代码是执行权威
+```
+
+脚本启动**之前**，桌面上会问一次，写明解释器路径、工作目录和目标。
+**你确认之前，一行代码都不会跑。**
+
+> 这个模式**不是沙盒**：脚本拥有与你自己运行它时完全相同的权限。只运行你信任
+> 的代码。
+
+Beta，边界是明确的：只支持 Python 脚本或 `-m` 模块、只接管那一个进程里的图、
+不支持任意 shell 包装、不支持 Jupyter、不写回你的源码、不写回你脚本自己存出来
+的产物、需要桌面应用。完整契约、错误码与排障见
+[`docs/compatibility/tavotto-run.md`](docs/compatibility/tavotto-run.md)。
+
 ## 全部在本机运行
 
 渲染、合成、导出都是本地进程。Tavotto 不会把你的图、脚本、项目文件或数据上传到任何地方，

@@ -44,7 +44,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import depresolve, execspec, managedenv, pool, projectenv, runtime
+from . import depresolve, execspec, managedenv, pool, projectenv, runcodes, runtime
 
 LOG = logging.getLogger("tavotto.deprepair")
 
@@ -69,6 +69,10 @@ ERROR_MANAGED_CREATE_FAILED = "managed_env_create_failed"
 ERROR_MANAGED_BROKEN = "managed_env_broken"
 ERROR_PLAN_STALE = "repair_plan_stale"
 ERROR_BUSY = "dependency_install_busy"
+#: 环境被一条活跃的 `tavotto run` 会话占着（ADR 0021 §6）。**与 `ERROR_BUSY`
+#: 分开是必须的**：另一次安装等几十秒就好，而这一条要用户自己去结束那个
+#: 脚本——两件事的下一步动作完全不同，混成一个码就只能给一句含糊的「忙」。
+ERROR_IN_USE_BY_NATIVE = runcodes.ENVIRONMENT_IN_USE_BY_NATIVE_SESSION
 ERROR_ROUNDS_EXHAUSTED = "dependency_repair_rounds_exhausted"
 
 # ---------------------------------------------------------------------------
@@ -519,11 +523,24 @@ def install(plan_id: str, on_event=None) -> dict:
         with pool.mutating_environment(key, plan.python):
             return _run_install(plan, key, on_event, cancel_ev)
     except pool.EnvironmentBusy as exc:
-        raise RepairError(ERROR_BUSY, str(exc)) from exc
+        raise _busy_error(exc) from exc
     finally:
         with _lock:
             _cancels.pop(plan.plan_id, None)
             _plans.pop(plan.plan_id, None)  # 计划是一次性的
+
+
+def _busy_error(exc) -> "RepairError":
+    """`EnvironmentBusy` → `RepairError`，**把它的 code 带过来**。
+
+    `envlease` 用两个 code 区分两种忙（另一次安装 / 有 native 会话）。在这里
+    统统折成 `ERROR_BUSY` 的话，前端就只能给一句「忙，稍后再试」——而"稍后"
+    对 native 那一条永远不会到来：那个脚本要用户自己去结束。
+    """
+    code = getattr(exc, "code", "")
+    if code == ERROR_IN_USE_BY_NATIVE:
+        return RepairError(ERROR_IN_USE_BY_NATIVE, str(exc))
+    return RepairError(ERROR_BUSY, str(exc))
 
 
 def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.Event) -> dict:
@@ -747,7 +764,7 @@ def rebuild_managed(project: str | Path, on_event=None) -> dict:
             _emit(REBUILD_PROGRESS_ID, STATE_DONE, on_event, result=result)
             return result
     except pool.EnvironmentBusy as exc:
-        raise RepairError(ERROR_BUSY, str(exc)) from exc
+        raise _busy_error(exc) from exc
     finally:
         with _lock:
             _cancels.pop(REBUILD_PROGRESS_ID, None)

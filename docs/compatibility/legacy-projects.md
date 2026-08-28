@@ -23,9 +23,9 @@ Layer 3   受控依赖修复（一键安装）                   ← 现在在�
 Layer 4   用户自己选一个 Python / Conda 环境
           设置 →「渲染环境」，可以只对这个项目生效
              ↓ 环境对了但**执行语义**仍然不兼容
-Layer 5   tavotto run / native 执行
-          原 cwd、原 argv、原 env、python -m、自定义启动器
-          —— 尚未实施，见文末「决策门」
+Layer 5   tavotto run / native 执行（Beta）
+          原 cwd、原 argv、原 env、python -m —— 用你自己的 Python 跑
+          你自己的命令，Tavotto 只接管那个进程里的 Figure
 ```
 
 ## Layer 1：内置渲染环境
@@ -187,7 +187,7 @@ TAVOTTO_WORKER_PYTHON  >  设置里指定的  >  这个项目记住的  >  内�
 诊断包的 `project.environment_resolution` 一段回答「为什么用了这个 Python」：
 来源、是不是自动接手、因为缺哪个包、那个环境的版本。
 
-## Layer 5：`tavotto run`（尚未实施）
+## Layer 5：`tavotto run`（Beta，2026-08-28 落地）
 
 Layer 2–4 解决的是「**环境里缺东西**」。还有一类失败是「**执行语义不同**」：
 
@@ -197,9 +197,28 @@ Layer 2–4 解决的是「**环境里缺东西**」。还有一类失败是「*
 * 必须用 `python -m package.figure` 而不是 `python figure.py`；
 * 有自己的启动器 / Makefile / 任务运行器。
 
-这些换个解释器解决不了，需要按项目原本的方式运行（ADR 0014 的 native 档）。
+前四条换个解释器解决不了——需要**按项目原本的方式运行**。做法是把你本来就在
+敲的那条命令原样交给 Tavotto：
 
-**决策门**：只有当真实数据表明剩余失败仍然大量集中在 cwd / argv / shell env /
-`python -m` / 自定义启动语义上时，才恢复 `tavotto run`。如果绝大多数项目在
-Layer 1–4 就能正常打开，它继续延期——native 执行放弃的是沙盒保证，那个代价
-不该为了长尾去付。
+```sh
+tavotto run -- python -m paper.figures.xps --sample A
+```
+
+解释器、cwd、argv、env、stdin/stdout 全部原样；Tavotto 只接管**那个进程里**
+创建的 Matplotlib Figure。完整契约见
+[`tavotto-run.md`](tavotto-run.md)，裁决见 [ADR 0021](../adr/0021-tavotto-run-product-contract.md)。
+
+**它与前四层的关系是"另一条路"，不是"第五次重试"**：
+
+* Layer 1–4 是 Tavotto **替你**挑一个能跑的环境，全程 safe（沙盒 cwd、
+  savefig 吞掉、写/删守卫）；
+* Layer 5 是**你自己**给出那条命令，Tavotto 只挂钩子。它**放弃了沙盒保证**
+  ——脚本拥有与你直接运行它时完全相同的权限。
+
+所以两者之间**绝不自动升级**：safe 失败不会静默改跑 native（ADR 0014
+「不做的事」），native 面板也不会在会话结束后悄悄退回 safe worker
+（ADR 0021 §9.1）。**最后一条（Makefile / 任意任务运行器）这一版仍然不支持**
+——那条路的解析与注入面是无界的，支持一半比不支持更坏。
+
+第五条剩下的那一类（`make` / `bash` 包装 / `poetry run` / `conda run`）
+会得到一个明确的 `unsupported_run_command`，不会假装跑起来。

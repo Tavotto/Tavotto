@@ -13,7 +13,6 @@ import contextlib
 import hashlib
 import json
 import logging
-import os
 import re
 import shutil
 import subprocess
@@ -22,7 +21,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import config, execspec, patchspec, projectenv, runtime
+from . import config, envlease, execspec, patchspec, projectenv, runtime
 
 LOG = logging.getLogger("tavotto.engine")
 
@@ -1735,28 +1734,18 @@ def _schedule_prune() -> None:
     threading.Thread(target=prune_engine_cache, daemon=True, name="mm-engine-cache-prune").start()
 
 
-#: 正在被改动（pip install / 建 venv）的环境。key 是**规范化的解释器路径**，
-#: 受管环境还没建出来时是 `<目标>:<项目指纹>`——粒度是**一个环境**，不是全局：
-#: A 项目在装包，B 项目的健康 worker 照常工作。
-_mutating: dict[str, str] = {}
-_mutating_lock = threading.Lock()
-
-#: 环境正在被改动时新起会话的 code（可恢复，不是故障）。
-ENVIRONMENT_MUTATING = "environment_mutating"
-
-
-class EnvironmentBusy(RuntimeError):
-    """这个环境上已经有一个改动在跑（同一环境不允许并发 pip）。"""
-
-
-def env_key_of(python: str) -> str:
-    """解释器路径 → 环境 key（与 `deprepair._env_key` 同一份归一）。"""
-    return os.path.normcase(os.path.normpath(os.path.abspath(str(python))))
-
-
-def is_mutating(python: str) -> bool:
-    with _mutating_lock:
-        return bool(python) and env_key_of(python) in _mutating
+#: 环境占用的**唯一一张表**在 `envlease`（ADR 0021 §6）。本模块从 2026-08-28
+#: 起是它的消费者：`_mutating` 曾经住在这里，而 native 会话不经过池，那把锁
+#: 对它**机制上不可见**——不是漏了一个分支，是实现方式决定的。搬走之后
+#: safe worker / native 会话 / pip 安装问的是同一张表。
+#:
+#: 下面这几个名字是**兼容外壳**，语义逐条不变（`tests/test_dependency_repair.py`
+#: 的既有用例一个字没改就该继续绿）。
+EnvironmentBusy = envlease.EnvironmentBusy
+ENVIRONMENT_MUTATING = envlease.ENVIRONMENT_MUTATING
+env_key_of = envlease.env_key_of
+is_mutating = envlease.is_mutating
+note_mutating_python = envlease.note_mutating_python
 
 
 def shutdown_workers_using(python: str) -> int:
@@ -1766,6 +1755,11 @@ def shutdown_workers_using(python: str) -> int:
     worker 的 `sys.modules`、已加载的动态库、import 缓存**都不会**跟着变。
     让它继续接渲染请求，用户看到的是「装完了还是老错误」或者更糟——半新
     半旧的一次 import。
+
+    **只收得掉池里的**。native 会话的进程属主是 `tavotto run` CLI，不是
+    sidecar——它由 `envlease` 那条反方向的拒绝挡住（有活跃 native 会话时
+    根本不允许开始安装），而不是被这里杀掉。杀用户正在跑的脚本从来不是
+    一个可以由"我要装个包"触发的动作。
     """
     with _lock:
         keys = [k for k, w in _workers.items() if same_python(w.python, python)]
@@ -1779,38 +1773,19 @@ def shutdown_workers_using(python: str) -> int:
 def mutating_environment(key: str, python: str = ""):
     """安装期间独占一个环境：挡住新会话、先把旧会话收掉。
 
-    `key` 由调用方给（受管环境还没建出来时它还没有解释器路径）。解释器路径
-    已知时**两个 key 都登记**，否则「建完 venv 再装包」那段窗口里，另一个
-    请求可以按解释器路径拿到锁。
+    独占语义整个在 `envlease.mutating()`（三方共用的那一份）；本函数只多做
+    池自己的那件事——**把池里用这个解释器的 worker 收掉**。
     """
-    keys = {k for k in (key, env_key_of(python) if python else "") if k}
-    with _mutating_lock:
-        busy = [k for k in keys if k in _mutating]
-        if busy:
-            raise EnvironmentBusy(f"这个环境上已经有一个安装在进行中: {busy[0]}")
-        for k in keys:
-            _mutating[k] = key
-    try:
+    with envlease.mutating(key, python):
         if python:
             shutdown_workers_using(python)
         yield
-    finally:
-        with _mutating_lock:
-            # **按归属清，不是按进入时那几个 key 清**：受管环境是先拿锁、
-            # 后建出解释器的，那条路径上 `note_mutating_python()` 会再登记
-            # 一个 key。只清进入时那几个的话，解释器那条会永远留在表里，
-            # 之后对这个环境的任何操作都被判成「正在安装」。
-            for k in [k for k, owner in _mutating.items() if owner == key]:
-                _mutating.pop(k, None)
 
 
-def note_mutating_python(key: str, python: str) -> None:
-    """受管环境**建出来之后**把解释器路径也登记进同一次改动。"""
-    if not python:
-        return
-    with _mutating_lock:
-        if key in _mutating:
-            _mutating[env_key_of(python)] = key
+def safe_workers_using(python: str) -> int:
+    """池里有几个 worker 在用这条解释器（`envlease.state_of` 的输入）。"""
+    with _lock:
+        return sum(1 for w in _workers.values() if same_python(w.python, python))
 
 
 def get(script_name: str, figures_dir: str, entry: str) -> EngineWorker:

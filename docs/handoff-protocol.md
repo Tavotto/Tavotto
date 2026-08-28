@@ -12,6 +12,7 @@ Agent，以及用户自己在终端里敲的那一行。协议版本 **v1**（`p
 ```
 tavotto open <产物|脚本|目录> [--json] [--no-launch] [--desktop|--browser] [--port N]
                               [--no-probe] [--stem <名字>]
+tavotto run  [--project P] [--quiet] [--status-file F] -- <python> <脚本|-m 模块> [参数…]
 tavotto doctor [--json] [--write-manifest|--remove-manifest]
 ```
 
@@ -21,6 +22,18 @@ tavotto doctor [--json] [--write-manifest|--remove-manifest]
 * `--json` —— 输出一行机器可读 JSON。**成功和失败都有**，失败那行带稳定的 `code`。
 * `--no-probe` —— `.py` 目标静态解不出产出时**不**试运行（只按现有登记打开）。
 * `--stem <名字>` —— 脚本产出多张图时显式选哪张（只对 `.py` 目标有效）。
+
+`tavotto run` 是**另一条命令、另一套语义**（Beta，ADR 0021）：它不"交接一张
+已经画好的图"，而是**用你自己的 Python 跑你自己的脚本**，Tavotto 接管那个
+进程里创建的 Figure。完整契约见
+[`docs/compatibility/tavotto-run.md`](compatibility/tavotto-run.md)。两条与本文
+其余部分不同的地方值得在这里点名：
+
+* **它没有 `--json`。** stdout 是用户程序的（`print` / `tqdm` / 二进制输出都
+  在那条流上），承诺"只有一行 JSON"与那条语义直接冲突。机器可读结果走
+  `--status-file <路径>`（原子写、不含 token、argv 只记数量）。
+* **退出码不是 0/1 两档**：命令写错 = 2，用户取消 = 3，桌面不可用/连接失败
+  = 4，界面上点了"终止脚本" = 5；**脚本一旦启动，返回的就是它自己的退出码**。
 
 ### `.py` 目标的 safe probe（2026-08-26，Compatibility Bridge PR 1）
 
@@ -250,6 +263,28 @@ Windows 上安装目录可能在 Program Files（只读），卸载后也会被�
 * **不把 Windows 注册表当唯一依据。** 企业策略能锁它。它只是第 5 条补充，
   用来发现装到非默认位置的安装。
 * **不要求管理员权限。** 安装是 currentUser，清单落在用户配置目录。
+
+---
+
+## 2.5 桌面壳的 argv 契约
+
+`tavotto open` / `tavotto run` 唤起桌面时用的是同一份 argv 契约。生产侧唯一
+出处是 `engine/handoff.desktop_argv()`，消费侧是
+`src-tauri/src/main.rs::parse_open_args()`——**严格同源对**，两侧各有一条用例
+（`tests/test_handoff.py` 与 `main.rs` 的 `#[test]`）。
+
+```
+Tavotto --open <项目目录> [--stem <名字> | --pick-script <脚本相对路径>]
+                          [--native-session <32 位十六进制 ID>]
+```
+
+* `--stem` 与 `--pick-script` **互斥**（定得下来一张就不需要选择器）；
+* `--native-session` 与它们**不互斥**——那两个说的是"打开哪张图"，这个说的是
+  "有一条 `tavotto run` 会话在等你确认"；
+* **argv 上只有一个不透明 ID**。token、端口、解释器路径、完整命令全部在
+  `<数据目录>/session/native/<ID>.json` 里（目录 0700、文件 0600、一次性、
+  有时效）。理由很直接：同一台机器上 `ps` 对别的用户可见，而那个文件不是
+  （ADR 0021 §4，与 ADR 0008 的本机会话凭据同一个安全论证）。
 
 ---
 

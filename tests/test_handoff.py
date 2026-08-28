@@ -390,6 +390,49 @@ def test_desktop_argv_contract():
     ]
 
 
+def test_desktop_argv_carries_the_native_session_id():
+    """`tavotto run` 的交接（ADR 0021 §4）。**与 parse_open_args 同源。**
+
+    与 `--stem` / `--pick-script` **不互斥**：那两个说的是"打开哪张图"，
+    这个说的是"有一条 native 会话在等你确认"。
+    """
+    nid = "0123456789abcdef0123456789abcdef"
+    assert handoff.desktop_argv("/A/Tavotto", handoff.Target("/p", None, None, nid)) == [
+        "/A/Tavotto",
+        "--open",
+        "/p",
+        "--native-session",
+        nid,
+    ]
+    assert handoff.desktop_argv("/A/Tavotto", handoff.Target("/p", "Fig1", None, nid)) == [
+        "/A/Tavotto",
+        "--open",
+        "/p",
+        "--stem",
+        "Fig1",
+        "--native-session",
+        nid,
+    ]
+
+
+def test_the_desktop_argv_never_carries_a_credential():
+    """**argv 上只有不透明 ID**，token / 端口 / 解释器一律不上去。
+
+    同一台机器上 `ps` / `wmic process` 对**别的用户**可见，而那份 0600 的
+    descriptor 文件不是（ADR 0021 §4，与 ADR 0008 的本机会话凭据同一个论证）。
+    判据按**参数名**扫而不是按某个具体值——加一个 `--native-token` 就红，
+    不用有人记得回来补一条。
+    """
+    nid = "0123456789abcdef0123456789abcdef"
+    argv = handoff.desktop_argv("/A/Tavotto", handoff.Target("/p", "Fig1", None, nid))
+    allowed = {"--open", "--stem", "--pick-script", "--native-session"}
+    flags = {a for a in argv if a.startswith("--")}
+    assert flags <= allowed, f"桌面 argv 里多了不该有的参数: {sorted(flags - allowed)}"
+    blob = " ".join(argv).lower()
+    for forbidden in ("token", "secret", "port", "password", "credential"):
+        assert forbidden not in blob, f"桌面 argv 里出现了 {forbidden!r}: {argv}"
+
+
 def test_launch_desktop_spawns_the_app():
     seen = []
     out = handoff.launch(

@@ -542,6 +542,48 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   身份断言兜底（源码判据在 `test_bridge_thread_model.py`）。
 - **spike 不是产品**：`python -m tavotto.engine.bridge_spike` 没有稳定契约、
   没有接进 `tavotto` CLI，别在文档 / 官网 / release notes 里提它。
+  **产品入口是 `tavotto run`**（下一节）。
+
+## `tavotto run` 的控制面（ADR 0021，Beta）
+
+进程关系是**倒过来的**——用户的 Python 是 **CLI 的子进程**，sidecar 只是
+通过一条认证 relay 连上去：
+
+```text
+用户终端 → tavotto run CLI ─┬─ 用户的 Python（Bridge Runner）
+                            └─ Tavotto 桌面 sidecar
+```
+
+| 模块 | 职责 |
+|---|---|
+| `runcodes.py` | **稳定错误码 + 中英文案的唯一出处**；`RunError`；退出码闭集 |
+| `runspec.py` | 严格 invocation 解析（`--` 强制）、解释器体检、cwd vs project_root、status file |
+| `runcli.py` | `tavotto run` 本身：拥有 stdio / env / cwd / 子进程，按顺序编排 |
+| `nativehandoff.py` | 一次性交接凭据（0700 目录 / 0600 文件 / 墓碑 / 过期 / realpath 判据） |
+| `nativerelay.py` | 两侧认证 + **纯字节**转发。**不许 import 任何引擎语义** |
+| `nativesession.py` | sidecar 侧注册表 + **单 reader** 传输 + 状态闭集 + live route |
+| `nativeperm.py` | "记住这个项目和这个 Python"（绑定 项目 × 解释器 × schema） |
+| `envlease.py` | **环境占用的唯一一张表**：safe worker / native 会话 / pip 安装三方共用 |
+| `enginesession.py` | **"谁来渲染"的唯一判据**（按 `execution_profile` 路由） |
+
+改动纪律（每一条都有用例，改之前先看它们）：
+
+- **CLI 必须继续拥有用户的 Python。** 让 sidecar 去 spawn 会同时失掉
+  stdin / stdout / cwd / env / Ctrl+C 五样（ADR 0021 §1）。
+- **确认之前一行用户代码都不许跑。** 顺序是产品语义的一部分
+  （`test_not_a_single_line_runs_before_the_user_confirms`）。
+- **Tavotto 的话只写 stderr。** stdout 是用户程序的——所以也没有 `--json`。
+- **`creationflags` 必须显式声明是哪一类**：GUI 拥有的隐藏子进程用
+  `CREATE_NO_WINDOW`，CLI 拥有的控制台子进程用 `INHERIT_CONSOLE`
+  （`test_windows_regressions` 按闭集判）。
+- **屏障释放必经 `bridge_runner.release_barrier()`**：保存 patch → 恢复成
+  脚本原样。下一个屏障 `rebase()` 重新采基准 + 重放。任何绕过它的释放路径
+  都会让**故障路径上的语义比正常路径更宽松**（ADR 0021 §8.1）。
+- **不许再写第二处 `pool.get()` 分支**：`app.py` 里所有"谁来渲染"都经
+  `enginesession.resolve()`（结构性守卫
+  `test_native_api::test_the_resolver_is_the_only_place_that_branches`）。
+- **native 会话绝不进池**：LRU 淘汰会杀掉用户正在跑的脚本。
+- **环境占用只有 `envlease` 一张表**：加第二张就保证了它们迟早不一致。
 
 ## 布局层（R18）
 

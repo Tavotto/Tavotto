@@ -237,6 +237,52 @@ A path suggested by the model is never treated as permission. On a zero-config f
 open, a capable Codex host shows the canonical local directory for you to approve;
 that approval lasts only for the current Tavotto MCP connection.
 
+## Bring an existing project · `tavotto run` (Beta)
+
+`tavotto open` assumes the shape Tavotto likes: a script beside its output, inside a
+figure library. Real papers often look different — a conda environment, a package,
+command-line arguments:
+
+```sh
+conda activate paper
+python -m figures.fig3 --dataset run7
+```
+
+For those, put `tavotto run --` in front of the command you already use:
+
+```sh
+tavotto run -- python figure.py
+tavotto run -- python figure.py --sample A --temperature 800
+tavotto run -- /path/to/paper/.venv/bin/python figure.py
+tavotto run -- python -m paper.figures.xps --sample A
+```
+
+Tavotto uses the Python command you provide and attaches to Matplotlib figures created
+in that Python process. Your interpreter, your working directory, your arguments, your
+environment, your `stdout`/`stdin` — none of them are rebuilt or intercepted. `savefig`
+still writes the files it always wrote. Ctrl+C still interrupts your script, and
+`tavotto run` returns your script's own exit code.
+
+Editing in Tavotto does **not** change what your script sees:
+
+```python
+ax.set_title("Script")
+plt.show()                          # you rename the title in Tavotto
+assert ax.get_title() == "Script"   # passes — your code is the authority
+```
+
+Before the script starts, the desktop app asks once, showing the interpreter path, the
+working directory and the target. **Nothing runs until you confirm.**
+
+> This mode is **not a sandbox**. The script has exactly the permissions it has when
+> you run it yourself. Only run code you trust.
+
+Beta, with explicit edges: Python script or `-m` module only, figures created in that
+one process, no arbitrary shell wrappers, no Jupyter, no writing back to your source
+or to your script's own output files, and the desktop app is required. Full contract,
+error codes and troubleshooting:
+[`docs/compatibility/tavotto-run.md`](docs/compatibility/tavotto-run.md).
+
 ## Everything runs on your machine
 
 Rendering, composition and export are local processes. Tavotto does not upload your

@@ -94,12 +94,13 @@
       "browser_eligible": true,
       "smoke": true,
       "notes": "AI 最常见的输出形态：pyplot + plt.show()，一次 savefig 都没有。桌面与浏览器必须都能捕获（2026-08-21 之前只有浏览器能）。静态扫描解不出（没有存图调用），走试运行探测。 2026-08-26（Compatibility Bridge PR 1）升级 full_support：素材库普通入口（图/脚本两区 + 运行并发现图）与 `tavotto open script.py` 自动 safe probe 落地，show-only 脚本经真实产品路由可达（product_routes 逐条走真实端点/真实 CLI 验证，绝不直接调内部 probe）。",
+      "native_eligible": true,
       "product_routes": {
         "desktop_project": true,
         "cli_open": true,
         "safe_probe": true,
         "browser_playground": true,
-        "native_run": "not_implemented"
+        "native_run": true
       }
     },
     {
@@ -476,12 +477,13 @@
       "browser_eligible": false,
       "smoke": false,
       "notes": "一个脚本三张图。 2026-08-26（Compatibility Bridge PR 1）升级 full_support：静态扫描仍然解不开这类循环（记录在案），但试运行探测已是普通产品路径（素材库脚本区 + `tavotto open`），product_routes 逐条走真实端点/真实 CLI 验证。",
+      "native_eligible": true,
       "product_routes": {
         "desktop_project": true,
         "cli_open": true,
         "safe_probe": true,
         "browser_playground": "not_applicable",
-        "native_run": "not_implemented"
+        "native_run": true
       }
     },
     {
@@ -525,12 +527,13 @@
       "browser_eligible": false,
       "smoke": false,
       "notes": "2026-08-26（Compatibility Bridge PR 1）升级 full_support：静态扫描仍然解不开这类循环（记录在案），但试运行探测已是普通产品路径（素材库脚本区 + `tavotto open`），product_routes 逐条走真实端点/真实 CLI 验证。",
+      "native_eligible": true,
       "product_routes": {
         "desktop_project": true,
         "cli_open": true,
         "safe_probe": true,
         "browser_playground": "not_applicable",
-        "native_run": "not_implemented"
+        "native_run": true
       }
     },
     {
@@ -574,12 +577,13 @@
       "browser_eligible": false,
       "smoke": false,
       "notes": "2026-08-26（Compatibility Bridge PR 1）升级 full_support：静态扫描仍然解不开这类循环（记录在案），但试运行探测已是普通产品路径（素材库脚本区 + `tavotto open`），product_routes 逐条走真实端点/真实 CLI 验证。",
+      "native_eligible": true,
       "product_routes": {
         "desktop_project": true,
         "cli_open": true,
         "safe_probe": true,
         "browser_playground": "not_applicable",
-        "native_run": "not_implemented"
+        "native_run": true
       }
     },
     {
@@ -839,12 +843,13 @@
       "browser_eligible": false,
       "smoke": false,
       "notes": "2026-08-26（Compatibility Bridge PR 1）升级 full_support：静态扫描仍然解不开这类循环（记录在案），但试运行探测已是普通产品路径（素材库脚本区 + `tavotto open`），product_routes 逐条走真实端点/真实 CLI 验证。",
+      "native_eligible": true,
       "product_routes": {
         "desktop_project": true,
         "cli_open": true,
         "safe_probe": true,
         "browser_playground": "not_applicable",
-        "native_run": "not_implemented"
+        "native_run": true
       }
     },
     {
@@ -1064,12 +1069,13 @@
       "browser_eligible": true,
       "smoke": true,
       "notes": "三张 pyplot Figure 全无 savefig，中间还 plt.close() 过一次。fallback stem 必须确定、稳定、互不相同，且**不按 figure 号编号**——按号编的话这里就会跳号。 2026-08-26（Compatibility Bridge PR 1）升级 full_support：素材库普通入口（图/脚本两区 + 运行并发现图）与 `tavotto open script.py` 自动 safe probe 落地，show-only 脚本经真实产品路由可达（product_routes 逐条走真实端点/真实 CLI 验证，绝不直接调内部 probe）。",
+      "native_eligible": true,
       "product_routes": {
         "desktop_project": true,
         "cli_open": true,
         "safe_probe": true,
         "browser_playground": true,
-        "native_run": "not_implemented"
+        "native_run": true
       }
     },
     {
@@ -1113,12 +1119,13 @@
       "browser_eligible": false,
       "smoke": false,
       "notes": "第二张的 fallback stem 必须是 `<脚本名>-2`。 2026-08-26（Compatibility Bridge PR 1）升级 full_support：素材库普通入口（图/脚本两区 + 运行并发现图）与 `tavotto open script.py` 自动 safe probe 落地，show-only 脚本经真实产品路由可达（product_routes 逐条走真实端点/真实 CLI 验证，绝不直接调内部 probe）。",
+      "native_eligible": true,
       "product_routes": {
         "desktop_project": true,
         "cli_open": true,
         "safe_probe": true,
         "browser_playground": "not_applicable",
-        "native_run": "not_implemented"
+        "native_run": true
       }
     },
     {
@@ -1162,12 +1169,13 @@
       "browser_eligible": false,
       "smoke": false,
       "notes": "第三张的 fallback stem 必须是 `<脚本名>-3`（不是 -4：中间那次plt.close() 让 figure 号跳到 4）。 2026-08-26（Compatibility Bridge PR 1）升级 full_support：素材库普通入口（图/脚本两区 + 运行并发现图）与 `tavotto open script.py` 自动 safe probe 落地，show-only 脚本经真实产品路由可达（product_routes 逐条走真实端点/真实 CLI 验证，绝不直接调内部 probe）。",
+      "native_eligible": true,
       "product_routes": {
         "desktop_project": true,
         "cli_open": true,
         "safe_probe": true,
         "browser_playground": "not_applicable",
-        "native_run": "not_implemented"
+        "native_run": true
       }
     },
     {
@@ -5702,12 +5710,13 @@
       "browser_eligible": true,
       "smoke": true,
       "notes": "双曲线 + 图例——pyplot 状态机 + plt.show()，无 savefig——桌面靠 pyplot 兜底捕获。 2026-08-26（Compatibility Bridge PR 1）升级 full_support：素材库普通入口（图/脚本两区 + 运行并发现图）与 `tavotto open script.py` 自动 safe probe 落地，show-only 脚本经真实产品路由可达（product_routes 逐条走真实端点/真实 CLI 验证，绝不直接调内部 probe）。",
+      "native_eligible": true,
       "product_routes": {
         "desktop_project": true,
         "cli_open": true,
         "safe_probe": true,
         "browser_playground": true,
-        "native_run": "not_implemented"
+        "native_run": true
       }
     },
     {
@@ -5844,12 +5853,13 @@
       "browser_eligible": true,
       "smoke": false,
       "notes": "散点 + 拟合线——pyplot 状态机 + plt.show()，无 savefig——桌面靠 pyplot 兜底捕获。 2026-08-26（Compatibility Bridge PR 1）升级 full_support：素材库普通入口（图/脚本两区 + 运行并发现图）与 `tavotto open script.py` 自动 safe probe 落地，show-only 脚本经真实产品路由可达（product_routes 逐条走真实端点/真实 CLI 验证，绝不直接调内部 probe）。",
+      "native_eligible": true,
       "product_routes": {
         "desktop_project": true,
         "cli_open": true,
         "safe_probe": true,
         "browser_playground": true,
-        "native_run": "not_implemented"
+        "native_run": true
       }
     },
     {
@@ -5976,12 +5986,13 @@
       "browser_eligible": true,
       "smoke": false,
       "notes": "带数值标签的柱状图——pyplot 状态机 + plt.show()，无 savefig——桌面靠 pyplot 兜底捕获。 2026-08-26（Compatibility Bridge PR 1）升级 full_support：素材库普通入口（图/脚本两区 + 运行并发现图）与 `tavotto open script.py` 自动 safe probe 落地，show-only 脚本经真实产品路由可达（product_routes 逐条走真实端点/真实 CLI 验证，绝不直接调内部 probe）。",
+      "native_eligible": true,
       "product_routes": {
         "desktop_project": true,
         "cli_open": true,
         "safe_probe": true,
         "browser_playground": true,
-        "native_run": "not_implemented"
+        "native_run": true
       }
     },
     {
@@ -6088,12 +6099,13 @@
       "browser_eligible": true,
       "smoke": false,
       "notes": "imshow + 色条——pyplot 状态机 + plt.show()，无 savefig——桌面靠 pyplot 兜底捕获。 2026-08-26（Compatibility Bridge PR 1）升级 full_support：素材库普通入口（图/脚本两区 + 运行并发现图）与 `tavotto open script.py` 自动 safe probe 落地，show-only 脚本经真实产品路由可达（product_routes 逐条走真实端点/真实 CLI 验证，绝不直接调内部 probe）。",
+      "native_eligible": true,
       "product_routes": {
         "desktop_project": true,
         "cli_open": true,
         "safe_probe": true,
         "browser_playground": true,
-        "native_run": "not_implemented"
+        "native_run": true
       }
     },
     {
@@ -6210,12 +6222,13 @@
       "browser_eligible": true,
       "smoke": false,
       "notes": "曲线 + annotate 箭头——pyplot 状态机 + plt.show()，无 savefig——桌面靠 pyplot 兜底捕获。 2026-08-26（Compatibility Bridge PR 1）升级 full_support：素材库普通入口（图/脚本两区 + 运行并发现图）与 `tavotto open script.py` 自动 safe probe 落地，show-only 脚本经真实产品路由可达（product_routes 逐条走真实端点/真实 CLI 验证，绝不直接调内部 probe）。",
+      "native_eligible": true,
       "product_routes": {
         "desktop_project": true,
         "cli_open": true,
         "safe_probe": true,
         "browser_playground": true,
-        "native_run": "not_implemented"
+        "native_run": true
       }
     },
     {
@@ -6352,12 +6365,13 @@
       "browser_eligible": true,
       "smoke": false,
       "notes": "均值曲线 + 误差带——pyplot 状态机 + plt.show()，无 savefig——桌面靠 pyplot 兜底捕获。 2026-08-26（Compatibility Bridge PR 1）升级 full_support：素材库普通入口（图/脚本两区 + 运行并发现图）与 `tavotto open script.py` 自动 safe probe 落地，show-only 脚本经真实产品路由可达（product_routes 逐条走真实端点/真实 CLI 验证，绝不直接调内部 probe）。",
+      "native_eligible": true,
       "product_routes": {
         "desktop_project": true,
         "cli_open": true,
         "safe_probe": true,
         "browser_playground": true,
-        "native_run": "not_implemented"
+        "native_run": true
       }
     },
     {
@@ -6484,12 +6498,13 @@
       "browser_eligible": true,
       "smoke": false,
       "notes": "直方图——pyplot 状态机 + plt.show()，无 savefig——桌面靠 pyplot 兜底捕获。 2026-08-26（Compatibility Bridge PR 1）升级 full_support：素材库普通入口（图/脚本两区 + 运行并发现图）与 `tavotto open script.py` 自动 safe probe 落地，show-only 脚本经真实产品路由可达（product_routes 逐条走真实端点/真实 CLI 验证，绝不直接调内部 probe）。",
+      "native_eligible": true,
       "product_routes": {
         "desktop_project": true,
         "cli_open": true,
         "safe_probe": true,
         "browser_playground": true,
-        "native_run": "not_implemented"
+        "native_run": true
       }
     },
     {
@@ -6604,12 +6619,13 @@
       "browser_eligible": true,
       "smoke": false,
       "notes": "左右两块面板——pyplot 状态机 + plt.show()，无 savefig——桌面靠 pyplot 兜底捕获。 2026-08-26（Compatibility Bridge PR 1）升级 full_support：素材库普通入口（图/脚本两区 + 运行并发现图）与 `tavotto open script.py` 自动 safe probe 落地，show-only 脚本经真实产品路由可达（product_routes 逐条走真实端点/真实 CLI 验证，绝不直接调内部 probe）。",
+      "native_eligible": true,
       "product_routes": {
         "desktop_project": true,
         "cli_open": true,
         "safe_probe": true,
         "browser_playground": true,
-        "native_run": "not_implemented"
+        "native_run": true
       }
     },
     {
