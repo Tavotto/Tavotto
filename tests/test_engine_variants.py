@@ -14,7 +14,7 @@ import pymupdf
 import pytest
 
 from tavotto import app as m
-from tavotto.engine import patchspec, pool as engine_pool
+from tavotto.engine import patchspec, pool as engine_pool, previewbudget
 
 
 @pytest.fixture
@@ -46,12 +46,18 @@ class _FakeWorker:
         self.previews: list[dict] = []
         self._png = png_path
 
+    #: 这个假 worker 要装成哪一档预览（None = 装成不认识 `preview` 的老 worker）
+    preview: dict | None = None
+
     def override(self, stem, patches, preview_dpi=None, inline_svg=False):
         self.renders.append(
             {"patches": patches, "preview_dpi": preview_dpi, "inline_svg": inline_svg}
         )
         resp = {"manifest": {"elements": []}, "warnings": []}
-        if inline_svg:
+        if self.preview is not None:
+            resp["preview"] = self.preview
+        raster = (self.preview or {}).get("mode") == previewbudget.MODE_RASTER
+        if inline_svg and not raster:
             # worker 把刚写完的那份读回来；这里用 patches 做指纹，好断言配对
             resp["svg"] = f"<svg data-variant='{len(patches)}'/>"
         return resp
@@ -129,6 +135,50 @@ def test_inline_svg_pairs_with_the_manifest_of_the_same_call(client, tmp_path, m
     )
     assert one.get_json()["svg"] == "<svg data-variant='1'/>"
     assert two.get_json()["svg"] == "<svg data-variant='2'/>"
+
+
+# --------------------- 预览表示法（ADR 0022 / issue #181） --------------------
+
+
+def test_render_passes_the_preview_verdict_through(client, tmp_path, monkeypatch):
+    """`preview` 必须原样透到前端。
+
+    没有它，前端只看得到「有没有 svg」，而「没有 svg」有两种成因——老后端
+    不实现 inline_svg，和引擎按硬闸主动不读。两者要走完全不同的路（前者保留
+    上一版画面，后者切位图预览），猜错任何一个都是用户可见的错。
+    """
+    _open(client, tmp_path, "verdict")
+    worker = _FakeWorker()
+    worker.preview = previewbudget.metadata(
+        svg_bytes=126_132_735,
+        mode=previewbudget.MODE_RASTER,
+        reason=previewbudget.REASON_SVG_HARD_LIMIT,
+    )
+    _stub_engine(monkeypatch, worker)
+
+    body = client.post(
+        "/api/engine/render", json={"id": "p1.pdf", "patches": [], "inline_svg": True}
+    ).get_json()
+
+    assert body["preview"] == worker.preview
+    # **要了 inline_svg 却没有 svg 不是错误**：manifest / rev / warnings 都在
+    assert "svg" not in body
+    assert body["manifest"] == {"elements": []} and body["rev"] == 7
+    assert body["warnings"] == []
+
+
+def test_old_worker_without_preview_keeps_the_old_response_shape(client, tmp_path, monkeypatch):
+    """加字段协议的另一半：worker 不返回 `preview` 时响应里一个字段都不多。"""
+    _open(client, tmp_path, "legacy-shape")
+    worker = _FakeWorker()  # preview 保持 None = 老 worker
+    _stub_engine(monkeypatch, worker)
+
+    body = client.post(
+        "/api/engine/render", json={"id": "p1.pdf", "patches": [], "inline_svg": True}
+    ).get_json()
+
+    assert "preview" not in body
+    assert body["svg"] == "<svg data-variant='0'/>"
 
 
 # ------------------------- preview_png（F3） --------------------------------

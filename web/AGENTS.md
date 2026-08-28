@@ -91,6 +91,40 @@ fileId，写**文件级** `building` 表，绝不盖任何变体条目（盖了�
   测试里「这一版已经精确画好」用 `test/renderFixtures.ts` 的 `seedExactRender()`
   ——手写 `{manifest, status:'ready'}` 造出来的是真实渲染永远不会有的形状。
 
+## 预览表示法：vector / hybrid / raster（2026-08-28，issue #181；ADR 0022）
+
+**画法可以换，能编辑的东西一个都不许少。** 细则在
+`docs/adr/0022-complexity-aware-editor-preview.md`，动手前先读。要点：
+
+* 渲染响应带 `preview`（`web/src/lib/previewBudget.ts` 的 `PreviewMetadata`）。
+  **加字段协议**：老后端不返回它，`EMPTY.preview` 就是 `VECTOR_PREVIEW`，
+  每一条路径的行为与从前逐字节相同。
+* `PanelView` 的分档只有一句：`render.preview.mode === 'raster'` 时编辑态也走
+  引擎位图（复用 `useEnginePngBlob` → `previewPngUrl`/`enginePreviewPng` 那条
+  既有链路，**不写第二套 objectURL 生命周期**），否则照旧内联 SVG。
+* **raster ≠ 只读**：`ElementHitLayer` 照常挂着，几何权威仍是
+  `useExactPanelManifest`（ADR 0017 一个字不放松）。把它做成「图太大所以不能
+  编辑了」是最容易滑进去的错误——#181 的用户要的恰恰是编辑这张图。
+* **二道闸收在 `resolvePreview()` 一处**：后端说 raster、或后端说 vector 却给
+  了一份超过硬闸的 `svg`，都在这里被丢掉，绝不 `prepareSvg` + 存进 store +
+  `dangerouslySetInnerHTML`。丢的时候 `reason` 改成 `fallback`——**是谁拦的**
+  要说得出口，否则排障时会以为后端那道闸生效了。
+* **`panelDisplayView` 多一档 `raster`**：它是「挂着**自己**这一版，只是画法
+  不同」，与 `fallback`（挂着**别人**的图、几何交互停摆）不是一回事。
+  诊断的 `display_variant` / `display_exact` 直接读它。
+* **退回来的 SVG 要带着它自己的表示法**（`mergeRender` 里 `preview` 跟着
+  `svg` 走）。拿自己那份（还没画出来 = 默认 vector）去解读别人的 SVG，
+  就是 raster 面板在退回窗口里闪一下矢量图。
+* Codex 内嵌画布：位图来自 `tavotto_apply_overrides` **同一次响应**的
+  `preview_png_base64`，`mcp/session.ts` 按变体存一版。拿不到这一版自己的
+  就宁可没有——「一个面板显示了另一个面板的图」是有前科的。
+* 角标 `panelBadge.memoryEfficientPreview` 只在**编辑态**出现，带 tooltip，
+  **不弹对话框、不说文件太大**：这是我们主动做出的显示决定，导出质量一点
+  没变（不变量 2）。
+* 看护：`canvas/panelPreviewMode.test.tsx`、`lib/previewBudget.test.ts`、
+  `store/renderStore.test.ts` 的「二道闸」一组、`mcp/session.test.ts` 的
+  raster 一组；Python 侧 `tests/test_preview_budget.py`。
+
 ## 假实时预览：预览平面与历史平面严格分开（2026-08-18，Phase G）
 
 预览平面（`web/src/store/svgPreviewStore.ts` + `lib/svgStyle.ts`）只活在内存与

@@ -2730,6 +2730,8 @@ export default interface Resources {
       "cold": "冷启动中，可能需要几分钟…",
       "error": "渲染失败",
       "firstBuild": "首次构建中…",
+      "memoryEfficientPreview": "低内存编辑预览",
+      "memoryEfficientPreviewHint": "当前图形较复杂，Tavotto 已切换为低内存编辑预览。最终导出质量不会受到影响。",
       "nativeOffline": "会话已结束，重新运行原命令可继续编辑",
       "nativeRunning": "脚本正在运行，停下来才能编辑",
       "rendering": "渲染中…",

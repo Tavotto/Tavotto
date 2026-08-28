@@ -106,6 +106,34 @@ def _text(url: str, timeout: float = 60) -> str:
         return r.read().decode("utf-8", "replace")
 
 
+#: 预览 SVG 里逐个数的 primitive。`<path>` 是 vector primitive 的主体
+#: （`pcolormesh` 在 SVG 后端上是**一个 quad 一个 path**，issue #181 的机制
+#: 就在这一条上）；`<image>` 是已经栅格化的那部分（imshow、色条渐变，以及
+#: 将来 hybrid preview 自己产出的那些）。
+_SVG_NEEDLES = {"svg_path_count": b"<path", "svg_image_count": b"<image"}
+
+
+def _svg_stats(url: str, timeout: float = 300) -> dict:
+    """预览 SVG 的体积与 primitive 计数。**流式数**，绝不整份读进内存。
+
+    #181 那张图的 SVG 是一百多 MB：`r.read()` 一次、`.decode()` 一次、
+    `.encode()` 再一次，光量一个大小就能让基准脚本自己吃掉半个 G——而这个
+    脚本要量的恰恰是「这份 payload 有多大」。分块数还有个好处：needle 跨块
+    时靠重叠补回来，不必把上下文留在内存里。
+    """
+    stats = {"svg_bytes": 0, **dict.fromkeys(_SVG_NEEDLES, 0)}
+    overlap = b""
+    keep = max(len(n) for n in _SVG_NEEDLES.values()) - 1
+    with urllib.request.urlopen(url, timeout=timeout) as r:
+        while chunk := r.read(1 << 20):
+            stats["svg_bytes"] += len(chunk)
+            window = overlap + chunk
+            for key, needle in _SVG_NEEDLES.items():
+                stats[key] += window.count(needle)
+            overlap = window[-keep:] if keep else b""
+    return stats
+
+
 def _patch(url: str, payload: dict, timeout: float = 30) -> dict:
     return _req(url, payload, "PATCH", timeout)
 
@@ -197,13 +225,14 @@ def bench_panel(
         rev = r["rev"]  # 取 SVG 要带上（服务端拿它做缓存穿透）
     rec["hot"] = {k: _median(samples, k) for k in [*TIMING_KEYS, "wall_ms"]}
     rec["hot_n"] = repeat
-    # 预览 SVG 的体积：前端每次渲染都要把它下载 + 解析一遍，属于「快显」的
-    # 另一半（含 imshow 的面板里它是 dpi 的直接函数，纯矢量图上是常数）
-    rec["svg_kb"] = round(
-        len(_text(f"{base}/api/engine/svg?id={urllib.parse.quote(pid)}&rev={rev}").encode("utf-8"))
-        / 1024,
-        1,
-    )
+    # 预览 SVG 的体积与 primitive 计数：前端每次渲染都要把它下载 + 解析 +
+    # 塞进 DOM，属于「快显」的另一半（含 imshow 的面板里体积是 dpi 的直接
+    # 函数，纯矢量图上是常数）。**path 数比体积更能说明问题**——体积随
+    # colormap 与坐标精度浮动，而「一个 quad 一个 path」是 issue #181 的机制
+    # 本身（docs/adr/0022）。
+    svg = _svg_stats(f"{base}/api/engine/svg?id={urllib.parse.quote(pid)}&rev={rev}")
+    rec.update(svg)
+    rec["svg_kb"] = round(svg["svg_bytes"] / 1024, 1)
 
     spec = {
         "page_w_mm": 90,
@@ -353,9 +382,9 @@ def markdown(rows: list[dict], meta: dict) -> str:
         out.append(
             "| 面板 | cost | 冷 wall | 冷 worker_get | 冷 build 往返 | "
             "冷 script_build | 热 wall(中位) | queue_wait | patch_apply | "
-            "canvas_draw | manifest | worker total | SVG | 导出 wall |"
+            "canvas_draw | manifest | worker total | SVG | path | image | 导出 wall |"
         )
-        out.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+        out.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
         for r in mine:
             cold, hot = r["cold"], r["hot"]
             out.append(
@@ -367,11 +396,14 @@ def markdown(rows: list[dict], meta: dict) -> str:
                 f"{_cell(hot.get('wall_ms'))} | {_cell(hot.get('queue_wait_ms'))} | "
                 f"{_cell(hot.get('patch_apply_ms'))} | {_cell(hot.get('canvas_draw_ms'))} | "
                 f"{_cell(hot.get('manifest_ms'))} | {_cell(hot.get('total_ms'))} | "
-                f"{_cell(r.get('svg_kb'))}KB | {_cell(r['export_wall_ms'])} |"
+                f"{_cell(r.get('svg_kb'))}KB | {_cell(r.get('svg_path_count'))} | "
+                f"{_cell(r.get('svg_image_count'))} | {_cell(r['export_wall_ms'])} |"
             )
         out.append("")
     out.append(
-        "单位全部是毫秒（SVG 列除外）。`wall` 是客户端看到的整次 HTTP 往返；"
+        "单位全部是毫秒（SVG / path / image 三列除外）。`path` 与 `image` 是"
+        "预览 SVG 里的 primitive 计数——**大图的成本主要由 path 数决定**，"
+        "体积只是它的影子（issue #181 / ADR 0022）。`wall` 是客户端看到的整次 HTTP 往返；"
         "`worker_get` 是取（必要时 spawn）会话；`build 往返` 是父进程量到的"
         "整条 build 命令（含子解释器启动与 import matplotlib），"
         "`script_build` 是其中 worker 自己那一段——两者之差就是**进程与"

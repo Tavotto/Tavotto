@@ -1,0 +1,10 @@
+{
+  "_comment": "Issue #181 合成复现图库。数据全部由脚本现生成，不含任何用户数据；跑出来的 SVG/PDF 绝不提交（默认规模下 SVG 一百多 MB）。",
+  "scripts": {
+    "issue_181_large_pcolormesh.py": {
+      "entry": "main",
+      "cost": "medium",
+      "stems": ["Issue181_large_pcolormesh"]
+    }
+  }
+}

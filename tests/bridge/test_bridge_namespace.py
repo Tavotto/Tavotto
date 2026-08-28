@@ -80,6 +80,83 @@ def test_loading_restores_sys_path_exactly():
     assert sys.path == before
 
 
+def _load_phases() -> tuple[str, ...]:
+    """`bridge_runner` 真正装进用户进程的那两批（`_PHASE1` + `_PHASE2`）。
+
+    用 AST 读而不是 import：`bridge_runner` 一被 import 就会**当场跑装载**
+    （模块级 `_PKG = bridgeboot.load_engine_modules(...)`），在测试进程里
+    那会真的去动 `sys.modules`。
+    """
+    import ast
+
+    tree = ast.parse((ENGINE_DIR / "bridge_runner.py").read_text(encoding="utf-8"))
+    out: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id in ("_PHASE1", "_PHASE2") for t in node.targets
+        ):
+            out += [e.value for e in node.value.elts if isinstance(e, ast.Constant)]
+    assert out, "用例前提：bridge_runner 里确实有 _PHASE1/_PHASE2 两批装载清单"
+    return tuple(out)
+
+
+def test_restore_list_covers_the_whole_flat_import_closure():
+    """`_TOPLEVEL_TO_RESTORE` 必须盖住 bridge 会装的模块的**整条传递闭包**。
+
+    与 `test_runtime_build.py::test_spec_ships_every_module_the_worker_imports`
+    同一个判据形状，同一个理由：**这张表不能靠人记得改**。
+
+    漏一个的两种下场都很难查——用户项目里恰好有同名模块时我们拿到的是他那份
+    （一个指向完全错误方向的 AttributeError）；他没有同名模块时，Tavotto 那份
+    会**留在他的顶层 `sys.modules` 里**，他之后再也 import 不到自己那份。
+
+    2026-08-28 实测漏过一次：`figsession` 新增了 `import previewbudget`，而
+    这张表没跟上。**当时的门禁没抓住**——它只查 `ENGINE_SIBLINGS`，查不到
+    figsession 平铺进来的这一层。抓住它的是人工评审，那不该是常态。
+    """
+    import ast
+
+    boot = _boot()
+
+    def flat_imports(name: str) -> set[str]:
+        tree = ast.parse((ENGINE_DIR / f"{name}.py").read_text(encoding="utf-8"))
+        names = {a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}
+        names |= {
+            n.module
+            for n in ast.walk(tree)
+            if isinstance(n, ast.ImportFrom) and n.level == 0 and n.module
+        }
+        # 只要**同目录**的平铺模块：`import matplotlib` 这类第三方不在此列
+        return {x for x in names if (ENGINE_DIR / f"{x}.py").is_file()}
+
+    # **根取自真实的装载清单**，不是 `ENGINE_SIBLINGS`。
+    #
+    # 决定「装什么进用户进程」的是 `bridge_runner` 的 `_PHASE1` / `_PHASE2`
+    # （硬编码两批，见那里的两阶段说明）；`ENGINE_SIBLINGS` 只被
+    # `_TOPLEVEL_TO_RESTORE` 消费，两者**是两份清单**（siblings 里没有
+    # figsession / wireproto）。拿 siblings 当根等于问错了问题——它少了两个
+    # 真正会被装进去的模块，只是这条用例当初手工补了那两个名字才碰巧对。
+    closure: set[str] = set()
+    todo = [*_load_phases()]
+    while todo:
+        name = todo.pop()
+        if name in closure:
+            continue
+        closure.add(name)
+        todo += list(flat_imports(name))
+
+    # 用例前提：闭包确实比装载清单深一层（否则这条在测一个恒真式）
+    assert "pathgeom" in closure, "用例前提：manifest 确实平铺 import 了 pathgeom"
+    assert closure - set(_load_phases()), "用例前提：闭包比 _PHASE1+_PHASE2 大"
+
+    missing = closure - set(boot._TOPLEVEL_TO_RESTORE)
+    assert not missing, (
+        f"bridgeboot._TOPLEVEL_TO_RESTORE 漏了引擎会平铺 import 的模块: "
+        f"{sorted(missing)}——漏掉的那个要么让我们拿到用户的同名模块，"
+        f"要么把我们的留在他的顶层 sys.modules 里"
+    )
+
+
 def test_loading_leaves_no_toplevel_engine_names_behind():
     """装完之后 `sys.modules` 里不许多出任何顶层引擎名字。
 

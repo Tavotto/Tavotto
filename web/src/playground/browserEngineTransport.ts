@@ -30,7 +30,10 @@ export function installBrowserTransport(client: PlaygroundClient): () => void {
       return {
         rev: r.render_revision,
         manifest: r.manifest,
-        svg: r.svg,
+        // raster 档下引擎不把 SVG 交出 Worker 边界（ADR 0022）：画布改用
+        // 位图，而位图这条路 playground 本来就有（下面的 previewPngUrl）。
+        svg: r.svg ?? undefined,
+        preview: r.preview,
         warnings: r.warnings ?? [],
         timings: {},
       }

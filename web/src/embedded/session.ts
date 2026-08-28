@@ -1,4 +1,5 @@
 import type { Manifest, PanelInfo } from '@/lib/api'
+import { VECTOR_PREVIEW, type PreviewMetadata } from '@/lib/previewBudget'
 import type { UiMessage } from '@/i18n'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
@@ -32,6 +33,11 @@ export interface EmbeddedFigure {
   cost?: string
   manifest: Manifest
   svg: string | null
+  /**
+   * 这一版的预览表示法（ADR 0022）。缺省按 `vector` 解读；`svg` 为 null 而
+   * 引擎给出 `raster` 时，画布走位图显示——**编辑语义一个字都不变**。
+   */
+  preview?: PreviewMetadata
   renderRevision?: number
   warnings?: string[]
 }
@@ -101,6 +107,7 @@ export function seedEmbeddedSession(
         rev: fig.renderRevision ?? 1,
         manifest: fig.manifest,
         svg: fig.svg ? prepareEmbeddedSvg(fig.svg) : null,
+        preview: fig.preview ?? VECTOR_PREVIEW,
         status: 'ready',
         error: null,
         code: '',

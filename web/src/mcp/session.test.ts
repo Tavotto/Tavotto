@@ -225,6 +225,76 @@ describe('MCP 传输', () => {
   })
 })
 
+describe('raster 档：内嵌画布不能变成空白（ADR 0022）', () => {
+  const RASTER = {
+    mode: 'raster' as const,
+    reason: 'svg_hard_limit' as const,
+    svg_bytes: 126_132_735,
+    rasterized_artist_count: 0,
+  }
+  const PNG = 'iVBORw0KGgo='
+
+  it('open 就是 raster：第一帧的位图取自同一次响应', async () => {
+    const open: OpenFigureResult = {
+      ...openResult(),
+      svg: null,
+      preview: RASTER,
+      preview_png_base64: PNG,
+    }
+    const { fileId } = seedSession(open)
+    restore = installMcpTransport(fakeBridge(() => okResult({})))
+
+    // 种进 store 的表示法就是引擎给的那一档——画布据此走位图
+    expect(useRenderStore.getState().get(renderKey(fileId, [])).preview.mode).toBe('raster')
+    await expect(engineTransport()!.previewPngUrl(fileId, [], 800)).resolves.toBe(
+      `data:image/png;base64,${PNG}`,
+    )
+  })
+
+  it('位图按变体配对：拿不到这一版自己的就宁可没有', async () => {
+    const { fileId } = seedSession({ ...openResult(), svg: null, preview: RASTER,
+      preview_png_base64: PNG })
+    restore = installMcpTransport(fakeBridge(() => okResult({})))
+
+    // 另一组 patches 的位图还没回来——绝不把 `[]` 那张喂给它
+    // （HTTP 那条路上正是为此才不再用「谁最后渲染谁说了算」的 /api/engine/png）
+    await expect(
+      engineTransport()!.previewPngUrl(fileId, [{ gid: 'g', prop: 'fontsize', value: 11 }], 800),
+    ).rejects.toThrowError(EngineError)
+  })
+
+  it('apply 之后位图跟着这一版走', async () => {
+    const { fileId } = seedSession({ ...openResult(), svg: null, preview: RASTER })
+    const patches = [{ gid: 'axes_0.xticks', prop: 'fontsize', value: 11 }]
+    restore = installMcpTransport(
+      fakeBridge(() =>
+        okResult({
+          manifest: manifest(11),
+          svg: null,
+          preview: RASTER,
+          preview_png_base64: PNG,
+          render_revision: 2,
+        }),
+      ),
+    )
+
+    const res = await engineTransport()!.render(fileId, patches)
+    expect(res.svg).toBeUndefined()
+    expect(res.preview?.mode).toBe('raster')
+    await expect(engineTransport()!.previewPngUrl(fileId, patches, 800)).resolves.toBe(
+      `data:image/png;base64,${PNG}`,
+    )
+  })
+
+  it('矢量图照旧不取位图（显示走引擎 SVG）', async () => {
+    const { fileId } = seedSession(openResult())
+    restore = installMcpTransport(fakeBridge(() => okResult({})))
+    await expect(engineTransport()!.previewPngUrl(fileId, [], 800)).rejects.toThrowError(
+      EngineError,
+    )
+  })
+})
+
 describe('unwrap', () => {
   it('isError 转成带 code 的异常', () => {
     expect(() =>

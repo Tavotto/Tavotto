@@ -337,6 +337,136 @@ JSON 只多几百字节。合成的重图上是 +26ms —— 但那张图本身�
    真要动得先有更大的图库样本（本基线只有 25–68 个元素的小图）。**归属：待定，
    证据不足。**
 
+## 大图预览基线（issue #181，修复前）
+
+日期：2026-08-28 ｜ 提交：`b23f8d9` + 本分支的合成 fixture ｜ **这是 before-fix
+基线**，任何针对 [ADR 0022](adr/0022-complexity-aware-editor-preview.md) 的改动
+都要回到这张表给出前后对照。
+
+上面那份 Phase E 基线量的是**普通科研图**（25–68 个元素、纯矢量、SVG 几十到
+几百 KB）。issue #181 是另一个量级的问题：多面板 `pcolormesh`，预览 SVG 里
+每个 cell 一个 `<path>`。这一节把那个量级测出来。
+
+### 复现对象
+
+合成 fixture `tests/fixtures/large_figures/issue_181_large_pcolormesh.py`
+（**不含任何用户数据**，`np.random.default_rng(181)` 现生成）：2×2 图，三格
+`pcolormesh`（默认 n=470 → 每格 220 900 个 quad）+ 一格普通曲线 + 色条 +
+标题/轴标签/图例。规模旋钮 `TAVOTTO_ISSUE181_MESH_N`。
+
+摊成可用图库并跑基线：
+
+```bash
+python tests/support/large_figures.py /tmp/issue181-lib --python "$(command -v python3)"
+TAVOTTO_ISSUE181_MESH_N=470 python scripts/bench_render.py \
+    --python .venv/bin/python --figures /tmp/issue181-lib --repeat 3 --plane python
+```
+
+### 机器与版本
+
+| 项 | 值 |
+|---|---|
+| 机器 | Apple M4 Pro（12 核）/ macOS 26.6.2 / `macOS-26.6.2-arm64-arm-64bit-Mach-O` |
+| Flask 侧 | Python 3.13.11 + Flask 3.1.3 + PyMuPDF 1.28.2（`.venv`，无 matplotlib） |
+| 渲染 worker | Python 3.13.11（Homebrew，来源 `system`）+ matplotlib 3.10.8 + numpy 2.4.3 |
+| 控制面 | Python 池（`TAVOTTO_WORKERD=0`）；**workerd 这一轮没测** |
+| 热态样本 | 3 次取中位 |
+
+### 数据（before fix）
+
+| 指标 | 值 | 出处 |
+|---|---|---|
+| `svg_bytes` | **126 132 735**（120.3 MiB） | `bench_render.py` |
+| `svg_path_count` | **662 773** | 同上（= 3 × 470² 个 quad + 73） |
+| `svg_image_count` | 1 | 同上（色条渐变） |
+| SVG 里的元素总数（= 插进 DOM 后的节点数） | **663 533** | 逐 tag 数了一遍 |
+| `manifest_ms`（热，中位） | 206.3 | worker 自报 |
+| `canvas_draw_ms`（热，中位） | 11 789.1 | worker 自报（`savefig(svg)`，见 ADR 0003 §9） |
+| `total_ms`（热，中位） | 11 992.7 | worker 自报 |
+| 热 `wall_ms`（客户端整次往返，中位） | 11 995.7 | `bench_render.py` |
+| 冷 `wall_ms` | 24 334.2 | 同上 |
+| 冷 `script_build_ms` | 11 969.1 | worker 自报 |
+| 冷 `script_exec_ms`（**用户脚本自己那一段**） | **74.6** | worker 自报 |
+| 导出 `wall_ms`（单面板 PDF，dpi 600 + PyMuPDF 合成） | 22 503.2 | `bench_render.py` |
+
+`inline_svg=True` 那条**真实前端链路**单独量了一次（前端恒发它，见
+`web/src/lib/api.ts`）：
+
+| 指标 | 值 |
+|---|---|
+| worker 响应里的 `svg` | 126 132 735 字节 |
+| Flask 交给浏览器的 JSON | **134 187 191 字节（128.0 MiB）** |
+| 一次 render 之后 Flask 进程的峰值 RSS | **1 245 MB** |
+| worker 进程峰值 RSS | not measured（`ru_maxrss` 只统计被 `wait()` 过的子进程，这条路径上它已被丢弃） |
+| 浏览器 DOM 节点数 / WebView2 内存 | not measured —— 见下 |
+
+### 这几个数字说明什么
+
+1. **成本几乎全是 Tavotto 自己的预览 SVG，不是用户的脚本。**
+   `script_exec_ms = 74.6`，而 `script_build_ms = 11 969.1`：用户的
+   `pcolormesh` 调用 75 毫秒就返回了，剩下的 11.9 秒全花在**我们**把它
+   序列化成矢量 SVG 上。「让用户自己 `set_rasterized(True)`」这条出路因此
+   在数据上就站不住——慢的不是他的图，是我们的表示法。
+2. **`canvas_draw_ms` 占热态的 98%。** 不是 manifest（206ms，1.7%）、不是
+   patch apply（0.006ms）、不是排队（0ms）。任何不动预览表示法的优化
+   （更快的 manifest、更好的队列、缓存）在这张图上最多省下 2%。
+3. **JSON 比 SVG 还大 8 MB**：`ensure_ascii=False` 之后仍要转义，加上 manifest。
+   issue #181 报的「134MB」正是这个数——它是 **worker → Flask → 浏览器**
+   三跳里每一跳都要完整持有一遍的那个 payload。
+4. **1.2 GB 峰值 RSS 出现在 Flask 侧，而 Flask 侧连 matplotlib 都没装。**
+   放大发生在「读回 → 解析 JSON → 再编码 JSON」这三步的中间副本上，与
+   渲染无关。**这正是「先 read 再判断太大」为什么不算保护**。
+5. **663 533 个节点**是浏览器那一半的账。Phase G 量过 DOM 写入本身的代价
+   （见上文），那里的量级是几十到几百个节点。
+
+### 没测的，以及为什么
+
+* **浏览器 / WebView2 的实际内存与冻结时长**：`dangerouslySetInnerHTML`
+  一份 126 MB 的 SVG 正是 issue #181 的症状本身，在本机跑它只会得到一次
+  无响应，量不出可比的数字。这项要在 ADR 0022 的安全闸落地**之后**，
+  用受控规模（临近阈值）在真浏览器里测，属于后续 Session。
+* **workerd 控制面**：本轮只测 Python 池。两条控制面在这条路径上走的是同一份
+  `figsession.do_render`，差异在信封传输——大 payload 下它可能不一样，但那是
+  另一个问题，没有数据就不写进来。
+* **多面板并发**：#181 的用户环境是多个大 mesh 面板同时在画布上。本基线只测
+  一个面板；并发下的排队行为在 Phase E 就已经标注为「完全没有数据」。
+
+## 大图预览：Session 01 安全闸之后（issue #181）
+
+日期：2026-08-28 ｜ 同一台机器、同一个 fixture（n=470）、同一条链路
+（`pool.one_shot` + `override(inline_svg=True)`，前端恒发 `inline_svg`）。
+
+| 指标 | 修复前 | 修复后 | |
+|---|---|---|---|
+| worker 响应里的 `svg` | 126 132 735 字节 | **不存在** | `preview.mode = raster` |
+| `read_text()` 调用次数 | 1 | **0** | 判定在读之前（`stat().st_size`） |
+| 交给浏览器的 JSON | 134 187 191 字节 | **≈ 97 400 字节** | **1378×** |
+| 服务进程峰值 RSS | 1 245 MB | **≈ 25 MB** | **50×** |
+| manifest 元素数 | 95 | 95 | 语义保真（不变量 1） |
+
+（后两行取整：JSON 里带着 `timings`，那几个浮点数的位数每次不同，峰值 RSS
+同样有百分之几的抖动。两次独立测量分别是 97 392 / 97 391 字节、
+24.8 / 25.7 MB——量级是结论，末位不是。）
+
+raster 档下用户实际看到的那张图（`preview_png`，宽度钉死
+`previewbudget.RASTER_PREVIEW_WIDTH_PX = 1200`）：
+
+| 指标 | 矢量预览 SVG | 位图预览 PNG | |
+|---|---|---|---|
+| 出图耗时 | 11 789 ms | **210 ms** | **56×** |
+| 字节数 | 126 MB | **1.1 MB** | **112×** |
+| base64 之后（MCP 那条路） | — | 1.5 MB | 受控，不是百 MB 级 |
+
+### 还没解决的（这一轮刻意没碰）
+
+* **`canvas_draw_ms` 一分钱没省**：12.3 秒的 `savefig(svg)` 照旧要跑一次
+  ——安全闸只是不让那份产物进内存与 DOM，没有让它不产生。真正砍掉这一段是
+  Session 02/03（复杂度分析器 + hybrid：mesh 层直接 rasterize，根本不生成
+  那 66 万个 `<path>`）。
+* **软闸（8–16 MiB）今天不改变任何行为**，见 ADR 0022 §4。
+* **浏览器侧仍未实测**：闸落地之后可以用「临近阈值」的受控规模在真浏览器里
+  量 DOM 节点数与 WebView2 内存了，但那是 Session 05 的事。
+
 ## 复现
 
 ```bash

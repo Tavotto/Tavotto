@@ -57,6 +57,14 @@ for r in reqs:
             f.write(r["append"])
         out.append({"ok": True})
         continue
+    # 同上，**只存在于测试驱动里**：把 ADR 0022 的硬闸现场压到一个很小的数，
+    # 好用一张普通的小图验证机制，而不是画一张一百多 MB 的图来验一个阈值。
+    # 阈值本身由 tests/test_preview_budget.py 单独钉住。
+    if r.get("cmd") == "__budget":
+        import previewbudget
+        previewbudget.EDITOR_SVG_HARD_LIMIT_BYTES = r["hard_limit"]
+        out.append({"ok": True})
+        continue
     out.append(json.loads(browser.handle(json.dumps(r))))
 sys.stdout.write("\\n" + json.dumps(out))
 """
@@ -377,6 +385,72 @@ fig.savefig("N.pdf")
     assert field_value(after["manifest"], "axes_0.title", "fontsize") == field_value(
         opened["manifest"], "axes_0.title", "fontsize"
     )
+
+
+def test_oversized_preview_svg_never_crosses_the_worker_boundary(tmp_path):
+    """ADR 0022 不变量 3 在 playground 这条入口上同样成立。
+
+    桌面那侧判的是 `stat().st_size`（判定必须在 `read_text` 之前）；这里 SVG
+    生在内存缓冲里，没有那一读——但**放大发生在它之后**：decode 一份 str、
+    JSON 一份、postMessage 过 Worker 边界再一份，然后展开成几十万个 DOM 节点。
+    所以判据挪到「交给 JS 之前」，量的是同一个东西、用的是同一份常量。
+
+    两侧各跑一次（同一张图、同一条命令，只有闸的位置不同）——一次绿是样本。
+    """
+    src = """
+import matplotlib.pyplot as plt
+fig, ax = plt.subplots(figsize=(2.4, 2))
+ax.plot([0, 1, 2], [0, 2, 1])
+ax.set_title("Budget")
+fig.savefig("B.pdf")
+"""
+    load = [{"cmd": "load", "filename": "b.py", "source": src}]
+    # 先量这张图真实多大，再把闸放在它的两侧
+    _, opened = drive([*load, {"cmd": "open", "stem": "B"}], tmp_path)
+    size = opened["preview"]["svg_bytes"]
+    assert size == len(opened["svg"].encode("utf-8"))
+
+    _, _, over = drive(
+        [*load, {"cmd": "__budget", "hard_limit": size}, {"cmd": "open", "stem": "B"}], tmp_path
+    )
+    assert over["ok"] is True, over
+    # **svg 是 None**——不是空字符串、不是被截断的一份
+    assert over["svg"] is None
+    assert over["preview"]["mode"] == "raster"
+    assert over["preview"]["reason"] == "svg_hard_limit"
+    # 仍然是一次成功的渲染：语义层一个字段都不少
+    assert over["manifest"]["elements"]
+    assert over["patch_hash"] == opened["patch_hash"]
+
+    # 对照：闸在上面一格时照旧交出 SVG
+    _, _, under = drive(
+        [*load, {"cmd": "__budget", "hard_limit": size + 1}, {"cmd": "open", "stem": "B"}], tmp_path
+    )
+    assert under["svg"], under
+    assert under["preview"]["mode"] == "vector"
+
+
+def test_render_also_carries_the_preview_verdict(tmp_path):
+    """`render` 与 `open` 说的必须是同一件事——两条命令各写一份判定的话，
+    改一处就会漂。"""
+    src = """
+import matplotlib.pyplot as plt
+fig, ax = plt.subplots(figsize=(2.4, 2))
+ax.plot([0, 1, 2], [0, 2, 1])
+fig.savefig("R.pdf")
+"""
+    _, _, _, rendered = drive(
+        [
+            {"cmd": "load", "filename": "r.py", "source": src},
+            {"cmd": "open", "stem": "R"},
+            {"cmd": "__budget", "hard_limit": 1},
+            {"cmd": "render", "stem": "R", "patches": []},
+        ],
+        tmp_path,
+    )
+    assert rendered["ok"] is True
+    assert rendered["svg"] is None
+    assert rendered["preview"]["mode"] == "raster"
 
 
 # ---------------------------------------------------------------- import 分类

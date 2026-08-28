@@ -11,6 +11,7 @@ import {
   type ProjectEnvFailure,
 } from '@/lib/api'
 import { engineTransport } from '@/lib/engineTransport'
+import { resolvePreview, VECTOR_PREVIEW, type PreviewMetadata } from '@/lib/previewBudget'
 import { useAssetStore } from '@/store/assetStore'
 import { useEnvStore } from '@/store/envStore'
 import { useUiStore } from '@/store/uiStore'
@@ -26,6 +27,16 @@ export interface PanelRender {
   manifest: Manifest | null
   /** 已处理好的 SVG 文本（去掉 width/height，铺满容器） */
   svg: string | null
+  /**
+   * 这一版该用哪种预览表示法（ADR 0022）。老后端不返回 `preview` 时是
+   * `VECTOR_PREVIEW`，行为与从前逐字节一致。
+   *
+   * `mode === 'raster'` ⇒ **`svg` 必然是 null**，而且那是刻意的：引擎按硬闸
+   * 决定不把那份 SVG 读进内存（issue #181）。这不是渲染失败，`status` 照样是
+   * `'ready'`、`manifest` 照样在——画布改用位图显示，命中层与几何权威一个字
+   * 都不放松（不变量 4）。
+   */
+  preview: PreviewMetadata
   status: RenderStatus
   /**
    * 失败原因（**描述符**，不是翻译好的字符串）。渲染失败会一直挂在 store 里
@@ -76,6 +87,7 @@ const EMPTY: PanelRender = {
   rev: 0,
   manifest: null,
   svg: null,
+  preview: VECTOR_PREVIEW,
   status: 'idle',
   error: null,
   code: '',
@@ -350,8 +362,19 @@ export const useRenderStore = create<RenderState>((set, get) => ({
             lastPatches: JSON.stringify(current),
             previewDpi: dpi ?? null,
           }
-          // 后端没给（老服务端）就保留上一版 SVG，别把画布刷成空白
-          if (res.svg != null) next.svg = prepareSvg(res.svg)
+          // 二道闸（ADR 0022）：后端的 pre-read 闸才是第一道保护，这里拦的是
+          // 「字节已经进了浏览器进程」之后的那一步——绝不 prepareSvg + 存进
+          // store + 塞进 DOM。判据收在 `resolvePreview` 一处。
+          const guarded = resolvePreview(res)
+          next.preview = guarded.preview
+          if (guarded.svg != null) {
+            next.svg = prepareSvg(guarded.svg)
+          } else if (guarded.preview.mode === 'raster') {
+            // raster 是**这一版的裁决**：留着上一次的矢量 SVG 既占内存，
+            // 又会让「画布上挂的是哪一版」说不清楚。后端没给 `svg` 而 mode
+            // 仍是 vector（老服务端）时才走 else，保留上一版别刷成空白。
+            next.svg = null
+          }
           // 成功那一刻同时挪动该文件的「最近画好的那份」，并把这一档记进
           // 近期缓存。**晚到的旧请求只入库、不挪 latest**——撤销之后新变体
           // 已经上屏，旧变体的响应再回来不该把画面拽回去（同文件的另一个副本
@@ -562,11 +585,16 @@ function mergeRender(
 ): PanelRender | undefined {
   if (!prev || prev === own) return own
   if (!own) return prev
+  const svg = own.svg ?? prev.svg
   return {
     ...own,
     manifest: own.manifest ?? prev.manifest,
-    svg: own.svg ?? prev.svg,
+    svg,
     rev: own.rev || prev.rev,
+    // **表示法跟着 SVG 走**：退回来的是上一版那张图，那么「该怎么显示它」
+    // 也得是上一版的答案。拿自己那份（还没画出来 = 默认 vector）去解读别人
+    // 的 SVG，正是 raster 面板会在退回窗口里闪一下矢量图的那条路。
+    preview: (own.svg ? own.preview : prev.preview) ?? VECTOR_PREVIEW,
   }
 }
 
@@ -620,6 +648,20 @@ export type PanelDisplayView =
       render: PanelRender
     }
   | {
+      /**
+       * 这一版画出来了，但**刻意没有矢量 SVG**（ADR 0022 的 raster 档）：
+       * 画布挂的是这一版自己的位图。`manifest` 在——几何权威一个字都不放松。
+       * 与 `fallback` 的区别是要害：那个是「暂时挂着**别人**的图」，
+       * 这个是「挂着**自己**的图，只是画法不同」。
+       */
+      kind: 'raster'
+      currentKey: string
+      sourceKey: string
+      svg: null
+      manifest: Manifest
+      render: PanelRender
+    }
+  | {
       kind: 'fallback'
       currentKey: string
       sourceKey: string
@@ -653,6 +695,19 @@ export function panelDisplayView(
       currentKey,
       sourceKey: currentKey,
       svg: exact.svg,
+      manifest: exact.manifest!,
+      render: exact,
+    }
+  }
+  if (exact && exact.preview?.mode === 'raster') {
+    // 没有 SVG **不等于**没画出来。这一档要是掉进下面的 fallback 分支，
+    // 诊断里的 `display_variant` 会指向另一个变体，`display_exact` 报 false
+    // ——画布上明明挂的就是这一版。
+    return {
+      kind: 'raster',
+      currentKey,
+      sourceKey: currentKey,
+      svg: null,
       manifest: exact.manifest!,
       render: exact,
     }

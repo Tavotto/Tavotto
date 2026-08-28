@@ -14,6 +14,7 @@ import { renderKey, renderKeyOf, useRenderStore, type PanelRender } from '@/stor
 import { resetPreview } from '@/store/svgPreviewStore'
 import { msg } from '@/i18n'
 import type { Manifest } from '@/lib/api'
+import { VECTOR_PREVIEW } from '@/lib/previewBudget'
 import type { PanelObject } from '@/types/document'
 import { __resetDiagnosticsForTests, readDiagnosticTrace, recordDiagnosticEvent } from './store'
 import { __setDiagnosticSaltForTests, docHash, variantHash } from './hash'
@@ -45,6 +46,7 @@ const ready = (overrides: unknown[]): PanelRender =>
     lastPatches: JSON.stringify(overrides),
     wantPatches: null,
     previewDpi: null,
+    preview: VECTOR_PREVIEW,
   }) as PanelRender
 
 const panelWith = (overrides: { gid: string; prop: string; value: unknown }[]): PanelObject =>

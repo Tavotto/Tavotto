@@ -48,6 +48,7 @@ from pathlib import Path
 import figcapture
 import manifest as manifest_mod
 import overrides as overrides_mod
+import previewbudget
 
 __all__ = ["LiveFigureSession", "WrongThread", "ms_since"]
 
@@ -213,10 +214,26 @@ class LiveFigureSession:
         t0 = time.perf_counter()
         man = manifest_mod.build_manifest(state, stem)
         t1 = time.perf_counter()
-        with self.real_output():
-            state.fig.savefig(
-                self.out_dir / f"{stem}.svg", format="svg", dpi=preview_dpi or self.preview_dpi
-            )
+        # **传文件对象、且 `newline=""`，不许传路径。** matplotlib 拿到路径时走
+        # `cbook.to_filehandle` → `open(fname, "w", encoding=…)`——**没有
+        # `newline` 参数**，于是 Windows 上每个 `\n` 被翻成 `\r\n`。
+        #
+        # 后果不是「文件大一点」：`svg_bytes` 是**判定量**（`mode_for_svg_bytes`
+        # 拿它决定 vector 还是 raster），而它取自 `stat().st_size`。同一张图在
+        # Windows 上因此显得大约 **+3.8%**（实测 22511 vs 21688，差值正好是
+        # 换行数），**更早掉进 raster**——而没有任何地方会报错，用户看到的是
+        # 「同一份项目，在 Windows 上预览掉档了」。
+        #
+        # 这也让 `do_render` 那句「读回磁盘那一份，与 out_dir/<stem>.svg 逐字节
+        # 相同」重新成立——在此之前它在 Windows 上是假的（读回来时
+        # universal-newlines 又把 `\r\n` 翻回 `\n`，两侧字节数对不上）。
+        #
+        # 抓到它的是 `test_v1_render_reports_the_preview_verdict` 在
+        # `backend-platforms (windows-latest)` 上——PR 上那一格是 skipping，
+        # 所以本机与 PR 全绿都是真的，它只在 merge_group 里发作。
+        svg_path = self.out_dir / f"{stem}.svg"
+        with self.real_output(), open(svg_path, "w", encoding="utf-8", newline="") as fh:
+            state.fig.savefig(fh, format="svg", dpi=preview_dpi or self.preview_dpi)
         if timings is not None:
             timings["manifest_ms"] = round((t1 - t0) * 1000.0, 3)
             timings["canvas_draw_ms"] = ms_since(t1)
@@ -251,6 +268,7 @@ class LiveFigureSession:
         timings: dict | None = None,
         preview_dpi: int | None = None,
         inline_svg: bool = False,
+        preview: dict | None = None,
     ) -> dict:
         """应用全量 override 列表 + 重出预览 SVG/manifest（v1 的 render）。
 
@@ -259,6 +277,21 @@ class LiveFigureSession:
         之后，第二跳 GET 拿到的磁盘 SVG 已经是别人的了，而 manifest 是这次的，
         画布上就出现「框选命中的元素和看到的图对不上」。会话串行执行，在这里
         把刚写完的那份读回来天然原子。
+
+        **超过硬闸时不读**（ADR 0022 不变量 3）。判据吃的是 `stat().st_size`，
+        因为「先 read 126 MB 再说太大」根本不算保护：实测那一读加上两次
+        JSON 编解码就能让 Flask 进程峰值 RSS 到 1.2 GB，而 SVG 一个字节都还
+        没到浏览器。这时响应里 **`svg` 整个不出现**——**它仍然是一次成功的
+        渲染**（manifest / warnings / timings 齐全），不是一次失败。
+
+        `preview` 是**出参**，与 `timings` 同一条纪律（ADR 0003 §1）：给一个
+        dict 就往里填这一版的表示法元数据，不给就一个字段都不多。这道弯是
+        为了 **legacy 扁平信封的形状一字不改**——它的响应契约就是
+        `{ok, manifest, warnings}`，手工 `echo '{"cmd":"override"}'` 调试与
+        任何还没切过来的调用方都靠它（看护
+        `test_legacy_envelope_keeps_the_old_response_shape`）。
+        **判定本身与信封无关**：两条信封上「超限就不读」都照常发生，v1 多的
+        只是把理由说出来。
         """
         self._own()
         t0 = time.perf_counter()
@@ -266,10 +299,21 @@ class LiveFigureSession:
         if timings is not None:
             timings["patch_apply_ms"] = ms_since(t0)
         result = {"manifest": self.render(stem, timings, preview_dpi), "warnings": warnings}
-        if inline_svg:
+        svg_path = self.out_dir / f"{stem}.svg"
+        try:
+            svg_bytes = svg_path.stat().st_size
+        except OSError:
+            # `render()` 刚写完它，这里读不到 size 说明磁盘/权限出了事。
+            # 按 0 记会把这一版说成「很小的矢量图」，接着 read_text 也一定
+            # 会抛——不如当场按最坏处理：不读，降到 raster。
+            svg_bytes = previewbudget.EDITOR_SVG_HARD_LIMIT_BYTES
+        mode, reason = previewbudget.mode_for_svg_bytes(svg_bytes)
+        if preview is not None:
+            preview.update(previewbudget.metadata(svg_bytes=svg_bytes, mode=mode, reason=reason))
+        if inline_svg and mode != previewbudget.MODE_RASTER:
             # 读回磁盘那一份而不是另存一个内存缓冲：调用方拿到的与
             # out_dir/<stem>.svg 逐字节相同，排障时不必怀疑「是不是两份」
-            result["svg"] = (self.out_dir / f"{stem}.svg").read_text(encoding="utf-8")
+            result["svg"] = svg_path.read_text(encoding="utf-8")
         return result
 
     def do_render_png(self, stem: str, width: int) -> dict:
