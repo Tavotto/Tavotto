@@ -36,6 +36,7 @@ from tavotto.engine import (
     patchspec,
     pool as engine_pool,
     preflight as engine_preflight,
+    previewbudget,
     profiles as engine_profiles,
     registry as engine_registry,
     telemetry as engine_telemetry,
@@ -219,6 +220,9 @@ class Session:
     patches: list = field(default_factory=list)
     manifest: dict | None = None
     svg: str | None = None
+    #: 这一版的预览表示法元数据（ADR 0021）。`mode == "raster"` 时 `svg` 是
+    #: None——那是一次**成功**的渲染，只是引擎按硬闸决定不把 SVG 读出来。
+    preview: dict | None = None
     rev: int = 0
     created: float = field(default_factory=time.time)
     last_used: float = field(default_factory=time.time)
@@ -461,10 +465,15 @@ def open_figure(
         #
         # 失败不静默：降级但如实回一个 code，调用方要么重试要么就看 SVG
         # （显示本来就走 SVG，位图只是给不能渲染 SVG 的 host 兜底）。
-        try:
-            out["preview_png_base64"] = preview_png(session, [], 1600)
-        except BridgeError as exc:
-            out["preview_png_error"] = exc.code or "preview_failed"
+        # raster 档的渲染已经在同一次响应里带了一张（ADR 0021）——**别再画一次**。
+        # 那张更小（RASTER_PREVIEW_WIDTH_PX），但它是画布此刻要显示的东西，
+        # 而 `include_png` 要的只是「顺带给我一张位图」。为了 400px 的差别
+        # 让 #181 那种图多画一遍不划算。
+        if "preview_png_base64" not in out:
+            try:
+                out["preview_png_base64"] = preview_png(session, [], 1600)
+            except BridgeError as exc:
+                out["preview_png_error"] = exc.code or "preview_failed"
     return out
 
 
@@ -483,9 +492,10 @@ def _render(session: Session, patches: list, *, preview_dpi: int | None) -> dict
     session.patches = list(patches)
     session.manifest = resp["manifest"]
     session.svg = resp.get("svg")
+    session.preview = resp.get("preview")
     session.rev = getattr(worker, "rev", session.rev + 1)
     session.last_used = time.time()
-    return {
+    out = {
         "manifest": session.manifest,
         "svg": session.svg,
         "patch_hash": session.patch_hash(),
@@ -494,6 +504,28 @@ def _render(session: Session, patches: list, *, preview_dpi: int | None) -> dict
         "warnings": resp.get("warnings", []),
         "timings": resp.get("timings", {}),
     }
+    if session.preview is not None:
+        out["preview"] = session.preview
+    # raster 档下 `svg` 是 None，而**内嵌画布里没有可连的 HTTP 服务**——
+    # 不在同一次响应里把位图带上，Codex 那边的画布就整个空掉（ADR 0021
+    # 「不变量 5」：降级是换一种画法，不是不给画）。
+    #
+    # 与位图**同一次响应**也不只是省一跳：另开一个工具去取，取回来的可能已经
+    # 是另一组 patches 的像素——SVG 与 manifest 的原子配对纪律（web/AGENTS.md
+    # 「渲染态」①）在这里同样成立。
+    #
+    # 尺寸受控（`RASTER_PREVIEW_WIDTH_PX`）：绝不把 giant SVG 转成 base64
+    # 塞回来，那只是把同一个 payload 换个编码再放大三分之一。
+    if (session.preview or {}).get("mode") == previewbudget.MODE_RASTER:
+        try:
+            out["preview_png_base64"] = preview_png(
+                session, list(patches), previewbudget.RASTER_PREVIEW_WIDTH_PX
+            )
+        except BridgeError as exc:
+            # 位图失败不该把这次**成功的渲染**变成一条错误：manifest 是对的、
+            # 编辑语义是完整的，缺的只是画面。如实回一个 code，别静默。
+            out["preview_png_error"] = exc.code or "preview_failed"
+    return out
 
 
 def apply_overrides(session_id: str, patches: object, *, preview_dpi: int | None = None) -> dict:

@@ -303,7 +303,9 @@
     "runtimeNeedsRerun": "Not run on this machine yet — enter editing to regenerate",
     "runtimePossiblyStale": "The script or its environment may have changed — re-run to refresh",
     "runtimeRerunFailed": "Re-run failed",
-    "stale": "Script changed"
+    "stale": "Script changed",
+    "memoryEfficientPreview": "Memory-efficient preview",
+    "memoryEfficientPreviewHint": "This figure is complex, so Tavotto switched to a memory-efficient editing preview. Export quality is unaffected."
   },
   "quickEdit": {
     "aria": "Quick edit",

@@ -87,8 +87,14 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   const bucket = Math.max(bucketRef.current, pickBucket(needed))
   bucketRef.current = bucket
 
-  // 编辑态用 SVG（要 gid 命中）；退出后有 override 的用引擎 PNG（imshow 面板不发糊）
-  const svgHtml = editing ? (render?.svg ?? null) : null
+  // 这一版该用哪种预览表示法（ADR 0021）。老后端不返回 `preview` 时是
+  // `vector`，下面每一处的行为与从前逐字节相同。
+  const rasterPreview = render?.preview.mode === 'raster'
+  // 编辑态用 SVG（要 gid 命中）；退出后有 override 的用引擎 PNG（imshow 面板不发糊）。
+  // **raster 档下编辑态也走位图**：那一版根本没有 SVG——引擎按硬闸决定不把
+  // 它读进内存（issue #181）。命中层不受影响，见下面的 ElementHitLayer：
+  // 位图只是画法，几何权威仍是 exact manifest（不变量 4）。
+  const svgHtml = editing && !rasterPreview ? (render?.svg ?? null) : null
 
   // 预览平面与权威 SVG 的接合点：内联 SVG 每换一次就来认领一次。
   // 换上来的正是等的那一版 → 预览功成身退（DOM 已经整个换掉）；还是原来那一版
@@ -122,7 +128,11 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   const tracked = useRenderStore((s) => !!s.tracked[obj.fileId])
   const needsEngine =
     (obj.overrides.length > 0 && !isJustBakedBaseline(obj)) || tracked || runtime
-  const useEnginePng = !editing && needsEngine && (render?.rev ?? 0) > 0
+  // raster 档下**编辑态也要位图**——否则画布上什么都没有。复用的是同一条
+  // PNG 链路（按 patches 出图、状态中立、AbortController + objectURL 生命周期），
+  // 不另写第二套。
+  const useEnginePng = (rasterPreview ? editing || needsEngine : !editing && needsEngine) &&
+    (render?.rev ?? 0) > 0
   const enginePng = useEnginePngBlob(obj, bucket, useEnginePng, render?.rev ?? 0)
   // runtime 面板的 stale / cache 状态（只查询，绝不触发脚本执行）
   const runtimeState = useRuntimeAssetStore((s) => (runtime ? s.byId[obj.fileId] : undefined))
@@ -157,7 +167,9 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   // → `useEnginePng` 为真 → MCP 传输拒掉每一次 `previewPngUrl()`，而它的
   // `panelSrc()` 本来就回 null（iframe 里没有 HTTP 服务）。旧写法在这里
   // 解出空串，用户看到的是**图整个消失**。
-  const inlineSvg = svgHtml ?? (src ? null : (render?.svg ?? null))
+  // raster 档除外：那一版**刻意没有** SVG，这条兜底不许把上一版的矢量图
+  // 拿来冒充（那正是这道闸要拦的 payload）。
+  const inlineSvg = svgHtml ?? (src || rasterPreview ? null : (render?.svg ?? null))
   const showSvg = inlineSvg != null
 
   return (
@@ -617,6 +629,14 @@ function useNativePanelState(obj: PanelObject): 'running' | 'offline' | null {
   return nativePanelState(sessions, obj.fileId, profile)
 }
 
+/** 角标的内容。`hint` 只有需要解释的那一档才有（tooltip） */
+type BadgeInfo = {
+  tone: 'busy' | 'error' | 'stale' | 'info'
+  cold: boolean
+  text: string
+  hint?: string
+}
+
 function RenderStatusBadge({ obj }: { obj: PanelObject }) {
   const render = usePanelRender(obj)
   // 冷启动/构建中是**文件级**的事实（一个 stem 一份 live figure），由 SSE 写；
@@ -632,13 +652,21 @@ function RenderStatusBadge({ obj }: { obj: PanelObject }) {
   // 角标画在世界层里，反向缩放保持屏幕上恒定大小
   const scale = 1 / zoom
   const runtimeBadge = runtimeStatus ? RUNTIME_BADGE[runtimeStatus] : undefined
+  // 低内存编辑预览（ADR 0022）只在**编辑态**说一次：退出编辑后画布本来就走
+  // 位图，没什么可解释的。
+  const rasterEditing = editing && render?.preview.mode === 'raster'
   const relevant =
-    editing || obj.overrides.length > 0 || render?.stale || !!runtimeBadge || !!nativeState
-  const info = useMemo(() => {
+    editing ||
+    obj.overrides.length > 0 ||
+    render?.stale ||
+    !!runtimeBadge ||
+    !!nativeState ||
+    rasterEditing
+  const info = useMemo((): BadgeInfo | null => {
     if (!relevant) return null
     if (render?.status === 'rendering' || building) {
       return {
-        tone: 'busy' as const,
+        tone: 'busy',
         cold: !!building?.cold,
         text: badge(
           building?.cold
@@ -650,29 +678,43 @@ function RenderStatusBadge({ obj }: { obj: PanelObject }) {
       }
     }
     if (render?.status === 'error') {
-      return { tone: 'error' as const, cold: false, text: badge('error') }
+      return { tone: 'error', cold: false, text: badge('error') }
     }
-    // **阻塞性的压过信息性的。** native 的两句说的是"现在不能编辑"，而
-    // `stale`（脚本已更新）/ runtime 的 stale 语义说的是"内容可能不是最新"
+    // **阻塞性的压过信息性的。** native 的两句说的是「现在不能编辑」，而
+    // `stale`（脚本已更新）/ runtime 的 stale 语义说的是「内容可能不是最新」
     // ——后者不妨碍用户动手，前者妨碍。把 `stale` 排在前面的表现是：native
     // 会话跑着的时候用户看到「脚本已更新」，以为可以重新渲染，点进去撞一条
-    // 409；而那时真正该告诉他的是"停下来才能编辑"。
+    // 409；而那时真正该告诉他的是「停下来才能编辑」。
     //
-    // 这一档也压过 `#193` 的 raster 预览角标（那条是信息性的），同一条理由。
+    // 这一档也压过下面 raster 的低内存预览角标（那条同样是信息性的），
+    // **同一条理由**：`'running'` 与 `'offline'` 都会让图内编辑撞 409
+    // （`_NATIVE_STATUS` 把两个码都映射成 409，`enginesession.resolve()`
+    // 在 profile=native、无活会话时直接抛），解锁动作不同但都失败。
     if (nativeState) {
       return {
-        tone: 'stale' as const,
+        tone: 'stale',
         cold: false,
         text: badge(nativeState === 'running' ? 'nativeRunning' : 'nativeOffline'),
       }
     }
-    if (render?.stale) return { tone: 'stale' as const, cold: false, text: badge('stale') }
+    if (render?.stale) return { tone: 'stale', cold: false, text: badge('stale') }
+    // **不弹对话框、不责怪用户**：这是我们主动做出的一个显示决定，用户什么
+    // 都没做错，而且导出质量一点没变（不变量 2）——所以是一枚可以忽略的
+    // 角标 + 一句 tooltip，不是一次打断。
+    if (rasterEditing) {
+      return {
+        tone: 'info',
+        cold: false,
+        text: badge('memoryEfficientPreview'),
+        hint: badge('memoryEfficientPreviewHint'),
+      }
+    }
     // runtime 的 stale 语义（诚实文案：说「可能已变化」，不说「数据未变」）
     if (runtimeBadge) {
       return { tone: runtimeBadge.tone, cold: false, text: badge(runtimeBadge.key) }
     }
     return null
-  }, [render, relevant, building, runtimeBadge, nativeState])
+  }, [render, relevant, building, runtimeBadge, nativeState, rasterEditing])
 
   // 退场那 90ms 里 info 已经是 null 了，留住最后一版才播得完
   const last = useRef(info)
@@ -694,13 +736,19 @@ function RenderStatusBadge({ obj }: { obj: PanelObject }) {
       style={{ transform: `scale(${scale})` }}
     >
       <span
+        // tooltip 要能被指到：外层是 pointer-events-none（角标不该挡住画布），
+        // 只有带解释的那一档把指针事件收回来
+        title={shown.hint}
         className={cn(
           'relative flex items-center gap-1 overflow-hidden rounded-sm px-1.5 py-0.5 text-xs',
+          shown.hint && 'pointer-events-auto cursor-help',
           shown.tone === 'error'
             ? 'bg-danger text-white'
             : shown.tone === 'stale'
               ? 'bg-ink text-white'
-              : 'bg-accent text-white',
+              : shown.tone === 'info'
+                ? 'bg-ink/70 text-white'
+                : 'bg-accent text-white',
         )}
       >
         {shown.tone === 'busy' && (

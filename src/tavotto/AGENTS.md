@@ -467,6 +467,41 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   会拿到 worker 的 `--script/--out-dir/--entry`，存出一堆叫 `--entry` 的图
   （试运行探测时当场撞见过，`test_script_sees_its_own_argv_not_the_workers` 看护）。
 
+## 编辑预览的表示法与复杂度预算（ADR 0021，issue #181）
+
+**预览怎么画** 与 **能编辑什么** 是两件事。动这一带之前先读
+`docs/adr/0021-complexity-aware-editor-preview.md` 与
+`docs/perf-baseline.md` 的「大图预览基线」。
+
+- **常量与判据唯一出处 `engine/previewbudget.py`**（前端镜像
+  `web/src/lib/previewBudget.ts` 是**二道闸**，不是第二份权威；两侧的数字由
+  `tests/test_preview_budget.py` 逐个比对）。`vector` / `hybrid` / `raster`
+  三档写进协议的 `preview` 字段——**加字段不升协议版本**（ADR 0003 §1），
+  老 worker 不返回它时前端按 `vector` 解读，行为一字不改。
+- **判定必须在 `read_text()` 之前**（`figsession.do_render`，吃的是
+  `stat().st_size`）。「先读 126 MB 再说太大」不算保护：实测那一读加上两次
+  JSON 编解码就让 Flask 进程峰值 RSS 到 **1.2 GB**，而 SVG 一个字节都还没到
+  浏览器。**这条是本轮唯一的硬验收**，看护是
+  `tests/support/preview_guard_probe.py`——它把 `Path.read_text` 换成记账实现，
+  在阈值两侧各跑一次；只跑一侧的绿是样本，不是对照。
+- **超限是一次成功的渲染**：`manifest` / `warnings` / `timings` / `rev` 一样
+  不少，只是 `svg` 整个不出现。别让错误路径接住它——把我们主动做出的一个显示
+  决定说成「渲染失败」，用户会去修一个不存在的问题。
+- **降级 ≠ 只读**：raster 档下命中层与 exact manifest 一个字都不放松
+  （不变量 4 = ADR 0017）。#181 的用户要的恰恰是编辑这张图。
+- **MCP 那条路上 raster 的位图与 manifest 在同一次响应里**
+  （`bridge._render` 的 `preview_png_base64`，宽度钉死
+  `previewbudget.RASTER_PREVIEW_WIDTH_PX`）。内嵌画布里没有可连的 HTTP 服务，
+  不带上它就是一张全白的画布；另开一跳去取则会拿到另一组 patches 的像素——
+  与 SVG/manifest 的原子配对是同一条纪律。**绝不把 giant SVG 转成 base64
+  塞回去**，那只是把同一个 payload 换个编码再放大三分之一。
+- **不按 artist 类型特判**。#181 的表面成因是 `pcolormesh`，成本的真实来源是
+  primitive 数量——`scatter` 十万点、`contourf` 上千条等值线是同一个问题。
+  判据问「有多少 primitive」，不问「你是谁」。
+- 合成复现在 `tests/fixtures/large_figures/`，摊成可用图库用
+  `tests/support/large_figures.py`。**跑出来的 SVG/PDF 绝不提交**
+  （默认规模下 SVG 一百多 MB）。
+
 ## 受控依赖修复（ADR 0019，2026-08-27）
 
 缺包时「一键装上并继续」。**动它之前先读 ADR 0019**——它是本仓库唯一一个会

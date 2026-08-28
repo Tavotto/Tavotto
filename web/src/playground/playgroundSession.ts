@@ -116,6 +116,7 @@ export async function openFigure(
       cost: 'light',
       manifest: opened.manifest,
       svg: opened.svg,
+      preview: opened.preview,
       renderRevision: opened.render_revision,
       warnings: opened.warnings,
     },

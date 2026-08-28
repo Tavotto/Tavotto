@@ -1,6 +1,6 @@
 # ADR 0021：Complexity-Aware Editor Preview（预览表示法与语义编辑解耦）
 
-状态：**Accepted（架构契约已定稿；落地未开始）**
+状态：**Accepted（架构契约已定稿；分阶段落地进行中）**
 日期：2026-08-28
 相关：[issue #181](https://github.com/Tavotto/Tavotto/issues/181)、
 [0017 显示回退 ≠ 几何权威](0017-display-fallback-vs-geometry-authority.md)（本
@@ -188,7 +188,7 @@ preview 元数据齐全，只是没有 `svg`），不是一次渲染失败。让
 | Session | 内容 | 状态 |
 |---|---|---|
 | 00 | 合成复现 + before 基线 + 本 ADR | 完成 |
-| 01 | Large SVG Safety Guard（不变量 3 + raster 档 + 前端二道闸） | 进行中 |
+| 01 | Large SVG Safety Guard（不变量 3 + raster 档 + 前端二道闸） | 完成 |
 | 02 | Preview Complexity Analyzer（primitive / vertex 估算，喂 `estimated_*`） | 待做 |
 | 03 | Hybrid Preview（mesh 层 rasterize，文字/轴/图例保持 vector） | 待做 |
 | 04 | renderStore 的 SVG 内存预算 | 待做 |
@@ -228,6 +228,10 @@ preview 元数据齐全，只是没有 `svg`），不是一次渲染失败。让
 
 * `tests/test_issue181_large_preview.py` —— 合成 fixture 的确定性、规模、
   以及「它真的复现了机制」（一个 quad 一个 `<path>`）；
-* Session 01 落地时补：常量与判据的两侧同源、**超限时 `read_text()` 一次
-  都不调**、三档显示行为、raster 下命中层仍在；
+* `tests/test_preview_budget.py` —— 常量、判据、两侧同源、**超限时
+  `read_text()` 一次都不调**；
+* `tests/test_browser_session.py` —— playground 那条入口上的同一条闸
+  （SVG 生在内存里，判据挪到「交给 JS 之前」）；
+* `web/src/canvas/panelPreviewMode.test.tsx` / `web/src/lib/previewBudget.test.ts`
+  —— 三档显示行为、raster 下命中层仍在、前端二道闸；
 * `docs/perf-baseline.md` 的「大图预览基线」—— 前后对照的唯一出处。

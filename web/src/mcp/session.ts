@@ -1,5 +1,6 @@
 import type { Manifest } from '@/lib/api'
 import { setEngineTransport, type EngineTransport } from '@/lib/engineTransport'
+import type { PreviewMetadata } from '@/lib/previewBudget'
 import { EngineError } from '@/lib/api'
 import { msg } from '@/i18n'
 import { embeddedFileIdFor, seedEmbeddedSession } from '@/embedded/session'
@@ -25,6 +26,10 @@ export interface OpenFigureResult {
   cost?: string
   manifest: Manifest
   svg: string | null
+  /** 这一版的预览表示法（ADR 0021）；老 server 不返回它。 */
+  preview?: PreviewMetadata
+  /** `preview.mode === 'raster'` 时**同一次响应**里带回的受控尺寸位图。 */
+  preview_png_base64?: string
   patch_hash: string
   render_revision?: number
   warnings?: string[]
@@ -60,6 +65,37 @@ export interface PreflightPayload {
 
 /** 面板 id ↔ MCP 会话。一个 widget 目前只端一张图，留表是为了以后多图拼版。 */
 const sessionOf = new Map<string, string>()
+
+/**
+ * raster 档下最近一次渲染带回来的位图（ADR 0021）。
+ *
+ * **按变体存**，不是「最后一张」：同文件多变体时拿错一张就是「一个面板显示
+ * 了另一个面板的图」——HTTP 那条路上正是为了这个才把 `/api/engine/png` 换成
+ * 按 patches 出图的 `preview_png`。这里靠「与 manifest 同一次响应」天然配对，
+ * 键只是把配对关系记下来。
+ *
+ * 一个会话只留最近一版：这是画布**此刻**要显示的东西，不是缓存。
+ */
+const rasterPngOf = new Map<string, { variant: string; url: string }>()
+
+/** 拿到的是不是这一组 patches 自己的位图；不是就宁可没有。 */
+function rasterPngFor(sessionId: string, patches: unknown[]): string | null {
+  const hit = rasterPngOf.get(sessionId)
+  return hit && hit.variant === JSON.stringify(patches) ? hit.url : null
+}
+
+function rememberRasterPng(sessionId: string, patches: unknown[], base64: unknown): void {
+  if (typeof base64 !== 'string' || !base64) {
+    rasterPngOf.delete(sessionId)
+    return
+  }
+  rasterPngOf.set(sessionId, {
+    variant: JSON.stringify(patches),
+    // data: URL 而不是 blob:——base64 是从 JSON-RPC 里拿的，转成 blob 只是
+    // 多复制一份，还多一条要人记得 revoke 的生命周期。
+    url: `data:image/png;base64,${base64}`,
+  })
+}
 
 export const fileIdFor = embeddedFileIdFor
 
@@ -115,19 +151,27 @@ export function installMcpTransport(bridge: AppsBridge): () => void {
         opts?.signal,
       )
       const body = unwrap(res)
+      // raster 档的位图与 manifest 在**同一次响应**里（bridge `_render`）：
+      // 另开一跳去取，取回来的可能已经是另一组 patches 的像素。
+      rememberRasterPng(sid, patches, body.preview_png_base64)
       return {
         rev: Number(body.render_revision ?? 0),
         manifest: body.manifest as Manifest,
         svg: (body.svg as string) ?? undefined,
+        preview: (body.preview as PreviewMetadata) ?? undefined,
         warnings: (body.warnings as string[]) ?? [],
         timings: (body.timings as Record<string, number>) ?? {},
       }
     },
     // 位图预览：MCP 那侧回 base64，转成 data URL 就是 `<img src>`。
-    // 纯矢量的图根本不会走到这里（显示用 SVG）。
-    async previewPngUrl() {
+    // 纯矢量的图不会走到这里（显示用 SVG），**raster 档非走不可**——
+    // iframe 里没有可连的 HTTP 服务，拿不到位图就是整张图空白。
+    async previewPngUrl(id, patches) {
+      const sid = sessionIdFor(id)
+      const url = sid ? rasterPngFor(sid, patches) : null
+      if (url) return url
       throw new EngineError(
-        'MCP 画布不取位图预览（显示走引擎 SVG）', '', 'not_supported', '')
+        'MCP 画布这一版没有位图预览（矢量图显示走引擎 SVG）', '', 'not_supported', '')
     },
     // iframe 里没有可寻址的 HTTP 资源：回 null，PanelView 退回 SVG 显示。
     panelSrc: () => null,
@@ -143,6 +187,9 @@ export function installMcpTransport(bridge: AppsBridge): () => void {
  */
 export function seedSession(open: OpenFigureResult): { panelId: string; fileId: string } {
   sessionOf.set(fileIdFor(open.stem), open.session_id)
+  // 打开就是 raster 的图（#181 那一类）：第一帧的位图也在这次响应里。
+  // 不记下来的话画布要等到用户改第一个值才有东西可显示。
+  rememberRasterPng(open.session_id, [], open.preview_png_base64)
   return seedEmbeddedSession(
     {
       stem: open.stem,
@@ -151,6 +198,7 @@ export function seedSession(open: OpenFigureResult): { panelId: string; fileId: 
       cost: open.cost,
       manifest: open.manifest,
       svg: open.svg,
+      preview: open.preview,
       renderRevision: open.render_revision,
       warnings: open.warnings,
     },

@@ -290,7 +290,9 @@
     "runtimeNeedsRerun": "尚未在本机运行，进入编辑即重新生成",
     "runtimePossiblyStale": "脚本或执行环境可能已变化，建议重新运行",
     "runtimeRerunFailed": "重新运行失败",
-    "stale": "脚本已更新"
+    "stale": "脚本已更新",
+    "memoryEfficientPreview": "低内存编辑预览",
+    "memoryEfficientPreviewHint": "当前图形较复杂，Tavotto 已切换为低内存编辑预览。最终导出质量不会受到影响。"
   },
   "quickEdit": {
     "aria": "快捷编辑",

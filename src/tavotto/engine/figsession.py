@@ -48,6 +48,7 @@ from pathlib import Path
 import figcapture
 import manifest as manifest_mod
 import overrides as overrides_mod
+import previewbudget
 
 __all__ = ["LiveFigureSession", "WrongThread", "ms_since"]
 
@@ -259,6 +260,13 @@ class LiveFigureSession:
         之后，第二跳 GET 拿到的磁盘 SVG 已经是别人的了，而 manifest 是这次的，
         画布上就出现「框选命中的元素和看到的图对不上」。会话串行执行，在这里
         把刚写完的那份读回来天然原子。
+
+        **超过硬闸时不读**（ADR 0021 不变量 3）。判据吃的是 `stat().st_size`，
+        因为「先 read 126 MB 再说太大」根本不算保护：实测那一读加上两次
+        JSON 编解码就能让 Flask 进程峰值 RSS 到 1.2 GB，而 SVG 一个字节都还
+        没到浏览器。这时响应里 **`svg` 整个不出现**，`preview.mode` 是
+        `raster`——**它仍然是一次成功的渲染**（manifest / warnings / timings
+        齐全），不是一次失败。
         """
         self._own()
         t0 = time.perf_counter()
@@ -266,10 +274,20 @@ class LiveFigureSession:
         if timings is not None:
             timings["patch_apply_ms"] = ms_since(t0)
         result = {"manifest": self.render(stem, timings, preview_dpi), "warnings": warnings}
-        if inline_svg:
+        svg_path = self.out_dir / f"{stem}.svg"
+        try:
+            svg_bytes = svg_path.stat().st_size
+        except OSError:
+            # `render()` 刚写完它，这里读不到 size 说明磁盘/权限出了事。
+            # 按 0 记会把这一版说成「很小的矢量图」，接着 read_text 也一定
+            # 会抛——不如当场按最坏处理：不读，降到 raster。
+            svg_bytes = previewbudget.EDITOR_SVG_HARD_LIMIT_BYTES
+        mode, reason = previewbudget.mode_for_svg_bytes(svg_bytes)
+        result["preview"] = previewbudget.metadata(svg_bytes=svg_bytes, mode=mode, reason=reason)
+        if inline_svg and mode != previewbudget.MODE_RASTER:
             # 读回磁盘那一份而不是另存一个内存缓冲：调用方拿到的与
             # out_dir/<stem>.svg 逐字节相同，排障时不必怀疑「是不是两份」
-            result["svg"] = (self.out_dir / f"{stem}.svg").read_text(encoding="utf-8")
+            result["svg"] = svg_path.read_text(encoding="utf-8")
         return result
 
     def do_render_png(self, stem: str, width: int) -> dict:

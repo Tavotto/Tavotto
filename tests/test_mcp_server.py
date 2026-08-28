@@ -12,6 +12,7 @@
 这里用假 worker，跑在 .venv 里。
 """
 
+import base64
 import io
 import json
 import os
@@ -24,6 +25,7 @@ ROOT = Path(__file__).resolve().parent.parent
 PLUGIN = ROOT / "codex-plugin"
 sys.path.insert(0, str(PLUGIN / "mcp"))
 
+from tavotto.engine import previewbudget  # noqa: E402
 from tavotto_mcp import bridge, rpc, server, widget  # noqa: E402
 
 
@@ -1256,3 +1258,87 @@ def test_open_with_an_unknown_profile_carries_a_code(project, fake_pool):
     with pytest.raises(bridge.BridgeError) as exc:
         bridge.open_figure(str(project), profile_id="没有这个规范")
     assert exc.value.code == "unknown_profile"
+
+
+# --------------------- raster 档：内嵌画布不能变成空白 -----------------------
+#
+# 内嵌画布里**没有可连的 HTTP 服务**（sidecar 端口是动态的，MCP Apps 的 CSP
+# 也不许连），所以 `svg=None` 那一刻要是响应里再没有别的东西，Codex 那边就是
+# 一张全白的画布。ADR 0021 不变量 5：降级是**换一种画法**，不是不给画。
+class RasterWorker(FakeWorker):
+    """超过硬闸的那种图：manifest 照给，`svg` 一个字节都不给。"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.png_calls: list[tuple] = []
+
+    def override(self, stem, patches, preview_dpi=None, inline_svg=False):
+        out = super().override(stem, patches, preview_dpi, inline_svg)
+        out.pop("svg", None)
+        out["preview"] = previewbudget.metadata(
+            svg_bytes=126_132_735,
+            mode=previewbudget.MODE_RASTER,
+            reason=previewbudget.REASON_SVG_HARD_LIMIT,
+        )
+        return out
+
+    def preview_png(self, stem, patches, width, tag):
+        self.png_calls.append((stem, list(patches), width, tag))
+        path = Path(self.png_dir) / f"{tag}.png"
+        path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"fake-pixels")
+        return path
+
+
+@pytest.fixture
+def raster_pool(monkeypatch, tmp_path):
+    worker = RasterWorker()
+    worker.png_dir = tmp_path / "png"
+    worker.png_dir.mkdir()
+    monkeypatch.setattr(bridge.engine_pool, "get", lambda *a, **k: worker)
+    return worker
+
+
+def test_raster_open_carries_a_bounded_png_instead_of_the_svg(project, raster_pool):
+    out = bridge.open_figure(str(project))
+    assert out["svg"] is None
+    assert out["preview"]["mode"] == "raster"
+    # **同一次响应**里就有画面，不必再跳一次
+    assert out["preview_png_base64"]
+    assert base64.b64decode(out["preview_png_base64"]).startswith(b"\x89PNG")
+    # 尺寸受控：绝不把 giant SVG 转成 base64 塞回来
+    assert raster_pool.png_calls[-1][2] == previewbudget.RASTER_PREVIEW_WIDTH_PX
+
+
+def test_raster_apply_pairs_the_png_with_this_variant(project, raster_pool):
+    """位图必须是**这一组 patches** 的。拿错一张就是「一个面板显示了另一个
+    面板的图」——HTTP 那条路上正是为此才不再用 `/api/engine/png`。"""
+    session = bridge.open_figure(str(project))["session_id"]
+    patches = [{"gid": "axes_0.xticks", "prop": "fontsize", "value": 11}]
+    out = bridge.apply_overrides(session, patches)
+
+    assert out["svg"] is None
+    assert out["preview_png_base64"]
+    assert raster_pool.png_calls[-1][1] == patches
+
+
+def test_raster_png_failure_does_not_turn_a_good_render_into_an_error(project, raster_pool):
+    """manifest 是对的、编辑语义是完整的，缺的只是画面——如实回一个 code，
+    别把整次渲染判成失败（那条会话就再也编辑不了了）。"""
+    session = bridge.open_figure(str(project))["session_id"]
+
+    def boom(*a, **k):
+        raise bridge.BridgeError("画不出来", code="preview_failed")
+
+    raster_pool.preview_png = boom
+    out = bridge.apply_overrides(session, [])
+    assert out["ok"] is True
+    assert out["manifest"]["elements"]
+    assert "preview_png_base64" not in out
+    assert out["preview_png_error"] == "preview_failed"
+
+
+def test_vector_render_never_pays_for_a_png(project, fake_pool):
+    """普通图**一分钱都不多付**：`FakeWorker.preview_png` 一被调用就 assert。"""
+    out = bridge.open_figure(str(project))
+    assert out["svg"]
+    assert "preview_png_base64" not in out

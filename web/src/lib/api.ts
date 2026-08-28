@@ -1,6 +1,7 @@
 import { apiUrl, withProject } from '@/lib/session'
 import { formatMessage, i18n, literal, msg, t, type UiMessage } from '@/i18n'
 import type { FigureDocument, ProjectDocument } from '@/types/document'
+import type { PreviewMetadata } from '@/lib/previewBudget'
 
 export interface PanelInfo {
   id: string
@@ -754,6 +755,15 @@ export interface EngineRenderResponse {
    * 或另一个标签页的渲染插进来就会拿到别人的图，而元素框还是这次的。
    */
   svg?: string
+  /**
+   * 这一版预览该用哪种表示法（ADR 0021）。**加字段协议**：老后端不返回它，
+   * 前端按 `vector` 解读，行为与从前逐字节一致。
+   *
+   * `mode === 'raster'` 时 `svg` **不出现**——那不是渲染失败，是引擎按硬闸
+   * 决定不把那份 SVG 读进内存（issue #181：读一份 126 MB 的预览 SVG 就能
+   * 让服务进程峰值 RSS 到 1.2 GB，而它一个字节都还没到浏览器）。
+   */
+  preview?: PreviewMetadata
   /**
    * 只在**这一次响应真的发生了项目环境自动接手**时出现（ADR 0018）：
    * 内置环境缺包 → Tavotto 自己找到并换用了项目的 `.venv`。界面据此给一条

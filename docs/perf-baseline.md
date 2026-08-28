@@ -431,6 +431,38 @@ TAVOTTO_ISSUE181_MESH_N=470 python scripts/bench_render.py \
 * **多面板并发**：#181 的用户环境是多个大 mesh 面板同时在画布上。本基线只测
   一个面板；并发下的排队行为在 Phase E 就已经标注为「完全没有数据」。
 
+## 大图预览：Session 01 安全闸之后（issue #181）
+
+日期：2026-08-28 ｜ 同一台机器、同一个 fixture（n=470）、同一条链路
+（`pool.one_shot` + `override(inline_svg=True)`，前端恒发 `inline_svg`）。
+
+| 指标 | 修复前 | 修复后 | |
+|---|---|---|---|
+| worker 响应里的 `svg` | 126 132 735 字节 | **不存在** | `preview.mode = raster` |
+| `read_text()` 调用次数 | 1 | **0** | 判定在读之前（`stat().st_size`） |
+| 交给浏览器的 JSON | 134 187 191 字节 | **97 392 字节** | **1378×** |
+| 服务进程峰值 RSS | 1 245 MB | **24.8 MB** | **50×** |
+| manifest 元素数 | 95 | 95 | 语义保真（不变量 1） |
+
+raster 档下用户实际看到的那张图（`preview_png`，宽度钉死
+`previewbudget.RASTER_PREVIEW_WIDTH_PX = 1200`）：
+
+| 指标 | 矢量预览 SVG | 位图预览 PNG | |
+|---|---|---|---|
+| 出图耗时 | 11 789 ms | **210 ms** | **56×** |
+| 字节数 | 126 MB | **1.1 MB** | **112×** |
+| base64 之后（MCP 那条路） | — | 1.5 MB | 受控，不是百 MB 级 |
+
+### 还没解决的（这一轮刻意没碰）
+
+* **`canvas_draw_ms` 一分钱没省**：12.3 秒的 `savefig(svg)` 照旧要跑一次
+  ——安全闸只是不让那份产物进内存与 DOM，没有让它不产生。真正砍掉这一段是
+  Session 02/03（复杂度分析器 + hybrid：mesh 层直接 rasterize，根本不生成
+  那 66 万个 `<path>`）。
+* **软闸（8–16 MiB）今天不改变任何行为**，见 ADR 0021 §4。
+* **浏览器侧仍未实测**：闸落地之后可以用「临近阈值」的受控规模在真浏览器里
+  量 DOM 节点数与 WebView2 内存了，但那是 Session 05 的事。
+
 ## 复现
 
 ```bash

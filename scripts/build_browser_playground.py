@@ -54,6 +54,7 @@ ENGINE_FILES = [
     "overrides.py",
     "patchspec.py",
     "pathgeom.py",
+    "previewbudget.py",
 ]
 
 MANIFEST_NAME = "playground-manifest.json"

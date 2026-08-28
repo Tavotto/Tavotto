@@ -60,6 +60,7 @@ import figcapture  # noqa: E402
 import manifest as manifest_mod  # noqa: E402
 import overrides as overrides_mod  # noqa: E402
 import patchspec  # noqa: E402
+import previewbudget  # noqa: E402
 
 #: 源文件上限。JS 侧在读文件时就拦，这里再守一道——两侧都必须拦：
 #: 只有 JS 拦的话，绕过页面直接 postMessage 的调用就没人管。
@@ -394,7 +395,7 @@ class BrowserSession:
     def open_figure(self, stem: str) -> dict:
         try:
             state = self._state(stem)
-            man, svg = self._render(state, stem)
+            man, svg, preview = self._render(state, stem)
         except KeyError:
             return _err("bad_request", f"没有这个 figure: {stem}")
         except Exception:  # noqa: BLE001 - instrument/manifest/savefig 都可能栽
@@ -406,6 +407,7 @@ class BrowserSession:
             "script": self.script_name,
             "manifest": man,
             "svg": svg,
+            "preview": preview,
             "patch_hash": patchspec.patch_hash([]),
             "render_revision": self.revision,
             "warnings": [],
@@ -424,7 +426,7 @@ class BrowserSession:
             return _err("bad_request", f"patches 不合规: {exc}")
         try:
             warnings = overrides_mod.apply(state, patches)
-            man, svg = self._render(state, stem, preview_dpi)
+            man, svg, preview = self._render(state, stem, preview_dpi)
         except Exception:  # noqa: BLE001
             return _err("render_error", "应用修改后渲染失败", traceback=self._trim_tb())
         self.revision += 1
@@ -432,6 +434,7 @@ class BrowserSession:
             "ok": True,
             "manifest": man,
             "svg": svg,
+            "preview": preview,
             "warnings": warnings,
             "patch_hash": patch_hash,
             "render_revision": self.revision,
@@ -460,6 +463,15 @@ class BrowserSession:
         return {"ok": True, "png": base64.b64encode(buf.getvalue()).decode("ascii")}
 
     def _render(self, state, stem: str, preview_dpi: int | None = None):
+        """→ `(manifest, svg_or_None, preview)`。
+
+        **超过硬闸就不把 SVG 交出去**（ADR 0021 不变量 3）。桌面那侧判的是
+        `stat().st_size`（判定必须在 `read_text` 之前）；这里 SVG 生在内存
+        缓冲里，没有那一读——但**放大发生在它之后**：`decode()` 一份 str、
+        `json.dumps` 一份、postMessage 过 Worker 边界再一份，然后展开成几十万
+        个 DOM 节点。所以判据挪到「交给 JS 之前」，量的是同一个东西
+        （字节数），用的是同一份常量。
+        """
         man = manifest_mod.build_manifest(state, stem)
         buf = io.BytesIO()
         with _real_output():
@@ -468,7 +480,12 @@ class BrowserSession:
         # 等价地把 numpy 标量在**这一层**就规约成纯 JSON 值——交给 JS 的
         # 结构里绝不能混着 numpy 类型
         man = json.loads(json.dumps(man, ensure_ascii=False, default=_json_default))
-        return man, buf.getvalue().decode("utf-8")
+        svg_bytes = buf.tell()
+        mode, reason = previewbudget.mode_for_svg_bytes(svg_bytes)
+        preview = previewbudget.metadata(svg_bytes=svg_bytes, mode=mode, reason=reason)
+        if mode == previewbudget.MODE_RASTER:
+            return man, None, preview
+        return man, buf.getvalue().decode("utf-8"), preview
 
 
 _ACTIVE: BrowserSession | None = None

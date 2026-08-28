@@ -8,6 +8,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { EngineRenderOptions, Manifest } from '@/lib/api'
 import { panelRender, renderKey, renderKeyOf, useRenderStore } from './renderStore'
+import { EDITOR_SVG_HARD_LIMIT_BYTES } from '@/lib/previewBudget'
 import type { PanelObject } from '@/types/document'
 
 const engineRender = vi.fn()
@@ -40,6 +41,73 @@ const panel = (id: string, fileId: string, overrides: unknown[] = []): PanelObje
 beforeEach(() => {
   engineRender.mockReset()
   useRenderStore.getState().clear()
+})
+
+describe('二道闸：超大 SVG 不进 store（ADR 0021）', () => {
+  it('后端说 raster 时不存 svg，但 manifest / status 照常', async () => {
+    const p = panel('a', 'Fig1.pdf')
+    engineRender.mockResolvedValue({
+      rev: 1,
+      manifest: manifest('Fig1'),
+      warnings: [],
+      preview: {
+        mode: 'raster',
+        reason: 'svg_hard_limit',
+        svg_bytes: 126_132_735,
+        rasterized_artist_count: 0,
+      },
+    })
+    await useRenderStore.getState().render('Fig1.pdf', [])
+
+    const entry = useRenderStore.getState().get(renderKeyOf(p))
+    // **不是渲染失败**：manifest 在，状态是 ready，只是没有矢量图
+    expect(entry.status).toBe('ready')
+    expect(entry.manifest).not.toBeNull()
+    expect(entry.svg).toBeNull()
+    expect(entry.preview.mode).toBe('raster')
+  })
+
+  it('后端异常地给了一份超大 svg：当场丢掉，绝不 prepareSvg 后存进来', async () => {
+    engineRender.mockResolvedValue({
+      rev: 1,
+      manifest: manifest('Fig1'),
+      warnings: [],
+      // 老后端 / 绕过了闸的后端：没有 preview 字段，svg 却大得离谱
+      svg: `<svg>${'x'.repeat(EDITOR_SVG_HARD_LIMIT_BYTES)}</svg>`,
+    })
+    await useRenderStore.getState().render('Fig1.pdf', [])
+
+    const entry = useRenderStore.getState().get(renderKey('Fig1.pdf', []))
+    expect(entry.svg).toBeNull()
+    expect(entry.preview.mode).toBe('raster')
+    expect(entry.preview.reason).toBe('fallback')
+  })
+
+  it('raster 之后再画成矢量：svg 回得来（这道闸不是单向门）', async () => {
+    engineRender.mockResolvedValue({
+      rev: 1,
+      manifest: manifest('Fig1'),
+      warnings: [],
+      preview: {
+        mode: 'raster',
+        reason: 'svg_hard_limit',
+        svg_bytes: 1e8,
+        rasterized_artist_count: 0,
+      },
+    })
+    await useRenderStore.getState().render('Fig1.pdf', [])
+    engineRender.mockResolvedValue({
+      rev: 2,
+      manifest: manifest('Fig1'),
+      warnings: [],
+      svg: '<svg id="back"/>',
+    })
+    await useRenderStore.getState().render('Fig1.pdf', [])
+
+    const entry = useRenderStore.getState().get(renderKey('Fig1.pdf', []))
+    expect(entry.svg).toContain('id="back"')
+    expect(entry.preview.mode).toBe('vector')
+  })
 })
 
 describe('变体键', () => {
