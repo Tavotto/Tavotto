@@ -1994,7 +1994,17 @@ def api_runtime_status():
     )
     if status["status"] is None:
         return _runtime_asset_unknown(rel_id)
-    return jsonify({"id": rel_id, **status})
+    # **上一次这张图是怎么产生的**（ADR 0021 §9）。界面靠它在重开文档时就说得出
+    # 「这张图来自一条 native 会话」——而不是等用户点进图内编辑、撞上一条 409
+    # 才知道。判据与渲染路由同一个出处（`enginesession.profile_of`），不另立
+    # 一份：两份判据迟早会在某个边角上分叉，而分叉的那一侧会显示成"能编辑"。
+    return jsonify(
+        {
+            "id": rel_id,
+            "execution_profile": engine_enginesession.profile_of(ctx.path, rel_id),
+            **status,
+        }
+    )
 
 
 @app.get("/api/runtime/preview")
@@ -2252,7 +2262,12 @@ def api_native_session_build(session_id: str):
     except engine_runcodes.RunError as exc:
         return _native_error(exc)
     except engine_pool.WorkerError as exc:
-        return _worker_error_payload(exc)
+        # **必须带状态码**：`_worker_error_payload()` 回的是裸 dict，Flask 会把它
+        # 序列化成 **HTTP 200**——而调用方（前端 `jsonFetch`）按状态码判成败，
+        # 于是一次 bridge 失败会被当成成功，然后去读一个不存在的 `session`。
+        # 用户看到的是**第二个**错误，真正的原因被盖掉了。同一个文件里另外 7 处
+        # `_worker_error_payload` 全是 `, 500`；这两处是漏的（issue #191）。
+        return jsonify(_worker_error_payload(exc)), 500
     rejected = engine_nativesession.REGISTRY.bind_assets(session)
     _materialize_native(session)
     out = {
@@ -2276,7 +2291,12 @@ def _native_action(session_id: str, action: str):
     except engine_runcodes.RunError as exc:
         return _native_error(exc)
     except engine_pool.WorkerError as exc:
-        return _worker_error_payload(exc)
+        # **必须带状态码**：`_worker_error_payload()` 回的是裸 dict，Flask 会把它
+        # 序列化成 **HTTP 200**——而调用方（前端 `jsonFetch`）按状态码判成败，
+        # 于是一次 bridge 失败会被当成成功，然后去读一个不存在的 `session`。
+        # 用户看到的是**第二个**错误，真正的原因被盖掉了。同一个文件里另外 7 处
+        # `_worker_error_payload` 全是 `, 500`；这两处是漏的（issue #191）。
+        return jsonify(_worker_error_payload(exc)), 500
     return jsonify({"ok": True, "result": result, "session": session.public_state()})
 
 
@@ -4487,17 +4507,31 @@ def tavotto_is_serving(port: int) -> bool:
         return False
 
 
+#: TCP 端口号的上限。**不是风格常量**：`bind()` 收到 65535 以上的号抛的是
+#: `OverflowError` 而不是 `OSError`，而 `port_is_free()` 只 catch 后者。
+MAX_PORT = 65535
+
+
 def resolve_port(preferred: int, tries: int = 20) -> int | None:
     """要用的端口；None = 该端口上已经有一个 Tavotto 在跑，不必再起。
 
     被别的程序占用时顺延找下一个空闲端口——双击启动的应用不能因为端口冲突就
     一声不响地退出（窗口化打包下用户连 traceback 都看不到）。
+
+    **顺延绝不越过 `MAX_PORT`。** 越过去的表现恰恰是这个函数自己承诺不许发生
+    的那件事：`bind(65536)` 抛的是 `OverflowError`，而 `port_is_free()` 只
+    catch `OSError`——于是 `preferred` 落在范围顶端 `tries` 个之内、且那几个
+    都被占着时，这里**当场崩掉**。默认参数下窗口是 65516–65535；调用方把
+    `tries` 调大，窗口就跟着变大。
+
+    扫不动了就退回 `preferred`（与"全占满了"同一条出口）：交给 `app.run`
+    报一个说得清的错，而不是从一个探测函数里抛 OverflowError。
     """
     if port_is_free(preferred):
         return preferred
     if tavotto_is_serving(preferred):
         return None
-    for p in range(preferred + 1, preferred + 1 + tries):
+    for p in range(preferred + 1, min(preferred + 1 + tries, MAX_PORT + 1)):
         if port_is_free(p):
             return p
     return preferred  # 全占满了：交给 app.run 报错，至少日志里有据可查

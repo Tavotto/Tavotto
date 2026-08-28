@@ -10,17 +10,61 @@
 
 - 日期：2026-08-28
 - 本 Session Prompt：Session 9 —— `tavotto run` · Matplotlib Bridge Beta
-- **状态：PR 9A 已就绪，未推送。** 分支 `compat/bridge-session09-native-run`
-  （worktree `.claude/worktrees/compat-bridge-session08`），基于
-  `origin/main` 的 `b23f8d9`（#187 认证枚举那一条）。
-- **本轮交付 = 控制面（PR 9A）。桌面产品面（PR 9B）没做**，见下方
-  「未完成 / 进 PR 9B 的入场券」。
-- **产品裁决**：`TAVOTTO_RUN_BETA = BLOCKED`（**不是 READY**）。后端与 CLI
-  的每一条不变式都立住了，缺的是 §68 里那几条只有 9B 能满足的：桌面确认
-  界面、native 会话 UI、offline / 重新绑定的面板行为、以及 Windows / macOS
-  **安装包**上的真机 E2E。
+- **状态：两个 PR 都已开，未合并。背靠背合，9A 不单独进队列**（用户拍板）。
+  - **PR 9A = 控制面**，[#189](https://github.com/Tavotto/Tavotto/pull/189)，
+    分支 `compat/bridge-session09-native-run`，基于 `origin/main` 的 `b23f8d9`。
+    评审两条 P1 已修：P1-2（`NativeSession` 的 worker-like 面）在 `958f276`；
+    P1-1（首启丢掉交接 ID）由 9B 修——**在 9A 里修不了**，见下一条。
+  - **PR 9B = 桌面产品面**，分支 `compat/bridge-session09b-desktop-surface`，
+    **stacked 在 9A 上**（同一个 worktree `.claude/worktrees/compat-bridge-session08`）。
+- **为什么必须背靠背**：9A 单独进 main 的话，README 上那句「你确认之前，一行
+  代码都不会跑」是**假**的。桌面首启的落地 URL 丢掉了 `--native-session`，
+  确认屏永远不出现，CLI 挂在 "Waiting for Tavotto desktop…" 上直到
+  `ATTACH_TIMEOUT = 300s`——而**每一条门禁都是绿的**。修它需要确认屏本身，
+  也就是 9B 的主体，切一半塞进 9A 只会得到"URL 里多了个参数、没人接"。
+- **产品裁决**：`TAVOTTO_RUN_BETA` 的**桌面面阻塞已解除**；仍未验证的只剩
+  Windows / macOS **安装包**上的真机 E2E（§58）。裁决本身不再只活在这份
+  Markdown 里——`tests/native/test_run_beta_claims.py` 把 README 的每一句
+  承诺连到兑现它的那几行代码上（跨 Rust / TS / Python 三种语言）。
 - 裁决与理由：**[ADR 0021](../adr/0021-tavotto-run-product-contract.md)**
-  （新增，Accepted）；ADR 0014 的四个待定稿事项到此全部关闭。
+  （Accepted，§0.1 记落地状态）；ADR 0014 的四个待定稿事项到此全部关闭。
+
+### PR 9B 交付（桌面产品面）
+
+- **首启那条路的真缺陷**（评审 P1-1）：`src-tauri` 的落地 URL 拼装抽成
+  `landing_query()` 并带上 `native=`。抽函数不是顺手——那段以前长在 `setup`
+  的闭包里，**谁也测不着，所以谁也没发现**。四条 Rust 用例钉住它。
+- `web/src/store/nativeSessionStore.ts`：确认队列 + 会话表。四条纪律各有用例
+  ——事件按 `sequence` 判序（终态不回头是推论）、项目代际、每条会话上的动作
+  互斥、错误存 code+params 不存成品字符串。
+- `NativeConfirmDialog`：ADR §7 的那一屏。**它是闸不是提示**，点外面 / Esc
+  不算回答；`□ 记住此项目和此 Python` 默认不勾；记住过的直接批准。
+- `NativeSessionCards`：状态闭集十档全覆盖 + 继续 / 放手 / 终止。终止只在屏障
+  处且二次确认。
+- **面板 live / offline 标记**：判据 `nativePanelState` 按**描述符里的 asset
+  id** 认领（不按 stem 猜）；「这张图出自哪一档」来自 `/api/runtime/status`
+  新增的 `execution_profile`（`enginesession.profile_of`，与渲染路由同一个
+  出处）。重开文档那一刻就标得出来。
+- `RunError.payload()` 补 `params`：CLI 的 JSON 契约是顶层平铺字段，前端文案
+  的约定是 `body.params`，两套都成立所以两边都给。
+- 中英文案：`nativeRun.*` / `nativeSession.*` / `panelBadge.native*` +
+  15 条 `backend.native_*`（正文由 `runcodes.MESSAGES` 生成，CLI 与界面对同一
+  个码说同一句话）。
+- **打包闭包复核**：`build_desktop.py` 与 `windows-exe-smoke` 各加两条不起
+  子进程的——`run --help` 退 0、一条故意的用法错误退 2。后者比前者值钱：
+  它证明 `runcodes` 的码表与退出码闭集也真的进了包（argparse 的 help 碰不到）。
+
+### PR 9B 的负向反证（十七条，全部先红后还原）
+
+对照组先跑一遍并全绿——**"全红"在对照也红的时候一文不值**（b6 这轮踩到过：
+zsh 不对未加引号的多个 `::` node id 分词，pytest 报 usage error rc=4，四个
+变异连同对照一起"红"）。判据一律看退出码。
+
+其中 **#16 第一轮是绿的**，抓到一条真的空门禁：README 承诺门禁在整份文件里
+找 `blockDismiss`，而 `NativeConfirmDialog.tsx` 的模块注释里正好写着这个词
+——把那个 prop 整个删掉之后门禁照样绿。判据改成**只在代码行里找**
+（`code_only`），并补了两条自看护用例。**被注释满足的门禁比没有门禁更坏：
+它让人以为那行代码还在。**
 
 ## Session 9 结论（一句话）
 
@@ -175,27 +219,27 @@ pending descriptor**，判据才真正只量那一条路径检查。
 数线程时它早就没了。改成"起一个真的去 `readline()` 的线程"——那才是 spike
 的形态，也才真的会把响应偷走。
 
-## 未完成 / 进 PR 9B 的入场券
+## §68 完成定义的账（9A + 9B 之后）
 
-**PR 9B（Desktop Product Surface）整个没做**，§68 完成定义里下面这些因此
-还是空的：
-
-- [ ] **桌面确认界面**：pending native request 的那一屏（Python 路径 / 工作
-  目录 / 目标 / 权限说明 / `□ 记住此项目和此 Python`）。后端
-  （`/api/native/pending/...` + `nativeperm`）已就绪，前端零行。
-- [ ] **native 会话状态 UI**：starting / waiting-for-figure / barrier /
-  continuing / ended / failed 六屏 + 「继续运行脚本」「放手」「终止脚本」。
-- [ ] **native live asset 绑面板**：`nativeSessionStore`（含项目代际纪律）、
-  offline badge、重新 attach 之后重放、多图选择器接 native 数据源。
-- [ ] **中英文案**：native 相关的 i18n key 一条都还没有；`native_session_*`
-  这批码在前端还没有对应文案（后端两种语言都齐了，见 `runcodes.MESSAGES`）。
-- [ ] **Windows / macOS 安装包真机 E2E**（§58）。本轮全部在**源码检出**上
-  跑；`tests/native` 走默认 pytest，所以 `backend-platforms` 会在 mac +
-  Windows 上各跑一遍——但那证明的是**后端与 CLI**，不是安装包里的
-  `tavotto-cli.exe` + 桌面壳。
-- [ ] **打包闭包复核**：`runcli` 等模块靠 PyInstaller 的字节码分析被收进
-  （与 `handoff` / `codexinstall` 同一条既有路径），本轮**没有**在真产物上
-  验过 `tavotto-cli run --help`。
+- [x] **桌面确认界面**：`NativeConfirmDialog`。目标 / 解释器与版本 / 工作目录
+  / 图库 / 参数**个数** + 权限说明 + `□ 记住此项目和此 Python`（默认不勾）。
+  点外面与 Esc 不算回答。
+- [x] **native 会话状态 UI**：`NativeSessionCards`，状态**闭集十档全覆盖**
+  （不是"六种常见的 + 一个 else"）+ 「继续运行脚本」「放手」「终止脚本」，
+  终止只在屏障处且二次确认。
+- [x] **native live asset 绑面板**：`nativeSessionStore`（项目代际、事件按
+  sequence 判序、动作互斥）、live / offline 角标、屏障处自动 build 并把图接进
+  画布、多图走 Figure 选择器（native 只是换了个数据源）。
+- [x] **中英文案**：`nativeRun.*` / `nativeSession.*` / `panelBadge.native*`
+  + 15 条 `backend.native_*`。码表由 `_NATIVE_STATUS` 枚举看护（两个方向都
+  量：缺文案红，多一条界面到不了的死键也红）。
+- [x] **打包闭包复核**：`build_desktop.py` 与 `windows-exe-smoke` 在**真产物**
+  上跑 `run --help`（退 0）与一条故意的用法错误（退 2）。
+- [ ] **Windows / macOS 安装包真机 E2E**（§58）——**唯一还空着的一条**。
+  `tests/native` 走默认 pytest，所以 `backend-platforms` 会在 mac + Windows
+  上各跑一遍，但那证明的是**后端与 CLI**；安装包里的 `tavotto-cli.exe` +
+  桌面壳（WebView2 / WKWebView）内的交互仍待真机取证。这条与 PR 1 起挂着的
+  壳内交互遗留项是同一条，需要用户 / lab runner 侧的候选产物。
 
 ### 本轮刻意没做的
 
@@ -211,11 +255,13 @@ pending descriptor**，判据才真正只量那一条路径检查。
 ## 下一 Session 首先阅读
 
 ```text
-docs/adr/0021-tavotto-run-product-contract.md    ← 本轮的全部裁决
-docs/compatibility/tavotto-run.md                ← 面向用户的完整契约
+docs/adr/0021-tavotto-run-product-contract.md    ← 本轮的全部裁决（§0.1 = 落地状态）
+docs/compatibility/tavotto-run.md                ← 面向用户的完整契约（含桌面面）
 src/tavotto/AGENTS.md 的「tavotto run 的控制面」一节
 src/tavotto/engine/{runcli,runspec,nativesession,nativerelay,envlease,enginesession}.py
 tests/native/                                    ← 尤其 test_native_barrier_semantics.py
+tests/native/test_run_beta_claims.py             ← README 承诺 ↔ 代码的跨语言连线
+web/src/store/nativeSessionStore.ts              ← 桌面面的四条纪律都在这一份里
 ```
 
 ## 建议启动命令

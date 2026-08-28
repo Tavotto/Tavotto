@@ -18,6 +18,7 @@ import { clearVariantPngCache } from '@/hooks/useVariantPng'
 import { useRenderStore } from '@/store/renderStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useFigurePickerStore } from '@/store/figurePickerStore'
+import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useScriptLibraryStore } from '@/store/scriptLibraryStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
 import { resetPreview } from '@/store/svgPreviewStore'
@@ -68,6 +69,10 @@ async function resetForNewProject() {
   useScriptLibraryStore.getState().clear()
   // 多 Figure 选择器（交接的 pick）属于旧项目，跟着关掉
   useFigurePickerStore.getState().close()
+  // native 会话换代：卡片与在途响应都属于旧项目。**用户的脚本一个都不动**
+  // ——那些进程是他自己在终端里起的，切个项目不该杀掉它们（ADR 0021 §14）。
+  // 切回去时 refresh() 会把它们重新对上账。
+  useNativeSessionStore.getState().clear()
   // 预览平面挂在「面板 + 那一版 SVG」上，旧项目的面板整批消失后那些账本
   // 指向的都是野节点，跟着一起清（DOM 由 React 自己收）
   resetPreview()

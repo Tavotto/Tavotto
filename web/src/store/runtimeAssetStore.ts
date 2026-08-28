@@ -24,6 +24,10 @@ export interface RuntimeAssetState {
   status: RuntimeStaleStatus
   cached: boolean
   registered: boolean
+  /** 上一次这张图是怎么产生的（`native` = 用户自己的 Python，ADR 0021 §9）。
+   *  老后端不给这个字段 → `safe`：**未知不等于 native**，把未知当 native 会让
+   *  一个普通面板挂上「会话已结束」的角标。 */
+  profile: 'safe' | 'native'
   /** 已经向后端问过一次（避免每次渲染面板都发请求） */
   checked: boolean
 }
@@ -111,6 +115,7 @@ export const useRuntimeAssetStore = create<RuntimeAssetStore>((set, get) => ({
               status: st.status,
               cached: st.cached,
               registered: st.registered,
+              profile: st.execution_profile === 'native' ? 'native' : 'safe',
               checked: true,
             },
           },
@@ -123,7 +128,13 @@ export const useRuntimeAssetStore = create<RuntimeAssetStore>((set, get) => ({
         set((s) => ({
           byId: {
             ...s.byId,
-            [id]: { status: 'needs_rerun', cached: false, registered: false, checked: true },
+            [id]: {
+              status: 'needs_rerun',
+              cached: false,
+              registered: false,
+              profile: 'safe',
+              checked: true,
+            },
           },
         }))
       })
@@ -135,7 +146,7 @@ export const useRuntimeAssetStore = create<RuntimeAssetStore>((set, get) => ({
       byId: {
         ...s.byId,
         [fileId]: {
-          ...(s.byId[fileId] ?? { registered: true, checked: true }),
+          ...(s.byId[fileId] ?? { registered: true, checked: true, profile: 'safe' as const }),
           status: 'fresh',
           cached: true,
           checked: true,

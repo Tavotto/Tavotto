@@ -8,6 +8,8 @@ import { Inspector } from '@/components/inspector/Inspector'
 import { LayoutDialog } from '@/components/LayoutDialog'
 import { CommandPalette } from '@/components/CommandPalette'
 import { FigurePickerDialog } from '@/components/FigurePickerDialog'
+import { NativeConfirmDialog } from '@/components/NativeConfirmDialog'
+import { NativeSessionCards } from '@/components/NativeSessionCards'
 import { RegistryDialog } from '@/components/RegistryDialog'
 import { RelinkDialog } from '@/components/RelinkDialog'
 import { SettingsDialog } from '@/components/SettingsDialog'
@@ -30,6 +32,7 @@ import { subscribePruneSelection } from '@/hooks/usePruneSelection'
 import { ProjectPicker } from '@/components/ProjectPicker'
 import { useAiStore } from '@/store/aiStore'
 import { useAssetStore } from '@/store/assetStore'
+import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useEnvStore } from '@/store/envStore'
 import { useTelemetryStore } from '@/store/telemetryStore'
@@ -74,6 +77,9 @@ export function App() {
       <>
         <ProjectPicker />
         <TelemetryConsentDialog />
+        {/* 还没打开项目也可能收到一条 `tavotto run` 交接：那个终端正阻塞着，
+            确认屏不能等到用户先挑完项目才出现 */}
+        <NativeConfirmDialog />
       </>
     )
   return <Workspace />
@@ -131,6 +137,15 @@ function Workspace() {
       useUiStore
         .getState()
         .setStatus(msg('autosave.docConflict', undefined, 'workspace'), 'error')
+    // `tavotto run` 的会话活在后端进程里，比这个窗口长命：重开界面、SSE
+    // 断线重连之后都要对一次账，否则一条还停在屏障上的会话在界面上就不存在
+    // 了——而那个终端还在等人点「继续运行脚本」。
+    const syncNative = () => {
+      const root = useProjectStore.getState().project?.figures_dir
+      void useNativeSessionStore.getState().refresh(root)
+    }
+    syncNative()
+    window.addEventListener('mm:sse-open', syncNative)
     window.addEventListener('tavotto:autosave-error', onAutosaveError)
     window.addEventListener('tavotto:doc-conflict', onDocConflict)
     return () => {
@@ -139,6 +154,7 @@ function Workspace() {
       stopCheckpoints()
       stopReflow()
       stopDiagnostics()
+      window.removeEventListener('mm:sse-open', syncNative)
       window.removeEventListener('tavotto:autosave-error', onAutosaveError)
       window.removeEventListener('tavotto:doc-conflict', onDocConflict)
     }
@@ -157,6 +173,7 @@ function Workspace() {
           <div className="relative flex min-w-0 flex-1 flex-col">
             <CanvasStage />
             <CanvasHud />
+            <NativeSessionCards />
             <StatusToasts />
           </div>
           {right.mounted && <Inspector overlay={overlay} state={right.state} />}
@@ -180,6 +197,7 @@ function Workspace() {
         <StyleDialog />
         <RegistryDialog />
         <FigurePickerDialog />
+        <NativeConfirmDialog />
       <RelinkDialog />
         <TelemetryConsentDialog />
         <CommandPalette />
@@ -199,6 +217,9 @@ function Workspace() {
  *     去找面板必然「找不到」，用户得到的就是一条假错误。
  *   * Tauri 事件 `tavotto:open` —— 桌面**再次**交接（单实例转发 argv）。
  *     它自带项目路径，所以在 Project Picker 上也能直接落地。
+ *
+ * `tavotto run` 的交接 ID（`?native=` / 事件里的 `native`）也走这两条——
+ * 它与「打开哪张图」不互斥，落地后交给 nativeSessionStore 的确认队列。
  */
 function useHandoff() {
   const phase = useProjectStore((s) => s.phase)
@@ -216,7 +237,12 @@ function useHandoff() {
     let unlisten: (() => void) | undefined
     let disposed = false
     void onDesktopOpen((p) => {
-      void applyOpenRequest({ project: p.project, stem: p.stem, pick: p.pick })
+      void applyOpenRequest({
+        project: p.project,
+        stem: p.stem,
+        pick: p.pick,
+        native: p.native,
+      })
     }).then((u) => {
       if (disposed) u()
       else unlisten = u

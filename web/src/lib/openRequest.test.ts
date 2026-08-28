@@ -4,6 +4,7 @@ import { applyOpenRequest, readOpenRequestFromUrl, stemOf } from '@/lib/openRequ
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useFigurePickerStore } from '@/store/figurePickerStore'
+import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -81,8 +82,18 @@ beforeEach(() => {
   useDocumentStore.setState({
     doc: { schema: 2, name: 't', page: { w: 210, h: 297 }, objects: [], guides: [] },
   } as never)
+  // native 会话的确认队列：这一层只关心「交接 ID 有没有被送过去」，
+  // 取 descriptor / 批准是 nativeSessionStore 自己的用例
+  receive = vi.fn(async () => {})
+  useNativeSessionStore.setState({ receive } as never)
   window.history.replaceState(null, '', '/')
 })
+
+/** 32 位小写十六进制——与 `nativehandoff._ID_RE` / 壳的过滤同源 */
+const NATIVE_ID = '0123456789abcdef0123456789abcdef'
+
+/** nativeSessionStore.receive 的替身；每个用例重置一次 */
+let receive: ReturnType<typeof vi.fn>
 
 describe('stemOf', () => {
   it('去目录与扩展名', () => {
@@ -113,6 +124,28 @@ describe('readOpenRequestFromUrl', () => {
     window.history.replaceState(null, '', '/?open=Fig1&pick=plot.py')
     expect(readOpenRequestFromUrl()).toEqual({ stem: 'Fig1' })
     expect(window.location.search).toBe('')
+  })
+
+  /**
+   * `?native=` 是 `tavotto run` **首启**这条路（壳的 `landing_query()`）。
+   * 它曾经在这一层整个不存在：壳解析了、`tavotto:open` 事件也带着，只有
+   * 落地 URL 与这边没接上——CLI 于是挂到 attach 超时，两边都不报错。
+   */
+  it('认下 ?native=（tavotto run 的交接 ID）并抹掉', () => {
+    window.history.replaceState(null, '', `/?native=${NATIVE_ID}&pj=abc`)
+    expect(readOpenRequestFromUrl()).toEqual({ native: NATIVE_ID })
+    expect(window.location.search).toBe('?pj=abc')
+  })
+
+  it('native 与 stem **不互斥**：一次交接可以既开图又带一条待确认的会话', () => {
+    window.history.replaceState(null, '', `/?open=Fig1&native=${NATIVE_ID}`)
+    expect(readOpenRequestFromUrl()).toEqual({ stem: 'Fig1', native: NATIVE_ID })
+    expect(window.location.search).toBe('')
+  })
+
+  it('native 与 pick 同样不互斥', () => {
+    window.history.replaceState(null, '', `/?pick=plot.py&native=${NATIVE_ID}`)
+    expect(readOpenRequestFromUrl()).toEqual({ pick: 'plot.py', native: NATIVE_ID })
   })
 })
 
@@ -262,5 +295,65 @@ describe('applyOpenRequest', () => {
 
     expect(await applyOpenRequest({ project: '/gone', stem: 'Fig1' })).toBe('failed')
     expect(formatMessage(useUiStore.getState().status)).toContain('目录不存在')
+  })
+
+  /**
+   * `tavotto run` 的交接。CLI 此刻正阻塞在「Waiting for Tavotto desktop…」
+   * 上，用户的 Python 一行都还没跑——所以**每条出口都要把它排进确认队列**，
+   * 包括项目没打开 / 打不开的那两条。漏掉哪一条，那个终端就一直挂到
+   * attach 超时，而界面上什么都没发生过。
+   */
+  describe('tavotto run 的交接 ID', () => {
+    it('只有 native：排进确认队列，没有面板要落', async () => {
+      expect(await applyOpenRequest({ native: NATIVE_ID })).toBe('native-pending')
+      expect(receive).toHaveBeenCalledWith(NATIVE_ID)
+    })
+
+    it('native 与 stem 同时来：图照常落地，确认队列也照常排', async () => {
+      const load = vi.fn(async () => setPanels([panel('Fig1.pdf')]))
+      useAssetStore.setState({ load } as never)
+
+      expect(await applyOpenRequest({ stem: 'Fig1', native: NATIVE_ID })).toBe('placed')
+      expect(receive).toHaveBeenCalledWith(NATIVE_ID)
+      expect(useDocumentStore.getState().doc.objects).toHaveLength(1)
+    })
+
+    it('项目还没打开也要排——确认屏自带项目路径，attach 不依赖界面开着谁', async () => {
+      useProjectStore.setState({ phase: 'none', project: null } as never)
+      expect(await applyOpenRequest({ native: NATIVE_ID })).toBe('native-pending')
+      expect(receive).toHaveBeenCalledWith(NATIVE_ID)
+    })
+
+    it('项目打不开也要排', async () => {
+      useProjectStore.setState({
+        open: vi.fn(async () => {
+          throw new Error('目录不存在')
+        }),
+      } as never)
+      expect(await applyOpenRequest({ project: '/gone', native: NATIVE_ID })).toBe('failed')
+      expect(receive).toHaveBeenCalledWith(NATIVE_ID)
+    })
+
+    it('**必须在换项目之后排**：换项目会把 native 会话状态整个换代掉', async () => {
+      const order: string[] = []
+      useProjectStore.setState({
+        open: vi.fn(async () => {
+          order.push('open')
+          return {} as never
+        }),
+      } as never)
+      receive.mockImplementation(async () => {
+        order.push('receive')
+      })
+      await applyOpenRequest({ project: '/other/figures', native: NATIVE_ID })
+      expect(order).toEqual(['open', 'receive'])
+    })
+
+    it('没有 native 时一次都不碰确认队列', async () => {
+      const load = vi.fn(async () => setPanels([panel('Fig1.pdf')]))
+      useAssetStore.setState({ load } as never)
+      await applyOpenRequest({ stem: 'Fig1' })
+      expect(receive).not.toHaveBeenCalled()
+    })
   })
 })

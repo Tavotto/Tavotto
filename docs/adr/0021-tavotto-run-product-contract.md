@@ -44,6 +44,49 @@
 "Safe native execution" / "Fully sandboxed"，理由与 ADR 0014 §2 同一条：
 **两档的文案必须与机制逐条一致**。
 
+### 0.1 落地状态（2026-08-28）
+
+控制面（PR 9A）与桌面产品面（PR 9B）**背靠背落地**，两者缺一都不成立：
+9A 单独进 main 的话，README 上那句「你确认之前，一行代码都不会跑」是**假**
+的——桌面首启的落地 URL 丢掉了交接 ID，确认屏永远不出现，CLI 挂到 attach
+超时，而每一条门禁都是绿的。
+
+那件事本身是这一版最值得记的一笔：**裁决写在 Markdown 里拦不住任何人。**
+`TAVOTTO_RUN_BETA = BLOCKED` 当时只存在于交接文档，全仓代码零处，而 `run`
+已经进了 CLI 的子命令闭集。现在这句承诺由
+`tests/native/test_run_beta_claims.py` 看着：它把 README 的每一句承诺连到
+兑现它的那几行代码上（跨 Rust / TypeScript / Python 三种语言——三条腿缺任何
+一条那句话就是假的，而没有任何单语言的用例看得见这一点）。
+
+**仍未验证的只剩一条**：Windows / macOS **安装包**上的真机 E2E（§58）。本轮
+全部在源码检出上跑；`tests/native` 走默认 pytest，所以 `backend-platforms`
+会在 mac + Windows 上各跑一遍——但那证明的是后端与 CLI，不是安装包里的
+`tavotto-cli.exe` + 桌面壳。打包闭包已经在真产物上有了看护
+（`build_desktop.py` 与 `windows-exe-smoke` 各跑一次 `run --help` 与一条
+故意的用法错误），壳内交互仍待真机。
+
+**合并这两个 PR ≠ `TAVOTTO_RUN_BETA = READY`。** 这是几个不同的决定，判据不同，
+**核判据的人与做决定的人也不是同一个**：
+
+| 决定 | 判据 | 判据由谁核 | 决定由谁做 |
+|---|---|---|---|
+| 够不够格合 | 评审 P1 清干净 + CI 绿 | 评审闸门 | —— |
+| 要不要现在合、按什么顺序 | 上一行 + 落地顺序的代价 | —— | 维护者 / 产品 |
+| Beta 能不能宣布 | §68 完成定义**逐条**满足，含安装包真机 E2E | 评审闸门可逐条核 | 产品 |
+
+**「核判据」与「做决定」分两栏是刻意的。** 这一轮里两者正好分开过一次：#189
+在 P1 修完、CI 全绿之后**够格**了，而它没有合——「要不要等 9B 背靠背」是用户
+拍的板。把两栏并成一栏「谁定」的话，下一个坐在闸门位置上的人会以为自己有那个
+权，**而缺授权这一环不会被任何技术信号提醒**：他掌握全部证据、也确实知道该
+怎么做，那正是最容易顺手把决定也做了的位置。
+
+写下来是因为它极易被读串：`run` 已经在 CLI 的子命令闭集里、README 上也已经
+写着用法，所以"合并了"看起来就像"可以用了"。**只剩一条**没验，与**验完了**
+之间隔着的正是这个功能唯一还没在真产物上跑过的那一段。
+
+在那一条关掉之前，面向用户的任何地方都不许出现"Beta 已就绪 / 可用"这类说法
+——理由与 §0 那条文案纪律同一条：**两档的文案必须与机制逐条一致**。
+
 ---
 
 ## 1. 进程所有权：CLI 必须继续拥有用户的 Python
@@ -633,6 +676,22 @@ Jupyter / 钩子传播给孙进程 / 远程 Python / Figure pickle / 往用户�
 Tavotto / `sitecustomize` / 第二套 manifest·override·export / 静默
 safe→native 或 native→safe fallback / native 模式自动 pip install /
 源码写回 / 原始产物写回 / 未经同意决定就扩遥测事件表 / 宣称 Stable。
+
+### 14.1 native 会话**不许**自动切到项目 `.venv`
+
+ADR 0018 的「缺依赖就接手项目自己的 `.venv`」是 safe 档的解药，在 native 档
+是**反的**：用户已经亲手指定了解释器，Tavotto 替他换一个等于把这个模式最核心
+的那句承诺（"跑的是你自己的 Python"）当场违掉，而且不会有任何提示。
+
+今天这条路不可达——`should_try_project_env()` 只认 `missing_dependency`，而
+native 侧的错误码里没有它（bridge_runner 产的是 `script_error` /
+`non_finite_response`）。所以 `_switched_to_project_env()` 里那个对
+`NativeSession` 会 AttributeError 的 `worker.script_name` **不是缺陷，也不加
+防御性分支**：加一个今天没人走的分支，只会在没人验证的路径上慢慢腐烂。
+
+写在这里是因为它会变：哪天 native 侧真的产生了 `missing_dependency`，那条路
+就活了。**那时该做的不是切环境，是明确拒绝**并把缺的包名告诉用户——让他自己
+决定往自己的环境里装什么。
 
 ## 15. 遥测与诊断
 

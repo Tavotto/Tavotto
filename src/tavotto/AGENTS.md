@@ -584,6 +584,18 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   `test_native_api::test_the_resolver_is_the_only_place_that_branches`）。
 - **native 会话绝不进池**：LRU 淘汰会杀掉用户正在跑的脚本。
 - **环境占用只有 `envlease` 一张表**：加第二张就保证了它们迟早不一致。
+- **连接过的 socket 一律 `shutdown(SHUT_RDWR)` 再 `close()`。** Linux 上
+  `close(fd)` **不唤醒**另一个线程里阻塞着的 `recv(fd)`——那个系统调用还持着
+  底层的 file description，于是**套接字不拆、FIN 不发**，对端永远等不到 EOF；
+  macOS 会让阻塞中的 `recv` 带 `EBADF` 返回，**所以这类缺陷本机恒绿、CI 恒红**。
+  产品上的形状：用户按了 Ctrl+C，脚本收到了也退出了，但 runner 停在"脚本
+  结束"那个屏障上等控制通道说话——通道没关、屏障不放、终端再也回不来。
+  判据要两条：一条量**不变式本身**（替身 socket 记 `shutdown` / `close` 的
+  调用顺序，任何平台都红），一条量行为（对端看不看得到 EOF，只有 Linux 红）。
+  只留后者等于把判据的有效性押在 CI 的平台组合上。
+- **native 面板"出自哪一档"只有一个出处**：`enginesession.profile_of()`。
+  `/api/runtime/status` 的 `execution_profile` 与渲染路由读的是同一份，
+  另立一份迟早在某个边角上分叉，而分叉的那一侧会在界面上显示成"能编辑"。
 
 ## 布局层（R18）
 

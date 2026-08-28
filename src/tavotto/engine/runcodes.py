@@ -261,7 +261,24 @@ class RunError(RuntimeError):
         return EXIT_FOR_CODE.get(self.code, EXIT_ATTACH_FAILED)
 
     def payload(self) -> dict:
-        return {"ok": False, "code": self.code, "error": str(self), **self.fields}
+        """机器可读的一份。**两套约定各自成立，所以两边都给。**
+
+        * 顶层平铺的 `fields` 是 **CLI 的 JSON 契约**（`--json` 的调用方按
+          `code` 分诊、按字段取值，`tests/native/test_run_codes.py` 钉着它）；
+        * `params` 是**前端错误文案的约定**（`lib/api.ts` 的 `backendCodeMsg`
+          从 `body.params` 取插值，仓库里每条带占位符的后端错误都这么发）。
+
+        少了 `params` 的表现很隐蔽：界面会照常显示那条错误，只是把
+        `{{seconds}}` 原样印出来——一条本地化过、看着很正常、却把占位符
+        泄漏给用户的句子。
+        """
+        return {
+            "ok": False,
+            "code": self.code,
+            "error": str(self),
+            "params": dict(self.fields),
+            **self.fields,
+        }
 
 
 def message_for(code: str, lang: str = "zh", /, **fields) -> str:

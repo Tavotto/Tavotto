@@ -258,3 +258,180 @@ def test_visible_codes_table_covers_every_literal_code():
         declared |= _declared_codes((SRC_DIR / name).read_text(encoding="utf-8"))
     unlisted = sorted(declared - set(USER_VISIBLE_CODES) - NON_UI_CODES)
     assert not unlisted, f"这些 code 没进 USER_VISIBLE_CODES 表：{unlisted}"
+
+
+# ---------------------------------------------------------------------------
+# Tavotto Run 的稳定码（ADR 0021）——**上面那张表按形状守不到它们**
+# ---------------------------------------------------------------------------
+# `_declared_codes` 认的是**字面量**：`{"code": "no_project"}`。而 native 那条
+# 面返回的是 `engine_runcodes.NATIVE_*` 常量，一个字面量都没有。于是
+# `test_visible_codes_table_covers_every_literal_code` 对它们**结构性地看不见**
+# ——不是漏登记，是判据的前提（"用户可见的 code 都以字面量出现在源码里"）在
+# runcodes 引入常量式码表的那一刻就不再成立了。
+#
+# 解法不是给 native 开一张平行的手工表（手工表下一次照样忘），而是**枚举**：
+# `app.py` 的 `_NATIVE_STATUS` 就是"这条 HTTP 面会返回哪些码"的闭集出处，
+# 逐条要求两种语言都有文案。往那张表里加一行却不加文案 → 当场红。
+#
+# 反方向同样量：`errors.json` 里不许有这个闭集之外的 `native_*` 键。
+# `test_i18n_dead_keys.py` 在这里帮不上忙——它按"源码里出现过这个串"判活，
+# 而 `runcodes.py` 的码表让**每一个** native 码看起来都有发射点，包括那些
+# 只有 CLI 会打印、界面永远见不到的（`native_desktop_required`、
+# `native_attach_timeout`、`no_figure_captured`）。
+
+_NATIVE_STATUS_RE = re.compile(r"engine_runcodes\.([A-Z0-9_]+):\s*\d{3}")
+
+
+def _native_http_codes() -> set[str]:
+    """`app.py` 的 `_NATIVE_STATUS` 键 —— 这条面能返回的码的闭集出处。"""
+    from tavotto.engine import runcodes
+
+    text = APP.read_text(encoding="utf-8")
+    block = text[text.index("_NATIVE_STATUS = {") : text.index("def _native_error")]
+    names = _NATIVE_STATUS_RE.findall(block)
+    assert len(names) >= 10, f"没解析到 _NATIVE_STATUS（只拿到 {names}）——判据本身坏了"
+    return {getattr(runcodes, n) for n in names}
+
+
+#: 不在 `_NATIVE_STATUS` 里、但确实会经别的端点到达界面的码。
+#: 只有一条：装依赖时撞上活跃 native 会话（envlease 抛 EnvironmentBusy，
+#: 依赖修复那条端点转成 JSON）。
+_EXTRA_NATIVE_UI_CODES = {"environment_in_use_by_native_session"}
+
+
+def _ui_native_codes() -> set[str]:
+    return _native_http_codes() | _EXTRA_NATIVE_UI_CODES
+
+
+@pytest.mark.parametrize("locale", ["zh-CN", "en-US"])
+def test_every_native_code_has_text_in_both_languages(locale: str):
+    table = _errors(locale).get("backend", {})
+    missing = sorted(_ui_native_codes() - set(table))
+    assert not missing, (
+        f"{locale} 的 errors.json 缺这些 Tavotto Run 码的文案：{missing}\n"
+        "  （界面会原样显示 `backend.<code>`，而这几条恰好都出现在"
+        "用户等着看一句解释的时刻）"
+    )
+    empty = sorted(c for c in _ui_native_codes() if not str(table[c]).strip())
+    assert not empty, f"{locale} 里这些码的文案是空的：{empty}"
+
+
+@pytest.mark.parametrize("locale", ["zh-CN", "en-US"])
+def test_native_placeholders_match_the_backend_message(locale: str):
+    """文案里的 `{{x}}` 必须与后端那条消息的 `{x}` 逐个对上。
+
+    对不上的表现不是报错，是界面上出现一个**原样的** `{{seconds}}`——一句
+    本地化过、看着很正常、却把占位符泄漏给用户的话。
+    """
+    from tavotto.engine import runcodes
+
+    table = _errors(locale)["backend"]
+    lang = "zh" if locale == "zh-CN" else "en"
+    for code in sorted(_ui_native_codes()):
+        entry = runcodes.MESSAGES[code]
+        backend = set(re.findall(r"\{(\w+)\}", entry.get(lang) or entry["zh"]))
+        front = set(re.findall(r"\{\{\s*(\w+)\s*\}\}", table[code]))
+        assert front == backend, f"{locale} {code}：文案用了 {front}，后端消息给的是 {backend}"
+
+
+def test_no_dead_native_keys_in_errors_json():
+    """反方向：`errors.json` 里不许有闭集之外的 `native_*` 键。
+
+    只有 CLI 会打印的那几条（`native_desktop_required` / `native_attach_timeout`
+    / `no_figure_captured`）放进来就是死键——而 `test_i18n_dead_keys.py` 抓不到
+    它们：它按"源码里出现过这个串"判活，`runcodes.py` 的码表让每一条都像活的。
+    """
+    allowed = _ui_native_codes()
+    for locale in ("zh-CN", "en-US"):
+        table = _errors(locale).get("backend", {})
+        stray = sorted(k for k in table if k.startswith("native_") and k not in allowed)
+        assert not stray, (
+            f"{locale} 的 errors.json 里有界面到不了的 native 码：{stray}\n"
+            "  要么它真的会到界面（那就把它加进 app.py 的 _NATIVE_STATUS），"
+            "要么删掉这条文案。"
+        )
+
+
+def test_run_error_payload_carries_params_for_the_frontend():
+    """`RunError.payload()` 必须同时给**两套约定**。
+
+    * 顶层平铺字段 = CLI 的 JSON 契约（`tests/native/test_run_codes.py` 钉着）；
+    * `params` = 前端错误文案的约定（`lib/api.ts` 的 `backendCodeMsg` 从
+      `body.params` 取插值）。
+
+    少了 `params` 的表现很隐蔽：界面照常显示那条错误，只是把 `{{seconds}}`
+    原样印出来。
+    """
+    from tavotto.engine import runcodes
+
+    payload = runcodes.RunError(runcodes.NATIVE_ATTACH_TIMEOUT, seconds=300).payload()
+    assert payload["params"] == {"seconds": 300}
+    assert payload["seconds"] == 300, "顶层平铺字段是 CLI 的契约，不能因为加了 params 就撤掉"
+    assert payload["code"] == runcodes.NATIVE_ATTACH_TIMEOUT
+    # params 是副本：调用方改它不该改到异常对象自己的 fields
+    payload["params"]["seconds"] = 1
+    assert runcodes.RunError(runcodes.NATIVE_ATTACH_TIMEOUT, seconds=300).fields == {"seconds": 300}
+
+
+# --------------------------------------------------------------------------
+# worker 错误必须带状态码
+# --------------------------------------------------------------------------
+def test_every_worker_error_response_carries_a_failure_status():
+    """`_worker_error_payload()` 回的是**裸 dict**——Flask 会把它序列化成
+    **HTTP 200**。
+
+    调用方（前端 `jsonFetch`）按状态码判成败，于是一次 bridge / worker 失败
+    被当成成功，代码接着去读一个不存在的 `session`。用户看到的是**第二个**
+    错误，真正的原因被盖掉了——这正是 "silent wrong" 的标准形状：不是没报，
+    是**报错了却说成功**。
+
+    2026-08-28 native 那两处（`build` / `continue`·`detach`·`terminate`）正是
+    这么漏的：同一个文件里另外 7 处全是 `, 500`，只有这两处忘了（issue #191）。
+    所以这条判据是**枚举**式的：每一处调用都要在同一段里带上一个非 2xx 的
+    状态码，加第 10 处时忘了会当场红。
+
+    判据只看源码文本，因为它量的是**响应的形状**，不是某一条端点的行为——
+    行为那一半由各端点自己的用例覆盖，而"忘了带状态码"恰恰是那些用例
+    看不见的（它们断言的是 body 里的 code，200 与 500 都读得到）。
+    """
+    src = APP.read_text(encoding="utf-8")
+    seen: list[str] = []
+    bad: list[str] = []
+    for i, line in enumerate(src.splitlines(), start=1):
+        if "_worker_error_payload(" not in line:
+            continue
+        if line.lstrip().startswith(("#", "*", "def ")):
+            continue  # 定义处与注释不算调用
+        seen.append(f"app.py:{i}")
+        if re.search(r"jsonify\(_worker_error_payload\([^)]*\)\)\s*,\s*[45]\d\d", line):
+            continue
+        bad.append(f"app.py:{i}: {line.strip()}")
+    assert not bad, (
+        "这些 worker 错误响应没带失败状态码，会以 HTTP 200 发出去：\n  "
+        + "\n  ".join(bad)
+        + "\n  前端按状态码判成败——200 的失败会被当成成功。"
+    )
+    # **扫到的条数也要钉**（2026-08-28 实测 11 处）。写成 `>=` 不行：那样它会
+    # 跟着系统一起长、却不会跟着系统一起收紧，"悄悄少两处"永远不会响（仓库里
+    # 那条"下限判据会向上腐烂"的同族）。
+    #
+    # **它兑现的是什么，说准**——这一格挡的是"调用点集合被动过了，来个人看
+    # 一眼"这条**绊线**：新增一处出口、删掉一处、或者把它挪到别的文件里，
+    # 都会红。
+    #
+    # **它挡不住什么**：在 `app.py` 里包一层（`_native_worker_error()` 内部
+    # 再调 `_worker_error_payload`）。那处调用没有消失，只是从路由搬进了
+    # wrapper——总数仍是 11，这条照样绿，而上面那条逐行判据也看不见 wrapper
+    # 的调用方。真要挡它，判据得改成**数出口**：枚举每条路由的
+    # `except pool.WorkerError` 分支、断言它的 `return` 带非 2xx。没这么写是
+    # 因为 `app.py` 里的 `except pool.WorkerError` 形态很杂（有的往 checks 里
+    # 追加、有的置状态字段、有的 `return None`、有的直接 re-raise），逐条分辨
+    # "哪些是响应路径"会引入一堆假红。
+    #
+    # 写在这里是因为**理由写得比兑现的强，比没有理由更坏**：下一个人会以为
+    # 这一格有人守着。
+    assert len(seen) == 11, (
+        f"`_worker_error_payload` 的调用点从 11 变成了 {len(seen)}：{seen}\n"
+        "  新增出口 → 把这个数改成新的实测值，并确认它带了状态码；\n"
+        "  变少了 → 确认那处是真的删了，而不是搬到了别的文件里。"
+    )

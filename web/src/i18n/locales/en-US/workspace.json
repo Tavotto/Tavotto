@@ -193,8 +193,6 @@
     "lockObject": "Lock object",
     "mcpOpenFigure": "Open figure",
     "moveElement": "Move {{label}}",
-    "playgroundOpenFigure": "Open figure",
-    "playgroundResetEdits": "Reset edits",
     "moveElements": "Move {{count}} figure elements",
     "moveGuide": "Move guide",
     "moveObject": "Move object",
@@ -203,6 +201,8 @@
     "pasteObjects_other": "Paste {{count}} objects",
     "pasteStyle": "Paste style",
     "pinLayout": "Pin position (ignore re-flow)",
+    "playgroundOpenFigure": "Open figure",
+    "playgroundResetEdits": "Reset edits",
     "reflowLayoutGroup": "Re-flow layout group",
     "relinkAssets_one": "Relink {{count}} asset",
     "relinkAssets_other": "Relink {{count}} assets",
@@ -264,17 +264,46 @@
     "grid": "grid layout",
     "row": "row layout"
   },
+  "nativeSession": {
+    "assetConflict": "These figures are already bound to another running session; this run did not take them over: {{stems}}",
+    "cardAria": "Tavotto Run session: {{target}}",
+    "detach": "Let go",
+    "resume": "Continue the script",
+    "resumeHint": "Restores the figure to what the script left before continuing; your edits replay at the next stop",
+    "state": {
+      "barrierAfterError": "Stopped after the script raised; captured figures are still editable",
+      "barrier_one": "Stopped — 1 figure ready to edit",
+      "barrier_other": "Stopped — {{count}} figures ready to edit",
+      "continuing": "Continuing…",
+      "detached": "Let go — the script is finishing on its own",
+      "ended": "Finished; figures captured: {{figures}}",
+      "endedWithCode": "Finished (exit code {{code}}); figures captured: {{figures}}",
+      "failed": "This session failed",
+      "pending_confirmation": "Waiting for you to confirm",
+      "running_script": "The script is running — actions resume when it stops",
+      "starting_python": "Starting your Python…",
+      "waiting_for_cli": "Connecting…",
+      "waiting_for_figure": "Waiting for the first figure — actions resume when it stops"
+    },
+    "terminate": "Stop the script",
+    "terminateConfirm": {
+      "body": "This ends {{target}} outright; the rest of the script will not run. Figures already on the canvas stay, but they are no longer attached to a running process.",
+      "title": "Stop this script?"
+    }
+  },
   "panelBadge": {
     "cold": "Cold start — this can take a few minutes…",
     "error": "Render failed",
     "firstBuild": "First build…",
+    "nativeOffline": "Session ended — re-run the original command to keep editing",
+    "nativeRunning": "Script is running — editing resumes when it stops",
     "rendering": "Rendering…",
-    "stale": "Script changed",
-    "runtimePossiblyStale": "The script or its environment may have changed — re-run to refresh",
-    "runtimeMissingSource": "The script is no longer on disk",
     "runtimeMissingEnvironment": "No rendering environment available",
+    "runtimeMissingSource": "The script is no longer on disk",
     "runtimeNeedsRerun": "Not run on this machine yet — enter editing to regenerate",
-    "runtimeRerunFailed": "Re-run failed"
+    "runtimePossiblyStale": "The script or its environment may have changed — re-run to refresh",
+    "runtimeRerunFailed": "Re-run failed",
+    "stale": "Script changed"
   },
   "quickEdit": {
     "aria": "Quick edit",

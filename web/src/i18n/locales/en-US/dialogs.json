@@ -120,6 +120,32 @@
     "rendering": "Re-rendering",
     "synced": "In sync"
   },
+  "nativeRun": {
+    "approve": "Run and connect",
+    "approving": "Connecting…",
+    "argCount_one": "{{count}} (its value never reaches this window)",
+    "argCount_other": "{{count}} (their values never reach this window)",
+    "cancel": "Cancel",
+    "description": "This command has not started running yet — it starts once you confirm.",
+    "descriptionQueued": "This command has not started running yet — it starts once you confirm. {{queued}} more are waiting.",
+    "fields": {
+      "args": "Arguments",
+      "cwd": "Working directory",
+      "interpreter": "Python",
+      "project": "Figure library",
+      "target": "Runs"
+    },
+    "loading": "Reading this run request…",
+    "permissionNotice": "This mode uses the project's own Python. The script has the same file permissions it would have if you ran it in your terminal yourself. Tavotto only takes over the Matplotlib figures inside that Python process. Only run code you trust.",
+    "pythonVersion": "Python {{version}}",
+    "remember": "Remember this project and this Python",
+    "rememberHint": "Next time the same figure library with the same interpreter runs without asking. Changing the interpreter, moving the library, or a permission-rule upgrade all bring the question back; you can revoke it in Settings at any time.",
+    "targetKind": {
+      "module": "module",
+      "script": "script"
+    },
+    "title": "Run and connect using your own Python"
+  },
   "palette": {
     "commands": {
       "add-text": {

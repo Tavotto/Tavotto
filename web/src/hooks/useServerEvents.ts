@@ -6,6 +6,7 @@ import { useAssetStore } from '@/store/assetStore'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useEnvStore } from '@/store/envStore'
+import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useRenderStore } from '@/store/renderStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
@@ -109,6 +110,13 @@ function handleEvent(ev: ServerEvent) {
     case 'probe.started':
       // 「运行并发现图」的执行确认：starting_runtime → running
       useScriptRunStore.getState().markRunning(ev.script)
+      break
+
+    case 'native.session':
+      // `tavotto run` 的会话状态（ADR 0021 §5.1）。后端发的是**快照**不是
+      // 增量，落地按 `sequence` 判序——断线重连补发的旧事件不该把已经退出
+      // 的脚本显示成"正在运行"。
+      useNativeSessionStore.getState().applyEvent(ev.session)
       break
 
     case 'registry.changed': {

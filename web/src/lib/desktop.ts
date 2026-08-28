@@ -78,12 +78,16 @@ export interface DesktopOpenPayload {
   stem?: string | null
   /** 多 Figure 交接的选择信息（脚本相对路径）——Figure 选择器在前端 */
   pick?: string | null
+  /** `tavotto run` 的一次性交接 ID（ADR 0021 §4）——确认界面在前端。
+   *  与 stem / pick **不互斥** */
+  native?: string | null
 }
 
 /**
  * 订阅「把这张图交给我打开」。壳在**已经开着窗口**时收到第二次启动的
  * `--open/--stem` 就发这个事件（单实例转发 argv）；首启不发——那一次项目走
- * sidecar 的 `--figures`、stem 走落地 URL 的 `?open=`，两条路最终都汇进
+ * sidecar 的 `--figures`、stem 走落地 URL 的 `?open=`、`tavotto run` 的交接
+ * ID 走 `?native=`（壳的 `landing_query`），三条路最终都汇进
  * lib/openRequest.ts 的同一个 applyOpenRequest。
  */
 export async function onDesktopOpen(

@@ -202,13 +202,97 @@ def test_busy_port_falls_back_instead_of_crashing():
 
     双击启动的应用不能因为端口冲突就一声不响地退出——窗口化打包下用户连
     traceback 都看不到。
+
+    **取材有两个坑，都不是产品缺陷，但都会让这条红成别的形状：**
+
+    ① **`tries` 给大**（默认 20 是产品值，这里不是在量它）。判据的主语是
+    "它会不会让开"，不是"20 个够不够"。用默认值时这条在全量套件里会偶发红：
+    这里拿的是**临时端口**，而内核是**顺序**发的——`busy + 1 … busy + 20`
+    精确地就是接下来要发出去的那 20 个号；而 `resolve_port` 在扫描之前先做
+    一次 **1.5 秒超时**的 `tavotto_is_serving()` 探测（对端 listen 了但从不
+    accept），那 1.5 秒足够同进程的池 / 子进程 / 后台线程把它们全用掉。
+    真实入参是固定的 5089（不在临时端口区间），这条链一条都不成立。
+
+    ② **要一个离天花板还有余量的端口**：顺延不越过 `MAX_PORT`，`busy` 落在
+    顶端 `tries` 个之内时它无处可去、只能退回 `preferred`——那时红的是
+    "没让开"，与本判据无关。
+
+    天花板本身**不在这条用例里量**：它依赖抢得到那几个高位端口，而那是概率
+    性的，CI 上大概率 skip，而 skip 在报告里长得和通过一模一样。那条不变式由
+    下面两条确定性用例看着。
     """
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        s.listen(1)
-        busy = s.getsockname()[1]
-        chosen = m.resolve_port(busy)
+    tries = 200
+    s = socket.socket()
+    try:
+        for _ in range(20):
+            s.bind(("127.0.0.1", 0))
+            s.listen(1)
+            busy = s.getsockname()[1]
+            if busy + tries <= m.MAX_PORT:
+                break
+            s.close()
+            s = socket.socket()
+        else:  # pragma: no cover - 连要 20 次都落在顶端，只可能是端口耗尽
+            pytest.skip("要不到一个离端口天花板还有余量的临时端口")
+        chosen = m.resolve_port(busy, tries=tries)
         assert chosen is not None and chosen != busy
+        assert m.port_is_free(chosen), f"让开了，但让到一个也不空闲的端口: {chosen}"
+    finally:
+        s.close()
+
+
+def test_the_port_probe_raises_above_the_ceiling_instead_of_saying_busy():
+    """**这条是下一条的前提，先把它钉住。**
+
+    `port_is_free()` 只 catch `OSError`，而 `bind()` 收到 65535 以上的号抛的是
+    `OverflowError`——所以越界不是"返回 False"，是**一个没人接的异常**。哪天
+    CPython 改成抛 `OSError`（或者有人给 `port_is_free` 加上 catch），下面那条
+    clamp 的用例就不再是在量真问题了，这里会先红出来提醒。
+
+    不占任何端口，任何平台任何时刻都跑。
+    """
+    with pytest.raises(OverflowError):
+        m.port_is_free(m.MAX_PORT + 1)
+
+
+def test_resolve_port_never_probes_above_the_ceiling(monkeypatch):
+    """顺延**绝不越过 `MAX_PORT`**。
+
+    越过去的表现恰恰是这个函数自己承诺不许发生的那件事：`bind(65536)` 抛
+    `OverflowError`，而 `port_is_free()` 不 catch 它——`preferred` 落在顶端
+    `tries` 个之内、且那几个都被占着时，`resolve_port` **当场崩掉**。
+    默认参数下窗口是 65516–65535；`tries` 调大窗口就跟着变大。
+
+    **刻意不占真端口**：那需要抢到 65530–65535 那几个号，而它们在临时端口
+    区间里、归谁每次都不一样——CI 上大概率 skip，而一条从没执行过的门禁不会
+    保持正确，何况 skip 在报告里长得和通过一模一样。这里用替身把"全占满"
+    做成确定性的（`tests/test_projects.py` 里已经是这个写法），并让替身在越界
+    时**抛真实的那个异常**——不然量到的只是"循环范围写对了"，不是"崩不掉"。
+    """
+    probed: list[int] = []
+
+    def fake_port_is_free(p: int) -> bool:
+        if p > m.MAX_PORT:  # 与真 bind() 同一种失败
+            raise OverflowError("bind(): port must be 0-65535.")
+        probed.append(p)
+        return False  # 全占满：确定性地走完整个扫描循环
+
+    monkeypatch.setattr(m, "port_is_free", fake_port_is_free)
+    monkeypatch.setattr(m, "tavotto_is_serving", lambda p: False)
+
+    chosen = m.resolve_port(m.MAX_PORT - 5, tries=20)
+
+    assert chosen == m.MAX_PORT - 5, "扫不动了要退回 preferred（与'全占满了'同一条出口）"
+    assert probed, "一个端口都没探——判据其实没跑到扫描循环"
+    # **两条边都要钉**。只写 `<= MAX_PORT` 的话，把 clamp 写成
+    # `min(..., MAX_PORT)`（少一个 +1）照样绿——那会**悄悄丢掉 65535 这个合法
+    # 端口**：不崩、不报错，只是永远不用它。变异测试里这一条正是漏网的那个。
+    assert max(probed) == m.MAX_PORT, (
+        f"扫描没覆盖到 65535（最高只探到 {max(probed)}）——合法端口被 clamp 吃掉了"
+    )
+    # `preferred` 自己那次探测也在 probed 里（`resolve_port` 的第一行），
+    # 所以区间是 [preferred, MAX_PORT] 而不是 (preferred, MAX_PORT]
+    assert probed == list(range(m.MAX_PORT - 5, m.MAX_PORT + 1)), f"扫描区间不对: {probed}"
 
 
 # ---------------- 默认编码不是 UTF-8（cp936） --------------------------------

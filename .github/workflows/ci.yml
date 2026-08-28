@@ -735,7 +735,43 @@ jobs:
           if (-not $j.ok) { throw "open 回了 ok=false: $out" }
           if ($j.launch) { throw "--no-launch 却起了界面: $out" }
           if (-not (Test-Path "$proj\tavotto_registry.json")) { throw "没生成 tavotto_registry.json" }
-          Write-Host "✓ 真产物上的 doctor / open --json --no-launch 都通了"
+          # `tavotto run` 的打包闭包复核（ADR 0021）。runcli / runspec /
+          # runcodes 靠 PyInstaller 的字节码分析被收进去，spec 里没有它们的
+          # 名字——漏收的表现不是构建失败，是用户机器上的 ModuleNotFoundError。
+          # 两条都**不起任何子进程**：--help 退 0；故意的用法错误退 2，后者
+          # 顺带证明 runcodes 的退出码闭集也真的进了包（--help 碰不到它）。
+          & $cli run --help > $null
+          if ($LASTEXITCODE -ne 0) { throw "tavotto-cli run --help 失败（$LASTEXITCODE）——runcli 多半没进包" }
+          # 下面这条**期望非零退出**，是本 workflow 里第一条这样的判据——而
+          # "这一步算成功吗"在 pwsh 里默认是**推断**出来的，不是我们说的。
+          #
+          # 2026-08-29 实测两轮：断言全过、`✓` 都打印了，步骤仍然退 1。第二轮
+          # 已经去掉 `2>&1`、也把 `$ErrorActionPreference` 放成了 `Continue`，
+          # **日志里一行 PowerShell 异常文本都没有**，它还是退 1。所以那两条
+          # 猜测（ErrorRecord 转换 / `$PSNativeCommandUseErrorActionPreference`）
+          # 至少有一条不成立，**具体机制我们没查清**，也不打算再猜：
+          #
+          #   这一步的契约是「**所有断言都过 = 成功**」，而它此前把这个结论
+          #   托付给了 `$LASTEXITCODE` 的隐式传播——那个值在最后一刻是上一条
+          #   原生命令留下的 **2**，也就是我们**故意**要的那个非零码。
+          #
+          # 所以显式 `exit 0`：把结论送进控制流，别让运行时替我们推断。失败
+          # 路径全是 `throw`，走不到这一行，所以它不掩盖任何真失败。
+          #
+          # 三条附带的事实，留给下一个想"顺手整理"这段的人：
+          #  * `2>&1 > $null` 连吞输出都没做到——`2>&1` 绑的是**当时的** stdout，
+          #    `> $null` 是之后才改的（与 bash 的 `2>&1 > file` 同一个形状）；
+          #  * `run --help` 的用法文本写的是 **stderr**，所以 `> $null` 挡不住它；
+          #  * stderr 不重定向是刻意的：那几行进日志无害，反而是"码表真的进了
+          #    包"的证据。
+          $prev = $ErrorActionPreference
+          $ErrorActionPreference = 'Continue'
+          & $cli run python x.py
+          $rc = $LASTEXITCODE
+          $ErrorActionPreference = $prev
+          if ($rc -ne 2) { throw "tavotto-cli run 的用法错误退出码是 $rc，应为 2" }
+          Write-Host "✓ 真产物上的 doctor / open --json --no-launch / run 闭包都通了"
+          exit 0
 
       - name: 断言产物里真有内置 runtime
         run: |

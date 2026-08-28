@@ -248,6 +248,31 @@ def main() -> None:
         )
     print(f"* tavotto-cli: {cli}（doctor 自检通过，协议 v{report.get('protocol')}）")
 
+    # `tavotto run` 的**打包闭包复核**（ADR 0021）。`runcli` / `runspec` /
+    # `runcodes` 这几个模块是靠 PyInstaller 的字节码分析被收进去的——与
+    # `handoff` / `codexinstall` 同一条既有路径，spec 里没有它们的名字。
+    # 那条路径一向可靠，但"一向可靠"不是证据：漏收的表现不是构建失败，
+    # 是装完的机器上 `tavotto run` 报 ModuleNotFoundError，而在源码树上
+    # 永远复现不了。
+    #
+    # 这里只跑**不起任何子进程**的两条：`run --help`（退出 0）与一条故意的
+    # 用法错误（退出 2）。第二条比第一条值钱——它证明的不只是"模块在"，
+    # 还有 `runcodes` 的码表与退出码闭集真的被打进去了（argparse 的 help
+    # 不碰它们）。
+    for argv, want in (([str(cli), "run", "--help"], 0), ([str(cli), "run", "python", "x.py"], 2)):
+        probe = subprocess.run(
+            argv, capture_output=True, text=True, encoding="utf-8", errors="replace"
+        )
+        if probe.returncode != want:
+            raise SystemExit(
+                f"tavotto-cli {' '.join(argv[1:])} 退出码 {probe.returncode}，应为 {want}：\n"
+                f"  stdout: {(probe.stdout or '').strip()[:400]}\n"
+                f"  stderr: {(probe.stderr or '').strip()[:400]}\n"
+                "  多半是 engine/runcli.py 及其闭包没被 PyInstaller 收进去"
+                "（packaging/tavotto.spec 的 hiddenimports）。"
+            )
+    print("* tavotto-cli run: --help 与用法错误（退出 2）都对，闭包完整")
+
     if args.skip_tauri:
         print("* --skip-tauri：到此为止")
         return

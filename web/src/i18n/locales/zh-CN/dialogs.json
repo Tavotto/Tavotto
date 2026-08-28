@@ -119,6 +119,31 @@
     "rendering": "正在重渲染",
     "synced": "已同步"
   },
+  "nativeRun": {
+    "approve": "运行并连接",
+    "approving": "正在连接…",
+    "argCount_other": "{{count}} 个（参数值不经过这个窗口）",
+    "cancel": "取消",
+    "description": "这条命令还没有开始运行——你确认之后才会。",
+    "descriptionQueued": "这条命令还没有开始运行——你确认之后才会。还有 {{queued}} 条在排队。",
+    "fields": {
+      "args": "参数",
+      "cwd": "工作目录",
+      "interpreter": "Python",
+      "project": "图库",
+      "target": "运行"
+    },
+    "loading": "正在读取这条运行请求…",
+    "permissionNotice": "此模式使用项目自己的 Python。脚本拥有与你在终端中直接运行时相同的文件权限。Tavotto 只接管当前 Python 进程中的 Matplotlib Figure。仅运行你信任的代码。",
+    "pythonVersion": "Python {{version}}",
+    "remember": "记住此项目和此 Python",
+    "rememberHint": "下次同一个图库配同一个解释器就不再询问。解释器换了、图库移动了、或者权限规则升级之后会重新询问；随时可以在设置里撤销。",
+    "targetKind": {
+      "module": "模块",
+      "script": "脚本"
+    },
+    "title": "用你自己的 Python 运行并连接"
+  },
   "palette": {
     "commands": {
       "add-text": {
