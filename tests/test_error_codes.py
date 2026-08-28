@@ -371,3 +371,41 @@ def test_run_error_payload_carries_params_for_the_frontend():
     # params 是副本：调用方改它不该改到异常对象自己的 fields
     payload["params"]["seconds"] = 1
     assert runcodes.RunError(runcodes.NATIVE_ATTACH_TIMEOUT, seconds=300).fields == {"seconds": 300}
+
+
+# --------------------------------------------------------------------------
+# worker 错误必须带状态码
+# --------------------------------------------------------------------------
+def test_every_worker_error_response_carries_a_failure_status():
+    """`_worker_error_payload()` 回的是**裸 dict**——Flask 会把它序列化成
+    **HTTP 200**。
+
+    调用方（前端 `jsonFetch`）按状态码判成败，于是一次 bridge / worker 失败
+    被当成成功，代码接着去读一个不存在的 `session`。用户看到的是**第二个**
+    错误，真正的原因被盖掉了——这正是 "silent wrong" 的标准形状：不是没报，
+    是**报错了却说成功**。
+
+    2026-08-28 native 那两处（`build` / `continue`·`detach`·`terminate`）正是
+    这么漏的：同一个文件里另外 7 处全是 `, 500`，只有这两处忘了（issue #191）。
+    所以这条判据是**枚举**式的：每一处调用都要在同一段里带上一个非 2xx 的
+    状态码，加第 10 处时忘了会当场红。
+
+    判据只看源码文本，因为它量的是**响应的形状**，不是某一条端点的行为——
+    行为那一半由各端点自己的用例覆盖，而"忘了带状态码"恰恰是那些用例
+    看不见的（它们断言的是 body 里的 code，200 与 500 都读得到）。
+    """
+    src = APP.read_text(encoding="utf-8")
+    bad: list[str] = []
+    for i, line in enumerate(src.splitlines(), start=1):
+        if "_worker_error_payload(" not in line:
+            continue
+        if line.lstrip().startswith(("#", "*", "def ")):
+            continue  # 定义处与注释不算调用
+        if re.search(r"jsonify\(_worker_error_payload\([^)]*\)\)\s*,\s*[45]\d\d", line):
+            continue
+        bad.append(f"app.py:{i}: {line.strip()}")
+    assert not bad, (
+        "这些 worker 错误响应没带失败状态码，会以 HTTP 200 发出去：\n  "
+        + "\n  ".join(bad)
+        + "\n  前端按状态码判成败——200 的失败会被当成成功。"
+    )

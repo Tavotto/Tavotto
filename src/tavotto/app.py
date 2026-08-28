@@ -2262,7 +2262,12 @@ def api_native_session_build(session_id: str):
     except engine_runcodes.RunError as exc:
         return _native_error(exc)
     except engine_pool.WorkerError as exc:
-        return _worker_error_payload(exc)
+        # **必须带状态码**：`_worker_error_payload()` 回的是裸 dict，Flask 会把它
+        # 序列化成 **HTTP 200**——而调用方（前端 `jsonFetch`）按状态码判成败，
+        # 于是一次 bridge 失败会被当成成功，然后去读一个不存在的 `session`。
+        # 用户看到的是**第二个**错误，真正的原因被盖掉了。同一个文件里另外 7 处
+        # `_worker_error_payload` 全是 `, 500`；这两处是漏的（issue #191）。
+        return jsonify(_worker_error_payload(exc)), 500
     rejected = engine_nativesession.REGISTRY.bind_assets(session)
     _materialize_native(session)
     out = {
@@ -2286,7 +2291,12 @@ def _native_action(session_id: str, action: str):
     except engine_runcodes.RunError as exc:
         return _native_error(exc)
     except engine_pool.WorkerError as exc:
-        return _worker_error_payload(exc)
+        # **必须带状态码**：`_worker_error_payload()` 回的是裸 dict，Flask 会把它
+        # 序列化成 **HTTP 200**——而调用方（前端 `jsonFetch`）按状态码判成败，
+        # 于是一次 bridge 失败会被当成成功，然后去读一个不存在的 `session`。
+        # 用户看到的是**第二个**错误，真正的原因被盖掉了。同一个文件里另外 7 处
+        # `_worker_error_payload` 全是 `, 500`；这两处是漏的（issue #191）。
+        return jsonify(_worker_error_payload(exc)), 500
     return jsonify({"ok": True, "result": result, "session": session.public_state()})
 
 
