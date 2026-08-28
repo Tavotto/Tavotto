@@ -12,6 +12,21 @@ const nr = (key: string, values?: Record<string, unknown>) =>
   translate(`nativeRun.${key}`, { ns: 'dialogs', ...(values ?? {}) })
 
 /**
+ * 这几个码意味着**那份 descriptor 已经没了**（用过 / 过期 / 不认识），再点一次
+ * 「运行并连接」只会拿到同一条错误。
+ *
+ * 它们会在批准失败之后出现，是因为后端在 attach **之前**就 `consume()` 了
+ * descriptor（issue #190）：attach 被拒时凭据已经成了墓碑。那条归后端修；
+ * 这边要做的是**别留一个点了也没用的按钮**——一个看起来可以重试、实际每次都
+ * 给同一条错误的入口，比直接说"这条请求已经作废了"更劝退。
+ */
+const HANDOFF_GONE = new Set([
+  'native_handoff_consumed',
+  'native_handoff_expired',
+  'native_handoff_invalid',
+])
+
+/**
  * `tavotto run` 的确认屏（ADR 0021 §7）。
  *
  * **这不是提示，是闸。** CLI 此刻正阻塞在「Waiting for Tavotto desktop…」上，
@@ -43,10 +58,13 @@ export function NativeConfirmDialog() {
   const store = useNativeSessionStore.getState()
   const info = head.info
   const busy = head.submitting
+  // descriptor 已经作废：这一屏没有"再试一次"，只有"知道了"
+  const gone = !!head.error && HANDOFF_GONE.has(head.error.code)
 
   // 取不到（过期 / 已被处理 / ID 不对）：说清楚，并给一个能关掉的出口。
   // 转圈的对话框比一条错误更坏——它让人一直等一件不会发生的事。
-  if (!info) {
+  // 批准之后 descriptor 作废的那条走同一屏：两种情况下用户能做的事一模一样。
+  if (!info || gone) {
     return (
       <Dialog
         open

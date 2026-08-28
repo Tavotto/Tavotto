@@ -216,6 +216,47 @@ describe('NativeConfirmDialog', () => {
     expect(useNativeSessionStore.getState().pendingQueue).toHaveLength(0)
   })
 
+  it('descriptor 作废之后不留一个点了也没用的「运行并连接」', async () => {
+    // 后端在 attach **之前**就 consume() 了 descriptor（issue #190），所以
+    // attach 被拒时凭据已经成了墓碑——再点一次只会拿到同一条错误。
+    useNativeSessionStore.setState({
+      pendingQueue: [
+        {
+          native_id: ID,
+          info: pending(),
+          loading: false,
+          submitting: false,
+          error: { code: 'native_handoff_consumed', message: '后端原文' },
+        },
+      ],
+    })
+    render()
+    expect(text()).toContain('已经被处理过')
+    expect(buttonWith('运行并连接'), '作废之后还留着一个点不动的按钮').toBeUndefined()
+    const close = buttonWith('关闭')
+    expect(close, '缺少能关掉它的出口').toBeTruthy()
+    await click(close!)
+    expect(useNativeSessionStore.getState().pendingQueue).toHaveLength(0)
+  })
+
+  it('可以重试的失败（环境被占）**保留**「运行并连接」', async () => {
+    // 反方向：不是所有批准失败都意味着 descriptor 没了。装依赖占着环境时
+    // 等一会儿再点就能成——这一格要是也被收掉，用户就只能重敲一遍命令。
+    useNativeSessionStore.setState({
+      pendingQueue: [
+        {
+          native_id: ID,
+          info: pending(),
+          loading: false,
+          submitting: false,
+          error: { code: 'environment_mutating', message: '后端原文' },
+        },
+      ],
+    })
+    render()
+    expect(buttonWith('运行并连接'), '可重试的失败不该把按钮收掉').toBeTruthy()
+  })
+
   it('排队中的第二条会说出来，不是悄悄压着', () => {
     useNativeSessionStore.setState({
       pendingQueue: [
