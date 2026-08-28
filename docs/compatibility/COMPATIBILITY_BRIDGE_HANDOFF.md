@@ -9,6 +9,10 @@
   `.claude/worktrees/compat-bridge-session08`，**基于 `origin/main` `7952ceb`**，
   不 stacked 在任何未合并分支上）
 - 本 Session Prompt：Session 8 —— Matplotlib Bridge Technical Spike
+- **已合入 main：2026-08-28 03:50Z，squash `8c5a697`**（队列一轮过；
+  `backend-platforms` 的 mac + Windows 两条腿**首次执行 `tests/bridge` 全部
+  69 条，一次全绿**，`windows-exe-smoke` / `macos-app-smoke` / `package ×3`
+  同轮全绿）。
 - 交付：**技术验证**（ADR 0020 定稿 + 可运行实现 + 69 条用例 + 12 条负向反证）。
   **不是产品**：`tavotto run` 不存在，spike 入口没有稳定契约。
 - **Session 7（PR #177，项目 .venv 自动接手 / ADR 0018+0019）仍 open**。
@@ -245,13 +249,19 @@ git merge-tree --write-tree --name-only HEAD origin/compat/bridge-session07-proj
 
 ## 未完成 / 进 Session 9 的入场券
 
-- [ ] **Windows 真机执行**：`tests/bridge/` 走默认 pytest，所以
-  `backend-platforms`（merge_group / `full-ci`）本来就会在 mac + Windows 上
-  各跑一遍——缺的只是**看见那一遍的结果**。入队前用 `full-ci` 标签在 PR SHA
-  上取证，别拿整轮队列资格试错（Session 6 的教训）。
-  本轮已经被仓库既有的 Windows 门禁抓到过一次真缺陷（9 处
-  `subprocess.run(text=True)` 没钉 `encoding`），说明「平台无关」不能只靠
-  眼睛看。
+- [x] ~~**Windows / macOS 执行**~~：**已完成**。入队那一轮
+  `backend-platforms`（mac + Windows 3.13）**首次执行 `tests/bridge` 全部
+  69 条，一次全绿**；同轮 `windows-exe-smoke` / `macos-app-smoke` /
+  `package ×3` 也全绿。ADR 0020 §12 的「设计与用例就绪、真机未跑」到此关闭
+  （CI 侧；WebView2 / WKWebView **壳内交互**仍属 PR 1 遗留的真机取证）。
+
+  **它为什么一次过，值得记**：仓库既有的
+  `test_source_hygiene::test_windows_bound_subprocesses_pin_their_decoding`
+  在 PR 阶段就抓到了唯一一处真的 Windows 缺陷——9 处
+  `subprocess.run(text=True)` 没钉 `encoding`，Windows 上会用 cp936/cp1252
+  解码、把中文 stderr 静默吞掉，而我有判据靠 stderr 内容分诊。没有那条门禁，
+  这就是白烧一轮队列。**「按平台无关写的」不等于「跑过」**，而在真跑之前
+  能替你挡一层的，只有那种"在本平台就能问出跨平台问题"的门禁。
 - [ ] **native 会话是否进池复用**（ADR 0014 §7 第 4 问）。
 - [ ] **产品面**：`tavotto run` 的稳定 CLI 契约与错误码表、桌面交接、UI 一次性
   确认（必须写明解释器路径 / cwd / 「拥有你当前用户的全部权限」）、每项目
