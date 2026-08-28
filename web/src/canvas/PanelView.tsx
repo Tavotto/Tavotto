@@ -652,9 +652,13 @@ function RenderStatusBadge({ obj }: { obj: PanelObject }) {
     if (render?.status === 'error') {
       return { tone: 'error' as const, cold: false, text: badge('error') }
     }
-    if (render?.stale) return { tone: 'stale' as const, cold: false, text: badge('stale') }
-    // native 排在 runtime stale 之前：一条还活着的会话上，「脚本可能已变化」
-    // 是次要的，「现在能不能编辑」才是用户下一步要做的事。
+    // **阻塞性的压过信息性的。** native 的两句说的是"现在不能编辑"，而
+    // `stale`（脚本已更新）/ runtime 的 stale 语义说的是"内容可能不是最新"
+    // ——后者不妨碍用户动手，前者妨碍。把 `stale` 排在前面的表现是：native
+    // 会话跑着的时候用户看到「脚本已更新」，以为可以重新渲染，点进去撞一条
+    // 409；而那时真正该告诉他的是"停下来才能编辑"。
+    //
+    // 这一档也压过 `#193` 的 raster 预览角标（那条是信息性的），同一条理由。
     if (nativeState) {
       return {
         tone: 'stale' as const,
@@ -662,6 +666,7 @@ function RenderStatusBadge({ obj }: { obj: PanelObject }) {
         text: badge(nativeState === 'running' ? 'nativeRunning' : 'nativeOffline'),
       }
     }
+    if (render?.stale) return { tone: 'stale' as const, cold: false, text: badge('stale') }
     // runtime 的 stale 语义（诚实文案：说「可能已变化」，不说「数据未变」）
     if (runtimeBadge) {
       return { tone: runtimeBadge.tone, cold: false, text: badge(runtimeBadge.key) }
