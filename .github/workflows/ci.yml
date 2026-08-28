@@ -742,8 +742,27 @@ jobs:
           # 顺带证明 runcodes 的退出码闭集也真的进了包（--help 碰不到它）。
           & $cli run --help > $null
           if ($LASTEXITCODE -ne 0) { throw "tavotto-cli run --help 失败（$LASTEXITCODE）——runcli 多半没进包" }
-          & $cli run python x.py 2>&1 > $null
-          if ($LASTEXITCODE -ne 2) { throw "tavotto-cli run 的用法错误退出码是 $LASTEXITCODE，应为 2" }
+          # 下面这条**期望非零退出**，是本 workflow 里第一条这样的判据，
+          # 而 PowerShell 在这件事上有两个各自能让它假红的坑（2026-08-29 实测：
+          # 断言全过、`Write-Host` 都打了，步骤仍然退 1）：
+          #
+          #  1. **别写 `2>&1`**。它把原生命令的 stderr 转成 ErrorRecord 送进成功流，
+          #     而步骤模板预置了 `$ErrorActionPreference = 'Stop'`，于是 PowerShell
+          #     自己抛 NativeCommandError——退出码 1 是它抛的，不是 `$LASTEXITCODE`
+          #     （那个此刻正是我们要的 2）。顺带一提 `2>&1 > $null` 连"吞掉输出"
+          #     都没做到：`2>&1` 绑的是**当时的** stdout（控制台），`> $null` 是之后
+          #     才改的——与 bash 里 `2>&1 > file` 把 stderr 留在终端同一个形状。
+          #  2. **`$ErrorActionPreference` 要临时放开**。PowerShell 7.4 起
+          #     `$PSNativeCommandUseErrorActionPreference` 默认为真，原生命令**非零
+          #     退出本身**就会在 Stop 之下抛出——那正是这条判据要的那个退出码。
+          #
+          # stderr 不重定向：那几行用法文本进日志无害，反而是"码表真的进了包"的证据。
+          $prev = $ErrorActionPreference
+          $ErrorActionPreference = 'Continue'
+          & $cli run python x.py
+          $rc = $LASTEXITCODE
+          $ErrorActionPreference = $prev
+          if ($rc -ne 2) { throw "tavotto-cli run 的用法错误退出码是 $rc，应为 2" }
           Write-Host "✓ 真产物上的 doctor / open --json --no-launch / run 闭包都通了"
 
       - name: 断言产物里真有内置 runtime
