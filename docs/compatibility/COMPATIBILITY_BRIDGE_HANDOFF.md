@@ -4,16 +4,33 @@
 
 ## 当前状态
 
+> **这一段是合并后的快照，整段一起重写过**（不是在旧快照上加一行）。
+> 半新半旧的状态块比完全陈旧更坏：完全陈旧至少自洽、读者看日期就知道该
+> 怀疑什么；半更新销毁了这个自洽性，却继承了"刚被人动过"的可信度。
+
 - 日期：2026-08-28
-- 当前 branch：`compat/bridge-session08-native-spike`（worktree
-  `.claude/worktrees/compat-bridge-session08`，**基于 `origin/main` `7952ceb`**，
-  不 stacked 在任何未合并分支上）
 - 本 Session Prompt：Session 8 —— Matplotlib Bridge Technical Spike
+- **状态：已合入 main。** squash `8c5a697`，2026-08-28 03:50Z，合并队列一轮过。
+  开发分支 `compat/bridge-session08-native-spike`（worktree
+  `.claude/worktrees/compat-bridge-session08`）已完成使命；收尾文档 PR #188。
+- **落地顺序**（都已在 main 上）：
+
+  ```
+  ee19e29  #185  cla-check 进 CI fast gate
+  8118ba2  #177  项目 .venv 自动接手 + 受控依赖安装（ADR 0018 / 0019）
+  8c5a697  #186  Native Matplotlib Bridge spike（ADR 0020）  ← 本 Session
+  ```
+
+  也就是说 **#177 先落地，本分支最终 rebase 在它上面**（`8118ba2` 是
+  `8c5a697` 的祖先）。开工时它还 open，本 Session 刻意**不 stacked** 在它
+  上面——两条线没有代码依赖，ADR 编号取 0020 与它的 0018/0019 不撞，所以
+  谁先合都不用返工。事实是它先合，本分支再 rebase 上去解了两处文档冲突。
+- **平台验证**：入队那一轮 `backend-platforms`（macos-latest /
+  windows-latest，3.13）**首次执行 `tests/bridge` 全部 69 条，一次全绿**；
+  同轮 `windows-exe-smoke` / `macos-app-smoke` / `package ×3` 也全绿。
 - 交付：**技术验证**（ADR 0020 定稿 + 可运行实现 + 69 条用例 + 12 条负向反证）。
-  **不是产品**：`tavotto run` 不存在，spike 入口没有稳定契约。
-- **Session 7（PR #177，项目 .venv 自动接手 / ADR 0018+0019）仍 open**。
-  本 Session **刻意不 stacked 在它上面**：spike 与它没有代码依赖，独立分支
-  两边都能先合（ADR 编号取 0020，与 #177 的 0018/0019 无冲突）。
+  **不是产品**：`tavotto run` 不存在，spike 入口没有稳定契约、没接进 CLI，
+  也不进 README / 官网 / release notes。
 
 ## Session 8 结论（一句话）
 
@@ -227,9 +244,12 @@ git merge-tree --write-tree --name-only HEAD origin/compat/bridge-session07-proj
 `src/tavotto/AGENTS.md`：项目环境接手 vs 「两条执行入口」），解法是取并集
 不是二选一。
 
-**顺序：#177 优先**（它工程侧已就绪、只等用户对 8 条 code-scanning 告警拍板；
-#186 是预研，没有时间压力）。所以由 **#186 在 #177 落地之后解这两个文件**，
-且**等它真落地再解**——main 一动预解就作废。
+**实际处置（已完成）**：#177 先落地（`8118ba2`），本分支随后 rebase 上去，
+两处冲突当场解掉。当时定的顺序理由是「#177 工程侧已就绪、只等用户对 8 条
+code-scanning 告警拍板，而 #186 是预研、没有时间压力」，事实也是这么走的。
+
+**其中一条纪律值得单独留着**：预解冲突要**等对方真落地**——main 一动，
+预先解好的那份就作废。本轮是等 #177 合入 main 之后才 rebase 的。
 
 ## 本轮踩到并留了注释的三个坑
 
@@ -245,13 +265,19 @@ git merge-tree --write-tree --name-only HEAD origin/compat/bridge-session07-proj
 
 ## 未完成 / 进 Session 9 的入场券
 
-- [ ] **Windows 真机执行**：`tests/bridge/` 走默认 pytest，所以
-  `backend-platforms`（merge_group / `full-ci`）本来就会在 mac + Windows 上
-  各跑一遍——缺的只是**看见那一遍的结果**。入队前用 `full-ci` 标签在 PR SHA
-  上取证，别拿整轮队列资格试错（Session 6 的教训）。
-  本轮已经被仓库既有的 Windows 门禁抓到过一次真缺陷（9 处
-  `subprocess.run(text=True)` 没钉 `encoding`），说明「平台无关」不能只靠
-  眼睛看。
+- [x] ~~**Windows / macOS 执行**~~：**已完成**。入队那一轮
+  `backend-platforms`（mac + Windows 3.13）**首次执行 `tests/bridge` 全部
+  69 条，一次全绿**；同轮 `windows-exe-smoke` / `macos-app-smoke` /
+  `package ×3` 也全绿。ADR 0020 §12 的「设计与用例就绪、真机未跑」到此关闭
+  （CI 侧；WebView2 / WKWebView **壳内交互**仍属 PR 1 遗留的真机取证）。
+
+  **它为什么一次过，值得记**：仓库既有的
+  `test_source_hygiene::test_windows_bound_subprocesses_pin_their_decoding`
+  在 PR 阶段就抓到了唯一一处真的 Windows 缺陷——9 处
+  `subprocess.run(text=True)` 没钉 `encoding`，Windows 上会用 cp936/cp1252
+  解码、把中文 stderr 静默吞掉，而我有判据靠 stderr 内容分诊。没有那条门禁，
+  这就是白烧一轮队列。**「按平台无关写的」不等于「跑过」**，而在真跑之前
+  能替你挡一层的，只有那种"在本平台就能问出跨平台问题"的门禁。
 - [ ] **native 会话是否进池复用**（ADR 0014 §7 第 4 问）。
 - [ ] **产品面**：`tavotto run` 的稳定 CLI 契约与错误码表、桌面交接、UI 一次性
   确认（必须写明解释器路径 / cwd / 「拥有你当前用户的全部权限」）、每项目

@@ -479,8 +479,8 @@ spike 入口（`python -m tavotto.engine.bridge_spike`）**不是产品**：没�
 
 | | 做法 | 状态 |
 |---|---|---|
-| macOS | 见上；开发机（arm64）上跑通全部用例 | ✅ 已验证 |
-| Windows | 同一条路径：loopback socket 跨平台一致（不用 fd 继承、不用 Unix socket、不用命名管道）；spawn 不经 shell（argv 列表）；控制通道两侧钉 UTF-8，而用户的 stdio 一个字节不碰；`creationflags=CREATE_NO_WINDOW` 复用 `runtime` 那份；跨盘符的 `relpath` 显式报错不裸抛 | ⚠️ **设计与用例就绪，真机未跑**（见 §13） |
+| macOS | 见上；开发机（arm64）上跑通全部用例 | ✅ 已验证（CI 侧 `backend-platforms (macos-latest, 3.13)` + `macos-app-smoke` 同轮亦绿） |
+| Windows | 同一条路径：loopback socket 跨平台一致（不用 fd 继承、不用 Unix socket、不用命名管道）；spawn 不经 shell（argv 列表）；控制通道两侧钉 UTF-8，而用户的 stdio 一个字节不碰；`creationflags=CREATE_NO_WINDOW` 复用 `runtime` 那份；跨盘符的 `relpath` 显式报错不裸抛 | ✅ **已验证**：入队轮 `backend-platforms (windows-latest, 3.13)` 首次执行 `tests/bridge` 全部 69 条，一次全绿；同轮 `windows-exe-smoke` / `package (windows)` 亦绿 |
 
 用例本身是平台无关的（没有一条依赖 POSIX 语义），而且走默认 pytest——
 所以 `backend-platforms`（merge_group / `full-ci`）会在 macOS 与 Windows 上
@@ -496,9 +496,10 @@ stderr 内容分诊的判据。这条说明"平台无关"不能只靠眼睛看�
 
 ## 13. 未完成（进 Session 9 的入场券）
 
-1. **Windows 真机执行**：`tests/bridge/` 在 Windows 上跑一遍。CI 侧
-   `backend-platforms` 只在 merge queue 跑，PR 上是 SKIPPED——大改动入队前
-   用 `full-ci` 标签在 PR SHA 上先取证。
+1. ~~**Windows 执行**~~ —— **已完成**（合入那一轮 `backend-platforms`
+   mac + Windows 首次执行 69 条用例、一次全绿）。剩下的只有 **WebView2 /
+   WKWebView 壳内交互**的真机取证，那是 PR 1 起就挂着的遗留项，与 native
+   bridge 不特别相关。
 2. **native 会话进池 / 复用**（ADR 0014 §7 第 4 问）。**#177 落地后这一问
    多了一个必须回答的具体场景**：`pool.mutating_environment()` 在装依赖期间
    独占一个环境——`shutdown_workers_using(python)` 收掉**池里的** worker，
