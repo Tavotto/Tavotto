@@ -13,6 +13,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { PanelView } from './PanelView'
 import { renderKeyOf, useRenderStore, type PanelRender } from '@/store/renderStore'
+import { useNativeSessionStore } from '@/store/nativeSessionStore'
+import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useUiStore } from '@/store/uiStore'
 import { VECTOR_PREVIEW, type PreviewMetadata } from '@/lib/previewBudget'
 import type { Manifest } from '@/lib/api'
@@ -82,6 +84,9 @@ beforeEach(() => {
   URL.createObjectURL = vi.fn(() => 'blob:mock/1')
   URL.revokeObjectURL = vi.fn()
   useRenderStore.getState().clear()
+  // 排序用例靠「只置要测的那一对」把相邻对隔离开，所以每条都得从空开始
+  useNativeSessionStore.setState({ sessions: {} })
+  useRuntimeAssetStore.setState({ byId: {} })
   useUiStore.setState({ elementPanelId: PANEL.id }) // 编辑态：三档的区别只在这里显现
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -241,5 +246,97 @@ describe('PanelView：三档预览表示法', () => {
     await mount()
 
     expect(inlineSvg()?.innerHTML).toContain('id="legacy"')
+  })
+})
+
+/* -------------------------------------------------------------------------- */
+/*  角标优先级：相邻两档同时成立时谁说了算                                       */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * 最终链条（#192 合入后）：
+ *
+ *     error → nativeState → stale → rasterEditing → runtimeBadge
+ *
+ * **排序缺陷唯一藏得住的地方是「相邻」。** 所以每条夹具只置要测的那一对，
+ * 链上位于两者之间的每一档都刻意留空——置了中间那档，测的就变成「A vs 中间
+ * 那档」，而对调 A/B 的顺序根本不改结果（#192 那边的第一版排序用例正是这么
+ * 变异完还绿的）。
+ *
+ * 变异纪律：每条**单独**变异，只对调那一对。一次变异把三条全打红 = 夹具没
+ * 隔离开，红的不是要测的那件事。
+ */
+describe('角标优先级：相邻两档同时成立时谁说了算', () => {
+  const badgeText = () =>
+    [...container.querySelectorAll('span')].map((el) => el.textContent).find((t) => t) ?? ''
+
+  /** 一条活着的 native 会话，descriptors 指着这个面板 */
+  const liveSession = (editable: boolean) => ({
+    sessions: {
+      s1: {
+        session_id: 's1',
+        state: 'running',
+        editable,
+        descriptors: [{ asset_id: PANEL.fileId }],
+      } as never,
+    },
+  })
+
+  it("'running' + raster → 说 native（两档都在，阻塞性的先说）", async () => {
+    useNativeSessionStore.setState(liveSession(false))
+    seed({ svg: null, preview: RASTER, stale: false }) // ← 刻意不置 stale
+    await mount()
+
+    expect(badgeText()).toBe('脚本正在运行，停下来才能编辑')
+    expect(container.textContent).not.toContain('低内存编辑预览')
+  })
+
+  it("'offline' + raster → 仍说 native（这一格论证最薄，不许抽代表）", async () => {
+    // `'offline'` 与 `'running'` **同为阻塞性**：`_NATIVE_STATUS` 把
+    // NATIVE_SESSION_OFFLINE 与 NATIVE_SESSION_NOT_AT_BARRIER 都映射成 409，
+    // `enginesession.resolve()` 在 profile=native、无活会话时也直接抛。
+    // 解锁动作不同（等屏障 vs 重跑原命令），但点进图内编辑都失败。
+    const runtimePanel = { ...PANEL, fileKind: 'runtime' } as unknown as PanelObject
+    // **`checked: true` 不是装饰**：少了它，PanelView 挂载后的 `ensure()`
+    // effect 会去查后端、落回默认的 `profile: 'safe'`，把夹具冲掉——用例照样
+    // 红，但红的原因不是被测的那件事（实测撞见过，`byId` 里 profile 变成了
+    // safe）。用的是产品代码自己的短路条件（`byId[id]?.checked` → 直接返回）。
+    useRuntimeAssetStore.setState({
+      byId: {
+        [PANEL.fileId]: {
+          profile: 'native',
+          checked: true,
+          registered: true,
+          cached: true,
+          status: 'fresh',
+        } as never,
+      },
+    })
+    useRenderStore.getState().patch(renderKeyOf(runtimePanel), {
+      fileId: PANEL.fileId,
+      manifest: MANIFEST,
+      rev: 3,
+      status: 'ready',
+      lastPatches: JSON.stringify(runtimePanel.overrides),
+      svg: null,
+      preview: RASTER,
+      stale: false, // ← 刻意不置 stale
+    })
+    await act(async () => {
+      root.render(<PanelView obj={runtimePanel} />)
+    })
+
+    expect(badgeText()).toBe('会话已结束，重新运行原命令可继续编辑')
+    expect(container.textContent).not.toContain('低内存编辑预览')
+  })
+
+  it('stale + raster → 说 stale（native 挪走之后 raster 的新上游邻居）', async () => {
+    // #192 把 nativeState 从 stale 后面挪到了前面，raster 的上游邻居于是从
+    // native 变成了 stale。**原本「两格各钉一条」的设计一条都碰不到这个新对。**
+    seed({ svg: null, preview: RASTER, stale: true }) // ← 刻意不置 native
+    await mount()
+
+    expect(badgeText()).toBe('脚本已更新')
+    expect(container.textContent).not.toContain('低内存编辑预览')
   })
 })
