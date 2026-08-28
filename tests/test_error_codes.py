@@ -258,3 +258,116 @@ def test_visible_codes_table_covers_every_literal_code():
         declared |= _declared_codes((SRC_DIR / name).read_text(encoding="utf-8"))
     unlisted = sorted(declared - set(USER_VISIBLE_CODES) - NON_UI_CODES)
     assert not unlisted, f"这些 code 没进 USER_VISIBLE_CODES 表：{unlisted}"
+
+
+# ---------------------------------------------------------------------------
+# Tavotto Run 的稳定码（ADR 0021）——**上面那张表按形状守不到它们**
+# ---------------------------------------------------------------------------
+# `_declared_codes` 认的是**字面量**：`{"code": "no_project"}`。而 native 那条
+# 面返回的是 `engine_runcodes.NATIVE_*` 常量，一个字面量都没有。于是
+# `test_visible_codes_table_covers_every_literal_code` 对它们**结构性地看不见**
+# ——不是漏登记，是判据的前提（"用户可见的 code 都以字面量出现在源码里"）在
+# runcodes 引入常量式码表的那一刻就不再成立了。
+#
+# 解法不是给 native 开一张平行的手工表（手工表下一次照样忘），而是**枚举**：
+# `app.py` 的 `_NATIVE_STATUS` 就是"这条 HTTP 面会返回哪些码"的闭集出处，
+# 逐条要求两种语言都有文案。往那张表里加一行却不加文案 → 当场红。
+#
+# 反方向同样量：`errors.json` 里不许有这个闭集之外的 `native_*` 键。
+# `test_i18n_dead_keys.py` 在这里帮不上忙——它按"源码里出现过这个串"判活，
+# 而 `runcodes.py` 的码表让**每一个** native 码看起来都有发射点，包括那些
+# 只有 CLI 会打印、界面永远见不到的（`native_desktop_required`、
+# `native_attach_timeout`、`no_figure_captured`）。
+
+_NATIVE_STATUS_RE = re.compile(r"engine_runcodes\.([A-Z0-9_]+):\s*\d{3}")
+
+
+def _native_http_codes() -> set[str]:
+    """`app.py` 的 `_NATIVE_STATUS` 键 —— 这条面能返回的码的闭集出处。"""
+    from tavotto.engine import runcodes
+
+    text = APP.read_text(encoding="utf-8")
+    block = text[text.index("_NATIVE_STATUS = {") : text.index("def _native_error")]
+    names = _NATIVE_STATUS_RE.findall(block)
+    assert len(names) >= 10, f"没解析到 _NATIVE_STATUS（只拿到 {names}）——判据本身坏了"
+    return {getattr(runcodes, n) for n in names}
+
+
+#: 不在 `_NATIVE_STATUS` 里、但确实会经别的端点到达界面的码。
+#: 只有一条：装依赖时撞上活跃 native 会话（envlease 抛 EnvironmentBusy，
+#: 依赖修复那条端点转成 JSON）。
+_EXTRA_NATIVE_UI_CODES = {"environment_in_use_by_native_session"}
+
+
+def _ui_native_codes() -> set[str]:
+    return _native_http_codes() | _EXTRA_NATIVE_UI_CODES
+
+
+@pytest.mark.parametrize("locale", ["zh-CN", "en-US"])
+def test_every_native_code_has_text_in_both_languages(locale: str):
+    table = _errors(locale).get("backend", {})
+    missing = sorted(_ui_native_codes() - set(table))
+    assert not missing, (
+        f"{locale} 的 errors.json 缺这些 Tavotto Run 码的文案：{missing}\n"
+        "  （界面会原样显示 `backend.<code>`，而这几条恰好都出现在"
+        "用户等着看一句解释的时刻）"
+    )
+    empty = sorted(c for c in _ui_native_codes() if not str(table[c]).strip())
+    assert not empty, f"{locale} 里这些码的文案是空的：{empty}"
+
+
+@pytest.mark.parametrize("locale", ["zh-CN", "en-US"])
+def test_native_placeholders_match_the_backend_message(locale: str):
+    """文案里的 `{{x}}` 必须与后端那条消息的 `{x}` 逐个对上。
+
+    对不上的表现不是报错，是界面上出现一个**原样的** `{{seconds}}`——一句
+    本地化过、看着很正常、却把占位符泄漏给用户的话。
+    """
+    from tavotto.engine import runcodes
+
+    table = _errors(locale)["backend"]
+    lang = "zh" if locale == "zh-CN" else "en"
+    for code in sorted(_ui_native_codes()):
+        entry = runcodes.MESSAGES[code]
+        backend = set(re.findall(r"\{(\w+)\}", entry.get(lang) or entry["zh"]))
+        front = set(re.findall(r"\{\{\s*(\w+)\s*\}\}", table[code]))
+        assert front == backend, f"{locale} {code}：文案用了 {front}，后端消息给的是 {backend}"
+
+
+def test_no_dead_native_keys_in_errors_json():
+    """反方向：`errors.json` 里不许有闭集之外的 `native_*` 键。
+
+    只有 CLI 会打印的那几条（`native_desktop_required` / `native_attach_timeout`
+    / `no_figure_captured`）放进来就是死键——而 `test_i18n_dead_keys.py` 抓不到
+    它们：它按"源码里出现过这个串"判活，`runcodes.py` 的码表让每一条都像活的。
+    """
+    allowed = _ui_native_codes()
+    for locale in ("zh-CN", "en-US"):
+        table = _errors(locale).get("backend", {})
+        stray = sorted(k for k in table if k.startswith("native_") and k not in allowed)
+        assert not stray, (
+            f"{locale} 的 errors.json 里有界面到不了的 native 码：{stray}\n"
+            "  要么它真的会到界面（那就把它加进 app.py 的 _NATIVE_STATUS），"
+            "要么删掉这条文案。"
+        )
+
+
+def test_run_error_payload_carries_params_for_the_frontend():
+    """`RunError.payload()` 必须同时给**两套约定**。
+
+    * 顶层平铺字段 = CLI 的 JSON 契约（`tests/native/test_run_codes.py` 钉着）；
+    * `params` = 前端错误文案的约定（`lib/api.ts` 的 `backendCodeMsg` 从
+      `body.params` 取插值）。
+
+    少了 `params` 的表现很隐蔽：界面照常显示那条错误，只是把 `{{seconds}}`
+    原样印出来。
+    """
+    from tavotto.engine import runcodes
+
+    payload = runcodes.RunError(runcodes.NATIVE_ATTACH_TIMEOUT, seconds=300).payload()
+    assert payload["params"] == {"seconds": 300}
+    assert payload["seconds"] == 300, "顶层平铺字段是 CLI 的契约，不能因为加了 params 就撤掉"
+    assert payload["code"] == runcodes.NATIVE_ATTACH_TIMEOUT
+    # params 是副本：调用方改它不该改到异常对象自己的 fields
+    payload["params"]["seconds"] = 1
+    assert runcodes.RunError(runcodes.NATIVE_ATTACH_TIMEOUT, seconds=300).fields == {"seconds": 300}

@@ -363,11 +363,18 @@ function runAction(
 function placeNativeFigures(descriptors: CapturedFigureDescriptor[]): void {
   if (!descriptors.length) return
   const ids = descriptors.map((d) => d.asset_id)
-  const runtime = useRuntimeAssetStore.getState()
-  runtime.invalidate(ids)
-  runtime.bumpPreview(ids)
-  void runtime.loadAssets()
-  useRenderStore.getState().markStale(ids)
+  try {
+    // 清单/预览刷新是**尽力而为**：它失败不该把"图没进画布"一起带走。
+    // 这个 try 刻意只包住这四行——把整个放置逻辑一起包进来的话，真正的
+    // 缺陷（面板加错了、选择器没开）会变成一条静默的 no-op。
+    const runtime = useRuntimeAssetStore.getState()
+    runtime.invalidate(ids)
+    runtime.bumpPreview(ids)
+    void runtime.loadAssets()
+    useRenderStore.getState().markStale(ids)
+  } catch {
+    /* 下一次 SSE / 手动刷新会补上 */
+  }
 
   const objects = useDocumentStore.getState().doc.objects
   const existing = (id: string) =>

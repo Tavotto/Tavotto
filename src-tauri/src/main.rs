@@ -77,7 +77,9 @@ fn parse_open_args(args: &[String]) -> Option<OpenRequest> {
     }
     let stem = stem.filter(|s| !s.trim().is_empty());
     // stem 定得下来一张就不需要选择器（生产侧本来就互斥，这里兜底同语义）
-    let pick = pick.filter(|s| !s.trim().is_empty()).filter(|_| stem.is_none());
+    let pick = pick
+        .filter(|s| !s.trim().is_empty())
+        .filter(|_| stem.is_none());
     // ID 的格式判据与 Python 侧（`nativehandoff._ID_RE`）同源：32 个小写
     // 十六进制字符。壳在这里挡一道，是因为它下一步要把这个串拼进落地 URL
     // ——一个含 `&` 或 `#` 的"ID"会把后面的查询参数整个改掉。
@@ -446,7 +448,9 @@ fn spawn_e2e_update_if_requested(handle: tauri::AppHandle) {
     if std::env::var("TAVOTTO_E2E_RUN_UPDATE").as_deref() != Ok("1") {
         return;
     }
-    eprintln!("[e2e-update] ⚠ TAVOTTO_E2E_RUN_UPDATE=1：启动即执行应用内更新（仅测试用，勿在生产设置）");
+    eprintln!(
+        "[e2e-update] ⚠ TAVOTTO_E2E_RUN_UPDATE=1：启动即执行应用内更新（仅测试用，勿在生产设置）"
+    );
     tauri::async_runtime::spawn(async move {
         use tauri_plugin_updater::UpdaterExt;
         let updater = match handle.updater() {
@@ -631,9 +635,13 @@ mod tests {
     #[test]
     fn parses_the_multi_figure_pick() {
         // 多 Figure 交接：`--pick-script` 原样透传给前端选择器
-        let req =
-            parse_open_args(&args(&["--open", "/p/figures", "--pick-script", "sub/plot.py"]))
-                .unwrap();
+        let req = parse_open_args(&args(&[
+            "--open",
+            "/p/figures",
+            "--pick-script",
+            "sub/plot.py",
+        ]))
+        .unwrap();
         assert_eq!(req.stem, None);
         assert_eq!(req.pick.as_deref(), Some("sub/plot.py"));
     }
