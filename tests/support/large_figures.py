@@ -68,6 +68,7 @@ def materialize(dest: str | Path, *, python: str | None = None) -> Path:
         check=True,
         capture_output=True,
         text=True,
+        encoding="utf-8",
     )
     return figures
 

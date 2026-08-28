@@ -82,7 +82,7 @@ datas = [
 # 不靠人记得回来改这一行。
 for name in ("worker.py", "manifest.py", "overrides.py", "patchspec.py",
              "pathgeom.py", "figcapture.py", "figsession.py", "wireproto.py",
-             "bridge_runner.py", "bridgeboot.py"):
+             "previewbudget.py", "bridge_runner.py", "bridgeboot.py"):
     datas.append((str(PKG / "engine" / name), "tavotto/engine"))
 
 # 内置渲染 runtime（见文件头说明 3）。

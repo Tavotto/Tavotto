@@ -233,6 +233,9 @@ class V1Handler:
 
         # 阶段计时（毫秒）。**只在 v1 出现**，legacy 信封的形状一字不改。
         timings: dict[str, float] = {}
+        #: 这一版的预览表示法（ADR 0021）。与 `timings` 同一条纪律：**只在 v1
+        #: 出现**，出参形态传下去，legacy 的 `{ok, manifest, warnings}` 一字不动。
+        preview: dict = {}
         self.ensure_built(timings)
         if cmd == "build":
             return {**self.build_result(timings), "timings": timings}
@@ -276,7 +279,7 @@ class V1Handler:
 
         try:
             if cmd == "render":
-                result = fig.do_render(stem, patches, timings, preview_dpi, inline_svg)
+                result = fig.do_render(stem, patches, timings, preview_dpi, inline_svg, preview)
             elif cmd == "render_png":
                 result = fig.do_render_png(stem, width)
             elif cmd == "preview_png":
@@ -297,6 +300,8 @@ class V1Handler:
             ) from exc
         if cmd in TIMED_COMMANDS:
             result["timings"] = timings
+        if preview:
+            result["preview"] = preview
         return result
 
     def cancel(self, payload: dict) -> dict:

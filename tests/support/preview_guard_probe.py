@@ -70,7 +70,10 @@ def main(argv: list[str] | None = None) -> int:
         session.instrument_all()
 
         READS.clear()  # instrument 期间的读不算数，量的是这一次 do_render
-        result = session.do_render(STEM, [], inline_svg=True)
+        # `preview` 是出参（与 `timings` 同一条纪律）：v1 信封给它一个 dict，
+        # legacy 不给——探针走的是 v1 那条路。
+        preview: dict = {}
+        result = session.do_render(STEM, [], inline_svg=True, preview=preview)
         svg_path = str(Path(tmp) / f"{STEM}.svg")
 
         print(
@@ -79,7 +82,7 @@ def main(argv: list[str] | None = None) -> int:
                     "hard_limit": args.hard_limit,
                     "svg_bytes_on_disk": Path(svg_path).stat().st_size,
                     "has_svg_in_response": "svg" in result,
-                    "preview": result.get("preview"),
+                    "preview": preview,
                     "manifest_elements": len(result["manifest"]["elements"]),
                     "has_warnings_key": "warnings" in result,
                     # **这一条才是不变量 3 的判据**

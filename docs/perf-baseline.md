@@ -440,9 +440,13 @@ TAVOTTO_ISSUE181_MESH_N=470 python scripts/bench_render.py \
 |---|---|---|---|
 | worker 响应里的 `svg` | 126 132 735 字节 | **不存在** | `preview.mode = raster` |
 | `read_text()` 调用次数 | 1 | **0** | 判定在读之前（`stat().st_size`） |
-| 交给浏览器的 JSON | 134 187 191 字节 | **97 392 字节** | **1378×** |
-| 服务进程峰值 RSS | 1 245 MB | **24.8 MB** | **50×** |
+| 交给浏览器的 JSON | 134 187 191 字节 | **≈ 97 400 字节** | **1378×** |
+| 服务进程峰值 RSS | 1 245 MB | **≈ 25 MB** | **50×** |
 | manifest 元素数 | 95 | 95 | 语义保真（不变量 1） |
+
+（后两行取整：JSON 里带着 `timings`，那几个浮点数的位数每次不同，峰值 RSS
+同样有百分之几的抖动。两次独立测量分别是 97 392 / 97 391 字节、
+24.8 / 25.7 MB——量级是结论，末位不是。）
 
 raster 档下用户实际看到的那张图（`preview_png`，宽度钉死
 `previewbudget.RASTER_PREVIEW_WIDTH_PX = 1200`）：

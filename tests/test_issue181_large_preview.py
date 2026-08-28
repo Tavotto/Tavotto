@@ -63,6 +63,7 @@ def _digest_in_subprocess(n: int) -> str:
         ],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=True,
     )
     return out.stdout.strip()

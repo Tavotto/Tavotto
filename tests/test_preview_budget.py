@@ -142,6 +142,7 @@ def _probe(hard_limit: int) -> dict:
         [WORKER_PY, str(PROBE), "--hard-limit", str(hard_limit)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=True,
     )
     return json.loads(out.stdout.strip().splitlines()[-1])

@@ -252,6 +252,7 @@ class LiveFigureSession:
         timings: dict | None = None,
         preview_dpi: int | None = None,
         inline_svg: bool = False,
+        preview: dict | None = None,
     ) -> dict:
         """应用全量 override 列表 + 重出预览 SVG/manifest（v1 的 render）。
 
@@ -264,9 +265,17 @@ class LiveFigureSession:
         **超过硬闸时不读**（ADR 0021 不变量 3）。判据吃的是 `stat().st_size`，
         因为「先 read 126 MB 再说太大」根本不算保护：实测那一读加上两次
         JSON 编解码就能让 Flask 进程峰值 RSS 到 1.2 GB，而 SVG 一个字节都还
-        没到浏览器。这时响应里 **`svg` 整个不出现**，`preview.mode` 是
-        `raster`——**它仍然是一次成功的渲染**（manifest / warnings / timings
-        齐全），不是一次失败。
+        没到浏览器。这时响应里 **`svg` 整个不出现**——**它仍然是一次成功的
+        渲染**（manifest / warnings / timings 齐全），不是一次失败。
+
+        `preview` 是**出参**，与 `timings` 同一条纪律（ADR 0003 §1）：给一个
+        dict 就往里填这一版的表示法元数据，不给就一个字段都不多。这道弯是
+        为了 **legacy 扁平信封的形状一字不改**——它的响应契约就是
+        `{ok, manifest, warnings}`，手工 `echo '{"cmd":"override"}'` 调试与
+        任何还没切过来的调用方都靠它（看护
+        `test_legacy_envelope_keeps_the_old_response_shape`）。
+        **判定本身与信封无关**：两条信封上「超限就不读」都照常发生，v1 多的
+        只是把理由说出来。
         """
         self._own()
         t0 = time.perf_counter()
@@ -283,7 +292,8 @@ class LiveFigureSession:
             # 会抛——不如当场按最坏处理：不读，降到 raster。
             svg_bytes = previewbudget.EDITOR_SVG_HARD_LIMIT_BYTES
         mode, reason = previewbudget.mode_for_svg_bytes(svg_bytes)
-        result["preview"] = previewbudget.metadata(svg_bytes=svg_bytes, mode=mode, reason=reason)
+        if preview is not None:
+            preview.update(previewbudget.metadata(svg_bytes=svg_bytes, mode=mode, reason=reason))
         if inline_svg and mode != previewbudget.MODE_RASTER:
             # 读回磁盘那一份而不是另存一个内存缓冲：调用方拿到的与
             # out_dir/<stem>.svg 逐字节相同，排障时不必怀疑「是不是两份」
