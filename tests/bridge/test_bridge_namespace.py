@@ -80,6 +80,26 @@ def test_loading_restores_sys_path_exactly():
     assert sys.path == before
 
 
+def _load_phases() -> tuple[str, ...]:
+    """`bridge_runner` 真正装进用户进程的那两批（`_PHASE1` + `_PHASE2`）。
+
+    用 AST 读而不是 import：`bridge_runner` 一被 import 就会**当场跑装载**
+    （模块级 `_PKG = bridgeboot.load_engine_modules(...)`），在测试进程里
+    那会真的去动 `sys.modules`。
+    """
+    import ast
+
+    tree = ast.parse((ENGINE_DIR / "bridge_runner.py").read_text(encoding="utf-8"))
+    out: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id in ("_PHASE1", "_PHASE2") for t in node.targets
+        ):
+            out += [e.value for e in node.value.elts if isinstance(e, ast.Constant)]
+    assert out, "用例前提：bridge_runner 里确实有 _PHASE1/_PHASE2 两批装载清单"
+    return tuple(out)
+
+
 def test_restore_list_covers_the_whole_flat_import_closure():
     """`_TOPLEVEL_TO_RESTORE` 必须盖住 bridge 会装的模块的**整条传递闭包**。
 
@@ -109,9 +129,15 @@ def test_restore_list_covers_the_whole_flat_import_closure():
         # 只要**同目录**的平铺模块：`import matplotlib` 这类第三方不在此列
         return {x for x in names if (ENGINE_DIR / f"{x}.py").is_file()}
 
-    # 两个根：bridge 显式装的那批，以及 bridge_runner 自己平铺 import 的
+    # **根取自真实的装载清单**，不是 `ENGINE_SIBLINGS`。
+    #
+    # 决定「装什么进用户进程」的是 `bridge_runner` 的 `_PHASE1` / `_PHASE2`
+    # （硬编码两批，见那里的两阶段说明）；`ENGINE_SIBLINGS` 只被
+    # `_TOPLEVEL_TO_RESTORE` 消费，两者**是两份清单**（siblings 里没有
+    # figsession / wireproto）。拿 siblings 当根等于问错了问题——它少了两个
+    # 真正会被装进去的模块，只是这条用例当初手工补了那两个名字才碰巧对。
     closure: set[str] = set()
-    todo = [*boot.ENGINE_SIBLINGS, "figsession", "wireproto"]
+    todo = [*_load_phases()]
     while todo:
         name = todo.pop()
         if name in closure:
@@ -119,9 +145,9 @@ def test_restore_list_covers_the_whole_flat_import_closure():
         closure.add(name)
         todo += list(flat_imports(name))
 
-    # 用例前提：闭包确实比 ENGINE_SIBLINGS 深一层（否则这条在测一个恒真式）
+    # 用例前提：闭包确实比装载清单深一层（否则这条在测一个恒真式）
     assert "pathgeom" in closure, "用例前提：manifest 确实平铺 import 了 pathgeom"
-    assert closure - set(boot.ENGINE_SIBLINGS), "用例前提：闭包比 ENGINE_SIBLINGS 大"
+    assert closure - set(_load_phases()), "用例前提：闭包比 _PHASE1+_PHASE2 大"
 
     missing = closure - set(boot._TOPLEVEL_TO_RESTORE)
     assert not missing, (
