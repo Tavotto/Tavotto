@@ -64,6 +64,51 @@ release 编排、golden vectors、锁文件：**一次只开一个动它的 PR**
 的冲突不是文本问题，是语义问题（两个 PR 各自改 CI 控制面，合并后的组合
 谁都没验过）；train 与 stack 都救不了，只有先后。
 
+## coordinate 域：撞的是名字，不是文本
+
+`docs/adr/**`：两个 PR 各加一份 ADR，**`git merge-tree` 报零冲突**——文件名
+不同，git 看到的是两个新文件——而合完的 main 上会躺着两个「ADR 0021」。
+2026-08-28 实测撞过一次（`0021-tavotto-run-product-contract` 与
+`0021-complexity-aware-editor-preview`）。
+
+这一档既不该 stack（两份 ADR 通常毫不相干），也不该 train（没有共享生成物），
+更不该 serialize（ADR 加得很频繁，串行化会拖住一切）。要做的只有一件事：
+**开工前看一眼同域 PR 占了哪个号**。
+
+### 已经撞了怎么改号
+
+让**先开的那个**保留编号，后者改。这是**两步**，两步该核的东西不一样——
+把它们压成一句话是错的（`--msg-filter` 只动消息，动不了文件名；而真改文件名
+必然改树哈希）：
+
+```sh
+# 第 1 步：改文件名 + 全仓引用 → 一个**新提交**（树当然会变，这一步不核树）
+git mv docs/adr/0021-<slug>.md docs/adr/0022-<slug>.md
+#   连带改掉正文标题、以及所有引用它的代码注释 / 文档 / 用例
+git commit -am "ADR 改号 0021 → 0022：编号撞了 PR #NNN"
+#   核的是：`grep -rn "ADR 0021\|adr/0021-<slug>"` 一条不剩
+
+# 第 2 步：把**历史提交消息**里的旧编号一并改掉（这一步树哈希必须不变）
+git log --format='%T' origin/main..HEAD > /tmp/before-trees
+FILTER_BRANCH_SQUELCH_WARNING=1 git filter-branch -f \
+    --msg-filter 'sed "s/ADR 0021/ADR 0022/g"' origin/main..HEAD
+git log --format='%T' origin/main..HEAD > /tmp/after-trees
+diff /tmp/before-trees /tmp/after-trees        # 必须一字不差：只动了消息
+git log --format='%an <%ae> %ad' --date=iso origin/main..HEAD   # author 与日期原样
+```
+
+**别用 `git commit --amend --reset-author`** 改任何一步：它会把 author 日期
+也改成现在。第 2 步之后如果分支已经推过，用
+`--force-with-lease=<branch>:<你实际看到的远端 SHA>`。
+
+如果改动还没提交就别急着做第 2 步——`filter-branch` 只改历史，工作区那份
+得先落进第 1 步的提交里。
+
+这类域在配置里**自带一句处方**（`advice` 字段）。通用兜底文案在这里是
+「对的判据 + 错的处方」：它说「留意合并顺序，后合的一侧 rebase 后重跑快线
+即可」，而 rebase 根本不会报冲突，重跑快线也发现不了。判据一旦对，人更会
+信它说的那句话。
+
 ## 与队列的关系速查
 
 | 情形 | 做法 |
@@ -72,3 +117,4 @@ release 编排、golden vectors、锁文件：**一次只开一个动它的 PR**
 | 相关改动、有依赖 | Stack，从底向上进队列 |
 | 不相关、同一生成物 | Train，一个集成 PR 进队列 |
 | 同一 serialize 域 | 排队：一个合完，下一个 rebase 再开 |
+| 同一 coordinate 域 | 各自挑一个没人占的名字/编号；已撞就后开的那个改 |

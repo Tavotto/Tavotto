@@ -33,6 +33,14 @@ from pathlib import Path
 
 API = "https://api.github.com"
 
+#: 认得的 policy。语义见 docs/ci/parallel-prs.md：
+#:   stack-or-train  相关改动 stack；不相关但共享生成物走 train branch
+#:   serialize       一次只开一个动它的 PR
+#:   coordinate      不必串行也不必 train，但共享一个**命名/编号空间**
+#:                   （`docs/adr/**` 的编号就是这么撞的：merge-tree 说零冲突，
+#:                    合完 main 上有两个同号 ADR）
+POLICIES = ("stack-or-train", "serialize", "coordinate")
+
 
 # ---------------------------------------------------------------- glob 匹配
 
@@ -84,8 +92,10 @@ def load_config(path: Path) -> dict:
         pats = spec.get("files", []) + spec.get("sources", []) + spec.get("generated", [])
         if not pats:
             raise ConfigError(f"域 {name} 一个 pattern 都没有")
-        if spec.get("policy") not in ("stack-or-train", "serialize"):
+        if spec.get("policy") not in POLICIES:
             raise ConfigError(f"域 {name} 的 policy 不认识：{spec.get('policy')}")
+        if "advice" in spec and not isinstance(spec["advice"], str):
+            raise ConfigError(f"域 {name} 的 advice 必须是字符串")
     return domains
 
 
@@ -183,12 +193,23 @@ def overlaps(mine: dict, theirs: dict, domains: dict) -> list[dict]:
                 "policy": domains[name]["policy"],
                 "direct": direct,
                 "generated_overlap": cross_generated,
+                "advice": domains[name].get("advice"),
             }
         )
     return out
 
 
-def advice(policy: str, generated_overlap: bool) -> str:
+def advice(policy: str, generated_overlap: bool, custom: str | None = None) -> str:
+    """给这次重叠的处方。
+
+    **域可以自带一句**（配置里的 `advice`），而且优先级最高。加这条是因为
+    通用文案在某些域上是**对的判据 + 错的处方**：`docs/adr/**` 撞的是编号
+    空间，而兜底那句说的是「留意合并顺序，后合的一侧 rebase 后重跑快线」
+    ——rebase 根本不会报冲突（文件名不同），重跑快线也发现不了。
+    判据一旦对，人更会信它说的那句话，所以说错比不说更贵。
+    """
+    if custom:
+        return custom
     if policy == "serialize":
         return "串行：一次只开一个动这个域的 PR，按队列先后合，后者在前者合入后 rebase"
     if generated_overlap:
@@ -241,7 +262,8 @@ def build_summary(pr_number: int, mine_hit: dict, findings: list[dict], domains:
             gen = "是" if o["generated_overlap"] else "—"
             lines.append(
                 f"| #{f['number']} {f['title'][:60]} | `{o['domain']}` "
-                f"| {direct} | {gen} | {advice(o['policy'], o['generated_overlap'])} |"
+                f"| {direct} | {gen} "
+                f"| {advice(o['policy'], o['generated_overlap'], o.get('advice'))} |"
             )
     lines += [
         "",
