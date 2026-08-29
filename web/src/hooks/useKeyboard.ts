@@ -5,6 +5,7 @@ import { handleCopyEvent, handlePasteEvent } from '@/lib/clipboard'
 import {
   changeZOrder,
   enterElementEdit,
+  runManualSave,
   deleteSelected,
   duplicateSelected,
   hideElements,
@@ -104,8 +105,22 @@ export function useKeyboard() {
         return
       }
 
-      if (inEditableTarget(e)) return
       const mod = e.metaKey || e.ctrlKey
+
+      // ⌘S 在**输入框和对话框里也要拦**：那才是用户最想按它的时刻（刚给
+      // 画布改完名、刚在对话框里填完东西）。不拦的话浏览器弹出「保存网页」
+      // 另存对话框——用户以为自己存了文档，存下来的是一张 HTML。
+      // 这是 inEditableTarget 之前**唯一**的例外：其余快捷键在输入框里都该
+      // 让位给原生编辑行为。
+      if (mod && e.key.toLowerCase() === 's') {
+        e.preventDefault()
+        // ⇧⌘S = 另存为一份命名的画布文件；⌘S = 真的保存当前文档
+        if (e.shiftKey) useUiStore.getState().setLayoutOpen(true)
+        else void runManualSave()
+        return
+      }
+
+      if (inEditableTarget(e)) return
       const doc = useDocumentStore.getState()
 
       if (mod && e.key.toLowerCase() === 'z') {
@@ -139,11 +154,6 @@ export function useKeyboard() {
       if (mod && e.key.toLowerCase() === 'k') {
         e.preventDefault()
         usePalette.getState().setOpen(true)
-        return
-      }
-      if (mod && e.key.toLowerCase() === 's') {
-        e.preventDefault()
-        ui.setLayoutOpen(true)
         return
       }
       if (mod && e.key.toLowerCase() === 'e') {

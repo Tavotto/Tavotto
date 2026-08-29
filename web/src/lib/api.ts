@@ -1,4 +1,4 @@
-import { apiUrl, withProject } from '@/lib/session'
+import { apiUrl, apiUrlFor, withProject, withProjectFor } from '@/lib/session'
 import { formatMessage, i18n, literal, msg, t, type UiMessage } from '@/i18n'
 import type { FigureDocument, ProjectDocument } from '@/types/document'
 import type { PreviewMetadata } from '@/lib/previewBudget'
@@ -162,8 +162,15 @@ const errorBody = (res: Response): Promise<Record<string, unknown>> =>
     .then((b) => (b ?? {}) as Record<string, unknown>)
     .catch(() => ({}) as Record<string, unknown>)
 
-async function jsonFetch<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(apiUrl(url), withProject(init))
+/**
+ * `pj` 显式给出时用它，不用全局当前项目：见 `session.apiUrlFor` 的说明——
+ * 排队稍后才发出的写入，属于**排队那一刻**的项目。`undefined` = 用全局的。
+ */
+async function jsonFetch<T>(url: string, init?: RequestInit, pj?: string | null): Promise<T> {
+  const res =
+    pj === undefined
+      ? await fetch(apiUrl(url), withProject(init))
+      : await fetch(apiUrlFor(url, pj), withProjectFor(init, pj))
   if (!res.ok) {
     let detail = `HTTP ${res.status}`
     let body: Record<string, unknown> = {}
@@ -331,30 +338,90 @@ export const saveLayout = (name: string, doc: FigureDocument | ProjectDocument) 
 /** 文档主体的可靠落盘（后端原子写）；localStorage 只留索引与崩溃兜底副本 */
 
 /**
- * `base` = 本标签页最后一次成功落盘时的 updatedAt（乐观并发基线）。
- * 带上它，后端发现磁盘上已经比它更新（另一个标签页存过）就回 409
- * `stale_write` 而不是整份覆盖。不带 = 后端不校验（首次写、旧路径都照常）。
+ * 磁盘上那一份文档的结构化摘要（后端 `document_summary`）。
+ * 冲突面板拿它回答「磁盘上现在是什么」——**不做文本 diff**，一份布局 JSON
+ * 里全是坐标，逐行 diff 对用户没有意义。
+ *
+ * `updatedAt` 与 `mtime` 是两个维度，都在：前者是文档自报的编辑时刻（外部
+ * 工具改完可能一动不动），后者是文件系统记的写入时刻。
  */
-export const putAutosave = (docId: string, doc: ProjectDocument, base?: number) =>
-  jsonFetch<{ ok: boolean }>(
-    `/api/autosave/${encodeURIComponent(docId)}${base === undefined ? '' : `?base=${base}`}`,
+export interface DiskDocumentSummary {
+  schema: number | null
+  canvases: number
+  objects: number
+  updatedAt: number | null
+  mtime: number
+  name: string | null
+  revision: string | null
+}
+
+/** 修订号基线的哨兵：**我认为磁盘上还没有这份文件**。见下面 putAutosave。 */
+export const REVISION_ABSENT = 'absent'
+
+/**
+ * `base` = 本标签页最后一次成功落盘时的 updatedAt（跨标签页乐观并发基线）。
+ * `baseRevision` = 本标签页最后一次**读到或写成功**的那一份的内容 hash
+ * （外部修改基线）。两者的区别不是精度而是**能看见什么**：编辑器外的工具
+ * 改完 `tavottofile/*.json` 往往一个字节的 updatedAt 都不动，那种改动只有
+ * 内容 hash 看得见。后端带了 `base_revision` 就以它为准。
+ *
+ * `baseRevision` 传 `REVISION_ABSENT` = 「我读过，磁盘上没有这份文件」。
+ * 少了这个哨兵，判据就只钉住了一条边：两个标签页同时新建同一份文档时
+ * 双方都没有 hash 可带，后写的那个会把先写的那份整份盖掉。
+ */
+export const putAutosave = (
+  docId: string,
+  doc: ProjectDocument,
+  base?: number,
+  baseRevision?: string,
+  pj?: string | null,
+) => {
+  const q = new URLSearchParams()
+  if (base !== undefined) q.set('base', String(base))
+  if (baseRevision !== undefined) q.set('base_revision', baseRevision)
+  const qs = q.toString()
+  return jsonFetch<{ ok: boolean; saved_at: number; revision: string | null }>(
+    `/api/autosave/${encodeURIComponent(docId)}${qs ? `?${qs}` : ''}`,
     {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(doc),
     },
+    pj,
   )
+}
 
-/** 404（没存过）返回 null；其余错误抛出 */
-export async function fetchAutosave(docId: string): Promise<unknown | null> {
-  const res = await fetch(apiUrl(`/api/autosave/${encodeURIComponent(docId)}`), withProject())
+/** 读到的一份自动保存：`revision` 来自响应头，是后续写入的基线 */
+export interface FetchedAutosave {
+  doc: unknown
+  revision: string | null
+}
+
+/** 404（没存过）返回 null；其余错误抛出。`pj` 见 putAutosave。 */
+export async function fetchAutosave(
+  docId: string,
+  pj?: string | null,
+): Promise<FetchedAutosave | null> {
+  const path = `/api/autosave/${encodeURIComponent(docId)}`
+  const res =
+    pj === undefined
+      ? await fetch(apiUrl(path), withProject())
+      : await fetch(apiUrlFor(path, pj), withProjectFor(undefined, pj))
   if (res.status === 404) return null
   if (!res.ok) {
     noteProjectGone(res.status, await errorBody(res))
     throw new Error(`HTTP ${res.status}`)
   }
-  return res.json()
+  return { doc: await res.json(), revision: res.headers.get('X-Tavotto-Revision') }
 }
+
+/** 磁盘那一份的摘要；没有这份文件返回 null */
+export const fetchAutosaveSummary = (docId: string, pj?: string | null) =>
+  jsonFetch<DiskDocumentSummary>(
+    `/api/autosave/${encodeURIComponent(docId)}/summary`,
+    undefined,
+    pj,
+  ).catch(() => null)
 
 export const deleteAutosave = (docId: string) =>
   jsonFetch<{ ok: boolean }>(`/api/autosave/${encodeURIComponent(docId)}`, {
@@ -376,6 +443,15 @@ export interface LayoutVersionMeta {
   description: string
   objects: number
   page?: { w: number; h: number }
+  /**
+   * 这个检查点拍的是**哪一张画布**（R-03）。
+   * 检查点存的是激活画布的内容，却按 documentId（整个项目）归档；不记下画布
+   * 身份，恢复时就只能往「当前激活的那张」上盖。
+   * **旧检查点没有这两个字段，而缺席就是缺席**——不要在读到的地方补一个
+   * 默认值，那等于替它编一个身份出来。
+   */
+  canvasId?: string
+  canvasName?: string
 }
 
 /**
@@ -409,7 +485,14 @@ export const fetchVersionDoc = (docId: string, vid: string) =>
 
 export const createVersion = (
   docId: string,
-  payload: { name?: string; description?: string; auto?: boolean; doc: FigureDocument },
+  payload: {
+    name?: string
+    description?: string
+    auto?: boolean
+    doc: FigureDocument
+    canvasId?: string
+    canvasName?: string
+  },
 ) =>
   jsonFetch<{ version?: LayoutVersionMeta; skipped?: boolean }>(
     `/api/versions/${encodeURIComponent(docId)}`,

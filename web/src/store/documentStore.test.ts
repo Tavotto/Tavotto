@@ -15,25 +15,38 @@ const text = (id: string, t: string): TextObject => ({
   color: '#000', align: 'left', x: 0, y: 0, w: 20, h: 8,
 })
 
-/** 模拟后端 /api/autosave 槽位（PUT/GET/DELETE），其余请求 404 */
+/**
+ * 模拟后端 /api/autosave 槽位（PUT/GET/DELETE），其余请求 404。
+ *
+ * 修订号用「内容长度 + 前 8 个字符」现算：它只需要满足"内容变了它就变"，
+ * 而真后端算的是 sha256。用例断言的是**基线怎么传怎么推进**，不是 hash 算法。
+ */
 const diskSlots = new Map<string, string>()
-globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+const revisionOf = (body: string) => `r${body.length}-${body.slice(0, 8).replace(/\W/g, '')}`
+const baseFetchImpl = (async (url: unknown, init?: RequestInit) => {
   const m = String(url).match(/\/api\/autosave\/([^/?]+)/)
   if (m) {
     const id = decodeURIComponent(m[1])
     if (init?.method === 'PUT') {
-      diskSlots.set(id, String(init.body))
-      return new Response('{"ok":true}', { status: 200 })
+      const body = String(init.body)
+      diskSlots.set(id, body)
+      return new Response(JSON.stringify({ ok: true, saved_at: 1, revision: revisionOf(body) }), {
+        status: 200,
+      })
     }
     if (init?.method === 'DELETE') {
       diskSlots.delete(id)
       return new Response('{"ok":true}', { status: 200 })
     }
     const v = diskSlots.get(id)
-    return new Response(v ?? '{}', { status: v ? 200 : 404 })
+    return new Response(v ?? '{}', {
+      status: v ? 200 : 404,
+      headers: v ? { 'X-Tavotto-Revision': revisionOf(v) } : undefined,
+    })
   }
   return new Response('{}', { status: 404 })
 }) as typeof fetch
+globalThis.fetch = baseFetchImpl
 
 const tick = () => new Promise((r) => setTimeout(r, 10))
 
@@ -225,7 +238,7 @@ describe('多画布数据层', () => {
       JSON.stringify({ schema: 2, name: 'old', page: { w: 80, h: 60 },
                        objects: [text('t9', 'legacy')], guides: [] }),
     )
-    const pd = (await readAutosaveDoc('d_old'))!
+    const pd = (await readAutosaveDoc('d_old')).doc!
     expect(pd.schema).toBe(3)
     expect(pd.canvases[0].objects[0].id).toBe('t9')
     expect(pd.canvases[0].page).toEqual({ w: 80, h: 60 })
@@ -233,13 +246,33 @@ describe('多画布数据层', () => {
     expect(JSON.parse(diskSlots.get('d_old')!).schema).toBe(3)
   })
 
-  it('磁盘与本机副本并存时取 updatedAt 更新的一份', async () => {
+  it('本机副本更新时**打开磁盘那份**，副本挪进恢复槽位等用户裁决', async () => {
     const older = { ...emptyProject(), updatedAt: 100 }
     const newer = { ...emptyProject(), updatedAt: 200 }
     diskSlots.set('d_x', JSON.stringify(older))
     localStorage.setItem('tavotto.autosave.d_x', JSON.stringify(newer))
-    const pd = (await readAutosaveDoc('d_x'))!
-    expect(pd.updatedAt).toBe(200)
+    const { doc, notice } = await readAutosaveDoc('d_x')
+    // 主文档照常打开（磁盘那份），**不再让本机副本静默取胜**
+    expect(doc!.updatedAt).toBe(100)
+    expect(notice).toMatchObject({ kind: 'recovery', docId: 'd_x' })
+    expect(notice?.kind === 'recovery' ? notice.summary.savedAt : null).toBe(200)
+    // 副本挪走了：原槽位空出来给正常自动保存用，恢复槽位留着
+    expect(localStorage.getItem('tavotto.autosave.d_x')).toBeNull()
+    expect(localStorage.getItem('tavotto.recovery.d_x')).not.toBeNull()
+    // 磁盘一个字节没动：恢复前主文件必须原样
+    expect(JSON.parse(diskSlots.get('d_x')!).updatedAt).toBe(100)
+  })
+
+  it('本机副本不比磁盘新 = 陈旧残留，直接清掉，不打扰用户', async () => {
+    const disk = { ...emptyProject(), updatedAt: 300 }
+    const stale = { ...emptyProject(), updatedAt: 300 }
+    diskSlots.set('d_y', JSON.stringify(disk))
+    localStorage.setItem('tavotto.autosave.d_y', JSON.stringify(stale))
+    const { doc, notice } = await readAutosaveDoc('d_y')
+    expect(doc!.updatedAt).toBe(300)
+    expect(notice).toBeNull()
+    expect(localStorage.getItem('tavotto.autosave.d_y')).toBeNull()
+    expect(localStorage.getItem('tavotto.recovery.d_y')).toBeNull()
   })
 })
 
@@ -507,7 +540,7 @@ describe('自动保存磁盘写入队列', () => {
  * stale_write——本窗口这次改动只留在本机兜底副本里，绝不清、绝不静默重试。
  */
 describe('自动保存的跨标签页写覆盖', () => {
-  const puts: { id: string; base: string | null }[] = []
+  const puts: { id: string; base: string | null; rev: string | null }[] = []
   const errors: { id: string; reason: string }[] = []
   const gate: (() => void)[] = []
   /** 下一批 PUT 是否被后端当作过期写挡下 */
@@ -517,7 +550,8 @@ describe('自动保存的跨标签页写覆盖', () => {
     const m = String(url).match(/\/api\/autosave\/([^/?]+)/)
     if (m && init?.method === 'PUT') {
       const id = decodeURIComponent(m[1])
-      puts.push({ id, base: new URL(String(url), 'http://t').searchParams.get('base') })
+      const q = new URL(String(url), 'http://t').searchParams
+      puts.push({ id, base: q.get('base'), rev: q.get('base_revision') })
       await new Promise<void>((r) => gate.push(r))
       if (stale) {
         return new Response(JSON.stringify({ code: 'stale_write', theirs: 999 }), {
@@ -525,7 +559,7 @@ describe('自动保存的跨标签页写覆盖', () => {
         })
       }
       diskSlots.set(id, String(init.body))
-      return new Response('{"ok":true}', { status: 200 })
+      return new Response('{"ok":true,"saved_at":1,"revision":"rNEW"}', { status: 200 })
     }
     return baseFetch(url as RequestInfo, init)
   }) as typeof fetch
@@ -535,6 +569,9 @@ describe('自动保存的跨标签页写覆盖', () => {
     await tick()
   }
   const drain = async () => {
+    // 先让在途的微任务跑完：每份文档第一次落盘前会先 GET 一次确认磁盘状况
+    // （ensureDiskKnown），那一下不经 gate，PUT 要等它回来才发出去。
+    await tick()
     while (gate.length) await releaseNext()
   }
   const slot = (id: string) => localStorage.getItem(`tavotto.autosave.${id}`)
@@ -576,11 +613,13 @@ describe('自动保存的跨标签页写覆盖', () => {
     // 磁盘上已有一份（另一个标签页存的），updatedAt = 4242
     diskSlots.set('d_base', JSON.stringify(seeded(4242)))
 
-    const pd = (await readAutosaveDoc('d_base'))!
+    const pd = (await readAutosaveDoc('d_base')).doc!
     expect(pd.updatedAt).toBe(4242)
     await s().switchDocument(pd, 'd_base') // 切进去会立刻落一次盘
     await drain()
-    expect(puts[0]).toEqual({ id: 'd_base', base: '4242' }) // 基线 = 读到的那一版
+    // 两个基线都带上：updatedAt 管跨标签页，内容 hash 管编辑器外的改动
+    expect(puts[0]).toMatchObject({ id: 'd_base', base: '4242' })
+    expect(puts[0].rev).toBeTruthy()
 
     const firstWritten = JSON.parse(diskSlots.get('d_base')!).updatedAt as number
     s().commit(literal('改一笔'), (d) => {
@@ -589,7 +628,7 @@ describe('自动保存的跨标签页写覆盖', () => {
     flushAutosave()
     await drain()
     // 写成功后基线推进到刚落盘的那一版，下一次带的就是它
-    expect(puts[1]).toEqual({ id: 'd_base', base: String(firstWritten) })
+    expect(puts[1]).toMatchObject({ id: 'd_base', base: String(firstWritten), rev: 'rNEW' })
   })
 
   it('首次写不带基线：后端无从校验，兼容旧路径', async () => {
@@ -600,7 +639,9 @@ describe('自动保存的跨标签页写覆盖', () => {
     })
     flushAutosave()
     await drain()
-    expect(puts[0]).toEqual({ id: 'd_fresh', base: null })
+    // 没有 updatedAt 基线，但**有**修订号基线：`absent` = 「我读过，磁盘上没有」。
+    // 少了它，两个标签页同时新建同一份文档时后写的那个会整份盖掉先写的。
+    expect(puts[0]).toEqual({ id: 'd_fresh', base: null, rev: 'absent' })
   })
 
   it('409 stale_write：兜底副本留着、报 stale、队列不死锁', async () => {
@@ -626,14 +667,23 @@ describe('自动保存的跨标签页写覆盖', () => {
     expect(errors).toEqual([{ id: 'd_stale', reason: 'stale' }])
     // 本机兜底副本绝不能清：磁盘上没有这份改动，清了就真丢了
     expect(slot('d_stale')).not.toBeNull()
-    // 队列照常推进（diskBusy 已复位），不是卡死
-    expect(puts).toHaveLength(2)
-
-    await releaseNext() // 排队那份仍带旧基线，仍然 409——有意为之，不静默重试
-    expect(errors).toHaveLength(2)
-    expect(errors[1].reason).toBe('stale')
-    expect(slot('d_stale')).not.toBeNull()
+    // 冲突未决 → 排在队列里的那一份**不再往磁盘上撞**。撞也只会再 409 一次，
+    // 而每撞一次就多一条"保存失败"，用户以为自己遇到了四个问题。
+    // 内容一个字节没丢：它在本机副本里等裁决。
+    expect(puts).toHaveLength(1)
+    expect(s().saveState).toBe('conflict')
+    expect(s().saveIssue).toMatchObject({ kind: 'stale', docId: 'd_stale' })
     expect(diskSlots.has('d_stale')).toBe(false) // 磁盘上对方那份没被覆盖
+
+    // 冲突期间继续编辑：状态不被顶掉，本机副本继续更新，磁盘一次都不碰
+    s().commit(literal('冲突期间还在改'), (d) => {
+      d.objects.push(text('t3', 'C'))
+    })
+    flushAutosave()
+    await tick()
+    expect(s().saveState).toBe('conflict')
+    expect(puts).toHaveLength(1)
+    expect(JSON.parse(slot('d_stale')!).canvases[0].objects).toHaveLength(3)
 
     // 写盘链路没被这次冲突堵死：换个文档照样落盘
     stale = false

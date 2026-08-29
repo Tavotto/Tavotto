@@ -119,6 +119,8 @@ USER_VISIBLE_CODES = {
     "script_changed": set(),
     "source_changed": set(),
     "stale_write": set(),
+    # --- Prompt 03（R-08）：磁盘上那份被 Tavotto 之外的改动覆盖过 ---
+    "external_change": set(),
     "write_back_disabled": set(),
     "write_back_warnings": set(),
 }

@@ -27,6 +27,7 @@
     "nudge": "Nudge 0.5mm / 5mm",
     "palette": "Command palette",
     "pan": "Pan the canvas",
+    "saveDocument": "Save this document",
     "saveLayout": "Save as canvas file",
     "script": "Superscript / subscript (inside the properties panel's text box)",
     "selectAll": "Select all",

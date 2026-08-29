@@ -4290,21 +4290,100 @@ def _autosave_newer_than(p: Path, base) -> int | None:
     return None
 
 
+def document_summary(path: Path) -> dict | None:
+    """磁盘上这一份的结构化摘要 —— 冲突时回答「那边现在是什么」。
+
+    **不做文本 diff**（Prompt 03 §七 明说不需要）：用户在冲突面板上要判断的是
+    「磁盘上那份是不是我想要的」，对象数、画布数、schema、两个时间就够了。
+    逐行 diff 对一份布局 JSON 也没有意义——里面全是坐标。
+
+    两个时间是**两个维度**，都给：`updatedAt` 是文档自报的编辑时刻（外部工具
+    改完可能一动不动），`mtime` 是文件系统记的最后写入时刻（`touch` 一下就变）。
+    只报一个，另一类外部修改就在摘要里隐形。
+
+    读不出来（文件不在 / 不是 JSON / 不是对象）返回 `None`：那是「磁盘上没有
+    可比较的东西」，不是「摘要里各项为 0」——后者会让前端把一个空壳画成
+    「对方把文档清空了」。
+    """
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        mtime = int(path.stat().st_mtime * 1000)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    canvases = raw.get("canvases")
+    return {
+        "schema": raw.get("schema"),
+        "canvases": len(canvases) if isinstance(canvases, list) else 1,
+        "objects": len(_doc_objects(raw)),
+        "updatedAt": raw.get("updatedAt"),
+        "mtime": mtime,
+        "name": (raw.get("project") or {}).get("name")
+        if isinstance(raw.get("project"), dict)
+        else None,
+        "revision": engine_atomicio.content_revision(path),
+    }
+
+
+#: `base_revision` 的哨兵：调用方**读过**，磁盘上当时没有这份文件。
+#: 没有它，判据就只钉住了一条边——两个标签页同时新建同一份文档时双方都没有
+#: hash 可带，后写的那个把先写的那份整份盖掉，而这正是这条判据要挡的事。
+REVISION_ABSENT = "absent"
+
+
+def _revision_conflict(base_revision: str, current: str | None) -> bool:
+    """带着这个基线来写，会不会盖掉别人的内容？
+
+    两侧**故意不对称**：
+
+    - 基线是 `absent`（我以为没有文件）而磁盘上有 → 冲突。那份内容不是我的，
+      整份 PUT 就是把它删掉。
+    - 基线是某个 hash 而磁盘上没有文件（被外部删了）→ **放行**。这条判据挡的
+      是「覆盖别人的内容」，不是「重建一个被删掉的文件」；此时磁盘上没有任何
+      内容会因为这次写入而消失，而内存里那份是用户真实的工作。
+    - 基线是某个 hash 而磁盘上是另一个 hash → 冲突。
+    """
+    if base_revision == REVISION_ABSENT:
+        return current is not None
+    return current is not None and current != base_revision
+
+
 @app.put("/api/autosave/<doc_id>")
 def api_autosave_put(doc_id):
     body = engine_documents.validate_document(request.get_json(force=True))
     p = _autosave_path(doc_id)
-    theirs = _autosave_newer_than(p, request.args.get("base"))
-    if theirs is not None:
-        return jsonify(
-            {
-                "error": "该文档已在其他窗口保存了更新的版本",
-                "code": "stale_write",
-                "theirs": theirs,
-            }
-        ), 409
+    # 外部修改检测（R-08）：`base_revision` 是调用方最后一次**读到或写成功**的
+    # 那一份的内容 hash。磁盘上现在的 hash 与它不同 = 这中间有人动过这个文件，
+    # 而那个人不一定是另一个 Tavotto 标签页——脚本、同步盘、编辑器都算。
+    #
+    # 它**强于** `base`（updatedAt 比较）：外部工具改完文档往往一个字节的
+    # updatedAt 都不动，甚至写回一个更小的值，那种改动 `base` 一律放行。
+    # 所以带了 `base_revision` 就以它为准，`base` 只服务不发修订号的旧前端。
+    base_revision = request.args.get("base_revision")
+    if base_revision:
+        current = engine_atomicio.content_revision(p)
+        if _revision_conflict(base_revision, current):
+            return jsonify(
+                {
+                    "error": "磁盘上的这份文档已被 Tavotto 之外的改动覆盖过",
+                    "code": "external_change",
+                    "revision": current,
+                    "summary": document_summary(p),
+                }
+            ), 409
+    else:
+        theirs = _autosave_newer_than(p, request.args.get("base"))
+        if theirs is not None:
+            return jsonify(
+                {
+                    "error": "该文档已在其他窗口保存了更新的版本",
+                    "code": "stale_write",
+                    "theirs": theirs,
+                }
+            ), 409
     engine_atomicio.write_json(p, body)
-    # revision = 落盘后的内容 hash。Prompt 03 的外部修改检测拿它当基线：
+    # revision = 落盘后的内容 hash。外部修改检测拿它当下一次写入的基线：
     # 「我上次写的就是这一份」比「文件的 mtime 是多少」结实得多。
     return jsonify(
         {
@@ -4313,6 +4392,15 @@ def api_autosave_put(doc_id):
             "revision": engine_atomicio.content_revision(p),
         }
     )
+
+
+@app.get("/api/autosave/<doc_id>/summary")
+def api_autosave_summary(doc_id):
+    """磁盘上那一份的结构化摘要（冲突面板用）。文件不在就是 404。"""
+    summary = document_summary(_autosave_path(doc_id))
+    if summary is None:
+        abort(404)
+    return jsonify(summary)
 
 
 @app.delete("/api/autosave/<doc_id>")
@@ -4384,7 +4472,7 @@ def _prune_versions(versions: list[dict]) -> list[dict]:
 
 def _version_meta(v: dict) -> dict:
     doc = v.get("doc") or {}
-    return {
+    meta = {
         "id": v["id"],
         "name": v.get("name", ""),
         "ts": v.get("ts", 0),
@@ -4393,6 +4481,16 @@ def _version_meta(v: dict) -> dict:
         "objects": len(_doc_objects(doc)),
         "page": doc.get("page"),
     }
+    # 检查点存的是**某一张画布**的内容，却按 documentId（= 整个项目）归档。
+    # 不记下是哪一张，恢复时就只能往「当前激活的那张」上盖——在画布 B 上产生
+    # 的检查点会把 B 的内容和名字盖到 A 头上（R-03）。
+    # 旧检查点没有这两个字段：**不填默认值**。`canvasId` 缺席的含义是
+    # 「不知道它来自哪张画布」，填一个 "" 或当前画布 id 都是在替它编一个身份。
+    if v.get("canvasId"):
+        meta["canvasId"] = v["canvasId"]
+    if v.get("canvasName"):
+        meta["canvasName"] = v["canvasName"]
+    return meta
 
 
 @app.get("/api/versions/<doc_id>")
@@ -4420,12 +4518,23 @@ def api_versions_create(doc_id):
         "description": str(body.get("description") or ""),
         "doc": doc,
     }
+    # 画布身份（R-03）：只在调用方真的给了的时候记；给了空串等于没给。
+    if body.get("canvasId"):
+        ver["canvasId"] = str(body["canvasId"])
+    if body.get("canvasName"):
+        ver["canvasName"] = str(body["canvasName"])
     with _VERSIONS_LOCK:
         versions = _load_versions(doc_id)
         # 自动检查点若与最近一版内容相同则跳过（刷新/空转不该刷版本）
         if ver["auto"] and versions:
             last = versions[-1]
-            if json.dumps(last.get("doc"), sort_keys=True) == json.dumps(doc, sort_keys=True):
+            # 画布身份也参与去重判据：两张画布内容恰好相同（复制一张画布之后
+            # 很常见）时，只比 doc 会把**另一张画布**的检查点判成重复而跳过，
+            # 于是那张画布在时间线上一个检查点都没有。
+            same_canvas = last.get("canvasId") == ver.get("canvasId")
+            if same_canvas and json.dumps(last.get("doc"), sort_keys=True) == json.dumps(
+                doc, sort_keys=True
+            ):
                 return jsonify({"skipped": True, "version": _version_meta(last)})
         versions.append(ver)
         versions = _prune_versions(versions)

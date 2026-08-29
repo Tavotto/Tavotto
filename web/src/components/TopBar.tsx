@@ -42,7 +42,7 @@ import { Button } from './ui/Button'
 import { Menu, MenuItem, MenuLabel, MenuSeparator } from './ui/Menu'
 import { Popover } from './ui/Popover'
 import { Tip } from './ui/Tooltip'
-import { MOD } from '@/lib/utils'
+import { MOD, cn } from '@/lib/utils'
 import { msg } from '@/i18n'
 import { formatTime } from '@/i18n/format'
 import { useFormatMessage } from '@/i18n/react'
@@ -88,7 +88,7 @@ export function TopBar() {
         <ProjectSwitcher />
         <span aria-hidden className="h-3.5 w-px shrink-0 bg-border" />
         <DocumentMenu />
-        <AutosaveState />
+        <SaveStateLabel />
       </div>
 
       <ToolCluster />
@@ -157,25 +157,50 @@ function Brand() {
   )
 }
 
-/** 自动保存是状态而不是动作：贴着文档名，报告本机存到了哪一步 */
-function AutosaveState() {
+/**
+ * 保存状态：贴着文档名，**报告的是保存状态机的当前状态**（R-06），
+ * 不是从 `dirty` 布尔现推的两句话。
+ *
+ * 改造前这里只有两种说法：「保存中…」和「已自动保存 14:03」——而
+ * 「保存中…」同时表示"有未保存修改"、"正在写盘"和"刚打开还没存过"三件事，
+ * 「已自动保存 14:03」在写盘失败之后照样显示（`dirty` 被 flush 清掉了，
+ * 失败只派了一个 4.5 秒后消失的事件）。用户看不出磁盘上到底是哪一版。
+ */
+function SaveStateLabel() {
   const { t } = useTranslation('workspace')
-  const dirty = useDocumentStore((s) => s.dirty)
+  const saveState = useDocumentStore((s) => s.saveState)
   const lastPersisted = useDocumentStore((s) => s.lastPersisted)
   const hasContent = useDocumentStore(
     (s) => s.doc.objects.length > 0 || s.doc.guides.length > 0 || s.canvases.length > 1,
   )
   if (!hasContent) return null
 
+  const text =
+    saveState === 'saving'
+      ? t('topbar.saveSaving')
+      : saveState === 'dirty'
+        ? t('topbar.saveDirty')
+        : saveState === 'saved'
+          ? t('topbar.saveSaved')
+          : saveState === 'save_error'
+            ? t('topbar.saveError')
+            : saveState === 'conflict'
+              ? t('topbar.saveConflict')
+              : lastPersisted
+                ? t('topbar.saveClean', { time: formatTime(lastPersisted) })
+                : t('topbar.saveCleanNoTime')
+  const bad = saveState === 'save_error' || saveState === 'conflict'
+
   return (
     <span
       aria-live="polite"
-      className="hidden shrink-0 text-xs text-ink-3 min-[900px]:inline"
-      title={t('topbar.autosaveTitle')}
+      className={cn(
+        'hidden shrink-0 text-xs min-[900px]:inline',
+        bad ? 'text-danger' : 'text-ink-3',
+      )}
+      title={t('topbar.saveStateTitle', { mod: MOD })}
     >
-      {dirty || !lastPersisted
-        ? t('topbar.saving')
-        : t('topbar.savedAt', { time: formatTime(lastPersisted) })}
+      {text}
     </span>
   )
 }
@@ -235,7 +260,7 @@ function DocumentMenu() {
       <MenuLabel>{t('topbar.canvasFiles')}</MenuLabel>
       <MenuItem
         onSelect={() => useUiStore.getState().setLayoutOpen(true, 'save')}
-        shortcut={`${MOD}S`}
+        shortcut={`⇧${MOD}S`}
       >
         {t('topbar.saveAsCanvasFile')}
       </MenuItem>

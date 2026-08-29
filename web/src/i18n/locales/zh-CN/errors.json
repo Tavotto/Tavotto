@@ -20,6 +20,7 @@
     "execution_cancelled": "试运行被中断（会话在执行期间被终止）",
     "execution_timeout": "脚本执行超时（入口 {{entry}}）",
     "export_render_failed": "{{id}} 重渲染失败：{{reason}}",
+    "external_change": "磁盘上的这份文档已被 Tavotto 之外的改动覆盖过，本次保存没有写入",
     "file_locked": "文件被其他程序占用，请关闭正在打开它的程序（PDF 阅读器 / 看图工具）后重试",
     "internal_error": "服务器内部错误：{{reason}}",
     "interpreter_no_matplotlib": "{{path}} 里 import 不到 matplotlib",

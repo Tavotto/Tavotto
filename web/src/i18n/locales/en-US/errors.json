@@ -20,6 +20,7 @@
     "execution_cancelled": "The trial run was interrupted (the session was terminated while running)",
     "execution_timeout": "Script execution timed out (entry {{entry}})",
     "export_render_failed": "Re-rendering {{id}} failed: {{reason}}",
+    "external_change": "This document was changed on disk outside Tavotto; this save was not written",
     "file_locked": "The file is locked by another program. Close whatever has it open (PDF reader / image viewer) and retry.",
     "internal_error": "Internal server error: {{reason}}",
     "interpreter_no_matplotlib": "matplotlib cannot be imported from {{path}}",

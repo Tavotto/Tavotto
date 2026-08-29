@@ -27,6 +27,7 @@
     "nudge": "微调 0.5mm / 5mm",
     "palette": "命令面板",
     "pan": "平移画布",
+    "saveDocument": "保存当前文档",
     "saveLayout": "保存为画布文件",
     "script": "上标 / 下标（属性面板的文字输入框内）",
     "selectAll": "全选",

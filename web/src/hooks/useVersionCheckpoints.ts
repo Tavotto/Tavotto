@@ -22,10 +22,19 @@ export function startVersionCheckpoints(): () => void {
       timer = window.setTimeout(fire, wait)
       return
     }
-    const { doc, documentId } = useDocumentStore.getState()
+    const { doc, documentId, activeCanvasId, canvases } = useDocumentStore.getState()
     if (!doc.objects.length) return
     lastSaved = Date.now()
-    void createVersion(documentId, { auto: true, doc })
+    // 检查点拍的是**激活画布**，却按 documentId（整个项目）归档。不把画布身份
+    // 一起记下来，恢复时就只能往「当前激活的那张」上盖——在画布 B 上产生的
+    // 检查点会把 B 的内容和名字盖到 A 头上（R-03）。
+    const canvasName = canvases.find((c) => c.id === activeCanvasId)?.name ?? doc.name
+    void createVersion(documentId, {
+      auto: true,
+      doc,
+      canvasId: activeCanvasId,
+      canvasName,
+    })
       .then((res) => {
         // 服务器与最近一版相同会跳过（skipped）——那不是一次新版本，不记
         if (res.skipped || !res.version) return

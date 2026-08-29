@@ -210,6 +210,10 @@
         "keywords": "ruler bc biaochi",
         "label": "显示 / 隐藏标尺"
       },
+      "save-document": {
+        "keywords": "save document bc baocun cunpan",
+        "label": "保存当前文档"
+      },
       "save-layout": {
         "keywords": "save layout bc baocun",
         "label": "保存为画布文件…"
@@ -867,6 +871,8 @@
     "duplicate": "复制版本",
     "emptyHint": "手动「存版本」，或编辑几分钟后自动出现检查点。",
     "emptyTitle": "还没有版本",
+    "fromCanvas": "来自画布「{{name}}」",
+    "fromUnknownCanvas": "旧检查点，不知道来自哪张画布",
     "intro": "整份布局的服务器快照；恢复产生新版本、可撤销，不改动任何源文件。",
     "keep": "保留",
     "keepTitle": "自动检查点会滚动清理；转正后按手动版本保留",
@@ -880,6 +886,12 @@
     "rename": "重命名版本",
     "restore": "恢复为新版本",
     "restoreHistory": "恢复布局版本「{{name}}」",
+    "restoreMissingCanvasBody": "这个检查点来自画布「{{from}}」，它已被删除。继续会把内容写进当前画布「{{to}}」，覆盖它现在的内容。",
+    "restoreMissingCanvasTitle": "原画布已不存在",
+    "restoreOtherCanvasBody": "这个检查点拍的是画布「{{from}}」，当前在「{{to}}」。恢复会切到「{{from}}」再写入，不动当前画布。",
+    "restoreOtherCanvasTitle": "恢复到画布「{{name}}」？",
+    "restoreUnknownCanvasBody": "它是旧版本留下的，不知道来自哪张画布。继续会把内容写进当前画布「{{to}}」，覆盖它现在的内容。",
+    "restoreUnknownCanvasTitle": "这个检查点没有画布身份",
     "restored": "已恢复布局版本「{{name}}」（可撤销；未改动任何源文件）",
     "save": "存版本",
     "saved": "已保存当前布局为新版本",
