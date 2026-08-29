@@ -2507,7 +2507,6 @@ export default interface Resources {
     },
     "assets": {
       "activeFilters": "生效中的筛选",
-      "addAria": "把 {{name}} 加入画布",
       "addToCanvas": "加入画布",
       "capabilityHeading": "{{name}} · {{status}}",
       "cardParameterizable": "可参数化",
@@ -2526,6 +2525,8 @@ export default interface Resources {
       "listLabel": "素材面板",
       "loadFailed": "素材库读取失败",
       "noMatch": "没有符合条件的面板",
+      "openAria": "打开 {{name}}（快速编辑）",
+      "openFigure": "打开",
       "refresh": "刷新项目",
       "refreshFailed": "刷新失败：{{error}}",
       "refreshTip": "检查项目里的新文件与脚本改动",
@@ -2668,6 +2669,19 @@ export default interface Resources {
       "unhide": "恢复显示",
       "unlock": "解锁",
       "unsupportedTip": "{{title}}暂不支持：{{reason}}"
+    },
+    "fastEdit": {
+      "addToCanvas": "添加到画布",
+      "added": "{{name}} 已加入画布",
+      "alreadyOnCanvas": "{{name}} 已经在画布上",
+      "connectSource": "连接源脚本",
+      "crumbTitle": "回到画布排版",
+      "figureMissing": "项目里找不到 {{name}}",
+      "layoutMode": "画布排版",
+      "layoutOnly": "这张图没有连接源脚本，可以排版但不能改图内元素。",
+      "mode": "快速编辑",
+      "originalSize": "原图 {{w}} × {{h}} mm",
+      "toLayout": "画布排版"
     },
     "history": {
       "addArrow": "添加箭头",

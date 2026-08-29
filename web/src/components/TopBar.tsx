@@ -35,6 +35,7 @@ import { WriteBackTopBarButton } from './inspector/UpdateSourceButton'
 import { usePalette } from '@/components/CommandPalette'
 import { useDocumentStore } from '@/store/documentStore'
 import { useUiStore } from '@/store/uiStore'
+import { returnToLayout, useWorkspaceStore } from '@/store/workspace'
 import { useUpdateStore } from '@/store/updateStore'
 import { useViewportStore } from '@/store/viewportStore'
 import { BrandMark } from './ui/BrandMark'
@@ -80,6 +81,7 @@ const INSERT_SHAPES = ['triangle', 'diamond', 'polygon', 'brace'] as const
 const ZOOM_PRESETS = [0.5, 0.75, 1, 1.5, 2, 4]
 
 export function TopBar() {
+  const fastEdit = useWorkspaceStore((s) => s.mode === 'fast_edit')
   return (
     <header className="flex h-11 shrink-0 items-center justify-between gap-3 border-b border-border bg-surface px-3">
       <div className="flex min-w-0 flex-1 items-center gap-1.5">
@@ -88,10 +90,11 @@ export function TopBar() {
         <ProjectSwitcher />
         <span aria-hidden className="h-3.5 w-px shrink-0 bg-border" />
         <DocumentMenu />
+        <WorkspaceCrumb />
         <SaveStateLabel />
       </div>
 
-      <ToolCluster />
+      <ToolCluster layoutTools={!fastEdit} />
 
       <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
         <ZoomControls />
@@ -298,19 +301,13 @@ function DocumentMenu() {
   )
 }
 
-function ToolCluster() {
+function ToolCluster({ layoutTools }: { layoutTools: boolean }) {
   const { t } = useTranslation(['workspace', 'common'])
   const fmt = useFormatMessage()
-  const tool = useUiStore((s) => s.tool)
-  const setTool = useUiStore((s) => s.setTool)
-  const [presetsOpen, setPresetsOpen] = useState(false)
   const canUndo = useDocumentStore((s) => s.past.length > 0)
   const canRedo = useDocumentStore((s) => s.future.length > 0)
   const undoLabel = useDocumentStore((s) => s.past.at(-1)?.label)
   const redoLabel = useDocumentStore((s) => s.future[0]?.label)
-  const activeMark = MARK_TOOLS.find((m) => m.tool === tool)
-  const markActive = !!activeMark
-  const ActiveMark = activeMark?.icon
 
   // 必须走带 undoRedoBlocked 守卫的入口：拖动进行中点撤销会把事务当场结算，
   // 后续位移绕过历史（真实撞见过的数据损坏路径）
@@ -354,6 +351,26 @@ function ToolCluster() {
         </Button>
       </Tip>
 
+      {layoutTools && <MarkTools />}
+    </div>
+  )
+}
+
+/**
+ * 画布标注工具（文字 / 形状 / 子图标签）。**只在画布排版模式出现**：
+ * 它们画的是画布对象，而快速编辑那一屏只有一张图，画下去看不见。
+ */
+function MarkTools() {
+  const { t } = useTranslation(['workspace', 'common'])
+  const tool = useUiStore((s) => s.tool)
+  const setTool = useUiStore((s) => s.setTool)
+  const [presetsOpen, setPresetsOpen] = useState(false)
+  const activeMark = MARK_TOOLS.find((m) => m.tool === tool)
+  const markActive = !!activeMark
+  const ActiveMark = activeMark?.icon
+
+  return (
+    <>
       <span className="mx-1.5 h-5 w-px bg-border" />
 
       <Tip label={t('common:objectType.text')} shortcut="T">
@@ -407,7 +424,52 @@ function ToolCluster() {
           <Tags size={15} />
         </Button>
       </Tip>
-    </div>
+    </>
+  )
+}
+
+/**
+ * 「现在在哪条工作流上」。一个标签，不解释：
+ *
+ * ```text
+ * Fig3  快速编辑      ← 点一下回到画布排版
+ *       画布排版      ← 排版模式：只是个名字，不是按钮
+ * ```
+ *
+ * 左边的项目 / 文档面包屑回答「在哪一份文档里」，这里回答「在做哪件事」。
+ * 两条工作流各有一个名字是这一阶段的产品前提——只给快速编辑一个标签的话，
+ * 用户会以为那是个临时状态而不是两条并列的路。
+ */
+function WorkspaceCrumb() {
+  const { t } = useTranslation('workspace')
+  const fastEdit = useWorkspaceStore((s) => s.mode === 'fast_edit')
+  const panelId = useWorkspaceStore((s) => s.activePanelId)
+  const name = useDocumentStore((s) => {
+    const o = s.doc.objects.find((x) => x.id === panelId)
+    return o?.type === 'panel' ? (o.name ?? o.fileId) : null
+  })
+
+  if (!fastEdit || !name) {
+    return (
+      <span className="shrink-0 rounded-sm bg-ink/[.055] px-1 text-xs text-ink-2">
+        {t('fastEdit.layoutMode')}
+      </span>
+    )
+  }
+  return (
+    <>
+      <span aria-hidden className="h-3.5 w-px shrink-0 bg-border" />
+      <button
+        onClick={returnToLayout}
+        title={t('fastEdit.crumbTitle')}
+        className="flex min-w-0 items-center gap-1.5 rounded-sm px-1.5 py-0.5 text-xs transition-colors hover:bg-ink/[.055]"
+      >
+        <span className="min-w-0 max-w-40 truncate text-ink">{name}</span>
+        <span className="shrink-0 rounded-sm bg-ink/[.055] px-1 text-ink-2">
+          {t('fastEdit.mode')}
+        </span>
+      </button>
+    </>
   )
 }
 

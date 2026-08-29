@@ -26,6 +26,7 @@ import { resetPreview } from '@/store/svgPreviewStore'
 import { clearDiagnosticTrace } from '@/diagnostics'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
+import { useWorkspaceStore } from '@/store/workspace'
 
 /**
  * 当前项目状态。'loading' 只出现在启动探测阶段；'none' = 后端没有打开的
@@ -87,6 +88,9 @@ async function resetForNewProject() {
   // 关闭记录本身按项目 id 存在本机，切回去时仍然作数——清的只是内存里
   // 「当前项目关过哪一版」这个投影。
   useProjectReadinessStore.getState().clear()
+  // 工作区模式指着旧文档里的一个对象 id，跟着换代（本机那一档按 documentId
+  // 存，切回去仍然作数——清的是内存里"现在停在哪张图上"）
+  useWorkspaceStore.getState().clear()
   // 3. 换成空白文档（旧文档属于旧项目；素材引用跨项目不可靠）
   await useDocumentStore.getState().switchDocument(
     { schema: 2, name: 'fig_layout', page: { w: 150, h: 100 }, objects: [], guides: [] },

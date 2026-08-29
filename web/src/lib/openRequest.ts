@@ -1,6 +1,7 @@
 /**
  * 交接请求：外部程序（Codex 插件、`tavotto open`、编辑器、别的 Agent）把一张
- * 刚画好的图送进来时，前端要做的三件事——切到那个项目、把面板放进画布、选中它。
+ * 刚画好的图送进来时，前端要做的三件事——切到那个项目、**打开那张图**
+ * （进快速编辑工作区，Prompt 09）、选中它。
  *
  * 两条入口共用这一份实现，**语义必须完全一样**：
  *   * 浏览器模式 / 桌面首启：地址栏 `?open=<stem>`（项目已由后端 `--figures`
@@ -17,14 +18,12 @@
  *  3. **找不到就说找不到**：绝不退而求其次选中别的面板——用户要的是那一张。
  */
 import { msg } from '@/i18n'
-import { addPanel, addRuntimePanel } from '@/store/actions'
+import { findFigurePanel, openFastEdit } from '@/store/workspace'
 import { useAssetStore } from '@/store/assetStore'
-import { useDocumentStore } from '@/store/documentStore'
 import { useFigurePickerStore } from '@/store/figurePickerStore'
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
-import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { backendErrorText } from '@/lib/api'
 import type { PanelInfo, RuntimeAssetInfo } from '@/lib/api'
@@ -100,14 +99,17 @@ export function readOpenRequestFromUrl(): OpenRequest | null {
   }
 }
 
-/** 画布上已有这个 fileId 的面板就只选中它（重复交接不叠面板）。 */
-function selectExisting(fileId: string): boolean {
-  const existing = useDocumentStore
-    .getState()
-    .doc.objects.find((o) => o.type === 'panel' && o.fileId === fileId)
-  if (!existing) return false
-  useSelectionStore.getState().set([existing.id])
-  return true
+/**
+ * 交接落地：打开这张图（进快速编辑工作区）。
+ *
+ * **不再自己拼「有就选中、没有就 addPanel」**——那份判据在
+ * `store/workspace.ts` 里只有一处（`findFigurePanel` + `openFastEdit`）。
+ * 这里只负责把结果翻译成交接的出参：文档里本来就有 = `selected`，
+ * 这次才落进来 = `placed`。
+ */
+function landFigure(fileId: string): OpenOutcome {
+  const existed = findFigurePanel(fileId) != null
+  return openFastEdit(fileId) === 'missing' ? 'missing' : existed ? 'selected' : 'placed'
 }
 
 /** 执行一次交接。返回值给测试与调用方看，用户看到的是选中的面板或一条 toast。 */
@@ -192,29 +194,32 @@ export async function applyOpenRequest(req: OpenRequest): Promise<OpenOutcome> {
       ui.setStatus(msg('handoff.panelMissing', { stem }, 'project'), 'error')
       return 'missing'
     }
-    if (selectExisting(asset.id)) {
-      ui.setStatus(msg('handoff.located', { name: asset.stem }, 'project'))
-      return 'selected'
-    }
-    if (!asset.descriptor) {
+    if (!asset.descriptor && !findFigurePanel(asset.id)) {
       // 已登记但从没跑出过预览（cache 物化失败/被清理）：不造假值，
       // 引导去素材库跑一次
       ui.setStatus(msg('handoff.runtimeNeedsRun', { stem }, 'project'), 'error')
       return 'runtime-uncached'
     }
-    addRuntimePanel(asset.descriptor)
-    ui.setStatus(msg('handoff.added', { name: asset.stem }, 'project'))
-    return 'placed'
+    const landed = landFigure(asset.id)
+    if (landed === 'missing') {
+      ui.setStatus(msg('handoff.panelMissing', { stem }, 'project'), 'error')
+      return 'missing'
+    }
+    ui.setStatus(
+      msg(landed === 'selected' ? 'handoff.located' : 'handoff.added', { name: asset.stem }, 'project'),
+    )
+    return landed
   }
 
-  // 画布上已经有这张图了就只选中它，不再叠一份（重复交接同一张是常态：
+  // 文档里已经有这张图了就只聚焦它，不再叠一份（重复交接同一张是常态：
   // 用户在 Codex 里改一版就交一次，每次都新增会堆出一摞同名面板）
-  if (selectExisting(info.id)) {
-    ui.setStatus(msg('handoff.located', { name: info.name }, 'project'))
-    return 'selected'
+  const landed = landFigure(info.id)
+  if (landed === 'missing') {
+    ui.setStatus(msg('handoff.panelMissing', { stem }, 'project'), 'error')
+    return 'missing'
   }
-
-  addPanel(info)
-  ui.setStatus(msg('handoff.added', { name: info.name }, 'project'))
-  return 'placed'
+  ui.setStatus(
+    msg(landed === 'selected' ? 'handoff.located' : 'handoff.added', { name: info.name }, 'project'),
+  )
+  return landed
 }

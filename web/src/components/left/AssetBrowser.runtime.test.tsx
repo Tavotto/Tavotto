@@ -20,9 +20,13 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   }),
   probeScript: vi.fn(),
 }))
+// 落面板的三个动作打桩。**必须回一个真的对象**：快速编辑（Prompt 09）拿它的
+// id 当工作区目标，回 undefined 的话崩的是被测代码之外的地方，看起来像产品坏了。
+const fakePanel = (id: string) => ({ id: 'obj-1', type: 'panel', fileId: id })
 vi.mock('@/store/actions', () => ({
-  addPanel: vi.fn(),
-  addRuntimePanel: vi.fn(),
+  addPanel: vi.fn((info: { id: string }) => fakePanel(info.id)),
+  addRuntimePanel: vi.fn((d: { asset_id: string }) => fakePanel(d.asset_id)),
+  enterElementEdit: vi.fn(),
 }))
 
 import { probeScript, type CapturedFigureDescriptor, type RuntimeAssetInfo } from '@/lib/api'
@@ -110,7 +114,7 @@ afterEach(async () => {
 })
 
 describe('RuntimeAssetCard', () => {
-  it('跑过的 runtime 素材：badge + 预览 + 「加入画布」用描述符（反证 #2）', async () => {
+  it('跑过的 runtime 素材：badge + 预览 + 「打开」用描述符（反证 #2）', async () => {
     useRuntimeAssetStore.setState({ assets: [asset()] })
     await mount()
     const card = host.querySelector<HTMLElement>('[data-card="runtime:show.py#show"]')!
@@ -119,7 +123,8 @@ describe('RuntimeAssetCard', () => {
     // 预览来自 runtime preview 端点，不是任何磁盘文件 URL
     const img = card.querySelector('img')!
     expect(img.getAttribute('src')).toContain('/api/runtime/preview')
-    // Enter = 加入画布：把**描述符**交给 addRuntimePanel（没有 path 字段可用）
+    // Enter = 打开（快速编辑，Prompt 09）。落面板那一步仍然把**描述符**交给
+    // addRuntimePanel——runtime 素材没有 path 字段可用，反证 #2 看护的正是这里
     await act(async () => {
       card.focus()
       card.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))

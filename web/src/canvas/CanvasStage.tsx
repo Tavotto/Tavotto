@@ -9,10 +9,12 @@ import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
+import { openFastEdit, useWorkspaceStore } from '@/store/workspace'
 import { clientToMm, mmToWorld, useViewportStore } from '@/store/viewportStore'
 import { shouldFitOnDoubleClick } from '@/lib/fitGuard'
 import { normalizeWheel } from '@/lib/wheel'
 import { ObjectView } from './ObjectView'
+import { FastEditBar } from './FastEditBar'
 import { OverlaySvg } from './OverlaySvg'
 import { PageSheet } from './PageSheet'
 import { ContextBar } from './ContextBar'
@@ -25,8 +27,14 @@ export function CanvasStage() {
   const viewRef = useRef<HTMLDivElement>(null)
   const [outer, setOuter] = useState({ w: 0, h: 0 })
 
-  const showRulers = useUiStore((s) => s.showRulers)
-  const showGrid = useUiStore((s) => s.showGrid)
+  // 快速编辑：这一屏只有那一张图。页面、网格、参考线、别的对象全部让开——
+  // 它们是排版的语言，而这条工作流里用户还没有画布这个概念。
+  // **只改这一屏怎么画，不改文档**：面板的 x/y/w/h 一个字节没动，
+  // 切回排版模式看到的还是原来那张版。
+  const fastEdit = useWorkspaceStore((s) => s.mode === 'fast_edit')
+  const activePanelId = useWorkspaceStore((s) => s.activePanelId)
+  const showRulers = useUiStore((s) => s.showRulers) && !fastEdit
+  const showGrid = useUiStore((s) => s.showGrid) && !fastEdit
   const gridSize = useUiStore((s) => s.gridSize)
   const showSafeArea = useUiStore((s) => s.showSafeArea)
   const tool = useUiStore((s) => s.tool)
@@ -39,6 +47,10 @@ export function CanvasStage() {
   const page = useDocumentStore((s) => s.doc.page)
   const objects = useDocumentStore((s) => s.doc.objects)
   const dragging = useInteractionStore((s) => s.kind !== 'none')
+
+  // 「适应」看的是哪一块。快速编辑下是那张图的包围盒（图比页面大是常态，
+  // 按页面 fit 会把它切掉一半）；排版下是页面。
+  const frame = useFrame(fastEdit ? activePanelId : null, objects, page)
 
   const pad = showRulers ? RULER_SIZE : 0
 
@@ -71,10 +83,10 @@ export function CanvasStage() {
     if (fittedRef.current) return
     const { viewW, viewH, fit } = useViewportStore.getState()
     if (viewW && viewH) {
-      fit(page.w, page.h)
+      fit(frame.w, frame.h)
       fittedRef.current = true
     }
-  }, [outer.w, outer.h, page.w, page.h])
+  }, [outer.w, outer.h, frame.w, frame.h])
 
   // React 的 onWheel 是被动监听，缩放必须手动挂非被动监听器
   useEffect(() => {
@@ -141,9 +153,9 @@ export function CanvasStage() {
       interacting: useInteractionStore.getState().kind !== 'none',
       onObject: !!(e.target as HTMLElement).closest('[data-object-id]'),
       point: clientToMm(e.clientX, e.clientY),
-      page: { w: page.w, h: page.h },
+      page: { w: frame.w, h: frame.h },
     })
-    if (ok) useViewportStore.getState().fitAnimated(page.w, page.h)
+    if (ok) useViewportStore.getState().fitAnimated(frame.w, frame.h)
   }
 
   const cursor = spaceDown
@@ -180,6 +192,11 @@ export function CanvasStage() {
           const pid = e.dataTransfer.getData('application/x-panel-id')
           if (!pid) return
           e.preventDefault()
+          if (fastEdit) {
+            // 这条工作流里"拖进来"的意思是"改看这一张"，不是"再摆一张上去"
+            openFastEdit(pid)
+            return
+          }
           const info = useAssetStore.getState().byId[pid]
           if (!info) return
           const p = clientToMm(e.clientX, e.clientY)
@@ -196,26 +213,28 @@ export function CanvasStage() {
             pointerEvents: spaceDown || tool !== 'select' ? 'none' : 'auto',
           }}
         >
-          <PageSheet
-            w={page.w}
-            h={page.h}
-            zoom={zoom}
-            showGrid={showGrid}
-            gridSize={gridSize}
-            bg={page.bg}
-            transparent={page.transparent}
-            margin={page.margin}
-            showSafeArea={showSafeArea}
-          />
-          <CanvasLayers />
+          {!fastEdit && (
+            <PageSheet
+              w={page.w}
+              h={page.h}
+              zoom={zoom}
+              showGrid={showGrid}
+              gridSize={gridSize}
+              bg={page.bg}
+              transparent={page.transparent}
+              margin={page.margin}
+              showSafeArea={showSafeArea}
+            />
+          )}
+          <CanvasLayers only={fastEdit ? activePanelId : null} />
         </div>
 
         <OverlaySvg />
 
-        {objects.length === 0 && <EmptyHint />}
+        {!fastEdit && objects.length === 0 && <EmptyHint />}
       </div>
 
-      <ElementEditBar />
+      {fastEdit ? <FastEditBar /> : <ElementEditBar />}
 
       {/* 右键快捷编辑：自己 portal 到 body，不受世界变换影响 */}
       <QuickEdit />
@@ -234,7 +253,7 @@ export function CanvasStage() {
  * 隐藏图层 display:none：无命中、无绘制成本；快照对象的 id 不在活跃 doc 里，
  * 任何按 id 回写（文字自适应高度这类）都会安静落空，不会误写。
  */
-function CanvasLayers() {
+function CanvasLayers({ only }: { only?: string | null }) {
   const objects = useDocumentStore((s) => s.doc.objects)
   const openTabs = useDocumentStore((s) => s.openTabs)
   const activeId = useDocumentStore((s) => s.activeCanvasId)
@@ -244,7 +263,10 @@ function CanvasLayers() {
     <>
       {openTabs.map((id) => {
         const active = id === activeId
-        const objs = active ? objects : canvases.find((c) => c.id === id)?.objects
+        // 快速编辑只画那一个对象：其余标签整层不挂（它们是别的画布的排版）
+        if (only && !active) return null
+        const all = active ? objects : canvases.find((c) => c.id === id)?.objects
+        const objs = only ? all?.filter((o) => o.id === only) : all
         if (!objs) return null
         return (
           <div
@@ -261,6 +283,24 @@ function CanvasLayers() {
       })}
     </>
   )
+}
+
+/**
+ * 「适应」的取景框：快速编辑对着那一张图，画布排版对着页面。
+ *
+ * 面板的包围盒原点不一定在 (0,0)，而视口的 `fit` 只吃宽高——所以这里把
+ * **右下角**当框（`x+w`），图才不会被裁在视野外。取的是包围盒不是图幅：
+ * 用户在画布上缩放过的面板，快速编辑照样把它整张放进视野（图幅是它的
+ * 输出规格，不是它此刻在屏幕上占多大）。
+ */
+function useFrame(
+  panelId: string | null,
+  objects: readonly { id: string; x: number; y: number; w: number; h: number }[],
+  page: { w: number; h: number },
+): { w: number; h: number } {
+  if (!panelId) return { w: page.w, h: page.h }
+  const o = objects.find((x) => x.id === panelId)
+  return o ? { w: o.x + o.w, h: o.y + o.h } : { w: page.w, h: page.h }
 }
 
 /**

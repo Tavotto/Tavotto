@@ -65,6 +65,7 @@ from .engine import (
     nativehandoff as engine_nativehandoff,
     nativeperm as engine_nativeperm,
     nativesession as engine_nativesession,
+    originalspec as engine_originalspec,
     patchspec as engine_patchspec,
     pool as engine_pool,
     probe as engine_probe,
@@ -509,7 +510,6 @@ def scan_panels() -> list[dict]:
     LOG.info("素材扫描: %s → %d 个素材", root, len(assets))
 
     for p, kind in assets:
-        ext = p.suffix.lower()
         rel = str(p.relative_to(root))
         folder = str(p.parent.relative_to(root)) or "."
         entry = {
@@ -519,24 +519,21 @@ def scan_panels() -> list[dict]:
             "mtime": int(p.stat().st_mtime),
         }
         try:
-            if kind == "pdf":
-                probe = pdfbackend.probe_asset(p, "pdf")
-                entry.update(
-                    kind="pdf",
-                    native_w_mm=round(probe["w_pt"] * MM_PER_PT, 3),
-                    native_h_mm=round(probe["h_pt"] * MM_PER_PT, 3),
-                )
-            else:
-                probe = pdfbackend.probe_asset(p, "raster")
-                # matplotlib 输出 PNG 为 600ppi；照片等按 300ppi 给个初始物理尺寸
-                ppi = 600 if ext == ".png" else 300
-                entry.update(
-                    kind="raster",
-                    px_w=probe["px_w"],
-                    px_h=probe["px_h"],
-                    native_w_mm=round(probe["px_w"] / ppi * 25.4, 3),
-                    native_h_mm=round(probe["px_h"] / ppi * 25.4, 3),
-                )
+            probe = pdfbackend.probe_asset(p, kind)
+            # 「这张图有多大」只算一次（`engine/originalspec`，ADR 0028）。
+            # `native_*_mm` 是那份 spec 的投影而不是第二次计算——改造前位图那一
+            # 档在这里现猜一个 ppi（`600 if png else 300`），猜完既不说也没有
+            # 别处能对账；现在密度先按文件自己写的物理密度读，读不到才落到同样
+            # 那两个数，且 `original_spec.dpi_source` 会说出来它是假定的。
+            spec = engine_originalspec.asset_spec(p, kind, probe)
+            entry.update(
+                kind=kind,
+                native_w_mm=spec["logical_w_mm"],
+                native_h_mm=spec["logical_h_mm"],
+                original_spec=spec,
+            )
+            if spec["px_w"] is not None:
+                entry.update(px_w=spec["px_w"], px_h=spec["px_h"])
             info = current_registry().for_stem(p.stem)
             if info is not None:  # 可参数化面板：有产出它的 matplotlib 脚本
                 entry.update(script=info["script"], cost=info["cost"])

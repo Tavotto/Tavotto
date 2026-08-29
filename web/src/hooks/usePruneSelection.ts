@@ -1,6 +1,7 @@
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
+import { useWorkspaceStore } from '@/store/workspace'
 
 /** 撤销/重做、删除或隐藏让对象从画布上消失后，清掉指向它们的选择与编辑态 */
 export function subscribePruneSelection(): () => void {
@@ -18,5 +19,10 @@ export function subscribePruneSelection(): () => void {
     if (ui.editingTextId && !usable(ui.editingTextId)) ui.setEditingText(null)
     if (ui.cropTargetId && !usable(ui.cropTargetId)) ui.setCropTarget(null)
     if (ui.elementPanelId && !usable(ui.elementPanelId)) ui.setElementPanel(null)
+    // 快速编辑指着的那个面板同理——它被删掉、被隐藏、或者切画布之后不在
+    // 激活画布里了，工作区就得回到排版模式，否则界面停在一个空工作区上
+    // 而且退不出来。判据复用上面那一个 `usable`：写第二份的话两处迟早分叉。
+    const ws = useWorkspaceStore.getState()
+    if (ws.activePanelId && !usable(ws.activePanelId)) ws.exitToLayout()
   })
 }

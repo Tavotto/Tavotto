@@ -33,6 +33,10 @@ export function PageSheet({
 
   return (
     <div
+      // 纸面是纯装饰（没有语义角色可以套），但"这一屏上有没有纸"正是
+      // 快速编辑与画布排版的可见差别——留一个测试落点，与 CanvasStage 的
+      // `data-canvas-stage` 同一条理由
+      data-page-sheet=""
       className="absolute left-0 top-0 outline outline-1 outline-border-strong/60"
       style={{
         width: wPx,
