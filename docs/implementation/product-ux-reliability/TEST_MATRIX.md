@@ -161,8 +161,9 @@
 | 打包（图 + 脚本 + 证明） | 已有 | `tests/test_package.py` | — |
 | 写回事务（prepare/verify/commit、像素门） | 已有 | `tests/test_write_back.py`、`test_pixel_compare.py` | — |
 | 几何权威 / 面板渲染 | 已有 | `web/src/store/geometryAuthority.test.ts`、`tests/test_manifest_geometry.py` | — |
-| 快速编辑模式（不经画布） | 未开始 | — | 09 |
-| 原图规格导出合同 | 未开始 | — | 09/12 |
+| 快速编辑模式（不经画布） | 已有（09） | `web/src/store/workspace.test.ts`、`web/src/canvas/fastEditStage.test.tsx` | — |
+| 原图规格合同（`OriginalOutputSpec`） | 已有（09） | `web/src/lib/originalSpec.test.ts`、`tests/test_original_spec.py` | — |
+| 原图规格 → 真的导出成那个尺寸 | 未开始 | — | 12 |
 | Style/Spec 分层与项目快照 | 未开始 | — | 10 |
 | 统一检查引擎 + 左侧问题面板 | 未开始 | — | 11 |
 | 问题项 → 真实对象定位（含跨画布） | 部分 | preflight 已带 objectIds/gids，无 canvasId | 11 |
@@ -709,3 +710,73 @@ Session 07 的第二类成因同形（用例只跑了方便的那个时刻）。
 没有任何输入能让那一句生效，也就没有任何用例能打红它。**处置是删掉它**
 （不是去造一个后端给不出来的输入来"覆盖"它）：`allScripts` 那一半的同名过滤
 是真需要的，两者不是一回事。
+
+---
+
+## Session 09 新增用例（后端 16 / 前端 47）
+
+### 后端 `tests/test_original_spec.py`（16 条）
+
+| 组 | 条数 | 守什么 |
+| --- | ---: | --- |
+| `TestRasterDpi` | 10 | 密度先量后猜：PNG `pHYs` / JPEG JFIF / Exif（英寸与厘米）读得到就报 `metadata`；单位字节为 0 的 pHYs 与 unit=1 的 Exif 只是长宽比，不是密度；**「没写」与「写着 96」是两个答案**；JFIF 压过 Exif；读不动文件退到 `assumed` 而不是崩；alpha 照实报 |
+| `TestVectorSpec` | 2 | 矢量报视口不编像素；没测量的维度报 `unknown` / `None` |
+| `TestPanelsProjection` | 2 | `/api/panels` 的 `native_*_mm` 是 `original_spec` 的**投影**；没有密度元数据时尺寸与改造前**逐位相同** |
+| （构造工具） | — | PNG / JPEG / Exif 都自己拼字节——只有这样才控制得住"写没写密度"这一维 |
+
+### 前端
+
+| 文件 | 条数 | 守什么 |
+| --- | ---: | --- |
+| `web/src/store/workspace.test.ts` | 19 | 打开单图直接进快速编辑；没有源脚本时诚实降级；项目里没有就不发明面板；重复打开/重复「添加到画布」不叠对象；**加入画布后 overrides 还在同一个对象 id 上**；从画布进图内编辑再返回位置尺寸 edits 全不动；切模式不进撤销栈、不置 dirty；按 documentId 恢复（对象没了 / 别的文档那一档 / 不认识的模式值 / 坏 blob 四种都回排版）；删除或隐藏当前面板就退出；图在另一张画布上时先切过去而不是复制一份 |
+| `web/src/lib/originalSpec.test.ts` | 25 | 四档来源的优先级各一条；矢量/位图/可编辑 Figure 各报各的维度；缺 DPI 报 `assumed`；透明度没测量报 `null`；`source_missing` 保留上次已知并标 `stale`、密度改报 `derived`；runtime 不在清单里不算"源丢了"；**画布缩放/裁剪/旋转/翻转/透明度只进 `ignored`**；四种路径形态（含 Windows 反斜杠与盘符）不影响规格；绑定层对不认识的 id 回 `null` |
+| `web/src/canvas/fastEditStage.test.tsx` | 5 | 快速编辑这一屏只画那一张图、没有页面纸；排版模式照旧画整张版；两个出口都在；**切进切出文档一个字节没动**（比整份 doc 的 JSON + 历史长度）；没有源脚本时说清原因并给出下一步 |
+| `web/src/i18n/overflow.test.tsx` | +6 | 新文案的英文字数预算（模式标签 / 两个出口 / 降级说明条 / 素材卡「打开」） |
+| `web/src/components/left/AssetBrowser.runtime.test.tsx` | 改 1 | 素材卡主动作换成「打开」之后，落面板那一步仍然把描述符交给 `addRuntimePanel`（反证 #2 原样成立） |
+
+## Session 09 的变异反证（21 条，全部被打红）
+
+脚本：`scratchpad/mutate.py`（一次性工具，不进仓库）。跑法与前几轮相同——
+**先提交再变异**（`git checkout --` 才不会吃掉未提交的修复），Python 侧每条
+先清 `__pycache__`（同尺寸 + 同一秒写入会命中旧 `.pyc`，那是"变异显示绿"的
+又一种成因），每条都先断言"变异真的写进去了"。
+
+| 变异 | 打红的用例 | 结果 |
+| --- | --- | --- |
+| PNG pHYs 的单位字节不看了 | `test_original_spec.py` | 红 ✔ |
+| 量化还原关掉（299.9994 不再还原成 300） | 同上 | 红 ✔ |
+| JFIF 不再压过 Exif | 同上 | 红 ✔ |
+| 位图密度一律按假定（不读文件） | 同上 | 红 ✔ |
+| `native_*_mm` 不再取自 spec | 同上 | 红 ✔ |
+| raster probe 不再报 alpha | 同上 | 红 ✔ |
+| 渲染回来的图幅不再压过文档那份 | `originalSpec.test.ts` | 红 ✔ |
+| 文档那份不再压过磁盘事实 | 同上 | 红 ✔ |
+| `stale` 恒假 | 同上 | 红 ✔ |
+| 反算出来的密度冒充 `metadata` | 同上 | 红 ✔ |
+| 缩放判据改用页面包围盒（裁过的图会被误报） | 同上 | 红 ✔ |
+| fallback 不再标记自己 | 同上 | 红 ✔ |
+| 文档里已有面板也再造一个 | `workspace.test.ts` | 红 ✔ |
+| 没有源脚本也进图内编辑 | 同上 | 红 ✔ |
+| 恢复时不验对象还在不在 | 同上 | 红 ✔ |
+| 恢复时不看模式那一维（一律当 `fast_edit`） | 同上 | 红 ✔ |
+| 坏 blob 不再兜底（抛出去） | 同上 | 红 ✔ |
+| 快速编辑顺手把图的尺寸改掉 | 同上 | 红 ✔ |
+| 对象消失后不退出快速编辑 | 同上 | 红 ✔ |
+| 快速编辑仍然画整张版 | `fastEditStage.test.tsx` | 红 ✔ |
+| 快速编辑仍然铺纸面 | 同上 | 红 ✔ |
+
+### 第一轮活下来的那一条：又是一条杀不死的冗余
+
+「本机存着的模式值不合法就当没有」这条判据，改成恒假之后**没有任何用例会红**。
+查下来不是判据错了，是它与 `restoreWorkspace` 里的 `saved.mode !== 'fast_edit'`
+**说的是同一件事**——前者拦下不合法的取值，后者对任何不是 `fast_edit` 的取值
+都回排版模式，两条路的结果逐字相同。这是 T-36 的形状。
+
+处置**不是**造个输入去覆盖它，而是合成一处：`readFastEditTarget()` 直接回
+「上次停在哪个面板上」（`string | null`），模式那一维只在这里判一次。合完之后
+它变成可杀的，并且顺手暴露出**一个从来没被量过的维度**——"上次停在画布排版"
+这一档：改造前的两条判据都能让它绿，而它才是最常见的那种存档。补了两条用例
+（`mode: 'layout'` 与一个不认识的模式值），变异当场红。
+
+一句话：**「杀不死」不总是"判据多余"，也可能是"两条判据合起来盖住了一个没人
+量过的维度"。** 合并之后那个维度才露出来。

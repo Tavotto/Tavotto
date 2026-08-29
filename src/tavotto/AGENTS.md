@@ -763,6 +763,23 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
     = 这一轮还不知道。三档都不许压成两档。
   * 缓存挂在 `RefreshState.readiness`，键是输入的内容签名；刷新在事实真的
     动了之后额外清一次（依赖方向是 readiness → refresh，**反过来会成环**）。
+- **「这张图有多大」的事实层只有一处（ADR 0028，2026-08-29）**：
+  `engine/originalspec.py`。它回答**文件自己说了什么**，一个字不掺画布信息
+  （没有 x/y/w/h、没有画布缩放、没有页面裁切）——「按原图导出」的**决策**在
+  前端 `web/src/lib/originalSpec.ts`，本模块不做决策。
+  * `/api/panels` 每项的 `original_spec` 与 `native_w_mm`/`native_h_mm` 是
+    **同一次计算的两个投影**。改造前位图那一档在 `scan_panels()` 里现猜一个
+    ppi（`600 if png else 300`），猜完既不说也没有别处能对账。
+  * **物理密度先量后猜**：PNG 的 `pHYs`、JPEG 的 JFIF 密度、JFIF 只给长宽比
+    时 Exif 的 `XResolution`/`YResolution`（纯标准库解析）。读不到才落到
+    `ASSUMED_DPI`（取值与改造前逐位相同）并报 `dpi_source: "assumed"`。
+  * **别改回 MuPDF 的 `Pixmap.xres`**：实测（PyMuPDF 1.28.2）它对「没有
+    pHYs」与「写着 96 dpi」一律回 96，两个不同的答案被压成同一个值——而
+    「不知道」正是这里最需要分出来的那一档。
+  * pHYs 存每米整数像素，300 dpi 读回来是 299.9994；量化误差上界 0.0127 dpi，
+    所以「离最近整数 < 0.02 就还原成整数」是去掉编码损失，不是四舍五入。
+  * 没测量的维度一律 `None`：矢量不编像素数与 dpi，位图不编 viewBox，
+    PDF 的透明度是 `None` 而不是 `False`。
 - 前端侧（sessionStorage 的 pj、schema 3、画布会话、自动保存、剪贴板、撤销
   防线等）见 `web/AGENTS.md`。
 

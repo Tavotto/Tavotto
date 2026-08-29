@@ -5,7 +5,298 @@
 
 ---
 
-## 最近一次：Session 08（2026-08-29）
+## 最近一次：Session 09（2026-08-29）
+
+### 目标
+
+把「打开一张图 → 改 → 按原图规格导出」做成**默认路径**，并给「按原图导出」
+一个说得出口的定义。
+
+本阶段**不做导出面板、不做输出门禁**（Prompt 12），**不动 Style/Spec 分层**
+（Prompt 10），也**不在前端重新判一次「这张图能不能编辑」**（那是 07/08 的
+事实模型）。
+
+### 开始前实测到的两件事（不是假设）
+
+1. **图内编辑确实必须先把面板放进画布。** `uiStore.elementPanelId` 存的是
+   **画布对象 id**；`usePruneSelection` 在对象离开 `doc.objects` 时清掉它。
+   没有对象就没有图内编辑——这不是 UI 层的限制，是 overrides 挂在
+   `CanvasObject` 上的直接后果。
+2. **导出尺寸没有出处。** `/api/export` 只按 `page_w_mm/page_h_mm` + 每个对象
+   的 x/y/w/h 合成，没有"原图尺寸"这条路；而 `/api/panels` 的
+   `native_*_mm` 在位图那一档是**猜**的：`ppi = 600 if png else 300`，
+   依据只有旁边那句注释。
+
+### 实际完成
+
+**1. `web/src/store/workspace.ts` —— 两条工作流的唯一出口。**
+
+```text
+mode: 'fast_edit' | 'layout'      activePanelId: string | null
+openFastEdit(figureId)      打开一张图 → 快速编辑工作区
+addFigureToLayout(figureId) 已在文档里就聚焦，不重复创建
+returnToLayout()            回排版
+focusLayoutPanel(panelId)   切画布 + 选中 + 滚进视野（11 / 12 复用）
+findFigurePanel(figureId)   「文档里有没有这张图」的唯一判据
+```
+
+**关键决定（T-43）：不建第二个容器。** 一张图在文档里只有一个面板对象，
+快速编辑是它的**另一种看法**。三个要求因此不需要各写一份实现：
+
+* 「添加到画布不复制失联对象」——根本没有复制这一步；
+* 「进图内编辑再返回位置尺寸不变」——快速编辑**一个字都不写 x/y/w/h**；
+* 「重复添加不叠对象」——找得到就聚焦。
+
+**代价如实记着**：打开一张图会真的在当前画布上放一个面板（一次可撤销的文档
+修改）。用户从没想过画布，但画布里多了一个对象——那个对象就是他接下来编辑的
+载体，让它凭空存在于"文档之外"才是幻觉。
+
+**2. 快速编辑这一屏**（`CanvasStage` + 新的 `canvas/FastEditBar.tsx`）：
+不铺纸面、不画网格/参考线/标尺、只画那一个对象，取景框（fit / 双击适应）
+换成那张图的包围盒；画布标签行与顶栏的标注工具整组收起（它们画的是画布对象，
+这一屏上看不见）；浮动条给三样东西——图名、原图规格、两个出口
+（添加到画布 / 画布排版）。没有源脚本时多一条说明，词取自
+`lib/readinessText.ts`，动作是就绪度中心的 `focusPanel()`。
+
+**3. 打开的入口全部换成快速编辑**：素材卡双击 / Enter（主动作从「加入画布」
+换成「打开」）、运行时图卡片（跑过的那一档）、`tavotto open <stem>` 的交接。
+交接不再自己拼「有就选中、没有就 addPanel」——它调 `findFigurePanel` +
+`openFastEdit`，只把结果翻译成 `selected` / `placed`。
+
+**4. `web/src/lib/originalSpec.ts` —— 原图规格的唯一服务**（ADR 0028）。
+优先级 ① 渲染回来的 manifest `size_mm` → ② 文档里的 `nativeW/nativeH`
+→ ③ `/api/panels` 的 `original_spec` → ④ 明确 fallback。①在②之前是因为
+**图幅不是派生字段**；②在③之前是因为**源文件消失之后它还在**。
+画布上的缩放 / 裁剪 / 旋转 / 翻转 / 透明度只进 `spec.ignored`。
+
+**5. `src/tavotto/engine/originalspec.py` —— 事实层。** 位图密度**先量后猜**：
+纯标准库解析 PNG `pHYs`、JPEG JFIF 密度、以及 JFIF 只给长宽比时 Exif 的
+`XResolution`/`YResolution`；读不到才落回 `ASSUMED_DPI`（**取值与改造前逐位
+相同**）并报 `dpi_source: "assumed"`。`/api/panels` 的 `native_*_mm` 改成这份
+spec 的**投影**，不是第二次计算。
+
+**别改回 MuPDF 的 `Pixmap.xres`**：实测（PyMuPDF 1.28.2）它对「没有 pHYs」
+与「写着 96 dpi」一律回 `96`——两个不同的答案被压成同一个值，而"不知道"正是
+这里最需要说出来的那一档。`test_ninety_six_dpi_is_metadata_not_the_absence_of_it`
+就钉着这条。
+
+### 关键 API（后面几个 Prompt 直接用）
+
+```ts
+// web/src/store/workspace.ts
+useWorkspaceStore              // mode / activePanelId
+openFastEdit(figureId)         // 'editing' | 'layout_only' | 'missing'
+addFigureToLayout(figureId)    // 'added' | 'focused' | 'missing'
+returnToLayout()
+focusLayoutPanel(panelId)      // boolean —— 11 的问题定位、12 的导出报告直接调
+findFigurePanel(figureId)      // { panel, canvasId } | null
+restoreWorkspace(documentId, objects)   // 恢复前先验对象还在不在
+
+// web/src/lib/originalSpec.ts   ← Prompt 12 的导出面板从这里取尺寸
+getOriginalOutputSpec(figureId): OriginalOutputSpec | null   // 不认识 → null
+resolveOriginalSpec(inputs)    // 纯函数核心，判据都打在它上面
+ignoredTransforms(panel)       // 画布上设了、原图导出不套用的那几项
+FALLBACK_MM                    // 占位尺寸；走到它的 spec 必带 fallback: true
+```
+
+```python
+# src/tavotto/engine/originalspec.py
+asset_spec(path, kind, probe) -> dict     # 文件自己说了什么
+raster_dpi(path) -> (x, y) | None         # 只回文件写下的密度，没写就 None
+ASSUMED_DPI / ASSUMED_DPI_DEFAULT         # 明确 fallback（值与改造前相同）
+```
+
+`/api/panels` 每项新增 `original_spec`；`PanelObject` 新增可选 `pxH`；
+`pdfbackend.probe_asset()` 的 raster 结果新增 `alpha`。
+
+### 迁移
+
+**没有迁移，磁盘格式一个字节没升版。** 两处新增都是**可选**字段：
+`PanelObject.pxH`（老文档没有它 = 那一维未知，**不许补默认值**）、
+`PanelInfo.original_spec`（老后端不发 = 那个后端没有这份事实，解析退到文档里
+那份）。新增的本机存储是 `localStorage['tavotto.workspace.<documentId>']`，
+读不回来就当"上次在画布排版"。
+
+**一处行为变化要留意**：写了物理密度、而那个密度不等于我们旧假定的位图
+（例如 72 dpi 的照片、300 dpi 的 PNG），`native_*_mm` 会变成按文件说的算。
+改造前那些值本来就是错的——但用户**已经摆在版上的面板一个都不动**
+（`nativeW/nativeH` 存在文档里，`panelSourceSync` 明确不碰图幅）。
+
+### 修改的文件
+
+```text
+新增  src/tavotto/engine/originalspec.py         原图规格事实层（+16 条用例）
+新增  tests/test_original_spec.py
+新增  web/src/store/workspace.ts                 两条工作流（+19 条用例）
+新增  web/src/store/workspace.test.ts
+新增  web/src/lib/originalSpec.ts                原图规格唯一服务（+25 条用例）
+新增  web/src/lib/originalSpec.test.ts
+新增  web/src/canvas/FastEditBar.tsx             快速编辑浮动条
+新增  web/src/canvas/fastEditStage.test.tsx      这一屏的可见差别（5 条）
+新增  docs/adr/0028-original-output-spec.md
+改动  src/tavotto/app.py                         scan_panels 走 originalspec
+改动  src/tavotto/pdfbackend/pymupdf_backend.py  raster probe +alpha
+改动  web/src/canvas/CanvasStage.tsx             快速编辑取景 / 只画一个对象
+改动  web/src/canvas/PageSheet.tsx               +data-page-sheet 测试落点
+改动  web/src/components/TopBar.tsx              模式标签 + 标注工具收进 MarkTools
+改动  web/src/components/left/AssetBrowser.tsx   主动作「加入画布」→「打开」
+改动  web/src/lib/openRequest.ts                 交接落到快速编辑
+改动  web/src/App.tsx                            挂持久化订阅 + 快速编辑藏画布标签
+改动  web/src/hooks/usePruneSelection.ts         对象消失也退出快速编辑
+改动  web/src/store/projectStore.ts              换项目清工作区
+改动  web/src/store/actions.ts / lib/clipboard.ts / lib/migrate.ts /
+      store/panelSourceSync.ts                   pxH 与 pxW 成对
+改动  web/src/lib/api.ts                         +AssetOriginalSpec / original_spec
+改动  web/src/types/document.ts                  +PanelObject.pxH
+改动  web/src/i18n/locales/*                     +assets.open* / +fastEdit.*，
+                                                 删掉死掉的 assets.addAria
+改动  web/src/i18n/overflow.test.tsx             +6 条字数预算
+改动  web/src/components/left/AssetBrowser.runtime.test.tsx  主动作改名跟着改
+改动  src/tavotto/AGENTS.md / web/AGENTS.md      长期规则的家
+重建  codex-plugin/mcp/widget/canvas.html        指纹 e8a2c128a5200354
+重建  web/dist-playground/                       指纹 73719cc4290353e6（不进 git）
+```
+
+### 测试命令与真实结果
+
+```sh
+PYTHONPATH=$PWD/src /Volumes/Projects/Tavotto/.venv/bin/python -m pytest
+PYTHONPATH=$PWD/src /Volumes/Projects/Tavotto/.venv/bin/python -m pytest tests/test_original_spec.py
+cd web && pnpm test && pnpm build && pnpm i18n:check && pnpm lint
+# 单跑一个前端用例文件要自己补环境变量（package.json 的 test 脚本里有）
+NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/store/workspace.test.ts
+# 改了 web/src 之后两个受管产物都要重建
+python scripts/build_mcp_widget.py && python scripts/build_browser_playground.py
+ruff check . && ruff format --check .
+```
+
+（实跑数字见 `STATUS.md` 的「Session 09 之后」表。）
+
+**变异反证 21 条全部被打红**；第一轮活下来 1 条，成因与处置见
+`TEST_MATRIX.md`——它是 T-36 的形状（两条判据说同一件事），但合并之后**露出
+了一个从来没被量过的维度**（"上次停在画布排版"这一档），补了两条用例。
+
+### 这一轮踩到的坑
+
+**1. `Pixmap.xres` 看不见"没写"这一维。** 第一版打算直接用 MuPDF 报的
+`xres`——实测之后发现没有 `pHYs` 的 PNG 和写着 96 dpi 的 PNG 它一律回 96。
+**尺子量不了那一维时，判据是恒等成立的**：两条用例会给出同一个答案，而它们
+问的是两件不同的事。处置是自己按格式解析（纯标准库）。
+
+**2. pHYs 是每米整数像素**，300 dpi 落盘再读回来是 299.9994。第一版用例
+`assert dpi == 300.0` 当场红——红的不是实现，是**编码损失**。量化误差上界
+`0.0254/2 = 0.0127`，所以"离最近整数不到 0.02 就还原"是有根据的，不是
+四舍五入的方便。
+
+**3. 一条用例自己把 JFIF 段写坏了。** 测试里改 JFIF 密度时把 units 写到了
+版本字节上（`JFIF\0` 之后是 2 字节版本再是 units），于是"读不到密度"这条绿得
+毫无意义，"读得到"那条红。**自己捏的输入形状会产生假红**——先确认构造是对的
+再怀疑实现。
+
+**4. 前端 mock 回 `undefined` 把崩溃甩到被测代码外面。**
+`AssetBrowser.runtime.test.tsx` 把 `@/store/actions` 整个打了桩，
+`addRuntimePanel` 回 `undefined`；主动作改成"打开"之后，工作区要拿它的 `id`
+——报错栈指向 `workspace.ts`，看起来像产品坏了。处置是让桩回一个真的对象，
+不是给产品代码加一句 `?.`（那句话没有任何用例能打红它）。
+
+**5. `npx vitest` 直接跑仍然会漏 `NODE_OPTIONS=--no-experimental-webstorage`。**
+连续第三轮踩到，记在这里。
+
+### 尚存限制
+
+1. **导出还没有"按原图"这条路。** 本轮只给规格与合同，`/api/export` 仍然只
+   会按画布合成。Prompt 12 接。
+2. **快速编辑里画不了画布标注。** 标注工具整组收起了——它们画的是画布对象，
+   这一屏上看不见。图内标注（override）不受影响。真需要"在图上加个箭头"的
+   用户，路径是"添加到画布 → 排版模式"。
+3. **打开一张图会在当前画布上放一个面板**（见上面的代价）。多画布项目里它落在
+   **激活画布**上，不由用户挑。
+4. **`original_spec` 只覆盖 `/api/panels` 的素材。** runtime 素材（ADR 0013）
+   走描述符里的 `size_mm`，没有像素网格与密度——它没有磁盘原件，那两维本来
+   就不存在。
+5. **`FALLBACK_MM` 是个占位常数**（80 × 60 mm），与 Prompt 10 的规范层没有
+   耦合。真到了要按规范给默认尺寸的那一步，那是 10 的事。
+6. **窄屏下快速编辑浮动条没有实测过**。它是一条 flex 行，jsdom 量不出溢出；
+   英文字数预算已经进了 `overflow.test.tsx`，但真实断行要等 e2e（issue #30 的
+   POSIX 腿仍然缺）。
+7. 04–08 的其余遗留原样开着（R-05 五处手写原子写、R-07 autosave 位置、
+   `/api/layouts/<name>` 无 schema 校验、axe 那两条从没真跑过）。
+
+### 工作树状态
+
+- worktree：`/Volumes/Projects/Tavotto/.claude/worktrees/product-ux-v2`
+- 分支：`feat/product-ux-reliability-v2`，从 `origin/main` 的 `ef9ac02` 开出
+- **PR #201** 带的仍然是 Session 01–04；**05–09 的提交还没有推**——节奏由用户
+  定（一推就触发一轮 Codex 评审）
+- author 用 `88193520+erwanjun@users.noreply.github.com`（与 `main` 上每一个
+  提交一致）。本机 `~/.gitconfig` 是别的邮箱，提交时用
+  `git -c user.email=… commit`，**别改共享的 `.git/config`**
+
+---
+
+## 下一阶段入口（Prompt 10：Style / Spec 分层）
+
+**从这里开始读**：`UX_CONTRACTS.md` 的「4. Style / Spec / Validation / Export
+分层合同」与新增的「6b. 原图规格合同」、`ARCHITECTURE.md` 的 §6。
+
+**Session 09 留给它的可复用入口**：
+
+| 东西 | 位置 | 性质 |
+| --- | --- | --- |
+| 这张图有多大 | `lib/originalSpec.getOriginalOutputSpec(figureId)` | **唯一服务**；12 的导出面板、10 的"规范说尺寸该是多少"都从它取现值 |
+| 画布上设了但原图导出忽略的变换 | 同文件 `spec.ignored` | 界面照此说明；别在导出面板里重新算一遍 |
+| 定位到画布上的某个面板 | `store/workspace.focusLayoutPanel(panelId)` | 11 的问题面板直接调 |
+| 打开一张图 / 加入画布 | `openFastEdit` / `addFigureToLayout` | 18 的 QuickEdit、21 的 onboarding 直接调 |
+
+**文档 / profile 上可以绑的字段**（Prompt 10 需要的那几个）：
+`CanvasData.profile: DocumentProfile { id, journal? }` 已经在文档里（每张画布
+各自一份，规则本身一条都不进文档）；最小字号的两个数仍在
+`src/tavotto/profiles/publication.json`（`absolute_min_font_size_pt: 8.0` 与
+`legend_policy.min_font_size_pt: 8.5`，R-11），**统一为 8 pt 要在 profile
+文件里改，不在两个求值器里改**。
+
+**绝不要做的事**（07 的六条、08 的三条原样成立，09 再加四条）：
+
+10. **不许给快速编辑建第二个容器**（隐藏画布、文档顶层 `figures[]`、
+    per-figure override 表都算）。两个容器 = 两份 `overrides` = 一条迟早会漏
+    的同步规则，而漏掉的表现是"我在那边改的东西这边没有"。
+11. **不许在快速编辑里写 x/y/w/h。** 「返回后布局不变」靠的是没动过；
+    改成"回来时恢复一下"的那一刻，旋转 / 成组 / 布局组重排里就会有一条路径漏掉。
+12. **不许在导出那一刻现算尺寸。** 来源优先级写在 ADR 0028 里，实现只有
+    `lib/originalSpec.ts` 一份；要加一档就改 ADR。
+13. **不许把 `dpi_source` 压成两档。** `assumed`（文件没写）与 `derived`
+    （反算出来的）不是同一件事，`unknown`（这一维没测量）更不是。
+
+**必须保留的不变式**（改动前先确认还成立）：
+
+1. `loadSeq` / `derivedSeq` 把「载入」「用户编辑」「派生同步」分成三档。
+2. `dirty` 同时盯 `doc` 与 `canvases`；收到 409 后基线**故意不推进**。
+3. 落盘一律走 `engine/atomicio`（ADR 0023）；保存状态只经 `setSaveState()` /
+   `setDocNotice()` 改（ADR 0024）。
+4. **刷新的编排只有 `refresh_project_index()` 一份**（ADR 0025）；**发现只有
+   `project_watch` 一份**（ADR 0026）；**前端的消费只有 `liveSync` 一份**；
+   **能力事实只有 `readiness` 一份**（ADR 0027）；**原图规格的决策只有
+   `lib/originalSpec.ts` 一份**（ADR 0028）。
+5. **无差异 = 零事件、零写盘、零 worker 失效、零缓存失效**（后端）；
+   **无差异 = 零 `set()`、零 dirty、零提示**（前端）。
+6. 「哪些文件算素材」只有 `iter_assets()` 一处；脚本遍历只有
+   `discover.iter_all_scripts()` / `iter_scripts()` 两个视图；「谁认领了这个
+   stem」只有 `discover.claims_of()` 一处；「状态说成什么话」只有
+   `lib/readinessText.ts` 一处；**「文档里有没有这张图」只有
+   `findFigurePanel()` 一处**。
+7. **就绪度不执行用户脚本、不 probe、不写盘、不改注册表、不发 SSE**；
+   界面也不执行。
+8. **派生数据刷新不得把文档标脏（对用户而言），也不得进普通撤销历史。**
+   侧栏折叠、横幅关闭、聚焦目标、**工作区模式**同样不进文档、不进 undo。
+9. **素材不在清单里 ≠ 脚本关系失效**（T-28）；**也 ≠ 这张图没有规格**
+   （原图规格退到文档里那份并标 `stale`）。
+10. `reason` 是闭集，表外的值归成 `manual`；客户端字符串不透传。
+11. **「没测量」不许压扁**：`conflicts` 的 `null`、`registry_valid` 的 `null`、
+    `capability` 的 `undefined`、**`dpi` 的 `null` 与 `dpi_source` 的四档**。
+
+---
+
+## 历史：Session 08（2026-08-29）
 
 ### 目标
 
@@ -242,56 +533,6 @@ STATUS.md 里记过一次，本轮又踩了一次——单跑文件时记得带�
   `git -c user.email=… commit`，**别改共享的 `.git/config`**
   （linked worktree 默认共享它，一条命令污染所有会话）
 - `web/node_modules` 已在 worktree 内真装
-
----
-
-## 下一阶段入口（Prompt 09：快速编辑与画布模式）
-
-**从这里开始读**：`UX_CONTRACTS.md` 的「2. 两种工作流合同」与
-「5b. 接入状态合同」、`ARCHITECTURE.md` 的 §3.4 与 §5。
-
-**Session 08 留给它的两个可复用入口**：
-
-| 东西 | 位置 | 性质 |
-| --- | --- | --- |
-| 打开接入状态并定位到某张图 | `useProjectReadinessStore.getState().focusPanel(fileId)` | 17 / 18 直接调，**不要在那两处重新拼状态判断** |
-| 状态标签与一句话原因 | `lib/readinessText.ts` 的 `statusLabel()` / `reasonText()` | 任何新出口都从这里取词，别再写第二份 |
-
-**绝不要做的事**（07 的六条原样成立，08 再加三条）：
-
-7. **不许给 `capability` 缺席补默认值。** `undefined` 的意思是「这一轮还不
-   知道」，四个出口对它的处理一律是**什么都不显示**。补成 `layout_only`，
-   用户会看到一条描述错误的说明，而且再也等不到正确的那一条。
-8. **不许把响应式让位写回侧栏偏好**（T-40）。判据只求值一次，写状态与写偏好
-   共用它。
-9. **不许再造第二个「接入中心开关」**（T-38）。它只有 `uiStore.registryOpen`
-   一个；聚焦是另一件事，归 `projectReadinessStore.focusId`。
-
-**必须保留的不变式**（改动前先确认还成立）：
-
-1. `loadSeq` / `derivedSeq` 把「载入」「用户编辑」「派生同步」分成三档。
-2. `dirty` 同时盯 `doc` 与 `canvases`；收到 409 后基线**故意不推进**。
-3. 落盘一律走 `engine/atomicio`（ADR 0023）；保存状态只经 `setSaveState()` /
-   `setDocNotice()` 改（ADR 0024）。
-4. **刷新的编排只有 `refresh_project_index()` 一份**（ADR 0025）；**发现只有
-   `project_watch` 一份**（ADR 0026）；**前端的消费只有 `liveSync` 一份**
-   （就绪度也挂在它上面，T-39）；**能力事实只有 `readiness` 一份**。
-5. **无差异 = 零事件、零写盘、零 worker 失效、零缓存失效**（后端）；
-   **无差异 = 零 `set()`、零 dirty、零提示**（前端；就绪度那一侧是
-   「同 fingerprint 不换报告对象引用」）。
-6. 「哪些文件算素材」只有 `iter_assets()` 一处判据；脚本遍历只有
-   `discover.iter_all_scripts()` / `iter_scripts()` 两个视图；「谁认领了这个
-   stem」只有 `discover.claims_of()` 一处；「状态说成什么话」只有
-   `lib/readinessText.ts` 一处。
-7. **就绪度不执行用户脚本、不 probe、不写盘、不改注册表、不发 SSE**
-   （磁盘 CANARY + 桩两层证据钉着）；**界面也不执行**——三个动作各归各的
-   既有端点，且只由用户点出来。
-8. **派生数据刷新不得把文档标脏（对用户而言），也不得进普通撤销历史。**
-   侧栏折叠、横幅关闭、聚焦目标同样**不进文档、不进 undo**。
-9. **素材不在清单里 ≠ 脚本关系失效**（T-28）。
-10. `reason` 是闭集，表外的值归成 `manual`；客户端字符串不透传。
-11. **「没测量」三档不许压扁**：`conflicts` 的 `null`、`registry_valid` 的
-    `null`、`capability` 的 `undefined`。
 
 ---
 

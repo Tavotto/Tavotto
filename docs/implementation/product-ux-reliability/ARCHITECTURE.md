@@ -351,8 +351,20 @@ SSE 重连（`subscribeEvents` 的 `onOpen`）补一次合并刷新 + 派生同�
   prepare → verify（全量重放 + 几何比对 + 像素门）→ commit，任一环不过 409
   （`app.py:3009 _write_back_prepare`、`2950 _replay_pixel_diff`）。
 
-**现状没有独立的「快速编辑工作流」**：图内编辑必须先把面板放进画布。
-这正是 Prompt 09 要解决的核心产品缺口。
+**（`← 09`）两条工作流已经合流到同一个对象**（ADR 0028 / T-43）：
+
+```text
+web/src/store/workspace.ts   mode: fast_edit | layout, activePanelId
+  openFastEdit(figureId)     找对象 / 没有就走既有 addPanel → 进图内编辑
+  addFigureToLayout(figureId)已在文档里就聚焦，不重复创建
+  returnToLayout()           回排版；x/y/w/h 一个字节没动过
+  focusLayoutPanel(panelId)  切画布 + 选中 + 滚进视野（11/12 复用）
+```
+
+一张图在文档里只有**一个**面板对象；快速编辑是它的另一种看法
+（`CanvasStage` 里 `only={activePanelId}`：不铺纸面、不画网格、不画别的对象，
+取景框改成那张图的包围盒），画布排版是它在页面上的落位。模式与当前图是**工作区
+状态**——不进文档、不进撤销、不置 dirty，按 documentId 存本机一档。
 
 ### 5.2 画布
 
@@ -364,6 +376,7 @@ SSE 重连（`subscribeEvents` 的 `onOpen`）补一次合并刷新 + 派生同�
 
 | 环节 | 位置 |
 | --- | --- |
+| **原图规格**（`← 09`，ADR 0028） | 决策 `web/src/lib/originalSpec.ts`（唯一服务）；事实 `src/tavotto/engine/originalspec.py` + `/api/panels` 的 `original_spec` |
 | 载荷构造 | `web/src/lib/exportPayload.ts`、默认值 `lib/exportDefaults.ts`（localStorage 偏好） |
 | UI | `web/src/components/ExportDialog.tsx` |
 | 后端 | `POST /api/export`（`app.py:860`），面板取源 `app.py:816 _resolve_panel_source()` |

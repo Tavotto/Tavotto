@@ -279,8 +279,10 @@ export function getOriginalOutputSpec(figureId: string): OriginalOutputSpec | nu
   const renderSizeMm = panel
     ? (useRenderStore.getState().byKey[renderKeyOf(panel)]?.manifest?.size_mm ?? null)
     : null
-  // runtime 素材从来不在 `/api/panels` 里；它的图幅在描述符里
-  const runtimeSize = runtime?.descriptor?.size_mm ?? null
+  // runtime 素材从来不在 `/api/panels` 里；它的图幅在清单里，描述符是兜底
+  // （还没跑出过描述符的那一档 `size_mm` 也可能是 null —— 那时就退到文档里
+  // 那份，再没有就是明确 fallback，绝不编一个数）
+  const runtimeSize = runtime?.size_mm ?? runtime?.descriptor?.size_mm ?? null
   return resolveOriginalSpec({
     figureId,
     panel,

@@ -300,7 +300,10 @@ function useFrame(
 ): { w: number; h: number } {
   if (!panelId) return { w: page.w, h: page.h }
   const o = objects.find((x) => x.id === panelId)
-  return o ? { w: o.x + o.w, h: o.y + o.h } : { w: page.w, h: page.h }
+  if (!o) return { w: page.w, h: page.h }
+  // 面板可能被拖到过页面左上角外面（x/y 为负）：框至少要有这张图那么大，
+  // 否则 fit 出来的比例装不下它。落位由随后的 revealRect 负责。
+  return { w: Math.max(o.x + o.w, o.w), h: Math.max(o.y + o.h, o.h) }
 }
 
 /**
