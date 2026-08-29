@@ -201,8 +201,8 @@ through_today` 在 hybrid 落地那一刻当场红，逼着一起改，而不是
 | 02 | Preview Complexity Analyzer（primitive / vertex 估算，喂 `estimated_*`） | 完成 |
 | 03 | Hybrid Preview（mesh 层 rasterize，文字/轴/图例保持 vector） | 完成 |
 | 04 | renderStore 的 SVG 内存预算 | 完成 |
-| 05 | Diagnostics 与回归看护 | 待做 |
-| 06 | 集成与 issue 收尾 | 待做 |
+| 05 | Diagnostics 与回归看护 | **待做** |
+| 06 | 集成与 issue 收尾 | 复核完成，**issue 不可关闭**（见 §9） |
 
 **顺序不能换。** 01 是止血：hybrid 还没有的时候，超限图至少不能再把浏览器
 打死。02 在 01 的安全网之下才敢真的去遍历大 figure 的 artist 树。
@@ -389,3 +389,77 @@ heapUsed 量的是「分配了多少」而不是「留下了多少」，两侧�
   clear/reset/prune 之后不留残账、`evicted` 那一档的显示与几何权威；
   配套 `web/src/hooks/useEngineSync.test.ts` 的「重排一次渲染」一组；
 * `docs/perf-baseline.md` 的「大图预览基线」—— 前后对照的唯一出处。
+
+---
+
+## 9. Session 06 复核（2026-08-29）：结论是 **不可关闭**
+
+全量绿（pytest 3 077 passed / 0 failed、web 1 366 tests、build / lint / i18n、
+两个受管产物 `--check`、`smoke_app`、E2E 14 passed），n=470 复现逐字节一致，
+浏览器侧**首次实测**（01–04 每一节都写着「还没量」的那一项）：
+
+| | 修复前 | hybrid 之后 |
+|---|---:|---:|
+| SVG 元素总数（同一把尺子） | 663 533 | **818** |
+| Chromium `Nodes` | not measured（挂进去就是症状本身） | **2 887** |
+| JS 堆 | not measured | **2.47 MB** |
+| 渲染进程 RSS（macOS headless Chromium） | not measured | **107–125 MB** |
+| 解析 + 插入（`parseMs`） | not measured | 70–84 ms |
+| **到画出来（`renderedMs`）** | not measured | **80–92 ms** |
+
+开关 5 次每轮回到 6 个节点 / 0.63 MB；RSS 五轮共涨 17–18 MB，是 allocator
+retention，不是线性增长。数据与复现命令见
+[perf-baseline 的 Session 06 一节](../perf-baseline.md#浏览器侧首次实测issue-181session-06)。
+
+五条不变量逐条仍然成立（manifest 逐字节相同且 `manifest_ms` 199.5 → 200.0 ms；
+导出 120 072 个 `<path>` 一个不少而预览只有 72 个；`read_text` 1 → 0；
+`ElementHitLayer` 与 `bitmapOnly` 无关；收不动时不谎报 hybrid）。
+
+### 但是：§4 的预算里没有「节点数」这一维
+
+四条复杂度预算量 primitive 数、两条字节闸量产物字节数。**渲染进程的代价按
+节点走，而没有一条闸量它**——两者在 `pcolormesh` 上重合（所以 fixture 修好了），
+在细小的不可 rasterize primitive 上分开：
+
+| shape（`large_preview_svg.py --shape`） | 裁决 | `svg_bytes` | DOM 节点 | 渲染进程 RSS |
+|---|---|---:|---:|---:|
+| `mesh --n 470`（#181 fixture） | `hybrid` | 1 838 682 | 2 887 | 107–125 MB |
+| **`lines --n 40000`（每条 3 点）** | **`vector` / `normal`——无闸触发** | 9 334 177 | **200 531** | **317–359 MB** |
+
+第二行**可达**：`estimated_primitives = 40 000` 在
+`TOTAL_VECTOR_PRIMITIVE_BUDGET`（50 000）之内；8.90 MiB 越过 8 MiB 软闸，但
+`line` 按契约不可 rasterize，`escalate_plan` 返回 `None`；16 MiB 硬闸也没到。
+40 000 次 `plot()` 是普通 matplotlib 写法；多面板画布把它乘上面板数，而
+**每个 live 面板都被 pin 住、按设计永不驱逐**（Session 04 §7）。四面板的形状
+对照（`paths --copies 4`，102 MB / 16 万个元素）实测**直接把渲染进程打死**
+——那正是 #181 报告的那个结局。
+
+**字节数不是节点数的代理，两个方向都成立**：560 条 × 2000 点是 21.4 MiB 却
+只有 3 336 个节点（字节在 path 的 `d` 属性里），而**那一条字节闸看得见**
+（越过 16 MiB 硬闸 → `raster`）；折线海只有 8.90 MiB 却有 20 万个节点，
+**字节闸看不见它**。贵的是**大量细小的、不可 rasterize 的 primitive**，
+不是大量字节。
+
+修法不必大——图级补一条**节点数**预算，或让高节点数而收不动的图也降进
+`raster`。但它是一条新的判据，要按「新增核心不变式测试提交前必须手工反证一次」的纪律配变异验证，
+**不该塞进本轮的复核 PR**。
+
+### 不可关闭的四条理由
+
+1. **代码不在 `main` 上**：02/03/04 是三个未合并的 stacked PR。
+2. **Session 05 整个没做**：诊断包分不出 vector / hybrid / raster / evicted /
+   泄漏这五种状态（`PanelSnapshot` 里没有任何表示法字段）；浏览器结构性 DOM
+   预算作为 CI gate 不存在；Windows WebView2 基准 **not locally measured**。
+3. **存在实测可达的 freeze 路径**（上一节）。
+4. **Windows 从没执行过这套代码**：`backend-platforms` 在普通 PR 上是
+   `SKIPPED`，而 `svg_bytes` 是判定量、Windows 的 `\r\n` 会让同一张图
+   显得大 3.8%。
+
+### 量内存时先说清「谁的」
+
+渲染进程 RSS 第一版按 `ps | grep -- '--type=renderer'` 全局求和，稳定得到
+**5.7 GB**——那是这台机器上所有 Chromium（含用户自己开着的浏览器）。它稳定、
+可复现、量纲也对，唯独**主语不是被测对象**。正确取法是启动前快照已有的
+renderer pid、启动后取差集（`tests/support/browser_dom_probe.mjs`）。
+同一族的还有一条：`663 533` 是标签数、`2 887` 是浏览器的 `Nodes`，
+**两把尺子不能互相相除**。
