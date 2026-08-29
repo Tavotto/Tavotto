@@ -242,30 +242,40 @@ def test_vertex_model_tracks_what_the_backend_writes(probe):
         )
 
 
-def test_vertex_sampling_covers_the_whole_collection_not_just_the_prefix(probe):
-    """**异构 collection 上的顶点抽样不许只看开头。**
+def test_vertex_sampling_covers_the_whole_collection_not_just_one_end(probe):
+    """**异构 collection 上的顶点抽样不许只看一端——两端都不许。**
 
-    重几何排在后面的形状（`PolyCollection` 先小后大：等值面、分箱统计、地理
-    边界都是这样）在前缀抽样下会被系统性低估，于是一个真有几十万顶点的层被
+    重几何排在一头的形状很常见（`PolyCollection` 的等值面、分箱统计、地理
+    边界）。只看一端的抽样在它上面会系统性低估，于是一个真有几十万顶点的层被
     估成便宜的、停在 `vector`——而那正是这个分析器存在的理由。
 
-    三个数摆在一起才说得清（探针现算，不调模型的私有函数）：4206 条 path、
-    取样上限 4096，真值 33 006，**旧的前缀抽样只报 21 030（63.7%）**，等距抽样
-    报 31 278（94.8%）。上界那条同样要钉：抽样不许把估值抬到真值之上去「保守」。
+    判据是**一对**图 ×（真值 / 前缀 / 后缀 / 等距）四个数，全部由探针现算：
+
+    | | 真值 | 前缀 | 后缀 | 等距 |
+    |---|---:|---:|---:|---:|
+    | 重几何在尾 | 33 006 | **21 030** | 33 328 | 31 278 |
+    | 重几何在头 | 33 006 | 33 328 | **21 030** | 33 328 |
+
+    只留尾重那张的话，把实现从「取前 N 条」换成「取后 N 条」照样全绿——同一个
+    缺陷换了个方向（[[gate-pinned-on-one-side-only]]，变异实测过）。等距抽样
+    要在**两张图上都落进带内**，而两种只看一端的数法要各自在一张图上出局。
 
     评审 P2（PR #199）。修的是实例，判据钉的是这一族形状。
     """
     v = probe["vertex_sampling"]
-    assert v["paths"] > v["sample_cap"], "用例前提：path 数确实超过取样上限，才谈得上抽样"
-    assert v["exact_flag"] is False, "用例前提：这一格走的是抽样那一支"
     lo, hi = _VERTEX_BAND
-    assert lo <= v["stride"] / v["exact"] <= hi, (
-        f"等距抽样 {v['stride']} vs 真值 {v['exact']}（比 {v['stride'] / v['exact']:.3f}）"
-    )
-    # **前缀抽样必须明显更差**——否则这张图区分不开两种数法，上面那条是恒真的
-    assert v["prefix"] / v["exact"] < lo, (
-        f"用例前提：前缀抽样在这张图上应当明显偏低，实得比 {v['prefix'] / v['exact']:.3f}"
-    )
+    for name in ("tail_heavy", "head_heavy"):
+        row = v[name]
+        assert row["paths"] > v["sample_cap"], f"{name}: 用例前提——path 数确实超过取样上限"
+        assert row["exact_flag"] is False, f"{name}: 用例前提——这一格走的是抽样那一支"
+        assert lo <= row["stride"] / row["exact"] <= hi, (
+            f"{name}: 等距抽样 {row['stride']} vs 真值 {row['exact']}"
+            f"（比 {row['stride'] / row['exact']:.3f}）"
+        )
+    # **两种只看一端的数法各在一张图上出局**——否则这对图区分不开它们，
+    # 上面那两条就是恒真的
+    assert v["tail_heavy"]["prefix"] / v["tail_heavy"]["exact"] < lo, "尾重那张上前缀抽样应当出局"
+    assert v["head_heavy"]["suffix"] / v["head_heavy"]["exact"] < lo, "头重那张上后缀抽样应当出局"
 
 
 def test_invisible_artists_are_not_priced(probe):
@@ -406,6 +416,24 @@ def test_unknown_artist_neither_crashes_nor_moves_the_verdict(cases):
     unknown = [c for c in plan["costs"] if c["family"] == "unknown"]
     assert [c["type"] for c in unknown] == ["Doodad"]
     assert not any(c["rasterizable"] for c in unknown)
+
+
+def test_an_artist_that_cannot_say_whether_it_is_visible_is_still_priced(cases):
+    """**可见性问不出来时按「会画」算**——这个方向是选过的，所以要有人钉着。
+
+    过滤不可见的 artist（评审 P2）之后多了一个新的失败模式：`get_visible()`
+    自己抛的 artist（第三方库包装过 `visible` 属性的那些）如果被当成不可见，
+    就会**整个从账上消失**——那是漏判方向，正是这个分析器要防的事。
+    高估只是多一次不必要的 rasterize，画质降级；漏判是把 66 万个 `<path>`
+    放进浏览器。
+
+    变异实测：把 `_visible` 的兜底从 `True` 改成 `False`，只有这条会红。
+    """
+    plan = cases["blind_artist"]
+    assert "unknown" in plan["families"], plan["families"]
+    assert [c["type"] for c in plan["costs"] if c["family"] == "unknown"] == ["BlindDoodad"]
+    # 不许崩，也不许因为它把裁决改掉
+    assert plan["mode"] == pb.MODE_VECTOR
 
 
 # --------------------------------------------------------------------------

@@ -48,6 +48,20 @@ import preview_complexity as pc  # noqa: E402
 DEFAULT_ISSUE181_N = 200
 
 
+class BlindDoodad(Artist):
+    """`get_visible()` 会抛的 artist。**未知 → 按会画算**这条方向选择要有人钉。
+
+    真实来源是第三方库里包装过 `visible` 属性的 artist；这里用注入的方式把它
+    摆出来，因为 matplotlib 自己的 artist 不会在这上面失败。
+    """
+
+    def get_visible(self):
+        raise RuntimeError("这个 artist 答不出自己可不可见")
+
+    def draw(self, renderer):
+        return None
+
+
 class Doodad(Artist):
     """完全不在 matplotlib 体系里的自定义 Artist——分析器不许被它绊倒，
     也不许把它静默当成 0 就当图很小。与 `test_artist_families.py` 里那个同名
@@ -143,6 +157,14 @@ def _fig_custom_artist():
     return fig
 
 
+def _fig_blind_artist():
+    """连「可不可见」都问不出来的 artist：**照样要记账**，且不许崩。"""
+    fig, ax = plt.subplots(figsize=(4.0, 3.0))
+    ax.plot([0, 1], [0, 1])
+    ax.add_artist(BlindDoodad())
+    return fig
+
+
 def _triangulation(n: int):
     from matplotlib.tri import Triangulation
 
@@ -227,6 +249,7 @@ def _cases(issue181_n: int) -> dict:
         "small_contour": _fig_small_contour,
         "large_contour": _fig_large_contour,
         "custom_artist": _fig_custom_artist,
+        "blind_artist": _fig_blind_artist,
         "trimesh_built": _fig_trimesh_built,
         "trimesh_unbuilt": _fig_trimesh_unbuilt,
         "many_medium_meshes": _fig_many_medium_meshes,
@@ -370,6 +393,26 @@ def _fig_polys(n: int):
     return fig
 
 
+def _fig_polys_head_heavy(n_small: int, n_big: int, big_verts: int):
+    """**头重**的异构 collection：重几何全排在最前面。
+
+    与 `_fig_polys_tail_heavy` 成对。少了这一张，「抽样要跨全序列」这条判据
+    只钉住了一侧——把抽样从「取前 N 条」换成「取后 N 条」照样绿，而那是同一个
+    缺陷换了个方向（[[gate-pinned-on-one-side-only]]）。
+    """
+    rng = np.random.default_rng(5)
+    t = np.linspace(0, 2 * np.pi, big_verts, endpoint=False)
+    verts = []
+    for k in range(n_big):
+        r = 0.2 + 0.02 * k
+        verts.append(list(zip(0.5 + r * np.cos(t), 0.5 + r * np.sin(t))))
+    xy = rng.random((n_small, 2))
+    verts += [[(x, y), (x + 0.005, y), (x + 0.005, y + 0.005), (x, y + 0.005)] for x, y in xy]
+    fig, ax = _bare_axes()
+    ax.add_collection(PolyCollection(verts, facecolors="#aa7744"))
+    return fig
+
+
 def _fig_polys_tail_heavy(n_small: int, n_big: int, big_verts: int):
     """**异构** collection：前面一堆四边形，后面少数几个顶点极多的多边形。
 
@@ -477,6 +520,8 @@ _CROSSCHECK = {
     "polycollection": (lambda: _fig_polys(300), _fig_blank),
     # 异构、且 path 数**超过取样上限**：前缀抽样在这一格上会把顶点数估到零头
     "poly_tail_heavy": (lambda: _fig_polys_tail_heavy(4200, 6, 2000), _fig_blank),
+    # 成对的另一侧：重几何全在最前面。少了它，「取后 N 条」的实现照样绿
+    "poly_head_heavy": (lambda: _fig_polys_head_heavy(4200, 6, 2000), _fig_blank),
     # 不可见的那两格：后端一个节点都不写，模型也必须报 0
     "mesh_hidden": (lambda: _fig_hidden_mesh(24), _fig_blank),
     "mesh_hidden_axes": (lambda: _fig_hidden_axes(24), _fig_blank),
@@ -488,29 +533,39 @@ _CROSSCHECK = {
 def _vertex_sampling() -> dict:
     """同一个异构 collection 上，三种数法各得多少个顶点。
 
-    `exact` 是逐条数出来的真值，`stride` 是模型现在用的等距抽样，`prefix` 是
-    **旧实现**（取前 N 条再等比放大）。三个数摆在一起，「前缀抽样会系统性
-    偏低」这句话才是可证的，而不是一句解释。
+    两张成对的图（重几何在尾 / 在头）× 四个数：`exact` 是逐条数出来的真值，
+    `stride` 是模型现在用的等距抽样，`prefix` / `suffix` 是两种**只看一端**的
+    数法。摆成这个形状，「抽样必须跨全序列」才是两侧都钉住的——只有尾重那张
+    的话，把实现换成「取后 N 条」照样全绿。
 
     数是**这里现算**的，不调模型的私有函数——两侧同源就等于自己验自己。
     """
-    fig = _fig_polys_tail_heavy(4200, 6, 2000)
-    paths = fig.axes[0].collections[0].get_paths()
-    n = len(paths)
-    cap = pc._VERTEX_SAMPLE_PATHS
-    exact = sum(len(q.vertices) for q in paths)
-    prefix_sample = paths[:cap]
-    prefix = round(sum(len(q.vertices) for q in prefix_sample) / len(prefix_sample) * n)
-    cost = next(c for c in pc.analyze_preview_complexity(fig).costs if c.family == pc.FAMILY_POLY)
-    plt.close(fig)
-    return {
-        "paths": n,
-        "sample_cap": cap,
-        "exact": exact,
-        "prefix": prefix,
-        "stride": cost.vertex_count,
-        "exact_flag": cost.vertex_count_exact,
-    }
+    out = {"sample_cap": pc._VERTEX_SAMPLE_PATHS}
+    for name, build in (
+        ("tail_heavy", lambda: _fig_polys_tail_heavy(4200, 6, 2000)),
+        ("head_heavy", lambda: _fig_polys_head_heavy(4200, 6, 2000)),
+    ):
+        fig = build()
+        paths = fig.axes[0].collections[0].get_paths()
+        n = len(paths)
+        cap = pc._VERTEX_SAMPLE_PATHS
+        exact = sum(len(q.vertices) for q in paths)
+        head = paths[:cap]
+        tail = paths[-cap:]
+        cost = next(
+            c for c in pc.analyze_preview_complexity(fig).costs if c.family == pc.FAMILY_POLY
+        )
+        plt.close(fig)
+        out[name] = {
+            "paths": n,
+            "exact": exact,
+            # 两种**只看一端**的数法，各自现算——两侧都得有人钉着
+            "prefix": round(sum(len(q.vertices) for q in head) / len(head) * n),
+            "suffix": round(sum(len(q.vertices) for q in tail) / len(tail) * n),
+            "stride": cost.vertex_count,
+            "exact_flag": cost.vertex_count_exact,
+        }
+    return out
 
 
 def _crosscheck() -> list[dict]:
