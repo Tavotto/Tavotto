@@ -22,6 +22,7 @@ import pytest
 
 from tavotto import app as m
 from tavotto.engine import (
+    atomicio as engine_atomicio,
     discover as engine_discover,
     pool as engine_pool,
     probe as engine_probe,
@@ -30,6 +31,44 @@ from tavotto.engine import (
     readiness as engine_readiness,
     registry as engine_registry,
 )
+
+
+def _make_unwritable(monkeypatch, root: Path) -> None:
+    """把「这个项目目录写不了」做成**平台无关**的注入。
+
+    以前这两条用例用 `os.chmod(root, 0o555)`，而那在 **Windows 上是空操作**：
+    目录的只读属性不拦在里面建文件，`os.access(root, W_OK)` 也照样回 True。
+    于是同一条用例在两个平台上量的是两件事——Linux 上量「读不了写就报
+    project_read_only」，Windows 上量「一个可写目录会不会报 project_read_only」
+    （答案当然是不会，所以它红）。实测在合并队列的 windows-latest 上撞见。
+
+    改成在**两个边界**上注入，两个平台一致：
+
+    * `os.access(..., W_OK)` —— 就绪度据它判 `writable`（只读，不写盘）；
+    * `atomicio.write_bytes` —— 真的要落盘时抛与只读目录同形状的
+      `AtomicWriteError("write_failed")`（`discover.write_config` 走的就是它）。
+    """
+    root = Path(root).resolve()
+
+    def _under(path) -> bool:
+        try:
+            return Path(path).resolve() == root or root in Path(path).resolve().parents
+        except OSError:
+            return False
+
+    real_access = os.access
+
+    def fake_access(path, mode, **kwargs):
+        if mode & os.W_OK and _under(path):
+            return False
+        return real_access(path, mode, **kwargs)
+
+    def refuse(path, data):
+        raise engine_atomicio.AtomicWriteError("write_failed", "写入失败：目录只读", Path(path))
+
+    monkeypatch.setattr(os, "access", fake_access)
+    monkeypatch.setattr(engine_atomicio, "write_bytes", refuse)
+
 
 # 静态可识别的绘图脚本。**同时是一枚运行探针**：真跑起来会写下 `RAN.txt`，
 # 于是"就绪度没有执行用户脚本"这条不靠桩的存在与否来证明，而是靠磁盘。
@@ -254,11 +293,9 @@ class TestClassification:
         ctx = _Ctx(figs)
         # **同一个 ctx 上翻转**：可写性是缓存键的一维，先热一遍才量得到它。
         assert _status(engine_readiness.compute(ctx), "FigA.pdf")[1] == "static_unique_candidate"
-        os.chmod(figs, 0o555)
-        try:
+        with pytest.MonkeyPatch.context() as mp:
+            _make_unwritable(mp, figs)
             body = engine_readiness.compute(ctx)
-        finally:
-            os.chmod(figs, 0o755)
 
         panel = _by_id(body)["FigA.pdf"]
         # 候选照旧看得见——看不见的是"我们能替你登记上"
@@ -324,15 +361,13 @@ class TestClassification:
         _pdf(figs / "FigA.pdf")
         _write_registry(figs, {})
         ctx = _Ctx(figs)
-        os.chmod(figs, 0o555)
-        try:
+        with pytest.MonkeyPatch.context() as mp:
+            _make_unwritable(mp, figs)
             with pytest.raises(engine_refresh.RefreshError) as exc:
                 engine_refresh.refresh_project_index(ctx, reason="manual")
             # 对外的 code 不能改（老 `/api/registry/scan` 的契约）
             assert exc.value.code == "scan_failed"
             assert engine_refresh.state_of(ctx).registry_write_failed is True
-        finally:
-            os.chmod(figs, 0o755)
 
         engine_refresh.refresh_project_index(ctx, reason="manual")
         assert engine_refresh.state_of(ctx).registry_write_failed is False
