@@ -579,13 +579,24 @@ class TestBatching:
         assert calls["script_changed"] == []
 
     def test_stop_cancels_the_pending_batch(self, tmp_path):
-        """项目关掉之后不许再发事件：那个 pj 对前端已经不存在了。"""
+        """项目关掉之后不许再发事件：那个 pj 对前端已经不存在了。
+
+        **两条断言量的是两件事**，缺一条就有一条判据落空：
+
+        * 「不再刷新」由 `_dispatch()` 开头的 `stop_event` 检查兜住
+          （上一条用例量的正是它）；
+        * 「pending 真的被丢掉了」只有 `stop()` 里那一句负责。少了下面那句
+          状态断言，把它删掉照样全绿——一个停掉的 watcher 抱着一批永远不会
+          结算的变化，是个会在下一个人手里变成 bug 的状态。
+        """
         figs, w, (clock, calls) = self._armed(tmp_path)
         _script(figs, "fig1.py", "Fig1")
         w.poll()
         assert calls["refresh"] == []
+        assert w._pending, "前提没成立：这一批本来就没攒上"
 
         w.stop()
+        assert not w._pending, "停掉的 watcher 还抱着一批没结算的变化"
         clock.advance(10.0)
         w.poll()
         assert calls["refresh"] == []
