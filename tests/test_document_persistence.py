@@ -478,6 +478,34 @@ def test_two_concurrent_creates_cannot_both_win(client, monkeypatch):
     assert sorted(results) == [200, 409], f"两个新建都成功了 = 有一份被静默盖掉：{results}"
 
 
+def test_the_returned_revision_is_read_while_we_still_hold_the_lock(client, monkeypatch):
+    """交回去的修订号必须是**在锁里**读的。
+
+    挪到锁外的话，A 读到的可能是 B 刚写下的那份的 hash——而 A 的下一次写会
+    带着它当基线，后端一比「和磁盘一致」就放行：判据看起来完全成立，实际是
+    拿着别人的内容当自己的起点，于是 A 能**静默**盖掉 B。
+
+    这条只能白盒量：黑盒看到的两种实现在单个请求下完全一样，差别只在一个
+    交错窗口里，而那个窗口正好是锁的存在与否决定的。
+    """
+    import threading
+
+    path = m._autosave_path("held")
+    lock = m._autosave_lock(path)
+    real = m.engine_atomicio.content_revision
+    held: list[bool] = []
+
+    def spy(target):
+        held.append(lock.locked())
+        return real(target)
+
+    monkeypatch.setattr(m.engine_atomicio, "content_revision", spy)
+    assert client.put("/api/autosave/held", json=PD).status_code == 200
+    assert held, "这次请求根本没读修订号"
+    assert held[-1], "交回去的那个修订号是在锁外读的"
+    assert isinstance(lock, threading.Lock().__class__)
+
+
 # ------------------------- 严格同源：schema 版本 -----------------------------
 
 
