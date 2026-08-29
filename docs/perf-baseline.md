@@ -789,7 +789,7 @@ mesh 上 +16%，40 000 条折线上 261 → 399 ms（**+53%**）。
 |---|---|---|---|
 | 结构（DOM 节点 / `<path>` 数） | `web/e2e/large-figure.spec.ts` | 落到 hybrid/raster、整页节点 < 20 000、`<path>` 比纯矢量低两个数量级 | **是**（随 `pnpm e2e` 进 `windows-exe-smoke`） |
 | 可观测（这一版是哪一档） | 诊断快照 `schema_version: 2` | 每个面板报 `preview_mode` / `preview_reason` / `svg_resident` / `svg_evicted`，顶层报 `preview_memory` | 不适用 |
-| 绝对内存（WebView2） | `scripts/bench_large_preview_windows.ps1` | Working Set / Private Bytes / handles / threads，5 轮 open/close | **否**——出 JSON 产物 |
+| 绝对内存（渲染进程） | `large_preview_svg.py` + `browser_dom_probe.mjs --browser msedge` | 渲染进程 RSS / JS 堆 / DOM 节点，5 轮 open/close | **否**——出 JSON 产物 |
 
 **为什么内存那条不做门禁**：绝对内存在托管 runner 上会飘，按字节做一条闸只会
 得到一个随机红的检查，而随机红的检查最后一定会被人忽略掉——比没有检查更坏。
@@ -800,10 +800,11 @@ mesh 上 +16%，40 000 条折线上 261 → 399 ms（**+53%**）。
 * **Windows WebView2 的 renderer private bytes**：本机没有 Windows 环境，
   **not locally measured**。issue 原始报告是 6.47 GB；上面所有数字来自
   macOS 上的 headless Chromium，**不是同一个渲染引擎、不是同一个平台**，
-  不能拿来宣称 §8 的内存验收项已满足。采样脚本
-  （`scripts/bench_large_preview_windows.ps1`）与 CI 接线已经就位，但
-  **它一次都没在 Windows 上执行过**——写它的机器上连 PowerShell 都没有，
-  只做了静态审阅。第一次真跑时按「每一步都是第一次执行」预期。
+  不能拿来宣称 §8 的内存验收项已满足。CI 接线已经就位
+  （`windows-exe-smoke` 里那两条命令，`--browser msedge`），**但那一档只在
+  merge_group / `full-ci` 上跑，本地无从复现**。Edge 与 WebView2 同一个
+  Chromium 引擎、同一个平台，比 macOS 上的 headless Chromium 近得多，
+  **但它不是 WebView2 本身**——产物里 `browserChannel` 如实写着量的是谁。
 * **完整编辑器里的读数**：上面挂的是裸页面里的一份预览 SVG，量的是这一份
   payload 的 DOM 代价本身（也就是 #181 归咎的那一步）。真实画布还有工具栏、
   命中层、检查器，绝对值会更高。

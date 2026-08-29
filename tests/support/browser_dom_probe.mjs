@@ -33,11 +33,17 @@
  * 用法：
  *
  *     node tests/support/browser_dom_probe.mjs <preview.svg> [--cycles N] [--copies N]
+ *                                                [--browser chromium|msedge|chrome]
+ *
+ * `--browser msedge` 在 **Windows** 上换成系统自带的 Edge。它与 WebView2 是
+ * **同一个 Chromium 引擎、同一个平台**，因此比 macOS 上的 headless Chromium
+ * 接近 issue #181 报的那个 6.47 GB 得多。但它**仍然不是 WebView2 本身**
+ * （不是嵌在桌面壳里的那个宿主），报数时别把两者说成一回事。
  *
  * 需要 `web/node_modules`（`cd web && pnpm install`）。stdout 是 JSON。
  */
 import { readFileSync } from 'node:fs'
-import { execSync } from 'node:child_process'
+import { execFileSync, execSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -57,11 +63,20 @@ const { chromium } = require('@playwright/test')
  */
 function parseArgs(argv) {
   const usage =
-    '用法: node tests/support/browser_dom_probe.mjs <preview.svg> [--cycles N] [--copies N]'
-  const out = { svgPath: null, cycles: 5, copies: 1 }
+    '用法: node tests/support/browser_dom_probe.mjs <preview.svg> [--cycles N] [--copies N] [--browser chromium|msedge|chrome]'
+  const out = { svgPath: null, cycles: 5, copies: 1, browser: undefined }
+  const CHANNELS = new Set(['chromium', 'msedge', 'chrome'])
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
-    if (a === '--cycles' || a === '--copies') {
+    if (a === '--browser') {
+      const ch = argv[++i]
+      if (!CHANNELS.has(ch)) {
+        console.error(`--browser 只认 ${[...CHANNELS].join(' / ')}，收到: ${ch}\n${usage}`)
+        process.exit(2)
+      }
+      // 'chromium' = Playwright 自带那个，用 channel:undefined 表示
+      out.browser = ch === 'chromium' ? undefined : ch
+    } else if (a === '--cycles' || a === '--copies') {
       const n = Number(argv[++i])
       if (!Number.isInteger(n) || n < 1) {
         console.error(`${a} 要一个 >= 1 的整数，收到: ${argv[i]}\n${usage}`)
@@ -85,20 +100,41 @@ function parseArgs(argv) {
   return out
 }
 
-const { svgPath, cycles, copies } = parseArgs(process.argv.slice(2))
+const { svgPath, cycles, copies, browser } = parseArgs(process.argv.slice(2))
 // `--copies N` 把同一份 payload 并排挂 N 次，量的是「多面板画布」那一行：
 // 每个 live 面板都被 pin 住、按设计永不驱逐，代价是线性叠加的。
 const svg = readFileSync(svgPath, 'utf8').repeat(copies)
 
-/** 此刻机器上所有 Chromium 渲染进程的 pid → RSS(KB)。 */
+/**
+ * 此刻机器上所有 Chromium 渲染进程的 pid → RSS(KB)。
+ *
+ * 两个平台各一条路，**取的是同一件事**：命令行里带 `--type=renderer` 的进程
+ * 及其常驻内存。Windows 那条走 `Win32_Process`（WorkingSetSize 就是 RSS 的
+ * 对应物），因为 `ps` 在那里不存在——上一版只有 POSIX 分支，于是在 Windows
+ * 上恒返回空 Map，`ourRssKb` 恒为 null：**一个永远报「没量到」的内存基准**。
+ */
 const rendererPids = () => {
   try {
-    const out = execSync("ps -Ao pid=,rss=,command= | grep -- '--type=renderer' | grep -v grep", {
-      encoding: 'utf8',
-      shell: '/bin/sh',
-    })
+    const lines =
+      process.platform === 'win32'
+        ? execFileSync(
+            'powershell',
+            [
+              '-NoProfile',
+              '-NonInteractive',
+              '-Command',
+              "Get-CimInstance Win32_Process -Property ProcessId,WorkingSetSize,CommandLine |" +
+                " Where-Object { $_.CommandLine -like '*--type=renderer*' } |" +
+                ' ForEach-Object { "$($_.ProcessId) $([int]($_.WorkingSetSize/1024))" }',
+            ],
+            { encoding: 'utf8' },
+          )
+        : execSync("ps -Ao pid=,rss=,command= | grep -- '--type=renderer' | grep -v grep", {
+            encoding: 'utf8',
+            shell: '/bin/sh',
+          })
     const m = new Map()
-    for (const line of out.trim().split('\n').filter(Boolean)) {
+    for (const line of lines.trim().split(/\r?\n/).filter(Boolean)) {
       const [pid, rss] = line.trim().split(/\s+/)
       m.set(Number(pid), Number(rss))
     }
@@ -110,8 +146,9 @@ const rendererPids = () => {
 }
 
 const before = new Set(rendererPids().keys())
-const browser = await chromium.launch()
-const page = await browser.newPage()
+// `channel: undefined` = Playwright 自带的 Chromium（默认）
+const app = await chromium.launch(browser ? { channel: browser } : {})
+const page = await app.newPage()
 await page.setContent('<!doctype html><html><body><div id="host"></div></body></html>')
 const cdp = await page.context().newCDPSession(page)
 await cdp.send('Performance.enable')
@@ -188,6 +225,9 @@ console.log(
     {
       svgPath,
       copies,
+      // **报清楚量的是哪个引擎**：msedge 与 WebView2 同族但不是同一个宿主
+      browserChannel: browser ?? 'chromium',
+      platform: process.platform,
       svgBytes: Buffer.byteLength(svg),
       ourRendererPids: ours,
       baseline,
@@ -197,4 +237,4 @@ console.log(
     1,
   ),
 )
-await browser.close()
+await app.close()

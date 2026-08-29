@@ -399,9 +399,13 @@ heapUsed 量的是「分配了多少」而不是「留下了多少」，两侧�
   复杂度触发的 hybrid / 硬闸兜底的 raster / JS 侧大 payload 驻留 / 被预算清掉
   的 evicted；后端 `_SNAPSHOT_SHAPE` 与前端类型两侧同步（**只改 TypeScript
   interface 的话字段会被静默丢掉**）；
-* `scripts/bench_large_preview_windows.ps1` —— Windows WebView2 的内存基准。
-  **不是门禁**（绝对内存在托管 runner 上会飘），挂在 `windows-exe-smoke` 上
-  出 JSON 产物。**它还没在 Windows 上跑过一次**，见脚本头的 NOTES；
+* `tests/support/large_preview_svg.py` + `tests/support/browser_dom_probe.mjs
+  --browser msedge` —— Windows 上的内存基准，挂在 `windows-exe-smoke` 出 JSON
+  产物。**不是门禁**（绝对内存在托管 runner 上会飘）。用的是**跨平台的同两条
+  命令**，本机每天在 macOS 上跑；换到 Windows 只换 `--browser`。第一版是一份
+  Windows 专用 PowerShell 脚本，它起 `--no-browser` 的 Python sidecar 再打
+  HTTP 端点——那条路上进程树里根本不会出现 WebView2，采样只可能报
+  `no_webview2_descendant`。**量不到自己主语的基准，删掉比留着诚实**；
 * `docs/perf-baseline.md` 的「大图预览基线」—— 前后对照的唯一出处。
 
 ---
