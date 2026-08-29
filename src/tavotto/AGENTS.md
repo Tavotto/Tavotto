@@ -503,8 +503,26 @@ PyMuPDF（**只经 `src/tavotto/pdfbackend/`**），前端 `web/`
   Figure → `PreviewPlan`（mode / 估算 / 该 rasterize 谁）。**不 savefig、
   不改 artist、不建大数组、不读 SVG**——它进 render 热路径（实测 0.0165 ms，
   对面是 `savefig` 的 10 540 ms）。改了 artist 就等于把预览的表示法写进常驻
-  Figure，而常驻 Figure 是导出读的那一份（不变量 2）。真正设 / 还原
-  `rasterized` 是 Session 03，且必须在 `finally` 里还原。
+  Figure，而常驻 Figure 是导出读的那一份（不变量 2）。
+- **设 / 还原 `rasterized` 收在 `engine/preview_hybrid.py`（Session 03）一处**，
+  且只发生在 `savefig` 那一瞬。三条纪律：**先读后写**（旧值在设新值之前入账）、
+  **还原不许半途而废**（逐个 try，一个失败不连累其余）、**还原失败要吵**
+  （`RestoreFailed`，静默吞掉 = 下一次导出把预览的位图化写进论文）。
+  「还原」是**还回原值**，不是 `set_rasterized(False)`——用户自己设了
+  `rasterized=True` 的那块 mesh 预览之后仍然得是 True。
+- **接线点是 `figsession.render()` 一处，冷 build 与热 render 共用。**
+  `instrument_all()`（冷 build）与 `do_render()`（热 render）都走它——只在
+  render request 上 rasterize 的话，用户**第一次打开** #181 那张图仍然要先等
+  十几秒，那不叫修好。playground 的 `browser._render()` 与它共用
+  `preview_hybrid.save_preview_svg`（策略只有一份，两条入口不许分叉）。
+- **软闸是第二把尺子，不是第二个档位**：`savefig` 出来的字节数越过
+  `EDITOR_SVG_SOFT_LIMIT_BYTES`、而可 rasterize 的层还没收满 ⇒ 全收、重画
+  一遍（最多第二遍）。复杂度预算量原料、字节闸量产物，模型估低了的时候只有
+  后者看得见。正常科研图（几十到几百 KB）一次都不会付那第二遍。
+- **gid 丢失是允许的**：rasterize 掉的 artist 在 SVG DOM 里没有节点了。
+  不造隐藏占位节点、不重新矢量化 mesh、不动 manifest 的 gid 语义——前端在
+  `findGidNode` 返回 null 时安静退出、覆盖层接管，几何权威照旧是 exact
+  manifest。**假实时覆盖的是矢量层，不是数据层。**
 - **成本模型抄的是 matplotlib 自己的绘制路径，不是「数据点数 == SVG path 数」**：
   `Collection.draw` 的单形状快路（→ `draw_markers`，几何进 `<defs>`）与
   `RendererSVG.draw_path_collection` 的成本取舍式。同一个 `PathCollection`，

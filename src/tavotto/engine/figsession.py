@@ -48,6 +48,7 @@ from pathlib import Path
 import figcapture
 import manifest as manifest_mod
 import overrides as overrides_mod
+import preview_hybrid
 import previewbudget
 
 __all__ = ["LiveFigureSession", "WrongThread", "ms_since"]
@@ -193,20 +194,35 @@ class LiveFigureSession:
 
     # ---------------- 渲染 ----------------
     def render(
-        self, stem: str, timings: dict | None = None, preview_dpi: int | None = None
+        self,
+        stem: str,
+        timings: dict | None = None,
+        preview_dpi: int | None = None,
+        preview: dict | None = None,
     ) -> dict:
         """导出预览 SVG + 重建 manifest，写入 out_dir。
 
-        `preview_dpi` 只影响 SVG 里**嵌入位图**的分辨率（imshow / 光栅化的
-        面板）：纯矢量图上它一分钱都不值（实测 dpi 72→300 耗时与体积一模一样），
-        含 imshow 的图上 200→100 能让 savefig 从 ~29ms 降到 ~17ms、SVG 从
-        827KB 降到 196KB。
+        **表示法在这里定，两条入口共用**（ADR 0022）：冷 build（`instrument_all`
+        走这里）与热 render（`do_render` 走这里）必须落到同一条 hybrid 策略上
+        ——只在 render request 上 rasterize 的话，用户**第一次打开** #181 那张
+        图仍然要先等十几秒把 66 万个 `<path>` 画出来，那不叫修好。
+
+        `preview_dpi` 影响 SVG 里**嵌入位图**的分辨率——hybrid 之后这句话才
+        真正管用：mesh 层变成 `<image>`，dpi 直接决定它多大（实测同一张图
+        dpi 72 → 310 KB、dpi 200 → 600 KB）。纯矢量图上它仍然一分钱都不值
+        （dpi 72→300 耗时与体积一模一样），含 imshow 的图上 200→100 能让
+        savefig 从 ~29ms 降到 ~17ms、SVG 从 827KB 降到 196KB。
 
         计时口径（`timings` 非空时填）：`manifest_ms` 是 `build_manifest`
         （其中包含一次 `fig.canvas.draw()`——量每个元素的包围盒必须有
-        renderer）；`canvas_draw_ms` 是 `savefig(svg)`。**SVG 序列化与 draw
-        在 matplotlib 里分不开**（`print_svg` 是「边画边写」的一趟），所以不
-        单出 `svg_ms`，见 ADR 0003 §9。
+        renderer）；`preview_plan_ms` 是复杂度分析；`canvas_draw_ms` 是
+        `savefig(svg)`（升档时是**两遍之和**——用户等的就是两遍）。**SVG
+        序列化与 draw 在 matplotlib 里分不开**（`print_svg` 是「边画边写」的
+        一趟），所以不单出 `svg_ms`，见 ADR 0003 §9。
+
+        `preview` 是**出参**（与 `timings` 同一条纪律，ADR 0003 §1）：给一个
+        dict 就往里填这一版的表示法元数据。**manifest 在 rasterize 之前就建完
+        了**——语义保真（不变量 1）不是靠谁记得，是靠这个顺序。
         """
         self._own()
         state = self.states[stem]
@@ -218,7 +234,7 @@ class LiveFigureSession:
         # `cbook.to_filehandle` → `open(fname, "w", encoding=…)`——**没有
         # `newline` 参数**，于是 Windows 上每个 `\n` 被翻成 `\r\n`。
         #
-        # 后果不是「文件大一点」：`svg_bytes` 是**判定量**（`mode_for_svg_bytes`
+        # 后果不是「文件大一点」：`svg_bytes` 是**判定量**（`resolve_mode`
         # 拿它决定 vector 还是 raster），而它取自 `stat().st_size`。同一张图在
         # Windows 上因此显得大约 **+3.8%**（实测 22511 vs 21688，差值正好是
         # 换行数），**更早掉进 raster**——而没有任何地方会报错，用户看到的是
@@ -232,11 +248,38 @@ class LiveFigureSession:
         # `backend-platforms (windows-latest)` 上——PR 上那一格是 skipping，
         # 所以本机与 PR 全绿都是真的，它只在 merge_group 里发作。
         svg_path = self.out_dir / f"{stem}.svg"
-        with self.real_output(), open(svg_path, "w", encoding="utf-8", newline="") as fh:
-            state.fig.savefig(fh, format="svg", dpi=preview_dpi or self.preview_dpi)
+        dpi = preview_dpi or self.preview_dpi
+
+        def _save(_plan) -> int:
+            with self.real_output(), open(svg_path, "w", encoding="utf-8", newline="") as fh:
+                state.fig.savefig(fh, format="svg", dpi=dpi)
+            try:
+                return svg_path.stat().st_size
+            except OSError:
+                # 刚写完它，这里读不到 size 说明磁盘 / 权限出了事。按 0 记会把
+                # 这一版说成「很小的矢量图」，接着 read_text 也一定会抛——不如
+                # 当场按最坏处理：不读，降到 raster。
+                return previewbudget.EDITOR_SVG_HARD_LIMIT_BYTES
+
+        # `preview_plan_ms` / `canvas_draw_ms` 由 `save_preview_svg` 自己填——
+        # 只有它知道那两段各自从哪到哪（升档时 savefig 跑两遍）。
+        plan, svg_bytes = preview_hybrid.save_preview_svg(state, _save, timings)
         if timings is not None:
             timings["manifest_ms"] = round((t1 - t0) * 1000.0, 3)
-            timings["canvas_draw_ms"] = ms_since(t1)
+        if preview is not None:
+            mode, reason = previewbudget.resolve_mode(
+                svg_bytes=svg_bytes, rasterized_artist_count=plan.rasterized_artist_count
+            )
+            preview.update(
+                previewbudget.metadata(
+                    svg_bytes=svg_bytes,
+                    mode=mode,
+                    reason=reason,
+                    rasterized_artist_count=plan.rasterized_artist_count,
+                    estimated_primitives=plan.estimated_primitives,
+                    estimated_vertices=plan.estimated_vertices,
+                )
+            )
         (self.out_dir / f"{stem}.json").write_text(
             json.dumps(man, ensure_ascii=False, default=_json_default), encoding="utf-8"
         )
@@ -298,22 +341,19 @@ class LiveFigureSession:
         warnings = overrides_mod.apply(self.states[stem], patches)
         if timings is not None:
             timings["patch_apply_ms"] = ms_since(t0)
-        result = {"manifest": self.render(stem, timings, preview_dpi), "warnings": warnings}
-        svg_path = self.out_dir / f"{stem}.svg"
-        try:
-            svg_bytes = svg_path.stat().st_size
-        except OSError:
-            # `render()` 刚写完它，这里读不到 size 说明磁盘/权限出了事。
-            # 按 0 记会把这一版说成「很小的矢量图」，接着 read_text 也一定
-            # 会抛——不如当场按最坏处理：不读，降到 raster。
-            svg_bytes = previewbudget.EDITOR_SVG_HARD_LIMIT_BYTES
-        mode, reason = previewbudget.mode_for_svg_bytes(svg_bytes)
+        # **裁决永远发生，信封只决定说不说**：`verdict` 是本地的，legacy 扁平
+        # 信封不给 `preview` 时它照样按同一条闸决定读不读 SVG。
+        verdict: dict = {}
+        result = {
+            "manifest": self.render(stem, timings, preview_dpi, preview=verdict),
+            "warnings": warnings,
+        }
         if preview is not None:
-            preview.update(previewbudget.metadata(svg_bytes=svg_bytes, mode=mode, reason=reason))
-        if inline_svg and mode != previewbudget.MODE_RASTER:
+            preview.update(verdict)
+        if inline_svg and verdict["mode"] != previewbudget.MODE_RASTER:
             # 读回磁盘那一份而不是另存一个内存缓冲：调用方拿到的与
             # out_dir/<stem>.svg 逐字节相同，排障时不必怀疑「是不是两份」
-            result["svg"] = svg_path.read_text(encoding="utf-8")
+            result["svg"] = (self.out_dir / f"{stem}.svg").read_text(encoding="utf-8")
         return result
 
     def do_render_png(self, stem: str, width: int) -> dict:

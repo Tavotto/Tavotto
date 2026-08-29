@@ -124,6 +124,11 @@ def test_the_fixture_reproduces_one_svg_path_per_quad(rendered):
     浮动，而**是不是每个 cell 一个 path** 才是问题本身。谁把 fixture 改成
     `rasterized=True`（或 matplotlib 改成整块 `<image>`）都会让它当场红。
     """
+    # 用例前提：**这个规模刻意落在复杂度预算之内**（576 cell/格 ≪ 20 000），
+    # 所以预览仍然是纯矢量，「一个 cell 一个 `<path>`」这条机制才看得见。
+    # 哪天有人把 `MESH_CELL_BUDGET` 调到 576 以下，这条会先红在这里而不是在
+    # 下面那句「path 太少」上——后者会把人指向 fixture，而原因在预算。
+    assert rendered["preview"]["mode"] == "vector", rendered["preview"]
     quads = 3 * TEST_N * TEST_N
     paths = rendered["svg"].count("<path")
     assert paths >= quads, f"只有 {paths} 个 path，少于 {quads} 个 quad——复现的机制没了"

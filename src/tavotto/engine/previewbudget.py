@@ -48,13 +48,15 @@ __all__ = [
     "SCATTER_INSTANCE_BUDGET",
     "TOTAL_VECTOR_PRIMITIVE_BUDGET",
     "metadata",
-    "mode_for_svg_bytes",
+    "resolve_mode",
+    "wants_hybrid_escalation",
 ]
 
 #: 普通科研图：行为与 #181 之前完全一致（内联 SVG，所见即所得）。
 MODE_VECTOR = "vector"
 #: 大型 mesh / collection 层临时 rasterize，文字 / 坐标轴 / 图例 / 标注 /
-#: 普通曲线保持矢量。**Session 03 才产出**，这里先进类型与协议。
+#: 普通曲线保持矢量。名单由 `preview_complexity` 出，设/还原由
+#: `preview_hybrid` 做——**只在 `savefig` 那一瞬**（ADR 0022 不变量 2）。
 MODE_HYBRID = "hybrid"
 #: 最后的安全降级：显示位图。**不是只读**——命中层与 exact manifest 照常在
 #: （ADR 0022 不变量 4）。
@@ -73,13 +75,14 @@ REASON_FALLBACK = "fallback"
 
 REASONS = (REASON_NORMAL, REASON_COMPLEXITY_BUDGET, REASON_SVG_HARD_LIMIT, REASON_FALLBACK)
 
-#: **hybrid 的触发线**。Session 03 之前它不改变任何行为——8～16 MiB 的图照旧
-#: 内联 SVG。这个缺口是刻意留着的，`tests/test_preview_budget.py` 有一条用例
-#: 钉住「今天软闸区间仍然透传」：hybrid 一落地它就红，逼着一起改。
+#: **hybrid 的第二把尺子**（Session 03 起真的生效）：`savefig` 出来的字节数
+#: 越过它、而可 rasterize 的数据层还没收满 ⇒ 全部收进来重画一遍
+#: （`preview_hybrid.save_preview_svg`）。它量的是**产物**，复杂度那几个预算
+#: 量的是**原料**——两把尺子独立，估算漏了的时候只有这一把看得见。
 #:
 #: 选 8 MiB 的理由在数据里（docs/perf-baseline.md）：普通科研图的预览 SVG 是
 #: 几十到几百 KB，含 imshow 的面板最坏 827 KB——比这条线低一个数量级以上，
-#: 正常图一张都碰不到。
+#: 正常图一张都碰不到，因此那第二遍 `savefig` 正常图一次都不会付。
 EDITOR_SVG_SOFT_LIMIT_BYTES = 8 * 1024 * 1024
 
 #: **raster 的硬闸**：超过这个数就绝不 `read_text()`。#181 那张 126 MB 的图
@@ -128,24 +131,36 @@ COLLECTION_VERTEX_BUDGET = 100_000
 TOTAL_VECTOR_PRIMITIVE_BUDGET = 50_000
 
 
-def mode_for_svg_bytes(svg_bytes: int) -> tuple[str, str]:
-    """光看预览 SVG 的体积能得出的裁决：`(mode, reason)`。
+def wants_hybrid_escalation(svg_bytes: int) -> bool:
+    """产物越过软闸了吗——**「要不要再画一遍」，不是「这一版叫什么」**。
 
-    **只吃字节数**（`os.stat().st_size`），刻意不吃 SVG 内容——判定必须能在
-    读取之前做完，见模块头。
+    软闸量的是 `savefig` 出来的字节数，复杂度预算量的是 artist 图上的
+    primitive 数。两把尺子**相互独立**，这正是软闸留着的理由：复杂度模型估
+    低了的时候，只有产物那一侧看得见。越过它且名单还没收满 ⇒ 把剩下的可
+    rasterize 数据层一并收进来重画一次（策略在
+    `engine/preview_hybrid.save_preview_svg`，那里也钉住了「最多第二遍」）。
 
-    复杂度那一维**不在这个函数里**：它问的是 artist 图（`savefig` 之前），
-    这个函数问的是产物（`savefig` 之后），两者是渲染流程里的两个时刻，合成
-    一个入参只会让「这一版是在哪一刻被判的」重新说不清。判据在
-    `engine/preview_complexity.analyze_preview_complexity()`，产出
-    `PreviewPlan`；把两个时刻的裁决合起来是 Session 03 的接线。**阈值仍然
-    只有这一处**——上面那几个 `*_BUDGET` 就是复杂度那一侧的常量。
+    硬闸不在这里：它的答案是 `MODE_RASTER`，见 `resolve_mode`。
+    """
+    return svg_bytes >= EDITOR_SVG_SOFT_LIMIT_BYTES
+
+
+def resolve_mode(*, svg_bytes: int, rasterized_artist_count: int = 0) -> tuple[str, str]:
+    """一次预览的最终裁决：`(mode, reason)`。**两个时刻合成一个答案。**
+
+    * `rasterized_artist_count` 来自 `savefig` **之前**那一刻（分析器的名单）；
+    * `svg_bytes` 来自 `savefig` **之后**那一刻，且**只吃字节数**
+      （`os.stat().st_size` / 缓冲区的 `tell()`），刻意不吃 SVG 内容——判定必须
+      能在 `read_text()` 之前做完，见模块头。
+
+    顺序不能反：硬闸先答。一版 hybrid 产物**仍然可能**超过硬闸（收不动的层
+    太多、或者矢量层本身就巨大），那时它照样不许被读进内存——不变量 3 不因为
+    「我们已经尽力了」而放松。
     """
     if svg_bytes >= EDITOR_SVG_HARD_LIMIT_BYTES:
         return MODE_RASTER, REASON_SVG_HARD_LIMIT
-    # 软闸区间（soft ≤ x < hard）今天仍然是 vector：hybrid 还没有实现，
-    # 而「报一个我们其实做不到的 mode」比什么都不报更坏——前端会照着它
-    # 去等一份永远不来的混合产物。
+    if rasterized_artist_count > 0:
+        return MODE_HYBRID, REASON_COMPLEXITY_BUDGET
     return MODE_VECTOR, REASON_NORMAL
 
 

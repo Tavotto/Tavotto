@@ -93,7 +93,7 @@ analyzer 里随意把 unknown 判成 raster」。两句话不矛盾，因为它�
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from matplotlib.collections import Collection, LineCollection, PathCollection, PolyCollection
 from matplotlib.contour import ContourSet
@@ -119,6 +119,7 @@ __all__ = [
     "ArtistPreviewCost",
     "PreviewPlan",
     "analyze_preview_complexity",
+    "escalate_plan",
     "plan_for_state",
 ]
 
@@ -685,6 +686,15 @@ def analyze_preview_complexity(fig, *, skip_axes=frozenset()) -> PreviewPlan:
         cost.should_rasterize = True
         residual -= cost.primitive_count
 
+    return _plan_from_costs(costs)
+
+
+def _plan_from_costs(costs, *, trigger: str = "复杂度预算") -> PreviewPlan:
+    """一组已经标好 `should_rasterize` 的账目 → `PreviewPlan`。
+
+    `analyze_preview_complexity` 与 `escalate_plan` 共用它：两条路只在**怎么
+    选名单**上不同，「选完之后这一版叫什么、报多少」必须只有一份实现。
+    """
     picked = [c for c in costs if c.should_rasterize]
     total_primitives = sum(c.primitive_count for c in costs)
     total_vertices = sum(c.vertex_count for c in costs)
@@ -696,7 +706,7 @@ def analyze_preview_complexity(fig, *, skip_axes=frozenset()) -> PreviewPlan:
         reason = previewbudget.REASON_COMPLEXITY_BUDGET
         families = sorted({c.family for c in picked})
         detail = (
-            f"{len(picked)} 个 artist（{', '.join(families)}）超出预览复杂度预算，"
+            f"{len(picked)} 个 artist（{', '.join(families)}）超出预览{trigger}，"
             f"预览中临时 rasterize：矢量层 {total_primitives} → {vector_primitives} 个 primitive"
         )
     else:
@@ -723,6 +733,29 @@ def analyze_preview_complexity(fig, *, skip_axes=frozenset()) -> PreviewPlan:
         costs=costs,
         detail=detail,
     )
+
+
+def escalate_plan(plan: PreviewPlan) -> PreviewPlan | None:
+    """把**还留在矢量层**的可 rasterize 数据层全部收进来；无可收时返回 `None`。
+
+    什么时候用它：`savefig` 出来的字节数越过了软闸，而这一版的名单还没收满。
+    那说明估价偏低——**字节是另一把尺子**，它量的是产物，与分析器量的原料
+    相互独立（这正是留着这条判据的理由：估算漏了的时候只有它看得见）。
+
+    收法是「全收」而不是「再按开销排一次序」：既然这一版的估价已经被证伪，
+    拿同一个模型去挑「收哪几个够」只会再错一次。文字 / 坐标轴 / 图例 /
+    标注 / 普通曲线**照旧不在可收之列**（`RASTERIZABLE_FAMILIES` 是策略，
+    不随升档放宽）——hybrid 的契约在这一步也不打折。
+
+    返回的是**新 plan**，原 plan 的 `costs` 一个字段都不改：调用方手里那一份
+    是「第一遍是怎么判的」的证据，升档不该把它改写成事后诸葛。
+    """
+    if not any(c.rasterizable and not c.should_rasterize for c in plan.costs):
+        return None
+    costs = [
+        replace(c, should_rasterize=True) if c.rasterizable else replace(c) for c in plan.costs
+    ]
+    return _plan_from_costs(costs, trigger="字节预算（软闸）")
 
 
 def plan_for_state(state) -> PreviewPlan:

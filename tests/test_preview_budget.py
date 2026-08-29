@@ -40,25 +40,57 @@ def test_soft_is_below_hard_and_both_are_positive():
     assert 0 < pb.EDITOR_SVG_SOFT_LIMIT_BYTES < pb.EDITOR_SVG_HARD_LIMIT_BYTES
 
 
-def test_mode_for_svg_bytes_bands():
-    assert pb.mode_for_svg_bytes(0) == (pb.MODE_VECTOR, pb.REASON_NORMAL)
-    assert pb.mode_for_svg_bytes(pb.EDITOR_SVG_HARD_LIMIT_BYTES - 1)[0] == pb.MODE_VECTOR
-    assert pb.mode_for_svg_bytes(pb.EDITOR_SVG_HARD_LIMIT_BYTES) == (
+def test_resolve_mode_bands():
+    """字节那一维：硬闸之下是 vector，硬闸之上是 raster。"""
+    assert pb.resolve_mode(svg_bytes=0) == (pb.MODE_VECTOR, pb.REASON_NORMAL)
+    assert pb.resolve_mode(svg_bytes=pb.EDITOR_SVG_HARD_LIMIT_BYTES - 1)[0] == pb.MODE_VECTOR
+    assert pb.resolve_mode(svg_bytes=pb.EDITOR_SVG_HARD_LIMIT_BYTES) == (
         pb.MODE_RASTER,
         pb.REASON_SVG_HARD_LIMIT,
     )
 
 
-def test_soft_band_still_passes_through_today():
-    """**刻意留的缺口**：hybrid 落地之前，8～16 MiB 的图照旧内联 SVG。
+def test_resolve_mode_reports_hybrid_only_when_something_was_rasterized():
+    """`hybrid` 不是一个档位名，是一句关于产物的事实陈述。
 
-    这条用例是那个缺口的看护，不是它的辩护词：Session 03 让软闸真正生效的
-    那一刻它会当场红，逼着一起改——而不是靠谁记得回来看一眼。
-    （报一个我们其实做不到的 `hybrid`，比暂时不报更坏：前端会照着它去等
-    一份永远不来的混合产物。）
+    「这一版里有 N 个 artist 被临时 rasterize 了」——`rasterized_artist_count`
+    是 0 就不许说 hybrid（前端会照着它去等一份永远不来的混合产物）。
+    """
+    assert pb.resolve_mode(svg_bytes=1_000, rasterized_artist_count=0)[0] == pb.MODE_VECTOR
+    assert pb.resolve_mode(svg_bytes=1_000, rasterized_artist_count=1) == (
+        pb.MODE_HYBRID,
+        pb.REASON_COMPLEXITY_BUDGET,
+    )
+
+
+def test_hard_limit_outranks_hybrid():
+    """**顺序不能反**：一版 hybrid 产物照样可能超硬闸，那时它仍然不许被读。
+
+    「我们已经尽力了」不是放松不变量 3 的理由——收不动的层太多、或者矢量层
+    本身就巨大的图确实存在，而 126 MB 进不进内存与它是怎么来的无关。
+    """
+    assert pb.resolve_mode(svg_bytes=pb.EDITOR_SVG_HARD_LIMIT_BYTES, rasterized_artist_count=5) == (
+        pb.MODE_RASTER,
+        pb.REASON_SVG_HARD_LIMIT,
+    )
+
+
+def test_soft_band_asks_for_a_second_pass():
+    """软闸的答案是「再画一遍」，不是一个 mode。
+
+    这条替换的是 Session 02 时期那条「软闸区间照旧透传」的缺口看护——它的任务
+    是在 hybrid 落地那一刻当场红，它做到了。软闸现在真的生效：产物越过 8 MiB
+    而名单还没收满 ⇒ 把剩下的可 rasterize 层全收进来重画一次
+    （`preview_hybrid.save_preview_svg`，端到端看护在
+    `tests/test_preview_hybrid.py`）。
     """
     mid = (pb.EDITOR_SVG_SOFT_LIMIT_BYTES + pb.EDITOR_SVG_HARD_LIMIT_BYTES) // 2
-    assert pb.mode_for_svg_bytes(mid) == (pb.MODE_VECTOR, pb.REASON_NORMAL)
+    assert pb.wants_hybrid_escalation(mid)
+    assert pb.wants_hybrid_escalation(pb.EDITOR_SVG_SOFT_LIMIT_BYTES)
+    assert not pb.wants_hybrid_escalation(pb.EDITOR_SVG_SOFT_LIMIT_BYTES - 1)
+    # **升档不改变这一版叫什么**：它只影响下一遍画什么。软闸区间里一版没收着
+    # 任何层的产物仍然是 vector（收不动就是收不动，硬闸兜底）。
+    assert pb.resolve_mode(svg_bytes=mid) == (pb.MODE_VECTOR, pb.REASON_NORMAL)
 
 
 def test_complexity_budgets_are_positive_and_ordered():
