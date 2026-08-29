@@ -84,6 +84,10 @@ analyzer 里随意把 unknown 判成 raster」。两句话不矛盾，因为它�
 | `Collection._paths` 是私有名 | 改名后整族退成「量不出来」，不再推荐 hybrid | 失效方向是少一层保护，不是崩；见 `_materialised_paths` |
 | contour 顶点估值偏低约 9% | 估值位数，不影响裁决 | 见 `_vertices_in_paths` 的实测表 |
 
+成本模型在 **3.10.8（playground）与 3.11.1（桌面 runtime）上各对拍过一次，
+九格数字逐个相同**——它抄的是 matplotlib 的绘制路径，会不会随版本漂这件事
+必须量，不能只在一个版本上跑完就宣称它稳。
+
 纯标准库之外只依赖 matplotlib；与 `worker.py` 同一条 sys.path 纪律，平铺 import。
 """
 

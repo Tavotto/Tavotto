@@ -150,16 +150,22 @@ def _triangulation(n: int):
     return Triangulation(rng.random(n * n), rng.random(n * n)), rng.random(n * n)
 
 
-def _fig_trimesh_gouraud():
-    """gouraud `tripcolor` → `TriMesh`。
+def _fig_trimesh_built():
+    """paths **已经建好**的 `TriMesh`：量得出来的时候就按 family 正常定价。
 
-    这一条**是**量得出来的：`ax.tripcolor` 走 `add_collection`（autolim 默认
-    开），`get_datalim()` 顺手就把 paths 建好了。它在这里是为了钉住「量得出来
-    的时候就按 family 正常定价」，与下面那条是一对。
+    **这里由探针自己把 paths 建出来**（`get_paths()`），不指望 matplotlib 顺手
+    替我们建——那件事是**版本相关**的，第一版就栽在这上面：本机 3.10.8 上
+    `ax.tripcolor` 走 `add_collection`（autolim 默认开），`get_datalim()` 会把
+    paths 建好；而 CI 的 **3.11.1 不会**，于是这一格在本机绿、在 CI 红。
+
+    被测的是分析器**面对两种状态各自怎么办**，所以状态该由探针确定地摆出来，
+    不该借一条会随版本变的副作用。分析器对真实图里的 gouraud TriMesh 是哪种
+    状态**不做断言**——两条路它都安全（正常定价，或标成量不出来）。
     """
     tri, z = _triangulation(120)
     fig, ax = plt.subplots(figsize=(4.0, 3.0))
-    ax.tripcolor(tri, z, shading="gouraud")
+    mesh = ax.tripcolor(tri, z, shading="gouraud")
+    mesh.get_paths()  # 明确把状态摆成「已建好」，不依赖版本相关的副作用
     return fig
 
 
@@ -221,7 +227,7 @@ def _cases(issue181_n: int) -> dict:
         "small_contour": _fig_small_contour,
         "large_contour": _fig_large_contour,
         "custom_artist": _fig_custom_artist,
-        "trimesh_gouraud": _fig_trimesh_gouraud,
+        "trimesh_built": _fig_trimesh_built,
         "trimesh_unbuilt": _fig_trimesh_unbuilt,
         "many_medium_meshes": _fig_many_medium_meshes,
         "imshow_colorbar": _fig_imshow_colorbar,

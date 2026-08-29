@@ -180,6 +180,11 @@ def test_model_matches_what_the_svg_backend_actually_emits(probe):
     差分本身也踩过一次：第一版没关坐标轴，scatter 那格量出来的 `<use>` 差是
     476 而不是 500——**刻度文字在 SVG 里也是 `<use>`**，两侧的刻度不同就把差分
     污染了。A/B 只有在「除了这一个 artist 之外完全相同」时才是对照。
+
+    **两个版本上逐个数字相同**（playground 的 3.10.8 与桌面 runtime 的
+    3.11.1，含 contour 那 0.916）——模型抄的是 matplotlib 的绘制路径，所以
+    「它会不会随版本漂」这个问题必须真的量一次，不能只在一个版本上跑完就
+    宣称它稳。
     """
     for row in probe["crosscheck"]:
         model = row["model_primitives"]
@@ -274,8 +279,13 @@ def test_unbuilt_lazy_collection_is_reported_not_priced_as_zero(cases):
     assert plan["unknown_families"] == ["collection_unmeasured"]
     assert plan["mode"] == pb.MODE_VECTOR
     assert plan["rasterized_artist_count"] == 0
-    # 对照：同一个类，paths 已经建好时就按 family 正常定价
-    built = cases["trimesh_gouraud"]
+    # 对照：**同一个类**，paths 已经建好时就按 family 正常定价。少了这一半，
+    # 上面那条在「分析器把所有 Collection 都标成量不出来」时也会绿。
+    #
+    # 这一格的状态由探针显式建出来（`get_paths()`），不借 matplotlib 的副作用
+    # ——`ax.tripcolor` 建不建 paths 是**版本相关**的：3.10.8 建（`add_collection`
+    # 的 `get_datalim`），3.11.1 不建。第一版靠那条副作用，于是本机绿、CI 红。
+    built = cases["trimesh_built"]
     assert built["unknown_families"] == []
     assert built["estimated_primitives"] > 0
 
