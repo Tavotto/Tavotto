@@ -159,7 +159,25 @@ Tavotto run 兼容层、matplotlib 捕获范围、CLA/法务。
 
 ---
 
-## 遗留（Session 04 之后仍开着的）
+### Session 05 之后（改动后实跑）
+
+| 命令 | 结果 |
+| --- | --- |
+| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest` | ✅ exit 0 —— **3146** passed / 34 skipped / 2 deselected（比评审回合 1 的 3102 整好 +44 = 新增的 `tests/test_project_watch.py`），10 分 24 秒 |
+| `cd web && pnpm test` | ✅ exit 0 —— 118 files / 1371 tests passed（本轮只动了类型，用例数不变） |
+| `cd web && pnpm build` | ✅ exit 0 |
+| `cd web && pnpm i18n:check` | ✅ exit 0（没有新增 key，`resources.d.ts` 未变） |
+| `cd web && pnpm lint` | ✅ exit 0（18 条既有的 fast-refresh 提示，无新增） |
+| `ruff check . && ruff format --check .` | ✅ exit 0（275 files） |
+| `git diff --check` | ✅ 无空白问题 |
+| `python scripts/build_mcp_widget.py` | ✅ 已重建（指纹 `cfba8a5c965ad282`，改了 `web/src/lib/api.ts`） |
+| 变异反证 31 条 | ✅ 全部 KILLED（记录见 `TEST_MATRIX.md`；**其中 1 条第一轮"活了下来"，但那是变异自己写错了——语义 no-op**） |
+
+> **中途红过两条**（`test_mcp_server.py` + `test_windows_regressions.py` 的画布
+> 同步判据）：`web/src/lib/api.ts` 改了而 `canvas.html` 没重建。重建之后两条
+> 都绿，上表是重建之后**重跑一遍完整套件**的结果，不是拼起来的。
+
+## 遗留（Session 05 之后仍开着的）
 
 | ID | 事项 | 归属 |
 | --- | --- | --- |

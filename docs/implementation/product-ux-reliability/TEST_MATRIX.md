@@ -45,7 +45,7 @@
 | 多项目隔离（watcher / worker / baked） | 已有 | `tests/test_projects.py`、`test_paths_and_baked.py`、`test_project_watch.py::TestLifecycle` | — |
 | 素材竞态 / 派生 metadata 不污染 undo | 部分 | `web/src/store/assetStore` 无专门用例 | 06 |
 | 统一 refresh 服务 | **已有（04）** | `tests/test_project_refresh.py`（39 条） | — |
-| **项目 watcher：整棵树的快照** | **已有（05）** | `tests/test_project_watch.py`（42 条） | — |
+| **项目 watcher：整棵树的快照** | **已有（05）** | `tests/test_project_watch.py`（44 条） | — |
 | ├ 新增 / 删除 / 重命名 / 原子替换 `.py` | 已有（05） | `TestChangeKinds`（四条各一） | — |
 | ├ 就地改写：同长度（量 mtime）/ 同 mtime（量 size） | 已有（05） | `TestSnapshot` 两条——**两维各有一条看着** | — |
 | ├ 注册表：新名 / 旧名 / 删除 / 非法 JSON 后修复 | 已有（05） | `TestChangeKinds` ×3 + `TestErrors::test_broken_registry_reports_and_recovers` | — |
@@ -309,7 +309,7 @@ Codex 在 `7efe8e0` 上报了 1 条 P1 + 2 条 P2，**三条都成立**，都已
 > 代码上跑，锚点找不到、`s.replace` 静默 no-op，结果看起来像"变异活下来了"。
 > 这条纪律在 Session 03 就记过一次，这次是同一个形状的第二次。
 
-## Session 05 的变异反证（30 条，全部 KILLED）
+## Session 05 的变异反证（31 条，全部 KILLED）
 
 每条变异都钉着**它应该打红的那条用例**（不是"跑全量看红不红"——那样一条
 不相干的用例红了也算过）。
@@ -332,7 +332,7 @@ Codex 在 `7efe8e0` 上报了 1 条 P1 + 2 条 P2，**三条都成立**，都已
 | 自写时把整批都丢掉 | 红 ✔ |
 | 刷新失败不发项目级错误 / 直接抛出去 | 红 ✔ ×2 |
 | 回调抛出不再被吞 | 红 ✔ |
-| `stop()` 不取消 pending 批次 | 红 ✔ |
+| `stop()` 不取消 pending 批次 / stop 之后仍结算已取走的那一批 | 红 ✔ ×2 —— 见下「抽掉不红」 |
 | 同路径重复 start 不停旧的（两个线程同时跑） | 红 ✔ |
 | `run()` 的一轮异常不再兜底 | 红 ✔ |
 | `prime()` 不建基线 | 红 ✔ |
@@ -361,6 +361,21 @@ keep.registry = set() or {name for name in batch.registry if …}
 **处置**：改成整段替换（`keep.registry = set()`），并**顺手补上反方向的那一条**
 （`keep.registry = set(batch.registry)`，即自写也不摘）——一行判据的两个越界
 方向各来一次，比只钉一侧可靠（同 Session 04 的 EINVAL 教训）。
+
+### 第二件：一条守卫把另一条判据的行为面盖住了
+
+`_dispatch()` 开头补上 `stop_event` 检查（"这一批可能已经被线程取走了"）之后，
+**「`stop()` 不清 pending」这条变异活了下来**——新守卫把它的行为面整个盖住。
+
+这是「抽掉不红」的两种成因之一，而**删错了会把刚防住的东西放回去**。逐条问：
+
+* 这一句还有没有独立价值？**有**——一个停掉的 watcher 抱着一批永远不会结算
+  的变化，是个会在下一个人手里变成 bug 的状态；
+* 那为什么量不到？因为它的维度是**状态**，而那条用例断言的是**行为**。
+
+处置不是删代码、也不是放宽判据，而是**换一把量得到那个维度的尺**：
+`assert not w._pending`。顺带补一句**前提断言**（`assert w._pending`）——
+否则"这一批本来就没攒上"会让后半句恒真（同 04 的「恒等成立的 diff」）。
 
 > 三条老纪律这一轮全部生效：脚本在脏树上**拒跑**（Session 03/04 各踩过一次
 > "`git checkout --` 吃掉未提交的修复"）；每轮清 `src/**/__pycache__`；
