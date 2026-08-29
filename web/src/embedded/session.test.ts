@@ -8,7 +8,7 @@ import { msg } from '@/i18n'
 import type { Manifest } from '@/lib/api'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
-import { renderKey, useRenderStore } from '@/store/renderStore'
+import { renderKey, residentSvgBytes, useRenderStore } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
 import { embeddedFileIdFor, prepareEmbeddedSvg, seedEmbeddedSession } from './session'
@@ -53,6 +53,40 @@ describe('seedEmbeddedSession', () => {
     expect(entry.svg).toContain('preserveAspectRatio="none"')
     expect(useRenderStore.getState().tracked[fileId]).toBe(true)
     expect(useUiStore.getState().elementPanelId).toBe(panelId)
+  })
+
+  it('第一帧的 SVG 也进字节记账——它同样是驻留在 JS 堆上的 payload', () => {
+    // 内嵌画布的种子条目是**直接 setState 灌进去的**，绕开了 render() 那条
+    // 记账路径。漏记的话它对预算隐形：`residentSvgBytes` 少算一份，全局那把
+    // 尺子就量不准（这份自己不会被驱逐——它是 latest，被 pin 住）。
+    const { fileId } = seedEmbeddedSession(
+      {
+        stem: 'FigP',
+        project: '/workspace',
+        script: 'figp.py',
+        manifest,
+        svg: '<svg width="1pt" height="1pt"><g/></svg>',
+        preview: {
+          mode: 'vector',
+          reason: 'normal',
+          svg_bytes: 987_654,
+          rasterized_artist_count: 0,
+        },
+      },
+      msg('history.playgroundOpenFigure', undefined, 'workspace'),
+    )
+    // 信后端那个数（与硬闸量的是同一个东西），不是处理后那串的长度
+    expect(useRenderStore.getState().byKey[renderKey(fileId, [])].svgBytes).toBe(987_654)
+    expect(residentSvgBytes(useRenderStore.getState()).total).toBe(987_654)
+  })
+
+  it('没有 SVG 的那一档（raster）记 0，不占预算', () => {
+    const { fileId } = seedEmbeddedSession(
+      { stem: 'FigP', project: '/w', script: 's.py', manifest, svg: null },
+      msg('history.playgroundOpenFigure', undefined, 'workspace'),
+    )
+    expect(useRenderStore.getState().byKey[renderKey(fileId, [])].svgBytes).toBe(0)
+    expect(residentSvgBytes(useRenderStore.getState()).total).toBe(0)
   })
 
   it('打开动作不进撤销栈', () => {
