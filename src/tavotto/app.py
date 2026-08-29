@@ -48,6 +48,7 @@ from .engine import (
     ai_bridge as engine_ai,
     ai_history as engine_ai_history,
     ai_providers as engine_ai_providers,
+    atomicio as engine_atomicio,
     bootstrap as engine_bootstrap,
     brand as engine_brand,
     cli as engine_cli,
@@ -56,6 +57,7 @@ from .engine import (
     diagnostics as engine_diagnostics,
     diagnostics_frontend as engine_diagnostics_frontend,
     discover as engine_discover,
+    documents as engine_documents,
     enginesession as engine_enginesession,
     handoff as engine_handoff,
     locate as engine_locate,
@@ -327,11 +329,8 @@ def _baked_path(ctx: "ProjectCtx") -> Path:
 
 
 def _write_baked(path: Path, data: dict) -> None:
-    """临时文件 + replace 原子落盘，读者不会撞见半个文件。"""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
-    tmp.replace(path)
+    """写回基线的原子落盘（唯一实现见 engine/atomicio.py）。"""
+    engine_atomicio.write_json(path, data, indent=1)
 
 
 def _migrate_global_baked(ctx: "ProjectCtx", path: Path) -> None:
@@ -579,6 +578,26 @@ def scan_panels() -> list[dict]:
 @app.errorhandler(NoProjectError)
 def _no_project(_exc):
     return jsonify({"error": "尚未打开项目", "code": "no_project"}), 409
+
+
+@app.errorhandler(engine_documents.DocumentError)
+def _document_error(exc):
+    """文档结构不合法（含「来自更新版本的 Tavotto」「名称已被占用」）。"""
+    return jsonify(exc.as_payload()), exc.status
+
+
+@app.errorhandler(engine_atomicio.AtomicWriteError)
+def _atomic_write_error(exc):
+    """原子写失败。
+
+    载荷本身有问题（非有限数）是 **400**——重试一百次也是同样的结果，
+    前端该提示用户而不是静默重排队；磁盘/权限类是 **500**，那是可重试的。
+    两类都保留 code，`tests/test_error_codes.py` 逐行扫这个文件。
+    """
+    if exc.code == "non_finite_number":
+        return jsonify(exc.as_payload()), 400
+    LOG.error("原子写失败: %s %s: %s", request.method, request.path, exc.message)
+    return jsonify(exc.as_payload()), 500
 
 
 def _worker_error_payload(exc) -> dict:
@@ -4163,17 +4182,25 @@ def layout_path(name: str, base: Path | None = None) -> Path:
     name = re.sub(r"[^\w\-一-鿿]+", "_", name)
     if not name:
         abort(400)
+    # 净化之后仍可能撞上收纳目录里 Tavotto 自己的文件名——那条路既能读出
+    # 样式表，也能用一份画布把它盖掉。
+    engine_documents.require_user_document_stem(name)
     return (base if base is not None else LAYOUT_DIR) / f"{name}.json"
 
 
 @app.get("/api/layouts")
 def api_layouts():
-    # 主位置 = 项目 tavottofile/；旧位置只读兼容，重名以主位置为准
+    # 主位置 = 项目 tavottofile/；旧位置只读兼容，重名以主位置为准。
+    # 收纳目录里还躺着 Tavotto 自己的文件（`_styles.json`），它们不是用户
+    # 文档——不剔掉的话「打开画布」列表里会多出一条叫 `_styles` 的东西，
+    # 点开是一份读不成画布的样式表。
     seen: dict[str, float] = {}
     for d in _layout_read_dirs():
         if not d.is_dir():
             continue
         for p in d.glob("*.json"):
+            if not engine_documents.is_user_document_stem(p.stem):
+                continue
             if p.stem not in seen:
                 seen[p.stem] = p.stat().st_mtime
     names = sorted(seen, key=lambda n: seen[n], reverse=True)
@@ -4191,11 +4218,21 @@ def api_layout_get(name):
 
 @app.post("/api/layouts/<name>")
 def api_layout_save(name):
-    d = project_layout_dir()
-    d.mkdir(parents=True, exist_ok=True)
-    layout_path(name, d).write_text(
-        json.dumps(request.get_json(force=True), ensure_ascii=False, indent=1),
-        encoding="utf-8",
+    """用户的「另存为」。
+
+    2026-08-29 之前这里是 `write_text` 直接盖：写到一半失败（磁盘满、断电、
+    进程被杀）留下的是一个**截断的文件**，而它已经把上一份好文件顶掉了——
+    产品里最显眼的一次保存，恰恰是唯一一处不原子的写入。
+
+    **载荷这里不做 schema 校验。** 已经在用这条路的调用方不止前端：
+    `scripts/ci/upgrade_acceptance.py` 发的是 `{"doc": ...}` 包一层的形状。
+    在这个 PR 里收紧会让 N-1 升级验收的两个检查悄悄换一种坏法（见
+    docs/implementation/product-ux-reliability/STATUS.md 的 R-18），
+    那属于修调用方，不属于修落盘。非有限数仍然挡（`atomicio` 里），
+    因为那种文档写出去谁都读不回来。
+    """
+    engine_atomicio.write_json(
+        layout_path(name, project_layout_dir()), request.get_json(force=True), indent=1
     )
     return jsonify({"ok": True})
 
@@ -4203,7 +4240,7 @@ def api_layout_save(name):
 # ------------------------- 文档自动保存（磁盘） ------------------------------
 # 文档主体的可靠落盘：localStorage 只留轻量索引与崩溃兜底副本。
 # 原子写（tmp + replace），按前端 documentId 一档。
-AUTOSAVE_DIR = LAYOUT_DIR / "_autosave"
+AUTOSAVE_DIR = LAYOUT_DIR / engine_documents.AUTOSAVE_DIRNAME
 
 
 def _autosave_path(doc_id: str) -> Path:
@@ -4220,6 +4257,12 @@ def api_autosave_get(doc_id):
         abort(404)
     resp = send_file(p, mimetype="application/json")
     resp.headers["Cache-Control"] = "no-store"
+    # 读到的这一份的内容 hash：前端拿它做后续写入的基线（Prompt 03）。
+    # 放 header 而不是塞进 body——body 就是文档本身，多一个字段会跟着
+    # 一路进 localStorage 兜底副本和版本快照。
+    revision = engine_atomicio.content_revision(p)
+    if revision:
+        resp.headers["X-Tavotto-Revision"] = revision
     return resp
 
 
@@ -4249,11 +4292,7 @@ def _autosave_newer_than(p: Path, base) -> int | None:
 
 @app.put("/api/autosave/<doc_id>")
 def api_autosave_put(doc_id):
-    body = request.get_json(force=True)
-    if not isinstance(body, dict) or body.get("schema") not in (2, 3):
-        return jsonify(
-            {"error": "无效的文档（需要 schema 2 或 3）", "code": "invalid_document"}
-        ), 400
+    body = engine_documents.validate_document(request.get_json(force=True))
     p = _autosave_path(doc_id)
     theirs = _autosave_newer_than(p, request.args.get("base"))
     if theirs is not None:
@@ -4264,11 +4303,16 @@ def api_autosave_put(doc_id):
                 "theirs": theirs,
             }
         ), 409
-    AUTOSAVE_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_name(p.name + ".tmp")
-    tmp.write_text(json.dumps(body, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(p)
-    return jsonify({"ok": True, "saved_at": int(time.time() * 1000)})
+    engine_atomicio.write_json(p, body)
+    # revision = 落盘后的内容 hash。Prompt 03 的外部修改检测拿它当基线：
+    # 「我上次写的就是这一份」比「文件的 mtime 是多少」结实得多。
+    return jsonify(
+        {
+            "ok": True,
+            "saved_at": int(time.time() * 1000),
+            "revision": engine_atomicio.content_revision(p),
+        }
+    )
 
 
 @app.delete("/api/autosave/<doc_id>")
@@ -4286,7 +4330,9 @@ def api_autosave_delete(doc_id):
 # 与「写回原始文件」的版本历史（baked_overrides/<项目>.json，作用于单张图的源文件）
 # 是两件事：这里保存的是**整份布局文档**的快照，按前端 documentId 分文件存放，
 # 恢复只改前端文档内容，绝不触碰 figures 里的任何文件。
-VERSIONS_DIR = LAYOUT_DIR / "_versions"  # 旧位置：只读兼容（新写入进项目 tavottofile/versions/）
+VERSIONS_DIR = (
+    LAYOUT_DIR / engine_documents.VERSIONS_DIRNAME
+)  # 旧位置：只读兼容（新写入进项目 tavottofile/versions/）
 _VERSIONS_LOCK = threading.Lock()
 VERSION_KEEP_AUTO = 40  # 自动检查点保留数
 VERSION_KEEP_TOTAL = 120  # 单文档版本总数上限（先裁自动、再裁最旧）
@@ -4325,11 +4371,7 @@ def _load_versions(doc_id: str) -> list[dict]:
 
 
 def _save_versions(doc_id: str, versions: list[dict]) -> None:
-    p = _versions_path(doc_id)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_name(p.name + ".tmp")
-    tmp.write_text(json.dumps({"versions": versions}, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(p)
+    engine_atomicio.write_json(_versions_path(doc_id), {"versions": versions})
 
 
 def _prune_versions(versions: list[dict]) -> list[dict]:
@@ -4369,11 +4411,7 @@ def api_versions_get(doc_id, vid):
 @app.post("/api/versions/<doc_id>")
 def api_versions_create(doc_id):
     body = request.get_json(force=True)
-    doc = body.get("doc")
-    if not isinstance(doc, dict) or doc.get("schema") not in (2, 3):
-        return jsonify(
-            {"error": "无效的文档快照（需要 schema 2 或 3）", "code": "invalid_document"}
-        ), 400
+    doc = engine_documents.validate_document(body.get("doc"))
     ver = {
         "id": _new_version_id(),
         "name": str(body.get("name") or "").strip() or time.strftime("%m-%d %H:%M"),
@@ -4447,7 +4485,7 @@ def api_versions_delete(doc_id, vid):
 # 命名样式（字体/字号/线宽/刻度/图例/页面预设），跨文档共享，存在 layouts 下。
 # 样式只在前端映射成 override / 标注属性，应用是文档操作（可撤销），
 # 不经它写回任何源文件。
-STYLES_PATH = LAYOUT_DIR / "_styles.json"
+STYLES_PATH = LAYOUT_DIR / engine_documents.STYLES_FILENAME
 _STYLES_LOCK = threading.Lock()
 
 
@@ -4460,10 +4498,7 @@ def _load_styles() -> list[dict]:
 
 
 def _save_styles(styles: list[dict]) -> None:
-    LAYOUT_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = STYLES_PATH.with_name(STYLES_PATH.name + ".tmp")
-    tmp.write_text(json.dumps({"styles": styles}, ensure_ascii=False, indent=1), encoding="utf-8")
-    tmp.replace(STYLES_PATH)
+    engine_atomicio.write_json(STYLES_PATH, {"styles": styles}, indent=1)
 
 
 @app.get("/api/styles")

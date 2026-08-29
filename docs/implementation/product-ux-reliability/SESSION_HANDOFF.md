@@ -128,7 +128,13 @@ ruff check . && ruff format --check .
 
 - worktree：`/Volumes/Projects/Tavotto/.claude/worktrees/product-ux-v2`
 - 分支：`feat/product-ux-reliability-v2`，从 `origin/main` 的 `ef9ac02` 开出
-- **未 commit**（共享规则 §9：默认不自动 commit，人工审过 diff 再提）
+- 两个独立 commit（01 = 交接文档，02 = 落盘权威 + ADR 0023 + 用例），
+  **未 push、未开 PR** —— 攒够几个 Session 再一次发出去
+- author 用 `88193520+erwanjun@users.noreply.github.com`（与 `main` 上每一个
+  提交一致）。本机 `~/.gitconfig` 现在是 `1259959884@qq.com`，两者不一致会让
+  cla-check 在同一个仓库里数出两个贡献者；提交时用
+  `git -c user.email=… commit`，**别改共享的 `.git/config`**（不带
+  `--worktree` 的 `git config` 会影响所有 worktree 和所有会话）
 - `web/node_modules` 已在 worktree 内真装（软链过不了 pnpm 的依赖检查）
 
 ---
