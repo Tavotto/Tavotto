@@ -5,254 +5,317 @@
 
 ---
 
-## 最近一次：Session 05（2026-08-29）
+## 最近一次：Session 06（2026-08-29）
 
 ### 目标
 
-把「只盯已登记脚本 mtime」的 watcher 升级成**项目级 watcher**：外部编辑器
-新增、删除、重命名、原子替换脚本，外部改注册表，新增/更新/删除图片，
-Tavotto 都要自己看见、合并成一批、调统一刷新、发正确的事件。
-本阶段**只做后端 watcher 与事件闭环**——不做前端 UI（06），不增强解析器。
+把 04/05 建起来的后端刷新与 watcher 接到**用户看得见的地方**：
+
+```text
+外部修改 → SSE → 前端素材元数据刷新 → 当前画布 PanelObject 原地更新
+        → 受影响 Figure 局部重建
+```
+
+本阶段**只做前端事件消费与派生元数据同步**——不做 Readiness UI（07/08）、
+不做多选栏、不做 onboarding、不增强解析器。后端一行没改。
 
 ### 实际完成
 
-裁决全文在 **`docs/adr/0026-project-file-watcher.md`**。
+**1. 事件字段解码（`web/src/lib/api.ts`）。** `ServerEvent` 的四条形状
+Session 04/05 已经补齐，本轮补的是三个纯函数：
 
-**新模块 `src/tavotto/engine/project_watch.py`。** 判据从「按注册表清单逐个
-`stat()` 看 mtime 变没变」换成**整棵树的轻量快照**：
-
-```text
-scripts   : discover.iter_all_scripts()      → rel_key(POSIX) → (size, mtime_ns)
-registry  : tavotto_registry.json + mm_registry.json
-assets    : project_refresh.iter_assets()    → 素材 id（与 /api/panels 逐字相同）
+```ts
+affectedScriptsOf(event)   // registry.changed 的批量 scripts ∪ 单脚本兼容字段 script
+affectedStemsOf(event)     // registry.changed / panel.file_changed 的 stems
+affectedAssetIdsOf(event)  // assets.changed 的 ids ∪ added ∪ removed ∪ changed
 ```
 
-集合变了 = 新增/删除/改名；签名变了 = 就地改写/原子替换。**老实现守住的其实
-只有「一个已登记脚本被就地改写」一种形状**——新建不在清单里、删除被
-`OSError` 吞掉、重命名两头都看不见、原子替换换掉了 inode（判据量的是那个
-已经不存在的对象）、注册表与素材根本不是 `.py`。换主语一次修好五种。
+理由是**可选字段与兼容字段**：不收口的话每个 handler 都要自己写一遍「先看
+批量、没有再看单条」，写三遍就会有一遍漏掉 `script`——而那正是 probe 与手工
+登记这两条最常见路径的形状。三个函数都容忍畸形载荷（payload 是 `JSON.parse`
+出来的，类型声明不是运行时保证），非数组、混了非字符串一律当"这一维没有
+信息"，不抛。**没有用 `any`。**
 
-**遍历规则不新写第三份**：脚本用 `discover` 的那一份（`PRUNE_DIRS` /
-`MAX_DEPTH` / 隐藏项），素材用 `project_refresh.iter_assets()`。代价是每轮
-两次遍历，换来的是"watcher 盯的范围"与"discover 会收的范围"、"用户看得见的
-素材"永远不会漂移。
+**2. `assetStore` 的并发治理。** `load()` 今天有七个触发点，而一次统一刷新
+连发 `registry.changed` + `assets.changed` 两条事件——「同一批里被调好几次」
+是常态。
 
-**批次**：防抖 0.5 s（新变化把批次结束往后推）+ **批次年龄上限 5 s**——防抖
-等的是「安静」，而目录可能永远不安静（脚本正在跑、正在拷一个大目录）。
-**快照在结算之前就换掉**，于是刷新执行期间到达的写入进下一批而不是丢失。
-两个参数都可注入，循环体拆成 `prime()` + `poll()`，测试用假时钟**逐轮**驱动
-——没有一句 `time.sleep(2.5)`。
-
-**自写循环**用 `project_refresh.is_self_written()`（内容修订号）认，不是"写完
-忽略两秒"；**摘掉的只是注册表那几个路径，不是整批**（一次保存完全可能同时
-改了脚本、生成了图片，并让刷新回写了注册表）。
-
-**目录暂时不可用时快照返回 `None`，这一轮什么都不做**。空快照与"用户删光了
-所有文件"在 diff 里长得一模一样，照它行事会让一次网盘抖动打掉整个项目的
-渲染会话。
-
-**`pool.py` 的 `start_watcher/stop_watcher/watched_dirs` 删除**，12 处调用方
-（10 个测试夹具 + `desktop.py`）全部迁移。不留兼容代理的理由是一个具体的
-失败模式：那个签名表达不了项目 watcher 需要的东西，留一个降级版代理的话，
-任何一条老路径调它就会把功能完整的 watcher **替换成一个只盯清单的**——
-两个 watcher 不会同时跑，但活下来的是残缺的那个，而且没有任何征兆。
-`RefreshSink.watch` 同理删除（整棵树的 watcher 没有"盯谁"这个状态）。
-新增 `pool.invalidate_project()` 与公开别名 `pool.norm_dir`。
-
-### 关键 API（Prompt 06 及之后直接用）
-
-```python
-# src/tavotto/engine/project_watch.py
-start(ctx, *, sink=None, interval=2.0, debounce=0.5, max_batch=5.0) -> ProjectWatcher
-stop(figures_dir=None)                 # 不给目录 = 全停
-watched_dirs() -> list[str]            # 诊断
-watcher_of(figures_dir) -> ProjectWatcher | None
-
-WatchSink(refresh=..., script_changed=..., error=...)   # 三个出口，app 层注入
-ProjectWatcher.prime() / .poll() / .run() / .stop()     # 循环体可逐轮驱动
-take_snapshot(root) -> Snapshot | None                  # None = 目录当前不可用
-diff_snapshots(before, after) -> Delta                  # .scripts / .registry / .assets
-DEFAULT_INTERVAL / DEFAULT_DEBOUNCE / DEFAULT_MAX_BATCH / REGISTRY_NAMES
-
-# src/tavotto/app.py
-_watch_sink(ctx) -> WatchSink          # refresh → refresh_project(reason="watcher")
-
-# src/tavotto/engine/pool.py
-invalidate_project(figures_dir)        # 本项目全部会话（paper_style* 走这条）
-norm_dir(figures_dir)                  # 公开别名，池键 / watcher 键同一把尺
+```ts
+load(opts?: { force?: boolean }): Promise<PanelsResponse | null>
+refresh(): Promise<PanelsResponse | null>     // 事件驱动的入口，与 load() 同一条路
 ```
 
-**`RefreshSink` 现在只有 `publish` 一个字段**（`watch` 已删）。
+* **合并**：同项目的在途请求被后来者复用，一批事件只发一个 `/api/panels`；
+* **旧响应不覆盖新响应**：判据是**请求序号**，不是"谁最后返回"（后者正是
+  缺陷本身）。序号比 AbortController 稳——被 abort 的请求在 jsdom 与真浏览器
+  里抛的东西不一样，而要挡的行为（旧值落地）两边一模一样；
+* **项目隔离**：发请求那一刻这个标签页认领的 pj，与落地那一刻的比。
+  `null`（跟随后端默认项目）与某个具体 id 是**两个取值，不合并**；
+* **`force` 永远另起一次**：手动刷新被一次早就发出的在途请求吞掉的话，
+  用户按了没反应，而"没反应"正是他按它的原因；
+* **失败不清空**：`panels` / `byId` 一个都不动，只多一条非阻塞错误；
+  首次加载失败时 `loaded` 仍是 false，界面照旧显示 EmptyState；
+* **返回本次生效的响应**（被丢弃或失败时 `null`）——调用方据此决定要不要
+  拿它去同步文档。
 
-### SSE（前端类型已补齐，**仍然没有加任何 handler**）
+模块级账本有 `resetAssetLoadBookkeeping()` 供用例清零（它们活得比一次
+`setState` 长）。
 
-```jsonc
-// panel.file_changed —— 由 watcher 发：已登记脚本的**内容**变了，且文件还在
-{"pj": "…", "scripts": ["fig1.py"], "stems": ["Fig1"]}
+**3. PanelObject 派生元数据同步（新模块 `web/src/store/panelSourceSync.ts`）。**
 
-// project.error（新）—— 后台刷新失败，可恢复：内存里的注册表原封不动，
-// watcher 线程继续，文件修好之后下一轮自动重试
-{"pj": "…", "reason": "watcher", "code": "scan_failed", "params": {"reason": "…"}}
-
-// registry.changed / assets.changed —— **只由统一刷新发**，形状与 04 完全一致，
-// 只是多了一个 reason="watcher" 的来由
+```ts
+syncPanelSourceMetadata(
+  panelsById: Record<string, PanelInfo>,
+  options?: { affectedIds?: readonly string[] },   // 素材 id；不给 = 全量比对
+): PanelSyncResult
 ```
 
-**没有新增错误 code**：`project.error` 复用刷新已有的 `scan_failed` /
-`registry_reload_failed`（双语文案 Session 04 已备）。
+```ts
+interface PanelSyncResult {
+  upgraded: string[]        // 对象 id：不可编辑 → 可编辑
+  downgraded: string[]      // 对象 id：可编辑 → 不可编辑
+  changed: string[]         // 对象 id：任意派生字段变了（前两者是它的子集）
+  missing: string[]         // 对象 id：文档引用了、本次清单里没有
+  staleFileIds: string[]    // 素材 id：要按新脚本重建（渲染层按文件粒度工作）
+  droppedFileIds: string[]  // 素材 id：刚失去脚本，失效的 manifest / 缓存按它清
+}
+```
+
+素材粒度的处置有**三档**：有脚本 → 重建；刚失去 → 清缓存；**从来没有脚本
+→ 两样都不做**。第三档单列的理由是一张普通位图的 `pxW` 也会变，把它标成
+`tracked` 等于告诉显示层"这张图要走引擎产物"，而它根本没有脚本可跑。
+
+```ts
+```
+
+**同步**：`script`、`cost`、`fileKind`、`pxW`。
+**绝不碰**：`x/y/w/h`、`nativeW/nativeH`、`crop`、`rotation`、`overrides`、
+`groupId`、布局组、`locked`、`hidden`、`name`、`opacity`、`flipH/flipV`、
+`lockedGids`、选择、文档名。图幅为什么也在这一列见 DECISIONS 的 T-27
+（它是几何，且权威在变体自己的 manifest 而不是磁盘文件）。
+**runtime 面板整个跳过**（`runtime:` 前缀的 id 永远不在 `/api/panels` 里，
+不跳过的话每轮都会被判成"素材不见了"）。
+
+非激活画布同样同步；**激活画布只算一遍**（`canvases[active]` 只是快照，
+权威在 `doc`）。
+
+**4. 保存链路的第三档（`documentStore`）。** 新增状态字段 `derivedSeq` 与
+导出入口 `applyDerivedUpdate({ doc?, canvases? })`。自动保存的订阅现在按
+两个代次认三种性质：
+
+| 性质 | `dirty` | `saveState` | 撤销历史 | 落盘 |
+| --- | --- | --- | --- | --- |
+| 载入（`loadSeq` +1） | 由载入方声明 | 由载入方声明 | 清空 | 不排队 |
+| 用户编辑 | 置位 | 推成 `dirty` | 进 | 排队 |
+| 派生同步（`derivedSeq` +1） | 置位 | **不动** | **不进** | **排队** |
+
+「不标脏」与「必须可靠落盘」不矛盾，理由全文在 DECISIONS 的 T-26：`script`
+是**存进文档的字段**（不落盘的话下次打开又回到不可编辑），但一次外部文件
+改动不是用户的编辑（推 `saveState` 会让关闭保护弹一句用户没做过的事）。
+写盘本身照常走完整状态机——`saving` / `save_error` / `conflict` 一个不吞。
+
+**5. 编排（新模块 `web/src/store/liveSync.ts`）。** SSE 事件、手动刷新按钮、
+SSE 重连恢复**三个入口共用一条路径**：
+
+```ts
+refreshAssetsAndSync(opts?: { force?: boolean; affectedIds?: readonly string[] })
+refreshProjectNow()         // 手动刷新：POST /api/project/refresh，再走上面那条
+syncLoadedDocument()        // 项目打开：拿手里的清单对一次账，**不发请求**
+recoverAfterReconnect()     // 3 秒节流，**不调**后端静态刷新
+```
+
+**项目打开也要对账**（`App.tsx`：素材清单与 `restoreSession()` 都到齐之后调
+`syncLoadedDocument()`）。理由是它是七个触发点里唯一「文档比清单晚到」的那个
+——Tavotto 关着的时候用户完全可能在外面改脚本，而项目打开那一轮 watcher
+**只建基线、一条事件都不发**。不对这一次账的话那些改动要等到下一次外部修改
+或手动刷新才生效，而用户看到的现象是"我明明加了脚本，它就是不认"。
+
+降级的处置（§七）：退出该面板的图内编辑 → 清 `selectedGids` → **画布选择
+保持不变** → `overrides` 一条不删 → `renderStore.reset(fileId)` 清掉失效的
+manifest 与渲染缓存 → 提示「这张图的源脚本关系已失效，已返回画布。图片和
+排版没有被删除。」升级则**不**自动进编辑态，只给一条轻提示。
+
+**6. 手动刷新入口（`AssetBrowser`）。** 按钮从 `assetStore.load()` 改成
+`POST /api/project/refresh` + 合并刷新；忙碌态覆盖**整条**（后端那一步才是
+最慢的，只看 `assetStore.loading` 的话按钮在那一步是不转的）；失败弹常驻
+错误。文案从「重新扫描 / 重新扫描素材目录」改成「刷新项目 / 检查项目里的
+新文件与脚本改动 / 正在检查新文件…」——普通用户看不到 registry、stem 这类词。
+与 RegistryDialog 的手工扫描是两件事（那条是冲突裁决用的高级入口）。
+
+### 关键 API（Prompt 07 及之后直接用）
+
+```ts
+// web/src/store/assetStore.ts
+load(opts?: { force?: boolean }): Promise<PanelsResponse | null>
+refresh(): Promise<PanelsResponse | null>
+resetAssetLoadBookkeeping()            // 只给用例：清模块级并发账本
+
+// web/src/store/panelSourceSync.ts
+syncPanelSourceMetadata(panelsById, options?): PanelSyncResult
+
+// web/src/store/documentStore.ts
+applyDerivedUpdate({ doc?, canvases? })   // 外部派生数据的唯一写入口
+derivedSeq                                 // 状态字段：派生同步的代次
+
+// web/src/store/liveSync.ts
+refreshAssetsAndSync(opts?)                // 事件 / 手动刷新 / 重连共用
+refreshProjectNow() / syncLoadedDocument() / recoverAfterReconnect()
+resetReconnectThrottle()                   // 只给用例：节流是模块级状态
+
+// web/src/lib/api.ts
+affectedScriptsOf / affectedStemsOf / affectedAssetIdsOf
+
+// web/src/hooks/useServerEvents.ts
+handleServerEvent(ev)                      // 导出给用例驱动（同 syncEngine 的先例）
+```
 
 ### 迁移
 
-**没有数据迁移，磁盘格式一个字节没动。** 唯一的兼容影响是
-`pool.start_watcher/stop_watcher/watched_dirs` 消失了——它们没有出现在任何
-公开契约里（不是 HTTP、不是 MCP、不是 CLI），调用方全在本仓库内。
-旧前端收到 `project.error` 会静默忽略（`EVENT_KINDS` 里没有它就不注册监听）。
+**没有数据迁移，磁盘格式一个字节没动。** `derivedSeq` 是运行时状态，不进
+文档。唯一的接口变化是 `assetStore.load()` 从 `Promise<void>` 变成
+`Promise<PanelsResponse | null>`——既有调用方全部忽略返回值，不受影响。
 
 ### 修改的文件
 
 ```text
-新增  src/tavotto/engine/project_watch.py    项目 watcher（快照 / 批次 / 生命周期）
-新增  tests/test_project_watch.py            44 条
-新增  docs/adr/0026-project-file-watcher.md
-改动  src/tavotto/engine/pool.py             删旧 watcher；+invalidate_project、+norm_dir
-改动  src/tavotto/engine/project_refresh.py  删 RefreshSink.watch 与重挂那一段
-改动  src/tavotto/app.py                     +engine_watch、+_watch_sink；open/close 换 watcher
-改动  src/tavotto/desktop.py                 退出路径改 engine_watch.stop()
-改动  web/src/lib/api.ts                     +project.error 的**类型**与 EVENT_KINDS
-改动  tests/（10 个文件）                     夹具 engine_pool.stop_watcher() → engine_watch.stop()
-改动  tests/test_projects.py                 watcher 替换用例改用新 API
-改动  tests/test_project_refresh.py          删「重挂 watcher」那条，换成「钩子确实没了」
-改动  docs/adr/0025-…                        摘要表里「watcher 重挂时机」那行作废
-重建  codex-plugin/mcp/widget/canvas.html    改了 web/src 就要重建
+新增  web/src/store/panelSourceSync.ts         派生元数据同步（唯一写入口）
+新增  web/src/store/liveSync.ts                事件 / 手动刷新 / 重连的共同路径
+新增  web/src/lib/serverEventFields.test.ts    13 条
+新增  web/src/store/assetStore.test.ts         14 条
+新增  web/src/store/panelSourceSync.test.ts    19 条
+新增  web/src/store/derivedAutosave.test.ts     8 条
+新增  web/src/hooks/useServerEvents.test.ts    26 条
+新增  web/src/components/left/AssetBrowser.refresh.test.tsx   5 条
+改动  web/src/lib/api.ts                       +三个事件解码纯函数
+改动  web/src/store/assetStore.ts              并发治理；load 返回权威数据
+改动  web/src/store/documentStore.ts           +derivedSeq、+applyDerivedUpdate、订阅认第三档
+改动  web/src/hooks/useServerEvents.ts         +assets.changed/project.error handler；重连恢复
+改动  web/src/components/left/AssetBrowser.tsx 刷新按钮改走统一刷新 + 忙碌态 + 错误可见
+改动  web/src/App.tsx                       启动时清单与文档都到齐之后对一次账
+改动  web/src/i18n/locales/*/workspace.json    assets.rescan* → assets.refresh*；status 新增四条
+改动  web/src/i18n/resources.d.ts              i18next-cli types 重新生成
+重建  codex-plugin/mcp/widget/canvas.html      改了 web/src 就要重建
 ```
 
 ### 测试命令与真实结果
 
 ```sh
-# 后端全量（worktree 里必须带 PYTHONPATH，否则 import 到主工作区）
-PYTHONPATH=$PWD/src /Volumes/Projects/Tavotto/.venv/bin/python -m pytest
 # 前端（先 cd web）
 pnpm test && pnpm build && pnpm i18n:check && pnpm lint
+# 单跑某个文件时**必须自己补上环境变量**（它在 package.json 的 test 脚本里）
+NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/store/assetStore.test.ts
+# 后端全量（worktree 里必须带 PYTHONPATH，否则 import 到主工作区）
+PYTHONPATH=$PWD/src /Volumes/Projects/Tavotto/.venv/bin/python -m pytest
 # 格式（与 CI 那一格逐字相同）
 ruff check . && ruff format --check .
-# 改了 web/src 之后（排在所有前端改动**之后**）
+# 改了 web/src 之后（排在所有前端改动**与** i18next-cli types **之后**）
 python scripts/build_mcp_widget.py
 ```
 
-结果见 `STATUS.md` 的表。后端 **3146 passed** / 34 skipped / 2 deselected（比 04 的 3102 整好 +44 = 新增的
-`tests/test_project_watch.py`），exit 0，10 分 24 秒。前端 118 files / **1371** passed，
-`build` / `i18n:check` / `lint` 三条 exit 0（本轮只动了类型，用例数不变）。
-**变异反证 31 条，全部被打红**（记录见 `TEST_MATRIX.md`）。
+数字见 `STATUS.md` 的表：前端 **124 files / 1456 passed**（比 05 的 1371
++85），`build` / `i18n:check` / `lint` 三条 exit 0。**变异反证 55 条全部被
+打红**（清单与五条第一轮活下来的分析见 `TEST_MATRIX.md`——其中一条查出来是个
+多余的守卫，处置是删掉它）。
 
-> 中途有一轮全量红了两条（`test_mcp_server.py` 与 `test_windows_regressions.py`
-> 的画布同步判据）——`web/src/lib/api.ts` 改了而 `canvas.html` 没重建。
-> **重建要排在所有前端改动之后**，反了的话产物是对的、判据仍然红。
+**后端全量 exit 1**，唯一那条红是
+`tests/native/test_run_cli_integration.py::test_ctrl_c_reaches_the_script_and_leaves_no_orphan`
+——本轮 `src/tavotto/**` 一个字节没改，那条用例走的是 Python CLI，不加载
+`web/src/**` 的任何东西。四组范围实测与「不处置成绿」的理由写在 `STATUS.md`
+的「全量套件里的那条红」。**不要因为它在你这一轮也红就当成背景噪音**：它今天
+早些时候（Session 05）还是绿的。
 
-### 这一轮变异反证学到的（两件）
+### 这一轮踩到的两个环境坑
 
-#### 一、变异自己可能不是变异
-
-第一版的「注册表变化一律不刷新」写成了 `keep.registry = set() or {…}`——
-`set()` 是假值，`or` 原样求值到后面那个推导式，**文本变了、行为一个字节
-没变**，跑完全绿。
-
-这是"变异显示绿"的**第四种**成因：不是判据弱（03/04 各撞过一次），不是那条
-分支从没被执行过，也不是 `__pycache__` 命中旧 `.pyc`，而是**这条变异根本不是
-一次变异**。变异脚本里"先证明产物真的变了"只比文本，挡得住 `s.replace()` 的
-静默 no-op，挡不住语义 no-op。处置是整段替换，**并顺手补上反方向的那一条**
-（自写也不摘）——一行判据的两个越界方向各来一次。
-
-#### 二、一条守卫把另一条判据的行为面盖住了
-
-`_dispatch()` 开头补上 `stop_event` 检查之后，「`stop()` 不清 pending」那条
-变异**活了下来**——新守卫把它的行为面整个盖住。这是「抽掉不红」的两种成因
-之一，而删错了会把刚防住的东西放回去。逐条问下来：那一句仍有独立价值
-（停掉的 watcher 抱着一批永远不会结算的变化，是个会在下一个人手里变成 bug
-的状态），只是它的维度是**状态**而那条用例断言的是**行为**。处置是换一把
-量得到那个维度的尺（`assert not w._pending`），外加一句前提断言——否则
-"这一批本来就没攒上"会让后半句恒真。
-
-三条老纪律这一轮全部生效并且都没有再踩：脚本在**脏树上拒跑**、每轮清
-`src/**/__pycache__`、锚点计数必须恰好 1。
+1. **`npx vitest` 会漏掉 `NODE_OPTIONS=--no-experimental-webstorage`。**
+   没有它，Node 自带的 `localStorage` 全局会盖住 jsdom 那份**并且不可用**，
+   任何碰 localStorage 的用例报的是 `Cannot read properties of undefined`
+   ——看起来像被测代码坏了，其实是跑法不对。
+2. **`npx` 会在仓库根建一个空的 `node_modules/.vite`**，而 `.gitignore` 只
+   忽略 `web/node_modules/`。跑完记得删，否则它会出现在 `git status` 里。
 
 ### 尚存限制
 
-1. **前端还没消费**：`assets.changed` / `project.error` 有类型、有 `EVENT_KINDS`
-   登记，**没有 handler**；`refreshProject()` 有实现但界面上还没有入口。归 06。
-2. **删除的脚本不会从注册表里消失**：`discover.merge()` 只追加、不删条目
-   （注册表是用户策展数据）。"源文件不见了"要由就绪度模型表达，归 07/08。
-3. **非 `paper_style` 的共享模块**（`helpers.py` 之类）改了不作废 worker，
-   只触发一次刷新——依赖图我们不解析。用户显式重渲染即可。
-4. **项目真的被删除**要等到用户下次打开时才报（`take_snapshot` 返回 `None`
-   的那条取舍，ADR 0026 §5）。这是刻意的：误报删除比晚报贵得多。
-5. **项目打开仍走自己的静态草稿逻辑**（`build_draft` + `write_config`），
-   没有并进统一服务（为了不让打开项目扫两遍）。
-6. `engine/` 里另外**五处**手写原子写仍未并入 `atomicio`（R-05）。
-7. **autosave 仍在数据目录**（R-07）。
-8. `/api/layouts/<name>` 仍不做 schema 校验（ADR 0023 §5a），前置是修 R-18。
-9. 「编辑历史」仍在文档菜单里，不是左上区域的独立入口（归 08）。
-10. **后端 `sse_publish` 的事件名与前端 `EVENT_KINDS` 没有同源门禁**——名字
-    写错一个字，后端全绿而前端永远收不到。（`assets.changed` 在 04 也是这样
-    加进来的。）做一个可靠的要先把发布点枚举清楚：有几处是变量传名
-    （`project_refresh` 的 sink、`ai_bridge`），朴素 grep 会误报。本阶段用
-    端到端用例把新加的 `project.error` 单独钉住，全仓门禁记在这里待办。
+1. **`affectedScriptsOf` 还没有生产调用方**（另外两个有）。它是 §三 明确要求
+   的解码收口，有单测；自然的第一个消费者是 07 的就绪度（脚本 → 就绪状态）。
+   这件事写在这里，不假装它已经在用。
+2. **`assets.changed` 里 `removed` 的素材不清渲染缓存**：面板继续显示最后
+   一次成功的那张图，由 `preflight` 的 `missing-asset` 报出来。清掉的话画布会
+   当场变成占位框，而文件很可能只是暂时不见（T-28 的同一条取舍）。
+3. **升级会触发一次引擎重建**（`markStale` 置 `tracked`）。这与
+   `panel.file_changed` 的既有行为同源（那条路径 Session 05 之前就这么做），
+   代价是一张一直静静躺着的 PDF 在获得脚本的那一刻会跑一次 worker。要改成
+   "等用户双击才跑"的话，需要给 `markStale` 分出"只作废、不跟踪"的第二档
+   ——本阶段没做，因为 Prompt 06 §十明确要求"registry 升级后新 `script`
+   能触发引擎构建"。
+4. **没有 SSE 事件名的同源门禁**（Session 05 遗留第 10 条，仍然开着）：后端
+   `sse_publish` 的事件名与前端 `EVENT_KINDS` 写错一个字，后端全绿而前端
+   永远收不到。本轮四条事件都有端到端用例钉住，但门禁本身还没做。
+5. 04/05 的其余遗留（R-05 五处手写原子写、R-07 autosave 位置、
+   `/api/layouts/<name>` 无 schema 校验、「编辑历史」入口位置）原样开着。
 
 ### 工作树状态
 
 - worktree：`/Volumes/Projects/Tavotto/.claude/worktrees/product-ux-v2`
 - 分支：`feat/product-ux-reliability-v2`，从 `origin/main` 的 `ef9ac02` 开出
-- **PR #201**（`feat/product-ux-reliability-v2` → `main`）已开，带的是
-  Session 01–04。**本阶段的 6 个提交还没有推**（`43281dd`…`03d54e0`）——
-  用户定的节奏是「每个 Session 一个独立提交，攒够几个再一次推」，推上去会
-  立刻触发一轮 Codex 评审，所以由用户决定什么时候推
-- author 用 `88193520+erwanjun@users.noreply.github.com`（与 `main` 上每一个提交
-  一致）。本机 `~/.gitconfig` 是 `1259959884@qq.com`，两者不一致会让 cla-check
-  在同一个仓库里数出两个贡献者；提交时用 `git -c user.email=… commit`，
-  **别改共享的 `.git/config`**（linked worktree 默认共享它，一条命令污染所有会话）
+- **PR #201** 已开，带的是 Session 01–04。**05 与 06 的提交还没有推**
+  ——用户定的节奏是「每个 Session 一个独立提交，攒够几个再一次推」，
+  推上去会立刻触发一轮 Codex 评审，所以由用户决定什么时候推
+- author 用 `88193520+erwanjun@users.noreply.github.com`（与 `main` 上每一个
+  提交一致）。本机 `~/.gitconfig` 是 `1259959884@qq.com`，两者不一致会让
+  cla-check 在同一个仓库里数出两个贡献者；提交时用
+  `git -c user.email=… commit`，**别改共享的 `.git/config`**
+  （linked worktree 默认共享它，一条命令污染所有会话）
 - `web/node_modules` 已在 worktree 内真装
 
 ---
 
-## 下一阶段入口（Prompt 06：前端事件消费与派生元数据同步）
+## 下一阶段入口（Prompt 07：Readiness 后端事实模型）
 
-**从这里开始读**：`web/src/lib/api.ts` 的 `ServerEvent` 与 `EVENT_KINDS`
-（四条事件的完整形状都在那儿）、`web/src/store/assetStore.ts`
-（今天唯一消费 `panel.file_changed` 的地方）、`docs/adr/0026` §6「事件的归属」。
+**从这里开始读**：`docs/adr/0025-…`（统一刷新的编排与 `ProjectRefreshResult`
+的形状）、`src/tavotto/engine/project_refresh.py` 的 `_events()`、
+`web/src/store/panelSourceSync.ts`（前端手里现在有哪些派生事实）。
 
-**Session 05 留给它的接口**：
+**Session 06 留给它的**：一份**稳定**的前端数据面。
 
-| 事件 | 谁发 | 前端该做什么（06 要实现的） |
+| 东西 | 位置 | 07 可以直接依赖的性质 |
 | --- | --- | --- |
-| `registry.changed` | 统一刷新 | 更新脚本/stem 映射；`conflicts` **缺席 = 这轮没扫**，不是"没有冲突" |
-| `assets.changed` | 统一刷新 | `added`/`removed`/`changed` 三类分别处理；**今天完全没有 handler** |
-| `panel.file_changed` | watcher | 重渲染这些 stem（既有语义，不变） |
-| `project.error` | watcher | 显示可恢复的项目级错误（`code` 走 `errors:*` 双语码表） |
+| 素材清单 | `assetStore.byId` | 不会被旧响应覆盖、不会串项目、后台失败时是"上一次成功的那份"而不是空 |
+| 画布上每个面板的派生字段 | `PanelObject.script/cost/fileKind/pxW` | 与 `/api/panels` 一致（事件、手动刷新、SSE 重连三条路都会把它拉平） |
+| 一次同步的差异 | `PanelSyncResult` | upgraded / downgraded / changed / missing 四类 + 两组素材 id |
+| 显式刷新 | `POST /api/project/refresh` → `refreshProjectNow()` | 界面上已经有入口（素材面板的刷新按钮） |
 
-显式刷新入口：`POST /api/project/refresh` → `refreshProject()`（已实现，
-界面上还没有入口）。返回结构见 ADR 0025 与 `ProjectRefreshResult`。
+**绝不要做的事**：
+
+1. **不得重新实现刷新。** 就绪度是在这份数据之上**再算一层事实**，不是第二个
+   刷新器。素材清单的唯一取法是 `assetStore.load()`，文档里派生字段的唯一写
+   入口是 `syncPanelSourceMetadata()`，事件与手动刷新的唯一路径是
+   `store/liveSync.ts`。
+2. **不要为就绪度再开一条事件通道**（SSE 已经是唯一通道）。
+3. **不要在组件里直接改 `documentStore` 的文档字段**（走 actions / 派生入口）。
+4. **`conflicts` 缺席 = 这一轮没跑静态扫描，不是"没有冲突"**——就绪度最容易
+   在这里把"没测量"当成"测量结果是零"。
 
 **必须保留的不变式**（改动前先确认还成立）：
 
-1. `loadSeq` 把「载入」与「编辑」分开——载入不得触发回写。
+1. `loadSeq` 把「载入」与「编辑」分开；`derivedSeq` 把「派生同步」从这两者里
+   再分出来（三档表见上）。
 2. `dirty` 同时盯 `doc` 与 `canvases`。
 3. 收到 409 后**基线故意不推进**，本机兜底副本**不清**。
 4. `HistoryEntry.label` 存 `UiMessage` 描述符，绝不存翻译后的字符串。
-5. 落盘一律走 `engine/atomicio`（ADR 0023），不再手写 tmp+replace。
+5. 落盘一律走 `engine/atomicio`（ADR 0023）。
 6. 保存状态只经 `setSaveState()` / `setDocNotice()` 改（ADR 0024）。
-7. 排队稍后才发出的写入必须带走**排队那一刻**的 `pj`。
+7. 排队稍后才发出的写入必须带走**排队那一刻**的 `pj`；前端的每一次
+   `/api/panels` 同样带走发请求那一刻的 `pj`。
 8. **刷新的编排只有 `refresh_project_index()` 一份**（ADR 0025）；**发现只有
-   `project_watch` 一份**（ADR 0026）。watcher 不 merge、不 reload、不发第二套
-   registry/assets 事件。
-9. **无差异 = 零事件、零写盘、零 worker 失效。**
+   `project_watch` 一份**（ADR 0026）；**前端的消费只有 `liveSync` 一份**。
+9. **无差异 = 零事件、零写盘、零 worker 失效**（后端）；
+   **无差异 = 零 `set()`、零 dirty、零提示**（前端）。
 10. 「哪些文件算素材」只有 `iter_assets()` 一处判据；脚本遍历只有
     `discover.iter_all_scripts()` 一处。
 11. `reason` 是闭集，表外的值归成 `manual`；客户端字符串不透传。
-12. 刷新失败时内存里的注册表**原封不动**，事件一条不发。
-13. **派生数据刷新不得把文档标脏，也不得进普通撤销历史**（UX_CONTRACTS 不变式 A）
-    ——06 最容易破的就是这一条：收到 `assets.changed` 就顺手 `setDoc()`。
-
-**别做的事**：不要为事件消费再造一条并行通道（SSE 已经是唯一通道）；不要在
-组件里直接改 `documentStore` 的文档字段（走 actions）；不要因为一条
-`assets.changed` 就整份重取素材（`added`/`removed`/`changed` 已经给到 id 级）；
-不要把 `project.error` 做成一个模态框（它是可恢复的后台状态，不是需要用户
-当场决策的事）。
+12. 刷新失败时内存里的注册表**原封不动**，事件一条不发；前端同理——
+    刷新失败就**不拿旧清单去同步文档**，也不弹提示。
+13. **派生数据刷新不得把文档标脏（对用户而言），也不得进普通撤销历史**
+    （UX_CONTRACTS 不变式 A / §1a）。
+14. **素材不在清单里 ≠ 脚本关系失效**：前者保留对象与 `script`，走既有缺失
+    素材语义；只有后端明确说"这个素材没有脚本"才算降级（T-28）。

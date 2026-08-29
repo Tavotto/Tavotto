@@ -33,6 +33,7 @@ import { subscribePruneSelection } from '@/hooks/usePruneSelection'
 import { ProjectPicker } from '@/components/ProjectPicker'
 import { useAiStore } from '@/store/aiStore'
 import { useAssetStore } from '@/store/assetStore'
+import { syncLoadedDocument } from '@/store/liveSync'
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useEnvStore } from '@/store/envStore'
@@ -103,14 +104,18 @@ function Workspace() {
   const scrim = usePresence(overlay && (leftOpen || rightOpen), DURATION.fast)
 
   useEffect(() => {
-    useAssetStore.getState().load()
+    const assets = useAssetStore.getState().load()
     // 启动那次静默：探测失败不该在用户还没进设置页时弹东西
     void useAiStore.getState().loadCaps().catch(() => {})
     // 磁盘恢复是异步的：恢复到文档后重新适配视口
-    void restoreSession().then((restored) => {
-      if (!restored) return
-      const page = useDocumentStore.getState().doc.page
-      useViewportStore.getState().fit(page.w, page.h)
+    void Promise.all([assets, restoreSession()]).then(([, restored]) => {
+      if (restored) {
+        const page = useDocumentStore.getState().doc.page
+        useViewportStore.getState().fit(page.w, page.h)
+      }
+      // 素材清单与文档**都到齐**之后再对账：两个请求谁先回来是不定的，
+      // 只挂在其中一个上就会有一半的时候拿着空清单去同步（= 什么都没做）
+      syncLoadedDocument()
     })
     const stopAutosave = startAutosave()
     const stopPrune = subscribePruneSelection()

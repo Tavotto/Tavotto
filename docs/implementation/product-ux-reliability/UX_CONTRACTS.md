@@ -52,6 +52,38 @@ clean ──编辑──▶ dirty ──flush──▶ saving ──成功且期
 （重命名 / 删除 / 复制 / 重排画布）——这条现状已经守住了
 （`startAutosave` 同时盯 `doc` 与 `canvases`），后续改动不得回退。
 
+### 1a. 派生元数据同步（Session 06）
+
+`doc` / `canvases` 的变化有**三种性质**，自动保存的订阅按两个代次
+（`loadSeq` / `derivedSeq`）区分：
+
+| 性质 | `dirty` | `saveState` | 撤销历史 | 落盘 |
+| --- | --- | --- | --- | --- |
+| 载入 | 由载入方声明 | 由载入方声明 | 清空 | 不排队 |
+| 用户编辑 | 置位 | 推成 `dirty` | 进 | 排队 |
+| **派生同步** | 置位 | **不动** | **不进** | **排队** |
+
+唯一入口 `documentStore.applyDerivedUpdate()`，唯一调用方
+`store/panelSourceSync.ts`。理由见 `DECISIONS.md` 的 T-26。
+
+**可同步的字段**（磁盘 / registry 说了算）：`script`、`cost`、`fileKind`、`pxW`。
+
+**绝不修改**：`x` / `y` / `w` / `h`、`nativeW` / `nativeH`、`crop`、`rotation`、
+`overrides`、`annotations`、`groupId`、布局组、`locked`、`hidden`、`name`、
+`opacity`、`flipH` / `flipV`、`lockedGids`、画布选择、当前文档名。
+图幅为什么也在这一列：T-27。
+
+**验收**：
+
+- 外部编辑器给一张已在画布上的图补上脚本 → 面板**原地**可编辑，几何、裁剪、
+  override、成组、选择、撤销栈一个字节不动，不需要删了重加；
+- 脚本失效 → 面板原地降级、退出图内编辑并**保留画布选择**、清掉失效的
+  manifest / 渲染缓存、`overrides` 一条不删，提示说清"图片和排版没有被删除"；
+- 升级**不**自动把用户拽进图内编辑（下次双击才进）；
+- 素材暂时不在清单里 ≠ 脚本关系失效：对象原样保留，走既有的缺失素材语义
+  （T-28）；
+- 无差异 = 零改动（不置 dirty、不排落盘、不弹提示）。
+
 ---
 
 ## 1b. 外部修改合同（Session 03）

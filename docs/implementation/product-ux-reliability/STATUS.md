@@ -37,7 +37,7 @@
 | 03 | 保存状态机、autosave、恢复、历史 | ✅ 完成（本次，ADR 0024） |
 | 04 | 后端统一 refresh | ✅ 完成（本次，ADR 0025） |
 | 05 | 项目 watcher、批次合并、SSE | ✅ 完成（本次，ADR 0026） |
-| 06 | 前端事件消费与派生元数据同步 | ⬜ |
+| 06 | 前端事件消费与派生元数据同步 | ✅ 完成（本次） |
 | 07 | Readiness 后端事实模型 | ⬜ |
 | 08 | Readiness 前端与常驻左栏 | ⬜ |
 | 09 | 快速编辑 / 画布双工作流、原图输出合同 | ⬜ |
@@ -61,7 +61,7 @@
 | Gate | 覆盖 | 状态 |
 | --- | --- | --- |
 | 1 数据安全 | 01–03 | ✅（三个阶段全部完成；遗留项见下方风险表） |
-| 2 项目实时状态 | 04–08 | 🟡 04（后端刷新核心）+ 05（项目 watcher）完成，06–08 未开始 |
+| 2 项目实时状态 | 04–08 | 🟡 04（后端刷新）+ 05（watcher）+ 06（前端消费闭环）完成，07–08 未开始 |
 | 3 核心工作流与输出 | 09–12 | ⬜ |
 | 4 编辑一致性 | 13–18 | ⬜ |
 | 5 产品外壳 | 19–22 | ⬜ |
@@ -177,13 +177,61 @@ Tavotto run 兼容层、matplotlib 捕获范围、CLA/法务。
 > 同步判据）：`web/src/lib/api.ts` 改了而 `canvas.html` 没重建。重建之后两条
 > 都绿，上表是重建之后**重跑一遍完整套件**的结果，不是拼起来的。
 
-## 遗留（Session 05 之后仍开着的）
+### Session 06 之后（改动后实跑）
+
+| 命令 | 结果 |
+| --- | --- |
+| `PYTHONPATH=<wt>/src <repo>/.venv/bin/python -m pytest` | ⚠️ exit 1 —— **3145 passed / 1 failed** / 34 skipped / 2 deselected，10 分 58 秒。唯一那条红的是 `tests/native/test_run_cli_integration.py::test_ctrl_c_reaches_the_script_and_leaves_no_orphan`，**与本阶段无关**（本轮 Python 一行没改）——详见下面的「全量套件里的那条红」 |
+| `cd web && pnpm test` | ✅ exit 0 —— **124** files / **1456** tests passed（比 05 的 1371 +85 = 六个新用例文件） |
+| `cd web && pnpm build` | ✅ exit 0（`tsc -b && vite build`，2777 modules） |
+| `cd web && pnpm i18n:check` | ✅ exit 0（zh-CN 2570 / en-US 2657；`resources.d.ts` 已重新生成） |
+| `cd web && pnpm lint` | ✅ exit 0（18 条既有 fast-refresh 提示，无新增） |
+| `ruff check . && ruff format --check .` | ✅ exit 0（275 files；本轮没动 Python） |
+| `git diff --check` | ✅ 无空白问题 |
+| `python scripts/build_mcp_widget.py` | ✅ 已重建（指纹 `6c61fe2315e158ba`；排在所有前端改动**与** `i18next-cli types` **之后**） |
+| 变异反证 55 条 | ✅ 全部被打红（清单见 `TEST_MATRIX.md`；**其中 5 条第一轮活了下来**：两条是变异自己没问对问题、两条是判据缺一维、一条查出来是**多余的守卫**（已删）——处置都记在 TEST_MATRIX） |
+
+> `npx vitest` 直接跑会漏掉 `NODE_OPTIONS=--no-experimental-webstorage`（在
+> `package.json` 的 `test` 脚本里）：没有它 Node 自带的 `localStorage` 全局会
+> 盖住 jsdom 那份并且不可用，任何碰 localStorage 的用例都报
+> `Cannot read properties of undefined`。单跑某个文件时要自己补上这个环境变量。
+
+#### 全量套件里的那条红（`test_ctrl_c_reaches_the_script_and_leaves_no_orphan`）
+
+**现象**：`os.killpg(..., SIGINT)` 发出去之后，`proc.communicate(timeout=90)` 超时
+——`tavotto run` 的 CLI 在 90 秒内没有退出。stdout 里有 `READY`（用户脚本已经
+跑到 `time.sleep(120)`，信号窗口是对的），stderr 停在「Waiting for Tavotto
+desktop…」。
+
+**范围（四组实测，本机）**：
+
+| 跑法 | 结果 |
+| --- | --- |
+| 全量 `pytest` | ❌ 2 次 2 红（本阶段跑的两次干净全量） |
+| `pytest tests/native/test_run_cli_integration.py` ×5 | ✅ 5 次全绿 |
+| `pytest tests/golden tests/native`（全量里排在它前面的全部） | ✅ 264 passed |
+| `pytest -k <这条>`（**收集整个套件**，只跑它一条） | ✅ 1 passed |
+
+也就是说：不是收集期的副作用（第四组排除），也不是排在它前面那些用例留下的
+状态（第三组排除），窄范围里一次都复现不出来。
+
+**性质不定，范围定了**：这是 PR #189（`tavotto run` 控制面，ADR 0021）带进来
+的用例，属于 `tavotto run` 那条线，与本阶段（纯前端）**没有任何代码路径相交**
+——本轮 `src/tavotto/**` 一个字节没改，而这条用例走的是 Python CLI，不加载
+`web/src/**` 的任何东西。Session 05 今天早些时候的全量是 3146 passed exit 0
+（总数一致：3145 + 1 = 3146），所以它在同一台机器上**今天早些时候还是绿的**。
+
+**没有处置成绿**：不 skip、不 xfail、不删。它需要 `tavotto run` 那条线的人
+按「全量里红、窄范围绿」这个形状去查（多半在控制通道的关闭/唤醒那一族——
+参见 compat-bridge 轨道踩过的「`close()` 不唤醒阻塞的 `recv`」）。
+
+## 遗留（Session 06 之后仍开着的）
 
 | ID | 事项 | 归属 |
 | --- | --- | --- |
 | R-05 | `engine/` 里另外五处手写原子写未并入 `atomicio`（config / runspec / runtimeasset / locate / session_client / nativehandoff） | 择机 |
 | R-07 | autosave 仍在数据目录（`LAYOUT_DIR/_autosave`）而非项目内 | 未定 |
-| — | 前端还没消费 `assets.changed` / `project.error` / `refreshProject()`（有类型、无 handler） | 06 |
+| — | **全量 pytest 里 `test_ctrl_c_reaches_the_script_and_leaves_no_orphan` 红**（窄范围全绿；与本阶段无关，属 `tavotto run` 线） | 待查 |
 | — | 项目打开仍走自己的静态草稿逻辑，没并进统一服务（为了不扫两遍） | 择机 |
 | — | 「编辑历史」仍在文档菜单里，不是左上区域的独立入口（Prompt 03 §六） | 08（左栏改造） |
 | — | `/api/layouts/<name>` 的载荷仍不做 schema 校验（ADR 0023 §5a） | 23 前 |
@@ -193,9 +241,9 @@ Tavotto run 兼容层、matplotlib 捕获范围、CLA/法务。
 
 ## 下一阶段
 
-**Prompt 06（前端事件消费与派生元数据同步）**，入口见 `SESSION_HANDOFF.md` 的
-「下一阶段入口」。后端从此会自己把变化推上来：前端要消费的是
-`registry.changed` / `assets.changed` / `panel.file_changed` / `project.error`
-四条（前两条与 `project.error` 今天**有类型、没有 handler**），
-显式刷新入口是 `POST /api/project/refresh`（`refreshProject()` 已实现，
-界面上还没有入口）。**派生数据刷新不得把文档标脏、不得进撤销历史**。
+**Prompt 07（Readiness 后端事实模型）**，入口见 `SESSION_HANDOFF.md` 的
+「下一阶段入口」。刷新闭环到 06 为止已经完整——**07 不得重新实现刷新**：
+素材清单的权威是 `assetStore.load()`（带并发治理，返回本次生效的响应），
+文档里派生字段的唯一写入口是 `syncPanelSourceMetadata()`，事件与手动刷新
+共用 `store/liveSync.ts` 这一条路径。就绪度是**在这份稳定数据之上再算一层
+事实**，不是第二个刷新器。

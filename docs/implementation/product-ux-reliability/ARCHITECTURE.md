@@ -221,8 +221,31 @@ probe 成功（`allow_static_merge=False`）、`PUT /api/registry`（同）、
 不再靠前端各 store 各做各的防抖。新增 `project.error`（后台刷新失败，可恢复；
 `{pj, reason, code, params}`，`code` 走 `errors:*` 那张双语码表）。
 
-**前端仍然没有 handler**：`assets.changed` / `project.error` 都只有类型与
-`EVENT_KINDS` 登记。那是 Prompt 06 的事，**不要再加一条并行通道**。
+**06 之后**：四条事件全部有 handler，闭环是
+
+```text
+外部修改 → watcher → 统一刷新 → SSE
+  → store/liveSync.refreshAssetsAndSync()
+      ├ assetStore.load()                    合并请求 + 序号防旧覆盖 + 项目隔离
+      ├ syncPanelSourceMetadata(byId)        PanelObject 派生字段原地同步
+      └ applyPanelSync(result)               markStale / reset / 退出图内编辑 / 一条提示
+```
+
+| 事件 | handler 做什么 |
+| --- | --- |
+| `panel.file_changed` | 先同步 `markStale`（**不等**素材刷新：脚本变了而 PDF 还没重生成时 mtime 一动不动），再走合并刷新 |
+| `registry.changed` | 脚本清单 / runtime 清单重取**已取过的**；合并刷新 + 全量派生同步 |
+| `assets.changed` | 合并刷新（`affectedIds` = 事件里的素材 id）；`mtime` 换代顺带让静态图片 URL 失效 |
+| `project.error` | 一条常驻错误提示（`errors:*` 码表，未知 code 有通用回退）；**不是模态框** |
+
+`web/src/lib/api.ts` 另有三个纯函数解码事件的可选/兼容字段：
+`affectedScriptsOf` / `affectedStemsOf` / `affectedAssetIdsOf`。
+**同一批事件只发一次 `/api/panels`**（`assetStore` 的 in-flight 合并），
+**无差异零改动**（`syncPanelSourceMetadata` 算不出差异就一个 `set()` 都不发）
+——两层合起来保证一批事件至多一条提示、至多一次落盘。
+
+SSE 重连（`subscribeEvents` 的 `onOpen`）补一次合并刷新 + 派生同步，
+3 秒节流，**不调后端的静态刷新**。
 
 ---
 

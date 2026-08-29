@@ -1490,6 +1490,51 @@ const EVENT_KINDS = [
   'ai.done',
 ] as const
 
+/**
+ * 事件 → 「这条事件牵涉到哪些东西」的三个纯函数。
+ *
+ * 有它们的理由是**可选字段**：`registry.changed` 同时带批量的 `scripts` 与
+ * 单脚本兼容字段 `script`，`assets.changed` 带一个并集 `ids` 外加三个细分。
+ * 不收口的话每个事件处理器都要自己写一遍「先看批量、没有再看单条、都当数组
+ * 处理」——写三遍就会有一遍漏掉兼容字段，而那条路径正是 probe 与手工登记
+ * （最常见的两条）走的形状。
+ *
+ * 三个函数都**容忍畸形载荷**：SSE 的 payload 是 `JSON.parse` 出来的，类型
+ * 声明是我们对后端的期望，不是运行时保证。非数组、数组里混着非字符串，一律
+ * 当作「这一维没有信息」而不是抛异常——一条读不懂的事件不该拖垮整条流。
+ */
+const strings = (v: unknown): string[] =>
+  Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
+
+const union = (...lists: unknown[]): string[] => {
+  const out = new Set<string>()
+  for (const list of lists) for (const v of strings(list)) out.add(v)
+  return [...out]
+}
+
+/** 这条事件牵涉到的**脚本键**（`registry.changed` 的单条兼容字段一并收进来） */
+export function affectedScriptsOf(event: ServerEvent): string[] {
+  if (event.kind === 'registry.changed') {
+    return union(event.scripts, event.script ? [event.script] : [])
+  }
+  if (event.kind === 'panel.file_changed') return union(event.scripts)
+  return []
+}
+
+/** 这条事件牵涉到的**图名（stem）** */
+export function affectedStemsOf(event: ServerEvent): string[] {
+  if (event.kind === 'registry.changed' || event.kind === 'panel.file_changed') {
+    return union(event.stems)
+  }
+  return []
+}
+
+/** 这条事件牵涉到的**素材 id**（新增 / 删除 / 内容变化的并集） */
+export function affectedAssetIdsOf(event: ServerEvent): string[] {
+  if (event.kind !== 'assets.changed') return []
+  return union(event.ids, event.added, event.removed, event.changed)
+}
+
 /** 订阅后端事件流；端点缺失时静默关闭，不无限重连刷屏。 */
 export function subscribeEvents(
   onEvent: (e: ServerEvent) => void,
