@@ -61,6 +61,13 @@ import figcapture  # noqa: E402
 import figsession  # noqa: E402
 import previewbudget  # noqa: E402
 
+# Windows 上 stdout 被重定向成管道时会退回系统区域编码（cp1252/cp936），而这个
+# 脚本把**带中文的 JSON** 打给调用方（CI 的 windows-exe-smoke 就是这么调的）
+# ——第一次 print 就 UnicodeEncodeError，退出码变成 1。
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 #: 抬闸时给的值。用一个大到不可能被越过的数，而不是 `None`——判据吃的是
 #: 整数比较，塞 `None` 会变成一个 TypeError 而不是「闸不生效」。
 _NO_LIMIT = 1 << 62
